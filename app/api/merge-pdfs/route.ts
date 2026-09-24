@@ -527,6 +527,11 @@ export async function POST(req: NextRequest) {
                 ad_months: p.adMonths,
                 ad_yen: p.adYen,
                 source: "line_group",
+                // 2026-09-24 竹内「どれ物件ピックアップで送ったか物件オススメで送ったかもわかる」:
+                //   ここは「グループに共有した」時点（お客様にはまだ送っていない）。お客様に送った行とは別の行として残し、
+                //   読み手の側で delivery を見て分ける（除外系は共有も数えるまま・app/lib/sent-delivery.ts）
+                delivery: "shared",
+                channel: "extension_group",
               }));
             const gotRent = toInsert.filter((r) => r.rent !== null).length;
             if (toInsert.length > 0) {

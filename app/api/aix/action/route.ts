@@ -1974,22 +1974,31 @@ async function handleAction(request: NextRequest): Promise<Response> {
         const { data: convRow } = await supabase.from("conversations")
           .select("property_customer_id").eq("id", conversationId).maybeSingle();
         const pcId = (convRow as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
-        let q = supabase.from("sent_properties").select("property_name, room_no, sent_at");
+        let q = supabase.from("sent_properties").select("property_name, room_no, sent_at, source, delivery");
         q = pcId
           ? q.or(`conversation_id.eq.${conversationId},property_customer_id.eq.${pcId}`)
           : q.eq("conversation_id", conversationId);
         const { data: sent } = await q.order("sent_at", { ascending: false }).limit(300);
-        const existing = ((sent ?? []) as Array<{ property_name: string | null; room_no: string | null; sent_at: string }>)
-          .map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no, sent_at: r.sent_at }));
+        const { isCustomerRow } = await import("@/app/lib/sent-delivery");
+        const existing = ((sent ?? []) as Array<{ property_name: string | null; room_no: string | null; sent_at: string; source: string | null; delivery: string | null }>)
+          .map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no, sent_at: r.sent_at, customer: isCustomerRow(r) }));
         if (existing.length === 0) return "";
+        // 2026-09-24: 注意を出す条件は変えない（共有のみでも出す）。当たったのが「グループに共有しただけ」の行だけなら文言を分ける
         const hits: string[] = [];
+        let anyCustomer = false;
         for (const inc of incoming) {
-          const hit = existing.find((e) => isSameProperty(e, inc));
-          if (hit) hits.push(`${inc.property_name}${inc.room_no ? ` ${inc.room_no}号室` : ""}（${String(hit.sent_at).slice(0, 10)}に送付済み）`);
+          const matched = existing.filter((e) => isSameProperty(e, inc));
+          if (matched.length === 0) continue;
+          const sentHit = matched.find((e) => e.customer);
+          const label = `${inc.property_name}${inc.room_no ? ` ${inc.room_no}号室` : ""}`;
+          if (sentHit) { anyCustomer = true; hits.push(`${label}（${String(sentHit.sent_at).slice(0, 10)}に送付済み）`); }
+          else hits.push(`${label}（${String(matched[0].sent_at).slice(0, 10)} 共有・お客様には未送付）`);
         }
         if (hits.length === 0) return "";
-        console.log(JSON.stringify({ tag: "aix:duplicate-property", action: currentAction, conversationId, hits }));
-        return `⚠ 以前にお送りした物件が含まれています: ${hits.join(" ／ ")}`;
+        console.log(JSON.stringify({ tag: "aix:duplicate-property", action: currentAction, conversationId, hits, sharedOnly: !anyCustomer }));
+        return anyCustomer
+          ? `⚠ 以前にお送りした物件が含まれています: ${hits.join(" ／ ")}`
+          : `⚠ 以前にグループへ共有した物件が含まれています（お客様には未送付）: ${hits.join(" ／ ")}`;
       } catch (e) {
         console.warn("[aix/action] duplicate notice failed:", e instanceof Error ? e.message : e);
         return "";

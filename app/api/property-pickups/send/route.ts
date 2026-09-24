@@ -13,15 +13,26 @@ import { buildCustomerPickupMessage } from "@/app/lib/property-pickups";
 export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
   if (authError) return authError;
-  const body = await req.json().catch(() => ({})) as { batch_id?: string; item_ids?: number[]; action?: "send" | "skip" | "mark_sent"; message?: string; sent_by?: string };
+  const body = await req.json().catch(() => ({})) as { batch_id?: string; item_ids?: number[]; action?: "send" | "skip" | "mark_sent"; message?: string; sent_by?: string; image_urls?: unknown; conversation_id?: string };
   const ids = Array.isArray(body.item_ids) ? body.item_ids.filter((n) => Number.isFinite(n)) : [];
   if (!body.batch_id || ids.length === 0) return NextResponse.json({ ok: false, error: "batch_id と item_ids が要ります" }, { status: 400 });
 
   const { data: rowsRaw, error } = await supabase.from("property_pickups")
-    .select("id, batch_id, property_customer_id, conversation_id, summary_text, pdf_blob_url, page_image_url, trim_image_url, recommended, status, rank")
+    .select("id, batch_id, property_customer_id, conversation_id, summary_text, pdf_blob_url, pdf_url, page_image_url, trim_image_url, recommended, status, rank, property_name, room_no, ad_yen")
     .eq("batch_id", body.batch_id).in("id", ids).order("rank", { ascending: true });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const rowsAll = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; summary_text: string; pdf_blob_url: string | null; page_image_url: string | null; trim_image_url: string | null; recommended: number; status: string; rank: number }>;
+  const rowsAll = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; summary_text: string; pdf_blob_url: string | null; pdf_url: string | null; page_image_url: string | null; trim_image_url: string | null; recommended: number; status: string; rank: number; property_name: string; room_no: string | null; ad_yen: number | null }>;
+  // 2026-09-24 竹内「どれ物件ピックアップで送ったか物件オススメで送ったかもわかる」:
+  //   送り終えたピックアップを sent_properties に直接書く（channel=pickup・pickup_id 付き）。失敗しても送った印は付ける
+  const recordSent = async (targets: typeof rowsAll, deliveredImageUrls: string[] | null) => {
+    try {
+      const { recordPickupSent } = await import("@/app/lib/pickup-sent-record");
+      return await recordPickupSent({ pickups: targets, deliveredImageUrls });
+    } catch (e) {
+      console.warn("[property-pickups/send] 送った物件の記録に失敗（印は付けた）:", e instanceof Error ? e.message : e);
+      return null;
+    }
+  };
   // 2026-09-24 竹内「トリミングされて画像となって送られる」: トリミング済みの画像（会社の帯を落とした形）があればそれを送る
   const rows = rowsAll.map((r) => ({ ...r, page_image_url: r.trim_image_url ?? r.page_image_url }));
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "対象の行が無い" }, { status: 404 });
@@ -31,7 +42,17 @@ export async function POST(req: NextRequest) {
   if ((body.action as string) === "mark_sent") {
     await supabase.from("property_pickups").update({ status: "sent", sent_at: now, sent_by: body.sent_by ?? "aix" }).in("id", rows.map((r) => r.id)).eq("status", "pending");
     if (rows[0].property_customer_id) await supabase.from("property_customers").update({ last_property_sent_at: now }).eq("id", rows[0].property_customer_id);
-    return NextResponse.json({ ok: true, marked: rows.length });
+    // image_urls: 画面（売上サポの handoff）が AIX で実際に届けた画像の URL（送った順）。古い画面は渡さない → null（画像の対応は付けない）
+    const delivered = Array.isArray(body.image_urls) ? body.image_urls.filter((u): u is string => typeof u === "string" && !!u) : null;
+    // 2026-09-24 反証: 画面が送った先の会話（conversation_id）とピックアップの会話が違えば記録しない
+    //   （別のお客様に送った画像を、このピックアップのお客様の「送った」行として書かない。送った印は上で付けている）
+    const pickupConv = rowsAll.find((r) => r.conversation_id)?.conversation_id ?? null;
+    if (body.conversation_id && pickupConv && body.conversation_id !== pickupConv) {
+      console.warn(JSON.stringify({ tag: "property-pickups/send", warn: "conversation_mismatch", batch: body.batch_id }));
+      return NextResponse.json({ ok: true, marked: rows.length, recorded: { inserted: 0, updated: 0, images: 0, skipped: ["conversation_mismatch"] } });
+    }
+    const recorded = await recordSent(rowsAll, delivered);
+    return NextResponse.json({ ok: true, marked: rows.length, recorded });
   }
   if (body.action === "skip") {
     await supabase.from("property_pickups").update({ status: "skipped", sent_by: body.sent_by ?? null }).in("id", rows.map((r) => r.id));
@@ -70,5 +91,9 @@ export async function POST(req: NextRequest) {
       ? supabase.from("property_customers").update({ last_property_sent_at: now }).eq("id", rows[0].property_customer_id)
       : Promise.resolve(),
   ]);
-  return NextResponse.json({ ok: true, sent: rows.length, conversation_id: c.id });
+  // 送った画像は pending 行の page_image_url（トリミング優先）を rank 順に並べた物＝位置が確実に対応する
+  const pendingIds = new Set(pending.map((r) => r.id));
+  //   （10枚を超えて切った時は数が合わず何も書かない＝送っていない物件を「送った」と書かない。画像の読み取りが経路 pickup で記録する）
+  const recorded = await recordSent(rowsAll.filter((r) => pendingIds.has(r.id)), imageUrls);
+  return NextResponse.json({ ok: true, sent: rows.length, conversation_id: c.id, recorded });
 }

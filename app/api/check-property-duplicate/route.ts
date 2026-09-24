@@ -6,9 +6,24 @@ import { supabase } from "@/app/lib/supabase";
 //   同じ会話の物件名ペア684組）で **号室が同じでも名前が違うペアが494組**あった（「101号室」はどの建物にもある）。
 //   つまり「コル・デ・ソル杭全 101」を送ると「小路東一戸建 101」が重複と警告されていた。
 //   新しい線は「名前の似ている度 ≥ 0.95 かつ 号室一致」。名前が違う物を巻き込む数が0になる線（実測）。
-import { isSameProperty } from "@/app/lib/sent-property-record";
+import { isSameProperty, normalizeRoomNo } from "@/app/lib/sent-property-record";
+// 2026-09-24 竹内「ここと拡張ツールも連携されてかなり効率の良いサイクルとなる」:
+//   拡張の送済みバッジを経路別（ピックアップで送った／オススメで送った／送った／共有のみ）にするため、
+//   行ごとに kind・name_key（名前で照合する鍵）・room_key を足して返す。今あるキー（property_name, room_no, sent_at）は残す＝古い拡張も動く
+import { badgeKindOfRow, badgeNameKey, pickBadge } from "@/app/lib/sent-delivery";
 
 export const maxDuration = 15;
+
+type SentRow = {
+  id: string; property_name: string; room_no: string; sent_at: string;
+  source: string | null; delivery: string | null; channel: string | null; pickup_id: number | null;
+};
+const withBadge = (r: SentRow) => ({
+  ...r,
+  kind: badgeKindOfRow(r),
+  name_key: badgeNameKey(r.property_name),
+  room_key: normalizeRoomNo(r.room_no),
+});
 
 // CORS headers — allow Chrome extension origins
 const CORS_HEADERS = {
@@ -43,7 +58,8 @@ export async function GET(req: NextRequest) {
 
   /** 両方渡されたらどちらかに当たる物を取る（紐付けが片方しか無い行を取りこぼさない） */
   const fetchSent = async () => {
-    let q = supabase.from("sent_properties").select("property_name, room_no, sent_at");
+    // 2026-09-24: 経路別のバッジのため source / delivery / channel / pickup_id も引く（応答には今あるキーを残して足すだけ）
+    let q = supabase.from("sent_properties").select("id, property_name, room_no, sent_at, source, delivery, channel, pickup_id");
     if (propertyCustomerId && conversationId) {
       q = q.or(`property_customer_id.eq.${propertyCustomerId},conversation_id.eq.${conversationId}`);
     } else if (propertyCustomerId) {
@@ -64,7 +80,7 @@ export async function GET(req: NextRequest) {
         { status: 500, headers: CORS_HEADERS }
       );
     }
-    return NextResponse.json({ list: listData ?? [] }, { headers: CORS_HEADERS });
+    return NextResponse.json({ list: ((listData ?? []) as SentRow[]).map(withBadge) }, { headers: CORS_HEADERS });
   }
 
   // Fetch all sent properties for this customer
@@ -77,11 +93,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const rows = (data ?? []) as Array<{
-    property_name: string;
-    room_no: string;
-    sent_at: string;
-  }>;
+  const rows = (data ?? []) as SentRow[];
 
   // 重複判定は sent-property-record.isSameProperty に一本化（四者同名）:
   //   ・名前の似ている度が 0.95 未満なら、号室が同じでも別物件（実測494組がそう）
@@ -94,11 +106,12 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     {
       is_duplicate: matches.length > 0,
-      duplicates: matches.map((r) => ({
-        property_name: r.property_name,
-        room_no: r.room_no,
-        sent_at: r.sent_at,
-      })),
+      duplicates: matches.map((r) => {
+        const b = withBadge(r);
+        return { property_name: r.property_name, room_no: r.room_no, sent_at: r.sent_at, kind: b.kind, name_key: b.name_key, room_key: b.room_key };
+      }),
+      // 当たった行の中で見せる1件の種類（オススメ＞ピックアップ＞送付＞共有のみ）
+      best_kind: pickBadge(matches)?.kind ?? null,
     },
     { headers: CORS_HEADERS }
   );

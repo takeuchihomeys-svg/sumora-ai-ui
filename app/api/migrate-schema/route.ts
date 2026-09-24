@@ -3254,6 +3254,18 @@ WHERE image_url IS NOT NULL AND conversation_id IS NOT NULL AND property_name IS
 ORDER BY image_url, sent_at DESC
 ON CONFLICT (image_url) DO NOTHING;
 
+-- 物件送った表を「共有した／お客様に送った」「どの経路で送ったか」で読む（2026-09-24 竹内「どれ物件ピックアップで送ったか
+--   物件オススメで送ったかもわかる」）。source の値と意味は変えない（'vision'＝照合できなかった印のまま）。判定は app/lib/sent-delivery.ts
+--   delivery: 'shared'（グループに共有しただけ・source='line_group' の時だけ）| 'customer'（お客様に送った）。NULL＝古い行（source から導く）
+--   channel : 'pickup' | 'recommendation' | 'check' | 'estimate' | 'aix_other' | 'staff_image' | 'extension_group'。NULL＝経路不明
+--   pickup_id: property_pickups.id（売上サポから送った時だけ・一意＝二重に書かない）
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS delivery TEXT;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS channel TEXT;
+ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS pickup_id BIGINT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sent_props_pickup ON sent_properties(pickup_id) WHERE pickup_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sent_props_image_url ON sent_properties(image_url) WHERE image_url IS NOT NULL;
+ALTER TABLE sent_image_properties ADD COLUMN IF NOT EXISTS channel TEXT;
+
 -- image_details: こちらが送った画像の「中身の読み取り」（2026-09-21 竹内「引用先の画像を読み取れるように」）
 --   sent_image_properties は「どの物件か」（名前・号室）だけで、資料に書いてある条件
 --   （駐車場・ペット・保証会社・洗濯機置場・設備・退去予定）は生成に1文字も渡っていなかった。

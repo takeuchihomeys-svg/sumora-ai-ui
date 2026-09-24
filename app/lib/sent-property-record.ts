@@ -19,6 +19,7 @@
 //   物件名の突き合わせは property-name-match の similarity に統一する
 //   （check-property-duplicate は独自の Levenshtein を持っていて線が二重になっていた）。
 import { normalizePropertyName, similarity } from "./property-name-match";
+import { channelFromSource, deliveryFromSource, type Channel, type Delivery } from "./sent-delivery";
 
 /** sent_properties に入れる1件 */
 export type SentPropertyRow = {
@@ -29,6 +30,10 @@ export type SentPropertyRow = {
   image_url: string | null;
   source: string;
   recruitment_status: string | null;
+  /** 'shared'（グループに共有しただけ）| 'customer'（お客様に送った）。source から導く（app/lib/sent-delivery.ts） */
+  delivery: Delivery;
+  /** どの経路で送ったか（pickup / recommendation / check …）。経路が分からなければ null */
+  channel: Channel | null;
 };
 
 /** 既に送ってある物件（重複判定の材料） */
@@ -145,6 +150,8 @@ export function buildSentPropertyRows(input: {
       image_url: input.imageUrl ?? null,
       source: input.source,
       recruitment_status: toRecruitmentStatus(input.statuses?.[i]),
+      delivery: deliveryFromSource(input.source),
+      channel: channelFromSource(input.source),
     });
   });
   return out;

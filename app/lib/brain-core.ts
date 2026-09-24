@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
+import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow } from "@/app/lib/aix-jev";
@@ -1319,20 +1320,41 @@ export async function analyzeConversation(
     //     **conversation_id で引けば               109件(86%)**
     //   紐付いていない18件には慶次さん・前田さんなど実際に文のすれ違いが出た会話が入っていた。
     //   → **両方で引いて混ぜる**（どちらか片方しか無い会話を落とさない）。
-    supabase
-      .from("sent_properties")
-      // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応を追加取得
-      // （current_property / urgency_appropriate をテキスト推測ではなくDB事実で接地させる）
-      .select("property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction")
-      .or(propertyCustomerId
+    // 2026-09-24 竹内「これで送ったのとかも判断できる」: 1本だと「グループに共有しただけ」（line_group・14日で1万行）が
+    //   上位20件を埋め、お客様に実際に送った物件がこぼれていた。お客様に送った物（20件）と共有のみ（20件）の2本に分ける。
+    //   delivery の列で絞らないのは、埋め戻しの前でも同じ結果にするため（delivery='shared' ⇔ source='line_group' の決まり）。
+    (async () => {
+      const linkOr = propertyCustomerId
         ? `property_customer_id.eq.${propertyCustomerId},conversation_id.eq.${conversationId}`
-        : `conversation_id.eq.${conversationId}`)
-      .order("sent_at", { ascending: false })
-      .limit(20),
+        : `conversation_id.eq.${conversationId}`;
+      const [customer, shared] = await Promise.all([
+        supabase
+          .from("sent_properties")
+          // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応を追加取得
+          // （current_property / urgency_appropriate をテキスト推測ではなくDB事実で接地させる）
+          .select("property_name, room_no, sent_at, rent, recruitment_status, applicant_rank, customer_reaction, source, channel, delivery, pickup_id")
+          .or(linkOr)
+          .or("source.is.null,source.neq.line_group")
+          .order("sent_at", { ascending: false })
+          .limit(20),
+        supabase
+          .from("sent_properties")
+          .select("property_name, room_no, sent_at, rent")
+          .or(linkOr)
+          .eq("source", "line_group")
+          .order("sent_at", { ascending: false })
+          // 2026-09-24 反証: 8件で切ると、共有した物件が ng_properties（aix/action の提案禁止・final-check の NG_PROPERTY_MENTION）
+          //   と「再提案しない」から外れていた（60日の実データで35人・214件）。旧の1本のクエリの上限（20）にそろえる
+          .limit(20),
+      ]);
+      // 共有のみの取得が失敗すると、共有した物件が除外から黙って消える（fail-open）→ ログを残す
+      if (shared.error) console.warn(JSON.stringify({ tag: "brain-core:sent-props-shared", conversationId, error: shared.error.message }));
+      return { data: customer.data ?? [], error: customer.error, shared: shared.data ?? [] };
+    })(),
     // 2026-09-20 竹内: 画像だけで送った物件（送信時に DeepSeek で読み取って記録した分）
     supabase
       .from("sent_image_properties")
-      .select("property_name, room_no, created_at, source")
+      .select("property_name, room_no, created_at, source, channel")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(20),
@@ -1845,51 +1867,15 @@ export async function analyzeConversation(
   // 監査FIX(2026-08-20): 募集状況・番手・家賃・顧客反応（構造化済みの行のみ）を注釈として付与。
   // urgency_appropriate（「残り1室」等の緊急表現の事実根拠）と current_property の接地に使う
   // sent_via: 画像から読み取って記録した物の経路（aix:property_recommendation 等）。sent_properties 由来は null
-  type SentProp = { property_name: string; room_no: string; sent_at: string; rent: number | null; recruitment_status: string | null; applicant_rank: number | null; customer_reaction: string | null; sent_via?: string | null };
-  const RECRUIT_LABEL: Record<string, string> = { open: "募集中", move_out_planned: "退去予定", occupied: "入居中", closed: "募集終了" };
-  const REACTION_LABEL: Record<string, string> = { interested: "興味あり", rejected: "見送り", no_response: "反応なし" };
-  // 2026-09-20: property_customer_id と conversation_id の両方で引くので、同じ物件が2行来ることがある。
-  //   物件名＋号室で1つにまとめる（新しい方＝先頭を残す。order は sent_at 降順）
-  const sentProps = (() => {
-    const seen = new Set<string>();
-    const out: SentProp[] = [];
-    for (const p of ((sentPropsResult.data ?? []) as SentProp[])) {
-      const key = `${(p.property_name ?? "").trim()}|${(p.room_no ?? "").trim()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(p);
-    }
-    // 2026-09-20 竹内（物件把握の監査）: **画像だけで送った物件**を足す。
-    //   スタッフが手で画像を送ると sent_properties には入らない（直近30日 1,624枚中 24枚＝1%しか
-    //   物件に直せていなかった）。送信時に読み取って sent_image_properties に書くようにしたので、
-    //   ブレインもそこを見る。既に sent_properties にある物件は重複させない。
-    for (const p of ((sentImagePropsResult.data ?? []) as Array<{ property_name: string | null; room_no: string | null; created_at: string | null; source: string | null }>)) {
-      const name = (p.property_name ?? "").trim();
-      if (!name) continue;
-      const key = `${name}|${(p.room_no ?? "").trim()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ property_name: name, room_no: (p.room_no ?? "").trim(), sent_at: p.created_at ?? "", rent: null, recruitment_status: null, applicant_rank: null, customer_reaction: null, sent_via: p.source ?? null });
-    }
-    return out;
-  })();
-  // 2026-09-20 竹内「どの物件をお客さんにたいしてオススメしたのか分かるように」:
-  //   画像の source（aix:property_recommendation など）から「オススメで送った物件」を取り出す。
-  //   ブレインが「この物件は推した物」と分かれば、次の一手（内覧・見積）の相手を取り違えない。
-  const recommendedProps = sentProps.filter((p) => String((p as { sent_via?: string | null }).sent_via ?? "").startsWith("aix:property_recommendation"));
-  let sentPropsText = sentProps.length > 0
-    ? `\n【すでに送付済みの物件（${sentProps.length}件）】\n${sentProps.map((p) => {
-        const facts = [
-          p.rent != null ? `家賃${p.rent.toLocaleString()}円` : "",
-          p.recruitment_status ? `募集状況:${RECRUIT_LABEL[p.recruitment_status] ?? p.recruitment_status}` : "",
-          p.applicant_rank != null ? `${p.applicant_rank}番手` : "",
-          p.customer_reaction ? `顧客反応:${REACTION_LABEL[p.customer_reaction] ?? p.customer_reaction}` : "",
-        ].filter(Boolean).join("・");
-        // 2026-09-20: オススメで送った物件は印を付ける（次の一手の相手を取り違えないため）
-        const via = String(p.sent_via ?? "").startsWith("aix:property_recommendation") ? "・🌟オススメで送付" : "";
-        return `- ${p.property_name} ${p.room_no}（${jstMD(p.sent_at)}送付${facts ? `・${facts}` : ""}${via}）`;
-      }).join("\n")}${recommendedProps.length > 0 ? `\n※このうち **${recommendedProps.map((p) => `${p.property_name} ${p.room_no}`.trim()).join("・")}** は AIX【物件オススメ】で推した物件。内覧・見積・申込の話はこのお部屋が相手になる（別の物件にすり替えない）。` : ""}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`
-    : "";
+  // channel: 送った経路（pickup / recommendation …・2026-09-24）。shared_only: グループに共有しただけ（お客様には未送付）
+  // 2026-09-24: 組み立ては app/lib/sent-props-text.ts（純関数）に切り出した。お客様に送った行 → 画像の行 → 共有のみの行 の順
+  //   （物件名＋号室の重複除けがこの順で効くので送った事実が勝つ）。📤ピックアップ／🌟オススメの印は channel から
+  const sentProps = buildSentProps({
+    customerRows: (sentPropsResult.data ?? []) as Parameters<typeof buildSentProps>[0]["customerRows"],
+    imageRows: (sentImagePropsResult.data ?? []) as Parameters<typeof buildSentProps>[0]["imageRows"],
+    sharedRows: ((sentPropsResult as { shared?: Parameters<typeof buildSentProps>[0]["sharedRows"] }).shared ?? []),
+  });
+  let sentPropsText = buildSentPropsText(sentProps);
 
   // 申込経験者: ベンチマーク物件の注入
   // applicant_rank が入っている物件 = 顧客が実際に申込んだ（番手がついた）物件。
@@ -1927,8 +1913,10 @@ export async function analyzeConversation(
   //   特定してChrome拡張に返す。完全自律物件選定の実現
   let propertySearchText = "";
   if (pc) {
-    // sentCount: sent_properties の直近10件クエリ結果（10件で頭打ちのため「以上」表記）
-    const sentCount = sentProps.length;
+    // sentCount: お客様に送った件数（共有のみは別の数字 sharedOnlyCount で並べる・2026-09-24 反証:
+    //   【すでに送付済みの物件（N件）】の N と同じ意味にそろえる。混ぜると同じプロンプトで件数が2つの意味になる）
+    const sentCount = sentProps.filter((p) => !p.shared_only).length;
+    const sharedOnlyCount = sentProps.length - sentCount;
     // daysSinceLastSend: last_property_sent_at 優先、無ければ sent_properties の最新 sent_at
     const lastSentIso = pc.last_property_sent_at ?? sentProps[0]?.sent_at ?? null;
     const daysSinceLastSend = lastSentIso
@@ -1953,7 +1941,7 @@ export async function analyzeConversation(
     }
     propertySearchText = `
 【物件検索統括】
-送付済み件数: ${sentCount}件${sentCount >= 10 ? "以上" : ""}
+送付済み件数: ${sentCount}件${sentCount >= 10 ? "以上" : ""}${sharedOnlyCount > 0 ? `（グループ共有のみ ${sharedOnlyCount}件）` : ""}
 最終送付: ${daysSinceLastSend !== null ? `${daysSinceLastSend}日前` : "まだ送付なし"}
 連続未返信送付: ${unansweredSendCount}件（2件以上 = お客さんが反応していない）
 検索条件:
@@ -3719,7 +3707,13 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
     supabase.from("conversation_checkpoints").select("summary, key_facts, conversation_stage").eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false }).limit(1).maybeSingle(),
     pcid ? supabase.from("property_customers").select("personality_profile, preferences, ng_points, ai_summary, desired_area, floor_plan, rent_max, move_in_time").eq("id", pcid).maybeSingle() : Promise.resolve({ data: null }),
-    pcid ? supabase.from("sent_properties").select("id", { count: "exact", head: true }).eq("property_customer_id", pcid) : Promise.resolve({ count: 0 }),
+    // 2026-09-24: お客様に送付（source が null か line_group 以外）とグループ共有のみ（line_group）を分けて数える
+    pcid
+      ? Promise.all([
+          supabase.from("sent_properties").select("id", { count: "exact", head: true }).eq("property_customer_id", pcid).or("source.is.null,source.neq.line_group"),
+          supabase.from("sent_properties").select("id", { count: "exact", head: true }).eq("property_customer_id", pcid).eq("source", "line_group"),
+        ]).then(([c, s]) => ({ count: c.count ?? 0, sharedCount: s.count ?? 0 }))
+      : Promise.resolve({ count: 0, sharedCount: 0 }),
     loadViewingReports(conversationId),
     supabase.from("aix_usage_logs")
       .select("aix_type, line_message_id, sent_at, created_at, template_name, check_pattern, property_names, prop_statuses, estimate_sent, prop_cost_notes, generated_text")
@@ -3781,7 +3775,7 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   const msgText = msgs.map((m) => `[${m.sender === "customer" ? "顧客" : "スタッフ"} ${jstMD(m.created_at)}] ${(m.text ?? "（画像/添付）").replace(/\n+/g, " ").slice(0, 200)}`).join("\n");
   const keyFacts = Array.isArray(cp?.key_facts) ? (cp!.key_facts as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 10) : [];
   const userText = [
-    `今日: ${jstYmdWeekday(nowIso)}／会話のステータス: ${(conv.status as string | null) ?? "不明"}／送付済み物件: ${(sentRes as { count?: number | null }).count ?? 0}件`,
+    `今日: ${jstYmdWeekday(nowIso)}／会話のステータス: ${(conv.status as string | null) ?? "不明"}／送付済み物件: お客様に送付 ${(sentRes as { count?: number | null }).count ?? 0}件（グループ共有のみ ${(sentRes as { sharedCount?: number | null }).sharedCount ?? 0}件）`,
     `\n【前回の戦略（JSON・${prev.strategy_msg_ts ? jstYmd(prev.strategy_msg_ts) : "不明"}時点）】\n${JSON.stringify(strategyForPrompt(prev))}`,
     digestText ? `\n【前回の戦略以降の毎回の分析の要点（古い→新しい）】\n${digestText}\n※要点の「AIX:」はブレインが提案した物。実際に押した AIX は次の【この会話で押した AIX】を見る` : "",
     aixFlowText ? `\n【この会話で押した AIX（実際の記録・新→旧）】${aixFlowText}` : "",

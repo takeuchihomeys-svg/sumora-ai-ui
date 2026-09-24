@@ -130,6 +130,13 @@ describe("AIX の並行配列を行にする", () => {
     const rows = buildSentPropertyRows({ conversationId: "c1", names: ["", null, undefined, "  ", "ハイム北野 405号室"], source: "x" });
     expect(rows.length).toBe(1);
   });
+  it("B5 行に delivery と channel が入る（source から導く・2026-09-24）", () => {
+    const a = buildSentPropertyRows({ conversationId: "c1", names: ["プロスペリテ 306号室"], source: "aix:property_check_result" });
+    expect(a[0].delivery).toBe("customer");
+    expect(a[0].channel).toBe("check");
+    const b = buildSentPropertyRows({ conversationId: "c1", names: ["プロスペリテ 306号室"], source: "aix:property_recommendation" });
+    expect(b[0].channel).toBe("recommendation");
+  });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

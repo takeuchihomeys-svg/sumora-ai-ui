@@ -100,6 +100,11 @@ interface AixModalProps {
    * 無ければ従来どおり1枚ずつ onSend で送る
    */
   onSendImages?: (imageUrls: string[]) => Promise<string[]>;
+  /**
+   * 2026-09-24: AIX【物件ピックアップした】で送る直前に、送る画像の File の並びを渡す（売上サポの handoff が
+   * 「セットした画像のまま送ったか」を File の同一性で確かめるため。外した・足した時は物件との対応付けをやめる）
+   */
+  onPropertySendFiles?: (files: File[]) => void;
   /** AIX【電話をかける】: LINEコールの「電話をかける」ボタンのカードを送る（失敗時は例外）。本文はその後に onSend で送る */
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
@@ -622,6 +627,7 @@ export default function AixModal({
   onClose,
   onSend,
   onSendImages,
+  onPropertySendFiles,
   onSendCallButton,
   onAfterSend,
   onDelayedSend,
@@ -3119,6 +3125,7 @@ export default function AixModal({
       if (actionType === "property_send") {
         // 物件画像を先に送信 → テキストを後で送信（送信済みindexはスキップ＝再押下時の重複送信防止）
         // 2026-09-22: 10枚までまとめて1回で送る（公式LINEと同じく横並び）
+        onPropertySendFiles?.(sendImageFiles);
         await sendRemainingImagesGrouped(sendImageFiles.length, (i) => uploadImageCached(sendImageFiles[i]));
         await sendAsAix(preview);
         sentImageIndexRef.current = -1;

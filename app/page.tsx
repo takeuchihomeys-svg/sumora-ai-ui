@@ -6054,7 +6054,10 @@ export default function Home() {
   //   売上サポは /?conv=<会話>&aix=property_send&pickup=<行ID>&batch=<バッチ> で来る。会話が開いたら、選んだ物件の資料画像
   //   （PDF 1ページ目＝弊社帯替え。元付の資料は API が返さない）を File にして AIX【物件ピックアップした】を開く。
   //   送り終えたら（onAfterSend）売上サポの行に「送った」印を付ける
-  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; done: boolean } | null>(null);
+  // sentImageUrls: AIX で実際に届いた画像の URL（mark_sent で sent_properties の行と結ぶ・2026-09-24）
+  // handoffFiles: handoff でモーダルにセットした File（並びがピックアップの並び）。filesIntact: 送る直前の並びがそれと同じ File か
+  //   （スタッフが外した・足した時は false → mark_sent に image_urls を渡さず、画像の読み取りの記録に任せる・2026-09-24 反証）
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; filesIntact?: boolean } | null>(null);
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
@@ -6064,6 +6067,8 @@ export default function Home() {
   }, []);
   useEffect(() => {
     const h = pickupHandoffRef.current;
+    // 2026-09-24 反証: 別の会話に移ったら handoff を捨てる（別のお客様で送った AIX の画像を売上サポの物件に結ばない）
+    if (h && h.done && selectedConversation?.id !== h.conv) { pickupHandoffRef.current = null; return; }
     if (!h || h.done || selectedConversation?.id !== h.conv) return;
     h.done = true;
     void (async () => {
@@ -6078,10 +6083,14 @@ export default function Home() {
             files.push(new File([blob], `${it.rank}_${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`, { type: blob.type || "image/jpeg" }));
           } catch { /* その1枚は飛ばす */ }
         }
+        h.handoffFiles = files;
         if (files.length) setAixInitialSendImages(files);
       } catch (e) {
         console.warn("[pickup→AIX] 画像を取れない:", e);
       } finally {
+        // 2026-09-24: 画面の状態（activeAixFlow）を自分で立てる。ページを開き直して来る handoff は通常の入口を通らないので、
+        //   立てないと送った画像に aix_type が付かず、読み取りの経路が staff_image / vision に落ちていた（YUMA の3回が全部 vision）
+        setActiveAixFlow("property_send");
         void openAixDirect("property_send");
         try { window.history.replaceState(null, "", `/?conv=${encodeURIComponent(h.conv)}`); } catch { /* 無視 */ }
       }
@@ -10688,12 +10697,28 @@ export default function Home() {
             // 未使用の2通目設定をクリア（キャンセル時に手動送信で誤発火しないよう）
             pendingSecondMsgRef.current = null;
             setActiveAixFlow(null);
+            // 2026-09-24 反証: 売上サポの handoff はモーダル1回分だけ（送らずに閉じた後の別の AIX 送信を結ばない）。
+            //   送った時は onAfterSend が先に mark_sent を出してから onClose が来るので、ここで消してよい
+            if (pickupHandoffRef.current?.done && aixModalType === "property_send") pickupHandoffRef.current = null;
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
             setShowTemplateModal(true);
           }}
-          onSendImages={(urls) => sendImagesBatch(urls, true)}
+          onSendImages={async (urls) => {
+            const delivered = await sendImagesBatch(urls, true);
+            // 2026-09-24: 売上サポから来た送信なら、実際に届いた画像の URL を貯める（mark_sent でピックアップの行と位置で対応させる）
+            const h = pickupHandoffRef.current;
+            if (h?.done && aixModalType === "property_send" && selectedConversation?.id === h.conv) h.sentImageUrls = [...(h.sentImageUrls ?? []), ...delivered];
+            return delivered;
+          }}
+          onPropertySendFiles={(files) => {
+            // 2026-09-24 反証: セットした画像（File）を外した・足した・並べ替えた時は、並び順で物件と結ぶ前提が崩れる
+            const h = pickupHandoffRef.current;
+            if (!h?.done || selectedConversation?.id !== h.conv) return;
+            const orig = h.handoffFiles ?? [];
+            h.filesIntact = files.length === orig.length && files.every((f, i) => f === orig[i]);
+          }}
           onSend={(text, imageUrl, isAix) => {
             lastAixLogTextRef.current = text || null;
             return sendMessageText(text, imageUrl, isAix);
@@ -10704,11 +10729,15 @@ export default function Home() {
             // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
             {
               const h = pickupHandoffRef.current;
-              if (h && h.done && aixModalType === "property_send" && !meta?.scheduled) {
+              if (h && h.done && aixModalType === "property_send" && !meta?.scheduled && selectedConversation?.id === h.conv) {
                 pickupHandoffRef.current = null;
+                // 画像を外した・足した時（filesIntact !== true）は image_urls を渡さない → サーバーは sent_properties に書かず、
+                //   画像の読み取り（recordSentImageProperty・経路 pickup）の記録に任せる。送った印（status=sent）は付ける
+                const imageUrls = h.filesIntact === true ? (h.sentImageUrls ?? []) : [];
                 void fetch("/api/property-pickups/send", {
                   method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
-                  body: JSON.stringify({ batch_id: h.batch, item_ids: h.ids.split(",").map(Number), action: "mark_sent", sent_by: "aix" }),
+                  // image_urls: 届いた画像（送った順）。数がピックアップと合う時だけ sent_properties の行と結ぶ（合わなければサーバーが書かない）
+                  body: JSON.stringify({ batch_id: h.batch, item_ids: h.ids.split(",").map(Number), action: "mark_sent", sent_by: "aix", image_urls: imageUrls, conversation_id: h.conv }),
                 }).catch(() => {});
               }
             }

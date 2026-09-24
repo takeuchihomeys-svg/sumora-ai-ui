@@ -311,16 +311,25 @@
   // ── 送済みバッジを物件カードに注入 ──────────────────────────
   var DUP_BADGE_CLASS = "axlx-dup-badge";
 
-  function injectDupBadge(el, sentAt) {
+  // kind: "pickup"（ピックアップで送信）| "recommend"（オススメで送信）| "sent"（送信）| "shared"（グループに共有のみ）
+  //   位置・形・大きさは今のまま。色と文言だけ種類で変える（2026-09-24・v2.5.14）
+  var DUP_BADGE_STYLE = {
+    pickup:    { bg: "#2e7d32", text: "🟢ピックアップ送信 ", how: "ピックアップで送信" },
+    recommend: { bg: "#1565c0", text: "🔵オススメ送信 ",     how: "オススメで送信" },
+    sent:      { bg: "#c62828", text: "送済み ",             how: "送信" },
+    shared:    { bg: "#757575", text: "⚪共有のみ ",         how: "グループに共有のみ・お客様には未送付" },
+  };
+  function injectDupBadge(el, sentAt, kind) {
     el.querySelectorAll("." + DUP_BADGE_CLASS).forEach(function (b) { b.remove(); });
 
     var d   = new Date(sentAt);
     var lbl = (d.getMonth() + 1) + "月" + d.getDate() + "日";
+    var st  = DUP_BADGE_STYLE[kind] || DUP_BADGE_STYLE.sent;
 
     var badge = document.createElement("span");
     badge.className = DUP_BADGE_CLASS;
     badge.style.cssText = [
-      "background:#c62828;color:#fff;",
+      "background:" + st.bg + ";color:#fff;",
       "font-size:11px;font-weight:700;",
       "padding:2px 8px;border-radius:10px;",
       "display:inline-block;margin:3px 4px 3px 0;",
@@ -329,8 +338,8 @@
       "white-space:nowrap;vertical-align:middle;",
       "position:relative;z-index:11;flex-shrink:0;",
     ].join("");
-    badge.textContent = "送済み " + lbl;
-    badge.title       = "この物件は " + lbl + " に送信済みです";
+    badge.textContent = st.text + lbl;
+    badge.title       = "この物件は " + lbl + " に" + st.how;
 
     // スコアバッジの直後に挿入（なければ先頭）
     var scoreBadge = el.querySelector("." + BADGE_CLASS);
@@ -452,7 +461,7 @@
     var lines = text.split("\n").map(function (s) { return s.trim(); }).filter(function (s) {
       return s &&
         !/^[◎○△×]\s*[0-9]+点/.test(s) &&  // スコアバッジ
-        !/^送済み/.test(s) &&               // 送済みバッジ
+        !/^(送済み|🟢|🔵|⚪)/.test(s) &&     // 送済みバッジ（経路別・v2.5.14）
         !/^★/.test(s);                     // AI評価バッジ
     });
     var cardName = (lines[0] || "").slice(0, 60);
@@ -561,23 +570,95 @@
   }
 
   // ── 全カードに送済みバッジを適用 ─────────────────────────
+  // 2026-09-24 竹内「ここと拡張ツールも連携されてかなり効率の良いサイクルとなる」（v2.5.14）:
+  //   旧は号室だけで照合していた（101号室はどの建物にもある＝別の建物に「送済み」が出る・DB の号室は 0.1% しか無く殆ど出ない）。
+  //   → API が返す name_key（物件名の鍵）でカードの行・セルの先頭を照合し（v2.5.15）、号室が両方ある時だけ号室でも絞る。
+  //   ⚠ nameKey は app/lib/sent-delivery.ts の badgeNameKey と同じ3行（片方だけ変えない）。
+  //     照合（nameStartsToken）は同じ決まり（NFKC・小文字・空白と「・･」を飛ばす）で1文字ずつ比べる。nameKey 自体は鍵の作り方の控え
+  function nameKey(s) {
+    var k = String(s || "").normalize("NFKC").toLowerCase().replace(/[\s・･]/g, "");
+    return k.length >= 3 ? k : "";
+  }
+  // 号室を「数字だけ・先頭の0を除く」に揃える（サーバーの normalizeRoomNo と同じ形。"0101"・"101号室"・"B101号室" → "101"）
+  function roomKey(s) {
+    var m = String(s || "").normalize("NFKC").match(/([0-9]{1,5})\s*(?:号室)?\s*$/);
+    return m ? m[1].replace(/^0+(?=\d)/, "") : "";
+  }
+  // カードの本文を行・セルに切る（NFKC・小文字。空白は残す＝名前の終わりの目印に使う）
+  function cardTokens(text) {
+    return String(text || "").normalize("NFKC").toLowerCase().split(/[\n\t]+/)
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s && s.length <= 120; });
+  }
+  // token の先頭から key（空白と「・･」を除いた名前の鍵）が始まり、その直後で名前が終わっているか。
+  //   名前の終わり = 行末・空白・号室らしい数字（3〜5桁）・記号や括弧。英字・かな・漢字・短い数字が続けば別の名前（vi→viii・グランツ→グランツ上新庄）
+  function nameStartsToken(token, key) {
+    var i = 0, j = 0;
+    while (i < token.length && j < key.length) {
+      var c = token.charAt(i);
+      if (/[\s・･]/.test(c)) { i++; continue; }
+      if (c !== key.charAt(j)) return false;
+      i++; j++;
+    }
+    if (j < key.length) return false;
+    var rest = token.slice(i);
+    if (!rest || /^\s/.test(rest)) return true;
+    rest = rest.replace(/^[・･]+/, "");
+    if (/^[0-9]{3,5}(?![0-9])/.test(rest)) return true;
+    return /^[^0-9a-z぀-ヿ㐀-鿿ｦ-ﾟ々〆]/.test(rest);
+  }
+  // 当たった行が複数ある時の1件（sent-delivery.ts の pickBadge と同じ決まり: オススメ＞ピックアップ＞送付＞共有のみ・同じ種類なら新しい方）
+  var BADGE_PRIORITY = { recommend: 4, pickup: 3, sent: 2, shared: 1 };
+  function pickBadgeRow(rows) {
+    var best = null;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var k = r.kind || "sent";
+      if (!best) { best = r; continue; }
+      var bk = best.kind || "sent";
+      var pd = (BADGE_PRIORITY[k] || 0) - (BADGE_PRIORITY[bk] || 0);
+      if (pd > 0 || (pd === 0 && Date.parse(r.sent_at || "") > Date.parse(best.sent_at || ""))) best = r;
+    }
+    return best;
+  }
+
   function runDupCheck() {
     if (!sentPropertiesList || sentPropertiesList.length === 0) return;
+    // 古い API の応答（name_key が無い）なら、今までの号室だけの照合に戻す（後方互換）
+    var hasNameKey = sentPropertiesList.some(function (r) { return typeof r.name_key === "string"; });
     var cards = findPropertyContainers();
     cards.forEach(function (card) {
       var text   = (card.innerText || "").trim();
       var roomNo = extractRoomNo(text);
-      if (!roomNo) return;
-      var rn = roomNo.trim().toLowerCase();
-      var match = null;
-      for (var i = 0; i < sentPropertiesList.length; i++) {
-        var row = sentPropertiesList[i];
-        if (row.room_no && row.room_no.trim().toLowerCase() === rn) {
-          match = row;
-          break;
+      if (!hasNameKey) {
+        if (!roomNo) return;
+        var rn = roomNo.trim().toLowerCase();
+        for (var i = 0; i < sentPropertiesList.length; i++) {
+          var row = sentPropertiesList[i];
+          if (row.room_no && row.room_no.trim().toLowerCase() === rn) { injectDupBadge(card, row.sent_at, "sent"); return; }
         }
+        return;
       }
-      if (match) injectDupBadge(card, match.sent_at);
+      var cardRoom = roomNo ? roomKey(roomNo) : "";
+      // v2.5.15（反証）: 本文全体への部分一致だと「スプランディッド新大阪vi」が「…viii」のカードに、
+      //   「グランツ」が「エスリード弁天町グランツ」「グランツ上新庄」に当たっていた（60日の名前キーで195種類・435組）。
+      //   → カードの本文を行・セル（改行・タブ）に切り、その**先頭から**名前が始まり、名前の直後で名前が終わっている時だけ当てる
+      var tokens = cardTokens(text);
+      var hits = sentPropertiesList.filter(function (r) {
+        if (!r.name_key || r.name_key.length < 3) return false;
+        var nameHit = false;
+        for (var ti = 0; ti < tokens.length; ti++) { if (nameStartsToken(tokens[ti], r.name_key)) { nameHit = true; break; } }
+        if (!nameHit) return false;
+        if (r.room_key && cardRoom) return r.room_key === cardRoom;   // 両方ある時だけ号室で絞る（片方しか無ければ建物単位）
+        return true;
+      });
+      // 当たった名前が別の当たった名前に含まれる時は長い方だけを採る（vi と viii の両方を送った時に viii のカードで vi を採らない）
+      hits = hits.filter(function (r) {
+        return !hits.some(function (o) { return o.name_key.length > r.name_key.length && o.name_key.indexOf(r.name_key) !== -1; });
+      });
+      if (hits.length === 0) return;
+      var best = pickBadgeRow(hits);
+      if (best) injectDupBadge(card, best.sent_at, best.kind || "sent");
     });
   }
 

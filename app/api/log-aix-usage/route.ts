@@ -356,9 +356,12 @@ export async function POST(req: NextRequest) {
             source: `aix:${aix_type}`,
           });
           if (rows.length === 0) return;
+          const { isCustomerRow } = await import("@/app/lib/sent-delivery");
           const { data: already } = await supabase.from("sent_properties")
-            .select("property_name, room_no").eq("conversation_id", conversation_id).limit(200);
-          const existing = ((already ?? []) as Array<{ property_name: string | null; room_no: string | null }>)
+            .select("property_name, room_no, source, delivery").eq("conversation_id", conversation_id).limit(200);
+          // 2026-09-24: お客様に送った行とだけ比べる（グループに共有した line_group の行に当たって、送った記録を捨てない）
+          const existing = ((already ?? []) as Array<{ property_name: string | null; room_no: string | null; source: string | null; delivery: string | null }>)
+            .filter((r) => isCustomerRow(r))
             .map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no }));
           const fresh = rows.filter((r) =>
             !existing.some((e) => isSameProperty(e, { property_name: r.property_name, room_no: r.room_no })));

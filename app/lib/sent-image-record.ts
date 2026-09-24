@@ -11,6 +11,7 @@
 //   既に同じ画像の記録があれば**読み直さず**、記録済みの名前を照合し直すだけ（AIX 物件オススメは
 //   生成の時と送る時に同じ画像を渡すので、2回目は DeepSeek を呼ばない）。
 import { supabase } from "@/app/lib/supabase";
+import { channelFromSource, isCustomerRow, rowChannel } from "@/app/lib/sent-delivery";
 
 export type SentImageRecordResult = {
   read: "deepseek" | "reused" | "not_property" | "failed";
@@ -45,6 +46,8 @@ export async function recordSentImageProperty(opts: {
   propertyCustomerId?: string | null;
 }): Promise<SentImageRecordResult> {
   const { imageUrl, conversationId, source } = opts;
+  // 経路は渡された source から決める（照合できなかった時の 'vision' への落とし込みより前・2026-09-24 竹内「どれ物件ピックアップで送ったか…わかる」）
+  const channel = channelFromSource(source);
   const out: SentImageRecordResult = { read: "failed", matched: false, propertyName: null, roomNo: null, sentProperties: "skipped" };
   try {
     const [{ readPropertyImage }, { resolveReadProperty }, { isSameProperty }] = await Promise.all([
@@ -82,23 +85,45 @@ export async function recordSentImageProperty(opts: {
     // ③ 画像ごとの記録。照合できた時だけ上書きする（照合なしで照合済みを消さない）
     const already = prev?.property_name && prev.source !== "vision";   // 照合済みの記録が既にある
     if (fixed) {
-      await supabase.from("sent_image_properties").upsert(
-        { image_url: imageUrl, conversation_id: conversationId, property_name: out.propertyName, room_no: out.roomNo, source },
-        { onConflict: "image_url" },
-      );
+      // 読み取り（最大80秒）の間に別の書き手（売上サポのピックアップの記録など）が照合済みの名前を書いていたら上書きしない
+      const { data: curRow } = await supabase.from("sent_image_properties").select("source").eq("image_url", imageUrl).maybeSingle();
+      const curSource = (curRow as { source: string | null } | null)?.source ?? null;
+      const overtaken = !!curRow && curSource !== "vision" && curSource !== (prev?.source ?? null);
+      if (!overtaken) {
+        await supabase.from("sent_image_properties").upsert(
+          { image_url: imageUrl, conversation_id: conversationId, property_name: out.propertyName, room_no: out.roomNo, source, ...(channel ? { channel } : {}) },
+          { onConflict: "image_url" },
+        );
+      }
     } else if (!prev) {
       await supabase.from("sent_image_properties").upsert(
-        { image_url: imageUrl, conversation_id: conversationId, property_name: out.propertyName, room_no: out.roomNo, source: "vision" },
+        { image_url: imageUrl, conversation_id: conversationId, property_name: out.propertyName, room_no: out.roomNo, source: "vision", ...(channel ? { channel } : {}) },
         { onConflict: "image_url", ignoreDuplicates: true },
       );
+    } else if (channel) {
+      // 照合できなかったが経路は分かっている → 経路だけ補う（source は触らない＝照合済みの印は変えない）
+      await supabase.from("sent_image_properties").update({ channel }).eq("image_url", imageUrl).is("channel", null);
     }
 
     // ④ 送った物件（同じ物件の2回目は書かない＝送った物件の数え方を守る）
     if (already && !fixed) { out.sentProperties = "skipped"; return out; }
-    const { data: rows } = await supabase.from("sent_properties").select("property_name, room_no").eq("conversation_id", conversationId).limit(200);
-    const existing = ((rows ?? []) as Array<{ property_name: string | null; room_no: string | null }>).map((r) => ({ property_name: r.property_name ?? "", room_no: r.room_no }));
-    if (existing.some((e) => isSameProperty(e, { property_name: out.propertyName!, room_no: out.roomNo ?? "" }))) {
+    const { data: rows } = await supabase.from("sent_properties")
+      .select("id, property_name, room_no, image_url, source, delivery, channel, pickup_id, sent_at")
+      .eq("conversation_id", conversationId).limit(200);
+    type Row = { id: string; property_name: string | null; room_no: string | null; image_url: string | null; source: string | null; delivery: string | null; channel: string | null; pickup_id: number | null; sent_at: string | null };
+    // 2026-09-24: お客様に送った行とだけ比べる（グループに共有した line_group の行に当たって、送った記録を捨てない）
+    const customerRows = ((rows ?? []) as Row[]).filter((r) => isCustomerRow(r));
+    const hit = customerRows.find((r) => r.image_url === imageUrl)
+      ?? customerRows.find((r) => isSameProperty({ property_name: r.property_name ?? "", room_no: r.room_no }, { property_name: out.propertyName!, room_no: out.roomNo ?? "" }));
+    if (hit) {
       out.sentProperties = "duplicate_skipped";
+      // 経路が分からない行（オススメの生成時に extract-property-info が vision で先に書いた行など）へ、送った時の経路を補う。
+      //   同じ画像か2時間以内の行だけ（昔の行に今日の経路を付けない）
+      const recent = Math.abs(Date.now() - Date.parse(hit.sent_at ?? "")) <= 2 * 60 * 60 * 1000;
+      if (channel && rowChannel(hit) === null && (hit.image_url === imageUrl || recent)) {
+        await supabase.from("sent_properties").update({ channel }).eq("id", hit.id).is("channel", null);
+        out.sentProperties = "duplicate_skipped:channel_filled";
+      }
       return out;
     }
     let pcId = opts.propertyCustomerId ?? null;
@@ -113,6 +138,9 @@ export async function recordSentImageProperty(opts: {
       room_no: out.roomNo ?? "",
       image_url: imageUrl,
       source: fixed ? source : "vision",
+      // 2026-09-24: 照合できなくても経路は残す（source='vision' は照合できなかった印のまま・経路は channel に）
+      delivery: "customer",
+      ...(channel ? { channel } : {}),
       // 読めなかった項目は入れない（0 や "open" に丸めない）
       ...(item.status ? { recruitment_status: item.status, recruitment_checked_at: new Date().toISOString() } : {}),
       ...(typeof item.rent === "number" ? { rent: item.rent } : {}),
