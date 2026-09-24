@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
     //   ⚠ 2026-09-24 本番の初回で `Setting up fake worker failed: Cannot find module '.../pdfjs-dist/legacy/build/pdf.worker.mjs'`:
     //   disableWorker でも pdfjs は pdf.worker.mjs を動的 import する（fake worker）。動的 import はファイル追跡に乗らないので legacy/build を丸ごと同梱する
     //   2026-09-24 本番（Linux）は日本語フォントが無く文字が抜けた → public/fonts/NotoSansJP.ttf（OFL）を同梱して pdf-render が登録する
+    //   2026-09-24 竹内「文字が反映されていないバグ」の本当の原因は cMap が渡っていなかった事（require.resolve が Turbopack で数値に置き換わった）。
+    //     置き場は app/lib/pdfjs-assets.ts が process.cwd()/node_modules/pdfjs-dist/{cmaps,standard_fonts}/ で求める＝下の cmaps・standard_fonts の同梱が要る。
+    //     pdf-text / pdf-render を使うルートを増やしたら、ここにも同じ4つを足す（無いと [pdfjs-assets] の警告が出て文字が抜ける）
     "/api/merge-pdfs": ["./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*", "./public/fonts/**/*"],
     // 売上サポの「画像トリミング」（PDF 1ページ目を画像にして会社の帯を落とす）も同じ物が要る
     "/api/property-pickups/trim": ["./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/@napi-rs/canvas*/**/*", "./public/fonts/**/*"],

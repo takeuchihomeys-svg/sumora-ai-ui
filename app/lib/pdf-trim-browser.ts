@@ -33,7 +33,19 @@ export async function trimPdfPageInBrowser(pdfUrl: string, opts?: { page?: numbe
     const ctx = full.getContext("2d");
     if (!ctx) throw new Error("canvas が使えない");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, full.width, full.height);
+    // 2026-09-24 竹内「文字が反映されていないバグ」: iPhone には MS ゴシックが無い。pdfjs は汎用名（sans-serif＝ヒラギノ）に落として描く見込みだが
+    //   実機では確かめていない → 描いた文字の数を数え、資料に文字があるのに 0 なら投げる（呼び出し側がサーバーで描く予備に回す。
+    //   サーバーは同梱の Noto Sans JP で描き、cMap の不具合も直した）。「白い表」の画像を黙って送らない
+    let textDraws = 0;
+    const origFill = ctx.fillText.bind(ctx), origStroke = ctx.strokeText.bind(ctx);
+    ctx.fillText = (...a: Parameters<CanvasRenderingContext2D["fillText"]>) => { textDraws++; origFill(...a); };
+    ctx.strokeText = (...a: Parameters<CanvasRenderingContext2D["strokeText"]>) => { textDraws++; origStroke(...a); };
     await page.render({ canvasContext: ctx, viewport, canvas: full }).promise;
+    if (textDraws === 0) {
+      const tc = await page.getTextContent().catch(() => null);
+      const chars = (tc?.items ?? []).reduce((n, it) => n + ("str" in it ? String(it.str).trim().length : 0), 0);
+      if (chars >= 40) throw new Error(`文字が描けない（資料の文字 ${chars}字・描いた文字 0）`);
+    }
     const r = cropRectForSheet(full.width, full.height, opts?.keepRatio);
     const out = document.createElement("canvas");
     out.width = r.width; out.height = r.height;

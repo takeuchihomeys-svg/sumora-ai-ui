@@ -6,7 +6,10 @@
 //   リアプロの印刷用 PDF は作られた PDF（スキャンではない）なので、まず**文字層**を取り出して文字として渡す。
 //   画像にする道（ラスタライズ）はネイティブの canvas が要り Vercel での動作リスクが高いので、文字層が無い時の次の手にする。
 //   設計知見: 読み取りの材料にするのは「有無・可否」だけ。金額・徒歩・㎡の数値は「表の文字（bulk-dl の説明文）」が正。
-import { createRequire } from "node:module";
+// 2026-09-24 竹内「文字が反映されていないバグ」: cMapUrl を渡していなかったので、埋め込みなしの日本語フォント（MS ゴシック・Identity-H）の
+//   PDF から文字が1文字も取れず（本番 withText:0）、順位付け・画像の読み取りが文字層なしで動いていた → pdfjs-assets.ts で CMap も渡す
+//   （旧 require.resolve は本番の Turbopack で数値に置き換わり、標準フォントの置き場も渡っていなかった）
+import { pdfjsAssetParams } from "./pdfjs-assets";
 
 export type PdfTextResult = {
   text: string;
@@ -26,11 +29,8 @@ export async function extractPdfText(input: string | Uint8Array, opts?: { maxPag
   try {
     const bytes = typeof input === "string" ? Uint8Array.from(Buffer.from(input, "base64")) : input;
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    // 標準フォントの置き場（無いと警告が出る。文字の取り出しには要らないが静かにする）
-    const require = createRequire(import.meta.url);
-    let standardFontDataUrl: string | undefined;
-    try { standardFontDataUrl = require.resolve("pdfjs-dist/package.json").replace(/package\.json$/, "standard_fonts/"); } catch { standardFontDataUrl = undefined; }
-    const task = pdfjs.getDocument({ data: bytes, disableWorker: true, isEvalSupported: false, useSystemFonts: false, ...(standardFontDataUrl ? { standardFontDataUrl } : {}) } as Parameters<typeof pdfjs.getDocument>[0]);
+    // CMap（日本語の文字コード対応表・無いと文字が取れない）と標準フォントの置き場
+    const task = pdfjs.getDocument({ data: bytes, disableWorker: true, isEvalSupported: false, useSystemFonts: false, ...pdfjsAssetParams() } as Parameters<typeof pdfjs.getDocument>[0]);
     const pdf = await task.promise;
     const parts: string[] = [];
     const n = Math.min(pdf.numPages, maxPages);

@@ -27,6 +27,18 @@ export type PickupItemInput = {
   agentImageUrl?: string | null;
   imageLines?: string[] | null;
   imageFacts?: Record<string, boolean | null> | null;
+  /**
+   * 2026-09-24 竹内「同じ建物だと平米数2㎡以内だと家賃がひくい部屋をここにいれて、他の部屋は売上サポに飛ばさなくて大丈夫」:
+   *   pickup-dedupe.ts で落とした部屋に 🌟/🌟★ が付いていた時、残した部屋に引き継ぐ印（説明文の印と強い方を採る）
+   */
+  recommendedOverride?: number | null;
+  /** 判定の理由に足す一文（例「同じ建物の近い広さの部屋を 7件省略」） */
+  extraReasonsJa?: string[] | null;
+  /**
+   * 説明文に【N】が無い時の順位（元の並びの番号・1始まり）。2026-09-24: 同じ建物の重複を落とすと items が詰まり、
+   *   i + 1 だと LINE グループの番号とずれる → 呼び出し側が元の番号を渡す
+   */
+  fallbackRank?: number | null;
 };
 
 export type PickupRow = {
@@ -75,13 +87,16 @@ export function buildPickupRows(
     const head = parseSummaryHead(it.summary);
     const mark = parseRecommendMark(it.summary);
     const j = it.judgment;
+    const extra = (it.extraReasonsJa ?? []).filter(Boolean);
+    // 足す一文（同じ建物の省略）は先頭に（画面は reasons_ja の先頭3つだけ出すので、後ろだと隠れる）
+    const reasons = [...extra, ...(j ? j.reasonsJa : [])];
     return {
       batch_id: batch.batchId,
       property_customer_id: batch.propertyCustomerId,
       conversation_id: batch.conversationId,
       customer_name: batch.customerName,
       site: batch.site,
-      rank: mark.rank ?? i + 1,
+      rank: mark.rank ?? it.fallbackRank ?? i + 1,
       property_name: head?.propertyName || j?.name || "物件",
       room_no: head?.roomNo || null,
       summary_text: it.summary,
@@ -92,10 +107,10 @@ export function buildPickupRows(
       verdict: j?.verdict ?? null,
       score: j?.score ?? null,
       reason_codes: j ? j.reasonCodes : null,
-      reasons_ja: j ? j.reasonsJa : null,
+      reasons_ja: j || extra.length ? reasons : null,
       ad_yen: j?.adYen ?? null,
       profit_yen: j?.profitYen ?? null,
-      recommended: mark.recommended,
+      recommended: Math.max(mark.recommended, it.recommendedOverride ?? 0),
       status: "pending",
       page_image_url: it.pageImageUrl ?? null,
       agent_image_url: it.agentImageUrl ?? null,

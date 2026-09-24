@@ -5,6 +5,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
+import { pickCustomerBest } from "@/app/lib/pickup-best";
+import { extractImageWants, dedupeWantsByTopic, imageAnalysisNeed, type ImageWant } from "@/app/lib/image-wants";
 
 export const dynamic = "force-dynamic";
 
@@ -186,10 +188,15 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);
   sq = conv ? sq.eq("conversation_id", conv) : sq.eq("property_customer_id", pcid as string);
-  const [pk, notesRes, sentRes] = await Promise.all([
+  // 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨」: 条件欄だけの軽い判定（会話・訴求は引かない・DeepSeek も呼ばない）
+  const pcRes = pcid
+    ? supabase.from("property_customers").select("preferences, ng_points, other_requests, additional_conditions").eq("id", pcid).maybeSingle()
+    : Promise.resolve({ data: null });
+  const [pk, notesRes, sentRes, condRes] = await Promise.all([
     q,
     pcid ? supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").eq("property_customer_id", pcid).order("created_at", { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
     sq,
+    pcRes,
   ]);
   if (pk.error) return { ok: false, error: pk.error.message };
   const rows = (pk.data ?? []) as Row[];
@@ -205,6 +212,13 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const convId = conv ?? first?.conversation_id ?? null;
   const { data: cv } = convId ? await supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : { data: null };
   const c = cv as { customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null } | null;
+  // 2026-09-24 竹内「1番オススメの物件全体の中で」: 回をまたいだ一番（最新の回から 6時間以内の未送信・画像で分析の点）
+  const best = pickCustomerBest(rows);
+  // 画像で確かめる希望: 分析済みの回に保存した希望（会話・訴求込み）があればそれ、無ければ条件欄だけで軽く判定
+  const savedWants = rows.map((r) => (r.image_analysis as { wants?: unknown } | null)?.wants).find((w): w is ImageWant[] => Array.isArray(w) && w.length > 0) ?? null;
+  const cond = (condRes.data ?? null) as { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
+  const wantsForNeed = savedWants ?? dedupeWantsByTopic(extractImageWants({ conditions: cond }));
+  const imageNeed = { ...imageAnalysisNeed(wantsForNeed), from: savedWants ? "analysis" : "conditions" };
   return {
     ok: true,
     customer: {
@@ -219,6 +233,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       line: c ? { profile_image_url: c.profile_image_url, updated_at: c.updated_at, account: c.account, status: c.status, last_sender: c.last_sender } : null,
       sent_history: (sentRes.data ?? []) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
       has_more_batches: order.length > nBatches,
+      best,
+      image_need: imageNeed,
     },
   };
 }

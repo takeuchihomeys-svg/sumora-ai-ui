@@ -154,6 +154,17 @@
 - DeepSeek の「送る物件・オススメ」の総合判断はまだ入れていない（判定は決定論・🌟は既存の Haiku）。PDF の文字層が取れると分かってから、文字で「有無」を DeepSeek に聞く段を足す
 - 実機での確かめ方: 拡張を再読み込み（v2.5.11）→ 検索して「売上番長に送る」→ アプリの売上サポ→ピックアップ に並ぶか → 「📄 資料を見る」が開くか → コンソール `property-pickups:record` の withText が 0 でないか
 
+## 2026-09-24 夜 売上サポの画像の文字抜けの根本修正・同じ建物の重複・画像で分析の強化（竹内「文字が反映されていないバグ」「同じ建物だと平米数2㎡以内は家賃の低い部屋だけ」「一番オススメを全体の中で」「WIC 等は画像読み取りを推奨」）
+- **文字抜けの本当の原因**: 日本語フォントではなく **pdfjs に cMapUrl が一度も渡っていなかった**。`require.resolve("pdfjs-dist/package.json").replace(...)` を Turbopack（本番ビルド）が**モジュール番号（数値）に置き換え** → `.replace` が TypeError → catch で黙って undefined。埋め込みなしの MS ゴシック（Identity-H）の文字は描画命令ごと捨てられ（fillText 0回）、文字層（pdf-text）も空（本番ログ `withText:0`・`Ensure that the cMapUrl API parameter is provided`）。tsx では通るのでローカルでは気付けない
+- **直し方**: `app/lib/pdfjs-assets.ts`（サーバー専用）が `process.cwd()/node_modules/pdfjs-dist/{cmaps,standard_fonts}/` を existsSync で求め、無ければ必ず `[pdfjs-assets]` の警告。pdf-render・pdf-text の両方が `...pdfjsAssetParams()` を渡す。可変フォントの Noto は ctx.font の太さを `fontVariationSettings "wght"` に写す（細字・bold が太らない問題も直した）
+- **見張り**: `renderPdfPageToPng` が `textDraws`（描いた文字の数）を返す。recordPickupBatch は文字層があるのに 0 なら警告し、`property-pickups:record` のログに `noTextDraw` を出す（**本番確認はこの値が 0・withText>0 であること**）。テスト `app/lib/__tests__/pdf-render-text.test.ts`（実物の PDF `fixtures/realpro-sheet-2p.pdf` で文字層・描いた数・表の欄の色の乗り方を見る＋ソースに require.resolve が戻っていないかの静的な見張り）
+- **作り直し**: `scripts/backfill-pickup-images.ts`（既定 dry-run・`--out=<dir>` で画像を保存・`--apply [--reset-analysis] [--delete-old]`）。2026-09-24 の dry-run: 対象 15行（#9〜11・#34〜45）全部作り直せる（p1 768〜1447字・p2 942〜1627字）・画像で分析済み 14行。**本番のデプロイが READY で record ログの noTextDraw=0 を見てから --apply**（BLOB_READ_WRITE_TOKEN が要る）
+- **同じ建物の重複**（`app/lib/pickup-dedupe.ts` の `dedupeSameBuilding`）: 同じ建物（名前の完全一致＋Ⅶ↔VII・号棟↔棟）で面積差 2㎡以内は**家賃が一番低い1部屋だけ**売上サポに記録（同じ家賃は 家賃＋管理費→AD 高→面積 広→順位）。面積・家賃・名前が読めない物／間取りが違う物は残す。数珠つなぎにしない（残した部屋と比べる）。落とした 🌟 は残した部屋に引き継ぎ、reasons_ja に「同じ建物の近い広さ（2㎡以内）の部屋を n件省略」。**LINE グループ・結合 PDF・sent_properties は変えない**（recordPickupBatch の最初で絞るだけ・順位【N】は元の番号）。実例: 10件 → 3件（エスリード難波AGREA 8件 → 73,100円の【5🌟】1件）。ログ `property-pickups:dedupe`
+- **画像で分析**: ①文字のある画像だけ渡す（`app/lib/pickup-image-url.ts`: トリミング → 文字層が取れた回の page_image_url → 無ければ画面が先に ✂️）②画面は1件ずつ・同時3件で送り、1件ごとに結果を出す。スマホで fetch が切れても再送せず、保存済みを読み直す（分析中と切れた後 2分半は 30秒ごとに詳細を取り直す・画面に戻った時も）③**👑 全体で一番**（`app/lib/pickup-best.ts` の `pickCustomerBest`・最新の回から6時間以内の未送信・点→上限前の点→🌟→新しい回→順位）を詳細 API の `customer.best` で返し、一番下の吹き出しに1つ（同点・未判定の数・「この物件を AIXで送る」）。回ごとの 👑 は全体と違えば「この回で一番」と灰色に ④同じ設備の希望は1つにまとめる（`dedupeWantsByTopic`・ペットが条件・会話・訴求で3重に数えられアイコン1つで100点になっていた）
+- **推奨のボタン**: `imageAnalysisNeed`（image-wants.ts・決定論）— WIC・収納・対面/独立キッチン・バストイレ別・独立洗面・室内洗濯機置場・部屋の配置が希望にあれば recommended → 「🔍 画像で分析（推奨: WIC・対面キッチン）」を先頭・全幅・濃い色、吹き出しに「画像で確かめたい希望」。ペット・設備だけは今のまま。希望なしは灰色で小さく（消さない）。判定は詳細 API の `customer.image_need`（分析済みの希望があればそれ・無ければ条件欄だけ。会話は引かない）
+- **iPhone のトリミング**: `pdf-trim-browser.ts` が描いた文字の数を数え、資料に文字があるのに 0 なら投げる → サーバーで描く予備（Noto・cMap 直した）に回る。実機の iPhone では未確認
+- **費用**（調査・ローカルから実測）: 画像で分析 1件 $0.0010〜0.0048（中央値 約0.25円）・10件で約2〜4円。キャッシュは固定の指示（約640）が毎回命中・同じ物件の読み直しは91%。並べ替えは効果が小さいので入れていない（固定を先頭に置く見張りのテストだけ）。本番の llm_usage_logs は e5b41fbd（lazyAltRecorder）より前は0件 → 次に押した後に `action=pickup_image_analysis` の行を確かめる
+
 ## 2026-09-24 利益（AD − 見積書の割引）を物件ごとに残し、物件検索ブレインと連動（竹内）
 
 竹内「物件ピックアップ・物件オススメで送った物件は分かっている。見積書送るの本文から割引も分かる。その物件が送った物件なら AD も理解しているはず。連動する」

@@ -159,3 +159,98 @@ export function scoreChecksDetail(wants: ImageWant[], checks: WantCheck[]): { sc
   const s = Math.round((ok / total) * 100);
   return { score: mustFail ? Math.min(20, s) : s, raw: s, mustFail };
 }
+
+// ── 同じ話題の希望をまとめる／画像で分析を勧めるか ─────────────────────────────────
+// 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨なので、画像読み取りボタンをだすかたちとする」
+//   実例（2026-09-24）: 希望が W1 条件「ペット可の物件があれば」・W2 会話「もしあればペット可の物件」・W3 訴求「ペット可」で
+//   同じ事が3重に数えられ、資料の「ペット相談」のアイコン1つで 100 点になっていた（10件中9件は文字抜けで未判定）。
+//   → 「同じ設備・同じ向き（NG か）」の希望は1つにまとめる。話題（topics）は粗い（水回りにバストイレ別も独立洗面も入る）ので、
+//     まとめる鍵は下の細かい設備（FEATURES）。どの設備にも当たらない希望はまとめない（誤って消さない側）。
+
+/** 希望の細かい設備。strong = 画像（間取り図）で確かめるのが確実な物（表の文字だけでは分からない事が多い） */
+export const WANT_FEATURES: Array<{ key: string; label: string; re: RegExp; strong: boolean }> = [
+  // シューズ用（SIC・シューズWIC）は WIC に数えない（設計知見「WIC はシューズ用を分ける」）
+  { key: "wic", label: "WIC", re: /(?<!シューズ\s*)(?:WIC|W\.I\.C|ウォークイン|ｳｫｰｸｲﾝ|ウォークスルー|WCL)/i, strong: true },
+  { key: "shoes_ic", label: "シューズWIC", re: /シューズ\s*(?:WIC|ウォークイン|ｸﾛｰｸ|クローク)|(?<![A-Za-z])SIC(?![A-Za-z])|シューズクローク/i, strong: false },
+  { key: "storage", label: "収納", re: /収納|クローゼット|クロゼット|納戸|押入|物置/, strong: true },
+  { key: "counter_kitchen", label: "対面キッチン", re: /対面|カウンターキッチン|カウンター式/, strong: true },
+  { key: "separate_kitchen", label: "独立キッチン", re: /独立(?:した)?キッチン|キッチン(?:が|は)?(?:独立|分かれ|別)/, strong: true },
+  { key: "burners", label: "コンロ口数", re: /[2二3三]口/, strong: false },
+  { key: "bath_toilet", label: "バストイレ別", re: /バス.?トイレ|風呂.?トイレ|トイレ.?別|[3三]点ユニット/, strong: true },
+  { key: "washbasin", label: "独立洗面", re: /独立洗面|洗面台|洗面所|脱衣/, strong: true },
+  { key: "laundry_in", label: "室内洗濯機置場", re: /洗濯機/, strong: true },
+  { key: "layout", label: "部屋の配置", re: /寝室|書斎|続き間|仕切|分けたい|分かれ|別々|生活空間|部屋の配置|独立した(?:部屋|洋室)|リビングと/, strong: true },
+  { key: "pet", label: "ペット", re: /ペット|犬|猫|ねこ|いぬ/, strong: false },
+  { key: "autolock", label: "オートロック", re: /オートロック/, strong: false },
+  { key: "net_free", label: "ネット無料", re: /ネット(?:使用料)?(?:無料|不要)|インターネット(?:無料|込)|Wi-?Fi無料/i, strong: false },
+  { key: "delivery_box", label: "宅配ボックス", re: /宅配/, strong: false },
+  { key: "sunlight", label: "日当たり・向き", re: /日当たり|日あたり|[南東西北]向き|採光/, strong: false },
+  { key: "corner", label: "角部屋", re: /角部屋/, strong: false },
+  { key: "floor2", label: "2階以上", re: /[2２二]階以上|1階(?:は|が)?(?:NG|嫌|不可|避け)|高層|上の階/, strong: false },
+  { key: "loft", label: "ロフト", re: /ロフト/, strong: false },
+  { key: "balcony", label: "バルコニー", re: /バルコニー|ベランダ/, strong: false },
+];
+
+/** 希望の文に当たる細かい設備（キーの並び） */
+export function wantFeatures(text: string): string[] {
+  return WANT_FEATURES.filter((f) => f.re.test(text)).map((f) => f.key);
+}
+
+const SOURCE_PRIORITY: Record<WantSource, number> = { "条件": 0, "会話": 1, "訴求": 2, "メモ": 3 };
+
+/**
+ * 同じ設備・同じ向き（ng）の希望を1つにまとめる。代表は出どころ「条件＞会話＞訴求＞メモ」の順、must は OR。
+ * 設備が1つも当たらない希望はまとめない。番号（W1…）は振り直す
+ */
+export function dedupeWantsByTopic(wants: ImageWant[]): ImageWant[] {
+  const out: ImageWant[] = [];
+  const byKey = new Map<string, number>();
+  const order = wants.map((w, i) => ({ w, i })).sort((a, z) => (SOURCE_PRIORITY[a.w.source] - SOURCE_PRIORITY[z.w.source]) || (a.i - z.i));
+  const kept: Array<{ w: ImageWant; i: number }> = [];
+  for (const { w, i } of order) {
+    const f = wantFeatures(w.text);
+    const key = f.length ? `${f.slice().sort().join("+")}|${w.ng ? "ng" : "ok"}` : "";
+    if (key && byKey.has(key)) {
+      const k = kept[byKey.get(key) as number];
+      if (w.must && !k.w.must) k.w = { ...k.w, must: true };
+      continue;
+    }
+    if (key) byKey.set(key, kept.length);
+    kept.push({ w: { ...w }, i });
+  }
+  // 元の並び（条件 → 会話 → 訴求 の出てきた順）に戻して番号を振り直す
+  for (const k of kept.sort((a, z) => a.i - z.i)) out.push(k.w);
+  return out.map((w, i) => ({ ...w, id: `W${i + 1}` }));
+}
+
+export type ImageAnalysisNeed = { level: "recommended" | "optional" | "none"; topics: string[]; labels: string[] };
+
+/**
+ * 画像で分析を勧めるか（決定論・DeepSeek は呼ばない）。
+ *   recommended: 画像（間取り図）で確かめるのが確実な希望（WIC・収納・対面/独立キッチン・バストイレ別・独立洗面・室内洗濯機置場・部屋の配置）が1つ以上
+ *   optional:    ペット・設備・日当たり・階など、資料の文字やアイコンで分かる事が多い希望だけ
+ *   none:        希望なし
+ */
+export function imageAnalysisNeed(wants: ImageWant[]): ImageAnalysisNeed {
+  if (!wants.length) return { level: "none", topics: [], labels: [] };
+  const labels: string[] = [];
+  const topics = new Set<string>();
+  for (const w of wants) {
+    for (const key of wantFeatures(w.text)) {
+      const f = WANT_FEATURES.find((x) => x.key === key);
+      if (!f?.strong) continue;
+      // 「収納」は WIC と重なる時は WIC だけ出す
+      if (key === "storage" && wantFeatures(w.text).includes("wic")) continue;
+      const label = key === "layout" ? layoutLabel(w.text) : f.label;
+      if (!labels.includes(label)) labels.push(label);
+      for (const t of w.topics) topics.add(t);
+    }
+  }
+  return labels.length ? { level: "recommended", topics: [...topics], labels: labels.slice(0, 4) } : { level: "optional", topics: [], labels: [] };
+}
+
+/** 部屋の配置の希望は短い言葉にする（「リビングと寝室兼書斎の生活空間を分けたい」→「リビングと寝室を分けたい」は作らず、先頭を短く切る） */
+function layoutLabel(text: string): string {
+  const s = text.replace(/\s+/g, "").replace(/[。、]$/, "");
+  return s.length <= 14 ? s : `${s.slice(0, 13)}…`;
+}

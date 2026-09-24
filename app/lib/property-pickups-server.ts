@@ -13,6 +13,7 @@ import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFact
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 import { readPropertyImageDetail } from "@/app/lib/property-image-read";
 import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
+import { dedupeSameBuilding, dedupeNoteJa } from "@/app/lib/pickup-dedupe";
 
 /** 画像を読む上限（1回分）。DeepSeek は1枚 約$0.002〜0.004・15〜25秒。10件を並列で読み、merge-pdfs の 90秒に収める */
 const IMAGE_READ_MAX_PER_BATCH = 10;
@@ -58,16 +59,25 @@ async function loadProfile(propertyCustomerId: string | null) {
   return buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen);
 }
 
-export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; error: string | null }> {
-  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, error: null as string | null };
+export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; deduped: number; noTextDraw: number; error: string | null }> {
+  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, deduped: 0, noTextDraw: 0, error: null as string | null };
   try {
     if (input.summaries.length === 0) return out;
+    // 2026-09-24 竹内「同じ建物だと平米数2㎡以内だと家賃がひくい部屋をここにいれて、他の部屋は売上サポに飛ばさなくて大丈夫。
+    //   同じマンションの部屋何個もお客さんに送らないので」→ 売上サポの記録だけ絞る（LINE グループ・結合 PDF・sent_properties は merge-pdfs のまま）。
+    //   先に絞るので、落とした部屋の画像の描画・Blob・DeepSeek の読み取りの費用もかからない。順位（【N】）は元の番号のまま＝LINE グループと一致
+    const dd = dedupeSameBuilding(input.summaries);
+    out.deduped = dd.dropped.length;
+    if (dd.dropped.length > 0) {
+      console.log(JSON.stringify({ tag: "property-pickups:dedupe", batch: input.batchId.slice(0, 40), kept: dd.keep.length, dropped: dd.dropped.map((d) => ({ rank: d.rank, name: d.name, area: d.areaSqm, rent: d.rentYen, keptRank: d.keptRank })) }));
+    }
     const conversationId = await resolveConversationId(input.propertyCustomerId, input.conversationId);
     const profile = await loadProfile(input.propertyCustomerId);
     const { put } = await import("@vercel/blob");
     const stamp = Date.now();
     const base = `pickups/${input.batchId.replace(/\.pdf$/i, "")}`;
-    const items: PickupItemInput[] = await Promise.all(input.summaries.map(async (summary, i) => {
+    const items: PickupItemInput[] = await Promise.all(dd.keep.map(async (i) => {
+      const summary = input.summaries[i];
       const b64 = input.pdfBase64List[i] ?? null;
       let pdfText: string | null = null;
       let pdfBlobUrl: string | null = null;
@@ -82,6 +92,12 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
           renderPdfPageToPng(b64, { page: AGENT_PAGE, scale: 1.5 }),
         ]);
         pdfText = t.text || null;
+        // 2026-09-24 竹内「文字が反映されていないバグ」: 文字層がある資料なのに描いた文字が 0 ＝ 文字抜けの画像（cMap が渡っていない等）。
+        //   落ちずに「白い表」になるだけで誰も気付けなかったので、数えて警告とログに出す
+        if (t.hasText && pngCustomer && pngCustomer.textDraws === 0) {
+          out.noTextDraw++;
+          console.warn("[property-pickups] 文字層がある資料なのに画像に文字が1つも描かれていない（文字抜け）:", `${base}_${i + 1}`);
+        }
         const puts = await Promise.allSettled([
           put(`${base}_${i + 1}_${stamp}.pdf`, Buffer.from(b64, "base64"), { access: "public", contentType: "application/pdf" }),
           pngCustomer ? put(`${base}_${i + 1}_${stamp}_p1.png`, pngCustomer.png, { access: "public", contentType: "image/png" }) : Promise.reject(new Error("no png p1")),
@@ -104,11 +120,38 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       if (profile) {
         try { judgment = judgeProperty(facts, profile, i); } catch { judgment = null; }
       }
-      return { summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment, pageImageUrl, agentImageUrl, imageLines: null, imageFacts: null };
+      const nDropped = dd.droppedCount.get(i) ?? 0;
+      return {
+        summary, pdfUrl: input.pdfUrls[i] ?? null, pdfBlobUrl, pdfText, judgment, pageImageUrl, agentImageUrl, imageLines: null, imageFacts: null,
+        recommendedOverride: dd.inheritMark.get(i) ?? null,
+        extraReasonsJa: nDropped > 0 ? [dedupeNoteJa(nDropped)] : null,
+        fallbackRank: i + 1,
+      };
     }));
 
+    // 落とした部屋も LINE グループには送られ sent_properties に記録されている（merge-pdfs）→ AD の補いは落とした部屋にも行う
+    //   （売上サポに載せないだけ。見積書の割引と結び付ける材料を失わない）。文字層だけ取る（画像・Blob・DeepSeek は使わない）
+    const droppedAd: Array<{ pdfUrl: string; judgment: Judgment | null }> = [];
+    if (profile) {
+      await Promise.allSettled(dd.dropped.map(async (d) => {
+        const pdfUrl = input.pdfUrls[d.index] ?? null;
+        if (!pdfUrl) return;
+        const facts = parsePropertyFacts(input.summaries[d.index]);
+        const b64 = input.pdfBase64List[d.index] ?? null;
+        if (facts.adMonths == null && facts.adYen == null && b64) {
+          const t = await extractPdfText(b64, { maxPages: 2, maxChars: 8000 });
+          const ad = parseAdFromText(t.text || null);
+          if (ad.adMonths != null) facts.adMonths = ad.adMonths;
+          else if (ad.adYen != null) facts.adYen = ad.adYen;
+        }
+        let judgment: Judgment | null = null;
+        try { judgment = judgeProperty(facts, profile, d.index); } catch { judgment = null; }
+        droppedAd.push({ pdfUrl, judgment });
+      }));
+    }
+
     // AD が PDF の文字層から取れたら、送付記録（sent_properties・同じ印刷用 URL の行）にも入れる（見積書の割引と結び付ける材料）
-    await Promise.allSettled(items.map(async (it) => {
+    await Promise.allSettled([...items, ...droppedAd].map(async (it) => {
       const j = it.judgment;
       if (!it.pdfUrl || !j || (j.facts.adMonths == null && j.facts.adYen == null)) return;
       await supabase.from("sent_properties")

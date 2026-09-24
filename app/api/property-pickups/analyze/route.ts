@@ -7,6 +7,7 @@ import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { analyzePickupImage, pickBest, ANALYSIS_MAX_TOKENS } from "@/app/lib/pickup-image-analysis";
 import { loadImageWants } from "@/app/lib/image-wants-server";
+import { pickAnalysisImageUrl } from "@/app/lib/pickup-image-url";
 
 export const maxDuration = 120;
 const MAX_ITEMS = 10;
@@ -19,9 +20,9 @@ export async function POST(req: NextRequest) {
   if (ids.length === 0) return NextResponse.json({ ok: false, error: "item_ids が要ります" }, { status: 400 });
 
   const { data, error } = await supabase.from("property_pickups")
-    .select("id, rank, property_name, property_customer_id, conversation_id, trim_image_url, page_image_url").in("id", ids);
+    .select("id, rank, property_name, property_customer_id, conversation_id, trim_image_url, page_image_url, pdf_has_text").in("id", ids);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const rows = (data ?? []) as Array<{ id: number; rank: number; property_name: string; property_customer_id: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>;
+  const rows = (data ?? []) as Array<{ id: number; rank: number; property_name: string; property_customer_id: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null; pdf_has_text: boolean | null }>;
 
   // お客様の希望: 条件欄・会話（120日）・物件オススメの訴求点から「画像で確かめられる物」だけ（名前・電話は伏せる）
   const wants = await loadImageWants({
@@ -32,8 +33,12 @@ export async function POST(req: NextRequest) {
 
   const startedAt = Date.now();
   const results = await Promise.all(rows.map(async (r) => {
-    const url = r.trim_image_url ?? r.page_image_url;   // お客様に送る1ページ目だけ（元付の資料は読まない）
-    if (!url) return { id: r.id, rank: r.rank, property_name: r.property_name, analysis: null, error: "画像が無い（先に ✂️ 画像トリミング）" };
+    // お客様に送る1ページ目だけ（元付の資料は読まない）。
+    // 2026-09-24 竹内「文字が反映されていないバグ」: サーバーで描いた page_image_url は cMap が渡らず表の文字が全部抜けていた
+    //   （10件中9件が「設備欄が空欄」で未判定）→ 文字のある画像を優先: トリミング（画面で描いた物）→ 文字層が取れた回の page_image_url。
+    //   文字層が無い回（直す前の記録）の page_image_url は使わない（画面が先に ✂️ トリミングしてから呼ぶ）
+    const url = pickAnalysisImageUrl(r);
+    if (!url) return { id: r.id, rank: r.rank, property_name: r.property_name, analysis: null, error: "文字のある画像が無い（先に ✂️ 画像トリミング）" };
     const t = Date.now();
     const out = await analyzePickupImage(url, wants);
     void import("@/app/lib/llm-usage-recorder").then(({ recordAltUsage }) => recordAltUsage({

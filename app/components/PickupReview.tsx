@@ -5,6 +5,8 @@
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import type { CustomerBest } from "@/app/lib/pickup-best";
+import { needsTrimBeforeAnalysis } from "@/app/lib/pickup-image-url";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -19,7 +21,9 @@ type Batch = { batch_id: string; created_at: string; site: string | null; conver
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
 type LineLite = { profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
-type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean };
+type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean;
+  /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
+  best?: CustomerBest | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null };
 /** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
 type ListCustomer = {
   key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
@@ -84,7 +88,8 @@ type Bubble =
   | { kind: "trim"; at: string; batch: Batch; items: Item[] }
   | { kind: "analysis"; at: string; batch: Batch; items: Item[]; bestId: number | null }
   | { kind: "staff"; at: string; text: string; sub?: string }
-  | { kind: "history"; at: string; items: SentHist[] };
+  | { kind: "history"; at: string; items: SentHist[] }
+  | { kind: "best"; at: string; best: CustomerBest };
 
 /** 画像を手元に保存（別ドメインの画像は download 属性が効かないので、取ってきて Blob の URL で落とす。取れなければ新しいタブで開く） */
 async function saveImage(url: string, name: string) {
@@ -131,7 +136,10 @@ function buildBubbles(c: Customer): Bubble[] {
   // 2026-09-24 夜: 送った物件の履歴は上のカードではなく、起きた事として左の吹き出しに（一番新しく送った時刻の位置）
   const hist = c.sent_history ?? [];
   if (hist.length > 0) out.push({ kind: "history", at: hist.map((h) => h.sent_at).sort().slice(-1)[0] + "~~~", items: hist });
-  return out.sort((a, z) => a.at.localeCompare(z.at));
+  const sorted = out.sort((a, z) => a.at.localeCompare(z.at));
+  // 2026-09-24 竹内「1番オススメの物件全体の中で」: 回をまたいだ一番は一番下（最新の位置）に1つだけ
+  if (c.best && sorted.length > 0) sorted.push({ kind: "best", at: sorted[sorted.length - 1].at + "~", best: c.best });
+  return sorted;
 }
 
 /** focusKey: 一覧の「🧠 物件 N件」から来た時に、そのお客様（property_customer_id）の会話風画面を最初から開く。onChange: 送った・見送りの後に親の件数を更新 */
@@ -169,14 +177,14 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     }
   }, []);
 
-  const loadDetail = useCallback(async (target: { key: string; pcid: string | null; conv: string | null }, n: number, resetChecks: boolean) => {
+  const loadDetail = useCallback(async (target: { key: string; pcid: string | null; conv: string | null }, n: number, resetChecks: boolean): Promise<Customer | null> => {
     setDetailLoading(true);
     try {
       const qs = target.pcid ? `pcid=${encodeURIComponent(target.pcid)}` : `conv=${encodeURIComponent(target.conv ?? "")}`;
       const res = await fetch(`/api/property-pickups?view=detail&${qs}&batches=${n}`, { cache: "no-store" });
       const json = await res.json() as { ok: boolean; customer?: Customer; error?: string };
       if (!json.ok || !json.customer) throw new Error(json.error || "取得に失敗");
-      if (openRef.current?.key !== target.key) return;   // 読み込み中に別のお客様を開いた
+      if (openRef.current?.key !== target.key) return null;   // 読み込み中に別のお客様を開いた
       setDetail({ ...json.customer, key: target.key });
       if (resetChecks) {
         // 既定のチェック: 未確認のうち「外す候補」以外
@@ -184,8 +192,10 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
         for (const b of json.customer.batches) for (const it of b.items) next[it.id] = it.status === "pending" && it.verdict !== "drop";
         setChecked(next);
       }
+      return json.customer;
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
+      return null;
     } finally {
       setDetailLoading(false);
     }
@@ -195,19 +205,32 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const load = useCallback(async () => {
     await Promise.all([
       loadList(true),
-      openRef.current ? loadDetail(openRef.current, nBatchesRef.current, false) : Promise.resolve(),
+      openRef.current ? loadDetail(openRef.current, nBatchesRef.current, false) : Promise.resolve(null),
     ]);
   }, [loadList, loadDetail]);
 
   useEffect(() => { void loadList(); }, [loadList]);
   // LINE の一覧の並びに追従（30秒ごと・画面に戻った時）
+  // 2026-09-24 竹内「画像で分析」がスマホで「Load failed」: 待っている間に画面が裏に回ると fetch が切れるが、サーバーは結果を保存している。
+  //   → 分析中（と切れた後しばらく）は開いている詳細も取り直し、画面に戻った時も詳細を読み直す（保存済みの結果と 👑 が出る）
+  const analyzingRef = useRef(false);
+  const refreshUntilRef = useRef(0);
   useEffect(() => {
-    const tick = () => { if (document.visibilityState === "visible") void loadList(true); };
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadList(true);
+      if (openRef.current && (analyzingRef.current || Date.now() < refreshUntilRef.current)) void loadDetail(openRef.current, nBatchesRef.current, false);
+    };
+    const onBack = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadList(true);
+      if (openRef.current) void loadDetail(openRef.current, nBatchesRef.current, false);
+    };
     const id = window.setInterval(tick, 30_000);
-    window.addEventListener("focus", tick);
-    document.addEventListener("visibilitychange", tick);
-    return () => { window.clearInterval(id); window.removeEventListener("focus", tick); document.removeEventListener("visibilitychange", tick); };
-  }, [loadList]);
+    window.addEventListener("focus", onBack);
+    document.addEventListener("visibilitychange", onBack);
+    return () => { window.clearInterval(id); window.removeEventListener("focus", onBack); document.removeEventListener("visibilitychange", onBack); };
+  }, [loadList, loadDetail]);
 
   const openCustomer = (c: { key: string; property_customer_id: string | null; conversation_id: string | null }) => {
     const target = { key: c.key, pcid: c.property_customer_id, conv: c.conversation_id };
@@ -436,27 +459,65 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
 
   // 2026-09-24 竹内「画像で分析ボタンを付ける。お客さんの要望【水回り・キッチン・リビングと洋室の位置関係・収納（WIC 等）】を判断できる。
   //   トリミングした画像の中で一番条件に合った物件がわかる」→ 画像が無い物件は先に画像にしてから DeepSeek が読む
+  // 2026-09-24 竹内「文字が反映されていないバグ」: 文字のある画像が無い物件（トリミングが無く、サーバーの画像が文字抜けの頃の物）は
+  //   先に画面でトリミングしてから読む（以前は page_image_url があるとトリミングせず、文字の無い画像のまま DeepSeek に渡っていた）
+  // 2026-09-24 スマホで「Load failed」: 10件を1回のリクエストで待つと 33〜60秒かかり、その間に画面が裏に回ると fetch が切れる
+  //   （サーバーは 200 で結果を保存済み）→ 1件ずつ・同時3件で送り、1件終わるごとに詳細を取り直して結果を出す。
+  //   切れた物件は再送しない（二重に費用がかかる）。保存済みの結果を読み直し、その後もしばらく 30秒ごとに読み直す
+  const ANALYZE_CONCURRENCY = 3;
   const analyze = async (b: Batch) => {
-    let targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
+    const targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
     if (targets.length === 0) { setMsg("分析する物件にチェックを入れてください"); return; }
-    const noImage = targets.filter((it) => !it.trim_image_url && !it.page_image_url);
-    if (noImage.length > 0 && !(await trim(b, noImage))) return;
-    targets = targets.map((it) => it);
+    const needTrim = targets.filter((it) => needsTrimBeforeAnalysis(it));
+    if (needTrim.length > 0 && !(await trim(b, needTrim))) return;
     setBusy(`analyze:${b.batch_id}`);
-    setMsg(`🔍 ${targets.length}件の資料を画像で分析しています…（1件 30〜40秒・並列）`);
+    analyzingRef.current = true;
+    const startedAt = new Date().toISOString();
+    let done = 0, ok = 0;
+    const cut: number[] = [];
+    const failed: string[] = [];
+    const progress = () => setMsg(`🔍 画像で分析しています… ${done}/${targets.length}件（1件 10〜40秒・同時${ANALYZE_CONCURRENCY}件。画面を切り替えても結果は保存されます）`);
+    progress();
+    const queue = targets.slice();
+    const worker = async () => {
+      for (let it = queue.shift(); it; it = queue.shift()) {
+        const item = it;
+        try {
+          const res = await fetch("/api/property-pickups/analyze", {
+            method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+            body: JSON.stringify({ item_ids: [item.id] }),
+          });
+          const json = await res.json() as { ok: boolean; items?: Array<{ id: number; error?: string }>; error?: string };
+          if (json.ok) ok++; else failed.push(`【${item.rank}】${json.items?.[0]?.error ?? json.error ?? "読めなかった"}`);
+        } catch {
+          cut.push(item.id);   // 通信が切れた（サーバーは続けて保存しているかもしれない）
+        }
+        done++;
+        progress();
+        if (openRef.current) void loadDetail(openRef.current, nBatchesRef.current, false);   // 1件ずつ結果を出す
+      }
+    };
     try {
-      const res = await fetch("/api/property-pickups/analyze", {
-        method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-        body: JSON.stringify({ item_ids: targets.map((it) => it.id) }),
-      });
-      const json = await res.json() as { ok: boolean; best_id?: number | null; items?: Array<{ id: number; property_name: string; error?: string }>; error?: string };
-      if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "分析できなかった");
-      const best = json.items?.find((x) => x.id === json.best_id);
-      setMsg(`🔍 分析しました${best ? `。一番条件に合うのは「${best.property_name}」` : ""}`);
-      await load();
+      await Promise.all(Array.from({ length: Math.min(ANALYZE_CONCURRENCY, targets.length) }, worker));
+      const fresh = openRef.current ? await loadDetail(openRef.current, nBatchesRef.current, false) : null;
+      // 切れた物件のうち、保存済みの結果が読めた件数
+      const saved = fresh ? fresh.batches.flatMap((x) => x.items).filter((x) => cut.includes(x.id) && String((x.image_analysis as { analyzed_at?: string } | null)?.analyzed_at ?? "") >= startedAt).length : 0;
+      if (cut.length > saved) refreshUntilRef.current = Date.now() + 150_000;   // サーバーはまだ読んでいるかもしれない → 2分半は読み直す
+      const best = fresh?.best;
+      const parts = [
+        `🔍 ${ok + saved}/${targets.length}件を分析しました`,
+        best ? `👑 全体で一番条件に合うのは【${best.rank}】${best.property_name}（${best.match}点）` : "",
+        cut.length > saved ? `通信が切れた ${cut.length - saved}件は結果が保存され次第ここに出ます` : "",
+        failed.length ? `⚠ 読めなかった: ${failed.join("・")}` : "",
+      ].filter(Boolean);
+      setMsg(parts.join("。"));
+      void loadList(true);
     } catch (e) {
-      setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
+      setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}（保存済みの結果を読み直します）`);
+      refreshUntilRef.current = Date.now() + 150_000;
+      void load();
     } finally {
+      analyzingRef.current = false;
       setBusy(null);
     }
   };
@@ -464,8 +525,9 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   // 2026-09-24 竹内「確認してお客様に送るの部分を AIX で送るにして。押したら AIX の物件ピックアップに選択した画像がセットされた状態にする
   //   （トリミングされた画像＝PDF 1枚目の弊社帯替え用が送られる形）。元付業者の資料は送られないようにする」
   //   → 画像が無い物件は先に画像にし、LINE の会話画面を AIX【物件ピックアップした】に画像をセットして開く（/?conv=…&aix=property_send&pickup=ids）
-  const sendViaAix = async (c: Customer, b: Batch) => {
-    const targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
+  const sendViaAix = async (c: Customer, b: Batch, only?: Item[]) => {
+    // only: 👑 全体で一番の吹き出しから、その1件だけを送る時（2026-09-24 竹内「1番オススメの物件全体の中で送る」）
+    const targets = only ?? b.items.filter((it) => checked[it.id] && it.status === "pending");
     if (targets.length === 0) { setMsg("送る物件にチェックを入れてください"); return; }
     const convId = c.conversation_id ?? b.conversation_id;
     if (!convId) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
@@ -510,6 +572,12 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const TIME = "mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]";
   const detailView = open ? (() => {
     const bubbles = buildBubbles(open);
+    // 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨なので、画像読み取りボタンをだす」:
+    //   判定は詳細 API の image_need（条件欄 or 分析済みの希望から決定論・DeepSeek は呼ばない）。
+    //   none でもボタンは消さない（スタッフのメモで希望を足すことがある）→ 灰色で小さく
+    const needRecommended = open.image_need?.level === "recommended";
+    const needNone = open.image_need?.level === "none";
+    const needLabels = (open.image_need?.labels ?? []).join("・");
     const lineHref = open.conversation_id ? `/?conv=${encodeURIComponent(open.conversation_id)}` : null;
     let lastDay = "";
     return (
@@ -570,6 +638,10 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 {/* 2026-09-24 竹内「ブレインモードで売上サポに送った日時も出るようにする」 */}
                 <div className="text-xs font-bold mb-0.5">ピックアップ {bb.batch.items.length}件（{bb.batch.site === "realpro" ? "リアプロ" : bb.batch.site ?? "-"}）を確認しました</div>
                 <div className="text-[10px] text-[#78909c] mb-1">🧠 ブレインモードで {fmtDateTime(bb.batch.created_at)} に届きました</div>
+                {/* 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨」 */}
+                {needRecommended && (
+                  <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>🔍 画像で確かめたい希望: {needLabels}</div>
+                )}
                 <div className="flex flex-col gap-2">
                   {bb.batch.items.map((it) => {
                     const v = it.verdict ? VERDICT_JA[it.verdict] : null;
@@ -614,17 +686,28 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 </div>
                 {bb.batch.items.some((it) => it.status === "pending") && (
                   <div className="flex flex-col gap-2 mt-2">
+                    {/* 推奨のお客様: 画像で分析を先頭・全幅・濃い色で（ラベルに確かめたい希望） */}
+                    {needRecommended && (
+                      <button disabled={!!busy} onClick={() => void analyze(bb.batch)}
+                        title="お客様の希望に、間取り図で確かめるのが確実な物（WIC・キッチン・水回り・部屋の配置）があります"
+                        className="w-full px-3 py-2.5 rounded-lg text-xs font-bold text-white" style={{ background: "#00796b", opacity: busy ? 0.6 : 1 }}>
+                        {busy === `analyze:${bb.batch.batch_id}` ? "🔍 分析中…" : `🔍 画像で分析（推奨: ${needLabels}）`}
+                      </button>
+                    )}
                     <div className="flex gap-2">
                       <button disabled={!!busy} onClick={() => void trim(bb.batch)}
                         title="選んだ物件の PDF 1ページ目（弊社帯替え）を画像にする（元付業者の資料は使わない）"
                         className="flex-1 px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy ? 0.6 : 1 }}>
                         {busy === `trim:${bb.batch.batch_id}` ? "✂️ …" : "✂️ 画像トリミング"}
                       </button>
-                      <button disabled={!!busy} onClick={() => void analyze(bb.batch)}
-                        title="選んだ物件の資料画像を DeepSeek が読み、水回り・キッチン・リビングと洋室の位置関係・収納をお客様の希望に照らして判断"
-                        className="flex-1 px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#e0f2f1", color: "#00695c", opacity: busy ? 0.6 : 1 }}>
-                        {busy === `analyze:${bb.batch.batch_id}` ? "🔍 分析中…" : "🔍 画像で分析"}
-                      </button>
+                      {!needRecommended && (
+                        <button disabled={!!busy} onClick={() => void analyze(bb.batch)}
+                          title="選んだ物件の資料画像を DeepSeek が読み、水回り・キッチン・リビングと洋室の位置関係・収納をお客様の希望に照らして判断"
+                          className={`flex-1 px-3 py-2 rounded-lg font-bold ${needNone ? "text-[10px]" : "text-xs"}`}
+                          style={needNone ? { background: "#f5f5f5", color: "#9e9e9e", opacity: busy ? 0.6 : 1 } : { background: "#e0f2f1", color: "#00695c", opacity: busy ? 0.6 : 1 }}>
+                          {busy === `analyze:${bb.batch.batch_id}` ? "🔍 分析中…" : needNone ? "🔍 画像で分析（画像で確かめる希望なし）" : "🔍 画像で分析"}
+                        </button>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <button disabled={!!busy} onClick={() => void sendViaAix(open, bb.batch)}
@@ -677,7 +760,10 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                 <div className="text-xs font-bold mb-1">🔍 画像で分析しました（水回り・キッチン・リビングと洋室・収納）</div>
                 {bb.bestId != null && (() => {
                   const best = bb.items.find((it) => it.id === bb.bestId);
-                  return best ? <div className="text-xs font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>👑 一番条件に合う: 【{best.rank}】{best.property_name}（{best.image_analysis?.match}点）</div> : null;
+                  // 全体の一番（下の 👑 の吹き出し）と違う時は「この回で一番」として色を弱める
+                  const isGlobal = !open.best || open.best.id === bb.bestId;
+                  return best ? <div className="text-xs font-bold mb-1.5 px-2 py-1 rounded-lg" style={isGlobal ? { background: "#e0f2f1", color: "#00695c" } : { background: "#f5f5f5", color: "#78909c" }}>
+                    {isGlobal ? "👑 一番条件に合う" : "この回で一番"}: 【{best.rank}】{best.property_name}（{best.image_analysis?.match}点）</div> : null;
                 })()}
                 <div className="flex flex-col gap-2">
                   {bb.items.map((it) => {
@@ -721,7 +807,36 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
               <span className={TIME}>{hm(bb.at)}</span>
             </div>
             );
-            else if (bb.kind === "history") {
+            else if (bb.kind === "best") {
+              // 2026-09-24 竹内「1番オススメの物件全体の中で送る。今回は物件数多かったからか出ていなかった」:
+              //   直近の回（6時間以内）をまたいで一番条件に合う物件を1つ。押すとその1件だけ AIX で送る
+              const bst = bb.best;
+              const bBatch = open.batches.find((x) => x.batch_id === bst.batch_id) ?? null;
+              const bItem = bBatch?.items.find((x) => x.id === bst.id) ?? null;
+              row = (
+            <div key={`w${i}`} className="flex items-end gap-1.5">
+              <Icon bg="#f9a825">👑</Icon>
+              <div className={LEFT_BUBBLE}>
+                <div className="text-xs font-bold mb-1">👑 全体で一番条件に合う（直近 {bst.batches}回分・画像で分析）</div>
+                <div className="text-[13px] font-bold px-2 py-1.5 rounded-lg" style={{ background: "#fff8e1", color: "#e65100" }}>
+                  【{bst.rank}】{bst.property_name}{bst.room_no ? ` ${bst.room_no}号室` : ""}（{bst.match}点）
+                </div>
+                <div className="text-[10px] text-[#607d8b] mt-1 leading-relaxed">
+                  {bst.tied_names.length > 0 && <div>同点: {bst.tied_names.join("・")}</div>}
+                  {bst.unscored > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.unscored}件は資料から読めず未判定</div>}
+                  {bst.not_analyzed > 0 && <div>{bst.not_analyzed}件はまだ画像で分析していません</div>}
+                </div>
+                {bBatch && bItem && bItem.status === "pending" && (
+                  <button disabled={!!busy} onClick={() => void sendViaAix(open, bBatch, [bItem])}
+                    className="mt-2 w-full py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy ? 0.6 : 1 }}>
+                    📤 この物件を AIXで送る（物件ピックアップした）
+                  </button>
+                )}
+              </div>
+              <span className={TIME}>{hm(bb.at)}</span>
+            </div>
+              );
+            } else if (bb.kind === "history") {
               // 2026-09-24 竹内「開くと履歴が見れる」: このお客様に送った物件（物件送った表・経路つき）。吹き出しの中で開閉
               const histCustomer = bb.items.filter((h) => !(h.delivery === "shared" || (h.delivery == null && h.source === "line_group")));
               const histShared = bb.items.length - histCustomer.length;

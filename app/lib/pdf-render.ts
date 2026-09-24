@@ -7,18 +7,28 @@
 //
 // ⚠ 日本語: PDF にフォントが埋め込まれていない時は pdfjs の標準フォント（standard_fonts）と CMap（cmaps）が要る。
 //   next.config.ts の outputFileTracingIncludes で同梱する。無ければ文字が抜けた画像になる（落ちはしない）。
+// ⚠ 置き場は pdfjs-assets.ts で求める。2026-09-24 竹内「文字が反映されていないバグ」: 旧 require.resolve は本番（Turbopack）で
+//   数値に置き換わり cMapUrl が渡らず、表・説明欄の文字が全部消えていた（詳しくは pdfjs-assets.ts）
 // ⚠ 失敗は null（呼び出し側は文字層だけで進む）。
-import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { pdfjsAssetParams } from "./pdfjs-assets";
 
-export type PdfRenderResult = { png: Buffer; width: number; height: number; ms: number };
+/**
+ * textDraws: 描いた文字の命令の数（fillText／strokeText）。2026-09-24: 文字抜けは落ちずに「白い表」の画像になるだけで
+ *   誰も気付けなかった → 数を返して呼び出し側のログに出す（文字層がある PDF で 0 なら描画が壊れている）
+ */
+export type PdfRenderResult = { png: Buffer; width: number; height: number; ms: number; textDraws: number };
 
-function pdfjsAssetDir(sub: "cmaps" | "standard_fonts"): string | undefined {
-  try {
-    const require = createRequire(import.meta.url);
-    return require.resolve("pdfjs-dist/package.json").replace(/package\.json$/, `${sub}/`);
-  } catch { return undefined; }
+/** ctx の fillText／strokeText を包んで数える（描き方は変えない） */
+function countTextDraws(ctx: Record<string, unknown>): { count: number } {
+  const box = { count: 0 };
+  for (const name of ["fillText", "strokeText"] as const) {
+    const orig = ctx[name];
+    if (typeof orig !== "function") continue;
+    ctx[name] = function (this: unknown, ...args: unknown[]) { box.count++; return (orig as (...a: unknown[]) => unknown).apply(this, args); };
+  }
+  return box;
 }
 
 /** 同梱の日本語フォント（public/fonts/NotoSansJP.ttf・OFL）。無ければ null（＝OS のフォント任せ） */
@@ -50,12 +60,30 @@ export function installJapaneseFontFallback(ctx: { font: string }, fonts: { regi
   const desc = Object.getOwnPropertyDescriptor(proto, "font");
   if (!desc || !desc.set || !desc.get) return false;
   const get = desc.get, set = desc.set;
+  const target = ctx as { font: string; fontVariationSettings?: string };
+  const canVary = "fontVariationSettings" in target;
   Object.defineProperty(ctx, "font", {
     configurable: true,
     get() { return get.call(this); },
-    set(v: string) { set.call(this, rewriteFontFamily(String(v))); },
+    set(v: string) {
+      set.call(this, rewriteFontFamily(String(v)));
+      // 2026-09-24: 同梱の Noto Sans JP は可変フォント（wght 軸）で、何もしないと細い字になり bold の見出しも太らない
+      //   （DeepSeek・スタッフが読みにくい）→ ctx.font の太さ（bold・600〜900）を wght 軸に写す。効かない環境では何もしない
+      if (canVary) { try { target.fontVariationSettings = `"wght" ${fontWeightOf(String(v))}`; } catch { /* 無視 */ } }
+    },
   });
   return true;
+}
+
+/** ctx.font の太さ（"bold 12px …" → 700・"600 12px" → 600・無ければ 400）。純関数・テスト用に export */
+export function fontWeightOf(font: string): number {
+  const head = String(font ?? "").split(/\d+(?:\.\d+)?(?:px|pt|em|%)/)[0] ?? "";
+  if (/\bbolder\b/.test(head)) return 800;
+  if (/\bbold\b/.test(head)) return 700;
+  const n = head.match(/\b([1-9]00)\b/);
+  if (n) return parseInt(n[1], 10);
+  if (/\blighter\b/.test(head)) return 300;
+  return 400;
 }
 
 /** base64 の PDF の page（1始まり）を PNG にする。scale は 1.5（A4 で約 890×1260px）が読み取りと容量の釣り合い */
@@ -65,12 +93,9 @@ export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { pa
     const bytes = typeof input === "string" ? Uint8Array.from(Buffer.from(input, "base64")) : input;
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const { createCanvas, GlobalFonts } = await import("@napi-rs/canvas");
-    const cMapUrl = pdfjsAssetDir("cmaps");
-    const standardFontDataUrl = pdfjsAssetDir("standard_fonts");
     const task = pdfjs.getDocument({
       data: bytes, disableWorker: true, isEvalSupported: false, useSystemFonts: false,
-      ...(cMapUrl ? { cMapUrl, cMapPacked: true } : {}),
-      ...(standardFontDataUrl ? { standardFontDataUrl } : {}),
+      ...pdfjsAssetParams(),
     } as Parameters<typeof pdfjs.getDocument>[0]);
     const pdf = await task.promise;
     // 無いページは null（丸めて別のページを返さない）。2026-09-24: 1ページしか無い PDF の「元付（2ページ目）」を弊社の1ページ目と取り違えないため
@@ -94,11 +119,12 @@ export async function renderPdfPageToPng(input: string | Uint8Array, opts?: { pa
     //   （pdfjs は Node では FontFace を使わず、埋め込みの有無に関わらず fallback の家族名で描く＝置き換えても崩れない）
     //   systemFonts: true はパソコンのフォントで描く（Windows のテストで「画面で切る」主経路と同じ見た目を作る用）
     if (!opts?.systemFonts) installJapaneseFontFallback(ctx as unknown as { font: string }, GlobalFonts);
+    const textDraws = countTextDraws(ctx as unknown as Record<string, unknown>);
     // pdfjs の型は DOM の canvas を想定しているので、@napi-rs/canvas を同じ形として渡す
     await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport, canvas: canvas as unknown as HTMLCanvasElement }).promise;
     const png = canvas.toBuffer("image/png");
     try { page.cleanup(); await pdf.cleanup(); await task.destroy(); } catch { /* 片付けの失敗は無視 */ }
-    return { png, width, height, ms: Date.now() - started };
+    return { png, width, height, ms: Date.now() - started, textDraws: textDraws.count };
   } catch (e) {
     console.warn("[pdf-render] 画像にできない:", e instanceof Error ? e.message : String(e));
     return null;

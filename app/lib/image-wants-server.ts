@@ -3,7 +3,7 @@
 // 2026-09-24 竹内「画像からしか分からない事を会話から読み取って抜けている部分を入れる。物件オススメで訴求している部分も見れば分かる」
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
-import { extractImageWants, type ImageWant } from "@/app/lib/image-wants";
+import { extractImageWants, dedupeWantsByTopic, type ImageWant } from "@/app/lib/image-wants";
 
 export async function loadImageWants(opts: { conversationId: string | null; propertyCustomerId: string | null; staffNote?: string | null }): Promise<ImageWant[]> {
   const since = new Date(Date.now() - 120 * 86400_000).toISOString();
@@ -27,12 +27,13 @@ export async function loadImageWants(opts: { conversationId: string | null; prop
     if (r.selection_label === "not_selected") continue;
     for (const p of Array.isArray(r.selling_points) ? r.selling_points : []) sellingPoints.push(String(p));
   }
-  return extractImageWants({
+  // 2026-09-24 竹内「画像で分析」: 同じ設備の希望（条件・会話・訴求で3重になったペット等）は1つにまとめる（点が1つのアイコンで跳ねない）
+  return dedupeWantsByTopic(extractImageWants({
     conditions: cust,
     customerMessages: (msgRes.data ?? []) as Array<{ text: string | null; created_at: string | null }>,
     sellingPoints,
     staffNote: opts.staffNote ?? null,
     maskNames: [cust?.customer_name, (convRes.data as { customer_name?: string | null } | null)?.customer_name],
     mask: (t, names) => maskPII(t, names),
-  });
+  }));
 }
