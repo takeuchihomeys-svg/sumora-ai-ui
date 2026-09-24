@@ -47,9 +47,15 @@ function clean(s: string): string {
   return s.replace(/\s+/g, " ").replace(/^(?:[・\-－\s①-⑳、,]+|[0-9０-９]{1,2}[.．)）、,](?![0-9０-９])\s*)+/, "").trim();
 }
 
-/** 条件欄の文を句に割る（「、」「・」「／」「改行」「。」） */
-function splitClauses(s: string): string[] {
-  return String(s ?? "").split(/[\n。、,，／/]|・(?=[^・]{2,})/).map(clean).filter((x) => x.length >= 2 && x.length <= 60);
+/**
+ * 1つの設備の名前の中の「・」（割らない）。2026-09-24 夜: 「バス・トイレ別」が「バス」「トイレ別」の2つの希望に割れていた
+ * （「トイレ別」だけが残り、「バス」は話題に当たらず消える・浴室とトイレの話が1つにならない）
+ */
+const KEEP_DOT_RE = /(バス|風呂|お風呂|浴室)[・･](トイレ)|(洗面)[・･](脱衣)|(キッチン)[・･](ダイニング)/g;
+const DOT_MARK = "\u0000";
+export function splitClauses(s: string): string[] {
+  const kept = String(s ?? "").replace(KEEP_DOT_RE, (m) => m.replace(/[・･]/, DOT_MARK));
+  return kept.split(/[\n。、,，／/]|・(?=[^・]{2,})/).map((x) => clean(x.split(DOT_MARK).join("・"))).filter((x) => x.length >= 2 && x.length <= 60);
 }
 
 /**

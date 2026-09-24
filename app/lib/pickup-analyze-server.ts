@@ -3,8 +3,8 @@
 // /api/property-pickups/analyze と YUMA のテストスクリプトが同じ関数を使う（設計知見「本番検証は画面が渡すのと同じ形で渡す」）
 // 2026-09-24 竹内「読んだ結果を物件ごとに保存し、2回目以降は画像を読み直さない（希望との照合は文字だけ）」
 import { buildPickupAnalysis, type PickupImageAnalysis } from "@/app/lib/pickup-image-analysis";
-import { loadSheetFacts, judgeWantsByText, type SheetReadOutcome, type SheetSourceRow, type SheetUsage } from "@/app/lib/sheet-read-server";
-import { matchWantsWithFacts, checkSheetConsistency, parseSummaryFacts } from "@/app/lib/sheet-facts";
+import { loadSheetFacts, judgeWantsByText, loadSavedJudgments, saveJudgments, type SheetReadOutcome, type SheetSourceRow, type SheetUsage } from "@/app/lib/sheet-read-server";
+import { matchWantsWithFacts, checkSheetConsistency, parseSummaryFacts, applySavedJudgments, mergeJudgments } from "@/app/lib/sheet-facts";
 import { SHEET_PROMPT_VERSION, SHEET_READ_MAX_TOKENS, SHEET_RETRY_MAX_TOKENS } from "@/app/lib/sheet-prompt";
 import type { ImageWant, WantCheck } from "@/app/lib/image-wants";
 
@@ -33,9 +33,17 @@ export async function analyzePickupRow(row: SheetSourceRow & { conversation_id?:
     const ok = checkSheetConsistency({ summary: row.summary_text, text: facts.text, image: facts.image }).status === "ok";
     const undecided = new Set(matchWantsWithFacts(wants, facts.text, ok ? facts.image : null, parseSummaryFacts(row.summary_text).madori).undecided);
     if (ok && undecided.size) {
-      const j = await judgeWantsByText(facts.text, facts.image, wants.filter((w) => undecided.has(w.id)));
-      if (j.usage) usage.push(j.usage);
-      llmChecks = j.checks;
+      // 2026-09-24 夜: 保存した答えを先に当てる（同じ物件の読み取り×同じ希望の文なら DeepSeek 0回）。当たらない希望だけ聞いて保存する
+      const ask = wants.filter((w) => undecided.has(w.id));
+      const saved = await loadSavedJudgments(facts.factsId);
+      const hit = applySavedJudgments(ask, saved);
+      llmChecks = hit.checks;
+      if (hit.missing.length) {
+        const j = await judgeWantsByText(facts.text, facts.image, hit.missing);
+        if (j.usage) usage.push(j.usage);
+        llmChecks = [...hit.checks, ...j.checks];
+        if (j.usage?.ok) await saveJudgments(facts.factsId, mergeJudgments(saved, hit.missing, j.checks));
+      }
     }
   }
   for (const u of usage) recordSheetUsage(u, conv);

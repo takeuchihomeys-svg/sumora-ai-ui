@@ -114,7 +114,7 @@ export type VisionAltResult = {
 export async function callDeepSeek(
   system: string | null,
   content: string | Array<Record<string, unknown>>,
-  opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string; thinking?: boolean },
+  opts?: { apiKey?: string; model?: string; maxTokens?: number; timeoutMs?: number; effort?: string; thinking?: boolean; temperature?: number },
 ): Promise<VisionAltResult | null> {
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
   const model = (opts?.model ?? process.env.VISION_ALT_MODEL ?? VISION_ALT_MODEL_DEFAULT).trim();
@@ -130,6 +130,8 @@ export async function callDeepSeek(
       body: JSON.stringify({
         model,
         max_tokens: opts?.maxTokens ?? VISION_ALT_MAX_TOKENS,
+        // 2026-09-25 資料の読み取り（正解表）: 温度を指定しないと同じ資料で回ごとに読みが入れ替わった → 読み取りは 0 を渡す（渡さない呼び出しは今まで通り）
+        ...(typeof opts?.temperature === "number" ? { temperature: opts.temperature } : {}),
         ...(noThinking ? { thinking: { type: "disabled" } } : effort ? { reasoning_effort: effort } : {}),
         messages: [
           ...(system ? [{ role: "system", content: system }] : []),

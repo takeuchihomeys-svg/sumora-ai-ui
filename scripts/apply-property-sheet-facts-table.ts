@@ -26,6 +26,8 @@ const STMTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_property_sheet_facts_unit ON property_sheet_facts(unit_key, prompt_version);`,
   `CREATE INDEX IF NOT EXISTS idx_property_sheet_facts_fp ON property_sheet_facts(fp_hash, prompt_version);`,
   `ALTER TABLE property_sheet_facts DISABLE ROW LEVEL SECURITY;`,
+  // 2026-09-24 夜: 希望の文字の照合（DeepSeek）の答えを物件ごとに保存し、2回目は呼ばない（{ 希望の文: {result, why} }）
+  `ALTER TABLE property_sheet_facts ADD COLUMN IF NOT EXISTS wants_judged JSONB;`,
   `SELECT pg_notify('pgrst', 'reload schema');`,
 ];
 

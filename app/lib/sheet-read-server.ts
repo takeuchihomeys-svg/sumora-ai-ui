@@ -10,11 +10,12 @@
 //   ⚠ 使い回した事実でも、その部屋の説明文・文字層との突き合わせ（sheet-facts.checkSheetConsistency）は毎回行う
 import { supabase } from "@/app/lib/supabase";
 import { callDeepSeek } from "@/app/lib/vision-alt-provider";
-import { readSheetPdf, loadImageCanvas, cropCanvas } from "@/app/lib/pdf-sheet-crop";
-import { detectSheetType, planSheetCrop, type SheetType, type CropPlan } from "@/app/lib/sheet-layout";
-import { parseSheetText, unitKeyOf, checkSheetConsistency, type SheetTextFacts } from "@/app/lib/sheet-facts";
+import { createHash } from "node:crypto";
+import { readSheetPdf, loadImageCanvas, cropCanvas, cropCanvasStack, findItandiFrameOnCanvas } from "@/app/lib/pdf-sheet-crop";
+import { detectSheetType, planSheetCrop, type SheetType, type CropPlan, type NormBox } from "@/app/lib/sheet-layout";
+import { parseSheetText, unitKeyOf, checkSheetConsistency, textFactsFromImageSheet, type SheetTextFacts, type SavedJudgments } from "@/app/lib/sheet-facts";
 import {
-  buildSheetReadContent, parseSheetImageFacts, sectionKeyFor, buildWantsJudgePrompt,
+  buildSheetReadContent, parseSheetImageFacts, sectionKeyFor, buildWantsJudgePrompt, settleItandiPdfFacts,
   SHEET_PROMPT_VERSION, SHEET_READ_MAX_TOKENS, SHEET_RETRY_MAX_TOKENS, type SheetImageFacts,
 } from "@/app/lib/sheet-prompt";
 import { pickAnalysisImageUrl } from "@/app/lib/pickup-image-url";
@@ -23,6 +24,8 @@ import { wantsToText, type ImageWant, type WantCheck } from "@/app/lib/image-wan
 export const SHEET_FACTS_TABLE = "property_sheet_facts";
 const READ_TIMEOUT_MS = 40_000;
 const RETRY_TIMEOUT_MS = 90_000;
+/** itandi の左の列の拡大の上限（2026-09-24 夜・正解表で試して決めた） */
+export const ITANDI_LEFT_MAX_SCALE = 2;
 
 export type SheetSourceRow = {
   id: number;
@@ -82,16 +85,23 @@ async function fetchBytes(url: string): Promise<Uint8Array | null> {
   } catch { return null; }
 }
 
-/** DeepSeek で切り出した画像を読む（推論なし → 崩れた／間取り図が読めない時だけ推論 low で1回） */
-async function readImage(mode: CropPlan["mode"], dataUrl: string): Promise<{ image: SheetImageFacts | null; usage: SheetUsage[] }> {
+/**
+ * DeepSeek で切り出した画像を読む（推論なし → 崩れた／間取り図が読めない時だけ推論 low で1回）。
+ * itandi（extra あり）は帯・表が読めていれば読み直さない（2026-09-24 夜: 正解表 25件中3件は間取り図が本当に無い資料。読み直しは 0.35円・20秒）
+ */
+async function readImage(mode: CropPlan["mode"], dataUrl: string, extraUrl?: string | null): Promise<{ image: SheetImageFacts | null; usage: SheetUsage[] }> {
   const usage: SheetUsage[] = [];
   const section = sectionKeyFor(mode);
-  const content = buildSheetReadContent(mode, dataUrl);
+  const content = buildSheetReadContent(mode, dataUrl, extraUrl);
   const t0 = Date.now();
-  const r1 = await callDeepSeek(null, content, { thinking: false, maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: READ_TIMEOUT_MS });
+  // 温度 0（2026-09-25 正解表: 既定のままだと同じ資料で水回り・部屋の関係の読みが回ごとに入れ替わった）
+  const r1 = await callDeepSeek(null, content, { thinking: false, temperature: 0, maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: READ_TIMEOUT_MS });
   const f1 = r1 ? parseSheetImageFacts(r1.text) : null;
   usage.push({ model: r1?.model ?? "deepseek-flash", input: r1?.usage.input ?? 0, output: r1?.usage.output ?? 0, cacheHit: r1?.usage.cacheHit ?? 0, ms: Date.now() - t0, retry: false, ok: !!f1, section });
   if (f1 && f1.fp_ok) return { image: f1, usage };
+  // itandi（画像だけ＝帯・表も読む／PDF＝枠とほかのマス）は、返事が崩れていなければ読み直さない
+  //   （2026-09-24 夜: 間取り図が本当に無い資料が画像だけで 25件中3件・PDF で 18件中2件。読み直しは 0.35円・20秒で答えは変わらない）
+  if (f1 && (mode === "image_area" || mode === "itandi_pdf")) return { image: f1, usage };
   // 2026-09-24 実測: 推論 low でも答えは変わらない事が多いが、返事が崩れた時と「間取り図が読めない」時だけ1回読み直す
   //   （max_tokens を小さくすると推論で使い切って答えが空になる＝12000）
   const t1 = Date.now();
@@ -100,6 +110,41 @@ async function readImage(mode: CropPlan["mode"], dataUrl: string): Promise<{ ima
   usage.push({ model: r2?.model ?? "deepseek-flash", input: r2?.usage.input ?? 0, output: r2?.usage.output ?? 0, cacheHit: r2?.usage.cacheHit ?? 0, ms: Date.now() - t1, retry: true, ok: !!f2, section });
   if (f2 && (f2.fp_ok || !f1)) return { image: f2, usage };
   return { image: f1 ?? f2, usage };
+}
+
+type CanvasOf = NonNullable<Awaited<ReturnType<typeof loadImageCanvas>>>;
+export type SheetCanvasRead = { plan: CropPlan; hash: string; image: SheetImageFacts | null; usage: SheetUsage[]; error: string | null };
+
+/**
+ * 描いた資料（canvas）を切り出して読む（DB を触らない）。本番（loadSheetFacts）と正解表の監査スクリプトが同じ関数を使う。
+ * lookup を渡すと、切り出しの画素のハッシュで保存した読み取りを先に引く（見つかれば DeepSeek を呼ばない）
+ */
+export async function readSheetCanvas(
+  type: SheetType, canvas: CanvasOf, boxes: NormBox[] | null, aspect: number,
+  lookup?: (hash: string, plan: CropPlan) => Promise<SheetImageFacts | null>,
+  /** 文字層の設備・備考の文（itandi の PDF の WIC を決まった手順で決める） */
+  equipText?: string | null,
+): Promise<SheetCanvasRead & { reused?: boolean }> {
+  // itandi の資料画像（描画命令が無い）は、左上の枠の罫線を画素で探す（見つかれば枠だけを画像1に・sheet-layout.planSheetCrop）
+  const itandiFrame = type === "itandi" && !boxes ? findItandiFrameOnCanvas(canvas) : null;
+  const plan = planSheetCrop(type, boxes, aspect, { itandiFrame });
+  // itandi の枠は資料の画像（幅 900〜1170px）から切ると 260〜560px しか無く、帖数の小さな字がつぶれる → 2倍まで拡大して渡す（PDF の左上の枠も同じ）
+  const crop = await cropCanvas(canvas, plan.rect, plan.mode === "image_area" || plan.mode === "itandi_pdf" ? { maxScale: ITANDI_LEFT_MAX_SCALE } : undefined);
+  // 2枚目（itandi の帯＋表・PDF のほかのマス）も2倍まで拡大する（2026-09-25 正解表: 帯の物件名の字「プ/ブ」「イ/ワ」の読み違い・ほかのマスの間取り図が 130px しか無かった）
+  const itandi = plan.mode === "image_area" || plan.mode === "itandi_pdf";
+  const extra = plan.extraStack?.length ? await cropCanvasStack(canvas, plan.extraStack, { maxScale: ITANDI_LEFT_MAX_SCALE })
+    : plan.extra ? await cropCanvas(canvas, plan.extra, itandi ? { maxScale: ITANDI_LEFT_MAX_SCALE } : undefined) : null;
+  if (!crop || ((plan.extra || plan.extraStack) && !extra)) return { plan, hash: "", image: null, usage: [], error: "切り出せない" };
+  // 2枚読む型（itandi）は2枚の画素のハッシュをつなぐ（表だけ違う＝別の部屋を同じにしない）
+  const hash = extra ? createHash("sha256").update(`${crop.hash}|${extra.hash}`).digest("hex").slice(0, 32) : crop.hash;
+  if (lookup) {
+    const saved = await lookup(hash, plan);
+    if (saved) return { plan, hash, image: saved, usage: [], error: null, reused: true };
+  }
+  const toUrl = (b: Buffer) => `data:image/jpeg;base64,${b.toString("base64")}`;
+  const r = await readImage(plan.mode, toUrl(crop.jpeg), extra ? toUrl(extra.jpeg) : null);
+  const image = r.image && plan.mode === "itandi_pdf" ? settleItandiPdfFacts(r.image, equipText) : r.image;
+  return { plan, hash, image, usage: r.usage, error: image ? null : "読めなかった" };
 }
 
 /** 物件1件の事実（文字層＋間取り図）を用意する。失敗しても投げない */
@@ -138,44 +183,42 @@ export async function loadSheetFacts(row: SheetSourceRow): Promise<SheetReadOutc
     const type = detectSheetType({ site: row.site, pdfUrl: row.pdf_url, pageText: sheet?.texts[0] ?? row.pdf_text });
     out.sheetType = type.type; out.typeBy = type.by;
     let canvas = sheet?.canvas ?? null;
-    let plan: CropPlan;
-    if (canvas && sheet) {
-      plan = planSheetCrop(type.type, sheet.boxes, sheet.aspect);
-    } else {
+    let boxes: NormBox[] | null = null, aspect = 0.707;
+    if (canvas && sheet) { boxes = sheet.boxes; aspect = sheet.aspect; }
+    else {
       // PDF が無い・描けない: 文字のある画像（トリミング → 文字層が取れた回の page_image_url）から。描画命令が無いので位置は確かめられない
       const url = pickAnalysisImageUrl(row);
       const bytes = url ? await fetchBytes(url) : null;
       canvas = bytes ? await loadImageCanvas(Buffer.from(bytes)) : null;
       if (!canvas) { out.error = "資料（PDF・画像）が無い"; return out; }
-      plan = planSheetCrop(type.type, null, canvas.height / canvas.width);
+      aspect = canvas.height / canvas.width;
     }
+    // ④ 同じ図（画素のハッシュ・同じ切り出しの形の時だけ）→ ⑤ 読む
+    let sameId: number | null = null;
+    const r = await readSheetCanvas(type.type, canvas, boxes, aspect, async (hash, plan) => {
+      const same = await findFacts("fp_hash", hash);
+      if (same && same.crop_mode === plan.mode) { sameId = same.id; return same.image_facts; }
+      return null;
+    }, out.text.features);
+    const plan = r.plan;
     out.crop = { mode: plan.mode, basis: plan.basis, reason: plan.reason };
-    const crop = await cropCanvas(canvas, plan.rect);
-    if (!crop) { out.error = "切り出せない"; return out; }
-
-    // ④ 同じ図（画素のハッシュ・同じ切り出しの形の時だけ）
-    const same = await findFacts("fp_hash", crop.hash);
-    if (same && same.crop_mode === plan.mode) {
-      const id = await saveFacts({
-        unit_key: key, site: row.site, sheet_type: type.type, crop_mode: plan.mode, crop_basis: plan.basis, fp_hash: crop.hash,
-        image_facts: same.image_facts, text_facts: out.text, consistency: checkSheetConsistency({ text: out.text, image: same.image_facts }),
-        model: "reused", prompt_version: SHEET_PROMPT_VERSION, reused_from: same.id, source_pickup_id: row.id,
-      });
-      return { ...out, image: same.image_facts, factsId: id ?? same.id, source: "saved_fp" };
-    }
-
-    // ⑤ 読む
-    const dataUrl = `data:image/jpeg;base64,${crop.jpeg.toString("base64")}`;
-    const r = await readImage(plan.mode, dataUrl);
     out.usage = r.usage;
-    if (!r.image) { out.error = "読めなかった"; return out; }
+    if (!r.image) { out.error = r.error ?? "読めなかった"; return out; }
     out.image = r.image;
-    out.source = "read";
+    // itandi 等の文字層が無い資料: 上の帯・右の表から読んだ物件名・号室・賃料・面積・間取り・設備を「資料の文字」として使う（突き合わせと鍵）
+    if (!out.text.hasText && r.image.sheet) {
+      out.text = textFactsFromImageSheet(r.image.sheet);
+      key = unitKeyOf(out.text);
+    }
+    out.source = r.reused ? "saved_fp" : "read";
     out.factsId = await saveFacts({
-      unit_key: key, site: row.site, sheet_type: type.type, crop_mode: plan.mode, crop_basis: plan.basis, fp_hash: crop.hash,
+      unit_key: key, site: row.site, sheet_type: type.type, crop_mode: plan.mode, crop_basis: plan.basis, fp_hash: r.hash,
       image_facts: r.image, text_facts: out.text, consistency: checkSheetConsistency({ text: out.text, image: r.image }),
-      model: r.usage[r.usage.length - 1]?.model ?? "deepseek-flash", prompt_version: SHEET_PROMPT_VERSION, reused_from: null, source_pickup_id: row.id,
-    });
+      model: r.reused ? "reused" : (r.usage[r.usage.length - 1]?.model ?? "deepseek-flash"), prompt_version: SHEET_PROMPT_VERSION,
+      reused_from: sameId, source_pickup_id: row.id,
+      // 反証 2026-09-25: 同じ鍵の行に読み直した事実を上書きする時、前の事実で出した照合の答えを残さない（事実が変われば答えも変わる）
+      wants_judged: null,
+    }) ?? sameId;
     return out;
   } catch (e) {
     out.error = e instanceof Error ? e.message : String(e);
@@ -210,4 +253,19 @@ export async function judgeWantsByText(text: SheetTextFacts, image: SheetImageFa
     usage.ok = true;
     return { checks, usage };
   } catch { return { checks: [], usage }; }
+}
+
+/** 物件の読み取りに保存した文字の照合の答え（無ければ null） */
+export async function loadSavedJudgments(factsId: number | null): Promise<SavedJudgments | null> {
+  if (!factsId) return null;
+  const { data, error } = await supabase.from(SHEET_FACTS_TABLE).select("wants_judged").eq("id", factsId).limit(1);
+  if (error) { console.warn("[sheet-read] 照合の答えを引けない:", error.message); return null; }
+  return (((data ?? [])[0] as { wants_judged?: SavedJudgments | null } | undefined)?.wants_judged) ?? null;
+}
+
+/** 文字の照合の答えを物件の読み取りに保存する（失敗しても投げない） */
+export async function saveJudgments(factsId: number | null, judged: SavedJudgments): Promise<void> {
+  if (!factsId) return;
+  const { error } = await supabase.from(SHEET_FACTS_TABLE).update({ wants_judged: judged, updated_at: new Date().toISOString() }).eq("id", factsId);
+  if (error) console.warn("[sheet-read] 照合の答えを保存できない:", error.message);
 }

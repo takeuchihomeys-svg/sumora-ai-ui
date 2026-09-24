@@ -1848,3 +1848,19 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 説明文（リアプロと同じ並び・サーバーの parsePropertyFacts が読める）: `【n】物件名／67,000円 [管理費]／1K 20.8㎡／405号室／交通（最大3行）／AD 1ヶ月`
 - テスト: `node chrome-extension/__tests__/itandi-row-parse.test.js`（実物の innerText・18件）
 - ⚠ 拡張の再読み込みが要る（chrome://extensions で更新）。サーバー側でも PDF の文字層から補う（itandi の作業で並行）
+
+## 2026-09-25 売上サポ「🔍 画像で分析」の itandi の読み取りを正解表で直す（sheet-v3 → sheet-v8）
+- 竹内「なんで itandi のやつできなかったのか。原因見つけて改善する。テストを行う。ちゃんと読み取れるようになるまで。プロンプトキャッシュで」
+- 正解表（目で作った・DeepSeek 不使用）: itandi の資料画像 26枚（重複1を除き25）＋本物の PDF 18件（property_pickups 50〜67）。scratchpad の it/truth.json・truth_pdf.json。「不明」は採点しない
+- 採点: `npx tsx --env-file=.env.local scripts/eval-itandi-reading.ts --dir=<正解表のフォルダ> --round=t1`（本番と同じ readSheetCanvas・保存を使わない＝毎回読み直す・llm_usage_logs の cache_read／費用を表に）
+- 原因（画像だけの資料）: 左の列（帯＋枠＋写真の格子）を1枚で渡していた。DeepSeek は画像を決まった大きさに縮めるので、間取り図は画像の 1/4 ほどで字・記号がつぶれた
+- 直し:
+  1. 枠を画素で探す（sheet-layout.findItandiFrameBox・左辺の縦の罫線→上下端→右端・itandi の位置の範囲で確かめる）: 25枚中24枚が ±0.005、ほかの資料112枚で誤検出0。画像1＝枠だけ、画像2＝上の帯と右の表を縦に並べた物（pdf-sheet-crop.cropCanvasStack）。2枚とも2倍まで拡大
+  2. 収納は字を並べさせて数える（storage.labels → sheet-prompt.closetsOf・CLOSET_LABEL／NOT_CLOSET_LABEL）。数だけ答えさせると下足入・Shoes・棚まで数えた
+  3. 設備欄の語がはっきりしている時だけ水回りを決める（settleByEquipText: 「バス・トイレ一緒」だけ→同室・浴室内／「別」だけ→別／独立洗面台→独立／室内洗濯機置場→室内。両方ある時は触らない）。PDF は文字層の設備で WIC も決める
+  4. 読み取りは温度 0（callDeepSeek に temperature を渡せるように）。既定だと同じ資料で回ごとに読みが入れ替わった
+  5. 前置き（共通の頭の「間違えやすい所」）: 引き戸・3点ユニット／パウダールーム・壁付けキッチン・1R・単室・納戸を rooms に。itandi の画像の型に部屋の関係と独立洗面の見本の文
+- 結果（全体 項目別の正答率・不明を除く）: t1 94.6% → t6 **97.4%**（450/462）。95% 未満で残ったのはキッチン 93.8%（2件）・部屋の関係 94.3%（2件）・収納 89.3%（3件）＝小さい A 形の枠（元画像 270px）の字と、境目の判断
+- 費用: 初めて読む資料で 1件 約0.06〜0.07円・2.2〜2.5秒（入力 約3,400 のうち前置き 約2,500 が2件目から命中）。以前の 0.03円より上がった（前置きが長くなり画像が大きくなった分）
+- リアプロの確認: YUMA #9〜11 の帖数（10.2/5.0・11.1/5.4・11.9/4.4）と #9 壁付けは正しい・突き合わせは15件とも ok。リアプロの「Clo.」「クローク」を収納の字の一覧に足した（入れないと収納 0 になっていた）
+- ⚠ 2026-09-25 07:20 に node_modules の pdfjs-dist・rimraf・@napi-rs/canvas の中身が空になっていた（npm の処理が途中で失敗した形）。lock のとおりに `npm install` で戻した（package.json・lock は変わっていない）

@@ -17,12 +17,13 @@
 //   - 読んだ間取りの型が文字層と違う／文字層の帖数と 0.3帖を超えて違う／帖数の合計×1.62㎡ が専有面積を超える・25%未満／
 //     図の中の㎡が専有面積と違う → 要確認
 import { normalizeFloorPlanToken } from "./property-brain";
+import { parseListingText, normalizeListingText, squeezeJaSpaces } from "./listing-text";
 import { parseRentFromSummary } from "./property-summary-parse";
 import { parseSummaryHead } from "./sent-property-filter";
 import { normalizeRoomNo } from "./sent-property-record";
 import { buildingKey, parseAreaSqm } from "./pickup-dedupe";
 import { wantFeatures, type ImageWant, type WantCheck } from "./image-wants";
-import type { SheetImageFacts } from "./sheet-prompt";
+import { WANTS_JUDGE_HEAD, type SheetImageFacts } from "./sheet-prompt";
 
 /** 1帖の広さ（㎡）。帖数の合計がこれ×専有面積を超えたら別の広い部屋の図 */
 export const JO_SQM = 1.62;
@@ -46,7 +47,55 @@ export type SheetTextFacts = {
   direction: string | null;
   /** 備考・設備・条件の文（改行を外して1行に。キーワードで照らす） */
   features: string;
+  /** 文字の出どころ。image＝文字層が無く、画像の帯・表から読んだ（itandi の画像だけの資料） */
+  from?: "pdf" | "image";
 };
+
+/**
+ * itandi（画像だけ）の上の帯・右の表から読んだ物を、資料の文字として扱う形に。
+ * 2026-09-24 夜: 画像だけの itandi は文字層が無く、物件名・号室・賃料・面積の突き合わせができず、同じ間取りの別物件が通った。
+ *   鍵（unit_key）も null だった → 帯の物件名＋号室と表の間取り・面積で鍵を作る（所在地は読ませていない）
+ */
+export function textFactsFromImageSheet(s: { name: string; room: string; rent: number | null; madori: string; sqm: number | null; equip: string }): SheetTextFacts {
+  const name = s.name.trim() || null;
+  const roomNo = s.room ? normalizeRoomNo(s.room) || null : null;
+  const hasAny = !!(name || roomNo || s.rent != null || s.sqm != null || s.madori);
+  return {
+    hasText: hasAny, name, names: name ? [name] : [], roomNo, roomNos: roomNo ? [roomNo] : [], floor: null, address: null,
+    madori: s.madori || null, jo: [], areaSqm: s.sqm, rentYen: s.rent, direction: null, features: nfkc(s.equip ?? ""), from: "image",
+  };
+}
+
+/** 編集距離（挿入・削除・置き換え 各1） */
+function editDistance(a: string, b: string): number {
+  const x = [...a], y = [...b];
+  let prev = Array.from({ length: y.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= x.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= y.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[y.length];
+}
+/** 画像から読んだ名前の読み違いとして許す字数（名前の長さの 1/4・最大 3 字） */
+export const imageNameMaxEdits = (len: number) => Math.min(3, Math.max(1, Math.floor(len / 4)));
+const nameCore = (s: string) => nfkc(s).replace(/[★☆◆◇■□●○※\s　()（）・]/g, "").toLowerCase();
+/** 英数字の語（ローマ数字は数字に・先頭の 0 は外す） */
+const ROMAN_NUM: Record<string, string> = { i: "1", ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7", viii: "8", ix: "9", x: "10" };
+const latinTokens = (core: string) => [...new Set((core.match(/[a-z0-9]+/g) ?? []).map((t) => ROMAN_NUM[t] ?? t.replace(/^0+(?=\d)/, "")))].sort().join(" ");
+/**
+ * 画像から読んだ名前と説明文の名前が同じ建物か（画像の帯の読み違い「イディオス／イデオス」「リリアン／リアン」・Ⅱ／II・★ を許す）。
+ * 反証 2026-09-25: 最初は 2文字ずつの重なり（Dice 0.5 以上）で見ていたが、実在の別の建物どうし
+ *   「エスリード新大阪SOUTH／NORTH」（property_pickups 52・54・どちらも 206号室の 1K）・「プレサンス新大阪ザ・シティ／クレスタ」・
+ *   「アドバンス新大阪IV／ウエストゲート」が同じ建物になった（会社名＋地名の頭が長く重なる）→
+ *   ①英数字の語（ローマ数字は数字）が揃わなければ別（片方だけにある時も別＝要確認の側に倒す）②残りは編集距離が名前の 1/4（最大3字）以内だけ同じ
+ */
+export function sameImageName(a: string, b: string): boolean {
+  const x = nameCore(a), y = nameCore(b);
+  if (!x || !y) return false;
+  if (latinTokens(x) !== latinTokens(y)) return false;
+  return editDistance(x, y) <= imageNameMaxEdits(Math.max([...x].length, [...y].length));
+}
 
 const nfkc = (s: string) => s.normalize("NFKC");
 const flat = (s: string) => s.replace(/\s*\n\s*/g, "");
@@ -63,7 +112,8 @@ function sectionIndex(text: string, label: string): number {
 
 /** 資料の文字層（pdf-text の text・複数ページ可）から事実を取る */
 export function parseSheetText(raw: string | null | undefined): SheetTextFacts {
-  const text = nfkc(String(raw ?? ""));
+  // 部首補助の字（⻄）・「‧」も揃える（itandi の文字層）
+  const text = normalizeListingText(raw);
   const empty: SheetTextFacts = { hasText: false, name: null, names: [], roomNo: null, roomNos: [], floor: null, address: null, madori: null, jo: [], areaSqm: null, rentYen: null, direction: null, features: "" };
   if (text.trim().length < 40) return empty;
   const names = [...text.matchAll(/物件名[ \t]+([^\n]+)/g)].map((m) => m[1].trim()).filter(Boolean);
@@ -87,19 +137,25 @@ export function parseSheetText(raw: string | null | undefined): SheetTextFacts {
   const iEnd = (() => { const a = text.indexOf("取引態様"), b = text.indexOf("特記事項"); return [a, b].filter((x) => x >= 0).sort((x, y) => x - y)[0] ?? -1; })();
   const start = [iRemarks, iEquip, iCond].filter((x) => x >= 0).sort((x, y) => x - y)[0] ?? -1;
   const features = start >= 0 ? flat(text.slice(start, iEnd > start ? iEnd : undefined)) : "";
+  // 2026-09-24 夜: itandi の PDF の文字層（実物 property_pickups 50〜67）は「物件名」「号室名」「間取タイプ」の見出しが無く、
+  //   物件名・号室は上の帯「〇〇 405 号室」、間取りは「間取り 1K 専有面積 20.8 ㎡」の形 → listing-text で読んで埋める（リアプロは今まで通り）
+  const lf = names.length === 0 || !madori ? parseListingText(raw) : null;
+  const itNames = lf?.format === "itandi" ? [...new Set(normalizeListingText(raw).split("\n").map((l) => l.trim()).filter((l) => /\S\s*号室\s*$/.test(l))
+    .map((l) => squeezeJaSpaces(l.replace(/\s+([0-9A-Za-z\-－]+|複数あり)\s*号室\s*$/, ""))).filter(Boolean))] : [];
+  const itRooms = lf?.format === "itandi" ? [...new Set(normalizeListingText(raw).split("\n").map((l) => (l.trim().match(/\s(\d{1,5})\s*号室\s*$/) ?? [])[1]).filter((x): x is string => !!x).map((x) => normalizeRoomNo(x)))] : [];
   return {
     hasText: true,
-    name: names[0] ?? null,
-    names: [...new Set(names)],
-    roomNo: roomNos[0] ?? null,
-    roomNos: [...new Set(roomNos)],
-    floor: floorM ? parseInt(floorM[1], 10) : null,
+    name: names[0] ?? lf?.name ?? null,
+    names: names.length ? [...new Set(names)] : itNames,
+    roomNo: roomNos[0] ?? lf?.roomNo ?? null,
+    roomNos: roomNos.length ? [...new Set(roomNos)] : itRooms,
+    floor: floorM ? parseInt(floorM[1], 10) : (lf?.format === "itandi" ? (() => { const m = text.match(/所在階[ \t]+(\d{1,2})\s*階/); return m ? parseInt(m[1], 10) : null; })() : null),
     address: addrM ? addrM[1].trim() : null,
-    madori,
+    madori: madori ?? lf?.madori ?? null,
     jo,
-    areaSqm: areaM ? parseFloat(areaM[1]) : null,
-    rentYen: rentM ? parseInt(rentM[1].replace(/,/g, ""), 10) : null,
-    direction: dirM ? dirM[1] : null,
+    areaSqm: areaM ? parseFloat(areaM[1]) : (lf?.areaSqm ?? null),
+    rentYen: rentM ? parseInt(rentM[1].replace(/,/g, ""), 10) : (lf?.rentYen ?? null),
+    direction: dirM ? dirM[1] : (lf?.format === "itandi" ? ((text.match(/主要採光面[ \t]+([東西南北]{1,2})/) ?? [])[1] ?? null) : null),
     features,
   };
 }
@@ -202,7 +258,8 @@ export function checkSheetConsistency(input: { summary?: string | null; text: Sh
   const s = input.summary ? parseSummaryFacts(input.summary) : null;
   // ① 説明文と資料（文字層）
   if (s && t.hasText) {
-    if (s.name && t.name && !sameName(s.name, t.name)) reasons.push(`物件名が説明文と資料で違う（${s.name}／${t.name}）`);
+    const nameOk = (a: string, b: string) => sameName(a, b) || (t.from === "image" && sameImageName(a, b));
+    if (s.name && t.name && !nameOk(s.name, t.name)) reasons.push(`物件名が説明文と資料で違う（${s.name}／${t.name}）`);
     if (s.rentYen != null && t.rentYen != null && s.rentYen !== t.rentYen) reasons.push(`賃料が説明文と資料で違う（${s.rentYen.toLocaleString()}円／${t.rentYen.toLocaleString()}円）`);
     if (s.areaSqm != null && t.areaSqm != null && !sameArea(s.areaSqm, t.areaSqm)) reasons.push(`専有面積が説明文と資料で違う（${s.areaSqm}㎡／${t.areaSqm}㎡）`);
     if (s.madori && t.madori && s.madori !== t.madori) reasons.push(`間取りが説明文と資料で違う（${s.madori}／${t.madori}）`);
@@ -276,6 +333,9 @@ function presenceOf(key: string, want: ImageWant, t: SheetTextFacts, img: SheetI
       if (WIC_TEXT_RE.test(f)) return P(true, "資料の設備: WIC");
       if (img?.storage.wic === "あり") return P(true, "間取り図: WIC あり");
       if (img?.storage.wic === "なし") return P(false, "間取り図: WIC なし");
+      // 2026-09-24 夜: 「WIC が欲しい」が、収納1か所と読めているのに unknown だった。間取り図を読めて収納の数まで数えられ、
+      //   WIC と書いていなければ「なし」と決める（正解表 22件の WIC は図の「WIC」「ウォークイン」の文字で全部見分けられた）
+      if (img?.fp_ok && img.storage.closets != null) return P(false, `間取り図: 収納 ${img.storage.closets}か所（WIC の記載なし）`);
       return P(null);
     case "shoes_ic":
       if (/SIC|シューズクローク/i.test(f)) return P(true, "資料の設備: シューズクローク");
@@ -326,10 +386,17 @@ function presenceOf(key: string, want: ImageWant, t: SheetTextFacts, img: SheetI
       if (img?.water.laundry === "屋外") return P(false, "間取り図: 洗濯機置場は屋外");
       return P(null);
     case "layout": {
-      if (!/分け|別々|分かれ|独立した|仕切|一緒|続き|つなが/.test(want.text)) return P(null);
+      if (!/分け|別々|分かれ|独立した|仕切|一緒|続き|つなが|離れ|離し|距離/.test(want.text)) return P(null);
       const plan = img?.madori || madori;
       if (plan && /^1[RK]$/.test(plan)) return P(false, `${plan}（居室が1つ）`);
       if (img?.living_bedroom === "単室") return P(false, "間取り図: 居室が1つ");
+      // 2026-09-24 夜: 「リビングと寝室は離れている方が良い」が、図は隣接なのに unknown だった（「離れ」を見ていなかった）。
+      //   「離れ」は分かれているだけでなく間に廊下がある事。隣接（扉で隣り合う）・続き間は ng、廊下を挟むは ok
+      if (/離れ|離し|距離/.test(want.text)) {
+        if (img?.living_bedroom === "廊下を挟む") return P(true, "間取り図: 廊下を挟む");
+        if (img?.living_bedroom === "隣接" || img?.living_bedroom === "続き間") return P(false, `間取り図: ${img.living_bedroom}（離れていない）`);
+        return P(null);
+      }
       if (img?.living_bedroom === "廊下を挟む" || img?.living_bedroom === "隣接") return P(true, `間取り図: ${img.living_bedroom}`);
       return P(null);
     }
@@ -441,4 +508,46 @@ export function describeFacts(text: SheetTextFacts, image: SheetImageFacts | nul
   if (image?.storage.closets != null) storage.push(`収納 ${image.storage.closets}か所`);
   if (/シューズボックス|下足/.test(f) || image?.storage.shoes === "あり") storage.push("シューズボックス");
   return { water: water.join("・"), kitchen: kitchen.join("・"), layout: layout.join("・"), storage: storage.join("・") };
+}
+
+// ── 文字の照合の答えの保存（2回目は DeepSeek を呼ばない） ─────────────────────────
+// 2026-09-24 夜 竹内「itandi をちゃんと読み取れるように」の6: 決まった手順で決まらない希望の文字の照合（judgeWantsByText）が、
+//   同じ物件・同じ希望でも「画像で分析」を押すたびに毎回1行呼ばれていた → 物件の読み取り（property_sheet_facts.wants_judged）に
+//   希望の文ごとに答えを保存し、2回目以降は保存した答えを使う（事実が同じ＝同じ facts の行の間だけ。前置きの版が変われば行も変わる）
+export type SavedJudgments = Record<string, { result: WantCheck["result"]; why: string }>;
+
+/** 照合の前置きの指紋（前置きを変えたら古い答えを使わない）。FNV-1a 32bit（node:crypto を使わない） */
+const JUDGE_HEAD_FP = (() => { let h = 0x811c9dc5; for (let i = 0; i < WANTS_JUDGE_HEAD.length; i++) { h ^= WANTS_JUDGE_HEAD.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16); })();
+
+/**
+ * 希望の鍵（空白・記号・大小を揃えた文＋NG・必須の印＋照合の前置きの指紋。出どころ・番号は入れない＝別のお客様の同じ希望にも使える）。
+ * 反証 2026-09-25: 文だけの鍵だと「ペット可」（欲しい）と「ペット可」【NG】（嫌）が同じ鍵になり、答え（ok/ng）が逆のまま使い回された
+ *   （照合の前置き: 「NG の項目ならその物がある＝ng」）→ NG・必須の印を鍵に入れる
+ */
+export function wantJudgeKey(w: Pick<ImageWant, "text" | "ng" | "must">): string {
+  const t = nfkc(String(w.text ?? "")).replace(/[\s　・、。,.!！?？「」『』【】()（）]/g, "").toLowerCase().slice(0, 60);
+  return `${JUDGE_HEAD_FP}|${w.ng ? "NG" : ""}${w.must ? "必須" : ""}|${t}`;
+}
+
+/** 保存した答えを当てる。当たらない希望（missing）だけ DeepSeek に聞く */
+export function applySavedJudgments(wants: ImageWant[], saved: SavedJudgments | null | undefined): { checks: WantCheck[]; missing: ImageWant[] } {
+  const checks: WantCheck[] = [];
+  const missing: ImageWant[] = [];
+  for (const w of wants) {
+    const s = saved?.[wantJudgeKey(w)];
+    if (s && (s.result === "ok" || s.result === "ng" || s.result === "unknown")) checks.push({ id: w.id, result: s.result, why: s.why ?? "" });
+    else missing.push(w);
+  }
+  return { checks, missing };
+}
+
+/** 新しい答えを保存の形に足す（聞いたのに答えが無かった希望は unknown で保存＝次も聞かない） */
+export function mergeJudgments(saved: SavedJudgments | null | undefined, asked: ImageWant[], answers: WantCheck[]): SavedJudgments {
+  const out: SavedJudgments = { ...(saved ?? {}) };
+  const byId = new Map(answers.map((c) => [c.id, c]));
+  for (const w of asked) {
+    const c = byId.get(w.id);
+    out[wantJudgeKey(w)] = { result: c?.result ?? "unknown", why: c?.why ?? "" };
+  }
+  return out;
 }

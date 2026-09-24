@@ -3,7 +3,7 @@
 // 実行: npx tsx app/lib/__tests__/pdf-sheet-crop.test.ts
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readSheetPdf, cropCanvas, imageBoxesFromOps } from "../pdf-sheet-crop";
+import { readSheetPdf, cropCanvas, cropCanvasStack, findItandiFrameOnCanvas, imageBoxesFromOps } from "../pdf-sheet-crop";
 import { detectSheetType, planSheetCrop, REALPRO_SLOTS } from "../sheet-layout";
 import { parseSheetText, unitKeyOf, checkSheetConsistency } from "../sheet-facts";
 
@@ -42,6 +42,15 @@ const near = (a: number, b: number, tol = 0.002) => Math.abs(a - b) <= tol;
   t("★ 説明文と一致（実物の説明文）", checkSheetConsistency({ summary: "【2🌟】スプランディッド難波WEST\n77,000円 7,000円\n1K 22.4㎡\nAD 2ヶ月", text }).status === "ok");
   const noRender = await readSheetPdf(bytes, { render: false });
   t("★ render:false は描かない（文字層と位置だけ・保存した読み取りを引く時）", !!noRender && noRender.canvas === null && noRender.boxes.length === r.boxes.length);
+  // 2026-09-25 itandi の画像: 2枚目は上の帯と右の表を縦に並べる（縮める倍率は1つ・間に 8px）
+  const st = await cropCanvasStack(r.canvas!, [{ x: 0, y: 0, w: 0.5, h: 0.1 }, { x: 0.5, y: 0, w: 0.5, h: 0.8 }], { maxSide: 5000 });
+  const W0 = Math.ceil(0.5 * r.canvas!.width), H0 = Math.ceil(0.1 * r.canvas!.height) + Math.ceil(0.8 * r.canvas!.height) + 8;
+  t("★ 縦に並べる: 幅は広い方・高さは足した物＋8px（倍率1）", !!st && Math.abs(st.width - W0) <= 2 && Math.abs(st.height - H0) <= 3, st && { w: st.width, h: st.height, W0, H0 });
+  const st2 = await cropCanvasStack(r.canvas!, [{ x: 0, y: 0, w: 0.5, h: 0.1 }, { x: 0.5, y: 0, w: 0.5, h: 0.8 }], { maxSide: 5000 });
+  t("★ 縦に並べる: 同じ入力なら同じハッシュ", !!st && !!st2 && st.hash === st2.hash);
+  const big = await cropCanvasStack(r.canvas!, [{ x: 0, y: 0, w: 0.2, h: 0.05 }], { maxScale: 2, maxSide: 100000 });
+  t("★ 縦に並べる: maxScale で拡大できる", !!big && big.width >= Math.floor(0.2 * r.canvas!.width) * 2 - 2, big && big.width);
+  t("★ 枠を探す: リアプロの資料には itandi の枠が無い（null）", findItandiFrameOnCanvas(r.canvas!) === null);
   t("★ 壊れた PDF は null（投げない）", (await readSheetPdf(new Uint8Array([1, 2, 3]))) === null);
   // 変換行列の計算（save/restore・transform）
   const OPS = { save: 1, restore: 2, transform: 3, paintImageXObject: 4, paintFormXObjectBegin: 5, paintFormXObjectEnd: 6 };

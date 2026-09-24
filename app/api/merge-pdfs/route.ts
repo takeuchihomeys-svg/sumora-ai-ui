@@ -12,7 +12,8 @@ import { parseRentFromSummary } from "@/app/lib/property-summary-parse";
 import { waitUntil } from "@vercel/functions";
 // 2026-09-24: 送った時の AD を送付記録に残す（見積書の割引と結び付けて利益を出す材料）
 import { parsePropertyFacts } from "@/app/lib/property-brain";
-import { enrichSummariesWithPdfAd, rankAndAnnotateSummaries } from "@/app/lib/pickup-rank";
+import { enrichSummariesFromPdf, rankAndAnnotateSummaries } from "@/app/lib/pickup-rank";
+import { isPlaceholderName } from "@/app/lib/listing-text";
 
 // 2026-09-24: 応答は今まで通り早く返し、売上サポへの記録（waitUntil）で DeepSeek が資料を読む時間（1枚 27〜40秒・並列）を確保するため 300 に
 export const maxDuration = 300;
@@ -236,6 +237,44 @@ export async function POST(req: NextRequest) {
     const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode, brain_mode } = body;
     let { pdf_urls, property_summaries } = body;
 
+    // PDF データを収集（pdf_urls[i]・pdf_data[i] は property_summaries[i] と同じ組）
+    let pdfBase64List: string[] = [];
+    let pdfsLoaded = false;
+    /** 送付済みを外した後に残した元の並びの番号（PDF を後で取る時に同じ組で落とす） */
+    let keptIndexes: number[] | null = null;
+    const loadPdfs = async (): Promise<NextResponse | null> => {
+      pdfsLoaded = true;
+      if (pdf_urls && pdf_urls.length > 0) {
+        // SSRF対策: 許可ドメイン以外のURLは拒否
+        const invalidUrl = pdf_urls.find((url) => !isAllowedPdfUrl(url));
+        if (invalidUrl) {
+          return NextResponse.json(
+            { error: `許可されていないURLです: ${invalidUrl}（realnetpro.com / Vercel Blob のみ許可）` },
+            { status: 400 }
+          );
+        }
+        // cookie_str なしでも公開URL（Vercel Blob等）は取得可能
+        pdfBase64List = await Promise.all(
+          pdf_urls.map((url) => fetchPdfAsBase64(url, cookie_str ?? ""))
+        );
+      } else if (pdf_data && pdf_data.length > 0) {
+        pdfBase64List = pdf_data;
+      } else {
+        return NextResponse.json({ error: "pdf_urls または pdf_data が必要です" }, { status: 400 });
+      }
+      return null;
+    };
+
+    // 2026-09-24 竹内「賃料と間取りも㎡数取り入れるようにする」: itandi の説明文は拡張が物件名を取れず「【1】物件」だけで届く。
+    //   名前が無いと送付済みの除外（建物ごと）が1件も当たらないので、その時だけ PDF を先に取って文字層で説明文を補ってから除外する。
+    //   名前のある説明文（リアプロ）は今まで通り除外を先にする（送付済みの PDF を取りに行かない）。
+    if (send_to_line && property_summaries && property_summaries.length > 0
+        && property_summaries.some((s) => isPlaceholderName(parseSummaryHead(s)?.propertyName))) {
+      const err = await loadPdfs();
+      if (err) return err;
+      property_summaries = await enrichSummariesFromPdf(property_summaries, pdfBase64List);
+    }
+
     // ─── 2026-09-21 竹内「一度共有した物件を除いてLINEに送る」──────────────────
     //   ここで外すのは **PDF を取りに行く前**。外した物の PDF をダウンロードしても捨てるだけなので。
     //   ⚠ pdf_urls[i] と property_summaries[i] は拡張側の send-pairing.js が**同じ組から**作っていて、
@@ -291,6 +330,9 @@ export async function POST(req: NextRequest) {
           excludedNotice = buildExcludedNotice(result.dropped);
           const keep = new Set(result.keep);
           if (pdf_urls) pdf_urls = pdf_urls.filter((_, i) => keep.has(i));
+          // 先に取った PDF も同じ組で落とす（pdf_data の経路は pdf_urls が無い）
+          if (pdfsLoaded) pdfBase64List = pdfBase64List.filter((_, i) => keep.has(i));
+          else keptIndexes = result.keep;
           property_summaries = renumberSummaries(property_summaries.filter((_, i) => keep.has(i)));
         }
       } catch (e) {
@@ -301,7 +343,9 @@ export async function POST(req: NextRequest) {
 
     // 候補が全部「送付済み」だった時は、PDF を作らずスタッフに知らせるだけにする
     //   （何も言わずに終わると「送ったつもり」になるので、必ず1通は出す）
-    if (send_to_line && excludedNotice && pdf_urls && pdf_urls.length === 0) {
+    //   反証 2026-09-25: pdf_data の経路（レインズ・pdf_urls が無い）も外した PDF を同じ組で落とすようにしたので、
+    //   全件外れた時に「有効なPDFページがありませんでした」（400）にならないよう、説明文が0件になった時もここで知らせる
+    if (send_to_line && excludedNotice && ((pdf_urls && pdf_urls.length === 0) || (property_summaries && property_summaries.length === 0))) {
       const groupId = await getGroupId();
       if (groupId && HANBANCYO_TOKEN) {
         const nameWithSan = customer_name ? (customer_name.endsWith("さん") ? customer_name : `${customer_name}さん`) : "";
@@ -311,26 +355,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, line_sent: true, all_already_sent: true, excluded: excludedNotice });
     }
 
-    // PDF データを収集
-    let pdfBase64List: string[] = [];
-
-    if (pdf_urls && pdf_urls.length > 0) {
-      // SSRF対策: 許可ドメイン以外のURLは拒否
-      const invalidUrl = pdf_urls.find((url) => !isAllowedPdfUrl(url));
-      if (invalidUrl) {
-        return NextResponse.json(
-          { error: `許可されていないURLです: ${invalidUrl}（realnetpro.com / Vercel Blob のみ許可）` },
-          { status: 400 }
-        );
-      }
-      // cookie_str なしでも公開URL（Vercel Blob等）は取得可能
-      pdfBase64List = await Promise.all(
-        pdf_urls.map((url) => fetchPdfAsBase64(url, cookie_str ?? ""))
-      );
-    } else if (pdf_data && pdf_data.length > 0) {
-      pdfBase64List = pdf_data;
-    } else {
-      return NextResponse.json({ error: "pdf_urls または pdf_data が必要です" }, { status: 400 });
+    // PDF データを収集（名前の無い説明文のために先に取った時は取り直さない）
+    if (!pdfsLoaded) {
+      const err = await loadPdfs();
+      if (err) return err;
+      // pdf_data の経路（pdf_urls が無い）で送付済みを外した時も、同じ組で落とす
+      if (keptIndexes && !(pdf_urls && pdf_urls.length > 0)) pdfBase64List = keptIndexes.map((i) => pdfBase64List[i]).filter((b): b is string => !!b);
     }
 
     // PDFを結合
@@ -387,8 +417,10 @@ export async function POST(req: NextRequest) {
 
         // 2026-09-24 竹内「今回、他の物件も AD あった」: 表の AD 列から取れなかった物件は、資料（元付の2ページ目）の文字から AD を補う。
         //   🌟 の順位付け・LINE の本文・送付記録（sent_properties.ad_months）・売上サポの判定が全部この説明文を読むので、ここで足す。
+        // 2026-09-24 夜 竹内「賃料と間取りも㎡数取り入れる」「駅名や徒歩数も」: 物件名・号室・賃料・管理費・間取り・㎡・最寄り駅と徒歩も
+        //   文字層から補う（説明文にある値が正・無い所だけ。先に補った説明文は足す物が無いのでそのまま）
         const summariesWithAd = property_summaries && property_summaries.length > 0
-          ? await enrichSummariesWithPdfAd(property_summaries, pdfBase64List)
+          ? await enrichSummariesFromPdf(property_summaries, pdfBase64List)
           : property_summaries;
         const rankedSummaries = summariesWithAd && summariesWithAd.length > 0
           ? await rankAndAnnotateSummaries(summariesWithAd, customer_conditions)

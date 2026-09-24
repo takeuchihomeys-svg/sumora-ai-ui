@@ -3,9 +3,9 @@
 // 実行: npx tsx app/lib/__tests__/pickup-sheet.test.ts
 // 文字層・画像の位置は 2026-09-24 の実物（property_pickups id 3・35・38・45 のリアプロ資料・物件の情報だけ。お客様の情報は無い）
 import { createHash } from "node:crypto";
-import { detectSheetType, planSheetCrop, padBox, toPixelRect, REALPRO_SLOTS, ITANDI_SLOTS, type NormBox } from "../sheet-layout";
-import { sheetPromptPrefix, SHEET_COMMON_HEAD, SHEET_TYPE_SECTIONS, buildSheetReadContent, parseSheetImageFacts, SHEET_PROMPT_VERSION, SHEET_READ_MAX_TOKENS, buildWantsJudgePrompt, WANTS_JUDGE_HEAD, type SheetImageFacts } from "../sheet-prompt";
-import { parseSheetText, unitKeyOf, checkSheetConsistency, matchWantsWithFacts, describeFacts, roomKindOf } from "../sheet-facts";
+import { detectSheetType, planSheetCrop, padBox, toPixelRect, findItandiFrameBox, REALPRO_SLOTS, ITANDI_SLOTS, ITANDI_PDF_FRAME, type NormBox } from "../sheet-layout";
+import { sheetPromptPrefix, SHEET_COMMON_HEAD, SHEET_TYPE_SECTIONS, buildSheetReadContent, parseSheetImageFacts, settleByEquipText, settleItandiPdfFacts, SHEET_PROMPT_VERSION, SHEET_READ_MAX_TOKENS, buildWantsJudgePrompt, WANTS_JUDGE_HEAD, type SheetImageFacts } from "../sheet-prompt";
+import { parseSheetText, unitKeyOf, checkSheetConsistency, matchWantsWithFacts, describeFacts, roomKindOf, wantJudgeKey, applySavedJudgments, mergeJudgments, sameImageName, textFactsFromImageSheet } from "../sheet-facts";
 import { extractImageWants, type ImageWant } from "../image-wants";
 
 let passed = 0, failed = 0;
@@ -105,22 +105,59 @@ const cell = (x: number, y: number): NormBox => ({ x, y, w: 0.089, h: 0.126 });
 }
 {
   const fixed = planSheetCrop("itandi", null, 0.707);
-  t("★ itandi 画像だけ: 画像の範囲（x .010〜.505・y .085〜.82）を測った比率で", fixed.mode === "image_area" && fixed.basis === "fixed" && Math.abs(fixed.rect.x - (ITANDI_SLOTS.imageArea.x - 0.003)) < 1e-9 && fixed.rect.x + fixed.rect.w <= 0.51, fixed.rect);
-  t("★ itandi 画像だけ: 縦向きの資料には当てない（1ページ全体）", planSheetCrop("itandi", null, 1.41).mode === "page");
+  // 2026-09-25: 画像だけの itandi は 画像1＝左上の枠（画素で見つけた範囲）・画像2＝上の帯と右の表を縦に並べた物。枠が見つからなければ写真の範囲全体
+  t("★ itandi 画像だけ・枠が見つからない（ページ形 0.707）: 写真の範囲＋（帯・表）", fixed.mode === "image_area" && fixed.basis === "fixed" && fixed.frame === "page" && JSON.stringify(fixed.rect) === JSON.stringify(ITANDI_SLOTS.photoArea) && JSON.stringify(fixed.extraStack) === JSON.stringify([ITANDI_SLOTS.band, ITANDI_SLOTS.table]), fixed);
+  const FR = { x: 0.018, y: 0.122, w: 0.237, h: 0.418 };
+  const px2 = planSheetCrop("itandi", null, 0.596, { itandiFrame: FR });
+  t("★ itandi 画像だけ・枠が見つかった: 画像1＝枠だけ（余白 .004）・帯は枠の上端まで・basis=pixels", px2.mode === "image_area" && px2.basis === "pixels" && px2.frame === "cut"
+    && Math.abs(px2.rect.x - 0.014) < 1e-9 && Math.abs(px2.rect.w - 0.245) < 1e-9 && px2.extraStack?.length === 2 && Math.abs(px2.extraStack[0].h - 0.12) < 1e-9 && px2.extraStack[1].x > 0.49, px2);
+  t("★ itandi PDF（描画命令あり）は画素の枠を使わない", planSheetCrop("itandi", [BG], 0.707, { itandiFrame: FR }).mode === "itandi_pdf");
+  const cut = planSheetCrop("itandi", null, 0.594);
+  t("★ itandi 画像だけ（切り抜き 0.594）: 型を外さず cut の座標に換算（旧は1ページ全体に落ちていた）", cut.mode === "image_area" && cut.frame === "cut" && !!cut.extra && cut.rect.h > ITANDI_SLOTS.left.h && cut.rect.x + cut.rect.w <= 1 && cut.rect.y + cut.rect.h <= 1, cut);
+  t("★ itandi 画像だけ: 縦向きの資料には当てない（1ページ全体）", planSheetCrop("itandi", null, 1.41).mode === "page" && planSheetCrop("itandi", null, 2.1).mode === "page");
   const drawn = planSheetCrop("itandi", [BG, { x: 0.015, y: 0.093, w: 0.241, h: 0.355 }, { x: 0.26, y: 0.093, w: 0.24, h: 0.355 }, { x: 0.52, y: 0.1, w: 0.4, h: 0.3 }], 0.707);
-  t("★ itandi 描画命令あり: 左半分の画像をまとめて切る（右の表の画像は入れない）", drawn.mode === "image_area" && drawn.basis === "drawn" && drawn.rect.x + drawn.rect.w < 0.51, drawn.rect);
-  t("★ itandi 描画命令あり・範囲の画像がロゴだけ（小さすぎる）→ 1ページ全体（反証 2026-09-24）", planSheetCrop("itandi", [BG, { x: 0.02, y: 0.09, w: 0.05, h: 0.04 }], 0.707).mode === "page");
-  t("★ itandi 描画命令あり・左に画像が無い → 1ページ全体", planSheetCrop("itandi", [BG, { x: 0.6, y: 0.1, w: 0.3, h: 0.3 }], 0.707).mode === "page");
+  t("★ itandi PDF: 画像1＝左上の枠・画像2＝ほかのマス（右の表の画像は入れない）", drawn.mode === "itandi_pdf" && drawn.basis === "drawn" && drawn.rect.x + drawn.rect.w < 0.27 && !!drawn.extra && drawn.extra.x > 0.25 && drawn.extra.x + drawn.extra.w < 0.51, drawn);
+  // 2026-09-24 夜 実物 PDF 18件: 左上の枠は罫線の固定位置（ITANDI_PDF_FRAME）。枠の中の画像が小さくても枠全体を切る（線で描いた図も入る）
+  const logo = planSheetCrop("itandi", [BG, { x: 0.03, y: 0.11, w: 0.05, h: 0.04 }], 0.707);
+  t("★ itandi PDF・枠の中の画像が小さい → 枠全体を切る（小さな絵だけにしない）", logo.mode === "itandi_pdf" && logo.rect.w >= ITANDI_PDF_FRAME.w && logo.rect.h >= ITANDI_PDF_FRAME.h, logo);
+  const none = planSheetCrop("itandi", [BG, { x: 0.6, y: 0.1, w: 0.3, h: 0.3 }], 0.707);
+  t("★ itandi PDF・左に画像が無い（画像情報なし）→ 枠を fixed で切り、理由を残す", none.mode === "itandi_pdf" && none.basis === "fixed" && !none.extra && !!none.reason, none);
   t("★ 型不明 → 1ページ全体", planSheetCrop("unknown", [BG, FLOOR, MAP], 0.707).mode === "page");
   t("★ 余白はページの外に出ない", JSON.stringify(padBox({ x: 0, y: 0, w: 1, h: 1 })) === JSON.stringify({ x: 0, y: 0, w: 1, h: 1 }));
   const px = toPixelRect({ x: 0.34, y: 0.293, w: 0.261, h: 0.368 }, 2580, 1822);
   t("★ 画素に直す（整数・画像の中）", px.x === 877 && px.y === 533 && px.x + px.width <= 2580 && px.y + px.height <= 1822, px);
 }
 
+// ── 2b. itandi の資料画像の左上の枠を画素で探す（2026-09-25・正解表 25枚中24枚で ±0.005・ほかの資料112枚で誤検出0） ──
+{
+  const W = 1100, H = 650;
+  const img = () => new Uint8ClampedArray(W * H * 4).fill(255);
+  const rect = (px: Uint8ClampedArray, x0: number, y0: number, x1: number, y1: number, th = 2) => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      if (y - y0 < th || y1 - y < th || x - x0 < th || x1 - x < th) { const i = (y * W + x) * 4; px[i] = px[i + 1] = px[i + 2] = 20; }
+    }
+  };
+  const a = img();
+  rect(a, 20, 79, 280, 350);            // 枠（x .018〜.255・y .122〜.538）
+  rect(a, 100, 180, 230, 260, 5);       // 枠の中の間取り図の壁（太い線・枠と端が揃わない）
+  rect(a, 300, 79, 540, 250);           // 隣の写真のマス
+  const f = findItandiFrameBox(a, W, H);
+  t("★ 枠: 罫線の四角を ±2px で取る（中の壁・隣のマスと取り違えない）", !!f && Math.abs(f.x - 20 / W) < 0.002 && Math.abs(f.y - 79 / H) < 0.004 && Math.abs(f.x + f.w - 281 / W) < 0.002 && Math.abs(f.y + f.h - 351 / H) < 0.004, f);
+  const b = img();
+  rect(b, 20, 79, 280, 350);
+  for (let x = 60; x < 240; x++) for (let y = 79; y < 82; y++) { const i = (y * W + x) * 4; b[i] = b[i + 1] = b[i + 2] = 255; }   // 上辺が途中で切れている（002 の形）
+  const fb = findItandiFrameBox(b, W, H);
+  t("★ 枠: 上辺の罫線が途中で切れていても下辺で右端を取る", !!fb && Math.abs(fb.x + fb.w - 281 / W) < 0.002, fb);
+  t("★ 枠: 何も無い画像は null", findItandiFrameBox(img(), W, H) === null);
+  const c = img();
+  rect(c, 5, 5, 540, 600);              // 表のような大きな罫線（リアプロ・見積書の形）＝itandi の位置の範囲の外
+  t("★ 枠: itandi の位置の範囲の外（上端 .01・下端 .92）は枠と見なさない", findItandiFrameBox(c, W, H) === null);
+}
+
 // ── 3. 固定の前置き（キャッシュ） ──
 {
-  const modes = ["floor", "image_area", "page"] as const;
-  t("★ 前置き: 3つとも共通の頭（役割・返す形・間違えやすい所）で始まる＝型の間でキャッシュを共有", modes.every((m) => sheetPromptPrefix(m).startsWith(SHEET_COMMON_HEAD)));
+  const modes = ["floor", "image_area", "itandi_pdf", "page"] as const;
+  t("★ 前置き: 4つとも共通の頭（役割・返す形・間違えやすい所）で始まる＝型の間でキャッシュを共有", modes.every((m) => sheetPromptPrefix(m).startsWith(SHEET_COMMON_HEAD)));
   t("★ 前置き: 呼ぶたびに一字一句同じ", modes.every((m) => sheetPromptPrefix(m) === sheetPromptPrefix(m)));
   t("★ 前置き: 日時・時刻が入っていない", modes.every((m) => !/\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}:\d{2}/.test(sheetPromptPrefix(m))));
   t("★ 前置き: お客様の希望（W1…）を入れない（画像から読むのは物件の事実だけ）", modes.every((m) => !/W\d|お客様の希望/.test(sheetPromptPrefix(m))));
@@ -128,10 +165,10 @@ const cell = (x: number, y: number): NormBox => ({ x, y, w: 0.089, h: 0.126 });
   t("★ 並び: 文（前置き）→ 画像。画像を先頭にしない", c.length === 2 && c[0].type === "text" && c[1].type === "image_url");
   // 固定の前置きを変えたら、このハッシュと SHEET_PROMPT_VERSION（保存した読み取りの版）を一緒に上げる
   const h = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
-  const pinned = { common: "89fc081db80aea0c", floor: "ac969cc77efdcf38", image_area: "da5ce53b858e5cd6", page: "5907930b2c29915a" };
-  const now = { common: h(SHEET_COMMON_HEAD), floor: h(sheetPromptPrefix("floor")), image_area: h(sheetPromptPrefix("image_area")), page: h(sheetPromptPrefix("page")) };
+  const pinned = { common: "fdd7f85dd75ad073", floor: "c9891c8b854b0598", image_area: "12bb4c89907fdcf6", itandi_pdf: "4c3bf9d4c58404b5", page: "7568fa981277514a" };
+  const now = { common: h(SHEET_COMMON_HEAD), floor: h(sheetPromptPrefix("floor")), image_area: h(sheetPromptPrefix("image_area")), itandi_pdf: h(sheetPromptPrefix("itandi_pdf")), page: h(sheetPromptPrefix("page")) };
   t(`★ 前置きの固定（変えたら SHEET_PROMPT_VERSION=${SHEET_PROMPT_VERSION} も上げる）`, JSON.stringify(now) === JSON.stringify(pinned), now);
-  t("★ 型の説明は3つ（リアプロ・itandi・1ページ全体）", Object.keys(SHEET_TYPE_SECTIONS).length === 3);
+  t("★ 型の説明は4つ（リアプロ・itandi 画像・itandi PDF・1ページ全体）", Object.keys(SHEET_TYPE_SECTIONS).length === 4);
   t("★ 推論なしの上限は 600（実測の出力 120〜171）", SHEET_READ_MAX_TOKENS === 600);
   const jp = buildWantsJudgePrompt("{}", "W1【会話】洋室が広め");
   t("★ 文字だけの照合も固定の頭が先頭・希望は後ろ", jp.startsWith(WANTS_JUDGE_HEAD) && jp.indexOf("W1【会話】") > WANTS_JUDGE_HEAD.length);
@@ -143,6 +180,25 @@ const cell = (x: number, y: number): NormBox => ({ x, y, w: 0.089, h: 0.126 });
   t("★ 返事: コードブロックの JSON・全角の間取り・文字の帖数を読む", !!f && f.madori === "1LDK" && f.rooms[0].jo === 11.9 && f.kitchen.placement === "対面" && f.storage.closets === 1, f);
   const g = parseSheetImageFacts('{"fp_ok":true,"madori":"1SLDK","kitchen":{"placement":"キッチン"},"water":{"bath_toilet":"たぶん別"},"living_bedroom":"離れている"}');
   t("★ 返事: 選択肢に無い値は「不明」（2026-09-24 写真の帯を足すと placement=キッチン が返った）", !!g && g.kitchen.placement === "不明" && g.water.bath_toilet === "不明" && g.living_bedroom === "不明" && g.madori === "1LDK", g);
+  // 2026-09-25 収納は字（labels）から数える（下駄箱・MB・PS・棚・収納でない字は数えない・WIC は数える・納戸は部屋）
+  const cl = (labels: unknown, closets: unknown = 9) => parseSheetImageFacts(JSON.stringify({ fp_ok: true, storage: { wic: "なし", labels, closets } }))?.storage.closets;
+  t("★ 収納: 英語の図（Closet・Storage／Shoes Clo・MB・PS は除く）→ 2", cl(["MB", "Shoes Clo", "Storage", "W", "Closet", "PS"]) === 2);
+  t("★ 収納: WIC も1つ・SCL（下駄箱）は除く（正解表 123）→ 2", cl(["SCL", "MB", "収", "WIC"]) === 2);
+  t("★ 収納: リアプロの「Clo.」「クローク」も数える／シューズクロークは除く", cl(["Clo.", "MB"]) === 1 && cl(["クローク", "M.B", "シューズクローク"]) === 1);
+  t("★ 収納: 納戸・収納でない字（Sniff・洗面所）は数えない", cl(["納戸", "Sniff", "洗面所"]) === 0);
+  t("★ 収納: labels が無い・空ならモデルの数のまま", cl(undefined, 2) === 2 && cl([], 1) === 1);
+  // 2026-09-25 設備欄の語がはっきりしている時だけ水回りを決める（正解表 43件で食い違い0）
+  const base = parseSheetImageFacts('{"fp_ok":true,"water":{"bath_toilet":"別","washbasin":"不明","laundry":"不明"},"storage":{"wic":"不明"},"balcony":"不明"}')!;
+  const u1 = settleByEquipText(base, "バス・トイレ一緒、IHクッキングヒーター、収納スペース");
+  t("★ 設備欄: 「バス・トイレ一緒」だけ → 同室・浴室内（図を「別」と読んだ 007）", u1.water.bath_toilet === "同室" && u1.water.washbasin === "浴室内", u1.water);
+  const u2 = settleByEquipText({ ...base, water: { ...base.water, bath_toilet: "同室" } }, "バス・トイレ別, バス・トイレ一緒, 独立洗面台");
+  t("★ 設備欄: 「別」と「一緒」の両方（022）→ 図の読みのまま・独立洗面台は独立", u2.water.bath_toilet === "同室" && u2.water.washbasin === "独立", u2.water);
+  const u3 = settleByEquipText({ ...base, water: { ...base.water, laundry: "屋外" } }, "室内洗濯機置場, バルコニー");
+  t("★ 設備欄: 室内洗濯機置場 → 室内・バルコニー → あり・WIC の字なし＋図あり → なし", u3.water.laundry === "室内" && u3.balcony === "あり" && u3.storage.wic === "なし", u3);
+  const u4 = settleByEquipText(base, "洗濯機置場, 専用トイレ");
+  t("★ 設備欄: 「洗濯機置場」だけ（室内と書いていない 008）は変えない", u4.water.laundry === "不明" && u4.water.bath_toilet === "別", u4.water);
+  t("★ PDF: 文字層の設備にウォークインクローゼット → WIC あり（シューズインクローゼットは除く）",
+    settleItandiPdfFacts(base, "ウォークインクローゼット").storage.wic === "あり" && settleItandiPdfFacts(base, "シューズインクローゼット").storage.wic === "なし");
   t("★ 返事: 壊れた返事は null", parseSheetImageFacts("読めませんでした") === null && parseSheetImageFacts("{壊れ") === null);
   t("★ 返事: fp_ok は true の時だけ true", parseSheetImageFacts('{"fp_ok":"yes"}')?.fp_ok === false);
 }
@@ -244,6 +300,37 @@ const W = (id: string, text: string, ng = false, must = false, source: ImageWant
   t("★ 照合: メモの「ペット可NG」（ng の印なし）もペット相談で ng", memo.checks[0].result === "ng", memo.checks);
   const desc = describeFacts(a, IMG());
   t("★ 画面の短い文: 水回り・キッチン・間取り・収納", desc.water.includes("バス・トイレ別") && desc.kitchen.startsWith("カウンターキッチン（資料）") && desc.layout.startsWith("1LDK") && desc.storage.includes("シューズボックス"), desc);
+}
+
+// ── 文字の照合の答えの保存（反証 2026-09-25） ──
+{
+  const want = (id: string, text: string, ng = false, must = false): ImageWant => ({ id, source: "条件", text, topics: [], ng, must });
+  t("★ 照合の鍵: 同じ文でも NG の有無で別の鍵（欲しい／嫌の答えを使い回さない）", wantJudgeKey(want("W1", "ペット可")) !== wantJudgeKey(want("W1", "ペット可", true)));
+  t("★ 照合の鍵: 必須の有無でも別の鍵", wantJudgeKey(want("W1", "WIC")) !== wantJudgeKey(want("W1", "WIC", false, true)));
+  t("★ 照合の鍵: 番号・空白・記号の違いは同じ鍵", wantJudgeKey(want("W1", "洋室が 広め！")) === wantJudgeKey(want("W7", "洋室が広め")));
+  const saved = mergeJudgments(null, [want("W1", "ペット可")], [{ id: "W1", result: "ok", why: "設備: ペット可" }]);
+  const hit = applySavedJudgments([want("W2", "ペット可", true), want("W3", "ペット可")], saved);
+  t("★ 保存した答え: NG の希望には欲しい向きの答えを当てない（聞き直す）", hit.missing.length === 1 && hit.missing[0].id === "W2" && hit.checks.length === 1 && hit.checks[0].id === "W3" && hit.checks[0].result === "ok", hit);
+  const s2 = mergeJudgments(saved, [want("W4", "洋室が広め")], []);
+  t("★ 保存: 答えが無かった希望は unknown で保存（次も聞かない）", Object.values(s2).some((v) => v.result === "unknown"), s2);
+}
+
+// ── 画像から読んだ物件名の突き合わせ（反証 2026-09-25: 2文字ずつの重なり 0.5 では実在の別の建物どうしが同じになった） ──
+{
+  const img = (name: string) => textFactsFromImageSheet({ name, room: "206", rent: 60000, madori: "1K", sqm: 19.09, equip: "" });
+  const nameNg = (summaryName: string, imageName: string) =>
+    checkSheetConsistency({ summary: `【1】${summaryName} 206号室\n60,000円\n1K 19.09㎡\nAD 1ヶ月`, text: img(imageName) }).reasons.some((r) => r.includes("物件名"));
+  // 同じ建物（読み違い・表記ゆれ）は通す
+  t("★ 画像の名前: イディオス／イデオス（カナの読み違い）は同じ", sameImageName("イディオス新大阪", "イデオス新大阪") && !nameNg("イディオス新大阪", "イデオス新大阪"));
+  t("★ 画像の名前: リリアン／リアン（1字落ち）は同じ", sameImageName("リリアン東三国", "リアン東三国"));
+  t("★ 画像の名前: Ⅱ／II・★ は同じ", !nameNg("★プレミアムステージ新大阪駅前Ⅱ★", "プレミアムステージ新大阪駅前II"));
+  t("★ 画像の名前: Ⅵ と空白・中黒の違いは同じ", !nameNg("エステムコート新大阪Ⅵ エキスプレイス", "エステムコート新大阪VI・エキスプレイス"));
+  // 実在の別の建物（property_pickups 50〜67 の itandi の回と近くの建物）は要確認
+  t("★ 画像の名前: エスリード新大阪SOUTH／NORTH は別（英字の語が違う）", !sameImageName("エスリード新大阪SOUTH", "エスリード新大阪NORTH") && nameNg("エスリード新大阪SOUTH", "エスリード新大阪NORTH"));
+  t("★ 画像の名前: プレサンス新大阪ザ・シティ／クレスタ は別", !sameImageName("プレサンス新大阪ザ・シティ", "プレサンス新大阪クレスタ"));
+  t("★ 画像の名前: アドバンス新大阪IV／ウエストゲート は別", !sameImageName("アドバンス新大阪IV", "アドバンス新大阪ウエストゲート"));
+  t("★ 画像の名前: エスティライフ新大阪第2／第3 は別（数字が違う）", !sameImageName("エスティライフ新大阪第2", "エスティライフ新大阪第3"));
+  t("★ 画像の名前: エスリード北大阪レジデンス／エスリード新大阪グランファースト は別", !sameImageName("エスリード北大阪レジデンス", "エスリード新大阪グランファースト"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

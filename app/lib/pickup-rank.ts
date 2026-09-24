@@ -35,6 +35,47 @@ export async function enrichSummariesWithPdfAd(summaries: string[], pdfBase64Lis
   return out;
 }
 
+/**
+ * 説明文の抜け（物件名・号室・賃料・管理費・間取り・㎡・最寄り駅と徒歩）を資料の文字層で補い、続けて AD も補う。
+ * 2026-09-24 竹内「賃料と間取りも㎡数取り入れるようにする。そうじゃないとちゃんと判断できないので」
+ *   「駅名や徒歩数もリアプロ itandi ともに読み取れているのか」
+ *   → itandi の説明文は「【1】物件 AD 1ヶ月」だけ・リアプロは号室と駅・徒歩が無かった（listing-text.ts の冒頭に実測）。
+ *   説明文にある値が正で、無い所だけ補う。名前が違う PDF（組の取り違え）は補わない。食い違いはログに出す。
+ *   LINE グループの表示・🌟 の順位付け・送付記録（sent_properties）・売上サポ（property_pickups）が全部この説明文を読むので、ここで一度だけ補う。
+ * 文字層の取り出しは純 JS（外部 API なし・1件 約50ms）。失敗は元の説明文のまま（fail-open）。
+ */
+export async function enrichSummariesFromPdf(summaries: string[], pdfBase64List: Array<string | null>, tag = "merge-pdfs"): Promise<string[]> {
+  if (summaries.length === 0) return summaries;
+  const out = [...summaries];
+  const stat = { candidates: 0, filled: 0, skipped: 0, conflicts: [] as string[], fields: {} as Record<string, number> };
+  try {
+    const { extractPdfText } = await import("@/app/lib/pdf-text");
+    const { parseListingText, fillSummaryFromListing } = await import("@/app/lib/listing-text");
+    await Promise.all(summaries.map(async (s, i) => {
+      const b64 = pdfBase64List[i];
+      if (!b64) return;
+      stat.candidates++;
+      try {
+        const t = await extractPdfText(b64, { maxPages: 2, maxChars: 8000 });
+        if (!t.hasText) return;
+        const r = fillSummaryFromListing(s, parseListingText(t.text));
+        if (r.skipped) stat.skipped++;
+        if (r.conflicts.length) stat.conflicts.push(`${i + 1}:${r.conflicts.join("/")}`);
+        if (r.filled.length) {
+          out[i] = r.summary;
+          stat.filled++;
+          for (const f of r.filled) stat.fields[f] = (stat.fields[f] ?? 0) + 1;
+        }
+      } catch { /* その物件は元のまま */ }
+    }));
+  } catch (e) {
+    console.warn(`[${tag}] 資料からの説明文の補いをスキップ:`, e instanceof Error ? e.message : String(e));
+    return summaries;
+  }
+  console.log(JSON.stringify({ tag: `${tag}:fill-from-pdf`, ...stat }));
+  return enrichSummariesWithPdfAd(out, pdfBase64List);
+}
+
 /** 🌟 の順位付けに渡す文（DeepSeek と、失敗時の Claude で**同じ文**を使う） */
 export function buildRankPrompt(summaries: string[], customerConditions?: string | null): string {
   const conditionsBlock = customerConditions
