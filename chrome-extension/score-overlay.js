@@ -657,6 +657,10 @@
     if (c.floor_plan)   conds.push(c.floor_plan);
     if (c.building_age) conds.push("築" + c.building_age + "年");
     if (c.area_min)     conds.push(c.area_min + "㎡〜");
+    // 2026-09-24 竹内「ブレインモードも更新日ちゃんと分かるように」: 検索に効いている更新日の絞りと前回出した日
+    if (c.rp_update_days) conds.push("更新" + c.rp_update_days + "日内" + (c.last_touch_date ? "(前回" + String(c.last_touch_date).slice(5).replace("-", "/") + ")" : ""));
+    else if (c.last_touch_date) conds.push("更新日:絞らず");
+    else if ("last_touch_date" in c) conds.push("初回(更新日なし)");
 
     var bar = document.createElement("div");
     bar.id = BAR_ID;

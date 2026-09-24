@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-09-24 更新日が「すべて表示」のまま検索されていた（竹内・v2.5.12）
+
+竹内「更新日が抜けているので、ちゃんと更新日設定されるようにする。ブレインモードも更新日ちゃんと分かるようにしておく」（スクショ: 送済み 9/22 のお客様なのにリアプロの更新日が「すべて表示」）
+
+- **原因**: 更新日（1/3/7/14日以内）は popup の `calcUpdateDays(前回出した日)` で決まるが、**リアプロの「売上番長に送る」は `last_property_sent_at` を更新していなかった**（itandi だけ `itandi-bulk-dl.js` が `/api/property-tasks` を叩く）。前回の日付が空 → `""` → page-script が `update_date` を「すべて表示」にリセット。確認（`property_viewed_at`）だけの人も同じく空だった
+- **直した物**:
+  - サーバー `merge-pdfs`: LINE 送信成功後に `PATCH /api/property-customers { last_property_sent_at }`（waitUntil・新規→毎日物件出しの自動昇格と送信回数の管理はそこにある）。全サイト・古い拡張でも残る
+  - popup.js `lastPropertyTouchDateJst(c)`: 送った日と**確認した日の新しい方**（自動便の `lastPropertyTouchAt` と同じ線）・JST。`preloadAdjForm` の更新日と「最終送信日」欄がこれを使う。コンソールに `[popup] 更新日: 3日以内 (前回=2026-09-22)` を出す
+  - ブレインモードの条件バー（score-overlay.js）に「**更新3日内(前回09/22)**」／「更新日:絞らず」／「初回(更新日なし)」を表示（`axlx_score_data` に `rp_update_days`・`last_touch_date` を追加）
+- ⚠ 一括検索（background の `_buildBatchConditions`）は今も `rp_update_days` を自動便以外で渡さないが、リアプロは popup 経由（`axlx-switch-customer`→autofill-btn）で入るので更新日は効く。itandi・レインズの更新日は別（itandi は `reg-date`）
+- 実機確認: 拡張 v2.5.12 再読み込み → 送済みのお客様で検索 → リアプロの更新日が「N日以内」になるか・条件バーに「更新N日内」が出るか
+
 ## 2026-09-24 ピックアップを「売上サポ」に飛ばして確認→送る／手直しの学習／PDF の文字層（竹内・v2.5.11）
 
 竹内「拡張で地域や駅が分からなかったり従業員が手直ししたところは DB に入って学習されているのか」「PDF は DeepSeek が読めるか」「ピックアップを一度アプリの売上サポに飛ばして、LINE のトーク一覧のように並べ、送る物件とオススメを DeepSeek が判断して共有。スタッフは確認して送るだけ」

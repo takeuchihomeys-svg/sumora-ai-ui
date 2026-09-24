@@ -2608,6 +2608,8 @@ function openSiteView(customer) {
       ng_points:            customer.ng_points || null,
       pet_ok:               customer.pet === true || customer.pet === 'true' || /ペット|pet|犬|猫|ねこ|豆柴|マメ柴|柴犬|小型犬|中型犬|大型犬|動物飼育|動物可/i.test([customer.preferences, customer.notes, customer.other_requests, customer.additional_conditions].filter(Boolean).join(" ")),
       admin_fee_max:        customer.admin_fee_max || null,
+      rp_update_days:       customer.rp_update_days || (Number(calcUpdateDays(lastPropertyTouchDateJst(customer), customer.status)) || null),
+      last_touch_date:      lastPropertyTouchDateJst(customer) || null,
     }});
   } catch (_) { /* ignore（非extension環境での実行対策）*/ }
 
@@ -3011,10 +3013,8 @@ function preloadAdjForm(c) {
   // 最終送信日：last_property_sent_at から初期値セット
   const lastSentEl = document.getElementById("adj-last-sent-date");
   if (lastSentEl) {
-    // JSTの日付で表示する（UTCのsplit("T")[0]だと早朝送信時に1日ズレる）
-    const initDate = c.last_property_sent_at
-      ? new Date(new Date(c.last_property_sent_at).getTime() + 9 * 3600 * 1000).toISOString().split("T")[0]
-      : "";
+    // JSTの日付で表示する（UTCのsplit("T")[0]だと早朝送信時に1日ズレる）。送った日と確認した日の新しい方
+    const initDate = lastPropertyTouchDateJst(c);
     lastSentEl.value = initDate;
     lastSentEl.oninput = () => {
       const el = document.getElementById("adj-update-days");
@@ -3028,9 +3028,10 @@ function preloadAdjForm(c) {
     if (c.rp_update_days) {
       updateDaysEl.value = String(c.rp_update_days);
     } else {
-      const initDate = c.last_property_sent_at ? c.last_property_sent_at.split("T")[0] : "";
-      updateDaysEl.value = calcUpdateDays(initDate, c.status);
+      updateDaysEl.value = calcUpdateDays(lastPropertyTouchDateJst(c), c.status);
     }
+    console.log("[popup] 更新日:", updateDaysEl.value ? updateDaysEl.value + "日以内" : "指定なし",
+      "(前回=" + (lastPropertyTouchDateJst(c) || "なし") + (c.rp_update_days ? "・アプリ指定" : "") + ")");
   }
 
   // レインズ登録日：初めての物件出しは絞り込まない
@@ -3144,6 +3145,18 @@ async function applyAdjToCustomer(c) {
     if (statusEl) { statusEl.textContent = "❌ エラー"; statusEl.className = "adj-save-status err"; }
   }
   if (btn) btn.disabled = false;
+}
+
+// 「前回そのお客様に物件を出した日」＝ 送った日（last_property_sent_at）と確認した日（property_viewed_at）の**新しい方**を JST の日付で返す。
+// 2026-09-19 竹内「物件出ししたお客さんは送信じゃなくて確認したお客さんも含む」・自動便（auto-search-schedule の lastPropertyTouchAt）と同じ線。
+// 2026-09-24 竹内「更新日が抜けているので、ちゃんと設定されるようにする」: 送った日だけ見ていたので、確認だけの人・
+//   リアプロ送信で日付が入っていなかった人は空（＝すべて表示）になっていた。
+function lastPropertyTouchDateJst(c) {
+  if (!c) return "";
+  var ts = [c.last_property_sent_at, c.property_viewed_at]
+    .filter(Boolean).map(function (s) { return new Date(s).getTime(); }).filter(function (n) { return !isNaN(n); });
+  if (!ts.length) return "";
+  return new Date(Math.max.apply(null, ts) + 9 * 3600 * 1000).toISOString().split("T")[0];
 }
 
 function calcUpdateDays(dateStr, status) {
@@ -4477,6 +4490,9 @@ function openInstructions(siteKey) {
           ng_points:            c.ng_points || null,
           pet_ok:               c.pet === true || c.pet === 'true' || false,
           admin_fee_max:        c.admin_fee_max || null,
+          // 2026-09-24 竹内「ブレインモードも更新日ちゃんと分かるように」: 条件バーに「更新N日内」を出す
+          rp_update_days:       adjUpdateDays ? Number(adjUpdateDays) : null,
+          last_touch_date:      lastPropertyTouchDateJst(c) || null,
         }});
       } catch (_) { /* ignore */ }
       clearTimeout(_areaResolveWatchdog); // エリア解決完了 → ウォッチドッグ解除

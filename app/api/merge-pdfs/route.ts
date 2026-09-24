@@ -595,6 +595,20 @@ export async function POST(req: NextRequest) {
           console.error("[merge-pdfs] sent_properties 記録処理失敗（LINE送信は成功扱い）:", histErr);
         }
 
+        // 2026-09-24 竹内「更新日が抜けているので、ちゃんと設定されるようにする」:
+        //   リアプロの送信は「前回出した日」（property_customers.last_property_sent_at）を更新していなかった
+        //   （itandi だけ拡張が /api/property-tasks を叩いていた）。次回の更新日（1/3/7/14日以内）はこの日から計算するので、
+        //   空のままだと「すべて表示」で検索していた。ここで更新すれば全サイト・古い拡張でも残る。
+        //   PATCH /api/property-customers を通す（新規→毎日物件出しへの自動昇格・送信回数の管理が同じ所にある）。応答は待たせない。
+        if (resolvedCustomerId) {
+          const touchJob = fetch(new URL("/api/property-customers", req.url), {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: resolvedCustomerId, last_property_sent_at: new Date().toISOString() }),
+          }).then((r) => { if (!r.ok) console.warn("[merge-pdfs] last_property_sent_at を更新できない: HTTP " + r.status); })
+            .catch((e) => console.warn("[merge-pdfs] last_property_sent_at を更新できない:", e instanceof Error ? e.message : String(e)));
+          try { waitUntil(touchJob); } catch { await touchJob; }
+        }
+
         return NextResponse.json({ ok: true, line_sent: true, url: blob.url });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
