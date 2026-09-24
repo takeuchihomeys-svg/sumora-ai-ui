@@ -41,6 +41,7 @@
 - ⚠ Vercel: `next.config.ts` の `outputFileTracingIncludes["/api/merge-pdfs"]` に pdfjs の cmaps・standard_fonts と `@napi-rs/canvas*` を同梱、`serverExternalPackages` に両方。**本番でネイティブが動くかは初回デプロイのログで確認**（落ちれば `[pdf-render] 画像にできない` が出て文字層だけで進む＝止まらない）
 - ⚠ 日本語フォントが PDF に埋め込まれていない時は文字が抜けた画像になる（cmaps/standard_fonts で大半は出る想定・実物で確認）
 - ⚠ **本番の初回（2026-09-24 10:51 JST・ブレインモードの送信）で文字層も画像も全滅**: `Setting up fake worker failed: Cannot find module '.../pdfjs-dist/legacy/build/pdf.worker.mjs'`。disableWorker でも pdfjs は worker ファイルを動的 import する（fake worker）ので、`outputFileTracingIncludes` に `./node_modules/pdfjs-dist/legacy/build/**/*` を足した。記録自体（property_pickups 3行・判定 pass・PDF の Blob）は入っていた＝fail-open は効いた
+- **🌟 の順位付けは DeepSeek**（竹内 2026-09-24「ここ Haiku じゃなくて DeepSeek 使う」）: merge-pdfs `rankAndAnnotateSummaries` → `rankWithDeepSeek`（deepseek-flash・reasoning low・文字だけ・25秒）。文は `buildRankPrompt` で DeepSeek と失敗時の Claude Haiku が同じ物を使う。費用は llm_usage_logs action=property_rank。🌟★ は「お客様の条件への合致→AD→㎡単価→広さ→駅距離」の順で選ぶ（物件検索ブレインの点数とは別の判断・今回は一致していた）
 - 売上サポの見え方（竹内「売上サポに反映されていない。紐付け済みのお客さんの UI が LINE チャットに変わっていない」）: ピックアップは別タブに入っていて一覧からは見えなかった → アナウンス／一覧の行に **「🧠 物件 N件 未確認」** の印を出し、押すとピックアップタブでそのお客様の会話風画面が開く（`PickupReview` の `focusKey`）。タブ名にも未確認のお客様数
 - **印刷用 PDF は物件ごとに2ページ組**（竹内 2026-09-24「奇数ページ＝弊社に帯替えされた資料・偶数ページ＝元付業者の資料で AD の記載がある。1&2・3&4 がセット」）
   - `property-pickups.ts` の `CUSTOMER_PAGE=1`（お客様に送る画像 `page_image_url`）／`AGENT_PAGE=2`（元付の資料 `agent_image_url`・**DeepSeek はこちらを読む**・お客様には送らない・画面では「🏢 元付の資料」）

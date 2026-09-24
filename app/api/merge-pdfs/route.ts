@@ -102,19 +102,12 @@ async function lookupCustomerByName(customerName: string | null | undefined): Pr
   return hits[0].id;
 }
 
-async function rankAndAnnotateSummaries(summaries: string[], customerConditions?: string | null): Promise<string[]> {
-  if (summaries.length <= 1) return summaries;
-  try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
-    const conditionsBlock = customerConditions
-      ? `【お客様の希望条件（最優先で照らし合わせること）】\n${customerConditions}\n\n`
-      : "";
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 200,
-      messages: [{
-        role: "user",
-        content: `以下の物件一覧を見て、お客様に最もオススメの物件番号（1始まり）を選んでください。上位1〜3件をJSONで返してください。JSONのみ返すこと。
+/** 🌟 の順位付けに渡す文（DeepSeek と、失敗時の Claude で**同じ文**を使う） */
+function buildRankPrompt(summaries: string[], customerConditions?: string | null): string {
+  const conditionsBlock = customerConditions
+    ? `【お客様の希望条件（最優先で照らし合わせること）】\n${customerConditions}\n\n`
+    : "";
+  return `以下の物件一覧を見て、お客様に最もオススメの物件番号（1始まり）を選んでください。上位1〜3件をJSONで返してください。JSONのみ返すこと。
 
 ${conditionsBlock}判断基準（優先順位が高い順）:
 1. お客様希望条件への合致度（最優先）:
@@ -134,13 +127,52 @@ ${conditionsBlock}判断基準（優先順位が高い順）:
 
 ${summaries.join('\n\n')}
 
-例: {"recommended":[2,5]}`
-      }],
+例: {"recommended":[2,5]}`;
+}
+
+/** 返事の JSON から番号を読む（DeepSeek・Claude 共通） */
+function parseRankReply(text: string): number[] | null {
+  const match = text.match(/"recommended"\s*:\s*\[([^\]]*)\]/);
+  if (!match) return null;
+  return match[1].split(",").map((n) => parseInt(n.trim())).filter((n) => !isNaN(n));
+}
+
+// 2026-09-24 竹内「ここ Haiku じゃなくて DeepSeek 使う」: 🌟 の順位付けは DeepSeek（deepseek-flash・reasoning low・文字だけ）。
+//   説明文は物件資料なので別クラウドに出してよい（お客様の個人情報は入れない: customerConditions は条件の文だけ）。
+//   DeepSeek が空・失敗なら今までの Claude Haiku に倒す（fail-open）。費用は llm_usage_logs（action=property_rank）に残す。
+async function rankWithDeepSeek(prompt: string): Promise<number[] | null> {
+  const { callVisionAlt, VISION_ALT_MODEL_DEFAULT } = await import("@/app/lib/vision-alt-provider");
+  const startedAt = Date.now();
+  const res = await callVisionAlt(null, [{ type: "text", text: prompt }], { maxTokens: 2000, timeoutMs: 25_000, effort: "low" });
+  const nums = res ? parseRankReply(res.text) : null;
+  void import("@/app/lib/llm-usage-recorder").then(({ recordAltUsage }) => {
+    recordAltUsage({
+      model: res?.model ?? VISION_ALT_MODEL_DEFAULT, action: "property_rank", conversationId: null,
+      usage: { input_tokens: res?.usage.cacheMiss ?? 0, output_tokens: res?.usage.output ?? 0, cache_read_input_tokens: res?.usage.cacheHit ?? 0 },
+      status: res ? 200 : 0, errorType: res ? (nums ? null : "empty_or_unparsable") : "no_response",
+      durationMs: Date.now() - startedAt, sysHead: "【🌟 順位付け】" + prompt.slice(0, 120), sysKeyFull: null, maxTokens: 2000,
     });
-    const text = response.content[0]?.type === "text" ? response.content[0].text : "";
-    const match = text.match(/"recommended"\s*:\s*\[([^\]]*)\]/);
-    if (!match) return summaries;
-    const recommendedArr = match[1].split(",").map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+  }).catch(() => {});
+  return nums;
+}
+
+async function rankAndAnnotateSummaries(summaries: string[], customerConditions?: string | null): Promise<string[]> {
+  if (summaries.length <= 1) return summaries;
+  try {
+    const prompt = buildRankPrompt(summaries, customerConditions);
+    let recommendedArr = await rankWithDeepSeek(prompt);
+    if (!recommendedArr) {
+      console.warn("[merge-pdfs] 🌟 の順位付け: DeepSeek が答えなかったので Claude Haiku に倒す");
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+      const response = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 200,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const text = response.content[0]?.type === "text" ? response.content[0].text : "";
+      recommendedArr = parseRankReply(text);
+      if (!recommendedArr) return summaries;
+    }
     const topPickNum = recommendedArr[0]; // AIの真の1位（配列の先頭が最高スコア）
     const recommended = new Set(recommendedArr);
     return summaries.map((summary, i) => {
