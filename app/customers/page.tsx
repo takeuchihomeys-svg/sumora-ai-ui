@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import BottomNav from "@/app/components/BottomNav";
 import { supabase } from "@/app/lib/supabase";
+import { effectiveRpUpdateDays, autoRpUpdateDays } from "@/app/lib/rp-update-days";
 
 type LinkedConv = {
   id: string;
@@ -378,15 +379,8 @@ function parseAreaMin(text: string | null | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-// popup.js の calcUpdateDays と同一ロジック: 最終物件送信日からリアプロ更新日フィルターを算出
-function calcRpUpdateDays(lastSentAt: string | null | undefined): number | null {
-  if (!lastSentAt) return null;
-  const daysSince = Math.floor((Date.now() - new Date(lastSentAt).getTime()) / 86400000);
-  if (daysSince <= 1) return 1;
-  if (daysSince <= 3) return 3;
-  if (daysSince <= 7) return 7;
-  return 14;
-}
+// 2026-09-25 竹内「更新日も拡張ツールと連動」: 旧 calcRpUpdateDays（送った日だけ・時刻の差）は拡張と食い違っていた
+//   → app/lib/rp-update-days.ts（手で決めた値 → 送った日と確認した日の新しい方・JST の日付）に1本化
 
 // popup.js preloadAdjForm のペット判定と同一ロジック: pet=null時は自由記述フォールバック
 function resolvePetOk(c: Customer): boolean {
@@ -1328,7 +1322,7 @@ function CustomersPageInner() {
       lines:        c.lines         ?? [] as string[],
       stations:     c.stations      ?? [] as string[],
       structure_types: parseStructureTypes(c.preferences, c.other_requests),
-      rp_update_days:  c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
+      rp_update_days:  effectiveRpUpdateDays(c),
       is_wide:      isWide,
       ...(tempAdj[c.id] ? { temp_adj: tempAdj[c.id] } : {}),
     };
@@ -1410,7 +1404,7 @@ function CustomersPageInner() {
               route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
               reins_line_names: resolved?.reins_line_names ?? [], detail_ward: resolved?.detail_ward ?? null,
               detail_area: resolved?.detail_area ?? null, unknown_tokens: resolved?.unknown_tokens ?? [],
-              structure_types: parseStructureTypes(c.preferences, c.other_requests), rp_update_days: c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
+              structure_types: parseStructureTypes(c.preferences, c.other_requests), rp_update_days: effectiveRpUpdateDays(c),
             },
           },
           status: "pending", created_at: new Date().toISOString(),
@@ -2984,7 +2978,7 @@ function CustomersPageInner() {
                   )}
                   {/* 更新日フィルター（自動計算 or アプリで上書き） */}
                   {c.status !== "pending" && !isApplying(c.status) && (() => {
-                    const autoVal = calcRpUpdateDays(c.last_property_sent_at);
+                    const autoVal = autoRpUpdateDays(c);
                     const manualVal = c.rp_update_days ?? null;
                     const displayVal = manualVal ?? autoVal;
                     const isAuto = manualVal === null;

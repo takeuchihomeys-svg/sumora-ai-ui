@@ -22,7 +22,7 @@
            組み合わせごとの動き・帯・バッジは mode-core.js の1か所（behavior / banner / badge）。
            右の「∨」（#collapse-btn）はモードとは別物: サイドパネルでは「お客さん一覧に戻る」、下のバーでは「折りたたむ」 -->
       <div class="mode-group">
-        <button type="button" id="brain-toggle" class="brain-toggle" aria-pressed="false" title="ブレイン：送る物件をお客様の条件・過去の物件出し・利益（AD−割引）で判定し、売上サポに記録する（通常／スタッフ／AIX連動のどれとも組み合わせられる）">🧠 ブレイン</button>
+        <button type="button" id="brain-toggle" class="brain-toggle" aria-pressed="false" title="ブレイン：送る物件をお客様の条件・過去の物件出し・利益（AD−割引）で判定し、AIXツールに記録する。AIXツールの一括検索も受け取る（スタッフの時は受け取らない）（通常／スタッフ／AIX連動のどれとも組み合わせられる）">🧠 ブレイン</button>
         <select id="mode-select" class="mode-select" title="モード：通常／スタッフ（自動化を無視・2時間で自動OFF）／AIX連動（AIXの指示で自動検索）">
           <option value="normal">通常</option>
           <option value="staff">スタッフ</option>
@@ -351,6 +351,8 @@
   <!-- 2026-09-18 竹内: 検索日の記録（サイト×モード）。background.js と同じ物を使う（popup.js より先に読む） -->
   <script src="search-history.js"></script>
   <script src="mode-core.js"></script>
+  <!-- 2026-09-25 検索の点検（ブレインの時だけ started を送る・background.js と同じ物） -->
+  <script src="search-audit.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

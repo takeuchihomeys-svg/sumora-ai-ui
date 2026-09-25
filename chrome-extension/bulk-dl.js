@@ -1328,6 +1328,31 @@
     return true;
   }
 
+  // ── 検索の点検（2026-09-25 竹内「0件だった場合ちゃんと検索されていない可能性がある」）──
+  // axlx-batch-customer-done に「ページ数・読んだ行数・送れる行数・送った数・0件と決めた理由・件数表示の生の文字・URL」を載せる。
+  // background は、ブレインの時だけその回の記録に足す（search-audit.js の tracker）。件数表示の場所は確かめていないので、画面の文字から
+  // 「N件」の形を探して生の文字のまま残す（self.AxlxSearchAudit.readCountText）
+  function _auditResult(state, extra) {
+    var r = {
+      site: "realpro",
+      pages: state ? (state.currentPage || null) : 0,
+      read_rows: state && state.readCount != null ? state.readCount : (state ? null : 0),
+      sendable_rows: state && state.sendableCount != null ? state.sendableCount : (state ? null : 0),
+      sent_count: state ? (state.sentCount || 0) : 0,
+      zero_reason: null,
+      url: String(location.href || "").slice(0, 300),
+    };
+    try {
+      var A = self.AxlxSearchAudit;
+      if (A && document.body) {
+        var ct = A.readCountText(String(document.body.innerText || "").slice(0, 30000));
+        r.count_text = ct.text; r.count_number = ct.number;
+      }
+    } catch (_) {}
+    if (r.read_rows === 0) r.zero_reason = "no_rows";
+    return Object.assign(r, extra || {});
+  }
+
   // ── 全ページ自動送信: 共通の次ページ遷移 or 完了処理 ─────────────────────
   // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
   function tryNext(state) {
@@ -1340,7 +1365,7 @@
       var countElLimit = document.getElementById("axlx-count");
       if (countElLimit) countElLimit.textContent = _maxPages + "P上限 → 次へ";
       console.log("[AXLX bulk-dl] " + _maxPages + "ページ上限到達 → " + (state.sentCount || 0) + "件送信。次顧客へ切替。");
-      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0, audit: _auditResult(state, { page_limit: _maxPages }) }, function() { void chrome.runtime.lastError; }); } catch (_) {}
       return;
     }
     if (hasNextPageBtn()) {
@@ -1348,13 +1373,13 @@
       if (!clicked) {
         clearAutoSendState();
         // propertyCount を付けない（すでに送信済みの物件があるため0件アナウンスを出さない）
-        try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+        try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, audit: _auditResult(state, { next_page_failed: true }) }, function() { void chrome.runtime.lastError; }); } catch (_) {}
         console.error("[AXLX bulk-dl] 次ページへの遷移に失敗しました（次ページボタンが見つからない）");
         var countEl2 = document.getElementById("axlx-count");
         if (countEl2) countEl2.textContent = "次ページ遷移エラー";
       } else {
         // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
-        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0 });
+        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0 });
         // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
         try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
@@ -1365,7 +1390,7 @@
     } else {
       clearAutoSendState();
       // sentCount を必ず付ける: 0件なら background が「🔍【物件0件】」アナウンスを送る
-      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0 }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0, audit: _auditResult(state) }, function() { void chrome.runtime.lastError; }); } catch (_) {}
       var countEl = document.getElementById("axlx-count");
       if (countEl) countEl.textContent = "全ページ送信完了！";
       console.log("[AXLX bulk-dl] 全ページ自動送信が完了しました。（" + state.currentPage + "ページ / " + (state.sentCount || 0) + "件送信）");
@@ -1398,6 +1423,7 @@
           clearInterval(_pollTimer);
           if (!urls2.length) {
             console.warn("[AXLX bulk-dl] autoSendOnePage: " + _pollWait + "ms待機後も物件なし → スキップ");
+            state.readCount = (state.readCount || 0) + 0;
             onDone(true, 0);
             return;
           }
@@ -1410,10 +1436,12 @@
     _doSend(urls);
 
     function _doSend(sendUrls) {
+      state.readCount = (state.readCount || 0) + sendUrls.length; // 検索の点検: 読んだ行数
       // 2026-09-18: urls / 説明文 / 学習用データを別々に作って slice で対応づけるのをやめ、
       //   1件 = 1つの組にしてから分ける。組のまま切るので、バッチ境界でもズレない。
       // 2026-09-23: ブレインモードなら送信前に判定（外す物を外す・失敗なら全件）。判定はページ単位（最大4秒＋API 30秒）。
       buildSendItemsBrain(state.customerId || null, function (sendItems, brain) {
+      state.sendableCount = (state.sendableCount || 0) + sendItems.length; // 検索の点検: 送れる行数（ブレインが外した後）
       if (!sendItems.length) {
         console.warn("[AXLX bulk-dl] autoSendOnePage: 送れる物件が0件（" + (brain ? "ブレインが全件を見送り" : "印刷用PDFのリンクなし") + "）→ スキップ");
         onDone(true, 0);
@@ -1453,7 +1481,7 @@
             console.error("[AXLX bulk-dl] 送信エラー:", errMsg1);
             // エラー詳細をアラートで表示（何が原因か分かるように）
             alert("LINE送信エラー:\n" + errMsg1 + "\n\n※リアプロにログインし直して再試行してください");
-            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, audit: _auditResult(state, { send_error: String(errMsg1).slice(0, 200) }) }, function () { void chrome.runtime.lastError; }); } catch (_) {}
             return;
           }
           if (!resp || !resp.ok) {
@@ -1463,7 +1491,7 @@
             console.error("[AXLX bulk-dl] 送信エラー:", errMsg2);
             // エラー詳細をアラートで表示（何が原因か分かるように）
             alert("LINE送信エラー:\n" + errMsg2 + "\n\n※セッション切れの場合: リアプロに再ログインしてください\n※タイムアウトの場合: 物件数を減らして再試行してください");
-            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
+            try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, audit: _auditResult(state, { send_error: String(errMsg2).slice(0, 200) }) }, function () { void chrome.runtime.lastError; }); } catch (_) {}
             return;
           }
           batchIndex++;
@@ -1511,13 +1539,13 @@
         var adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
         if (adLink && adLink.href) {
           console.log("[AXLX bulk-dl] AD高→低ソート適用 → リロード後Case Bで再開");
-          var sortState = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0 };
+          var sortState = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0, readCount: 0, sendableCount: 0 };
           setAutoSendState(sortState);
           location.href = adLink.href;
           return;
         }
       }
-      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0 };
+      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0, readCount: 0, sendableCount: 0 };
       setAutoSendState(state);
       autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, 800); });
     }
@@ -1627,7 +1655,7 @@
       console.log("[AXLX bulk-dl] 25秒経過・新ボタンなし確定（tracked=0） → 0件としてbatch-customer-done送信");
       try {
         chrome.runtime.sendMessage(
-          { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0 },
+          { type: "axlx-batch-customer-done", customerId: _armed0ItemCid, propertyCount: 0, audit: _auditResult(null, { zero_reason: "no_rows_25s" }) },
           function () { void chrome.runtime.lastError; }
         );
       } catch (_) {}

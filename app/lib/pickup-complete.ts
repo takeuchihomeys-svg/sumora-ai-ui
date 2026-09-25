@@ -214,10 +214,11 @@ export function autoCompleteDue(rows: ReadonlyArray<AutoCompleteRow>, now: numbe
 /** 拡張のトーストに出す短い文（件数だけ・お客様の名前は出さない） */
 export function completeToastJa(r: { claimed: number; sites: Record<string, number>; already?: boolean; skipped?: string | null }): string {
   if (r.skipped === "brain_off") return "";
-  if (r.claimed <= 0) return r.already ? "売上サポ: もうまとめてあります（新しいピックアップなし）" : "売上サポ: まとめる新しいピックアップはありません";
+  // 2026-09-25 竹内「売上サポの名前は AIXツールに変更」（スタッフ向けの文だけ・お客様に届く文には出ていない）
+  if (r.claimed <= 0) return r.already ? "AIXツール: もうまとめてあります（新しいピックアップなし）" : "AIXツール: まとめる新しいピックアップはありません";
   const label: Record<string, string> = { realpro: "リアプロ", itandi: "itandi", reins: "レインズ" };
   const parts = Object.entries(r.sites).filter(([, n]) => n > 0).map(([k, n]) => `${label[k] ?? k} ${n}件`);
-  return `売上サポにまとめました: ${parts.join("・") || `${r.claimed}件`}（分析と順位の付け直しは1〜3分で反映）`;
+  return `AIXツールにまとめました: ${parts.join("・") || `${r.claimed}件`}（分析と順位の付け直しは1〜3分で反映）`;
 }
 
 /**

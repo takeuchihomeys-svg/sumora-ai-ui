@@ -90,7 +90,8 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
     },
     {
       href: "/conditions",
-      label: "申込一覧",
+      // 2026-09-25 竹内「売上サポの名前は AIXツールに変更」→ 下のナビも同じ名前に
+      label: "AIXツール",
       icon: <IconBuilding active={pathname === "/conditions"} />,
       isActive: pathname === "/conditions",
       hasUnread: false,
@@ -130,7 +131,8 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
       {/* ボタン行 */}
       <div className="flex items-center" style={{ paddingTop: 5, paddingBottom: 5 }}>
         {items.map((item) => (
-          <Link key={item.href} href={item.href} className="flex flex-1 items-center justify-center">
+          // 2026-09-25 画面の確かめ: 名前（label）は絵だけのナビで画面に出ていなかった → 読み上げ・長押しの名前に使う（見た目は変えない）
+          <Link key={item.href} href={item.href} aria-label={item.label} title={item.label} className="flex flex-1 items-center justify-center">
             <span
               className="flex items-center justify-center transition-all duration-200"
               style={{

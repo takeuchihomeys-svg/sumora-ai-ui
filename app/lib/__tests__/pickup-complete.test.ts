@@ -114,7 +114,7 @@ console.log("\n■ 認証（アプリは内部認証・拡張は自動化の鍵�
 
 console.log("\n■ 拡張のトースト");
 {
-  t("件数とサイト", completeToastJa({ claimed: 17, sites: { realpro: 10, itandi: 7 } }).startsWith("売上サポにまとめました: リアプロ 10件・itandi 7件"), completeToastJa({ claimed: 17, sites: { realpro: 10, itandi: 7 } }));
+  t("件数とサイト", completeToastJa({ claimed: 17, sites: { realpro: 10, itandi: 7 } }).startsWith("AIXツールにまとめました: リアプロ 10件・itandi 7件"), completeToastJa({ claimed: 17, sites: { realpro: 10, itandi: 7 } }));
   t("もうまとめてある", completeToastJa({ claimed: 0, sites: {}, already: true }).includes("もうまとめてあります"));
   t("ブレイン OFF は出さない", completeToastJa({ claimed: 0, sites: {}, skipped: "brain_off" }) === "");
 }

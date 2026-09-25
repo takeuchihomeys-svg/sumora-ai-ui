@@ -2,7 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
 // 修正10: status は enum 検証、更新フィールドはホワイトリスト方式で明示抽出
-const ALLOWED_STATUS = ["pending", "running", "done", "error"];
+// 2026-09-25 'cancelled' を足した（拡張のストップ・ブレイン中の自動便の見送りが 400 で書けず、running のまま残っていた。DB の CHECK も同時に直した）
+const ALLOWED_STATUS = ["pending", "running", "done", "error", "cancelled"];
 
 export async function POST(req: NextRequest) {
   // 修正10: 共有シークレット認証（AUTOMATION_API_KEY 設定時のみ強制。未設定なら従来通り許可）

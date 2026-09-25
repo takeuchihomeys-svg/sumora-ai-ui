@@ -12,6 +12,10 @@ import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/li
 import type { PickupTerms } from "@/app/lib/pickup-terms";
 import { PICKUP_EXPIRED_LABEL, PICKUP_EXPIRED_ACTION_NOTE } from "@/app/lib/pickup-retention";
 import { buildPickupCardView, groupPickupRounds, mergeRoundItems, roundSiteSummary, siteLabel, verdictCounts, type CardMark, type CellTone } from "@/app/lib/pickup-card-view";
+import { sortByNewArrivals } from "@/app/lib/new-arrivals";
+import { summarizeWebBrainProgress, webBrainBlockReason, type WebBrainSite, type WebBrainProgress, type CommandLite } from "@/app/lib/web-brain-search";
+// 2026-09-25 検索の点検: 回の見出しに「この回の検索: 駅 3/4・東三国が入っていない」（純関数だけ・サーバーの物は import しない）
+import { pickAuditForRound } from "@/app/lib/search-audit-check";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -49,6 +53,8 @@ type ListCustomer = {
   key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
   pending: number; last_pickup_at: string | null; batch_count: number; last_batch: { batch_id: string; count: number; rec_name: string | null } | null;
   sent: { pickup: number; recommendation: number; other: number; last_at: string | null }; line: LineLite | null; last_at: string; order_at: string;
+  /** 2026-09-25 新着物件（通す・未送信・未読・72時間以内・送った建物に当たらない＝new-arrivals.ts）の数・一番新しい時刻・2行目の文 */
+  new_count?: number; new_at?: string | null; new_line?: string | null;
 };
 /** 送った経路の表示（sent_properties.channel・無ければ source から） */
 function channelLabel(h: { channel: string | null; delivery: string | null; source: string | null }): { label: string; color: string; bg: string } {
@@ -329,14 +335,23 @@ function buildBubbles(c: Customer): Bubble[] {
   return sorted;
 }
 
-/** focusKey: 一覧の「🧠 物件 N件」から来た時に、そのお客様（property_customer_id）の会話風画面を最初から開く。onChange: 送った・見送りの後に親の件数を更新 */
-export default function PickupReview({ focusKey = null, onChange }: { focusKey?: string | null; onChange?: () => void } = {}) {
+/**
+ * focusKey: 一覧の「🧠 物件 N件」から来た時に、そのお客様（property_customer_id）の会話風画面を最初から開く。onChange: 送った・見送り・既読の後に親の件数を更新
+ * mode（2026-09-25 竹内「右の一覧の項目を新着物件に名前変更」）:
+ *   "pickup" … ピックアップのタブ（今まで通り・並びは LINE の順）
+ *   "new"    … 新着物件のタブ。新着のあるお客様を新着の新しい順に上・丸は新着の数・2行目に「🆕 新着2件・〇〇 7.2万」。
+ *              各行にチェック → 下の「🧠 一括検索」（ピンポイント／広げて × リアプロ／itandi／レインズ）＝拡張のブレインの PC が検索
+ */
+export default function PickupReview({ focusKey = null, onChange, mode = "pickup" }: { focusKey?: string | null; onChange?: () => void; mode?: "pickup" | "new" } = {}) {
+  const isNewMode = mode === "new";
   // 2026-09-24 竹内「開くとき重いのは画像を全部読み取っているから。お客さんの詳細を開いた時に読み込まれるように。
   //   全て読み込むと重いから限定して読み込む。並びは LINE の一覧と連動して変わる。UI の幅も LINE の一覧と同じ」:
   //   一覧は要約だけ（view=list・30秒ごと＋画面に戻った時に取り直す＝LINE の並びに追従）。
   //   開いたお客様だけ詳細（view=detail・直近3回分＋送った履歴）。画像は loading=lazy・小さく出し、押すと原寸
   const [list, setList] = useState<ListCustomer[]>([]);
   const [detail, setDetail] = useState<Customer | null>(null);
+  // 検索の点検（ブレインモードの検索の1回ずつ・/api/search-audits?view=runs）。回の見出しの札に使う
+  const [auditRuns, setAuditRuns] = useState<Array<{ run_id: string; site: string | null; created_at: string; severity: string | null; headline: string | null; status: string }>>([]);
   const [openKey, setOpenKey] = useState<string | null>(focusKey);
   const [nBatches, setNBatches] = useState(3);
   const [checked, setChecked] = useState<Record<number, boolean>>({});
@@ -403,6 +418,16 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   }, [loadList, loadDetail]);
 
   useEffect(() => { void loadList(); }, [loadList]);
+  useEffect(() => {
+    const pcid = detail?.property_customer_id;
+    if (!pcid) { setAuditRuns([]); return; }
+    let alive = true;
+    fetch(`/api/search-audits?view=runs&days=14&limit=60&customer_id=${encodeURIComponent(pcid)}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; runs?: Array<{ run_id: string; site: string | null; created_at: string; severity: string | null; headline: string | null; status: string }> }) => { if (alive) setAuditRuns(j.ok ? j.runs ?? [] : []); })
+      .catch(() => { if (alive) setAuditRuns([]); });
+    return () => { alive = false; };
+  }, [detail?.property_customer_id]);
   // LINE の一覧の並びに追従（30秒ごと・画面に戻った時）
   // 2026-09-24 竹内「画像で分析」がスマホで「Load failed」: 待っている間に画面が裏に回ると fetch が切れるが、サーバーは結果を保存している。
   //   → 分析中（と切れた後しばらく）は開いている詳細も取り直し、画面に戻った時も詳細を読み直す（保存済みの結果と 👑 が出る）
@@ -436,6 +461,16 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     setChecked({});
     setMsg("");
     void loadDetail(target, 3, true);
+    // 2026-09-25 新着物件の既読（スタッフ全員で共有）: 開いたお客様のまだ読んでいない「通す」にまとめて入れる。
+    //   先に画面の丸を消し（LINE と同じ）、書けたら一覧と親のタブの数を取り直す。書けなくても開くのは止めない
+    const row = list.find((x) => x.key === c.key);
+    if ((row?.new_count ?? 0) > 0 && (target.pcid || target.conv)) {
+      setList((prev) => prev.map((x) => x.key === c.key ? { ...x, new_count: 0, new_at: null, new_line: null } : x));
+      void fetch("/api/property-pickups/seen", {
+        method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        body: JSON.stringify({ property_customer_id: target.pcid, conversation_id: target.pcid ? null : target.conv }),
+      }).then(() => { void loadList(true); onChange?.(); }).catch(() => { /* 次の取り直しで戻る */ });
+    }
     // スマホ: 端末の「戻る」で一覧に戻れるよう履歴を1つ積む（LINE のトーク画面と同じ操作）。Next の状態は引き継ぐ
     if (!isDesktop() && !historyPushedRef.current) {
       try { window.history.pushState({ ...(window.history.state ?? {}), pickupDetail: true }, ""); historyPushedRef.current = true; } catch { /* 積めなくても閉じるボタンで戻れる */ }
@@ -581,7 +616,66 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   }, [focusKey, list]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = detail;
-  const filtered = useMemo(() => list.filter((c) => !q || (c.customer_name ?? "").includes(q)), [list, q]);
+  // 新着物件のタブは新着のあるお客様を新着の新しい順に上（new-arrivals.sortByNewArrivals）。ピックアップのタブは LINE の順のまま
+  const filtered = useMemo(() => {
+    const hit = list.filter((c) => !q || (c.customer_name ?? "").includes(q));
+    return isNewMode ? sortByNewArrivals(hit) : hit;
+  }, [list, q, isNewMode]);
+
+  // ── 2026-09-25 AIXツールの一括検索（新着物件のタブ）──────────────────────────────
+  // 竹内「チェックボックスを付ける。拡張ツールのように、下にピンポイントか広げて検索、そしてリアプロか itandi で選択。
+  //   チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」
+  //   押すと /api/automation/trigger（brain:true・1人1コマンド・更新日はお客様ごと）に積み、拡張に「すぐ拾って」（poll-now）を送る。
+  //   拾うのはブレインが ON の PC だけ（🧠×スタッフは拾わない）。進み具合は /api/automation/status?ids= を5秒ごとに見る
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [bulkWide, setBulkWide] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState("");
+  const [bulkRun, setBulkRun] = useState<{ ids: string[]; sinceMs: number } | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<WebBrainProgress | null>(null);
+  const pickedIds = useMemo(() => Object.keys(picked).filter((k) => picked[k]), [picked]);
+  const togglePicked = (pcid: string) => setPicked((p) => ({ ...p, [pcid]: !p[pcid] }));
+  const startBulk = async (site: WebBrainSite) => {
+    const block = webBrainBlockReason(pickedIds.length, site);
+    if (block) { setBulkMsg(`⚠️ ${block}`); return; }
+    setBulkBusy(true);
+    setBulkMsg("");
+    try {
+      const res = await fetch("/api/automation/trigger", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_ids: pickedIds, sites: [site], is_wide: bulkWide, brain: true }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string; queued?: number; already?: number; missing?: number; commandIds?: string[] };
+      if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      // 拡張（このパソコンがブレインなら）に「すぐ拾って」。ほかのブレインの PC は30秒ごとの見回りで拾う
+      try { window.postMessage({ from: "aixlinx-webapp-poll-now" }, "*"); } catch { /* 拡張が無い端末（スマホ）は見回りに任せる */ }
+      const siteJa = site === "itandi" ? "itandi" : site === "reins" ? "レインズ（条件を入れるだけ）" : "リアプロ";
+      setBulkMsg(`🧠 ${siteJa}・${bulkWide ? "広げて" : "ピンポイント"}で ${json.queued ?? 0}人を積みました${json.already ? `（${json.already}人はもう積んであります）` : ""}${json.missing ? `（${json.missing}人は見つかりません）` : ""}`);
+      setPicked({});
+      if (json.commandIds?.length) setBulkRun({ ids: json.commandIds, sinceMs: Date.now() });
+    } catch (e) {
+      setBulkMsg(`⚠️ 積めませんでした: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (!bulkRun) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/automation/status?ids=${encodeURIComponent(bulkRun.ids.join(","))}`, { cache: "no-store" });
+        const json = await res.json() as { commands?: CommandLite[] };
+        if (stop) return;
+        const p = summarizeWebBrainProgress(json.commands ?? [], { sinceMs: bulkRun.sinceMs });
+        setBulkProgress(p);
+        if (p.finished) { stop = true; void loadList(true); onChange?.(); }
+      } catch { /* 次の回で */ }
+    };
+    void tick();
+    const id = window.setInterval(() => { if (!stop) void tick(); }, 5000);
+    return () => { stop = true; window.clearInterval(id); };
+  }, [bulkRun]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 2026-09-24 夜: お客様への送信は「📤 AIXで送る」だけ（/send の直接送信はサーバーで止めた・説明文の AD・🌟 が届いたため）。ここは見送りだけ
   const act = async (b: Batch, action: "skip") => {
@@ -1068,6 +1162,15 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   🧠 ブレインモードで {fmtDateTime(bb.batch.created_at)}{bb.batch.last_at && bb.batch.last_at.slice(0, 16) !== bb.batch.created_at.slice(0, 16) ? `〜${hm(bb.batch.last_at)}` : ""} に届きました
                   {(bb.batch.parts?.length ?? 1) > 1 ? `（${bb.batch.parts!.length}回分をまとめて表示）` : ""}
                 </div>
+                {/* 2026-09-25 検索の点検: この回に当たる検索（サイトごとに一番近い1回）の見出し。点検していない回（ブレイン OFF・古い版）は出さない */}
+                {pickAuditForRound(auditRuns, { sites: (bb.batch.parts ?? [bb.batch]).map((x) => x.site), from: bb.batch.created_at, to: bb.batch.last_at ?? null })
+                  .filter((a) => a.headline).map((a) => (
+                    <div key={a.run_id} className="text-[10px] mb-1 px-2 py-0.5 rounded-lg leading-snug"
+                      style={a.severity === "bad" ? { background: "#ffebee", color: "#c62828" } : a.severity === "warn" ? { background: "#fff8e1", color: "#8d6e00" } : { background: "#e8f5e9", color: "#2e7d32" }}
+                      title="AIXツール上の「🔍 検索の点検」で原因ごとに見られます">
+                      🔍 {siteLabel(a.site)}: {a.headline}
+                    </div>
+                  ))}
                 {verdictCounts(bb.batch.items) && <div className="text-[11px] font-bold mb-1.5" style={{ color: "#5d4037" }}>{verdictCounts(bb.batch.items)}</div>}
                 {/* 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨」 */}
                 {needRecommended && (
@@ -1425,19 +1528,38 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
       {filtered.length === 0 && !loading && (
         <div className="text-sm text-[#90a4ae] py-10 text-center px-4">まだありません（拡張ツールのブレインモードで「売上番長に送る」をするか、AIX で物件を送ると並びます）</div>
       )}
+      {isNewMode && filtered.length > 0 && !filtered.some((c) => (c.new_count ?? 0) > 0) && !q && (
+        <div className="text-[12px] text-[#90a4ae] py-2 text-center px-4" style={{ background: "#fafafa", borderBottom: "1px solid #f0f2f5" }}>
+          今は新着物件がありません（チェックして下の「🧠 一括検索」をすると、ブレインが通した物件がここに届きます）
+        </div>
+      )}
       {/* 2026-09-24 竹内「ピックアップの一覧は LINE と同じ UI にする（アイコンも付ける）。順番も LINE と同じに連動」:
           行の形は app/page.tsx の LINE 一覧（アイコン・名前＋アカウント札・1行目のプレビュー・右に時刻と緑の件数）と同じ。並びは API が LINE の updated_at 順で返す */}
       {filtered.map((c) => {
         const lb = c.last_batch;
         const sentParts = [c.sent.pickup ? `🟢${c.sent.pickup}` : "", c.sent.recommendation ? `🔵${c.sent.recommendation}` : "", c.sent.other ? `送${c.sent.other}` : ""].filter(Boolean).join(" ");
         const preview = lb ? `🧠 ${lb.count}件${lb.rec_name ? `・👑${lb.rec_name}` : ""}` : sentParts ? `📦 送った物件 ${sentParts}` : "";
-        const at = c.line?.updated_at ?? c.last_at;
         const img = c.line?.profile_image_url ?? null;
         const active = c.key === openKey;
+        // 新着物件のタブ: 丸＝新着の数・時刻＝一番新しい新着・2行目＝「🆕 新着2件・〇〇 7.2万」（LINE の一覧の未読と同じ形）
+        const newCount = c.new_count ?? 0;
+        const badge = isNewMode ? newCount : c.pending;
+        const at = isNewMode && newCount > 0 && c.new_at ? c.new_at : (c.line?.updated_at ?? c.last_at);
+        const pcid = c.property_customer_id;
+        const rowTone = active ? "border-[#1565C0] bg-[#f0f2f5]"
+          : isNewMode ? (newCount > 0 ? "border-[#06C755] bg-[#f1fbf4] hover:bg-[#e6f7ec]" : "border-transparent bg-white hover:bg-[#f5f6f6]")
+          : c.pending > 0 ? "border-orange-400 bg-orange-50 hover:bg-orange-100" : "border-transparent bg-white hover:bg-[#f5f6f6]";
         return (
-          <button key={c.key} onClick={() => openCustomer(c)}
-            className={`flex w-full items-center gap-3 px-4 py-[16px] text-left transition border-l-[3px] ${active ? "border-[#1565C0] bg-[#f0f2f5]" : c.pending > 0 ? "border-orange-400 bg-orange-50 hover:bg-orange-100" : "border-transparent bg-white hover:bg-[#f5f6f6]"}`}
-            style={{ borderBottom: "1px solid #f0f2f5" }}>
+          <div key={c.key} className="flex w-full items-stretch" style={{ borderBottom: "1px solid #f0f2f5" }}>
+          {isNewMode && (
+            // チェックはボタンの外（ボタンの中に input を入れない・押しても会話は開かない）
+            <label className={`flex shrink-0 items-center pl-3 pr-1 ${pcid ? "cursor-pointer" : "opacity-30"}`} title={pcid ? "一括検索に入れる" : "お客様の条件と紐付いていないため検索できません"}>
+              <input type="checkbox" className="h-4 w-4 accent-[#1565C0]" disabled={!pcid} checked={!!(pcid && picked[pcid])}
+                onChange={() => { if (pcid) togglePicked(pcid); }} aria-label={`${c.customer_name ?? "お客様"}を一括検索に入れる`} />
+            </label>
+          )}
+          <button onClick={() => openCustomer(c)}
+            className={`flex min-w-0 flex-1 items-center gap-3 ${isNewMode ? "pl-2" : "pl-4"} pr-4 py-[16px] text-left transition border-l-[3px] ${rowTone}`}>
             <div className="relative shrink-0">
               {img ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -1449,27 +1571,73 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             </div>
             <div className="relative min-w-0 flex-1 pr-12">
               <div className="absolute right-0 top-0 flex flex-col items-end gap-1">
-                <span className="text-[11px] text-[#667781]" title="LINE の最終更新（並び順）">{at ? fmtWhen(at) : ""}</span>
-                {c.pending > 0 && (
-                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">{c.pending}</span>
+                <span className="text-[11px] text-[#667781]" title={isNewMode && newCount > 0 ? "一番新しい新着物件が届いた時刻（並び順）" : "LINE の最終更新（並び順）"}>{at ? fmtWhen(at) : ""}</span>
+                {badge > 0 && (
+                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">{badge}</span>
                 )}
               </div>
               <div className="mb-0.5 flex h-5 min-w-0 items-center gap-1.5 overflow-hidden">
                 <span className="truncate text-[14px] font-medium text-[#111b21]">{c.customer_name ?? "（名前なし）"}</span>
                 <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold text-gray-400">{accountLabel(c.line?.account)}</span>
-                {c.pending > 0 && <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">未確認</span>}
+                {!isNewMode && c.pending > 0 && <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">未確認</span>}
+                {isNewMode && newCount > 0 && <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#e8f5e9", color: "#1b5e20" }}>新着</span>}
                 {!c.conversation_id && <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#ffebee", color: "#b71c1c" }}>LINE未紐付け</span>}
               </div>
-              <div className="truncate text-[13px] text-[#667781]">
-                {preview}
-                {lb && sentParts && <span className="ml-1 text-[11px]">📦{sentParts}</span>}
-                {c.last_pickup_at && <span className="ml-1 text-[11px] text-[#b0bec5]">（{fmtDateTime(c.last_pickup_at)} ブレインモード）</span>}
+              <div className={`truncate text-[13px] ${isNewMode && newCount > 0 ? "font-bold text-[#1b5e20]" : "text-[#667781]"}`}>
+                {isNewMode && newCount > 0 && c.new_line ? c.new_line : (
+                  <>
+                    {preview}
+                    {lb && sentParts && <span className="ml-1 text-[11px]">📦{sentParts}</span>}
+                    {c.last_pickup_at && <span className="ml-1 text-[11px] text-[#b0bec5]">（{fmtDateTime(c.last_pickup_at)} ブレインモード）</span>}
+                  </>
+                )}
               </div>
             </div>
           </button>
+          </div>
         );
       })}
       </div>
+      {/* 2026-09-25 AIXツールの一括検索（新着物件のタブ）: 拡張の一括検索ツールバーと同じ並び（モードの2択 → サイトのボタン） */}
+      {isNewMode && (pickedIds.length > 0 || bulkMsg || (bulkProgress && !bulkProgress.finished)) && (
+        <div className="shrink-0 bg-white px-3 pt-2 pb-2" style={{ borderTop: "1px solid #e9edef", boxShadow: "0 -2px 8px rgba(0,0,0,0.05)" }}>
+          {pickedIds.length > 0 && (
+            <>
+              {/* 2026-09-25 画面の確かめ（390px・PC の左の一覧も同じ幅）: 「解／除」「ピンポイ／ント」と1字ずつ折り返していた → 折り返さない（人数の文だけ縮める） */}
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 whitespace-nowrap text-[12px] font-bold text-[#111b21]" title="🧠 一括検索（ブレインのパソコンが検索します）">🧠 {pickedIds.length}人選択中</span>
+                <button type="button" onClick={() => setPicked({})} className="shrink-0 whitespace-nowrap text-[11px] text-[#607d8b] underline">解除</button>
+                <div className="ml-auto flex shrink-0 overflow-hidden rounded-full" style={{ border: "1px solid #cfd8dc" }}>
+                  {([false, true] as const).map((w) => (
+                    <button key={String(w)} type="button" onClick={() => setBulkWide(w)}
+                      className="whitespace-nowrap px-2.5 py-1 text-[11px] font-bold" style={{ background: bulkWide === w ? "#1565C0" : "#fff", color: bulkWide === w ? "#fff" : "#546e7a" }}>
+                      {w ? "🔎 広げて" : "🎯 ピンポイント"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-2 flex gap-1.5">
+                {([["realnetpro", "🏠 リアプロ"], ["itandi", "📋 itandi"], ["reins", "🔍 レインズ"]] as const).map(([site, label]) => {
+                  const block = webBrainBlockReason(pickedIds.length, site);
+                  return (
+                    <button key={site} type="button" disabled={bulkBusy || !!block} onClick={() => void startBulk(site)} title={block ?? undefined}
+                      className="flex-1 rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-40"
+                      style={{ background: site === "reins" ? "#546e7a" : site === "itandi" ? "#00897b" : "#1565C0" }}>
+                      {bulkBusy ? "…" : label}{site === "reins" ? <span className="block text-[9px] font-normal leading-tight">条件を入れるだけ</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-1 text-[10px] leading-snug text-[#90a4ae]">拡張の 🧠 ブレインが ON のパソコン（スタッフモード以外）が検索します。更新日はお客様ごと（拡張と同じ）</div>
+            </>
+          )}
+          {bulkMsg && <div className="mt-1 text-[11px] leading-snug break-words" style={{ color: bulkMsg.startsWith("⚠️") ? "#b71c1c" : "#0d47a1" }}>{bulkMsg}</div>}
+          {bulkProgress && <div className="mt-1 text-[11px] leading-snug break-words" style={{ color: bulkProgress.waitingForBrainPc ? "#e65100" : "#1b5e20" }}>{bulkProgress.line}</div>}
+          {!pickedIds.length && bulkMsg && (bulkProgress?.finished ?? true) && (
+            <button type="button" onClick={() => { setBulkMsg(""); setBulkProgress(null); setBulkRun(null); }} className="mt-1 text-[11px] text-[#607d8b] underline">閉じる</button>
+          )}
+        </div>
+      )}
     </div>
   );
 

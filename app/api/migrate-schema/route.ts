@@ -1839,6 +1839,10 @@ CREATE INDEX IF NOT EXISTS automation_commands_status_idx ON automation_commands
 -- scrape_and_compare コマンドの顧客情報・条件を格納するペイロードカラム（2026-08-06）
 -- customers/page.tsx の handleScrapeCompare が INSERT 時に使用
 ALTER TABLE automation_commands ADD COLUMN IF NOT EXISTS payload jsonb;
+-- 2026-09-25 既存の不具合: status の CHECK に 'cancelled' が無く、/api/automation/stop（全部止める）と拡張の見送り・ストップ
+--   （_updateBatchCommand status:'cancelled'）が本番で1件も書けていなかった（cancelled 0件）→ 足す（/api/automation/update の ALLOWED_STATUS も）
+ALTER TABLE automation_commands DROP CONSTRAINT IF EXISTS automation_commands_status_check;
+ALTER TABLE automation_commands ADD CONSTRAINT automation_commands_status_check CHECK (status IN ('pending', 'running', 'done', 'error', 'cancelled'));
 
 -- ── 物件検索条件 自動読み取り・インテント分類対応（2026-08-06）──
 
@@ -2351,6 +2355,12 @@ CREATE INDEX IF NOT EXISTS idx_property_pickups_retention ON property_pickups(cr
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS complete_group_id TEXT;
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS complete_rank INT;
 CREATE INDEX IF NOT EXISTS idx_property_pickups_complete ON property_pickups(complete_group_id) WHERE complete_group_id IS NOT NULL;
+-- 2026-09-25 竹内「右の一覧の項目を新着物件に。ブレインの基準をクリアした物件があれば LINE 一覧と同じ UI で 1・2 や文字が出る」:
+--   新着物件の既読（スタッフ全員で共有）。AIXツールでお客様の詳細を開いた時に、まだ読んでいない「通す」（verdict='pass'・未送信）へ
+--   まとめて入れる（/api/property-pickups/seen）。新着の決まりは app/lib/new-arrivals.ts
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS seen_by TEXT;
+CREATE INDEX IF NOT EXISTS idx_property_pickups_unseen ON property_pickups(created_at DESC) WHERE seen_at IS NULL AND verdict = 'pass' AND status = 'pending';
 --   まとめ1つに1行（主キー＝まとめ ID）: 押した経路・モード・まとめた行・👑（best_id・best_basis＝image/score）・自動の読み取りの件数
 CREATE TABLE IF NOT EXISTS property_pickup_completions (
   group_id TEXT PRIMARY KEY,
@@ -3579,6 +3589,62 @@ ALTER TABLE jev_shadow_logs ADD COLUMN IF NOT EXISTS kind TEXT;
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_conv_created ON jev_shadow_logs(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jev_shadow_logs_created_at ON jev_shadow_logs(created_at DESC);
 ALTER TABLE jev_shadow_logs DISABLE ROW LEVEL SECURITY;
+
+-- ── 検索の点検（2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」）──
+-- search_audits: 拡張がブレインモードで検索した1回（入れようとした条件・実際に入った値・結果・決定論の札・DeepSeek の見立て）。名前・電話は入れない
+CREATE TABLE IF NOT EXISTS search_audits (
+  id BIGSERIAL PRIMARY KEY,
+  run_id TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'finished', 'abandoned')),
+  property_customer_id TEXT,
+  site TEXT,
+  mode TEXT CHECK (mode IS NULL OR mode IN ('brain_normal', 'brain_staff', 'brain_aix')),
+  trigger TEXT CHECK (trigger IS NULL OR trigger IN ('bulk_queue', 'bulk_manual', 'single', 'scrape_compare', 'web_brain')),
+  command_id TEXT,
+  is_wide BOOLEAN,
+  area_mode TEXT,
+  pass TEXT,
+  customer_snapshot JSONB,
+  intended JSONB,
+  filled JSONB,
+  steps JSONB,
+  result JSONB,
+  error TEXT,
+  error_kind TEXT,
+  page_url TEXT,
+  ext_version TEXT,
+  checks JSONB,
+  severity TEXT CHECK (severity IS NULL OR severity IN ('ok', 'warn', 'bad')),
+  cause_key TEXT,
+  ai_status TEXT,
+  ai_diagnosis JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_search_audits_created ON search_audits(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_audits_started ON search_audits(created_at) WHERE status = 'started';
+CREATE INDEX IF NOT EXISTS idx_search_audits_ai_pending ON search_audits(created_at) WHERE ai_status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_search_audits_cause ON search_audits(cause_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_audits_customer ON search_audits(property_customer_id, created_at DESC);
+ALTER TABLE search_audits DISABLE ROW LEVEL SECURITY;
+-- search_audit_causes: 原因ごと（cause_key の形 station_missing:itandi:JR京都線:東三国）の数・直し方の案・状態（未対応／直した＋版／無視）
+CREATE TABLE IF NOT EXISTS search_audit_causes (
+  cause_key TEXT PRIMARY KEY,
+  title TEXT,
+  site TEXT,
+  count_7d INTEGER NOT NULL DEFAULT 0,
+  count_total INTEGER NOT NULL DEFAULT 0,
+  first_seen TIMESTAMPTZ,
+  last_seen TIMESTAMPTZ,
+  example_run_ids TEXT[],
+  fix_hint TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'fixed', 'ignored')),
+  fixed_in_version TEXT,
+  fixed_at TIMESTAMPTZ,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_search_audit_causes_last_seen ON search_audit_causes(last_seen DESC);
+ALTER TABLE search_audit_causes DISABLE ROW LEVEL SECURITY;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

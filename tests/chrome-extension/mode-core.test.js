@@ -71,6 +71,19 @@ eq("ブレイン×AIX も押した時はまとめる", M.behavior("aix", true).c
 eq("ブレイン OFF は3つとも呼ばない（売上サポに届いていない）", M.MODES.map((m) => M.behavior(m, false).completeGroup), [false, false, false]);
 eq("まとめる時は必ず売上サポに記録している（completeGroup ⇒ recordPickup）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).completeGroup || M.behavior(m, b).recordPickup)).every(Boolean), true);
 
+console.log("\n■ ウェブの AIXツールの一括検索（web_brain）を受け取る PC（2026-09-25 竹内「ブレインモードのみで連動」）");
+eq("6通り: ブレイン×通常・ブレイン×AIX だけ受け取る", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).claimBrainCommands)), [false, true, false, false, false, true]);
+eq("🧠×スタッフは受け取らない（スタッフは自動化を無視）", M.behavior("staff", true).claimBrainCommands, false);
+eq("受け取る PC は必ずコマンドを claim する PC（claimBrainCommands ⇒ claimCommands）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).claimBrainCommands || M.behavior(m, b).claimCommands)).every(Boolean), true);
+eq("受け取る PC は必ず AIXツールに記録する（claimBrainCommands ⇒ recordPickup）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).claimBrainCommands || M.behavior(m, b).recordPickup)).every(Boolean), true);
+eq("帯: 受け取る組み合わせは一括検索を書く", [M.banner("normal", true).text, M.banner("aix", true).text].every((t) => /一括検索も受け取ります/.test(t)), true);
+eq("帯: 名前は AIXツール（売上サポは出さない）", [M.banner("normal", true), M.banner("staff", true), M.banner("aix", true)].every((b) => /AIXツール/.test(b.text) && !/売上サポ/.test(b.text)), true);
+
+console.log("\n■ 検索の点検（2026-09-25 竹内「ブレインモードで…検索がちゃんとされていなかったら原因を見つけられるようにする」）");
+eq("6通り: ブレインの時だけ送る（スタッフ×ブレインも）", M.MODES.flatMap((m) => [false, true].map((b) => M.behavior(m, b).searchAudit)), [false, true, false, true, false, true]);
+eq("ブレイン OFF は3つとも送らない", M.MODES.map((m) => M.behavior(m, false).searchAudit), [false, false, false]);
+eq("送る時は必ず判定している（searchAudit ⇒ brainJudge）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).searchAudit || M.behavior(m, b).brainJudge)).every(Boolean), true);
+
 console.log("\n■ バッジ・帯");
 eq("バッジ 6通り", M.MODES.flatMap((m) => [false, true].map((b) => M.badge(m, b).text)), ["", "脳通", "手動", "手脳", "AIX", "脳"]);
 eq("帯: 通常×なし は出さない", M.banner("normal", false), null);

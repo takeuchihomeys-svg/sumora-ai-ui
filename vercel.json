@@ -65,6 +65,14 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/search-audit-sweep",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/search-audit-weekly",
+      "schedule": "0 0 * * 1"
+    },
+    {
       "path": "/api/cron/scoring-learning",
       "schedule": "10 20 * * 0"
     },

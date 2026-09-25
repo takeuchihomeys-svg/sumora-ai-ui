@@ -27,6 +27,15 @@
     });
   }
 
+  // 2026-09-25 検索の点検: reins-page-script.js の完了の合図に run_id が載っている時（＝ブレインの時）だけ background に中継する。
+  //   レインズは完了の合図を待つ仕組みが無い（今まで中継していなかった）ので、点検の記録だけに使う（background も待ちは解かない）
+  window.addEventListener("message", function (e) {
+    if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-done" || !e.data.runId) return;
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-fill-done", site: "reins", customerId: null, runId: e.data.runId, audit: e.data.audit || null, pageError: e.data.error || null }, function () { void chrome.runtime.lastError; });
+    } catch (err) { /* 拡張の再読み込み等 */ }
+  });
+
   // URLパラメータ検知：?sumora_cid=<ID> でページを開いたとき自動入力をトリガー
   (function () {
     var _cid = new URLSearchParams(window.location.search).get("sumora_cid");

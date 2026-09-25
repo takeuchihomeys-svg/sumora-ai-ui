@@ -785,6 +785,24 @@
     return false;
   }
 
+  // ── 検索の点検（2026-09-25 竹内「0件だった場合ちゃんと検索されていない可能性がある」）──
+  // axlx-batch-customer-done に「ページ数・読んだ行数・送った数・0件と決めた理由・件数表示の生の文字・URL」を載せる。
+  // background は、ブレインの時だけその回の記録に足す。件数表示の場所は確かめていないので、画面の文字から「N件」の形を探して生のまま残す
+  var _itAuditRes = null;
+  function _itAuditResult(extra) {
+    var base = _itAuditRes || { pages: 0, read_rows: 0, sent_count: 0 };
+    var r = { site: "itandi", pages: base.pages, read_rows: base.read_rows, sendable_rows: null, sent_count: base.sent_count, zero_reason: null, url: String(location.href || "").slice(0, 300) };
+    try {
+      var A = self.AxlxSearchAudit;
+      if (A && document.body) {
+        var ct = A.readCountText(String(document.body.innerText || "").slice(0, 30000));
+        r.count_text = ct.text; r.count_number = ct.number;
+      }
+    } catch (_) {}
+    if (r.read_rows === 0) r.zero_reason = "no_rows";
+    return Object.assign(r, extra || {});
+  }
+
   // ── 全ページ自動送信 ─────────────────────────────────────────────────────
   // _manual=true で呼ぶとスタッフモードチェックをスキップ（手動ボタン押下用）
   function autoSendAllPages(_manual) {
@@ -795,9 +813,11 @@
     }
     _autoSendInProgress = true;
     var _totalSentCount = 0; // 全ページ合計送信件数（axlx-batch-customer-done に渡す）
+    _itAuditRes = { pages: 0, read_rows: 0, sent_count: 0 };
     getCustomerFromPopup(function(customerName, customerId, customerConditions) {
       _autoSendOnePage(customerName, customerId, customerConditions, function done(ok, count) {
         if (ok && count) _totalSentCount += count;
+        if (_itAuditRes) _itAuditRes.sent_count = _totalSentCount;
         var clicked = clickNextPage();
         if (!clicked) {
           _autoSendInProgress = false;
@@ -806,7 +826,7 @@
           // リアプロ(bulk-dl.js)と同様に background.js へ完了シグナルを送る
           try {
             chrome.runtime.sendMessage(
-              { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount },
+              { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult() },
               function () { void chrome.runtime.lastError; }
             );
           } catch (_) {}
@@ -824,7 +844,7 @@
               // 次ページに物件がなかった（ページ移動後0件）→ 完了シグナル
               try {
                 chrome.runtime.sendMessage(
-                  { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount },
+                  { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult({ next_page_empty: true }) },
                   function () { void chrome.runtime.lastError; }
                 );
               } catch (_) {}
@@ -842,6 +862,7 @@
     tracked.forEach(function(t) { t.cb.checked = true; checkedKeys.add(t.rowKey); });
     updateBar();
     var targets = tracked.filter(function(t) { return t.cb.checked; });
+    if (_itAuditRes) { _itAuditRes.pages += 1; _itAuditRes.read_rows += targets.length; } // 検索の点検: ページ数・読んだ行数
     if (!targets.length) { onComplete(true); return; }
     var lineBtn = document.getElementById("axlx-itandi-line-btn");
     if (!lineBtn) { onComplete(false); return; }
@@ -887,7 +908,7 @@
       getCustomerFromPopup(function(_n, customerId) {
         try {
           chrome.runtime.sendMessage(
-            { type: "axlx-batch-customer-done", customerId: customerId || null, propertyCount: 0 },
+            { type: "axlx-batch-customer-done", customerId: customerId || null, propertyCount: 0, audit: (function () { _itAuditRes = null; return _itAuditResult({ zero_reason: "no_rows_15s" }); })() },
             function() { void chrome.runtime.lastError; }
           );
         } catch (_) {}

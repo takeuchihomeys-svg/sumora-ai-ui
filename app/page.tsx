@@ -35,6 +35,7 @@ import { compareConversationOrder, sortMsOf } from "./lib/conversation-order";
 import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
+import { effectiveRpUpdateDays } from "./lib/rp-update-days";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -347,6 +348,8 @@ type PropertyCustomerRow = {
   customer_name: string;
   status?: string | null;
   last_property_sent_at?: string | null;
+  /** 物件を確認した日時（更新日の自動計算は送った日と確認した日の新しい方・rp-update-days.ts） */
+  property_viewed_at?: string | null;
   desired_area?: string | null;
   floor_plan?: string | null;
   rent_min?: number | null;
@@ -380,15 +383,8 @@ function parseAreaMin(text: string | null | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-// popup.js の calcUpdateDays と同一ロジック: 最終物件送信日からリアプロ更新日フィルターを算出
-function calcRpUpdateDays(lastSentAt: string | null | undefined): number | null {
-  if (!lastSentAt) return null;
-  const daysSince = Math.floor((Date.now() - new Date(lastSentAt).getTime()) / 86400000);
-  if (daysSince <= 1) return 1;
-  if (daysSince <= 3) return 3;
-  if (daysSince <= 7) return 7;
-  return 14;
-}
+// 2026-09-25 竹内「更新日も拡張ツールと連動」: 旧 calcRpUpdateDays（送った日だけ・時刻の差）は拡張と食い違っていた
+//   → app/lib/rp-update-days.ts の effectiveRpUpdateDays（手で決めた値 → 送った日と確認した日の新しい方・JST の日付）に1本化
 
 // popup.js preloadAdjForm のペット判定と同一ロジック: pet=null時は自由記述フォールバック
 function resolvePetOk(c: PropertyCustomerRow): boolean {
@@ -1277,7 +1273,7 @@ export default function Home() {
       lines:        [] as string[],
       stations:     [] as string[],
       structure_types: parseStructureTypes(c.preferences, c.other_requests),
-      rp_update_days:  c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
+      rp_update_days:  effectiveRpUpdateDays(c),
       is_wide:      isWide,
     };
 
@@ -1358,7 +1354,7 @@ export default function Home() {
               reins_line_names: resolved?.reins_line_names ?? [], detail_ward: resolved?.detail_ward ?? null,
               detail_area: resolved?.detail_area ?? null, unknown_tokens: resolved?.unknown_tokens ?? [],
               structure_types: parseStructureTypes(c.preferences, c.other_requests),
-              rp_update_days: c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
+              rp_update_days: effectiveRpUpdateDays(c),
             },
           },
           status: "pending", created_at: new Date().toISOString(),
@@ -2618,7 +2614,7 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days")
+        .select("id,customer_name,status,last_property_sent_at,property_viewed_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days")
         .in("id", propCustomerIds);
       if (pcData) {
         const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }> = {};
@@ -9984,7 +9980,7 @@ export default function Home() {
                   ))}
                 {propertyCustomers.filter((pc) => !linkSearchQuery.trim() || pc.customer_name.includes(linkSearchQuery.trim())).length === 0 && (
                   <div className="py-8 text-center text-[13px] text-[#8696a0]">
-                    {linkSearchQuery.trim() ? "該当するお客様がいません" : "売上サポにお客様がいません"}
+                    {linkSearchQuery.trim() ? "該当するお客様がいません" : "AIXツールにお客様がいません"}
                   </div>
                 )}
               </div>

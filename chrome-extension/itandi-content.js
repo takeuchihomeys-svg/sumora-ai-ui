@@ -175,6 +175,11 @@
         site: "itandi",
         // 2026-09-18: シグナルに載っている ID（その入力を始めた時の顧客）を最優先
         customerId: e.data.customerId || _pendingFillCustomerId || null,
+        // 2026-09-25 検索の点検（ブレインの時だけ page-script が載せる）: その回の run_id と audit をそのまま中継
+        runId: e.data.runId || null,
+        audit: e.data.audit || null,
+        // ⚠ error ではなく pageError（点検の記録だけに使う）。error で渡すと _notifyFillDone が検索を止める動きに変わる（今まで中継していなかった＝動きは変えない）
+        pageError: e.data.error || null,
       }, function () {
         void chrome.runtime.lastError;
       });

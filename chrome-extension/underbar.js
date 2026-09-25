@@ -506,6 +506,10 @@
         areaMode:     msg.areaMode,
         is_wide:      msg.is_wide,
         auto_send_all: msg.auto_send_all,
+        // 2026-09-25 検索の点検: background が作った run_id・起動の種類・コマンド ID（popup が started を送り page-script に渡す）
+        auditRunId:   msg.auditRunId || null,
+        trigger:      msg.trigger || null,
+        commandId:    msg.commandId || null,
       }, "*");
       sendResponse({ ok: true });
     };

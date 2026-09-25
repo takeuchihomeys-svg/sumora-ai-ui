@@ -14,6 +14,7 @@ import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
+import { summarizeNewArrivals, newArrivalLine, NEW_ARRIVAL_WINDOW_HOURS, type NewArrivalRow, type NewArrivalSummary, type SentBuilding } from "@/app/lib/new-arrivals";
 
 export const dynamic = "force-dynamic";
 // 2026-09-25 反証: 詳細を開いた時の10分の自動まとめは、自動の読み取り（最長 約200秒で新しい物件を始めない）を waitUntil で後ろに回す。
@@ -134,14 +135,16 @@ export async function GET(req: NextRequest) {
 // 2026-09-24 竹内「ここに一覧が出るように、開くと履歴が見れる。並びは LINE の一覧と連動」:
 //   ピックアップのあるお客様に加えて、直近にお客様へ物件を送った（sent_properties・delivery=customer）お客様も並べる。
 //   並びは LINE の一覧と同じ＝会話の updated_at 降順
-type SentLite = { conversation_id: string | null; property_customer_id: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string | null };
+type SentLite = { conversation_id: string | null; property_customer_id: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string | null; property_name?: string | null };
 async function buildList(since: string) {
-  const [pk, sp, roundOf] = await Promise.all([
+  const nowMs = Date.now();
+  const [pk, sp, roundOf, na] = await Promise.all([
     supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at, score, verdict")
       .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
-    supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at")
+    supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at, property_name")
       .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
     readRoundIds({ since }),
+    readNewArrivalCandidates(nowMs),
   ]);
   if (pk.error) return { ok: false, error: pk.error.message };
   type L = {
@@ -151,6 +154,7 @@ async function buildList(since: string) {
   };
   const byKey = new Map<string, L>();
   const convToKey = new Map<string, string>();
+  const sentNamesByKey = new Map<string, SentBuilding[]>();
   // 2026-09-25 竹内「まとめられていない」: 一覧の「🧠 N件」も、短い間に届いた回（リアプロ・itandi）をまとめた1回分で数える
   // 2026-09-25 一覧の「🧠 N件・👑名前」: 一番オススメは DeepSeek の🌟★ ではなく 👑（まとめの best_id → 無ければ判定の点の1位・同点は🌟）
   type BestLite = { id: number; created_at: string; batch_id: string; rank: number; status: string; recommended: number; property_name: string; score: number | null; verdict: string | null };
@@ -208,6 +212,25 @@ async function buildList(since: string) {
     if (s.sent_at && (!c.sent.last_at || s.sent_at > c.sent.last_at)) c.sent.last_at = s.sent_at;
     byKey.set(key, c);
     convToKey.set(s.conversation_id, key);
+    const names = sentNamesByKey.get(key) ?? [];
+    names.push({ property_name: s.property_name ?? null });
+    sentNamesByKey.set(key, names);
+  }
+  // 2026-09-25 竹内「右の一覧の項目を新着物件に。ブレインの基準をクリアした物件があれば LINE 一覧と同じ UI で 1・2 や文字が出る」:
+  //   お客様ごとの新着（通す・未送信・未読・72時間以内・送った建物に当たらない＝new-arrivals.ts）。数・一番新しい時刻・2行目の文
+  const newBy = new Map<string, NewArrivalSummary>();
+  if (na.rows.length > 0) {
+    const rowsByKey = new Map<string, Array<NewArrivalRow>>();
+    for (const r of na.rows) {
+      const key = (r.conversation_id ? convToKey.get(r.conversation_id) : undefined) ?? r.property_customer_id ?? `conv:${r.conversation_id ?? r.batch_id}`;
+      const arr = rowsByKey.get(key) ?? [];
+      arr.push(r);
+      rowsByKey.set(key, arr);
+    }
+    for (const [key, rows] of rowsByKey) {
+      const sum = summarizeNewArrivals(rows, sentNamesByKey.get(key) ?? [], nowMs);
+      if (sum.count > 0) newBy.set(key, sum);
+    }
   }
   const convIds = [...new Set([...byKey.values()].map((c) => c.conversation_id).filter((v): v is string => !!v))];
   type ConvLite = { id: string; customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
@@ -219,15 +242,41 @@ async function buildList(since: string) {
   const customers = [...byKey.values()].map((c) => {
     const cv = c.conversation_id ? convMap.get(c.conversation_id) ?? null : null;
     const last = [c.last_pickup_at, c.sent.last_at].filter((v): v is string => !!v).sort().slice(-1)[0] ?? "";
+    const nw = newBy.get(c.key) ?? null;
     return {
       ...c,
       customer_name: c.customer_name ?? cv?.customer_name ?? null,
       line: cv ? { profile_image_url: cv.profile_image_url, updated_at: cv.updated_at, account: cv.account, status: cv.status, last_sender: cv.last_sender } : null,
       last_at: last,
       order_at: cv?.updated_at ?? last,
+      new_count: nw?.count ?? 0,
+      new_at: nw?.at ?? null,
+      new_line: nw ? newArrivalLine(nw) : null,
     };
-  }).sort((a, z) => (z.order_at ?? "").localeCompare(a.order_at ?? "")).slice(0, 200);
-  return { ok: true, customers };
+  // 並びは今まで通り LINE の順。新着のあるお客様は 200人の枠から落とさない（新着物件のタブは画面で新着の順に並べ直す）
+  }).sort((a, z) => ((z.new_count > 0 ? 1 : 0) - (a.new_count > 0 ? 1 : 0)) || (z.order_at ?? "").localeCompare(a.order_at ?? "")).slice(0, 200)
+    .sort((a, z) => (z.order_at ?? "").localeCompare(a.order_at ?? ""));
+  const newTotal = customers.reduce((n, c) => n + (c.new_count ?? 0), 0);
+  return { ok: true, customers, new_total: newTotal, new_error: na.error };
+}
+
+/**
+ * 新着物件の候補（通す・未送信・未読・画像が残っている・72時間以内）。summary_text は2行目の家賃に使う。
+ * seen_at の列がまだ無い（本番に入る前）・読めない時は空＋理由（一覧は出す＝新着だけ出ない）
+ */
+type NewArrivalDbRow = NewArrivalRow & { property_customer_id: string | null; conversation_id: string | null; batch_id: string };
+async function readNewArrivalCandidates(nowMs: number): Promise<{ rows: NewArrivalDbRow[]; error: string | null }> {
+  try {
+    const since = new Date(nowMs - NEW_ARRIVAL_WINDOW_HOURS * 3600_000).toISOString();
+    const { data, error } = await supabase.from("property_pickups")
+      .select("id, created_at, batch_id, property_customer_id, conversation_id, property_name, summary_text, verdict, status, expired_at, seen_at, score, recommended, rank")
+      .eq("verdict", "pass").eq("status", "pending").is("seen_at", null).is("expired_at", null)
+      .gte("created_at", since).order("created_at", { ascending: false }).limit(2000);
+    if (error) { console.warn("[property-pickups] 新着を読めない:", error.message); return { rows: [], error: error.message }; }
+    return { rows: (data ?? []) as NewArrivalDbRow[], error: null };
+  } catch (e) {
+    return { rows: [], error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────

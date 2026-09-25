@@ -5,6 +5,8 @@ import { supabase } from "@/app/lib/supabase";
 import BottomNav from "@/app/components/BottomNav";
 // 2026-09-24 竹内「ピックアップしたのを一度アプリの売上サポの部分に飛ばして…スタッフは確認してお客さんに送るだけ」
 import PickupReview from "@/app/components/PickupReview";
+// 2026-09-25 竹内「ブレインモードで…検索がちゃんとされていなかったら原因を見つけられるようにする」: 🔍 検索の点検
+import SearchAuditPanel from "@/app/components/SearchAuditPanel";
 
 function SendTaskListButton() {
   const [sending, setSending] = useState(false);
@@ -34,7 +36,7 @@ function SendTaskListButton() {
       <button
         onClick={handleSend}
         disabled={sending}
-        className="flex items-center gap-1 rounded-full bg-[#06c755] px-2.5 py-1 text-[10px] font-bold text-white disabled:opacity-50 active:opacity-70"
+        className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-[#06c755] px-2.5 py-1 text-[10px] font-bold text-white disabled:opacity-50 active:opacity-70"
       >
         {sending ? "送信中..." : "📲 LINE送信"}
       </button>
@@ -104,6 +106,18 @@ const STATUS_META: Record<Status, { chip: string; dot: string }> = {
   property_search: { chip: "bg-blue-50 text-blue-700",  dot: "bg-blue-400" },
   pending:     { chip: "bg-gray-100 text-gray-500",  dot: "bg-gray-300" },
 };
+// 2026-09-25 画面の確かめで見つけた: 本番の property_customers には上の4つ以外の状態（applying＝申込 38人）があり、
+//   「👥 全員」（旧「一覧」タブ）が STATUS_META[c.status].dot で落ちていた（Cannot read properties of undefined）。
+//   知らない状態は落とさず出す（申込の色と名前は customers/page.tsx の STATUS と同じ）
+const OTHER_STATUS_META: Record<string, { label: string; chip: string; dot: string }> = {
+  applying: { label: "申込", chip: "bg-pink-50 text-pink-700", dot: "bg-pink-500" },
+};
+function statusMeta(s: string | null | undefined): { chip: string; dot: string } {
+  return STATUS_META[s as Status] ?? OTHER_STATUS_META[String(s)] ?? { chip: "bg-gray-100 text-gray-500", dot: "bg-gray-300" };
+}
+function statusLabel(s: string | null | undefined): string {
+  return STATUS_LABELS[s as Status] ?? OTHER_STATUS_META[String(s)]?.label ?? String(s ?? "");
+}
 
 const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   customer_name: "",
@@ -177,7 +191,12 @@ export default function ConditionsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   // 2026-09-24 竹内「ピックアップとアナウンスの位置を変えてピックアップを一番左にする（使いやすくするため）」→ 既定もピックアップ
-  const [tab, setTab] = useState<"announce" | "list" | "pickup">("pickup");
+  // 2026-09-25 竹内「右の一覧の項目を新着物件に名前変更」: 右のタブは「新着物件」（PickupReview mode="new"）。
+  //   全顧客の一覧はアナウンスのタブの中の「👥 全員」から開く（announceView）
+  const [tab, setTab] = useState<"announce" | "new" | "pickup">("pickup");
+  // 🔍 検索の点検（全画面で開く）
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [announceView, setAnnounceView] = useState<"today" | "all">("today");
   const [listFilter, setListFilter] = useState<Status | "all">("all");
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
@@ -217,18 +236,26 @@ export default function ConditionsPage() {
   //   ピックアップは別タブに入っていて、一覧の行からは見えなかった。お客様の行に「🧠 物件 N件」を出し、押すとそのお客様の会話風画面を開く
   const [pickupPending, setPickupPending] = useState<Map<string, number>>(new Map());
   const [pickupFocus, setPickupFocus] = useState<string | null>(null);
+  /** 新着物件の合計（タブのバッジ・スタッフ全員で共有の既読を引いた数） */
+  const [newTotal, setNewTotal] = useState(0);
   const loadPickupPending = useCallback(async () => {
     try {
       // 件数だけ要るので軽い一覧（画像・本文を読まない）
       const res = await fetch("/api/property-pickups?view=list&days=30", { cache: "no-store" });
-      const json = await res.json() as { ok: boolean; customers?: Array<{ property_customer_id: string | null; pending: number }> };
+      const json = await res.json() as { ok: boolean; new_total?: number; customers?: Array<{ property_customer_id: string | null; pending: number }> };
       if (!json.ok) return;
       const m = new Map<string, number>();
       for (const c of json.customers ?? []) if (c.property_customer_id && c.pending > 0) m.set(c.property_customer_id, c.pending);
       setPickupPending(m);
+      setNewTotal(Number(json.new_total ?? 0) || 0);
     } catch { /* 表示だけなので失敗は無視 */ }
   }, []);
   useEffect(() => { void loadPickupPending(); }, [loadPickupPending]);
+  // 新着物件のタブの数は、一括検索の結果が届くたびに増える → 60秒ごと（画面が見えている時だけ）に取り直す
+  useEffect(() => {
+    const id = window.setInterval(() => { if (document.visibilityState === "visible") void loadPickupPending(); }, 60_000);
+    return () => window.clearInterval(id);
+  }, [loadPickupPending]);
   const openPickupFor = (e: React.MouseEvent, customerId: string) => {
     e.stopPropagation();
     setPickupFocus(customerId);
@@ -589,11 +616,24 @@ export default function ConditionsPage() {
           paddingBottom: 10,
         }}
       >
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-bold text-slate-800">売上サポ</h1>
-          <span className="text-xs text-slate-400">全{customers.length}件</span>
+        {/* 2026-09-25 画面の確かめ（390px）: 「🔍 検索の点検」を足して見出しが「AIXツ／ール」「検索の／点検」と折り返していた
+            → 折り返さない・スマホでは件数を隠し（「👥 全員 N」にも出る）ボタンは「🔍 点検」に縮める */}
+        <div className="flex min-w-0 items-center gap-2">
+          {/* 2026-09-25 竹内「売上サポの名前は AIXツールに変更」 */}
+          <h1 className="whitespace-nowrap text-lg font-bold text-slate-800">AIXツール</h1>
+          <span className="hidden whitespace-nowrap text-xs text-slate-400 sm:inline">全{customers.length}件</span>
           <SendTaskListButton />
+          <button
+            onClick={() => setAuditOpen(true)}
+            className="shrink-0 whitespace-nowrap rounded-lg bg-[#f0f2f5] px-2 py-1 text-[11px] font-bold text-[#54656f]"
+            title="ブレインモードの検索がちゃんとできていたか（原因ごと・DeepSeek の見立て）"
+            aria-label="検索の点検"
+          >
+            <span className="sm:hidden">🔍 点検</span>
+            <span className="hidden sm:inline">🔍 検索の点検</span>
+          </button>
         </div>
+        {auditOpen && <SearchAuditPanel onClose={() => setAuditOpen(false)} />}
         <button
           onClick={openAdd}
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-bold text-white"
@@ -609,7 +649,7 @@ export default function ConditionsPage() {
         className="flex sticky z-10 bg-white"
         style={{ top: 53, borderBottom: "1px solid #e9edef" }}
       >
-        {(["pickup", "announce", "list"] as const).map((t) => (
+        {(["pickup", "announce", "new"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -625,7 +665,17 @@ export default function ConditionsPage() {
                   </span>
                 )}
               </span>
-            ) : t === "list" ? "一覧" : (
+            ) : t === "new" ? (
+              // 2026-09-25 竹内「右の一覧の項目を新着物件に名前変更」: 合計のバッジ（LINE の一覧と同じ緑）
+              <span className="flex items-center justify-center gap-1.5">
+                新着物件
+                {newTotal > 0 && (
+                  <span className="text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none" style={{ background: "#06C755" }}>
+                    {newTotal}
+                  </span>
+                )}
+              </span>
+            ) : (
               <span className="flex items-center justify-center gap-1.5">
                 ピックアップ
                 {pickupPending.size > 0 && (
@@ -646,7 +696,7 @@ export default function ConditionsPage() {
       </div>
 
       {/* ── 検索バー（アナウンス・一覧。ピックアップはタブの中に LINE と同じ検索がある＝2段にしない） ── */}
-      <div className={`px-4 pt-3 pb-2 bg-white border-b border-[#e9edef] ${tab === "pickup" ? "hidden" : ""}`}>
+      <div className={`px-4 pt-3 pb-2 bg-white border-b border-[#e9edef] ${tab === "pickup" || tab === "new" ? "hidden" : ""}`}>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -868,12 +918,27 @@ export default function ConditionsPage() {
           <PickupReview focusKey={pickupFocus} onChange={() => void loadPickupPending()} />
         </div>
       )}
-      {tab !== "pickup" && (loading ? (
+      {/* ── 新着物件タブ（2026-09-25 竹内「右の一覧の項目を新着物件に」）: ブレインが通した物件があるお客様を新着の順に・チェックして一括検索 ── */}
+      {tab === "new" && (
+        <div className="flex-1 min-h-0 pb-[max(0px,calc(env(safe-area-inset-bottom)_-_27px))] md:min-h-[auto] md:pb-16">
+          <PickupReview mode="new" onChange={() => void loadPickupPending()} />
+        </div>
+      )}
+      {tab === "announce" && (loading ? (
         <p className="text-center text-slate-400 py-16 text-sm">読み込み中...</p>
       ) : (
         <div className="flex-1 pb-28">
+          {/* 2026-09-25 竹内（決定）: 全顧客の一覧はアナウンスのタブの中の「👥 全員」から開く（右のタブは新着物件になった） */}
+          <div className="flex gap-2 px-4 pt-3">
+            {([["today", `📣 今日の対応${actionNeeded.length ? ` ${actionNeeded.length}` : ""}`], ["all", `👥 全員 ${customers.length}`]] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setAnnounceView(v)}
+                className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-bold border transition-all ${announceView === v ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-500 border-slate-200"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           {/* ── アナウンスタブ ── */}
-          {tab === "announce" && (
+          {announceView === "today" && (
             <div className="mt-2">
               {actionNeeded.length === 0 ? (
                 <div className="text-center py-20">
@@ -892,7 +957,7 @@ export default function ConditionsPage() {
                   <div className="bg-white border-y border-slate-100 divide-y divide-slate-50">
                     {announceFiltered.map((c) => {
                       const days = daysSinceSent(c);
-                      const meta = STATUS_META[c.status];
+                      const meta = statusMeta(c.status);
                       return (
                         <button
                           key={c.id}
@@ -907,7 +972,7 @@ export default function ConditionsPage() {
                             <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                               <span className="font-bold text-slate-800 text-sm">{c.customer_name}</span>
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${meta.chip}`}>
-                                {STATUS_LABELS[c.status]}
+                                {statusLabel(c.status)}
                               </span>
                               {linkedIds.has(c.id) && (
                                 <span className="text-[10px] bg-blue-50 text-blue-600 font-bold px-1.5 py-0.5 rounded-full flex-shrink-0">
@@ -943,8 +1008,8 @@ export default function ConditionsPage() {
             </div>
           )}
 
-          {/* ── 一覧タブ ── */}
-          {tab === "list" && (
+          {/* ── 全員（旧「一覧」タブ・2026-09-25 アナウンスの中へ移した） ── */}
+          {announceView === "all" && (
             <div className="mt-2">
               {/* フィルター */}
               <div className="flex gap-2 px-4 pt-3 pb-2.5 overflow-x-auto">
@@ -979,7 +1044,7 @@ export default function ConditionsPage() {
                 <div className="bg-white border-y border-slate-100 divide-y divide-slate-50">
                   {listFiltered.map((c) => {
                     const days = daysSinceSent(c);
-                    const meta = STATUS_META[c.status];
+                    const meta = statusMeta(c.status);
                     const isExpanded = expandedListId === c.id;
                     const rent = formatRent(c);
                     const isLinked = linkedIds.has(c.id);
@@ -1020,7 +1085,7 @@ export default function ConditionsPage() {
                             <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                               <span className="font-bold text-slate-800 text-sm">{c.customer_name}</span>
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${meta.chip}`}>
-                                {STATUS_LABELS[c.status]}
+                                {statusLabel(c.status)}
                               </span>
                               {isLinked && (
                                 <span className="text-[10px] bg-blue-50 text-blue-600 font-bold px-1.5 py-0.5 rounded-full flex-shrink-0">
@@ -1167,10 +1232,10 @@ export default function ConditionsPage() {
           >
             {/* お客様名 + ステータス */}
             <div className="flex items-center gap-2 pb-1">
-              <div className={`w-3 h-3 rounded-full flex-shrink-0 ${STATUS_META[quickTarget.status].dot}`} />
+              <div className={`w-3 h-3 rounded-full flex-shrink-0 ${statusMeta(quickTarget.status).dot}`} />
               <span className="font-bold text-slate-800 text-base">{quickTarget.customer_name}</span>
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_META[quickTarget.status].chip}`}>
-                {STATUS_LABELS[quickTarget.status]}
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusMeta(quickTarget.status).chip}`}>
+                {statusLabel(quickTarget.status)}
               </span>
             </div>
 

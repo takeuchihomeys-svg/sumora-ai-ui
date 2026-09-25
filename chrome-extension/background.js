@@ -11,6 +11,10 @@ import "./search-history.js";
 import "./fill-done-match.js";
 // 2026-09-25 竹内「ブレインだけ別で、ほかはドロップダウン」: 動作モードの読み方・組み合わせの動き・バッジ（self.AxlxModeCore・popup.js と同じ1つ）
 import "./mode-core.js";
+// 2026-09-25 竹内「更新日も拡張ツールと連動」: 一括検索の更新日（手で決めた値 → 送った日と確認した日の新しい方）（self.AxlxRpUpdateDays・app/lib/rp-update-days.ts の写し）
+import "./rp-update-days.js";
+// 2026-09-25 竹内「ブレインモードで…検索がちゃんとされていなかったら原因を見つけられるようにする」: 検索の点検（self.AxlxSearchAudit）
+import "./search-audit.js";
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
@@ -382,7 +386,7 @@ function isStaffModeOn() {
 // 2026-09-25 竹内「ブレインだけ別で、ほかはドロップダウン。ブレインでもスタッフモードや AIX モード、通常モードを行う」:
 //   旧は「aixMode と brainMode が両方 true」の時だけ ON（ブレイン＝AIX連動＋判定）。新は **brainMode 単独で ON**。
 //   旧「ブレイン」の値 {aixMode:true, brainMode:true} は新でも ON（＝ブレイン×AIX）なので、再読み込みしても動きは変わらない。
-//   自動便（11:00/17:00・AIX）の claim は _isAixModeActive がそのまま見るので、ここは判定の有無だけ。
+//   自動便（11:00/17:00・AIX）・AIXツールの一括検索（web_brain）の claim は _pollAndRunBatch が AxlxModeCore.behavior から読むので、ここは判定の有無だけ。
 function isBrainModeOn() {
   return new Promise((resolve) => {
     try {
@@ -1209,12 +1213,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         for (var _bi = 0; _bi < _bulkTargets.length; _bi++) {
           var _bc = _bulkTargets[_bi];
           console.log("[manual-bulk-search] (" + (_bi+1) + "/" + _bulkTargets.length + ") " + _bc.customer_name);
+          // 検索の点検: この1人の記録を始める（ブレインの時だけ）
+          var _bulkAudit = await _auditBegin({
+            site: _bulkSite, customer_id: _bc.id, customer: _bc, trigger: "bulk_manual",
+            is_wide: _bulkIsWide, area_mode: _bc.area_mode || null,
+          });
           try {
             // fill-done ウェイターを autofill 発火「前」に生成（先着シグナルを取りこぼさないため）
             var _bulkFillDone = (_bulkSite === "realnetpro" || _bulkSite === "itandi")
               ? _createFillDoneWaiter(_bulkSite, String(_bc.id), _fillDoneTimeoutMs(_bulkSite))
               : null;
-            var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide);
+            // 2026-09-25 竹内「更新日も拡張ツールと連動」: 一括検索も更新日で絞る（旧は渡しておらず、すべて表示で検索していた）。
+            //   決まりは個別検索（preloadAdjForm）と同じ: 手で決めた値 → 送った日と確認した日の新しい方から 1/3/7/14（初めては絞らない）
+            var _bulkRpDays = self.AxlxRpUpdateDays ? self.AxlxRpUpdateDays.effectiveRpUpdateDays(_bc, Date.now()) : null;
+            console.log("[manual-bulk-search] 更新日=" + (_bulkRpDays ? _bulkRpDays + "日以内" : "指定なし") + " (" + _bc.customer_name + ")");
+            var _bulkConds = await _batchAutofill(_bc, _bulkSite, _bulkIsWide, { rp_update_days: _bulkRpDays }, _bulkAudit);
             // 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
             //   個別検索（popup.js）は search_history を書いていたが、一括検索は1行も書いていなかった。
             //   同じ関数（search-history.js）で記録し、顧客リストの RP/IT/RE グリッドが一括の分も埋まるようにする
@@ -1230,19 +1243,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 _bulkSite === "itandi" ? "itandi" : "リアプロ"
               );
             }
+            // レインズは fill-done で閉じる（_auditOnFillDone）
+            if (_bulkAudit && _bulkSite !== "reins") _auditFinish(_bulkAudit.runId, {});
           } catch (_be) {
+            if (_bulkAudit) _auditFinish(_bulkAudit.runId, { error: _be });
             if (_be && _be.message === "__BATCH_STOPPED__") {
               console.log("[manual-bulk-search] ストップ要求 → 中断");
               break;
             }
             console.error("[manual-bulk-search] 顧客エラー:", _bc.customer_name, _be.message || _be);
             // 例外スキップ時も必ず1件アナウンス（4人検索→4人分アナウンス要件）
+            // 2026-09-25 竹内（検索の点検）: 例外は「0件」ではない（検索できていない）→「⚠ 検索できなかった」に分ける
             if (_bc.customer_name) {
               var _bulkSiteLabel = _bulkSite === "itandi" ? "itandi" : _bulkSite === "reins" ? "レインズ" : "リアプロ";
               fetch(SUMORA_BATCH_API + "/api/notify-group", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: "🔍【物件0件】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索が0件でした", group_key: "pickup_group_id" })
+                body: JSON.stringify({ text: "⚠【検索できなかった】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索ができませんでした（0件とは限りません）", group_key: "pickup_group_id" })
               }).catch(function() {});
             }
           }
@@ -2091,6 +2108,116 @@ async function _getAutomationKeyHeader() {
   }
 }
 
+// ── 検索の点検（2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」）──
+// 1回の検索（お客様×サイト×パス）ごとに run_id を作り、/api/search-audits に started → finished を送る（search-audit.js の tracker）。
+//   ・ブレインの時だけ（AxlxModeCore.behavior の searchAudit）。送信は5秒で切り、失敗しても検索は止めない
+//   ・run_id は axlx-switch-customer で popup.js に渡し、popup が page-script に渡す conditions._audit_run_id に載る
+//     → page-script が fill-done に audit（押せた・押せなかった駅・検索直前のフォームの読み戻し）を載せて返す → content.js が中継 → ここで足す
+//   ・結果（ページ数・読んだ行数・送れる行数・0件の理由・件数表示の生の文字）は bulk-dl.js / itandi-bulk-dl.js の axlx-batch-customer-done で届く
+//   ・一括検索は呼び出し元が _auditFinish を呼ぶ。個別の検索（popup が run_id を作った回）は結果が届いた時／レインズは fill-done の時に閉じる
+var _auditTracker = (self.AxlxSearchAudit && self.AxlxSearchAudit.createTracker({
+  extVersion: (function () { try { return chrome.runtime.getManifest().version; } catch (_) { return null; } })(),
+})) || null;
+// 個別の検索の閉じ忘れ（結果が届かない）を6分で閉じる
+var AUDIT_SINGLE_CLOSE_MS = 6 * 60 * 1000;
+var _auditSingleTimers = new Map();
+
+// 今のモード → { enabled, mode }（mode は brain_normal / brain_staff / brain_aix）
+function _auditState() {
+  return new Promise(function (resolve) {
+    try {
+      var core = self.AxlxModeCore;
+      var keys = (core && core.STORAGE_KEYS) || ["staffMode", "staffModeAt", "aixMode", "brainMode"];
+      chrome.storage.local.get(keys, function (raw) {
+        if (!core || !_auditTracker) { resolve({ enabled: false, mode: null }); return; }
+        var st = core.readState(raw || {}, Date.now());
+        var b = core.behavior(st.mode, st.brain);
+        resolve({ enabled: !!b.searchAudit, mode: self.AxlxSearchAudit.modeLabel(st) });
+      });
+    } catch (_) { resolve({ enabled: false, mode: null }); }
+  });
+}
+
+// 一括検索の1回を始める（ブレインでなければ null＝何も送らない）
+async function _auditBegin(ctx) {
+  try {
+    var st = await _auditState();
+    if (!st.enabled) return null;
+    var run = _auditTracker.begin(Object.assign({}, ctx, { mode: st.mode }));
+    return run ? { runId: run.run_id, trigger: run.trigger, commandId: run.command_id } : null;
+  } catch (e) {
+    console.warn("[search-audit] begin 失敗（検索は続ける）:", e && e.message);
+    return null;
+  }
+}
+
+// その回に「入れようとした条件」を足す（popup を通らない経路＝executeScript の代わり・レインズ）
+function _auditPostIntended(auditRun, site, conds) {
+  if (!auditRun || !self.AxlxSearchAudit) return;
+  var A = self.AxlxSearchAudit;
+  var run = _auditTracker.get(auditRun.runId);
+  A.post({ phase: "started", brain: true, run_id: auditRun.runId, site: A.siteKey(site), mode: run && run.mode, trigger: auditRun.trigger, intended: A.pickIntended(conds) });
+}
+
+function _auditStep(runId, k, d) {
+  try { if (_auditTracker && runId) _auditTracker.step(runId, k, d); } catch (_) {}
+}
+
+function _auditFinish(runId, extra) {
+  try {
+    if (!_auditTracker || !runId) return;
+    var t = _auditSingleTimers.get(runId);
+    if (t) { clearTimeout(t); _auditSingleTimers.delete(runId); }
+    var x = extra || {};
+    if (x.error && x.error.message) x = Object.assign({}, x, { error: x.error.message });
+    if (x.error && String(x.error) === "__BATCH_STOPPED__") x = Object.assign({}, x, { error_kind: "stopped" });
+    _auditTracker.finish(runId, x);
+  } catch (e) { console.warn("[search-audit] finish 失敗:", e && e.message); }
+}
+
+// fill-done に載ってきた audit を足す。知らない run_id（popup の個別の検索が作った回）はここで記録を作る
+async function _auditOnFillDone(msg) {
+  try {
+    if (!_auditTracker || !msg || !msg.runId) return;
+    var run = _auditTracker.get(msg.runId);
+    if (!run) {
+      var st = await _auditState();
+      if (!st.enabled) return;
+      // popup が started を送り済み（post_started:false）
+      run = _auditTracker.begin({ run_id: msg.runId, site: msg.site, customer_id: msg.customerId, trigger: "single", mode: st.mode, post_started: false });
+      var timer = setTimeout(function () { _auditSingleTimers.delete(msg.runId); _auditFinish(msg.runId, { error: null }); }, AUDIT_SINGLE_CLOSE_MS);
+      _auditSingleTimers.set(msg.runId, timer);
+    }
+    var _pageErr = msg.pageError || msg.error || null;
+    _auditTracker.attachFill(msg.runId, { audit: msg.audit || null, error: _pageErr });
+    // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索で失敗した時もここで閉じる
+    if (run.site === "reins" || (run.trigger === "single" && _pageErr)) _auditFinish(msg.runId, {});
+  } catch (e) { console.warn("[search-audit] fill-done の記録に失敗:", e && e.message); }
+}
+
+// bulk-dl.js / itandi-bulk-dl.js の結果を、そのお客様のまだ閉じていない回に足す
+function _auditOnBatchDone(customerId, propertyCount, audit) {
+  try {
+    if (!_auditTracker) return;
+    var site = audit && audit.site ? audit.site : null;
+    var run = _auditTracker.findOpen(customerId != null ? String(customerId) : null, site);
+    if (!run) return;
+    var res = Object.assign({}, audit || {});
+    delete res.site;
+    if (propertyCount != null) res.property_count = propertyCount;
+    _auditTracker.attachResult(run.run_id, res);
+    if (run.trigger === "single") _auditFinish(run.run_id, {});
+  } catch (e) { console.warn("[search-audit] 結果の記録に失敗:", e && e.message); }
+}
+
+// そのお客様のまだ閉じていない回の run_id（_scrapeAndSendRealpro から印を付ける時）
+function _auditOpenRunId(customerId, site) {
+  try {
+    var run = _auditTracker && _auditTracker.findOpen(customerId != null ? String(customerId) : null, site || null);
+    return run ? run.run_id : null;
+  } catch (_) { return null; }
+}
+
 // ── 修正4: 検索完了シグナル（fill-done）待機インフラ ─────────────────────────
 // page-script.js / itandi-page-script.js が検索実行後に postMessage する
 // 'aixlinx-fill-done' を content script が axlx-fill-done として中継してくる。
@@ -2289,7 +2416,10 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     } else {
       console.log("[fill-done] 受信 site=" + (msg.site || "unknown"));
     }
-    _notifyFillDone(msg.site || null, msg.customerId || null, msg.error || null);
+    // 検索の点検: page-script の audit（押せた・押せなかった駅・検索直前のフォームの読み戻し）をその回に足す（ブレインの時だけ）
+    if (msg.runId) _auditOnFillDone(msg);
+    // レインズは待ち（_createFillDoneWaiter）を作らないので解決しない（点検の記録だけ）
+    if (msg.site !== "reins") _notifyFillDone(msg.site || null, msg.customerId || null, msg.error || null);
     sendResponse({ ok: true });
     return true;
   }
@@ -2299,6 +2429,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-batch-customer-done") {
     // _scrapeAndSendRealpro の待機を解除して次顧客へ進む（propertyCount: 0 なら0件確定）
+    // 検索の点検: ページ数・読んだ行数・送れる行数・0件の理由・件数表示の生の文字をその回に足す（待ちを解く前に＝閉じる前に届くように）
+    _auditOnBatchDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null);
     _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null);
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
   }
@@ -2456,9 +2588,19 @@ async function _pollAndRunBatch() {
       return;
     }
     // 修正9: pending ポーリングに10秒タイムアウト / 修正10: 共有シークレットヘッダー
-    // AIXモードのPCだけが AIX 由来（source=aix）の自動検索コマンドも受け取る
-    var _aixOn = await _isAixModeActive();
-    var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending" + (_aixOn ? "?aix=1" : ""), {
+    // 2026-09-25: どの出どころを拾うかは AxlxModeCore.behavior の1か所から読む（claimCommands / claimAix / claimBrainCommands）。
+    //   AIXモードのPCだけが AIX 由来（source=aix・auto_schedule）を受け取る（?aix=1）。
+    //   竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」:
+    //   ブレインが ON の PC（スタッフ以外）だけがウェブの AIXツールの一括検索（source=web_brain）を受け取る（?brain=1）
+    var _modeRaw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"]);
+    var _core = self.AxlxModeCore;
+    var _modeSt = _core ? _core.readState(_modeRaw, Date.now()) : { mode: _modeRaw.aixMode ? "aix" : "normal", brain: !!_modeRaw.brainMode };
+    var _bh = _core ? _core.behavior(_modeSt.mode, _modeSt.brain) : { claimCommands: true, claimAix: !!_modeRaw.aixMode, claimBrainCommands: false };
+    if (!_bh.claimCommands) return;
+    var _qs = [];
+    if (_bh.claimAix) _qs.push("aix=1");
+    if (_bh.claimBrainCommands) _qs.push("brain=1");
+    var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending" + (_qs.length ? "?" + _qs.join("&") : ""), {
       cache: "no-store",
       headers: await _getAutomationKeyHeader(),
       signal: AbortSignal.timeout(10000),
@@ -2628,6 +2770,13 @@ async function _runBatchSearch(command) {
   if (autoSched) {
     console.log("[batch] 自動便 mode=" + autoSched.mode + " 更新日=" + autoSched.rp_update_days + " 並び=" + autoSched.sort + " ページ上限=" + autoSched.max_pages);
   }
+  // 2026-09-25 竹内「更新日も拡張ツールと連動」: payload の rp_update_days は出どころを問わず使う（_buildBatchConditions）。
+  //   AIXツールの一括検索（web_brain）はサーバーが1人ごとに計算して積む（rp-update-days.ts）。並び順・ページ数は自動便だけ
+  var cmdPayload = command.payload || null;
+  var isWebBrain = !!(cmdPayload && cmdPayload.source === "web_brain");
+  if (isWebBrain) {
+    console.log("[batch] AIXツールの一括検索（ブレイン）: 更新日=" + (cmdPayload.rp_update_days || "指定なし") + " 広げて=" + batchIsWide);
+  }
   await _updateBatchCommand(command.id, {
     status: "running",
     total_customers: targets.length,
@@ -2663,6 +2812,7 @@ async function _runBatchSearch(command) {
       // B3修正: both顧客は各パスの0件通知を抑制し、ループ後に合計0件なら1回だけ通知する
       var _isMultiPass = areaModePasses.length > 1;
       var _totalPassCount = 0;
+      var _passFailed = 0; // 2026-09-25: 失敗・5分の待ち切れのパスの数（全部だめなら「0件」ではなく「検索できなかった」と送る）
       for (var k = 0; k < areaModePasses.length; k++) {
         if (k > 0) {
           // 地域→駅の切り替えインターバル（5〜10秒）
@@ -2673,6 +2823,12 @@ async function _runBatchSearch(command) {
         var effectiveCustomer = areaModePasses[k]
           ? Object.assign({}, customer, { area_mode: areaModePasses[k] })
           : customer;
+        // 検索の点検: この1回（お客様×サイト×パス）の記録を始める（ブレインの時だけ・それ以外は null）
+        var _batchAudit = await _auditBegin({
+          site: batchSite, customer_id: effectiveCustomer.id, customer: effectiveCustomer,
+          trigger: isWebBrain ? "web_brain" : "bulk_queue", command_id: command.id,
+          is_wide: batchIsWide, area_mode: effectiveCustomer.area_mode || null, pass: areaModePasses[k] || null,
+        });
         try {
           // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
           // モーダル操作/ページロードで60秒を超えることがあるため リアプロ90秒・itandi245秒（FILL_DONE_TIMEOUT_MS）
@@ -2681,7 +2837,9 @@ async function _runBatchSearch(command) {
             ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
             : null;
           // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
-          var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide, autoSched);
+          var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide, cmdPayload, _batchAudit);
+          // AIXツールの一括検索も検索日を記録する（拡張の手動の一括と同じ・顧客リストの RP/IT/RE のグリッドが埋まる）
+          if (isWebBrain && k === 0) _recordBulkSearch(customer, batchSite, batchIsWide);
           var _passCount = 0;
           if (batchSite === "itandi") {
             // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
@@ -2690,7 +2848,7 @@ async function _runBatchSearch(command) {
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, autoSched),
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, cmdPayload),
               "itandi",
               _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             );
@@ -2701,7 +2859,7 @@ async function _runBatchSearch(command) {
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, autoSched),
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, cmdPayload),
               null,         // siteLabel → "リアプロ" (default)
               _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             );
@@ -2709,7 +2867,12 @@ async function _runBatchSearch(command) {
             await new Promise(function(r) { setTimeout(r, 2000 + Math.floor(Math.random() * 2000)); });
           }
           _totalPassCount += (_passCount || 0);
+          if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeLastOutcome.timedOut) _passFailed++;
+          // レインズは fill-done で閉じる（_auditOnFillDone）。ここで閉じるのはリアプロ・itandi
+          if (_batchAudit && batchSite !== "reins") _auditFinish(_batchAudit.runId, {});
         } catch (e) {
+          _passFailed++;
+          if (_batchAudit) _auditFinish(_batchAudit.runId, { error: e });
           // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
           if (e && e.message === "__BATCH_STOPPED__") {
             console.log("[batch] __BATCH_STOPPED__ 受信 → バッチ中断");
@@ -2723,10 +2886,14 @@ async function _runBatchSearch(command) {
       // B3修正: area_mode='both' で全パス合計0件の場合のみ1回だけ通知（重複送信防止）
       if (_isMultiPass && _totalPassCount === 0 && customer.customer_name) {
         var _bothSiteLabel = batchSite === "itandi" ? "itandi" : "リアプロ";
+        // 2026-09-25: 全パスが失敗・待ち切れなら「0件」ではなく「検索できなかった」（0件とは限らない）
+        var _bothText = _passFailed >= areaModePasses.length
+          ? "⚠【検索できなかった】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が途中で止まりました（0件とは限りません）"
+          : "🔍【物件0件】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が0件でした";
         fetch(SUMORA_BATCH_API + "/api/notify-group", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: "🔍【物件0件】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が0件でした", group_key: "pickup_group_id" })
+          body: JSON.stringify({ text: _bothText, group_key: "pickup_group_id" })
         }).catch(function() {});
       }
     }
@@ -2784,7 +2951,8 @@ function _recordBulkSearch(customer, site, isWide) {
     }, function (e) { console.warn("[manual-bulk-search] 検索日の記録に失敗:", e && e.message); });
 }
 
-async function _batchAutofill(customer, site, isWide, autoSched) {
+async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts: コマンドの payload か手動の一括の { rp_update_days }（_buildBatchConditions）
+  // auditRun: 検索の点検の { runId, trigger, commandId }（ブレインの時だけ・無ければ null）。popup に渡し、popup を通らない経路では conditions に載せる
   var siteUrlPrefixes = {
     reins: "https://system.reins.jp",
     itandi: "https://itandibb.com",
@@ -2807,7 +2975,9 @@ async function _batchAutofill(customer, site, isWide, autoSched) {
     await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
   }
 
-  var conds = _buildBatchConditions(customer, isWide, autoSched);
+  var conds = _buildBatchConditions(customer, isWide, opts);
+  // 検索の点検: page-script が fill-done に audit を載せて返す印（popup を通らない経路でも同じ run に届くように）
+  if (auditRun) conds._audit_run_id = auditRun.runId;
 
   // ── itandi 専用: 路線名・エリア名を itandi-page-script.js が使うキー形式に変換 ──
   // itandi-page-script.js は cond.itandi_lines と cond.ward_names を参照する。
@@ -2864,6 +3034,10 @@ async function _batchAutofill(customer, site, isWide, autoSched) {
         areaMode:     customer.area_mode || null,
         is_wide:      isWide,
         auto_send_all: false,
+        // 検索の点検（ブレインの時だけ）: popup が同じ run_id で started（入れようとした条件）を送り、page-script に渡す
+        auditRunId:   auditRun ? auditRun.runId : null,
+        trigger:      auditRun ? auditRun.trigger : null,
+        commandId:    auditRun ? auditRun.commandId : null,
       }, function(resp) {
         if (chrome.runtime.lastError) {
           console.warn("[batchAutofill] realnetpro axlx-switch-customer error:", chrome.runtime.lastError.message);
@@ -2875,6 +3049,8 @@ async function _batchAutofill(customer, site, isWide, autoSched) {
     if (!batchRpSwitched) {
       // フォールバック: underbar.js / popup.js 未応答 → 解決済み条件で直接 fill
       console.warn("[batchAutofill] realnetpro: axlx-switch-customer 未応答 → executeScript fallback");
+      _auditStep(auditRun && auditRun.runId, "popup_fallback", "switch-customer 未応答 → 直接入力");
+      _auditPostIntended(auditRun, site, conds);
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",
@@ -2920,6 +3096,9 @@ async function _batchAutofill(customer, site, isWide, autoSched) {
         areaMode:      customer.area_mode || null,
         is_wide:       isWide,
         auto_send_all: false,
+        auditRunId:    auditRun ? auditRun.runId : null,
+        trigger:       auditRun ? auditRun.trigger : null,
+        commandId:     auditRun ? auditRun.commandId : null,
       }, function(resp) {
         if (chrome.runtime.lastError) {
           console.warn("[batchAutofill] itandi axlx-switch-customer error:", chrome.runtime.lastError.message);
@@ -2931,6 +3110,8 @@ async function _batchAutofill(customer, site, isWide, autoSched) {
     if (!batchItandiSwitched) {
       // フォールバック: underbar.js / popup.js 未応答 → 解決済み条件で直接 fill
       console.warn("[batchAutofill] itandi: axlx-switch-customer 未応答 → direct fallback");
+      _auditStep(auditRun && auditRun.runId, "popup_fallback", "switch-customer 未応答 → 直接入力");
+      _auditPostIntended(auditRun, site, conds);
       var itandiFbSent = await new Promise(function(resolve) {
         chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds }, function(resp) {
           resolve(!chrome.runtime.lastError && !!(resp && resp.ok));
@@ -2951,6 +3132,7 @@ async function _batchAutofill(customer, site, isWide, autoSched) {
     }
   } else {
     // reins
+    _auditPostIntended(auditRun, site, conds);
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: "MAIN",
@@ -2962,7 +3144,12 @@ async function _batchAutofill(customer, site, isWide, autoSched) {
   return conds;
 }
 
-function _buildBatchConditions(c, isWide, autoSched) {
+// 3つ目の引数 opts はコマンドの payload（または手動の一括検索の { rp_update_days }）。
+//   rp_update_days … 出どころを問わず使う（2026-09-25 竹内「更新日も拡張ツールと連動」・web_brain／手動の一括／自動便）
+//   sort / max_pages … 自動便（source="auto_schedule"）だけ（手動の一括検索は今までどおり）
+function _buildBatchConditions(c, isWide, opts) {
+  var autoSched = (opts && opts.source === "auto_schedule") ? opts : null;
+  var _rpDays = opts && opts.rp_update_days != null ? (Number(opts.rp_update_days) || null) : null;
   // desired_area (文字列) → areas (配列) 変換
   var areaArr = [];
   if (c.areas && c.areas.length) {
@@ -2985,7 +3172,7 @@ function _buildBatchConditions(c, isWide, autoSched) {
     city: c.city || null,
     // 2026-09-19 竹内: 自動便だけ更新日・並び順・ページ数を指定する（手動の一括検索は null＝今までどおり）
     //   更新日は page-script.js が select[name="update_date"] に入れる（個別検索と同じ欄）
-    rp_update_days: autoSched ? (autoSched.rp_update_days || null) : null,
+    rp_update_days: _rpDays,
     sort_order: autoSched ? (autoSched.sort || null) : null,
     max_pages: autoSched ? (autoSched.max_pages || null) : null
   };
@@ -3312,6 +3499,9 @@ async function _scrapeAndCompareForCustomer(customer) {
          mergedCityCodes.length > 0 || !!mergedDetailWard); // null/auto/'both'は両方チェック
   if (hasAreaInput && !hasAreaResolved) {
     var utList = (mergedConditions.unknown_tokens || []).join(", ");
+    // 検索の点検: 場所が作れず検索をやめた回も記録する（AREA_UNRESOLVED の材料）
+    var _naAudit = await _auditBegin({ site: "realnetpro", customer_id: customerId, customer: customer.conditions ? null : customer, trigger: "scrape_compare", is_wide: isWide, area_mode: _am || null, intended: mergedConditions });
+    if (_naAudit) _auditFinish(_naAudit.runId, { error: "エリア条件を解決できませんでした（条件なし全件検索を防ぐため中止）", error_kind: "no_area" });
     throw new Error(
       "エリア条件を解決できませんでした（条件なし全件検索を防ぐため中止）。" +
       "desired_area=\"" + (baseConditions.desired_area || "") + "\"" +
@@ -3321,9 +3511,21 @@ async function _scrapeAndCompareForCustomer(customer) {
 
   // Phase 3〜6: fill-done 待機 → スクレイプ → AI比較+LINE送信
   // 修正4: 固定8秒待ちを廃止。ウェイターは autofill 発火「前」に作成する
+  // 検索の点検（ブレインの時だけ）: popup を通らない経路なので、入れようとした条件はここで送り、run_id を conditions に載せる
+  var _scAudit = await _auditBegin({
+    site: "realnetpro", customer_id: customerId, customer: customer.conditions ? null : customer, trigger: "scrape_compare",
+    is_wide: isWide, area_mode: mergedConditions.area_mode || null,
+  });
+  if (_scAudit) { mergedConditions._audit_run_id = _scAudit.runId; _auditPostIntended(_scAudit, "realnetpro", mergedConditions); }
   var fillDonePromise = _createFillDoneWaiter("realnetpro", customerId, 90000);
-  await _webappAutofill("realnetpro", mergedConditions);
-  await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
+  try {
+    await _webappAutofill("realnetpro", mergedConditions);
+    await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
+    if (_scAudit) _auditFinish(_scAudit.runId, {});
+  } catch (e) {
+    if (_scAudit) _auditFinish(_scAudit.runId, { error: e });
+    throw e;
+  }
 }
 
 // ── リアプロの fill-done 待機 → bulk-dl.js 全ページ送信完了待機 ──
@@ -3331,6 +3533,8 @@ async function _scrapeAndCompareForCustomer(customer) {
 // background.js はその完了を待ってから次顧客へ移る（ページ競合を防ぐ）。
 // suppressZeroNotify=true のとき 0件 LINE通知をスキップし、呼び出し元が集計して1回だけ通知する
 // （area_mode='both' の2パス重複通知防止用）
+// 2026-09-25: 直前の1回が「5分の待ち切れ」だったか（both の集計で「0件」と「検索できなかった」を分けるため）
+var _scrapeLastOutcome = { timedOut: false };
 async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions, siteLabel, suppressZeroNotify) {
   var _site = siteLabel || "リアプロ";
   // fill-done を待つ（検索実行完了シグナル）
@@ -3354,15 +3558,20 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     throw new Error("__BATCH_STOPPED__");
   }
   var _propCount = 0;
+  _scrapeLastOutcome = { timedOut: false };
   if (batchDone && batchDone.timedOut) {
     console.warn("[scrapeAndCompare] 全ページ送信完了シグナルが5分以内に届きませんでした（次顧客へ続行） customer=" + customerId);
-    // タイムアウト = 検索結果0件の可能性が高い → 0件アナウンスとして送信（4人検索→4人分アナウンス要件）
+    // 2026-09-25 竹内（検索の点検）: 5分の待ち切れは「0件」と限らない（読み取り・送信が途中で止まった）→ LINE では「⚠ 検索できなかった」に分ける。
+    //   旧は「タイムアウト = 0件の可能性が高い」として「🔍【物件0件】」を送っていた（本当は検索できていない回も0件に見えた）
     // suppressZeroNotify=true の場合は呼び出し元が集計後に1回だけ通知するためここではスキップ
+    _scrapeLastOutcome = { timedOut: true };
+    var _toRun = _auditOpenRunId(customerId, siteLabel === "itandi" ? "itandi" : "realpro");
+    if (_toRun) { _auditTracker.attachResult(_toRun, { batch_timed_out: true }); _auditStep(_toRun, "batch_timeout", "5分無進捗"); }
     if (!suppressZeroNotify && customerName) {
       fetch(SUMORA_BATCH_API + "/api/notify-group", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした", group_key: "pickup_group_id" })
+        body: JSON.stringify({ text: "⚠【検索できなかった】" + customerName + "さんの" + _site + "検索が途中で止まりました（結果を読み終わる合図が5分届かず・0件とは限りません）", group_key: "pickup_group_id" })
       }).catch(function() {});
     }
     _propCount = 0;

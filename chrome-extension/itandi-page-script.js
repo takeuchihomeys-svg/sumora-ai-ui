@@ -72,6 +72,59 @@
     return true;
   }
 
+  // ── 検索の点検（2026-09-25 竹内「検索がちゃんとされていなかったら原因を見つけられるようにする」）──
+  // popup が conditions._audit_run_id を載せた時（＝ブレインの時）だけ、押せなかった路線・駅（最後に試した路線・ラベル数・見本）・
+  // 部品・リセットの失敗と、検索ボタンを押す直前のフォームの読み戻し（このファイルが値を入れている name だけ）を fill-done の audit に載せる。
+  // 駅は「路線ごとに全駅名を試す」ので、1路線で見つからないのは普通 → 最後まで1度も押せなかった駅だけを「押せなかった」にする
+  var _itAudit = null;
+  var _itRunId = null;
+  var _itDiag = {}; // 正規化した駅名 → 最後に見つからなかった時の { line, label_count, sample }
+  function _itAuditReset(runId) {
+    _itRunId = runId || null;
+    _itDiag = {};
+    _itAudit = _itRunId ? { v: 1, site: "itandi", search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [] } : null;
+  }
+  function _itStep(k, d) {
+    if (!_itAudit) return;
+    _itAudit.steps.push({ at: Date.now(), k: String(k).slice(0, 30), d: d == null ? null : String(d).slice(0, 120) });
+    if (_itAudit.steps.length > 20) _itAudit.steps.shift();
+  }
+  function _itReadForm() {
+    var f = {};
+    try {
+      var v = function (name) { var el = document.querySelector('input[name="' + name + '"]'); return el ? el.value : undefined; };
+      var r = v("rent:lteq"); if (r !== undefined) f.rent_max = r;
+      var rm = v("rent:gteq"); if (rm !== undefined) f.rent_min = rm;
+      var w = v("station_walk_minutes:lteq"); if (w !== undefined) f.walk = w;
+      var a = v("building_age:lteq"); if (a !== undefined) f.age = a;
+      f.layouts = [].slice.call(document.querySelectorAll("input[name='room_layout:in']:checked")).map(function (x) { return String(x.id || x.value || ""); }).slice(0, 20);
+    } catch (e) { f.read_error = String((e && e.message) || e).slice(0, 100); }
+    return f;
+  }
+  function _itPack() {
+    if (!_itAudit) return null;
+    try {
+      var a = _itAudit;
+      if (JSON.stringify(a).length > 8000) {
+        a = JSON.parse(JSON.stringify(a));
+        ["stations_missing", "lines_missing", "click_fails"].forEach(function (k) { a[k] = (a[k] || []).slice(0, 6).map(function (m) { if (m && m.sample) m.sample = m.sample.slice(0, 3); return m; }); });
+        a.stations_ok = (a.stations_ok || []).slice(0, 20);
+        a.steps = (a.steps || []).slice(-8);
+        a.truncated = true;
+      }
+      return a;
+    } catch (e) { return { v: 1, site: "itandi", pack_error: true }; }
+  }
+  function _itLabelSample(root, n) {
+    try {
+      return [].slice.call((root || document).querySelectorAll("label")).filter(function (l) { return l.querySelector("input[type='checkbox']"); })
+        .map(function (l) { return l.textContent.replace(/\s+/g, "").slice(0, 20); }).slice(0, n || 6);
+    } catch (e) { return []; }
+  }
+  function _itLabelCount(root) {
+    try { return [].slice.call((root || document).querySelectorAll("label")).filter(function (l) { return l.querySelector("input[type='checkbox']"); }).length; } catch (e) { return null; }
+  }
+
   // buttonのみ。完全一致 → 部分一致フォールバック
   function clickBtn(text) {
     var n = norm(text);
@@ -419,6 +472,7 @@
       if (clickNav("近畿")) { setTimeout(pollOsaka, 100); return; }
       if (++_kinkiPolls >= 25) {
         console.warn("[AX] selectItandiLines: 近畿タブ5s未発見 → 中断");
+        if (_itAudit) _itAudit.click_fails.push({ what: "line_modal", text: "近畿" });
         _abort(); return;
       }
       setTimeout(pollKinki, 200);
@@ -429,6 +483,7 @@
         if (clickNav("大阪府")) { setTimeout(pollLineList, 100); return; }
         if (++_p >= 25) {
           console.warn("[AX] selectItandiLines: 大阪府タブ5s未発見 → 中断");
+          if (_itAudit) _itAudit.click_fails.push({ what: "line_modal", text: "大阪府" });
           _abort(); return;
         }
         setTimeout(_poll, 200);
@@ -453,6 +508,7 @@
         }
         if (++_p >= 25) {
           console.warn("[AX] selectItandiLines: 路線リスト5s未描画 → 中断");
+          if (_itAudit) _itAudit.click_fails.push({ what: "line_modal", text: "路線リスト" });
           _abort(); return;
         }
         setTimeout(_poll, 200);
@@ -548,6 +604,15 @@
           var _missing = selectAllStations ? [] : stNames.filter(function(s) { return !_selectedSt.has(norm(s)); });
           if (selectAllStations) console.log("[AX] 電車1本: 沿線の駅を計" + _allSelectedCount + "駅選択");
           if (_missing.length) console.log("[AX] 選択できなかった駅: " + _missing.join(", "));
+          // 検索の点検: 押せた駅・最後まで押せなかった駅（最後に試した路線・ラベル数・見本）
+          if (_itAudit) {
+            _itAudit.stations_ok = stNames.filter(function (s) { return _selectedSt.has(norm(s)); }).slice(0, 60);
+            _missing.slice(0, 20).forEach(function (s) {
+              var d = _itDiag[norm(s)] || {};
+              _itAudit.stations_missing.push({ name: s, line: d.line || null, label_count: d.label_count != null ? d.label_count : null, sample: d.sample || [] });
+            });
+            _itStep("lines_done", "路線" + lineNames.length + "・駅 " + _itAudit.stations_ok.length + "/" + stNames.length);
+          }
           setTimeout(function () {
             clickBtn("確定");
             setTimeout(onDone, 1500);
@@ -556,6 +621,7 @@
         }
         var clicked = clickLabel(lineNames[lineIdx], dlg);
         if (clicked) anyLineClicked = true;
+        else if (_itAudit) _itAudit.lines_missing.push({ name: lineNames[lineIdx], label_count: _itLabelCount(dlg), sample: _itLabelSample(dlg, 6) });
         lineIdx++;
 
         if (selectAllStations) {
@@ -605,6 +671,7 @@
                 var _diagDlg = document.querySelector('[role="dialog"]') || document;
                 var _diagLbls = [].slice.call(_diagDlg.querySelectorAll("label")).filter(function(l) { return l.querySelector("input[type='checkbox']"); });
                 console.log("[AX] 駅未発見: " + sn + " | route=" + _lineKey + " | label数=" + _diagLbls.length + " | サンプル:", _diagLbls.slice(0,6).map(function(l){return '"'+l.textContent.replace(/\s+/g,'').slice(0,20)+'"';}).join(', '));
+                _itDiag[norm(sn)] = { line: _lineKey, label_count: _diagLbls.length, sample: _diagLbls.slice(0, 6).map(function (l) { return l.textContent.replace(/\s+/g, "").slice(0, 20); }) };
               }
             }
             // 実際に駅を押した時だけ 300〜800ms ランダム待機（人間らしい操作）。
@@ -862,10 +929,15 @@
     // 2026-09-14 竹内「時間かかっても大丈夫なのでタイムアウトが原因なら時間をのばす」: 150秒→240秒（駅の多い広げて検索・電車1本の安全幅）
     // 2026-09-18 竹内（一括検索の混線）: この入力を始めた時の顧客 ID を fill-done にそのまま載せて返す
     var _fillCid = _pendingFillCid;
+    // 検索の点検: popup が載せた run_id（ブレインの時だけ）
+    _itAuditReset(cond && cond._audit_run_id);
+    var _myRunId = _itRunId;
+    _itStep("fill_start", cond && cond.area_mode);
     var _watchdog = setTimeout(function () {
       console.warn("[AX] watchdog: 240s timeout — fill-done強制送信");
       var wmsg = { from: "aixlinx-fill-done", error: "watchdog-timeout" };
       if (_fillCid) wmsg.customerId = _fillCid;
+      if (_myRunId && _myRunId === _itRunId) { wmsg.runId = _myRunId; _itStep("watchdog", "240秒"); wmsg.audit = _itPack(); }
       window.postMessage(wmsg, "*");
     }, 240000);
     function _safeDone(errMsg) {
@@ -873,6 +945,7 @@
       var msg = { from: "aixlinx-fill-done" };
       if (_fillCid) msg.customerId = _fillCid;
       if (errMsg) msg.error = errMsg;
+      if (_myRunId && _myRunId === _itRunId) { msg.runId = _myRunId; if (errMsg) _itStep("done_error", errMsg); msg.audit = _itPack(); }
       window.postMessage(msg, "*");
     }
 
@@ -901,6 +974,7 @@
       // リセットボタン未発見時は前回検索の区チップが残留したまま追加される。
       // 発見できない場合を必ず可視化し、残留チップ（削除×ボタン付きタグ）の個別削除を試みる
       console.warn("[AX] ⚠️ 条件リセットボタン未発見: 前回の所在地チップが残留している可能性があります");
+      if (_itAudit) _itAudit.reset_fail = "条件リセットのボタンが見つからない（前の所在地が残るおそれ）";
       var _chipCloseBtns = [].slice.call(document.querySelectorAll("button, [role='button']")).filter(function(b) {
         var t = (b.textContent || "").trim();
         var aria = b.getAttribute && (b.getAttribute("aria-label") || "");
@@ -974,6 +1048,7 @@
     var wardNames = cond.ward_names && cond.ward_names.length ? cond.ward_names : (cond.ward_name ? [cond.ward_name] : []);
     var hasArea  = wardNames.length > 0;
     var hasLines = !!(cond.itandi_lines && cond.itandi_lines.length);
+    if (_itAudit) { _itAudit.area_path = hasArea ? "area" : hasLines ? "station" : "none"; _itStep("location", _itAudit.area_path); }
 
     setTimeout(function () {
 
@@ -988,7 +1063,13 @@
             clearInterval(_afterModalPoll);
             fillRemainingFields(cond);
             setTimeout(function () {
-              clickBtn("検索");
+              // 検索の点検: 押す直前のフォームを読み戻す・検索ボタンが押せたか
+              if (_itAudit) _itAudit.form = _itReadForm();
+              var _searched = clickBtn("検索");
+              if (_itAudit) {
+                _itAudit.search_clicked = !!_searched;
+                if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });
+              }
               setTimeout(function () {
                 _safeDone();
               }, 500);

@@ -4,6 +4,77 @@
 
 ---
 
+## 2026-09-25 v2.5.24／v2.5.25 の YUMA での通し確認（拡張のコードは変えていない・版はそのまま 2.5.25）
+本番DB＋ローカルのサーバーで、テスト用の物件のお客様を作って YUMA に紐付けて確かめた（終わって全部消した・YUMA の紐付けも外した）。
+- **一括検索（web_brain）**: trigger(brain:true) で1人1コマンド・?brain=1 の無い pending には出ない・同時2回の pending で拾うのは1つ（5回くり返して全部1つ）・payload.rp_update_days＝effectiveRpUpdateDays（3）・二度押しは already=1・レインズ2人は 400・update で cancelled が書ける。
+  ⚠ 試す時の注意: **本番のサーバー（まだ push 前）の /api/automation/pending は web_brain を知らない**＝本番DBに web_brain の pending を置くと、動いている拡張（どのモードでも）が拾いうる。push して新しい pending（?brain=1 の時だけ渡す）が出れば、古い拡張（brain=1 を付けない）には渡らない。今回の確認は、積んですぐ自分で拾う（見えていた時間 約0.9秒）・同時の確認は存在しないお客様の ID（拾われても対象0人で done になるだけ・LINE は飛ばない）で行った。
+- **新着物件**: pass 2件＋保留1件 → new_count=2・「🆕 新着2件・〇〇 7.2万」・一番上・タブの合計 +2 → /seen で2件既読（2回目 0件・認証なし 401）→ 合計が元の 33 に戻る。本物のお客様の新着は減っていない。
+- **検索の点検**: 駅（東三国・架空駅）＝bad・station_missing:itandi:JR京都線:東三国／賃料の上限2万の本当の0件＝warn ZERO_CONFIRMED／リセット失敗＝warn・見立てなし／started だけ→sweep で STALLED／ブレイン OFF は行なし・名前と電話は写しに残らない・2回目の同じ原因は reused（DeepSeek を呼ばない）・llm_usage_logs は deepseek-flash だけ（6回・1回 約1.2〜1.9秒）。
+- **直した物**:
+  1. 未ログインの失敗（「リアプロのセッションが見つかりません。リアプロにログインしてください。」）が「画面の部品が見つからない」（ui_not_found）に、「リアプロが未ログインです…」が「検索中の失敗」（exception）に落ちていた → `classifyError` に `not_logged_in`（札 error:realpro:not_logged_in・見出し「サイトにログインしていなかった」）。「ログインしているか確認してください」はヒントなので入れない。
+  2. 見立ての材料: 読み戻しに欄が無い（画面に入力欄が無かった＝読めなかった）のに「入った=なし」と書いていた → DeepSeek が「徒歩が入っていない」と読んだ → 「（読み戻しなし）」。お客様の賃料の上限を材料に足し、前置きに「件数表示0で条件どおりなら条件が厳しいを先に疑う」を1行（search-audit-v2）。v1 では賃料2万の0件を「駅と地域のずれ」と読んでいた → v2 で「賃料2万が厳しい・本当の0件」（is_genuine_zero=true）。
+  3. 原因ごとの 💡 が、同じ回の別の原因（途中で止まった）の見立てを出していた → その原因が一番重かった回の見立てだけを出す（listCauses）。
+  4. 「👥 全員」が本番で落ちていた（状態 applying＝申込 38人が STATUS_META に無く `.dot` で TypeError）→ 知らない状態でも出す（申込はピンク）。旧「一覧」タブからあった不具合。
+  5. 390px: 見出しが「AIXツ／ール」「検索の／点検」と折り返し → 折り返さない・スマホは件数を隠して「🔍 点検」。一括検索の下のバーの「解／除」「ピンポイ／ント」も折り返さない（人数の文は「🧠 N人選択中」）。下のナビは絵だけなので名前（AIXツール など）を aria-label に。
+
+## 2026-09-25 v2.5.25 検索の点検（ブレインモードの検索が「ちゃんとできていたか」を1回ずつ記録・原因ごとに数える・DeepSeek の見立て）
+竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする。0件だった場合ちゃんと検索されていない可能性があるし、お客さんの条件とずれた検索をしていた可能性がある。ブレインモードに拡張ツール連携していた時。DeepSeek の API で行う。そうすればずっと拡張ツール側も成長していく」→「これでお願い」
+- **いつ記録するか**: ブレインの時だけ（`mode-core.js` behavior の **searchAudit = brain**・スタッフ×ブレインの手の検索も）。サーバーも `brain!==true` なら何もしない。送信は5秒で切り、失敗しても検索は止めない
+- **流れ（1回＝お客様×サイト×パス・run_id）**
+  1. background（`_runBatchSearch`＝bulk_queue／web_brain・手動の一括＝bulk_manual・`_scrapeAndCompareForCustomer`＝scrape_compare）が `_auditBegin` で run_id を作り started（お客様の条件の写し・名前と電話は入れない）
+  2. `_batchAutofill(…, auditRun)` が axlx-switch-customer に **auditRunId・trigger・commandId**（underbar.js が popup へ中継）
+  3. popup.js `_auditTag(site, customer, conditions)`（3サイトの自動入力を page-script に渡す直前）: started（入れようとした条件）を送り **conditions._audit_run_id** を載せる。個別の検索は run_id をここで作る（trigger=single）
+  4. page-script.js / itandi-page-script.js / reins-page-script.js: 押せた駅・**押せなかった駅（最後に試した路線・ラベル数・見本）**・選べなかった路線・押せなかった部品・リセットの失敗・条件を外した検索と、**検索ボタンを押す直前のフォームの読み戻し**（リアプロ: rental_cost1/2・update_date・required_time・structured_date・room_layout_id[]・station_id[]・route_id[]・city_code[]・town_code[]／itandi: rent:lteq/gteq・station_walk_minutes:lteq・building_age:lteq・room_layout:in／レインズ: 番号の欄 75/76・47/54/61・48/55/62・30/36/42）を fill-done の **runId・audit** に（8KB まで）
+     - itandi は路線ごとに全駅名を試すので「1路線で見つからない」は普通 → **最後まで1度も押せなかった駅だけ**を押せなかったにする。リアプロもポーリングで後から押せた駅は消す
+  5. content.js / itandi-content.js / **reins-content.js（新しく中継・run_id がある時だけ）** が runId・audit・**pageError** を中継
+  6. bulk-dl.js / itandi-bulk-dl.js: axlx-batch-customer-done の**全部**に audit（ページ数・読んだ行数・送れる行数・送った数・0件の理由 no_rows / no_rows_25s / no_rows_15s・件数表示の生の文字・URL）。件数表示の場所は確かめていないので `AxlxSearchAudit.readCountText`（画面の文字から「N件」「該当する物件はありません」を探す）で生の文字を残す
+  7. background が finished（一括は呼び出し元が `_auditFinish`・個別は結果が届いた時／6分・レインズは fill-done で閉じる）
+- **サーバー**: `POST/GET/PATCH /api/search-audits`（`app/lib/search-audit-server.ts`）→ 決定論の札 `app/lib/search-audit-check.ts`（純関数・回帰テスト80件）→ bad か warn の0件だけ応答の後（waitUntil）で DeepSeek `app/lib/search-audit-diagnose.ts`（deepseek-flash・推論なし・温度0・max 400・20秒・1回だけ読み直し・action=search_audit・NO_CLAUDE_FALLBACK_ACTIONS）。**同じ原因の鍵に7日以内の見立てがあれば呼ばずに写す**
+  - 札: STATION_MISSING・ROUTE_MISSING・AREA_UNRESOLVED・CONDITION_MISREAD・RENT_MISMATCH・FLOOR_PLAN_DROPPED・UPDATE_DAYS（任務 A の effectiveRpUpdateDays）・LOCATION_MODE・RESET_FAILED・UI_NOT_FOUND・ZERO_UNCONFIRMED（bad）・ZERO_CONFIRMED（warn）・SENT_LT_READ・ERROR_*・STALLED。原因の鍵の形 `station_missing:itandi:JR京都線:東三国`
+  - 読み戻しが無い欄（古い版・select が無い）は比べない＝誤った札を付けない
+  - cron: `/api/cron/search-audit-sweep`（15分ごと・started から20分で abandoned＋STALLED・見立ての残りを1回20件）／`/api/cron/search-audit-weekly`（月曜 JST 9:00・原因ごとの7日の数を付け直し・上位5件のまとめを DeepSeek で1回・cron_run_logs に残す・LINE には送らない）
+  - 表: `search_audits`（run_id UNIQUE）・`search_audit_causes`（cause_key PK・状態 open/fixed/ignored・fixed_in_version・fixed_at）。migrate-schema と本番に反映済み（scripts/apply-search-audits.ts）
+- **画面**: AIXツールの見出しの「🔍 検索の点検」（`SearchAuditPanel.tsx`）: 原因ごと（7日／30日・例の回・DeepSeek の見立てと直し方の案・未対応／直した＋版／無視・**直した後に直した版以上で同じ原因が出たら「再発」**）と回ごと。お客様の回の見出しに「🔍 リアプロ: この回の検索: 駅 3/4・東三国が入っていない」（`pickAuditForRound`）
+- **LINE の文を分けた**: 5分の待ち切れ・手動の一括の例外は「🔍【物件0件】」ではなく **「⚠【検索できなかった】…（0件とは限りません）」**。area_mode=both の集計も、全パスが失敗・待ち切れなら「検索できなかった」
+- **報告**: `npx tsx --env-file=.env.local scripts/search-audit-report.ts --days=7`（原因ごとの Markdown・読むだけ）
+- **費用**: 見立て1回 ≒ 入力1.5千・出力250トークン・2〜3秒（本番の確かめ: 2,116ms・入力1,536・出力242）。呼ぶのは重い回・0件の回だけ＋同じ原因は7日に1回
+- ⚠ **竹内さんに確認（直していない既存の穴）**: content.js / itandi-content.js は page-script の fill-done の **error を background に中継していなかった**（background の `_scrapeAndSendRealpro` は error なら検索を止める作りなのに届かない＝watchdog や駅モーダルの失敗の後も前の画面を読みに行く可能性）。動きを変えないため点検には `pageError` で渡しただけ。error を中継するかは判断待ち（中継すると「duplicate-call-ignored」でも止まるようになるので、合わせて見直しが要る）
+- テスト: `tests/chrome-extension/search-audit.test.js`（65件・名前と電話を送らない・5秒で切る・8KB・finished は1通・読み込みの配線・全 bulk の完了に audit）／`app/lib/__tests__/search-audit-check.test.ts`（80件・本番の条件の実物）／mode-core に searchAudit の表
+- **反証レビュー（2026-09-25・v2.5.24／v2.5.25 の両方・拡張のファイルは変えていない＝版はそのまま）**で直したこと:
+  1. `/api/search-audits` の **PATCH（原因の状態）に認証が無かった**（CORS * ＝誰でも「直した・無視」に変えられた）→ `requireInternalAuth`・`SearchAuditPanel.tsx` が内部認証のヘッダーを付ける
+  2. `recordFinished`: 同じ回の finished が2通同時に来た時／見回りが先に abandoned にした時に、条件付き UPDATE が0行でも原因の数を足していた → 0行なら数えない・見立ても頼まない（`.select()` で行数を見る）
+  3. DeepSeek の読み直しは「答えが崩れた」時だけ（`retryIf: 経過 < 18秒`）。20秒の待ち切れは同じ原因なので呼び直さない（週のまとめも 28秒で同じ）
+  4. `/api/automation/trigger` の force なしの再利用が、**8月の scrape_and_compare（running のまま6件）を「今動いている物」として返していた**＝/automation の開始ボタンが何も積まない → 一括検索（batch_property_search）・直近3時間だけに絞った
+  - 確かめて問題なかった物: ブレイン OFF・🧠×スタッフは brain=1 を付けない（旧版の PC も web_brain を拾わない）／1人1コマンド・同じお客様×サイトの未完了は積まない／自動便はブレインの PC で cancelled（CHECK と update の許可リストに cancelled あり・本番 0件は拡張の再読み込み前だから）／更新日は拡張・ウェブ・サーバーで同じ（2,178通り一致）／新着は pass・pending・未読・72時間・送った建物以外だけ／既読は pcid か会話 ID でそのお客様の行だけ／点検に名前・電話の欄は入らない（拡張の写す欄＋サーバーで欄を落とす）／「⚠【検索できなかった】」は売上番長グループ宛てだけ（お客様に届く文は変わらない）／お客様に届く文に「AIXツール」「売上サポ」は無い
+
+---
+
+## 2026-09-25 v2.5.24 AIXツール（旧 売上サポ）— ウェブのチェック → 一括検索はブレインの PC だけ・更新日を拡張と連動・右のタブは「新着物件」
+竹内「チェックボックスを付ける。拡張ツールのように、下にピンポイントか広げて検索、そしてリアプロか itandi で選択。チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」「売上サポの名前は AIXツールに変更」「更新日も拡張ツールと連動」「右の一覧の項目を新着物件に名前変更。ブレインの基準をクリアした物件（一括検索や自動検索等でブレインが仕分ける）があれば LINE 一覧と同じ UI で 1・2 や文字が出る。トーク一覧も新着物件があった順に」
+- **決定（竹内）**: ①**自動検索（11:00／17:00 の自動便）はまだ行わない＝ブレインの PC では見送りのまま**（質が固まったら入れる）→ 新着物件は手動の一括・個別の検索の分だけ ②全顧客の一覧はアナウンスのタブの中の「👥 全員」から開く。こちらで決めた事: 🧠×スタッフの PC はウェブの一括を拾わない／既読はスタッフ全員で共有／下のナビの「申込一覧」も「AIXツール」に
+- **一括検索の流れ**: AIXツール（/conditions）の「新着物件」タブで行にチェック → 下の「🧠 一括検索・N人選択中」「🎯 ピンポイント／🔎 広げて」「🏠 リアプロ／📋 itandi／🔍 レインズ（条件を入れるだけ・1人ずつ）」
+  → `/api/automation/trigger` に `brain:true` → **1人1コマンド**（payload `{source:"web_brain", is_wide, rp_update_days}`・sites:[site]・更新日はサーバーが1人ずつ計算）→ `aixlinx-webapp-poll-now` → 拡張のブレインの PC が `/api/automation/pending?brain=1` で拾う（1台だけ＝既存の条件付き UPDATE）→ 今までの一括検索（検索 → 判定 → 売上番長グループ → AIXツールに記録）
+  - まだ終わっていない同じお客様・同じサイトは積まない（二度押し）。一度に30人まで。進み具合は `/api/automation/status?ids=` を5秒ごと（全部 pending のまま90秒 →「ブレインモードの PC がまだ拾っていません」）
+  - ブレインの PC が3時間いなければ error（「ブレインモードのPCが3時間なかったため未実行で終了」）。拾い手の決まりは `app/lib/automation-sources.ts` の1か所（null＝どの PC／aix・auto_schedule＝AIX の PC／web_brain＝ブレインの PC）
+- **拡張（v2.5.24）**
+  - `mode-core.js` behavior に **claimBrainCommands ＝ brain && !staff**（🧠×通常・🧠×AIX だけ）。`background.js _pollAndRunBatch` は behavior から `?aix=1`／`?brain=1` を組む（claimCommands／claimAix も behavior から読む形にそろえた。_isAixModeActive は使わなくなった）
+  - `_buildBatchConditions(c, isWide, opts)`: **rp_update_days は payload の値を出どころを問わず使う**（並び順・ページ数は自動便だけ）。web_brain の回は検索日（search_history）も記録
+  - **手動の一括検索（axlx-manual-bulk-search）にも更新日**（旧は渡しておらず「すべて表示」で検索していた）。新しい `chrome-extension/rp-update-days.js`（`self.AxlxRpUpdateDays`・background が import）＝ `app/lib/rp-update-days.ts` の写し（テストで一字一句同じ答えを確認）
+  - 一時調整フォームの**更新日の select を手で変えたら** `PATCH /api/property-customers {rp_update_days}`（「指定なし」は null＝自動に戻す＝ウェブの切替の auto と同じ意味）
+  - 帯・ブレインの説明: 「売上サポ」→「AIXツール」・🧠×通常／🧠×AIX は「AIXツールの一括検索も受け取ります」・🧠×スタッフは「拾いません」。popup.js のまとめのトーストも AIXツール
+- **更新日の1本化**: `app/lib/rp-update-days.ts` の `effectiveRpUpdateDays(c)` ＝ 手で決めた値（1以上）→ 無ければ `rpUpdateDaysFor(lastPropertyTouchAt(c))`（送った日と確認した日の新しい方・JST の日付・1/3/7/14・初めては null）。
+  app/page.tsx・app/customers/page.tsx の旧 `calcRpUpdateDays`（送った日だけ・時刻の差＝確認だけの人は空・朝の送信は1日ずれる）を置き換え（page.tsx の問い合わせに property_viewed_at を足した）
+- **新着物件**（`app/lib/new-arrivals.ts`）: verdict='pass' かつ status='pending' かつ expired_at なし・72時間以内 かつ **seen_at なし** かつ お客様に送った物件（sent_properties・お客様に届いた行・30日）の建物に当たらない（名前の近さ 0.75・一般名は比べない）
+  - 列 `property_pickups.seen_at / seen_by`（部分インデックス `idx_property_pickups_unseen`・migrate-schema・**本番適用済み** `scripts/apply-aix-tool-new-arrivals.ts`）。`POST /api/property-pickups/seen`（詳細を開いたら未読の「通す」にまとめて入れる・内部認証）＝**既読はスタッフ全員で共有**
+  - `/api/property-pickups?view=list` に `new_count / new_at / new_line`（「🆕 新着2件・〇〇 7.2万」）と `new_total`。新着のあるお客様は200人の枠から落とさない
+  - 画面: `/conditions` のタブ「一覧」→「**新着物件**」（`PickupReview mode="new"`・新着のあるお客様を new_at の新しい順に上・丸は LINE 一覧と同じ緑・タブにも合計のバッジ）。全顧客の一覧はアナウンスの中の「👥 全員」
+  - 本番の数（2026-09-25 15時ごろ・読むだけ）: 候補34件 → 新着のあるお客様4人・合計33件（送った建物で外した1件＝表記ゆれの同じ建物を目で確認）
+- **既存の不具合を直した**: automation_commands の status に 'cancelled' が許されていなかった（DB の CHECK と `/api/automation/update` の ALLOWED_STATUS）→ 本番に cancelled が0件＝全部止める（/api/automation/stop）・拡張のストップ・ブレイン中の自動便の見送りが書けていなかった（自動便の見送りは 400 で running のまま → 30分後に pending に戻り再び拾われうる）。両方に足した（本番適用済み・確かめの行を入れて消した）
+- 名前: 画面の見出し・下のナビ・line-webhook のスタッフ向け通知（新規条件）・pickup-complete のトースト・page.tsx の紐付けの空の文を「AIXツール」に。お客様に届く文には出ていない（変えていない）。コメントは直していない
+- テスト: `app/lib/__tests__/rp-update-days.test.ts`（14・拡張の写しと2,178通り一致）・`new-arrivals.test.ts`（29）・`web-brain-search.test.ts`（23・拾い手の決まり込み）・`pickup-complete.test.ts`（33）・`tests/chrome-extension/mode-core.test.js`（56）・拡張の全ファイル node --check・tsc 0・next build 通過
+- 気づいた別件（触っていない）: automation_commands に 8月の scrape_and_compare が6件 running のまま（picked_up_at が null なので30分の戻しにかからない）。force なしの trigger はこれを「今動いている」として再利用しうる
+- **竹内さんが確かめること（拡張の再読み込み後・version 2.5.24）**: ①ブレインの PC（🧠 ON・通常か AIX）でリアプロにログインしておく ②スマホか別の PC で AIXツール →「新着物件」→ 1人だけチェック（⚠ YUMA は物件の条件〈property_customers〉と紐付いていないのでチェックが灰色。試すなら YUMA をテスト用の条件と紐付けるか、実のお客様1人で）→「🏠 リアプロ」→ 下に「完了 0/1・待ち 1」→ 数十秒で「検索中」→ 今までの一括検索と同じく売上番長グループに1回分届く（通した物件が「新着物件」に並ぶ） ③🧠×スタッフの PC では拾わない（コンソールに claim が出ない）④拡張の更新日を手で 7 にする → ウェブの お客さん画面の「更新7日✎」になる ⑤新着の丸は詳細を開くと全員の画面で消える
+
 ## 2026-09-25 ブレインを独立の切り替えに・モードはドロップダウン（通常／スタッフ／AIX連動）— ブレインは3つのどれとも組み合わせる（v2.5.20・竹内）
 竹内「スタッフモード等はこのブレインの横に付ける。ブレインだけ別で、ほかはドロップダウン方式で行う。ブレインでもスタッフモードや AIX モード、通常モードを行うため」
 - 旧（v2.5.9〜2.5.19）: ヘッダーの select 1つで 通常／スタッフモード／AIX連動／ブレイン の4択（ブレイン＝AIX連動＋判定・排他）。画面の「ブレイン」の丸いピルはこの select、横の「∨」は `#collapse-btn`（サイドパネル＝お客さん一覧に戻る／下のバー＝折りたたむ・モードとは無関係）

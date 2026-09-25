@@ -15,6 +15,19 @@ export async function GET(req: NextRequest) {
 
   const id = req.nextUrl.searchParams.get("id");
 
+  // 2026-09-25 AIXツールの一括検索（1人1コマンド）の進み具合: ?ids=a,b,c（軽い列だけ・最大60件）
+  const idsParam = req.nextUrl.searchParams.get("ids");
+  if (idsParam) {
+    const ids = idsParam.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 60);
+    if (ids.length === 0) return NextResponse.json({ commands: [] });
+    const { data, error } = await supabase
+      .from("automation_commands")
+      .select("id, status, error_message, created_at, picked_up_at, completed_at, customer_ids, sites")
+      .in("id", ids);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ commands: data ?? [] });
+  }
+
   if (id) {
     const { data, error } = await supabase
       .from("automation_commands")

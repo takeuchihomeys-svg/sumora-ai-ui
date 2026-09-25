@@ -156,6 +156,8 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
 export const NO_CLAUDE_FALLBACK_ACTIONS: ReadonlySet<string> = new Set([
   "property_rank", "pickup_image_analysis", "pickup_image_analysis_auto", "condition_summary",
   "property_brain_image", "property_image_detail", "property_image_read",
+  // 2026-09-25 検索の点検の見立て（search-audit-diagnose.ts・竹内「DeepSeek の API で行う」）
+  "search_audit",
 ]);
 
 export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null): boolean {

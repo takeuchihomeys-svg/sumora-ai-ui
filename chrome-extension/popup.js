@@ -349,6 +349,36 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
 //        ①②では検出できず、無条件検索が黙って走っていた。
 const _resolveAreaCache = new Map(); // key: `${area}|${mode}`, value: { data, ts }
 let _fillDoneWatchdog = null; // fill-done 25秒タイムアウト監視タイマー
+// ── 検索の点検（2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」）──
+// background の一括検索は axlx-switch-customer で run_id・起動の種類・コマンド ID を渡してくる（ここに60秒だけ置く）。
+// 自動入力を page-script に渡す直前（_auditTag）に、ブレインの時だけ started（入れようとした条件・お客様の条件の写し）を送り、
+// conditions._audit_run_id を載せる → page-script が fill-done に audit を載せて返す。個別の検索は run_id をここで作る（trigger=single）
+var _pendingAuditCtx = null; // { runId, trigger, commandId, at }
+function _setPendingAuditCtx(d) {
+  _pendingAuditCtx = d && (d.auditRunId || d.trigger) ? { runId: d.auditRunId || null, trigger: d.trigger || null, commandId: d.commandId || null, at: Date.now() } : null;
+}
+function _auditTag(site, customer, conditions) {
+  try {
+    var ctx = _pendingAuditCtx && Date.now() - _pendingAuditCtx.at < 60000 ? _pendingAuditCtx : null;
+    _pendingAuditCtx = null;
+    var A = self.AxlxSearchAudit, core = self.AxlxModeCore;
+    if (!A || !core || !conditions) return conditions;
+    var st = _modeState();
+    if (!core.behavior(st.mode, st.brain).searchAudit) return conditions;
+    var runId = (ctx && ctx.runId) || A.newRunId();
+    conditions._audit_run_id = runId;
+    var ver = null;
+    try { ver = chrome.runtime.getManifest().version; } catch (_) {}
+    A.post({
+      phase: "started", brain: true, run_id: runId, site: A.siteKey(site), mode: A.modeLabel(st),
+      trigger: (ctx && ctx.trigger) || "single", command_id: (ctx && ctx.commandId) || null,
+      property_customer_id: customer && customer.id != null ? String(customer.id) : null,
+      is_wide: !!conditions.is_wide, area_mode: conditions.area_mode || null, ext_version: ver,
+      customer_snapshot: A.snapshotCustomer(customer), intended: A.pickIntended(conditions),
+    });
+  } catch (e) { console.warn("[search-audit] started を送れない（検索は続ける）:", e && e.message); }
+  return conditions;
+}
 const _RESOLVE_AREA_CACHE_MAX = 50;
 const _RESOLVE_AREA_CACHE_TTL = 10 * 60 * 1000; // 10分
 async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
@@ -2509,8 +2539,9 @@ function completePickupsForCustomer(customerId, trigger) {
     _pickupCompleteBusy[key] = Date.now();
     chrome.runtime.sendMessage({ type: "axlx-pickups-complete", property_customer_id: key, trigger: trigger || "manual" }, function (res) {
       var err = chrome.runtime.lastError; // 受け取り側が無い時の警告を消す
-      if (err || !res) { _pickupCompleteToast("売上サポのまとめに失敗しました（もう一度「確認」を押し直せます）", "error"); delete _pickupCompleteBusy[key]; return; }
-      if (!res.ok) { console.warn("[AX] 売上サポのまとめ失敗:", res.error); _pickupCompleteToast("売上サポのまとめに失敗しました: " + String(res.error || "").slice(0, 60), "error"); delete _pickupCompleteBusy[key]; return; }
+      // 2026-09-25 竹内「売上サポの名前は AIXツールに変更」
+      if (err || !res) { _pickupCompleteToast("AIXツールのまとめに失敗しました（もう一度「確認」を押し直せます）", "error"); delete _pickupCompleteBusy[key]; return; }
+      if (!res.ok) { console.warn("[AX] AIXツールのまとめ失敗:", res.error); _pickupCompleteToast("AIXツールのまとめに失敗しました: " + String(res.error || "").slice(0, 60), "error"); delete _pickupCompleteBusy[key]; return; }
       var d = res.data || {};
       if (d.skipped === "brain_off") return; // ブレイン OFF: 売上サポに届いていないので何もしない（トーストも出さない）
       if (d.toast) _pickupCompleteToast(d.toast, d.claimed > 0 ? "ok" : "info");
@@ -3083,6 +3114,10 @@ function preloadAdjForm(c) {
     }
     console.log("[popup] 更新日:", updateDaysEl.value ? updateDaysEl.value + "日以内" : "指定なし",
       "(前回=" + (lastPropertyTouchDateJst(c) || "なし") + (c.rp_update_days ? "・アプリ指定" : "") + ")");
+    // 2026-09-25 竹内「更新日も拡張ツールと連動」: 手で選び直したらお客様の rp_update_days に書く（ウェブの更新日の切替・AIXツールの一括検索と同じ値になる）。
+    //   「指定なし」は null＝自動（前回物件を出した日から計算）に戻す（ウェブの切替の「auto」と同じ意味）。
+    //   onchange は代入（開くたびに置き換え＝前のお客様の分が残らない）。値を入れるだけの所（上・前回の日付の欄）は change を起こさない
+    updateDaysEl.onchange = () => { void saveRpUpdateDays(c, updateDaysEl.value); };
   }
 
   // レインズ登録日：初めての物件出しは絞り込まない
@@ -3208,6 +3243,29 @@ function lastPropertyTouchDateJst(c) {
     .filter(Boolean).map(function (s) { return new Date(s).getTime(); }).filter(function (n) { return !isNaN(n); });
   if (!ts.length) return "";
   return new Date(Math.max.apply(null, ts) + 9 * 3600 * 1000).toISOString().split("T")[0];
+}
+
+// 更新日の select を手で変えた時に DB（property_customers.rp_update_days）へ書く。失敗しても検索は止めない（その回は欄の値で検索する）
+async function saveRpUpdateDays(c, value) {
+  if (!c || !c.id) return;
+  var n = Number(value);
+  var next = value && isFinite(n) && n > 0 ? n : null;
+  if ((c.rp_update_days || null) === next) return;
+  try {
+    var res = await fetch(API_BASE + "/api/property-customers", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: c.id, rp_update_days: next }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    c.rp_update_days = next;
+    var idx = (allCustomers || []).findIndex(function (x) { return x.id === c.id; });
+    if (idx >= 0) allCustomers[idx].rp_update_days = next;
+    try { sessionStorage.removeItem(CUSTOMER_CACHE_KEY); } catch (_) { /* ignore */ }
+    console.log("[popup] 更新日を保存:", next ? next + "日以内" : "自動（指定なし）");
+  } catch (e) {
+    console.warn("[popup] 更新日の保存に失敗（今回は欄の値で検索します）:", e && e.message);
+  }
 }
 
 function calcUpdateDays(dateStr, status) {
@@ -4046,6 +4104,8 @@ function openInstructions(siteKey) {
         building_age:    conditions.building_age,
         floor_plan:      conditions.floor_plan,
       });
+      // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる
+      _auditTag("itandi", selectedCustomer, conditions);
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
       if (isUnderbar) {
         window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
@@ -4523,7 +4583,8 @@ function openInstructions(siteKey) {
         from: "aixlinx-underbar",
         action: "autofill",
         source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
-        conditions: {
+        // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる（_auditTag）
+        conditions: _auditTag("realpro", c, {
           area_mode:     _lockedMode || currentAreaMode,
           rent_min:      readAdjRentMin(c, rpEffectiveRentMax),
           rent_max:      rpEffectiveRentMax,
@@ -4547,7 +4608,7 @@ function openInstructions(siteKey) {
           shikirei_free: !!(document.getElementById("adj-shikirei-free")?.checked),
           rp_update_days: adjUpdateDays ? Number(adjUpdateDays) : null,
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
-        },
+        }),
       }, "*");
       // ページリロード後も自動送信が再開できるようフラグを立てる（手動・自動バッチ共通）
       // ★ 2026-08-17 修正: 以前は `if (!isAutomated)` で手動クリック限定にしていたが、
@@ -4774,6 +4835,8 @@ function openInstructions(siteKey) {
         building_age:  conditions.building_age,
         floor_plan:    conditions.floor_plan,
       });
+      // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる
+      _auditTag("reins", c0, conditions);
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs[0]) return;
         chrome.tabs.sendMessage(tabs[0].id, {
@@ -5266,6 +5329,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             var aBtn = document.getElementById('autofill-btn');
             if (aBtn) {
+              _setPendingAuditCtx(e.data); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
               aBtn.dataset.automated = "1";
               aBtn.dataset.auto_send_all = e.data.auto_send_all ? "1" : "";
               aBtn.click();
@@ -5576,6 +5640,7 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           });
           var aBtn = document.getElementById('autofill-btn');
           if (aBtn) {
+            _setPendingAuditCtx(msg); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
             aBtn.dataset.auto_send_all = msg.auto_send_all ? "1" : "";
             aBtn.click(); // display:noneでもonclickは発火する
             delete aBtn.dataset.auto_send_all;

@@ -321,6 +321,69 @@
   // 2026-09-18 竹内（一括検索の混線）: この自動入力を始めた時の顧客 ID。notifyDone がそのまま返す
   var _fillCustomerId = null;
 
+  // ── 検索の点検（2026-09-25 竹内「検索がちゃんとされていなかったら原因を見つけられるようにする」）──
+  // popup が conditions._audit_run_id を載せた時（＝ブレインの時）だけ、この入力で「押せた・押せなかった駅」「路線」「部品」
+  // 「リセットの失敗」「条件を外した検索」と、検索ボタンを押す直前のフォームの読み戻しを集め、fill-done の audit に載せて返す（8KB まで）。
+  // 読み戻しはこのファイルが値を入れている name（rental_cost1/2・update_date・required_time・structured_date・room_layout_id[]・
+  // station_id[]・route_id[]・city_code[]・town_code[]）だけ。見つからない欄は入れない（点検側は比べない）
+  var _fillRunId = null;
+  var _audit = null;
+  function _auditReset(runId) {
+    _fillRunId = runId || null;
+    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [] } : null;
+  }
+  function _auditStepP(k, d) {
+    if (!_audit) return;
+    _audit.steps.push({ at: Date.now(), k: String(k).slice(0, 30), d: d == null ? null : String(d).slice(0, 120) });
+    if (_audit.steps.length > 20) _audit.steps.shift();
+  }
+  function _visibleTexts(sel, n) {
+    try {
+      return Array.prototype.slice.call(document.querySelectorAll(sel)).filter(function (el) { return el.offsetParent !== null; })
+        .map(function (el) { return (el.textContent || el.value || '').replace(/\s+/g, '').slice(0, 20); }).filter(Boolean).slice(0, n || 8);
+    } catch (e) { return []; }
+  }
+  function _checkedLabelTexts(name) {
+    try {
+      return Array.prototype.slice.call(document.querySelectorAll('input[name="' + name + '"]:checked')).map(function (inp) {
+        var l = (inp.closest && inp.closest('label')) || inp.parentElement;
+        var t = l ? (l.textContent || '').replace(/\s+/g, '').slice(0, 24) : '';
+        return t || String(inp.value || '');
+      }).slice(0, 80);
+    } catch (e) { return []; }
+  }
+  function _readRealproForm() {
+    var f = {};
+    try {
+      var sel = function (name) { return document.querySelector('select[name="' + name + '"]'); };
+      var r2 = sel('rental_cost2'); if (r2) f.rent_max = r2.value;
+      var r1 = sel('rental_cost1'); if (r1) f.rent_min = r1.value;
+      var up = sel('update_date'); if (up) f.update_days = up.value;
+      var ag = sel('structured_date'); if (ag) f.age = ag.value;
+      var wk = document.querySelector('input[name="required_time"]'); if (wk) f.walk = wk.value;
+      f.layouts = _checkedLabelTexts('room_layout_id[]');
+      f.stations = _checkedLabelTexts('station_id[]');
+      f.lines = _checkedLabelTexts('route_id[]');
+      f.wards = _checkedLabelTexts('city_code[]').concat(_checkedLabelTexts('town_code[]')).slice(0, 80);
+    } catch (e) { f.read_error = String((e && e.message) || e).slice(0, 100); }
+    return f;
+  }
+  function _auditPack() {
+    if (!_audit) return null;
+    try {
+      var a = _audit;
+      if (JSON.stringify(a).length > 8000) {
+        a = JSON.parse(JSON.stringify(a));
+        ['stations_missing', 'lines_missing', 'click_fails'].forEach(function (k) { a[k] = (a[k] || []).slice(0, 6).map(function (m) { if (m && m.sample) m.sample = m.sample.slice(0, 3); return m; }); });
+        if (a.form) ['stations', 'lines', 'wards', 'layouts'].forEach(function (k) { if (a.form[k]) a.form[k] = a.form[k].slice(0, 20); });
+        a.stations_ok = (a.stations_ok || []).slice(0, 20);
+        a.steps = (a.steps || []).slice(-8);
+        a.truncated = true;
+      }
+      return a;
+    } catch (e) { return { v: 1, site: 'realpro', pack_error: true }; }
+  }
+
   // errMsg を渡すと fill-done メッセージに error フィールドが付き、
   // content.js → background.js へ中継されてログ・デバッグ材料になる。
   // 正常系は引数なしで呼ぶこと。
@@ -333,6 +396,12 @@
     // 2026-09-18: この入力を始めた時の顧客 ID をそのまま返す（誰の完了かを送る側が持つ）
     if (_fillCustomerId) msg.customerId = _fillCustomerId;
     if (errMsg) msg.error = String(errMsg).slice(0, 300);
+    // 検索の点検（ブレインの時だけ）: この入力の記録を載せて返す
+    if (_fillRunId) {
+      msg.runId = _fillRunId;
+      if (_audit && errMsg) _auditStepP('done_error', errMsg);
+      msg.audit = _auditPack();
+    }
     window.postMessage(msg, '*');
   }
 
@@ -416,8 +485,10 @@
     var goDivs = Array.prototype.slice.call(
       document.querySelectorAll('div.go_search, div.go_search_submit')
     );
+    // 検索の点検: 押す直前のフォームを読み戻す（入れようとした条件と比べる材料）
+    if (_audit) _audit.form = _readRealproForm();
     for (var i = 0; i < goDivs.length; i++) {
-      if (goDivs[i].offsetParent) { goDivs[i].click(); notifyDone(); return; }
+      if (goDivs[i].offsetParent) { if (_audit) _audit.search_clicked = true; goDivs[i].click(); notifyDone(); return; }
     }
     // フォールバック: button/a テキスト一致
     var SEARCH_TEXTS = ['住居検索', '検索', '物件を検索する', '条件で検索'];
@@ -429,9 +500,10 @@
         var b = allBtns[i];
         if (!b.offsetParent) continue;
         var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
-        if (txt === SEARCH_TEXTS[si]) { b.click(); notifyDone(); return; }
+        if (txt === SEARCH_TEXTS[si]) { if (_audit) _audit.search_clicked = true; b.click(); notifyDone(); return; }
       }
     }
+    if (_audit) { _audit.search_clicked = false; _audit.click_fails.push({ what: 'search', text: '検索', sample: _visibleTexts('button,input[type="submit"],a', 8) }); }
     notifyDone('clickSearch: 検索ボタンが見つかりません（フォーム折りたたみ/モーダル遮蔽の可能性）');
   }
 
@@ -467,6 +539,9 @@
           found = true;
         }
       }
+      // 検索の点検: 選べなかった路線（ラベルの数と見本）
+      if (found && _audit) _audit.lines_missing = _audit.lines_missing.filter(function (m) { return m.name !== lineName; });
+      if (!found && _audit && !_audit.lines_missing.some(function (m) { return m.name === lineName; })) _audit.lines_missing.push({ name: lineName, label_count: labels.length, sample: labels.slice(0, 6).map(function (l) { return (l.textContent || '').replace(/\s+/g, '').slice(0, 20); }) });
     });
   }
 
@@ -477,6 +552,13 @@
       var clean = name.replace(/駅$/, '').trim();
       if (!clean) return;
       var found = false;
+      // 検索の点検: 選べた駅（ポーリングで何度も呼ばれるので重ねない）
+      var _okMark = function () {
+        if (!_audit) return;
+        if (_audit.stations_ok.indexOf(clean) < 0) _audit.stations_ok.push(clean);
+        // 前の回（一覧の描画前）に「押せなかった」とした駅が後で押せたら消す（誤った札を付けない）
+        _audit.stations_missing = _audit.stations_missing.filter(function (m) { return m.name !== clean; });
+      };
 
       // STEP1: label+checkbox（フォーム方式）- 全マッチを順次クリック（同名駅が複数路線に出現するため）
       // クリックはキュー経由（90〜200ms間隔）。checked済み・クリック予約済みも「処理済み」扱いにして
@@ -500,7 +582,7 @@
           }
         }
       }
-      if (found) return;
+      if (found) { _okMark(); return; }
 
       var els = Array.prototype.slice.call(
         document.querySelectorAll('a,button,td,li,span,div,p')
@@ -541,7 +623,7 @@
           found = true;
         }
       }
-      if (found) return;
+      if (found) { _okMark(); return; }
 
       // STEP3: 全テキスト完全一致かつ葉ノード - 全マッチを順次クリック
       for (var i = 0; i < els.length; i++) {
@@ -552,7 +634,7 @@
           found = true;
         }
       }
-      if (found) return;
+      if (found) { _okMark(); return; }
 
       // STEP4: 直接テキスト 前方一致
       for (var i = 0; i < els.length && !found; i++) {
@@ -564,7 +646,7 @@
           found = true;
         }
       }
-      if (found) return;
+      if (found) { _okMark(); return; }
 
       // STEP5: label 前方一致フォールバック（checked済みも処理済み扱い）
       for (var i = 0; i < labels.length && !found; i++) {
@@ -597,6 +679,13 @@
           }
         }
         if (!found) console.log('[AX] selectStations: 全STEP失敗（駅モーダルに存在しない可能性）: ' + clean);
+      }
+      // 検索の点検: 押せた駅・押せなかった駅（ラベルの数と見本）。同じ駅は1回だけ
+      if (found) { _okMark(); }
+      else if (_audit && !_audit.stations_missing.some(function (m) { return m.name === clean; })) {
+        var _stInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'));
+        _audit.stations_missing.push({ name: clean, line: null, label_count: _stInputs.length,
+          sample: _stInputs.slice(0, 6).map(function (x) { return x.parentElement ? (x.parentElement.textContent || '').replace(/\s+/g, '').slice(0, 16) : ''; }) });
       }
     });
   }
@@ -715,6 +804,9 @@
       notifyDone('watchdog-timeout: 85秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
     }, 85000);
 
+    // 検索の点検: popup が載せた run_id（ブレインの時だけ）。無ければ記録しない
+    _auditReset(cond && cond._audit_run_id);
+    _auditStepP('fill_start', cond && cond.area_mode);
     if (!cond) { notifyDone(); return; }
 
     // 連続検索対応: モーダルを閉じる → フォームを手動クリア → 条件入力 の順で実行
@@ -829,6 +921,7 @@
         } catch (err) {
           // クリア失敗でも条件入力は続行する（静かに停止すると fill-done が来なくなる）
           console.error("[AX] _doReset クリア中の例外（続行）", err);
+          if (_audit) _audit.reset_fail = 'フォームのクリアで例外: ' + String((err && err.message) || err).slice(0, 120);
         }
         setTimeout(callback, 240 + Math.floor(Math.random() * 150)); // 短い安定待機のみ（ランダム）
         }); // whenClickQueueIdle end
@@ -937,6 +1030,7 @@
       return "none";
     }
     var locationMode = decideLocationMode(cond);
+    if (_audit) { _audit.area_path = locationMode; _auditStepP('location', locationMode); }
     console.log("[AX] 場所モード判定: " + locationMode,
       { area_mode: cond.area_mode, station_names: cond.station_names, route_ids: cond.route_ids,
         hasStation: hasStation, hasRoutes: hasRoutes,
@@ -1186,6 +1280,7 @@
         // city_codes があれば直接チェックボックス方式に降格して検索を継続する（区レベルで検索）。
         // city_codes も無い場合のみ全件検索防止のため中止する。
         function fallbackSearchWithoutArea(msg) {
+          if (_audit) { _audit.fallback = '所在地モーダル失敗 → 市区コードで代替: ' + String(msg).slice(0, 150); _auditStepP('fallback_area', msg); }
           try { closeAreaModal(); } catch (e) { /* ignore */ }
           var codes = (cond.city_codes || []).map(String);
           if (codes.length > 0) {
@@ -1456,6 +1551,7 @@
     // fallbackSearchWithoutArea と同じ方針: エリア条件が解決できない場合は検索しない。
     function fallbackSearchWithoutStation(msg) {
       var errMsg = '沿線・駅モーダル操作失敗（全件検索防止のため中止）: ' + msg;
+      _auditStepP('station_modal_fail', msg);
       showWarnToast(errMsg);
       try { closeStationModal(); } catch (e) { /* ignore */ }
       notifyDone(errMsg);

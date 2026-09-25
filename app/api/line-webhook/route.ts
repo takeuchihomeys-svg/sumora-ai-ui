@@ -1683,9 +1683,10 @@ async function notifyFormatReceived(
 
   const condText = lines.length > 0
     ? "\n" + lines.join("\n")
-    : "\n（条件詳細は売上サポで確認）";
+    : "\n（条件詳細はAIXツールで確認）";
 
-  const text = `📋 新規条件が届きました！\n\n👤 ${customerName}様${condText}\n\n売上サポで確認して物件を探しましょう！`;
+  // 2026-09-25 竹内「売上サポの名前は AIXツールに変更」（売上番長グループ＝スタッフ向けの通知）
+  const text = `📋 新規条件が届きました！\n\n👤 ${customerName}様${condText}\n\nAIXツールで確認して物件を探しましょう！`;
 
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",

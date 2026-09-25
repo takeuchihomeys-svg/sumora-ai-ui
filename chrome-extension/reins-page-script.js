@@ -65,13 +65,32 @@
     "SLDK": ["SLDK", "ＳＬＤＫ"],
   };
 
+  // ── 検索の点検（2026-09-25 竹内「検索がちゃんとされていなかったら原因を見つけられるようにする」）──
+  // popup が conditions._audit_run_id を載せた時（＝ブレインの時）だけ、検索ボタンを押す直前の入力欄（このファイルが値を入れる番号の欄）を
+  // 読み戻し、fill-done の audit に載せる（reins-content.js が background に中継）。レインズは結果の自動送信が無いので件数は無い
+  function _reReadForm() {
+    var f = {};
+    try {
+      var val = function (idx) { var el = getField(idx); if (!el) return undefined; if (el.tagName === "SELECT") { var o = el.options[el.selectedIndex]; return o ? o.text : el.value; } return el.value; };
+      var r = val(76); if (r !== undefined) f.rent_max = r;
+      var rm = val(75); if (rm !== undefined) f.rent_min = rm;
+      f.lines = [47, 54, 61].map(val).filter(function (x) { return x; }).slice(0, 3);
+      f.stations = [48, 55, 62].map(val).filter(function (x) { return x; }).slice(0, 3);
+      f.wards = [30, 36, 42].map(val).filter(function (x) { return x; }).slice(0, 3);
+    } catch (e) { f.read_error = String((e && e.message) || e).slice(0, 100); }
+    return f;
+  }
+
   async function fill(cond) {
     var _doneSent = false;
+    var _runId = cond && cond._audit_run_id ? cond._audit_run_id : null;
+    var _audit = _runId ? { v: 1, site: "reins", search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [] } : null;
     var _sendDone = function(ok, reason) {
       if (_doneSent) return;
       _doneSent = true;
       var msg = { from: "aixlinx-fill-done" };
       if (!ok && reason) msg.error = String(reason).slice(0, 300);
+      if (_runId) { msg.runId = _runId; msg.audit = _audit; }
       window.postMessage(msg, "*");
     };
     var watchdog = setTimeout(function() {
@@ -99,6 +118,7 @@
       cond.ward_name  = null;
       cond.ward_names = [];
     }
+    if (_audit) _audit.area_path = (cond.ward_names && cond.ward_names.length) || cond.ward_name ? "area" : cond.reins_line ? "station" : "none";
     console.log("[AX] 場所モード判定(reins)", {
       area_mode: cond.area_mode, wards: cond.ward_names || cond.ward_name,
       line: cond.reins_line, pairs: cond.reins_station_pairs, station: cond.station_name });
@@ -318,6 +338,11 @@
     var searchBtn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
       return b.textContent.trim() === "検索";
     });
+    if (_audit) {
+      _audit.form = _reReadForm();
+      _audit.search_clicked = !!searchBtn;
+      if (!searchBtn) _audit.click_fails.push({ what: "search", text: "検索" });
+    }
     if (searchBtn) searchBtn.click();
     _sendDone(true, '');
     } catch(e) {

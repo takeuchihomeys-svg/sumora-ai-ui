@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, pendingSourceOrFilter,
+} from "@/app/lib/automation-sources";
 
 export async function GET(req: NextRequest) {
   // 修正10: 共有シークレット認証（AUTOMATION_API_KEY 設定時のみ強制。未設定なら従来通り許可）
@@ -39,25 +42,34 @@ export async function GET(req: NextRequest) {
   //   2026-09-19 竹内「拡張ツールAIXモードにしている場合、毎日11:00に…17:00に…」:
   //   時刻起動の自動検索（payload.source="auto_schedule"・/api/cron/auto-property-search が積む）も同じ扱いにする。
   //   AIX モードの PC だけが実行し、誰も AIX モードでなければ3時間で閉じる（古い指示で後から検索しない）。
+  //   2026-09-25 竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」:
+  //   ウェブの AIXツールの一括検索（payload.source="web_brain"）は、拡張のブレインが ON の PC（?brain=1・🧠×スタッフは付けない）だけに渡す。
+  //   どの PC もブレインでないまま 3時間経ったものは error で閉じる。拾い手の決まりは app/lib/automation-sources.ts の1か所
   const aixMode = req.nextUrl.searchParams.get("aix") === "1";
-  const aixExpireBefore = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+  const brainMode = req.nextUrl.searchParams.get("brain") === "1";
+  const expireBefore = new Date(Date.now() - WAIT_FOR_PICKER_MS).toISOString();
+  const nowIso = new Date().toISOString();
   const { error: aixExpErr } = await supabase
     .from("automation_commands")
-    .update({ status: "error", error_message: "AIXモードのPCが3時間なかったため未実行で終了", completed_at: new Date().toISOString() })
+    .update({ status: "error", error_message: AIX_EXPIRE_MESSAGE, completed_at: nowIso })
     .eq("status", "pending")
-    .in("payload->>source", ["aix", "auto_schedule"])
-    .lt("created_at", aixExpireBefore);
+    .in("payload->>source", [...AIX_ONLY_SOURCES])
+    .lt("created_at", expireBefore);
   if (aixExpErr) console.warn("[automation/pending] aix expire error:", aixExpErr.message);
+  const { error: brainExpErr } = await supabase
+    .from("automation_commands")
+    .update({ status: "error", error_message: BRAIN_EXPIRE_MESSAGE, completed_at: nowIso })
+    .eq("status", "pending")
+    .in("payload->>source", [...BRAIN_ONLY_SOURCES])
+    .lt("created_at", expireBefore);
+  if (brainExpErr) console.warn("[automation/pending] brain expire error:", brainExpErr.message);
 
   let pendingQuery = supabase
     .from("automation_commands")
     .select("*")
     .eq("status", "pending");
-  if (!aixMode) {
-    pendingQuery = pendingQuery.or(
-      "payload->>source.is.null,and(payload->>source.neq.aix,payload->>source.neq.auto_schedule)"
-    );
-  }
+  const sourceFilter = pendingSourceOrFilter({ aix: aixMode, brain: brainMode });
+  if (sourceFilter) pendingQuery = pendingQuery.or(sourceFilter);
   const { data: commands, error: selErr } = await pendingQuery
     .order("created_at", { ascending: true })
     .limit(1);

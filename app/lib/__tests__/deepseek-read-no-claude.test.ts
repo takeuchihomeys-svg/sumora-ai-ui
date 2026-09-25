@@ -283,7 +283,7 @@ const SUMMARIES = ["【1】テスト物件A 101\n賃料 7.2万円 / 1K / 25㎡",
 
   await it("★ 名札の一覧に返信・AIX の本文・ブレインが入っていない", () => {
     for (const a of ["reply_generate", "property_send", "property_recommendation", "brain_fresh", "brain_full", "brain"]) ok(!alt.NO_CLAUDE_FALLBACK_ACTIONS.has(a), a);
-    for (const a of ["property_rank", "pickup_image_analysis", "condition_summary", "property_brain_image"]) ok(alt.NO_CLAUDE_FALLBACK_ACTIONS.has(a), a);
+    for (const a of ["property_rank", "pickup_image_analysis", "condition_summary", "property_brain_image", "search_audit"]) ok(alt.NO_CLAUDE_FALLBACK_ACTIONS.has(a), a);
   });
 
   console.log("\n── ★ 物件の判断・読み取りのファイルに Claude の呼び出しが無い（静かに戻らない）──");
@@ -291,6 +291,7 @@ const SUMMARIES = ["【1】テスト物件A 101\n賃料 7.2万円 / 1K / 25㎡",
   const files = [
     "app/lib/pickup-rank.ts", "app/lib/sheet-read-server.ts", "app/lib/pickup-analyze-server.ts", "app/lib/pickup-auto-analyze.ts",
     "app/lib/condition-summary-server.ts", "app/lib/image-wants-server.ts", "app/lib/property-brain-image.ts", "app/lib/pickup-image-analysis.ts",
+    "app/lib/search-audit-diagnose.ts", "app/lib/search-audit-server.ts",
     "app/api/merge-pdfs/route.ts", "app/api/property-brain/judge/route.ts", "app/api/property-pickups/analyze/route.ts",
   ];
   await it("★ @anthropic-ai/sdk・api.anthropic.com・claude- のモデル名を使っていない", () => {
