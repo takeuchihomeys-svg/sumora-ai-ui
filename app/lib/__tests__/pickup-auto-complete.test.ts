@@ -19,7 +19,8 @@ const RP = "2026-09-25T02:00:00Z", IT = "2026-09-25T02:04:00Z";
 
 console.log("\n■ お客様の決まり（画像で分析が必要か）");
 {
-  t("recommended → image", bestBasisFor({ level: "recommended" }) === "image");
+  // 2026-09-25 竹内「総合的に判定されたのみにする」: 画像で分析が要るお客様でも 👑 は総合の判定の点
+  t("recommended でも → score（総合の判定の点）", bestBasisFor({ level: "recommended" }) === "score");
   t("optional → score", bestBasisFor({ level: "optional" }) === "score");
   t("none → score", bestBasisFor({ level: "none" }) === "score");
   t("分からない（null）→ score", bestBasisFor(null) === "score");

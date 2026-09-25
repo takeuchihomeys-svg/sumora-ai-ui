@@ -165,7 +165,8 @@ export async function loadBestBasis(propertyCustomerId: string, rows: ReadonlyAr
     const recentRows = recent.error ? null : ((recent.data ?? []) as Array<{ wants?: unknown }>).map((r) => ({ image_analysis: { wants: r.wants } }));
     return bestBasisFor(customerImageNeed(recentRows ?? rows, (data ?? null) as Parameters<typeof customerImageNeed>[1]));
   } catch {
-    return "image";
+    // 2026-09-25 竹内「総合的に判定されたのみにする」: 読めない時も総合の判定の点
+    return "score";
   }
 }
 

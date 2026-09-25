@@ -67,9 +67,15 @@ export const CUSTOMER_BEST_WINDOW_HOURS = 6;
 
 export type BestBasis = "image" | "score";
 
-/** お客様の決まり: 画像で分析が必要（recommended）なら画像の点、それ以外は判定の点 */
-export function bestBasisFor(need: Pick<ImageAnalysisNeed, "level"> | null | undefined): BestBasis {
-  return need?.level === "recommended" ? "image" : "score";
+/**
+ * 👑（一番オススメ）の決まり。
+ * 2026-09-25 竹内「総合的に判定されたのみにする。ややこしいから」: 画像で分析が要るお客様でも画像の点で分けず、
+ *   いつも総合の判定の点（judgeProperty の 50＋札の合計。画像の読み取りの結果も IMAGE_* の札で中に入っている）で決める。
+ *   （旧: 画像で分析が必要（recommended）なら画像の点・それ以外は判定の点＝画像の点が並んだ時に判定の低い物が 👑 になり分かりにくかった）
+ *   判定の点が1件も無い古い行だけの時は、pickCustomerBest が画像の点で補う（前の動き）
+ */
+export function bestBasisFor(_need?: Pick<ImageAnalysisNeed, "level"> | null): BestBasis {
+  return "score";
 }
 
 type CondLike = { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
@@ -145,7 +151,8 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   const imageScored = inWindow.filter((r) => m(r) != null);
   // 判定の点で決める時は外す候補を候補にしない（外す候補が 👑 だと「外すのか一番なのか」が食い違う）
   const scoreScored = inWindow.filter((r) => sc(r) != null && r.verdict !== "drop");
-  const want: BestBasis = opts?.basis ?? "image";
+  // 2026-09-25 竹内「総合的に判定されたのみにする」: 省略時も総合の判定の点（bestBasisFor と同じ）
+  const want: BestBasis = opts?.basis ?? "score";
   // お客様の決まりの点が1件も無ければ、もう片方の点で補う
   const basis: BestBasis | null = want === "image"
     ? (imageScored.length ? "image" : scoreScored.length ? "score" : null)
