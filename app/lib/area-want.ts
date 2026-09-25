@@ -223,7 +223,11 @@ export function parseAreaWant(desiredArea: string | null | undefined, freeText?:
     covered.push([t.index, t.index + t.word.length]);
   }
   // 区・市（駅の名前と重なる時は駅を優先したいので、先に駅の位置を取る）
-  const st = stationsInText(raw).filter((s) => !inCommute(s.index) && !covered.some(([a, b]) => s.index >= a && s.index < b));
+  // 2026-09-25 竹内「沿線指定あれば沿線もちゃんと理解しているのか」: 路線名の中の駅名（「阪急京都線」の京都・「京阪中之島線」の中之島・「阪急宝塚線」の宝塚）を
+  //   駅の希望にしない。「線」で終わる路線の言い方が駅名を丸ごと含む時は路線を優先（「野田阪神」のように駅名の方が長い物は駅のまま）
+  const lineWordSpans = linesInText(raw).filter((l) => /線|沿い/.test(l.word)).map((l) => [l.index, l.index + l.word.length] as [number, number]);
+  const insideLineWord = (s: { index: number; word: string }) => lineWordSpans.some(([a, b]) => s.index >= a && s.index + s.word.length <= b && b - a > s.word.length);
+  const st = stationsInText(raw).filter((s) => !inCommute(s.index) && !covered.some(([a, b]) => s.index >= a && s.index < b) && !insideLineWord(s));
   const stSpans = st.map((s) => [s.index, s.index + s.word.length] as [number, number]);
   for (const w of wardsInText(raw)) {
     if (inCommute(w.index)) continue;
