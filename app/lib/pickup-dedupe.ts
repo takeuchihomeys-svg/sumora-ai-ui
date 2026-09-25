@@ -15,7 +15,8 @@
 //   - 数珠つなぎにしない: 建物ごとに「家賃が低い順」に並べ、**残した部屋**と 2㎡以内なら落とす
 //     （20.0・21.5・23.0 で 20.0 が一番安い → 21.5 は落とし、23.0 は 20.0 と 3㎡違うので残す）
 //   - 家賃が同じ時: 家賃＋管理費が低い → AD（円）が高い（利益）→ 面積が広い → 元の順位が上
-//   - 落とした部屋の 🌟 / 🌟★ は、残した部屋に強い方を引き継ぐ
+//   - 落とした部屋の 🌟 / 🌟★ は、残した部屋に強い方を引き継ぐ（🌟 の部屋の AD の段が残す部屋より高い時は落とさない・2026-09-25）
+//   - 送付済みの部屋（isSent）は残す部屋の候補の最後に回す（2026-09-25）
 // ⚠ LINE グループへの送信・結合 PDF・sent_properties には使わない（売上サポの記録だけ・merge-pdfs は変えない）
 import { parseSummaryHead } from "./sent-property-filter";
 import { normalizePropertyName } from "./property-name-match";
@@ -122,7 +123,25 @@ function cheaperFirst(a: DedupeRoom, z: DedupeRoom): number {
     || (a.rank - z.rank);
 }
 
-export function dedupeSameBuilding(summaries: ReadonlyArray<string>, opts?: { maxAreaDiffSqm?: number }): DedupeResult {
+/**
+ * AD の段（property-brain の AD の札と同じ区切り）: 0＝なし・読めない ／ 1＝1ヶ月未満 ／ 2＝1ヶ月以上 ／ 3＝2ヶ月以上 ／ 4＝3ヶ月以上。
+ * 円は家賃で月数に直す（円のままだと家賃が高い部屋ほど AD が高く見える）
+ */
+export function adTier(r: Pick<DedupeRoom, "adYen" | "rentYen">): number {
+  const m = r.adYen != null && r.rentYen ? r.adYen / r.rentYen + 1e-6 : null;
+  if (m == null || m <= 0) return 0;
+  return m >= 3 ? 4 : m >= 2 ? 3 : m >= 1 ? 2 : 1;
+}
+
+export function dedupeSameBuilding(summaries: ReadonlyArray<string>, opts?: {
+  maxAreaDiffSqm?: number;
+  /**
+   * このお客様に送付済みの部屋か（元の並びの番号）。2026-09-25 YUMA テスト（お客様B）: 送付済みの 710号室が一番安いので残り、
+   *   まだ送っていない同じ建物の部屋（907号室 AD 2.5ヶ月など）を落としていた＝売上サポに「送付済み（保留）」しか残らない。
+   *   送付済みの部屋は残す部屋の候補の最後に回す（全部が送付済みなら今まで通り一番安い部屋）
+   */
+  isSent?: (index: number) => boolean;
+}): DedupeResult {
   const maxDiff = opts?.maxAreaDiffSqm ?? SAME_BUILDING_AREA_DIFF_SQM;
   const rooms = summaries.map((s, i) => readDedupeRoom(s, i));
   const dropped: DedupeDrop[] = [];
@@ -136,11 +155,22 @@ export function dedupeSameBuilding(summaries: ReadonlyArray<string>, opts?: { ma
   for (const group of byBuilding.values()) {
     if (group.length < 2) continue;
     const kept: DedupeRoom[] = [];
-    for (const r of group.slice().sort(cheaperFirst)) {
-      const near = kept.find((k) =>
+    const sentLast = (a: DedupeRoom, z: DedupeRoom) => (opts?.isSent ? Number(opts.isSent(a.index)) - Number(opts.isSent(z.index)) : 0);
+    for (const r of group.slice().sort((a, z) => sentLast(a, z) || cheaperFirst(a, z))) {
+      const nears = kept.filter((k) =>
         Math.abs((k.areaSqm as number) - (r.areaSqm as number)) <= maxDiff + 1e-9
         && !(k.floorPlan && r.floorPlan && k.floorPlan !== r.floorPlan));
-      if (!near) { kept.push(r); continue; }
+      if (!nears.length) { kept.push(r); continue; }
+      let near = nears[0];
+      // 2026-09-25 YUMA テスト（お客様A・itandi の回）: 🌟★ は AD 2.5ヶ月の 907号室に付いたのに、2,000円安い 413号室（AD 0.5ヶ月・利益が出ない）を残して
+      //   🌟★ を引き継ぎ、売上サポで「一番オススメ」が保留（PROFIT_NEGATIVE）の物件に付いていた（印と点が矛盾）。
+      //   → 🌟 の付いた部屋が、残す部屋より AD の段（判定の AD の札と同じ段）が高い時は落とさない（迷う物は残す側）。印も引き継がない。
+      //   ただし同じ段以上の部屋をもう残していれば、そちらに寄せて印を引き継ぐ（同じ建物を 3部屋・4部屋と並べない・お客様C の回）
+      if (r.recommended > 0 && adTier(r) > adTier(near)) {
+        const peer = nears.find((k) => adTier(k) >= adTier(r));
+        if (!peer) { kept.push(r); continue; }
+        near = peer;
+      }
       dropSet.add(r.index);
       dropped.push({ index: r.index, rank: r.rank, name: r.name, areaSqm: r.areaSqm as number, rentYen: r.rentYen as number, keptIndex: near.index, keptRank: near.rank, reason: "same_building_within_2sqm" });
       droppedCount.set(near.index, (droppedCount.get(near.index) ?? 0) + 1);

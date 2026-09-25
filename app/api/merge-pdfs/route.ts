@@ -12,7 +12,7 @@ import { parseRentFromSummary } from "@/app/lib/property-summary-parse";
 import { waitUntil } from "@vercel/functions";
 // 2026-09-24: 送った時の AD を送付記録に残す（見積書の割引と結び付けて利益を出す材料）
 import { parsePropertyFacts } from "@/app/lib/property-brain";
-import { enrichSummariesFromPdf, rankAndAnnotateSummaries } from "@/app/lib/pickup-rank";
+import { enrichSummariesFromPdf, rankAndAnnotateSummaries, buildRankMaterials, loadRankConditions } from "@/app/lib/pickup-rank";
 import { isPlaceholderName } from "@/app/lib/listing-text";
 
 // 2026-09-24: 応答は今まで通り早く返し、売上サポへの記録（waitUntil）で DeepSeek が資料を読む時間（1枚 27〜40秒・並列）を確保するため 300 に
@@ -422,8 +422,12 @@ export async function POST(req: NextRequest) {
         const summariesWithAd = property_summaries && property_summaries.length > 0
           ? await enrichSummariesFromPdf(property_summaries, pdfBase64List)
           : property_summaries;
+        // 2026-09-25 任務B: 🌟 の判断に資料の表の事実（敷礼・築年・入居時期・よく訴求する設備）を「資料:」の1行で渡す（説明文・LINE の本文は変えない）
+        const rankMaterials = summariesWithAd && summariesWithAd.length > 1 ? await buildRankMaterials(pdfBase64List) : null;
+        // 2026-09-25 YUMA テスト: 🌟 に渡す条件は DB の条件の要約（設備・入居時期・初期費用・通勤も入る・家賃を丸めない）。無ければ拡張の文（loadRankConditions）
+        const rankConditions = summariesWithAd && summariesWithAd.length > 1 ? await loadRankConditions(resolvedCustomerId, customer_conditions) : customer_conditions;
         const rankedSummaries = summariesWithAd && summariesWithAd.length > 0
-          ? await rankAndAnnotateSummaries(summariesWithAd, customer_conditions)
+          ? await rankAndAnnotateSummaries(summariesWithAd, rankConditions, rankMaterials)
           : summariesWithAd;
         const lineText = buildLineMessage(
           blob.url,

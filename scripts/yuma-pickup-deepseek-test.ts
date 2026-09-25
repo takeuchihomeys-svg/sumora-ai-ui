@@ -13,7 +13,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { renderPdfPageToPng } from "../app/lib/pdf-render";
 import { trimSheetImage } from "../app/lib/pdf-trim";
-import { enrichSummariesWithPdfAd, rankAndAnnotateSummaries } from "../app/lib/pickup-rank";
+import { enrichSummariesWithPdfAd, rankAndAnnotateSummaries, buildRankMaterials } from "../app/lib/pickup-rank";
 import { readPropertyImageDetail } from "../app/lib/property-image-read";
 import { parseRecommendMark, CUSTOMER_PAGE, AGENT_PAGE } from "../app/lib/property-pickups";
 // 2026-09-24 画像で分析を作り直した（型の前置き・間取り図の切り出し・物件ごとの保存）→ 本番と同じ analyzePickupRow を使う
@@ -56,7 +56,8 @@ async function main() {
 
   // ① 資料から AD を補う → ② DeepSeek で 🌟（本番 merge-pdfs と同じ関数）
   const withAd = await enrichSummariesWithPdfAd(summaries, b64);
-  const ranked = await rankAndAnnotateSummaries(withAd, "家賃〜10万円 / 1LDK / 敷礼なるべく0");
+  // 2026-09-25 本番の merge-pdfs と同じく資料の表の1行（敷礼・築年・入居・設備）を🌟の判断に渡す
+  const ranked = await rankAndAnnotateSummaries(withAd, "家賃〜10万円 / 1LDK / 敷礼なるべく0", await buildRankMaterials(b64));
   console.log("\n=== DeepSeek の順位付け ===");
   ranked.forEach((s) => console.log("  " + s.split("\n").slice(0, 2).join(" / ")));
 

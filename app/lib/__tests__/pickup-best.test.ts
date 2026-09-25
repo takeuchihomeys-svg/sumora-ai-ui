@@ -76,5 +76,16 @@ t("★ 空は null", pickCustomerBest([]) === null);
   t("★ 要確認は needs_check に数え、未判定（unscored）と分ける", b?.needs_check === 1 && b?.unscored === 1, b);
 }
 
+{
+  // 2026-09-25 YUMA テスト（お客様C）: 画像の点が全部 100 で並び、🌟★ を引き継いだ保留の物件（敷礼あり・利益が出ない）に 👑 が付いていた
+  const rows = [
+    row(1, "B1", "2026-09-25T02:10:00Z", 6, 100, { recommended: 2, verdict: "hold" }),
+    row(2, "B1", "2026-09-25T02:10:00Z", 7, 100, { recommended: 1, verdict: "pass" }),
+    row(3, "B1", "2026-09-25T02:10:00Z", 1, 100, { verdict: "pass" }),
+  ];
+  t("★ 同じ点・同じ「合う」の数なら保留より通す物（🌟 の強さより先）", pickCustomerBest(rows)?.id === 2, pickCustomerBest(rows));
+  t("★ 点が違えば判定より点（保留でも点が高ければ 👑）", pickCustomerBest([row(1, "B1", "2026-09-25T02:10:00Z", 1, 100, { verdict: "hold" }), row(2, "B1", "2026-09-25T02:10:00Z", 2, 90, { verdict: "pass" })])?.id === 1);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

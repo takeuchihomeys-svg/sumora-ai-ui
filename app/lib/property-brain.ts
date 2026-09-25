@@ -20,8 +20,10 @@
 //   - 間取り: 候補の間取りが希望文に含まれないのが 17〜21%（1LDK希望→1DK が 1,465件、2LDK・3LDK希望→1K が 512件）。
 //     希望文は「1LDK以上」「2LDK〜」「1K.1DK.1LDK」「1LDKか2LDK」「30平米以上」の自由文なので、範囲・集合に正規化してから比べる。
 //     不一致は hold 止まり（drop にすると実送信の 17% を落とす）。
-//   - AD: 取れた分の分布は 1ヶ月 13%／2ヶ月 45%／3ヶ月以上 42%。AD=0 は一度も記録されていない（書式の取りこぼしと区別できない）
+//   - AD: 取れた分の分布は 1ヶ月 13%／2ヶ月 45%／3ヶ月以上 42%。
 //     → **不明は減点しない**。AD が高い物件は加点（竹内「ADちゃんと高い物件か」）。
+//     2026-09-25 監査: 「AD=0 は一度も記録されていない」は読み方の取りこぼしだった。itandi の資料は「広告費 なし」と書く（売上サポ id 57・62）
+//     → 資料に「なし・0」と書いてある時は adMonths=0（不明の null と分ける）で AD_NONE −5。家賃が読めれば利益も負（PROFIT_NEGATIVE）
 //   - 割引: AIX【見積書送る】本文の「N円割引」は中央値 42,000円（Q1 28,000／Q3 68,000・213通）。
 //     estimate_action_log は 0行（書き手も無い）ので使わない。利益 = AD円 − 割引 で、負なら hold（落とさない）。
 //
@@ -32,7 +34,7 @@
 
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { isGenericBuildingName } from "./generic-building-name";
-import { EQUIP_LABELS, type EquipmentMatch, type EquipKey } from "./listing-equipment";
+import { EQUIP_LABELS, conditionalFloorOf, type EquipmentMatch, type EquipKey } from "./listing-equipment";
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 
@@ -57,6 +59,8 @@ export type PropertyFacts = {
   buildingAge: number | null;
   /** 2026-09-25 専有面積（㎡）。説明文の「25.62㎡」か資料の文字層。不明 = null */
   areaSqm?: number | null;
+  /** 2026-09-25 号室（1行目の「303号室」）。送付済みの照合を建物でなく部屋で見るため。不明は持たない */
+  roomNo?: string | null;
   rawText: string;
 };
 
@@ -118,7 +122,7 @@ export type CustomerLike = {
 };
 
 /** delivery / source は sent_properties の列（無い呼び出し元は今まで通り全部を送付として扱う） */
-export type SentRowLike = { property_name?: string | null; rent?: number | null; delivery?: string | null; source?: string | null };
+export type SentRowLike = { property_name?: string | null; rent?: number | null; delivery?: string | null; source?: string | null; room_no?: string | null };
 
 /**
  * お客様に届いた送付か（売上番長グループへの共有だけの行は false）。GET /api/property-pickups の送った履歴と同じ線:
@@ -150,8 +154,15 @@ export type CustomerProfile = {
   history: {
     sentCount: number;
     sentBuildings: Set<string>;
+    /**
+     * 2026-09-25 建物 → 送った号室（号室の分からない送付は ""）。任務B: 実際の🌟 121件のうち 9件が「送付済みの建物」で外す候補になり、
+     *   うち 4件は同じ建物の**別の部屋**（101→102 など＝新しい空室）だった → 号室が分かって違う時は外す候補にしない
+     */
+    sentRooms?: Map<string, Set<string>>;
     /** 過去に送った物件の 家賃/rentMax の中央値（材料が無ければ null） */
     rentRatioMedian: number | null;
+    /** 中央値の元になった送付の件数（2026-09-25: 3件未満の中央値では RENT_ABOVE_USUAL を付けない） */
+    rentRatioN?: number;
     sellingPointsSelected: Record<string, number>;
   };
   discountYen: number;
@@ -207,6 +218,13 @@ export const RENT_MAX_SANE_MIN = 30_000;
 /** 家賃比の線（実データ: >1.10 は 3.5%・>1.30 は 1.8%。どちらも0ではないので hold／drop候補 に留める） */
 export const RENT_RATIO_HOLD = 1.10;
 export const RENT_RATIO_DROP = 1.30;
+/**
+ * 2026-09-25 任務B: 家賃の超過を比だけで切ると、予算が低いお客様ほど厳しい（上限 5万円なら 1万円の超過で 1.2倍＝保留）。
+ *   実際の🌟（465通）の超過は中央値 5,000円・1万円以内が 79.8%・2万円超は 5.1%。
+ *   → 比が線を越えても、超過が金額で小さい時は一段ゆるめる: 上限＋1万円以内は保留にしない（0点）、上限＋2万円以内は外す候補にしない（保留）
+ */
+export const RENT_OVER_SOFT_YEN = 10_000;
+export const RENT_OVER_DROP_MIN_YEN = 20_000;
 
 /**
  * 2026-09-25 竹内「広げて検索した場合も、お客さんの希望の方が点数少し大きく。隣の駅だからって点数が大幅に低くならないように。家賃とかでもそう」
@@ -232,7 +250,7 @@ export const SCORE_MAX = 200;
 export const REASON_JA: Record<string, string> = {
   RENT_OK: "家賃は上限内",
   RENT_WIDE: "家賃が広げた検索の幅の中（上限＋5千円／10万円超は＋1万円まで・管理費込み）",
-  RENT_SLIGHTLY_OVER: "家賃が上限を1割まで超過",
+  RENT_SLIGHTLY_OVER: "家賃が上限を少し超過（1割まで・または1万円まで）",
   RENT_OVER_110: "家賃が上限を1割超",
   RENT_OVER_130: "家賃が上限を3割超",
   RENT_ABOVE_USUAL: "このお客様に送ってきた家賃帯より高め",
@@ -247,6 +265,9 @@ export const REASON_JA: Record<string, string> = {
   FLOOR_PLAN_NEAR: "間取りが近い（部屋数は同じ）",
   FLOOR_PLAN_WIDE: "間取りが広げた検索の型（LDK の希望に同じ部屋数の DK）",
   FLOOR_PLAN_MISMATCH: "間取りが希望と違う",
+  // 2026-09-25 任務B（実際の🌟で「間取り不一致」の保留が 35件・うち希望より大きい間取り 5人9件・2DK↔1LDK 4人5件）
+  FLOOR_PLAN_SAME_CLASS: "間取りが希望と同じ広さの級（2DK↔1LDK）",
+  FLOOR_PLAN_LARGER: "間取りが希望より広い",
   WALK_OK: "徒歩は希望内",
   WALK_SLIGHTLY_OVER: "徒歩が希望を少し超過",
   WALK_OVER: "徒歩が希望の1.5倍超",
@@ -255,7 +276,10 @@ export const REASON_JA: Record<string, string> = {
   BUILDING_AGE_WIDE: "築年が広げた検索の幅の中（希望＋5年まで）",
   BUILDING_AGE_OVER: "築年が希望超過",
   ALREADY_SENT: "この建物は送付済み",
+  ALREADY_SENT_OTHER_ROOM: "同じ建物を送付済み（この部屋は送った部屋に無い・号室を確認）",
+  ALREADY_SENT_SAME_ROOM: "この部屋は送付済み（送り直しか確認）",
   AD_UNKNOWN: "ADが読めない",
+  AD_NONE: "AD なし（資料に「広告費 なし」）",
   AD_HIGH: "ADが高い（2ヶ月以上）",
   AD_1M: "AD 1ヶ月",
   AD_VERY_HIGH: "AD 3ヶ月以上",
@@ -436,6 +460,12 @@ export const REASON_POINTS: Record<string, number> = {
   //   築年: 希望内 +5 ／＋5年まで +2（今までは ＋3年まで −3・＋4〜5年は −10 保留）・広さ: 9割以上 0 ／−5㎡まで −3（今までは −10 保留）
   AREA_STATION_WIDE: 8, AREA_STATION_2STOPS: 6, AREA_WARD_WIDE: 6,
   RENT_WIDE: 10, FLOOR_PLAN_WIDE: 8, BUILDING_AGE_WIDE: 2, SQM_WIDE: -3,
+  // 2026-09-25 監査（任務A・B）: 保留・外す候補にしない札。
+  //   同じ建物の別の部屋 −3（旧: 建物で −30 の外す候補）・2DK↔1LDK +8（旧: 不一致 −15 保留）・希望より広い間取り +5（旧: 不一致 −15 保留）
+  //   AD なし −5（旧: 不明と同じ 0点で AD 0.5ヶ月より上に並んでいた）
+  ALREADY_SENT_OTHER_ROOM: -3, FLOOR_PLAN_SAME_CLASS: 8, FLOOR_PLAN_LARGER: 5, AD_NONE: -5,
+  // 号室を読んで初めて当たる「同じ部屋を送付済み」（旧は当たらなかった形）は保留 −10（外す候補にしない）
+  ALREADY_SENT_SAME_ROOM: -10,
 };
 /** 理由コードの点（画像の読み取り IMAGE_*_OK/_NG も含む）。知らないコードは 0 */
 export function reasonPoints(code: string): number {
@@ -467,9 +497,25 @@ function num(v: unknown): number | null {
 /** 建物名の正規化（【N】・空白・全角英数を落とす）。送付済みの照合に使う */
 export function normalizeBuildingName(name: string | null | undefined): string {
   return toHalfWidth(String(name ?? ""))
-    .replace(/^【\d+】\s*/u, "")
+    // 2026-09-25: 🌟 の付いた番号（【1🌟★】）も落とす（売上サポは🌟を付けた後の説明文を読むので、旧は🌟の物件が送付済みに当たらなかった）
+    .replace(/^【\s*\d+\s*(?:🌟|★|☆)*\s*】\s*/u, "")
     .replace(/\s+/g, "")
     .toLowerCase();
+}
+
+/** 部屋番号の表記ゆれをそろえる（「0403」「403号室」「４０３」→ "403"）。読めなければ "" */
+export function normalizeRoomKey(raw: string | null | undefined): string {
+  const m = toHalfWidth(String(raw ?? "")).match(/(\d{1,5})\s*号?室?\s*$/);
+  return m ? m[1].replace(/^0+(?=\d)/, "") : "";
+}
+
+/** 「セレニティ照ヶ丘 303号室」「X 303」→ 建物名と号室（sent-property-filter の parseSummaryHead と同じ線・号室が無ければ room=""） */
+export function splitBuildingRoom(name: string | null | undefined): { building: string; room: string } {
+  const s = toHalfWidth(String(name ?? "")).replace(/^【\s*\d+\s*(?:🌟|★|☆)*\s*】\s*/u, "").trim();
+  const m = s.match(/[\s　]+(\d{1,4})(?:号室?)?$/) ?? s.match(/(\d{1,4})号室$/);
+  if (!m) return { building: s, room: "" };
+  const building = s.slice(0, m.index ?? 0).trim();
+  return building ? { building, room: normalizeRoomKey(m[1]) } : { building: s, room: "" };
 }
 
 /** 「Nヶ月」「なし」「－」→ ヶ月。読めなければ null */
@@ -497,8 +543,10 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
   const raw = String(summary ?? "");
   const lines = raw.split("\n").map((l) => toHalfWidth(l).trim()).filter(Boolean);
   const first = lines[0] ?? "";
-  const rankM = first.match(/^【(\d+)】/);
-  const name = first.replace(/^【\d+】\s*/u, "").trim() || String(data?.name ?? "") || "物件";
+  // 【1🌟★】（🌟 の順位付けの後の説明文）も番号として読む
+  const rankM = first.match(/^【\s*(\d+)\s*(?:🌟|★|☆)*\s*】/u);
+  const name = first.replace(/^【\s*\d+\s*(?:🌟|★|☆)*\s*】\s*/u, "").trim() || String(data?.name ?? "") || "物件";
+  const roomNo = splitBuildingRoom(name).room || null;
   const rest = lines.slice(1);
   const restText = rest.join("\n");
 
@@ -530,12 +578,16 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
   // AD（「AD 2ヶ月」「AD 0.5ヶ月」「AD 100,000円」「広告料 1ヶ月」）
   let adMonths = num(data?.ad_months);
   let adYen = num(data?.ad_yen);
-  const adLine = rest.find((l) => /^(AD|広告料)/i.test(l));
+  const adLine = rest.find((l) => /^(A\s?D|広告料|広告費)/i.test(l));
   if (adLine) {
     const m = adLine.match(/(\d+(?:\.\d+)?)\s*[ヶかカケ]?\s*月/);
     const y = adLine.replace(/,/g, "").match(/(\d+)\s*円/);
+    const pct = adLine.match(/(\d+(?:\.\d+)?)\s*[%％]/);
     if (m && adMonths == null) adMonths = parseFloat(m[1]);
+    else if (!m && pct && adMonths == null) adMonths = parseFloat(pct[1]) / 100;
     else if (!m && y && adYen == null) adYen = parseInt(y[1], 10);
+    // 2026-09-25 「AD なし」（資料の「広告費 なし」を補った行）＝ 0（読めない null と分ける）
+    else if (!m && !y && adMonths == null && adYen == null && /^(?:A\s?D|広告料|広告費)\s*[:：]?\s*(?:なし|無し|無|0)\s*$/i.test(adLine)) adMonths = 0;
   }
   // 拡張の itandi 側の変換ミス（「AD 30,000円」→ ad_months=30）は物理的にありえない値として捨てる
   if (adMonths != null && adMonths > 12) adMonths = null;
@@ -565,6 +617,7 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
     name, rank: rankM ? parseInt(rankM[1], 10) : num(data?.rank),
     rentYen, adminFeeYen, depositMonths, keyMoneyMonths, adMonths, adYen, walkMinutes, floorPlan, buildingAge,
     ...(areaSqm != null && areaSqm >= 5 && areaSqm <= 500 ? { areaSqm } : {}),
+    ...(roomNo ? { roomNo } : {}),
     rawText: raw,
   };
 }
@@ -727,6 +780,27 @@ export function isWideFloorPlan(want: FloorPlanWant, plan: string | null | undef
   return want.plans.includes(`${p[0]}LDK`);
 }
 
+/**
+ * 2026-09-25 任務B: 2DK と 1LDK は同じ広さの級（実際の🌟で 2DK↔1LDK の入れ替えが 4人・5件。1人に偏らない）。
+ *   本命・「も可」・広げた検索の型に合わない時だけ呼ぶ。2K↔1LDK は 12件が1人に集中していたので入れない（過学習を避ける）
+ */
+export function isSameClassPlan(want: FloorPlanWant, plan: string | null | undefined): boolean {
+  const p = normalizeFloorPlanToken(plan);
+  if (!p || want.any) return false;
+  return (p === "2DK" && want.plans.includes("1LDK")) || (p === "1LDK" && want.plans.includes("2DK"));
+}
+
+/**
+ * 2026-09-25 任務B: 希望より大きい間取り（1LDK→2LDK・2LDK→3LDK・1R→2DK）は実際の🌟で 5人・9件。不一致の保留ではなく「広い」の加点にする。
+ *   部屋数が希望のどれより多い時だけ（同じ部屋数の型違いは matchFloorPlan の near）。上限を書いた希望（「1DK〜2K」）は上限の意味があるので当てない
+ */
+export function isLargerPlan(want: FloorPlanWant, plan: string | null | undefined): boolean {
+  const p = normalizeFloorPlanToken(plan);
+  if (!p || want.any || want.maxRank != null || want.plans.length === 0) return false;
+  const rooms = parseInt(p[0], 10);
+  return want.plans.every((w) => rooms > parseInt(w[0], 10));
+}
+
 export function matchFloorPlan(want: FloorPlanWant, plan: string | null | undefined): FloorPlanMatch {
   const p = normalizeFloorPlanToken(plan);
   if (!p || want.any) return "unknown";
@@ -766,12 +840,19 @@ const IMAGE_WANT_RES: Array<[ImageWantKey, RegExp]> = [
   ["separate_washstand", /独立洗面/],
   ["storage", /収納|クローゼット|ウォークイン/],
   ["south_facing", /南向き/],
+  // 2026-09-25 監査 E3: 「2階以上はエレベーター必須」は階の希望ではない（2階以上**なら**エレベーターが要る）→ detectImageWants で条件の節を先に消す
+  //   （反証レビュー: 旧の否定先読み「2階以上(?!は…)」だと「2階以上は必須」「2階以上は希望」まで落としていた）
   ["floor_2_plus", /1階.{0,4}(NG|不可|嫌|以外|×)|2階以上|１階.{0,4}(NG|不可)/],
 ];
 
+/** 「N階以上は／なら〜（別の設備）」の条件の節（conditionalFloorOf が数を返す節だけ）を消す。「2階以上は必須」は残す */
+function stripConditionalFloorClauses(text: string): string {
+  return text.replace(/(?:[0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})階以上[^、。，,\n]*/g, (m) => (conditionalFloorOf(m) != null ? "" : m));
+}
+
 /** 画像（間取り図）でしか分からない希望を拾う */
 export function detectImageWants(c: CustomerLike): ImageWantKey[] {
-  const text = [c.preferences, c.other_requests, c.ng_points, c.additional_conditions].map((s) => String(s ?? "")).join("\n");
+  const text = stripConditionalFloorClauses([c.preferences, c.other_requests, c.ng_points, c.additional_conditions].map((s) => String(s ?? "")).join("\n"));
   const out: ImageWantKey[] = [];
   for (const [key, re] of IMAGE_WANT_RES) if (re.test(text)) out.push(key);
   return out;
@@ -877,13 +958,22 @@ export function buildCustomerProfile(
   }
 
   const sentBuildings = new Set<string>();
+  const sentRooms = new Map<string, Set<string>>();
   const ratios: number[] = [];
   for (const r of sentRows) {
-    const n = normalizeBuildingName(r.property_name);
+    // 2026-09-25: 建物名に号室が付いた送付（「X 201号室」）も建物で持つ（号室は room_no・無ければ名前の末尾から）
+    const split = splitBuildingRoom(r.property_name);
+    const n = normalizeBuildingName(split.building);
     // 2026-09-24: 一般名（「物件」＝拡張が itandi で名前を取れなかった送付）は建物が分からないので送付済みに入れない
     //   （入れると今回の「物件」全件が ALREADY_SENT −30 で外す候補 20 点に横並びになった・HONOKA さんの回 id 50〜67）
     //   グループに共有しただけの行（delivery='shared'）も入れない（お客様には届いていない・同じ回の共有で自分自身が送付済みになる）
-    if (n && !isGenericBuildingName(r.property_name) && isCustomerDelivery(r)) sentBuildings.add(n);
+    if (n && !isGenericBuildingName(r.property_name) && isCustomerDelivery(r)) {
+      // sentBuildings は今まで通り名前そのまま（号室付きの名前は号室付きのまま）＝外す候補の当たり方は増やさない。号室の照合は sentRooms で
+      sentBuildings.add(normalizeBuildingName(r.property_name));
+      const room = normalizeRoomKey(r.room_no) || split.room;
+      if (!sentRooms.has(n)) sentRooms.set(n, new Set());
+      sentRooms.get(n)!.add(room);
+    }
     const rent = num(r.rent);
     if (rent != null && rent > 0 && rentMax != null) ratios.push(rent / rentMax);
   }
@@ -930,7 +1020,7 @@ export function buildCustomerProfile(
     wantsLowInitialCost, lowInitialCostSource,
     pet: customer.pet === true,
     imageWants: detectImageWants(customer),
-    history: { sentCount: sentRows.length, sentBuildings, rentRatioMedian: median(ratios), sellingPointsSelected },
+    history: { sentCount: sentRows.length, sentBuildings, sentRooms, rentRatioMedian: median(ratios), rentRatioN: ratios.length, sellingPointsSelected },
     discountYen: discountYen != null && discountYen > 0 ? discountYen : DEFAULT_DISCOUNT_YEN,
     confidence,
     moveInWant: parseMoveInWant(customer.move_in_time, { registeredAt: customer.created_at ?? null, today: opts.today }),
@@ -1025,6 +1115,9 @@ export type JudgeOptions = {
   locationCodes?: string[] | null;
 };
 
+/** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
+export const RENT_USUAL_MIN_SENT = 3;
+
 /** 家賃の下限の線（下限の 85% 未満で情報の札） */
 export const RENT_MIN_RATIO = 0.85;
 
@@ -1055,13 +1148,16 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     //   78,000円＋管理費9,000円（計87,000・高い方）が +10 と、安い方が低くなっていた
     const wideCap = profile.rentMax + wideRentBuffer(profile.rentMax);
     const inWide = total <= wideCap || (facts.rentYen <= wideCap && ratio <= RENT_RATIO_HOLD);
+    // 超過額（管理費込み）。比の線に加えて金額の線（上限＋1万円までは保留にしない・＋2万円までは外す候補にしない）
+    const overYen = total - profile.rentMax;
     if (ratio <= 1.0) add("RENT_OK", 15);
     else if (inWide) add("RENT_WIDE", reasonPoints("RENT_WIDE"));
-    else if (ratio <= RENT_RATIO_HOLD) add("RENT_SLIGHTLY_OVER", 0);
-    else if (ratio <= RENT_RATIO_DROP) add("RENT_OVER_110", -20, "hold");
+    else if (ratio <= RENT_RATIO_HOLD || overYen <= RENT_OVER_SOFT_YEN) add("RENT_SLIGHTLY_OVER", 0);
+    else if (ratio <= RENT_RATIO_DROP || overYen <= RENT_OVER_DROP_MIN_YEN) add("RENT_OVER_110", -20, "hold");
     else add("RENT_OVER_130", -35, "drop");
     const med = profile.history.rentRatioMedian;
-    if (med != null && ratio > med + 0.15) add("RENT_ABOVE_USUAL", -5);
+    // 2026-09-25 YUMA テスト（お客様B）: 送付1件（58,000円）の中央値で、上限内（7万円）の物件がほぼ全部 −5 になっていた → 3件以上の時だけ
+    if (med != null && (profile.history.rentRatioN ?? RENT_USUAL_MIN_SENT) >= RENT_USUAL_MIN_SENT && ratio > med + 0.15) add("RENT_ABOVE_USUAL", -5);
   }
   // 家賃の下限（2026-09-25 竹内「家賃の下限入れる」）: 下限の 85% 未満の時だけ情報の札（−3・保留にしない。安い物件を外す理由にはしない）
   if (profile.rentMin != null && facts.rentYen != null) {
@@ -1091,6 +1187,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   else if (fpAlt) add("FLOOR_PLAN_ALT_MATCH", reasonPoints("FLOOR_PLAN_ALT_MATCH"));
   else if (isWideFloorPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_WIDE", reasonPoints("FLOOR_PLAN_WIDE"));
   else if (fpm === "near") add("FLOOR_PLAN_NEAR", 5);
+  else if (isSameClassPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_SAME_CLASS", reasonPoints("FLOOR_PLAN_SAME_CLASS"));
+  else if (isLargerPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_LARGER", reasonPoints("FLOOR_PLAN_LARGER"));
   else if (fpm === "mismatch") add("FLOOR_PLAN_MISMATCH", -15, "hold");
   else if (facts.floorPlan == null) missing.push("floor_plan");
 
@@ -1127,7 +1225,21 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
 
   // 送付済みの建物（サーバーの skip-sent と同じ線。スタッフモードでは呼ばれない）
   //   名前が一般名（「物件」等）の物件は照合しない（どの建物か分からない＝送付済みと判断しない・迷う物は残す側）
-  if (!isGenericBuildingName(facts.name) && profile.history.sentBuildings.has(normalizeBuildingName(facts.name))) add("ALREADY_SENT", -30, "drop");
+  //   2026-09-25 任務B: 号室で見る。同じ部屋（号室が一致）は今まで通り外す候補。号室が分かって、その建物で送った部屋に無い時は
+  //   ALREADY_SENT_OTHER_ROOM（−3・情報の札）＝同じ建物の新しい空室（実際の🌟で 101→102・205/306→305・1003→202 を外す候補にしていた）。
+  //   号室が分からない時は今まで通り（名前が一致すれば外す候補）。外す候補は増やさない（名前の一致は旧と同じ線）
+  if (!isGenericBuildingName(facts.name)) {
+    const split = splitBuildingRoom(facts.name);
+    const room = normalizeRoomKey(facts.roomNo) || split.room;
+    const rooms = profile.history.sentRooms?.get(normalizeBuildingName(split.building));
+    const nameHit = profile.history.sentBuildings.has(normalizeBuildingName(facts.name));
+    // 同じ部屋: 旧の線（名前の一致）でも当たる時だけ外す候補。号室を読んで初めて当たる時（リアプロの「X 303号室」＝旧は名前が合わず当たらなかった）は
+    //   保留（ALREADY_SENT_SAME_ROOM）に留める＝外す候補を増やさない。実際の🌟にも同じ部屋を日をおいて送り直した物がある（任務B 5件）
+    if (room && rooms?.has(room)) add(nameHit ? "ALREADY_SENT" : "ALREADY_SENT_SAME_ROOM", nameHit ? -30 : reasonPoints("ALREADY_SENT_SAME_ROOM"), nameHit ? "drop" : "hold");
+    else if (room && rooms) add("ALREADY_SENT_OTHER_ROOM", reasonPoints("ALREADY_SENT_OTHER_ROOM"));
+    else if (nameHit) add("ALREADY_SENT", -30, "drop");
+    else if (rooms) add("ALREADY_SENT_OTHER_ROOM", reasonPoints("ALREADY_SENT_OTHER_ROOM"));
+  }
 
   // AD と利益（AD円 − 割引）
   // 2026-09-24 竹内「AD の価値をもっと上げる。AD は報酬なので重要。AD 2ヶ月以上（200%以上）なら追加で点数を上げる」:
@@ -1137,12 +1249,18 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   let profitYen: number | null = null;
   // 月数が無く円だけの時は家賃で月数に直す（「AD 160,000円・家賃 80,000円」＝2ヶ月）
   const adMonthsEff = facts.adMonths ?? (facts.adYen != null && facts.rentYen ? facts.adYen / facts.rentYen : null);
-  if (adYen == null) {
+  // 2026-09-25 任務B: 月数だけあって家賃が読めない時（候補プールで AD が読めた分は全部この形）も AD の段の点は付ける。
+  //   利益（AD円−割引）と AD_COVERS_DISCOUNT／PROFIT_NEGATIVE は円にできる時だけ（家賃が要る）
+  if (adYen == null && adMonthsEff == null) {
     add("AD_UNKNOWN", 0); missing.push("ad");
   } else {
-    profitYen = adYen - profile.discountYen;
-    if (profitYen < 0) add("PROFIT_NEGATIVE", -10, "hold");
-    else add("AD_COVERS_DISCOUNT", 10);
+    if (adYen != null) {
+      profitYen = adYen - profile.discountYen;
+      if (profitYen < 0) add("PROFIT_NEGATIVE", -10, "hold");
+      else add("AD_COVERS_DISCOUNT", 10);
+    }
+    // 資料に「広告費 なし」＝ AD 0（読めない null とは別）。AD 0.5ヶ月（利益が出ない −10）より下に並ぶよう −5 を足す
+    if (adMonthsEff != null && adMonthsEff <= 0) add("AD_NONE", reasonPoints("AD_NONE"));
     if (adMonthsEff != null && adMonthsEff >= 1 && adMonthsEff < 2) add("AD_1M", 5);
     if (adMonthsEff != null && adMonthsEff >= 2) add("AD_HIGH", 20);
     if (adMonthsEff != null && adMonthsEff >= 3) add("AD_VERY_HIGH", 5);
@@ -1194,6 +1312,20 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   };
 }
 
+/**
+ * この部屋（号室まで）をこのお客様に送付済みか。judgeProperty の ALREADY_SENT / ALREADY_SENT_SAME_ROOM と同じ線（号室が分からない時は建物名の一致）。
+ * 2026-09-25 売上サポの同じ建物の間引き（pickup-dedupe の isSent）で、送付済みの部屋を「残す部屋」に選ばないために使う
+ */
+export function isSentRoom(facts: Pick<PropertyFacts, "name" | "roomNo">, profile: CustomerProfile): boolean {
+  if (isGenericBuildingName(facts.name)) return false;
+  const split = splitBuildingRoom(facts.name);
+  const room = normalizeRoomKey(facts.roomNo) || split.room;
+  const rooms = profile.history.sentRooms?.get(normalizeBuildingName(split.building));
+  if (room && rooms?.has(room)) return true;
+  if (room && rooms) return false;
+  return profile.history.sentBuildings.has(normalizeBuildingName(facts.name));
+}
+
 /** 画像（間取り図）の読み取り結果を判定に足す。false は hold（落とさない）・true は加点・null は何もしない */
 export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined): Judgment {
   if (!img) return j;
@@ -1223,13 +1355,13 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
 
 /** 2026-09-25 に足した加点の札（理由の日本語に出す） */
 function isNewPositive(c: string): boolean {
-  return /^(?:FLOOR_PLAN_ALT_MATCH|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
+  return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
     // 広げた検索の幅の内側（希望より少しだけ低い加点）
     || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c);
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_NONE)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -1238,6 +1370,7 @@ export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件
   "SQM_UNDER", "AREA_EXCLUDED", // 2026-09-25 広さの9割未満・希望外のエリア（以外）
+  "ALREADY_SENT_SAME_ROOM", // 2026-09-25 号室で初めて当たる同じ部屋（外す候補にしない）
 ]);
 const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 

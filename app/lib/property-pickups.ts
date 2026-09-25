@@ -144,18 +144,32 @@ export function buildPickupRows(
 export const CUSTOMER_PAGE = 1;
 export const AGENT_PAGE = 2;
 
-/** 元付資料の文字から AD を読む（「AD 2ヶ月」「AD100%」「広告料 1ヶ月」「AD 50,000円」）。数値は表の文字が正だが、AD は元付の資料にしか無い事が多い */
+/**
+ * 元付資料の文字から AD を読む（「AD 2ヶ月」「AD100%」「広告料 1ヶ月」「AD 50,000円」）。数値は表の文字が正だが、AD は元付の資料にしか無い事が多い。
+ * 2026-09-25 監査（任務A）:
+ *   E1 リアプロの元付資料は「A D 250%(税込)」「A D 10000円」「A D 2ヶ月(税込)」と A と D の間に空白がある（19件すべて）→ `A\s?D` で読む
+ *   E2 itandi の「広告費 なし」は AD 0（adMonths: 0）。読めない（null）と分ける（旧は不明扱いで AD 0.5ヶ月より上に並んでいた）
+ *   「広告掲載 可」は AD ではない（「広告費」「広告料」だけ）
+ */
+const AD_LABEL = String.raw`(?:(?<![A-Za-z])A\s?D(?![A-Za-z])|広告料|広告費)`;
+const AD_MONTHS_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(?:家賃|賃料)?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:ヶ月|ヵ月|カ月|か月|ケ月|ヶ|%)`, "i");
+const AD_YEN_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(\\d{4,7})\\s*円`, "i");
+const AD_NONE_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(?:なし|無し|無(?![料])|0\\s*(?:%|ヶ月|ヵ月|カ月|か月|円)?(?![\\d.]))`, "i");
 export function parseAdFromText(text: string | null | undefined): { adMonths: number | null; adYen: number | null } {
-  const t = String(text ?? "").replace(/[０-９．，]/g, (c) => c === "．" ? "." : c === "，" ? "," : String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/,/g, "");
-  const m = t.match(/(?:AD|ＡＤ|広告料|広告費)\s*[:：]?\s*(?:家賃|賃料)?\s*(\d+(?:\.\d+)?)\s*(?:ヶ月|ヵ月|カ月|か月|ケ月|ヶ|%|％)/i);
+  const t = String(text ?? "")
+    .replace(/[０-９Ａ-Ｚａ-ｚ．，％：]/g, (c) => c === "．" ? "." : c === "，" ? "," : c === "％" ? "%" : c === "：" ? ":" : String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/,/g, "");
+  const m = t.match(AD_MONTHS_RE);
   if (m) {
     const v = parseFloat(m[1]);
-    const isPct = /[%％]\s*$/.test(m[0]);
+    const isPct = /%\s*$/.test(m[0]);
     const months = isPct ? v / 100 : v;
+    if (months === 0) return { adMonths: 0, adYen: null };
     return months > 0 && months <= 12 ? { adMonths: months, adYen: null } : { adMonths: null, adYen: null };
   }
-  const y = t.match(/(?:AD|ＡＤ|広告料|広告費)\s*[:：]?\s*(\d{4,7})\s*円/i);
+  const y = t.match(AD_YEN_RE);
   if (y) return { adMonths: null, adYen: parseInt(y[1], 10) };
+  if (AD_NONE_RE.test(t)) return { adMonths: 0, adYen: null };
   return { adMonths: null, adYen: null };
 }
 

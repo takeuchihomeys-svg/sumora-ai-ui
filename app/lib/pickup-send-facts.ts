@@ -45,7 +45,7 @@ export function parsePickupFact(row: PickupFactRow): PickupFact {
   const lines = String(row.summary_text ?? "").split("\n").map((s) => s.trim());
   if (!layout) {
     for (const l of lines.slice(1)) {
-      if (/^(?:AD|広告)/i.test(l)) continue;
+      if (/^(?:A\s?D|ＡＤ|広告)/i.test(l)) continue; // 社内の AD 行（「A D 250%」も）は読まない
       const found = extractLayouts(l.split(/\s/)[0] ?? "")[0];
       if (found) { layout = found; break; }
     }
@@ -53,7 +53,7 @@ export function parsePickupFact(row: PickupFactRow): PickupFact {
   // 家賃: 説明文の2行目「80,000円 10,500円」の1つ目（家賃・管理費の順）。AD の行は見ない
   let rentYen: number | null = null;
   for (const l of lines.slice(1)) {
-    if (/^(?:AD|広告)/i.test(l)) continue;
+    if (/^(?:A\s?D|ＡＤ|広告)/i.test(l)) continue; // 社内の AD 行（「A D 250%」も）は読まない
     const m = toHalf(l).match(/^([\d,]{4,9})\s*円/);
     if (m) { const v = parseInt(m[1].replace(/,/g, ""), 10); if (v >= 10000 && v <= 2000000) { rentYen = v; break; } }
   }

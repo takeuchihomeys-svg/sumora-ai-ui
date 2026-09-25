@@ -508,9 +508,30 @@ export function moveInAvailableFrom(m: MoveIn, opts?: { today?: Date | string })
 export function compareMoveIn(m: MoveIn, wantBy: string | null | undefined, opts?: { today?: Date | string; graceDays?: number }): "ok" | "late" | "unknown" {
   if (!wantBy || !/^\d{4}-\d{2}-\d{2}$/.test(wantBy)) return "unknown";
   const from = moveInAvailableFrom(m, opts);
-  if (!from) return "unknown";
+  if (!from) {
+    // 2026-09-25 監査 E4: 「退去予定(10/31)/相談」は相談でも退去日の翌日より前には入れない（リアプロ）。
+    //   退去日の翌日が希望日より graceDays を超えて遅い時だけ late。早い時は「入れる」とは言えない（相談）ので unknown のまま
+    const v = vacateNextDay(m, opts);
+    if (v && (Date.parse(v) - Date.parse(wantBy)) / 86_400_000 > (opts?.graceDays ?? 14)) return "late";
+    return "unknown";
+  }
   const diff = (Date.parse(from) - Date.parse(wantBy)) / 86_400_000;
   return diff > (opts?.graceDays ?? 14) ? "late" : "ok";
+}
+
+/**
+ * 退去予定日（'MM-DD'・年は書いていない）の翌日 'YYYY-MM-DD'。年は基準日（JST）から: 基準の月より2か月以上前の月は来年（readMoveInTiming と同じ線）。
+ * 退去日が無い・読めない時は null
+ */
+export function vacateNextDay(m: MoveIn, opts?: { today?: Date | string }): string | null {
+  if (!m.vacateMonthDay || !/^\d{2}-\d{2}$/.test(m.vacateMonthDay)) return null;
+  const ref = refYm(opts?.today);
+  const mon = parseInt(m.vacateMonthDay.slice(0, 2), 10);
+  const day = parseInt(m.vacateMonthDay.slice(3), 10);
+  // 反証レビュー: 1月の基準で「退去予定(12/31)」は去年の12月（もう空いた）。今年の12月と読むと「入居が遅い」の誤保留になる → 10か月以上先の月は去年
+  const y = mon < ref.m - 1 ? ref.y + 1 : mon - ref.m >= 10 ? ref.y - 1 : ref.y;
+  const d = new Date(Date.UTC(y, mon - 1, day + 1));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
 /** 監査・画面用の1行（「敷0 礼1 保0 築2008年6月(18年) 入居:2026-11上旬(居住中) 普通2年 更新1ヶ月 楽器× 外国籍○」） */

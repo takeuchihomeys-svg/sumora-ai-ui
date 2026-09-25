@@ -9,7 +9,7 @@ import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
-import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
 import { buildPickupTerms } from "@/app/lib/pickup-terms";
@@ -72,7 +72,8 @@ async function loadProfile(propertyCustomerId: string | null): Promise<{ profile
   const [custRes, sentRes, patRes, convsRes] = await Promise.all([
     // 2026-09-25: 広さ・条件フォームの原文（間取りの「も可」）・エリア・通勤も引く
     supabase.from("property_customers").select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, move_in_time, created_at, floor_area_min, raw_format_text, desired_area, commute_station, commute_minutes").eq("id", propertyCustomerId).maybeSingle(),
-    supabase.from("sent_properties").select("property_name, rent, delivery, source").eq("property_customer_id", propertyCustomerId).gte("sent_at", since).limit(500),
+    // room_no: 送付済みの照合を号室で見る（同じ建物の別の部屋は外す候補にしない・2026-09-25）
+    supabase.from("sent_properties").select("property_name, rent, delivery, source, room_no").eq("property_customer_id", propertyCustomerId).gte("sent_at", since).limit(500),
     supabase.from("property_selection_patterns").select("selling_points, selection_label").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(60),
     supabase.from("conversations").select("id").eq("property_customer_id", propertyCustomerId).limit(10),
   ]);
@@ -98,14 +99,17 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     // 2026-09-24 竹内「同じ建物だと平米数2㎡以内だと家賃がひくい部屋をここにいれて、他の部屋は売上サポに飛ばさなくて大丈夫。
     //   同じマンションの部屋何個もお客さんに送らないので」→ 売上サポの記録だけ絞る（LINE グループ・結合 PDF・sent_properties は merge-pdfs のまま）。
     //   先に絞るので、落とした部屋の画像の描画・Blob・DeepSeek の読み取りの費用もかからない。順位（【N】）は元の番号のまま＝LINE グループと一致
-    const dd = dedupeSameBuilding(input.summaries);
+    // 2026-09-25 送付済みの部屋は「残す部屋」に選ばない（同じ建物のまだ送っていない部屋を残す）→ 判定の材料（送付の記録）を先に読む
+    const conversationId = await resolveConversationId(input.propertyCustomerId, input.conversationId);
+    const loaded = await loadProfile(input.propertyCustomerId);
+    const profile = loaded?.profile ?? null;
+    const sentIdx = new Set<number>();
+    if (profile && profile.history.sentCount > 0) input.summaries.forEach((s, i) => { try { if (isSentRoom(parsePropertyFacts(s), profile)) sentIdx.add(i); } catch { /* 読めない物は送付済みにしない */ } });
+    const dd = dedupeSameBuilding(input.summaries, { isSent: (i) => sentIdx.has(i) });
     out.deduped = dd.dropped.length;
     if (dd.dropped.length > 0) {
       console.log(JSON.stringify({ tag: "property-pickups:dedupe", batch: input.batchId.slice(0, 40), kept: dd.keep.length, dropped: dd.dropped.map((d) => ({ rank: d.rank, name: d.name, area: d.areaSqm, rent: d.rentYen, keptRank: d.keptRank })) }));
     }
-    const conversationId = await resolveConversationId(input.propertyCustomerId, input.conversationId);
-    const loaded = await loadProfile(input.propertyCustomerId);
-    const profile = loaded?.profile ?? null;
     /** 判定の材料（説明文＋AD の補い）。判定は設備の照合（回の全部の行が要る）の後で行う */
     const factsOf = new Map<number, PropertyFacts>();
     // 2026-09-25 竹内「敷金礼金と入居時期、組み込みたい」: 資料の表（文字層）の募集の条件（listing-terms.ts・決定論・DeepSeek 0円）。

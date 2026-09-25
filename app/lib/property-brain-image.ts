@@ -1,5 +1,5 @@
 // app/lib/property-brain-image.ts
-// 物件検索ブレインの「画像でしか分からない有無」だけを DeepSeek（vision-alt-provider と同じ型・reasoning low）で読む。
+// 物件検索ブレインの「画像でしか分からない有無」だけを DeepSeek（vision-alt-provider の callDeepSeek・推論なし・温度0）で読む。
 //
 // 2026-09-23 竹内「間取りを読み取ってお客さん希望の条件に近いか…画像からそうすれば何が良い物件なのか分かる」
 //
@@ -9,13 +9,18 @@
 //   - 推論モデルは「答えが0文字」で失敗するので、成否は取れた項目で見る。失敗は null（判定を止めない・落とさない）。
 //   - 無条件には読まない: お客様の希望に画像でしか分からない語がある時だけ、1バッチ5枚まで。
 
-import { callVisionAlt, VISION_ALT_MODEL_DEFAULT } from "./vision-alt-provider";
+import { callDeepSeek, VISION_ALT_MODEL_DEFAULT } from "./vision-alt-provider";
 import type { ImageFacts, ImageWantKey } from "./property-brain";
 
 export const PROPERTY_BRAIN_IMAGE_MAX_PER_BATCH = 5;
 export const PROPERTY_BRAIN_IMAGE_TIMEOUT_MS = 8_000;
-/** 推論を含むので余裕を持つ（答えは JSON 1行） */
-export const PROPERTY_BRAIN_IMAGE_MAX_TOKENS = 1_500;
+/**
+ * 答えは JSON 1行（40 トークン前後）。2026-09-25 YUMA テスト（売上サポの実物の資料 21枚・同じ画像で旧と新を続けて実行・scripts/yuma-pickup-customers-test.ts の回）:
+ *   旧＝推論 low・max 1,500 は 21枚中 9枚が答え0文字（約9秒で空・本番の llm_usage_logs でも 26回中 8回が失敗）・成功の中央 6.3秒。
+ *   新＝推論なし・温度0 は 21/21 が答え・中央 1.7秒・2回目も同じ答え 20/21・両方が答えた項目の一致 55/57。
+ *   拡張の判定（/api/property-brain/judge）は 8秒で打ち切るので、旧はほとんど間に合っていなかった → 推論なしに固定（設計知見「DeepSeek で短い選択は推論なし」）
+ */
+export const PROPERTY_BRAIN_IMAGE_MAX_TOKENS = 300;
 
 const KEY_QUESTIONS: Record<ImageWantKey, string> = {
   bath_toilet_separate: "bath_toilet_separate: 浴室とトイレが別々の部屋か（ユニットバスなら false）",
@@ -64,12 +69,13 @@ export async function readFloorPlanFacts(imageUrl: string, keys: ImageWantKey[],
   if (!/^https?:\/\//.test(imageUrl) || keys.length === 0) return { facts: null, ms: 0, model };
   const content = [
     { type: "text", text: buildImageQuestion(keys) },
-    { type: "image", source: { type: "url", url: imageUrl } },
+    { type: "image_url", image_url: { url: imageUrl } },
   ];
-  const res = await callVisionAlt(PROPERTY_BRAIN_IMAGE_SYSTEM, content, {
+  const res = await callDeepSeek(PROPERTY_BRAIN_IMAGE_SYSTEM, content, {
     maxTokens: PROPERTY_BRAIN_IMAGE_MAX_TOKENS,
     timeoutMs: opts?.timeoutMs ?? PROPERTY_BRAIN_IMAGE_TIMEOUT_MS,
-    effort: "low",
+    thinking: false,
+    temperature: 0,
   });
   const ms = Date.now() - startedAt;
   const facts = res ? parseImageFacts(res.text, keys) : null;

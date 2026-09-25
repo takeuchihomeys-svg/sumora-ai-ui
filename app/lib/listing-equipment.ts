@@ -403,6 +403,11 @@ export type EquipmentWant = {
   soft: boolean;
   minFloor?: number;
   maxFloor?: number;
+  /**
+   * 2026-09-25 監査 E3: 「2階以上はエレベーター必須」＝その階以上の部屋の時だけの希望（N）。部屋の階が N 未満なら照らさない。
+   *   階の希望（floor2）そのものではない（旧は「2階以上が必須」と読み、1階の部屋を ×・必須の上限20点にしていた＝🌟★の物件だった）
+   */
+  ifFloorAtLeast?: number;
   /** 元の節 */
   text: string;
   field: WantField;
@@ -493,6 +498,18 @@ function additionalToText(s: string): string {
   return out.join("、");
 }
 
+/**
+ * 「2階以上はエレベーター必須」「3階以上ならエレベーター」の N（階の条件付きの設備の希望）。
+ *   「N階以上」の直後が「は・なら・の場合・の時・だと」で、その後ろに別の設備の語がある時だけ。「2階以上は必須」「2階以上がいい」は階の希望（null）
+ */
+export function conditionalFloorOf(c: string): number | null {
+  const m = c.match(/([0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})階以上\s*(?:は|なら|の場合(?:は)?|の時(?:は)?|だと|であれば)(.*)$/);
+  if (!m) return null;
+  const rest = m[2];
+  if (!WANT_RES.some(({ key, re }) => key !== "floor2" && re.test(rest))) return null;
+  return toNum(m[1]);
+}
+
 function parseFloorWants(c: string, field: WantField): EquipmentWant[] {
   const base = { mode: "must" as const, strong: STRONG_RE.test(c), soft: SOFT_RE.test(c), text: c, field };
   const n = (x: string) => toNum(x);
@@ -512,6 +529,8 @@ function parseFloorWants(c: string, field: WantField): EquipmentWant[] {
   if ((m = c.match(/([0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})階以上/))) {
     const a = n(m[1]);
     if (a == null) return [];
+    // 「2階以上は／なら／の場合 エレベーター必須」＝条件の節（階の希望ではない）→ 設備の希望に ifFloorAtLeast を付ける（conditionalFloorOf）
+    if (conditionalFloorOf(c) != null) return [];
     const isNg = ngField || AFTER_NG_RE.test(c.slice((m.index ?? 0) + m[0].length));
     if (isNg) return [{ key: "floor", ...base, maxFloor: a - 1 }];
     return [{ key: a === 2 ? "floor2" : "floor", ...base, minFloor: a }];
@@ -569,6 +588,7 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
       if (/木造/.test(c) && (field === "ng_points" || /以外|NG|ng|不可|嫌|×|避け/.test(c))) { push({ key: "not_wood", mode: "must", strong, soft, text: c, field }); hit = true; }
       if (ACCEPT_ONLY_RE.test(c)) hit = true; // 「ユニットバス可」は受け入れの話（希望ではない）
       const petSelfNone = PET_SELF_NONE_RE.test(c);
+      const condFloor = conditionalFloorOf(c);
       for (const { key, re } of WANT_RES) {
         if (key === "bath_toilet" && (ACCEPT_ONLY_RE.test(c) || /(?:バス|風呂|浴室)・?トイレ(?:一緒|同室)|トイレ同室/.test(c))) continue;
         if (key === "pet" && petSelfNone) continue; // 自分はペットを飼っていない（希望ではない）
@@ -580,7 +600,7 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
         if (AFTER_NG_RE.test(after) || AFTER_NG_RE.test(after.replace(/^(?:可|OK|可能|相談可?)/, ""))) mode = "ng";
         else if (field === "ng_points" && NG_FIELD_NONE_RE.test(after)) mode = "must"; // NG欄の「独立洗面なし」＝無いのが NG
         else if (field === "ng_points" && !/あり|付き|付|可|希望|欲しい|ほしい|必須/.test(c)) mode = "ng";
-        push({ key, mode, strong, soft: soft || /^(?:も|でも)(?:OK|可|大丈夫)/.test(after), text: c, field });
+        push({ key, mode, strong, soft: soft || /^(?:も|でも)(?:OK|可|大丈夫)/.test(after), text: c, field, ...(condFloor != null ? { ifFloorAtLeast: condFloor } : {}) });
         hit = true;
       }
       if (hit) continue;
@@ -610,7 +630,8 @@ export function wantLabel(w: EquipmentWant): string {
   const base = w.key === "floor"
     ? (w.minFloor != null && w.maxFloor != null ? `${w.minFloor}〜${w.maxFloor}階` : w.minFloor != null ? `${w.minFloor}階以上` : `${w.maxFloor}階以下`)
     : w.key === "floor2" && w.minFloor && w.minFloor > 2 ? `${w.minFloor}階以上` : EQUIP_LABELS[w.key];
-  return w.mode === "ng" ? `${base}NG` : base;
+  const label = w.mode === "ng" ? `${base}NG` : base;
+  return w.ifFloorAtLeast != null ? `${label}（${w.ifFloorAtLeast}階以上の時）` : label;
 }
 
 /** 希望と資料の事実を照らす（決定論）。unlisted は「書いていない」で、NG ではない */
@@ -618,6 +639,8 @@ export function matchEquipment(wants: EquipmentWants | EquipmentWant[], facts: L
   const list = Array.isArray(wants) ? wants : wants.wants;
   const rows: EquipmentMatchRow[] = [];
   for (const w of list) {
+    // 「2階以上はエレベーター必須」: 部屋が N 階未満（地下でなく階が分かる時）なら、この希望は当てはまらない（行を出さない・点を付けない）
+    if (w.ifFloorAtLeast != null && !facts.basement && facts.floor != null && facts.floor < w.ifFloorAtLeast) continue;
     const label = wantLabel(w);
     let result: EquipmentMatchRow["result"] = "unlisted", why = "資料に記載なし", fromBuilding = false;
     if (w.key === "floor" || (w.key === "floor2" && (w.minFloor ?? 2) !== 2)) {

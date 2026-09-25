@@ -5,7 +5,7 @@
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { okCountOf, type CustomerBest } from "@/app/lib/pickup-best";
+import { okCountOf, verdictOrder, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
 import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
@@ -270,7 +270,8 @@ function buildBubbles(c: Customer): Bubble[] {
       const raw = (x: Item) => Number((x.image_analysis as { match_raw?: number | null }).match_raw ?? 0);
       // 同点（全件が必須 NG で 20 点など）は上限前の点 →「合う」の数で並べる（pickup-image-analysis.pickBest と同じ）
       // 2026-09-24 竹内「前回の反証で出た点も直す」: 同点は「合う」の数が多い方を上に
-      const best = scored.slice().sort((a, z) => (m(z) - m(a)) || (raw(z) - raw(a)) || (okCountOf(z.image_analysis) - okCountOf(a.image_analysis)) || (a.rank - z.rank))[0];
+      // 2026-09-25 それでも同じなら判定（通す＞保留＞外す候補）。全体の 👑（pickCustomerBest）と同じ
+      const best = scored.slice().sort((a, z) => (m(z) - m(a)) || (raw(z) - raw(a)) || (okCountOf(z.image_analysis) - okCountOf(a.image_analysis)) || (verdictOrder(a) - verdictOrder(z)) || (a.rank - z.rank))[0];
       out.push({ kind: "analysis", at: b.created_at + "~~", batch: b, items: analyzed, bestId: best?.id ?? null });
     }
     const sent = b.items.filter((it) => it.status === "sent");

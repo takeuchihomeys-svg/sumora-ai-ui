@@ -76,6 +76,12 @@ const CHIP_JA: Record<string, string> = {
   FLOOR_PLAN_WIDE: "広げた間取り（LDK→DK）",
   BUILDING_AGE_WIDE: "広げた築年の幅（＋5年）",
   SQM_WIDE: "広げた広さの幅（−5㎡）",
+  // 2026-09-25 監査（任務A・B）
+  ALREADY_SENT_OTHER_ROOM: "同じ建物の別の部屋を送付済み",
+  ALREADY_SENT_SAME_ROOM: "この部屋は送付済み（送り直し？）",
+  FLOOR_PLAN_SAME_CLASS: "同じ広さの級（2DK↔1LDK）",
+  FLOOR_PLAN_LARGER: "希望より広い間取り",
+  AD_NONE: "AD なし",
 };
 
 /** 読めなかった材料（点が動かない理由）。コード → 札の言葉 */

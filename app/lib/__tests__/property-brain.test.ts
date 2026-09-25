@@ -219,6 +219,10 @@ console.log("── 判定（決定論・drop は実送信でほぼ0の形だけ
   const usual = buildCustomerProfile({ rent_max: 100_000, floor_plan: "1K" }, [{ property_name: "A", rent: 60_000 }, { property_name: "B", rent: 62_000 }, { property_name: "C", rent: 64_000 }]);
   const hi = judgeProperty(parsePropertyFacts("【1】上限ギリ\n98,000円\n1K\n敷なし 礼なし\n徒歩5分\nAD 2ヶ月"), usual);
   t("中央値 0.62 に対し 0.98 → RENT_ABOVE_USUAL（減点のみ・pass）", hi.reasonCodes.includes("RENT_ABOVE_USUAL") && hi.verdict === "pass");
+  // 2026-09-25 YUMA テスト（お客様B）: 送付1件（58,000円）だけの中央値では付けない（上限 7万円内のほぼ全件が −5 になっていた）
+  const one = buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }, [{ property_name: "エステムコート新大阪VIエキスプレイス", rent: 58_000, room_no: "710", delivery: "customer" }]);
+  const hi1 = judgeProperty(parsePropertyFacts("【1】プレサンス新大阪ザ・シティ 104号室\n65,000円 管理費5,000円\n1K 22.03㎡\nJR京都線「新大阪」徒歩5分\nAD 2ヶ月"), one);
+  t("送付1件の中央値では RENT_ABOVE_USUAL を付けない", !hi1.reasonCodes.includes("RENT_ABOVE_USUAL") && one.history.rentRatioN === 1, hi1.reasonCodes.join(","));
 }
 
 console.log("── 画像の有無（DeepSeek の答えの読み方・判定への足し方）");
