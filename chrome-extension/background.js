@@ -9,6 +9,8 @@ import "./resolution-core.js";
 import "./search-history.js";
 // 2026-09-18 竹内（一括検索の混線）: fill-done が誰の分かの判定（純関数・テストあり）
 import "./fill-done-match.js";
+// 2026-09-25 竹内「ブレインだけ別で、ほかはドロップダウン」: 動作モードの読み方・組み合わせの動き・バッジ（self.AxlxModeCore・popup.js と同じ1つ）
+import "./mode-core.js";
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
@@ -375,15 +377,17 @@ function isStaffModeOn() {
   });
 }
 
-// ── ヘルパー: ブレインモードか（popup.js が chrome.storage.local に持つ・TTL なし）──
+// ── ヘルパー: ブレインか（popup.js の 🧠 ブレインの切り替えが chrome.storage.local.brainMode に持つ・TTL なし）──
 // 2026-09-23 竹内「物件検索の拡張ツールでもブレインモードつくる」
-//   ブレイン ＝ AIX連動（aixMode）＋ 判定（brainMode）。両方 true の時だけ ON。
+// 2026-09-25 竹内「ブレインだけ別で、ほかはドロップダウン。ブレインでもスタッフモードや AIX モード、通常モードを行う」:
+//   旧は「aixMode と brainMode が両方 true」の時だけ ON（ブレイン＝AIX連動＋判定）。新は **brainMode 単独で ON**。
+//   旧「ブレイン」の値 {aixMode:true, brainMode:true} は新でも ON（＝ブレイン×AIX）なので、再読み込みしても動きは変わらない。
 //   自動便（11:00/17:00・AIX）の claim は _isAixModeActive がそのまま見るので、ここは判定の有無だけ。
 function isBrainModeOn() {
   return new Promise((resolve) => {
     try {
-      chrome.storage.local.get(["aixMode", "brainMode"], (res) => {
-        resolve(!!(res && res.aixMode && res.brainMode));
+      chrome.storage.local.get(["brainMode"], (res) => {
+        resolve(!!(res && res.brainMode));
       });
     } catch (_) { resolve(false); }
   });
@@ -393,8 +397,11 @@ function isBrainModeOn() {
 async function callMergeApi(payload) {
   // 送信の3経路（リアプロ・itandi・レインズ）は全部ここを通るので、スタッフモードの判定もここで付ける
   const staffMode = await isStaffModeOn();
-  // brain_mode はサーバーの記録用（判定そのものは bulk-dl.js が送信前に /api/property-brain/judge で行う）。スタッフモード中は false
-  const brainMode = staffMode ? false : await isBrainModeOn();
+  // brain_mode はサーバーの記録用（判定そのものは bulk-dl.js が送信前に /api/property-brain/judge で行う）＝ 売上サポ（property_pickups）に1回分を残す。
+  // 2026-09-25 竹内「ブレインでもスタッフモードを行う」: 旧はスタッフモード中は false に倒していたが、ブレイン×スタッフでも記録する
+  //   （AxlxModeCore.behavior の recordPickup。スタッフの送り方は変えない: staff_mode=true で送付済みの除外はしないまま・LINE グループへの送り方も同じ）。
+  //   サーバー（merge-pdfs）の brain_mode は property_pickups の記録にしか使っておらず、staff_mode（除外しない）とは独立に効く。
+  const brainMode = await isBrainModeOn();
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2302,29 +2309,17 @@ async function _isAixModeActive() {
   }
 }
 
+// バッジ（2026-09-25: 組み合わせは AxlxModeCore.badge の1か所。スタッフ「手動」／ブレイン×スタッフ「手脳」／AIX「AIX」／
+//   ブレイン×AIX「脳」（旧「ブレイン」と同じ）／ブレイン×通常「脳通」／通常 なし）。on はスタッフが有効か（TTL 込み）
 function _updateStaffModeBadge(on) {
   try {
-    if (on) {
-      chrome.action.setBadgeText({ text: "手動" });
-      chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
-      return;
-    }
-    _isAixModeActive().then(function(aixOn) {
-      if (aixOn) {
-        // ブレイン（AIX連動＋判定）は「脳」、AIX連動だけなら「AIX」（優先: 手動 > 脳 > AIX）
-        isBrainModeOn().then(function(brainOn) {
-          if (brainOn) {
-            chrome.action.setBadgeText({ text: "脳" });
-            chrome.action.setBadgeBackgroundColor({ color: "#0ea5e9" });
-          } else {
-            chrome.action.setBadgeText({ text: "AIX" });
-            chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
-          }
-        });
-      } else {
-        chrome.action.setBadgeText({ text: "" });
-      }
-    });
+    chrome.storage.local.get(["aixMode", "brainMode"]).then(function(st) {
+      var core = self.AxlxModeCore;
+      var mode = on ? "staff" : (st && st.aixMode ? "aix" : "normal");
+      var b = core ? core.badge(mode, !!(st && st.brainMode)) : { text: on ? "手動" : "", color: "#16a34a" };
+      chrome.action.setBadgeText({ text: b.text });
+      if (b.text) chrome.action.setBadgeBackgroundColor({ color: b.color });
+    }).catch(function() { /* ignore */ });
   } catch (e) { /* ignore */ }
 }
 
@@ -2383,6 +2378,8 @@ async function _pollAndRunBatch() {
     // 2026-09-24 竹内「ブレインモードにしているのに 11:00 の自動モードが連動していた。ブレインモードならブレインモードのままで、
     //   AIX モード（自動便）は連動されない」: ブレインモード中は時刻起動の自動便（auto_schedule）を実行しない。
     //   pending のまま残すと後でモードを戻した時に古い便が走るので、見送りとして閉じる（画面の履歴に理由が残る）
+    // 2026-09-25: ブレインが独立の切り替えになった後も同じ（AxlxModeCore.behavior の runAutoSchedule = AIX かつ ブレインOFF）。
+    //   自動便は ?aix=1 の PC（AIX連動）にしか届かないので、ここに来るのは ブレイン×AIX の時だけ（旧「ブレイン」と同じ動き）。
     if (cmd.command_type !== "stop_all" && cmd.payload && cmd.payload.source === "auto_schedule" && await isBrainModeOn()) {
       console.log("[batch] ブレインモード中 → 自動便を見送り: " + cmd.id);
       await _updateBatchCommand(cmd.id, { status: "cancelled", error_message: "ブレインモード中のため自動便（AIX連動）は実行しない", completed_at: new Date().toISOString() });

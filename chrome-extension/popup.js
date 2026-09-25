@@ -4899,52 +4899,81 @@ function executeBulkSearch(site) {
   document.querySelectorAll(".bulk-check").forEach((cb) => { cb.checked = false; });
 }
 
-// ── 動作モード（通常／スタッフ／AIX連動／ブレイン）────────────────────────
-// 2026-09-23 竹内「物件検索の拡張ツールでもブレインモードつくる。スタッフモードのところダウンドロップで切り替えれるようにする」
-//   旧: AIX ボタンとスタッフモードボタンの2つ（排他）。新: <select id="mode-select"> 1つ。
+// ── 動作モード（🧠 ブレインの切り替え ＋ モードのドロップダウン 通常／スタッフ／AIX連動）──────────
+// 2026-09-25 竹内「スタッフモード等はこのブレインの横に付ける。ブレインだけ別で、ほかはドロップダウン方式で行う。
+//   ブレインでもスタッフモードや AIX モード、通常モードを行うため」
+//   旧（v2.5.9〜2.5.19）: <select> 1つで 通常／スタッフ／AIX連動／ブレイン の4択（ブレイン＝AIX連動＋判定・排他）。
+//   新（v2.5.20〜）   : #brain-toggle（brainMode だけを書く）＋ #mode-select（staffMode/staffModeAt/aixMode だけを書く）。
 //
-// storage のキーは**今まで通り**（background.js・bulk-dl.js・itandi/reins の bulk-dl が読んでいるので変えない）:
-//   staffMode / staffModeAt … スタッフモード。ONの間このPCは自動化コマンドを無視（background._isStaffModeActive・2時間TTL）
-//   aixMode                … AIX連動。AIX の指示（物件ピックアップ・物件オススメ）の自動検索コマンドを claim（background._isAixModeActive）
-//   brainMode（新）        … ブレイン。**aixMode:true を伴う**（ブレイン＝AIX連動＋判定）。bulk-dl.js が送信前に /api/property-brain/judge を呼ぶ
-// 表示値は storage から導く: staffMode→staff ／ aixMode&&brainMode→brain ／ aixMode→aix ／ それ以外→normal
-// ⚠ ブレインを選んだ時に aixMode を false にすると自動便（11:00/17:00・AIX）が止まる。_applyMode 以外で書かない。
-var _staffModeOn = false;
+// storage のキーは**今まで通り**（background.js・bulk-dl.js・itandi-bulk-dl.js が読んでいるので変えない）:
+//   staffMode / staffModeAt … スタッフ。ONの間このPCは自動化コマンドを無視（background._isStaffModeActive・2時間TTL）
+//   aixMode                … AIX連動。AIX の指示・11:00/17:00 の自動便を claim（background._isAixModeActive）
+//   brainMode              … ブレイン。**単独で ON**（旧は aixMode と両方 true の時だけ）。旧「ブレイン」の値はそのまま ブレイン×AIX になる
+// 読み方・組み合わせの動き・帯・バッジは mode-core.js（AxlxModeCore）の1か所。ここは「読む・描く・書く」だけ。
+// ⚠ モードとブレインは別々に書く（片方の操作でもう片方を消さない）。書き込みは _applyMode / _applyBrain の2か所だけ。
+var _modeRaw = {};          // storage の生の値（staffMode / staffModeAt / aixMode / brainMode）
+var _staffModeOn = false;   // 以下3つは読み取り専用の写し（バッジ等で使う）
 var _aixModeOn = false;
 var _brainModeOn = false;
+var _brainToggleLastAt = 0; // ブレインの切り替えの二重押し（ダブルクリック）で ON→OFF に戻らないように
 
-function _modeFromFlags(staff, aix, brain) {
-  if (staff) return "staff";
-  if (aix && brain) return "brain";
-  if (aix) return "aix";
-  return "normal";
+function _modeState() {
+  var core = self.AxlxModeCore;
+  return core ? core.readState(_modeRaw, Date.now()) : { mode: "normal", brain: false, staffExpired: false };
+}
+
+function _modeBadge() {
+  var core = self.AxlxModeCore;
+  var s = _modeState();
+  return core ? core.badge(s.mode, s.brain) : { text: "", color: "#7c3aed" };
+}
+
+function _setModeBadge() {
+  try {
+    var b = _modeBadge();
+    chrome.action.setBadgeText({ text: b.text });
+    if (b.text) chrome.action.setBadgeBackgroundColor({ color: b.color });
+  } catch (_) { /* ignore */ }
 }
 
 function _renderModeUI() {
+  var core = self.AxlxModeCore;
+  var s = _modeState();
+  _staffModeOn = s.mode === "staff";
+  _aixModeOn = s.mode === "aix";
+  _brainModeOn = s.brain;
   var sel = document.getElementById("mode-select");
-  var mode = _modeFromFlags(_staffModeOn, _aixModeOn, _brainModeOn);
-  if (sel && sel.value !== mode) sel.value = mode;
   if (sel) {
-    sel.classList.toggle("on-staff", mode === "staff");
-    sel.classList.toggle("on-aix", mode === "aix");
-    sel.classList.toggle("on-brain", mode === "brain");
+    // 表示は storage から導くだけ（value を比べてから入れる＝change イベントを自分で起こさない）
+    if (sel.value !== s.mode) sel.value = s.mode;
+    sel.classList.toggle("on-staff", s.mode === "staff");
+    sel.classList.toggle("on-aix", s.mode === "aix");
   }
-  var sb = document.getElementById("staff-mode-banner");
-  var ab = document.getElementById("aix-mode-banner");
-  var bb = document.getElementById("brain-mode-banner");
-  if (sb) sb.style.display = mode === "staff" ? "block" : "none";
-  if (ab) ab.style.display = mode === "aix" ? "block" : "none";
-  if (bb) bb.style.display = mode === "brain" ? "block" : "none";
+  var bt = document.getElementById("brain-toggle");
+  if (bt) {
+    bt.classList.toggle("on", s.brain);
+    bt.setAttribute("aria-pressed", s.brain ? "true" : "false");
+  }
+  var banner = document.getElementById("mode-banner");
+  if (banner) {
+    var bn = core ? core.banner(s.mode, s.brain) : null;
+    if (bn) {
+      banner.className = "mode-banner " + bn.cls;
+      banner.textContent = bn.text;
+      banner.style.display = "block";
+    } else {
+      banner.style.display = "none";
+    }
+  }
 }
 
-// storage への書き込みはここ1か所（排他を1つの表で持つ）
+// モードの書き込みはここ1か所（ブレイン brainMode には触らない）
 function _applyMode(mode) {
-  var upd;
-  if (mode === "staff")      upd = { staffMode: true,  staffModeAt: Date.now(), aixMode: false, brainMode: false };
-  else if (mode === "aix")   upd = { staffMode: false, staffModeAt: null,       aixMode: true,  brainMode: false };
-  else if (mode === "brain") upd = { staffMode: false, staffModeAt: null,       aixMode: true,  brainMode: true  };
-  else                       upd = { staffMode: false, staffModeAt: null,       aixMode: false, brainMode: false };
-  _staffModeOn = upd.staffMode; _aixModeOn = upd.aixMode; _brainModeOn = upd.brainMode;
+  var core = self.AxlxModeCore;
+  if (!core || core.MODES.indexOf(mode) < 0) mode = "normal";
+  var upd = core ? core.storageUpdateForMode(mode, Date.now())
+                 : { staffMode: false, staffModeAt: null, aixMode: false };
+  Object.assign(_modeRaw, upd);
   _renderModeUI(); // 即時反映（storage.onChanged でも同期される）
   try { chrome.storage.local.set(upd); } catch (_) { /* ignore */ }
   // スタッフモードON → 要対応へ自動切替（旧ボタンと同じ挙動）
@@ -4956,14 +4985,22 @@ function _applyMode(mode) {
   }
 }
 
+// ブレインの書き込みはここ1か所（モードには触らない）。on は「押した時点の反対」を呼び出し側で決めずここで決める
+function _applyBrain(on) {
+  var core = self.AxlxModeCore;
+  var upd = core ? core.storageUpdateForBrain(on) : { brainMode: !!on };
+  Object.assign(_modeRaw, upd);
+  _renderModeUI();
+  try { chrome.storage.local.set(upd); } catch (_) { /* ignore */ }
+}
+
 function _initModeSelect() {
+  var keys = (self.AxlxModeCore && self.AxlxModeCore.STORAGE_KEYS) || ["staffMode", "staffModeAt", "aixMode", "brainMode"];
   try {
-    chrome.storage.local.get(["staffMode", "aixMode", "brainMode"], function(res) {
-      _staffModeOn = !!(res && res.staffMode);
-      _aixModeOn = !!(res && res.aixMode);
-      _brainModeOn = !!(res && res.brainMode);
+    chrome.storage.local.get(keys, function(res) {
+      _modeRaw = Object.assign({}, res || {});
       _renderModeUI();
-      // ポップアップ起動時にスタッフモードONなら要対応をデフォルトに
+      // ポップアップ起動時にスタッフモードONなら要対応をデフォルトに（TTL 切れは除く）
       if (_staffModeOn) {
         currentAccount = "__needs_action__";
         var _acctSel0 = document.getElementById("acct-select");
@@ -4972,16 +5009,26 @@ function _initModeSelect() {
     });
     // 他のpopupインスタンス（サイドパネル/各タブのアンダーバー）での切替・TTL自動OFF（background が staffMode:false を書く）を同期
     chrome.storage.local.onChanged.addListener(function(changes) {
-      if (!changes.staffMode && !changes.aixMode && !changes.brainMode) return;
-      if (changes.staffMode) _staffModeOn = !!changes.staffMode.newValue;
-      if (changes.aixMode) _aixModeOn = !!changes.aixMode.newValue;
-      if (changes.brainMode) _brainModeOn = !!changes.brainMode.newValue;
-      _renderModeUI();
+      var hit = false;
+      keys.forEach(function(k) {
+        if (changes[k]) { _modeRaw[k] = changes[k].newValue; hit = true; }
+      });
+      if (hit) _renderModeUI();
     });
   } catch (_) { /* ignore */ }
   var sel = document.getElementById("mode-select");
   if (sel) {
     sel.addEventListener("change", function() { _applyMode(sel.value); });
+  }
+  var bt = document.getElementById("brain-toggle");
+  if (bt) {
+    bt.addEventListener("click", function() {
+      var now = Date.now();
+      if (now - _brainToggleLastAt < 400) return; // 二重押しは1回として扱う
+      _brainToggleLastAt = now;
+      // 次の値は「今 storage から読んで描いている状態」の反対（ボタンの見た目では決めない）
+      _applyBrain(!_modeState().brain);
+    });
   }
 }
 
@@ -5000,7 +5047,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!cmd) return;
       chrome.storage.session.remove("pendingPopupCmd");
       // openPopup() 失敗時に background.js が立てた赤バッジを消す（スタッフモード中はバッジ「手動」を維持）
-      try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_brainModeOn && _aixModeOn ? '脳' : (_aixModeOn ? 'AIX' : '')) }); } catch (_) {}
+      _setModeBadge();
       var c = allCustomers.find(function(x) {
         return String(x.id) === String(cmd.customerId);
       });
@@ -5052,7 +5099,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // allCustomers 未ロードなら DOMContentLoaded の then() 側で処理されるので無視
     if (!allCustomers || allCustomers.length === 0) return;
     chrome.storage.session.remove("pendingPopupCmd");
-    try { chrome.action.setBadgeText({ text: _staffModeOn ? '手動' : (_brainModeOn && _aixModeOn ? '脳' : (_aixModeOn ? 'AIX' : '')) }); } catch (_) {}
+    _setModeBadge();
     var c = allCustomers.find(function(x) {
       return String(x.id) === String(cmd.customerId);
     });

@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-09-25 ブレインを独立の切り替えに・モードはドロップダウン（通常／スタッフ／AIX連動）— ブレインは3つのどれとも組み合わせる（v2.5.20・竹内）
+竹内「スタッフモード等はこのブレインの横に付ける。ブレインだけ別で、ほかはドロップダウン方式で行う。ブレインでもスタッフモードや AIX モード、通常モードを行うため」
+- 旧（v2.5.9〜2.5.19）: ヘッダーの select 1つで 通常／スタッフモード／AIX連動／ブレイン の4択（ブレイン＝AIX連動＋判定・排他）。画面の「ブレイン」の丸いピルはこの select、横の「∨」は `#collapse-btn`（サイドパネル＝お客さん一覧に戻る／下のバー＝折りたたむ・モードとは無関係）
+- 新: `#brain-toggle`「🧠 ブレイン」（ON で水色）＋ 横に `#mode-select`（通常／スタッフ／AIX連動・▾ 付き）。帯は `#mode-banner` 1つで組み合わせごとに文言と色を変える。狭い幅（≤400px）では「物件検索サポート」を隠す
+- **仕様は `chrome-extension/mode-core.js`（純関数・`self.AxlxModeCore`）の1か所**: readState（storage→モード・TTL）／storageUpdateForMode／storageUpdateForBrain／behavior（組み合わせ→動き）／badge／banner。popup.html（`<script>`）と background.js（`import`）が読む。`web_accessible_resources` にも追加（下のバーの iframe が popup.html を開くため）。テスト `tests/chrome-extension/mode-core.test.js`（45件）
+
+| 組み合わせ | コマンドの claim | AIX・自動便の受け取り | 自動送信 | 送付済みの除外 | ブレイン判定 | drop を外す | LINE 末尾の「🧠 ブレイン判定」 | 売上サポに記録（brain_mode） | 11:00/17:00 自動便 | バッジ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 通常 | ○ | × | ○ | ○ | × | × | × | × | 届かない | なし |
+| スタッフ | ×（別PCが拾う） | × | ×（手動のみ） | ×（人が選んだ物は減らさない） | × | × | × | × | 届かない | 手動 |
+| AIX連動 | ○ | ○ | ○ | ○ | × | × | × | × | ○ 実行 | AIX |
+| 🧠×通常（新） | ○ | × | ○ | ○ | ○ | ○※ | ○ | ○ | 届かない | 脳通 |
+| 🧠×スタッフ（新） | × | × | × | × | ○（記録だけ） | **×（拡張もサーバーも外さない）** | **×（スタッフの文は変えない）** | ○ | 届かない | 手脳 |
+| 🧠×AIX（＝旧「ブレイン」） | ○ | ○ | ○ | ○ | ○ | ○※ | ○ | ○ | **見送り（cancelled）** | 脳 |
+※ drop を外すのはサーバーの `PROPERTY_BRAIN_DROP=on` の時だけ（今は影の運用＝1件も外さない）。判定はリアプロの一括DL・自動送信だけ（itandi・レインズは判定なし・売上サポの記録は3サイトとも）
+
+- **storage のキーは変えていない**（staffMode／staffModeAt／aixMode／brainMode）。変わったのは brainMode の意味だけ: 旧「aixMode && brainMode」→ 新「brainMode 単独」。
+  旧「ブレイン」{aixMode:true, brainMode:true} は新の ブレイン×AIX（同じ動き）、旧 AIX／スタッフ／通常 もそのまま＝**書き込み（移し替え）は要らない**。旧 `_applyMode` は brainMode:true を必ず aixMode:true と一緒に書いていたので、意味が変わって動きが変わる PC は無い
+- モードの書き込み（`_applyMode`）は brainMode に触らず、ブレインの書き込み（`_applyBrain`）はモードに触らない＝片方を変えてももう片方が残る。スタッフの2時間 TTL はそのまま（切れると スタッフ→通常、ブレインは残る＝🧠×スタッフ → 🧠×通常）
+- 直した所（旧は「スタッフならブレインを切る」だった）: background `callMergeApi` の `brain_mode = staffMode ? false : …` → `isBrainModeOn()`（スタッフでも売上サポに記録）／`isBrainModeOn()` は brainMode だけを見る／bulk-dl `buildSendItemsBrain` はスタッフ中も判定を呼ぶが、呼んだ時点がスタッフなら apply_drop を無視し note_line を足さない（`_staffAtJudge`）
+- 二重押し: ブレインの切り替えは 400ms 以内の2回目を無視。次の値はボタンの見た目でなく storage から読んだ状態の反対。select は値を比べてから入れる（自分で change を起こさない）
+- 確かめ: ヘッドレス Chrome（chrome.* の差し替え＋本物の popup.html/popup.js/mode-core.js）で 初回・ブレインON・二重押し・スタッフ・開き直し・AIX・別画面の書き込みの同期・旧「ブレイン」/旧「AIX連動」の値・TTL 切れ・スタッフ時の要対応 を確認。実機の拡張読み込みは未確認
+- 竹内さんに確認（今は安全側で入れた）: ①🧠×スタッフでも LINE の説明文末尾に「🧠 ブレイン判定」を付けるか（今は付けない）②🧠×AIX で 11:00/17:00 の自動便も走らせるか（今は旧「ブレイン」と同じく見送り）③🧠×スタッフで売上サポに記録してよいか（今は記録する・DeepSeek の画像費用が手動の送信分も増える）
+- ⚠ 別件（触っていない）: `chrome-extension/webapp-bridge.js` が **構文エラー**（`var site`（47行）と `const { site }`（93行）が同じ関数内）で `node --check` が通らない。2026-08-10 の 497a94e9 から。Chrome でも読み込み時に落ちている可能性が高い（ウェブアプリ→拡張の橋渡し: 見積書自動・ウェブからの検索・scrape-and-compare）
+- 戻し方: 拡張を v2.5.19 に戻せば、storage はそのまま旧の4択で読める（旧は brainMode:true かつ aixMode:false を「ブレインOFF」と読むので、🧠×通常／🧠×スタッフにしていた PC はブレインが切れた扱いになるだけ）
+
 ## 2026-09-25 候補の記憶を太くする — 候補の記録に全項目＋生の文字・🌟の時点の候補一覧・送った画像ごとの値（v2.5.19・竹内）
 竹内「候補の記憶を太くする。会話を見たりオススメしている部分を見ればギャップが分かる」
 - **拡張（v2.5.19）**: 候補の記録（property_pool → /api/log-property-candidates → property_candidate_pools.candidates の jsonb）を太くした。送る物・説明文・判定の payload は変えない

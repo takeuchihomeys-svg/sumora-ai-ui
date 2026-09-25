@@ -48,20 +48,19 @@
     });
   } catch (_e) {}
 
-  // ── ブレインモードキャッシュ（2026-09-23 竹内「物件検索の拡張ツールでもブレインモードつくる」）──
-  // ブレイン ＝ AIX連動（aixMode）＋ 判定（brainMode）。両方 true の時だけ、送信前に /api/property-brain/judge を呼ぶ。
-  // スタッフモード中は呼ばない（人が選んだ物は減らさない）。判定の失敗・タイムアウトは今までどおり全件送る（fail-open）。
+  // ── ブレインのキャッシュ（2026-09-23 竹内「物件検索の拡張ツールでもブレインモードつくる」）──
+  // 2026-09-25 竹内「ブレインだけ別で、ほかはドロップダウン。ブレインでもスタッフモードや AIX モード、通常モードを行う」:
+  //   旧は aixMode と brainMode の両方 true の時だけ ON。新は **brainMode 単独で ON**（通常／スタッフ／AIX連動のどれとも組み合わせる）。
+  //   組み合わせの仕様は mode-core.js（AxlxModeCore.behavior）。content script には読み込んでいないので、ここは同じ意味の分岐だけ持つ:
+  //     brainJudge = brainMode ／ brainDrop・brainNote = brainMode かつ スタッフでない（buildSendItemsBrain 参照）
+  //   判定の失敗・タイムアウトは今までどおり全件送る（fail-open）。
   var _brainModeOn = false;
   try {
-    chrome.storage.local.get(["aixMode", "brainMode"], function(res) {
-      _brainModeOn = !!(res && res.aixMode && res.brainMode);
+    chrome.storage.local.get(["brainMode"], function(res) {
+      _brainModeOn = !!(res && res.brainMode);
     });
     chrome.storage.local.onChanged.addListener(function(changes) {
-      if ("aixMode" in changes || "brainMode" in changes) {
-        chrome.storage.local.get(["aixMode", "brainMode"], function(res) {
-          _brainModeOn = !!(res && res.aixMode && res.brainMode);
-        });
-      }
+      if ("brainMode" in changes) _brainModeOn = !!changes.brainMode.newValue;
     });
   } catch (_e) {}
 
@@ -396,10 +395,16 @@
   // 流れ: 組（url・説明文・data）を作る → background 経由で /api/property-brain/judge → 返ってきた判定で
   //   drop（apply_drop=true の時だけ）を外す → 【1】【2】… を1から詰め直す → 末尾の説明文に判定の1ブロックを足す。
   // ⚠ 影の運用（サーバーの PROPERTY_BRAIN_DROP 未設定）では apply_drop=false ＝ 1件も外さず、印（末尾のブロック）だけ付く。
-  // ⚠ 失敗・タイムアウト・顧客IDなし・スタッフモード・ブレインOFF → そのまま全件（fail-open）。
+  // ⚠ 失敗・タイムアウト・顧客IDなし・ブレインOFF → そのまま全件（fail-open）。
+  // 2026-09-25 ブレイン×スタッフ（竹内「ブレインでもスタッフモードを行う」・旧はスタッフ中は呼ばなかった）: 判定は呼ぶ
+  //   （property_brain_judgments に残り、売上サポの記録と並ぶ）が、
+  //   ① 1件も外さない（サーバーも staff_mode=true で apply_drop=false・拡張でも apply_drop を見ない＝二重の歯止め）
+  //   ② 説明文の末尾に判定の1ブロックを足さない（スタッフが手で送る文は今まで通り）。判定はコンソールに出る。
+  //   判定を待つ分（ふだん数秒・最大35秒）だけ送信が遅くなる。
   function buildSendItemsBrain(customerId, cb) {
     var items = buildSendItems();
-    if (!_brainModeOn || _staffModeOn || !customerId || !items.length) { cb(items, null); return; }
+    if (!_brainModeOn || !customerId || !items.length) { cb(items, null); return; }
+    var _staffAtJudge = _staffModeOn; // 呼んだ時点のスタッフモード（応答までに切り替わっても、呼んだ時の扱いで通す）
     var done = false;
     var finish = function (kept, brain) { if (done) return; done = true; cb(kept, brain); };
     var watchdog = setTimeout(function () {
@@ -423,7 +428,7 @@
         }
         var d = resp.data;
         var dropIdx = {};
-        if (d.apply_drop) d.judgments.forEach(function (j) { if (j.verdict === "drop") dropIdx[j.index] = true; });
+        if (d.apply_drop && !_staffAtJudge) d.judgments.forEach(function (j) { if (j.verdict === "drop") dropIdx[j.index] = true; });
         var kept = items.filter(function (_, i) { return !dropIdx[i]; });
         // 外した後は【N】を1から詰め直す（send-pairing.prepareItems と同じ考え・ズレたまま送らない）
         if (kept.length !== items.length) {
@@ -432,10 +437,10 @@
           });
         }
         // 判定のまとめ（外した物・保留の物と理由）を末尾の説明文に1ブロック
-        if (d.note_line && kept.length) kept[kept.length - 1].summary += "\n\n" + d.note_line;
+        if (d.note_line && kept.length && !_staffAtJudge) kept[kept.length - 1].summary += "\n\n" + d.note_line;
         var c = d.counts || {};
         console.log("[AXLX bulk-dl][brain] 判定 " + items.length + "件: 通す" + (c.pass || 0) + "・保留" + (c.hold || 0) + "・外す候補" + (c.drop || 0) +
-          (d.apply_drop ? "（外した " + (items.length - kept.length) + "件）" : "（影の運用・外さない）") + " " + (d.ms || 0) + "ms");
+          (_staffAtJudge ? "（スタッフモード・外さない・説明文は変えない）" : d.apply_drop ? "（外した " + (items.length - kept.length) + "件）" : "（影の運用・外さない）") + " " + (d.ms || 0) + "ms");
         d.judgments.forEach(function (j) {
           if (j.verdict !== "pass") console.log("[AXLX bulk-dl][brain] " + (j.verdict === "drop" ? "見送り候補" : "保留") + ": " + j.name + "（" + (j.reasons_ja || []).slice(0, 3).join("・") + "）" + (j.profit_yen != null ? " 利益目安 " + j.profit_yen + "円" : ""));
         });
