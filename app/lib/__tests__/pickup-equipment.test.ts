@@ -5,7 +5,7 @@
 import { buildBatchEquipment, matchFromSummary, floorLabel, toPickupEquipment } from "../pickup-equipment";
 import { parseEquipmentWants, matchEquipment, parseListingEquipment } from "../listing-equipment";
 import {
-  buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, applyEquipmentMatch, equipmentReasonCodes,
+  buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, applyEquipmentMatch, equipmentReasonCodes, detectImageWants, detectImageMust,
   reasonPoints, reasonJa, BASE_SCORE, SCORE_MAX, EQUIP_CAP_CODE, type CustomerLike,
 } from "../property-brain";
 import { buildReasonView, formatScoreBreakdown } from "../pickup-review-order";
@@ -227,6 +227,33 @@ console.log("■ 反証レビュー（2026-09-24）");
     { key: 2, pdfText: g("205", "大阪府大阪市淀川区東三国5丁目 2-17", "都市ガス , 独立洗面台"), label: "【2】" },
   ], { preferences: "エレベーター付き、宅配box付き" });
   t("④ 一般名の別の建物には〔建〕を付けない", gb.rows[1].match.rows.every((r) => r.result === "unlisted" && !r.fromBuilding), gb.rows[1].saved.line);
+}
+
+// ── 2026-09-25 本番の全お客様（303人）の条件欄に当てた監査で見つけた読み違い（文は本番の条件欄の書き方そのまま・名前は無い）──
+console.log("■ バス・トイレ別の希望の読み取り（設備欄と画像の側を同じ読み方に）");
+{
+  const bt = (c: CustomerLike) => parseEquipmentWants(c).wants.filter((w) => w.key === "bath_toilet");
+  const img = (c: CustomerLike) => ({ want: detectImageWants(c).includes("bath_toilet_separate"), must: detectImageMust(c).includes("bath_toilet_separate") });
+  t("「洗面所とトイレ別希望」はバス・トイレ別ではない", bt({ other_requests: "洗面所とトイレ別希望" }).length === 0, bt({ other_requests: "洗面所とトイレ別希望" }));
+  t("「お風呂とトイレ別・洗面所とトイレ別」はバス・トイレ別（必須）", bt({ other_requests: "お風呂とトイレ別\n洗面所とトイレ別" })[0]?.strong === true);
+  t("「トイレ別で」は今まで通りバス・トイレ別", bt({ other_requests: "トイレ別で" }).length === 1);
+  for (const s of ["トイレ風呂別", "トイレとバスが別", "トイレバス別", "トイレお風呂別", "トイレ・お風呂別", "トイレお風呂洗面別", "入居2人以上可能/浴室トイレ別/独立洗面台"]) {
+    const c = { preferences: s };
+    t(`「${s}」: 設備欄も画像も必須のバス・トイレ別`, bt(c)[0]?.strong === true && img(c).want && img(c).must, [bt(c), img(c)]);
+  }
+  const mix = { preferences: "バストイレ別・出来れば築浅・白基調の部屋があれば" };
+  t("「バストイレ別・出来れば築浅」: 「出来れば」は築浅の節 → 画像の × も必須（設備欄と同じ）", bt(mix)[0]?.strong === true && img(mix).must, [bt(mix), img(mix)]);
+  const soft = { preferences: "できればバストイレ別" };
+  t("「できればバストイレ別」は設備欄・画像とも普通の希望", bt(soft)[0]?.strong === false && img(soft).want && !img(soft).must, [bt(soft), img(soft)]);
+  const form = { additional_conditions: "⑧【その他こだわりご要望】⇒白基調の綺麗な内装、お風呂トイレ別、お風呂綺麗、オートロック" };
+  t("フォームの回答の貼り付け（希望: の形でない）は画像の側だけ予備で読む（必須）", img(form).want && img(form).must, img(form));
+  for (const s of ["バストイレ別じゃなくてもいい", "バストイレ別でなくても大丈夫", "バストイレ別は不要", "バストイレ別はこだわらない", "バストイレ一緒でもいい", "3点ユニットでもいい", "ユニットバスでも良い"]) {
+    const c = { preferences: s };
+    t(`「${s}」は希望にしない（上限20・保留にしない）`, bt(c).length === 0 && !img(c).want && !img(c).must, [bt(c), img(c)]);
+  }
+  t("「バストイレ別でないとNG」は必須のまま", bt({ preferences: "バストイレ別でないとNG" })[0]?.strong === true);
+  t("「浴室乾燥は不要」でバス・トイレ別の希望を消さない（別の節）", bt({ preferences: "バストイレ別、浴室乾燥は不要" })[0]?.strong === true);
+  t("NG欄「バストイレ同室」は必須", bt({ ng_points: "バストイレ同室" })[0]?.strong === true);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

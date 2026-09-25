@@ -486,6 +486,20 @@ export type CustomerConditionsLike = {
   structure_types?: string | null;
 };
 
+/**
+ * バス・トイレ別の希望の言い方（条件欄）。画像の希望（property-brain の detectImageWants／detectImageMust）もこの読み取りを正にする。
+ * 2026-09-25 本番の全お客様（303人・バス／トイレ／風呂の語のある81人）に当てた監査:
+ *   「洗面所とトイレ別希望」を バス・トイレ別の必須と読んでいた（「トイレ別」の枝）→ 直前が「洗面（所・台）と」の時は読まない。
+ *   画像の側の式は「トイレ風呂別」「トイレとバスが別」「浴室トイレ別」の並び（17人）を読めず、設備欄は必須・画像は確かめない、に割れていた
+ */
+export const BATH_TOILET_WANT_RE = /(?:バス|お?風呂|浴室)(?:場)?.{0,3}トイレ.{0,4}別|トイレ.{0,4}(?:バス|お?風呂|浴室).{0,4}別|(?<!洗面(?:所|台)?(?:と|・)?)トイレ(?:が|は)?別|バストイレ別|セパレート/;
+/**
+ * 「バストイレ別じゃなくてもいい」「バストイレ別は不要」「こだわらない」「一緒でもいい」＝希望ではない（受け入れの話）。
+ * 本番の条件欄にはまだ無い言い方（2026-09-25 監査で0件）だが、必須にすると上限20・保留になるので先に止める
+ */
+//   バス・風呂・浴室・トイレの「別」「一緒」に続く言い方だけ見る（「友達と一緒でもいい」「浴室乾燥は不要」を拾わない）
+export const BATH_TOILET_NOT_REQUIRED_RE = /(?:バス|風呂|浴室|トイレ).{0,4}別(?:じゃ|で)(?:は)?なく(?:ても|て(?:いい|良い|よい|大丈夫|OK|可))|(?:(?:バス|風呂|浴室|トイレ).{0,4}別|セパレート)(?:で)?(?:は|が|に)?(?:不要|いらない|要らない|なくても|こだわらない|こだわりなし|こだわりません|問わない|問いません|気にしない|どちらでも|どっちでも)|(?:(?:バス|風呂|浴室|トイレ)・?(?:トイレ|バス|風呂|浴室)?(?:が|は)?(?:一緒|同室)|(?:3|３|三)点(?:式)?ユニット(?:バス)?|ユニットバス)(?:でも|も)?(?:いい|良い|よい|可|OK|大丈夫|構わない|かまわない)/i;
+
 /** 希望の文 → キー（1つの節に複数当たってよい）。ng 反転の言い方（1階NG・3点ユニットNG・木造NG）は must として別に扱う */
 const WANT_RES: Array<{ key: EquipKey; re: RegExp }> = [
   { key: "elevator", re: /エレベータ[ー]?|EV(?:付|あり)/i },
@@ -493,7 +507,7 @@ const WANT_RES: Array<{ key: EquipKey; re: RegExp }> = [
   { key: "autolock", re: /オートロック/ },
   { key: "net_free", re: /(?:インター)?ネット(?:使用料)?(?:無料|込|不要)|Wi-?Fi(?:あり|無料|付き?)?|無料(?:インター)?ネット/i },
   { key: "parking", re: /駐車場|駐車(?:スペース)?/ },
-  { key: "bath_toilet", re: /(?:バス|お?風呂|浴室)(?:場)?.{0,3}トイレ.{0,4}別|トイレ.{0,4}(?:バス|お?風呂|浴室).{0,4}別|トイレ(?:が|は)?別|バストイレ別|セパレート/ },
+  { key: "bath_toilet", re: BATH_TOILET_WANT_RE },
   { key: "washbasin", re: /独立洗面|洗面(?:所|台)?(?:が|は)?(?:独立|別)|洗面別/ },
   { key: "laundry_in", re: /室内洗濯|洗濯機(?:置き?場)?(?:が|は)?(?:室内|屋内|洗面所|中)|洗濯機置き?場[（(]室内/ },
   { key: "corner", re: /角部屋|角住戸/ },
@@ -585,7 +599,7 @@ const SOFT_RE = /できれば|出来れば|あれば|あったら|嬉しい|う�
 const PET_SELF_NONE_RE = /ペット(?:飼育)?(?:は|が)?(?:なし|無し|無|いない|いません|飼っていない|飼わない)/;
 /** ng_points の「Xなし」「X無」＝「X が無いのは NG」＝X が欲しい（must に反転） */
 const NG_FIELD_NONE_RE = /^(?:が|は)?(?:なし|無し|無い|ない|無)(?![料])/;
-const ACCEPT_ONLY_RE = /ユニットバス(?:でも)?(?:可|OK|大丈夫)|3点ユニット(?:でも)?(?:可|OK|大丈夫)/;
+const ACCEPT_ONLY_RE = /ユニットバス(?:でも)?(?:可|OK|大丈夫|いい|良い|よい|構わない)|3点ユニット(?:でも)?(?:可|OK|大丈夫|いい|良い|よい|構わない)/;
 /** 別の所（property-brain）で見る条件（家賃・費用・築年・綺麗さ・場所・間取りの型・㎡・審査・入居・契約・保証） */
 const ELSEWHERE_RE = /家賃|賃料|[0-9０-９.]+万|円|初期費用|費用|敷金|礼金|敷礼|更新料|保証料|フリーレント|築|新し|新築|リノベ|リフォーム|綺麗|きれい|キレイ|駅|徒歩|分以内|電車|通勤|職場|エリア|沿線|丁目|周辺|付近|近く|近い|間取り|[1-5１-５]\s*(?:S?LDK|DK|K|R)(?![a-z])|ワンルーム|平米|㎡|m2|審査|保証会社|保証人|ブラック|滞納|破産|任意整理|入居(?:時期|日)|契約|法人|生活保護|社宅|引越|安|抑え|おさえ|下げ|値下げ|管理費|共益費|相場|スモラ割引/;
 /** 条件ではないメモ・やり取り（「確認したい」「TikTok で出ている物件」「候補を見たい」）→ other */
@@ -700,7 +714,7 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
       // 階
       for (const w of parseFloorWants(c, field)) { push(w); hit = true; }
       // 反転の言い方（無いほうがよい物＝ある方を must）
-      if (/(?:3|３|三)点(?:式)?ユニット|ユニットバス(?:は|が)?(?:NG|ng|不可|嫌|×|以外)|バス・?トイレ(?:一緒|同室)|トイレ同室/.test(c) && !ACCEPT_ONLY_RE.test(c)) {
+      if (/(?:3|３|三)点(?:式)?ユニット|ユニットバス(?:は|が)?(?:NG|ng|不可|嫌|×|以外)|バス・?トイレ(?:一緒|同室)|トイレ同室/.test(c) && !ACCEPT_ONLY_RE.test(c) && !BATH_TOILET_NOT_REQUIRED_RE.test(c)) {
         if (field === "ng_points" || /NG|ng|不可|嫌|×|以外|避け/.test(c)) { push({ key: "bath_toilet", mode: "must", strong, soft, text: c, field }); hit = true; }
       }
       // 構造（段で持つ・節をまたいでまとめて最後に1つの希望にする）と物件種別
@@ -717,11 +731,11 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
         // アパートの希望が1つでもあればマンションでも減点しない側（apartment が勝つ）
         if (!typeAcc || bt === "apartment") typeAcc = { type: bt, text: c, field, strong, soft };
       }
-      if (ACCEPT_ONLY_RE.test(c)) hit = true; // 「ユニットバス可」は受け入れの話（希望ではない）
+      if (ACCEPT_ONLY_RE.test(c) || BATH_TOILET_NOT_REQUIRED_RE.test(c)) hit = true; // 「ユニットバス可」「バストイレ別じゃなくてもいい」は受け入れの話（希望ではない）
       const petSelfNone = PET_SELF_NONE_RE.test(c);
       const condFloor = conditionalFloorOf(c);
       for (const { key, re } of WANT_RES) {
-        if (key === "bath_toilet" && (ACCEPT_ONLY_RE.test(c) || /(?:バス|風呂|浴室)・?トイレ(?:一緒|同室)|トイレ同室/.test(c))) continue;
+        if (key === "bath_toilet" && (ACCEPT_ONLY_RE.test(c) || BATH_TOILET_NOT_REQUIRED_RE.test(c) || /(?:バス|風呂|浴室)・?トイレ(?:一緒|同室)|トイレ同室/.test(c))) continue;
         if (key === "pet" && petSelfNone) continue; // 自分はペットを飼っていない（希望ではない）
         const m = c.match(re);
         if (!m) continue;

@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-09-25 夜 本番点検（082644c9・fac923f5・005fd9a8）— 拡張のコードは変えていない・版はそのまま 2.5.25
+- **バス・トイレ別の読み取り**（全お客様303人・語のある82人を目で読んだ）: 設備欄と画像の側が割れていた → 直した（app/lib/listing-equipment.ts BATH_TOILET_WANT_RE・BATH_TOILET_NOT_REQUIRED_RE／app/lib/property-brain.ts bathToiletWantOf。テスト pickup-equipment に本番の書き方23件）
+  - 「洗面所とトイレ別希望」（1人）を必須のバス・トイレ別と誤読 → 読まない
+  - 「トイレ風呂別」「トイレとバスが別」「浴室トイレ別」等（17人）を画像の側が読めず、間取り図で確かめていなかった → 確かめる（画像の分析が要る人が増える）
+  - 「バストイレ別・出来れば築浅」（1人）: 画像の × が必須にならなかった → 必須
+  - 否定（じゃなくてもいい・不要・こだわらない・一緒でもいい）は本番0件だが先に止めた
+  - 残り: フォームの回答の貼り付け（additional_conditions の「⑧【その他こだわりご要望】⇒…」・1人）は設備欄の照合が読まない（画像の側だけ予備で読む）
+- **保存済みピックアップ**（37行・文字層22行）: 資料の bath_toilet × は0件（itandi 18・リアプロ 3 が ○、1件記載なし）。点は付け直していない。今の読み取りで作り直すと cg_d08cf59e_358 は必須○で +2 → #369 が2位→4位（読むだけ）
+- **一括検索・点検**: 本番の反映は 19:48 JST。その後の web_brain・cancelled・search_audits は0件（ブレインの検索がまだ無い）。/api/search-audits は画面の GET 4回だけ・sweep は 11:00 UTC に ok。llm_usage_logs の search_audit は deepseek-flash だけ（8回・YUMA 試験分）。8月の running 6件は残ったまま（読むだけなので触っていない）
+- 今朝の自動便（AM 30件）の 8件が「リアプロ 検索完了シグナル（fill-done）が9…」で error → 検索の点検で原因を見る対象
+
 ## 2026-09-25 v2.5.24／v2.5.25 の YUMA での通し確認（拡張のコードは変えていない・版はそのまま 2.5.25）
 本番DB＋ローカルのサーバーで、テスト用の物件のお客様を作って YUMA に紐付けて確かめた（終わって全部消した・YUMA の紐付けも外した）。
 - **一括検索（web_brain）**: trigger(brain:true) で1人1コマンド・?brain=1 の無い pending には出ない・同時2回の pending で拾うのは1つ（5回くり返して全部1つ）・payload.rp_update_days＝effectiveRpUpdateDays（3）・二度押しは already=1・レインズ2人は 400・update で cancelled が書ける。

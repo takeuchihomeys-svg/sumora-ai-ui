@@ -34,7 +34,7 @@
 
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { isGenericBuildingName } from "./generic-building-name";
-import { EQUIP_LABELS, conditionalFloorOf, type EquipmentMatch, type EquipKey } from "./listing-equipment";
+import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT_RE, BATH_TOILET_NOT_REQUIRED_RE, type EquipmentMatch, type EquipKey } from "./listing-equipment";
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 
@@ -975,7 +975,8 @@ export function detectWantsLowInitialCost(c: CustomerLike): boolean {
 }
 
 const IMAGE_WANT_RES: Array<[ImageWantKey, RegExp]> = [
-  ["bath_toilet_separate", /バス.?トイレ.?別|風呂.?トイレ.?別|お?風呂と?トイレ.?(別|セパレート)|セパレート|バストイレ別/],
+  // バス・トイレ別は bathToiletWantOf（条件欄の読み取り parseEquipmentWants を正にする）で決める。この式は予備の節の読み取りだけに使う
+  ["bath_toilet_separate", BATH_TOILET_WANT_RE],
   ["separate_washstand", /独立洗面/],
   ["storage", /収納|クローゼット|ウォークイン/],
   ["south_facing", /南向き/],
@@ -990,22 +991,39 @@ function stripConditionalFloorClauses(text: string): string {
 }
 
 /**
+ * バス・トイレ別の希望（画像で確かめるか・画像の × を必須の × にするか）。
+ * 2026-09-25 本番の全お客様に当てた監査で、設備欄の読み取り（parseEquipmentWants）と画像の側の式が割れていた:
+ *   ①「トイレ風呂別」「トイレとバスが別」「浴室トイレ別」（17人）を画像の側だけ読めない（設備欄は必須・画像は確かめない）
+ *   ②「バストイレ別・出来れば築浅」を、画像の側は「・」で割らずに節ごと「できれば」と読み、設備欄は必須・画像は普通の希望
+ *   → 条件欄の読み取り（parseEquipmentWants の bath_toilet）を正にする。そこで読まない所（additional_conditions の「希望:」以外＝
+ *     フォームの回答の貼り付け）だけ、同じ式・同じ区切り（「バス・トイレ」の「・」は割らない）で節を見る
+ */
+function bathToiletWantOf(c: CustomerLike): { want: boolean; must: boolean } {
+  const w = parseEquipmentWants({ preferences: c.preferences, ng_points: c.ng_points, other_requests: c.other_requests, additional_conditions: c.additional_conditions })
+    .wants.find((x) => x.key === "bath_toilet");
+  if (w) return w.mode === "must" ? { want: true, must: w.strong } : { want: false, must: false };
+  const text = [c.preferences, c.other_requests, c.additional_conditions].map((s) => String(s ?? "")).join("\n").normalize("NFKC")
+    .replace(/(バス|風呂|浴室|トイレ)[・･‧](トイレ|バス|風呂|浴室)/g, "$1$2");
+  const cls = text.split(/[、。,，\n／/・]/).filter((cl) => BATH_TOILET_WANT_RE.test(cl) && !BATH_TOILET_NOT_REQUIRED_RE.test(cl));
+  return { want: cls.length > 0, must: cls.some((cl) => !WANT_SOFT_RE.test(cl)) };
+}
+
+/**
  * 画像の × を必須の × として扱う希望。2026-09-25 竹内「バストイレ別希望していたら、一緒の場合はかなり減点・他に物件があれば入れないレベル（NG）」:
- *   バス・トイレ別は「必須」と書いていなくても必須。「できれば」「あれば」等と書いた節だけ普通の希望（listing-equipment の parseEquipmentWants と同じ線）。
- *   節の区切りに「・」を入れない（「バス・トイレ別」が切れる）
+ *   バス・トイレ別は「必須」と書いていなくても必須。「できれば」「あれば」等と書いた節だけ普通の希望（bathToiletWantOf＝設備欄と同じ読み取り）
  */
 export function detectImageMust(c: CustomerLike): ImageWantKey[] {
-  const text = [c.preferences, c.other_requests, c.ng_points, c.additional_conditions].map((s) => String(s ?? "")).join("\n").normalize("NFKC");
-  const re = IMAGE_WANT_RES.find(([k]) => k === "bath_toilet_separate")![1];
-  const cls = text.split(/[、。,，\n／/]/).filter((cl) => re.test(cl));
-  return cls.length && cls.some((cl) => !WANT_SOFT_RE.test(cl)) ? ["bath_toilet_separate"] : [];
+  return bathToiletWantOf(c).must ? ["bath_toilet_separate"] : [];
 }
 
 /** 画像（間取り図）でしか分からない希望を拾う */
 export function detectImageWants(c: CustomerLike): ImageWantKey[] {
   const text = stripConditionalFloorClauses([c.preferences, c.other_requests, c.ng_points, c.additional_conditions].map((s) => String(s ?? "")).join("\n"));
   const out: ImageWantKey[] = [];
-  for (const [key, re] of IMAGE_WANT_RES) if (re.test(text)) out.push(key);
+  for (const [key, re] of IMAGE_WANT_RES) {
+    if (key === "bath_toilet_separate") { if (bathToiletWantOf(c).want) out.push(key); continue; }
+    if (re.test(text)) out.push(key);
+  }
   return out;
 }
 
