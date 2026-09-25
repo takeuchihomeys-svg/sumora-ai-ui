@@ -11,6 +11,7 @@ import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
 import type { PickupTerms } from "@/app/lib/pickup-terms";
 import { PICKUP_EXPIRED_LABEL, PICKUP_EXPIRED_ACTION_NOTE } from "@/app/lib/pickup-retention";
+import { buildPickupCardView, groupPickupRounds, mergeRoundItems, roundSiteSummary, siteLabel, verdictCounts, type CardMark } from "@/app/lib/pickup-card-view";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -24,11 +25,17 @@ type Item = {
   /** 2026-09-25 資料の表の募集の条件（敷礼・築年・入居時期・契約・更新料）と希望の照合 */
   terms?: PickupTerms | null;
   /** 2026-09-25 物件の場所と希望のエリア・通勤の照合（area-want.ts の PickupLocation・画面は line と area.code だけ読む） */
-  location?: { line?: string; area?: { code?: string; why?: string } | null } | null;
+  location?: { line?: string; area?: { code?: string; why?: string } | null; ward?: string | null; stations?: Array<{ station?: string | null; line?: string | null; walk?: number | null }> | null } | null;
   /** 2026-09-25 画像・資料の保存期間（届いてから 72時間・pickup-retention.ts）。切れた行は URL が空で来る */
   expired?: boolean; expiry_hours_left?: number | null; expiry_warn?: boolean;
+  /** 元の回（まとめた回の中でどの回・どのサイトから来たか） */
+  batch_id?: string; site?: string | null;
 };
-type Batch ={ batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
+/**
+ * 1回分。2026-09-25 竹内「まとめられていない」: 画面では短い間に届いた回（リアプロ・itandi）を1つにまとめた回（pickup-card-view.groupPickupRounds）で扱う。
+ *   まとめた回は batch_id＝元の回を「,」でつないだ物（/send もこの形を受ける）・parts＝元の回
+ */
+type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[]; round_id?: string | null; parts?: Batch[]; last_at?: string };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
 type LineLite = { profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
@@ -66,12 +73,6 @@ function fmtDateTime(iso: string): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-const VERDICT_JA: Record<string, { label: string; color: string; bg: string }> = {
-  pass: { label: "通す", color: "#1b5e20", bg: "#e8f5e9" },
-  hold: { label: "保留", color: "#e65100", bg: "#fff3e0" },
-  drop: { label: "外す候補", color: "#b71c1c", bg: "#ffebee" },
-};
-
 /** 左の吹き出しの横の丸いアイコン（起きた事の種類） */
 function Icon({ bg, children }: { bg: string; children: React.ReactNode }) {
   return <div className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0" style={{ background: bg, color: "#fff" }}>{children}</div>;
@@ -104,6 +105,14 @@ type Bubble =
   | { kind: "history"; at: string; items: SentHist[] }
   | { kind: "best"; at: string; best: NonNullable<Customer["best"]> };
 
+/** 点数の丸い札の色（○ 通す＝緑・△ 保留＝橙・× 外す候補＝赤） */
+const MARK_STYLE: Record<CardMark["tone"], { color: string; bg: string }> = {
+  pass: { color: "#2e7d32", bg: "#f1f8e9" }, hold: { color: "#e65100", bg: "#fff3e0" },
+  drop: { color: "#c62828", bg: "#ffebee" }, none: { color: "#90a4ae", bg: "#f5f5f5" },
+};
+/** 畳んだ時の1行の色 */
+const HEADLINE_COLOR: Record<"drop" | "minus" | "plus" | "info", string> = { drop: "#c62828", minus: "#e65100", plus: "#2e7d32", info: "#78909c" };
+
 /** 理由の札の色（外す理由＝赤・減点＝橙・加点＝緑・知らせ＝灰） */
 const CHIP_STYLE: Record<string, { bg: string; color: string }> = {
   drop: { bg: "#ffebee", color: "#b71c1c" }, minus: { bg: "#fff3e0", color: "#e65100" },
@@ -131,7 +140,7 @@ function ReasonChips({ it, open, onToggle }: { it: Item; open: boolean; onToggle
         {it.profit_yen != null && <span className="text-[10px] leading-none px-1.5 py-1 rounded-full" style={CHIP_STYLE.info}>利益目安 {it.profit_yen.toLocaleString()}円</span>}
         {breakdown && (
           <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(); }}
-            className="text-[10px] leading-none px-1.5 py-1 rounded-full font-bold" style={{ color: "#1565C0", background: "#e3f2fd" }}>{open ? "内訳を閉じる" : "点の内訳"}</button>
+            className="leading-none px-1.5 py-1 rounded-full font-bold" style={{ color: "#1565C0", background: "#e3f2fd", fontSize: 10 }}>{open ? "内訳を閉じる" : "点の内訳"}</button>
         )}
       </div>
       {open && breakdown && <div className="text-[10px] mt-1 leading-snug break-words" style={{ color: "#546e7a" }}>{breakdown}</div>}
@@ -255,9 +264,29 @@ function batchExpired(b: Batch): boolean {
   return b.items.length > 0 && b.items.every((x) => x.expired);
 }
 
+/**
+ * 2026-09-25 竹内「まとめられていない。スタッフモードで送った時は完了ボタンでリアプロと itandi の全部を分析」:
+ *   同じお客様に短い間（前の回から30分以内・拡張の「完了」の印 round_id があればそれ）に届いた回を1つの吹き出しにまとめる。
+ *   物件は 🌟★ → 🌟 → 点の高い順（サイトが混ざってもよい・カードにサイトの小さな札）
+ */
+function toRounds(batches: Batch[]): Batch[] {
+  return groupPickupRounds(batches).map((r) => {
+    if (r.batches.length === 1) return { ...r.batches[0], parts: r.batches, last_at: r.last_at };
+    const sites = [...new Set(r.batches.map((b) => b.site ?? "-"))];
+    return {
+      batch_id: r.key, created_at: r.created_at, last_at: r.last_at, round_id: r.round_id,
+      site: sites.length === 1 ? sites[0] : "mixed",
+      conversation_id: r.batches.find((b) => b.conversation_id)?.conversation_id ?? null,
+      // 元の回とサイトを物件に残す（カードの札・送る時の回）
+      items: mergeRoundItems(r.batches.map((b) => ({ items: b.items.map((it) => ({ ...it, batch_id: it.batch_id ?? b.batch_id, site: it.site ?? b.site })) }))),
+      parts: r.batches,
+    };
+  });
+}
+
 function buildBubbles(c: Customer): Bubble[] {
   const out: Bubble[] = [];
-  for (const b of c.batches) {
+  for (const b of toRounds(c.batches)) {
     out.push({ kind: "brain", at: b.created_at, batch: b });
     // 2026-09-24 竹内「トリミングした画像はピックアップの画面内に送られて、そのままスタッフが保存して使えるように」
     const trimmed = b.items.filter((it) => it.trim_image_url);
@@ -311,6 +340,8 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const [q, setQ] = useState("");
   /** 点の内訳を開いている物件 */
   const [openBreakdown, setOpenBreakdown] = useState<Record<number, boolean>>({});
+  /** 2026-09-25 物件カードの「詳細 ▾」を開いている物件（既定は畳む） */
+  const [openCard, setOpenCard] = useState<Record<number, boolean>>({});
   /** iPhone で共有シートを開けなかった時（画像の用意に時間がかかり、押した操作の有効期限が切れた）の「もう一度押す」用 */
   const [shareReady, setShareReady] = useState<File[] | null>(null);
   const openRef = useRef<{ key: string; pcid: string | null; conv: string | null } | null>(null);
@@ -775,6 +806,9 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     const targets = only ?? b.items.filter((it) => checked[it.id] && it.status === "pending");
     if (targets.length === 0) { setMsg("送る物件にチェックを入れてください"); return; }
     if (targets.some((it) => it.expired)) { setMsg(`🔒 ${PICKUP_EXPIRED_ACTION_NOTE}`); return; }
+    // 2026-09-25 反証: AIX に渡せるのは1回10件まで（GET ?ids が10件で切る）。回をまとめてチェックが増えると、
+    //   届かない11件目以降にも送り終えた印（mark_sent は渡した id 全部）が付いてしまう → 10件を超えたら止める
+    if (targets.length > 10) { setMsg(`AIX で一度に送れるのは10件までです（今 ${targets.length}件にチェック。10件以下にしてください）`); return; }
     const convId = c.conversation_id ?? b.conversation_id;
     if (!convId) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
     const noImage = targets.filter((it) => !it.trim_image_url);
@@ -815,6 +849,125 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   //   左の白い吹き出し＝起きた事（🧠ピックアップ・✂️画像・🔍分析・📦送った履歴）／右の緑の吹き出し＝こちら（メモ・送った・見送り）・時刻は吹き出しの外・下に入力欄。
   //   パソコン（md 以上）はヘッダーと背景だけ今のまま（2列はそのまま）
   const LEFT_BUBBLE = "min-w-0 max-w-[86%] md:max-w-[92%] rounded-2xl rounded-bl-md bg-white text-[#3d4a52] shadow-sm px-3 py-2.5";
+
+  /**
+   * 物件カード（1件）。2026-09-25 竹内「リアプロの物件一覧と同じ見た目にして、図面だけ今と同じようにして、図面の下にリアプロの物件一覧の項目の表記で。
+   *   点数の項目も入れて。内訳や分析した内容等は折りたたんで詳細押したら出る。スマホでより使いやすく」:
+   *   建物の段＝チェック・図面（今のサムネイル・タップで拡大）・物件名・住所・沿線と徒歩・点数の丸い札（○通す／△保留／×外す候補）
+   *   部屋の段＝茶色の見出し帯・白い値の段（部屋/階・状態/入居・間取り/㎡・賃料/管理費・敷金/礼金・保証金/償却・AD・築年・点数）。スマホは3列の格子
+   *   畳んだ時は一番大事な1行だけ。「詳細 ▾」で理由の札・点の内訳・設備・募集の条件・場所・画像の読み取り・画像で分析・資料
+   */
+  const renderCard = (it: Item, b: Batch) => {
+    const cv = buildPickupCardView(it);
+    const pending = it.status === "pending";
+    const img = it.trim_image_url ?? it.page_image_url ?? null;
+    const opened = !!openCard[it.id];
+    const ms = MARK_STYLE[cv.mark.tone];
+    const hl = cv.headline;
+    const site = it.site ?? b.site;
+    const a = it.image_analysis as { match?: number | null; water?: string; kitchen?: string; layout?: string; storage?: string; good?: string[]; concern?: string[]; review?: { status?: string } } | null;
+    const stop = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
+    // 建物の段の文字（物件名・住所・沿線と徒歩）
+    const nameBlock = (
+      <>
+        <div className="text-[13px] font-bold leading-snug break-words" style={{ color: cv.name ? "#3e2723" : "#90a4ae" }}>{cv.name ?? "物件名なし"}</div>
+        {(cv.address || cv.access) && (
+          <div className="text-[10px] leading-snug break-words">
+            {cv.address && <span className="text-[#6d4c41]">{cv.address}</span>}
+            {cv.address && cv.access && <span className="text-[#bcaaa4]">　</span>}
+            {cv.access && <span className="text-[#37474f]">{cv.access}</span>}
+          </div>
+        )}
+      </>
+    );
+    return (
+      <div key={it.id} className="rounded-xl overflow-hidden bg-white" style={{ border: `1px solid ${it.recommended > 0 ? "#ffcc80" : "#d7ccc8"}`, opacity: pending ? 1 : 0.6 }}>
+        {/* 建物の段（リアプロの写真の位置に図面） */}
+        <div className="flex gap-2 p-2 items-start" style={{ background: it.recommended > 0 ? "#fff8e1" : "#fffdfb" }}>
+          <label className="shrink-0 -m-1.5 p-1.5 flex items-start" aria-label={`【${it.rank}】を選ぶ`}>
+            <input type="checkbox" className="mt-1 h-4 w-4" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
+          </label>
+          {it.expired && <ExpiredImage width={88} height={62} />}
+          {img && (
+            <a href={img} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => openImage(e, img, `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`)}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff" }} />
+              {it.trim_image_url && <span className="absolute -top-1 -left-1 text-[9px] font-bold px-1 rounded" style={{ background: "#6a1b9a", color: "#fff" }}>✂️ 送る形</span>}
+            </a>
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1 flex-wrap leading-none mb-0.5">
+              <span className="text-[9px] font-bold px-1 py-[2px] rounded" style={site === "itandi" ? { background: "#fff3e0", color: "#e65100" } : { background: "#e3f2fd", color: "#1565C0" }}>{siteLabel(site)}</span>
+              <span className="text-[10px] text-[#8d6e63] font-bold">【{it.rank}】</span>
+              {it.recommended === 2 && <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: "#f57f17" }}>🌟★ 一番オススメ</span>}
+              {it.recommended === 1 && <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: "#f57f17" }}>🌟 オススメ</span>}
+              {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
+            </div>
+            {/* パソコンは図面の横・スマホは図面の下の全幅（360px でも物件名が1〜2行に収まる） */}
+            <div className="hidden md:block">{nameBlock}</div>
+          </div>
+          {/* 点数の丸い札（リアプロの「○75点」） */}
+          <div className="shrink-0 flex h-[46px] w-[46px] flex-col items-center justify-center rounded-full leading-none" style={{ border: `2px solid ${ms.color}`, background: ms.bg, color: ms.color }} title={cv.mark.label}>
+            <span className="text-[13px] font-bold">{cv.mark.symbol}</span>
+            <span className="text-[11px] font-bold tabular-nums mt-0.5">{cv.mark.score != null ? `${cv.mark.score}点` : "－"}</span>
+          </div>
+        </div>
+        <div className="md:hidden px-2 pb-2 -mt-0.5" style={{ background: it.recommended > 0 ? "#fff8e1" : "#fffdfb" }}>{nameBlock}</div>
+        {/* 部屋の段（茶色の見出し帯・白い値の段）。スマホは3列の格子で横に流れない・パソコンは1列の表 */}
+        <div className="grid grid-cols-3 md:grid-cols-9 gap-px" style={{ background: "#d7ccc8", borderTop: "1px solid #d7ccc8" }}>
+          {cv.cells.map((c) => (
+            <div key={c.key} className="flex min-w-0 flex-col bg-white">
+              <div className="px-0.5 py-[3px] text-center text-[9px] font-bold leading-none text-white whitespace-nowrap overflow-hidden text-ellipsis" style={{ background: "#8d6e63" }}>{c.head}</div>
+              <div className="flex flex-1 flex-col items-center justify-center px-1 py-1 text-center leading-tight">
+                <span className="text-[11px] font-bold break-all" style={{ color: c.key === "score" ? ms.color : c.value === "－" ? "#bcaaa4" : "#3e2723" }}>{c.value}</span>
+                {c.sub != null && <span className="text-[10px] break-all" style={{ color: c.sub === "－" ? "#bcaaa4" : "#6d4c41" }}>{c.sub}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* 畳んだ時の1行と「詳細 ▾」 */}
+        <div className="flex items-center gap-2 px-2 py-1.5" style={{ borderTop: "1px solid #efebe9" }}>
+          <div className="flex-1 min-w-0 text-[10px] font-bold leading-snug break-words" style={{ color: hl ? HEADLINE_COLOR[hl.tone] : "#bcaaa4" }}>
+            {hl ? hl.text : "理由の記録なし"}
+            {a && typeof a.match === "number" && a.review?.status !== "要確認" && <span className="ml-1 font-normal" style={{ color: "#00695c" }}>🔍{a.match}点</span>}
+            {a?.review?.status === "要確認" && <span className="ml-1" style={{ color: "#e65100" }}>🔍要確認</span>}
+          </div>
+          <button type="button" onClick={(e) => { stop(e); setOpenCard((p) => ({ ...p, [it.id]: !p[it.id] })); }} aria-expanded={opened}
+            className="shrink-0 rounded-full px-2.5 py-1 font-bold leading-none" style={{ background: "#efebe9", color: "#5d4037", fontSize: 11 /* globals.css の button { font: inherit } が text-[11px] に勝つため */ }}>{opened ? "詳細 ▴" : "詳細 ▾"}</button>
+        </div>
+        {opened && (
+          <div className="px-2 pb-2 pt-1" style={{ background: "#fafafa", borderTop: "1px dashed #d7ccc8" }}>
+            <ReasonChips it={it} open={openBreakdown[it.id] ?? true} onToggle={() => setOpenBreakdown((p) => ({ ...p, [it.id]: !(p[it.id] ?? true) }))} />
+            <EquipmentLine eq={it.equipment} />
+            <TermsLine t={it.terms} />
+            {it.location?.line && (
+              <div className="text-[10px] mt-1 break-words" style={{ color: it.location.area?.code === "AREA_EXCLUDED" ? "#c62828" : it.location.area?.code === "AREA_FAR" ? "#ef6c00" : "#37474f" }}>{it.location.line}</div>
+            )}
+            {it.image_lines && it.image_lines.length > 0 && (
+              <div className="text-[10px] mt-1 break-words" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 8).join("／")}</div>
+            )}
+            {a && (a.water || a.kitchen || a.layout || a.storage || a.good?.length || a.concern?.length) && (
+              <div className="text-[10px] mt-1 leading-relaxed" style={{ color: "#37474f" }}>
+                <div className="font-bold" style={{ color: "#00695c" }}>🔍 画像で分析{typeof a.match === "number" ? ` ${a.match}点` : ""}</div>
+                {a.water && <div>🚿 水回り: {a.water}</div>}
+                {a.kitchen && <div>🍳 キッチン: {a.kitchen}</div>}
+                {a.layout && <div>🛋️ リビングと洋室: {a.layout}</div>}
+                {a.storage && <div>🧥 収納: {a.storage}</div>}
+                {a.good && a.good.length > 0 && <div style={{ color: "#2e7d32" }}>◎ {a.good.join("／")}</div>}
+                {a.concern && a.concern.length > 0 && <div style={{ color: "#c62828" }}>△ {a.concern.join("／")}</div>}
+              </div>
+            )}
+            <div className="flex gap-3 flex-wrap mt-1.5">
+              {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
+              {/* 偶数ページ＝元付業者の資料（AD の記載・ブレインが読んだ側）。お客様には送らない・見るだけ（保存を出さない） */}
+              {it.agent_image_url && <a href={it.agent_image_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}
+                onClick={(e) => openImage(e, it.agent_image_url, `${it.property_name}_元付.png`, { noSave: true })}>🏢 元付の資料（見るだけ）</a>}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
   const TIME = "mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]";
   const detailView = open ? (() => {
     const bubbles = buildBubbles(open);
@@ -880,10 +1033,16 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             if (bb.kind === "brain") row = (
             <div key={`b${i}`} className="flex items-end gap-1.5">
               <Icon bg="#1565C0">🧠</Icon>
-              <div className={LEFT_BUBBLE}>
-                {/* 2026-09-24 竹内「ブレインモードで売上サポに送った日時も出るようにする」 */}
-                <div className="text-xs font-bold mb-0.5">ピックアップ {bb.batch.items.length}件（{bb.batch.site === "realpro" ? "リアプロ" : bb.batch.site ?? "-"}）を確認しました</div>
-                <div className="text-[10px] text-[#78909c] mb-1">🧠 ブレインモードで {fmtDateTime(bb.batch.created_at)} に届きました</div>
+              {/* 2026-09-25 物件カードに幅を使う（スマホ 360〜420px で表が3列に収まるよう、吹き出しは残りの幅いっぱい） */}
+              <div className={`${LEFT_BUBBLE} flex-1 !max-w-full md:!max-w-[92%]`}>
+                {/* 2026-09-24 竹内「ブレインモードで売上サポに送った日時も出るようにする」
+                    2026-09-25 竹内「まとめられていない」: 短い間に届いた回（リアプロ・itandi）は1つにまとめ、サイトごとの件数と届いた時刻の幅を出す */}
+                <div className="text-xs font-bold mb-0.5">ピックアップ {bb.batch.items.length}件（{roundSiteSummary(bb.batch.parts ?? [bb.batch])}）を確認しました</div>
+                <div className="text-[10px] text-[#78909c] mb-1">
+                  🧠 ブレインモードで {fmtDateTime(bb.batch.created_at)}{bb.batch.last_at && bb.batch.last_at.slice(0, 16) !== bb.batch.created_at.slice(0, 16) ? `〜${hm(bb.batch.last_at)}` : ""} に届きました
+                  {(bb.batch.parts?.length ?? 1) > 1 ? `（${bb.batch.parts!.length}回分をまとめて表示）` : ""}
+                </div>
+                {verdictCounts(bb.batch.items) && <div className="text-[11px] font-bold mb-1.5" style={{ color: "#5d4037" }}>{verdictCounts(bb.batch.items)}</div>}
                 {/* 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨」 */}
                 {needRecommended && (
                   <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>🔍 画像で確かめたい希望: {needLabels}</div>
@@ -895,59 +1054,19 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   const lab = ((autos[0].image_analysis as { auto?: { labels?: string[] } }).auto?.labels ?? []).join("・");
                   return <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e8f5e9", color: "#2e7d32" }}>🔍 自動で読みました（{autos.length}件{lab ? `・推奨: ${lab}` : ""}）</div>;
                 })()}
-                {/* 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約と、資料で照らせない条件（スタッフ向け） */}
-                {open.condition_summary?.line && (
-                  <div className="text-[10px] mb-1 leading-snug break-words" style={{ color: "#455a64" }}>📝 条件の要約: {open.condition_summary.line}</div>
+                {/* 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約と、資料で照らせない条件（スタッフ向け）。
+                    2026-09-25 竹内「内訳や分析した内容等は折りたたんで詳細押したら出る」→ 畳んでおく */}
+                {open.condition_summary && (open.condition_summary.line || open.condition_summary.uncheckable.length > 0) && (
+                  <details className="mb-1.5 text-[10px] leading-snug">
+                    <summary className="cursor-pointer font-bold" style={{ color: "#455a64" }}>📝 条件の要約{open.condition_summary.uncheckable.length ? `・照らせない条件 ${open.condition_summary.uncheckable.length}` : ""}</summary>
+                    {open.condition_summary.line && <div className="mt-0.5 break-words" style={{ color: "#455a64" }}>{open.condition_summary.line}</div>}
+                    {open.condition_summary.uncheckable.length > 0 && <div className="mt-0.5 break-words" style={{ color: "#78909c" }}>照らせない条件: {open.condition_summary.uncheckable.join("／")}</div>}
+                  </details>
                 )}
-                {open.condition_summary && open.condition_summary.uncheckable.length > 0 && (
-                  <div className="text-[10px] mb-1.5 leading-snug break-words" style={{ color: "#78909c" }}>照らせない条件: {open.condition_summary.uncheckable.join("／")}</div>
-                )}
-                <div className="flex flex-col gap-2">
-                  {/* 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」 */}
-                  {sortForReview(bb.batch.items).map((it) => {
-                    const v = it.verdict ? VERDICT_JA[it.verdict] : null;
-                    const body = it.summary_text.replace(/^【\d+[^】]*】\s*/u, "").split("\n").filter(Boolean);
-                    const pending = it.status === "pending";
-                    const img = it.trim_image_url ?? it.page_image_url ?? null;
-                    return (
-                      <label key={it.id} className="flex gap-2 items-start rounded-xl px-2 py-2" style={{ background: it.recommended > 0 ? "#fff8e1" : "#f7f9fb", opacity: pending ? 1 : 0.6 }}>
-                        <input type="checkbox" className="mt-1" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
-                        {it.expired && <ExpiredImage width={88} height={62} />}
-                        {img && (
-                          <a href={img} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => openImage(e, img, `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`)}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={img} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff" }} />
-                            {it.trim_image_url && <span className="absolute -top-1 -left-1 text-[9px] font-bold px-1 rounded" style={{ background: "#6a1b9a", color: "#fff" }}>✂️ 送る形</span>}
-                          </a>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-bold">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}</span>
-                            {it.recommended === 2 && <span className="text-[10px] font-bold" style={{ color: "#f57f17" }}>🌟★ 一番オススメ</span>}
-                            {it.recommended === 1 && <span className="text-[10px] font-bold" style={{ color: "#f57f17" }}>🌟 オススメ</span>}
-                            {v && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: v.bg, color: v.color }}>{v.label}{it.score != null ? ` ${it.score}` : ""}</span>}
-                            {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
-                          </div>
-                          <div className="text-[11px] text-[#455a64] mt-0.5 break-words">{body.slice(0, 4).join(" / ")}</div>
-                          <ReasonChips it={it} open={!!openBreakdown[it.id]} onToggle={() => setOpenBreakdown((p) => ({ ...p, [it.id]: !p[it.id] }))} />
-                          <EquipmentLine eq={it.equipment} />
-                          <TermsLine t={it.terms} />
-                          {it.location?.line && (
-                            <div className="text-[10px] mt-0.5 break-words" style={{ color: it.location.area?.code === "AREA_EXCLUDED" ? "#c62828" : it.location.area?.code === "AREA_FAR" ? "#ef6c00" : "#37474f" }}>{it.location.line}</div>
-                          )}
-                          {it.image_lines && it.image_lines.length > 0 && (
-                            <div className="text-[10px] mt-0.5" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 5).join("／")}</div>
-                          )}
-                          <div className="flex gap-2 flex-wrap">
-                            {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
-                            {/* 偶数ページ＝元付業者の資料（AD の記載・ブレインが読んだ側）。お客様には送らない */}
-                            {it.agent_image_url && <a href={it.agent_image_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#6a1b9a" }}
-                              onClick={(e) => openImage(e, it.agent_image_url, `${it.property_name}_元付.png`, { noSave: true })}>🏢 元付の資料</a>}
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
+                <div className="flex flex-col gap-2.5">
+                  {/* 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」
+                      2026-09-25 竹内「リアプロの物件一覧と同じ見た目にして、図面だけ今と同じ。図面の下にリアプロの物件一覧の項目の表記で。点数の項目も」 */}
+                  {sortForReview(bb.batch.items).map((it) => renderCard(it, bb.batch))}
                 </div>
                 {/* 2026-09-25 竹内「保存期間が終了しましたと出る感じで（実際の LINE のように）」: 切れた回は理由を1行・切れる前 12時間は残りを小さく */}
                 {batchExpired(bb.batch)
@@ -1078,6 +1197,9 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                         {needCheck && (a.review?.reasons ?? []).length > 0 && (
                           <div className="text-[10px] mt-0.5 leading-snug" style={{ color: "#e65100" }}>{(a.review?.reasons ?? []).slice(0, 3).map((x, k) => <div key={k}>・{x}</div>)}<div style={{ color: "#90a4ae" }}>（点は出しません。資料が正しい物件か確かめてください）</div></div>
                         )}
+                        {/* 2026-09-25 竹内「内訳や分析した内容等は折りたたんで詳細押したら出る」: 読み取りの中身と希望ごとの判定は畳む（点と要確認は上に出したまま） */}
+                        <details className="mt-0.5">
+                          <summary className="cursor-pointer text-[10px] font-bold" style={{ color: "#00695c" }}>分析の内訳{(() => { const cs = a.checks ?? []; const ok = cs.filter((x) => x.result === "ok").length, ng = cs.filter((x) => x.result === "ng").length; return cs.length ? `（◎${ok}・×${ng}）` : ""; })()} 詳細 ▾</summary>
                         {sheetNote && <div className="text-[9px] mt-0.5" style={{ color: "#b0bec5" }}>📐 {sheetNote}{a.sheet?.crop_reason ? `（${a.sheet.crop_reason}）` : ""}</div>}
                         <div className="text-[10px] text-[#37474f] mt-0.5 leading-relaxed">
                           {a.water && <div>🚿 水回り: {a.water}</div>}
@@ -1103,6 +1225,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                             })}
                           </div>
                         )}
+                        </details>
                       </div>
                     );
                   })}

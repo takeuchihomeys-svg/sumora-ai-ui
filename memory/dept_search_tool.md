@@ -2081,3 +2081,23 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - mode-core.js の behavior: brainNote = brain（スタッフでも true）。bulk-dl.js の buildSendItemsBrain: スタッフでも note_line を末尾に付ける。外すのは今まで通りしない（brainDrop = brain かつ スタッフでない・サーバーも staff_mode=true で apply_drop=false）
 - 🧠×AIX の 11:00/17:00 の自動便は見送りのまま（竹内「質が上がったら出来るようにするから、まだこのまま」）
 - ブレインが ON なら、通常・スタッフ・AIX のどれでも売上サポに連動（竹内「ブレインモードの場合は売上サポに連動される形」）
+
+## 2026-09-25 v2.5.22 お客様の作業を終えた時（確認☑／✅ 送った）に、売上サポの回をまとめて分析する
+竹内（売上サポのスマホの画面を見て）「まとめられていない。スタッフモードで送った時は、拡張ツールはお客さんのところ完了ボタン押したら、リアプロと itandi の全部分析されるようにする」
+- **今まで**: merge-pdfs の1回（サイト・ページごと）が1バッチ＝ property_pickups の batch_id。🧠×スタッフで手で送るとリアプロと itandi が別々のバッチで届き、自動の読み取り（pickup-auto-analyze）もバッチごと（110秒の締め切り・20件まで）、👑 は画面で「最新の回から6時間」をまとめて計算。お客様の「確認」は property_viewed_at を書くだけ、「✅ 送った」は property-tasks を書くだけで、売上サポとは無関係だった
+- **今**: 「完了」＝ お客様一覧の **「確認」**（押すと ☑・`markPropertyViewed`）と、リアプロの下のバーの **「✅ 送った」**（`adj-mark-sent-btn`）。押して記録が書けたら `completePickupsForCustomer(id, trigger)` → background `axlx-pickups-complete` → **POST /api/property-pickups/complete**（待たない・結果はトースト `#pickup-complete-toast`）
+  - ☑ をもう一度押した時は、確認の記録は書き直さず、まとめだけ行う（☑ の後に送った回もまとめられる）
+  - 呼ぶかは `mode-core.js` の behavior **completeGroup ＝ ブレイン ON**（🧠×スタッフ・🧠×通常・🧠×AIX のどれでも）。ブレイン OFF は呼ばない（売上サポに届いていない）。サーバーも brain !== true なら何もしない（二重の歯止め）
+  - 二重押し: 拡張は同じお客様を結果が返るまで＋返ってから10秒は呼ばない。サーバーも冪等
+  - 認証: 拡張は自動化の API と同じ `x-automation-key`（chrome.storage.local.automationApiKey・サーバーの AUTOMATION_API_KEY が無ければ通す）。アプリ・scripts は内部認証（Bearer INTERNAL_API_SECRET）
+- **サーバー**: `app/lib/pickup-complete.ts`（純関数）・`app/lib/pickup-complete-server.ts`・`app/api/property-pickups/complete/route.ts`
+  - 対象＝そのお客様の `complete_group_id` が空の行（前の完了より後）で、押した時から24時間以内（状態は問わない・送った行・自動送信の回も入る）
+  - まとめ ID ＝ `cg_<お客様 id 先頭8文字>_<一番古い行の id>`（2台が同時に押しても同じ ID）。行には「complete_group_id が空の行だけ」書く＝先に書いた方だけが行を取り、後の方は 0件（読まない）
+  - 応答はまとめ ID を付けたらすぐ（YUMA で 2台同時 830ms）。後ろ（waitUntil・締め切り200秒）で ①取った行だけ自動の読み取り（`autoAnalyzeBatch`・DeepSeek だけ・保存済み／外す候補は読まない・画像でしか分からない希望がある人だけ）②まとめた全件で順位（`complete_rank`：外す候補は最後→判定の点→画像の点→通す＞保留→🌟→新しい回）と 👑（画像の点があれば画面と同じ `pickCustomerBest`、無ければ判定の点の一番＝`best_basis`）
+  - 新しい列・表（migrate-schema・本番適用済み `scripts/apply-pickup-complete-columns.ts`）: `property_pickups.complete_group_id / complete_rank`、`property_pickup_completions`（group_id 主キー・trigger・mode・requested_by・status running/done/error・item_ids・batch_ids・sites・best_id・best_basis・result）
+- **YUMA**（`scripts/yuma-pickup-complete-test.ts --run / --cleanup`）: テスト用のお客様（WIC・対面キッチン）にリアプロ6件＋itandi 7件を2回に分けて入れ（本番の資料を写す）→ ブレイン OFF は0件 → 2台同時は片方13件・片方0件（同じ cg_…）→ 二重押し0件 → 後ろで13件を自動で読み（27秒・llm_usage_logs 24行すべて deepseek-flash・Claude 0）→ 👑 は itandi の回の物件（67点）＝リアプロだけでは出ない物をまとめた全件から選んだ。片付け済み（行・まとめ・お客様・property_sheet_facts 11行消し2行戻し）
+- ~~画面（売上サポ）はまだまとめ ID を使っていない~~ → **反証レビューでつないだ**: 画面の担当は `round_id` という列を読んでいた（本番に無い列・error を握りつぶして30分の時刻でしか寄せていなかった）→ `/api/property-pickups` の `readRoundIds` を `complete_group_id` に直した。YUMA で 5時間離れたリアプロと itandi の回（同じまとめ ID）が「ピックアップ 6件（リアプロ 3・itandi 3）・2回分をまとめて表示」の1つの吹き出しになり、印なしの回は別になるのを 390px で確かめた（横スクロールなし）。👑 はまだ画面の決め方（`pickCustomerBest`・直近6時間）で、`property_pickup_completions.best_id` は読んでいない（どちらを一番にするかの竹内さんの判断待ち）
+- 反証レビューで足した歯止め: `/send` は batch_id を「,」で100回分まで受け、別のお客様の行が混ざった頼みは 400（送った印・sent_properties を別のお客様に書かない）／「📤 AIXで送る」はチェックが10件を超えたら止める（AIX は10件で切るのに mark_sent は渡した id 全部に印を付けていた）
+- 気付いた事（直していない）: ①👑（画像の点）と順位（判定の点）が食い違う — YUMA では 👑 の物件が判定 65点・保留で順位12位（画像の点 67 が一番）。画面の 👑 も同じ決め方（pickCustomerBest は画像の点が先・判定は同点の時だけ）。どちらを「一番」にするか竹内さんに確認 ②9/24 の itandi の行は物件名が「物件」だけ（説明文が「【1】物件\nAD 1ヶ月」）＝リアプロの一覧の形に物件名を出すには itandi の名前の取り方が要る
+- テスト: `app/lib/__tests__/pickup-complete.test.ts`（33）・`tests/chrome-extension/mode-core.test.js`（50）
+- **竹内さんが確かめること（拡張の再読み込み後）**: 🧠 ブレイン ON・スタッフで、同じお客様にリアプロと itandi から「売上番長に送る」→ お客様一覧で「確認」→ 下に「売上サポにまとめました: リアプロ N件・itandi M件」→ 1〜3分後に売上サポ。ブレイン OFF では何も出ない

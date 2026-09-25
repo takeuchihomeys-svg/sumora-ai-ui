@@ -2431,7 +2431,9 @@ function renderList(customers) {
   list.querySelectorAll(".viewed-btn").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (btn.classList.contains("viewed-done")) return;
+      // ☑（今日もう確認済み）をもう一度押した時は、確認の記録は書き直さず、売上サポのまとめだけ行う
+      //   （☑ の後に送った回もまとめられるように。ブレイン OFF なら何もしない・サーバーは冪等）
+      if (btn.classList.contains("viewed-done")) { completePickupsForCustomer(btn.dataset.id, "viewed"); return; }
       await markPropertyViewed(btn.dataset.id);
     });
   });
@@ -2484,9 +2486,55 @@ async function markPropertyViewed(id) {
       setCachedCustomers(allCustomers);
       filterCustomers(document.getElementById("search-input")?.value || "");
     }
+    // このお客様の作業を終えた＝売上サポの回（リアプロ・itandi…）を1つにまとめる（ブレイン ON の時だけ・待たない）
+    completePickupsForCustomer(id, "viewed");
   } catch (e) {
     console.error("[AX] markPropertyViewed failed:", e);
   }
+}
+
+// ── 売上サポ: お客様の作業を終えた時に回をまとめる（2026-09-25・v2.5.22）──────────────
+// 竹内「スタッフモードで送った時は、拡張ツールはお客さんのところ完了ボタン押したら、リアプロと itandi の全部分析されるようにする」
+// 呼ぶ所: お客様一覧の「確認」（☑）／リアプロの「✅ 送った」。background（axlx-pickups-complete）→ /api/property-pickups/complete。
+// 呼ぶかどうかは background が AxlxModeCore.behavior の completeGroup（＝ブレイン ON・スタッフ／通常／AIX のどれでも）で決める。
+// 二重押し: 同じお客様は結果が返るまで・返ってから10秒は呼ばない（サーバーも冪等＝同じまとめ ID・後の呼び出しは0件）。
+// ⚠ 失敗しても「確認」「送った」の記録は変えない（まとめは後からもう一度押せばよい）。
+var _pickupCompleteBusy = {}; // お客様 id → 押した時刻（ms）
+function completePickupsForCustomer(customerId, trigger) {
+  try {
+    var key = String(customerId || "");
+    if (!key) return;
+    var last = _pickupCompleteBusy[key] || 0;
+    if (Date.now() - last < 10000) return;
+    _pickupCompleteBusy[key] = Date.now();
+    chrome.runtime.sendMessage({ type: "axlx-pickups-complete", property_customer_id: key, trigger: trigger || "manual" }, function (res) {
+      var err = chrome.runtime.lastError; // 受け取り側が無い時の警告を消す
+      if (err || !res) { _pickupCompleteToast("売上サポのまとめに失敗しました（もう一度「確認」を押し直せます）", "error"); delete _pickupCompleteBusy[key]; return; }
+      if (!res.ok) { console.warn("[AX] 売上サポのまとめ失敗:", res.error); _pickupCompleteToast("売上サポのまとめに失敗しました: " + String(res.error || "").slice(0, 60), "error"); delete _pickupCompleteBusy[key]; return; }
+      var d = res.data || {};
+      if (d.skipped === "brain_off") return; // ブレイン OFF: 売上サポに届いていないので何もしない（トーストも出さない）
+      if (d.toast) _pickupCompleteToast(d.toast, d.claimed > 0 ? "ok" : "info");
+      _pickupCompleteBusy[key] = Date.now();
+    });
+  } catch (e) {
+    console.warn("[AX] completePickupsForCustomer:", e);
+  }
+}
+
+function _pickupCompleteToast(text, kind) {
+  try {
+    var old = document.getElementById("pickup-complete-toast");
+    if (old) old.remove();
+    var el = document.createElement("div");
+    el.id = "pickup-complete-toast";
+    el.setAttribute("role", "status");
+    el.textContent = text;
+    var bg = kind === "error" ? "#c62828" : kind === "ok" ? "#00796B" : "#455a64";
+    el.style.cssText = "position:fixed;left:8px;right:8px;bottom:10px;z-index:2147483000;padding:9px 12px;border-radius:10px;" +
+      "background:" + bg + ";color:#fff;font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none;";
+    document.body.appendChild(el);
+    setTimeout(function () { if (el.parentNode) el.remove(); }, kind === "error" ? 7000 : 5000);
+  } catch (_) { /* ignore */ }
 }
 
 function buildSshGrid(sh) {
@@ -4061,6 +4109,8 @@ function openInstructions(siteKey) {
           allCustomers = allCustomers.map(c => c.id === selectedCustomer.id ? { ...c, last_property_sent_at: now } : c);
           updateTodayBanner();
           markSentBtn.textContent = "✅ 送った";
+          // このお客様の作業を終えた＝売上サポの回（リアプロ・itandi…）を1つにまとめる（ブレイン ON の時だけ・待たない）
+          completePickupsForCustomer(selectedCustomer.id, "sent");
         } catch {
           markSentBtn.textContent = "✅ 送った";
         }

@@ -11,6 +11,7 @@ import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { extractImageWants, dedupeWantsByTopic, imageAnalysisNeed, type ImageWant } from "@/app/lib/image-wants";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
+import { groupPickupRounds } from "@/app/lib/pickup-card-view";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,8 @@ export async function GET(req: NextRequest) {
     // 2026-09-25 保存期間（届いてから 72時間）が切れた物件は画像を渡さない（image_url: null・AIX には載らない）
     const nowMs = Date.now();
     const items = ((data ?? []) as Array<{ id: number; created_at: string; expired_at: string | null; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>)
-      .sort((a, z) => a.rank - z.rank)
+      // 同じ順位（まとめた回で別の回の【1】どうし）は id の順＝送った印の記録（pickup-sent-plan）と同じ並び
+      .sort((a, z) => (a.rank - z.rank) || (a.id - z.id))
       .map((r) => toPickupHandoffItem(withPickupRetention(r, nowMs)));
     return NextResponse.json({ ok: true, items });
   }
@@ -129,11 +131,12 @@ export async function GET(req: NextRequest) {
 //   並びは LINE の一覧と同じ＝会話の updated_at 降順
 type SentLite = { conversation_id: string | null; property_customer_id: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string | null };
 async function buildList(since: string) {
-  const [pk, sp] = await Promise.all([
+  const [pk, sp, roundOf] = await Promise.all([
     supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at")
       .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
     supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at")
       .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
+    readRoundIds({ since }),
   ]);
   if (pk.error) return { ok: false, error: pk.error.message };
   type L = {
@@ -143,24 +146,36 @@ async function buildList(since: string) {
   };
   const byKey = new Map<string, L>();
   const convToKey = new Map<string, string>();
-  const batchesSeen = new Map<string, Set<string>>();
+  // 2026-09-25 竹内「まとめられていない」: 一覧の「🧠 N件」も、短い間に届いた回（リアプロ・itandi）をまとめた1回分で数える
+  type BatchSum = { batch_id: string; created_at: string; site: string | null; round_id: string | null; count: number; rec2: string | null; rec1: string | null };
+  const batchesSeen = new Map<string, Map<string, BatchSum>>();
   for (const r of (pk.data ?? []) as Array<{ created_at: string; batch_id: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; rank: number; property_name: string; recommended: number; status: string }>) {
     const key = r.property_customer_id ?? `conv:${r.conversation_id ?? r.batch_id}`;
     const c = byKey.get(key) ?? { key, property_customer_id: r.property_customer_id, conversation_id: r.conversation_id, customer_name: r.customer_name, pending: 0, last_pickup_at: null, batch_count: 0, last_batch: null, sent: { pickup: 0, recommendation: 0, other: 0, last_at: null } };
     if (!c.conversation_id && r.conversation_id) c.conversation_id = r.conversation_id;
     if (r.status === "pending") c.pending++;
     if (!c.last_pickup_at || r.created_at > c.last_pickup_at) c.last_pickup_at = r.created_at;
-    const seen = batchesSeen.get(key) ?? new Set<string>();
-    if (!seen.has(r.batch_id)) { seen.add(r.batch_id); c.batch_count++; }
+    const seen = batchesSeen.get(key) ?? new Map<string, BatchSum>();
+    const bs = seen.get(r.batch_id) ?? { batch_id: r.batch_id, created_at: r.created_at, site: null, round_id: roundOf.get(r.batch_id) ?? null, count: 0, rec2: null, rec1: null };
+    bs.count++;
+    if (r.created_at < bs.created_at) bs.created_at = r.created_at;
+    if (r.recommended === 2 && !bs.rec2) bs.rec2 = r.property_name;
+    if (r.recommended === 1 && !bs.rec1) bs.rec1 = r.property_name;
+    seen.set(r.batch_id, bs);
     batchesSeen.set(key, seen);
-    // 行は新しい順に来るので、最初に見た batch が最新
-    if (!c.last_batch) c.last_batch = { batch_id: r.batch_id, count: 0, rec_name: null };
-    if (c.last_batch.batch_id === r.batch_id) {
-      c.last_batch.count++;
-      if (r.recommended === 2 || (r.recommended === 1 && !c.last_batch.rec_name)) c.last_batch.rec_name = r.property_name;
-    }
     byKey.set(key, c);
     if (c.conversation_id) convToKey.set(c.conversation_id, key);
+  }
+  for (const [key, seen] of batchesSeen) {
+    const c = byKey.get(key);
+    if (!c) continue;
+    const rounds = groupPickupRounds([...seen.values()]);
+    c.batch_count = rounds.length;
+    const last = rounds[rounds.length - 1];
+    if (last) {
+      const rec = last.batches.find((b) => b.rec2)?.rec2 ?? last.batches.find((b) => b.rec1)?.rec1 ?? null;
+      c.last_batch = { batch_id: last.key, count: last.batches.reduce((n, b) => n + b.count, 0), rec_name: rec };
+    }
   }
   for (const s of (sp.data ?? []) as SentLite[]) {
     if (!s.conversation_id) continue;
@@ -209,12 +224,15 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     : Promise.resolve({ data: null });
   // 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約（決定論＋保存済みの DeepSeek の要約・ここでは DeepSeek を呼ばない）と照らせない条件
   const sumRes = pcid ? loadConditionSummary(pcid, { allowLlm: false }).catch(() => null) : Promise.resolve(null);
-  const [pk, notesRes, sentRes, condRes, sum] = await Promise.all([
+  // 2026-09-25 竹内「まとめられていない」: 拡張の「完了」でまとめた1回分の印（complete_group_id）。列がまだ無い時は読めない（error）→ 届いた時刻で寄せる
+  const roundRes = readRoundIds(pcid ? { pcid } : { conv: conv as string });
+  const [pk, notesRes, sentRes, condRes, sum, roundOf] = await Promise.all([
     q,
     pcid ? supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").eq("property_customer_id", pcid).order("created_at", { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
     sq,
     pcRes,
     sumRes,
+    roundRes,
   ]);
   if (pk.error) return { ok: false, error: pk.error.message };
   // 2026-09-25 竹内「3日前の画像は消される・保存期間が終了しましたと出る（LINE のように）」: 届いてから 72時間を過ぎた行は
@@ -228,8 +246,11 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     if (!b) { b = { batch_id: r.batch_id, created_at: r.created_at, site: r.site, conversation_id: r.conversation_id, items: [] }; byBatch.set(r.batch_id, b); order.push(r.batch_id); }
     b.items.push(r);
   }
+  // 2026-09-25 竹内「まとめられていない」: 直近 N 回は「まとめの回」（短い間に届いたリアプロ・itandi の回を1つ）で数える。
+  //   回の途中で切ると、画面で1つにまとめる回の片方だけが出る → まとめの回ごと返す（画面も同じ関数で寄せる）
+  const rounds = groupPickupRounds(order.map((id) => ({ ...byBatch.get(id)!, round_id: roundOf.get(id) ?? null })));
   // 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」: 🌟★ → 🌟 → 点の高い順（同点は元の順位）。画面も同じ関数で並べ直す
-  const batches = order.slice(0, nBatches).map((id) => byBatch.get(id)!).map((b) => ({ ...b, items: sortForReview(b.items) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
+  const batches = rounds.slice(-nBatches).flatMap((r) => r.batches).map((b) => ({ ...b, items: sortForReview(b.items) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
   const first = rows[0] ?? null;
   const convId = conv ?? first?.conversation_id ?? null;
   const { data: cv } = convId ? await supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : { data: null };
@@ -257,10 +278,28 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       last_at: rows[0]?.created_at ?? "",
       line: c ? { profile_image_url: c.profile_image_url, updated_at: c.updated_at, account: c.account, status: c.status, last_sender: c.last_sender } : null,
       sent_history: (sentRes.data ?? []) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
-      has_more_batches: order.length > nBatches,
+      has_more_batches: rounds.length > nBatches,
       best,
       image_need: imageNeed,
       condition_summary: sum ? { line: sum.line, uncheckable: sum.uncheckable, ai: sum.ai.length > 0 } : null,
     },
   };
+}
+
+/**
+ * まとめの回の印（拡張の「完了」でまとめた1回分）を batch_id ごとに読む。
+ * 列の名前は property_pickups.complete_group_id（/api/property-pickups/complete・pickup-complete-server が付ける）。画面と関数の中では round_id と呼ぶ。
+ *   ※ 最初は round_id という列を読んでいた → 本番の列は complete_group_id で、error を握りつぶして時刻でしか寄せていなかった（反証レビューで直した）
+ * 列がまだ無い・読めない時は空（届いた時刻で寄せる）。詳細の本体の問い合わせを落とさないよう別に読む
+ */
+async function readRoundIds(by: { pcid: string } | { conv: string } | { since: string }): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    let q = supabase.from("property_pickups").select("batch_id, complete_group_id").not("complete_group_id", "is", null).order("created_at", { ascending: false }).limit(3000);
+    q = "pcid" in by ? q.eq("property_customer_id", by.pcid) : "conv" in by ? q.eq("conversation_id", by.conv) : q.gte("created_at", by.since);
+    const { data, error } = await q;
+    if (error) { console.warn("[property-pickups] まとめ ID を読めない（時刻で寄せる）:", error.message); return out; }
+    for (const r of (data ?? []) as Array<{ batch_id: string; complete_group_id: string | null }>) if (r.complete_group_id && !out.has(r.batch_id)) out.set(r.batch_id, r.complete_group_id);
+  } catch { /* 読めなければ時刻で寄せる */ }
+  return out;
 }

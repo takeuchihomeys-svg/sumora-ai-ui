@@ -64,6 +64,13 @@ eq("スタッフ×ブレインでも brainDrop=false", M.behavior("staff", true)
 eq("スタッフ×ブレインでも excludeSent=false", M.behavior("staff", true).excludeSent, false);
 eq("スタッフ×ブレインでも自動化コマンドを claim しない", M.behavior("staff", true).claimCommands, false);
 
+console.log("\n■ 完了で売上サポの回をまとめる（2026-09-25 竹内「完了ボタン押したらリアプロと itandi の全部分析」）");
+eq("ブレイン×スタッフ は必ずまとめる", M.behavior("staff", true).completeGroup, true);
+eq("ブレイン×通常 も押した時はまとめる", M.behavior("normal", true).completeGroup, true);
+eq("ブレイン×AIX も押した時はまとめる", M.behavior("aix", true).completeGroup, true);
+eq("ブレイン OFF は3つとも呼ばない（売上サポに届いていない）", M.MODES.map((m) => M.behavior(m, false).completeGroup), [false, false, false]);
+eq("まとめる時は必ず売上サポに記録している（completeGroup ⇒ recordPickup）", M.MODES.flatMap((m) => [false, true].map((b) => !M.behavior(m, b).completeGroup || M.behavior(m, b).recordPickup)).every(Boolean), true);
+
 console.log("\n■ バッジ・帯");
 eq("バッジ 6通り", M.MODES.flatMap((m) => [false, true].map((b) => M.badge(m, b).text)), ["", "脳通", "手動", "手脳", "AIX", "脳"]);
 eq("帯: 通常×なし は出さない", M.banner("normal", false), null);

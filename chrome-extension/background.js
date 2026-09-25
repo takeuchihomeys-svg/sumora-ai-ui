@@ -436,8 +436,49 @@ async function callBrainJudgeApi(payload) {
   return data;
 }
 
+// ── 売上サポ: お客様の作業を終えた時に回をまとめる（2026-09-25・v2.5.22）──────────────
+// 竹内「スタッフモードで送った時は、拡張ツールはお客さんのところ完了ボタン押したら、リアプロと itandi の全部分析されるようにする」
+// popup.js（一覧の「確認」☑／リアプロの「✅ 送った」）→ ここ → /api/property-pickups/complete。
+// 呼ぶかどうかは AxlxModeCore.behavior の completeGroup（＝ブレイン ON。スタッフ・通常・AIX のどれでも）。ブレイン OFF は呼ばない。
+// サーバーはまとめ ID を付けたらすぐ返す（読み取り・順位・👑 は後ろ）。二重押し・2台の PC でもサーバーが冪等にする。
+async function callPickupsComplete(propertyCustomerId, trigger) {
+  const raw = await new Promise((resolve) => {
+    try { chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"], (res) => resolve(res || {})); } catch (_) { resolve({}); }
+  });
+  const core = self.AxlxModeCore;
+  const st = core ? core.readState(raw, Date.now()) : { mode: "normal", brain: !!raw.brainMode };
+  const bh = core ? core.behavior(st.mode, st.brain) : { completeGroup: !!raw.brainMode };
+  if (!bh.completeGroup) return { ok: true, skipped: "brain_off", claimed: 0, toast: "" };
+  const authHeader = await _getAutomationKeyHeader();
+  const resp = await fetch("https://sumora-ai-ui.vercel.app/api/property-pickups/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeader },
+    body: JSON.stringify({ property_customer_id: propertyCustomerId, brain: true, mode: st.mode, trigger: trigger || "manual" }),
+    signal: AbortSignal.timeout(20000), // まとめ ID を付けるだけ（数百ms）。読み取りはサーバーの後ろ
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`売上サポのまとめ HTTP ${resp.status}: ${text.slice(0, 120)}`);
+  }
+  return await resp.json();
+}
+
 // ── メッセージハンドラ ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+  // ── 売上サポ: お客様の作業を終えた時に回をまとめる（popup.js → background → /api/property-pickups/complete）──
+  if (msg.type === "axlx-pickups-complete") {
+    (async () => {
+      try {
+        if (!msg.property_customer_id) { sendResponse({ ok: false, error: "お客様がありません" }); return; }
+        const data = await callPickupsComplete(String(msg.property_customer_id), msg.trigger || null);
+        sendResponse({ ok: true, data });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
+      }
+    })();
+    return true;
+  }
 
   // ── 物件検索ブレインの判定（bulk-dl.js → background → /api/property-brain/judge）──
   if (msg.type === "axlx-brain-judge") {
