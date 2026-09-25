@@ -211,13 +211,28 @@ console.log("■ 設備の強さ・画像の × で全部合うが外れる・�
   t("画像で確かめる前は全部合う（家賃・間取り・徒歩）", j.reasonCodes.includes("FIT_ALL"), j.reasonCodes);
   const ji = applyImageFacts(j, { bath_toilet_separate: false });
   t("画像の × で保留 → 全部合うが外れる", !ji.reasonCodes.some((c) => c.startsWith("FIT_")) && ji.verdict === "hold", ji.reasonCodes);
-  t("画像の後も 50＋札の点の合計＝点", sum50(ji.reasonCodes) === ji.score, [ji.score, sum50(ji.reasonCodes)]);
+  // 2026-09-25 バス・トイレ別の希望は必須の扱い → 画像の × で上限20の印が付く（点＝min(50＋合計, 20)）
+  t("画像のバス・トイレ一緒 → 上限20（50＋札の点の合計と20の小さい方）", ji.reasonCodes.includes(EQUIP_CAP_CODE) && ji.score === Math.min(20, sum50(ji.reasonCodes)), [ji.score, sum50(ji.reasonCodes), ji.reasonCodes]);
   const jo = applyImageFacts(j, { bath_toilet_separate: true });
   t("画像の ○ → 全部合うのまま（4つ）", jo.reasonCodes.includes("FIT_ALL") && summarizeFit(jo.reasonCodes).n === 4, jo.reasonCodes);
   const je = applyEquipmentMatch(j, mkMatch([{ key: "autolock", strong: true, result: "ng" }]));
   t("設備の付け直しで必須 × → 全部合うが外れて上限20", !je.reasonCodes.some((c) => c.startsWith("FIT_")) && je.score <= 20, je);
   const jk = applyEquipmentMatch(j, mkMatch([{ key: "autolock", strong: true, result: "ok" }]));
   t("設備の付け直しで必須 ○ → +5・全部合う", jk.reasonCodes.includes("EQUIP_AUTOLOCK_MUST_OK") && jk.reasonCodes.includes("FIT_ALL") && jk.score === Math.min(SCORE_MAX, sum50(jk.reasonCodes)), jk.reasonCodes);
+}
+
+// ── 2026-09-25 竹内「バストイレ別希望していたら、一緒の場合はかなり減点。他に物件があれば入れないレベル（NG）」 ──
+console.log("■ 例題: バス・トイレ別の希望に バス・トイレ一緒 → 他のどの物件より下");
+{
+  const cust = { rent_max: 70_000, floor_plan: "1K", walk_minutes: 10, preferences: "バストイレ別" };
+  const good = J("【1】A 201\n60,000円\n1K 25㎡\n敷なし 礼なし\n○○駅 徒歩4分\nAD 2ヶ月", cust);
+  const bt = applyImageFacts(good, { bath_toilet_separate: false });
+  const weak = J("【2】B 102\n69,000円\n1K 20㎡\n○○駅 徒歩10分\nAD なし", cust);
+  t("一緒の方は上限20・保留", bt.score <= 20 && bt.verdict === "hold" && bt.reasonCodes.includes(EQUIP_CAP_CODE), [bt.score, bt.verdict]);
+  t("家賃・徒歩・AD が良くても、条件ぎりぎり・AD なしの物件より下", bt.score < weak.score, [bt.score, weak.score]);
+  t("記載なし（－）は減点しない（書いていない＝一緒とは限らない）", !weak.reasonCodes.includes(EQUIP_CAP_CODE), weak.reasonCodes);
+  const softJ = J("【1】A 201\n60,000円\n1K 25㎡\n○○駅 徒歩4分\nAD 2ヶ月", { ...cust, preferences: "できればバストイレ別" });
+  t("「できればバストイレ別」は普通の希望のまま（上限20にしない）", !applyImageFacts(softJ, { bath_toilet_separate: false }).reasonCodes.includes(EQUIP_CAP_CODE));
 }
 
 // ── 条件の要約が点と同じ読み方か（YUMA テスト 2026-09-25: 「築浅は必須」が「できれば 築浅」・駅近／家賃を低く が要約に無かった） ──

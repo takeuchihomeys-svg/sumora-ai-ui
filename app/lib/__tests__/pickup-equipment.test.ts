@@ -87,7 +87,8 @@ console.log("■ 理由コード（○ +3 で合計 +15 まで・× −10・－ 
   const many = parseEquipmentWants({ preferences: "2階以上、独立洗面台、バストイレ別、室内洗濯機置場、システムキッチン、都市ガス、オートロック" });
   const codes = equipmentReasonCodes(matchEquipment(many, f));
   const okPts = codes.filter((c) => /_OK$/.test(c)).reduce((a, c) => a + reasonPoints(c), 0);
-  t("○が7つでも加点は +15 まで（残りは _OK_MAX で 0点）", okPts === 15 && codes.filter((c) => c.endsWith("_OK_MAX")).length === 2, codes);
+  // 2026-09-25 バス・トイレ別は必須の扱い（+5）で先に数える → 5＋3＋3＋3＝14（次の +3 は 15 を越えるので _OK_MAX）
+  t("○が7つでも加点は +15 まで（残りは _OK_MAX で 0点）", okPts === 14 && codes[0] === "EQUIP_BATH_TOILET_MUST_OK" && codes.filter((c) => c.endsWith("_OK_MAX")).length === 3, codes);
   t("_OK_MAX は 0点", reasonPoints("EQUIP_CITY_GAS_OK_MAX") === 0);
   t("× は −10", reasonPoints("EQUIP_FLOOR2_NG") === -10);
   t("－ は 0点", reasonPoints("EQUIP_DELIVERY_BOX_UNLISTED") === 0);
@@ -114,7 +115,8 @@ const sum405 = "【1】エステムコート新大阪Ⅵエキスプレイス 40
   const j405 = judgeProperty(parsePropertyFacts(sum405), p, 0, { equipment: b.rows[0].match });
   const base = judgeProperty(parsePropertyFacts(sum405), p, 0);
   // 2026-09-25 案B: ○ の +15 に加えて、書いた条件の数が 2つ（半分 +8）→ 7つ（全部合う +15）になる
-  t("405号室: ○5つで +15・全部合うが半分 +8 → 満額 +15", j405.score === Math.min(SCORE_MAX, base.score + 15 + 7) && j405.reasonCodes.includes("FIT_ALL") && base.reasonCodes.includes("FIT_ALL_HALF"), [base.score, j405.score, j405.reasonCodes]);
+  // 2026-09-25 バス・トイレ別は必須（+5）: 5＋3＋3＋3＝+14（洗面は _OK_MAX）
+  t("405号室: ○5つで +14・全部合うが半分 +8 → 満額 +15", j405.score === Math.min(SCORE_MAX, base.score + 14 + 7) && j405.reasonCodes.includes("FIT_ALL") && base.reasonCodes.includes("FIT_ALL_HALF"), [base.score, j405.score, j405.reasonCodes]);
   t("50＋合計＝score", BASE_SCORE + j405.reasonCodes.reduce((a, c) => a + reasonPoints(c), 0) === j405.score);
   t("設備欄で決まった希望は画像で確かめ直さない（imageChecks から外す）", !j405.imageChecks.includes("floor_2_plus") && !j405.imageChecks.includes("bath_toilet_separate") && !j405.imageChecks.includes("separate_washstand"), j405.imageChecks);
   t("設備欄が無ければ今まで通り画像で確かめる", base.imageChecks.includes("floor_2_plus"));
@@ -159,8 +161,8 @@ console.log("■ 保存済みの判定に付け直す（applyEquipmentMatch）")
   const r = applyEquipmentMatch({ reasonCodes: stored }, b.rows[0].match);
   t("家賃・徒歩・AD のコードは残る", ["RENT_OK", "WALK_OK", "AD_COVERS_DISCOUNT", "AD_1M"].every((c) => r.reasonCodes.includes(c)), r.reasonCodes);
   t("設備欄で決まった画像のコードは外す（二重に数えない）", !r.reasonCodes.some((c) => c.startsWith("IMAGE_")), r.reasonCodes);
-  // 2026-09-25 案B: 付け直しで書いた条件が 家賃・徒歩＋設備5つ＝全部合う +15 → 120
-  t("点: 50＋15＋10＋0＋15＋15＋全部合う15 = 120", r.score === 120 && r.verdict === "pass" && r.reasonCodes.includes("FIT_ALL"), [r.score, r.reasonCodes]);
+  // 2026-09-25 案B: 付け直しで書いた条件が 家賃・徒歩＋設備5つ＝全部合う +15。バス・トイレ別は必須（+5）で設備 +14 → 119
+  t("点: 50＋15＋10＋0＋15＋14＋全部合う15 = 119", r.score === 119 && r.verdict === "pass" && r.reasonCodes.includes("FIT_ALL"), [r.score, r.reasonCodes]);
   const again = applyEquipmentMatch({ reasonCodes: r.reasonCodes }, b.rows[0].match);
   t("2回付け直しても同じ（冪等）", JSON.stringify(again) === JSON.stringify(r));
   const hold = applyEquipmentMatch({ reasonCodes: ["RENT_OK", "PROFIT_NEGATIVE"] }, null);

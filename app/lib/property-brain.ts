@@ -151,6 +151,8 @@ export type CustomerProfile = {
   lowInitialCostSource: "form" | "history" | "none";
   pet: boolean;
   imageWants: ImageWantKey[];
+  /** 画像の × を必須の × として上限20にする希望（バス・トイレ別は「できれば」と書いた時以外） */
+  imageMust?: ImageWantKey[];
   history: {
     sentCount: number;
     sentBuildings: Set<string>;
@@ -220,6 +222,8 @@ export type Judgment = {
   profitYen: number | null;
   /** 画像で確かめたい希望（あれば画像の読み取りに回す） */
   imageChecks: ImageWantKey[];
+  /** imageChecks のうち画像の × で上限20にする希望（無い古い判定は バス・トイレ別 を必須とみなす） */
+  imageMust?: ImageWantKey[];
   facts: PropertyFacts;
 };
 
@@ -474,7 +478,10 @@ export function equipmentReasonCodes(m: EquipmentMatch | null | undefined): stri
   if (!m) return [];
   const out: string[] = [];
   let okPts = 0;
-  for (const r of m.rows) {
+  // 2026-09-25 必須の ○ を先に数える（並び順のせいで必須の ○ が +15 の上限に当たって 0点になるのを防ぐ）
+  const rank = (r: EquipmentMatch["rows"][number]) => (r.want.strong ? 0 : r.want.soft ? 2 : 1);
+  const rows = [...m.rows].sort((a, b) => rank(a) - rank(b));
+  for (const r of rows) {
     // mode=ng（「ロフトNG」）は別のコード（EQUIP_LOFT_NOT_OK＝ロフトが無い＝希望どおり）。同じ KEY だと「ロフト○」と読めて逆の意味になる
     const KEY = String(r.want.key).toUpperCase() + (r.want.mode === "ng" ? "_NOT" : "");
     const okCode = r.want.strong ? `EQUIP_${KEY}_MUST_OK` : r.want.soft ? `EQUIP_${KEY}_SOFT_OK` : `EQUIP_${KEY}_OK`;
@@ -982,6 +989,18 @@ function stripConditionalFloorClauses(text: string): string {
   return text.replace(/(?:[0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})階以上[^、。，,\n]*/g, (m) => (conditionalFloorOf(m) != null ? "" : m));
 }
 
+/**
+ * 画像の × を必須の × として扱う希望。2026-09-25 竹内「バストイレ別希望していたら、一緒の場合はかなり減点・他に物件があれば入れないレベル（NG）」:
+ *   バス・トイレ別は「必須」と書いていなくても必須。「できれば」「あれば」等と書いた節だけ普通の希望（listing-equipment の parseEquipmentWants と同じ線）。
+ *   節の区切りに「・」を入れない（「バス・トイレ別」が切れる）
+ */
+export function detectImageMust(c: CustomerLike): ImageWantKey[] {
+  const text = [c.preferences, c.other_requests, c.ng_points, c.additional_conditions].map((s) => String(s ?? "")).join("\n").normalize("NFKC");
+  const re = IMAGE_WANT_RES.find(([k]) => k === "bath_toilet_separate")![1];
+  const cls = text.split(/[、。,，\n／/]/).filter((cl) => re.test(cl));
+  return cls.length && cls.some((cl) => !WANT_SOFT_RE.test(cl)) ? ["bath_toilet_separate"] : [];
+}
+
 /** 画像（間取り図）でしか分からない希望を拾う */
 export function detectImageWants(c: CustomerLike): ImageWantKey[] {
   const text = stripConditionalFloorClauses([c.preferences, c.other_requests, c.ng_points, c.additional_conditions].map((s) => String(s ?? "")).join("\n"));
@@ -1320,6 +1339,7 @@ export function buildCustomerProfile(
     wantsLowInitialCost, lowInitialCostSource,
     pet: customer.pet === true,
     imageWants: detectImageWants(customer),
+    imageMust: detectImageMust(customer),
     history: { sentCount: sentRows.length, sentBuildings, sentRooms, rentRatioMedian: median(ratios), rentRatioN: ratios.length, sellingPointsSelected },
     discountYen: discountYen != null && discountYen > 0 ? discountYen : DEFAULT_DISCOUNT_YEN,
     confidence,
@@ -1629,6 +1649,7 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     index, rank: facts.rank, name: facts.name, verdict, score, reasonCodes: codes, flagCodes, reasonsJa,
     confidence: profile.confidence, missing, adYen, profitYen,
     imageChecks: verdict === "drop" ? [] : imageChecks,
+    imageMust: profile.imageMust ?? [],
     facts,
   };
 }
@@ -1660,6 +1681,9 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     const code = `IMAGE_${key.toUpperCase()}_${v ? "OK" : "NG"}`;
     codes.push(code);
     if (v) score += 5; else { score -= 10; hold = true; flagCodes.push(code); }
+    // 2026-09-25 竹内「バストイレ別を希望していたら、一緒の場合はかなり減点。他に物件があれば入れないレベル（NG）」:
+    //   間取り図でバス・トイレが一緒と読めた時も、資料の設備欄の × と同じく必須の × の上限（20点）を掛ける
+    if (!v && (j.imageMust ?? ["bath_toilet_separate"]).includes(key) && !codes.includes(EQUIP_CAP_CODE)) codes.push(EQUIP_CAP_CODE);
   }
   // 画像の × で条件の外れが増えた物件も AD の段を点に入れない（judgeProperty と同じ settleHeldAd）
   if (flagCodes.length) {

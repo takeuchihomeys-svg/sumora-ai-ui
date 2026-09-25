@@ -759,6 +759,10 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
     });
   }
   if (typeAcc) res.wants.push({ key: "bldg_type", mode: "must", strong: typeAcc.strong, soft: typeAcc.soft, bldgType: typeAcc.type, text: typeAcc.text, field: typeAcc.field });
+  // 2026-09-25 竹内「バストイレ別を希望していたら、バストイレが一緒の場合はかなり減点。他に物件があれば入れないレベル（NG）」:
+  //   バス・トイレ別の希望は「必須」と書いていなくても必須の扱い（× なら EQUIP_MUST_NG_CAP で上限20点・保留＝一番下に回る）。
+  //   「できれば」と書いた時だけ今まで通りの普通の希望。記載なし（－）は減点しない（書いていない＝一緒とは限らない）
+  for (const w of res.wants) if (w.key === "bath_toilet" && w.mode === "must" && !w.soft) w.strong = true;
   return res;
 }
 
