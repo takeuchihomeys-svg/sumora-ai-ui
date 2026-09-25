@@ -52,7 +52,7 @@
   // 2026-09-25 竹内「ブレインだけ別で、ほかはドロップダウン。ブレインでもスタッフモードや AIX モード、通常モードを行う」:
   //   旧は aixMode と brainMode の両方 true の時だけ ON。新は **brainMode 単独で ON**（通常／スタッフ／AIX連動のどれとも組み合わせる）。
   //   組み合わせの仕様は mode-core.js（AxlxModeCore.behavior）。content script には読み込んでいないので、ここは同じ意味の分岐だけ持つ:
-  //     brainJudge = brainMode ／ brainDrop・brainNote = brainMode かつ スタッフでない（buildSendItemsBrain 参照）
+  //     brainJudge = brainMode ／ brainDrop = brainMode かつ スタッフでない ／ brainNote = brainMode（スタッフでも付ける・buildSendItemsBrain 参照）
   //   判定の失敗・タイムアウトは今までどおり全件送る（fail-open）。
   var _brainModeOn = false;
   try {
@@ -399,7 +399,7 @@
   // 2026-09-25 ブレイン×スタッフ（竹内「ブレインでもスタッフモードを行う」・旧はスタッフ中は呼ばなかった）: 判定は呼ぶ
   //   （property_brain_judgments に残り、売上サポの記録と並ぶ）が、
   //   ① 1件も外さない（サーバーも staff_mode=true で apply_drop=false・拡張でも apply_drop を見ない＝二重の歯止め）
-  //   ② 説明文の末尾に判定の1ブロックを足さない（スタッフが手で送る文は今まで通り）。判定はコンソールに出る。
+  //   ② 説明文の末尾に判定のまとめ（外す候補・保留と理由）の1ブロックを付ける（2026-09-25 竹内「共有しておく」・売上番長グループ向け）。
   //   判定を待つ分（ふだん数秒・最大35秒）だけ送信が遅くなる。
   function buildSendItemsBrain(customerId, cb) {
     var items = buildSendItems();
@@ -437,10 +437,11 @@
           });
         }
         // 判定のまとめ（外した物・保留の物と理由）を末尾の説明文に1ブロック
-        if (d.note_line && kept.length && !_staffAtJudge) kept[kept.length - 1].summary += "\n\n" + d.note_line;
+        // 2026-09-25 竹内「共有しておく」: スタッフモード中も売上番長グループに判定のまとめを付ける（外しはしない）
+        if (d.note_line && kept.length) kept[kept.length - 1].summary += "\n\n" + d.note_line;
         var c = d.counts || {};
         console.log("[AXLX bulk-dl][brain] 判定 " + items.length + "件: 通す" + (c.pass || 0) + "・保留" + (c.hold || 0) + "・外す候補" + (c.drop || 0) +
-          (_staffAtJudge ? "（スタッフモード・外さない・説明文は変えない）" : d.apply_drop ? "（外した " + (items.length - kept.length) + "件）" : "（影の運用・外さない）") + " " + (d.ms || 0) + "ms");
+          (_staffAtJudge ? "（スタッフモード・外さない・まとめは付ける）" : d.apply_drop ? "（外した " + (items.length - kept.length) + "件）" : "（影の運用・外さない）") + " " + (d.ms || 0) + "ms");
         d.judgments.forEach(function (j) {
           if (j.verdict !== "pass") console.log("[AXLX bulk-dl][brain] " + (j.verdict === "drop" ? "見送り候補" : "保留") + ": " + j.name + "（" + (j.reasons_ja || []).slice(0, 3).join("・") + "）" + (j.profit_yen != null ? " 利益目安 " + j.profit_yen + "円" : ""));
         });

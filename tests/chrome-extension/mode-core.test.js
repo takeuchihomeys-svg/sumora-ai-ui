@@ -55,7 +55,7 @@ eq("通常",            pick(M.behavior("normal", false)), "101100000");
 eq("スタッフ",        pick(M.behavior("staff", false)),  "000000000");
 eq("AIX連動",         pick(M.behavior("aix", false)),    "111100001");
 eq("ブレイン×通常",   pick(M.behavior("normal", true)),  "101111110");
-eq("ブレイン×スタッフ（判定と記録だけ・外さない・印なし・自動化は止めたまま）", pick(M.behavior("staff", true)), "000010010");
+eq("ブレイン×スタッフ（判定・まとめ・記録・外さない・自動化は止めたまま）", pick(M.behavior("staff", true)), "000010110");
 eq("ブレイン×AIX（旧「ブレイン」）", pick(M.behavior("aix", true)), "111111110");
 eq("知らないモード → 通常扱い", pick(M.behavior("brain", false)), pick(M.behavior("normal", false)));
 
