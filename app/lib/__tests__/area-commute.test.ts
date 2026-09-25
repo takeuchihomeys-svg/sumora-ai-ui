@@ -8,7 +8,7 @@ import {
 import { shortestRoute } from "../transit-route";
 import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, formatLocationLine } from "../area-want";
 import {
-  buildCustomerProfile, judgeProperty, parsePropertyFacts, normalizeFloorPlanWant, parseFloorPlanAlt, reasonPoints, reasonJa, BASE_SCORE, REASON_POINTS, HOLD_REASON_CODES,
+  buildCustomerProfile, judgeProperty, parsePropertyFacts, normalizeFloorPlanWant, parseFloorPlanAlt, reasonPoints, reasonJa, BASE_SCORE, REASON_POINTS, HOLD_REASON_CODES, SCORE_MAX,
 } from "../property-brain";
 import { buildConditionSummary, parseSummaryResponse, maskClause, SUMMARY_SYSTEM_PROMPT, formatSummaryLine, uncheckableLabels } from "../condition-summary";
 import { strongFeatures, rowNeedsImage, pickAutoTargets, type AutoRow } from "../pickup-auto-targets";
@@ -113,8 +113,16 @@ console.log("■ 物件の場所と照らす");
   t("希望の駅そのもの → AREA_STATION_MATCH", m("恵美須町・大国町")?.code === "AREA_STATION_MATCH");
   t("希望の区 → AREA_WARD_MATCH", m("浪速区")?.code === "AREA_WARD_MATCH");
   t("希望の路線（堺筋線）→ AREA_LINE_MATCH", m("堺筋線沿い")?.code === "AREA_LINE_MATCH");
-  const near = m("大国町");
-  t(`大国町から 2km 以内 → AREA_NEAR（${near?.km}km）`, near?.code === "AREA_NEAR" && (near?.km ?? 9) < 2);
+  // 2026-09-25: 動物園前（徒歩9分）は大国町の隣（御堂筋線）＝拡張の広げて検索の駅 → 距離の AREA_NEAR ではなく AREA_STATION_WIDE +8
+  const wide = m("大国町");
+  t(`大国町の隣の駅（動物園前）→ AREA_STATION_WIDE（${wide?.why}）`, wide?.code === "AREA_STATION_WIDE" && (wide?.why ?? "").includes("動物園前") && (wide?.why ?? "").includes("御堂筋線"));
+  t("日本橋の隣（恵美須町・堺筋線）→ AREA_STATION_WIDE", m("日本橋")?.code === "AREA_STATION_WIDE");
+  t("なんばから御堂筋線で2駅（動物園前）→ AREA_STATION_2STOPS", m("なんば")?.code === "AREA_STATION_2STOPS");
+  t("希望の区（浪速区）は2駅より上（+8）", m("浪速区・なんば")?.code === "AREA_WARD_MATCH");
+  t("西区の希望に浪速区 → 難波・心斎橋の3区 AREA_WARD_WIDE", m("西区")?.code === "AREA_WARD_WIDE");
+  const near = m("今宮");
+  t(`今宮から 2km 以内（同じ路線ではない）→ AREA_NEAR（${near?.km}km）`, near?.code === "AREA_NEAR" && (near?.km ?? 9) < 2);
+  t("徒歩15分を超える駅は隣でも広げた検索の駅にしない", matchArea(parseAreaWant("大国町"), buildPropertyLocation("【1】A", "交通\n御堂筋線「動物園前」徒歩18分"))?.code !== "AREA_STATION_WIDE");
   t("隣の区（西成区）→ AREA_CLOSE か近い", ["AREA_CLOSE", "AREA_NEAR"].includes(m("西成区")?.code ?? ""));
   const far = m("茨木市");
   t(`茨木市 → AREA_FAR（${far?.why}）`, far?.code === "AREA_FAR");
@@ -158,9 +166,12 @@ console.log("■ 家賃下限・間取りの「も可」・広さ・築浅（pro
 
   const p5 = buildCustomerProfile({ rent_max: 90_000, floor_area_min: 30 });
   const sqOk = judgeProperty(parsePropertyFacts(S("80,000円", "1LDK 31.2㎡")), p5);
-  const sqUnder = judgeProperty(parsePropertyFacts(S("80,000円", "1K 25.0㎡")), p5);
+  const sqWide = judgeProperty(parsePropertyFacts(S("80,000円", "1K 25.0㎡")), p5);
+  const sqUnder = judgeProperty(parsePropertyFacts(S("80,000円", "1K 24.5㎡")), p5);
   const sqNone = judgeProperty(parsePropertyFacts(S("80,000円", "1K")), p5);
-  t("広さ: 以上 +3・9割未満は保留・読めない時は要確認", sqOk.reasonCodes.includes("SQM_OK") && sqUnder.flagCodes.includes("SQM_UNDER") && sqUnder.verdict === "hold" && sqNone.reasonCodes.includes("SQM_UNKNOWN"));
+  t("広さ: 以上 +3・−5㎡まで（広げた検索の幅）は −3 の情報・それより下は保留・読めない時は要確認",
+    sqOk.reasonCodes.includes("SQM_OK") && sqWide.reasonCodes.includes("SQM_WIDE") && !sqWide.flagCodes.includes("SQM_WIDE")
+    && sqUnder.flagCodes.includes("SQM_UNDER") && sqUnder.verdict === "hold" && sqNone.reasonCodes.includes("SQM_UNKNOWN"));
   const p6 = buildCustomerProfile({ rent_max: 90_000, preferences: "築浅が良い" });
   t("築浅（築年の列が空）→ 目安10年", p6.ageTextMax?.years === 10);
   const a1 = judgeProperty(parsePropertyFacts(S("80,000円", "1K", "\n築5年")), p6);
@@ -190,7 +201,7 @@ console.log("■ 点の表（REASON_POINTS）と 50＋合計＝score（新しい
   ];
   for (const [s, loc] of cases) {
     const j = judgeProperty(parsePropertyFacts(s), p, 0, { locationCodes: loc });
-    const raw = Math.max(0, Math.min(130, BASE_SCORE + j.reasonCodes.reduce((a, c) => a + reasonPoints(c), 0)));
+    const raw = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + j.reasonCodes.reduce((a, c) => a + reasonPoints(c), 0)));
     t(`${s.split("\n")[0]} ${j.reasonCodes.filter((c) => /^(AREA|COMMUTE|SQM|FLOOR|RENT_BELOW|BUILDING_AGE_TEXT)/.test(c)).join(",")} → ${j.score}`, raw === j.score);
   }
   const ex = judgeProperty(parsePropertyFacts(cases[2][0]), p, 0, { locationCodes: ["AREA_EXCLUDED"] });

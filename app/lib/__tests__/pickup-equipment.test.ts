@@ -6,7 +6,7 @@ import { buildBatchEquipment, matchFromSummary, floorLabel, toPickupEquipment } 
 import { parseEquipmentWants, matchEquipment, parseListingEquipment } from "../listing-equipment";
 import {
   buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, applyEquipmentMatch, equipmentReasonCodes,
-  reasonPoints, reasonJa, BASE_SCORE, EQUIP_CAP_CODE, type CustomerLike,
+  reasonPoints, reasonJa, BASE_SCORE, SCORE_MAX, EQUIP_CAP_CODE, type CustomerLike,
 } from "../property-brain";
 import { buildReasonView, formatScoreBreakdown } from "../pickup-review-order";
 
@@ -113,7 +113,7 @@ const sum405 = "【1】エステムコート新大阪Ⅵエキスプレイス 40
   const b = buildBatchEquipment([{ key: 1, pdfText: IT_405 }, { key: 2, pdfText: IT_104 }, { key: 3, pdfText: IT_1512 }], cust);
   const j405 = judgeProperty(parsePropertyFacts(sum405), p, 0, { equipment: b.rows[0].match });
   const base = judgeProperty(parsePropertyFacts(sum405), p, 0);
-  t("405号室: ○5つで +15", j405.score === Math.min(130, base.score + 15), [base.score, j405.score, j405.reasonCodes]);
+  t("405号室: ○5つで +15", j405.score === Math.min(SCORE_MAX, base.score + 15), [base.score, j405.score, j405.reasonCodes]);
   t("50＋合計＝score", BASE_SCORE + j405.reasonCodes.reduce((a, c) => a + reasonPoints(c), 0) === j405.score);
   t("設備欄で決まった希望は画像で確かめ直さない（imageChecks から外す）", !j405.imageChecks.includes("floor_2_plus") && !j405.imageChecks.includes("bath_toilet_separate") && !j405.imageChecks.includes("separate_washstand"), j405.imageChecks);
   t("設備欄が無ければ今まで通り画像で確かめる", base.imageChecks.includes("floor_2_plus"));
@@ -212,7 +212,7 @@ console.log("■ 反証レビュー（2026-09-24）");
   const j = judgeProperty(parsePropertyFacts("【2】X 104号室\n60,000円\n1K\n徒歩5分\nAD 3ヶ月"), strongP, 1, { equipment: matchEquipment(sw, parseListingEquipment(IT_104)) });
   const img = applyImageFacts({ ...j, imageChecks: ["storage"] }, { storage: false });
   const raw = BASE_SCORE + img.reasonCodes.reduce((a, c) => a + reasonPoints(c), 0);
-  t("③ 上限20の行に画像の × → min(50＋合計, 20)", img.reasonCodes.includes(EQUIP_CAP_CODE) && img.score === Math.min(Math.max(0, Math.min(130, raw)), 20), [img.score, raw, img.reasonCodes]);
+  t("③ 上限20の行に画像の × → min(50＋合計, 20)", img.reasonCodes.includes(EQUIP_CAP_CODE) && img.score === Math.min(Math.max(0, Math.min(SCORE_MAX, raw)), 20), [img.score, raw, img.reasonCodes]);
   t("③ drop にはならない", img.verdict === "hold");
 
   // ④ 同じ回の一般名の別の建物に補わない（名前「物件」・所在地の番地が違う）

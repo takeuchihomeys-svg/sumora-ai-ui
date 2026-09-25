@@ -3,7 +3,7 @@
 // 資料の文字は 2026-09-25 の実物（property_pickups の1ページ目の文字層）の抜粋。お客様の名前・電話番号は無い
 import { parseListingTerms } from "../listing-terms";
 import {
-  buildCustomerProfile, judgeProperty, parsePropertyFacts, fillFactsFromTerms, applyEquipmentMatch, applyImageFacts, reasonPoints, reasonJa, BASE_SCORE,
+  buildCustomerProfile, judgeProperty, parsePropertyFacts, fillFactsFromTerms, applyEquipmentMatch, applyImageFacts, reasonPoints, reasonJa, BASE_SCORE, SCORE_MAX,
   type CustomerLike,
 } from "../property-brain";
 import { buildPickupTerms, formatTermsLine } from "../pickup-terms";
@@ -115,7 +115,8 @@ console.log("■ 敷礼・築年は説明文に無い所だけ資料の表で埋
   const c = judge(LOW, IT61, SUM("X", "敷1ヶ月 礼1ヶ月"));
   t("説明文の値が先（説明文 敷1礼1・資料 敷礼なし → 敷礼あり）", c.j.reasonCodes.includes("INITIAL_COST_NOT_ZERO") && !c.filled.includes("deposit"), { c: c.j.reasonCodes, f: c.filled });
   const d = judge({ ...LOW, building_age: 15 }, IT50);
-  t("築年を埋めて BUILDING_AGE_* の線のまま（築18年・希望15年 → 少し超過）", d.j.reasonCodes.includes("BUILDING_AGE_SLIGHTLY_OVER"), d.j.reasonCodes);
+  // 2026-09-25: 築年の＋5年までは拡張の広げて検索の幅 → BUILDING_AGE_WIDE（+2・旧 少し超過 −3）
+  t("築年を埋めて BUILDING_AGE_* の線のまま（築18年・希望15年 → 広げた検索の幅）", d.j.reasonCodes.includes("BUILDING_AGE_WIDE"), d.j.reasonCodes);
   const e = judge({ ...LOW, building_age: 15 }, IT50, SUM("X", "築3年"));
   t("説明文の築年が先（築3年 → OK）", e.j.reasonCodes.includes("BUILDING_AGE_OK"), e.j.reasonCodes);
 }
@@ -209,12 +210,12 @@ console.log("■ 50＋合計＝score（募集の条件の札込み・画像・�
     const eq = matchEquipment(parseEquipmentWants(c), parseListingEquipment(text));
     const { j } = judge(c, text, s, eq);
     const raw = BASE_SCORE + j.reasonCodes.reduce((a, x) => a + reasonPoints(x), 0);
-    let exp = Math.max(0, Math.min(130, raw));
+    let exp = Math.max(0, Math.min(SCORE_MAX, raw));
     if (j.reasonCodes.includes("EQUIP_MUST_NG_CAP")) exp = Math.min(exp, 20);
     if (exp !== j.score) bad.push({ codes: j.reasonCodes, raw, score: j.score });
     if (j.verdict === "drop") bad.push({ drop: j.reasonCodes });
     const re = applyEquipmentMatch(j, eq);
-    const raw2 = Math.max(0, Math.min(130, BASE_SCORE + re.reasonCodes.reduce((a, x) => a + reasonPoints(x), 0)));
+    const raw2 = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + re.reasonCodes.reduce((a, x) => a + reasonPoints(x), 0)));
     if (!re.reasonCodes.includes("EQUIP_MUST_NG_CAP") && raw2 !== re.score) bad.push({ re: re.reasonCodes, raw2, score: re.score });
     if (re.reasonCodes.filter((x) => /TWO_PERSON/.test(x)).length > 1) bad.push({ twoDup: re.reasonCodes });
     const img = applyImageFacts({ ...j, imageChecks: ["storage"] }, { storage: true });

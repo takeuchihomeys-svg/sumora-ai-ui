@@ -585,6 +585,22 @@ body {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
 .adj-history-chip:hover { background: #ffe0b2; }
+
+/* 2026-09-25 通勤の候補の駅（commute-candidates.js） */
+.commute-candidates { margin: 4px 0 6px; padding: 6px 8px; background: #f0f7ff; border: 1px solid #cfe3ff; border-radius: 8px; font-size: 11px; }
+.commute-candidates .cc-block { margin-bottom: 6px; }
+.commute-candidates .cc-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.commute-candidates .cc-title { font-weight: bold; color: #1565c0; }
+.commute-candidates .cc-count { color: #607d8b; }
+.commute-candidates .cc-ctrl { display: flex; gap: 4px; margin-bottom: 4px; }
+.commute-candidates .cc-ctrl select { font-size: 11px; padding: 2px 4px; border: 1px solid #b0c4de; border-radius: 6px; }
+.commute-candidates .cc-chips, .commute-candidates .cc-list { display: flex; flex-wrap: wrap; gap: 3px; max-height: 140px; overflow-y: auto; }
+.commute-candidates .cc-chip, .commute-candidates .cc-st { border: 1px solid #90caf9; background: #fff; color: #0d47a1; border-radius: 12px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
+.commute-candidates .cc-st small { margin-left: 3px; color: #78909c; }
+.commute-candidates .cc-st.cc-none { border-color: #ddd; color: #aaa; cursor: default; }
+.commute-candidates .cc-chip:hover, .commute-candidates .cc-st:hover { background: #e3f2fd; }
+.commute-candidates .cc-all { margin-top: 4px; border: none; background: #1565c0; color: #fff; border-radius: 8px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+.commute-candidates .cc-note { color: #607d8b; margin-top: 2px; }
 .adj-chip-date { color: #bcaaa4; font-size: 9px; }
 
 /* ── 一時調整: 本条件に反映（DB保存）ボタン ── */

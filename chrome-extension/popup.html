@@ -227,6 +227,8 @@
             </div>
             <!-- 顧客別 一時調整履歴チップ（直近3件・クリックで再適用） -->
             <div id="adj-history-chips" class="adj-history-chips" style="display:none"></div>
+            <!-- 2026-09-25 通勤の候補の駅（「◯◯まで一本／◯分以内／通勤」・commute-candidates.js が描く・押した時だけ駅欄に入る） -->
+            <div id="commute-candidates" class="commute-candidates" style="display:none"></div>
             <div class="adj-row">
               <span class="adj-label">賃料下限</span>
               <input class="adj-input adj-num" id="adj-rent-min" type="number" placeholder="例:60000" step="1000" />
@@ -344,6 +346,9 @@
   </div>
   <script src="popup-maps.js"></script>
   <script src="transit_graph.js"></script>
+  <!-- 2026-09-25 路線のつながり（サーバーと同じデータ・同じ関数の自動生成）と通勤の候補の駅（popup.js より先に読む） -->
+  <script src="osaka-transit.js"></script>
+  <script src="commute-candidates.js"></script>
   <!-- 2026-09-18 竹内: 検索日の記録（サイト×モード）。background.js と同じ物を使う（popup.js より先に読む） -->
   <script src="search-history.js"></script>
   <script src="popup.js"></script>

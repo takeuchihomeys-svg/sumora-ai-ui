@@ -175,7 +175,8 @@ console.log("── 判定（決定論・drop は実送信でほぼ0の形だけ
 
   const b = judgeProperty(parsePropertyFacts(SUMMARY_B), low);
   t("敷1礼1（抑えたい人）・1LDK・家賃 77,000/70,000=1.10 → hold（drop ではない）", b.verdict === "hold" && b.reasonCodes.includes("INITIAL_COST_NOT_ZERO"), b.reasonCodes.join(","));
-  t("家賃 1.10 ちょうどは RENT_SLIGHTLY_OVER", b.reasonCodes.includes("RENT_SLIGHTLY_OVER"));
+  // 2026-09-25 反証レビュー: 家賃だけ 72,000円は上限7万＋5千円の幅の中（拡張の広げた検索が拾う）・管理費込み 1.10 以内 → RENT_WIDE（旧 RENT_SLIGHTLY_OVER）
+  t("家賃 1.10 ちょうど（家賃だけ上限＋5千円以内）は RENT_WIDE", b.reasonCodes.includes("RENT_WIDE"), b.reasonCodes.join(","));
   t("AD 1ヶ月 72,000 − 42,000 = 30,000 ≥ 0", b.profitYen === 30_000);
 
   const c = judgeProperty(parsePropertyFacts(SUMMARY_C), low);

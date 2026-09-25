@@ -208,8 +208,30 @@ export const RENT_MAX_SANE_MIN = 30_000;
 export const RENT_RATIO_HOLD = 1.10;
 export const RENT_RATIO_DROP = 1.30;
 
+/**
+ * 2026-09-25 竹内「広げて検索した場合も、お客さんの希望の方が点数少し大きく。隣の駅だからって点数が大幅に低くならないように。家賃とかでもそう」
+ *   拡張の「広げて検索」の幅（chrome-extension/resolution-core.js resolveConditionsLocal ⑧・popup.js と同じ算術）:
+ *     家賃の上限 ＋5,000円（上限 10万円以下）／＋10,000円（10万円超）・築年 ＋5年・LDK の希望に同じ部屋数の DK・駅は同じ路線の前後1駅。
+ *   その幅の内側は「希望どおり」より少しだけ低い点にし、幅の外から今までの減点・保留にする。
+ *   実送信（sent_properties 2,205件・46人・家賃だけ）: 上限内 94.8%／上限〜幅 2.0%／幅〜1.10 0件／1.10〜1.30 1.6%／1.30超 1.6%
+ *   ＝幅の内側は実際に送っていて、幅の外で 1.10 以内は 0件（拡張が幅の上で切るので）
+ */
+export function wideRentBuffer(rentMax: number): number {
+  return rentMax <= 100_000 ? 5_000 : 10_000;
+}
+export const WIDE_AGE_YEARS = 5;
+/** 拡張の広さの幅（popup.js buildCondData の −5㎡。⚠ 2026-09-25 時点で手順の表示だけで自動入力には入っていない） */
+export const WIDE_SQM = 5;
+/**
+ * 点の上限（下限 0）。2026-09-25 に 130→200: 条件が全部合う物件は AD なしで 50＋156＝156 前後に届き、130 で切ると
+ *   AD の差（1ヶ月 +15／2ヶ月 +30／3ヶ月 +35）が消えていた（竹内「AD は報酬なので重要・200%以上は追加で点」）。
+ *   200 は加点の現実的な合計（家賃15・敷礼0 20・間取り15・広さ3・徒歩10・築年5・入居5・設備15・エリア10・通勤8・AD35）＝ 191 の上
+ */
+export const SCORE_MAX = 200;
+
 export const REASON_JA: Record<string, string> = {
   RENT_OK: "家賃は上限内",
+  RENT_WIDE: "家賃が広げた検索の幅の中（上限＋5千円／10万円超は＋1万円まで・管理費込み）",
   RENT_SLIGHTLY_OVER: "家賃が上限を1割まで超過",
   RENT_OVER_110: "家賃が上限を1割超",
   RENT_OVER_130: "家賃が上限を3割超",
@@ -223,12 +245,14 @@ export const REASON_JA: Record<string, string> = {
   INITIAL_COST_UNKNOWN: "敷礼が読めない",
   FLOOR_PLAN_MATCH: "間取り一致",
   FLOOR_PLAN_NEAR: "間取りが近い（部屋数は同じ）",
+  FLOOR_PLAN_WIDE: "間取りが広げた検索の型（LDK の希望に同じ部屋数の DK）",
   FLOOR_PLAN_MISMATCH: "間取りが希望と違う",
   WALK_OK: "徒歩は希望内",
   WALK_SLIGHTLY_OVER: "徒歩が希望を少し超過",
   WALK_OVER: "徒歩が希望の1.5倍超",
   BUILDING_AGE_OK: "築年は希望内",
   BUILDING_AGE_SLIGHTLY_OVER: "築年が希望を少し超過",
+  BUILDING_AGE_WIDE: "築年が広げた検索の幅の中（希望＋5年まで）",
   BUILDING_AGE_OVER: "築年が希望超過",
   ALREADY_SENT: "この建物は送付済み",
   AD_UNKNOWN: "ADが読めない",
@@ -266,13 +290,17 @@ export const REASON_JA: Record<string, string> = {
   FLOOR_PLAN_ALT_MATCH: "間取りが「も可」の型に一致（本命ではない）",
   SQM_OK: "広さは希望以上",
   SQM_SLIGHTLY_UNDER: "広さが希望を少し下回る（9割以上）",
+  SQM_WIDE: "広さが広げた検索の幅の中（希望−5㎡まで）",
   SQM_UNDER: "広さが希望の9割未満",
   SQM_UNKNOWN: "要確認: 広さ",
   BUILDING_AGE_TEXT_OK: "築年が「築浅・新築」の希望に合う",
   BUILDING_AGE_TEXT_OVER: "築年が「築浅・新築」の希望より古い",
   // 2026-09-25 竹内「エリアの部分、把握できれば理想」「通勤の部分も沿線の知識」（area-want.ts・osaka-geo.ts・transit-route.ts）
   AREA_STATION_MATCH: "希望の駅",
+  AREA_STATION_WIDE: "広げた検索の駅（希望の駅の隣・同じ路線）",
+  AREA_STATION_2STOPS: "希望の駅から同じ路線で2駅",
   AREA_WARD_MATCH: "希望の区・市",
+  AREA_WARD_WIDE: "広げた検索の区（難波・心斎橋の3区）",
   AREA_LINE_MATCH: "希望の路線の駅",
   AREA_NEAR: "希望のエリアから2km以内",
   AREA_REGION_MATCH: "希望の範囲（大阪市内・環状線内 等）",
@@ -373,7 +401,7 @@ export function equipmentReasonCodes(m: EquipmentMatch | null | undefined): stri
 }
 
 /**
- * 理由コードごとの点（judgeProperty の add の点と同じ。基準 50 点に足す・上限 130・下限 0）。
+ * 理由コードごとの点（judgeProperty の add の点と同じ。基準 50 点に足す・上限 SCORE_MAX（200）・下限 0）。
  * 2026-09-24 竹内「今回なんで外されているのか理由が分かれば大きい」: 画面で「どの理由で何点」を出すために表にした。
  *   judgeProperty の点を変えたらここも変える（property-brain.test.ts が全コードで 50＋合計＝score を確かめる）。
  *   画像の読み取り（IMAGE_*）は applyImageFacts: _OK +5・_NG −10（imageReasonPoints）
@@ -402,6 +430,12 @@ export const REASON_POINTS: Record<string, number> = {
   AREA_STATION_MATCH: 10, AREA_WARD_MATCH: 8, AREA_LINE_MATCH: 6, AREA_NEAR: 5, AREA_REGION_MATCH: 3, AREA_CLOSE: 2, AREA_FAR: -3,
   AREA_EXCLUDED: -10, AREA_UNKNOWN: 0, AREA_DIRECTION_NG: -3,
   COMMUTE_OK: 8, COMMUTE_SLIGHTLY_OVER: 0, COMMUTE_OVER: -5, COMMUTE_INFO: 0, COMMUTE_UNKNOWN: 0,
+  // 2026-09-25 拡張の「広げて検索」の幅の内側（希望どおりより少しだけ低い・保留にしない）。
+  //   駅: 希望 +10 ／隣（拡張が広げる前後1駅）+8 ／同じ路線で2駅 +6（今までは距離で +5〜+2 だった）
+  //   家賃: 上限内 +15 ／幅の中 +10（今までは 0）・間取り: 本命 +15 ／LDK→同じ部屋数の DK +8（今までは近い +5）
+  //   築年: 希望内 +5 ／＋5年まで +2（今までは ＋3年まで −3・＋4〜5年は −10 保留）・広さ: 9割以上 0 ／−5㎡まで −3（今までは −10 保留）
+  AREA_STATION_WIDE: 8, AREA_STATION_2STOPS: 6, AREA_WARD_WIDE: 6,
+  RENT_WIDE: 10, FLOOR_PLAN_WIDE: 8, BUILDING_AGE_WIDE: 2, SQM_WIDE: -3,
 };
 /** 理由コードの点（画像の読み取り IMAGE_*_OK/_NG も含む）。知らないコードは 0 */
 export function reasonPoints(code: string): number {
@@ -682,6 +716,16 @@ export function parseFloorPlanAlt(c: CustomerLike, main: FloorPlanWant): FloorPl
 }
 
 export type FloorPlanMatch = "match" | "near" | "mismatch" | "unknown";
+
+/**
+ * 拡張の「広げて検索」が足す間取りか（LDK の希望に同じ部屋数の DK。page-script.js・itandi-page-script.js・reins-page-script.js の is_wide と同じ）。
+ *   本命に合う物は呼ぶ側で先に見る（ここは DK と LDK の組だけ）
+ */
+export function isWideFloorPlan(want: FloorPlanWant, plan: string | null | undefined): boolean {
+  const p = normalizeFloorPlanToken(plan);
+  if (!p || want.any || !/^[1-9]DK$/.test(p)) return false;
+  return want.plans.includes(`${p[0]}LDK`);
+}
 
 export function matchFloorPlan(want: FloorPlanWant, plan: string | null | undefined): FloorPlanMatch {
   const p = normalizeFloorPlanToken(plan);
@@ -1006,7 +1050,13 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   } else {
     const total = facts.rentYen + (facts.adminFeeYen ?? 0);
     const ratio = total / profile.rentMax;
+    // 広げた検索の幅: 管理費込みで 上限＋幅 以内、または家賃だけなら 上限＋幅 以内（＝拡張の広げた検索が拾う物・サイトの賃料の欄は管理費を含まない）で管理費込み1割以内。
+    //   反証レビュー 2026-09-25: 旧は2つ目を「家賃だけ上限内」にしていたので、83,000円＋管理費3,000円（計86,000・広げた検索で拾う）が 0点、
+    //   78,000円＋管理費9,000円（計87,000・高い方）が +10 と、安い方が低くなっていた
+    const wideCap = profile.rentMax + wideRentBuffer(profile.rentMax);
+    const inWide = total <= wideCap || (facts.rentYen <= wideCap && ratio <= RENT_RATIO_HOLD);
     if (ratio <= 1.0) add("RENT_OK", 15);
+    else if (inWide) add("RENT_WIDE", reasonPoints("RENT_WIDE"));
     else if (ratio <= RENT_RATIO_HOLD) add("RENT_SLIGHTLY_OVER", 0);
     else if (ratio <= RENT_RATIO_DROP) add("RENT_OVER_110", -20, "hold");
     else add("RENT_OVER_130", -35, "drop");
@@ -1039,6 +1089,7 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   const fpAlt = fpm !== "match" && !!profile.floorPlanAlt && facts.floorPlan != null && matchFloorPlan(profile.floorPlanAlt, facts.floorPlan) === "match";
   if (fpm === "match") add("FLOOR_PLAN_MATCH", 15);
   else if (fpAlt) add("FLOOR_PLAN_ALT_MATCH", reasonPoints("FLOOR_PLAN_ALT_MATCH"));
+  else if (isWideFloorPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_WIDE", reasonPoints("FLOOR_PLAN_WIDE"));
   else if (fpm === "near") add("FLOOR_PLAN_NEAR", 5);
   else if (fpm === "mismatch") add("FLOOR_PLAN_MISMATCH", -15, "hold");
   else if (facts.floorPlan == null) missing.push("floor_plan");
@@ -1049,6 +1100,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     if (a == null) add("SQM_UNKNOWN", 0);
     else if (a >= profile.sqmMin) add("SQM_OK", reasonPoints("SQM_OK"));
     else if (a >= profile.sqmMin * 0.9) add("SQM_SLIGHTLY_UNDER", 0);
+    // 広げた検索の広さ（−5㎡まで）は情報の札（保留にしない）
+    else if (a >= profile.sqmMin - WIDE_SQM) add("SQM_WIDE", reasonPoints("SQM_WIDE"));
     else add("SQM_UNDER", reasonPoints("SQM_UNDER"), "hold");
   }
 
@@ -1062,7 +1115,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   // 築年
   if (profile.buildingAgeMax != null && facts.buildingAge != null) {
     if (facts.buildingAge <= profile.buildingAgeMax) add("BUILDING_AGE_OK", 5);
-    else if (facts.buildingAge <= profile.buildingAgeMax + 3) add("BUILDING_AGE_SLIGHTLY_OVER", -3);
+    // 広げた検索の築年（＋5年まで）は少しだけ低い +2（旧: ＋3年まで −3・＋4〜5年は保留）。BUILDING_AGE_SLIGHTLY_OVER は保存済みの行のために表に残す
+    else if (facts.buildingAge <= profile.buildingAgeMax + WIDE_AGE_YEARS) add("BUILDING_AGE_WIDE", reasonPoints("BUILDING_AGE_WIDE"));
     else add("BUILDING_AGE_OVER", -10, "hold");
   } else if (profile.buildingAgeMax != null) missing.push("building_age");
   // 築年の列が空で自由文に「新築・築浅」: 情報の札だけ（合えば +3・古くても 0点）
@@ -1118,9 +1172,9 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     add(code, reasonPoints(code), isHoldCode(code) ? "hold" : undefined);
   }
 
-  // 上限は 130（旧 100）。条件が全部合う物件は AD なしで 88〜100 に達し、100 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
+  // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
-  score = Math.max(0, Math.min(130, score));
+  score = Math.max(0, Math.min(SCORE_MAX, score));
   // 必須（strong）の条件が資料で × なら上限 20（画像で分析と同じ決まり）
   if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
@@ -1154,11 +1208,11 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     codes.push(code);
     if (v) score += 5; else { score -= 10; hold = true; flagCodes.push(code); }
   }
-  score = Math.max(0, Math.min(130, score));   // judgeProperty と同じ上限（AD の上乗せ分）
+  score = Math.max(0, Math.min(SCORE_MAX, score));   // judgeProperty と同じ上限（AD の上乗せ分）
   if (codes.includes(EQUIP_CAP_CODE)) {
     // 必須の × の上限20は画像の加点でも越えない。j.score は既に20に丸めてあるので、そこから引くと 50＋合計 と食い違う
-    //   （例: 素点80→20 に −10 で 10 になる）→ 素点（50＋合計・0〜130）から上限20を掛け直す（反証レビュー 2026-09-24）
-    const raw = Math.max(0, Math.min(130, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
+    //   （例: 素点80→20 に −10 で 10 になる）→ 素点（50＋合計・0〜SCORE_MAX）から上限20を掛け直す（反証レビュー 2026-09-24）
+    const raw = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
     score = Math.min(raw, EQUIP_STRONG_NG_CAP);
   }
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
@@ -1169,11 +1223,13 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
 
 /** 2026-09-25 に足した加点の札（理由の日本語に出す） */
 function isNewPositive(c: string): boolean {
-  return /^(?:FLOOR_PLAN_ALT_MATCH|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c);
+  return /^(?:FLOOR_PLAN_ALT_MATCH|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
+    // 広げた検索の幅の内側（希望より少しだけ低い加点）
+    || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c);
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -1189,7 +1245,7 @@ const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|C
  * 保存済みの判定（理由コード）に、資料の設備欄の照合を付け直す（決定論）。
  * 2026-09-24: 既存の行（HONOKA さんの id 50〜67）は説明文が古い形で、judgeProperty をやり直すと家賃・徒歩・AD の材料が消える
  *   → 元のコードは残し、①前の EQUIP_* を外す ②設備欄で決まった希望の IMAGE_*（バストイレ別・独立洗面・南向き・2階以上）を外す（二重に数えない）
- *   ③設備欄でペットが決まったら PET_NG を外す ④新しい EQUIP_* を足す。点は 50＋合計（0〜130・必須の × は上限20）、
+ *   ③設備欄でペットが決まったら PET_NG を外す ④新しい EQUIP_* を足す。点は 50＋合計（0〜SCORE_MAX・必須の × は上限20）、
  *   verdict は drop のコードがあれば drop・hold のコードか 40 点未満で hold
  */
 export function applyEquipmentMatch(
@@ -1206,7 +1262,7 @@ export function applyEquipmentMatch(
     && !(c.startsWith("CONDITION_TWO_PERSON_") && decided.has("two_person")));
   const twoByTerms = codes.some((c) => /^CONDITION_TWO_PERSON_(OK|NG|ASK)$/.test(c));
   codes.push(...equipmentReasonCodes(m).filter((c) => !(twoByTerms && c === "EQUIP_TWO_PERSON_UNLISTED")));
-  let score = Math.max(0, Math.min(130, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
+  let score = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
   if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.5.16",
+  "version": "2.5.17",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -34,7 +34,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup.html", "popup-maps.js", "transit_graph.js", "search-history.js", "fill-done-match.js", "popup.js", "styles.css", "page-script.js", "score-overlay.js"],
+      "resources": ["popup.html", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "search-history.js", "fill-done-match.js", "popup.js", "styles.css", "page-script.js", "score-overlay.js"],
       "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
     },
     {

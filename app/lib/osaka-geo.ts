@@ -30,6 +30,7 @@ import {
   EXT_LINE_STATION_ORDER, EXT_LINE_TRAVEL_TIMES, EXT_STATION_WARD_MAP, EXT_NEIGHBORHOOD_WARD_MAP, EXT_MULTI_WARD_MAP,
   EXT_ADJACENT_AREA_MAP, EXT_LINE_ALIAS_MAP,
 } from "./osaka-transit-data";
+import { normStationWith, TOWN_SUFFIX_STATIONS } from "./transit-core";
 
 export type LatLon = { lat: number; lon: number };
 
@@ -68,16 +69,66 @@ const EXTRA_TRAVEL_TIMES: Record<string, number> = {
 };
 export const DEFAULT_MINUTES_PER_STOP = 2.5;
 
-/** 乗り換えにしない直通（同じ電車で続けて乗れる）。駅は問わず路線の組で持つ */
-const THROUGH_PAIRS: Array<[string, string]> = [
-  ["大阪市高速軌道御堂筋線", "北大阪急行南北線"],
-  ["JR東西線", "片町線"], ["JR東西線", "JR宝塚線"],
-  ["大阪市高速軌道堺筋線", "阪急電鉄千里線"],
-  ["阪神電鉄阪神なんば線", "近鉄難波・奈良線"],
-  ["JR神戸線", "東海道本線"], ["JR宝塚線", "東海道本線"],
-  ["大阪市高速軌道中央線", "近鉄けいはんな線"],
-  ["南海電鉄高野線", "南海電鉄泉北線"],
-  ["近鉄南大阪線", "近鉄長野線"],
+/**
+ * 直通の運転（乗り換えなしで続けて乗れる並び）。[路線, この路線で乗る始めの駅, 終わりの駅] をつないで1本の経路にする。
+ * 2026-09-25 までは路線の組（御堂筋線↔北急 等）で持ち「どの駅で乗り換えても乗り換えにしない」としていたが、向きが無いので
+ *   「JR宝塚線↔東海道本線」の組では JR宝塚線（尼崎から）→大阪（JR神戸線の上）が乗り換え1回になり、逆に三ノ宮まで直通扱いになる穴があった。
+ *   実際に走っている並びで持つ（transit-core の services）。
+ * 入れていない（全部の電車ではない・要判断）: 大和路快速・関空/紀州路快速の環状線への乗り入れ、阪急千里線→梅田、能勢電→梅田（日生エクスプレス）、
+ *   おおさか東線→大和路線、京阪交野線→中之島。拡張の「電車1本」（popup.js resolveDirectCommute）も同じ扱い。
+ */
+export const THROUGH_SERVICES: Array<{ name: string; parts: Array<[string, string, string]>; /** 止まる駅だけ（急行等の直通）。無ければ全部の駅 */ stops?: string[] }> = [
+  { name: "御堂筋線⇔北急", parts: [["北大阪急行南北線", "箕面萱野", "江坂"], ["大阪市高速軌道御堂筋線", "江坂", "なかもず"]] },
+  { name: "阪急千里線⇔堺筋線", parts: [["阪急電鉄千里線", "北千里", "天神橋筋六丁目"], ["大阪市高速軌道堺筋線", "天神橋筋六丁目", "天下茶屋"]] },
+  { name: "阪急京都線⇔堺筋線", parts: [["阪急電鉄京都線", "高槻市", "淡路"], ["阪急電鉄千里線", "淡路", "天神橋筋六丁目"], ["大阪市高速軌道堺筋線", "天神橋筋六丁目", "天下茶屋"]] },
+  { name: "中央線⇔けいはんな線", parts: [["大阪市高速軌道中央線", "夢洲", "長田"], ["近鉄けいはんな線", "長田", "新石切"]] },
+  // 阪神なんば線の直通は快速急行（止まる駅だけ・千鳥橋〜大物や阪神本線の各駅は尼崎で乗り換え）
+  { name: "近鉄奈良線⇔阪神（快速急行）", parts: [["近鉄難波・奈良線", "布施", "なんば"], ["阪神電鉄阪神なんば線", "なんば", "尼崎"], ["阪神電鉄本線", "尼崎", "芦屋"]],
+    stops: ["布施", "鶴橋", "大阪上本町", "日本橋", "なんば", "桜川", "ドーム前", "九条", "西九条", "尼崎", "甲子園", "西宮", "芦屋"] },
+  { name: "泉北線⇔南海高野線", parts: [["南海電鉄泉北線", "和泉中央", "なかもず"], ["南海電鉄高野線", "なかもず", "なんば"]] },
+  { name: "近鉄長野線⇔南大阪線", parts: [["近鉄長野線", "河内長野", "古市"], ["近鉄南大阪線", "古市", "大阪阿部野橋"]] },
+  { name: "JR宝塚線⇔大阪", parts: [["JR宝塚線", "宝塚", "尼崎"], ["JR神戸線", "尼崎", "大阪"]] },
+  { name: "JR宝塚線⇔東西線⇔学研都市線", parts: [["JR宝塚線", "宝塚", "尼崎"], ["JR東西線", "尼崎", "京橋"], ["片町線", "京橋", "長尾"]] },
+  { name: "JR神戸線⇔東西線⇔学研都市線", parts: [["JR神戸線", "三ノ宮", "尼崎"], ["JR東西線", "尼崎", "京橋"], ["片町線", "京橋", "長尾"]] },
+  { name: "JR神戸線⇔JR京都線", parts: [["JR神戸線", "三ノ宮", "大阪"], ["東海道本線", "大阪", "京都"]] },
+  { name: "京阪本線⇔中之島線", parts: [["京阪電気鉄道京阪線", "樟葉", "天満橋"], ["京阪電気鉄道中之島線", "天満橋", "中之島"]] },
+];
+
+/**
+ * 駅のまとまり（乗り換えで同じ場所として扱う・目的地の「着いた」）。名前は normStation の後の形。
+ *   梅田＝大阪梅田・東梅田・阪急/阪神梅田（normStation で「梅田」にそろう）＋JR大阪・西梅田・北新地
+ *   なんば＝難波・大阪難波・南海難波・JR難波（normStation で「なんば」にそろう）。日本橋は1駅離れるので別
+ *   天王寺＝天王寺・大阪阿部野橋・天王寺駅前（阪堺）／日本橋＝近鉄日本橋（そろう）／上本町＝大阪上本町・谷町九丁目／心斎橋＝心斎橋・四ツ橋
+ *   京橋・本町・新大阪・三ノ宮は1つの名前（京阪/JR/メトロの京橋は同じ名前にそろう）
+ */
+export const STATION_GROUPS: Record<string, string[]> = {
+  梅田: ["梅田", "大阪", "西梅田", "北新地"],
+  なんば: ["なんば"],
+  天王寺: ["天王寺", "大阪阿部野橋", "天王寺駅前"],
+  京橋: ["京橋"],
+  本町: ["本町"],
+  心斎橋: ["心斎橋", "四ツ橋"],
+  日本橋: ["日本橋"],
+  上本町: ["大阪上本町", "谷町九丁目"],
+  新今宮: ["新今宮", "動物園前"],
+  南森町: ["南森町", "大阪天満宮"],
+  淀屋橋: ["淀屋橋", "大江橋"],
+  北浜: ["北浜", "なにわ橋"],
+  新大阪: ["新大阪"],
+  十三: ["十三"],
+  鶴橋: ["鶴橋"],
+  三ノ宮: ["三ノ宮"],
+};
+
+/** 歩いて乗り換える駅の組（まとまりの中の組は STATION_GROUPS から足す） */
+export const WALK_LINKS: Array<[string, string]> = [
+  ["梅田", "大阪"], ["梅田", "北新地"], ["大阪", "北新地"], ["梅田", "西梅田"], ["大阪", "西梅田"], ["北新地", "西梅田"],
+  ["天王寺", "大阪阿部野橋"], ["天王寺", "天王寺駅前"], ["大阪阿部野橋", "阿倍野"],
+  ["新今宮", "動物園前"], ["新今宮", "新今宮駅前"], ["動物園前", "新今宮駅前"], ["岸里玉出", "岸里"], ["岸里玉出", "玉出"],
+  ["大阪上本町", "谷町九丁目"], ["南森町", "大阪天満宮"], ["扇町", "天満"], ["北浜", "なにわ橋"], ["淀屋橋", "大江橋"], ["肥後橋", "渡辺橋"],
+  ["新福島", "福島"], ["海老江", "野田阪神"], ["野田", "玉川"], ["住吉", "住吉大社"], ["住吉鳥居前", "住吉大社"], ["恵美須町", "今宮戎"],
+  ["中津", "梅田"], ["桜川", "なんば"], ["日本橋", "なんば"], ["今池", "新今宮"], ["天下茶屋", "北天下茶屋"],
+  ["心斎橋", "四ツ橋"], ["長堀橋", "心斎橋"],
 ];
 
 /** 利用者の言い方 → 路線（拡張の LINE_ALIAS_MAP＋短い言い方）。1語が複数の路線を指す物は配列 */
@@ -191,8 +242,8 @@ const PLACE_WORDS: Array<{ re: RegExp; name: string; lat: number; lon: number; r
 
 // ───────────────────────── 名前の揺れ ─────────────────────────
 
-const PREFIXES = ["大阪メトロ", "OsakaMetro", "Osaka Metro", "地下鉄", "JR", "阪急", "阪神", "京阪", "近鉄", "南海", "北大阪急行", "北急", "大阪モノレール", "モノレール", "能勢電", "阪堺"];
-const ALIASES: Record<string, string> = {
+export const PREFIXES = ["大阪メトロ", "OsakaMetro", "Osaka Metro", "地下鉄", "JR", "阪急", "阪神", "京阪", "近鉄", "南海", "北大阪急行", "北急", "大阪モノレール", "モノレール", "能勢電", "阪堺"];
+export const ALIASES: Record<string, string> = {
   天六: "天神橋筋六丁目", 谷九: "谷町九丁目", 谷六: "谷町六丁目", 谷四: "谷町四丁目", 天満宮: "大阪天満宮",
   あびこ: "我孫子", 中百舌鳥: "なかもず", 難波: "なんば", 大阪難波: "なんば", 南海難波: "なんば", 近鉄難波: "なんば", JR難波: "なんば",
   大阪梅田: "梅田", 東梅田: "梅田", 阪急梅田: "梅田", 阪神梅田: "梅田", 大阪駅: "大阪", 近鉄日本橋: "日本橋",
@@ -206,26 +257,9 @@ const ALIASES: Record<string, string> = {
 const KANJI_NUM: Record<string, string> = { "1": "一", "2": "二", "3": "三", "4": "四", "5": "五", "6": "六", "7": "七", "8": "八", "9": "九" };
 
 /** 駅名をそろえる（見つからない駅名もそろえた形で返す。空は ""） */
+// 中身は transit-core.ts の normStationWith（拡張の osaka-transit.js と同じ関数）
 export function normStation(raw: string | null | undefined): string {
-  let s = String(raw ?? "").normalize("NFKC").replace(/[\s　]/g, "").replace(/[「」『』]/g, "");
-  s = s.replace(/[（(][^）)]*[）)]$/, "").replace(/駅$/, "");
-  s = s.replace(/[ヶがケ](?=[丘崎谷原森浦])/g, "ケ").replace(/ヶ/g, "ケ");
-  s = s.replace(/([0-9])丁目/g, (_m, d: string) => `${KANJI_NUM[d] ?? d}丁目`);
-  if (ALIASES[s]) return ALIASES[s];
-  if (STATION_INDEX.has(s)) return s;
-  for (const p of PREFIXES) {
-    if (s.startsWith(p) && s.length > p.length) {
-      const rest = s.slice(p.length).replace(/^[・\-]/, "");
-      if (ALIASES[rest]) return ALIASES[rest];
-      if (STATION_INDEX.has(rest)) return rest;
-    }
-  }
-  // 「の/ノ」の揺れ
-  const noKey = s.replace(/の/g, "ノ");
-  if (STATION_INDEX.has(noKey)) return noKey;
-  const noKey2 = s.replace(/ノ/g, "の");
-  if (STATION_INDEX.has(noKey2)) return noKey2;
-  return s;
+  return normStationWith(raw, ALIASES, PREFIXES, (s) => STATION_INDEX.has(s));
 }
 
 // ───────────────────────── 組み立て ─────────────────────────
@@ -274,9 +308,6 @@ const STATION_INDEX: Set<string> = new Set(STATION_LINES.keys());
 export const LINE_MINUTES_PER_STOP: Record<string, number> = { ...EXT_LINE_TRAVEL_TIMES, ...EXTRA_TRAVEL_TIMES };
 export function minutesPerStop(line: string): number {
   return LINE_MINUTES_PER_STOP[line] ?? DEFAULT_MINUTES_PER_STOP;
-}
-export function isThrough(a: string, b: string): boolean {
-  return THROUGH_PAIRS.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
 }
 
 /** 駅の座標（手で持つ物＋按分） */
@@ -420,8 +451,7 @@ export function placesInText(text: string): Array<{ name: string; point: LatLon;
   return out;
 }
 
-/** 町名の後ろに付きやすい2字の駅名（「川俣本町」「東野田町」「西清水」）。前が漢字の時は駅にしない */
-const TOWN_SUFFIX_STATIONS = new Set(["本町", "野田", "清水", "吉田", "長田", "山田", "平野", "福島", "今里", "大正", "新町", "住吉"]);
+// 町名の後ろに付きやすい2字の駅名（「川俣本町」「東野田町」「西清水」）は transit-core.ts の TOWN_SUFFIX_STATIONS（拡張の通勤の読みと同じ）
 
 /** 文の中の駅名（長い名前から当てる・重なりは長い方）。区・市の名前の一部は駅にしない */
 export function stationsInText(text: string): Array<{ station: string; index: number; word: string }> {

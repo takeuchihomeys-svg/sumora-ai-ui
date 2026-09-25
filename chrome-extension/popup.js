@@ -3010,6 +3010,9 @@ function preloadAdjForm(c) {
   const labelEl = document.getElementById("adj-customer-label");
   if (labelEl) labelEl.textContent = c.customer_name ? c.customer_name + "様" : "";
 
+  // 2026-09-25 竹内: 「◯◯まで一本／◯分以内／通勤」の候補の駅（押した時だけ駅欄に入れる・自動の検索は変えない）
+  renderCommuteCandidates(c);
+
   // 最終送信日：last_property_sent_at から初期値セット
   const lastSentEl = document.getElementById("adj-last-sent-date");
   if (lastSentEl) {
@@ -3352,6 +3355,49 @@ function saveTempAdjSnapshot(cid) {
   try { localStorage.setItem("tempAdj_" + cid, JSON.stringify(hist)); } catch (_) {}
   _adjDraftCustomerId = cid;
   renderTempAdjChips(cid);
+}
+
+// ── 通勤の候補の駅（2026-09-25 竹内「梅田駅まで電車で一本の場合…沿線を全て理解…何分以内で通える駅かも分かる」）──
+// 路線のつながり: osaka-transit.js（self.AxlxOsakaTransit・サーバーと同じデータと関数の自動生成）
+// 候補の組み立てと画面: commute-candidates.js（self.AxlxCommuteCandidates）
+// 押した時だけ「駅」欄に入れて input の出来事を出す（手で入れた時と同じ＝一時調整優先・履歴の保存）。
+// サイトごとの駅名・路線名は、ここから先の既存の対応表（STATION_LINE_MAP → 各サイトの表）がする。
+function renderCommuteCandidates(c) {
+  const box = document.getElementById("commute-candidates");
+  if (!box) return;
+  const T = (typeof self !== "undefined" && self.AxlxOsakaTransit) || null;
+  const CC = (typeof self !== "undefined" && self.AxlxCommuteCandidates) || null;
+  if (!T || !CC || !c) { box.style.display = "none"; box.innerHTML = ""; return; }
+  try {
+    const extLinesOf = (w) => {
+      if (STATION_LINE_MAP[w]) return STATION_LINE_MAP[w];
+      const learned = LEARNED_STATION_MAP[w]?.realpro_lines;
+      if (learned && learned.length) return learned;
+      if (_dbStationRouteMap && _dbStationRouteMap[w]) {
+        const v = _dbStationRouteMap[w];
+        return Array.isArray(v) ? v : (v.realpro_lines || []);
+      }
+      return null;
+    };
+    const res = CC.render(box, T, c, {
+      extLinesOf,
+      onAdd: (names, label) => {
+        const stEl = document.getElementById("adj-area-station");
+        if (!stEl) return;
+        const before = stEl.value;
+        stEl.value = CC.mergeStationField(before, names);
+        stEl.dispatchEvent(new Event("input", { bubbles: true }));
+        const n = stEl.value.split("・").filter(Boolean).length;
+        const note = box.querySelector(".cc-note");
+        if (note) note.textContent = `🚉 ${label} の駅を入れました（駅欄は ${n}駅）。この後「自動入力」で検索します。`;
+        console.log("[AX] 通勤の候補の駅を駅欄に追加:", label, names.length, "駅", names);
+      },
+    });
+    if (res && res.blocks.length) console.log("[AX] 通勤の候補:", res.blocks.map(b => b.title + " " + b.extCount + "駅").join(" / "));
+  } catch (e) {
+    console.warn("[AX] 通勤の候補の表示に失敗（検索には影響なし）:", e);
+    box.style.display = "none";
+  }
 }
 
 // 履歴チップ（直近3件）を地域/駅フィールド下に描画。クリックで再適用

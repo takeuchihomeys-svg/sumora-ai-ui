@@ -67,6 +67,15 @@ const CHIP_JA: Record<string, string> = {
   COMMUTE_OK: "通勤が希望の時間内",
   COMMUTE_OVER: "通勤が希望の時間超",
   COMMUTE_UNKNOWN: "通勤は要確認",
+  // 2026-09-25 竹内「広げて検索した場合も希望の方が少し高く・隣の駅だからって大幅に低くしない。家賃とかでもそう」:
+  //   拡張の広げて検索の幅の内側（希望どおりより少しだけ低い加点）
+  AREA_STATION_WIDE: "広げた検索の駅（希望の駅の隣）",
+  AREA_STATION_2STOPS: "希望の駅から2駅",
+  AREA_WARD_WIDE: "広げた検索の区（難波の3区）",
+  RENT_WIDE: "広げた家賃の幅（上限＋5千/1万円）",
+  FLOOR_PLAN_WIDE: "広げた間取り（LDK→DK）",
+  BUILDING_AGE_WIDE: "広げた築年の幅（＋5年）",
+  SQM_WIDE: "広げた広さの幅（−5㎡）",
 };
 
 /** 読めなかった材料（点が動かない理由）。コード → 札の言葉 */

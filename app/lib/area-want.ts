@@ -25,7 +25,7 @@
 //     分の指定が無い → COMMUTE_INFO（0・所要を見せるだけ）／駅が読めない・路線図に無い → COMMUTE_UNKNOWN（0・要確認）
 import {
   normStation, stationPoint, wardPoint, normWard, distanceKm, wardsAdjacent, insideLoop, MULTI_WARD_MAP,
-  stationsInText, wardsInText, linesInText, placesInText, townsInText, wardOfStation, wardOfAddress, STATION_LINES, LINES, isKnownStation, type LatLon,
+  stationsInText, wardsInText, linesInText, placesInText, townsInText, wardOfStation, wardOfAddress, STATION_LINES, LINES, STATION_GROUPS, isKnownStation, type LatLon,
 } from "./osaka-geo";
 import { shortestRoute, shortLineName } from "./transit-route";
 import { normalizeListingText, parseListingText, parseAccessLine } from "./listing-text";
@@ -70,7 +70,8 @@ export type PropertyLocation = {
 
 export type AreaMatch = {
   code: string;
-  result: "excluded" | "station" | "ward" | "line" | "near" | "region" | "close" | "far" | "unknown";
+  /** station_wide＝希望の駅から同じ路線で1〜2駅（広げた検索の駅）・ward_wide＝難波・心斎橋の3区 */
+  result: "excluded" | "station" | "station_wide" | "ward" | "ward_wide" | "line" | "near" | "region" | "close" | "far" | "unknown";
   /** 比べた相手（「大国町」「浪速区」「御堂筋線」） */
   anchor: string | null;
   km: number | null;
@@ -357,6 +358,51 @@ export function buildPropertyLocation(summary: string | null | undefined, pdfTex
 
 // ───────────────────────── 照らす ─────────────────────────
 
+/**
+ * 2026-09-25 竹内「広げて検索した場合も、お客さんの希望の駅の方が点数少し大きくするように。隣の駅だからって点数が大幅に低くならないように」
+ *   拡張の「広げて検索」は希望の駅ごとに**同じ路線の前後1駅**を足す（resolution-core.js resolveConditionsLocal ④ getAdjacentStations・
+ *   popup.js の手動の検索も同じ。同じ事業者の4路線以上の大きな駅だけ手動では足さない）。路線の並びは同じ popup-maps.js の写し（LINES）。
+ *   → 希望の駅 +10（AREA_STATION_MATCH）／前後1駅 +8（AREA_STATION_WIDE・広げた検索の駅）／同じ路線で2駅 +6（AREA_STATION_2STOPS）。
+ *   今までは隣の駅も距離で見ていたので +5（2km 以内）〜 +2 まで下がっていた。
+ *   地域（区）で検索した時は、難波・心斎橋（中央区・浪速区・西区）を3区まとめて足す（popup.js expandNambaCodes）→ AREA_WARD_WIDE +6
+ */
+export const WIDE_STATION_STOPS = 1;
+export const NAMBA_CLUSTER_WARDS = ["大阪市中央区", "大阪市浪速区", "大阪市西区"];
+
+/** 駅のまとまり（STATION_GROUPS）の駅。まとまりに無い駅はその駅だけ */
+export function stationGroupOf(station: string): string[] {
+  for (const members of Object.values(STATION_GROUPS)) if (members.includes(station)) return members;
+  return [station];
+}
+
+/** 2駅の間の駅の数（同じ路線に両方ある時の一番少ない数・同じ駅は 0・同じ路線に無ければ null） */
+export function stopsBetween(a: string, b: string): { stops: number; line: string } | null {
+  if (a === b) return { stops: 0, line: "" };
+  let best: { stops: number; line: string } | null = null;
+  for (const line of STATION_LINES.get(a) ?? []) {
+    const order = LINES[line] ?? [];
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    if (ia < 0 || ib < 0) continue;
+    let d = Math.abs(ia - ib);
+    // 環状線は輪（LINES は輪を閉じない形で 大阪…天満 の両端が隣）。反証レビュー 2026-09-25: 天満の希望で大阪の物件が 18駅離れていた
+    if (line === "大阪環状線" && order.length > 2) d = Math.min(d, order.length - d);
+    if (!best || d < best.stops) best = { stops: d, line };
+  }
+  return best;
+}
+
+/** 拡張の「広げて検索」が足す駅（同じ路線の前後1駅）。拡張の getAdjacentStations と同じ */
+export function adjacentStations(station: string): string[] {
+  const out: string[] = [];
+  for (const line of STATION_LINES.get(station) ?? []) {
+    const order = LINES[line] ?? [];
+    const i = order.indexOf(station);
+    if (i > 0 && !out.includes(order[i - 1])) out.push(order[i - 1]);
+    if (i >= 0 && i < order.length - 1 && !out.includes(order[i + 1])) out.push(order[i + 1]);
+  }
+  return out;
+}
+
 export const AREA_NEAR_KM = 2.0;
 /** 希望の駅そのもの（AREA_STATION_MATCH）とみなす徒歩の上限 */
 export const STATION_MATCH_WALK_MAX = 15;
@@ -390,10 +436,29 @@ export function matchArea(want: AreaWant, loc: PropertyLocation): AreaMatch | nu
   if (!loc.point && !loc.ward && !stNames.length) return { code: "AREA_UNKNOWN", result: "unknown", anchor: null, km: null, why: "物件の場所が資料から読めない" };
   // 希望の駅そのもの
   // 徒歩 15分を超える駅は「その駅の物件」とは言えない（資料の3行目の遠い駅）→ 距離で見る
-  const hitSt = loc.stations.filter((x) => x.walk == null || x.walk <= STATION_MATCH_WALK_MAX).map((x) => x.station).find((s) => want.stations.some((w) => w.station === s));
+  const walkable = loc.stations.filter((x) => x.walk == null || x.walk <= STATION_MATCH_WALK_MAX).map((x) => x.station);
+  // 駅のまとまり（STATION_GROUPS: 梅田＝梅田・大阪・西梅田・北新地、天王寺＝天王寺・大阪阿部野橋 等）は同じ駅として見る。
+  //   反証レビュー 2026-09-25: 梅田の希望で JR大阪駅の物件が AREA_NEAR +5、隣の中津が AREA_STATION_WIDE +8 と、広げた駅の方が高くなっていた
+  const hitSt = walkable.find((s) => want.stations.some((w) => stationGroupOf(w.station).includes(s)));
   if (hitSt) return withDir({ code: "AREA_STATION_MATCH", result: "station", anchor: hitSt, km: 0, why: `希望の駅（${hitSt}）` });
+  // 希望の駅から同じ路線で1駅（拡張の広げて検索の駅）・2駅。物件の駅（徒歩15分以内）と希望の駅（まとまりの駅も）の組で一番近い物
+  let stopHit: { st: string; want: string; stops: number; line: string } | null = null;
+  for (const s of walkable) for (const w of want.stations) for (const m of stationGroupOf(w.station)) {
+    const b = stopsBetween(s, m);
+    if (b && b.stops >= 1 && b.stops <= 2 && (!stopHit || b.stops < stopHit.stops)) stopHit = { st: s, want: w.station, stops: b.stops, line: b.line };
+  }
+  const lineShort = (l: string) => shortLineName(l);
+  if (stopHit && stopHit.stops <= WIDE_STATION_STOPS) {
+    return withDir({ code: "AREA_STATION_WIDE", result: "station_wide", anchor: stopHit.want, km: null, why: `広げた検索の駅（${stopHit.st}＝希望の${stopHit.want}の隣・${lineShort(stopHit.line)}）` });
+  }
   // 希望の区・市（大阪市内の広い言い方は下の region）
   if (loc.ward && want.wards.includes(loc.ward)) return withDir({ code: "AREA_WARD_MATCH", result: "ward", anchor: loc.ward, km: null, why: `希望の${/区$/.test(loc.ward) ? "区" : "市"}（${shortWard(loc.ward)}）` });
+  if (stopHit) return withDir({ code: "AREA_STATION_2STOPS", result: "station_wide", anchor: stopHit.want, km: null, why: `希望の${stopHit.want}から${lineShort(stopHit.line)}で2駅（${stopHit.st}）` });
+  // 難波・心斎橋の3区（拡張が地域の広げて検索でまとめて足す）
+  if (loc.ward && NAMBA_CLUSTER_WARDS.includes(loc.ward) && want.wards.some((w) => NAMBA_CLUSTER_WARDS.includes(w))) {
+    const w0 = want.wards.find((w) => NAMBA_CLUSTER_WARDS.includes(w)) as string;
+    return withDir({ code: "AREA_WARD_WIDE", result: "ward_wide", anchor: loc.ward, km: null, why: `広げた検索の区（${shortWard(loc.ward)}＝希望の${shortWard(w0)}と同じ難波・心斎橋の3区）` });
+  }
   // 希望の路線の駅
   for (const s of loc.stations) {
     const ls = STATION_LINES.get(s.station) ?? [];

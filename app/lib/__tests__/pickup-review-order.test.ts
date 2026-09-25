@@ -4,7 +4,7 @@
 import { isGenericBuildingName } from "../generic-building-name";
 import { isGenericBuildingName as dedupeGeneric } from "../pickup-dedupe";
 import {
-  buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, reasonPoints, BASE_SCORE, REASON_POINTS,
+  buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, reasonPoints, BASE_SCORE, REASON_POINTS, SCORE_MAX,
   type CustomerLike, type Judgment,
 } from "../property-brain";
 import { sortForReview, compareForReview, buildReasonView, formatScoreBreakdown } from "../pickup-review-order";
@@ -92,9 +92,10 @@ const REALPRO = [
 {
   const p = buildCustomerProfile(realproCust, []);
   const js = REALPRO.map((s, i) => judgeProperty(parsePropertyFacts(s), p, i));
-  // 家賃＋管理費はどれも 8万を少し超える（81,100〜85,000）＝「家賃は上限内 +15」ではなく「少し超過 0」
-  t("家賃＋管理費で上限と比べる（全件 RENT_SLIGHTLY_OVER）", js.every((j) => j.reasonCodes.includes("RENT_SLIGHTLY_OVER")), js.map((j) => j.reasonCodes));
-  t("AD 2ヶ月（80点）と 1.5ヶ月（65点）で分かれる", js[2].score === 80 && js[4].score === 65, js.map((j) => j.score));
+  // 家賃＋管理費はどれも 8万を少し超える（81,100〜85,000）＝「家賃は上限内 +15」ではない。
+  //   2026-09-25: 拡張の広げて検索の幅（8万以下は＋5千円＝85,000）の中なので「少し超過 0」ではなく RENT_WIDE +10（上限内より少しだけ低い）
+  t("家賃＋管理費で上限と比べる（全件 広げた検索の幅 RENT_WIDE・上限内ではない）", js.every((j) => j.reasonCodes.includes("RENT_WIDE") && !j.reasonCodes.includes("RENT_OK")), js.map((j) => j.reasonCodes));
+  t("AD 2ヶ月（90点）と 1.5ヶ月（75点）で分かれる", js[2].score === 90 && js[4].score === 75, js.map((j) => j.score));
   t("材料（徒歩・築年・敷礼）が無い所は減点しない（材料なし）", js.every((j) => j.missing.includes("walk") && j.missing.includes("deposit_key_money")), js.map((j) => j.missing));
 }
 
@@ -117,17 +118,17 @@ console.log("■ 点の表（REASON_POINTS）と judgeProperty・applyImageFacts
     for (const [i, s] of sums.entries()) {
       const j = judgeProperty(parsePropertyFacts(s), p, i);
       const raw = BASE_SCORE + j.reasonCodes.reduce((a, code) => a + reasonPoints(code), 0);
-      if (Math.max(0, Math.min(130, raw)) !== j.score) bad.push({ s: s.split("\n")[0], codes: j.reasonCodes, raw, score: j.score });
+      if (Math.max(0, Math.min(SCORE_MAX, raw)) !== j.score) bad.push({ s: s.split("\n")[0], codes: j.reasonCodes, raw, score: j.score });
       const withImg = applyImageFacts({ ...j, imageChecks: ["bath_toilet_separate", "floor_2_plus"] }, { bath_toilet_separate: true, floor_2_plus: false });
       // applyImageFacts は judgeProperty の（上限・下限で切った）点に足してもう一度切る
       const raw2 = j.score + withImg.reasonCodes.filter((c) => c.startsWith("IMAGE_")).reduce((a, code) => a + reasonPoints(code), 0);
-      if (Math.max(0, Math.min(130, raw2)) !== withImg.score) bad.push({ img: true, codes: withImg.reasonCodes, raw2, score: withImg.score });
+      if (Math.max(0, Math.min(SCORE_MAX, raw2)) !== withImg.score) bad.push({ img: true, codes: withImg.reasonCodes, raw2, score: withImg.score });
       // 2026-09-24 資料の設備欄の照合（EQUIP_*）も同じ表で数える。必須の × は上限20（EQUIP_MUST_NG_CAP）
       for (const eqText of [EQ_UPPER, EQ_GROUND]) {
         const m = matchEquipment(EQ_WANTS, parseListingEquipment(eqText));
         const je = judgeProperty(parsePropertyFacts(s), p, i, { equipment: m });
         const rawE = BASE_SCORE + je.reasonCodes.reduce((a, code) => a + reasonPoints(code), 0);
-        let expE = Math.max(0, Math.min(130, rawE));
+        let expE = Math.max(0, Math.min(SCORE_MAX, rawE));
         if (je.reasonCodes.includes("EQUIP_MUST_NG_CAP")) expE = Math.min(expE, 20);
         if (expE !== je.score) bad.push({ eq: true, codes: je.reasonCodes, rawE, score: je.score });
         if (je.verdict === "drop" && !j.flagCodes.some((c) => c === "ALREADY_SENT" || c === "RENT_OVER_130")) bad.push({ eqDrop: true, codes: je.reasonCodes });
