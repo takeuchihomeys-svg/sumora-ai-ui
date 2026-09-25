@@ -56,7 +56,8 @@ console.log("■ 築年 ＋5年まで +2 ／ 広さ −5㎡まで −3（どち�
   const p = buildCustomerProfile({ rent_max: 90_000, building_age: 10 });
   const c = (age: number) => judgeProperty(parsePropertyFacts(S("80,000円", "1K", `築${age}年`)), p);
   t("築10年 → OK・築15年 → WIDE（保留なし）・築16年 → OVER（保留）", c(10).reasonCodes.includes("BUILDING_AGE_OK") && c(15).reasonCodes.includes("BUILDING_AGE_WIDE") && c(15).verdict === "pass" && c(16).flagCodes.includes("BUILDING_AGE_OVER"));
-  t("築年: 希望内と幅の中の差は 3点", c(10).score - c(15).score === 3, [c(10).score, c(15).score]);
+  // 2026-09-25 案B: 築年の列の人は希望内に段の上乗せ（10年以内 AGE_COL_W10 +3）→ 希望内 5＋3 と幅の中 2 の差は 6点
+  t("築年: 希望内（段の上乗せ込み）と幅の中の差は 6点", c(10).score - c(15).score === 6 && c(10).reasonCodes.includes("AGE_COL_W10"), [c(10).score, c(15).score]);
   const q = buildCustomerProfile({ rent_max: 90_000, floor_area_min: 25 });
   const a = (sqm: number) => judgeProperty(parsePropertyFacts(S("80,000円", `1K ${sqm}㎡`)), q);
   t("25㎡の希望: 23㎡ 0点（9割以上）・21㎡ SQM_WIDE −3（情報）・19㎡ 保留", a(23).reasonCodes.includes("SQM_SLIGHTLY_UNDER") && a(21).reasonCodes.includes("SQM_WIDE") && a(21).verdict === "pass" && a(19).flagCodes.includes("SQM_UNDER"));

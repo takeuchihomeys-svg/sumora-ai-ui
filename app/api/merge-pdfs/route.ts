@@ -129,6 +129,11 @@ function buildLineMessage(
   }
 
   // 🌟一番オススメ（🌟付き物件の先頭に単独表示）
+  // 2026-09-25 竹内（野口さんの回: 162点に🌟★・164点に🌟）: 売上サポの「一番オススメ」は判定の点の1位（👑・pickup-best.roundBestId）に1つにまとめた。
+  //   この LINE グループの文の🌟は**送信の時点の DeepSeek の順のまま**にする（変えない）。理由:
+  //   ①判定（property_pickups の score）はこの送信の後の waitUntil（recordPickupBatch）で付く＝ここではまだ点が無い。点を待つと送信が数十秒遅れる
+  //   ②画像で分析が要るお客様の 👑 は後から読む画像の点で決まり、回をまたいで変わる（ここで決めても後で食い違う）
+  //   ③この文は売上番長グループ（スタッフ向け）で、お客様に届く文ではない。スタッフが送る物件を決める画面は売上サポ（👑 と点の順）
   if (propertySummaries && propertySummaries.length > 0) {
     // 🌟★ = AIの真の1位を優先、なければ最初の🌟（後方互換フォールバック）
     const topPick = propertySummaries.find(s => s.split("\n")[0].includes("🌟★"))

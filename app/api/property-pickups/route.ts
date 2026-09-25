@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
 type SentLite = { conversation_id: string | null; property_customer_id: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string | null };
 async function buildList(since: string) {
   const [pk, sp, roundOf] = await Promise.all([
-    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at")
+    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at, score, verdict")
       .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
     supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at")
       .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
@@ -152,25 +152,27 @@ async function buildList(since: string) {
   const byKey = new Map<string, L>();
   const convToKey = new Map<string, string>();
   // 2026-09-25 竹内「まとめられていない」: 一覧の「🧠 N件」も、短い間に届いた回（リアプロ・itandi）をまとめた1回分で数える
-  type BatchSum = { batch_id: string; created_at: string; site: string | null; round_id: string | null; count: number; rec2: string | null; rec1: string | null };
+  // 2026-09-25 一覧の「🧠 N件・👑名前」: 一番オススメは DeepSeek の🌟★ ではなく 👑（まとめの best_id → 無ければ判定の点の1位・同点は🌟）
+  type BestLite = { id: number; created_at: string; batch_id: string; rank: number; status: string; recommended: number; property_name: string; score: number | null; verdict: string | null };
+  type BatchSum = { batch_id: string; created_at: string; site: string | null; round_id: string | null; count: number; rows: BestLite[] };
   const batchesSeen = new Map<string, Map<string, BatchSum>>();
-  for (const r of (pk.data ?? []) as Array<{ created_at: string; batch_id: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; rank: number; property_name: string; recommended: number; status: string }>) {
+  for (const r of (pk.data ?? []) as Array<BestLite & { property_customer_id: string | null; conversation_id: string | null; customer_name: string | null }>) {
     const key = r.property_customer_id ?? `conv:${r.conversation_id ?? r.batch_id}`;
     const c = byKey.get(key) ?? { key, property_customer_id: r.property_customer_id, conversation_id: r.conversation_id, customer_name: r.customer_name, pending: 0, last_pickup_at: null, batch_count: 0, last_batch: null, sent: { pickup: 0, recommendation: 0, other: 0, last_at: null } };
     if (!c.conversation_id && r.conversation_id) c.conversation_id = r.conversation_id;
     if (r.status === "pending") c.pending++;
     if (!c.last_pickup_at || r.created_at > c.last_pickup_at) c.last_pickup_at = r.created_at;
     const seen = batchesSeen.get(key) ?? new Map<string, BatchSum>();
-    const bs = seen.get(r.batch_id) ?? { batch_id: r.batch_id, created_at: r.created_at, site: null, round_id: roundOf.get(r.batch_id) ?? null, count: 0, rec2: null, rec1: null };
+    const bs = seen.get(r.batch_id) ?? { batch_id: r.batch_id, created_at: r.created_at, site: null, round_id: roundOf.get(r.batch_id) ?? null, count: 0, rows: [] };
     bs.count++;
     if (r.created_at < bs.created_at) bs.created_at = r.created_at;
-    if (r.recommended === 2 && !bs.rec2) bs.rec2 = r.property_name;
-    if (r.recommended === 1 && !bs.rec1) bs.rec1 = r.property_name;
+    bs.rows.push(r);
     seen.set(r.batch_id, bs);
     batchesSeen.set(key, seen);
     byKey.set(key, c);
     if (c.conversation_id) convToKey.set(c.conversation_id, key);
   }
+  const lastRounds: Array<{ c: L; key: string; round_id: string | null; rows: BestLite[] }> = [];
   for (const [key, seen] of batchesSeen) {
     const c = byKey.get(key);
     if (!c) continue;
@@ -178,9 +180,22 @@ async function buildList(since: string) {
     c.batch_count = rounds.length;
     const last = rounds[rounds.length - 1];
     if (last) {
-      const rec = last.batches.find((b) => b.rec2)?.rec2 ?? last.batches.find((b) => b.rec1)?.rec1 ?? null;
-      c.last_batch = { batch_id: last.key, count: last.batches.reduce((n, b) => n + b.count, 0), rec_name: rec };
+      c.last_batch = { batch_id: last.key, count: last.batches.reduce((n, b) => n + b.count, 0), rec_name: null };
+      lastRounds.push({ c, key: last.key, round_id: last.round_id, rows: last.batches.flatMap((b) => b.rows) });
     }
+  }
+  // まとめてある回は best_id（画面の 👑 と同じ決まり・画像で分析が要るお客様は画像の点）。無い回・読めない時は判定の点の1位（外す候補は除く）
+  const gids = [...new Set(lastRounds.map((x) => x.round_id).filter((v): v is string => !!v))];
+  const bestOf = new Map<string, number>();
+  for (let i = 0; i < gids.length; i += 200) {
+    const { data } = await supabase.from("property_pickup_completions").select("group_id, best_id").in("group_id", gids.slice(i, i + 200));
+    for (const r of (data ?? []) as Array<{ group_id: string; best_id: number | null }>) if (r.best_id != null) bestOf.set(r.group_id, Number(r.best_id));
+  }
+  for (const x of lastRounds) {
+    const pre = x.round_id ? bestOf.get(x.round_id) : undefined;
+    const hit = pre != null ? x.rows.find((r) => r.id === pre && r.status === "pending") : undefined;
+    const b = hit ?? (() => { const p = pickCustomerBest(x.rows, { basis: "score", windowHours: 24 * 365 }); return p ? x.rows.find((r) => r.id === p.id) : undefined; })();
+    if (x.c.last_batch) x.c.last_batch.rec_name = b?.property_name ?? null;
   }
   for (const s of (sp.data ?? []) as SentLite[]) {
     if (!s.conversation_id) continue;
@@ -262,7 +277,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   // 2026-09-25 竹内「まとめられていない」: 直近 N 回は「まとめの回」（短い間に届いたリアプロ・itandi の回を1つ）で数える。
   //   回の途中で切ると、画面で1つにまとめる回の片方だけが出る → まとめの回ごと返す（画面も同じ関数で寄せる）
   const rounds = groupPickupRounds(order.map((id) => ({ ...byBatch.get(id)!, round_id: roundOf.get(id) ?? null })));
-  // 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」: 🌟★ → 🌟 → 点の高い順（同点は元の順位）。画面も同じ関数で並べ直す
+  // 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」→ 2026-09-25 点の高い順（同点は🌟★／🌟 → 元の順位）。
+  //   一番オススメ（👑）の先頭寄せは画面（pickup-best.roundBestId → sortForReview の bestId）。画面も同じ関数で並べ直す
   const batches = rounds.slice(-nBatches).flatMap((r) => r.batches).map((b) => ({ ...b, items: sortForReview(b.items) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
   const first = rows[0] ?? null;
   const convId = conv ?? first?.conversation_id ?? null;

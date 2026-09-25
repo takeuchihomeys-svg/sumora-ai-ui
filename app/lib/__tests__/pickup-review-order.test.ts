@@ -141,7 +141,7 @@ console.log("■ 点の表（REASON_POINTS）と judgeProperty・applyImageFacts
   t("ALREADY_SENT は −30", REASON_POINTS.ALREADY_SENT === -30);
 }
 
-console.log("■ 並び順（🌟★ → 🌟 → 点の高い順・同点は順位）");
+console.log("■ 並び順（2026-09-25 点の高い順・同点は🌟★／🌟 → 順位・👑 を先頭）");
 {
   // id 50〜67 の形（付け直し後の点の例）
   const rows = [
@@ -151,9 +151,14 @@ console.log("■ 並び順（🌟★ → 🌟 → 点の高い順・同点は順
     { id: 61, rank: 12, recommended: 0, score: 55 },
   ];
   const s = sortForReview(rows).map((r) => r.id);
-  t("🌟★ → 🌟（点の高い順）→ 印なし（点の高い順・同点は順位）→ 点なし", JSON.stringify(s) === JSON.stringify([58, 55, 51, 52, 61, 50, 60]), s);
+  // 2026-09-25 竹内（野口さんの回: 162点に🌟★・164点に🌟）「お客さんにベストな物件が一番オススメ」→ 点の順。DeepSeek の🌟は同点の時だけ
+  t("点の高い順（同点は順位）→ 点なし。🌟 は点が低ければ下", JSON.stringify(s) === JSON.stringify([58, 55, 52, 61, 50, 51, 60]), s);
   t("元の配列は変えない", rows[0].id === 50);
-  t("比べ方: 🌟 は点が低くても上", compareForReview({ id: 1, rank: 5, recommended: 1, score: 10 }, { id: 2, rank: 1, recommended: 0, score: 120 }) < 0);
+  t("比べ方: 🌟 でも点が低ければ下", compareForReview({ id: 1, rank: 5, recommended: 1, score: 10 }, { id: 2, rank: 1, recommended: 0, score: 120 }) > 0);
+  t("比べ方: 同点なら 🌟★ ＞ 🌟 ＞ 印なし（順位より先）", compareForReview({ id: 1, rank: 5, recommended: 2, score: 120 }, { id: 2, rank: 1, recommended: 1, score: 120 }) < 0 && compareForReview({ id: 1, rank: 5, recommended: 1, score: 120 }, { id: 2, rank: 1, recommended: 0, score: 120 }) < 0);
+  t("野口さんの形: 164点（🌟）が 162点（🌟★）より上", JSON.stringify(sortForReview([{ id: 368, rank: 1, recommended: 2, score: 162 }, { id: 369, rank: 2, recommended: 1, score: 164 }]).map((r) => r.id)) === "[369,368]");
+  t("bestId（👑）を先頭に・残りは点の順", JSON.stringify(sortForReview(rows, 50).map((r) => r.id)) === JSON.stringify([50, 58, 55, 52, 61, 51, 60]));
+  t("bestId が無い・一覧に無い時は点の順のまま", JSON.stringify(sortForReview(rows, 999).map((r) => r.id)) === JSON.stringify([58, 55, 52, 61, 50, 51, 60]));
 }
 
 console.log("■ 理由の札（なぜ外す候補か・点の内訳）");

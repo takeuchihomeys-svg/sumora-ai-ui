@@ -3,7 +3,7 @@
 // 形は 2026-09-24〜25 の実物（property_pickups id 370・369・359・58・54・3）。お客様の名前・電話番号は無い
 import {
   parseSummaryText, buildPickupCardView, cardHeadline, verdictMark, groupPickupRounds, mergeRoundItems,
-  roundSiteSummary, verdictCounts, siteLabel, DASH, type PickupCardInput,
+  roundSiteSummary, verdictCounts, siteLabel, DASH, scoreGapNote, type PickupCardInput,
 } from "../pickup-card-view";
 
 let passed = 0, failed = 0;
@@ -58,7 +58,14 @@ console.log("■ カード（リアプロの物件一覧の並び）");
   t("保証金/償却 なし なし", cell(v, "guarantee")?.value === "なし" && cell(v, "guarantee")?.sub === "なし", cell(v, "guarantee"));
   t("AD 2ヶ月", cell(v, "ad")?.value === "2ヶ月");
   t("点数の項目", cell(v, "score")?.value === "162点" && cell(v, "score")?.sub === "通す");
-  t("見出しはリアプロの順（部屋→状態→間取り→賃料→敷礼→保証金→AD）", v.cells.slice(0, 7).map((c) => c.key).join(",") === "room,state,madori,rent,deposit,guarantee,ad");
+  // 2026-09-25 竹内「カードの項目もお客さんの理想の条件に合わせて表示する。それと AD。そして点数も（各項目の点数）」:
+  //   お客様が書いた条件の項目（賃料・敷礼・間取り・徒歩・入居）→ AD → 事実だけの項目（部屋・保証金・築年）→ 点数
+  t("並び: 書いた条件 → AD → 事実 → 点数", v.cells.map((c) => c.key).join(",") === "rent,deposit,madori,walk,state,ad,room,guarantee,built,score", v.cells.map((c) => c.key));
+  t("敷金/礼金 なし なし +20（初期費用を抑えたい・一致）・緑", cell(v, "deposit")?.points === 20 && cell(v, "deposit")?.note === "初期費用を抑えたい・一致" && cell(v, "deposit")?.tone === "ok" && cell(v, "deposit")?.written === true, cell(v, "deposit"));
+  t("間取り/㎡ は間取り＋広さの点（15＋3）", cell(v, "madori")?.points === 18, cell(v, "madori"));
+  t("駅徒歩 4分・+10（徒歩・一致）", cell(v, "walk")?.value === "4分" && cell(v, "walk")?.points === 10 && cell(v, "walk")?.note === "徒歩・一致", cell(v, "walk"));
+  t("AD は必ず出す・2ヶ月 +20 緑", cell(v, "ad")?.points === 20 && cell(v, "ad")?.tone === "ok", cell(v, "ad"));
+  t("事実だけの項目は点なし（部屋/階）", cell(v, "room")?.points == null && cell(v, "room")?.written === false);
 
   // id 369: 償却の記載なし・入居 9月下旬
   const v369 = buildPickupCardView({ ...R370, summary_text: "【1】CITY　SPIRE難波WEST 508号室\n93,000円 12,000円\n1R 30.06㎡\n関西線「JR難波」徒歩8分\nAD 2ヶ月", room_no: "508",
@@ -81,6 +88,30 @@ console.log("■ カード（リアプロの物件一覧の並び）");
   t("AD は説明文 → 無ければ ad_yen", buildPickupCardView({ ...R370, summary_text: "【1】X\n80,000円", ad_yen: 150000 }).cells.find((c) => c.key === "ad")?.value === "150,000円");
   t("沿線は説明文 → 無ければ場所の駅", buildPickupCardView({ ...R370, summary_text: "【1】X" }).access === "谷町線「四天王寺前夕陽ケ丘」徒歩4分");
   t("room_no が優先", buildPickupCardView({ ...R370, room_no: "0202" }).room === "0202");
+}
+
+console.log("■ 項目ごとの点（案B）: 合う緑・合わない赤・要確認灰・全部合う・書いていない");
+{
+  const v = buildPickupCardView({ ...R370, reason_codes: ["RENT_SLIGHTLY_OVER", "ZERO_ZERO", "FLOOR_PLAN_MATCH", "SQM_UNKNOWN", "WALK_OK", "WALK_NEAR_W5", "BUILDING_AGE_TEXT_OK", "AGE_W5",
+    "EQUIP_AUTOLOCK_MUST_OK", "EQUIP_DELIVERY_BOX_UNLISTED", "AD_COVERS_DISCOUNT", "AD_1M", "FIT_ONE_MISS"] });
+  const keys = v.cells.map((c) => c.key);
+  t("書いた条件が上（賃料→間取り→徒歩→築年→設備）→ 全部合う → AD → 書いていない（敷礼0）", keys.slice(0, 9).join(",") === "rent,madori,walk,built,eq:AUTOLOCK,eq:DELIVERY_BOX,fit,ad,deposit", keys);
+  t("家賃 少し超え → 赤・±0（予算・外れ）", cell(v, "rent")?.tone === "ng" && cell(v, "rent")?.points === 0 && cell(v, "rent")?.note === "予算・外れ", cell(v, "rent"));
+  t("間取り ○＋広さ 要確認 → 緑（読めない広さは外れにしない）", cell(v, "madori")?.tone === "ok", cell(v, "madori"));
+  t("駅近: 徒歩 +10＋5分以内 +5 ＝ +15（駅近・一致）", cell(v, "walk")?.points === 15 && cell(v, "walk")?.note === "駅近・一致", cell(v, "walk"));
+  t("築浅: +12（築浅・一致）", cell(v, "built")?.points === 12 && cell(v, "built")?.note === "築浅・一致", cell(v, "built"));
+  t("設備 オートロック（必須）○ +5", cell(v, "eq:AUTOLOCK")?.head === "オートロック" && cell(v, "eq:AUTOLOCK")?.value === "○" && cell(v, "eq:AUTOLOCK")?.points === 5 && cell(v, "eq:AUTOLOCK")?.note === "必須・一致", cell(v, "eq:AUTOLOCK"));
+  t("設備 宅配ボックス 記載なし → 灰・要確認", cell(v, "eq:DELIVERY_BOX")?.tone === "unread" && cell(v, "eq:DELIVERY_BOX")?.value === DASH, cell(v, "eq:DELIVERY_BOX"));
+  t("全部合うの行: 1つだけ外れ +5", cell(v, "fit")?.points === 5 && /1つ外れ/.test(cell(v, "fit")?.note ?? ""), cell(v, "fit"));
+  t("書いていない敷礼0: +8（書いていない）・見出しは薄い（written=false）", cell(v, "deposit")?.points === 8 && cell(v, "deposit")?.note === "書いていない" && cell(v, "deposit")?.written === false, cell(v, "deposit"));
+  t("項目の点の合計＋50 ＝ 判定の点（札が全部どこかの項目に入る）", 50 + v.cells.reduce((a, c) => a + (c.points ?? 0), 0) === 50 + 0 + 8 + 15 + 0 + 10 + 5 + 0 + 12 + 5 + 0 + 0 + 15 + 5, v.cells.map((c) => [c.key, c.points]));
+  const held = buildPickupCardView({ ...R370, verdict: "hold", reason_codes: ["RENT_OK", "INITIAL_COST_NOT_ZERO", "AD_HIGH_HELD"] });
+  t("保留の物件の AD は 0点（保留の物件なので0点）", cell(held, "ad")?.points === 0 && cell(held, "ad")?.note === "保留の物件なので0点", cell(held, "ad"));
+  t("敷礼あり（抑えたい人）→ 赤 −15", cell(held, "deposit")?.tone === "ng" && cell(held, "deposit")?.points === -15, cell(held, "deposit"));
+  const none = buildPickupCardView({ ...R370, reason_codes: ["RENT_OK", "AD_NONE", "PROFIT_NEGATIVE"] });
+  t("AD なし → 赤 −20（割引の方が大きい）", cell(none, "ad")?.tone === "ng" && cell(none, "ad")?.points === -20, cell(none, "ad"));
+  const noAd = buildPickupCardView({ ...R370, summary_text: "【1】X\n80,000円", ad_yen: null, reason_codes: ["RENT_OK"] });
+  t("AD の札が無い行でも AD の項目は出す（要確認）", cell(noAd, "ad")?.value === DASH && cell(noAd, "ad")?.note === "要確認", cell(noAd, "ad"));
 }
 
 console.log("■ 判定の札と畳んだ時の1行");
@@ -117,7 +148,9 @@ const mk = (id: string, at: string, site: string, items: B["items"], round_id: s
   t("最初と最後の時刻", r[1].created_at === "2026-09-25T05:17:00Z" && r[1].last_at === "2026-09-25T05:19:31Z");
   t("1回だけの回は元の batch_id が鍵", r[0].key === "old");
   const merged = mergeRoundItems(r[1].batches);
-  t("まとめた並び: 🌟★ → 点の高い順", merged.map((x) => x.id).join(",") === "369,368,371,367", merged.map((x) => x.id));
+  // 2026-09-25 点の高い順（🌟★ は同点の時だけ上）。👑（bestId）を渡せば先頭
+  t("まとめた並び: 点の高い順（🌟★ の 120点は3番目）", merged.map((x) => x.id).join(",") === "368,371,369,367", merged.map((x) => x.id));
+  t("まとめた並び: 👑 を先頭に", mergeRoundItems(r[1].batches, 371).map((x) => x.id).join(",") === "371,368,369,367");
   t("サイトの内訳", roundSiteSummary(r[1].batches) === "リアプロ 3・itandi 1", roundSiteSummary(r[1].batches));
   t("判定の数", verdictCounts(merged) === "○通す 3・△保留 1", verdictCounts(merged));
 
@@ -148,6 +181,38 @@ console.log("■ まとめの回（完了の印 round_id を優先）");
 
 console.log("■ サイトの札");
 t("リアプロ／itandi", siteLabel("realpro") === "リアプロ" && siteLabel("itandi") === "itandi" && siteLabel(null) === "-");
+
+console.log("■ 点数の項目の一言（項目の合計＋50 と合計点が合わない時だけ・反証レビュー 2026-09-25）");
+{
+  const codes = ["RENT_OK", "ZERO_ZERO_MATCH", "FLOOR_PLAN_MATCH", "AD_HIGH"]; // 50+15+20+15+20 = 120
+  t("一致する時は何も出さない", scoreGapNote(codes, 120) === null);
+  t("保存が前の配点（案B の前の行）", scoreGapNote(codes, 110) === "今の配点では 120点", scoreGapNote(codes, 110));
+  const big = [...codes, "AD_1_5M", "WALK_OK", "AGE_W5", "RENT_CHEAP_W80", "SQM_OK", "AREA_STATION_MATCH", "FIT_ALL", "EQUIP_BATH_TOILET_OK", "COMMUTE_OK", "MOVE_IN_OK", "AGE_COL_W5", "AD_VERY_HIGH"];
+  const gb = scoreGapNote(big, 200);
+  t("上限200で丸めた時は素点を出す", gb != null && gb.startsWith("上限200（素点 "), gb);
+  const cap = [...codes, "EQUIP_BATH_TOILET_NG", "EQUIP_MUST_NG_CAP"];
+  t("必須の × の上限20", scoreGapNote(cap, 20) === "必須の×で上限20（素点 110）", scoreGapNote(cap, 20));
+  t("札が無い古い行・点なしは出さない", scoreGapNote(null, 100) === null && scoreGapNote(codes, null) === null);
+  const v = buildPickupCardView({ ...R370, reason_codes: codes, score: 110 });
+  t("カードの点数の項目に一言が付く", cell(v, "score")?.note === "今の配点では 120点", cell(v, "score"));
+}
+
+console.log("■ 必須の設備が × ／読めない時も「必須」（YUMA テスト お客様E 2026-09-25）");
+{
+  // 札の EQUIP_X_NG／_UNLISTED には強さが付かない → 保存した照合（equipment.match の strong）から引く
+  const codes = ["RENT_OK", "FLOOR_PLAN_MATCH", "EQUIP_DELIVERY_BOX_UNLISTED", "EQUIP_AUTOLOCK_MUST_OK", "EQUIP_BATH_DRYER_UNLISTED", "AD_1M"];
+  const equipment = { roomFloor: 3, totalFloors: 6, basement: false, match: [
+    { key: "delivery_box", strong: true }, { key: "autolock", strong: true }, { key: "bath_dryer", strong: false },
+  ] };
+  const v = buildPickupCardView({ ...R370, reason_codes: codes, score: 50 + 15 + 15 + 5 + 15, equipment });
+  t("宅配ボックス（必須・読めない）は「必須・要確認」", cell(v, "eq:DELIVERY_BOX")?.note === "必須・要確認", cell(v, "eq:DELIVERY_BOX"));
+  t("オートロック（必須・○）は「必須・一致」", cell(v, "eq:AUTOLOCK")?.note === "必須・一致", cell(v, "eq:AUTOLOCK"));
+  t("浴室乾燥機（必須でない・読めない）は「希望・要確認」", cell(v, "eq:BATH_DRYER")?.note === "希望・要確認", cell(v, "eq:BATH_DRYER"));
+  const ng = buildPickupCardView({ ...R370, reason_codes: ["RENT_OK", "EQUIP_DELIVERY_BOX_NG", "EQUIP_MUST_NG_CAP"], score: 20, equipment });
+  t("必須の × は「必須・外れ」（赤）", cell(ng, "eq:DELIVERY_BOX")?.note === "必須・外れ" && cell(ng, "eq:DELIVERY_BOX")?.tone === "ng", cell(ng, "eq:DELIVERY_BOX"));
+  const noMatch = buildPickupCardView({ ...R370, reason_codes: codes, score: 100, equipment: { roomFloor: 3 } });
+  t("照合が無い古い行は今まで通り「希望」", cell(noMatch, "eq:DELIVERY_BOX")?.note === "希望・要確認", cell(noMatch, "eq:DELIVERY_BOX"));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

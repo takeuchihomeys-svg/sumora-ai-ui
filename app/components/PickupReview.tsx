@@ -5,13 +5,13 @@
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { okCountOf, verdictOrder, bestPointLabel, type CustomerBest } from "@/app/lib/pickup-best";
+import { okCountOf, verdictOrder, bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
 import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
 import type { PickupTerms } from "@/app/lib/pickup-terms";
 import { PICKUP_EXPIRED_LABEL, PICKUP_EXPIRED_ACTION_NOTE } from "@/app/lib/pickup-retention";
-import { buildPickupCardView, groupPickupRounds, mergeRoundItems, roundSiteSummary, siteLabel, verdictCounts, type CardMark } from "@/app/lib/pickup-card-view";
+import { buildPickupCardView, groupPickupRounds, mergeRoundItems, roundSiteSummary, siteLabel, verdictCounts, type CardMark, type CellTone } from "@/app/lib/pickup-card-view";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -109,6 +109,14 @@ type Bubble =
 const MARK_STYLE: Record<CardMark["tone"], { color: string; bg: string }> = {
   pass: { color: "#2e7d32", bg: "#f1f8e9" }, hold: { color: "#e65100", bg: "#fff3e0" },
   drop: { color: "#c62828", bg: "#ffebee" }, none: { color: "#90a4ae", bg: "#f5f5f5" },
+};
+/**
+ * 項目の色（2026-09-25 竹内「カードの項目もお客さんの理想の条件に合わせて表示する」）: 合う＝緑・合わない＝赤・要確認＝灰・幅の中＝薄い緑・書いていない／事実＝白。
+ *   見出しは お客様が書いた条件＝茶色（リアプロの見出し帯）／それ以外＝薄い茶色
+ */
+const CELL_TONE: Record<CellTone, { bg: string; pts: string }> = {
+  ok: { bg: "#f1f8e9", pts: "#2e7d32" }, wide: { bg: "#f9fbe7", pts: "#689f38" }, ng: { bg: "#ffebee", pts: "#c62828" },
+  unread: { bg: "#f5f5f5", pts: "#90a4ae" }, info: { bg: "#ffffff", pts: "#5d4037" },
 };
 /** 畳んだ時の1行の色 */
 const HEADLINE_COLOR: Record<"drop" | "minus" | "plus" | "info", string> = { drop: "#c62828", minus: "#e65100", plus: "#2e7d32", info: "#78909c" };
@@ -267,7 +275,7 @@ function batchExpired(b: Batch): boolean {
 /**
  * 2026-09-25 竹内「まとめられていない。スタッフモードで送った時は完了ボタンでリアプロと itandi の全部を分析」:
  *   同じお客様に短い間（前の回から30分以内・拡張の「完了」の印 round_id があればそれ）に届いた回を1つの吹き出しにまとめる。
- *   物件は 🌟★ → 🌟 → 点の高い順（サイトが混ざってもよい・カードにサイトの小さな札）
+ *   物件は 👑 → 点の高い順（同点は🌟★／🌟・サイトが混ざってもよい・カードにサイトの小さな札）
  */
 function toRounds(batches: Batch[]): Batch[] {
   return groupPickupRounds(batches).map((r) => {
@@ -782,7 +790,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
       const best = fresh?.best;
       const parts = [
         `🔍 ${ok + saved}/${targets.length}件を分析しました`,
-        best ? `👑 全体で一番条件に合うのは【${best.rank}】${best.property_name}（${bestPointLabel(best)}）` : "",
+        best ? `👑 一番オススメ（全体）は【${best.rank}】${best.property_name}（${bestPointLabel(best)}）` : "",
         cut.length > saved ? `通信が切れた ${cut.length - saved}件は結果が保存され次第ここに出ます` : "",
         failed.length ? `⚠ 読めなかった: ${failed.join("・")}` : "",
       ].filter(Boolean);
@@ -857,8 +865,13 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
    *   部屋の段＝茶色の見出し帯・白い値の段（部屋/階・状態/入居・間取り/㎡・賃料/管理費・敷金/礼金・保証金/償却・AD・築年・点数）。スマホは3列の格子
    *   畳んだ時は一番大事な1行だけ。「詳細 ▾」で理由の札・点の内訳・設備・募集の条件・場所・画像の読み取り・画像で分析・資料
    */
-  const renderCard = (it: Item, b: Batch) => {
+  // 2026-09-25 一番オススメ（👑）は1つ: 全体の 👑（詳細 API の best）か、同じ決まり（pickCustomerBest）でその回の一番。
+  //   DeepSeek の🌟★／🌟 は「🌟 候補」として小さく残す（点が並んだ時の順番にだけ使う・pickup-best.roundBestId）
+  //   反証レビュー 2026-09-25: 全体の 👑 が別の回にある時、この回の一番まで「👑 一番オススメ」と出すと 👑 が2つに割れる → 「この回で一番」（色を弱める）
+  const renderCard = (it: Item, b: Batch, bestId: number | null = null, bestIsGlobal = true) => {
     const cv = buildPickupCardView(it);
+    const isBest = bestId != null && it.id === bestId;
+    const crown = isBest && bestIsGlobal;
     const pending = it.status === "pending";
     const img = it.trim_image_url ?? it.page_image_url ?? null;
     const opened = !!openCard[it.id];
@@ -881,9 +894,9 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
       </>
     );
     return (
-      <div key={it.id} className="rounded-xl overflow-hidden bg-white" style={{ border: `1px solid ${it.recommended > 0 ? "#ffcc80" : "#d7ccc8"}`, opacity: pending ? 1 : 0.6 }}>
+      <div key={it.id} className="rounded-xl overflow-hidden bg-white" style={{ border: crown ? "2px solid #f9a825" : "1px solid #d7ccc8", opacity: pending ? 1 : 0.6 }}>
         {/* 建物の段（リアプロの写真の位置に図面） */}
-        <div className="flex gap-2 p-2 items-start" style={{ background: it.recommended > 0 ? "#fff8e1" : "#fffdfb" }}>
+        <div className="flex gap-2 p-2 items-start" style={{ background: crown ? "#fff8e1" : "#fffdfb" }}>
           <label className="shrink-0 -m-1.5 p-1.5 flex items-start" aria-label={`【${it.rank}】を選ぶ`}>
             <input type="checkbox" className="mt-1 h-4 w-4" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
           </label>
@@ -899,8 +912,10 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             <div className="flex items-center gap-1 flex-wrap leading-none mb-0.5">
               <span className="text-[9px] font-bold px-1 py-[2px] rounded" style={site === "itandi" ? { background: "#fff3e0", color: "#e65100" } : { background: "#e3f2fd", color: "#1565C0" }}>{siteLabel(site)}</span>
               <span className="text-[10px] text-[#8d6e63] font-bold">【{it.rank}】</span>
-              {it.recommended === 2 && <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: "#f57f17" }}>🌟★ 一番オススメ</span>}
-              {it.recommended === 1 && <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: "#f57f17" }}>🌟 オススメ</span>}
+              {isBest && (bestIsGlobal
+                ? <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#fff", background: "#f9a825" }}>👑 一番オススメ</span>
+                : <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#78909c", background: "#eceff1" }}>この回で一番</span>)}
+              {!isBest && it.recommended > 0 && <span className="text-[10px] whitespace-nowrap" style={{ color: "#bf8f00" }} title="DeepSeek が選んだ候補（点が並んだ時の順番に使う）">🌟 候補</span>}
               {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
             </div>
             {/* パソコンは図面の横・スマホは図面の下の全幅（360px でも物件名が1〜2行に収まる） */}
@@ -912,18 +927,29 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             <span className="text-[11px] font-bold tabular-nums mt-0.5">{cv.mark.score != null ? `${cv.mark.score}点` : "－"}</span>
           </div>
         </div>
-        <div className="md:hidden px-2 pb-2 -mt-0.5" style={{ background: it.recommended > 0 ? "#fff8e1" : "#fffdfb" }}>{nameBlock}</div>
-        {/* 部屋の段（茶色の見出し帯・白い値の段）。スマホは3列の格子で横に流れない・パソコンは1列の表 */}
-        <div className="grid grid-cols-3 md:grid-cols-9 gap-px" style={{ background: "#d7ccc8", borderTop: "1px solid #d7ccc8" }}>
-          {cv.cells.map((c) => (
-            <div key={c.key} className="flex min-w-0 flex-col bg-white">
-              <div className="px-0.5 py-[3px] text-center text-[9px] font-bold leading-none text-white whitespace-nowrap overflow-hidden text-ellipsis" style={{ background: "#8d6e63" }}>{c.head}</div>
-              <div className="flex flex-1 flex-col items-center justify-center px-1 py-1 text-center leading-tight">
-                <span className="text-[11px] font-bold break-all" style={{ color: c.key === "score" ? ms.color : c.value === "－" ? "#bcaaa4" : "#3e2723" }}>{c.value}</span>
-                {c.sub != null && <span className="text-[10px] break-all" style={{ color: c.sub === "－" ? "#bcaaa4" : "#6d4c41" }}>{c.sub}</span>}
+        <div className="md:hidden px-2 pb-2 -mt-0.5" style={{ background: crown ? "#fff8e1" : "#fffdfb" }}>{nameBlock}</div>
+        {/* 部屋の段（茶色の見出し帯・値の段）。2026-09-25 竹内「カードの項目もお客さんの理想の条件に合わせて表示する。AD。各項目の点数」:
+            お客様が書いた条件の項目が先（茶色の見出し）→ 全部合う → AD → 書いていない条件 → 事実。項目ごとに点（＋20）と「初期費用を抑えたい・一致」。
+            合う＝緑・合わない＝赤・要確認＝灰。スマホは3列の格子で横に流れない・パソコンは6列 */}
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-px" style={{ background: "#d7ccc8", borderTop: "1px solid #d7ccc8" }}>
+          {cv.cells.map((c) => {
+            const tone = c.tone ? CELL_TONE[c.tone] : null;
+            return (
+              <div key={c.key} className="flex min-w-0 flex-col" style={{ background: tone?.bg ?? "#fff" }} title={c.codes?.length ? c.codes.join(" ") : undefined}>
+                <div className="px-0.5 py-[3px] text-center text-[9px] font-bold leading-none text-white whitespace-nowrap overflow-hidden text-ellipsis" style={{ background: c.written ? "#8d6e63" : c.key === "score" ? "#6d4c41" : "#bcaaa4" }}>{c.written ? "★" : ""}{c.head}</div>
+                <div className="flex flex-1 flex-col items-center justify-center px-1 py-1 text-center leading-tight">
+                  <span className="text-[11px] font-bold break-all" style={{ color: c.key === "score" ? ms.color : c.value === "－" ? "#bcaaa4" : "#3e2723" }}>{c.value}</span>
+                  {c.sub != null && <span className="text-[10px] break-all" style={{ color: c.sub === "－" ? "#bcaaa4" : "#6d4c41" }}>{c.sub}</span>}
+                  {c.points != null && (
+                    <span className="text-[10px] font-bold tabular-nums leading-tight" style={{ color: tone?.pts ?? "#5d4037" }}>
+                      {c.points > 0 ? `+${c.points}` : c.points < 0 ? `−${Math.abs(c.points)}` : "±0"}
+                    </span>
+                  )}
+                  {c.note && <span className="text-[9px] leading-tight break-all" style={{ color: tone?.pts ?? "#8d6e63" }}>{c.note}</span>}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         {/* 畳んだ時の1行と「詳細 ▾」 */}
         <div className="flex items-center gap-2 px-2 py-1.5" style={{ borderTop: "1px solid #efebe9" }}>
@@ -1063,11 +1089,26 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     {open.condition_summary.uncheckable.length > 0 && <div className="mt-0.5 break-words" style={{ color: "#78909c" }}>照らせない条件: {open.condition_summary.uncheckable.join("／")}</div>}
                   </details>
                 )}
-                <div className="flex flex-col gap-2.5">
-                  {/* 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」
-                      2026-09-25 竹内「リアプロの物件一覧と同じ見た目にして、図面だけ今と同じ。図面の下にリアプロの物件一覧の項目の表記で。点数の項目も」 */}
-                  {sortForReview(bb.batch.items).map((it) => renderCard(it, bb.batch))}
-                </div>
+                {(() => {
+                  // 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」
+                  // 2026-09-25 竹内「お客さんにベストな物件が一番オススメ」（野口さんの回: 162点に🌟★・164点に🌟）:
+                  //   一番オススメ（👑）は点の1位（画像で分析が要るお客様は画像の点）＝全体の 👑 と同じ決まり。並びは 👑 → 点の高い順（同点は🌟）
+                  const at = new Map((bb.batch.parts ?? [bb.batch]).map((x) => [x.batch_id, x.created_at] as const));
+                  const rb = roundBestId(bb.batch.items.map((x) => ({ ...x, batch_id: x.batch_id ?? bb.batch.batch_id, created_at: at.get(x.batch_id ?? "") ?? bb.batch.created_at })), bestBasisFor(open.image_need), open.best?.id ?? null);
+                  const bi = rb != null ? bb.batch.items.find((x) => x.id === rb) ?? null : null;
+                  const basisImage = bestBasisFor(open.image_need) === "image" && typeof (bi?.image_analysis as { match?: unknown } | null)?.match === "number";
+                  // 全体の 👑（open.best）がこの回に無い時は、この回の一番は「この回で一番」（👑 は全体で1つ）
+                  const rbGlobal = !open.best || open.best.id === rb;
+                  return (
+                    <>
+                      {bi && <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={rbGlobal ? { background: "#fff8e1", color: "#8d6e00" } : { background: "#f5f5f5", color: "#78909c" }}>
+                        {rbGlobal ? "👑 一番オススメ" : "この回で一番（全体の👑は別の回）"}: 【{bi.rank}】{bi.property_name}{bi.room_no ? ` ${bi.room_no}` : ""}（{basisImage ? `画像の点 ${(bi.image_analysis as { match: number }).match}点` : `判定 ${bi.score ?? "－"}点`}）</div>}
+                      <div className="flex flex-col gap-2.5">
+                        {sortForReview(bb.batch.items, rb).map((it) => renderCard(it, bb.batch, rb, rbGlobal))}
+                      </div>
+                    </>
+                  );
+                })()}
                 {/* 2026-09-25 竹内「保存期間が終了しましたと出る感じで（実際の LINE のように）」: 切れた回は理由を1行・切れる前 12時間は残りを小さく */}
                 {batchExpired(bb.batch)
                   ? <div className="text-[10px] mt-1.5 px-2 py-1 rounded-lg leading-snug" style={{ background: "#eceff1", color: "#78909c" }}>🔒 {PICKUP_EXPIRED_ACTION_NOTE}</div>
@@ -1156,7 +1197,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   // 全体の一番（下の 👑 の吹き出し）と違う時は「この回で一番」として色を弱める
                   const isGlobal = !open.best || open.best.id === bb.bestId;
                   return best ? <div className="text-xs font-bold mb-1.5 px-2 py-1 rounded-lg" style={isGlobal ? { background: "#e0f2f1", color: "#00695c" } : { background: "#f5f5f5", color: "#78909c" }}>
-                    {isGlobal ? "👑 一番条件に合う" : "この回で一番"}: 【{best.rank}】{best.property_name}（{best.image_analysis?.match}点）</div> : null;
+                    {isGlobal ? "👑 一番オススメ（画像の点）" : "この回で画像の点が一番"}: 【{best.rank}】{best.property_name}（{best.image_analysis?.match}点）</div> : null;
                 })()}
                 <div className="flex flex-col gap-2">
                   {/* 2026-09-24 竹内「分析結果のところに画像を添付。分析によって絞られたのもそのまま使えるように」:
@@ -1191,7 +1232,8 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                         )}
                         <div className="flex-1 min-w-0">
                         <div className="text-[11px] font-bold break-words">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}{a.match != null ? `　${a.match}点` : ""}{needCheck && <span className="ml-1 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "#fff3e0", color: "#e65100" }}>⚠ 要確認</span>}{!aPending && <span className="ml-1 text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}</div>
-                        {it.recommended > 0 && <div className="text-[10px] font-bold mt-0.5" style={{ color: "#f57f17" }}>{it.recommended === 2 ? "🌟★ 一番オススメ" : "🌟 オススメ"}</div>}
+                        {/* 反証レビュー 2026-09-25: DeepSeek の印をここだけ「🌟★ 一番オススメ」と出していた（👑 と割れる）→ カードと同じ「🌟 候補」 */}
+                        {it.recommended > 0 && <div className="text-[10px] mt-0.5" style={{ color: "#bf8f00" }} title="DeepSeek が選んだ候補（点が並んだ時の順番に使う）">🌟 候補</div>}
                         </div>
                         </div>
                         {needCheck && (a.review?.reasons ?? []).length > 0 && (
@@ -1270,7 +1312,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
               <Icon bg="#f9a825">👑</Icon>
               <div className={LEFT_BUBBLE}>
                 {/* 2026-09-25 竹内「画像で分析必要なお客さんなら画像で分析の点、不要なお客さんは判定した点」: 何で決めたか（basis）と、まとめた回か直近の回かを出す */}
-                <div className="text-xs font-bold mb-1">👑 全体で一番条件に合う（{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析" : "判定"}の点）</div>
+                <div className="text-xs font-bold mb-1">👑 一番オススメ（全体・{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析" : "判定"}の点）</div>
                 <div className="text-[13px] font-bold px-2 py-1.5 rounded-lg" style={{ background: "#fff8e1", color: "#e65100" }}>
                   【{bst.rank}】{bst.property_name}{bst.room_no ? ` ${bst.room_no}号室` : ""}（{bestPointLabel(bst)}）
                 </div>
@@ -1388,7 +1430,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
       {filtered.map((c) => {
         const lb = c.last_batch;
         const sentParts = [c.sent.pickup ? `🟢${c.sent.pickup}` : "", c.sent.recommendation ? `🔵${c.sent.recommendation}` : "", c.sent.other ? `送${c.sent.other}` : ""].filter(Boolean).join(" ");
-        const preview = lb ? `🧠 ${lb.count}件${lb.rec_name ? `・🌟${lb.rec_name}` : ""}` : sentParts ? `📦 送った物件 ${sentParts}` : "";
+        const preview = lb ? `🧠 ${lb.count}件${lb.rec_name ? `・👑${lb.rec_name}` : ""}` : sentParts ? `📦 送った物件 ${sentParts}` : "";
         const at = c.line?.updated_at ?? c.last_at;
         const img = c.line?.profile_image_url ?? null;
         const active = c.key === openKey;

@@ -273,6 +273,11 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       }
       void i;
     }));
+    // 2026-09-25 一番オススメ: 行の recommended（🌟★=2・🌟=1）は merge-pdfs で判定の**前**に DeepSeek が付けた印のまま残す（書き換えない）。
+    //   売上サポの「一番オススメ」は判定の後の点の1位（👑・pickup-best の pickCustomerBest／roundBestId）で画面と「完了」のまとめが決め、
+    //   recommended は「点が並んだ時の順番」（pickCustomerBest の tail・compareForReview）の材料にだけ使う。
+    //   ここで付け直さない理由: 画像で分析が要るお客様の 👑 はこの後の自動の読み取り（pickup-auto-analyze）の点で決まり、回をまたいで変わる
+    //   （ここで判定の点で付け直すと、画面の 👑 と食い違う印が DB に残る）。DeepSeek が何を選んだかの記録も消えない
     const rows = buildPickupRows({
       batchId: input.batchId, propertyCustomerId: input.propertyCustomerId, conversationId,
       customerName: input.customerName, site: input.site,

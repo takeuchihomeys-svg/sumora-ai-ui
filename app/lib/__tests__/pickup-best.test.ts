@@ -1,7 +1,7 @@
 // 2026-09-24 竹内「1番オススメの物件全体の中で送る。今回は物件数多かったからか出ていなかった」— 回をまたいだ一番のテスト
 // 実行: npx tsx app/lib/__tests__/pickup-best.test.ts
 // 形は 2026-09-24 の実例（同じお客様に 1分以内に 1件・10件・1件 の3回。id 34〜45）。お客様の情報は無い
-import { pickCustomerBest, type BestCandidateRow } from "../pickup-best";
+import { pickCustomerBest, roundBestId, type BestCandidateRow } from "../pickup-best";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -85,6 +85,21 @@ t("★ 空は null", pickCustomerBest([]) === null);
   ];
   t("★ 同じ点・同じ「合う」の数なら保留より通す物（🌟 の強さより先）", pickCustomerBest(rows)?.id === 2, pickCustomerBest(rows));
   t("★ 点が違えば判定より点（保留でも点が高ければ 👑）", pickCustomerBest([row(1, "B1", "2026-09-25T02:10:00Z", 1, 100, { verdict: "hold" }), row(2, "B1", "2026-09-25T02:10:00Z", 2, 90, { verdict: "pass" })])?.id === 1);
+}
+
+// 2026-09-25 一番オススメ＝👑（判定の点の1位）。野口さんの回の形: 162点に🌟★（DeepSeek）・164点に🌟
+{
+  const at = "2026-09-25T05:17:00Z";
+  const rows = [
+    row(368, "B1", at, 1, undefined, { score: 162, recommended: 2, verdict: "pass" }),
+    row(369, "B1", at, 2, undefined, { score: 164, recommended: 1, verdict: "pass" }),
+    row(370, "B1", at, 3, undefined, { score: 150, verdict: "pass" }),
+  ];
+  t("一番オススメは点の1位（164点）・🌟★ の 162点ではない", roundBestId(rows, "score") === 369);
+  t("同点なら DeepSeek の🌟★ が上", roundBestId(rows.map((r) => ({ ...r, score: 160 })), "score") === 368);
+  t("全体の 👑 がこの回にあればそれ", roundBestId(rows, "score", 370) === 370);
+  t("全体の 👑 が別の回なら、この回の中の一番", roundBestId(rows, "score", 999) === 369);
+  t("送った物件は一番オススメにしない", roundBestId(rows.map((r) => (r.id === 369 ? { ...r, status: "sent" } : r)), "score") === 368);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

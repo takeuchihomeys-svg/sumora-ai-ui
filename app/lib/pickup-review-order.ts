@@ -11,20 +11,26 @@ import { BASE_SCORE, reasonJa, reasonPoints } from "./property-brain";
 
 export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null };
 
-/** 並びの比べ方: 🌟★ → 🌟 → 印なし、点の高い順（点なしは最後）、同点は順位 → id */
+/**
+ * 並びの比べ方: 点の高い順（点なしは最後）→ 同点は DeepSeek の🌟★／🌟 → 順位 → id。
+ * 2026-09-25 竹内（野口さんの回: 162点に🌟★・164点に🌟）: 「お客さんにベストな物件が一番オススメ」。🌟★ は DeepSeek が回ごとに選んだ印で
+ *   点と連動していなかった → 並びは点を先にし、DeepSeek の選び方は「点が並んだ時の順番」にだけ使う（1点でも差があれば点の順）。
+ *   一番オススメ（👑）は pickCustomerBest の決まり（画像で分析が要るお客様は画像の点）で決め、sortForReview の bestId で先頭に置く
+ */
 export function compareForReview(a: ReviewOrderRow, z: ReviewOrderRow): number {
-  const rec = (z.recommended ?? 0) - (a.recommended ?? 0);
-  if (rec) return rec;
   const sa = a.score, sz = z.score;
   if (sa != null && sz != null && sa !== sz) return sz - sa;
   if (sa == null && sz != null) return 1;
   if (sa != null && sz == null) return -1;
-  return (a.rank - z.rank) || (a.id - z.id);
+  return ((z.recommended ?? 0) - (a.recommended ?? 0)) || (a.rank - z.rank) || (a.id - z.id);
 }
 
-/** 1回分の物件を画面の並びにする（元の配列は変えない） */
-export function sortForReview<T extends ReviewOrderRow>(items: ReadonlyArray<T>): T[] {
-  return items.slice().sort(compareForReview);
+/** 1回分の物件を画面の並びにする（元の配列は変えない）。bestId（👑 一番オススメ）があればそれを先頭に */
+export function sortForReview<T extends ReviewOrderRow>(items: ReadonlyArray<T>, bestId?: number | null): T[] {
+  const sorted = items.slice().sort(compareForReview);
+  if (bestId == null) return sorted;
+  const i = sorted.findIndex((x) => x.id === bestId);
+  return i > 0 ? [sorted[i], ...sorted.slice(0, i), ...sorted.slice(i + 1)] : sorted;
 }
 
 /** 画面に出す短い言い方（REASON_JA より短く。無ければ REASON_JA） */
@@ -82,6 +88,15 @@ const CHIP_JA: Record<string, string> = {
   FLOOR_PLAN_SAME_CLASS: "同じ広さの級（2DK↔1LDK）",
   FLOOR_PLAN_LARGER: "希望より広い間取り",
   AD_NONE: "AD なし",
+  // 2026-09-25 案B（書いた条件だけ重く・全部合う・AD 1ヶ月未満）
+  ZERO_ZERO_INFERRED: "敷礼0（送った物件から推した）",
+  AGE_W5: "築5年以内（築浅の希望）", AGE_W10: "築10年以内（築浅の希望）", AGE_W15: "築15年以内（築浅の希望）", AGE_W_OLD: "築15年超（築浅の希望）",
+  AGE_COL_W5: "築5年以内（希望の中でも新しい）", AGE_COL_W10: "築10年以内（希望の中でも新しい）", AGE_N5: "築5年以内", AGE_N10: "築10年以内",
+  WALK_NEAR_W5: "徒歩5分以内（駅近の希望）", WALK_NEAR_W7: "徒歩7分以内（駅近の希望）", WALK_NEAR_N: "徒歩5分以内",
+  WALK_TEXT_OK: "駅近の希望内", WALK_TEXT_OVER: "駅近の希望を超える", WALK_TEXT_FAR: "駅近の希望を大きく超える",
+  RENT_CHEAP_W80: "家賃が上限の8割以下（安くしたい）", RENT_CHEAP_W90: "家賃が上限の9割以下（安くしたい）", RENT_CHEAP_W95: "家賃が上限の95%以下（安くしたい）",
+  AD_UNDER_1M: "AD 1ヶ月未満",
+  FIT_ALL: "書いた条件に全部合う", FIT_ALL_HALF: "書いた条件（2つ）に全部合う", FIT_ONE_MISS: "書いた条件の1つだけ外れ", FIT_ONE_MISS_HALF: "書いた条件（2つ）の1つだけ外れ",
 };
 
 /** 読めなかった材料（点が動かない理由）。コード → 札の言葉 */

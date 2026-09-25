@@ -181,6 +181,24 @@ export type CustomerProfile = {
   sqmMin?: number | null;
   /** 2026-09-25 築年の列が空で、自由文に「新築」「築浅」「新しめ」がある時の年数の目安（情報の札だけ） */
   ageTextMax?: { years: number; word: string } | null;
+  /** 2026-09-25 案B お客様が書いた条件の強さ（築浅の自由文・駅近・家賃を低くしたい）。readWrittenWants。無い呼び出し元は「書いていない」扱い */
+  written?: WrittenWants;
+};
+
+/** 希望の強さ（必須・絶対・マスト＝strong／できれば・あれば＝soft） */
+export type WantStrength = "strong" | "normal" | "soft";
+/**
+ * 2026-09-25 案B お客様が「書いた」条件（scripts/audit-fit-balance.ts の readWants と同じ読み方）。
+ *   ageText: 自由文の「新築・築浅・新しめ・築N年以内」の強さ（年数は profile.ageTextMax）／ageColumn: 築年の列
+ *   walkText: 自由文の「駅近・駅チカ・徒歩N分以内」（max は徒歩の列 → 文の N 分 → 10分）／walkColumn: 徒歩の列だけ
+ *   rentCheap: 自由文「家賃は低い方が良い・安く・抑えたい」（家賃の上限が使える時だけ）
+ */
+export type WrittenWants = {
+  ageText: { strength: WantStrength } | null;
+  ageColumn: boolean;
+  walkText: { max: number; strength: WantStrength } | null;
+  walkColumn: boolean;
+  rentCheap: { strength: WantStrength } | null;
 };
 
 export type Verdict = "pass" | "hold" | "drop";
@@ -340,6 +358,24 @@ export const REASON_JA: Record<string, string> = {
   COMMUTE_OVER: "通勤が希望の時間を超える",
   COMMUTE_INFO: "通勤の所要（目安）",
   COMMUTE_UNKNOWN: "要確認: 通勤の所要",
+  // 2026-09-25 案B（竹内「お客さんの希望に合っていたら加点する重み付け・AD のように」「お客さん毎の条件で加点も変動」）
+  //   書いた条件だけ重くする札（writtenWeightCodes）。_MUST＝必須・絶対（×1.3）／_SOFT＝できれば（×0.6）
+  ZERO_ZERO_INFERRED: "敷礼0（送った物件から初期費用を抑えたい方と推した）",
+  AGE_W5: "築5年以内（築浅の希望）", AGE_W10: "築10年以内（築浅の希望）", AGE_W15: "築15年以内（築浅の希望）", AGE_W_OLD: "築15年超（築浅の希望）",
+  AGE_W5_MUST: "築5年以内（築浅が必須）", AGE_W10_MUST: "築10年以内（築浅が必須）", AGE_W15_MUST: "築15年以内（築浅が必須）",
+  AGE_W5_SOFT: "築5年以内（できれば築浅）", AGE_W10_SOFT: "築10年以内（できれば築浅）", AGE_W15_SOFT: "築15年以内（できれば築浅）",
+  AGE_COL_W5: "築5年以内（築年の希望の中でも新しい）", AGE_COL_W10: "築10年以内（築年の希望の中でも新しい）",
+  AGE_N5: "築5年以内（築年は書いていない）", AGE_N10: "築10年以内（築年は書いていない）",
+  WALK_NEAR_W5: "徒歩5分以内（駅近の希望）", WALK_NEAR_W7: "徒歩7分以内（駅近の希望）",
+  WALK_NEAR_W5_MUST: "徒歩5分以内（駅近が必須）", WALK_NEAR_W7_MUST: "徒歩7分以内（駅近が必須）",
+  WALK_NEAR_W5_SOFT: "徒歩5分以内（できれば駅近）", WALK_NEAR_W7_SOFT: "徒歩7分以内（できれば駅近）",
+  WALK_NEAR_N: "徒歩5分以内（駅近は書いていない）",
+  WALK_TEXT_OK: "徒歩が「駅近」の希望内", WALK_TEXT_OVER: "徒歩が「駅近」の希望を超える（15分以内）", WALK_TEXT_FAR: "徒歩が「駅近」の希望を大きく超える（15分超）",
+  RENT_CHEAP_W80: "家賃が上限の8割以下（家賃を低くしたい希望）", RENT_CHEAP_W90: "家賃が上限の9割以下（家賃を低くしたい希望）", RENT_CHEAP_W95: "家賃が上限の95%以下（家賃を低くしたい希望）",
+  RENT_CHEAP_W80_MUST: "家賃が上限の8割以下（家賃を低くが必須）", RENT_CHEAP_W90_MUST: "家賃が上限の9割以下（家賃を低くが必須）", RENT_CHEAP_W95_MUST: "家賃が上限の95%以下（家賃を低くが必須）",
+  RENT_CHEAP_W80_SOFT: "家賃が上限の8割以下（できれば家賃を低く）", RENT_CHEAP_W90_SOFT: "家賃が上限の9割以下（できれば家賃を低く）", RENT_CHEAP_W95_SOFT: "家賃が上限の95%以下（できれば家賃を低く）",
+  AD_UNDER_1M: "AD 1ヶ月未満（報酬が少ない）",
+  FIT_ALL: "書いた条件に全部合う", FIT_ALL_HALF: "書いた条件（2つ）に全部合う", FIT_ONE_MISS: "書いた条件のうち1つだけ外れ", FIT_ONE_MISS_HALF: "書いた条件（2つ）のうち1つだけ外れ",
 };
 
 /**
@@ -389,7 +425,10 @@ export const EQUIP_NG_POINTS = -10;
 export const EQUIP_STRONG_NG_CAP = 20;
 export const EQUIP_CAP_CODE = "EQUIP_MUST_NG_CAP";
 
-function equipKeyLabel(key: string): string {
+export function equipKeyLabel(key: string): string {
+  // 2026-09-25 案B: 強さの付いた ○ の札（EQUIP_<KEY>_MUST_OK・_SOFT_OK）は KEY の後ろに _MUST／_SOFT が付く
+  if (/_MUST$/.test(key)) return `${equipKeyLabel(key.slice(0, -5))}（必須）`;
+  if (/_SOFT$/.test(key)) return `${equipKeyLabel(key.slice(0, -5))}（できれば）`;
   // 「無いほうがよい」希望（ロフトNG 等）は KEY_NOT（画面の1行の「ロフトNG○」と同じ言い方にする）
   if (/_NOT$/.test(key)) return `${equipKeyLabel(key.slice(0, -4))}NG`;
   const k = key.toLowerCase();
@@ -426,7 +465,11 @@ export function reasonJa(code: string): string {
   }
 }
 
-/** 照合の行 → 理由コード（同じコードは1つだけ・○ の加点は合計 +15 まで） */
+/**
+ * 照合の行 → 理由コード（同じコードは1つだけ・○ の加点は合計 +15 まで）。
+ * 2026-09-25 案B: ○ の点は希望の強さで変える（必須 +5 EQUIP_<KEY>_MUST_OK／普通 +3 EQUIP_<KEY>_OK／できれば +2 EQUIP_<KEY>_SOFT_OK）。
+ *   合計 +15 を越える ○ は今まで通り _OK_MAX（0点）。案（audit-fit-balance）は越えた分を端数で足すが、札の点を固定にするため丸ごと 0点にした
+ */
 export function equipmentReasonCodes(m: EquipmentMatch | null | undefined): string[] {
   if (!m) return [];
   const out: string[] = [];
@@ -434,16 +477,18 @@ export function equipmentReasonCodes(m: EquipmentMatch | null | undefined): stri
   for (const r of m.rows) {
     // mode=ng（「ロフトNG」）は別のコード（EQUIP_LOFT_NOT_OK＝ロフトが無い＝希望どおり）。同じ KEY だと「ロフト○」と読めて逆の意味になる
     const KEY = String(r.want.key).toUpperCase() + (r.want.mode === "ng" ? "_NOT" : "");
+    const okCode = r.want.strong ? `EQUIP_${KEY}_MUST_OK` : r.want.soft ? `EQUIP_${KEY}_SOFT_OK` : `EQUIP_${KEY}_OK`;
+    const okPt = r.want.strong ? EQUIP_OK_POINTS_MUST : r.want.soft ? EQUIP_OK_POINTS_SOFT : EQUIP_OK_POINTS;
     let code: string;
     if (r.result === "ng") code = `EQUIP_${KEY}_NG`;
     else if (r.result === "unlisted") code = `EQUIP_${KEY}_UNLISTED`;
     // 構造の一段下（鉄筋の希望に鉄骨）は「少し低い」（0点・保留にしない）。ペット相談の △ とは別のコード
     else if (r.mark === "△" && r.want.key === "structure") code = `EQUIP_${KEY}_NEAR`;
     else if (r.mark === "△") code = `EQUIP_${KEY}_ASK`;
-    else if (okPts + EQUIP_OK_POINTS <= EQUIP_OK_MAX_TOTAL) code = `EQUIP_${KEY}_OK`;
+    else if (okPts + okPt <= EQUIP_OK_MAX_TOTAL) code = okCode;
     else code = `EQUIP_${KEY}_OK_MAX`;
     if (out.includes(code)) continue;
-    if (code.endsWith("_OK")) okPts += EQUIP_OK_POINTS;
+    if (code === okCode) okPts += okPt;
     out.push(code);
   }
   if (m.strongNg) out.push(EQUIP_CAP_CODE);
@@ -481,7 +526,8 @@ export const REASON_POINTS: Record<string, number> = {
   RENT_BELOW_MIN: -3,
   FLOOR_PLAN_ALT_MATCH: 8,
   SQM_OK: 3, SQM_SLIGHTLY_UNDER: 0, SQM_UNDER: -10, SQM_UNKNOWN: 0,
-  BUILDING_AGE_TEXT_OK: 3, BUILDING_AGE_TEXT_OVER: 0,
+  // 2026-09-25 案B: 築浅の自由文の○×は 0点の札（全部合うの数に入る）。点は段の札（AGE_W*）で数える（旧 ○ +3）
+  BUILDING_AGE_TEXT_OK: 0, BUILDING_AGE_TEXT_OVER: 0,
   // 2026-09-25 エリア・通勤（外す候補にしない。以外に当たる時だけ保留）
   AREA_STATION_MATCH: 10, AREA_WARD_MATCH: 8, AREA_LINE_MATCH: 6, AREA_NEAR: 5, AREA_REGION_MATCH: 3, AREA_CLOSE: 2, AREA_FAR: -3,
   AREA_EXCLUDED: -10, AREA_UNKNOWN: 0, AREA_DIRECTION_NG: -3,
@@ -495,10 +541,45 @@ export const REASON_POINTS: Record<string, number> = {
   // 2026-09-25 監査（任務A・B）: 保留・外す候補にしない札。
   //   同じ建物の別の部屋 −3（旧: 建物で −30 の外す候補）・2DK↔1LDK +8（旧: 不一致 −15 保留）・希望より広い間取り +5（旧: 不一致 −15 保留）
   //   AD なし −5（旧: 不明と同じ 0点で AD 0.5ヶ月より上に並んでいた）
-  ALREADY_SENT_OTHER_ROOM: -3, FLOOR_PLAN_SAME_CLASS: 8, FLOOR_PLAN_LARGER: 5, AD_NONE: -5,
+  ALREADY_SENT_OTHER_ROOM: -3, FLOOR_PLAN_SAME_CLASS: 8, FLOOR_PLAN_LARGER: 5,
+  // AD なし: 旧 −5 → 2026-09-25 案B −10（竹内「AD 1未満は点数低く・なかなかお勧めしない」）
+  AD_NONE: -10,
   // 号室を読んで初めて当たる「同じ部屋を送付済み」（旧は当たらなかった形）は保留 −10（外す候補にしない）
   ALREADY_SENT_SAME_ROOM: -10,
+  // ── 2026-09-25 案B（竹内さん決定・scripts/audit-fit-balance.ts の PLAN_B・例の25問は fit-balance.test.ts）──────────────
+  //   竹内「お客さんの希望に合っていたら点数加点する重み付け・AD のように」「全部の条件当てはまっていたらさらに加点」
+  //   「お客さんにベストな物件が一番オススメ」「AD 低ければ利益にならないので AD も重要」「AD 1未満は点数低く・なかなかお勧めしない」
+  //   「初期費用を抑えたいお客さんには敷金礼金0円が加点・お客さん毎の条件で加点も変動」
+  //   → お客様が**書いた**条件だけ重くする（書いていない条件は軽く）。点は今まで通り「50＋札の点の合計」（上限200）。
+  //   倍率（築年・徒歩・家賃の安さ）: 必須 ×1.3（_MUST）・できれば ×0.6（_SOFT）を丸めた値を札ごとに持つ（札の点は固定＝付け直せる）
+  // 敷礼0: 書いた人 +20（ZERO_ZERO_MATCH）・送った物件から推した人 +14・書いていない人 +8（ZERO_ZERO）
+  ZERO_ZERO_INFERRED: 14,
+  // 築年（自由文の「築浅・新築・築N年以内」を書いた人）: 5年以内 +12／10年以内 +8／15年以内 +3／15年超 −3（BUILDING_AGE_TEXT_* は 0点の○×の札に）
+  AGE_W5: 12, AGE_W10: 8, AGE_W15: 3, AGE_W_OLD: -3,
+  AGE_W5_MUST: 16, AGE_W10_MUST: 10, AGE_W15_MUST: 4,
+  AGE_W5_SOFT: 7, AGE_W10_SOFT: 5, AGE_W15_SOFT: 2,
+  // 築年の列を書いた人（BUILDING_AGE_OK +5 に上乗せ・合計 5年以内 12／10年以内 8／それ以外 5＝案の max(5, 段)）
+  AGE_COL_W5: 7, AGE_COL_W10: 3,
+  // 築年を書いていない人（軽く）: 5年以内 +3／10年以内 +1
+  AGE_N5: 3, AGE_N10: 1,
+  // 駅近を書いた人: 徒歩5分以内 +5／7分以内 +2（徒歩の列だけの人は今まで通り WALK_OK）。書いていない人 5分以内 +2
+  WALK_NEAR_W5: 5, WALK_NEAR_W7: 2, WALK_NEAR_W5_MUST: 7, WALK_NEAR_W7_MUST: 3, WALK_NEAR_W5_SOFT: 3, WALK_NEAR_W7_SOFT: 1,
+  WALK_NEAR_N: 2,
+  // 駅近を書いたが徒歩の列が空の人: 希望内 +10（WALK_OK と同じ）／15分以内 −3／15分超 −8（保留にしない）
+  WALK_TEXT_OK: 10, WALK_TEXT_OVER: -3, WALK_TEXT_FAR: -8,
+  // 家賃を低くしたい人（自由文「家賃は低い方が良い」）: 上限の 0.8 以下 +8／0.9 以下 +5／0.95 以下 +2
+  RENT_CHEAP_W80: 8, RENT_CHEAP_W90: 5, RENT_CHEAP_W95: 2,
+  RENT_CHEAP_W80_MUST: 10, RENT_CHEAP_W90_MUST: 7, RENT_CHEAP_W95_MUST: 3,
+  RENT_CHEAP_W80_SOFT: 5, RENT_CHEAP_W90_SOFT: 3, RENT_CHEAP_W95_SOFT: 1,
+  // AD 1ヶ月未満（0 より大きく 1 未満・利益が出ない保留の札が無い時）−8。AD なしは −10（旧 −5）。AD 不明は 0 のまま
+  AD_UNDER_1M: -8,
+  // 全部合う +15・1つだけ外れ +5（書いた条件のうち読めた物で数える・条件2つなら半分・保留の物件には付けない）
+  FIT_ALL: 15, FIT_ALL_HALF: 8, FIT_ONE_MISS: 5, FIT_ONE_MISS_HALF: 3,
 };
+
+/** 設備 ○ の点（案B: 必須 +5／普通 +3／できれば +2・合計 +15 まで）。札は EQUIP_<KEY>_MUST_OK／EQUIP_<KEY>_OK／EQUIP_<KEY>_SOFT_OK */
+export const EQUIP_OK_POINTS_MUST = 5;
+export const EQUIP_OK_POINTS_SOFT = 2;
 /**
  * 2026-09-25 重みの版（scoring_weights の active・app/lib/scoring-learning-server.ts の applyActiveScoringWeights が入れる）。
  *   null ＝ この表の定数のまま（DB が読めない時・版が無い時）。札の点だけを上書きする（札の付け方・保留／外す候補の決まりは変えない）
@@ -520,6 +601,8 @@ export function reasonPoints(code: string): number {
 export function baseReasonPoints(code: string): number {
   if (/^IMAGE_.*_OK$/.test(code)) return 5;
   if (/^IMAGE_.*_NG$/.test(code)) return -10;
+  if (/^EQUIP_.*_MUST_OK$/.test(code)) return EQUIP_OK_POINTS_MUST;
+  if (/^EQUIP_.*_SOFT_OK$/.test(code)) return EQUIP_OK_POINTS_SOFT;
   if (/^EQUIP_.*_OK$/.test(code)) return EQUIP_OK_POINTS;
   if (/^EQUIP_.*_NG$/.test(code)) return EQUIP_NG_POINTS;
   if (/^EQUIP_/.test(code)) return 0; // _UNLISTED・_ASK・_OK_MAX・上限の印（上限20は reasonPoints の外）
@@ -968,6 +1051,170 @@ export function detectAgeText(c: CustomerLike): { years: number; word: string } 
   return null;
 }
 
+// ─── 2026-09-25 案B お客様が書いた条件（強さ）と重み ─────────────────────────────
+
+const WANT_STRONG_RE = /必須|絶対|マスト/;
+const WANT_SOFT_RE = /できれば|出来れば|あれば|理想|なお可|だと嬉しい|だとうれしい|優先度(?:は)?低|こだわらない/;
+/**
+ * 駅近の自由文（「駅近」「駅チカ」「駅から近い」「徒歩N分以内」）。
+ * 2026-09-25 全お客様 303人の条件欄で確かめた: 「姫路駅近」は駅の名前＋近く（場所の希望）で、駅近の希望ではない
+ *   → 「駅近」の直前が漢字・カタカナ（駅の名前）の時は読まない（「できるだけ駅近」「希望: 駅近」は読む）
+ */
+export const WALK_TEXT_RE = /(?<![一-龥ァ-ヶ])(?:駅近|駅チカ|駅ちか)|駅から近|駅まで近|駅(?:から|まで)?徒歩\s*\d{1,2}\s*分以内|徒歩\s*\d{1,2}\s*分以内/;
+/**
+ * 家賃を低くしたい（「家賃は低い方が良い」「賃料を抑えたい」）。
+ * 2026-09-25 全お客様 303人の文で確かめた（audit-fit-balance）: 「初期費用はできるだけ安い方が良い」（初期費用の話）・「家賃の値下げ交渉」・
+ *   「場所を変えると家賃や初期費用〜」（相談）は家賃の安さの希望ではない → 同じ節に「初期・交渉・相談」がある時は読まない。家賃の語が無い「安い方が良い」も読まない
+ */
+export const RENT_CHEAP_RE = /(?:家賃|賃料|月々|毎月)[^、。,\n]{0,12}(?:低い|低め|安い|安め|安く|抑え|おさえ|下げ)/;
+const RENT_CHEAP_NEG_RE = /交渉|相談|高くても|こだわらない|気にしない/;
+/**
+ * 家賃の安さの節か。「初期」は家賃の語と安さの語の**間**にある時だけ除く（「家賃や初期費用が安くなる物件」＝両方の話）。
+ * 2026-09-25 全お客様の条件欄で確かめた: 「初期費用・家賃はできるだけ安いほうが良い」（家賃も安くしたい）を旧は節の中の「初期」で落としていた
+ */
+export function isRentCheapClause(cl: string): boolean {
+  const m = cl.match(RENT_CHEAP_RE);
+  return !!m && !/初期/.test(m[0]) && !RENT_CHEAP_NEG_RE.test(cl);
+}
+function wantClauseOf(text: string, re: RegExp): string | null {
+  for (const cl of text.split(/[、。,，\n／/・]/)) if (re.test(cl)) return cl;
+  return null;
+}
+const strengthOfClause = (cl: string | null): WantStrength => (!cl ? "normal" : WANT_STRONG_RE.test(cl) ? "strong" : WANT_SOFT_RE.test(cl) ? "soft" : "normal");
+
+/** お客様が書いた条件（強さ）を読む。材料は buildCustomerProfile と同じ条件欄（自由文は preferences・other_requests・additional_conditions） */
+export function readWrittenWants(c: CustomerLike, p: { rentMax: number | null; walkMax: number | null; buildingAgeMax: number | null; ageTextMax?: { years: number; word: string } | null }): WrittenWants {
+  const t = [c.preferences, c.other_requests, c.additional_conditions].filter(Boolean).map((s) => String(s).normalize("NFKC")).join("\n");
+  const ageCl = wantClauseOf(t, /新築|築浅|新しめ|新しい|築\s*\d{1,2}\s*年/);
+  const walkCl = wantClauseOf(t, WALK_TEXT_RE);
+  const walkN = walkCl?.match(/徒歩\s*(\d{1,2})\s*分/);
+  const cheapCl = t.split(/[、。,，\n／/]/).find(isRentCheapClause) ?? null;
+  return {
+    ageText: p.buildingAgeMax == null && p.ageTextMax ? { strength: strengthOfClause(ageCl) } : null,
+    ageColumn: p.buildingAgeMax != null,
+    walkText: walkCl ? { max: p.walkMax ?? (walkN ? parseInt(walkN[1], 10) : 10), strength: strengthOfClause(walkCl) } : null,
+    walkColumn: p.walkMax != null,
+    rentCheap: cheapCl && p.rentMax != null ? { strength: strengthOfClause(cheapCl) } : null,
+  };
+}
+
+const strengthSuffix = (s: WantStrength) => (s === "strong" ? "_MUST" : s === "soft" ? "_SOFT" : "");
+
+/** 案B の重みを決める物件の値（judgeProperty の facts から・例のテストは直接） */
+export type WeightFacts = { buildingAge: number | null; walkMinutes: number | null; /** 家賃（管理費込み）÷ 上限 */ rentRatio: number | null; /** AD の月数（円は家賃で月数に直した物） */ adMonths: number | null };
+
+/**
+ * 2026-09-25 案B: 書いた条件の重み・AD 1ヶ月未満の札（純関数）。codes は judgeProperty が付けた札（保留の _HELD 前でも後でもよい）。
+ *   返すのは足す札だけ（scripts/audit-fit-balance.ts の scorePlan と同じ決まり）:
+ *   - 築年: 自由文の築浅を書いた人は段（AGE_W5/10/15/_OLD・強さ）。築年の列の人は希望内の時だけ上乗せ（AGE_COL_W5/10）。書いていない人は軽く（AGE_N5/10）
+ *   - 徒歩: 駅近を書いた人は 5分以内・7分以内の上乗せ（強さ）。徒歩の列が無ければ ○×（WALK_TEXT_OK/OVER/FAR）もここで。書いていない人は 5分以内 +2
+ *   - 家賃を低くしたい人: 上限の 0.8／0.9／0.95 以下（強さ）
+ *   - AD 1ヶ月未満（0 より大きく 1 未満・段の札も「なし」も無い・利益が出ない保留でない時）
+ */
+export function writtenWeightCodes(codes: readonly string[], f: WeightFacts, w: WrittenWants | null | undefined): string[] {
+  const out: string[] = [];
+  const W: WrittenWants = w ?? { ageText: null, ageColumn: false, walkText: null, walkColumn: false, rentCheap: null };
+  const a = f.buildingAge;
+  if (a != null) {
+    const tier = a <= 5 ? 0 : a <= 10 ? 1 : a <= 15 ? 2 : 3;
+    if (W.ageText) out.push(tier === 3 ? "AGE_W_OLD" : `${["AGE_W5", "AGE_W10", "AGE_W15"][tier]}${strengthSuffix(W.ageText.strength)}`);
+    else if (W.ageColumn) { if (codes.includes("BUILDING_AGE_OK") && tier <= 1) out.push(tier === 0 ? "AGE_COL_W5" : "AGE_COL_W10"); }
+    else if (a <= 5) out.push("AGE_N5");
+    else if (a <= 10) out.push("AGE_N10");
+  }
+  const wk = f.walkMinutes;
+  if (W.walkText && wk != null) {
+    const sfx = strengthSuffix(W.walkText.strength);
+    if (wk <= 5) out.push(`WALK_NEAR_W5${sfx}`);
+    else if (wk <= 7) out.push(`WALK_NEAR_W7${sfx}`);
+    // 徒歩の列の札（WALK_OK 等）が無い人（列が空・自由文だけ）は ○× もここで（保留にしない）
+    if (!codes.some((c) => /^WALK_(?:OK|SLIGHTLY_OVER|OVER)$/.test(c))) out.push(wk <= W.walkText.max ? "WALK_TEXT_OK" : wk <= 15 ? "WALK_TEXT_OVER" : "WALK_TEXT_FAR");
+  } else if (!W.walkText && !W.walkColumn && wk != null && wk <= 5) out.push("WALK_NEAR_N");
+  const r = f.rentRatio;
+  if (W.rentCheap && r != null && r <= 1) {
+    const base = r <= 0.8 ? "RENT_CHEAP_W80" : r <= 0.9 ? "RENT_CHEAP_W90" : r <= 0.95 ? "RENT_CHEAP_W95" : null;
+    if (base) out.push(`${base}${strengthSuffix(W.rentCheap.strength)}`);
+  }
+  const am = f.adMonths;
+  const hasTier = codes.some((c) => /^(?:AD_1M|AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)(?:_HELD)?$/.test(c) || c === "AD_UNKNOWN" || c === "AD_NONE");
+  if (am != null && am > 0 && am + 0.01 < 1 && !hasTier && !codes.includes("PROFIT_NEGATIVE")) out.push("AD_UNDER_1M");
+  return out;
+}
+
+/** 書いた条件の種類と、その札の合い方（ok＝合う／wide＝広げた検索の幅の中／soft_ng・ng＝外れ／unread＝読めない・要確認）。条件の札でなければ null */
+export type FitVerdict = "ok" | "wide" | "soft_ng" | "ng" | "unread";
+const FIT_TABLE: Record<string, [string, FitVerdict]> = {
+  RENT_OK: ["家賃", "ok"], RENT_WIDE: ["家賃", "wide"], RENT_SLIGHTLY_OVER: ["家賃", "soft_ng"], RENT_OVER_110: ["家賃", "ng"], RENT_OVER_130: ["家賃", "ng"], RENT_UNKNOWN: ["家賃", "unread"],
+  ZERO_ZERO_MATCH: ["初期費用（敷礼0）", "ok"], INITIAL_COST_NOT_ZERO: ["初期費用（敷礼0）", "ng"], INITIAL_COST_OVER_LIMIT: ["初期費用の上限", "ng"],
+  FLOOR_PLAN_MATCH: ["間取り", "ok"], FLOOR_PLAN_ALT_MATCH: ["間取り", "ok"], FLOOR_PLAN_WIDE: ["間取り", "wide"], FLOOR_PLAN_NEAR: ["間取り", "wide"],
+  FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"],
+  SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNKNOWN: ["広さ", "unread"],
+  WALK_OK: ["徒歩", "ok"], WALK_SLIGHTLY_OVER: ["徒歩", "soft_ng"], WALK_OVER: ["徒歩", "ng"],
+  WALK_TEXT_OK: ["徒歩", "ok"], WALK_TEXT_OVER: ["徒歩", "soft_ng"], WALK_TEXT_FAR: ["徒歩", "soft_ng"],
+  BUILDING_AGE_OK: ["築年", "ok"], BUILDING_AGE_WIDE: ["築年", "wide"], BUILDING_AGE_SLIGHTLY_OVER: ["築年", "soft_ng"], BUILDING_AGE_OVER: ["築年", "ng"],
+  BUILDING_AGE_TEXT_OK: ["築年", "ok"], BUILDING_AGE_TEXT_OVER: ["築年", "soft_ng"],
+  AREA_STATION_MATCH: ["エリア", "ok"], AREA_WARD_MATCH: ["エリア", "ok"], AREA_LINE_MATCH: ["エリア", "ok"], AREA_REGION_MATCH: ["エリア", "ok"],
+  AREA_STATION_WIDE: ["エリア", "wide"], AREA_WARD_WIDE: ["エリア", "wide"], AREA_STATION_2STOPS: ["エリア", "wide"], AREA_NEAR: ["エリア", "wide"], AREA_CLOSE: ["エリア", "wide"],
+  AREA_FAR: ["エリア", "soft_ng"], AREA_DIRECTION_NG: ["エリア", "soft_ng"], AREA_EXCLUDED: ["エリア", "ng"], AREA_UNKNOWN: ["エリア", "unread"],
+  COMMUTE_OK: ["通勤", "ok"], COMMUTE_SLIGHTLY_OVER: ["通勤", "wide"], COMMUTE_OVER: ["通勤", "soft_ng"], COMMUTE_UNKNOWN: ["通勤", "unread"],
+  MOVE_IN_OK: ["入居時期", "ok"], MOVE_IN_LATE: ["入居時期", "ng"], MOVE_IN_UNKNOWN: ["入居時期", "unread"],
+  PET_NG: ["ペット", "ng"],
+};
+export function fitVerdictOf(code: string): { fam: string; v: FitVerdict } | null {
+  const c = code.endsWith(AD_HELD_SUFFIX) ? code.slice(0, -AD_HELD_SUFFIX.length) : code;
+  const t = FIT_TABLE[c];
+  if (t) return { fam: t[0], v: t[1] };
+  let m = c.match(/^EQUIP_(.+?)(?:_MUST|_SOFT)?_(OK_MAX|OK|NG|NEAR|ASK|UNLISTED)$/);
+  if (m && c !== EQUIP_CAP_CODE) return { fam: `設備:${m[1]}`, v: m[2] === "OK" || m[2] === "OK_MAX" ? "ok" : m[2] === "NG" ? "ng" : m[2] === "NEAR" ? "wide" : "unread" };
+  m = c.match(/^CONDITION_(.+?)_(OK|NG|ASK|UNLISTED)$/);
+  if (m) return { fam: `入居の条件:${m[1]}`, v: m[2] === "OK" ? "ok" : m[2] === "NG" ? "ng" : "unread" };
+  m = c.match(/^IMAGE_(.+?)_(OK|NG)$/);
+  if (m) return { fam: `画像:${m[1]}`, v: m[2] === "OK" ? "ok" : "ng" };
+  return null;
+}
+
+export const FIT_CODES = ["FIT_ALL", "FIT_ALL_HALF", "FIT_ONE_MISS", "FIT_ONE_MISS_HALF"] as const;
+/** 全部合う・1つだけ外れの数え方（画面の「全部合う」の行もこれ） */
+export type FitSummary = { n: number; miss: number; held: boolean; code: (typeof FIT_CODES)[number] | null; families: Array<{ fam: string; v: FitVerdict }> };
+/**
+ * 書いた条件の合い方を数える（純関数）。種類ごとに一番良い合い方を採る（同じ種類に ○ と × があれば ○）。
+ *   読めない・要確認は数えない／幅の内側は外れに数えない／条件3つ以上で満額・2つなら半分・1つ以下は付けない／保留・外す候補の物件には付けない
+ */
+export function summarizeFit(codes: readonly string[]): FitSummary {
+  const rank: Record<FitVerdict, number> = { ok: 4, wide: 3, soft_ng: 2, ng: 1, unread: 0 };
+  const fam = new Map<string, FitVerdict>();
+  for (const code of codes) {
+    const f = fitVerdictOf(code);
+    if (!f) continue;
+    const prev = fam.get(f.fam);
+    if (!prev || rank[f.v] > rank[prev]) fam.set(f.fam, f.v);
+  }
+  const families = [...fam.entries()].map(([k, v]) => ({ fam: k, v }));
+  const judged = families.filter((x) => x.v !== "unread");
+  const n = judged.length;
+  const miss = judged.filter((x) => x.v === "soft_ng" || x.v === "ng").length;
+  const held = codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c));
+  let code: FitSummary["code"] = null;
+  if (!held && n >= 2) {
+    const half = n === 2;
+    if (miss === 0) code = half ? "FIT_ALL_HALF" : "FIT_ALL";
+    else if (miss === 1) code = half ? "FIT_ONE_MISS_HALF" : "FIT_ONE_MISS";
+  }
+  return { n, miss, held, code, families };
+}
+/** 全部合うの札を付け直す（前の FIT_* を外して、今の札で数え直す）。judgeProperty・applyImageFacts・applyEquipmentMatch の3か所で通す */
+export function settleFitBonus(codes: readonly string[]): string[] {
+  const base = codes.filter((c) => !(FIT_CODES as readonly string[]).includes(c));
+  const s = summarizeFit(base);
+  return s.code ? [...base, s.code] : base;
+}
+
+/** 札から点（50＋合計・0〜SCORE_MAX・必須の × は上限20）。judgeProperty・applyImageFacts・applyEquipmentMatch と同じ */
+export function scoreFromCodes(codes: readonly string[]): number {
+  const s = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
+  return codes.includes(EQUIP_CAP_CODE) ? Math.min(s, EQUIP_STRONG_NG_CAP) : s;
+}
+
 /** 見積書の本文から割引額（円）を読む。「🌟26,500円割引させて頂き」 */
 export function parseDiscountYen(text: string | null | undefined): number | null {
   const t = toHalfWidth(String(text ?? "")).replace(/,/g, "");
@@ -1054,17 +1301,21 @@ export function buildCustomerProfile(
   if (fromForm.length) floorPlanWant.plans = [...floorPlanWant.plans, ...fromForm];
   const areaMin = num(customer.floor_area_min);
   const sqmMin = areaMin != null && areaMin >= 10 && areaMin <= 200 ? areaMin : (floorPlanWant.sqmMin ?? sqmFromText(customer));
+  const walkMaxUse = walkMax != null && walkMax > 0 ? walkMax : null;
+  const ageMaxUse = buildingAgeMax != null && buildingAgeMax > 0 ? buildingAgeMax : null;
+  const ageTextMax = ageMaxUse != null ? null : detectAgeText(customer);
 
   return {
     rentMax, notes,
+    written: readWrittenWants(customer, { rentMax, walkMax: walkMaxUse, buildingAgeMax: ageMaxUse, ageTextMax }),
     // 下限は上限より小さい時だけ。上限が入力誤り（上限＜下限・3万未満）の人は下限も信じない
     rentMin: rentMin != null && rentMin >= 10_000 && !notes.includes("RENT_MAX_UNRELIABLE") && (rentMax == null || rentMin < rentMax) ? rentMin : null,
     floorPlanAlt: parseFloorPlanAlt(customer, floorPlanWant),
     sqmMin: sqmMin ?? null,
-    ageTextMax: buildingAgeMax != null && buildingAgeMax > 0 ? null : detectAgeText(customer),
+    ageTextMax,
     floorPlanWant,
-    walkMax: walkMax != null && walkMax > 0 ? walkMax : null,
-    buildingAgeMax: buildingAgeMax != null && buildingAgeMax > 0 ? buildingAgeMax : null,
+    walkMax: walkMaxUse,
+    buildingAgeMax: ageMaxUse,
     initialCostLimit: lim != null && lim > 0 ? lim : null,
     wantsLowInitialCost, lowInitialCostSource,
     pet: customer.pet === true,
@@ -1219,7 +1470,9 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   if (dep == null || key == null) {
     add("INITIAL_COST_UNKNOWN", 0); missing.push("deposit_key_money");
   } else if (dep === 0 && key === 0) {
-    add(profile.wantsLowInitialCost ? "ZERO_ZERO_MATCH" : "ZERO_ZERO", profile.wantsLowInitialCost ? 20 : 8);
+    // 2026-09-25 案B: 書いた人 +20／送った物件から推した人 +14（ZERO_ZERO_INFERRED・全部合うの数に入れない）／書いていない人 +8
+    const zz = !profile.wantsLowInitialCost ? "ZERO_ZERO" : profile.lowInitialCostSource === "history" ? "ZERO_ZERO_INFERRED" : "ZERO_ZERO_MATCH";
+    add(zz, reasonPoints(zz));
   } else if (profile.wantsLowInitialCost) {
     add("INITIAL_COST_NOT_ZERO", -15, "hold");
   }
@@ -1344,18 +1597,25 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     add(code, reasonPoints(code), isHoldCode(code) ? "hold" : undefined);
   }
 
+  // 2026-09-25 案B: 書いた条件の重み（築年の段・駅近・家賃の安さ）と AD 1ヶ月未満（writtenWeightCodes・純関数）
+  const rentTotal = facts.rentYen != null ? facts.rentYen + (facts.adminFeeYen ?? 0) : null;
+  for (const code of writtenWeightCodes(codes, {
+    buildingAge: facts.buildingAge, walkMinutes: facts.walkMinutes,
+    rentRatio: rentTotal != null && profile.rentMax ? rentTotal / profile.rentMax : null, adMonths: adMonthsEff,
+  }, profile.written)) add(code, reasonPoints(code));
+
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
   // 条件の外れ（保留・外す候補の札）がある物件は AD の段を点に入れない（settleHeldAd・札は _HELD で残す）
   if (holds.length || drops.length) {
     const settled = settleHeldAd(codes, true);
-    for (let k = 0; k < codes.length; k++) if (settled[k] !== codes[k]) { score -= reasonPoints(codes[k]) - reasonPoints(settled[k]); codes[k] = settled[k]; }
+    for (let k = 0; k < codes.length; k++) codes[k] = settled[k];
   }
-  // 重みの版があれば 50＋札の点（版）で付け直す（札は同じ・点だけ変わる）
-  if (reasonPointOverrides) score = BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0);
-  score = Math.max(0, Math.min(SCORE_MAX, score));
-  // 必須（strong）の条件が資料で × なら上限 20（画像で分析と同じ決まり）
-  if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
+  // 2026-09-25 案B: 全部合う +15・1つだけ外れ +5（保留・外す候補には付けない・settleFitBonus）
+  const fitted = settleFitBonus(codes);
+  codes.splice(0, codes.length, ...fitted);
+  // 点は常に 50＋札の点の合計（重みの版があれば版の点）。上限 SCORE_MAX・必須（strong）の × は上限 20（scoreFromCodes）
+  score = scoreFromCodes(codes);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
@@ -1404,18 +1664,15 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
   // 画像の × で条件の外れが増えた物件も AD の段を点に入れない（judgeProperty と同じ settleHeldAd）
   if (flagCodes.length) {
     const settled = settleHeldAd(codes, true);
-    for (let k = 0; k < codes.length; k++) if (settled[k] !== codes[k]) { score -= reasonPoints(codes[k]) - reasonPoints(settled[k]); codes[k] = settled[k]; }
+    for (let k = 0; k < codes.length; k++) codes[k] = settled[k];
   }
+  // 2026-09-25 案B: 画像の ○× も書いた条件の合い方に入る → 全部合うの札を付け直す（× で保留になれば外れる）
+  const fitted = settleFitBonus(codes);
+  codes.splice(0, codes.length, ...fitted);
   // 2026-09-25 反証レビュー: j.score は上限 200 で丸めた後の値なので、そこから足し引きすると「50＋札の合計」とずれる
-  //   （素点 230 の物件に画像の × −10 で 190＝本当は 220→200）。札が決まった後に 50＋合計 で付け直す
-  score = BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0);
-  score = Math.max(0, Math.min(SCORE_MAX, score));   // judgeProperty と同じ上限（AD の上乗せ分）
-  if (codes.includes(EQUIP_CAP_CODE)) {
-    // 必須の × の上限20は画像の加点でも越えない。j.score は既に20に丸めてあるので、そこから引くと 50＋合計 と食い違う
-    //   （例: 素点80→20 に −10 で 10 になる）→ 素点（50＋合計・0〜SCORE_MAX）から上限20を掛け直す（反証レビュー 2026-09-24）
-    const raw = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
-    score = Math.min(raw, EQUIP_STRONG_NG_CAP);
-  }
+  //   （素点 230 の物件に画像の × −10 で 190＝本当は 220→200）。札が決まった後に 50＋合計 で付け直す。
+  //   必須の × の上限20も素点から掛け直す（反証レビュー 2026-09-24・scoreFromCodes）
+  score = scoreFromCodes(codes);
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
   const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
@@ -1429,11 +1686,13 @@ const POSITIVE_BASE_CODES = ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_2_5M", "AD_H
 function isNewPositive(c: string): boolean {
   return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
     // 広げた検索の幅の内側（希望より少しだけ低い加点）
-    || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c);
+    || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c)
+    // 案B（書いた条件の重み・全部合う）
+    || /^(?:ZERO_ZERO_INFERRED|AGE_W5|AGE_W10|AGE_W15|AGE_COL_W5|AGE_COL_W10|WALK_NEAR_W5|WALK_NEAR_W7|WALK_TEXT_OK|RENT_CHEAP_W80|RENT_CHEAP_W90|RENT_CHEAP_W95)(?:_MUST|_SOFT)?$|^FIT_(?:ALL|ALL_HALF|ONE_MISS|ONE_MISS_HALF)$/.test(c);
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_NONE)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_NONE|AD_UNDER_1M|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -1469,8 +1728,9 @@ export function applyEquipmentMatch(
   codes.push(...equipmentReasonCodes(m).filter((c) => !(twoByTerms && c === "EQUIP_TWO_PERSON_UNLISTED")));
   // 付け直しで条件の外れが増えた／無くなった時は AD の段の札を合わせる（保留・外す候補なら _HELD の0点）
   codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
-  let score = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
-  if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
+  // 2026-09-25 案B: 設備の ○× が変わったら全部合うの札も付け直す
+  codes = settleFitBonus(codes);
+  const score = scoreFromCodes(codes);
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");

@@ -314,7 +314,11 @@ export type RankOutcome = { summaries: string[]; status: "ranked" | "failed" | "
 /** 🌟 を付けられなかった時に LINE グループの本文へ添える1行（次の回で DeepSeek が読み直す） */
 export const RANK_FAILED_NOTICE = "⚠ 🌟の判断: 読み取れなかった（DeepSeek が答えず・次の回で読み直します）";
 
-/** 番号の配列から説明文に🌟の印を付ける（純関数） */
+/**
+ * 番号の配列から説明文に🌟の印を付ける（純関数）。
+ * 2026-09-25: 🌟★ は「DeepSeek の1位」の印。売上サポの一番オススメは判定の後の点の1位（👑・pickup-best.roundBestId）で、
+ *   🌟★／🌟 は点が並んだ時の順番にだけ使う（LINE グループの文の🌟は送信の時点のまま・merge-pdfs の buildLineMessage のコメント）
+ */
 export function applyRankMarkers(summaries: string[], recommendedArr: number[]): string[] {
   const topPickNum = recommendedArr[0]; // AIの真の1位（配列の先頭が最高スコア）
   const recommended = new Set(recommendedArr);

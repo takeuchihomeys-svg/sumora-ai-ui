@@ -48,7 +48,8 @@ export type ConditionSummary = {
 export const SKIP_CLAUSE_RE = /喫煙|タバコ|たばこ|禁煙|家具|家電/;
 
 /** 決定論で照らしている種類の言葉（別の所で見ると振った節のうち、これに当たる物は「照らしている」） */
-const COVERED_ELSEWHERE_RE = /家賃|賃料|[0-9０-９.]+\s*万|円|初期費用|費用|敷金|礼金|敷礼|更新料|フリーレント|築|新築|新し|徒歩|分以内|間取り|[1-5１-５]\s*(?:S?LDK|DK|K|R)(?![a-z])|ワンルーム|平米|㎡|m2|入居(?:時期|日)|契約|法人|楽器|学生|外国|単身|二人|2人|同棲|ルームシェア|子供|子ども|ペット|管理費|共益費|保証人不要/;
+// 2026-09-25: 駅近（property-brain の WALK_TEXT_RE と同じ語）も点で照らしている → DeepSeek に回さない（「立地 できれば 駅近」と二重に出ない）
+const COVERED_ELSEWHERE_RE = /駅近|駅チカ|駅ちか|駅から近|駅まで近|家賃|賃料|[0-9０-９.]+\s*万|円|初期費用|費用|敷金|礼金|敷礼|更新料|フリーレント|築|新築|新し|徒歩|分以内|間取り|[1-5１-５]\s*(?:S?LDK|DK|K|R)(?![a-z])|ワンルーム|平米|㎡|m2|入居(?:時期|日)|契約|法人|楽器|学生|外国|単身|二人|2人|同棲|ルームシェア|子供|子ども|ペット|管理費|共益費|保証人不要/;
 /** 照らしていない種類（資料で決まらない・判定に無い） */
 const UNCHECKABLE_KIND: Array<[RegExp, string]> = [
   [/綺麗|きれい|キレイ|清潔|内装|リノベ|リフォーム|白|基調|おしゃれ|デザイナーズ/, "内装"],
@@ -56,6 +57,9 @@ const UNCHECKABLE_KIND: Array<[RegExp, string]> = [
   [/審査|保証会社|ブラック|滞納|破産|任意整理|債務整理|信用情報|無職|生活保護|夜職|水商売|年金/, "審査"],
   [/駅|沿線|エリア|丁目|付近|近く|近い|電車|通勤|職場/, "立地"],
 ];
+
+/** 自由文に「徒歩N分」の数がある（無ければ駅近の分は目安の10分） */
+const WALK_N_RE = /徒歩\s*[0-9０-９]{1,2}\s*分/;
 
 /** 自由文（ハッシュの元・DeepSeek に渡す材料の元）。自動の記録行は外す */
 export function conditionFreeText(c: SummaryCustomer): string {
@@ -86,8 +90,16 @@ export function buildConditionSummary(c: SummaryCustomer, opts: { today?: Date |
   if (profile.floorPlanAlt?.plans.length) push("間取り", "soft", `${profile.floorPlanAlt.plans.join("・")}も可`);
   if (profile.sqmMin != null) push("広さ", "must", `${profile.sqmMin}㎡以上`);
   if (profile.walkMax != null) push("徒歩", "must", `${profile.walkMax}分以内`);
+  // 2026-09-25 案B の YUMA テスト: 点の計算（property-brain の profile.written＝書いた条件の強さ）と同じ読み方で出す。
+  //   旧は自由文の築浅をいつも「できれば」で出し、「築浅は必須です」（点は ×1.3）が「築年 できれば 築浅」、
+  //   「駅近希望」「家賃はできるだけ安く」（点は付く）が要約に無かった → スタッフが条件と点を照らせない・🌟 にも渡らない
+  const wr = profile.written;
+  const modeOf = (s: "strong" | "soft" | "normal" | undefined): SummaryItem["mode"] => (s === "soft" ? "soft" : "must");
+  const mustMark = (s: "strong" | "soft" | "normal" | undefined) => (s === "strong" ? "［必須］" : "");
   if (profile.buildingAgeMax != null) push("築年", "must", `${profile.buildingAgeMax}年以内`);
-  else if (profile.ageTextMax) push("築年", "soft", `${profile.ageTextMax.word}（${profile.ageTextMax.years}年以内の目安）`);
+  else if (profile.ageTextMax) push("築年", modeOf(wr?.ageText?.strength), `${profile.ageTextMax.word}（${profile.ageTextMax.years}年以内の目安）${mustMark(wr?.ageText?.strength)}`);
+  if (profile.walkMax == null && wr?.walkText) push("徒歩", modeOf(wr.walkText.strength), `駅近（徒歩${wr.walkText.max}分以内${WALK_N_RE.test(conditionFreeText(c)) ? "" : "の目安"}）${mustMark(wr.walkText.strength)}`);
+  if (wr?.rentCheap) push("家賃", modeOf(wr.rentCheap.strength), `できるだけ安く${mustMark(wr.rentCheap.strength)}`);
   if (profile.moveInWant && profile.moveInWant.label && profile.moveInWant.kind !== "none") push("入居", profile.moveInWant.kind === "by" || profile.moveInWant.kind === "asap" ? "must" : "info", profile.moveInWant.label);
   if (profile.wantsLowInitialCost) push("費用", "soft", profile.initialCostLimit != null ? `初期費用${man(profile.initialCostLimit)}まで` : "初期費用を抑えたい");
   else if (profile.initialCostLimit != null) push("費用", "must", `初期費用${man(profile.initialCostLimit)}まで`);
@@ -140,6 +152,16 @@ export function uncheckableLabels(s: Pick<ConditionSummary, "unread" | "unchecke
   // DeepSeek の要約があれば、その短い言い方に置き換える（同じ数だけ）
   if (ai && ai.length) return ai.filter((x) => x.mode !== "info").map((x) => `${x.kind}: ${x.label}${x.mode === "ng" ? "（NG）" : x.mode === "soft" ? "（できれば）" : ""}`).slice(0, 12);
   return out.slice(0, 12);
+}
+
+/**
+ * 保存済みの DeepSeek の要約のうち、決定論で出すようになった物（駅近）を落とす（2026-09-25）。
+ *   要約は自由文のハッシュで保存しているので、前に DeepSeek が「立地 駅近」と要約したお客様は文が変わるまでそれを使い続ける
+ *   → 決定論の「徒歩 駅近（…）」と二重に出さない
+ */
+export function dropAiCoveredByRule(ai: SummaryItem[], s: Pick<ConditionSummary, "items">): SummaryItem[] {
+  const hasWalkText = s.items.some((x) => x.kind === "徒歩" && x.label.startsWith("駅近"));
+  return hasWalkText ? ai.filter((x) => !/駅近|駅チカ|駅ちか|駅から近|駅まで近/.test(x.label)) : ai;
 }
 
 /** 画面の1行（「条件の要約: 家賃6〜8万・間取り 1LDK（1DKも可）・…」）。項目が多い時は種類ごとに先頭だけ */

@@ -88,6 +88,18 @@ export function customerImageNeed(
   return { ...imageAnalysisNeed(wants), from: saved ? "analysis" : "conditions" };
 }
 
+/**
+ * 1回（まとめの回）の「一番オススメ」の id（純関数・画面のカードの 👑 と並びの先頭）。
+ * 2026-09-25 竹内（野口さんの回: 162点に🌟★・164点に🌟）: 🌟★ は DeepSeek が回ごとに選んだ印で点と連動していなかった。
+ *   → 一番オススメは 👑 と同じ決まり（pickCustomerBest・画像で分析が要るお客様は画像の点・要らないお客様は判定の点）に1つにまとめる。
+ *   DeepSeek の🌟★／🌟 は点が並んだ時の順番（pickCustomerBest の tail）にだけ使う。
+ *   全体の 👑（詳細 API の best）がこの回の物件ならそれ（完了のまとめの best_id を含む）、無ければ同じ決まりでこの回の中の一番
+ */
+export function roundBestId(rows: ReadonlyArray<BestCandidateRow>, basis: BestBasis, globalBestId?: number | null): number | null {
+  if (globalBestId != null && rows.some((r) => r.id === globalBestId && r.status === "pending")) return globalBestId;
+  return pickCustomerBest(rows, { basis, windowHours: 24 * 365 })?.id ?? null;
+}
+
 /** 👑 の点の出し方（画面の文言）。画像＝「85点」／判定＝「判定 72点」 */
 export function bestPointLabel(b: Pick<CustomerBest, "basis" | "match" | "score">): string {
   if (b.basis === "image" && b.match != null) return `${b.match}点`;

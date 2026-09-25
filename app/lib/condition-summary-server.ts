@@ -11,7 +11,7 @@ import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import {
-  buildConditionSummary, conditionFreeText, buildSummaryUserText, parseSummaryResponse, maskClause, formatSummaryLine, uncheckableLabels,
+  buildConditionSummary, conditionFreeText, buildSummaryUserText, parseSummaryResponse, maskClause, formatSummaryLine, uncheckableLabels, dropAiCoveredByRule,
   SUMMARY_SYSTEM_PROMPT, CONDITION_SUMMARY_VERSION, type ConditionSummary, type SummaryCustomer, type SummaryItem,
 } from "@/app/lib/condition-summary";
 
@@ -109,6 +109,8 @@ export async function loadConditionSummary(propertyCustomerId: string | null, op
     const toSave: SavedSummary = { v: CONDITION_SUMMARY_VERSION, hash, ai: [], clauses: [], at: new Date().toISOString(), model: null };
     await supabase.from("property_customers").update({ condition_summary: toSave, condition_summary_hash: hash }).eq("id", propertyCustomerId).then(() => {}, () => {});
   }
-  const items = [...summary.items, ...ai.filter((x) => x.mode !== "info")];
-  return { summary, ai, line: formatSummaryLine(items), uncheckable: uncheckableLabels(summary, ai.length ? ai : null), called, readFailed, hash };
+  // 保存済みの DeepSeek の要約のうち、決定論で出すようになった物（駅近）は重ねない（dropAiCoveredByRule）
+  const aiUse = dropAiCoveredByRule(ai, summary);
+  const items = [...summary.items, ...aiUse.filter((x) => x.mode !== "info")];
+  return { summary, ai: aiUse, line: formatSummaryLine(items), uncheckable: uncheckableLabels(summary, aiUse.length ? aiUse : null), called, readFailed, hash };
 }

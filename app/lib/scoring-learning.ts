@@ -123,6 +123,9 @@ export function isFrozenCode(code: string): boolean {
   if (DROP_RULE_CODES.has(code)) return true;
   // 2026-09-25 竹内「AD 150%以上は1.15倍、200%以上は1.3倍と重みを付ける」: AD の段は竹内さんが決めた方針。学習では上げも下げもしない（提案の対象から外す）
   if (isAdCode(code)) return true;
+  // 2026-09-25 案B: 全部合う（FIT_*）は竹内さんが決めた上乗せ（「全部の条件当てはまっていたらさらに加点」）で、他の札の合い方から決まる札。
+  //   学習で動かすと、元の条件の札（家賃・間取り…）の重みと二重に学ぶことになる → 学ばない（AD_UNDER_1M・AD_NONE は AD_ なので上で止まる）
+  if (/^FIT_/.test(code)) return true;
   if (/_UNKNOWN$|_UNLISTED$|_ASK$|_OK_MAX$/.test(code)) return true;
   if (/^IMAGE_/.test(code)) return true;
   if (code === "EQUIP_MUST_NG_CAP" || code === "RENT_MAX_UNRELIABLE" || code === "COMMUTE_INFO" || code === "AD_UNKNOWN") return true;

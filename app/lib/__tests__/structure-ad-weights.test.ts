@@ -183,7 +183,8 @@ console.log("■ 構造の照合（○ △ × －）と札");
   const jN = judgeProperty(parsePropertyFacts(S), p, 0, { equipment: matchEquipment(rc, parseListingEquipment(IT_NOSTRUCT)) });
   t("木造 → EQUIP_STRUCTURE_NG・保留（外す候補ではない）", jW.reasonCodes.includes("EQUIP_STRUCTURE_NG") && jW.verdict === "hold", jW.reasonCodes);
   t("RC ＞ 鉄骨 ＞ 木造 の順の点", jR.score > jS.score && jS.score > jW.score, [jR.score, jS.score, jW.score]);
-  t("書いていない → EQUIP_STRUCTURE_UNLISTED 0点・通す", jN.reasonCodes.includes("EQUIP_STRUCTURE_UNLISTED") && jN.verdict === "pass" && jN.score === jS.score, [jN.score, jN.reasonCodes]);
+  // 2026-09-25 案B: 鉄骨（一段下＝幅の内側）は書いた条件の数に入り（3つで全部合う +15）、書いていない（要確認）は数えない（2つで半分 +8）→ 差は 7点
+  t("書いていない → EQUIP_STRUCTURE_UNLISTED 0点・通す（全部合うの数に入らない分だけ鉄骨より 7点下）", jN.reasonCodes.includes("EQUIP_STRUCTURE_UNLISTED") && jN.verdict === "pass" && jN.score === jS.score - (REASON_POINTS.FIT_ALL - REASON_POINTS.FIT_ALL_HALF), [jN.score, jS.score, jN.reasonCodes]);
   t("ラベル: RC以上・鉄骨以上・木造NG・マンション", [wantLabel(rc.wants[0]), wantLabel(steel.wants.find((w) => w.key === "structure")!), wantLabel(woodNg.wants[0]), wantLabel(mansion.wants[0])].join(",") === "RC以上,鉄骨以上,木造NG,マンション");
 }
 
@@ -198,7 +199,9 @@ console.log("■ AD の段（ほかの項目の約1.3倍・2ヶ月以上はは�
   t("2ヶ月は家賃の上限内（+15）の約1.3倍", Math.abs(d(m2) / REASON_POINTS.RENT_OK - 1.33) < 0.05);
   t("倍率: 1.5ヶ月は1ヶ月の約1.15倍・2ヶ月は約1.3倍（2ヶ月以上は一律）", Math.abs(d(m15) / d(m1) - 1.15) < 0.05 && Math.abs(d(m2) / d(m1) - 1.3) < 0.05 && d(m25) === d(m2) && d(m3) === d(m2));
   t("AD 不明は 0点（一段下げない）・要確認の札", none.reasonCodes.includes("AD_UNKNOWN") && reasonPoints("AD_UNKNOWN") === 0 && reasonJa("AD_UNKNOWN").startsWith("要確認"));
-  t("AD なしは今まで通り −5＋利益が出ない −10（不明より下・保留）", d(adn) === -15 && adn.reasonCodes.includes("AD_NONE") && adn.reasonCodes.includes("PROFIT_NEGATIVE"), adn.reasonCodes);
+  // 2026-09-25 案B: AD なし −5 → −10（竹内「AD 1未満は点数低く・なかなかお勧めしない」）
+  // 保留（利益が出ない）なので、AD 不明の物件に付く全部合う（条件2つ＝半分 +8）も付かない
+  t("AD なしは −10＋利益が出ない −10（不明より下・保留・全部合うも外れる）", d(adn) === -20 - REASON_POINTS.FIT_ALL_HALF && none.reasonCodes.includes("FIT_ALL_HALF") && !adn.reasonCodes.some((c) => c.startsWith("FIT_")) && adn.reasonCodes.includes("AD_NONE") && adn.reasonCodes.includes("PROFIT_NEGATIVE"), adn.reasonCodes);
   t("割引をまかなえる（AD_COVERS_DISCOUNT）は 0点の知らせ（段と二重に数えない）", REASON_POINTS.AD_COVERS_DISCOUNT === 0 && m2.reasonCodes.includes("AD_COVERS_DISCOUNT"));
   const low = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1LDK\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), p);
   t("利益が出ない（AD 40,000 < 割引 42,000）は今まで通り −10 保留", low.reasonCodes.includes("PROFIT_NEGATIVE") && low.verdict === "hold");
