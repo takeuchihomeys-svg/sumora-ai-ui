@@ -105,6 +105,7 @@ interface AixModalProps {
   /**
    * 2026-09-24: AIX【物件ピックアップした】で送る直前に、送る画像の File の並びを渡す（売上サポの handoff が
    * 「セットした画像のまま送ったか」を File の同一性で確かめるため。外した・足した時は物件との対応付けをやめる）
+   * 2026-09-25: AIX【物件オススメ】も送る直前の物件資料（1枚・無ければ空）を渡す（「変更」で差し替えた物件に送った印を付けない）
    */
   onPropertySendFiles?: (files: File[]) => void;
   /** AIX【電話をかける】: LINEコールの「電話をかける」ボタンのカードを送る（失敗時は例外）。本文はその後に onSend で送る */
@@ -3263,6 +3264,7 @@ export default function AixModal({
       } else {
         // 物件オススメは物件資料画像をLINEに添付
         let uploadedImageUrl: string | undefined;
+        if (actionType === "property_recommendation") onPropertySendFiles?.(imageFile ? [imageFile] : []);
         if (actionType === "property_recommendation" && imageFile) {
           uploadedImageUrl = await uploadImageCached(imageFile);
         } else if (config.requiresImage && imageFile) {

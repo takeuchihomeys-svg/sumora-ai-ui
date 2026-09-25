@@ -36,7 +36,7 @@ import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 import { effectiveRpUpdateDays } from "./lib/rp-update-days";
-import { parsePickupAixHandoff, type PickupAixType } from "./lib/pickup-aix-handoff";
+import { parsePickupAixHandoff, planPickupMarkSent, type PickupAixType } from "./lib/pickup-aix-handoff";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -6054,11 +6054,13 @@ export default function Home() {
   //   （PDF 1ページ目＝弊社帯替え。元付の資料は API が返さない）を File にして AIX【物件ピックアップした】を開く。
   //   送り終えたら（onAfterSend）売上サポの行に「送った」印を付ける
   // sentImageUrls: AIX で実際に届いた画像の URL（mark_sent で sent_properties の行と結ぶ・2026-09-24）
-  // handoffFiles: handoff でモーダルにセットした File（並びがピックアップの並び）。filesIntact: 送る直前の並びがそれと同じ File か
-  //   （スタッフが外した・足した時は false → mark_sent に image_urls を渡さず、画像の読み取りの記録に任せる・2026-09-24 反証）
+  // handoffFiles: handoff でモーダルにセットした File（並びがピックアップの並び）。送る直前の並び（sentFiles）がそれと同じ File の時だけ
+  //   image_urls を結ぶ（スタッフが外した・足した時は結ばず、画像の読み取りの記録に任せる・2026-09-24 反証）
   // 2026-09-25 竹内「チェックして1件だけなら物件オススメでセットされてトークに移る・複数なら物件ピックアップ」:
   //   aix=property_recommendation（1件）も受ける。物件オススメは資料1枚を「② 物件資料」にセットして開く（pickup-aix-handoff.ts）
-  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; filesIntact?: boolean } | null>(null);
+  // handoffIds: handoffFiles と同じ並びの行 ID（画像を取れた行だけ）。sentFiles: 送る直前の File の並び（AixModal の onPropertySendFiles）
+  //   → 送った印は planPickupMarkSent（pickup-aix-handoff.ts）が「セットした画像が送る直前に残っていた行」だけに付ける（2026-09-25 E2E の反証）
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; sentFiles?: File[] | null } | null>(null);
   useEffect(() => {
     try {
       const h = parsePickupAixHandoff(window.location.search);
@@ -6085,7 +6087,9 @@ export default function Home() {
             fileIds.push(it.id);
           } catch { /* その1枚は飛ばす */ }
         }
-        h.handoffFiles = files;
+        // 物件オススメは1枚だけセットする（送った印もその1件）
+        h.handoffFiles = h.aix === "property_recommendation" ? files.slice(0, 1) : files;
+        h.handoffIds = h.aix === "property_recommendation" ? fileIds.slice(0, 1) : fileIds;
         if (h.aix === "property_recommendation" && files[0]) {
           // 物件オススメ: 1件の資料をセットして開く（ピッカーの「新規／継続…」は通さない＝売上サポで選んだ一番オススメの1件）
           setAixInitialPickupType(null);
@@ -10737,10 +10741,10 @@ export default function Home() {
           }}
           onPropertySendFiles={(files) => {
             // 2026-09-24 反証: セットした画像（File）を外した・足した・並べ替えた時は、並び順で物件と結ぶ前提が崩れる
+            //   2026-09-25: 物件オススメも送る直前の資料（1枚）を渡す（「変更」で別の物件に差し替えた時は印を付けない）
             const h = pickupHandoffRef.current;
-            if (!h?.done || selectedConversation?.id !== h.conv) return;
-            const orig = h.handoffFiles ?? [];
-            h.filesIntact = files.length === orig.length && files.every((f, i) => f === orig[i]);
+            if (!h?.done || selectedConversation?.id !== h.conv || aixModalType !== h.aix) return;
+            h.sentFiles = files;
           }}
           onSend={(text, imageUrl, isAix) => {
             lastAixLogTextRef.current = text || null;
@@ -10754,14 +10758,16 @@ export default function Home() {
               const h = pickupHandoffRef.current;
               if (h && h.done && aixModalType === h.aix && !meta?.scheduled && selectedConversation?.id === h.conv) {
                 pickupHandoffRef.current = null;
-                // 画像を外した・足した時（filesIntact !== true）は image_urls を渡さない → サーバーは sent_properties に書かず、
-                //   画像の読み取り（recordSentImageProperty・経路 pickup）の記録に任せる。送った印（status=sent）は付ける
-                // 物件オススメは資料を AixModal の中で差し替えられるので画像の URL は結ばない（送った印だけ・記録は画像の読み取りに任せる）
-                const imageUrls = h.aix === "property_send" && h.filesIntact === true ? (h.sentImageUrls ?? []) : [];
-                void fetch("/api/property-pickups/send", {
+                // 画像を外した・足した・並べ替えた時は image_urls を渡さない → サーバーは sent_properties に書かず、
+                //   画像の読み取り（recordSentImageProperty・経路 pickup）の記録に任せる。
+                // 物件オススメは画像の URL を結ばない（送った印だけ・記録は画像の読み取り＝aix:property_recommendation に任せる）
+                // 2026-09-25 E2E の反証: 送った印は「セットした画像が送る直前に残っていた行」だけ（旧は URL の ids 全部＝画像が取れなかった行・
+                //   外した行・オススメで差し替えた物件にも付いていた）。1枚も残っていなければ印を付けない
+                const plan = planPickupMarkSent({ aix: h.aix, handoffIds: h.handoffIds ?? [], handoffFiles: h.handoffFiles ?? [], sentFiles: h.sentFiles ?? null, sentImageUrls: h.sentImageUrls ?? [] });
+                if (plan) void fetch("/api/property-pickups/send", {
                   method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
                   // image_urls: 届いた画像（送った順）。数がピックアップと合う時だけ sent_properties の行と結ぶ（合わなければサーバーが書かない）
-                  body: JSON.stringify({ batch_id: h.batch, item_ids: h.ids.split(",").map(Number), action: "mark_sent", sent_by: "aix", image_urls: imageUrls, conversation_id: h.conv }),
+                  body: JSON.stringify({ batch_id: h.batch, item_ids: plan.itemIds, action: "mark_sent", sent_by: "aix", image_urls: plan.imageUrls, conversation_id: h.conv }),
                 }).catch(() => {});
               }
             }

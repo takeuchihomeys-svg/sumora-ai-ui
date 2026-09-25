@@ -19,11 +19,14 @@ export function aixTypeForPickupCount(n: number): PickupAixType | null {
   return n === 1 ? "property_recommendation" : "property_send";
 }
 
+/** WORD JOINER（U+2060）。数字と「件」の間で折り返さない */
+const WJ = String.fromCharCode(0x2060);
 /** ボタンの文字（件数で変わる）。0件はチェックを促す */
 export function pickupAixButtonLabel(n: number): string {
   const t = aixTypeForPickupCount(n);
   if (!t) return "📤 チェックした物件を AIX で送る";
-  return t === "property_recommendation" ? "🏠 AIX物件オススメ（1件）" : `📤 AIX物件ピックアップ（${n}件）`;
+  // 数字と「件」の間は WORD JOINER（U+2060）: 390px のボタンで「（1」「件）」と割れて折り返していた（2026-09-25 E2E のスクショ）
+  return t === "property_recommendation" ? `🏠 AIX物件オススメ（1${WJ}件）` : `📤 AIX物件ピックアップ（${n}${WJ}件）`;
 }
 
 /** 売上サポ → トークへ移る URL */
@@ -47,4 +50,38 @@ export function parsePickupAixHandoff(search: string): PickupAixHandoff | null {
   const n = ids.split(",").filter((s) => /^\d+$/.test(s.trim())).length;
   if (n === 0) return null;
   return { conv, ids, batch: sp.get("batch") ?? "", aix: aix === "property_recommendation" && n !== 1 ? "property_send" : aix };
+}
+
+/**
+ * 送り終えた時（onAfterSend）に「送った」印を付ける行と、sent_properties と結ぶ画像の URL を決める。
+ *
+ * 2026-09-25 YUMA の E2E テストで分かった穴（反証）:
+ *   旧は URL の ids を全部 mark_sent に渡していた。①画像が取れなかった行（取得の失敗・72時間切れ）も「送った」になり
+ *   売上サポから消える（実際は送っていない）②その時は画像の数と行の数が合わず、届いた物件の sent_properties も
+ *   丸ごと書かれない（image_count_mismatch）③スタッフが AIX の中で画像を外した行も「送った」になる
+ *   ④物件オススメで資料を「変更」で別の物件に差し替えて送っても、売上サポの物件に「送った」が付く。
+ *   → 印は「セットした画像（File）が送る直前の並びに残っていた行」だけに付ける。1枚も残っていなければ印は付けない。
+ *   画像の URL を結ぶのは物件ピックアップで、セットした並びのまま送った時だけ（今まで通り）。
+ *   物件オススメは URL を結ばない（送った記録は画像の読み取り＝source aix:property_recommendation に任せる。
+ *   recordPickupSent は channel=pickup で書くので、オススメを結ぶと経路を取り違える）。
+ *
+ * @param handoffIds   画像をセットできた行（handoffFiles と同じ並び）
+ * @param handoffFiles セットした File（同一性で比べるだけなので型は問わない）
+ * @param sentFiles    送る直前の File の並び（AixModal の onPropertySendFiles）。null＝分からない（古い画面）→ セットした行全部
+ * @param sentImageUrls AIX で実際に届いた画像の URL（物件ピックアップの時だけ使う）
+ */
+export function planPickupMarkSent<F>(p: {
+  aix: PickupAixType;
+  handoffIds: readonly number[];
+  handoffFiles: readonly F[];
+  sentFiles: readonly F[] | null;
+  sentImageUrls: readonly string[];
+}): { itemIds: number[]; imageUrls: string[] } | null {
+  if (p.handoffIds.length === 0 || p.handoffIds.length !== p.handoffFiles.length) return null;
+  if (p.sentFiles === null) return { itemIds: [...p.handoffIds], imageUrls: [] };
+  const sent = p.sentFiles;
+  const itemIds = p.handoffIds.filter((_, i) => sent.includes(p.handoffFiles[i]));
+  if (itemIds.length === 0) return null;
+  const intact = sent.length === p.handoffFiles.length && sent.every((f, i) => f === p.handoffFiles[i]);
+  return { itemIds, imageUrls: p.aix === "property_send" && intact ? [...p.sentImageUrls] : [] };
 }
