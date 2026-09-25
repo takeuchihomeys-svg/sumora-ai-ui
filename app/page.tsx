@@ -36,6 +36,7 @@ import { jstYmd } from "./lib/jst-date";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 import { effectiveRpUpdateDays } from "./lib/rp-update-days";
+import { parsePickupAixHandoff, type PickupAixType } from "./lib/pickup-aix-handoff";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -6055,12 +6056,13 @@ export default function Home() {
   // sentImageUrls: AIX で実際に届いた画像の URL（mark_sent で sent_properties の行と結ぶ・2026-09-24）
   // handoffFiles: handoff でモーダルにセットした File（並びがピックアップの並び）。filesIntact: 送る直前の並びがそれと同じ File か
   //   （スタッフが外した・足した時は false → mark_sent に image_urls を渡さず、画像の読み取りの記録に任せる・2026-09-24 反証）
-  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; filesIntact?: boolean } | null>(null);
+  // 2026-09-25 竹内「チェックして1件だけなら物件オススメでセットされてトークに移る・複数なら物件ピックアップ」:
+  //   aix=property_recommendation（1件）も受ける。物件オススメは資料1枚を「② 物件資料」にセットして開く（pickup-aix-handoff.ts）
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; filesIntact?: boolean } | null>(null);
   useEffect(() => {
     try {
-      const sp = new URLSearchParams(window.location.search);
-      const conv = sp.get("conv"), ids = sp.get("pickup");
-      if (conv && ids && sp.get("aix") === "property_send") pickupHandoffRef.current = { conv, ids, batch: sp.get("batch") ?? "", done: false };
+      const h = parsePickupAixHandoff(window.location.search);
+      if (h) pickupHandoffRef.current = { ...h, done: false };
     } catch { /* 無視 */ }
   }, []);
   useEffect(() => {
@@ -6084,6 +6086,15 @@ export default function Home() {
           } catch { /* その1枚は飛ばす */ }
         }
         h.handoffFiles = files;
+        if (h.aix === "property_recommendation" && files[0]) {
+          // 物件オススメ: 1件の資料をセットして開く（ピッカーの「新規／継続…」は通さない＝売上サポで選んだ一番オススメの1件）
+          setAixInitialPickupType(null);
+          setAixInitialIsNewArrival(false);
+          setActiveAixFlow("property_recommendation");
+          await openAixDirect("property_recommendation");
+          setAixInitialFile(files[0]);
+          return;
+        }
         if (files.length) {
           // 2026-09-24: 画像と同じ並びの行 ID（AIX が今回の物件の間取り・家賃を知るため）
           setAixInitialPickupIds(fileIds);
@@ -6092,10 +6103,15 @@ export default function Home() {
       } catch (e) {
         console.warn("[pickup→AIX] 画像を取れない:", e);
       } finally {
-        // 2026-09-24: 画面の状態（activeAixFlow）を自分で立てる。ページを開き直して来る handoff は通常の入口を通らないので、
-        //   立てないと送った画像に aix_type が付かず、読み取りの経路が staff_image / vision に落ちていた（YUMA の3回が全部 vision）
-        setActiveAixFlow("property_send");
-        void openAixDirect("property_send");
+        if (h.aix === "property_recommendation") {
+          // 画像が取れなかった時も物件オススメは開く（スタッフが資料を選べる）。取れた時は上で開き済み
+          if (!h.handoffFiles?.length) { setActiveAixFlow("property_recommendation"); void openAixDirect("property_recommendation"); }
+        } else {
+          // 2026-09-24: 画面の状態（activeAixFlow）を自分で立てる。ページを開き直して来る handoff は通常の入口を通らないので、
+          //   立てないと送った画像に aix_type が付かず、読み取りの経路が staff_image / vision に落ちていた（YUMA の3回が全部 vision）
+          setActiveAixFlow("property_send");
+          void openAixDirect("property_send");
+        }
         try { window.history.replaceState(null, "", `/?conv=${encodeURIComponent(h.conv)}`); } catch { /* 無視 */ }
       }
     })();
@@ -10706,7 +10722,7 @@ export default function Home() {
             setActiveAixFlow(null);
             // 2026-09-24 反証: 売上サポの handoff はモーダル1回分だけ（送らずに閉じた後の別の AIX 送信を結ばない）。
             //   送った時は onAfterSend が先に mark_sent を出してから onClose が来るので、ここで消してよい
-            if (pickupHandoffRef.current?.done && aixModalType === "property_send") pickupHandoffRef.current = null;
+            if (pickupHandoffRef.current?.done && aixModalType === pickupHandoffRef.current.aix) pickupHandoffRef.current = null;
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -10736,11 +10752,12 @@ export default function Home() {
             // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
             {
               const h = pickupHandoffRef.current;
-              if (h && h.done && aixModalType === "property_send" && !meta?.scheduled && selectedConversation?.id === h.conv) {
+              if (h && h.done && aixModalType === h.aix && !meta?.scheduled && selectedConversation?.id === h.conv) {
                 pickupHandoffRef.current = null;
                 // 画像を外した・足した時（filesIntact !== true）は image_urls を渡さない → サーバーは sent_properties に書かず、
                 //   画像の読み取り（recordSentImageProperty・経路 pickup）の記録に任せる。送った印（status=sent）は付ける
-                const imageUrls = h.filesIntact === true ? (h.sentImageUrls ?? []) : [];
+                // 物件オススメは資料を AixModal の中で差し替えられるので画像の URL は結ばない（送った印だけ・記録は画像の読み取りに任せる）
+                const imageUrls = h.aix === "property_send" && h.filesIntact === true ? (h.sentImageUrls ?? []) : [];
                 void fetch("/api/property-pickups/send", {
                   method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
                   // image_urls: 届いた画像（送った順）。数がピックアップと合う時だけ sent_properties の行と結ぶ（合わなければサーバーが書かない）

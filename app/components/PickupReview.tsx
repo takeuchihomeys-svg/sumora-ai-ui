@@ -16,6 +16,8 @@ import { sortByNewArrivals } from "@/app/lib/new-arrivals";
 import { summarizeWebBrainProgress, webBrainBlockReason, type WebBrainSite, type WebBrainProgress, type CommandLite } from "@/app/lib/web-brain-search";
 // 2026-09-25 検索の点検: 回の見出しに「この回の検索: 駅 3/4・東三国が入っていない」（純関数だけ・サーバーの物は import しない）
 import { pickAuditForRound } from "@/app/lib/search-audit-check";
+// 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ（一番オススメだから）」
+import { buildPickupAixHref, pickupAixButtonLabel, PICKUP_AIX_MAX } from "@/app/lib/pickup-aix-handoff";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -733,7 +735,7 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
         : await post({ item_ids: fallbackIds, force: true });   // 押すたびに作り直す
       const json = await res.json() as { ok: boolean; trimmed?: number; items?: Array<{ id: number; error?: string }>; error?: string };
       if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "失敗");
-      setMsg(`✂️ ${json.trimmed}件の物件資料を画像にしました。下の画像は「💾 保存」で手元に落とせます。「📤 AIXで送る」で送れます`);
+      setMsg(`✂️ ${json.trimmed}件の物件資料を画像にしました。下の画像は「💾 保存」で手元に落とせます。「AIX物件ピックアップ（1件なら物件オススメ）」で送れます`);
       await load();
       onChange?.();
       return true;
@@ -910,13 +912,15 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
     if (targets.some((it) => it.expired)) { setMsg(`🔒 ${PICKUP_EXPIRED_ACTION_NOTE}`); return; }
     // 2026-09-25 反証: AIX に渡せるのは1回10件まで（GET ?ids が10件で切る）。回をまとめてチェックが増えると、
     //   届かない11件目以降にも送り終えた印（mark_sent は渡した id 全部）が付いてしまう → 10件を超えたら止める
-    if (targets.length > 10) { setMsg(`AIX で一度に送れるのは10件までです（今 ${targets.length}件にチェック。10件以下にしてください）`); return; }
+    if (targets.length > PICKUP_AIX_MAX) { setMsg(`AIX で一度に送れるのは${PICKUP_AIX_MAX}件までです（今 ${targets.length}件にチェック。${PICKUP_AIX_MAX}件以下にしてください）`); return; }
     const convId = c.conversation_id ?? b.conversation_id;
     if (!convId) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
     const noImage = targets.filter((it) => !it.trim_image_url);
     if (noImage.length > 0 && !(await trim(b, noImage))) return;
-    const ids = targets.map((it) => it.id).join(",");
-    leaveTo(`/?conv=${encodeURIComponent(convId)}&aix=property_send&pickup=${encodeURIComponent(ids)}&batch=${encodeURIComponent(b.batch_id)}`);
+    // 2026-09-25: 1件＝AIX【物件オススメ】（資料をセット）・2件以上＝AIX【物件ピックアップした】（画像を並べてセット）
+    const href = buildPickupAixHref({ conversationId: convId, pickupIds: targets.map((it) => it.id), batchId: b.batch_id });
+    if (!href) { setMsg("AIX に渡せませんでした（チェックと会話の紐付けを確かめてください）"); return; }
+    leaveTo(href);
   };
   /** 別のページへ移る。スマホで開いた時に積んだ履歴があれば、それを置き換えて移る（戻った時に中身の無い履歴が1つ残り「戻る」が空振りしない） */
   const leaveTo = (href: string) => {
@@ -1244,9 +1248,9 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
                     </div>
                     <div className="flex gap-2">
                       <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void sendViaAix(open, bb.batch)}
-                        title="LINE の会話画面で AIX【物件ピックアップした】を開き、選んだ物件の資料画像（1ページ目）をセットする"
+                        title="LINE の会話画面で AIX を開き、選んだ物件の資料画像（1ページ目）をセットする（1件＝物件オススメ・2件以上＝物件ピックアップした）"
                         className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 }}>
-                        📤 AIXで送る（物件ピックアップした）
+                        {pickupAixButtonLabel(bb.batch.items.filter((it) => checked[it.id] && it.status === "pending").length)}
                       </button>
                       <button disabled={!!busy} onClick={() => void act(bb.batch, "skip")}
                         className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#eceff1", color: "#546e7a" }}>見送り</button>
@@ -1284,7 +1288,7 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
                 <div className="flex items-center justify-between gap-2 mt-1.5">
                   <button disabled={!!busy} onClick={() => void saveImages(bb.batch, bb.items)}
                     className="text-[11px] font-bold px-2.5 py-1 rounded-lg" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy ? 0.6 : 1 }}>💾 {bb.items.length}枚まとめて保存</button>
-                  <span className="text-[10px] text-[#b0bec5] text-right">「📤 AIXで送る」はこの画像をセットします</span>
+                  <span className="text-[10px] text-[#b0bec5] text-right">「AIX物件ピックアップ／物件オススメ」はこの画像をセットします</span>
                 </div>
               </div>
               <span className={TIME}>{hm(bb.at)}</span>
@@ -1392,7 +1396,7 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
                       </div>
                       <div className="flex gap-2">
                         <button disabled={!!busy || sel.length === 0} onClick={() => void sendViaAix(open, bb.batch, sel)}
-                          className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || sel.length === 0 ? 0.5 : 1 }}>📤 AIXで送る（{sel.length}件）</button>
+                          className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || sel.length === 0 ? 0.5 : 1 }}>{pickupAixButtonLabel(sel.length)}</button>
                         <button disabled={!!busy || sel.length === 0} onClick={() => void saveImages(bb.batch, sel)}
                           className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy || sel.length === 0 ? 0.5 : 1 }}>
                           {busy === `save:${bb.batch.batch_id}` || busy === `trim:${bb.batch.batch_id}` ? "💾 …" : "💾 画像保存"}</button>
@@ -1445,7 +1449,7 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
                 {bBatch && bItem && bItem.status === "pending" && (
                   <button disabled={!!busy} onClick={() => void sendViaAix(open, bBatch, [bItem])}
                     className="mt-2 w-full py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy ? 0.6 : 1 }}>
-                    📤 この物件を AIXで送る（物件ピックアップした）
+                    🏠 この物件を AIX物件オススメで送る
                   </button>
                 )}
               </div>
