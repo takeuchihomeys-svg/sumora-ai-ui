@@ -61,6 +61,10 @@
       "schedule": "40 19 * * *"
     },
     {
+      "path": "/api/cron/pickup-auto-complete",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/cron/scoring-learning",
       "schedule": "10 20 * * 0"
     },

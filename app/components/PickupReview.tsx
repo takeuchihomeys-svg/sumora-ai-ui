@@ -5,7 +5,7 @@
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { okCountOf, verdictOrder, type CustomerBest } from "@/app/lib/pickup-best";
+import { okCountOf, verdictOrder, bestPointLabel, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
 import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
@@ -41,7 +41,7 @@ type LineLite = { profile_image_url: string | null; updated_at: string | null; a
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
 type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean;
   /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
-  best?: (CustomerBest & { image_url?: string | null; status?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
+  best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
   /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
   condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null };
 /** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
@@ -782,7 +782,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
       const best = fresh?.best;
       const parts = [
         `🔍 ${ok + saved}/${targets.length}件を分析しました`,
-        best ? `👑 全体で一番条件に合うのは【${best.rank}】${best.property_name}（${best.match}点）` : "",
+        best ? `👑 全体で一番条件に合うのは【${best.rank}】${best.property_name}（${bestPointLabel(best)}）` : "",
         cut.length > saved ? `通信が切れた ${cut.length - saved}件は結果が保存され次第ここに出ます` : "",
         failed.length ? `⚠ 読めなかった: ${failed.join("・")}` : "",
       ].filter(Boolean);
@@ -1269,9 +1269,10 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
             <div key={`w${i}`} className="flex items-end gap-1.5">
               <Icon bg="#f9a825">👑</Icon>
               <div className={LEFT_BUBBLE}>
-                <div className="text-xs font-bold mb-1">👑 全体で一番条件に合う（直近 {bst.batches}回分・画像で分析）</div>
+                {/* 2026-09-25 竹内「画像で分析必要なお客さんなら画像で分析の点、不要なお客さんは判定した点」: 何で決めたか（basis）と、まとめた回か直近の回かを出す */}
+                <div className="text-xs font-bold mb-1">👑 全体で一番条件に合う（{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析" : "判定"}の点）</div>
                 <div className="text-[13px] font-bold px-2 py-1.5 rounded-lg" style={{ background: "#fff8e1", color: "#e65100" }}>
-                  【{bst.rank}】{bst.property_name}{bst.room_no ? ` ${bst.room_no}号室` : ""}（{bst.match}点）
+                  【{bst.rank}】{bst.property_name}{bst.room_no ? ` ${bst.room_no}号室` : ""}（{bestPointLabel(bst)}）
                 </div>
                 {/* 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: お客様に送る1ページ目（元付の資料は出さない）。押すと原寸 */}
                 {(() => {
@@ -1294,7 +1295,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                   {bst.tied_names.length > 0 && <div>同点: {bst.tied_names.join("・")}</div>}
                   {bst.unscored > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.unscored}件は資料から読めず未判定</div>}
                   {(bst.needs_check ?? 0) > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.needs_check}件は要確認（物件と資料が一致しない・点なし）</div>}
-                  {bst.not_analyzed > 0 && <div>{bst.not_analyzed}件はまだ画像で分析していません</div>}
+                  {bst.basis === "image" && bst.not_analyzed > 0 && <div>{bst.not_analyzed}件はまだ画像で分析していません</div>}
                 </div>
                 {bBatch && bItem && bItem.status === "pending" && (
                   <button disabled={!!busy} onClick={() => void sendViaAix(open, bBatch, [bItem])}

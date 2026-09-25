@@ -11,8 +11,19 @@
 //   - まとめ ID: お客様と対象の一番古い行の id から決める（completeGroupId）。2台の PC が同時に押しても同じ ID になり、行の書き込みは
 //     「complete_group_id が空の行だけ」なので、先に書いた方だけが行を取る（後の方は 0件＝二重に読まない）
 //   - 順位: 外す候補は最後 → 判定の点（高い順・点なしは後）→ 画像の点 → 判定（通す＞保留）→ 🌟★/🌟 → 新しい回 → 元の順位 → id
-//   - 👑: 画像で分析した点がある物件があれば pickCustomerBest（画面の 👑 と同じ並び）をまとめた全件に当てる。無ければ点の一番（外す候補・送付済みを除く）
-import { pickCustomerBest, verdictOrder, okCountOf, type BestCandidateRow } from "./pickup-best";
+//   - 👑: pickCustomerBest（画面の 👑 と同じ純関数）をまとめた全件に当てる。2026-09-25 からお客様ごとの basis で
+//     （画像で分析が必要なお客様＝画像の点・不要なお客様＝判定の点。決まりの表は pickup-best.ts の先頭）。👑 はまとめの順位でも1番にする
+//
+// 2026-09-25 竹内「スタッフモードで最終更新した10分間物件がなければ、その間の物件でまとめることできるか。毎回完了押すよりも、
+//   最後にスタッフモードで指定したお客さん（例 YUMA さん物件完了後）10分たてば自動的に送られた物件まとめて、ほかの一括検索や自動モードのときのようにまとめて判定する」
+//   → 10分の自動まとめ（autoCompleteDue / isQuietFor）: そのお客様のまだまとめていない行のうち一番新しい行（created_at＝売上サポに届いた時刻）から
+//     AUTO_COMPLETE_QUIET_MINUTES 分、新しい行が届かなければ「完了」と同じまとめをする。「完了」ボタンは残す（すぐまとめたい時用）。
+//   - 対象はブレイン ON の回＝property_pickups の全行（行があるのはブレイン ON の時だけ・merge-pdfs の brain_mode）。
+//     🧠×通常・🧠×AIX の自動便・一括検索の回にもかける: 行にモードの印が無く見分けられない上、一括検索もお客様ごとにサイトを続けて回すので
+//     （background.js の _runBatch: お客様 → サイトの二重ループ）同じお客様のリアプロ・itandi・レインズは数分おきに続けて届き、10分の静けさで1つに寄る。
+//     1回ずつ届いた回を寄せても順位と 👑 が「まとめた全件」になるだけで、送った物・判定は変えない（悪くならない）
+//   - 境目: ちょうど10分（now − 最後 ＝ 600000ms）でまとめる（>=）。未来の時刻（時計のずれ）はまとめない
+import { pickCustomerBest, verdictOrder, okCountOf, type BestCandidateRow, type BestBasis } from "./pickup-best";
 
 /** 「完了」でまとめる行の古さの上限（時間）。前の完了より後の行は complete_group_id が空なので、実際は「前の完了以降・最大24時間」 */
 export const COMPLETE_WINDOW_HOURS = 24;
@@ -119,18 +130,22 @@ export type CompleteRanking = {
   notAnalyzed: number;
 };
 
-/** まとめた全件で順位と 👑 を付け直す（純関数） */
-export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>): CompleteRanking {
+/** 👑 の窓（まとめ全体を切らない長さ）。画面がまとめた回の 👑 を出し直す時も同じ値で呼ぶ */
+export const COMPLETE_BEST_WINDOW_HOURS = COMPLETE_WINDOW_HOURS * 2 + 1;
+
+/**
+ * まとめた全件で順位と 👑 を付け直す（純関数）。
+ * basis: お客様の決まり（bestBasisFor(customerImageNeed(...))）。省略は image（前の動き）
+ */
+export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: { basis?: BestBasis }): CompleteRanking {
   const sorted = rows.slice().sort(compareCompleteGroup);
-  const order = sorted.map((r, i) => ({ id: r.id, complete_rank: i + 1 }));
-  // 画像の点で 👑（画面と同じ pickCustomerBest。窓はまとめ全体＝48時間で切らない。未送信の行だけ）
-  const img = rows.length ? pickCustomerBest(rows, { windowHours: COMPLETE_WINDOW_HOURS * 2 + 1 }) : null;
-  let bestId: number | null = null, bestBasis: CompleteRanking["bestBasis"] = null;
-  if (img) { bestId = img.id; bestBasis = "image"; }
-  else {
-    const top = sorted.find((r) => r.status === "pending" && r.verdict !== "drop" && num(r.score) != null);
-    if (top) { bestId = top.id; bestBasis = "score"; }
-  }
+  // 👑（画面と同じ pickCustomerBest・同じ basis。窓はまとめ全体で切らない。未送信の行だけ）
+  const pick = rows.length ? pickCustomerBest(rows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis: opts?.basis ?? "image" }) : null;
+  const bestId: number | null = pick?.id ?? null;
+  const bestBasis: CompleteRanking["bestBasis"] = pick?.basis ?? null;
+  // 👑 はまとめの順位でも1番（順位の1番と 👑 が別の物件だと、どちらが一番か読めない）。残りは compareCompleteGroup の並び
+  const ordered = bestId != null ? [...sorted.filter((r) => r.id === bestId), ...sorted.filter((r) => r.id !== bestId)] : sorted;
+  const order = ordered.map((r, i) => ({ id: r.id, complete_rank: i + 1 }));
   const best = bestId != null ? rows.find((r) => r.id === bestId) ?? null : null;
   return {
     order, bestId, bestBasis,
@@ -141,6 +156,59 @@ export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>): Complet
     imageScored: rows.filter((r) => matchOf(r) != null).length,
     notAnalyzed: rows.filter((r) => !r.image_analysis).length,
   };
+}
+
+// ── 10分の自動まとめ（2026-09-25）─────────────────────────────────────────────
+
+/** 最後に届いた行から何分、新しい行が届かなければ自動でまとめるか */
+export const AUTO_COMPLETE_QUIET_MINUTES = 10;
+export const AUTO_COMPLETE_QUIET_MS = AUTO_COMPLETE_QUIET_MINUTES * 60_000;
+
+/** 最後に届いた時刻から quietMs 経ったか（ちょうどは経った扱い・未来の時刻は経っていない） */
+export function isQuietFor(lastAtMs: number, now: number, quietMs = AUTO_COMPLETE_QUIET_MS): boolean {
+  if (!Number.isFinite(lastAtMs) || !Number.isFinite(now)) return false;
+  return now - lastAtMs >= quietMs;
+}
+
+/** まだまとめていない行（complete_group_id が空）の一番新しい届いた時刻（ms）。無ければ null */
+export function lastOpenAt(rows: ReadonlyArray<Pick<CompleteSourceRow, "created_at" | "complete_group_id">>): number | null {
+  let last: number | null = null;
+  for (const r of rows) {
+    if (r.complete_group_id) continue;
+    const t = Date.parse(r.created_at);
+    if (Number.isFinite(t) && (last == null || t > last)) last = t;
+  }
+  return last;
+}
+
+export type AutoCompleteRow = { id: number; created_at: string; property_customer_id: string | null; complete_group_id: string | null };
+export type AutoCompleteCustomer = { property_customer_id: string; open: number; last_at: string; due_at: string };
+
+/**
+ * 自動でまとめる時が来たお客様を選ぶ（純関数）。rows は全お客様の行（直近 COMPLETE_WINDOW_HOURS）。
+ *   due: まだまとめていない行があり、その一番新しい行から quietMs 経った（古い順＝待たせている順）
+ *   waiting: まだ届き続けているかもしれない（due_at が来たら due になる）
+ * 窓（24時間）より古い行は「完了」と同じく拾わない
+ */
+export function autoCompleteDue(rows: ReadonlyArray<AutoCompleteRow>, now: number, quietMs = AUTO_COMPLETE_QUIET_MS, windowHours = COMPLETE_WINDOW_HOURS): { due: AutoCompleteCustomer[]; waiting: AutoCompleteCustomer[] } {
+  const since = now - windowHours * 3600_000;
+  const by = new Map<string, { open: number; last: number }>();
+  for (const r of rows) {
+    if (!r.property_customer_id || r.complete_group_id) continue;
+    const t = Date.parse(r.created_at);
+    if (!Number.isFinite(t) || t < since) continue;
+    const c = by.get(r.property_customer_id) ?? { open: 0, last: -Infinity };
+    c.open++; if (t > c.last) c.last = t;
+    by.set(r.property_customer_id, c);
+  }
+  const due: AutoCompleteCustomer[] = [], waiting: AutoCompleteCustomer[] = [];
+  for (const [pcid, c] of by) {
+    const item = { property_customer_id: pcid, open: c.open, last_at: new Date(c.last).toISOString(), due_at: new Date(c.last + quietMs).toISOString() };
+    (isQuietFor(c.last, now, quietMs) ? due : waiting).push(item);
+  }
+  due.sort((a, z) => a.last_at.localeCompare(z.last_at));
+  waiting.sort((a, z) => a.due_at.localeCompare(z.due_at));
+  return { due, waiting };
 }
 
 /** 拡張のトーストに出す短い文（件数だけ・お客様の名前は出さない） */

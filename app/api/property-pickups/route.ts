@@ -5,15 +5,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
-import { pickCustomerBest } from "@/app/lib/pickup-best";
+import { waitUntil } from "@vercel/functions";
+import { pickCustomerBest, bestBasisFor, customerImageNeed } from "@/app/lib/pickup-best";
+import { COMPLETE_BEST_WINDOW_HOURS } from "@/app/lib/pickup-complete";
+import { claimIdleComplete } from "@/app/lib/pickup-complete-server";
 import { sortForReview } from "@/app/lib/pickup-review-order";
 import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
-import { extractImageWants, dedupeWantsByTopic, imageAnalysisNeed, type ImageWant } from "@/app/lib/image-wants";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
 
 export const dynamic = "force-dynamic";
+// 2026-09-25 反証: 詳細を開いた時の10分の自動まとめは、自動の読み取り（最長 約200秒で新しい物件を始めない）を waitUntil で後ろに回す。
+//   関数の上限が短いと読み取りの途中で切れ、まとめが running のまま 15分後の Cron のやり直しまで残る → complete と同じ 300秒
+export const maxDuration = 300;
 
 type Row = {
   id: number; created_at: string; batch_id: string; property_customer_id: string | null; conversation_id: string | null;
@@ -212,6 +217,14 @@ async function buildList(since: string) {
 
 // ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────
 async function buildDetail(pcid: string | null, conv: string | null, nBatches: number) {
+  // 2026-09-25 竹内「10分たてば自動的に送られた物件まとめて」: 開いた時に、最後に届いた行から10分を過ぎたまとめ前の回があればその場でまとめる
+  //   （Cron・拡張の alarm と同じ判定・同じまとめ ID＝冪等）。まとめ ID を付けるだけ先に待ち（数百ms）、読み取り・順位・👑 は後ろ
+  if (pcid) {
+    try {
+      const idle = await claimIdleComplete(pcid, "screen");
+      if (idle.job) { try { waitUntil(idle.job); } catch { /* ローカル: 待たずに走らせる */ } }
+    } catch { /* まとめられなくても詳細は出す */ }
+  }
   let q = supabase.from("property_pickups")
     .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location, expired_at")
     .order("created_at", { ascending: false }).limit(300);
@@ -255,16 +268,37 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const convId = conv ?? first?.conversation_id ?? null;
   const { data: cv } = convId ? await supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : { data: null };
   const c = cv as { customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null } | null;
-  // 2026-09-24 竹内「1番オススメの物件全体の中で」: 回をまたいだ一番（最新の回から 6時間以内の未送信・画像で分析の点）
-  const bestRaw = pickCustomerBest(rows);
+  // 画像で確かめる希望: 分析済みの回に保存した希望（会話・訴求込み）があればそれ、無ければ条件欄だけで軽く判定（pickup-best.customerImageNeed）
+  const cond = (condRes.data ?? null) as { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
+  const imageNeed = customerImageNeed(rows, cond);
+  // 2026-09-25 竹内「画像で分析必要なお客さんなら画像で分析の点、画像で分析不要なお客さんは判定した点」: 👑 の決め方はお客様ごと（決まりの表は pickup-best.ts）
+  const basis = bestBasisFor(imageNeed);
+  // 2026-09-24 竹内「1番オススメの物件全体の中で」: 回をまたいだ一番（最新の回から 6時間以内の未送信）。
+  // 2026-09-25 一番新しい回が「完了」／10分の自動まとめでまとめてあれば、そのまとめの 👑（property_pickup_completions.best_id）を読む。
+  //   同じ純関数（pickCustomerBest）・同じ basis をまとめた行に当て、best_id が今も候補なら（未送信・まとめの後に分析し直していない・決まりが同じ）それを一番に
+  const latestGid = rows[0] ? roundOf.get(rows[0].batch_id) ?? null : null;
+  let bestFrom: "complete" | "window" = "window";
+  let bestRaw = null as ReturnType<typeof pickCustomerBest>;
+  if (latestGid) {
+    const groupRows = rows.filter((r) => roundOf.get(r.batch_id) === latestGid);
+    const { data: comp } = await supabase.from("property_pickup_completions").select("status, best_id, finished_at, result").eq("group_id", latestGid).maybeSingle();
+    const cp = comp as { status: string | null; best_id: number | null; finished_at: string | null; result: { basis_rule?: string } | null } | null;
+    // 反証（2026-09-25）: 時刻は文字の比べ方だと「…Z」と「…+00:00」・小数の桁で食い違う → Date.parse で比べる。
+    //   決まり（basis_rule）が無い前の版のまとめは、決まりが同じか分からないので best_id を使わない（同じ関数で並べ直す）
+    const finMs = cp?.finished_at ? Date.parse(cp.finished_at) : NaN;
+    const reanalyzed = Number.isFinite(finMs) && groupRows.some((r) => {
+      const at = Date.parse(String((r.image_analysis as { analyzed_at?: unknown } | null)?.analyzed_at ?? ""));
+      return Number.isFinite(at) && at > finMs;
+    });
+    const preferId = cp?.status === "done" && cp.best_id != null && !reanalyzed && cp.result?.basis_rule === basis ? Number(cp.best_id) : null;
+    bestRaw = pickCustomerBest(groupRows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId });
+    bestFrom = "complete";
+  } else {
+    bestRaw = pickCustomerBest(rows, { basis });
+  }
   // 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: 一番の物件の画像（お客様に送る1ページ目だけ・元付は返さない）
   const bestRow = bestRaw ? rows.find((r) => r.id === bestRaw.id) ?? null : null;
-  const best = bestRaw ? { ...bestRaw, image_url: bestRow ? pickSaveImageUrl(bestRow) : null, status: bestRow?.status ?? null } : null;
-  // 画像で確かめる希望: 分析済みの回に保存した希望（会話・訴求込み）があればそれ、無ければ条件欄だけで軽く判定
-  const savedWants = rows.map((r) => (r.image_analysis as { wants?: unknown } | null)?.wants).find((w): w is ImageWant[] => Array.isArray(w) && w.length > 0) ?? null;
-  const cond = (condRes.data ?? null) as { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
-  const wantsForNeed = savedWants ?? dedupeWantsByTopic(extractImageWants({ conditions: cond }));
-  const imageNeed = { ...imageAnalysisNeed(wantsForNeed), from: savedWants ? "analysis" : "conditions" };
+  const best = bestRaw ? { ...bestRaw, from: bestFrom, image_url: bestRow ? pickSaveImageUrl(bestRow) : null, status: bestRow?.status ?? null } : null;
   return {
     ok: true,
     customer: {

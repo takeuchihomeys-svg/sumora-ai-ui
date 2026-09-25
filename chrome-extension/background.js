@@ -414,8 +414,41 @@ async function callMergeApi(payload) {
   }
   const data = await resp.json();
   if (!data.ok) throw new Error(data.error || "APIエラー");
+  // 2026-09-25 v2.5.23 売上サポに届いた（ブレイン ON）お客様は、最後の送信から10分半後にまとめを頼む（10分の自動まとめ・下の _schedulePickupIdle）
+  if (brainMode && payload && payload.property_customer_id) _schedulePickupIdle(String(payload.property_customer_id), 0);
   return data;
 }
+
+// ── 売上サポ: 10分の自動まとめ（2026-09-25・v2.5.23）──────────────────────────────
+// 竹内「毎回完了おすよりも最後にスタッフモードで指定したお客さん（例 yuma さん物件完了後）10分たてば自動的に送られた物件まとめて、
+//   ほかの一括検索や自動モードのときのようにまとめて判定する」
+// 送信（callMergeApi・ブレイン ON）のたびに、そのお客様の alarm を「今から10分半後」に置き直す（同じ名前＝前の alarm は置き換わる＝最後の送信から数える）。
+// 鳴ったら /api/property-pickups/complete に idle:true で頼む。10分を数えるのはサーバー（売上サポに届いた時刻 created_at から）で、
+// まだなら not_due と due_at が返る → その時刻の30秒後に置き直す。
+// ここは「PC が付いている間に早くまとめる」ための物で、本体はサーバーの Cron（/api/cron/pickup-auto-complete・2分おき）。
+// PC が消えた・alarm が消えた・ブレインを OFF にした時も Cron がまとめる（同じまとめ ID で冪等＝二重にまとまらない）。
+var PICKUP_IDLE_ALARM_PREFIX = "axlx-pickup-idle:";
+var PICKUP_IDLE_DELAY_MS = 10.5 * 60 * 1000;
+function _schedulePickupIdle(propertyCustomerId, whenMs) {
+  try {
+    var when = whenMs && whenMs > Date.now() + 30000 ? whenMs : Date.now() + PICKUP_IDLE_DELAY_MS;
+    chrome.alarms.create(PICKUP_IDLE_ALARM_PREFIX + propertyCustomerId, { when: when });
+  } catch (e) { console.warn("[AX] 売上サポの自動まとめを予約できない（サーバーの Cron がまとめる）:", e && e.message); }
+}
+chrome.alarms.onAlarm.addListener(async function(alarm) {
+  if (!alarm || typeof alarm.name !== "string" || alarm.name.indexOf(PICKUP_IDLE_ALARM_PREFIX) !== 0) return;
+  var pcid = alarm.name.slice(PICKUP_IDLE_ALARM_PREFIX.length);
+  if (!pcid) return;
+  try {
+    var d = await callPickupsComplete(pcid, "idle", { idle: true });
+    if (d && d.not_due && d.due_at) {
+      var dueMs = Date.parse(d.due_at);
+      _schedulePickupIdle(pcid, isFinite(dueMs) ? dueMs + 30000 : 0);
+    }
+  } catch (e) {
+    console.warn("[AX] 売上サポの自動まとめに失敗（サーバーの Cron がまとめる）:", e && e.message);
+  }
+});
 
 // ── 物件検索ブレインの判定（2026-09-23）──────────────────────────────────────
 // bulk-dl.js（ブレインモード）が送信前に呼ぶ。content script からは CSP で直接 fetch できないので background 経由。
@@ -441,7 +474,8 @@ async function callBrainJudgeApi(payload) {
 // popup.js（一覧の「確認」☑／リアプロの「✅ 送った」）→ ここ → /api/property-pickups/complete。
 // 呼ぶかどうかは AxlxModeCore.behavior の completeGroup（＝ブレイン ON。スタッフ・通常・AIX のどれでも）。ブレイン OFF は呼ばない。
 // サーバーはまとめ ID を付けたらすぐ返す（読み取り・順位・👑 は後ろ）。二重押し・2台の PC でもサーバーが冪等にする。
-async function callPickupsComplete(propertyCustomerId, trigger) {
+// opts.idle（v2.5.23）: 10分の自動まとめ。サーバーは最後に届いた行から10分経っていなければまとめず not_due・due_at を返す
+async function callPickupsComplete(propertyCustomerId, trigger, opts) {
   const raw = await new Promise((resolve) => {
     try { chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"], (res) => resolve(res || {})); } catch (_) { resolve({}); }
   });
@@ -453,7 +487,7 @@ async function callPickupsComplete(propertyCustomerId, trigger) {
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/property-pickups/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeader },
-    body: JSON.stringify({ property_customer_id: propertyCustomerId, brain: true, mode: st.mode, trigger: trigger || "manual" }),
+    body: JSON.stringify({ property_customer_id: propertyCustomerId, brain: true, mode: st.mode, trigger: trigger || "manual", idle: !!(opts && opts.idle) }),
     signal: AbortSignal.timeout(20000), // まとめ ID を付けるだけ（数百ms）。読み取りはサーバーの後ろ
   });
   if (!resp.ok) {
@@ -1373,6 +1407,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     (async function() {
       try {
+        // 2026-09-25（webapp-bridge の文法の誤りを直して見積書の画面からもここへ来るようになった）:
+        //   この後 main.php のタブでフリーワード検索を押す。キューの一括（batchRunning のロック中）が同じタブで
+        //   検索している最中に押すと、そのお客様の検索条件が壊れる → ロック中は断る（ポップアップからの時も同じ）
+        var _epLockSt = await chrome.storage.local.get("batchRunning");
+        var _epLock = _epLockSt.batchRunning;
+        var _epLockAt = (typeof _epLock === "object" && _epLock) ? _epLock.startedAt : 0;
+        if (_epLockAt && Date.now() - _epLockAt < BATCH_LOCK_TTL_MS) {
+          sendResponse({ ok: false, error: "物件の一括検索の実行中です。終わってからもう一度お試しください。" });
+          return;
+        }
         var MAIN_PHP_URL = "https://www.realnetpro.com/main.php";
 
         // ── Step 1: リアプロ main.php タブを探す or 作成 ───────────────────────
@@ -1604,7 +1648,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // fromPopup の場合: supplementaryText を storage に保存し、見積書ページを開く
         if (msg.fromPopup) {
-          await chrome.storage.local.set({ axlx_pending_supplementary: _epBrokerText });
+          await chrome.storage.local.set({ axlx_pending_supplementary: _epBrokerText, axlx_pending_supplementary_at: Date.now() });
           await chrome.tabs.create({ url: "https://sumora-ai-ui.vercel.app/estimate?pendingSupp=1", active: true });
         }
 
@@ -1618,10 +1662,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── ポップアップ経由で保存された supplementaryText を返す ────────────────
   if (msg.type === "axlx-get-pending-supplementary") {
-    chrome.storage.local.get("axlx_pending_supplementary", function(result) {
+    // 2026-09-25: webapp-bridge が6週間 SyntaxError で、ここは1回も呼ばれていなかった＝保存した補足情報が読まれずに残っている。
+    //   直した後の最初の見積書の画面に何週間も前の物件の「客付業者様へ」が入らないよう、保存から10分以内の物だけ渡す
+    //   （時刻の無い古い形も渡さない）。渡さなかった物も、渡した物も、ここで消す。
+    chrome.storage.local.get(["axlx_pending_supplementary", "axlx_pending_supplementary_at"], function(result) {
       var text = result.axlx_pending_supplementary || null;
-      if (text) chrome.storage.local.remove("axlx_pending_supplementary");
-      sendResponse({ ok: !!text, text: text });
+      var at = result.axlx_pending_supplementary_at || 0;
+      var fresh = !!(text && at && Date.now() - at < 10 * 60 * 1000);
+      if (text || at) chrome.storage.local.remove(["axlx_pending_supplementary", "axlx_pending_supplementary_at"]);
+      sendResponse({ ok: fresh, text: fresh ? text : null });
     });
     return true; // async sendResponse
   }
@@ -2388,7 +2437,18 @@ chrome.alarms.onAlarm.addListener(async function(alarm) {
   await _pollAndRunBatch();
 });
 
+// 2026-09-25: webapp-bridge の文法の誤りを直して、ウェブアプリの poll-now（キューに入れた直後の「すぐ拾って」）が
+//   6週間ぶりに届くようになった。アラーム・poll-now はどちらも「ロックが無い」を見てから pending を取りに行き、
+//   ロックは取った後で書くので、同じ PC で間を置かずに2回呼ばれると別々のコマンドを2本同時に走らせうる
+//   （例: itandi とレインズのボタンを続けて押す）。拾っている最中（ロックを書くまで）は2本目を始めない。
+var _pollClaimInFlight = false;
+
 async function _pollAndRunBatch() {
+  if (_pollClaimInFlight) {
+    console.log("[batch] 別の呼び出しが pending を拾っている最中 → 今回は見送り（次のアラームで拾う）");
+    return;
+  }
+  _pollClaimInFlight = true;
   try {
     // スタッフモード中は pending をclaimしない（fetch前に離脱）。
     // コマンドは pending のまま残り、次の30秒ポーリングで別PCが拾うため自動化は継続する。
@@ -2466,6 +2526,8 @@ async function _pollAndRunBatch() {
       batchRunning: { running: true, startedAt: Date.now() },
       batchCommandId: cmd.id,
     });
+    // ロックを書いたので、ここから先の2本目はロックで止まる（_pollClaimInFlight は拾う間だけ）
+    _pollClaimInFlight = false;
     try {
       await _runBatchSearch(cmd);
     } catch (e) {
@@ -2476,6 +2538,8 @@ async function _pollAndRunBatch() {
   } catch (e) {
     // MV3 Service Worker起動直後の一時的なfetch失敗は無視（次の30秒ポーリングで自動回復）
     console.warn("[batch] poll error (transient):", e.message || e);
+  } finally {
+    _pollClaimInFlight = false;
   }
 }
 

@@ -2101,3 +2101,52 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 気付いた事（直していない）: ①👑（画像の点）と順位（判定の点）が食い違う — YUMA では 👑 の物件が判定 65点・保留で順位12位（画像の点 67 が一番）。画面の 👑 も同じ決め方（pickCustomerBest は画像の点が先・判定は同点の時だけ）。どちらを「一番」にするか竹内さんに確認 ②9/24 の itandi の行は物件名が「物件」だけ（説明文が「【1】物件\nAD 1ヶ月」）＝リアプロの一覧の形に物件名を出すには itandi の名前の取り方が要る
 - テスト: `app/lib/__tests__/pickup-complete.test.ts`（33）・`tests/chrome-extension/mode-core.test.js`（50）
 - **竹内さんが確かめること（拡張の再読み込み後）**: 🧠 ブレイン ON・スタッフで、同じお客様にリアプロと itandi から「売上番長に送る」→ お客様一覧で「確認」→ 下に「売上サポにまとめました: リアプロ N件・itandi M件」→ 1〜3分後に売上サポ。ブレイン OFF では何も出ない
+
+## 2026-09-25 webapp-bridge.js の文法の誤りを直す（8/10〜9/25 の約6週間、ウェブアプリ→拡張の橋渡しが全部止まっていた）
+竹内「文法の誤り直す」
+- **原因**: 497a94e9（8/10 見積書自動モード）で `var site`（estimate-auto の枝）を足した時、同じ関数の下に `const { site }` があり二重の宣言 → ファイル全体が読み込みで SyntaxError。content script は1行も動かず、ウェブアプリは「拡張の返事が 1.5秒来ない → キューへ」の予備の道だけで動いていた（だから気付かれなかった）
+- **止まっていた機能**: ①poll-now（キューに入れた直後の即時の拾い → 30秒のアラーム待ちになっていた）②物件の比較のスクレイプの直接の道（aixlinx-webapp-scrape → キュー scrape_and_compare で代わりに動いていた）③物件検索の直接の道（aixlinx-webapp → /api/automation/trigger で代わりに動いていた）④見積書の「自動」の新フロー（物件名でリアプロを検索 → 客付業者様へ）と旧フロー（開いている詳細タブを読む）＝**予備の道が無く「タイムアウト（Chrome拡張が応答しません）」になっていた** ⑤ポップアップの「見積書自動」で開いた見積書（?pendingSupp=1）への補足情報の受け渡し（ページは開くが補足情報は入らなかった）⑥一括の1人完了の中継（顧客リストの一括の進み具合が進まない）⑦app/page.tsx の条件パネルの「🔍 物件検索」（予備の道なし・何も起きない）
+- **直した事**: 見積書の枝の `var site` → `estimateSite`（node --check を通る）
+- **動き出す道の安全の確認（1つずつ）**
+  - poll-now → 動かす。background はスタッフモード・ロック中は断る。ただし同じ PC で続けて押すと、アラームと poll-now（または poll-now 2回）が「ロックが無い」を見てから別々のコマンドを claim して2本同時に走りうる → `background.js` の `_pollAndRunBatch` に `_pollClaimInFlight`（拾ってロックを書くまで2本目を始めない）
+  - 物件検索・比較のスクレイプの直接の道 → **止めたまま**（`webapp-bridge.js` の `DIRECT_SEARCH_ENABLED = false`・ACK も返さない＝6週間の本番と同じくキュー＋poll-now）。理由: 直接の受け口（axlx-webapp-search / axlx-scrape-and-compare）にはキューの道の歯止め（スタッフモードなら拾わない・ロック）が無い／要対応一括（customers/page.tsx の flagged）はキューに全員入れた上で1人目にも直接の検索（auto_send_all）を出し、1人終わるごとに次の人へも出す＝同じリアプロのタブで2本同時（8/12 に通常の一括で外した「条件混線」と同じ形）／地域＋駅（both）のお客様は直接の道だと10秒後に2本目を出す。戻す時は受け口に歯止め＋画面の二重の発火を消してから
+  - 見積書 新フロー（axlx-estimate-realpro-search）→ 動かす。main.php のタブで検索を押すので、**キューの一括のロック中は断る**（「物件の一括検索の実行中です…」・ポップアップからの時も同じ）
+  - 見積書 旧フロー（axlx-estimate-auto）→ 動かす。開いている詳細タブを読むだけ（押さない・遷移しない）
+  - 補足情報の受け渡し → 動かす。6週間分の読み残しが古いまま入らないよう、保存時に `axlx_pending_supplementary_at` を書き、**10分を過ぎた物・時刻の無い古い形は渡さずに消す**
+  - 一括の1人完了の中継 → 動かす（表示だけ）。⚠ 画面の onBatchCustomerDone が一括中かを見ないので、画面で一括を始めていない時に自動便などが走ると「全員分の検索が完了しました！」が出る（操作は起きない・画面側で batchMode を見るのが直し方・未対応）
+  - 入口: `e.source !== window` も足した（ページの iframe からの postMessage を受けない）
+- テスト: `tests/chrome-extension/webapp-bridge.test.js`（29・拡張の全25ファイルの node --check・manifest の js の実在・偽の window/chrome で分かれ道・DIRECT_SEARCH_ENABLED=true の時も読める）。直す前の版は `Identifier 'site' has already been declared` で落ちるのを確認
+- manifest の version は上げていない（同じ日の別の担当が上げる。この変更も再読み込みが要る）
+- **竹内さんが確かめること（拡張の再読み込み後）**: ①見積書の画面（sumora-ai-ui.vercel.app/estimate）で物件の画像を入れて「自動」→「リアプロで物件を検索中...」→ 補足情報に「客付業者様へ」が入る（リアプロにログイン済みのタブが要る・一括の実行中は断りの文）②拡張のポップアップの「見積書自動」（リアプロのフリーワードに物件名が入った状態）→ 見積書の画面が開いて補足情報が入る ③顧客リストで itandi の検索ボタン → 30秒待たずに拡張が動き出す（キュー＋poll-now）
+
+## 2026-09-25 v2.5.23 売上サポの 👑 をお客様ごとに（画像で分析の点／判定の点）・最後の送信から10分で自動まとめ
+竹内「画像で分析必要なお客さんなら画像で分析の点、画像で分析不要なお客さんは判定した点」「スタッフモードで最終更新した10分間物件がなければ、その間の物件でまとめる。毎回完了おすよりも…10分たてば自動的に送られた物件まとめて、ほかの一括検索や自動モードのときのようにまとめて判定する」
+- **👑 の決め方**（`app/lib/pickup-best.ts` の `pickCustomerBest(rows, { basis, preferId })`・画面とまとめの API が同じ関数）:
+
+| お客様 | 👑 の点 | 同じ点の時 |
+|---|---|---|
+| 画像で分析が必要（`imageAnalysisNeed`=recommended・WIC/対面キッチン等） | 画像で分析の点（点の無い物件は候補にしない） | 上限前の点 →「合う」の数 → 判定（通す＞保留＞外す候補）→ 判定の点 → 🌟 → 新しい回 |
+| 　└ 画像の点が1件も無い | 判定の点で補う | ↓ と同じ |
+| 画像で分析が不要（optional / none） | 判定の点（外す候補・送った物は候補にしない） | 判定（通す＞保留）→ 🌟★/🌟 → 新しい回 → 順位 |
+| 　└ 判定の点が1件も無い古い行 | 画像の点 | |
+  - 「必要か」は `customerImageNeed`（分析済みの回に保存した希望＝会話・訴求込みがあればそれ、無ければ条件欄だけ）→ `bestBasisFor`。⚠ 会話にだけ希望がある人は、自動の読み取りが走るまで画面は条件欄だけで「不要」扱い（読み取り後は「必要」）
+  - まとめ（`rankCompleteGroup(rows, { basis })`）の 👑 は順位（complete_rank）でも1番。`property_pickup_completions.result.basis_rule` に決まりを残す
+  - 画面: 一番新しい回がまとめてあれば、そのまとめの行だけに同じ関数を当て、`best_id` が今も候補（未送信・まとめの後に分析し直していない・決まりが同じ）ならそれを 👑（`preferId`）。まとめていなければ直近6時間。吹き出しの見出しに「まとめた N回分・画像で分析／判定の点」、点は `bestPointLabel`（「67点」／「判定 105点」）
+- **10分の自動まとめ**（純関数 `app/lib/pickup-complete.ts` の `autoCompleteDue`／`isQuietFor`／`lastOpenAt`・`AUTO_COMPLETE_QUIET_MINUTES=10`）: そのお客様のまだまとめていない一番新しい行（`property_pickups.created_at`＝売上サポに届いた時刻）から10分、新しい行が届かなければ「完了」と同じまとめ（complete_group_id・自動の読み取り・順位と 👑）。ちょうど10分でまとめる。「完了」ボタンは残す（すぐまとめたい時）
+  - 入口は3つ・どれか1つが動けばまとまる（全部 `claimCompleteGroup(..., { quietMs })`＝同じまとめ ID・「空の行だけ書く」で冪等）:
+    ① **Vercel Cron** `/api/cron/pickup-auto-complete`（`*/2 * * * *`・1回 最大3人・`runAutoCompleteSweep`）＝本体。PC が消えていても動く。最長12分でまとまる
+    ② **拡張** background.js `_schedulePickupIdle`: `callMergeApi` が成功し ブレイン ON・お客様あり の時に `chrome.alarms` の `axlx-pickup-idle:<お客様id>` を「今から10分半後」に置き直す（同じ名前＝最後の送信から数える）→ 鳴ったら `/api/property-pickups/complete {idle:true, trigger:"idle"}`。サーバーがまだなら `not_due`＋`due_at` → その30秒後に置き直す。呼ぶかは mode-core の `completeGroup`（＝ブレイン ON）
+    ③ **売上サポの詳細を開いた時**（`GET /api/property-pickups?view=detail&pcid=`）: 10分を過ぎていればその場でまとめ ID を付け（数百ms）、読み取り・順位は waitUntil
+  - 止まった時: まとめ ID を付けた後に関数が切れたまとめは `status=running` のまま → Cron が15分過ぎた running を条件付き UPDATE で `retry` に取り、1回だけやり直す（保存済みの分析は読まない）
+  - 対象はブレイン ON の回＝ property_pickups の全行（🧠×スタッフ・🧠×通常・🧠×AIX・一括検索）。行にモードの印が無く、一括検索もお客様→サイトの順に回す（`_runBatch` の二重ループ）ので同じお客様のサイトは数分おきに続いて届く＝10分で1つに寄る
+- 変更: `app/lib/pickup-best.ts`・`pickup-complete.ts`・`pickup-complete-server.ts`・`app/api/property-pickups/route.ts`・`complete/route.ts`・`app/api/cron/pickup-auto-complete/route.ts`（新）・`vercel.json`・`app/components/PickupReview.tsx`・`chrome-extension/background.js`・`mode-core.js`（コメント）・`manifest.json`（2.5.23）
+- テスト: `app/lib/__tests__/pickup-auto-complete.test.ts`（43・👑 の決まり・10分の境目・冪等）・既存の pickup-best（15）・pickup-complete（33）・tests/chrome-extension 全部通過
+- **YUMA**（`scripts/yuma-pickup-auto-complete-test.ts --run / --cleanup`）: A（WIC・対面キッチン・会話 YUMA）と B（条件欄だけ・会話なし）にリアプロ6件（14分前）＋itandi 7件（6分前）→ 6分の時点は Cron 0件・拡張 idle は not_due（due_at 付き）・詳細を開いても0件 → itandi を10分1秒前にずらす → A は Cron で13件（自動の読み取り13件・DeepSeek 24回・Claude 0）・B は詳細を開いた時に13件（643ms）→ 👑: A は画像の点の一番（67点・判定65点の保留）＝判定の点なら別の物件（105点）、B は判定の点の一番（105点・通す）。どちらも画面の 👑＝まとめの best_id＝順位1番 → もう一度 Cron は0件・後から鳴った alarm は already。片付け済み
+  - 1回目は B にも YUMA の会話を付けたら、会話の「バストイレ別・収納」で B も画像が要る人になった（自動の読み取りは会話の希望も見る）→ B の行は会話なしでやり直した
+- **竹内さんが確かめること（デプロイと拡張の再読み込みの後）**: 🧠 ON・スタッフで、同じお客様にリアプロ → itandi を送り、何も押さずに10〜12分待つ → 売上サポでそのお客様が「まとめた N回分」の1つの吹き出し・👑 の見出しが「画像で分析の点」（WIC 等の希望がある人）か「判定の点」（無い人）
+- **反証レビュー（2026-09-25・サーバー側だけ・拡張は変えていない）**:
+  - 👑 の決まりが画面とまとめで割れうる所を直した: まとめ（`loadBestBasis`）は「まとめの行だけ」の保存した希望を見ていて、画面の詳細 API は「お客様の新しい順 300行」の希望を見ていた → まとめ側も同じ 300行から取る（`image_analysis->wants` だけ読む）
+  - 画面が best_id を使う条件: 分析し直しの判定を文字の比べ方から `Date.parse` に／`basis_rule` の無い前の版のまとめは best_id を使わず並べ直す
+  - `/api/property-pickups`（詳細を開いた時の自動まとめ）に `maxDuration = 300`（waitUntil の読み取りが途中で切れて running のまま残らないように）
+  - 本番の今の状態（dry）: Cron が最初に拾うのは 3人・34件（24時間以内のまとめ前の行）。最初の1回で自動の読み取りが走る
+  - `chrome-extension/.tmp.driveupload/`（Google ドライブの同期の一時フォルダ・「.」始まり）は別の物。拡張の読み込みは妨げないが、コミットには入れない
