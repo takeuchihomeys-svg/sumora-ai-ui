@@ -11,7 +11,6 @@ import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { extractImageWants, dedupeWantsByTopic, imageAnalysisNeed, type ImageWant } from "@/app/lib/image-wants";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
-import { groupPickupRounds } from "@/app/lib/pickup-card-view";
 
 export const dynamic = "force-dynamic";
 
@@ -46,8 +45,7 @@ export async function GET(req: NextRequest) {
     // 2026-09-25 保存期間（届いてから 72時間）が切れた物件は画像を渡さない（image_url: null・AIX には載らない）
     const nowMs = Date.now();
     const items = ((data ?? []) as Array<{ id: number; created_at: string; expired_at: string | null; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>)
-      // 同じ順位（まとめた回で別の回の【1】どうし）は id の順＝送った印の記録（pickup-sent-plan）と同じ並び
-      .sort((a, z) => (a.rank - z.rank) || (a.id - z.id))
+      .sort((a, z) => a.rank - z.rank)
       .map((r) => toPickupHandoffItem(withPickupRetention(r, nowMs)));
     return NextResponse.json({ ok: true, items });
   }
