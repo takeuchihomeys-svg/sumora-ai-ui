@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-09-25 拡張でも「◯◯まで一本／◯分以内」を理解する — 路線のつながりをサーバーと1か所に（v2.5.17・竹内）
+竹内「地図の部分や沿線の部分の位置関係の強化は拡張ツールでも理解できるようにする。例えば梅田駅まで電車で一本の場合、梅田駅や大阪梅田駅に一本で通える沿線を全て理解して、そこの駅を理解していれば分かるし、位置関係も理解していれば、電車で何分以内で通える駅かも分かる」
+- **元データは1か所**: `app/lib/osaka-geo.ts`（駅の座標・路線の直し LINE_FIXES・足した路線・**直通の運転 THROUGH_SERVICES**・**駅のまとまり STATION_GROUPS**・歩きの乗り換え WALK_LINKS・名前の揺れ ALIASES/PREFIXES）＋拡張の popup-maps.js の写し（osaka-transit-data.ts）。
+  `npx tsx scripts/build-osaka-transit-data.ts` が ①`app/lib/osaka-transit-data.ts` ②**`chrome-extension/osaka-transit.js`**（UMD・`self.AxlxOsakaTransit`・55KB）を生成。**どちらも手で編集しない**（直したら流し直す）
+- **関数も1つ**: `app/lib/transit-core.ts`（import なしの純関数）を生成時に JS へ変換して osaka-transit.js に入れる＝サーバー（`app/lib/transit-route.ts`）と拡張で同じ関数・同じデータ。テストで結果が一字一句同じことを確かめる
+  - `oneRideStations(目的地)` → 乗り換えなしで行ける全駅（路線ごと・直通の運転を含む・目的地のまとまりの駅は除く）
+  - `stationsWithin(目的地, 分, {maxTransfers})` → 所要の目安付きの駅（隣の駅の分＝停車0.8分＋1.1分/km・乗換5分・歩きの乗換5分・既定 乗換2回まで・分の短い順）。**各駅停車の目安**（新快速・特急は無い: 京都河原町→梅田 72分・三ノ宮→梅田 43分）
+  - `shortestRoute`・`groupOf`・`commuteAsks(文)`（「梅田まで電車1本」「大阪駅から30分以内」「北新地にアクセスがいい」「会社が淀屋橋にあり通勤しやすい」を読む・徒歩/車/バスの分は読まない・「大阪市内」「川俣本町」は駅にしない）・`extName/extNames`（拡張の辞書の言い方に戻す）
+- **駅のまとまり**（着いたと同じ）: 梅田＝梅田/大阪梅田/東梅田・JR大阪・西梅田・北新地／なんば＝難波/大阪難波/南海難波/JR難波（日本橋は別）／天王寺＝天王寺・大阪阿部野橋・天王寺駅前／心斎橋＝心斎橋・四ツ橋／上本町＝大阪上本町・谷町九丁目／京橋・本町・新大阪・新今宮・南森町・淀屋橋・北浜・十三・鶴橋・三ノ宮
+- **直通の運転**（12本・向きのある並び）: 御堂筋⇔北急／阪急千里線⇔堺筋線／阪急京都線(高槻市)⇔堺筋線／中央線⇔けいはんな線／近鉄奈良線⇔阪神の**快速急行（止まる駅だけ）**／泉北⇔南海高野線／近鉄長野線⇔南大阪線／JR宝塚線⇔大阪／JR宝塚線⇔東西線⇔学研都市線／JR神戸線⇔東西線⇔学研都市線／JR神戸線⇔JR京都線／京阪本線⇔中之島線。**入れていない**（全部の電車ではない・要判断）: 大和路快速・関空/紀州路快速の環状線、阪急千里線→梅田、能勢電→梅田、おおさか東線→大和路線（拡張の「電車1本」と同じ扱い）
+- **目で読んだ結果**（`npx tsx scripts/audit-osaka-transit.ts [--full] [--min=30]`・サーバーと拡張の食い違い 0）:
+  | 目的地 | 一本 | 30分以内（乗換2回まで） |
+  |---|---|---|
+  | 梅田 | 203駅・17経路 | 292駅 |
+  | なんば | 143駅・11経路 | 292駅 |
+  | 天王寺 | 117駅・9経路 | 266駅 |
+  | 京橋 | 98駅・8経路 | 251駅 |
+  | 本町 | 49駅・5経路 | 276駅 |
+  | 新大阪 | 66駅・5経路 | 225駅 |
+  - 読んで直した誤り: ①**環状線が輪になっていなかった**（京橋→大阪を天王寺回りで数えていた）→ transitData で輪を閉じた ②JR宝塚線（尼崎から）→大阪が乗り換え1回・逆に三ノ宮まで直通扱い（路線の組の直通は向きが無い）→ 並びの直通に ③阪神なんば線の直通で出屋敷（快速急行が止まらない）を一本にしていた → 止まる駅だけ ④天王寺に阪堺上町線（天王寺駅前）が入っていなかった ⑤拡張の言い方「能勢電平野」を谷町線の平野に戻していた・「住吉(神戸)」を大阪の住吉に戻していた
+  - **サーバーの最短の乗り方も変わった**（area-want の通勤の札・担当 A に影響）: 代表12駅×全駅 6,000組のうち 1,687組 — 乗換が減った 1,319（直通・まとまり）／分が減った 335／分が増えた 26（±1分の丸め）／乗換が増えた 7（分の短い方を選んだ）。area-commute 116・property-brain 88 ほか関連テストは全部通過
+- **拡張への組み込み（候補として見せてスタッフが選ぶ・自動の検索は変えない）**: `chrome-extension/commute-candidates.js`（UMD・`self.AxlxCommuteCandidates`）
+  - 一時調整フォームの「駅」欄の下（`#commute-candidates`・3サイト共通の adj-form）に、お客様の 通勤の列（commute_station/commute_minutes）・希望エリア・条件欄から読んだ目的地ごとに
+    - 🚃「梅田まで一本（乗り換えなし）」: 経路ごとのチップ（＋阪急宝塚線 18 等）・「＋全部を駅に入れる」
+    - ⏱「本町まで20分以内（乗り換え1回まで）」: 駅ごとのチップ（駅名＋分・乗換）・分（10〜60）と乗換（0〜2）の切替・「＋全部を駅に入れる」
+  - 押すと駅欄に**拡張の辞書の駅名**（STATION_LINE_MAP・学習済み・DB の駅）で入れ、input の出来事を出す（手で打った時と同じ＝一時調整優先・履歴保存）。駅欄の「梅田まで電車1本」等の通勤の言い方の語は外す。そこから先のリアプロ／itandi／レインズの駅名・路線名は**既存の対応表のまま**（ここではサイトの表記を作らない）
+  - 駅の言い方は乗る路線で選ぶ: なんば×大和路線→JR難波・×南海→難波・×近鉄→大阪難波・×御堂筋→なんば、平野×大和路線→JR平野、梅田×阪急→大阪梅田。拡張の辞書に無い駅（京都・兵庫の一部・JR京都線の岸辺〜茨木 等）は入れず数だけ出す
+  - **変えていない**: 「電車1本」の自動（resolveDirectCommute＝沿線を選んで全駅）・「◯分」の自動（TRANSIT_GRAPH の展開）・popup-maps.js の辞書（LINE_STATION_ORDER 等）。読み込み: popup.html に `osaka-transit.js`→`commute-candidates.js`→popup.js、manifest の web_accessible_resources に2つ、styles.css に `.commute-candidates`
+- **拡張の辞書の誤り（直していない・判断待ち）**: 御堂筋線の新大阪／西中島南方の順・中央線に森ノ宮なし・片町線の放出→鴫野・東海道本線の大阪→塚本→新大阪・関西本線の加美／平野、JR東西線の末尾に放出、能勢電の「平野」が谷町線の平野と同じ名前。直すと LINE_STATION_ORDER の範囲指定（本町〜南森町）・TRANSIT_GRAPH（◯分の自動展開）が変わる。**今の TRANSIT_GRAPH の「梅田まで30分」には能勢電の 多田・一の鳥居 が入る**（平野の取り違え）。新しいつながりとの差（30分）: 梅田 旧256／新292駅・旧だけ23（多田・一の鳥居・高槻 等）・新だけ57（尼崎・甲子園 等 兵庫側）。自動の展開を新しい方に替えるかは実機で確かめてから
+- テスト: `node chrome-extension/__tests__/osaka-transit.test.js`（35・self で UMD を読む・辞書の駅名に戻す・サイトの路線名を入れない・読み込みの順）・`npx tsx app/lib/__tests__/transit-core.test.ts`（80・サーバーと拡張が同じ・一本／◯分／最短／文の読み）
+- **実機で確かめること（拡張の再読み込みが必要・version 2.5.17）**: chrome://extensions → 🔄 → リアプロ／itandi で「梅田まで電車1本」や通勤の列があるお客様を選ぶ → 一時調整の「駅」欄の下に 🚃／⏱ の候補が出るか → チップを押して駅欄に入り「🚉 駅で検索中（一時調整優先）」になるか → 自動入力で検索できるか（駅数が多い時にサイト側の上限で止まらないか）。コンソール `[AX] 通勤の候補:`・`[AX] 通勤の候補の駅を駅欄に追加:`
+
+## 2026-09-25 売上サポ: 画像・資料の保存期間 72時間（竹内「3日前の画像は消されるように。保存期間が終了しましたと出る感じで（実際の LINE のように）」）
+- 調べた量（9/25 時点）: property_pickups 36行（9/24 の1日分・お客様4人＝18／12／3／3行）。1行 ≈ PDF 250KB〜1.8MB＋p1・p2 各 260〜650KB＋トリミング 200〜540KB ≈ **1.7MB/行**（36行で ≈ 61MB）。**消す仕組みは無かった**（cleanup-images は messages の line-images 30日と property-images 90日だけ）
+- 置き場: PDF・p1・p2・トリミングは Vercel Blob の `pickups/`（`pickups/trim/`）。切り出し画像は保存していない（メモリの中だけ）。**LINE で送った画像は AIX が Supabase property-images へ写してから送る**（AixModal の uploadImage）ので、Blob を消しても LINE の会話の画像は消えない
+- 仕組み: `/api/cron/pickup-retention`（毎日 UTC 19:40＝JST 4:40・CRON_SECRET・`?dry=1&measure=1`）→ `app/lib/pickup-retention-server.ts`。選び方は純関数 `app/lib/pickup-retention.ts`（テスト 27件 `npx tsx app/lib/__tests__/pickup-retention.test.ts`）
+  - 消すのは **Blob の pickups/ 配下だけ**。消さない: messages / sent_properties / sent_image_properties が同じ URL を指す物（完全一致＋Blob の pickups/ を指す行の総なめ・照会に失敗したら消さない側）・まだ期限内の行が使っている URL・pickups/ 以外（Supabase・結合 PDF）
+  - 消した行は `expired_at` を入れ、4つの URL の列を空にする（行の説明文・判定・札・分析の文字・PDF の文字層は残す）。Blob の削除に失敗した行は印を付けず翌日やり直す。1回 300行まで
+  - property_sheet_facts・image_details（読み取りの文字）は消さない
+- 画面: `GET /api/property-pickups`（一覧・詳細・?ids）は `withPickupRetention` で **72時間ちょうどで** expired（URL を空）にする（cron の前の数時間も LINE と同じ見え方）。PickupReview は画像のかわりに灰色の枠「🔒 保存期間が終了しました」・💾 画像保存／🔍 画像で分析／📤 AIXで送る は押せない（理由を1行）・残り12時間を切ると「⏳ あと◯時間で…」。AIX に渡す画像（?ids）も期限切れは null
+- 列: `property_pickups.expired_at`（migrate-schema＋`scripts/apply-pickup-expired-column.ts` で本番に適用済み）
+- 点検: `npx tsx --env-file=.env.local scripts/pickup-retention.ts [--now=ISO]`（既定 dry-run）。9/28 の時刻で dry: 36行・消す Blob 96個 ≈ 41MB・残す 9（YUMA のテスト行 9〜11 の Supabase の画像＝LINE で送った物 6・pickups/ 以外 3）・**消す物のうち送信の表に出る物 0/96**
+- YUMA で確かめた（行を作って片付け済み）: Blob の鍵が無い時は消さず印も付けない／Blob が無い行は印＋列が空／API は 96時間前＝expired・65時間前＝残り7時間の警告・AIX に渡す画像は期限切れだけ null
+- 未確認: 実際の Blob の削除（手元に BLOB_READ_WRITE_TOKEN が無い）。デプロイ後に `curl -H "Authorization: Bearer $CRON_SECRET" …/api/cron/pickup-retention?dry=1&measure=1` を見てから、最初の本番の実行（9/27 JST 4:40 に 9/24 分が対象）後に `expired_at` の件数と Blob の URL が 404 になるかを見る
+- 残り（竹内さんが決める）: 結合 PDF（Blob 直下・LINE グループに貼るリンク）は今回消していない／送った行の画像を売上サポに残したい場合は sent_properties の property-images の写しを見せる形にできる
+
 ## 2026-09-25 売上サポ: 資料の表の敷礼・築年・入居時期・契約・入居の条件を判定に組み込む（竹内「敷金礼金と入居時期、組み込みたい」）
 - きっかけ（9/24「ほかにもれないか」の監査）: 判定の仕組みはあるのに物件側の値が届いていなかった — property_pickups 36行中33行が INITIAL_COST_UNKNOWN（説明文に敷礼が無い）・BUILDING_AGE_* は本番で0行・入居時期はどこでも照らしていない
 - 部品（純関数・DeepSeek 0円）:
@@ -1137,7 +1183,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ## 🔁 引き継ぎ事項（次セッションへ）
 
-- 現在のバージョン: **v2.5.6**（manifest.json 記載・2026-09-14 一時調整に賃料下限を追加）
+- 現在のバージョン: **v2.5.17**（manifest.json 記載・2026-09-25 通勤の候補の駅 osaka-transit.js／commute-candidates.js）
 - **2026-09-14 賃料下限 実機確認待ち（v2.5.6）**: 拡張を再読み込み → 一時調整の「賃料下限」に 60000 を入れて各サイトで検索。リアプロ＝賃料の下限プルダウンが 6万（無ければ直下の選択肢）／itandi＝賃料の下限欄に 6、コンソール `[AX] itandi 賃料下限: 6万`（`rent:gteq が見つかりません` が出たら欄の name を DevTools で確認）／レインズ＝賃料FROM に 6、コンソール `[AX] 賃料下限 FROM(idx75)`（`idx75 が賃料FROM欄と確認できない` が出たら idx を調べ直す）
 - **2026-09-14 itandi 実機確認待ち（v2.5.5）**: 拡張を再読み込み → 駅の多い条件（SATOKO♪ 様の広げて検索など）で itandi 自動検索 → 駅チェックが途切れず続き、途中で数十秒止まらないか。コンソール `[AX] 駅クリック:` が連続して出ること・`watchdog: 240s` が出ないこと
 - **2026-09-12 itandi「電車1本」実機確認待ち**: みく様で itandi 自動入力 → 路線13本が順に選ばれ、各路線の駅が全部チェックされて検索まで進むか。コンソール `[AX] 電車1本: <路線> の駅 X/Y 選択` と `沿線の駅を計N駅選択`。150秒 watchdog（v2.5.4 で85秒から延長）に掛かるならクリック間隔・路線後待機を詰める。兵庫・京都側の駅も必要なら都道府県タブ切替の DOM 確認から
@@ -1887,3 +1933,43 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
   ④ yuma-condition-leak-test.ts を今の判定に合わせた（📍・判定が読む・照らせない条件・不要を分けて数える・旧基準も並べる）。広さの「材料なし」の正規表現の \ が抜けていて常に材料なしだったのも直した
   - 漏れテスト: 旧基準 8→5種類（家賃下限＝判定は読むが今回の物件が下限の85%以上・内装と周辺環境＝照らせない条件に表示・喫煙と家具家電＝不要）→ 今の基準の漏れは 0種類
   - 自動の読み取り: A（WIC・対面キッチン）5件を読み DeepSeek 10回・入力 未命中 2,812／命中 13,440（83%）・出力 1,147・約0.035円/件、2回目は保存済みで 0回。B（宅配BOX・2階以上だけ）は 2回とも 0回。条件の要約は1人1回（入力363・出力28・約0.008円）、2回目の回・最後の呼び出しでは呼ばない
+
+## 2026-09-25 判定の点を拡張の「広げて検索」の幅に合わせる・点の上限 130→200（担当 A・拡張のコードは読んだだけ）
+- 竹内「広げて検索した場合も、お客さんの希望の駅の方が点数少し大きくするように。隣の駅だからって点数が大幅に低くなるようにしない。これは家賃とかでもそう。判断基準、広げて検索の部分（拡張ツール）も理解してスコアリングを精密に強化」
+- **拡張の広げ方（実物のコード）**:
+  | 項目 | 広げ方 | 場所 |
+  |---|---|---|
+  | 駅 | 解決した駅ごとに**同じ路線の前後1駅**（手動は同じ事業者4路線以上の大きな駅だけ足さない） | resolution-core.js resolveConditionsLocal ④ getAdjacentStations・popup.js 3832/4243 |
+  | 地域（区） | 難波・心斎橋（中央区・浪速区・西区）を3区まとめて足す。itandi は町名まで行かず区まで | popup.js expandNambaCodes/Wards・ward_town_map は wide で null・page-script.js 1351 |
+  | 家賃 | 上限 **＋5,000円（10万円以下）／＋10,000円（10万円超）**。サイトの賃料の欄＝**管理費を含まない** | resolution-core.js ⑧・popup.js 3885/4382・background.js 3175 |
+  | 間取り | **LDK の希望に同じ部屋数の DK** を足す（1LDK→1DK） | page-script.js 1044・itandi-page-script.js 780・reins-page-script.js 260 |
+  | 築年 | **＋5年**（リアプロの手動・background の scrape 経路だけ。itandi の手動 popup 3897 は足していない） | resolution-core.js ⑧・popup.js 4438 |
+  | 広さ | −5㎡（**手順の表示だけ**・自動入力の area_min には入っていない） | popup.js buildCondData 2110 |
+  | 徒歩 | 広げない | — |
+- **広げた回かはサーバーに届いていない**: merge-pdfs の body（callMergeApi）は is_wide を送らない・sent_properties / property_pickups に列なし。property_customers.search_history（{realpro_w: 時刻}）と last_wide_search_at は最後の1回だけ。→ **判定は回の種類に関係なく「拡張が広げる幅」で帯を作る**（ピンポイントでも管理費で上限を超える物・別の駅の交通で拾う物は同じ扱いでよい）
+- **新しい配点**（property-brain.ts REASON_POINTS・area-want.ts matchArea）:
+  - 駅: 希望 +10／**隣（AREA_STATION_WIDE・広げた検索の駅）+8**／**同じ路線で2駅（AREA_STATION_2STOPS）+6**（旧: 隣も距離で見て 2km 以内 +5・4km 以内 +2）。徒歩15分以内の駅だけ。並びは 駅 → 隣 → 区 +8 → 2駅 → 難波の3区（AREA_WARD_WIDE）+6 → 路線 +6 → 2km +5 …
+  - 家賃: 上限内 +15／**幅の中（RENT_WIDE）+10**＝管理費込みで 上限＋幅 以内、または家賃だけなら上限内で管理費込み1割以内（旧: 0）／幅の外で1割以内 0／1割超は保留（変えていない）
+  - 間取り: 本命 +15／「も可」+8／**LDK→同じ部屋数の DK（FLOOR_PLAN_WIDE）+8**（旧: 近い +5）／近い +5
+  - 築年: 希望内 +5／**＋5年まで（BUILDING_AGE_WIDE）+2**（旧: ＋3年まで −3・＋4〜5年は −10 保留）。BUILDING_AGE_SLIGHTLY_OVER は保存済みの行のために表に残した
+  - 広さ: 9割以上 0／**−5㎡まで（SQM_WIDE）−3 情報**（旧: −10 保留）／それより下は保留
+  - どれも保留・外す候補にしない。札は「広げた検索の駅（新大阪＝希望の東三国の隣・御堂筋線）」「広げた家賃の幅（上限＋5千/1万円）」（pickup-review-order.ts CHIP_JA）
+- **点の上限 130→200（SCORE_MAX）**: 条件が全部合う物件は AD なしで 136点 → 130 で切ると AD 1ヶ月 151・2ヶ月 166・3ヶ月 171 が全部 130 で同点だった（テストで確認）。AD の重み（AD_HIGH +20・AD_VERY_HIGH +5）は変えていない。実送信で AD の月数が分かる 937件は 1〜2ヶ月 14%・2〜3ヶ月 51%・3ヶ月以上 35%
+- **線を引いた実データ**: sent_properties（家賃あり 2,205件・46人・家賃だけ）で 上限内 94.8%／上限〜幅 2.0%／**幅〜1.10 は 0件**／1.10〜1.30 1.6%／1.30超 1.6% ＝ 幅の内側は実際に送っていて、幅の外は拡張が切っている
+- **監査（本番 property_pickups 全36行・判定できる33行・6回・3人）**: 点が変わったのは 26行（全部上がった・下がった行 0）・保留→通す 1行（#1 1LDK 35.19㎡・広さの希望の −5㎡以内）。
+  - リアプロ #34〜45（上限8万・管理費込み 81,100〜85,000）: 全12行 RENT_SLIGHTLY_OVER 0 → RENT_WIDE +10（80→90・65→75）。並びは同じ（AD 2ヶ月 ＞ 1.5ヶ月のまま）
+  - itandi #50〜67（希望 東三国）: 新大阪の11行 AREA_NEAR +5 → AREA_STATION_WIDE +8、西中島南方の1行 AREA_CLOSE +2 → 2駅 +6。18件中13か所で並びが入れ替わり、東三国の駅の物件と隣の駅の物件が他の条件（敷礼0・設備・AD）で並ぶようになった（同じ条件なら希望の駅が +2 上）
+- **全お客様の希望の駅（287人・168種類）で判定の「隣」と拡張の getAdjacentStations を照合**（resolution-core.js を vm で読み込み）: 一致 84・違う 42・拡張の辞書に無い 42。違いの多くは判定の方が本当の隣を多く持つ物（梅田は拡張の STATION_LINE_MAP が御堂筋線だけ＝十三・福島・南森町 等を足さない／なんば・尼崎・久宝寺は拡張で隣が0）
+- **⚠ 拡張側に要る変更（担当 B へ）**:
+  1. 拡張の路線の並びの誤りで、広げて検索が**間違った駅を隣として足している**: 東三国→西中島南方（本当は新大阪）・西中島南方→東三国・新大阪→中津・中津→新大阪・塚本→新大阪・谷町四丁目→緑橋（中央線に森ノ宮が無い）・緑橋→谷町四丁目。直しは osaka-geo.ts の LINE_FIXES と同じ並びを popup-maps.js の LINE_STATION_ORDER（と resolution-core.js の写し）に
+  2. 大きな駅（梅田・なんば・尼崎・天王寺）は STATION_LINE_MAP に一部の路線しか無く、広げても他の路線の隣が入らない
+  3. 広さの −5㎡ は手順の表示だけで自動入力に入っていない（popup.js buildCondData だけ）・itandi の手動（popup.js 3897）は築年 ＋5年を入れていない ＝ 経路で広げ方が違う
+  4. 広げた回かをサーバーに届ける: callMergeApi の body に `search_mode: 'wide'|'pinpoint'`（bulk-dl.js・itandi-bulk-dl.js が今の検索のモードを storage に持って渡す）→ merge-pdfs → recordPickupBatch → property_pickups.search_mode（新しい列・migrate-schema も）。届けば札を「広げた検索の回」と出せる。点の帯は今のままでよい
+- テスト: `npx tsx app/lib/__tests__/wide-search-score.test.ts`（34件・新規）・area-commute 116・property-brain 88・pickup-review-order 58・pickup-terms 50・pickup-equipment 64 ほか全通過。上限は SCORE_MAX を import して 50＋合計＝score を確かめる
+
+### 2026-09-25 反証レビュー（広げて検索の帯・通勤の候補）で直した物
+- **駅のまとまりを希望の駅に**（area-want.ts `stationGroupOf`）: 梅田の希望で JR大阪・西梅田・北新地の物件が AREA_NEAR +5、隣の中津が AREA_STATION_WIDE +8 と**広げた駅の方が高かった**。STATION_GROUPS（梅田＝梅田/大阪/西梅田/北新地、天王寺＝天王寺/大阪阿部野橋/天王寺駅前、心斎橋＝心斎橋/四ツ橋 等）の駅は AREA_STATION_MATCH、まとまりの駅の隣（中崎町＝東梅田の隣）も WIDE に
+- **環状線の輪**（`stopsBetween`）: LINES の環状線は 大阪…天満 の両端がつながらない形 → 天満の希望で大阪が 18駅扱い。輪で数える（`adjacentStations` は拡張の getAdjacentStations の写しなのでそのまま）
+- **家賃の幅**（property-brain.ts judgeProperty）: 2つ目の条件を「家賃だけ上限内」→「家賃だけ 上限＋幅 以内」かつ管理費込み1.10以内に。旧は 83,000＋管理費3,000（計86,000・広げた検索で拾う）が 0点、78,000＋9,000（計87,000）が +10 と**安い方が低かった**。property-brain.test の「1.10 ちょうど」（72,000＋5,000・上限7万）は RENT_WIDE に
+- **拡張 commute-candidates.js mergeStationField**: 通勤の言い方を外す正規表現の「分」が駅名の 河内国分 まで消していた → 数字＋分だけ外す（osaka-transit.test.js に1件）
+- 確かめた（問題なし）: AD の重み不変・外す／保留の候補は増えない（札は全部保留にしない）・全行 50＋合計＝score（SCORE_MAX 200）・UMD は node（module.exports）とブラウザ（self）両方・manifest の web_accessible_resources に2ファイル・popup.html の読み込み順・osaka-transit.js は生成し直しても同じ（md5 一致）

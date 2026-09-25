@@ -57,6 +57,10 @@
       "schedule": "23 3 * * *"
     },
     {
+      "path": "/api/cron/pickup-retention",
+      "schedule": "40 19 * * *"
+    },
+    {
       "path": "/api/cron/announce-hot-customers",
       "schedule": "0 1,3,5,7,9,11 * * *"
     },

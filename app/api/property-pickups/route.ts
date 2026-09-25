@@ -8,6 +8,7 @@ import { toPickupHandoffItem } from "@/app/lib/property-pickups";
 import { pickCustomerBest } from "@/app/lib/pickup-best";
 import { sortForReview } from "@/app/lib/pickup-review-order";
 import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
+import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { extractImageWants, dedupeWantsByTopic, imageAnalysisNeed, type ImageWant } from "@/app/lib/image-wants";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 
@@ -27,6 +28,8 @@ type Row = {
   terms?: Record<string, unknown> | null;
   /** 2026-09-25 物件の場所と希望のエリア・通勤の照合（area-want.ts の PickupLocation） */
   location?: Record<string, unknown> | null;
+  /** 2026-09-25 画像・資料を消した時刻（/api/cron/pickup-retention） */
+  expired_at?: string | null;
 };
 type Note = { id: number; created_at: string; property_customer_id: string; batch_id: string | null; text: string; author: string | null };
 
@@ -37,11 +40,13 @@ export async function GET(req: NextRequest) {
   if (idsParam) {
     const ids = idsParam.split(",").map((s) => Number(s)).filter((n) => Number.isFinite(n)).slice(0, 10);
     //   2026-09-24 夜: 説明文（summary_text＝AD・🌟 入り）は返さない（AIX の入力欄に流れる入口を作らない・お客様に届く道を塞ぐ）
-    const { data, error } = await supabase.from("property_pickups").select("id, rank, property_name, room_no, conversation_id, trim_image_url, page_image_url").in("id", ids);
+    const { data, error } = await supabase.from("property_pickups").select("id, created_at, expired_at, rank, property_name, room_no, conversation_id, trim_image_url, page_image_url").in("id", ids);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    const items = ((data ?? []) as Array<{ id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>)
+    // 2026-09-25 保存期間（届いてから 72時間）が切れた物件は画像を渡さない（image_url: null・AIX には載らない）
+    const nowMs = Date.now();
+    const items = ((data ?? []) as Array<{ id: number; created_at: string; expired_at: string | null; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>)
       .sort((a, z) => a.rank - z.rank)
-      .map(toPickupHandoffItem);
+      .map((r) => toPickupHandoffItem(withPickupRetention(r, nowMs)));
     return NextResponse.json({ ok: true, items });
   }
   const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days") ?? "30")));
@@ -61,12 +66,13 @@ export async function GET(req: NextRequest) {
 
   const [{ data, error }, notesRes] = await Promise.all([
     supabase.from("property_pickups")
-      .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms")
+      .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, expired_at")
       .gte("created_at", since).order("created_at", { ascending: false }).order("rank", { ascending: true }).limit(3000),
     supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").gte("created_at", since).order("created_at", { ascending: true }).limit(2000),
   ]);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const rows = (data ?? []) as Row[];
+  const nowMs = Date.now();
+  const rows = ((data ?? []) as Row[]).map((r) => withPickupRetention(r, nowMs));
   const notes = (notesRes.data ?? []) as Note[];
 
   type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Row[] };
@@ -192,7 +198,7 @@ async function buildList(since: string) {
 // ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────
 async function buildDetail(pcid: string | null, conv: string | null, nBatches: number) {
   let q = supabase.from("property_pickups")
-    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location")
+    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location, expired_at")
     .order("created_at", { ascending: false }).limit(300);
   q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);
@@ -211,7 +217,10 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     sumRes,
   ]);
   if (pk.error) return { ok: false, error: pk.error.message };
-  const rows = (pk.data ?? []) as Row[];
+  // 2026-09-25 竹内「3日前の画像は消される・保存期間が終了しましたと出る（LINE のように）」: 届いてから 72時間を過ぎた行は
+  //   画像・資料の URL を空にして expired を付ける（消す処理は毎日1回の cron。間の数時間も画面は 72時間ちょうどでそろえる）
+  const nowMs = Date.now();
+  const rows = ((pk.data ?? []) as Row[]).map((r) => withPickupRetention(r, nowMs));
   const order: string[] = [];
   const byBatch = new Map<string, { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Row[] }>();
   for (const r of rows) {

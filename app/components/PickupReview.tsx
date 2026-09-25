@@ -10,6 +10,7 @@ import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/
 import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
 import type { PickupTerms } from "@/app/lib/pickup-terms";
+import { PICKUP_EXPIRED_LABEL, PICKUP_EXPIRED_ACTION_NOTE } from "@/app/lib/pickup-retention";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -24,8 +25,10 @@ type Item = {
   terms?: PickupTerms | null;
   /** 2026-09-25 物件の場所と希望のエリア・通勤の照合（area-want.ts の PickupLocation・画面は line と area.code だけ読む） */
   location?: { line?: string; area?: { code?: string; why?: string } | null } | null;
+  /** 2026-09-25 画像・資料の保存期間（届いてから 72時間・pickup-retention.ts）。切れた行は URL が空で来る */
+  expired?: boolean; expiry_hours_left?: number | null; expiry_warn?: boolean;
 };
-type Batch = { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
+type Batch ={ batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Item[] };
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
 type LineLite = { profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
@@ -234,6 +237,22 @@ async function saveImage(url: string, name: string) {
   } catch {
     window.open(url, "_blank", "noopener");
   }
+}
+
+/** 2026-09-25 竹内「保存期間が終了しましたと出る感じで（実際の LINE のように）」: 画像のかわりに出す灰色の枠 */
+function ExpiredImage({ width, height }: { width?: number; height?: number }) {
+  return (
+    <div className="shrink-0 rounded-md flex flex-col items-center justify-center text-center leading-tight"
+      style={{ width: width ?? "100%", height: height ?? undefined, aspectRatio: height ? undefined : "1.41", background: "#eceff1", border: "1px solid #cfd8dc", color: "#90a4ae" }}>
+      <span className="text-[14px]">🔒</span>
+      <span className="text-[9px] font-bold px-1">{PICKUP_EXPIRED_LABEL}</span>
+    </div>
+  );
+}
+
+/** 回の画像・資料の保存期間が切れたか（同じ回の行は同じ時刻に届くので、全部が切れていれば切れた回） */
+function batchExpired(b: Batch): boolean {
+  return b.items.length > 0 && b.items.every((x) => x.expired);
 }
 
 function buildBubbles(c: Customer): Bubble[] {
@@ -634,6 +653,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const saveImages = async (b: Batch | null, targetsIn?: Item[]) => {
     const targets = targetsIn ?? (b ? b.items.filter((it) => checked[it.id]) : []);
     if (targets.length === 0) { setMsg("保存する物件にチェックを入れてください"); return; }
+    if (targets.some((it) => it.expired)) { setMsg(`🔒 ${PICKUP_EXPIRED_ACTION_NOTE}`); return; }
     let list = targets;
     const needTrim = targets.filter((it) => !pickSaveImageUrl(it));
     if (needTrim.length > 0 && b) {
@@ -690,6 +710,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
   const analyze = async (b: Batch) => {
     const targets = b.items.filter((it) => checked[it.id] && it.status === "pending");
     if (targets.length === 0) { setMsg("分析する物件にチェックを入れてください"); return; }
+    if (targets.some((it) => it.expired)) { setMsg(`🔒 ${PICKUP_EXPIRED_ACTION_NOTE}`); return; }
     const needTrim = targets.filter((it) => needsTrimBeforeAnalysis(it));
     if (needTrim.length > 0 && !(await trim(b, needTrim))) return;
     setBusy(`analyze:${b.batch_id}`);
@@ -752,6 +773,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
     // only: 👑 全体で一番の吹き出しから、その1件だけを送る時（2026-09-24 竹内「1番オススメの物件全体の中で送る」）
     const targets = only ?? b.items.filter((it) => checked[it.id] && it.status === "pending");
     if (targets.length === 0) { setMsg("送る物件にチェックを入れてください"); return; }
+    if (targets.some((it) => it.expired)) { setMsg(`🔒 ${PICKUP_EXPIRED_ACTION_NOTE}`); return; }
     const convId = c.conversation_id ?? b.conversation_id;
     if (!convId) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
     const noImage = targets.filter((it) => !it.trim_image_url);
@@ -889,6 +911,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     return (
                       <label key={it.id} className="flex gap-2 items-start rounded-xl px-2 py-2" style={{ background: it.recommended > 0 ? "#fff8e1" : "#f7f9fb", opacity: pending ? 1 : 0.6 }}>
                         <input type="checkbox" className="mt-1" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
+                        {it.expired && <ExpiredImage width={88} height={62} />}
                         {img && (
                           <a href={img} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => openImage(e, img, `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`)}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -925,36 +948,40 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                     );
                   })}
                 </div>
+                {/* 2026-09-25 竹内「保存期間が終了しましたと出る感じで（実際の LINE のように）」: 切れた回は理由を1行・切れる前 12時間は残りを小さく */}
+                {batchExpired(bb.batch)
+                  ? <div className="text-[10px] mt-1.5 px-2 py-1 rounded-lg leading-snug" style={{ background: "#eceff1", color: "#78909c" }}>🔒 {PICKUP_EXPIRED_ACTION_NOTE}</div>
+                  : (() => { const w = bb.batch.items.find((x) => x.expiry_warn); return w ? <div className="text-[10px] mt-1 text-[#ef6c00]">⏳ あと{w.expiry_hours_left}時間で画像・資料の保存期間が終了します（届いてから3日）</div> : null; })()}
                 {bb.batch.items.some((it) => it.status === "pending") && (
                   <div className="flex flex-col gap-2 mt-2">
                     {/* 推奨のお客様: 画像で分析を先頭・全幅・濃い色で（ラベルに確かめたい希望） */}
                     {needRecommended && (
-                      <button disabled={!!busy} onClick={() => void analyze(bb.batch)}
+                      <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void analyze(bb.batch)}
                         title="お客様の希望に、間取り図で確かめるのが確実な物（WIC・キッチン・水回り・部屋の配置）があります"
-                        className="w-full px-3 py-2.5 rounded-lg text-xs font-bold text-white" style={{ background: "#00796b", opacity: busy ? 0.6 : 1 }}>
+                        className="w-full px-3 py-2.5 rounded-lg text-xs font-bold text-white" style={{ background: "#00796b", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 }}>
                         {busy === `analyze:${bb.batch.batch_id}` ? "🔍 分析中…" : `🔍 画像で分析（推奨: ${needLabels}）`}
                       </button>
                     )}
                     <div className="flex gap-2">
                       {/* 2026-09-24 竹内「画像トリミングボタンを画像保存にして、押したら選択しているのが一括で携帯に保存される形にする」 */}
-                      <button disabled={!!busy} onClick={() => void saveImages(bb.batch)}
+                      <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void saveImages(bb.batch)}
                         title="選んだ物件の資料画像（PDF 1ページ目・弊社帯替え）をまとめて保存する（元付業者の資料は保存しない）"
-                        className="flex-1 px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy ? 0.6 : 1 }}>
+                        className="flex-1 px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 }}>
                         {busy === `trim:${bb.batch.batch_id}` || busy === `save:${bb.batch.batch_id}` ? "💾 …" : "💾 画像保存"}
                       </button>
                       {!needRecommended && (
-                        <button disabled={!!busy} onClick={() => void analyze(bb.batch)}
+                        <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void analyze(bb.batch)}
                           title="選んだ物件の資料画像を DeepSeek が読み、水回り・キッチン・リビングと洋室の位置関係・収納をお客様の希望に照らして判断"
                           className={`flex-1 px-3 py-2 rounded-lg font-bold ${needNone ? "text-[10px]" : "text-xs"}`}
-                          style={needNone ? { background: "#f5f5f5", color: "#9e9e9e", opacity: busy ? 0.6 : 1 } : { background: "#e0f2f1", color: "#00695c", opacity: busy ? 0.6 : 1 }}>
+                          style={needNone ? { background: "#f5f5f5", color: "#9e9e9e", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 } : { background: "#e0f2f1", color: "#00695c", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 }}>
                           {busy === `analyze:${bb.batch.batch_id}` ? "🔍 分析中…" : needNone ? "🔍 画像で分析（画像で確かめる希望なし）" : "🔍 画像で分析"}
                         </button>
                       )}
                     </div>
                     <div className="flex gap-2">
-                      <button disabled={!!busy} onClick={() => void sendViaAix(open, bb.batch)}
+                      <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void sendViaAix(open, bb.batch)}
                         title="LINE の会話画面で AIX【物件ピックアップした】を開き、選んだ物件の資料画像（1ページ目）をセットする"
-                        className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy ? 0.6 : 1 }}>
+                        className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 }}>
                         📤 AIXで送る（物件ピックアップした）
                       </button>
                       <button disabled={!!busy} onClick={() => void act(bb.batch, "skip")}
@@ -1039,7 +1066,7 @@ export default function PickupReview({ focusKey = null, onChange }: { focusKey?:
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={aImg} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff", objectPosition: "top" }} />
                           </a>
-                        ) : (
+                        ) : it.expired ? <ExpiredImage width={88} height={62} /> : (
                           <div className="shrink-0 rounded-md flex items-center justify-center text-[9px] text-[#90a4ae] text-center" style={{ width: 88, height: 62, border: "1px dashed #cfd8dc" }}>画像は保存時に作成</div>
                         )}
                         <div className="flex-1 min-w-0">

@@ -2341,6 +2341,10 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS terms JSONB;
 -- 2026-09-25 竹内「エリアの部分、把握できれば理想」「通勤の部分も沿線の知識」: 物件の場所（交通・所在地の区）と希望のエリア・通勤の照合
 --   {stations, ward, wardSource, area:{code,result,anchor,km,why}, commute:[{target,minutes,transfers,…}], line}（area-want.ts・osaka-geo.ts・DeepSeek 0円）
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS location JSONB;
+-- 2026-09-25 竹内「3日前の画像は消されるように。保存期間が終了しましたと出る感じで（実際の LINE のように）」:
+--   届いてから 72時間で画像・資料（Blob の pickups/）を消した時刻（/api/cron/pickup-retention）。行の文字は残す
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS expired_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_property_pickups_retention ON property_pickups(created_at) WHERE expired_at IS NULL;
 -- 2026-09-25 竹内「文章の部分も要約できるようにする」: 条件の自由文のうち決定論で読めない節だけ DeepSeek で要約した物（condition-summary-server.ts）
 --   condition_summary_hash＝自由文のハッシュ＋版（文が変わらない限り DeepSeek を呼ばない）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS condition_summary JSONB;
