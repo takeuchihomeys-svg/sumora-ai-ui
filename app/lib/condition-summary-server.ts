@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
-import { callDeepSeek } from "@/app/lib/vision-alt-provider";
+import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import {
   buildConditionSummary, conditionFreeText, buildSummaryUserText, parseSummaryResponse, maskClause, formatSummaryLine, uncheckableLabels,
   SUMMARY_SYSTEM_PROMPT, CONDITION_SUMMARY_VERSION, type ConditionSummary, type SummaryCustomer, type SummaryItem,
@@ -29,6 +29,8 @@ export type LoadedSummary = {
   uncheckable: string[];
   /** DeepSeek を今回呼んだか */
   called: boolean;
+  /** 2026-09-25: DeepSeek が2回とも答えなかった（「読み取れなかった」の印・保存していないので次の回で読み直す。Claude では埋めない） */
+  readFailed: boolean;
   hash: string;
 };
 
@@ -37,13 +39,22 @@ export function summaryHash(c: SummaryCustomer): string {
 }
 
 /** 使用量を llm_usage_logs に（action を分ける） */
-function recordUsage(u: { model: string; input: number; output: number; cacheHit: number; ms: number; ok: boolean }, conversationId: string | null): void {
+function recordUsage(u: { model: string; input: number; output: number; cacheHit: number; ms: number; ok: boolean; retry?: boolean }, conversationId: string | null): void {
   void import("@/app/lib/llm-usage-recorder").then(({ recordAltUsage }) => recordAltUsage({
     model: u.model, action: "condition_summary", conversationId,
     usage: { input_tokens: Math.max(0, u.input - u.cacheHit), output_tokens: u.output, cache_read_input_tokens: u.cacheHit },
     status: u.input > 0 ? 200 : 0, errorType: u.ok ? null : (u.input > 0 ? "empty_or_unparsable" : "no_response"),
-    durationMs: u.ms, sysHead: `【条件の要約】${CONDITION_SUMMARY_VERSION}`, sysKeyFull: null, maxTokens: 500,
+    durationMs: u.ms, sysHead: `【条件の要約${u.retry ? "・読み直し" : ""}】${CONDITION_SUMMARY_VERSION}`, sysKeyFull: null, maxTokens: 500,
   })).catch(() => {});
+}
+
+/** 要約の返事が JSON として読める形か（items の配列がある）。純関数 */
+export function summaryReplyWellFormed(text: string): boolean {
+  try {
+    const body = String(text ?? "").match(/\{[\s\S]*\}/)?.[0] ?? "";
+    if (!body) return false;
+    return Array.isArray((JSON.parse(body) as { items?: unknown }).items);
+  } catch { return false; }
 }
 
 /**
@@ -70,20 +81,26 @@ export async function loadConditionSummary(propertyCustomerId: string | null, op
   const saved = cust.condition_summary && cust.condition_summary.hash === hash ? cust.condition_summary : null;
   let ai: SummaryItem[] = saved?.ai ?? [];
   let called = false;
+  let readFailed = false;
   const clauses = [...summary.unread, ...summary.unchecked];
   // 鍵が無い環境（テスト・ローカル）では呼ばない＝空の使用量の行（status 0・no_response）を llm_usage_logs に残さない
   const hasKey = !!(process.env.DEEPSEEK_API_KEY ?? "").trim();
   if (!saved && opts.allowLlm && hasKey && clauses.length > 0 && propertyCustomerId) {
     const names = [cust.customer_name].filter(Boolean) as string[];
     const masked = clauses.map((x) => maskClause(maskPII(x, names)));
-    const t0 = Date.now();
-    const r = await callDeepSeek(SUMMARY_SYSTEM_PROMPT, buildSummaryUserText(masked), { thinking: false, maxTokens: 500, timeoutMs: 30_000, temperature: 0 });
+    // 2026-09-25 竹内「抜けの内容にプロンプトキャッシュを効かせる」「クロードに切り替えない」: 固定の前置き（SUMMARY_SYSTEM_PROMPT）が system・読めない節は後ろ。
+    //   答えない・崩れた時は同じ前置きのまま1回だけ読み直す（callDeepSeekRead）。2回とも駄目なら保存しない＝次の回（売上サポに届いた時）で読み直す・readFailed の印
+    //   「条件が無い」という正しい答え（{"items":[]}）は読めた扱い（保存して次から呼ばない）。JSON が崩れた・items が無い時だけ読み直す
+    const read = await callDeepSeekRead(SUMMARY_SYSTEM_PROMPT, buildSummaryUserText(masked), { maxTokens: 500, timeoutMs: 30_000 },
+      (t) => (summaryReplyWellFormed(t) ? parseSummaryResponse(t, masked.length) : null));
     called = true;
-    const parsed = r ? parseSummaryResponse(r.text, masked.length) : [];
-    recordUsage({ model: r?.model ?? "deepseek-flash", input: r?.usage.input ?? 0, output: r?.usage.output ?? 0, cacheHit: r?.usage.cacheHit ?? 0, ms: Date.now() - t0, ok: !!r && parsed.length > 0 }, opts.conversationId ?? null);
-    if (r) {
-      ai = parsed;
-      const toSave: SavedSummary = { v: CONDITION_SUMMARY_VERSION, hash, ai, clauses: masked, at: new Date().toISOString(), model: r.model };
+    for (const a of read.attempts) {
+      recordUsage({ model: a.res?.model ?? "deepseek-flash", input: a.res?.usage.input ?? 0, output: a.res?.usage.output ?? 0, cacheHit: a.res?.usage.cacheHit ?? 0, ms: a.ms, ok: a.ok, retry: a.retry }, opts.conversationId ?? null);
+    }
+    readFailed = read.failed;
+    if (read.value) {
+      ai = read.value;
+      const toSave: SavedSummary = { v: CONDITION_SUMMARY_VERSION, hash, ai, clauses: masked, at: new Date().toISOString(), model: read.res?.model ?? null };
       const { error } = await supabase.from("property_customers").update({ condition_summary: toSave, condition_summary_hash: hash }).eq("id", propertyCustomerId);
       if (error) console.warn("[condition-summary] 保存できない:", error.message);
     }
@@ -93,5 +110,5 @@ export async function loadConditionSummary(propertyCustomerId: string | null, op
     await supabase.from("property_customers").update({ condition_summary: toSave, condition_summary_hash: hash }).eq("id", propertyCustomerId).then(() => {}, () => {});
   }
   const items = [...summary.items, ...ai.filter((x) => x.mode !== "info")];
-  return { summary, ai, line: formatSummaryLine(items), uncheckable: uncheckableLabels(summary, ai.length ? ai : null), called, hash };
+  return { summary, ai, line: formatSummaryLine(items), uncheckable: uncheckableLabels(summary, ai.length ? ai : null), called, readFailed, hash };
 }

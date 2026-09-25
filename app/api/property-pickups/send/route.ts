@@ -22,9 +22,12 @@ export async function POST(req: NextRequest) {
   const ids = Array.isArray(body.item_ids) ? body.item_ids.filter((n) => Number.isFinite(n)) : [];
   if (!body.batch_id || ids.length === 0) return NextResponse.json({ ok: false, error: "batch_id と item_ids が要ります" }, { status: 400 });
 
+  // 2026-09-25 竹内「まとめられていない」: 売上サポは短い間に届いた回（リアプロ・itandi）を1つにまとめて出す（pickup-card-view.groupPickupRounds）。
+  //   まとめた回から送る・見送る時は batch_id に元の回を「,」でつないで渡す（結合 PDF の名前に「,」は入らない）
+  const batchIds = body.batch_id.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20);
   const { data: rowsRaw, error } = await supabase.from("property_pickups")
     .select("id, batch_id, property_customer_id, conversation_id, page_image_url, trim_image_url, status, rank, property_name, room_no, ad_yen")
-    .eq("batch_id", body.batch_id).in("id", ids).order("rank", { ascending: true });
+    .in("batch_id", batchIds).in("id", ids).order("rank", { ascending: true }).order("id", { ascending: true });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   const rowsAll = (rowsRaw ?? []) as Array<{ id: number; property_customer_id: string | null; conversation_id: string | null; page_image_url: string | null; trim_image_url: string | null; status: string; rank: number; property_name: string; room_no: string | null; ad_yen: number | null }>;
   if (rowsAll.length === 0) return NextResponse.json({ ok: false, error: "対象の行が無い" }, { status: 404 });

@@ -88,7 +88,9 @@ export type EquipKey =
   | "bath_toilet" | "washbasin" | "laundry_in" | "corner" | "pet" | "floor2" | "top_floor" | "south"
   | "aircon" | "system_kitchen" | "counter_kitchen" | "reheating" | "bath_dryer" | "washlet"
   | "walk_in_closet" | "shoebox" | "monitor_intercom" | "city_gas" | "gas_stove" | "ih" | "burner2"
-  | "flooring" | "balcony" | "loft" | "bike_parking" | "garbage24" | "two_person" | "no_guarantor" | "rc" | "not_wood";
+  | "flooring" | "balcony" | "loft" | "bike_parking" | "garbage24" | "two_person" | "no_guarantor" | "rc" | "not_wood"
+  // 2026-09-25 竹内「構造も指定あればちゃんと見る。構造木造NGとかある」: 構造の段（木造→軽量鉄骨→鉄骨→RC→SRC）と物件種別（マンション／アパート）
+  | "structure" | "bldg_type";
 
 /** 表示の短い名前 */
 export const EQUIP_LABELS: Record<EquipKey, string> = {
@@ -99,8 +101,40 @@ export const EQUIP_LABELS: Record<EquipKey, string> = {
   walk_in_closet: "WIC", shoebox: "シューズボックス", monitor_intercom: "モニター付インターホン", city_gas: "都市ガス",
   gas_stove: "ガスコンロ", ih: "IHコンロ", burner2: "コンロ2口以上", flooring: "フローリング", balcony: "バルコニー", loft: "ロフト",
   bike_parking: "駐輪場", garbage24: "24時間ゴミ出し", two_person: "二人入居可", no_guarantor: "保証人不要",
-  rc: "鉄筋コンクリート", not_wood: "木造以外",
+  rc: "鉄筋コンクリート", not_wood: "木造以外", structure: "構造", bldg_type: "物件種別",
 };
+
+/**
+ * 構造の段（小さいほど軽い）。2026-09-25 竹内「木造NG とかあるのでそこも含めて考える」:
+ *   木造 0 → 軽量鉄骨 1 → 鉄骨 2 → RC（鉄筋コンクリート）3 → SRC（鉄骨鉄筋コンクリート）4
+ */
+export const STRUCTURE_TIER_NAMES = ["木造", "軽量鉄骨", "鉄骨", "RC", "SRC"] as const;
+
+/**
+ * 構造の文字 → 段（読めなければ null）。資料の「鉄筋コンクリート造」「RC造」「鉄骨造」「軽量鉄骨造」「木造」「SRC造」「鉄骨鉄筋コンクリート」
+ * と、お客様の条件の「鉄筋」「RC」「鉄骨造」も同じ関数で読む。ALC・ブロック・その他は決めない（null）
+ */
+export function structureTierOf(raw: string | null | undefined): number | null {
+  const s = norm(raw).replace(/\s+/g, "").toUpperCase();
+  if (!s) return null;
+  if (/(?<![A-Z])SRC(?![A-Z])|鉄骨鉄筋|鉄筋鉄骨/.test(s)) return 4;
+  if (/(?<![A-Z])RC(?![A-Z])|鉄筋コンクリ|鉄筋|壁式|PC造|プレキャスト/.test(s)) return 3;
+  if (/軽量鉄骨|軽鉄/.test(s)) return 1;
+  if (/鉄骨|重量鉄骨|^S造$/.test(s)) return 2;
+  if (/木造|木質/.test(s)) return 0;
+  return null;
+}
+
+/** 資料の物件種別・物件種目の文字 → 短い名前（「[住居用] マンション」→ マンション）。読めなければ null */
+export function buildingTypeOf(raw: string | null | undefined): string | null {
+  const s = norm(raw).replace(/\s+/g, "");
+  if (!s || /^[ー-]$/.test(s)) return null;
+  if (/マンション/.test(s)) return "マンション";
+  if (/アパート|ハイツ|コーポ/.test(s)) return "アパート";
+  if (/一戸建|戸建|貸家/.test(s)) return "一戸建て";
+  if (/テラス|タウンハウス|長屋/.test(s)) return "テラスハウス";
+  return null;
+}
 export const EQUIP_KEYS = Object.keys(EQUIP_LABELS) as EquipKey[];
 
 /**
@@ -141,6 +175,10 @@ export type ListingEquipment = {
   basement: boolean;
   totalFloors: number | null;
   structure: string | null;
+  /** 2026-09-25 構造の段（STRUCTURE_TIER_NAMES の添字・読めなければ null） */
+  structureTier?: number | null;
+  /** 2026-09-25 物件種別（リアプロ「物件種目 [住居用] マンション」・itandi「物件種別 マンション」）。読めなければ null */
+  buildingType?: string | null;
   direction: string | null;
   items: Record<EquipKey, EquipFact>;
 };
@@ -149,7 +187,13 @@ export type ListingEquipment = {
 type Rule = { ok?: RegExp[]; ng?: RegExp[] };
 // 照らす文字は空白・改行を詰めた物（squash 済み）
 const RULES: Partial<Record<EquipKey, Rule>> = {
-  elevator: { ok: [/エレベータ[ー]?(?:[（(][^)）]{0,6}[)）]|各階有)?/], ng: [/エレベータ[ー]?(?:なし|無し|無)(?![料])/] },
+  // 2026-09-25 竹内: 設備欄・備考の「エレベーターなし」「EV無」を ok（○）と読んでいた（ok の式が「エレベーター」だけで当たり、ok を先に見るため）
+  //   → ok は直後に「なし・無」が続かない時だけ。「EV有・EVあり・EV付」も ok、「EV無・EVなし」は ng
+  elevator: {
+    //   反証レビュー: 「エレベーター（無）」「EV：無」の括弧・区切りも同じ扱い
+    ok: [/エレベータ[ー]?(?![ー]?[:：]?[（(]?(?:なし|無し|無|ナシ|ﾅｼ))(?:[（(][^)）]{0,6}[)）]|各階有)?/, /(?<![A-Z])EV[:：]?(?:有|あり|付)/],
+    ng: [/エレベータ[ー]?[:：]?[（(]?(?:なし|無し|無|ナシ)(?![料])/, /(?<![A-Z])EV[:：]?[（(]?(?:なし|無し|無)(?![料])/],
+  },
   delivery_box: { ok: [/宅配(?:BOX|ボックス|ロッカー)(?:暗証番号)?/i], ng: [/宅配(?:BOX|ボックス)(?:なし|無し)/i] },
   autolock: { ok: [/(?:モニタ付)?オートロック/], ng: [/オートロック(?:なし|無し)/] },
   net_free: { ok: [/インターネット(?:\(Wi-?Fi\))?(?:使用料)?無料|ネット使用料(?:不要|無料)|ネット無料|無料インターネット|Wi-?Fi無料/i] },
@@ -278,8 +322,12 @@ export function parseListingEquipment(raw: string | null | undefined): ListingEq
   out.totalFloors = tf ? parseInt(tf[1], 10) : null;
 
   // ── 構造・向き
-  const st = format === "realpro" ? (text.match(/建築構造[ \t]+([^ \t\n]+)/) ?? [])[1] : (text.match(/(?:^|\n)[ \t]*構造[ \t]+([^ \t\n]+)/) ?? [])[1];
+  const st = format === "realpro" ? (text.match(/建築構造[ \t]+([^ \t\n]+)/) ?? [])[1] : (text.match(/(?:^|\n)[ \t]*構造[ \t]+([^ \t\n]+)/) ?? text.match(/(?:建物|建築)構造[ \t]*[:：]?[ \t]*([^ \t\n]+)/) ?? [])[1];
   out.structure = st && st !== "ー" && st !== "-" ? st : null;
+  out.structureTier = structureTierOf(out.structure);
+  // 物件種別: リアプロ「物件種目 [住居用] マンション」・itandi「物件種別 マンション」（「ー」は読まない）
+  const bt = (text.match(/物件種目[ \t]*(?:\[[^\]\n]*\])?[ \t]*([^ \t\n]+)/) ?? text.match(/物件種別[ \t]*[:：]?[ \t]*([^ \t\n]+)/) ?? [])[1] ?? null;
+  out.buildingType = buildingTypeOf(bt);
   const dir = (text.match(/主要採光面[ \t]+([東西南北]{1,2})向き/) ?? text.match(/開口部方位[ \t]+([東西南北]{1,2})(?=[ \t]*(?:\n|$))/) ?? [])[1] ?? null;
   out.direction = dir;
 
@@ -352,6 +400,9 @@ export function parseListingEquipment(raw: string | null | undefined): ListingEq
     items.rc = { status: isRc ? "ok" : (isWood || /鉄骨|軽量/.test(s)) ? "ng" : "unlisted", evidence: `構造 ${s}` };
     items.not_wood = { status: isWood ? "ng" : "ok", evidence: `構造 ${s}` };
   }
+  // 構造の段・物件種別（ok＝資料に書いてある。希望との照らし合わせは matchEquipment が段で見る）
+  if (out.structure && out.structureTier != null) items.structure = { status: "ok", evidence: `構造 ${out.structure}`, detail: STRUCTURE_TIER_NAMES[out.structureTier] };
+  if (out.buildingType) items.bldg_type = { status: "ok", evidence: `物件種別 ${out.buildingType}`, detail: out.buildingType };
   return out;
 }
 
@@ -391,7 +442,7 @@ export function mergeBuildingEquipment<T extends { id?: string | number | null; 
 
 // ───────────────────────── お客様の希望 ─────────────────────────
 
-export type WantField = "preferences" | "ng_points" | "other_requests" | "additional_conditions" | "pet";
+export type WantField = "preferences" | "ng_points" | "other_requests" | "additional_conditions" | "pet" | "structure_types";
 export type EquipmentWant = {
   /** floor＝「3階以上」「7階以下」のように 2階以上 以外の階の範囲 */
   key: EquipKey | "floor";
@@ -408,6 +459,14 @@ export type EquipmentWant = {
    *   階の希望（floor2）そのものではない（旧は「2階以上が必須」と読み、1階の部屋を ×・必須の上限20点にしていた＝🌟★の物件だった）
    */
   ifFloorAtLeast?: number;
+  /** key=structure: この段以上なら ok（STRUCTURE_TIER_NAMES の添字）。一段下（鉄筋の希望に鉄骨）は「少し低い」、それより下と木造は × */
+  structureMin?: number;
+  /** key=structure: 木造NG だけから来た希望（ラベルを「木造NG」にする） */
+  woodNgOnly?: boolean;
+  /** key=structure: 下限の一つ下は「避けたい」と書かれた段（軽量鉄骨NG 等）＝一段下 △ にせず × */
+  structureNoNear?: boolean;
+  /** key=bldg_type: マンションの希望（アパートは ×）／アパートの希望（マンションでも減点しない） */
+  bldgType?: "mansion" | "apartment";
   /** 元の節 */
   text: string;
   field: WantField;
@@ -423,6 +482,8 @@ export type EquipmentWants = {
 };
 export type CustomerConditionsLike = {
   preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null; pet?: unknown;
+  /** 2026-09-25 条件の構造の欄（「RC造　SRC造」「鉄骨造　RC造　SRC造」）。並んだ構造の一番軽い段以上を希望として読む */
+  structure_types?: string | null;
 };
 
 /** 希望の文 → キー（1つの節に複数当たってよい）。ng 反転の言い方（1階NG・3点ユニットNG・木造NG）は must として別に扱う */
@@ -459,8 +520,63 @@ const WANT_RES: Array<{ key: EquipKey; re: RegExp }> = [
   { key: "garbage24", re: /24時間ゴミ/ },
   { key: "two_person", re: /(?:二|2|２)人入居|入居(?:二|2|２)人|同棲(?!相手)|(?:二|2|２)人暮らし|(?:二|2|２)人で住/ },
   { key: "no_guarantor", re: /保証人(?:不要|なし|無し|無)/ },
-  { key: "rc", re: /鉄筋(?:コンクリート)?|RC造|SRC/ },
+  // 構造（鉄筋・RC・鉄骨・木造NG）と物件種別（マンション・アパート）は parseEquipmentWants の後段で段として読む（structureWantOfClause）
 ];
+
+// ───────────────────────── 構造・物件種別の希望 ─────────────────────────
+
+/** 「木造でもいい」「木造可」＝受け入れの話（希望にしない） */
+const WOOD_ACCEPT_RE = /木造(?:でも|も)?(?:いい|良い|よい|可|OK|大丈夫|構わない|かまわない)/i;
+/** 木造を避けたい言い方（NG 欄の「木造」はこれが無くても NG） */
+const WOOD_NG_RE = /木造(?:は|が)?(?:以外|NG|不可|嫌|いや|×|避け|ダメ|だめ|無理|なし)|木造以外/i;
+
+/** 1つの節から構造の希望を読む。woodNg＝木造を避ける・tiers＝希望として並べた構造の段（「鉄筋または鉄骨造」＝[3,2]） */
+export function structureWantOfClause(c: string, field: WantField): { woodNg: boolean; tiers: number[]; accept: boolean; ngMin?: number } | null {
+  const s = norm(c).replace(/\s+/g, "").toUpperCase();
+  if (!/木造|鉄骨|鉄筋|(?<![A-Z])S?RC(?![A-Z])|コンクリート/.test(s)) return null;
+  if (WOOD_ACCEPT_RE.test(s)) return { woodNg: false, tiers: [], accept: true };
+  const woodNg = /木造/.test(s) && (field === "ng_points" || WOOD_NG_RE.test(s));
+  const tiers: number[] = [];
+  // 2026-09-25 反証レビュー: 「鉄骨NG」「軽量鉄骨以外」（希望欄）・NG 欄の「鉄骨」を「鉄骨の希望」と読む（＝鉄骨を ○）か読まない形だった。
+  //   避けたい段の一つ上を下限（ngMin）にする: 軽量鉄骨NG → 鉄骨以上・鉄骨NG → RC以上。避けた段そのものは「一段下 △」にしない（×）
+  const noSrc = s.replace(/鉄骨鉄筋|鉄筋鉄骨/g, "");
+  const ngTiers: number[] = [];
+  let rest = noSrc.replace(/(軽量鉄骨|軽鉄|鉄骨)造?(?:は|が)?(?:以外|NG|不可|嫌|いや|×|避け|ダメ|だめ|無理)/g, (_m, w: string) => { ngTiers.push(w === "鉄骨" ? 3 : 2); return ""; });
+  if (field === "ng_points") {
+    if (/軽量鉄骨|軽鉄/.test(rest)) ngTiers.push(2);
+    else if (/鉄骨/.test(rest)) ngTiers.push(3);
+    rest = rest.replace(/軽量鉄骨|軽鉄|鉄骨/g, "");
+  } else {
+    if (/(?<![A-Z])SRC(?![A-Z])|鉄骨鉄筋|鉄筋鉄骨/.test(s)) tiers.push(4);
+    if (/(?<![A-Z])RC(?![A-Z])|鉄筋(?!鉄骨)/.test(noSrc)) tiers.push(3);
+    if (/軽量鉄骨|軽鉄/.test(rest)) tiers.push(1);
+    if (/(?<!軽量)鉄骨/.test(rest)) tiers.push(2);
+  }
+  const ngMin = ngTiers.length ? Math.max(...ngTiers) : undefined;
+  if (!woodNg && !tiers.length && ngMin == null) return null;
+  return { woodNg, tiers, accept: false, ...(ngMin != null ? { ngMin } : {}) };
+}
+
+/** 条件の構造の欄（「RC造　SRC造」「鉄骨造　RC造　SRC造」）→ 並んだ段。木造が入っていれば制限なし（null） */
+export function structureTypesColumnTiers(raw: string | null | undefined): number[] | null {
+  const toks = norm(raw).split(/[\s　・、,，/／]+/).filter(Boolean);
+  const tiers = toks.map((t) => structureTierOf(t)).filter((x): x is number => x != null);
+  if (!tiers.length || tiers.includes(0)) return null;
+  return tiers;
+}
+
+/** 1つの節から物件種別の希望を読む（「マンション」「マンションのみ」「マンション希望」／「アパート」「アパート希望」）。木造を含む節は読まない（「木造NG（アパート指定）」は木造NG が優先） */
+export function buildingTypeWantOfClause(c: string, field: WantField): "mansion" | "apartment" | null {
+  const s = norm(c).replace(/\s+/g, "");
+  if (/木造/.test(s) || /マンスリー/.test(s)) return null;
+  if (field === "ng_points") return /^アパート(?:は|が)?(?:NG|不可|嫌|×)?$/i.test(s) ? "mansion" : null;
+  const m = /マンション/.test(s) && !/マンション(?:は|が)?(?:以外|NG|不可|嫌|×)/i.test(s);
+  const a = /アパート/.test(s) && !/アパート(?:は|が)?(?:以外|NG|不可|嫌|×)/i.test(s);
+  if (a) return "apartment"; // アパートの希望（マンションも可）。両方ある節も減点しない側
+  if (m) return "mansion";
+  if (/アパート(?:は|が)?(?:以外|NG|不可|嫌|×)/i.test(s)) return "mansion";
+  return null;
+}
 /** キーの直後にこれがあれば「要らない」（ng）。「保証人不要」「ネット使用料不要」はキー自体に含むので当たらない */
 const AFTER_NG_RE = /^(?:は|が)?(?:NG|ng|不可|嫌|いや|避け|いらない|要らない|なしで|無しで|×)/;
 const STRONG_RE = /必須|絶対|マスト|\[必須\]/;
@@ -563,6 +679,8 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
     ["ng_points", String(customer.ng_points ?? "")],
   ];
   const seen = new Set<string>();
+  const structAcc: { woodNg: boolean; tiers: number[]; ngMin: number | null; src: Array<{ text: string; field: WantField; strong: boolean; soft: boolean }> } = { woodNg: false, tiers: [], ngMin: null, src: [] };
+  let typeAcc: { type: "mansion" | "apartment"; text: string; field: WantField; strong: boolean; soft: boolean } | null = null;
   const push = (w: EquipmentWant) => {
     const id = `${w.key}|${w.mode}|${w.minFloor ?? ""}|${w.maxFloor ?? ""}`;
     if (seen.has(id)) {
@@ -585,7 +703,20 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
       if (/(?:3|３|三)点(?:式)?ユニット|ユニットバス(?:は|が)?(?:NG|ng|不可|嫌|×|以外)|バス・?トイレ(?:一緒|同室)|トイレ同室/.test(c) && !ACCEPT_ONLY_RE.test(c)) {
         if (field === "ng_points" || /NG|ng|不可|嫌|×|以外|避け/.test(c)) { push({ key: "bath_toilet", mode: "must", strong, soft, text: c, field }); hit = true; }
       }
-      if (/木造/.test(c) && (field === "ng_points" || /以外|NG|ng|不可|嫌|×|避け/.test(c))) { push({ key: "not_wood", mode: "must", strong, soft, text: c, field }); hit = true; }
+      // 構造（段で持つ・節をまたいでまとめて最後に1つの希望にする）と物件種別
+      const sw = structureWantOfClause(c, field);
+      if (sw) {
+        hit = true;
+        if (sw.woodNg) { structAcc.woodNg = true; structAcc.src.push({ text: c, field, strong, soft }); }
+        if (sw.tiers.length) { structAcc.tiers.push(...sw.tiers); structAcc.src.push({ text: c, field, strong, soft }); }
+        if (sw.ngMin != null) { structAcc.ngMin = Math.max(structAcc.ngMin ?? 0, sw.ngMin); structAcc.src.push({ text: c, field, strong, soft }); }
+      }
+      const bt = buildingTypeWantOfClause(c, field);
+      if (bt) {
+        hit = true;
+        // アパートの希望が1つでもあればマンションでも減点しない側（apartment が勝つ）
+        if (!typeAcc || bt === "apartment") typeAcc = { type: bt, text: c, field, strong, soft };
+      }
       if (ACCEPT_ONLY_RE.test(c)) hit = true; // 「ユニットバス可」は受け入れの話（希望ではない）
       const petSelfNone = PET_SELF_NONE_RE.test(c);
       const condFloor = conditionalFloorOf(c);
@@ -610,6 +741,24 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
   }
   // 条件欄の pet=true（フォームの「ペット」）
   if (customer.pet === true || customer.pet === "true") push({ key: "pet", mode: "must", strong: false, soft: false, text: "ペット（条件欄）", field: "pet" });
+  // 構造の欄（property_customers.structure_types）
+  const colTiers = structureTypesColumnTiers(customer.structure_types);
+  if (colTiers) { structAcc.tiers.push(...colTiers); structAcc.src.push({ text: `構造の欄: ${norm(customer.structure_types).trim()}`, field: "structure_types", strong: false, soft: false }); }
+  // 構造: 希望として並べた段の一番軽い段以上（「鉄筋または鉄骨造」＝鉄骨以上）。木造NG だけなら軽量鉄骨以上。一番軽い段が木造なら制限なし
+  const posMin = structAcc.tiers.length ? Math.min(...structAcc.tiers) : null;
+  //   「軽量鉄骨NG」「鉄骨NG」（ngMin）は下限を上げる。下限が避けた段の一つ上そのものなら、避けた段は △ にしない（structureNoNear）
+  const floorMin = Math.max(structAcc.woodNg ? 1 : 0, structAcc.ngMin ?? 0);
+  const structureMin = posMin != null ? Math.max(posMin, floorMin) : floorMin >= 1 ? floorMin : null;
+  const structureNoNear = structAcc.ngMin != null && structureMin != null && structAcc.ngMin >= structureMin;
+  if (structureMin != null && structureMin >= 1) {
+    const src = structAcc.src;
+    res.wants.push({
+      key: "structure", mode: "must", strong: src.some((x) => x.strong), soft: src.length > 0 && src.every((x) => x.soft),
+      structureMin, ...(posMin == null && structAcc.ngMin == null ? { woodNgOnly: true } : {}), ...(structureNoNear ? { structureNoNear: true } : {}),
+      text: [...new Set(src.map((x) => x.text))].join(" ／ "), field: src[0]?.field ?? "preferences",
+    });
+  }
+  if (typeAcc) res.wants.push({ key: "bldg_type", mode: "must", strong: typeAcc.strong, soft: typeAcc.soft, bldgType: typeAcc.type, text: typeAcc.text, field: typeAcc.field });
   return res;
 }
 
@@ -627,6 +776,8 @@ export type EquipmentMatchRow = {
 export type EquipmentMatch = { rows: EquipmentMatchRow[]; ok: number; ng: number; unlisted: number; strongNg: boolean };
 
 export function wantLabel(w: EquipmentWant): string {
+  if (w.key === "structure" && w.structureMin != null) return w.woodNgOnly ? "木造NG" : `${STRUCTURE_TIER_NAMES[w.structureMin] ?? "構造"}以上`;
+  if (w.key === "bldg_type") return w.bldgType === "apartment" ? "アパート（マンションも可）" : "マンション";
   const base = w.key === "floor"
     ? (w.minFloor != null && w.maxFloor != null ? `${w.minFloor}〜${w.maxFloor}階` : w.minFloor != null ? `${w.minFloor}階以上` : `${w.maxFloor}階以下`)
     : w.key === "floor2" && w.minFloor && w.minFloor > 2 ? `${w.minFloor}階以上` : EQUIP_LABELS[w.key];
@@ -643,7 +794,26 @@ export function matchEquipment(wants: EquipmentWants | EquipmentWant[], facts: L
     if (w.ifFloorAtLeast != null && !facts.basement && facts.floor != null && facts.floor < w.ifFloorAtLeast) continue;
     const label = wantLabel(w);
     let result: EquipmentMatchRow["result"] = "unlisted", why = "資料に記載なし", fromBuilding = false;
-    if (w.key === "floor" || (w.key === "floor2" && (w.minFloor ?? 2) !== 2)) {
+    if (w.key === "structure") {
+      // 構造の段: 希望の段以上 ○・一段下（鉄筋の希望に鉄骨・鉄骨の希望に軽量鉄骨）は △（少し低い・保留にしない）・それより下と木造は ×・書いていなければ －
+      const t = facts.structureTier ?? null;
+      const min = w.structureMin ?? 1;
+      if (t == null) why = facts.structure ? `構造 ${facts.structure}（段が読めない）` : "資料に構造の記載なし";
+      else {
+        why = `構造 ${facts.structure}`;
+        if (t >= min) result = "ok";
+        else if (!w.structureNoNear && t === min - 1 && t >= 1) { rows.push({ want: w, label, result: "ok", mark: "△", why: `${why}（希望の${STRUCTURE_TIER_NAMES[min]}より一段下）` }); continue; }
+        else result = "ng";
+      }
+    } else if (w.key === "bldg_type") {
+      const bt = facts.buildingType ?? null;
+      if (bt == null) why = "資料に物件種別の記載なし";
+      else {
+        why = `物件種別 ${bt}`;
+        if (w.bldgType === "apartment") result = bt === "アパート" || bt === "マンション" ? "ok" : "unlisted";
+        else result = bt === "マンション" ? "ok" : "ng";
+      }
+    } else if (w.key === "floor" || (w.key === "floor2" && (w.minFloor ?? 2) !== 2)) {
       if (facts.basement) { result = "ng"; why = "地下"; }
       else if (facts.floor != null) {
         const f = facts.floor;

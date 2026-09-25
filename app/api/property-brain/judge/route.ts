@@ -85,7 +85,8 @@ export async function POST(req: NextRequest) {
     const since = new Date(Date.now() - 180 * 24 * 3600 * 1000).toISOString();
     const [custRes, sentRes, patRes, convsRes] = await Promise.all([
       supabase.from("property_customers")
-        .select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet")
+        // structure_types: 条件の構造の欄（売上サポ recordPickupBatch と同じ読み・2026-09-25 反証レビュー）
+        .select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, structure_types")
         .eq("id", customerId).maybeSingle(),
       // room_no: 送付済みの照合を号室で見る（同じ建物の別の部屋は外す候補にしない・2026-09-25）
       supabase.from("sent_properties").select("property_name, rent, delivery, source, room_no").eq("property_customer_id", customerId).gte("sent_at", since).limit(500),
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
     let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants) }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
-    let imageRead = 0, imageOk = 0;
+    let imageRead = 0, imageOk = 0, imageFailed = 0;
     if (!body.dry_run && profile.imageWants.length > 0 && (process.env.DEEPSEEK_API_KEY ?? "").trim()) {
       const targets = judgments
         .map((j, i) => ({ j, i, url: items[i].image_url ?? null }))
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest) {
             imageOk++;
             const t = targets[k];
             judgments[t.i] = applyImageFacts(t.j, r.value.facts);
-          }
+          } else imageFailed++;   // 2026-09-25: DeepSeek が2回とも答えなかった＝「読み取れなかった」（判定は変えない・Claude では埋めない）
         });
       }
     }
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest) {
     // ── 記録（影の運用の材料。失敗しても返す） ──
     console.log(JSON.stringify({
       tag: "property-brain:judge", customer: customerId.slice(0, 8), site: body.site ?? null, n: items.length,
-      ...counts, apply_drop: applyDrop, image_read: imageRead, image_ok: imageOk, ms: Date.now() - startedAt,
+      ...counts, apply_drop: applyDrop, image_read: imageRead, image_ok: imageOk, image_failed: imageFailed, ms: Date.now() - startedAt,
       items: out.map((o) => ({ r: o.rank, v: o.verdict, s: o.score, c: o.reason_codes.filter((c) => !/_OK$|_UNKNOWN$/.test(c)) })),
     }));
     if (!body.dry_run) {
@@ -186,7 +187,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true, apply_drop: applyDrop, counts, judgments: out, note_line: noteLine,
-      profile_summary: profileSummary, image: { read: imageRead, ok: imageOk }, ms: Date.now() - startedAt,
+      profile_summary: profileSummary, image: { read: imageRead, ok: imageOk, failed: imageFailed, failed_label: imageFailed ? "読み取れなかった" : null }, ms: Date.now() - startedAt,
     }, { headers: CORS });
   } catch (e) {
     console.error(JSON.stringify({ tag: "property-brain:judge-failed", error: e instanceof Error ? e.message : String(e) }));

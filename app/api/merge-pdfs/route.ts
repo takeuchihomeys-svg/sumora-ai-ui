@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/app/lib/supabase";
-import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-25: Anthropic の import を外した（🌟 の Claude Haiku への切り替えを外し、このルートは Claude を呼ばない）
 // 2026-09-21 竹内「一度共有した物件を除いてLINEに送ることが出来ればかなり質高くなる」
 import {
   filterOutAlreadySent, renumberSummaries, parseSummaryHead, buildExcludedNotice,
@@ -12,7 +12,7 @@ import { parseRentFromSummary } from "@/app/lib/property-summary-parse";
 import { waitUntil } from "@vercel/functions";
 // 2026-09-24: 送った時の AD を送付記録に残す（見積書の割引と結び付けて利益を出す材料）
 import { parsePropertyFacts } from "@/app/lib/property-brain";
-import { enrichSummariesFromPdf, rankAndAnnotateSummaries, buildRankMaterials, loadRankConditions } from "@/app/lib/pickup-rank";
+import { enrichSummariesFromPdf, rankAndAnnotateSummariesDetailed, buildRankMaterials, loadRankConditions, RANK_FAILED_NOTICE } from "@/app/lib/pickup-rank";
 import { isPlaceholderName } from "@/app/lib/listing-text";
 
 // 2026-09-24: 応答は今まで通り早く返し、売上サポへの記録（waitUntil）で DeepSeek が資料を読む時間（1枚 27〜40秒・並列）を確保するため 300 に
@@ -426,9 +426,14 @@ export async function POST(req: NextRequest) {
         const rankMaterials = summariesWithAd && summariesWithAd.length > 1 ? await buildRankMaterials(pdfBase64List) : null;
         // 2026-09-25 YUMA テスト: 🌟 に渡す条件は DB の条件の要約（設備・入居時期・初期費用・通勤も入る・家賃を丸めない）。無ければ拡張の文（loadRankConditions）
         const rankConditions = summariesWithAd && summariesWithAd.length > 1 ? await loadRankConditions(resolvedCustomerId, customer_conditions) : customer_conditions;
-        const rankedSummaries = summariesWithAd && summariesWithAd.length > 0
-          ? await rankAndAnnotateSummaries(summariesWithAd, rankConditions, rankMaterials)
-          : summariesWithAd;
+        // 2026-09-25 竹内「分析 DeepSeek で必ず行う。クロードに切り替えない」: DeepSeek が2回とも答えなければ🌟なし＋最後に「読み取れなかった」の1行（Claude Haiku には倒さない）
+        const rankOutcome = summariesWithAd && summariesWithAd.length > 0
+          ? await rankAndAnnotateSummariesDetailed(summariesWithAd, rankConditions, rankMaterials)
+          : null;
+        const rankedSummaries = rankOutcome ? rankOutcome.summaries : summariesWithAd;
+        const lineNotice = rankOutcome?.status === "failed"
+          ? [excludedNotice, RANK_FAILED_NOTICE].filter(Boolean).join("\n")
+          : excludedNotice;
         const lineText = buildLineMessage(
           blob.url,
           name,
@@ -437,7 +442,7 @@ export async function POST(req: NextRequest) {
           rankedSummaries,
           site === "itandi" ? "itandi" : site === "realpro" ? "リアプロ" :
             (pdf_urls && pdf_urls.some(u => !u.includes("realnetpro"))) ? "itandi" : "リアプロ",
-          excludedNotice,
+          lineNotice,
         );
         await pushLineMessage(groupId, lineText);
 

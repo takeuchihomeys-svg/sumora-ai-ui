@@ -30,6 +30,11 @@ export type PickupImageAnalysis = {
   checks: WantCheck[];  // 希望1つずつの判定（W1…）
   /** 物件と資料・読んだ間取り図が一致しているか（要確認なら点を出さない） */
   review?: SheetConsistency;
+  /**
+   * 2026-09-25 竹内「読み取り必ず DeepSeek で」: DeepSeek が2回とも答えなかった所（"間取り図"・"希望の照合"）。
+   * Claude では埋めない。保存していないので 🔍 画像で分析（次の回）で DeepSeek が読み直す
+   */
+  read_failed?: string[];
   /** 資料の型・切り出し・保存した読み取り（画面の小さな注記と、2回目以降の引き当て） */
   sheet?: {
     type: string; type_by: string; crop_mode: string | null; crop_basis: string | null; crop_reason: string | null;
@@ -49,6 +54,8 @@ export function buildPickupAnalysis(input: {
   image: SheetImageFacts | null;
   summary?: string | null;
   llmChecks?: WantCheck[];
+  /** DeepSeek が2回とも答えなかった所（image＝間取り図・wantIds＝文字の照合で聞けなかった希望） */
+  unread?: { image?: boolean; wantIds?: string[] };
 }): PickupImageAnalysis | null {
   const { wants, text, image } = input;
   if (!text.hasText && !image) return null;
@@ -56,15 +63,22 @@ export function buildPickupAnalysis(input: {
   const trusted = review.status === "ok" ? image : null;
   const fm = matchWantsWithFacts(wants, text, trusted, parseSummaryFacts(input.summary).madori);
   const llm = new Map((review.status === "ok" ? input.llmChecks ?? [] : []).map((c) => [c.id, c]));
+  const unreadIds = new Set(input.unread?.wantIds ?? []);
   const checks: WantCheck[] = [...fm.checks];
-  for (const id of fm.undecided) checks.push(llm.get(id) ?? { id, result: "unknown", why: "" });
+  // 読み取れなかった希望は「分からない」のまま（点に入らない）・理由に印を書く
+  for (const id of fm.undecided) checks.push(llm.get(id) ?? { id, result: "unknown", why: unreadIds.has(id) ? `${UNREAD_WHY}` : "" });
   const order = new Map(wants.map((w, i) => [w.id, i]));
   checks.sort((a, z) => (order.get(a.id) ?? 99) - (order.get(z.id) ?? 99));
   const detail = wants.length ? scoreChecksDetail(wants, checks) : { score: null, raw: null, mustFail: false };
   const byId = new Map(wants.map((w) => [w.id, w]));
   const good = checks.filter((c) => c.result === "ok").map((c) => byId.get(c.id)?.text ?? "").filter(Boolean).slice(0, 4);
+  const readFailed = [
+    ...(input.unread?.image ? ["間取り図"] : []),
+    ...(unreadIds.size && fm.undecided.some((id) => unreadIds.has(id)) ? ["希望の照合"] : []),
+  ];
   const concern = [
     ...(review.status === "要確認" ? ["要確認（物件と資料が一致しない）"] : []),
+    ...(readFailed.length ? [`要確認（${readFailed.join("・")}を${UNREAD_LABEL}・🔍 で読み直す）`] : []),
     ...checks.filter((c) => c.result === "ng").map((c) => byId.get(c.id)?.text ?? ""),
   ].filter(Boolean).slice(0, 4);
   const d = describeFacts(text, trusted);
@@ -75,9 +89,14 @@ export function buildPickupAnalysis(input: {
     must_fail: detail.mustFail,
     ok_count: checks.filter((c) => c.result === "ok").length,
     good, concern, checks, review,
+    ...(readFailed.length ? { read_failed: readFailed } : {}),
   };
   return out;
 }
+
+/** 「読み取れなかった」の印（vision-alt-provider の DEEPSEEK_READ_FAILED_LABEL と同じ語。純関数のファイルなので import しない） */
+export const UNREAD_LABEL = "読み取れなかった";
+const UNREAD_WHY = `${UNREAD_LABEL}（DeepSeek）`;
 
 /** 旧: 条件欄をまとめた文（画面の表示用に残す） */
 export function buildWantsText(c: Record<string, unknown> | null | undefined, staffNote?: string | null): string {

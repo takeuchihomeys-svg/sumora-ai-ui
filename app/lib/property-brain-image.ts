@@ -9,7 +9,7 @@
 //   - 推論モデルは「答えが0文字」で失敗するので、成否は取れた項目で見る。失敗は null（判定を止めない・落とさない）。
 //   - 無条件には読まない: お客様の希望に画像でしか分からない語がある時だけ、1バッチ5枚まで。
 
-import { callDeepSeek, VISION_ALT_MODEL_DEFAULT } from "./vision-alt-provider";
+import { callDeepSeekRead, VISION_ALT_MODEL_DEFAULT } from "./vision-alt-provider";
 import type { ImageFacts, ImageWantKey } from "./property-brain";
 
 export const PROPERTY_BRAIN_IMAGE_MAX_PER_BATCH = 5;
@@ -57,7 +57,8 @@ export function parseImageFacts(text: string | null | undefined, keys: ImageWant
   return got > 0 ? out : null;   // 1項目も取れなければ失敗扱い（成否は取れた項目で見る）
 }
 
-export type ImageReadResult = { facts: ImageFacts | null; ms: number; model: string; usage?: { input: number; output: number; cacheHit: number } };
+/** failed＝DeepSeek が2回とも答えなかった（「読み取れなかった」・Claude では埋めない） */
+export type ImageReadResult = { facts: ImageFacts | null; ms: number; model: string; usage?: { input: number; output: number; cacheHit: number }; failed?: boolean };
 
 /**
  * 1枚読む。失敗は facts=null（呼び出し側は判定を変えない）。
@@ -71,21 +72,23 @@ export async function readFloorPlanFacts(imageUrl: string, keys: ImageWantKey[],
     { type: "text", text: buildImageQuestion(keys) },
     { type: "image_url", image_url: { url: imageUrl } },
   ];
-  const res = await callDeepSeek(PROPERTY_BRAIN_IMAGE_SYSTEM, content, {
-    maxTokens: PROPERTY_BRAIN_IMAGE_MAX_TOKENS,
-    timeoutMs: opts?.timeoutMs ?? PROPERTY_BRAIN_IMAGE_TIMEOUT_MS,
-    thinking: false,
-    temperature: 0,
-  });
+  // 2026-09-25 竹内「読み取り必ず DeepSeek で」: 答えない・崩れた時は同じ前置き（system 固定＋同じ問い＋同じ画像）のまま1回だけ読み直す。
+  //   ただし時間の枠（timeoutMs）の中だけ: 残りが 1.5秒を切っていれば読み直さない（拡張の判定は 8秒で切る）。Claude には倒さない。
+  //   2回とも駄目なら facts=null・failed=true（判定は変えない＝「分からない」のまま。次の判定で読み直す）
+  const budget = opts?.timeoutMs ?? PROPERTY_BRAIN_IMAGE_TIMEOUT_MS;
+  const read = await callDeepSeekRead(PROPERTY_BRAIN_IMAGE_SYSTEM, content, { maxTokens: PROPERTY_BRAIN_IMAGE_MAX_TOKENS, timeoutMs: budget },
+    (t) => parseImageFacts(t, keys),
+    { retryIf: (elapsed) => budget - elapsed >= 1_500, retryTimeoutMs: (elapsed) => budget - elapsed });
   const ms = Date.now() - startedAt;
-  const facts = res ? parseImageFacts(res.text, keys) : null;
   void import("./llm-usage-recorder").then(({ recordAltUsage }) => {
-    recordAltUsage({
-      model: res?.model ?? model, action: "property_brain_image", conversationId: null,
-      usage: { input_tokens: res?.usage.cacheMiss ?? 0, output_tokens: res?.usage.output ?? 0, cache_read_input_tokens: res?.usage.cacheHit ?? 0 },
-      status: res ? 200 : 0, errorType: res ? (facts ? null : "empty_or_unparsable") : "no_response",
-      durationMs: ms, sysHead: PROPERTY_BRAIN_IMAGE_SYSTEM.slice(0, 200), sysKeyFull: null, maxTokens: PROPERTY_BRAIN_IMAGE_MAX_TOKENS,
-    });
+    for (const a of read.attempts) {
+      recordAltUsage({
+        model: a.res?.model ?? model, action: "property_brain_image", conversationId: null,
+        usage: { input_tokens: a.res?.usage.cacheMiss ?? 0, output_tokens: a.res?.usage.output ?? 0, cache_read_input_tokens: a.res?.usage.cacheHit ?? 0 },
+        status: a.res ? 200 : 0, errorType: a.ok ? null : a.res ? "empty_or_unparsable" : "no_response",
+        durationMs: a.ms, sysHead: a.retry ? "【読み直し】" + PROPERTY_BRAIN_IMAGE_SYSTEM.slice(0, 180) : PROPERTY_BRAIN_IMAGE_SYSTEM.slice(0, 200), sysKeyFull: null, maxTokens: PROPERTY_BRAIN_IMAGE_MAX_TOKENS,
+      });
+    }
   }).catch(() => {});
-  return { facts, ms, model: res?.model ?? model, usage: res?.usage };
+  return { facts: read.value, ms, model: read.res?.model ?? model, usage: read.res?.usage, failed: read.failed };
 }

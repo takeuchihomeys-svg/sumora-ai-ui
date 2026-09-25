@@ -147,6 +147,17 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
  * action は呼び出し側が付ける x-sumora-llm-action。返信生成・ブレインは action を持たないので、
  * system プロンプトの先頭で見分けて仮の名前を割り当てる（下の resolveRouteName）。
  */
+/**
+ * 物件の判断・読み取りの action（2026-09-25 竹内「分析 DeepSeek で必ず行う。クロードに切り替えない。物件判断のところ」）。
+ * 今は全部 vision-alt-provider.callDeepSeekRead で直接 DeepSeek を呼び、この fetch の包みは通らない。
+ * 将来この名札で Anthropic 宛てに書かれても、別クラウドに回した後は**失敗しても・変換できなくても Claude に倒さない**（LLM_ALT_FALLBACK に関係なく）。
+ * お客様への返信（reply_generate）・AIX の本文（property_send / property_recommendation 等）・ブレインは入れない（今のまま）
+ */
+export const NO_CLAUDE_FALLBACK_ACTIONS: ReadonlySet<string> = new Set([
+  "property_rank", "pickup_image_analysis", "pickup_image_analysis_auto", "condition_summary",
+  "property_brain_image", "property_image_detail", "property_image_read",
+]);
+
 export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null): boolean {
   if (!cfg || !routeName) return false;
   if (cfg.actions.has(routeName)) return true;
@@ -609,7 +620,11 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         ? await callBedrock(cfg, body)
         // 1文字ずつの形は応答を読み切ってから usage が分かるので、コールバックで受ける（切れた時も errorType 付きで1行）
         : await callOpenAICompatible(cfg, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType));
-      if (!res) return original(input as RequestInfo, init); // 画像等は今までどおり
+      if (!res) {
+        // 物件の判断・読み取りは変換できなくても Claude に倒さない（呼び出し側が「読み取れなかった」の印を付ける）
+        if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: DeepSeek に送れない形（Claude には倒さない）`);
+        return original(input as RequestInfo, init); // 画像等は今までどおり
+      }
       const ms = Date.now() - started;
       console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, stream: !!body.stream, ms }));
       // 2026-09-19 本番の検証で見つけた穴: fetch の出口の記録は Anthropic 宛てだけを見るので、
@@ -631,6 +646,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
       if (!cfg.fallbackToAnthropic) throw e;
+      if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw e; // 物件の判断・読み取りは Claude に倒さない
       return original(input as RequestInfo, init); // 失敗したら今までどおり Anthropic で返す
     }
   }) as typeof fetch;

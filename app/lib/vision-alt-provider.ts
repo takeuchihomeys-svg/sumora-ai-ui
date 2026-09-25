@@ -158,8 +158,67 @@ export async function callDeepSeek(
   }
 }
 
+/** 物件の判断・読み取りで DeepSeek が2回とも答えなかった時の印（札・要確認の文言。Claude で埋めない） */
+export const DEEPSEEK_READ_FAILED_LABEL = "読み取れなかった";
+
+export type DeepSeekReadAttempt = { res: VisionAltResult | null; ok: boolean; ms: number; retry: boolean };
+export type DeepSeekReadOutcome<T> = {
+  /** 読めた値（2回とも読めなければ null） */
+  value: T | null;
+  /** 最後に答えた返事（使用量の記録用） */
+  res: VisionAltResult | null;
+  /** 1回目・読み直しのそれぞれ（llm_usage_logs に1行ずつ残す） */
+  attempts: DeepSeekReadAttempt[];
+  /** 2回とも読めなかった＝「読み取れなかった」の印を付ける */
+  failed: boolean;
+};
+
+/**
+ * 物件の判断・読み取り専用の DeepSeek の口（2026-09-25 竹内「分析 DeepSeek で必ず行う。クロードに切り替えない。物件判断のところ。
+ *   読み取り必ず DeepSeek で、抜けの内容にプロンプトキャッシュを効かせる」）。
+ *   ① 1回目が失敗（HTTP・時間切れ・空・読めない形）なら、**同じ前置き・同じ設定のまま1回だけ**読み直す（前置きが一字一句同じなので2回目はキャッシュが当たる）
+ *   ② それでも読めなければ failed=true を返す。**Claude（Haiku・Sonnet・Anthropic SDK）には決して倒さない**
+ *      呼び出し側は「読み取れなかった」の印（札・要確認）を付け、次の回・ボタンで DeepSeek で読み直す
+ *   ③ 読み直しは時間の残りがある時だけ（retryIf で呼び出し側が決める。拡張の判定のように 8秒で切る所は残りが無ければ読み直さない）
+ *   鍵が無い時は DeepSeek も呼ばない（callDeepSeek が null）＝そのまま failed（fetch は1回も出ない）
+ * 対象: 🌟の順位付け・画像で分析（資料の読み取り・希望の照合）・条件の要約・間取り図の有無。お客様への返信・AIX の本文・ブレインは対象外（今のまま）
+ */
+export async function callDeepSeekRead<T>(
+  system: string | null,
+  content: string | Array<Record<string, unknown>>,
+  opts: { maxTokens: number; timeoutMs: number; apiKey?: string; model?: string },
+  parse: (text: string) => T | null,
+  retry?: { retryIf?: (elapsedMs: number) => boolean; retryTimeoutMs?: (elapsedMs: number) => number },
+): Promise<DeepSeekReadOutcome<T>> {
+  // 推論なし・温度0 に固定（推論ありは 🌟 25/102・間取り図の有無 8/36・資料の詳細 21/165 が空の返事だった＝2026-09-25 の llm_usage_logs 14日分）。
+  //   読み直しも同じ設定（送る形を変えると前置きキャッシュの先頭一致が外れる）
+  const call = (timeoutMs: number) => callDeepSeek(system, content, {
+    apiKey: opts.apiKey, model: opts.model, maxTokens: opts.maxTokens, timeoutMs, thinking: false, temperature: 0,
+  });
+  const attempts: DeepSeekReadAttempt[] = [];
+  const t0 = Date.now();
+  const r1 = await call(opts.timeoutMs);
+  const v1 = r1 ? safeParse(parse, r1.text) : null;
+  attempts.push({ res: r1, ok: v1 != null, ms: Date.now() - t0, retry: false });
+  if (v1 != null) return { value: v1, res: r1, attempts, failed: false };
+  // 鍵が無い時は読み直しても同じ（fetch も出ない）
+  if (!(opts.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim()) return { value: null, res: r1, attempts, failed: true };
+  const elapsed = Date.now() - t0;
+  if (retry?.retryIf && !retry.retryIf(elapsed)) return { value: null, res: r1, attempts, failed: true };
+  const t1 = Date.now();
+  const r2 = await call(Math.max(1_000, retry?.retryTimeoutMs ? retry.retryTimeoutMs(elapsed) : opts.timeoutMs));
+  const v2 = r2 ? safeParse(parse, r2.text) : null;
+  attempts.push({ res: r2, ok: v2 != null, ms: Date.now() - t1, retry: true });
+  return { value: v2, res: r2 ?? r1, attempts, failed: v2 == null };
+}
+
+function safeParse<T>(parse: (text: string) => T | null, text: string): T | null {
+  try { return parse(text); } catch { return null; }
+}
+
 /**
  * DeepSeek に投げる。失敗したら null（呼び出し側が Claude に倒す＝fail-open）。
+ * ⚠ AIX の本文（物件オススメ文）専用。物件の判断・読み取りは callDeepSeekRead を使う（Claude に倒さない）
  * 画像の中身は読み替えられないので、既存の Vision と同じく PII の読み替えは掛からない。
  */
 export async function callVisionAlt(

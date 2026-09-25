@@ -430,7 +430,8 @@ console.log("■ お客様の希望（条件欄）");
   const w2 = parseEquipmentWants({ preferences: "木造以外、全室洋室（和室なし）、敷金0円、礼金0円、バス・トイレ別、エアコンあり、独立洗面台など設備が充実" });
   const k2 = w2.wants.map((x) => x.key);
   t("「バス・トイレ別」を「・」で割らない", k2.includes("bath_toilet") && !w2.uncovered.some((u) => u.text === "バス"), w2);
-  t("木造以外 → not_wood must", k2.includes("not_wood"));
+  // 2026-09-25 構造は段で持つ（木造以外＝軽量鉄骨以上）
+  t("木造以外 → 構造 軽量鉄骨以上（木造NG）", w2.wants.some((x) => x.key === "structure" && x.structureMin === 1 && x.woodNgOnly === true), w2.wants);
   t("敷金・礼金は handledElsewhere", w2.handledElsewhere.some((h) => /敷金/.test(h.text)));
   t("「全室洋室（和室なし）」は uncovered", w2.uncovered.some((u) => /和室/.test(u.text)), w2.uncovered);
   const w3 = parseEquipmentWants({ preferences: "トイレ風呂別、カウンターキッチン、音が通りにくい部屋", ng_points: "3階未満NG" });

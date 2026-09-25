@@ -278,10 +278,12 @@ export const REASON_JA: Record<string, string> = {
   ALREADY_SENT: "この建物は送付済み",
   ALREADY_SENT_OTHER_ROOM: "同じ建物を送付済み（この部屋は送った部屋に無い・号室を確認）",
   ALREADY_SENT_SAME_ROOM: "この部屋は送付済み（送り直しか確認）",
-  AD_UNKNOWN: "ADが読めない",
+  AD_UNKNOWN: "要確認: AD（読めない・0点）",
   AD_NONE: "AD なし（資料に「広告費 なし」）",
   AD_HIGH: "ADが高い（2ヶ月以上）",
-  AD_1M: "AD 1ヶ月",
+  AD_1M: "AD 1ヶ月以上",
+  AD_1_5M: "AD 1.5ヶ月以上",
+  AD_2_5M: "AD 2.5ヶ月以上",
   AD_VERY_HIGH: "AD 3ヶ月以上",
   AD_COVERS_DISCOUNT: "ADで割引をまかなえる",
   PROFIT_NEGATIVE: "ADより割引が大きい（利益が出ない）",
@@ -348,6 +350,26 @@ export const CONDITION_CODE_KEYS: Record<ConditionKey, string> = {
   instrument: "INSTRUMENT", corporate: "CORPORATE", foreigner: "FOREIGNER", student: "STUDENT", office: "OFFICE",
   singleOnly: "SINGLE", twoPerson: "TWO_PERSON", roomShare: "ROOM_SHARE", children: "CHILDREN",
 };
+/**
+ * 2026-09-25 竹内「条件が合わない物件が AD だけで最上位にならないように」:
+ *   保留・外す候補の札（条件の外れ）がある物件は、AD の段の札を「_HELD」（0点）に替える＝札は残して AD は見えるが点に入れない。
+ *   実データ（property_pickups・新しい配点）: 入居が遅い保留（AD 2.2ヶ月・106点）が通す物件（AD 1.5ヶ月・100点）より上、
+ *   2階以上×の保留（AD 2ヶ月・109点）が通す物件（AD 1ヶ月・109〜111点）と並んでいた → どちらも AD の段の点が理由。
+ *   半分にする案は「保留 −10 ＋ AD 3ヶ月の半分 13」で条件の同じ通す物件（AD 不明）を上回るので採らない。
+ *   保留の中の並びは条件の点で決まる（AD では上下しない）。スタッフの🌟が保留だった回（🌟の本文で判定 64/670）は AD の分かる物が1件だけで、
+ *   「条件外を AD で選んでいる」とは言えない（scripts/audit-ad-hold-line.ts）
+ */
+export const AD_TIER_CODES = ["AD_1M", "AD_1_5M", "AD_HIGH", "AD_2_5M", "AD_VERY_HIGH"] as const;
+export const AD_HELD_SUFFIX = "_HELD";
+/** AD の段の札を保留の形（_HELD・0点）にする／戻す。それ以外の札はそのまま */
+export function settleHeldAd(codes: string[], held: boolean): string[] {
+  return codes.map((c) => {
+    const base = c.endsWith(AD_HELD_SUFFIX) ? c.slice(0, -AD_HELD_SUFFIX.length) : c;
+    if (!(AD_TIER_CODES as readonly string[]).includes(base)) return c;
+    return held ? `${base}${AD_HELD_SUFFIX}` : base;
+  });
+}
+
 export const CONDITION_OK_POINTS = 3;
 export const CONDITION_NG_POINTS = -10;
 function conditionKeyOfCode(k: string): ConditionKey | null {
@@ -378,6 +400,7 @@ function equipKeyLabel(key: string): string {
 /** 理由コードの日本語（EQUIP_* は項目名から作る・それ以外は REASON_JA）。知らないコードはそのまま */
 export function reasonJa(code: string): string {
   if (REASON_JA[code]) return REASON_JA[code];
+  if (code.endsWith(AD_HELD_SUFFIX) && REASON_JA[code.slice(0, -AD_HELD_SUFFIX.length)]) return `${REASON_JA[code.slice(0, -AD_HELD_SUFFIX.length)]}（保留の物件なので点に入れない）`;
   if (code === EQUIP_CAP_CODE) return `必須の条件が資料で×（上限${EQUIP_STRONG_NG_CAP}点）`;
   const cm = code.match(/^CONDITION_(.+?)_(OK|NG|ASK|UNLISTED)$/);
   if (cm) {
@@ -390,7 +413,7 @@ export function reasonJa(code: string): string {
       default: return `要確認: ${label}`;
     }
   }
-  const m = code.match(/^EQUIP_(.+?)_(OK_MAX|OK|NG|UNLISTED|ASK)$/);
+  const m = code.match(/^EQUIP_(.+?)_(OK_MAX|OK|NG|UNLISTED|ASK|NEAR)$/);
   if (!m) return code;
   const label = equipKeyLabel(m[1]);
   switch (m[2]) {
@@ -398,6 +421,7 @@ export function reasonJa(code: string): string {
     case "OK_MAX": return `${label}○（資料・加点は上限）`;
     case "NG": return `${label}×（資料）`;
     case "ASK": return `${label}は相談（要確認）`;
+    case "NEAR": return `${label}が希望より一段下（資料）`;
     default: return `要確認: ${label}`;
   }
 }
@@ -413,6 +437,8 @@ export function equipmentReasonCodes(m: EquipmentMatch | null | undefined): stri
     let code: string;
     if (r.result === "ng") code = `EQUIP_${KEY}_NG`;
     else if (r.result === "unlisted") code = `EQUIP_${KEY}_UNLISTED`;
+    // 構造の一段下（鉄筋の希望に鉄骨）は「少し低い」（0点・保留にしない）。ペット相談の △ とは別のコード
+    else if (r.mark === "△" && r.want.key === "structure") code = `EQUIP_${KEY}_NEAR`;
     else if (r.mark === "△") code = `EQUIP_${KEY}_ASK`;
     else if (okPts + EQUIP_OK_POINTS <= EQUIP_OK_MAX_TOTAL) code = `EQUIP_${KEY}_OK`;
     else code = `EQUIP_${KEY}_OK_MAX`;
@@ -438,7 +464,13 @@ export const REASON_POINTS: Record<string, number> = {
   WALK_OK: 10, WALK_SLIGHTLY_OVER: -5, WALK_OVER: -15,
   BUILDING_AGE_OK: 5, BUILDING_AGE_SLIGHTLY_OVER: -3, BUILDING_AGE_OVER: -10,
   ALREADY_SENT: -30,
-  AD_UNKNOWN: 0, PROFIT_NEGATIVE: -10, AD_COVERS_DISCOUNT: 10, AD_1M: 5, AD_HIGH: 20, AD_VERY_HIGH: 5,
+  // 2026-09-25 竹内「AD は2ヶ月以上だと点数が高い形。ほかの項目より AD は1.3倍ほど価値ある」→
+  //   竹内「AD 150%以上は1.15倍、200%以上は1.3倍と重みを付ける。ここ分ける」:
+  //   基準の1段＝ほかの項目の同じ段（家賃が上限内・間取り一致の +15）。1ヶ月〜1.5ヶ月未満 +15（1.0倍）／
+  //   1.5ヶ月以上 +17（15×1.15・AD_1M 15 ＋ AD_1_5M 2）／2ヶ月以上 +20（15×1.3・AD_HIGH 単独）。2.5ヶ月・3ヶ月以上は札だけ（0点・2ヶ月以上は1.3倍で一律）。
+  //   割引をまかなえる（AD_COVERS_DISCOUNT）は段と二重に数えるので 0点の知らせ。AD 不明は 0点の「要確認」・AD なし −5・利益が出ない −10 保留は今まで通り。
+  //   保留・外す候補の物件の AD は *_HELD の札で 0点（条件が合わない物件を AD だけで上げない）
+  AD_UNKNOWN: 0, PROFIT_NEGATIVE: -10, AD_COVERS_DISCOUNT: 0, AD_1M: 15, AD_1_5M: 2, AD_HIGH: 20, AD_2_5M: 0, AD_VERY_HIGH: 0,
   PET_NG: -15,
   // 2026-09-25 資料の表の募集の条件（listing-terms.ts）
   MOVE_IN_OK: 5, MOVE_IN_LATE: -10, MOVE_IN_UNKNOWN: 0,
@@ -467,8 +499,25 @@ export const REASON_POINTS: Record<string, number> = {
   // 号室を読んで初めて当たる「同じ部屋を送付済み」（旧は当たらなかった形）は保留 −10（外す候補にしない）
   ALREADY_SENT_SAME_ROOM: -10,
 };
-/** 理由コードの点（画像の読み取り IMAGE_*_OK/_NG も含む）。知らないコードは 0 */
+/**
+ * 2026-09-25 重みの版（scoring_weights の active・app/lib/scoring-learning-server.ts の applyActiveScoringWeights が入れる）。
+ *   null ＝ この表の定数のまま（DB が読めない時・版が無い時）。札の点だけを上書きする（札の付け方・保留／外す候補の決まりは変えない）
+ */
+let reasonPointOverrides: Record<string, number> | null = null;
+export function setReasonPointOverrides(m: Record<string, number> | null): void {
+  reasonPointOverrides = m && Object.keys(m).length ? { ...m } : null;
+}
+export function getReasonPointOverrides(): Record<string, number> | null {
+  return reasonPointOverrides;
+}
+
+/** 理由コードの点（画像の読み取り IMAGE_*_OK/_NG も含む）。知らないコードは 0。重みの版があればそちら */
 export function reasonPoints(code: string): number {
+  if (reasonPointOverrides && Object.prototype.hasOwnProperty.call(reasonPointOverrides, code)) return reasonPointOverrides[code];
+  return baseReasonPoints(code);
+}
+/** コードの定数の点（重みの版を見ない・学習の基準） */
+export function baseReasonPoints(code: string): number {
   if (/^IMAGE_.*_OK$/.test(code)) return 5;
   if (/^IMAGE_.*_NG$/.test(code)) return -10;
   if (/^EQUIP_.*_OK$/.test(code)) return EQUIP_OK_POINTS;
@@ -1243,8 +1292,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
 
   // AD と利益（AD円 − 割引）
   // 2026-09-24 竹内「AD の価値をもっと上げる。AD は報酬なので重要。AD 2ヶ月以上（200%以上）なら追加で点数を上げる」:
-  //   割引をまかなえる +10（旧 +5）／ 1ヶ月以上 +5 ／ 2ヶ月以上 さらに +15（旧 +5）／ 3ヶ月以上 さらに +5。
-  //   条件（家賃・間取り）の hold/drop は AD で覆さない（点は上がるが verdict は変わらない）
+  //   → 2026-09-25 段に（REASON_POINTS の説明: 1ヶ月 7／1.5ヶ月 10／2ヶ月 20／2.5ヶ月 23／3ヶ月以上 26・まかなえるは 0点の知らせ）。
+  //   条件（家賃・間取り）の hold/drop は AD で覆さない。保留・外す候補の物件は AD の段を _HELD（0点）にする（settleHeldAd・判定の最後）
   const adYen = computeAdYen(facts);
   let profitYen: number | null = null;
   // 月数が無く円だけの時は家賃で月数に直す（「AD 160,000円・家賃 80,000円」＝2ヶ月）
@@ -1257,13 +1306,18 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     if (adYen != null) {
       profitYen = adYen - profile.discountYen;
       if (profitYen < 0) add("PROFIT_NEGATIVE", -10, "hold");
-      else add("AD_COVERS_DISCOUNT", 10);
+      else add("AD_COVERS_DISCOUNT", reasonPoints("AD_COVERS_DISCOUNT"));
     }
     // 資料に「広告費 なし」＝ AD 0（読めない null とは別）。AD 0.5ヶ月（利益が出ない −10）より下に並ぶよう −5 を足す
     if (adMonthsEff != null && adMonthsEff <= 0) add("AD_NONE", reasonPoints("AD_NONE"));
-    if (adMonthsEff != null && adMonthsEff >= 1 && adMonthsEff < 2) add("AD_1M", 5);
-    if (adMonthsEff != null && adMonthsEff >= 2) add("AD_HIGH", 20);
-    if (adMonthsEff != null && adMonthsEff >= 3) add("AD_VERY_HIGH", 5);
+    // 2026-09-25 段（重ねて足す・REASON_POINTS の説明）: 1ヶ月 7 ／1.5ヶ月 10 ／2ヶ月 20 ／2.5ヶ月 23 ／3ヶ月以上 26。
+    //   0.01 の余裕は「AD 250%」→2.5 の丸め・円÷家賃の割り算の端数（159,999円/80,000円）で段を落とさないため
+    const am = adMonthsEff != null ? adMonthsEff + 0.01 : null;
+    if (am != null && am >= 1 && am < 2) add("AD_1M", reasonPoints("AD_1M"));
+    if (am != null && am >= 1.5 && am < 2) add("AD_1_5M", reasonPoints("AD_1_5M"));
+    if (am != null && am >= 2) add("AD_HIGH", reasonPoints("AD_HIGH"));
+    if (am != null && am >= 2.5) add("AD_2_5M", reasonPoints("AD_2_5M"));
+    if (am != null && am >= 3) add("AD_VERY_HIGH", reasonPoints("AD_VERY_HIGH"));
   }
 
   // ペット: 設備欄の照合でペットが決まった（可・相談・不可）時はそちら（EQUIP_PET_*）で数え、説明文の語は見ない（二重に数えない）。
@@ -1292,13 +1346,20 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
 
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
+  // 条件の外れ（保留・外す候補の札）がある物件は AD の段を点に入れない（settleHeldAd・札は _HELD で残す）
+  if (holds.length || drops.length) {
+    const settled = settleHeldAd(codes, true);
+    for (let k = 0; k < codes.length; k++) if (settled[k] !== codes[k]) { score -= reasonPoints(codes[k]) - reasonPoints(settled[k]); codes[k] = settled[k]; }
+  }
+  // 重みの版があれば 50＋札の点（版）で付け直す（札は同じ・点だけ変わる）
+  if (reasonPointOverrides) score = BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0);
   score = Math.max(0, Math.min(SCORE_MAX, score));
   // 必須（strong）の条件が資料で × なら上限 20（画像で分析と同じ決まり）
   if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => isNewPositive(c) || ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
   // 設備欄で ○/× が決まった希望は画像で確かめ直さない（同じ希望を二重に数えない）
   const decided = new Set<string>((eq?.rows ?? []).filter((r) => r.result !== "unlisted").map((r) => r.want.key));
@@ -1340,6 +1401,14 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     codes.push(code);
     if (v) score += 5; else { score -= 10; hold = true; flagCodes.push(code); }
   }
+  // 画像の × で条件の外れが増えた物件も AD の段を点に入れない（judgeProperty と同じ settleHeldAd）
+  if (flagCodes.length) {
+    const settled = settleHeldAd(codes, true);
+    for (let k = 0; k < codes.length; k++) if (settled[k] !== codes[k]) { score -= reasonPoints(codes[k]) - reasonPoints(settled[k]); codes[k] = settled[k]; }
+  }
+  // 2026-09-25 反証レビュー: j.score は上限 200 で丸めた後の値なので、そこから足し引きすると「50＋札の合計」とずれる
+  //   （素点 230 の物件に画像の × −10 で 190＝本当は 220→200）。札が決まった後に 50＋合計 で付け直す
+  score = BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0);
   score = Math.max(0, Math.min(SCORE_MAX, score));   // judgeProperty と同じ上限（AD の上乗せ分）
   if (codes.includes(EQUIP_CAP_CODE)) {
     // 必須の × の上限20は画像の加点でも越えない。j.score は既に20に丸めてあるので、そこから引くと 50＋合計 と食い違う
@@ -1348,10 +1417,13 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
     score = Math.min(raw, EQUIP_STRONG_NG_CAP);
   }
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
-  const positives = codes.filter((c) => isNewPositive(c) || ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
   return { ...j, score, verdict, reasonCodes: codes, flagCodes, reasonsJa };
 }
+
+/** 理由の日本語に良い点として出す札（AD の段は 1.5ヶ月・2.5ヶ月も） */
+const POSITIVE_BASE_CODES = ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_2_5M", "AD_HIGH", "AD_1_5M", "AD_1M", "FLOOR_PLAN_MATCH"];
 
 /** 2026-09-25 に足した加点の札（理由の日本語に出す） */
 function isNewPositive(c: string): boolean {
@@ -1391,17 +1463,19 @@ export function applyEquipmentMatch(
     return !!k && decided.has(IMAGE_TO_EQUIP[k] as string);
   };
   // 設備欄で二人入居が決まったら資料の表の CONDITION_TWO_PERSON_* を外す（二重に数えない・matchListingTerms と同じ決まり）
-  const codes = j.reasonCodes.filter((c) => !c.startsWith("EQUIP_") && !imageDecided(c) && !(c === "PET_NG" && decided.has("pet"))
+  let codes = j.reasonCodes.filter((c) => !c.startsWith("EQUIP_") && !imageDecided(c) && !(c === "PET_NG" && decided.has("pet"))
     && !(c.startsWith("CONDITION_TWO_PERSON_") && decided.has("two_person")));
   const twoByTerms = codes.some((c) => /^CONDITION_TWO_PERSON_(OK|NG|ASK)$/.test(c));
   codes.push(...equipmentReasonCodes(m).filter((c) => !(twoByTerms && c === "EQUIP_TWO_PERSON_UNLISTED")));
+  // 付け直しで条件の外れが増えた／無くなった時は AD の段の札を合わせる（保留・外す候補なら _HELD の0点）
+  codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
   let score = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
   if (codes.includes(EQUIP_CAP_CODE)) score = Math.min(score, EQUIP_STRONG_NG_CAP);
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => isNewPositive(c) || ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_HIGH", "AD_1M", "FLOOR_PLAN_MATCH"].includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa) };
 }
 

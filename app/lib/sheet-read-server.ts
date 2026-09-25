@@ -9,7 +9,7 @@
 //     ④ どれも無ければ DeepSeek で読む（推論なし・崩れた／fp_ok=false の時だけ推論 low で1回読み直す）
 //   ⚠ 使い回した事実でも、その部屋の説明文・文字層との突き合わせ（sheet-facts.checkSheetConsistency）は毎回行う
 import { supabase } from "@/app/lib/supabase";
-import { callDeepSeek } from "@/app/lib/vision-alt-provider";
+import { callDeepSeek, callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import { createHash } from "node:crypto";
 import { readSheetPdf, loadImageCanvas, cropCanvas, cropCanvasStack, findItandiFrameOnCanvas } from "@/app/lib/pdf-sheet-crop";
 import { detectSheetType, planSheetCrop, type SheetType, type CropPlan, type NormBox } from "@/app/lib/sheet-layout";
@@ -40,7 +40,8 @@ export type SheetSourceRow = {
   image_analysis: Record<string, unknown> | null;
 };
 
-export type SheetUsage = { model: string; input: number; output: number; cacheHit: number; ms: number; retry: boolean; ok: boolean; section: string };
+/** retry＝読み直し（think=true は質の読み直し＝推論 low・max 12000／無ければ失敗の読み直し＝同じ前置き・推論なし） */
+export type SheetUsage = { model: string; input: number; output: number; cacheHit: number; ms: number; retry: boolean; think?: boolean; ok: boolean; section: string };
 
 export type SheetReadOutcome = {
   sheetType: SheetType;
@@ -86,30 +87,37 @@ async function fetchBytes(url: string): Promise<Uint8Array | null> {
 }
 
 /**
- * DeepSeek で切り出した画像を読む（推論なし → 崩れた／間取り図が読めない時だけ推論 low で1回）。
+ * DeepSeek で切り出した画像を読む（推論なし → 答えない・崩れた時は同じ形で1回 → 間取り図が読めない時だけ推論 low で1回）。
  * itandi（extra あり）は帯・表が読めていれば読み直さない（2026-09-24 夜: 正解表 25件中3件は間取り図が本当に無い資料。読み直しは 0.35円・20秒）
  */
 async function readImage(mode: CropPlan["mode"], dataUrl: string, extraUrl?: string | null): Promise<{ image: SheetImageFacts | null; usage: SheetUsage[] }> {
   const usage: SheetUsage[] = [];
   const section = sectionKeyFor(mode);
   const content = buildSheetReadContent(mode, dataUrl, extraUrl);
-  const t0 = Date.now();
   // 温度 0（2026-09-25 正解表: 既定のままだと同じ資料で水回り・部屋の関係の読みが回ごとに入れ替わった）
-  const r1 = await callDeepSeek(null, content, { thinking: false, temperature: 0, maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: READ_TIMEOUT_MS });
-  const f1 = r1 ? parseSheetImageFacts(r1.text) : null;
-  usage.push({ model: r1?.model ?? "deepseek-flash", input: r1?.usage.input ?? 0, output: r1?.usage.output ?? 0, cacheHit: r1?.usage.cacheHit ?? 0, ms: Date.now() - t0, retry: false, ok: !!f1, section });
-  if (f1 && f1.fp_ok) return { image: f1, usage };
+  // 2026-09-25 竹内「読み取り必ず DeepSeek で」: 答えない・崩れた時は**同じ前置き・推論なしのまま1回だけ**読み直す（callDeepSeekRead・キャッシュが当たる）。
+  //   Claude には倒さない。2回とも駄目なら image=null（呼び出し側が「読み取れなかった」の印・🔍 で読み直せる＝保存しない）
+  const read = await callDeepSeekRead(null, content, { maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: READ_TIMEOUT_MS }, (t) => parseSheetImageFacts(t));
+  for (const a of read.attempts) {
+    usage.push({ model: a.res?.model ?? "deepseek-flash", input: a.res?.usage.input ?? 0, output: a.res?.usage.output ?? 0, cacheHit: a.res?.usage.cacheHit ?? 0, ms: a.ms, retry: a.retry, ok: a.ok, section });
+  }
+  const f1 = read.value;
+  if (!f1) return { image: null, usage };
+  if (f1.fp_ok) return { image: f1, usage };
   // itandi（画像だけ＝帯・表も読む／PDF＝枠とほかのマス）は、返事が崩れていなければ読み直さない
   //   （2026-09-24 夜: 間取り図が本当に無い資料が画像だけで 25件中3件・PDF で 18件中2件。読み直しは 0.35円・20秒で答えは変わらない）
   if (f1 && (mode === "image_area" || mode === "itandi_pdf")) return { image: f1, usage };
-  // 2026-09-24 実測: 推論 low でも答えは変わらない事が多いが、返事が崩れた時と「間取り図が読めない」時だけ1回読み直す
+  // 2026-09-24 実測: 推論 low でも答えは変わらない事が多いが、「間取り図が読めない」（fp_ok=false）時だけ1回読み直す
   //   （max_tokens を小さくすると推論で使い切って答えが空になる＝12000）
+  // 2026-09-25 見直し: これは失敗の読み直しではなく、読めた返事の質の読み直し（リアプロの間取り図・1ページ全体だけ）。
+  //   推論なし・温度0 で同じ物を送り直しても同じ答えになるので、ここだけ推論 low を残す。llm_usage_logs 14日: 推論 low の読み直し 6回・空の返事 0回・中央 44秒。
+  //   空・崩れても1回目の答え（f1）を使う＝ Claude には倒さない。sys_head は「読み直し・推論」で失敗の読み直しと分ける
   const t1 = Date.now();
   const r2 = await callDeepSeek(null, content, { effort: "low", maxTokens: SHEET_RETRY_MAX_TOKENS, timeoutMs: RETRY_TIMEOUT_MS });
   const f2 = r2 ? parseSheetImageFacts(r2.text) : null;
-  usage.push({ model: r2?.model ?? "deepseek-flash", input: r2?.usage.input ?? 0, output: r2?.usage.output ?? 0, cacheHit: r2?.usage.cacheHit ?? 0, ms: Date.now() - t1, retry: true, ok: !!f2, section });
-  if (f2 && (f2.fp_ok || !f1)) return { image: f2, usage };
-  return { image: f1 ?? f2, usage };
+  usage.push({ model: r2?.model ?? "deepseek-flash", input: r2?.usage.input ?? 0, output: r2?.usage.output ?? 0, cacheHit: r2?.usage.cacheHit ?? 0, ms: Date.now() - t1, retry: true, think: true, ok: !!f2, section });
+  if (f2 && f2.fp_ok) return { image: f2, usage };
+  return { image: f1, usage };
 }
 
 type CanvasOf = NonNullable<Awaited<ReturnType<typeof loadImageCanvas>>>;
@@ -230,29 +238,33 @@ export async function loadSheetFacts(row: SheetSourceRow): Promise<SheetReadOutc
  * 決まった手順で決まらなかった希望だけ、保存した事実と希望を文字で聞く（推論なし）。失敗は空（その希望は「分からない」のまま）
  * お客様の名前・電話は入らない（希望は image-wants-server が伏せた物・事実は物件の資料だけ）
  */
-export async function judgeWantsByText(text: SheetTextFacts, image: SheetImageFacts | null, wants: ImageWant[]): Promise<{ checks: WantCheck[]; usage: SheetUsage | null }> {
-  if (!wants.length) return { checks: [], usage: null };
+export async function judgeWantsByText(text: SheetTextFacts, image: SheetImageFacts | null, wants: ImageWant[]): Promise<{ checks: WantCheck[]; usage: SheetUsage[]; failed: boolean }> {
+  if (!wants.length) return { checks: [], usage: [], failed: false };
   const facts = {
     間取り: image?.madori || text.madori, 専有面積: text.areaSqm, 階: text.floor, 方位: text.direction,
     部屋: image?.rooms ?? [], 帖数_資料: text.jo, キッチン: image?.kitchen ?? null, 水回り: image?.water ?? null,
     部屋の関係: image?.living_bedroom ?? null, 収納: image?.storage ?? null, 設備と条件: text.features.slice(0, 900),
   };
-  const t0 = Date.now();
-  const r = await callDeepSeek(null, buildWantsJudgePrompt(JSON.stringify(facts), wantsToText(wants)), { thinking: false, maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: 30_000 });
-  const usage: SheetUsage = { model: r?.model ?? "deepseek-flash", input: r?.usage.input ?? 0, output: r?.usage.output ?? 0, cacheHit: r?.usage.cacheHit ?? 0, ms: Date.now() - t0, retry: false, ok: false, section: "wants_text" };
-  if (!r) return { checks: [], usage };
+  // 2026-09-25 竹内「抜けの内容にプロンプトキャッシュを効かせる」: 固定の頭（WANTS_JUDGE_HEAD）が先頭・物件の事実と希望は後ろ（テストで見張る）。
+  //   温度 0 を足した（旧は既定の温度で、同じ事実×同じ希望でも答えが揺れうる）。答えない・崩れた時は同じ文で1回だけ読み直す。Claude には倒さない
+  const read = await callDeepSeekRead(null, buildWantsJudgePrompt(JSON.stringify(facts), wantsToText(wants)), { maxTokens: SHEET_READ_MAX_TOKENS, timeoutMs: 30_000 }, (t) => parseWantsJudgeReply(t, wants));
+  const usage: SheetUsage[] = read.attempts.map((a) => ({ model: a.res?.model ?? "deepseek-flash", input: a.res?.usage.input ?? 0, output: a.res?.usage.output ?? 0, cacheHit: a.res?.usage.cacheHit ?? 0, ms: a.ms, retry: a.retry, ok: a.ok, section: "wants_text" }));
+  return { checks: read.value ?? [], usage, failed: read.failed };
+}
+
+/** 文字の照合の返事を読む（純関数・崩れていれば null＝読み直し） */
+export function parseWantsJudgeReply(text: string, wants: ImageWant[]): WantCheck[] | null {
   const ids = new Set(wants.map((w) => w.id));
-  try {
-    const body = r.text.match(/\{[\s\S]*\}/)?.[0] ?? "";
-    const o = JSON.parse(body) as { checks?: Array<Record<string, unknown>> };
-    const checks = (o.checks ?? []).map((c) => ({
-      id: String(c.id ?? "").trim().toUpperCase(),
-      result: (["ok", "ng", "unknown"].includes(String(c.result)) ? String(c.result) : "unknown") as WantCheck["result"],
-      why: String(c.why ?? "").replace(/\s+/g, " ").trim().slice(0, 60),
-    })).filter((c) => ids.has(c.id));
-    usage.ok = true;
-    return { checks, usage };
-  } catch { return { checks: [], usage }; }
+  const body = text.match(/\{[\s\S]*\}/)?.[0] ?? "";
+  if (!body) return null;
+  let o: { checks?: Array<Record<string, unknown>> };
+  try { o = JSON.parse(body) as { checks?: Array<Record<string, unknown>> }; } catch { return null; }
+  if (!Array.isArray(o.checks)) return null;
+  return o.checks.map((c) => ({
+    id: String(c.id ?? "").trim().toUpperCase(),
+    result: (["ok", "ng", "unknown"].includes(String(c.result)) ? String(c.result) : "unknown") as WantCheck["result"],
+    why: String(c.why ?? "").replace(/\s+/g, " ").trim().slice(0, 60),
+  })).filter((c) => ids.has(c.id));
 }
 
 /** 物件の読み取りに保存した文字の照合の答え（無ければ null） */

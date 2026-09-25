@@ -110,7 +110,7 @@ console.log("■ 点の表・上限・保留");
   const p = buildCustomerProfile({ rent_max: 90_000, floor_plan: "1LDK", floor_area_min: 30, walk_minutes: 10, building_age: 10, other_requests: "初期費用を抑えたい" });
   const full = (ad: string) => judgeProperty(parsePropertyFacts(`【1】A\n80,000円\n1LDK 35㎡\n敷なし 礼なし\n徒歩5分\n築3年\n${ad}`), p, 0, { locationCodes: ["AREA_STATION_MATCH", "COMMUTE_OK"] });
   const s1 = full("AD 1ヶ月").score, s2 = full("AD 2ヶ月").score, s3 = full("AD 3ヶ月").score, s0 = full("").score;
-  t(`全部合う物件で AD の差が残る（AD不明 ${s0} ＜ 1ヶ月 ${s1} ＜ 2ヶ月 ${s2} ＜ 3ヶ月 ${s3}・上限 ${SCORE_MAX}）`, s0 < s1 && s1 < s2 && s2 < s3 && s3 < SCORE_MAX && s0 > 130);
+  t(`全部合う物件で AD の差が残る（AD不明 ${s0} ＜ 1ヶ月 ${s1} ＜ 2ヶ月 ${s2} ＜ 3ヶ月 ${s3}・上限 ${SCORE_MAX}）`, s0 < s1 && s1 < s2 && s2 === s3 && s3 < SCORE_MAX && s0 > 130);
   const j = full("AD 2ヶ月");
   t("50＋合計＝score（上限の内側）", BASE_SCORE + j.reasonCodes.reduce((a, c) => a + reasonPoints(c), 0) === j.score);
   const v = buildReasonView({ reason_codes: ["AREA_STATION_WIDE", "RENT_WIDE", "FLOOR_PLAN_WIDE"] });

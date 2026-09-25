@@ -2345,6 +2345,32 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS location JSONB;
 --   届いてから 72時間で画像・資料（Blob の pickups/）を消した時刻（/api/cron/pickup-retention）。行の文字は残す
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS expired_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_property_pickups_retention ON property_pickups(created_at) WHERE expired_at IS NULL;
+-- 2026-09-25 竹内「まとめられていない。完了ボタン押したらリアプロと itandi の全部分析されるようにする」:
+--   拡張でお客様の作業を終えた時（確認☑／✅ 送った）に、そのお客様のまだまとめていない行（最大24時間）を1つのまとめにする（/api/property-pickups/complete）。
+--   complete_group_id＝まとめ ID（cg_<お客様>_<一番古い行の id>・空の行だけ付ける＝冪等）／complete_rank＝まとめた全件での順位（pickup-complete.ts）
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS complete_group_id TEXT;
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS complete_rank INT;
+CREATE INDEX IF NOT EXISTS idx_property_pickups_complete ON property_pickups(complete_group_id) WHERE complete_group_id IS NOT NULL;
+--   まとめ1つに1行（主キー＝まとめ ID）: 押した経路・モード・まとめた行・👑（best_id・best_basis＝image/score）・自動の読み取りの件数
+CREATE TABLE IF NOT EXISTS property_pickup_completions (
+  group_id TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  property_customer_id UUID,
+  conversation_id TEXT,
+  trigger TEXT,
+  mode TEXT,
+  requested_by TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  item_ids BIGINT[],
+  batch_ids TEXT[],
+  sites JSONB,
+  best_id BIGINT,
+  best_basis TEXT,
+  result JSONB,
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_property_pickup_completions_customer ON property_pickup_completions(property_customer_id, created_at DESC);
+ALTER TABLE property_pickup_completions DISABLE ROW LEVEL SECURITY;
 -- 2026-09-25 竹内「文章の部分も要約できるようにする」: 条件の自由文のうち決定論で読めない節だけ DeepSeek で要約した物（condition-summary-server.ts）
 --   condition_summary_hash＝自由文のハッシュ＋版（文が変わらない限り DeepSeek を呼ばない）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS condition_summary JSONB;
@@ -2830,6 +2856,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_rec_snap_message ON recommendation_snapshot
 CREATE INDEX IF NOT EXISTS idx_rec_snap_conv ON recommendation_snapshots(conversation_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_rec_snap_customer ON recommendation_snapshots(property_customer_id, sent_at DESC);
 ALTER TABLE recommendation_snapshots DISABLE ROW LEVEL SECURITY;
+
+-- ── scoring_weights / scoring_learning_runs: 物件の点の重みの版と、週1回の学習の結果（2026-09-25追加）──
+-- 竹内「自動的に学習されていく仕組みを作る。判定基準をより精度高くしていくために」。正解は「スタッフが選んで送った事実」。
+-- scoring_weights: 札（理由コード）の点の上書き（weights＝{札: 点}・無い札はコードの定数）。status は proposed / active / retired / rejected。
+--   active は1つだけ（無ければコードの定数のまま）。前の版へは retired を active に戻す（version 0＝コードの定数）。
+-- scoring_learning_runs: 毎週の測り（今の点での順位・特徴ごとの選ばれ方・条件の種類ごと）・提案・確かめ用での前後・自動で入れたか。
+--   書き手: /api/cron/scoring-learning（毎週月曜 JST 5:10・決定論・LLM なし）と scripts/scoring-learning.ts
+CREATE TABLE IF NOT EXISTS scoring_weights (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  version INTEGER NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','active','retired','rejected')),
+  weights JSONB NOT NULL DEFAULT '{}',
+  base_version INTEGER,
+  source TEXT NOT NULL DEFAULT 'learning',
+  run_id BIGINT,
+  note TEXT,
+  activated_at TIMESTAMPTZ,
+  retired_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scoring_weights_active ON scoring_weights((status)) WHERE status = 'active';
+ALTER TABLE scoring_weights DISABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS scoring_learning_runs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  dry BOOLEAN NOT NULL DEFAULT false,
+  data_until TIMESTAMPTZ,
+  days INTEGER,
+  episodes_total INTEGER,
+  train_n INTEGER,
+  holdout_n INTEGER,
+  counts JSONB,
+  active_version INTEGER,
+  metrics JSONB,
+  feature_stats JSONB,
+  segment_stats JSONB,
+  code_stats JSONB,
+  proposal JSONB,
+  holdout_base JSONB,
+  holdout_proposed JSONB,
+  improved BOOLEAN NOT NULL DEFAULT false,
+  decision TEXT,
+  proposed_version INTEGER,
+  auto_applied BOOLEAN NOT NULL DEFAULT false,
+  auto_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_scoring_learning_runs_created ON scoring_learning_runs(created_at DESC);
+ALTER TABLE scoring_learning_runs DISABLE ROW LEVEL SECURITY;
 
 -- ── property_brain_judgments: 物件検索ブレインの判定記録（2026-09-23追加）──
 -- 拡張のブレインモードが /api/property-brain/judge に送った物件1件ごとの pass/hold/drop・点数・理由コード・

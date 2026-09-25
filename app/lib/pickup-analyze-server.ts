@@ -15,8 +15,9 @@ export function recordSheetUsage(u: SheetUsage, conversationId: string | null): 
     usage: { input_tokens: Math.max(0, u.input - u.cacheHit), output_tokens: u.output, cache_read_input_tokens: u.cacheHit },
     status: u.input > 0 ? 200 : 0, errorType: u.ok ? null : (u.input > 0 ? "empty_or_unparsable" : "no_response"),
     // sys_head は前置きの種類ごとに分ける（どの型でキャッシュが効いているかを後から読むため）
-    durationMs: u.ms, sysHead: `【🔍 画像で分析・${u.section}${u.retry ? "・読み直し" : ""}】${SHEET_PROMPT_VERSION}`, sysKeyFull: null,
-    maxTokens: u.retry ? SHEET_RETRY_MAX_TOKENS : SHEET_READ_MAX_TOKENS,
+    // 2026-09-25: 読み直しは2種類（失敗の読み直し＝同じ前置き・推論なし／質の読み直し＝推論 low）を分ける
+    durationMs: u.ms, sysHead: `【🔍 画像で分析・${u.section}${u.retry ? (u.think ? "・読み直し・推論" : "・読み直し") : ""}】${SHEET_PROMPT_VERSION}`, sysKeyFull: null,
+    maxTokens: u.think ? SHEET_RETRY_MAX_TOKENS : SHEET_READ_MAX_TOKENS,
   })).catch(() => {});
 }
 
@@ -29,6 +30,7 @@ export async function analyzePickupRow(row: SheetSourceRow & { conversation_id?:
   const usage: SheetUsage[] = [...facts.usage];
   // 決まった手順で決まらない希望だけ文字で聞く（物件と資料が一致している時だけ。点を出さない要確認では聞かない＝費用をかけない）
   let llmChecks: WantCheck[] | undefined;
+  let unreadIds: string[] = [];
   if ((facts.text.hasText || facts.image) && wants.length) {
     const ok = checkSheetConsistency({ summary: row.summary_text, text: facts.text, image: facts.image }).status === "ok";
     const undecided = new Set(matchWantsWithFacts(wants, facts.text, ok ? facts.image : null, parseSummaryFacts(row.summary_text).madori).undecided);
@@ -40,14 +42,18 @@ export async function analyzePickupRow(row: SheetSourceRow & { conversation_id?:
       llmChecks = hit.checks;
       if (hit.missing.length) {
         const j = await judgeWantsByText(facts.text, facts.image, hit.missing);
-        if (j.usage) usage.push(j.usage);
+        usage.push(...j.usage);
         llmChecks = [...hit.checks, ...j.checks];
-        if (j.usage?.ok) await saveJudgments(facts.factsId, mergeJudgments(saved, hit.missing, j.checks));
+        // 2026-09-25: 読み取れなかった時は保存しない（次の 🔍・次の回で DeepSeek が聞き直す）。Claude では埋めない
+        if (j.failed) unreadIds = hit.missing.map((w) => w.id);
+        else await saveJudgments(facts.factsId, mergeJudgments(saved, hit.missing, j.checks));
       }
     }
   }
   for (const u of usage) recordSheetUsage(u, conv);
-  const analysis = buildPickupAnalysis({ wants, text: facts.text, image: facts.image, summary: row.summary_text, llmChecks });
+  // 間取り図の読み取りが2回とも答えなかった（資料はあった）＝「読み取れなかった」の印。保存していないので 🔍 で読み直せる
+  const imageUnread = !facts.image && facts.source === "none" && facts.error === "読めなかった";
+  const analysis = buildPickupAnalysis({ wants, text: facts.text, image: facts.image, summary: row.summary_text, llmChecks, unread: { image: imageUnread, wantIds: unreadIds } });
   if (analysis) {
     analysis.sheet = {
       type: facts.sheetType, type_by: facts.typeBy, crop_mode: facts.crop?.mode ?? null, crop_basis: facts.crop?.basis ?? null,
