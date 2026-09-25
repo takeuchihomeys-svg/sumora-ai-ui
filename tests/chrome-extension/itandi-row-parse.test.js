@@ -1,6 +1,6 @@
-// 実行: node chrome-extension/__tests__/itandi-row-parse.test.js
+// 実行: node tests/chrome-extension/itandi-row-parse.test.js
 // 本文は 2026-09-24 竹内さんが itandi の一覧でコンソールから取った実物（部屋の段・建物の段の innerText）
-const P = require("../itandi-row-parse.js");
+const P = require("../../chrome-extension/itandi-row-parse.js");
 let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 

@@ -1,4 +1,4 @@
-// 実行: node chrome-extension/__tests__/osaka-transit.test.js
+// 実行: node tests/chrome-extension/osaka-transit.test.js
 // 2026-09-25 拡張の路線のつながり（osaka-transit.js・自動生成）と通勤の候補の駅（commute-candidates.js）
 //   - UMD をブラウザと同じ形（self）で読めるか
 //   - 「梅田まで一本」「◯分以内」の候補が拡張の辞書の駅名（STATION_LINE_MAP のキー）に戻るか（サイトの表記は作らない）
@@ -11,7 +11,7 @@ let pass = 0, fail = 0;
 function ok(name, cond) { cond ? pass++ : fail++; console.log((cond ? "  ✓ " : "  ✗ ") + name); }
 function eq(name, a, b) { const c = JSON.stringify(a) === JSON.stringify(b); c ? pass++ : fail++; console.log((c ? "  ✓ " : "  ✗ ") + name + (c ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 
-const dir = path.join(__dirname, "..");
+const dir = path.join(__dirname, "..", "..", "chrome-extension");
 const read = (f) => fs.readFileSync(path.join(dir, f), "utf8");
 
 console.log("\n■ ブラウザと同じ形（self）で読む");
@@ -24,7 +24,7 @@ const T = sandbox.AxlxOsakaTransit;
 const CC = sandbox.AxlxCommuteCandidates;
 ok("self.AxlxOsakaTransit がある", !!T && typeof T.oneRideStations === "function" && typeof T.stationsWithin === "function");
 ok("self.AxlxCommuteCandidates がある", !!CC && typeof CC.build === "function" && typeof CC.render === "function");
-ok("node の require でも読める", typeof require("../osaka-transit.js").oneRideStations === "function");
+ok("node の require でも読める", typeof require("../../chrome-extension/osaka-transit.js").oneRideStations === "function");
 
 // 拡張の辞書（popup-maps.js は const の塊なので関数で包んで取り出す）
 const M = new Function(read("popup-maps.js") + ";return { STATION_LINE_MAP, LINE_ROUTE_MAP, ITANDI_LINE_MAP_FILL, REINS_LINE_MAP };")();

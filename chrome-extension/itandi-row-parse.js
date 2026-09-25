@@ -10,7 +10,7 @@
 //     部屋の段 = 最初に「円」と「㎡」が両方入る所（例: 612／5.7万円／なし／8,000円／…／1K／20.88㎡／…／13枚／100%／代理／可）
 //     建物の段 = 最初に「徒歩」が入る所（例: 6枚／物件名／所在地／交通の行…／15階建…）
 //   の文字の並びから読む。AD は部屋の段の「画像枚数（N枚）」の次の値だけを見る（他の物件の AD を拾わない）。
-//   実物（2026-09-24 竹内さんのコンソール出力）をそのままテストに使う: chrome-extension/__tests__/itandi-row-parse.test.js
+//   実物（2026-09-24 竹内さんのコンソール出力）をそのままテストに使う: tests/chrome-extension/itandi-row-parse.test.js
 (function (root, factory) {
   var api = factory();
   if (typeof module !== "undefined" && module.exports) { module.exports = api; }

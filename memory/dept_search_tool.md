@@ -33,7 +33,7 @@
   - 駅の言い方は乗る路線で選ぶ: なんば×大和路線→JR難波・×南海→難波・×近鉄→大阪難波・×御堂筋→なんば、平野×大和路線→JR平野、梅田×阪急→大阪梅田。拡張の辞書に無い駅（京都・兵庫の一部・JR京都線の岸辺〜茨木 等）は入れず数だけ出す
   - **変えていない**: 「電車1本」の自動（resolveDirectCommute＝沿線を選んで全駅）・「◯分」の自動（TRANSIT_GRAPH の展開）・popup-maps.js の辞書（LINE_STATION_ORDER 等）。読み込み: popup.html に `osaka-transit.js`→`commute-candidates.js`→popup.js、manifest の web_accessible_resources に2つ、styles.css に `.commute-candidates`
 - **拡張の辞書の誤り（直していない・判断待ち）**: 御堂筋線の新大阪／西中島南方の順・中央線に森ノ宮なし・片町線の放出→鴫野・東海道本線の大阪→塚本→新大阪・関西本線の加美／平野、JR東西線の末尾に放出、能勢電の「平野」が谷町線の平野と同じ名前。直すと LINE_STATION_ORDER の範囲指定（本町〜南森町）・TRANSIT_GRAPH（◯分の自動展開）が変わる。**今の TRANSIT_GRAPH の「梅田まで30分」には能勢電の 多田・一の鳥居 が入る**（平野の取り違え）。新しいつながりとの差（30分）: 梅田 旧256／新292駅・旧だけ23（多田・一の鳥居・高槻 等）・新だけ57（尼崎・甲子園 等 兵庫側）。自動の展開を新しい方に替えるかは実機で確かめてから
-- テスト: `node chrome-extension/__tests__/osaka-transit.test.js`（35・self で UMD を読む・辞書の駅名に戻す・サイトの路線名を入れない・読み込みの順）・`npx tsx app/lib/__tests__/transit-core.test.ts`（80・サーバーと拡張が同じ・一本／◯分／最短／文の読み）
+- テスト: `node tests/chrome-extension/osaka-transit.test.js`（35・self で UMD を読む・辞書の駅名に戻す・サイトの路線名を入れない・読み込みの順）・`npx tsx app/lib/__tests__/transit-core.test.ts`（80・サーバーと拡張が同じ・一本／◯分／最短／文の読み）
 - **実機で確かめること（拡張の再読み込みが必要・version 2.5.17）**: chrome://extensions → 🔄 → リアプロ／itandi で「梅田まで電車1本」や通勤の列があるお客様を選ぶ → 一時調整の「駅」欄の下に 🚃／⏱ の候補が出るか → チップを押して駅欄に入り「🚉 駅で検索中（一時調整優先）」になるか → 自動入力で検索できるか（駅数が多い時にサイト側の上限で止まらないか）。コンソール `[AX] 通勤の候補:`・`[AX] 通勤の候補の駅を駅欄に追加:`
 
 ## 2026-09-25 売上サポ: 画像・資料の保存期間 72時間（竹内「3日前の画像は消されるように。保存期間が終了しましたと出る感じで（実際の LINE のように）」）
@@ -1892,7 +1892,7 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
   - 建物の段 = 最初に「徒歩」が入る所（8段上）: 写真の枚数／**物件名**／**所在地**／**交通の行（路線 駅 徒歩N分）**／階建・築年／管理会社／（以下 表の見出しと部屋の段）
 - 直し: `chrome-extension/itandi-row-parse.js`（UMD・`self.AxlxItandiRowParse`）を itandi-bulk-dl.js の前に読む（manifest）。class 名に頼らず文字の並びで読む。AD は部屋の段の「N枚」の次の値だけ（100% → 1ヶ月・250% → 2.5ヶ月・円表記は円）
 - 説明文（リアプロと同じ並び・サーバーの parsePropertyFacts が読める）: `【n】物件名／67,000円 [管理費]／1K 20.8㎡／405号室／交通（最大3行）／AD 1ヶ月`
-- テスト: `node chrome-extension/__tests__/itandi-row-parse.test.js`（実物の innerText・18件）
+- テスト: `node tests/chrome-extension/itandi-row-parse.test.js`（実物の innerText・18件）
 - ⚠ 拡張の再読み込みが要る（chrome://extensions で更新）。サーバー側でも PDF の文字層から補う（itandi の作業で並行）
 
 ## 2026-09-25 売上サポ「🔍 画像で分析」の itandi の読み取りを正解表で直す（sheet-v3 → sheet-v8）
@@ -1973,3 +1973,8 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - **家賃の幅**（property-brain.ts judgeProperty）: 2つ目の条件を「家賃だけ上限内」→「家賃だけ 上限＋幅 以内」かつ管理費込み1.10以内に。旧は 83,000＋管理費3,000（計86,000・広げた検索で拾う）が 0点、78,000＋9,000（計87,000）が +10 と**安い方が低かった**。property-brain.test の「1.10 ちょうど」（72,000＋5,000・上限7万）は RENT_WIDE に
 - **拡張 commute-candidates.js mergeStationField**: 通勤の言い方を外す正規表現の「分」が駅名の 河内国分 まで消していた → 数字＋分だけ外す（osaka-transit.test.js に1件）
 - 確かめた（問題なし）: AD の重み不変・外す／保留の候補は増えない（札は全部保留にしない）・全行 50＋合計＝score（SCORE_MAX 200）・UMD は node（module.exports）とブラウザ（self）両方・manifest の web_accessible_resources に2ファイル・popup.html の読み込み順・osaka-transit.js は生成し直しても同じ（md5 一致）
+
+## ⚠ 2026-09-25 拡張が読み込めなかった（v2.5.16・v2.5.17）: chrome-extension/ の中に「_」で始まるフォルダを置かない
+- 竹内さんの Chrome:「Cannot load extension with file or directory name __tests__. Filenames starting with "_" are reserved for use by the system.」
+- 原因: 9/24 の itandi-row-parse のテストを chrome-extension/__tests__/ に置いた（v2.5.16）。拡張のフォルダの中の「_」始まりのファイル・フォルダは Chrome が読み込みを拒否する
+- 直し: テストは tests/chrome-extension/ に移した（node tests/chrome-extension/itandi-row-parse.test.js・osaka-transit.test.js）。**拡張のテストは chrome-extension/ の外に置く**
