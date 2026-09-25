@@ -2792,6 +2792,44 @@ CREATE TABLE IF NOT EXISTS property_candidate_pools (
 );
 CREATE INDEX IF NOT EXISTS idx_pcp_customer_id ON property_candidate_pools(property_customer_id);
 CREATE INDEX IF NOT EXISTS idx_pcp_sent_at ON property_candidate_pools(sent_at DESC);
+-- 2026-09-25 竹内「候補の記憶を太くする」: candidates の1件に家賃・管理費・敷礼・㎡・築年月・駅と徒歩・所在地（区）・階・号室・AD・設備の語・
+--   資料URL・🌟 と出どころ（src）を足した印（candidate-facts.ts の FACTS_VERSION。NULL＝太くする前の行）。項目は jsonb の中（列は増やさない）
+ALTER TABLE property_candidate_pools ADD COLUMN IF NOT EXISTS facts_version INTEGER;
+ALTER TABLE property_candidate_pools ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMPTZ;
+
+-- ── recommendation_snapshots: 🌟（AIX 物件オススメ）を送った時点の候補一覧（2026-09-25追加）──
+-- 🌟は「物件の画像を何枚か送った後に、その中から1件を押す」流れが中心なのに、その時の候補一覧が残っていなかった。
+-- 同じ会話でお客様に直近72時間に送った物件（sent_properties・お客様に届いた行）を候補に、🌟の物件と一緒に1行残す。
+-- 候補の値は 送付記録 → 拡張の回（property_candidate_pools）→ 売上サポの行（property_pickups）の順に空いている所だけ埋める。
+-- 🌟の本文から読んだ値は star_text_facts に分けて持つ（候補の値に混ぜると🌟だけ材料が多くなり順位が歪む）。
+-- お客様の発言そのものは写さず、希望の話題（customer_wants）だけ。書き手: /api/log-aix-usage（waitUntil・送信は止めない）
+CREATE TABLE IF NOT EXISTS recommendation_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  aix_usage_log_id UUID,
+  message_id TEXT,
+  conversation_id TEXT NOT NULL,
+  property_customer_id UUID,
+  sent_at TIMESTAMPTZ NOT NULL,
+  star_name TEXT,
+  star_room TEXT,
+  star_text TEXT,
+  star_in_candidates BOOLEAN NOT NULL DEFAULT false,
+  candidate_count INTEGER NOT NULL DEFAULT 0,
+  candidates JSONB NOT NULL DEFAULT '[]',
+  star_text_facts JSONB,
+  appeal_topics TEXT[],
+  customer_wants JSONB,
+  pool_ids TEXT[],
+  pickup_batch_ids TEXT[],
+  source TEXT NOT NULL DEFAULT 'live',
+  facts_v INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rec_snap_aix_log ON recommendation_snapshots(aix_usage_log_id) WHERE aix_usage_log_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rec_snap_message ON recommendation_snapshots(message_id) WHERE message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rec_snap_conv ON recommendation_snapshots(conversation_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rec_snap_customer ON recommendation_snapshots(property_customer_id, sent_at DESC);
+ALTER TABLE recommendation_snapshots DISABLE ROW LEVEL SECURITY;
 
 -- ── property_brain_judgments: 物件検索ブレインの判定記録（2026-09-23追加）──
 -- 拡張のブレインモードが /api/property-brain/judge に送った物件1件ごとの pass/hold/drop・点数・理由コード・
@@ -3308,6 +3346,11 @@ ALTER TABLE sent_properties ADD COLUMN IF NOT EXISTS pickup_id BIGINT;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sent_props_pickup ON sent_properties(pickup_id) WHERE pickup_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sent_props_image_url ON sent_properties(image_url) WHERE image_url IS NOT NULL;
 ALTER TABLE sent_image_properties ADD COLUMN IF NOT EXISTS channel TEXT;
+-- 2026-09-25 竹内「候補の記憶を太くする」: 送った画像1枚ごとの値（家賃・管理費・敷礼・間取り・㎡・最寄り駅と徒歩・築年月・AD・募集状況）。
+--   readPropertyImage（DeepSeek・同じ1回の読み取り）の結果を candidate-facts.factsFromImageRead で候補の形にした物。記録と分析だけに使う
+--   （返信の本文の材料にはしない）。一覧の画像（号室が複数）は残さない。NULL＝読む前の行（埋め戻しは scripts/backfill-sent-image-facts.ts）
+ALTER TABLE sent_image_properties ADD COLUMN IF NOT EXISTS facts JSONB;
+ALTER TABLE sent_image_properties ADD COLUMN IF NOT EXISTS facts_read_at TIMESTAMPTZ;
 
 -- image_details: こちらが送った画像の「中身の読み取り」（2026-09-21 竹内「引用先の画像を読み取れるように」）
 --   sent_image_properties は「どの物件か」（名前・号室）だけで、資料に書いてある条件

@@ -38,14 +38,27 @@ export const PROPERTY_IMAGE_MAX_TOKENS = 8000;
 //   ⚠ 退去日の読み取りは AIX【物件オススメ】のプロンプト（aix/action:1938）と同じ線にする:
 //     備考欄の「解約予定／退去予定／解約日」の日付が退去予定日。
 //     「現況／入居時期」の欄は**退去後に入居できる日**であって退去予定日ではない。
-export const PROPERTY_IMAGE_PROMPT = `この画像から物件情報を読み取ってください。JSONのみ返答（説明文・コードブロック・前置き一切不要）：
-{"items":[{"property_name":"","room_number":"","rent":null,"deposit":null,"key_money":null,"status":"","vacancy_date":""}],"is_property":true}
+//
+// 2026-09-25 竹内「候補の記憶を太くする」（別の調査の結論「点より先に材料を残す」）:
+//   お客様に送った画像1枚ごとに 管理費・間取り・㎡・最寄り駅と徒歩・築年月・AD も読み、sent_image_properties.facts に残す
+//   （今までは家賃だけが sent_properties に残り、敷礼も読んでいたのに捨てていた）。**同じ1回の読み取りで足す**（呼び出しは増やさない）。
+//   ⚠ ここで読んだ値は「記録と分析（🌟の候補一覧・ブレインの点の検証）」にだけ使う。返信の本文に数字を書く材料にはしない
+//     （下の PROPERTY_IMAGE_DETAIL_PROMPT の「金額・住所・駅徒歩・面積は書かない」線はそのまま＝誤読がそのまま事故になるため）。
+//   ⚠ 指示の文は固定で先頭（画像はその後）＝ DeepSeek のキャッシュが効く形のまま。お客様の画像・本人確認書類は呼び出し側で出さない
+export const PROPERTY_IMAGE_PROMPT =`この画像から物件情報を読み取ってください。JSONのみ返答（説明文・コードブロック・前置き一切不要）：
+{"items":[{"property_name":"","room_number":"","rent":null,"admin_fee":null,"deposit":null,"key_money":null,"floor_plan":"","area_sqm":null,"station":"","walk_minutes":null,"built":"","ad":"","status":"","vacancy_date":""}],"is_property":true}
 - items: 画像に出ている物件を全部。1件だけなら1つ、一覧なら全部
 - property_name: マンション名のみ（号室は含めない）。読めなければ""
 - room_number: 号室番号のみ（例: 502）。号室が無い・読めなければ""
 - rent: 賃料（管理費・共益費を含めない月額の数字のみ。例 106000）。読めなければ null
-- deposit: 敷金の金額（0円・なしなら 0）。読めなければ null
-- key_money: 礼金の金額（0円・なしなら 0）。読めなければ null
+- admin_fee: 管理費・共益費の月額（両方あれば合計・なしなら 0）。読めなければ null
+- deposit: 敷金の金額（0円・なしなら 0。「1ヶ月」のように月数で書いてあれば月数の数字 1）。読めなければ null
+- key_money: 礼金の金額（0円・なしなら 0。月数で書いてあれば月数の数字）。読めなければ null
+- floor_plan: 間取り（例 "1K" "1LDK"。ワンルームは "1R"）。読めなければ ""
+- area_sqm: 専有面積の数字（㎡。例 25.5）。読めなければ null
+- station: 一番近い駅の名前（「駅」は付けない。バス停は除く）。walk_minutes: その駅から徒歩の分の数字。読めなければ "" と null
+- built: 築年月（例 "2019年3月"。新築なら "新築"）。読めなければ ""
+- ad: 広告料・AD（業者向けの欄に書いてあれば文字のまま。例 "100%" "1ヶ月" "50,000円"）。書いていなければ ""
 - status: 募集状況。次の4つのどれか。読めなければ""
     "open"（空室・即入居可）／"move_out_planned"（退去予定・解約予定）／
     "under_construction"（建築中・新築未完成・竣工予定）／"occupied"（申込あり・満室・募集終了）
@@ -207,6 +220,14 @@ export type ReadItem = {
   status?: string | null;
   /** 退去予定日（"6月30日"）。読めなければ null */
   vacancyDate?: string | null;
+  /** 2026-09-25: 管理費・共益費の月額（0＝なし）・間取り・㎡・最寄り駅と徒歩・築年月の文字・AD の文字。読めなければ null */
+  adminFee?: number | null;
+  floorPlan?: string | null;
+  areaSqm?: number | null;
+  station?: string | null;
+  walkMinutes?: number | null;
+  built?: string | null;
+  ad?: string | null;
 };
 export type ReadResult = { items: ReadItem[]; isProperty: boolean; raw: string; usage?: { input: number; output: number; cacheHit?: number } };
 
@@ -246,9 +267,20 @@ export function parseReadResult(content: string): ReadResult {
       const vacancyRaw = String(o.vacancy_date ?? o["退去予定日"] ?? "").trim();
       // 「6月30日」の形だけ受ける（西暦付き・曖昧な語は捨てる）
       const vacancyDate = /^[0-9０-９]{1,2}月[0-9０-９]{1,2}日$/.test(vacancyRaw) ? vacancyRaw : null;
+      // 2026-09-25: 候補の記録用（管理費・間取り・㎡・駅と徒歩・築年月・AD）。読めない・空は null
+      const str = (v: unknown): string | null => { const t = String(v ?? "").trim(); return t && t !== "null" ? t.slice(0, 40) : null; };
+      const extra = {
+        adminFee: num(o.admin_fee ?? o["管理費"]),
+        floorPlan: str(o.floor_plan ?? o["間取り"]),
+        areaSqm: num(o.area_sqm ?? o["専有面積"]),
+        station: str(o.station ?? o["最寄り駅"]),
+        walkMinutes: num(o.walk_minutes ?? o["徒歩"]),
+        built: str(o.built ?? o["築年月"]),
+        ad: str(o.ad ?? o["広告料"]),
+      };
       // 号室が配列で返る事がある（物件一覧の画像）
       const rooms = Array.isArray(roomRaw) ? roomRaw.map((x) => String(x)) : [String(roomRaw ?? "")];
-      for (const r of rooms) items.push({ propertyName: name, roomNumber: r.trim(), rent, deposit, keyMoney, status, vacancyDate });
+      for (const r of rooms) items.push({ propertyName: name, roomNumber: r.trim(), rent, deposit, keyMoney, status, vacancyDate, ...extra });
     }
     const isProp = typeof (parsed as { is_property?: unknown }).is_property === "boolean"
       ? Boolean((parsed as { is_property: boolean }).is_property) : items.length > 0;

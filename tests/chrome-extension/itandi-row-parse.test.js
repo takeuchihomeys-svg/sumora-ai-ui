@@ -39,5 +39,22 @@ eq("612 の説明文（管理費あり・AD なし）", P.buildSummary(1, null, 
 eq("PDF の名前があればそれを使う", P.buildSummary(3, "別名マンション", P.merge(r1, b1)).split("\n")[0], "【3】別名マンション");
 eq("何も読めない時は従来どおり「物件N」", P.buildSummary(4, null, {}), "【4】物件4");
 
+console.log("\n■ 候補の記録を太くする（2026-09-25）");
+eq("612: 敷金なし・礼金なし → 0・0", [r1.depositMonths, r1.keyMoneyMonths], [0, 0]);
+eq("405: 敷金なし・礼金1ヶ月", [r2.depositMonths, r2.keyMoneyMonths], [0, 1]);
+eq("敷金が円（50,000円）", P.parseRoomText("101\n6万円\nなし\nなし\n50,000円\nなし\n入力なし\n1K\n20㎡").depositYen, 50000);
+eq("敷礼が「入力なし」は分からない（null）", [P.parseRoomText("101\n6万円\nなし\nなし\n入力なし\n入力なし\n入力なし\n1K\n20㎡").depositMonths], [null]);
+eq("賃料と間取りの間が6つでない並びは敷礼を読まない", [P.parseRoomText("101\n7万円\nなし\nなし\n1LDK\n30㎡").depositMonths], [null]);
+eq("建物: 築年月・築年数・階建", [b1.builtYm, b1.buildingAge, b1.totalFloors], ["2008-06", 18, 15]);
+const pool = P.toPoolData(2, null, P.merge(r2, b2), "https://blob.example/x.pdf");
+eq("候補の記録: 家賃・管理費・敷礼・間取り・㎡・号室・所在地・交通・徒歩・築・AD・URL", pool, {
+  rank: 2, name: "エステムコート新大阪Ⅵエキスプレイス", rent: 67000, admin_fee_yen: 0, deposit_months: 0, key_money_months: 1,
+  floor_plan: "1K", area_sqm: 20.8, room_no: "405", address: "大阪府大阪市淀川区西宮原1丁目7-46",
+  stations: ["JR京都線 新大阪駅 徒歩8分", "阪急宝塚本線 三国駅 徒歩16分", "大阪メトロ御堂筋線 東三国駅 徒歩17分"],
+  walk_minutes: 8, built_ym: "2008-06", building_age: 18, total_floors: 15, ad_months: 1, pdf_url: "https://blob.example/x.pdf",
+});
+eq("候補の記録: 分からない項目は入れない（null を書かない）", Object.keys(P.toPoolData(4, null, {}, null)), ["rank", "name"]);
+eq("候補の記録: PDF の名前を優先", P.toPoolData(3, "別名マンション", P.merge(r1, b1), null).name, "別名マンション");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

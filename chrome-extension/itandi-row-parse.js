@@ -34,6 +34,16 @@
     return null;
   }
   function isNone(v) { return /^(なし|無し|入力なし|-|－|ー)$/.test(String(v || "").trim()); }
+  /** 敷金・礼金の欄: 「なし」→ 0ヶ月 / 「1ヶ月」→ 1 / 「50,000円」→ 円 / 「入力なし」・読めない → null */
+  function depositOf(v) {
+    var s = toHalf(v).replace(/\s+/g, "");
+    if (!s || s === "入力なし") return null;
+    if (/^(なし|無し|-|－|ー|0)$/.test(s)) return { months: 0, yen: null };
+    var m = s.match(/^(\d+(?:\.\d+)?)[ヶかカケヵ]?月$/);
+    if (m) return { months: parseFloat(m[1]), yen: null };
+    var y = yenOf(s);
+    return y != null ? { months: null, yen: y } : null;
+  }
 
   var RENT_RE = /^[\d０-９.．]+万円$|^[\d０-９,，]+円$/;
   var LAYOUT_RE = /^(ワンルーム|1R|[1-9１-９]\s*S?\s*[LDK]{1,3}|[1-9１-９]\s*[LDKS]+)$/i;
@@ -42,7 +52,8 @@
   /** 部屋の段の文字 → { room, rentYen, adminYen, layout, areaSqm, ad, adMonths, adYen } */
   function parseRoomText(text) {
     var ls = lines(text);
-    var out = { room: null, rentYen: null, adminYen: null, layout: null, areaSqm: null, ad: null, adMonths: null, adYen: null };
+    var out = { room: null, rentYen: null, adminYen: null, layout: null, areaSqm: null, ad: null, adMonths: null, adYen: null,
+      depositMonths: null, depositYen: null, keyMoneyMonths: null, keyMoneyYen: null };
     var ri = -1;
     for (var i = 0; i < ls.length; i++) { if (/万円$/.test(ls[i]) && yenOf(ls[i]) != null) { ri = i; break; } }
     if (ri < 0) for (var j = 0; j < ls.length; j++) { if (RENT_RE.test(ls[j]) && yenOf(ls[j]) != null) { ri = j; break; } }
@@ -55,11 +66,20 @@
       var fees = [ls[ri + 1], ls[ri + 2]].map(yenOf).filter(function (n) { return n != null; });
       out.adminYen = fees.length ? fees.reduce(function (a, b) { return a + b; }, 0) : (isNone(ls[ri + 1]) ? 0 : null);
     }
+    var li = -1;
     for (var k = 0; k < ls.length; k++) {
       var h = toHalf(ls[k]).replace(/\s+/g, "");
-      if (!out.layout && LAYOUT_RE.test(h)) out.layout = h.toUpperCase().replace("ワンルーム", "1R");
+      if (!out.layout && LAYOUT_RE.test(h)) { out.layout = h.toUpperCase().replace("ワンルーム", "1R"); li = k; }
       var am = h.match(AREA_RE);
       if (out.areaSqm == null && am) out.areaSqm = parseFloat(am[1]);
+    }
+    // 2026-09-25 竹内「候補の記憶を太くする」: 敷金・礼金。表の並びは 賃料｜管理費｜共益費｜敷金｜礼金｜保証金｜間取り
+    //   （実物 612: 5.7万円／なし／8,000円／なし／なし／入力なし／1K）。**賃料と間取りの間がちょうど6つの時だけ**読む
+    //   （並びが違う画面で別の欄を敷礼と読まない）。「なし」= 0・「入力なし」= 分からない（null）
+    if (ri >= 0 && li === ri + 6) {
+      var dep = depositOf(ls[ri + 3]), key = depositOf(ls[ri + 4]);
+      if (dep) { out.depositMonths = dep.months; out.depositYen = dep.yen; }
+      if (key) { out.keyMoneyMonths = key.months; out.keyMoneyYen = key.yen; }
     }
     // AD: 画像枚数（N枚）の次の値だけ（100% / 1ヶ月 / 30,000円 / 入力なし）
     for (var p = 0; p < ls.length - 1; p++) {
@@ -82,7 +102,7 @@
   /** 建物の段の文字 → { name, address, stations: ["JR京都線 新大阪駅 徒歩8分", …], walkMin } */
   function parseBuildingText(text) {
     var ls = lines(text);
-    var out = { name: null, address: null, stations: [], walkMin: null };
+    var out = { name: null, address: null, stations: [], walkMin: null, builtYm: null, buildingAge: null, totalFloors: null };
     // 表の見出し（募集状況）より前だけを見る（下の部屋の段の文字を混ぜない）
     var end = ls.indexOf("募集状況");
     var head = end >= 0 ? ls.slice(0, end) : ls;
@@ -104,7 +124,49 @@
       var w = parseInt(m[1], 10);
       if (out.walkMin == null || w < out.walkMin) out.walkMin = w;
     });
+    // 2026-09-25: 階建・築年月・築年数（実物: 「15階建」「/ 2008年6月」「(築18年)」）
+    head.forEach(function (l) {
+      var h = toHalf(l).replace(/\s+/g, "");
+      var tf = h.match(/^(\d{1,2})階建/);
+      if (tf && out.totalFloors == null) out.totalFloors = parseInt(tf[1], 10);
+      var by = h.match(/^\/?((?:19|20)\d{2})年(\d{1,2})月$/);
+      if (by && out.builtYm == null) out.builtYm = by[1] + "-" + (by[2].length === 1 ? "0" + by[2] : by[2]);
+      var ag = h.match(/^[(（]?築(\d{1,3})年[)）]?$/);
+      if (ag && out.buildingAge == null) out.buildingAge = parseInt(ag[1], 10);
+      if (/^[(（]?新築[)）]?$/.test(h) && out.buildingAge == null) out.buildingAge = 0;
+    });
     return out;
+  }
+
+  /**
+   * 候補の記録（property_pool の1件・/api/log-property-candidates）に残す形。2026-09-25 竹内「候補の記憶を太くする」:
+   *   旧は { rank, name, ad_months } だけで、家賃・徒歩・敷礼・築年が候補の記録に無かった（24件中 0件）。
+   *   画面から読めた値を全部入れ、サーバー（candidate-facts.ts）が読み直せるように交通の行もそのまま残す
+   */
+  function toPoolData(rank, nameFromPdf, info, pdfUrl) {
+    info = info || {};
+    var name = nameFromPdf || (info.name && info.name !== "物件" ? info.name : null) || ("物件" + rank);
+    var d = { rank: rank, name: name };
+    var put = function (k, v) { if (v !== null && v !== undefined && v !== "") d[k] = v; };
+    put("rent", info.rentYen);
+    put("admin_fee_yen", info.adminYen);
+    put("deposit_months", info.depositMonths);
+    put("deposit_yen", info.depositYen);
+    put("key_money_months", info.keyMoneyMonths);
+    put("key_money_yen", info.keyMoneyYen);
+    put("floor_plan", info.layout);
+    put("area_sqm", info.areaSqm);
+    put("room_no", info.room);
+    put("address", info.address);
+    if (info.stations && info.stations.length) d.stations = info.stations.slice(0, 5);
+    put("walk_minutes", info.walkMin);
+    put("built_ym", info.builtYm);
+    put("building_age", info.buildingAge);
+    put("total_floors", info.totalFloors);
+    put("ad_months", info.adMonths);
+    put("ad_yen", info.adYen);
+    put("pdf_url", pdfUrl || null);
+    return d;
   }
 
   /** 「物件資料」ボタンから部屋の段・建物の段を探して読む（DOM が要る。テストでは parseRoomText / parseBuildingText を直接使う） */
@@ -119,7 +181,9 @@
   function merge(r, b) {
     return {
       name: b.name, address: b.address, stations: b.stations, walkMin: b.walkMin,
+      builtYm: b.builtYm, buildingAge: b.buildingAge, totalFloors: b.totalFloors,
       room: r.room, rentYen: r.rentYen, adminYen: r.adminYen, layout: r.layout, areaSqm: r.areaSqm,
+      depositMonths: r.depositMonths, depositYen: r.depositYen, keyMoneyMonths: r.keyMoneyMonths, keyMoneyYen: r.keyMoneyYen,
       ad: r.ad, adMonths: r.adMonths, adYen: r.adYen,
     };
   }
@@ -138,5 +202,5 @@
     return out.join("\n");
   }
 
-  return { parseRoomText: parseRoomText, parseBuildingText: parseBuildingText, readFromButton: readFromButton, merge: merge, buildSummary: buildSummary, yenOf: yenOf };
+  return { parseRoomText: parseRoomText, parseBuildingText: parseBuildingText, readFromButton: readFromButton, merge: merge, buildSummary: buildSummary, yenOf: yenOf, toPoolData: toPoolData };
 });

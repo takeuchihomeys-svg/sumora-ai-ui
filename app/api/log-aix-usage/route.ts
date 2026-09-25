@@ -294,6 +294,21 @@ export async function POST(req: NextRequest) {
       })());
     }
 
+    // 2026-09-25 竹内「候補の記憶を太くする。会話を見たりオススメしている部分を見ればギャップが分かる」:
+    //   🌟（物件オススメ）を送った時点で、同じ会話でお客様に直近に送っていた物件を候補として🌟と一緒に残す（recommendation_snapshots）。
+    //   送信の本文・お客様に届く物は変えない。予約送信（scheduled）はまだ送っていないので残さない。失敗しても本処理は変えない（waitUntil の中で握る）
+    if (logRow?.id && aix_type === "property_recommendation" && scheduled !== true && typeof generated_text === "string" && generated_text.trim().startsWith("🌟")) {
+      waitUntil((async () => {
+        try {
+          const { recordRecommendationSnapshot } = await import("@/app/lib/recommendation-snapshot-server");
+          const r = await recordRecommendationSnapshot(supabase, { aixUsageLogId: logRow.id as string, conversationId: conversation_id, starText: generated_text, sentAt: sent_at ?? logRow.created_at ?? new Date().toISOString() });
+          console.log(JSON.stringify({ tag: "log-aix-usage:recommendation-snapshot", conversation_id, ...r }));
+        } catch (e) {
+          console.warn("[log-aix-usage] recommendation_snapshots failed:", e instanceof Error ? e.message : e);
+        }
+      })());
+    }
+
     // 売上番長グループの「AIX要対応」: この会話の未完了を完了（一覧で✅）にする（2026-09-12 竹内方針）
     try {
       const { completeAixActionItem } = await import("@/app/lib/aix-action-items");

@@ -679,6 +679,12 @@
         // itandi: propertyInfos から構造化候補データを生成（学習ループ用）
         var propertyPool = sendItems.map(function (it) {
           var fi = it.info || {};
+          // 2026-09-25 竹内「候補の記憶を太くする」: 家賃・管理費・敷礼・間取り・㎡・号室・所在地・交通・築年月・階建・AD を全部残す
+          //   （旧は rank・name・ad_months だけ）。資料の URL は background が Blob に上げた後に足す（pdf_url）
+          if (self.AxlxItandiRowParse && self.AxlxItandiRowParse.toPoolData) {
+            var pdfName0 = it.name && it.name !== "物件" ? it.name : null;
+            return self.AxlxItandiRowParse.toPoolData(it.rank, pdfName0, fi, null);
+          }
           // 2026-09-24: 旧は「AD 100%」を 100ヶ月と数えていた → 読んだ月数（100% = 1ヶ月）をそのまま使う
           return { rank: it.rank, name: it.name || fi.name || ("物件" + it.rank), ad_months: fi.adMonths != null ? fi.adMonths : null };
         });

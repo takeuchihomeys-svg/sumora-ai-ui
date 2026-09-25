@@ -464,6 +464,12 @@
       data.rent = rm ? Math.round(parseFloat(rm[1]) * 10000) : null;
     }
     if (info.madori) data.floor_plan = info.madori;
+    // 2026-09-25 竹内「候補の記憶を太くする」: 行の文字をそのまま残す（駅・徒歩・所在地・築年・敷礼・㎡・階は
+    //   サーバーの candidate-facts.ts が読む。レインズの行の並びは実機で確かめていないので、ここで決め打ちしない）
+    try {
+      var rt = (t.row && (t.row.innerText || t.row.textContent) || "").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
+      if (rt) data.row_text = rt.slice(0, 600);
+    } catch (_) {}
     return data;
   }
 

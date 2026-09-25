@@ -784,7 +784,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const baseName = (msg.file_name || `物件まとめ_${today}`).replace(/\.pdf$/, "");
 
         // fire-and-forget: 物件候補プールを学習ループ用APIに記録
-        if (msg.property_pool && msg.property_pool.length > 0) {
+        // 2026-09-25 竹内「候補の記憶を太くする」: 資料の URL（Blob）も候補に残すため、アップロードの後に記録する。
+        //   pdf_data と property_pool は同じ組（sendItems）から同じ順で作られている（itandi-bulk-dl.js）ので i 番目どうしが同じ物件。
+        //   件数が合わない時は URL を付けない（位置でずらして別の物件の URL を付けない）。アップロードが途中で失敗しても記録は残す（URL なし）
+        let _poolLogged = false;
+        const logPool = (urls) => {
+          if (_poolLogged || !msg.property_pool || !msg.property_pool.length) return;
+          _poolLogged = true;
+          const sameLen = Array.isArray(urls) && urls.length === msg.property_pool.length;
+          const cands = msg.property_pool.map((c, i) => (sameLen && urls[i] && !c.pdf_url ? Object.assign({}, c, { pdf_url: urls[i] }) : c));
           fetch("https://sumora-ai-ui.vercel.app/api/log-property-candidates", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -792,13 +800,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               property_customer_id: msg.customer_id || null,
               customer_name: msg.customer_name || null,
               site: msg.site || "itandi",
-              candidates: msg.property_pool,
+              candidates: cands,
             }),
           }).catch(function() {});
-        }
+        };
 
         // Step1: 1件ずつVercel BlobにアップロードしてURLを収集
         const blobUrls = [];
+        try {
         for (let i = 0; i < msg.pdf_data.length; i++) {
           const name = `${baseName}_${i + 1}.pdf`;
           const url = await uploadWithRetry(msg.pdf_data[i], name);
@@ -813,6 +822,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               total: msg.pdf_data.length,
             }).catch(() => {});
           }
+        }
+        } finally {
+          // 全件上がれば URL 付き・途中で失敗すれば URL なしで記録（logPool の中で件数を見る）
+          logPool(blobUrls);
         }
 
         // Step2: URLでまとめてmerge → LINE送信（リアプロと同じ仕組み）

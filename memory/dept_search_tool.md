@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-09-25 候補の記憶を太くする — 候補の記録に全項目＋生の文字・🌟の時点の候補一覧・送った画像ごとの値（v2.5.19・竹内）
+竹内「候補の記憶を太くする。会話を見たりオススメしている部分を見ればギャップが分かる」
+- **拡張（v2.5.19）**: 候補の記録（property_pool → /api/log-property-candidates → property_candidate_pools.candidates の jsonb）を太くした。送る物・説明文・判定の payload は変えない
+  - itandi: `itandi-row-parse.js` に **敷金・礼金**（賃料と間取りの間がちょうど6つの並びの時だけ・「なし」=0・「入力なし」=null）、建物の段の **築年月・築年数・階建** を追加。
+    `toPoolData()` で 家賃・管理費・敷礼・間取り・㎡・号室・所在地・交通（全行）・徒歩・築・階建・AD・資料URL を候補に（旧は rank・name・ad_months だけ）。
+    資料URL は background が Blob に上げた後に付ける（**候補の記録はアップロードの後**に送る。件数が合わない時は URL を付けない）
+  - リアプロ: `bulk-dl.js` の buildPropertyData に **㎡**・**管理費の読み違いの直し**（見出し「賃料/管理費」が1列で 管理費＝家賃 が 865/865件 → セルの2つ目の金額）・
+    **生の文字**（行のセル全部 cells・見出し head・建物の段 bld_text＝`findBuildingText`）・資料URL（`poolWithUrl`）。駅・徒歩・所在地・築年は拡張で決め打ちせずサーバーが読む（見出しの並びは実機未確認のため）。判定（brain judge）には生の文字を送らない
+  - レインズ: 行の文字 row_text を残す
+- **サーバー**: `app/lib/candidate-facts.ts`（純関数）の `enrichCandidate` が拡張の値を最優先に、空いている項目だけ生の文字から埋め、出どころを `src` に（ext / text:cells / pickup / image / sent）。`facts_v=2`。
+  列 `property_candidate_pools.facts_version / enriched_at`（migrate-schema・本番適用済み）。建物名の照合は2文字組の近さ **0.75** 以上で一番近い物（`bestBuildingMatch`。0.6 だと ハーモニーテラス今林↔田島 のような同じシリーズの別の建物が当たる）
+- **🌟の時点の候補一覧**: 新しい表 `recommendation_snapshots`（`app/lib/recommendation-snapshot-server.ts`）。/api/log-aix-usage が property_recommendation の時に waitUntil で1行（送信・本文は変えない・失敗で止めない・予約送信は残さない）。
+  候補＝同じ会話でお客様に直近72時間に送った物件（sent_properties・お客様に届いた行）＋🌟。値は 送付記録 → 送った画像ごとの値 → 拡張の回 → 売上サポの行 の順に埋める。🌟の本文の値は `star_text_facts` に分けて持つ（混ぜると🌟に有利）。お客様の発言は写さず希望の話題だけ
+- **送った画像ごとの値**（追加の指示）: readPropertyImage（DeepSeek・同じ1回の読み取り）に 管理費・間取り・㎡・最寄り駅と徒歩・築年月・AD を足し、`sent_image_properties.facts`（jsonb・本番適用済み）に1枚ごとに残す（一覧の画像は残さない・記録と分析だけに使い本文の材料にしない）
+- **ギャップを見る道具**: `scripts/audit-recommendation-gaps.ts`（読むだけ）。365日の結果: 🌟748回・点を比べた310回で🌟1位 13.5%（でたらめ 22.7%）・全部同点 153回＝**候補の値が薄くて点が分かれない**。
+  9/20 以降（送った画像を読むようになってから）は🌟が直近の送付の中 86.4%・候補の家賃 35.6%／敷金・㎡・徒歩・築 0%。🌟の本文には 家賃 89%・敷礼 56%・駅徒歩 70%・築 53%・設備 89% が書いてある＝**スタッフは知っているがブレインに届いていない**。
+  訴求した話題のうち候補の値でブレインに見える物はほぼ0（2階以上だけ号室から見える）。希望があるのに訴求が少ない話題: 入居時期 21%・審査 9%・通勤 14%・2階以上 27%・駐車場 30%
+- **埋め戻し**: `scripts/backfill-candidate-facts.ts`（拡張の回 4,522回を facts_version=2 に・🌟の候補一覧 748行を source='backfill' で書いた）／`scripts/backfill-sent-image-facts.ts`（**dry-run まで**: 3,532枚・約 $3.60・DeepSeek。YUMA の2枚だけ書いて確認済み）
+- テスト: `app/lib/__tests__/candidate-facts.test.ts`（60）・`tests/chrome-extension/itandi-row-parse.test.js`（27）
+- **竹内さんが確かめること（拡張の再読み込み後）**: ①itandi・リアプロで「売上番長に送る」→ 1〜2分後に property_candidate_pools の最新行の candidates に 敷礼・築・徒歩（itandi）／cells・bld_text（リアプロ）が入っているか ②リアプロの bld_text が建物の段（住所・沿線）を拾えているか（拾えていなければ cells の中身を見て読み方を決める）③AIX 物件オススメを送った後に recommendation_snapshots に source='live' の行ができるか（デプロイ後）
+
 ## 2026-09-25 拡張でも「◯◯まで一本／◯分以内」を理解する — 路線のつながりをサーバーと1か所に（v2.5.17・竹内）
 竹内「地図の部分や沿線の部分の位置関係の強化は拡張ツールでも理解できるようにする。例えば梅田駅まで電車で一本の場合、梅田駅や大阪梅田駅に一本で通える沿線を全て理解して、そこの駅を理解していれば分かるし、位置関係も理解していれば、電車で何分以内で通える駅かも分かる」
 - **元データは1か所**: `app/lib/osaka-geo.ts`（駅の座標・路線の直し LINE_FIXES・足した路線・**直通の運転 THROUGH_SERVICES**・**駅のまとまり STATION_GROUPS**・歩きの乗り換え WALK_LINKS・名前の揺れ ALIASES/PREFIXES）＋拡張の popup-maps.js の写し（osaka-transit-data.ts）。
@@ -1978,3 +1999,53 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 竹内さんの Chrome:「Cannot load extension with file or directory name __tests__. Filenames starting with "_" are reserved for use by the system.」
 - 原因: 9/24 の itandi-row-parse のテストを chrome-extension/__tests__/ に置いた（v2.5.16）。拡張のフォルダの中の「_」始まりのファイル・フォルダは Chrome が読み込みを拒否する
 - 直し: テストは tests/chrome-extension/ に移した（node tests/chrome-extension/itandi-row-parse.test.js・osaka-transit.test.js）。**拡張のテストは chrome-extension/ の外に置く**
+
+## 2026-09-25 売上サポの点数の監査（任務A）と、スタッフが選んだ🌟で重みを確かめる（任務B）→ 強化（サーバーだけ・拡張の再読み込み不要）
+竹内「ちゃんと評価されているか・点数化は正確か・AIX 物件オススメと物件ピックアップで実際に送ったデータも見て、なぜ一番オススメなのかを調べてスコアリングを強化。YUMA で徹底的に・DeepSeek」
+### 監査で見つけた誤り（property_pickups 全36行を本番と同じ手順で当て直し・scripts/audit-pickup-scores.ts）と直し
+- **E1 リアプロの AD が読めない**: 元付資料は「A D 250%(税込)」「A D 10000円」（A と D の間に空白・19件全部）→ property-pickups.ts `parseAdFromText` を `A\s?D`＋全角そろえ、pickup-rank.ts `enrichSummariesWithPdfAd` の AD 行の判定も同じ形。id 1 は AD 2.5ヶ月（+30）、id 3 は AD 1万円＝利益が出ない（−10・保留）
+- **E2 itandi「広告費 なし」を不明扱い**: `adMonths: 0` を返す（null と分ける）。説明文には「AD なし」の行を足す。新しい札 **AD_NONE −5**（＋家賃が読めれば PROFIT_NEGATIVE −10 保留）→ AD なしが AD 0.5ヶ月より下に並ぶ（id 57: 104→89・id 62: 98→83）
+- **E3「2階以上はエレベーター必須」を「2階以上が必須」と読んでいた**: listing-equipment.ts `conditionalFloorOf`＝「N階以上は／なら／の場合」の後に別の設備がある節は階の希望を作らず、設備の希望に `ifFloorAtLeast` を付ける。`matchEquipment` は部屋が N 階未満ならその行を出さない（階が分からない時は残す）。画面の名前「エレベーター（2階以上の時）」。property-brain `IMAGE_WANT_RES` の floor_2_plus も「2階以上は…」を拾わない。**id 2（DeepSeek の🌟★）は上限20点→68点**
+- **E4「退去予定(10/31)/相談」の退去日を使っていない**: listing-terms.ts `vacateNextDay`・`compareMoveIn` は相談・居住中でも退去日の翌日が希望日＋14日より遅ければ late（早い時は ok にせず要確認のまま）。id 1 は「入居が遅い」−10・保留
+### スタッフが選んだ🌟で重みを確かめて入れた物（property-brain.ts judgeProperty）
+- **送付済みは号室で見る**: `splitBuildingRoom`・`normalizeRoomKey`・profile.history.sentRooms（sent_properties.room_no を judge route と売上サポで引く）。同じ建物の別の部屋＝ **ALREADY_SENT_OTHER_ROOM −3（情報）**。号室を読んで初めて当たる同じ部屋（旧は名前が合わず当たらなかった）＝ **ALREADY_SENT_SAME_ROOM −10（保留）**。名前の一致（旧の線）は今まで通り外す候補＝**外す候補は増やしていない**。`normalizeBuildingName` と `parsePropertyFacts` は【1🌟★】の番号も落とす（旧は🌟の物件が送付済みに当たらなかった）
+- **間取りの帯**: 2DK↔1LDK＝ **FLOOR_PLAN_SAME_CLASS +8**（🌟で4人5件）・希望より部屋数が多い＝ **FLOOR_PLAN_LARGER +5**（5人9件・上限を書いた希望「1DK〜2K」には当てない）・狭いは今まで通り不一致の保留・2K↔1LDK（1人に偏る12件）は入れない
+- **家賃の超過は金額の線も**: 上限＋1万円以内は比が 1.10 超でも RENT_SLIGHTLY_OVER 0点／上限＋2万円以内は外す候補にせず保留（RENT_OVER_SOFT_YEN・RENT_OVER_DROP_MIN_YEN）。🌟の超過は中央値 5,000円・1万円以内 80%
+- **AD は月数だけでも段の点**（AD_1M・AD_HIGH・AD_VERY_HIGH）。利益の札（まかなえる／利益が出ない）は家賃が読めて円にできる時だけ
+- 🌟（pickup-rank.ts）: **固定の前置き `RANK_PROMPT_PREFIX` を先頭**（条件・物件一覧は後ろ＝キャッシュ）。「㎡あたりの家賃が安いほど良い」をやめ（🌟は予算の 0.95）、スタッフの訴求の多い順（敷礼0・築浅・駅近・広さ・オートロック・独立洗面・ネット無料・宅配BOX・浴室乾燥・角部屋）、2DK↔1LDK、同じくらいなら元の並び。merge-pdfs は `buildRankMaterials` で物件ごとに「資料: 敷なし・礼1ヶ月 ／ 築2年 ／ 入居11月上旬〜（退去予定も） ／ 設備: …」をプロンプトだけに足す（説明文・LINE は変えない）。**AD「2ヶ月以上は必ず最上位」は竹内さんの 9/24 の指示のまま（データでは🌟は AD で選ばれていない＝判断待ち）**
+- 🌟の DeepSeek は **推論なし（thinking:false・温度0・max 300）** に固定: 推論 low・max 4000 は YUMA テストで 9回中5回が約20秒で答え0文字（推論で上限を使い切り Haiku に落ちる）。推論なしは 9回とも答え・1秒未満・2回目も同じ答え・2回目は入力の 84〜94% がキャッシュ
+### 前後の当たり方（scripts/audit-star-rank.ts・--until=2026-09-25T12:00Z・直近90日・旧のコードと同じデータで続けて実行）
+| | 旧 | 新 |
+|---|---|---|
+| 🌟の回（候補2件以上） | 82 | 82 |
+| 相対順位（0=1位・でたらめ 0.5） | 0.461 | 0.466（変わらない） |
+| 3位以内（同点は平均） | 58.5% | 58.5%（でたらめ 67.4%） |
+| 単独の1位 | 6.1% | 15.9% |
+| 候補の点が全部同じ回 | 54/82 | 15/82 |
+| 🌟の AD がプールにある回（28）の相対順位 | 0.435 | 0.157 |
+| 🌟の本文の値で保留・外す候補の札が付く（誤保留） | 74/549（13.5%） | 50/549（9.1%） |
+| 🌟が外す候補 | 0 | 0 |
+- **正直な読み**: 候補プールの材料（名前・順位・間取り・AD 37%・家賃 0.4%・敷礼 0）では、点はまだスタッフの選び方をでたらめ以上に当てられない。改善したのは同点の解消と誤保留（13.5→9.1%）。AD の有無の欠けが順位を動かす（🌟の AD がある回は上がり、無い回は下がる）ので、AD の重みそのものは全候補の AD が分かる回（1回だけ）が溜まるまで判断できない。拡張の順位（1位 41.5%・3位以内 80.5%）が今いちばん強い材料
+- 監査の実物（売上サポ）の変化: id 1 120→137（AD 2.5 読めた・入居が遅い保留）／id 2 20→68／id 3 53→43（利益が出ない）／id 57 104→89・id 62 98→83（AD なし・保留）。**保存済みの行の点は付け直していない**（書き込みを伴うので未実施）
+### 残り
+- 候補の記録を太くする（log-property-candidates／候補プールに 家賃・管理費・敷礼・徒歩・築年・㎡ と、🌟を押した時の回の候補 id）＝点の当たり方を測れるようにする一番の手
+- 拡張の判定（/api/property-brain/judge）は資料が無いので敷礼・築年を埋められない（売上サポだけ）
+- 🌟に渡る条件の文（拡張の buildCustomerConditionsString）に自由文の設備の希望（2階以上・宅配BOX 等）が入っていない＝ DeepSeek が 1階の部屋を選ぶことがある
+- listing-equipment の設備欄は「エレベーターなし」も ○ と読む（ok を先に見る決まり・今回は触っていない）
+- YUMA テストで上げた資料の画像 8枚（property-images/aix/YUMA/pickup_test_1790300773594_*）は公開キーでは消せなかった（物件資料・お客様の情報なし）
+- 反証レビュー（2026-09-25）で直した: ①番号の印の読み取りを【N🌟★】だけに（旧の [^】]{0,4} は「【2024年築】」を番号 2024 と読み名前を削った）②画像の階の希望で「2階以上は必須／希望」まで落としていた否定先読みをやめ、conditionalFloorOf が数を返す節だけ消す ③1月の基準で「退去予定(12/31)」を今年12月と読み「入居が遅い」の誤保留→10か月以上先の月は去年 ④お客様向けの事実（pickup-send-facts）の AD 行の読み飛ばしを「A D」にも
+- テスト: app/lib/__tests__/pickup-score-audit.test.ts（77件）・wide-search-score の 90,000円（上限＋1万円ちょうど）を RENT_SLIGHTLY_OVER に
+
+## 2026-09-25 YUMA で条件の違うお客様6人を本番の資料で通して目で確かめる → 直した物（サーバーだけ・拡張の再読み込み不要）
+- 道具: `scripts/yuma-pickup-customers-test.ts`（`--run` / `--report` / `--cleanup`・`--state=<json>`）。本番の property_pickups の資料（itandi id 50〜67・リアプロ 34〜45）で、お客様A〜F（設備重視・駅近＋送付済み・家賃＋初期費用・画像の希望・通勤・広げた検索＋入居時期）を作り、merge-pdfs と同じ順（説明文の補い → 🌟の材料 → 🌟 DeepSeek → recordPickupBatch）に通す。ローカルに Blob の鍵が無いので `@vercel/blob` だけ `scripts/yuma-blob-shim.cjs` に差し替え（借りた本番の資料の URL に `?yst=<印>` を付けて返す・何も上げない）。片付けで property_pickups・property_customers・sent_properties・image_details（?yst=）・property_sheet_facts（新しい行は消し wants_judged は元に戻す）を全部戻す
+- 見つかって直した物（3回まわして目で確認）
+  1. **🌟★ が保留の物件に付く**（お客様A・C）: 同じ建物の間引き（pickup-dedupe）が AD 2.5ヶ月の 🌟★（907号室）を落とし、2,000円安い AD 0.5ヶ月の部屋（413号室・利益が出ない保留）に 🌟★ を引き継いでいた（C は 50点・保留に 🌟★）。→ `adTier`（判定の AD の札と同じ段）: 🌟 の部屋の段が残す部屋より高い時は落とさない。同じ段以上の部屋をもう残していればそちらに寄せて印を引き継ぐ（同じ建物を3部屋並べない）
+  2. **送付済みの部屋が「残す部屋」になる**（お客様B）: 一番安い 710号室（送付済み・保留）が残り、まだ送っていない 907号室を落としていた。→ `dedupeSameBuilding(summaries, { isSent })`・`property-brain.isSentRoom`（judgeProperty の ALREADY_SENT / SAME_ROOM と同じ線）。recordPickupBatch は判定の材料（loadProfile）を間引きの前に読む
+  3. **送付1件で「いつもの家賃帯より高め」−5 がほぼ全件に付く**（お客様B）→ `RENT_USUAL_MIN_SENT = 3`（`history.rentRatioN`）
+  4. **👑 が同点の保留に付く**（お客様C）→ `pickCustomerBest` と画面の回ごとの一番（PickupReview）で、点・上限前の点・「合う」の数が同じなら判定（通す＞判定なし＞保留＞外す候補）を 🌟 より先に見る（`verdictOrder`）
+  5. **🌟 に渡る条件の文が粗い**: 拡張の `buildCustomerConditionsString` は家賃を万で丸め（7.5万→「予算8万円以内」・6.2万→「6万円」）、設備・入居時期・初期費用・通勤が入らない。→ `pickup-rank.loadRankConditions`（merge-pdfs）: DB の「条件の要約」（condition-summary の line・DeepSeek は呼ばない）を正にし、拡張の文は要約が無い時だけ。初期費用を抑えたい方は「初期費用を抑えたい（敷金・礼金0の物件を優先）」を足す。固定の前置きより後ろ＝キャッシュは割らない。結果: E（入居10月中旬）で入居が遅い物件に 🌟 が付かなくなり、6人とも 🌟★ が点の1位（か同点1位）になった（1回目は A 92点・保留、C 50点・保留に 🌟★）
+  6. **間取り図の有無の読み取り（readFloorPlanFacts）が 31% 失敗**: 推論 low・max 1,500 は同じ 21枚で 9枚が答え0文字（約9秒）。→ callDeepSeek・推論なし・温度0・max 300: 21/21・中央 1.7秒・2回目同じ 20/21・項目の一致 55/57。拡張の判定（judge・8秒で打ち切り）でもほぼ間に合っていなかった
+- 目で見て問題なしとした物: 家賃の帯（管理費込み・上限＋5千円の幅・＋1万円まで保留にしない）・敷礼0（抑えたい方は +20）・入居時期（10月中旬に 11/28・12/1 は −10 保留）・設備（宅配BOX必須の記載なしは 0点の要確認・1階は 2階以上 ×）・通勤（梅田まで 17分 乗換0）・AD（171,600円÷78,000円＝2ヶ月以上）・同じ建物の間引き（AGREA 8部屋→1部屋）
+- AIX 物件オススメ（property_recommendation・DeepSeek flash）を YUMA で3回: 社内の文・AD は0。敷礼0 は点の札と一致・「浴室乾燥機」（資料に記載なし＝要確認）は書かない。**物件名を2回とも「エキスプレス」と読み違え**（正: エキスプレイス）。9/24 09:01 の回のリアプロの1ページ目の画像は文字抜け（9/24 20:16 の cMap の直しより前）で、その画像を渡すと「🌟お部屋」になる
+- 費用（llm_usage_logs・env=local・3回分＋比較）: 合計 約$0.40（約60円）。9割は元付の資料の読み取り property_image_detail（推論 low・1回 出力 約4,700・約$0.003）。Claude は 0回
+- 残り: ①拡張の条件の文の丸め（popup.js・サーバーは要約で上書きするので 🌟 には効かない・要約が無い時だけ残る）②property_image_detail の推論（費用の9割・20〜40秒）を推論なしで足りるか正解表で測る ③AIX 物件オススメの物件名の読み違い（売上サポから渡す時は行の物件名を渡す）④エリアの駅の一致は徒歩の長い副駅（新大阪 徒歩15分）でも「希望の駅 +10」

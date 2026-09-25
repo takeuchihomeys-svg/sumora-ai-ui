@@ -411,7 +411,8 @@
         type: "axlx-brain-judge",
         property_customer_id: customerId,
         site: "realpro",
-        items: items.map(function (it) { return { summary: it.summary, data: it.data, url: it.url, image_url: it.image_url || null }; }),
+        // 2026-09-25: 候補の記録用の生の文字（cells・head・bld_text）は判定に送らない（判定の payload は今まで通り）
+        items: items.map(function (it) { var jd = Object.assign({}, it.data); delete jd.cells; delete jd.head; delete jd.bld_text; return { summary: it.summary, data: jd, url: it.url, image_url: it.image_url || null }; }),
       }, function (resp) {
         clearTimeout(watchdog);
         if (chrome.runtime.lastError || !resp || !resp.ok || !resp.data || !Array.isArray(resp.data.judgments)) {
@@ -599,7 +600,40 @@
     // AD列はリアプロで10〜12列目あたりのため15まで取得
     // 2026-09-23 ブレインの画像フェーズ用: 行の中の間取り図らしい <img>（アイコン・ボタン画像は除く）。無ければ null。
     //   ⚠ リアプロの一覧に間取り図があるかは実機未確認。無ければ null のまま＝画像の読み取りはしない（判定は表の文字だけ）。
-    return { name: name || "物件", texts: texts.slice(0, 15), cells: allCells, headerIdx: findHeaderIndex(row), imageUrl: findFloorPlanImage(row) };
+    return { name: name || "物件", texts: texts.slice(0, 15), cells: allCells, headerIdx: findHeaderIndex(row), imageUrl: findFloorPlanImage(row), bldText: findBuildingText(row) };
+  }
+
+  // ── 建物の段の文字（候補の記録用）─────────────────────────
+  // 2026-09-25 竹内「候補の記憶を太くする」: リアプロの部屋の行（印刷用PDF のある行）には駅・徒歩・所在地・築年が無く、
+  //   候補の記録で徒歩 0%・築年 0件だった。建物名を探す所（extractCard）と同じく、行より前の「住所・沿線・徒歩」を含む段の文字を
+  //   そのまま残し、読むのはサーバー（candidate-facts.ts）に任せる（画面の並びを推測で決め打ちしない・後で読み直せる）。
+  //   ⚠ 見つからなければ null（今までと同じ）。説明文・送る物は変えない（候補の記録にだけ入る）
+  function findBuildingText(row) {
+    try {
+      if (!row) return null;
+      var pick = function (el) {
+        if (!el || el.textContent.indexOf("印刷用PDF") !== -1) return null;
+        var t = (el.innerText || el.textContent || "").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
+        if (t.length < 6 || t.length > 1500) return null;
+        return /住所|所在地|沿線|徒歩|築/.test(t) ? t.slice(0, 600) : null;
+      };
+      // ① 同じ tbody の前の行（8行まで）
+      var p = row.previousElementSibling;
+      for (var i = 0; i < 8 && p; i++, p = p.previousElementSibling) { var a = pick(p); if (a) return a; }
+      // ② 親をたどって、その前の兄弟（6段まで）
+      var cur = row.parentElement;
+      for (var j = 0; j < 6 && cur; j++, cur = cur.parentElement) { var b = pick(cur.previousElementSibling); if (b) return b; }
+    } catch (_) {}
+    return null;
+  }
+
+  /** 候補の記録（property_pool）に、その1件の資料（印刷用PDF）の URL を足す（送る物・説明文は変えない） */
+  function poolWithUrl(items) {
+    return items.map(function (it) {
+      var d = Object.assign({}, it.data || {});
+      if (it.url && !d.pdf_url) d.pdf_url = it.url;
+      return d;
+    });
   }
 
   // ── 列の見出し（th）→ 列番号 ─────────────────────────────
@@ -672,6 +706,8 @@
         age: find(/築年|築/),
       };
       var any = Object.keys(idx).some(function (k) { return idx[k] >= 0; });
+      // 2026-09-25: 見出しの文字も持つ（候補の記録に残し、サーバーが列の意味を読めるようにする）。数字の鍵ではないので cellByHeader には当たらない
+      idx.labels = labels.slice(0, 40);
       if (!_headerLogged) {
         _headerLogged = true;
         console.log("[AXLX bulk-dl] 列見出し(" + found.strategy + "): " + (any ? JSON.stringify(idx) + " 見出し=" + JSON.stringify(labels) : "AD 等の見出しが無い → 今までの読み方"));
@@ -812,7 +848,14 @@
     data.read_mode = card.headerIdx ? "header" : "heuristic";
     var _hRent = cellByHeader(card, "rent");
     var _hAdmin = cellByHeader(card, "adminFee");
-    if (_hAdmin !== null) { var _av = parseYenText(_hAdmin); if (_av !== null && _av >= 0 && _av <= 100000) data.admin_fee_yen = _av; }
+    // 2026-09-25: 見出しが「賃料/管理費」の1列だと賃料と管理費が同じ列になり、管理費に家賃が入っていた（候補の記録 861/861件が 管理費＝家賃）。
+    //   同じ列の時は、そのセルの**2つ目の金額**を管理費にする（「65,000円 10,000円」→ 10,000）。2つ目が無ければ入れない
+    var _sameCol = card.headerIdx && card.headerIdx.adminFee >= 0 && card.headerIdx.adminFee === card.headerIdx.rent;
+    if (_hAdmin !== null && _sameCol) {
+      var _amts = (String(_hAdmin).replace(/[,，]/g, "").match(/\d+(?:\.\d+)?\s*万|\d+\s*円|¥\s*\d+/g) || []).map(parseYenText).filter(function (v) { return v !== null; });
+      if (_amts.length >= 2 && _amts[1] >= 0 && _amts[1] <= 100000 && _amts[1] < _amts[0]) data.admin_fee_yen = _amts[1];
+      else if (_amts.length === 1 && /(?:なし|－|-)\s*$/.test(String(_hAdmin))) data.admin_fee_yen = 0;
+    } else if (_hAdmin !== null) { var _av = parseYenText(_hAdmin); if (_av !== null && _av >= 0 && _av <= 100000) data.admin_fee_yen = _av; }
     var rentText = _hRent !== null ? _hRent : card.texts.find(function(t) { return /[0-9,，]+[\s]*[万円]/.test(t) || /¥/.test(t); });
     if (rentText) {
       // 2026-09-23: 旧 `/(\d+)万/` はリアプロの「58,000円」「¥58,000」に当たらず、30,681件中 2件しか rent が入っていなかった
@@ -828,6 +871,9 @@
     if (madoriText) {
       var mm = madoriText.trim().match(/[1-9][A-Z]+/i);
       data.floor_plan = mm ? mm[0] : null;
+      // 2026-09-25: 広さ（間取りのセルが「1K 22.62㎡」）。説明文には出ていたが候補の記録に無かった
+      var _sq = madoriText.replace(/[０-９．]/g, function (c) { return c === "．" ? "." : String.fromCharCode(c.charCodeAt(0) - 0xfee0); }).match(/(\d{1,3}(?:\.\d{1,2})?)\s*(?:㎡|m2|m²|平米)/);
+      if (_sq) { var _sv = parseFloat(_sq[1]); if (_sv >= 5 && _sv <= 500) data.area_sqm = _sv; }
     }
     var madoriIdx = madoriText ? card.texts.indexOf(madoriText) : -1;
     // 徒歩: 見出しの列（徒歩・交通）→「徒歩」を含むセル →「駅」を含むセル（説明文と同じ探し方）
@@ -884,6 +930,13 @@
         if (_ay2) { data.ad_yen = parseInt(_ay2[1]); break; }
       }
     }
+    // 2026-09-25 竹内「候補の記憶を太くする」: 行のセル（全部）・見出し・建物の段の文字をそのまま候補の記録に残す。
+    //   駅・徒歩・所在地・築年・敷礼・号室・階は、ここで推測せずサーバー（/api/log-property-candidates → candidate-facts.ts）が読む
+    //   （リアプロの見出しの並びは実機で確かめていないため。生の文字があれば読み方を直した後に読み直せる）。
+    //   ⚠ data はブレインの判定（/api/property-brain/judge）にも渡るが、足した鍵は判定では読まない
+    if (card.cells && card.cells.length) data.cells = card.cells.slice(0, 40).map(function (t) { return String(t).slice(0, 120); });
+    if (card.headerIdx && card.headerIdx.labels) data.head = card.headerIdx.labels;
+    if (card.bldText) data.bld_text = card.bldText;
     return data;
   }
 
@@ -952,7 +1005,7 @@
         urls: AxlxSendPairing.pluck(sendItems, "url"),
         customer_name: customerName || null,
         property_summaries: AxlxSendPairing.pluck(sendItems, "summary"),
-        property_pool: AxlxSendPairing.pluck(sendItems, "data"),
+        property_pool: poolWithUrl(sendItems),   // 2026-09-25: 資料の URL も候補の記録に
         customer_id: customerId || null,
         customer_conditions: customerConditions || null,
         site: "realpro",
@@ -1382,7 +1435,7 @@
           urls: AxlxSendPairing.pluck(batch, "url"),
           customer_name: state.customerName || null,
           property_summaries: AxlxSendPairing.pluck(batch, "summary"),
-          property_pool: AxlxSendPairing.pluck(batch, "data"),
+          property_pool: poolWithUrl(batch),   // 2026-09-25: 資料の URL も候補の記録に
           customer_id: state.customerId || null,
           customer_conditions: state.customerConditions || null,
           site: "realpro",

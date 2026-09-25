@@ -62,6 +62,9 @@ export async function recordSentImageProperty(opts: {
     const prev = prevRow as { property_name: string; room_no: string | null; source: string | null } | null;
     type Item = { propertyName: string; roomNumber: string; rent?: number | null; status?: string | null; deposit?: number | null; keyMoney?: number | null; vacancyDate?: string | null };
     let item: Item | null = null;
+    // 2026-09-25 竹内「候補の記憶を太くする」: 読んだ画像1枚ごとの値（家賃・管理費・敷礼・間取り・㎡・駅と徒歩・築年月・AD）。
+    //   一覧の画像（号室が複数）は部屋ごとに値が違うので残さない（1件の画像だけ）
+    let freshFacts: Record<string, unknown> | null = null;
     if (prev?.property_name) {
       item = { propertyName: prev.property_name, roomNumber: prev.room_no ?? "" };
       out.read = "reused";
@@ -72,6 +75,13 @@ export async function recordSentImageProperty(opts: {
       if (!read.isProperty || read.items.length === 0) { out.read = !read.isProperty && read.raw.startsWith("{") ? "not_property" : "failed"; return out; }
       item = read.items[0];
       out.read = "deepseek";
+      if (read.items.length === 1) {
+        try {
+          const { factsFromImageRead } = await import("@/app/lib/candidate-facts");
+          const f = factsFromImageRead(read.items[0]);
+          if (Object.keys(f).length) freshFacts = { ...f, src: "image", model: process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash" };
+        } catch { /* 値が読めなくても物件の記録は続ける */ }
+      }
     }
 
     // ② 照合（会話に出ている物件名に寄せる）
@@ -103,6 +113,13 @@ export async function recordSentImageProperty(opts: {
     } else if (channel) {
       // 照合できなかったが経路は分かっている → 経路だけ補う（source は触らない＝照合済みの印は変えない）
       await supabase.from("sent_image_properties").update({ channel }).eq("image_url", imageUrl).is("channel", null);
+    }
+
+    // ③' 画像ごとの値（まだ無い時だけ・上の③で行は必ずある）。列が無い DB（migrate 前）でも止めない
+    if (freshFacts) {
+      const { error: fErr } = await supabase.from("sent_image_properties")
+        .update({ facts: freshFacts, facts_read_at: new Date().toISOString() }).eq("image_url", imageUrl).is("facts", null);
+      if (fErr) console.warn("[sent-image-record] facts 書き込み失敗:", fErr.message);
     }
 
     // ④ 送った物件（同じ物件の2回目は書かない＝送った物件の数え方を守る）
