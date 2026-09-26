@@ -14,7 +14,7 @@ export const AIX_TOPIC_RE: Record<string, RegExp> = {
   estimate_sheet: /見積|初期費用|割引|総額/,
   cost_explain: /初期費用|安さ|仕組み|報酬|還元/,
   cost_breakdown: /初期費用|敷金|礼金|日割|火災保険|内訳|見積/,
-  guarantor_info: /保証会社|審査|独立系|信販|LICC|並行/,
+  guarantor_info: /保証会社|審査|独立系|信販|信用系|LICC|並行/,   // 種類は3つ（2026-09-26）。LICC は旧の言い方
   phone_call: /電話|通話|相談/,
   viewing_invite: /内覧|内見|案内|見学/,
   meeting_place: /待ち合わせ|集合|現地|案内/,

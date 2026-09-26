@@ -22,8 +22,9 @@ import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 // 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
-import { GUARANTOR_TYPE_SHORT, GUARANTOR_TYPE_LABELS, isGuarantorType } from './guarantor-companies';
-const guarantorTypeJa = (t: string): string => isGuarantorType(t) ? (GUARANTOR_TYPE_SHORT[t] || GUARANTOR_TYPE_LABELS[t]) : t;
+import { GUARANTOR_TYPE_SHORT, GUARANTOR_TYPE_LABELS, normalizeGuarantorType } from './guarantor-companies';
+// 保存済みの旧 "licc" は信用系と読む（2026-09-26 種類は3つ）
+const guarantorTypeJa = (t: string): string => { const n = normalizeGuarantorType(t); return n ? (GUARANTOR_TYPE_SHORT[n] || GUARANTOR_TYPE_LABELS[n]) : t; };
 // 再 export（生成・検査が action-ledger 経由でも同じ定数を得る）
 export { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, REDO_CLAIM_RE, LEDGER_OUTBOUND_SOURCES };
 
@@ -637,7 +638,7 @@ export function buildLedgerLinesForBrain(ledger: ActionLedger, max = 8): string 
     if (e.kind === 'properties_sent') return `${d.propertyCount ?? 1}件${d.propertyNames?.length ? `: ${d.propertyNames.slice(0, 3).join('・')}` : ''}`;
     if ((e.kind === 'estimate_sent' || e.kind === 'estimate_declared') && d.estimateFor?.length) return d.estimateFor.slice(0, 3).join('・');
     // 2026-09-15 竹内（YUYA 事例）: 保証会社の案内はブレインに物件名と会社名・種類も渡す（次の一手＝どの物件の審査に進むかの前提）
-    //   種類は日本語（独立系／LICC系／信販系・不明は「不明・その他」）＝ラベルの1表は guarantor-companies に置く
+    //   種類は日本語（独立系／信販系／信用系・不明は「不明・その他」）＝ラベルの1表は guarantor-companies に置く
     if (e.kind === 'guarantor_explained' && d.guarantors?.length) return `${d.guarantors.slice(0, 5).map((g) => `${g.name}: ${g.company}（${guarantorTypeJa(g.type)}）`).join('／')}${d.parallel ? '／並行審査を勧めた' : ''}`;
     // 2026-09-26（穴2）: 物件ごとの確認結果（どの物件がどうだったか）。旧は「結果=available」だけで、報告済みの物件を「確認する旨」と方向に書いていた
     if (e.kind === 'confirmation_reported' && d.propStatuses?.length && d.propertyNames?.length) {

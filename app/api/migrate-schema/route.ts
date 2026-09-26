@@ -3060,6 +3060,10 @@ $func$;
 --                  訴求品質向上用実例バケット — aix/action が直接クエリで参照）
 -- 'aix_adapt'    … 「会話を合わせる」（conversation_match）で実送信された文の実績
 --                  （aix_usage_logs.conversation_match=true 由来・analyze-aix-adapt がバックフィル）
+-- 'rejected_example' … 誤りを含むので手本に使わない行（2026-09-26〜・conversation_state も 'rejected_example'）。
+--                  conversation_state だけだと ①match_aix_reply_examples（conversation_state を見ない）に残る
+--                  ②上の「entry_source='line_reply' かつ LINE返信ステート以外 → aix_action」の UPDATE で AIX 側に移る ので両方変える。
+--                  例: 保証会社の種類を取り違えた 3b6c5662・9dae55b5・9d777f08（DELETE しない・元は line_reply/proposing・aix_action/property_check_result_available）
 
 -- ── analyze-aix-property: AIX物件本文バックフィルの冪等ガード（2026-08-29追加）──
 -- aix_usage_logs.property_example_backfilled_at: /api/analyze-aix-property が該当ログを
@@ -3502,7 +3506,7 @@ ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS viewing_report_at TIMESTAMP
 -- guarantor_companies: スタッフが AIX【保証会社について】で登録した保証会社（2026-09-15 竹内・YUYA 事例）
 --   静的な一覧（日本セーフティー・全保連・エポスカード 等の名寄せと種類）は app/lib/guarantor-companies.ts にハードコード。
 --   ここには選択肢に無くてスタッフがテキストで登録した会社だけ入る（マスタと同じ名前は /api/guarantor-companies が登録前に弾く）。
---   type は independent / licc / credit / unknown（GuarantorType）。sent_facts.detail（JSONB）に guarantors / parallel が入るが列の追加は不要
+--   type は independent / credit / shinyou / unknown（GuarantorType・2026-09-26 に3種類へ。旧の licc は読む時に信用系＝shinyou）。sent_facts.detail（JSONB）に guarantors / parallel が入るが列の追加は不要
 CREATE TABLE IF NOT EXISTS guarantor_companies (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,

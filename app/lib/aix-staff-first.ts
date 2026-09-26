@@ -20,7 +20,7 @@ const AIX_OWNED_TOPIC_RE: Record<string, RegExp> = {
   // 2026-09-16 カイナ事例: 打診中の内覧（viewing-thread の pending／画面の「流れを続ける」）は呼び出し側で viewingInvite=true 扱いにして VIEWING_RE を外す
   phone_call: /電話|通話/,
   // 2026-09-15 竹内（YUYA 事例）: 保証会社について は審査・保証会社の話そのものを送る（ブレインの avoid_topics「審査」で本題を禁止しない）
-  guarantor_info: /保証会社|審査|保証人|独立系|LICC|信販/,
+  guarantor_info: /保証会社|審査|保証人|独立系|信用系|LICC|信販/,   // 種類は3つ（2026-09-26）。LICC は旧の言い方
 };
 const ESTIMATE_RE = /見積|初期費用|費用|割引|金額|総額/;
 const VIEWING_RE = /内覧|内見|ご案内|日程/;

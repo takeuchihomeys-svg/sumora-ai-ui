@@ -91,9 +91,9 @@ export function ensureRequirementLine(text: string, requirements: readonly strin
  * grounding = スタッフのキーワード・希望条件・続いている事情・お客様の希望（ここにその話があれば残す）。
  * ピックアップ行の中の句は句だけ、それ以外の行は行ごと落とす。落としきれない保証会社の話が残れば unresolved
  */
-const SCREENING_CLAIM_RE = /独立系|信販系|LICC|審査(?:に)?(?:通過|通り)やす|並行して(?:お申込|お申し込み|審査)|保証会社/;
+const SCREENING_CLAIM_RE = /独立系|信販系|信用系|LICC|審査(?:に)?(?:通過|通り)やす|並行して(?:お申込|お申し込み|審査)|保証会社/;
 const SCREENING_CLAUSE_RES: readonly RegExp[] = [
-  /(?:審査(?:に)?(?:通過|通り)やすい|(?:独立系|信販系|LICC系?)(?:の)?保証会社)[^\n、。！!]{0,24}?(?:を中心に|中心に)、?/g,
+  /(?:審査(?:に)?(?:通過|通り)やすい|(?:独立系|信販系|信用系|LICC系?)(?:の)?保証会社)[^\n、。！!]{0,24}?(?:を中心に|中心に)、?/g,
   /審査(?:に)?(?:通過|通り)やすい(?:お部屋)?(?:で|の)?/g,
 ];
 export function stripUngroundedClaims(text: string, grounding: string): { text: string; removed: string[]; unresolved: boolean } {
