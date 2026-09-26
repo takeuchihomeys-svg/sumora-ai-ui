@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-09-27 v2.5.27 案A: メモの上書きで検索した回は、判定（点・👑・画像で分析の対象・カード）もその上書きで
+竹内「案Aでおこなう」（v2.5.26 の未決「判定は登録の条件のまま」を解いた）。例 登録が 1K のお客様を 1LDK で検索した回は 1LDK を「合っている」扱い。上書きした項目だけ・書いていない項目は登録のまま。
+- **結び方（拡張の変更は最小）**: background.js に `_searchOverrideLink`（{commandId, customerIds}）。`_runBatchSearch` が**上書きのある web_brain のコマンドの時だけ**置き、呼び出し元（_pollAndRunBatch）の finally で必ず消す。`callMergeApi` が同じお客様の送信に `search_command_id` を付ける（`_searchCommandIdFor`）。**中身は送らない**
+- **サーバー**: merge-pdfs → `app/lib/search-override-link.ts` `loadPickupSearchOverride`（automation_commands を引き直し・web_brain・同じお客様・4時間以内・関所 sanitizeSearchOverride を通す。結べない時は登録の条件＝今まで通り）→ `recordPickupBatch({searchOverride})`
+- **判定**: `app/lib/search-override-judge.ts`（純関数1つ）`buildProfileWithOverride` が条件欄の写しに重ねて（`overlayCustomerForOverride`: 駅は「〇〇駅」で書く・only＝置き換え／add＝足す・家賃の上限を下げて登録の下限が上限以上なら下限は使わない）プロフィールを作る。間取りを上書きした時は本命をその間取りだけ（フォームの希望の行・「も可」を足さない）。設備・エリアの照合も同じ重ねた条件
+- **印**: `property_pickups.search_override`（JSONB・{command_id, override}・migrate-schema と scripts/apply-pickup-search-override-column.ts で本番に作成済み）
+- **混ざった時（上書きの回と登録の条件の回が同じまとめ）**: 👑 は `pickup-best.sameRulerCandidates` で**一番新しい回の物差し（上書きの鍵 overrideRulerKey・サイトと広げては入れない）の物件だけ**から選ぶ（点の物差しが違う物を比べない）。まとめの順位も 👑 と同じ物差しを先に。まとめを分ける案は取らない（まとめ ID・後からの足し込み・画面の回の寄せの3か所を割るため）
+- **画面**: 回の上に「📝 この回はメモの条件（大正駅だけ・1LDK）で判定・書いていない条件は登録のまま」、混ざった回はカードに「📝 メモの条件で判定」
+- **確かめ（YUMA・本番DB・DeepSeek 0回）**: 登録 1K・大正区/西区のテストのお客様を YUMA に紐付け、登録の回（3件）→ 上書き（大正駅だけ・1LDK）の回（3件）を recordPickupBatch に。上書きの回は 1LDK が FLOOR_PLAN_MATCH・1K が FLOOR_PLAN_NEAR・エリアは AREA_STATION_MATCH（登録の回は 1LDK が NEAR・AREA_WARD_MATCH）。まとめの 👑 は上書きの回の一番（登録の回に高い点があっても比べない）・詳細 API の 👑 も同じ・カードの1行が出る。別のお客様では結ばない。作った物は全部消し、YUMA の紐付けは null に戻した
+- テスト: `app/lib/__tests__/search-override-judge.test.ts`（57）・`tests/chrome-extension/search-override.test.js`（58）・既存の pickup-best/pickup-complete/search-override/property-brain/fit-balance/area-commute/pickup-card-view/pickup-equipment/pickup-review-order・tsc 0・next build 通過・node --check
+- **まだの事**: LINE グループの🌟（merge-pdfs の rankAndAnnotate）は登録の条件のまま（点が並んだ時の順番にだけ使う）。画像で分析の対象の選びは各行の点（上書きで付いた点）の順のまま混ざった回をまたぐ。**竹内さんの拡張の再読み込み（2.5.27）までは結ばれない**（判定は登録の条件のまま＝前と同じ）
+- **竹内さんが確かめること（2.5.27 に再読み込み後）**: 1K のお客様で メモ「1LDKで検索する」→［実行］→ AIXツールに届いた回の上に「📝 この回はメモの条件（1LDK）で判定」、1LDK の物件の「間取り」が一致（緑）になっている
+
 ## 2026-09-27 v2.5.26 AIXツールのメモ欄の検索の指示 → 拡張の一時調整（その回だけ）で検索
 竹内「ここ（AIXツールのお客様の画面の下のメモ欄）に条件を送ったら、それに連動して検索されるようにする。『大正駅で検索する』なら駅は大正駅だけ、『1LDKで検索する』なら1LDK。拡張ツールの一時調整の部分で合わせる形。こちらからの文を DeepSeek の物件検索 AI が要約して拡張ツールに渡す。ゆくゆくは拡張ツールの AIX モードで使えるように」
 - **流れ**: メモを送る（今まで通り右に残る）→ きっかけ語があれば `POST /api/search-override`（内部認証・DeepSeek 1回）→ メモ欄の上に1行「🔍 大正駅だけ・間取りは登録のまま（1K〜1DK）・家賃は登録のまま（〜7.5万）・リアプロ・ピンポイント で検索します」＋サイト（リアプロ／itandi／レインズ）とピンポイント／広げての切替・［実行］［やめる］・「⚠ 入れなかった所」→［実行］で `/api/automation/trigger`（brain:true・1人1コマンド・**payload.search_override**）→ 拡張のブレインの PC（🧠×通常／🧠×AIX）が拾う → 今まで通り検索 → 判定 → AIXツールに届く。進み具合は /api/automation/status を5秒ごと
@@ -21,7 +34,7 @@
   - YUMA: テストのお客様を作って YUMA に紐付け、ローカル（本番DB）＋ヘッドレス Chrome で メモ「大正駅で検索する」→ 1行 → ［実行］→ web_brain の payload `{source:"web_brain", is_wide:false, rp_update_days:null, search_override:{location:{mode:"only",stations:["大正"]…}}}`・sites ["realnetpro"]・二度押しは already=1・「明日10時に内覧予定」は何も出ない。**積んだコマンドは 0.8秒で cancelled（拾われていない）**・テストのお客様・メモ・ピックアップ・紐付けは消した
   - テスト: `app/lib/__tests__/search-override.test.ts`（61）・`tests/chrome-extension/search-override.test.js`（48・配線と5大バグの型の検査込み）・既存の拡張テスト全部・web-brain-search 23・search-audit-check 89・tsc 0・next build 通過・拡張の全ファイル node --check
 - **まだの事・注意**
-  - 物件の**判定（ブレイン）はお客様の登録の条件で行う**（上書きは判定に渡していない）。1LDK で検索して登録が 1K の人は、判定で点が下がる・保留になりうる
+  - ~~物件の判定（ブレイン）はお客様の登録の条件で行う~~ → **v2.5.27（案A）で判定にも渡した**（上の節）
   - itandi・リアプロは popup の欄から、レインズは background の条件（_buildBatchConditions）から入る。レインズはペット・面積の上書きは入らない（今までの予備の経路と同じ）
   - 実機の拡張での動きは未確認（竹内さんの PC）
 - **竹内さんが確かめること（拡張の再読み込み後・version 2.5.26）**: ①ブレインの PC（🧠 ON・通常か AIX）でリアプロにログイン ②AIXツールで条件の紐付いたお客様を開き、メモ欄に「大正駅で検索する」→ 1行が出る →［実行］③拡張のコンソールに `[batch] AIXツールのメモの一時調整（この回だけ）: 大正駅だけ`・popup に `[AX] AIXツールのメモの一時調整（この回だけ・保存しない）` と帯「🔍 AIXツールの指示（この回だけ）」④リアプロの駅が大正だけで検索される ⑤2分後に一時調整の欄が登録の条件に戻り、そのお客様の一時調整の履歴チップが増えていない ⑥「🔍 検索の点検」のその回に上書きが残る

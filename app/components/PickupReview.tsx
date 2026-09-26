@@ -19,7 +19,7 @@ import { pickAuditForRound } from "@/app/lib/search-audit-check";
 // 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ（一番オススメだから）」
 import { buildPickupAixHref, pickupAixButtonLabel, PICKUP_AIX_MAX } from "@/app/lib/pickup-aix-handoff";
 // 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: メモの検索の指示 → 一時調整の要約 → 確かめて［実行］（軽い物だけ import）
-import { looksLikeSearchInstruction, overrideLine, type SearchOverride, type RegisteredConditions, type OverrideSite } from "@/app/lib/search-override";
+import { looksLikeSearchInstruction, overrideLine, overrideJudgeLine, overrideRulerKey, type SearchOverride, type RegisteredConditions, type OverrideSite } from "@/app/lib/search-override";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -38,7 +38,20 @@ type Item = {
   expired?: boolean; expiry_hours_left?: number | null; expiry_warn?: boolean;
   /** 元の回（まとめた回の中でどの回・どのサイトから来たか） */
   batch_id?: string; site?: string | null;
+  /** 2026-09-27 案A: その回をメモの上書きで判定した印（search-override.ts の PickupSearchOverride）。無い行＝登録の条件 */
+  search_override?: unknown;
 };
+
+/**
+ * 2026-09-27 案A: 回（まとめた回）の中で「メモの条件で判定した」旨の1行。登録の条件と違う点が付く理由をカードの上に出す。
+ *   混ざった回（上書きの回と登録の条件の回）は、👑 が一番新しい回の条件の物件から選ばれることも書く（pickup-best.sameRulerCandidates）
+ */
+function roundOverrideNote(items: ReadonlyArray<Pick<Item, "search_override">>): { line: string; mixed: boolean } | null {
+  const lines = [...new Set(items.map((x) => overrideJudgeLine(x.search_override)).filter(Boolean))];
+  if (!lines.length) return null;
+  const mixed = new Set(items.map((x) => overrideRulerKey(x.search_override))).size > 1;
+  return { line: lines.join("／"), mixed };
+}
 /**
  * 1回分。2026-09-25 竹内「まとめられていない」: 画面では短い間に届いた回（リアプロ・itandi）を1つにまとめた回（pickup-card-view.groupPickupRounds）で扱う。
  *   まとめた回は batch_id＝元の回を「,」でつないだ物（/send もこの形を受ける）・parts＝元の回
@@ -1094,6 +1107,8 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
                 : <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#78909c", background: "#eceff1" }}>この回で一番</span>)}
               {!isBest && it.recommended > 0 && <span className="text-[10px] whitespace-nowrap" style={{ color: "#bf8f00" }} title="DeepSeek が選んだ候補（点が並んだ時の順番に使う）">🌟 候補</span>}
               {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
+              {/* 2026-09-27 案A: 条件の違う回が混ざった時だけ、メモの条件で判定した物件に印（点の物差しが違う） */}
+              {roundOverrideNote(b.items)?.mixed && overrideJudgeLine(it.search_override) && <span className="text-[9px] font-bold whitespace-nowrap px-1 rounded" style={{ background: "#ede7f6", color: "#4527a0" }}>📝 メモの条件で判定</span>}
             </div>
             {/* パソコンは図面の横・スマホは図面の下の全幅（360px でも物件名が1〜2行に収まる） */}
             <div className="hidden md:block">{nameBlock}</div>
@@ -1255,6 +1270,13 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
                     </div>
                   ))}
                 {verdictCounts(bb.batch.items) && <div className="text-[11px] font-bold mb-1.5" style={{ color: "#5d4037" }}>{verdictCounts(bb.batch.items)}</div>}
+                {/* 2026-09-27 竹内「案Aでおこなう」: メモの上書き（大正駅だけ・1LDK）で検索した回は、判定もその条件（登録の条件と違う点が付く理由） */}
+                {(() => {
+                  const n = roundOverrideNote(bb.batch.items);
+                  if (!n) return null;
+                  return <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg leading-snug break-words" style={{ background: "#ede7f6", color: "#4527a0" }}>
+                    📝 {n.line}{n.mixed ? "（登録の条件で判定した回と混ざっています・👑 は一番新しい回の条件の物件から選びます）" : ""}</div>;
+                })()}
                 {/* 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨」 */}
                 {needRecommended && (
                   <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>🔍 画像で確かめたい希望: {needLabels}</div>

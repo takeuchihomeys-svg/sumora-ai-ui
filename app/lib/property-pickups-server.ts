@@ -9,7 +9,7 @@ import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
-import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
 import { buildPickupTerms } from "@/app/lib/pickup-terms";
@@ -19,6 +19,8 @@ import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
 import { dedupeSameBuilding, dedupeNoteJa } from "@/app/lib/pickup-dedupe";
 import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, toPickupLocation, type AreaWant, type CommuteWant, type PickupLocation } from "@/app/lib/area-want";
 import { parseListingText } from "@/app/lib/listing-text";
+import { buildProfileWithOverride } from "@/app/lib/search-override-judge";
+import type { PickupSearchOverride } from "@/app/lib/search-override";
 
 /**
  * 2026-09-25 自動の読み取り（pickup-auto-analyze）を始めてよい締め切り（recordPickupBatch の開始から）。merge-pdfs の maxDuration 300秒に収める。
@@ -55,6 +57,11 @@ export type RecordPickupInput = {
   pdfUrls: Array<string | null>;
   /** 説明文と同じ並びの PDF（base64） */
   pdfBase64List: Array<string | null>;
+  /**
+   * 2026-09-27 案A: メモの上書き（その回だけの一時調整）で検索した回なら、その上書き（search-override-link が web_brain のコマンドから引いた物）。
+   *   判定・設備の照合・エリアの照合をこの上書きを重ねた条件で行い、行（property_pickups.search_override）に残す。無ければ登録の条件
+   */
+  searchOverride?: PickupSearchOverride | null;
 };
 
 /** お客様の会話（LINE の宛先）を物件顧客から引く（最新1件） */
@@ -66,7 +73,7 @@ async function resolveConversationId(propertyCustomerId: string | null, conversa
 }
 
 /** 判定のプロフィール（judge API と同じ材料）と、設備の希望を読む条件欄（customer） */
-async function loadProfile(propertyCustomerId: string | null): Promise<{ profile: CustomerProfile; customer: CustomerLike; location: LocationWants | null } | null> {
+async function loadProfile(propertyCustomerId: string | null, searchOverride: PickupSearchOverride | null = null): Promise<{ profile: CustomerProfile; customer: CustomerLike; location: LocationWants | null } | null> {
   if (!propertyCustomerId) return null;
   const since = new Date(Date.now() - 180 * 86400_000).toISOString();
   const [custRes, sentRes, patRes, convsRes] = await Promise.all([
@@ -77,15 +84,19 @@ async function loadProfile(propertyCustomerId: string | null): Promise<{ profile
     supabase.from("property_selection_patterns").select("selling_points, selection_label").eq("property_customer_id", propertyCustomerId).order("created_at", { ascending: false }).limit(60),
     supabase.from("conversations").select("id").eq("property_customer_id", propertyCustomerId).limit(10),
   ]);
-  const customer = custRes.data as (CustomerLike & { desired_area?: string | null; commute_station?: string | null; commute_minutes?: number | null }) | null;
-  if (!customer) return null;
+  const registered = custRes.data as (CustomerLike & { desired_area?: string | null; commute_station?: string | null; commute_minutes?: number | null }) | null;
+  if (!registered) return null;
   const convIds = ((convsRes.data ?? []) as Array<{ id: string }>).map((c) => c.id);
   const profit = await loadCustomerProfit({ propertyCustomerId, conversationIds: convIds });
+  // 2026-09-27 案A: その回の上書きを条件欄に重ねる（上書きした項目だけ・書いていない項目は登録のまま）。
+  //   判定（点・verdict）・設備の照合・エリアの照合が同じ重ねた条件を見る → それを読む 👑・画像で分析の対象・カードも同じ値になる
+  const built = buildProfileWithOverride(registered, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen, searchOverride?.override ?? null);
+  const customer = built.customer;
   // 2026-09-25 エリア（desired_area＋自由文の「以外・より北」）と通勤（列・自由文の「◯◯まで30分」）
   const area = parseAreaWant(customer.desired_area, [customer.preferences, customer.other_requests].filter(Boolean).join("\n"));
   const commute = parseCommuteWants(customer);
   return {
-    profile: buildCustomerProfile(customer, (sentRes.data ?? []) as SentRowLike[], (patRes.data ?? []) as PatternRowLike[], profit.discountMedianYen),
+    profile: built.profile,
     customer,
     location: area.any || commute.length ? { area, commute } : null,
   };
@@ -101,7 +112,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     //   先に絞るので、落とした部屋の画像の描画・Blob・DeepSeek の読み取りの費用もかからない。順位（【N】）は元の番号のまま＝LINE グループと一致
     // 2026-09-25 送付済みの部屋は「残す部屋」に選ばない（同じ建物のまだ送っていない部屋を残す）→ 判定の材料（送付の記録）を先に読む
     const conversationId = await resolveConversationId(input.propertyCustomerId, input.conversationId);
-    const loaded = await loadProfile(input.propertyCustomerId);
+    const searchOverride = input.propertyCustomerId ? (input.searchOverride ?? null) : null;
+    const loaded = await loadProfile(input.propertyCustomerId, searchOverride);
     const profile = loaded?.profile ?? null;
     const sentIdx = new Set<number>();
     if (profile && profile.history.sentCount > 0) input.summaries.forEach((s, i) => { try { if (isSentRoom(parsePropertyFacts(s), profile)) sentIdx.add(i); } catch { /* 読めない物は送付済みにしない */ } });
@@ -281,8 +293,13 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     const rows = buildPickupRows({
       batchId: input.batchId, propertyCustomerId: input.propertyCustomerId, conversationId,
       customerName: input.customerName, site: input.site,
-    }, items);
+    }, items).map((r) => (searchOverride && loaded ? { ...r, search_override: searchOverride } : r));
     let ins = await supabase.from("property_pickups").insert(rows).select("id");
+    // 2026-09-27: search_override 列を本番に足す前に動いても記録は残す（判定は上書きで済んでいる・印だけ落ちる）
+    if (ins.error && /search_override/.test(ins.error.message)) {
+      console.warn("[property-pickups] search_override 列が無いので外して記録:", ins.error.message);
+      ins = await supabase.from("property_pickups").insert(rows.map((r) => { const { search_override: _s, ...rest } = r as typeof r & { search_override?: unknown }; void _s; return rest; })).select("id");
+    }
     // 2026-09-25: location 列を本番に足す前に動いても記録は残す（列が無い時は location を外して入れ直す）
     if (ins.error && /location/.test(ins.error.message)) {
       console.warn("[property-pickups] location 列が無いので外して記録:", ins.error.message);
@@ -328,6 +345,6 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     out.error = e instanceof Error ? e.message : String(e);
     return out;
   } finally {
-    console.log(JSON.stringify({ tag: "property-pickups:record", batch: input.batchId.slice(0, 40), customer: input.propertyCustomerId?.slice(0, 8) ?? null, ...out }));
+    console.log(JSON.stringify({ tag: "property-pickups:record", batch: input.batchId.slice(0, 40), customer: input.propertyCustomerId?.slice(0, 8) ?? null, override: input.searchOverride ? (input.searchOverride.command_id?.slice(0, 8) ?? "yes") : null, ...out }));
   }
 }

@@ -108,5 +108,25 @@ console.log("\n■ 検索の点検（tracker.begin）に上書きが残る");
   ok("上書きが無い回は今まで通り（_search_override なし）", !("_search_override" in sent2[0].customer_snapshot));
 }
 
+console.log("\n■ 案A（2026-09-27）: 上書きの回の merge-pdfs に search_command_id（判定も上書きで）");
+{
+  const bg = read("background.js");
+  const manifest = JSON.parse(read("manifest.json"));
+  ok("manifest の版が 2.5.27 以上", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005027);
+  // 関数を取り出して動かす（chrome.* を使わない）
+  const src = bg.slice(bg.indexOf("function _searchCommandIdFor"), bg.indexOf("// ── ヘルパー: /api/merge-pdfs"));
+  const f = (link) => new Function("link", "var _searchOverrideLink = link;\n" + src + "\nreturn _searchCommandIdFor;")(link);
+  eq("上書きの検索の最中・同じお客様 → コマンドの id", f({ commandId: "cmd-1", customerIds: ["c1"] })("c1"), "cmd-1");
+  eq("数字の id でも同じ", f({ commandId: "cmd-1", customerIds: ["12"] })(12), "cmd-1");
+  eq("別のお客様 → 付けない", f({ commandId: "cmd-1", customerIds: ["c1"] })("c2"), null);
+  eq("上書きの検索でない（印なし）→ 付けない", f(null)("c1"), null);
+  eq("お客様の id が無い送信 → 付けない", f({ commandId: "cmd-1", customerIds: ["c1"] })(null), null);
+  const merge = bg.slice(bg.indexOf("async function callMergeApi"), bg.indexOf("async function callMergeApi") + 2000);
+  ok("callMergeApi が body に search_command_id を付ける（付く時だけ）", merge.includes("...(searchCommandId ? { search_command_id: searchCommandId } : {})"));
+  ok("中身（上書き）は merge-pdfs に送らない（サーバーがコマンドの行から引き直す）", !merge.includes("search_override"));
+  ok("_runBatchSearch が上書きのある時だけ印を置く", bg.includes("_searchOverrideLink = searchOverride ? { commandId: String(command.id)"));
+  ok("呼び出し元の finally で必ず消す（止めた・失敗した時も）", /finally \{\s*_searchOverrideLink = null;/.test(bg));
+}
+
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

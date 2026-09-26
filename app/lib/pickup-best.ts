@@ -21,6 +21,7 @@
 //     （画像でしか分からない希望を確かめていない物件は「一番条件に合う」と言えない・点の尺度も違うので1本の並びで混ぜない）
 //   - 保留・外す候補は、同じ点の時に通す物件より先に 👑 にしない（前の決まり・verdictOrder）。判定の点で決める時は外す候補を候補にしない
 import { imageAnalysisNeed, extractImageWants, dedupeWantsByTopic, type ImageWant, type ImageAnalysisNeed } from "./image-wants";
+import { overrideRulerKey } from "./search-override";
 
 export type BestCandidateRow = {
   id: number;
@@ -36,7 +37,30 @@ export type BestCandidateRow = {
   /** 判定の点（property-brain の score）。2026-09-25 画像で分析が不要なお客様の 👑 はこの点で決める */
   score?: number | null;
   image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null;
+  /** 2026-09-27 案A: その回をメモの上書きで判定した印（property_pickups.search_override）。無い行＝登録の条件で判定 */
+  search_override?: unknown;
 };
+
+/**
+ * 2026-09-27 案A: 同じまとめ（窓）に「メモの上書きで判定した回」と「登録の条件で判定した回」が混ざった時の 👑 の決まり。
+ *   点はそれぞれの回の条件で付けた物（1LDK で検索した回は 1LDK が満点・登録の 1K の回は 1K が満点）なので、物差しの違う点を1本の並びで比べない。
+ *   → 点の付いた候補がある物差しのうち、一番新しく届いた回の物差しの物件だけから 👑 を選ぶ（スタッフの一番新しい指示＝今の探し物）。
+ *   まとめを分ける案は取らない: まとめ ID・後から届いた回の足し込み（joinableGroupId）・画面の回の寄せ（groupPickupRounds）の3か所を割る必要があり、
+ *   混ざるのは「上書きの検索の前後に同じお客様を普通に検索した」時だけ（まれ）なので、👑 の候補だけ絞る単純な方にした。
+ *   物差しが1つだけ（ふつう）の時は何も変えない。
+ */
+export function sameRulerCandidates<T extends Pick<BestCandidateRow, "created_at" | "search_override">>(rows: ReadonlyArray<T>, hasPoint: (r: T) => boolean): T[] {
+  const keys = new Set(rows.map((r) => overrideRulerKey(r.search_override)));
+  if (keys.size <= 1) return rows.slice();
+  let bestKey: string | null = null, bestAt = -Infinity;
+  for (const r of rows) {
+    if (!hasPoint(r)) continue;
+    const t = Date.parse(r.created_at);
+    if (Number.isFinite(t) && t > bestAt) { bestAt = t; bestKey = overrideRulerKey(r.search_override); }
+  }
+  if (bestKey == null) return rows.slice();
+  return rows.filter((r) => overrideRulerKey(r.search_override) === bestKey);
+}
 
 export type CustomerBest = {
   id: number;
@@ -144,9 +168,11 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   const windowMs = (opts?.windowHours ?? CUSTOMER_BEST_WINDOW_HOURS) * 3600_000;
   const latest = Math.max(...rows.map((r) => Date.parse(r.created_at)).filter((n) => Number.isFinite(n)));
   if (!Number.isFinite(latest)) return null;
-  const inWindow = rows.filter((r) => r.status === "pending" && latest - Date.parse(r.created_at) <= windowMs);
   const m = (r: BestCandidateRow) => numOrNull(r.image_analysis?.match);
   const sc = (r: BestCandidateRow) => numOrNull(r.score);
+  // 2026-09-27 案A: 物差し（メモの上書き／登録の条件）が混ざる時は、一番新しい回の物差しの物件だけ（sameRulerCandidates）
+  const inWindow = sameRulerCandidates(rows.filter((r) => r.status === "pending" && latest - Date.parse(r.created_at) <= windowMs),
+    (r) => m(r) != null || (sc(r) != null && r.verdict !== "drop"));
   const raw = (r: BestCandidateRow) => numOrNull(r.image_analysis?.match_raw) ?? m(r) ?? 0;
   const imageScored = inWindow.filter((r) => m(r) != null);
   // 判定の点で決める時は外す候補を候補にしない（外す候補が 👑 だと「外すのか一番なのか」が食い違う）

@@ -399,6 +399,18 @@ function isBrainModeOn() {
   });
 }
 
+// 2026-09-27 竹内「案Aでおこなう」: AIXツールのメモの上書き（web_brain の payload.search_override）で検索している間、
+//   そのお客様の merge-pdfs に search_command_id（コマンドの id）を付ける＝サーバーがその回の判定も上書きで行う（search-override-link.ts）。
+//   中身は送らない（サーバーがコマンドの行から引き直す）。_runBatchSearch が置き、呼び出し元（_pollAndRunBatch）の finally で必ず消す
+var _searchOverrideLink = null; // { commandId, customerIds: [..] } | null
+
+/** merge-pdfs に付ける search_command_id（上書きの検索の最中・同じお客様の時だけ） */
+function _searchCommandIdFor(propertyCustomerId) {
+  var l = _searchOverrideLink;
+  if (!l || !propertyCustomerId) return null;
+  return l.customerIds.indexOf(String(propertyCustomerId)) >= 0 ? l.commandId : null;
+}
+
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
 async function callMergeApi(payload) {
   // 送信の3経路（リアプロ・itandi・レインズ）は全部ここを通るので、スタッフモードの判定もここで付ける
@@ -408,10 +420,11 @@ async function callMergeApi(payload) {
   //   （AxlxModeCore.behavior の recordPickup。スタッフの送り方は変えない: staff_mode=true で送付済みの除外はしないまま・LINE グループへの送り方も同じ）。
   //   サーバー（merge-pdfs）の brain_mode は property_pickups の記録にしか使っておらず、staff_mode（除外しない）とは独立に効く。
   const brainMode = await isBrainModeOn();
+  const searchCommandId = _searchCommandIdFor(payload && payload.property_customer_id);
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, staff_mode: staffMode, brain_mode: brainMode }),
+    body: JSON.stringify({ ...payload, staff_mode: staffMode, brain_mode: brainMode, ...(searchCommandId ? { search_command_id: searchCommandId } : {}) }),
     signal: AbortSignal.timeout(85000), // Vercel maxDuration=90s より5s短く設定（旧60sだと多PDF時にクライアント側が先にタイムアウト）
   });
   if (!resp.ok) {
@@ -2677,6 +2690,7 @@ async function _pollAndRunBatch() {
     } catch (e) {
       await _updateBatchCommand(cmd.id, { status: "error", error_message: String(e) });
     } finally {
+      _searchOverrideLink = null; // 2026-09-27 上書きの回の印はこのコマンドの間だけ（止めた・失敗した時も消す）
       await chrome.storage.local.set({ batchRunning: null, batchCommandId: null });
     }
   } catch (e) {
@@ -2784,6 +2798,8 @@ async function _runBatchSearch(command) {
   //   （お客様の登録の条件・拡張に保存した一時調整は書き換えない。popup には axlx-switch-customer の searchOverride で渡す＝_batchAutofill）
   var searchOverride = (isWebBrain && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(cmdPayload.search_override) : null;
   if (searchOverride) console.log("[batch] AIXツールのメモの一時調整（この回だけ）: " + self.AxlxSearchOverride.describe(searchOverride));
+  // 2026-09-27 案A: この回の merge-pdfs に search_command_id を付ける（判定も上書きで）。上書きの無いコマンドは付けない
+  _searchOverrideLink = searchOverride ? { commandId: String(command.id), customerIds: targets.map(function (c) { return String(c.id); }) } : null;
   await _updateBatchCommand(command.id, {
     status: "running",
     total_customers: targets.length,

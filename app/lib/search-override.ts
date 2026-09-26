@@ -229,3 +229,68 @@ export function overrideLine(ov: SearchOverride | null, reg: RegisteredCondition
   return `🔍 ${parts.join("・")} で検索します`;
 }
 
+
+// ─────────────────────────── 判定にも渡す（案A・2026-09-27） ───────────────────────────
+// 竹内さんの決定（2026-09-27）「案Aでおこなう」: メモの上書きで検索した回は、判定（点数・👑・画像で分析の対象・カード）も
+//   その回の上書きで行う（例 登録が 1K のお客様を 1LDK で検索した回は、1LDK を「合っている」扱い）。
+//   上書きした項目だけ・書いていない項目は登録のまま（要約の決まりと同じ）。重ね方は search-override-judge.ts（純関数1つ）。
+//   ここは画面からも使う軽い物だけ（ラベル・物差しの鍵・行の形の読み取り）。
+
+/** property_pickups.search_override の形（その回をどの上書きで検索・判定したか）。無い行＝登録の条件で判定 */
+export type PickupSearchOverride = {
+  /** 上書きを積んだ automation_commands の id（拡張が merge-pdfs に search_command_id で渡す） */
+  command_id: string | null;
+  override: SearchOverride;
+};
+
+/** 行の search_override を読む（形が違う・上書きが空なら null）。画面・サーバーの両方で同じ読み方 */
+export function readPickupSearchOverride(x: unknown): PickupSearchOverride | null {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return null;
+  const o = x as { command_id?: unknown; override?: unknown };
+  const ov = o.override as SearchOverride | null | undefined;
+  if (!ov || typeof ov !== "object" || Array.isArray(ov) || ov.v !== 1 || isEmptyOverride(ov)) return null;
+  return { command_id: typeof o.command_id === "string" ? o.command_id : null, override: ov };
+}
+
+/**
+ * 判定の物差しの鍵（同じ鍵の行どうしだけ点を比べてよい）。"" ＝登録の条件。
+ *   判定に効く欄だけで作る（サイト・広げて は判定を変えないので入れない＝同じ条件をリアプロと itandi で検索しても同じ物差し）
+ */
+export function overrideRulerKey(x: unknown): string {
+  const p = readPickupSearchOverride(x);
+  if (!p) return "";
+  const ov = p.override;
+  const loc = ov.location ? `${ov.location.mode}:${[...ov.location.stations].sort().join(",")}|${[...ov.location.lines].sort().join(",")}|${[...ov.location.areas].sort().join(",")}` : "";
+  return JSON.stringify([loc, ov.floor_plan ?? "", ov.rent_max ?? "", ov.rent_min ?? "", ov.walk_minutes ?? "", ov.building_age ?? "", ov.area_min ?? "", ov.area_max ?? "", ov.pet ? 1 : ""]);
+}
+
+/** 上書きした項目だけの短い説明（例「大正駅だけ・1LDK・家賃〜8万」）。画面の1行と判定の記録に使う */
+export function overrideShortLabel(ov: SearchOverride | null | undefined): string {
+  if (!ov) return "";
+  const parts: string[] = [];
+  const loc = ov.location;
+  if (loc) {
+    const names = [...loc.stations.map((s) => `${s}駅`), ...loc.lines.map((l) => `${l}沿い`), ...loc.areas.map((a) => a.replace(/^大阪市/, ""))];
+    if (names.length) parts.push(loc.mode === "add" ? `${names.join("・")}を足して` : `${names.join("・")}だけ`);
+  }
+  if (ov.floor_plan) parts.push(ov.floor_plan);
+  if (ov.rent_max != null || ov.rent_min != null) {
+    const lo = man(ov.rent_min), hi = man(ov.rent_max);
+    parts.push(`家賃${lo ? `${lo}〜` : "〜"}${hi ?? ""}`);
+  }
+  if (ov.walk_minutes != null) parts.push(`徒歩${ov.walk_minutes}分`);
+  if (ov.building_age != null) parts.push(`築${ov.building_age}年以内`);
+  if (ov.area_min != null && ov.area_max != null) parts.push(`${ov.area_min}〜${ov.area_max}㎡`);
+  else if (ov.area_min != null) parts.push(`${ov.area_min}㎡以上`);
+  else if (ov.area_max != null) parts.push(`${ov.area_max}㎡まで`);
+  if (ov.pet) parts.push("ペット相談");
+  return parts.join("・");
+}
+
+/** カードの1行（「この回はメモの条件（大正駅だけ・1LDK）で判定」）。上書きの無い回は "" */
+export function overrideJudgeLine(x: unknown): string {
+  const p = readPickupSearchOverride(x);
+  if (!p) return "";
+  const label = overrideShortLabel(p.override);
+  return label ? `この回はメモの条件（${label}）で判定・書いていない条件は登録のまま` : "";
+}

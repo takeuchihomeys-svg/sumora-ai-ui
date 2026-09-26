@@ -237,6 +237,11 @@ export async function POST(req: NextRequest) {
       staff_mode?: boolean | null;
       /** 2026-09-23 拡張のブレインモード（記録用・判定は拡張側で済んでいる） */
       brain_mode?: boolean | null;
+      /**
+       * 2026-09-27 案A: AIXツールのメモの上書き（その回だけの一時調整）で検索した回なら、そのコマンドの id（拡張 v2.5.27〜 の web_brain の回だけ）。
+       *   中身は受け取らず、サーバーが automation_commands から引き直して判定に使う（search-override-link.ts）
+       */
+      search_command_id?: string | null;
     };
 
     const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode, brain_mode } = body;
@@ -461,11 +466,16 @@ export async function POST(req: NextRequest) {
           if (summariesForPickup.length > 0 && (resolvedCustomerId || conversation_id)) {
             const pdfUrlsForPickup = summariesForPickup.map((_, i) => (pdf_urls?.[i] && /realnetpro\.com/.test(pdf_urls[i]) ? pdf_urls[i] : null));
             const base64ForPickup = summariesForPickup.map((_, i) => pdfBase64List[i] ?? null);
-            const job = import("@/app/lib/property-pickups-server").then(({ recordPickupBatch }) => recordPickupBatch({
+            // 2026-09-27 案A: メモの上書きで検索した回は、判定もその上書きで（結べない時は登録の条件＝今まで通り）
+            const job = import("@/app/lib/search-override-link")
+              .then(({ loadPickupSearchOverride }) => loadPickupSearchOverride(body.search_command_id, resolvedCustomerId))
+              .catch(() => null)
+              .then((searchOverride) => import("@/app/lib/property-pickups-server").then(({ recordPickupBatch }) => recordPickupBatch({
               batchId: name, propertyCustomerId: resolvedCustomerId, conversationId: conversation_id ?? null,
               customerName: customer_name ?? null, site: site ?? null,
               summaries: summariesForPickup, pdfUrls: pdfUrlsForPickup, pdfBase64List: base64ForPickup,
-            })).catch((e) => console.warn("[merge-pdfs] property_pickups の記録に失敗:", e instanceof Error ? e.message : String(e)));
+              searchOverride,
+            }))).catch((e) => console.warn("[merge-pdfs] property_pickups の記録に失敗:", e instanceof Error ? e.message : String(e)));
             try { waitUntil(job); } catch { /* Vercel 以外 */ }
           }
         }

@@ -24,6 +24,7 @@
 //     1回ずつ届いた回を寄せても順位と 👑 が「まとめた全件」になるだけで、送った物・判定は変えない（悪くならない）
 //   - 境目: ちょうど10分（now − 最後 ＝ 600000ms）でまとめる（>=）。未来の時刻（時計のずれ）はまとめない
 import { pickCustomerBest, verdictOrder, okCountOf, type BestCandidateRow, type BestBasis } from "./pickup-best";
+import { overrideRulerKey } from "./search-override";
 
 /** 「完了」でまとめる行の古さの上限（時間）。前の完了より後の行は complete_group_id が空なので、実際は「前の完了以降・最大24時間」 */
 export const COMPLETE_WINDOW_HOURS = 24;
@@ -144,7 +145,13 @@ export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: {
   const bestId: number | null = pick?.id ?? null;
   const bestBasis: CompleteRanking["bestBasis"] = pick?.basis ?? null;
   // 👑 はまとめの順位でも1番（順位の1番と 👑 が別の物件だと、どちらが一番か読めない）。残りは compareCompleteGroup の並び
-  const ordered = bestId != null ? [...sorted.filter((r) => r.id === bestId), ...sorted.filter((r) => r.id !== bestId)] : sorted;
+  // 2026-09-27 案A: メモの上書きで判定した回と登録の条件の回が混ざる時は、👑 と同じ物差しの物件を先に（点の物差しが違う物を交ぜて並べない・pickup-best.sameRulerCandidates）
+  const bestRow = bestId != null ? rows.find((r) => r.id === bestId) ?? null : null;
+  const ruler = bestRow ? overrideRulerKey(bestRow.search_override) : null;
+  const same = (r: CompleteRankRow) => ruler == null || overrideRulerKey(r.search_override) === ruler;
+  const ordered = bestId != null
+    ? [...sorted.filter((r) => r.id === bestId), ...sorted.filter((r) => r.id !== bestId && same(r)), ...sorted.filter((r) => r.id !== bestId && !same(r))]
+    : sorted;
   const order = ordered.map((r, i) => ({ id: r.id, complete_rank: i + 1 }));
   const best = bestId != null ? rows.find((r) => r.id === bestId) ?? null : null;
   return {

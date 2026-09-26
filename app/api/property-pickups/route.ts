@@ -29,6 +29,8 @@ type Row = {
   recommended: number; status: string; sent_at: string | null;
   page_image_url: string | null; agent_image_url: string | null; trim_image_url: string | null; image_lines: string[] | null; image_facts: Record<string, boolean | null> | null;
   image_analysis: Record<string, unknown> | null;
+  /** 2026-09-27 案A: その回をメモの上書きで判定した印（search-override.ts の PickupSearchOverride）。無い行＝登録の条件 */
+  search_override?: Record<string, unknown> | null;
   /** 2026-09-24 資料の設備欄 × お客様の条件の照合（pickup-equipment.ts の PickupEquipment） */
   equipment?: Record<string, unknown> | null;
   /** 2026-09-25 資料の表の募集の条件と希望の照合（pickup-terms.ts の PickupTerms） */
@@ -139,7 +141,7 @@ type SentLite = { conversation_id: string | null; property_customer_id: string |
 async function buildList(since: string) {
   const nowMs = Date.now();
   const [pk, sp, roundOf, na] = await Promise.all([
-    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at, score, verdict")
+    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at, score, verdict, search_override")
       .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
     supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at, property_name")
       .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
@@ -157,7 +159,7 @@ async function buildList(since: string) {
   const sentNamesByKey = new Map<string, SentBuilding[]>();
   // 2026-09-25 竹内「まとめられていない」: 一覧の「🧠 N件」も、短い間に届いた回（リアプロ・itandi）をまとめた1回分で数える
   // 2026-09-25 一覧の「🧠 N件・👑名前」: 一番オススメは DeepSeek の🌟★ ではなく 👑（まとめの best_id → 無ければ判定の点の1位・同点は🌟）
-  type BestLite = { id: number; created_at: string; batch_id: string; rank: number; status: string; recommended: number; property_name: string; score: number | null; verdict: string | null };
+  type BestLite = { id: number; created_at: string; batch_id: string; rank: number; status: string; recommended: number; property_name: string; score: number | null; verdict: string | null; search_override?: unknown };
   type BatchSum = { batch_id: string; created_at: string; site: string | null; round_id: string | null; count: number; rows: BestLite[] };
   const batchesSeen = new Map<string, Map<string, BatchSum>>();
   for (const r of (pk.data ?? []) as Array<BestLite & { property_customer_id: string | null; conversation_id: string | null; customer_name: string | null }>) {
@@ -290,7 +292,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     } catch { /* まとめられなくても詳細は出す */ }
   }
   let q = supabase.from("property_pickups")
-    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location, expired_at")
+    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location, search_override, expired_at")
     .order("created_at", { ascending: false }).limit(300);
   q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);

@@ -122,7 +122,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       out.analyzed = a.analyzed; out.analyzeLevel = a.level; out.analyzeTargets = a.targets;
     }
     const { data, error } = await supabase.from("property_pickups")
-      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis")
+      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis, search_override")
       .eq("complete_group_id", input.groupId).limit(500);
     if (error) { out.error = error.message; return out; }
     const rows = (data ?? []) as CompleteRankRow[];

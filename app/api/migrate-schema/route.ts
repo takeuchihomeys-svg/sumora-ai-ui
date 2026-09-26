@@ -2360,6 +2360,10 @@ CREATE INDEX IF NOT EXISTS idx_property_pickups_complete ON property_pickups(com
 --   まとめて入れる（/api/property-pickups/seen）。新着の決まりは app/lib/new-arrivals.ts
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS seen_by TEXT;
+-- 2026-09-27 竹内「案Aでおこなう」: AIXツールのメモの上書き（その回だけの一時調整）で検索した回は、判定もその上書きで行う。
+--   その回をどの上書きで判定したか {command_id, override}（search-override.ts の PickupSearchOverride・無い行＝登録の条件で判定）。
+--   👑 は物差し（上書き）が混ざる時に一番新しい回の物差しの物件だけから選ぶ（pickup-best.sameRulerCandidates）
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_override JSONB;
 CREATE INDEX IF NOT EXISTS idx_property_pickups_unseen ON property_pickups(created_at DESC) WHERE seen_at IS NULL AND verdict = 'pass' AND status = 'pending';
 --   まとめ1つに1行（主キー＝まとめ ID）: 押した経路・モード・まとめた行・👑（best_id・best_basis＝image/score）・自動の読み取りの件数
 CREATE TABLE IF NOT EXISTS property_pickup_completions (
