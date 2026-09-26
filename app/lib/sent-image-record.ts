@@ -69,6 +69,13 @@ export async function recordSentImageProperty(opts: {
       item = { propertyName: prev.property_name, roomNumber: prev.room_no ?? "" };
       out.read = "reused";
     } else {
+      // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
+      //   読み取りは DeepSeek（property_image_read）。申込中の会話で送った画像は読まない（送った直後に呼ばれる＝今の時刻で見る・読めなければ読まない）
+      const { loadDeepseekCutoff } = await import("@/app/lib/post-apply");
+      if ((await loadDeepseekCutoff(supabase, conversationId)) === null) {
+        console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "sent-image-record", conversationId }));
+        return out;
+      }
       const read = await readPropertyImage(imageUrl, { timeoutMs: 80_000 });
       out.tokens = read.usage ?? null;
       // 見積書・本人確認書類は物件として記録しない

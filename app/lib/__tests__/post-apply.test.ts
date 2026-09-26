@@ -62,14 +62,14 @@ async function main() {
         const res = (payload: unknown) => (table === opts.failTable ? { data: null, error: { message: "boom" } } : { data: payload, error: null });
         const chain: Record<string, unknown> = {};
         chain.select = () => chain; chain.eq = () => chain; chain.in = () => chain; chain.order = () => chain;
-        chain.maybeSingle = async () => res({ status: opts.status ?? "proposing", is_post_apply: !!opts.badge, status_manual_back_at: opts.back ?? null });
+        chain.maybeSingle = async () => res({ status: opts.status ?? "proposing", is_post_apply: !!opts.badge, status_manual_back_at: opts.back ?? null, deepseek_cutoff_at: null });
         chain.limit = async () => res(table === "aix_usage_logs" ? (opts.push ? [{ created_at: opts.push }] : []) : (opts.idDoc ? [{ created_at: opts.idDoc }] : []));
         return chain;
       },
     });
     await it("3つの記録を1つの facts にまとめる（最後の時刻だけ）", async () => {
       const f = await loadPostApplyFacts(fake({ status: "proposing", push: "2026-09-20T01:00:00.000Z", back: "2026-09-16T00:00:00.000Z" }), "c1");
-      eq(f, { status: "proposing", isPostApply: false, applicationPushAt: "2026-09-20T01:00:00.000Z", idDocumentAt: null, statusManualBackAt: "2026-09-16T00:00:00.000Z" });
+      eq(f, { status: "proposing", isPostApply: false, applicationPushAt: "2026-09-20T01:00:00.000Z", idDocumentAt: null, statusManualBackAt: "2026-09-16T00:00:00.000Z", deepseekCutoffAt: null });
       eq(resolvePostApply(f).reason, "application_push");
     });
     await it("どれか1つでも読めなければ例外（呼び出し側が fail-closed にできる）", async () => {

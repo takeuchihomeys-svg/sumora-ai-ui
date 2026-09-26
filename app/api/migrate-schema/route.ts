@@ -3650,6 +3650,43 @@ CREATE TABLE IF NOT EXISTS search_audit_causes (
 CREATE INDEX IF NOT EXISTS idx_search_audit_causes_last_seen ON search_audit_causes(last_seen DESC);
 ALTER TABLE search_audit_causes DISABLE ROW LEVEL SECURITY;
 
+-- conversations.deepseek_cutoff_at: 申込以降→申込前に切り替えた時刻（2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、
+--   申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」）。DeepSeek に渡すのはこの時刻より後だけ（app/lib/post-apply.ts deepseekSafeCutoff）。
+--   ⚠ 消えない列: 前に進めても消さない。次に申込以降から戻した時だけ新しくなる（旧の線 status_manual_back_at は前進で null に戻り、20会話で線が消えていた）。
+--   書くのはトリガー1か所（stamp_deepseek_cutoff）: 画面の状態変更・「申込以降」の解除・審査管理からの同期・スクリプトなど、どの経路の更新でも同じ判定で付く。
+--   申込以降だったか = 更新前の status が申込以降（DRAFT_SKIP_STATUSES と同じ8値）／印 is_post_apply／AIX【申込へ】・本人確認書類・収入証明書の
+--   最後の記録が前の線（この列・status_manual_back_at の新しい方）以後（resolvePostApply と同じ向き・同時刻は申込中）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS deepseek_cutoff_at TIMESTAMPTZ;
+CREATE OR REPLACE FUNCTION stamp_deepseek_cutoff()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  skip TEXT[] := ARRAY['applying','application','screening','contract','closed_won','closed_lost','lost','approved'];
+  was_post BOOLEAN;
+  prev_line TIMESTAMPTZ;
+  last_rec TIMESTAMPTZ;
+BEGIN
+  -- 更新後も申込以降（status・印）なら線は引かない
+  IF COALESCE(NEW.status, '') = ANY(skip) OR COALESCE(NEW.is_post_apply, FALSE) THEN RETURN NEW; END IF;
+  -- 戻す操作か: 更新前が申込以降の status・印／戻しの印を新しく付けた
+  was_post := COALESCE(OLD.status, '') = ANY(skip) OR COALESCE(OLD.is_post_apply, FALSE);
+  IF NOT was_post THEN
+    IF NEW.status_manual_back_at IS NULL OR NEW.status_manual_back_at IS NOT DISTINCT FROM OLD.status_manual_back_at THEN RETURN NEW; END IF;
+    prev_line := GREATEST(OLD.deepseek_cutoff_at, OLD.status_manual_back_at);
+    SELECT GREATEST(
+      (SELECT MAX(created_at) FROM aix_usage_logs WHERE conversation_id = NEW.id AND aix_type = 'application_push'),
+      (SELECT MAX(created_at) FROM messages WHERE conversation_id = NEW.id AND sender = 'customer' AND image_type IN ('id_document', 'income_document'))
+    ) INTO last_rec;
+    was_post := last_rec IS NOT NULL AND (prev_line IS NULL OR last_rec >= prev_line);
+  END IF;
+  IF was_post THEN NEW.deepseek_cutoff_at := now(); END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_conversations_deepseek_cutoff ON conversations;
+CREATE TRIGGER trg_conversations_deepseek_cutoff
+BEFORE UPDATE OF status, is_post_apply, status_manual_back_at ON conversations
+FOR EACH ROW EXECUTE FUNCTION stamp_deepseek_cutoff();
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

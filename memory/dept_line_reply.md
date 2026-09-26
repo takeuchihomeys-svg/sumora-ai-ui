@@ -7284,3 +7284,18 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 後ろ: received-document が保存した名前を読み戻す（`savedPersonalDocumentLabel`・新しい種類は nameOnly＝昔の書き起こしには当てない）→ provesEmployment は書き起こし無しで効く。既に残っている9行は書き換えていない（竹内さん判断待ち）
 - 残り: （brain-core の IMAGE_TYPE_LABEL の `income_document:"収入証明書"` は 2026-09-26 段3の担当が足した）post-apply（申込以降の判定）は id_document だけ見る
 - テスト `personal-document-guard.test.ts`（47）
+
+## 2026-09-27 個人情報: 申込中は DeepSeek に渡さない・戻したら切り替えた時刻より後だけ（時刻の線の本体）
+竹内さん（9/26）「申込の間の部分は DeepSeek に渡さず、申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」「収入証明書が届いたら申込中とみなす」
+- **線**: `conversations.deepseek_cutoff_at`（消えない列）。書くのは DB のトリガー `stamp_deepseek_cutoff` の1か所（migrate-schema・`scripts/apply-deepseek-cutoff.ts` で本番反映済み）。申込以降の status・`is_post_apply` から申込前へ／申込へ押下・本人確認書類・収入証明書の後に戻しの印を付けた時だけ now()。**前に進めても消えない**（YUMA の本番で確認）。画面・印の解除・審査管理の同期・スクリプト、どの経路の更新でも同じ
+- 埋め戻し: 8会話（戻しの印＋状態の履歴から）。うち2会話は押下の記録が無く status だけで申込中だった＝旧は全部 DeepSeek へ
+- **判定**: `app/lib/post-apply.ts` `deepseekSafeCutoff` → null（申込中・読めない＝渡さない）／ISO（この時刻より後だけ）／-Infinity（申込の記録なし＝全部）。`resolvePostApply` も戻した時刻に新しい列を使う
+- **切る所**（DeepSeek に回る時だけ。Claude の時は何も変えない）: generate-reply（履歴・台帳のタスク・AIX の履歴・送った事実・内覧の報告は時刻で／ブレインの判断・会話の方向・要約 ai_summary_json・セーブデータ・引用は作った時刻で／画面の要約・予約送信は落とす）、aix/action（本文を読む前に recent_messages を切る・ブレインの判断・内覧の報告・引用・お客様の発言の読み直し・画像経路 callVisionAlt）、evaluate-property（要約・成約パターン）、画像の読み取り（send-line-message の after＝`ensureImageDetail`／`recordSentImageProperty`、引用先＝送った時刻で）
+- **戻した直後に申込中の発言へ下書き**を作る時（最後のお客様発言が線より前）は Claude のまま（`deepseek-cutoff:blocked`）
+- **旧の歯止め（戻した会話 movedBack は丸ごと Claude）は置き換えた**（generate-reply・aix/action・evaluate-property）
+- **出口の二重の鍵**（`llm-alt-provider`）: 印（ヘッダ `x-sumora-llm-deepseek-cutoff`＝all / cut:<ISO> / blocked、無ければリクエストの箱 `app/lib/deepseek-scope.ts`）が無い会話の呼び出し・blocked は回さない。cut の時は線より前の**お客様の**発言の断片（20字以上）が本文に残っていれば回さない（網・スタッフの定型文はプロンプトにもあるので入れない）
+- 確認の道具: `npx tsx --env-file=.env.local scripts/audit-deepseek-pii.ts --days=30`（本番30日: 戻した後21回で線より前が延べ270件→今の形0件・9/23 の歯止めの後の申込中は0回）
+- **後日の確認（本番に出した後）**: `scripts/audit-deepseek-pii.ts --since=<本番に出した時刻>` で「申込中の DeepSeek 呼び出し 0」「線より前の発言への返信を DeepSeek で作った回 0」。Vercel のログ `deepseek-cutoff:cut` / `deepseek-cutoff:blocked` / `[llm-alt] 線より前のお客様の発言が本文に残っている`
+- 開発で目で見る: `LLM_TEST_MODE=deepseek-all DEBUG_PROMPT_DIR=<dir> npx next dev` → `<dir>/alt-<経路>-*.txt` に DeepSeek に送った本文（1行目に印）。YUMA の実回しで送った本文5件に線より前の断片74個が0件
+- テスト: `post-apply-cutoff.test.ts`（29）・`deepseek-cutoff-routes.test.ts`（27）・`post-apply.test.ts`（15）
+- **残る穴**: 線より後にブレイン（Claude）が全履歴から作った要約・セーブデータ・判断は申込中の事実を言い換えて持ち越しうる（網は文そのままだけ）／`aix-template-generate` 等の名札も会話 ID も無い呼び出しはテスト用の切り替えの時だけ鍵をすり抜けうる（本番では回っていない）／「申込以降の記録より後の戻し」が無い申込前 status の20会話は申込中扱いのまま（安全側・下書きも止まる）

@@ -37,9 +37,11 @@ import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { loadKnownCustomerNames, loadPartyAliases } from "@/app/lib/pii-known-names";
 import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
-import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+import { keepBrainMeta } from "@/app/lib/deepseek-cut";
+import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
 // recordAltUsage: DeepSeek など Anthropic 以外の呼び出しを llm_usage_logs に残す（fetch の出口は anthropic 宛しか見ない）
-import { LLM_POST_APPLY_HEADER, recordAltUsage } from "@/app/lib/llm-usage-recorder";
+import { LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, recordAltUsage } from "@/app/lib/llm-usage-recorder";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
 // 2026-09-19 竹内（内覧調整の会話を合わせる）: 退去前の候補の行を出口で落とす
 import { stripSlotLinesBeforeViewable } from "@/app/lib/viewing-window";
@@ -871,6 +873,14 @@ type AixReqCtx = {
   postApply: boolean;
   /** 別クラウドに回す時だけ作る読み替え器。出口で実名に戻す */
   masker: Masker | null;
+  /**
+   * 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
+   *   DeepSeek に渡してよい線（post-apply.ts deepseekSafeCutoff）。cutActive＝DeepSeek に回るので線より前の履歴・派生データを落とす
+   */
+  cutoff?: DeepseekCutoff;
+  cutActive?: boolean;
+  /** 出口に渡す「判定を通った印」（ヘッダ x-sumora-llm-deepseek-cutoff） */
+  cutMark?: CutoffMark;
 };
 const aixRequestCtx = new AsyncLocalStorage<AixReqCtx>();
 
@@ -881,6 +891,8 @@ function llmMetaHeaders(action: string): Record<string, string> {
   if (cid) h[LLM_META_HEADER_CONVERSATION] = llmMetaHeaderValue(cid);
   // 申込以降は llm-alt-provider が最初にこの印を見て Anthropic へ戻す（二重の歯止め）
   if (store?.postApply) h[LLM_POST_APPLY_HEADER] = "1";
+  // 2026-09-26 時刻の線の印（出口の二重の鍵）。印が無い・blocked の会話の呼び出しは出口で DeepSeek に回らない
+  if (store?.cutMark) h[LLM_CUTOFF_HEADER] = formatCutoffMark(store.cutMark);
   return h;
 }
 
@@ -896,6 +908,9 @@ function llmMetaHeaders(action: string): Record<string, string> {
 async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | null, customerName: string | null, action: string): Promise<void> {
   ctx.postApply = false;
   ctx.masker = null;
+  ctx.cutoff = conversationId ? null : NO_CUTOFF;
+  ctx.cutActive = false;
+  ctx.cutMark = { kind: "blocked" };
   try {
     if (conversationId) {
       // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
@@ -903,11 +918,25 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       //   status ∪ スタッフの印 ∪ 申込へ押下 ∪ 本人確認書類の受信 を1つの純関数で見る（app/lib/post-apply.ts）
       const facts = await loadPostApplyFacts(supabase, conversationId);
       const r = resolvePostApply(facts);
-      // 2026-09-26 竹内（申込中は DeepSeek に渡さない・戻したら切り替え以降だけ）: 切り替え時刻で切る仕組みができるまで、
-      //   否決で戻した会話（movedBack）も DeepSeek に回さない（履歴・要約に申込中の中身が残るため）。generate-reply と同じ
-      ctx.postApply = r.postApply || r.movedBack;
+      // 2026-09-26 竹内（申込中は DeepSeek に渡さない・戻したら切り替え以降だけ）: 戻した会話（movedBack）は丸ごと Claude のまま、を
+      //   「切り替えた時刻（deepseek_cutoff_at）より後だけ渡す」に置き換えた（generate-reply と同じ・下の cutActive で履歴と派生データを切る）
+      ctx.postApply = r.postApply;
+      ctx.cutoff = deepseekSafeCutoff(facts);
+      if (ctx.cutoff === null) ctx.postApply = true; // 線が引けない＝渡さない（fail-closed）
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
     }
+    const line = cutoffMs(ctx.cutoff ?? null);
+    const goesAlt = willRouteAlt(action, { postApply: ctx.postApply }) || (shouldRouteVisionAlt(action) && !ctx.postApply);
+    ctx.cutActive = goesAlt && line !== null && line !== NO_CUTOFF;
+    // Claude に行く時も、線がある会話は blocked にしておく（名札の無い呼び出しが DeepSeek に回らないように）
+    ctx.cutMark = ctx.postApply || (line !== NO_CUTOFF && !ctx.cutActive) ? { kind: "blocked" } : cutoffMarkOf(ctx.cutoff ?? null);
+    const cutIso = ctx.cutActive && conversationId && typeof ctx.cutoff === "string" ? ctx.cutoff : null;
+    setDeepseekScope({
+      conversationId,
+      mark: ctx.cutMark,
+      ...(cutIso && conversationId ? { netChunks: onceAsync(() => loadPreCutoffCustomerChunks(supabase, conversationId, cutIso)) } : {}),
+    });
+    if (ctx.cutActive) console.log(JSON.stringify({ tag: "deepseek-cutoff:cut", route: "aix/action", action, conversationId, line: ctx.cutoff }));
     if (!willRouteAlt(action, { postApply: ctx.postApply })) return;   // 回らないならマスクもしない
     ctx.masker = createMasker({
       conversationId: conversationId ?? action,
@@ -922,6 +951,9 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
     console.warn("[aix/action] 歯止めの用意に失敗 → Anthropic のまま:", e);
     ctx.postApply = true;
     ctx.masker = null;
+    ctx.cutActive = false;
+    ctx.cutMark = { kind: "blocked" };
+    setDeepseekScope({ conversationId, mark: ctx.cutMark });
   }
 }
 
@@ -1047,7 +1079,9 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   //     llm_usage_logs: DeepSeek へ回った AIX 171回のうち 114回（5会話）が申込へ押下の後（scripts/audit-post-apply-gate.ts）。
   //     system には会話の履歴が入るので、申込以降（status ∪ 印 ∪ 申込へ押下 ∪ 本人確認書類）は Claude のまま。
   //     判定は setupAltProviderGuards が同じ純関数（post-apply.ts）で決めた ctx.postApply を読む（四者同名）。
-  if (shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply) {
+  // 2026-09-26 時刻の線: この経路は fetch の出口を通らない（callVisionAlt が直接 DeepSeek を呼ぶ）ので、ここで印を見る（blocked・印なしは Claude）
+  const visionCutMark = aixRequestCtx.getStore()?.cutMark;
+  if (shouldRouteVisionAlt(action) && !aixRequestCtx.getStore()?.postApply && !!visionCutMark && visionCutMark.kind !== "blocked") {
     const altT0 = Date.now();
     const alt = await callVisionAlt(systemBlocks, content);
     if (alt) {
@@ -1435,16 +1469,22 @@ const AIX_SUGGEST_TEMPLATE_CATEGORY: Record<string, string> = {
 async function handleAction(request: NextRequest): Promise<Response> {
   try {
     const body = await request.json();
+    // 2026-09-17 竹内（AIX キャッシュ点検）: 会話 ID を計測用ヘッダ（x-sumora-llm-conversation）へ。POST で run() した箱に入れる
+    // 2026-09-26: 歯止め（申込以降・時刻の線）は本文を読む前に決める — DeepSeek に回る時は線より前の履歴をここで落とす
+    const reqCtx = aixRequestCtx.getStore();
+    const convId = typeof body.conversation_id === "string" && body.conversation_id ? body.conversation_id as string : null;
+    if (reqCtx) {
+      reqCtx.conversationId = convId;
+      await setupAltProviderGuards(reqCtx, convId, typeof body.customer_name === "string" ? body.customer_name : null, String(body.action ?? ""));
+      if (reqCtx.cutActive && Array.isArray(body.recent_messages)) {
+        const before = (body.recent_messages as unknown[]).length;
+        body.recent_messages = filterAfterCutoff(body.recent_messages as Array<{ rawCreatedAt?: string | null; createdAt?: string | null }>, (m) => m?.rawCreatedAt ?? m?.createdAt ?? null, reqCtx.cutoff ?? null);
+        console.log(JSON.stringify({ tag: "deepseek-cutoff:aix-history", action: body.action ?? null, conversationId: convId, before, after: (body.recent_messages as unknown[]).length }));
+      }
+    }
     const { action, account, customer_name, image_url, image_urls, condition_image_url, property_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, other_room_status, conversation_id: conversationId } = body;
     // 2026-09-18 竹内: 見積書送る【AIX】の「🎁 キャンペーン」欄（任意）。入れると2通目（カバーレター）に1文が入る
     const estimateCampaign = typeof body.estimate_campaign === "string" ? body.estimate_campaign : "";
-    // 2026-09-17 竹内（AIX キャッシュ点検）: 会話 ID を計測用ヘッダ（x-sumora-llm-conversation）へ。POST で run() した箱に入れる
-    const reqCtx = aixRequestCtx.getStore();
-    const convId = typeof conversationId === "string" && conversationId ? conversationId : null;
-    if (reqCtx) {
-      reqCtx.conversationId = convId;
-      await setupAltProviderGuards(reqCtx, convId, typeof customer_name === "string" ? customer_name : null, String(action ?? ""));
-    }
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
@@ -1644,7 +1684,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
         const row = data as (BrainMetaRow & { property_customer_id?: string | null }) | null;
         // 2026-09-13 監査 抜け1: 下書きを表示すると suggested_aix_meta が消えるため、AIX を押す時点ではほぼ常にブレインの判断なしだった。
         //   表示で消えただけ（控えが最新のお客様発言を見た本分析）なら last_brain_meta から戻す
-        const meta = (await resolveBrainMetaForGeneration(conversationId, row, "aix-action")).meta as AixLocalBrainMeta | null;
+        const metaRaw = (await resolveBrainMetaForGeneration(conversationId, row, "aix-action")).meta as AixLocalBrainMeta | null;
+        // 2026-09-26 時刻の線: DeepSeek に回る時は、線より前の発言を見て作ったブレインの判断（台帳・AIX の履歴を含む）は渡さない
+        const cutCtx = aixRequestCtx.getStore();
+        const meta = cutCtx?.cutActive ? keepBrainMeta(metaRaw, cutCtx.cutoff ?? null) : metaRaw;
         const pcid = row?.property_customer_id ?? null;
         if (!meta) return { brainContext: "", brainMeta: null, propertyCustomerId: pcid };
         // AIX-META全フィールドをRAGクエリ文脈に注入（P0-2: meta.action追加で4経路を対称化。
@@ -1668,7 +1711,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
 
     // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（誰が契約するか・誰と相談しているか等・会話に書かれない事情）は
     //   全 AIX の前提。ブレインの判断の有無に関係なく、各 AIX に渡る brainGuidanceNote の末尾に付ける
-    const aixViewingReportNote = conversationId ? viewingReportNoteForReply(await loadViewingReports(conversationId)) : "";
+    const aixViewingReportNote = conversationId
+      ? viewingReportNoteForReply(aixRequestCtx.getStore()?.cutActive
+        ? filterAfterCutoff(await loadViewingReports(conversationId), (v) => v.reportedAt, aixRequestCtx.getStore()?.cutoff ?? null)
+        : await loadViewingReports(conversationId))
+      : "";
     // ブレインノートをプロンプトに注入（戦略系→制約系の順）
     const brainGuidanceNote = (() => {
       if (!aixBrainMeta) return "";
@@ -3007,6 +3054,9 @@ ${SMORA_COMMON_RULES}
             const psmUpper = [...recentMsgArray].reverse().find((m) => m.rawCreatedAt && !Number.isNaN(Date.parse(m.rawCreatedAt)))?.rawCreatedAt;
             let q = supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "customer");
             if (psmUpper) q = q.lte("created_at", psmUpper);
+            // 2026-09-26 時刻の線: DeepSeek に回る時は線より後の発言だけ
+            const psmCut = aixRequestCtx.getStore();
+            if (psmCut?.cutActive && typeof psmCut.cutoff === "string") q = q.gt("created_at", psmCut.cutoff);
             const { data: older } = await q.order("created_at", { ascending: false }).limit(80);
             psmReqSources = ((older ?? []) as Array<{ text: string | null }>).reverse().map((r) => ({ sender: "customer", text: r.text ?? "" }));
           } catch { /* 読めなければ画面の分だけ */ }
@@ -4954,7 +5004,7 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
             ? buildEstimateCostFacts(cmEstUrls, (property_names as string[] | undefined) ?? [], currentAction)
             : Promise.resolve({ block: "", notes: [] } as EstimateCostFacts),
           // 2026-09-15 竹内（みく事例）: お客様の引用返信の引用先（スタッフが送った物件資料の画像 → sent_properties で物件名）
-          conversationId ? resolveLatestQuotedContext(conversationId) : Promise.resolve(null),
+          conversationId ? resolveLatestQuotedContext(conversationId, aixRequestCtx.getStore()?.cutActive ? { cutoff: aixRequestCtx.getStore()?.cutoff ?? null } : {}) : Promise.resolve(null),
         ]);
         const pcrQuotedBlock = formatQuotedContextBlock(pcrQuoted);
         // 見積書送付の事実 + 費用メモを aix_usage_logs へ永続化させる（クライアント → log-aix-usage）
@@ -7125,7 +7175,7 @@ const SERVER_BUDGET_MS = 55_000;
 
 export async function POST(request: NextRequest) {
   if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
-    return aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => handleAction(request));
+    return runInDeepseekScope(() => aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => handleAction(request)));
   }
 
   const encoder = new TextEncoder();
@@ -7147,7 +7197,7 @@ export async function POST(request: NextRequest) {
 
       const ctx: AixStreamCtx = { emit, deadline, signal: ac.signal, seq: 0, busy: false };
       try {
-        const res = await aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => aixStream.run(ctx, () => handleAction(request)));
+        const res = await runInDeepseekScope(() => aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => aixStream.run(ctx, () => handleAction(request))));
         const resData = await (res as Response).json().catch(() => ({}));
         emit({ t: "done", payload: resData });
       } catch (err) {

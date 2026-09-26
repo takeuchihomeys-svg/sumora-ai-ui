@@ -15,6 +15,7 @@
 //   身分証が写っている事がある（設計知見「画像は伏せようがない」）。この関数を customer の画像に使わない。
 import { supabase } from "@/app/lib/supabase";
 import { readPropertyImageDetail, type ImageKind } from "@/app/lib/property-image-read";
+import { loadDeepseekCutoff, isAfterCutoff } from "@/app/lib/post-apply";
 
 export type ImageDetail = { kind: ImageKind; lines: string[] };
 
@@ -43,12 +44,19 @@ export async function getImageDetails(imageUrls: string[]): Promise<Map<string, 
 export async function ensureImageDetail(
   imageUrl: string,
   conversationId: string | null,
-  opts?: { timeoutMs?: number },
+  /** sentAt: その画像を送った時刻（省略時は今＝送った直後の読み取り） */
+  opts?: { timeoutMs?: number; sentAt?: string | null },
 ): Promise<ImageDetail | null> {
   if (!imageUrl) return null;
   try {
     const cached = (await getImageDetails([imageUrl])).get(imageUrl);
     if (cached) return cached;
+    // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
+    //   読み取りは DeepSeek（property_image_detail）。申込中の会話・線より前に送った画像は読まない（会話の記録から線を引く・読めなければ読まない）
+    if (conversationId && !isAfterCutoff(opts?.sentAt ?? new Date().toISOString(), await loadDeepseekCutoff(supabase, conversationId))) {
+      console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "image-detail", conversationId }));
+      return null;
+    }
     const read = await readPropertyImageDetail(imageUrl, { timeoutMs: opts?.timeoutMs });
     // 読めなかった（推論で使い切った・HTTPエラー）時は**残さない**。
     //   "other" を残すと次の機会に読み直せなくなる（読み取りの失敗と「物件資料ではない」は別）

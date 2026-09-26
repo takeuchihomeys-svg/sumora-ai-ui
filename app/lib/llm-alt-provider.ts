@@ -19,8 +19,10 @@
 //   ・画像（Vision）と streaming は対象外＝そのまま Anthropic へ
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
-import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, recordAltUsage, systemFullKey } from "./llm-usage-recorder";
+import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, LLM_CUTOFF_HEADER, recordAltUsage, systemFullKey } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
+import { parseCutoffMark, countCutoffLeaks, type CutoffMark } from "./post-apply";
+import { currentDeepseekScope } from "./deepseek-scope";
 import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, type LlmTestMode } from "./llm-test-mode";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -234,6 +236,28 @@ export function isAutoSendCall(headers: Headers): boolean {
 export function isPostApplyCall(headers: Headers): boolean {
   const v = (headers.get(LLM_POST_APPLY_HEADER) ?? "").trim();
   return v === "1" || v.toLowerCase() === "true";
+}
+
+/**
+ * 「DeepSeek に渡す時刻の線」の二重の鍵（純関数）。2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」
+ *   入口（返信生成・AIX）が線（post-apply.ts deepseekSafeCutoff）で材料を切り、印（ヘッダ x-sumora-llm-deepseek-cutoff か deepseek-scope の箱）を置く。
+ *   出口はその印を見る:
+ *     blocked                          … 回さない（申込中・判定が読めない・線より前の発言への返信）
+ *     会話の呼び出し（会話 ID・箱あり）で印なし … 回さない（線を引かずに来た呼び出し＝入口の取りこぼし）
+ *     会話の無い呼び出し（物件の読み取り等）   … 今までどおり
+ */
+export type CutoffGate = "route" | "claude:blocked" | "claude:no_mark";
+export function cutoffGateDecision(o: { conversationId: string | null; inScope: boolean; mark: CutoffMark | null }): CutoffGate {
+  if (o.mark?.kind === "blocked") return "claude:blocked";
+  if ((o.conversationId || o.inScope) && !o.mark) return "claude:no_mark";
+  return "route";
+}
+
+/** 出口の網に当てる本文（system と messages の文字だけ・画像は含まない） */
+export function altBodyText(body: AnthropicBody): string {
+  const parts: string[] = [flattenContent(body.system) ?? ""];
+  for (const m of body.messages ?? []) parts.push(flattenContent(m.content) ?? "");
+  return parts.join("\n");
 }
 
 /**
@@ -670,6 +694,34 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     const sysKeyFull = systemFullKey(body.system);
     const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), sysHead);
     if (!shouldRouteAlt(cfg, routeName, sysHead)) return original(input as RequestInfo, init);
+
+    // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 二重の鍵。
+    //   入口が線を引いた印（ヘッダ優先・無ければリクエストの箱）が無い会話の呼び出し・blocked は回さない。
+    //   cut（線より後だけに切った）の時は、線より前のお客様の発言が本文に残っていないかを網で見る（入口の取りこぼしの最後の歯止め）
+    const scope = currentDeepseekScope();
+    const mark = parseCutoffMark(headers.get(LLM_CUTOFF_HEADER)) ?? scope?.mark ?? null;
+    const convForGate = headers.get(LLM_CONVERSATION_HEADER) ?? scope?.conversationId ?? null;
+    const gate = cutoffGateDecision({ conversationId: convForGate, inScope: !!scope, mark });
+    if (gate !== "route") {
+      console.warn("[llm-alt] 時刻の線の印なし・渡さない会話 → Claude のまま", JSON.stringify({ route: routeName, gate, conversationId: convForGate }));
+      return original(input as RequestInfo, init);
+    }
+    if (mark?.kind === "cut") {
+      let leaks = -1;
+      try { leaks = countCutoffLeaks(altBodyText(body), scope?.netChunks ? await scope.netChunks() : []); } catch { leaks = -1; }
+      if (leaks !== 0) {
+        // -1 ＝ 網の材料が読めない（fail-closed）
+        console.warn("[llm-alt] 線より前のお客様の発言が本文に残っている → Claude のまま", JSON.stringify({ route: routeName, leaks, conversationId: convForGate }));
+        return original(input as RequestInfo, init);
+      }
+    }
+    // 開発環境だけ: DeepSeek に送る本文を書き出す（線より前の中身が入っていないかを目で確かめる用・本番では VERCEL_ENV が付くので動かない）
+    if (process.env.DEBUG_PROMPT_DIR && !process.env.VERCEL_ENV) {
+      try {
+        const fs = await import("node:fs");
+        fs.writeFileSync(`${process.env.DEBUG_PROMPT_DIR}/alt-${routeName}-${Date.now()}.txt`, `mark=${mark ? JSON.stringify(mark) : "none"} conversation=${convForGate ?? "-"}\n\n${altBodyText(body)}`, "utf8");
+      } catch { /* 書けなくても止めない */ }
+    }
 
     const started = Date.now();
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
-import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
+import { loadDeepseekCutoff, NO_CUTOFF, type DeepseekCutoff } from "@/app/lib/post-apply";
+import { keepIfMadeAfter, keepBrainMeta } from "@/app/lib/deepseek-cut";
 
 export const maxDuration = 25;
 
@@ -122,7 +123,7 @@ export async function POST(req: NextRequest) {
   const { data: customer, error: customerError } = await supabase
     .from("property_customers")
     .select(
-      "rent_max, max_rent, walk_minutes, floor_plan, layout, floor_area_min, pet, building_age, desired_area, preferences, ng_points, initial_cost_limit, personality_profile, ai_summary_json, exclusion_areas"
+      "rent_max, max_rent, walk_minutes, floor_plan, layout, floor_area_min, pet, building_age, desired_area, preferences, ng_points, initial_cost_limit, personality_profile, ai_summary_json, ai_summary_at, exclusion_areas"
     )
     .eq("id", propertyCustomerId)
     .single();
@@ -135,17 +136,17 @@ export async function POST(req: NextRequest) {
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const aixMeta = convRow?.suggested_aix_meta as { winning_pattern?: string; repeated_concern?: string } | null;
+  const aixMetaRaw = convRow?.suggested_aix_meta as { winning_pattern?: string; repeated_concern?: string; analyzed_msg_ts?: string | null } | null;
   // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
   //   この経路は DeepSeek に会話由来の要約（ai_summary_json・winning_pattern・repeated_concern・personality_profile）を
   //   申込の判定なしで送っていた（scripts/audit-deepseek-pii.ts）。切り替え時刻で切る仕組みができるまで、申込以降・否決で戻した会話・
   //   判定が読めない時は、会話由来の要約を DeepSeek に渡さない（物件と条件だけで点を付ける）
-  let conversationSummaryAllowed = false;
-  try {
-    const convId = (convRow as { id?: string } | null)?.id;
-    if (convId) { const r = resolvePostApply(await loadPostApplyFacts(supabase, convId)); conversationSummaryAllowed = !r.postApply && !r.movedBack; }
-    else conversationSummaryAllowed = true; // 会話が無い＝申込の記録も無い
-  } catch { conversationSummaryAllowed = false; }
+  //   → 2026-09-26 時刻の線（post-apply.ts deepseekSafeCutoff）に置き換え: 申込中・読めない時は渡さない／戻した会話は線より後に作った物だけ／
+  //     申込の記録が無ければ全部。顧客タイプ（personality_profile）は作った時刻が無いので線がある会話では渡さない
+  const convIdForCut = (convRow as { id?: string } | null)?.id ?? null;
+  const summaryCutoff: DeepseekCutoff = await loadDeepseekCutoff(supabase, convIdForCut); // 会話が無い＝申込の記録も無い（-Infinity）・読めなければ null
+  const conversationSummaryAllowed = summaryCutoff !== null;
+  const aixMeta = keepBrainMeta(aixMetaRaw, summaryCutoff);
 
   if (customerError || !customer) {
     return NextResponse.json(
@@ -450,8 +451,8 @@ export async function POST(req: NextRequest) {
       if (crossProfileTags.length > 0)  contextParts.push(`【類似顧客の傾向】${crossProfileTags.join("・")}（この顧客の配点傾向: ${weightsUsed}）`);
       if (conversationSummaryAllowed && aixMeta?.winning_pattern)    contextParts.push(`【この顧客の成約パターン（スコアに応用）】${aixMeta.winning_pattern}`);
       if (conversationSummaryAllowed && aixMeta?.repeated_concern)   contextParts.push(`【この顧客の繰り返す懸念（懸念を解消できない物件は減点）】${aixMeta.repeated_concern}`);
-      if (conversationSummaryAllowed && customer.personality_profile) contextParts.push(`【顧客タイプ】${customer.personality_profile}`);
-      if (conversationSummaryAllowed && customer.ai_summary_json) {
+      if (summaryCutoff === NO_CUTOFF && customer.personality_profile) contextParts.push(`【顧客タイプ】${customer.personality_profile}`);
+      if (conversationSummaryAllowed && keepIfMadeAfter(customer.ai_summary_json, (customer as { ai_summary_at?: string | null }).ai_summary_at ?? null, summaryCutoff)) {
         const summaryStr = typeof customer.ai_summary_json === "string"
           ? customer.ai_summary_json
           : JSON.stringify(customer.ai_summary_json);

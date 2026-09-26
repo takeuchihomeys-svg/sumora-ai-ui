@@ -274,7 +274,7 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
 {
   const gen = readFileSync("app/api/generate-reply/route.ts", "utf8");
   t("★ 回る時だけ読み替え器を作る（Claude へ行く時は素通し）",
-    /willRouteAlt\("reply_generate", \{[\s\S]{0,120}?postApply: postApplyConversation, autoSend: autoSendConversation/.test(gen));
+    /willRouteAlt\("reply_generate", \{[\s\S]{0,120}?postApply: postApplyConversation \|\| deepseekBlocked, autoSend: autoSendConversation/.test(gen));
   t("★ キャッシュの印が無いブロックだけ読み替える（前置きを壊さない）",
     /if \(b\.cache_control\) return b;/.test(gen) && /maskUncachedBlocks\(messages, replyMasker\)/.test(gen));
   t("★ 生成文を実名に戻している（後処理より先）", /replyMasker\.unmask\(fullText\)/.test(gen));
@@ -283,7 +283,8 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
   t("★ 修正ループ（再生成）にも同じ読み替えを通す（1回目だけ伏せても2回目で実名が出る）",
     /\.\.\.genMessages,\s*\n\s*new AIMessage\(replyMasker \? replyMasker\.maskBlock\(draftBody\)/.test(gen));
   t("★ 申込以降は印を付けて回さない（竹内「申込以降はいれない」）",
-    /postApplyConversation \? \{ \[LLM_POST_APPLY_HEADER\]: "1" \}/.test(gen)
+    /postApplyConversation \|\| deepseekBlocked \? \{ \[LLM_POST_APPLY_HEADER\]: "1" \}/.test(gen)
+    // 2026-09-26: 線より前の発言への返信（deepseekBlocked）も同じ印で Claude のまま（post-apply.ts deepseekSafeCutoff）
     // 2026-09-23: 判定は status だけでなく記録（申込へ押下・本人確認書類・戻し）を見る post-apply.ts に移した
     && /loadPostApplyFacts\(supabase, conversationId\)/.test(gen) && /postApplyConversation = r\.postApply/.test(gen));
   t("★ 状態が読めない時は「回さない」側へ倒す（fail-closed）",

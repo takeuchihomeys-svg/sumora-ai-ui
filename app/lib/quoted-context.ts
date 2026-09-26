@@ -17,6 +17,7 @@ import { supabase } from "@/app/lib/supabase";
 import { getImageDetails } from "@/app/lib/image-detail-store";
 import type { ImageKind } from "@/app/lib/property-image-read";
 import type { QuotedContext } from "@/app/lib/quoted-note";
+import { isAfterCutoff, type DeepseekCutoff } from "@/app/lib/post-apply";
 
 export type { QuotedContext } from "@/app/lib/quoted-note";
 export { formatQuotedDetailBlock, describeQuotedTarget, buildQuotedReplyNote, formatQuotedContextBlock } from "@/app/lib/quoted-note";
@@ -51,7 +52,9 @@ export async function propertyLabelsForImages(conversationId: string, imageUrls:
 
 type QuotedPair = {
   customerText: string;
-  quoted: { sender: string; text: string | null; image_url: string | null };
+  /** 引用したお客様の発言の時刻 */
+  customerAt: string | null;
+  quoted: { sender: string; text: string | null; image_url: string | null; created_at?: string | null };
 };
 
 /** お客様の最新の発言（最後のスタッフ発言より後）のうち、引用返信の最後の1通と、その引用先 */
@@ -61,7 +64,7 @@ async function findLatestQuotedPair(conversationId: string): Promise<QuotedPair 
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(8);
-  const recent = (rows ?? []) as Array<{ sender: string; text: string | null; quoted_message_id: string | null }>;
+  const recent = (rows ?? []) as Array<{ sender: string; text: string | null; quoted_message_id: string | null; created_at?: string | null }>;
   let target: (typeof recent)[number] | null = null;
   for (const m of recent) {
     if (m.sender !== "customer") { if (target) break; continue; }
@@ -69,12 +72,12 @@ async function findLatestQuotedPair(conversationId: string): Promise<QuotedPair 
   }
   if (!target?.quoted_message_id) return null;
   const { data: q } = await supabase.from("messages")
-    .select("sender, text, image_url")
+    .select("sender, text, image_url, created_at")
     .eq("conversation_id", conversationId)
     .eq("line_message_id", target.quoted_message_id)
     .maybeSingle();
   if (!q) return null;
-  return { customerText: target.text ?? "", quoted: q as QuotedPair["quoted"] };
+  return { customerText: target.text ?? "", customerAt: target.created_at ?? null, quoted: q as QuotedPair["quoted"] };
 }
 
 /** 「[画像]」「[動画]」だけ＝中身がまだ分かっていない画像 */
@@ -94,8 +97,11 @@ export async function ensureQuotedImageDetail(conversationId: string): Promise<b
     if (!pair) return false;
     const { quoted } = pair;
     if (quoted.sender !== "staff" || !quoted.image_url || !isImagePlaceholder(quoted.text)) return false;
+    // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
+    //   読み取りは DeepSeek（property_image_detail）。申込中の会話・線より前に送った画像は読まない
+    //   （判定は ensureImageDetail の中・引用先を送った時刻で見る）
     const { ensureImageDetail } = await import("@/app/lib/image-detail-store");
-    const d = await ensureImageDetail(quoted.image_url, conversationId);
+    const d = await ensureImageDetail(quoted.image_url, conversationId, { sentAt: quoted.created_at ?? null });
     return !!d;
   } catch (e) {
     console.warn("[quoted-context] ensure detail failed:", e instanceof Error ? e.message : e);
@@ -104,10 +110,15 @@ export async function ensureQuotedImageDetail(conversationId: string): Promise<b
 }
 
 /** お客様の最新の発言（最後のスタッフ発言より後）のうち、引用返信の最後の1通の引用先 */
-export async function resolveLatestQuotedContext(conversationId: string): Promise<QuotedContext | null> {
+export async function resolveLatestQuotedContext(
+  conversationId: string,
+  /** DeepSeek に送る時だけ渡す線（post-apply.ts）。引用した発言・引用先のどちらかが線より前なら何も返さない。省略時は今までどおり */
+  opts: { cutoff?: DeepseekCutoff } = {},
+): Promise<QuotedContext | null> {
   try {
     const pair = await findLatestQuotedPair(conversationId);
     if (!pair) return null;
+    if ("cutoff" in opts && !(isAfterCutoff(pair.customerAt, opts.cutoff) && isAfterCutoff(pair.quoted.created_at ?? null, opts.cutoff))) return null;
     const quoted = pair.quoted;
     const isImage = isImagePlaceholder(quoted.text);
     let propertyLabel: string | null = null;

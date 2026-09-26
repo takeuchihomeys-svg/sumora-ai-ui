@@ -2,6 +2,7 @@
 // final-check anomaly_scan 用の正解データ取得（チェックポイント + property_customers）
 // 絶対に throw しない・GT_TIMEOUT_MS で諦める（fail-open — 送信を絶対に止めない）
 import { supabase } from "@/app/lib/supabase";
+import { isAfterCutoff, type DeepseekCutoff } from "@/app/lib/post-apply";
 
 export interface GroundTruth {
   checkpointFacts?: string;      // 確認済み事実（最新チェックポイント・最高権威）
@@ -12,11 +13,16 @@ const GT_TIMEOUT_MS = 1500;
 
 export async function fetchGroundTruth(
   conversationId: string | null | undefined,
+  /**
+   * 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
+   *   DeepSeek に送る時だけ渡す線（post-apply.ts deepseekSafeCutoff）。線より前に作ったセーブデータは返さない。省略時は今までどおり
+   */
+  opts: { cutoff?: DeepseekCutoff } = {},
 ): Promise<GroundTruth> {
   if (!conversationId) return {};
   try {
     return await Promise.race([
-      fetchInner(conversationId),
+      fetchInner(conversationId, opts),
       new Promise<GroundTruth>((resolve) => setTimeout(() => resolve({}), GT_TIMEOUT_MS)),
     ]);
   } catch (e) {
@@ -26,11 +32,11 @@ export async function fetchGroundTruth(
   }
 }
 
-async function fetchInner(conversationId: string): Promise<GroundTruth> {
+async function fetchInner(conversationId: string, opts: { cutoff?: DeepseekCutoff }): Promise<GroundTruth> {
   const [cpRes, convRes] = await Promise.all([
     supabase
       .from("conversation_checkpoints")
-      .select("checkpoint_index, summary")
+      .select("checkpoint_index, summary, created_at")
       .eq("conversation_id", conversationId)
       .order("checkpoint_index", { ascending: false })
       .limit(1)
@@ -43,7 +49,8 @@ async function fetchInner(conversationId: string): Promise<GroundTruth> {
   ]);
 
   let checkpointFacts: string | undefined;
-  if (!cpRes.error && cpRes.data?.summary) {
+  const cpAllowed = !("cutoff" in opts) || isAfterCutoff((cpRes.data?.created_at as string | null | undefined) ?? null, opts.cutoff);
+  if (!cpRes.error && cpRes.data?.summary && cpAllowed) {
     checkpointFacts = (cpRes.data.summary as string).slice(0, 2000);
   }
 

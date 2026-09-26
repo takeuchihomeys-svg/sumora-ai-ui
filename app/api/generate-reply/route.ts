@@ -6,10 +6,13 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
-import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER } from "@/app/lib/llm-usage-recorder";
+import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER } from "@/app/lib/llm-usage-recorder";
 import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
-import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
+import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
+// 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 線で派生データを切る・出口の印を置く箱
+import { cutBrainGate, keepIfMadeAfter } from "@/app/lib/deepseek-cut";
+import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
@@ -2690,9 +2693,9 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 //   （旧: 生成だけが別の関数を持っていて、AIX・ブレインが使っている「引用先の画像 → 物件名」を
 //    見ておらず、「どの物件かはスタッフにしか分からない」という**もう本当でない理由**で名前を伏せていた）。
 //   併せて、引用先がこちらの物件資料なら**資料に書いてある条件**（駐車場・ペット・保証会社・設備）も渡る。
-async function fetchQuotedContext(conversationId: string): Promise<string> {
+async function fetchQuotedContext(conversationId: string, cutoffOpts: { cutoff?: DeepseekCutoff } = {}): Promise<string> {
   try {
-    const q = await resolveLatestQuotedContext(conversationId);
+    const q = await resolveLatestQuotedContext(conversationId, cutoffOpts);
     if (!q) return "";
     const custText = q.customerText;
     // お客様がリンク（URL）そのものを求めているか判定
@@ -2720,7 +2723,7 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
 // ─── conversationId → ai_summary_json 取得（regex往復の廃止・構造化サマリー直接参照）──
 // クライアントが summaryJson を渡さない場合のフォールバック。
 // conversations.property_customer_id 経由で property_customers.ai_summary_json を引く
-async function fetchSummaryJsonByConversation(conversationId: string): Promise<ReplySummaryJson | null> {
+async function fetchSummaryJsonByConversation(conversationId: string, cutoffOpts: { cutoff?: DeepseekCutoff } = {}): Promise<ReplySummaryJson | null> {
   try {
     const { data: conv } = await supabase
       .from("conversations")
@@ -2731,10 +2734,13 @@ async function fetchSummaryJsonByConversation(conversationId: string): Promise<R
     if (!pcId) return null;
     const { data: pc } = await supabase
       .from("property_customers")
-      .select("ai_summary_json")
+      .select("ai_summary_json, ai_summary_at")
       .eq("id", pcId)
       .single();
-    return ((pc as { ai_summary_json?: ReplySummaryJson | null } | null)?.ai_summary_json) ?? null;
+    const row = pc as { ai_summary_json?: ReplySummaryJson | null; ai_summary_at?: string | null } | null;
+    // 2026-09-26 時刻の線: DeepSeek に送る時は、線より前に作った要約（作った時刻が分からない物も）は渡さない
+    if ("cutoff" in cutoffOpts) return keepIfMadeAfter(row?.ai_summary_json ?? null, row?.ai_summary_at ?? null, cutoffOpts.cutoff ?? null);
+    return row?.ai_summary_json ?? null;
   } catch (err) {
     console.warn("[generate-reply] ai_summary_json取得失敗 — テキストregexフォールバックで続行:", err);
     return null;
@@ -2864,7 +2870,13 @@ async function applyAixGateAndRespond(
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────
+// 2026-09-26: リクエストごとに「DeepSeek に渡す時刻の線」の箱を開ける（app/lib/deepseek-scope.ts）。
+//   線を引くまでの呼び出し・名札の無い中の判定（最終チェック等）も、出口（llm-alt-provider）がこの箱の印で守る
 export async function POST(req: NextRequest) {
+  return runInDeepseekScope(() => handleGenerateReply(req));
+}
+
+async function handleGenerateReply(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
   }
@@ -3144,6 +3156,8 @@ export async function POST(req: NextRequest) {
   let postApplyConversation = false;
   // 記録が読めた時の判定（下書きを止める側はこちらを見る。読めない時は止めない）
   let postApplyResolved: ReturnType<typeof resolvePostApply> | null = null;
+  // DeepSeek に渡してよい線（null＝申込中・読めない／ISO＝この時刻より後だけ／-Infinity＝全部）。会話が無ければ申込の記録も無い
+  let deepseekCutoff: DeepseekCutoff = conversationId ? null : NO_CUTOFF;
   if (conversationId && !isTemplateOptimize) {
     try {
       // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: status は27.4%の会話で遅れていて、
@@ -3159,16 +3173,19 @@ export async function POST(req: NextRequest) {
       const r = resolvePostApply(facts);
       postApplyResolved = r;
       // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、申込落ちてステータスを切り替えたら切り替えたところ以降渡せば個人情報防げる」:
-      //   切り替えた時刻より後だけを渡す仕組み（deepseekSafeCutoff・消えない列）ができるまでの歯止め — 戻した会話（movedBack）は
-      //   履歴25件・要約・セーブデータに申込中の中身が残るので DeepSeek に回さない（Claude のまま）。下書きの生成は止めない（postApplyResolved は変えない）
-      //   監査: scripts/audit-deepseek-pii.ts（9/23 の歯止めの後も戻した5会話で11回届いていた）
-      postApplyConversation = r.postApply || r.movedBack;
+      //   戻した会話（movedBack）は、切り替えた時刻（conversations.deepseek_cutoff_at・消えない列）より後だけを DeepSeek に渡す（下の「時刻の線」）。
+      //   旧の歯止め（戻した会話は丸ごと Claude のまま）はこの仕組みに置き換えた。監査: scripts/audit-deepseek-pii.ts
+      postApplyConversation = r.postApply;
+      deepseekCutoff = deepseekSafeCutoff(facts);
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "generate-reply:post-apply", conversationId, reason: r.reason }));
     } catch {
       // 読めなければ自動返信は false（通常どおり）だが、申込以降は true に倒す（個人情報を外に出さない）
       postApplyConversation = true;
+      deepseekCutoff = null;
     }
   }
+  // テンプレートの最適化も会話の履歴を使うので同じ線で見る（下書きを止める判定には使わない）
+  if (conversationId && isTemplateOptimize) deepseekCutoff = await loadDeepseekCutoff(supabase, conversationId);
 
   // 2026-09-23 竹内「申込中は別のツールで文生成しているので、ここ文生成しなくて大丈夫なところとなる」:
   //   旧は is_post_apply と status だけを見ていた（status は27.4%の会話で遅れる）。上で読んだ同じ記録（post-apply.ts:
@@ -3176,6 +3193,44 @@ export async function POST(req: NextRequest) {
   if (conversationId && externalBrainGate === null && !isTemplateOptimize && postApplyResolved?.postApply) {
     console.log("[generate-reply] post_apply → ドラフト生成スキップ:", JSON.stringify({ conversationId, reason: postApplyResolved.reason }));
     return NextResponse.json({ skipped: true, reason: "post_apply_or_skip_status", post_apply_reason: postApplyResolved.reason });
+  }
+
+  // ─── 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、申込落ちてステータスを切り替えたら、切り替えたところ以降渡せば個人情報防げる」───
+  //   DeepSeek に送る時だけ、線（deepseekCutoff）より前の履歴・派生データ（ブレインの判断・会話の方向・要約・セーブデータ・台帳・AIX の履歴）を落とす。
+  //   Claude に送る時は1バイトも変えない（ブレイン等の Claude の経路は今までどおり）。
+  //   ・線より前の発言への返信（戻した直後に申込中の発言へ下書きを作る）は DeepSeek に渡さない（今の発言そのものが線より前）
+  //   ・出口（llm-alt-provider）には「判定を通った印」を置く（ヘッダ＋リクエストの箱）。印が blocked・無い会話の呼び出しは出口で Claude に戻す（二重の鍵）
+  const replyCutLine = cutoffMs(deepseekCutoff);
+  const replyGoesAlt = !postApplyConversation && replyCutLine !== null
+    && willRouteAlt("reply_generate", { postApply: false, autoSend: autoSendConversation });
+  const latestCustomerAtForCut = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
+  let deepseekBlocked = replyCutLine === null;
+  let deepseekCutActive = false;
+  if (replyGoesAlt && replyCutLine !== NO_CUTOFF) {
+    if (isAfterCutoff(latestCustomerAtForCut, deepseekCutoff) || (isTemplateOptimize && !latestCustomerAtForCut)) deepseekCutActive = true;
+    else deepseekBlocked = true;
+  }
+  // Claude に行く会話で線がある時も、名札の無い中の呼び出しが DeepSeek に回らないよう blocked にしておく
+  const replyCutMark: CutoffMark = deepseekBlocked || (replyCutLine !== NO_CUTOFF && !deepseekCutActive) ? { kind: "blocked" } : cutoffMarkOf(deepseekCutoff);
+  setDeepseekScope({
+    conversationId: conversationId ?? null,
+    mark: replyCutMark,
+    ...(deepseekCutActive && conversationId && typeof deepseekCutoff === "string"
+      ? { netChunks: onceAsync(() => loadPreCutoffCustomerChunks(supabase, conversationId, deepseekCutoff as string)) }
+      : {}),
+  });
+  if (deepseekCutActive) {
+    const before = recentMessages.length;
+    recentMessages = filterAfterCutoff(recentMessages, (m) => m.createdAt, deepseekCutoff);
+    // 画面・呼び出し元が渡した要約（作った時刻が分からない）は渡さない。構造化サマリーは DB から作った時刻つきで読み直す
+    customerSummary = "";
+    bodySummaryJson = undefined;
+    pendingScheduledMessages = [];
+    aixSourceMessage = "";
+    if (externalBrainGate) externalBrainGate = cutBrainGate(externalBrainGate, deepseekCutoff);
+    console.log(JSON.stringify({ tag: "deepseek-cutoff:cut", conversationId, line: deepseekCutoff, messages: { before, after: recentMessages.length } }));
+  } else if (deepseekBlocked && replyGoesAlt) {
+    console.log(JSON.stringify({ tag: "deepseek-cutoff:blocked", conversationId, line: deepseekCutoff, latestCustomerAt: latestCustomerAtForCut }));
   }
 
   // ─── LINE グループの会話（2026-09-21 竹内・黒明様お部屋探し）────────────────────────────
@@ -3267,6 +3322,7 @@ export async function POST(req: NextRequest) {
         .order("created_at", { ascending: false })
         .limit(20);
       ledgerTasks = (data ?? []) as LedgerTask[];
+      if (deepseekCutActive) ledgerTasks = filterAfterCutoff(ledgerTasks, (t) => t.created_at ?? null, deepseekCutoff);
     } catch (err) { console.error("[generate-reply] ledger line_tasks 取得失敗:", err); }
   }
   // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
@@ -3520,6 +3576,12 @@ export async function POST(req: NextRequest) {
         recentAixRows = (recentAixRes.data ?? []) as RecentAixRow[];
         recordedFacts = recordedRes;
         viewingReports = viewingReportsRes;
+        // 2026-09-26 時刻の線: DeepSeek に送る時は、線より前の AIX の履歴・送った事実・内覧の報告を渡さない（「見積書を送ったか」の真偽だけは中身ではないので全体のまま）
+        if (deepseekCutActive) {
+          recentAixRows = filterAfterCutoff(recentAixRows, (r) => r.created_at, deepseekCutoff);
+          recordedFacts = filterAfterCutoff(recordedFacts, (f) => f.sent_at, deepseekCutoff);
+          viewingReports = filterAfterCutoff(viewingReports, (v) => v.reportedAt, deepseekCutoff);
+        }
       } catch { /* 判定不能時は従来動作（宣言許可）を維持する */ }
     }
     // 顧客の現在のメッセージが新規見積依頼なら「送付済み」フラグを解除する
@@ -3651,9 +3713,11 @@ export async function POST(req: NextRequest) {
     // brain直列アーキテクチャ: brainMetaDirect 指定時（bg-async経由）は DB 再フェッチをスキップ。
     // bg-async が直前に brain を直列実行して書いた値なので DB と同値（むしろ順序保証つき）＝常にT1（fresh）。
     // 重複フェッチ解消(2026-08): チェックポイントAのスナップショットがあれば再利用（毎分cron積算のDB往復1回削減）
-    const brainGate = externalBrainGate ?? gateFromCheckpointA ?? ((conversationId && !isTemplateOptimize)
+    const brainGateRaw = externalBrainGate ?? gateFromCheckpointA ?? ((conversationId && !isTemplateOptimize)
       ? await fetchReplyModeGate(conversationId)
       : null);
+    // 2026-09-26 時刻の線: DeepSeek に送る時は、線より前の発言を見て作ったブレインの判断・会話の方向は渡さない（T3 の扱いになる）
+    const brainGate = deepseekCutActive ? cutBrainGate(brainGateRaw, deepseekCutoff) : brainGateRaw;
     const brainMeta = brainGate?.meta ?? null;
     // AIX履歴: Brain(suggested_aix_meta.last_aix_history)から取得（Brain がaix_usage_logs を読んで組み立て済み）
     const lastAixHistoryText: string | null = brainMeta?.last_aix_history ?? null;
@@ -5006,11 +5070,11 @@ export async function POST(req: NextRequest) {
         .catch((err) => { console.error("[generate-reply] getCachedPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
       // 構造化サマリー: body未指定かつconversationIdありならDBから直接取得（regex往復の廃止）
       !bodySummaryJson && conversationId
-        ? fetchSummaryJsonByConversation(conversationId)
+        ? fetchSummaryJsonByConversation(conversationId, deepseekCutActive ? { cutoff: deepseekCutoff } : {})
         : Promise.resolve(null),
       // パターンA: 引用リプライの引用先コンテキスト（quoted_message_id → line_message_id JOIN）
       conversationId
-        ? fetchQuotedContext(conversationId)
+        ? fetchQuotedContext(conversationId, deepseekCutActive ? { cutoff: deepseekCutoff } : {})
         : Promise.resolve(""),
       // テンプレート最適化モードのみ: 旧adaptルートのDB学習ルール2種を追加取得
       isTemplateOptimize ? fetchTemplateAdaptRules() : Promise.resolve(""),
@@ -5020,7 +5084,7 @@ export async function POST(req: NextRequest) {
       // 過去の会話セーブポイント + property_customers 条件 — final-check の正解データ兼プロンプト文脈
       // （旧: conversation_checkpoints を ascending limit 3 でインライン取得 → ローリング方式では最古を
       //  取ってしまうため fetchGroundTruth（最新1件 desc）に統一）
-      fetchGroundTruth(conversationId),
+      fetchGroundTruth(conversationId, deepseekCutActive ? { cutoff: deepseekCutoff } : {}),
       // final-check 専用ルール（action_type="final_check"）: 3パス全てに注入して日々改善を反映
       // includeGlobal=false で global共通ルールを除外（生成用ルールの二重注入・プロンプト汚染を防ぐ）
       getCachedPromptRules("final_check", {}, false)
@@ -5374,7 +5438,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     const autoSendHeaders = {
       ...(conversationId ? { [LLM_CONVERSATION_HEADER]: conversationId } : {}),
       ...(autoSendConversation ? { [LLM_AUTO_SEND_HEADER]: "1" } : {}),
-      ...(postApplyConversation ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
+      ...(postApplyConversation || deepseekBlocked ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
+      // 2026-09-26 時刻の線: 判定を通った印（出口の二重の鍵）。blocked・印なしの会話の呼び出しは DeepSeek に回らない
+      [LLM_CUTOFF_HEADER]: formatCutoffMark(replyCutMark),
     };
 
     // ─── 2026-09-19 竹内「お客さんの本名や電話番号は絶対にマスキングするように」────────────────
@@ -5383,7 +5449,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     //   **キャッシュの印が付いているブロックには触らない**：個人情報はそこに無いうえ、
     //   前置きが変わるとプロンプトキャッシュが効かなくなる（DeepSeek は前置き一致で 1/30 の値段）。
     const replyMasker = (!isTemplateOptimize && willRouteAlt("reply_generate", {
-      postApply: postApplyConversation, autoSend: autoSendConversation,
+      postApply: postApplyConversation || deepseekBlocked, autoSend: autoSendConversation,
     }))
       ? createMasker({
         conversationId: conversationId ?? "reply",
