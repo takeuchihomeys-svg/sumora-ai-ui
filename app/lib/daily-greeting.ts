@@ -94,3 +94,42 @@ export function applyDailyGreeting(text: string, opts: { staffSentToday: boolean
   }
   return { text: `${opts.name}${opts.greetingPhrase}\n${text.replace(/^\n+/, "")}`, action: "added" };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 「今日こちらが会話文を送ったか」（資料文・画像は数えない）— テンプレート最適化（AIX→テンプレ）の挨拶で使う
+//
+// 2026-09-26 竹内「こちらが言ったことの関係性…たとえば AIX からテンプレートの場合は挨拶入れない等」
+// ■ 実測（scripts/audit-staff-relation.ts・template_selection_logs 180日 420件の「最適化した文 × スタッフが送った文」）
+//   - 今日こちらが会話文を送っている時に、最適化した文の冒頭に挨拶が残った → 9/22 の方針以降 9件、送った6件は **6件ともスタッフが消した**（残した0件）
+//     出所: テンプレの挨拶は入口（applyGreetingSwap）で消えるが、LLM が【AIX物件情報】（AIX の本文の冒頭「〇〇さんお世話になっております！！」）を写して足していた
+//   - 今日こちらが送ったのが**資料文だけ**（🌟物件カード・【】見積の本体・室内イメージの URL・画像）の時は、
+//     最適化した文の挨拶をスタッフが残した 37/38（97%）・無い時に足した 13/61 → 資料文は「その日の会話文」に数えないのがスタッフの形
+//     （姉妹の測定 R2a: 資料だけの日の添え文は挨拶か呼びかけ 67%／会話文がある日は 13%）
+// ■ AIX 本体の仕上げ（applyDailyGreeting に sentByStaffToday＝画像も数える）は今回は変えない（測っていないため）。
+//   テンプレート最適化の入口（applyGreetingSwap）・プロンプト・出口だけ、スタッフの形に合わせてこちらを使う。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 資料文（その日の会話文に数えない通）: 物件カード・御見積書の本体・画像・動画・URL だけの通
+ * 2026-09-26 反証レビューで追加: 「①【物件名】初期費用さらに🌟〇円割引」（複数物件の見積の本体・30日で12通）・[スタンプ]・[ファイル]・[通話リクエスト]
+ *   （generate-reply の hasAnyStaffTextMsg もスタンプ・ファイルを会話文に数えない＝同じ扱いにそろえる）。
+ *   template_selection_logs 180日 421件ではこの追加で判定が変わる行は0件。資料側に倒すと出口（挨拶を消す）が通らなくなる方向＝誤削除は増えない。
+ */
+const MATERIAL_HEAD_RE = /^\s*(?:【|🌟|[①-⑳]\s*【|\[(?:画像|動画|スタンプ|ファイル|通話リクエスト)\]|https?:\/\/|（室内イメージ）)/u;
+export function isMaterialOnlyText(text: string | null | undefined): boolean {
+  const t = (text ?? "").trim();
+  return !t || MATERIAL_HEAD_RE.test(t);
+}
+
+export type TalkMsg = DayMsg & { text?: string | null };
+
+/** 今日（日本時間）こちらが会話文（資料文・画像・動画ではない通）を1通でも送っているか。時刻の無い通は数えない */
+export function staffTalkedToday(messages: ReadonlyArray<TalkMsg>, now: number = Date.now()): boolean {
+  const today = jstDay(now);
+  return messages.some((m) => {
+    if (m.sender !== "staff" || isMaterialOnlyText(m.text)) return false;
+    const iso = m.rawCreatedAt ?? m.createdAt;
+    const t = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(t) && jstDay(t) === today;
+  });
+}

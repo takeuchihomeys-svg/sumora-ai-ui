@@ -137,6 +137,8 @@ import {
   stripRoomLeadingZeros,
   type VacatingDate,
 } from "@/app/lib/template-preprocess";
+import { staffTalkedToday, applyDailyGreeting } from "@/app/lib/daily-greeting";
+import { staffTalkedTodayFromDb } from "@/app/lib/daily-greeting-server";
 // Step1完全廃止（2026-08）: brain(suggested_aix_meta) が唯一の分析ソース。
 // SuggestedAixMeta 型と条件問い合わせ検出 regex は brain-core と共有する（二重定義禁止）
 import { PROPERTY_CONDITION_INQUIRY_RE, runBrainAndNotify, type SuggestedAixMeta } from "@/app/lib/brain-core";
@@ -2983,9 +2985,16 @@ export async function POST(req: NextRequest) {
   // テンプレート最適化モード: 旧adaptルートで実績のある前処理をプロンプト組み立て前に適用
   // （退去予定日/内覧可能日の◯月◯日置換 + 挨拶差し替え。共有lib: app/lib/template-preprocess.ts）
   let preprocessedTemplate = "";
+  // 2026-09-26 竹内「AIX からテンプレートの場合は挨拶入れない等の関係性」: テンプレート最適化の挨拶は
+  //   「今日こちらが**会話文**を送ったか」（資料文＝🌟物件カード・【】見積の本体・室内イメージ URL・画像 は数えない＝スタッフの実送信の形）で決め、
+  //   入口（applyGreetingSwap）・プロンプト（◆ 挨拶）・出口（applyDailyGreeting の消す方向だけ）の3か所で同じ値を使う。
+  //   画面の staffMessagedToday（sentByStaffToday＝画像・資料も数える）は、資料だけの日に挨拶を消してしまう（スタッフは 37/38 で残す）ので使わない。
+  //   画面の一覧に1分前の送信がまだ無いことがあるので DB でも見る（daily-greeting-server.ts）。測定: scripts/audit-staff-relation.ts
+  let templateTalkedToday = false;
   if (isTemplateOptimize) {
+    templateTalkedToday = staffTalkedToday(recentMessages) || await staffTalkedTodayFromDb(conversationId);
     preprocessedTemplate = applyVacatingDateToTemplate(_sanitizeSurrogates(templateText), vacatingDate);
-    preprocessedTemplate = applyGreetingSwap(preprocessedTemplate, staffMessagedToday);
+    preprocessedTemplate = applyGreetingSwap(preprocessedTemplate, templateTalkedToday);
   }
 
   // 初回例外（first_reply exemption）: 真の初回（スタッフの非AIXテキスト返信ゼロ）は
@@ -3246,6 +3255,13 @@ export async function POST(req: NextRequest) {
     const currentState = resolveState(state, { hasStaffMsg: hasAnyStaffTextMsg, brainFresh: false, conversationId }).phase;
 
     // 画像送付を会話履歴に反映（[画像]をフィルタせず意味のあるラベルに変換）
+    // 2026-09-26 竹内「こちらが言ったことの関係性（AIX→テンプレは挨拶なし・前に送った物）」: 各「スモラ:」行に関係の札
+    //   （〔AIXの続き・2分後〕〔お客様への返答〕等）や時刻を付ける案は**作らないと決めた**。
+    //   - 天井: 関係を生成に渡しても そのまま送信 +6.4pt（新しい分 +3.6pt）・時刻のタイムラインは +3.9pt（scripts/audit-reply-relation.ts・audit-reply-timeline.ts）
+    //   - スタッフの関係ごとの決まりは「その日はじめての会話文か（資料文は数えない）」1本に畳まれ、関係ごとの表にする過半数の決まりが無い
+    //   - 時刻を並べると LLM が「夜遅くに」「お待たせ」を足しに行く（G32 を壊す）
+    //   関係で実際に割れていたのはテンプレート最適化（AIX→テンプレ）の挨拶だけ → templateTalkedToday（入口・プロンプト・出口）で直した。
+    //   約束の言い直しは出口で落とさない（言い直しを含む下書きの そのまま送信 33〜52%＝誤削除が出る）。
     // 連続する画像メッセージ（同一sender・同一isAixフラグ）は1エントリにまとめて枚数を _imageCount に記録
     type HistoryMsg = RecentMessage & { _imageCount?: number };
     const isImageOnlyMsg = (m: RecentMessage) =>
@@ -4913,6 +4929,11 @@ export async function POST(req: NextRequest) {
     // replyHintNote と同じ「最後に書いたルールが勝つ」スロットに置く。
     // 長さ制限（2〜3行等）はテンプレの長さを優先して解除するが、
     // 内覧日時・見積金額・空室確認結果・待ち合わせ場所の捏造禁止ゲートはそのまま効かせる。
+    // 挨拶の行（入口の applyGreetingSwap・出口の applyDailyGreeting と同じ templateTalkedToday）。
+    //   今日こちらが会話文を送った後は、LLM が【AIX物件情報】（AIX 本文の冒頭の挨拶）を写して挨拶を足していた（9/22 以降 9件・送った6件はスタッフが全部消した）
+    const templateGreetingRule = templateTalkedToday
+      ? "◆ 挨拶: 今日はこちらから既にメッセージを送っている続きの1通なので、冒頭の挨拶（お世話になっております／夜分遅くに失礼致します）は書かない。【AIX物件情報】や会話履歴の冒頭の挨拶も写さない（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。結び文は削除しない）"
+      : "◆ 挨拶: テンプレートに冒頭挨拶が含まれている場合はそのまま維持する（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。「お世話になっております」等の挨拶・結び文を削除しない）";
     const templateNote = isTemplateOptimize
       ? (() => {
           const pendingSection = pendingScheduledMessages
@@ -4935,7 +4956,7 @@ export async function POST(req: NextRequest) {
 ◆ 過去AIX参照禁止: 会話履歴に他の物件を紹介した過去のAIX送信が含まれていても一切参照しない。物件情報は必ず【AIX物件情報】のみから取る（件数・物件名・金額等を過去のAIX送信と混ぜることを絶対禁止）
 ◆ AIX構成の持ち込み禁止: AIX文の詳細な段落構成（オススメポイント箇条書き・設備リスト・長い説明文等）はテンプレートにない場合は出力しない
 ◆ プレースホルダ置換: 「アカウント名」→「${customerName || "〇〇"}さん」。物件名・家賃・間取り等はAIX物件情報から読み取った実際の値に置換する。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
-◆ 挨拶: テンプレートに冒頭挨拶が含まれている場合はそのまま維持する（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。「お世話になっております」等の挨拶・結び文を削除しない）
+${templateGreetingRule}
 ◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
 ◆ 申込フォーム誘導フレーズの強制置換: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋押さえさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
 ◆ 捏造禁止ゲート: 内覧日時・見積金額内訳・空室確認結果・待ち合わせ場所の捏造禁止（AIX物件情報にない情報を補完しない）
@@ -4955,7 +4976,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ】\n${pend
 ◆ 状況適合: 冒頭に【🎯 最優先指示】がある場合はその方向へ文面を寄せる。お客様の感情状態に合うトーンにする（不安→安心材料を先に、前向き→次アクションを即宣言）
 ◆ プレースホルダ置換: 「アカウント名」→「${customerName || "〇〇"}さん」。物件名・○月○日・〇〇円・〇〇分などは ①予約送信待ちのAIXメッセージ ②会話履歴 ③お客様の希望条件（DB） の優先順で実際の値に置換する。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
 ◆ ハードコード物件名: テンプレ内に特定の物件名が入っていて、今話している物件と違う場合は今回の物件名に必ず差し替える（不明なら「〇〇」。前の物件名を残さない）
-◆ 挨拶: テンプレートに冒頭挨拶が含まれている場合はそのまま維持する（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。「お世話になっております」等の挨拶・結び文を削除しない）
+${templateGreetingRule}
 ◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
 ◆ 禁止: テンプレにない新しい質問リストの発明・会話履歴と矛盾する内容・スモラが既に案内済みの情報の繰り返し
 ◆ 申込フォーム誘導フレーズの強制置換（骨格維持・フェーズ指示より優先）: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋押さえさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
@@ -5489,6 +5510,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
               if (isTemplateOptimize) {
                 outText = stripRoomLeadingZeros(outText);
+                // 出口: 今日こちらが会話文を送った後の冒頭の挨拶を消す（消す方向だけ・足さない。名前の行は残す）。
+                //   誤削除0の確認: template_selection_logs の全件（scripts/audit-staff-relation.ts）で、9/22 の方針以降
+                //   「会話文を送った日×最適化した文に挨拶」を送った6件はスタッフが6件とも消していた（残した0件）。
+                //   資料文だけの日は消さない（スタッフは 37/38 で挨拶を残す）＝ templateTalkedToday が false なので通らない。
+                if (templateTalkedToday) {
+                  const g = applyDailyGreeting(outText, { staffSentToday: true, greetingPhrase: "", name: "" });
+                  if (g.action === "removed") {
+                    console.log(JSON.stringify({ tag: "template-optimize:greeting-removed", conversationId }));
+                    outText = g.text;
+                  }
+                }
                 // g-7: 金額ハルシネーション機械検証（テンプレ最適化はaixGates対象外のため専用ポストチェック）
                 // 【物件固有の金額・数値はAIが画像を見れないため生成禁止】— 出力中の「〜円」が
                 // スタッフ由来ソース（AIX物件情報・テンプレ原文・予約送信AIX・会話履歴・希望条件DB）に
