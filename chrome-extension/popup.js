@@ -3602,6 +3602,73 @@ function initTempAdjHandlers() {
 }
 initTempAdjHandlers();
 
+// ── 2026-09-27 AIXツールのメモの検索の指示（web_brain の payload.search_override）をその回だけ一時調整の欄に入れる ──
+// 竹内「『大正駅で検索する』なら駅は大正駅だけで検索、『1LDKで検索する』なら1LDKで検索。これは拡張ツールの一時調整の部分で合わせる形」
+// 決まり（拡張の5大バグの型を避ける）:
+//   ・欄には値を入れるだけ（input の出来事を出さない＝履歴 tempAdj_{id} に保存しない・_adjDirty も立てない・保存待ちのタイマーも消す）
+//   ・保存済みの一時調整の復元（restoreTempAdj）はこの回だけ止める＝書かれていない条件はお客様の登録の条件のまま
+//   ・駅／地域の軸はボタンの click（トグル）を重ねず、currentAreaMode と _adjLastEditedField に直接入れる
+//   ・欄の値は自動入力のボタンを押した瞬間（onclick の同期の所）に読まれる → 押した後、2分で登録の条件へ戻す（同じお客様を開いている時だけ）。
+//     戻すまでの間は fetchFreshCustomer の読み直しで欄と軸を戻さない（検索の途中で軸が変わらないように）
+let _searchOverrideHold = null; // { cid, until, timer }
+function _searchOverrideHeld(cid) {
+  return !!(_searchOverrideHold && cid != null && String(_searchOverrideHold.cid) === String(cid) && Date.now() < _searchOverrideHold.until);
+}
+function _applySearchOverrideToForm(ov, pass, c) {
+  const SO = (typeof self !== "undefined" && self.AxlxSearchOverride) || null;
+  if (!SO || !ov || !c) return false;
+  const val = (id) => document.getElementById(id)?.value || "";
+  const v = SO.formValues(ov, { station: val("adj-area-station"), ward: val("adj-area-ward") }, (pass === "ward" || pass === "station") ? pass : null);
+  const set = (id, x) => { const el = document.getElementById(id); if (el && x !== undefined) el.value = x; };
+  clearTimeout(_adjSaveTimer);
+  _adjDirty = false;
+  set("adj-area-station", v.station);
+  set("adj-area-ward", v.ward);
+  if (v.station !== undefined || v.ward !== undefined) set("adj-area", [v.station, v.ward].filter(Boolean).join("・"));
+  set("adj-floor", v.floor);
+  set("adj-rent-max", v.rent_max);
+  set("adj-rent-min", v.rent_min);
+  set("adj-walk", v.walk);
+  set("adj-age", v.age);
+  set("adj-area-min", v.area_min);
+  set("adj-area-max", v.area_max);
+  if (v.pet) { const pe = document.getElementById("adj-pet"); if (pe) pe.checked = true; }
+  if (v.edited === "station" || v.edited === "ward") {
+    _adjLastEditedField = v.edited;
+    currentAreaMode = v.edited;
+    _areaModeSource = "user"; // 自動の補正（③/③-pre/⑤）をしない＝指示どおりの軸
+    document.getElementById("btn-mode-station")?.classList.toggle("active", v.edited === "station");
+    document.getElementById("btn-mode-ward")?.classList.toggle("active", v.edited === "ward");
+  } else if (v.station !== undefined || v.ward !== undefined) {
+    _adjLastEditedField = null; // 駅と地域の両方（登録の軸に任せる）
+  }
+  if (_searchOverrideHold && _searchOverrideHold.timer) clearTimeout(_searchOverrideHold.timer);
+  _searchOverrideHold = { cid: c.id, until: Date.now() + 120000, timer: null };
+  console.log("[AX] AIXツールのメモの一時調整（この回だけ・保存しない）:", SO.describe(ov), "pass=", pass || "-");
+  return true;
+}
+function _afterSearchOverrideClick(ov) {
+  const SO = (typeof self !== "undefined" && self.AxlxSearchOverride) || null;
+  const el = document.getElementById("adj-mode-indicator");
+  if (el && SO) {
+    el.className = "adj-mode-indicator mode-station";
+    el.textContent = "🔍 AIXツールの指示（この回だけ）: " + SO.describe(ov);
+    el.style.display = "inline-block";
+  }
+  if (!_searchOverrideHold) return;
+  const hold = _searchOverrideHold;
+  hold.timer = setTimeout(function () { _restoreAdjAfterSearchOverride(hold.cid); }, Math.max(0, hold.until - Date.now()));
+}
+function _restoreAdjAfterSearchOverride(cid) {
+  if (!_searchOverrideHold || String(_searchOverrideHold.cid) !== String(cid)) return;
+  _searchOverrideHold = null;
+  if (!selectedCustomer || String(selectedCustomer.id) !== String(cid)) return; // 別のお客様を開いている＝開いた時に作り直し済み
+  preloadAdjForm(selectedCustomer);
+  restoreTempAdj(selectedCustomer);
+  if (selectedSite) setupAreaModeSelector(selectedCustomer, selectedSite);
+  console.log("[AX] 一時調整の欄をお客様の条件に戻しました（AIXツールの指示の回が終わった）");
+}
+
 // ── 未登録地名ヘルパー（博士連携: 駅でも地名マップにもないトークンを検出） ──────
 // ※ トップレベル定義必須: deleteLearnedToken / correctLearnedToken（トップレベル関数）から
 //    呼ばれるため、openInstructions 内に置くと strict mode で ReferenceError になる
@@ -3735,6 +3802,7 @@ function openInstructions(siteKey) {
     fetchFreshCustomer(selectedCustomer?.id).then(fresh => {
       if (!fresh) return;
       syncFreshToCache(fresh);
+      if (_searchOverrideHeld(fresh.id)) return; // AIXツールの指示の回（欄と軸を戻さない）
       preloadAdjForm(selectedCustomer);
       wireAdjSaveBtn(selectedCustomer);
       setupAreaModeSelector(selectedCustomer, "itandi");
@@ -4188,6 +4256,7 @@ function openInstructions(siteKey) {
     fetchFreshCustomer(c0?.id).then(fresh => {
       if (!fresh) return;
       syncFreshToCache(fresh);
+      if (_searchOverrideHeld(fresh.id)) return; // AIXツールの指示の回（欄と軸を戻さない）
       preloadAdjForm(c0);
       wireAdjSaveBtn(c0);
       setupAreaModeSelector(c0, "realpro");
@@ -4680,6 +4749,7 @@ function openInstructions(siteKey) {
     fetchFreshCustomer(c0?.id).then(fresh => {
       if (!fresh) return;
       syncFreshToCache(fresh);
+      if (_searchOverrideHeld(fresh.id)) return; // AIXツールの指示の回（欄と軸を戻さない）
       preloadAdjForm(c0);
       wireAdjSaveBtn(c0);
       setupAreaModeSelector(c0, "reins");
@@ -5317,7 +5387,10 @@ document.addEventListener("DOMContentLoaded", () => {
               var pBtn = document.querySelector('.mode-btn[data-mode="pinpoint"]');
               if (pBtn) pBtn.click();
             }
-            openInstructions(e.data.site);
+            // 2026-09-27 AIXツールのメモの一時調整がある回は、保存済みの一時調整を復元しない（書かれていない条件は登録のまま）
+            var _ovP = (e.data.searchOverride && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(e.data.searchOverride) : null;
+            if (_ovP) _adjRestoreSuppressed = true;
+            try { openInstructions(e.data.site); } finally { _adjRestoreSuppressed = false; }
             if (e.data.areaMode === 'station' || e.data.areaMode === 'ward') {
               var mBtn = document.getElementById(
                 e.data.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward'
@@ -5330,11 +5403,13 @@ document.addEventListener("DOMContentLoaded", () => {
             var aBtn = document.getElementById('autofill-btn');
             if (aBtn) {
               _setPendingAuditCtx(e.data); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
+              var _ovAppliedP = _ovP ? _applySearchOverrideToForm(_ovP, e.data.areaMode, c) : false;
               aBtn.dataset.automated = "1";
               aBtn.dataset.auto_send_all = e.data.auto_send_all ? "1" : "";
               aBtn.click();
               delete aBtn.dataset.automated;
               delete aBtn.dataset.auto_send_all;
+              if (_ovAppliedP) _afterSearchOverrideClick(_ovP);
             }
           }
         })();
@@ -5621,7 +5696,10 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
             if (pBtnEl) pBtnEl.click();
           }
           // サイト別手順ビューを開く（selectedSite を更新）
-          openInstructions(msg.site);
+          // 2026-09-27 AIXツールのメモの一時調整がある回は、保存済みの一時調整を復元しない（書かれていない条件は登録のまま）
+          var _ovR = (msg.searchOverride && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(msg.searchOverride) : null;
+          if (_ovR) _adjRestoreSuppressed = true;
+          try { openInstructions(msg.site); } finally { _adjRestoreSuppressed = false; }
           // areaMode が指定されていればモードをセット
           // ※ modeBtn.click() は _areaModeSource="user" にしてしまいAPIによる自動補正を封じるため
           //   一括検索（DB設定）では "auto" に留め、臨機応変フォールバックが働くようにする
@@ -5641,9 +5719,11 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           var aBtn = document.getElementById('autofill-btn');
           if (aBtn) {
             _setPendingAuditCtx(msg); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
+            var _ovAppliedR = _ovR ? _applySearchOverrideToForm(_ovR, msg.areaMode, c) : false;
             aBtn.dataset.auto_send_all = msg.auto_send_all ? "1" : "";
             aBtn.click(); // display:noneでもonclickは発火する
             delete aBtn.dataset.auto_send_all;
+            if (_ovAppliedR) _afterSearchOverrideClick(_ovR);
             sendResponse({ ok: true });
           } else {
             sendResponse({ ok: false });

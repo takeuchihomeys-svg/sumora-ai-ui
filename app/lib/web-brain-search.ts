@@ -9,6 +9,7 @@
 //   1台だけが拾う（条件付き UPDATE・既存）。拾い手が3時間いなければ error（automation-sources.ts）。
 // 決定（2026-09-25 竹内）: 自動検索（11時・17時の自動便）はまだ行わない＝ブレインの PC では見送りのまま。新着物件は手動の一括・個別の検索の分だけ。
 import { effectiveRpUpdateDays, type RpUpdateDaysCustomer } from "./rp-update-days";
+import type { SearchOverride } from "./search-override";
 
 export const WEB_BRAIN_SOURCE = "web_brain";
 export type WebBrainSite = "realnetpro" | "itandi" | "reins";
@@ -22,7 +23,11 @@ export function isWebBrainSite(v: unknown): v is WebBrainSite {
   return typeof v === "string" && (WEB_BRAIN_SITES as readonly string[]).includes(v);
 }
 
-export type WebBrainPayload = { source: typeof WEB_BRAIN_SOURCE; is_wide: boolean; rp_update_days: number | null };
+export type WebBrainPayload = {
+  source: typeof WEB_BRAIN_SOURCE; is_wide: boolean; rp_update_days: number | null;
+  /** 2026-09-27 AIXツールのメモ欄の検索の指示（その回だけの一時調整・search-override.ts）。無ければ登録の条件のまま */
+  search_override?: SearchOverride;
+};
 export type WebBrainCommandRow = {
   command_type: "batch_property_search";
   customer_ids: string[];
@@ -42,7 +47,7 @@ export function buildWebBrainCommands(
   customers: ReadonlyArray<RpUpdateDaysCustomer & { id: string }>,
   site: WebBrainSite,
   isWide: boolean,
-  opts: { nowMs?: number; queued?: ReadonlySet<string> } = {},
+  opts: { nowMs?: number; queued?: ReadonlySet<string>; searchOverride?: SearchOverride | null } = {},
 ): { rows: WebBrainCommandRow[]; skipped: string[] } {
   const nowMs = opts.nowMs ?? Date.now();
   const rows: WebBrainCommandRow[] = [];
@@ -57,7 +62,7 @@ export function buildWebBrainCommands(
       command_type: "batch_property_search",
       customer_ids: [id],
       sites: [site],
-      payload: { source: WEB_BRAIN_SOURCE, is_wide: !!isWide, rp_update_days: effectiveRpUpdateDays(c, nowMs) },
+      payload: { source: WEB_BRAIN_SOURCE, is_wide: !!isWide, rp_update_days: effectiveRpUpdateDays(c, nowMs), ...(opts.searchOverride ? { search_override: opts.searchOverride } : {}) },
       status: "pending",
     });
   }

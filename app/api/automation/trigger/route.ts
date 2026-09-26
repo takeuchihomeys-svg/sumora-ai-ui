@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { pendingSourceOrFilter } from "@/app/lib/automation-sources";
 import { buildWebBrainCommands, isWebBrainSite, queuedKey, webBrainBlockReason, WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
+import { sanitizeSearchOverride } from "@/app/lib/search-override-read";
 
 /**
  * 2026-09-25 竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」「更新日も拡張ツールと連動」:
@@ -11,13 +12,16 @@ import { buildWebBrainCommands, isWebBrainSite, queuedKey, webBrainBlockReason, 
  */
 async function queueWebBrain(
   supabase: SupabaseClient,
-  body: { customer_ids?: string[]; sites?: string[]; is_wide?: boolean },
+  body: { customer_ids?: string[]; sites?: string[]; is_wide?: boolean; search_override?: unknown },
 ): Promise<[Record<string, unknown>, { status: number }]> {
   const site = body.sites?.[0];
   if (!isWebBrainSite(site) || (body.sites?.length ?? 0) !== 1) return [{ ok: false, error: "sites は realnetpro / itandi / reins のどれか1つ" }, { status: 400 }];
   const ids = [...new Set((body.customer_ids ?? []).map((s) => String(s)).filter(Boolean))];
   const block = webBrainBlockReason(ids.length, site);
   if (block) return [{ ok: false, error: block }, { status: 400 }];
+  // 2026-09-27 メモ欄の検索の指示（その回だけの一時調整）。関所を通した物だけ payload に入れる（1人だけ・知らない欄は捨てる）
+  const searchOverride = body.search_override != null ? sanitizeSearchOverride(body.search_override) : null;
+  if (body.search_override != null && ids.length !== 1) return [{ ok: false, error: "一時調整の上書きは1人ずつです" }, { status: 400 }];
   const { data: pcs, error: pcErr } = await supabase
     .from("property_customers")
     .select("id, rp_update_days, last_property_sent_at, property_viewed_at")
@@ -41,7 +45,7 @@ async function queueWebBrain(
   for (const r of (open ?? []) as Array<{ id: string; customer_ids: string[] | null; sites: string[] | null }>) {
     for (const cid of r.customer_ids ?? []) for (const s of r.sites ?? []) { queued.add(queuedKey(String(cid), s)); openIdOf.set(queuedKey(String(cid), s), r.id); }
   }
-  const { rows, skipped } = buildWebBrainCommands(customers, site, !!body.is_wide, { queued });
+  const { rows, skipped } = buildWebBrainCommands(customers, site, !!body.is_wide, { queued, searchOverride });
   let inserted: Array<{ id: string; customer_ids: string[] }> = [];
   if (rows.length > 0) {
     const { data, error } = await supabase.from("automation_commands").insert(rows).select("id, customer_ids");
@@ -50,7 +54,7 @@ async function queueWebBrain(
   }
   // 進み具合は積んだ物＋まだ終わっていない同じ検索の両方を見る
   const commandIds = [...inserted.map((r) => r.id), ...skipped.map((cid) => openIdOf.get(queuedKey(cid, site))).filter((v): v is string => !!v)];
-  return [{ ok: true, brain: true, site, queued: inserted.length, already: skipped.length, missing: missing.length, commandIds }, { status: 200 }];
+  return [{ ok: true, brain: true, site, queued: inserted.length, already: skipped.length, missing: missing.length, commandIds, search_override: searchOverride }, { status: 200 }];
 }
 
 export async function POST(req: NextRequest) {
@@ -72,6 +76,8 @@ export async function POST(req: NextRequest) {
     is_wide?: boolean; // 修正5: 広ボタンのキュー経路伝搬
     /** 2026-09-25 AIXツールの一括検索（ブレインの PC だけが拾う・1人1コマンド） */
     brain?: boolean;
+    /** 2026-09-27 メモ欄の検索の指示（その回だけの一時調整・brain:true の時だけ） */
+    search_override?: unknown;
   };
 
   if (body.brain === true) return NextResponse.json(...(await queueWebBrain(supabase, body)));

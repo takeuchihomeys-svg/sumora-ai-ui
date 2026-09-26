@@ -61,6 +61,22 @@
     return out;
   }
 
+  // 一時調整の上書き（search-override.js の形）を点検用に小さく写す（名前・電話は元から無い）
+  function overrideForAudit(ov) {
+    if (!ov || typeof ov !== "object") return null;
+    var out = {};
+    ["location", "floor_plan", "rent_max", "rent_min", "walk_minutes", "building_age", "area_min", "area_max", "pet", "site", "is_wide"].forEach(function (k) {
+      if (ov[k] !== undefined && ov[k] !== null) out[k] = ov[k];
+    });
+    return Object.keys(out).length ? out : null;
+  }
+  function withOverride(snap, ovr) {
+    if (!ovr) return snap;
+    var o = snap || {};
+    o._search_override = ovr;
+    return o;
+  }
+
   function capArray(a, n) {
     return Array.isArray(a) ? a.slice(0, n) : a;
   }
@@ -243,13 +259,17 @@
         finished: false,
       };
       pushStep(run.steps, "begin", run.trigger, now());
+      // 2026-09-27 AIXツールのメモの検索の指示（その回だけの一時調整）で検索した回は、どの上書きかを残す
+      //   （customer_snapshot は上書きを重ねた後の条件＝決定論の点検が「条件と違う」と誤って言わない。元の指示は _search_override に）
+      var ovr = overrideForAudit(ctx.search_override);
+      if (ovr) pushStep(run.steps, "search_override", JSON.stringify(ovr).slice(0, 400), now());
       runs.set(id, run);
       if (ctx.post_started !== false) {
         send({
           phase: "started", brain: true, run_id: id, site: run.site, mode: run.mode, trigger: run.trigger,
           property_customer_id: run.property_customer_id, command_id: run.command_id, is_wide: run.is_wide,
           area_mode: run.area_mode, pass: run.pass, ext_version: o.extVersion || null,
-          customer_snapshot: ctx.customer ? snapshotCustomer(ctx.customer) : null,
+          customer_snapshot: ctx.customer ? withOverride(snapshotCustomer(ctx.customer), ovr) : null,
           intended: ctx.intended ? pickIntended(ctx.intended) : null,
         });
       }

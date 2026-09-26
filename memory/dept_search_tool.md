@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-09-27 v2.5.26 AIXツールのメモ欄の検索の指示 → 拡張の一時調整（その回だけ）で検索
+竹内「ここ（AIXツールのお客様の画面の下のメモ欄）に条件を送ったら、それに連動して検索されるようにする。『大正駅で検索する』なら駅は大正駅だけ、『1LDKで検索する』なら1LDK。拡張ツールの一時調整の部分で合わせる形。こちらからの文を DeepSeek の物件検索 AI が要約して拡張ツールに渡す。ゆくゆくは拡張ツールの AIX モードで使えるように」
+- **流れ**: メモを送る（今まで通り右に残る）→ きっかけ語があれば `POST /api/search-override`（内部認証・DeepSeek 1回）→ メモ欄の上に1行「🔍 大正駅だけ・間取りは登録のまま（1K〜1DK）・家賃は登録のまま（〜7.5万）・リアプロ・ピンポイント で検索します」＋サイト（リアプロ／itandi／レインズ）とピンポイント／広げての切替・［実行］［やめる］・「⚠ 入れなかった所」→［実行］で `/api/automation/trigger`（brain:true・1人1コマンド・**payload.search_override**）→ 拡張のブレインの PC（🧠×通常／🧠×AIX）が拾う → 今まで通り検索 → 判定 → AIXツールに届く。進み具合は /api/automation/status を5秒ごと
+- **要約（1か所・将来の AIX モードも同じ）**: `app/lib/search-override.ts`（形 SearchOverride・きっかけ語 looksLikeSearchInstruction・1行 overrideLine・固定の前置き）／`search-override-read.ts`（サーバー用・osaka-geo で駅/区/路線を読む: parseDeterministic・**validateOverride＝文に根拠のある値だけ残す**・積む前の関所 sanitizeSearchOverride）／`search-override-server.ts`（DeepSeek・deepseek-flash・推論なし・温度0・max300・12秒・崩れたら同じ前置きで1回だけ読み直し・Claude に倒さない・action=search_override）
+  - 書かれていない条件は null＝**お客様の登録の条件のまま**。駅は文の中の駅だけ（路線名の中の駅＝「阪急京都線」の京都は除く）・区/市・路線も文の中の物だけ・間取り/金額/分/年/㎡も文の中の数字だけ（家賃は「登録の上限±文の数字」も可＝「1万上げて」）。「〇〇以外」・通勤の目的地（「梅田まで一本」）・表に無い地名は入れず画面に出す
+  - DeepSeek に渡すのは**メモの文（電話・メールは伏せる）と登録の条件の欄だけ**（名前・電話・会話は入れない＝申込中のお客様でも会話は渡らない）
+  - サイトごとの駅名・路線名はここでは作らない（「大正」「御堂筋線」「大阪市大正区」＝お客様の希望エリアと同じ書き方で渡し、拡張の既存の対応表が直す）
+- **拡張（v2.5.26・`chrome-extension/search-override.js`＝self.AxlxSearchOverride・純関数）**
+  - background `_runBatchSearch`: web_brain の回だけ `sanitize(payload.search_override)` → `applyToCustomer(targets[i], ov)` で**お客様の写し**に重ねる（desired_area・area_mode〈駅だけ→station／地域だけ→ward／両方・足す→both〉・間取り・家賃・徒歩・築年・面積・ペット）。_buildBatchConditions（レインズ・予備・照合）と検索の点検が同じ値を見る
+  - `_batchAutofill` → axlx-switch-customer に **searchOverride**（リアプロ・itandi の2つ）→ underbar.js が popup へ中継
+  - popup.js の**2つの受け口（runtime.onMessage／postMessage）の両方**で: 保存済みの一時調整の復元を止める（_adjRestoreSuppressed）→ 自動入力を押す直前に `_applySearchOverrideToForm`（欄に値を入れるだけ・**input の出来事を出さない＝tempAdj_ の履歴に保存しない**・_adjDirty を立てない・保存待ちのタイマーを消す・軸は click でなく currentAreaMode/_adjLastEditedField に直接・both の回は pass の軸だけ）→ 押した後 `_afterSearchOverrideClick`（帯「🔍 AIXツールの指示（この回だけ）: 大正駅だけ」・2分後に登録の条件へ戻す）。戻すまで fetchFreshCustomer の読み直し3か所は欄と軸を戻さない（_searchOverrideHeld）
+  - お客様の登録の条件（DB）・拡張に保存した一時調整は**書き換えない**。「💾 本条件に反映」も押さない
+  - 検索の点検: `customer_snapshot` は上書き後の条件＋`_search_override`（元の指示）・段 `search_override`（search-audit.js。列は足していない＝migrate-schema の変更なし）
+- **確かめ**: 本番の文57件（本物のメモ2・お客様の条件の書き方30・例と言い方25）を DeepSeek に2周当てて目で読んだ（104回・エラー0・1回 入力約820トークン〈約8割キャッシュ〉・出力約90・約0.9秒）。1周目で直した: 区・市を付けない駅名（茨木・天王寺）を地域に入れて落ちる→文の中の駅に直す／「2LDK〜」→以上／「電車で30分以内」を徒歩にしない／「西区で1Kか1DK、6万から7万で」「レインズで条件入れて」を拾う。2周目で黙って違う値は0（表に無い地名〈神戸市の区・京都の駅・大阪市内・恵比須町〉は「入れなかった所」に出る）
+  - YUMA: テストのお客様を作って YUMA に紐付け、ローカル（本番DB）＋ヘッドレス Chrome で メモ「大正駅で検索する」→ 1行 → ［実行］→ web_brain の payload `{source:"web_brain", is_wide:false, rp_update_days:null, search_override:{location:{mode:"only",stations:["大正"]…}}}`・sites ["realnetpro"]・二度押しは already=1・「明日10時に内覧予定」は何も出ない。**積んだコマンドは 0.8秒で cancelled（拾われていない）**・テストのお客様・メモ・ピックアップ・紐付けは消した
+  - テスト: `app/lib/__tests__/search-override.test.ts`（61）・`tests/chrome-extension/search-override.test.js`（48・配線と5大バグの型の検査込み）・既存の拡張テスト全部・web-brain-search 23・search-audit-check 89・tsc 0・next build 通過・拡張の全ファイル node --check
+- **まだの事・注意**
+  - 物件の**判定（ブレイン）はお客様の登録の条件で行う**（上書きは判定に渡していない）。1LDK で検索して登録が 1K の人は、判定で点が下がる・保留になりうる
+  - itandi・リアプロは popup の欄から、レインズは background の条件（_buildBatchConditions）から入る。レインズはペット・面積の上書きは入らない（今までの予備の経路と同じ）
+  - 実機の拡張での動きは未確認（竹内さんの PC）
+- **竹内さんが確かめること（拡張の再読み込み後・version 2.5.26）**: ①ブレインの PC（🧠 ON・通常か AIX）でリアプロにログイン ②AIXツールで条件の紐付いたお客様を開き、メモ欄に「大正駅で検索する」→ 1行が出る →［実行］③拡張のコンソールに `[batch] AIXツールのメモの一時調整（この回だけ）: 大正駅だけ`・popup に `[AX] AIXツールのメモの一時調整（この回だけ・保存しない）` と帯「🔍 AIXツールの指示（この回だけ）」④リアプロの駅が大正だけで検索される ⑤2分後に一時調整の欄が登録の条件に戻り、そのお客様の一時調整の履歴チップが増えていない ⑥「🔍 検索の点検」のその回に上書きが残る
+
+---
+
 ## 2026-09-25 夜 本番点検（082644c9・fac923f5・005fd9a8）— 拡張のコードは変えていない・版はそのまま 2.5.25
 - **バス・トイレ別の読み取り**（全お客様303人・語のある82人を目で読んだ）: 設備欄と画像の側が割れていた → 直した（app/lib/listing-equipment.ts BATH_TOILET_WANT_RE・BATH_TOILET_NOT_REQUIRED_RE／app/lib/property-brain.ts bathToiletWantOf。テスト pickup-equipment に本番の書き方23件）
   - 「洗面所とトイレ別希望」（1人）を必須のバス・トイレ別と誤読 → 読まない

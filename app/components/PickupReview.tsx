@@ -18,6 +18,8 @@ import { summarizeWebBrainProgress, webBrainBlockReason, type WebBrainSite, type
 import { pickAuditForRound } from "@/app/lib/search-audit-check";
 // 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ（一番オススメだから）」
 import { buildPickupAixHref, pickupAixButtonLabel, PICKUP_AIX_MAX } from "@/app/lib/pickup-aix-handoff";
+// 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: メモの検索の指示 → 一時調整の要約 → 確かめて［実行］（軽い物だけ import）
+import { looksLikeSearchInstruction, overrideLine, type SearchOverride, type RegisteredConditions, type OverrideSite } from "@/app/lib/search-override";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -949,12 +951,82 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
       setNote("");
       stickBottomRef.current = true;   // 残したメモ（右の吹き出し）が見えるように
       await load();
+      // 2026-09-27 メモが検索の指示なら、一時調整の要約を下に出す（ふつうのメモは何もしない）
+      void readMemoSearch(c, text);
     } catch (e) {
       setMsg(`⚠️ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(null);
     }
   };
+
+  // ── 2026-09-27 メモ欄の検索の指示 → 拡張の一時調整（この回だけ）──────────────────────────────
+  // 竹内「ここに条件を送ったら、それに連動して検索されるようにする。例えば『大正駅で検索する』なら駅は大正駅だけで検索、
+  //   『1LDKで検索する』なら1LDKで検索。これは拡張ツールの一時調整の部分で合わせる形。こちらからの文を DeepSeek の物件検索 AI が要約して、拡張ツールに渡す形」
+  //   メモはいつも通り右に残す。きっかけ語がある時だけ /api/search-override（DeepSeek）で要約 → 下に1行で確かめる → ［実行］で
+  //   /api/automation/trigger（brain:true・1人1コマンド・payload.search_override）に積む。同じ回が走っていれば積まない（trigger の既存の決まり）
+  type MemoSearch = { key: string; pcid: string; text: string; override: SearchOverride | null; registered: RegisteredConditions | null; unclear: string[]; site: OverrideSite; isWide: boolean; state: "ready" | "busy" | "queued" | "error"; msg: string; ids?: string[]; sinceMs?: number };
+  const [memoSearch, setMemoSearch] = useState<MemoSearch | null>(null);
+  const [memoProgress, setMemoProgress] = useState<WebBrainProgress | null>(null);
+  const readMemoSearch = async (c: Customer, text: string) => {
+    if (!c.property_customer_id || !looksLikeSearchInstruction(text)) return;
+    const key = c.key, pcid = c.property_customer_id;
+    setMemoProgress(null);
+    setMemoSearch({ key, pcid, text, override: null, registered: null, unclear: [], site: "realnetpro", isWide: false, state: "busy", msg: "🔍 検索の指示を読んでいます…" });
+    try {
+      const res = await fetch("/api/search-override", {
+        method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        body: JSON.stringify({ text, property_customer_id: pcid }),
+      });
+      const j = await res.json() as { ok?: boolean; error?: string; is_search?: boolean; override?: SearchOverride | null; unclear?: string[]; dropped?: string[]; registered?: RegisteredConditions | null };
+      if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      if (!j.is_search) { setMemoSearch(null); return; }   // ふつうのメモ（何も出さない）
+      const ov = j.override ?? null;
+      setMemoSearch({ key, pcid, text, override: ov, registered: j.registered ?? null, unclear: [...(j.unclear ?? []), ...(j.dropped ?? [])].slice(0, 8), site: ov?.site ?? "realnetpro", isWide: ov?.is_wide ?? false, state: "ready", msg: "" });
+    } catch (e) {
+      setMemoSearch({ key, pcid, text, override: null, registered: null, unclear: [], site: "realnetpro", isWide: false, state: "error", msg: `⚠️ 検索の指示を読めませんでした: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  };
+  const runMemoSearch = async () => {
+    const m = memoSearch;
+    if (!m || m.state !== "ready") return;
+    setMemoSearch({ ...m, state: "busy", msg: "" });
+    try {
+      const res = await fetch("/api/automation/trigger", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_ids: [m.pcid], sites: [m.site], is_wide: m.isWide, brain: true, ...(m.override ? { search_override: m.override } : {}) }),
+      });
+      const j = await res.json() as { ok?: boolean; error?: string; queued?: number; already?: number; missing?: number; commandIds?: string[] };
+      if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      // 拡張（このパソコンがブレインなら）に「すぐ拾って」。ほかのブレインの PC は30秒ごとの見回りで拾う
+      try { window.postMessage({ from: "aixlinx-webapp-poll-now" }, "*"); } catch { /* 拡張が無い端末（スマホ）は見回りに任せる */ }
+      const msg = j.queued ? "🧠 積みました（ブレインモードの PC が拾って検索します・結果はここに届きます）"
+        : j.already ? "🧠 同じお客様・同じサイトの検索がまだ終わっていないので積みませんでした（終わってからもう一度）"
+        : j.missing ? "⚠️ お客様の条件が見つかりません" : "積めませんでした";
+      setMemoSearch({ ...m, state: j.queued ? "queued" : "error", msg, ids: j.commandIds ?? [], sinceMs: Date.now() });
+    } catch (e) {
+      setMemoSearch({ ...m, state: "ready", msg: `⚠️ 積めませんでした: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  };
+  useEffect(() => {
+    const ids = memoSearch?.state === "queued" ? memoSearch.ids ?? [] : [];
+    const sinceMs = memoSearch?.sinceMs ?? Date.now();
+    if (ids.length === 0) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/automation/status?ids=${encodeURIComponent(ids.join(","))}`, { cache: "no-store" });
+        const json = await res.json() as { commands?: CommandLite[] };
+        if (stop) return;
+        const p = summarizeWebBrainProgress(json.commands ?? [], { sinceMs });
+        setMemoProgress(p);
+        if (p.finished) { stop = true; void load(); onChange?.(); }
+      } catch { /* 次の回で */ }
+    };
+    void tick();
+    const id = window.setInterval(() => { if (!stop) void tick(); }, 5000);
+    return () => { stop = true; window.clearInterval(id); };
+  }, [memoSearch?.state, memoSearch?.ids?.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 会話画面（右の列。開いたお客様1人分だけ） ──
   // 2026-09-24 夜 竹内「スマホ用で使えるように。見た目は LINE トーク詳細と同じ UI。左が起きた事項、右はこちらからの指示」:
@@ -1506,6 +1578,50 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
         </div>
         {/* 下の入力欄（LINE と同じ形）。メモは右の吹き出しに残る（社内の記録だけ・お客様には届かない） */}
         <div className="shrink-0 border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3" style={{ paddingBottom: !desk && vp.kb ? "4px" : "max(10px, env(safe-area-inset-bottom))" }}>
+          {memoSearch && memoSearch.key === open.key && (
+            // 2026-09-27 メモの検索の指示の要約（検索する前に確かめる）。［実行］で拡張のブレインの PC がこの回だけ一時調整を当てて検索
+            <div className="mb-1.5 rounded-xl border border-[#b3e5fc] bg-[#f1f9fe] px-3 py-2 text-[12px] leading-5 text-[#0d47a1]">
+              {memoSearch.state === "busy" && !memoSearch.override ? (
+                <div>{memoSearch.msg}</div>
+              ) : memoSearch.state === "error" && !memoSearch.ids ? (
+                <div className="flex items-center gap-2"><span className="flex-1">{memoSearch.msg}</span><button onClick={() => setMemoSearch(null)} className="shrink-0 text-[#607d8b] font-bold">閉じる</button></div>
+              ) : (
+                <>
+                  <div className="font-bold break-words">{overrideLine(memoSearch.override, memoSearch.registered, { site: memoSearch.site, isWide: memoSearch.isWide })}</div>
+                  {memoSearch.unclear.length > 0 && <div className="mt-0.5 text-[11px] text-[#b26a00] break-words">⚠ 入れなかった所: {memoSearch.unclear.join("／")}</div>}
+                  {(memoSearch.state === "ready" || (memoSearch.state === "busy" && !!memoSearch.override)) && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      {(["realnetpro", "itandi", "reins"] as const).map((s) => (
+                        <button key={s} onClick={() => setMemoSearch({ ...memoSearch, site: s })}
+                          className="rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap"
+                          style={memoSearch.site === s ? { background: "#1565C0", color: "#fff" } : { background: "#e3f2fd", color: "#1565C0" }}>
+                          {s === "itandi" ? "📋 itandi" : s === "reins" ? "🔍 レインズ" : "🏠 リアプロ"}
+                        </button>
+                      ))}
+                      {([false, true] as const).map((w) => (
+                        <button key={String(w)} onClick={() => setMemoSearch({ ...memoSearch, isWide: w })}
+                          className="rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap"
+                          style={memoSearch.isWide === w ? { background: "#00897b", color: "#fff" } : { background: "#e0f2f1", color: "#00796b" }}>
+                          {w ? "🔎 広げて" : "🎯 ピンポイント"}
+                        </button>
+                      ))}
+                      <span className="flex-1" />
+                      <button disabled={memoSearch.state !== "ready"} onClick={() => void runMemoSearch()}
+                        className="rounded-full bg-[#29B6F6] px-3 py-1 text-[12px] font-bold text-white whitespace-nowrap disabled:opacity-50">
+                        {memoSearch.state === "busy" ? "…" : "実行"}
+                      </button>
+                      <button onClick={() => setMemoSearch(null)} className="rounded-full bg-[#eceff1] px-3 py-1 text-[12px] font-bold text-[#546e7a] whitespace-nowrap">やめる</button>
+                    </div>
+                  )}
+                  {memoSearch.msg && <div className="mt-1 text-[11px] break-words">{memoSearch.msg}</div>}
+                  {memoSearch.state === "queued" && memoProgress && <div className="mt-0.5 text-[11px] break-words">{memoProgress.line}</div>}
+                  {memoSearch.state !== "ready" && memoSearch.state !== "busy" && (
+                    <div className="mt-1 text-right"><button onClick={() => { setMemoSearch(null); setMemoProgress(null); }} className="text-[11px] font-bold text-[#607d8b]">閉じる</button></div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <div className="flex flex-1 min-w-0 items-center rounded-[24px] bg-[#f0f2f5] px-4 py-2">
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="メモ（右側に残ります・お客様には届きません）"

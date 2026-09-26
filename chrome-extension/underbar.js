@@ -510,6 +510,8 @@
         auditRunId:   msg.auditRunId || null,
         trigger:      msg.trigger || null,
         commandId:    msg.commandId || null,
+        // 2026-09-27 AIXツールのメモの検索の指示（その回だけの一時調整・無ければ null）
+        searchOverride: msg.searchOverride || null,
       }, "*");
       sendResponse({ ok: true });
     };

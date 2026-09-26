@@ -15,6 +15,8 @@ import "./mode-core.js";
 import "./rp-update-days.js";
 // 2026-09-25 竹内「ブレインモードで…検索がちゃんとされていなかったら原因を見つけられるようにする」: 検索の点検（self.AxlxSearchAudit）
 import "./search-audit.js";
+// 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: AIXツールのメモの検索の指示（web_brain の payload.search_override）をその回だけ重ねる（self.AxlxSearchOverride）
+import "./search-override.js";
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
@@ -2777,6 +2779,11 @@ async function _runBatchSearch(command) {
   if (isWebBrain) {
     console.log("[batch] AIXツールの一括検索（ブレイン）: 更新日=" + (cmdPayload.rp_update_days || "指定なし") + " 広げて=" + batchIsWide);
   }
+  // 2026-09-27 竹内「『大正駅で検索する』なら駅は大正駅だけで検索…拡張ツールの一時調整の部分で合わせる形」:
+  //   AIXツールのメモ欄の検索の指示（payload.search_override）は web_brain の回だけ・この回だけお客様の写しに重ねる
+  //   （お客様の登録の条件・拡張に保存した一時調整は書き換えない。popup には axlx-switch-customer の searchOverride で渡す＝_batchAutofill）
+  var searchOverride = (isWebBrain && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(cmdPayload.search_override) : null;
+  if (searchOverride) console.log("[batch] AIXツールのメモの一時調整（この回だけ）: " + self.AxlxSearchOverride.describe(searchOverride));
   await _updateBatchCommand(command.id, {
     status: "running",
     total_customers: targets.length,
@@ -2798,7 +2805,7 @@ async function _runBatchSearch(command) {
       await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
       return;
     }
-    var customer = targets[i];
+    var customer = searchOverride ? self.AxlxSearchOverride.applyToCustomer(targets[i], searchOverride) : targets[i];
     for (var j = 0; j < sites.length; j++) {
       // Fix 4: サイト間でも同期フラグを確認し、ストップ要求があれば即中断する
       if (_batchShouldStop) {
@@ -2828,6 +2835,7 @@ async function _runBatchSearch(command) {
           site: batchSite, customer_id: effectiveCustomer.id, customer: effectiveCustomer,
           trigger: isWebBrain ? "web_brain" : "bulk_queue", command_id: command.id,
           is_wide: batchIsWide, area_mode: effectiveCustomer.area_mode || null, pass: areaModePasses[k] || null,
+          search_override: searchOverride, // 2026-09-27 どの上書きで検索したか（点検に残す）
         });
         try {
           // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
@@ -2976,6 +2984,9 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   }
 
   var conds = _buildBatchConditions(customer, isWide, opts);
+  // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
+  //   popup はお客様の登録の条件から欄を作り直すので、同じ上書きを searchOverride で渡して一時調整の欄に入れさせる（pass は area_mode）
+  var _searchOverride = (opts && opts.source === "web_brain" && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(opts.search_override) : null;
   // 検索の点検: page-script が fill-done に audit を載せて返す印（popup を通らない経路でも同じ run に届くように）
   if (auditRun) conds._audit_run_id = auditRun.runId;
 
@@ -3038,6 +3049,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         auditRunId:   auditRun ? auditRun.runId : null,
         trigger:      auditRun ? auditRun.trigger : null,
         commandId:    auditRun ? auditRun.commandId : null,
+        searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
       }, function(resp) {
         if (chrome.runtime.lastError) {
           console.warn("[batchAutofill] realnetpro axlx-switch-customer error:", chrome.runtime.lastError.message);
@@ -3099,6 +3111,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         auditRunId:    auditRun ? auditRun.runId : null,
         trigger:       auditRun ? auditRun.trigger : null,
         commandId:     auditRun ? auditRun.commandId : null,
+        searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
       }, function(resp) {
         if (chrome.runtime.lastError) {
           console.warn("[batchAutofill] itandi axlx-switch-customer error:", chrome.runtime.lastError.message);
