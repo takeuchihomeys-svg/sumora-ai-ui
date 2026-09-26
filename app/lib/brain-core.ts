@@ -100,6 +100,8 @@ import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
 import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 2026-09-27 竹内: 主のお部屋（こちらが送ったお部屋）への見積もりの依頼は 見積書送る
+import { resolveFocusedEstimateRequest } from "@/app/lib/focused-estimate-request";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -375,6 +377,7 @@ const AIX_CAPABILITY_MAP = `
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・この事例）
 - estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・この事例）
 - cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・この事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
+- estimate_sheet（【主のお部屋への見積もりの依頼】）: 【お客様の今の状況】の主のお部屋が**こちらが送ったお部屋**で、お客様が見積もり・初期費用の金額を頼んだ（「〇〇いいですね」→「見積もりお願いできますか」「こちらの初期費用いくらですか」）→ estimate_sheet。物件確認した（募集状況の確認）を先に挟まない（実送信52件中 見積書送る47・物件確認した＋御見積書同封2・物件確認のみ1）。お客様が持ち込んだお部屋（URL・画像）は従来どおり募集状況の確認＋御見積書／物件が決まっていない費用の質問は AIX なし／同じ連投で空き状況・内覧も聞かれた時はその判断に任せる（物件確認した＋御見積書同封は両方に1通で答えられる）（2026-09-27 竹内・YUMA 事例）
 - cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・この事例）。境界: 金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
 - phone_call: 顧客がこちらと電話で話したい時（「ご相談があるのですがお電話では無理でしょうか？」「電話いける時間ありますか？」「1度お電話いただけませんか？」「物件の事で聞きたい事がありますのでお手隙の際電話いけますか？」）。他の話題が同じ発言にあっても電話の依頼を先に受ける。本文で電話番号・「こちらからお電話します」「〇時にお電話します」を作らない（2026-09-15 竹内・H 事例）。境界: 電話番号の質問・管理会社等から電話があった報告・他所への電話の相談・「電話は大丈夫です」は phone_call ではない
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
@@ -2856,6 +2859,28 @@ ${history}`;
       decisionSource = "correction:scene_S2_check_result";
     }
     // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
+    // 2026-09-27 竹内（YUMA の返信テスト）「この場面は見積書を正解にする」: こちらが送ったお部屋（エステムコート大阪WEST）に「いいですね」→
+    //   「見積もりお願いできますか」で、LLM が 物件確認した（募集状況を確認し報告）を選んだ。
+    //   主のお部屋（customer-state の focus）がこちらの送ったお部屋で、今回の連投が見積もりの依頼なら 見積書送る（focused-estimate-request.ts）。
+    //   実送信（180日・scripts/audit-focused-estimate-request.ts）: この場面 52件で次の AIX は 見積書送る 47・物件確認した＋御見積書同封 2・物件確認のみ 1。
+    //   お客様が持ち込んだお部屋（URL・画像）の見積もりの依頼 129件は 物件確認した 37・見積書送る 28 と分かれる → そちらは従来どおり（focus_not_ours）。
+    //   上書きするのは AIX なし／確認します／物件確認した だけ（内覧・申込・ピックアップ等の判断はそのまま）。
+    //   室内写真（S11）・保証会社（S3）・安さへの不審（S8）・費用の中身（S9）・入居日の質問（S2）は、それぞれの決まり・ブレインの判断が先（S8/S9 は見積書送るも上書きする）。
+    //   空き状況・内覧も同じ連投で聞かれた時は上書きしない（物件確認した＋御見積書同封なら両方に1通で答えられる）
+    let focusedEstimateOverride: string | null = null;
+    if (!promiseAix && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")
+      && sceneEvidence?.reasonCode !== "room_photo_request" && sceneEvidence?.reasonCode !== "guarantor_question"
+      && sceneEvidence?.scene !== "S8_cost_doubt" && sceneEvidence?.scene !== "S9_cost_breakdown" && sceneEvidence?.scene !== "S2_move_in") {
+      const focusRoom = customerState?.focusKey ? customerState.properties.find((p) => p.key === customerState.focusKey) ?? null : null;
+      const fe = resolveFocusedEstimateRequest(unrepliedTurn.text,
+        focusRoom ? { name: focusRoom.name, sentByUs: focusRoom.sentByUs, ended: focusRoom.status === "ended" } : null);
+      if (fe.hit) {
+        finalAix = "estimate_sheet";
+        sceneSignalCheckPattern = null;
+        decisionSource = "signal:focused_estimate_request";
+        focusedEstimateOverride = fe.focusName;
+      }
+    }
     //   物件が1件も無い（こちらの送付0・見積なし／会話のどこにもお客様の URL・画像・号室・「ここの」・見積の語なし）のに 見積書送る → 外す。
     //   お客様が条件を送っていれば物件ピックアップ、それ以外は AIX なし（質問に答えて「初期費用を抑える」一文＝返信側）
     if (!promiseAix && finalAix === "estimate_sheet" && !estimatePropertyInPlay) {
@@ -3045,7 +3070,11 @@ ${history}`;
     // 2026-09-23 反証者の指摘: 読点の無い方向は1節＝全文なので、家賃の節を落とすと方向が丸ごと null になり
     //   generate-reply が汎用の STATE_FALLBACK_DIRECTION に落ちていた（実物3件中2件）。落とした時の受け皿は、
     //   この場面の正解として既にナレッジにある形（8381c035「今の物件で家賃交渉を試みない→条件に合う別の物件を再ピックアップ」）
-    const replyDirection = rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
+    // 2026-09-27: 主のお部屋への見積もりの依頼で 見積書送る に上書きした時は、LLM の方向（「募集状況を確認し結果を報告する」）を見積書に合わせる
+    //   （方向を残すと返信が「募集状況確認させて頂きます」と AIX と食い違う）
+    const replyDirection = focusedEstimateOverride !== null
+      ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
+      : rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
 
     // key_topics: 文字列のみ・空要素/重複除去・最大3件・各40字
     const keyTopicsRaw = Array.from(new Set(
@@ -3054,7 +3083,11 @@ ${history}`;
         .map((t) => absolutizeRelativeDays(t.trim(), relDayBaseMs).slice(0, 40)) // 相対の日は絶対の日で残す（yasuki 事例）
     )).slice(0, 3);
     const keyTopicsGuard = stripRentNegotiationFromList(keyTopicsRaw, { customerAsked: custRentAsk });
-    const keyTopics = keyTopicsGuard.items;
+    // 2026-09-27: 主のお部屋への見積もりの依頼で 見積書送る に上書きした時は、LLM が物件確認した のつもりで入れた「募集状況確認」を必須内容から外す
+    //   （残すと返信が「募集状況確認させて頂きます」を約束し、物件確認のやることが立つ）
+    const keyTopics = focusedEstimateOverride !== null
+      ? keyTopicsGuard.items.filter((t) => !/募集状況|空室|空き状況/.test(t))
+      : keyTopicsGuard.items;
 
     // avoid_topics: ルール⑤（来阪・常時）+ ルール②（費用質問なし）をコード側で決定論的に強制
     const avoidSet = new Set(
@@ -3398,7 +3431,8 @@ ${history}`;
       // 2026-09-23: 入口で落とした していない約束（家賃交渉）。digest に残して「何を落としたか」を追えるようにする
       dropped_direction: rentGuard.dropped ?? undefined,
       scene_evidence: compactSceneEvidence(sceneEvidence),
-      reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
+      reason: focusedEstimateOverride !== null ? "気に入ったお部屋への見積もりの依頼"
+        : typeof parsed.reason === "string" ? parsed.reason.slice(0, 30) : null,
       winning_pattern: winningPattern,
       // 2026-09-13 2層ブレイン: 今回の発言の層は ai_summary_json を出さないので、今回の発言の感情（emotion）と購買シグナル（purchase_signal_event）を読む。
       //   購買シグナルの蓄積は mergeBrainLayers が戦略の値と高い方を取る
@@ -3990,12 +4024,27 @@ async function analyzeAndSaveBrainMetaInner(
   // 2026-09-18 竹内「重複だけ直す」: 同じ出来事の二重起動（別インスタンスで並走した分）を止める。
   //   上の analysisInFlight は同一インスタンス内だけなので、DB の打刻でも見る。
   //   スタッフの宣言直後（forced）と、保存済みの判断が無い会話は必ず走らせる（fail-open）
-  if (isDuplicateRun({
+  const dupInput = {
     brainAnalyzedAt: (conv.brain_analyzed_at as string | null) ?? null,
     forced: !!runOpts?.forceIncremental || !!runOpts?.inputUpdatedAt,
     hasSuggestedMeta: !!conv.suggested_aix_meta,
     nowMs: Date.now(),
-  })) {
+  };
+  // 2026-09-27 YUMA 事例: 時刻だけで二重起動と見ると、分析中に届いたお客様の2通目の再分析まで止まる（1通目だけの判断が残る）。
+  //   時刻で止まりそうな時だけ、保存済みの判断が最新のお客様の発言を見ているかを1回読む（見ていなければ別の出来事として走らせる）
+  let savedMissedLatestCustomer: boolean | undefined;
+  if (isDuplicateRun(dupInput)) {
+    const { data: lastCustRow } = await supabase.from("messages").select("created_at")
+      .eq("conversation_id", conversationId).eq("sender", "customer")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const seenTs = (m: unknown) => (m as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
+    savedMissedLatestCustomer = brainMissedCustomerMessage(
+      (lastCustRow?.created_at as string | undefined) ?? null, [seenTs(conv.suggested_aix_meta), seenTs(conv.last_brain_meta)]);
+    if (savedMissedLatestCustomer) {
+      console.log(JSON.stringify({ tag: "brain:duplicate-run-new-message", conversationId, lastAnalyzedAt: conv.brain_analyzed_at, latestCustomerAt: lastCustRow?.created_at ?? null }));
+    }
+  }
+  if (isDuplicateRun({ ...dupInput, savedMissedLatestCustomer })) {
     console.log(JSON.stringify({
       tag: "brain:duplicate-run-skipped", conversationId,
       lastAnalyzedAt: conv.brain_analyzed_at, windowMs: DUPLICATE_RUN_WINDOW_MS,

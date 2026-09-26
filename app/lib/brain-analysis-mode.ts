@@ -70,6 +70,13 @@ export type DuplicateRunInput = {
   /** 保存済みの判断があるか（無ければ省略しない＝初回は必ず分析する） */
   hasSuggestedMeta: boolean;
   nowMs: number;
+  /**
+   * 保存済みの判断が見ていないお客様の発言があるか（brain-meta-restore.brainMissedCustomerMessage）。true なら二重起動ではない。
+   * 2026-09-27 YUMA 事例: 1通目（「〇〇いいですね」）の分析中に2通目（「見積もりお願いできますか」）が届き、bg-async の連投の再分析
+   * （burst brain rerun）が1通目の分析の打刻から45秒以内だったので二重起動として止まり、2通目を見た判断が一度も作られなかった
+   * （ブレインは1通目だけを見た 物件確認した のまま）。undefined＝分からない（従来どおり時刻だけで決める）
+   */
+  savedMissedLatestCustomer?: boolean;
 };
 
 /**
@@ -77,9 +84,10 @@ export type DuplicateRunInput = {
  * ・forced（スタッフの宣言直後など）は必ず走らせる
  * ・保存済みの判断が無ければ走らせる（初回・失敗直後を止めない）
  * ・時刻が読めない時は走らせる（fail-open）
+ * ・保存済みの判断が見ていないお客様の発言がある時は走らせる（別の出来事＝新しい発言）
  */
 export function isDuplicateRun(i: DuplicateRunInput): boolean {
-  if (i.forced || !i.hasSuggestedMeta || !i.brainAnalyzedAt) return false;
+  if (i.forced || !i.hasSuggestedMeta || !i.brainAnalyzedAt || i.savedMissedLatestCustomer === true) return false;
   const at = Date.parse(i.brainAnalyzedAt);
   if (!Number.isFinite(at)) return false;
   const elapsed = i.nowMs - at;

@@ -7344,3 +7344,15 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - ブレインの判断（9/23 の段階＝申込）→ `brain_analyzed_at`・`brain_full_analyzed_at`・`brain_full_msg_count`・`last_brain_meta`・`brain_strategy`・`conversation_direction`・`suggested_aix_meta`・`suggested_next_aix` を空に → Claude のブレインを origin=staff で呼んで full で作り直し（段階＝proposing・action なし「顧客の反応を待つ」）。AIX 要対応・カレンダー・タスクの新規は0
 - 残っていた他の物: 未完了の AIX 要対応・カレンダー・下書き・予約送信は無し。9/27 の物件31件・送った記録3件・status（proposing）・deepseek_cutoff_at は触っていない
 - ⚠ ブレインを tsx から呼ぶ時は next/server の `after` がリクエストの外で落ちる（1回目は LLM を呼んだ後に保存で失敗）。Module._load で `after` を差し替える shim が要る
+
+## 2026-09-27 気に入ったお部屋への見積もりの依頼は AIX【見積書送る】（竹内「この場面は見積書を正解にする」・YUMA 事例）
+- **場面**: YUMA でこちらが送ったエステムコート大阪WEST に「いいですね」→「見積もりお願いできますか」。ブレインは AIX【物件確認した】（募集状況を確認し報告）
+- **本当の原因（穴:G2）**: ブレインは2通目を見ていなかった。1通目の bg-async のブレイン中に2通目が届き、2通目の bg-async は claim 失敗、1通目側の連投の再分析（burst brain rerun）は `isDuplicateRun`（45秒の窓）で `brain:duplicate-run-skipped` → 1通目だけの判断が残った（analyzed_msg_ts=1通目）。
+  直し: `isDuplicateRun` に `savedMissedLatestCustomer`。窓に当たった時だけ最新のお客様の発言の時刻を読み、保存済みの判断が見ていなければ走らせる（ログ `brain:duplicate-run-new-message`）。テスト `brain-unchanged.test.ts`
+- **決まり（穴:G3・LLM の揺れの保険）**: `app/lib/focused-estimate-request.ts` `resolveFocusedEstimateRequest`。主のお部屋（customer-state の focus）がこちらの送ったお部屋・終了していない＋今回の連投が見積もりの依頼 → AIX なし／確認します／物件確認した を `estimate_sheet` に（decision_source `signal:focused_estimate_request`）。上書きした時は reply_direction「〇〇の最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）」・key_topics から募集状況・reason もそろえる。プロンプトにも同名の行【主のお部屋への見積もりの依頼】
+  - 上書きしない: 物件が決まっていない（今まで通り）／お客様が持ち込んだお部屋（URL・画像）／同じ連投で空き状況・内覧も聞いた（物件確認した＋御見積書同封なら両方に1通で答えられる＝見積書送るは募集状況を報告しない）／別の物件・条件の依頼（探して欲しい 等）／S2・S3・S8・S9・S11
+  - 見積もりの依頼の判定は共有の `CUSTOMER_ESTIMATE_REQUEST_RE` を使わない（「見積もり書ありがとうございます」も拾う）
+- **実送信の線**（`npx tsx --env-file=.env.local scripts/audit-focused-estimate-request.ts`・180日・グループと YUMA を除く）: こちらが送ったお部屋への依頼 52件 → 見積書送る 47・物件確認した＋同封 2・物件確認のみ 1・申込へ 2（次のお客様の発言の後）。持ち込み 129件 → 物件確認した 37・見積書送る 28・AIX なし 54。空きも聞いた（こちらの送付）3件は 見積書送る 2・なし 1（線を引けない→ブレインに任せる）
+- `aix-scene-stats` の「先に募集状況の確認」は持ち込みの場面だけと書き直した（旧の設計知見「費用や見積もりを聞かれても実務は先に募集状況の確認」は持ち込みの数字が混ざっていた）
+- 確かめ: 本番の YUMA の今の会話で保存しない関数（scripts/yuma-brain-decision.ts）→ 直す前・後とも estimate_sheet（2通目まで見れば LLM も選ぶ）。customer-state は stage=interested・focus=エステムコート大阪WEST（sentByUs）・決まりの判定 hit
+- 設計知見2件（ブレイン診断／穴:G3／見積書、ブレイン診断／穴:G2／鮮度）

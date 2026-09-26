@@ -75,6 +75,12 @@ it("打刻が無い・読めない時は走らせる（fail-open）", () => {
   expect(isDuplicateRun({ ...dupBase, brainAnalyzedAt: null })).toBe(false);
   expect(isDuplicateRun({ ...dupBase, brainAnalyzedAt: "こわれた日付" })).toBe(false);
 });
+// 2026-09-27 YUMA 事例: 1通目の分析中に届いた2通目（見積もりの依頼）の再分析が45秒以内で止まり、2通目を見た判断が作られなかった
+it("保存済みの判断が見ていないお客様の発言がある時は45秒以内でも走らせる", () => {
+  expect(isDuplicateRun({ ...dupBase, savedMissedLatestCustomer: true })).toBe(false);
+  expect(isDuplicateRun({ ...dupBase, savedMissedLatestCustomer: false })).toBe(true);
+  expect(isDuplicateRun({ ...dupBase, savedMissedLatestCustomer: undefined })).toBe(true);
+});
 it("打刻が未来（時計のずれ）でも走らせる", () => {
   expect(isDuplicateRun({ ...dupBase, nowMs: Date.parse("2026-09-18T11:59:50Z") })).toBe(false);
 });
