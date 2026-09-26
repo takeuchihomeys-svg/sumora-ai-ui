@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
   // 2026-09-09 Fable5 行動台帳: generate-reply と同じ buildActionLedger（一次証拠 aix_usage_logs > line_tasks > 本文 regex）。fail-open
   const [aixRes, taskRes] = conversationId
     ? await Promise.all([
-        supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, estimate_sent").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(30).then((r) => r, () => ({ data: [] as LedgerAixRow[] })),
+        supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, estimate_sent, prop_statuses").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(30).then((r) => r, () => ({ data: [] as LedgerAixRow[] })),
         // 2026-09-11 統合設計（L6）: result 列も取る（property_check の result=NULL は「機械的に閉じられただけ」で報告ではない＝generate-reply と同じ台帳）
         supabase.from("line_tasks").select("task_type, status, created_at, completed_at, result").eq("conversation_id", conversationId).in("status", ["pending", "completed"]).order("created_at", { ascending: false }).limit(20).then((r) => r, () => ({ data: [] as LedgerTask[] })),
       ])

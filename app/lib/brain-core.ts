@@ -2119,7 +2119,7 @@ export async function analyzeConversation(
   const aixHistoryText = aixFlow.text;
   // 2026-09-09 Fable5 行動台帳: last_aix_history（AIX 3件・時刻なし・宣言/実行の区別なし）を補強。手打ち送付・宣言も含む確定事実を brain に渡す
   const brainLedger = buildActionLedger({
-    recentAixRows: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, generated_text: (l as { generated_text?: string | null }).generated_text ?? null })),
+    recentAixRows: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, prop_statuses: l.prop_statuses ?? null, generated_text: (l as { generated_text?: string | null }).generated_text ?? null })),
     messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
     lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at })),
     lastCustomerAt: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
@@ -3726,7 +3726,7 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   type M = { sender: string; text: string | null; created_at: string };
   const newMsgs = (newMsgsRes.data ?? []) as M[];
   // 押した AIX と流れ（毎回の分析と同じ関数）
-  type StrategyAixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null; property_names?: string[] | null; estimate_sent?: boolean | null; generated_text?: string | null };
+  type StrategyAixLog = { aix_type: string | null; line_message_id: string | null; sent_at: string | null; created_at: string; template_name?: string | null; check_pattern?: string | null; property_names?: string[] | null; prop_statuses?: string[] | null; estimate_sent?: boolean | null; generated_text?: string | null };
   const strategyAixLogs = (aixLogsRes.data ?? []) as StrategyAixLog[];
   const strategyTransitionMap: AixTransitionMap = buildAixTransitionMap((transitionRes.data ?? []) as Array<{ from_aix_type: string; to_aix_type: string; count: number }>);
   const aixFlowText = buildAixFlowNote(strategyAixLogs, strategyTransitionMap).text;
@@ -3734,7 +3734,7 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   type LM = { sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null };
   const ledgerMsgs = ((ledgerMsgsRes.data ?? []) as LM[]).slice().reverse();
   const strategyLedger = buildActionLedger({
-    recentAixRows: strategyAixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, generated_text: l.generated_text ?? null })),
+    recentAixRows: strategyAixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, prop_statuses: l.prop_statuses ?? null, generated_text: l.generated_text ?? null })),
     messages: ledgerMsgs.map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
     recordedFacts,
   });

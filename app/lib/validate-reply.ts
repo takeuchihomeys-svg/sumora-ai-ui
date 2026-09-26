@@ -126,7 +126,10 @@ export function enforceCustomerName(
   }
 
   // ② 行頭の呼びかけ「〇〇さん」が実名の形でない（表示名の変形・崩れをAIが書いた場合）
-  const lineHeadAddressRe = /(^|\n)([\s「]*)([^\s、。！!？?\n【】「」（）()・]{1,20})\s*(?:さん|サン|様|さま)([、,]?[ 　]*)([のがにをへ])?/g;
+  // 2026-09-26 YUMA の前後比較で発見: 「テストハイツ梅田とサンプルコート中津の駐車場…」の「サン」を敬称と読み、
+  //   「YUMAさんプルコート中津」に書き換えて物件名を壊していた（前後どちらの木でも出る既存の不具合）。
+  //   片仮名の「サン」の直後に片仮名が続く物は語の一部（サンハイツ・サンライズ・サンプル…）で敬称ではない → 置き換えない（置換を減らす向きだけ）
+  const lineHeadAddressRe = /(^|\n)([\s「]*)([^\s、。！!？?\n【】「」（）()・]{1,20})\s*(?:さん|サン(?![ァ-ヺー])|様|さま)([、,]?[ 　]*)([のがにをへ])?/g;
   cleaned = cleaned.replace(lineHeadAddressRe, (m, br: string, lead: string, base: string, tail: string, particle: string | undefined) => {
     if (base === canonical) return m;
     // 実名の形をしているものは第三者名の可能性もあるため一切触らない（誤置換の防止）
@@ -896,6 +899,8 @@ export function enforceAixGates(
     estimateAllowed?: boolean;
     /** ブレインが AIX【初期費用について】を選んだ（本文で初期費用の中身を説明しない） */
     costBreakdownAix?: boolean;
+    /** 2026-09-26（穴3）: 決まっている内覧の「時」（done-state.viewingHoursOf）。この時刻を言い直す文は「待ち合わせ確定」の置換にしない */
+    scheduledViewingHours?: number[];
   },
 ): { cleaned: string; violations: string[]; edits: GateEdit[] } {
   const violations: string[] = [];
@@ -961,6 +966,13 @@ export function enforceAixGates(
         if (r.name === "内覧候補日時" && opts?.lastStaffMsg) {
           const dateMatch = s.match(/[0-9０-９]{1,2}\s*[\/／月]\s*[0-9０-９]{1,2}/);
           if (dateMatch && opts.lastStaffMsg.includes(dateMatch[0])) return false;
+        }
+        // 2026-09-26 竹内「ここの部分改善する根本的に」（穴3）: 決まっている内覧の日時の復唱（「明日13時現地エントランスにて何卒」）は
+        //   待ち合わせを新しく決める文ではない。旧はこれを「内覧の詳細についてはご連絡させて頂きます」に置き換え、決まった内覧を未定に戻していた
+        //   （3383aa6b: スタッフは13時の待ち合わせを言い直した）。住所（丁目・番地・〒）を含む文と、決まった時刻と違う時刻の文は従来どおり置き換える
+        if (r.name === "待ち合わせ確定" && opts?.scheduledViewingHours?.length && !/丁目|番地|〒/.test(s)) {
+          const hs = [...s.normalize("NFKC").matchAll(/([0-9]{1,2})\s*(?::[0-9]{2}|時)/g)].map((m) => Number(m[1]));
+          if (hs.length > 0 && hs.every((h) => opts.scheduledViewingHours!.includes(h))) return false;
         }
         // G6: 直前スタッフ発言（AIX送付文含む）に確認結果報告があれば「確認済み事実の復唱」として通す
         if (r.assertion && opts?.lastStaffMsg && r.assertion.staffConfirmedRe.test(opts.lastStaffMsg)) return false;
@@ -1070,6 +1082,8 @@ export function validateAndClean(
     estimateAllowed?: boolean;
     /** ブレインが AIX【初期費用について】を選んだ（本文の初期費用の中身の説明を受付の一文に置き換える） */
     costBreakdownAix?: boolean;
+    /** 決まっている内覧の「時」（enforceAixGates へ渡す） */
+    scheduledViewingHours?: number[];
     /** 2026-09-11 竹内方針3: resolveAddressName の aliases（呼びかけ位置の別名を確定名に統一する） */
     nameAliases?: string[];
     /** 曜日の自動修正の基準時刻（既定 Date.now()） */
@@ -1127,6 +1141,7 @@ export function validateAndClean(
       customerConditions: opts.customerConditions,
       estimateAllowed: opts.estimateAllowed,
       costBreakdownAix: opts.costBreakdownAix,
+      scheduledViewingHours: opts.scheduledViewingHours,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));

@@ -1902,6 +1902,20 @@ export const PAIR_MATRIX: PairRule[] = [
     example: "はい😊！！\n募集状況確認出来次第ご連絡させて頂きます！！",
     length: "40〜90字", closer: "none", nanisotsu: false },
 
+  // ── 2026-09-26 竹内「ここの部分改善する根本的に」（穴1: 約束の言い直し）──
+  //   直前のこちらが確認・連絡の約束を「〜次第」「明日」の待ちの形で言い終えていて（done-state.findWaitFormPromises）、お客様は了承だけ。
+  //   CP_ACK（「直前約束の復唱WE DO」を必須）は YUMA の前後比較で、done-state の3か所を直した後も「募集状況確認出来次第ご連絡」を
+  //   2/3 で書かせていた（対象も駐車場→募集状況に化けた）。実送信（直近90日）: この場面の手打ちの82%・場面の96%が約束を書かず受けだけ
+  //   → 受けだけを型にする（過半数が守っている形）。resolveTurnPair が opts.waitFormPromised の時だけ明示的に選ぶ（closingOnly）
+  { id: "CP_ACK_WAIT", staff: "confirmation_promise", customer: "ack_only", closingOnly: true, precedence: "after_wait",
+    tpoLabel: "短い了承（待ちの形で伝え済みの約束への了承）",
+    direction: "直前にこちらが「〜確認出来次第ご連絡」「明日ご連絡」の形で約束を言い終えていて、お客様はそれに了承しただけ。開口語「はい😊！！」→受けの締め1文だけ。同じ約束（確認・連絡）を言い直さない・まだ送っていない物に「ご査収」を書かない。20〜60字",
+    mustInclude: [{ label: "受けの締め", detect: /気になる点|お気軽|何卒|よろしくお願い|お待ち/, severity: "warning",
+      fix: "「気になる点等出てきましたらいつでもお気軽にご連絡ください！！」の1文で受ける" }],
+    mustNot: ["直前の約束（〜次第ご連絡・確認させて頂きます）の言い直し", "ご査収（まだ送っていない物）", "約束に無い業務語彙（撮影・内覧日程）"],
+    example: "はい😊！！\n気になる点等出てきましたらいつでもお気軽にご連絡ください！！",
+    length: "20〜60字", closer: "none", nanisotsu: false },
+
   // ── 2026-09-12 竹内（KENYOU 事例）: 送付物件の一部を外した（探索継続）。
   //    実送信「かしこまりました！！\nフジパレスは対象から外し、引き続き物件お探しさせて頂きます！！\n新着でKENYOUさん達にオススメ出来るお部屋が募集に出次第お送りさせて頂きます！！\n何卒よろしくお願い致します！！」
   //    ／「こちらの物件は大丈夫です😭 また、違う物件探して見ます！」→「かしこまりました！！\n新着でオススメできるお部屋で次第随時お送りさせていただきます😊！！」。
@@ -2192,7 +2206,9 @@ export function resolveTurnPair(
   staff: StaffTurn, customer: CustomerResponse, substance: SubstanceVerdict, lastStaffText: string,
   opts: { searched?: boolean; ledger?: ActionLedger | null; customerName?: string; brainCurrentProperty?: string | null;
     /** 2026-09-11 統合設計（経路D）: 直前スタッフ発言より前の顧客発言（断り→スタッフ締め→お礼 の往復で farewell を立てる） */
-    priorCustomerText?: string | null } = {},
+    priorCustomerText?: string | null;
+    /** 2026-09-26（穴1）: 直前のこちらが確認・連絡の約束を待ちの形（〜次第・日付）で言い終えている（done-state.findWaitFormPromises を route が渡す） */
+    waitFormPromised?: boolean } = {},
 ): PairContext {
   // 2026-09-09 Fable5: 同一セルに「未探索（宣言型）」と「探索済み（結果報告型・hedgeAllowed）」がある時は resolveHedgeAllowance の searched で選ぶ
   // 「探索済み」＝顧客最新発言より後の送付（hedgeAllowed セル選択）。全期間の propertiesSentCount は {redo} 用で混同しない
@@ -2231,6 +2247,8 @@ export function resolveTurnPair(
     : closing.kind === "decline" ? (PAIR_MATRIX.find((r) => r.id === "ANY_DECLINE") ?? null)
     // 2026-09-15 竹内（みく事例）: 申込の案内の後の検討・迷い → かしこまりましたで受け止めて扉1文で締める
     : isApplyGuideThinking(effectiveKind, lastStaffText) ? (PAIR_MATRIX.find((r) => r.id === "APPLY_THINKING") ?? null)
+    // 2026-09-26（穴1）: 待ちの形で言い終えた確認・連絡の約束への了承は、復唱を必須にする CP_ACK ではなく受けだけの CP_ACK_WAIT
+    : staff.kind === "confirmation_promise" && effectiveKind === "ack_only" && opts.waitFormPromised ? (PAIR_MATRIX.find((r) => r.id === "CP_ACK_WAIT") ?? null)
     : (searched ? exact.find((r) => r.hedgeAllowed) : exact.find((r) => !r.hedgeAllowed)) ??
       exact[0] ??
       pool.find((r) => r.staff === "*" && r.customer === effectiveKind) ??

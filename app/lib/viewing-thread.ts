@@ -95,21 +95,25 @@ export function resolveViewingThread(
   };
   if (p) {
     const after = messagesOldestFirst.slice(p.i + 1);
+    const slotsParsed = parseCandidateSlots(textOf(p.m), tsOf(p.m) ?? nowMs);
+    const slots = slotsParsed.map((s) => s.label);
+    // 2026-09-26 竹内「ここの部分改善する根本的に」（穴3）: 決まった内覧（scheduled）にも提案した日時を持たせる（pending は false のまま）。
+    //   返信生成が「お客様はこちらの提案した日時を受けてくれた（候補が1つならその日時）」を言えるようにする（done-state.resolveViewingScheduled）
+    const scheduled = (reason: string): ViewingThreadVerdict =>
+      ({ pending: false, kind: "scheduled", proposalText: textOf(p!.m), proposedAtMs: tsOf(p!.m), slots, customerWish: null, roomsWanted: null, reason });
     // (c) 打診の後のこちらの発言
     for (const m of after) {
       if (m.sender !== "staff" || !isText(m)) continue;
       if (STAFF_VIEWING_DONE_RE.test(textOf(m))) return none("viewing_done" + reasonSuffix);
-      if (STAFF_MEETING_PLACE_RE.test(textOf(m))) return none("meeting_place_sent" + reasonSuffix, "scheduled");
+      if (STAFF_MEETING_PLACE_RE.test(textOf(m))) return scheduled("meeting_place_sent" + reasonSuffix);
     }
     // (d) 打診の後のお客様の発言
     for (const m of after) {
       if (m.sender !== "customer" || !isText(m)) continue;
       if (CUSTOMER_VIEWING_CANCEL_RE.test(textOf(m))) return none("customer_cancelled" + reasonSuffix);
-      if (CUSTOMER_SLOT_ACCEPT_RE.test(textOf(m))) return none("customer_accepted" + reasonSuffix, "scheduled");
+      if (CUSTOMER_SLOT_ACCEPT_RE.test(textOf(m))) return scheduled("customer_accepted" + reasonSuffix);
     }
     // (e) 候補の枠が全部過ぎている（返事も無い）
-    const slotsParsed = parseCandidateSlots(textOf(p.m), tsOf(p.m) ?? nowMs);
-    const slots = slotsParsed.map((s) => s.label);
     if (slotsParsed.length > 0 && slotsParsed.every((s) => Date.parse(`${s.ymd}T${s.end}:00+09:00`) + 3 * HOUR_MS < nowMs)) return none("slots_expired" + reasonSuffix);
     // (f) 打診済み・返事待ち
     const before = messagesOldestFirst.slice(Math.max(0, p.i - 6), p.i + 1);

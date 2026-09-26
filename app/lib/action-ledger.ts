@@ -74,6 +74,8 @@ export interface LedgerEntry {
     /** guarantor_explained: 案内した物件ごとの保証会社（AIX 保証会社についての画面入力）と並行審査を勧めたか */
     guarantors?: Array<{ name: string; company: string; type: string }>;
     parallel?: boolean;
+    /** confirmation_reported（AIX 物件確認した）: 物件ごとの結果（propertyNames と同じ順） */
+    propStatuses?: string[];
   };
   /** done 直後（次のスタッフ発言より前）の顧客返答（往復文脈の一般化） */
   customerReactionAfter?: ReactionKind;
@@ -109,6 +111,11 @@ export interface LedgerFacts {
   confirmationPromisedObject: string | null;
   confirmationReported: boolean;
   confirmationReportPattern: string | null;
+  /**
+   * 2026-09-26（穴2: 前に送った物の中身を知らない）: 最後に報告した確認結果の中身（物件名なし・件数と状態だけ。例「募集中1件・募集終了1件」）。
+   *   旧: 「結果=available」だけで、4件のうち1件募集中（残りは空いていない）を報告した後に残りを「確認いたします」と約束した（7a7d6286 型）
+   */
+  confirmationReportDetail?: string | null;
   viewingInvited: boolean;
   meetingPlaceSent: boolean;
   applicationGuided: boolean;
@@ -144,6 +151,8 @@ export type LedgerAixRow = {
   property_names?: string[] | null;
   estimate_sent?: boolean | null;
   template_name?: string | null;
+  /** 2026-09-26（穴2）: AIX【物件確認した】の物件ごとの結果（property_names と同じ順。available/unavailable/vacating/alternative） */
+  prop_statuses?: string[] | null;
 };
 export type LedgerMessage = { sender: string; text: string; createdAt?: string; isAix?: boolean; lineMessageId?: string | null };
 export type LedgerTask = {
@@ -230,7 +239,53 @@ export function confirmObjectOf(text: string | null | undefined): string | null 
  * 確認結果の報告を約束に読まない（台帳専用・返信生成が共有する STAFF_CONFIRM_REPORT_RE は触らない）。
  *   実データ: 「確認させていただき、〜とのご連絡がございました」の報告文が confirmation_promised に誤分類（21件中3件）
  */
-const LEDGER_CONFIRM_REPORT_RE = /との(?:ご)?(?:連絡|返答|返事|回答)(?:が|を)?(?:ございました|御座いました|(?:頂|いただ)きました|ありました)|より(?:ご)?(?:返答|回答|連絡)(?:が)?(?:あり|ございました)/;
+const LEDGER_CONFIRM_REPORT_LEGACY_RE = /との(?:ご)?(?:連絡|返答|返事|回答)(?:が|を)?(?:ございました|御座いました|(?:頂|いただ)きました|ありました)|より(?:ご)?(?:返答|回答|連絡)(?:が)?(?:あり|ございました)/;
+const LEDGER_CONFIRM_REPORT_RE = new RegExp([
+  LEDGER_CONFIRM_REPORT_LEGACY_RE.source,
+  // 2026-09-26 竹内「ここの部分改善する根本的に」（穴2: 前に送った物の中身を知らない）:
+  //   手打ちの確認結果の報告（直近60日の広い候補118通）のうち、報告として記録されたのは65通（55.1%）だけだった。
+  //   「確認させて頂きましたが無しとのことです」「調べさせて頂きましたが募集に出ていないお部屋」「との事です」（漢字）
+  //   「お申込みが入り」「専任のお部屋」「〇〇のみ募集中となります」が何も記録されず、台帳は「確認約束未履行」のまま
+  //   → ブレインの方向「〜を確認する旨」・生成の「確認します」の言い直しの材料になっていた。
+  //   監査: scripts/audit-reply-context-fix.ts SEC=ledger（前後で変わった通を全部目で読む）
+  //   2026-09-26 反証レビュー: 「探させて頂きましたが〇〇が1番オススメ」は物件探しの報告で確認結果ではない（初期費用・募集状況の確認の【必ず】を閉じていた bfd172e6）→「探」は外す
+  /(?:確認|お調べ|問い合わせ|交渉)(?:させて(?:頂|いただ)き|いたし|致し|し)ました(?:ところ|所|が)|お?調べさせて(?:頂|いただ)きました(?:ところ|所|が)|確認させて(?:頂|いただ)き、[^\n。！!]{0,40}(?:(?:ました|ございません)[！!。😊😌]*$|との(?:こと|事))/.source,
+  //   ⚠ 約束・条件の形（「審査結果出次第ご連絡」「お申込みが入りますと」「募集中となり次第」）は当てない
+  /との事(?:です|でした|で)|募集に出ていない(?:お部屋|状況)|申込み?(?:が)?(?:入り(?:まし|、)|入って(?:おり|い)|はいって(?:おり|い))|専任の(?:お部屋|物件)|掲載(?:が)?終了し|募集(?:が)?終了して(?:おり|いるお部屋|いる物件|いました)|審査否決(?:とな|でし|との)|(?:号室|件|部屋|まだ|のみ|現在|現状|予定で|も)[^\n。！!]{0,12}?募集中(?:となり(?!次第)|でした|では(?:無|な)い)/.source,
+].join('|'));
+/** 報告に見えるが条件付き・推量（「募集に出ていない可能性もございます…お送り頂けますと確認させて頂きます」）は報告にしない */
+const REPORT_HEDGE_RE = /可能性(?:も|が)(?:ございます|御座います|あります)|場合(?:が|も)?(?:ございます|御座います|あります)|ケース|かもしれ|と思われ|(?:頂け|いただけ)(?:ましたら|ますと|れば)|お送り(?:頂|いただ)け/;
+/** お客様の言葉の復唱（「ご希望とのことですね」「審査期間がギリギリとのことでしたので」）は確認結果の報告ではない */
+const REPORT_ECHO_RE = /とのことですね|ということですね|ご(?:希望|検討|要望)[^\n。！!]{0,8}とのこと/;
+/** 確認結果の報告の文（報告の語がある文で、条件付き・推量でない物）。1通の中の最初の1文 */
+export function findConfirmReportSentence(text: string | null | undefined): string | null {
+  for (const s of (text ?? '').split(/\n|(?<=[。！!？?])(?![。！!？?])/)) {
+    const x = s.trim();
+    if (!x || REPORT_HEDGE_RE.test(x) || REPORT_ECHO_RE.test(x)) continue;
+    if (STAFF_CONFIRM_REPORT_RE.test(x) || LEDGER_CONFIRM_REPORT_RE.test(x)) return x;
+  }
+  return null;
+}
+/** 募集状況の報告の語（募集中・募集に出ていない・専任・申込が入り・掲載終了） */
+const RECRUIT_REPORT_RE = /募集|専任|申込み?(?:が)?(?:入|はい)|掲載/;
+/** 要件が読めない新しい語彙の報告の要件（promise-calendar では相手・不明の約束の行だけに当たり、要件のある約束の行は閉じない） */
+export const REPORT_OBJECT_UNKNOWN = '確認結果';
+/**
+ * 確認結果の報告の要件（送信時の約束カレンダー planPromiseCompletion が「どの【必ず】を閉じるか」に使う）。
+ * 2026-09-26 反証レビュー（旧・新の分類器で直近90日の手打ちを再生し、閉じ方が変わった【必ず】を全部読んだ）:
+ *   要件が空・相手だけ（管理会社・交渉）の報告は、その会話の開いている確認の約束を**全部**閉じる（isConfirmPartyObject＝ワイルドカード）。
+ *   報告の語彙を広げた＋物件送付の通にも報告を足したことで、「募集中となります」でペット・初期費用の確認の【必ず】が閉じる誤りが出た
+ *   （110b3053・ca571e21・d3f7f5f3・2ae0d94e 型）＝連絡漏れの見張りが外れる。
+ *   → 旧の語彙で通全体が報告だった物は旧と同じ要件（閉じ方を変えない）。新しい語彙の報告は文の要件 → 募集の語なら「募集状況」→ それ以外は
+ *     REPORT_OBJECT_UNKNOWN（相手・不明の約束の行だけ閉じる）
+ */
+export function reportObjectOf(sentence: string, text: string, primary: boolean): string | null {
+  if (primary && (STAFF_CONFIRM_REPORT_RE.test(text) || LEDGER_CONFIRM_REPORT_LEGACY_RE.test(text))) return confirmObjectOf(text);
+  const o = confirmObjectOf(sentence);
+  if (o && !isConfirmPartyObject(o)) return o;
+  if (RECRUIT_REPORT_RE.test(sentence)) return '募集状況';
+  return REPORT_OBJECT_UNKNOWN;
+}
 /** 約束の文（カレンダーの「約束:」欄・80字）。末尾の記号・絵文字は落とす */
 function promiseSentenceText(s: string | null | undefined): string | null {
   const t = (s ?? '').replace(/[！!。、\s]+$/g, '').replace(/[\p{Extended_Pictographic}️]/gu, '').trim();
@@ -267,8 +322,11 @@ export function isPropertyWatchDeclaration(sentence: string | null | undefined):
 
 /** 文の中の確認の約束（ピックアップの宣言の文・物件を探し続ける宣言・条件付きの文・報告の文は除く） */
 function findConfirmPromiseSentence(sentences: string[]): { sentence: string; evidence: string } | null {
-  for (const s of sentences) {
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
     if (STAFF_PICKUP_DECL_RE.test(s) || isPropertyWatchDeclaration(s) || CONDITIONAL_PROMISE_RE.test(s) || LEDGER_CONFIRM_REPORT_RE.test(s)) continue;
+    // 2026-09-26: 相手の言葉の引用（「保証会社に一度審査可能か確認させていただきます。とのことですので」）はこちらの約束ではない
+    if (/^\s*との(?:こと|事)/.test(sentences[i + 1] ?? '')) continue;
     const m = s.match(STAFF_CONFIRM_DECL_RE) ?? s.match(BARE_CONFIRM_DECL_RE);
     if (m) return { sentence: s, evidence: m[0] };
   }
@@ -421,9 +479,11 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   if (STAFF_VIEWING_INVITE_RE.test(t)) return base('viewing_invited', 'done', t.match(STAFF_VIEWING_INVITE_RE)![0]);
   if (STAFF_APPLY_PUSH_RE.test(t)) return base('application_guided', 'done', t.match(STAFF_APPLY_PUSH_RE)![0]);
   if (STAFF_CONDITION_ASK_RE.test(t)) return base('condition_asked', 'done', t.match(STAFF_CONDITION_ASK_RE)![0]);
-  if (STAFF_CONFIRM_REPORT_RE.test(t) || LEDGER_CONFIRM_REPORT_RE.test(t)) {
-    const ev = t.match(STAFF_CONFIRM_REPORT_RE)?.[0] ?? t.match(LEDGER_CONFIRM_REPORT_RE)![0];
-    return base('confirmation_reported', 'done', ev, { object: confirmObjectOf(t) });
+  // 2026-09-26: 文単位で見る（条件付き・推量の文「募集に出ていない可能性もございます」は報告にしない）
+  const reportSentence = findConfirmReportSentence(t);
+  if (reportSentence) {
+    const ev = reportSentence.match(STAFF_CONFIRM_REPORT_RE)?.[0] ?? reportSentence.match(LEDGER_CONFIRM_REPORT_RE)?.[0] ?? reportSentence;
+    return base('confirmation_reported', 'done', ev, { object: reportObjectOf(reportSentence, t, true) });
   }
   // 宣言（未来形）。ピックアップ宣言は確認約束より先（「ピックアップ出来次第お送り」を確認約束にしない）
   const watchSentence = sentences.find((s) => isPropertyWatchDeclaration(s));
@@ -476,8 +536,23 @@ export function classifyStaffTextFacts(text: string, at: string | null): LedgerE
   if (!has('pickup_declared', 'properties_sent', 'condition_asked') && STAFF_PICKUP_DECL_RE.test(t) && !STAFF_CONDITION_ASK_RE.test(t)) {
     add('pickup_declared', 'promised', t.match(STAFF_PICKUP_DECL_RE)![0], { sentence: promiseSentenceText(sentences.find((s) => STAFF_PICKUP_DECL_RE.test(s))) });
   }
+  // 2026-09-26: 報告が主な行為になった通（「確認させて頂きましたところ募集終了…／ご条件に合ったお部屋を新着物件併せて確認させて頂きます」）でも
+  //   物件を探し続ける宣言は残す（旧は宣言が主な行為だった）
+  if (!has('pickup_declared', 'properties_sent', 'condition_asked')) {
+    const w = sentences.find((s) => isPropertyWatchDeclaration(s));
+    if (w) add('pickup_declared', 'promised', w.match(/(?:確認|お調べ|チェック)[^\n。！!？?]{0,12}/)?.[0] ?? '確認', { sentence: promiseSentenceText(w), watch: true });
+  }
+  // 2026-09-26（穴2）: 主な行為が物件送付・見積書・待ち合わせでも、同じ通の確認結果の報告は別に記録する
+  //   （「1件募集中でしたのでお送りさせて頂きました」「1番手でお申込みが入りましたので2番手…」「確認させて頂きましたが専任のお部屋…引き続き新着で」）。
+  //   主な行為は変えない（送付件数を減らさない）。報告を足すと、その前の確認の約束が「履行済み」になる（⑥の履行リンク）
+  if (!has('confirmation_reported')) {
+    const r = findConfirmReportSentence(t);
+    if (r) add('confirmation_reported', 'done', r.match(STAFF_CONFIRM_REPORT_RE)?.[0] ?? r.match(LEDGER_CONFIRM_REPORT_RE)?.[0] ?? r, { object: reportObjectOf(r, t, false) });
+  }
   // 文ごとに見る（旧: 通全体にピックアップの宣言があると確認の約束を捨てた → 慶次「ピックアップ出来次第お送り＋保証会社の件も確認させて頂きます」の確認が落ちた）
-  if (!has('confirmation_promised', 'confirmation_reported')) {
+  //   2026-09-26: 報告と同じ通の別の文の約束（「保証会社審査中とのご返事でした。月曜日に再度確認させていただきます」）も残す。
+  //   報告の文そのものは findConfirmPromiseSentence が飛ばす（報告を約束に読まない）。並びは報告→約束なので、この約束は未履行のまま
+  if (!has('confirmation_promised')) {
     const c = findConfirmPromiseSentence(sentences);
     if (c) add('confirmation_promised', 'promised', c.evidence, { object: confirmObjectOf(c.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([c.sentence, ...sentences], c.sentence) });
   }
@@ -564,7 +639,11 @@ export function buildLedgerLinesForBrain(ledger: ActionLedger, max = 8): string 
     // 2026-09-15 竹内（YUYA 事例）: 保証会社の案内はブレインに物件名と会社名・種類も渡す（次の一手＝どの物件の審査に進むかの前提）
     //   種類は日本語（独立系／LICC系／信販系・不明は「不明・その他」）＝ラベルの1表は guarantor-companies に置く
     if (e.kind === 'guarantor_explained' && d.guarantors?.length) return `${d.guarantors.slice(0, 5).map((g) => `${g.name}: ${g.company}（${guarantorTypeJa(g.type)}）`).join('／')}${d.parallel ? '／並行審査を勧めた' : ''}`;
-    if (d.checkPattern) return `結果=${d.checkPattern}`;
+    // 2026-09-26（穴2）: 物件ごとの確認結果（どの物件がどうだったか）。旧は「結果=available」だけで、報告済みの物件を「確認する旨」と方向に書いていた
+    if (e.kind === 'confirmation_reported' && d.propStatuses?.length && d.propertyNames?.length) {
+      return `結果: ${d.propertyNames.slice(0, 6).map((nm, i) => `${nm}=${REPORT_STATUS_JA[d.propStatuses![i] ?? ''] ?? d.propStatuses![i] ?? '?'}`).join('／')}`;
+    }
+    if (d.checkPattern) return `結果=${REPORT_STATUS_JA[d.checkPattern] ?? d.checkPattern}`;
     if (d.object) return `対象=${d.object}`;
     return '';
   };
@@ -599,6 +678,27 @@ function pickLastStaffEntry(merged: LedgerEntry[], lastStaffAt: number): LedgerE
   })[0] ?? null;
 }
 
+/** 確認結果の状態の日本語（AIX 物件確認した の prop_statuses / check_pattern / line_tasks.result） */
+export const REPORT_STATUS_JA: Record<string, string> = {
+  available: "募集中", unavailable: "募集終了", vacating: "退去予定", move_out_planned: "退去予定", alternative: "代わりのお部屋を案内",
+  taken: "申込あり", second_position: "2番手", mgmt_availability: "募集状況",
+};
+/**
+ * 報告した確認結果の中身（物件名なし）。物件ごとの状態があれば件数（「募集中1件・募集終了2件」）、無ければ check_pattern の日本語。
+ * 生成プロンプト（竹内方針2: 物件名を渡さない）と連投の途中の注記で使う。ブレインには buildLedgerLinesForBrain が物件名つきで渡す
+ */
+export function reportDetailOf(e: LedgerEntry | null): string | null {
+  if (!e || e.kind !== "confirmation_reported") return null;
+  const st = e.detail.propStatuses ?? [];
+  if (st.length) {
+    const n = new Map<string, number>();
+    for (const x of st) { const k = REPORT_STATUS_JA[x] ?? x; n.set(k, (n.get(k) ?? 0) + 1); }
+    return [...n].map(([k, c]) => `${k}${c}件`).join("・");
+  }
+  const cp = e.detail.checkPattern ?? null;
+  return cp ? (REPORT_STATUS_JA[cp] ?? null) : null;
+}
+
 export function buildActionLedger(input: LedgerInput): ActionLedger {
   const now = input.now ?? Date.now();
   const msgs = input.messages ?? [];
@@ -622,6 +722,10 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     if (map.kind === 'properties_sent') { e.detail.propertyNames = names; e.detail.propertyCount = Math.max(1, names.length); }
     if (map.kind === 'estimate_sent') e.detail.estimateFor = names;
     if (map.kind === 'meeting_place_sent') e.detail.appointment = extractViewingAppointment(r.generated_text, at);
+    if (map.kind === 'confirmation_reported' && names.length) {
+      e.detail.propertyNames = names;
+      if (Array.isArray(r.prop_statuses) && r.prop_statuses.length) e.detail.propStatuses = r.prop_statuses.map(String);
+    }
     // 送信時の記録があれば中身（画面で入力した待ち合わせの日時・物件 等）はそちらを正にする
     for (const x of recordedAixNear(r.aix_type as string, ms(at))) {
       // AIX 本文に書き足した約束（aixTextPromises）はこの AIX の行とは別の行として ②' で入れる（2026-09-15 ゆうこ事例: ここで使用済みにして捨てていた）
@@ -817,6 +921,7 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     confirmationPromisedObject: confirmOpen.at(-1)?.detail.object ?? null,
     confirmationReported: reports.length > 0,
     confirmationReportPattern: reports.at(-1)?.detail.checkPattern ?? null,
+    confirmationReportDetail: reportDetailOf(reports.at(-1) ?? null),
     viewingInvited: merged.some((e) => e.kind === 'viewing_invited'),
     meetingPlaceSent: merged.some((e) => e.kind === 'meeting_place_sent'),
     applicationGuided: merged.some((e) => e.kind === 'application_guided'),
@@ -963,7 +1068,8 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   }
   if (f.estimateSent) lines.push('→ 御見積書は送付済み。「御見積書を作成しお送りします」の再宣言は禁止（金額変更依頼がある場合のみ「再作成」）。');
   else lines.push('→ 御見積書は未送付。「先ほどお送りした御見積書」「ご検討の程」は使えない。');
-  if (f.recentDone.vacancyCheck || f.recentDone.mgmtCheck) lines.push(`→ 募集状況の確認は実行・報告済み（結果=${f.confirmationReportPattern ?? '報告済'}）。「確認します」の再宣言は禁止（新しい物件の提示がある場合のみ正当）。`);
+  // 2026-09-26（穴2）: 報告の中身（件数と状態・物件名なし）も渡す。報告済みの結果で答えられる問いは確認の約束にしない（手打ちの報告も数える）
+  if (f.recentDone.vacancyCheck || f.recentDone.mgmtCheck) lines.push(`→ 募集状況等の確認は実行・報告済み（結果=${f.confirmationReportDetail ?? f.confirmationReportPattern ?? '報告済'}）。報告済みの結果で答えられる問いには、その結果で答える（「確認します」「確認出来次第ご連絡」の再宣言は禁止。新しい物件・まだ確認していない事の時だけ正当）。`);
   // 2026-09-14 竹内（名無しの権兵衛事例）: 内覧の約束は送った内容の中でも鮮度が高い。当日の「着きました」に新しい内覧日程を打診しない
   //   （文例はスタッフの実送信: 着いた→「まもなく到着いたします！！少々お待ちください」／遅れる→「かしこまりました！！お気をつけてお越しください」）
   // 2026-09-21 竹内（まりあさん事例）「なんでここ明日会えるの楽しみ等今の分からない文がでているのか」:

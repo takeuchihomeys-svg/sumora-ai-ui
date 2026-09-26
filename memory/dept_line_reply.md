@@ -1,6 +1,6 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-09-24
+最終更新: 2026-09-26
 
 ---
 
@@ -7190,3 +7190,41 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 変えていない: AIX 本体の仕上げ（aix/action・aix-template-generate の applyDailyGreeting＋sentByStaffToday）・通常返信の computeAlreadyGreetedToday（続きの挨拶は直近17日で2件＝天井が小さい）・旧 templates/adapt（generate-reply が失敗した時の予備）
 - テスト: daily-greeting 21（実物の本文を YUMA に置換）／greeting 31／greeting-standard-optional 7 ほか PASS
 - 残した課題: ①内覧後お礼の定型（aix/action apply_guide）を申込フォーム送付後は使わない（60日3件・0%）②約束の言い直しは入口（ブレインに『済んだ事』）で ③isFollowUp の時に台帳・前回送信の注記が空になる件は未測定 ④aix/action の AIX 本体も資料文だけの日の扱いを測る（画像を数えている）
+
+
+## 済んだ事・もう言った約束・決まった内覧を入口で1回だけ決める（竹内・2026-09-26「ここの部分改善する根本的に」・scripts/audit-reply-context-fix.ts）— 黄金ルール
+- 3つの穴: ①約束の言い直し（20分前の約束を相槌でもう一度） ②前に送った物の中身を知らない（確認済みを「確認します」） ③お客様の返事をこちらの提案への答えとして読めない（決まった内覧の「よろしく」に日程調整）
+- **根**: 材料（台帳の約束済み・送付済み・報告済み）は届いていたのに、書き方を決める決定論（gratitudeActionHint・promiseEchoNote・場面ラベル「短い了承（復唱）」・シンプル締め）が直前の文を正規表現で読み直して「約束を復唱せよ」「ご都合よろしいお日にちに」と命じていた／「直前のこちら」の数え方が3つ／isFollowUp で台帳が空／内覧の状態が1か所に無い（シンプル締めは各発言の1行目しか見ていなかった）
+- **全部入口**（`app/lib/done-state.ts`）。出口で本文から約束を消すのは入れない（言い直しを含む下書きの そのまま送信 33〜52%＝誤削除0が示せない）
+  - `latestStaffBlock`: 直前のこちらの塊を、一番新しい発言から6時間で区切る（route の lastStaffMsgForSearch と生成の lastStaffMsg に同じ値）。835組中85組で外れる発言あり（前日のピックアップ・見積の宣言＝今日の送付で果たした物）
+  - `findWaitFormPromises` / `withoutWaitFormPromises`: 確認・連絡・見積の約束を「〜次第」「明日・9/30・火曜日」で言い終えた文を外してから、感謝返しの次の一手（gratitudeActionHint）・promiseEchoNote・場面ラベルを選ぶ（route の `detectEchoablePromise` が共通）。外した物があれば受けだけ（WAIT_FORM_ACK_HINT＝「気になる点等出てきましたら…ご連絡ください」）・`waitFormAckNote`。線の外: 初回の挨拶文・ピックアップ・撮影・出次第・宣言だけ（次第なし）・お客様が先の条件付き
+  - `resolveViewingScheduled`: 決まった内覧＝台帳の待ち合わせ案内／viewing-thread の scheduled／日時を1つ出して都合を聞いた打診への「はい！大丈夫です！」。シンプル締め（`isWholeShortAck`＝発言全体が短い了承）・【🗓 内覧は決まっている】注記（viewingFactNote の「のみ許可」の代わり）・感謝返しの次の一手（「明日何卒よろしくお願い致します！！」）・AIX 待ち合わせ／内覧日調整の方向と WE DO（route `aixReplyDirectionFor`）・出口の待ち合わせの復唱の免除（validate-reply `scheduledViewingHours`＝置換しない向きだけ）が同じ値。静的な許可文（GENERATION_SYSTEM 2・viewing 規則・PatternB・meetingPlaceGateNote）には「【🗓 内覧は決まっている】がある時は使わない」の1文だけ
+  - `buildFollowUpDoneNote`: 連投の途中は台帳の「済んだ事」の確定行だけ渡す（往復文脈・姿勢・前回送信の注記は空のまま）。`customerAnsweredByAix`: お客様の最後の発言の後に AIX を送った連投では aixDone の解除条件を立てない
+- **台帳の報告の語彙**（`action-ledger.ts`）: 手打ちの確認結果の報告の記録 55.1% → 97.5%（広い候補119通）。`findConfirmReportSentence`（推量・一般の説明・お客様の言葉の復唱を外す）・報告は主な行為と別の行で足す（送付件数は減らさない）・報告と同じ通の「月曜日に再度確認させていただきます」は約束として残す・引用の「〜確認させていただきます。とのことです」は約束にしない・報告が主になった通の探し続ける宣言も残す。全部の手打ち（180日 6,710通）で新旧を並べ、変わった293通を全部読んだ
+- **確認結果の中身**: aix_usage_logs.prop_statuses を LedgerAixRow に通した（generate-reply・brain-core・check-reply の select）。ブレインには「物件名=募集中／募集終了」、生成には件数と状態（募集中1件・募集終了1件・物件名なし）。台帳の注記「募集状況等の確認は実行・報告済み…報告済みの結果で答えられる問いには、その結果で答える」
+- **監査の数字**: 待ちの形×短い了承 6組・下書きの言い直し4件は4件ともスタッフが消した（残した0）・実送信の手打ち20通の言い直し2（10%）／決まった内覧×短い了承 33組（旧判定 44組中3組）・下書きの定型4件はスタッフが全部消した
+- **費用**: dynamic は当たる場面だけ +0〜150トークン程度（waitFormAckNote は promiseEchoNote の代わり・内覧の注記は viewingFactNote の代わりでほぼ差し引き0）。静的な前置きは約240字（約200トークン）増え、デプロイ後の最初の1回だけキャッシュの書き直し
+- **テスト**: `app/lib/__tests__/done-state.test.ts`（29・実物の本文を YUMA に置換）。関係テスト 61ファイル PASS（aix-system-blocks・jst-date の各1件は HEAD でも落ちる既存）
+- **入れなかった物（理由）**: 出口で約束の言い直しを消す（誤削除）／2回目締め（isSecondClosing）の1行目の不具合（170組中0→最大51組に動く・効果を別に測ってから）／未回答の問いの引き継ぎ（60日2件）／往復セルの必須要素「確認宣言」→新しい依頼の宣言（64dc7ea4 型・60日1件）／final-check AIX_BOUNDARY_MOVEIN の例外（1件）／内覧の件数（「3件全てご案内」）を台帳に持たせる（51a107a0 型）／viewing-thread の受諾の正規表現（AIX【物件確認した】の会話を合わせるの縛りも読むので変えない）
+- **次にやる物**: ①YUMA（DeepSeek）で3場面（待ちの形の約束の後の「ありがとうございます」／待ち合わせ案内後の「よろしくお願いします」／AIX 物件確認した直後の連投）の前後を確かめる ②1週間後に `[staff-block]` `[viewing-scheduled]` のログ件数と、該当組の そのまま送信 を audit-reply-context-fix で測り直す ③ブレインの reply_direction「〜を確認する旨」が報告済みの物件に出る率（9/10〜 3/4）を brain_decision_logs で測り直す
+- 設計知見5件（kb-insert・穴:G1 ×4／汎用1「Git Bash で \\ が潰れる」）
+- **反証レビュー（同日）で直した物**（件数ではなく判定そのものを1組ずつ読んで見つけた・設計知見2件 汎用/静かに壊れる）
+  - 決まった内覧の誤判定: viewing-thread の scheduled のうち候補の日時が無い10組はほぼ全部が誤り（費用の説明の「最安値のお日にち」への「わかりました／お願いします」・「やめときます」・内覧後の「今日はありがとうございました」）→ 候補の日時を出した打診だけ＋逆提案（しか間に合わず・以降でしたら）を外す。台帳の待ち合わせで当日・始まりから60分過ぎの15組は全部が内覧後 → 外す（`sameDayAppointmentPassed`）。直した後 決まった内覧72組・短い了承28組
+  - ブレインが AIX【内覧日調整】を選んだ時は本文でも「決まっている」にしない（AIX と本文の食い違い）。AIX【待ち合わせ】の橋渡し（buildAixTimingNote の既定「内覧の詳細についてはご連絡」）も決まっている時は同じ値（viewingAckLine）に揃えた。出口の免除の時刻は決まった時刻（label）だけ
+  - 報告の語彙を広げた副作用: 送信時の約束カレンダー（sent-facts → planPromiseCompletion）は要件の空・相手だけの報告で開いている確認の【必ず】を全部閉じる → 「募集中となります」でペット・初期費用の【必ず】が閉じていた。新しい語彙の報告は要件を持たせる（`reportObjectOf`・不明は「確認結果」＝相手・不明の約束だけ）・「探させていただきましたが」は報告から外す。旧新の再生（90日）で 新だけ閉じる21→13（全部正しい履行）・旧だけ0
+  - 予約送信の AIX（sent_at が未来）は「もう AIX で答えた」に数えない
+  - テスト done-state 35（+6）
+
+
+## YUMA で前後を比べた（済んだ事・もう言った約束・決まった内覧／2026-09-26・scripts/yuma-done-state-test.ts）
+- やり方: 前＝`git worktree add --detach .claude/worktrees/tmp-fix-before HEAD`（node_modules は junction）を :3101、後＝作業コピーを :3100 で next dev（LINE の鍵は無効な値・内部認証は乱数）。場面の発言を YUMA の messages／aix_usage_logs に入れ、ブレインは各木で analyzeConversation（保存しない）→ その判断を置いて前後 各3回を DeepSeek で生成。片付けは t0 以降の YUMA の行を消し、conversations は変わった列だけ戻し、ai_reply_knowledge.used_count も戻す
+- 結果（前 → 後、各3回。後は直した後の最終）: S1 見積の待ちの約束の後の相槌 ご査収 1/3 → 1/3（YUMA の履歴の「ご査収」由来）／S2 確認の待ちの約束の後の相槌 言い直し 3/3 → 0/3（6回中0）／S3 AIX 物件確認した直後の連投 「確認しご連絡」3/3 → 0/3・結果の繰り返し 0/3／S5 提案日時への「はい！大丈夫です！」決まった日時で受ける 0/3 → 3/3（うち1回は「現地にてお待ち合わせ如何でしょうか」）／S6 待ち合わせ案内後の「よろしくお願いします」 詳細はご連絡 2/3 → 0/3・「明日何卒」3/3／S4（全て送付後）・S7（未回答の問い）は直していない・変化なし
+- YUMA で見つけて直した物:
+  - **往復文脈のセル CP_ACK が復唱を必須にしていた**（S2 の後が 2/3 で「募集状況確認出来次第ご連絡」）→ `CP_ACK_WAIT`（受けだけ・closingOnly）を reply-context に足し、route が `findWaitFormPromises` で `waitFormPromised` を渡した時だけ選ぶ。同じ場面の【✅ 確認対象】【管理会社の状況】AIX の橋渡しも `waitFormConfirmAck` 1つで受けだけにする
+  - **連投の途中で確認の依頼にもう AIX で答えた時**（S3）: 質問検出×2・往復文脈の「質問に直接回答」と必須・確認対象・管理会社・AIX の橋渡し・aixDoneAckNote が答え終えた発言を読み直していた → `checkAnsweredFollowUp` 1つで全部止める（方向は次の一手＝内覧のご案内）
+  - **決まった内覧の免除が customer_accepted でも効いていた**: 待ち合わせ未案内なのに「現地エントランスにてお待ち合わせできますでしょうか」が出口を素通り → 免除は待ち合わせ案内済みの時だけ。buildViewingScheduledNote（customer_accepted）に「待ち合わせの場所は書かない」
+  - **enforceCustomerName が物件名を壊していた**（前後どちらも）:「テストハイツ梅田とサンプルコート」→「YUMAさんプルコート」。片仮名のサン＋片仮名は敬称にしない。実送信 12,798通で判定が変わる75通は全部物件名（プレサンス等）
+- テスト: `wait-form-ack-cell.test.ts`（6）・`customer-name-katakana-san.test.ts`（4）を新設。done-state 35 ほか関係テスト PASS
+- ブレイン（Claude）の AIX の種類は前後で同じ向き（S1 estimate_sheet・S2 property_check_result・S5 meeting_place・S6/S4 なし・S7 property_check_result mgmt_parking）。S3 は前 estimate_sheet/property_send・後 estimate_sheet/acknowledge_check と回ごとに揺れる（台帳に確認結果の中身が届いた後は「確認します」系の reply_direction は出なかった）
+- 残り（止めた判断）: ①S5 の「現地にてお待ち合わせ如何でしょうか」（出口の待ち合わせ確定の正規表現に「現地にて」が無い。出口を広げるのは誤削除の監査が要る）②S1 の「ご査収」は YUMA の履歴（AIX の物件送付ばかり）由来 ③ブレインの reply_direction は S2 でも「確認中である旨を伝えて」と書く（生成側で止まるので変えていない）④**AIX の物件送付の本文に「お待たせ致しました」**（直近7日 実お客様17通・G32 違反。AIX 側の担当へ）
+- 設計知見4件（穴:G1 ×2・汎用1・静かに壊れる1）

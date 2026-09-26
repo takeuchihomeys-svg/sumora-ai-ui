@@ -220,6 +220,9 @@ import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask, type RecordedFact } from "@/app/lib/action-ledger";
+// 2026-09-26 竹内「ここの部分改善する根本的に」: 済んだ事・もう言った約束・決まった内覧を入口で1回だけ決める（純関数・done-state.ts の冒頭を見る）
+import { latestStaffBlock, withoutWaitFormPromises, findWaitFormPromises, WAIT_FORM_ACK_HINT, resolveViewingScheduled, buildViewingScheduledNote, isWholeShortAck, buildFollowUpDoneNote, customerAnsweredByAix, viewingHoursOf, viewingAckLine, type ViewingScheduled } from "@/app/lib/done-state";
+import { resolveViewingThread } from "@/app/lib/viewing-thread";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
 import { viewingReportNoteForReply, type ViewingReport } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
@@ -408,6 +411,20 @@ export function detectStaffPromise(staffText: string): { label: string; echo: st
   if (/ピックアップ|お調べ|お探し|オススメできるお部屋/.test(staffText)) return { label: "条件に合う物件のピックアップ送付", echo: "オススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！" };
   if (/ご案内させて頂きます|内覧/.test(staffText) && /[0-9０-９]{1,2}時/.test(staffText)) return { label: "内覧の実施（日時確定）", echo: "当日何卒よろしくお願い致します！！" };
   return null;
+}
+/**
+ * 2026-09-26 竹内「ここの部分改善する根本的に」（穴1: 約束の言い直し）: 短い了承に復唱してよい直前の約束。
+ *   待ちの形（〜次第・日付）で言い終えた確認・連絡・見積の文は外す（done-state.withoutWaitFormPromises）。
+ *   確認・連絡を言い終えている時は、同じ通に残った報告の文（「管理会社より…受理とのご連絡がございました」）から「募集状況の確認」を拾わない（8d8c04b0 型）。
+ *   promiseEchoNote（buildGenerationMessages）と「短い了承（復唱）」の場面ラベル（route）が同じこの関数を読む
+ */
+function detectEchoablePromise(staffText: string): { label: string; echo: string } | null {
+  const w = withoutWaitFormPromises(staffText);
+  const p = detectStaffPromise(w.text);
+  if (!p || w.removed.length === 0) return p;
+  if (/募集状況/.test(p.label) && w.removed.some((r) => r.kind !== "見積")) return null;
+  if (/見積/.test(p.label) && w.removed.some((r) => r.kind === "見積")) return null;
+  return p;
 }
 // 締めフィラー通（「では失礼します」単独で来ても感謝返しを壊さない）
 const CLOSER_ONLY_RE = /^(?:では|それでは)?(?:失礼(?:します|いたします|致します)|以上です|また(?:ご)?連絡(?:します|いたします)|よろしくです)[！!。]*$/;
@@ -617,7 +634,7 @@ function buildAvailabilityCheckNote(): string {
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 2つに分ける
 //   r（ブレインが決めた AIX・fresh の時だけ）→「どの AIX で送るか」の見出し＋橋渡しの型
 //   safety（証拠がある時）→「テキストで物件情報・金額を書かない・橋渡し文」だけ（AIX ボタンの指示は書かない）
-function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null): string {
+function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null, viewingScheduledAck: string | null = null, waitFormConfirmAck = false, checkAnswered = false): string {
   if (!r && !safety) return "";
   const src = r
     ? { aix: r.action, label: r.label, chained: r.chained, urgency: r.urgency, highlight: r.highlight, extra: r.extra, forbidden: r.forbiddenText, bridge0: r.bridge }
@@ -627,15 +644,29 @@ function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null
   const s = {
     ...src,
     forbidden: `${src.forbidden}${extraForbid}`,
-    bridge: src.bridge0 ?? AIX_ACTION_REPLY_DIRECTION[src.aix]?.weDo ?? "かしこまりました！！",
+    // 2026-09-26 反証レビュー（四者同名）: 内覧が決まっている時の AIX【待ち合わせ】は、既定の橋渡し「内覧の詳細についてはご連絡」（決まった内覧を未定に戻す）を使わない。
+    //   route の aixReplyDirectionFor・【🗓 内覧は決まっている】と同じ値（viewingAckLine）
+    bridge: src.aix === "meeting_place" && viewingScheduledAck ? `かしこまりました！！${viewingScheduledAck}`
+      // 2026-09-26（穴1）: 待ちの形で言い終えた確認・連絡の約束への了承には、橋渡しの実例にも確認の約束を載せない
+      : (src.aix === "property_check_result" || src.aix === "acknowledge_check") && waitFormConfirmAck ? "はい😊！！気になる点等出てきましたらいつでもお気軽にご連絡ください！！"
+      // 2026-09-26（穴2）: 確認結果を AIX で送った直後の連投は、橋渡しの実例も次の一手（確認の約束を載せない）
+      : (src.aix === "property_check_result" || src.aix === "acknowledge_check") && checkAnswered ? AIX_ACTION_REPLY_DIRECTION.property_check_result.weDo
+      : src.bridge0 ?? AIX_ACTION_REPLY_DIRECTION[src.aix]?.weDo ?? "かしこまりました！！",
   };
   // G26/G7（2026-09-08 Fable5）: 旧固定型「→ 出来次第/確認出来次第ご連絡させて頂きます」は AIX 種別を問わず確認約束を注入していた
   // （創作約束の再生産源）。締めを AIX 種別で分岐し、viewing_invite は日程を尋ねる疑問形のみ（主語逆転の禁止を明記）
   // 2026-09-23 竹内: 室内写真（S11・interior_photo）は確認する物が無い（手元の写真・URL をピッカーから送る）。「お送りさせて頂きます」で締める
   const interiorPhoto = r ? r.check_pattern === "interior_photo" : safety?.scene === "S11_other_room";
   const closer =
-    interiorPhoto
+    s.aix === "meeting_place" && viewingScheduledAck
+      ? "決まっている日時で受ける一文で完結（住所・集合場所は AIX【待ち合わせ】で送る）。「内覧の詳細については（改めて）ご連絡」「ご都合よろしいお日にちに」「ピックアップ出来次第お送り」は書かない"
+    : interiorPhoto
       ? "受付の一文で完結（「室内のお写真お送りさせて頂きます😊！！」）。写真・URL は AIX【物件確認した→室内写真を確認した】でスタッフが送るので、写真の有無・撮影の約束・URL・物件名を本文に書かない。「確認出来次第ご連絡」「確認させて頂きます」「ピックアップ出来次第お送り」も書かない"
+    // 2026-09-26（穴1）: 確認・連絡の約束を待ちの形で言い終えた後の短い了承は、橋渡しで同じ約束を言い直さない（CP_ACK_WAIT と同じ場面）
+    : (s.aix === "property_check_result" || s.aix === "acknowledge_check") && checkAnswered
+      ? "確認結果は直前の AIX で送り済み。確認の約束（確認出来次第ご連絡）も結果の繰り返しも書かず、次の一手を1文で完結"
+    : (s.aix === "property_check_result" || s.aix === "acknowledge_check") && waitFormConfirmAck
+      ? "受けの一文で完結（「気になる点等出てきましたらいつでもお気軽にご連絡ください！！」）。直前に「〜確認出来次第ご連絡」を伝え済みなので、確認の約束を言い直さない。確認結果は AIX で送る"
     : s.aix === "property_check_result" || s.aix === "acknowledge_check"
       ? "「〇〇（確認対象: 募集状況 等）確認出来次第ご連絡させて頂きます」"
     : s.aix === "viewing_invite"
@@ -765,6 +796,8 @@ type AixDoneFlags = {
   asksNewPickup?: boolean;
   /** 2026-09-11 統合設計（経路F1）: resolvePickupGate の判定理由（tpo_debug.postprocess 用） */
   pickupGateReason?: string;
+  /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の最後の発言にはもう AIX で答えた（done-state.customerAnsweredByAix） */
+  answeredByAix?: boolean;
 };
 
 type PromptOverrides = {
@@ -859,6 +892,12 @@ function buildGenerationMessages(
   //   お客様が送ってきた物件のうち、こちらが前に送った物件（own-property-match・記録で照合）。
   //   all=true（全部こちらの物件）の時は「お送り頂きました物件」の呼び方・募集状況確認の指示を出さない（逆向きの指示をぶつけない）
   ownProperty: { note: string; all: boolean } | null = null,
+  // 2026-09-26 竹内「ここの部分改善する根本的に」: 済んだ事（done-state）。
+  //   lastStaffBlockOverride = 時刻で区切った「直前のこちら」（route の lastStaffMsgForSearch と同じ値）
+  //   viewingScheduled = 決まった内覧（シンプル締め・内覧の注記）
+  doneState: { lastStaffBlockOverride?: string; viewingScheduled: ViewingScheduled; viewingAppointment: ActionLedger["facts"]["viewingAppointment"];
+    /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX（物件確認した）で答えた（checkAnsweredFollowUp） */
+    checkAnsweredFollowUp?: boolean } | null = null,
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
@@ -1000,7 +1039,8 @@ function buildGenerationMessages(
       .map((q) => q.trim())
       .filter((q) => q.length > 4 && !isCoveredByBrain(q) && !detectedQuestions.some((d) => d.includes(q) || q.includes(d)));
     const allDetectedQuestions = [...detectedQuestions, ...detectedQuestionsNoMark];
-    if (allDetectedQuestions.length >= 1) {
+    // 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で確認の依頼にもう AIX で答えた時は「必ず正面から答えること」を渡さない（結果の繰り返しを書かせた）
+    if (allDetectedQuestions.length >= 1 && !doneState?.checkAnsweredFollowUp) {
       const label = allDetectedQuestions.length > 1
         ? "⚠️ 複数質問検出（全て漏れなく答えること・省略禁止。各質問の対象語を本文で復唱し、即答できない場合は「○○につきましては管理会社に確認し本日中にご連絡させて頂きます」形で確認先＋期限を明示）"
         : "⚠️ 質問検出（必ず正面から答えること・「確認します」で逃げることは禁止。即答できない場合は質問対象を復唱し確認先＋期限を明示）";
@@ -1102,7 +1142,11 @@ function buildGenerationMessages(
     return groups;
   })();
   // 最後のスモラ返信（スプリット送信は結合済み）
-  const lastStaffMsg = allPastStaffMsgs.length > 0 ? allPastStaffMsgs[allPastStaffMsgs.length - 1] : null;
+  const lastStaffMsg = doneState?.lastStaffBlockOverride !== undefined
+    ? doneState.lastStaffBlockOverride
+    : allPastStaffMsgs.length > 0 ? allPastStaffMsgs[allPastStaffMsgs.length - 1] : null;
+  // 2026-09-26（穴1）: 直前のこちらが待ちの形（〜次第・明日）で言い終えた確認・連絡・見積の約束
+  const waitFormInLast = findWaitFormPromises(lastStaffMsg);
 
   // 繰り返し防止リスト（直前を除く過去のスモラ返信を列挙）
   const repetitionNote = allPastStaffMsgs.length > 1
@@ -1178,7 +1222,7 @@ function buildGenerationMessages(
     ? `\n【🚫 見積書作成宣言の繰り返し禁止（最優先・【💰 見積書カバー文】ゲートより上位）】
 スタッフは直前の返信で既に「割引・御見積書の作成/送付」を約束済み（またはAIX【見積書送る】で見積書送付済み）。
 → 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます」等の作成宣言・割引の約束を絶対にもう一度生成しない（二重宣言になる）
-→ 返信は短い受付文のみ（例:「はい😊！！確認しご連絡させて頂きます😊！！」）。開口語単独で終わらない。見積・費用の話を新たに展開しない
+→ 返信は短い受付文のみ（例:「${isShortAckMsg && waitFormInLast.some((w) => w.kind === "見積") ? "はい😊！！何卒よろしくお願い致します！！" : "はい😊！！確認しご連絡させて頂きます😊！！"}」）。開口語単独で終わらない。見積・費用の話を新たに展開しない
 ※ただし例外: お客様が【新しい物件】（URL・物件画像・物件名）を送って初期費用・費用を尋ねた場合はこのブロックを適用しない。新規見積として「最大限割引しました初期費用の御見積書を作成しお送りさせて頂きます！！」の作成宣言を必ず行うこと`
     : "";
 
@@ -1187,7 +1231,7 @@ function buildGenerationMessages(
   // （撮影・ご査収・内覧日程）を無文脈で流用しやすい。「直前のスタッフ約束をそのまま復唱するWE DO」を
   // 決定論で1行渡し、約束に無い語彙の持ち出しを禁止する。pickup/estimate 専用ノートが出ている時は二重注入しない。
   const staffPromiseRaw = (!isFollowUp && isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote)
-    ? detectStaffPromise(lastStaffMsg ?? "")
+    ? detectEchoablePromise(lastStaffMsg ?? "")
     : null;
   // 2026-09-11 統合設計（経路E5）: ピックアップ約束の復唱は台帳に未履行約束がある時だけ（台帳有効時）。echo の顧客名はここで埋める
   const staffPromise = staffPromiseRaw && /ピックアップ/.test(staffPromiseRaw.label) && ledgerPickupPromised === false
@@ -1195,6 +1239,10 @@ function buildGenerationMessages(
     : staffPromiseRaw && /ピックアップ/.test(staffPromiseRaw.label)
       ? { ...staffPromiseRaw, echo: fillNameSlot(`{name}に${staffPromiseRaw.echo}`, sanitizeCustomerName(customerName)) }
       : staffPromiseRaw;
+  // 2026-09-26（穴1）: 待ちの形の約束は復唱させない。復唱の材料が他に無ければ「伝え済み・受けだけ」を渡す（感謝返しの WAIT_FORM_ACK_HINT と同じ向き）
+  const waitFormAckNote = (!isFollowUp && isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote && !staffPromiseRaw && waitFormInLast.length > 0)
+    ? `\n【🔁 直前の約束はお伝え済み（決定論）】直前にこちらが「${[...new Set(waitFormInLast.map((w) => w.kind))].join("・")}」の約束を待ちの形（〜次第・日付）で伝え済みで、お客様はそれに了承しただけ。同じ約束・「ご査収」を書き直さず、受けだけにする（開口語「はい😊！！」＋締め。新しい日付・時刻が言える時だけ1文足す）。`
+    : "";
   const promiseEchoNote = staffPromise
     ? `\n【🔁 直前のスタッフ約束の復唱（決定論・最優先）】お客様の最新メッセージは短い了承語で、内容は「直前のスタッフ約束への了承」です。直前の約束: ${staffPromise.label}（未履行）。返信は開口語「はい😊！！」（単独行）＋この約束をそのまま復唱するWE DO 1文（例:「${staffPromise.echo}」）＋締め1文のみ（場面【短い了承】）。撮影・ご査収・内覧日程・申込誘導など、直前の約束に無い業務語彙を新たに持ち出さない。「ご都合よろしいお日にちに」をスタッフ作業に接続しない。`
     : "";
@@ -1223,7 +1271,11 @@ function buildGenerationMessages(
 【実行済み】${aixDone.labels.join(" / ")}
 → 実行済みのアクションを「これから行います」と未来形で宣言することは絶対禁止（既にやったことをもう一度やると言う二重宣言になり、お客様に「話を聞いていない」と受け取られる）
 ${bans.map((b) => `→ ${b}`).join("\n")}
-→ 代わりに: 既に送信済みの結果を踏まえて、今回のお客様の反応・懸念に直接答える。添えるべき次の一手が無ければ短い受付文（例:「かしこまりました😊！！」）で締める
+${aixDone.answeredByAix
+    // 2026-09-26（穴2・YUMA の前後比較）: 連投の途中でお客様の発言にもう AIX で答えた時に「今回のお客様の反応に直接答える」を渡すと、
+    //   3分前に AIX で送った確認結果（募集中・募集終了）を本文でもう一度書いた（後の木 4回中2回）。答え終えた事は繰り返させない
+    ? "→ お客様の今回の発言には、上の AIX でもう答えている（この返信は続きの1通）。AIX で送った結果（募集中・募集終了・物件名ごとの状況）を本文でもう一度書かない。添える次の一手（内覧のご案内・御見積書など）が無ければ短く締める"
+    : "→ 代わりに: 既に送信済みの結果を踏まえて、今回のお客様の反応・懸念に直接答える。添えるべき次の一手が無ければ短い受付文（例:「かしこまりました😊！！」）で締める"}
 ※例外: お客様が【新しい物件】（URL・物件画像・まだ確認していない物件名）を新たに挙げた場合、その物件についての確認宣言は正当。上記禁止は既に実行済みの物件・依頼にのみ適用する`;
   })();
 
@@ -1373,7 +1425,11 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   本文の安全（断言しない・橋渡し）は証拠（bodySafetyPre）で別に注入する（ブレインが AIX なし・stale でも効く）
   const aixTiming = (templateNote || replyHint) ? null : aixScenePre;
   const bodySafety = (templateNote || replyHint) ? null : bodySafetyPre;
-  const aixTimingNote = buildAixTimingNote(aixTiming, bodySafety);
+  // 2026-09-26（穴1・YUMA の前後比較）: 直前に確認・連絡の約束を待ちの形で言い終えた後の短い了承。
+  //   CP_ACK_WAIT（往復文脈）と同じ場面で、AIX の橋渡し・確認対象・管理会社の状況の3つの注記も「確認出来次第ご連絡」を書かせない（書くなと書けを別の場所から渡さない）
+  const waitFormConfirmAck = !isFollowUp && isShortAckMsg && waitFormInLast.some((w) => w.kind !== "見積");
+  const checkAnswered = !!doneState?.checkAnsweredFollowUp;
+  const aixTimingNote = buildAixTimingNote(aixTiming, bodySafety, doneState?.viewingScheduled.scheduled ? viewingAckLine(doneState.viewingAppointment) : null, waitFormConfirmAck, checkAnswered);
 
   // G26（2026-09-08 Fable5）: 確認約束 verdict に合成（route.ts confirmCtxFinal と同じ pure 関数・同じ根拠 → 三層で同値）
   //   根拠 = 証拠が確認の要る質問（S1/S2/S3）または ブレインの action が property_check_result / acknowledge_check
@@ -1381,7 +1437,8 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
 
   // G26: 管理会社ノートは verdict でゲート。確認対象が無い返信に「確認させて頂きます／確認出来次第ご連絡」を営業時間の説明付きで
   // 無条件注入していた（創作約束の再生産源）。allowed の時のみ、確認対象「${confirmCtx.object}」をリテラルで前置させる
-  const managementNote = !confirmCtx.allowed
+  const managementNote = (waitFormConfirmAck || checkAnswered) && confirmCtx.allowed ? ""
+    : !confirmCtx.allowed
     ? `\n【管理会社の状況】現在${jstHour}時台（JST）${isWeekend ? "・土日" : ""}。この返信には管理会社への確認対象が存在しない（${confirmCtx.reason}）ため、「確認させて頂きます」「確認出来次第ご連絡」「明日一番でご確認」等の確認約束を書かない（営業時間・曜日の説明も不要）。`
     : isWeekend
       ? `\n【管理会社の状況・必ず守ること】本日は土日。「${confirmCtx.object}」の確認（空室確認）は土日でも可能なので「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝えてよい。ただし交渉（フリーレント・値引き・条件変更・審査再挑戦など）は土日不可。交渉が必要な場合は「月曜日一番で管理会社に交渉させて頂きます！！」と伝える。`
@@ -1396,6 +1453,11 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     // 2026-09-11 統合設計（経路B/D・🐥事例）: 旧文は TPO に関係なく（生成の 68%）「〇〇周辺全域から〇〇さんに…ピックアップ出来次第」の固定句を
     //   行動宣言として命じ、感謝返し・締めの場面にもピックアップ約束と 〇〇 リテラルを持ち込ませていた。行動宣言は往復文脈にだけ従わせる
     ? `\n\n【🚫 確認約束の禁止（決定論・確認対象なし）】この返信に「確認出来次第ご連絡」「確認しご連絡」「確認の上ご連絡」を書いてはいけない（理由: ${confirmCtx.reason}）。確認する事実が会話に存在しないのに確認を約束するのは創作約束。確認約束は書かない。行動宣言は【🔁 往復文脈】の方向と必須要素だけに従う（感謝返し・締めの場面では行動宣言を足さない）。`
+    // 2026-09-26（穴1）: 対象は書かない（confirmCtx.object は「駐車場の空き状況」を「募集状況」と読み、YUMA で対象の化けた復唱を書かせた）
+    : checkAnswered
+      ? `\n\n【✅ 確認は済んでいる（決定論）】お客様のこの発言（確認の依頼）には、直前の AIX で確認結果を送り済み。確認の約束（「確認させて頂きます」「確認出来次第ご連絡」）も、結果（募集中・募集終了）の繰り返しも書かない。`
+    : confirmCtx.allowed && waitFormConfirmAck
+      ? `\n\n【✅ 確認の約束は伝え済み（決定論）】直前にこちらが確認・連絡を待ちの形（〜次第・日付）で約束済みで、お客様は了承しただけ。この返信で確認の約束（「確認させて頂きます」「確認出来次第ご連絡」）を書き直さない。受けだけにする。`
     : confirmCtx.allowed
       ? `\n\n【✅ 確認対象（決定論）】この返信で確認を約束してよい対象は「${confirmCtx.object}」（根拠: ${confirmCtx.reason}）。書く場合は必ず「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」のように対象を前置する。「すぐに」は付けない。同じ返信内で確認宣言を二重に書かない。`
       : "";
@@ -1425,6 +1487,9 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   // 内覧日時の具体的提案はAIXの「内覧へ」ボタン専用。generate-replyでは絶対に具体的日時を出さない
   const viewingFactNote = (resolvedPropertyStatus === "move_out_scheduled" || resolvedPropertyStatus === "occupied")
     ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後ご案内させて頂きます」「お申込みでお部屋を先に押さえてからのご内覧も可能です」の方向で返すこと。`
+    // 2026-09-26（穴3）: 内覧が決まっている時は「内覧に触れる場合は〜のみ許可」を渡さない（決まった日時をそのまま言う・書くなと書けを同時に渡さない）
+    : doneState?.viewingScheduled.scheduled
+      ? `\n\n${buildViewingScheduledNote(doneState.viewingScheduled)}`
     : isAvailabilityCheckContext
       // 募集状況が未確認の段階では「お気に召されましたら〜ご案内」の例外許可を出さない（内覧誘導は順番が逆）
       ? `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。[日付][時間帯]プレースホルダーも使用禁止。さらに今回は募集状況が未確認の段階のため、「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」等の内覧誘導フレーズも一切書かない（【🚨 募集状況確認の文脈】が正）。`
@@ -1468,7 +1533,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
     "✅ ただし【決まっている内覧】ブロックがある時は、そこに書かれた住所・日時は既にお客様へ案内済みの事実なので、",
     "　 場所・行き方・住所を聞かれたらそのまま答えてよい（新しく決めているのではなく、決まっている事を答えるだけ）。",
     "　 この場合「内覧の詳細については改めてご連絡させて頂きます」のような先送りで済ませない。",
-    "　 ブロックが無い時だけ「内覧の詳細についてはご連絡させて頂きます」等の宣言にとどめる。",
+    "　 ブロックが無い時だけ「内覧の詳細についてはご連絡させて頂きます」等の宣言にとどめる（【🗓 内覧は決まっている】がある時はこの先送りも書かず、決まっている日時をそのまま言う）。",
   ].join("\n");
 
   const aixOperationNote = [
@@ -1554,15 +1619,21 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   );
   // A-12（E-2）: 先頭アンカー付きの了承文型に限定し、リスケ要望（「別日でお願いします」「時間変更お願いします」）は除外
   const CUSTOMER_VIEWING_ACK_RE = /^(?:はい|了解|承知|かしこまり|わかりました|分かりました|大丈夫です|お願いします|よろしくお願い|ありがとう)[^\n]{0,12}$/m;
-  const isViewingAppointmentAck = !isSecondClosing
-    && VIEWING_SCHEDULED_STAFF_RE.test(recentStaffText)
-    && CUSTOMER_VIEWING_ACK_RE.test(customerMessage.trim())
-    && !RESCHEDULE_RE.test(customerMessage);
+  // 2026-09-26 竹内「ここの部分改善する根本的に」（穴3）: 旧判定（recentStaffText＝履歴の各発言の1行目の直近3件）は
+  //   AIX 待ち合わせの1行目「かしこまりました！！」しか見えず、決まった内覧への了承44組で3組しか発火しなかった。
+  //   1行目の不具合だけ直して全文を見ると提案中にも27組発火して逆効果（提案中はスタッフも「ご都合よろしいお日にち」を使う）。
+  //   → 状態は done-state.resolveViewingScheduled（台帳の待ち合わせ／viewing-thread の scheduled）、了承は発言全体で見る（isWholeShortAck）。
+  //   doneState が無い経路（テンプレート最適化等）だけ旧判定のまま
+  const isViewingAppointmentAck = !isSecondClosing && (doneState
+    ? doneState.viewingScheduled.scheduled && isWholeShortAck(customerMessage)
+    : VIEWING_SCHEDULED_STAFF_RE.test(recentStaffText)
+      && CUSTOMER_VIEWING_ACK_RE.test(customerMessage.trim())
+      && !RESCHEDULE_RE.test(customerMessage));
   const viewingAppointmentAckNote = isViewingAppointmentAck
     ? `\n【🤝 内覧日程確定後シンプル締め（最優先・全生成ルールを上書き・以下の全ルールより上位）】スタッフがすでに内覧日時・物件・待ち合わせ場所を確定しており、お客様がシンプルに承認している。詳細はすでに伝達済み。
 【返信の型（絶対に守る・これ以外は入れない）】
 ① 冒頭挨拶 — 【⏰ 挨拶ルール・最優先】に従う（1フレーズのみ）
-② 締め 1行 — 内覧が本日なら「本日何卒よろしくお願い致します！！」、それ以外は「〇日何卒よろしくお願い致します！！」
+② 締め 1行 — ${doneState ? `「${viewingAckLine(doneState.viewingAppointment)}」` : "内覧が本日なら「本日何卒よろしくお願い致します！！」、それ以外は「〇日何卒よろしくお願い致します！！」"}
 【🚫 絶対禁止（1つも書かない・viewingFactNoteやフェーズ別パターンより本ルールが優先）】
 ・「ご都合よろしいお日にちにお部屋をご案内させて頂きます」← 日程は確定済みのため完全NG
 ・「内覧の詳細についてはご連絡させて頂きます」（詳細は確定済み）
@@ -1739,7 +1810,7 @@ ${bans.map((b) => `→ ${b}`).join("\n")}
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${waitFormAckNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${knowledgeNote}
@@ -3266,7 +3337,7 @@ export async function POST(req: NextRequest) {
     type HistoryMsg = RecentMessage & { _imageCount?: number };
     const isImageOnlyMsg = (m: RecentMessage) =>
       m.text === "[画像]" || m.text === "[動画]" || (!m.text && !!m.imageUrl);
-    const history = recentMessages
+    const historyMsgs = recentMessages
       .slice(-25)
       .reduce<HistoryMsg[]>((acc, m) => {
         const prev = acc[acc.length - 1];
@@ -3276,8 +3347,8 @@ export async function POST(req: NextRequest) {
           acc.push({ ...m });
         }
         return acc;
-      }, [])
-      .map((m, i, arr) => {
+      }, []);
+    const historyLineOf = (m: HistoryMsg, i: number, arr: HistoryMsg[]): string | null => {
         const who = m.sender === "customer" ? "お客様" : "スモラ";
         const isImageMsg = isImageOnlyMsg(m);
         const imgCount = m._imageCount || 1;
@@ -3315,9 +3386,12 @@ export async function POST(req: NextRequest) {
 
         if (!m.text) return null;
         return `${who}: ${m.text}`;
-      })
-      .filter(Boolean)
-      .join("\n");
+    };
+    // 2026-09-26 竹内「ここの部分改善する根本的に」: 各行の送った時刻を持ったまま組む（「直前のこちら」を時刻で区切るため）
+    const historyEntries = historyMsgs
+      .map((m, i, arr) => ({ line: historyLineOf(m, i, arr), m }))
+      .filter((e): e is { line: string; m: HistoryMsg } => !!e.line);
+    const history = historyEntries.map((e) => e.line).join("\n");
 
     // AIXテンプレート最適化モードでは historyから過去のAIXメッセージブロックを除外する
     // → AIXメッセージは複数行にまたがるため、行単位ではなくブロック単位でフィルタする
@@ -3349,7 +3423,17 @@ export async function POST(req: NextRequest) {
 
     // 最後のスモラメッセージを全文抽出（② の検索クエリ・① の表示用）
     // スプリット送信（連続複数行）を結合した全文を使用。buildGenerationMessages 内の lastStaffMsg と同一ロジック。
-    const lastStaffMsgForSearch = (() => {
+    // 2026-09-26 竹内「ここの部分改善する根本的に」（done-state.latestStaffBlock）:
+    //   旧は「お客様の発言までの連続するこちらの発言」を時刻で区切らずに1つの塊にしていた（塊が6時間超にまたがる 8.0%・
+    //   6時間以上前の約束を含む 3.8%）。YUMA では数日前の「駐車場の空き状況の確認」が今日の AIX と同じ塊に入り、古い約束を復唱させた。
+    //   塊の一番新しい発言から6時間より前の発言は「直前」から外す（生成の lastStaffMsg にも同じ値を渡す＝同じ読み方）
+    const staffBlock = latestStaffBlock(historyEntries.map((e) => ({
+      sender: e.m.sender === "customer" ? "customer" as const : "staff" as const,
+      text: e.line.replace(/^(?:スモラ|お客様):\s*/, "").trim(),
+      t: Number.isFinite(Date.parse(e.m.createdAt ?? "")) ? Date.parse(e.m.createdAt ?? "") : null,
+    })));
+    if (staffBlock.dropped > 0) console.info("[staff-block]", JSON.stringify({ conversationId, kept: staffBlock.kept, dropped: staffBlock.dropped }));
+    const lastStaffMsgForSearchUncut = (() => {
       const segments = history.split(/\n(?=スモラ:|お客様:)/);
       const groups: string[] = [];
       let cur: string[] = [];
@@ -3363,6 +3447,7 @@ export async function POST(req: NextRequest) {
       if (cur.length > 0) groups.push(cur.join("\n"));
       return groups.length > 0 ? groups[groups.length - 1] : undefined;
     })();
+    const lastStaffMsgForSearch = staffBlock.dropped > 0 ? staffBlock.text : lastStaffMsgForSearchUncut;
 
     // ─── 見積書・割引の「約束済み」検出（見積二重宣言の防止）─────────────────
     // ① aix_usage_logs に estimate_sheet の使用履歴がある（AIXで見積書送付済み）
@@ -3392,7 +3477,7 @@ export async function POST(req: NextRequest) {
             .limit(1),
           supabase
             .from("aix_usage_logs")
-            .select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, estimate_sent, template_name")
+            .select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, estimate_sent, template_name, prop_statuses")
             .eq("conversation_id", conversationId)
             .order("created_at", { ascending: false })
             .limit(30),
@@ -3442,6 +3527,10 @@ export async function POST(req: NextRequest) {
         return Number.isFinite(t) && now - t <= AIX_DONE_WINDOW_MS;
       });
       if (fresh.length === 0) return null;
+      // 2026-09-26（穴2）: 連投の途中で、お客様の最後の発言の後に AIX を送っている＝その発言にはもう AIX で答えた。
+      //   答え終えた発言を読み直して下の解除条件を立てると「募集中と報告した2分後に募集状況を確認します」が出る（a61cac0b・19ca0a6d 型）
+      const answeredByAix = customerAnsweredByAix(isFollowUp, [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null, fresh);
+      const rel = !answeredByAix;
 
       // ── 解除条件（新規依頼は「未実行」として扱い、正当な宣言を潰さない）──────────
       // ① 新しい物件の提示（URL・画像）→ その物件は未確認なので空室確認宣言は正当
@@ -3461,12 +3550,12 @@ export async function POST(req: NextRequest) {
           /[0-9０-９]{1,2}\s*[\/月]\s*[0-9０-９]{1,2}/.test(lastStaffMsgForSearch) &&
           /大丈夫|はい|OK|お願いします|その日で|で大丈夫|承知|かしこまり/.test(intentMessage));
 
-      const VACANCY_RELEASE = hasNewPropertyRef || asksRecheck;
+      const VACANCY_RELEASE = rel && (hasNewPropertyRef || asksRecheck);
       const vacancyCheck = !VACANCY_RELEASE && fresh.some((l) => l.aix_type === "property_check_result");
       const mgmtCheck = !VACANCY_RELEASE && fresh.some((l) => (l.check_pattern ?? "").startsWith("mgmt_"));
       const propertySend =
-        !asksNewPickup && fresh.some((l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation");
-      const viewingInvite = !asksNewViewing && fresh.some((l) => l.aix_type === "viewing_invite");
+        !(rel && asksNewPickup) && fresh.some((l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation");
+      const viewingInvite = !(rel && asksNewViewing) && fresh.some((l) => l.aix_type === "viewing_invite");
       const meetingPlace = fresh.some((l) => l.aix_type === "meeting_place");
 
       if (!vacancyCheck && !mgmtCheck && !propertySend && !viewingInvite && !meetingPlace) return null;
@@ -3507,8 +3596,12 @@ export async function POST(req: NextRequest) {
           return `${base}（${when}${result}）`;
         });
 
-      return { vacancyCheck, mgmtCheck, propertySend, viewingInvite, meetingPlace, labels, asksNewPickup };
+      return { vacancyCheck, mgmtCheck, propertySend, viewingInvite, meetingPlace, labels, asksNewPickup: rel && asksNewPickup, answeredByAix };
     })();
+    // 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX【物件確認した】で答えた。
+    //   お客様の発言（「今も空いてますか？」）を読み直す注記（確認対象・管理会社の状況・AIX の橋渡し・往復文脈の「質問に直接回答」）が
+    //   「確認出来次第ご連絡」「結果の繰り返し」を書かせていた（前 3/3・後 3/6）。この1つの値を4か所が見る
+    const checkAnsweredFollowUp = isFollowUp && !!aixDone?.answeredByAix && !!(aixDone.vacancyCheck || aixDone.mgmtCheck);
     if (aixDone) {
       console.log("[generate-reply] AIX実行済み再宣言ブロック適用:", conversationId, JSON.stringify(aixDone));
     }
@@ -3625,6 +3718,34 @@ export async function POST(req: NextRequest) {
     console.info("[ledger]", JSON.stringify({ recorded: recordedFacts.length, summary: ledger.summary, facts: { sent: ledger.facts.propertiesSentCount, est: ledger.facts.estimateSent, promised: ledger.facts.pickupPromisedUnfulfilled, redo: ledger.facts.redoAllowed, sinceCust: ledger.facts.propertiesSentSinceCustomerLatest, last: ledger.facts.lastStaffEntry?.kind ?? null }, mode: ACTION_LEDGER_MODE }));
     const ledgerActive = ACTION_LEDGER_MODE !== "shadow" && !isTemplateOptimize;
     const ledgerForCtx: ActionLedger | null = ledgerActive ? ledger : null;
+    // ── 2026-09-26 竹内「ここの部分改善する根本的に」（穴3: お客様の返事をこちらの提案への答えとして読めない）──
+    //   内覧の状態（決まっている＝待ち合わせを案内済み／こちらの提案した日時をお客様が受諾）を1か所で決め、
+    //   シンプル締め・内覧の注記・AIX の方向（待ち合わせ／内覧日調整）の WE DO・出口の待ち合わせの復唱の免除が同じ値を見る
+    const viewingThreadForReply = isTemplateOptimize ? null
+      : resolveViewingThread(recentMessages.map((m) => ({ sender: m.sender, text: m.text ?? "", rawCreatedAt: m.createdAt ?? null })), { nowMs: Date.now() });
+    // 2026-09-26 反証レビュー: ブレインが AIX【内覧日調整】（新しい日程を出す）を選んだ時は、本文でも「決まっている」にしない
+    //   （AIX の要否・種類はブレインだけが決める。本文が「決まっている・ご都合よろしいお日にちは書かない」と言い、AIX が新しい日程を出すと食い違う）
+    const viewingScheduledRaw: ViewingScheduled = isTemplateOptimize
+      ? { scheduled: false, source: null, label: null }
+      : resolveViewingScheduled({ appointment: ledger.facts.viewingAppointment, viewingDone: ledger.facts.viewingDone, thread: viewingThreadForReply, customerText: intentMessage });
+    const viewingScheduled: ViewingScheduled = viewingScheduledRaw.scheduled && effectiveAction === "viewing_invite"
+      ? { scheduled: false, source: null, label: null }
+      : viewingScheduledRaw;
+    // 出口（validate-reply の待ち合わせの置換の免除）は決まっている時刻だけ（label）。提案文の全候補の時刻は入れない
+    //   （2026-09-26 反証レビュー: 旧は viewing-thread の提案文の時刻も足していて、台帳の待ち合わせと別の古い提案の時刻でも置換を外していた）
+    //   2026-09-26 YUMA の前後比較（S5）: 待ち合わせをまだ案内していない「お客様が提案日時を受けた」（customer_accepted）で免除すると、
+    //   「9/28(月)16:00に〇〇の現地エントランスにてお待ち合わせできますでしょうか」（待ち合わせの新しい提案＝AIX【待ち合わせ】専用）が素通りした（後 3回中1回）。
+    //   免除は待ち合わせを案内済み（meeting_place / staff_meeting_text）の時だけ＝既に伝えた事の復唱だけ
+    const scheduledViewingHours = viewingScheduled.scheduled && viewingScheduled.source !== "customer_accepted" ? viewingHoursOf(viewingScheduled.label) : [];
+    if (viewingScheduledRaw.scheduled) console.info("[viewing-scheduled]", JSON.stringify({ conversationId, source: viewingScheduledRaw.source, label: viewingScheduledRaw.label, brainViewingInvite: !viewingScheduled.scheduled }));
+    /** 決まった内覧がある時の AIX【待ち合わせ】の方向。旧 WE DO「内覧の詳細についてはご連絡させて頂きます」は決まった内覧を未定に戻す */
+    const aixReplyDirectionFor = (a: string) => a === "meeting_place" && viewingScheduled.scheduled
+      ? {
+          direction: `内覧は決まっている${viewingScheduled.label ? `（${viewingScheduled.label}）` : ""}。決まっている日時をそのまま言って受ける（住所・集合場所は AIX 待ち合わせで送る）`,
+          weDo: viewingAckLine(ledger.facts.viewingAppointment),
+          forbid: "「ご都合よろしいお日にちに」「内覧の詳細については（改めて）ご連絡」・新しい日程の打診・住所の創作",
+        }
+      : AIX_ACTION_REPLY_DIRECTION[a];
 
     // ── 2026-09-16 竹内（𝒮 さん事例）「根本的な部分を、住所わかっている」────────────────────
     //   決まっている内覧の住所は viewing_history に構造化されて入っている（AIX【待ち合わせ】の送信時に記録）。
@@ -3903,7 +4024,8 @@ export async function POST(req: NextRequest) {
     //   ラベル側も同じ3条件（直前約束あり／ピックアップ約束済みでない／見積約束済みでない）で「短い了承」を立て、それ以外は「感謝返し」に落とす
     // 2026-09-11 統合設計（経路E5）: 台帳が有効な時はピックアップ約束の検出を台帳の未履行約束で絞る（buildGenerationMessages と同じ条件）
     const ledgerPickupOpenForLabel = ACTION_LEDGER_MODE !== "shadow" && !isTemplateOptimize ? ledger.facts.pickupPromisedUnfulfilled : null;
-    const shortAckPromiseRaw = detectStaffPromise(lastStaffMsgForSearch ?? "");
+    // 2026-09-26（穴1）: 待ちの形で言い終えた約束は復唱の対象にしない（buildGenerationMessages の promiseEchoNote と同じ関数）
+    const shortAckPromiseRaw = detectEchoablePromise(lastStaffMsgForSearch ?? "");
     const shortAckPromise = isGratitudeReplyTPO && !isFollowUp && !!shortAckPromiseRaw
       && !(/ピックアップ/.test(shortAckPromiseRaw.label) && ledgerPickupOpenForLabel === false);
     const staffPromisedPickupForLabel = !!lastStaffMsgForSearch
@@ -4093,6 +4215,8 @@ export async function POST(req: NextRequest) {
       searched: hedge.searched.yes, ledger: ledgerForCtx,
       customerName: customerName ?? "", brainCurrentProperty: brainStrategy?.current_property ?? null,
       priorCustomerText,
+      // 2026-09-26（穴1）: 待ちの形で言い終えた確認・連絡の約束（見積は estimatePromiseAckNote が受ける）→ CP_ACK_WAIT（受けだけ）
+      waitFormPromised: findWaitFormPromises(lastStaffMsgForSearch || tpoLatestStaffText || "").some((w) => w.kind !== "見積"),
     });
     // ── 2026-09-11 統合設計（経路F1・YUYA/it_0 事例）: aixDone.propertySend（aix_usage_logs 72h 窓）を台帳・往復文脈と整合させる ──
     //   送付後の未履行ピックアップ宣言／顧客の条件変更／ピックアップ宣言を必須要素に持つセルでは「再宣言禁止」にしない。
@@ -4132,7 +4256,15 @@ export async function POST(req: NextRequest) {
 
     // ── 感謝返しの具体アクションを直前スタッフ発言から決定論で1つ選ぶ（LLM に選ばせない）──
     const gratitudeActionHint: string = (() => {
-      const s = tpoLatestStaffText;
+      // 2026-09-26 竹内「ここの部分改善する根本的に」（穴1: 約束の言い直し）:
+      //   直前のこちらが確認・連絡・見積の約束を「〜次第」「明日」の待ちの形で言い終えている時は、その文を外してから次の一手を選ぶ
+      //   （旧: 「管理会社」「確認」の語で「{対象}確認出来次第ご連絡させて頂きます！！」を必須のように渡し、20分前の約束を言い直させた）。
+      //   実送信（90日）: 待ちの形の約束→短い了承→手打ち の82%が約束を書かず受けだけ（done-state.findWaitFormPromises の説明）
+      const waitForm = withoutWaitFormPromises(tpoLatestStaffText);
+      const s = waitForm.text;
+      // 決まった内覧への短い了承は、決まっている日付で受ける（旧: 「当日は現地にてお待ちしております」＋シンプル締めの「〇日何卒」が別々に来ていた）
+      if (viewingScheduled.scheduled && isWholeShortAck(intentMessage))
+        return `「${viewingAckLine(ledger.facts.viewingAppointment)}」（内覧は決まっている。新しい日程・「ご都合よろしいお日にちに」「詳細はご連絡」は書かない）`;
       // 2026-09-11 統合設計（経路E5/B）: ピックアップ約束の復唱は台帳に未履行約束がある時だけ（台帳有効時）。顧客名はスロットで埋める
       const pickupOpen = ledgerPickupOpenForLabel !== false;
       if (pickupOpen && /ピックアップ/.test(s) && /(お送り|送らせて|お届け|送付)/.test(s) && !/ご査収/.test(s))
@@ -4141,7 +4273,8 @@ export async function POST(req: NextRequest) {
         return pickupOpen
           ? `「お手隙の際にご査収ください😌！！」＋「${fillNameSlot("私の方でも{name}にオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！", customerName ?? "")}」（主語はスタッフ。「確認でき次第ご連絡」は主語混乱のため禁止）`
           : "「お手隙の際にご査収ください😌！！」（主語はスタッフ。「確認でき次第ご連絡」は主語混乱のため禁止。台帳に無いピックアップ約束を新たに書かない）";
-      if (/管理会社|オーナー|交渉|空室確認|募集状況|確認(?:して|させて|いたし)/.test(s)) {
+      // 待ちの形で確認・連絡を言い終えている時は、残りの報告の文（「管理会社より…受理とのご連絡がございました」）の語で確認の約束を復唱させない（8d8c04b0 型）
+      if (!waitForm.removed.some((w) => w.kind !== "見積") && /管理会社|オーナー|交渉|空室確認|募集状況|確認(?:して|させて|いたし)/.test(s)) {
         // G26（2026-09-08 Fable5）: 確認対象を必ずリテラルで書く（対象の無い「確認出来次第ご連絡」は創作約束として final-check で block）
         const obj = findConfirmObject(s) ?? (/交渉/.test(s) ? "費用・条件交渉の可否" : "募集状況");
         return `「${obj}確認出来次第ご連絡させて頂きます！！」（確認対象「${obj}」を必ず書く。「すぐに」禁止）`;
@@ -4155,6 +4288,7 @@ export async function POST(req: NextRequest) {
         return "「当日は現地にてお待ちしております！！」（日付の語は書かない。内覧は本日）";
       if (/内覧|内見|ご案内|待ち合わせ/.test(s))
         return "「当日は現地にてお待ちしております！！」（日時または場所を1つだけ復唱）";
+      if (waitForm.removed.length) return WAIT_FORM_ACK_HINT;
       return "「気になる点等出てきましたらいつでもお気軽にご連絡ください！！」";
     })();
     // ── 2026-09-09 Fable5 みく事例: 締め verdict（断り＞成果物＞日程＞検討中＞質問＞セル指定＞具体宣言あり節目）。生成前は「宣言はこれから書く」前提の予測 ──
@@ -4180,6 +4314,7 @@ export async function POST(req: NextRequest) {
         `禁止：2行目の具体宣言の代わりに「ご条件に合ったお部屋」「全力でサポート」「お探しします」等の抽象語だけで済ませること（3行目の締めとしての伴走宣言は必須）／「新着あれば」「日々更新」等の受け身文／「本日中」「なるべく早く」等の時間約束／足りない条件の聞き返し（まず送る）／「〜をご希望ですね」の単体確認文／条件の実現可能性への言及（難しい・厳しい・少ない・可能性・かもしれません）／条件緩和・代替案の先回り提案（条件を1つ変えた場合・優先順位・妥協・〇〇未満まで広げる）／顧客の自己ヘッジ「難しいと思う」「あれば教えて」の復唱。エリア名と家賃表記は必ず原文どおり本文に埋め込むこと`;
     })();
     const effectiveReplyDirection: string | null = (() => {
+      if (checkAnsweredFollowUp) return `確認結果は直前の AIX で送り済み（この返信は続きの1通）。確認の約束・結果（募集中・募集終了）の繰り返しを書かず、次の一手を1文だけ添える（例:「${AIX_ACTION_REPLY_DIRECTION.property_check_result.weDo}」）。20〜80字`;
       if (isConditionPresented) return conditionDirection;
       if (isViewingCancel) return "内覧キャンセルの受け止め（50〜100字）。開口語は「かしこまりました！！」（単独行）。謝罪・残念語禁止。「またご都合の良い日がございましたらいつでもお申し付けください」の1文で別日を軽く開放するのみ。物件追加提案・申込誘導禁止";
       if (negativeDetail.kind === "withdrawal") return "顧客自身の断り・キャンセルの受け止め（50〜110字）。開口語は「かしこまりました！！」（単独行）。2行目「またお部屋探しの際はいつでもお気軽にご連絡ください😊！！」で扉を開け、3行目「この度はありがとうございました！！」で締める。謝罪禁止・「申し訳ございません」「残念ながら」等のネガティブ語禁止・引き留め提案（他にもオススメ〜）禁止・「かしこまりました！！」単独終了禁止";
@@ -4206,8 +4341,8 @@ export async function POST(req: NextRequest) {
       // 2026-09-09 Fable5 往復文脈: after_wait セル（内覧受諾・検討中・回答受領・了承）は AIX action より先（brain の正しい reply_direction が L3735 で action に負けて捨てられていた）
       if (pairContext.rule && pairDirection) return pairDirection;
       // A-7 / S-3: brain action が有効（fresh）なら顧客向け方向性に変換して採用（スタッフ操作文は注入しない）
-      if (effectiveAction && AIX_ACTION_REPLY_DIRECTION[effectiveAction]) {
-        const d = AIX_ACTION_REPLY_DIRECTION[effectiveAction];
+      if (effectiveAction && aixReplyDirectionFor(effectiveAction)) {
+        const d = aixReplyDirectionFor(effectiveAction);
         return `${d.direction}。WE DO例:「${d.weDo}」。禁止: ${d.forbid}`;
       }
       // S-3: reply_direction は message-local。fresh の時のみ採用し、stale なら state 別フォールバックへ
@@ -4227,6 +4362,7 @@ export async function POST(req: NextRequest) {
       if (isConditionPresented) {
         return freshTopics.length > 0 ? freshTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
       }
+      if (checkAnsweredFollowUp) return []; // 2026-09-26（穴2）: 答え終えた質問への「直接回答 or 確認宣言」を必須にしない
       // 初期費用について／初期費用を説明の時は、往復文脈の必須要素（質問への直接回答）を入れない（中身は AIX で送る）
       if (effectiveAction === "cost_breakdown" || effectiveAction === "cost_explain" || effectiveAction === "phone_call" || effectiveAction === "guarantor_info") return [];
       // 2026-09-09 Fable5 往復文脈: セルの必須要素を「必ず含める内容」に（final-check PAIR_ELEMENT_MISSING と同名）
@@ -4502,7 +4638,7 @@ export async function POST(req: NextRequest) {
           }
         } else {
           // A-7: スタッフ操作文（AIX_STAFF_NOTES「AIX【〇〇】を押してください」）の二重注入を廃止し、顧客向け direction / WE DO / 禁止を注入する
-          const dir = AIX_ACTION_REPLY_DIRECTION[effectiveAction];
+          const dir = aixReplyDirectionFor(effectiveAction);
           lines.push(dir
             ? `- 推奨アクション（${AIX_BUTTON_LABELS[effectiveAction] ?? effectiveAction}）: ${dir.direction}。WE DO例:「${dir.weDo}」。禁止: ${dir.forbid}`
             : `- 推奨アクション: ${AIX_BUTTON_LABELS[effectiveAction] ?? effectiveAction}（この場面に合った受付・宣言文のみ。AIX操作語はお客様向け本文に書かない）`);
@@ -4561,7 +4697,7 @@ export async function POST(req: NextRequest) {
         lines.push(`- 💬 戦略選択理由: ${brainMeta.reason}`);
       }
       // ── message-local戦術ブロック（Step1廃止に伴いbrainへ移植した分析・brainFreshForMessage時のみ）──
-      if (qs.length >= 1) {
+      if (qs.length >= 1 && !checkAnsweredFollowUp) { // 2026-09-26（穴2）: 答え終えた質問は検出しても渡さない
         const qLabel = qs.length > 1
           ? "⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）"
           : "⚠️ 質問検出（必ず正面から答えること・「確認します」で逃げることは禁止）";
@@ -4698,7 +4834,9 @@ export async function POST(req: NextRequest) {
     // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（台帳と同じ「こちらが知っている事実」の位置・往復文脈の前提）
     const viewingReportNote = viewingReportNoteForReply(viewingReports);
     if (viewingReportNote) console.info("[viewing-report]", JSON.stringify({ conversationId, reports: viewingReports.length, chars: viewingReportNote.length }));
-    const actionLedgerNote = (isFollowUp || !ledgerActive ? "" : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote;
+    // 2026-09-26（穴2）: 連投の途中（isFollowUp）でも「済んだ事」の確定行だけは渡す（旧は台帳の注記が全部空になり、
+    //   報告の2分後に「募集状況を確認します」・物件を送っている最中に「ピックアップ出来次第お送り」が出た）
+    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "" });
@@ -5130,6 +5268,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       propertyChoiceAmbiguous, // 2026-09-19 竹内（この事例）: 物件名を1つに絞って書かない場面か
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
+      { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -5314,6 +5453,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 costBreakdownAix: effectiveAction === "cost_breakdown" || sceneEvidencePre?.scene === "S9_cost_breakdown",
                 protect: (s: string) => isCellRequiredSentence(s, pairContext),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
+                // 2026-09-26（穴3）: 決まった内覧の日時の復唱は「待ち合わせ確定」の置換（詳細はご連絡）にしない
+                scheduledViewingHours,
               };
               let vr = validateAndClean(openingFixed, vOpts);
               if (aixGates && vr.gateEdits.some((e) => e.reversible)) {
