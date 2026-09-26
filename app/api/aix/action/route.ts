@@ -66,7 +66,7 @@ import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation 
 import { buildApplicationNote, applicationBulletNote } from "@/app/lib/application-status-note";
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
-import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
+import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
 import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, type PickupFact } from "@/app/lib/pickup-send-facts";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -175,9 +175,9 @@ function guarantorPropertyOf(name: string, f: PropFacilityData | undefined | nul
   const company = (f?.guarantorName ?? "").trim();
   if (!company) return null;
   const raw = (f?.guarantorType ?? "").trim();
-  // 旧クライアント（設備情報の「独立系／信用系」チップ）の日本語も受ける
-  const legacy: Record<string, GuarantorType> = { "独立系": "independent", "信用系": "licc", "LICC系": "licc", "信販系": "credit", "不明": "unknown" };
-  const type: GuarantorType = isGuarantorType(raw) ? raw : (legacy[raw] ?? resolveGuarantor(company).type);
+  // 旧クライアント（設備情報の「独立系／信用系」チップ）の日本語も受ける。
+  //   2026-09-26 竹内さん決定: スタッフの「信用系」＝信販系（旧はここで LICC系 に読んでいた）
+  const type: GuarantorType = parseGuarantorTypeJa(raw) ?? resolveGuarantor(company).type;
   return { name: (name ?? "").trim(), company, type };
 }
 function buildFacilityLines(f: PropFacilityData): string[] {
@@ -4456,21 +4456,18 @@ ${SMORA_COMMON_RULES}`;
 
       // テキスト入力がない場合のみ画像OCRで保証会社名を抽出
       if (!companyName && image_url) {
-        const GUARANTOR_COMPANY_LIST_OCR = `【保証会社タイプ一覧（独立系が最も審査緩い）】
-信販系: エポスカード、オリコフォレントインシュア、アプラス、ジャックス、フォーレント
-LICC系: ジェイリース、全保連、JID、全国保証、アート・プランニング、青山ライフデザイン、保証ベース
-独立系（最も審査緩い）: 日本セーフティー、エルズサポート、Casa、フォーシーズンズ、ルームバンク、いえらぶ保証、スマートタカミ、イントラスト、レジデンシャルパートナーズ、日本トラストコーポレーション、株式会社日本トラストコーポレーション`;
-
+        // 2026-09-26 竹内さん決定（保証会社の知識をマスタ1本に）: 旧はここに種類つき一覧のコピーを持ち、種類を LLM に判定させていた
+        //   （マスタと食い違う・一覧に無い会社の種類を推測する）。読み取りは会社名だけ・種類は resolveGuarantor（マスタに無い会社は「不明」）
         const extractSystem = `賃貸物件資料の画像から保証会社情報を抽出してください。
-${GUARANTOR_COMPANY_LIST_OCR}
+${GUARANTOR_OCR_NAME_HINT}
 
 以下のJSON形式のみで返答（説明不要）：
-{"property_name":"物件名（読み取れなければ空文字）","company_name":"保証会社名（正確に・読み取れなければ空文字）","guarantor_type":"独立系|LICC系|信販系|不明"}`;
+{"property_name":"物件名（読み取れなければ空文字）","company_name":"保証会社名（資料に書かれている会社名をそのまま・社名が無ければ空文字＝推測しない）"}`;
 
         const extractRaw = await callClaudeVision(
           extractSystem,
           [
-            { type: "text", text: "この物件資料から保証会社名とタイプを特定してください。" },
+            { type: "text", text: "この物件資料から物件名と保証会社名を読み取ってください。" },
             { type: "image", source: { type: "url", url: String(image_url) } },
           ],
           currentAction
@@ -4479,13 +4476,19 @@ ${GUARANTOR_COMPANY_LIST_OCR}
         try {
           const m = extractRaw.match(/\{[\s\S]*\}/);
           if (m) {
-            const d = JSON.parse(m[0]) as { property_name?: string; company_name?: string; guarantor_type?: string };
+            const d = JSON.parse(m[0]) as { property_name?: string; company_name?: string };
             if (d.property_name && !inputPropertyName) property_name_override = d.property_name;
-            companyName = d.company_name || "";
-            guarantorType = d.guarantor_type || "不明";
+            const resolved = resolveGuarantor(d.company_name || "");
+            companyName = resolved.name;
+            guarantorType = companyName ? guarantorTypeJa(resolved.type) : "不明";
           }
         } catch { /* 解析失敗時はデフォルト値を使用 */ }
+      } else if (companyName && guarantorType === "不明") {
+        // 会社名を手で入れて種類を選ばなかった時はマスタの既定（マスタに無ければ不明のまま）
+        guarantorType = guarantorTypeJa(resolveGuarantor(companyName).type);
       }
+      // 旧画面の「信用系」は信販系（2026-09-26 竹内さん決定）
+      guarantorType = guarantorTypeJa(parseGuarantorTypeJa(guarantorType) ?? "unknown");
 
       // タイプ別の詳細説明（スタッフ実例を参考に強化）
       const typeDesc =

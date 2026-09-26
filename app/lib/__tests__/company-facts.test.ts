@@ -60,6 +60,20 @@ describe("物件によって変わる事を事実にしない", () => {
     truthy(buildCompanyFactsNote("緊急連絡先は必要ですか").includes("物件によって変わる")));
   it("連帯保証人と緊急連絡先を分けて書く（竹内さんのルール）", () =>
     truthy(buildCompanyFactsNote("緊急連絡先について").includes("連帯保証人")));
+  // 2026-09-26 竹内さん決定（保証会社の知識を直す）
+  it("緊急連絡先は確認の電話だけ・支払い義務は無い", () => {
+    const f = COMPANY_FACTS.find((x) => x.id === "emergency_contact")!.fact;
+    truthy(/確認のお電話が入るだけ/.test(f), f);
+    truthy(/支払い義務は無い/.test(f), f);
+  });
+  it("審査期間は「3日〜10日」（旧「3〜5日」「3日〜1週間」を持たない）", () => {
+    const all = COMPANY_FACTS.map((x) => x.fact).join("\n");
+    truthy(all.includes("3日〜10日"), "3日〜10日");
+    falsy(/3〜5日|3日〜5日|3日〜1週間/.test(all), all);
+  });
+  it("「信用系」の語を持たない（呼び方は信販系・種類はそもそも入れない）", () => {
+    for (const f of COMPANY_FACTS) falsy(/信用系/.test(f.fact), f.id);
+  });
 });
 
 // ── 2026-09-23 S6 の実測（今月の当たり76通を全部読んだ）: 当たりの50%が [画像] の書き起こし ──

@@ -8,10 +8,14 @@
 // ─── 型 ───
 export type GuarantorType = "independent" | "licc" | "credit" | "unknown";
 export const GUARANTOR_TYPES: readonly GuarantorType[] = ["independent", "licc", "credit", "unknown"];
-/** UI の select と台帳の日本語ラベル。竹内さんの言う「信用系」は LICC系＋信販系（信用情報を見る側）に近いので LICC系 のラベルに添える */
+/**
+ * UI の select と台帳の日本語ラベル。
+ * 2026-09-26 竹内さん決定: スタッフの言う「信用系」は**信販系**（お客様への説明の呼び方は「信販系」にそろえる）。
+ *   旧: 「信用系」を LICC系 のラベルに添えていた（LICC系（信用系））→ 外した。「信用系」の語はお客様向けの文に出さない
+ */
 export const GUARANTOR_TYPE_LABELS: Record<GuarantorType, string> = {
   independent: "独立系（審査ゆるめ）",
-  licc: "LICC系（信用系）",
+  licc: "LICC系",
   credit: "信販系（クレジット審査）",
   unknown: "不明・その他",
 };
@@ -41,6 +45,26 @@ export function isGuarantorType(v: unknown): v is GuarantorType {
   return typeof v === "string" && (GUARANTOR_TYPES as readonly string[]).includes(v);
 }
 
+/** 画像の読み取り（extract-guarantor-info・AIX の mgmt_guarantor）と旧画面が使う日本語の種類名（unknown は「不明」） */
+export type GuarantorTypeJa = "独立系" | "LICC系" | "信販系" | "不明";
+export function guarantorTypeJa(t: GuarantorType): GuarantorTypeJa {
+  return t === "independent" ? "独立系" : t === "licc" ? "LICC系" : t === "credit" ? "信販系" : "不明";
+}
+/**
+ * 日本語の種類名 → GuarantorType。旧クライアントの「信用系」は**信販系**（2026-09-26 竹内さん決定・スタッフの「信用系」＝信販系）。
+ * 読めない値は null（呼び出し側が会社名から resolveGuarantor で決める）
+ */
+export function parseGuarantorTypeJa(raw: string | null | undefined): GuarantorType | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  if (isGuarantorType(s)) return s;
+  if (/^独立系/.test(s)) return "independent";
+  if (/^LICC/i.test(s)) return "licc";
+  if (/^(信販系|信用系)/.test(s)) return "credit";
+  if (/^不明/.test(s)) return "unknown";
+  return null;
+}
+
 // ─── マスタ（正規名・別名・既定の種類）───
 // 出現頻度は 2025-09〜2026-09 のスタッフ実送信: 日本セーフティ(ー)24・エポス16・エルズサポート7・Casa5・全保連5・ジェイリース4・クレディセゾン3・
 //   オリコ3・アセス保証2・いえらぶ2・ライフ2・他各1。種類の語もスタッフの使い方（独立系＝審査基準が緩い／LICC系＝独立系より上がるが信用情報重視ではない／
@@ -57,11 +81,22 @@ export const GUARANTOR_COMPANY_MASTER: readonly GuarantorCompany[] = [
   { name: "日本トラストコーポレーション", aliases: ["日本トラスト"], type: "independent" },
   { name: "ハウスリーブ", aliases: [], type: "independent" },
   { name: "ナップ", aliases: ["NAP", "ナップ賃貸保証"], type: "independent" },
-  { name: "JPMC", aliases: ["ジェイピーエムシー", "日本管理センター"], type: "independent" },
+  { name: "JPMC", aliases: ["ジェイピーエムシー", "日本管理センター", "JPMCファイナンス"], type: "independent" },
   { name: "イントラスト", aliases: ["intrust"], type: "independent" },
   { name: "ラクーン", aliases: ["ラクーンレント", "raccoon"], type: "independent" },
   { name: "ニッポンインシュア", aliases: ["日本インシュア"], type: "independent" },
   { name: "GTN", aliases: ["ジーティーエヌ", "グローバルトラストネットワークス"], type: "independent" },
+  // 2026-09-26 竹内さん決定「マスタに無い会社はスタッフが過去に説明した種類で足す」（scripts/audit-guarantor.ts の調査・スタッフ実送信）:
+  //   シノケン・ほっと保証 ab7ea742「シノケンコミュニケーションズ（独立系）…2番手ほっと保証（独立系）」／レンポッポ d25e07d1「レンポッポ（独立系）」／
+  //   アーク 359e5a77「アーク保証会社と独立系の保証会社」／エイト d46290ff「エイト賃貸保証と独立系の保証会社」／
+  //   オセロ 583171e6「オセロ・フィナンシャルサービス株式会社となり独立系の保証会社」
+  //   短い呼び名（シノケン・アーク・エイト・オセロ）は一般語・不動産会社名と重なるので名寄せだけに使い、本文の走査はしない（SCAN_SKIP）
+  { name: "シノケンコミュニケーションズ", aliases: ["シノケン", "シノケン保証"], type: "independent" },
+  { name: "ほっと保証", aliases: [], type: "independent" },
+  { name: "レンポッポ", aliases: [], type: "independent" },
+  { name: "アーク保証", aliases: ["アーク賃貸保証", "アーク"], type: "independent" },
+  { name: "エイト賃貸保証", aliases: ["エイト保証", "エイト"], type: "independent" },
+  { name: "オセロ・フィナンシャルサービス", aliases: ["オセロフィナンシャルサービス", "オセロ"], type: "independent" },
   // LICC系
   { name: "全保連", aliases: ["ゼンホレン"], type: "licc" },
   { name: "ジェイリース", aliases: ["Jリース", "J-LEASE"], type: "licc" },
@@ -72,9 +107,27 @@ export const GUARANTOR_COMPANY_MASTER: readonly GuarantorCompany[] = [
   { name: "クレディセゾン", aliases: ["セゾン", "SAISON"], type: "credit" },
   { name: "ジャックス", aliases: ["JACCS"], type: "credit" },
   { name: "アプラス", aliases: ["APLUS"], type: "credit" },
+  // 2026-09-26 竹内さん決定: K-net はスタッフが「信用系」と説明（d25e07d1「3番手:K-net（信用系）」）＝信販系
+  { name: "K-net", aliases: ["Knet", "ケーネット"], type: "credit" },
   // 種類が定まらない（スタッフが選ぶ）
   { name: "ライフ", aliases: ["ライフ保証", "ライフ賃貸保証"], type: "unknown" },
+  // 2026-09-26 竹内さん決定「説明の無い会社は種類を推測しない」: 名寄せ・入力に無い会社名を伏せる走査のためだけに置く（種類は不明＝審査の緩い・厳しいに触れない）
+  //   スタッフの実送信に種類の説明が無い（クレデンスは「比較的審査通過しやすい」だけで種類の語なし）
+  { name: "クレデンス", aliases: [], type: "unknown" },
+  { name: "興和アシスト", aliases: [], type: "unknown" },
+  { name: "テナントファースト", aliases: [], type: "unknown" },
+  { name: "プレサンスギャランティ", aliases: ["プレサンス"], type: "unknown" },
+  { name: "ランドインシュア", aliases: [], type: "unknown" },
+  { name: "パナソニックホームズ賃貸サポート", aliases: [], type: "unknown" },
+  { name: "エフアール信用保証", aliases: [], type: "unknown" },
 ];
+
+/** 種類ごとのマスタの正規名（プロンプトの一般知識の会社名はここから作る＝会社の種類の知識をマスタ1本に・2026-09-26） */
+export function guarantorNamesByType(t: GuarantorType): string[] {
+  return GUARANTOR_COMPANY_MASTER.filter((c) => c.type === t).map((c) => c.name);
+}
+/** 画像の読み取り用: 資料に出る会社名の手がかり（種類は付けない＝種類は読み取った会社名から resolveGuarantor で決める） */
+export const GUARANTOR_OCR_NAME_HINT: string = `【よく出る保証会社名（表記の手がかり・この一覧に無い会社もある）】\n${GUARANTOR_COMPANY_MASTER.map((c) => c.name).join("、")}`;
 
 // ─── 名寄せ ───
 /** 比較用のキー（全角半角・空白・株式会社・末尾の「保証会社」「保証」を落とす。正規名側も同じ関数を通すので「アセス保証」は一致する） */
@@ -194,19 +247,19 @@ export function buildGuarantorInfoText(o: { customerName: string; properties: re
 //
 // 【物件確認した】は「この1件（数件）の保証会社」を御見積書の直後に1〜2行で添える場面で、
 // 【保証会社について】（保証会社一覧を送る場面）とは文の型が違う。文はスタッフの実送信そのまま（種類ごとに1つ）:
-//   信用系 2026-09-16 YUYA「クレディセゾンという信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！」
+//   信販系 2026-09-16 YUYA「クレディセゾンという信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！」
 //     （🌟最大限割引しました御見積書同封させて頂きました！！ の直後に置かれている＝画面の入力欄も見積書の下に置く）
 //   独立系 2026-06-29「保証会社:オセロ・フィナンシャルサービス株式会社となり独立系の保証会社となりますのでかなり審査通過しやすいお部屋となります😊！！」
 //   複数件で同じ会社 2026-07-21「2部屋とも保証会社クレデンスという比較的審査通過しやすいもの採用しております！！」
 //   LICC系 の実送信はこの場面に無いので【保証会社について】と同じ言い回し（GUARANTOR_TYPE_SCREENING_NOTE.licc）を使う
-// ※ credit（クレディセゾン・エポス等）の呼び名は、この場面の実送信に合わせて「信用系」にする
-//   （一覧の AIX は「信販系」。同じ会社でも場面で呼び名が違うのは実データどおり）
+// ※ credit（クレディセゾン・エポス等）の呼び名は「信販系」（2026-09-26 竹内さん決定: スタッフの「信用系」＝信販系・お客様への説明は「信販系」にそろえる）。
+//   旧: この場面だけ実送信に合わせて「信用系」と書いていた（一覧の AIX は「信販系」で、同じ会社が場面で呼び名が割れていた）
 // ※ 旧実装（AixModal で generatedMsg に追記）は種類を見ずに「クレジットカードの滞納歴で審査する中級程の保証会社」固定で、
 //   独立系（審査が緩い）の物件にも信販系の説明が付いていた。事実関係の説明なので種類ごとに分ける
 export const GUARANTOR_CHECK_SENTENCE: Record<GuarantorType, (company: string) => string> = {
   independent: (c) => `${c}という独立系の保証会社を使用しており、審査基準が緩くかなり審査通過しやすいお部屋となります😊！！`,
   licc: (c) => `${c}というLICC系の保証会社を使用しており、${GUARANTOR_TYPE_SCREENING_NOTE.licc}`,
-  credit: (c) => `${c}という信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！`,
+  credit: (c) => `${c}という信販系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！`,
   unknown: (c) => `${c}という保証会社を使用しております！！`,
 };
 
@@ -267,7 +320,7 @@ export function formatGuarantorFacts(properties: readonly GuarantorProperty[], o
 
 // ─── 本文の事実の照合（決定論）───
 /** 単独では走査しない一般語 */
-const SCAN_SKIP = new Set(["ライフ"]);
+const SCAN_SKIP = new Set(["ライフ", "シノケン", "アーク", "エイト", "オセロ", "プレサンス"]);
 /** 2026-09-15 検証指摘: 会社名の直後にこの語が続く時は別の言葉（「ナップサック」）なので伏せない */
 const SCAN_NOT_FOLLOWED_BY: Record<string, string[]> = { "ナップ": ["サック"] };
 /** UI の「会話履歴から保証会社名を自動検出」にも使える走査語（長い順） */
@@ -346,8 +399,9 @@ export function checkGuarantorFacts(
   const t = cleaned.replace(/独立系の保証会社に比べ/g, "");
   const typeWarnings: string[] = [];
   if (/独立系/.test(t) && !has("independent")) typeWarnings.push("種類:独立系");
-  if (/LICC系|信用系/i.test(t) && !has("licc")) typeWarnings.push("種類:LICC系");
-  if (/信販系/.test(t) && !has("credit")) typeWarnings.push("種類:信販系");
+  if (/LICC系/i.test(t) && !has("licc")) typeWarnings.push("種類:LICC系");
+  // 2026-09-26 竹内さん決定: スタッフの「信用系」＝信販系
+  if (/信販系|信用系/.test(t) && !has("credit")) typeWarnings.push("種類:信販系");
   if (/審査基準が緩|審査ゆるめ|緩め|審査(?:が|は)?緩/.test(t) && !has("independent")) typeWarnings.push("種類:緩い");
   return { ok: unmatched.length === 0 && typeWarnings.length === 0, cleaned, unmatched, typeWarnings };
 }

@@ -1,13 +1,13 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { GUARANTOR_OCR_NAME_HINT, resolveGuarantor, guarantorTypeJa } from "@/app/lib/guarantor-companies";
 
 export const maxDuration = 30;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 
-const GUARANTOR_COMPANY_LIST = `【保証会社タイプ一覧（独立系が最も審査緩い）】
-信販系（最も厳しい）: エポスカード、オリコフォレントインシュア、アプラス、ジャックス、フォーレント
-LICC系（一般的）: ジェイリース（J-Lease）、全保連（全国賃貸保証業協会）、JID、全国保証、アート・プランニング、青山ライフデザイン、保証ベース
-独立系（最も審査緩い）: 日本セーフティー、エルズサポート、Casa（カーサ）、フォーシーズンズ、ルームバンク（ルームバンクインシュア）、いえらぶ保証、スマートタカミ、イントラスト、レジデンシャルパートナーズ、株式会社日本トラストコーポレーション（日本トラスト）`;
+// 2026-09-26 竹内さん決定（保証会社の知識をマスタ1本に）: 旧はここに種類つきの会社一覧のコピーを持ち、種類を LLM に判定させていた
+//   （マスタと一覧が食い違う・マスタに無い会社の種類を推測する）。LLM には会社名の読み取りだけをさせ、種類は読み取った会社名から
+//   app/lib/guarantor-companies.ts の resolveGuarantor で決める（マスタに無い会社は「不明」＝種類を推測しない）
 
 export async function POST(req: NextRequest) {
   try {
@@ -42,18 +42,16 @@ export async function POST(req: NextRequest) {
       | "image/webp";
 
     const system = `賃貸物件資料の画像から保証会社情報を抽出してください。
-${GUARANTOR_COMPANY_LIST}
+${GUARANTOR_OCR_NAME_HINT}
 
 画像を分析し、以下のJSON形式のみで返答してください（説明不要）：
 {
   "property_name": "物件名（資料から読み取った正確な名前・見当たらなければ空文字）",
-  "company_name": "保証会社名（資料から読み取った正確な名前・見当たらなければ空文字）",
-  "guarantor_type": "独立系|LICC系|信販系|不明"
+  "company_name": "保証会社名（資料に書かれている会社名をそのまま・見当たらなければ空文字）"
 }
 
-判定ルール:
-- 会社名が上記リストに一致する場合 → 対応するタイプを返す
-- 会社名が不明または上記リストにない場合 → "不明"
+ルール:
+- 保証会社名は資料に書かれている物だけ。「保証会社: 必須」「保証会社利用」のように社名が無ければ空文字（推測しない）
 - 物件名は「物件名」「建物名」「マンション名」等のラベルの横に書かれた名前`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -110,11 +108,12 @@ ${GUARANTOR_COMPANY_LIST}
         const parsed = JSON.parse(match[0]) as {
           property_name?: string;
           company_name?: string;
-          guarantor_type?: string;
         };
         propertyName = parsed.property_name || "";
-        companyName = parsed.company_name || "";
-        guarantorType = parsed.guarantor_type || "不明";
+        // 種類はマスタで決める（マスタに無い会社は「不明」・会社名は正規名に名寄せ）
+        const resolved = resolveGuarantor(parsed.company_name || "");
+        companyName = resolved.name;
+        guarantorType = companyName ? guarantorTypeJa(resolved.type) : "不明";
       }
     } catch {
       console.error("[extract-guarantor-info] JSON parse error, raw:", rawText);
