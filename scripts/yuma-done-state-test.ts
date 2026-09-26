@@ -23,6 +23,7 @@ import { createClient } from "@supabase/supabase-js";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const Y = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
@@ -215,8 +216,19 @@ async function insertScene(s: State, sc: Scene) {
 function runBrain(dir: string, out: string): Record<string, unknown> | null {
   // 前の木（HEAD の worktree）には無いので複写する（worktree ごと消えるので作業コピーは汚れない）
   const runner = join(dir, "scripts", "yuma-brain-decision.ts");
-  if (!existsSync(runner)) writeFileSync(runner, readFileSync(join(MAIN, "scripts", "yuma-brain-decision.ts"), "utf8"), "utf8");
-  const r = spawnSync(`npx tsx --env-file=.env.local scripts/yuma-brain-decision.ts "${out}"`, { cwd: dir, shell: true, encoding: "utf8", timeout: 240_000 });
+  // 2026-09-26: 使い回し（BRAIN_CACHE_LABEL）を読めるよう、前の木にある古い版も作業コピーの版で上書きする
+  const runnerSrc = readFileSync(join(MAIN, "scripts", "yuma-brain-decision.ts"), "utf8");
+  if (!existsSync(runner) || readFileSync(runner, "utf8") !== runnerSrc) writeFileSync(runner, runnerSrc, "utf8");
+  // 2026-09-26 テストの3段の②: ブレインは場面ごとに Claude で1回取って使い回す（BRAIN_REUSE=0 で毎回取る・BRAIN_REFRESH=1 で取り直す）。
+  //   使い回しの名前に「その木のブレインのコード（brain-core.ts）の中身のハッシュ」を入れる＝ブレインを直したら自動で取り直しになる
+  const reuse = process.env.BRAIN_REUSE !== "0";
+  const brainSrc = join(dir, "app", "lib", "brain-core.ts");
+  const codeHash = existsSync(brainSrc) ? createHash("sha1").update(readFileSync(brainSrc)).digest("hex").slice(0, 8) : "nocode";
+  const env = reuse
+    ? { ...process.env, BRAIN_CACHE_LABEL: `${dir.includes("tmp-fix-before") ? "before" : "after"}-${codeHash}`, BRAIN_CACHE_DIR: join(MAIN, "scripts", ".brain-cache") }
+    : process.env;
+  const r = spawnSync(`npx tsx --env-file=.env.local scripts/yuma-brain-decision.ts "${out}"`, { cwd: dir, shell: true, encoding: "utf8", timeout: 240_000, env });
+  if (reuse && /brain reused/.test(r.stdout ?? "")) console.log(`  （ブレイン ${dir.includes("tmp-fix-before") ? "前" : "後"}: 保存した判断を使い回し＝Claude を呼んでいない）`);
   if (r.status !== 0) { console.log(`⚠ brain (${dir.includes("tmp-fix-before") ? "前" : "後"}) 失敗: ${(r.stderr ?? "").slice(-400)}`); return null; }
   return JSON.parse(readFileSync(out, "utf8")) as Record<string, unknown> | null;
 }

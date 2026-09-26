@@ -21,6 +21,7 @@
 
 import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, recordAltUsage } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
+import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, type LlmTestMode } from "./llm-test-mode";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
@@ -71,6 +72,12 @@ export type AltProviderConfig = {
    *   ⚠ 申込以降（DRAFT_SKIP_STATUSES）の歯止めと、失敗時の Anthropic フォールバックはそのまま。
    */
   allowAutoSend: boolean;
+  /**
+   * テスト用の切り替え（llm-test-mode.ts・2026-09-26 竹内「この形でおこなう」）。
+   * "deepseek-all" の時は、LLM_ALT_ACTIONS に書いていない呼び出しも**ブレイン以外は全部** DeepSeek に回し、失敗しても Claude に戻さない。
+   * 本番（Vercel・NODE_ENV=production）では readTestMode が必ず null を返す＝常に null（今までどおり）。
+   */
+  testMode: LlmTestMode | null;
 };
 
 /**
@@ -88,11 +95,14 @@ export type AltProviderConfig = {
  *   鍵は Authorization: Bearer でも api-key でも通るので、下の callAzure は両方を送っている。
  */
 export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | null {
-  const provider = (env.LLM_ALT_PROVIDER ?? "").trim().toLowerCase();
+  // 2026-09-26 テスト用の切り替え（LLM_TEST_MODE=deepseek-all）。本番（Vercel・NODE_ENV=production）では必ず null＝下は今までと同じ
+  const testMode = readTestMode(env);
+  // テスト用の切り替えだけで LLM_ALT_PROVIDER が無い時は DeepSeek 本家（鍵は LLM_ALT_DEEPSEEK_KEY / DEEPSEEK_API_KEY）
+  const provider = (env.LLM_ALT_PROVIDER ?? "").trim().toLowerCase() || (testMode ? "deepseek" : "");
   const actionsRaw = (env.LLM_ALT_ACTIONS ?? "").trim();
-  if (!actionsRaw) return null;
+  if (!actionsRaw && !testMode) return null;
   const actions = new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
-  if (actions.size === 0) return null;
+  if (actions.size === 0 && !testMode) return null;
   // 2026-09-23 竹内「これなら質落ちるから毎回の分析もクロードの方が良いね」:
   //   ブレインは**毎回の分析（brain_fresh）も会話全体の分析（brain_full）も Claude のまま**。既定では回さない。
   //   一度 DeepSeek に回して実測した結果（scripts/shadow-brain-deepseek.ts・10会話・同じ入力で両方を走らせた）:
@@ -112,13 +122,13 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
     const apiKey = (env.AZURE_AI_KEY ?? "").trim();
     const model = (env.AZURE_AI_MODEL ?? "").trim();
     if (!endpoint || !apiKey || !model) return null;
-    return { provider: "azure", endpoint, apiKey, model, actions, fallbackToAnthropic, allowAutoSend };
+    return { provider: "azure", endpoint, apiKey, model, actions, fallbackToAnthropic, allowAutoSend, testMode };
   }
   if (provider === "bedrock") {
     const region = (env.BEDROCK_REGION ?? "").trim();
     const model = (env.BEDROCK_DEEPSEEK_MODEL_ID ?? "").trim();
     if (!region || !model || !env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) return null;
-    return { provider: "bedrock", endpoint: region, apiKey: "", model, actions, fallbackToAnthropic, allowAutoSend };
+    return { provider: "bedrock", endpoint: region, apiKey: "", model, actions, fallbackToAnthropic, allowAutoSend, testMode };
   }
   // DeepSeek 本家。OpenAI 互換なので Azure と同じ変換（toOpenAIBody / fromOpenAIResponse）で通る。
   // 既に DEEPSEEK_API_KEY が物件評価・駅名解決で使われているので、鍵はそれを流用する。
@@ -137,7 +147,7 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
     const apiKey = (env.LLM_ALT_DEEPSEEK_KEY ?? env.DEEPSEEK_API_KEY ?? "").trim();
     const model = (env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL).trim();
     if (!apiKey || !model) return null;
-    return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model, actions, fallbackToAnthropic, allowAutoSend };
+    return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model, actions, fallbackToAnthropic, allowAutoSend, testMode };
   }
   return null;
 }
@@ -160,12 +170,23 @@ export const NO_CLAUDE_FALLBACK_ACTIONS: ReadonlySet<string> = new Set([
   "search_audit",
 ]);
 
-export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null): boolean {
+export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null, systemHead: string | null = null): boolean {
   if (!cfg || !routeName) return false;
   if (cfg.actions.has(routeName)) return true;
   // 2026-09-23: ブレインは層で名札を分けた（brain_fresh / brain_full）。設定に古い "brain" と書いてあれば両方を指す
   if (routeName.startsWith("brain_") && cfg.actions.has("brain")) return true;
-  return false;
+  return routedByTestMode(cfg, routeName, systemHead);
+}
+
+/**
+ * テスト用の切り替え（LLM_TEST_MODE=deepseek-all）**だけ**が理由で回すか。
+ * ブレイン（brain_fresh / brain_full / 戦略の整理 / セーブデータ）は対象外（llm-test-mode.isBrainCall）。
+ * 鍵を重ねる: 設定を読んだ時（readTestMode）＋ここで実行中の環境をもう一度（isTestModeAllowed(process.env)）。
+ */
+export function routedByTestMode(cfg: AltProviderConfig | null, routeName: string | null, systemHead: string | null = null): boolean {
+  if (!cfg?.testMode || !routeName) return false;
+  if (!isTestModeAllowed(process.env)) return false;
+  return isTestModeTarget(cfg.testMode, routeName, systemHead);
 }
 
 /**
@@ -281,7 +302,28 @@ export type AnthropicBody = {
   stream?: boolean;
   /** AIX の callClaude は {type:"disabled"} を送っている。DeepSeek も同じ形を受け取る */
   thinking?: { type: "disabled" | "enabled" };
+  /** Anthropic の構造化出力（final-check・suggest-template が json_schema で使う） */
+  output_config?: { format?: { type?: string; schema?: unknown } };
 };
+
+/**
+ * 2026-09-26 テスト用の切り替えで見つけた穴（YUMA 実測）: final-check は Anthropic の構造化出力（output_config の json_schema）で
+ *   JSON を強制しているが、OpenAI 互換への変換はこれを捨てていた → DeepSeek は ```json で囲んだり `issues: []` と書いたりして
+ *   JSON.parse が3本とも失敗（fail-open＝最終チェックが素通り）。
+ *   → テスト用の切り替えの時だけ、スキーマを指示文に書き足して DeepSeek の JSON モード（response_format: json_object）で返させる。
+ *   本番の経路（LLM_ALT_ACTIONS で回す物）は今までどおり触らない（本番の動きを変えない）。
+ */
+export function jsonSchemaInstruction(body: AnthropicBody): string | null {
+  const f = body.output_config?.format;
+  if (!f || f.type !== "json_schema" || f.schema == null) return null;
+  return `\n\n【出力形式（必須）】次の JSON Schema に従う JSON オブジェクトを1つだけ出力する。\`\`\` で囲まない・前置きや説明を書かない。\n${JSON.stringify(f.schema)}`;
+}
+
+/** 応答の全体が ``` で囲まれていたら外す（テスト用の切り替えの読み切りの形だけで使う） */
+export function stripWholeCodeFence(text: string): string {
+  const m = text.trim().match(/^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/);
+  return m ? m[1].trim() : text;
+}
 
 /** Anthropic の content（文字列 or ブロック配列）を平文にする。画像ブロックがあれば null（対象外） */
 export function flattenContent(content: string | AnthropicBlock[] | undefined): string | null {
@@ -312,7 +354,7 @@ export function flattenContent(content: string | AnthropicBlock[] | undefined): 
 export function toOpenAIBody(
   body: AnthropicBody,
   model: string,
-  opts: { disableThinking?: boolean; allowStream?: boolean } = {},
+  opts: { disableThinking?: boolean; allowStream?: boolean; jsonSchemaToJsonMode?: boolean } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -327,6 +369,12 @@ export function toOpenAIBody(
     messages.push({ role: m.role === "assistant" ? "assistant" : "user", content: text });
   }
   if (messages.filter((m) => m.role !== "system").length === 0) return null;
+  // テスト用の切り替えの時だけ: 構造化出力（json_schema）を JSON モード＋指示文に移す（jsonSchemaInstruction の説明）
+  const schemaNote = opts.jsonSchemaToJsonMode && !body.stream ? jsonSchemaInstruction(body) : null;
+  if (schemaNote) {
+    if (messages[0]?.role === "system") messages[0].content += schemaNote;
+    else messages.unshift({ role: "system", content: schemaNote.trim() });
+  }
   // 呼び出し側（AIX の callClaude）が Anthropic に送っている thinking をそのまま尊重する。
   // 指定が無い時も DeepSeek 宛ては切る（既定オンなので、黙って max_tokens を食われて本文が空になる）
   const thinking = opts.disableThinking
@@ -338,6 +386,7 @@ export function toOpenAIBody(
     ...(typeof body.max_tokens === "number" ? { max_tokens: body.max_tokens } : {}),
     ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(schemaNote ? { response_format: { type: "json_object" } } : {}),
     // 1文字ずつの形。usage は最後の chunk で受け取る（include_usage）
     ...(body.stream && opts.allowStream ? { stream: true, stream_options: { include_usage: true } } : {}),
   };
@@ -477,7 +526,9 @@ async function callOpenAICompatible(
 ): Promise<Response | null> {
   // 1文字ずつの形は DeepSeek だけ通す（Anthropic の SSE に組み直す変換を用意しているため）
   const allowStream = cfg.provider === "deepseek";
-  const payload = toOpenAIBody(body, cfg.model, { disableThinking: cfg.provider === "deepseek", allowStream });
+  // テスト用の切り替えの時だけ構造化出力を JSON モードに移す（本番の経路は今までどおり）
+  const testShape = !!cfg.testMode;
+  const payload = toOpenAIBody(body, cfg.model, { disableThinking: cfg.provider === "deepseek", allowStream, jsonSchemaToJsonMode: testShape });
   if (!payload) return null;
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
@@ -541,6 +592,10 @@ async function callOpenAICompatible(
     return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream; charset=utf-8" } });
   }
   const json = await res.json() as Parameters<typeof fromOpenAIResponse>[0];
+  // テスト用の切り替えの時だけ: 全体が ```json で囲まれた応答を外す（Claude 前提の JSON.parse がそのまま読めるように）
+  if (testShape && json.choices?.[0]?.message && typeof json.choices[0].message.content === "string") {
+    json.choices[0].message.content = stripWholeCodeFence(json.choices[0].message.content);
+  }
   return new Response(JSON.stringify(fromOpenAIResponse(json, cfg.model)), {
     status: 200, headers: { "content-type": "application/json" },
   });
@@ -586,6 +641,9 @@ async function callBedrock(cfg: AltProviderConfig, body: AnthropicBody): Promise
 let installed = false;
 export function installAltProvider(env: EnvLike = process.env): boolean {
   if (installed && isAltFetchInstalled()) return true;
+  // LLM_TEST_MODE が入っているのに効かせない時（本番・知らない値）は1行だけ知らせる。経路は今までどおり
+  const blocked = testModeBlockedReason(env);
+  if (blocked) console.warn("[llm-test-mode] 無視:", blocked);
   const cfg = readAltConfig(env);
   if (!cfg) return false; // 設定が無ければ何もしない＝今までどおり Anthropic
   const original = globalThis.fetch;
@@ -605,12 +663,13 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     // 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」:
     //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
     //   かつこのツールの仕事は申込までなので、回す必要がそもそも無い。**スイッチは用意しない**
+    if (cfg.testMode && isPostApplyCall(headers)) console.warn("[llm-test-mode] 申込以降の会話は Claude のまま（個人情報の歯止め・YUMA は status_manual_back_at を最新に）");
     if (isPostApplyCall(headers)) return original(input as RequestInfo, init);
-    const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), flattenContent(body.system));
-    if (!shouldRouteAlt(cfg, routeName)) return original(input as RequestInfo, init);
+    const sysHead = flattenContent(body.system);
+    const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), sysHead);
+    if (!shouldRouteAlt(cfg, routeName, sysHead)) return original(input as RequestInfo, init);
 
     const started = Date.now();
-    const sysHead = flattenContent(body.system);
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);
     try {
       const writeUsage = (usage: Record<string, number>, ms: number, errorType: string | null = null) => recordAltUsage({
@@ -625,10 +684,12 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       if (!res) {
         // 物件の判断・読み取りは変換できなくても Claude に倒さない（呼び出し側が「読み取れなかった」の印を付ける）
         if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: DeepSeek に送れない形（Claude には倒さない）`);
+        // テスト用の切り替えでも画像つきは DeepSeek（文字だけ）に送れないので Claude のまま。ログで分かるようにする
+        if (cfg.testMode) console.warn("[llm-test-mode] DeepSeek に送れない形（画像つき等）→ Claude のまま", JSON.stringify({ route: routeName }));
         return original(input as RequestInfo, init); // 画像等は今までどおり
       }
       const ms = Date.now() - started;
-      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, stream: !!body.stream, ms }));
+      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, stream: !!body.stream, ms, ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
       // 2026-09-19 本番の検証で見つけた穴: fetch の出口の記録は Anthropic 宛てだけを見るので、
       //   別クラウドに回った分は1行も残らなかった（費用も質も後から追えない）。ここで自分で書く。
       //   1文字ずつの形は上のコールバックで書くので、ここでは読み切りの形だけ
@@ -648,12 +709,18 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
       if (!cfg.fallbackToAnthropic) throw e;
+      // 2026-09-26 テスト用の切り替えの間は**失敗しても Claude に戻さない**（失敗は失敗として出す）。
+      //   理由: 戻すと、費用が黙って Claude に漏れる＋「DeepSeek で回したつもりの結果」が実は Claude の結果になり、試行錯誤の比較が混ざる。
+      //   最終チェック等の呼び出し側はそれぞれ失敗時の扱い（fail-open 等）を持っているので、テストではそれがそのまま見える。
+      //   本番（testMode は常に null）はここを通らない＝今までどおり Anthropic にフォールバック
+      if (cfg.testMode) throw e;
       if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw e; // 物件の判断・読み取りは Claude に倒さない
       return original(input as RequestInfo, init); // 失敗したら今までどおり Anthropic で返す
     }
   }) as typeof fetch;
   (globalThis.fetch as unknown as Record<string, unknown>)[ALT_FETCH_MARK] = true;
   installed = true;
-  console.log("[llm-alt] installed", JSON.stringify({ provider: cfg.provider, model: cfg.model, actions: [...cfg.actions] }));
+  console.log("[llm-alt] installed", JSON.stringify({ provider: cfg.provider, model: cfg.model, actions: [...cfg.actions], ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
+  if (cfg.testMode) console.warn(`[llm-test-mode] ${cfg.testMode}: ブレイン以外の Claude 呼び出しを ${cfg.provider}（${cfg.model}）に回す・失敗しても Claude に戻さない（ローカル専用）`);
   return true;
 }

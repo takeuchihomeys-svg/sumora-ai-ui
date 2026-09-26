@@ -14,6 +14,8 @@
 //   → 呼び出し側がリクエストの headers に x-sumora-llm-action / x-sumora-llm-conversation を付け、出口で読んで action / conversation_id に残す。
 //   この2つは Anthropic に送らない（送る前に取り除く）。sys_key_full は system 全ブロックを "\n\n" で結合した全文のハッシュ（プロンプト変更の検出用）。
 
+import { usageEnvLabel } from "./llm-test-mode";
+
 /** 呼び出し側が付ける印（Anthropic には送らない）。AIX の種類・LINE の会話 ID */
 export const LLM_ACTION_HEADER = "x-sumora-llm-action";
 export const LLM_CONVERSATION_HEADER = "x-sumora-llm-conversation";
@@ -341,7 +343,8 @@ function lazyAltRecorder(): AltRecorder | null {
     },
     keepAlive: (p: Promise<unknown>) => { import("@vercel/functions").then((m) => m.waitUntil(p)).catch(() => { /* Vercel 以外 */ }); },
     route: () => null,
-    env: process.env.VERCEL_ENV ?? "local",
+    // 2026-09-26 テスト用の切り替え（llm-test-mode）が効いている時だけ "local:deepseek-all"。本番は VERCEL_ENV のまま
+    env: usageEnvLabel(process.env),
   };
 }
 
@@ -415,7 +418,8 @@ export async function installLlmUsageRecorder(): Promise<boolean> {
     },
     keepAlive: (p: Promise<unknown>) => { try { waitUntil(p); } catch { /* Vercel 以外 */ } },
     route: () => workStore?.getStore()?.route ?? null,
-    env: process.env.VERCEL_ENV ?? "local",
+    // 2026-09-26 テスト用の切り替え（llm-test-mode）が効いている時だけ "local:deepseek-all"。本番は VERCEL_ENV のまま
+    env: usageEnvLabel(process.env),
   };
   // 別クラウド（DeepSeek）に回った呼び出しも同じ口から書く（llm-alt-provider が recordAltUsage を呼ぶ）
   altRecorder = deps;

@@ -65,3 +65,5 @@ scripts/.s*
 scripts/.yuma-backup-*.json
 scripts/.yuma-scene-gap-*
 scripts/_*.ts
+# 2026-09-26 テストの3段の②: 場面ごとに Claude で1回取ったブレインの判断の置き場（scripts/yuma-brain-decision.ts）
+scripts/.brain-cache/
