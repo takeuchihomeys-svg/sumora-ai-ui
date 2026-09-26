@@ -1,5 +1,6 @@
 // 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ」— 売上サポ → トークの AIX の受け渡し
 // 実行: npx tsx app/lib/__tests__/pickup-aix-handoff.test.ts
+import { pickTopForAix, defaultAixChecks } from "../pickup-review-order";
 import { aixTypeForPickupCount, pickupAixButtonLabel, buildPickupAixHref, parsePickupAixHandoff, planPickupMarkSent, PICKUP_AIX_MAX } from "../pickup-aix-handoff";
 
 const WJ = String.fromCharCode(0x2060);
@@ -66,6 +67,21 @@ console.log("■ 送り終えた時の「送った」印（planPickupMarkSent）
   const recNoFile = planPickupMarkSent({ aix: "property_recommendation", handoffIds: [7], handoffFiles: [a], sentFiles: [], sentImageUrls: [] });
   t("オススメ: 資料なしで送った → 印を付けない", recNoFile === null, recNoFile);
   t("ids と File の数が違う（呼び間違い）→ 印を付けない", planPickupMarkSent({ aix: "property_send", handoffIds: [1, 2], handoffFiles: [a], sentFiles: [a], sentImageUrls: [] }) === null);
+}
+
+console.log("■ 10件を超えた時（2026-09-26 スクショ「AIX物件ピックアップ（20件）」）");
+t("ボタン: 11件以上は絞る案内", /20.*件チェック中.*点の高い10.*件に絞る/.test(plain(pickupAixButtonLabel(20))), pickupAixButtonLabel(20));
+t("ボタン: 10件はそのまま物件ピックアップ", plain(pickupAixButtonLabel(10)) === "📤 AIX物件ピックアップ（10件）");
+{
+  const mk = (id: number, score: number | null, extra: Record<string, unknown> = {}) => ({ id, rank: id, recommended: 0, score, status: "pending", verdict: "pass", ...extra });
+  const items = Array.from({ length: 20 }, (_, i) => mk(i + 1, 100 + i));   // id 20 が一番高い
+  const top = pickTopForAix(items);
+  t("20件 → 点の高い10件（20〜11）", top.join(",") === "20,19,18,17,16,15,14,13,12,11", top);
+  t("👑 は点が低くても先頭に入る", pickTopForAix(items, 1)[0] === 1 && pickTopForAix(items, 1).length === 10);
+  const mixed = [mk(1, 200, { verdict: "drop" }), mk(2, 190, { status: "sent" }), mk(3, 180, { expired: true }), mk(4, 100), mk(5, null)];
+  t("外す候補・送った物・72時間切れは選ばない（点なしは後）", pickTopForAix(mixed).join(",") === "4,5", pickTopForAix(mixed));
+  const checks = defaultAixChecks([{ items }, { items: [mk(31, 50), mk(32, 60, { verdict: "drop" })] }]);
+  t("既定のチェック: 回ごとに10件まで・外す候補は外す", Object.values(checks).filter(Boolean).length === 11 && checks[20] && !checks[1] && checks[31] && !checks[32], checks);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

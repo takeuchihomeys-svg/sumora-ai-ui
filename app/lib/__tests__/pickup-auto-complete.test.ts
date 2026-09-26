@@ -4,6 +4,8 @@
 // 実行: npx tsx app/lib/__tests__/pickup-auto-complete.test.ts
 // 形は実例（リアプロの回＋数分あけて itandi の回）。お客様の情報は無い
 import { pickCustomerBest, bestBasisFor, customerImageNeed, bestPointLabel, type BestCandidateRow } from "../pickup-best";
+import { joinableGroupId } from "../pickup-complete";
+import { pickAutoTargets, type AutoRow } from "../pickup-auto-targets";
 import { rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, completeGroupId, selectCompleteTargets, AUTO_COMPLETE_QUIET_MS, AUTO_COMPLETE_QUIET_MINUTES, type CompleteRankRow, type AutoCompleteRow } from "../pickup-complete";
 
 let passed = 0, failed = 0;
@@ -100,10 +102,12 @@ console.log("\n■ まとめ（完了の API）の 👑 と順位も同じ関数
 console.log("\n■ 10分の判定（境目）");
 {
   const last = Date.parse("2026-09-25T02:04:00Z");
-  t(`${AUTO_COMPLETE_QUIET_MINUTES}分`, AUTO_COMPLETE_QUIET_MS === 600_000);
-  t("9分59秒999 はまだ", !isQuietFor(last, last + 599_999));
-  t("ちょうど10分でまとめる", isQuietFor(last, last + 600_000));
-  t("10分1秒もまとめる", isQuietFor(last, last + 601_000));
+  // 2026-09-26 10分 → 3分（分かれて届く間隔の実測 最大122秒・後から届いた回は joinableGroupId で前のまとめに足す）
+  t(`${AUTO_COMPLETE_QUIET_MINUTES}分`, AUTO_COMPLETE_QUIET_MINUTES === 3 && AUTO_COMPLETE_QUIET_MS === 180_000);
+  t("2分59秒999 はまだ", !isQuietFor(last, last + 179_999));
+  t("ちょうど3分でまとめる", isQuietFor(last, last + 180_000));
+  t("3分1秒もまとめる", isQuietFor(last, last + 181_000));
+  t("分かれて届く最大の間（122秒）ではまとめない", !isQuietFor(last, last + 122_000));
   t("未来の時刻（時計のずれ）はまとめない", !isQuietFor(last + 60_000, last));
   t("時刻が読めなければまとめない", !isQuietFor(NaN, last));
   t("最後に届いた時刻はまとめていない行の一番新しい物", lastOpenAt([
@@ -131,11 +135,13 @@ console.log("\n■ 自動でまとめるお客様の選び方");
     { id: 6, created_at: "2026-09-25T01:00:00Z", property_customer_id: null, complete_group_id: null },
     { id: 7, created_at: "2026-09-24T01:00:00Z", property_customer_id: C, complete_group_id: null },
   ];
-  const r = autoCompleteDue(rows, now);
+  // この例は 10分の静けさで書いた例（quietMs を渡す）。既定の3分は上の境目のテスト
+  const Q10 = 600_000;
+  const r = autoCompleteDue(rows, now, Q10);
   t("A はまとめる（2件）", r.due.length === 1 && r.due[0].property_customer_id === A && r.due[0].open === 2, r.due);
   t("B は待つ（最後の itandi から10分＝02:18）", r.waiting.length === 1 && r.waiting[0].property_customer_id === B && r.waiting[0].due_at === "2026-09-25T02:18:00.000Z", r.waiting);
   t("まとめ済み・お客様なし・24時間より前は拾わない", !r.due.concat(r.waiting).some((x) => x.property_customer_id === C));
-  const later = autoCompleteDue(rows, Date.parse("2026-09-25T02:18:00Z"));
+  const later = autoCompleteDue(rows, Date.parse("2026-09-25T02:18:00Z"), Q10);
   t("02:18 には B もまとめる", later.due.map((x) => x.property_customer_id).join(",") === [A, B].join(","), later.due);
 }
 

@@ -305,15 +305,23 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     //   ①画像でしか分からない希望があるお客様だけ、この回の物件を「🔍 画像で分析」と同じ形で自動で読む（pickup-auto-analyze）
     //   ②条件の自由文のうち決定論で読めない節だけ DeepSeek で要約して保存（文が変わっていなければ呼ばない）
     //   どちらも同じ waitUntil の中（応答は待たせない）・失敗しても記録は残す
+    // 2026-09-26 竹内「物件検索全部完了してから分析するようにする。分けるごとに物件分析されている」:
+    //   ①の画像で分析は届くたびには読まない。お客様の分かる回は、まとめ（拡張の「完了」／最後の物件から3分の自動まとめ）の
+    //   finishCompleteGroup が、まとめた全件から点の高い順に最大20件を1回で読む（pickAutoTargets）。
+    //   旧は回ごとに「その回の順位の上から20件」を読んでいた＝リアプロの一括が 2件ずつ7回に分かれると、点の低い物件まで回ごとに読んでいた。
+    //   お客様の分からない回（property_customer_id なし）は自動まとめに乗らないので、今まで通りここで読む
+    //   ②条件の要約は文が変わっていなければ DeepSeek を呼ばない（2回目以降の回は保存の読み出しだけ）ので、ここのまま（merge-pdfs の🌟が次の回で使う）
     const [auto, summary] = await Promise.allSettled([
-      import("@/app/lib/pickup-auto-analyze").then(({ autoAnalyzeBatch }) => autoAnalyzeBatch({
-        ids: insertedIds, propertyCustomerId: input.propertyCustomerId, conversationId, deadlineAt: startedAt + AUTO_ANALYZE_DEADLINE_MS,
-      })),
+      input.propertyCustomerId
+        ? Promise.resolve(null)
+        : import("@/app/lib/pickup-auto-analyze").then(({ autoAnalyzeBatch }) => autoAnalyzeBatch({
+          ids: insertedIds, propertyCustomerId: input.propertyCustomerId, conversationId, deadlineAt: startedAt + AUTO_ANALYZE_DEADLINE_MS,
+        })),
       input.propertyCustomerId
         ? import("@/app/lib/condition-summary-server").then(({ loadConditionSummary }) => loadConditionSummary(input.propertyCustomerId, { allowLlm: true, conversationId }))
         : Promise.resolve(null),
     ]);
-    if (auto.status === "fulfilled") { out.autoAnalyzed = auto.value.analyzed; out.autoLevel = auto.value.level; }
+    if (auto.status === "fulfilled" && auto.value) { out.autoAnalyzed = auto.value.analyzed; out.autoLevel = auto.value.level; }
     if (summary.status === "fulfilled" && summary.value) out.summaryCalled = summary.value.called;
     return out;
   } catch (e) {

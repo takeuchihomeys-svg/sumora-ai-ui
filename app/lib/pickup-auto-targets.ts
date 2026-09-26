@@ -28,13 +28,16 @@ export function rowNeedsImage(features: string[], equipment: Pick<PickupEquipmen
   return features.some((f) => { const e = FEATURE_TO_EQUIP[f]; return !e || !decided.has(e); });
 }
 
-export type AutoRow = SheetSourceRow & { verdict: string | null; equipment: PickupEquipment | null; rank: number };
+export type AutoRow = SheetSourceRow & { verdict: string | null; equipment: PickupEquipment | null; rank: number; score?: number | null };
 
 /** 読む物件を選ぶ（純関数・テスト用に分ける） */
 export function pickAutoTargets(rows: AutoRow[], features: string[], max = AUTO_ANALYZE_MAX): { targets: AutoRow[]; skipped: Array<{ id: number; why: string }> } {
   const skipped: Array<{ id: number; why: string }> = [];
   const targets: AutoRow[] = [];
-  for (const r of [...rows].sort((a, z) => a.rank - z.rank)) {
+  // 2026-09-26: まとめ（複数の回）で1回だけ読むようにしたので、回ごとの順位（【N】）ではなく判定の点の高い順（点なしは後・同点は順位）に上限まで読む
+  const sc = (r: AutoRow) => (typeof r.score === "number" && Number.isFinite(r.score) ? r.score : null);
+  const order = (a: AutoRow, z: AutoRow) => { const sa = sc(a), sz = sc(z); if (sa != null && sz != null && sa !== sz) return sz - sa; if (sa == null && sz != null) return 1; if (sa != null && sz == null) return -1; return (a.rank - z.rank) || (a.id - z.id); };
+  for (const r of [...rows].sort(order)) {
     if (r.verdict === "drop") { skipped.push({ id: r.id, why: "外す候補" }); continue; }
     if (r.image_analysis) { skipped.push({ id: r.id, why: "保存済み" }); continue; }
     if (!r.pdf_blob_url && !r.page_image_url && !r.trim_image_url) { skipped.push({ id: r.id, why: "資料なし" }); continue; }

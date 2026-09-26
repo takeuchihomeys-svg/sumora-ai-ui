@@ -25,6 +25,8 @@ const WJ = String.fromCharCode(0x2060);
 export function pickupAixButtonLabel(n: number): string {
   const t = aixTypeForPickupCount(n);
   if (!t) return "📤 チェックした物件を AIX で送る";
+  // 2026-09-26: 10件を超えたらボタンで分かるように（押すと点の高い10件に絞る・もう一度押すと送る）
+  if (n > PICKUP_AIX_MAX) return `⚠️ ${n}${WJ}件チェック中 → 点の高い${PICKUP_AIX_MAX}${WJ}件に絞る`;
   // 数字と「件」の間は WORD JOINER（U+2060）: 390px のボタンで「（1」「件）」と割れて折り返していた（2026-09-25 E2E のスクショ）
   return t === "property_recommendation" ? `🏠 AIX物件オススメ（1${WJ}件）` : `📤 AIX物件ピックアップ（${n}${WJ}件）`;
 }

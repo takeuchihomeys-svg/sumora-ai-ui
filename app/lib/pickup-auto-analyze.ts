@@ -50,7 +50,7 @@ export async function autoAnalyzeBatch(input: { ids: number[]; propertyCustomerI
     if (need.level !== "recommended") return out;
     const features = strongFeatures(wants);
     const { data, error } = await supabase.from("property_pickups")
-      .select("id, rank, site, pdf_url, pdf_blob_url, pdf_text, pdf_has_text, summary_text, trim_image_url, page_image_url, image_analysis, verdict, equipment")
+      .select("id, rank, site, pdf_url, pdf_blob_url, pdf_text, pdf_has_text, summary_text, trim_image_url, page_image_url, image_analysis, verdict, score, equipment")
       .in("id", input.ids);
     if (error) { console.warn("[pickup-auto] 行を引けない:", error.message); return out; }
     const { targets, skipped } = pickAutoTargets((data ?? []) as AutoRow[], features);

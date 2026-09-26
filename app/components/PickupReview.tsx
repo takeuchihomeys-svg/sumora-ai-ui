@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { okCountOf, verdictOrder, bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/app/lib/pickup-best";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
-import { sortForReview, buildReasonView, formatScoreBreakdown } from "@/app/lib/pickup-review-order";
+import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks } from "@/app/lib/pickup-review-order";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
 import type { PickupTerms } from "@/app/lib/pickup-terms";
 import { PICKUP_EXPIRED_LABEL, PICKUP_EXPIRED_ACTION_NOTE } from "@/app/lib/pickup-retention";
@@ -397,10 +397,9 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
       if (openRef.current?.key !== target.key) return null;   // 読み込み中に別のお客様を開いた
       setDetail({ ...json.customer, key: target.key });
       if (resetChecks) {
-        // 既定のチェック: 未確認のうち「外す候補」以外
-        const next: Record<number, boolean> = {};
-        for (const b of json.customer.batches) for (const it of b.items) next[it.id] = it.status === "pending" && it.verdict !== "drop";
-        setChecked(next);
+        // 既定のチェック: 未確認のうち「外す候補」以外を、まとめの回ごとに点の高い順（👑 を先頭）で AIX に渡せる10件まで
+        // 2026-09-26 竹内のスクショ「AIX物件ピックアップ（20件）」: 旧は外す候補以外を全部チェック＝20件で、押すと「10件までに」で止まっていた
+        setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null));
       }
       return json.customer;
     } catch (e) {
@@ -909,6 +908,14 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
     // only: 👑 全体で一番の吹き出しから、その1件だけを送る時（2026-09-24 竹内「1番オススメの物件全体の中で送る」）
     const targets = only ?? b.items.filter((it) => checked[it.id] && it.status === "pending");
     if (targets.length === 0) { setMsg("送る物件にチェックを入れてください"); return; }
+    // 2026-09-26: 10件を超えていたら、止めずに点の高い10件（👑 を先頭・画面の並びと同じ）にチェックを絞る。もう一度押すと送る
+    if (targets.length > PICKUP_AIX_MAX) {
+      const ids = targets.map((it) => it.id);
+      const top = new Set(pickTopForAix(targets, c.best?.id ?? null));
+      setChecked((p) => { const n = { ...p }; for (const id of ids) n[id] = top.has(id); return n; });
+      setMsg(`${targets.length}件にチェックがあったので、点の高い${top.size}件に絞りました（AIX は${PICKUP_AIX_MAX}件まで）。確かめてもう一度押すと AIX に移ります`);
+      return;
+    }
     if (targets.some((it) => it.expired)) { setMsg(`🔒 ${PICKUP_EXPIRED_ACTION_NOTE}`); return; }
     // 2026-09-25 反証: AIX に渡せるのは1回10件まで（GET ?ids が10件で切る）。回をまとめてチェックが増えると、
     //   届かない11件目以降にも送り終えた印（mark_sent は渡した id 全部）が付いてしまう → 10件を超えたら止める

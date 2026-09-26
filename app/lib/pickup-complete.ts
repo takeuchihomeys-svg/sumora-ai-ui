@@ -160,9 +160,43 @@ export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: {
 
 // ── 10分の自動まとめ（2026-09-25）─────────────────────────────────────────────
 
-/** 最後に届いた行から何分、新しい行が届かなければ自動でまとめるか */
-export const AUTO_COMPLETE_QUIET_MINUTES = 10;
+/**
+ * 最後に届いた行から何分、新しい行が届かなければ自動でまとめるか。
+ * 2026-09-26 竹内「物件検索全部完了してから分析するようにする。最後の完了してから1分後にまとめて分析した方が効率良い」→ 10分 → 3分。
+ *   実測（scripts/audit-pickup-arrivals.ts・9/24〜26 本番 16回・6ラウンド）: 1回の検索が分かれて届く間隔は 6〜23秒が9/10・最大 122秒
+ *   （リアプロの一括は 2件ずつ 7回に分かれて届いた例あり）。1分だと 122秒の間で割れる → 3分（観測の最大の約1.5倍）。
+ *   Cron は2分おきなので実際は最後の物件から 3〜5分でまとまる。3分を過ぎて同じ回の物件が届いた時は joinableGroupId で
+ *   前のまとめに足して順位と 👑 を付け直す（割れない）。拡張の alarm（10分半）はそのまま＝後から来ても「もうまとめてある」で何もしない
+ */
+export const AUTO_COMPLETE_QUIET_MINUTES = 3;
 export const AUTO_COMPLETE_QUIET_MS = AUTO_COMPLETE_QUIET_MINUTES * 60_000;
+
+/** 後から届いた回を前のまとめに足してよい間（画面のまとめの回 groupPickupRounds と同じ 30分・最初の行から3時間） */
+export const LATE_JOIN_GAP_MS = 30 * 60_000;
+export const LATE_JOIN_MAX_SPAN_MS = 3 * 60 * 60_000;
+
+/**
+ * まとめた後に同じ回の物件が届いた時、前のまとめ（complete_group_id）に足すか（純関数）。
+ * まだまとめていない行の一番古い行が、一番新しいまとめの最後の行から gapMs 以内・そのまとめの最初の行から maxSpanMs 以内なら、そのまとめ ID。
+ * 画面は同じお客様の回を 30分の間で1つの吹き出しに寄せる（groupPickupRounds）ので、まとめもそれに合わせる（👑 が2つに割れない）。
+ */
+export function joinableGroupId(rows: ReadonlyArray<Pick<CompleteSourceRow, "id" | "created_at" | "complete_group_id">>, gapMs = LATE_JOIN_GAP_MS, maxSpanMs = LATE_JOIN_MAX_SPAN_MS): string | null {
+  const at = (r: { created_at: string }) => Date.parse(r.created_at);
+  const open = rows.filter((r) => !r.complete_group_id && Number.isFinite(at(r)));
+  const grouped = rows.filter((r) => !!r.complete_group_id && Number.isFinite(at(r)));
+  if (!open.length || !grouped.length) return null;
+  const firstOpen = Math.min(...open.map(at));
+  // 一番新しいまとめ（最後の行の時刻で比べる）
+  const latest = grouped.reduce((a, r) => (at(r) > at(a) || (at(r) === at(a) && r.id > a.id) ? r : a));
+  const gid = latest.complete_group_id as string;
+  const members = grouped.filter((r) => r.complete_group_id === gid).map(at);
+  const gFirst = Math.min(...members), gLast = Math.max(...members);
+  if (firstOpen < gLast) return null;   // まとめより前に届いた行がある（順番が崩れている）→ 足さない
+  if (firstOpen - gLast > gapMs) return null;
+  const openLast = Math.max(...open.map(at));
+  if (openLast - gFirst > maxSpanMs) return null;
+  return gid;
+}
 
 /** 最後に届いた時刻から quietMs 経ったか（ちょうどは経った扱い・未来の時刻は経っていない） */
 export function isQuietFor(lastAtMs: number, now: number, quietMs = AUTO_COMPLETE_QUIET_MS): boolean {

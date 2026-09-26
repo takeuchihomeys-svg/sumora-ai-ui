@@ -16,7 +16,7 @@
 //   止まった時: まとめ ID を付けた後に読み取り・順位が途中で切れた（関数の打ち切り等）まとめは status=running のまま残る
 //     → Cron が 15分を過ぎた running を1回だけ retry に変えて（条件付き UPDATE で取る）finishCompleteGroup をやり直す（保存済みの分析は読まない）
 import { supabase } from "@/app/lib/supabase";
-import { selectCompleteTargets, completeGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow } from "@/app/lib/pickup-complete";
+import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow } from "@/app/lib/pickup-complete";
 import { bestBasisFor, customerImageNeed, type BestBasis } from "@/app/lib/pickup-best";
 
 export type ClaimResult = {
@@ -64,7 +64,10 @@ export async function claimCompleteGroup(propertyCustomerId: string, meta: Compl
       out.ok = true; out.groupId = t.latestGroupId; out.already = t.alreadyGrouped > 0;
       return out;
     }
-    const gid = completeGroupId(propertyCustomerId, t.ids);
+    // 2026-09-26 自動まとめを3分にした: まとめた後に同じ回の物件が届いたら、新しいまとめを作らず前のまとめに足す（joinableGroupId・画面の回と同じ 30分）。
+    //   足した時もまとめの行は upsert の ignoreDuplicates で書き換えない（status を running に戻すと、created_at が古いので Cron の「止まった」に取られる）。
+    //   finishCompleteGroup は足した行だけ読み、まとめ全体で順位と 👑 を付け直して行を done で書き直す
+    const gid = joinableGroupId(rows) ?? completeGroupId(propertyCustomerId, t.ids);
     if (!gid) { out.error = "まとめ ID を作れない"; return out; }
     out.groupId = gid;
     // まとめの行（1まとめ1行・主キー＝まとめ ID）。同じ ID がもうあれば何もしない（2台目・二重押し）

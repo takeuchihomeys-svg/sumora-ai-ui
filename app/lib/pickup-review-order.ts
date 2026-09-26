@@ -8,6 +8,7 @@
 //     → 点の横に理由の札（減点・外す理由が先・何点引いたか）。材料が読めずに点が動かない時は「材料なし」も札で出す
 //       （点が横並びの原因は『材料が無い』か『同じ理由が全件に当たった』のどちらか。画面で一目で分かるように）
 import { BASE_SCORE, reasonJa, reasonPoints } from "./property-brain";
+import { PICKUP_AIX_MAX } from "./pickup-aix-handoff";
 
 export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null };
 
@@ -31,6 +32,30 @@ export function sortForReview<T extends ReviewOrderRow>(items: ReadonlyArray<T>,
   if (bestId == null) return sorted;
   const i = sorted.findIndex((x) => x.id === bestId);
   return i > 0 ? [sorted[i], ...sorted.slice(0, i), ...sorted.slice(i + 1)] : sorted;
+}
+
+// ── AIX に渡す物件のチェック（2026-09-26）。page.tsx が import する pickup-aix-handoff に判定の部品を持ち込まないよう、並びの隣に置く ──
+/** AIX に渡せる候補の行（未確認・外す候補でない・72時間切れでない） */
+export type AixPickRow = { id: number; rank: number; recommended: number; score: number | null; status: string; verdict: string | null; expired?: boolean };
+const aixCandidate = (r: AixPickRow) => r.status === "pending" && r.verdict !== "drop" && !r.expired;
+
+/**
+ * 点の高い順（画面の並び sortForReview と同じ・👑 を先頭）に max 件まで選ぶ。
+ * 2026-09-26 竹内のスクショ「AIX物件ピックアップ（20件）」: リアプロの一括が 2件ずつ7回に分かれて届いた回（20件・外す候補 0）で、
+ *   既定のチェックが「未確認で外す候補以外 全部」＝20件になり、押すと「10件までにしてください」で止まっていた。
+ */
+export function pickTopForAix<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX): number[] {
+  return sortForReview(items.filter(aixCandidate), bestId ?? null).slice(0, max).map((r) => r.id);
+}
+
+/** 詳細を開いた時の既定のチェック: まとめの回ごとに、点の高い順に PICKUP_AIX_MAX 件まで（それより下はチェックを外しておく） */
+export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T> }>, bestId?: number | null, max = PICKUP_AIX_MAX): Record<number, boolean> {
+  const out: Record<number, boolean> = {};
+  for (const r of rounds) {
+    const top = new Set(pickTopForAix(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max));
+    for (const it of r.items) out[it.id] = top.has(it.id);
+  }
+  return out;
 }
 
 /** 画面に出す短い言い方（REASON_JA より短く。無ければ REASON_JA） */
