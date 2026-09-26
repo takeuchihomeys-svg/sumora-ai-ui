@@ -4,6 +4,8 @@ import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
 import { generateEmbedding, upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { isUsableExampleText } from "@/app/lib/example-hygiene";
 import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -109,7 +111,7 @@ export async function GET(req: NextRequest) {
     // 未処理の☆つき例文を取得
     const { data: examples } = await supabase
       .from("ai_reply_examples")
-      .select("id, conversation_state, customer_message, sent_reply")
+      .select("id, conversation_id, conversation_state, customer_message, sent_reply")
       .eq("is_starred", true)
       .eq("entry_source", "line_reply")
       .order("created_at", { ascending: false })
@@ -135,7 +137,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 2026-09-11 データ衛生: 生成失敗文・テスト送信からナレッジを作らない（失敗文由来の差分学習11行の再発防止）
-    const notInKnowledge = examples.filter((ex) => !processedIds.has(ex.id as string) && isUsableExampleText(ex.sent_reply as string));
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    const notInKnowledge = examples.filter((ex) => !processedIds.has(ex.id as string) && isUsableExampleText(ex.sent_reply as string)
+      && !isTestConversation(ex.conversation_id as string | null));
     // 処理済みの印（統合・重複で新しい行が無かった物）と3回失敗した物を外す
     const blocked = await loadBlockedItems(UPDATE_KNOWLEDGE_JOB, notInKnowledge.map((ex) => ex.id as string));
     const unprocessed = notInKnowledge.filter((ex) => !blocked.has(ex.id as string));

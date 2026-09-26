@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -34,9 +36,9 @@ async function run() {
   const runLogId = await startCronLog("update-action-confidence");
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: logs, error } = await supabase
+  const { data: logsRaw, error } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, source, suggestion_source")
+    .select("action_type, source, suggestion_source, conversation_id")
     .in("source", ["suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "suggestion_bypassed"])
     .gte("created_at", thirtyDaysAgo)
     .limit(5000);
@@ -45,6 +47,8 @@ async function run() {
     await finishCronLog(runLogId, false, undefined, error.message);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const logs = excludeTestConversations(logsRaw);
 
   // ※ 採択ログが0件でも中1の予測精度集計（next_action_logs）は実行するため早期returnしない
 
@@ -143,7 +147,7 @@ async function run() {
   const accuracyBreakdown: Record<string, { accurate: number; total: number; accuracy: number | null }> = {};
   const { data: accuracyLogs, error: accuracyError } = await supabase
     .from("next_action_logs")
-    .select("actual_aix_type, was_accurate")
+    .select("actual_aix_type, was_accurate, conversation_id")
     .eq("validated", true)
     .not("actual_aix_type", "is", null)
     .not("was_accurate", "is", null)
@@ -154,7 +158,8 @@ async function run() {
     console.error("[update-action-confidence] next_action_logs 取得エラー:", accuracyError.message);
   } else {
     const accuracyStats: Record<string, { accurate: number; total: number }> = {};
-    for (const log of accuracyLogs ?? []) {
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    for (const log of excludeTestConversations(accuracyLogs)) {
       const action = (log.actual_aix_type as string) ?? "";
       if (!action) continue;
       accuracyStats[action] ??= { accurate: 0, total: 0 };
@@ -195,7 +200,7 @@ async function run() {
   const submodeBreakdown: Record<string, { accepted: number; total: number; rate: number | null }> = {};
   const { data: submodeLogs, error: submodeError } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, source")
+    .select("action_type, source, conversation_id")
     .like("action_type", "%_submode")
     .in("source", ["prediction_accepted", "prediction_bypassed", "prediction_match", "suggestion_dismissed"])
     .gte("created_at", thirtyDaysAgo)
@@ -205,7 +210,8 @@ async function run() {
     console.error("[update-action-confidence] submode logs 取得エラー:", submodeError.message);
   } else {
     const submodeStats: Record<string, { accepted: number; total: number }> = {};
-    for (const log of submodeLogs ?? []) {
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    for (const log of excludeTestConversations(submodeLogs)) {
       const at = (log.action_type as string) ?? "";
       if (!at) continue;
       submodeStats[at] ??= { accepted: 0, total: 0 };

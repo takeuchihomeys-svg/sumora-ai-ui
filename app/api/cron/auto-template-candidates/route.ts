@@ -3,6 +3,8 @@ import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { attemptKey, loadBlockedItems, markAttemptDone, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // 2026-09-15: 実行時間 22〜49秒で 60秒の上限すれすれ（9/8・9/10・9/15 に時間切れ）→ 120秒
 export const maxDuration = 120;
@@ -204,7 +206,8 @@ async function run() {
     return NextResponse.json({ ok: true, saved: 0, message: "no AIX messages in window" });
   }
 
-  const convIds = [...new Set(aixMsgs.map((m) => m.conversation_id as string))];
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const convIds = [...new Set(aixMsgs.map((m) => m.conversation_id as string))].filter((id) => !isTestConversation(id));
 
   // 2. 対象会話のスタッフ送信（後続候補）と aix_usage_logs をまとめて取得
   const [{ data: staffMsgs, error: staffErr }, { data: logs, error: logErr }] = await Promise.all([
@@ -247,6 +250,8 @@ async function run() {
   const pairs: Pair[] = [];
 
   for (const aix of aixMsgs as Msg[]) {
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    if (isTestConversation(aix.conversation_id)) continue;
     const aixAt = new Date(aix.created_at).getTime();
     const convMsgs = msgsByConv.get(aix.conversation_id as string) ?? [];
 

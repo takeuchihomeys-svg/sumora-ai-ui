@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { TEST_CONVERSATIONS_IN } from "@/app/lib/test-conversations";
 
 // ── AIX物件本文の週次学習（analyze-aix-property）──────────────────
 // AIXボタン「物件ピックアップ（property_send）」「物件オススメ（property_recommendation）」で
@@ -246,6 +248,10 @@ export async function POST(req: NextRequest) {
       .not("generated_text", "is", null)
       .neq("generated_text", "")
       .not("conversation_id", "is", null)
+      // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+      // （直前で conversation_id IS NOT NULL に絞っているので NOT IN で NULL 行は落ちない。
+      //   読んだ後で外すと未処理のまま残り limit を食い続けるため、読む時点で外す）
+      .not("conversation_id", "in", TEST_CONVERSATIONS_IN)
       .not("sent_at", "is", null)
       .is("property_example_backfilled_at", null)
       .order("created_at", { ascending: false })

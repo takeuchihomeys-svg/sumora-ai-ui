@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { isUsableExampleText, isUsableAiDraft } from "@/app/lib/example-hygiene";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 300;
 
@@ -35,7 +37,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, starred: 0, message: "no closed_won conversations in 14 days" });
   }
 
-  const convIds = wonConvs.map((c) => c.id as string);
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const convIds = wonConvs.map((c) => c.id as string).filter((id) => !isTestConversation(id));
 
   // 未☆ かつ AI が貢献した例（was_ai_used か was_ai_modified）
   // MED-08: 品質フィルター

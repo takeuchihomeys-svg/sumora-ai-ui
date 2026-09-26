@@ -5,6 +5,8 @@ import {
   pairBrainDecisions, aggregateBrainAixFeedback, collapsePresses, customerTurnBeforePress, sceneEvidenceForTurn,
   normalizeAixForMatch, type BrainDecisionRow, type AixPressRow, type ScenePress,
 } from "@/app/lib/brain-aix-feedback";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
 
 // ── brain-aix-eval: ブレインの AIX 判断 × スタッフが実際に押した AIX（2026-09-12 竹内方針「AIX のセットはブレインが判断する」統合設計 段2）──
 // ブレイン側の cron。aix_usage_logs は読むだけ（AIX の学習パスのコードには触れない）。
@@ -80,7 +82,8 @@ export async function GET(req: NextRequest) {
     });
 
     // 2) scene_staff: スタッフが押す直前の顧客発言に場面の証拠を当て、場面ごとに押された AIX を数える
-    const collapsed = collapsePresses(presses);
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない（1) の各行への書き戻しは従来どおり・集計にだけ入れない）
+    const collapsed = collapsePresses(excludeTestConversations(presses));
     const convIds = [...new Set(collapsed.map((p) => p.conversation_id))];
     const msgSince = new Date(Date.now() - (WINDOW_DAYS + 3) * 86_400_000).toISOString();
     type Msg = { conversation_id: string; sender: string; text: string | null; created_at: string };
@@ -120,7 +123,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 3) 集計を upsert
-    const rows = aggregateBrainAixFeedback(pairs, scenePresses, WINDOW_DAYS);
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    const learnPairs = pairs.filter((p) => !isTestConversation(p.decision.conversation_id));
+    const rows = aggregateBrainAixFeedback(learnPairs, scenePresses, WINDOW_DAYS);
     if (rows.length > 0) {
       const now = new Date().toISOString();
       const { error } = await supabase.from("brain_aix_feedback").upsert(rows.map((r) => ({ ...r, updated_at: now })), { onConflict: "key" });

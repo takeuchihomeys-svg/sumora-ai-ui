@@ -2,6 +2,8 @@
 import { supabase } from "@/app/lib/supabase";
 import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 30;
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
@@ -29,7 +31,9 @@ const VALID_ADAPT_ACTION_TYPES = new Set([
 
 export async function POST(request: NextRequest) {
   try {
-    const { adaptedText, recentConversation, rating, comment, actionType } = await request.json() as {
+    const { adaptedText, recentConversation, rating, comment, actionType, conversationId } = await request.json() as {
+      /** 2026-09-27: テスト用の会話（YUMA）を外すため */
+      conversationId?: string | null;
       adaptedText: string;
       baseText?: string;
       recentConversation: string; // 直近会話テキスト
@@ -40,6 +44,8 @@ export async function POST(request: NextRequest) {
 
     // 学習カテゴリをアクション別に分離（aix/action の getAdaptImprovementRules が category=actionType で取得する）
     const category = actionType && VALID_ADAPT_ACTION_TYPES.has(actionType) ? actionType : "greeting_viewing";
+    // 2026-09-27 竹内: テスト用の会話（YUMA）の👍/👎は改善ルールの学習に入れない
+    if (isTestConversation(conversationId)) return NextResponse.json({ ok: true, skipped: true, reason: "test_conversation" });
 
     if (rating === "good") {
       // 👍: パターンをHaikuで分析してルール化

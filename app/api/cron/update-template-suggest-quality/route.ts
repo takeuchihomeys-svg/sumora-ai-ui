@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 120;
 
@@ -44,7 +46,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const since = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
   const { data: logs, error: logsErr } = await supabase
     .from("template_selection_logs")
-    .select("template_id, template_category, recommended_rank, was_recommended, conversation_status, aix_action_type, final_sent_text")
+    .select("template_id, template_category, recommended_rank, was_recommended, conversation_status, aix_action_type, final_sent_text, conversation_id")
     .gte("created_at", since)
     .not("final_sent_text", "is", null)
     .order("created_at", { ascending: false })
@@ -54,7 +56,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     return NextResponse.json({ ...results, error: logsErr.message });
   }
 
-  const allLogs = (logs ?? []) as SelectionLog[];
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const allLogs: SelectionLog[] = excludeTestConversations((logs ?? []) as (SelectionLog & { conversation_id?: string | null })[]);
 
   // ── カテゴリ×状態でグループ化 ──────────────────────────────────────────────
   const groups = new Map<string, SelectionLog[]>();

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // ── won_count バックフィル（ワンショットAPI）────────────────────────────────
 // 背景: analyze-applying の countTemplateWins() は learnFromConversation の学習成功時
@@ -117,9 +119,10 @@ export async function POST(req: NextRequest) {
   if (convErr) {
     return NextResponse.json({ error: `conversations取得失敗: ${convErr.message}` }, { status: 500 });
   }
-  const convs = (convRows ?? []) as Array<{
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const convs = ((convRows ?? []) as Array<{
     id: string; customer_name: string | null; status: string; learned_at: string | null;
-  }>;
+  }>).filter((c) => !isTestConversation(c.id));
 
   // learned_at NULL の会話は通常フロー（analyze-applying）で今後 countTemplateWins が
   // 走るため、デフォルトでは除外して二重カウントを防ぐ

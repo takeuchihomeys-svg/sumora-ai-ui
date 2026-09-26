@@ -3,6 +3,8 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 function getModel() {
   return new ChatAnthropic({
@@ -541,7 +543,9 @@ export async function POST(req: NextRequest) {
       }).eq("id", c.customer_id);
 
       // next_action 予測をログに保存（差分学習の基準点）
-      if (summaryJson.next_action) {
+      // 2026-09-27 竹内: テスト用の会話（YUMA）は予測の答え合わせ（next_action・winning_pattern）に入れない
+      const isTestConv = isTestConversation(c.conversation_id ?? null);
+      if (summaryJson.next_action && !isTestConv) {
         supabase.from("next_action_logs").insert({
           customer_id: c.customer_id,
           conversation_id: c.conversation_id ?? null,
@@ -551,7 +555,7 @@ export async function POST(req: NextRequest) {
 
       // 中1: winning_pattern 予測をログに保存（週次 eval-winning-pattern cron が成約/失注結果と突合して答え合わせ）
       // conversation_id は NOT NULL のため、会話に紐付く予測のみ記録する
-      if (summaryJson.winning_pattern && c.conversation_id) {
+      if (summaryJson.winning_pattern && c.conversation_id && !isTestConv) {
         supabase.from("winning_pattern_logs").insert({
           conversation_id: c.conversation_id,
           customer_id: c.customer_id,

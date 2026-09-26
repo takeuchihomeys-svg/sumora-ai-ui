@@ -5,6 +5,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,6 +39,8 @@ export async function POST(req: NextRequest) {
       // shown フェーズ
       template_ids?: string[];
     };
+    // 2026-09-27 竹内: テスト用の会話（YUMA）はテンプレート選択の学習に入れない
+    if (isTestConversation(body.conversation_id)) return NextResponse.json({ ok: true, skipped: true, reason: "test_conversation" });
 
     // おすすめとして提示したテンプレのshown_countを一括インクリメント
     if (body.phase === "shown") {

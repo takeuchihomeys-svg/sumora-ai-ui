@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 // Vercel Functions のタイムアウト上限（秒）
 // 逐次upsert廃止・バッチ化済みのため300秒に引き上げ
@@ -124,14 +126,16 @@ export async function POST(req?: Request) {
 
   // action_pattern_logs から全データ取得（source で重み付け + created_at で鮮度減衰）
   // 高3: サブモードログ（viewing_invite_submode 等）は customer_msg_summary にモードキーが入っており n-gram を汚染するため除外
-  const { data: logs } = await supabase
+  const { data: logsRaw } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, customer_msg_summary, source, created_at")
+    .select("action_type, customer_msg_summary, source, created_at, conversation_id")
     .not("customer_msg_summary", "is", null)
     .not("action_type", "like", "%_submode")
     .gte("created_at", NINETY_DAYS_AGO)
     .order("created_at", { ascending: false })
     .limit(3000);
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const logs = excludeTestConversations(logsRaw);
 
   if (!logs?.length) {
     await finishCronLog(runLogId, true, { learned: 0, reason: "no logs" });
@@ -296,7 +300,7 @@ export async function POST(req?: Request) {
   // 高6: 直近90日窓 + created_at 降順で「最新の3000件」を確定させる
   const { data: chainLogs } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, previous_action_type, conversation_status, source, created_at")
+    .select("action_type, previous_action_type, conversation_status, source, created_at, conversation_id")
     .not("previous_action_type", "is", null)
     .not("action_type", "like", "%_submode")
     .gte("created_at", NINETY_DAYS_AGO)
@@ -313,7 +317,8 @@ export async function POST(req?: Request) {
   const prevTotal: Record<string, number> = {};
   const phaseChainCount: Record<string, Record<string, number>> = {};
   const phasePrevTotal: Record<string, number> = {};
-  for (const log of chainLogs ?? []) {
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  for (const log of excludeTestConversations(chainLogs)) {
     if (CHAIN_EXCLUDED_SOURCES.has((log.source as string) ?? "")) continue;
     const prev = log.previous_action_type as string;
     const curr = log.action_type as string;

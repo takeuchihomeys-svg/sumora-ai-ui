@@ -249,6 +249,8 @@ import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinc
 import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-readiness";
 // 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている他のお客様の条件を伏せる
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -2314,8 +2316,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
         const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds, ...effectiveApplyingIds, ...effectiveViewingIds];
-        incrementKnowledgeUsage(usedAndLossIds);
-        if (conversationId) logKnowledgeApply(usedAndLossIds, conversationId);
+        // 2026-09-27 竹内: テスト用の会話（YUMA）はナレッジの使用回数・答え合わせに入れない
+        if (!isTestConversation(conversationId)) {
+          incrementKnowledgeUsage(usedAndLossIds);
+          if (conversationId) logKnowledgeApply(usedAndLossIds, conversationId);
+        }
 
         const sections: string[] = [];
         if (diffLearned.length > 0) {
@@ -2449,8 +2454,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     ...phrases.slice(0, 6),
   ].map(k => (k as KnowledgeRow).id).filter(Boolean);
   const allFallbackIds = [...usedIds, ...lossIds, ...applyingIds, ...viewingIds];
-  incrementKnowledgeUsage(allFallbackIds);
-  if (conversationId) logKnowledgeApply(allFallbackIds, conversationId);
+  // 2026-09-27 竹内: テスト用の会話（YUMA）はナレッジの使用回数・答え合わせに入れない
+  if (!isTestConversation(conversationId)) {
+    incrementKnowledgeUsage(allFallbackIds);
+    if (conversationId) logKnowledgeApply(allFallbackIds, conversationId);
+  }
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
@@ -6540,7 +6548,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
                 // fire-and-forget — closing_strategyが生成されたらログに保存
-                if (suggestedAix.closing_strategy && conversationId) {
+                // 2026-09-27: テスト用の会話（YUMA）は締め戦略の答え合わせ（成約・失注で書き戻す）に入れない
+                if (suggestedAix.closing_strategy && conversationId && !isTestConversation(conversationId)) {
                   supabase.from("closing_strategy_logs").insert({
                     conversation_id: conversationId,
                     closing_strategy: suggestedAix.closing_strategy,

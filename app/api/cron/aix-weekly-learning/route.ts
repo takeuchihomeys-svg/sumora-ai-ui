@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { PROPERTY_CHECK_RESULT_LABEL } from "@/app/lib/aix-taxonomy";
 import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 300;
 
@@ -100,12 +102,13 @@ async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
     // 無い行（旧ログ）は "property_check_result" にフォールバック集計する。
     const { data: discardedRows } = await supabase
       .from("aix_generate_log")
-      .select("action_type, check_pattern")
+      .select("action_type, check_pattern, conversation_id")
       .eq("status", "discarded")
       .gte("created_at", fourteenDaysAgo);
 
     const discardCounts: Record<string, number> = {};
-    for (const row of discardedRows ?? []) {
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    for (const row of excludeTestConversations(discardedRows as Array<{ action_type: string | null; check_pattern: string | null; conversation_id: string | null }> | null)) {
       if (!row.action_type) continue;
       const key = row.action_type === "property_check_result" && row.check_pattern
         ? `property_check_result|${row.check_pattern}`
@@ -116,12 +119,13 @@ async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
     // Signal B: suggestion_bypassed — grouped by action_type
     const { data: bypassedRows } = await supabase
       .from("action_pattern_logs")
-      .select("action_type")
+      .select("action_type, conversation_id")
       .eq("source", "suggestion_bypassed")
       .gte("created_at", fourteenDaysAgo);
 
     const bypassCounts: Record<string, number> = {};
-    for (const row of bypassedRows ?? []) {
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    for (const row of excludeTestConversations(bypassedRows as Array<{ action_type: string | null; conversation_id: string | null }> | null)) {
       if (row.action_type) bypassCounts[row.action_type] = (bypassCounts[row.action_type] ?? 0) + 1;
     }
 
@@ -253,7 +257,7 @@ async function synthesizeAixPatterns(
 ): Promise<{ actionsProcessed: number; inserted: number; merged: number; skipped: number }> {
   const result = { actionsProcessed: 0, inserted: 0, merged: 0, skipped: 0 };
 
-  const { data: rows, error } = await supabase
+  const { data: rowsRaw, error } = await supabase
     .from("ai_reply_examples")
     .select("aix_action, entry_source, conversation_id, customer_message, sent_reply, is_starred, outcome_status")
     .in("entry_source", AIX_PATTERN_SOURCES)
@@ -266,6 +270,8 @@ async function synthesizeAixPatterns(
     console.warn("[aix-weekly-learning] synthesizeAixPatterns 取得失敗:", error.message);
     return result;
   }
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const rows = excludeTestConversations(rowsRaw);
 
   // Brain/AIX-META コンテキスト一括取得（fail-open）: パターン抽出時に
   // 「なぜこの送信が良かったか」の顧客状況文脈（brain_action・checkpoint_stage・customer_intent等）を渡す
@@ -423,7 +429,7 @@ export async function POST(req: NextRequest) {
       // 2026-08-29: entry_source を aix_action のみ → 全AIXバケットに拡張。
       // aix_template（adapted_text 由来）/ aix_property・aix_adapt（aix_generate_log 由来）にも
       // ai_draft と was_ai_modified がバックフィルされるため、編集差分の学習対象に含める
-      const { data: examples } = await supabase
+      const { data: examplesRaw } = await supabase
         .from("ai_reply_examples")
         .select("customer_message, ai_draft, sent_reply, conversation_id")
         .in("entry_source", ["aix_action", "aix_template", "aix_property", "aix_adapt"])
@@ -434,6 +440,8 @@ export async function POST(req: NextRequest) {
         .not("sent_reply", "is", null)
         .order("created_at", { ascending: false })
         .limit(15);
+      // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+      const examples = excludeTestConversations(examplesRaw);
 
       if (!examples || examples.length < 2) {
         results[actionType] = 0;

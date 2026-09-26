@@ -42,7 +42,8 @@ import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/bra
 // 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定を一本化（四者同名）
-import { isWaitedAllowed } from "@/app/lib/waited-scope";
+// 2026-09-27 竹内さん決定で上書き: AIX でも使わない（許す一覧は空＝全部落とす・手本も置き換えて見せる）
+import { isWaitedAllowed, neutralizeWaitedInExample } from "@/app/lib/waited-scope";
 // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前の1通目を読んで2通目の材料にする
 import { buildAixChainNote } from "@/app/lib/aix-chain-note";
 // 2026-09-20 竹内「生成される文が長すぎる」: 長さの目安を実測から渡す＋生成後に記録する
@@ -65,6 +66,8 @@ import { extractPropertyLabels } from "@/app/lib/action-ledger";
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 import { applyDailyGreeting } from "@/app/lib/daily-greeting";
 import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -521,7 +524,7 @@ function formatExamplesSection(ranked: ExampleHit[]): string {
   if (ranked.length === 0) return "";
   return "【⭐ スモラの実際の返信例（状況が類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・テンポをこの例から忠実に再現すること。構成・内容は橋渡し文の役割（構造化データはAIXが正）を最優先】\n" +
     ranked.map((ex, i) =>
-      `[例${i + 1}${ex.is_starred ? "⭐" : ""}${ex.aix_action ? "・AIX橋渡し文実例" : ""}]\nお客様: 「${safeSlice(ex.customer_message ?? "", 200)}」\nスモラ: 「${safeSlice(ex.sent_reply, 600)}」`
+      `[例${i + 1}${ex.is_starred ? "⭐" : ""}${ex.aix_action ? "・AIX橋渡し文実例" : ""}]\nお客様: 「${safeSlice(ex.customer_message ?? "", 200)}」\nスモラ: 「${safeSlice(neutralizeWaitedInExample(ex.sent_reply), 600)}」`
     ).join("\n\n");
 }
 
@@ -1110,7 +1113,7 @@ export async function POST(req: NextRequest) {
             (exampleFrameOk(ex.sent_reply) ? "" : " ⚠️今回の訴求シナリオとは冒頭フレームが異なる実例") +
             ` ---\n` +
             `[お客様の状況] 「${safeSlice(ex.customer_message ?? "", 200)}」\n` +
-            `[実際に送った続き文] 「${safeSlice(ex.sent_reply ?? "", 600)}」` +
+            `[実際に送った続き文] 「${safeSlice(neutralizeWaitedInExample(ex.sent_reply), 600)}」` +
             (exampleFrameOk(ex.sent_reply)
               ? ""
               : `\n[⚠️注意] この実例の冒頭は今回の訴求シナリオでは事実と異なるため絶対に流用しない。文体・テンポ・絵文字の使い方のみ参考にすること。`)
@@ -1578,6 +1581,7 @@ export async function POST(req: NextRequest) {
       //   残0/消0/**足7**・物件ピックアップ 残66/消6/足6 に対し、内覧日調整は 残1/**消14**/足0。
       //   ＝「待たせた作業の結果を届ける」場面では正しい文で、無条件に消すと**スタッフが手で足し直す**。
       //   判定は waited-scope.isWaitedAllowed に一本化（AIX 本体・テスト・監査が同じ物を見る）。
+      // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない → 許す一覧は空で、ここは常に落とす。
       if (!isWaitedAllowed(actionType)) {
         const waited = stripWaited(text);
         if (waited.removed > 0) {
@@ -1704,7 +1708,8 @@ export async function POST(req: NextRequest) {
     );
 
     // M1: ナレッジ使用テレメトリ（レスポンス返却後に fire-and-forget — 生成成功時のみカウント）
-    incrementKnowledgeUsage(knowledgeUsedIds);
+    // 2026-09-27 竹内: テスト用の会話（YUMA）はナレッジの使用回数に入れない
+    if (!isTestConversation(conversationId as string | undefined)) incrementKnowledgeUsage(knowledgeUsedIds);
 
     // 2026-09-18 竹内「テンプレートよくわからん文生成される」:
     //   テンプレート生成は **aix_generate_log に1行も残していなかった**（AIX 本体 aix/action は残している）。

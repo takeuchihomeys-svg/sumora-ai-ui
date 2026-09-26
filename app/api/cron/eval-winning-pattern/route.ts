@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -66,8 +68,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: wrongErr.message }, { status: 500 });
     }
 
-    const exampleList = (examples ?? []) as ReplyExample[];
-    const wrongList = (wrongExamples ?? []) as ReplyExample[];
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    const exampleList = excludeTestConversations((examples ?? []) as ReplyExample[]);
+    const wrongList = excludeTestConversations((wrongExamples ?? []) as ReplyExample[]);
     if (exampleList.length === 0 && wrongList.length === 0) {
       await finishCronLog(runLogId, true, { evaluated: 0, knowledge_fed: 0 });
       return NextResponse.json({ ok: true, evaluated: 0, knowledge_fed: 0 });

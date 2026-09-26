@@ -2,6 +2,8 @@
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -18,7 +20,7 @@ export async function POST(request: NextRequest) {
   // 1. ai_reply_examples から最新100件の sent_reply を取得
   const { data: examples, error } = await supabase
     .from("ai_reply_examples")
-    .select("sent_reply")
+    .select("sent_reply, conversation_id")
     .not("sent_reply", "is", null)
     .order("created_at", { ascending: false })
     .limit(100);
@@ -28,7 +30,8 @@ export async function POST(request: NextRequest) {
   }
 
   // nullフィルタ+改行を含む文のみに絞る（改行なし文は参考にならない）
-  const texts = examples
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const texts = excludeTestConversations(examples)
     .map(e => (e.sent_reply as string).trim())
     .filter(t => t && t.includes("\n"));
 

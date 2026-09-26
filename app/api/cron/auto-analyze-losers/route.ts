@@ -3,6 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 const LOSERS_JOB = "auto-analyze-losers";
 
@@ -33,7 +35,8 @@ async function run() {
   }
   // 2026-09-14: 3回失敗した会話・材料が足りない短い会話はもう扱わない（旧: 印を付けず、14日間毎日同じ会話を送り直し／20件の枠を占めていた）
   const blocked = await loadBlockedItems(LOSERS_JOB, (fetchedConvs ?? []).map((c) => c.id as string));
-  const lostConvs = (fetchedConvs ?? []).filter((c) => !blocked.has(c.id as string)).slice(0, 20);
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const lostConvs = (fetchedConvs ?? []).filter((c) => !blocked.has(c.id as string) && !isTestConversation(c.id as string)).slice(0, 20);
 
   if (!lostConvs?.length) {
     return NextResponse.json({ ok: true, analyzed: 0, message: "no closed_lost conversations in 14 days" });

@@ -29,28 +29,33 @@
 //   ・aix/action（AIX 本体）: 許さない場面（内覧日調整）にだけ stripWaited をかける
 //   ・generate-reply / greeting.enforceOpening: 通常返信なので従来どおり全部消す（ここは触らない）
 
-/**
- * 「お待たせ致しました」を許す AIX（＝待たせた作業の結果を届ける場面）。
- * ⚠ 足す時は必ず実測を根拠にする（その AIX でスタッフが「残した＋足した」が「消した」を上回るか）。
- */
-export const WAITED_ALLOWED_ACTIONS: ReadonlySet<string> = new Set([
-  "property_send",                            // 物件ピックアップした（実送信 45.7% / 668件）
-  "property_send_new_arrival",                // 新着物件（25.2% / 135件）
-  "property_send_widen",                      // 条件を広げて再検索（42.6% / 47件）
-  "estimate_sheet",                           // 見積書送る（10.4% / 327件）
-  "property_check_result",                    // 物件確認した（31.8% / 22件）
-  "property_check_result_available",          //   └ 空室あり（37.1% / 62件）
-  "property_check_result_unavailable",        //   └ 申込あり（33.3% / 15件）
-  "property_check_result_alternative",        //   └ 別のお部屋（同じ性質・母数10件未満）
-  "zenryoku_support",                         // 全力サポート（65.2% / 23件）
-  // ⚠ 2026-09-21 実測で外した（scripts/audit-waited-when.ts・直近120日・実送信1,881件）:
-  //   property_recommendation  559件中 **1件（0.2%）** — 物件を探した結果でも、この経路では書いていない
-  //   acknowledge_check         13件中 **0件（0.0%）** — 「確認します」と言う通そのもので、まだ結果が無い
-  //   property_search / phone_followup — 実測が1件も無い（推測で入れていた）。未知は消す側に倒す方針に戻す
-]);
+// ─────────────────────────────────────────────────────────────
+// ■ 2026-09-27 竹内さんの決定で上書き: **AIX でも「お待たせ致しました」は使わない**
+//   9/27 の YUMA 実送信で AIX【物件ピックアップした】が「YUMAさんお待たせ致しました！！」で始まった
+//   （本番の AIX の物件送付でも直近7日で17通）。上の 9/20 の「結果を届ける AIX では許す」は
+//   スタッフの実送信の率（property_send 45.7% 等）を根拠にしていたが、竹内さんは
+//   「自動返信に切り替えていくと待たせる事が無くなる」方針（feedback_no_omatase）を AIX にも当てると決めた。
+//   → 許す一覧を**空**にする（isWaitedAllowed は常に false）。率の表 WAITED_SENT_RATE は監査用に残す。
+//   入口: 2択（buildWaitedOpeningChoice）・材料（buildWaitedNote）は空文字になり、共通の挨拶ルールは「禁止語」に戻る。
+//         手本（ai_reply_examples の実送信）は neutralizeWaitedInExample で「お世話になっております」に置き換えて見せる。
+//   出口: aix/action の finalize で replaceWaitedOpening（挨拶行の「お待たせ致しました」だけを差し替える）。
+//   9/20・9/21 の経緯（許す一覧・2択・前回の書き出しで寄せる）は下のコメントに履歴として残す。
+// ─────────────────────────────────────────────────────────────
 
 /**
- * 「お待たせ致しました」を消さない場面か。
+ * 「お待たせ致しました」を許す AIX。**2026-09-27 から空**（AIX でも使わない・竹内さん決定）。
+ * ⚠ 戻す時は竹内さんの判断が要る（9/20 は実測で許したが、9/27 に方針で上書きした）。
+ *
+ * 9/20〜9/26 に入っていた物（実送信の率・履歴）:
+ *   property_send 45.7% / property_send_new_arrival 25.2% / property_send_widen 42.6% /
+ *   estimate_sheet 10.4% / property_check_result 31.8%（available 37.1%・unavailable 33.3%・alternative）/
+ *   zenryoku_support 65.2%
+ *   ※ 9/21 に property_recommendation（0.2%）・acknowledge_check（0.0%）は実測で外していた
+ */
+export const WAITED_ALLOWED_ACTIONS: ReadonlySet<string> = new Set<string>([]);
+
+/**
+ * 「お待たせ致しました」を消さない場面か。2026-09-27 から常に false（許す一覧が空）。
  * 未知の action は **false（消す）** に倒す（新しい AIX が黙って禁止語を通さないように）。
  */
 export function isWaitedAllowed(action: string | null | undefined): boolean {
@@ -226,4 +231,102 @@ export function buildWaitedOpeningChoice(
     + `探した物件・作った見積書・管理会社に確認した結果など、`
     + `**こちらが作業した結果を届ける通なら前者**（お客様は結果を待っているので事実として正しい）。`
     + `そうでなければ後者。両方を重ねて書かない。${lean}`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 2026-09-27 出口: 挨拶行の「お待たせ致しました」だけを差し替える（誤削除0）
+//
+// 旧の stripWaited（greeting.ts）は「〇〇さんお待たせ致しました！！」の**文節ごと**消すので、
+// 名前の呼びかけも一緒に消え、挨拶の無い通になっていた。AIX の実送信（ai_reply_examples の aix_action あり・
+// お待たせを含む712通）で形を数えると、全部が**行頭**に置かれていた:
+//   「[名]さんお待たせ致しました！！」単独の行 429 ／ 「お待たせ致しました！！」単独の行（名前行・お世話にの後）約240 ／
+//   同じ行に本題が続く（「お待たせ致しました！！ご希望の3部屋を…」）数件 ／ 見積書の表の後ろ（L9〜24）約30
+// 直す形: 行頭の「([名]さん)?(大変)?お待たせ致しました[絵文字]！！」だけを取り、
+//   ・その前（同じ通の中）に挨拶が無く、決まった挨拶（greetingPhrase）がある → 「[名]さん」＋挨拶 に差し替える
+//     （名前が無く、直前の行が名前だけの行なら、その行に挨拶をつなぐ）
+//   ・既に挨拶がある／本日挨拶済み（greetingPhrase が空）→ 「お待たせ致しました」の部分だけ落とす
+//     （名前だけ残る行は名前行として残す＝スタッフの実送信にもある形「愛乃さん\nお待たせいたしました！！」の前半）
+//   ・同じ行に続く本題は1文字も触らない
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 行頭の「([名]さん|様 ／ さんの無い短い名前)?(、)?(大変)?お待たせ致しました[絵文字][！!。]」。
+ * 名前は「!」「.」を含む表示名（H!tom!.Mさん）や、さんの無い短い表示名（「i」・ひらがな無し12字まで）もある（実送信で確認）
+ */
+const WAITED_LINE_HEAD_RE = /^([ \t]*)((?:[^\n]{0,20}?(?:さん|様)|[^\n぀-ゟ、。！!\s]{1,12})??)[、,]?[ \t]*(?:大変)?お待たせ(?:致|いた)?しました((?:😊|😌|🙇‍♀️|🙇)*)[！!。]*[ \t]*/u;
+/** 同じ通の中に既に挨拶があるか */
+const HAS_GREETING_RE = /お世話になっております|夜分遅くに失礼|ありがとう(?:ござい|御座い)ます|はじめまして|初めまして/;
+/** 名前だけの行（「〇〇さん」「〇〇様」） */
+const NAME_ONLY_LINE_RE = /^[ \t]*[^\n！!。、,]{1,20}?(?:さん|様)[ \t]*$/;
+
+/**
+ * 挨拶行の「お待たせ致しました」を差し替える（AIX の出口・純関数）。
+ * @param text           生成された本文
+ * @param greetingPhrase その通で使う挨拶（例「お世話になっております！！」）。空なら本日挨拶済み
+ * @returns text: 直した本文 / replaced: 直した箇所の数
+ */
+export function replaceWaitedOpening(text: string, greetingPhrase: string): { text: string; replaced: number } {
+  if (!text || !/お待たせ(?:致|いた)?しました/.test(text)) return { text, replaced: 0 };
+  const greet = (greetingPhrase ?? "").trim();
+  const lines = text.split("\n");
+  let replaced = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = WAITED_LINE_HEAD_RE.exec(lines[i]);
+    if (!m) continue;
+    const indent = m[1] ?? "";
+    const namePart = (m[2] ?? "").trim();
+    const rest = lines[i].slice(m[0].length);
+    const before = lines.slice(0, i).join("\n");
+    const alreadyGreeted = HAS_GREETING_RE.test(before) || HAS_GREETING_RE.test(rest);
+    replaced++;
+    if (greet && !alreadyGreeted) {
+      // 直前の空でない行が名前だけの行なら、そこに挨拶をつなぐ（「紗季さん\n\nお待たせ致しました！！」の形）
+      let j = i - 1;
+      while (j >= 0 && lines[j].trim() === "") j--;
+      if (!namePart && j >= 0 && NAME_ONLY_LINE_RE.test(lines[j])) {
+        lines[j] = `${lines[j].trimEnd()}${greet}`;
+        if (rest) lines[i] = `${indent}${rest}`;
+        else { lines.splice(i, 1); i--; }
+        continue;
+      }
+      lines[i] = rest ? `${indent}${namePart}${greet}\n${rest}` : `${indent}${namePart}${greet}`;
+      continue;
+    }
+    // 挨拶を足さない: 「お待たせ致しました」の部分だけ落とす
+    if (namePart) lines[i] = rest ? `${indent}${namePart}\n${rest}` : `${indent}${namePart}`;
+    else if (rest) lines[i] = `${indent}${rest}`;
+    else { lines.splice(i, 1); i--; }
+  }
+  const out = lines.join("\n").replace(/^\s*\n/, "").replace(/\n{3,}/g, "\n\n");
+  return { text: replaced ? out : text, replaced };
+}
+
+/**
+ * 手本（過去の実送信）を AIX のプロンプトに見せる前に、「お待たせ致しました」を「お世話になっております」に置き換える（入口）。
+ * 手本は形を真似させる物なので、使わない語を見せない（入口は厳しくてよい）。送る本文には使わない。
+ */
+export function neutralizeWaitedInExample(text: string | null | undefined): string {
+  const t = String(text ?? "");
+  if (!/お待たせ/.test(t)) return t;
+  return t
+    .replace(/(?:大変)?お待たせ(?:致|いた)?しました/g, "お世話になっております")
+    // 「お世話になっております！！\nお世話になっております！！」と重なったら1つに畳む
+    .replace(/(お世話になっております[！!😊😌]*)\n+(?:[^\n]{0,20}(?:さん|様))?お世話になっております[！!😊😌]*/gu, "$1");
+}
+
+/**
+ * 監査用: 9/20〜9/26 に許していた場面（scripts/audit-waited-*.ts が「結果を届ける AIX」を選ぶのに使う）。
+ * 2026-09-27 に isWaitedAllowed は常に false になったので、監査が黙って0件にならないよう別に持つ。生成には使わない。
+ */
+const WAITED_ALLOWED_UNTIL_0926: ReadonlySet<string> = new Set([
+  "property_send", "property_send_new_arrival", "property_send_widen", "estimate_sheet",
+  "property_check_result", "property_check_result_available", "property_check_result_unavailable",
+  "property_check_result_alternative", "zenryoku_support",
+]);
+export function wasWaitedAllowedUntil0926(action: string | null | undefined): boolean {
+  const a = (action ?? "").trim();
+  if (!a) return false;
+  if (WAITED_ALLOWED_UNTIL_0926.has(a)) return true;
+  for (const k of WAITED_ALLOWED_UNTIL_0926) if (a.startsWith(`${k}_`)) return true;
+  return false;
 }

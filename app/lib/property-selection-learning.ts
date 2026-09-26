@@ -8,6 +8,8 @@
 // 機能追加前の送信・申込に進んだ会話への送信（最良の正例）が学習から漏れていた。
 import { supabase } from "@/app/lib/supabase";
 import { extractRecommendationReason, deriveCustomerProfileTags } from "@/app/lib/knowledge-utils";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // ── セリングポイント抽出（オススメ文 → タグ配列）。LLM不要の正規表現 ──
 const SELLING_POINT_TAGS: Array<{ re: RegExp; tag: string }> = [
@@ -89,7 +91,8 @@ export async function accumulatePropertySelections(): Promise<PropertySelectionR
     (await selectIn<{ aix_usage_log_id: string }>("property_selection_patterns", "aix_usage_log_id", "aix_usage_log_id", logs.map((l) => l.id)))
       .map((r) => r.aix_usage_log_id),
   );
-  const unlearned = logs.filter((l) => !learned.has(l.id) && l.conversation_id);
+  // 2026-09-27 竹内: テスト用の会話（YUMA）は物件選びの学習に入れない
+  const unlearned = logs.filter((l) => !learned.has(l.id) && l.conversation_id && !isTestConversation(l.conversation_id));
 
   // 物件顧客に紐付かない会話は条件が無く学習できない。スライス前に除外しないと毎回枠を占有して飢餓する
   const convRows = await selectIn<{ id: string; property_customer_id: string | null; suggested_aix_meta: Record<string, unknown> | null }>(

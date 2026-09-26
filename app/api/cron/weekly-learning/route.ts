@@ -5,6 +5,8 @@ import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isUsableExampleText, isUsableAiDraft } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 300;
 
@@ -286,7 +288,9 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
   if (fetchErr) throw new Error(fetchErr.message);
 
   // 2026-09-11 データ衛生: 生成失敗文（下書き・送信文とも）・テスト送信は差分分析の対象にしない
-  const examples = ((rawExamples ?? []) as DiffExample[]).filter((ex) => isUsableExampleText(ex.sent_reply) && (ex.ai_draft == null || isUsableAiDraft(ex.ai_draft)));
+  const examples = ((rawExamples ?? []) as DiffExample[]).filter((ex) => isUsableExampleText(ex.sent_reply) && (ex.ai_draft == null || isUsableAiDraft(ex.ai_draft))
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    && !isTestConversation(ex.conversation_id));
 
   if (examples.length === 0) {
     return { chunk, processed: 0, newRules: 0, questionsRaised: 0, message: `chunk${chunk}: 直近7日の修正差分なし` };
@@ -470,7 +474,7 @@ async function runWeeklyMetricsRollup(): Promise<Record<string, unknown>> {
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
     const { data: rows, error } = await supabase
       .from("ai_reply_examples")
-      .select("ai_draft, sent_reply, was_ai_modified")
+      .select("ai_draft, sent_reply, was_ai_modified, conversation_id")
       .eq("entry_source", "line_reply")
       .gte("created_at", sevenDaysAgo.toISOString())
       .not("sent_reply", "is", null)
@@ -478,7 +482,8 @@ async function runWeeklyMetricsRollup(): Promise<Record<string, unknown>> {
     if (error) throw new Error(error.message);
 
     // 2026-09-11 データ衛生: 生成失敗文は KPI の母集団から外す（失敗文の「無修正送信」を未修正率に数えない）
-    const all = ((rows ?? []) as Array<{ ai_draft: string | null; sent_reply: string | null; was_ai_modified: boolean | null }>)
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    const all = excludeTestConversations((rows ?? []) as Array<{ ai_draft: string | null; sent_reply: string | null; was_ai_modified: boolean | null; conversation_id: string | null }>)
       .filter((r) => isUsableExampleText(r.sent_reply) && (r.ai_draft == null || isUsableAiDraft(r.ai_draft)));
     // AI案が存在した返信のみが unmodified_rate / edit distance の母集団（手書きは別カウント）
     const withDraft = all.filter((r) => (r.ai_draft ?? "").trim().length > 0);

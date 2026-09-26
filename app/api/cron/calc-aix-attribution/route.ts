@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
 
 // P5: 成果アトリビューション週次集計
 // 過去7日間の aix_usage_logs を (aix_type, template_id) でグルーピングし、
@@ -98,7 +100,8 @@ async function run() {
     return NextResponse.json({ ok: false, error: logsErr.message }, { status: 500 });
   }
 
-  const usageLogs = (logs ?? []) as UsageLog[];
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const usageLogs = excludeTestConversations((logs ?? []) as UsageLog[]);
   if (usageLogs.length === 0) {
     console.log("[calc-aix-attribution] no usage logs in period, skip");
     return NextResponse.json({
@@ -247,6 +250,8 @@ async function run() {
       const tid = r.template_id as string | null;
       const cid = r.conversation_id as string | null;
       if (!tid || !cid) continue;
+      // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+      if (isTestConversation(cid)) continue;
       const entry = tslByTemplate.get(tid) ?? { convs: new Set<string>(), wonConvs: new Set<string>() };
       entry.convs.add(cid);
       if (rankOf(tslCurrentStatus.get(cid)) >= WON_RANK && rankOf(r.conversation_status as string) < WON_RANK) {

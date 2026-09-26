@@ -3,6 +3,8 @@ import { waitUntil } from "@vercel/functions";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SummaryJson } from "@/app/api/customer-summary/route";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
@@ -544,7 +546,8 @@ JSONのみ返してください。説明文不要。`,
         predRow = customerScopedPred;
       }
 
-      if (predRow) {
+      // 2026-09-27 竹内: テスト用の会話（YUMA）は予測の答え合わせ・ギャップ学習（ai_reply_knowledge）に入れない
+      if (predRow && !isTestConversation(conversation_id)) {
         // 二重処理防止のため先に validated=true にしてから非同期で分析
         // ⑨-1: Haiku 分析が失敗すると was_accurate が NULL のまま残るため、
         //      キーワード簡易判定の結果を暫定書き込みしておく（Haiku 成功時に runGapAnalysis が上書き）

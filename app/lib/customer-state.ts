@@ -468,6 +468,29 @@ const WON_STATUSES = new Set(["closed_won", "contract"]);
 const LOST_STATUSES = new Set(["closed_lost", "lost"]);
 const DAY = 86_400_000;
 const ms = (iso: string | null | undefined) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? t : NaN; };
+
+/**
+ * 主のお部屋に選ぶ「新しい出来事」の日数（2026-09-27）。これより前の進んだ出来事（内覧日経過・見積・持ち込み）だけのお部屋は、
+ * その後に動きがあれば主にしない。線は scripts/audit-customer-state-focus.ts で実会話の前後を読んで決めた。
+ */
+export const FOCUS_FRESH_DAYS = 21;
+/** お部屋の「送った」以外の出来事（進んだ出来事）の最後の時刻。無ければ 0 */
+function lastMainAt(r: Pick<RoomState, "events">): number {
+  let t = 0;
+  for (const e of r.events) if (e.kind !== "sent") { const x = ms(e.at); if (Number.isFinite(x) && x > t) t = x; }
+  return t;
+}
+/** こちらが送った最後の時刻。無ければ 0 */
+function lastSentAt(r: Pick<RoomState, "events">): number {
+  let t = 0;
+  for (const e of r.events) if (e.kind === "sent") { const x = ms(e.at); if (Number.isFinite(x) && x > t) t = x; }
+  return t;
+}
+/** 進んだ出来事が FOCUS_FRESH_DAYS より前だけのお部屋（主にも「他N件」にも数えない） */
+export function isStaleRoom(r: Pick<RoomState, "events">, now: number): boolean {
+  const t = lastMainAt(r);
+  return t > 0 && now - t > FOCUS_FRESH_DAYS * DAY;
+}
 const iso = (t: number) => new Date(t).toISOString();
 /** YYYY-MM-DD の次の日 */
 const nextYmd = (ymd: string) => jstYmd(Date.parse(`${ymd}T12:00:00+09:00`) + DAY);
@@ -869,9 +892,23 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
   if (upcoming?.roomKey) focus = rooms.find((r) => r.key === upcoming!.roomKey) ?? null;
   if (!focus && (stage === "applying" || stage === "apply_prep")) focus = [...rooms].filter((r) => r.events.some((e) => e.kind === "application")).sort((a, b) => ms(b.lastAt) - ms(a.lastAt))[0] ?? null;
   if (!focus && stage === "interested" && lastEv?.roomKey) focus = rooms.find((r) => r.key === lastEv.roomKey) ?? null;
+  // 2026-09-27 竹内（YUMA 9/27 の実送信直後に「📨 提案中 コンフォリア・リヴ北久宝寺Q｜内覧日経過(未確認) 他4件」）:
+  //   順位（内覧日経過 4.5 ＞ 候補 0）だけで選ぶと、12週前の持ち込み・内覧日経過が、昨日送った物件より主になる。
+  //   主は「直近 FOCUS_FRESH_DAYS 日の出来事の中で一番進んだお部屋」にする。進んだ出来事が全部古く、
+  //   その後に物件を送っていれば、送った物件（一番新しい送付）を主にする。どちらも無い（しばらく動きの無い会話）なら従来の順位で選ぶ。
+  //   線は scripts/audit-customer-state-focus.ts（直近の実会話で前後を目で読んで決めた）
   if (!focus) {
-    const top = [...liveRooms].filter((r) => ROOM_RANK[r.status] >= ROOM_RANK.available || r.customerInterest).sort(byRankRecent)[0];
-    focus = top ?? null;
+    const ranked = [...liveRooms].filter((r) => ROOM_RANK[r.status] >= ROOM_RANK.available || r.customerInterest);
+    const top = ranked.filter((r) => !isStaleRoom(r, now)).sort(byRankRecent)[0];
+    if (top) focus = top;
+    // ⚠ 進んだお部屋が1つも無い会話（送っただけの候補だけ）は従来どおり主なし（候補の1件を主に見せない）。
+    //   古い進んだお部屋がある時だけ、その代わりに一番新しい送付を主にする（前後の比較で、候補だけの会話に主が付く変化は 20件超・意図しない）
+    else if (ranked.length) {
+      const recentSent = liveRooms
+        .filter((r) => r.sentByUs && now - lastSentAt(r) <= FOCUS_FRESH_DAYS * DAY)
+        .sort((a, b) => lastSentAt(b) - lastSentAt(a))[0];
+      focus = recentSent ?? ranked.sort(byRankRecent)[0] ?? null;
+    }
   }
 
   // ─── 探し続けている印 ───
@@ -940,7 +977,7 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
   // 同じ中身の食い違いは1つに（予定表の同じ日の行が2つある会話 d25e07d1）
   const seenC = new Set<string>();
   for (let i = conflicts.length - 1; i >= 0; i--) { const k = conflicts[i].code + conflicts[i].detail; if (seenC.has(k)) conflicts.splice(i, 1); else seenC.add(k); }
-  const headline = buildCustomerStateHeadline({ stage, stageDetail, upcoming, focus, properties, searching, conflicts });
+  const headline = buildCustomerStateHeadline({ stage, stageDetail, upcoming, focus, properties, searching, conflicts, now });
   const viewingList: CustomerViewing[] = [...viewings.values()].sort((a, b) => a.ymd.localeCompare(b.ymd)).slice(-8).map((v) => ({
     ymd: v.ymd, time: v.time, name: v.name, thankedAt: v.thankedAt,
     status: v.cancelled ? "cancelled" : v.done ? "done" : v.ymd >= todayYmd ? "scheduled" : "unconfirmed",
@@ -956,6 +993,8 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
 export function buildCustomerStateHeadline(s: {
   stage: CustomerStage; stageDetail: string | null; upcoming: UpcomingViewing | null; focus: RoomState | null;
   properties: RoomState[]; searching: SearchingMark; conflicts: Conflict[];
+  /** 2026-09-27: 渡すと「他N件」から古いお部屋（isStaleRoom）を外す（主が新しい時だけ） */
+  now?: number;
 }): string {
   const parts: string[] = [`${STAGE_ICON[s.stage]} ${STAGE_LABEL[s.stage]}`];
   if (s.stageDetail) parts.push(s.stageDetail);
@@ -968,7 +1007,9 @@ export function buildCustomerStateHeadline(s: {
     if (!(s.stage === "viewing_scheduled" && s.focus.status === "viewing_scheduled" && !s.focus.estimateSent)) tail.push(lbl.replace(/^内覧予定・/, ""));
   }
   // 「他N件」は何か進んだお部屋だけ数える（送っただけの候補は数えない。数十件の「他40件」は読めない）
-  const others = s.properties.filter((p) => p.key !== s.focus?.key && p.status !== "ended" && (ROOM_RANK[p.status] >= ROOM_RANK.available || p.customerInterest || p.estimateSent)).length;
+  // 2026-09-27: 主が新しいお部屋の時は、古い出来事だけのお部屋（isStaleRoom）を数えない（YUMA「他4件」が7月の持ち込み・6月の見積だった）
+  const dropStale = s.now != null && !!s.focus && !isStaleRoom(s.focus, s.now);
+  const others = s.properties.filter((p) => p.key !== s.focus?.key && p.status !== "ended" && (ROOM_RANK[p.status] >= ROOM_RANK.available || p.customerInterest || p.estimateSent) && !(dropStale && isStaleRoom(p, s.now!))).length;
   if (others > 0) tail.push(`他${others}件`);
   if (s.searching.active && s.stage !== "searching") tail.push("探し中");
   let line = parts.join(" ");

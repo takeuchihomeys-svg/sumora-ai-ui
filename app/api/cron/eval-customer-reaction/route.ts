@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { accumulatePropertySelections, type PropertySelectionResult } from "@/app/lib/property-selection-learning";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // 物件選定学習（スタッフが選んで送った物件＝正解）は反応評価と独立して毎回実行する。
 // 反応評価の対象が0件の日・申込中の会話・機能追加前の送信も漏らさないため。
@@ -153,7 +155,8 @@ export async function POST(req: NextRequest) {
 
       // aix_usage_log.id → conversation_id マップ
       const idToConv = new Map<string, string>();
-      for (const log of logs) idToConv.set(log.id, log.conversation_id);
+      // 2026-09-27: テスト用の会話（YUMA）は学びに入れない（customer_reacted の記録は従来どおり・ナレッジの正誤にだけ入れない）
+      for (const log of logs) if (!isTestConversation(log.conversation_id)) idToConv.set(log.id, log.conversation_id);
 
       const reactedConvIds = new Set(reactedIds.map(id => idToConv.get(id) ?? "").filter(Boolean));
       const notReactedConvIds = new Set(notReactedIds.map(id => idToConv.get(id) ?? "").filter(Boolean));
@@ -237,6 +240,8 @@ export async function POST(req: NextRequest) {
           const kid = l.knowledge_id as string;
           const at  = l.applied_at as string;
           if (!cid || !kid || excludedGenConvIds.has(cid)) continue;
+          // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+          if (isTestConversation(cid)) continue;
           if (!convAnchor.has(cid) || at > convAnchor.get(cid)!) convAnchor.set(cid, at);
           if (!convKids.has(cid)) convKids.set(cid, new Set());
           convKids.get(cid)!.add(kid);
@@ -312,6 +317,8 @@ export async function POST(req: NextRequest) {
       const totalByType = new Map<string, number>();
       for (const log of logs) {
         if (!log.aix_type) continue;
+        // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+        if (isTestConversation(log.conversation_id)) continue;
         if (reactedSet.has(log.id) || notReactedSet.has(log.id)) {
           totalByType.set(log.aix_type, (totalByType.get(log.aix_type) ?? 0) + 1);
         }
@@ -350,12 +357,14 @@ export async function POST(req: NextRequest) {
     try {
       const { data: highImpStats } = await supabase
         .from("aix_usage_logs")
-        .select("aix_type, customer_reacted")
+        .select("aix_type, customer_reacted, conversation_id")
         .not("customer_reacted", "is", null)
         .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
       const highImpBuckets: Record<string, { total: number; noReact: number }> = {};
       for (const row of (highImpStats ?? [])) {
+        // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+        if (isTestConversation(row.conversation_id as string | null)) continue;
         const t = (row.aix_type as string) ?? "unknown";
         if (!highImpBuckets[t]) highImpBuckets[t] = { total: 0, noReact: 0 };
         highImpBuckets[t].total++;

@@ -98,6 +98,8 @@ import { resolveInitialCostTight } from "@/app/lib/initial-cost-tight";
 import { customerPointsAtProperty } from "@/app/lib/cost-question-scope";
 // 2026-09-23 課題③: 真の初回の「最初の一手」（first_contact_pickup）の許可リスト（純関数）
 import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstContactPickup } from "@/app/lib/first-contact-pickup";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -4347,7 +4349,8 @@ async function analyzeAndSaveBrainMetaInner(
       const m = meta as Record<string, unknown>;
       const baseScore = m.enforcement_level === "required" ? 8 : m.enforcement_level === "recommended" ? 6 : 4;
       const qualityScore = baseScore - (analysisMode === "incremental" ? 2 : 0);
-      if (qualityScore >= 5) {
+      // 2026-09-27 竹内: テスト用の会話（YUMA）は学習キュレーター（corpus2skill）に入れない
+      if (qualityScore >= 5 && !isTestConversation(conversationId)) {
         const patternTags = [
           typeof m.hesitancy_pattern === "string" ? `hesitancy:${m.hesitancy_pattern}` : null,
           typeof m.checkpoint_stage === "string" ? `stage:${m.checkpoint_stage}` : null,

@@ -1,5 +1,7 @@
 ﻿import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // ── 申込/成約/失注確定時の会話全体分析（Opus 4.8）─────────────────────────────────
 // conversations.status が applying / closed_won / closed_lost に変わった瞬間に呼ばれ、
@@ -88,6 +90,8 @@ export async function writeBackClosedOutcome(
   outcome: ClosedOutcome
 ): Promise<void> {
   if (outcome !== "closed_won" && outcome !== "closed_lost") return;
+  // 2026-09-27 竹内: テスト用の会話（YUMA）は成約・失注の答え合わせに入れない
+  if (isTestConversation(conversationId)) return;
   const isWon = outcome === "closed_won";
 
   // closing_strategy_logs: outcome 未確定の戦略提案行に成約/失注結果を記録
@@ -118,6 +122,8 @@ export async function analyzeClosedConversation(
   conversationId: string,
   outcome: ClosedOutcome
 ): Promise<ClosedAnalysisResult> {
+  // 2026-09-27 竹内: テスト用の会話（YUMA）は勝ちパターン（winning_patterns）・成約分析に入れない
+  if (isTestConversation(conversationId)) return { ok: true, skipped: true, reason: "test_conversation" };
   const dedupeKey = `closed_analysis_${conversationId}`;
 
   // 0. 成果の書き戻し（学習ループのクローズ）

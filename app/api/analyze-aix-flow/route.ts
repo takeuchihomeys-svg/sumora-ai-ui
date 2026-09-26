@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -97,7 +99,8 @@ export async function POST(req: NextRequest) {
 
     // 3. AIX種類ごとの使用回数・テンプレート別・成約率・予測一致率の集計
     type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null; suggested_action: string | null; was_edited: boolean | null };
-    const logs = (usageLogs ?? []) as UsageLog[];
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    const logs = excludeTestConversations((usageLogs ?? []) as UsageLog[]);
 
     // 3-a. conversation_status はAIX送信時点のスナップショットで closed_won はほぼ含まれない。
     // conversations テーブルの「現在の」status を別クエリで取得して突合する。

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 300;
 
@@ -63,14 +65,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: usageErr.message }, { status: 500 });
     }
 
-    const logs = (usageLogs ?? []) as Array<{
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    const logs = excludeTestConversations((usageLogs ?? []) as Array<{
       id: string;
       conversation_id: string;
       aix_type: string;
       previous_action_type: string | null;
       sent_at: string | null;
       created_at: string;
-    }>;
+    }>);
 
     if (logs.length === 0) {
       await finishCronLog(runLogId, true, { evaluated: 0, note: "no usage logs yesterday" });

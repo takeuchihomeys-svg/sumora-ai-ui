@@ -19,7 +19,8 @@
 //
 // 実行: npx tsx --env-file=.env.local scripts/audit-waited-when.ts
 import { createClient } from "@supabase/supabase-js";
-import { isWaitedAllowed } from "../app/lib/waited-scope";
+// 2026-09-27: isWaitedAllowed は常に false（AIX でも使わない）になったので、監査は 9/26 までの許す一覧で選ぶ
+import { wasWaitedAllowedUntil0926 as isWaitedAllowed } from "../app/lib/waited-scope";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const DAYS = Number(process.env.DAYS ?? 120);

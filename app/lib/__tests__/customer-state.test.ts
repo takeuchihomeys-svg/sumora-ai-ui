@@ -317,5 +317,44 @@ it("送っただけの候補は件数だけ・進んだお部屋と主のお部�
   expect(JSON.stringify(v)).notToContain("brainSituation");
 });
 
+console.log("\n■ 主のお部屋は新しい出来事から（2026-09-27 YUMA「📨 提案中 コンフォリア・リヴ北久宝寺Q｜内覧日経過(未確認) 他4件」）");
+{
+  // 9/27 の YUMA の形: 7/5 のお客様持ち込み（内覧日経過）・6/29 の見積 → 9/26 に AIX で3件送った
+  const old = {
+    viewingHistory: [{ scheduled_date: "2026-07-05", status: "lapsed", property_name: "コンフォリア・リヴ北久宝寺Q" }],
+    messages: [
+      C("2026-06-29T01:00:00Z", "物件探しています"),
+      S("2026-06-29T01:20:00Z", "【KTIレジデンス西中島II 202号室】\n\n初期費用さらに\n🌟30,000円割引させて頂き\n初期費用：180,000円\n\n※ご入居日によって日割家賃が発生致します。", true),
+      S("2026-09-26T08:03:00Z", "YUMAさんお世話になっております！！\n大阪市西区周辺からお部屋ピックアップさせて頂きました😊！！", true),
+    ],
+    sentProperties: [
+      { property_name: "S-FORT大正リヴィエール", room_no: "603", sent_at: "2026-09-26T08:03:00Z" },
+      { property_name: "エステムコート大阪WEST", room_no: null, sent_at: "2026-09-26T08:03:00Z" },
+      { property_name: "エステムコート難波WEST-SIDEⅨレデント", room_no: "404", sent_at: "2026-09-26T08:03:00Z" },
+    ],
+  } satisfies Partial<CustomerStateInput>;
+  it("★ 古い内覧日経過・見積（21日より前）より、その後に送った物件を主にする", () => {
+    const s = resolveCustomerState(base({ ...old, now: Date.parse("2026-09-27T03:00:00Z") }));
+    const focus = s.properties.find((p) => p.key === s.focusKey);
+    expect(focus?.status).toBe("candidate");
+    expect(focus?.sentByUs).toBe(true);
+    expect(s.headline).notToContain("コンフォリア");
+    expect(s.headline).notToContain("内覧日経過");
+    expect(s.headline).notToContain("他");
+  });
+  it("★ 同じ出来事が21日以内なら従来どおり進んだお部屋が主（内覧日経過が主のまま）", () => {
+    const s = resolveCustomerState(base({ ...old, now: Date.parse("2026-07-15T03:00:00Z"), sentProperties: [], messages: old.messages.slice(0, 2) }));
+    expect(s.headline).toContain("コンフォリア");
+  });
+  it("★ 進んだお部屋が無く送っただけの候補しか無い会話は、従来どおり主なし（候補の1件を主に見せない）", () => {
+    const s = resolveCustomerState(base({ ...old, viewingHistory: [], messages: [old.messages[0], old.messages[2]], now: Date.parse("2026-09-27T03:00:00Z") }));
+    expect(s.focusKey).toBe(null);
+  });
+  it("しばらく動きの無い会話（古い出来事しか無く、新しい送付も無い）は従来の順位で主を選ぶ", () => {
+    const s = resolveCustomerState(base({ ...old, sentProperties: [], messages: old.messages.slice(0, 2), now: Date.parse("2026-09-27T03:00:00Z") }));
+    expect(s.focusKey !== null).toBe(true);
+  });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  - " + f); process.exit(1); }

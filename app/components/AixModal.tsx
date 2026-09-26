@@ -2923,6 +2923,8 @@ export default function AixModal({
           action_type: actionType,
           conversation_status: conversationStatus ?? "hearing",
           sent_text: sentText,
+          // 2026-09-27: テスト用の会話（YUMA）をサーバーで外すため
+          conversation_id: conversationId,
         }),
       }).then(ensureOk).catch((e) => { console.warn("[AixModal] フレーズ学習ログ保存失敗:", e); });
     }
@@ -3005,6 +3007,8 @@ export default function AixModal({
             conversation_status: conversationStatus,
             action_type: actionType,
             customer_msg_summary: lastCustomerMsg.slice(0, 150),
+            // 2026-09-27: テスト用の会話（YUMA）をサーバーで外すため
+            conversation_id: conversationId,
           }),
         }).then(ensureOk).catch((e) => { console.warn("[AixModal] アクションパターン学習ログ保存失敗（予約送信）:", e); });
       }
@@ -3036,6 +3040,8 @@ export default function AixModal({
             action_type: actionType,
             conversation_status: conversationStatus ?? "hearing",
             sent_text: textToSend,
+            // 2026-09-27: テスト用の会話（YUMA）をサーバーで外すため
+            conversation_id: conversationId,
           }),
         }).then(ensureOk).catch((e) => { console.warn("[AixModal] フレーズ学習ログ保存失敗（予約送信）:", e); });
       }

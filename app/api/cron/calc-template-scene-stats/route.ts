@@ -22,6 +22,8 @@ import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 // 残っているため、集計前に normalizeStatus で新5段階（hearing/proposing/applying）へ正規化する。
 // suggest-next-action は正規化後のステータスで recommended を引くため、ここで揃えないとミスマッチする。
 import { normalizeStatus } from "@/app/lib/status-normalize";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -33,9 +35,9 @@ async function run() {
   const since90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
   // テンプレ選択ログ（select フェーズ全件。sent 判定は final_sent_text の有無で行う）
-  const { data: logs, error } = await supabase
+  const { data: logsRaw, error } = await supabase
     .from("template_selection_logs")
-    .select("template_id, conversation_status, aix_action_type, picker_mode, was_adapted, final_sent_text, prev_template_id, aix_session_id, sequence_no, template_category, brain_template_hint")
+    .select("template_id, conversation_status, aix_action_type, picker_mode, was_adapted, final_sent_text, prev_template_id, aix_session_id, sequence_no, template_category, brain_template_hint, conversation_id")
     .not("template_id", "is", null)
     .gte("created_at", since90d)
     .limit(10000);
@@ -44,6 +46,8 @@ async function run() {
     await finishCronLog(runLogId, false, undefined, error.message);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const logs = excludeTestConversations(logsRaw);
 
   // status × template_id の出現回数を集計（H4: 実際に送信された final_sent_text あり のみ）
   // ※ conversation_status は正規化してから集計する（旧名で分散した実績を新キーに統合。
@@ -123,11 +127,12 @@ async function run() {
   // 経路②: AIX直送信ログ（テンプレを構造ソースにしてAI生成→送信。送信済み確定・AI生成=adapted扱い）
   const { data: aixLogs, error: aixError } = await supabase
     .from("aix_usage_logs")
-    .select("conversation_status, aix_type, template_id, check_pattern, app_sub_mode, send_mode")
+    .select("conversation_status, aix_type, template_id, check_pattern, app_sub_mode, send_mode, conversation_id")
     .not("template_id", "is", null)
     .gte("created_at", since90d)
     .limit(10000);
-  for (const log of aixLogs ?? []) {
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  for (const log of excludeTestConversations(aixLogs)) {
     const tid = log.template_id as string;
     const aixType = (log.aix_type as string | null)?.trim();
     if (!aixType || !tid) continue;

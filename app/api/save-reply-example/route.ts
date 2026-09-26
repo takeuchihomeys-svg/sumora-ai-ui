@@ -7,6 +7,8 @@ import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
 import { computeStanceLite } from "@/app/lib/reply-context";
 // 2026-09-11 データ衛生: 生成失敗文・テスト送信を正解例・学習材料にしない（読む側と書く側で同じ関数）
 import { isUsableExampleText, isUsableAiDraft, isGenerationFailureText } from "@/app/lib/example-hygiene";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は手本・学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
@@ -740,11 +742,13 @@ export async function PATCH(req: NextRequest) {
   // 既存レコードを取得
   const { data: existing } = await supabase
     .from("ai_reply_examples")
-    .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_used, was_ai_modified, entry_source")
+    .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_used, was_ai_modified, entry_source, conversation_id")
     .eq("id", id)
     .maybeSingle();
 
   if (!existing) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+  // 2026-09-27: テスト用の会話（YUMA）の行は☆・差分学習の対象にしない
+  if (isTestConversation((existing as { conversation_id?: string | null }).conversation_id)) return NextResponse.json({ ok: true, skipped: true, reason: "test_conversation" });
 
   // is_starred を更新
   await supabase.from("ai_reply_examples").update({ is_starred }).eq("id", id);
@@ -1171,6 +1175,10 @@ export async function POST(req: NextRequest) {
   // 送信文そのものが失敗文なら保存も学習チェーンも起動しない（行を作らない。既存行は読む側で除外）
   if (isGenerationFailureText(sentReply)) {
     return NextResponse.json({ ok: true, skipped: true, reason: "generation_failure_text" });
+  }
+  // 2026-09-27 竹内: テスト用の会話（YUMA）は返信の手本・ナレッジの答え合わせ・言い回しの学習に入れない（行を作らない）
+  if (isTestConversation(conversationId)) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "test_conversation" });
   }
   const templateId = typeof body.template_id === "string" ? body.template_id : null;
   let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;

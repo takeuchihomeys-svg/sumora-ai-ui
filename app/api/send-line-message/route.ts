@@ -5,6 +5,8 @@ import { isGenerationFailureText } from "@/app/lib/example-hygiene";
 import { classifyStaffTextFacts } from "@/app/lib/action-ledger";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { buildCallRequestFlex, callUrlSettingKey, isValidLineCallUrl } from "@/app/lib/phone-call";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
 export const maxDuration = 120;
@@ -410,6 +412,8 @@ export async function POST(req: NextRequest) {
         .eq("account", accountKey)
         .maybeSingle();
       if (!convRow?.id) return;
+      // 2026-09-27 竹内: テスト用の会話（YUMA）は返信後の反応の計測（学習の材料）に入れない
+      if (isTestConversation(convRow.id as string)) return;
       await supabase.from("reply_engagement_signals").insert({
         conversation_id: convRow.id as string,
         staff_sent_at: new Date().toISOString(),

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // AI貢献率（アトリビューション）日次計算バッチ
 // 直近30日の closed_won 会話のうち、AIが貢献（was_ai_used=true または was_ai_modified=true）した割合を算出し、
@@ -37,7 +39,8 @@ async function run() {
     return NextResponse.json({ ok: false, error: convErr.message }, { status: 500 });
   }
 
-  const convIds = (wonConvs ?? []).map((c) => c.id as string);
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const convIds = (wonConvs ?? []).map((c) => c.id as string).filter((id) => !isTestConversation(id));
   const total = convIds.length;
 
   // 2. AIが貢献した返信例（was_ai_used=true または was_ai_modified=true）を取得

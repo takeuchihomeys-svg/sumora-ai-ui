@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // bootstrapは最大1200超のDB往復が発生するため延長（Vercel Pro上限300秒）
 export const maxDuration = 300;
@@ -50,6 +52,8 @@ export async function POST(req: NextRequest) {
     if (!body.conversation_status || !body.action_type) {
       return NextResponse.json({ ok: false, error: "missing fields" });
     }
+    // 2026-09-27 竹内: テスト用の会話（YUMA）は行動の学習（action_pattern_logs → trigger_action_rules）に入れない
+    if (isTestConversation(body.conversation_id)) return NextResponse.json({ ok: true, skipped: true, reason: "test_conversation" });
     // フロントから渡された source を尊重（提案採択学習ループ用）
     // 高2: page.tsx が送る全 source を許可（未登録だと manual に化けて学習の重み付けが壊れる）
     const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed", "prediction_accepted", "prediction_bypassed", "split_draft_used", "analysis_step1"]);
@@ -129,6 +133,8 @@ export async function POST(req: NextRequest) {
       .limit(400);
 
     for (const task of tasks ?? []) {
+      // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+      if (isTestConversation(task.conversation_id as string | null)) continue;
       try {
         // タスク作成直前の顧客メッセージを取得
         const { data: msgRow } = await supabase
@@ -175,6 +181,8 @@ export async function POST(req: NextRequest) {
       .limit(200);
 
     for (const conv of viewingConvs ?? []) {
+      // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+      if (isTestConversation(conv.id as string | null)) continue;
       try {
         // その会話の最後の顧客メッセージを取得（タイミング推定用）
         const { data: msgRow } = await supabase

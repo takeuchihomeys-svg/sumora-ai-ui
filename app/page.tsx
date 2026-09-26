@@ -4993,7 +4993,8 @@ export default function Home() {
         fetch("/api/templates/increment-use", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ templateId: selectedTemplateIdRef.current }),
+          // 2026-09-27: テスト用の会話（YUMA）は使用回数に数えない（サーバーで外す）
+          body: JSON.stringify({ templateId: selectedTemplateIdRef.current, conversationId: selectedConversation.id }),
         }).catch(() => {});
         selectedTemplateIdRef.current = "";
       }
@@ -10927,7 +10928,8 @@ export default function Home() {
                 fetch("/api/templates/increment-use", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ templateId: pendingTemplateSource.id }),
+                  // 2026-09-27: テスト用の会話（YUMA）は使用回数に数えない（サーバーで外す）
+                  body: JSON.stringify({ templateId: pendingTemplateSource.id, conversationId: selectedConversation.id }),
                 }).catch(() => {});
               }
               setPendingTemplateSource(null);
@@ -12442,6 +12444,8 @@ export default function Home() {
                 comment: rating === "bad" ? viewingAdaptFeedbackComment : undefined,
                 // 学習カテゴリのアクション別分離: このフローは内覧誘導挨拶（viewing-guide）の adapt
                 actionType: "greeting_viewing",
+                // 2026-09-27: テスト用の会話（YUMA）の評価は学習に入れない（サーバーで外す）
+                conversationId: selectedConversation?.id ?? null,
               }),
             });
             setViewingAdaptFeedbackSent(true);

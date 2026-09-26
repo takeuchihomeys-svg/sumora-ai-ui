@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // Sonnet呼び出し（80件履歴）+ embedding生成で15〜30秒かかるため延長
 export const maxDuration = 60;
@@ -14,6 +16,8 @@ export async function POST(req: NextRequest) {
     };
     const eventLabel = event_type === "application" ? "申込" : "成約";
     if (!conversation_id) return NextResponse.json({ ok: false, error: "conversation_id required" }, { status: 400 });
+    // 2026-09-27 竹内: テスト用の会話（YUMA）は成約・失注パターンの学習に入れない
+    if (isTestConversation(conversation_id)) return NextResponse.json({ ok: true, skipped: true, reason: "test_conversation" });
 
     // 会話履歴を取得（直近80件・降順で取得後reverseして時系列順に並べる）
     // ascending + limit80 は最古80件になり申込直前のメッセージが欠落するため修正

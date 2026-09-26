@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { isUsableExampleText } from "@/app/lib/example-hygiene";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -169,7 +171,7 @@ export async function POST(req: NextRequest) {
   // ── STEP 2: ⭐例文を改良プロンプトで再分析 ───────────────────────────────
   const query = supabase
     .from("ai_reply_examples")
-    .select("id, conversation_state, customer_message, sent_reply")
+    .select("id, conversation_id, conversation_state, customer_message, sent_reply")
     .order("created_at", { ascending: false })
     .limit(Math.min(limitParam, 20));
 
@@ -185,6 +187,8 @@ export async function POST(req: NextRequest) {
   for (const ex of examples) {
     // 2026-09-11 データ衛生: 生成失敗文・テスト送信からナレッジを作らない
     if (!isUsableExampleText(ex.sent_reply as string)) continue;
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    if (isTestConversation(ex.conversation_id as string | null)) continue;
     const state = ex.conversation_state as string;
     const added = await analyzeExample(
       ex.id as string,

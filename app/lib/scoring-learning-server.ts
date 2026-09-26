@@ -19,7 +19,9 @@ import { adTwoMonthCodes, buildContext, customerAt, episodeFromSnapshot, episode
 
 type Row = Record<string, any>;
 const D = 24 * 3600_000;
-export const YUMA_CONVERSATION_ID = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
+// 2026-09-27: テスト用の会話の一覧は test-conversations.ts の1か所に移した（ここは再輸出だけ）
+import { YUMA_CONVERSATION_ID } from "./test-conversations";
+export { YUMA_CONVERSATION_ID };
 
 const CUST_COLS = "id, rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, move_in_time, created_at, floor_area_min, raw_format_text, desired_area, commute_station, commute_minutes";
 

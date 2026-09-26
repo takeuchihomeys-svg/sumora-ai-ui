@@ -10,6 +10,8 @@ import { EXCLUDE_FAILED_SENT_LIKE } from "@/app/lib/example-hygiene";
 // 2026-09-18 保存する action_type が「取りに行く呼び出しのある値」かを門で確かめる（届かない行を新しく作らない）
 import { normalizePromptRuleActionType } from "@/app/lib/prompt-rule-registry";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 300;
 
@@ -900,6 +902,8 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
   type Cluster = { phrase: string; convIds: Set<string>; sampleAiDraft?: string; sampleSentReply?: string; aixActions: Set<string>; hasLineReply: boolean };
   const clusters: Cluster[] = [];
   for (const ex of filteredRecent) {
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    if (isTestConversation(ex.conversation_id as string | null)) continue;
     const draftSentences = splitSentences((ex.ai_draft as string) ?? "");
     const sentSentences = splitSentences((ex.sent_reply as string) ?? "");
     const sentNorm = ((ex.sent_reply as string) ?? "").replace(/\s+/g, "");
@@ -1092,6 +1096,8 @@ export async function POST(req: NextRequest) {
       }));
     }
   }
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  examples.splice(0, examples.length, ...examples.filter((e) => !isTestConversation((e as { conversation_id?: string | null }).conversation_id ?? null)));
 
   // ── ⑥ AIX編集差分の第2パス用フェッチ（2026-08追加）──
   // メインループは entry_source='line_reply' のみ対象のため、スタッフがAIX生成文を修正した差分
@@ -1116,6 +1122,8 @@ export async function POST(req: NextRequest) {
   }
   // ⑥AIX第2パスもメインループと同様に処理順をシャッフル（先頭固着による飢餓防止）
   if (aixExamples) {
+    // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+    aixExamples.splice(0, aixExamples.length, ...aixExamples.filter((e) => !isTestConversation((e as { conversation_id?: string | null }).conversation_id ?? null)));
     for (let i = aixExamples.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [aixExamples[i], aixExamples[j]] = [aixExamples[j], aixExamples[i]];
@@ -1398,7 +1406,7 @@ export async function POST(req: NextRequest) {
     const modRateCooldownBefore = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
     const { data: examples30 } = await supabase
       .from("ai_reply_examples")
-      .select("conversation_state, was_ai_modified")
+      .select("conversation_state, was_ai_modified, conversation_id")
       .eq("entry_source", "line_reply")
       .gte("created_at", thirtyDaysAgo)
       .not("ai_draft", "is", null);
@@ -1406,6 +1414,8 @@ export async function POST(req: NextRequest) {
     if (examples30 && examples30.length >= 10) {
       const stateStats = new Map<string, { total: number; modified: number }>();
       for (const row of examples30) {
+        // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+        if (isTestConversation(row.conversation_id as string | null)) continue;
         const s = row.conversation_state as string;
         if (!s) continue;
         const st = stateStats.get(s) ?? { total: 0, modified: 0 };
@@ -2219,7 +2229,7 @@ export async function POST(req: NextRequest) {
   {
     const { data: usedExamples } = await supabase
       .from("ai_reply_examples")
-      .select("id, conversation_state, ai_components")
+      .select("id, conversation_state, ai_components, conversation_id")
       .eq("was_ai_modified", false)
       .eq("was_ai_used", true)
       .is("diff_analyzed_at", null)
@@ -2232,6 +2242,8 @@ export async function POST(req: NextRequest) {
         console.warn("[analyze-diffs] 時間制限到達、ポジティブ強化Aブロックをスキップ");
         break;
       }
+      // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+      if (isTestConversation(ue.conversation_id as string | null)) continue;
       const ueState = ue.conversation_state as string;
       const ueComps = ue.ai_components as Record<string, string>;
       const ueLearnList = STATE_LEARNABLE[ueState] ?? [];

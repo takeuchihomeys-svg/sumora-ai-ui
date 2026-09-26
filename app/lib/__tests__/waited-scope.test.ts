@@ -1,23 +1,15 @@
-// 「お待たせ致しました」を許す場面（竹内さん判断・2026-09-20）。
+// 「お待たせ致しました」— 2026-09-27 竹内さん決定: **AIX でも使わない**（9/20 の「結果を届ける AIX では許す」を上書き）。
 //
-// 竹内「AIX で送ったあとの AIX テンプレートの文の質を上げる」→ 差分を測ると、この語は
-//   **場面によって正誤が正反対**だった。竹内さんの判断は「結果を届ける AIX では許す」。
+// 経緯: 9/20 に実測（scripts/audit-omatase-aix.ts・60日・1,805件）で「結果を届ける AIX では許す」にした。
+//   9/27 の YUMA 実送信で AIX【物件ピックアップした】が「YUMAさんお待たせ致しました！！」で始まり
+//   （本番の AIX の物件送付でも直近7日で17通）、竹内さんは AIX でも使わないと決めた（自動返信化の方針）。
 //
-// 実測（scripts/audit-omatase-aix.ts・直近60日・生成文と実送信が両方ある1,805件）
-//   生成に出た時スタッフがどうしたか（残した / 消した / 足した）:
-//     見積書送る                21 / 0  / 16   ← 足すのが最多
-//     物件確認した（申込あり）   0 / 0  /  7
-//     物件ピックアップ          66 / 6  /  6
-//     新着物件                  39 / 1  /  3
-//     物件確認した（空室あり）   22 / 3  /  6
-//     条件を広げて再検索        17 / 1  /  2
-//     ───────────────────────────
-//     内覧日調整                 1 / 14 /  0   ← 消すのが圧倒的
-//     通常返信（line_reply）     0 / 5  /  1
+// 出口（replaceWaitedOpening）は AIX の実送信712通（お待たせを含む全部）×（挨拶あり・本日挨拶済み）で
+//   「お待たせ」以外の文字の削除 0・残り 0 を確かめた（旧 stripWaited は名前の呼びかけまで消していた＝920/1424）。
 //
 // 実行: npx tsx app/lib/__tests__/waited-scope.test.ts（全 PASS で exit 0）
-import { isWaitedAllowed, WAITED_ALLOWED_ACTIONS } from "../waited-scope";
-import { stripWaited, WAITED_RE } from "../greeting";
+import { isWaitedAllowed, WAITED_ALLOWED_ACTIONS, replaceWaitedOpening, neutralizeWaitedInExample, buildWaitedOpeningChoice, buildWaitedNote, waitedSentRate } from "../waited-scope";
+import { WAITED_RE } from "../greeting";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }
@@ -29,101 +21,99 @@ function expect<T>(actual: T) {
   return {
     toBe(exp: T) { if (actual !== exp) throw new Error(`expected ${JSON.stringify(exp)} but got ${JSON.stringify(actual)}`); },
     toContain(item: unknown) { if (typeof actual === "string" ? !actual.includes(String(item)) : true) throw new Error(`expected ${JSON.stringify(actual)} to contain ${JSON.stringify(item)}`); },
+    notToContain(item: unknown) { if (typeof actual === "string" && actual.includes(String(item))) throw new Error(`expected ${JSON.stringify(actual)} not to contain ${JSON.stringify(item)}`); },
   };
 }
 
-describe("待たせた作業の結果を届ける場面 → 許す", () => {
-  const ALLOW: Array<[string, string]> = [
-    ["estimate_sheet", "見積書送る（残21/消0/足16）"],
-    ["property_send", "物件ピックアップ（残66/消6/足6）"],
-    ["property_send_new_arrival", "新着物件（残39/消1/足3）"],
-    ["property_send_widen", "条件を広げて再検索（残17/消1/足2）"],
-    ["property_check_result", "物件確認した"],
-    ["property_check_result_available", "物件確認した・空室あり（残22/消3/足6）"],
-    ["property_check_result_unavailable", "物件確認した・申込あり（残0/消0/足7）"],
-    // ⚠ property_recommendation は 2026-09-21 にここから外した（実送信559件中1件・0.2%）。
-    //   下は「外したことを固定する」側で見る（NG 一覧）
-    ["zenryoku_support", "全力サポート（残7/消1/足0）"],
+describe("2026-09-27: AIX の全種類で許さない", () => {
+  const ALL = [
+    "property_send", "property_send_new_arrival", "property_send_widen", "estimate_sheet",
+    "property_check_result", "property_check_result_available", "property_check_result_unavailable",
+    "property_check_result_alternative", "property_check_result_mgmt_move_in", "zenryoku_support",
+    "property_recommendation", "acknowledge_check", "viewing_invite", "meeting_place", "application_push",
   ];
-  for (const [action, why] of ALLOW) {
-    it(`W ${action} は許す — ${why}`, () => { expect(isWaitedAllowed(action)).toBe(true); });
-  }
-  it("★ W10 サブパターン付き（property_check_result_mgmt_move_in）も許す", () => {
-    expect(isWaitedAllowed("property_check_result_mgmt_move_in")).toBe(true);
-  });
-});
-
-describe("待たせていない場面 → 消す", () => {
-  const DENY: Array<[string, string]> = [
-    ["viewing_invite", "内覧日調整（残1/消14/足0）"],
-    ["meeting_place", "待ち合わせ"],
-    ["greeting_viewing", "内覧挨拶"],
-    ["condition_hearing", "ヒアリング"],
-    ["application_push", "申込へ！"],
-    ["phone_call", "電話をかける"],
-    ["followup_revive", "追客する"],
-  ];
-  for (const [action, why] of DENY) {
-    it(`D ${action} は消す — ${why}`, () => { expect(isWaitedAllowed(action)).toBe(false); });
-  }
-  it("★ D8 未知の action は消す側に倒す（新しい AIX が黙って通さない）", () => {
+  for (const a of ALL) it(`★ ${a} は許さない`, () => { expect(isWaitedAllowed(a)).toBe(false); });
+  it("★ 許す一覧は空", () => { expect(WAITED_ALLOWED_ACTIONS.size).toBe(0); });
+  it("未知・空も許さない", () => {
     expect(isWaitedAllowed("brand_new_action")).toBe(false);
     expect(isWaitedAllowed("")).toBe(false);
     expect(isWaitedAllowed(null)).toBe(false);
-    expect(isWaitedAllowed(undefined)).toBe(false);
+  });
+  it("★ 入口の2択・率の材料は出ない（プロンプトに『お待たせ』を書かせる道が無い）", () => {
+    for (const a of ["property_send", "estimate_sheet", "property_check_result_available", "zenryoku_support"]) {
+      expect(buildWaitedOpeningChoice(a, "お世話になっております！！", true)).toBe("");
+      expect(buildWaitedNote(a)).toBe("");
+      expect(waitedSentRate(a)).toBe(null);
+    }
   });
 });
 
-describe("出口の掛け方（実物の文で確かめる）", () => {
-  // 2026-09-20 の実送信（AIX 由来）
-  const PICKUP = "じゅなさんお待たせ致しました！！\n\n大阪市内周辺全域からじゅなさんご希望の家賃管理費込み12万円以内・2LDK以上のお部屋ピックアップさせて頂きました😊！！\n\nお手隙の際にご査収ください😌！！";
-  const ESTIMATE = "Hさんお待たせ致しました！！\nハイツカトレアB号室とハイムM&K 306号室の御見積書をお送りさせて頂きます😊！！\nお手隙の際にご査収ください😌！！";
-
-  it("★ E1 物件ピックアップでは消さない（実送信の形がそのまま残る）", () => {
-    const out = isWaitedAllowed("property_send") ? PICKUP : stripWaited(PICKUP).text;
-    expect(WAITED_RE.test(out)).toBe(true);
-    expect(out).toContain("ピックアップさせて頂きました");
+describe("出口 replaceWaitedOpening（実物の本文）", () => {
+  const G = "お世話になっております！！";
+  // 9/27 YUMA の実送信（AIX【物件ピックアップした】）の形
+  const YUMA = "YUMAさんお待たせ致しました！！\n\n大阪市西区・浪速区周辺から1LDK・家賃8万円程でYUMAさんにオススメできるお部屋ピックアップさせて頂きました😊！！\n\nお手隙の際にご査収ください😌！！";
+  it("★ R1 挨拶がまだの日は「[名]さんお世話になっております！！」に差し替える（名前を消さない）", () => {
+    const r = replaceWaitedOpening(YUMA, G);
+    expect(r.replaced).toBe(1);
+    expect(r.text.startsWith("YUMAさんお世話になっております！！\n")).toBe(true);
+    expect(r.text).toContain("オススメできるお部屋ピックアップさせて頂きました😊！！");
+    expect(WAITED_RE.test(r.text)).toBe(false);
   });
-
-  it("★ E2 見積書送るでは消さない", () => {
-    const out = isWaitedAllowed("estimate_sheet") ? ESTIMATE : stripWaited(ESTIMATE).text;
-    expect(WAITED_RE.test(out)).toBe(true);
+  it("★ R2 本日挨拶済み（挨拶が空）は「お待たせ致しました」だけ落として名前行を残す", () => {
+    const r = replaceWaitedOpening(YUMA, "");
+    expect(r.text.startsWith("YUMAさん\n")).toBe(true);
+    expect(r.text).notToContain("お世話になっております");
+    expect(WAITED_RE.test(r.text)).toBe(false);
   });
-
-  it("★ E3 内覧日調整では消す（本文は残る）", () => {
-    const text = "Rさんお待たせ致しました！！\nご内覧可否確認させて頂きます！！";
-    const out = isWaitedAllowed("viewing_invite") ? text : stripWaited(text).text;
-    expect(WAITED_RE.test(out)).toBe(false);
-    expect(out).toContain("ご内覧可否確認させて頂きます");
+  it("★ R3 名前行の次の行の「お待たせいたしました！！」は名前行に挨拶をつなぐ（実送信の形）", () => {
+    const t = "愛乃さん\nお待たせいたしました！！\n\n本町駅～大国町駅周辺エリアから家賃6〜8万円・1Kのお部屋ピックアップさせて頂きました！！";
+    const r = replaceWaitedOpening(t, G);
+    expect(r.text.startsWith("愛乃さんお世話になっております！！\n")).toBe(true);
+    expect(r.text).toContain("本町駅～大国町駅周辺エリアから家賃6〜8万円・1Kのお部屋ピックアップさせて頂きました！！");
   });
-
-  it("E4 消す側でも本文は1文字も欠けない（誤削除0）", () => {
-    const text = "お待たせ致しました！！\n日本橋・谷九・難波周辺全域から築浅・ペット可のご条件でオススメできる1LDKのお部屋ピックアップさせて頂きました😊！！";
-    const out = stripWaited(text).text;
-    expect(out).toContain("日本橋・谷九・難波周辺全域から築浅・ペット可のご条件でオススメできる1LDKのお部屋ピックアップさせて頂きました");
+  it("★ R4 既に「お世話になっております」がある通は、お待たせの行だけ落とす（挨拶を重ねない）", () => {
+    const t = "お客様お世話になっております！！\nお待たせ致しました！！\nお送り頂いたS-RESIDENCE堺筋本町Deux 909号室の御見積書となります！！";
+    const r = replaceWaitedOpening(t, G);
+    expect(r.text).toBe("お客様お世話になっております！！\nお送り頂いたS-RESIDENCE堺筋本町Deux 909号室の御見積書となります！！");
+  });
+  it("★ R5 同じ行に続く本題は1文字も触らない", () => {
+    const t = "ゆーたさん\nお待たせ致しました！！ご希望の3部屋を最大限割引させていただいた御見積書お送りさせていただきます😊！！";
+    const r = replaceWaitedOpening(t, "");
+    expect(r.text).toBe("ゆーたさん\nご希望の3部屋を最大限割引させていただいた御見積書お送りさせていただきます😊！！");
+  });
+  it("★ R6 見積書の表の後ろにある挨拶行も直す（表は触らない）", () => {
+    const t = "【メイウール木川中里 413号室】\n\n初期費用：324,500円\n\n※ご入居日によって日割家賃が発生致します。\nmasayaさんお待たせ致しました！！\n\nメイワール木川中里413号室の初期費用を最大限割引させて頂いた御見積書をお送りさせて頂きます😊！！";
+    const r = replaceWaitedOpening(t, G);
+    expect(r.text).toContain("【メイウール木川中里 413号室】\n\n初期費用：324,500円\n\n※ご入居日によって日割家賃が発生致します。\nmasayaさんお世話になっております！！");
+    expect(WAITED_RE.test(r.text)).toBe(false);
+  });
+  it("R7 さんの無い表示名・「、」・大変・絵文字の形も取る", () => {
+    expect(replaceWaitedOpening("iお待たせ致しました！！\n本文です", G).text).toBe("iお世話になっております！！\n本文です");
+    expect(replaceWaitedOpening("ニアさん、お待たせ致しました！！\n本文です", "").text).toBe("ニアさん\n本文です");
+    expect(replaceWaitedOpening("大変お待たせ致しました！！2物件それぞれの初期費用御見積書となります😊！！", "").text).toBe("2物件それぞれの初期費用御見積書となります😊！！");
+    expect(replaceWaitedOpening("Kさんお待たせ致しました😌！！\n本文", "").text).toBe("Kさん\n本文");
+  });
+  it("R8 お待たせが無ければ何もしない（同じ文字列を返す）", () => {
+    const t = "YUMAさんお世話になっております！！\n本文";
+    const r = replaceWaitedOpening(t, G);
+    expect(r.text).toBe(t);
+    expect(r.replaced).toBe(0);
+  });
+  it("R9 夜の挨拶（夜分遅くに失礼致します）も同じく名前につなぐ", () => {
+    expect(replaceWaitedOpening(YUMA, "夜分遅くに失礼致します！！").text.startsWith("YUMAさん夜分遅くに失礼致します！！\n")).toBe(true);
   });
 });
 
-describe("定数の自己整合", () => {
-  it("C1 許す一覧に内覧日調整・通常返信系を入れていない", () => {
-    for (const ng of ["viewing_invite", "meeting_place", "greeting_viewing", "condition_hearing"]) {
-      expect(WAITED_ALLOWED_ACTIONS.has(ng)).toBe(false);
-    }
+describe("入口 neutralizeWaitedInExample（手本に見せない）", () => {
+  it("★ N1 手本の「お待たせ致しました」を「お世話になっております」に置き換える", () => {
+    expect(neutralizeWaitedInExample("じゅなさんお待たせ致しました！！\n本文")).toBe("じゅなさんお世話になっております！！\n本文");
   });
-  it("★ C1' 実測で外した場面を戻さない（2026-09-21・scripts/audit-waited-when.ts）", () => {
-    // property_recommendation 559件中1件（0.2%）／ acknowledge_check 13件中0件（0.0%）
-    // property_search・phone_followup は実測が1件も無かった（推測で入れていた）
-    for (const [ng, why] of [
-      ["property_recommendation", "実送信 0.2%（559件）"],
-      ["acknowledge_check", "実送信 0.0%（13件）・「確認します」と言う通でまだ結果が無い"],
-      ["property_search", "実測 0件（推測で入れていた）"],
-      ["phone_followup", "実測 0件（推測で入れていた）"],
-    ] as Array<[string, string]>) {
-      if (WAITED_ALLOWED_ACTIONS.has(ng)) throw new Error(`${ng} を戻している: ${why}`);
-    }
+  it("★ N2 置き換えて挨拶が2つ並んだら1つに畳む", () => {
+    expect(neutralizeWaitedInExample("お客様お世話になっております！！\nお待たせ致しました！！\n本文")).toBe("お客様お世話になっております！！\n本文");
   });
-  it("C2 許す一覧は空でない（配線の事故で全部消えていないこと）", () => {
-    expect(WAITED_ALLOWED_ACTIONS.size >= 8).toBe(true);
+  it("N3 null・無い時はそのまま", () => {
+    expect(neutralizeWaitedInExample(null)).toBe("");
+    expect(neutralizeWaitedInExample("本文")).toBe("本文");
   });
 });
 

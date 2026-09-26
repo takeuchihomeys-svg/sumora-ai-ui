@@ -6,6 +6,8 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 import { extractSelfInitiatedSends } from "@/app/lib/brain-core";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // ── 申込到達会話からの自動学習（analyze-applying）─────────────────────────────
 // status が申込段階（applying / 旧名 application, screening, contract / approved）に
@@ -284,6 +286,8 @@ type ConvResult = { learned: boolean; skipped?: string; error?: string };
 
 // 1会話分の学習処理。成功（または学習対象外としてスキップ確定）時のみ learned_at を更新する。
 async function learnFromConversation(conv: { id: string; customer_name: string | null; status: string }): Promise<ConvResult> {
+  // 2026-09-27 竹内: テスト用の会話（YUMA）は申込到達の学習に入れない（learned_at も付けない＝何も書かない）
+  if (isTestConversation(conv.id)) return { learned: false, skipped: "test_conversation" };
   // 1. 会話の全メッセージ（[画像]は一旦残す。AIX画像送信はプレースホルダとして学習に使う）
   const { data: msgRows, error: msgErr } = await supabase
     .from("messages")

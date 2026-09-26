@@ -55,7 +55,8 @@ import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensure
 import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定と除去を返信生成・テンプレートと同じ関数で
-import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime } from "@/app/lib/waited-scope";
+// 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない（許す一覧は空・出口は replaceWaitedOpening・手本は neutralizeWaitedInExample）
+import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime, replaceWaitedOpening, neutralizeWaitedInExample } from "@/app/lib/waited-scope";
 // 2026-09-21 竹内「実際のスタッフが送るような文が生成されていない可能性があるってこと？」: 漢字/ひらがなの混ぜ方
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
@@ -81,6 +82,8 @@ import { limitViewingSlotsInReply, stripDayAfterTomorrowLabel } from "@/app/lib/
 import { isMgmtAfterHours, ensureAfterHoursApplyLine, stripLeadingBareAck, APPLY_INFO_SENT_RE } from "@/app/lib/after-hours";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 300;
 
@@ -313,7 +316,7 @@ async function getPropertyExamples(): Promise<string> {
     .order("created_at", { ascending: false });
   if (!data || data.length === 0) return "";
   return (data as { sent_reply: string }[])
-    .map((r, i) => `【実例${i + 1}】\n${r.sent_reply}`)
+    .map((r, i) => `【実例${i + 1}】\n${neutralizeWaitedInExample(r.sent_reply)}`)
     .join("\n\n---\n\n");
 }
 
@@ -369,7 +372,8 @@ async function getPropertyKnowledge(conversationId?: string, customerContext?: s
   // 使用追跡（after()でレスポンス返却後も実行保証）
   const usedIds = [...(diffLearned ?? []), ...(stateKnowledge ?? []), ...vectorExtras]
     .map(r => (r as KRow).id).filter(Boolean);
-  if (usedIds.length) {
+  // 2026-09-27 竹内: テスト用の会話（YUMA）はナレッジの使用回数・答え合わせに入れない
+  if (usedIds.length && !isTestConversation(conversationId)) {
     after(async () => {
       try {
         await supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds });
@@ -389,11 +393,11 @@ async function getPropertyKnowledge(conversationId?: string, customerContext?: s
   }
   const parts: string[] = [];
   if ((diffLearned?.length ?? 0) > 0)
-    parts.push("【🔴 過去の修正パターン（必ず守る）】\n" + (diffLearned as KRow[]).map(r => `・${r.title}: ${r.content}`).join("\n"));
+    parts.push("【🔴 過去の修正パターン（必ず守る）】\n" + (diffLearned as KRow[]).map(r => `・${r.title}: ${neutralizeWaitedInExample(r.content)}`).join("\n"));
   if ((stateKnowledge?.length ?? 0) > 0)
-    parts.push("【物件オススメのノウハウ】\n" + (stateKnowledge as KRow[]).map(r => `・${r.content}`).join("\n"));
+    parts.push("【物件オススメのノウハウ】\n" + (stateKnowledge as KRow[]).map(r => `・${neutralizeWaitedInExample(r.content)}`).join("\n"));
   if (vectorExtras.length > 0)
-    parts.push("【📍 このお客様の状況に関連するノウハウ（RAG）】\n" + vectorExtras.map(r => `・${r.content}`).join("\n"));
+    parts.push("【📍 このお客様の状況に関連するノウハウ（RAG）】\n" + vectorExtras.map(r => `・${neutralizeWaitedInExample(r.content)}`).join("\n"));
   return parts.join("\n\n");
 }
 
@@ -509,7 +513,8 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
 
     // 使用追跡（after()でレスポンス返却後も実行保証）
     const allIds = [...sortedDiff, ...sortedOther, ...vectorExtras].map(r => r.id).filter(Boolean);
-    if (allIds.length) {
+    // 2026-09-27 竹内: テスト用の会話（YUMA）はナレッジの使用回数・答え合わせに入れない
+    if (allIds.length && !isTestConversation(conversationId)) {
       after(async () => {
         try {
           await supabase.rpc("increment_knowledge_used_count", { p_ids: allIds });
@@ -532,11 +537,11 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     const parts: string[] = [];
     if (sortedDiff.length > 0) {
       parts.push("【🔴 過去の修正パターン（必ず守る）】\n" +
-        sortedDiff.map(r => `・${r.title}: ${r.content}`).join("\n"));
+        sortedDiff.map(r => `・${r.title}: ${neutralizeWaitedInExample(r.content)}`).join("\n"));
     }
     if (sortedOther.length > 0) {
       parts.push("【📚 ノウハウ・鉄則（言い回し・表現の参考にすること。ただし上記の【構成】ルールと矛盾する場合は【構成】ルールを最優先にすること）】\n" +
-        sortedOther.map(r => `・${r.content}`).join("\n"));
+        sortedOther.map(r => `・${neutralizeWaitedInExample(r.content)}`).join("\n"));
     }
     if ((editExamples?.length ?? 0) > 0) {
       parts.push("【✏️ スタッフが実際に改善した送信例（この質感・表現を目指すこと。ただし上記の【構成】ルールを最優先にすること）】\n" +
@@ -567,7 +572,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     // F04: pgvector で追加取得した文脈関連ルール
     if (vectorExtras.length > 0) {
       parts.push("【🔍 この顧客メッセージへの関連ルール（文脈検索）】\n" +
-        vectorExtras.map(r => `・${r.content}`).join("\n"));
+        vectorExtras.map(r => `・${neutralizeWaitedInExample(r.content)}`).join("\n"));
     }
     return parts.length > 0 ? "\n\n" + parts.join("\n\n") : "";
   } catch (e) {
@@ -617,7 +622,7 @@ async function getStarredExamplesForAction(
     if (!examples.length) return "";
 
     return "\n\n【✅ 過去の成功返信パターン（☆スタッフ承認済み・参考にすること）】\n" +
-      examples.map(e => `顧客:「${safeSlice(e.customer_message, 80)}」\nスタッフ返信:「${safeSlice(e.sent_reply, 200)}」`).join("\n---\n");
+      examples.map(e => `顧客:「${safeSlice(e.customer_message, 80)}」\nスタッフ返信:「${safeSlice(neutralizeWaitedInExample(e.sent_reply), 200)}」`).join("\n---\n");
   } catch {
     return ""; // ☆実例取得失敗は生成自体を止めない
   }
@@ -732,7 +737,7 @@ async function getAixPropertyExamples(
     rows.map((r, i) => {
       const ctx = (r.customer_message ?? "").split("\n")[0];
       const ctxLine = ctx && ctx !== "（初回連絡）" ? `状況:「${safeSlice(ctx, 60)}」\n` : "";
-      return `[実例${i + 1}${r.is_starred ? "⭐" : ""}]\n${ctxLine}${safeSlice(r.sent_reply, 400)}`;
+      return `[実例${i + 1}${r.is_starred ? "⭐" : ""}]\n${ctxLine}${safeSlice(neutralizeWaitedInExample(r.sent_reply), 400)}`;
     }).join("\n\n");
 }
 
@@ -1508,7 +1513,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       ? body.template_sample.trim()
       : null;
     const templateSampleNote = template_sample
-      ? `\n\n【テンプレート見本（このトーン・言い回し・絵文字の使い方を参考にすること）】\n${template_sample}`
+      ? `\n\n【テンプレート見本（このトーン・言い回し・絵文字の使い方を参考にすること）】\n${neutralizeWaitedInExample(String(template_sample))}`
       : "";
 
     // プロンプト管理UIのDB上書きを取得（なければコード定数をフォールバック）
@@ -1569,6 +1574,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // 2026-09-21: ここに全AIX共通で「『お待たせ致しました』は禁止語」と書いてあったのが、
     //   結果を届ける AIX で1通も書けていなかった原因（YUMA で 0/2）。
     //   許す場面（waited-scope）では禁止と書かず、2択（率つき）に差し替える。
+    // ⚠ 2026-09-27 竹内さん決定で上書き: AIX でも使わない。許す一覧が空になったので waitedRateHere は常に null
+    //   → 全 AIX で「禁止語」＋挨拶は「必ず」の固定に戻る（2択・率の材料は出ない）。下の枝は履歴として残す。
     //   実測: property_send 45.7%（668件）／ property_recommendation 0.2%（559件）＝ 場面だけが分ける。
     // 2026-09-21: 2択のどちらに寄せるかを決める唯一の軸（実測で分かれたのはこれだけ）。
     //   前回「お待たせ」で書き出していた → 今回も 55.8% ／ いなかった → 22.6%
@@ -1899,10 +1906,17 @@ async function handleAction(request: NextRequest): Promise<Response> {
       //   ＝「待たせた作業の結果を届ける」場面では正しい文で、そこで消すとスタッフが手で足し直す。
       //   AIX 本体にはこれまで stripWaited が1つも配られておらず、内覧日調整でも素通りしてスタッフが14件消していた。
       //   許す場面（waited-scope.isWaitedAllowed）以外にだけ掛ける。判定は返信生成・テンプレートと同じ関数。
+      // ── 2026-09-27 竹内さん決定で上書き: **AIX でも使わない**（9/27 YUMA の物件ピックアップが「お待たせ致しました」で始まった）──
+      //   waited-scope の許す一覧は空（isWaitedAllowed は常に false）。全 AIX で落とす。
+      //   ① 行頭の挨拶行は replaceWaitedOpening で「[名]さん＋その通の挨拶」に差し替える（旧 stripWaited は
+      //      「〇〇さんお待たせ致しました！！」の文節ごと消して名前の呼びかけまで消していた＝AIX の実送信712通の監査で920/1424）。
+      //      実送信712通×（挨拶あり・本日挨拶済み）で「お待たせ」以外の文字の削除0・残り0（scripts/audit-waited-exit.ts）。
+      //   ② 行頭でない残り（文中の「お待たせ致しました」）だけ従来の stripWaited。
       if (!isWaitedAllowed(currentAction)) {
-        const waited = stripWaited(banned.text);
-        if (waited.removed > 0) {
-          console.log(JSON.stringify({ tag: "aix:strip-waited", action: currentAction, conversationId, removed: waited.removed }));
+        const head = replaceWaitedOpening(banned.text, greetingPhrase);
+        const waited = stripWaited(head.text);
+        if (head.replaced > 0 || waited.removed > 0) {
+          console.log(JSON.stringify({ tag: "aix:strip-waited", action: currentAction, conversationId, headReplaced: head.replaced, removed: waited.removed }));
           banned.text = waited.text;
         }
       }
@@ -2913,14 +2927,15 @@ ${SMORA_COMMON_RULES}
         .select("sent_reply")
         .in("conversation_state", ["property_send", "proposing"])
         .eq("is_starred", true)
-        .or("sent_reply.ilike.%ピックアップ%,sent_reply.ilike.%お待たせ致しました%")
+        // 2026-09-27: 「お待たせ致しました」で引く条件は外した（AIX でも使わない・竹内さん決定）
+        .ilike("sent_reply", "%ピックアップ%")
         .order("created_at", { ascending: false })
         .limit(5);
 
       const sendExamplesText = (sendExamples || []).length > 0
         ? "\n\n【スモラの実際の物件送付メッセージ例 — 文体・言い回し・構成を必ずこれに合わせること】\n" +
           (sendExamples as { sent_reply: string }[])
-            .map((r, i) => `[例${i + 1}]\n${r.sent_reply}`)
+            .map((r, i) => `[例${i + 1}]\n${neutralizeWaitedInExample(r.sent_reply)}`)
             .join("\n\n")
         : "";
 
@@ -3792,7 +3807,7 @@ ${SMORA_COMMON_RULES}
       const viewingExamplesText = (viewingExamples || []).length > 0
         ? "\n\n【⭐ スモラの実際の内覧誘導例（文体・テンポ・絵文字をこれに合わせる）】\n" +
           (viewingExamples as { customer_message: string; sent_reply: string }[])
-            .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`)
+            .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${neutralizeWaitedInExample(r.sent_reply)}」`)
             .join("\n\n")
         : "";
 
@@ -3981,7 +3996,7 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
       const examplesText = (applyExamples || []).length > 0
         ? "\n\n【⭐ スモラの実際の申込後押し例（文体・テンポ・感嘆符・絵文字をこれに合わせる）】\n" +
           (applyExamples as { customer_message: string; sent_reply: string }[])
-            .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`)
+            .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${neutralizeWaitedInExample(r.sent_reply)}」`)
             .join("\n\n")
         : "";
 
@@ -5500,7 +5515,8 @@ M/D（曜日）HH:MM〜HH:MM
       ]);
 
       // 見積書・物件ピックアップ系はフィルタして結果報告に近いものだけ残す
-      const relevantKeywords = ["空室", "募集終了", "満室", "お待たせ", "確認", "案内", "退去"];
+      // 2026-09-27: 「お待たせ」は手本を選ぶ語から外した（AIX でも使わない・竹内さん決定）
+      const relevantKeywords = ["空室", "募集終了", "満室", "確認", "案内", "退去"];
       const filteredExamples = (checkExamples || []).filter((r) =>
         relevantKeywords.some((kw) => r.sent_reply?.includes(kw))
       );
@@ -5509,14 +5525,14 @@ M/D（曜日）HH:MM〜HH:MM
         ? "\n\n【スモラの実際の送信例（文体・感嘆符・絵文字をこれに合わせる）】\n" +
           filteredExamples
             .slice(0, 4)
-            .map((r, i) => `[実例${i + 1}]\nスモラ:「${r.sent_reply}」`)
+            .map((r, i) => `[実例${i + 1}]\nスモラ:「${neutralizeWaitedInExample(r.sent_reply)}」`)
             .join("\n\n")
         : "";
 
       const knowledgeText = (checkKnowledge || []).length > 0
         ? "\n\n【スモラのノウハウ（必ず従うこと）】\n" +
           (checkKnowledge as { category: string; content: string }[])
-            .map((r) => `・[${r.category}] ${r.content}`)
+            .map((r) => `・[${r.category}] ${neutralizeWaitedInExample(r.content)}`)
             .join("\n")
         : "";
 

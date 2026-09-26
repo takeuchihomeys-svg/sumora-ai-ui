@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // Opus呼び出し（80件履歴）を1会話ずつシーケンシャル処理するため延長
 export const maxDuration = 300;
@@ -42,7 +44,8 @@ export async function POST(req: NextRequest) {
   }
 
   type ConvRow = { id: string; customer_name: string | null; status: string };
-  const typedConvs = convs as ConvRow[];
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const typedConvs = (convs as ConvRow[]).filter((c) => !isTestConversation(c.id));
 
   // 2) 既に latent_intent_pattern 学習済みの顧客を把握
   //   （title LIKE %パターン% AND content LIKE %潜在意識% の既存knowledgeに customer_name が含まれているか）
@@ -232,7 +235,8 @@ export async function GET(req: NextRequest) {
     (r) => `${r.title ?? ""}\n${r.content ?? ""}`
   );
 
-  const typedConvs = (convs ?? []) as Array<{ id: string; customer_name: string | null }>;
+  // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
+  const typedConvs = ((convs ?? []) as Array<{ id: string; customer_name: string | null }>).filter((c) => !isTestConversation(c.id));
   const remaining = typedConvs.filter(
     (c) => !c.customer_name || !learnedTexts.some((t) => t.includes(c.customer_name as string))
   ).length;

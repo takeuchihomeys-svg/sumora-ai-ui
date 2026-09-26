@@ -7314,3 +7314,33 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - ⚠ 開発サーバは HMR で使用量の記録の包みが外れる（llm-alt-provider は包み直すが記録は外れたまま）ので、まとめの呼び出しの記録は本番の llm_usage_logs（action='apply_period_summary'）で見る。SDK には `fetch: (i, n) => globalThis.fetch(i, n)` を渡した（既定では出口を通っていなかった）
 - **確かめ**: `npx tsx --env-file=.env.local scripts/audit-deepseek-pii.ts --days=30` の ⑤（線のある会話ごとの状態・渡しているまとめの再検査＝0件であること・1件あたりのトークン）
 - テスト: `app/lib/__tests__/apply-period-summary.test.ts`（36）
+
+## 2026-09-27 YUMA の返信テストの前に4つ直した（竹内「全部それで」）
+
+### 1. AIX でも「お待たせ致しました」を使わない（9/20 の「結果を届ける AIX では許す」を上書き）
+- `app/lib/waited-scope.ts` の許す一覧 `WAITED_ALLOWED_ACTIONS` を**空**に（`isWaitedAllowed` は常に false）。2択（`buildWaitedOpeningChoice`）・率の材料（`buildWaitedNote`）は空文字になり、全 AIX 共通の挨拶ルールは「禁止語」に戻る。率の表 `WAITED_SENT_RATE` と監査用の `wasWaitedAllowedUntil0926` は残した
+- 入口: 手本（`ai_reply_examples` の実送信・テンプレ見本・ナレッジ本文）は `neutralizeWaitedInExample` で「お世話になっております」に置き換えて見せる。物件ピックアップの手本を「お待たせ致しました」で引く条件・物件確認の手本を選ぶ語から「お待たせ」を外した
+- 出口: `aix/action` の finalize で `replaceWaitedOpening(text, greetingPhrase)` → 残りだけ従来の `stripWaited`。行頭の「([名]さん)?(大変)?お待たせ致しました！！」だけを取り、挨拶がまだなら「[名]さん＋挨拶」、本日挨拶済み・既に挨拶ありなら語だけ落として名前行を残す。AIX 実送信712通×2条件で残り0・誤削除0（`scripts/audit-waited-exit.ts`）。旧 stripWaited は名前まで消していた（920/1424）
+- テンプレート生成（`aix-template-generate`）は従来どおり全部落とす（許す一覧が空なので常に）
+- YUMA の実履歴で DeepSeek（`LLM_TEST_MODE=deepseek-all`）に property_send を3回作らせて 0/3（入口だけで止まり、出口の出番なし）
+- 固定テンプレ（物件確認した・申込あり）の「前回お待たせなら置き換える」枝も `isWaitedAllowed` が false なので出ない
+
+### 2. トークの上の「主のお部屋」を新しい出来事から選ぶ（`app/lib/customer-state.ts`）
+- `FOCUS_FRESH_DAYS=21`・`isStaleRoom`: 進んだ出来事（送った以外）が21日より前だけのお部屋は主にしない。古い進んだお部屋しか無く、その後に送っていれば一番新しい送付の物件を主に。候補しかない会話は従来どおり主なし。動きの無い会話は従来の順位
+- 「他N件」も主が新しい時は古いお部屋を数えない
+- 前後比較 `scripts/audit-customer-state-focus.ts`（直近40日211会話で主が変わったのは9件・全部目で読んで妥当）。14日だと内覧後に探し続けている会話まで倒れるので21日
+- YUMA: 「📨 提案中 コンフォリア・リヴ北久宝寺Q｜内覧日経過(未確認) 他4件」→「📨 提案中 S-FORT大正リヴィエール 603号室」
+
+### 3. 学習から YUMA を全部外す（一覧は `app/lib/test-conversations.ts` の1か所）
+- テスト会話を足す時は `TEST_CONVERSATION_IDS` に足すだけ。`scoring-learning-server` の `YUMA_CONVERSATION_ID` もここからの再輸出に
+- その場の書き込みは入口で返す（save-reply-example・log-aix-usage のギャップ学習・learn-action-patterns・learn-template-selection・learn-template-phrases・templates/increment-use・learn-closing-pattern・ナレッジ使用回数/適用記録（generate-reply・aix/action・aix-template-generate）・締め戦略ログ・customer-summary の予測ログ・brain-core の学習キュー・analyze-closed-conversation・property-selection-learning・analyze-applying・aix/adapt-feedback・reply_engagement_signals）
+- バッチ（analyze-diffs・analyze-aix-*・weekly-learning・aix-weekly-learning・calc-aix-attribution・brain-aix-eval・eval-*・auto-template-candidates・calc-template-scene-stats・update-action-confidence・aix-shadow-eval・learn-trigger-rules ほか計26ファイル）は読んだ直後に外す。NULL になり得る列に `.not(in)` を使わない（NULL の行まで落ちる）
+- 消した YUMA の行: ai_reply_examples 32・そこから作られた ai_reply_knowledge 23・knowledge_apply_log 16,647・action_pattern_logs 40・template_selection_logs 1・winning_pattern_logs 17・closing_strategy_logs 118・next_action_logs 15・brain_learning_queue 1・reply_engagement_signals 23・property_selection_patterns 2・ai_template_candidates 1
+- 戻せない物（回数を足す形）: ナレッジの used_count（YUMA の適用記録 16,647 件ぶん）・テンプレの use_count・フレーズの usage_count（会話の列が無く件数不明）。trigger_action_rules・aix_action_attribution・brain_aix_feedback は元のログから作り直す cron なので次の実行で YUMA ぬきになる
+- 残し: recommendation_snapshots 3（9/27 の送付に対応・scoring-learning は元から YUMA を外している）・DB 関数 `backfill_outcome_status`（SQL は触っていない・YUMA の行はもう無い）
+
+### 4. YUMA の古い記録を片付けた
+- 8/24 の見積書タスク（line_tasks・pending）→ completed（line-tasks/complete と同じ patch）
+- ブレインの判断（9/23 の段階＝申込）→ `brain_analyzed_at`・`brain_full_analyzed_at`・`brain_full_msg_count`・`last_brain_meta`・`brain_strategy`・`conversation_direction`・`suggested_aix_meta`・`suggested_next_aix` を空に → Claude のブレインを origin=staff で呼んで full で作り直し（段階＝proposing・action なし「顧客の反応を待つ」）。AIX 要対応・カレンダー・タスクの新規は0
+- 残っていた他の物: 未完了の AIX 要対応・カレンダー・下書き・予約送信は無し。9/27 の物件31件・送った記録3件・status（proposing）・deepseek_cutoff_at は触っていない
+- ⚠ ブレインを tsx から呼ぶ時は next/server の `after` がリクエストの外で落ちる（1回目は LLM を呼んだ後に保存で失敗）。Module._load で `after` を差し替える shim が要る

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+// 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
+import { isTestConversation } from "@/app/lib/test-conversations";
 
 // ④ action_type → phrase_dictionary カテゴリ（save-reply-example の STATE_TO_PHRASE_CATEGORY と対応）
 const ACTION_TO_PHRASE_CATEGORY: Record<string, string> = {
@@ -33,7 +35,11 @@ export async function POST(req: NextRequest) {
     action_type: string;
     conversation_status: string;
     sent_text: string;
+    /** 2026-09-27: テスト用の会話（YUMA）を外すために受け取る */
+    conversation_id?: string | null;
   };
+  // 2026-09-27 竹内: テスト用の会話（YUMA）は言い回しの学習（回数を足す）に入れない
+  if (isTestConversation(body.conversation_id)) return NextResponse.json({ ok: true, skipped: true, reason: "test_conversation" });
 
   if (!body.action_type || !body.sent_text) {
     return NextResponse.json({ ok: false, error: "missing fields" });
