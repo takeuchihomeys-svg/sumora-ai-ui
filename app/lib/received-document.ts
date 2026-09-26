@@ -20,6 +20,8 @@
 //   同じ書類をもう一度依頼している … 4件（いずれも**別の**書類の追加依頼＝3親等以内のご情報・転勤先の住所）
 //   ＝書類が届いた返信は「お礼 → こちらが次にやる事」で、届いた書類の再依頼はしない。
 
+import { savedPersonalDocumentLabel, INCOME_DOCUMENT_TYPE, INCOME_DOCUMENT_LABEL } from "@/app/lib/personal-document-guard";
+
 /** ファイルメッセージの本文の印（画像の "[画像]" と同じ役割） */
 export const FILE_MSG_PREFIX = "[ファイル]";
 
@@ -40,8 +42,12 @@ export function fileNameFromText(text: string | null | undefined): string | null
 /**
  * 書類の種類（ファイル名・画像の読み取り文から）。
  * スタッフが会話で使う呼び名に揃える（在籍証明の代わりに労働条件通知書が届く場面がある＝友哉事例）。
+ *
+ * nameOnly: ファイル名と、保存した種類の名前（"[画像] 収入証明書（課税証明書）"）にだけ使う。
+ *   昔の画像の書き起こし（全文）には当てない＝物件資料の必要書類欄「身分証・収入証明 連帯保証人様：印鑑証明書」を
+ *   「収入証明書が届いた」にしない（2026-09-26 に足した種類は全部 nameOnly）。
  */
-export const DOCUMENT_KINDS: readonly { label: string; re: RegExp; provesEmployment?: boolean }[] = [
+export const DOCUMENT_KINDS: readonly { label: string; re: RegExp; provesEmployment?: boolean; nameOnly?: boolean }[] = [
   { label: "労働条件通知書", re: /労働条件(?:通知書)?/, provesEmployment: true },
   { label: "雇用契約書", re: /雇用契約書?/, provesEmployment: true },
   { label: "内定通知書", re: /内定(?:通知書)?/, provesEmployment: true },
@@ -49,6 +55,13 @@ export const DOCUMENT_KINDS: readonly { label: string; re: RegExp; provesEmploym
   { label: "源泉徴収票", re: /源泉徴収票?/, provesEmployment: true },
   { label: "給与明細", re: /給与明細|給料明細/, provesEmployment: true },
   { label: "確定申告書", re: /確定申告書?/, provesEmployment: true },
+  // 2026-09-26 竹内「収入証明書なども収入証明書とするだけで、文字おこししないようにする」
+  //   書き起こしを捨てて種類の名前だけ残す（personal-document-guard.ts）ので、その名前をここで読み戻す
+  { label: "課税証明書", re: /課税証明|所得証明|非課税証明/, provesEmployment: true, nameOnly: true },
+  { label: "年金の通知書", re: /年金.{0,4}通知書?|年金証書/, provesEmployment: true, nameOnly: true },
+  { label: "辞令", re: /辞令/, provesEmployment: true, nameOnly: true },
+  { label: "収入証明書", re: /収入証明/, provesEmployment: true, nameOnly: true },
+  { label: "印鑑登録証明書", re: /印鑑登録証明|印鑑証明/, nameOnly: true },
   { label: "運転免許証", re: /運転免許(?:証)?|免許証/ },
   { label: "マイナンバーカード", re: /マイナンバー|個人番号/ },
   { label: "保険証", re: /保険証|健康保険/ },
@@ -58,11 +71,17 @@ export const DOCUMENT_KINDS: readonly { label: string; re: RegExp; provesEmploym
   { label: "年金手帳", re: /年金手帳?/ },
 ];
 
-/** ファイル名・読み取り文から書類の種類を1つ決める（分からなければ null） */
-export function classifyDocumentName(name: string | null | undefined): string | null {
+/**
+ * ファイル名・読み取り文から書類の種類を1つ決める（分からなければ null）
+ * opts.transcript: 画像の書き起こし（全文）に当てる時は nameOnly の種類を使わない
+ */
+export function classifyDocumentName(name: string | null | undefined, opts: { transcript?: boolean } = {}): string | null {
   const n = (name ?? "").trim();
   if (!n) return null;
-  for (const k of DOCUMENT_KINDS) if (k.re.test(n)) return k.label;
+  for (const k of DOCUMENT_KINDS) {
+    if (opts.transcript && k.nameOnly) continue;
+    if (k.re.test(n)) return k.label;
+  }
   return null;
 }
 
@@ -111,9 +130,11 @@ export function detectReceivedDocuments(messages: readonly MsgLike[], opts: { li
       continue;
     }
     if (!text.startsWith("[画像]")) continue;
-    const label = classifyDocumentName(text);
-    if (!label && m.image_type !== "id_document") continue;
-    out.push({ via: "image", fileName: null, label: label ?? "本人確認書類", at });
+    // 2026-09-26: 収入・身元の証明書類は書き起こしを捨てて "[画像] 収入証明書（給与明細）" の形で保存する。
+    //   まずその形を読み戻す（形そのものの時だけ）→ 無ければ従来どおり書き起こし（昔の行）から読む
+    const label = savedPersonalDocumentLabel(text) ?? classifyDocumentName(text, { transcript: true });
+    if (!label && m.image_type !== "id_document" && m.image_type !== INCOME_DOCUMENT_TYPE) continue;
+    out.push({ via: "image", fileName: null, label: label ?? (m.image_type === INCOME_DOCUMENT_TYPE ? INCOME_DOCUMENT_LABEL : "本人確認書類"), at });
   }
   // 新しい物を優先して上限まで（同じ種類は1つに）
   const seen = new Set<string>();

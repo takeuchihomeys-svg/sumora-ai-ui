@@ -43,7 +43,8 @@ export type FirstContactPickupInput = {
  * 電子契約完了画面のスクショ＋名乗りで契約段階のお客様に要対応が立つ）。
  * ⚠ other は除外しない（TikTok のスクショは other で、直る4件の3件がそれ）。null（未読み取り）も除外しない
  */
-const NON_PROPERTY_IMAGE_TYPES = new Set(["id_document", "estimate"]);
+// 2026-09-26 income_document（収入・身元の証明書類・personal-document-guard）も物件の画像ではない
+const NON_PROPERTY_IMAGE_TYPES = new Set(["id_document", "income_document", "estimate"]);
 
 /** 物件の画像／URL で物件を指名してきた（S1 空室確認・property_nomination）。文の物件名だけ（property_word・room_no）は初回では材料にしない */
 export function isFirstContactPropertyNomination(scene: FirstContactSceneLite): boolean {

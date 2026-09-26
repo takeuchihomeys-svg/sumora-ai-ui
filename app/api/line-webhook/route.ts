@@ -2239,7 +2239,8 @@ async function autoPromoteApplyingOnFormImage(
 // ── Claude Vision で画像内容を日本語テキスト抽出 + 画像種別分類 ─────────────
 // buf: LINE Content API から取得済みの ArrayBuffer（二重ダウンロード不要）
 // 既存のVision 1回呼び出しに分類を相乗りさせる（追加APIコストゼロ）
-// imageType: 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'other'
+// imageType: 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'income_document' | 'other'
+// 2026-09-26 income_document（収入・勤め先・身元の証明書類）を足した。本人確認書類と同じく書き起こしは保存しない（personal-document-guard.ts）
 async function extractImageContent(
   buf: ArrayBuffer,
   mimeType: string,
@@ -2274,7 +2275,7 @@ async function extractImageContent(
               },
               {
                 type: "text",
-                text: "1行目に必ず「TYPE: estimate|floor_plan|property_photo|id_document|other」の形式で画像の種類を1つだけ出力してください。\n- estimate=見積書/初期費用明細, floor_plan=間取り図/物件資料, property_photo=室内外の物件写真,\n  id_document=本人確認書類（免許証・保険証・マイナンバー等）, other=それ以外（LINEスクショ含む）\n2行目以降に、この画像に写っているテキスト・会話・情報をすべて書き起こしてください。LINEスクリーンショットの場合は発言者と内容を整理して返してください。画像の説明は不要で、内容だけ返してください。",
+                text: "1行目に必ず「TYPE: estimate|floor_plan|property_photo|id_document|income_document|other」の形式で画像の種類を1つだけ出力してください。\n- estimate=見積書/初期費用明細, floor_plan=間取り図/物件資料, property_photo=室内外の物件写真,\n  id_document=本人確認書類（免許証・保険証・マイナンバー等）,\n  income_document=収入・勤め先・身元の証明書類（源泉徴収票・給与明細・課税証明書・確定申告書・在籍証明書・内定通知書・雇用契約書・労働条件通知書・年金の通知書・通帳・住民票・印鑑登録証明書・記入済みの申込書）※見積書・初期費用の明細・物件資料は含めない,\n  other=それ以外（LINEスクショ含む）\n2行目以降に、この画像に写っているテキスト・会話・情報をすべて書き起こしてください。LINEスクリーンショットの場合は発言者と内容を整理して返してください。画像の説明は不要で、内容だけ返してください。",
               },
             ],
           },
@@ -2289,7 +2290,7 @@ async function extractImageContent(
       content?: Array<{ type: string; text?: string }>;
     };
     const raw = visionData.content?.find((b) => b.type === "text")?.text?.trim() ?? "";
-    const typeMatch = raw.match(/^TYPE:\s*(estimate|floor_plan|property_photo|id_document|other)/i);
+    const typeMatch = raw.match(/^TYPE:\s*(estimate|floor_plan|property_photo|id_document|income_document|other)/i);
     const imageType = typeMatch ? typeMatch[1].toLowerCase() : (raw ? "other" : "");
     const content = raw.replace(/^TYPE:[^\n]*\n?/, "").trim();
     return { imageType, content };
@@ -2355,6 +2356,8 @@ async function fetchAndUploadLineImage(
     //     会話本文に入ると、返信生成のプロンプト（直近25件）にも学習の事例にも載ってしまうため、
     //     後段でマスクするのではなく**保存する前に捨てる**。
     //     捨てても image_type が残るので「書類が届いた」事実は received-document / ブレインに伝わる。
+    // 2026-09-26 竹内「収入証明書なども収入証明書とするだけで、文字おこししないようにする」
+    //   → 収入・勤め先・身元の証明書類も同じ関数で "[画像] 収入証明書（給与明細）" のように種類だけにする（image_type=income_document）
     const newText = imageTextForSave(extractedType, extracted);
     const savedType = imageTypeForSave(extractedType, extracted);
 

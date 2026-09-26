@@ -77,7 +77,7 @@ console.log("── ★ 捨てても事実が伝わる受け皿が実在する�
   // 受け皿が消えると、書類が届いたことに誰も気付かなくなる。
   const received = readFileSync("app/lib/received-document.ts", "utf8");
   t("★ received-document が image_type==='id_document' を本文なしで拾う",
-    /image_type\s*!==\s*"id_document"/.test(received) && /label\s*\?\?\s*"本人確認書類"/.test(received),
+    /image_type\s*!==\s*"id_document"/.test(received) && /label\s*\?\?[^\n]*"本人確認書類"/.test(received),
     "app/lib/received-document.ts の判定を変えたらここも直す");
 
   const brain = readFileSync("app/lib/brain-core.ts", "utf8");

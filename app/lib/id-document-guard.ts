@@ -22,6 +22,8 @@
 //   実データ（画像5,082件）で image_type が NULL/other の中に本物の身分証が7件あった。
 //   そこで type が id_document でなくても、**中身の指紋**に当たれば捨てる。
 
+import { personalDocumentName, INCOME_DOCUMENT_TYPE } from "@/app/lib/personal-document-guard";
+
 /** 会話本文に残す文字列（これだけ。中身は残さない） */
 export const ID_DOCUMENT_LABEL = "本人確認書類";
 export const ID_DOCUMENT_TEXT = `[画像] ${ID_DOCUMENT_LABEL}`;
@@ -57,10 +59,16 @@ export function isIdDocument(imageType: string | null | undefined, content: stri
 /**
  * messages.text に保存する文字列を決める。
  * 本人確認書類なら書き起こしを捨てて「[画像] 本人確認書類」だけにする。
+ * 2026-09-26 竹内「収入証明書なども収入証明書とするだけで、文字おこししないようにする」:
+ *   収入・勤め先・身元の証明書類（給与明細・源泉徴収票・雇用契約書・住民票 等）も書き起こしを捨てて
+ *   「[画像] 収入証明書（給与明細）」「[画像] 住民票」のように種類だけにする（判定は personal-document-guard.ts）。
+ *   本人確認書類を先に見る（「氏名：＋生年月日」の申込書は従来どおり本人確認書類）。
  */
 export function imageTextForSave(imageType: string | null | undefined, content: string | null | undefined): string {
   const t = (content ?? "").trim();
   if (isIdDocument(imageType, t)) return ID_DOCUMENT_TEXT;
+  const doc = personalDocumentName(imageType, t);
+  if (doc) return `[画像] ${doc}`;
   return t ? `[画像] ${t}` : "[画像]";
 }
 
@@ -72,5 +80,8 @@ export function imageTypeForSave(imageType: string | null | undefined, content: 
   const given = (imageType ?? "").trim().toLowerCase();
   if (given === "id_document") return given;
   if (isIdDocument(given, content)) return "id_document";
+  // 収入・身元の証明書類は income_document（実データの給与明細6件は Vision が estimate＝見積書と分類していた。
+  //   見積書のままだと「見積書が届いた」とブレインに伝わる）
+  if (personalDocumentName(given, content)) return INCOME_DOCUMENT_TYPE;
   return given;
 }

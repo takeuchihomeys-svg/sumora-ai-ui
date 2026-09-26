@@ -2432,7 +2432,7 @@ UPDATE region_map SET priority = 100 WHERE source = 'manual' AND priority = 0;
 UPDATE station_map SET priority = 100 WHERE source = 'manual' AND priority = 0;
 
 -- ③ messages 拡張（画像分類・物件紐付け）
--- 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'other'
+-- 'estimate' | 'floor_plan' | 'property_photo' | 'id_document' | 'income_document'（2026-09-26・収入・身元の証明書類＝書き起こしは保存しない） | 'other'
 -- webhook受信時にVisionで1回分類 → brain信号3.5の「全画像=見積書」盲目仮定を解消
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_type TEXT;
 -- sent_properties.id への参照（URL一致・quoted_message_id 経由で自動リンク）
