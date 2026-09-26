@@ -903,7 +903,9 @@ async function setupAltProviderGuards(ctx: AixReqCtx, conversationId: string | n
       //   status ∪ スタッフの印 ∪ 申込へ押下 ∪ 本人確認書類の受信 を1つの純関数で見る（app/lib/post-apply.ts）
       const facts = await loadPostApplyFacts(supabase, conversationId);
       const r = resolvePostApply(facts);
-      ctx.postApply = r.postApply;
+      // 2026-09-26 竹内（申込中は DeepSeek に渡さない・戻したら切り替え以降だけ）: 切り替え時刻で切る仕組みができるまで、
+      //   否決で戻した会話（movedBack）も DeepSeek に回さない（履歴・要約に申込中の中身が残るため）。generate-reply と同じ
+      ctx.postApply = r.postApply || r.movedBack;
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "aix:post-apply", conversationId, reason: r.reason, action }));
     }
     if (!willRouteAlt(action, { postApply: ctx.postApply })) return;   // 回らないならマスクもしない

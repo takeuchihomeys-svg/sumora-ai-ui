@@ -3135,7 +3135,11 @@ export async function POST(req: NextRequest) {
       autoSendConversation = row?.auto_send_enabled === true;
       const r = resolvePostApply(facts);
       postApplyResolved = r;
-      postApplyConversation = r.postApply;
+      // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、申込落ちてステータスを切り替えたら切り替えたところ以降渡せば個人情報防げる」:
+      //   切り替えた時刻より後だけを渡す仕組み（deepseekSafeCutoff・消えない列）ができるまでの歯止め — 戻した会話（movedBack）は
+      //   履歴25件・要約・セーブデータに申込中の中身が残るので DeepSeek に回さない（Claude のまま）。下書きの生成は止めない（postApplyResolved は変えない）
+      //   監査: scripts/audit-deepseek-pii.ts（9/23 の歯止めの後も戻した5会話で11回届いていた）
+      postApplyConversation = r.postApply || r.movedBack;
       if (r.postApply && r.reason !== "status") console.log(JSON.stringify({ tag: "generate-reply:post-apply", conversationId, reason: r.reason }));
     } catch {
       // 読めなければ自動返信は false（通常どおり）だが、申込以降は true に倒す（個人情報を外に出さない）

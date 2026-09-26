@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+import { loadPostApplyFacts, resolvePostApply } from "@/app/lib/post-apply";
 
 export const maxDuration = 25;
 
@@ -129,12 +130,22 @@ export async function POST(req: NextRequest) {
   // AIX-META取得（最新会話からwinning_pattern/repeated_concernを取得）
   const { data: convRow } = await supabase
     .from("conversations")
-    .select("suggested_aix_meta")
+    .select("id, suggested_aix_meta")
     .eq("property_customer_id", propertyCustomerId)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   const aixMeta = convRow?.suggested_aix_meta as { winning_pattern?: string; repeated_concern?: string } | null;
+  // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」:
+  //   この経路は DeepSeek に会話由来の要約（ai_summary_json・winning_pattern・repeated_concern・personality_profile）を
+  //   申込の判定なしで送っていた（scripts/audit-deepseek-pii.ts）。切り替え時刻で切る仕組みができるまで、申込以降・否決で戻した会話・
+  //   判定が読めない時は、会話由来の要約を DeepSeek に渡さない（物件と条件だけで点を付ける）
+  let conversationSummaryAllowed = false;
+  try {
+    const convId = (convRow as { id?: string } | null)?.id;
+    if (convId) { const r = resolvePostApply(await loadPostApplyFacts(supabase, convId)); conversationSummaryAllowed = !r.postApply && !r.movedBack; }
+    else conversationSummaryAllowed = true; // 会話が無い＝申込の記録も無い
+  } catch { conversationSummaryAllowed = false; }
 
   if (customerError || !customer) {
     return NextResponse.json(
@@ -437,10 +448,10 @@ export async function POST(req: NextRequest) {
       // [QW5] ネガティブシグナル（同じ候補の中からスタッフが選ばなかった物件）
       if (noResponsePatterns.length > 0) contextParts.push(`【同じ候補の中からスタッフが選ばなかった物件の特徴（低評価寄りにすること）】${noResponsePatterns.join("・")}`);
       if (crossProfileTags.length > 0)  contextParts.push(`【類似顧客の傾向】${crossProfileTags.join("・")}（この顧客の配点傾向: ${weightsUsed}）`);
-      if (aixMeta?.winning_pattern)    contextParts.push(`【この顧客の成約パターン（スコアに応用）】${aixMeta.winning_pattern}`);
-      if (aixMeta?.repeated_concern)   contextParts.push(`【この顧客の繰り返す懸念（懸念を解消できない物件は減点）】${aixMeta.repeated_concern}`);
-      if (customer.personality_profile) contextParts.push(`【顧客タイプ】${customer.personality_profile}`);
-      if (customer.ai_summary_json) {
+      if (conversationSummaryAllowed && aixMeta?.winning_pattern)    contextParts.push(`【この顧客の成約パターン（スコアに応用）】${aixMeta.winning_pattern}`);
+      if (conversationSummaryAllowed && aixMeta?.repeated_concern)   contextParts.push(`【この顧客の繰り返す懸念（懸念を解消できない物件は減点）】${aixMeta.repeated_concern}`);
+      if (conversationSummaryAllowed && customer.personality_profile) contextParts.push(`【顧客タイプ】${customer.personality_profile}`);
+      if (conversationSummaryAllowed && customer.ai_summary_json) {
         const summaryStr = typeof customer.ai_summary_json === "string"
           ? customer.ai_summary_json
           : JSON.stringify(customer.ai_summary_json);
