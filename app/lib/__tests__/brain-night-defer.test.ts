@@ -90,6 +90,10 @@ console.log("── isOffSwitch / env の読み方");
   t("decideNightDeferNow: env を読んで判定（夜・customer_message → defer）", decideNightDeferNow("customer_message", night, {}).defer === true);
   t("decideNightDeferNow: BRAIN_NIGHT_DEFER=off → 走る", decideNightDeferNow("customer_message", night, { BRAIN_NIGHT_DEFER: "off" }).defer === false);
   t("decideNightDeferNow: BRAIN_NIGHT_HOURS_JST=\"2-3\" なら 1:00 JST は夜でない", decideNightDeferNow("customer_message", night, { BRAIN_NIGHT_HOURS_JST: "2-3" }).reason === "day");
+  // 2026-09-27 竹内「YUMA だけその制限を外す」
+  t("テスト用の会話（YUMA）は夜でも見送らない", decideNightDeferNow("customer_message", night, {}, "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7").defer === false && decideNightDeferNow("customer_message", night, {}, "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7").reason === "test-conversation");
+  t("ほかの会話は今まで通り夜は見送る", decideNightDeferNow("customer_message", night, {}, "00000000-0000-0000-0000-000000000000").defer === true);
+  t("会話を渡さない入口（sweep / cron）は今まで通り", decideNightDeferNow("sweep", night, {}).defer === true);
 }
 
 console.log(`\n${passed} OK / ${failed} NG`);

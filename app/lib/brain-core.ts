@@ -3958,7 +3958,7 @@ async function analyzeAndSaveBrainMetaInner(
   // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から分析する」: 保険の関門（入口＝bg-async / cron / sweep / webhook で先に止める。ここは名札付きの呼び出しが漏れた時の最後の砦）。
   //   DB 読みゼロで判定。見送りは **false**（"unchanged" にしない: 申込以降など meta が残る会話で古い判断が新鮮なスナップショットとして返り、通知・カレンダーまで動く）。
   //   brain_analyzed_at は打刻しない（打刻すると sweep の30分バックオフに乗り 9:00 の拾いが最大30分遅れる）
-  const nightDefer = decideNightDeferNow(runOpts?.origin);
+  const nightDefer = decideNightDeferNow(runOpts?.origin, undefined, undefined, conversationId);
   if (nightDefer.defer) {
     console.log(JSON.stringify({ tag: "brain:night-defer", stage: "brain-core", conversationId, origin: runOpts?.origin ?? null, until: new Date(nightDefer.until!).toISOString(), reason: nightDefer.reason }));
     return false;

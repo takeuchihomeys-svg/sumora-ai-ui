@@ -1,3 +1,4 @@
+import { isTestConversation } from "./test-conversations";
 // app/lib/brain-night-defer.ts
 // 22:00〜9:00（JST）に届いたお客様のメッセージは分析しない（ブレインも下書きも）で、9:00 から順に分析する — その判定だけを置く純関数
 //
@@ -87,7 +88,12 @@ export function decideNightDefer(i: NightDeferInput): NightDeferDecision {
   return { defer: true, until: nightDeferUntilMs(i.nowMs, i.range), reason: `night(${i.range.start}-${i.range.end})` };
 }
 
-/** 入口で呼ぶ形（env と今の時刻を読んで decideNightDefer に渡すだけ。時刻の比較を入口ごとにコピペしない） */
-export function decideNightDeferNow(origin: BrainOrigin | undefined, nowMs: number = Date.now(), env: EnvLike = process.env): NightDeferDecision {
+/**
+ * 入口で呼ぶ形（env と今の時刻を読んで decideNightDefer に渡すだけ。時刻の比較を入口ごとにコピペしない）。
+ * 2026-09-27 竹内「YUMA だけその制限を外す」: テスト用の会話（test-conversations.ts の一覧）は夜でも見送らない（テストを朝まで待たせない）。
+ *   会話が1つに決まる入口（webhook・bg-async・brain-core）だけ conversationId を渡す。sweep / cron は会話をまたぐので渡さない
+ */
+export function decideNightDeferNow(origin: BrainOrigin | undefined, nowMs: number = Date.now(), env: EnvLike = process.env, conversationId?: string | null): NightDeferDecision {
+  if (isTestConversation(conversationId)) return { defer: false, until: null, reason: "test-conversation" };
   return decideNightDefer({ nowMs, origin, enabled: isNightDeferEnabled(env), range: nightRangeFromEnv(env) });
 }

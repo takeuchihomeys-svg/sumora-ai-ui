@@ -234,7 +234,7 @@ export async function POST(req: NextRequest) {
   //   claim（draft_attempted_at）も draft_pending_at も触らない → 朝は cron の orphaned / sweep がそのまま拾う（新カラム不要）。
   //   スタッフの明示操作は再生成ボタン（generate-reply 手動）で夜も動く（page.tsx は night_defer で再生成ボタンを出す）
   const brainOrigin = source === "direct" ? "customer_message" : "ui";
-  const nightDefer = decideNightDeferNow(brainOrigin);
+  const nightDefer = decideNightDeferNow(brainOrigin, undefined, undefined, convId);
   if (nightDefer.defer) {
     const until = new Date(nightDefer.until!).toISOString();
     console.log(JSON.stringify({ tag: "brain:night-defer", stage: "bg-async", conversationId: convId, source: source ?? null, until }));
@@ -342,7 +342,7 @@ export async function POST(req: NextRequest) {
     const bgStartedAt = Date.now();
     // 2026-09-24 反証: after() の途中で 22:00 を跨いだ時の見送り（同期部の判定と同じ origin・自分の claim だけ外す）
     const abortIfNightDefer = async (stage: string): Promise<boolean> => {
-      const nd = decideNightDeferNow(brainOrigin);
+      const nd = decideNightDeferNow(brainOrigin, undefined, undefined, convId);
       if (!nd.defer) return false;
       console.log(JSON.stringify({ tag: "brain:night-defer", stage: `bg-async:${stage}`, conversationId: convId, source: source ?? null, until: new Date(nd.until!).toISOString() }));
       await db.from("conversations").update({ draft_attempted_at: null }).eq("id", convId).eq("draft_attempted_at", claimedAt);

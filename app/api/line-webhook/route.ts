@@ -549,7 +549,7 @@ async function handleTextMessage(
     try {
       // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: お客様起点の直接ブレイン（申込以降ステータス）は夜は見送る（DB の select もしない）。
       //   朝は sweep（suggested_aix_meta null・last_sender=customer）が拾う。スタッフの操作（send-line-message / generate-reply）は別経路で夜も動く
-      const nd = decideNightDeferNow("customer_message");
+      const nd = decideNightDeferNow("customer_message", undefined, undefined, convId);
       if (nd.defer) {
         console.log(JSON.stringify({ tag: "brain:night-defer", stage: "webhook-post-apply", conversationId: convId, until: new Date(nd.until!).toISOString() }));
         return;
