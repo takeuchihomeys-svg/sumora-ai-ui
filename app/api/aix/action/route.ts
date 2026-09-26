@@ -40,6 +40,8 @@ import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, cutoffMs, cutoffMarkOf, formatCutoffMark, filterAfterCutoff, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 import { keepBrainMeta } from "@/app/lib/deepseek-cut";
 import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
+// 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して…DeepSeek に渡す」: 申込期間のまとめ（個人情報なし・検査済み）
+import { loadApplyPeriodNote } from "@/app/lib/apply-period-summary-server";
 // recordAltUsage: DeepSeek など Anthropic 以外の呼び出しを llm_usage_logs に残す（fetch の出口は anthropic 宛しか見ない）
 import { LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, recordAltUsage } from "@/app/lib/llm-usage-recorder";
 import { ensureVacatingNotice, buildVacatingPromptNote, viewableFromVacancyDate, viewableFromVacancyYmd, vacancyDateLabel, vacatingViewableSentence } from "@/app/lib/vacating-notice";
@@ -1716,6 +1718,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
         ? filterAfterCutoff(await loadViewingReports(conversationId), (v) => v.reportedAt, aixRequestCtx.getStore()?.cutoff ?? null)
         : await loadViewingReports(conversationId))
       : "";
+    // 2026-09-27: DeepSeek に回る時（線より前を切った時）だけ、申込期間のまとめ（個人情報なし）を各 AIX の前提の末尾に1ブロック（Claude の時は全履歴があるので足さない）
+    const aixApplyPeriodNote = conversationId && aixRequestCtx.getStore()?.cutActive
+      ? (await loadApplyPeriodNote(conversationId, aixRequestCtx.getStore()?.cutoff ?? null)).note
+      : "";
     // ブレインノートをプロンプトに注入（戦略系→制約系の順）
     const brainGuidanceNote = (() => {
       if (!aixBrainMeta) return "";
@@ -1805,7 +1811,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
         lines.push(`【⚠️ 顧客の質問（全て回答すること）】${aixBrainMeta.customer_questions.join("・")}`);
       }
       return lines.length > 0 ? "\n\n" + lines.join("\n") : "";
-    })() + aixViewingReportNote;
+    })() + aixViewingReportNote + aixApplyPeriodNote;
 
     // 物件提案系（property_send / property_recommendation）専用: PSP注入ノート
     const pspGuidanceNote = (() => {

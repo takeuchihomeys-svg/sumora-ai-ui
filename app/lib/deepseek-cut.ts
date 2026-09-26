@@ -8,12 +8,21 @@
 //     申込中の事実が持ち越されうる（残っている穴。出口の網＝線より前のお客様の発言の断片で、文そのままの持ち越しだけは止まる）。
 //   線が -Infinity（申込の記録なし）の時は何も切らない。線が null（申込中）の時は全部落とす（そもそも DeepSeek に行かない）。
 import { isAfterCutoff, cutoffMs, NO_CUTOFF, type DeepseekCutoff } from "./post-apply";
+import { scrubDerivedForDeepseek } from "./apply-period-summary";
 
-/** 派生データ1つ: 作った時刻が線より後なら残す、前・不明なら null */
+/**
+ * 派生データ1つ: 作った時刻が線より後なら残す、前・不明なら null。
+ * 2026-09-27（残っていた穴を塞ぐ）: 線より後に作った物も、作る側（ブレイン＝Claude）は線より前（申込中）の履歴を読んでいるので
+ *   申込中の事実を言い換えて持ち越しうる（勤務先・年収・保証人・滞納…）。線がある会話では、残す物の文字の欄を1つずつ
+ *   個人情報の網（apply-period-summary.scrubDerivedForDeepseek）に当て、引っかかった欄だけ落とす（構造・選択肢の欄は残る・費用0）。
+ *   申込期間の要点は別に「申込期間のまとめ（個人情報なし）」で渡る。
+ *   実測（本番の直近300会話のブレインの判断 582件）: 欄を落とした判断は 45件（7.7%）・127欄。多くは「保証人」「緊急連絡先」「滞納」を含む欄
+ */
 export function keepIfMadeAfter<T>(value: T | null | undefined, madeAt: string | null | undefined, c: DeepseekCutoff): T | null {
   if (value === null || value === undefined) return null;
   if (cutoffMs(c) === NO_CUTOFF) return value;
-  return isAfterCutoff(madeAt, c) ? value : null;
+  if (!isAfterCutoff(madeAt, c)) return null;
+  return scrubDerivedForDeepseek(value).value;
 }
 
 /** ブレインの判断（suggested_aix_meta / last_brain_meta）: 見た最後のお客様発言の時刻（analyzed_msg_ts）で判定 */

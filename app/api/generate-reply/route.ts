@@ -13,6 +13,8 @@ import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, loadDeepseekC
 // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 線で派生データを切る・出口の印を置く箱
 import { cutBrainGate, keepIfMadeAfter } from "@/app/lib/deepseek-cut";
 import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deepseek-scope";
+// 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して…DeepSeek に渡す」: 申込期間のまとめ（個人情報なし・検査済み）
+import { loadApplyPeriodNote, ensureApplyPeriodSummary } from "@/app/lib/apply-period-summary-server";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
@@ -3205,6 +3207,8 @@ async function handleGenerateReply(req: NextRequest) {
     && willRouteAlt("reply_generate", { postApply: false, autoSend: autoSendConversation });
   const latestCustomerAtForCut = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
   let deepseekBlocked = replyCutLine === null;
+  /** DeepSeek に回る時だけ入る「申込期間のまとめ（個人情報なし）」（Claude の時は空＝Claude には全履歴が今まで通り渡る） */
+  let applyPeriodNote = "";
   let deepseekCutActive = false;
   if (replyGoesAlt && replyCutLine !== NO_CUTOFF) {
     if (isAfterCutoff(latestCustomerAtForCut, deepseekCutoff) || (isTemplateOptimize && !latestCustomerAtForCut)) deepseekCutActive = true;
@@ -3229,6 +3233,18 @@ async function handleGenerateReply(req: NextRequest) {
     aixSourceMessage = "";
     if (externalBrainGate) externalBrainGate = cutBrainGate(externalBrainGate, deepseekCutoff);
     console.log(JSON.stringify({ tag: "deepseek-cutoff:cut", conversationId, line: deepseekCutoff, messages: { before, after: recentMessages.length } }));
+    // 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して（…切り替えた時に連動してクロードが申込期間の部分を要約して DeepSeek に渡す）」:
+    //   線より前（申込期間）の代わりに、Claude が作って検査を通した「申込期間のまとめ（個人情報なし）」を1ブロックで渡す（毎回変わる所＝行動台帳の後ろ）。
+    //   まだ無ければ返した後に作る（次の生成から効く・brain-sweep も5分毎に拾う）
+    if (conversationId) {
+      const ap = await loadApplyPeriodNote(conversationId, deepseekCutoff);
+      applyPeriodNote = ap.note;
+      if (ap.missing) {
+        const cid = conversationId;
+        try { after(() => ensureApplyPeriodSummary(cid).then(() => {}, () => {})); } catch { /* after の外（テスト等）は sweep に任せる */ }
+      }
+      console.log(JSON.stringify({ tag: "apply-summary:note", conversationId, has: !!applyPeriodNote, missing: ap.missing }));
+    }
   } else if (deepseekBlocked && replyGoesAlt) {
     console.log(JSON.stringify({ tag: "deepseek-cutoff:blocked", conversationId, line: deepseekCutoff, latestCustomerAt: latestCustomerAtForCut }));
   }
@@ -4942,7 +4958,7 @@ async function handleGenerateReply(req: NextRequest) {
     if (viewingReportNote) console.info("[viewing-report]", JSON.stringify({ conversationId, reports: viewingReports.length, chars: viewingReportNote.length }));
     // 2026-09-26（穴2）: 連投の途中（isFollowUp）でも「済んだ事」の確定行だけは渡す（旧は台帳の注記が全部空になり、
     //   報告の2分後に「募集状況を確認します」・物件を送っている最中に「ピックアップ出来次第お送り」が出た）
-    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote;
+    const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
     const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "" });

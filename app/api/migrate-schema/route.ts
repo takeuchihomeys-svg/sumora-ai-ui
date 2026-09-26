@@ -3691,6 +3691,26 @@ CREATE TRIGGER trg_conversations_deepseek_cutoff
 BEFORE UPDATE OF status, is_post_apply, status_manual_back_at ON conversations
 FOR EACH ROW EXECUTE FUNCTION stamp_deepseek_cutoff();
 
+-- apply_period_summaries: 申込期間のまとめ（個人情報なし）（2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して…
+--   ステータスを切り替えた時に連動してクロードが申込期間の部分を要約して DeepSeek に渡す仕組み」）。
+--   1会話1行（戻すたびに作り直す＝cutoff_at が conversations.deepseek_cutoff_at と違えば古い）。作るのは app/lib/apply-period-summary-server.ts
+--   （brain-sweep・返信生成の after）。DeepSeek に渡すのは status='ok' の block だけ。検査で引っかかった物（rejected）は本文を残さず理由の種類だけ
+CREATE TABLE IF NOT EXISTS apply_period_summaries (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  cutoff_at TIMESTAMPTZ NOT NULL,
+  period_start TIMESTAMPTZ,
+  status TEXT NOT NULL,
+  block TEXT,
+  summary_json JSONB,
+  reject_reasons TEXT[],
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  message_count INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE apply_period_summaries DISABLE ROW LEVEL SECURITY;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

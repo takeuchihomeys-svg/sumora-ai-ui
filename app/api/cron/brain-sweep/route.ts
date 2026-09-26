@@ -11,6 +11,7 @@ import { decideNightDeferNow, isOffSwitch } from "@/app/lib/brain-night-defer";
 import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { jstDayStartMs } from "@/app/lib/jst-date";
 import { MSG_SEP } from "@/app/lib/reply-context";
+import { pendingApplySummaryConversations, ensureApplyPeriodSummary } from "@/app/lib/apply-period-summary-server";
 
 // ── brain-sweep: 脳分析バックストップ（5分毎）─────────────────────────────
 // FIX(Fable5 #2): 分析の主経路は line-webhook のイベント駆動（顧客メッセージ受信 =
@@ -211,6 +212,15 @@ export async function GET(req: NextRequest) {
       .lt("created_at", new Date(Date.now() - EMBEDDING_CACHE_TTL_MS).toISOString());
     if (purgeErr) console.warn("[brain-sweep] embedding_cache purge failed:", purgeErr.message);
   }
+
+  // 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して（審査否決等になって申込から物件提案中にステータスを切り替えた時に
+  //   連動してクロードが申込期間の部分を要約して DeepSeek に渡す仕組み）」: 線（deepseek_cutoff_at）は DB のトリガーが書くので LLM を呼べない。
+  //   ここ（5分毎）で「線があるのに、その線のまとめが無い会話」を1回に2件まで作る（月に数件・1件 約$0.01）。夜も止めない（お客様への通知は無い）。
+  //   失敗しても sweep は止めない（ensureApplyPeriodSummary は例外を外に出さない・失敗は30分後にもう一度）
+  const applySummaries = await pendingApplySummaryConversations(2)
+    .then((ids) => Promise.all(ids.map((id) => ensureApplyPeriodSummary(id))))
+    .catch((e) => { console.warn("[brain-sweep] 申込期間のまとめ: 対象を読めない:", e instanceof Error ? e.message : e); return []; });
+  if (applySummaries.length) console.log(JSON.stringify({ tag: "brain-sweep:apply-summary", results: applySummaries.map((r) => ({ id: r.conversationId.slice(0, 8), status: r.status, reasons: r.reasons ?? [] })) }));
 
   // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から分析する」: 夜は先頭で止める（最重要）。
   //   webhook が meta を消すので、ここを止めないと夜の会話を 3〜5 分後に sweep が分析して見送りが無効になる。温めもしない（9〜22 の窓の外）。

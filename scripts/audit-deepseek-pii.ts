@@ -12,6 +12,8 @@
 //      同じ窓に今の切り方（filterAfterCutoff＋線より前の発言への返信は Claude）を当てた時に届く件数（直した後の形・0 になるはず）
 //   ③ --since=<ISO>（本番に出した時刻）: その後の本番の DeepSeek 呼び出しで「申込中」「線より前の発言への返信」が0か（後日の確認手順）
 //   ④ 今の status は申込前なのに「申込以降」扱い（線が引けない＝下書きも止まる）の会話
+//   ⑤ 申込期間のまとめ（apply_period_summaries・2026-09-27）: 線のある会話にまとめがあるか・渡している（ok）まとめに
+//      個人情報の語・名前・電話等・保証会社の名前が入っていないか（作った時と同じ検査をもう一度当てる。本文は出さない）
 //   ⚠ その時点の status は履歴が無い（conversation_stage_history は 9/14 以降の手の変更だけ）ので、①の「申込中」には status だけで申込中だった回は入らない
 //   ⚠ 会話IDが残らない経路（property_image_read / property_image_detail / property_rank 等）と、llm_usage_logs に記録しない経路
 //     （/api/evaluate-property・token-resolve・resolve-area）はここでは数えられない（evaluate-property は同じ線で要約を切る＝コードで確認）
@@ -19,6 +21,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-deepseek-pii.ts [--days=30] [--since=2026-09-27T12:00:00+09:00]
 import { createClient } from "@supabase/supabase-js";
 import { DRAFT_SKIP_STATUSES } from "../app/lib/conversation-status";
+import { piiReasons, checkApplySummary, type ApplyPeriodSummary } from "../app/lib/apply-period-summary";
 import { resolvePostApply, deepseekSafeCutoff, cutoffMs, filterAfterCutoff, isAfterCutoff, NO_CUTOFF, type DeepseekCutoff } from "../app/lib/post-apply";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -133,5 +136,33 @@ async function main() {
     const a = lost.get(k) ?? []; a.push(c.id.slice(0, 8)); lost.set(k, a);
   }
   for (const [k, v] of lost) console.log(`   ${k}: ${v.length}会話`);
+
+  console.log(`\n=== ⑤ 申込期間のまとめ（個人情報なし）: 線のある会話ごとの状態と、渡しているまとめの再検査 ===`);
+  const sums = await all<{ conversation_id: string; cutoff_at: string; status: string; block: string | null; summary_json: ApplyPeriodSummary | null; reject_reasons: string[] | null; input_tokens: number | null; output_tokens: number | null }>((a, z) => sb.from("apply_period_summaries").select("conversation_id, cutoff_at, status, block, summary_json, reject_reasons, input_tokens, output_tokens").range(a, z));
+  const sumBy = new Map(sums.map((r) => [r.conversation_id, r]));
+  const lined = convs.filter((c) => c.deepseek_cutoff_at);
+  const st = new Map<string, string[]>();
+  for (const c of lined) {
+    const r = sumBy.get(c.id);
+    const k = !r ? "まとめ無し（sweep 待ち）" : T(r.cutoff_at) !== T(c.deepseek_cutoff_at) ? "古い線のまとめ（作り直し待ち）" : r.status;
+    const a = st.get(k) ?? []; a.push(c.id.slice(0, 8)); st.set(k, a);
+  }
+  for (const [k, v] of st) console.log(`   ${k}: ${v.length}会話  ${v.join(",")}`);
+  const rejected = sums.filter((r) => r.status === "rejected");
+  if (rejected.length) console.log(`   検査で止めた理由（種類だけ）: ${[...new Set(rejected.flatMap((r) => r.reject_reasons ?? []))].join(" ")}`);
+  let bad = 0;
+  for (const r of sums.filter((x) => x.status === "ok")) {
+    const conv = await sb.from("conversations").select("customer_name").eq("id", r.conversation_id).maybeSingle();
+    const ctx = { conversationId: r.conversation_id, customerName: (conv.data as { customer_name?: string } | null)?.customer_name ?? null };
+    const reasons = new Set<string>([
+      ...(r.summary_json ? checkApplySummary(r.summary_json, ctx) : ["summary_json なし"]),
+      // ブロックの本文そのもの（見出しと注意書きの定型を除いた行）にも当てる
+      ...piiReasons((r.block ?? "").split("\n").filter((l) => l.startsWith("・")).join("\n"), ctx, { names: true, family: true }),
+    ]);
+    if (reasons.size) { bad++; console.log(`   ⚠ ${r.conversation_id.slice(0, 8)}: ${[...reasons].join(" ")}`); }
+  }
+  const tok = sums.filter((r) => r.input_tokens);
+  console.log(`   渡しているまとめ ${sums.filter((x) => x.status === "ok").length}件のうち個人情報の検査に当たる物: ${bad}件（0 であること）`);
+  if (tok.length) console.log(`   1件あたり 入力 平均${Math.round(tok.reduce((a, r) => a + (r.input_tokens ?? 0), 0) / tok.length)}・出力 平均${Math.round(tok.reduce((a, r) => a + (r.output_tokens ?? 0), 0) / tok.length)} トークン（${tok.length}件）`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

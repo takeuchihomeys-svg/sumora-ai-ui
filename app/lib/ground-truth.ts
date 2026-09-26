@@ -2,7 +2,8 @@
 // final-check anomaly_scan 用の正解データ取得（チェックポイント + property_customers）
 // 絶対に throw しない・GT_TIMEOUT_MS で諦める（fail-open — 送信を絶対に止めない）
 import { supabase } from "@/app/lib/supabase";
-import { isAfterCutoff, type DeepseekCutoff } from "@/app/lib/post-apply";
+import { isAfterCutoff, cutoffMs, NO_CUTOFF, type DeepseekCutoff } from "@/app/lib/post-apply";
+import { scrubDerivedForDeepseek } from "@/app/lib/apply-period-summary";
 
 export interface GroundTruth {
   checkpointFacts?: string;      // 確認済み事実（最新チェックポイント・最高権威）
@@ -52,6 +53,10 @@ async function fetchInner(conversationId: string, opts: { cutoff?: DeepseekCutof
   const cpAllowed = !("cutoff" in opts) || isAfterCutoff((cpRes.data?.created_at as string | null | undefined) ?? null, opts.cutoff);
   if (!cpRes.error && cpRes.data?.summary && cpAllowed) {
     checkpointFacts = (cpRes.data.summary as string).slice(0, 2000);
+    // 2026-09-27: 線がある会話で DeepSeek に渡す時は、線より後に作ったセーブデータも個人情報の網に当たる行を落とす
+    //   （セーブデータは積み上げ式で、申込中の事実（勤務先・保証人…）が持ち越される。deepseek-cut.keepIfMadeAfter と同じ網）
+    const line = "cutoff" in opts ? cutoffMs(opts.cutoff) : NO_CUTOFF;
+    if (line !== null && line !== NO_CUTOFF) checkpointFacts = scrubDerivedForDeepseek(checkpointFacts).value;
   }
 
   let customerConditionsDb: string | undefined;

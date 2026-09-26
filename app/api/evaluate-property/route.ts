@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { loadDeepseekCutoff, NO_CUTOFF, type DeepseekCutoff } from "@/app/lib/post-apply";
 import { keepIfMadeAfter, keepBrainMeta } from "@/app/lib/deepseek-cut";
+import { loadApplyPeriodNote } from "@/app/lib/apply-period-summary-server";
 
 export const maxDuration = 25;
 
@@ -147,6 +148,7 @@ export async function POST(req: NextRequest) {
   const summaryCutoff: DeepseekCutoff = await loadDeepseekCutoff(supabase, convIdForCut); // 会話が無い＝申込の記録も無い（-Infinity）・読めなければ null
   const conversationSummaryAllowed = summaryCutoff !== null;
   const aixMeta = keepBrainMeta(aixMetaRaw, summaryCutoff);
+  const applyPeriodNote = (await loadApplyPeriodNote(convIdForCut, summaryCutoff)).note;
 
   if (customerError || !customer) {
     return NextResponse.json(
@@ -452,12 +454,16 @@ export async function POST(req: NextRequest) {
       if (conversationSummaryAllowed && aixMeta?.winning_pattern)    contextParts.push(`【この顧客の成約パターン（スコアに応用）】${aixMeta.winning_pattern}`);
       if (conversationSummaryAllowed && aixMeta?.repeated_concern)   contextParts.push(`【この顧客の繰り返す懸念（懸念を解消できない物件は減点）】${aixMeta.repeated_concern}`);
       if (summaryCutoff === NO_CUTOFF && customer.personality_profile) contextParts.push(`【顧客タイプ】${customer.personality_profile}`);
-      if (conversationSummaryAllowed && keepIfMadeAfter(customer.ai_summary_json, (customer as { ai_summary_at?: string | null }).ai_summary_at ?? null, summaryCutoff)) {
-        const summaryStr = typeof customer.ai_summary_json === "string"
-          ? customer.ai_summary_json
-          : JSON.stringify(customer.ai_summary_json);
+      // 2026-09-27: 線がある会話は keepIfMadeAfter が個人情報の網に当たる欄を落とした物を返す（旧は判定だけに使い、元の要約をそのまま渡していた）
+      const keptSummary = conversationSummaryAllowed
+        ? keepIfMadeAfter(customer.ai_summary_json, (customer as { ai_summary_at?: string | null }).ai_summary_at ?? null, summaryCutoff)
+        : null;
+      if (keptSummary) {
+        const summaryStr = typeof keptSummary === "string" ? keptSummary : JSON.stringify(keptSummary);
         contextParts.push(`【顧客AIサマリー】${summaryStr.slice(0, 300)}`);
       }
+      // 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して…DeepSeek に渡す」: 戻した会話は申込期間のまとめ（個人情報なし・検査済み）を1ブロック
+      if (applyPeriodNote) contextParts.push(applyPeriodNote.trim());
 
       const prompt = `以下の情報を踏まえて、この物件をこのお客さんに推薦する総合スコア（0〜100点）と理由を返してください。
 
