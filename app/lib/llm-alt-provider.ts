@@ -19,7 +19,7 @@
 //   ・画像（Vision）と streaming は対象外＝そのまま Anthropic へ
 //   ・応答は Anthropic の形に戻すので、使用量の記録（llm_usage_logs）はそのまま動く（model 名で見分けられる）
 
-import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, recordAltUsage } from "./llm-usage-recorder";
+import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CONVERSATION_HEADER, recordAltUsage, systemFullKey } from "./llm-usage-recorder";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, type LlmTestMode } from "./llm-test-mode";
 
@@ -666,6 +666,8 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     if (cfg.testMode && isPostApplyCall(headers)) console.warn("[llm-test-mode] 申込以降の会話は Claude のまま（個人情報の歯止め・YUMA は status_manual_back_at を最新に）");
     if (isPostApplyCall(headers)) return original(input as RequestInfo, init);
     const sysHead = flattenContent(body.system);
+    // 記録の sys_key_full は Anthropic 宛ての行と同じハッシュ（全文をそのまま入れない・2026-09-26 まで 75,016字の全文が入っていた）
+    const sysKeyFull = systemFullKey(body.system);
     const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), sysHead);
     if (!shouldRouteAlt(cfg, routeName, sysHead)) return original(input as RequestInfo, init);
 
@@ -675,7 +677,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       const writeUsage = (usage: Record<string, number>, ms: number, errorType: string | null = null) => recordAltUsage({
         model: cfg.model, action: routeName, conversationId,
         usage, status: 200, errorType, durationMs: ms, stream: !!body.stream,
-        sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
+        sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
       const res = cfg.provider === "bedrock"
         ? await callBedrock(cfg, body)
@@ -706,7 +708,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       recordAltUsage({
         model: cfg.model, action: routeName, conversationId, usage: {},
         status: 0, errorType: "alt_failed", durationMs: Date.now() - started,
-        sysHead, sysKeyFull: sysHead, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
+        sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
       if (!cfg.fallbackToAnthropic) throw e;
       // 2026-09-26 テスト用の切り替えの間は**失敗しても Claude に戻さない**（失敗は失敗として出す）。

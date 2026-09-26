@@ -7,6 +7,8 @@ import {
   isTestModeAllowed, readTestMode, testModeBlockedReason, isBrainCall, isTestModeTarget, usageEnvLabel,
   TEST_MODE_BRAIN_SYSTEM_MARKERS,
 } from "../llm-test-mode";
+import { buildRuleCheckPrompt, ISSUE_SCHEMA } from "../final-check";
+import { systemFullKey, parseAnthropicRequest } from "../llm-usage-recorder";
 import { readAltConfig, shouldRouteAlt, routedByTestMode, resolveRouteName, willRouteAlt, toOpenAIBody, jsonSchemaInstruction, stripWholeCodeFence } from "../llm-alt-provider";
 
 let pass = 0, fail = 0;
@@ -111,6 +113,53 @@ console.log("── ★ 構造化出力（final-check の json_schema）を JSON
   t("文の途中のコードは触らない", stripWholeCodeFence("前置き\n```json\n{}\n```") === "前置き\n```json\n{}\n```");
   const fc = readFileSync("app/lib/final-check.ts", "utf8");
   t("final-check はまだ output_config の json_schema を使っている（使わなくなったらこの橋渡しを見直す）", /output_config: \{ format: \{ type: "json_schema"/.test(fc));
+}
+
+console.log("── ★ 前置きキャッシュ: 切り替えの形でも「固定の前置きが先頭・毎回変わる所が後ろ」のまま（DeepSeek は先頭一致）");
+// 2026-09-26 実測（YUMA・env=local:deepseek-all）: 判定・最終チェックの命中は同じ場面の2回目 91%・3回目 99%、別の場面でも 87〜88%。
+//   最初に見えた「9回で 10%」は、2回の生成の間に JSON モードのスキーマ指示（system の先頭に足す）を入れた＝先頭が変わった＋初回の冷え、だった。
+//   ここでは、その並びが崩れない（スキーマ指示が毎回同じ・動的部より前・固定の前置きが一字一句同じ）ことを固定する
+{
+  const lcp = (a: string, b: string) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
+  const flat = (p: Record<string, unknown> | null) => ((p?.messages ?? []) as Array<{ role: string; content: string }>).map((m) => `<${m.role}>${m.content}`).join("\n");
+  const schema = { type: "object", properties: { issues: { type: "array" } } };
+  const FIXED = "返信文を以下の観点で確認してください。".repeat(40);
+  const mk = (dyn: string) => ({
+    model: "claude-haiku-4-5", max_tokens: 100, thinking: { type: "disabled" as const },
+    output_config: { format: { type: "json_schema", schema } },
+    messages: [{ role: "user", content: [{ type: "text", text: FIXED, cache_control: { type: "ephemeral" } }, { type: "text", text: dyn }] as Array<{ type: string; text: string }> }],
+  });
+  const a = toOpenAIBody(mk("[REPLY]\nかしこまりました😊！！\n[/REPLY]"), "deepseek-v4-pro", { disableThinking: true, jsonSchemaToJsonMode: true });
+  const b = toOpenAIBody(mk("【現在時刻】9/26 19:44\n[REPLY]\nはい😊！！\n[/REPLY]"), "deepseek-v4-pro", { disableThinking: true, jsonSchemaToJsonMode: true });
+  const fa = flat(a), fb = flat(b);
+  const common = lcp(fa, fb);
+  t("別の会話・別の下書きでも、固定の前置き（cache_control のブロック）全体が共通の先頭に入る", common >= fa.indexOf(FIXED) + FIXED.length, `common=${common}`);
+  t("スキーマの指示は固定の前置きより前で、2回とも同じ（毎回変わる値を含まない）", fa.indexOf("JSON Schema") >= 0 && fa.indexOf("JSON Schema") < fa.indexOf(FIXED));
+  // system を持つ呼び出し（verify 型: 固定の指示を system に・動的は user）: スキーマは system の末尾＝動的部より前
+  const mkSys = (dyn: string) => ({ ...mk(dyn), system: [{ type: "text", text: FIXED, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: dyn }] });
+  const sa = flat(toOpenAIBody(mkSys("情報源A"), "m", { jsonSchemaToJsonMode: true }));
+  const sb = flat(toOpenAIBody(mkSys("情報源B・別の会話"), "m", { jsonSchemaToJsonMode: true }));
+  t("system を持つ呼び出しは、固定の system＋スキーマの指示まで共通の先頭", lcp(sa, sb) >= sa.indexOf("<user>"), `common=${lcp(sa, sb)} user=${sa.indexOf("<user>")}`);
+  // 実物（final-check の判定の1つ目）で: 下書きだけ違う2回の変換が、固定の前置きの終わりまで一致する
+  const fcMod = { buildRuleCheckPrompt, ISSUE_SCHEMA };
+  const ctx = { isAix: true } as Parameters<typeof buildRuleCheckPrompt>[1];
+  const real = (d: string) => ({ model: "claude-haiku-4-5", max_tokens: 100, output_config: { format: { type: "json_schema", schema: fcMod.ISSUE_SCHEMA } }, messages: [{ role: "user", content: fcMod.buildRuleCheckPrompt(d, ctx) }] });
+  const stableText = fcMod.buildRuleCheckPrompt("x", ctx)[0].text;
+  const ra = flat(toOpenAIBody(real("かしこまりました😊！！"), "m", { jsonSchemaToJsonMode: true }));
+  const rb = flat(toOpenAIBody(real("はい😊！！\n内覧のご都合如何でしょうか？"), "m", { jsonSchemaToJsonMode: true }));
+  t("★ 実物（final-check の判定）: 固定の前置きの終わりまで一字一句同じ", lcp(ra, rb) >= ra.indexOf(stableText) + stableText.length, `common=${lcp(ra, rb)}`);
+}
+
+console.log("── 記録の sys_key_full は Anthropic 宛ての行と同じハッシュ（別クラウドに回した行に全文を入れない）");
+{
+
+  const system = [{ type: "text", text: "固定".repeat(500), cache_control: { type: "ephemeral" } }, { type: "text", text: "二つ目" }];
+  const k = systemFullKey(system);
+  t("ハッシュ（8桁）で、全文ではない", k !== null && /^[0-9a-f]{8}$/.test(k));
+  t("Anthropic 宛ての行（parseAnthropicRequest）と同じ値", k === parseAnthropicRequest(JSON.stringify({ model: "m", system, messages: [] })).sys_key_full);
+  t("system が無ければ null", systemFullKey(undefined) === null);
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("llm-alt-provider は sysKeyFull に全文（sysHead）を渡さない", !/sysKeyFull: sysHead/.test(provider) && /systemFullKey\(body\.system\)/.test(provider));
 }
 
 console.log(`\n${pass} passed / ${fail} failed`);

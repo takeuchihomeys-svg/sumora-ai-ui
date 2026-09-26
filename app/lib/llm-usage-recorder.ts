@@ -93,6 +93,16 @@ function systemFullText(system: unknown): string | null {
   return null;
 }
 
+/**
+ * sys_key_full の値（system 全ブロックの全文のハッシュ）。Anthropic 宛ての行（parseAnthropicRequest）と同じ計算。
+ * 2026-09-26: 別クラウドに回した行（recordAltUsage）は全文そのもの（返信生成で 75,016字）を入れていた＝行が太る・Anthropic の行と比べられない
+ *   → 回した行もこれで同じハッシュにする
+ */
+export function systemFullKey(system: unknown): string | null {
+  const full = systemFullText(system);
+  return full ? shortHash(full) : null;
+}
+
 /** リクエスト本文から、どの呼び出しか・どう呼んだかを読む（お客様の発言は保存しない＝system の先頭だけ） */
 export function parseAnthropicRequest(body: string): ReqInfo {
   const info: ReqInfo = { model: null, stream: false, max_tokens: null, thinking_mode: null, cache_breakpoints: 0, sys_key: null, sys_head: null, sys_key_full: null };
