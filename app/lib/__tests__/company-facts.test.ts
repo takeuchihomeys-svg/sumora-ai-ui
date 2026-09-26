@@ -71,8 +71,10 @@ describe("物件によって変わる事を事実にしない", () => {
     truthy(all.includes("3日〜10日"), "3日〜10日");
     falsy(/3〜5日|3日〜5日|3日〜1週間/.test(all), all);
   });
-  it("「信用系」の語を持たない（呼び方は信販系・種類はそもそも入れない）", () => {
-    for (const f of COMPANY_FACTS) falsy(/信用系/.test(f.fact), f.id);
+  // 2026-09-26 竹内さん訂正: 種類は4つ（独立系・LICC系・信販系・信用系）で、会社ごとの種類は guarantor-companies.ts のマスタ1本。
+  //   会社の事実（company-facts）には種類を入れない（入れると取り違えがマスタと食い違う＝fd989546 で信用系を信販系と書いた事故の再発を防ぐ）
+  it("保証会社の種類名（独立系・LICC系・信販系・信用系）を持たない（種類はマスタ1本）", () => {
+    for (const f of COMPANY_FACTS) falsy(/独立系|LICC系|信販系|信用系/.test(f.fact), f.id);
   });
 });
 

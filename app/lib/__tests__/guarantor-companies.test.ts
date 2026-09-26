@@ -5,6 +5,7 @@ import {
   buildGuarantorListText, formatGuarantorFacts, checkGuarantorFacts, GUARANTOR_TYPE_LABELS, GUARANTOR_SCAN_WORDS, type GuarantorProperty,
   buildGuarantorCheckNote, detectGuarantorInText, detectGuarantorFromMessages,
   parseGuarantorTypeJa, guarantorTypeJa, guarantorNamesByType, GUARANTOR_OCR_NAME_HINT,
+  GUARANTOR_TYPES, GUARANTOR_TYPE_DEFINITION, GUARANTOR_TYPE_SHORT, GUARANTOR_TYPES_JA, GUARANTOR_TYPE_SCREENING_NOTE,
 } from "../guarantor-companies";
 import { normalizeAixActionKey, AIX_STAFF_NOTES, AIX_BUTTON_LABELS } from "../aix-taxonomy";
 import { aixLedgerKind, aixTextPromises, buildActionLedger, buildLedgerLinesForBrain, LEDGER_KIND_JA } from "../action-ledger";
@@ -240,7 +241,7 @@ it("送信時の記録 guarantor_explained が台帳に入り、ブレインの�
 });
 
 // ─── 8. 物件確認した（募集中）に添える説明（2026-09-17 竹内・YUYA 事例）───
-it("1件・信販系: 9/16 の実送信の型（クレディセゾン→呼び名は「信販系」に統一・2026-09-26 竹内さん決定「信用系＝信販系」）", () => {
+it("1件・信販系: 9/16 の実送信の型（クレディセゾンは信販系＝2026-09-26 竹内さん決定。実送信の「信用系」は種類名だけ信販系に・信用系は別の種類）", () => {
   const note = buildGuarantorCheckNote([{ name: "サンキャッスル田川 406号室", company: "クレディセゾン", type: "credit" }]);
   expect(note).toBe("クレディセゾンという信販系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！");
 });
@@ -307,7 +308,7 @@ it("会話（古い順）からは一番新しい発言の保証会社を拾う"
   expect(detectGuarantorFromMessages([])).toBe(null);
 });
 
-// ─── 10. 2026-09-26 竹内さん決定（ナップ=独立系・クレディセゾン=信販系・スタッフの「信用系」=信販系・マスタに無い会社はスタッフの説明どおり）───
+// ─── 10. 2026-09-26 竹内さん決定（ナップ=独立系・クレディセゾン=信販系・マスタに無い会社はスタッフの説明どおり）───
 it("決定どおりの分類: ナップ=独立系／クレディセゾン=信販系／全保連・ジェイリース=LICC系", () => {
   expect(resolveGuarantor("ナップ賃貸保証").type).toBe("independent");
   expect(resolveGuarantor("クレディセゾン").type).toBe("credit");
@@ -318,10 +319,6 @@ it("足した会社（スタッフが独立系と説明）: シノケン・ほ�
   for (const [raw, name] of [["シノケンコミュニケーションズ", "シノケンコミュニケーションズ"], ["シノケン", "シノケンコミュニケーションズ"], ["ほっと保証", "ほっと保証"], ["レンポッポ", "レンポッポ"], ["アーク保証", "アーク保証"], ["アーク賃貸保証", "アーク保証"], ["エイト賃貸保証", "エイト賃貸保証"], ["オセロ・フィナンシャルサービス株式会社", "オセロ・フィナンシャルサービス"], ["JPMCファイナンス", "JPMC"]] as const) {
     expect(resolveGuarantor(raw)).toEqual({ name, type: "independent", known: true });
   }
-});
-it("K-net（スタッフが「信用系」）→ 信販系", () => {
-  expect(resolveGuarantor("K-net")).toEqual({ name: "K-net", type: "credit", known: true });
-  expect(resolveGuarantor("ケーネット").type).toBe("credit");
 });
 it("説明の無い会社は種類を推測しない（不明）", () => {
   for (const raw of ["興和アシスト", "テナントファースト", "プレサンスギャランティ", "ランドインシュア", "パナソニックホームズ賃貸サポート", "エフアール信用保証", "クレデンス"]) {
@@ -335,30 +332,83 @@ it("短い呼び名（シノケン・アーク・プレサンス）は本文か�
   expect(detectGuarantorInText("アークヒルズ近くのお部屋")).toBe(null);
   expect(detectGuarantorInText("プレサンス難波のお部屋")).toBe(null);
   expect(detectGuarantorInText("保証会社はエイト賃貸保証です")).toEqual({ name: "エイト賃貸保証", type: "independent" });
-  expect(detectGuarantorInText("3番手:K-net となります")).toEqual({ name: "K-net", type: "credit" });
+  expect(detectGuarantorInText("3番手:K-net となります")).toEqual({ name: "K-net", type: "shinyou" });
 });
-it("お客様向けの文に「信用系」を出さない（ラベル・一覧・物件確認の文）", () => {
+
+// ─── 11. 2026-09-26 竹内さん訂正: 種類は4つ（独立系・LICC系・信販系・信用系）・信用系と信販系は違う・信用系=K-net ───
+//   （同日 fd989546 で「スタッフの信用系＝信販系」と取り違え、K-net を信販系・本文の「信用系」を信販系に数えていた）
+it("種類は4つ＋不明: 信用系は信販系と別の種類", () => {
+  expect([...GUARANTOR_TYPES]).toEqual(["independent", "licc", "credit", "shinyou", "unknown"]);
+  expect(GUARANTOR_TYPE_SHORT.shinyou).toBe("信用系");
+  expect(GUARANTOR_TYPE_SHORT.credit).toBe("信販系");
+  expect(GUARANTOR_TYPE_LABELS.shinyou.startsWith("信用系")).toBe(true);
+  expect([...GUARANTOR_TYPES_JA]).toEqual(["独立系", "LICC系", "信販系", "信用系", "不明"]);
+});
+it("信用系に入るのは K-net（別名も）・全保連/ジェイリースは LICC系・クレディセゾンは信販系・ナップは独立系のまま", () => {
+  expect(resolveGuarantor("K-net")).toEqual({ name: "K-net", type: "shinyou", known: true });
+  expect(resolveGuarantor("ケーネット").type).toBe("shinyou");
+  expect(resolveGuarantor("Knet").type).toBe("shinyou");
+  expect(guarantorNamesByType("shinyou")).toEqual(["K-net"]);
+  expect(guarantorNamesByType("credit").includes("K-net")).toBe(false);
+});
+it("種類の定義は竹内さんの言葉に沿う（信販系＝クレジットカード会社・信販会社が母体・一番厳しい／信用系＝金融系の情報ではなく過去の家賃滞納やトラブル）", () => {
+  expect(GUARANTOR_TYPE_DEFINITION.credit).toBe("クレジットカード会社や信販会社が母体となっている保証会社。審査は一番厳しい");
+  expect(GUARANTOR_TYPE_DEFINITION.shinyou).toBe("金融系の情報ではなく、過去の家賃滞納やトラブルが無かったかを見る保証会社");
+  // 独立系・LICC系は竹内さんの定義なし（説明はスタッフの実送信 SCREENING_NOTE のまま）
+  expect(GUARANTOR_TYPE_DEFINITION.independent).toBe("");
+  expect(GUARANTOR_TYPE_DEFINITION.licc).toBe("");
+});
+it("信用系の説明文: 定義の言葉だけ・審査の緩い・厳しいを書かない・信販系の語（クレジット）を持たない", () => {
+  expect(GUARANTOR_TYPE_SCREENING_NOTE.shinyou).toBe("信用系の保証会社となり、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る審査となります！！");
+  const note = buildGuarantorCheckNote([{ name: "ALEX23", company: "K-net", type: "shinyou" }]);
+  expect(note).toBe("K-netという信用系の保証会社を使用しており、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る保証会社となります！！");
+  const info = buildGuarantorInfoText({ customerName: "", properties: [{ name: "ALEX23", company: "ケーネット", type: "shinyou" }], parallel: false });
+  expect(info).toContain("の保証会社はK-netと信用系の保証会社となり、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る審査となります！！");
+  // 一覧の決まった締めの文（審査無事通過する為・キャンセル料不要・審査かけさせて頂きます）は除いて見る
+  const body = (t: string) => t.split("\n").filter((l) => !/審査無事通過する為|キャンセル料不要|審査かけさせて頂きます/.test(l)).join("\n");
+  for (const t of [note, info, GUARANTOR_TYPE_SCREENING_NOTE.shinyou]) {
+    expect(/緩|厳し|通りやす|通過しやす|中級|クレジット|信販/.test(body(t))).toBe(false);
+  }
+});
+it("信用系以外の文は「信用系」と書かない（取り違えの再発防止）", () => {
   for (const t of ["independent", "licc", "credit", "unknown"] as const) {
     expect(GUARANTOR_TYPE_LABELS[t]).notToContain("信用系");
     expect(buildGuarantorCheckNote([{ name: "A", company: "テスト保証", type: t }])).notToContain("信用系");
     expect(buildGuarantorInfoText({ customerName: "", properties: [{ name: "A", company: "テスト保証", type: t }], parallel: false })).notToContain("信用系");
   }
+  expect(GUARANTOR_TYPE_LABELS.licc).toBe("LICC系");   // LICC系を「信用系」と呼ばない（旧ラベル「LICC系（信用系）」に戻さない）
 });
-it("本文の「信用系」は信販系の表現として数える（入力が LICC系だけ → 種類:信販系）", () => {
+it("本文の種類の照合: 「信用系」は信用系・「信販系」は信販系として別々に数える", () => {
+  // 9/23 の実送信のように LICC系・信販系の会社を「信用系」と書いたら止める
   const r = checkGuarantorFacts("Aの保証会社は全保連と信用系の保証会社となります！！", [{ name: "A", company: "全保連", type: "licc" }]);
-  expect(r.typeWarnings).toEqual(["種類:信販系"]);
-  expect(checkGuarantorFacts("Aの保証会社はセゾンと信用系の保証会社となります！！", [{ name: "A", company: "クレディセゾン", type: "credit" }]).ok).toBe(true);
+  expect(r.typeWarnings).toEqual(["種類:信用系"]);
+  expect(checkGuarantorFacts("Aの保証会社はセゾンと信用系の保証会社となります！！", [{ name: "A", company: "クレディセゾン", type: "credit" }]).typeWarnings).toEqual(["種類:信用系"]);
+  expect(checkGuarantorFacts("AはK-netという信販系の保証会社", [{ name: "A", company: "K-net", type: "shinyou" }]).typeWarnings).toEqual(["種類:信販系"]);
+  expect(checkGuarantorFacts(buildGuarantorCheckNote([{ name: "A", company: "K-net", type: "shinyou" }]), [{ name: "A", company: "K-net", type: "shinyou" }]).ok).toBe(true);
+  expect(checkGuarantorFacts(buildGuarantorCheckNote([{ name: "A", company: "クレディセゾン", type: "credit" }]), [{ name: "A", company: "クレディセゾン", type: "credit" }]).ok).toBe(true);
 });
-it("日本語の種類名: 旧画面の「信用系」は信販系・往復できる", () => {
-  expect(parseGuarantorTypeJa("信用系")).toBe("credit");
+it("日本語の種類名: 「信用系」は信用系（旧画面のチップも）・往復できる", () => {
+  expect(parseGuarantorTypeJa("信用系")).toBe("shinyou");
   expect(parseGuarantorTypeJa("信販系")).toBe("credit");
   expect(parseGuarantorTypeJa("LICC系")).toBe("licc");
   expect(parseGuarantorTypeJa("独立系")).toBe("independent");
   expect(parseGuarantorTypeJa("不明")).toBe("unknown");
   expect(parseGuarantorTypeJa("credit")).toBe("credit");
+  expect(parseGuarantorTypeJa("shinyou")).toBe("shinyou");
   expect(parseGuarantorTypeJa("")).toBe(null);
   expect(parseGuarantorTypeJa("なにか")).toBe(null);
-  for (const t of ["independent", "licc", "credit", "unknown"] as const) expect(parseGuarantorTypeJa(guarantorTypeJa(t))).toBe(t);
+  for (const t of GUARANTOR_TYPES) expect(parseGuarantorTypeJa(guarantorTypeJa(t))).toBe(t);
+});
+it("会社を混ぜた一覧: 種類の順は 独立系 → LICC系 → 信販系 → 信用系 → 不明", () => {
+  const info = buildGuarantorInfoText({ customerName: "", parallel: false, properties: [
+    { name: "E", company: "クレデンス", type: "unknown" },
+    { name: "D", company: "K-net", type: "shinyou" },
+    { name: "C", company: "エポス", type: "credit" },
+    { name: "B", company: "全保連", type: "licc" },
+    { name: "A", company: "日本セーフティー", type: "independent" },
+  ] });
+  const order = ["・A", "・B", "・C", "・D", "・E"].map((k) => info.indexOf(k));
+  expect(order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1]))).toBe(true);
 });
 it("プロンプトの一般知識の会社名はマスタから: 全保連・ジェイリースは独立系に並ばない", () => {
   const ind = guarantorNamesByType("independent");

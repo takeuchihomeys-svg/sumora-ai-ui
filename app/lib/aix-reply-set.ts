@@ -126,7 +126,7 @@ function sceneS3(reason: string): SceneHit {
       forbidden: ["SCREENING_ASSURANCE"], forbiddenText: d?.forbid ?? "保証会社名の記載／審査の通りやすさ・通過の断言／並行審査の提案",
       scene: "S3_screening", reason_code: reason, chained: null,
       urgency: "15分以内に橋渡し→保証会社確認後に AIX【保証会社について】で一覧を案内", highlight: false,
-      extra: "物件ごとの保証会社名と種類（独立系＝審査基準が緩い／LICC系／信販系）はスタッフが確認して AIX【保証会社について】で送る。本文で会社名・通りやすさを書かない。",
+      extra: "物件ごとの保証会社名と種類（独立系＝審査基準が緩い／LICC系／信販系／信用系）はスタッフが確認して AIX【保証会社について】で送る。本文で会社名・通りやすさを書かない。",
     };
   }
   return {

@@ -66,7 +66,7 @@ import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation 
 import { buildApplicationNote, applicationBulletNote } from "@/app/lib/application-status-note";
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
-import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
+import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, isGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
 import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, type PickupFact } from "@/app/lib/pickup-send-facts";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
@@ -166,7 +166,7 @@ type PropFacilityData = {
   internet: string | null;
   internetDetail: string | null;
   // 2026-09-17 竹内（YUYA 事例）: 保証会社は「名前＋種類」で1つの材料（画面では見積書の下の欄）。
-  //   種類は GuarantorType（independent/licc/credit/unknown）。旧クライアントの日本語（独立系・信用系）も読む
+  //   種類は GuarantorType（independent/licc/credit/shinyou/unknown）。旧クライアントの日本語（独立系・信用系）も読む
   guarantorName?: string | null;
   guarantorType: string | null;
 };
@@ -176,7 +176,7 @@ function guarantorPropertyOf(name: string, f: PropFacilityData | undefined | nul
   if (!company) return null;
   const raw = (f?.guarantorType ?? "").trim();
   // 旧クライアント（設備情報の「独立系／信用系」チップ）の日本語も受ける。
-  //   2026-09-26 竹内さん決定: スタッフの「信用系」＝信販系（旧はここで LICC系 に読んでいた）
+  //   「信用系」は信用系（2026-09-26 竹内さん訂正: 信用系と信販系は違う・4つ目の種類。旧は LICC系→fd989546 で信販系に読んでいた）
   const type: GuarantorType = parseGuarantorTypeJa(raw) ?? resolveGuarantor(company).type;
   return { name: (name ?? "").trim(), company, type };
 }
@@ -4487,7 +4487,7 @@ ${GUARANTOR_OCR_NAME_HINT}
         // 会社名を手で入れて種類を選ばなかった時はマスタの既定（マスタに無ければ不明のまま）
         guarantorType = guarantorTypeJa(resolveGuarantor(companyName).type);
       }
-      // 旧画面の「信用系」は信販系（2026-09-26 竹内さん決定）
+      // 日本語の種類名をそろえる（「信用系」は信用系のまま・2026-09-26 竹内さん訂正: 信用系と信販系は違う）
       guarantorType = guarantorTypeJa(parseGuarantorTypeJa(guarantorType) ?? "unknown");
 
       // タイプ別の詳細説明（スタッフ実例を参考に強化）
@@ -4498,6 +4498,9 @@ ${GUARANTOR_OCR_NAME_HINT}
           ? `LICC系保証会社の為一般的な審査基準となります！！`
           : guarantorType === "信販系"
           ? `信販系保証会社の為クレジット情報が参照される物件となります！！`
+          : guarantorType === "信用系"
+          // 2026-09-26 竹内さんの定義「信用系は金融系の情報ではなく過去の家賃滞納やトラブルがなかったかみられるばしょ」の言葉だけ（緩い・厳しいは書かない）
+          ? GUARANTOR_TYPE_SCREENING_NOTE.shinyou
           : `保証会社の詳細につきましては確認次第ご連絡させて頂きます！！`;
 
       // 誘導文（任意・pushType未選択なら省略）
@@ -6946,7 +6949,7 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         : undefined);
 
     } else if (action === "guarantor_info") {
-      // AIX【保証会社について】（2026-09-15 竹内・YUYA 事例）: 管理会社に確認した物件ごとの保証会社名・種類（独立系／LICC系／信販系）を一覧で案内し、
+      // AIX【保証会社について】（2026-09-15 竹内・YUYA 事例）: 管理会社に確認した物件ごとの保証会社名・種類（独立系／LICC系／信販系／信用系）を一覧で案内し、
       //   審査の通りやすさを種類ごとの決まった言い回しで伝える。「並行して審査かける」ON で、かぶっていない保証会社の並行審査を勧める。
       //   会社名・種類はスタッフの入力だけ（LLM に作らせない）。conversation_match=false は固定テンプレ（LLM 0回）、true は会話に合わせた1通
       //   （入力に無い会社名・種類の表現は checkGuarantorFacts で〇〇→1回だけ作り直し→残れば notice＝送信前チェックで止まる。cost_breakdown の金額の照合と同じ考え）
@@ -6994,7 +6997,7 @@ ${SMORA_COMMON_RULES}
 【お客様名】ユーザーメッセージに記載のお客様名を使うこと
 
 【この返信の目的】
-・管理会社に確認した物件ごとの保証会社名と種類（独立系／LICC系／信販系）を一覧で伝え、審査の通りやすさを種類に応じた決まった言い回しで説明し、（指示がある時だけ）保証会社がかぶっていないお部屋の並行審査を勧める1通を作る
+・管理会社に確認した物件ごとの保証会社名と種類（独立系／LICC系／信販系／信用系）を一覧で伝え、審査の通りやすさを種類に応じた決まった言い回しで説明し、（指示がある時だけ）保証会社がかぶっていないお部屋の並行審査を勧める1通を作る
 
 【構成】
 ①お客様の直近の発言に質問・不安（審査が心配・保証会社はどこか・保証人は要るか 等）があれば、最初の1文でそれに直接答える（無ければ「こちら保証会社一覧となります！！」から始める）

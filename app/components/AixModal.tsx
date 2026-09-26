@@ -490,7 +490,7 @@ const CONFIG: Record<
     emoji: "🏦",
     requiresImage: false,
     imageLabel: "",
-    description: "物件ごとの保証会社名と種類（独立系・LICC系・信販系）を入れると、保証会社の一覧と審査の通りやすさ、並行して審査をかけられる旨を1通で送ります。",
+    description: "物件ごとの保証会社名と種類（独立系・LICC系・信販系・信用系）を入れると、保証会社の一覧と審査の通りやすさ、並行して審査をかけられる旨を1通で送ります。",
   },
 };
 
@@ -801,7 +801,7 @@ export default function AixModal({
   // 保証会社確認専用: テキスト入力 + タイプ + OCRローディング
   const [mgmtGuarantorPropertyName, setMgmtGuarantorPropertyName] = useState<string>("");
   const [mgmtGuarantorCompanyName, setMgmtGuarantorCompanyName] = useState<string>("");
-  const [mgmtGuarantorType, setMgmtGuarantorType] = useState<"独立系" | "LICC系" | "信販系" | "不明" | "">("");
+  const [mgmtGuarantorType, setMgmtGuarantorType] = useState<"独立系" | "LICC系" | "信販系" | "信用系" | "不明" | "">("");
   const [mgmtDocOcrLoading, setMgmtDocOcrLoading] = useState(false);
   // 保証会社確認専用: 画像先送り用URL（generate()後にセット）
   const [previewDocImageUrl, setPreviewDocImageUrl] = useState<string>("");
@@ -4905,7 +4905,7 @@ export default function AixModal({
                     />
                     {/* 保証会社の種類 */}
                     <div className="flex gap-1.5">
-                      {(["独立系", "LICC系", "信販系", "不明"] as const).map(t => (
+                      {(["独立系", "LICC系", "信販系", "信用系", "不明"] as const).map(t => (   /* 2026-09-26 竹内さん訂正: 種類は4つ・信用系は信販系と別（K-net） */
                         <button
                           key={t}
                           onClick={() => { setMgmtGuarantorType(prev => prev === t ? "" : t); setPreview(""); }}
@@ -4914,6 +4914,7 @@ export default function AixModal({
                               ? t === "独立系" ? "border-emerald-500 bg-emerald-50 text-emerald-700"
                                 : t === "LICC系" ? "border-blue-400 bg-blue-50 text-blue-700"
                                 : t === "信販系" ? "border-red-400 bg-red-50 text-red-700"
+                                : t === "信用系" ? "border-amber-400 bg-amber-50 text-amber-700"
                                 : "border-[#546E7A] bg-[#ECEFF1] text-[#546E7A]"
                               : "border-[#E5E7EB] text-[#9CA3AF]"
                           }`}
@@ -4965,8 +4966,8 @@ export default function AixModal({
                               if (!ocrData.ok) throw new Error(ocrData.error ?? "読み取り失敗");
                               if (ocrData.property_name) setMgmtGuarantorPropertyName(ocrData.property_name);
                               if (ocrData.company_name) setMgmtGuarantorCompanyName(ocrData.company_name);
-                              if (ocrData.guarantor_type && (["独立系","LICC系","信販系","不明"] as string[]).includes(ocrData.guarantor_type)) {
-                                setMgmtGuarantorType(ocrData.guarantor_type as "独立系" | "LICC系" | "信販系" | "不明");
+                              if (ocrData.guarantor_type && (["独立系","LICC系","信販系","信用系","不明"] as string[]).includes(ocrData.guarantor_type)) {
+                                setMgmtGuarantorType(ocrData.guarantor_type as "独立系" | "LICC系" | "信販系" | "信用系" | "不明");
                               }
                             } catch (err) {
                               console.error("[AixModal] OCR error:", err);

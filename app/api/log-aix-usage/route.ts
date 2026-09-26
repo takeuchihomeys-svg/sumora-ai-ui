@@ -32,7 +32,7 @@ const AIX_TYPE_LABELS: Record<string, string> = {
   cost_breakdown:           "御見積書の内訳で初期費用の中身（含まれる項目・家賃だけで入居できるか）を説明した",
   phone_call:               "「電話をかける」ボタン（LINEコール）と案内文を送った（お客様からの電話待ち）",
   phone_followup:           "電話でお話しした内容のまとめを送った",
-  guarantor_info:           "物件ごとの保証会社名と種類（独立系・LICC系・信販系）を案内した（並行審査の勧めを含むことがある）",
+  guarantor_info:           "物件ごとの保証会社名と種類（独立系・LICC系・信販系・信用系）を案内した（並行審査の勧めを含むことがある）",
 };
 
 // 一致判定（簡易ベースライン）
@@ -60,7 +60,7 @@ const MATCH_KEYWORDS: Record<string, string[]> = {
   cost_breakdown:          ["初期費用", "敷金", "礼金", "内訳", "家賃だけ", "日割"],
   phone_call:              ["電話", "通話", "相談"],
   phone_followup:          ["電話", "お話し", "まとめ"],
-  guarantor_info:          ["保証会社", "独立系", "LICC", "信販", "並行"],
+  guarantor_info:          ["保証会社", "独立系", "LICC", "信販", "信用系", "並行"],   // 信用系は4つ目の種類（2026-09-26）
 };
 
 // キーワード簡易判定（予測テキストに実アクションのキーワードが含まれるか）
