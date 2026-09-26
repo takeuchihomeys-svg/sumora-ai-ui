@@ -116,7 +116,7 @@ import { stripVagueQuantifier, VAGUE_QUANTIFIER_NOTE } from "@/app/lib/vague-qua
 import { sentFullSupportToday, stripRepeatedFullSupport, buildFullSupportNote } from "@/app/lib/full-support-line";
 import { buildRelativeDayNote, buildConversationClockNote } from "@/app/lib/relative-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶の決定論（route / brain-core / final-check で四者同名）
-import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, type MoveOutSubject } from "@/app/lib/move-out-context";
+import { MOVE_OUT_PATTERN, classifyMoveOutSubject, moveOutEvidenceText, CURRENT_HOME_MOVEOUT_CLAUSE_RE, isMoveOutReleased, moveOutViewingVerdict, moveOutMsgsFromHistory, moveOutSwitchedToOtherProperty, type MoveOutSubject } from "@/app/lib/move-out-context";
 import { resolveConfirmationContext, applyAixTiming, findConfirmObject, type ConfirmationContextVerdict } from "@/app/lib/confirmation-context";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」判定（断言検査・募集状況判定・AIX 場面判定が共有）
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: resolveReplyAixDecision はブレインの判断を読むだけ。
@@ -174,6 +174,10 @@ const AB_OFF = process.env.PREV_SEND_NOTE === "off";
 import { getCachedPromptRules, getCachedPhrases } from "@/app/lib/prompt-cache";
 import { detectBrainTier, buildBrainFetchSpec, type BrainTierResult, type BrainFetchSpec } from "@/app/lib/brain-fetch-spec";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
+// 2026-09-26 段3: 並行で探す（ブレインの判断を材料に）・status=viewing の残りで内覧の手引きを書かない（customer-state）
+import { buildParallelSearchReplyNote } from "@/app/lib/parallel-search";
+import { getCustomerState } from "@/app/lib/customer-state-server";
+import { customerStateHasViewing } from "@/app/lib/customer-state";
 import { newerCustomerMessageAfter, SUPERSEDED_DRAFT_UPDATE } from "@/app/lib/draft-supersede";
 import { aixMetaKnowledgeBonus, extractMetaKeywords, type AixMetaRerankSignals } from "@/app/lib/knowledge-aixmeta-rerank";
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
@@ -581,6 +585,9 @@ function detectPropertyStatus(history: string | null | undefined, customerMessag
       .slice(-5)
       .join("\n");
     if (isMoveOutReleased(recentStaffText)) return "unknown";
+    // 2026-09-26（穴:G5・四者同名）: 退去予定はお部屋ごとの事実。退去予定の話の後に別のお部屋を送った・お客様が別のお部屋を指している時は、
+    //   その別のお部屋の話に「退去前のため現地ご案内ができません」を当てない（ブレインの moveOutBlocksViewing と同じ moveOutViewingVerdict）
+    if (moveOutSwitchedToOtherProperty(moveOutViewingVerdict(moveOutMsgsFromHistory(history, customerMessage), "oldest_first"))) return "unknown";
     return "move_out_scheduled";
   }
   return explicit ?? "unknown";
@@ -1933,7 +1940,15 @@ type ResolvedState = { phase: string; guideKey: PhaseKey; searchState: string; r
 
 function resolveState(
   raw: string | null | undefined,
-  opts: { hasStaffMsg: boolean; checkpointStage?: string | null; brainFresh: boolean; conditionPresented?: boolean; conversationId?: string },
+  opts: {
+    hasStaffMsg: boolean; checkpointStage?: string | null; brainFresh: boolean; conditionPresented?: boolean; conversationId?: string;
+    /**
+     * 2026-09-26 段3: お客様の今の状況（customer-state.customerStateHasViewing）に内覧の話があるか。false の時は status=viewing を内覧の手引きにしない（ブレインの fresh な viewing は打ち消さない）。
+     *   status=viewing を書くのは審査管理の同期だけで、22会話中21会話はこれからの内覧が無い（古い値の残り）→ 内覧の手引きを書いていた（60日6組）。
+     *   null / undefined＝調べていない（従来どおり）
+     */
+    viewingInPlay?: boolean | null;
+  },
 ): ResolvedState {
   const k = (raw ?? "").trim();
   const aliased = STATE_ALIAS[k] ?? SEARCH_ALIAS_REVERSE[k] ?? k;
@@ -1947,11 +1962,19 @@ function resolveState(
   } else {
     phase = aliased;
   }
+  if (phase === "viewing" && opts.viewingInPlay === false) {
+    // 画面の5区分でも viewing は「物件提案中」に畳んでいる（app/page.tsx DETAIL_STATUSES）のと同じ扱い
+    phase = "proposing";
+    console.info(JSON.stringify({ tag: "state:viewing-stale", raw: k, inferred: phase, conversationId: opts.conversationId ?? null }));
+  }
   let guideKey = phase as PhaseKey;
   // hearing で条件が揃っている → 聞き返し禁止の proposing ガイドへ前倒し（DB status は触らない）
   if (phase === "hearing" && opts.conditionPresented) guideKey = "proposing";
   // brain checkpoint_stage は fresh かつ前進方向のみ採用
   const cs = opts.brainFresh ? (opts.checkpointStage ?? null) : null;
+  // 2026-09-26 反証レビュー: 今回の発言を見たブレイン（fresh）の viewing は customer-state で打ち消さない。
+  //   customer-state の「内覧の話」は語の一覧（CUSTOMER_VIEWING_WISH_RE）と記録から決めるので「土曜日行けますか」のような希望を拾えない時があり、
+  //   ブレイン自身は今の状況のブロック（buildCustomerStateBrainBlock）を読んだうえで判断している。打ち消すのは古い値の残り（status=viewing）だけ
   if (cs === "viewing" && (phase === "proposing" || phase === "hearing")) guideKey = "viewing";
   if (cs === "applying" && phase === "proposing") guideKey = "applying";
   if (cs === "contract" && (phase === "applying" || phase === "proposing")) guideKey = "closed_won";
@@ -3327,7 +3350,12 @@ export async function POST(req: NextRequest) {
 
     // S-2: 暫定の state 解決（brain 鮮度・条件提示は未確定なので後段で resolveState を再実行して phaseGuideKey を確定する）
     const hasAnyStaffTextMsg = recentMessages.some((m) => m.sender === "staff" && !!m.text && !/^\s*(?:\[(?:画像|動画|スタンプ|ファイル)\]\s*)+$/.test(m.text));
-    const currentState = resolveState(state, { hasStaffMsg: hasAnyStaffTextMsg, brainFresh: false, conversationId }).phase;
+    // 2026-09-26 段3: status=viewing（審査管理の同期が書く）の時だけ、お客様の今の状況に内覧の話があるかを読む（約0.4秒・読むだけ）。
+    //   無ければ viewing を内覧の手引きにしない（resolveState の viewingInPlay）。読めなければ従来どおり
+    const viewingInPlay: boolean | null = (conversationId && state === "viewing")
+      ? await getCustomerState(conversationId).then((s) => (s ? customerStateHasViewing(s) : null), () => null)
+      : null;
+    const currentState = resolveState(state, { hasStaffMsg: hasAnyStaffTextMsg, brainFresh: false, conversationId, viewingInPlay }).phase;
 
     // 画像送付を会話履歴に反映（[画像]をフィルタせず意味のあるラベルに変換）
     // 2026-09-26 竹内「こちらが言ったことの関係性（AIX→テンプレは挨拶なし・前に送った物）」: 各「スモラ:」行に関係の札
@@ -3807,6 +3835,10 @@ export async function POST(req: NextRequest) {
       console.info("[brain-strategy] T3 fallback: last_brain_meta を conversation-scope 方針として採用", conversationId);
     }
     const brainLocalFresh = brainFreshForMessage && !isCachedMeta;
+    // 2026-09-26 段3: ブレインの「並行で探す」（parallel-search.ts）。今回の発言を見た判断で、待ちの局面でない時だけ効かせる。
+    //   生成の材料（buildParallelSearchReplyNote）と最終チェックの免除（runProposalChecks）が同じ値を見る
+    const parallelSearchReplyOn = !!(brainLocalFresh && brainMeta?.parallel_search?.on && brainMeta?.engagement_stance !== "wait");
+    if (brainMeta?.parallel_search) console.info(JSON.stringify({ tag: "reply:parallel-search", conversationId, brainOn: !!brainMeta.parallel_search.on, applied: parallelSearchReplyOn, fresh: brainLocalFresh, stance: brainMeta?.engagement_stance ?? null, scene: brainMeta.parallel_search.scene ?? null }));
     const substance: SubstanceVerdict = mergeBrainEvidence(substanceBase, brainLocal, brainLocalFresh);
     console.info("[reply-context]", JSON.stringify({ has: substance.has, kinds: substance.kinds, concerns: substance.concerns.map((c) => c.key), isAckOnly: substance.isAckOnly, staff: lastStaffTurn.kind, staffSource: lastStaffTurn.source, units: customerMsgUnits.length }));
 
@@ -3899,6 +3931,8 @@ export async function POST(req: NextRequest) {
       brainFresh: brainFreshForMessage,
       conditionPresented: conditionDetail.presented,
       conversationId,
+      // status=viewing の古い値の残りだけを畳む（上で読んだ値）。ブレインの fresh な checkpoint_stage=viewing は打ち消さない（resolveState の注記）
+      viewingInPlay,
     });
     const phaseGuideKey: PhaseKey = resolvedState.guideKey;
     const searchState = resolvedState.searchState;
@@ -4571,6 +4605,10 @@ export async function POST(req: NextRequest) {
         lines.push("- 🏆 過去の勝ちパターン: " + wp + " → このパターンに沿った具体アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信に1文含めること" + relaxGuard);
         if (territoryGuard) lines.push(territoryGuard);
       }
+      // 2026-09-26 段3（竹内「その物件も候補にしてほかも探す／申込して部屋抑えながらほかも探す」）:
+      //   ブレインが「主の一手＋並行で探す」と判断した時だけ、引き続き探す一文を添えてよい（許可・必須にしない）。
+      //   今回の発言を見た判断（brainLocalFresh）で、待ちの局面（WAIT＝新規物件提案を入れない）でない時だけ。四者同名: parallel-search.ts
+      if (parallelSearchReplyOn) lines.push(`- ${buildParallelSearchReplyNote(brainMeta.parallel_search).trim()}（この一文は上の WE DO 宣言1文とは別に数えてよい）`);
       // 2026-09-11: 旧「冒頭1文で感情を受け止めよ（例: ご心配なお気持ち、よくわかります）」は共感語全面禁止ルール
       //   （line-reply-prompts ■姿勢・正解返信125件中0件）と矛盾し、禁止語を避けた言い換え「〜気になりますよね」を生んでいた。
       //   スタッフ実送信6,090通中「〜ますよね/ですよね」は3通。感情はトーンにだけ反映し、気持ちの代弁・同調文は書かせない
@@ -5824,7 +5862,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
-                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突（四者同名）
+                  brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
                   // 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後）。生成ノート・後処理・検査が同じ値
                   aixDone: aixDone ? { propertySend: aixDone.propertySend, vacancyCheck: aixDone.vacancyCheck, mgmtCheck: aixDone.mgmtCheck, pickupGateReason: aixDone.pickupGateReason } : null,
@@ -6044,7 +6082,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                     hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
-                    brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
+                    brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                     ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   };
                   const nameRes = enforceCustomerName(draftBody, { customerName, lineDisplayName });
@@ -6202,7 +6240,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
-                  brainStrategy: brainLocalFresh ? brainStrategy : null, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
+                  brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   ngProperties: brainFreshForMessage
                     ? (brainMeta?.property_search_params?.ng_properties ?? []).filter((p) => p?.property_name).map((p) => `${p.property_name}${p.room_no ? ` ${p.room_no}` : ""}`)

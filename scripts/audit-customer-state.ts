@@ -9,6 +9,12 @@ import { customerSharedPropertyNames } from "../app/lib/customer-property-names"
 import { extractViewingAppointment, appointmentYmd } from "../app/lib/action-ledger";
 import { STAFF_VIEWING_DONE_RE } from "../app/lib/viewing-thread";
 import { isApplicationFormMessage } from "../app/lib/application-form-detect";
+// 2026-09-26 段1: 1か所で決めた状況（resolveCustomerState）を全会話に当てる（CS 節）
+//   CS_ONLY=1 … CS 節だけ（今の段階・食い違い・例／段階ごとの次のスタッフの動き）。CS_SHOW=STATUS_VIEWING_STALE 等で例を全部・CS_SHOW=HEAD で1行を全部
+import { resolveCustomerState, STAGE_LABEL, splitPropertyName, matchRoomRefs, bundleFocusEvents, applicationPropertyFromText, estimateNamesFromText, focusEventsFromFacts, focusEventsFromAixRows, pickSingleFocusName, type CustomerStateInput } from "../app/lib/customer-state";
+import { classifyStaffTextFacts } from "../app/lib/action-ledger";
+import { jstYmd } from "../app/lib/jst-date";
+import { resolveParallelSearchScene, parallelSearchInputsFromMessages, hasParallelTrigger } from "../app/lib/parallel-search";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
@@ -219,6 +225,7 @@ async function main() {
     candDistRecent.push(ur.length);
   }
 
+  if (process.env.CS_ONLY) { await auditResolvedState({ convs, byConv, sfBy, aixBy, vhBy, spBy, shBy }); return; }
   console.log("\n=== 2. 食い違い（件数・例） ===");
   for (const [k, v] of Object.entries(mism).sort()) { console.log(`\n■ ${k}: ${v.length}件（会話 ${new Set(v.map((x) => x.slice(0, 8))).size}）`); for (const x of v.slice(0, SHOW === k.slice(0, 3).trim() ? 60 : 8)) console.log("   ", x); }
   console.log("\n=== 3. お部屋の結び付き（送った物件の記録との一致） ===");
@@ -237,5 +244,180 @@ async function main() {
   console.log("\n今の段階（最後の出来事）", cnt(currentStages));
   console.log("\n画面の区分→細かい段階（14日以内に発言）", cnt(uiX));
   console.log("\n凡例:", Object.entries(ST_JA).map(([k, v]) => `${v}=${k}`).join(" "));
+  await auditResolvedState({ convs, byConv, sfBy, aixBy, vhBy, spBy, shBy });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CS 節（2026-09-26 段1）: resolveCustomerState を全会話に当てる
+//   ① 今の段階の件数・1行（headline）の例 ② 食い違い（conflicts）の件数と実物（目で読む）
+//   ③ 段階の境目の確かめ: 直近60日のお客様の発言（連投の最後）ごとに「その時点の材料だけで」状況を作り直し、次のスタッフの動き（48時間以内の最初の送信）と並べる
+//   ※ ③の status は conversation_stage_history から戻す（履歴の無い会話は今の値）・line_tasks の完了は時刻で戻す・viewing_history の lapsed/done は未来の日付なら scheduled に戻す
+// ═════════════════════════════════════════════════════════════════════════════
+async function auditResolvedState(ctx: { convs: any[]; byConv: Map<string, any[]>; sfBy: Map<string, any[]>; aixBy: Map<string, any[]>; vhBy: Map<string, any[]>; spBy: Map<string, any[]>; shBy: Map<string, any[]> }) {
+  const tasks = await all("line_tasks", "conversation_id,task_type,status,created_at,resolved_at,result");
+  const pcs = new Map((await all("property_customers", "id,ai_summary_json")).map((p: any) => [p.id, p.ai_summary_json?.situation ?? null]));
+  const tBy = new Map<string, any[]>(); for (const t of tasks) { if (!tBy.has(t.conversation_id)) tBy.set(t.conversation_id, []); tBy.get(t.conversation_id)!.push(t); }
+  const CS_SHOW = process.env.CS_SHOW ?? "";
+  const buildInput = (c: any, at: number | null): CustomerStateInput => {
+    const cut = (iso: string | null | undefined) => at == null || (iso != null && Date.parse(iso) <= at);
+    const hist = (ctx.shBy.get(c.id) ?? []).slice().sort((a: any, b: any) => a.changed_at.localeCompare(b.changed_at));
+    // 過去の時点の status は履歴から戻す。履歴の無い会話は分からない（今の値を過去に当てると成約の会話が最初から成約に見える）→ null
+    let status: string | null = at == null ? c.status : null;
+    if (at != null && hist.length) { const before = hist.filter((h: any) => Date.parse(h.changed_at) <= at); status = before.length ? before[before.length - 1].to_status : hist[0].from_status ?? c.status; }
+    const atYmd = at != null ? jstYmd(at) : null;
+    return {
+      now: at ?? Date.now(), status, isPostApply: at == null ? c.is_post_apply : ["applying", "application", "screening"].includes(status ?? ""), statusManualBackAt: at == null ? c.status_manual_back_at : null,
+      brainPhase: at == null ? c.conversation_direction?.current_phase ?? null : null, brainPhaseUpdatedAt: at == null ? c.conversation_direction?.updated_at ?? null : null,
+      brainSituation: at == null && c.property_customer_id ? pcs.get(c.property_customer_id) ?? null : null,
+      messages: (ctx.byConv.get(c.id) ?? []).filter((m: any) => cut(m.created_at)).map((m: any) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!m.is_aix_generated })),
+      aixRows: (ctx.aixBy.get(c.id) ?? []).filter((a: any) => cut(a.sent_at)).map((a: any) => ({ ...a })),
+      recordedFacts: (ctx.sfBy.get(c.id) ?? []).filter((f: any) => cut(f.sent_at)).sort((a: any, b: any) => a.sent_at.localeCompare(b.sent_at)),
+      lineTasks: (tBy.get(c.id) ?? []).filter((t: any) => cut(t.created_at)).map((t: any) => ({ task_type: t.task_type, status: at == null ? t.status : (t.resolved_at && Date.parse(t.resolved_at) <= at ? t.status : "pending"), created_at: t.created_at, completed_at: t.resolved_at, result: t.result })),
+      viewingHistory: (ctx.vhBy.get(c.id) ?? []).filter((v: any) => cut(v.created_at)).map((v: any) => ({ ...v, status: at != null && atYmd && v.scheduled_date >= atYmd && v.status !== "cancelled" ? "scheduled" : v.status })),
+      sentProperties: (ctx.spBy.get(c.id) ?? []).filter((x: any) => cut(x.sent_at)),
+    };
+  };
+  // ① ② 今
+  const stages: string[] = []; const conf: Record<string, string[]> = {}; const heads: Record<string, string[]> = {};
+  let roomsTotal = 0, maybeTotal = 0; const roomStatus: string[] = []; const searching: string[] = [];
+  for (const c of ctx.convs) {
+    const st = resolveCustomerState(buildInput(c, null));
+    stages.push(st.stageLabel);
+    (heads[st.stageLabel] ??= []).push(`${id8(c.id)} [${c.status}] ${st.headline}`);
+    for (const k of st.conflicts) (conf[`${k.severity} ${k.code}`] ??= []).push(`${id8(c.id)} [${c.status}] ${k.detail}  ｜ ${st.headline}`);
+    roomsTotal += st.properties.length; maybeTotal += st.properties.filter((p) => p.maybeSameAs.length).length;
+    for (const p of st.properties) roomStatus.push(p.status);
+    if (st.searching.active) searching.push(st.searching.reason ?? "?");
+  }
+  console.log(`\n=== CS-1. 今の段階（resolveCustomerState・${ctx.convs.length}会話） ===`);
+  console.log(cnt(stages).map(([k, n]) => `${k}=${n}`).join(" / "));
+  for (const [k, v] of Object.entries(heads)) { console.log(`\n■ ${k} ${v.length}件（例）`); for (const x of v.slice(0, CS_SHOW === "HEAD" ? 400 : 5)) console.log("   ", x); }
+  console.log(`\nお部屋 ${roomsTotal}件（1会話平均 ${(roomsTotal / Math.max(1, ctx.convs.length)).toFixed(1)}）・状態: ${cnt(roomStatus).map(([k, n]) => `${k}=${n}`).join(" ")}`);
+  console.log(`寄せなかった似ている候補（maybeSameAs あり）: ${maybeTotal}件`);
+  console.log(`探し続けている印: ${searching.length}件 ${cnt(searching).map(([k, n]) => `${k}=${n}`).join(" ")}`);
+  console.log("\n=== CS-2. 食い違い（conflicts） ===");
+  for (const [k, v] of Object.entries(conf).sort()) { console.log(`\n■ ${k}: ${v.length}件`); for (const x of v.slice(0, CS_SHOW && k.includes(CS_SHOW) ? 400 : 8)) console.log("   ", x); }
+
+  // ③ 段階の境目
+  const since60 = Date.now() - 60 * 864e5;
+  const AX: Record<string, string> = { property_send: "物件送付", property_recommendation: "物件送付", property_send_new_arrival: "物件送付", estimate_sheet: "見積", viewing_invite: "内覧打診", meeting_place: "待ち合わせ", application_push: "申込案内", property_check_result: "確認結果", acknowledge_check: "確認します", greeting_viewing: "内覧挨拶", followup_revive: "追客" };
+  const TX: Record<string, string> = { properties_sent: "物件送付", pickup_declared: "探す約束", estimate_sent: "見積", estimate_declared: "見積の約束", viewing_invited: "内覧打診", meeting_place_sent: "待ち合わせ", application_guided: "申込の勧め", confirmation_promised: "確認します", confirmation_reported: "確認結果", condition_asked: "条件を聞く", question_asked: "質問" };
+  const nextKind = (c: any, t: number): string => {
+    const first = (ctx.byConv.get(c.id) ?? []).find((m: any) => m.sender === "staff" && Date.parse(m.created_at) > t && Date.parse(m.created_at) <= t + 48 * 3600e3 && (m.text ?? "").trim() && !/^\s*\[(?:画像|動画|スタンプ|ファイル)/.test(m.text));
+    if (!first) return "返信なし(48h)";
+    const ft = Date.parse(first.created_at);
+    const ax = (ctx.aixBy.get(c.id) ?? []).find((a: any) => Math.abs(Date.parse(a.sent_at) - ft) <= 3 * 60e3);
+    if (ax) return "AIX:" + (AX[ax.aix_type] ?? ax.aix_type);
+    if (STAFF_VIEWING_DONE_RE.test(first.text)) return "内覧後のお礼";
+    const f = classifyStaffTextFacts(first.text, first.created_at)[0];
+    return "文:" + (f ? TX[f.kind] ?? f.kind : "その他");
+  };
+  const table: Record<string, string[]> = {};
+  let turns = 0;
+  for (const c of ctx.convs) {
+    const ms_ = ctx.byConv.get(c.id) ?? [];
+    for (let i = 0; i < ms_.length; i++) {
+      const m = ms_[i]; if (m.sender !== "customer") continue;
+      const nx = ms_[i + 1]; if (nx && nx.sender === "customer") continue;
+      const t = Date.parse(m.created_at); if (t < since60) continue;
+      const st = resolveCustomerState(buildInput(c, t));
+      (table[st.stageLabel] ??= []).push(nextKind(c, t)); turns++;
+    }
+  }
+  console.log(`\n=== CS-3. 段階ごとの次のスタッフの動き（直近60日・お客様の発言の区切り ${turns}件） ===`);
+  for (const k of Object.values(STAGE_LABEL)) { const v = table[k]; if (!v) continue; const tot = v.length; console.log(`■ ${k} (${tot}) ` + cnt(v).slice(0, 8).map(([a, n]) => `${a} ${((n / tot) * 100).toFixed(0)}%`).join(" / ")); }
+
+  // ④ 入口の直し（sent-facts.recordAixFacts）を過去の送信に当てたら、物件名がどれだけ付くか（読むだけ・書き込まない）
+  const est = { total: 0, emptyBefore: 0, filled: 0 }, app = { total: 0, filled: 0, verdict: {} as Record<string, number> };
+  const appNames: string[] = [];
+  for (const c of ctx.convs) {
+    const facts = (ctx.sfBy.get(c.id) ?? []) as any[]; const aixs = (ctx.aixBy.get(c.id) ?? []) as any[];
+    for (const a of aixs) {
+      if (a.aix_type === "estimate_sheet") {
+        est.total++;
+        const f = facts.find((x) => x.kind === "estimate_sent" && x.origin === "aix" && Math.abs(Date.parse(x.sent_at) - Date.parse(a.sent_at)) <= 3 * 60e3);
+        const before = (f?.detail?.estimateFor ?? []).length > 0 || (a.property_names ?? []).length > 0;
+        if (!before) { est.emptyBefore++; if (estimateNamesFromText(a.generated_text).length) est.filled++; }
+      }
+      if (a.aix_type === "application_push") {
+        app.total++;
+        const from = Date.parse(a.sent_at) - 21 * 864e5;
+        const evs = [...focusEventsFromFacts(facts.filter((x) => Date.parse(x.sent_at) <= Date.parse(a.sent_at) && Date.parse(x.sent_at) >= from)),
+          ...focusEventsFromAixRows(aixs.filter((x) => Date.parse(x.sent_at) <= Date.parse(a.sent_at) && Date.parse(x.sent_at) >= from))];
+        const inferred = pickSingleFocusName(bundleFocusEvents(evs), a.sent_at);
+        // 本文（sent-facts.inferApplicationProperty と同じ: AIX の本文 → 直前30分のこちらの本文）
+        const t = Date.parse(a.sent_at);
+        let fromText = applicationPropertyFromText(a.generated_text);
+        if (!fromText) for (const m of ((ctx.byConv.get(c.id) ?? []) as any[]).filter((m) => m.sender === "staff" && Date.parse(m.created_at) >= t - 30 * 60e3 && Date.parse(m.created_at) <= t + 60e3).reverse()) { fromText = applicationPropertyFromText(m.text); if (fromText) break; }
+        const n = fromText ?? inferred;
+        if (fromText) app.filled++;
+        const same = (x: string, y: string) => { const r = matchRoomRefs(splitPropertyName(x)!, splitPropertyName(y)!); return r === "same_room" || r === "same_building" || r === "maybe"; };
+        const v = fromText && inferred ? (same(fromText, inferred) ? "本文あり・推定も一致" : "本文あり・推定は別の物件") : fromText ? "本文あり・推定なし" : inferred ? "本文なし・推定だけ" : "決まらない";
+        app.verdict[v] = (app.verdict[v] ?? 0) + 1;
+        appNames.push(`${id8(c.id)} ${a.sent_at.slice(0, 10)} 本文=${fromText ?? "-"} 推定=${inferred ?? "-"} ［${v}］`);
+      }
+    }
+  }
+  // 物件名の無い内覧に「直前の関心の出来事の1件」で名前を付けてよいか: 名前のある内覧の記録で、名前を隠して推定を当てる
+  const vinf: Record<string, number> = {}; const vinfEx: string[] = [];
+  for (const c of ctx.convs) {
+    const facts = (ctx.sfBy.get(c.id) ?? []) as any[]; const aixs = (ctx.aixBy.get(c.id) ?? []) as any[];
+    for (const v of (ctx.vhBy.get(c.id) ?? []) as any[]) {
+      if (!v.property_name || !v.created_at) continue;
+      const at = Date.parse(v.created_at); const from = at - 21 * 864e5;
+      const evs = [...focusEventsFromFacts(facts.filter((x) => x.kind !== "meeting_place_sent" && Date.parse(x.sent_at) < at - 60e3 && Date.parse(x.sent_at) >= from)),
+        ...focusEventsFromAixRows(aixs.filter((x) => Date.parse(x.sent_at) < at - 60e3 && Date.parse(x.sent_at) >= from))];
+      const inf = pickSingleFocusName(bundleFocusEvents(evs), new Date(at - 60e3).toISOString());
+      const r = !inf ? "決まらない" : ["same_room", "same_building", "maybe"].includes(matchRoomRefs(splitPropertyName(inf)!, splitPropertyName(v.property_name)!)) ? "一致" : "別の物件";
+      vinf[r] = (vinf[r] ?? 0) + 1; if (r === "別の物件") vinfEx.push(`${id8(c.id)} 記録=${v.property_name} 推定=${inf}`);
+    }
+  }
+  console.log(`\n=== CS-4. 入口の直しを過去の送信に当てたら ===`);
+  console.log(`物件名のある内覧の記録で推定を当てる: ${JSON.stringify(vinf)}`); for (const x of vinfEx.slice(0, 10)) console.log("   ", x);
+  console.log(`見積書 ${est.total}通: 物件名の記録が空 ${est.emptyBefore}通 → 本文の【】で埋まる ${est.filled}通（${((est.filled / Math.max(1, est.emptyBefore)) * 100).toFixed(0)}%）`);
+  console.log(`申込の案内 ${app.total}通: 本文の「〇〇号室お申込み」で物件が決まる（採用） ${app.filled}通（${((app.filled / Math.max(1, app.total)) * 100).toFixed(0)}%）`);
+  console.log("  内訳（本文の「〇〇号室お申込み」と直前の関心の出来事からの推定）:", JSON.stringify(app.verdict));
+  for (const x of appNames.slice(0, CS_SHOW === "APP" ? 400 : 10)) console.log("   ", x);
+
+  // ⑤ 段3（2026-09-26）: 並行で探す場面（parallel-search.resolveParallelSearchScene）を、その時点の状況で全ターンに当てる。
+  //   場面の中で、スタッフが同じターンで『探す』と『今のお部屋を進める（申込・見積・確認・内覧）』を両方した割合が、場面の外より高いか
+  //   （場面の線が境目になっているか）。LLM は呼ばない。ブレインが parallel_search を出すかは YUMA の前後（scripts/yuma-switch-scenes-test.ts）で見る
+  const SEARCH_AIX_T = new Set(["property_send", "property_recommendation", "property_send_new_arrival", "condition_hearing"]);
+  const OTHER_AIX_T = new Set(["application_push", "estimate_sheet", "property_check_result", "acknowledge_check", "viewing_invite", "meeting_place", "cost_explain", "cost_breakdown"]);
+  const SEARCH_TXT = /ピックアップ|お探し|新着|オススメ出来るお部屋|ご条件に合(?:った|う)お部屋|引き続き[^。\n]{0,10}(?:お部屋|物件)/;
+  const OTHER_TXT = /お申し?込|お部屋抑え|お部屋を抑え|押さえ|御見積|見積書|募集状況|募集して(?:おり|ます)|空き状況|ご内覧|お待ち合わせ/;
+  const psTable: Record<string, { n: number; both: number; search: number; other: number; none: number; ex: string[] }> = {};
+  for (const c of ctx.convs) {
+    const ms_ = ctx.byConv.get(c.id) ?? [];
+    for (let i = 0; i < ms_.length; i++) {
+      const m = ms_[i]; if (m.sender !== "customer") continue;
+      const nx = ms_[i + 1]; if (nx && nx.sender === "customer") continue;
+      const t = Date.parse(m.created_at); if (t < since60) continue;
+      const st = resolveCustomerState(buildInput(c, t));
+      const newestFirst = ms_.slice(Math.max(0, i - 14), i + 1).reverse().map((x: any) => ({ sender: x.sender, text: x.text, created_at: x.created_at }));
+      const ps = resolveParallelSearchScene({ state: st, ...parallelSearchInputsFromMessages(newestFirst), nowMs: t });
+      // このターンへのスタッフの動き（次のお客様の発言まで・48時間以内）
+      const nextCust = ms_.slice(i + 1).find((x: any) => x.sender === "customer");
+      const horizon = Math.min(t + 48 * 3600e3, nextCust ? Date.parse(nextCust.created_at) : Infinity);
+      const staffAfter = ms_.slice(i + 1).filter((x: any) => x.sender === "staff" && Date.parse(x.created_at) <= horizon);
+      const aixAfter = (ctx.aixBy.get(c.id) ?? []).filter((a: any) => Date.parse(a.sent_at) > t && Date.parse(a.sent_at) <= horizon + 60e3);
+      const hand = staffAfter.filter((x: any) => !x.is_aix_generated).map((x: any) => x.text ?? "");
+      const search = aixAfter.some((a: any) => SEARCH_AIX_T.has(a.aix_type)) || hand.some((h: string) => SEARCH_TXT.test(h));
+      const other = aixAfter.some((a: any) => OTHER_AIX_T.has(a.aix_type)) || hand.some((h: string) => OTHER_TXT.test(h));
+      // お客様の発言のきっかけ（別の物件・探す・条件・迷い）で分けて見る（場面を広く取ると「進めるだけ」が大半になる）
+      const turnText = newestFirst.filter((x: any, j: number) => newestFirst.slice(0, j + 1).every((y: any) => y.sender === "customer")).map((x: any) => x.text ?? "").join("\n");
+      const trig = hasParallelTrigger(turnText) ? "＋きっかけ" : "";
+      const k = ps.scene ? `${ps.scene}${trig}` : (ps.blockedBy ? `対象外:${ps.blockedBy.slice(0, 12)}` : `場面の外${trig}`);
+      const row = (psTable[k] ??= { n: 0, both: 0, search: 0, other: 0, none: 0, ex: [] });
+      row.n++;
+      if (search && other) { row.both++; if (row.ex.length < 4) row.ex.push(`${id8(c.id)} ${m.created_at.slice(0, 10)} ${ps.evidence ?? ""}`); }
+      else if (search) row.search++; else if (other) row.other++; else row.none++;
+    }
+  }
+  console.log(`\n=== CS-5. 並行で探す場面 × スタッフが同じターンで両方した割合（直近60日・その時点の状況） ===`);
+  for (const [k, r] of Object.entries(psTable).sort((a, b) => b[1].n - a[1].n)) {
+    const p = (x: number) => `${((x / Math.max(1, r.n)) * 100).toFixed(0)}%`;
+    console.log(`■ ${k} (${r.n}) 両方 ${p(r.both)}・探すだけ ${p(r.search)}・進めるだけ ${p(r.other)}・どちらも無し ${p(r.none)}${r.ex.length ? `  例: ${r.ex.join(" ／ ")}` : ""}`);
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -10,6 +10,8 @@ import { supabase } from "@/app/lib/supabase";
 import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, confirmObjectOf, confirmTopicForCheckPattern, type RecordedFact, type ViewingAppointment, type LedgerEntry } from "@/app/lib/action-ledger";
 // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】と入れて、お客さん名と要件を入れる（AIX と合わせて）」
 import { promiseEventRows, planPromiseInsert, planPromiseCompletion, PROMISE_MUST_MARK } from "@/app/lib/promise-calendar";
+// 2026-09-26 お客様の状況（customer-state）: 見積の物件名を本文の【】から・申込の案内の物件をこちらの本文の「〇〇号室お申込み」から（純関数は customer-state に1つ）
+import { estimateNamesFromText, applicationPropertyFromText } from "@/app/lib/customer-state";
 
 type FactRow = RecordedFact & { conversation_id: string };
 type FactLike = Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">;
@@ -124,6 +126,19 @@ export async function recordAixFacts(o: {
   }
   if (o.propertyNames?.length) { detail.propertyNames = o.propertyNames; detail.propertyCount = o.propertyNames.length; }
   if (map.kind === "estimate_sent" && o.propertyNames?.length) detail.estimateFor = o.propertyNames;
+  // 2026-09-26（お客様の状況・入口）: AIX【見積書送る】は画面から物件名が来ない（sent_facts の estimateFor は84%が空）。
+  //   本文の【建物 部屋号室】ラベルは92%が送った物件と建物＋部屋で一致する（scripts/audit-customer-state.ts）→ ラベルから埋める
+  else if (map.kind === "estimate_sent") {
+    const names = estimateNamesFromText(o.generatedText);
+    if (names.length) detail.estimateFor = names;
+  }
+  // 2026-09-26（お客様の状況・入口）: AIX【申込へ】の本文は申込フォーマットだけで物件名が無い（申込案内の100%が物件名なし）。
+  //   AIX の本文・直前30分のこちらの本文「〇〇 102号室お申込みさせていただきます」があればその物件（スタッフが書いた事実）だけを記録する。
+  //   直前の見積・確認の1件からの推定は入れない（2026-09-26 監査: 本文と比べられた13通で推定は6通しか合わない＝見積の後に別の物件へ申込む・同じ建物の別の部屋）
+  if (map.kind === "application_guided" && !o.propertyNames?.length) {
+    const name = await applicationPropertyNearSend(o.conversationId, o.sentAt, o.generatedText);
+    if (name) { detail.propertyNames = [name]; detail.propertyCount = 1; }
+  }
   if (map.kind === "guarantor_explained" && o.guarantors?.properties.length) {
     detail.guarantors = o.guarantors.properties; detail.parallel = o.guarantors.parallel;
     detail.propertyNames = o.guarantors.properties.map((g) => g.name); detail.propertyCount = o.guarantors.properties.length;
@@ -161,6 +176,29 @@ export async function recordAixFacts(o: {
       conversationId: o.conversationId, sentAt: o.sentAt,
       entries: rows.map((r) => ({ kind: r.kind as LedgerEntry["kind"], status: r.status as LedgerEntry["status"], evidence: r.evidence ?? "", detail: (r.detail ?? {}) as LedgerEntry["detail"] })),
     });
+  }
+}
+
+/**
+ * 申込の案内（AIX【申込へ】）の物件（書いていなければ null）。customer-state の読む側と同じ: AIX の本文 → 直前30分のこちらの本文の
+ * 「〇〇 102号室お申込みさせていただきます」（applicationPropertyFromText）。推定はしない
+ */
+export async function applicationPropertyNearSend(conversationId: string, sentAt: string, generatedText?: string | null): Promise<string | null> {
+  try {
+    const fromText = applicationPropertyFromText(generatedText);
+    if (fromText) return fromText;
+    const t = Date.parse(sentAt);
+    if (!Number.isFinite(t)) return null;
+    const { data } = await supabase.from("messages").select("text, created_at").eq("conversation_id", conversationId).eq("sender", "staff")
+      .gte("created_at", new Date(t - 30 * 60_000).toISOString()).lte("created_at", new Date(t + 60_000).toISOString()).order("created_at", { ascending: false }).limit(10);
+    for (const m of (data ?? []) as Array<{ text: string | null }>) {
+      const n = applicationPropertyFromText(m.text);
+      if (n) return n;
+    }
+    return null;
+  } catch (e) {
+    console.warn("[sent-facts] applicationPropertyNearSend failed:", e instanceof Error ? e.message : e);
+    return null;
   }
 }
 

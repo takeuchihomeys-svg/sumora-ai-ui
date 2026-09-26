@@ -89,8 +89,11 @@ export function buildSentPropsText(sentProps: SentProp[]): string {
   const sharedBlock = sharedOnlyProps.length > 0
     ? `${deliveredProps.length > 0 ? "\n" : ""}▼グループに共有のみ（お客様には未送付・再提案は避ける）\n${sharedOnlyProps.map(line).join("\n")}`
     : "";
+  // 2026-09-26 段3（切り替え）: 旧「内覧・見積・申込の話はこのお部屋が相手になる（別の物件にすり替えない）」は、
+  //   お客様が自分で見つけた物件（SUUMO の URL・画像）や、後から名前を出した別のお部屋の内覧・見積の話まで、推した物件に寄せる入口になり得た
+  //   （設計知見「1つの物件へのとらわれは…」の (c)・害は小）。お客様がどのお部屋か言っていない時だけの既定にする
   const recNote = recommendedProps.length > 0
-    ? `\n※このうち **${recommendedProps.map((p) => `${p.property_name} ${p.room_no}`.trim()).join("・")}** は AIX【物件オススメ】で推した物件。内覧・見積・申込の話はこのお部屋が相手になる（別の物件にすり替えない）。`
+    ? `\n※このうち **${recommendedProps.map((p) => `${p.property_name} ${p.room_no}`.trim()).join("・")}** は AIX【物件オススメ】で推した物件。内覧・見積・申込の話でお客様がどのお部屋か言っていない時は、このお部屋が相手の第一候補（お客様が名前・URL・画像で別のお部屋を指している時は、そのお部屋が相手）。`
     : "";
   return `\n【すでに送付済みの物件（${deliveredProps.length}件）】\n${deliveredProps.map(line).join("\n")}${sharedBlock}${recNote}\n※上記の物件は絶対に再提案しないこと（顧客が明示的に再リクエストした場合を除く。例外: 顧客が申込→落選した物件と同一マンションの別号室が新規募集された場合は、最優先で提案し申込訴求すること。申込経験のある建物は建物の印象・共用部・立地を把握済みのため内覧スキップ可能）。property_send・property_recommendation の候補から必ず除外すること。`;
 }

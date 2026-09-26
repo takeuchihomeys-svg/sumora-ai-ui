@@ -4,6 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, ty
 import AixModal, { type AixActionType } from "./components/AixModal";
 import AixManualModal from "./components/AixManualModal";
 import BottomNav from "./components/BottomNav";
+import CustomerStateBar from "./components/CustomerStateBar";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
@@ -7240,6 +7241,15 @@ export default function Home() {
             </div>
           </header>
 
+          {/* 2026-09-26 竹内「LINE のトークの上に今の状況を把握しているステータスのような物が表示されていたら、ズレがあった際にわかりやすい」:
+              今の段階とお部屋ごとの状況（customer-state.ts の resolveCustomerState・LLM なし）を1行で。押すと中身、食い違いがある時だけ ⚠ずれ。
+              取り直しの合図＝最後のメッセージ・状態（送信・AIX・お客様の発言・状態の変更で変わる。古いメッセージの読み足しでは変わらない） */}
+          <CustomerStateBar
+            conversationId={selectedConversation.id}
+            refreshKey={`${selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""}:${selectedConversation.status}`}
+            authHeader={INTERNAL_AUTH_HEADER}
+          />
+
           {/* 条件パネル: ▼ボタンで開閉 */}
           {showCondPanel && (() => {
             const lc = linkedCustomerMap[selectedConversation.id];
@@ -13538,7 +13548,7 @@ export default function Home() {
                 {
                   key: "mgmt_guarantor",
                   label: "保証会社について（審査面）",
-                  desc: "保証会社名・タイプ（独立系/LICC系/信販系）を物件資料から確認",
+                  desc: "保証会社名・タイプ（独立系/信販系/信用系）を物件資料から確認",
                   hint: "",
                   icon: <>
                     <path d="M36 20L50 28V36C50 44.8 43.6 52.4 36 55C28.4 52.4 22 44.8 22 36V28L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/>

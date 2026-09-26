@@ -4,6 +4,55 @@
 
 ---
 
+## 切り替え（段3）: ブレインに今の状況を渡す・主の一手＋並行で探す・退去予定の補正をお部屋ごとに（竹内・2026-09-26「いつまで1つの物件にとらわれないか」）
+- **状況を渡す**: brain-core の【内覧履歴・予定】＋【内覧済み顧客・重要】を `buildCustomerStateBrainBlock`（段階・主のお部屋・進んだお部屋・募集終了・送っただけの候補の件数・探し続けているか・内覧の一覧（お礼があれば実施済み）・warn のずれ）に置き換えた。customerSpecificText（キャッシュしない所）にだけ入る。読めない時は旧のブロックに戻る。旧の「他社への並行問い合わせは実質終了・申込へを優先」は「申込の一文と引き続き探すの両方があり得る・どちらを主にするかはお客様の反応で」に直した
+- **生成の内覧の手引き**: resolveState は status=viewing（審査管理の同期の残り）・ブレインの checkpoint_stage=viewing でも、`customerStateHasViewing`（これからの内覧・内覧調整中・7日以内の内覧後）が false なら内覧の手引きにしない（ログ `state:viewing-stale`）。読むのは status=viewing か checkpoint_stage=viewing の時だけ（約0.4秒）
+- **並行で探す**（`app/lib/parallel-search.ts`・四者同名）: 場面は決定論（内覧後・申込中・番手待ち・7日以上ぶり。番手待ち以外はお客様のきっかけの語がある時だけ）→ 場面の時だけブレインに材料と JSON の項目 `parallel_search`/`parallel_search_reason`（既定 false）→ on の時は alt_actions に property_send（AIX は1つのまま）→ 生成は今回の発言を見た判断で wait でない時だけ「引き続き探す一文を添えてもよい（添えなくてもよい）」（例は実送信で一番多い「引き続き新着でおすすめできる物件が出次第ご連絡させて頂きます！！」）→ 最終チェックは UNPROMPTED_PROPOSAL を免除。ログ `brain:parallel-search`・`reply:parallel-search`（applied/fresh/stance）
+- **退去予定の補正（穴:G5）**: `moveOutViewingVerdict`（理由つき）。別のお部屋を送った後・お客様が別のお部屋を名前で指した時・別のお部屋の送付に付いた定型の締めは先押さえに数えない。名前が取れない時は旧のまま。ブレイン・生成（detectPropertyStatus＋moveOutMsgsFromHistory）・最終チェック E6 が同じ関数。監査 `npx tsx --env-file=.env.local scripts/audit-move-out-guard.ts`（180日44ターンで変わったのは2回・両方スタッフは申込へを押していない）。9/5 以降の guard:viewing 4件は全部スタッフの動きと合う（テスト: 9b9b81ba 9/15・9/24、ad97cd40）
+- **sent-props-text**: 「推した物件にすり替えない」→「お客様がどのお部屋か言っていない時だけ第一候補（名前・URL・画像で別のお部屋を指していればそちら）」
+- **YUMA の前後**（`scripts/yuma-switch-scenes-test.ts`・実物は `REPLAY_OUT=… npx tsx --env-file=.env.local scripts/audit-switch-scenes.ts` で書き出す・前の木 .claude/worktrees/tmp-fix-before）: AIX の類の一致 12場面で 前3・後3、G5 を入れた4場面で 前1・後2（G5 が申込へ→内覧へ）。並行で探すはブレインが場面の4件で全部 false（スタッフが両方した回も含む）。on を置いて材料を通しても生成は探す一文を足さず、本番と同じ LLM の本文は「他物件もご覧頂いた上でごゆっくりご検討ください😊！！」（スタッフの実送信とほぼ同じ）。`FORCE_PARALLEL=1|2`（2 は wait も外す＝材料の経路だけの確かめ）。判断を使い回す時は analyzed_msg_ts を場面の最後のお客様の発言にそろえる（そろえないと T2 で材料が届かない）
+- **作業メモ**: DeepSeek が「【AIX実行済み・確認結果報告済みを踏まえた返信】」を1行目に入れた → meta-narration に「1行まるごと【…返信/回答】」（実送信0行）
+- **反証レビューで直した（2026-09-27）**: ①`getCustomerState` は読めない時（supabase の error を含む）に空の状況でなく **null**（旧は「初回・お部屋なし（こちらが正）」がブレインに・「内覧の話なし」が生成に届いた）②今の状況のブロックは毎回変わるので `customerStateBlockText` として3（毎回変わる物）の並び＝seeMore の後に移した（旧の【内覧履歴・予定】の位置だと DeepSeek の先頭一致キャッシュが後ろごと外れる）。【内覧済み顧客】の「両方も多い」は実数（49通: 申込の一文28・探す25・両方8）に ③生成の resolveState は **ブレインの fresh な checkpoint_stage=viewing を customer-state で打ち消さない**（語の一覧で拾えない内覧の希望がある・ブレインは状況のブロックを読んで判断済み）。打ち消すのは status=viewing の残りだけ ④最終チェックの免除③は avoid_topics に新規ピックアップがある時は効かせない ⑤退去予定のお部屋の照合: 漢数字（第二↔第2）・【家賃 65000】を部屋にしない・「こちらの〇〇 103号室」の名前を残す（audit-move-out-guard の結果は変わらず）
+- **残り**: YUMA の再生では customer-state が YUMA 自身の記録（送付・内覧の記録）を読むので、場面によっては並行の場面が出ない（本物の会話の状況は再生されない）／並行で探すの効果は本番のログ（brain:parallel-search の on の率・スタッフが alt の物件ピックアップを押したか）で見る／画面のブレインのカードに parallel_search の理由は出していない（alt のボタンが並ぶだけ）／前の木 .claude/worktrees/tmp-fix-before は残っている（node_modules が本体への junction なので、消す時は先に junction を外す）
+
+---
+
+## トークの上の「今の状況」1行（customer-state・段2）（竹内・2026-09-26「トークの上に今の状況・ズレがあった際にわかりやすい」）
+- **部品**: `app/components/CustomerStateBar.tsx`（app/page.tsx の会話ヘッダー `</header>` の直下）。customer-state.ts からは**型だけ** import（関数を入れると依存ごと画面の束に入る）。サーバー専用は import しない
+- **値**: `GET /api/customer-state?conversation_id=…&view=compact`（`compactCustomerStateForView`: 送っただけの候補は件数だけ・進んだお部屋は主のお部屋を先頭に最大12・出来事は同じ日の同じ種類を畳んで直近6・brainSituation は渡さない。1会話 最大約30KB → 数KB）。LLM を呼ばない（ローカルで開いた間の llm_usage_logs は0件）・1回 0.3〜0.8秒
+- **取り方**: 会話を開いた時に1回／refreshKey（最後のメッセージid:状態）が変わったら2.5秒待って1回（開いた直後のメッセージ読み込みは数えない）。失敗したら出さないだけ
+- **見た目**: 閉じた時は1行で省略（390px で高さ25px・横のはみ出し0）。押すと全体を折り返し＋⚠ずれの中身（warn）＋段階の日付＋内覧＋探し中の理由＋お部屋ごと（★主・状態の色・見積済/退去予定/お客様が指名/持ち込み・未確認の似た名前・出来事の日付）＋参考（info・畳む）＋材料（状態・ブレインの段階を日本語）＋↻取り直す。⚠ずれ は warn がある時だけ・直す操作は付けない
+- **確かめ**: ヘッドレス Chrome（scratchpad の puppeteer-core）で YUMA と実の会話6件 × 390/1280。実の会話は GET と CORS の OPTIONS だけ通し、書き込み系の API は CDP の setBlockedURLs でも止め、閉じる前にオフラインにする（最初は閉じる時の POST が1回だけ通り、generate-draft-bg-async が本文なしで JSON エラー＝何もしていない）。取り直しは YUMA の状態を手で変えて1回だけ取り直すのを見て、状態・updated_at・status_manual_back_at を戻した
+- **気づいた事（段1の材料の側・未対応）**: 「🎉 成約 606号室」（建物名なし）・「T's Court福島 40号室」・「スプランディッド本町グラン 1」のような部屋の読み違い／後の確認が募集中でも「退去予定」の印が残る（110b3053）／こちらが送った物件に「お客様の持ち込み」が付いて見える会話がある（要確認）
+
+## お客様の今の段階とお部屋ごとの状況（customer-state・段1）（竹内・2026-09-26「内覧前の状態も認識／トークの上にステータス・ズレが分かる」）
+- **1か所で決める**: `app/lib/customer-state.ts` の `resolveCustomerState`（純関数・画面から import 可・supabase を import しない）／材料の読み込み `app/lib/customer-state-server.ts` の `getCustomerState(conversationId)`／画面用 `GET /api/customer-state?conversation_id=…`（内部認証・読むだけ）。**まだブレイン・生成・画面にはつないでいない**（段2・段3）
+- **段階（12）**: 初回／物件検索中（こちらの番）／提案中（お客様の番）／気に入った物件あり／見積送付済み／内覧調整中／内覧予定（日時）／内覧後／申込準備／申込・審査中／成約／見送り・他社決定。60日2,173区切りで「その時点の材料だけで」作り直すと次のスタッフの動きが段階ごとに違う（境目になっている）
+- **正の順**: status の申込以降・成約・失注 → 行動台帳 → viewing_history（lapsed でもお礼があれば実施済みとして**読む**・行は書き換えない）→ AIX 本文の【】・物件確認 → お客様の共有（物件ポータルの URL だけ）。ブレインの phase/situation は比べるだけ
+- **お部屋**: 建物の鍵（NFKC＋normalizePropertyName）＋部屋（0外し）。似ている・略称は寄せず maybeSameAs（未確認）。状態 候補／確認中／募集中(退去予定)／見積済／内覧予定／内覧日経過(未確認)／内覧済／申込中（最後に申込んだ部屋だけ・状態が申込以降の時だけ）／終了
+- **食い違い**: warn（画面の⚠ずれ）= STATUS_VIEWING_STALE 21・DECIDED_ELSEWHERE_OPEN 3（全部目で読んで本物）／info = VIEWING_DONE_BUT_LAPSED 29・VIEWING_UNCONFIRMED 11・FORM_BUT_PROPOSING 16・APPLY_NO_ROOM 16・PHASE_MISMATCH 100・UPCOMING_VIEWING_NO_ROOM
+- **入口の直し**（`sent-facts.recordAixFacts`）: 見積の estimateFor を本文の【】から（過去234通で94%埋まる）／申込の案内はこちらの本文「〇〇 102号室お申込みさせていただきます」（applicationPropertyFromText）の物件だけ（75通中19通）
+- **止めた判断**: 物件名の無い内覧・申込に「直前の見積・確認の1件」で名前を付ける推定は入れない（名前のある記録で当てると半分外れた）→ info で見せ、画面で物件を選ぶ入口で直す（段2以降）
+- **監査**: `CS_ONLY=1 npx tsx --env-file=.env.local scripts/audit-customer-state.ts`（CS_SHOW=HEAD で1行を全部・CS_SHOW=STATUS_VIEWING_STALE 等で例を全部・CS_SHOW=APP で申込の物件）。テスト `npx tsx app/lib/__tests__/customer-state.test.ts`（38）
+- **残り**: 見送り（お客様がこの部屋はやめた）・番手はまだ持たない／申込の案内の画面に物件を選ぶ欄（入口）／viewing_history の物件名なし（画面の挨拶ピッカー経由）／status=viewing の同期の残りを直すのはスタッフ（⚠で気づく）
+
+---
+
+## 保証会社の知識はマスタ1本（竹内・2026-09-26 決定・同日3回目が最新）— 黄金ルール
+- 種類は `app/lib/guarantor-companies.ts` だけ。**種類は3つ: 独立系・信販系・信用系**（＋不明）。「LICC系」という種類は無い（竹内さん「全保連は信用系」「エポスは信販系」「LICC系は全部信用系」）
+  - 信用系: 全保連・ジェイリース・日本賃貸保証（LICC 加盟）・K-net／信販系: エポス・オリコ・クレディセゾン・ジャックス・アプラス／独立系: 日本セーフティー・Casa・ナップ 等。マスタに無い会社はスタッフが説明した種類で足す・説明の無い会社は「不明」（推測しない）
+- 🔴 **同じ日に2回取り違えた**: fd989546「スタッフの信用系＝信販系」（誤り）→ 4a3a0e79「4種類（LICC系を別に・信用系=K-net）」→ 04883e71 LICC系の説明 → 最新「LICC系を信用系に統合して3種類」。信用系と信販系は違う。種類の数・呼び名を変える時は「どの会社がどれに入るか」を並べて本人に確かめる
+- 定義（竹内さんの言葉そのまま）: 信販系「信販系はクレジットカード会社や信販会社が母体となっている　一番厳しい」／信用系「信用系は金融系の情報ではなく過去の家賃滞納やトラブルがなかったかみられるばしょ」。コードは `GUARANTOR_TYPE_DEFINITION`（テストで文言固定）。独立系の説明はスタッフの実送信のまま
+- お客様向けの信用系の文は定義の言葉だけ（「〇〇という信用系の保証会社を使用しており、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る保証会社となります！！」）。審査の緩い・厳しい、LICC の加盟の話は書かない（加盟を説明した実送信が無い・実送信の「LICC」は種類名だけ）。プロンプトの一般知識（SCREENING_COMPANY_RULE）では「LICC 加盟の会社も信用系」「信販系＞信用系＞独立系」を持つ
+- 本文の照合 `checkGuarantorFacts`（3種類）: 全保連を「信用系」と書くのは正しい／信販系・独立系の会社を「信用系」、信用系の会社を「信販系」と書いたら notice／「LICC」はどの会社でも notice（無くした種類）
+- 後方互換: DB・旧画面・AI の読み取りに残る "licc"／「LICC系」「LICC」は信用系として読む（`normalizeGuarantorType`・`parseGuarantorTypeJa`。guarantor_companies の登録・sent_facts の台帳・AixModal の読み取りチップ）
+- 画像の読み取り（extract-guarantor-info・AIX mgmt_guarantor）は会社名だけ読ませ、種類は `resolveGuarantor`。プロンプトの「主な会社」は `guarantorNamesByType()` から作る（コピーを置かない）
+- ナレッジ 7fba1320・df318fb3（全保連・ジェイリースを独立系と書いた imp9）・6e228953（クレディセゾンを「LICC系」）は rejected。手本 ai_reply_examples 3b6c5662（9/23 一覧でナップ・エポスを「信用系」）・9dae55b5（9/16 クレディセゾンを「信用系」）・9d777f08（7/01 クレディセゾンを「LICC系」）は `entry_source`・`conversation_state` とも `rejected_example`（DELETE しない。conversation_state だけだと match_aix_reply_examples に残り、migrate-schema の UPDATE で line_reply→aix_action に移るため両方）
+- 残り（竹内さんの判断待ち・DB 未変更）: 「LICC系」の呼び名が残る有効な行 — ナレッジ ab2907c2（confirmed・一般論「信販系/LICC系/独立系」）・d41dc387（「独立系/LICC/信販系」）・df2a78f8（「LICC系と独立系に絞って」）／ai_prompts feedback_rule_ddee955f（「信販系・LICC系・独立系の違い」）／手本 95ed54d7（6/16「LICC系と独立系の保証会社中心に」）。会社の種類の誤りではなく呼び名なので、「LICC系」→「信用系」に書き換えるかは判断が要る／審査期間「3日〜1週間」の実送信・ナレッジ（未変更）
+- brain-core.ts:356（guarantor_info の説明）・page.tsx:13551（保証会社の確認の説明）は 2026-09-26 段3の担当が「独立系／信販系／信用系」に直した
+
+---
+
 ## 売上サポ「画像で分析」・一番オススメ（竹内・2026-09-24 夜）
 - 画像の文字抜け（pdfjs に cMap が渡っていなかった）を直した。詳細・作り直しのスクリプトは `memory/dept_search_tool.md` の同日の節
 - AIX【物件ピックアップした】に渡る画像は toPickupHandoffItem（trim → page）のまま。売上サポは同じ建物の近い広さの部屋を記録しない（LINE グループは変えない）ので、AIX に渡る候補も1建物1部屋が基本になる
@@ -1703,7 +1752,7 @@ npx tsx --env-file=.env.local scripts/audit-opener-body.ts   # 実送信への�
 - **直した実害**: 旧実装は AixModal が生成文の**末尾**に `〇〇という保証会社使用しており、クレジットカードの滞納歴で審査する中級程の保証会社となります！！` を**種類に関わらず**足していた（7/10 の信販系の実文を固定で流用）。独立系（審査が緩い）の物件にも信販系の説明が付き、事実と逆を伝えていた（実データ1年: この言い回し1件・「独立系」45件）
 - **位置**（実送信9件・例外なし）: `御見積書同封させて頂きました → 保証会社 → 締め（お手隙の際にご査収ください／内覧・申込の誘導／他N件募集終了の案内）`。保証会社は**その物件の情報の一部**なので物件ブロックに属する
 - **文**（種類ごと・スタッフの実送信そのまま・`app/lib/guarantor-companies.ts` の `GUARANTOR_CHECK_SENTENCE`）
-  - 信用系（credit）: 「〇〇という信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！」（9/16 YUYA）
+  - 信用系（credit）: 「〇〇という信用系の保証会社を使用しており、クレジットカードの滞納歴で審査する保証会社となります！！」（9/16 YUYA）※2026-09-26 以降: credit は「信販系」と書く・信用系は別の種類（K-net）＝冒頭の「保証会社の知識はマスタ1本」の節
   - 独立系: 「〇〇という独立系の保証会社を使用しており、審査基準が緩くかなり審査通過しやすいお部屋となります😊！！」（6/29）
   - LICC系: 【保証会社について】と同じ言い回し（独立系に比べると審査基準は上がるが信用情報を重視しない）
   - 2部屋とも同じ会社: 「こちら2部屋とも〜」（7/21）／会社が分かれる: 物件名を頭に付けて1行ずつ
@@ -7228,3 +7277,10 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - ブレイン（Claude）の AIX の種類は前後で同じ向き（S1 estimate_sheet・S2 property_check_result・S5 meeting_place・S6/S4 なし・S7 property_check_result mgmt_parking）。S3 は前 estimate_sheet/property_send・後 estimate_sheet/acknowledge_check と回ごとに揺れる（台帳に確認結果の中身が届いた後は「確認します」系の reply_direction は出なかった）
 - 残り（止めた判断）: ①S5 の「現地にてお待ち合わせ如何でしょうか」（出口の待ち合わせ確定の正規表現に「現地にて」が無い。出口を広げるのは誤削除の監査が要る）②S1 の「ご査収」は YUMA の履歴（AIX の物件送付ばかり）由来 ③ブレインの reply_direction は S2 でも「確認中である旨を伝えて」と書く（生成側で止まるので変えていない）④**AIX の物件送付の本文に「お待たせ致しました」**（直近7日 実お客様17通・G32 違反。AIX 側の担当へ）
 - 設計知見4件（穴:G1 ×2・汎用1・静かに壊れる1）
+
+### 2026-09-26 収入・身元の証明書類も書き起こさない（竹内「収入証明書なども収入証明書とするだけで、文字おこししないようにする」）
+- 入口（line-webhook の保存前）で `imageTextForSave` が本人確認書類に続けて `app/lib/personal-document-guard.ts` を見る → `[画像] 収入証明書（給与明細）`／`[画像] 住民票`／`[画像] 申込書` だけ残す。image_type は `income_document`（Vision の TYPE にも追加）。判定は分類 or 中身の指紋（fail-closed・書類名だけでは当てず欄の語の組）
+- 実データ: お客様の画像 912件で当たる9件（給与明細6＝Vision は全部 estimate と誤分類・労働条件通知書1・辞令1・保険の申込1）、物件資料・見積書・写真の誤爆0、会話本文358件（スクショ代わり）でも依頼文の誤爆0
+- 後ろ: received-document が保存した名前を読み戻す（`savedPersonalDocumentLabel`・新しい種類は nameOnly＝昔の書き起こしには当てない）→ provesEmployment は書き起こし無しで効く。既に残っている9行は書き換えていない（竹内さん判断待ち）
+- 残り: （brain-core の IMAGE_TYPE_LABEL の `income_document:"収入証明書"` は 2026-09-26 段3の担当が足した）post-apply（申込以降の判定）は id_document だけ見る
+- テスト `personal-document-guard.test.ts`（47）

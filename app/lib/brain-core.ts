@@ -43,6 +43,11 @@ import {
 import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOutViewingReleased } from "@/app/lib/move-out-context";
+// 2026-09-26 段3（竹内「ステータスや内覧予定をブレインに持たせたら…」「いつまで1つの物件にとらわれないように」）:
+//   お客様の今の段階・お部屋ごとの状況（customer-state）と、主の一手＋並行で探す（parallel-search）
+import { getCustomerState } from "@/app/lib/customer-state-server";
+import { buildCustomerStateBrainBlock, type CustomerState } from "@/app/lib/customer-state";
+import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
 import { resolveBrainPropertyState } from "@/app/lib/property-send-state";
 // 2026-09-18 ブレインが保存する短い語は「文の途中で切らない」（切れた語が AIX の指示に流れ込んでいた）
@@ -156,6 +161,12 @@ export type SuggestedAixMeta = {
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
   two_choice_mode?: boolean;           // 2択UI表示フラグ（物件提案中フェーズで条件トレードオフ質問検出時）
   alt_actions?: string[];              // 2つ目以降の AIX（action の横に並べて出す。2026-09-15 この事例: 連絡待ちの物件ピックアップ＋物件オススメ）
+  /**
+   * 2026-09-26 段3: 主の一手（action）に加えて、ほかのお部屋も並行して探すか（内覧後・申込中・番手待ち・しばらくぶりに戻った時だけ）。
+   *   場面は決定論（parallel-search.resolveParallelSearchScene）・出すかはブレイン（必須にしない）。on の時は alt_actions に物件ピックアップを並べ、
+   *   返信生成は「引き続き探す一文を添えてよい」を材料に、最終チェックは新規の探索の宣言を余計な提案に数えない
+   */
+  parallel_search?: ParallelSearchOutput;
   reply_direction_label?: string;      // 返信方向の要約ラベル（10字以内・two_choice_mode=true時のみ設定。例: 「条件説明」「不安解消」「相場説明」）
   // Chrome拡張フィードバックループ用: 拡張が brain/list API 経由で取得し検索フォームに自動入力する
   property_search_params?: {
@@ -342,7 +353,7 @@ const AIX_CAPABILITY_MAP = `
 - cost_explain: 費用の安さの説明を生成（仕組み＝オーナー様からの広告料をお客様に還元。仲介手数料はスモラ＝一律2,980円／イエヤス・ギガ＝0円。＋この物件の具体額＝貸主から〇〇円頂き〇〇円を還元。金額はスタッフ入力のみ・金額なしの「仕組みを説明」も可）
 - cost_breakdown: 初期費用の中身の説明を生成（スタッフが貼り付けた御見積書の画像を読み取り、含まれる項目・合計・家賃だけで入居できるか・日割家賃の扱いを1通で答える。金額は御見積書の数字のみ）
 - phone_call: 「電話をかける」ボタン（LINEコール・お客様がボタンから公式LINEに電話できる）と案内文を送る。電話の後のまとめはスタッフが AIX【電話終了後】で送る（ブレインは選ばない）
-- guarantor_info: 物件ごとの保証会社名と種類（独立系＝審査基準が緩い／LICC系／信販系）を一覧で案内し、かぶっていない保証会社の並行審査を勧める（会社名・種類はスタッフ入力のみ）。お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時に選ぶ。本文は「保証会社確認させて頂きます」の受付だけで、会社名・通りやすさを本文に書かない
+- guarantor_info: 物件ごとの保証会社名と種類（独立系＝審査基準が緩い／信販系／信用系）を一覧で案内し、かぶっていない保証会社の並行審査を勧める（会社名・種類はスタッフ入力のみ）。お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時に選ぶ。本文は「保証会社確認させて頂きます」の受付だけで、会社名・通りやすさを本文に書かない
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
@@ -1279,6 +1290,8 @@ export async function analyzeConversation(
   // limit 30→15: checkpoint（RAG検索含む）が古い会話をカバーするため、直近15件で十分。
   // CPが機能する前は30件必要だったが、CP+RAG実装後は前半15件はCPと重複するだけ → トークン削減。
   // count: "exact" は総メッセージ数のプロンプト注入用（B3）
+  // 2026-09-26 段3: お客様の今の状況（7本の読み取り・約0.4秒）を下の読み取りと並べて先に投げる。失敗したら旧の【内覧履歴・予定】に戻る
+  const customerStatePromise: Promise<CustomerState | null> = getCustomerState(conversationId).catch(() => null);
   const [msgResult, pcResult, examplesResult, checkpointsResult, sentPropsResult, sentImagePropsResult, templatesResult, contractKnowledgeResult, contractExamplesResult, aixLogsResult, scheduledMsgsResult, openTasksResult, viewingsResult, viewingHistoryResult, applyingPatternsResult, winningPatternsResult, actionRulesResult, transitionStatsResult, recordedFacts, systemInputs] = await Promise.all([
     supabase
       .from("messages")
@@ -1498,7 +1511,7 @@ export async function analyzeConversation(
   const typedMessages = messages as Array<{ sender: string; text: string | null; created_at: string; line_message_id: string | null; is_aix_generated: boolean | null; quoted_message_id: string | null; image_type: string | null; image_url?: string | null }>;
   // 監査FIX(2026-08-20): 画像種別ラベル（Vision分類済みの場合のみ）と引用リプライ注釈を履歴に付与。
   // 引用先が取得ウィンドウ内にあれば先頭30字を添える → 「物件カードへの引用=その物件が話題の中心」を事実化
-  const IMAGE_TYPE_LABEL: Record<string, string> = { estimate: "見積書", floor_plan: "間取り図", property_photo: "物件写真", id_document: "本人確認書類", other: "その他画像" };
+  const IMAGE_TYPE_LABEL: Record<string, string> = { estimate: "見積書", floor_plan: "間取り図", property_photo: "物件写真", id_document: "本人確認書類", income_document: "収入証明書", other: "その他画像" };
   const msgByLmid = new Map<string, { text: string | null; sender?: string; image_url?: string | null }>();
   for (const m of typedMessages) {
     if (m.line_message_id) msgByLmid.set(m.line_message_id, { text: m.text, sender: m.sender, image_url: m.image_url ?? null });
@@ -2273,7 +2286,17 @@ export async function analyzeConversation(
     : (viewingsResult.data ?? []) as Viewing[];
   // lapsed = 日付が過ぎたが実施したかは記録が無い（viewing-status-update が閉じる・2026-09-14）。完了（対面済み）とは扱わない
   const viewingStatusLabel: Record<string, string> = { scheduled: "予定", done: "完了", cancelled: "キャンセル", lapsed: "日付経過（実施は未確認）" };
-  let viewingsText = viewings.length > 0
+  // 2026-09-26 段3: お客様の今の状況（customer-state）があれば、【内覧履歴・予定】と【内覧済み顧客・重要】の代わりにそれを渡す。
+  //   旧の【内覧履歴・予定】は viewing_history の行のまま（lapsed の34/42件は内覧後のお礼を送っているのに「実施は未確認」・物件名なし67%）で、
+  //   status=viewing の残り（審査管理の同期）とも突き合わせていなかった。新は内覧の一覧（お礼があれば実施済み）＋段階＋お部屋ごと＋探し続けているか＋ずれ。
+  //   毎回変わる値なので customerSpecificText（キャッシュしない所）にだけ入る（system の前置きは変えない）
+  const customerState = await customerStatePromise;
+  // 2026-09-26 反証レビュー（プロンプトキャッシュ）: 今の状況は毎回変わる（段階・出来事の日付・内覧の予定/日付経過は日付でも変わる）。
+  //   旧の【内覧履歴・予定】の位置（2＝この会話で当分変わらない物の並び）に置くと、DeepSeek の先頭一致のキャッシュが
+  //   その後ろ（未完了タスク・手本・会社の事実…）ごと外れる → 3（毎回変わる物）の並び・並行で探すの材料の直前に置く（customerStateBlockText）
+  let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
+  const customerStateText = customerStateBlockText;
+  let viewingsText = customerStateText ? "" : viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {
         let s = `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`;
         if (v.property_name) s += ` 物件: ${v.property_name}`;
@@ -2281,16 +2304,28 @@ export async function analyzeConversation(
         return s;
       }).join(" / ")}`
     : "";
-  // 内覧済み顧客の特別扱い（修正5）: 完了内覧がある顧客は対面済み＝申込プッシュ優先
-  const completedViewings = viewings.filter((v) =>
-    v.status === "completed" || v.status === "done" || v.status === "完了"
-  );
+  // 内覧済み顧客の特別扱い（修正5）: 完了内覧がある顧客は対面済み
+  // 2026-09-26 段3 竹内「内覧終了して別の物件に切り替えるなら切り替える・その物件も候補にしてほかも探す」:
+  //   旧「①他社への並行問い合わせが実質終了 … application_push を優先」は実態と逆だった（設計知見「1つの物件へのとらわれは…」）。
+  //   内覧後のお礼（180日 49通）は 申込の一文 28・引き続き探す 25・両方 8（成約した会話の5通は 申込の一文3・引き続き探す4・両方2）。内覧後に別の物件の話が出た回、スタッフは探すと申込/確認を同じターンで両方する回が33%。
+  //   → 「申込の一文と引き続き探すの両方があり得る・どちらを主にするかはお客様の反応で決める」に直した。
+  //   数え方も customer-state の内覧の一覧（lapsed でもお礼があれば実施済み）に合わせる（旧は viewing_history の done だけ＝10件）
+  const completedViewings = customerState
+    ? customerState.viewings.filter((v) => v.status === "done")
+    : viewings.filter((v) => v.status === "completed" || v.status === "done" || v.status === "完了");
   if (completedViewings.length > 0) {
-    viewingsText += `\n【内覧済み顧客・重要】\n`;
-    viewingsText += `この顧客はスタッフと対面済み（内覧完了: ${completedViewings.length}回）。\n`;
-    viewingsText += `対面経験により: ①他社への並行問い合わせが実質終了している ②信頼関係が形成済み ③申込への心理障壁が対面前より大幅に低下。\n`;
-    viewingsText += `次の対応指針: 提案物件が条件に合えば viewing_invite より application_push を優先。物件への反応が薄い場合も「弊社で引き続き探す」前提で関係維持。`;
+    // 反証レビュー: 旧の「両方も多い」は実数（49通中8通＝16%）と合わない → 数字のまま渡す
+    const viewedText = `\n【内覧済み顧客（対面済み・${completedViewings.length}回）】` +
+      `対面で信頼関係はできている。内覧後は『気に入ったお部屋の申込の一文』と『引き続きほかのお部屋も探す』の両方があり得る（スタッフの内覧後のお礼49通: 申込の一文28・引き続き探す25・両方8）。` +
+      `どちらを主の一手にするかは内覧後のお客様の反応（気に入った／迷っている／別の物件の話）で決める。内覧したお部屋に決めたと言っていない時に、内覧済みだけを理由に application_push にしない。`;
+    if (customerStateText) customerStateBlockText += viewedText; else viewingsText += viewedText;
   }
+  // 2026-09-26 段3: 主の一手＋並行で探す（場面は決定論・出すかはブレイン）。場面の外では何も渡さない
+  const parallelSearchCtx = resolveParallelSearchScene({
+    state: customerState,
+    ...parallelSearchInputsFromMessages(typedMessages.map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))),
+  });
+  const parallelSearchBrainText = buildParallelSearchBrainNote(parallelSearchCtx);
   viewingsText += viewingReportText;
 
   // H6(Fable5): ホット顧客・スタッフ要対応フラグ
@@ -2350,11 +2385,11 @@ export async function analyzeConversation(
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -2369,7 +2404,9 @@ ${history}`;
       cond: condText.length, profile: profileText.length, aiSummary: aiSummaryNote.length, scheduled: scheduledText.length, tasks: tasksText.length,
       viewings: viewingsText.length, examples: examplesText.length, checkpoint: checkpointText.length, ragKnowledge: ragKnowledgeText.length,
       sentProps: sentPropsText.length, propertySearch: propertySearchText.length, history: history.length,
+      customerState: customerStateBlockText.length, parallelSearch: parallelSearchBrainText.length,
     },
+    customerStage: customerState?.stage ?? null, parallelScene: parallelSearchCtx.scene,
     userTotal: customerSpecificText.length, staticSystem: sys.staticText.length, dynamicSystem: sys.dynamicText.length,
   }));
   // 2026-09-23 竹内「問題は個人情報を deepseek 側が読み取ること」:
@@ -3282,8 +3319,18 @@ ${history}`;
       try { waitUntil(shadow); } catch { /* Vercel 以外 */ }
     }
 
+    // 2026-09-26 段3: 主の一手＋並行で探す。場面の外・主の一手がもう物件の送付の時は付けない（parallel-search.resolveParallelSearchOutput）
+    const parallelOut = resolveParallelSearchOutput(
+      parallelSearchCtx,
+      parsed as { parallel_search?: unknown; parallel_search_reason?: unknown },
+      finalAix ?? null,
+      closedAckWait ? ["property_recommendation"] : (promiseAltAction ? [promiseAltAction] : undefined),
+    );
+    if (parallelOut.parallel) console.log(JSON.stringify({ tag: "brain:parallel-search", conversationId, scene: parallelOut.parallel.scene, on: parallelOut.parallel.on, aix: finalAix ?? null, reason: parallelOut.parallel.reason }));
+
     return {
       action: finalAix ?? "",
+      parallel_search: parallelOut.parallel,
       note: staffNote,
       check_pattern: checkKind?.check_pattern ?? null,
       source,
@@ -3296,7 +3343,8 @@ ${history}`;
       reply_direction_label: replyDirectionLabel,
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ
       // 2026-09-17 慶次事例: 探し続ける約束の後も同じ2つ（物件ピックアップ＋物件オススメ）を並べる
-      alt_actions: closedAckWait ? ["property_recommendation"] : (promiseAltAction ? [promiseAltAction] : undefined),
+      // 2026-09-26 段3: 並行で探す時は物件ピックアップも並べる（parallelOut に畳んだ）
+      alt_actions: parallelOut.altActions,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
       property_search_params: pc ? {
         area: pc.desired_area ?? null,

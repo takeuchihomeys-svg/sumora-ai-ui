@@ -110,9 +110,11 @@ async function main() {
   const since = new Date(Date.now() - DAYS * 86400e3).toISOString();
   const since2 = new Date(Date.now() - (DAYS + 30) * 86400e3).toISOString();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const convs = await page<any>("conversations", "id, status, line_source_type, created_at", null);
+  const convs = await page<any>("conversations", "id, status, line_source_type, created_at, customer_name", null);
   const convOk = new Map<string, string>();
   for (const c of convs) if (c.id !== YUMA && c.line_source_type !== "group") convOk.set(c.id, c.status ?? "?");
+  const convName = new Map<string, string>();
+  for (const c of convs) if (typeof c.customer_name === "string" && c.customer_name.trim().length >= 2) convName.set(c.id, c.customer_name.trim());
   const msgs = (await page<Msg>("messages", "conversation_id, sender, text, image_url, image_type, created_at, is_aix_generated", since2))
     .filter((m) => convOk.has(m.conversation_id)).map((m) => ({ ...m, t: Date.parse(m.created_at) }));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -318,6 +320,85 @@ async function main() {
     const c: Record<string, number> = {};
     for (const e of es) { const k = String(e.brain!.src ?? "llm/なし").replace(/:.*/, ":*"); c[k] = (c[k] ?? 0) + 1; }
     console.log(`${sc}: ${Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・")}`);
+  }
+  // 2026-09-26 段3: YUMA で前後を比べる実物を書き出す（REPLAY_OUT=<file>）。場面ごとに「スタッフが両方した回」2件＋「片方だけ」1件（直近 REPLAY_DAYS 日・会話は重複させない）。
+  //   本文は伏せる（名前→YUMA・電話・URL はポータルの形に）。時刻は場面の最後からの分で、間は最大3時間に縮める（YUMA の既存の発言と混ざらないように）。
+  //   scripts/yuma-switch-scenes-test.ts が読んで YUMA に入れ、ブレインの前（HEAD）・後（作業コピー）を取る
+  if (process.env.REPLAY_OUT) {
+    const REPLAY_SCENES = ["A0 内覧後の反応（保留・お礼）", "A1 内覧後に別の物件へ・条件の見直し", "B 申込後に他の物件も見る", "P 番手（2番手・繰り上がり待ち）の後"];
+    const rdays = Number(process.env.REPLAY_DAYS ?? 60);
+    // 個人情報を YUMA の会話に入れない: 申込のフォーム（氏名・生年月日・住所）は中身ごと伏せる／表示名・行頭の「〇〇さん」／電話・メール・郵便番号・生年月日・住所の行
+    const callNameCache = new Map<string, string[]>();
+    const callNames = (conv: string): string[] => {
+      if (callNameCache.has(conv)) return callNameCache.get(conv)!;
+      const c = new Map<string, number>();
+      for (const m of byConv.get(conv) ?? []) {
+        if (m.sender === "customer") continue;
+        for (const x of (m.text ?? "").matchAll(/(?:^|\n)([^\s、。！!？?「」（）()\n:：]{1,8})(?:さん|様)/g)) if (!/YUMA|お客|皆|担当|オーナー/.test(x[1])) c.set(x[1], (c.get(x[1]) ?? 0) + 1);
+      }
+      const names = [...c.entries()].filter(([, n]) => n >= 1).map(([k]) => k).sort((a, b) => b.length - a.length);
+      callNameCache.set(conv, names);
+      return names;
+    };
+    const maskReplay = (s: string, conv: string, sender: string) => {
+      if (/記入欄】|氏名|生年月日|フリガナ/.test(s)) return sender === "customer" ? "【お申込者様記入欄】（ご記入済み・内容は伏せた）" : ["【お申込者様記入欄】", "・入居希望日", "・氏名、フリガナ", "・現住所", "・携帯番号", "（申込時フォーマット・項目の一覧）"].join("\n");
+      let t = s;
+      const nm = convName.get(conv);
+      if (nm) t = t.split(nm).join("YUMA");
+      // スタッフが行頭で呼んでいる名前（「あやさん\n」「〇〇さんお世話に」）をこの会話の中で全部伏せる
+      for (const n of callNames(conv)) t = t.split(n).join("YUMA");
+      return t
+        .split("\n").filter((l) => !/〒|住所|現住所|生年月日|@|メール/.test(l)).join("\n")
+        .replace(/0\d{1,4}-?\d{1,4}-?\d{3,4}/g, "")
+        .replace(/\d{4}年\d{1,2}月\d{1,2}日/g, "")
+        .replace(/(^|\n)[^\s、。！!？?「」（）()\n:：]{1,10}(さん|様)/g, "$1YUMA$2")
+        .replace(/(で|、|。|！|!|\s)(?!YUMA)([A-Za-zぁ-んァ-ヶ一-龯]{1,6})(さん|様)(?=[にのがはをもへとご達、！!])/g, "$1YUMA$3")
+        .replace(/https?:\/\/\S+/g, (u) => (URL_RE.test(u) ? "https://suumo.jp/chintai/jnc_000000000000/" : "https://example.com/"));
+    };
+    const used = new Set<string>();
+    const out: unknown[] = [];
+    // REPLAY_PICK="7beca4f5@2026-07-29,..." で特定のターンを選ぶ（会話の先頭8桁@JST の日付・場面は問わない）。REPLAY_MSGS=通数（既定12）・REPLAY_GAP=間の上限の分（既定180）
+    const pickSpec = (process.env.REPLAY_PICK ?? "").split(",").map((x) => x.trim()).filter(Boolean).map((x) => { const [c, d] = x.split("@"); return { c, d }; });
+    const jstDate = (t: number) => new Date(t + 9 * 3600e3).toISOString().slice(0, 10);
+    const nMsgs = Number(process.env.REPLAY_MSGS ?? 12);
+    const gapCap = Number(process.env.REPLAY_GAP ?? 180);
+    const sceneList = pickSpec.length ? ["(指定)"] : REPLAY_SCENES;
+    for (const sc of sceneList) {
+      let pick: typeof evs = [];
+      if (pickSpec.length) {
+        for (const ps of pickSpec) { const e = evs.find((x) => x.conv.startsWith(ps.c) && jstDate(x.t1) === ps.d && !pick.some((y) => y.conv === x.conv && y.t1 === x.t1)); if (e) pick.push(e); else console.log(`（指定のターンが場面に無い: ${ps.c}@${ps.d}）`); }
+      } else {
+        const es = evs.filter((e) => e.scene === sc && Date.now() - e.t1 < rdays * 86400e3 && e.tracks.length).sort((a, b) => b.t1 - a.t1);
+        const two = es.filter((e) => e.tracks.includes("探す") && e.tracks.some((t) => t !== "探す"));
+        const one = es.filter((e) => !two.includes(e));
+        for (const e of two) { if (pick.length >= 2) break; if (!used.has(e.conv)) { pick.push(e); used.add(e.conv); } }
+        for (const e of one) { if (pick.length >= 3) break; if (!used.has(e.conv)) { pick.push(e); used.add(e.conv); } }
+      }
+      for (const e of pick) {
+        const list = byConv.get(e.conv)!;
+        const upto = list.filter((m) => m.t <= e.t1).slice(-nMsgs);
+        const aixs = aixBy.get(e.conv) ?? [];
+        // 時刻: 場面の最後からの分。間は最大180分に縮める
+        const mins: number[] = new Array(upto.length).fill(1);
+        let acc = 1;
+        for (let i = upto.length - 1; i >= 0; i--) {
+          mins[i] = acc;
+          if (i > 0) acc += Math.max(1, Math.min(gapCap, Math.round((upto[i].t - upto[i - 1].t) / 60e3)));
+        }
+        out.push({
+          id: `${(pickSpec.length ? e.scene : sc).slice(0, 2).trim()}-${e.conv.slice(0, 8)}`, scene: pickSpec.length ? e.scene : sc, conv8: e.conv.slice(0, 8), status: e.status,
+          staffMove: e.staffMove, tracks: e.tracks, twoTracks: e.tracks.includes("探す") && e.tracks.some((t) => t !== "探す"),
+          staffAix: e.nextAix?.type ?? null, staffText: maskReplay(e.staffText, e.conv, "staff").slice(0, 400),
+          loggedBrainAix: e.brain?.aix ?? null,
+          msgs: upto.map((m, i) => {
+            const a = m.is_aix_generated ? aixs.find((x) => Math.abs(x.t - m.t) < 3 * 60e3) : undefined;
+            return { s: m.sender === "customer" ? "customer" : "staff", text: maskReplay(m.text ?? (m.image_url ? "[画像]" : ""), e.conv, m.sender), min: mins[i], aix: a ? { type: a.type, property_names: a.props } : undefined };
+          }).filter((m) => m.text.trim()),
+        });
+      }
+    }
+    writeFileSync(process.env.REPLAY_OUT, JSON.stringify(out, null, 2));
+    console.log(`\nYUMA で比べる実物 ${out.length}件を ${process.env.REPLAY_OUT} に書き出した`);
   }
   if (process.env.OUT) {
     const out: string[] = [];

@@ -26,7 +26,7 @@ import { HASTY_ADVERB_TEST_RE, findUnanchoredUketamawari } from "./banned-phrasi
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する
 import { jstParts, WEEKDAYS_JA } from "./jst-date";
 // 2026-09-08 Fable5 G10/G26/G30: 主語判定・確認約束 verdict・冒頭挨拶（generate-reply / brain-core と四者同名）
-import { moveOutEvidenceText, isMoveOutReleased, moveOutRoomMismatch, type MoveOutSubject } from "./move-out-context";
+import { moveOutEvidenceText, isMoveOutReleased, moveOutRoomMismatch, moveOutViewingVerdict, moveOutSwitchedToOtherProperty, type MoveOutSubject } from "./move-out-context";
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
 // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順の質問（住所の再掲は AIX の越権ではない）
 import { isViewingAccessQuestion } from "./viewing-access";
@@ -228,6 +228,11 @@ export interface FinalCheckContext {
    *  検査は「今回のメッセージが何か」の判定にはこれを使わない。UNPROMPTED_PROPOSAL の severity と
    *  CELL_AVOID_CONFLICT の警告にのみ使う。check-reply 経路は省略可（severity が warning に落ちるだけ） */
   brainStrategy?: BrainConversationScope | null;
+  /**
+   * 2026-09-26 段3: ブレインが今回の発言を見て「主の一手＋並行でほかも探す」と判断した（parallel-search.ts・route の parallelSearchReplyOn と同じ値）。
+   *   true の時、引き続き探す一文は余計な提案（UNPROMPTED_PROPOSAL）に数えない
+   */
+  parallelSearch?: boolean;
   /** route.ts detectCellConflicts の結果（同一オブジェクト） */
   cellConflicts?: CellConflict[];
   /** 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後の aixDone）。生成ノート・後処理・検査が同じ値を見る（監査・tpo_debug 用） */
@@ -1454,6 +1459,10 @@ export function runProposalChecks(text: string, ctx: FinalCheckContext): CheckIs
     // 免除①: 選ばれたセルがまさにこの文を要求している／免除②: 未履行約束の復唱
     //   2026-09-11 統合設計: isCellRequiredSentence（後処理ゲートの protect・DOUBLE_DECLARATION フィルタと同じ関数）
     if (isCellRequiredSentence(s, pair)) continue;
+    // 免除③（2026-09-26 段3）: ブレインが並行で探すと判断した（内覧後・申込中・番手待ち・しばらくぶり）。
+    //   内覧後のお礼への「ありがとうございました」だけの返事でも、スタッフは引き続き探す一文を添える（内覧後のお礼 49通中25通）
+    //   反証レビュー: ブレインが avoid_topics に新規ピックアップを入れた時（同じ判断の中の食い違い）は免除しない＝避ける方を優先
+    if (ctx.parallelSearch && !waitSaid && !avoidSaid) continue;
     issues.push({
       pass: "context_check", severity: waitSaid || avoidSaid ? "block" : "warning",
       code: "UNPROMPTED_PROPOSAL",
@@ -2241,7 +2250,9 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
       /(?:ご都合よろしい|今週末|いつでも)[^\n。]{0,15}ご案内|内覧(?:でき|出来|可能)(?!ません|ない|次第|な(?:お部屋|物件)|る(?:お部屋|物件))/.test(text) &&
       !/以降(?:に|は)?(?:ご案内|ご内覧)|退去後(?:に)?ご案内|先に(?:抑|押さ)え/.test(text) &&
       !isMoveOutReleased(lastStaffTexts(ctx, 5)) &&
-      !moveOutRoomMismatch(moveOutHist, text))
+      !moveOutRoomMismatch(moveOutHist, text) &&
+      // 2026-09-26（穴:G5・四者同名）: 退去予定の話の後に別のお部屋を送った・お客様が別のお部屋を指している時は当てない（ブレイン・生成と同じ moveOutViewingVerdict）
+      !moveOutSwitchedToOtherProperty(moveOutViewingVerdict(recentMsgsForMoveOut(ctx, cust), "oldest_first")))
     push("context_check", "block", "VIEWING_BEFORE_VACANCY", "退去予定・入居中物件に対して現時点での内覧誘導をしています", firstSentenceAround(text, /ご案内|内覧/), "「[退去予定日]以降にご案内可能」または「お申込みで先に押さえてからご内覧」に変更");
   // E6' G10 現住居の退去・引越し報告（探索継続）に対する会話終了返信（離脱と誤読）
   if (ctx.moveOutSubject === "current_home" &&
@@ -2337,6 +2348,13 @@ const CUSTOMER_APPLY_INTENT_RE = /申込|申し込|申請|決め|押さえ|抑�
 function lastStaffTexts(ctx: FinalCheckContext, n: number): string {
   // oldest-first 前提。直近 n 件のスタッフ発言を結合（AIX 送付文も含む）
   return (ctx.recentMessages ?? []).filter((m) => m.sender === "staff").slice(-n).map((m) => m.text).join("\n");
+}
+/** 退去予定の補正をお部屋ごとに見るためのメッセージ（古い順・最後に今回のお客様の発言。同じ本文が既に最後にあれば足さない） */
+function recentMsgsForMoveOut(ctx: FinalCheckContext, cust: string): Array<{ sender: string; text: string }> {
+  const msgs = (ctx.recentMessages ?? []).map((m) => ({ sender: m.sender === "staff" ? "staff" : "customer", text: m.text ?? "" }));
+  const last = msgs.at(-1);
+  if (cust && !(last && last.sender === "customer" && last.text === cust)) msgs.push({ sender: "customer", text: cust });
+  return msgs;
 }
 function lastCustomerTexts(ctx: FinalCheckContext, n: number): string {
   return (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-n).map((m) => m.text).join("\n");
