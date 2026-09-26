@@ -1,5 +1,10 @@
 "use strict";
 
+// 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 人の操作の間（human-wait.js・manifest で先に読む）。
+//   読めない時は元の値。_axContentHd＝人の操作の間（0.8〜1.5倍）／_axContentSd＝画面が落ち着くのを待つ固定の秒数（元より短くしない）
+function _axContentHd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.humanDelay(ms) : ms; }
+function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+
 // リアプロ 左サイドバー強制表示スクリプト v8 - 包括対策版
 (function () {
   const SIDEBAR_MARKERS = ["リスト検索", "所在地絞り込み", "沿線・駅絞り込み", "管理会社絞り込み"];
@@ -10,7 +15,18 @@
   // scriptタグを使ってページ本体のJSとして実行させる
   // ══════════════════════════════════════════════════
   (function injectPageScript() {
+    // 2026-09-27 待ち時間のばらつき（self.AxlxHumanWait）を page-script.js より先にページへ入れる。
+    //   動的に足した <script> は既定で async（読み終わった順に動く）ので、async=false で入れた順に動かす。
+    //   読めなくても page-script.js は元の値で動く（予備あり）。
+    try {
+      const hw = document.createElement("script");
+      hw.src = chrome.runtime.getURL("human-wait.js");
+      hw.async = false;
+      hw.onload = function() { this.remove(); };
+      (document.head || document.documentElement).appendChild(hw);
+    } catch (_) { /* 予備で動く */ }
     const s = document.createElement("script");
+    s.async = false;
     s.src = chrome.runtime.getURL("page-script.js");
     s.onload = function() { this.remove(); };
     (document.head || document.documentElement).appendChild(s);
@@ -103,7 +119,7 @@
 
   // resizeイベント（content scriptからも二重対策）
   window.addEventListener("resize", function () {
-    [200, 600, 1500].forEach(function (d) { setTimeout(fix, d); });
+    [200, 600, 1500].forEach(function (d) { setTimeout(fix, _axContentHd(d)); });
   });
 
   // MutationObserver（ループ防止ロック付き）
@@ -175,7 +191,7 @@
         // page-script.js がリスナーを登録し終わるまで余裕を持たせてから送信
         setTimeout(function () {
           window.postMessage({ from: "aixlinx-fill", conditions: _buildConditions(c) }, "*");
-        }, 1000);
+        }, _axContentSd(1000));
       }
     );
   }
@@ -210,7 +226,7 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
     setTimeout(function () {
       window.postMessage({ from: "axlx-autofill-initiated" }, "*");
       window.postMessage({ from: "aixlinx-fill", conditions: msg.conditions, customerId: _fillCid }, "*");
-    }, 500);
+    }, _axContentHd(500)); // 自動入力を始めるまでの間（毎回ばらつかせる）
     sendResponse({ ok: true });
   });
 }

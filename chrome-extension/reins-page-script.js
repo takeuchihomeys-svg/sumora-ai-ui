@@ -2,6 +2,11 @@
   "use strict";
 
   function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+  // 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: human-wait.js（self.AxlxHumanWait）は
+  //   reins-content.js が先にページへ入れる。読めない時は元の値で動く。
+  //   _hd＝人の操作の間（0.8〜1.5倍）／_sd＝選択肢の読み込みなど画面が落ち着くのを待つ固定の秒数（元より短くしない）
+  function _hd(ms) { var H = window.AxlxHumanWait; return H ? H.humanDelay(ms) : ms; }
+  function _sd(ms) { var H = window.AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
 
   // Vue対応 value setter（select/inputどちらも対応）
   function setVal(el, val) {
@@ -104,7 +109,7 @@
       var r = b.getBoundingClientRect();
       return ["条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0 && (r.width > 0 || r.height > 0);
     });
-    if (_resetBtn) { _resetBtn.click(); console.log("[AX] 条件リセット実行"); await sleep(600); }
+    if (_resetBtn) { _resetBtn.click(); console.log("[AX] 条件リセット実行"); await sleep(_sd(600)); }
 
     // ── area_mode: webappトグル/ポップアップの明示指定が絶対ルール（自動判定より優先）──
     // "ward"    → 所在地入力のみ使用。沿線・駅の軸を完全に消す
@@ -125,12 +130,12 @@
 
     // 遅延レンダリング対策：最上部にスクロールして全フィールドを確実にレンダリング
     window.scrollTo(0, 0);
-    await sleep(800);
+    await sleep(_sd(800));
 
     // ① 物件種別1 = 賃貸マンション (select index 5)
     // 入力ガイド（ペット相談等）はこの選択が完了していないと動かないため必ずwaitする
     selectByText(getField(5), "賃貸マンション");
-    await sleep(600);
+    await sleep(_sd(600));
 
     // ② 所在地（ward_names）または 沿線名（reins_line）
     // 診断結果: 都道府県名[23,26,29] + 所在地名1[24,27,30] の3行構造
@@ -144,7 +149,7 @@
         // 都道府県名（SELECTまたはtext）
         var kenEl = getField(rowBases[wi]);
         if (!selectByText(kenEl, "大阪府")) setVal(kenEl, "大阪府");
-        await sleep(800); // 所在地名1のSELECTオプションが読み込まれるまで待つ
+        await sleep(_sd(800)); // 所在地名1のSELECTオプションが読み込まれるまで待つ
         // 所在地名1（SELECT）- selectByTextで選択、マッチしなければスキップ（不正値を入れない）
         var chiikiEl = getField(rowBases[wi] + 1);
         var wardVal = cond.ward_names[wi];
@@ -157,7 +162,7 @@
       // フォールバック: 旧方式の生テキスト → 所在地1に入れる
       var kenEl0 = getField(29);
       if (!selectByText(kenEl0, "大阪府")) setVal(kenEl0, "大阪府");
-      await sleep(800);
+      await sleep(_sd(800));
       var chiikiEl0 = getField(30);
       if (!selectByText(chiikiEl0, cond.ward_name)) {
         if (chiikiEl0 && chiikiEl0.tagName !== "SELECT") setVal(chiikiEl0, cond.ward_name);
@@ -171,7 +176,7 @@
           var pair = cond.reins_station_pairs[li];
           var baseIdx = sensenIdxs[li];
           setVal(getField(baseIdx), pair.line);
-          await sleep(800); // SELECTのオプション読み込みを待つ
+          await sleep(_sd(800)); // SELECTのオプション読み込みを待つ
           var stName = (pair.station || "").replace(/駅$/, "").trim();
           if (stName) {
             var stFromEl = getField(baseIdx + 1);
@@ -188,7 +193,7 @@
         for (var li = 0; li < lines.length && li < 3; li++) {
           var baseIdx = sensenIdxs[li];
           setVal(getField(baseIdx), lines[li]);
-          await sleep(800);
+          await sleep(_sd(800));
           if (stName) {
             var stFromEl2 = getField(baseIdx + 1);
             var stToEl2   = getField(baseIdx + 2);
@@ -308,14 +313,14 @@
       var optGuideBtn = allGuideBtns[allGuideBtns.length - 1];
       if (optGuideBtn) {
         optGuideBtn.click();
-        await sleep(800);
+        await sleep(_sd(800));
         checkByLabel("ペット相談");
-        await sleep(300);
+        await sleep(_hd(300));
         var ketteBtn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
           return b.textContent.trim() === "決定";
         });
         if (ketteBtn) ketteBtn.click();
-        await sleep(500);
+        await sleep(_sd(500));
       }
     }
 
@@ -334,7 +339,7 @@
     }
 
     // ⑨ 検索ボタン自動クリック
-    await sleep(600);
+    await sleep(_hd(600));
     var searchBtn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
       return b.textContent.trim() === "検索";
     });

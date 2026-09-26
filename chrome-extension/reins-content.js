@@ -1,13 +1,24 @@
 (function () {
   "use strict";
 
+  // 2026-09-27 竹内「全て時間ランダムに」: ページの中の物が読み込まれるのを待つ固定の秒数（元より短くしない）。human-wait.js は manifest で先に読む
+  function _sd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+
   var injected = false;
 
   function injectPageScript() {
     if (injected) return;
     injected = true;
     try {
+      // 2026-09-27 待ち時間のばらつき（self.AxlxHumanWait）を先にページへ入れる（async=false で入れた順に動く・読めなくても元の値で動く）
+      try {
+        var hw = document.createElement("script");
+        hw.src = chrome.runtime.getURL("human-wait.js");
+        hw.async = false;
+        (document.head || document.documentElement).appendChild(hw);
+      } catch (_) { /* 予備で動く */ }
       var s = document.createElement("script");
+      s.async = false;
       s.src = chrome.runtime.getURL("reins-page-script.js");
       (document.head || document.documentElement).appendChild(s);
     } catch (e) {
@@ -23,7 +34,7 @@
         window.dispatchEvent(
           new CustomEvent("axlx-reins-fill", { detail: msg.conditions })
         );
-      }, 200);
+      }, _sd(200));
     });
   }
 
@@ -77,7 +88,7 @@
             window.dispatchEvent(
               new CustomEvent("axlx-reins-fill", { detail: _buildConditions(c) })
             );
-          }, 600);
+          }, _sd(600));
         })
         .catch(function (e) {
           console.warn("[reins-content] URLパラメータ自動入力エラー:", e);

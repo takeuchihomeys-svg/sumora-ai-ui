@@ -6,6 +6,10 @@
   var isSending   = false;
 
   function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+  // 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: human-wait.js（manifest で先に読む）。読めない時は元の値
+  //   _hd＝人の操作の間（0.8〜1.5倍）／_sd＝画面が落ち着くのを待つ固定の秒数（元より短くしない）
+  function _hd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.humanDelay(ms) : ms; }
+  function _sd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
 
   // ── 物件行を取得（クラス名非依存・CB逆引き方式）──────────────────────
   // 設計方針: CSSクラス名はREINSのUI更新で変わるため信頼しない。
@@ -411,7 +415,7 @@
     targets.forEach(function (t) { clickNativeCb(t.cb, true); confirmed++; });
     console.log("[AX-REINS] ネイティブCB確認: " + confirmed + "/" + expectedCount + " 件");
 
-    sleep(400).then(function () {
+    sleep(_hd(400)).then(function () {
       // Step2: JSフック注入（createObjectURL / fetch / XHR / <a download> を全て捕捉）
       chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
         chrome.runtime.sendMessage({ type: "axlx-reins-watch-tab" }, function () {
@@ -429,7 +433,7 @@
 
           // Step3: 確認ダイアログ「一括取得」を800ms後に自動クリック
           // offsetParent は position:fixed のモーダルで null になるため getBoundingClientRect で可視判定
-          sleep(800).then(function () {
+          sleep(_hd(800)).then(function () {
             var ikkatsuBtn = Array.from(document.querySelectorAll("button")).find(function (b) {
               if (b.textContent.trim() !== "一括取得") return false;
               var r = b.getBoundingClientRect();
@@ -503,12 +507,12 @@
           captureOnePdf(target).then(function (b64) {
             console.log("[AX-REINS] 図面取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
             captured.push({ pdf: b64, target: target });
-            return sleep(1500);
+            return sleep(_hd(1500)) /* 1件ずつ資料を取る間隔（毎回ばらつかせる） */;
           }).then(function () {
             processNext(i + 1);
           }).catch(function (e) {
             console.error("[AX-REINS] 図面取得失敗 " + (i + 1) + "件目:", e.message);
-            sleep(800).then(function () { processNext(i + 1); });
+            sleep(_hd(800)).then(function () { processNext(i + 1); });
           });
         })(targets[i]);
       }
@@ -559,7 +563,7 @@
     var interval = setInterval(function () {
       if (findResultRows().length > 0 || Date.now() - start > maxMs) {
         clearInterval(interval);
-        setTimeout(callback, 300);
+        setTimeout(callback, _sd(300));
       }
     }, 200);
   }
@@ -606,7 +610,7 @@
             document.removeEventListener("axlx-pdf-ready", customEvtHdlr);
             closeViewer();
             // レインズのDOM安定化を待ってから行の確認（新タブ閉鎖後のSPA再描画を考慮）
-            sleep(600).then(function () {
+            sleep(_sd(600)).then(function () {
               waitForRows(function () { resolve(b64); }, 3000);
             });
           }
@@ -671,7 +675,7 @@
                 chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" });
               }, 300);
             });
-          }, 200); // MAINワールドのaxlx-start-pdf-capture処理を待つ
+          }, _sd(200)); // MAINワールドのaxlx-start-pdf-capture処理を待つ
         });
       }, 4000); // 前回のビューワーが閉じるのを最大4秒待つ
     });

@@ -17,6 +17,13 @@ import "./rp-update-days.js";
 import "./search-audit.js";
 // 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: AIXツールのメモの検索の指示（web_brain の payload.search_override）をその回だけ重ねる（self.AxlxSearchOverride）
 import "./search-override.js";
+// 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 待ち時間のばらつき（self.AxlxHumanWait・popup/content/ページの中と同じ1つ）
+import "./human-wait.js";
+
+// 待ち時間のばらつき（human-wait.js）。settle＝ページが落ち着くのを待つ固定の秒数（元より短くしない）／
+//   poll＝条件を見る間隔（平均は元と同じ・回数で打ち切る待ちの長さは変えない）。読めない時は元の値。
+function _settleMs(ms) { var H = self.AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+function _pollMs(ms) { var H = self.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
@@ -1076,11 +1083,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (_realTab) {
             await chrome.tabs.update(_realTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
             await _batchWaitForTabComplete(_realTab.id);
-            await new Promise(function(r) { setTimeout(r, 1500); });
+            await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
           } else {
             _realTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
             await _batchWaitForTabComplete(_realTab.id);
-            await new Promise(function(r) { setTimeout(r, 2000); });
+            await new Promise(function(r) { setTimeout(r, _settleMs(2000)); });
           }
           await chrome.storage.session.set({
             pendingPopupCmd: {
@@ -1121,7 +1128,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!_itandiTab) {
             _itandiTab = await chrome.tabs.create({ url: "https://itandibb.com/rent_rooms/list", active: false });
             await _batchWaitForTabComplete(_itandiTab.id);
-            await new Promise(function(r) { setTimeout(r, 2000); });
+            await new Promise(function(r) { setTimeout(r, _settleMs(2000)); });
           }
           console.log("[webapp-search] itandiタブ:", _itandiTab.url);
           // itandi-content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
@@ -1498,7 +1505,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           await _batchWaitForTabComplete(_epMainTab.id);
           // page-script.js が document_start → document_idle で注入されるまで待機
-          await new Promise(function(r) { setTimeout(r, 2500); });
+          await new Promise(function(r) { setTimeout(r, _settleMs(2500)); });
         }
 
         var _epListTabId = _epMainTab.id;
@@ -1521,7 +1528,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // ── Step 3: page-script.js が検索ボタンをクリックしたか確認（triggered フラグ, 最大6秒）
         var _epTriggered = false;
         for (var _ep1 = 0; _ep1 < 12; _ep1++) {
-          await new Promise(function(r) { setTimeout(r, 500); });
+          await new Promise(function(r) { setTimeout(r, _pollMs(500)); });
           try {
             var _epTrigPoll = await chrome.scripting.executeScript({
               target: { tabId: _epListTabId },
@@ -1565,7 +1572,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // ── Step 5: 号室に一致する行の「詳細」ボタンをクリック（最大25秒ポーリング）
         var _epClicked = false;
         for (var _ep2 = 0; _ep2 < 50 && !_epClicked; _ep2++) {
-          await new Promise(function(r) { setTimeout(r, 500); });
+          await new Promise(function(r) { setTimeout(r, _pollMs(500)); });
           try {
             var _epClickRes = await chrome.scripting.executeScript({
               target: { tabId: _epListTabId },
@@ -1608,7 +1615,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // room_detail タブが開いてロード完了するまで待つ（最大20秒）
         for (var _ep3 = 0; _ep3 < 40 && !_epDetailTabId; _ep3++) {
-          await new Promise(function(r) { setTimeout(r, 500); });
+          await new Promise(function(r) { setTimeout(r, _pollMs(500)); });
         }
         chrome.tabs.onUpdated.removeListener(_epTabUpdatedL);
 
@@ -1616,7 +1623,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: "詳細ページ（room_detail.php）が開きませんでした。リアプロにログインしているか確認してください。" });
           return;
         }
-        await new Promise(function(r) { setTimeout(r, 500); });
+        await new Promise(function(r) { setTimeout(r, _settleMs(500)); });
 
         // ── Step 6: 「客付業者様へ」セクションの innerText を抽出 ────────────────
         // リアプロ詳細ページは page=1 と page=2 に分割されている場合がある。
@@ -1869,12 +1876,12 @@ async function _runScrapeAndCompare(customerId, conditions) {
       console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
       await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
       await _batchWaitForTabComplete(_scRealTab.id);
-      await new Promise(function(r) { setTimeout(r, 1500); });
+      await new Promise(function(r) { setTimeout(r, _settleMs(1500)); });
     } else {
       console.log("[scrape-compare] リアプロタブなし → 新規作成");
       _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
       await _batchWaitForTabComplete(_scRealTab.id);
-      await new Promise(function(r) { setTimeout(r, 2000); });
+      await new Promise(function(r) { setTimeout(r, _settleMs(2000)); });
     }
     if (customerId) {
       await chrome.storage.session.set({
@@ -3330,7 +3337,7 @@ async function _webappAutofill(site, conditions) {
     // ping が通れば content script は生きているので待機を 1500ms → 300ms に短縮
     await chrome.tabs.update(tab.id, { active: true });
     var alive2 = await _pingTab(tab.id, 800);
-    await new Promise(function(r) { setTimeout(r, alive2 ? 300 : 1500); });
+    await new Promise(function(r) { setTimeout(r, _settleMs(alive2 ? 300 : 1500)); });
   }
 
   // 修正: タブ準備後にURLを再取得して検証する。
@@ -3471,7 +3478,7 @@ async function _scrapeAllRealproPages(tabId) {
     var hasNext = await _clickNextPage(tabId);
     if (!hasNext) break;
     // 次ページ読み込みを待つ
-    await new Promise(function (r) { setTimeout(r, 2000); });
+    await new Promise(function (r) { setTimeout(r, _settleMs(2000)); });
   }
   return allProperties;
 }

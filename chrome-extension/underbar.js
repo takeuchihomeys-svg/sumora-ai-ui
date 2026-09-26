@@ -5,6 +5,9 @@
 (function () {
   if (document.getElementById("aixlinx-float-wrap")) return;
 
+  // 2026-09-27 竹内「全て時間ランダムに」: 画面が落ち着くのを待つ固定の秒数（元より短くしない）。human-wait.js は manifest で先に読む。読めない時は元の値
+  function _sd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+
   const MINI    = 100;
   const DRAG_H  = 28;
   const MIN_W   = 300;
@@ -530,7 +533,7 @@
       iframe.addEventListener("load", function _onLoad() {
         iframe.removeEventListener("load", _onLoad);
         console.log("[underbar] iframe load完了 → 1秒後に転送");
-        setTimeout(doForward, 1000);
+        setTimeout(doForward, _sd(1000)); // 2026-09-27 毎回ばらつかせる（元より短くしない＝popup の初期化待ちを削らない）
       });
     } else {
       doForward();

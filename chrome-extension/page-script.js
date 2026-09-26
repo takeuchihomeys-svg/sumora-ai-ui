@@ -29,9 +29,9 @@
         }
       }, delay);
     }
-    tryClick(300);
-    tryClick(800);
-    tryClick(1800);
+    tryClick(_hd(300));
+    tryClick(_hd(800));
+    tryClick(_hd(1800));
   });
 
   // ── リアプロ自動入力 ──────────────────────────────────────────────
@@ -156,6 +156,11 @@
   function humanRand(min, max) {
     return min + Math.floor(Math.random() * (max - min + 1));
   }
+  // 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 固定の数字の待ちを共通の関数で散らす。
+  //   human-wait.js（self.AxlxHumanWait）は content.js が先にページへ入れる。読めない時は元の値で動く（止まらない）。
+  //   _hd＝人の操作の間（0.8〜1.5倍）／_pd＝条件を見る間隔（±15%・平均は元と同じ＝回数で打ち切る長さは変えない）
+  function _hd(ms) { var H = window.AxlxHumanWait; return H ? H.humanDelay(ms) : ms; }
+  function _pd(ms) { var H = window.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
   function _clickEl(el) { el.click(); }
   // ★ 修正(Bug2): 選択側クリックの実行時ガード。
   // 同一駅が複数路線に出現するモーダルでは同名inputが2つ描画され、内部状態で同期している場合
@@ -197,7 +202,7 @@
   }
   function whenClickQueueIdle(cb) {
     if (!isClickQueueBusy()) { cb(); return; }
-    setTimeout(function() { whenClickQueueIdle(cb); }, 150);
+    setTimeout(function() { whenClickQueueIdle(cb); }, _pd(150));
   }
   // fillRealpro 開始時に前回残留のキューを破棄（pendingフラグも解除）
   function clearClickQueue() {
@@ -266,12 +271,12 @@
   function waitForClick(tryFn, onDone, maxTries, retryMs, pauseMs, onFail) {
     maxTries = maxTries !== undefined ? maxTries : 30;
     retryMs  = retryMs  !== undefined ? retryMs  : 500;
-    pauseMs  = pauseMs  !== undefined ? pauseMs  : 600;
+    pauseMs  = pauseMs  !== undefined ? pauseMs  : _hd(600); // 省略時も毎回ばらつかせる（呼ぶ側の多くは既に乱数）
     var tries = 0;
     function attempt() {
       // 人間らしいクリックキュー消化中は判定・クリックを開始しない
       // （前ステップのクリックが全て完了してから次ステップに進む＝順序保証。試行回数は消費しない）
-      if (isClickQueueBusy()) { setTimeout(attempt, 150); return; }
+      if (isClickQueueBusy()) { setTimeout(attempt, _pd(150)); return; }
       var ok = false;
       try {
         ok = tryFn();
@@ -295,7 +300,7 @@
         }, pauseMs);
       } else if (tries < maxTries) {
         tries++;
-        setTimeout(attempt, retryMs);
+        setTimeout(attempt, _pd(retryMs));
       } else {
         if (onFail) {
           try {
@@ -480,7 +485,7 @@
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
   function clickSearch() {
     // クリックキュー消化中は検索しない（条件クリックが全て反映される前の検索送信を防止）
-    if (isClickQueueBusy()) { setTimeout(clickSearch, 200); return; }
+    if (isClickQueueBusy()) { setTimeout(clickSearch, _pd(200)); return; }
     // 優先: div.go_search（リアプロのメイン検索ボタン）
     var goDivs = Array.prototype.slice.call(
       document.querySelectorAll('div.go_search, div.go_search_submit')
@@ -1235,7 +1240,7 @@
         prefCb.checked = true;
         prefCb.dispatchEvent(new Event("change", {bubbles:true}));
       }
-      setTimeout(function() { setCheckboxes("city_code[]", cond.city_codes); }, 150);
+      setTimeout(function() { setCheckboxes("city_code[]", cond.city_codes); }, _hd(150));
     }
 
     // 沿線・駅なし（locationMode: area または none）
@@ -1646,7 +1651,7 @@
                       return true;
                     },
                     _closeAndSearch,
-                    6, 500, 300,
+                    6, 500, _hd(300),
                     _closeAndSearch // 駅リストが描画されない場合は従来どおりそのまま閉じて検索
                   );
                   return;

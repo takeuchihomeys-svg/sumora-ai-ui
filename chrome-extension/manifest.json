@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.5.28",
+  "version": "2.5.29",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -34,7 +34,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup.html", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "popup.js", "styles.css", "page-script.js", "score-overlay.js"],
+      "resources": ["popup.html", "human-wait.js", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "popup.js", "styles.css", "page-script.js", "score-overlay.js"],
       "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
     },
     {
@@ -49,7 +49,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"],
-      "js": ["search-audit.js"],
+      "js": ["human-wait.js", "search-audit.js"],
       "run_at": "document_start"
     },
     {
@@ -85,7 +85,7 @@
     },
     {
       "matches": ["https://itandibb.com/*"],
-      "js": ["itandi-page-script.js"],
+      "js": ["human-wait.js", "itandi-page-script.js"],
       "world": "MAIN",
       "run_at": "document_idle"
     },

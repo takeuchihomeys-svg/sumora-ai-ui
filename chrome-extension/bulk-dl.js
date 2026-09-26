@@ -13,6 +13,11 @@
   var _pendingCustomerForAutoSend = null; // autofill開始時点の顧客スナップショット（名前ずれ防止）
   var _zeroDetectTimer = null;            // 0件確定ポーリングタイマー（顧客切替時にクリア）
 
+  // 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 人の操作の間（human-wait.js・manifest で先に読む）。
+  //   読めない時は元の値。_hd＝人の操作の間（0.8〜1.5倍）／_sd＝ページが落ち着くのを待つ固定の秒数（元より短くしない）
+  function _hd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.humanDelay(ms) : ms; }
+  function _sd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+
   // ── ページ離脱（検索リロード開始）時は0件確定ポーリングを必ず破棄する ──
   // 検索クリック→fill-done→リロード完了の間にサーバー応答が遅いと、旧ページ上の
   // 0件確定タイマーが誤発火して「0件」を background に送信し、さらに Case C の
@@ -259,7 +264,7 @@
         _pendingAutoSendDispatched = true;
         console.log("[AXLX bulk-dl] Case B: AJAXページネーション継続 P" + _resumeState.currentPage);
         setTimeout(function () {
-          autoSendOnePage(_resumeState, function (ok, cnt) { _resumeState.sentCount = (_resumeState.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(_resumeState); }, 800); });
+          autoSendOnePage(_resumeState, function (ok, cnt) { _resumeState.sentCount = (_resumeState.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(_resumeState); }, _hd(800)); });
         }, 700 + Math.floor(Math.random() * 700));
       }
     }
@@ -1541,13 +1546,25 @@
           console.log("[AXLX bulk-dl] AD高→低ソート適用 → リロード後Case Bで再開");
           var sortState = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0, readCount: 0, sendableCount: 0 };
           setAutoSendState(sortState);
-          location.href = adLink.href;
+          // 2026-09-27 竹内「物件検索を押してから並び替えを変える所…全て不規則にする」:
+          //   結果が出てすぐ並び替えを押していた（結果が出る → 0.2秒（固定）または 0.6〜1.2秒 → すぐ遷移）。
+          //   人が結果を見てから並び替えを選ぶ間（約0.9秒を 0.7〜1.35秒でばらつかせる）を置いてから押す。
+          //   状態（sortState）は先に書く＝待つ間にリロードが入っても Case B/C で同じ所から再開できる（今までと同じ順）。
+          //   待つ間に inject() の Case B が同じ sortState で並び替え前のページを送り始めないよう、起動済みの印を先に立てる
+          //   （遷移でページが読み直されると印は初期化され、並び替え後のページで Case B/C が再開する）。
+          _pendingAutoSendDispatched = true;
+          var _sortHref = adLink.href;
+          setTimeout(function () {
+            // 待つ間に止められた（clearAutoSendState）時は並び替えに進まない
+            if (!getAutoSendState()) { console.log("[AXLX bulk-dl] 並び替えの前に止められた → 遷移しない"); return; }
+            location.href = _sortHref;
+          }, _hd(900));
           return;
         }
       }
       var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions || null, customerId: customerId || null, sentCount: 0, readCount: 0, sendableCount: 0 };
       setAutoSendState(state);
-      autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, 800); });
+      autoSendOnePage(state, function (ok, cnt) { state.sentCount = (state.sentCount || 0) + (cnt || 0); setTimeout(function() { tryNext(state); }, _hd(800)); });
     }
 
     if (_snap && _snap.name) {
@@ -1586,7 +1603,7 @@
         if (_hasNBsnap) {
           _autoSendArmed = false;
           _pendingAutoSendDispatched = true;
-          setTimeout(autoSendAllPages, 200);
+          setTimeout(autoSendAllPages, _hd(200));
         }
       }
     });
@@ -1615,7 +1632,7 @@
         _autoSendArmed = false;
         _pendingAutoSendDispatched = true;
         console.log("[AXLX bulk-dl] 2秒フォールバック: hasNewBtn=true → 自動送信開始");
-        setTimeout(autoSendAllPages, 200);
+        setTimeout(autoSendAllPages, _hd(200));
       }
     }, 2000);
     // 0件確定ポーリング: 1秒毎にチェック、最大25秒待機して物件なし確定→batch-customer-done送信
@@ -1703,7 +1720,7 @@
         _pendingAutoSendDispatched = true;
         console.log("[AXLX bulk-dl] Case D: ページリロード後の継続 P" + autoState.currentPage);
         autoSendOnePage(autoState, function (ok, cnt) { autoState.sentCount = (autoState.sentCount || 0) + (cnt || 0); tryNext(autoState); });
-      }, 2500);
+      }, _sd(2500));
       return; // Case C は不要（ページ1ではないため）
     }
 

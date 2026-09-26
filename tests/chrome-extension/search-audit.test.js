@@ -123,7 +123,8 @@ function ok(name, c) { eq(name, !!c, true); }
   console.log("\n■ 読み込みの配線（静かに外れないように）");
   const root = path.join(__dirname, "..", "..", "chrome-extension");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-  eq("content_scripts の先頭が search-audit.js", manifest.content_scripts[0].js, ["search-audit.js"]);
+  // 2026-09-27 v2.5.29: 同じ先頭の段の前に待ち時間のばらつき（human-wait.js）が入った（search-audit.js は他の content script より先のまま）
+  eq("content_scripts の先頭の段が human-wait.js → search-audit.js", manifest.content_scripts[0].js, ["human-wait.js", "search-audit.js"]);
   ok("3サイトで読む", ["realnetpro.com", "itandibb.com", "system.reins.jp"].every((h) => manifest.content_scripts[0].matches.some((m) => m.includes(h))));
   ok("web_accessible_resources にある", manifest.web_accessible_resources[0].resources.includes("search-audit.js"));
   ok("版は 2.5.25 以上", (() => { const [a, b, c] = manifest.version.split(".").map(Number); return a > 2 || (a === 2 && (b > 5 || (b === 5 && c >= 25))); })());

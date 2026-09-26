@@ -2,6 +2,11 @@
 
 const API_BASE = "https://sumora-ai-ui.vercel.app";
 
+// 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 待ち時間のばらつき（human-wait.js・popup.html で先に読む）。
+//   読めない時は元の値。_popupSd＝画面が落ち着くのを待つ固定の秒数（元より短くしない）／_popupPd＝条件を見る間隔（±15%）
+function _popupSd(ms) { var H = self.AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+function _popupPd(ms) { var H = self.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
+
 // ── 自動学習マップ（Supabase から起動時に取得・未知トークンは Web検索で自動解決）──
 const LEARNED_WARD_MAP    = {};  // 地名 → 市区
 const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
@@ -5380,7 +5385,7 @@ document.addEventListener("DOMContentLoaded", () => {
           // allCustomers ロード完了待ち（初回ロード時の非同期フェッチ完了前に届く場合を吸収 Bug 1 fix）
           var deadline = Date.now() + 5000;
           while ((!allCustomers || !allCustomers.length) && Date.now() < deadline) {
-            await new Promise(function(r) { setTimeout(r, 100); });
+            await new Promise(function(r) { setTimeout(r, _popupPd(100)); });
           }
           var c = (allCustomers || []).find(function(x) {
             return String(x.id) === String(e.data.customerId);
@@ -5577,7 +5582,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 alert("見積書ページが準備できていません。\n画像をアップロードしてから再度お試しください。");
               }
             });
-          }, 300);
+          }, _popupSd(300)); // タブを前に出してから（毎回ばらつかせる・元より短くしない）
         });
       } else if (realproTab && realproTab.id) {
         // リアプロタブがあればフリーワードを読んで直接検索

@@ -1,6 +1,14 @@
 (function () {
   "use strict";
 
+  // 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 固定の数字の待ちを共通の関数で散らす。
+  //   human-wait.js（self.AxlxHumanWait）は manifest の同じ world:MAIN の段で先に読む。読めない時は元の値で動く。
+  //   _hd＝人の操作の間（0.8〜1.5倍）／_sd＝画面が落ち着くのを待つ固定の秒数（元より短くしない）／_pd＝条件を見る間隔（±15%）
+  function _hw() { return (typeof self !== "undefined" ? self : window).AxlxHumanWait; }
+  function _hd(ms) { var H = _hw(); return H ? H.humanDelay(ms) : ms; }
+  function _sd(ms) { var H = _hw(); return H ? H.settleDelay(ms) : ms; }
+  function _pd(ms) { var H = _hw(); return H ? H.pollDelay(ms) : ms; }
+
   function setReactVal(el, val) {
     var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
     setter.call(el, String(val));
@@ -201,7 +209,7 @@
           afterClose(); // タイムアウトでも進める
         }
       }, 100);
-    }, 1500);
+    }, _sd(1500));
   }
 
   function selectItandiArea(wardNamesInput, wardTownMap, townAreaFallback, onDone) {
@@ -289,13 +297,13 @@
               }
               clickNextWardLabel();
             } else if (pollTries++ < 15) {
-              setTimeout(pollForWardLabels, 400); // 400ms×15回=最大6秒待機
+              setTimeout(pollForWardLabels, _pd(400)); // 400ms×15回=最大6秒待機（平均は同じ）
             } else {
               console.warn("[AX] batchCity: 6秒タイムアウト → 1件ずつに切り替え");
               safeConfirm(function() { openNextWardModal(); });
             }
           }
-          setTimeout(pollForWardLabels, 500);
+          setTimeout(pollForWardLabels, _hd(500));
         }, 700 + Math.floor(Math.random() * 400)); // 近畿クリック後 700-1100ms
       }, 1800 + Math.floor(Math.random() * 600)); // モーダル展開後 1800-2400ms
     }
@@ -469,24 +477,24 @@
     // ── ポーリングで近畿→大阪府→路線リスト描画を待つ（固定遅延→ポーリングに置換）──
     var _kinkiPolls = 0;
     function pollKinki() {
-      if (clickNav("近畿")) { setTimeout(pollOsaka, 100); return; }
+      if (clickNav("近畿")) { setTimeout(pollOsaka, _hd(100)); return; }
       if (++_kinkiPolls >= 25) {
         console.warn("[AX] selectItandiLines: 近畿タブ5s未発見 → 中断");
         if (_itAudit) _itAudit.click_fails.push({ what: "line_modal", text: "近畿" });
         _abort(); return;
       }
-      setTimeout(pollKinki, 200);
+      setTimeout(pollKinki, _pd(200));
     }
     function pollOsaka() {
       var _p = 0;
       function _poll() {
-        if (clickNav("大阪府")) { setTimeout(pollLineList, 100); return; }
+        if (clickNav("大阪府")) { setTimeout(pollLineList, _hd(100)); return; }
         if (++_p >= 25) {
           console.warn("[AX] selectItandiLines: 大阪府タブ5s未発見 → 中断");
           if (_itAudit) _itAudit.click_fails.push({ what: "line_modal", text: "大阪府" });
           _abort(); return;
         }
-        setTimeout(_poll, 200);
+        setTimeout(_poll, _pd(200));
       }
       _poll();
     }
@@ -511,7 +519,7 @@
           if (_itAudit) _itAudit.click_fails.push({ what: "line_modal", text: "路線リスト" });
           _abort(); return;
         }
-        setTimeout(_poll, 200);
+        setTimeout(_poll, _pd(200));
       }
       _poll();
     }
@@ -591,7 +599,7 @@
           clickNext();
         }
         var allInp = allLbl && allLbl.querySelector("input[type='checkbox']");
-        if (allInp && !allInp.checked) { allInp.click(); setTimeout(collectAndClick, 400); }
+        if (allInp && !allInp.checked) { allInp.click(); setTimeout(collectAndClick, _hd(400)); }
         else collectAndClick();
       }
       function clickNextLine() {
@@ -615,7 +623,7 @@
           }
           setTimeout(function () {
             clickBtn("確定");
-            setTimeout(onDone, 1500);
+            setTimeout(onDone, _sd(1500));
           }, 600 + Math.floor(Math.random() * 300));
           return;
         }
@@ -626,7 +634,7 @@
 
         if (selectAllStations) {
           // 路線が見つからなかった時は駅リストが前の路線のままなので押さない
-          if (!clicked) { setTimeout(clickNextLine, 300); return; }
+          if (!clicked) { setTimeout(clickNextLine, _hd(300)); return; }
           setTimeout(function() {
             selectAllStationsOfLine(function() { setTimeout(clickNextLine, 400 + Math.floor(Math.random() * 400)); });
           }, 900 + Math.floor(Math.random() * 600));
@@ -894,7 +902,7 @@
           setTimeout(function() {
             petEl = document.querySelector('input[name="option_id:all_in"][id="22010"]');
             if (!tryTickPet()) clickLabel("ペット相談");
-          }, 700);
+          }, _sd(700)); // 0.70〜0.95秒。検索を押す待ち（1.0〜1.35秒）より必ず先に終わる（前後が入れ替わらない）
         } else {
           clickLabel("ペット相談");
         }
@@ -968,7 +976,7 @@
       return ["条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0 && (r.width > 0 || r.height > 0);
     });
     var _resetDelay = 0;
-    if (_resetBtn) { _resetBtn.click(); _resetDelay = 600; console.log("[AX] 条件リセット実行"); }
+    if (_resetBtn) { _resetBtn.click(); _resetDelay = _sd(600); console.log("[AX] 条件リセット実行"); }
     else {
       // ★ 修正(Bug1): 所在地選択はチップ積み上げ方式で解除処理がないため、
       // リセットボタン未発見時は前回検索の区チップが残留したまま追加される。
@@ -985,8 +993,10 @@
       });
       if (_chipCloseBtns.length) {
         console.log("[AX] 残留チップ削除ボタンを " + _chipCloseBtns.length + " 件クリック");
-        _chipCloseBtns.forEach(function(b, i) { setTimeout(function() { try { b.click(); } catch (e) {} }, i * 250); });
-        _resetDelay = _chipCloseBtns.length * 250 + 400;
+        // 1件ずつ押す間も毎回ばらつかせる（旧: 0・250・500…の等間隔）
+        var _chipAt = 0;
+        _chipCloseBtns.forEach(function(b, i) { if (i > 0) _chipAt += _hd(250); setTimeout(function() { try { b.click(); } catch (e) {} }, _chipAt); });
+        _resetDelay = _chipAt + _sd(400);
       }
     }
 
@@ -1073,7 +1083,7 @@
               setTimeout(function () {
                 _safeDone();
               }, 500);
-            }, 1000);
+            }, _sd(1000)); // 検索ボタンを押すまで: 1.0〜1.35秒（ペットの欄を開く待ち 0.70〜0.95秒より必ず後）
           }
         }, 100);
       }
@@ -1107,7 +1117,7 @@
         _safeDone(_errE);
       }
 
-    }, 800);
+    }, _hd(800));
 
     } catch(err) {
       console.error('[AX] fill exception', err);

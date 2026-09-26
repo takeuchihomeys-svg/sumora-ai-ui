@@ -276,6 +276,8 @@
   }
 
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  // 2026-09-27 竹内「全て時間ランダムに」: 条件を見る間隔（±15%・平均は元と同じ）。human-wait.js は manifest で先に読む。読めない時は元の値
+  function _pd(ms) { var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
 
   // ── 進捗バー更新（captureOnePdf 内から現在ステップを表示） ─────────────
   function setStatusBar(text) {
@@ -449,7 +451,7 @@
             if (pdfPollTries < maxPdfPollTries) {
               console.log("[AXLX] PDFボタン待機中... (" + pdfPollTries + "/" + maxPdfPollTries + ")");
               setStatusBar("PDFボタン探索中 (" + pdfPollTries + "/" + maxPdfPollTries + ")...");
-              setTimeout(findAndClickPdf, 250);
+              setTimeout(findAndClickPdf, _pd(250));
               return;
             }
             var dlgBtns = Array.from(document.querySelectorAll('[role="dialog"] button'));
