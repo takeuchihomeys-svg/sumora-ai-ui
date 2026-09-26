@@ -61,7 +61,7 @@ async function main() {
       from: (table: string) => {
         const res = (payload: unknown) => (table === opts.failTable ? { data: null, error: { message: "boom" } } : { data: payload, error: null });
         const chain: Record<string, unknown> = {};
-        chain.select = () => chain; chain.eq = () => chain; chain.order = () => chain;
+        chain.select = () => chain; chain.eq = () => chain; chain.in = () => chain; chain.order = () => chain;
         chain.maybeSingle = async () => res({ status: opts.status ?? "proposing", is_post_apply: !!opts.badge, status_manual_back_at: opts.back ?? null });
         chain.limit = async () => res(table === "aix_usage_logs" ? (opts.push ? [{ created_at: opts.push }] : []) : (opts.idDoc ? [{ created_at: opts.idDoc }] : []));
         return chain;

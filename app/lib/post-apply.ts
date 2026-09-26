@@ -14,7 +14,9 @@
 //   ① status が DRAFT_SKIP_STATUSES（従来。申込・審査中は必ずここ）
 //   ② スタッフが付けた申込以降の印（conversations.is_post_apply）
 //   ③ AIX【申込へ】（application_push）の最後の押下（aix_usage_logs）
-//   ④ お客様からの本人確認書類の最後の受信（messages.image_type = 'id_document'）
+//   ④ お客様からの本人確認書類・収入証明書の最後の受信（messages.image_type = 'id_document' | 'income_document'）
+//      2026-09-26 竹内「（収入証明書が届いたら申込中と）みなす」: 収入・勤め先・身元の証明書類も申込の手続きで届く物なので同じ扱い
+//      （申込中は DeepSeek に渡さない。personal-document-guard.ts が income_document を付ける）
 //   ③④は押した・届いた瞬間に記録されるので、status の昇格を待たない。
 //
 // 【戻り】③④は**永続にしない**。否決などでスタッフが段階を戻した時刻（conversations.status_manual_back_at・
@@ -81,7 +83,7 @@ export async function loadPostApplyFacts(sb: Sb, conversationId: string): Promis
   const [conv, push, idDoc] = (await Promise.all([
     sb.from("conversations").select("status, is_post_apply, status_manual_back_at").eq("id", conversationId).maybeSingle(),
     sb.from("aix_usage_logs").select("created_at").eq("conversation_id", conversationId).eq("aix_type", "application_push").order("created_at", { ascending: false }).limit(1),
-    sb.from("messages").select("created_at").eq("conversation_id", conversationId).eq("sender", "customer").eq("image_type", "id_document").order("created_at", { ascending: false }).limit(1),
+    sb.from("messages").select("created_at").eq("conversation_id", conversationId).eq("sender", "customer").in("image_type", ["id_document", "income_document"]).order("created_at", { ascending: false }).limit(1),
   ])) as [Res, Res, Res];
   if (conv.error) throw new Error(`post-apply: conversations: ${conv.error.message}`);
   if (push.error) throw new Error(`post-apply: aix_usage_logs: ${push.error.message}`);
