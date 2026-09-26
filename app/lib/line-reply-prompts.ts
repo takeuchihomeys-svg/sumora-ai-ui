@@ -459,7 +459,7 @@ const SCREENING_COMPANY_RULE = `【保証会社の種類と審査難易度】
 ▼信用系: ${GUARANTOR_TYPE_DEFINITION.shinyou}。
 主な会社: ${guarantorNamesByType("shinyou").join("、")}
 
-▼LICC系: LICC（賃貸保証業協会）加盟会社間で家賃滞納情報を共有。LICC系で滞納歴があると否決になりやすい。審査難易度は一般的。
+▼LICC系: LICC（賃貸保証業協会）に加盟している保証会社同士で、滞納の情報を共有している。LICC加盟の保証会社で滞納歴があると否決になりやすい。審査難易度は一般的。（2026-09-26 竹内さん: 信用系＝過去の家賃滞納やトラブルを見る、とは別の種類。お客様への説明で混ぜない）
 主な会社: ${guarantorNamesByType("licc").join("、")}
 ※ジェイリースはLICC系の中では比較的通りやすい特性がある。
 
