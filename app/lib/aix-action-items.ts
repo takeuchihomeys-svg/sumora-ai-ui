@@ -11,6 +11,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { buildAixActionNotice, isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
+import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
 /** 売上番長グループへ push（宛先・トークンの決め方は notify-group と同じ: env → hanbancyo_settings.group_id） */
@@ -50,6 +51,12 @@ export async function syncAixActionItem(input: {
   const { conversationId, customerName, meta } = input;
   // cached は今回の顧客発言を見ていない判断なので使わない
   if (!meta || meta.source === "cached") return;
+  // 2026-09-27 お客様役（テスト・YUMA）の番: 要対応の登録・売上番長グループへの通知・物件の自動検索をしない
+  //   （判断は suggested_aix_meta に残るので、お客様役の実行は そこを読む）。本物の発言（竹内さんの手動テスト）は今まで通り
+  if (await isSimulatedCustomerTurn(conversationId)) {
+    console.log(JSON.stringify({ tag: "aix-action-items:customer-sim-skip", conversationId, action: meta.action ?? null }));
+    return;
+  }
   // 初回（スタッフ未返信）でお客様が条件を送ってきた: action は出さない（挨拶下書き優先）が、ブレインが残した「物件ピックアップが必要」を使う
   const action = meta.action || meta.first_contact_pickup || null;
   // 実在の AIX ボタンだけ。reply_mode=aix（ブレインが AIX 必要と判断）か、初回の条件受領（first_contact_pickup）

@@ -399,7 +399,8 @@ export async function runConditionBrain(
   const hasUpdates = Object.keys(updates).length > 0;
 
   // ── 矛盾通知（updates に関係なく実行）───────────────────────────────────
-  if (parsed.contradiction) {
+  // 2026-09-27: お客様役（テスト・YUMA）の番では売上番長グループに出さない（customer-sim-guard）
+  if (parsed.contradiction && !(await import("@/app/lib/customer-sim-guard").then((m) => m.isSimulatedCustomerTurn(convId)))) {
     console.warn(`[conditionBrain] 矛盾検出: ${parsed.contradiction}`);
     await notifyContradiction(
       ctx.customer.customerName,

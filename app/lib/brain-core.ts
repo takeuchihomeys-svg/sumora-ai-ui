@@ -102,6 +102,7 @@ import { resolveFirstContactPickup, firstContactSuggestedAction, type FirstConta
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内: 主のお部屋（こちらが送ったお部屋）への見積もりの依頼は 見積書送る
 import { resolveFocusedEstimateRequest } from "@/app/lib/focused-estimate-request";
+import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -376,8 +377,8 @@ const AIX_CAPABILITY_MAP = `
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（acknowledge_check / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・この事例）
 - estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・この事例）
-- cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・この事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
 - estimate_sheet（【主のお部屋への見積もりの依頼】）: 【お客様の今の状況】の主のお部屋が**こちらが送ったお部屋**で、お客様が見積もり・初期費用の金額を頼んだ（「〇〇いいですね」→「見積もりお願いできますか」「こちらの初期費用いくらですか」）→ estimate_sheet。物件確認した（募集状況の確認）を先に挟まない（実送信52件中 見積書送る47・物件確認した＋御見積書同封2・物件確認のみ1）。お客様が持ち込んだお部屋（URL・画像）は従来どおり募集状況の確認＋御見積書／物件が決まっていない費用の質問は AIX なし／同じ連投で空き状況・内覧も聞かれた時はその判断に任せる（物件確認した＋御見積書同封は両方に1通で答えられる）（2026-09-27 竹内・YUMA 事例）
+- cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・この事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
 - cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・この事例）。境界: 金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
 - phone_call: 顧客がこちらと電話で話したい時（「ご相談があるのですがお電話では無理でしょうか？」「電話いける時間ありますか？」「1度お電話いただけませんか？」「物件の事で聞きたい事がありますのでお手隙の際電話いけますか？」）。他の話題が同じ発言にあっても電話の依頼を先に受ける。本文で電話番号・「こちらからお電話します」「〇時にお電話します」を作らない（2026-09-15 竹内・H 事例）。境界: 電話番号の質問・管理会社等から電話があった報告・他所への電話の相談・「電話は大丈夫です」は phone_call ではない
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
@@ -2858,7 +2859,6 @@ ${history}`;
       finalAix = "property_check_result";
       decisionSource = "correction:scene_S2_check_result";
     }
-    // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
     // 2026-09-27 竹内（YUMA の返信テスト）「この場面は見積書を正解にする」: こちらが送ったお部屋（エステムコート大阪WEST）に「いいですね」→
     //   「見積もりお願いできますか」で、LLM が 物件確認した（募集状況を確認し報告）を選んだ。
     //   主のお部屋（customer-state の focus）がこちらの送ったお部屋で、今回の連投が見積もりの依頼なら 見積書送る（focused-estimate-request.ts）。
@@ -2881,6 +2881,7 @@ ${history}`;
         focusedEstimateOverride = fe.focusName;
       }
     }
+    // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
     //   物件が1件も無い（こちらの送付0・見積なし／会話のどこにもお客様の URL・画像・号室・「ここの」・見積の語なし）のに 見積書送る → 外す。
     //   お客様が条件を送っていれば物件ピックアップ、それ以外は AIX なし（質問に答えて「初期費用を抑える」一文＝返信側）
     if (!promiseAix && finalAix === "estimate_sheet" && !estimatePropertyInPlay) {
@@ -4915,7 +4916,8 @@ export async function runBrainAndNotify(
 
   // ブレインのaction判断時にカレンダーへ直接登録（テキスト解析不要・通知失敗の影響を受けない fire-and-forget）
   //   2026-09-12 竹内（Sky・AKANE 事例）: AIX要対応と同じく、48時間より古いお客様発言への判断では今日のタスクを作らない
-  if (conversationId && snapshot.meta.action && isFreshAixTurn(snapshot.meta.analyzed_msg_ts)) {
+  //   2026-09-27: お客様役（テスト・YUMA）の番ではカレンダーに入れない（朝の一覧・日報に載せない）
+  if (conversationId && snapshot.meta.action && isFreshAixTurn(snapshot.meta.analyzed_msg_ts) && !(await isSimulatedCustomerTurn(conversationId))) {
     void createCalendarEventFromBrainAction(conversationId, snapshot.meta.action, snapshot.customerName || null)
       .catch((e) => console.error("[brain-core] calendar from brain action failed:", e));
   }

@@ -7345,6 +7345,17 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 残っていた他の物: 未完了の AIX 要対応・カレンダー・下書き・予約送信は無し。9/27 の物件31件・送った記録3件・status（proposing）・deepseek_cutoff_at は触っていない
 - ⚠ ブレインを tsx から呼ぶ時は next/server の `after` がリクエストの外で落ちる（1回目は LLM を呼んだ後に保存で失敗）。Module._load で `after` を差し替える shim が要る
 
+## 2026-09-27 お客様役（テスト・YUMA 専用）の往復の仕組み（竹内「YUMA で自動的に YUMA から自動返信が来て、返信を繰り返せたら理想」）
+- **なぜ新しく作ったか**: お客様の発言は LINE の署名つきの `/api/line-webhook` からしか入らず、署名の鍵は Vercel の見えない設定でローカルに無い。→ 本番のサーバーの中に「テスト用の会話だけ」の入口を作った
+- **共通化**: webhook の「お客様の文字の発言を受けた時」の処理（保存・未読・引用・下書きの起動・ブレイン・条件の読み取り・タスク検知 等）を `app/lib/line-webhook-text.ts` に**そのまま移した**（行の集合で比べて中身の変更なし・署名の確認と振り分けは route.ts）。お客様役も webhook も同じ `handleTextMessage` を通る
+- **入口** `POST /api/test/customer-sim`（mode: generate / inject / generate_and_inject）・`GET`（筋書きの一覧）。鍵は三重: 内部認証＋`CUSTOMER_SIM_ENABLED=1`（Vercel に入れる）＋`test-conversations.ts` の一覧（それ以外は必ず 403）。`app/lib/customer-sim-guard.ts`
+- **印**: お客様役の発言は `messages.line_message_id = "sim-<uuid>"`（列は足していない）。`isSimulatedCustomerTurn(convId)` が「テスト用の会話の最後のお客様の発言が sim-」を見て、**お客様役の番だけ**売上番長グループ・鈴木さんへの通知（AIX要対応の登録/通知/物件の自動検索・条件受領・地域変更・物件出しの依頼・条件の矛盾）とカレンダーの登録を止める。竹内さんが LINE から送った本物の発言（手動テスト）は今まで通り。テスト用でない会話は DB を読まずに false
+- **筋書き** `app/lib/customer-sim-scenarios.json`（4本: 気に入る→見積→内覧／迷う・他も見たい／審査に落ちて探し直す／初回→待つ→催促）。段ごとに goal・fixed（固定文）・max_turns・expect_stage。DeepSeek（deepseek-flash・推論なし・温度0.8）が直前の会話・届いた物件・見積の有無を読んで次の返事を JSON で書く（前置きは固定＝キャッシュ）。申込中（DeepSeek に渡さない線の内側）は DeepSeek を呼ばない。費用は llm_usage_logs の action=customer_sim（1回 約1,500入力/50出力 ≒ $0.0005）
+- **実行** `scripts/customer-sim.ts`（本番の入口を呼ぶ・内部認証は `.env.prod` の値を読む）: お客様役を入れる → ブレインと下書きを待つ（conversations.suggested_aix_meta、消えていれば brain_decision_logs）→ AIX なしは下書きを、会話だけで作れる AIX（condition_hearing・application_push・followup_revive・greeting_viewing）は `/api/aix/action` で作って `/api/send-line-message` で YUMA に実送信し、画面と同じ記録（messages・会話・判断の結果・log-aix-usage）を書く。**材料が要る AIX（物件・見積書・管理会社の回答・日程）は送らずに止める** → 画面で送ってからもう一度動かすと続きから。`--step`（1往復）・`--no-send`（送る直前で止める）・`--dry`（作るだけ）・`--list`・`--reset`。直近30分に竹内さんの本物の発言があれば止まる（`--force` で進む）
+- **記録と検査**: 1往復ずつ「お客様役の文・ブレインの判断（AIX・reply_mode・段階・並行検索・方向）・下書き・送った文・トークの上の状況の1行・送った事実/送った物件/タスク/AIX要対応/カレンダーの増え方・費用」を表示し、`%TEMP%/sumora-customer-sim/<run>.jsonl` に残す。検査は決定論（`auditSimTurn`）: お待たせ・作業メモ・創作の疑い（会話に無い金額・日付・時刻・号室）・約束の言い直し（物件を送らないままピックアップ宣言をもう一度）・状況の取り違え（筋書きの expect_stage とブレインの段階／状況表示のずれ）
+- テスト: `app/lib/__tests__/customer-sim.test.ts`（57件・本物の会話は 403・webhook は署名の後にだけ処理・lib に本体が1つ・通知の3か所だけに判定）
+- 残り: cron の定時一覧（hot・要対応フラグ等）はテスト用の会話を外していない（手動テストと同じ）。テンプレートの材料が要る AIX の自動化は未
+
 ## 2026-09-27 気に入ったお部屋への見積もりの依頼は AIX【見積書送る】（竹内「この場面は見積書を正解にする」・YUMA 事例）
 - **場面**: YUMA でこちらが送ったエステムコート大阪WEST に「いいですね」→「見積もりお願いできますか」。ブレインは AIX【物件確認した】（募集状況を確認し報告）
 - **本当の原因（穴:G2）**: ブレインは2通目を見ていなかった。1通目の bg-async のブレイン中に2通目が届き、2通目の bg-async は claim 失敗、1通目側の連投の再分析（burst brain rerun）は `isDuplicateRun`（45秒の窓）で `brain:duplicate-run-skipped` → 1通目だけの判断が残った（analyzed_msg_ts=1通目）。
