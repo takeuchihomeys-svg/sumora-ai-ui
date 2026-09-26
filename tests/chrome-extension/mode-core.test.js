@@ -94,5 +94,38 @@ eq("帯: ブレイン×AIX は自動便の見送りを書く", /自動便は見�
 eq("帯: ブレイン×通常", M.banner("normal", true).cls, "brain");
 eq("帯: スタッフの帯は2時間で自動OFFを書く", [M.banner("staff", false).text, M.banner("staff", true).text].every((t) => /2時間で自動OFF/.test(t)), true);
 
+console.log("\n■ 検索の種類の覚え書き（2026-09-27 ピンポイント→足りなければ広げて・merge-pdfs の search_mode）");
+{
+  const M0 = M.rememberSearchMode({}, "c1", "realnetpro", false, NOW);
+  eq("残す（サイトは realpro にそろえる）", M0, { "c1|realpro": { mode: "pinpoint", at: NOW } });
+  eq("同じお客様×サイトで読む（リアプロの呼び名が違っても）", M.pickSearchMode(M0, "c1", "realpro", NOW + 5 * 60000), "pinpoint");
+  const M1 = M.rememberSearchMode(M0, "c1", "itandi", true, NOW + 60000);
+  eq("サイトごとに別（itandi は広げて）", [M.pickSearchMode(M1, "c1", "itandi", NOW + 120000), M.pickSearchMode(M1, "c1", "realnetpro", NOW + 120000)], ["widen", "pinpoint"]);
+  eq("サイトが分からない送信はそのお客様の一番新しい値", M.pickSearchMode(M1, "c1", null, NOW + 120000), "widen");
+  eq("別のお客様の値は使わない", M.pickSearchMode(M1, "c2", "realpro", NOW), null);
+  eq("別のサイトの値は使わない（検索していないサイト）", M.pickSearchMode(M0, "c1", "itandi", NOW), null);
+  eq("1時間を過ぎた値は使わない（分からない＝付けない）", M.pickSearchMode(M0, "c1", "realpro", NOW + M.SEARCH_MODE_TTL_MS + 1), null);
+  eq("同じお客様×サイトは上書き（ピンポイントの後の広げて）", M.pickSearchMode(M.rememberSearchMode(M0, "c1", "realpro", true, NOW + 1000), "c1", "realpro", NOW + 2000), "widen");
+  const old = M.rememberSearchMode(M0, "c9", "itandi", false, NOW + M.SEARCH_MODE_TTL_MS + 5000);
+  eq("足す時に切れた物を捨てる", Object.keys(old), ["c9|itandi"]);
+  eq("元の覚え書きは変えない", Object.keys(M0), ["c1|realpro"]);
+  eq("壊れた値でも落ちない", [M.pickSearchMode(null, "c1", "realpro", NOW), M.pickSearchMode({ "c1|realpro": { mode: "x", at: NOW } }, "c1", "realpro", NOW), Object.keys(M.rememberSearchMode("x", null, "realpro", true, NOW))], [null, null, []]);
+  let big = {};
+  for (let i = 0; i < 250; i++) big = M.rememberSearchMode(big, "c" + i, "realpro", false, NOW + i);
+  eq("多すぎる時は古い物から捨てる（200件）", [Object.keys(big).length, "c0|realpro" in big, "c249|realpro" in big], [200, false, true]);
+  eq("名前: 広げて=widen・ピンポイント=pinpoint", [M.searchModeOf(true), M.searchModeOf(false)], ["widen", "pinpoint"]);
+}
+
+console.log("\n■ 検索の種類の配線（静かに外れないように）");
+{
+  const fs = require("fs"), path = require("path");
+  const root = path.join(__dirname, "..", "..", "chrome-extension");
+  const bg = fs.readFileSync(path.join(root, "background.js"), "utf8");
+  const pp = fs.readFileSync(path.join(root, "popup.js"), "utf8");
+  eq("送信（callMergeApi）が search_mode を付ける", /search_mode:\s*searchMode/.test(bg) && /_searchModeFor\(payload\.property_customer_id, payload\.site\)/.test(bg), true);
+  eq("一括の入口（_batchAutofill）で残す", /_rememberSearchMode\(customer && customer\.id, site, isWide\)/.test(bg), true);
+  eq("個別の検索（popup の _auditTag）で残す", /core\.rememberSearchMode\(r && r\[_mk\], _cid, site, _wide/.test(pp), true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

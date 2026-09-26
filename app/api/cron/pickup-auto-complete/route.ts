@@ -9,6 +9,7 @@
 // 拡張の chrome.alarms と売上サポの詳細を開いた時も同じ判定でまとめる（どれか1つが動けばまとまる・同じまとめ ID で冪等）。
 import { NextRequest, NextResponse } from "next/server";
 import { runAutoCompleteSweep } from "@/app/lib/pickup-complete-server";
+import { sweepWidenChains } from "@/app/lib/search-widen-chain-server";
 
 // 1回 最大3人・1人の読み取りは 200秒で新しい物件を始めない（pickup-complete の FINISH_DEADLINE と同じ）
 export const maxDuration = 300;
@@ -21,5 +22,8 @@ export async function GET(req: NextRequest) {
   }
   const dry = req.nextUrl.searchParams.get("dry") === "1";
   const report = await runAutoCompleteSweep({ dry, deadlineAt: Date.now() + 200_000 });
-  return NextResponse.json(report, { status: report.ok ? 200 : 500 });
+  // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: 物件が届かなかったピンポイントの回の取りこぼしを拾う
+  //   （物件が届いた回はまとめ・送れる物件0件は検索の点検の finished が決める。ここは同じ関数で冪等）
+  const widen = dry ? null : await sweepWidenChains();
+  return NextResponse.json({ ...report, widen }, { status: report.ok ? 200 : 500 });
 }

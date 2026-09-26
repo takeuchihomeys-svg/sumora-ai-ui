@@ -380,6 +380,8 @@ export const REASON_JA: Record<string, string> = {
   RENT_CHEAP_W80_SOFT: "家賃が上限の8割以下（できれば家賃を低く）", RENT_CHEAP_W90_SOFT: "家賃が上限の9割以下（できれば家賃を低く）", RENT_CHEAP_W95_SOFT: "家賃が上限の95%以下（できれば家賃を低く）",
   AD_UNDER_1M: "AD 1ヶ月未満（報酬が少ない）",
   FIT_ALL: "書いた条件に全部合う", FIT_ALL_HALF: "書いた条件（2つ）に全部合う", FIT_ONE_MISS: "書いた条件のうち1つだけ外れ", FIT_ONE_MISS_HALF: "書いた条件（2つ）のうち1つだけ外れ",
+  // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」
+  SEARCH_PINPOINT: "🎯 ピンポイント検索（条件ぴったりの検索）で見つかった",
 };
 
 /**
@@ -401,11 +403,26 @@ export const CONDITION_CODE_KEYS: Record<ConditionKey, string> = {
  */
 export const AD_TIER_CODES = ["AD_1M", "AD_1_5M", "AD_HIGH", "AD_2_5M", "AD_VERY_HIGH"] as const;
 export const AD_HELD_SUFFIX = "_HELD";
-/** AD の段の札を保留の形（_HELD・0点）にする／戻す。それ以外の札はそのまま */
+/**
+ * 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」: ピンポイントの回で見つかった物件の札（+10）。
+ *   広げての回・分からない回（古い拡張・ブレイン OFF）は付けない（減点もしない）。付けるのは売上サポの記録（recordPickupBatch）だけ。
+ *   ・保留・外す候補の物件は AD の段と同じく _HELD（0点・札は残す）＝条件の外れた物件をピンポイントだけで上げない
+ *   ・pass／hold の線（40点）はこの札を除いた点で見る（passLineScore）＝検索の種類で「通す」の数が変わらない（自動で広げるかの数え方と同じ物差し）
+ *   ・学習（scoring-learning）では動かさない（isFrozenCode）: 竹内さんが決めた上乗せで、過去の回（札が無い）と比べると検索の種類の差を物件の良さと取り違える
+ *   ・点の値は例題（fit-balance.test.ts の「ピンポイントの例題」）で決めた
+ */
+export const PINPOINT_CODE = "SEARCH_PINPOINT";
+/** 保留・外す候補の物件で 0点にする札（AD の段＋ピンポイント） */
+const HELD_ZERO_CODES: readonly string[] = [...AD_TIER_CODES, PINPOINT_CODE];
+/** pass／hold の 40点の線に使う点（ピンポイントの上乗せを除く）。judgeProperty・applyImageFacts・applyEquipmentMatch の3か所で同じ */
+export function passLineScore(codes: readonly string[], score: number): number {
+  return codes.includes(PINPOINT_CODE) ? score - reasonPoints(PINPOINT_CODE) : score;
+}
+/** AD の段・ピンポイントの札を保留の形（_HELD・0点）にする／戻す。それ以外の札はそのまま */
 export function settleHeldAd(codes: string[], held: boolean): string[] {
   return codes.map((c) => {
     const base = c.endsWith(AD_HELD_SUFFIX) ? c.slice(0, -AD_HELD_SUFFIX.length) : c;
-    if (!(AD_TIER_CODES as readonly string[]).includes(base)) return c;
+    if (!HELD_ZERO_CODES.includes(base)) return c;
     return held ? `${base}${AD_HELD_SUFFIX}` : base;
   });
 }
@@ -582,6 +599,8 @@ export const REASON_POINTS: Record<string, number> = {
   AD_UNDER_1M: -8,
   // 全部合う +15・1つだけ外れ +5（書いた条件のうち読めた物で数える・条件2つなら半分・保留の物件には付けない）
   FIT_ALL: 15, FIT_ALL_HALF: 8, FIT_ONE_MISS: 5, FIT_ONE_MISS_HALF: 3,
+  // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」（PINPOINT_CODE の説明・例題は fit-balance.test.ts）
+  SEARCH_PINPOINT: 10,
 };
 
 /** 設備 ○ の点（案B: 必須 +5／普通 +3／できれば +2・合計 +15 まで）。札は EQUIP_<KEY>_MUST_OK／EQUIP_<KEY>_OK／EQUIP_<KEY>_SOFT_OK */
@@ -1451,6 +1470,11 @@ export type JudgeOptions = {
   today?: Date | string;
   /** 2026-09-25 エリア・通勤の札（area-want.ts の locationReasonCodes。売上サポの recordPickupBatch だけが渡す） */
   locationCodes?: string[] | null;
+  /**
+   * 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」: この物件を見つけた検索の種類（拡張 v2.5.28〜 が merge-pdfs に送る）。
+   *   pinpoint なら SEARCH_PINPOINT（+10・保留なら 0点の _HELD）。widen・null（分からない）は何も付けない。売上サポの recordPickupBatch だけが渡す
+   */
+  searchMode?: "pinpoint" | "widen" | null;
 };
 
 /** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
@@ -1645,6 +1669,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
   // 条件の外れ（保留・外す候補の札）がある物件は AD の段を点に入れない（settleHeldAd・札は _HELD で残す）
+  // 2026-09-27 ピンポイントの回で見つかった物件（保留・外す候補なら下の settleHeldAd で 0点の _HELD に）
+  if (opts.searchMode === "pinpoint") codes.push(PINPOINT_CODE);
   if (holds.length || drops.length) {
     const settled = settleHeldAd(codes, true);
     for (let k = 0; k < codes.length; k++) codes[k] = settled[k];
@@ -1654,7 +1680,7 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   codes.splice(0, codes.length, ...fitted);
   // 点は常に 50＋札の点の合計（重みの版があれば版の点）。上限 SCORE_MAX・必須（strong）の × は上限 20（scoreFromCodes）
   score = scoreFromCodes(codes);
-  const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
+  const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
   const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
@@ -1715,7 +1741,7 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
   //   （素点 230 の物件に画像の × −10 で 190＝本当は 220→200）。札が決まった後に 50＋合計 で付け直す。
   //   必須の × の上限20も素点から掛け直す（反証レビュー 2026-09-24・scoreFromCodes）
   score = scoreFromCodes(codes);
-  const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || score < 40 ? "hold" : "pass");
+  const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || passLineScore(codes, score) < 40 ? "hold" : "pass");
   const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
   return { ...j, score, verdict, reasonCodes: codes, flagCodes, reasonsJa };
@@ -1727,6 +1753,8 @@ const POSITIVE_BASE_CODES = ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_2_5M", "AD_H
 /** 2026-09-25 に足した加点の札（理由の日本語に出す） */
 function isNewPositive(c: string): boolean {
   return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
+    // 2026-09-27 ピンポイントの回で見つかった
+    || c === PINPOINT_CODE
     // 広げた検索の幅の内側（希望より少しだけ低い加点）
     || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c)
     // 案B（書いた条件の重み・全部合う）
@@ -1775,7 +1803,7 @@ export function applyEquipmentMatch(
   const score = scoreFromCodes(codes);
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
-  const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || score < 40 ? "hold" : "pass");
+  const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
   const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa) };

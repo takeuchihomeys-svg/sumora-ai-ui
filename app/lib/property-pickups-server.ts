@@ -62,6 +62,12 @@ export type RecordPickupInput = {
    *   判定・設備の照合・エリアの照合をこの上書きを重ねた条件で行い、行（property_pickups.search_override）に残す。無ければ登録の条件
    */
   searchOverride?: PickupSearchOverride | null;
+  /**
+   * 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」「ピンポイント検索で行ったか広げて検索を行ったかも分かるように」:
+   *   この回を見つけた検索の種類（拡張 v2.5.28〜 が merge-pdfs に送る）。判定に渡し（pinpoint は SEARCH_PINPOINT +10）、行（property_pickups.search_mode）に残す。
+   *   null＝分からない（古い拡張）→ 加点しない・画面にも印を出さない
+   */
+  searchMode?: "pinpoint" | "widen" | null;
 };
 
 /** お客様の会話（LINE の宛先）を物件顧客から引く（最新1件） */
@@ -113,6 +119,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     // 2026-09-25 送付済みの部屋は「残す部屋」に選ばない（同じ建物のまだ送っていない部屋を残す）→ 判定の材料（送付の記録）を先に読む
     const conversationId = await resolveConversationId(input.propertyCustomerId, input.conversationId);
     const searchOverride = input.propertyCustomerId ? (input.searchOverride ?? null) : null;
+    const searchMode = input.searchMode === "pinpoint" || input.searchMode === "widen" ? input.searchMode : null;
     const loaded = await loadProfile(input.propertyCustomerId, searchOverride);
     const profile = loaded?.profile ?? null;
     const sentIdx = new Set<number>();
@@ -218,7 +225,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const lc = locOf.get(i);
       it.location = lc?.saved ?? null;
       if (profile && facts) {
-        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null }); } catch { it.judgment = null; }
+        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null, searchMode }); } catch { it.judgment = null; }
       }
       if (tm && tm.t.hasText) {
         try { it.terms = buildPickupTerms(tm.t, profile, { equipment: e?.match ?? null, filled: tm.filled }); } catch { it.terms = null; }
@@ -248,7 +255,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         if (facts.areaSqm == null && text) { const a = parseListingText(text).areaSqm; if (a != null) facts.areaSqm = a; }
         const dl = locateItem(input.summaries[d.index], text, loaded?.location ?? null);
         let judgment: Judgment | null = null;
-        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes }); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes, searchMode }); } catch { judgment = null; }
         droppedAd.push({ pdfUrl, judgment });
       }
     }
@@ -293,8 +300,15 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     const rows = buildPickupRows({
       batchId: input.batchId, propertyCustomerId: input.propertyCustomerId, conversationId,
       customerName: input.customerName, site: input.site,
-    }, items).map((r) => (searchOverride && loaded ? { ...r, search_override: searchOverride } : r));
+    }, items).map((r) => (searchOverride && loaded ? { ...r, search_override: searchOverride } : r))
+      // 2026-09-27 ピンポイントか広げてか（分からない回は列を出さない＝列を足す前の DB にも書ける）
+      .map((r) => (searchMode ? { ...r, search_mode: searchMode } : r));
     let ins = await supabase.from("property_pickups").insert(rows).select("id");
+    // 2026-09-27: search_mode 列を本番に足す前に動いても記録は残す（加点は判定で済んでいる・印だけ落ちる）
+    if (ins.error && /search_mode/.test(ins.error.message)) {
+      console.warn("[property-pickups] search_mode 列が無いので外して記録:", ins.error.message);
+      ins = await supabase.from("property_pickups").insert(rows.map((r) => { const { search_mode: _m, ...rest } = r as typeof r & { search_mode?: unknown }; void _m; return rest; })).select("id");
+    }
     // 2026-09-27: search_override 列を本番に足す前に動いても記録は残す（判定は上書きで済んでいる・印だけ落ちる）
     if (ins.error && /search_override/.test(ins.error.message)) {
       console.warn("[property-pickups] search_override 列が無いので外して記録:", ins.error.message);
@@ -345,6 +359,6 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     out.error = e instanceof Error ? e.message : String(e);
     return out;
   } finally {
-    console.log(JSON.stringify({ tag: "property-pickups:record", batch: input.batchId.slice(0, 40), customer: input.propertyCustomerId?.slice(0, 8) ?? null, override: input.searchOverride ? (input.searchOverride.command_id?.slice(0, 8) ?? "yes") : null, ...out }));
+    console.log(JSON.stringify({ tag: "property-pickups:record", batch: input.batchId.slice(0, 40), customer: input.propertyCustomerId?.slice(0, 8) ?? null, override: input.searchOverride ? (input.searchOverride.command_id?.slice(0, 8) ?? "yes") : null, search_mode: input.searchMode ?? null, ...out }));
   }
 }

@@ -249,7 +249,9 @@
         trigger: ctx.trigger || "single",
         mode: ctx.mode || null,
         command_id: ctx.command_id || null,
-        is_wide: !!ctx.is_wide,
+        // 2026-09-27: 渡されない時は null（分からない）。null は started／finished で送っても サーバーが欄を書かない
+        //   （popup が started で入れた広げての値を finished の false で上書きしない）
+        is_wide: ctx.is_wide == null ? null : !!ctx.is_wide,
         area_mode: ctx.area_mode || null,
         pass: ctx.pass || null,
         steps: [],

@@ -14,6 +14,8 @@ import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
+import { widenChainNotes, type ChainCommandLite, type PickupLite } from "@/app/lib/search-widen-chain";
+import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
 import { summarizeNewArrivals, newArrivalLine, NEW_ARRIVAL_WINDOW_HOURS, type NewArrivalRow, type NewArrivalSummary, type SentBuilding } from "@/app/lib/new-arrivals";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +33,8 @@ type Row = {
   image_analysis: Record<string, unknown> | null;
   /** 2026-09-27 案A: その回をメモの上書きで判定した印（search-override.ts の PickupSearchOverride）。無い行＝登録の条件 */
   search_override?: Record<string, unknown> | null;
+  /** 2026-09-27 その回を見つけた検索の種類（pinpoint｜widen・無い行＝分からない） */
+  search_mode?: string | null;
   /** 2026-09-24 資料の設備欄 × お客様の条件の照合（pickup-equipment.ts の PickupEquipment） */
   equipment?: Record<string, unknown> | null;
   /** 2026-09-25 資料の表の募集の条件と希望の照合（pickup-terms.ts の PickupTerms） */
@@ -292,7 +296,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     } catch { /* まとめられなくても詳細は出す */ }
   }
   let q = supabase.from("property_pickups")
-    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location, search_override, expired_at")
+    .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location, search_override, search_mode, expired_at")
     .order("created_at", { ascending: false }).limit(300);
   q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);
@@ -305,13 +309,21 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const sumRes = pcid ? loadConditionSummary(pcid, { allowLlm: false }).catch(() => null) : Promise.resolve(null);
   // 2026-09-25 竹内「まとめられていない」: 拡張の「完了」でまとめた1回分の印（complete_group_id）。列がまだ無い時は読めない（error）→ 届いた時刻で寄せる
   const roundRes = readRoundIds(pcid ? { pcid } : { conv: conv as string });
-  const [pk, notesRes, sentRes, condRes, sum, roundOf] = await Promise.all([
+  // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: 自動で広げたコマンド（payload.chain）と、広げても足りなかった時の「ここで止めます」
+  const chainRes: Promise<ChainCommandLite[]> = pcid
+    ? Promise.resolve(supabase.from("automation_commands").select("id, created_at, status, sites, customer_ids, payload")
+        .contains("customer_ids", [pcid]).eq("payload->>source", WEB_BRAIN_SOURCE).not("payload->chain", "is", null)
+        .gte("created_at", new Date(Date.now() - 24 * 3600_000).toISOString()).order("created_at", { ascending: false }).limit(10))
+        .then((r) => (r.error ? [] : (r.data ?? []) as ChainCommandLite[]), () => [])
+    : Promise.resolve([]);
+  const [pk, notesRes, sentRes, condRes, sum, roundOf, chainCmds] = await Promise.all([
     q,
     pcid ? supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").eq("property_customer_id", pcid).order("created_at", { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
     sq,
     pcRes,
     sumRes,
     roundRes,
+    chainRes,
   ]);
   if (pk.error) return { ok: false, error: pk.error.message };
   // 2026-09-25 竹内「3日前の画像は消される・保存期間が終了しましたと出る（LINE のように）」: 届いてから 72時間を過ぎた行は
@@ -383,6 +395,9 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       best,
       image_need: imageNeed,
       condition_summary: sum ? { line: sum.line, uncheckable: sum.uncheckable, ai: sum.ai.length > 0 } : null,
+      // 2026-09-27 自動で広げた回の説明（サイトごと・24時間以内）。画面は回の見出しの下に出す
+      widen_chain: widenChainNotes(chainCmds, rows.map((r) => ({ id: r.id, created_at: r.created_at, site: r.site, verdict: r.verdict, search_mode: r.search_mode ?? null })) as PickupLite[], nowMs)
+        .map((n) => ({ ...n, at: chainCmds.find((c) => (c.payload?.chain?.site ?? "") === n.site)?.created_at ?? null })),
     },
   };
 }

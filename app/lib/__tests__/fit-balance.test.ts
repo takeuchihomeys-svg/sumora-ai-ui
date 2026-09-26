@@ -260,5 +260,67 @@ console.log("■ 条件の要約（condition-summary）も書いた条件の強�
   t("駅近を書いていない人の AI 要約はそのまま", dropAiCoveredByRule(ai, buildConditionSummary({ rent_max: 85000, preferences: "治安が良い所" })).length === 2);
 }
 
+// ── 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」──
+//   決め方: 「同じくらいならピンポイントが上（PP）」と「条件にずっと合う広げての物件は下げない（PN）」を例題にして、両方を満たす幅を測った
+//   （scripts で 0〜20 を試した: 4〜13 が全問合格・3 以下は PP4 が同点／負け・14 以上は PN3 が同点／負け）。+10 は幅の中ほど。
+//   REF（札が全部同じで AD 1ヶ月 vs 2ヶ月）は +5 から「ピンポイント AD 1ヶ月」が上になる＝竹内さんの「ピンポイントなので加点」を AD 1ヶ月の差より重く見る側。
+//   ※ 広げての回で「札が全部一致」の物件は、ピンポイントの回に出なかった物（町字・更新日・検索の駅の違い）でまれ
+console.log("■ 例題: ピンポイントの加点（SEARCH_PINPOINT）");
+{
+  const PIN = "SEARCH_PINPOINT";
+  const pin = (c: Cand): Cand => ({ ...c, key: `${c.key}(P)`, codes: settleHeldAd([...c.codes, PIN], c.codes.some(isHeldCode)) });
+  const NEAR = swap("AREA_STATION_MATCH", "AREA_STATION_WIDE");
+  const NEAR_RENT = NEAR.map((c) => (c === "RENT_OK" ? "RENT_WIDE" : c));
+  const AGE_MISS = swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER");
+  const WALK_MISS = swap("WALK_OK", "WALK_SLIGHTLY_OVER");
+  const PX: Array<{ id: string; say: string; hi: Cand; lo: Cand; b: [number, number] }> = [
+    { id: "PP1", say: "札も AD も同じなら ピンポイント ＞ 広げて", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("全一致 AD1", FULL, 1), b: [176, 166] },
+    { id: "PP2", say: "ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 1ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD1", NEAR, 1), b: [176, 164] },
+    { id: "PP3", say: "ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 1.5ヶ月（加点の前は同点）", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD1.5", NEAR, 1.5), b: [176, 166] },
+    { id: "PP4", say: "同じくらい（加点の前の差 3点）なら ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 2ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD2", NEAR, 2), b: [176, 169] },
+    { id: "PN1", say: "条件にずっと合う広げては下げない: 広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 築浅外れ・AD 1ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("築18 AD1", AGE_MISS, 1, { age: 18 })), b: [164, 155] },
+    { id: "PN2", say: "広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 徒歩少し超え・AD 2ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("徒歩14 AD2", WALK_MISS, 2, { walk: 14 })), b: [164, 156] },
+    { id: "PN3", say: "広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 築浅外れ・AD 2ヶ月（一番きわどい・差 4点）", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("築18 AD2", AGE_MISS, 2, { age: 18 })), b: [164, 160] },
+    { id: "PN4", say: "AD 1ヶ月未満はおすすめしにくい: 広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 全一致・AD 0.5ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("全一致 AD0.5", FULL, 0.5)), b: [164, 153] },
+    { id: "PN5", say: "広げて 隣の駅＋家賃の幅・AD 2ヶ月 ＞ ピンポイント 築浅外れ・AD 1ヶ月", hi: mk("隣の駅+家賃幅 AD2", NEAR_RENT, 2), lo: pin(mk("築18 AD1", AGE_MISS, 1, { age: 18 })), b: [164, 155] },
+    { id: "PN6", say: "保留のピンポイントは加点しない: 広げて 隣の駅・AD 0.5ヶ月（通す）＞ ピンポイント 家賃1割超え・AD 3ヶ月（保留）", hi: mk("隣の駅 AD0.5", NEAR, 0.5), lo: pin(mk("家賃超え AD3", swap("RENT_OK", "RENT_OVER_110"), 3)), b: [141, 101] },
+    { id: "REF", say: "（決めた向き）札が全部同じ: ピンポイント AD 1ヶ月 ＞ 広げて AD 2ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("全一致 AD2", FULL, 2), b: [176, 171] },
+  ];
+  for (const ex of PX) {
+    const a = score(ex.hi, W_FULL), b = score(ex.lo, W_FULL);
+    t(`${ex.id} ${ex.say}: ${a.score} vs ${b.score}`, a.score > b.score, { hi: a.codes, lo: b.codes });
+    t(`${ex.id} 点（${ex.b[0]} vs ${ex.b[1]}）`, a.score === ex.b[0] && b.score === ex.b[1], { got: [a.score, b.score] });
+  }
+  t("ピンポイント +10", REASON_POINTS[PIN] === 10 && reasonPoints(PIN) === 10);
+  t("保留の物件のピンポイントは _HELD の 0点（札は残す）", reasonPoints(`${PIN}_HELD`) === 0 && /保留の物件なので点に入れない/.test(reasonJa(`${PIN}_HELD`)), reasonJa(`${PIN}_HELD`));
+  t("日本語に 🎯", /🎯 ピンポイント/.test(reasonJa(PIN)));
+  t("全部合うの数に入れない（条件の札ではない）", fitVerdictOf(PIN) === null);
+  t("学習で動かさない（凍結）", isFrozenCode(PIN) && isFrozenCode(`${PIN}_HELD`));
+  t("保留・外す候補にしない", !HOLD_REASON_CODES.has(PIN) && !DROP_REASON_CODES.has(PIN));
+
+  // judgeProperty を通す（売上サポの recordPickupBatch と同じ渡し方）
+  const cust = { rent_max: 80_000, floor_plan: "1LDK", walk_minutes: 10 };
+  const S = "【1】A 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩4分\nAD 1ヶ月";
+  const jp = J(S, cust, { searchMode: "pinpoint" }), jw = J(S, cust, { searchMode: "widen" }), jn = J(S, cust, {});
+  t("ピンポイントの回だけ札が付く（広げて・分からないは付けない・減点もしない）", jp.reasonCodes.includes(PIN) && !jw.reasonCodes.some((c) => c.startsWith(PIN)) && !jn.reasonCodes.some((c) => c.startsWith(PIN)), [jp.reasonCodes, jw.reasonCodes]);
+  t("点はちょうど +10（広げて＝分からない）", jp.score === jw.score + 10 && jw.score === jn.score, [jp.score, jw.score, jn.score]);
+  t("理由の日本語に出る", jp.reasonsJa.some((x) => /🎯/.test(x)), jp.reasonsJa);
+  const H = "【2】B 101\n95,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩4分\nAD 2ヶ月";
+  const hp = J(H, cust, { searchMode: "pinpoint" }), hw = J(H, cust, {});
+  t("保留（家賃超え）のピンポイントは 0点（点は広げてと同じ）", hp.verdict === "hold" && hp.reasonCodes.includes(`${PIN}_HELD`) && hp.score === hw.score, [hp.verdict, hp.score, hw.score, hp.reasonCodes]);
+  // 通す／保留の線（40点）は加点の前の点で見る: 加点で保留が通すに変わらない（自動で広げるかの「通す」の数が検索の種類で変わらない）
+  const L = "【3】C 101\n1R\n○○駅 徒歩25分\nAD なし";
+  const lw = J(L, { rent_max: 80_000, walk_minutes: 10 }, {}), lp = J(L, { rent_max: 80_000, walk_minutes: 10 }, { searchMode: "pinpoint" });
+  t("加点の前 40点未満の物件はピンポイントでも保留のまま", lw.score < 40 && lp.verdict === lw.verdict, [lw.score, lw.verdict, lp.score, lp.verdict, lp.reasonCodes]);
+  // 設備の付け直し・画像の × でも札は残り、保留になれば 0点に替わる
+  const mkM = (result: "ok" | "ng"): EquipmentMatch => ({ rows: [{ want: { key: "autolock", mode: "must", strong: false, soft: false, text: "autolock", field: "preferences" }, label: "autolock", result, mark: result === "ok" ? "○" : "×", why: "" }] as unknown as EquipmentMatch["rows"], ok: result === "ok" ? 1 : 0, ng: result === "ng" ? 1 : 0, unlisted: 0, strongNg: false });
+  const eNg = applyEquipmentMatch(jp, mkM("ng"));
+  t("設備の × で保留 → ピンポイントは _HELD", eNg.verdict === "hold" && eNg.reasonCodes.includes(`${PIN}_HELD`) && !eNg.reasonCodes.includes(PIN), eNg.reasonCodes);
+  const eOk = applyEquipmentMatch({ reasonCodes: eNg.reasonCodes }, mkM("ok"));
+  t("付け直しで保留が消えたら +10 に戻る", eOk.verdict === "pass" && eOk.reasonCodes.includes(PIN), eOk.reasonCodes);
+  const iNg = applyImageFacts(J("【4】D 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩4分\nAD 1ヶ月", { ...cust, preferences: "独立洗面台" }, { searchMode: "pinpoint" }), { separate_washstand: false });
+  t("画像の × で保留 → ピンポイントは _HELD", iNg.verdict === "hold" && iNg.reasonCodes.includes(`${PIN}_HELD`), iNg.reasonCodes);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

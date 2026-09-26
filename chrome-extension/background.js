@@ -411,6 +411,30 @@ function _searchCommandIdFor(propertyCustomerId) {
   return l.customerIds.indexOf(String(propertyCustomerId)) >= 0 ? l.commandId : null;
 }
 
+// 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。検索結果はピンポイント検索で行ったか広げて検索を行ったかも
+//   ちゃんと分かるようにする（ブレインモードの場合）」: 検索を始めた時に {お客様×サイト → ピンポイント／広げて} を残し（AxlxModeCore の覚え書き）、
+//   送信（callMergeApi）が merge-pdfs に search_mode を付ける。残すのは _batchAutofill（一括・AIXツールの一括・手動の一括）と popup の _auditTag（個別の検索）
+async function _rememberSearchMode(customerId, site, isWide) {
+  try {
+    var core = self.AxlxModeCore;
+    if (!core || !core.rememberSearchMode || customerId == null) return;
+    var key = core.SEARCH_MODE_MEMO_KEY;
+    var st = await chrome.storage.local.get([key]);
+    var o = {};
+    o[key] = core.rememberSearchMode(st && st[key], String(customerId), site, !!isWide, Date.now());
+    await chrome.storage.local.set(o);
+  } catch (e) { console.warn("[search-mode] 覚え書きを残せない（検索は続ける）:", e && e.message); }
+}
+async function _searchModeFor(customerId, site) {
+  try {
+    var core = self.AxlxModeCore;
+    if (!core || !core.pickSearchMode || customerId == null) return null;
+    var key = core.SEARCH_MODE_MEMO_KEY;
+    var st = await chrome.storage.local.get([key]);
+    return core.pickSearchMode(st && st[key], String(customerId), site, Date.now());
+  } catch (_) { return null; }
+}
+
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
 async function callMergeApi(payload) {
   // 送信の3経路（リアプロ・itandi・レインズ）は全部ここを通るので、スタッフモードの判定もここで付ける
@@ -421,10 +445,12 @@ async function callMergeApi(payload) {
   //   サーバー（merge-pdfs）の brain_mode は property_pickups の記録にしか使っておらず、staff_mode（除外しない）とは独立に効く。
   const brainMode = await isBrainModeOn();
   const searchCommandId = _searchCommandIdFor(payload && payload.property_customer_id);
+  // 2026-09-27 この送信がピンポイントの検索か広げての検索か（ブレインの時だけ・分からない時は付けない＝サーバーは加点しない）
+  const searchMode = brainMode && payload && payload.property_customer_id ? await _searchModeFor(payload.property_customer_id, payload.site) : null;
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, staff_mode: staffMode, brain_mode: brainMode, ...(searchCommandId ? { search_command_id: searchCommandId } : {}) }),
+    body: JSON.stringify({ ...payload, staff_mode: staffMode, brain_mode: brainMode, ...(searchCommandId ? { search_command_id: searchCommandId } : {}), ...(searchMode ? { search_mode: searchMode } : {}) }),
     signal: AbortSignal.timeout(85000), // Vercel maxDuration=90s より5s短く設定（旧60sだと多PDF時にクライアント側が先にタイムアウト）
   });
   if (!resp.ok) {
@@ -2199,7 +2225,11 @@ async function _auditOnFillDone(msg) {
       var st = await _auditState();
       if (!st.enabled) return;
       // popup が started を送り済み（post_started:false）
-      run = _auditTracker.begin({ run_id: msg.runId, site: msg.site, customer_id: msg.customerId, trigger: "single", mode: st.mode, post_started: false });
+      // 2026-09-27: 広げてかどうかは popup の started が正（is_wide を入れている）。ここで既定の false を持つと finished が
+      //   is_wide=false で上書きし、広げての個別の検索が「ピンポイント」と記録されていた（自動で広げる連鎖が誤って動く）
+      //   → 覚え書き（popup の _auditTag が残す）から読み、分からなければ null（finished で送らない＝started の値のまま）
+      var _sm = await _searchModeFor(msg.customerId, msg.site);
+      run = _auditTracker.begin({ run_id: msg.runId, site: msg.site, customer_id: msg.customerId, trigger: "single", mode: st.mode, post_started: false, is_wide: _sm ? _sm === "widen" : null });
       var timer = setTimeout(function () { _auditSingleTimers.delete(msg.runId); _auditFinish(msg.runId, { error: null }); }, AUDIT_SINGLE_CLOSE_MS);
       _auditSingleTimers.set(msg.runId, timer);
     }
@@ -2792,6 +2822,8 @@ async function _runBatchSearch(command) {
   var isWebBrain = !!(cmdPayload && cmdPayload.source === "web_brain");
   if (isWebBrain) {
     console.log("[batch] AIXツールの一括検索（ブレイン）: 更新日=" + (cmdPayload.rp_update_days || "指定なし") + " 広げて=" + batchIsWide);
+    // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する」: サーバー（search-widen-chain）が積んだ「自動で広げて」の回
+    if (cmdPayload.chain) console.log("[batch] 🔎 ピンポイントで通す物件が " + cmdPayload.chain.pass_count + " 件（" + (cmdPayload.chain.kind === "new" ? "新規は" + cmdPayload.chain.threshold + "件未満" : "新着・追加は0件") + "）→ 自動で広げて検索（1回だけ）");
   }
   // 2026-09-27 竹内「『大正駅で検索する』なら駅は大正駅だけで検索…拡張ツールの一時調整の部分で合わせる形」:
   //   AIXツールのメモ欄の検索の指示（payload.search_override）は web_brain の回だけ・この回だけお客様の写しに重ねる
@@ -2989,6 +3021,8 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   };
   var prefix = siteUrlPrefixes[site];
   if (!prefix) return;
+  // 2026-09-27 この回がピンポイントか広げてか（送信の callMergeApi が merge-pdfs の search_mode に付ける）
+  await _rememberSearchMode(customer && customer.id, site, isWide);
 
   var allTabs = await chrome.tabs.query({});
   var existing = allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });

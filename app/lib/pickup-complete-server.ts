@@ -106,6 +106,8 @@ export type FinishResult = {
   ranking: CompleteRanking | null;
   ms: number;
   error: string | null;
+  /** 2026-09-27 ピンポイントの回が足りなかった時に広げてを積んだか（サイトごと） */
+  widen?: Array<{ site: string; action: string; reason: string; command: string | null }>;
 };
 
 /**
@@ -143,6 +145,13 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       result: { basis_rule: basis, items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
     }).eq("group_id", input.groupId);
     if (cErr) console.warn("[pickup-complete] まとめの結果を書けない:", cErr.message);
+    // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: 判定・画像の読み取り・順位が済んだこの時に、
+    //   ピンポイントの回の「通す」が足りなければ同じお客様×サイトで広げてを1回だけ積む（search-widen-chain-server・失敗してもまとめは終わっている）
+    try {
+      const { chainAfterComplete } = await import("@/app/lib/search-widen-chain-server");
+      const chained = await chainAfterComplete(input.propertyCustomerId, rows.map((r) => r.site ?? null));
+      out.widen = chained.map((c) => ({ site: c.site, action: c.decision.action, reason: c.decision.reason, command: c.commandId }));
+    } catch (e) { console.warn("[pickup-complete] 広げての判断に失敗（まとめは済んでいる）:", e instanceof Error ? e.message : String(e)); }
     return out;
   } catch (e) {
     out.error = e instanceof Error ? e.message : String(e);
@@ -150,7 +159,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
     return out;
   } finally {
     out.ms = Date.now() - t0;
-    console.log(JSON.stringify({ tag: "property-pickups:complete-finish", group: input.groupId, claimed: input.claimedIds.length, analyzed: out.analyzed, level: out.analyzeLevel, best: out.ranking?.bestId ?? null, basis: out.ranking?.bestBasis ?? null, items: out.ranking?.items ?? 0, ms: out.ms, error: out.error }));
+    console.log(JSON.stringify({ tag: "property-pickups:complete-finish", group: input.groupId, claimed: input.claimedIds.length, analyzed: out.analyzed, level: out.analyzeLevel, best: out.ranking?.bestId ?? null, basis: out.ranking?.bestBasis ?? null, items: out.ranking?.items ?? 0, ms: out.ms, error: out.error, widen: out.widen ?? null }));
   }
 }
 

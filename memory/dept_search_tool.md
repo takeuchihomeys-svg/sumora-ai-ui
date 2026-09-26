@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-09-27 v2.5.28 ブレインモードの検索を「まずピンポイント → 足りなければ広げて（1回だけ）」・ピンポイントに +10・🎯／🔎 の印
+竹内「新着物件はピンポイントで検索して、物件がなかったら広げて検索する。新規の場合は10件、ピンポイント検索で出なかったら広げて検索をする。そして上位10件が物件ピックアップに選ばれる形。ピンポイント検索で検索した物件はピンポイントなので加点する」「検索結果はピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるようにする（ブレインモードの場合）」
+- **今までの広げて**（変えていない）: 家賃上限 ＋5千円（10万以下）/＋1万円・駅は同じ路線の前後1駅・地域は難波の3区・LDK→同じ部屋数の DK・築年 ＋5年（resolution-core.js ⑧・popup.js buildCondData・page-script.js）。どの経路も「押した時のモード」を1回走らせて終わり（手動＝popup の searchMode・手動の一括＝msg.isWide・AIXツールの一括＝payload.is_wide・メモの上書き＝override.is_wide）。自動で続ける仕組みは無かった
+- **検索の種類をサーバーへ（拡張 v2.5.28）**: `mode-core.js` に覚え書き（`rememberSearchMode`/`pickSearchMode`・chrome.storage.local `searchModeMemo`・{お客様×サイト → pinpoint|widen・時刻}・1時間で切れる・200件まで）。残すのは `background._batchAutofill`（一括・AIXツールの一括・手動の一括）と `popup._auditTag`（個別の検索・ブレインの時だけ）。送信の `callMergeApi`（3経路の1か所）が merge-pdfs に `search_mode` を付ける（ブレインの時だけ・分からない時は付けない＝加点しない）
+  - ついでに直した: 個別の検索の点検は background が fill-done で `is_wide` を既定 false で持ち、finished で popup の started（広げて=true）を上書きしていた → 覚え書きから読み、分からなければ null（search-audit.js の begin が null を持てる・サーバーは boolean の時だけ書く）
+- **サーバー**: merge-pdfs `search_mode` → `recordPickupBatch({searchMode})` → 判定 `judgeProperty(..., {searchMode})` と行 `property_pickups.search_mode`（TEXT・pinpoint/widen・本番作成済み・migrate-schema・scripts/apply-pickup-search-mode-column.ts）
+- **加点**: `SEARCH_PINPOINT` +10（property-brain.ts `PINPOINT_CODE`）。保留・外す候補は `_HELD`（0点・札は残す＝AD の段と同じ settleHeldAd）。**通す／保留の 40点の線は加点の前の点**（`passLineScore`・3か所）＝検索の種類で「通す」の数が変わらない。学習（scoring-learning）は動かさない（`isFrozenCode` の `^SEARCH_`）。カードの内訳に「検索 ピンポイント +10 🎯」
+  - 値の決め方（fit-balance.test.ts「ピンポイントの例題」11問）: 同じくらいならピンポイントが上（PP1〜4）と、条件にずっと合う広げては下げない（PN1〜6）を両方満たす幅は **+4〜+13**（0〜20 を試した）→ +10。**決めた向き（REF）**: 札が全部同じで AD 1ヶ月（ピンポイント）vs AD 2ヶ月（広げて）はピンポイントが上（+5 から逆転）
+- **自動で広げる（`app/lib/search-widen-chain.ts` 純関数 `decideWiden`・`-server.ts` `maybeChainWiden`）**: 足りなければ AIXツールの一括検索と同じ web_brain のコマンド（`is_wide:true`・同じサイト・**ピンポイントの回と同じ更新日**・`payload.chain`）を1つ積む → ブレインの PC が拾う（拡張の拾い方は変えていない）
+  - 数え方: その回（同じお客様×サイト・続けた検索＝地域→駅の2パスも1つ）の行のうち verdict=pass。**新規**（検索を始めた時の写し customer_snapshot に送った日・確認した日が無い＝更新日で絞らない回）は **10件未満**（PICKUP_AIX_MAX）、**新着・追加**は **0件**で広げる
+  - 決める所（同じ関数・冪等）: まとめ（finishCompleteGroup の最後＝判定と画像の読み取りの後）／検索の点検の finished（送れる物件0件＝物件が届かない回はその場で）／Cron pickup-auto-complete（届かなかった回の取りこぼし・終わって8〜16分の回）
+  - 広げない: 広げての回の後・🧠×スタッフ・メモの上書きの回（人が範囲を決めた）・レインズ・scrape_compare・同じお客様×サイトの一括が待ち／実行中・**この回の後に自動の広げてを積んだ（1回だけ・広げても足りなければ止める）**・点検が無い／is_wide が分からない。止める: `SEARCH_WIDEN_CHAIN=off`（決めるだけ・積まない）
+  - 広げての回は30分以内なら同じまとめ（joinableGroupId）に足され、順位・👑・既定のチェック（点の高い順10件）がまとめ全体で付け直る
+- **画面（PickupReview）**: カードに「🎯 ピンポイント」「🔎 広げて」・回の見出しに「🎯 ピンポイント 6件・🔎 広げて 2件」（両方の時は件数を並べる）・トークの最後に自動で広げた説明（積んだ／検索中／「広げても足りないので、ここで止めます」／動かなかった）＝詳細 API の `widen_chain`
+- **確かめ（YUMA・本番DB・LINE に送らない・DeepSeek 0回）**: 新規のテスト顧客で ピンポイント6件（通す4・保留2）→ まとめで「通す 4 < 10」→ web_brain（realnetpro・is_wide・rp_update_days null・chain）が積まれた（すぐ running にして拾わせない・判定の後はお客様を消して万一拾っても検索しない）→ 2回目は already_chained → 広げて2件（通す1）が同じまとめに → 「広げて通す 1件・合わせて 5件…ここで止めます」・3回目は latest_is_widen。ピンポイントの通すは 149〜154点（+10）・保留は 74点（_HELD）・広げての通すは 139点。新着・追加で0件 → 点検の finished からその場で積む（更新日 7日を引き継ぐ）。作った物は全部消した
+- テスト: `app/lib/__tests__/search-widen-chain.test.ts`（46）・fit-balance（168）・`tests/chrome-extension/mode-core.test.js`（75）・search-audit（66）・既存の property-brain/scoring-learning/pickup-card-view/pickup-complete/pickup-review-order/pickup-best/search-override-judge/wide-search-score・tsc 0・next build・node --check
+- **竹内さんの拡張の再読み込み（2.5.28）までは** search_mode が届かない（加点・印なし）。ただし自動で広げるのは検索の点検（is_wide）で決めるので、再読み込み前でも一括・AIXツールの一括のピンポイントの回では動く（個別の検索は再読み込み後に正しい is_wide になる）
+- **まだの事・決めてほしい事**: ①REF の向き（全部の条件が同じなら AD 2ヶ月の広げてより AD 1ヶ月のピンポイントを上）でよいか ②新規の「10件」は「通す」の数（保留は数えない） ③🧠×スタッフでは自動で広げない ④LINE グループには自動で広げた旨を送らない（AIXツールの画面だけ）
+
 ## 2026-09-27 v2.5.27 案A: メモの上書きで検索した回は、判定（点・👑・画像で分析の対象・カード）もその上書きで
 竹内「案Aでおこなう」（v2.5.26 の未決「判定は登録の条件のまま」を解いた）。例 登録が 1K のお客様を 1LDK で検索した回は 1LDK を「合っている」扱い。上書きした項目だけ・書いていない項目は登録のまま。
 - **結び方（拡張の変更は最小）**: background.js に `_searchOverrideLink`（{commandId, customerIds}）。`_runBatchSearch` が**上書きのある web_brain のコマンドの時だけ**置き、呼び出し元（_pollAndRunBatch）の finally で必ず消す。`callMergeApi` が同じお客様の送信に `search_command_id` を付ける（`_searchCommandIdFor`）。**中身は送らない**

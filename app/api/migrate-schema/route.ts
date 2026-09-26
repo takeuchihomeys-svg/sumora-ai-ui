@@ -2364,6 +2364,10 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS seen_by TEXT;
 --   その回をどの上書きで判定したか {command_id, override}（search-override.ts の PickupSearchOverride・無い行＝登録の条件で判定）。
 --   👑 は物差し（上書き）が混ざる時に一番新しい回の物差しの物件だけから選ぶ（pickup-best.sameRulerCandidates）
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_override JSONB;
+-- 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。検索結果はピンポイント検索で行ったか広げて検索を行ったかも分かるように」:
+--   その回を見つけた検索の種類（拡張 v2.5.28〜 が merge-pdfs に送る・無い行＝分からない）。ピンポイントの物件は判定で +10（SEARCH_PINPOINT）。
+--   ピンポイントの回の「通す」が足りない時は同じお客様・同じサイトで広げてを1回だけ自動で積む（search-widen-chain.ts・automation_commands.payload.chain）
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_mode TEXT CHECK (search_mode IS NULL OR search_mode IN ('pinpoint', 'widen'));
 CREATE INDEX IF NOT EXISTS idx_property_pickups_unseen ON property_pickups(created_at DESC) WHERE seen_at IS NULL AND verdict = 'pass' AND status = 'pending';
 --   まとめ1つに1行（主キー＝まとめ ID）: 押した経路・モード・まとめた行・👑（best_id・best_basis＝image/score）・自動の読み取りの件数
 CREATE TABLE IF NOT EXISTS property_pickup_completions (

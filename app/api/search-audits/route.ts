@@ -52,6 +52,17 @@ export async function POST(req: NextRequest) {
       const job = runDiagnosis(runId).then((d) => { if (d.error) console.warn("[search-audits] 見立て:", d.status, d.error); }, (e) => console.warn("[search-audits] 見立ての例外:", e));
       try { waitUntil(job); } catch { /* Vercel 以外（ローカル）: 待たずに走らせる */ }
     }
+    // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: ピンポイントの回で送れる物件が0件だった時は物件が届かない（まとめが来ない）
+    //   → ここで決める（送れる物件があった回はまとめの時に決める・decideWiden が rows_coming で待つ）。応答は待たせない
+    if (r.ok && body.is_wide === false && body.mode !== "brain_staff" && (typeof body.property_customer_id === "string" || typeof body.property_customer_id === "number")
+        && (body.site === "realpro" || body.site === "realnetpro" || body.site === "itandi")) {
+      const pcid = String(body.property_customer_id);
+      const site = String(body.site);
+      const chain = import("@/app/lib/search-widen-chain-server")
+        .then(({ maybeChainWiden }) => maybeChainWiden({ propertyCustomerId: pcid, site, trigger: "audit" }))
+        .then(() => undefined, (e) => console.warn("[search-audits] 広げての判断に失敗:", e));
+      try { waitUntil(chain); } catch { /* ローカル */ }
+    }
     return NextResponse.json(r, { status: r.ok ? 200 : 500, headers: CORS });
   }
   return NextResponse.json({ ok: false, error: "phase は started か finished" }, { status: 400, headers: CORS });

@@ -110,6 +110,8 @@ function ok(name, c) { eq(name, !!c, true); }
     eq("post_started:false は送らない", posts.length, 2);
     await T.finish("sa_given_id_1", { error: "watchdog-timeout: 85秒" });
     eq("失敗の文を載せる", posts[2].error, "watchdog-timeout: 85秒");
+    // 2026-09-27: 個別の検索（popup が started を送った回）は is_wide を渡さない → null のまま finished（サーバーは欄を書かない＝started の広げてが残る）
+    eq("is_wide を渡さない回は null（false で上書きしない）", [run2.is_wide, posts[2].is_wide], [null, null]);
     const r = await T.finish("sa_unknown_1", {});
     eq("知らない回は送らない", [r.ok, posts.length], [false, 3]);
     const run3 = T.begin({ site: "reins", trigger: "bulk_manual" });

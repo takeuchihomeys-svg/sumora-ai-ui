@@ -130,7 +130,77 @@
       : null;
   }
 
+  // ── 検索の種類の覚え書き（2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。
+  //   検索結果はピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるようにする（ブレインモードの場合）」）──
+  // 検索を始めた所（background の _batchAutofill＝一括・AIXツールの一括・手動の一括／popup の _auditTag＝個別の検索）で
+  //   {お客様×サイト → ピンポイントか広げてか・時刻} を chrome.storage.local に残し、送信（background の callMergeApi）が
+  //   同じお客様×サイトの値を merge-pdfs の search_mode に付ける（サーバーが property_pickups.search_mode に残す・ピンポイントに加点）。
+  //   リアプロ・itandi・レインズの送信の3経路は全部 callMergeApi を通るので、付けるのはそこ1か所（送る側の content script は検索の種類を知らない）。
+  //   storage にしたのは、検索から送信までの間に service worker が止まっても消えないように（変数だと止まった時に消える）。
+  //   古い値（SEARCH_MODE_TTL_MS を過ぎた物）は使わない＝分からない時は付けない（サーバーは「分からない」として加点しない）
+  var SEARCH_MODE_MEMO_KEY = "searchModeMemo";
+  var SEARCH_MODE_TTL_MS = 60 * 60 * 1000; // 1回の検索と送信（複数ページ・画像の取り込み）が収まる長さ
+  var SEARCH_MODE_MEMO_MAX = 200;
+
+  // サイトの呼び名を1つに（realnetpro／realpro／リアプロ → realpro）。search-audit.js の siteKey と同じ線
+  function searchSiteKey(site) {
+    var s = String(site || "").toLowerCase();
+    if (s === "realnetpro" || s === "realpro" || s === "リアプロ") return "realpro";
+    if (s === "itandi") return "itandi";
+    if (s === "reins" || s === "レインズ") return "reins";
+    return s || "";
+  }
+
+  // 広げてかどうか → サーバーに送る名前（pinpoint | widen）
+  function searchModeOf(isWide) {
+    return isWide ? "widen" : "pinpoint";
+  }
+
+  function memoEntryOk(v, t) {
+    return !!v && typeof v.at === "number" && t - v.at <= SEARCH_MODE_TTL_MS && t - v.at >= -60000 && (v.mode === "pinpoint" || v.mode === "widen");
+  }
+
+  // 覚え書きに1件足した新しい物を返す（元は変えない）。切れた物は捨て、多すぎる時は古い物から捨てる
+  function rememberSearchMode(memo, customerId, site, isWide, now) {
+    var t = typeof now === "number" ? now : Date.now();
+    var out = {};
+    var src = memo && typeof memo === "object" ? memo : {};
+    Object.keys(src).forEach(function (k) { if (memoEntryOk(src[k], t)) out[k] = src[k]; });
+    if (customerId == null || customerId === "") return out;
+    out[String(customerId) + "|" + searchSiteKey(site)] = { mode: searchModeOf(!!isWide), at: t };
+    var keys = Object.keys(out);
+    if (keys.length > SEARCH_MODE_MEMO_MAX) {
+      keys.sort(function (a, b) { return out[a].at - out[b].at; });
+      keys.slice(0, keys.length - SEARCH_MODE_MEMO_MAX).forEach(function (k) { delete out[k]; });
+    }
+    return out;
+  }
+
+  // 送信の時に使う値: 同じお客様×サイトの値（切れていない物）。サイトが分からない送信は、そのお客様の一番新しい値。無ければ null
+  function pickSearchMode(memo, customerId, site, now) {
+    var t = typeof now === "number" ? now : Date.now();
+    if (!memo || typeof memo !== "object" || customerId == null || customerId === "") return null;
+    var sk = searchSiteKey(site);
+    if (sk) {
+      var hit = memo[String(customerId) + "|" + sk];
+      return memoEntryOk(hit, t) ? hit.mode : null;
+    }
+    var best = null;
+    Object.keys(memo).forEach(function (k) {
+      if (k.indexOf(String(customerId) + "|") !== 0) return;
+      var v = memo[k];
+      if (memoEntryOk(v, t) && (!best || v.at > best.at)) best = v;
+    });
+    return best ? best.mode : null;
+  }
+
   return {
+    SEARCH_MODE_MEMO_KEY: SEARCH_MODE_MEMO_KEY,
+    SEARCH_MODE_TTL_MS: SEARCH_MODE_TTL_MS,
+    searchSiteKey: searchSiteKey,
+    searchModeOf: searchModeOf,
+    rememberSearchMode: rememberSearchMode,
+    pickSearchMode: pickSearchMode,
     STAFF_MODE_TTL_MS: STAFF_MODE_TTL_MS,
     MODES: MODES,
     STORAGE_KEYS: STORAGE_KEYS,

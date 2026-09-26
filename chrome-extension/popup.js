@@ -376,6 +376,18 @@ function _auditTag(site, customer, conditions) {
       is_wide: !!conditions.is_wide, area_mode: conditions.area_mode || null, ext_version: ver,
       customer_snapshot: A.snapshotCustomer(customer), intended: A.pickIntended(conditions),
     });
+    // 2026-09-27 竹内「ピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるようにする（ブレインモードの場合）」:
+    //   この回の種類を覚え書きに残す（送信の background.callMergeApi が merge-pdfs の search_mode に付ける・AxlxModeCore）
+    if (customer && customer.id != null && core.rememberSearchMode) {
+      var _mk = core.SEARCH_MODE_MEMO_KEY, _cid = String(customer.id), _wide = !!conditions.is_wide;
+      chrome.storage.local.get([_mk], function (r) {
+        try {
+          var o = {};
+          o[_mk] = core.rememberSearchMode(r && r[_mk], _cid, site, _wide, Date.now());
+          chrome.storage.local.set(o);
+        } catch (_) { /* 覚え書きが残せなくても検索は続ける（サーバーは加点しないだけ） */ }
+      });
+    }
   } catch (e) { console.warn("[search-audit] started を送れない（検索は続ける）:", e && e.message); }
   return conditions;
 }

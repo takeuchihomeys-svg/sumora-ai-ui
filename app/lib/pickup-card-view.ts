@@ -282,6 +282,8 @@ export function cellOfCode(code: string): { key: string; head: string } | null {
   if (code === "PET_NG") return { key: "pet", head: "ペット" };
   if (/^ALREADY_SENT/.test(code)) return { key: "sent", head: "送付済み" };
   if (/^FIT_/.test(code)) return { key: "fit", head: "全部合う" };
+  // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」（+10・保留の物件は _HELD の 0点）
+  if (/^SEARCH_PINPOINT/.test(code)) return { key: "search", head: "検索" };
   if (/^AD_|^PROFIT_NEGATIVE$/.test(code)) return { key: "ad", head: "AD" };
   let m = code.match(/^EQUIP_(.+?)(?:_MUST|_SOFT)?_(?:OK_MAX|OK|NG|NEAR|ASK|UNLISTED)$/);
   if (m) return { key: `eq:${m[1]}`, head: equipKeyLabel(m[1]) };
@@ -309,6 +311,7 @@ function toneOfCodes(codes: string[], key: string): CellTone {
     return codes.includes("AD_UNKNOWN") || codes.length === 0 ? "unread" : "info";
   }
   if (key === "fit") return "ok";
+  if (key === "search") return codes.some((c) => c.endsWith(AD_HELD_SUFFIX)) ? "info" : "ok";
   if (key === "sent") return codes.some((c) => c === "ALREADY_SENT" || c === "ALREADY_SENT_SAME_ROOM") ? "ng" : "info";
   const vs = codes.map((c) => fitVerdictOf(c)?.v).filter(Boolean);
   if (vs.some((v) => v === "ng" || v === "soft_ng") || codes.some((c) => /^(?:WALK_TEXT_OVER|WALK_TEXT_FAR|AGE_W_OLD|RENT_ABOVE_USUAL|CONTRACT_FIXED)$/.test(c))) return "ng";
@@ -374,6 +377,7 @@ export function buildFitCells(reasonCodes: readonly string[] | null, facts: Reco
       const f = summarizeFit(reasonCodes);
       note = f.miss === 0 ? `書いた条件 ${f.n}つ全部` : `${f.n}つ中 ${f.miss}つ外れ`;
     } else if (key === "ad") note = g.codes.some((c) => c.endsWith(AD_HELD_SUFFIX)) ? "保留の物件なので0点" : g.codes.includes("AD_UNKNOWN") ? "要確認" : g.codes.includes("PROFIT_NEGATIVE") ? "割引の方が大きい" : null;
+    else if (key === "search") note = g.codes.some((c) => c.endsWith(AD_HELD_SUFFIX)) ? "🎯 ピンポイント・保留の物件なので0点" : "🎯 ピンポイントで見つかった";
     else if (key === "sent") note = g.codes.includes("ALREADY_SENT_OTHER_ROOM") ? "同じ建物の別の部屋" : "送り直しか確認";
     else if (written) note = [wantWordOf(key, g.codes, opts?.strongEquip), TONE_WORD[tone]].filter(Boolean).join("・");
     else if (g.codes.includes("ZERO_ZERO_INFERRED")) note = "送った物件から推した";
@@ -388,6 +392,8 @@ export function buildFitCells(reasonCodes: readonly string[] | null, facts: Reco
   const fit = all.filter((c) => c.key === "fit");
   const adCell = all.find((c) => c.key === "ad") ?? { ...facts.ad, points: 0, tone: "unread" as CellTone, written: false, note: "要確認", codes: [] };
   const other = all.filter((c) => !c.written && c.key !== "fit" && c.key !== "ad").sort(byOrder);
+  // 検索（🎯 ピンポイント）は項目の値が無いので「ピンポイント」と書く（facts に無い項目は markOfCodes の － になる）
+  for (const c of other) if (c.key === "search") c.value = "ピンポイント";
   const used = new Set([...written, ...fit, adCell, ...other].map((c) => c.key));
   const rest = FACT_ORDER.filter((k) => !used.has(k)).map((k) => ({ ...facts[k], points: null, tone: null, written: false, note: null }));
   return [...written, ...fit, adCell, ...other, ...rest];

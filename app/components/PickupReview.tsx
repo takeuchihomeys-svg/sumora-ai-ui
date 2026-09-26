@@ -20,6 +20,8 @@ import { pickAuditForRound } from "@/app/lib/search-audit-check";
 import { buildPickupAixHref, pickupAixButtonLabel, PICKUP_AIX_MAX } from "@/app/lib/pickup-aix-handoff";
 // 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: メモの検索の指示 → 一時調整の要約 → 確かめて［実行］（軽い物だけ import）
 import { looksLikeSearchInstruction, overrideLine, overrideJudgeLine, overrideRulerKey, type SearchOverride, type RegisteredConditions, type OverrideSite } from "@/app/lib/search-override";
+// 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。ピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるように」（純関数だけ）
+import { normalizeSearchMode, roundSearchModeLine, type ChainNote } from "@/app/lib/search-widen-chain";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -40,7 +42,18 @@ type Item = {
   batch_id?: string; site?: string | null;
   /** 2026-09-27 案A: その回をメモの上書きで判定した印（search-override.ts の PickupSearchOverride）。無い行＝登録の条件 */
   search_override?: unknown;
+  /** 2026-09-27 その回を見つけた検索の種類（pinpoint｜widen・無い行＝分からない） */
+  search_mode?: string | null;
 };
+
+/** 2026-09-27 カードの検索の種類の印（🎯 ピンポイント／🔎 広げて）。分からない行は出さない */
+function SearchModeChip({ mode }: { mode: string | null | undefined }) {
+  const m = normalizeSearchMode(mode);
+  if (!m) return null;
+  return m === "pinpoint"
+    ? <span className="text-[9px] font-bold whitespace-nowrap px-1 py-[2px] rounded" style={{ background: "#e8f5e9", color: "#1b5e20" }} title="条件ぴったりの検索で見つかった物件（+10点）">🎯 ピンポイント</span>
+    : <span className="text-[9px] font-bold whitespace-nowrap px-1 py-[2px] rounded" style={{ background: "#fff3e0", color: "#e65100" }} title="家賃・エリア・広さを少し広げた検索で見つかった物件（加点なし）">🔎 広げて</span>;
+}
 
 /**
  * 2026-09-27 案A: 回（まとめた回）の中で「メモの条件で判定した」旨の1行。登録の条件と違う点が付く理由をカードの上に出す。
@@ -64,7 +77,9 @@ type Customer = { key: string; property_customer_id: string | null; conversation
   /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
   best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
   /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
-  condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null };
+  condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null;
+  /** 2026-09-27 自動で広げた回の説明（サイトごと・詳細だけ） */
+  widen_chain?: Array<ChainNote & { at: string | null }> };
 /** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
 type ListCustomer = {
   key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
@@ -1102,6 +1117,8 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
             <div className="flex items-center gap-1 flex-wrap leading-none mb-0.5">
               <span className="text-[9px] font-bold px-1 py-[2px] rounded" style={site === "itandi" ? { background: "#fff3e0", color: "#e65100" } : { background: "#e3f2fd", color: "#1565C0" }}>{siteLabel(site)}</span>
               <span className="text-[10px] text-[#8d6e63] font-bold">【{it.rank}】</span>
+              {/* 2026-09-27 竹内「ピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるようにする」 */}
+              <SearchModeChip mode={it.search_mode} />
               {isBest && (bestIsGlobal
                 ? <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#fff", background: "#f9a825" }}>👑 一番オススメ</span>
                 : <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#78909c", background: "#eceff1" }}>この回で一番</span>)}
@@ -1270,6 +1287,14 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
                     </div>
                   ))}
                 {verdictCounts(bb.batch.items) && <div className="text-[11px] font-bold mb-1.5" style={{ color: "#5d4037" }}>{verdictCounts(bb.batch.items)}</div>}
+                {/* 2026-09-27 竹内「検索結果はピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるようにする（ブレインモードの場合）」:
+                    回（まとめ）の検索の種類。両方ある時は件数を並べ、カードの印（🎯／🔎）で見分ける */}
+                {(() => {
+                  const m = roundSearchModeLine(bb.batch.items);
+                  if (!m) return null;
+                  return <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg leading-snug" style={m.mixed ? { background: "#fffde7", color: "#6d4c41" } : m.pinpoint ? { background: "#e8f5e9", color: "#1b5e20" } : { background: "#fff3e0", color: "#e65100" }}>
+                    {m.line}{m.mixed ? "（ピンポイントの物件は +10点・カードの印で見分けます）" : m.pinpoint ? "（条件ぴったりの検索・+10点）" : "（家賃・エリア・広さを少し広げた検索）"}</div>;
+                })()}
                 {/* 2026-09-27 竹内「案Aでおこなう」: メモの上書き（大正駅だけ・1LDK）で検索した回は、判定もその条件（登録の条件と違う点が付く理由） */}
                 {(() => {
                   const n = roundOverrideNote(bb.batch.items);
@@ -1595,6 +1620,14 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
             );
             return <div key={`r${i}`} className="contents">{divider}{row}</div>;
           })}
+          {/* 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: 自動で広げた（広げても足りなければ止めた）説明 */}
+          {(open.widen_chain ?? []).map((n) => (
+            <div key={`wc-${n.site}`} className="flex justify-center">
+              <div className="max-w-[92%] rounded-lg px-3 py-1.5 text-[11px] font-bold leading-snug break-words"
+                style={n.tone === "stop" ? { background: "#ffebee", color: "#b71c1c" } : n.tone === "warn" ? { background: "#fff8e1", color: "#8d6e00" } : { background: "#e3f2fd", color: "#0d47a1" }}>
+                {n.line}{n.at ? `（${hm(n.at)}）` : ""}</div>
+            </div>
+          ))}
           {bubbles.length === 0 && <div className="text-sm text-[#90a4ae] text-center py-10">まだ何もありません</div>}
           </div>
         </div>

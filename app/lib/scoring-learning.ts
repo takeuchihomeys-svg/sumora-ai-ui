@@ -126,6 +126,10 @@ export function isFrozenCode(code: string): boolean {
   // 2026-09-25 案B: 全部合う（FIT_*）は竹内さんが決めた上乗せ（「全部の条件当てはまっていたらさらに加点」）で、他の札の合い方から決まる札。
   //   学習で動かすと、元の条件の札（家賃・間取り…）の重みと二重に学ぶことになる → 学ばない（AD_UNDER_1M・AD_NONE は AD_ なので上で止まる）
   if (/^FIT_/.test(code)) return true;
+  // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」: SEARCH_PINPOINT（_HELD も）は物件の良さではなく
+  //   「どの検索で見つけたか」の札で、竹内さんが決めた上乗せ（値は例題で決めた）。過去の回には札が無く、ピンポイントの回と広げての回で
+  //   スタッフの選び方が違っても、それは検索の種類の差（広げての回は元から条件の外れた物件が多い）＝他の札（家賃・駅の幅）と二重に学ぶ → 学ばない
+  if (/^SEARCH_/.test(code)) return true;
   if (/_UNKNOWN$|_UNLISTED$|_ASK$|_OK_MAX$/.test(code)) return true;
   if (/^IMAGE_/.test(code)) return true;
   if (code === "EQUIP_MUST_NG_CAP" || code === "RENT_MAX_UNRELIABLE" || code === "COMMUTE_INFO" || code === "AD_UNKNOWN") return true;

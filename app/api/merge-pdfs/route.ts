@@ -242,6 +242,12 @@ export async function POST(req: NextRequest) {
        *   中身は受け取らず、サーバーが automation_commands から引き直して判定に使う（search-override-link.ts）
        */
       search_command_id?: string | null;
+      /**
+       * 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。検索結果はピンポイント検索で行ったか広げて検索を行ったかも
+       *   ちゃんと分かるようにする（ブレインモードの場合）」: この送信を見つけた検索の種類（拡張 v2.5.28〜・ブレインの時だけ）。
+       *   property_pickups.search_mode に残し、ピンポイントの物件に加点（SEARCH_PINPOINT）。無い・知らない値は「分からない」（加点しない）
+       */
+      search_mode?: string | null;
     };
 
     const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode, brain_mode } = body;
@@ -475,6 +481,7 @@ export async function POST(req: NextRequest) {
               customerName: customer_name ?? null, site: site ?? null,
               summaries: summariesForPickup, pdfUrls: pdfUrlsForPickup, pdfBase64List: base64ForPickup,
               searchOverride,
+              searchMode: body.search_mode === "pinpoint" || body.search_mode === "widen" ? body.search_mode : null,
             }))).catch((e) => console.warn("[merge-pdfs] property_pickups の記録に失敗:", e instanceof Error ? e.message : String(e)));
             try { waitUntil(job); } catch { /* Vercel 以外 */ }
           }
