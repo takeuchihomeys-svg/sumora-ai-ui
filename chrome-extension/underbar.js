@@ -515,6 +515,8 @@
         commandId:    msg.commandId || null,
         // 2026-09-27 AIXツールのメモの検索の指示（その回だけの一時調整・無ければ null）
         searchOverride: msg.searchOverride || null,
+        // 2026-09-27 自動便の指定（午後の便の更新日・更新順・ページ数。自動便でなければ null）
+        autoRun: msg.autoRun || null,
       }, "*");
       sendResponse({ ok: true });
     };

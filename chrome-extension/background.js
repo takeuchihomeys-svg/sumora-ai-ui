@@ -21,6 +21,8 @@ import "./search-override.js";
 import "./human-wait.js";
 // 2026-09-27 v2.5.32 竹内「重い順から治す」: 一括検索の前のタブの確かめ・地域が空なら検索しない・失敗の知らせ（self.AxlxBatchGuard・純関数）
 import "./batch-guard.js";
+// 2026-09-27 自動便（auto_schedule）の決まり: ITANDI も回す・タブが無ければ飛ばす・サイト／お客様の間・便の指定（self.AxlxAutoRun）
+import "./auto-run.js";
 
 // 待ち時間のばらつき（human-wait.js）。settle＝ページが落ち着くのを待つ固定の秒数（元より短くしない）／
 //   poll＝条件を見る間隔（平均は元と同じ・回数で打ち切る待ちの長さは変えない）。読めない時は元の値。
@@ -2845,6 +2847,8 @@ async function _pollAndRunBatch() {
       await _updateBatchCommand(cmd.id, { status: "error", error_message: String(e) });
     } finally {
       _searchOverrideLink = null; // 2026-09-27 上書きの回の印はこのコマンドの間だけ（止めた・失敗した時も消す）
+      // 2026-09-27 自動便の指定（午後の便の1ページ・更新順等）もこのコマンドの間だけ（後の手動の検索に残さない）
+      try { if (self.AxlxAutoRun) await chrome.storage.local.remove(self.AxlxAutoRun.STORAGE_KEY); } catch (_) {}
       await chrome.storage.local.set({ batchRunning: null, batchCommandId: null });
     }
   } catch (e) {
@@ -2938,8 +2942,14 @@ async function _runBatchSearch(command) {
   //   更新日・並び順・ページ数を payload の指定で上書きする。手動の一括検索は今までどおり。
   var autoSched = (command.payload && command.payload.source === "auto_schedule") ? command.payload : null;
   if (autoSched) {
-    console.log("[batch] 自動便 mode=" + autoSched.mode + " 更新日=" + autoSched.rp_update_days + " 並び=" + autoSched.sort + " ページ上限=" + autoSched.max_pages);
+    console.log("[batch] 自動便 mode=" + autoSched.mode + " 更新日=" + autoSched.rp_update_days + " 並び=" + autoSched.sort + " ページ上限=" + autoSched.max_pages + " サイト=" + sites.join(","));
   }
+  // 2026-09-27 竹内「ITANDI もおねがい」: 自動便の指定（popup・bulk-dl・itandi-bulk-dl へ storage で渡す）とサイトの飛ばし・間（auto-run.js）
+  var _AR = self.AxlxAutoRun || null;
+  var _autoOpts = (_AR && autoSched) ? _AR.optsFromPayload(autoSched) : null;
+  try { if (_AR) await chrome.storage.local.remove(_AR.STORAGE_KEY); } catch (_) {}
+  var _autoSkipped = []; // ITANDI のタブが無くて飛ばしたお客様
+  var _siteAttempts = 0; // 実際に回したお客様×サイトの数（全部失敗の判定に使う）
   // 2026-09-25 竹内「更新日も拡張ツールと連動」: payload の rp_update_days は出どころを問わず使う（_buildBatchConditions）。
   //   AIXツールの一括検索（web_brain）はサーバーが1人ごとに計算して積む（rp-update-days.ts）。並び順・ページ数は自動便だけ
   var cmdPayload = command.payload || null;
@@ -2978,14 +2988,37 @@ async function _runBatchSearch(command) {
       return;
     }
     var customer = searchOverride ? self.AxlxSearchOverride.applyToCustomer(targets[i], searchOverride) : targets[i];
-    for (var j = 0; j < sites.length; j++) {
+    // 長い一括（午後の便で何人も・リアプロ＋ITANDI）でロックの15分を超えて別のコマンドが並んで走らないよう、お客様ごとに印を新しくする
+    try { await chrome.storage.local.set({ batchRunning: { running: true, startedAt: Date.now() } }); } catch (_) {}
+    // 自動便: ITANDI のタブが開いていない PC は ITANDI を飛ばす（タブを新しく開かない・失敗と数えない）。お客様ごとに見直す（途中で閉じた・開いた）
+    var custSites = sites;
+    if (autoSched && _AR) {
+      var _sitePlan = _AR.planSites(sites, { isAuto: true, hasItandiTab: _AR.hasItandiTab(await chrome.tabs.query({})) });
+      custSites = _sitePlan.sites;
+      if (_sitePlan.skipped.length) {
+        _autoSkipped.push(String(customer.id));
+        console.log("[batch] 自動便: ITANDI のタブが開いていない → ITANDI を飛ばす customer=" + customer.id);
+      }
+    }
+    for (var j = 0; j < custSites.length; j++) {
       // Fix 4: サイト間でも同期フラグを確認し、ストップ要求があれば即中断する
       if (_batchShouldStop) {
         console.log("[batch] Fix4: _batchShouldStop 検知 (j=" + j + ") → バッチ中断");
         await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
         return;
       }
-      var batchSite = sites[j];
+      var batchSite = custSites[j];
+      // 2026-09-27 竹内「同じお客様のリアプロと ITANDI は続けて走る…間を人の動きのようにばらつかせる」（自動便だけ）
+      if (j > 0 && autoSched && _AR) {
+        var _siteGap = _AR.siteGapMs();
+        console.log("[batch] 自動便: 次のサイト（" + batchSite + "）まで " + _siteGap + "ms");
+        await new Promise(function(r) { setTimeout(r, _siteGap); });
+        if (_batchShouldStop) {
+          await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
+          return;
+        }
+      }
+      _siteAttempts++;
       // area_mode='both': 地域（ward）と駅（station）を別々に2回検索・送信
       var areaModePasses = (customer.area_mode === 'both') ? ['ward', 'station'] : [null];
       // B3修正: both顧客は各パスの0件通知を抑制し、ループ後に合計0件なら1回だけ通知する
@@ -3015,6 +3048,11 @@ async function _runBatchSearch(command) {
           // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
           // モーダル操作/ページロードで60秒を超えることがあるため リアプロ90秒・itandi245秒（FILL_DONE_TIMEOUT_MS）
           // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
+          // 自動便の指定をこのお客様×サイトに付けて置く（popup の経路でも bulk-dl・itandi-bulk-dl がページ数・並びを守る）
+          if (_AR && _autoOpts) {
+            var _arSet = {}; _arSet[_AR.STORAGE_KEY] = _AR.record(effectiveCustomer.id, batchSite, _autoOpts, Date.now());
+            try { await chrome.storage.local.set(_arSet); } catch (_) {}
+          }
           var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
             ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
             : null;
@@ -3110,14 +3148,15 @@ async function _runBatchSearch(command) {
     } catch (_ignore) {}
     // 次顧客がいる場合のみ: 人間らしい間隔（3〜8秒ランダム）を挿入
     if (i < targets.length - 1) {
-      var _interCustomerDelay = 3000 + Math.floor(Math.random() * 5000);
+      // 自動便（午後の便は1コマンドで何人も）は人が次のお客様に移る間（多くは15〜60秒・時々一息）。手動の一括は今までどおり
+      var _interCustomerDelay = (autoSched && _AR) ? _AR.customerGapMs() : 3000 + Math.floor(Math.random() * 5000);
       console.log("[batch] 次顧客まで待機 " + _interCustomerDelay + "ms");
       await new Promise(function(r) { setTimeout(r, _interCustomerDelay); });
     }
   }
 
   // 修正12: 全件失敗なら status:'error'、一部失敗でも error_message に記録して可視化
-  var totalAttempts = targets.length * sites.length;
+  var totalAttempts = _siteAttempts;
   if (batchErrors.length > 0 && batchErrors.length >= totalAttempts && totalAttempts > 0) {
     await _updateBatchCommand(command.id, {
       status: "error",
@@ -3133,6 +3172,9 @@ async function _runBatchSearch(command) {
   if (batchErrors.length > 0) {
     doneUpdates.error_message = "一部失敗: " + batchErrors.join(" | ").slice(0, 1800);
   }
+  // 自動便で ITANDI を飛ばした時は記録に残す（失敗ではない）
+  var _skipNote = _AR ? _AR.skippedNote(_autoSkipped) : null;
+  if (_skipNote) doneUpdates.error_message = (doneUpdates.error_message ? doneUpdates.error_message + " / " : "") + _skipNote;
   await _updateBatchCommand(command.id, doneUpdates);
 }
 
@@ -3192,6 +3234,8 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   var _searchOverride = (opts && opts.source === "web_brain" && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(opts.search_override) : null;
   // 検索の点検: page-script が fill-done に audit を載せて返す印（popup を通らない経路でも同じ run に届くように）
   if (auditRun) conds._audit_run_id = auditRun.runId;
+  // 2026-09-27 自動便の指定を popup にも渡す（旧は popup の経路に届かず、午後の便でも更新日＝人ごと・AD 順・3ページだった）
+  var _autoRunMsg = (self.AxlxAutoRun && opts) ? self.AxlxAutoRun.optsFromPayload(opts) : null;
 
   // ── itandi 専用: 路線名・エリア名を itandi-page-script.js が使うキー形式に変換 ──
   // itandi-page-script.js は cond.itandi_lines と cond.ward_names を参照する。
@@ -3259,6 +3303,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
           trigger:      auditRun ? auditRun.trigger : null,
           commandId:    auditRun ? auditRun.commandId : null,
           searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
+          autoRun:      _autoRunMsg,     // 2026-09-27 自動便の指定（午後の便の更新日・更新順・ページ数。自動便でなければ null）
         }, function(resp) {
           if (chrome.runtime.lastError) {
             console.warn("[batchAutofill] realnetpro axlx-switch-customer error:", chrome.runtime.lastError.message);
@@ -3346,6 +3391,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         trigger:       auditRun ? auditRun.trigger : null,
         commandId:     auditRun ? auditRun.commandId : null,
         searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
+        autoRun:       _autoRunMsg,     // 2026-09-27 自動便の指定（自動便でなければ null）
       }, function(resp) {
         if (chrome.runtime.lastError) {
           console.warn("[batchAutofill] itandi axlx-switch-customer error:", chrome.runtime.lastError.message);

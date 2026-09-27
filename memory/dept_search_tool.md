@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-09-27 v2.5.35 自動便（AIX モード）に ITANDI も・開始時刻を毎日ばらつかせる（**拡張の再読み込み必須**・vercel.json の cron も変わる）
+竹内「ITANDI もおねがい」「開始時間を 11:00 と 17:00 ではなく 10:15〜11:15・16:15〜17:15 の中でランダムに不規則性をもって毎日変える」
+- **サイト**: cron（app/api/cron/auto-property-search）の sites を `["realnetpro","itandi"]`（`AUTO_SEARCH_SITES`）。同じお客様はリアプロ → ITANDI と続けて走る（拡張の _runBatchSearch はお客様 → サイトの順）。サイトごとの claim は無い（コマンド単位で1台が拾う）＝拾った PC が両方回す。**ITANDI のタブが開いていない PC は ITANDI だけ飛ばす**（新しいタブを開かない・失敗と数えない・完了の error_message に「ITANDI のタブが開いていない PC のため ITANDI は飛ばした（N件）」）。お客様ごとに見直す。手動の一括は今までどおり（無ければ開く）
+- **ITANDI の並び順（コードで確認）**: itandi-page-script / itandi-bulk-dl に並び替えの操作は無い（リアプロの bulk-dl の `key=ad&odr=desc` に当たる物が無い）→ **近い形**: 午前＝既定の並びのまま3ページまで（AD 順にはできない）・午後＝更新日「1日以内」（v2.5.34 の欄に 1 を打つ・リアプロと同じ値。ITANDI には「0＝当日」もあるが、前日17時以降の分を落とさない広い側の 1 にした）＋1ページ。ITANDI の一覧に AD の高い順・更新順の並び替えがあるかは実物の画面で未確認
+- **旧の穴（見つけて直した）**: 自動便の指定（午後＝更新日1・更新順・1ページ）は popup を通らない直接入力の経路にしか届いていなかった。popup の経路（ほぼ毎回）では ①更新日＝人ごと ②bulk-dl がいつも AD 高い順へ並べ替え ③conditions が文字列で max_pages が読めず3ページ ＝**17時便もリアプロは AD 順・3ページだった**。直し: 新しい `chrome-extension/auto-run.js`（self.AxlxAutoRun・純関数）
+  - background: お客様×サイトごとに storage `axlx_auto_run`（{customerId, site, mode, rp_update_days, sort, max_pages, at}・20分で無効）を置き、コマンドの finally で消す。switch-customer に `autoRun` を付ける（リアプロ・ITANDI）→ underbar が転送
+  - popup: `_applyAutoRunToForm` で午後の便だけ更新日の欄を 1 に（値を入れるだけ＝DB に書かない）・並び／ページ数はボタンの dataset → onclick が await 前に読み conditions に sort_order・max_pages → 押した直後に `_restoreAutoRun` で欄を元に戻す。午前の便は更新日を上書きしない（popup が今までどおり 手で決めた値→前回出した日から＝サーバーと同じ線）
+  - bulk-dl（リアプロ）: 午後の便（sort=updated）は AD 高い順へ並べ替えない（点検の段 `sort_skip`）・ページ上限は conditions → 自動便の指定 → 3
+  - itandi-bulk-dl: 自動便の指定があればページ上限（午後1・午前3）で次へ（audit に page_limit）。手動・他の一括は今までどおり全ページ
+- **開始時刻**: vercel.json の cron を `0 1 * * *`（10:00 JST）・`0 7 * * *`（16:00 JST）＝**積むだけ**。payload に `not_before`（ISO）→ `/api/automation/pending` は `isClaimableNow`（automation-sources.ts）でそれより前を渡さない（古い順に100件見て最初の1件）。**拾い手を待つ3時間は not_before から**（`isPickerWaitExpired`・積んだ時刻が3時間より前の候補だけ取り JS で決める）。新しい列は無い（payload の中）
+  - 時刻の決め方（auto-search-schedule.ts `startOffsetSec`）: 窓（10:15〜11:15／16:15〜17:15）の中で、前の日の開始から 7〜53分の不規則な一歩を足して回す＝前の日といつも7分以上ずれる。一歩は「日付＋便」の種の乱数（同じ日に cron を再実行しても同じ時刻＝二重積みの防止と食い違わない）。2026-01-01 から1日ずつ足す
+  - 午前の便（1人1コマンド）は `notBeforeSchedule` で1人ずつ 40〜130秒（6回に1回 180〜360秒の一息）ずらす。⚠ 1人の検索（リアプロ＋ITANDI）は数分かかるので、実際の間はほぼ「前の人が終わった後の次のポーリング（30秒おき）」になる
+  - 拡張の間（自動便だけ）: 同じお客様のリアプロ → ITANDI は `siteGapMs` 8〜28秒（7回に1回 40〜95秒）・午後の便のお客様の間は `customerGapMs` 15〜60秒（6回に1回 90〜200秒・旧は 3〜8秒）
+  - 1週間の例（9/28〜10/4 の午前／午後）: 10:29:02／16:17:57・10:38:56／16:32:27・10:28:32／16:18:38・10:49:26／16:31:18・10:36:19／16:16:27・11:10:58／17:00:36・10:40:40／16:45:28
+- **ロック**: 長い一括（午後の便で何人も×2サイト）でロックの15分を超えて別のコマンドが並んで走らないよう、お客様ごとに batchRunning の startedAt を新しくする
+- 確かめ: dry_run（`/api/cron/auto-property-search?mode=am&dry_run=1`・手元で本番 DB を読むだけ）→ sites 2つ・start_at_jst が出る（今日は積み済みで queued 0）。実際の検索は積んでいない
+- テスト: `tests/chrome-extension/auto-run.test.js`（59）・`app/lib/__tests__/auto-search-schedule.test.ts`（80・120日×2便が窓の中・前の日と7分以上・not_before と期限・配線）・拡張の既存テスト全部 0 failed・tsc 0
+- **竹内さんに頼むこと**: 拡張を 2.5.35 に再読み込み → リアプロと ITANDI のタブを F5。ITANDI も回す PC は ITANDI の一覧のタブを開いてログインしておく。次の便の後に `scripts/search-audit-timeline.ts` で itandi の update_days の段（午後は 1）・ページ数 1・リアプロの sort_skip を確かめる
+- まだの事: ITANDI の並び替え（AD 順・更新順）の有無を実物の画面で確かめる／web_brain 等の popup の経路は今までどおり（自動便だけ直した）
+
 ## 2026-09-27 売上サポ: 画像の点を判定の点に合わせる・質の高い10件のボタン・AD 1ヶ月未満は保留・アズ・スタットは AD 200%（拡張は変えていない）
 竹内（e86ed5cc への答え）「ここは合わせる」「物件ピックアップの場合、質の高い10件のボタン、3件ではない10件で行う」「質の高い物件は NG 条件の物件が入ってたら10件にならなくても入れない」「AD 1ヶ月未満の物件は点数かなり落とす／アズ・スタットは AD 記載なくても基本的に 200% とみなす」
 - **合わせ方（pickup-image-bonus.ts・純関数）**: 合計＝判定の点＋画像の加点。加点は画像の希望（設備でまとめる）のうち、判定に同じ設備の ○× の札（EQUIP_*／IMAGE_*・PET_NG。_UNLISTED/_ASK は決まっていない扱い）が**無い物だけ**を、判定の設備の札と同じ物差しで: ○ 必須・NG +5／ふつう +3・× 必須・NG −10／ふつう −5・？0、合計 +15〜−20。分析待ち・要確認・希望の一覧の無い古い形は加点なし（判定の点のまま・画面に「判定の点だけで並べています」）。並び `compareOverall`: 合計 → 判定 → 判定の点 → 画像の点 → … → 🌟。版 `score+imagebonus@2026-09-27b`

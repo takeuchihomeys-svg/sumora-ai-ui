@@ -38,3 +38,32 @@ export function isReusableForManualTrigger(source: string | null | undefined): b
   if (!source) return true;
   return !(AIX_ONLY_SOURCES as readonly string[]).includes(source) && !(BRAIN_ONLY_SOURCES as readonly string[]).includes(source);
 }
+
+/**
+ * 2026-09-27 竹内「開始時間を 11:00 と 17:00 ではなく…ランダムに毎日変える」:
+ * payload.not_before（ISO）より前のコマンドは PC に渡さない。not_before が無い・読めない物は今までどおりすぐ渡す。
+ */
+export function notBeforeMs(payload: unknown): number | null {
+  const v = payload && typeof payload === "object" ? (payload as Record<string, unknown>).not_before : null;
+  if (typeof v !== "string" || !v) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+export function isClaimableNow(payload: unknown, nowMs: number): boolean {
+  const nb = notBeforeMs(payload);
+  return nb === null || nb <= nowMs;
+}
+/**
+ * 拾い手を待つ3時間の数え始め＝not_before（あれば）・無ければ積んだ時刻。
+ * 例: 10:00 に積んで not_before 11:02 の自動便は 14:02 まで待つ（積んだ時刻から数えると窓の遅い側の分だけ短くなる）
+ */
+export function waitStartMs(row: { created_at?: string | null; payload?: unknown }): number | null {
+  const nb = notBeforeMs(row.payload);
+  if (nb !== null) return nb;
+  const c = row.created_at ? Date.parse(row.created_at) : NaN;
+  return Number.isFinite(c) ? c : null;
+}
+export function isPickerWaitExpired(row: { created_at?: string | null; payload?: unknown }, nowMs: number): boolean {
+  const s = waitStartMs(row);
+  return s !== null && nowMs - s > WAIT_FOR_PICKER_MS;
+}

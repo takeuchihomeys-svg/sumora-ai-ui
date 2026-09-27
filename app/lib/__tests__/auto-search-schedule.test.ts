@@ -5,7 +5,11 @@
 import {
   rpUpdateDaysFor, selectAutoSearchTargets, buildAutoSearchPayload, lastPropertyTouchAt, isBatchedRun,
   RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS, MAX_TARGETS_PER_RUN, PM_LATEST,
+  AUTO_SEARCH_SITES, START_WINDOWS, MIN_DAY_TO_DAY_DIFF_SEC, seededRandom, startOffsetSec, autoStartAtMs, customerGapSec, notBeforeSchedule,
 } from "../auto-search-schedule";
+import { isClaimableNow, isPickerWaitExpired, waitStartMs, WAIT_FOR_PICKER_MS } from "../automation-sources";
+import * as fs from "fs";
+import * as path from "path";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -127,6 +131,92 @@ console.log("── 17時の便（本日の更新日付・更新順・1ページ
   t("★ 17時はピンポイント検索（広げない）", p.is_wide === false);
   t("★ 17時は1コマンドにまとめる／11時は1人1コマンド", isBatchedRun("pm") === true && isBatchedRun("am") === false);
   t("17時は target が無くても作れる（全員同じ条件だから）", buildAutoSearchPayload("pm", null, NOW).rp_update_days === 1);
+}
+
+console.log("── ★ 2026-09-27 ITANDI も積む・開始は窓の中で毎日ばらつく（10:15〜11:15・16:15〜17:15 JST）");
+{
+  t("★ 自動便はリアプロ → ITANDI の順", eq([...AUTO_SEARCH_SITES], ["realnetpro", "itandi"]));
+  const jst = (ms: number) => new Date(ms + 9 * 3600 * 1000).toISOString().slice(11, 19);
+  const days: string[] = [];
+  for (let d = 0; d < 120; d++) days.push(new Date(Date.parse("2026-09-01T12:00:00+09:00") + d * 86_400_000 + 9 * 3600 * 1000).toISOString().slice(0, 10));
+  let inWin = true, sameMinute = 0;
+  const ams = new Set<string>();
+  for (const mode of ["am", "pm"] as const) {
+    const w = START_WINDOWS[mode];
+    let prevOff: number | null = null;
+    for (const d of days) {
+      const ms = autoStartAtMs(mode, d);
+      const lo = Date.parse(`${d}T00:00:00+09:00`) + w.fromMin * 60_000;
+      if (ms < lo || ms >= lo + (w.toMin - w.fromMin) * 60_000) inWin = false;
+      const off = startOffsetSec(mode, d);
+      if (prevOff !== null && Math.abs(off - prevOff) < MIN_DAY_TO_DAY_DIFF_SEC) sameMinute++;
+      prevOff = off;
+      if (mode === "am") ams.add(jst(ms).slice(0, 5));
+    }
+  }
+  t("★ 120日×2便すべて窓の中（午前 10:15〜11:15・午後 16:15〜17:15）", inWin);
+  t("★ 前の日といつも7分以上ずれる", sameMinute === 0, String(sameMinute));
+  t("★ 毎日違う時刻（120日で窓の60分のうち45通り以上の分に散る）", ams.size >= 45, String(ams.size));
+  t("同じ日・同じ便は何度計算しても同じ（cron の再実行と二重積みの防止が食い違わない）", autoStartAtMs("am", "2026-09-28") === autoStartAtMs("am", "2026-09-28"));
+  t("午前と午後は窓の中の位置が別", startOffsetSec("am", "2026-09-28") !== startOffsetSec("pm", "2026-09-28"));
+  t("前の日との差の下限は7分", MIN_DAY_TO_DAY_DIFF_SEC === 420);
+  t("数え始めより前の日も窓の中", startOffsetSec("am", "2025-06-01") >= 0 && startOffsetSec("am", "2025-06-01") < 3600);
+  const r1 = seededRandom("x"), r2 = seededRandom("x");
+  t("種が同じなら乱数も同じ", r1() === r2() && r1() === r2());
+  t("種が違えば違う", seededRandom("a")() !== seededRandom("b")());
+  let roundish = 0;
+  for (const d of days) { if (startOffsetSec("am", d) % 300 === 0) roundish++; }
+  t("5分刻みちょうどに揃わない（秒まで散る）", roundish <= 3, String(roundish));
+}
+
+console.log("── ★ 午前の便は1人ずつ不規則な間でずらす（notBeforeSchedule）");
+{
+  const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  const sch = notBeforeSchedule("am", "2026-09-28", ids);
+  t("1人目は開始時刻", sch[0].notBeforeMs === autoStartAtMs("am", "2026-09-28"));
+  const gaps = sch.slice(1).map((x, i) => (x.notBeforeMs - sch[i].notBeforeMs) / 1000);
+  t("★ 間は 40〜360秒", gaps.every((g) => g >= 40 && g <= 360), JSON.stringify(gaps));
+  t("★ 間は毎回違う", new Set(gaps).size === gaps.length, JSON.stringify(gaps));
+  t("順番は積む順のまま（時刻が増えていく）", sch.every((x, i) => i === 0 || x.notBeforeMs > sch[i - 1].notBeforeMs));
+  t("同じ人でも日が変われば間が変わる", customerGapSec("am", "2026-09-28", "b") !== customerGapSec("am", "2026-09-29", "b"));
+  let breath = 0;
+  const N = 300;
+  for (let k = 0; k < N; k++) { if (customerGapSec("am", "2026-09-28", "id" + k) >= 180) breath++; }
+  t("時々一息（180秒以上）が入る（1〜3割）", breath / N > 0.08 && breath / N < 0.3, `${breath}/${N}`);
+  t("空なら空", eq(notBeforeSchedule("am", "2026-09-28", []), []));
+}
+
+console.log("── ★ /api/automation/pending は not_before より前を渡さない・3時間は not_before から数える");
+{
+  const now = Date.parse("2026-09-28T10:30:00+09:00");
+  const iso = (j: string) => new Date(`${j}+09:00`).toISOString();
+  t("★ not_before 前は渡さない", !isClaimableNow({ source: "auto_schedule", not_before: iso("2026-09-28T10:41:07") }, now));
+  t("★ not_before を過ぎたら渡す", isClaimableNow({ source: "auto_schedule", not_before: iso("2026-09-28T10:29:59") }, now));
+  t("not_before の無い物（手動・web_brain・古い自動便）は今までどおりすぐ渡す", isClaimableNow({ source: "web_brain" }, now) && isClaimableNow(null, now));
+  t("読めない not_before は渡す（止めない）", isClaimableNow({ not_before: "??" }, now));
+  const row = { created_at: iso("2026-09-28T10:00:00"), payload: { source: "auto_schedule", not_before: iso("2026-09-28T11:10:00") } };
+  t("★ 3時間は not_before から（10:00 に積んで 11:10 開始 → 14:10 まで待つ）", waitStartMs(row) === Date.parse(iso("2026-09-28T11:10:00")));
+  t("14:05 はまだ閉じない", !isPickerWaitExpired(row, Date.parse(iso("2026-09-28T14:05:00"))));
+  t("14:11 に閉じる", isPickerWaitExpired(row, Date.parse(iso("2026-09-28T14:11:00"))));
+  t("not_before の無い物は積んだ時刻から（今までどおり）", isPickerWaitExpired({ created_at: iso("2026-09-28T07:00:00"), payload: {} }, now) && WAIT_FOR_PICKER_MS === 3 * 3600 * 1000);
+}
+
+console.log("── 配線（cron・pending・vercel.json）");
+{
+  const root = path.join(__dirname, "../../..");
+  const cron = fs.readFileSync(path.join(root, "app/api/cron/auto-property-search/route.ts"), "utf8");
+  t("★ cron の sites はリアプロと ITANDI（積む2か所・まとめの1か所）", (cron.match(/sites: \[\.\.\.AUTO_SEARCH_SITES\]/g) || []).length === 3 && !/sites: \["realnetpro"\]/.test(cron));
+  t("★ 午後の便は not_before＝その日の開始時刻", /not_before: new Date\(autoStartAtMs\(mode, jstDate\)\)\.toISOString\(\)/.test(cron));
+  t("★ 午前の便は1人ずつ notBeforeSchedule", /notBeforeSchedule\(mode, jstDate, toQueue\.map/.test(cron));
+  t("同じ日・同じ便の二重積みの防止は今までどおり", /\.eq\("payload->>jst_date", jstDate\)/.test(cron));
+  const pend = fs.readFileSync(path.join(root, "app/api/automation/pending/route.ts"), "utf8");
+  t("★ pending は isClaimableNow で選ぶ", /\.find\(\(c\) => isClaimableNow\(c\.payload, nowMs\)\)/.test(pend));
+  t("★ 期限は isPickerWaitExpired（not_before から）", /isPickerWaitExpired\(r, nowMs\)/.test(pend));
+  const vj = JSON.parse(fs.readFileSync(path.join(root, "vercel.json"), "utf8"));
+  const am = vj.crons.find((c: { path: string }) => c.path === "/api/cron/auto-property-search?mode=am");
+  const pm = vj.crons.find((c: { path: string }) => c.path === "/api/cron/auto-property-search?mode=pm");
+  t("★ cron は窓より前に積むだけ（10:00 JST＝01:00 UTC）", am?.schedule === "0 1 * * *", am?.schedule);
+  t("★ cron は窓より前に積むだけ（16:00 JST＝07:00 UTC）", pm?.schedule === "0 7 * * *", pm?.schedule);
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);

@@ -28,6 +28,23 @@
     if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
   });
 
+
+  // ── 2026-09-27 自動便（auto_schedule）の指定（background が storage に置く・chrome-extension/auto-run.js）──
+  // 竹内「ITANDI もおねがい」: 午後の便＝1ページ・更新順／午前の便＝3ページ。お客様（とサイト）が合う時だけ使う（手動の検索は今までどおり）
+  var _autoRunStored = null;
+  function _AR() { return (typeof self !== "undefined" ? self : window).AxlxAutoRun || null; }
+  try {
+    var _arKey = _AR() ? _AR().STORAGE_KEY : "axlx_auto_run";
+    chrome.storage.local.get([_arKey], function (r) { _autoRunStored = (r && r[_arKey]) || null; });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area === "local" && ch[_arKey]) _autoRunStored = ch[_arKey].newValue || null;
+    });
+  } catch (_) {}
+  function _autoRunFor(customerId) {
+    var A = _AR();
+    return A ? A.forCustomer(_autoRunStored, customerId, "realnetpro", Date.now()) : null;
+  }
+
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
 
@@ -1398,7 +1415,9 @@
     // ヒット多すぎ上限: 既定3ページまで送ったら4ページ目には進まず完了扱い（一括検索では次顧客へ）
     // 2026-09-19 竹内「17:00の便は項目は１ページだけで本来のように３ページ迄いかなくて大丈夫」:
     //   自動便は conditions.max_pages（サーバーの payload → background → conditions）で上限を変える
-    var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages)) || 3;
+    //   2026-09-27: conditions は popup の経路では文字列（max_pages が読めない）→ background が置いた自動便の指定からも読む（auto-run.js）
+    var _arOpts = _autoRunFor(state.customerId);
+    var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages)) || (_AR() ? _AR().pageLimit(_arOpts, null) : null) || 3;
     if (state.currentPage >= _maxPages && hasNextPageBtn()) {
       clearAutoSendState();
       var countElLimit = document.getElementById("axlx-count");
@@ -1581,7 +1600,11 @@
       var params = new URLSearchParams(location.search);
       var isAdDesc = params.get("key") === "ad" && params.get("odr") === "desc";
       _tmark("start", isAdDesc ? "sorted" : "unsorted", customerId);
-      if (!isAdDesc) {
+      // 2026-09-27 午後の便（更新順）は AD 高い順へ並べ替えない（旧はいつも並べ替え＝17時便も AD 順だった）
+      var _arStart = _autoRunFor(customerId);
+      var _adSortOk = _AR() ? _AR().allowAdSort(_arStart) : true;
+      if (!_adSortOk) _tmark("sort_skip", "updated");
+      if (!isAdDesc && _adSortOk) {
         var adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
         if (adLink && adLink.href) {
           console.log("[AXLX bulk-dl] AD高→低ソート適用 → リロード後Case Bで再開");

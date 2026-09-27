@@ -805,6 +805,22 @@
     return Object.assign(r, extra || {});
   }
 
+  // ── 2026-09-27 自動便（auto_schedule）の指定（background が storage に置く・chrome-extension/auto-run.js）──
+  // 竹内「ITANDI もおねがい」: 午後の便＝1ページ・更新順／午前の便＝3ページ。お客様（とサイト）が合う時だけ使う（手動の検索は今までどおり）
+  var _autoRunStored = null;
+  function _AR() { return (typeof self !== "undefined" ? self : window).AxlxAutoRun || null; }
+  try {
+    var _arKey = _AR() ? _AR().STORAGE_KEY : "axlx_auto_run";
+    chrome.storage.local.get([_arKey], function (r) { _autoRunStored = (r && r[_arKey]) || null; });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area === "local" && ch[_arKey]) _autoRunStored = ch[_arKey].newValue || null;
+    });
+  } catch (_) {}
+  function _autoRunFor(customerId) {
+    var A = _AR();
+    return A ? A.forCustomer(_autoRunStored, customerId, "itandi", Date.now()) : null;
+  }
+
   // ── 全ページ自動送信 ─────────────────────────────────────────────────────
   // _manual=true で呼ぶとスタッフモードチェックをスキップ（手動ボタン押下用）
   function autoSendAllPages(_manual) {
@@ -820,6 +836,20 @@
       _autoSendOnePage(customerName, customerId, customerConditions, function done(ok, count) {
         if (ok && count) _totalSentCount += count;
         if (_itAuditRes) _itAuditRes.sent_count = _totalSentCount;
+        // 2026-09-27 竹内「ITANDI もおねがい」: 自動便はページ数に上限（午後の便 1・午前の便 3＝リアプロと同じ）。手動・他の一括は今までどおり全ページ
+        var _itLimit = _AR() ? _AR().pageLimit(_autoRunFor(customerId), null) : null;
+        if (_itLimit && _itAuditRes && _itAuditRes.pages >= _itLimit && !_manual) {
+          _autoSendInProgress = false;
+          _pendingAutoSendDispatched = false;
+          console.log("[AXLX itandi] 自動便の " + _itLimit + "ページ上限 → 次へ totalSent=" + _totalSentCount);
+          try {
+            chrome.runtime.sendMessage(
+              { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult({ page_limit: _itLimit }) },
+              function () { void chrome.runtime.lastError; }
+            );
+          } catch (_) {}
+          return;
+        }
         var clicked = clickNextPage();
         if (!clicked) {
           _autoSendInProgress = false;

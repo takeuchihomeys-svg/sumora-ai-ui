@@ -195,6 +195,11 @@ export type AutoSearchPayload = {
   max_pages: number;
   /** 何時の便か（JST・ログと重複防止のキー） */
   jst_date: string;
+  /**
+   * この時刻（ISO・UTC）より前は PC に渡さない（2026-09-27 竹内「開始時間を毎日ランダムに」）。
+   * 拾い手を待つ3時間もここから数える（automation-sources.ts）。payload の中なので新しい列は無い
+   */
+  not_before?: string;
 };
 
 /**
@@ -225,4 +230,110 @@ export function buildAutoSearchPayload(
 /** 17時は1コマンドにまとめる（全員同じ条件）／11時は1人1コマンド（更新日が人ごとに違う） */
 export function isBatchedRun(mode: AutoSearchMode): boolean {
   return mode === "pm";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-09-27 竹内「ITANDI もおねがい」「開始時間を 11:00 と 17:00 ではなく 10:15〜11:15・16:15〜17:15 の中で
+//   ランダムに不規則性をもって毎日変える」
+//
+// 【サイト】自動便はリアプロと ITANDI の両方を積む（1つのコマンドの sites）。同じお客様はリアプロ → ITANDI の順に続けて走る。
+//   ITANDI のタブが開いていない PC では拡張が ITANDI の分だけ飛ばす（chrome-extension/auto-run.js planSites）。
+//   サイトごとの claim は無い（コマンド単位で1台が拾う）＝拾った PC が両方を回す。
+// 【開始時刻】cron は窓より前（10:00・16:00 JST）に「積むだけ」。積む命令の payload.not_before に、窓の中で日ごとにばらつく時刻を付け、
+//   /api/automation/pending はその時刻より前は渡さない（automation-sources.ts isClaimableNow）。拾い手を待つ3時間も not_before から数える。
+//   乱数の元は「日付＋便（＋お客様）」＝同じ日に cron を再実行しても同じ時刻（二重に積まない仕組みと食い違わない）・日が変われば変わる。
+//   前の日の開始から 7〜53分の不規則な一歩を足して窓の中で回す＝前の日といつも7分以上ずれる（毎日「だいたい同じ時刻」にならない）。
+// 【お客様ごとの間】11時の便（1人1コマンド）は not_before を1人ずつ不規則な間（多くは 40〜130秒・時々 3〜6分の一息）でずらす。
+//   17時の便（1コマンドで一括）は拡張の中でお客様の間を不規則にする（auto-run.js customerGapMs）。
+
+/** 自動便で検索するサイト（コマンドの sites の順＝同じお客様はこの順に続けて走る） */
+export const AUTO_SEARCH_SITES = ["realnetpro", "itandi"] as const;
+
+/** 開始の窓（JST の 0時からの分）。am=10:15〜11:15・pm=16:15〜17:15 */
+export const START_WINDOWS: Record<AutoSearchMode, { fromMin: number; toMin: number }> = {
+  am: { fromMin: 10 * 60 + 15, toMin: 11 * 60 + 15 },
+  pm: { fromMin: 16 * 60 + 15, toMin: 17 * 60 + 15 },
+};
+/** 前の日の開始とこれより近ければ引き直す（秒） */
+export const MIN_DAY_TO_DAY_DIFF_SEC = 7 * 60;
+
+/** 文字列 → 32bit の数（FNV-1a） */
+function hash32(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** 種から決まる 0〜1 の乱数列（mulberry32）。同じ種なら同じ列 */
+export function seededRandom(seed: string): () => number {
+  let a = hash32(seed) || 0x9e3779b9;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 開始の数え始めの日（この日からの日数で1日ずつ進める）。これより前の日は素の乱数だけ */
+const START_EPOCH_JST = "2026-01-01";
+
+function jstDayIndex(jstDate: string): number {
+  return Math.round((Date.parse(`${jstDate}T00:00:00+09:00`) - Date.parse(`${START_EPOCH_JST}T00:00:00+09:00`)) / DAY_MS);
+}
+
+/**
+ * その日・その便の開始の秒（窓の始まりから・0〜3599）。
+ * 前の日の開始から「7分〜53分」の不規則な一歩を足して窓の中で回す（足しすぎた分は窓の頭へ戻る）:
+ *   前の日との差は一歩か（窓の長さ−一歩）のどちらか＝いつも7分以上ずれる（毎日「だいたい同じ時刻」にならない）。
+ *   一歩は日付と便で決まる乱数（同じ日に cron を再実行しても同じ時刻）。数え始め（2026-01-01）から1日ずつ足していく。
+ */
+export function startOffsetSec(mode: AutoSearchMode, jstDate: string): number {
+  const w = START_WINDOWS[mode];
+  const span = (w.toMin - w.fromMin) * 60; // 3600秒
+  const n = jstDayIndex(jstDate);
+  let off = Math.floor(seededRandom(`auto-search|${mode}|start`)() * span);
+  if (!Number.isFinite(n) || n <= 0) {
+    return n === 0 ? off : Math.floor(seededRandom(`auto-search|${mode}|${jstDate}`)() * span);
+  }
+  // 数え始めから1日ずつ（10年で3,650回の軽い計算）
+  for (let k = 1; k <= n; k++) {
+    const step = MIN_DAY_TO_DAY_DIFF_SEC + Math.floor(seededRandom(`auto-search|${mode}|step|${k}`)() * (span - 2 * MIN_DAY_TO_DAY_DIFF_SEC + 1));
+    off = (off + step) % span;
+  }
+  return off;
+}
+
+/** その日・その便の開始時刻（UTC ミリ秒）。JST の窓の中 */
+export function autoStartAtMs(mode: AutoSearchMode, jstDate: string): number {
+  const w = START_WINDOWS[mode];
+  const windowStart = Date.parse(`${jstDate}T00:00:00+09:00`) + w.fromMin * 60_000;
+  return windowStart + startOffsetSec(mode, jstDate) * 1000;
+}
+
+/**
+ * お客様の間（秒・11時の便の not_before のずらし）。人が次のお客様に移る間のように:
+ *   多くは 40〜130秒、6回に1回くらい 180〜360秒の一息。種は日付＋便＋お客様（毎日・人ごとに違う）
+ */
+export function customerGapSec(mode: AutoSearchMode, jstDate: string, customerId: string): number {
+  const rnd = seededRandom(`auto-gap|${mode}|${jstDate}|${customerId}`);
+  const breath = rnd() < 0.16;
+  const r = rnd();
+  return breath ? Math.round(180 + r * 180) : Math.round(40 + r * 90);
+}
+
+/**
+ * 積む順（ids の順）に「この時刻より前は拾わない」を付ける。1人目は開始時刻・2人目からは不規則な間を足していく。
+ * 17時の便（1コマンド）は ids を渡さずに autoStartAtMs だけ使う。
+ */
+export function notBeforeSchedule(mode: AutoSearchMode, jstDate: string, ids: readonly string[]): Array<{ id: string; notBeforeMs: number }> {
+  let t = autoStartAtMs(mode, jstDate);
+  return ids.map((id, i) => {
+    if (i > 0) t += customerGapSec(mode, jstDate, id) * 1000;
+    return { id, notBeforeMs: t };
+  });
 }

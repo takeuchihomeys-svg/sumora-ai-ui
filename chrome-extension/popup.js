@@ -3696,6 +3696,30 @@ initTempAdjHandlers();
 //   ・欄の値は自動入力のボタンを押した瞬間（onclick の同期の所）に読まれる → 押した後、2分で登録の条件へ戻す（同じお客様を開いている時だけ）。
 //     戻すまでの間は fetchFreshCustomer の読み直しで欄と軸を戻さない（検索の途中で軸が変わらないように）
 let _searchOverrideHold = null; // { cid, until, timer }
+
+// ── 2026-09-27 自動便（auto_schedule）の指定をこの回だけ欄とボタンに載せる（chrome-extension/auto-run.js optsFromPayload）──
+// 竹内「ITANDI もおねがい」（午後の便＝本日の更新日付・更新順・1ページ を ITANDI にも）。
+//   ・更新日は午後の便だけ上書き（rp_update_days）。欄に値を入れるだけ（change を出さない＝お客様の rp_update_days に書かない）。
+//     押した瞬間（onclick の同期の所）に読まれるので、押した直後に元の値へ戻す（_restoreAutoRun）
+//   ・並び・ページ数はボタンの dataset で onclick に渡す（押した直後に消す）
+function _applyAutoRunToForm(btn, ar) {
+  if (!btn || !ar || typeof ar !== "object") return null;
+  const undo = { btn, prevDays: null, daysEl: null };
+  if (ar.rp_update_days) {
+    const el = document.getElementById("adj-update-days");
+    if (el) { undo.daysEl = el; undo.prevDays = el.value; el.value = String(ar.rp_update_days); }
+  }
+  if (ar.sort) btn.dataset.auto_sort = String(ar.sort);
+  if (ar.max_pages) btn.dataset.auto_max_pages = String(ar.max_pages);
+  console.log("[AX] 自動便の指定（この回だけ）: 更新日=" + (ar.rp_update_days || "お客様の値") + " 並び=" + (ar.sort || "-") + " ページ=" + (ar.max_pages || "-"));
+  return undo;
+}
+function _restoreAutoRun(undo) {
+  if (!undo) return;
+  delete undo.btn.dataset.auto_sort;
+  delete undo.btn.dataset.auto_max_pages;
+  if (undo.daysEl) undo.daysEl.value = undo.prevDays;
+}
 function _searchOverrideHeld(cid) {
   return !!(_searchOverrideHold && cid != null && String(_searchOverrideHold.cid) === String(cid) && Date.now() < _searchOverrideHold.until);
 }
@@ -3909,6 +3933,9 @@ function openInstructions(siteKey) {
       const isAutomated_itandi = !!autofillBtn.dataset.automated;
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
+      // 2026-09-27 自動便の指定（background → switch-customer の autoRun → _applyAutoRunToForm）。await 前に取得
+      const _autoSort_it = autofillBtn.dataset.auto_sort || null;
+      const _autoMaxPages_it = Number(autofillBtn.dataset.auto_max_pages) || null;
       let c = selectedCustomer;
       const _adjWard_it    = document.getElementById("adj-area-ward")?.value.trim()    || "";
       const _adjStation_it = document.getElementById("adj-area-station")?.value.trim() || "";
@@ -4239,6 +4266,9 @@ function openInstructions(siteKey) {
         station_names: stationNames,
         select_all_line_stations: _selectAllLineStations_it,
         rp_update_days: adjUpdateDaysIt ? Number(adjUpdateDaysIt) : null, // 募集条件更新 N日以内（v2.5.34）
+        // 2026-09-27 自動便だけ（手動は null）。ITANDI は並び替えを持たない（itandi-page-script は見ない・点検に残す）・ページ数は itandi-bulk-dl が storage で守る
+        sort_order: _autoSort_it,
+        max_pages: _autoMaxPages_it,
         unknown_tokens: unknownTokens.length > 0 ? unknownTokens : null,
       };
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
@@ -4367,6 +4397,9 @@ function openInstructions(siteKey) {
       const isAutomated = !!autofillBtn.dataset.automated;
       const isAutoSendAll = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode = autofillBtn.dataset.area_mode_locked || null; // await前に取得（非同期後は dataset が削除済み）
+      // 2026-09-27 自動便の指定（午後の便＝更新順・1ページ）。await 前に取得（旧は popup の経路で page-script に届かなかった）
+      const _autoSort = autofillBtn.dataset.auto_sort || null;
+      const _autoMaxPages = Number(autofillBtn.dataset.auto_max_pages) || null;
       const c = c0;
       // 調整フォームの値を優先して使う
       const _adjWard_rp    = document.getElementById("adj-area-ward")?.value.trim()    || "";
@@ -4776,6 +4809,9 @@ function openInstructions(siteKey) {
           pet_ok: adjPet,
           shikirei_free: !!(document.getElementById("adj-shikirei-free")?.checked),
           rp_update_days: adjUpdateDays ? Number(adjUpdateDays) : null,
+          // 2026-09-27 自動便だけ（手動は null＝今までどおり）: sort_order="updated" で page-script が並び替えを既定（更新順）へ戻す
+          sort_order: _autoSort,
+          max_pages: _autoMaxPages,
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         }),
       }, "*");
@@ -5430,11 +5466,13 @@ document.addEventListener("DOMContentLoaded", () => {
             if (aBtn) {
               _setPendingAuditCtx(e.data); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
               var _ovAppliedP = _ovP ? _applySearchOverrideToForm(_ovP, e.data.areaMode, c) : false;
+              var _arUndoP = _applyAutoRunToForm(aBtn, e.data.autoRun);
               aBtn.dataset.automated = "1";
               aBtn.dataset.auto_send_all = e.data.auto_send_all ? "1" : "";
               aBtn.click();
               delete aBtn.dataset.automated;
               delete aBtn.dataset.auto_send_all;
+              _restoreAutoRun(_arUndoP);
               if (_ovAppliedP) _afterSearchOverrideClick(_ovP);
             }
           }
@@ -5748,9 +5786,11 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           if (aBtn) {
             _setPendingAuditCtx(msg); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
             var _ovAppliedR = _ovR ? _applySearchOverrideToForm(_ovR, msg.areaMode, c) : false;
+            var _arUndoR = _applyAutoRunToForm(aBtn, msg.autoRun);
             aBtn.dataset.auto_send_all = msg.auto_send_all ? "1" : "";
             aBtn.click(); // display:noneでもonclickは発火する
             delete aBtn.dataset.auto_send_all;
+            _restoreAutoRun(_arUndoR);
             if (_ovAppliedR) _afterSearchOverrideClick(_ovR);
             sendResponse({ ok: true });
           } else {

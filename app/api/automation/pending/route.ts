@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import {
   AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, pendingSourceOrFilter,
+  isClaimableNow, isPickerWaitExpired,
 } from "@/app/lib/automation-sources";
 
 export async function GET(req: NextRequest) {
@@ -47,22 +48,31 @@ export async function GET(req: NextRequest) {
   //   どの PC もブレインでないまま 3時間経ったものは error で閉じる。拾い手の決まりは app/lib/automation-sources.ts の1か所
   const aixMode = req.nextUrl.searchParams.get("aix") === "1";
   const brainMode = req.nextUrl.searchParams.get("brain") === "1";
-  const expireBefore = new Date(Date.now() - WAIT_FOR_PICKER_MS).toISOString();
-  const nowIso = new Date().toISOString();
-  const { error: aixExpErr } = await supabase
-    .from("automation_commands")
-    .update({ status: "error", error_message: AIX_EXPIRE_MESSAGE, completed_at: nowIso })
-    .eq("status", "pending")
-    .in("payload->>source", [...AIX_ONLY_SOURCES])
-    .lt("created_at", expireBefore);
-  if (aixExpErr) console.warn("[automation/pending] aix expire error:", aixExpErr.message);
-  const { error: brainExpErr } = await supabase
-    .from("automation_commands")
-    .update({ status: "error", error_message: BRAIN_EXPIRE_MESSAGE, completed_at: nowIso })
-    .eq("status", "pending")
-    .in("payload->>source", [...BRAIN_ONLY_SOURCES])
-    .lt("created_at", expireBefore);
-  if (brainExpErr) console.warn("[automation/pending] brain expire error:", brainExpErr.message);
+  const nowMs = Date.now();
+  const expireBefore = new Date(nowMs - WAIT_FOR_PICKER_MS).toISOString();
+  const nowIso = new Date(nowMs).toISOString();
+  // 2026-09-27 竹内「開始時間を毎日ランダムに」: 3時間は payload.not_before（あれば）から数える（isPickerWaitExpired）。
+  //   not_before は積んだ時刻より後なので、積んだ時刻が3時間より前の物だけを候補に取り、JS で決める
+  const closeExpired = async (sources: readonly string[], message: string) => {
+    const { data: cand, error: candErr } = await supabase
+      .from("automation_commands")
+      .select("id, created_at, payload")
+      .eq("status", "pending")
+      .in("payload->>source", [...sources])
+      .lt("created_at", expireBefore)
+      .limit(200);
+    if (candErr) { console.warn("[automation/pending] expire select error:", candErr.message); return; }
+    const ids = (cand ?? []).filter((r) => isPickerWaitExpired(r, nowMs)).map((r) => r.id);
+    if (ids.length === 0) return;
+    const { error: expErr } = await supabase
+      .from("automation_commands")
+      .update({ status: "error", error_message: message, completed_at: nowIso })
+      .eq("status", "pending")
+      .in("id", ids);
+    if (expErr) console.warn("[automation/pending] expire error:", expErr.message);
+  };
+  await closeExpired(AIX_ONLY_SOURCES, AIX_EXPIRE_MESSAGE);
+  await closeExpired(BRAIN_ONLY_SOURCES, BRAIN_EXPIRE_MESSAGE);
 
   let pendingQuery = supabase
     .from("automation_commands")
@@ -70,18 +80,19 @@ export async function GET(req: NextRequest) {
     .eq("status", "pending");
   const sourceFilter = pendingSourceOrFilter({ aix: aixMode, brain: brainMode });
   if (sourceFilter) pendingQuery = pendingQuery.or(sourceFilter);
+  // 2026-09-27: not_before（自動便の開始時刻）より前の物は渡さない。古い順に見て、今渡してよい最初の1件
+  //   （自動便は1回に最大40件・時刻待ちの物の後ろに積まれた手動の検索が埋もれないよう多めに取る）
   const { data: commands, error: selErr } = await pendingQuery
     .order("created_at", { ascending: true })
-    .limit(1);
+    .limit(100);
 
   if (selErr) {
     return NextResponse.json({ error: selErr.message }, { status: 500 });
   }
-  if (!commands || commands.length === 0) {
+  const cmd = (commands ?? []).find((c) => isClaimableNow(c.payload, nowMs));
+  if (!cmd) {
     return NextResponse.json({ command: null });
   }
-
-  const cmd = commands[0];
 
   // 修正3: 条件付きUPDATE + .select() で claim 成功を確認する。
   // 複数PCが同時にポーリングした場合、先に claim した方だけが実行権を得る。

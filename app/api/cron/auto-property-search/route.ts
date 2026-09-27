@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import {
   selectAutoSearchTargets, buildAutoSearchPayload, isBatchedRun,
   MAX_TARGETS_PER_RUN, RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS,
+  AUTO_SEARCH_SITES, autoStartAtMs, notBeforeSchedule,
   type AutoSearchMode, type AutoSearchCustomer,
 } from "@/app/lib/auto-search-schedule";
 
@@ -23,6 +24,13 @@ export const maxDuration = 60;
 //
 // 誰を選ぶか・どの条件かは app/lib/auto-search-schedule.ts の純関数1か所（四者同名）。
 // AIX モードの PC が1台も無いまま3時間経ったコマンドは、既存の /api/automation/pending が error で閉じる。
+//
+// 2026-09-27 竹内「ITANDI もおねがい」「開始時間を 11:00 と 17:00 ではなく 10:15〜11:15・16:15〜17:15 の中で
+//   ランダムに不規則性をもって毎日変える」:
+//   ・sites はリアプロと ITANDI（AUTO_SEARCH_SITES）。ITANDI のタブが無い PC は拡張が ITANDI だけ飛ばす
+//   ・cron は窓より前（10:00・16:00 JST）に積むだけ。payload.not_before（日ごとに窓の中でばらつく・11時は1人ずつずらす）
+//     より前は /api/automation/pending が渡さない。3時間の期限も not_before から数える
+//   ・?dry_run=1 で積まずに、誰を・何時から（not_before）を返す
 
 type Row = AutoSearchCustomer & { customer_name?: string | null; desired_area?: string | null; area?: string | null };
 
@@ -70,7 +78,7 @@ export async function GET(req: NextRequest) {
     for (const id of ((r.customer_ids as string[] | null) ?? [])) openIds.add(String(id));
   }
 
-  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null }> = [];
+  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null; not_before?: string }> = [];
   const skipped: Array<{ id: string; name: string | null; why: string }> = [];
   const byId = new Map(rows.map((r) => [String(r.id), r]));
 
@@ -85,38 +93,39 @@ export async function GET(req: NextRequest) {
   if (isBatchedRun(mode)) {
     // 17時（pm）: 全員が同じ条件なので**1コマンドにまとめて**拡張の一括検索で回す
     //   （竹内 2026-09-19「17:00の検索はピンポイント検索で一括で行うようにする」）
-    const payload = buildAutoSearchPayload(mode, null, now);
+    const payload = { ...buildAutoSearchPayload(mode, null, now), not_before: new Date(autoStartAtMs(mode, jstDate)).toISOString() };
     if (toQueue.length > 0 && !dryRun) {
       const { error: insErr } = await supabase.from("automation_commands").insert({
         command_type: "batch_property_search",
         customer_ids: toQueue.map((t) => t.id),
-        sites: ["realnetpro"],
+        sites: [...AUTO_SEARCH_SITES],
         payload,
         status: "pending",
       });
       if (insErr) {
         for (const t of toQueue) skipped.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, why: `積めなかった: ${insErr.message}` });
       } else {
-        for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days });
+        for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before });
       }
     } else {
-      for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days });
+      for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before });
     }
   } else {
-    // 11時（am）: 更新日が人ごとに違うので1人1コマンド
+    // 11時（am）: 更新日が人ごとに違うので1人1コマンド。開始は1人ずつ不規則な間でずらす（notBeforeSchedule）
+    const nbById = new Map(notBeforeSchedule(mode, jstDate, toQueue.map((t) => t.id)).map((x) => [x.id, x.notBeforeMs]));
     for (const t of toQueue) {
       const c = byId.get(t.id);
-      const payload = buildAutoSearchPayload(mode, t, now);
-      if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days }); continue; }
+      const payload = { ...buildAutoSearchPayload(mode, t, now), not_before: new Date(nbById.get(t.id) ?? autoStartAtMs(mode, jstDate)).toISOString() };
+      if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before }); continue; }
       const { error: insErr } = await supabase.from("automation_commands").insert({
         command_type: "batch_property_search",
         customer_ids: [t.id],
-        sites: ["realnetpro"],
+        sites: [...AUTO_SEARCH_SITES],
         payload,
         status: "pending",
       });
       if (insErr) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: `積めなかった: ${insErr.message}` }); continue; }
-      queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days });
+      queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before });
     }
   }
 
@@ -129,6 +138,9 @@ export async function GET(req: NextRequest) {
       ? "本日の更新日付（更新日1日以内）・更新順・1ページだけ・ピンポイント検索・1コマンドで一括"
       : `直近${RECENT_SENT_DAYS}日に物件出しした人（送信 or 確認）＋登録${NEW_CUSTOMER_DAYS}日以内でまだ出していない人・更新日は前回出した日から・AD高い順・広げて検索・1人1コマンド`,
     batched: isBatchedRun(mode),
+    sites: [...AUTO_SEARCH_SITES],
+    // 今日のこの便の開始（JST の窓の中・日ごとに変わる）
+    start_at_jst: new Date(autoStartAtMs(mode, jstDate) + 9 * 3600 * 1000).toISOString().slice(11, 19),
     customers: rows.length,
     targets: targets.length,
     queued: queued.length,
