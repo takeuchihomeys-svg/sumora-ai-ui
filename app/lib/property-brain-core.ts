@@ -395,7 +395,13 @@ export async function runConditionBrain(
     return null;
   }
 
-  const updates = parsed.updates ?? {};
+  // 2026-09-27 家賃の決まり（rent-raise.ts・follow）: 旧の判断ルール2「もう少し予算上げられます→ +1〜2万」は LLM 任せで揺れ（野口さんの回は上げなかった）、
+  //   P4 と両方で上げると二重になる。相対の上げは P4（決定論・+2万）だけが行い、ここは家賃の上限に触らない。下限はお客様が言った時だけ
+  const { applyConditionGuards } = await import("@/app/lib/rent-raise");
+  const cur = ctx.customer;
+  const guarded = applyConditionGuards(messageText, { rent_max: cur.rentMax ?? null, rent_min: cur.rentMin ?? null, floor_area_min: cur.floorAreaMin ?? null }, parsed.updates ?? {}, "follow");
+  if (guarded.notes.length) console.log(JSON.stringify({ tag: "conditionBrain:condition-guards", convId, notes: guarded.notes }));
+  const updates = guarded.extracted;
   const hasUpdates = Object.keys(updates).length > 0;
 
   // ── 矛盾通知（updates に関係なく実行）───────────────────────────────────
@@ -414,6 +420,10 @@ export async function runConditionBrain(
   // ── DBに反映（更新フィールドのみ）────────────────────────────────────────
   const dbUpdate: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
 
+  // 2026-09-27: 条件ブレインの更新も履歴に残す（旧は残していなかった＝どの経路で条件が変わったか後から追えない）
+  const { data: oldRow } = await supabase
+    .from("property_customers").select(Object.keys(updates).join(",")).eq("id", customerId).maybeSingle();
+
   const { error } = await supabase
     .from("property_customers")
     .update(dbUpdate)
@@ -422,6 +432,11 @@ export async function runConditionBrain(
   if (error) {
     console.error("[conditionBrain] DB更新失敗:", error.message);
     return null;
+  }
+  {
+    const { recordConditionHistory } = await import("@/app/lib/condition-history");
+    void recordConditionHistory(supabase, customerId, (oldRow ?? null) as Record<string, unknown> | null, updates)
+      .catch((e) => console.warn("[condition-history] conditionBrain:", e));
   }
 
   console.log(`[conditionBrain] 条件更新完了 (${customerId}):`, updates, `| 理由: ${parsed.reasoning ?? ""}`);

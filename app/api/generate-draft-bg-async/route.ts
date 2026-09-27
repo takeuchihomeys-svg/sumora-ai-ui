@@ -13,6 +13,7 @@ import { MSG_SEP } from "@/app/lib/reply-context";
 // 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
 import { shouldSkipDraftAfterClosing } from "@/app/lib/previous-send-note";
 import { DRAFT_SENTINEL_NO_REPLY } from "@/app/lib/draft-text";
+import { applyConditionGuards } from "@/app/lib/rent-raise";
 import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
@@ -154,6 +155,13 @@ async function applyBrainConditionChange(
       if (v <= 300) extracted[f] = v * 10000;
       else if (v > 500000 && f !== "initial_cost_limit") extracted[f] = v / 10;
     }
+  }
+
+  // 2026-09-27 家賃の決まり（rent-raise.ts・follow）: 下限はお客様が言った時だけ・「家賃を上げて」の相対の上げは P4 が済ませている＝ここでは家賃に触らない（二重に上げない）
+  {
+    const g = applyConditionGuards(targetMessage, pc as { rent_max?: number | null; rent_min?: number | null; floor_area_min?: number | null } | null, extracted, "follow");
+    extracted = g.extracted;
+    if (g.notes.length) console.log(JSON.stringify({ tag: "bg-async:condition-guards", convId, notes: g.notes }));
   }
 
   const updates: Record<string, unknown> = {};

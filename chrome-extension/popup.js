@@ -3529,6 +3529,8 @@ function saveTempAdjSnapshot(cid) {
     area_max:  document.getElementById("adj-area-max")?.value || "",
     edited:    _adjLastEditedField,
     last_used: new Date().toISOString(),
+    // v2.5.36: その時の登録の条件の鍵（登録の条件が変わったら、開いた時にこの調整を戻さない。temp-adj-base.js）
+    base:      (self.AxlxTempAdjBase && selectedCustomer && String(selectedCustomer.id) === String(cid)) ? self.AxlxTempAdjBase.baseKey(selectedCustomer) : "",
   };
   const _same = (h) => h.area === entry.area && h.station === entry.station &&
     String(h.rent_min || "") === String(entry.rent_min) &&
@@ -3652,7 +3654,15 @@ function restoreTempAdj(c) {
   _adjDirty = false;
   const cid = c && c.id;
   const hist = cid ? loadTempAdjHistory(cid) : [];
-  if (hist.length > 0 && !_adjRestoreSuppressed) {
+  // v2.5.36 2026-09-27 竹内（未桜さん: 登録の条件を大国町に直したのに前の一時調整〈九条・大正・8万〉で検索していた）
+  //   「一時調整じゃなくて、そもそもの条件を修正する」: 登録の条件が一時調整を保存した時から変わっていたら戻さない（チップは残る）。
+  //   base の無い古い履歴も戻さない（いつの条件の上の調整か分からない）。自動の一括（AIX・自動便）もこの判定を通る
+  const _TAB = (typeof self !== "undefined" && self.AxlxTempAdjBase) || null;
+  const _canRestore = hist.length > 0 && (_TAB ? _TAB.shouldRestore(hist[0], c) : true);
+  if (hist.length > 0 && !_adjRestoreSuppressed && !_canRestore) {
+    console.log("[AX] 保存した一時調整は戻しません（登録の条件が変わった・または古い履歴）。登録の条件で検索します。チップを押せば使えます:", cid);
+  }
+  if (_canRestore && !_adjRestoreSuppressed) {
     applyTempAdjEntry(hist[0]);
     _adjDirty = false; // 復元直後は未編集扱い（検索実行時の再保存はチップ再適用/手動編集時のみ）
   }

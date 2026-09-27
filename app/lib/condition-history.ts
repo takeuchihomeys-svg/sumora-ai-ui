@@ -12,8 +12,9 @@ export async function recordConditionHistory(
   sourceMessageId?: string, // line_message_id など変更の根拠（カラムはTEXT）
 ): Promise<void> {
   try {
+    // 2026-09-27: 広さ・通勤・こだわり・NG も残す（検索に効く列の言い直しを後から追えるように。customerAt が数値の列を戻す）
     const TRACKED = [
-      "desired_area", "floor_plan", "rent_max", "rent_min",
+      "desired_area", "floor_plan", "rent_max", "rent_min", "floor_area_min", "commute_station", "commute_minutes", "preferences", "ng_points",
       "walk_minutes", "move_in_time", "building_age", "initial_cost_limit", "other_requests",
     ];
     const rows = TRACKED

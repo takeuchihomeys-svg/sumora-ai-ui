@@ -18,6 +18,8 @@ import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { recordConditionHistory } from "@/app/lib/condition-history";
+// 2026-09-27 竹内（野口さん「もう少し家賃あげて」・未桜さん「7畳以上の部屋」）: 抽出した家賃・広さを決定論で直す（家賃を上げて＝上限を上げる・下限は言った時だけ・帖→㎡）
+import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo } from "@/app/lib/rent-raise";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
 import { detectTaskTypeByKeywords, decideAutoTask } from "@/app/lib/property-check-task";
@@ -1027,6 +1029,11 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   };
   // 正式フォーマット用フィールド（全条件フィールド + additional_conditions リセット）
   // 新規顧客INSERT・売上番長通知にも使用する
+  // 2026-09-27: 正式フォーマットでも「7畳以上」は面積の下限に（家賃の決まりはカジュアル更新だけ＝フォームの家賃欄はそのまま）
+  if (parsed.floor_area_min == null) {
+    const fa = floorAreaMinFromJo(text, typeof parsed.floor_plan === "string" ? parsed.floor_plan : null);
+    if (fa) parsed.floor_area_min = fa.sqm;
+  }
   const parsedFields: Record<string, unknown> = { ...baseFields };
   for (const f of ["move_in_time", "rent_min", "rent_max", "desired_area", "walk_minutes", "commute_station", "commute_minutes", "floor_plan", "initial_cost_limit", "building_age", "floor_area_min", "preferences", "ng_points", "other_requests"]) {
     if (parsed[f] !== null && parsed[f] !== undefined) parsedFields[f] = parsed[f];
@@ -1096,6 +1103,13 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   // カジュアル更新用: インテント分類 → フィールドマージ
   const computeCasualUpdate = async (existingRec: Record<string, unknown> | null) => {
     const existingConds = (existingRec ?? {}) as ConditionFields;
+    // 2026-09-27 家賃・広さの決まり（rent-raise.ts）: 「家賃を上げて」（漢字の「上げ」はこの経路に来る）＝登録の上限 +2万・
+    //   下限は言った時だけ・「7畳以上」→ floor_area_min（未桜さん: 文字の希望だけ入り 25㎡ が残っていた）
+    {
+      const g = applyConditionGuards(text, existingConds, parsed, "p4");
+      parsed = g.extracted;
+      if (g.notes.length) console.log(JSON.stringify({ tag: "autoParseFormat:condition-guards", convId, notes: g.notes }));
+    }
     let intentResult = classifyByKeywords(text, existingConds.desired_area as string | null);
     if (!intentResult) {
       intentResult = await classifyByAI(anthropic, text, existingConds.desired_area as string | null);
@@ -1134,6 +1148,9 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       await db.from("property_customers")
         .update({ ...baseFields, ...mergedConds, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
         .eq("id", customerId);
+      // 2026-09-27: カジュアル更新も条件の履歴に残す（旧は残していなかった＝未桜さんの 9/27 の言い直しが履歴に無い）
+      void recordConditionHistory(db, customerId, existing as Record<string, unknown>, mergedConds as Record<string, unknown>)
+        .catch((e) => console.warn("[condition-history] autoParseFormat:", e));
       await appendAdditionalConditions(customerId, intent);
     }
   } else if (conv?.property_customer_id) {
@@ -1154,6 +1171,8 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       await db.from("property_customers")
         .update({ ...baseFields, ...mergedConds, line_user_id: userId, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
         .eq("id", customerId);
+      void recordConditionHistory(db, customerId, linkedConds as Record<string, unknown> | null, mergedConds as Record<string, unknown>)
+        .catch((e) => console.warn("[condition-history] autoParseFormat:", e));
       await appendAdditionalConditions(customerId, intent);
     }
   } else {
@@ -1240,7 +1259,9 @@ async function extractConditionsFromCasualReply(
   const isViewingContext = /内覧|集合場所|ご案内.*場所|案内.*場所/.test(combinedStaffText);
   const isConditionContext = (hasStrongCondSignal || hasMedCondSignal) && !isViewingContext;
   // 顧客メッセージ自体に条件語彙が含まれる場合もOR発火（内覧調整中等に漏れる条件を拾う）
-  const customerMentionsCondition = CUSTOMER_CONDITION_VOCAB_RE.test(customerText || "");
+  // 2026-09-27: 「もう少し家賃あげて」（語の一覧に当たらない）・「7畳以上」も決定論で拾う
+  const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null;
+  const customerMentionsCondition = CUSTOMER_CONDITION_VOCAB_RE.test(customerText || "") || deterministicCondHit;
   if (!isConditionContext && !customerMentionsCondition) return;
 
   // Haiku で「本当に条件メッセージか」を分類（フォーマット知識＋文脈利用）
@@ -1252,7 +1273,7 @@ async function extractConditionsFromCasualReply(
   });
   const recentContext = staffTexts.reverse().map((t) => ({ sender: "staff" as const, text: t }));
   const p4Class = await classifyConditionMessage(anthropicP4, customerText, recentContext);
-  if (p4Class.type === "not_condition" || p4Class.confidence < 0.6) {
+  if ((p4Class.type === "not_condition" || p4Class.confidence < 0.6) && !deterministicCondHit) {
     console.log(`[P4] skip: type=${p4Class.type} confidence=${p4Class.confidence}`);
     return;
   }
@@ -1326,11 +1347,12 @@ ${customerText.slice(0, 600)}
 
     const rawText = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const m = rawText.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
-    if (!m) return;
-    extracted = JSON.parse(m[0]) as Record<string, unknown>;
+    extracted = m ? JSON.parse(m[0]) as Record<string, unknown> : {};
   } catch {
-    return; // Haiku 失敗 → サイレントスキップ
+    extracted = {}; // Haiku 失敗
   }
+  // 決定論で拾える物（家賃を上げて・N帖以上）が無ければ、読めなかった時は今まで通り何もしない
+  if (Object.keys(extracted).length === 0 && !deterministicCondHit) return;
 
   // 家賃バリデーション（autoParseFormat と同ロジック）
   for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
@@ -1343,14 +1365,14 @@ ${customerText.slice(0, 600)}
 
   // C1: 非 null・非空 フィールドのみ UPDATE 対象にする
   const CONDITION_FIELDS = [
-    "desired_area", "floor_plan", "rent_max", "rent_min",
+    "desired_area", "floor_plan", "rent_max", "rent_min", "floor_area_min",
     "walk_minutes", "commute_station", "commute_minutes",
     "move_in_time", "building_age", "initial_cost_limit",
     "preferences", "ng_points", "other_requests",
   ];
 
   // 型検証: 数値カラムに文字列が入るとUPDATE全体が失敗するため number 以外は破棄
-  const NUMERIC_FIELDS = new Set(["rent_max", "rent_min", "walk_minutes", "commute_minutes", "building_age", "initial_cost_limit"]);
+  const NUMERIC_FIELDS = new Set(["rent_max", "rent_min", "floor_area_min", "walk_minutes", "commute_minutes", "building_age", "initial_cost_limit"]);
   for (const f of NUMERIC_FIELDS) {
     if (extracted[f] !== undefined && typeof extracted[f] !== "number") delete extracted[f];
   }
@@ -1360,12 +1382,21 @@ ${customerText.slice(0, 600)}
 
   const { data: existingPc } = await db
     .from("property_customers")
-    .select(["desired_area", "floor_plan", "rent_max", "rent_min", "walk_minutes", "commute_station", "commute_minutes", "move_in_time", "building_age", "initial_cost_limit", "preferences", "ng_points", "other_requests"].join(","))
+    .select(["desired_area", "floor_plan", "rent_max", "rent_min", "floor_area_min", "walk_minutes", "commute_station", "commute_minutes", "move_in_time", "building_age", "initial_cost_limit", "preferences", "ng_points", "other_requests"].join(","))
     .eq("id", pcId)
     .maybeSingle();
 
-  // desired_area: インテント分類してマージ（「〜区もお願い」等の追加要求で既存エリアを上書きしない）
   const existingPcRec = existingPc as unknown as Record<string, unknown> | null;
+  // 2026-09-27 家賃・広さの決まり（rent-raise.ts）: 「家賃を上げて」＝登録の上限 +2万（金額を言えばその金額）・
+  //   下限はお客様が言った時だけ（野口さん: スタッフの文「合計88,000円」を下限と読んだ）・「N帖以上」→ floor_area_min。
+  //   相対の上げはここ（P4）だけが行う（ブレインの橋・条件ブレインは follow で家賃に触らない＝二重に上げない）
+  {
+    const g = applyConditionGuards(customerText, existingPcRec as { rent_max?: number | null; rent_min?: number | null; floor_area_min?: number | null } | null, extracted, "p4");
+    extracted = g.extracted;
+    if (g.notes.length) console.log(JSON.stringify({ tag: "P4:condition-guards", convId, notes: g.notes }));
+  }
+
+  // desired_area: インテント分類してマージ（「〜区もお願い」等の追加要求で既存エリアを上書きしない）
   if (extracted.desired_area && existingPcRec?.desired_area) {
     const existingArea = (existingPcRec.desired_area ?? "") as string;
     const intentRes = classifyByKeywords(customerText, existingArea)
@@ -1382,7 +1413,7 @@ ${customerText.slice(0, 600)}
   }
 
   const FIELD_LABELS: Record<string, string> = {
-    desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限",
+    desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限", floor_area_min: "広さ(㎡以上)",
     walk_minutes: "徒歩分数", commute_station: "通勤先駅", commute_minutes: "通勤時間",
     move_in_time: "入居時期", building_age: "築年数",
     initial_cost_limit: "初期費用上限", preferences: "こだわり", ng_points: "NG条件", other_requests: "その他",
