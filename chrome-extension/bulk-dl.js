@@ -69,6 +69,37 @@
     });
   } catch (_e) {}
 
+  // ── 操作ごとの時刻（2026-09-27 v2.5.31 竹内「操作ごとの待ち時間を本物の検索の記録で測れるように」）──
+  // fill-done を受けた時（armed）から、結果を見た・並び替えの前の間・並び替えへ進んだ・ページ・資料の送信の束（送った／返った）・
+  // 次のページへ、の時刻を sessionStorage に貯め（ページの読み直しでも消えない）、axlx-batch-customer-done の audit.timings に載せて渡す。
+  // background（search-audit.js の tracker）が点検の段（steps）に "dl:" を付けて並べる。関数を大量に呼んで分布を取るのでなく、本物の検索の1回を読む
+  var AUDIT_T_KEY = "axlx_audit_timings";
+  function _treset(cid) {
+    try { sessionStorage.setItem(AUDIT_T_KEY, JSON.stringify({ cid: cid != null ? String(cid) : null, list: [] })); } catch (_) {}
+  }
+  function _tmark(k, d, cid) {
+    try {
+      var raw = sessionStorage.getItem(AUDIT_T_KEY);
+      var o = raw ? JSON.parse(raw) : null;
+      if (!o || !Array.isArray(o.list)) o = { cid: null, list: [] };
+      if (cid != null) {
+        if (o.cid == null) o.cid = String(cid);
+        else if (o.cid !== String(cid)) o = { cid: String(cid), list: [] }; // 別のお客様の回に変わった
+      }
+      o.list.push({ k: String(k).slice(0, 20), at: Date.now(), d: d == null ? null : String(d).slice(0, 60) });
+      while (o.list.length > 50) o.list.shift();
+      sessionStorage.setItem(AUDIT_T_KEY, JSON.stringify(o));
+    } catch (_) {}
+  }
+  function _ttake() {
+    try {
+      var raw = sessionStorage.getItem(AUDIT_T_KEY);
+      sessionStorage.removeItem(AUDIT_T_KEY);
+      var o = raw ? JSON.parse(raw) : null;
+      return o && Array.isArray(o.list) && o.list.length ? o.list : null;
+    } catch (_) { return null; }
+  }
+
   function getAutoSendState() {
     try {
       var raw = sessionStorage.getItem(AUTO_SEND_KEY);
@@ -251,6 +282,7 @@
         _pendingAutoSendDispatched = true;
         try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
         console.log("[AXLX bulk-dl] Case A: 新結果検出 → 自動送信開始");
+        _tmark("results", "rows=" + tracked.length);
         setTimeout(autoSendAllPages, 600 + Math.floor(Math.random() * 600));
       }
     }
@@ -1355,6 +1387,8 @@
       }
     } catch (_) {}
     if (r.read_rows === 0) r.zero_reason = "no_rows";
+    var _tl = _ttake();
+    if (_tl) r.timings = _tl;
     return Object.assign(r, extra || {});
   }
 
@@ -1374,6 +1408,7 @@
       return;
     }
     if (hasNextPageBtn()) {
+      _tmark("next", "P" + (state.currentPage + 1));
       var clicked = clickNextPageBtn();
       if (!clicked) {
         clearAutoSendState();
@@ -1408,6 +1443,7 @@
   function autoSendOnePage(state, onDone) {
     var BATCH_SIZE = 10; // 20→10: merge-pdfs の処理時間削減（PDF10件×並列取得+結合+Blob+AI+LINE+DB）
     var countEl = document.getElementById("axlx-count");
+    _tmark("page", "P" + state.currentPage, state.customerId || null);
     if (countEl) countEl.textContent = "全ページ送信中 P" + state.currentPage + "...";
 
     // 全チェックボックス選択
@@ -1466,6 +1502,7 @@
           return;
         }
         var batch = batches[batchIndex];
+        _tmark("send", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length + " n=" + batch.length);
         if (countEl) {
           countEl.textContent = "P" + state.currentPage + " 送信中 (" + (batchIndex + 1) + "/" + batches.length + ")";
         }
@@ -1486,6 +1523,7 @@
             console.error("[AXLX bulk-dl] 送信エラー:", errMsg1);
             // エラー詳細をアラートで表示（何が原因か分かるように）
             alert("LINE送信エラー:\n" + errMsg1 + "\n\n※リアプロにログインし直して再試行してください");
+            _tmark("send_err", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length);
             try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, audit: _auditResult(state, { send_error: String(errMsg1).slice(0, 200) }) }, function () { void chrome.runtime.lastError; }); } catch (_) {}
             return;
           }
@@ -1496,9 +1534,11 @@
             console.error("[AXLX bulk-dl] 送信エラー:", errMsg2);
             // エラー詳細をアラートで表示（何が原因か分かるように）
             alert("LINE送信エラー:\n" + errMsg2 + "\n\n※セッション切れの場合: リアプロに再ログインしてください\n※タイムアウトの場合: 物件数を減らして再試行してください");
+            _tmark("send_err", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length);
             try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, audit: _auditResult(state, { send_error: String(errMsg2).slice(0, 200) }) }, function () { void chrome.runtime.lastError; }); } catch (_) {}
             return;
           }
+          _tmark("sent", "P" + state.currentPage + " " + (batchIndex + 1) + "/" + batches.length);
           batchIndex++;
           // 進捗ハートビート: background の全ページ送信完了待機タイムアウトをリセット。
           // 多ページ・多物件の送信は5分を超えることがあり、固定5分タイムアウトのままだと
@@ -1540,6 +1580,7 @@
       // AD高→低ソートが未適用ならソートURLへ遷移し、Case Bがリロード後に再開する
       var params = new URLSearchParams(location.search);
       var isAdDesc = params.get("key") === "ad" && params.get("odr") === "desc";
+      _tmark("start", isAdDesc ? "sorted" : "unsorted", customerId);
       if (!isAdDesc) {
         var adLink = document.querySelector('a[href*="key=ad&"][href*="odr=desc"]');
         if (adLink && adLink.href) {
@@ -1554,11 +1595,14 @@
           //   （遷移でページが読み直されると印は初期化され、並び替え後のページで Case B/C が再開する）。
           _pendingAutoSendDispatched = true;
           var _sortHref = adLink.href;
+          var _sortWaitMs = _hd(900);
+          _tmark("sort_wait", _sortWaitMs);
           setTimeout(function () {
             // 待つ間に止められた（clearAutoSendState）時は並び替えに進まない
             if (!getAutoSendState()) { console.log("[AXLX bulk-dl] 並び替えの前に止められた → 遷移しない"); return; }
+            _tmark("sort_go", null);
             location.href = _sortHref;
-          }, _hd(900));
+          }, _sortWaitMs);
           return;
         }
       }
@@ -1616,6 +1660,7 @@
     _autoSendArmed = true;
     _autofillInitiated = false;
     console.log("[AXLX bulk-dl] fill-done 受信 → 全ページ自動送信 armed");
+    _treset(null); _tmark("armed", null);
     // AJAX完了はfill-done到着より先にMutationObserverが走るため、
     // Case A は _autoSendArmed=false のまま inject() を空振りしてしまう。
     // fill-done 後に inject() を再呼び出しして Case A を確実に到達させる。

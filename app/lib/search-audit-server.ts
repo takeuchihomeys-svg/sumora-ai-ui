@@ -105,7 +105,8 @@ export function rowFromBody(b: Record<string, unknown>): Partial<SearchAuditRow>
   }
   if (b.intended && typeof b.intended === "object") out.intended = capJson(b.intended) as Record<string, unknown>;
   if (b.filled && typeof b.filled === "object") out.filled = capJson(b.filled) as Record<string, unknown>;
-  if (Array.isArray(b.steps)) out.steps = (b.steps as Array<Record<string, unknown>>).slice(-40);
+  // 2026-09-27 v2.5.31: 操作ごとの時刻（ページ・資料の送信の段）を足したので 40 → 120（拡張の MAX_STEPS と同じ）
+  if (Array.isArray(b.steps)) out.steps = (b.steps as Array<Record<string, unknown>>).slice(-120);
   if (b.result && typeof b.result === "object") out.result = capJson(b.result) as Record<string, unknown>;
   if (b.error != null) out.error = str(b.error, 1000);
   if (b.error_kind != null) out.error_kind = str(b.error_kind, 40);

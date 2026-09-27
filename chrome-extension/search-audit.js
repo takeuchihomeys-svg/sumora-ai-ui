@@ -21,7 +21,8 @@
 
   var API_BASE = "https://sumora-ai-ui.vercel.app";
   var SEND_TIMEOUT_MS = 5000;
-  var MAX_STEPS = 40;
+  // 2026-09-27 v2.5.31: 操作ごとの時刻（ページの段・資料の送信の段）を足したので 40 → 120
+  var MAX_STEPS = 120;
   var MAX_AUDIT_BYTES = 8192;
 
   // お客様の条件のうち写す欄（名前・電話・LINE の ID は入れない）
@@ -131,6 +132,12 @@
       }
       if (Array.isArray(a.stations_ok) && a.stations_ok.length > n * 4) a.stations_ok = a.stations_ok.slice(0, Math.max(n * 4, 4));
       if (Array.isArray(a.steps)) a.steps = a.steps.slice(-Math.max(n * 2, 4));
+      if (Array.isArray(a.ops)) a.ops = a.ops.slice(-Math.max(n * 3, 6));
+      if (a.stall && a.stall.form) {
+        ["stations", "lines", "wards", "layouts"].forEach(function (key) {
+          if (Array.isArray(a.stall.form[key]) && a.stall.form[key].length > n) a.stall.form[key] = a.stall.form[key].slice(0, Math.max(n, 2));
+        });
+      }
     }
     if (byteLen(a) > lim) return { v: a.v || 1, truncated: true, search_clicked: a.search_clicked, area_path: a.area_path || null };
     a.truncated = true;
@@ -314,6 +321,13 @@
     function attachResult(id, result) {
       var r = get(id);
       if (!r) return null;
+      // 2026-09-27 v2.5.31: bulk-dl の操作の時刻（結果を見た・並び替え・ページ・資料の送信の束）は段（steps）に "dl:" を付けて並べる
+      var res = Object.assign({}, result || {});
+      if (Array.isArray(res.timings)) {
+        res.timings.forEach(function (s) { if (s && s.k) pushStep(r.steps, "dl:" + s.k, s.d, s.at || now()); });
+      }
+      delete res.timings;
+      result = res;
       r.result = Object.assign({}, r.result || {}, result || {});
       pushStep(r.steps, "result", "rows=" + (result && result.read_rows) + " sent=" + (result && result.sent_count), now());
       return r;

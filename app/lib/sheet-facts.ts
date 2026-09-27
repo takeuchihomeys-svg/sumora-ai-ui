@@ -118,7 +118,8 @@ export function parseSheetText(raw: string | null | undefined): SheetTextFacts {
   if (text.trim().length < 40) return empty;
   const names = [...text.matchAll(/物件名[ \t]+([^\n]+)/g)].map((m) => m[1].trim()).filter(Boolean);
   const roomLines = [...text.matchAll(/号室名[ \t]+([^\n]+)/g)].map((m) => m[1].trim());
-  const roomNos = roomLines.map((l) => normalizeRoomNo((l.match(/^([0-9]{1,5})/) ?? [])[1] ?? "")).filter(Boolean);
+  // 2026-09-27: 英字付きの号室（「005B」）の英字を落とさない（旧は 005A・005B・005 が同じ鍵になり、別の部屋の読み取りを使い回すおそれ）
+  const roomNos = roomLines.map((l) => normalizeRoomNo((l.match(/^((?=[0-9A-Za-z\-]*\d)[0-9A-Za-z\-]{1,8})/) ?? [])[1] ?? "")).filter(Boolean);
   const floorM = text.match(/[（(]\s*(\d{1,2})\s*階部分\s*[)）]/);
   const addrM = text.match(/所在地[ \t]*\n?[ \t]*([^\n]+)/);
   const madoriLine = (text.match(/間取タイプ[ \t]+([^\n]+)/) ?? [])[1] ?? "";
@@ -142,7 +143,7 @@ export function parseSheetText(raw: string | null | undefined): SheetTextFacts {
   const lf = names.length === 0 || !madori ? parseListingText(raw) : null;
   const itNames = lf?.format === "itandi" ? [...new Set(normalizeListingText(raw).split("\n").map((l) => l.trim()).filter((l) => /\S\s*号室\s*$/.test(l))
     .map((l) => squeezeJaSpaces(l.replace(/\s+([0-9A-Za-z\-－]+|複数あり)\s*号室\s*$/, ""))).filter(Boolean))] : [];
-  const itRooms = lf?.format === "itandi" ? [...new Set(normalizeListingText(raw).split("\n").map((l) => (l.trim().match(/\s(\d{1,5})\s*号室\s*$/) ?? [])[1]).filter((x): x is string => !!x).map((x) => normalizeRoomNo(x)))] : [];
+  const itRooms = lf?.format === "itandi" ? [...new Set(normalizeListingText(raw).split("\n").map((l) => (l.trim().match(/\s((?=[0-9A-Za-z\-]*\d)[0-9A-Za-z\-]{1,8})\s*号室\s*$/) ?? [])[1]).filter((x): x is string => !!x).map((x) => normalizeRoomNo(x)))] : [];
   return {
     hasText: true,
     name: names[0] ?? lf?.name ?? null,

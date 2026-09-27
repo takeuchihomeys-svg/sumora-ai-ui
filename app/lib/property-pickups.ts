@@ -8,7 +8,7 @@
 //   ・1回分の鍵（batch_id）: merge-pdfs が Blob に置く結合 PDF の名前（一意）
 //   ・行 ＝ 物件1件（説明文・PDF の文字層・判定・🌟オススメ・PDF の URL）
 //   ・🌟 の印は merge-pdfs の rankAndAnnotateSummaries が説明文の先頭に付ける「【1🌟★】」「【2🌟】」をそのまま読む（別の判断を作らない）
-import { parseSummaryHead } from "./sent-property-filter";
+import { parseSummaryHead, summaryHeadRoomVerbatim } from "./sent-property-filter";
 import type { Judgment } from "./property-brain";
 import type { PickupEquipment } from "./pickup-equipment";
 import type { PickupTerms } from "./pickup-terms";
@@ -110,7 +110,8 @@ export function buildPickupRows(
       site: batch.site,
       rank: mark.rank ?? it.fallbackRank ?? i + 1,
       property_name: head?.propertyName || j?.name || "物件",
-      room_no: head?.roomNo || null,
+      // 2026-09-27 竹内「資料の文字を変えず・抜かず」: 号室は説明文（＝資料）の文字のまま（「0206」「005B」）。照合する所は normalizeRoomNo で揃える
+      room_no: summaryHeadRoomVerbatim(it.summary) || head?.roomNo || null,
       summary_text: it.summary,
       pdf_url: it.pdfUrl,
       pdf_blob_url: it.pdfBlobUrl,
@@ -155,6 +156,20 @@ const AD_LABEL = String.raw`(?:(?<![A-Za-z])A\s?D(?![A-Za-z])|広告料|広告�
 const AD_MONTHS_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(?:家賃|賃料)?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:ヶ月|ヵ月|カ月|か月|ケ月|ヶ|%)`, "i");
 const AD_YEN_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(\\d{4,7})\\s*円`, "i");
 const AD_NONE_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(?:なし|無し|無(?![料])|0\\s*(?:%|ヶ月|ヵ月|カ月|か月|円)?(?![\\d.]))`, "i");
+/**
+ * 資料のページごとの文字から AD を読む（2026-09-27 竹内「1枚目や3枚目奇数は弊社、2枚目や4枚目偶数は元付業者と交互」）。
+ *   AD は元付業者の資料（偶数ページ）に書かれる → 2ページ以上ある資料は偶数ページだけから読む（弊社帯の奇数ページの文字で当てない）。
+ *   1ページしか無い資料（itandi 等）・ページごとの文字が無い時は今まで通り全体から読む
+ */
+export function parseAdFromPages(pageTexts: ReadonlyArray<string> | null | undefined, joined: string | null | undefined): { adMonths: number | null; adYen: number | null } {
+  const pages = Array.isArray(pageTexts) ? pageTexts : [];
+  if (pages.length >= 2) return parseAdFromText(agentPagesText(pages));
+  return parseAdFromText(joined);
+}
+/** 元付業者のページ（偶数ページ＝2・4…）の文字をつないだ物 */
+export function agentPagesText(pageTexts: ReadonlyArray<string>): string {
+  return pageTexts.filter((_, i) => (i + 1) % 2 === 0).join("\n");
+}
 export function parseAdFromText(text: string | null | undefined): { adMonths: number | null; adYen: number | null } {
   const t = String(text ?? "")
     .replace(/[０-９Ａ-Ｚａ-ｚ．，％：]/g, (c) => c === "．" ? "." : c === "，" ? "," : c === "％" ? "%" : c === "：" ? ":" : String.fromCharCode(c.charCodeAt(0) - 0xfee0))

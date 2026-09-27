@@ -17,12 +17,12 @@ export async function enrichSummariesWithPdfAd(summaries: string[], pdfBase64Lis
   let added = 0;
   try {
     const { extractPdfText } = await import("@/app/lib/pdf-text");
-    const { parseAdFromText } = await import("@/app/lib/property-pickups");
+    const { parseAdFromPages } = await import("@/app/lib/property-pickups");
     await Promise.all(targets.map(async ({ s, i }) => {
       try {
         const t = await extractPdfText(pdfBase64List[i] as string, { maxPages: 2, maxChars: 8000 });
         if (!t.hasText) return;
-        const ad = parseAdFromText(t.text);
+        const ad = parseAdFromPages(t.pageTexts ?? null, t.text); // 2026-09-27: AD は元付業者のページ（偶数）から
         // 資料に「広告費 なし」＝ AD なし（parsePropertyFacts が 0 と読む・不明とは分ける）
         const line = ad.adMonths === 0 ? "AD なし" : ad.adMonths != null ? `AD ${String(ad.adMonths).replace(/\.0$/, "")}ヶ月` : ad.adYen != null ? `AD ${ad.adYen.toLocaleString()}円` : null;
         if (!line) return;

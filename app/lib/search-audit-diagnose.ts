@@ -15,7 +15,8 @@ import { parseMan, type AuditCheck, type AuditResult, type AuditStep, type Fille
 export const SEARCH_AUDIT_ACTION = "search_audit";
 // v2（2026-09-25）: 本番の通し確認で「賃料の上限2万・件数表示0件（本当の0件）」を DeepSeek が「駅と地域の入れ方のずれ・徒歩が入っていない」と読んだ
 //   → ①お客様の賃料の上限を材料に足す ②件数表示が0で条件どおりに入っている時は「条件が厳しい」を先に疑う、を前置きに1行 ③読み戻せなかった欄を「入った=なし」と書かない
-export const SEARCH_AUDIT_PROMPT_VERSION = "search-audit-v2";
+// v3（2026-09-27）: 札に CONDITION_DRIFT・CONDITION_STALE、材料に「止まった時の様子」（拡張 v2.5.31 の stall）を足した
+export const SEARCH_AUDIT_PROMPT_VERSION = "search-audit-v3";
 
 /** 固定の前置き（毎回一字一句同じ＝キャッシュが当たる。変えたら SEARCH_AUDIT_PROMPT_VERSION も上げる） */
 export const SEARCH_AUDIT_SYSTEM_PROMPT = `あなたは不動産の物件検索を自動で行う Chrome 拡張「AIXLINX 物件検索」の不具合を調べる係です。
@@ -38,6 +39,7 @@ export const SEARCH_AUDIT_SYSTEM_PROMPT = `あなたは不動産の物件検索�
 【札（決定論の点検が付けた物）】
 STATION_MISSING 駅のボタンが見つからない／ROUTE_MISSING 路線が選べない／AREA_UNRESOLVED 地名を場所に直せない／
 LOCATION_MODE 駅と地域の入れ方の食い違い・場所なし検索・条件を外した検索／CONDITION_MISREAD お客様の条件を検索に入れていない／
+CONDITION_DRIFT 入った値がお客様の登録の条件と違う（区の欠け・混ざり・間取り・家賃・築年・徒歩・こだわり）／CONDITION_STALE 3項目以上ちがう＝古い条件で検索したおそれ／
 RENT_MISMATCH 賃料の上限が入らない・狭い／FLOOR_PLAN_DROPPED 間取りが入らない／UPDATE_DAYS 更新日が入らない・決まりと違う／
 RESET_FAILED 前の条件を消せない／UI_NOT_FOUND 画面の部品が見つからない／ZERO_UNCONFIRMED 0件だが本当に0件か確かめられない／
 ZERO_CONFIRMED 0件（件数表示も0）／SENT_LT_READ 送れる物件を送り切れない／STALLED 途中で止まった／ERROR_* 失敗。
@@ -46,6 +48,7 @@ ZERO_CONFIRMED 0件（件数表示も0）／SENT_LT_READ 送れる物件を送�
 - 賃料は円と万円が混ざらないよう、どちらも万円に直して並べている。
 - 札が ZERO_CONFIRMED（件数表示も0）で、入れた条件がお客様の条件どおりに入っている時は、検索のずれより「お客様の条件が厳しい」を先に疑う（is_genuine_zero=true にして、どの条件が厳しいかを書く）。
 - 「（読み戻しなし）」はその欄を画面から読めなかった印で、入らなかったという意味ではない。
+- 「止まった時の様子」がある時（条件を入れ終わる前の時間切れ）は、止まった段・列の残り・タブが見えていたか（hidden）・タイマーの遅れ（予定より遅れた最大）から原因を考える。タブが隠れていてタイマーの遅れが大きい時は、ブラウザがタイマーを間引いた可能性を書く。
 - 材料に書いてあることだけから考える。推測で DOM の名前（クラス名・name 属性・id）やサイトの画面の作りを作らない。分からない所は「分からない」と書く。
 - where はファイル名と関数名まで（上の地図の名前から選ぶ。無ければ function は空文字）。
 - is_genuine_zero: 本当に条件に合う物件が0件だったと思えるなら true、検索のずれ・失敗が原因なら false、判断できなければ null。
@@ -120,6 +123,14 @@ export function intendedFilledDiff(i: Intended | null | undefined, f: Filled | n
   if (f?.area_path) lines.push(`場所の入れ方（画面側の判定）: ${f.area_path}`);
   if (f && f.search_clicked != null) lines.push(`検索ボタン: ${f.search_clicked ? "押した" : "押せなかった"}`);
   if (i?.unknown_tokens?.length) lines.push(`場所に直せなかった言葉: ${i.unknown_tokens.join("・")}`);
+  // 2026-09-27 v2.5.31: 見張りで止まった時の様子（どの段で・列の残り・タブ・タイマーの遅れ）
+  const st = f?.stall;
+  if (st) {
+    lines.push(`止まった時の様子: 段=${st.stage ?? "?"}${st.stage_detail ? `(${String(st.stage_detail).slice(0, 40)})` : ""} その段から${st.since_stage_ms != null ? Math.round(st.since_stage_ms / 1000) : "?"}秒 ` +
+      `タブ=${st.visibility ?? "?"}（隠れていた合計${st.hidden_ms != null ? Math.round(st.hidden_ms / 1000) : "?"}秒・フォーカス${st.has_focus == null ? "?" : st.has_focus ? "あり" : "なし"}） ` +
+      `クリックの列 残り${st.queue_len ?? "?"}件${st.queue_next ? `（次: ${st.queue_next}）` : ""}・済み${st.ops_done ?? "?"}件 ` +
+      `タイマーの遅れ 最大${st.late_max != null ? Math.round(st.late_max) : "?"}ms・1秒超${st.late_over_1s ?? "?"}回 モーダル=${st.modal_open ? "開いている" : "閉じている"} 市区のチェック=${st.city_checked ?? "?"}`);
+  }
   return lines;
 }
 

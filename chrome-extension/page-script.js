@@ -129,10 +129,10 @@
   }
   // 基本条件フォームの select/text 入力も1項目ずつ間隔を空けてセットする
   function queueSelVal(name, val) {
-    enqueueHumanAction(function() { setSelVal(name, val); }, 80, 200);
+    enqueueHumanAction(function() { setSelVal(name, val); }, 80, 200, 'sel:' + name + '=' + val);
   }
   function queueTxtVal(name, val) {
-    enqueueHumanAction(function() { setTxtVal(name, val); }, 80, 200);
+    enqueueHumanAction(function() { setTxtVal(name, val); }, 80, 200, 'txt:' + name + '=' + val);
   }
 
   function getDirectText(el) {
@@ -171,24 +171,35 @@
   function _clickIfUnchecked(el) { if (!el.checked) _clickEl(el); }
   var _clickQueue = [];
   var _clickQueueTimer = null;
+  // 2026-09-27 v2.5.31: 点検の記録（ブレインの時だけ）に操作ごとの時刻を残すため、列の1件ごとに名前（label）を持つ
+  function _opLabel(el) {
+    try {
+      if (!el) return 'action';
+      var n = el.getAttribute && el.getAttribute('name');
+      if (n) return (n + ':' + String(el.value || '')).slice(0, 40);
+      return ('click:' + String(el.textContent || '').replace(/\s+/g, '')).slice(0, 40);
+    } catch (e) { return 'click'; }
+  }
   function enqueueHumanClick(el, clickFn, minGap, maxGap) {
     if (!el || el.__axPending) return false;
     el.__axPending = true;
-    _clickQueue.push({ el: el, fn: clickFn || _clickEl, gap: humanRand(minGap || 80, maxGap || 200) });
+    _clickQueue.push({ el: el, fn: clickFn || _clickEl, gap: humanRand(minGap || 80, maxGap || 200), label: _opLabel(el) });
     _scheduleClickDrain();
     return true;
   }
   // 要素に紐づかない汎用アクション（select/text入力・モーダル閉じ等）もキューで直列化
-  function enqueueHumanAction(fn, minGap, maxGap) {
-    _clickQueue.push({ el: null, fn: fn, gap: humanRand(minGap || 80, maxGap || 200) });
+  function enqueueHumanAction(fn, minGap, maxGap, label) {
+    _clickQueue.push({ el: null, fn: fn, gap: humanRand(minGap || 80, maxGap || 200), label: label || 'action' });
     _scheduleClickDrain();
   }
   function _scheduleClickDrain() {
     if (_clickQueueTimer || !_clickQueue.length) return;
     var item = _clickQueue.shift();
     var hesitate = (Math.random() < 0.08) ? humanRand(300, 700) : 0; // 低確率の長め「迷い」ポーズ
+    var _planned = item.gap + hesitate, _setAt = Date.now();
     _clickQueueTimer = setTimeout(function() {
       _clickQueueTimer = null;
+      _auditOp(item.label, _planned, Date.now() - _setAt);
       try {
         if (item.el) item.fn(item.el);
         else item.fn();
@@ -333,14 +344,67 @@
   // station_id[]・route_id[]・city_code[]・town_code[]）だけ。見つからない欄は入れない（点検側は比べない）
   var _fillRunId = null;
   var _audit = null;
+  // 2026-09-27 v2.5.31 竹内「操作ごとの待ち時間を本物の検索の記録で測る」「広げての回が条件を入れ終わる前に85秒の見張りで止まった（点検23）」:
+  //   ・段（steps）は 20 → 60 件まで（リセット・モーダルの各段・検索を押した時刻・タブが見えていたかも足した）
+  //   ・操作の列（ops）: クリックの列の1件ごとに {t: 入力を始めてからの ms, k: 何を, p: 予定の間 ms, w: 実際の間 ms}（最大80件）。
+  //     w − p が大きい＝タイマーが遅れた（タブが隠れている時の Chrome のタイマーの間引き等）。
+  //   ・見張り（85秒）で止まった時は stall に「どの段で・列の残り・タブが見えていたか・遅れの最大」を残す
+  //     （その時の読み戻しは stall.form に入れる＝入れ終わっていない値なので点検の比べ（form）には使わない）
+  var _fillStartedAt = 0;
+  var _hiddenSince = null, _hiddenMs = 0;
   function _auditReset(runId) {
     _fillRunId = runId || null;
-    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [] } : null;
+    _fillStartedAt = Date.now();
+    _hiddenMs = 0;
+    _hiddenSince = (document.visibilityState === 'hidden') ? Date.now() : null;
+    _audit = _fillRunId ? { v: 1, site: 'realpro', search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [], ops: [], late_max: 0, late_over_1s: 0, stall: null } : null;
   }
   function _auditStepP(k, d) {
     if (!_audit) return;
     _audit.steps.push({ at: Date.now(), k: String(k).slice(0, 30), d: d == null ? null : String(d).slice(0, 120) });
-    if (_audit.steps.length > 20) _audit.steps.shift();
+    if (_audit.steps.length > 60) _audit.steps.shift();
+  }
+  function _auditOp(label, planned, waited) {
+    if (!_audit || !_audit.ops) return;
+    var late = waited - planned;
+    if (late > _audit.late_max) _audit.late_max = late;
+    if (late > 1000) _audit.late_over_1s++;
+    _audit.ops.push({ t: Date.now() - _fillStartedAt, k: String(label || '').slice(0, 40), p: planned, w: waited });
+    if (_audit.ops.length > 80) _audit.ops.shift();
+  }
+  try {
+    document.addEventListener('visibilitychange', function () {
+      var hidden = document.visibilityState === 'hidden';
+      if (hidden && _hiddenSince == null) _hiddenSince = Date.now();
+      if (!hidden && _hiddenSince != null) { _hiddenMs += Date.now() - _hiddenSince; _hiddenSince = null; }
+      if (window._axFillRunning) _auditStepP('vis', document.visibilityState);
+    });
+  } catch (e) { /* 記録だけ */ }
+  function _auditStall() {
+    if (!_audit) return;
+    try {
+      var last = _audit.steps.length ? _audit.steps[_audit.steps.length - 1] : null;
+      var hiddenNow = _hiddenSince != null ? Date.now() - _hiddenSince : 0;
+      var closeEl = document.querySelector('div.this_window_close');
+      _audit.stall = {
+        stage: last ? last.k : 'none',
+        stage_detail: last ? last.d : null,
+        since_stage_ms: last ? Date.now() - last.at : null,
+        elapsed_ms: Date.now() - _fillStartedAt,
+        visibility: document.visibilityState,
+        has_focus: (typeof document.hasFocus === 'function') ? document.hasFocus() : null,
+        hidden_ms: _hiddenMs + hiddenNow,
+        queue_len: _clickQueue.length,
+        queue_busy: isClickQueueBusy(),
+        queue_next: _clickQueue.length ? _clickQueue[0].label : null,
+        ops_done: _audit.ops ? _audit.ops.length : 0,
+        late_max: _audit.late_max,
+        late_over_1s: _audit.late_over_1s,
+        modal_open: !!(closeEl && isVisible(closeEl)),
+        city_checked: document.querySelectorAll('input[name="city_code[]"]:checked').length,
+        form: _readRealproForm(),
+      };
+    } catch (e) { _audit.stall = { stage: 'stall_read_error', error: String((e && e.message) || e).slice(0, 100) }; }
   }
   function _visibleTexts(sel, n) {
     try {
@@ -376,13 +440,16 @@
   function _auditPack() {
     if (!_audit) return null;
     try {
+      delete _audit._searchWaitMarked;
       var a = _audit;
       if (JSON.stringify(a).length > 8000) {
         a = JSON.parse(JSON.stringify(a));
         ['stations_missing', 'lines_missing', 'click_fails'].forEach(function (k) { a[k] = (a[k] || []).slice(0, 6).map(function (m) { if (m && m.sample) m.sample = m.sample.slice(0, 3); return m; }); });
         if (a.form) ['stations', 'lines', 'wards', 'layouts'].forEach(function (k) { if (a.form[k]) a.form[k] = a.form[k].slice(0, 20); });
+        if (a.stall && a.stall.form) ['stations', 'lines', 'wards', 'layouts'].forEach(function (k) { if (a.stall.form[k]) a.stall.form[k] = a.stall.form[k].slice(0, 10); });
         a.stations_ok = (a.stations_ok || []).slice(0, 20);
-        a.steps = (a.steps || []).slice(-8);
+        a.ops = (a.ops || []).slice(-30);
+        a.steps = (a.steps || []).slice(-30);
         a.truncated = true;
       }
       return a;
@@ -485,7 +552,11 @@
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
   function clickSearch() {
     // クリックキュー消化中は検索しない（条件クリックが全て反映される前の検索送信を防止）
-    if (isClickQueueBusy()) { setTimeout(clickSearch, _pd(200)); return; }
+    if (isClickQueueBusy()) {
+      if (_audit && !_audit._searchWaitMarked) { _audit._searchWaitMarked = true; _auditStepP('search_wait', 'queue=' + _clickQueue.length); }
+      setTimeout(clickSearch, _pd(200)); return;
+    }
+    if (_audit) { delete _audit._searchWaitMarked; _auditStepP('search', null); }
     // 優先: div.go_search（リアプロのメイン検索ボタン）
     var goDivs = Array.prototype.slice.call(
       document.querySelectorAll('div.go_search, div.go_search_submit')
@@ -806,12 +877,14 @@
       // 条件入力が未完了のまま clickSearch すると全件検索→LINE誤送信になるため検索しない。
       // error付きdoneでbackground.jsがスクレイプを中止するので前回結果の誤スクレイプも起きない。
       console.warn('[AX] フェイルセーフ: 85秒経過 → 検索せず fill-done(error) 送信');
+      _auditStall();
       notifyDone('watchdog-timeout: 85秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
     }, 85000);
 
     // 検索の点検: popup が載せた run_id（ブレインの時だけ）。無ければ記録しない
     _auditReset(cond && cond._audit_run_id);
     _auditStepP('fill_start', cond && cond.area_mode);
+    _auditStepP('vis', document.visibilityState);
     if (!cond) { notifyDone(); return; }
 
     // 連続検索対応: モーダルを閉じる → フォームを手動クリア → 条件入力 の順で実行
@@ -928,6 +1001,7 @@
           console.error("[AX] _doReset クリア中の例外（続行）", err);
           if (_audit) _audit.reset_fail = 'フォームのクリアで例外: ' + String((err && err.message) || err).slice(0, 120);
         }
+        _auditStepP('reset', null);
         setTimeout(callback, 240 + Math.floor(Math.random() * 150)); // 短い安定待機のみ（ランダム）
         }); // whenClickQueueIdle end
       }, closeDelay);
@@ -1240,7 +1314,7 @@
         prefCb.checked = true;
         prefCb.dispatchEvent(new Event("change", {bubbles:true}));
       }
-      setTimeout(function() { setCheckboxes("city_code[]", cond.city_codes); }, _hd(150));
+      setTimeout(function() { _auditStepP('cities', (cond.city_codes || []).length); setCheckboxes("city_code[]", cond.city_codes); }, _hd(150));
     }
 
     // 沿線・駅なし（locationMode: area または none）
@@ -1388,6 +1462,7 @@
           function() { return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']); },
           function() {
             console.log('[AX] STEP1完了: 所在地絞り込みクリック済');
+            _auditStepP('modal', 'area');
             // STEP2+3を統合: 市区郡直接クリックと大阪府クリックを同時にポーリング
             // ケースA: モーダルが市区郡ページ表示中 → 大阪府をスキップして市区郡を直接クリック
             // ケースB: モーダルが都道府県ページ表示中 → 大阪府をクリック
@@ -1395,6 +1470,7 @@
 
             function doAfterWard() {
               console.log('[AX] STEP3完了: 市区郡クリック済 → next_step_button2 確認');
+              _auditStepP('ward', null);
               if (hasDetailArea) {
                 // STEP3後確認: div.next_step_button2 が見えることを確認
                 // 見えない場合 = 市区郡がトグルで解除された → 再クリックして再選択
@@ -1402,6 +1478,7 @@
                   waitForClick(clickNextStepBtn,
                     function() {
                       console.log('[AX] STEP4完了: 詳細な地域へ進むクリック済 → 町字待機 detailArea:', detailAreaName);
+                      _auditStepP('next_step', null);
                       // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
                       waitForClick(
                         function() {
@@ -1417,8 +1494,10 @@
                         },
                         function() {
                           console.log('[AX] STEP5完了: 町字クリック済 → 閉じる待機');
+                          _auditStepP('town', null);
                           waitForClick(closeAreaModal, function() {
                             console.log('[AX] STEP6完了: モーダル閉じた → 検索');
+                            _auditStepP('modal_close', null);
                             setTimeout(clickSearch, 650 + Math.floor(Math.random() * 450));
                           },
                           20, 500, 500 + Math.floor(Math.random() * 350),

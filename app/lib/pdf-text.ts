@@ -16,6 +16,11 @@ export type PdfTextResult = {
   pages: number;
   /** 文字層があったか（文字数が少なければ false＝スキャン画像の可能性） */
   hasText: boolean;
+  /**
+   * ページごとの文字（読んだページだけ・1ページ目から）。2026-09-27 竹内「奇数ページは弊社帯・偶数ページは元付業者」:
+   *   元付から読む物（AD）を偶数ページに限るために持つ。text は今まで通り全ページをつないだ物
+   */
+  pageTexts?: string[];
   ms: number;
 };
 
@@ -52,16 +57,19 @@ export async function extractPdfText(input: string | Uint8Array, opts?: { maxPag
     const task = pdfjs.getDocument({ data: bytes, disableWorker: true, isEvalSupported: false, useSystemFonts: false, ...pdfjsAssetParams() } as Parameters<typeof pdfjs.getDocument>[0]);
     const pdf = await task.promise;
     const parts: string[] = [];
+    const pageTexts: string[] = [];
     const n = Math.min(pdf.numPages, maxPages);
     for (let p = 1; p <= n; p++) {
       const page = await pdf.getPage(p);
       const tc = await page.getTextContent();
-      parts.push(...textItemsToLines(tc.items as Array<{ str?: string; transform?: number[] }>));
+      const lines = textItemsToLines(tc.items as Array<{ str?: string; transform?: number[] }>);
+      parts.push(...lines);
+      pageTexts.push(lines.join("\n").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim().slice(0, maxChars));
       if (parts.join("\n").length >= maxChars) break;
     }
     const text = parts.join("\n").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim().slice(0, maxChars);
     try { await pdf.cleanup(); await task.destroy(); } catch { /* 片付けの失敗は無視 */ }
-    return { text, pages: pdf.numPages, hasText: text.length >= MIN_TEXT_CHARS, ms: Date.now() - started };
+    return { text, pages: pdf.numPages, hasText: text.length >= MIN_TEXT_CHARS, ms: Date.now() - started, pageTexts };
   } catch (e) {
     console.warn("[pdf-text] 取り出せない:", e instanceof Error ? e.message : String(e));
     return { text: "", pages: 0, hasText: false, ms: Date.now() - started };

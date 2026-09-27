@@ -103,7 +103,7 @@ function ok(name, c) { eq(name, !!c, true); }
     const fin = posts[1];
     eq("finished に入った値と結果", [fin.filled.search_clicked, fin.filled.stations_missing[0].name, fin.result.zero_reason], [true, "東三国", "no_rows_25s"]);
     ok("page-script の段は steps に移る", fin.steps.some((s) => s.k === "page:fill_start") && !("steps" in fin.filled));
-    ok("steps は40件まで", fin.steps.length <= 40);
+    ok("steps は120件まで", fin.steps.length <= 120);
     eq("閉じた回はもう探せない", T.findOpen("c1", "realpro"), null);
     const run2 = T.begin({ site: "itandi", customer_id: "c2", trigger: "single", run_id: "sa_given_id_1", post_started: false });
     eq("run_id を渡せばそれを使う", run2.run_id, "sa_given_id_1");
@@ -115,9 +115,9 @@ function ok(name, c) { eq(name, !!c, true); }
     const r = await T.finish("sa_unknown_1", {});
     eq("知らない回は送らない", [r.ok, posts.length], [false, 3]);
     const run3 = T.begin({ site: "reins", trigger: "bulk_manual" });
-    for (let i = 0; i < 60; i++) T.step(run3.run_id, "s" + i, null);
+    for (let i = 0; i < 150; i++) T.step(run3.run_id, "s" + i, null);
     await T.finish(run3.run_id, {});
-    ok("段が多くても40件に切る", posts[posts.length - 1].phase === "finished" && posts[posts.length - 1].steps.length === 40);
+    ok("段が多くても120件に切る", posts[posts.length - 1].phase === "finished" && posts[posts.length - 1].steps.length === 120);
   }
 
   console.log("\n■ 読み込みの配線（静かに外れないように）");

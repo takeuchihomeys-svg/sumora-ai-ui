@@ -3430,6 +3430,52 @@ async function _awaitFreshPreload(maxMs) {
   ]);
 }
 
+// ── ウェブアプリの自動入力（pendingPopupCmd）の2経路（開いた時／開いている時）を1つに（v2.5.31）──
+// 2026-09-27 v2.5.30 は background の切替・underbar の中継の2経路だけ「読み直しを待ってから押す」にし、
+//   こちらの2経路（リアプロのページ更新の予備・scrape-compare の予備）は 0.8〜1.2秒後に古い欄のまま押す競争が残っていた。
+//   → 同じ考え方: 開く → 登録の条件の読み直し（_freshPreloadPromise）を待つ（最長6秒・読めなければ今まで通り）
+//     → 地域/駅の軸を押す（読み直しの作り直しで軸が戻らないよう待った後）→ 人の間 → 押す。
+//   押す時の軸は待った後の currentAreaMode で固定する（API の非同期の補正で変わらないように・旧と同じ）。
+async function _runPendingPopupCmd(cmd, via) {
+  var c = (allCustomers || []).find(function(x) {
+    return String(x.id) === String(cmd.customerId);
+  });
+  if (!c) return;
+  openSiteView(c);
+  if (!cmd.site) return;
+  // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
+  if (cmd.is_wide) {
+    var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
+    if (wBtnEl) wBtnEl.click();
+  } else {
+    var pBtnEl = document.querySelector('.mode-btn[data-mode="pinpoint"]');
+    if (pBtnEl) pBtnEl.click();
+  }
+  // 自動バッチ: 一時調整履歴の自動復元をしない（検索条件を確定的に保つ）。読み直しの後の作り直しも同じ印を守る（_supAtOpen_*）
+  _adjRestoreSuppressed = true;
+  try { openInstructions(cmd.site); } finally { _adjRestoreSuppressed = false; }
+  // v2.5.31: 登録の条件の読み直しが欄に入ってから押す（間に合わないと古い条件で検索していた）
+  if (!(await _awaitFreshPreload(6000))) console.warn("[popup] 登録の条件を読み直せないまま自動入力します（手元の値・" + via + "）");
+  // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
+  if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
+    var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
+    if (btnEl) btnEl.click();
+  }
+  // Step ④ auto-click: autofill-btn をユーザー操作に近い遅延で自動クリックする
+  var lockedAreaMode = currentAreaMode; // 顧客切替・API非同期コールバックによる上書きを防ぐ
+  await new Promise(function(r) { setTimeout(r, 800 + Math.floor(Math.random() * 400)); }); // 800-1200ms
+  var aBtn = document.getElementById('autofill-btn');
+  if (aBtn && aBtn.style.display !== 'none') {
+    aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
+    aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
+    aBtn.dataset.area_mode_locked = lockedAreaMode;
+    aBtn.click();
+    delete aBtn.dataset.automated;
+    delete aBtn.dataset.auto_send_all;
+    delete aBtn.dataset.area_mode_locked;
+  }
+}
+
 // 一時調整の上書きモードを判定: "ward" | "station" | null（null=顧客デフォルトで検索）
 function computeTempAdjOverride() {
   const w = document.getElementById("adj-area-ward")?.value.trim()    || "";
@@ -5280,47 +5326,7 @@ document.addEventListener("DOMContentLoaded", () => {
       chrome.storage.session.remove("pendingPopupCmd");
       // openPopup() 失敗時に background.js が立てた赤バッジを消す（スタッフモード中はバッジ「手動」を維持）
       _setModeBadge();
-      var c = allCustomers.find(function(x) {
-        return String(x.id) === String(cmd.customerId);
-      });
-      if (!c) return;
-      openSiteView(c);
-      if (cmd.site) {
-        // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
-        if (cmd.is_wide) {
-          var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
-          if (wBtnEl) wBtnEl.click();
-        } else {
-          var pBtnEl = document.querySelector('.mode-btn[data-mode="pinpoint"]');
-          if (pBtnEl) pBtnEl.click();
-        }
-        // 自動バッチ: 一時調整履歴の自動復元をしない（検索条件を確定的に保つ）
-        _adjRestoreSuppressed = true;
-        openInstructions(cmd.site);
-        _adjRestoreSuppressed = false;
-        // Step ④a: setupAreaModeSelector の自動判定をウェブアプリのボタン押下で上書きする
-        // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
-        if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
-          var _modeBtn = (cmd.areaMode === 'station') ? 'btn-mode-station' : 'btn-mode-ward';
-          var btnEl = document.getElementById(_modeBtn);
-          if (btnEl) btnEl.click();
-        }
-        // Step ④ auto-click: autofill-btnをユーザー操作に近い遅延で自動クリックする
-        var _lockedAreaMode = currentAreaMode; // 顧客切替・API非同期コールバックによる上書きを防ぐ
-        var _autoClickDelay = 800 + Math.floor(Math.random() * 400); // 800-1200ms
-        setTimeout(function() {
-          var aBtn = document.getElementById('autofill-btn');
-          if (aBtn && aBtn.style.display !== 'none') {
-            aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
-            aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
-            aBtn.dataset.area_mode_locked = _lockedAreaMode;
-            aBtn.click();
-            delete aBtn.dataset.automated;
-            delete aBtn.dataset.auto_send_all;
-            delete aBtn.dataset.area_mode_locked;
-          }
-        }, _autoClickDelay);
-      }
+      _runPendingPopupCmd(cmd, "load");
     });
   });
   // popup already open のとき DOMContentLoaded は再発火しないため
@@ -5332,46 +5338,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!allCustomers || allCustomers.length === 0) return;
     chrome.storage.session.remove("pendingPopupCmd");
     _setModeBadge();
-    var c = allCustomers.find(function(x) {
-      return String(x.id) === String(cmd.customerId);
-    });
-    if (!c) return;
-    openSiteView(c);
-    if (cmd.site) {
-      // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
-      if (cmd.is_wide) {
-        var wBtnEl2 = document.querySelector('.mode-btn[data-mode="wide"]');
-        if (wBtnEl2) wBtnEl2.click();
-      } else {
-        var pBtnEl2 = document.querySelector('.mode-btn[data-mode="pinpoint"]');
-        if (pBtnEl2) pBtnEl2.click();
-      }
-      // 自動バッチ: 一時調整履歴の自動復元をしない（検索条件を確定的に保つ）
-      _adjRestoreSuppressed = true;
-      openInstructions(cmd.site);
-      _adjRestoreSuppressed = false;
-      // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
-      if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
-        var _modeBtn2 = (cmd.areaMode === 'station') ? 'btn-mode-station' : 'btn-mode-ward';
-        var btnEl2 = document.getElementById(_modeBtn2);
-        if (btnEl2) btnEl2.click();
-      }
-      // Step ④ auto-click (onChanged path)
-      var _lockedAreaMode2 = currentAreaMode; // 顧客切替・API非同期コールバックによる上書きを防ぐ
-      var _autoClickDelay2 = 800 + Math.floor(Math.random() * 400);
-      setTimeout(function() {
-        var aBtn = document.getElementById('autofill-btn');
-        if (aBtn && aBtn.style.display !== 'none') {
-          aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
-          aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
-          aBtn.dataset.area_mode_locked = _lockedAreaMode2;
-          aBtn.click();
-          delete aBtn.dataset.automated;
-          delete aBtn.dataset.auto_send_all;
-          delete aBtn.dataset.area_mode_locked;
-        }
-      }, _autoClickDelay2);
-    }
+    _runPendingPopupCmd(cmd, "changed");
   });
 
   // 初期状態で「紐付け済み」ボタンをONに見せる

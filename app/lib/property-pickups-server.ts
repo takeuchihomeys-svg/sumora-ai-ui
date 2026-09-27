@@ -8,7 +8,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
-import { buildPickupRows, parseAdFromText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
+import { buildPickupRows, parseAdFromPages, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
 import { judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
@@ -143,6 +143,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const summary = input.summaries[i];
       const b64 = input.pdfBase64List[i] ?? null;
       let pdfText: string | null = null;
+      let pdfPageTexts: string[] | null = null;
       let pdfBlobUrl: string | null = null;
       let pageImageUrl: string | null = null;
       let agentImageUrl: string | null = null;
@@ -155,6 +156,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
           renderPdfPageToPng(b64, { page: AGENT_PAGE, scale: 1.5 }),
         ]);
         pdfText = t.text || null;
+        pdfPageTexts = t.pageTexts ?? null;
         // 2026-09-24 竹内「文字が反映されていないバグ」: 文字層がある資料なのに描いた文字が 0 ＝ 文字抜けの画像（cMap が渡っていない等）。
         //   落ちずに「白い表」になるだけで誰も気付けなかったので、数えて警告とログに出す
         if (t.hasText && pngCustomer && pngCustomer.textDraws === 0) {
@@ -175,7 +177,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       // 判定の材料: 表の文字（説明文）が正。AD だけは元付の資料（PDF の文字層）にしか無い事が多いので、無ければそこから補う
       const facts = parsePropertyFacts(summary);
       if (facts.adMonths == null && facts.adYen == null && pdfText) {
-        const ad = parseAdFromText(pdfText);
+        // 2026-09-27: AD は元付業者のページ（偶数）から（奇数＝弊社帯の文字で当てない）
+        const ad = parseAdFromPages(pdfPageTexts, pdfText);
         if (ad.adMonths != null) facts.adMonths = ad.adMonths;
         else if (ad.adYen != null) facts.adYen = ad.adYen;
       }
@@ -200,11 +203,13 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     //   （売上サポに載せないだけ。見積書の割引と結び付ける材料を失わない）。文字層だけ取る（画像・Blob・DeepSeek は使わない）
     //   2026-09-24: 落とした部屋の文字層は設備の補い（同じ建物の別の部屋に「宅配BOX」と書いてある）にも使う → 文字層は PDF がある部屋は全部取る
     const droppedText = new Map<number, string | null>();
+    const droppedPages = new Map<number, string[] | null>();
     await Promise.allSettled(dd.dropped.map(async (d) => {
       const b64 = input.pdfBase64List[d.index] ?? null;
       if (!b64) return;
       const t = await extractPdfText(b64, { maxPages: 2, maxChars: 8000 });
       droppedText.set(d.index, t.text || null);
+      droppedPages.set(d.index, t.pageTexts ?? null);
     }));
 
     // 2026-09-24 竹内「宅配BOX付きなども条件なのに入れていない」「設備欄を見る」「202号室なら2階」:
@@ -246,7 +251,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         const facts = parsePropertyFacts(input.summaries[d.index]);
         const text = droppedText.get(d.index) ?? null;
         if (facts.adMonths == null && facts.adYen == null && text) {
-          const ad = parseAdFromText(text);
+          const ad = parseAdFromPages(droppedPages.get(d.index) ?? null, text);
           if (ad.adMonths != null) facts.adMonths = ad.adMonths;
           else if (ad.adYen != null) facts.adYen = ad.adYen;
         }

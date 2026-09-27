@@ -271,11 +271,26 @@ export const SUMMARY_NO_RE = /^【\s*\d+\s*(?:🌟)?(?:★)?\s*】/u;
 export function parseSummaryHead(summary: string): { propertyName: string; roomNo: string } | null {
   const firstLine = String(summary ?? "").split("\n")[0].replace(SUMMARY_NO_RE, "").trim();
   if (!firstLine) return null;
-  const roomMatch = firstLine.match(/[\s　]+(\d{1,4})(?:号室?)?$/);
+  // 2026-09-27: 英字付きの号室（「005B号室」）も号室として分ける（旧は名前に「005B号室」が残り、号室が空だった）。
+  //   英字付きは「号室」が付いている時だけ（名前の末尾の「5F」「2nd」等を号室と取り違えない）
+  const roomMatch = firstLine.match(/[\s　]+(\d{1,4})(?:号室?)?$/)
+    ?? firstLine.match(/[\s　]+((?=[0-9A-Za-z０-９Ａ-Ｚａ-ｚ\-－]*[0-9０-９])[0-9A-Za-z０-９Ａ-Ｚａ-ｚ\-－]{1,8})\s*号室$/);
   const roomNo = roomMatch ? normalizeRoomNo(roomMatch[1]) : "";
   const propertyName = roomMatch ? firstLine.slice(0, roomMatch.index ?? 0).trim() : firstLine;
   if (!propertyName) return null;
   return { propertyName, roomNo };
+}
+
+/**
+ * 説明文の1行目の号室を**資料の文字のまま**返す（「0206」「005B」）。無ければ null。
+ * 2026-09-27 竹内「物件の資料の中の文字変えなくても…そのまま使う」: 売上サポ（property_pickups.room_no）・AIX に渡す号室は先頭の 0・英字を落とさない。
+ *   照合（送付済みか）は今まで通り parseSummaryHead の roomNo（normalizeRoomNo で揃えた物）を使う
+ */
+export function summaryHeadRoomVerbatim(summary: string): string | null {
+  const firstLine = String(summary ?? "").split("\n")[0].replace(SUMMARY_NO_RE, "").trim();
+  const m = firstLine.match(/[\s　]+(\d{1,4})(?:号室?)?$/)
+    ?? firstLine.match(/[\s　]+((?=[0-9A-Za-z０-９Ａ-Ｚａ-ｚ\-－]*[0-9０-９])[0-9A-Za-z０-９Ａ-Ｚａ-ｚ\-－]{1,8})\s*号室$/);
+  return m ? m[1] : null;
 }
 
 /** スタッフに見せる一文（LINE の末尾に添える）。外した物が無ければ空文字 */

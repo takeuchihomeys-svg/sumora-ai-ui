@@ -214,7 +214,7 @@ function rest() {
   ok("並び替えの前に人の間（_hd(900)＝0.72〜1.35秒）を置く", iWait > 0 && iNav > 0);
   ok("状態（sortState）は待つ前に書く（待つ間のリロードでも再開できる）", iSet > 0 && iSet < iWait);
   ok("待つ前に起動済みの印（Case B が並び替え前のページを送らない）", iFlag > iSet && iFlag < iWait);
-  ok("待つ間に止められたら遷移しない（getAutoSendState を見る）", /if \(!getAutoSendState\(\)\)[^\n]*return;[\s\S]{0,40}location\.href = _sortHref/.test(doStart));
+  ok("待つ間に止められたら遷移しない（getAutoSendState を見る）", /if \(!getAutoSendState\(\)\)[^\n]*return;[\s\S]{0,80}location\.href = _sortHref/.test(doStart)); // v2.5.31: 間に「並び替えへ進んだ時刻」の記録（_tmark）が1行入る
   ok("旧: すぐ遷移（location.href = adLink.href）が残っていない", !/location\.href = adLink\.href/.test(bulk));
   ok("検索の結果 → 自動送信の開始（固定 200ms）がばらつく", (bulk.match(/setTimeout\(autoSendAllPages, _hd\(200\)\)/g) || []).length === 2);
   ok("次のページへ（固定 800ms）がばらつく", (bulk.match(/tryNext\((state|_resumeState)\); \}, _hd\(800\)\)/g) || []).length === 2);

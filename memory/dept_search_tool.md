@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-09-27 v2.5.31 残りの課題（古い条件の競争の残り・点検の食い違い・操作ごとの時刻・止まった段・資料の号室）（**拡張の再読み込み必須**）
+竹内「2000回試すなど危ないやり方なのでやらない（リアプロの運営）もっと人間が試した形で試す／物件の資料の中の文字変えなくても…1枚目や3枚目奇数は弊社、2枚目や4枚目偶数は元付業者と交互／文字抜かなくてそのまま使う／残っている課題も改善する」
+- **① ウェブアプリの自動入力（pendingPopupCmd）の2経路も読み直しを待つ（popup.js）**: 開いた時（loadCustomers の後）と開いている時（storage.onChanged）の2か所を `_runPendingPopupCmd(cmd, via)` の1つにし、2.5.30 と同じ「開く → `_awaitFreshPreload(6000)` → 地域/駅の軸 → 軸を固定（currentAreaMode）→ 人の間（0.8〜1.2秒）→ 押す」。開く間は一時調整を復元しない（try/finally）。旧は 0.8〜1.2秒の setTimeout で古い欄のまま押していた
+- **② 点検が「登録の条件 ↔ 入った値」を見る（サーバー・app/lib/search-condition-drift.ts 純関数）**: 区の欠け（bad）・希望にない区の混ざり（warn・希望エリアが全部区の書き方の時だけ）・間取りの欠け（bad）／余分（warn・「以上」「〜」は言わない）・家賃が低い（bad）／高い（warn）・築年・徒歩の狭い（bad）／広い（warn）・こだわり（ペット相談・敷金礼金なしが検索に入っていない＝warn。バストイレ別・オートロック等は検索で絞らないので言わない）。読み戻しが無い欄は入れようとした値で比べる。広げての決まり（家賃+5千/+1万・築+5年・難波の3区・同じ部屋数の DK）とリアプロの選択肢の切り上げは許す。メモの上書きで変えた項目は比べない。**3項目以上ずれたら CONDITION_STALE（bad）「古い条件で検索したおそれ」**。入力の失敗（入れようとした値は登録どおり・画面だけ違う）は今まで通り RENT_MISMATCH／FLOOR_PLAN_DROPPED が言う（2回言わない）
+  - 点検 22 を今の決まりで付け直すと: CONDITION_STALE（4項目）＋区の混ざり（西区・大正区）・1LDK の欠け・家賃 8万→7.5万・築 20→30年。点検 23（広げて）は食い違いなし（見張りの時間切れだけ）
+  - DeepSeek の見立ての前置きに札の説明を足した（search-audit-v3）
+- **③ 操作ごとの時刻を本物の検索の記録に残す**（関数を大量に呼んで分布を取らない）:
+  - page-script: 段（steps）20 → 60件・足した段 `vis`（タブが見えているか）`reset` `cities` `modal` `ward` `next_step` `town` `modal_close` `search_wait` `search`。クリックの列の1件ごとに `filled.ops` = {t: 入力を始めてからの ms, k: 何を（`city_code[]:27111`・`sel:rental_cost2=80000`）, p: 予定の間, w: 実際の間}（80件まで）・`late_max`・`late_over_1s`
+  - bulk-dl: sessionStorage `axlx_audit_timings` に `armed` `results` `start` `sort_wait`（予定の ms）`sort_go` `page` `send`（束 n/N・件数）`sent` `send_err` `next` を貯め、axlx-batch-customer-done の audit.timings で渡す → search-audit.js が段に `dl:*` で並べる（MAX_STEPS 40 → 120・サーバーの steps も 120）
+  - 読む道具: `npx tsx --env-file=.env.local scripts/search-audit-timeline.ts --id=N`（または `--customer=<id>` で最新）＝登録 ↔ 入れようとした ↔ 入った の表・札・段の時刻と間・人の間を置く所の実際の間・クリックの列（app/lib/search-audit-timing.ts 純関数）
+  - 分かった事: リアプロの資料は merge-pdfs（サーバー）が1束10件を**並列**で取り、束と束の間は置いていない（束の往復がそのまま間）。拡張の待ちではないので今回は変えていない（要相談）
+- **④ 資料の号室を資料の文字のまま**（listing-text.ts・sent-property-filter.ts・property-pickups.ts・sheet-facts.ts）: 説明文に書く号室は資料の文字（「0206」「005B」「3A」）。旧は「0206」→「206」・「005B」は落ちて property_pickups.room_no が null・名前に「… 005B号室」が残った。**照合（送付済み・同じ部屋）は今まで通り 0 を外した鍵**（parseSummaryHead の roomNo・normalizeRoomNo／roomKey）。売上サポ・AIX に渡す号室は `summaryHeadRoomVerbatim`。sheet-facts の部屋の鍵も英字を落とさない（005A と 005B を同じ部屋にしない）
+  - 保存済みの資料 103件（Vercel Blob の写し・サイトには触れない）で確かめた: 号室が変わるのは 18件で全部「先頭の 0 を残す／英字付きを落とさない」向き（誤りなし）
+  - **奇数ページ＝弊社帯・偶数ページ＝元付**: 物件ごとの PDF は「1＝弊社（お客様に送る画像）・2＝元付（AD・条件を読む画像）」で、読む所はこの前提どおり（CUSTOMER_PAGE/AGENT_PAGE）。ただ文字層の AD だけは1・2ページをつないだ文字の最初の一致だった → `extractPdfText` がページごとの文字（pageTexts）も返し、**AD は偶数ページから**（`parseAdFromPages`・1ページしか無い資料は全体から）。保存済み 103件で AD の結果は全件同じ（今は変わらない・弊社帯の字で当てない守り）
+  - 資料の文字の書き換え（間取りの S の脱落・名前の NFKC）は説明文の補いに残っている（下の「まだの事」）
+- **⑤ 広げての回が見張り（85秒）で止まった件（点検 23）**: コードから一番の候補は **Chrome のタイマーの間引き**。広げての回は最初の回の 5分12秒後（01:43:55 → 01:49:07）で、一括の検索はリアプロのタブを前に出さない（_batchAutofill は active:false）。隠れて5分を超えたタブでは、続けて積む setTimeout（クリックの列は1件ずつ次を積む）が1分に1回まで間引かれる。記録では入力の始め〜地域の判定（1.8秒）までは速く、その後の列（区4つ・家賃・築年・間取り…）で止まっている＝形が合う。次に止まった時は `filled.stall`（止まった段・列の残りと次の操作・タブが hidden か・隠れていた合計・タイマーの遅れの最大・モーダル・市区のチェック数・その時の読み戻し）と ops の w−p で確かめられる。直し方（タブを前に出す等）は記録を見てから決める（未対応）
+- テスト: `tests/chrome-extension/audit-timing.test.js`（72・pendingPopupCmd の順を動かして確認・ops/stall/timings の形）・fresh-before-autoclick（受け口 3か所に）・human-wait（並び替えの前の窓 80字に）・search-audit（段 120）・`app/lib/__tests__/search-condition-drift.test.ts`（43・点検 22/23 の実物）・search-audit-timing（12）・listing-text（35・005B/0206/3A/AD の偶数ページ）・既存の拡張テスト全部・app の関連テスト・tsc 0
+- **竹内さんが確かめること（2.5.31 に再読み込み後）**: ①アプリで YUMA のテスト顧客の条件を変えて一括検索を1回 → `scripts/search-audit-timeline.ts --customer=509cd061-60cc-49a9-8c5a-4f356c4a5f88` で「入れた値＝新しい条件」（札なし）と段・列の時刻がばらついているか ②売上サポのカードの号室が資料どおり（0206・005B）
+- **まだの事**: 本物の検索1回（2.5.31 の再読み込み待ち）／タイマーの間引きの直し（記録を見てから）／merge-pdfs の資料の並列取得と束の間／説明文の補いの間取りの正規化（1SLDK→1LDK・ワンルーム→1R）と名前の NFKC（Ⅵ→VI）は資料の文字の書き換え＝AIX 側と相談
+
 ## 2026-09-27 v2.5.30 YUMA の実検索とピックアップ→AIX 連動テストで見つけた3つを直した（**拡張の再読み込み必須**）
 竹内「AIXサポートからピックアップした物件が物件ピックアップ／物件オススメで連動されるか YUMA でテスト・検索条件を変えてよい・待ち時間が不規則か・資料の文字を抜けずに」
 - **変えた条件**（YUMA のテスト顧客 509cd061）: 大正区・西区／1K・1DK／7.5万／築30年／バストイレ別 → **浪速区・天王寺区／1K・1DK・1LDK／8万／築20年／バストイレ別・オートロック**、last_property_sent_at を null（新規の扱い）。元の値は報告に一覧

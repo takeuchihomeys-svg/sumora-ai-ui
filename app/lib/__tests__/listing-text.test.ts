@@ -1,8 +1,9 @@
 // listing-text（資料の文字層で LINE の説明文の抜けを補う純関数）のテスト
 // 実行: npx tsx app/lib/__tests__/listing-text.test.ts
 // 文字層は 2026-09-24 の実物（property_pickups 50 の itandi の PDF・35 のリアプロの PDF）の形。物件の情報だけ（お客様の情報は無い）
-import { parseListingText, fillSummaryFromListing, isPlaceholderName, sameListingName } from "../listing-text";
-import { parseSummaryHead } from "../sent-property-filter";
+import { parseListingText, fillSummaryFromListing, isPlaceholderName, sameListingName, roomKey, roomForSummary } from "../listing-text";
+import { parseSummaryHead, summaryHeadRoomVerbatim } from "../sent-property-filter";
+import { buildPickupRows, parseAdFromPages, agentPagesText } from "../property-pickups";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -81,7 +82,50 @@ const REALPRO_TEXT = [
   // リアプロ（号室・駅が無い説明文）: 号室と駅だけ足し、賃料は変えない
   const rp = fillSummaryFromListing("【3】エステムコート難波Ⅶビヨンド\n78,000円 10,000円\n1K 21.81㎡\nAD 1ヶ月", parseListingText(REALPRO_TEXT));
   const lines = rp.summary.split("\n");
-  t("リアプロ: 号室と駅を足す・賃料の行は1つのまま", lines[0].endsWith(" 404号室") && lines.some((l) => /恵美須町」徒歩5分/.test(l)) && lines.filter((l) => /78,000/.test(l)).length === 1 && rp.conflicts.length === 0, rp);
+  // 2026-09-27 竹内「資料の文字を変えず・抜かず」: 号室は資料の文字のまま（旧は「0404」→「404」）
+  t("リアプロ: 号室（資料の文字のまま 0404）と駅を足す・賃料の行は1つのまま", lines[0].endsWith(" 0404号室") && lines.some((l) => /恵美須町」徒歩5分/.test(l)) && lines.filter((l) => /78,000/.test(l)).length === 1 && rp.conflicts.length === 0, rp);
+  const head = parseSummaryHead(rp.summary);
+  t("送付済みの照合の号室は今まで通り 0 を外した 404（sent_properties の照合は変えない）", head?.roomNo === "404" && head?.propertyName === "エステムコート難波Ⅶビヨンド", head);
+  t("売上サポ・AIX に渡す号室は資料の文字のまま 0404", summaryHeadRoomVerbatim(rp.summary) === "0404");
+}
+
+console.log("── 2026-09-27 号室を資料の文字のまま（実物: property_pickups 618 の「005B」・61 の itandi「3A」・693 の「0206」）");
+{
+  const rp005b = parseListingText(REALPRO_TEXT.replace("号室名 0404（4階部分）", "号室名 005B（地下部分）"));
+  t("資料の号室「005B」: 照合用の roomNo は null・roomLabel は 005B", rp005b.roomNo === null && rp005b.roomLabel === "005B", rp005b);
+  t("説明文に書く号室は 005B", roomForSummary(rp005b) === "005B");
+  const s = fillSummaryFromListing("【2】エステムコート難波Ⅶビヨンド\n78,000円 10,000円\n1K 21.81㎡\nAD 1ヶ月", rp005b);
+  t("★ 旧は号室を落としていた → 1行目に「005B号室」", s.summary.split("\n")[0] === "【2】エステムコート難波Ⅶビヨンド 005B号室" && s.filled.includes("room"), s);
+  const h = parseSummaryHead(s.summary);
+  t("★ 名前に号室が残らない（旧は名前が「… 005B号室」・号室が空）", h?.propertyName === "エステムコート難波Ⅶビヨンド" && h?.roomNo === "005B", h);
+  t("号室（そのまま）= 005B", summaryHeadRoomVerbatim(s.summary) === "005B");
+  const rp0206 = parseListingText(REALPRO_TEXT.replace("号室名 0404（4階部分）", "号室名 0206（2階部分）"));
+  const s2 = fillSummaryFromListing("【1】エステムコート難波Ⅶビヨンド\n78,000円 10,000円\nAD 1ヶ月", rp0206);
+  t("「0206」は先頭の 0 を残す", s2.summary.split("\n")[0].endsWith(" 0206号室"), s2.summary);
+  // itandi の説明文（号室が独立した行）: 英字付き・先頭の 0 も文字のまま1行目へ移す
+  const it = parseListingText(IT_TEXT);
+  const s3 = fillSummaryFromListing("【4】エステムコート新大阪Ⅵエキスプレイス\n67,000円\n3A号室\nAD 1ヶ月", it);
+  t("★ itandi の「3A号室」の行を1行目へ（旧は移さず、1行目に資料の 405 を足して2つになった）", s3.summary.split("\n")[0] === "【4】エステムコート新大阪Ⅵエキスプレイス 3A号室" && !s3.summary.split("\n").slice(1).some((l) => /号室/.test(l)), s3.summary);
+  t("資料（405）と違うので食い違いを返す", s3.conflicts.some((c) => c.startsWith("room:3A")), s3.conflicts);
+  const s4 = fillSummaryFromListing("【5】エステムコート新大阪Ⅵエキスプレイス\n67,000円\n0405号室\nAD 1ヶ月", it);
+  t("「0405号室」の行は文字のまま移し、資料の 405 と同じ部屋（食い違いにしない）", s4.summary.split("\n")[0].endsWith(" 0405号室") && !s4.conflicts.some((c) => c.startsWith("room:")), s4);
+  t("照合の鍵: 0206＝206・005A≠005B・全角も同じ", roomKey("0206") === roomKey("206") && roomKey("005A") !== roomKey("005B") && roomKey("００５Ｂ") === roomKey("005B"));
+  t("名前の末尾の「5F」は号室にしない（号室の字が無い英字付き）", parseSummaryHead("【1】ルクス本町 5F\n5.8万円")?.roomNo === "" && summaryHeadRoomVerbatim("【1】ルクス本町 5F\n5.8万円") === null);
+  // 売上サポの行（property_pickups.room_no）
+  const rows = buildPickupRows({ batchId: "b", propertyCustomerId: null, conversationId: null, customerName: null, site: "realpro" },
+    [{ summary: s.summary, pdfUrl: null, pdfBlobUrl: null, pdfText: null, judgment: null } as never, { summary: s2.summary, pdfUrl: null, pdfBlobUrl: null, pdfText: null, judgment: null } as never]);
+  t("★ property_pickups.room_no は資料の文字のまま（005B・0206）", rows[0].room_no === "005B" && rows[1].room_no === "0206" && rows[0].property_name === "エステムコート難波Ⅶビヨンド", rows.map((r) => [r.property_name, r.room_no]));
+}
+
+console.log("── 2026-09-27 AD は元付業者のページ（偶数）から（奇数＝弊社帯）");
+{
+  const p1 = "物件名 X\n賃料 70,000 円\n弊社の帯 AD 3ヶ月キャンペーン"; // 弊社帯に AD らしい字があっても当てない
+  const p2 = "元付 〇〇不動産\nA D 100%(税込)";
+  t("2ページ: 偶数（元付）の AD 1ヶ月", parseAdFromPages([p1, p2], `${p1}\n${p2}`).adMonths === 1);
+  t("4ページ（2物件分）: 2・4ページだけ", agentPagesText(["a", "b", "c", "d"]) === "b\nd");
+  t("1ページしか無い資料は全体から（itandi 等）", parseAdFromPages(["広告費 1ヶ月"], "広告費 1ヶ月").adMonths === 1);
+  t("ページごとの文字が無い時は全体から（今まで通り）", parseAdFromPages(null, p2).adMonths === 1);
+  t("元付のページに AD が無ければ不明（弊社帯の字で埋めない）", parseAdFromPages([p1, "元付 〇〇不動産"], `${p1}\n元付`).adMonths === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

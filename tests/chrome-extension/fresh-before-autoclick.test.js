@@ -25,7 +25,8 @@ const ok = (name, cond) => { if (cond) { pass++; console.log("  ✓ " + name); }
 
   console.log("\n■ ② 自動で押す経路は押す前に待つ（background の切替・underbar の中継）");
   const waits = popup.match(/if \(!\(await _awaitFreshPreload\(6000\)\)\) console\.warn/g) || [];
-  ok("2つの受け口（runtime.onMessage／postMessage）で待つ", waits.length === 2);
+  // v2.5.31: ウェブアプリの自動入力（pendingPopupCmd）の2経路も _runPendingPopupCmd の1か所で待つ（→ 3か所）
+  ok("3つの受け口（runtime.onMessage／postMessage／pendingPopupCmd）で待つ", waits.length === 3);
   for (const [label, open] of [["runtime.onMessage", "try { openInstructions(msg.site); }"], ["postMessage", "try { openInstructions(e.data.site); }"]]) {
     const i = popup.indexOf(open), w = popup.indexOf("await _awaitFreshPreload(6000)", i), click = popup.indexOf("aBtn.click()", i);
     ok(`${label}: 開く → 待つ → 押す の順`, i > 0 && w > i && click > w);

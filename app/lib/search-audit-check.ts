@@ -17,13 +17,14 @@
 //   ・駅が押せなかったかは page-script 自身の判定（stations_missing）を第一に使う。フォームの読み戻しとの比較は読み戻しがある時だけ
 //   ・0件は「件数表示が 0 と読めた」時だけ確かめ済み（warn）。それ以外の0件（25秒ボタンが出なかった等）は確かめていない（bad）
 import { effectiveRpUpdateDays, type RpUpdateDaysCustomer } from "./rp-update-days";
+import { conditionDrift } from "./search-condition-drift";
 
 export type AuditSeverity = "ok" | "warn" | "bad";
 export type AuditSite = "realpro" | "itandi" | "reins";
 
 export type CheckCode =
   | "STATION_MISSING" | "ROUTE_MISSING" | "AREA_UNRESOLVED" | "CONDITION_MISREAD" | "RENT_MISMATCH"
-  | "FLOOR_PLAN_DROPPED" | "UPDATE_DAYS" | "LOCATION_MODE" | "RESET_FAILED" | "UI_NOT_FOUND"
+  | "FLOOR_PLAN_DROPPED" | "UPDATE_DAYS" | "LOCATION_MODE" | "RESET_FAILED" | "UI_NOT_FOUND" | "CONDITION_DRIFT" | "CONDITION_STALE"
   | "ZERO_UNCONFIRMED" | "ZERO_CONFIRMED" | "SENT_LT_READ" | "STALLED" | `ERROR_${string}`;
 
 export type AuditCheck = {
@@ -101,6 +102,18 @@ export type Filled = {
   area_path?: string | null;
   /** 条件を外して検索した（例: 駅が選べず駅なしで検索） */
   fallback?: string | null;
+  /** 2026-09-27 v2.5.31: クリックの列の1件ごとの時刻（t＝入力を始めてからの ms・p＝予定の間・w＝実際の間） */
+  ops?: Array<{ t: number; k: string; p: number; w: number }> | null;
+  late_max?: number | null;
+  late_over_1s?: number | null;
+  /** 2026-09-27 v2.5.31: 見張り（85秒）で止まった時の様子（どの段で・列の残り・タブが見えていたか・タイマーの遅れ） */
+  stall?: {
+    stage?: string | null; stage_detail?: string | null; since_stage_ms?: number | null; elapsed_ms?: number | null;
+    visibility?: string | null; has_focus?: boolean | null; hidden_ms?: number | null;
+    queue_len?: number | null; queue_busy?: boolean | null; queue_next?: string | null; ops_done?: number | null;
+    late_max?: number | null; late_over_1s?: number | null; modal_open?: boolean | null; city_checked?: number | null;
+    form?: FormReadback | null; error?: string | null;
+  } | null;
 };
 
 export type AuditResult = {
@@ -152,7 +165,7 @@ const SEV_RANK: Record<AuditSeverity, number> = { ok: 0, warn: 1, bad: 2 };
 /** 札の優先順（同じ重さなら先の物が cause_key になる） */
 const CODE_ORDER: string[] = [
   "STALLED", "ERROR_", "UI_NOT_FOUND", "STATION_MISSING", "ROUTE_MISSING", "AREA_UNRESOLVED", "LOCATION_MODE",
-  "RENT_MISMATCH", "FLOOR_PLAN_DROPPED", "UPDATE_DAYS", "CONDITION_MISREAD", "RESET_FAILED", "ZERO_UNCONFIRMED",
+  "CONDITION_STALE", "RENT_MISMATCH", "FLOOR_PLAN_DROPPED", "CONDITION_DRIFT", "UPDATE_DAYS", "CONDITION_MISREAD", "RESET_FAILED", "ZERO_UNCONFIRMED",
   "SENT_LT_READ", "ZERO_CONFIRMED",
 ];
 
@@ -411,11 +424,35 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
     }
   }
 
+  // ── 登録の条件と入った値の食い違い（2026-09-27 v2.5.31・search-condition-drift.ts）──
+  //   点検 22（古い条件で検索した回）は「区の混ざり・間取りの欠け・築年・家賃」がずれていたのに、家賃しか言わなかった。
+  //   入った値（読み戻し・無い欄は入れようとした値）を登録の条件と比べる。3項目以上ずれたら「古い条件で検索したおそれ」
+  //   同じずれを2回言わない:
+  //   ・家賃・間取りで「入れようとした値は登録どおり・画面だけ違う」＝入力の失敗は RENT_MISMATCH／FLOOR_PLAN_DROPPED が言う → ここでは言わない
+  //   ・家賃が低いのを入れようとした値でしか比べられない時は、下の CONDITION_MISREAD（rent_lower）が言う
+  const driftIn = { site, is_wide: a.is_wide ?? i?.is_wide ?? null, customer: c as Record<string, unknown> | null, intended: i as Record<string, unknown> | null };
+  const driftAll = c ? conditionDrift({ ...driftIn, form: form as Record<string, unknown> | null }).items : [];
+  const driftIntended = c && form ? conditionDrift({ ...driftIn, form: null }).items : driftAll;
+  const driftItems = driftAll.filter((d) => {
+    if (d.field === "rent" && d.source === "intended" && d.kind === "lower") return false;
+    if ((d.field === "rent" || d.field === "floor_plan") && d.source === "form" && !driftIntended.some((x) => x.field === d.field)) return false;
+    return true;
+  });
+  const driftFields = new Set(driftItems.map((x) => x.field));
+  if (driftFields.size >= 3) {
+    add("CONDITION_STALE", "bad", `condition_stale:${siteKey}`, `登録の条件と${driftFields.size}項目ちがう（古い条件で検索したおそれ）`,
+      driftItems.map((x) => x.title).join("／"));
+  }
+  for (const d of driftItems) {
+    add("CONDITION_DRIFT", d.severity, `condition_drift:${siteKey}:${d.field}:${d.kind}`, d.title, `${d.detail}${d.source === "intended" ? "（読み戻しが無いので入れようとした値）" : ""}`);
+  }
+  const driftRent = driftItems.some((x) => x.field === "rent");
+
   // ── お客様の条件を読み落としていないか ──
   if (c && i) {
     const cRent = parseMan(c.rent_max ?? c.max_rent);
     if (cRent != null && iRent == null) add("CONDITION_MISREAD", "warn", `condition_misread:${siteKey}:rent_max`, "賃料の条件が検索に入っていない", `お客様=${cRent}万`);
-    else if (cRent != null && iRent != null && iRent < cRent * 0.98) add("CONDITION_MISREAD", "warn", `condition_misread:${siteKey}:rent_lower`, "賃料がお客様の上限より低い", `お客様=${cRent}万・検索=${iRent}万`);
+    else if (!driftRent && cRent != null && iRent != null && iRent < cRent * 0.98) add("CONDITION_MISREAD", "warn", `condition_misread:${siteKey}:rent_lower`, "賃料がお客様の上限より低い", `お客様=${cRent}万・検索=${iRent}万`);
     const cPlans = planTokens(c.floor_plan || c.layout);
     if (cPlans.length && !iPlans.length) add("CONDITION_MISREAD", "warn", `condition_misread:${siteKey}:floor_plan`, "間取りの条件が検索に入っていない", `お客様=${c.floor_plan || c.layout}`);
     if (c.walk_minutes && !i.walk_minutes) add("CONDITION_MISREAD", "warn", `condition_misread:${siteKey}:walk`, "徒歩の条件が検索に入っていない", `お客様=${c.walk_minutes}分`);
@@ -468,6 +505,8 @@ export function causeTitle(causeKey: string): string {
     case "floor_plan_dropped": return `${siteJa}: 間取りが入らない（${a}）`;
     case "update_days": return `${siteJa}: 更新日（${a}）`;
     case "condition_misread": return `${siteJa}: 条件の読み落とし（${a}）`;
+    case "condition_drift": return `${siteJa}: 登録の条件と違う（${a}${b ? `・${b}` : ""}）`;
+    case "condition_stale": return `${siteJa}: 古い条件で検索したおそれ`;
     case "reset_failed": return `${siteJa}: 前の条件を消せない`;
     case "ui_not_found": return `${siteJa}: 画面の部品が見つからない（${[a, b].filter(Boolean).join("・")}）`;
     case "zero_unconfirmed": return `${siteJa}: 0件（確かめられない・${a}）`;

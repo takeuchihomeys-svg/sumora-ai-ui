@@ -36,8 +36,9 @@ export type ListingFacts = {
   /** どちらの資料の形で読めたか */
   format: "realpro" | "itandi" | "unknown";
   name: string | null;
-  /** 号室（数字だけ・先頭の 0 を外す）。「3A」等の数字でない号室は roomLabel にだけ入る */
+  /** 号室（数字だけ・先頭の 0 を外す＝照合用）。「3A」等の数字でない号室は roomLabel にだけ入る */
   roomNo: string | null;
+  /** 号室（資料の文字のまま「0206」「005B」）。説明文に書くのはこちら（2026-09-27 竹内「資料の文字を変えず・抜かず」） */
   roomLabel: string | null;
   rentYen: number | null;
   /** 管理費・共益費（「なし」は 0） */
@@ -184,6 +185,23 @@ export function parseListingText(raw: string | null | undefined): ListingFacts {
 
 // ── 説明文を補う ────────────────────────────────────────────────────────
 
+// 2026-09-27 竹内「物件の資料の中の文字変えなくても…そのまま使う・文字抜かなくて」:
+//   号室は資料の文字のまま書く（「0206」を「206」に・「005B」を落とす、をしない）。照合（同じ部屋か）は roomKey で揃えて比べる
+/** 号室の形（英数とハイフン・数字を1つ以上含む・8字まで） */
+const ROOM_TOKEN = String.raw`(?=[0-9A-Za-z０-９Ａ-Ｚａ-ｚ\-－]*[0-9０-９])[0-9A-Za-z０-９Ａ-Ｚａ-ｚ\-－]{1,8}`;
+const ROOM_SUFFIX_RE = new RegExp(`[\\s　]+${ROOM_TOKEN}\\s*号室$`);
+const ROOM_LINE_RE = new RegExp(`^\\s*(${ROOM_TOKEN})\\s*号室\\s*$`);
+/** 号室の照合の鍵（NFKC・大文字・数字の頭の 0 を外す）。「0206」と「206」は同じ・「005A」と「005B」は別 */
+export function roomKey(s: string | null | undefined): string {
+  return toHalf(String(s ?? "")).trim().replace(/号室?$/, "").toUpperCase().replace(/^0+(?=\d)/, "");
+}
+/** 資料の号室で説明文に書く文字（roomLabel が号室の形ならそのまま・違えば roomNo） */
+export function roomForSummary(f: Pick<ListingFacts, "roomNo" | "roomLabel">): string | null {
+  const l = (f.roomLabel ?? "").trim();
+  if (l && new RegExp(`^${ROOM_TOKEN}$`).test(l)) return l;
+  return f.roomNo;
+}
+
 const SUMMARY_NO_RE = /^【\d+(?:🌟★?)?】/u;
 const toHalf = (s: string) => s.normalize("NFKC");
 
@@ -193,7 +211,7 @@ function summaryHas(summary: string): { name: string; room: boolean; rent: boole
   const head = (lines[0] ?? "").replace(SUMMARY_NO_RE, "").trim();
   const rest = lines.slice(1).map(toHalf);
   const room = /[\s　]\d{1,5}(?:号室?)?$/.test(toHalf(head)) || /号室/.test(head);
-  const name = head.replace(/[\s　]+\d{1,5}(?:号室?)?$/, "").trim();
+  const name = head.replace(/[\s　]+\d{1,5}(?:号室?)?$/, "").replace(ROOM_SUFFIX_RE, "").trim();
   let rentYen: number | null = null, areaSqm: number | null = null, madoriTok: string | null = null;
   for (const l of rest) {
     if (/^(AD|広告)/i.test(l)) continue;
@@ -279,16 +297,18 @@ export function fillSummaryFromListing(summary: string, f: ListingFacts): Summar
   // 反証 2026-09-25: 拡張 v2.5.16 の itandi の説明文（itandi-row-parse.js buildSummary）は号室を1行目でなく「405号室」の独立した行に書く。
   //   1行目に号室が無いと見て文字層の号室を足すと、LINE で号室が2回出る。送付済みの照合（parseSummaryHead）は1行目の号室しか読まない
   //   → 独立した号室の行は1行目へ移す（説明文の値が正・文字層の号室と違えば食い違いとして返す）
-  const roomLineIdx = has.room ? -1 : lines.findIndex((l, i) => i > 0 && /^\s*\d{1,5}\s*号室\s*$/.test(toHalf(l)));
+  //   2026-09-27: 移す号室は説明文の文字のまま（旧は parseInt で「0206」→「206」・英字付き「005B」は移さなかった）
+  const roomLineIdx = has.room ? -1 : lines.findIndex((l, i) => i > 0 && ROOM_LINE_RE.test(l));
+  const fRoom = roomForSummary(f);
   if (roomLineIdx > 0 && (!placeholder || f.name)) {
-    const r = String(parseInt(toHalf(lines[roomLineIdx]).replace(/\D/g, ""), 10));
-    if (f.roomNo && f.roomNo !== r) res.conflicts.push(`room:${r}≠${f.roomNo}`);
+    const r = (lines[roomLineIdx].match(ROOM_LINE_RE) as RegExpMatchArray)[1];
+    if (fRoom && roomKey(fRoom) !== roomKey(r)) res.conflicts.push(`room:${r}≠${fRoom}`);
     head = `${head} ${r}号室`;
     lines.splice(roomLineIdx, 1);
     res.filled.push("room_moved");   // 呼ぶ側は filled がある時だけ説明文を差し替える
-  } else if (!has.room && f.roomNo && (!placeholder || f.name)) {
-    // 号室は名前が分かっている時だけ足す（「物件 405号室」にしない）
-    head = `${head} ${f.roomNo}号室`; res.filled.push("room");
+  } else if (!has.room && fRoom && (!placeholder || f.name)) {
+    // 号室は名前が分かっている時だけ足す（「物件 405号室」にしない）。資料の文字のまま（「0206号室」「005B号室」）
+    head = `${head} ${fRoom}号室`; res.filled.push("room");
   }
   lines[0] = `${no}${head}`;
 
