@@ -279,6 +279,8 @@ export function cellOfCode(code: string): { key: string; head: string } | null {
   if (/^RENT_/.test(code)) return { key: "rent", head: "賃料/管理費" };
   if (/^(?:ZERO_ZERO|INITIAL_COST_|FREE_RENT)/.test(code)) return { key: "deposit", head: "敷金/礼金" };
   if (/^(?:FLOOR_PLAN_|SQM_)/.test(code)) return { key: "madori", head: "間取り/㎡" };
+  // 2026-09-27 洋室の帖数（資料の文字 → 間取り図の読み取り）
+  if (/^ROOM_JO_/.test(code)) return { key: "jo", head: "洋室の帖数" };
   if (/^WALK_/.test(code)) return { key: "walk", head: "駅徒歩" };
   if (/^(?:BUILDING_AGE_|AGE_)/.test(code)) return { key: "built", head: "築年/階建" };
   if (/^AREA_/.test(code)) return { key: "area", head: "エリア" };
@@ -340,6 +342,7 @@ function wantWordOf(key: string, codes: string[], strongEquip?: ReadonlySet<stri
   if (key === "commute") return "通勤";
   if (key === "contract") return "契約";
   if (key === "pet") return "ペット";
+  if (key === "jo") return "洋室の帖数";
   // 2026-09-25 YUMA テスト（お客様E「宅配ボックス必須」）: × と読めない（－）の札（EQUIP_X_NG／_UNLISTED）には強さが付かず、
   //   「宅配ボックス － +0（希望・要確認）」と出ていた → 保存した照合（equipment.match の strong）で「必須」を引く
   if (key.startsWith("eq:")) return has(/_MUST_OK$/) || strongEquip?.has(key.slice(3)) ? "必須" : has(/_SOFT_OK$/) ? "できれば" : "希望";
@@ -391,7 +394,7 @@ export function buildFitCells(reasonCodes: readonly string[] | null, facts: Reco
     return { ...base, head: base.head, points, tone, written, note, codes: g.codes.slice() };
   };
   const all = [...groups.entries()].map(([k, g]) => cellOf(k, g));
-  const ORDER = ["rent", "deposit", "madori", "walk", "built", "area", "commute", "state", "contract", "pet"];
+  const ORDER = ["rent", "deposit", "madori", "jo", "walk", "built", "area", "commute", "state", "contract", "pet"];
   const orderOf = (k: string) => { const i = ORDER.indexOf(k); return i >= 0 ? i : k.startsWith("eq:") ? 20 : k.startsWith("cond:") ? 30 : k.startsWith("img:") ? 40 : 50; };
   const byOrder = (a: CardCell, z: CardCell) => orderOf(a.key) - orderOf(z.key);
   const written = all.filter((c) => c.written).sort(byOrder);

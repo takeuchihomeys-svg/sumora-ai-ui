@@ -18,6 +18,7 @@ import { loadImageWants } from "@/app/lib/image-wants-server";
 import { imageAnalysisNeed } from "@/app/lib/image-wants";
 import { analyzePickupRow } from "@/app/lib/pickup-analyze-server";
 import { runWithActionRename } from "@/app/lib/llm-action-scope";
+import { applyRoomJoAfterAnalysis } from "@/app/lib/room-jo-server";
 import { pickAutoTargets, strongFeatures, AUTO_ANALYZE_CONCURRENCY, AUTO_ACTION, type AutoRow } from "@/app/lib/pickup-auto-targets";
 
 export type AutoAnalyzeResult = {
@@ -50,7 +51,7 @@ export async function autoAnalyzeBatch(input: { ids: number[]; propertyCustomerI
     if (need.level !== "recommended") return out;
     const features = strongFeatures(wants);
     const { data, error } = await supabase.from("property_pickups")
-      .select("id, rank, site, pdf_url, pdf_blob_url, pdf_text, pdf_has_text, summary_text, trim_image_url, page_image_url, image_analysis, verdict, score, equipment")
+      .select("id, rank, site, pdf_url, pdf_blob_url, pdf_text, pdf_has_text, summary_text, trim_image_url, page_image_url, image_analysis, verdict, score, equipment, reason_codes")
       .in("id", input.ids);
     if (error) { console.warn("[pickup-auto] 行を引けない:", error.message); return out; }
     const { targets, skipped } = pickAutoTargets((data ?? []) as AutoRow[], features);
@@ -73,7 +74,11 @@ export async function autoAnalyzeBatch(input: { ids: number[]; propertyCustomerI
               .is("image_analysis", null).select("id");
             if (uErr) { out.failed++; console.warn("[pickup-auto] 保存できない:", uErr.message); }
             else if (!saved?.length) out.skipped.push({ id: r.id, why: "ボタンで先に保存済み" });
-            else out.analyzed++;
+            else {
+              out.analyzed++;
+              // 2026-09-27 間取り図で洋室の帖数が読めたら、判定の「要確認: 洋室の帖数」を付け直す
+              await applyRoomJoAfterAnalysis(r.id, res, r.summary_text);
+            }
           } else out.failed++;
         } catch (e) {
           out.failed++;

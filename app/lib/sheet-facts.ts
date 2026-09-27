@@ -24,6 +24,7 @@ import { normalizeRoomNo } from "./sent-property-record";
 import { buildingKey, parseAreaSqm } from "./pickup-dedupe";
 import { wantFeatures, type ImageWant, type WantCheck } from "./image-wants";
 import { WANTS_JUDGE_HEAD, type SheetImageFacts } from "./sheet-prompt";
+import { roomJoFromText, roomJoFromImageRooms, roomJoWantOf, judgeRoomJo, mainRoomJo, maxJoOfKinds, type RoomJoItem, type RoomJoItemKind } from "./room-jo";
 
 /** 1帖の広さ（㎡）。帖数の合計がこれ×専有面積を超えたら別の広い部屋の図 */
 export const JO_SQM = 1.62;
@@ -42,6 +43,11 @@ export type SheetTextFacts = {
   madori: string | null;
   /** 間取タイプの括弧の中の帖数（例「LDK11.9 x 洋4.4」→ [{LDK,11.9},{洋,4.4}]） */
   jo: Array<{ kind: string; jo: number }>;
+  /**
+   * 2026-09-27 居室（洋・和）の一番広い帖数（room-jo.roomJoFromText・「間取タイプ 1K[洋:6.5畳]」「[6.6帖K]」も読む）。
+   *   突き合わせ（checkSheetConsistency）には使わない（jo のまま）。前に保存した読み取りには無い（undefined）
+   */
+  roomJo?: number | null;
   areaSqm: number | null;
   rentYen: number | null;
   direction: string | null;
@@ -154,6 +160,7 @@ export function parseSheetText(raw: string | null | undefined): SheetTextFacts {
     address: addrM ? addrM[1].trim() : null,
     madori: madori ?? lf?.madori ?? null,
     jo,
+    roomJo: roomJoFromText(text, madori ?? lf?.madori ?? null),
     areaSqm: areaM ? parseFloat(areaM[1]) : (lf?.areaSqm ?? null),
     rentYen: rentM ? parseInt(rentM[1].replace(/,/g, ""), 10) : (lf?.rentYen ?? null),
     direction: dirM ? dirM[1] : (lf?.format === "itandi" ? ((text.match(/主要採光面[ \t]+([東西南北]{1,2})/) ?? [])[1] ?? null) : null),
@@ -429,6 +436,31 @@ function presenceOf(key: string, want: ImageWant, t: SheetTextFacts, img: SheetI
       return P(t.floor >= 2, `${t.floor}階`);
     case "loft":
       return /ロフト/.test(f) ? P(true, "資料の設備: ロフト") : P(null);
+    case "room_jo": {
+      // 2026-09-27 竹内「7畳以上は、帖数が資料に書かれていなかったら間取り図から読み取る」: 資料の文字 → 間取り図（照合に渡った＝一致した図だけ）
+      const plan = img?.madori || madori;
+      const ldkWant = roomJoWantOf([want.text], "LDK");
+      const youWant = roomJoWantOf([want.text], "洋");
+      const w = youWant ?? ldkWant;
+      if (!w) return P(null);
+      const textItems: RoomJoItem[] = t.jo.map((x) => ({ kind: x.kind as RoomJoItemKind, jo: x.jo }));
+      const imgItems: RoomJoItem[] = (img?.rooms ?? []).filter((r) => r.jo != null).map((r) => ({ kind: roomKindOf(r.name) === "LDK" ? "LDK" : roomKindOf(r.name) === "DK" ? "DK" : "?", jo: r.jo as number }));
+      let jo: number | null, from: string;
+      if (w === youWant) {
+        const tj = t.roomJo ?? mainRoomJo(textItems, madori);
+        jo = tj ?? roomJoFromImageRooms(img?.rooms, plan);
+        from = tj != null ? "資料" : "間取り図";
+      } else {
+        const tj = maxJoOfKinds(textItems, ["LDK", "DK"]);
+        jo = tj ?? maxJoOfKinds(imgItems, ["LDK", "DK"]);
+        from = tj != null ? "資料" : "間取り図";
+      }
+      const r = judgeRoomJo(w, jo);
+      if (r === "unknown") return P(null);
+      const label = w === youWant ? "洋室" : "LDK";
+      // 向き: 希望の帖数以上なら ok（NG の印の付いた文でも「広さが足りるか」で見る）
+      return P(want.ng ? r !== "ok" : r === "ok", `${from}: ${label}${jo}帖（希望 ${w.jo}帖${w.approx ? "前後" : "以上"}）`);
+    }
     case "balcony":
       if (/バルコニー|ベランダ/.test(f)) return P(true, "資料の設備: バルコニー");
       if (img?.balcony === "あり") return P(true, "間取り図: バルコニー");
@@ -477,6 +509,19 @@ export function matchWantsWithFacts(wants: ImageWant[], text: SheetTextFacts, im
     else checks.push({ id: w.id, result: "unknown", why: "" });
   }
   return { checks, undecided };
+}
+
+/**
+ * 2026-09-27 資料の事実（文字層＋照合に渡った間取り図）から居室の一番広い帖数（純関数）。
+ *   資料の文字を先に（文字と図が食い違えば checkSheetConsistency が要確認にする）・図は review が ok の時だけ。読めなければ null
+ */
+export function roomJoOfSheet(text: SheetTextFacts, image: SheetImageFacts | null, reviewOk: boolean, summaryMadori?: string | null): { jo: number; from: "資料" | "間取り図" } | null {
+  const madori = text.madori ?? summaryMadori ?? null;
+  const tj = text.roomJo ?? mainRoomJo(text.jo.map((x) => ({ kind: x.kind as RoomJoItemKind, jo: x.jo })), madori);
+  if (tj != null) return { jo: tj, from: "資料" };
+  if (!reviewOk || !image || !image.fp_ok) return null;
+  const ij = roomJoFromImageRooms(image.rooms, image.madori || madori);
+  return ij != null ? { jo: ij, from: "間取り図" } : null;
 }
 
 // ── 画面に出す短い文（スタッフ向け） ───────────────────────────────────────

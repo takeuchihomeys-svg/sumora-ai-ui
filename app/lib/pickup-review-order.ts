@@ -122,6 +122,12 @@ const CHIP_JA: Record<string, string> = {
   FLOOR_PLAN_ALT_MATCH: "間取り「も可」の型",
   SQM_UNDER: "広さが希望の9割未満",
   SQM_UNKNOWN: "広さは要確認",
+  // 2026-09-27 洋室の帖数（room-jo.ts）
+  ROOM_JO_OK: "洋室の帖数が希望以上",
+  ROOM_JO_NG: "洋室が希望の帖数より狭い",
+  ROOM_JO_SOFT_NG: "洋室が希望の帖数（目安）より狭い",
+  ROOM_JO_IMG_NG: "図の読みでは洋室が狭い（要確認）",
+  ROOM_JO_UNKNOWN: "洋室の帖数は要確認",
   AREA_STATION_MATCH: "希望の駅",
   AREA_WARD_MATCH: "希望の区・市",
   AREA_LINE_MATCH: "希望の路線",
@@ -187,7 +193,7 @@ export type ReasonView = {
 };
 
 /** 外す（drop）にするコード（judgeProperty の "drop" と同じ） */
-const DROP_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130"]);
+const DROP_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG"]);
 
 /**
  * 1件の理由の見え方。reason_codes（判定のコード）から点の内訳を作る。

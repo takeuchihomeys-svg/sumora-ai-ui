@@ -38,6 +38,7 @@ import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { assumedAdAgentInLine, assumedAdAgentOf } from "./agent-ad-assume";
+import { roomJoWantOf, roomJoFromText, judgeRoomJo, type RoomJoWant } from "./room-jo";
 
 // ─── 型 ──────────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,12 @@ export type PropertyFacts = {
    *   AD が資料に書かれておらず、元付業者の決まりでみなした時の元付業者の名前（agent-ad-assume.ts）。書かれていた時は持たない
    */
   adAssumedBy?: string | null;
+  /**
+   * 2026-09-27 居室（洋・和）の一番広い帖数（room-jo.ts）。説明文 → 資料の文字層（「間取タイプ 1K[洋:6.5畳]」）→ 間取り図の読み取りの順。
+   *   不明は持たない（null）。roomJoFrom はどこで読んだか
+   */
+  roomJo?: number | null;
+  roomJoFrom?: "資料" | "間取り図" | null;
   rawText: string;
 };
 
@@ -187,6 +194,8 @@ export type CustomerProfile = {
   floorPlanAlt?: FloorPlanWant | null;
   /** 2026-09-25 広さの下限（㎡・列 floor_area_min か間取りの希望の「30平米以上」） */
   sqmMin?: number | null;
+  /** 2026-09-27 洋室の帖数の希望（「7畳以上の部屋」「1K(7畳)以上」→ 7・room-jo.ts）。無ければ持たない */
+  roomJoWant?: RoomJoWant | null;
   /** 2026-09-25 築年の列が空で、自由文に「新築」「築浅」「新しめ」がある時の年数の目安（情報の札だけ） */
   ageTextMax?: { years: number; word: string } | null;
   /** 2026-09-25 案B お客様が書いた条件の強さ（築浅の自由文・駅近・家賃を低くしたい）。readWrittenWants。無い呼び出し元は「書いていない」扱い */
@@ -347,6 +356,12 @@ export const REASON_JA: Record<string, string> = {
   SQM_WIDE: "広さが広げた検索の幅の中（希望−5㎡まで）",
   SQM_UNDER: "広さが希望の9割未満",
   SQM_UNKNOWN: "要確認: 広さ",
+  // 2026-09-27 竹内「7畳以上は、帖数が資料に書かれていなかったら間取り図から読み取る」（room-jo.ts）
+  ROOM_JO_OK: "洋室の帖数が希望以上",
+  ROOM_JO_NG: "洋室の帖数が希望より狭い",
+  ROOM_JO_SOFT_NG: "洋室の帖数が希望（目安）より狭い",
+  ROOM_JO_IMG_NG: "間取り図の読みでは洋室が希望より狭い（資料に帖数なし・要確認）",
+  ROOM_JO_UNKNOWN: "要確認: 洋室の帖数（資料・間取り図で読めない）",
   BUILDING_AGE_TEXT_OK: "築年が「築浅・新築」の希望に合う",
   BUILDING_AGE_TEXT_OVER: "築年が「築浅・新築」の希望より古い",
   // 2026-09-25 竹内「エリアの部分、把握できれば理想」「通勤の部分も沿線の知識」（area-want.ts・osaka-geo.ts・transit-route.ts）
@@ -559,6 +574,9 @@ export const REASON_POINTS: Record<string, number> = {
   RENT_BELOW_MIN: -3,
   FLOOR_PLAN_ALT_MATCH: 8,
   SQM_OK: 3, SQM_SLIGHTLY_UNDER: 0, SQM_UNDER: -10, SQM_UNKNOWN: 0,
+  // 2026-09-27 洋室の帖数（希望以上 +3＝広さの ○ と同じ・狭い −15 外す候補・目安より狭い −10 保留・読めない 0点の要確認）
+  //   間取り図の読みだけで狭い −10 保留（ROOM_JO_IMG_NG・図の帖数の読み違いが実物で 4件あったので外す候補にしない）
+  ROOM_JO_OK: 3, ROOM_JO_NG: -15, ROOM_JO_SOFT_NG: -10, ROOM_JO_IMG_NG: -10, ROOM_JO_UNKNOWN: 0,
   // 2026-09-25 案B: 築浅の自由文の○×は 0点の札（全部合うの数に入る）。点は段の札（AGE_W*）で数える（旧 ○ +3）
   BUILDING_AGE_TEXT_OK: 0, BUILDING_AGE_TEXT_OVER: 0,
   // 2026-09-25 エリア・通勤（外す候補にしない。以外に当たる時だけ保留）
@@ -776,6 +794,8 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
       if (fp) { floorPlan = fp; break; }
     }
   }
+  // 2026-09-27 居室の帖数（説明文に「1K[洋:6.5畳]」があれば・名前の行は見ない）
+  const roomJoOfSummary = roomJoFromText(restText, floorPlan);
 
   // 築年
   let buildingAge: number | null = null;
@@ -793,6 +813,7 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
     ...(areaSqm != null && areaSqm >= 5 && areaSqm <= 500 ? { areaSqm } : {}),
     ...(roomNo ? { roomNo } : {}),
     ...(adAssumedBy ? { adAssumedBy } : {}),
+    ...(roomJoOfSummary != null ? { roomJo: roomJoOfSummary, roomJoFrom: "資料" as const } : {}),
     rawText: raw,
   };
 }
@@ -1223,6 +1244,7 @@ const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   FLOOR_PLAN_MATCH: ["間取り", "ok"], FLOOR_PLAN_ALT_MATCH: ["間取り", "ok"], FLOOR_PLAN_WIDE: ["間取り", "wide"], FLOOR_PLAN_NEAR: ["間取り", "wide"],
   FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"],
   SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNKNOWN: ["広さ", "unread"],
+  ROOM_JO_OK: ["洋室の帖数", "ok"], ROOM_JO_NG: ["洋室の帖数", "ng"], ROOM_JO_SOFT_NG: ["洋室の帖数", "ng"], ROOM_JO_IMG_NG: ["洋室の帖数", "ng"], ROOM_JO_UNKNOWN: ["洋室の帖数", "unread"],
   WALK_OK: ["徒歩", "ok"], WALK_SLIGHTLY_OVER: ["徒歩", "soft_ng"], WALK_OVER: ["徒歩", "ng"],
   WALK_TEXT_OK: ["徒歩", "ok"], WALK_TEXT_OVER: ["徒歩", "soft_ng"], WALK_TEXT_FAR: ["徒歩", "soft_ng"],
   BUILDING_AGE_OK: ["築年", "ok"], BUILDING_AGE_WIDE: ["築年", "wide"], BUILDING_AGE_SLIGHTLY_OVER: ["築年", "soft_ng"], BUILDING_AGE_OVER: ["築年", "ng"],
@@ -1386,6 +1408,7 @@ export function buildCustomerProfile(
     rentMin: rentMin != null && rentMin >= 10_000 && !notes.includes("RENT_MAX_UNRELIABLE") && (rentMax == null || rentMin < rentMax) ? rentMin : null,
     floorPlanAlt: parseFloorPlanAlt(customer, floorPlanWant),
     sqmMin: sqmMin ?? null,
+    roomJoWant: roomJoWantOfCustomer(customer),
     ageTextMax,
     floorPlanWant,
     walkMax: walkMaxUse,
@@ -1474,6 +1497,67 @@ export function computeAdYen(f: PropertyFacts): number | null {
 const IMAGE_TO_EQUIP: Partial<Record<ImageWantKey, EquipKey>> = {
   bath_toilet_separate: "bath_toilet", separate_washstand: "washbasin", south_facing: "south", floor_2_plus: "floor2",
 };
+
+/**
+ * 2026-09-27 お客様の洋室の帖数の希望（room-jo.ts の parseRoomJoWants）。条件欄の自由文（こだわり・その他・追加条件）と
+ *   間取りの欄（「1K(7畳)以上」）と条件フォームの原文の広さ・間取りの行だけを読む（会話の原文は物件の貼り付けが混ざるので読まない）
+ */
+export function roomJoWantOfCustomer(c: CustomerLike): RoomJoWant | null {
+  return roomJoWantOf([c.preferences, c.other_requests, c.additional_conditions, c.floor_plan, c.layout, formPlanLines(c.raw_format_text)]);
+}
+
+/**
+ * 洋室の帖数の札（純関数・judgeProperty と applyRoomJoToRow で同じ線）。希望が無ければ何も付けない。
+ *   外す候補（ROOM_JO_NG）は資料の文字で読めた帖数だけ。間取り図の読みで狭い時は保留（ROOM_JO_IMG_NG）:
+ *   2026-09-27 監査で資料の文字と図の読みを比べられた 1K 約20件のうち 4件は図の読みが狭く違った
+ *   （#711 資料 9.3帖／図 6.5・#745 8／6.1・#619 8.3／6.3・#671 7.4／6.0。どれも図が小さく読む向き）→ 図だけで外すと誤って外す
+ */
+export function roomJoCodes(want: RoomJoWant | null | undefined, jo: number | null | undefined, from: "資料" | "間取り図" = "資料"): string[] {
+  if (!want) return [];
+  const r = judgeRoomJo(want, jo);
+  if (r === "unknown") return ["ROOM_JO_UNKNOWN"];
+  if (r === "ok") return ["ROOM_JO_OK"];
+  if (want.approx) return ["ROOM_JO_SOFT_NG"];
+  return [from === "間取り図" ? "ROOM_JO_IMG_NG" : "ROOM_JO_NG"];
+}
+
+/**
+ * 保存済みの1行（判定済み）に、後から読めた洋室の帖数（間取り図の読み取り・資料の文字）を当てる（純関数）。
+ *   ROOM_JO_UNKNOWN の行だけ付け直す（もう ○× の決まった行・希望の無い行は null＝書き換えない）。
+ *   点は「保存の点 ＋ 札の差」（applyAdRulesToRow と同じ・前の配点で付いた所まで動かさない）。判定は同じ決まり（drop の札 → drop／保留の札か 40点の線の下 → hold）
+ */
+export function applyRoomJoToRow(
+  row: { reason_codes?: readonly string[] | null; score?: number | null; verdict?: string | null },
+  want: RoomJoWant | null | undefined,
+  jo: number | null | undefined,
+  from: "資料" | "間取り図" = "間取り図",
+): { score: number; verdict: Verdict; reason_codes: string[]; reasons_ja: string[]; result: "ok" | "ng" } | null {
+  const old = [...(row.reason_codes ?? [])];
+  if (!want || !old.includes("ROOM_JO_UNKNOWN")) return null;
+  const next = roomJoCodes(want, jo, from);
+  if (!next.length || next[0] === "ROOM_JO_UNKNOWN") return null;
+  let codes = old.filter((c) => c !== "ROOM_JO_UNKNOWN");
+  codes.push(...next);
+  codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
+  codes = settleFitBonus(codes);
+  const stored = typeof row.score === "number" ? row.score : scoreFromCodes(old);
+  const score = Math.max(0, Math.min(SCORE_MAX, stored + (scoreFromCodes(codes) - scoreFromCodes(old))));
+  const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
+  const holds = codes.filter(isHoldCode);
+  const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
+  const flagCodes = [...drops, ...holds];
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  return { score, verdict, reason_codes: codes, reasons_ja: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa), result: next[0] === "ROOM_JO_OK" ? "ok" : "ng" };
+}
+
+/** 判定（Judgment）に後から読めた居室の帖数を当てる（ROOM_JO_UNKNOWN の時だけ・applyRoomJoToRow と同じ線）。当たらなければそのまま */
+export function applyRoomJoToJudgment(j: Judgment, want: RoomJoWant | null | undefined, jo: number | null | undefined, from: "資料" | "間取り図"): Judgment {
+  const r = applyRoomJoToRow({ reason_codes: j.reasonCodes, score: j.score, verdict: j.verdict }, want, jo, from);
+  if (!r) return j;
+  const flagCodes = r.reason_codes.filter((c) => DROP_REASON_CODES.has(c) || isHoldCode(c));
+  return { ...j, score: r.score, verdict: r.verdict, reasonCodes: r.reason_codes, flagCodes, reasonsJa: r.reasons_ja,
+    imageChecks: r.verdict === "drop" ? [] : j.imageChecks, facts: { ...j.facts, roomJo: jo ?? null, roomJoFrom: from } };
+}
 
 export type JudgeOptions = {
   /** 資料の設備欄との照合（listing-equipment.ts の matchEquipment。拡張の判定は説明文から読めた分だけ） */
@@ -1583,6 +1667,13 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     // 広げた検索の広さ（−5㎡まで）は情報の札（保留にしない）
     else if (a >= profile.sqmMin - WIDE_SQM) add("SQM_WIDE", reasonPoints("SQM_WIDE"));
     else add("SQM_UNDER", reasonPoints("SQM_UNDER"), "hold");
+  }
+
+  // 洋室の帖数（2026-09-27 竹内「7畳以上は、帖数が資料に書かれていなかったら間取り図から読み取る」・未桜さん）:
+  //   希望より狭い＝外す候補（「前後・程度」の目安の希望は1帖下まで ok・それより狭いと保留）・読めない＝0点の要確認
+  //   （売上サポに届いた後の間取り図の読み取りで applyRoomJoToRow が付け直す）
+  for (const code of roomJoCodes(profile.roomJoWant ?? null, facts.roomJo ?? null, facts.roomJoFrom ?? "資料")) {
+    add(code, reasonPoints(code), code === "ROOM_JO_NG" ? "drop" : code === "ROOM_JO_SOFT_NG" || code === "ROOM_JO_IMG_NG" ? "hold" : undefined);
   }
 
   // 徒歩
@@ -1772,7 +1863,7 @@ const POSITIVE_BASE_CODES = ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_2_5M", "AD_H
 
 /** 2026-09-25 に足した加点の札（理由の日本語に出す） */
 function isNewPositive(c: string): boolean {
-  return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
+  return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|ROOM_JO_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
     // 2026-09-27 ピンポイントの回で見つかった
     || c === PINPOINT_CODE
     // 広げた検索の幅の内側（希望より少しだけ低い加点）
@@ -1782,16 +1873,19 @@ function isNewPositive(c: string): boolean {
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
-export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130"]);
+// 2026-09-27 ROOM_JO_NG: 洋室の帖数が希望より狭い（竹内「7帖未満は外す」）
+export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG"]);
 export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件
   "SQM_UNDER", "AREA_EXCLUDED", // 2026-09-25 広さの9割未満・希望外のエリア（以外）
   "ALREADY_SENT_SAME_ROOM", // 2026-09-25 号室で初めて当たる同じ部屋（外す候補にしない）
+  "ROOM_JO_SOFT_NG", // 2026-09-27 洋室の帖数が目安（「7畳前後」）より1帖を超えて狭い
+  "ROOM_JO_IMG_NG", // 2026-09-27 資料に帖数が無く、間取り図の読みで狭い（読み違いがあるので保留どまり）
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」（通す→保留に落ちる程度）。AD 不明（記載なし・読めない）は今まで通り 0点の要確認（保留にしない）
   "AD_UNDER_1M", "AD_NONE",
 ]);

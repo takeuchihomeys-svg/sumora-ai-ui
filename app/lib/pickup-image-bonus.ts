@@ -48,6 +48,8 @@ const FEATURE_JUDGE_PREFIX: Record<string, string[]> = {
   floor2: ["EQUIP_FLOOR2_", "IMAGE_FLOOR_2_PLUS_"],
   loft: ["EQUIP_LOFT_"],
   balcony: ["EQUIP_BALCONY_"],
+  // 2026-09-27 洋室の帖数（判定の ROOM_JO_OK／ROOM_JO_NG／ROOM_JO_SOFT_NG が決まっていれば画像では足さない・_UNKNOWN は決まっていない）
+  room_jo: ["ROOM_JO_"],
 };
 
 /** 判定の札が ○× の決まった物か（_UNLISTED・_ASK・上限の印は決まっていない）。_HELD（AD の保留の印）は外して見る */

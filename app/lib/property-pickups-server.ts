@@ -11,7 +11,7 @@ import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromPages, agentPagesText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
 // 2026-09-27 竹内「株式会社アズ・スタットは AD 記載なくても基本的に 200% あるから 200% とみなす」（純関数）
 import { assumedAdAgentOf } from "@/app/lib/agent-ad-assume";
-import { judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { judgeProperty, parsePropertyFacts, applyImageFacts, applyRoomJoToJudgment, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
 import { buildPickupTerms } from "@/app/lib/pickup-terms";
@@ -21,6 +21,7 @@ import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
 import { dedupeSameBuilding, dedupeNoteJa } from "@/app/lib/pickup-dedupe";
 import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, toPickupLocation, type AreaWant, type CommuteWant, type PickupLocation } from "@/app/lib/area-want";
 import { parseListingText } from "@/app/lib/listing-text";
+import { roomJoFromText } from "@/app/lib/room-jo";
 import { buildProfileWithOverride } from "@/app/lib/search-override-judge";
 import type { PickupSearchOverride } from "@/app/lib/search-override";
 
@@ -194,6 +195,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         termsOf.set(i, { t, filled: fillFactsFromTerms(facts, t) });
         // 2026-09-25 広さ（説明文に無い時は資料の文字層の専有面積）
         if (facts.areaSqm == null) { const a = parseListingText(pdfText).areaSqm; if (a != null) facts.areaSqm = a; }
+        // 2026-09-27 居室の帖数（説明文に無い時は資料の文字層の「間取タイプ 1K[洋:6.5畳]」）。読めない時は売上サポの間取り図の読み取りで付け直す
+        if (facts.roomJo == null) { const jo = roomJoFromText(pdfText, facts.floorPlan); if (jo != null) { facts.roomJo = jo; facts.roomJoFrom = "資料"; } }
       }
       factsOf.set(i, facts);
       locOf.set(i, locateItem(summary, pdfText, loaded?.location ?? null));
@@ -297,7 +300,11 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS }),
         wants.length > 0 ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 60_000) }) : Promise.resolve(null),
       ]);
-      if (detail.kind === "property" && detail.lines.length > 0) { it.imageLines = detail.lines; out.imageRead++; }
+      if (detail.kind === "property" && detail.lines.length > 0) {
+        it.imageLines = detail.lines; out.imageRead++;
+        // 2026-09-27 資料の画像の行（「間取り: 1K【洋6帖】」）に帖数があれば、洋室の帖数の要確認を付け直す
+        if (it.judgment && profile?.roomJoWant) it.judgment = applyRoomJoToJudgment(it.judgment, profile.roomJoWant, roomJoFromText(detail.lines.join("\n"), it.judgment.facts.floorPlan), "資料");
+      }
       if (facts?.facts) {
         it.imageFacts = facts.facts;
         if (it.judgment) it.judgment = applyImageFacts(it.judgment, facts.facts);

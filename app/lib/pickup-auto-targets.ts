@@ -21,14 +21,23 @@ export function strongFeatures(wants: ImageWant[]): string[] {
   return [...out];
 }
 
-/** その物件で画像を読む必要があるか（推奨の強い設備のうち、設備欄で決まっていない物が1つでもあれば読む） */
-export function rowNeedsImage(features: string[], equipment: Pick<PickupEquipment, "match"> | null | undefined): boolean {
+/**
+ * その物件で画像を読む必要があるか（推奨の強い設備のうち、設備欄で決まっていない物が1つでもあれば読む）。
+ * 2026-09-27 洋室の帖数（room_jo）は判定の札で決める: 資料の文字で ○×（ROOM_JO_OK／_NG／_SOFT_NG）が付いた物件は読まない・
+ *   要確認（ROOM_JO_UNKNOWN）か札の無い物件は読む（竹内「帖数が資料に書かれていなかったら間取り図から読み取る」）
+ */
+export function rowNeedsImage(features: string[], equipment: Pick<PickupEquipment, "match"> | null | undefined, reasonCodes?: ReadonlyArray<string> | null): boolean {
   if (!features.length) return false;
   const decided = new Set((equipment?.match ?? []).filter((m) => m.result !== "unlisted").map((m) => m.key));
-  return features.some((f) => { const e = FEATURE_TO_EQUIP[f]; return !e || !decided.has(e); });
+  const joDecided = (reasonCodes ?? []).some((c) => /^ROOM_JO_(?:OK|NG|SOFT_NG|IMG_NG)$/.test(c));
+  return features.some((f) => {
+    if (f === "room_jo") return !joDecided;
+    const e = FEATURE_TO_EQUIP[f];
+    return !e || !decided.has(e);
+  });
 }
 
-export type AutoRow = SheetSourceRow & { verdict: string | null; equipment: PickupEquipment | null; rank: number; score?: number | null };
+export type AutoRow = SheetSourceRow & { verdict: string | null; equipment: PickupEquipment | null; rank: number; score?: number | null; reason_codes?: string[] | null };
 
 /** 読む物件を選ぶ（純関数・テスト用に分ける） */
 export function pickAutoTargets(rows: AutoRow[], features: string[], max = AUTO_ANALYZE_MAX): { targets: AutoRow[]; skipped: Array<{ id: number; why: string }> } {
@@ -41,7 +50,7 @@ export function pickAutoTargets(rows: AutoRow[], features: string[], max = AUTO_
     if (r.verdict === "drop") { skipped.push({ id: r.id, why: "外す候補" }); continue; }
     if (r.image_analysis) { skipped.push({ id: r.id, why: "保存済み" }); continue; }
     if (!r.pdf_blob_url && !r.page_image_url && !r.trim_image_url) { skipped.push({ id: r.id, why: "資料なし" }); continue; }
-    if (!rowNeedsImage(features, r.equipment)) { skipped.push({ id: r.id, why: "設備欄で決まった" }); continue; }
+    if (!rowNeedsImage(features, r.equipment, r.reason_codes)) { skipped.push({ id: r.id, why: "設備欄で決まった" }); continue; }
     if (targets.length >= max) { skipped.push({ id: r.id, why: "上限" }); continue; }
     targets.push(r);
   }

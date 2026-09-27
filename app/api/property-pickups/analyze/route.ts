@@ -11,6 +11,7 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import { pickBest } from "@/app/lib/pickup-image-analysis";
 import { loadImageWants } from "@/app/lib/image-wants-server";
 import { analyzePickupRow } from "@/app/lib/pickup-analyze-server";
+import { applyRoomJoAfterAnalysis } from "@/app/lib/room-jo-server";
 import type { SheetSourceRow } from "@/app/lib/sheet-read-server";
 
 // 2026-09-24 反証: 1件で PDF 取得 15秒＋描画＋読み 40秒＋読み直し 90秒＋文字の照合 30秒 = 最大 約180秒 → 120 では途中で切られ何も保存されない
@@ -45,6 +46,8 @@ export async function POST(req: NextRequest) {
     if (out.analysis) {
       const { error: uErr } = await supabase.from("property_pickups").update({ image_analysis: { ...out.analysis, wants, analyzed_at: new Date().toISOString() } }).eq("id", r.id);
       if (uErr) console.warn("[pickups/analyze] 保存できない:", uErr.message);
+      // 2026-09-27 間取り図で洋室の帖数が読めたら、判定の「要確認: 洋室の帖数」を付け直す（7帖未満の希望なら外す候補）
+      else await applyRoomJoAfterAnalysis(r.id, out, r.summary_text);
     }
     return { id: r.id, rank: r.rank, property_name: r.property_name, analysis: out.analysis, error: out.error ?? undefined, source: out.facts.source, usage: out.usage };
   }));
