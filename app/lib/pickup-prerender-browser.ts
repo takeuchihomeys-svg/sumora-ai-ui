@@ -14,8 +14,37 @@ export function deviceHasRealproFont(): boolean {
   try { return isLocalFontFamilyAvailable("MS Gothic") || isLocalFontFamilyAvailable("ＭＳ ゴシック"); } catch { return false; }
 }
 
+/**
+ * 2026-09-27 YUMA の実検索（2.5.33）: 拡張の裏の画面（chrome.offscreen）は表示されない（hidden）ので requestAnimationFrame が呼ばれず、
+ *   pdf.js の page.render()（display の描き方は描く処理を requestAnimationFrame に載せる）が終わらないまま 4分で閉じていた（32件中0件）。
+ *   hidden の時だけ requestAnimationFrame を setTimeout に差し替える（見えている売上サポでは何もしない）
+ */
+function ensureFrameCallbackWhenHidden(): void {
+  try {
+    if (typeof document === "undefined") return;
+    // 裏の画面専用のページ（/pickup-prerender）は見えていても差し替える（offscreen の中の iframe は visible と答えても描画の合図が来ないことがある）
+    const offscreenPage = typeof location !== "undefined" && location.pathname.startsWith("/pickup-prerender");
+    if (document.visibilityState !== "hidden" && !offscreenPage) return;
+    const w = window as unknown as { __axRafShim?: boolean; requestAnimationFrame: (cb: FrameRequestCallback) => number; cancelAnimationFrame: (id: number) => void };
+    if (w.__axRafShim) return;
+    w.__axRafShim = true;
+    w.requestAnimationFrame = (cb: FrameRequestCallback) => window.setTimeout(() => cb(performance.now()), 0);
+    w.cancelAnimationFrame = (id: number) => window.clearTimeout(id);
+  } catch { /* 差し替えられなくても普段どおり */ }
+}
+
+/** 1件ごとの時間切れ（止まったら次へ進み、どこで止まったか分かるようにする） */
+const RENDER_TIMEOUT_MS = 30_000;
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const tm = window.setTimeout(() => reject(new Error(`時間切れ（${Math.round(ms / 1000)}秒）: ${label}`)), ms);
+    p.then((v) => { window.clearTimeout(tm); resolve(v); }, (e) => { window.clearTimeout(tm); reject(e); });
+  });
+}
+
 export async function prerenderPickupImages(opts: { authHeader: Record<string, string>; ids?: number[]; limit?: number; onLog?: (s: string) => void }): Promise<PrerenderResult> {
   const log = opts.onLog ?? (() => {});
+  ensureFrameCallbackWhenHidden();
   const qs = new URLSearchParams();
   if (opts.ids?.length) qs.set("ids", opts.ids.join(","));
   if (opts.limit) qs.set("limit", String(opts.limit));
@@ -28,7 +57,7 @@ export async function prerenderPickupImages(opts: { authHeader: Record<string, s
   const images: Array<{ id: number; jpeg_base64: string }> = [];
   for (const it of items) {
     try {
-      const jpeg = await renderOriginalPageInBrowser(it.pdf_blob_url);
+      const jpeg = await withTimeout(renderOriginalPageInBrowser(it.pdf_blob_url), RENDER_TIMEOUT_MS, `#${it.id} ${it.property_name}`);
       images.push({ id: it.id, jpeg_base64: await blobToBase64(jpeg) });
       log(`描いた #${it.id} ${it.property_name}${it.room_no ? ` ${it.room_no}` : ""}`);
     } catch (e) {
