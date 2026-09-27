@@ -19,7 +19,7 @@ import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
-import { BRAIN_AIX_LABELS, sameAixAction, resolveAixButtonView, aixDismissKey, isAixListBadge, latestCustomerTs, type KeptAix } from "./lib/aix-button-view";
+import { BRAIN_AIX_LABELS, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
@@ -1060,6 +1060,8 @@ export default function Home() {
   const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
   // 2026-09-16 竹内（𝒮❦ 事例）「こんな約束絶対に逃してはいけないので【必ず】といれてカレンダーに入れる。そうすればスタッフの抜けがない」:
   //   カレンダーの【必ず】（お客様への約束・未履行）を会話ごとに持ち、会話画面のバナーと一覧のバッジに出す（カレンダーを開かなくても届く）
+  // 2026-09-27 竹内「それでおねがい」: 売上番長グループの AIX要対応（aix_action_items の pending）。返信の後もカードを残す元（aix-button-view の I）
+  const [pendingAixItems, setPendingAixItems] = useState<Record<string, PendingAixItem>>({});
   const [openPromises, setOpenPromises] = useState<Record<string, Array<{ id: number; event_type: string | null; title: string; start_at: string; notes: string | null }>>>({});
   // 2026-09-18 竹内「自動ボタンをつける。デフォルトは自動ではない。自動モードにしていないお客さんは絶対に勝手に自動モードにしない」:
   //   自動に切り替えた会話の ID だけを持つ（入っていない＝手動。既定は必ず手動）
@@ -1775,9 +1777,23 @@ export default function Home() {
       supabase.from("conversations").select("id").eq("auto_send_enabled", true).limit(500)
         .then(({ data }) => { setAutoSendIds(new Set((data ?? []).map((r) => String(r.id)))); }, () => {});
 
+    // 2026-09-27 竹内「それでおねがい」: AIX要対応（pending）も30秒の読み直しで取る。返信の後もその判断のカードを残し、
+    //   ✅（AIX を送った）・取り下げ（ブレインが AIX なしと判断し直した・48時間）になったら次の読み直しで消える
+    const refreshPendingAixItems = () =>
+      supabase.from("aix_action_items").select("conversation_id, action, check_pattern, brain_analyzed_msg_ts")
+        .eq("status", "pending").limit(500)
+        .then(({ data }) => {
+          const map: Record<string, PendingAixItem> = {};
+          for (const r of (data ?? []) as Array<{ conversation_id: string; action: string | null; check_pattern: string | null; brain_analyzed_msg_ts: string | null }>) {
+            map[String(r.conversation_id)] = { action: r.action, check_pattern: r.check_pattern, brain_analyzed_msg_ts: r.brain_analyzed_msg_ts };
+          }
+          setPendingAixItems(map);
+        }, () => {});
+
     refreshActiveTasks();
     refreshOpenPromises();
     refreshAutoSend();
+    refreshPendingAixItems();
 
     // 2026-09-21 竹内「読み込み中が重い原因はなにかな？」:
     //   下の購読は会話の UPDATE が1件届くたびに全件（会話＋直近90日のメッセージ・数MB）を読み直す作り。
@@ -1956,6 +1972,7 @@ export default function Home() {
       fetchConversationsAndMessages(true);
       refreshActiveTasks();
       refreshOpenPromises();
+      refreshPendingAixItems();
     }, 30_000); // Realtimeが差分を拾うため30秒で十分（6秒は入力中ラグの原因）
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
@@ -2883,14 +2900,18 @@ export default function Home() {
   // 2026-09-27 竹内「AIXのボタンが表示されるタイミングとかもズレや問題、違うのが出たりする場合そこのズレも修正する」:
   //   点滅・帯・ブレインのカード・2択・AIX ボタンを隠すか・メニューのおすすめ枠は resolveAixButtonView（app/lib/aix-button-view.ts）1つで決める。
   //   却下（✕・押下）の鍵は「会話＋判断」（aixDismissKey）。旧は会話 id だけで、同じタブの間は次の判断でも二度と出なかった（G）
-  const aixDismissKeyNow = useMemo(() => {
+  //   2026-09-27（I）: 返信の後も AIX要対応が pending ならその判断のカードを残す（pendingItem）。鍵もその判断で作る
+  const selectedPendingAixItem = pendingAixItems[selectedConversation?.id ?? ""] ?? null;
+  const aixDismissKeyList = useMemo(() => {
     const id = selectedConversation?.id ?? "";
     const meta = selectedConversation.suggestedAixMeta as { action?: string | null; analyzed_msg_ts?: string | null; two_choice_mode?: boolean } | null;
-    return aixDismissKey(id, meta ?? { analyzed_msg_ts: latestCustomerTs(selectedConversation.messages || []), action: "" });
-  }, [selectedConversation?.id, selectedConversation.suggestedAixMeta, selectedConversation.messages]);
+    const fromPending = pendingItemMeta({ meta, pending: selectedPendingAixItem, messages: selectedConversation.messages || [] });
+    return aixDismissKeys(id, meta ?? fromPending ?? { analyzed_msg_ts: latestCustomerTs(selectedConversation.messages || []), action: "" });
+  }, [selectedConversation?.id, selectedConversation.suggestedAixMeta, selectedConversation.messages, selectedPendingAixItem]);
+  const aixDismissKeyNow = aixDismissKeyList[0];
   const aixView = useMemo(() => {
     const id = selectedConversation?.id ?? "";
-    const k = aixDismissKeyNow;
+    const has = (set: Set<string>) => aixDismissKeyList.some((k) => set.has(k));
     return resolveAixButtonView({
       meta: selectedConversation.suggestedAixMeta ?? null,
       kept: suggestedAix as KeptAix,
@@ -2898,17 +2919,18 @@ export default function Home() {
       lastSender: selectedConversation.lastSender ?? null,
       activeAixFlow: activeAixFlow ?? null,
       viewingTemplatePending: !!suggestViewingTemplateMap[id],
+      pendingItem: selectedPendingAixItem,
       dismissed: {
-        brainHint: dismissedBrainHintIds.has(k),
-        viewingSpecific: dismissedViewingSpecificIds.has(k),
-        meetingPlace: dismissedMeetingPlaceIds.has(k),
-        newListing: dismissedNewListingIds.has(k),
-        viewingInvite: dismissedViewingInviteIds.has(k),
-        estimateSheet: dismissedEstimateSheetIds.has(k),
+        brainHint: has(dismissedBrainHintIds),
+        viewingSpecific: has(dismissedViewingSpecificIds),
+        meetingPlace: has(dismissedMeetingPlaceIds),
+        newListing: has(dismissedNewListingIds),
+        viewingInvite: has(dismissedViewingInviteIds),
+        estimateSheet: has(dismissedEstimateSheetIds),
       },
     });
   }, [selectedConversation?.id, selectedConversation.suggestedAixMeta, selectedConversation.messages, selectedConversation.lastSender, suggestedAix, activeAixFlow,
-      suggestViewingTemplateMap, aixDismissKeyNow, dismissedBrainHintIds, dismissedViewingSpecificIds, dismissedMeetingPlaceIds, dismissedNewListingIds, dismissedViewingInviteIds, dismissedEstimateSheetIds]);
+      suggestViewingTemplateMap, aixDismissKeyList, selectedPendingAixItem, dismissedBrainHintIds, dismissedViewingSpecificIds, dismissedMeetingPlaceIds, dismissedNewListingIds, dismissedViewingInviteIds, dismissedEstimateSheetIds]);
   // ブレインが「今の顧客発言に対して AIX が必要」と判断した AIX（無ければ null）。
   // 2026-09-12 竹内方針: AIX が必要かどうかはブレインだけが判断する。画面の AIX 誘導はすべてこの値だけを見る。
   const brainAixAction = aixView.brainAixAction;
@@ -8791,7 +8813,8 @@ export default function Home() {
               // 旧: 初期費用キーワードregex検知 → 廃止し、AI分析結果を使う
               // AIXアクション（ボタンあり）の場合: 上部バナーは非表示にし、このカードに
               // 「大きいAIXボタン（メイン）+ 小さい指示テキスト」を統合表示する
-              const brainMeta = selectedConversation.suggestedAixMeta;
+              // 2026-09-27（I）: 返信の後は DB の判断が消えるので、AIX要対応から戻した判断（aixView.pendingMeta・note なし）でカードを出す
+              const brainMeta = (selectedConversation.suggestedAixMeta ?? aixView.pendingMeta) as Conversation["suggestedAixMeta"];
               // 診断修正P2(a): action が空でも note があればフォールバック表示する。
               // [AIX誘導中] センチネルでドラフトが非表示のとき、旧条件（action && note 必須）だと
               // brain が action="" を返した場合に何も表示されない完全空白状態になる穴を塞ぐ

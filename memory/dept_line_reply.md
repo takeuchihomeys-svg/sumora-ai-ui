@@ -7467,7 +7467,17 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - H AIX メニューのおすすめ枠は頻度の推薦（/api/aix/suggest）と古い判断の見積書でも光っていた → ブレインの今の判断の AIX だけ（/api/aix/suggest の値は学習の記録 predicted_action にだけ残す）
 - **ビルド**: tsc 通過（scripts/yuma-aix-daily-greeting-test.ts と scripts/peek-snapshot.ts の `main` 重複は前からの物）。`next build` は開発サーバーとぶつからないよう本体の外の複製（node_modules は junction・turbopack.root を親に）で通した
 - **お客様役の検査に使う**: `resolveAixButtonView({ meta: suggested_aix_meta, messages: [{sender, rawCreatedAt: created_at, isAix: is_aix_generated}], lastSender })` → `summarizeAixButtonView` で「画面が出す AIX（帯・カード・2択・点滅・なし）」。ブレインの判断・押した AIX と並べてズレを数える（scripts/customer-sim.ts への組み込みは別の担当）
-- **未決（竹内さんに聞く）**: 通常の返信を先に送ると、AIX要対応（売上番長グループの一覧）は pending のままなのに画面のカードは消える（上の 36件）。返信の後も AIX要対応が残っている間はカードを残すか
+- ~~未決~~ → **決定（9/27 竹内「それでおねがい」）・実装済み（下の I）**: 通常の返信を先に送ると、AIX要対応（売上番長グループの一覧）は pending のままなのに画面のカードは消える（上の 36件）→ 返信の後も AIX要対応が残っている間はカードを残す
+- **I 返信の後も AIX要対応が pending の間はカードを残す**（2026-09-27）
+  - 判定 `aix-button-view.ts` `pendingItemMeta`（resolveAixButtonView の入力 `pendingItem`）: DB の判断が無い（送信で消えた）／実在の AIX ボタン／AIX要対応の `brain_analyzed_msg_ts` が最新のお客様の発言を見ている／その後にスタッフが**通常の返信を送った**／その後に AIX を送っていない → AIX要対応から判断を戻す（`source: "aix_action_item"`・note なし・2択/2つ目の AIX なし＝ボタン1つのカード。見積書は今まで通り見積書の帯・内覧日調整は最後がスタッフでもカード）。返信をまだ送っていない間（下書きを出して判断が消えただけ）は今まで通り出さない。一覧のバッジは変えない
+  - 消える: AIX を送った（手元のメッセージの isAix で即時。どの AIX でも AIX要対応は完了）／✅・取り下げ（画面の30秒の読み直しで pending から外れる）／新しいお客様の発言
+  - 画面の読み口: 旧は aix_action_items をどこからも読んでいなかった → page.tsx の30秒の読み直し（refreshActiveTasks と同じ所）に `refreshPendingAixItems`（status=pending の conversation_id・action・check_pattern・brain_analyzed_msg_ts）を足した。カードの元は `suggestedAixMeta ?? aixView.pendingMeta`
+  - 却下の鍵 `aixDismissKeys`: 戻した判断は2択か分からないので2択の鍵も見る（返信の前に ✕・2択で「返信する」を押した判断は返信の後も出さない）
+  - 監査（`scripts/audit-aix-button.ts` ⑥・aix_action_items 371件・9/12〜）: 返信の後にカードが残るようになる番 **161**（今までは返信の直後に何も出ていなかった 161/161）。その後 同じ AIX を押した **20（12.4%・中央31分後）**・別の AIX 19・押さなかった **122（75.8%）**。押さなかった番の終わり方: お客様の発言 92（中央17分＝「お願いします」ですぐ新しい判断に替わる）・取り下げ 23・まだ pending 7。**押さずに1時間以上残る 49 番（延べ約1,300時間）**: property_send 23・property_check_result 7・viewing_invite 5・application_push 4・estimate_sheet 4…
+  - 押さなかった番を読んだ型（残っても邪魔な番）: ①**返信の本文で AIX の仕事を済ませていた**（申込へ「お申込完了させて頂きます」「並行して審査かけさせて頂きます」・物件確認した「最短で11月中旬から下旬でのご入居可能」「既にご契約が決まって」・待ち合わせ「17:30からお電話お待ちしております」「19:00からのご内覧です」・内覧日調整「9/28・9/29どちらも」・見積書「2件とも最大限割引しました…御見積書」を手送り）②**お客様が止まったのに property_send / viewing_invite が pending のまま48時間の片付け（stale_customer_turn）まで残る**（「一旦考えます」「確認してまたご連絡」「他社で見つかった」「インフルで内覧厳しい」）。どちらも画面でなく AIX要対応の側（ブレインの判断・取り下げ）の問題＝竹内さんに報告して判断待ち。③「はじめまして…条件で探します」「ピックアップさせて頂きます」の宣言の後の property_send は次にやる事そのもの（残って正しい）
+  - 本番の「36件」との差: 前の監査は brain_decision_logs（9/5〜）で数え、aix_action_items が無い 9/5〜9/11 も含む。今回は AIX要対応が実在した番だけ
+  - テスト `aix-button-view.test.ts` 37件（I の13件を追加）
+  - お客様役（別の担当）への渡し方: `resolveAixButtonView({ meta: suggested_aix_meta, messages, lastSender, pendingItem })` の `pendingItem` に、その会話の `aix_action_items`（status=pending）の `{ action, check_pattern, brain_analyzed_msg_ts }` を入れる。お客様役の番は syncAixActionItem が登録しない（customer-sim-skip）ので、YUMA では pending が無い＝返信の後は今まで通り何も出ないのが正しい。お客様役で I を検査するなら、ブレインの判断（reply_mode=aix の action・analyzed_msg_ts）から `{ action, brain_analyzed_msg_ts: analyzed_msg_ts }` を作って「登録された物」として渡す
 - **見送り**: 表示の遅れを縮める（選んだ会話だけ5秒ごとに判断を読む）は、メッセージ自体も30秒の読み直しで届くので効きが小さい／/api/aix/suggest に鮮度を見ずに brain_action を渡す（e101a27d・学習の記録の経路）／下書き＋AIX の判断（返信モード）で下書きを表示するとカードが消えて点滅だけになる設計（「返信＋AIX 誘導の同時表示を防ぐ」の意図・返信モードで AIX を持つ判断は初回の7件だけ）
 
 ## 2026-09-27 「初期費用しりたい」は見積書送る・各 AIX のピッカーを理解する・ピッカーの記録（竹内「初期費用しりたいはAIXの初期費用おくるから見積書おくってる／物件なければ物件確認したの募集終了していたのピッカーから／それぞれのピッカーを理解したらもっと意味が分かる」「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」）

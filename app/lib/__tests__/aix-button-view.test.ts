@@ -1,7 +1,7 @@
 // 2026-09-27 AIX のボタンのズレ（竹内さん「表示されるタイミングとかもズレや問題、違うのが出たりする場合そこのズレも修正する」）
 // 実行: npx tsx app/lib/__tests__/aix-button-view.test.ts（自己完結ハーネス。全 PASS で exit 0）
 // 事例は本番の判断の形（scripts/audit-aix-button.ts の実例）をそのまま使う
-import { resolveAixButtonView, resolveBrainAixAction, isAixListBadge, aixDismissKey, brainDecisionKey, summarizeAixButtonView, type AixViewMessage, type AixViewMeta } from "../aix-button-view";
+import { resolveAixButtonView, resolveBrainAixAction, isAixListBadge, aixDismissKey, aixDismissKeys, brainDecisionKey, summarizeAixButtonView, pendingItemMeta, PENDING_ITEM_SOURCE, type AixViewMessage, type AixViewMeta } from "../aix-button-view";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -149,5 +149,68 @@ it("今の判断の物件オススメ → 新は光る（旧は光らなかっ�
   expect(resolveAixButtonView({ meta: brain("property_recommendation"), messages: [cust(C1)] }).menuHighlight).toBe("property_recommendation");
 });
 
+
+console.log("■ I: 返信の後も AIX要対応が pending の間はカードを残す（2026-09-27 竹内「それでおねがい」）");
+{
+  const R1 = "2026-09-27T01:50:00.000Z";           // スタッフの通常の返信（判断は送信で消える）
+  const A1 = "2026-09-27T02:37:00.000Z";           // その後の AIX の送信
+  const pend = (action: string, extra: Record<string, unknown> = {}) => ({ action, check_pattern: null, brain_analyzed_msg_ts: C1, ...extra });
+  it("返信の後・判断は消えた・AIX要対応 pending → カード（AIX のボタン1つ・note なし）", () => {
+    const v = resolveAixButtonView({ meta: null, pendingItem: pend("property_check_result", { check_pattern: "available" }), messages: [cust(C1), staff(R1)] });
+    expect(v.card?.kind).toBe("brain_button"); expect(v.card?.action).toBe("property_check_result");
+    expect(v.pendingMeta?.source).toBe(PENDING_ITEM_SOURCE); expect(v.pendingMeta?.check_pattern).toBe("available"); expect(v.pendingMeta?.note).toBe(null);
+    expect(v.pulse).toBe("property_check_result"); expect(v.menuHighlight).toBe("property_check_result");
+  });
+  it("旧（legacy）は返信の後に何も出ない", () => {
+    const v = resolveAixButtonView({ meta: null, pendingItem: pend("property_check_result"), messages: [cust(C1), staff(R1)], legacy: true });
+    expect(summarizeAixButtonView(v)).toBe({ shown: null, channel: "none" });
+  });
+  it("見積書送るは見積書の帯（今の判断と同じ並び）", () => {
+    const v = resolveAixButtonView({ meta: null, pendingItem: pend("estimate_sheet"), messages: [cust(C1), staff(R1)] });
+    expect(v.earlyBanner).toBe("estimate_sheet");
+  });
+  it("内覧日調整は最後がスタッフでもカードを出す（見た発言が最新の判断。内覧の帯は最後がお客様の時だけのまま）", () => {
+    const v = resolveAixButtonView({ meta: null, pendingItem: pend("viewing_invite"), messages: [cust(C1), staff(R1)] });
+    expect(v.earlyBanner).toBe(null); expect(v.card?.action).toBe("viewing_invite");
+  });
+  it("AIX を送ったら消える（どの AIX でも AIX要対応は完了になる・読み直しを待たない）", () => {
+    const v = resolveAixButtonView({ meta: null, pendingItem: pend("property_check_result"), messages: [cust(C1), staff(R1), staff(A1, true)] });
+    expect(summarizeAixButtonView(v)).toBe({ shown: null, channel: "none" }); expect(v.pendingMeta).toBe(null);
+  });
+  it("新しいお客様の発言が来たら消える（新しい判断を待つ）", () => {
+    const v = resolveAixButtonView({ meta: null, pendingItem: pend("property_check_result"), messages: [cust(C1), staff(R1), cust(C2)] });
+    expect(v.card).toBe(null); expect(v.pendingMeta).toBe(null);
+  });
+  it("AIX要対応が✅・取り下げ（pending から外れた）なら出ない", () => {
+    const v = resolveAixButtonView({ meta: null, pendingItem: null, messages: [cust(C1), staff(R1)] });
+    expect(summarizeAixButtonView(v)).toBe({ shown: null, channel: "none" });
+  });
+  it("返信をまだ送っていない（下書きを出して判断が消えただけ）間は今まで通り出さない", () => {
+    expect(pendingItemMeta({ meta: null, pending: pend("property_check_result"), messages: [cust(C1)] })).toBe(null);
+  });
+  it("DB の判断がある時はそれを使う（AIX なしの判断でも AIX要対応に落ちない）", () => {
+    const v = resolveAixButtonView({ meta: brain("", { analyzed_msg_ts: C1 }), pendingItem: pend("property_check_result"), messages: [cust(C1), staff(R1)] });
+    expect(v.pendingMeta).toBe(null); expect(summarizeAixButtonView(v).shown).toBe(null);
+  });
+  it("見た発言が古い AIX要対応（brain_analyzed_msg_ts が最新のお客様の発言より前）は出さない", () => {
+    expect(pendingItemMeta({ meta: null, pending: pend("estimate_sheet"), messages: [cust(C1), cust(C2), staff(R1)] })).toBe(null);
+  });
+  it("実在しない AIX・見た発言の時刻が無い AIX要対応は出さない", () => {
+    expect(pendingItemMeta({ meta: null, pending: pend("follow_up"), messages: [cust(C1), staff(R1)] })).toBe(null);
+    expect(pendingItemMeta({ meta: null, pending: pend("estimate_sheet", { brain_analyzed_msg_ts: null }), messages: [cust(C1), staff(R1)] })).toBe(null);
+  });
+  it("一覧のバッジは今まで通り（最後がスタッフなら出さない）", () => {
+    expect(resolveAixButtonView({ meta: null, pendingItem: pend("estimate_sheet"), messages: [cust(C1), staff(R1)] }).listBadge).toBe(false);
+  });
+  it("✕・押下の鍵: 返信の前に ✕ したカード（2択で「返信する」も）は返信の後も出さない", () => {
+    const pm = pendingItemMeta({ meta: null, pending: pend("property_send"), messages: [cust(C1), staff(R1)] });
+    const keys = aixDismissKeys("conv", pm);
+    expect(keys.includes(aixDismissKey("conv", brain("property_send")))).toBe(true);
+    expect(keys.includes(aixDismissKey("conv", brain("property_send", { two_choice_mode: true })))).toBe(true);
+    expect(aixDismissKeys("conv", brain("property_send")).length).toBe(1);
+    const v = resolveAixButtonView({ meta: null, pendingItem: pend("property_recommendation"), messages: [cust(C1), staff(R1)], dismissed: { brainHint: true } });
+    expect(v.card).toBe(null);
+  });
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

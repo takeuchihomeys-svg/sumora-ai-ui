@@ -23,6 +23,12 @@
 //      → 却下の鍵を「会話＋判断（見た発言の時刻・AIX の種類・2択）」にする（brainDecisionKey）
 //   H. AIX メニューのおすすめ枠がブレインの判断でない頻度の推薦（/api/aix/suggest）や古い判断の見積書でも光っていた
 //      → おすすめ枠はブレインの今の判断の AIX だけ
+//   I. 通常の返信を先に送ると DB の判断（suggested_aix_meta）が送信で消え、カード・帯・点滅も消えるのに、
+//      売上番長グループの AIX要対応（aix_action_items の pending）は残っていた（本番: 返信の後に同じ番で同じ AIX を押した 36件・
+//      中央47分後・押す時にはカードが無かった）。2026-09-27 竹内さん「それでおねがい」
+//      → 返信の後も、その判断の AIX要対応が pending の間はカードを残す（pendingItemMeta）。
+//        消える: AIX を送った（どの AIX でも完了になる）・AIX要対応が✅／取り下げ（画面の30秒の読み直しで pending から外れる）・
+//        新しいお客様の発言（新しい判断）。返信をまだ送っていない間（下書きを出して判断が消えただけ）は今まで通り出さない
 
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./brain-meta-restore";
 
@@ -48,6 +54,7 @@ export const BRAIN_AIX_LABELS: Record<string, string> = {
 
 export type AixViewMeta = {
   action?: string | null;
+  check_pattern?: string | null;
   note?: string | null;
   analyzed_msg_ts?: string | null;
   reply_mode?: string | null;
@@ -111,6 +118,40 @@ function staffAixSentAfter(msgs: AixViewMessage[], ts: string | null | undefined
   const t = tsMs(ts);
   if (!Number.isFinite(t)) return false;
   return msgs.some((m) => m.sender === "staff" && m.isAix && tsMs(m.rawCreatedAt) > t);
+}
+
+/** 売上番長グループの AIX要対応（aix_action_items の pending 1件。画面は30秒の読み直しで読む） */
+export type PendingAixItem = { action?: string | null; check_pattern?: string | null; brain_analyzed_msg_ts?: string | null } | null | undefined;
+
+/** AIX要対応から戻した判断の印（source）。カードの出所の見分けに使う */
+export const PENDING_ITEM_SOURCE = "aix_action_item";
+
+/**
+ * I: 通常の返信の後も AIX要対応が pending の間は、その判断をカードに戻す（無ければ null）。
+ *   条件: DB の判断が無い（送信で消えた）／実在の AIX ボタン／AIX要対応が見た発言が最新のお客様の発言（新しい発言が来ていない）／
+ *        その発言の後にスタッフが通常の返信を送った（下書きを出しただけの間は出さない）／その後に AIX を送っていない。
+ *   AIX要対応には note・2択・2つ目の AIX が残らないので、戻すのは AIX のボタン1つのカード（note なし）。
+ */
+export function pendingItemMeta(input: { meta: AixViewMeta | null | undefined; pending: PendingAixItem; messages: AixViewMessage[] }): AixViewMeta | null {
+  const { meta, pending, messages } = input;
+  if (meta || !pending?.action || !BRAIN_AIX_LABELS[pending.action]) return null;
+  const ts = pending.brain_analyzed_msg_ts ?? null;
+  if (!ts || !isBrainAixFresh({ analyzed_msg_ts: ts }, messages)) return null;
+  const turnTs = latestCustomerTs(messages) ?? ts;
+  const t = tsMs(turnTs);
+  const repliedAfter = messages.some((m) => m.sender === "staff" && !m.isAix && tsMs(m.rawCreatedAt) > t);
+  if (!repliedAfter || staffAixSentAfter(messages, turnTs)) return null;
+  return { action: pending.action, check_pattern: pending.check_pattern ?? null, analyzed_msg_ts: ts, reply_mode: "aix", source: PENDING_ITEM_SOURCE, note: null };
+}
+
+/**
+ * 却下（✕・押下）を引く鍵の一覧。AIX要対応から戻したカードは2択かどうかが分からないので、
+ * 同じ判断の2択の鍵も見る（2択で「返信する」を押した判断を、返信の後に AIX のカードで出し直さない）
+ */
+export function aixDismissKeys(conversationId: string, meta: AixViewMeta | null | undefined): string[] {
+  const k = aixDismissKey(conversationId, meta);
+  if (meta?.source !== PENDING_ITEM_SOURCE) return [k];
+  return [k, aixDismissKey(conversationId, { ...meta, two_choice_mode: true })];
 }
 
 /**
@@ -195,6 +236,8 @@ export type AixButtonView = {
   menuHighlight: string | null;
   /** 一覧の AIX バッジ */
   listBadge: boolean;
+  /** I: 返信の後に AIX要対応から戻した判断（カードの元。DB の判断がある時・戻さない時は null） */
+  pendingMeta: AixViewMeta | null;
 };
 
 export type AixButtonViewInput = {
@@ -207,15 +250,20 @@ export type AixButtonViewInput = {
   dismissed?: AixDismissState;
   /** P3 の内覧テンプレの帯が出ている（P3.5 はその間出さない） */
   viewingTemplatePending?: boolean;
+  /** I: この会話の AIX要対応（pending）。返信の後もカードを残すかの元 */
+  pendingItem?: PendingAixItem;
   legacy?: boolean;
 };
 
 /** 今の値で画面が出す AIX（page.tsx はこれを呼ぶだけ・お客様役の検査・監査も同じ関数を当てる） */
 export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
-  const { meta, kept, messages, activeAixFlow, legacy } = input;
+  const { kept, messages, activeAixFlow, legacy } = input;
   const d = input.dismissed ?? {};
   const lastSender = input.lastSender ?? messages[messages.length - 1]?.sender ?? null;
   const customerIsLast = lastSender === "customer";
+  // I: 返信の後（DB の判断が送信で消えた）でも AIX要対応が pending なら、その判断を今の判断として読む（一覧のバッジは元のまま）
+  const pendingMeta = legacy ? null : pendingItemMeta({ meta: input.meta, pending: input.pendingItem, messages });
+  const meta = pendingMeta ?? input.meta;
   const brainAixAction = resolveBrainAixAction({ meta, kept, messages, legacy });
   const metaFresh = isBrainAixFresh(meta, messages);
   const flow = !!activeAixFlow;
@@ -232,7 +280,8 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
   const action = meta?.action ?? "";
   const hasValidAction = !!(action && BRAIN_AIX_LABELS[action]);
   const alt = (meta?.alt_actions ?? []).filter((a) => a !== action && !!BRAIN_AIX_LABELS[a]);
-  const viewingBlocked = action === "viewing_invite" && !customerIsLast;
+  // 内覧へ！は最後がスタッフ（物件を送った後）の古い判断では出さない。AIX要対応から戻した判断は見た発言が最新なので止めない
+  const viewingBlocked = action === "viewing_invite" && !customerIsLast && !pendingMeta;
   let card: AixCard | null = null;
   if (metaFresh && !d.brainHint && !viewingBlocked) {
     const two = !!meta?.two_choice_mode;
@@ -276,7 +325,8 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
     earlyBanner,
     card: earlyBanner ? null : card,
     menuHighlight,
-    listBadge: isAixListBadge({ meta, lastSender, messages }, legacy),
+    listBadge: isAixListBadge({ meta: input.meta, lastSender, messages }, legacy),
+    pendingMeta,
   };
 }
 

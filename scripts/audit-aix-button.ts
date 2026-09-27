@@ -8,9 +8,12 @@
 //   画面の手元の控え（下書きを出した時の判断）は DB に残らない → 記録の並びから「控えが残る場面」を数える（A・C）。
 //   ブレイン以外の帯（申込・審査・契約の帯、送信直後のテンプレの帯、やることの帯）は数えない。
 //
-// 実行: npx tsx --env-file=.env.local scripts/audit-aix-button.ts [--days=30] [--examples=4]
+// I（2026-09-27 竹内「それでおねがい」）: 通常の返信の後も AIX要対応（aix_action_items の pending）が残っている間はカードを残す。
+//   ⑥で「返信の後にカードが残るようになる番」と、その後スタッフが同じ AIX を押したか・押さなかった番の中身を並べる（--read=N で押さなかった番を N 件読む）
+//
+// 実行: npx tsx --env-file=.env.local scripts/audit-aix-button.ts [--days=30] [--examples=4] [--read=12]
 import { createClient } from "@supabase/supabase-js";
-import { resolveAixButtonView, summarizeAixButtonView, BRAIN_AIX_LABELS, sameAixAction, type AixViewMeta, type AixViewMessage } from "../app/lib/aix-button-view";
+import { resolveAixButtonView, summarizeAixButtonView, BRAIN_AIX_LABELS, sameAixAction, type AixViewMeta, type AixViewMessage, type PendingAixItem } from "../app/lib/aix-button-view";
 import { YUMA_CONVERSATION_ID, isTestConversation } from "../app/lib/test-conversations";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -23,6 +26,8 @@ const TOL = 5_000;
 type Msg = { id: string; conversation_id: string; sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null };
 type Log = { id: string; conversation_id: string; created_at: string; suggested_action: string | null; suggested_reply_mode: string | null; analyzed_msg_ts: string | null; decision_source: string | null; analysis_mode: string | null };
 type Use = { id: string; conversation_id: string; aix_type: string; created_at: string; sent_at: string | null };
+type Item = { id: string; conversation_id: string; action: string; check_pattern: string | null; status: string; brain_analyzed_msg_ts: string | null; created_at: string; updated_at: string; done_at: string | null; done_aix_type: string | null; dismissed_reason: string | null };
+const READ = Number(arg("read", "12"));
 type Conv = { id: string; customer_name: string | null; status: string | null; last_sender: string | null; updated_at: string; suggested_aix_meta: Record<string, unknown> | null; last_brain_meta: Record<string, unknown> | null; ai_draft: string | null };
 
 async function all<T>(table: string, cols: string, build: (q: any) => any): Promise<T[]> {
@@ -58,19 +63,21 @@ function logToMeta(l: Log): AixViewMeta {
 type Ev = { t: number; kind: "cust" | "staff" | "log"; msg?: Msg; log?: Log };
 
 async function main() {
-  const [msgs, logs, uses, convs] = await Promise.all([
+  const [msgs, logs, uses, convs, items] = await Promise.all([
     all<Msg>("messages", "id, conversation_id, sender, text, created_at, is_aix_generated", (q) => q.gte("created_at", SINCE).order("created_at", { ascending: true })),
     all<Log>("brain_decision_logs", "id, conversation_id, created_at, suggested_action, suggested_reply_mode, analyzed_msg_ts, decision_source, analysis_mode", (q) => q.gte("created_at", SINCE).order("created_at", { ascending: true })),
     all<Use>("aix_usage_logs", "id, conversation_id, aix_type, created_at, sent_at", (q) => q.gte("created_at", SINCE).order("created_at", { ascending: true })),
     all<Conv>("conversations", "id, customer_name, status, last_sender, updated_at, suggested_aix_meta, last_brain_meta, ai_draft", (q) => q.gte("updated_at", SINCE)),
+    all<Item>("aix_action_items", "id, conversation_id, action, check_pattern, status, brain_analyzed_msg_ts, created_at, updated_at, done_at, done_aix_type, dismissed_reason", (q) => q.gte("created_at", SINCE).order("created_at", { ascending: true })),
   ]);
   const nameOf = new Map(convs.map((c) => [c.id, c.customer_name ?? "?"]));
   // 判断の記録（brain_decision_logs）は 2026-09-05 から。番・押下の集計はそれ以降だけ（それより前は「判断が無い」と数えてしまう）
   const FROM = Math.max(ms(SINCE), ms(logs[0]?.created_at ?? SINCE));
   console.log(`=== AIX のボタンの監査（直近${DAYS}日）: メッセージ ${msgs.length}・ブレインの判断 ${logs.length}・押した AIX ${uses.length}・会話 ${convs.length} ===`);
 
-  const byConv = new Map<string, { msgs: Msg[]; logs: Log[]; uses: Use[] }>();
-  const g = (id: string) => { let v = byConv.get(id); if (!v) { v = { msgs: [], logs: [], uses: [] }; byConv.set(id, v); } return v; };
+  const byConv = new Map<string, { msgs: Msg[]; logs: Log[]; uses: Use[]; items: Item[] }>();
+  const g = (id: string) => { let v = byConv.get(id); if (!v) { v = { msgs: [], logs: [], uses: [], items: [] }; byConv.set(id, v); } return v; };
+  for (const it of items) g(String(it.conversation_id)).items.push(it);
   for (const m of msgs) g(m.conversation_id).msgs.push(m);
   for (const l of logs) g(l.conversation_id).logs.push(l);
   for (const u of uses) g(u.conversation_id).uses.push(u);
@@ -87,6 +94,9 @@ async function main() {
   let textThenSame = 0; const textThenGap: number[] = []; const exTextThen: string[] = [];
   let aixTurns = 0, aixTurnsPressedSame = 0, aixTurnsPressedOther = 0, aixTurnsText = 0, aixTurnsNothing = 0;
   const yumaLines: string[] = [];
+  // ⑥ I: 返信の後もカードが残る番
+  type Keep = { name: string; action: string; turnText: string; replyText: string; replyAt: string; outcome: "same" | "other" | "none"; end: string; durMin: number; gapMin?: number; wasShown: boolean; after: string };
+  const keeps: Keep[] = []; let itemsSeen = 0, itemsNoReply = 0, itemsReplyBeforeItem = 0;
   const todayJst = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
 
   for (const [cid, v] of byConv) {
@@ -227,6 +237,48 @@ async function main() {
       }
     }
 
+    // ⑥ I: AIX要対応が pending の間に通常の返信を送った番（返信で判断が消える → 今回からカードが残る）
+    if (!test) {
+      for (const it of v.items) {
+        if (ms(it.created_at) < FROM || !BRAIN_AIX_LABELS[it.action] || !it.brain_analyzed_msg_ts) continue;
+        itemsSeen++;
+        const turnT = ms(it.brain_analyzed_msg_ts);
+        const pendEnd = it.status === "done" ? ms(it.done_at ?? it.updated_at) : it.status === "dismissed" ? ms(it.updated_at) : Date.now();
+        const nextCust = v.msgs.find((m) => m.sender === "customer" && ms(m.created_at) > turnT + TOL);
+        const aixAfter = v.msgs.find((m) => m.sender === "staff" && !!m.is_aix_generated && ms(m.created_at) > turnT);
+        // pending の間（登録の後）に送った最初の通常の返信（それより前に新しい発言・AIX の送信が無いもの）
+        const reply = v.msgs.find((m) => m.sender === "staff" && !m.is_aix_generated && ms(m.created_at) > Math.max(turnT, ms(it.created_at)) && ms(m.created_at) < pendEnd
+          && (!nextCust || ms(m.created_at) < ms(nextCust.created_at)) && (!aixAfter || ms(m.created_at) < ms(aixAfter.created_at)));
+        if (!reply) {
+          const early = v.msgs.find((m) => m.sender === "staff" && !m.is_aix_generated && ms(m.created_at) > turnT && ms(m.created_at) <= ms(it.created_at));
+          if (early) itemsReplyBeforeItem++; else itemsNoReply++;
+          continue;
+        }
+        const tR = ms(reply.created_at);
+        // 返信の直後の画面（DB の判断は送信で消える）: pending なし（今まで）と pending あり（今回）
+        const s0 = stateAt(tR + 1, false);
+        const pendingItem: PendingAixItem = { action: it.action, check_pattern: it.check_pattern, brain_analyzed_msg_ts: it.brain_analyzed_msg_ts };
+        const v1 = resolveAixButtonView({ meta: s0.meta, messages: s0.msgs, pendingItem });
+        if (!v1.pendingMeta) continue;
+        const shown0 = summarizeAixButtonView(s0.view).shown;
+        const W = Math.min(nextCust ? ms(nextCust.created_at) : Infinity, aixAfter ? ms(aixAfter.created_at) : Infinity, pendEnd);
+        const use = v.uses.find((u) => { const t = ms(u.sent_at ?? u.created_at); return t > tR && t <= W + 90_000; });
+        const outcome: Keep["outcome"] = use ? (sameAixAction(use.aix_type, it.action) ? "same" : "other") : "none";
+        let end: string;
+        if (nextCust && W === ms(nextCust.created_at)) end = `お客様の発言「${short(nextCust.text, 26)}」`;
+        else if (aixAfter && W === ms(aixAfter.created_at)) end = `AIX 送信（${use?.aix_type ?? "?"}）`;
+        else if (it.status === "dismissed") end = `取り下げ（${it.dismissed_reason ?? ""}）`;
+        else if (it.status === "done") end = `✅（${it.done_aix_type ?? ""}）`;
+        else end = "まだ pending";
+        const turnMsg = [...v.msgs].reverse().find((m) => m.sender === "customer" && ms(m.created_at) <= turnT + TOL);
+        const afterMsgs = v.msgs.filter((m) => m.sender === "staff" && ms(m.created_at) > tR && ms(m.created_at) <= Math.min(W, tR + 6 * 3600e3))
+          .slice(0, 2).map((m) => `${m.is_aix_generated ? "AIX" : "返信"}「${short(m.text, 20)}」`).join(" ");
+        keeps.push({ name, action: it.action, turnText: short(turnMsg?.text, 34), replyText: short(reply.text, 34), replyAt: reply.created_at, outcome, end,
+          durMin: (Math.min(W, Date.now()) - tR) / 60000,
+          gapMin: use ? (ms(use.sent_at ?? use.created_at) - tR) / 60000 : undefined, wasShown: !!shown0, after: afterMsgs });
+      }
+    }
+
     // YUMA の今日の往復（読むだけ）
     if (cid === YUMA_CONVERSATION_ID) {
       for (const e of evs) {
@@ -287,6 +339,33 @@ async function main() {
   console.log(`  E 2択 ${twoTotal} のうち 帯の種類（内覧・待ち合わせ・物件ピックアップ・見積書）${twoPre}（旧は帯が先に出て2択が出ず AIX ボタンも隠れる）・2択で note 空 ${twoNoNote}・2択なのに返信モード ${twoDraft}`);
   console.log(`  E 2つ目の AIX ${altTotal} のうち 帯の種類 ${altPre}（旧は帯が先に出て2つ目のボタンが出ない）`);
   exSnap.forEach((x) => console.log(`   例 ${x}`));
+  // ⑥ I
+  console.log(`\n■ I 返信の後も AIX要対応が残っている間はカードを残す（AIX要対応 ${itemsSeen}件）`);
+  console.log(`  返信の後にカードが残るようになる番 ${keeps.length}（返信の直後に今まででも何か出ていた ${keeps.filter((k) => k.wasShown).length}）・pending の間に返信なし ${itemsNoReply}・返信が登録より前だけ ${itemsReplyBeforeItem}`);
+  const same = keeps.filter((k) => k.outcome === "same"), other = keeps.filter((k) => k.outcome === "other"), none = keeps.filter((k) => k.outcome === "none");
+  console.log(`  その後スタッフが同じ AIX を押した ${same.length}（${pct(same.length, keeps.length)}・返信→AIX 中央 ${Math.round(quant(same.map((k) => k.gapMin!), 0.5))}分）・別の AIX ${other.length}・押さなかった ${none.length}（${pct(none.length, keeps.length)}）`);
+  console.log(`  カードが残る長さ 押した番 中央 ${Math.round(quant(same.map((k) => k.durMin), 0.5))}分／押さなかった番 中央 ${Math.round(quant(none.map((k) => k.durMin), 0.5))}分・90% ${Math.round(quant(none.map((k) => k.durMin), 0.9))}分`);
+  const byAct: Record<string, { same: number; other: number; none: number }> = {};
+  for (const k of keeps) { const b = (byAct[k.action] ??= { same: 0, other: 0, none: 0 }); b[k.outcome]++; }
+  const tot = (b: { same: number; other: number; none: number }) => b.same + b.other + b.none;
+  console.log(`  AIX ごと（同じ/別/押さず）: ${Object.entries(byAct).sort((a, b) => tot(b[1]) - tot(a[1])).map(([a, b]) => `${a} ${b.same}/${b.other}/${b.none}`).join("・")}`);
+  const endKind = (e: string) => e.replace(/「.*」/, "").replace(/（.*）/, "");
+  const ends: Record<string, number> = {};
+  for (const k of none) ends[endKind(k.end)] = (ends[endKind(k.end)] ?? 0) + 1;
+  console.log(`  押さなかった番の終わり方: ${Object.entries(ends).map(([a, b]) => `${a} ${b}`).join("・")}`);
+  // 残っても邪魔なだけの番の見当: 押さずに1時間以上残る番（お客様がすぐ「お願いします」と返して終わる番は短い）
+  const longNone = none.filter((k) => k.durMin >= 60);
+  const byActLong: Record<string, number> = {};
+  for (const k of longNone) byActLong[k.action] = (byActLong[k.action] ?? 0) + 1;
+  const longMin = longNone.reduce((a, k) => a + k.durMin, 0);
+  console.log(`  押さずに1時間以上残る番 ${longNone.length}（延べ ${Math.round(longMin / 60)}時間）: ${Object.entries(byActLong).sort((a, b) => b[1] - a[1]).map(([a, b]) => `${a} ${b}`).join("・")}`);
+  // 返信そのものが AIX の代わりになっていた番（確認の結果・申込の受付を本文で済ませた）: 返信の語で見当を付ける（件数だけでなく下の実例で読む）
+  const doneByText = none.filter((k) => /(確認させて頂きましたが|確認させていただきましたが|可能です|ご契約が決ま|お申込させて|お部屋抑えさせて|募集終了)/.test(k.replyText));
+  console.log(`  返信の本文で済ませた見当（確認の結果・申込の受付）${doneByText.length}: ${doneByText.map((k) => `${k.name}/${k.action}`).join("・")}`);
+  for (const k of same.slice(0, EX)) console.log(`   押した ${k.name} ${k.action} 発言「${k.turnText}」→ 返信 ${jst(k.replyAt)}「${k.replyText}」→ ${Math.round(k.gapMin!)}分後に AIX`);
+  for (const k of other.slice(0, EX)) console.log(`   別の AIX ${k.name} ${k.action} 発言「${k.turnText}」→ 返信「${k.replyText}」→ ${k.end}`);
+  for (const k of none.slice(-READ)) console.log(`   押さず ${k.name} ${k.action} 発言「${k.turnText}」→ 返信 ${jst(k.replyAt)}「${k.replyText}」→ 終わり ${k.end}（${Math.round(k.durMin)}分）${k.after ? " 後: " + k.after : ""}`);
+
   console.log(`\n■ YUMA の今日（${todayJst}・読むだけ）`);
   yumaLines.forEach((x) => console.log(x));
 }
