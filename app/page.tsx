@@ -10751,9 +10751,9 @@ export default function Home() {
           onDelayedSend={handleDelayedSend}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number }) => {
             // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
+            let _sentPickupNames: string[] | null = null;
             {
               const h = pickupHandoffRef.current;
-            let _sentPickupNames: string[] | null = null;
               if (h && h.done && aixModalType === h.aix && !meta?.scheduled && selectedConversation?.id === h.conv) {
                 pickupHandoffRef.current = null;
                 // 画像を外した・足した・並べ替えた時は image_urls を渡さない → サーバーは sent_properties に書かず、
@@ -10762,10 +10762,10 @@ export default function Home() {
                 // 2026-09-25 E2E の反証: 送った印は「セットした画像が送る直前に残っていた行」だけ（旧は URL の ids 全部＝画像が取れなかった行・
                 //   外した行・オススメで差し替えた物件にも付いていた）。1枚も残っていなければ印を付けない
                 const plan = planPickupMarkSent({ aix: h.aix, handoffIds: h.handoffIds ?? [], handoffFiles: h.handoffFiles ?? [], sentFiles: h.sentFiles ?? null, sentImageUrls: h.sentImageUrls ?? [] });
-                if (plan) void fetch("/api/property-pickups/send", {
-                  method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
                 // 2026-09-27: 送った印を付けた行の物件名（台帳の物件送付の件数・名前）
                 if (plan) _sentPickupNames = plan.itemIds.map((id) => h.handoffNames?.[(h.handoffIds ?? []).indexOf(id)] ?? "").filter(Boolean);
+                if (plan) void fetch("/api/property-pickups/send", {
+                  method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
                   // image_urls: 届いた画像（送った順）。数がピックアップと合う時だけ sent_properties の行と結ぶ（合わなければサーバーが書かない）
                   body: JSON.stringify({ batch_id: h.batch, item_ids: plan.itemIds, action: "mark_sent", sent_by: "aix", image_urls: plan.imageUrls, conversation_id: h.conv }),
                 }).catch(() => {});
@@ -10903,11 +10903,11 @@ export default function Home() {
                   //   （check_pattern / app_sub_mode / send_mode 以外）。整えるのはサーバー（app/lib/aix-pickers.ts sanitizePickerChoices）。
                   //   誰に確認したか（管理会社／代表／オーナー／近隣月極）はこの画面の ref にしか無いのでここで足す
                   picker_choices: { ...(meta?.pickerChoices ?? {}), check_who: propertyCheckSubTypeRef.current },
-                }),
-              }).catch(() => {});
                   // 2026-09-27: 物件ピックアップ・物件オススメで送った物件の数と名前（台帳の物件送付。旧は1通＝1件で10件送っても +1）
                   properties_sent_count: meta?.scheduled ? null : (meta?.sentPropertyCount ?? null),
                   properties_sent_names: _sentPickupNames && _sentPickupNames.length ? _sentPickupNames : null,
+                }),
+              }).catch(() => {});
               lastAixLogTextRef.current = null;
               // 2026-09-15 竹内（隼斗事例）: 待ち合わせを送ったら内覧の予定を作り、予定を入れる画面を開いて内覧方法を入れてもらう
               if (aixModalType === "meeting_place" && !meta?.scheduled && meta?.meetingDate) {
