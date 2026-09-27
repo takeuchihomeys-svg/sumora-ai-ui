@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   }
   const since = new Date(Date.now() - TALK_DAYS * 86400_000).toISOString();
   let q = supabase.from("property_pickups")
-    .select("id, created_at, batch_id, site, verdict, status, seen_at, sent_at, search_mode, search_override, complete_group_id, property_customer_id, conversation_id")
+    .select("id, created_at, batch_id, site, verdict, status, seen_at, sent_at, search_mode, search_override, complete_group_id, property_customer_id, conversation_id, property_name, room_no, trim_image_url")
     .gte("created_at", since).order("created_at", { ascending: false }).limit(600);
   q = pcid && conv ? q.or(`property_customer_id.eq.${pcid},conversation_id.eq.${conv}`) : pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   const auditsP = pcid

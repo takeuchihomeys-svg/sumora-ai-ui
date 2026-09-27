@@ -13,6 +13,8 @@
 //   seen_at は AIXツールでお客様を開いた時に /api/property-pickups/seen が入れる（スタッフ全員で共有）。
 // お客様に出ない: この中身は messages に入れない・LINE へ送らない・下書き・ブレインの材料に渡さない（トーク画面の表示だけ）。
 import { groupPickupRounds, siteLabel } from "./pickup-card-view";
+import { aixTypeForPickupCount } from "./pickup-aix-handoff";
+import { pickSendImageUrl } from "./pickup-send-image";
 import { WARD_CODE_NAMES } from "./search-condition-drift";
 
 export type NacPickupRow = {
@@ -27,6 +29,9 @@ export type NacPickupRow = {
   search_mode?: string | null;
   search_override?: unknown;
   complete_group_id?: string | null;
+  property_name?: string | null;
+  room_no?: string | null;
+  trim_image_url?: string | null;
 };
 
 export type NacAudit = {
@@ -60,7 +65,26 @@ export type NewArrivalCard = {
   /** 拡張で検索した条件の1行（点検の intended から。無ければ null） */
   condition: string | null;
   confirm: NacConfirm;
+  /** 物件オススメの回（1件を推す形）の時だけ、その物件（資料の画像つき）。物件ピックアップ（複数件）の回は null＝件数だけ */
+  recommend: NacRecommend | null;
 };
+
+export type NacRecommend = { id: number; name: string; room_no: string | null; image: string | null };
+
+/**
+ * その回が「物件オススメ」（1件を推す形）か。2026-09-27 竹内「新着物件もオススメだけは資料も表示／物件ピックアップは件数が表示されていればよい」
+ * 決まり（AIXツールと同じ件数の決まり aixTypeForPickupCount: 1件＝物件オススメ・2件以上＝物件ピックアップ）:
+ *   ・送った行（status=sent）がある回 → 送った件数で決める（1件だけ送った＝物件オススメで送った）
+ *   ・まだ送っていない回 → 通す（verdict=pass）の件数で決める（通すが1件＝その1件を推す）
+ * 画像は送る画像と同じ pickSendImageUrl（trim_image_url＝元の資料の1ページ目そのまま）。無ければ null（画面は物件名だけ）
+ */
+export function roundRecommend(rows: ReadonlyArray<NacPickupRow>): NacRecommend | null {
+  const sent = rows.filter((r) => r.status === "sent");
+  const base = sent.length > 0 ? sent : rows.filter((r) => r.verdict === "pass");
+  if (aixTypeForPickupCount(base.length) !== "property_recommendation") return null;
+  const r = base[0];
+  return { id: r.id, name: String(r.property_name ?? "").trim() || "（物件名なし）", room_no: r.room_no ?? null, image: pickSendImageUrl(r) };
+}
 
 const ms = (s: string | null | undefined) => { const v = Date.parse(String(s ?? "")); return Number.isFinite(v) ? v : NaN; };
 /** 点検のサイト名とピックアップのサイト名をそろえる（realpro / realnetpro → realpro） */
@@ -184,6 +208,7 @@ export function buildNewArrivalCards(rows: ReadonlyArray<NacPickupRow>, audits: 
       kinds,
       condition: conds.length ? conds.join(" ／ ") : null,
       confirm: roundConfirm(items),
+      recommend: roundRecommend(items),
     };
   });
 }

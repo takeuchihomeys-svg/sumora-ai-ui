@@ -23,7 +23,7 @@ import { BRAIN_AIX_LABELS, sameAixAction, resolveAixButtonView, aixDismissKeys, 
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 // 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
-import { useNewArrivalCards, useNewArrivalCounts, NewArrivalCardSlot, NewArrivalListBadge } from "./components/NewArrivalCard";
+import { useNewArrivalCards, useNewArrivalCounts, newArrivalElems, NewArrivalListBadge } from "./components/NewArrivalCard";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
 import { limitSlotsPerDay } from "./lib/viewing-slots";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
@@ -7705,11 +7705,13 @@ export default function Home() {
                     ? new Date(message.rawCreatedAt).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })
                     : "";
                   const showDate = msgDate && msgDate !== lastDate;
+                  // 新着物件カード（スタッフだけ）を時系列の位置に・日付の区切り込みで先に入れる（2026-09-27）
+                  const nac = newArrivalElems(nacTalk, idx > 0 ? displayMessages[idx - 1].rawCreatedAt : null, message.rawCreatedAt, lastDate, `nac-${idx}`);
+                  lastDate = nac.lastDate;
                   if (showDate) lastDate = msgDate;
                   const isCustomer = message.sender === "customer";
-                  const elems = [];
+                  const elems: ReactNode[] = [...nac.elems];
                   if (showDate) {
-                  elems.push(<NewArrivalCardSlot key={`nac-${idx}`} talk={nacTalk} prevAt={idx > 0 ? displayMessages[idx - 1].rawCreatedAt : null} curAt={message.rawCreatedAt} />);
                     elems.push(
                       <div key={`date-${idx}`} className="flex items-center gap-3 py-2">
                         <div className="h-px flex-1 bg-[#e9edef]" />
@@ -7948,7 +7950,7 @@ export default function Home() {
                     </div>
                   );
                   return elems;
-                  if (idx === displayMessages.length - 1) elems.push(<NewArrivalCardSlot key="nac-tail" talk={nacTalk} prevAt={message.rawCreatedAt} curAt={null} />);
+                  if (idx === displayMessages.length - 1) elems.push(...newArrivalElems(nacTalk, message.rawCreatedAt, null, lastDate, "nac-tail").elems);
                 });
               })()}
               {generating && (

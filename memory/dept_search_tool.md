@@ -2418,3 +2418,4 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - **一覧の印**: `/api/property-pickups/talk?view=counts`（`new-arrivals.summarizeNewArrivals`＝AIXツールの新着と同じ数）→「🆕 新着 N件・未確認」
 - **お客様に出ない**: カードは React の表示だけ（messages に入れない・送信・下書き・ブレインの材料に渡らない）。API `/api/property-pickups/talk` は読むだけ
 - 注意: AIXツールの詳細は直近3回分だけ読むので、古い回のカードから来た時はスクロールせず一番下
+- 2026-09-27 追記（竹内「自分の部分で日時と出たら分かりやすい」「オススメだけは資料も」）: カードをスタッフの吹き出しと同じ右側・左に時刻（HH:MM）で出す。日付の区切りはカードの日で出す（`newArrivalElems` が lastDate を受けて返す＝旧は次の吹き出しの区切りより上に出て日またぎで前日の下に並んでいた）。1件を推す回（送った件数／未送信なら通すの件数が1＝`aixTypeForPickupCount`）だけ `roundRecommend` で資料の画像（`pickSendImageUrl`＝trim_image_url）を小さく出す・押すと大きく・画像無しは物件名だけ。複数件の回は件数だけ

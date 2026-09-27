@@ -1,6 +1,6 @@
 // 2026-09-27 LINE のトーク画面の「新着物件カード」（スタッフだけ）の中身
 // 実行: npx tsx app/lib/__tests__/new-arrival-card.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { buildNewArrivalCards, conditionLine, roundConfirm, roundKinds, cardsBetween, pickupReviewHref, cardHeadline, auditForRound, type NacPickupRow, type NacAudit } from "../new-arrival-card";
+import { buildNewArrivalCards, conditionLine, roundConfirm, roundRecommend, roundKinds, cardsBetween, pickupReviewHref, cardHeadline, auditForRound, type NacPickupRow, type NacAudit } from "../new-arrival-card";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -55,5 +55,18 @@ it("時系列の置き場所（前の吹き出しより後・この吹き出し�
 });
 it("AIXツールの URL（回の最初の batch_id）", () => eq(pickupReviewHref("509cd061", "a.pdf,b.pdf"), "/conditions?pickup=509cd061&batch=a.pdf"));
 
+// 2026-09-27 竹内「新着物件もオススメだけは資料も表示／物件ピックアップは件数が表示されていればよい」
+it("物件オススメ: 通すが1件の回はその物件（資料の画像＝trim_image_url）", () => {
+  const r = roundRecommend([row(1, { property_name: "ルミエール福島", room_no: "302", trim_image_url: "https://x/t.png" }), row(2, { verdict: "hold" })]);
+  eq(r, { id: 1, name: "ルミエール福島", room_no: "302", image: "https://x/t.png" });
+});
+it("物件オススメ: 画像が無ければ image=null（物件名だけ）", () => eq(roundRecommend([row(1, { property_name: "A" })])?.image, null));
+it("物件ピックアップ（通す2件以上）は null＝件数だけ", () => eq(roundRecommend([row(1, {}), row(2, {})]), null));
+it("送った回は送った件数で決める（1件だけ送った＝物件オススメ・その1件）", () => {
+  eq(roundRecommend([row(1, {}), row(2, { status: "sent", property_name: "B" }), row(3, {})])?.id, 2);
+  eq(roundRecommend([row(1, { verdict: "pass", status: "sent" }), row(2, { status: "sent" })]), null);
+});
+it("通す0件の回は null", () => eq(roundRecommend([row(1, { verdict: "hold" })]), null));
+it("カードに recommend が入る", () => eq(buildNewArrivalCards([row(1, { property_name: "C" })], [audit])[0].recommend?.name, "C"));
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }
