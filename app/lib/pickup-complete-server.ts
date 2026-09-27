@@ -17,7 +17,8 @@
 //     → Cron が 15分を過ぎた running を1回だけ retry に変えて（条件付き UPDATE で取る）finishCompleteGroup をやり直す（保存済みの分析は読まない）
 import { supabase } from "@/app/lib/supabase";
 import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow } from "@/app/lib/pickup-complete";
-import { bestBasisFor, customerImageNeed, type BestBasis } from "@/app/lib/pickup-best";
+import { bestBasisFor, bestRuleTag, customerImageNeed, type BestBasis } from "@/app/lib/pickup-best";
+import { dropDiscountFromRow } from "@/app/lib/property-brain";
 
 export type ClaimResult = {
   ok: boolean;
@@ -124,10 +125,16 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       out.analyzed = a.analyzed; out.analyzeLevel = a.level; out.analyzeTargets = a.targets;
     }
     const { data, error } = await supabase.from("property_pickups")
-      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis, search_override")
+      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis, search_override, reason_codes, reasons_ja, summary_text")
       .eq("complete_group_id", input.groupId).limit(500);
     if (error) { out.error = error.message; return out; }
-    const rows = (data ?? []) as CompleteRankRow[];
+    // 2026-09-27 付け直し（backfill-drop-discount-codes --apply）の前の行も、割引と AD の比べの札を外した点・判定で並べる（画面の詳細 API と同じ）
+    const rows = ((data ?? []) as Array<CompleteRankRow & { reason_codes?: string[] | null; reasons_ja?: string[] | null; summary_text?: string | null }>).map((r) => {
+      const d = dropDiscountFromRow(r);
+      const { reason_codes: _c, reasons_ja: _j, summary_text: _s, ...rest } = r;
+      void _c; void _j; void _s;
+      return (d ? { ...rest, score: d.score, verdict: d.verdict } : rest) as CompleteRankRow;
+    });
     // 👑 の決め方はお客様ごと（画像で分析が必要＝画像の点・不要＝判定の点）。画面の詳細 API と同じ customerImageNeed → bestBasisFor
     const basis = await loadBestBasis(input.propertyCustomerId, rows);
     const ranking = rankCompleteGroup(rows, { basis });
@@ -142,7 +149,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       batch_ids: [...new Set(rows.map((r) => r.batch_id))],
       sites,
       best_id: ranking.bestId, best_basis: ranking.bestBasis,
-      result: { basis_rule: basis, items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
+      result: { basis_rule: bestRuleTag(basis), items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
     }).eq("group_id", input.groupId);
     if (cErr) console.warn("[pickup-complete] まとめの結果を書けない:", cErr.message);
     // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: 判定・画像の読み取り・順位が済んだこの時に、

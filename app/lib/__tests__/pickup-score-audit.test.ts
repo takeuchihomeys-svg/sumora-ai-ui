@@ -43,7 +43,8 @@ console.log("■ E2 「広告費 なし」は AD 0（不明と分ける）・AD 
   const none = J("【8】X\n66,000円\n1K\nAD なし", c);
   const half = J("【11】Y\n66,000円\n1K\nAD 0.5ヶ月", c);
   const unk = J("【9】Z\n66,000円\n1K", c);
-  t("AD なし → AD_NONE と PROFIT_NEGATIVE", none.reasonCodes.includes("AD_NONE") && none.reasonCodes.includes("PROFIT_NEGATIVE"), none.reasonCodes);
+  // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 割引との比べ（PROFIT_NEGATIVE）は付けない
+  t("AD なし → AD_NONE（割引との比べの PROFIT_NEGATIVE は付けない）", none.reasonCodes.includes("AD_NONE") && !none.reasonCodes.includes("PROFIT_NEGATIVE"), none.reasonCodes);
   t("AD なし（旧は不明と同じ）は AD 0.5ヶ月より下", none.score < half.score, [none.score, half.score]);
   t("AD 不明は今まで通り減点しない（AD_UNKNOWN 0）", unk.reasonCodes.includes("AD_UNKNOWN") && !unk.reasonCodes.includes("AD_NONE"), unk.reasonCodes);
   t("AD なしは外す候補にしない", none.verdict !== "drop");
@@ -143,7 +144,7 @@ console.log("■ B4 AD は月数だけでも点を付ける（家賃が読めな
   const j1 = J("【2】Y\n1LDK\nAD 1ヶ月", { rent_max: 90_000, floor_plan: "1LDK" });
   t("家賃なし・AD 1ヶ月 → AD_1M", j1.reasonCodes.includes("AD_1M"), j1.reasonCodes);
   const j3 = J("【3】Z\n60,000円\n1LDK\nAD 3ヶ月", { rent_max: 90_000, floor_plan: "1LDK" });
-  t("家賃ありは今まで通り（まかなえる＋2ヶ月以上＋3ヶ月以上）", ["AD_COVERS_DISCOUNT", "AD_HIGH", "AD_VERY_HIGH"].every((c) => j3.reasonCodes.includes(c)), j3.reasonCodes);
+  t("家賃ありは 2ヶ月以上＋3ヶ月以上（割引との比べの AD_COVERS_DISCOUNT は付けない・利益の目安は記録だけ）", ["AD_HIGH", "AD_VERY_HIGH"].every((c) => j3.reasonCodes.includes(c)) && !j3.reasonCodes.includes("AD_COVERS_DISCOUNT") && j3.profitYen != null, j3.reasonCodes);
 }
 
 console.log("■ 新しい札の点の表・日本語・50＋合計＝score");

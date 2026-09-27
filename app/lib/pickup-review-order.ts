@@ -9,8 +9,10 @@
 //       （点が横並びの原因は『材料が無い』か『同じ理由が全件に当たった』のどちらか。画面で一目で分かるように）
 import { BASE_SCORE, reasonJa, reasonPoints } from "./property-brain";
 import { PICKUP_AIX_MAX } from "./pickup-aix-handoff";
+import { compareOverall } from "./pickup-best";
 
-export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null };
+/** 2026-09-27 判定・画像で分析の点・回の時刻（あれば）も並びに使う（pickup-best.compareOverall） */
+export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null; verdict?: string | null; created_at?: string | null; image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null };
 
 /**
  * 並びの比べ方: 点の高い順（点なしは最後）→ 同点は DeepSeek の🌟★／🌟 → 順位 → id。
@@ -19,11 +21,9 @@ export type ReviewOrderRow = { id: number; rank: number; recommended: number; sc
  *   一番オススメ（👑）は pickCustomerBest の決まり（画像で分析が要るお客様は画像の点）で決め、sortForReview の bestId で先頭に置く
  */
 export function compareForReview(a: ReviewOrderRow, z: ReviewOrderRow): number {
-  const sa = a.score, sz = z.score;
-  if (sa != null && sz != null && sa !== sz) return sz - sa;
-  if (sa == null && sz != null) return 1;
-  if (sa != null && sz == null) return -1;
-  return ((z.recommended ?? 0) - (a.recommended ?? 0)) || (a.rank - z.rank) || (a.id - z.id);
+  // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。まとめたうえで結果をだす」: 👑・まとめの順位と同じ1本の並び
+  //   （判定の点 → 判定 → 画像で分析の点 → 上限前の点 →「合う」の数 → 🌟★/🌟 → 新しい回 → 順位 → id）
+  return compareOverall(a, z);
 }
 
 /** 1回分の物件を画面の並びにする（元の配列は変えない）。bestId（👑 一番オススメ）があればそれを先頭に */

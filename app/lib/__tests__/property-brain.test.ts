@@ -205,11 +205,14 @@ console.log("── 判定（決定論・drop は実送信でほぼ0の形だけ
   const dup = judgeProperty(parsePropertyFacts(SUMMARY_A), sentP);
   t("送付済み建物 → ALREADY_SENT で drop 候補", dup.verdict === "drop" && dup.reasonCodes.includes("ALREADY_SENT"));
 
-  // 利益: AD 1ヶ月 × 家賃 40,000 = 40,000 < 割引 42,000 → hold
+  // 利益: AD 1ヶ月 × 家賃 40,000 = 40,000 < 割引 42,000。
+  // 2026-09-27 竹内「割引が AD より大きいとあるが、AD はこっち側で自由に変えられるものやから、そこは影響しない」:
+  //   利益の目安は記録だけ（profitYen）・判定・点・保留の理由には入れない
   const cheap = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1K\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }));
-  t("AD より割引が大きい → PROFIT_NEGATIVE で hold", cheap.verdict === "hold" && cheap.profitYen === -2_000);
+  t("AD より割引が大きくても保留にしない（PROFIT_NEGATIVE を付けない・利益の目安は記録）", cheap.verdict === "pass" && cheap.profitYen === -2_000 && !cheap.reasonCodes.includes("PROFIT_NEGATIVE") && !cheap.flagCodes.includes("PROFIT_NEGATIVE"), JSON.stringify([cheap.verdict, cheap.reasonCodes]));
   const bigDisc = judgeProperty(parsePropertyFacts(SUMMARY_A), buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }, [], [], 150_000));
-  t("このお客様の割引 150,000 なら AD 116,000 でも利益は負", bigDisc.profitYen === -34_000 && bigDisc.verdict === "hold");
+  const smallDisc = judgeProperty(parsePropertyFacts(SUMMARY_A), buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }, [], [], 20_000));
+  t("このお客様の割引 150,000 でも（利益 −34,000）判定・点は割引 20,000 の時と同じ", bigDisc.profitYen === -34_000 && bigDisc.verdict === smallDisc.verdict && bigDisc.score === smallDisc.score && JSON.stringify(bigDisc.reasonCodes) === JSON.stringify(smallDisc.reasonCodes), JSON.stringify([bigDisc.verdict, bigDisc.score, smallDisc.score]));
 
   // 徒歩・築年
   const walk = judgeProperty(parsePropertyFacts("【1】遠い\n60,000円\n1K\n敷なし 礼なし\n徒歩16分\nAD 2ヶ月"), low);

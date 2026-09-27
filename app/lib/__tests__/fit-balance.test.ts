@@ -180,9 +180,10 @@ const sum50 = (codes: string[]) => BASE_SCORE + codes.reduce((a, c) => a + reaso
   t("徒歩の列が空・駅近を書いた人: 徒歩6分 → WALK_NEAR_W7＋WALK_TEXT_OK", d2.reasonCodes.includes("WALK_NEAR_W7") && d2.reasonCodes.includes("WALK_TEXT_OK"), d2.reasonCodes);
 
   const e = J("【6】F 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD なし", plain);
-  t("AD なし −10（＋利益が出ない −10 保留）", e.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -10, e.reasonCodes);
+  t("AD なし −10（割引との比べは付けない）", e.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -10, e.reasonCodes);
   const f = J("【7】G 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD 0.5ヶ月", plain, {}, []);
-  t("AD 0.5ヶ月・家賃あり → 利益が出ない（保留）。AD_UNDER_1M は重ねない", f.reasonCodes.includes("PROFIT_NEGATIVE") && !f.reasonCodes.includes("AD_UNDER_1M"), f.reasonCodes);
+  // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 割引との比べ（PROFIT_NEGATIVE）は付けない → 家賃があっても AD_UNDER_1M −8（保留にしない）
+  t("AD 0.5ヶ月・家賃あり → AD_UNDER_1M −8（割引との比べは付けない・保留にしない）", f.reasonCodes.includes("AD_UNDER_1M") && !f.reasonCodes.includes("PROFIT_NEGATIVE") && f.verdict !== "hold", f.reasonCodes);
   const g = J("【8】H 101\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD 0.5ヶ月", plain);
   t("AD 0.5ヶ月・家賃が読めない → AD_UNDER_1M −8", g.reasonCodes.includes("AD_UNDER_1M"), g.reasonCodes);
   const g1 = J("【9】I 101\n1LDK\nAD 1ヶ月", plain);

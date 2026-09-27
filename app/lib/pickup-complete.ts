@@ -23,7 +23,7 @@
 //     （background.js の _runBatch: お客様 → サイトの二重ループ）同じお客様のリアプロ・itandi・レインズは数分おきに続けて届き、10分の静けさで1つに寄る。
 //     1回ずつ届いた回を寄せても順位と 👑 が「まとめた全件」になるだけで、送った物・判定は変えない（悪くならない）
 //   - 境目: ちょうど10分（now − 最後 ＝ 600000ms）でまとめる（>=）。未来の時刻（時計のずれ）はまとめない
-import { pickCustomerBest, verdictOrder, okCountOf, type BestCandidateRow, type BestBasis } from "./pickup-best";
+import { pickCustomerBest, compareOverall, type BestCandidateRow, type BestBasis } from "./pickup-best";
 import { overrideRulerKey } from "./search-override";
 
 /** 「完了」でまとめる行の古さの上限（時間）。前の完了より後の行は complete_group_id が空なので、実際は「前の完了以降・最大24時間」 */
@@ -94,24 +94,15 @@ export type CompleteRankRow = BestCandidateRow & {
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const matchOf = (r: CompleteRankRow): number | null => num(r.image_analysis?.match);
 
-/** まとめた全件の並び（外す候補は最後 → 判定の点 → 画像の点 → 判定 → 🌟 → 新しい回 → 元の順位 → id） */
+/**
+ * まとめた全件の並び（外す候補は最後 → 画面・👑 と同じ1本の並び compareOverall）。
+ * 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。まとめたうえで結果をだす」: 並びの決め方を画面・👑 と1つにした
+ *   （旧は 判定の点 → 画像の点 → 合う数 → 判定。今は 判定の点 → 判定 → 画像の点 → 上限前の点 → 合う数 → 🌟 → 新しい回 → 順位 → id）
+ */
 export function compareCompleteGroup(a: CompleteRankRow, z: CompleteRankRow): number {
   const dropA = a.verdict === "drop" ? 1 : 0, dropZ = z.verdict === "drop" ? 1 : 0;
   if (dropA !== dropZ) return dropA - dropZ;
-  const sa = num(a.score), sz = num(z.score);
-  if (sa != null && sz != null && sa !== sz) return sz - sa;
-  if (sa == null && sz != null) return 1;
-  if (sa != null && sz == null) return -1;
-  const ma = matchOf(a), mz = matchOf(z);
-  if (ma != null && mz != null && ma !== mz) return mz - ma;
-  if (ma == null && mz != null) return 1;
-  if (ma != null && mz == null) return -1;
-  return (okCountOf(z.image_analysis ?? null) - okCountOf(a.image_analysis ?? null))
-    || (verdictOrder(a) - verdictOrder(z))
-    || ((z.recommended ?? 0) - (a.recommended ?? 0))
-    || (Date.parse(z.created_at) - Date.parse(a.created_at))
-    || (a.rank - z.rank)
-    || (a.id - z.id);
+  return compareOverall(a, z);
 }
 
 export type CompleteRanking = {

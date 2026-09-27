@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
 import { waitUntil } from "@vercel/functions";
-import { pickCustomerBest, bestBasisFor, customerImageNeed } from "@/app/lib/pickup-best";
+import { pickCustomerBest, bestBasisFor, bestRuleTag, customerImageNeed } from "@/app/lib/pickup-best";
 import { COMPLETE_BEST_WINDOW_HOURS } from "@/app/lib/pickup-complete";
 import { claimIdleComplete } from "@/app/lib/pickup-complete-server";
 import { sortForReview } from "@/app/lib/pickup-review-order";
@@ -14,6 +14,8 @@ import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
+import { listingAdText, listingRoomText, nameWithRoom } from "@/app/lib/pickup-listing-text";
+import { dropDiscountFromRow, isDiscountCompareCode } from "@/app/lib/property-brain";
 import { widenChainNotes, type ChainCommandLite, type PickupLite } from "@/app/lib/search-widen-chain";
 import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
 import { summarizeNewArrivals, newArrivalLine, NEW_ARRIVAL_WINDOW_HOURS, type NewArrivalRow, type NewArrivalSummary, type SentBuilding } from "@/app/lib/new-arrivals";
@@ -145,7 +147,8 @@ type SentLite = { conversation_id: string | null; property_customer_id: string |
 async function buildList(since: string) {
   const nowMs = Date.now();
   const [pk, sp, roundOf, na] = await Promise.all([
-    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, recommended, status, sent_at, score, verdict, search_override")
+    // 2026-09-27 一覧の 👑 も詳細と同じ1本の並び（判定の点 → 画像の点）: 画像で分析の点だけ JSON から引く（分析の全文は返さない）・号室も
+    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, room_no, recommended, status, sent_at, score, verdict, reason_codes, search_override, ia_match:image_analysis->match, ia_raw:image_analysis->match_raw, ia_ok:image_analysis->ok_count, ia_review:image_analysis->review->>status")
       .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
     supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at, property_name")
       .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
@@ -163,10 +166,28 @@ async function buildList(since: string) {
   const sentNamesByKey = new Map<string, SentBuilding[]>();
   // 2026-09-25 竹内「まとめられていない」: 一覧の「🧠 N件」も、短い間に届いた回（リアプロ・itandi）をまとめた1回分で数える
   // 2026-09-25 一覧の「🧠 N件・👑名前」: 一番オススメは DeepSeek の🌟★ ではなく 👑（まとめの best_id → 無ければ判定の点の1位・同点は🌟）
-  type BestLite = { id: number; created_at: string; batch_id: string; rank: number; status: string; recommended: number; property_name: string; score: number | null; verdict: string | null; search_override?: unknown };
+  type BestLite = { id: number; created_at: string; batch_id: string; rank: number; status: string; recommended: number; property_name: string; room_no?: string | null; score: number | null; verdict: string | null; search_override?: unknown;
+    image_analysis?: { match?: unknown; match_raw?: unknown; ok_count?: unknown; review?: { status?: unknown } } | null };
+  type BestLiteDb = BestLite & { ia_match?: unknown; ia_raw?: unknown; ia_ok?: unknown; ia_review?: unknown };
   type BatchSum = { batch_id: string; created_at: string; site: string | null; round_id: string | null; count: number; rows: BestLite[] };
   const batchesSeen = new Map<string, Map<string, BatchSum>>();
-  for (const r of (pk.data ?? []) as Array<BestLite & { property_customer_id: string | null; conversation_id: string | null; customer_name: string | null }>) {
+  // 2026-09-27 付け直し（backfill-drop-discount-codes --apply）の前の行も、割引と AD の比べの札を外した点・判定で 👑 を決める（詳細と同じ）。
+  //   札のある行だけ説明文（AD の月数を読むため）を別に読む
+  type ListDb = BestLiteDb & { property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; reason_codes?: string[] | null };
+  const listRows = (pk.data ?? []) as ListDb[];
+  const discIds = listRows.filter((r) => (r.reason_codes ?? []).some(isDiscountCompareCode)).map((r) => r.id);
+  const summaryOf = new Map<number, string | null>();
+  for (let i = 0; i < discIds.length; i += 200) {
+    const { data: st, error: stErr } = await supabase.from("property_pickups").select("id, summary_text").in("id", discIds.slice(i, i + 200));
+    if (stErr) break;
+    for (const t of (st ?? []) as Array<{ id: number; summary_text: string | null }>) summaryOf.set(t.id, t.summary_text);
+  }
+  for (const rx of listRows) {
+    const d = (rx.reason_codes ?? []).some(isDiscountCompareCode) ? dropDiscountFromRow({ ...rx, summary_text: summaryOf.get(rx.id) ?? "" }) : null;
+    const { reason_codes: _rc, ...r0 } = d ? { ...rx, score: d.score, verdict: d.verdict } : rx;
+    void _rc;
+    const { ia_match, ia_raw, ia_ok, ia_review, ...rest } = r0;
+    const r = { ...rest, image_analysis: ia_match === undefined && ia_review === undefined ? null : { match: ia_match, match_raw: ia_raw, ok_count: ia_ok, review: ia_review ? { status: ia_review } : undefined } };
     const key = r.property_customer_id ?? `conv:${r.conversation_id ?? r.batch_id}`;
     const c = byKey.get(key) ?? { key, property_customer_id: r.property_customer_id, conversation_id: r.conversation_id, customer_name: r.customer_name, pending: 0, last_pickup_at: null, batch_count: 0, last_batch: null, sent: { pickup: 0, recommendation: 0, other: 0, last_at: null } };
     if (!c.conversation_id && r.conversation_id) c.conversation_id = r.conversation_id;
@@ -194,18 +215,32 @@ async function buildList(since: string) {
       lastRounds.push({ c, key: last.key, round_id: last.round_id, rows: last.batches.flatMap((b) => b.rows) });
     }
   }
-  // まとめてある回は best_id（画面の 👑 と同じ決まり・画像で分析が要るお客様は画像の点）。無い回・読めない時は判定の点の1位（外す候補は除く）
+  // まとめてある回は best_id（画面の 👑 と同じ決まり）。無い回・読めない時・前の決まりのまとめは判定の点の1位（外す候補は除く・同点は画像の点）
   const gids = [...new Set(lastRounds.map((x) => x.round_id).filter((v): v is string => !!v))];
   const bestOf = new Map<string, number>();
   for (let i = 0; i < gids.length; i += 200) {
-    const { data } = await supabase.from("property_pickup_completions").select("group_id, best_id").in("group_id", gids.slice(i, i + 200));
-    for (const r of (data ?? []) as Array<{ group_id: string; best_id: number | null }>) if (r.best_id != null) bestOf.set(r.group_id, Number(r.best_id));
+    const { data } = await supabase.from("property_pickup_completions").select("group_id, best_id, rule:result->>basis_rule").in("group_id", gids.slice(i, i + 200));
+    for (const r of (data ?? []) as Array<{ group_id: string; best_id: number | null; rule?: string | null }>) if (r.best_id != null && r.rule === bestRuleTag("score")) bestOf.set(r.group_id, Number(r.best_id));
   }
+  const crowns: Array<{ c: L; b: BestLite }> = [];
   for (const x of lastRounds) {
     const pre = x.round_id ? bestOf.get(x.round_id) : undefined;
     const hit = pre != null ? x.rows.find((r) => r.id === pre && r.status === "pending") : undefined;
     const b = hit ?? (() => { const p = pickCustomerBest(x.rows, { basis: "score", windowHours: 24 * 365 }); return p ? x.rows.find((r) => r.id === p.id) : undefined; })();
-    if (x.c.last_batch) x.c.last_batch.rec_name = b?.property_name ?? null;
+    if (x.c.last_batch) x.c.last_batch.rec_name = b ? nameWithRoom(b.property_name, b.room_no ?? null) : null;
+    if (b && x.c.last_batch) crowns.push({ c: x.c, b });
+  }
+  // 2026-09-27 竹内「物件名に号室もいれる」（号室は資料の文字のまま・0 を落とさない＝詳細のカードと同じ）:
+  //   👑 の1件だけ資料の文字（pdf_text）を読んで号室名を取る（2.5.31 より前の行は room_no の頭の 0 が落ちている）。読めない時は room_no
+  const crownIds = crowns.map((x) => x.b.id);
+  for (let i = 0; i < crownIds.length; i += 100) {
+    const { data: tx, error: txErr } = await supabase.from("property_pickups").select("id, pdf_text").in("id", crownIds.slice(i, i + 100));
+    if (txErr) break;
+    const roomOf = new Map(((tx ?? []) as Array<{ id: number; pdf_text: string | null }>).map((t) => [t.id, listingRoomText(t.pdf_text)]));
+    for (const x of crowns) {
+      const rt = roomOf.get(x.b.id);
+      if (rt && x.c.last_batch) x.c.last_batch.rec_name = nameWithRoom(x.b.property_name, rt);
+    }
   }
   for (const s of (sp.data ?? []) as SentLite[]) {
     if (!s.conversation_id) continue;
@@ -329,7 +364,13 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   // 2026-09-25 竹内「3日前の画像は消される・保存期間が終了しましたと出る（LINE のように）」: 届いてから 72時間を過ぎた行は
   //   画像・資料の URL を空にして expired を付ける（消す処理は毎日1回の cron。間の数時間も画面は 72時間ちょうどでそろえる）
   const nowMs = Date.now();
-  const rows = ((pk.data ?? []) as Row[]).map((r) => withPickupRetention(r, nowMs));
+  // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 付け直し（backfill-drop-discount-codes --apply）の前の行も、
+  //   割引と AD の比べの札を外した点・判定・理由で出す（札・保留・👑 の並びが、付け直した後と同じになる）
+  const rows = ((pk.data ?? []) as Row[]).map((r) => {
+    const d = dropDiscountFromRow(r);
+    const r2 = d ? { ...r, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes, reasons_ja: d.reasons_ja } : r;
+    return withPickupRetention(r2, nowMs);
+  });
   const order: string[] = [];
   const byBatch = new Map<string, { batch_id: string; created_at: string; site: string | null; conversation_id: string | null; items: Row[] }>();
   for (const r of rows) {
@@ -342,7 +383,18 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const rounds = groupPickupRounds(order.map((id) => ({ ...byBatch.get(id)!, round_id: roundOf.get(id) ?? null })));
   // 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」→ 2026-09-25 点の高い順（同点は🌟★／🌟 → 元の順位）。
   //   一番オススメ（👑）の先頭寄せは画面（pickup-best.roundBestId → sortForReview の bestId）。画面も同じ関数で並べ直す
-  const batches = rounds.slice(-nBatches).flatMap((r) => r.batches).map((b) => ({ ...b, items: sortForReview(b.items) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
+  const batches0 = rounds.slice(-nBatches).flatMap((r) => r.batches).map((b) => ({ ...b, items: sortForReview(b.items) })).sort((a, z) => a.created_at.localeCompare(z.created_at));
+  // 2026-09-27 竹内「物件名に号室もいれる」「AD の項目は重要なので物件名の横にもスタンプでいれる」: 資料の文字（pdf_text）から
+  //   号室名と AD の欄を資料の文字のまま読んで行に付ける（pickup-listing-text.ts）。資料の全文は画面に返さない（出す行の分だけ別に読む）
+  const shownIds = batches0.flatMap((b) => b.items.map((it) => it.id));
+  const listingOf = new Map<number, { ad_text: string | null; room_text: string | null }>();
+  for (let i = 0; i < shownIds.length; i += 100) {
+    const { data: tx, error: txErr } = await supabase.from("property_pickups").select("id, pdf_text").in("id", shownIds.slice(i, i + 100));
+    if (txErr) { console.warn("[property-pickups] 資料の文字を読めない（号室・AD の札なし）:", txErr.message); break; }
+    for (const t of (tx ?? []) as Array<{ id: number; pdf_text: string | null }>) listingOf.set(t.id, { ad_text: listingAdText(t.pdf_text), room_text: listingRoomText(t.pdf_text) });
+  }
+  const withListing = <T extends { id: number }>(it: T) => ({ ...it, ad_text: listingOf.get(it.id)?.ad_text ?? null, room_text: listingOf.get(it.id)?.room_text ?? null });
+  const batches = batches0.map((b) => ({ ...b, items: b.items.map(withListing) }));
   const first = rows[0] ?? null;
   const convId = conv ?? first?.conversation_id ?? null;
   const { data: cv } = convId ? await supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : { data: null };
@@ -369,7 +421,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       const at = Date.parse(String((r.image_analysis as { analyzed_at?: unknown } | null)?.analyzed_at ?? ""));
       return Number.isFinite(at) && at > finMs;
     });
-    const preferId = cp?.status === "done" && cp.best_id != null && !reanalyzed && cp.result?.basis_rule === basis ? Number(cp.best_id) : null;
+    // 2026-09-27 決まりの名前に版を付けた（bestRuleTag・判定の点 → 画像の点の1本の並び）。前の版のまとめは best_id を使わず並べ直す
+    const preferId = cp?.status === "done" && cp.best_id != null && !reanalyzed && cp.result?.basis_rule === bestRuleTag(basis) ? Number(cp.best_id) : null;
     bestRaw = pickCustomerBest(groupRows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId });
     bestFrom = "complete";
   } else {
@@ -377,7 +430,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   }
   // 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: 一番の物件の画像（お客様に送る1ページ目だけ・元付は返さない）
   const bestRow = bestRaw ? rows.find((r) => r.id === bestRaw.id) ?? null : null;
-  const best = bestRaw ? { ...bestRaw, from: bestFrom, image_url: bestRow ? pickSaveImageUrl(bestRow) : null, status: bestRow?.status ?? null } : null;
+  const best = bestRaw ? { ...bestRaw, from: bestFrom, image_url: bestRow ? pickSaveImageUrl(bestRow) : null, status: bestRow?.status ?? null,
+    room_text: listingOf.get(bestRaw.id)?.room_text ?? null, ad_text: listingOf.get(bestRaw.id)?.ad_text ?? null } : null;
   return {
     ok: true,
     customer: {

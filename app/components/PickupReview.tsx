@@ -5,7 +5,9 @@
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { okCountOf, verdictOrder, bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/app/lib/pickup-best";
+import { bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/app/lib/pickup-best";
+// 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」「物件名に号室もいれる」「AD は物件名の横にもスタンプで」（純関数・import なし）
+import { nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel, type ImageChip } from "@/app/lib/pickup-listing-text";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
 import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks } from "@/app/lib/pickup-review-order";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
@@ -44,6 +46,8 @@ type Item = {
   search_override?: unknown;
   /** 2026-09-27 その回を見つけた検索の種類（pinpoint｜widen・無い行＝分からない） */
   search_mode?: string | null;
+  /** 2026-09-27 資料の文字のまま: AD の欄（「A D 2ヶ月（税込）（-1万）」）と号室名（「0808」）。詳細 API が pdf_text から読む（無ければ null） */
+  ad_text?: string | null; room_text?: string | null;
 };
 
 /** 2026-09-27 カードの検索の種類の印（🎯 ピンポイント／🔎 広げて）。分からない行は出さない */
@@ -75,7 +79,7 @@ type LineLite = { profile_image_url: string | null; updated_at: string | null; a
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
 type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean;
   /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
-  best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
+  best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null; room_text?: string | null; ad_text?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
   /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
   condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null;
   /** 2026-09-27 自動で広げた回の説明（サイトごと・詳細だけ） */
@@ -138,7 +142,6 @@ function fmtWhen(iso: string): string {
 type Bubble =
   | { kind: "brain"; at: string; batch: Batch }
   | { kind: "trim"; at: string; batch: Batch; items: Item[] }
-  | { kind: "analysis"; at: string; batch: Batch; items: Item[]; bestId: number | null }
   | { kind: "staff"; at: string; text: string; sub?: string }
   | { kind: "history"; at: string; items: SentHist[] }
   | { kind: "best"; at: string; best: NonNullable<Customer["best"]> };
@@ -173,7 +176,8 @@ function ReasonChips({ it, open, onToggle }: { it: Item; open: boolean; onToggle
   const v = buildReasonView(it);
   const chips = [...v.minus, ...v.plus.slice(0, it.verdict === "pass" ? 3 : 2)];
   const breakdown = formatScoreBreakdown(v, it.score);
-  if (chips.length === 0 && v.missing.length === 0 && v.notes.length === 0 && it.profit_yen == null) return null;
+  // 2026-09-27 竹内「AD はこっち側で自由に変えられるものやから（割引との比べは）影響しない」: 利益目安（AD − 見積書の割引）の札は出さない
+  if (chips.length === 0 && v.missing.length === 0 && v.notes.length === 0) return null;
   return (
     <div className="mt-1">
       <div className="flex flex-wrap items-center gap-1">
@@ -183,7 +187,6 @@ function ReasonChips({ it, open, onToggle }: { it: Item; open: boolean; onToggle
             {c.tone === "drop" ? "✕ " : ""}{c.label}{c.points !== 0 ? ` ${c.points > 0 ? "+" : "−"}${Math.abs(c.points)}` : ""}</span>;
         })}
         {v.missing.length > 0 && <span className="text-[10px] leading-none px-1.5 py-1 rounded-full" style={CHIP_STYLE.info}>材料なし: {v.missing.join("・")}</span>}
-        {it.profit_yen != null && <span className="text-[10px] leading-none px-1.5 py-1 rounded-full" style={CHIP_STYLE.info}>利益目安 {it.profit_yen.toLocaleString()}円</span>}
         {breakdown && (
           <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(); }}
             className="leading-none px-1.5 py-1 rounded-full font-bold" style={{ color: "#1565C0", background: "#e3f2fd", fontSize: 10 }}>{open ? "内訳を閉じる" : "点の内訳"}</button>
@@ -261,16 +264,6 @@ function TermsLine({ t }: { t: PickupTerms | null | undefined }) {
   );
 }
 
-/** 分析結果の並び: 点の高い順（要確認・点なしは後ろ）→ 🌟 → 順位 */
-function analysisOrder(items: Item[]): Item[] {
-  const m = (x: Item) => {
-    const a = x.image_analysis as { match?: unknown; review?: { status?: string } } | null;
-    if (a?.review?.status === "要確認") return -2;
-    return typeof a?.match === "number" ? a.match : -1;
-  };
-  return items.slice().sort((a, z) => (m(z) - m(a)) || (z.recommended - a.recommended) || (a.rank - z.rank));
-}
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 画像を手元に保存（別ドメインの画像は download 属性が効かないので、取ってきて Blob の URL で落とす。取れなければ新しいタブで開く） */
@@ -330,6 +323,29 @@ function toRounds(batches: Batch[]): Batch[] {
   });
 }
 
+/** 物件名＋号室（号室は資料の文字のまま「ラ・フォーレ東天満 703」・2026-09-27 竹内「物件名に号室もいれる」） */
+function itemTitle(it: Pick<Item, "property_name" | "room_no" | "room_text">): string {
+  return nameWithRoom(it.property_name, cardRoom(it.room_no, it.room_text));
+}
+
+/** 2026-09-27 竹内「AD の項目は重要なので物件名の横にもスタンプでいれる」: 資料の文字のままの AD の札（芯＋付け足し。無ければ出さない） */
+function AdStamp({ text }: { text: string | null | undefined }) {
+  if (!text) return null;
+  const { core, rest } = splitAdStamp(text);
+  return (
+    <span className="inline-flex max-w-full items-baseline gap-0.5 rounded px-1.5 py-[2px] align-middle text-[10px] font-bold leading-tight break-words"
+      style={{ background: "#fff3e0", color: "#bf360c", border: "1px solid #ffcc80" }} title={`資料の AD の欄: ${text}`}>
+      <span className="whitespace-nowrap">{core}</span>{rest && <span className="font-normal" style={{ color: "#8d6e63" }}>{rest}</span>}
+    </span>
+  );
+}
+
+/** 画像で分析の札の色 */
+const IMAGE_CHIP_STYLE: Record<ImageChip["kind"], { bg: string; color: string }> = {
+  scored: { bg: "#e0f2f1", color: "#00695c" }, needs_check: { bg: "#fff3e0", color: "#e65100" },
+  unscored: { bg: "#f5f5f5", color: "#78909c" }, waiting: { bg: "#f5f5f5", color: "#90a4ae" },
+};
+
 function buildBubbles(c: Customer): Bubble[] {
   const out: Bubble[] = [];
   for (const b of toRounds(c.batches)) {
@@ -337,25 +353,16 @@ function buildBubbles(c: Customer): Bubble[] {
     // 2026-09-24 竹内「トリミングした画像はピックアップの画面内に送られて、そのままスタッフが保存して使えるように」
     const trimmed = b.items.filter((it) => it.trim_image_url);
     if (trimmed.length) out.push({ kind: "trim", at: b.created_at + "~", batch: b, items: trimmed });
-    // 🔍 画像で分析の結果（一番合う物件＝点が最大・同点は順位が上）
-    const analyzed = b.items.filter((it) => it.image_analysis);
-    if (analyzed.length) {
-      const scored = analyzed.filter((it) => typeof (it.image_analysis as { match?: unknown })?.match === "number");
-      const m = (x: Item) => (x.image_analysis as { match: number }).match;
-      const raw = (x: Item) => Number((x.image_analysis as { match_raw?: number | null }).match_raw ?? 0);
-      // 同点（全件が必須 NG で 20 点など）は上限前の点 →「合う」の数で並べる（pickup-image-analysis.pickBest と同じ）
-      // 2026-09-24 竹内「前回の反証で出た点も直す」: 同点は「合う」の数が多い方を上に
-      // 2026-09-25 それでも同じなら判定（通す＞保留＞外す候補）。全体の 👑（pickCustomerBest）と同じ
-      const best = scored.slice().sort((a, z) => (m(z) - m(a)) || (raw(z) - raw(a)) || (okCountOf(z.image_analysis) - okCountOf(a.image_analysis)) || (verdictOrder(a) - verdictOrder(z)) || (a.rank - z.rank))[0];
-      out.push({ kind: "analysis", at: b.created_at + "~~", batch: b, items: analyzed, bestId: best?.id ?? null });
-    }
+    // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。まとめたうえで結果をだす。点数のと画像で分析がわかれていたらみにくい」:
+    //   「🔍 画像で分析しました」の別の吹き出し（別の一番・別の並び）はやめ、物件カード（🧠 の吹き出し）の中に画像の点・内訳・🌟 を入れた。
+    //   一番（👑）と並びは判定の点 → 同じ点なら画像の点の1本（pickup-best.compareOverall）
     const sent = b.items.filter((it) => it.status === "sent");
     const skipped = b.items.filter((it) => it.status === "skipped");
     if (sent.length) {
       const at = sent.map((it) => it.sent_at ?? b.created_at).sort().slice(-1)[0];
-      out.push({ kind: "staff", at, text: `${sent.length}件をお客様に送りました`, sub: sent.map((it) => `【${it.rank}】${it.property_name}`).join("・") });
+      out.push({ kind: "staff", at, text: `${sent.length}件をお客様に送りました`, sub: sent.map((it) => `【${it.rank}】${itemTitle(it)}`).join("・") });
     }
-    if (skipped.length) out.push({ kind: "staff", at: b.created_at, text: `${skipped.length}件を見送り`, sub: skipped.map((it) => `【${it.rank}】${it.property_name}`).join("・") });
+    if (skipped.length) out.push({ kind: "staff", at: b.created_at, text: `${skipped.length}件を見送り`, sub: skipped.map((it) => `【${it.rank}】${itemTitle(it)}`).join("・") });
   }
   for (const n of c.notes) out.push({ kind: "staff", at: n.created_at, text: n.text });
   // 2026-09-24 夜: 送った物件の履歴は上のカードではなく、起きた事として左の吹き出しに（一番新しく送った時刻の位置）
@@ -974,7 +981,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
       const best = fresh?.best;
       const parts = [
         `🔍 ${ok + saved}/${targets.length}件を分析しました`,
-        best ? `👑 一番オススメ（全体）は【${best.rank}】${best.property_name}（${bestPointLabel(best)}）` : "",
+        best ? `👑 一番オススメ（全体）は【${best.rank}】${nameWithRoom(best.property_name, cardRoom(best.room_no, best.room_text))}（${bestPointLabel(best)}）` : "",
         cut.length > saved ? `通信が切れた ${cut.length - saved}件は結果が保存され次第ここに出ます` : "",
         failed.length ? `⚠ 読めなかった: ${failed.join("・")}` : "",
       ].filter(Boolean);
@@ -1132,7 +1139,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   // 2026-09-25 一番オススメ（👑）は1つ: 全体の 👑（詳細 API の best）か、同じ決まり（pickCustomerBest）でその回の一番。
   //   DeepSeek の🌟★／🌟 は「🌟 候補」として小さく残す（点が並んだ時の順番にだけ使う・pickup-best.roundBestId）
   //   反証レビュー 2026-09-25: 全体の 👑 が別の回にある時、この回の一番まで「👑 一番オススメ」と出すと 👑 が2つに割れる → 「この回で一番」（色を弱める）
-  const renderCard = (it: Item, b: Batch, bestId: number | null = null, bestIsGlobal = true) => {
+  // 2026-09-27 showImageWaiting: 画像で確かめる希望があるお客様・この回で1件でも分析した時は、まだの物件に「🔍 画像の分析待ち」
+  const renderCard = (it: Item, b: Batch, bestId: number | null = null, bestIsGlobal = true, showImageWaiting = false) => {
     const cv = buildPickupCardView(it);
     const isBest = bestId != null && it.id === bestId;
     const crown = isBest && bestIsGlobal;
@@ -1142,12 +1150,23 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     const ms = MARK_STYLE[cv.mark.tone];
     const hl = cv.headline;
     const site = it.site ?? b.site;
-    const a = it.image_analysis as { match?: number | null; water?: string; kitchen?: string; layout?: string; storage?: string; good?: string[]; concern?: string[]; review?: { status?: string } } | null;
+    const a = it.image_analysis as { match?: number | null; water?: string; kitchen?: string; layout?: string; storage?: string; good?: string[]; concern?: string[];
+      checks?: Array<{ id: string; result: string; why: string }>; wants?: Array<{ id: string; source: string; text: string; ng: boolean; must: boolean }> | string;
+      review?: { status?: string; reasons?: string[] }; sheet?: { type?: string; crop_mode?: string | null; crop_basis?: string | null; crop_reason?: string | null; source?: string } } | null;
     const stop = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
-    // 建物の段の文字（物件名・住所・沿線と徒歩）
+    // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」: 画像の点・◎× の数・要確認・分析待ちを建物の段の札に
+    //   「分析待ち」は未送信の物だけ（送信済み・見送りはもう分析しない）
+    const imgChip = imageChipOf(it.image_analysis as Parameters<typeof imageChipOf>[0], showImageWaiting && it.status === "pending");
+    // 2026-09-27 竹内「物件名に号室もいれる」（号室は資料の文字のまま・0 を落とさない）
+    const room = cardRoom(cv.room, it.room_text);
+    // 建物の段の文字（物件名・号室・AD の札・住所・沿線と徒歩）
     const nameBlock = (
       <>
-        <div className="text-[13px] font-bold leading-snug break-words" style={{ color: cv.name ? "#3e2723" : "#90a4ae" }}>{cv.name ?? "物件名なし"}</div>
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <span className="text-[13px] font-bold leading-snug break-words" style={{ color: cv.name ? "#3e2723" : "#90a4ae" }}>{cv.name ? nameWithRoom(cv.name, room) : `物件名なし${room ? ` ${room}` : ""}`}</span>
+          {/* 2026-09-27 竹内「AD の項目は重要なので物件名の横にもスタンプでいれる」（資料の文字のまま・無ければ出さない） */}
+          <AdStamp text={it.ad_text} />
+        </div>
         {(cv.address || cv.access) && (
           <div className="text-[10px] leading-snug break-words">
             {cv.address && <span className="text-[#6d4c41]">{cv.address}</span>}
@@ -1182,6 +1201,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                 ? <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#fff", background: "#f9a825" }}>👑 一番オススメ</span>
                 : <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#78909c", background: "#eceff1" }}>この回で一番</span>)}
               {!isBest && it.recommended > 0 && <span className="text-[10px] whitespace-nowrap" style={{ color: "#bf8f00" }} title="DeepSeek が選んだ候補（点が並んだ時の順番に使う）">🌟 候補</span>}
+              {imgChip && <span className="text-[10px] font-bold whitespace-nowrap px-1 py-[1px] rounded" style={IMAGE_CHIP_STYLE[imgChip.kind]}
+                title={imgChip.kind === "scored" ? "画像で分析の点（判定の点が同じ時の順番に使う）。内訳は「詳細 ▾」" : imgChip.kind === "needs_check" ? "物件と資料が一致しない（点は出さない）" : imgChip.kind === "waiting" ? "まだ画像で分析していません（下の「🔍 画像で分析」）" : "資料から読めず点が付かなかった"}>{imgChip.text}</span>}
               {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
               {/* 2026-09-27 案A: 条件の違う回が混ざった時だけ、メモの条件で判定した物件に印（点の物差しが違う） */}
               {roundOverrideNote(b.items)?.mixed && overrideJudgeLine(it.search_override) && <span className="text-[9px] font-bold whitespace-nowrap px-1 rounded" style={{ background: "#ede7f6", color: "#4527a0" }}>📝 メモの条件で判定</span>}
@@ -1223,8 +1244,6 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
         <div className="flex items-center gap-2 px-2 py-1.5" style={{ borderTop: "1px solid #efebe9" }}>
           <div className="flex-1 min-w-0 text-[10px] font-bold leading-snug break-words" style={{ color: hl ? HEADLINE_COLOR[hl.tone] : "#bcaaa4" }}>
             {hl ? hl.text : "理由の記録なし"}
-            {a && typeof a.match === "number" && a.review?.status !== "要確認" && <span className="ml-1 font-normal" style={{ color: "#00695c" }}>🔍{a.match}点</span>}
-            {a?.review?.status === "要確認" && <span className="ml-1" style={{ color: "#e65100" }}>🔍要確認</span>}
           </div>
           <button type="button" onClick={(e) => { stop(e); setOpenCard((p) => ({ ...p, [it.id]: !p[it.id] })); }} aria-expanded={opened}
             className="shrink-0 rounded-full px-2.5 py-1 font-bold leading-none" style={{ background: "#efebe9", color: "#5d4037", fontSize: 11 /* globals.css の button { font: inherit } が text-[11px] に勝つため */ }}>{opened ? "詳細 ▴" : "詳細 ▾"}</button>
@@ -1240,17 +1259,47 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
             {it.image_lines && it.image_lines.length > 0 && (
               <div className="text-[10px] mt-1 break-words" style={{ color: "#37474f" }}>📷 {it.image_lines.slice(0, 8).join("／")}</div>
             )}
-            {a && (a.water || a.kitchen || a.layout || a.storage || a.good?.length || a.concern?.length) && (
-              <div className="text-[10px] mt-1 leading-relaxed" style={{ color: "#37474f" }}>
-                <div className="font-bold" style={{ color: "#00695c" }}>🔍 画像で分析{typeof a.match === "number" ? ` ${a.match}点` : ""}</div>
-                {a.water && <div>🚿 水回り: {a.water}</div>}
-                {a.kitchen && <div>🍳 キッチン: {a.kitchen}</div>}
-                {a.layout && <div>🛋️ リビングと洋室: {a.layout}</div>}
-                {a.storage && <div>🧥 収納: {a.storage}</div>}
-                {a.good && a.good.length > 0 && <div style={{ color: "#2e7d32" }}>◎ {a.good.join("／")}</div>}
-                {a.concern && a.concern.length > 0 && <div style={{ color: "#c62828" }}>△ {a.concern.join("／")}</div>}
-              </div>
-            )}
+            {/* 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」: 旧「🔍 画像で分析しました」の吹き出しの中身（読み取り・希望1つずつの ◎×？・要確認の理由）をカードの詳細に */}
+            {a && (() => {
+              const needCheck = a.review?.status === "要確認";
+              const TYPE_JA: Record<string, string> = { realpro: "リアプロ", itandi: "itandi", unknown: "型不明" };
+              const CROP_JA: Record<string, string> = { floor: "間取り図を切り出し", image_area: "画像の範囲を切り出し", page: "1ページ全体" };
+              const SRC_JA: Record<string, string> = { read: "今回読んだ", saved_row: "保存した読み取り", saved_unit: "保存した読み取り（同じ部屋）", saved_fp: "保存した読み取り（同じ図）", none: "文字層だけ" };
+              const sheetNote = a.sheet ? [TYPE_JA[a.sheet.type ?? ""] ?? a.sheet.type, a.sheet.crop_mode ? CROP_JA[a.sheet.crop_mode] ?? a.sheet.crop_mode : null, a.sheet.source ? SRC_JA[a.sheet.source] ?? a.sheet.source : null].filter(Boolean).join("・") : "";
+              const wantList = Array.isArray(a.wants) ? a.wants : [];
+              const MARK: Record<string, string> = { ok: "◎", ng: "×", unknown: "？" };
+              return (
+                <div className="text-[10px] mt-1 leading-relaxed" style={{ color: "#37474f" }}>
+                  <div className="font-bold" style={{ color: needCheck ? "#e65100" : "#00695c" }}>{imgChip?.text ?? "🔍 画像で分析"}（水回り・キッチン・リビングと洋室・収納）</div>
+                  {needCheck && (a.review?.reasons ?? []).length > 0 && (
+                    <div className="leading-snug" style={{ color: "#e65100" }}>{(a.review?.reasons ?? []).slice(0, 3).map((x, k) => <div key={k}>・{x}</div>)}<div style={{ color: "#90a4ae" }}>（点は出しません。資料が正しい物件か確かめてください）</div></div>
+                  )}
+                  {sheetNote && <div className="text-[9px]" style={{ color: "#b0bec5" }}>📐 {sheetNote}{a.sheet?.crop_reason ? `（${a.sheet.crop_reason}）` : ""}</div>}
+                  {a.water && <div>🚿 水回り: {a.water}</div>}
+                  {a.kitchen && <div>🍳 キッチン: {a.kitchen}</div>}
+                  {a.layout && <div>🛋️ リビングと洋室: {a.layout}</div>}
+                  {a.storage && <div>🧥 収納: {a.storage}</div>}
+                  {a.good && a.good.length > 0 && <div style={{ color: "#2e7d32" }}>◎ {a.good.join("／")}</div>}
+                  {a.concern && a.concern.length > 0 && <div style={{ color: "#c62828" }}>△ {a.concern.join("／")}</div>}
+                  {/* 希望1つずつの判定（出どころ＝条件欄・会話・訴求） */}
+                  {wantList.length > 0 && a.checks && a.checks.length > 0 && (
+                    <div className="mt-1 pt-1 flex flex-col gap-0.5" style={{ borderTop: "1px dashed #cfd8dc" }}>
+                      {wantList.map((w) => {
+                        const c = a.checks!.find((x) => x.id === w.id);
+                        const r = c?.result ?? "unknown";
+                        return (
+                          <div key={w.id} className="leading-snug" style={{ color: r === "ok" ? "#2e7d32" : r === "ng" ? "#c62828" : "#90a4ae" }}>
+                            {MARK[r] ?? "？"} <span className="font-bold">{w.text}</span>
+                            <span className="ml-1 text-[9px]" style={{ color: "#90a4ae" }}>（{w.source}{w.ng ? "・NG" : ""}{w.must ? "・必須" : ""}）</span>
+                            {c?.why && r !== "unknown" && <span className="ml-1" style={{ color: "#607d8b" }}>— {c.why}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="flex gap-3 flex-wrap mt-1.5">
               {it.pdf_blob_url && <a href={it.pdf_blob_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold" style={{ color: "#1565C0" }}>📄 資料を見る{!it.pdf_has_text ? "（文字層なし）" : ""}</a>}
               {/* 偶数ページ＝元付業者の資料（AD の記載・ブレインが読んだ側）。お客様には送らない・見るだけ（保存を出さない） */}
@@ -1365,12 +1414,15 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                 {needRecommended && (
                   <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>🔍 画像で確かめたい希望: {needLabels}</div>
                 )}
-                {/* 2026-09-25 竹内「売上サポに送られたら、条件指定あれば間取り図とか設備も自動的に読み取る」: 届いた時に自動で読んだ件数 */}
+                {/* 2026-09-25 竹内「売上サポに送られたら、条件指定あれば間取り図とか設備も自動的に読み取る」: 届いた時に自動で読んだ件数
+                    2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」: 画像で分析の件数（分析待ち・要確認）をこの1行に。点・内訳は各カード */}
                 {(() => {
+                  const line = roundImageLine(bb.batch.items as Parameters<typeof roundImageLine>[0]);
                   const autos = bb.batch.items.filter((x) => (x.image_analysis as { auto?: unknown } | null)?.auto);
-                  if (!autos.length) return null;
-                  const lab = ((autos[0].image_analysis as { auto?: { labels?: string[] } }).auto?.labels ?? []).join("・");
-                  return <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e8f5e9", color: "#2e7d32" }}>🔍 自動で読みました（{autos.length}件{lab ? `・推奨: ${lab}` : ""}）</div>;
+                  if (!line && !autos.length) return null;
+                  const lab = autos.length ? ((autos[0].image_analysis as { auto?: { labels?: string[] } }).auto?.labels ?? []).join("・") : "";
+                  return <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={{ background: "#e0f2f1", color: "#00695c" }}>
+                    {line ?? "🔍 画像で分析"}{autos.length ? `・自動で読みました ${autos.length}件${lab ? `（推奨: ${lab}）` : ""}` : ""}</div>;
                 })()}
                 {/* 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約と、資料で照らせない条件（スタッフ向け）。
                     2026-09-25 竹内「内訳や分析した内容等は折りたたんで詳細押したら出る」→ 畳んでおく */}
@@ -1391,12 +1443,19 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                   const basisImage = bestBasisFor(open.image_need) === "image" && typeof (bi?.image_analysis as { match?: unknown } | null)?.match === "number";
                   // 全体の 👑（open.best）がこの回に無い時は、この回の一番は「この回で一番」（👑 は全体で1つ）
                   const rbGlobal = !open.best || open.best.id === rb;
+                  // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。まとめたうえで結果をだす」: 画像で分析もこの回のカードに入れ、
+                  //   👑 と並びは 判定の点 → 同じ点なら画像で分析の点 → 🌟 の1本（pickup-best.compareOverall）。分析待ちがあれば一言
+                  const showWaiting = open.image_need?.level === "recommended" || bb.batch.items.some((x) => !!x.image_analysis);
+                  const waiting = bb.batch.items.filter((x) => x.status === "pending" && !x.image_analysis).length;
                   return (
                     <>
                       {bi && <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={rbGlobal ? { background: "#fff8e1", color: "#8d6e00" } : { background: "#f5f5f5", color: "#78909c" }}>
-                        {rbGlobal ? "👑 一番オススメ" : "この回で一番（全体の👑は別の回）"}: 【{bi.rank}】{bi.property_name}{bi.room_no ? ` ${bi.room_no}` : ""}（{basisImage ? `画像の点 ${(bi.image_analysis as { match: number }).match}点` : `判定 ${bi.score ?? "－"}点`}）</div>}
+                        {rbGlobal ? "👑 一番オススメ" : "この回で一番（全体の👑は別の回）"}: 【{bi.rank}】{itemTitle(bi)}（{basisImage ? `画像の点 ${(bi.image_analysis as { match: number }).match}点` : pointsLabel(bi.score, bi.image_analysis as Parameters<typeof pointsLabel>[1])}）
+                        <div className="text-[10px] font-normal mt-0.5" style={{ color: "#8d6e63" }}>
+                          並び: 判定の点 → 同じ点なら画像で分析の点 → 🌟{showWaiting && waiting > 0 ? `（画像の分析待ち ${waiting}件・分析すると同じ点の順番が変わることがあります）` : ""}</div>
+                      </div>}
                       <div className="flex flex-col gap-2.5">
-                        {sortForReview(bb.batch.items, rb).map((it) => renderCard(it, bb.batch, rb, rbGlobal))}
+                        {sortForReview(bb.batch.items, rb).map((it) => renderCard(it, bb.batch, rb, rbGlobal, showWaiting))}
                       </div>
                     </>
                   );
@@ -1479,120 +1538,6 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
               <span className={TIME}>{hm(bb.at)}</span>
             </div>
             );
-            else if (bb.kind === "analysis") row = (
-            <div key={`a${i}`} className="flex items-end gap-1.5">
-              <Icon bg="#00695c">🔍</Icon>
-              <div className={LEFT_BUBBLE}>
-                <div className="text-xs font-bold mb-1">🔍 画像で分析しました（水回り・キッチン・リビングと洋室・収納）</div>
-                {bb.bestId != null && (() => {
-                  const best = bb.items.find((it) => it.id === bb.bestId);
-                  // 全体の一番（下の 👑 の吹き出し）と違う時は「この回で一番」として色を弱める
-                  const isGlobal = !open.best || open.best.id === bb.bestId;
-                  return best ? <div className="text-xs font-bold mb-1.5 px-2 py-1 rounded-lg" style={isGlobal ? { background: "#e0f2f1", color: "#00695c" } : { background: "#f5f5f5", color: "#78909c" }}>
-                    {isGlobal ? "👑 一番オススメ（画像の点）" : "この回で画像の点が一番"}: 【{best.rank}】{best.property_name}（{best.image_analysis?.match}点）</div> : null;
-                })()}
-                <div className="flex flex-col gap-2">
-                  {/* 2026-09-24 竹内「分析結果のところに画像を添付。分析によって絞られたのもそのまま使えるように」:
-                      点の高い順に並べ、各物件に送る形の画像（1ページ目）とチェックを付ける。チェックは上の一覧と同じ（下のボタンでそのまま送る・保存） */}
-                  {analysisOrder(bb.items).map((it) => {
-                    const a = it.image_analysis as unknown as { water?: string; kitchen?: string; layout?: string; storage?: string; match?: number | null; good?: string[]; concern?: string[];
-                      checks?: Array<{ id: string; result: string; why: string }>; wants?: Array<{ id: string; source: string; text: string; ng: boolean; must: boolean }> | string;
-                      review?: { status: string; reasons: string[] }; sheet?: { type?: string; crop_mode?: string | null; crop_basis?: string | null; crop_reason?: string | null; source?: string } } | null;
-                    if (!a) return null;
-                    // 2026-09-24 竹内「物件と一致しているか。食い違いは点を出さず『要確認』」: 要確認は点の代わりに理由を出す
-                    const needCheck = a.review?.status === "要確認";
-                    const TYPE_JA: Record<string, string> = { realpro: "リアプロ", itandi: "itandi", unknown: "型不明" };
-                    const CROP_JA: Record<string, string> = { floor: "間取り図を切り出し", image_area: "画像の範囲を切り出し", page: "1ページ全体" };
-                    const SRC_JA: Record<string, string> = { read: "今回読んだ", saved_row: "保存した読み取り", saved_unit: "保存した読み取り（同じ部屋）", saved_fp: "保存した読み取り（同じ図）", none: "文字層だけ" };
-                    const sheetNote = a.sheet ? [TYPE_JA[a.sheet.type ?? ""] ?? a.sheet.type, a.sheet.crop_mode ? CROP_JA[a.sheet.crop_mode] ?? a.sheet.crop_mode : null, a.sheet.source ? SRC_JA[a.sheet.source] ?? a.sheet.source : null].filter(Boolean).join("・") : "";
-                    const wantList = Array.isArray(a.wants) ? a.wants : [];
-                    const MARK: Record<string, string> = { ok: "◎", ng: "×", unknown: "？" };
-                    const aImg = pickSaveImageUrl(it);
-                    const aPending = it.status === "pending";
-                    return (
-                      <div key={`ai${it.id}`} className="rounded-xl px-2 py-1.5" style={{ background: it.id === bb.bestId ? "#f1f8e9" : "#f7f9fb", opacity: aPending ? 1 : 0.6 }}>
-                        <div className="flex gap-2 items-start">
-                        <input type="checkbox" className="mt-1 shrink-0" disabled={!aPending} checked={!!checked[it.id]} aria-label={`【${it.rank}】を選ぶ`}
-                          onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
-                        {aImg ? (
-                          <a href={aImg} target="_blank" rel="noreferrer" className="shrink-0" onClick={(e) => openImage(e, aImg, saveImageFileName(it, aImg))}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={aImg} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff", objectPosition: "top" }} />
-                          </a>
-                        ) : it.expired ? <ExpiredImage width={88} height={62} /> : (
-                          <div className="shrink-0 rounded-md flex items-center justify-center text-[9px] text-[#90a4ae] text-center" style={{ width: 88, height: 62, border: "1px dashed #cfd8dc" }}>画像は保存時に作成</div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                        <div className="text-[11px] font-bold break-words">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}{a.match != null ? `　${a.match}点` : ""}{needCheck && <span className="ml-1 px-1.5 py-0.5 rounded text-[10px]" style={{ background: "#fff3e0", color: "#e65100" }}>⚠ 要確認</span>}{!aPending && <span className="ml-1 text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}</div>
-                        {/* 反証レビュー 2026-09-25: DeepSeek の印をここだけ「🌟★ 一番オススメ」と出していた（👑 と割れる）→ カードと同じ「🌟 候補」 */}
-                        {it.recommended > 0 && <div className="text-[10px] mt-0.5" style={{ color: "#bf8f00" }} title="DeepSeek が選んだ候補（点が並んだ時の順番に使う）">🌟 候補</div>}
-                        </div>
-                        </div>
-                        {needCheck && (a.review?.reasons ?? []).length > 0 && (
-                          <div className="text-[10px] mt-0.5 leading-snug" style={{ color: "#e65100" }}>{(a.review?.reasons ?? []).slice(0, 3).map((x, k) => <div key={k}>・{x}</div>)}<div style={{ color: "#90a4ae" }}>（点は出しません。資料が正しい物件か確かめてください）</div></div>
-                        )}
-                        {/* 2026-09-25 竹内「内訳や分析した内容等は折りたたんで詳細押したら出る」: 読み取りの中身と希望ごとの判定は畳む（点と要確認は上に出したまま） */}
-                        <details className="mt-0.5">
-                          <summary className="cursor-pointer text-[10px] font-bold" style={{ color: "#00695c" }}>分析の内訳{(() => { const cs = a.checks ?? []; const ok = cs.filter((x) => x.result === "ok").length, ng = cs.filter((x) => x.result === "ng").length; return cs.length ? `（◎${ok}・×${ng}）` : ""; })()} 詳細 ▾</summary>
-                        {sheetNote && <div className="text-[9px] mt-0.5" style={{ color: "#b0bec5" }}>📐 {sheetNote}{a.sheet?.crop_reason ? `（${a.sheet.crop_reason}）` : ""}</div>}
-                        <div className="text-[10px] text-[#37474f] mt-0.5 leading-relaxed">
-                          {a.water && <div>🚿 水回り: {a.water}</div>}
-                          {a.kitchen && <div>🍳 キッチン: {a.kitchen}</div>}
-                          {a.layout && <div>🛋️ リビングと洋室: {a.layout}</div>}
-                          {a.storage && <div>🧥 収納: {a.storage}</div>}
-                          {a.good && a.good.length > 0 && <div style={{ color: "#2e7d32" }}>◎ {a.good.join("／")}</div>}
-                          {a.concern && a.concern.length > 0 && <div style={{ color: "#c62828" }}>△ {a.concern.join("／")}</div>}
-                        </div>
-                        {/* 2026-09-24 竹内「希望条件や NG 条件の細かい部分も画像から判断できているか」: 希望1つずつの判定（出どころ＝条件欄・会話・訴求） */}
-                        {wantList.length > 0 && a.checks && a.checks.length > 0 && (
-                          <div className="mt-1 pt-1 flex flex-col gap-0.5" style={{ borderTop: "1px dashed #cfd8dc" }}>
-                            {wantList.map((w) => {
-                              const c = a.checks!.find((x) => x.id === w.id);
-                              const r = c?.result ?? "unknown";
-                              return (
-                                <div key={w.id} className="text-[10px] leading-snug" style={{ color: r === "ok" ? "#2e7d32" : r === "ng" ? "#c62828" : "#90a4ae" }}>
-                                  {MARK[r] ?? "？"} <span className="font-bold">{w.text}</span>
-                                  <span className="ml-1 text-[9px]" style={{ color: "#90a4ae" }}>（{w.source}{w.ng ? "・NG" : ""}{w.must ? "・必須" : ""}）</span>
-                                  {c?.why && r !== "unknown" && <span className="ml-1" style={{ color: "#607d8b" }}>— {c.why}</span>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        </details>
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* 分析で絞った物件をそのまま使う（チェックは上の一覧と同じ）。点の高い順の上位3件を選ぶ手早い道も */}
-                {(() => {
-                  const pend = analysisOrder(bb.items).filter((it) => it.status === "pending");
-                  if (pend.length === 0) return null;
-                  const sel = pend.filter((it) => checked[it.id]);
-                  const top = pend.filter((it) => typeof (it.image_analysis as { match?: unknown } | null)?.match === "number" && (it.image_analysis as { review?: { status?: string } } | null)?.review?.status !== "要確認").slice(0, 3);
-                  return (
-                    <div className="flex flex-col gap-2 mt-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-[#607d8b]">この分析から {sel.length}件を選択中</span>
-                        {top.length > 0 && (
-                          <button type="button" disabled={!!busy} onClick={() => setChecked((p) => { const n = { ...p }; for (const it of pend) n[it.id] = top.some((t) => t.id === it.id); return n; })}
-                            className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: "#e0f2f1", color: "#00695c" }}>点の高い{top.length}件だけ選ぶ</button>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <button disabled={!!busy || sel.length === 0} onClick={() => void sendViaAix(open, bb.batch, sel)}
-                          className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || sel.length === 0 ? 0.5 : 1 }}>{pickupAixButtonLabel(sel.length)}</button>
-                        <button disabled={!!busy || sel.length === 0} onClick={() => void saveImages(bb.batch, sel)}
-                          className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#f3e5f5", color: "#6a1b9a", opacity: busy || sel.length === 0 ? 0.5 : 1 }}>
-                          {busy === `save:${bb.batch.batch_id}` || busy === `trim:${bb.batch.batch_id}` ? "💾 …" : "💾 画像保存"}</button>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-              <span className={TIME}>{hm(bb.at)}</span>
-            </div>
-            );
             else if (bb.kind === "best") {
               // 2026-09-24 竹内「1番オススメの物件全体の中で送る。今回は物件数多かったからか出ていなかった」:
               //   直近の回（6時間以内）をまたいで一番条件に合う物件を1つ。押すとその1件だけ AIX で送る
@@ -1604,9 +1549,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
               <Icon bg="#f9a825">👑</Icon>
               <div className={LEFT_BUBBLE}>
                 {/* 2026-09-25 竹内「画像で分析必要なお客さんなら画像で分析の点、不要なお客さんは判定した点」: 何で決めたか（basis）と、まとめた回か直近の回かを出す */}
-                <div className="text-xs font-bold mb-1">👑 一番オススメ（全体・{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析" : "判定"}の点）</div>
+                {/* 2026-09-27 竹内「まとめたうえで結果をだす」: 判定の点 → 同じ点なら画像で分析の点（1本の並び）で決めた一番。物件名は号室つき・AD の札も */}
+                <div className="text-xs font-bold mb-1">👑 一番オススメ（全体・{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析の点" : "判定の点 → 画像で分析の点"}）</div>
                 <div className="text-[13px] font-bold px-2 py-1.5 rounded-lg" style={{ background: "#fff8e1", color: "#e65100" }}>
-                  【{bst.rank}】{bst.property_name}{bst.room_no ? ` ${bst.room_no}号室` : ""}（{bestPointLabel(bst)}）
+                  【{bst.rank}】{nameWithRoom(bst.property_name, cardRoom(bst.room_no, bst.room_text))}（{bestPointLabel(bst)}）
+                  {bst.ad_text && <div className="mt-0.5"><AdStamp text={bst.ad_text} /></div>}
                 </div>
                 {/* 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: お客様に送る1ページ目（元付の資料は出さない）。押すと原寸 */}
                 {(() => {
@@ -1629,7 +1576,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                   {bst.tied_names.length > 0 && <div>同点: {bst.tied_names.join("・")}</div>}
                   {bst.unscored > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.unscored}件は資料から読めず未判定</div>}
                   {(bst.needs_check ?? 0) > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.needs_check}件は要確認（物件と資料が一致しない・点なし）</div>}
-                  {bst.basis === "image" && bst.not_analyzed > 0 && <div>{bst.not_analyzed}件はまだ画像で分析していません</div>}
+                  {bst.not_analyzed > 0 && <div>{bst.not_analyzed}件は画像の分析待ち（分析すると同じ点の物件の順番が変わることがあります）</div>}
                 </div>
                 {bBatch && bItem && bItem.status === "pending" && (
                   <button disabled={!!busy} onClick={() => void sendViaAix(open, bBatch, [bItem])}

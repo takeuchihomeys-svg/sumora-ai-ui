@@ -102,6 +102,51 @@ export function bestBasisFor(_need?: Pick<ImageAnalysisNeed, "level"> | null): B
   return "score";
 }
 
+/**
+ * 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。まとめたうえで結果をだす。点数のと画像で分析がわかれていたらみにくい」:
+ *   売上サポの「🔍 画像で分析」の吹き出しは別に一番（画像の点・🌟 を見ない・送信済みも入れる）を決めていて、上の 👑（判定の点）と食い違った
+ *   （YUMA の回: 判定 162点・画像 86点で並んだ 705 と 703 → 👑 は🌟の 703・画像の吹き出しは順位の上の 705）。
+ *   → 一番と並びの決め方を1つにした（compareOverall）: 判定の点 → 判定（通す＞保留＞外す候補）→ 画像で分析の点 → 上限前の点 →「合う」の数 → 🌟★/🌟 → 新しい回 → 順位 → id。
+ *   画像の点は判定の点に足さない: 判定の点には資料の設備欄・間取り図の読み取り（EQUIP_*／IMAGE_*）が既に入っていて、足すと同じ希望を二重に数える。
+ *   9/25 竹内「総合的に判定されたのみにする」の決まり（👑 は判定の点）もそのまま。画像の点は「判定の点が同じ時の順番」に使う
+ *   （画像の点をどれだけ重く足すかは竹内さんの判断待ち＝未決）。画面の吹き出しの 👑・並び・「完了」のまとめの順位と best_id が全部この1つを使う
+ */
+export const BEST_RULE_TAG = "score+image@2026-09-27";
+/** まとめ（property_pickup_completions.result.basis_rule）に残す決まりの名前。決まりが変わった前のまとめの best_id は使わない（並べ直す） */
+export function bestRuleTag(basis: BestBasis): string {
+  return basis === "score" ? BEST_RULE_TAG : basis;
+}
+
+type OverallRow = { id: number; rank: number; recommended?: number | null; score?: number | null; verdict?: string | null; created_at?: string | null; image_analysis?: { match?: unknown; match_raw?: unknown; review?: unknown; [k: string]: unknown } | null };
+/** 画像で分析の点（要確認＝物件と資料が合わない時は点として使わない） */
+export function imageMatchOf(r: Pick<OverallRow, "image_analysis">): number | null {
+  const a = r.image_analysis;
+  if (!a || (a.review as { status?: unknown } | undefined)?.status === "要確認") return null;
+  return typeof a.match === "number" && Number.isFinite(a.match) ? a.match : null;
+}
+/** 1本の並び（判定の点 → 判定 → 画像の点 → 上限前の点 →「合う」の数 → 🌟 → 新しい回 → 順位 → id）。点の無い物は後ろ */
+export function compareOverall(a: OverallRow, z: OverallRow): number {
+  const sa = typeof a.score === "number" ? a.score : null, sz = typeof z.score === "number" ? z.score : null;
+  if (sa != null && sz != null && sa !== sz) return sz - sa;
+  if (sa == null && sz != null) return 1;
+  if (sa != null && sz == null) return -1;
+  const v = verdictOrder(a) - verdictOrder(z);
+  if (v) return v;
+  const ma = imageMatchOf(a), mz = imageMatchOf(z);
+  if (ma != null && mz != null && ma !== mz) return mz - ma;
+  if (ma == null && mz != null) return 1;
+  if (ma != null && mz == null) return -1;
+  if (ma != null && mz != null) {
+    const raw = (r: OverallRow) => { const x = r.image_analysis?.match_raw; return typeof x === "number" ? x : (imageMatchOf(r) ?? 0); };
+    const d = (raw(z) - raw(a)) || (okCountOf(z.image_analysis) - okCountOf(a.image_analysis));
+    if (d) return d;
+  }
+  const ta = a.created_at ? Date.parse(a.created_at) : NaN, tz = z.created_at ? Date.parse(z.created_at) : NaN;
+  return ((z.recommended ?? 0) - (a.recommended ?? 0))
+    || (Number.isFinite(ta) && Number.isFinite(tz) ? tz - ta : 0)
+    || (a.rank - z.rank) || (a.id - z.id);
+}
+
 type CondLike = { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
 
 /**
@@ -133,7 +178,8 @@ export function roundBestId(rows: ReadonlyArray<BestCandidateRow>, basis: BestBa
 /** 👑 の点の出し方（画面の文言）。画像＝「85点」／判定＝「判定 72点」 */
 export function bestPointLabel(b: Pick<CustomerBest, "basis" | "match" | "score">): string {
   if (b.basis === "image" && b.match != null) return `${b.match}点`;
-  if (b.score != null) return `判定 ${b.score}点`;
+  // 2026-09-27 画像で分析をまとめた: 判定の点で決めた 👑 にも画像の点を並べる（同じ点の時は画像の点で決めた）
+  if (b.score != null) return `判定 ${b.score}点${b.match != null ? `・画像 ${b.match}点` : ""}`;
   return b.match != null ? `${b.match}点` : "点なし";
 }
 
@@ -152,7 +198,7 @@ export function okCountOf(obj: object | null | undefined): number {
  * 判定の順（同じ点の時）: 通す → 判定なし → 保留 → 外す候補。
  * 2026-09-25 YUMA テスト（お客様C）: 画像の点が全件 100 で並んだ時、🌟★ を引き継いだ保留の物件（敷礼あり・利益が出ない）に 👑 が付いていた
  */
-export function verdictOrder(r: Pick<BestCandidateRow, "verdict">): number {
+export function verdictOrder(r: { verdict?: string | null }): number {
   return r.verdict === "pass" ? 0 : r.verdict === "hold" ? 2 : r.verdict === "drop" ? 3 : 1;
 }
 
@@ -192,7 +238,8 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   const sorted = cands.slice().sort(basis === "image"
     ? (a, z) => (primary(z) - primary(a)) || (raw(z) - raw(a)) || (okCountOf(z.image_analysis) - okCountOf(a.image_analysis)) || (verdictOrder(a) - verdictOrder(z))
       || ((sc(z) ?? -1) - (sc(a) ?? -1)) || tail(a, z)
-    : (a, z) => (primary(z) - primary(a)) || (verdictOrder(a) - verdictOrder(z)) || tail(a, z));
+    // 2026-09-27 判定の点で決める時は1本の並び（compareOverall・画面の並び／まとめの順位と同じ）
+    : compareOverall);
   const preferred = opts?.preferId != null ? sorted.find((r) => r.id === opts.preferId) ?? null : null;
   const best = preferred ?? sorted[0];
   const tied = sorted.filter((r) => r.id !== best.id && primary(r) === primary(best));

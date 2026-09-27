@@ -23,9 +23,9 @@
 //   - AD: 取れた分の分布は 1ヶ月 13%／2ヶ月 45%／3ヶ月以上 42%。
 //     → **不明は減点しない**。AD が高い物件は加点（竹内「ADちゃんと高い物件か」）。
 //     2026-09-25 監査: 「AD=0 は一度も記録されていない」は読み方の取りこぼしだった。itandi の資料は「広告費 なし」と書く（売上サポ id 57・62）
-//     → 資料に「なし・0」と書いてある時は adMonths=0（不明の null と分ける）で AD_NONE −5。家賃が読めれば利益も負（PROFIT_NEGATIVE）
+//     → 資料に「なし・0」と書いてある時は adMonths=0（不明の null と分ける）で AD_NONE −5
 //   - 割引: AIX【見積書送る】本文の「N円割引」は中央値 42,000円（Q1 28,000／Q3 68,000・213通）。
-//     estimate_action_log は 0行（書き手も無い）ので使わない。利益 = AD円 − 割引 で、負なら hold（落とさない）。
+//     estimate_action_log は 0行（書き手も無い）ので使わない。利益 = AD円 − 割引 は記録だけ（2026-09-27 竹内: 割引はこちらが AD に合わせて決める＝判定・点・順位には入れない）。
 //
 // ■ 出口の原則（設計知見「出口の決定論」「誤削除0」）
 //   drop は「実送信でほぼ0の形」だけ: 送付済みの建物・家賃比 1.30 超（上限が正しい時だけ）。
@@ -537,7 +537,9 @@ export const REASON_POINTS: Record<string, number> = {
   //   竹内「AD 150%以上は1.15倍、200%以上は1.3倍と重みを付ける。ここ分ける」:
   //   基準の1段＝ほかの項目の同じ段（家賃が上限内・間取り一致の +15）。1ヶ月〜1.5ヶ月未満 +15（1.0倍）／
   //   1.5ヶ月以上 +17（15×1.15・AD_1M 15 ＋ AD_1_5M 2）／2ヶ月以上 +20（15×1.3・AD_HIGH 単独）。2.5ヶ月・3ヶ月以上は札だけ（0点・2ヶ月以上は1.3倍で一律）。
-  //   割引をまかなえる（AD_COVERS_DISCOUNT）は段と二重に数えるので 0点の知らせ。AD 不明は 0点の「要確認」・AD なし −5・利益が出ない −10 保留は今まで通り。
+  //   割引をまかなえる（AD_COVERS_DISCOUNT）は段と二重に数えるので 0点の知らせ。AD 不明は 0点の「要確認」・AD なし −5。
+  //   2026-09-27 AD_COVERS_DISCOUNT・PROFIT_NEGATIVE（利益が出ない −10 保留）は付けなくなった（竹内「AD はこっち側で自由に変えられる」）。
+  //   下の点は付け直す前の古い行を読むためだけに残す（rejudgeWithoutDiscount で外す）
   //   保留・外す候補の物件の AD は *_HELD の札で 0点（条件が合わない物件を AD だけで上げない）
   AD_UNKNOWN: 0, PROFIT_NEGATIVE: -10, AD_COVERS_DISCOUNT: 0, AD_1M: 15, AD_1_5M: 2, AD_HIGH: 20, AD_2_5M: 0, AD_VERY_HIGH: 0,
   PET_NG: -15,
@@ -1193,7 +1195,8 @@ export function writtenWeightCodes(codes: readonly string[], f: WeightFacts, w: 
   }
   const am = f.adMonths;
   const hasTier = codes.some((c) => /^(?:AD_1M|AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)(?:_HELD)?$/.test(c) || c === "AD_UNKNOWN" || c === "AD_NONE");
-  if (am != null && am > 0 && am + 0.01 < 1 && !hasTier && !codes.includes("PROFIT_NEGATIVE")) out.push("AD_UNDER_1M");
+  // 2026-09-27 割引と AD の比べ（PROFIT_NEGATIVE）は付けなくなった（judgeProperty）→ AD 1ヶ月未満はいつもこの札（報酬の低さだけを見る）
+  if (am != null && am > 0 && am + 0.01 < 1 && !hasTier) out.push("AD_UNDER_1M");
   return out;
 }
 
@@ -1614,16 +1617,16 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   // 月数が無く円だけの時は家賃で月数に直す（「AD 160,000円・家賃 80,000円」＝2ヶ月）
   const adMonthsEff = facts.adMonths ?? (facts.adYen != null && facts.rentYen ? facts.adYen / facts.rentYen : null);
   // 2026-09-25 任務B: 月数だけあって家賃が読めない時（候補プールで AD が読めた分は全部この形）も AD の段の点は付ける。
-  //   利益（AD円−割引）と AD_COVERS_DISCOUNT／PROFIT_NEGATIVE は円にできる時だけ（家賃が要る）
+  // 2026-09-27 竹内「割引が AD より大きいとあるが、AD はこっち側で自由に変えられるものやから、そこは影響しない」:
+  //   割引と AD の比べ（旧 PROFIT_NEGATIVE −10・保留／AD_COVERS_DISCOUNT 0点の知らせ）は判定・点・順位・保留の理由に入れない。
+  //   割引はこちらが AD に合わせて決める物なので、見積書の過去の割引と比べて物件を下げると条件の合う物件が保留に落ちていた
+  //   （YUMA の回 10件中7件が この札だけで保留・AD の段＋ピンポイント＋全部合う も 0点になり 1件 約55点下がった）。
+  //   利益の目安（profitYen）は記録（property_pickups.profit_yen・見積書の利益の突き合わせ）のためだけに残す（画面にも出さない）
   if (adYen == null && adMonthsEff == null) {
     add("AD_UNKNOWN", 0); missing.push("ad");
   } else {
-    if (adYen != null) {
-      profitYen = adYen - profile.discountYen;
-      if (profitYen < 0) add("PROFIT_NEGATIVE", -10, "hold");
-      else add("AD_COVERS_DISCOUNT", reasonPoints("AD_COVERS_DISCOUNT"));
-    }
-    // 資料に「広告費 なし」＝ AD 0（読めない null とは別）。AD 0.5ヶ月（利益が出ない −10）より下に並ぶよう −5 を足す
+    if (adYen != null) profitYen = adYen - profile.discountYen;
+    // 資料に「広告費 なし」＝ AD 0（読めない null とは別）。AD 0.5ヶ月（AD_UNDER_1M −8）より下に並ぶよう AD_NONE を足す（今は −10）
     if (adMonthsEff != null && adMonthsEff <= 0) add("AD_NONE", reasonPoints("AD_NONE"));
     // 2026-09-25 段（重ねて足す・REASON_POINTS の説明）: 1ヶ月 7 ／1.5ヶ月 10 ／2ヶ月 20 ／2.5ヶ月 23 ／3ヶ月以上 26。
     //   0.01 の余裕は「AD 250%」→2.5 の丸め・円÷家賃の割り算の端数（159,999円/80,000円）で段を落とさないため
@@ -1792,7 +1795,8 @@ export function applyEquipmentMatch(
     return !!k && decided.has(IMAGE_TO_EQUIP[k] as string);
   };
   // 設備欄で二人入居が決まったら資料の表の CONDITION_TWO_PERSON_* を外す（二重に数えない・matchListingTerms と同じ決まり）
-  let codes = j.reasonCodes.filter((c) => !c.startsWith("EQUIP_") && !imageDecided(c) && !(c === "PET_NG" && decided.has("pet"))
+  // 2026-09-27 保存済みの行に残る割引と AD の比べの札（旧）も付け直しの時に外す（isDiscountCompareCode）
+  let codes = j.reasonCodes.filter((c) => !isDiscountCompareCode(c) && !c.startsWith("EQUIP_") && !imageDecided(c) && !(c === "PET_NG" && decided.has("pet"))
     && !(c.startsWith("CONDITION_TWO_PERSON_") && decided.has("two_person")));
   const twoByTerms = codes.some((c) => /^CONDITION_TWO_PERSON_(OK|NG|ASK)$/.test(c));
   codes.push(...equipmentReasonCodes(m).filter((c) => !(twoByTerms && c === "EQUIP_TWO_PERSON_UNLISTED")));
@@ -1807,6 +1811,73 @@ export function applyEquipmentMatch(
   const flagCodes = [...drops, ...holds];
   const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa) };
+}
+
+/**
+ * 2026-09-27 竹内「割引が AD より大きいとあるが、AD はこっち側で自由に変えられるものやから、そこは影響しない」:
+ *   割引と AD の比べの札（旧）。judgeProperty はもう付けない。保存済みの行（9/20〜 113行中 17行・全部 保留）に残る物は
+ *   rejudgeWithoutDiscount で外して点・判定を付け直す（scripts/backfill-drop-discount-codes.ts）。
+ *   REASON_JA・REASON_POINTS・HOLD_REASON_CODES の行は、付け直す前の古い行を読む時のために残す
+ */
+export const DISCOUNT_COMPARE_CODES = ["PROFIT_NEGATIVE", "AD_COVERS_DISCOUNT"] as const;
+export function isDiscountCompareCode(c: string): boolean {
+  return (DISCOUNT_COMPARE_CODES as readonly string[]).includes(c);
+}
+
+/**
+ * 保存済みの判定の札から、割引と AD の比べの札を外して、点・判定・理由を付け直す（純関数・決定論）。
+ *   ①PROFIT_NEGATIVE・AD_COVERS_DISCOUNT を外す ②AD 1ヶ月未満だった物件（旧は PROFIT_NEGATIVE の時に AD_UNDER_1M を付けなかった）は
+ *   adMonths が分かれば AD_UNDER_1M を足す（writtenWeightCodes と同じ線）③保留・外す候補が残るかで AD の段・ピンポイントの _HELD を付け直す
+ *   ④全部合うを付け直す ⑤点＝50＋札の合計・判定は applyEquipmentMatch と同じ決まり（drop の札 → drop／保留の札か 40点の線の下 → hold）
+ *   札に割引の比べが無い行は changed=false（呼ぶ側は書き換えない）
+ */
+export function rejudgeWithoutDiscount(
+  reasonCodes: readonly string[],
+  opts: { adMonths?: number | null } = {},
+): { changed: boolean; score: number; verdict: Verdict; reasonCodes: string[]; flagCodes: string[]; reasonsJa: string[] } {
+  const had = reasonCodes.some(isDiscountCompareCode);
+  let codes = reasonCodes.filter((c) => !isDiscountCompareCode(c));
+  const am = opts.adMonths;
+  const hasTier = codes.some((c) => /^(?:AD_1M|AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)(?:_HELD)?$/.test(c) || c === "AD_UNKNOWN" || c === "AD_NONE" || c === "AD_UNDER_1M");
+  // 保留を解く・全部合うを付け直すのは PROFIT_NEGATIVE（−10・保留）があった時だけ。AD_COVERS_DISCOUNT（0点の知らせ）だけの行は外すだけ
+  //   （前の配点の古い行で、割引と関係ない全部合う・AD の段まで付け直さない）
+  const hadNegative = reasonCodes.includes("PROFIT_NEGATIVE");
+  if (hadNegative && am != null && am > 0 && am + 0.01 < 1 && !hasTier) codes.push("AD_UNDER_1M");
+  if (hadNegative) {
+    codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
+    codes = settleFitBonus(codes);
+  }
+  const score = scoreFromCodes(codes);
+  const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
+  const holds = codes.filter(isHoldCode);
+  const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
+  const flagCodes = [...drops, ...holds];
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  return { changed: had, score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa) };
+}
+
+/**
+ * 保存済みの1行から割引と AD の比べの札を外した値（純関数）。札が無い行は null（そのまま使う）。
+ *   2026-09-27 付け直し（scripts/backfill-drop-discount-codes.ts）と、付け直す前の画面（/api/property-pickups の詳細）で同じ線を使う
+ *   （デプロイしただけで流す前でも、画面に「割引が AD より大きい」の札・保留・前の 👑 を出さない）。
+ *   点は「保存の点 ＋ 札の差」（古い行は前の配点で点が付いている＝今の配点で数え直すと割引と関係ない所まで動く）。
+ *   PROFIT_NEGATIVE（−10・保留）があった行だけ点・判定を付け直す。AD_COVERS_DISCOUNT（0点の知らせ）だけの行は札と理由の一文を外すだけ
+ */
+export function dropDiscountFromRow(row: {
+  reason_codes?: readonly string[] | null; reasons_ja?: readonly string[] | null; score?: number | null; verdict?: string | null; summary_text?: string | null;
+}): { score: number; verdict: Verdict; reason_codes: string[]; reasons_ja: string[]; negative: boolean } | null {
+  const codes = row.reason_codes ?? [];
+  if (!codes.some(isDiscountCompareCode)) return null;
+  const f = parsePropertyFacts(row.summary_text ?? "");
+  const adMonths = f.adMonths ?? (f.adYen != null && f.rentYen ? f.adYen / f.rentYen : null);
+  const j = rejudgeWithoutDiscount(codes, { adMonths });
+  const negative = codes.includes("PROFIT_NEGATIVE");
+  const stored = typeof row.score === "number" ? row.score : null;
+  const score = negative && stored != null ? Math.max(0, Math.min(SCORE_MAX, stored + (j.score - scoreFromCodes(codes)))) : (stored ?? j.score);
+  const old = row.verdict === "pass" || row.verdict === "hold" || row.verdict === "drop" ? row.verdict : null;
+  const verdict: Verdict = negative ? j.verdict : (old ?? j.verdict);
+  const reasons_ja = negative ? j.reasonsJa : (row.reasons_ja ?? []).filter((x) => !/割引/.test(x));
+  return { score, verdict, reason_codes: j.reasonCodes, reasons_ja, negative };
 }
 
 // ─── まとめ（LINE の末尾・コンソール用） ─────────────────────────────────────

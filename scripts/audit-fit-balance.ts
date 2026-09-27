@@ -6,6 +6,8 @@
 //   追加「初期費用を抑えたいお客さんには敷金礼金0円が加点される。お客さん毎の条件によって加点も変動して変わる」
 //     → 今の ZERO_ZERO_MATCH（抑えたい人 +20）／ZERO_ZERO（それ以外 +8）の形を、築年・徒歩・家賃の安さ・設備にも広げる（書いた人だけ重く）。
 //
+// ■ 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 割引と AD の比べ（PROFIT_NEGATIVE・AD_COVERS_DISCOUNT）は判定に入れない。
+//   保存済みの行に残っていても保留に数えず（isAdCode で外す）、AD_UNDER_1M はいつも付ける（本番の writtenWeightCodes と同じ）。
 // ■ 正解は「スタッフが選んで送った事実」（memory feedback_property_selection_label）。お客様の反応は使わない。
 //   材料: 🌟の時点の候補（recommendation_snapshots・is_star）／拡張の回（property_candidate_pools・72時間以内にお客様に届いた物）。
 //   売上サポ（property_pickups）はスタッフの送付がまだ無い（status 全部 pending）ので、1位の入れ替わりを目で読むだけに使う。
@@ -66,7 +68,7 @@ export function fitOf(code: string): { fam: string; v: FitVerdict } | null {
 }
 const isAdCode = (c: string) => /^AD_|^PROFIT_NEGATIVE$/.test(c);
 const AD_TIER = /^(AD_1M|AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)(_HELD)?$/;
-const HOLD_CODES = new Set(["RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
+const HOLD_CODES = new Set(["RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", "SQM_UNDER", "AREA_EXCLUDED", "ALREADY_SENT_SAME_ROOM", "ALREADY_SENT", "RENT_OVER_130"]);
 const isHold = (c: string) => HOLD_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 
@@ -209,7 +211,7 @@ export function scorePlan(c: Cand, w: Wants, p: Plan): { score: number; parts: A
   // AD 1ヶ月未満（0 より大きく 1 未満）。AD の段・不明・なしの札が無く、AD が読めている時
   const adKnown = c.codes.includes("AD_COVERS_DISCOUNT") || c.codes.includes("PROFIT_NEGATIVE") || (c.adMonths != null && c.adMonths > 0);
   const under1 = !c.codes.some((x) => AD_TIER.test(x) || x === "AD_UNKNOWN" || x === "AD_NONE") && adKnown && !(c.adMonths != null && (c.adMonths >= 0.99 || c.adMonths <= 0));
-  if (under1 && p.adUnder1 && !c.codes.includes("PROFIT_NEGATIVE")) parts.push(["AD_UNDER_1M", p.adUnder1]);
+  if (under1 && p.adUnder1) parts.push(["AD_UNDER_1M", p.adUnder1]);
 
   // 書いた条件の重み（築年の段・駅近・家賃の安さ）
   let ageVerdict: FitVerdict | null = null, walkVerdict: FitVerdict | null = null;

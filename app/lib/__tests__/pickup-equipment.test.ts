@@ -159,14 +159,19 @@ console.log("■ 保存済みの判定に付け直す（applyEquipmentMatch）")
   t("前提: 保存の点は 105", BASE_SCORE + stored.reduce((a, c) => a + reasonPoints(c), 0) === 105);
   const b = buildBatchEquipment([{ key: 1, pdfText: IT_405 }, { key: 3, pdfText: IT_1512 }], HONOKA_COND);
   const r = applyEquipmentMatch({ reasonCodes: stored }, b.rows[0].match);
-  t("家賃・徒歩・AD のコードは残る", ["RENT_OK", "WALK_OK", "AD_COVERS_DISCOUNT", "AD_1M"].every((c) => r.reasonCodes.includes(c)), r.reasonCodes);
+  t("家賃・徒歩・AD のコードは残る", ["RENT_OK", "WALK_OK", "AD_1M"].every((c) => r.reasonCodes.includes(c)), r.reasonCodes);
+  // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 割引との比べの札（旧 AD_COVERS_DISCOUNT）は付け直しで外す（0点の知らせだったので点は同じ）
+  t("割引との比べの札（AD_COVERS_DISCOUNT）は外す", !r.reasonCodes.includes("AD_COVERS_DISCOUNT"), r.reasonCodes);
   t("設備欄で決まった画像のコードは外す（二重に数えない）", !r.reasonCodes.some((c) => c.startsWith("IMAGE_")), r.reasonCodes);
   // 2026-09-25 案B: 付け直しで書いた条件が 家賃・徒歩＋設備5つ＝全部合う +15。バス・トイレ別は必須（+5）で設備 +14 → 119
   t("点: 50＋15＋10＋0＋15＋14＋全部合う15 = 119", r.score === 119 && r.verdict === "pass" && r.reasonCodes.includes("FIT_ALL"), [r.score, r.reasonCodes]);
   const again = applyEquipmentMatch({ reasonCodes: r.reasonCodes }, b.rows[0].match);
   t("2回付け直しても同じ（冪等）", JSON.stringify(again) === JSON.stringify(r));
-  const hold = applyEquipmentMatch({ reasonCodes: ["RENT_OK", "PROFIT_NEGATIVE"] }, null);
-  t("照合なしでも hold のコードは hold", hold.verdict === "hold" && hold.score === 55);
+  const hold = applyEquipmentMatch({ reasonCodes: ["RENT_OK", "RENT_OVER_110"] }, null);
+  t("照合なしでも hold のコードは hold", hold.verdict === "hold" && hold.reasonCodes.includes("RENT_OVER_110"), [hold.verdict, hold.score]);
+  // 2026-09-27 割引との比べ（旧 PROFIT_NEGATIVE −10・保留）は付け直しで外す → 保留が解ける
+  const pn = applyEquipmentMatch({ reasonCodes: ["RENT_OK", "PROFIT_NEGATIVE"] }, null);
+  t("旧 PROFIT_NEGATIVE は付け直しで外れて保留が解ける", pn.verdict === "pass" && !pn.reasonCodes.includes("PROFIT_NEGATIVE") && pn.score === 65, [pn.verdict, pn.score, pn.reasonCodes]);
   const drop = applyEquipmentMatch({ reasonCodes: ["ALREADY_SENT", "RENT_OK"] }, b.rows[0].match);
   t("drop のコードは drop のまま", drop.verdict === "drop");
   // judgeProperty の結果と一致する（同じ材料なら）
