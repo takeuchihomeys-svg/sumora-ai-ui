@@ -105,6 +105,12 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内: 主のお部屋（こちらが送ったお部屋）への見積もりの依頼は 見積書送る
 import { resolveFocusedEstimateRequest } from "@/app/lib/focused-estimate-request";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
+// 2026-09-27 竹内「重い順から治す」①: 語のルール（信号5.5・8）はブレインの「AIX なし」を上書きしない・意味の無い語は外す（穴:G5）
+import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedKeywordRuleHit } from "@/app/lib/brain-keyword-rules";
+// 2026-09-27 ②: お客様の「審査落ちた」（別物件への切り替え）に 物件確認した を選ばせない（本番の線は 物件ピックアップ）
+import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch";
+// 2026-09-27 ③: 資料の現況が「審査中」のお送りしたお部屋をブレインに渡す（資料の文字のまま）
+import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -637,6 +643,8 @@ async function detectSignalBasedAixFallback(
   conversationId: string,
   propertyCustomerId: string | null,
   newPhase: "hearing" | "proposing" | "viewing" | "applying",
+  // 2026-09-27: ブレイン（LLM）がはっきり「AIX なし」と言った時は true＝語のルール（信号5.5・8）を当てない（brain-keyword-rules.ts）
+  opts?: { skipKeywordRules?: boolean },
 ): Promise<string | null> {
   try {
     const [msgsRes, aixRes, scheduledRes, tasksRes, pcRes, rulesRes] = await Promise.all([
@@ -708,6 +716,8 @@ async function detectSignalBasedAixFallback(
       .map((r) => ({ ...r, action_type: r.action_type === "alternative_send" ? "property_send" : r.action_type }))
       .filter((r) =>
         typeof r.keyword === "string" && r.keyword.length >= 2 &&
+        // 2026-09-27: 語尾・絵文字・助詞の断片・定型の敬語・フォームの断片（「ます😊」「しました」「ですか」「も見て」）は使わない
+        !isMeaninglessRuleKeyword(r.keyword) &&
         typeof r.action_type === "string" && Boolean(AIX_BRAIN_NOTES[r.action_type]));
 
     // 信号0.97（同棟別号室依頼 — brain一本化: deriveSuggestedAix Step 0.5 を移植）:
@@ -867,13 +877,8 @@ async function detectSignalBasedAixFallback(
     // ai-feedback/route.ts が「この場合はこのAIXを使う」という竹内さんの回答を
     // confidence 0.95 / occurrence_count 10 の trigger_action_rules として保存する。
     // 人間が明示的に教えたルールは時間ヒューリスティック（信号6/7）より優先して発火させる。
-    if (custText) {
-      const humanHit = dbRules.find(
-        (r) =>
-          (r.confidence ?? 0) >= 0.95 && (r.confidence ?? 0) <= 1 &&
-          (r.occurrence_count ?? 0) >= 10 &&
-          custText.includes(r.keyword),
-      );
+    if (custText && !opts?.skipKeywordRules) {
+      const humanHit = humanKeywordRuleHit(custText, dbRules);
       if (humanHit) return humanHit.action_type;
     }
 
@@ -919,16 +924,9 @@ async function detectSignalBasedAixFallback(
     // 最終顧客メッセージに含まれるキーワードごとに confidence（0-1クランプ・汚染値防御）を
     // アクション別に合算し、合計 0.85 以上の最上位アクションを採用する（suggest-next-action と同閾値）。
     // マッチなしなら従来通り null → フェーズ別デフォルトに落ちる（既存ロジックを壊さない）。
-    if (custText) {
-      const scores: Record<string, number> = {};
-      for (const r of dbRules) {
-        if (!custText.includes(r.keyword)) continue;
-        scores[r.action_type] = (scores[r.action_type] ?? 0) + Math.min(r.confidence ?? 0, 1);
-      }
-      const top = Object.entries(scores)
-        .filter(([, score]) => score >= 0.85)
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
-      if (top) return top[0];
+    if (custText && !opts?.skipKeywordRules) {
+      const top = summedKeywordRuleHit(custText, dbRules);
+      if (top) return top.action;
     }
 
     return null;
@@ -2280,6 +2278,21 @@ export async function analyzeConversation(
   //   その後ろ（未完了タスク・手本・会社の事実…）ごと外れる → 3（毎回変わる物）の並び・並行で探すの材料の直前に置く（customerStateBlockText）
   let customerStateBlockText = customerState ? buildCustomerStateBrainBlock(customerState) : "";
   const customerStateText = customerStateBlockText;
+  // 2026-09-27 竹内「審査中は審査中としておく」③: お送りしたピックアップのうち資料の現況が「審査中」のお部屋（該当が無ければ何も足さない）。
+  //   毎回変わる並び（3）の中・今の状況の後ろに置く（system の前置き＝1時間キャッシュは変えない）
+  try {
+    const { data: pickRows } = await supabase
+      .from("property_pickups")
+      .select("property_name, room_no, terms") // pdf_text は重いので読まない（terms.evidence.moveIn は 9/25 以降の行に全部ある）
+      .eq("conversation_id", conversationId)
+      .eq("status", "sent")
+      .gte("created_at", new Date(Date.now() - 60 * 86_400_000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(60);
+    customerStateBlockText += buildScreeningRoomsBrainText((pickRows ?? []) as Array<{ property_name: string | null; room_no: string | null; terms?: { evidence?: { moveIn?: string | null } | null } | null; pdf_text?: string | null }>);
+  } catch (e) {
+    console.warn("[brain-core] screening rooms block failed:", conversationId, e instanceof Error ? e.message : e);
+  }
   let viewingsText = customerStateText ? "" : viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {
         let s = `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`;
@@ -2621,6 +2634,12 @@ ${history}`;
       finalAix = "estimate_sheet";
       decisionSource = "correction:image_only";
     }
+    // 2026-09-27 竹内「重い順から治す」②（YUMA 9fa0bd64）: 自分の審査落ちの報告（特定のお部屋・空き・別の保証会社・質問なし）に
+    //   物件確認した／確認します を選んだら 物件ピックアップ にする（app/lib/screening-failed-switch.ts・本番の線は scripts/audit-screening-failed-switch.ts）
+    {
+      const sf = resolveScreeningFailedSwitch(finalAix, unrepliedTurn);
+      if (sf) { finalAix = sf.aix; decisionSource = sf.decisionSource; }
+    }
     // AIXボタン種別アナウンス改善(2026-08): LLMがボタンを特定できなかった場合、
     // 信号ベース決定論（detectSignalBasedAixFallback）でボタン種別を判定して action を埋める。
     // 従来この判定結果は conversation_direction.suggested_aix_button のみに使われ、
@@ -2639,7 +2658,8 @@ ${history}`;
         if (phaseEstimate === "hearing" || phaseEstimate === "proposing" || phaseEstimate === "viewing" || phaseEstimate === "applying") return phaseEstimate;
         return "proposing";
       })();
-      const signalAix = await detectSignalBasedAixFallback(conversationId, propertyCustomerId, fallbackPhase);
+      // 2026-09-27: ブレインがはっきり「なし」と言った時は語のルールで上書きしない（決まり: AIX の要否はブレインだけが判断）
+      const signalAix = await detectSignalBasedAixFallback(conversationId, propertyCustomerId, fallbackPhase, { skipKeywordRules: isExplicitNoAix(parsed.aix) });
       signalAixRan = true;
       signalAixResult = signalAix && AIX_BRAIN_NOTES[signalAix] ? signalAix : null;
       if (signalAixResult) {

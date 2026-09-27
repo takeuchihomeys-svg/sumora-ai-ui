@@ -16,6 +16,8 @@
 //     （前の回から 30分以内・最初から 3時間以内）。round_id のある回と無い回は混ぜない
 import { buildReasonView, sortForReview, type ReviewOrderRow } from "./pickup-review-order";
 import { moveInLabel, type PickupTerms } from "./pickup-terms";
+// 2026-09-27 竹内「審査中は審査中としておく」: 資料の「現況/入居時期」の3つ目（審査中・商談中）を資料の文字のまま「状態」と見出しに出す
+import { listingDealStatus } from "./listing-deal-status";
 import { reasonPoints, reasonJa, fitVerdictOf, summarizeFit, equipKeyLabel, scoreFromCodes, AD_HELD_SUFFIX, EQUIP_CAP_CODE, EQUIP_STRONG_NG_CAP, BASE_SCORE, SCORE_MAX } from "./property-brain";
 
 export const DASH = "－";
@@ -220,12 +222,13 @@ export function buildPickupCardView(row: PickupCardInput): PickupCardView {
   const building = [age, total].filter(Boolean).join("・") || null;
   const ad = s.ad ?? (row.ad_yen != null && row.ad_yen > 0 ? `${row.ad_yen.toLocaleString("ja-JP")}円` : row.ad_yen === 0 ? "なし" : null);
   const mark = verdictMark(row.verdict, row.score);
+  const deal = listingDealStatus({ evidenceMoveIn: t?.evidence?.moveIn ?? null });
   const pair = (a: string | null, b: string | null) => ({ value: a ?? DASH, sub: b ?? DASH });
   const walkM = access?.match(/徒歩\s*(\d+)\s*分/u);
   const stName = access?.match(/「([^」]+)」/u)?.[1] ?? st?.station ?? null;
   const facts: Record<string, CardCell> = {
     room: { key: "room", head: "部屋/階", ...pair(room, floor) },
-    state: { key: "state", head: "状態/入居", ...pair(stateLabel(t, lines), moveInShort(t, lines)) },
+    state: { key: "state", head: "状態/入居", ...pair([stateLabel(t, lines), deal].filter(Boolean).join("・") || null, moveInShort(t, lines)) },
     madori: { key: "madori", head: "間取り/㎡", ...pair(madori, sqm) },
     rent: { key: "rent", head: "賃料/管理費", ...pair(s.rent, s.admin) },
     deposit: { key: "deposit", head: "敷金/礼金", ...pair(monthsLabel(t?.deposit), monthsLabel(t?.keyMoney)) },
@@ -237,7 +240,10 @@ export function buildPickupCardView(row: PickupCardInput): PickupCardView {
   };
   const score: CardCell = { key: "score", head: "点数", value: mark.score != null ? `${mark.score}点` : DASH, sub: mark.label, note: scoreGapNote(row.reason_codes ?? null, row.score) };
   const strongEquip = new Set((row.equipment?.match ?? []).filter((m) => m?.strong && m.key).map((m) => String(m.key).toUpperCase()));
-  return { name, room, address: row.location?.ward ?? null, access, building, mark, cells: [...buildFitCells(row.reason_codes ?? null, facts, { strongEquip }), score], headline: cardHeadline(row) };
+  return { name, room, address: row.location?.ward ?? null, access, building, mark, cells: [...buildFitCells(row.reason_codes ?? null, facts, { strongEquip }), score],
+    // 審査中・商談中は畳んだ時の1行に先に出す（送る判定＝pass の時だけ。保留・外すはその理由のまま）。
+    //   説明を付けるのは審査中だけ（商談中の扱いは竹内さんに確認中なので資料の文字だけ）
+    headline: deal && row.verdict === "pass" ? { text: deal === "審査中" ? "資料の現況: 審査中（他のお客様の申込が審査中・申込は番手になる）" : `資料の現況: ${deal}`, tone: "minus" } : cardHeadline(row) };
 }
 
 // ── 2026-09-25 項目ごとの点数（案B）──────────────────────────────────────────────

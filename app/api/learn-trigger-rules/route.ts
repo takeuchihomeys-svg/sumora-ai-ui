@@ -4,6 +4,8 @@ import { normalizeStatus } from "@/app/lib/status-normalize";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { excludeTestConversations } from "@/app/lib/test-conversations";
+// 2026-09-27 竹内「重い順から治す」①: 語尾・絵文字・助詞の断片・定型の敬語・フォームの断片（「ます😊」「しました」「も見て」）は作らない・次の実行で消す
+import { isMeaninglessRuleKeyword } from "@/app/lib/brain-keyword-rules";
 
 // Vercel Functions のタイムアウト上限（秒）
 // 逐次upsert廃止・バッチ化済みのため300秒に引き上げ
@@ -267,7 +269,7 @@ export async function POST(req?: Request) {
       ...new Set(
         (allRules ?? [])
           .map((r) => r.keyword as string)
-          .filter((k) => k.length < MIN_NGRAM_LENGTH || isStopNgram(k))
+          .filter((k) => k.length < MIN_NGRAM_LENGTH || isStopNgram(k) || isMeaninglessRuleKeyword(k))
       ),
     ];
     for (let i = 0; i < noiseKeywords.length; i += 200) {
@@ -287,6 +289,7 @@ export async function POST(req?: Request) {
   const qualityRules = sorted
     .filter((r) => !isLowQualityRule(r.confidence, r.occurrence_count))
     .filter((r) => !isGarbageTriggerRule(r.keyword, r.action_type, false))
+    .filter((r) => !isMeaninglessRuleKeyword(r.keyword))
     .map((r) => ({ ...r, updated_at: new Date().toISOString() }));
   const BATCH = 100;
   for (let i = 0; i < qualityRules.length; i += BATCH) {
