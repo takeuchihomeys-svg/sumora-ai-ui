@@ -2,7 +2,6 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
-import { stripRoomLeadingZeros } from "@/app/lib/template-preprocess";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 import { safeSlice } from "@/app/lib/safe-slice";
 // 本番LINE返信AI（generate-reply）と共有のプロンプトセクション（単一ソース・二重定義禁止）
@@ -164,7 +163,7 @@ AIXボタンで送付した（または送付予定の）構造化メッセー�
 × マークダウン太字（**）等の記法（LINEは非対応）
 × 謝罪の多用（「申し訳ございません」の連発）
 × 敷金を初期費用削減として訴求（敷金は返還される預かり金）
-× 号室の先頭ゼロ（0906号室 → 906号室）
+× 号室の表記の書き換え（資料の「0906号室」「005B」は先頭の0・英字もそのまま）
 × 「〇〇さん」「○○さん」「[名前]さん」等の伏せ字・プレースホルダーをそのまま本文に書く（実名に置換するか、名前不明なら呼びかけごと省略する）
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -1528,7 +1527,7 @@ export async function POST(req: NextRequest) {
     if (!text) {
       return NextResponse.json({ ok: false, error: "empty result" }, { status: 500 });
     }
-    text = stripRoomLeadingZeros(text);
+    // 2026-09-27 竹内さん「資料の文字はそのまま」: 号室の先頭ゼロ除去（stripRoomLeadingZeros）はやめた
 
     // 伏せ字「〇〇さん」の決定論修正（実名に置換 / 名前不明なら呼びかけごと削除）
     const nameFix = fixNamePlaceholderAddress(text, resolvedCustomerName);
@@ -1558,7 +1557,7 @@ export async function POST(req: NextRequest) {
         `出力は本文のみ。`;
       const retry = await callClaude(retryPrompt);
       if (retry.ok && retry.text) {
-        const retryText = fixNamePlaceholderAddress(stripRoomLeadingZeros(retry.text), resolvedCustomerName).text;
+        const retryText = fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text;
         // 再生成が違反を解消していれば採用。まだ違反していれば初回結果を維持する
         if (!detectFrameViolation(retryText, recommendationScenario)) text = retryText;
         else console.warn("[aix-template-generate] frame violation 再生成後も未解消 — 初回結果を返却");

@@ -4,6 +4,7 @@
 import {
   extractLayouts, parsePickupFact, buildPickupFactsNote, labelHistoryTextForAix, isInternalPropertyCard, isPastPickupSend,
   findPickupSendConflicts, findUncheckedClaimInPickupLine, INTERNAL_CARD_PLACEHOLDER, PAST_PICKUP_SEND_LABEL, labelsPastPickupFor,
+  parseConditionFields, desiredLayoutField, desiredLayoutsCoverFacts, restoreConditionDots,
 } from "../pickup-send-facts";
 import { DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES } from "../property-send-match";
 
@@ -126,6 +127,49 @@ it("印を付けない AIX でも、社内の説明文は伏せる・前回の�
   eq(labelHistoryTextForAix("staff", past, { labelPastPickup: false }), past);
   ok(labelHistoryTextForAix("staff", past, { labelPastPickup: true }).startsWith(PAST_PICKUP_SEND_LABEL));
   eq(labelHistoryTextForAix("staff", ROW_DAIRE.summary_text, { labelPastPickup: false }), INTERNAL_CARD_PLACEHOLDER);
+});
+// ── 2026-09-27 竹内さん「文字変えなくても…そのまま使う・文字抜かなくて」（YUMA 9/27 02:05 の物件ピックアップの実物）──
+console.log("\n■ 希望条件の欄の文字のまま（2026-09-27）");
+const COND_0927 = "エリア: 大阪市浪速区、大阪市天王寺区\n間取り: 1K、1DK、1LDK\n家賃: 8万円以内\n駅徒歩: 10分以内\n入居: 2か月以内\n築年数: 20年以内\n希望: バストイレ別・オートロック";
+const GEN_0927 = "YUMAさん\n\n大阪市浪速区・天王寺区から家賃8万円以内・1K・駅徒歩10分以内・バストイレ別オートロックでYUMAさんにオススメできるお部屋ピックアップさせて頂きました！！\n\nお手隙の際にご査収ください😌！！";
+const K1 = { layout: "1K", rentYen: 63000 };
+it("希望条件の欄を文字のまま読む", () => {
+  const f = parseConditionFields(COND_0927);
+  eq(f.get("間取り"), "1K、1DK、1LDK");
+  eq(f.get("希望"), "バストイレ別・オートロック");
+  eq(desiredLayoutField(COND_0927)?.layouts, ["1K", "1DK", "1LDK"]);
+  eq(desiredLayoutField("大阪市大正区・西区 1K 家賃7.5万円以内"), null); // 欄の形でない条件は読まない＝旧の動き
+});
+it("送る物件（1K）が希望の並びに入っていれば、並びのまま書かせる（1K だけに絞らせない）", () => {
+  ok(!!desiredLayoutsCoverFacts([K1], COND_0927));
+  const note = buildPickupFactsNote([K1], COND_0927);
+  ok(note.includes("「1K、1DK、1LDK」"), note);
+  ok(!note.includes("この事実と合う物だけ（1K"), note);
+});
+it("希望の並びに入らない物件（9/24: 希望1K・送る物件1LDK）は旧のまま事実に合わせる", () => {
+  const cond = "間取り: 1K\n家賃: 7万円以内";
+  eq(desiredLayoutsCoverFacts([{ layout: "1LDK", rentYen: 80000 }], cond), null);
+  ok(buildPickupFactsNote([{ layout: "1LDK", rentYen: 80000 }], cond).includes("この事実と合う物だけ（1LDK"));
+  ok(buildPickupFactsNote([{ layout: "1LDK", rentYen: 80000 }]).includes("この事実と合う物だけ（1LDK")); // 条件を渡さない＝旧
+});
+it("並びのまま書いた文は注意しない・並びに無い間取りは今まで通り注意", () => {
+  const good = GEN_0927.replace("・1K・", "・1K、1DK、1LDK・");
+  eq(findPickupSendConflicts(good, [K1], [], ALLOWED, COND_0927).filter((n) => n.includes("間取り")).length, 0);
+  eq(findPickupSendConflicts(good.replace("1LDK", "2LDK"), [K1], [], ALLOWED, COND_0927).filter((n) => n.includes("間取り")).length, 1);
+  eq(findPickupSendConflicts(good, [K1], [], ALLOWED).filter((n) => n.includes("間取り")).length, 1); // 条件なし＝旧
+});
+it("中黒を落とした条件の語を欄の文字に戻す（足すのは「・」だけ）", () => {
+  const r = restoreConditionDots(GEN_0927, COND_0927);
+  eq(r.restored, ["バストイレ別・オートロック"]);
+  ok(r.text.includes("駅徒歩10分以内・バストイレ別・オートロックで"), r.text);
+  eq(r.text.replace(/・/g, ""), GEN_0927.replace(/・/g, "")); // 誤削除0
+});
+it("欄の文字のままの文・ピックアップ行でない行・欄に中黒が無い条件は触らない", () => {
+  const already = GEN_0927.replace("バストイレ別オートロック", "バストイレ別・オートロック");
+  eq(restoreConditionDots(already, COND_0927).restored.length, 0);
+  eq(restoreConditionDots("バストイレ別オートロックのお部屋です", COND_0927).restored.length, 0);
+  eq(restoreConditionDots(GEN_0927, "希望: バストイレ別").restored.length, 0);
+  eq(restoreConditionDots(GEN_0927, null).text, GEN_0927);
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

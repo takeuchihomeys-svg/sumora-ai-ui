@@ -1,7 +1,7 @@
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state で補正（viewing に上げる）・会話の方向の段階を段階から決める（app/lib/brain-stage.ts）
 //   実物は scripts/audit-brain-stage.ts（本番30〜60日の会話）で前後を読んだ物。お客様の発言は本文のまま（名前は YUMA に置き換え）。
 // 実行: npx tsx app/lib/__tests__/brain-stage.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { correctBrainStage, resolveDirectionPhase, VIEWED_FRESH_DAYS } from "../brain-stage";
+import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction, VIEWED_FRESH_DAYS } from "../brain-stage";
 import { resolveCustomerState, type CustomerStateInput, type CustomerStateAixRow } from "../customer-state";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -126,5 +126,33 @@ it("申込経験者（審査落ち→別の物件）は hearing に降格しな�
   expect(resolveDirectionPhase({ checkpointStage: "hearing", status: "proposing", hasApplicationHistory: false })).toBe("hearing");
 });
 
+console.log("\n■ 【現在フェーズの参考】の次の一手（戦略の文の語で定型文に置き換えない・2026-09-27）");
+// 実物は scripts/audit-next-staff-action.ts（本番30日）で前後を読んだ物
+it("ブレインの手順をそのまま（前置きだけ外す）。旧は語「物件」で『希望条件に合う物件を…送る』に置き換えていた", () => {
+  expect(resolveNextStaffAction({ nextSteps: ["Step1（今すぐ）: 送付した4件への反応・気になる物件の有無を確認する", "Step2: …"], phase: "proposing" }))
+    .toBe("送付した4件への反応・気になる物件の有無を確認する");
+  expect(resolveNextStaffAction({ nextSteps: ["Step1: 両物件の保証会社審査進捗と、通過しやすい保証会社の有無を管理会社に確認する"], phase: "applying" }))
+    .toBe("両物件の保証会社審査進捗と、通過しやすい保証会社の有無を管理会社に確認する");
+});
+it("旧は語「申込」で『申込書類の準備について自然に案内する』（書類を受け取った後でも）→ ブレインの手順のまま", () => {
+  expect(resolveNextStaffAction({ nextSteps: ["Step1（今すぐ）: 管理会社へ火災保険申込用紙の日付指定再発行を依頼する"], phase: "applying" }))
+    .toBe("管理会社へ火災保険申込用紙の日付指定再発行を依頼する");
+});
+it("（完了）の手順は飛ばして次の手順（旧は『Step1（完了）: 見積書を作成した』を次の一手にしていた）", () => {
+  expect(resolveNextStaffAction({ nextSteps: ["Step1（完了）: 904号室の最大限割引済み見積書を作成した", "Step2（今すぐ）: 顧客からの申込返信・質問・確認を待機"], phase: "proposing" }))
+    .toBe("顧客からの申込返信・質問・確認を待機");
+});
+it("前置きの無い手順・文字列1つの手順もそのまま", () => {
+  expect(resolveNextStaffAction({ nextSteps: ["桜川・堀江・大国町エリアで家賃7万円以内の物件を再検索する"], phase: "hearing" })).toBe("桜川・堀江・大国町エリアで家賃7万円以内の物件を再検索する");
+  expect(resolveNextStaffAction({ nextSteps: "Step1: 内覧の感想を伺う", phase: "viewing" })).toBe("内覧の感想を伺う");
+});
+it("手順が無い時は段階の既定。内覧の段階は日時が決まっている・当日・内覧済みで『日程を調整』を出さない", () => {
+  expect(resolveNextStaffAction({ nextSteps: null, phase: "hearing" })).toBe("希望条件を確認");
+  expect(resolveNextStaffAction({ nextSteps: [], phase: "viewing", viewingDetail: "scheduling" })).toBe("内覧日程を調整");
+  expect(resolveNextStaffAction({ nextSteps: [], phase: "viewing", viewingDetail: "confirmed_future" })).toBe("内覧の日時は決まっている（日程の打診はしない）");
+  expect(resolveNextStaffAction({ nextSteps: ["Step1（完了）: 待ち合わせを案内した"], phase: "viewing", viewingDetail: "today" })).toBe("本日が内覧日");
+  expect(resolveNextStaffAction({ nextSteps: undefined, phase: "viewing", viewingDetail: "after_viewing" })).toBe("内覧済み（内覧後のフォロー）");
+  expect(resolveNextStaffAction({ nextSteps: undefined, phase: null })).toBe("状況を確認して次の一手を判断");
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  - " + f); process.exit(1); }

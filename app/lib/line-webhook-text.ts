@@ -20,7 +20,7 @@ import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { recordConditionHistory } from "@/app/lib/condition-history";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
-import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
+import { detectTaskTypeByKeywords, decideAutoTask } from "@/app/lib/property-check-task";
 // 2026-09-27: お客様役（テスト）の番では売上番長グループ・鈴木さんへの通知を出さない
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 // 2026-09-21 竹内「LINEのグループでも送れるように。個人とLINEのグループ分けて認識」: 宛先と発言者を分ける
@@ -1534,42 +1534,24 @@ async function autoMarkPropertyViewed(
 }
 
 // ── メッセージからタスクを自動検知・作成 ──────────────────────────────────
-const PROPERTY_CHECK_KEYWORDS = [
-  "物件確認", "初期費用確認", "初期費用を確認",
-  "内覧したい", "内覧させてほしい", "内覧お願い", "内覧を希望",
-  "内覧できますか", "内覧は可能", "内覧申し込み",
-  "見学したい", "見学させてほしい", "見学お願い",
-  "空室確認",
-];
-
-const PROPERTY_SEND_KEYWORDS = [
-  "物件送って", "物件を送", "物件探して", "物件を探",
-  "物件ありますか", "物件お願い", "物件出して", "物件を出して",
-  "物件ください", "物件紹介してほしい", "物件を紹介", "物件ピックアップ",
-];
-
-const CONFIRM_PHRASES = ["確認してほしい", "確認してください", "確認お願い", "確認をお願い", "確認できますか"];
-const CONFIRM_TARGETS = ["物件", "初期費用", "空室", "この部屋", "この物件"];
-
-function detectTaskType(text: string): "property_check" | "property_send" | null {
-  // 2026-09-12 竹内（じゅにあ事例）: 「何件か気になる物件送ってもいいですか？」はお客様が自分で送る予告。
-  //   「物件送って」の部分一致で物件出しタスク（→「やること: 物件ピックアップした」・グループ通知）を作っていた。
-  //   物件が届くまでタスクは作らない（届いたら募集状況確認＋見積）。判定は返信 AI と同じ CUST_WILL_SEND_SELF_PRED
-  if (CUST_WILL_SEND_SELF_PRED(text).yes) return null;
-  if (PROPERTY_CHECK_KEYWORDS.some((k) => text.includes(k))) return "property_check";
-  // "確認してほしい/ください/お願い" + 物件/初期費用 の組み合わせ
-  if (CONFIRM_PHRASES.some((p) => text.includes(p)) && CONFIRM_TARGETS.some((t) => text.includes(t))) return "property_check";
-  if (PROPERTY_SEND_KEYWORDS.some((k) => text.includes(k))) return "property_send";
-  return null;
-}
+// 2026-09-27: 判定は app/lib/property-check-task.ts に移した（語の一覧は候補・物件確認は customerRequestedPropertyCheck も通った時だけ）。
+//   旧は「内覧したい」「見学したい」の語だけで物件確認のタスクを作っていた（/api/line-tasks の判定を通らない入口）
 
 async function autoDetectTask(
   db: ReturnType<typeof getDb>,
   convId: string,
   text: string,
 ): Promise<void> {
-  const taskType = detectTaskType(text);
-  if (!taskType) return;
+  // 語の一覧で候補を出し、物件確認は直前の会話（今回のお客様の連投まで・20通）で依頼かを確かめる（/api/line-tasks と同じ判定）
+  if (!detectTaskTypeByKeywords(text)) return;
+  const { data: recentRows } = await db.from("messages").select("sender, text").eq("conversation_id", convId)
+    .order("created_at", { ascending: false }).limit(20);
+  const recentOldestFirst = ((recentRows ?? []) as Array<{ sender: string; text: string | null }>).reverse();
+  const taskType = decideAutoTask(text, recentOldestFirst);
+  if (!taskType) {
+    console.log(JSON.stringify({ tag: "line-webhook:property-check-not-requested", convId, head: text.slice(0, 40) }));
+    return;
+  }
 
   // 既にpending中なら重複作成しない
   const { data: existing } = await db

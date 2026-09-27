@@ -257,6 +257,21 @@ function requestUrl(input: unknown): URL | null {
 }
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+// ── 開発サーバで包みが外れた時の探り（2026-09-27）────────────────────────────────
+// 9/27 02:19 のお客様役の往復（手元の開発サーバ）で、ブレイン（Claude）の呼び出しが llm_usage_logs に1行も残らなかった
+//   （同じ往復の DeepSeek の2回は残った）。Next の開発サーバは router-server の resetFetch で globalThis.fetch を
+//   **起動時の素の fetch**（instrumentation より前に取った物）に戻すことがある（HMR 等）。別クラウドの包み（llm-alt-provider）は
+//   willRouteAlt の中で包み直すが、この記録の包み（と絵文字の片割れ除去）は戻らない → Claude 宛てだけ記録が落ちる。
+//   Next の包み（patch-fetch・dedupe）は中を覗けないので、印でなく**探りの1回**で「記録の包みが通り道にいるか」を確かめる。
+//   探りの URL はこの包みが答える（外に出ない）。包みが無ければ .invalid で素早く失敗する
+export const LLM_CHAIN_PROBE_HOST = "sumora-llm-chain-probe.invalid";
+export const LLM_CHAIN_PROBE_HEADER = "x-sumora-llm-chain";
+const CHAIN_INSTALLED_FLAG = Symbol.for("sumora.llmChainInstalledByInstrumentation");
+function probeResponse(url: URL | null): Response | null {
+  return url && url.hostname === LLM_CHAIN_PROBE_HOST ? new Response(null, { status: 204, headers: { [LLM_CHAIN_PROBE_HEADER]: "recorder" } }) : null;
+}
+
 export type RecorderDeps = {
   insert: (row: LlmUsageRow) => Promise<void>;
   keepAlive: (p: Promise<unknown>) => void;
@@ -270,6 +285,8 @@ export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: Recorde
   const now = deps.now ?? Date.now;
   return async (input, initArg) => {
     const url = requestUrl(input);
+    const probed = probeResponse(url);
+    if (probed) return probed;
     const isAnthropic = !!url && url.hostname === "api.anthropic.com";
     // 2026-09-17 竹内（AIX キャッシュ点検）: 印のヘッダは Anthropic 宛の全リクエストから取り除く（count_tokens 等に SDK の既定ヘッダで付いても漏らさない）
     const marks = isAnthropic ? extractSumoraMarks(initArg) : { action: null, conversationId: null, init: initArg };
@@ -328,6 +345,8 @@ const INSTALLED = Symbol.for("sumora.llmUsageRecorder");
 export function wrapFetchStripSumoraMarks(original: FetchLike): FetchLike {
   return (input, init) => {
     const url = requestUrl(input);
+    const probed = probeResponse(url);
+    if (probed) return Promise.resolve(probed);
     return original(input, url && url.hostname === "api.anthropic.com" ? extractSumoraMarks(init).init : init);
   };
 }
@@ -405,17 +424,11 @@ export function recordAltUsage(input: {
   try { r.keepAlive(r.insert(row).catch(() => {})); } catch { /* 記録の失敗で本来の応答を止めない */ }
 }
 
-/** globalThis.fetch を1回だけ包む（instrumentation.ts から。Vercel ではレスポンス後も waitUntil で記録を書き終える） */
-export async function installLlmUsageRecorder(): Promise<boolean> {
-  const g = globalThis as unknown as { fetch: FetchLike & Record<PropertyKey, unknown> };
-  if (typeof g.fetch !== "function" || g.fetch[INSTALLED]) return false;
+/** 記録の書き込み口を作る（記録を止めている時は null） */
+async function buildRecorderDeps(): Promise<AltRecorder | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (process.env.LLM_USAGE_RECORD === "off" || !url || !key) {
-    installWrapped(g, g.fetch, wrapFetchStripSumoraMarks(g.fetch.bind(globalThis)));
-    return false;
-  }
-
+  if (process.env.LLM_USAGE_RECORD === "off" || !url || !key) return null;
   const { createClient } = await import("@supabase/supabase-js");
   const { waitUntil } = await import("@vercel/functions");
   const db = createClient(url, key, { auth: { persistSession: false } });
@@ -426,10 +439,8 @@ export async function installLlmUsageRecorder(): Promise<boolean> {
     const mod = await import("next/dist/server/app-render/work-async-storage.external");
     workStore = (mod as unknown as { workAsyncStorage?: WorkStore }).workAsyncStorage ?? null;
   } catch { workStore = null; }
-
   let warned = false;
-  const original = g.fetch;
-  const deps = {
+  return {
     insert: async (row: LlmUsageRow) => {
       const { error } = await db.from("llm_usage_logs").insert(row);
       if (error && !warned) { warned = true; console.warn("[llm-usage-recorder] insert failed:", error.message); }
@@ -439,9 +450,62 @@ export async function installLlmUsageRecorder(): Promise<boolean> {
     // 2026-09-26 テスト用の切り替え（llm-test-mode）が効いている時だけ "local:deepseek-all"。本番は VERCEL_ENV のまま
     env: usageEnvLabel(process.env),
   };
+}
+
+/** globalThis.fetch を1回だけ包む（instrumentation.ts から。Vercel ではレスポンス後も waitUntil で記録を書き終える） */
+export async function installLlmUsageRecorder(): Promise<boolean> {
+  const g = globalThis as unknown as { fetch: FetchLike & Record<PropertyKey, unknown> };
+  if (typeof g.fetch !== "function" || g.fetch[INSTALLED]) return false;
+  (globalThis as unknown as Record<symbol, unknown>)[CHAIN_INSTALLED_FLAG] = true;
+  const deps = await buildRecorderDeps();
+  if (!deps) {
+    installWrapped(g, g.fetch, wrapFetchStripSumoraMarks(g.fetch.bind(globalThis)));
+    return false;
+  }
+  const original = g.fetch;
   // 別クラウド（DeepSeek）に回った呼び出しも同じ口から書く（llm-alt-provider が recordAltUsage を呼ぶ）
   altRecorder = deps;
   const wrapped = wrapFetchWithLlmUsageRecorder(original.bind(globalThis), deps);
   installWrapped(g, original, wrapped);
   return true;
+}
+
+/**
+ * 開発サーバだけ: 記録の包みが通り道から外れていたら（Next の resetFetch）、instrumentation と同じ順（絵文字の片割れ除去→記録→別クラウド）で包み直す。
+ * 本番（NODE_ENV=production）・instrumentation を通っていない手元のスクリプト（tsx）では何もしない。探りは10秒に1回まで。
+ * Claude を呼ぶ入口（ブレイン・返信生成・AIX）の最初で await する
+ */
+let lastChainCheck = 0;
+export async function ensureLlmFetchChainInDev(): Promise<"ok" | "reinstalled" | "skipped"> {
+  if (process.env.NODE_ENV === "production") return "skipped";
+  if (!(globalThis as unknown as Record<symbol, unknown>)[CHAIN_INSTALLED_FLAG]) return "skipped";
+  const t = Date.now();
+  if (t - lastChainCheck < 10_000) return "skipped";
+  lastChainCheck = t;
+  let ok = false;
+  try {
+    const r = await globalThis.fetch(`http://${LLM_CHAIN_PROBE_HOST}/`, { cache: "no-store", signal: AbortSignal.timeout(1500) });
+    ok = r.headers.get(LLM_CHAIN_PROBE_HEADER) === "recorder";
+  } catch { ok = false; }
+  if (ok) return "ok";
+  console.warn("[llm-usage-recorder] 開発サーバで fetch の包みが外れていたので包み直します（使用量の記録・絵文字の片割れ除去・別クラウド）");
+  try {
+    const [{ installLlmFetchSanitizer, wrapFetchWithLlmSanitizer }, { installAltProvider, ALT_INNER_BOX }] = await Promise.all([import("./llm-request-sanitize"), import("./llm-alt-provider")]);
+    const box = (globalThis.fetch as unknown as Record<symbol, unknown>)[ALT_INNER_BOX] as { fn: FetchLike } | undefined;
+    if (box && typeof box.fn === "function") {
+      // 別クラウドの包みが一番外にいる（その包みは willRouteAlt で自分だけ包み直した）→ 本番と同じ順になるよう、その**内側**に差し込む
+      //   （外側に足すと、別クラウドに回った呼び出しを記録の包みと別クラウドの記録で2行にしてしまう）
+      const inner = wrapFetchWithLlmSanitizer(box.fn);
+      const deps = await buildRecorderDeps();
+      if (deps) altRecorder = deps;
+      box.fn = deps ? wrapFetchWithLlmUsageRecorder(inner, deps) : wrapFetchStripSumoraMarks(inner);
+    } else {
+      installLlmFetchSanitizer();
+      await installLlmUsageRecorder();
+      installAltProvider();
+    }
+  } catch (e) {
+    console.warn("[llm-usage-recorder] 包み直しに失敗:", e instanceof Error ? e.message : e);
+  }
+  return "reinstalled";
 }

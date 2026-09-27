@@ -81,15 +81,5 @@ export function applyGreetingSwap(templateText: string, staffMessagedToday: bool
   return templateText.replace(GREETING_RE, (m) => (greeting ? `${greeting}${m.endsWith("\n") ? "\n" : ""}` : ""));
 }
 
-/**
- * 号室の先頭ゼロを除去（日本の号室は0始まりにならない: 0906号室→906号室）。
- * 生成後の出力テキストに適用する。
- */
-export function stripRoomLeadingZeros(text: string): string {
-  // 「号室」付き: 0906号室 → 906号室
-  let result = text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
-  // 「号室」なし・先頭ゼロの番号: スペース区切りで続く 0XXX 形式を削除（例: ミカーサ 0203 → ミカーサ）
-  // 先頭ゼロ付きは号室以外の正規な数値（築年・金額等）に出現しないため安全に除去できる
-  result = result.replace(/\s+0\d+(?=[\s　、。！!？?」\n]|$)/g, "");
-  return result;
-}
+// 2026-09-27 竹内さん「物件の資料の中の文字変えなくても…そのまま使う」: 号室の先頭ゼロを消す stripRoomLeadingZeros はやめた
+//   （「ミカーサ 0203」の号室ごと消していた）。号室は資料の表記のまま（scripts/audit-room-verbatim.ts）

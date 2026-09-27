@@ -110,3 +110,42 @@ const STATUS_FALLBACK_PHASE: Record<string, DirectionPhase> = {
   availability_check: "proposing",
   viewing: "proposing",
 };
+
+/** 内覧の予定の事実（brain-core が viewing_history / viewings から決める conversation_direction.viewing_phase_detail） */
+export type ViewingPhaseDetail = "today" | "after_viewing" | "scheduling" | "confirmed_future" | null | undefined;
+
+/**
+ * 【📍 現在フェーズの参考】（generate-reply）の「次の一手」＝ conversation_direction.next_staff_action。
+ * 2026-09-27（竹内さん「残っている課題も改善する」・段階の直し 4f04918d と同じ考え方＝ブレインの値をそのまま使い、文の語で分類しない）:
+ *   旧は戦略の層の next_steps[0] の**語**で3つの定型文に置き換えていた（「申込」→申込書類の案内・「内覧」→内覧日程の提案・「物件」→物件を送る）。
+ *   ・語は場面と関係なく出る（「身分証の確認」は置き換えず、「両物件の保証会社審査の進捗を確認」は『物件』で物件を送るに、
+ *     「9/28 鍵渡しの待ち合わせ」はそのまま…と、定型文になるかは語の有無しだけで決まっていた）
+ *   ・next_steps[0] が「Step1（完了）: 見積書を作成した」でも次の一手として出していた（30日の戦略155件の手順のうち18が（完了））
+ *   → ブレイン自身の手順から「（完了）でない最初の手順」を、前置き（StepN（今すぐ）:）だけ外してそのまま使う。手順が無い時だけ段階の既定
+ *   （段階ごとの見出し phases_plan.staff_action と同じ語）。定型の言い回しは足さない。前後は scripts/audit-next-staff-action.ts
+ */
+const STEP_HEAD_RE = /^\s*Step\s*\d+\s*(?:[（(]([^）)]*)[）)])?\s*[:：]?\s*/i;
+const PHASE_DEFAULT_ACTION: Record<string, string> = {
+  hearing: "希望条件を確認",
+  proposing: "条件に合う物件を提案",
+  viewing: "内覧日程を調整",
+  applying: "申込書類を案内",
+};
+export function resolveNextStaffAction(i: { nextSteps: unknown; phase: string | null | undefined; viewingDetail?: ViewingPhaseDetail }): string {
+  const steps = Array.isArray(i.nextSteps) ? i.nextSteps : typeof i.nextSteps === "string" ? [i.nextSteps] : [];
+  for (const raw of steps) {
+    const t = typeof raw === "string" ? raw.trim() : "";
+    if (!t) continue;
+    const head = t.match(STEP_HEAD_RE);
+    if (head && /完了/.test(head[1] ?? "")) continue;
+    const body = t.replace(STEP_HEAD_RE, "").trim();
+    if (body) return body;
+  }
+  // 手順が無い時の既定。内覧の段階で日時が決まっている・当日・内覧済みの時は「日程を調整」を出さない（事実だけ）
+  if (i.phase === "viewing") {
+    if (i.viewingDetail === "confirmed_future") return "内覧の日時は決まっている（日程の打診はしない）";
+    if (i.viewingDetail === "today") return "本日が内覧日";
+    if (i.viewingDetail === "after_viewing") return "内覧済み（内覧後のフォロー）";
+  }
+  return PHASE_DEFAULT_ACTION[i.phase ?? ""] ?? "状況を確認して次の一手を判断";
+}

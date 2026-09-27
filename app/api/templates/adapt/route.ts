@@ -3,7 +3,6 @@ import { supabase } from "@/app/lib/supabase";
 import {
   applyVacatingDateToTemplate,
   applyGreetingSwap,
-  stripRoomLeadingZeros,
 } from "@/app/lib/template-preprocess";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
@@ -114,8 +113,7 @@ const STATIC_ADAPT_SYSTEM = `あなたはスモラ（賃貸仲介サービス）
 ・緊急連絡先: 万が一の際に電話が入るだけ。支払い義務は一切なし
 
 【号室番号の表記ルール】
-・日本の号室は0から始まらない。「0906号室」等の先頭ゼロは必ず除去すること
-× 0906号室 → ○ 906号室
+・号室は資料・会話の表記のまま（「0906号室」「005B」も先頭の0・英字を変えない・抜かない）
 
 ━━━━━━━━━━━━━━━━━━━━
 【情報の優先順位】
@@ -386,7 +384,7 @@ export async function POST(req: NextRequest) {
       content?: Array<{ type: string; text?: string }>;
     };
     let adapted = data.content?.find((b) => b.type === "text")?.text?.trim() ?? templateText;
-    adapted = stripRoomLeadingZeros(adapted);
+    // 2026-09-27 竹内さん「資料の文字はそのまま」: 号室の先頭ゼロ除去（stripRoomLeadingZeros）はやめた
 
     console.log(
       `[templates/adapt] category=${templateCategory || "-"} brainMeta=${brainMeta ? "ok" : "none"}` +

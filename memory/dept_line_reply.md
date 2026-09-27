@@ -7413,3 +7413,23 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 確かめ: YUMA（内覧予定 10/4）で保存しない実呼び出し（scripts/yuma-brain-decision.ts）→ 新しい説明で LLM 自身が viewing（前は applying）。お客様役1往復（段5・--no-send）→ 段階 viewing・方向 viewing・AIX要対応/カレンダー +0
 - **キャッシュの確かめ方**（デプロイ後）: `llm_usage_logs` の action LIKE 'brain%'・デプロイ後 → 最初の1〜2行が新しい sys_key_full で cache_write_1h≈39k、以降は同じ鍵で cache_read≈39.8k（直前の本番は a815422c…）。約$0.24を1回
 - 見送り: YUMA で LLM が内覧予定中に applying と言った時の下げ（業者の会話 599db03e「採寸内覧」は applying が正しい・説明の直しで LLM 自身が viewing を言うようになった）。next_staff_action（【現在フェーズの参考】の「次の一手」）はまだ next_steps の語で決まる
+
+## 2026-09-27 資料の文字をそのまま・残りの課題5つ（竹内「物件の資料の中の文字変えなくても…そのまま使う／残っている課題も改善する」）
+### 1. 資料・希望条件の文字をそのまま使う（AIX 物件オススメ・物件ピックアップ）
+- **出所（全部こちらの指示と決定論だった）**: ①共通ルール `ROOM_NUMBER_RULE`（SMORA_COMMON_RULES・返信生成にも入る）と AIX の入居日確認・物件確認・テンプレ最適化（templates/adapt・aix-template-generate）・discuss-context・extract-vacancy-date のプロンプトが「先頭の0を必ず省略」②出口 aix/action finalize の `/0+(\d+)号室/` と `template-preprocess.stripRoomLeadingZeros`（「ミカーサ 0203」を号室ごと消していた）③物件ピックアップの「入れる条件は最大4個まで」で2つの設備をくっつけた ④9/24 の `buildPickupFactsNote`「事実と合う間取りだけ」が希望の並びを1Kに絞らせた
+- **直し**: 号室は「資料・会話の表記のまま（0206 は 0206・005B は 005B）」に反転・出口のゼロ除去は全部削除（stripRoomLeadingZeros は関数ごと削除）。ピックアップは希望条件の欄を読む `parseConditionFields`・希望の並びが送る物件の間取りを全部含めば並びのまま書かせる `desiredLayoutsCoverFacts`（含まない時は旧のまま）・注意（findPickupSendConflicts）も並びの間取りは注意しない。構成に「条件の語は欄の文字のまま（くっつけない・抜かない・言い換えない）」。出口 `restoreConditionDots`（ピックアップ行で欄の語が中黒を落としていたら戻す・足すのは「・」だけ）
+- **監査**: `scripts/audit-room-verbatim.ts`（物件オススメの下書き×送った文の号室 244通でスタッフが直したのは0通・先頭0のまま送った通 オススメ10/待ち合わせ5/見積書4〜5・旧出口を実送信3,325通に当てると8＋18通が変わり「🌟プレメント豊中 0206」→「🌟プレメント豊中」）／`scripts/audit-condition-verbatim.ts`（物件ピックアップ597件・希望条件つき158件で中黒の復元は YUMA の1件・誤削除0／希望の間取り2つ以上49件のうち並びの一部だけ書いたのは6件）
+- 触っていない: 資料の読み取り側（property-image-read の roomNumber・照合用の normalizeRoomNo／sent-property-record）＝照合の形なので。共通ルールの変更で返信生成・AIX の1時間キャッシュの前置きが1回作り直しになる
+### 2. 物件オススメの「送った」行は送った後にだけ
+- 生成時に呼んでいた /api/extract-property-info（sent_properties・sent_image_properties に書く）をやめた。送った記録は send-line-message の after（source=aix:property_recommendation）だけ。お客様役の手元の経路も after は動く。過去分: 8/28 以降の source=vision 1,000行のうち43行は画像がトークに無い（消していない・生成だけの物か1件ずつ決まらない）
+### 3. 物件確認のタスクはお客様の依頼の時だけ（webhook の入口）
+- webhook の autoDetectTask は語の一覧だけで line_tasks を作り、決まりの判定 customerRequestedPropertyCheck を通っていなかった → `app/lib/property-check-task.ts`（語は候補・物件確認は直前20通で判定も通った時だけ）。テスト `property-check-task.test.ts`
+- 線（`scripts/audit-property-check-task.ts`・120日）: 作らない側の内覧・見学の語だけ19件 → 次が物件確認したは2件（なし10・内覧へ4）／作る側43件 → 物件確認した29・見積書10
+- **未決（竹内さんに確認）**: YUMA の実物「見積もりありがとうございます…こちらのお部屋、ぜひ内覧したい」は「物件を指した内覧の依頼」＝決まりの定義では依頼に入るので、直した後も作る。こちらが送って見積書まで済んだお部屋への内覧の希望は180日で2件（次はなし・見積書）で線を引けない
+### 4・5. llm_usage_logs の抜け
+- 戦略の層に名札 `brain_strategy`・セーブデータに `brain_checkpoint`＋会話 ID（本番直近2日: 戦略19回・セーブ9回が名札なし・どちらも Claude）。brain_ で始めるので振り分けは変わらない
+- 手元の開発サーバの抜け（9/27 02:19 のブレインの行なし）: Next の dev の resetFetch が globalThis.fetch を起動時の素の fetch に戻し、記録の包みが外れる（別クラウドの包みだけ自分で包み直す）。`ensureLlmFetchChainInDev`（探りの URL に記録の包みが答えるかで確かめ・外れていれば同じ順で包み直す・別クラウドの包みが外にいれば内側の箱 ALT_INNER_BOX へ差し込む）をブレイン・戦略・セーブ・返信生成・AIX の入口で await。本番・tsx のスクリプトでは何もしない（tsx から呼ぶブレインは元々記録なし＝別件）
+### 6. 次の一手（【現在フェーズの参考】）
+- 段階だけの定型文の案は監査で旧より悪く（書類受領後に『申込書類の準備を案内』等）入れなかった。`resolveNextStaffAction`＝ブレインの手順のうち（完了）でない最初の物を前置きだけ外してそのまま・無い時だけ段階の既定（内覧は日時確定・当日・内覧済みで『日程を調整』を出さない）。返信生成には「スタッフの作業の参考・本文の素材ではない」と明記。監査 `scripts/audit-next-staff-action.ts`（30日171会話）
+- 設計知見5件（出口の決定論／送付記録／ブレイン診断・穴:G3／静かに壊れる・API費用／ブレイン診断・穴:G1）
+- YUMA での確かめは別の徹底テストが使うため未（親が確かめる事項）

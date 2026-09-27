@@ -1,0 +1,60 @@
+// 2026-09-27: お客様の発言から物件確認のタスク（line_tasks property_check）を作る線（app/lib/property-check-task.ts）
+//   決まり: 物件確認はお客様から依頼があった時だけ（memory feedback_property_check_on_request・判定は customerRequestedPropertyCheck）。
+//   お客様の発言は scripts/audit-property-check-task.ts（本番120日）で次にスタッフが何を送ったかと並べて読んだ実物（名前は伏せた）。
+// 実行: npx tsx app/lib/__tests__/property-check-task.test.ts（自己完結ハーネス。全 PASS で exit 0）
+import { detectTaskTypeByKeywords, decideAutoTask } from "../property-check-task";
+
+let passed = 0, failed = 0; const failures: string[] = [];
+function it(name: string, fn: () => void) {
+  try { fn(); passed++; console.log(`  ✓ ${name}`); }
+  catch (e) { failed++; failures.push(`${name}: ${e instanceof Error ? e.message : String(e)}`); console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); }
+}
+function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
+
+type M = { sender: string; text: string };
+const hist = (...m: M[]) => m;
+// こちらが見積書を送った後（YUMA のお客様役 9/27・内覧の希望だけ）
+const AFTER_ESTIMATE: M[] = [
+  { sender: "staff", text: "【エステムコート大阪WEST 406号室】\n\n初期費用さらに\n🌟124,050円割引させて頂き\n初期費用：137,980円" },
+];
+
+console.log("\n■ 語の一覧（候補）は旧と同じ");
+it("内覧・見学・物件確認・空室確認の語は物件確認の候補／物件を探しての語は物件出し／自分で送る予告は何も作らない", () => {
+  eq(detectTaskTypeByKeywords("内覧したいです"), "property_check");
+  eq(detectTaskTypeByKeywords("空室確認お願いします"), "property_check");
+  eq(detectTaskTypeByKeywords("この物件確認してください"), "property_check");
+  eq(detectTaskTypeByKeywords("他にも物件探してほしいです"), "property_send");
+  eq(detectTaskTypeByKeywords("何件か気になる物件送ってもいいですか？"), null);
+  eq(detectTaskTypeByKeywords("ありがとうございます"), null);
+});
+
+console.log("\n■ 物件確認はお客様からの依頼の時だけ（customerRequestedPropertyCheck と同じ判定）");
+it("見積書の後の「内覧もお願いしたいです」だけ（物件を指していない）→ 作らない（次は AIX【内覧へ】の場面）", () => {
+  const text = "見積もりありがとうございます！内容を確認して、内覧もお願いしたいです。今週の土曜か日曜で可能でしょうか？";
+  eq(decideAutoTask(text, [...AFTER_ESTIMATE, { sender: "customer", text }]), null);
+});
+it("「内覧したいです」だけ（9b9b81ba 9/14・次は内覧へ）→ 作らない", () => {
+  eq(decideAutoTask("内覧したいです", hist({ sender: "staff", text: "お送りさせて頂きました！" }, { sender: "customer", text: "内覧したいです" })), null);
+});
+it("物件を指した内覧の依頼（「こちらの物件も内覧したいですー」）→ 作る", () => {
+  const text = "こちらの物件も内覧したいですー";
+  eq(decideAutoTask(text, hist({ sender: "customer", text: "[画像]" }, { sender: "customer", text })), "property_check");
+});
+it("お客様が物件の URL を送って空きと内覧を聞いた（110b3053 9/02）→ 作る", () => {
+  const text = "ここはいくらになりますか内覧は可能ですか？ 【賃貸マンション】 南海高野線 我孫子前駅 徒歩9分 https://www.homes.co.jp/chintai/room/xxxx/";
+  eq(decideAutoTask(text, hist({ sender: "customer", text })), "property_check");
+});
+it("空室の確認の依頼（2c434b28 9/09「空室あるか確認お願いできますか？ 空室あれば内覧したい」・物件の画像の後）→ 作る", () => {
+  const text = "空室あるか確認お願いできますか？🙇‍♀️ 空室あれば内覧したいと思ってます！";
+  eq(decideAutoTask(text, hist({ sender: "customer", text: "[画像]" }, { sender: "customer", text })), "property_check");
+});
+it("物件出しの候補はそのまま（物件確認の判定は通さない）", () => {
+  eq(decideAutoTask("他にも物件探してほしいです", hist({ sender: "customer", text: "他にも物件探してほしいです" })), "property_send");
+});
+it("直前の会話が読めない時は語だけ（旧の動き）", () => {
+  eq(decideAutoTask("内覧したいです", []), "property_check");
+  eq(decideAutoTask("内覧したいです", null), "property_check");
+});
+
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed) { console.log(failures.join("\n")); process.exit(1); }

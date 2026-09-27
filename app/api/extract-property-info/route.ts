@@ -6,7 +6,8 @@ import { recordSentImageProperty } from "@/app/lib/sent-image-record";
 //   同じ画像を DeepSeek で読んでいたので、1枚を2回読んでいた。
 //   → 読み取りと記録は app/lib/sent-image-record.ts の recordSentImageProperty に一本化（DeepSeek・1回・照合つき）。
 //     同じ画像を既に読んでいれば読み直さない。
-//   画面の送信は send-line-message が読むので、ここを呼ぶのは送る前に画像を扱う経路だけ（AIX 物件オススメの生成時）。
+//   画面の送信は send-line-message が読む。2026-09-27 から AIX 物件オススメの生成時にも呼ばない（生成して送らなかった時に「送った」行が残るため）。
+//   今はアプリの中に呼び出し元は無い（外から直接呼ばれた時のために残す）。
 //   推論モデルで数秒〜20秒かかる。呼び出し元は結果を待たない（裏で動く）
 export const maxDuration = 90;
 

@@ -1,6 +1,6 @@
 // 2026-09-14 API 漏れ調査: 使用量を出口（fetch）で DB に残す。約30経路が未記録・返信生成の出力が常に0・ログ検索で集計できない、の解消
 // 実行: npx tsx app/lib/__tests__/llm-usage-recorder.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { parseAnthropicRequest, parseUsageFromJson, parseUsageFromSse, wrapFetchWithLlmUsageRecorder, wrapFetchStripSumoraMarks, type LlmUsageRow } from "../llm-usage-recorder";
+import { parseAnthropicRequest, parseUsageFromJson, parseUsageFromSse, wrapFetchWithLlmUsageRecorder, wrapFetchStripSumoraMarks, type LlmUsageRow, LLM_CHAIN_PROBE_HOST, LLM_CHAIN_PROBE_HEADER, ensureLlmFetchChainInDev } from "../llm-usage-recorder";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 async function it(name: string, fn: () => void | Promise<void>) {
@@ -204,6 +204,21 @@ async function main() {
     await Promise.allSettled(pending);
   });
 
+// 2026-09-27: 開発サーバで Next の resetFetch が包みを外した時の探り（ensureLlmFetchChainInDev）。探りは記録の包みが答え、外に出さない・行を書かない
+await it("探りの URL は記録の包みが答える（外に出さない・記録しない）", async () => {
+  let reached = 0; const rows: LlmUsageRow[] = [];
+  const f = wrapFetchWithLlmUsageRecorder(async () => { reached++; return new Response("x"); }, { insert: async (r) => { rows.push(r); }, keepAlive: () => {}, route: () => null });
+  const r = await f(`http://${LLM_CHAIN_PROBE_HOST}/`);
+  expect(r.headers.get(LLM_CHAIN_PROBE_HEADER)).toBe("recorder");
+  expect(reached).toBe(0);
+  expect(rows.length).toBe(0);
+  const s = wrapFetchStripSumoraMarks(async () => { reached++; return new Response("x"); });
+  expect((await s(`http://${LLM_CHAIN_PROBE_HOST}/`)).headers.get(LLM_CHAIN_PROBE_HEADER)).toBe("recorder");
+  expect(reached).toBe(0);
+});
+await it("本番・instrumentation を通っていない手元のスクリプトでは探らない", async () => {
+  expect(await ensureLlmFetchChainInDev()).toBe("skipped"); // テストは instrumentation を通っていない
+});
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
 }

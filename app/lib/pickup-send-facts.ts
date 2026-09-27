@@ -62,17 +62,54 @@ export function parsePickupFact(row: PickupFactRow): PickupFact {
 
 const man = (yen: number) => { const v = yen / 10000; return `${Number.isInteger(v) ? v : v.toFixed(1).replace(/\.0$/, "")}万円`; };
 
+/**
+ * 希望条件の欄（「間取り: 1K、1DK、1LDK」「希望: バストイレ別・オートロック」）を欄の名前ごとに読む（値は書かれた文字のまま）。
+ * 2026-09-27 竹内さん「文字変えなくても…そのまま使う・文字抜かなくて」: 物件ピックアップの文が
+ *   「間取り: 1K、1DK、1LDK」を「1K」だけに・「バストイレ別・オートロック」を「バストイレ別オートロック」にしていた（YUMA 9/27）。
+ *   出所は ①下の事実のブロックの「この事実と合う間取りだけ」（希望の並びが送る物件を含む時も1Kに絞らせた）
+ *   ②構成の「入れる条件は最大4個まで」（2つの設備を1つにくっつけて数を合わせた）。欄の文字のまま使わせるために欄を読む
+ */
+export function parseConditionFields(conditionsText: string | null | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of String(conditionsText ?? "").split(/\r?\n/)) {
+    const m = line.match(/^\s*([^:：\s]{1,8})\s*[:：]\s*(.+?)\s*$/);
+    if (m && !out.has(m[1])) out.set(m[1], m[2]);
+  }
+  return out;
+}
+
+/** 希望条件の「間取り」欄の値（書かれた文字のまま）と、そこに並ぶ間取り。欄が無ければ null */
+export function desiredLayoutField(conditionsText: string | null | undefined): { raw: string; layouts: string[] } | null {
+  const raw = parseConditionFields(conditionsText).get("間取り");
+  if (!raw) return null;
+  const layouts = extractLayouts(raw);
+  return layouts.length ? { raw, layouts } : null;
+}
+
+/** 送る物件の間取りが全部、希望条件の間取りの並びに入っている＝希望の並びをそのまま書いてよい */
+export function desiredLayoutsCoverFacts(facts: readonly PickupFact[], conditionsText: string | null | undefined): { raw: string; layouts: string[] } | null {
+  const d = desiredLayoutField(conditionsText);
+  if (!d) return null;
+  const factLayouts = facts.map((f) => f.layout).filter(Boolean) as string[];
+  if (factLayouts.length === 0) return null;
+  return factLayouts.every((l) => d.layouts.includes(l)) ? d : null;
+}
+
 /** 生成に渡す「今回送る物件」のブロック（事実が1つも無ければ空） */
-export function buildPickupFactsNote(facts: readonly PickupFact[]): string {
+export function buildPickupFactsNote(facts: readonly PickupFact[], conditionsText?: string | null): string {
   const known = facts.filter((f) => f.layout || f.rentYen);
   if (known.length === 0) return "";
   const layouts = [...new Set(known.map((f) => f.layout).filter(Boolean))] as string[];
   const rents = known.map((f) => f.rentYen).filter((v): v is number => typeof v === "number");
   const rentText = rents.length === 0 ? "" : Math.min(...rents) === Math.max(...rents) ? `家賃${man(rents[0])}` : `家賃${man(Math.min(...rents))}〜${man(Math.max(...rents))}`;
+  // 2026-09-27: 希望条件の間取りの並びが送る物件の間取りを全部含む時は、並びを絞らせない（「1K、1DK、1LDK」→「1K」だけにしていた）
+  const covered = desiredLayoutsCoverFacts(known, conditionsText);
   return [
     `【今回お送りする物件（${facts.length}件・資料から読んだ事実）】`,
     ...known.map((f, i) => `・${i + 1}件目: ${[f.layout, f.rentYen ? `家賃${man(f.rentYen)}` : ""].filter(Boolean).join("・")}`),
-    `→ 間取り・家賃の数字を書くなら、この事実と合う物だけ（${[layouts.join("・"), rentText].filter(Boolean).join("／")}）。`,
+    covered
+      ? `→ 希望条件の間取り「${covered.raw}」は今回の物件（${layouts.join("・")}）を含むので、間取りを書くなら希望条件の欄の文字のまま「${covered.raw}」と書く（送る物件の間取りだけに絞らない・並びも区切りも変えない）。家賃の数字を書くなら、この事実と合う物だけ${rentText ? `（${rentText}）` : ""}。`
+      : `→ 間取り・家賃の数字を書くなら、この事実と合う物だけ（${[layouts.join("・"), rentText].filter(Boolean).join("／")}）。`,
     "　希望条件・会話・前回の送付の文にある間取りや「家賃〇万円以内」が、この事実と食い違う時はその数字を書かない（送る物件と違う間取り・送る物件の家賃より低い上限は誤り）。",
     "　構成にある他の文（条件を広げた旨の説明・退去予定 等）はこれまでどおり書く（この事実は数字の照合だけに使う）。",
   ].join("\n");
@@ -144,12 +181,15 @@ export function findPickupSendConflicts(
   facts: readonly PickupFact[],
   pastSendTexts: readonly string[] = [],
   allowedPromiseLines: readonly string[] = [],
+  conditionsText?: string | null,
 ): string[] {
   const notes: string[] = [];
   const body = String(text ?? "");
   const factLayouts = new Set(facts.map((f) => f.layout).filter(Boolean) as string[]);
   if (factLayouts.size > 0) {
-    const wrong = extractLayouts(body).filter((l) => !factLayouts.has(l));
+    // 希望条件の並びが送る物件を含む時は、並びの間取り（1DK・1LDK）を書いても食い違いにしない（入口で並びのまま書かせている）
+    const covered = desiredLayoutsCoverFacts(facts, conditionsText);
+    const wrong = extractLayouts(body).filter((l) => !factLayouts.has(l) && !(covered?.layouts.includes(l)));
     if (wrong.length) notes.push(`文の間取り（${wrong.join("・")}）が今回お送りする物件（${[...factLayouts].join("・")}）と違います`);
   }
   const rents = facts.map((f) => f.rentYen).filter((v): v is number => typeof v === "number");
@@ -173,4 +213,35 @@ export function findPickupSendConflicts(
     }
   }
   return notes;
+}
+
+/**
+ * 出口（中黒を戻すだけ・文字は消さない）: ピックアップ行で、希望条件の欄の語「バストイレ別・オートロック」が
+ * 中黒を落として「バストイレ別オートロック」になっていたら、欄の文字のまま（中黒あり）に戻す。
+ * 2026-09-27 竹内さん「文字抜かなくてそのまま使う」（YUMA 9/27 の物件ピックアップ）。
+ * 誤削除0: 足すのは「・」だけ（中黒を全部消すと前後で同じ文になる）。当てるのはピックアップ行・中黒を抜いた形が4文字以上の語だけ。
+ * 監査 scripts/audit-condition-verbatim.ts（aix_generate_log の物件ピックアップ全件×その時の希望条件）
+ */
+export function restoreConditionDots(text: string, conditionsText: string | null | undefined): { text: string; restored: string[] } {
+  const items: string[] = [];
+  for (const v of parseConditionFields(conditionsText).values()) {
+    for (const it of v.split(/[、,，\/／]/)) {
+      const t = it.trim();
+      if (t.includes("・") && t.replace(/・/g, "").length >= 4) items.push(t);
+    }
+  }
+  if (items.length === 0) return { text, restored: [] };
+  const restored: string[] = [];
+  const lines = String(text ?? "").split("\n").map((line) => {
+    if (!/ピックアップ|募集に(?:で|出)ました/.test(line)) return line;
+    let out = line;
+    for (const it of items) {
+      const joined = it.replace(/・/g, "");
+      if (out.includes(it) || !out.includes(joined)) continue;
+      out = out.split(joined).join(it);
+      restored.push(it);
+    }
+    return out;
+  });
+  return { text: lines.join("\n"), restored };
 }

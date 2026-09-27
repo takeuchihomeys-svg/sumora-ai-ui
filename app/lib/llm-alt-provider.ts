@@ -301,6 +301,8 @@ export function willRouteAlt(
 }
 
 const ALT_FETCH_MARK = "__sumoraAltProvider";
+/** 包みの内側の箱（llm-usage-recorder の開発サーバ用の包み直しが使う） */
+export const ALT_INNER_BOX = Symbol.for("sumora.altInnerBox");
 function isAltFetchInstalled(): boolean {
   return !!(globalThis.fetch as unknown as Record<string, unknown>)[ALT_FETCH_MARK];
 }
@@ -670,7 +672,10 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
   if (blocked) console.warn("[llm-test-mode] 無視:", blocked);
   const cfg = readAltConfig(env);
   if (!cfg) return false; // 設定が無ければ何もしない＝今までどおり Anthropic
-  const original = globalThis.fetch;
+  // 2026-09-27: 包みの内側（素通しの先）を箱に入れる。開発サーバで記録の包みが外れた時（Next の resetFetch）に、
+  //   llm-usage-recorder.ensureLlmFetchChainInDev が**この包みの内側**へ記録の包みを差し込めるように（本番と同じ順を保つ）
+  const box: { fn: typeof fetch } = { fn: globalThis.fetch };
+  const original = ((i: RequestInfo | URL, n?: RequestInit) => box.fn(i, n)) as typeof fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (!url || !url.startsWith(ANTHROPIC_MESSAGES_URL)) return original(input as RequestInfo, init);
@@ -773,6 +778,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     }
   }) as typeof fetch;
   (globalThis.fetch as unknown as Record<string, unknown>)[ALT_FETCH_MARK] = true;
+  (globalThis.fetch as unknown as Record<symbol, unknown>)[ALT_INNER_BOX] = box;
   installed = true;
   console.log("[llm-alt] installed", JSON.stringify({ provider: cfg.provider, model: cfg.model, actions: [...cfg.actions], ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
   if (cfg.testMode) console.warn(`[llm-test-mode] ${cfg.testMode}: ブレイン以外の Claude 呼び出しを ${cfg.provider}（${cfg.model}）に回す・失敗しても Claude に戻さない（ローカル専用）`);

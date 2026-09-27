@@ -139,7 +139,6 @@ import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
 import {
   applyVacatingDateToTemplate,
   applyGreetingSwap,
-  stripRoomLeadingZeros,
   type VacatingDate,
 } from "@/app/lib/template-preprocess";
 import { staffTalkedToday, applyDailyGreeting } from "@/app/lib/daily-greeting";
@@ -2887,6 +2886,8 @@ export async function POST(req: NextRequest) {
 }
 
 async function handleGenerateReply(req: NextRequest) {
+  // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
+  await (await import("@/app/lib/llm-usage-recorder")).ensureLlmFetchChainInDev().catch(() => {});
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
   }
@@ -5276,7 +5277,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     const convDir = (brainGate?.conversationDirection ?? null) as Record<string, unknown> | null;
     const directionNote = convDir?.current_phase
       ? "【📍 現在フェーズの参考（事実情報 — 戦略指示ではない）】現フェーズ: " + (phaseLabels[String(convDir.current_phase)] ?? String(convDir.current_phase)) +
-        " / 次の一手: " + String(convDir.next_staff_action ?? "状況に応じて判断") +
+        // 2026-09-27: 次の一手はブレインの手順（（完了）でない最初の物）をそのまま入れるようになった（brain-stage.resolveNextStaffAction）→ 予定ステップと同じく作業の参考と明記
+        " / 次の一手（スタッフの作業の参考・本文の素材ではない）: " + String(convDir.next_staff_action ?? "状況に応じて判断") +
         " / 方針: " + String(convDir.direction_summary ?? "申込まで丁寧にリード") +
         "\n※戦略の判断はAIX-META戦略（存在する場合）を最優先とし、このブロックは現在地把握の参考としてのみ扱うこと。\n"
       : "";
@@ -5781,9 +5783,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               const { cleaned, issues } = runValidate(openingFixed, !isTemplateOptimize);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
-              // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
+              // テンプレート最適化モードの後処理: noEmoji時の絵文字除去（旧adaptルート互換。号室先頭ゼロ除去は 2026-09-27 にやめた）
               if (isTemplateOptimize) {
-                outText = stripRoomLeadingZeros(outText);
+                // 2026-09-27 竹内さん「資料の文字はそのまま」: 号室の先頭ゼロ除去（stripRoomLeadingZeros）はやめた
                 // 出口: 今日こちらが会話文を送った後の冒頭の挨拶を消す（消す方向だけ・足さない。名前の行は残す）。
                 //   誤削除0の確認: template_selection_logs の全件（scripts/audit-staff-relation.ts）で、9/22 の方針以降
                 //   「会話文を送った日×最適化した文に挨拶」を送った6件はスタッフが6件とも消していた（残した0件）。

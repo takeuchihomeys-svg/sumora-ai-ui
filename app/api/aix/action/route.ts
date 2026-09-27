@@ -73,7 +73,7 @@ import { buildApplicationNote, applicationBulletNote } from "@/app/lib/applicati
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
-import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, type PickupFact } from "@/app/lib/pickup-send-facts";
+import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, restoreConditionDots, type PickupFact } from "@/app/lib/pickup-send-facts";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ（お客様が日にちを指定した日だけ空き時間を全部）
@@ -1858,11 +1858,13 @@ async function handleAction(request: NextRequest): Promise<Response> {
         : preferredRawName;
     const name = familyName ? `${familyName}さん` : "お客様";
 
-    // ⑦修正: 生成文の共通後処理（号室の先頭ゼロ除去 + 内部メモ分離）を一元化するヘルパー。
+    // ⑦修正: 生成文の共通後処理（内部メモ分離・禁止語の置換 等。号室の先頭ゼロ除去は 2026-09-27 にやめた）を一元化するヘルパー。
     //   メインパス末尾だけでなく conversation_match 系の早期returnパスでも必ず通すこと
     const finalize = (text: string): { message: string; notice: string | null } => {
-      // 号室の先頭ゼロを除去（日本の号室は0始まりにならない: 0806→806。\b はASCII境界のみ機能するため (?<!\d) を使用）
-      const zeroStripped = text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
+      // 2026-09-27 竹内さん「物件の資料の中の文字変えなくても…そのままで大丈夫・文字抜かなくてそのまま使う」:
+      //   旧はここで号室の先頭ゼロを消していた（0806号室→806号室）。資料の表記のまま送る決まりに変えたので消さない。
+      //   スタッフの実送信でも号室の先頭0はそのまま（下書きと送った文の号室が両方ある物件オススメ244通で直した0通・scripts/audit-room-verbatim.ts）
+      const zeroStripped = text;
       // 2026-09-15 竹内（隼斗事例）「曜日は日本基準に、18日は金曜日」: 「9/18(木)」のような曜日の食い違いを日付を正として直す（日本時間の暦・jst-date）
       const { text: stripped, applied: weekdayFixed } = fixDateWeekdays(zeroStripped);
       if (weekdayFixed.length > 0) console.log(JSON.stringify({ tag: "aix:weekday-fixed", action: currentAction, conversationId, applied: weekdayFixed }));
@@ -1945,6 +1947,12 @@ async function handleAction(request: NextRequest): Promise<Response> {
         if (picked.removed.length > 0) {
           console.log(JSON.stringify({ tag: "aix:pickup-line-property-name", action: currentAction, conversationId, removed: picked.removed }));
           sendCleaned = picked.text;
+        }
+        // 2026-09-27 竹内さん「文字抜かなくてそのまま使う」: 希望条件の欄の語の中黒（バストイレ別・オートロック）を落としていたら戻す（足すのは「・」だけ）
+        const dots = restoreConditionDots(sendCleaned, customer_conditions ? String(customer_conditions) : null);
+        if (dots.restored.length > 0) {
+          console.log(JSON.stringify({ tag: "aix:pickup-condition-dots-restored", action: currentAction, conversationId, restored: dots.restored }));
+          sendCleaned = dots.text;
         }
       }
       // 2026-09-17 竹内（AIX 物件確認した）「変に割引できる金額少ないや、費用かかる等いれないし、退去予定ともっと
@@ -2163,7 +2171,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // 出口（注意だけ・本文は書き換えない）: 今回の物件と食い違う間取り・家賃上限／前回の送付の約束の写し
     const pickupSendExitNotice = (text: string): string => {
       if (action !== "property_send") return "";
-      const notes = findPickupSendConflicts(text, pickupFacts, pastPickupSendTexts, [DEADLINE_SUPPORT_LINE, ...INSERTED_PROMISE_LINES]);
+      const notes = findPickupSendConflicts(text, pickupFacts, pastPickupSendTexts, [DEADLINE_SUPPORT_LINE, ...INSERTED_PROMISE_LINES], customer_conditions ? String(customer_conditions) : null);
       if (notes.length) console.log(JSON.stringify({ tag: "aix:pickup-send-conflict", conversationId, notes }));
       return notes.map((n) => `⚠ ${n}`).join("\n");
     };
@@ -2571,28 +2579,12 @@ ${SMORA_COMMON_RULES}`;
         message_text += "\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！";
       }
 
-      // Fire-and-forget: extract property info from property recommendation image
-      if (conversationId && image_url) {
-        const _extractBaseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sumora-ai-ui.vercel.app";
-        (async () => {
-          let resolvedPropertyCustomerId: string | null = null;
-          const { data: convRow } = await supabase
-            .from("conversations")
-            .select("property_customer_id")
-            .eq("id", conversationId)
-            .maybeSingle();
-          resolvedPropertyCustomerId = convRow?.property_customer_id ?? null;
-          await fetch(`${_extractBaseUrl}/api/extract-property-info`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              image_url: String(image_url),
-              conversation_id: conversationId,
-              property_customer_id: resolvedPropertyCustomerId,
-            }),
-          });
-        })().catch(() => {}); // fire-and-forget
-      }
+      // 2026-09-27: 生成の時点で /api/extract-property-info（sent_properties・sent_image_properties に「送った」行を書く）を呼ぶのをやめた。
+      //   生成して送らなかった時も「送った」行が残っていた（YUMA 9/27: 生成 02:12:17 に channel なしの行→送信 02:12:50 は duplicate_skipped）。
+      //   ブレイン（brain-core）・自分の物件の判定（own-property-server）・提案禁止（ng_properties）は両方の表を「送った物件」として読む。
+      //   送った記録は送信の後（send-line-message の after → recordSentImageProperty・source=aix:property_recommendation）だけで付ける。
+      //   画面の送信・お客様役（scripts/customer-sim.ts・手元の LINE を通さない経路も after は動く）のどちらも send-line-message を通る。
+      //   読み取りは送信時の1回だけ（生成時に読んでいた分の DeepSeek 1回が送信時に移るだけで回数は同じ）
 
     // ── 💰 見積書送る ─────────────────────────────────────────────
     // ※ 見積書本体はOCR（JSON抽出）＋テンプレート組み立て式（AI自由生成なし・金額を壊さない）。
@@ -2967,14 +2959,15 @@ ${SMORA_COMMON_RULES}
 
       const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
       // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
-      const pickupFactsNote = buildPickupFactsNote(pickupFacts);
+      const pickupFactsNote = buildPickupFactsNote(pickupFacts, conditionsInfo);
       const conditionsRule = conditionsInfo
         ? `・【最重要】「ご希望のご条件に合ったお部屋」「ご希望の条件に合うお部屋」などの抽象的な表現は絶対に使わない。お客様の具体的な希望条件を文中に自然に織り込むこと
   条件の入れ方（厳守）：
   ・エリアは必ず入れる
   ・入居日はお客様から必須指定がある場合のみ入れる（指定がなければ入れない）
   ・設備・その他はお客様が気にしていた条件（希望条件データにあるもの）から選ぶ
-  ・入れる条件は最大4個まで。箇条書きにせず文中に自然に埋め込む
+  ・入れる条件は最大4個まで（1つの欄は1つと数える）。箇条書きにせず文中に自然に埋め込む
+  ・条件の語は【お客様の希望条件】の欄の文字のまま書く（欄の中の語をくっつけない・抜かない・言い換えない。例: 「バストイレ別・オートロック」の「・」を落とさない、間取りの欄「1K、1DK、1LDK」は並びのまま）
   ・条件のでっち上げ禁止。希望条件データにない条件は絶対に書かない
   例：「梅田まで30分圏内のエリアから[お客様名]にオススメできる2口ガスコンロの初期費用抑えられる9/1入居可能なお部屋ピックアップさせて頂きました😊！！」
   ※下の【出力例】に「ご希望のご条件に合ったお部屋」とある部分は、必ず上記ルールで具体条件に置き換えて出力すること`
@@ -4478,7 +4471,7 @@ ${appealFocus}`;
 
 【読み取る情報】
 1. マンション名（物件名）
-2. 号室番号（先頭の0は省略: 0806→806）
+2. 号室番号（資料の表記のまま・先頭の0も落とさない: 0806 は 0806）
 3. 退去予定日（例: 6月30日）
 4. 入居可能予定時期（退去日＋クリーニング1〜2週間で算出。「〇月上旬/中旬/下旬」で表現）
    ※ 上旬=1〜10日、中旬=11〜20日、下旬=21日〜
@@ -4492,7 +4485,7 @@ ${appealFocus}`;
 
 【厳守ルール】
 ・フォーマット以外の文章・説明・挨拶は一切追加しない
-・号室番号の先頭0は省略すること
+・号室番号は資料の表記のまま（先頭の0も落とさない）
 ・退去日が画像に記載されていない場合は「退去予定日不明」と記載
 ・完成したメッセージのみ出力
 
@@ -4961,7 +4954,7 @@ ${availabilityStatus === "available"
 ${mgmtDef.format}
 
 【置き換えルール】
-${check_pattern === "mgmt_proxy" ? "" : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室の先頭0は省略: 0806→806）。特定できない場合は「ご確認頂きましたお部屋」とする
+${check_pattern === "mgmt_proxy" ? "" : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室は資料や会話の表記のまま: 0806 は 0806）。特定できない場合は「ご確認頂きましたお部屋」とする
 `}${mgmtDef.rules}
 
 【厳守ルール】
@@ -5773,7 +5766,7 @@ ${name}ご都合よろしいお日にちにご案内させて頂きます😊！
         const availableFixedSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを一字一句そのまま出力してください。
 [物件名と号室]の部分のみ、画像または会話履歴から「マンション名 ○○○号室」の形式で置き換えること（例: アドバンス難波ラシュレ 806号室）。
-号室番号は先頭の0を省略すること（0806 → 806、0102 → 102）。
+号室番号は画像・会話の表記のまま（先頭の0も落とさない: 0806 は 0806）。
 号室が不明な場合はマンション名のみ記載する。
 それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。`;
         // テンプレート本文は顧客名・募集終了物件名を含む動的コンテンツ → キャッシュ対象の system から分離
@@ -7196,6 +7189,8 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
 const SERVER_BUDGET_MS = 55_000;
 
 export async function POST(request: NextRequest) {
+  // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
+  await (await import("@/app/lib/llm-usage-recorder")).ensureLlmFetchChainInDev().catch(() => {});
   if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
     return runInDeepseekScope(() => aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => handleAction(request)));
   }

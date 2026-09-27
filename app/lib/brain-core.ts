@@ -18,7 +18,7 @@ import {
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
-import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, shortHash } from "@/app/lib/llm-usage-recorder";
+import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, shortHash, ensureLlmFetchChainInDev } from "@/app/lib/llm-usage-recorder";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数）と起点の名札
 import { decideNightDeferNow, type BrainOrigin } from "@/app/lib/brain-night-defer";
 export type { BrainOrigin };
@@ -48,7 +48,7 @@ import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOu
 import { getCustomerState } from "@/app/lib/customer-state-server";
 import { buildCustomerStateBrainBlock, type CustomerState } from "@/app/lib/customer-state";
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
-import { correctBrainStage, resolveDirectionPhase } from "@/app/lib/brain-stage";
+import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
 import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）は1つの型・1つの関数に集約（AIX / テンプレート / 返信生成が同じ物を読む）
 import { resolveBrainPropertyState } from "@/app/lib/property-send-state";
@@ -1256,6 +1256,8 @@ export async function analyzeConversation(
     /** 2026-09-13 2層ブレイン: "fresh"＝今回の発言の層（strategy を前提に今回の発言だけ・軽く）/ "combined"＝全項目（従来） */
     layer?: "combined" | "fresh"; strategy?: BrainStrategy | null },
 ): Promise<SuggestedAixMeta> {
+  // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
+  await ensureLlmFetchChainInDev().catch(() => {});
   // RAG化 Phase1: 前回フェーズ（無ければ convStatus からの粗い推定）でアクション候補を絞る。
   // フェーズ不明・未知フェーズ時は全AIXアクションにフォールバック（フィルタ無効化 = 取りこぼしゼロ側）
   const phaseEstimate = opts?.prevPhase ?? (convStatus ? STATUS_TO_PHASE[convStatus] ?? null : null);
@@ -3543,6 +3545,8 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
   if (checkpointInFlight.has(conversationId)) return;
   checkpointInFlight.add(conversationId);
   try {
+    // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
+    await ensureLlmFetchChainInDev().catch(() => {});
     // 1) 総メッセージ数 + 最新チェックポイントを並列取得
     const [countRes, cpRes] = await Promise.all([
       supabase
@@ -3603,6 +3607,11 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       thinking: { type: "disabled" },
       system: [{ type: "text", text: CHECKPOINT_STATIC_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
       messages: [{ role: "user", content: maskPII(userContent, [customerName]) }],
+    }, {
+      // 2026-09-27: 戦略の層と同じく名札と会話 ID を付ける（llm_usage_logs の action・conversation_id が空だった）。
+      //   名札なしの時は system の先頭で "classify" 扱いだった（本番は Claude のまま＝LLM_ALT_ACTIONS に classify も brain も無い）。
+      //   brain_ で始めるのでテスト用の切り替えでもブレインとして外れる（今までは system の先頭の語で外していた）
+      headers: { [LLM_ACTION_HEADER]: "brain_checkpoint", [LLM_CONVERSATION_HEADER]: conversationId },
     });
     logLlmUsage("checkpoint", response.usage, { conversationId, stop: response.stop_reason });
     // analyzeConversation と同じ content.find() で thinking ブロック対策
@@ -3770,6 +3779,8 @@ export async function runStrategyRefresh(conversationId: string, kind: "consolid
 
 /** 戦略の整理（前回の戦略＋それ以降の毎回の分析の要点＋セーブポイント＋新しいメッセージ＋成約パターン → 新しい戦略） */
 async function consolidateStrategy(conversationId: string, conv: Record<string, unknown>, prev: BrainStrategy, nowIso: string): Promise<BrainStrategy | null> {
+  // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
+  await ensureLlmFetchChainInDev().catch(() => {});
   const customerName = (conv.customer_name as string | null) ?? undefined;
   // セーブポイントを先に更新してから使う（同じ整理の仕事を二度読みしない。更新が不要なら即戻る）
   await maybeCreateCheckpoint(conversationId, customerName).catch(() => {});
@@ -3873,6 +3884,14 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
     model: BRAIN_MODEL, max_tokens: 2500, thinking: { type: "disabled" },
     system: [{ type: "text" as const, text: STRATEGY_SYSTEM, cache_control: { type: "ephemeral" as const, ttl: "1h" as const } }],
     messages: [{ role: "user", content: maskPII(userText, [customerName]) }],
+  }, {
+    // 2026-09-27: 名札と会話 ID を付ける（llm_usage_logs の action・conversation_id が空で、会話ごとの費用＝お客様役の費用表示から漏れていた・1回 約$0.03）。
+    //   名札は brain_ で始める＝振り分け（LLM_ALT_ACTIONS の "brain"・テスト用の切り替えのブレイン外し）は名札なしの時（system の先頭で "brain"）と同じ扱い
+    headers: {
+      [LLM_ACTION_HEADER]: "brain_strategy",
+      [LLM_CONVERSATION_HEADER]: conversationId,
+      ...(isPostApplyStatus(conv.status as string | null) ? { [LLM_POST_APPLY_HEADER]: "1" } : {}),
+    },
   });
   logLlmUsage("brain:strategy", res.usage, { conversationId });
   if (res.stop_reason === "max_tokens") { console.warn("[brain-core] strategy truncated (max_tokens):", conversationId); return null; }
@@ -4686,16 +4705,8 @@ async function analyzeAndSaveBrainMetaInner(
             staff_action: ["希望条件を確認", "条件に合う物件を提案", "内覧日程を調整", "申込書類を案内"][i],
             status: i < newIdx ? "done" : i === newIdx ? "current" : "pending",
           })),
-          next_staff_action: (() => {
-            const raw = Array.isArray(metaRecord.next_steps)
-              ? String((metaRecord.next_steps as string[])[0] ?? "")
-              : String(metaRecord.next_steps ?? "");
-            const src = raw.trim() || "状況を確認して次の一手を判断";
-            if (/申込/.test(src)) return "お客さんの懸念点を確認しながら、申込書類の準備について自然に案内する";
-            if (/内覧/.test(src)) return "物件の空き状況や他の問い合わせ状況を伝えながら、内覧日程を提案する";
-            if (/物件/.test(src)) return "希望条件に合う物件を絞り込みながら、具体的な物件情報を送る";
-            return src;
-          })(),
+          // 2026-09-27: 戦略の文（next_steps）の語で定型文に置き換えない。ブレインの手順のうち（完了）でない最初の物をそのまま（app/lib/brain-stage.ts resolveNextStaffAction）
+          next_staff_action: resolveNextStaffAction({ nextSteps: metaRecord.next_steps, phase: newPhase, viewingDetail: viewingPhaseDetail }),
           suggested_aix_button: suggAixButton,
           viewing_scheduled_at: viewingScheduledAt,
           viewing_phase_detail: viewingPhaseDetail,
