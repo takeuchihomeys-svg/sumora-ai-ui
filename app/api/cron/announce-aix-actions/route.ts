@@ -52,10 +52,10 @@ export async function GET(req: NextRequest) {
   const todayStart = new Date(jstDayStartMs()).toISOString();
   const [{ data: pending, error: e1 }, { data: doneToday, error: e2 }] = await Promise.all([
     supabase.from("aix_action_items")
-      .select("id, conversation_id, customer_name, action, check_pattern, status, done_aix_type, done_at, created_at")
+      .select("id, conversation_id, customer_name, action, check_pattern, status, done_aix_type, done_at, created_at, done_by")
       .eq("status", "pending").order("created_at", { ascending: true }).limit(100),
     supabase.from("aix_action_items")
-      .select("id, conversation_id, customer_name, action, check_pattern, status, done_aix_type, done_at, created_at")
+      .select("id, conversation_id, customer_name, action, check_pattern, status, done_aix_type, done_at, created_at, done_by")
       .eq("status", "done").gte("done_at", todayStart).order("done_at", { ascending: true }).limit(100),
   ]);
   if (e1 || e2) return NextResponse.json({ ok: false, error: (e1 ?? e2)?.message }, { status: 500 });

@@ -3245,6 +3245,10 @@ ALTER TABLE aix_action_items ALTER COLUMN conversation_id TYPE TEXT USING conver
 CREATE UNIQUE INDEX IF NOT EXISTS aix_action_items_one_pending ON aix_action_items (conversation_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS aix_action_items_status_done_at ON aix_action_items (status, done_at);
 ALTER TABLE aix_action_items DISABLE ROW LEVEL SECURITY;
+-- 2026-09-27 竹内「その方向でおねがい」: 返信の本文で済ませた（done_by='staff_text'）／AIX を送った（'aix'）を分ける。
+--   resolution_note = 片付けの根拠（本文で済んだ文・ブレインが取り下げた理由 brain_customer_paused の保留の型と判断の出どころ）
+ALTER TABLE aix_action_items ADD COLUMN IF NOT EXISTS done_by TEXT;
+ALTER TABLE aix_action_items ADD COLUMN IF NOT EXISTS resolution_note TEXT;
 
 -- ── RAG の厳密化（2026-09-13 RAG 監査）──
 -- ivfflat.probes=1（既定）＋索引後の WHERE で近い行を取りこぼしていた（例文検索は厳密上位8件と0〜4件しか重ならない→修正後 8/8）。

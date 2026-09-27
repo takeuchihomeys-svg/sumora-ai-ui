@@ -375,8 +375,31 @@ export async function POST(req: NextRequest) {
   //   スタッフが見積書・物件ピックアップを宣言した送信の直後にブレインを分析し直す（顧客の新着が無くても forceIncremental）。
   //   ブレインが「未履行の宣言 → それを履行する AIX」（aix-task-link.resolveStaffPromiseAix）と判断 → AIX要対応に登録・
   //   売上番長グループへ「〇〇さん → AIX【見積書送る】」。宣言の判定は行動台帳と同じ classifyStaffTextForLedger
+  // 2026-09-27 竹内「返信の本文で AIX の仕事を済ませた時は自動で済み」: 通常の返信（AIX の本文でない）が pending の AIX要対応の仕事を
+  //   済ませていれば完了（✅ 返信で済み）にする（判定 aix-item-cleanup.staffTextFulfillsAixItem）。
+  //   下の宣言の再分析（ブレインが次の AIX を登録し直す）より先に済ませる＝同じ after の中で await してから再分析へ進む
+  //   （順が逆だと、再分析の「同じ指示は再通知しない」に吸われた後に完了して、宣言の要対応が消える）
+  const completeByText = async (cid: string | null): Promise<void> => {
+    if (!message || origin === "aix" || !cid) return;
+    try {
+      const { completeAixActionItemByStaffText } = await import("@/app/lib/aix-action-items");
+      await completeAixActionItemByStaffText(cid, message, sentAtIsoForFacts);
+    } catch (e) {
+      console.warn("[send-line-message] complete aix item by staff text failed:", e instanceof Error ? e.message : e);
+    }
+  };
   if (message) {
     const promiseEntry = classifyStaffTextFacts(message, null).find((e) => e.status === "promised" && (e.kind === "estimate_declared" || e.kind === "pickup_declared" || e.kind === "confirmation_promised")) ?? null;
+    if (!(promiseEntry?.status === "promised") && origin !== "aix") {
+      after(async () => {
+        let cid = conversation_id ?? null;
+        if (!cid) {
+          const { data: convRow } = await supabase.from("conversations").select("id").eq("line_user_id", line_user_id).eq("account", accountKey).maybeSingle();
+          cid = (convRow?.id as string | undefined) ?? null;
+        }
+        await completeByText(cid);
+      });
+    }
     // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言（「お送り頂きました物件、募集状況確認させて頂きます」）も対象
     //   → ブレインが AIX【物件確認した】をセット（お客様から確認の依頼があった時だけ・aix-task-link.resolveStaffPromiseAix）
     if (promiseEntry?.status === "promised" && (promiseEntry.kind === "estimate_declared" || promiseEntry.kind === "pickup_declared" || promiseEntry.kind === "confirmation_promised")) {
@@ -388,6 +411,8 @@ export async function POST(req: NextRequest) {
             .eq("line_user_id", line_user_id).eq("account", accountKey).maybeSingle();
           if (!convRow?.id) return;
           const cid = convRow.id as string;
+          // 宣言と同じ通に報告もある（「募集終了…／他のお部屋も確認させて頂きます」）→ 先に今の要対応を済みにしてから再分析で登録し直す
+          await completeByText(cid);
           // 画面（page.tsx）がこの送信を messages に保存するのを待つ（ブレインが宣言を読めるように・最大15秒）
           for (let i = 0; i < 8; i++) {
             const { data: saved } = await supabase

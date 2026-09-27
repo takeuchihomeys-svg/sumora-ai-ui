@@ -55,6 +55,8 @@ export type AixActionItemRow = {
   done_aix_type: string | null;
   done_at: string | null;
   created_at: string;
+  /** 2026-09-27: 'aix'＝AIX を送った／'staff_text'＝通常の返信の本文で済ませた（aix-item-cleanup）。旧の行は null（＝AIX） */
+  done_by?: string | null;
 };
 
 /** 定時一覧の本文（未対応 → 今日の完了 の順。未対応も今日の完了も無ければ null＝送らない） */
@@ -73,7 +75,8 @@ export function buildAixActionList(items: AixActionItemRow[], nowMs: number = Da
     `【AIX要対応リスト】${jstMDHm(nowMs)}`,
     "",
     ...pending.map((i) => `・${name(i)} → ${aixButtonText(i.action, i.check_pattern)}`),
-    ...doneToday.map((i) => `✅${name(i)} → ${doneButton(i)}`),
+    // 2026-09-27: 返信の本文で済ませた物は「（返信で済み）」を付ける（AIX を送っていないので ✅=AIX送信済み と区別する）
+    ...doneToday.map((i) => `✅${name(i)} → ${doneButton(i)}${i.done_by === "staff_text" ? "（返信で済み）" : ""}`),
     "",
     pending.length === 0 ? "🎉 AIX要対応 全件完了！" : `残り ${pending.length}件（✅=AIX送信済み　・=未対応）`,
   ].join("\n");

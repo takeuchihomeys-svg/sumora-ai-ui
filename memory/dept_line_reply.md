@@ -7538,3 +7538,27 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **監査** `npx tsx --env-file=.env.local scripts/audit-pickup-send-image.ts [--days=14] [--fix]`（このパソコンの Chrome で描いた物を元の資料の基準に・差 2.0 未満＝元の資料）: 14日 42行。送る画像 trim 33件＝元の資料 12・差し替え 21、届いた画像 31件＝元の資料 8・差し替え 23。**差し替えは全部 YUMA のテスト**（1684×1189 の画像・お客様役の 1548×1093 の荒い JPEG・page_image_url をそのまま）。本番のお客様への pickup 経由の送信は 0。送っていない行の差し替え 0（--fix の対象なし）
 - テスト `app/lib/__tests__/pickup-send-image.test.ts`（27）・既存 pickup-sent-plan（30）・property-pickups（44）・pickup-review-order（62）・pickup-image-analysis（23）の期待を新しい決まりに
 - 残り: お客様役（scripts/customer-sim.ts・customer-sim-material）が trim ?? page で page_image_url（差し替え）を送る＝別担当に伝える。スマホ（MS ゴシックなし）の売上サポではリアプロの資料を画像にできない（パソコンで押す）。
+
+## 2026-09-27 YUMA の徹底テスト（検索 → ピックアップ → AIX 実送信 → お客様役）の結果（竹内「YUMAでテスト徹底的に・設計知見と協力して」・コードは直していない）
+- 通った物: 物件ピックアップ10件（chunkTrimImages で2回に分けて 200/200・mark_sent 10・sent_properties/sent_image_properties 10行ずつ・88418817 の直しは効いている）／オススメの号室は資料の「0205」のまま・家賃等の数字は資料どおり／生成だけの回は sent_* の行0（送った時だけ書く）／条件の語（「1K、1LDK」「バストイレ別」）は欄の文字のまま
+- 見つかった問題（未対応・設計知見に YUMA タグで7件登録）:
+  - 高: ピックアップ本文の地域（北区・福島区）が送る物件（九条・阿波座・難波等）と食い違っても注意なし（pickup-send-facts.ts:21・179-）／オススメが資料「空室 / 相談」「入居可能日未定」なのに「即入居可能」（route.ts:2158 で事実は property_send だけ）→ 次の物件確認した にも写った／信号8（brain-core.ts:917-931・2640-2648）が「ます😊」「しました」「も見て」で AIX なしを上書き（穴:G5）／物件確認した（募集中）が「募集に出ていない・他52件募集終了」に反転（route.ts:5574-5579 の sent_property_count に上限なし・出口に検査なし）
+  - 中: page.tsx:5598-5620 が種類を見ずに aix_followed／台帳の物件送付が1通＝1件（action-ledger.ts:911・sent_facts.detail={}）／sent-image-record.ts:25-36 の順序なし limit(50) で YUMA が50行を超えた後は source=vision／PROPERTY_LABEL_RE（action-ledger.ts:179）が「🌟名前 0205」を拾えない／customer-state.ts:229-259 の表示名が照合用の形（205号室・II）／「審査落ちた」に物件確認した（9fa0bd64）
+  - 低: psp が条件変更前のまま（route.ts:1824-1838）／2.5.31 より前の room_no は0落ち（直さない決まり）
+- テストの道具の穴: お客様役の材料が主のお部屋（エステムコート大阪WEST）固定（customer-sim-material.ts:337-342）・見積書の画像はコンフォリア・リヴ博労町一丁目Q で見出しだけ書き換え・内覧の候補日が固定で「平日NG」を無視・generateAixRaw に customer_conditions なし（customer-sim.ts:305-354）・手元のブレイン（Claude）が llm_usage_logs に入らない・bg-async の直接起動が3秒で切れ判断待ち421秒が3回
+- テストの手違い: 03:31 の1回目は JPEG 画質の単位を誤り低画質で YUMA に届いた（trim_image_url 11行は画面と同じ描き方で置き直し済み）
+- 状態: テスト顧客 509cd061 の条件はお客様役の読み取りで rent_max 70000・梅田・「1K・1DK」・2階以上に変わっている／状況表示が「内覧予定 9/29 14:00 エステムコート大阪WEST」（viewing_history a7532e24 is_primary・テストの取り違え）／お客様役の最後の発言「通りやすい保証会社…」が未返信／YUMA の画像つき未送付ピックアップ0件
+- 片付け済み: calendar_events 867・line_tasks 2b80a2a8（手打ちの宣言から作られた物）。売上番長グループへの送信0
+
+## 2026-09-27 AIX要対応の片付け: 返信の本文で済んだら自動で済み・お客様が止まったらブレインが取り下げ（竹内「その方向でおねがい」）
+- **判定（純関数）** `app/lib/aix-item-cleanup.ts`: `staffTextFulfillsAixItem`（本文で済み）・`brainPausedCustomer`（取り下げ）。テスト `app/lib/__tests__/aix-item-cleanup.test.ts` 38件（実送信の本文そのまま）
+- **今までの経路**: 登録・更新＝brain-core runBrainAndNotify → syncAixActionItem／完了＝log-aix-usage（AIX を送った時だけ）／取り下げ＝ブレインが AIX なし（brain_no_aix）か 48時間の片付け（announce-aix-actions の stale_customer_turn）。**通常の返信の本文はどこからも見ていなかった**
+- **取り下げが起きなかった原因**: 止まった番（瑞希「他社で見つかった」・r「一旦考えます」・m◡̈⃝e「確認してまたご連絡」・🐥「インフルで内覧厳しい」）でブレインの LLM は aix=null・hesitancy=thinking/callback を出していたのに、決定論の補い（detectSignalBasedAixFallback の signal:property_* ・場面の信号 signal:scene_S4_date_alt 等）が AIX を入れ直し、syncAixActionItem は「AIX あり」として登録・維持した
+- **直し**
+  - 1 本文で済み: send-line-message の after（AIX の本文 origin=aix は除く）で `completeAixActionItemByStaffText` → done・`done_by=staff_text`・`resolution_note`（根拠の文）。宣言の再分析より先に await（逆だと宣言の要対応が消える）。syncAixActionItem も登録の直前に判断の番より後の返信を見て、既に済んでいれば登録・通知しない
+  - 2 取り下げ: `brainPausedCustomer`＝decision_source が signal:*（signal:pending_pickup 除く）かつ hesitancy ∈ thinking/callback/waiting または intent=negative → 「AIX なし」と同じ（前の要対応を `dismissed_reason=brain_customer_paused`・resolution_note に理由、新しく登録しない）。画面の判断（suggested_aix_meta）は変えない
+  - 新カラム `aix_action_items.done_by`・`resolution_note`（migrate-schema 同時更新・本番 DB 適用済み）。グループの一覧は ✅ に「（返信で済み）」。新しい送信は増やしていない
+- **線（AIX の種類ごと・押した番＝NEG に当てて誤り0）** 物件確認した＝結果の報告（募集中の報告は資料送付が残るので除く）＋入居可能日の回答／確認します＝報告か手打ちの「確認させて頂きます」／見積書送る＝台帳 estimate_sent／待ち合わせ場所＝場所つきの案内・当日の時刻・電話の時刻（「明日15:00よりご案内」だけは🧸🤎7/23 で1分後に AIX で場所）／内覧日調整＝時刻つきの候補・日にちを受けた文（条件付き・日時なしは除く）／申込へ＝申込完了の報告・「並行して審査かけ」（「審査かけさせて頂きます」「2番手でお申込み」は後に書式を押した番あり）／物件ピックアップ・オススメは本文では済みにしない（本文の「送りました」288通中65通が誤り）
+- **監査** `scripts/audit-aix-item-cleanup.ts`（5月〜の実送信・7月前半の印なし保存の AIX 本文は除外）: ① 押した番の返信で誤り 0（物件確認した 3件は同じ通・直後の宣言で登録し直される番）② ブレインが AIX を出した番 824 のうち取り下げの型 8・同じ AIX を押した 0 ③ 過去の要対応 373件: 済み 17（延べ392時間短く・その後同じ AIX を押した 0）・登録しない（保留）2（🐥・m◡̈⃝e）
+- **見送り・残り**: rule:closed_ack_wait（締めの後のお礼→次の物件）は竹内さんの決まりなので取り下げない（和樹 thinking の2番は押さず）／r は「新着出次第お送り」の宣言の再分析で property_send が登録し直される（宣言の後は残って正しい型）／瑞希は 9/12 で保留の型の記録（digest）が無く監査で測れない／𝑛𝑎「19:00からのご内覧ですと…ご教授ください」は問いを含むので待ち合わせを済みにしない／画面のカードは30秒の読み直しで消える（送った直後の最大30秒は残る）
+
