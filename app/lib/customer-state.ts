@@ -256,7 +256,27 @@ export function splitPropertyName(raw: string | null | undefined, roomNo?: strin
   }
   const buildingKey = buildingKeyOf(building);
   if (buildingKey.length < 2) return null;
-  return { building, buildingKey, room, floor, display: room ? `${building} ${room}号室` : building };
+  // 2026-09-27 竹内「重い順から治す」: 表示は資料の文字のまま（旧は照合用の形＝NFKC・先頭の0外しで「0205」→「205号室」「WESTⅡ」→「WESTII」）。
+  //   building・room（照合の鍵）は上のまま。表示の建物名・号室だけ元の文字から取る（取れなければ照合用の形）
+  const disp = rawDisplayParts(raw, roomNo);
+  const dispBuilding = disp && buildingKeyOf(disp.building) === buildingKey ? disp.building : building;
+  const dispRoom = room ? (disp?.room && normalizeRoomNo(disp.room) === room ? disp.room : room) : null;
+  return { building: dispBuilding, buildingKey, room, floor, display: dispRoom ? `${dispBuilding} ${dispRoom}号室` : dispBuilding };
+}
+
+/** 表示用: 元の文字（NFKC をかけない）から建物名と号室（先頭の0・英字もそのまま）を取る */
+function rawDisplayParts(raw: string | null | undefined, roomNo?: string | null): { building: string; room: string | null } | null {
+  let t = String(raw ?? "").replace(/[\s　]+/g, " ").trim();
+  t = t.replace(/^[🌟★☆\s]+/u, "").replace(/^(?:【\s*[0-9０-９]{1,2}\s*】|[①-⑳]|[0-9０-９]{1,2}\s*[.．)）])\s*/, "").replace(/^【\s*|\s*】$/g, "").trim();
+  if (!t) return null;
+  const rn = String(roomNo ?? "").replace(/号室?/g, "").replace(/[\s　]/g, "").trim() || null;
+  const g = t.match(/^(.*?)[\s]*([0-9０-９]{1,4}[A-Za-zＡ-Ｚａ-ｚ]?)\s*号室?\s*$/);
+  if (g && g[1].trim()) return { building: g[1].trim(), room: rn ?? g[2] };
+  const s = t.match(/^(.*\S)\s+([0-9０-９]{3,4}[A-Za-zＡ-Ｚａ-ｚ]?)\s*$/);
+  if (s) return { building: s[1].trim(), room: rn ?? s[2] };
+  const f = t.match(/^(.*?)[\s]*([0-9０-９]{1,3})\s*階\s*$/);
+  if (f && f[1].trim()) return { building: f[1].trim(), room: rn };
+  return { building: t, room: rn };
 }
 
 export type RoomMatch = "same_room" | "same_building" | "different_room" | "maybe" | "different";

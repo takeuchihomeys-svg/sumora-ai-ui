@@ -7562,6 +7562,19 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **監査** `scripts/audit-aix-item-cleanup.ts`（5月〜の実送信・7月前半の印なし保存の AIX 本文は除外）: ① 押した番の返信で誤り 0（物件確認した 3件は同じ通・直後の宣言で登録し直される番）② ブレインが AIX を出した番 824 のうち取り下げの型 8・同じ AIX を押した 0 ③ 過去の要対応 373件: 済み 17（延べ392時間短く・その後同じ AIX を押した 0）・登録しない（保留）2（🐥・m◡̈⃝e）
 - **見送り・残り**: rule:closed_ack_wait（締めの後のお礼→次の物件）は竹内さんの決まりなので取り下げない（和樹 thinking の2番は押さず）／r は「新着出次第お送り」の宣言の再分析で property_send が登録し直される（宣言の後は残って正しい型）／瑞希は 9/12 で保留の型の記録（digest）が無く監査で測れない／𝑛𝑎「19:00からのご内覧ですと…ご教授ください」は問いを含むので待ち合わせを済みにしない／画面のカードは30秒の読み直しで消える（送った直後の最大30秒は残る）
 
+## 2026-09-27 自動化の度合いの表・測る仕組みの穴（竹内「テスト繰り返して質上げていく…そうすれば完全自動化できるから」「『提案と違う』と記録して学習にも反映」）
+- **表**: `npx tsx --env-file=.env.local scripts/automation-readiness.ts [--weeks=4] [--examples=3] [--json=out.json]`（読むだけ・YUMA 除く）。中身は純関数 `app/lib/automation-readiness.ts`・判断の後の行動 `app/lib/brain-outcome.ts`・手直しの量と型 `app/lib/edit-diff.ts`
+  - ①週ごと ②AIX の種類ごと（予想一致・手直しなし・量・型）③下書き（段階・③b ブレインが読んだ発言の意図 digest.intent）④ブレインの判断の後の行動（場面ごと）⑤届いた所 ⑥次に直す候補（手直し＋手打ちの件数順）・過去の outcome と推定の食い違い・記録の穴の残り
+  - 「届いた」＝手直しなし 80% 以上かつ 10件以上。手直し＝1文字でも違う（絵文字含む）
+- **記録の穴と直し**:
+  - aix_usage_logs.suggested_action は suggest-next-action（P8）の予想でブレインの予想ではなかった（94件中ブレインと同じは1件）→ log-aix-usage が brain_decision_logs の押す前の一番新しい判断（48h）から書く（AIX なしは "none"）。画面は送らない。表は 2026-09-28 0時より前を推定（`READINESS_PREDICTION_RECORDED_FROM` で変更可）
+  - brain_decision_logs.outcome は画面が「空の一番新しい判断」にだけ書く→連投で次の判断が来た判断・何もしない判断が空（4割）・aix_followed は種類を見ない → cron/brain-aix-eval が `OUTCOME_RESOLVED_FROM`（2026-09-28 0時 JST）以降の判断に事実から書く: aix_followed（提案どおり）/aix_different（提案と違う・押した種類は actual_aix_type）/draft_followed/draft_modified/draft_rewritten/manual/reply_unknown/superseded/no_action。画面の即時の値も種類を比べる（immediateAixOutcome）。過去の行は書き換えない（表で推定: aix_followed→実は別の AIX 72件など）
+  - outcome を読む学習の経路は app には無い（brain-aix-feedback は matched/actual_aix_type で既に種類を見る・learn-action-patterns は P8 の予想）。scripts/customer-sim.ts:195 は種類を見ずに aix_followed を書く（別の担当の持ち物・cron が上書き）
+  - aix_usage_logs.generated_text は送った文（名前と違う）。生成文は ai_reply_examples(aix_action).ai_draft。その sent_reply は分割送信のまとめで別の送信がつながる事がある → 表は messages の AIX の文から送った文を取る。見積書送るのカバーレターは 123件中59件送られていない（生成文を使わず）
+- **今の数字（8/31〜9/27・YUMA 除く）**: AIX 手直しなし 12〜24%/週・予想一致（推定）32→66→62%・下書きそのまま 17〜31%・手打ち 53〜67%。届いた所なし。AIX で高いのは申込へ 70%・見積書送る 41%。候補の上位: 下書き（意図なし・判断なし）・物件オススメ（9%・消した/言い換え）・物件ピックアップ（9%）・物件確認した（12%）
+- **お客様役の点数**: `app/lib/customer-sim-score.ts`（scoreSimRun→formatSimScore）。全31往復: 自動で届いた 24%・手直しなし 75%・止まった 材料10/判断が来ない3。customer-sim.ts への組み込みは担当に（jsonl を読んで最後に出すだけ）
+- テスト: edit-diff 10・brain-outcome（readiness 含む）14・customer-sim-score 5（実物）
+
 ## 2026-09-27 重い順から治す（竹内「重い順から治す」「申込以降のステータス審査中は審査中としておく」・YUMA の徹底テストの続き）
 - **① 語のルール（信号5.5・8）がブレインの「AIX なし」を上書き（穴:G5）**: `app/lib/brain-keyword-rules.ts`。ブレインの aix がはっきり null・空・"なし"（isExplicitNoAix）の時は detectSignalBasedAixFallback の信号5.5・8を当てない（opts.skipKeywordRules・語でない信号は変えていない）。語尾・絵文字・助詞で始まる断片・定型の敬語・フォームの断片（isMeaninglessRuleKeyword）はブレインが読まない＋learn-trigger-rules は作らない・**次の実行の掃除で消える**（keyword_rule 1,705件中 426件・ブレインが読む物 249件: 語尾・助詞298／フォーム77／敬語31／助詞で始まる9／絵文字11。一覧は `scripts/audit-brain-keyword-rules.ts --list`）
   - 本番（9/5〜・YUMA 除く）: 語のルール由来らしい上書き34件 → スタッフが同じ AIX 1（3890f691「引き続き」→オススメ）・AIX なし30・別3。意味の無い語だけで当たっていたのは11件、残り23件は中身のある語（引き続き・初期費用・ご連絡・探して）で①が止める
@@ -7570,3 +7583,13 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **③ 審査中の部屋**: リアプロの資料「現況/入居時期 空室 / 相談 / 審査中」の3つ目を捨てていた（113行中 審査中4・商談中9・全部 pass/hold・送付11）。`app/lib/listing-deal-status.ts` で terms.evidence.moveIn（9/25 以降の行に全部ある）から資料の文字のまま読み、売上サポのカードの状態「空室・審査中」・pass の行の1行「資料の現況: 審査中（…番手になる）」、ブレインには送ったピックアップの審査中のお部屋だけを毎回変わる並び（今の状況の後ろ）に一段。除外はしない。`scripts/audit-pickup-deal-status.ts`
   - 未決（竹内さんに）: 「商談中」を審査中と同じに扱うか（今はカードに文字だけ・ブレインへは渡さない）。物件確認したのピッカーに「審査中（番手）」の選択肢を足すか（aix/action の物件確認したの文＝別の担当）。ピックアップの判定（pass/hold）で審査中を下げるか
 - テスト: brain-keyword-rules 14・screening-failed-switch 13・listing-deal-status 10（実物）。関係: pickup-card-view 90・property-check-task 21・aix-button-view 37・brain-aix-feedback 38。tsc 通過。設計知見3件（穴:G5・穴:G3×2）
+
+## 2026-09-27 AIX の文と資料の事実（竹内「重い順から治す」・YUMA の徹底テストの高3・中3）
+- 純関数 `app/lib/aix-material-facts.ts`（テスト `app/lib/__tests__/aix-material-facts.test.ts` 48件・実物の文）。監査 `scripts/audit-aix-material-facts.ts`（地域・即入居・物件確認した）／`scripts/audit-sent-match-display.ts`（照合の辞書・表示）
+- **1. ピックアップの地域**: pickup_ids の行の区（location.ward → pdf_text の所在地）を生成に渡す（buildPickupWardNote）・文の区が送る物件の区を1つも含まない時は注意（findPickupAreaConflict・書き換えない）。監査: 判定できた5通中 注意は YUMA の3通（実のお客様は区の記録が 9/25 以降のみ）
+- **2. 即入居**: 物件オススメも handoff の行 ID を渡す（page.tsx・AixModal は資料がセットのままの時だけ）→ 資料の入居時期（「現況/入居時期 空室 / 相談」「※入居可能日未定」）を渡す・即入居と読むのは「即入・即時・即日」だけ・合わない時は注意。MOVE_IN_TIMING_RULE ①も「入居時期欄に即入」に。写った経路: 会話を合わせるの確認結果の説明「空室あり・入居可能」→入居時期は無いと明記・履歴のこちらの即入居に PAST_MOVE_IN_CLAIM_NOTE・物件確認したの根拠なしの即入居は注意。監査: オススメ実送信で資料の入居時期が分かる55通中 注意4通（資料が「空室 / 相談」なのにスタッフも即入居のまま送った通）
+- **3. 物件確認した（募集中）の反転**: sent_property_count は 1〜5 以外を捨てる（丸めない）・findCheckStatusContradiction（名指し・募集中の有無・他N件の数・申込ありの名指し）→ API が send_hold、AixModal は生成したままの文の1回目の送信を止めて理由を出す（2回目・直せば送る）。監査: 状態の記録のある実送信64通で止まるのは2通（9/21 より前の全体の申込状況＝今は anyAppliedFlag で外れる）・YUMA 04:40 は止まる。conditions_snapshot に property_names
+- **4. 送付の件数**: log-aix-usage に properties_sent_count / properties_sent_names → sent_facts.detail.propertyCount（旧 1通＝1件）。過去の行は直していない
+- **5. 照合**: knownPropertyNames を新しい順300行（会話 ID＋物件顧客 ID）＋直近14日のピックアップ＋「🌟建物 0205」。matchKnownProperty に建物の末尾の番号の関所（ドミール桜川III↔II が 1.00 だった）。14日の vision 486行: 照合 98→156行
+- **6. 表示**: customer-state の display・building は元の文字（0205・Ⅱ）・鍵はそのまま。14日で変わる表示 68/789種類（全部 Ⅱ・先頭0・全角）
+- 確かめ: tsc 0・関係テスト（customer-state 47・pickup-send-facts 26・property-name-match 13・sent-facts 13・action-ledger 35・pickup-aix-handoff 41）・next build は一時複製で webpack の compile 成功（型検査は既存の app/api/aix/settings の AIX_DEFAULTS で落ちる＝7/11 からの既存・webpack だけ）。DeepSeek での本文の生成確認と YUMA での実送信の確認は未（YUMA は別のワークフローが使用中）

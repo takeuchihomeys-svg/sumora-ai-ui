@@ -73,6 +73,7 @@ import { buildApplicationNote, applicationBulletNote } from "@/app/lib/applicati
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
+import { wardOfPickupRow, moveInFactOfPickup, buildMoveInFactNote, findMoveInClaimConflict, findPickupAreaConflict, buildPickupWardNote, sanitizeSentPropertyCount, findCheckStatusContradiction, findCheckResultMoveInClaim, hasStaffMoveInClaim, PAST_MOVE_IN_CLAIM_NOTE, type PickupMaterialRow } from "@/app/lib/aix-material-facts";
 import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, restoreConditionDots, type PickupFact } from "@/app/lib/pickup-send-facts";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
@@ -782,7 +783,7 @@ function maxTokensForAction(action: string): number {
 // どちらか一方でも欠ける場合は「即入居可能」等の入居時期の記載は禁止。
 const MOVE_IN_TIMING_RULE = `【入居時期の記載ルール — 必ず守ること】
 お客様の希望条件の「入居:」行や会話の流れから、入居を急いでいるか（即入居・今月中など）／先の入居希望か（〇月入居希望・数ヶ月先など）を判断して以下を使い分ける。明示的な急ぎ情報がない場合は会話の文脈・AI要約から推測すること。
-・「空室のため即入居可能」と記載してよいのは【①物件資料に空室記載あり（空室確認済み） かつ ②お客様が入居を急いでいる（入居時期制限なし）】の両方を満たす場合のみ
+・「空室のため即入居可能」と記載してよいのは【①物件資料の入居時期（入居可能日）の欄に「即入」「即入居可」「即時」の記載あり（「空室 / 相談」「入居可能日 相談・未定」は即入居の記載ではない） かつ ②お客様が入居を急いでいる（入居時期制限なし）】の両方を満たす場合のみ
 ・お客様の入居時期が先（急いでいない）場合 → 「ご希望の〇月入居に対応可能」と記載する（〇月はお客様の希望入居時期）
 ・空室記載があっても お客様が急いでいない場合 → 「即入居可能」等の入居時期の記載はしない
 ・【🔴 絶対禁止】「〇ヶ月後のご入居にもしっかり対応頂けるお部屋となります」という表現は絶対に使わない
@@ -1630,7 +1631,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
         historyRowsForAix
           .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${labelHistoryTextForAix(m.sender, m.text, { labelPastPickup })}`)
           .join("\n") +
-        (pastPickupSendTexts.length > 0 ? `\n\n${PAST_PICKUP_HISTORY_NOTE}` : "")
+        (pastPickupSendTexts.length > 0 ? `\n\n${PAST_PICKUP_HISTORY_NOTE}` : "") +
+        // 2026-09-27: 前にこちらが書いた「即入居可能」を次の AIX が確かめた事実として写した（YUMA 03:47 物件オススメ → 04:18 物件確認した）
+        (hasStaffMoveInClaim(historyRowsForAix) ? `\n\n${PAST_MOVE_IN_CLAIM_NOTE}` : "")
       : "";
 
     // 最新の顧客メッセージ（☆成功返信パターンの類似検索クエリに使用・LL-04）
@@ -2004,6 +2007,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       prop_statuses: Array.isArray(prop_statuses) ? (prop_statuses as string[]).slice(0, 10) : null,
       property_count: typeof property_count === "number" ? property_count : null,
       sent_property_count: typeof body.sent_property_count === "number" ? body.sent_property_count : null,
+      // 2026-09-27: 確認した物件の名前（状態と逆の文の監査で名指しを見る・scripts/audit-aix-material-facts.ts）
+      property_names: Array.isArray(property_names) ? (property_names as string[]).slice(0, 10) : null,
       check_application_invite: body.check_application_invite === true ? true : null,
       show_viewing_invite: show_viewing_invite === true ? true : null,
       is_new_arrival: body.is_new_arrival === true ? true : null,
@@ -2113,8 +2118,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
       //   finalize の注意（お客様への返信になっていない等）と**両方**出す（片方で上書きしない）
       // 2026-09-24: 呼び出し側の注意（extra.notice）が finalize・重複の注意を上書きして消していた → 全部つなぐ
       const { notice: extraNotice, ...extraRest } = (extra ?? {}) as Record<string, unknown> & { notice?: unknown };
-      const mergedNotice = [notice, typeof extraNotice === "string" ? extraNotice : "", pickupSendExitNotice(message), duplicateNotice].filter(Boolean).join("\n");
-      return NextResponse.json({ ok: true, message_text: message, ...(mergedNotice ? { notice: mergedNotice } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...extraRest });
+      const checkExit = checkResultExit(message);
+      const mergedNotice = [notice, typeof extraNotice === "string" ? extraNotice : "", pickupSendExitNotice(message), checkExit.notice, duplicateNotice].filter(Boolean).join("\n");
+      return NextResponse.json({ ok: true, message_text: message, ...(mergedNotice ? { notice: mergedNotice } : {}), ...(checkExit.hold ? { send_hold: checkExit.hold } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...extraRest });
     };
 
     /**
@@ -2154,26 +2160,59 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // 2026-09-24 竹内「改善する」: 売上サポから来た AIX【物件ピックアップした】は、どの物件を送るかが分かっている（pickup_ids）。
     //   AIX の生成は画像を読まないので、今回の物件の事実（間取り・家賃だけ・AD/利益/🌟は読まない）を行から渡す。
     //   画面が渡した画像の枚数と行の数が同じ時だけ使う（スタッフが画像を外した・足した時は並びが合わない）
-    const pickupFacts: PickupFact[] = await (async () => {
-      if (action !== "property_send" || !conversationId || !Array.isArray(body.pickup_ids)) return [];
+    // 2026-09-27 竹内「重い順から治す」: 区（所在地）・入居時期も同じ行から読む（app/lib/aix-material-facts.ts）。
+    //   物件オススメ（1件）も売上サポから来た時は行 ID が来る（画面がセットした資料のまま送る時だけ）
+    type PickupRowForFacts = { id: number; summary_text: string | null; image_lines: string[] | null; location: { ward?: string | null } | null; pdf_text: string | null; terms: PickupMaterialRow["terms"] };
+    const pickupRowsForFacts: PickupRowForFacts[] = await (async () => {
+      if ((action !== "property_send" && action !== "property_recommendation") || !conversationId || !Array.isArray(body.pickup_ids)) return [];
       const ids = (body.pickup_ids as unknown[]).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0).slice(0, 20);
-      const imgCount = Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0;
+      const imgCount = action === "property_send" ? (Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0) : (image_url ? 1 : 0);
       if (ids.length === 0 || ids.length !== imgCount) return [];
       try {
-        const { data } = await supabase.from("property_pickups").select("id, summary_text, image_lines")
+        const { data } = await supabase.from("property_pickups").select("id, summary_text, image_lines, location, pdf_text, terms")
           .in("id", ids).eq("conversation_id", conversationId);
-        const byId = new Map(((data ?? []) as Array<{ id: number; summary_text: string | null; image_lines: string[] | null }>).map((r) => [r.id, r]));
+        const byId = new Map(((data ?? []) as PickupRowForFacts[]).map((r) => [r.id, r]));
         if (byId.size !== ids.length) return [];
-        return ids.map((id) => parsePickupFact(byId.get(id)!));
+        return ids.map((id) => byId.get(id)!);
       } catch { return []; }
     })();
-    if (pickupFacts.length) console.log(JSON.stringify({ tag: "aix:pickup-facts", conversationId, facts: pickupFacts }));
-    // 出口（注意だけ・本文は書き換えない）: 今回の物件と食い違う間取り・家賃上限／前回の送付の約束の写し
+    const pickupFacts: PickupFact[] = action === "property_send" ? pickupRowsForFacts.map((r) => parsePickupFact(r)) : [];
+    const pickupWards = action === "property_send" ? pickupRowsForFacts.map((r) => wardOfPickupRow(r)) : [];
+    const recMoveInFact = action === "property_recommendation" && pickupRowsForFacts.length === 1 ? moveInFactOfPickup(pickupRowsForFacts[0]) : null;
+    if (pickupFacts.length) console.log(JSON.stringify({ tag: "aix:pickup-facts", conversationId, facts: pickupFacts, wards: pickupWards }));
+    if (recMoveInFact) console.log(JSON.stringify({ tag: "aix:recommendation-move-in-fact", conversationId, fact: recMoveInFact }));
+    // 出口（注意だけ・本文は書き換えない）: 今回の物件と食い違う間取り・家賃上限・地域／前回の送付の約束の写し／資料と合わない即入居
     const pickupSendExitNotice = (text: string): string => {
+      if (action === "property_recommendation") {
+        const mi = findMoveInClaimConflict(text, recMoveInFact);
+        if (mi) console.log(JSON.stringify({ tag: "aix:recommendation-move-in-conflict", conversationId, note: mi }));
+        return mi ? `⚠ ${mi}` : "";
+      }
       if (action !== "property_send") return "";
       const notes = findPickupSendConflicts(text, pickupFacts, pastPickupSendTexts, [DEADLINE_SUPPORT_LINE, ...INSERTED_PROMISE_LINES], customer_conditions ? String(customer_conditions) : null);
+      const area = findPickupAreaConflict(text, pickupWards);
+      if (area) notes.push(area);
       if (notes.length) console.log(JSON.stringify({ tag: "aix:pickup-send-conflict", conversationId, notes }));
       return notes.map((n) => `⚠ ${n}`).join("\n");
+    };
+    // 2026-09-27: 物件確認した（募集中）の出口。状態（ピッカー）と逆の文は注意を出して止める（send_hold）・根拠の無い即入居は注意
+    const checkSentCount = sanitizeSentPropertyCount(body.sent_property_count);
+    const checkResultExit = (text: string): { notice: string; hold: string | null } => {
+      if (action !== "property_check_result") return { notice: "", hold: null };
+      const pc = typeof property_count === "number" && property_count > 0 ? property_count : Math.max(1, Array.isArray(prop_statuses) ? (prop_statuses as unknown[]).length : 1);
+      const hold = Array.isArray(prop_statuses) ? findCheckStatusContradiction(text, {
+        pattern: typeof check_pattern === "string" ? check_pattern : null,
+        statuses: prop_statuses as string[], propertyCount: pc,
+        endedCount: checkSentCount !== null && checkSentCount > pc ? checkSentCount - pc : 0,
+        propertyNames: Array.isArray(property_names) ? (property_names as string[]) : null,
+        anyAppliedFlag: body.available_application === "yes",
+      }) : null;
+      const mi = findCheckResultMoveInClaim(text, [
+        ...(Array.isArray(property_vacancy_dates) ? (property_vacancy_dates as string[]) : []),
+        typeof body.staff_note === "string" ? body.staff_note : "", typeof extra_input === "string" ? extra_input : "",
+      ]);
+      if (hold || mi) console.log(JSON.stringify({ tag: "aix:check-result-exit", conversationId, hold, moveIn: mi }));
+      return { notice: [hold ? `⛔ ${hold}（このまま送る時はもう一度「送信」を押してください）` : "", mi ? `⚠ ${mi}` : ""].filter(Boolean).join("\n"), hold };
     };
 
     // phrase_dictionary 取得（固定フォーマット出力でないアクションにのみフレーズ注入する）
@@ -2418,7 +2457,9 @@ ${SMORA_COMMON_RULES}`;
       const situationSystemOverride = isSituationKind(body.situation_kind)
         ? `\n\n【🔴 この通だけの上書き — 上の「出力の最初の文字は必ず🌟」より優先】\nこの通は「探した現状」を1文書いてから🌟の物件カードを出す。順序は 現状の1文 → 空行 → 🌟物件名 … 。\n現状の1文以外は🌟より前に書かない（システム注記・前置き・挨拶は従来どおり禁止）。`
         : "";
-      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + recApplyLineNote + situationSystemOverride;
+      // 2026-09-27 竹内「重い順から治す」: 売上サポから来た1件は資料の入居時期を渡す（YUMA #702「空室 / 相談」「※入居可能日未定」→「即入居可能」と書いた）
+      const recMoveInFactNote = recMoveInFact ? `\n\n${buildMoveInFactNote(recMoveInFact)}` : "";
+      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + recMoveInFactNote + recApplyLineNote + situationSystemOverride;
 
       const summaryNoteForRec = recCustomerSummary
         ? `\n\n【このお客さんのAI要約 — 人物像・今の状況・次の対応ヒントをオススメ訴求に反映すること】\n${recCustomerSummary}`
@@ -2959,7 +3000,8 @@ ${SMORA_COMMON_RULES}
 
       const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
       // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
-      const pickupFactsNote = buildPickupFactsNote(pickupFacts, conditionsInfo);
+      // 2026-09-27: 送る物件の所在地（区）も渡す（YUMA「大阪市北区・福島区から」で西区・大正区の20件を送った）
+      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length)].filter(Boolean).join("\n");
       const conditionsRule = conditionsInfo
         ? `・【最重要】「ご希望のご条件に合ったお部屋」「ご希望の条件に合うお部屋」などの抽象的な表現は絶対に使わない。お客様の具体的な希望条件を文中に自然に織り込むこと
   条件の入れ方（厳守）：
@@ -5041,7 +5083,8 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         // → 結果が確定している unavailable/exclusive は固定テンプレを内部生成して適応モードへ、
         //   それ以外は確認結果をプロンプトに必ず注入する。
         const cmPattern = String(check_pattern ?? "");
-        const cmSentCount = (body.sent_property_count as number | undefined) ?? null;
+        // 2026-09-27: 画面のセレクター（1〜5）の外の値は使わない（YUMA: 53 を入れて「他の52件も募集終了」）
+        const cmSentCount = sanitizeSentPropertyCount(body.sent_property_count);
 
         // 「物件なかった」: 固定テンプレ（通常生成と同一文面）をベースに会話適応
         // （adaptMessageToConversation のガードで確認前文への書き換えは絶対禁止済み）
@@ -5097,7 +5140,8 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
 
         // 「物件あった」「別の部屋が募集してた」等: 自由生成だが確認結果を必ず注入
         const CM_RESULT_DESC: Record<string, string> = {
-          available: "空室あり・入居可能（募集中）",
+          // 2026-09-27: 旧「空室あり・入居可能（募集中）」の「入居可能」が「空室のため即入居可能」を誘っていた（YUMA 04:18）。入居時期は確認結果に無い
+          available: "募集中（入居時期は確認結果に無い。入居可能日の入力が無ければ「即入居」等の入居時期は書かない）",
           alternative: "リクエストのお部屋は募集終了。ただし同じ物件で別のお部屋が募集中",
         };
         const CM_STATUS_LABEL: Record<string, string> = {
@@ -5571,7 +5615,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
 
       // 送られた物件数（任意・AixModalの「送られた物件数」セレクター）
       // 募集終了件数 N = 送られた物件数 − 確認できた物件数
-      const sentPropCount = (body.sent_property_count as number | undefined) ?? null;
+      const sentPropCount = sanitizeSentPropertyCount(body.sent_property_count);
       const endedPropCount = sentPropCount !== null && sentPropCount > propCount ? sentPropCount - propCount : 0;
       // ケース2（一部のみ募集あり）: 末尾に「他N件は募集終了」の案内を追加
       const endedSection = endedPropCount > 0
@@ -7157,11 +7201,13 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
     //   **ここが物件を送る AIX の本命の出口**（finalizeResponse は早期 return 用で、
     //   物件ピックアップは通らなかった。YUMA 検証でログには判定が出ているのに応答に載らず見つけた）。
     //   finalize の注意と重複の注意は**両方**出す（片方で上書きしない）。
-    const finalNotice = [notice, pickupSendExitNotice(cleanedMessage), duplicateNotice].filter(Boolean).join("\n");
+    const mainCheckExit = checkResultExit(cleanedMessage);
+    const finalNotice = [notice, pickupSendExitNotice(cleanedMessage), mainCheckExit.notice, duplicateNotice].filter(Boolean).join("\n");
     return NextResponse.json({
       ok: true,
       message_text: cleanedMessage,
       ...(finalNotice ? { notice: finalNotice } : {}),
+      ...(mainCheckExit.hold ? { send_hold: mainCheckExit.hold } : {}),
       ...(parsed_estimate_result ? { parsed_estimate: parsed_estimate_result } : {}),
       ...(estimate_text_result ? { estimate_text: estimate_text_result } : {}),
       // M2: 御見積書を同封したか（AixModal → onAfterSend → log-aix-usage → aix_usage_logs.estimate_sent）

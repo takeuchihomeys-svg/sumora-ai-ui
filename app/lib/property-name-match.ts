@@ -67,6 +67,16 @@ export const MATCH_MIN_SCORE = 0.7;
 
 export type PropertyMatch = { name: string; score: number; exact: boolean };
 
+/** 建物名の末尾の番号（「Ⅲ」「III」→ "3"・「2」→ "2"・無ければ ""）。ローマ数字と算用数字は同じ物に揃える */
+export function buildingNumeral(name: string | null | undefined): string {
+  const t = String(name ?? "").normalize("NFKC").replace(/[\s　・()（）「」\-−ー_/／]+$/g, "").replace(/(?:号館|棟)$/, "");
+  const roman: Record<string, string> = { i: "1", ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7", viii: "8", ix: "9", x: "10" };
+  const m = t.match(/(?:^|[^A-Za-z])(I{1,3}|IV|VI{0,3}|IX|X)$/) ?? t.match(/(?:^|[^A-Za-z])(i{1,3}|iv|vi{0,3}|ix|x)$/);
+  if (m) return roman[m[1].toLowerCase()] ?? "";
+  const d = t.match(/(?:^|[^0-9])([0-9]{1,2})$/);
+  return d ? String(parseInt(d[1], 10)) : "";
+}
+
 /**
  * 読み取った物件名を既知の名前に寄せる。
  * @returns 十分近い既知の名前（無ければ null ＝ 記録しない）
@@ -79,10 +89,14 @@ export function matchKnownProperty(
   const r = normalizePropertyName(read);
   if (!r || r.length < 2) return null;
   let best: PropertyMatch | null = null;
+  const rNum = buildingNumeral(read);
   for (const k of known) {
     const kn = normalizePropertyName(k);
     if (!kn) continue;
     const s = similarity(r, kn);
+    // 2026-09-27: 2文字のかたまりの集合では「ドミール桜川III」と「ドミール桜川II」が 1.00 になる（集合なので重なりを数えない）。
+    //   建物の末尾の番号（Ⅱ・III・2号館 等）が違えば別の建物 → 寄せない（無い方と有る方も別＝「グロウス」と「グロウスⅡ」）
+    if (s < 1 || kn !== r) { if (buildingNumeral(k) !== rNum) continue; }
     if (s >= minScore && (!best || s > best.score)) best = { name: k.trim(), score: s, exact: s === 1 };
   }
   return best;

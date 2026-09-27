@@ -20,10 +20,11 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
+import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
-import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 // 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
 import { useNewArrivalCards, useNewArrivalCounts, newArrivalElems, NewArrivalListBadge } from "./components/NewArrivalCard";
+import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
 import { limitSlotsPerDay } from "./lib/viewing-slots";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
@@ -2842,9 +2843,9 @@ export default function Home() {
       filteredConversations[0]
     );
   }, [filteredConversations, conversations, selectedId]);
-
   const nacTalk = useNewArrivalCards(selectedConversation.id || null);
   const nacCounts = useNewArrivalCounts();
+
   // 会話を開いた時に、その会話で最後に送った AIX を DB から読む（テンプレート一覧を送った AIX のカテゴリで開くため）
   useEffect(() => {
     const cid = selectedConversation.id;
@@ -4782,13 +4783,9 @@ export default function Home() {
               .limit(1)
               .maybeSingle();
             if (!brainLog) return;
-            let outcome: string;
-            if (_brainDraftIsAi) {
-              const wasModified = _brainOrigDraft.trim() !== "" && _brainOrigDraft.trim() !== _brainSentText.trim();
-              outcome = wasModified ? "draft_modified" : "draft_followed";
-            } else {
-              outcome = "ignored";
-            }
+            // 2026-09-27: 下書きの控えが空の時に draft_followed と書いていた（旧）→ 書かない（cron が事実から決める）。手打ちは manual（旧 ignored）
+            const outcome = immediateTextOutcome({ draftIsAi: _brainDraftIsAi, originalDraft: _brainOrigDraft, sentText: _brainSentText });
+            if (!outcome) return;
             await supabase
               .from("brain_decision_logs")
               .update({ outcome, outcome_recorded_at: new Date().toISOString() })
@@ -5602,12 +5599,15 @@ export default function Home() {
     if (textSent || imageSent) {
       const _brainCid = selectedConversation.id;
       const _brainIsAix = isAix ?? false;
+      // 2026-09-27 竹内「『提案と違う』と記録して、学習にもそう反映する」: 送った AIX の種類を提案と比べる（旧は種類を見ずに aix_followed）。
+      //   種類が分からない AIX は書かない（cron/brain-aix-eval が事実から決める・app/lib/brain-outcome.ts）
+      const _brainSentAix = _brainIsAix ? (activeAixFlow ?? null) : null;
       void (async () => {
         try {
           const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
           const { data: brainLog } = await supabase
             .from("brain_decision_logs")
-            .select("id")
+            .select("id, suggested_action")
             .eq("conversation_id", _brainCid)
             .is("outcome", null)
             .gt("created_at", cutoff)
@@ -5615,7 +5615,8 @@ export default function Home() {
             .limit(1)
             .maybeSingle();
           if (!brainLog) return;
-          const outcome = _brainIsAix ? "aix_followed" : "ignored";
+          const outcome = _brainIsAix ? immediateAixOutcome(brainLog.suggested_action as string | null, _brainSentAix) : "manual";
+          if (!outcome) return;
           await supabase
             .from("brain_decision_logs")
             .update({ outcome, outcome_recorded_at: new Date().toISOString() })
@@ -6044,7 +6045,7 @@ export default function Home() {
   //   aix=property_recommendation（1件）も受ける。物件オススメは資料1枚を「② 物件資料」にセットして開く（pickup-aix-handoff.ts）
   // handoffIds: handoffFiles と同じ並びの行 ID（画像を取れた行だけ）。sentFiles: 送る直前の File の並び（AixModal の onPropertySendFiles）
   //   → 送った印は planPickupMarkSent（pickup-aix-handoff.ts）が「セットした画像が送る直前に残っていた行」だけに付ける（2026-09-25 E2E の反証）
-  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; sentFiles?: File[] | null } | null>(null);
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; handoffNames?: string[]; sentFiles?: File[] | null } | null>(null);
   useEffect(() => {
     try {
       const h = parsePickupAixHandoff(window.location.search);
@@ -6063,23 +6064,29 @@ export default function Home() {
         const json = await res.json() as { ok: boolean; items?: Array<{ id: number; rank: number; property_name: string; room_no: string | null; image_url: string | null }> };
         const files: File[] = [];
         const fileIds: number[] = [];
+        const fileNames: string[] = [];
         for (const it of json.items ?? []) {
           if (!it.image_url) continue;
           try {
             const blob = await (await fetch(it.image_url)).blob();
             files.push(new File([blob], `${it.rank}_${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`, { type: blob.type || "image/jpeg" }));
             fileIds.push(it.id);
+            // 2026-09-27: 送った物件の名前（資料の文字のまま・号室付き）を台帳の物件送付の記録に渡す
+            fileNames.push(`${it.property_name}${it.room_no ? ` ${it.room_no}` : ""}`);
           } catch { /* その1枚は飛ばす */ }
         }
         // 物件オススメは1枚だけセットする（送った印もその1件）
         h.handoffFiles = h.aix === "property_recommendation" ? files.slice(0, 1) : files;
         h.handoffIds = h.aix === "property_recommendation" ? fileIds.slice(0, 1) : fileIds;
+        h.handoffNames = h.aix === "property_recommendation" ? fileNames.slice(0, 1) : fileNames;
         if (h.aix === "property_recommendation" && files[0]) {
           // 物件オススメ: 1件の資料をセットして開く（ピッカーの「新規／継続…」は通さない＝売上サポで選んだ一番オススメの1件）
           setAixInitialPickupType(null);
           setAixInitialIsNewArrival(false);
           setActiveAixFlow("property_recommendation");
           await openAixDirect("property_recommendation");
+          // 2026-09-27: 物件オススメにも行 ID を渡す（サーバーが資料の入居時期を読む・「即入居」が資料と合わない時は注意）
+          setAixInitialPickupIds(fileIds.slice(0, 1));
           setAixInitialFile(files[0]);
           return;
         }
@@ -7028,8 +7035,8 @@ export default function Home() {
                         })}
                       </div>
 
-                      {/* 本文プレビュー: 薄色・右端に余白 */}
                       <NewArrivalListBadge count={nacCounts[conversation.id]} />
+                      {/* 本文プレビュー: 薄色・右端に余白 */}
                       <div className="truncate text-[11px] text-[#b0b8be]">
                         {conversation.lastMessage}
                       </div>
@@ -7704,10 +7711,10 @@ export default function Home() {
                   const msgDate = message.rawCreatedAt
                     ? new Date(message.rawCreatedAt).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })
                     : "";
-                  const showDate = msgDate && msgDate !== lastDate;
                   // 新着物件カード（スタッフだけ）を時系列の位置に・日付の区切り込みで先に入れる（2026-09-27）
                   const nac = newArrivalElems(nacTalk, idx > 0 ? displayMessages[idx - 1].rawCreatedAt : null, message.rawCreatedAt, lastDate, `nac-${idx}`);
                   lastDate = nac.lastDate;
+                  const showDate = msgDate && msgDate !== lastDate;
                   if (showDate) lastDate = msgDate;
                   const isCustomer = message.sender === "customer";
                   const elems: ReactNode[] = [...nac.elems];
@@ -7949,8 +7956,8 @@ export default function Home() {
                       </div>
                     </div>
                   );
-                  return elems;
                   if (idx === displayMessages.length - 1) elems.push(...newArrivalElems(nacTalk, message.rawCreatedAt, null, lastDate, "nac-tail").elems);
+                  return elems;
                 });
               })()}
               {generating && (
@@ -10677,7 +10684,8 @@ export default function Home() {
           initialTemplateSample={pendingTemplateSample ?? undefined}
           initialSendMode={aixInitSendMode}
           initialSendImages={aixInitialSendImages.length > 0 ? aixInitialSendImages : undefined}
-          initialPickupIds={aixModalType === "property_send" && aixInitialPickupIds.length > 0 && aixInitialPickupIds.length === aixInitialSendImages.length ? aixInitialPickupIds : undefined}
+          initialPickupIds={aixModalType === "property_send" && aixInitialPickupIds.length > 0 && aixInitialPickupIds.length === aixInitialSendImages.length ? aixInitialPickupIds
+            : aixModalType === "property_recommendation" && aixInitialPickupIds.length === 1 && aixInitialFile ? aixInitialPickupIds : undefined}
           initialViewingSpecificMode={aixInitViewingSpecific}
           initialViewingVacancy={aixInitViewingVacancy}
           initialViewingReschedule={aixInitViewingReschedule}
@@ -10741,10 +10749,11 @@ export default function Home() {
           }}
           onSendCallButton={sendCallButton}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown> }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number }) => {
             // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
             {
               const h = pickupHandoffRef.current;
+            let _sentPickupNames: string[] | null = null;
               if (h && h.done && aixModalType === h.aix && !meta?.scheduled && selectedConversation?.id === h.conv) {
                 pickupHandoffRef.current = null;
                 // 画像を外した・足した・並べ替えた時は image_urls を渡さない → サーバーは sent_properties に書かず、
@@ -10755,6 +10764,8 @@ export default function Home() {
                 const plan = planPickupMarkSent({ aix: h.aix, handoffIds: h.handoffIds ?? [], handoffFiles: h.handoffFiles ?? [], sentFiles: h.sentFiles ?? null, sentImageUrls: h.sentImageUrls ?? [] });
                 if (plan) void fetch("/api/property-pickups/send", {
                   method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
+                // 2026-09-27: 送った印を付けた行の物件名（台帳の物件送付の件数・名前）
+                if (plan) _sentPickupNames = plan.itemIds.map((id) => h.handoffNames?.[(h.handoffIds ?? []).indexOf(id)] ?? "").filter(Boolean);
                   // image_urls: 届いた画像（送った順）。数がピックアップと合う時だけ sent_properties の行と結ぶ（合わなければサーバーが書かない）
                   body: JSON.stringify({ batch_id: h.batch, item_ids: plan.itemIds, action: "mark_sent", sent_by: "aix", image_urls: plan.imageUrls, conversation_id: h.conv }),
                 }).catch(() => {});
@@ -10851,7 +10862,9 @@ export default function Home() {
                   template_name: pendingTemplateSource?.name ?? null,
                   template_category: pendingTemplateSource?.category ?? null,
                   conversation_status: _ns,
-                  suggested_action: _predictedAction,
+                  // 2026-09-27: suggested_action（ブレインの予想）は log-aix-usage が brain_decision_logs から決める。
+                  //   旧はここで suggest-next-action の予想（_predictedAction）を送っていて、ブレインの判断と同じ値は 94件中1件だった
+                  //   （P8 の予想は learn-action-patterns の predicted_action に残る）
                   line_message_id: _lineSend?.messageId ?? null,
                   sent_at: _lineSend?.sentAt ?? null,
                   // 予約送信（まだ送っていない）: 約束のカレンダーを予約時点で閉じない（実送信で同期）
@@ -10892,6 +10905,9 @@ export default function Home() {
                   picker_choices: { ...(meta?.pickerChoices ?? {}), check_who: propertyCheckSubTypeRef.current },
                 }),
               }).catch(() => {});
+                  // 2026-09-27: 物件ピックアップ・物件オススメで送った物件の数と名前（台帳の物件送付。旧は1通＝1件で10件送っても +1）
+                  properties_sent_count: meta?.scheduled ? null : (meta?.sentPropertyCount ?? null),
+                  properties_sent_names: _sentPickupNames && _sentPickupNames.length ? _sentPickupNames : null,
               lastAixLogTextRef.current = null;
               // 2026-09-15 竹内（隼斗事例）: 待ち合わせを送ったら内覧の予定を作り、予定を入れる画面を開いて内覧方法を入れてもらう
               if (aixModalType === "meeting_place" && !meta?.scheduled && meta?.meetingDate) {

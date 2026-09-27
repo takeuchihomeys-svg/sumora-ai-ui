@@ -7,6 +7,7 @@ import type { SummaryJson } from "@/app/api/customer-summary/route";
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」: 画面で選んだピッカー・入力値の記録（picker_choices）
 import { sanitizePickerChoices } from "@/app/lib/aix-pickers";
+import { brainPredictionAt, PREDICTION_LOOKBACK_MS } from "@/app/lib/brain-outcome";
 
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
@@ -223,9 +224,12 @@ export async function POST(req: NextRequest) {
       scheduled?: boolean;
       /** 2026-09-27: 画面で選んだピッカー・入力値（check_pattern / app_sub_mode / send_mode 以外）。鍵と値は app/lib/aix-pickers.ts の AIX_PICKERS */
       picker_choices?: unknown;
+      /** 2026-09-27: 物件ピックアップ・物件オススメで送った物件の数（送った資料の枚数）と名前（売上サポの行）。台帳の物件送付の件数 */
+      properties_sent_count?: number | null;
+      properties_sent_names?: string[] | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled, picker_choices } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled, picker_choices, properties_sent_count, properties_sent_names } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -243,6 +247,26 @@ export async function POST(req: NextRequest) {
       previousAction = (prevRow?.aix_type as string) ?? null;
     }
 
+    // 2026-09-27 自動化の度合いの表（scripts/automation-readiness.ts）: suggested_action は「押した時点のブレインの予想」。
+    //   旧は画面が suggest-next-action の予想を送っていて（ブレインの判断と同じ値は 94件中1件・入っているのも1〜2割）、ブレインの予想は残っていなかった。
+    //   画面の判断（suggested_aix_meta）は送信・返信で消えるので、消えない brain_decision_logs の「押す前の一番新しい判断（48時間以内）」から決める。
+    //   判断があって AIX なしなら "none"・判断が無ければ（こちらから送った AIX 等）送られた値（お客様役はブレインの action を送る）か null
+    let brainPrediction: string | null = null;
+    try {
+      const atIso = sent_at ?? new Date().toISOString();
+      const { data: decs } = await supabase
+        .from("brain_decision_logs")
+        .select("created_at, suggested_action")
+        .eq("conversation_id", conversation_id)
+        .lte("created_at", atIso)
+        .gte("created_at", new Date(new Date(atIso).getTime() - PREDICTION_LOOKBACK_MS).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1);
+      brainPrediction = brainPredictionAt((decs ?? []) as Array<{ created_at: string; suggested_action: string | null }>, atIso);
+    } catch (e) {
+      console.warn("[log-aix-usage] brain prediction lookup failed:", e instanceof Error ? e.message : e);
+    }
+
     // 2026-09-27: ピッカーの選択（知らない鍵・選択肢に無い値は落とす）。空なら null
     const pickerChoices = sanitizePickerChoices(aix_type, picker_choices, { checkPattern: check_pattern ?? null, appSubMode: app_sub_mode ?? null, sendMode: send_mode ?? null });
     const logRowInsert = {
@@ -252,7 +276,7 @@ export async function POST(req: NextRequest) {
       template_name: template_name ?? null,
       template_category: template_category ?? null,
       conversation_status: conversation_status ?? null,
-      suggested_action: suggested_action ?? null,
+      suggested_action: brainPrediction ?? suggested_action ?? null,
       line_message_id: line_message_id ?? null,
       sent_at: sent_at ?? null,
       previous_action_type: previousAction,
@@ -352,6 +376,9 @@ export async function POST(req: NextRequest) {
           generatedText: generated_text ?? null, checkPattern: check_pattern ?? null,
           propertyNames: Array.isArray(property_names) ? property_names.map((n) => String(n ?? "")).filter(Boolean) : null,
           estimateSent: estimate_sent === true,
+          // 2026-09-27: 物件ピックアップ・オススメで送った物件の数・名前（台帳の物件送付の件数。旧は1通＝1件）
+          sentPropertyCount: typeof properties_sent_count === "number" ? properties_sent_count : null,
+          sentPropertyNames: Array.isArray(properties_sent_names) ? properties_sent_names.map((n) => String(n ?? "").slice(0, 100)) : null,
           meeting: aix_type === "meeting_place" ? { date: meeting_date ?? null, time: meeting_time ?? null, propertyName: meeting_property_name ?? null, address: meeting_property_address ?? null } : null,
           guarantors: aix_type === "guarantor_info" && Array.isArray(guarantor_properties)
             ? {

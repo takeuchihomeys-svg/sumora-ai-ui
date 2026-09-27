@@ -5,6 +5,8 @@ import {
   pairBrainDecisions, aggregateBrainAixFeedback, collapsePresses, customerTurnBeforePress, sceneEvidenceForTurn,
   normalizeAixForMatch, type BrainDecisionRow, type AixPressRow, type ScenePress,
 } from "@/app/lib/brain-aix-feedback";
+// 2026-09-27 判断の後の行動（outcome）を事実から決める（画面は「outcome が空の一番新しい判断」にしか書けず、4割が空・種類を見ない aix_followed だった）
+import { resolveBrainOutcomes, OUTCOME_RESOLVED_FROM, type OutcomeStaffMessage, type OutcomeReplyExample } from "@/app/lib/brain-outcome";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
 
@@ -48,9 +50,9 @@ export async function GET(req: NextRequest) {
   try {
     const sinceIso = new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString();
 
-    const decisions = await fetchAll<BrainDecisionRow & { matched: boolean | null; actual_aix_type: string | null }>((f, t) =>
+    const decisions = await fetchAll<BrainDecisionRow & { matched: boolean | null; actual_aix_type: string | null; outcome: string | null }>((f, t) =>
       supabase.from("brain_decision_logs")
-        .select("id, conversation_id, created_at, suggested_action, suggested_check_pattern, decision_source, scene_evidence, matched, actual_aix_type")
+        .select("id, conversation_id, created_at, suggested_action, suggested_check_pattern, decision_source, scene_evidence, matched, actual_aix_type, outcome")
         .gte("created_at", sinceIso)
         .order("created_at", { ascending: true })
         .range(f, t));
@@ -80,6 +82,38 @@ export async function GET(req: NextRequest) {
       }).eq("id", p.decision.id);
       if (!error) updated++;
     });
+
+    // 1b) outcome（判断の後の行動）を事実から決めて書き戻す。OUTCOME_RESOLVED_FROM より前の判断は書き換えない（過去の行は表で推定するだけ）
+    //   aix_followed＝提案どおり・aix_different＝提案と違う AIX（押した種類は actual_aix_type）・draft_*／manual／superseded／no_action（brain-outcome.ts）
+    let outcomeUpdated = 0;
+    const outcomeTargets = decisions.filter((d) => d.created_at >= new Date(OUTCOME_RESOLVED_FROM).toISOString());
+    if (outcomeTargets.length > 0) {
+      const oConvIds = [...new Set(outcomeTargets.map((d) => d.conversation_id))];
+      const oSince = new Date(Math.min(...outcomeTargets.map((d) => new Date(d.created_at).getTime())) - 10 * 60_000).toISOString();
+      const staffMsgs: OutcomeStaffMessage[] = [];
+      const examples: OutcomeReplyExample[] = [];
+      for (let i = 0; i < oConvIds.length; i += 25) {
+        const chunk = oConvIds.slice(i, i + 25);
+        staffMsgs.push(...await fetchAll<OutcomeStaffMessage>((f, t) => supabase.from("messages")
+          .select("conversation_id, created_at, text, is_aix_generated")
+          .in("conversation_id", chunk).eq("sender", "staff").gte("created_at", oSince)
+          .order("created_at", { ascending: true }).range(f, t), 10000));
+        examples.push(...await fetchAll<OutcomeReplyExample>((f, t) => supabase.from("ai_reply_examples")
+          .select("conversation_id, sent_at, sent_reply, ai_draft, entry_source")
+          .in("conversation_id", chunk).eq("entry_source", "line_reply").gte("created_at", oSince)
+          .order("created_at", { ascending: true }).range(f, t), 10000));
+      }
+      // 窓は「次の判断まで」なので、対象の会話の判断は全部渡す（前の判断の窓の終わりを正しく切る）
+      const oDecisions = decisions.filter((d) => oConvIds.includes(d.conversation_id));
+      const resolved = resolveBrainOutcomes({ decisions: oDecisions, presses, staffMessages: staffMsgs, replyExamples: examples });
+      const targetIds = new Set(outcomeTargets.map((d) => d.id));
+      const prevOutcome = new Map(decisions.map((d) => [d.id, d.outcome ?? null]));
+      const changes = resolved.filter((r) => r.outcome && targetIds.has(r.decision.id) && prevOutcome.get(r.decision.id) !== r.outcome);
+      await withConcurrency(changes, 8, async (r) => {
+        const { error } = await supabase.from("brain_decision_logs").update({ outcome: r.outcome, outcome_recorded_at: new Date().toISOString() }).eq("id", r.decision.id);
+        if (!error) outcomeUpdated++;
+      });
+    }
 
     // 2) scene_staff: スタッフが押す直前の顧客発言に場面の証拠を当て、場面ごとに押された AIX を数える
     // 2026-09-27: テスト用の会話（YUMA）は学びに入れない（1) の各行への書き戻しは従来どおり・集計にだけ入れない）
@@ -142,6 +176,8 @@ export async function GET(req: NextRequest) {
       with_action: withAction.length,
       with_action_matched: withAction.filter((p) => p.matched).length,
       updated,
+      outcome_targets: outcomeTargets.length,
+      outcome_updated: outcomeUpdated,
       scene_presses: scenePresses.length,
       feedback_rows: rows.length,
     };

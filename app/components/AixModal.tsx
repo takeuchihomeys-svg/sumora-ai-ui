@@ -112,7 +112,7 @@ interface AixModalProps {
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string; pickerChoices?: Record<string, unknown> }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -758,6 +758,9 @@ export default function AixModal({
   // condition_hearing: 「会話を合わせる」で生成したか（true なら送信時に導入文→30秒後フォーム自動送信の2通フロー）
   const [hearingConvMatchMode, setHearingConvMatchMode] = useState(false);
   const [aixNotice, setAixNotice] = useState<string>("");
+  // 2026-09-27 竹内「状態（ピッカー）と逆の文は注意を出して止める」: サーバーの send_hold（物件確認した・募集中なのに募集していない文 等）。
+  //   生成したままの文で「送信」を押した1回目は送らずに理由を出す。直したか、もう一度押せば送る
+  const sendHoldRef = useRef<{ reason: string; text: string; acknowledged: boolean } | null>(null);
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   // ① LL-07: 見積書カバーレター（AI生成・送信+学習ループ対象）
   const [estimateCoverLetter, setEstimateCoverLetter] = useState<string>("");
@@ -2242,6 +2245,9 @@ export default function AixModal({
           // 条件スクショなし: 物件資料のみで生成
           body.image_url = await uploadImageCached(imageFile);
         }
+        // 2026-09-27: 売上サポから来た1件（物件オススメ）の行 ID。セットされた資料のまま送る時だけ渡す
+        //   （サーバーが資料の入居時期を読み、「即入居」が資料と合わない時は注意を出す）
+        if (initialPickupIds?.length === 1 && initialImageFile && imageFile === initialImageFile) body.pickup_ids = initialPickupIds;
         // 新着フラグ
         if (isNewArrival) body.is_new_arrival = true;
         // ピックアップ種別（継続ピックアップの場合に追客向けプロンプトを使用）
@@ -2754,6 +2760,7 @@ export default function AixModal({
         error?: string;
         message_text?: string;
         notice?: string;
+        send_hold?: string;
         estimate_text?: string;
         parsed_estimate?: Record<string, string>;
         // M2: 御見積書を同封したか / 見積書OCRから抽出した物件別の費用メモ
@@ -2787,6 +2794,9 @@ export default function AixModal({
       setPreview2("");
       if (data.ai_components) setAiActionComponents(data.ai_components as Record<string, string>);
       setAixNotice(data.notice || "");
+      sendHoldRef.current = typeof data.send_hold === "string" && data.send_hold
+        ? { reason: data.send_hold, text: useEmoji ? generatedMsg : stripEmoji(generatedMsg), acknowledged: false }
+        : null;
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
       setEstimateTextReady(data.estimate_text || "");
       // ① LL-07: カバーレターを保存（見積書に添える挨拶文）
@@ -3180,6 +3190,13 @@ export default function AixModal({
       setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
       return;
     }
+    // 2026-09-27: 状態と逆の文（send_hold）は、生成したままの文なら1回目は止める（直した・2回目は送る）
+    const hold = sendHoldRef.current;
+    if (hold && !hold.acknowledged && preview.trim() === hold.text.trim()) {
+      hold.acknowledged = true;
+      setError(`⛔ 送信を止めました: ${hold.reason}。文を直すか、このまま送る時はもう一度「送信」を押してください`);
+      return;
+    }
     // ② 再送信ガード: actionTypeごとに送信済みステップ番号を記録し、
     // 通信不安定時に「送信する」を押し直しても送信済みの画像・カバーレター等を二重送信しない
     const stepDone = (step: number) => (sentStepRef.current[actionType] ?? 0) >= step;
@@ -3463,6 +3480,8 @@ export default function AixModal({
         wasEdited: _sendWasEdited,
         // 2026-09-16 竹内（カイナ事例）: 内覧日調整で実際に送った文（この中の候補日時をカレンダーの「時間確保」にする）
         viewingCandidateText: actionType === "viewing_invite" ? preview : undefined,
+        // 2026-09-27: 送った物件の数（物件ピックアップ＝送った資料の枚数・物件オススメ＝1）。台帳の物件送付が1通＝1件になっていた（10件送っても +1）
+        sentPropertyCount: actionType === "property_send" ? (sendImageFiles.length || undefined) : actionType === "property_recommendation" ? 1 : undefined,
         suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
         conversationMatch: lastGenConvMatchRef.current,
         // M1: 物件別空き状況（brain の確定事実ソース）

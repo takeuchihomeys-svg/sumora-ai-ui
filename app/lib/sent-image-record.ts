@@ -12,6 +12,7 @@
 //   生成の時と送る時に同じ画像を渡すので、2回目は DeepSeek を呼ばない）。
 import { supabase } from "@/app/lib/supabase";
 import { channelFromSource, isCustomerRow, rowChannel } from "@/app/lib/sent-delivery";
+import { starHeadBuilding } from "@/app/lib/aix-material-facts";
 
 export type SentImageRecordResult = {
   read: "deepseek" | "reused" | "not_property" | "failed";
@@ -23,15 +24,27 @@ export type SentImageRecordResult = {
 };
 
 /** その会話で既に分かっている物件名（照合の辞書）: 送った物件＋本文の物件名 */
-async function knownPropertyNames(conversationId: string): Promise<string[]> {
+// 2026-09-27 竹内「重い順から治す」（YUMA）: 旧は sent_properties を**順序なしの50行**だけ読んでいた。YUMA は 81行に増え、
+//   50行を超えた 03:41 以降、新しく送った物件が辞書に入らず source=vision（照合できなかった印）に落ちた（03:47 の物件オススメ・手元の往復 13行中12行）。
+//   → 新しい順・会話 ID と物件顧客 ID の両方・直近14日の売上サポのピックアップ（これから送る物件＝property_pickups）の物件名も辞書に入れる。
+//   本文の「🌟建物 0205」（号室の字なし）も物件名として拾う（extractPropertyLabels は「号室」が要る）。
+//   辞書はその会話の物件に限る（全社の辞書は誤照合する・property-name-match.ts の記録）
+async function knownPropertyNames(conversationId: string, propertyCustomerId?: string | null): Promise<string[]> {
   const { extractPropertyLabels } = await import("@/app/lib/action-ledger");
   const known = new Set<string>();
-  const { data: sp } = await supabase.from("sent_properties").select("property_name").eq("conversation_id", conversationId).limit(50);
+  let spq = supabase.from("sent_properties").select("property_name");
+  spq = propertyCustomerId ? spq.or(`conversation_id.eq.${conversationId},property_customer_id.eq.${propertyCustomerId}`) : spq.eq("conversation_id", conversationId);
+  const { data: sp } = await spq.order("sent_at", { ascending: false }).limit(300);
   for (const r of (sp ?? []) as Array<{ property_name: string | null }>) if (r.property_name) known.add(r.property_name.trim());
+  const { data: pk } = await supabase.from("property_pickups").select("property_name").eq("conversation_id", conversationId)
+    .gte("created_at", new Date(Date.now() - 14 * 86400000).toISOString()).order("created_at", { ascending: false }).limit(300);
+  for (const r of (pk ?? []) as Array<{ property_name: string | null }>) if (r.property_name) known.add(r.property_name.trim());
   const { data: ms } = await supabase.from("messages").select("text").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(80);
-  for (const lbl of extractPropertyLabels(((ms ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n"))) {
+  const texts = ((ms ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "");
+  for (const lbl of extractPropertyLabels(texts.join("\n"))) {
     known.add(lbl.replace(/\s*[0-9０-９]{1,4}号室\s*$/, "").trim());
   }
+  for (const t of texts) { const b = starHeadBuilding(t); if (b) known.add(b); }
   return [...known].filter((s) => s.length >= 2);
 }
 
@@ -92,7 +105,12 @@ export async function recordSentImageProperty(opts: {
     }
 
     // ② 照合（会話に出ている物件名に寄せる）
-    const fixed = resolveReadProperty(item, await knownPropertyNames(conversationId));
+    let pcId = opts.propertyCustomerId ?? null;
+    if (!pcId) {
+      const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+      pcId = (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+    }
+    const fixed = resolveReadProperty(item, await knownPropertyNames(conversationId, pcId));
     const named = fixed ?? item;
     out.matched = !!fixed;
     out.propertyName = named.propertyName?.trim() || null;
@@ -133,7 +151,7 @@ export async function recordSentImageProperty(opts: {
     if (already && !fixed) { out.sentProperties = "skipped"; return out; }
     const { data: rows } = await supabase.from("sent_properties")
       .select("id, property_name, room_no, image_url, source, delivery, channel, pickup_id, sent_at")
-      .eq("conversation_id", conversationId).limit(200);
+      .eq("conversation_id", conversationId).order("sent_at", { ascending: false }).limit(300); // 2026-09-27: 新しい順（旧は順序なし200行）
     type Row = { id: string; property_name: string | null; room_no: string | null; image_url: string | null; source: string | null; delivery: string | null; channel: string | null; pickup_id: number | null; sent_at: string | null };
     // 2026-09-24: お客様に送った行とだけ比べる（グループに共有した line_group の行に当たって、送った記録を捨てない）
     const customerRows = ((rows ?? []) as Row[]).filter((r) => isCustomerRow(r));
@@ -149,11 +167,6 @@ export async function recordSentImageProperty(opts: {
         out.sentProperties = "duplicate_skipped:channel_filled";
       }
       return out;
-    }
-    let pcId = opts.propertyCustomerId ?? null;
-    if (!pcId) {
-      const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
-      pcId = (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
     }
     const { error: spErr } = await supabase.from("sent_properties").insert({
       conversation_id: conversationId,

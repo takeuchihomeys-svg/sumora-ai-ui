@@ -111,6 +111,9 @@ export async function recordAixFacts(o: {
   guarantors?: { properties: Array<{ name: string; company: string; type: string }>; parallel: boolean } | null;
   /** 遡って記録する時だけ: この日（YYYY-MM-DD）より前の内覧の記録は作らない */
   viewingOnlyFrom?: string;
+  /** 2026-09-27: 物件ピックアップ・物件オススメで送った物件の数（送った資料の枚数）と名前（売上サポの行）。台帳の物件送付の件数に使う */
+  sentPropertyCount?: number | null;
+  sentPropertyNames?: string[] | null;
   /** 予約送信の予約時点（まだ送っていない）: 約束のカレンダーは触らない（実送信で send-scheduled-messages が同期する） */
   skipCalendar?: boolean;
 }): Promise<void> {
@@ -125,6 +128,14 @@ export async function recordAixFacts(o: {
     if (obj) detail.object = obj;
   }
   if (o.propertyNames?.length) { detail.propertyNames = o.propertyNames; detail.propertyCount = o.propertyNames.length; }
+  // 2026-09-27 竹内「重い順から治す」: 物件ピックアップで10件送っても台帳は +1（detail={} → action-ledger の propertyCount ?? 1）。
+  //   送った物件の名前（売上サポの行）か数（送った資料の枚数・1〜20）を入れる。物件確認した 等の propertyNames は上のまま
+  if (map.kind === "properties_sent" && !o.propertyNames?.length) {
+    const names = (o.sentPropertyNames ?? []).map((n) => String(n ?? "").trim()).filter(Boolean).slice(0, 20);
+    const cnt = typeof o.sentPropertyCount === "number" && Number.isInteger(o.sentPropertyCount) && o.sentPropertyCount >= 1 && o.sentPropertyCount <= 20 ? o.sentPropertyCount : null;
+    if (names.length) { detail.propertyNames = names; detail.propertyCount = Math.max(names.length, cnt ?? 0); }
+    else if (cnt !== null) detail.propertyCount = cnt;
+  }
   if (map.kind === "estimate_sent" && o.propertyNames?.length) detail.estimateFor = o.propertyNames;
   // 2026-09-26（お客様の状況・入口）: AIX【見積書送る】は画面から物件名が来ない（sent_facts の estimateFor は84%が空）。
   //   本文の【建物 部屋号室】ラベルは92%が送った物件と建物＋部屋で一致する（scripts/audit-customer-state.ts）→ ラベルから埋める
