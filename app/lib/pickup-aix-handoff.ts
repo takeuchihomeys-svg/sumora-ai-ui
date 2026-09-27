@@ -108,3 +108,39 @@ export function chunkTrimImages<T extends { jpeg_base64: string }>(images: reado
   if (cur.length > 0) out.push(cur);
   return out;
 }
+
+/**
+ * 2026-09-27 竹内（確認済み）「一度物件ピックアップで送った物件も、またチェックできるように。AIX物件オススメで送る必要があるから、
+ *   一番オススメ（👑）の物件じゃない場合、送った中で1件選んで物件オススメでお客さんに送れるようにする」
+ *   チェックの中身 → AIX に渡す物件を決める（純関数）。
+ *   ・送信済みを混ぜない（二重送り防止）: 未送信が1件でもチェックされていれば未送信だけを渡す（送信済みのチェックは落とす・件数を返す）
+ *   ・未送信なし＋送信済み1件 → その1件を物件オススメで送り直す（resend）
+ *   ・未送信なし＋送信済み2件以上 → 渡さない（オススメは1件だけ・ピックアップに送信済みは混ぜない）
+ *   ・見送り（skipped）などはチェックされていても数えない
+ */
+export type PickupAixSelection =
+  | { kind: "none" }
+  | { kind: "send"; ids: number[]; droppedSent: number }
+  | { kind: "resend_recommendation"; id: number }
+  | { kind: "too_many_sent"; sent: number };
+
+export function planPickupAixSelection(items: ReadonlyArray<{ id: number; status: string }>, checked: Readonly<Record<number, boolean>>): PickupAixSelection {
+  const pending = items.filter((it) => checked[it.id] && it.status === "pending").map((it) => it.id);
+  const sent = items.filter((it) => checked[it.id] && it.status === "sent").map((it) => it.id);
+  if (pending.length > 0) return { kind: "send", ids: pending, droppedSent: sent.length };
+  if (sent.length === 1) return { kind: "resend_recommendation", id: sent[0] };
+  if (sent.length > 1) return { kind: "too_many_sent", sent: sent.length };
+  return { kind: "none" };
+}
+
+/** チェック欄を押せるか（未送信と送信済み。見送りは押せない） */
+export function isPickupCheckable(status: string): boolean {
+  return status === "pending" || status === "sent";
+}
+
+/** ボタンの文字（選び方で変わる） */
+export function pickupAixSelectionLabel(sel: PickupAixSelection): string {
+  if (sel.kind === "resend_recommendation") return "🏠 この物件を AIX物件オススメで送る";
+  if (sel.kind === "too_many_sent") return `🏠 送信済みは1${WJ}件だけ選んでください（今 ${sel.sent}${WJ}件）`;
+  return pickupAixButtonLabel(sel.kind === "send" ? sel.ids.length : 0);
+}

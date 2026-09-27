@@ -21,7 +21,9 @@ import { summarizeWebBrainProgress, webBrainBlockReason, type WebBrainSite, type
 // 2026-09-25 検索の点検: 回の見出しに「この回の検索: 駅 3/4・東三国が入っていない」（純関数だけ・サーバーの物は import しない）
 import { pickAuditForRound } from "@/app/lib/search-audit-check";
 // 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ（一番オススメだから）」
-import { buildPickupAixHref, pickupAixButtonLabel, PICKUP_AIX_MAX, chunkTrimImages, TRIM_POST_BUDGET_CHARS } from "@/app/lib/pickup-aix-handoff";
+import { buildPickupAixHref, PICKUP_AIX_MAX, chunkTrimImages, TRIM_POST_BUDGET_CHARS, planPickupAixSelection, pickupAixSelectionLabel, isPickupCheckable } from "@/app/lib/pickup-aix-handoff";
+// 2026-09-27 竹内「ピックアップや物件オススメで送った物件は、送ったのが分かるバッジ」（純関数・サーバーの物は import しない）
+import { sentBadgesFor } from "@/app/lib/pickup-sent-badge";
 // 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: メモの検索の指示 → 一時調整の要約 → 確かめて［実行］（軽い物だけ import）
 import { looksLikeSearchInstruction, overrideLine, overrideJudgeLine, overrideRulerKey, type SearchOverride, type RegisteredConditions, type OverrideSite } from "@/app/lib/search-override";
 // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。ピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるように」（純関数だけ）
@@ -1004,7 +1006,10 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   //   → 画像が無い物件は先に画像にし、LINE の会話画面を AIX【物件ピックアップした】に画像をセットして開く（/?conv=…&aix=property_send&pickup=ids）
   const sendViaAix = async (c: Customer, b: Batch, only?: Item[]) => {
     // only: 👑 全体で一番の吹き出しから、その1件だけを送る時（2026-09-24 竹内「1番オススメの物件全体の中で送る」）
-    const targets = only ?? b.items.filter((it) => checked[it.id] && it.status === "pending");
+    // 2026-09-27 竹内（確認済み）: 送信済みも1件だけ選んで物件オススメで送り直せる。ピックアップ（複数件）には送信済みを混ぜない（pickup-aix-handoff.planPickupAixSelection）
+    const sel = only ? null : planPickupAixSelection(b.items, checked);
+    if (sel?.kind === "too_many_sent") { setMsg(`送信済みの物件を物件オススメで送る時は1件だけ選んでください（今 ${sel.sent}件）。ピックアップには送信済みを混ぜません`); return; }
+    const targets = only ?? (sel?.kind === "send" ? b.items.filter((it) => sel.ids.includes(it.id)) : sel?.kind === "resend_recommendation" ? b.items.filter((it) => it.id === sel.id) : []);
     if (targets.length === 0) { setMsg("送る物件にチェックを入れてください"); return; }
     // 2026-09-26: 10件を超えていたら、止めずに点の高い10件（👑 を先頭・画面の並びと同じ）にチェックを絞る。もう一度押すと送る
     if (targets.length > PICKUP_AIX_MAX) {
@@ -1147,6 +1152,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     const isBest = bestId != null && it.id === bestId;
     const crown = isBest && bestIsGlobal;
     const pending = it.status === "pending";
+    const sentBadges = sentBadgesFor(it, open?.sent_history);
     const img = it.trim_image_url ?? it.page_image_url ?? null;
     const opened = !!openCard[it.id];
     const ms = MARK_STYLE[cv.mark.tone];
@@ -1183,11 +1189,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
       </>
     );
     return (
-      <div key={it.id} className="rounded-xl overflow-hidden bg-white" style={{ border: crown ? "2px solid #f9a825" : "1px solid #d7ccc8", opacity: pending ? 1 : 0.6 }}>
+      <div key={it.id} className="rounded-xl overflow-hidden bg-white" style={{ border: crown ? "2px solid #f9a825" : "1px solid #d7ccc8", opacity: pending ? 1 : it.status === "sent" ? 0.9 : 0.6 }}>
         {/* 建物の段（リアプロの写真の位置に図面） */}
         <div className="flex gap-2 p-2 items-start" style={{ background: crown ? "#fff8e1" : "#fffdfb" }}>
           <label className="shrink-0 -m-1.5 p-1.5 flex items-start" aria-label={`【${it.rank}】を選ぶ`}>
-            <input type="checkbox" className="mt-1 h-4 w-4" disabled={!pending} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
+            <input type="checkbox" className="mt-1 h-4 w-4" disabled={!isPickupCheckable(it.status)} checked={!!checked[it.id]} onChange={(e) => setChecked((p) => ({ ...p, [it.id]: e.target.checked }))} />
           </label>
           {it.expired && <ExpiredImage width={88} height={62} />}
           {img && (
@@ -1209,7 +1215,9 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
               {!isBest && it.recommended > 0 && <span className="text-[10px] whitespace-nowrap" style={{ color: "#bf8f00" }} title="DeepSeek が選んだ候補（点が並んだ時の順番に使う）">🌟 候補</span>}
               {imgChip && <span className="text-[10px] font-bold whitespace-nowrap px-1 py-[1px] rounded" style={IMAGE_CHIP_STYLE[imgChip.kind]}
                 title={imgChip.kind === "scored" ? (imgChip.bonus != null ? `判定の点に足した画像の点（判定に入っている希望${imgChip.covered ? ` ${imgChip.covered}件` : ""}は二重に数えない・○ +3／必須 +5・× −5／必須 −10・${IMAGE_BONUS_MIN}〜+${IMAGE_BONUS_MAX}）。画像で分析 ${imgChip.match}点。内訳は「詳細 ▾」` : `画像で分析 ${imgChip.match}点（古い形で判定の点には足していない）`) : imgChip.kind === "needs_check" ? "物件と資料が一致しない（点は出さない）" : imgChip.kind === "waiting" ? "まだ画像で分析していません（下の「🔍 画像で分析」）" : "資料から読めず点が付かなかった"}>{imgChip.text}</span>}
-              {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
+              {/* 2026-09-27 竹内「ピックアップや物件オススメで送った物件は、送ったのが分かるバッジ」: どの AIX で・いつ（両方なら両方）。出所は sent_properties（pickup-sent-badge.ts） */}
+              {sentBadges.map((sb) => <span key={sb.kind} className="text-[10px] font-bold whitespace-nowrap px-1.5 py-[2px] rounded-full" style={{ background: sb.bg, color: sb.color, border: `1px solid ${sb.border}` }}>{sb.label}</span>)}
+              {it.status === "skipped" && <span className="text-[10px] text-[#90a4ae]">見送り</span>}
               {/* 2026-09-27 案A: 条件の違う回が混ざった時だけ、メモの条件で判定した物件に印（点の物差しが違う） */}
               {roundOverrideNote(b.items)?.mixed && overrideJudgeLine(it.search_override) && <span className="text-[9px] font-bold whitespace-nowrap px-1 rounded" style={{ background: "#ede7f6", color: "#4527a0" }}>📝 メモの条件で判定</span>}
             </div>
@@ -1512,7 +1520,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                     {(() => {
                       const bid = open.best && bb.batch.items.some((x) => x.id === open.best?.id) ? open.best.id : null;
                       const q = pickQualityTop(bb.batch.items, bid);
-                      const sel = bb.batch.items.filter((it) => checked[it.id] && it.status === "pending").length;
+                      const sel = bb.batch.items.filter((it) => checked[it.id] && isPickupCheckable(it.status)).length;
                       return (
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[10px] text-[#607d8b] leading-snug">{sel}件を選択中{q.ngExcluded ? `・NG 条件・保留の物件 ${q.ngExcluded}件は選びません` : ""}</span>
@@ -1528,7 +1536,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                       <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void sendViaAix(open, bb.batch)}
                         title="LINE の会話画面で AIX を開き、選んだ物件の資料画像（1ページ目）をセットする（1件＝物件オススメ・2件以上＝物件ピックアップした）"
                         className="flex-1 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy || batchExpired(bb.batch) ? 0.4 : 1 }}>
-                        {pickupAixButtonLabel(bb.batch.items.filter((it) => checked[it.id] && it.status === "pending").length)}
+                        {pickupAixSelectionLabel(planPickupAixSelection(bb.batch.items, checked))}
                       </button>
                       <button disabled={!!busy} onClick={() => void act(bb.batch, "skip")}
                         className="px-3 py-2 rounded-lg text-xs font-bold" style={{ background: "#eceff1", color: "#546e7a" }}>見送り</button>
@@ -1612,7 +1620,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                   {(bst.needs_check ?? 0) > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.needs_check}件は要確認（物件と資料が一致しない・点なし）</div>}
                   {bst.not_analyzed > 0 && <div>{bst.not_analyzed}件は画像の分析待ち（判定の点だけで並べています・分析すると順位や👑が変わることがあります）</div>}
                 </div>
-                {bBatch && bItem && bItem.status === "pending" && (
+                {bBatch && bItem && (bItem.status === "pending" || bItem.status === "sent") && (
                   <button disabled={!!busy} onClick={() => void sendViaAix(open, bBatch, [bItem])}
                     className="mt-2 w-full py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy ? 0.6 : 1 }}>
                     🏠 この物件を AIX物件オススメで送る

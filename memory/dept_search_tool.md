@@ -4,6 +4,9 @@
 
 ---
 
+## 2026-09-27 売上サポ: 送った物件のバッジ（📤 ピックアップで送った 9/27・🏠 オススメで送った 9/28・両方なら両方）＋送信済みを1件選んで AIX物件オススメで送り直す（拡張は変えていない）
+- 出所は sent_properties（詳細の sent_history・直近40行・共有 delivery=shared は除く）: pickup_id 一致か同じ物件（isSameProperty 名前0.95＋号室）・経路は rowChannel。オススメは pickup_id が付かない（画像の読み取りが名前で書く）ので名前で当てる。表に無く status=sent だけ→「📨 送った」。純関数 app/lib/pickup-sent-badge.ts・選び方 pickup-aix-handoff.planPickupAixSelection（未送信が1件でもあれば未送信だけ＝ピックアップに送信済みは混ぜない／送信済み1件だけ→オススメ／2件以上→止める）・送信済みのチェック欄を押せる・👑 の送るボタンも送信済みで出す。テスト app/lib/__tests__/pickup-sent-badge.test.ts（27）
+
 ## 2026-09-27 v2.5.35 自動便（AIX モード）に ITANDI も・開始時刻を毎日ばらつかせる（**拡張の再読み込み必須**・vercel.json の cron も変わる）
 竹内「ITANDI もおねがい」「開始時間を 11:00 と 17:00 ではなく 10:15〜11:15・16:15〜17:15 の中でランダムに不規則性をもって毎日変える」
 - **サイト**: cron（app/api/cron/auto-property-search）の sites を `["realnetpro","itandi"]`（`AUTO_SEARCH_SITES`）。同じお客様はリアプロ → ITANDI と続けて走る（拡張の _runBatchSearch はお客様 → サイトの順）。サイトごとの claim は無い（コマンド単位で1台が拾う）＝拾った PC が両方回す。**ITANDI のタブが開いていない PC は ITANDI だけ飛ばす**（新しいタブを開かない・失敗と数えない・完了の error_message に「ITANDI のタブが開いていない PC のため ITANDI は飛ばした（N件）」）。お客様ごとに見直す。手動の一括は今までどおり（無ければ開く）
