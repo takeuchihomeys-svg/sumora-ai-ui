@@ -731,6 +731,8 @@ interface TemplateModalProps {
     conversationId: string;
     actionType: string;
     sentMessage: string;
+    // 2026-09-27: 直前の AIX のピッカー（新着1件／新規・継続ピックアップ等）。AI 最適化に渡す（新着1件なら比べる言い方を使わない）
+    pickerMode?: string | null;
   };
   // 会話ID（テンプレート選択ログ記録用）
   conversationId?: string;
@@ -2452,6 +2454,9 @@ export default function TemplateModal({
           staffMessagedToday: staffMessagedToday ?? false,
           // AIXカテゴリ: AIXが送信したテキストをベースに最適化（会話全体から生成しない）
           ...(aixSourceMessage !== undefined ? { aixSourceMessage } : {}),
+          // 2026-09-27 竹内「AIXのあとのひとこと」: 同じテンプレのスタッフの実送信を手本に引く ID と、直前の AIX のピッカー
+          templateId: tmpl.id,
+          ...(isAixCategoryTemplate && postAixContext?.pickerMode ? { aixPickerMode: postAixContext.pickerMode } : {}),
         }),
       });
       if (!res.ok) throw new Error(`generate-reply ${res.status}`);

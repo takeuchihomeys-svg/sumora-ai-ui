@@ -10449,6 +10449,8 @@ export default function Home() {
                   conversationId: selectedConversation.id,
                   actionType: postAixTemplateMap[selectedConversation.id]?.actionType ?? "",
                   sentMessage: postAixTemplateMap[selectedConversation.id]?.sentMessage ?? "",
+                  // 2026-09-27: 直前の AIX のピッカー（テンプレ選択の記録 picker_mode と同じ値）を AI 最適化に渡す
+                  pickerMode: lastPickerModeByConvRef.current.get(selectedConversation.id) ?? null,
                 }
               : undefined
           }

@@ -25,6 +25,13 @@
 //           --shadow（影の道: ブレインが選ばなかった方も作って突き合わせる・送らない。app/lib/customer-sim-shadow.ts）
 //             --shadow-base=http://localhost:3000（影を作る入口・既定は手元＝LLM_TEST_MODE=deepseek-all の開発サーバ。本番の入口では作らない）
 //             --shadow-images（画像を読む AIX〈見積書・物件確認した・ピックアップ/オススメ〉も影で作る・Vision は Claude のまま）
+//   スタッフ役の送り方（2026-09-27 竹内「実際のスタッフが送ったようになるように／AIXを活用しながらテスト進めていく」・app/lib/staff-send-pattern.ts）:
+//     ・押す AIX は画面に出ている AIX（resolveAixButtonView）。ブレインの判断と違えば「⚠ 画面:」のズレに出す
+//     ・ピッカーは場面から（simPickerFor→pickerForScene）選び、AIX の生成と log-aix-usage に画面と同じ形で渡す（申込フォーマットは画面の固定文）
+//     ・実送信の割合で: 返信→AIX（往復の番号で決める・乱数でない）／物件ピックアップした→物件オススメ（75%）／AIX の後の一言
+//       （見積書送る・申込へ〈フォーマットの後〉・物件オススメ＝送信後のバナーのテンプレ→画面と同じ AI 最適化）
+//     --staff-simple（旧の動き: ブレインの AIX をそのまま押す・一言なし・ピッカーは今まで通り）
+//   送る物件の画像は pickSendImageUrl（trim_image_url＝元の資料の1ページ目だけ）。trim の無い物件は送らず理由を出す
 //   内部認証の値は環境変数 INTERNAL_API_SECRET、無ければ .env.prod から読む（画面に出さない）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync } from "node:fs";
@@ -45,6 +52,15 @@ import {
 import { sameBuilding } from "../app/lib/customer-sim-material";
 import { judgeShadowTurn, summarizeShadow, type ShadowFinding } from "../app/lib/customer-sim-shadow";
 import { runShadowTurn, generateReplyAcceptsShadow, isLocalBase, type ShadowTurnResult } from "../app/lib/customer-sim-shadow-run";
+import { pickSendImageUrl } from "../app/lib/pickup-send-image";
+import { pickSimMaterial } from "../app/lib/customer-sim-material";
+import type { PickerChoice } from "../app/lib/aix-pickers";
+import {
+  decideSimStaffTurn, checkAfterReply, secondAixMaterial, simPickerFor, pickerLogFields, pickerAixBody, followupAllowed, followupPropertyLabel,
+  pickupsWithoutSendImage, summarizeViewMismatch, simRowShape, REAL_SHAPE_RATE, STAFF_TURN_SHAPE_JA, SIM_AIX_VIEW_MISMATCH_JA,
+  type SimBrainMetaLike, type SimViewMismatch, type StaffTurnShape,
+} from "../app/lib/staff-send-pattern";
+import { simAixView, draftForReplyFirst, makeFollowup, appFormatText, type FollowupResult } from "../app/lib/customer-sim-staff-run";
 
 const CONV = YUMA_CONVERSATION_ID;
 const args = process.argv.slice(2);
@@ -59,6 +75,10 @@ const STATE_FILE = join(DIR, "state.json");
 // 影の道（--shadow の時だけ）: 手元の開発サーバで作る。generate-reply が書かない呼び方を持つ時だけ影の下書きを作る
 const SHADOW = flag("shadow");
 const SHADOW_BASE = (arg("shadow-base") ?? "http://localhost:3000").replace(/\/$/, "");
+// スタッフ役の送り方（staff-send-pattern.ts）。--staff-simple で旧の動き
+const STAFF_SIMPLE = flag("staff-simple");
+/** 元の資料の画像（trim）が無いので送らないピックアップ（loadMaterialPool が毎回入れ直す） */
+let noSendImagePickups: string[] = [];
 const SHADOW_DRAFT_OK = SHADOW && isLocalBase(SHADOW_BASE) && existsSync("app/api/generate-reply/route.ts")
   && generateReplyAcceptsShadow(readFileSync("app/api/generate-reply/route.ts", "utf8"));
 
@@ -235,10 +255,12 @@ async function loadMaterialPool(c: ConvRow, msgs: MsgRow[]): Promise<SimMaterial
   const pickups: SimPickupSource[] = ((pk.data ?? []) as Array<{ id: number; batch_id: string | null; property_name: string; room_no: string | null; trim_image_url: string | null; page_image_url: string | null; pdf_blob_url: string | null; pdf_text: string | null; summary_text: string | null; rank: number | null; complete_rank: number | null; complete_group_id: string | null; status: string | null; sent_at: string | null; conversation_id: string | null }>)
     .filter((p) => !p.conversation_id || p.conversation_id === CONV)
     .map((p) => ({
-      // 画面の handoff と同じ画像（trim → page・app/lib/property-pickups.ts）
-      id: p.id, propertyName: p.property_name, roomNo: p.room_no, imageUrl: p.trim_image_url ?? p.page_image_url ?? null, pdfUrl: p.pdf_blob_url, summaryText: p.summary_text,
+      // 送る画像は元の資料の1ページ目そのまま（trim_image_url）だけ。page_image_url は書体を差し替えた画像＝送らない（app/lib/pickup-send-image.ts）
+      id: p.id, propertyName: p.property_name, roomNo: p.room_no, imageUrl: pickSendImageUrl(p), pdfUrl: p.pdf_blob_url, summaryText: p.summary_text,
       address: addressFromPdfText(p.pdf_text), rank: p.complete_rank ?? p.rank, status: p.status, sentAt: p.sent_at, completeGroupId: p.complete_group_id, batchId: p.batch_id,
     }));
+  noSendImagePickups = pickupsWithoutSendImage(((pk.data ?? []) as Array<{ property_name: string; room_no: string | null; trim_image_url: string | null; sent_at: string | null; status: string | null; conversation_id: string | null }>)
+    .filter((p) => !p.conversation_id || p.conversation_id === CONV));
   const sentNames: string[] = [];
   for (const r of (sp.data ?? []) as Array<{ property_name: string | null; room_no: string | null; delivery: string | null }>) {
     if (r.delivery === "line_group") continue;
@@ -280,12 +302,14 @@ type MaterialSendResult = { text: string | null; images: number; label: string; 
  * 材料の要る AIX を送る。生成・送信・記録は画面（AixModal・page.tsx）と同じ API・引数・順番（画像→本文→記録）。
  *   画面が送った後に作るカレンダー（待ち合わせ後の内覧の予定・内覧へ！の時間確保）は作らない（お客様役の決まり）
  */
-async function sendWithMaterial(action: string, checkPattern: string | null, material: SimAixMaterial, c: ConvRow, msgs: MsgRow[], predicted: string | null, noSend: boolean): Promise<MaterialSendResult> {
+/** opts.aixBody: ピッカーから /api/aix/action に足す欄 ／ opts.log: ピッカーの記録（log-aix-usage）／ opts.skipMark: 送った印を付けない（同じ番で送ったピックアップの1件をオススメで推す時） */
+type SendOpts = { aixBody?: Record<string, unknown>; log?: Record<string, unknown>; skipMark?: boolean };
+async function sendWithMaterial(action: string, checkPattern: string | null, material: SimAixMaterial, c: ConvRow, msgs: MsgRow[], predicted: string | null, noSend: boolean, opts: SendOpts = {}): Promise<MaterialSendResult> {
   const skippedAfterSend: string[] = [];
   const done = async (text: string, images: string[], logExtra: Record<string, unknown>, label: string): Promise<MaterialSendResult> => {
     if (noSend) return { text: null, images: 0, label: `${label}（--no-send: 送る直前で止めた）`, note: `送る予定: 画像${images.length}枚／${one(text, 300)}`, skippedAfterSend };
     const delivered = images.length ? await sendImagesAsStaff(images, c, action) : [];
-    await sendAsStaff(text, true, c, action, checkPattern, predicted, logExtra);
+    await sendAsStaff(text, true, c, action, checkPattern, predicted, { ...logExtra, ...(opts.log ?? {}) });
     return { text, images: delivered.length, label, skippedAfterSend };
   };
   switch (material.kind) {
@@ -316,16 +340,17 @@ async function sendWithMaterial(action: string, checkPattern: string | null, mat
       const urls = items.map((p) => p.imageUrl).filter((u): u is string => !!u);
       if (action === "property_recommendation") {
         // 画面の物件オススメ: image_url（資料・必須）→ [資料] → 本文（AixModal 2179-2210・3271-3299）
-        const g = await generateAixRaw(action, null, c, msgs, { image_url: urls[0] }, false);
+        const g = await generateAixRaw(action, null, c, msgs, { image_url: urls[0], ...(opts.aixBody ?? {}) }, false);
         if (!g.text) throw new Error("物件オススメの生成が空");
         const r = await done(g.text, [urls[0]], { conversation_match: false }, `AIX【property_recommendation】をピックアップ#${items[0].id}で送る`);
-        if (!noSend) await markPickupsSent(items.slice(0, 1), null);
+        if (!noSend && !opts.skipMark) await markPickupsSent(items.slice(0, 1), null);
         return r;
       }
       // 画面の物件ピックアップした（売上サポから）: image_urls・pickup_ids → [画像まとめて] → 本文 → 送った印（mark_sent）
-      const g = await generateAixRaw(action, null, c, msgs, { image_urls: urls, pickup_ids: items.map((p) => p.id), send_mode: "normal" }, true);
+      const sendMode = typeof opts.aixBody?.send_mode === "string" ? opts.aixBody.send_mode : "normal";
+      const g = await generateAixRaw(action, null, c, msgs, { image_urls: urls, pickup_ids: items.map((p) => p.id), ...(opts.aixBody ?? {}), send_mode: sendMode }, true);
       if (!g.text) throw new Error("物件ピックアップした の生成が空");
-      const r = await done(g.text, urls, { conversation_match: true, send_mode: "normal" }, `AIX【property_send】をピックアップ${items.length}件で送る`);
+      const r = await done(g.text, urls, { conversation_match: true, send_mode: sendMode }, `AIX【property_send/${sendMode}】をピックアップ${items.length}件で送る`);
       if (!noSend) await markPickupsSent(items, urls);
       return r;
     }
@@ -412,6 +437,13 @@ type Row = {
   material?: string | null; images?: number; skippedAfterSend?: string[];
   /** 影の道（--shadow）: 選ばなかった方（送らない）と突き合わせのズレ */
   shadow?: (Omit<ShadowTurnResult, "findings"> & { coverLetter?: string | null }) | null; shadowFindings?: ShadowFinding[];
+  /** スタッフ役の送り方（staff-send-pattern.ts）: 画面の AIX・押した AIX・ピッカー・先の返信・2つ目の AIX・一言・画面のズレ・形 */
+  aixView?: { shown: string | null; channel: string; source: string } | null;
+  pressed?: { aix: string | null; second: string | null; replyFirst: boolean; followup: boolean; reasons: string[] } | null;
+  picker?: (PickerChoice & { note?: string }) | null;
+  replyFirstText?: string | null; secondAixText?: string | null; followupText?: string | null;
+  followup?: Omit<FollowupResult, "text"> | null;
+  viewMismatches?: SimViewMismatch[]; shape?: StaffTurnShape;
 };
 
 function printRow(r: Row) {
@@ -420,9 +452,16 @@ function printRow(r: Row) {
   if (r.brain) console.log(`  ブレイン: AIX=${r.brain.action ?? "なし"} reply_mode=${r.brain.reply_mode ?? "-"} 段階=${r.brain.stage ?? "-"} 並行検索=${r.brain.parallel_search ? "ON" : "OFF"} 方向=${one(r.brain.direction, 60)}（${r.waitedSec}秒）`);
   else console.log(`  ブレイン: 判断が来なかった（${r.waitedSec}秒）`);
   console.log(`  スタッフ役: ${r.plan}`);
+  if (r.aixView) console.log(`  画面の AIX: ${r.aixView.shown ?? "なし"}（${r.aixView.channel}・${r.aixView.source}）／押した: ${r.pressed?.aix ?? "なし"}${r.pressed?.second ? ` → ${r.pressed.second}` : ""}${r.pressed?.replyFirst ? "（返信を先に）" : ""}`);
+  if (r.pressed?.reasons.length) console.log(`    決め方: ${r.pressed.reasons.join("／")}`);
+  if (r.picker) console.log(`  ピッカー: ${r.picker.label}（${r.picker.field}=${r.picker.value}）… ${r.picker.reason}${r.picker.note ? `／${r.picker.note}` : ""}`);
+  if (r.replyFirstText) console.log(`  先に送った返信: ${one(r.replyFirstText, 200)}`);
   if (r.draft && r.draft !== r.sent) console.log(`  下書き: ${one(r.draft, 200)}`);
   if (r.material) console.log(`  使った材料: ${r.material}${r.images ? `・画像${r.images}枚` : ""}`);
   console.log(`  送った文${r.sentKind ? `（${r.sentKind}）` : ""}: ${r.sent ? one(r.sent, 300) : "（送っていない）"}`);
+  if (r.secondAixText) console.log(`  2つ目の AIX: ${one(r.secondAixText, 200)}`);
+  if (r.followup) console.log(`  AIX の後の一言${r.followup.label ? `（テンプレ「${r.followup.label}」・${r.followup.how ?? "送らない"}）` : ""}: ${r.followupText ? one(r.followupText, 200) : `送っていない（${r.followup.skipped ?? "-"}）`}`);
+  if (r.viewMismatches?.length) console.log(`  ⚠ 画面: ${r.viewMismatches.map((x) => `${SIM_AIX_VIEW_MISMATCH_JA[x.kind]}（${x.detail}）`).join(" ／ ")}`);
   if (r.skippedAfterSend?.length) console.log(`  作らなかった物: ${r.skippedAfterSend.join("／")}`);
   console.log(`  状況の表示: ${r.headline}${r.conflicts ? `（⚠ずれ ${r.conflicts}）` : ""}`);
   if (r.changes) console.log(`  変化: 送った事実[${r.changes.facts.join(", ") || "-"}] 送った物件[${r.changes.props.join(", ") || "-"}] タスク[${r.changes.tasks.join(", ") || "-"}] AIX要対応+${r.changes.aixItems} カレンダー+${r.changes.calendar < 0 ? "?" : r.changes.calendar}`);
@@ -499,9 +538,31 @@ async function main() {
       direction: (m.reply_direction_label as string | null) ?? (m.reply_direction as string | null) ?? null,
       parallel_search: (m.parallel_search as { on?: boolean } | undefined)?.on ?? null, stage: (m.checkpoint_stage as string | null) ?? null,
     } : null;
-    const poolMsgs = await recentMessages();
+    let poolMsgs = await recentMessages();
     const pool = await loadMaterialPool(c, poolMsgs);
-    const plan = planStaffAction(meta as { action?: string | null; reply_mode?: string | null; check_pattern?: string | null } | null, pool);
+    // ── スタッフ役の送り方（staff-send-pattern.ts）: 画面に出ている AIX を押す・ブレインと違えばズレ（⚠ 画面:） ──
+    const aixView = simAixView(meta, poolMsgs);
+    const staffTurn = meta && !STAFF_SIMPLE ? decideSimStaffTurn({ round: state.round, meta: meta as SimBrainMetaLike, view: aixView }) : null;
+    const viewMismatches: SimViewMismatch[] = [...aixView.mismatches];
+    const effMeta = !meta ? null : !staffTurn ? meta
+      : staffTurn.pressAix ? { ...meta, action: staffTurn.pressAix, reply_mode: "aix", check_pattern: staffTurn.checkPattern }
+      : { ...meta, reply_mode: "draft" };
+    const plan = planStaffAction(effMeta as { action?: string | null; reply_mode?: string | null; check_pattern?: string | null } | null, pool);
+    // ピッカー（場面から・画面と同じ記録の形。null の欄は渡さない＝材料の send_mode・check_pattern を消さない）
+    const turnMsgs: MsgRow[] = [];
+    for (let i = poolMsgs.length - 1; i >= 0 && poolMsgs[i].sender === "customer"; i--) turnMsgs.unshift(poolMsgs[i]);
+    const turnText = turnMsgs.map((x) => x.text ?? "").filter((x) => x && x !== "[画像]").join("\n");
+    const recentStaffTexts = poolMsgs.filter((x) => x.sender === "staff" && x.text && x.text !== "[画像]").map((x) => x.text as string).slice(-6);
+    const pickFor = (action: string, usedCp: string | null): { choice: Row["picker"]; aix: ReturnType<typeof pickerAixBody>; log: Record<string, unknown> } => {
+      if (STAFF_SIMPLE) return { choice: null, aix: { body: {} }, log: {} };
+      const choice = simPickerFor({ aixType: action, turnText, hasImage: turnMsgs.some((x) => !!x.image_url || /https?:\/\//.test(x.text ?? "")), sentPropertyCount: pool.sentPropertyNames.length, recentStaffTexts, roomStatus: "unknown" });
+      // 物件確認した の結果は材料の設定（募集中）で送る → 場面のピッカーと違えばメモだけ（記録は送った方）
+      const cpDiff = action === "property_check_result" && choice?.field === "check_pattern" && choice.value !== usedCp;
+      const extraChoices = action === "application_push" && choice?.value === "format" ? { living_type: "single", guarantor_kind: "emergency" } : null;
+      const fields = cpDiff ? pickerLogFields(action, null, { checkPattern: usedCp }) : pickerLogFields(action, choice, { checkPattern: usedCp, extraChoices });
+      const log = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== null));
+      return { choice: choice ? { ...choice, ...(cpDiff ? { note: `送ったのは ${usedCp ?? "空"}（材料の設定）` } : {}) } : null, aix: cpDiff ? { body: {} } : pickerAixBody(action, choice), log };
+    };
     const historyBefore: SimHistoryItem[] = (await recentMessages()).map((x) => ({ sender: x.sender, text: x.text, isAix: x.is_aix_generated, hasImage: !!x.image_url, createdAt: x.created_at }));
 
     // ── 影の道（--shadow）: 送る前に、ブレインが見たのと同じ会話で「選ばなかった方」を作る（送らない・送った記録を作らない） ──
@@ -523,29 +584,99 @@ async function main() {
     let stop = false;
     let materialLabel: string | null = null, images = 0, skippedAfterSend: string[] = [], material: SimAixMaterial | null = null;
     let shadowCover: string | null = null;
+    let replyFirstText: string | null = null, secondAixText: string | null = null, followupText: string | null = null;
+    let followup: Omit<FollowupResult, "text"> | null = null;
+    let picker: Row["picker"] = null;
+    // 画面の lastPickerModeByConvRef と同じ値（checkPattern ?? appSubMode ?? sendMode・物件オススメは pickup_type）。AIX の後の一言の AI 最適化に aixPickerMode で渡す
+    let lastPickerLog: Record<string, unknown> = {};
+    const pickerModeOf = (log: Record<string, unknown>): string | null => {
+      const v = log.check_pattern ?? log.app_sub_mode ?? log.send_mode ?? (log.picker_choices as Record<string, unknown> | undefined)?.pickup_type;
+      return typeof v === "string" && v ? v : null;
+    };
+    const noSend = flag("no-send");
     try {
+      // 返信→AIX（実送信 15%・往復の番号で決まる）: 返信を先に送ってから同じ番で AIX。送った後の画面にその AIX が残るかも見る
+      if ((plan.kind === "aix" || plan.kind === "aix_material") && staffTurn?.replyFirst) {
+        if (noSend) note = "返信→AIX の番（--no-send: 先の返信も送らない）";
+        else {
+          const r0 = await draftForReplyFirst(BASE, CONV, c, poolMsgs, draft);
+          if (r0.text) {
+            await sendAsStaff(r0.text, false, c, null, null, brain?.action ?? null);
+            replyFirstText = r0.text;
+            await sleep(2000);
+            const c2 = await conv();
+            poolMsgs = await recentMessages();
+            const gone = checkAfterReply(plan.action, simAixView(c2.suggested_aix_meta, poolMsgs));
+            if (gone) viewMismatches.push(gone);
+          } else note = `返信→AIX の番だが先の返信を作れない（${r0.error ?? "-"}）→ AIX から`;
+        }
+      }
       if (plan.kind === "wait") { planLabel = "判断が来ないので止める"; stop = true; }
       else if (plan.kind === "aix_needs_material") {
-        planLabel = `AIX【${plan.action}】は材料が揃わない（${plan.reason}）→ 送らずに止める`;
+        const noImg = (plan.action === "property_send" || plan.action === "property_recommendation") && noSendImagePickups.length
+          ? `・元の資料の画像（trim）が無いので送らない: ${noSendImagePickups.slice(0, 5).join("・")}` : "";
+        planLabel = `AIX【${plan.action}】は材料が揃わない（${plan.reason}${noImg}）→ 送らずに止める`;
         note = "画面で AIX を送ってから、もう一度同じ命令で続きから進みます"; stop = true;
       } else if (plan.kind === "aix_material") {
         material = plan.material;
         materialLabel = describeSimMaterial(plan.material);
-        const r = await sendWithMaterial(plan.action, plan.checkPattern, plan.material, c, poolMsgs, brain?.action ?? null, flag("no-send"));
+        const pk = pickFor(plan.action, plan.checkPattern);
+        picker = pk.choice; lastPickerLog = pk.log;
+        const r = await sendWithMaterial(plan.action, plan.checkPattern, plan.material, c, poolMsgs, brain?.action ?? null, noSend, { aixBody: pk.aix.body, log: pk.log });
         planLabel = r.label; images = r.images; skippedAfterSend = r.skippedAfterSend; shadowCover = r.coverLetter ?? null;
         if (r.note) note = r.note;
         if (r.text) { sent = r.text; sentKind = `AIX ${plan.action}${plan.checkPattern ? `/${plan.checkPattern}` : ""}`; } else stop = true;
       } else if (plan.kind === "aix") {
-        const text = await generateAix(plan.action, plan.checkPattern, c, msgs);
-        planLabel = `AIX【${plan.action}】を本番の生成で作って送る`;
+        const pk = pickFor(plan.action, plan.checkPattern);
+        picker = pk.choice; lastPickerLog = pk.log;
+        let text: string | null;
+        if (pk.aix.screenOnly === "application_format") {
+          // 申込フォーマットは画面が API を呼ばずに固定文（AixModal の APP_FORMAT_SECTIONS）を作る → 同じ文を読む
+          const f = appFormatText();
+          text = f.text;
+          planLabel = `AIX【${plan.action}/format】申込フォーマット（画面の固定文・単独・緊急連絡先）${f.text ? "" : ` → ${f.reason}`}`;
+        } else {
+          text = (await generateAixRaw(plan.action, plan.checkPattern, c, poolMsgs, pk.aix.body)).text;
+          planLabel = `AIX【${plan.action}】を本番の生成で作って送る`;
+        }
         if (!text) { planLabel += " → 生成が空"; stop = true; }
-        else if (flag("no-send")) { planLabel += "（--no-send: 送る直前で止めた）"; sent = null; note = `送る予定の文: ${one(text, 300)}`; stop = true; }
-        else { await sendAsStaff(text, true, c, plan.action, plan.checkPattern, brain?.action ?? null); sent = text; sentKind = `AIX ${plan.action}`; }
+        else if (noSend) { planLabel += "（--no-send: 送る直前で止めた）"; sent = null; note = `送る予定の文: ${one(text, 300)}`; stop = true; }
+        else { await sendAsStaff(text, true, c, plan.action, plan.checkPattern, brain?.action ?? null, pk.log); sent = text; sentKind = `AIX ${plan.action}`; }
       } else {
         planLabel = "AIX なし → 下書きをそのまま送る";
-        if (!draft) { planLabel += " → 下書きが来なかった"; stop = true; }
-        else if (flag("no-send")) { planLabel += "（--no-send: 送る直前で止めた）"; stop = true; }
-        else { await sendAsStaff(draft, false, c, null, null, brain?.action ?? null); sent = draft; sentKind = "下書き"; }
+        let text = draft;
+        // 画面に AIX が無く下書きも無い（ブレインは AIX の番）→ 画面の下書き作成と同じ生成（実際のスタッフは手打ちする所）
+        if (!text && staffTurn && !noSend) {
+          const r0 = await draftForReplyFirst(BASE, CONV, c, poolMsgs, null);
+          if (r0.text) { text = r0.text; planLabel = "画面に AIX が無く下書きも無い → 画面の下書き作成と同じ生成で送る"; }
+        }
+        if (!text) { planLabel += " → 下書きが来なかった"; stop = true; }
+        else if (noSend) { planLabel += "（--no-send: 送る直前で止めた）"; stop = true; }
+        else { await sendAsStaff(text, false, c, null, null, brain?.action ?? null); sent = text; sentKind = "下書き"; }
+      }
+      // 2つ目の AIX（実送信で過半数の組だけ: 物件ピックアップした → 物件オススメ 75%。オススメは今送った1件目を推す）
+      let lastAction: string | null = sent && sentKind?.startsWith("AIX ") && (plan.kind === "aix" || plan.kind === "aix_material") ? plan.action : null;
+      let lastText = sent, lastMaterial = material;
+      if (lastAction && !noSend && staffTurn?.secondAix) {
+        const second = staffTurn.secondAix;
+        const m2 = secondAixMaterial(material, second);
+        const pick2 = m2 ? { ok: true as const, material: m2 } : pickSimMaterial(second, null, await loadMaterialPool(c, await recentMessages()));
+        if (pick2.ok) {
+          const pk2 = pickFor(second, null);
+          const r2 = await sendWithMaterial(second, null, pick2.material, c, await recentMessages(), brain?.action ?? null, false, { aixBody: pk2.aix.body, log: pk2.log, skipMark: !!m2 });
+          if (r2.text) { secondAixText = r2.text; images += r2.images; lastAction = second; lastText = r2.text; lastMaterial = pick2.material; lastPickerLog = pk2.log; planLabel += ` → 続けて ${r2.label}`; }
+        } else planLabel += ` → 続けて AIX【${second}】は材料が無い（${pick2.reason}）`;
+      }
+      // AIX の後の一言（送信後のバナーのテンプレ → 画面と同じ AI 最適化）。過半数が添える型だけ
+      if (lastAction && lastText && !noSend && staffTurn?.followup) {
+        const allow = followupAllowed(lastAction, (plan.kind === "aix" || plan.kind === "aix_material") && lastAction === plan.action ? (picker?.value ?? null) : null);
+        if (!allow.ok) followup = { templateId: null, label: null, how: null, skipped: allow.reason };
+        else {
+          const f = await makeFollowup(sb, BASE, { action: lastAction, aixText: lastText, conversationId: CONV, conv: c, msgs: await recentMessages(), propertyLabel: followupPropertyLabel(lastMaterial), pickerMode: pickerModeOf(lastPickerLog) });
+          const { text: fuText, ...rest } = f;
+          followup = rest;
+          if (fuText) { await sendAsStaff(fuText, false, c, null, null, brain?.action ?? null); followupText = fuText; }
+        }
       }
     } catch (e) {
       planLabel += ` → 失敗: ${e instanceof Error ? e.message : e}`; stop = true;
@@ -554,7 +685,11 @@ async function main() {
     // 影: AIX を送った番は「AIX の後の一言」（お客様役は一言を送らない＝followupSent=false）
     const shadowFindings: ShadowFinding[] = [...(shadow?.findings ?? [])];
     if (shadow && sent && sentKind?.startsWith("AIX ") && plan.kind !== "draft" && plan.kind !== "wait") {
-      shadowFindings.push(...judgeShadowTurn({ chosen: "aix", aix: { action: plan.action, checkPattern: plan.kind === "aix_needs_material" ? null : plan.checkPattern, text: sent }, draftText: null, followupSent: false }));
+      shadowFindings.push(...judgeShadowTurn({ chosen: "aix", aix: { action: plan.action, checkPattern: plan.kind === "aix_needs_material" ? null : plan.checkPattern, text: sent }, draftText: null, followupSent: !!followupText }));
+    }
+    if (replyFirstText && (plan.kind === "aix" || plan.kind === "aix_material")) {
+      shadowFindings.push(...judgeShadowTurn({ chosen: "aix", aix: { action: plan.action, checkPattern: plan.checkPattern, text: null }, draftText: replyFirstText, focusSentByUs })
+        .map((f) => ({ ...f, detail: `先に送った返信: ${f.detail}` })));
     }
     if (sent) await sleep(SETTLE_MS); // 送った後の記録（送った事実・ブレインの再分析）が落ち着くのを待つ
     const st = await stateLine();
@@ -566,13 +701,23 @@ async function main() {
       materialMustShow: material && sent ? mustShowOfMaterial(material) : undefined,
     });
     for (const f of shadowFindings) findings.push({ kind: f.kind, detail: f.detail });
+    for (const [label, t] of [["先の返信", replyFirstText], ["2つ目の AIX", secondAixText], ["一言", followupText]] as const) {
+      if (!t) continue;
+      for (const f of auditSimTurn({ sentText: t, historyBefore, groundingExtra: [...changes.props, ...(material ? groundingOfMaterial(material) : []), ...(sent ? [sent] : []), ...(secondAixText ? [secondAixText] : [])] })) {
+        findings.push({ kind: f.kind, detail: `（${label}）${f.detail}` });
+      }
+    }
     const row: Row = {
       round: state.round, step: stepLabel, at: jst(customerAt), customer: customerText, customerSource, goalReached, brain, plan: planLabel,
       draft, sent, sentKind, headline: st.headline, conflicts: st.conflicts, changes, usd: cost.usd, simUsd, waitedSec: Math.round(waitedMs / 1000), findings, note,
       material: materialLabel, images, skippedAfterSend,
       shadow: shadow ? { chosen: shadow.chosen, draft: shadow.draft, draftSkipped: shadow.draftSkipped, draftError: shadow.draftError, candidates: shadow.candidates, coverLetter: shadowCover } : null,
       shadowFindings,
+      aixView: { shown: aixView.shown, channel: aixView.channel, source: aixView.source },
+      pressed: staffTurn ? { aix: staffTurn.pressAix, second: staffTurn.secondAix, replyFirst: staffTurn.replyFirst, followup: staffTurn.followup, reasons: staffTurn.reasons } : null,
+      picker, replyFirstText, secondAixText, followupText, followup, viewMismatches,
     };
+    row.shape = simRowShape(row);
     rows.push(row);
     appendFileSync(logFile, JSON.stringify({ ...row, costByModel: cost.byModel }) + "\n");
     printRow(row);
@@ -589,6 +734,13 @@ async function main() {
     console.log(`\n══ 要約（${rows.length}往復・${state.finished ? "筋書きの終わり" : `段 ${state.cursor.stepIndex + 1}/${scenario.steps.length} で停止`}）`);
     console.log(`  送った: ${rows.filter((r) => r.sent).length}（AIX ${rows.filter((r) => r.sentKind?.startsWith("AIX")).length}・下書き ${rows.filter((r) => r.sentKind === "下書き").length}）`);
     console.log(`  検査: ${sum.map((s) => `${s.label} ${s.count}`).join("／")}`);
+    console.log(`  画面の AIX: ${summarizeViewMismatch(rows).map((x) => `${x.label} ${x.count}`).join("／")}`);
+    {
+      const cnt = new Map<StaffTurnShape, number>();
+      for (const r of rows) cnt.set(r.shape ?? "none", (cnt.get(r.shape ?? "none") ?? 0) + 1);
+      const keys = Object.keys(REAL_SHAPE_RATE) as Array<keyof typeof REAL_SHAPE_RATE>;
+      console.log(`  送り方: ${keys.map((k) => `${STAFF_TURN_SHAPE_JA[k]} ${cnt.get(k) ?? 0}（実送信 ${Math.round(REAL_SHAPE_RATE[k] * 100)}%）`).join("・")}${cnt.get("none") ? `・送らない ${cnt.get("none")}` : ""}`);
+    }
     if (SHADOW) console.log(`  影の道: ${summarizeShadow(rows).map((s) => `${s.label} ${s.count}`).join("／")}（影の下書き: ${SHADOW_DRAFT_OK ? "作る" : "作らない＝generate-reply に書かない呼び方がまだ無い"}・入口 ${SHADOW_BASE}）`);
     console.log(`  費用: 合計 $${total.toFixed(4)}（1往復あたり $${(total / rows.length).toFixed(4)}・うちお客様役の DeepSeek $${simTotal.toFixed(5)}）`);
     console.log(`  記録: ${logFile}`);

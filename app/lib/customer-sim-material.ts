@@ -38,7 +38,7 @@ export type SimPickupSource = {
   id: number;
   propertyName: string;
   roomNo: string | null;
-  /** お客様に送れる画像（trim → page の順） */
+  /** お客様に送れる画像（元の資料の1ページ目そのまま＝trim_image_url だけ・app/lib/pickup-send-image.ts pickSendImageUrl。page_image_url は送らない） */
   imageUrl: string | null;
   pdfUrl: string | null;
   summaryText: string | null;
@@ -156,7 +156,7 @@ export function pickPickups(pool: SimMaterialPool, max = 3): SimMaterialPick {
     !!p.imageUrl && !p.sentAt && p.status !== "sent" && p.status !== "excluded"
     && !sentNames.some((n) => sameBuilding(n, p.propertyName)));
   if (pool.pickups.length === 0) return { ok: false, reason: "保存済みのピックアップが無い" };
-  if (fresh.length === 0) return { ok: false, reason: "送っていない・画像のあるピックアップが残っていない" };
+  if (fresh.length === 0) return { ok: false, reason: "送っていない・送れる画像（元の資料の1ページ目＝trim_image_url）のあるピックアップが残っていない" };
   return { ok: true, material: { kind: "pickups", items: fresh.slice(0, Math.max(1, max)) } };
 }
 

@@ -250,6 +250,10 @@ import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-r
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 2026-09-27 竹内「AIXのあとのひとこと」: テンプレ最適化（🟣 AIX モード）の材料（お客様の枠・ピッカー・スタッフの実送信の手本）
+import { resolveTemplateOptimizeMessage, pickerModeNote, applyPickerToTemplate, extractAixPropertyName, aixPropertyNameNote, findLeakedSpans, aixSourceSurvivesCut, fixTemplateClosing } from "@/app/lib/template-optimize-context";
+import { fetchStaffTemplateExamples } from "@/app/lib/template-optimize-examples-server";
+import { replaceWaitedOpening } from "@/app/lib/waited-scope";
 import { SHADOW_NO_WRITE_FIELD } from "@/app/lib/customer-sim-shadow";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
@@ -290,14 +294,18 @@ function createAnalysisModel() {
 // - thinking は明示的に無効化する（有効だとストリーミングchunkのcontentがブロック配列になり、
 //   既存の「typeof chunk.content === "string"」蓄積ロジックがテキストを取りこぼすため）
 // - テンプレは長文（物件ピックアップ等）があるため maxTokens は通常生成より広め
-function createTemplateOptimizeModel() {
+// 2026-09-27 竹内「AIXのあとのひとこと」: 実測（llm_usage_logs の max_tokens=4096）で、この呼び出しは 9/19 から本番でも
+//   DeepSeek（deepseek-v4-pro・action=reply_generate）に回っていた（system の先頭が返信生成と同じ「ハードゲート」＝同じ名札になる）。
+//   なのに会話 ID・時刻の線・申込以降の印のヘッダを付けておらず、名前の読み替え（replyMasker）も「テンプレ最適化は除く」で外れていた。
+//   → 返信生成と同じ印（defaultHeaders）を付け、読み替えも同じ条件で掛ける（下の replyMasker）。Claude に行く時は1バイトも変わらない
+function createTemplateOptimizeModel(defaultHeaders?: Record<string, string>) {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 4096,
     thinking: { type: "disabled" },
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     maxRetries: 2, // 2026-09-14: LangChain の既定（再試行6回）を絞る
-    clientOptions: { timeout: 60_000 },
+    clientOptions: { timeout: 60_000, ...(defaultHeaders ? { defaultHeaders } : {}) },
     betas: ["prompt-caching-2024-07-31"],
   });
 }
@@ -1367,7 +1375,10 @@ ${aixDone.answeredByAix
 
   // ⭐実例がある場合: 文体参考として使うが、ルール（禁止ワード・挨拶等）は常に最優先
   // A-10: 実例ゼロ時は「実例外パターン禁止」（ルール8）が充足不能になるため明示的に解除し、PHASE_GUIDE の例文を型として使わせる
-  const examplesInstruction = examples
+  // 2026-09-27 竹内「AIXのあとのひとこと」: 🟣 AIX テンプレ最適化は返信の手本を取らない（手本の形は【スタッフが実際に送った文】が受け持つ）。
+  //   空の時に入る「【⭐実例なし】PHASE_GUIDE の例文を型に」は通常の返信向けで、テンプレの続きの1通を「お客様への返信」に寄せていた（検証の指摘・うえっち事例）
+  const isAixTemplateNote = templateNote.includes("【🟣✨ AIXテンプレート最適化モード");
+  const examplesInstruction = isAixTemplateNote && !examples ? "" : examples
     ? "\n\n【⭐実例の使い方】上記実例は文体・テンポ・絵文字・感嘆符の参考。言い回しの雰囲気を再現すること。ただし実例に「今すぐ」「すぐに」「即入居可能」「お世話になっております（初回時）」等の古いパターンが含まれていても、現行の禁止ルール・挨拶ルールを必ず優先すること。"
     : "\n\n【⭐実例なし】今回は参照できる実例がありません。「⭐実例にない対応パターンは作らない」ルールは適用しない。PHASE_GUIDE の該当パターン例文と場面通知の構成のみを型として使い、業務内容は履歴の事実だけで組み立てること。";
 
@@ -1838,7 +1849,7 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 
 ${examples}${examplesInstruction}
 
-↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
+↑${isAixTemplateNote ? "これはお客様への返信ではなく、直前に送った AIX の続きの1通。末尾の【🟣✨ AIXテンプレート最適化モード】に従って、テンプレートを書き直した本文を1つ生成してください。" : isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}${openerNote}${applicationStageNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
@@ -2945,6 +2956,12 @@ async function handleGenerateReply(req: NextRequest) {
   let vacatingDate: VacatingDate = null;
   let staffMessagedToday = false;
   let aixSourceMessage = ""; // AIXカテゴリ最適化: AIXが送信したテキストをベースに改善（設定時はAIX最適化モード）
+  // 2026-09-27 竹内「AIXのあとのひとこと」: 直前の AIX のピッカー（新着1件／新規・継続ピックアップ等）と、選んだテンプレの ID（スタッフの実送信の手本を引く）
+  let aixPickerMode: string | null = null;
+  let templateId: string | null = null;
+  let templateReplayBefore: string | null = null;
+  // 再生（会話 ID を渡さない＝書き込み0）の時に、その会話のスタッフの送信を手本から除くための ID（手元の開発サーバだけ・何も書かない）
+  let templateReplayExcludeConv: string | null = null;
   // S-4: 呼び出し元が DB から算出した「スタッフのテキスト返信が1件でもあるか」（履歴窓20件外の初回判定ズレ防止）。未渡し=undefined
   let hasStaffRepliedFromBody: boolean | undefined;
   // 2026-09-09 Fable5: 通単位の配列（page.tsx / bg-async / bg が MSG_SEP 結合と併せて送る）。未渡しなら MSG_SEP で分割
@@ -2993,6 +3010,8 @@ async function handleGenerateReply(req: NextRequest) {
       vacatingDate?: { month: number; day: number } | null;
       staffMessagedToday?: boolean;
       aixSourceMessage?: string;    // AIXカテゴリ最適化: AIXが送信したテキストを渡す（設定時は会話全体ではなくこのテキストを改善）
+      aixPickerMode?: string | null; // 直前の AIX のピッカー（新着1件 等）
+      templateId?: string | null;    // 選んだテンプレの ID（同じテンプレのスタッフの実送信を手本に引く）
       // S-4: messages count where sender=staff and text not media-only（呼び出し元が DB で算出。初回判定の履歴窓外落ち防止）
       hasStaffReplied?: boolean;
     };
@@ -3034,6 +3053,15 @@ async function handleGenerateReply(req: NextRequest) {
     vacatingDate = body.vacatingDate ?? null;
     staffMessagedToday = body.staffMessagedToday === true;
     aixSourceMessage = body.aixSourceMessage || "";
+    aixPickerMode = typeof body.aixPickerMode === "string" && body.aixPickerMode.trim() ? body.aixPickerMode.trim().slice(0, 40) : null;
+    templateId = typeof body.templateId === "string" && /^[0-9a-f-]{36}$/i.test(body.templateId) ? body.templateId : null;
+    // 過去の実例で作り直す時（scripts/audit-template-optimize-replay.ts・手元の開発サーバだけ）: 手本をこの時刻より前の送信に限る。本番では読まない
+    if (process.env.NODE_ENV !== "production") {
+      const rb = (body as { _replayBefore?: unknown })._replayBefore;
+      templateReplayBefore = typeof rb === "string" && Number.isFinite(Date.parse(rb)) ? rb : null;
+      const rx = (body as { _replayExcludeConversationId?: unknown })._replayExcludeConversationId;
+      templateReplayExcludeConv = typeof rx === "string" && /^[0-9a-f-]{36}$/i.test(rx) ? rx : null;
+    }
     hasStaffRepliedFromBody = typeof body.hasStaffReplied === "boolean" ? body.hasStaffReplied : undefined;
     externalBrainGate = body.brainMetaDirect
       ? {
@@ -3077,10 +3105,10 @@ async function handleGenerateReply(req: NextRequest) {
   // お客様の新着メッセージが無いケースが正当。履歴の最後のお客様発言、無ければ合成文脈で代替する
   if (!message) {
     if (isTemplateOptimize) {
-      const lastCustomerText = [...recentMessages].reverse().find(
-        (m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
-      )?.text;
-      message = lastCustomerText || "（お客様の新着メッセージなし・テンプレート送信の文脈）";
+      // 2026-09-27 竹内「AIXのあとのひとこと」: AIX の後の一言（aixSourceMessage あり）で、最後のお客様の発言の後にこちらが送っていたら
+      //   「新着なし・AIX の続きの1通」を入れる（旧: 既に AIX で応えた古い発言を入れ、「かしこまりました／とんでもございません」から書き出していた。
+      //   スタッフの実送信で返事の言い回しから書き出したのは 2/102）。判定は app/lib/template-optimize-context.ts
+      message = resolveTemplateOptimizeMessage(recentMessages, { afterAix: !!aixSourceMessage }).message;
     } else {
       return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
     }
@@ -3122,6 +3150,10 @@ async function handleGenerateReply(req: NextRequest) {
     templateTalkedToday = staffTalkedToday(recentMessages) || await staffTalkedTodayFromDb(conversationId);
     preprocessedTemplate = applyVacatingDateToTemplate(_sanitizeSurrogates(templateText), vacatingDate);
     preprocessedTemplate = applyGreetingSwap(preprocessedTemplate, templateTalkedToday);
+    // 2026-09-27 竹内「AIXのあとのひとこと」: 新着1件の時だけ、テンプレの比べる言い方を骨格から外す（注記だけでは骨格厳守に負けた・実送信の過半数は物件名から）
+    if (aixSourceMessage) preprocessedTemplate = applyPickerToTemplate(preprocessedTemplate, aixPickerMode);
+    // 2026-09-27 検証の指摘: テンプレ原文の崩れた締め（お気に召されたお部屋ご都合）を、スタッフの多数派の形にして見せる（入口だけ・出口は書き換えない）
+    if (aixSourceMessage) preprocessedTemplate = fixTemplateClosing(preprocessedTemplate);
   }
 
   // 初回例外（first_reply exemption）: 真の初回（スタッフの非AIXテキスト返信ゼロ）は
@@ -3249,7 +3281,9 @@ async function handleGenerateReply(req: NextRequest) {
     customerSummary = "";
     bodySummaryJson = undefined;
     pendingScheduledMessages = [];
-    aixSourceMessage = "";
+    // 2026-09-27: AIX の後の一言（🟣）の材料は、線より後に残った履歴に同じ文の送信がある時だけ残す（無ければ今まで通り渡さない）。
+    //   旧は常に空にしていた → 線のある会話（審査落ちで戻した会話）では 🟣 が 🟠 に落ち、一言がお客様の最後の発言への返事になった（YUMA 2/2回）
+    if (!aixSourceSurvivesCut(aixSourceMessage, recentMessages)) aixSourceMessage = "";
     if (externalBrainGate) externalBrainGate = cutBrainGate(externalBrainGate, deepseekCutoff);
     console.log(JSON.stringify({ tag: "deepseek-cutoff:cut", conversationId, line: deepseekCutoff, messages: { before, after: recentMessages.length } }));
     // 2026-09-27 竹内「申込中の部分はクロードに切り替えて要約して（…切り替えた時に連動してクロードが申込期間の部分を要約して DeepSeek に渡す）」:
@@ -5070,6 +5104,12 @@ async function handleGenerateReply(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
+    // 2026-09-27 竹内「AIXのあとのひとこと」: 🟣 AIX モードは学習ルール（adaptation_improvement_rules）の代わりに、同じテンプレのスタッフの実送信を手本にする
+    const staffExamplesPromise = (isTemplateOptimize && aixSourceMessage)
+      ? fetchStaffTemplateExamples(supabase, {
+          templateId, templateLabel, templateCategory, pickerMode: aixPickerMode, conversationId: conversationId ?? templateReplayExcludeConv, before: templateReplayBefore,
+        })
+      : Promise.resolve(null);
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
       fetchKnowledge(searchState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText,
         // 2026-09-13: 新しい判断（fresh かつ分析の省略でない）の時だけ、推奨 AIX・質問・話題・返信の方向で並べ替える
@@ -5082,6 +5122,10 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタに**行動台帳の事実（場面）**と**内覧の鮮度**を渡す
       //   「内覧挨拶は当日にAIXからおこなうなら分かるが、持ち越したことで変な文になっていた」
       //   → 直近の内覧の動きからの経過日数を出して、14日より前なら内覧のお礼の手本を見せない
+      // 2026-09-27 竹内「AIXのあとのひとこと」: 🟣 AIX モード（テンプレ最適化＋aixSourceMessage）では返信の手本（他のお客様への返信 RAG）を見せない。
+      //   再生（DeepSeek）で、手本の「アーバネックス本町Ⅱ505号室」の号室がタクヤさんの見積書の一言に混ざった（6回中2回「サザンネスト住ノ江駅前505号室」）。
+      //   一言の形の手本は staffExamplesPromise（同じテンプレのスタッフの実送信・他のお客様の中身は伏せ済み）が受け持つ。手本は動的ブロックなのでキャッシュは変わらない
+      (isTemplateOptimize && aixSourceMessage) ? Promise.resolve("") :
       fetchExamples(searchState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext, fetchSpec, brainMeta, lastStaffMsgForSearch ?? null, brainFreshForMessage && !isCachedMeta,
         {
           viewingInvited: ledger.facts.viewingInvited,
@@ -5113,7 +5157,10 @@ async function handleGenerateReply(req: NextRequest) {
         : Promise.resolve(""),
       // テンプレート最適化モードのみ: 旧adaptルートのDB学習ルール2種を追加取得
       isTemplateOptimize ? fetchTemplateAdaptRules() : Promise.resolve(""),
-      isTemplateOptimize && templateCategory
+      // 2026-09-27: 🟣 AIX モード（aixSourceMessage あり）では入れない。上位5件に食い違う物（「ご査収で締める」と「積極的な申込を提示」）・
+      //   9/27 の禁止と逆の物（見積書「冒頭は〇〇さんお待たせ致しました」）が「必ず守ること」で入り、example_count はバッチの修正件数の水増しだった
+      //   （analyze-template-modifications 252-281）。代わりに staffExamplesPromise（同じテンプレのスタッフの実送信）を見せる。🟠 は従来どおり
+      isTemplateOptimize && templateCategory && !aixSourceMessage
         ? fetchCategoryAdaptationRules(templateCategory)
         : Promise.resolve(""),
       // 過去の会話セーブポイント + property_customers 条件 — final-check の正解データ兼プロンプト文脈
@@ -5213,6 +5260,8 @@ async function handleGenerateReply(req: NextRequest) {
     const templateGreetingRule = templateTalkedToday
       ? "◆ 挨拶: 今日はこちらから既にメッセージを送っている続きの1通なので、冒頭の挨拶（お世話になっております／夜分遅くに失礼致します）は書かない。【AIX物件情報】や会話履歴の冒頭の挨拶も写さない（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。結び文は削除しない）"
       : "◆ 挨拶: テンプレートに冒頭挨拶が含まれている場合はそのまま維持する（【⏰ 挨拶ルール】はテンプレート最適化モードでは無視。「お世話になっております」等の挨拶・結び文を削除しない）";
+    // 2026-09-27 竹内「AIXのあとのひとこと」: 🟣 の手本（同じテンプレのスタッフの実送信・他のお客様の中身は伏せ済み）
+    const staffExamples = await staffExamplesPromise;
     const templateNote = isTemplateOptimize
       ? (() => {
           const pendingSection = pendingScheduledMessages
@@ -5226,25 +5275,29 @@ async function handleGenerateReply(req: NextRequest) {
           // AIXカテゴリのテンプレート最適化: テンプレートの骨格に従い、AIX物件情報を事実参照として当てはめる
           if (aixSourceMessage) {
             return `\n\n【🟣✨ AIXテンプレート最適化モード（最優先 — 上記すべてのフェーズ別指示・長さ制限を上書き）】
-テンプレートの骨格・長さ・構成を厳守しながら、AIX物件情報から事実を抽出して当てはめてください。
+テンプレートの骨格・構成を厳守しながら、AIX物件情報から事実を抽出して当てはめてください。
 「AIXで生成」ボタンと同じ出力は絶対に禁止。テンプレートの構成が正解です。
 
-◆ テンプレート骨格厳守: 【テンプレート原文】の段落数・文体・長さ・トーンを厳密に守ること。これが出力の唯一の骨格
-◆ 長さ厳守: テンプレートが短い（5行以内）なら出力も同等の短さにする。AIX文の長さに合わせてはいけない
-◆ 事実抽出のみ: 【AIX物件情報】から物件名・家賃・間取り・オススメポイント・特徴などの事実情報のみを抽出し、テンプレートの該当箇所に自然に当てはめる
+◆ テンプレート骨格厳守: 【テンプレート原文】の段落数・文体・トーンを厳密に守ること。これが出力の唯一の骨格
+◆ 長さ: 段落の数はテンプレートに合わせる（AIX文の段落・箇条書きの構成は持ち込まない）
+◆ 事実抽出のみ: 【AIX物件情報】から物件名・家賃・間取り・オススメポイント・特徴などの事実情報のみを抽出し、テンプレートの該当箇所に自然に当てはめる。テンプレートの物件の良さを書く所（「築年数も新しく費用を抑える事ができ」等）には、【AIX物件情報】にある事実（築年月・退去予定日・立地・駅徒歩・敷金礼金・金額 等）を書かれた値のまま入れ、削って短くしない（【AIX物件情報】に無い事実は足さない）
 ◆ 過去AIX参照禁止: 会話履歴に他の物件を紹介した過去のAIX送信が含まれていても一切参照しない。物件情報は必ず【AIX物件情報】のみから取る（件数・物件名・金額等を過去のAIX送信と混ぜることを絶対禁止）
 ◆ AIX構成の持ち込み禁止: AIX文の詳細な段落構成（オススメポイント箇条書き・設備リスト・長い説明文等）はテンプレートにない場合は出力しない
-◆ プレースホルダ置換: 「アカウント名」→「${customerName || "〇〇"}さん」。物件名・家賃・間取り等はAIX物件情報から読み取った実際の値に置換する。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
+◆ プレースホルダ置換: 「アカウント名」→「${customerName || "〇〇"}さん」。テンプレート原文に今回のお客様以外の名前（〇〇さん）が書かれていたら、それも「${customerName || "〇〇"}さん」にする。物件名・家賃・間取り等はAIX物件情報から読み取った実際の値に置換する。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
 ${templateGreetingRule}
-◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
-◆ 申込フォーム誘導フレーズの強制置換: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋押さえさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
+◆ お客様への返事ではない: これは直前にこちらが【AIX物件情報】をお客様へ送った、その続きの1通。「かしこまりました」「承知いたしました」「とんでもございません」「はい」「ご連絡ありがとうございます」等の返事から書き出さない。会話履歴の古いご希望を持ち出して、テンプレートに無い約束（ピックアップします・確認します等）を足さない
+◆ 物件の性質の語: テンプレート原文の「築年数も新しく」「新築」「築浅」等は、【AIX物件情報】に築年・新築の記載がある時だけ使う。無ければ【AIX物件情報】にある別の事実（敷金礼金なし・設備 等）に置き換える
+◆ テンプレート原文の金額: テンプレート原文に書かれた具体的な金額（例「1日ご入居の場合98,500円」）は別のお客様の時の値。【AIX物件情報】に同じ意味の金額（初期費用なら初期費用）がある時だけその値にし、無ければ「〇〇円」にする（家賃を初期費用に流用しない）
+◆ 申込の案内: テンプレート原文の申込・フォーマット・ご本人確認書類の文はそのまま使う（別の申込・内覧の誘い文を新しく作ったり足したりしない）
+◆ 締めの文: 下に【スタッフが実際に送った文】がある時は、締めはその手本の締めの言い回しに合わせる（テンプレート原文の締めの言い回しが崩れていても写さない）。手本が無い時はテンプレート原文の締めを使う
+${pickerModeNote(aixPickerMode) ? `${pickerModeNote(aixPickerMode)}\n` : ""}${aixPropertyNameNote(extractAixPropertyName(aixSourceMessage)) ? `${aixPropertyNameNote(extractAixPropertyName(aixSourceMessage))}\n` : ""}◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
 ◆ 捏造禁止ゲート: 内覧日時・見積金額内訳・空室確認結果・待ち合わせ場所の捏造禁止（AIX物件情報にない情報を補完しない）
 ${noEmoji ? "◆ 絵文字は一切使用しない（テンプレートに絵文字があっても全て削除）\n" : ""}${soloEntry ? "◆ 1人入居モード（厳守）: 同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族 を含む行はすべて出力しない（完全に削除）\n" : ""}${templateLabel ? `【テンプレート名】${templateLabel}\n` : ""}${templateCategory ? `【テンプレートカテゴリ】${templateCategory}\n` : ""}【テンプレート原文（出力の骨格・長さ・構成の基準 — これに従うこと）】
 ${preprocessedTemplate}
 
-【AIX物件情報（事実情報の参照元 — 物件名・家賃・間取り・特徴の事実のみ使う。構成は参照しない）】
+【AIX物件情報（直前にお客様へ送信済み・事実情報の参照元 — 物件名・家賃・間取り・特徴の事実のみ使う。構成は参照しない）】
 ${safeSlice(aixSourceMessage, 1500)}
-${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ】\n${pendingSection}\n` : ""}${learnedRulesSection ? `\n${learnedRulesSection}\n` : ""}
+${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ】\n${pendingSection}\n` : ""}${templateAdaptRules ? `\n${templateAdaptRules}\n` : ""}${staffExamples?.note ? `\n${staffExamples.note}\n` : ""}
 出力は書き直したテンプレート本文のみ。説明・前置き・補足コメントは一切書かない。`;
           }
 
@@ -5270,7 +5323,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 連結するとモードの有無でキャッシュが分岐するため、dynamicBlock 末尾（templateNote スロット）に注入する
     const templateSystemNote = isTemplateOptimize
       ? (aixSourceMessage
-          ? "\n\n【AIXテンプレート最適化モード】テンプレートの骨格に従い、AIX物件情報から物件の事実を当てはめる。AIX物件オススメと同じ出力形式にしてはいけない。テンプレートが短ければ出力も短くする。詳細ルールはプロンプト末尾の【🟣✨ AIXテンプレート最適化モード】ブロックに従うこと。"
+          ? "\n\n【AIXテンプレート最適化モード】テンプレートの骨格に従い、AIX物件情報から物件の事実を当てはめる。AIX物件オススメと同じ出力形式にしてはいけない。段落の数はテンプレートに合わせる（物件の事実は削らない）。詳細ルールはプロンプト末尾の【🟣✨ AIXテンプレート最適化モード】ブロックに従うこと。"
           : "\n\n【テンプレート最適化モード】今回はテンプレートをベースに、この顧客の状況に最適化した文章を作成してください。詳細ルールはプロンプト末尾の【🟠✨ テンプレート最適化モード】ブロックに従うこと。")
       : "";
 
@@ -5485,7 +5538,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     //   （常にマスクすると、今まで積み上げた品質が全経路で一度に変わってしまう）。
     //   **キャッシュの印が付いているブロックには触らない**：個人情報はそこに無いうえ、
     //   前置きが変わるとプロンプトキャッシュが効かなくなる（DeepSeek は前置き一致で 1/30 の値段）。
-    const replyMasker = (!isTemplateOptimize && willRouteAlt("reply_generate", {
+    // 2026-09-27: テンプレ最適化も DeepSeek に回っていた（createTemplateOptimizeModel の注記）ので、読み替えを同じ条件で掛ける
+    const replyMasker = (willRouteAlt("reply_generate", {
       postApply: postApplyConversation || deepseekBlocked, autoSend: autoSendConversation,
     }))
       ? createMasker({
@@ -5501,7 +5555,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
 
     // テンプレート最適化モードは maxTokens 広めの専用モデル（通常生成は createGenerationModel）
     const genStream = (isTemplateOptimize
-      ? createTemplateOptimizeModel()
+      ? createTemplateOptimizeModel(autoSendHeaders)
       : createGenerationModel({ defaultHeaders: autoSendHeaders })
     ).stream(genMessages);
 
@@ -5806,6 +5860,29 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     console.log(JSON.stringify({ tag: "template-optimize:greeting-removed", conversationId }));
                     outText = g.text;
                   }
+                }
+                // 2026-09-27 竹内「AIX でも『お待たせ致しました』を使わない」: テンプレ最適化には出口が無かった（生成16件・送った文に7件残った・9/27 より前）。
+                //   AIX の出口と同じ replaceWaitedOpening（挨拶行のその語だけ差し替え・名前の行は残す・誤削除0は AIX 実送信712通×2条件で確認済み）。
+                //   今日こちらが会話文を送った後は挨拶を足さない（上の templateTalkedToday と同じ値）
+                //   ※ 🟣（aixSourceMessage あり）だけ。🟠（通常テンプレ）の実送信では誤削除0を確かめていないので今まで通り（検証の指摘・9/27）
+                if (aixSourceMessage) {
+                  const w = replaceWaitedOpening(outText, templateTalkedToday ? "" : "お世話になっております！！");
+                  if (w.replaced) {
+                    console.log(JSON.stringify({ tag: "template-optimize:waited-replaced", conversationId, count: w.replaced }));
+                    outText = w.text;
+                  }
+                }
+                // 中国の字「收」（9/21 慶次「ご査收ください」がそのまま送られた）。日本語の返信で「査收」が正しい場面は無い＝誤置換0
+                if (aixSourceMessage && outText.includes("査收")) outText = outText.replace(/査收/g, "査収");
+                // 全体を「」で包んだ出力（8/22 Sky・8/27 A 等 4件）: 通常返信と同じ外し方。テンプレ原文が「で始まる時は触らない
+                if (aixSourceMessage && outText.startsWith("「") && outText.endsWith("」") && !preprocessedTemplate.trim().startsWith("「")) {
+                  outText = outText.slice(1, -1).trim();
+                }
+                // 手本（他のお客様への実送信）の伏せた物件名が出ていないか（記録だけ・書き換えない）。
+                //   設計知見「別の顧客の情報が混ざった」はまずこの『わざと他人の会話を載せている経路』を疑う
+                if (staffExamples?.masked.length) {
+                  const leaked = findLeakedSpans(outText, staffExamples.masked, [aixSourceMessage, preprocessedTemplate, history, pendingScheduledMessages.map((m) => m.text ?? "").join("\n")].join("\n"));
+                  if (leaked.length) console.warn(JSON.stringify({ tag: "template-optimize:example-leak", conversationId, leaked }));
                 }
                 // g-7: 金額ハルシネーション機械検証（テンプレ最適化はaixGates対象外のため専用ポストチェック）
                 // 【物件固有の金額・数値はAIが画像を見れないため生成禁止】— 出力中の「〜円」が
