@@ -13,6 +13,7 @@ import type { Judgment } from "./property-brain";
 import type { PickupEquipment } from "./pickup-equipment";
 import type { PickupTerms } from "./pickup-terms";
 import type { PickupLocation } from "./area-want";
+import { pickSendImageUrl } from "./pickup-send-image";
 
 export type PickupItemInput = {
   /** 番号付きの説明文（🌟 付きならそれ） */
@@ -202,7 +203,9 @@ export const PICKUP_DIRECT_SEND_GONE_MESSAGE = "お客様への送信は AIX【�
 
 /** AIX【物件ピックアップした】に渡す1件（GET /api/property-pickups?ids=）。画像の URL と見出しだけ。説明文（AD・🌟）・元付の資料は渡さない */
 export type PickupHandoffItem = { id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; image_url: string | null };
-export function toPickupHandoffItem(r: { id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }): PickupHandoffItem {
+export function toPickupHandoffItem(r: { id: number; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url?: string | null }): PickupHandoffItem {
   // 余分な列（summary_text・agent_image_url 等）が来ても拾わないよう、返す鍵を列挙する
-  return { id: r.id, rank: r.rank, property_name: r.property_name, room_no: r.room_no, conversation_id: r.conversation_id, image_url: r.trim_image_url ?? r.page_image_url };
+  // 2026-09-27 竹内「そのままの画像つかったら大丈夫」: お客様に送る画像は元の資料のページをそのまま描いた物だけ（pickSendImageUrl）。
+  //   page_image_url（サーバーが書体を差し替えて描いた画像）には落とさない（無い時は null＝売上サポが先に元の資料から画像にする）
+  return { id: r.id, rank: r.rank, property_name: r.property_name, room_no: r.room_no, conversation_id: r.conversation_id, image_url: pickSendImageUrl(r) };
 }

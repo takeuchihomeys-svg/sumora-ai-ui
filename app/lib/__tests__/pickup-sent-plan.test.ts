@@ -10,7 +10,7 @@ function t(name: string, ok: boolean, detail?: unknown) {
 
 const NOW = "2026-09-24T05:00:00.000Z";
 const P = (id: number, rank: number, name: string, room: string | null, img: string | null, ad: number | null = null): PickupForRecord =>
-  ({ id, rank, property_name: name, room_no: room, ad_yen: ad, trim_image_url: null, page_image_url: img });
+  ({ id, rank, property_name: name, room_no: room, ad_yen: ad, trim_image_url: img, page_image_url: null });
 const E = (o: Partial<ExistingSentRow> & { id: string }): ExistingSentRow =>
   ({ property_name: null, room_no: null, image_url: null, source: null, delivery: null, channel: null, pickup_id: null, sent_at: NOW, ad_yen: null, ...o });
 const base = { conversationId: "conv1", propertyCustomerId: "pc1", now: NOW };
@@ -158,6 +158,15 @@ console.log("── 2026-09-27 家賃・AD の月数を説明文から入れる�
     existing: [E({ id: "v2", property_name: "エステムコート難波センチュリオ", image_url: "sa.jpg", source: "vision", delivery: "customer", rent: 61000 })],
   });
   t("既に入っている家賃は上書きしない", !("rent" in (kept.updates[0]?.patch ?? {})), kept.updates);
+}
+
+// 2026-09-27 竹内「そのままの画像つかったら大丈夫」: 送る画像は元の資料のページ（trim_image_url）だけ。
+//   page_image_url（サーバーが書体を差し替えて描いた画像）しか無い行は「画像あり」に数えない（受け渡し toPickupHandoffItem と同じ）
+{
+  const pageOnly: PickupForRecord = { id: 901, rank: 1, property_name: "テスト", room_no: "101", ad_yen: null, trim_image_url: null, page_image_url: "noto.png" };
+  const withOrig: PickupForRecord = { id: 902, rank: 2, property_name: "テスト2", room_no: "102", ad_yen: null, trim_image_url: "orig.jpg", page_image_url: "noto2.png" };
+  const r = planPickupSentWrites({ ...base, pickups: [pageOnly, withOrig], deliveredImageUrls: ["sent2.jpg"], existing: [] });
+  t("page_image_url だけの行は画像ありに数えない（届いた1枚は元の資料の行に結ぶ）", r.skipped.length === 0 && r.inserts.find((x) => x.pickup_id === 902)?.image_url === "sent2.jpg" && r.inserts.find((x) => x.pickup_id === 901)?.image_url === null, r);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

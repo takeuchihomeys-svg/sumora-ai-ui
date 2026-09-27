@@ -1,13 +1,17 @@
-// POST /api/property-pickups/trim  { item_ids: number[] }
-// 選んだ物件の PDF 1ページ目（弊社に帯替えした面）を、お客様に実際に送っている形（下の会社の帯を落とす）にトリミングして
-// Blob に置き、property_pickups.trim_image_url に残す。送る時（/send）はこの画像を優先して使う。
+// POST /api/property-pickups/trim  { item_ids: number[] } または { images: [{ id, jpeg_base64 }] }
+// 選んだ物件の PDF 1ページ目（奇数ページ＝弊社帯の面）を**そのまま**画像にして Blob に置き、property_pickups.trim_image_url に残す。
+// お客様に送る画像（AIX【物件ピックアップ】【物件オススメ】・💾 画像保存）はこの画像だけ（pickSendImageUrl・pickup-send-image.ts）。
 // 2026-09-24 竹内「画像トリミングボタンを付ける。押すと選択している物件の PDF 1枚目がトリミングされて画像となって送られる」
+// 2026-09-27 竹内「物件はいま文字とか入れなおしてるけど、そのままの画像つかったら大丈夫」:
+//   切り取らない（ページ全体）。サーバーの予備は「資料の書体のまま描けた時だけ」（itandi＝書体の埋め込みあり）。
+//   リアプロの資料（MS ゴシックの埋め込みなし）はサーバーで描くと Noto Sans JP に全部の文字を差し替えるので作らない（画面＝スタッフのパソコンで描く）。
+//   旧は page_image_url（サーバーが差し替えて描いた画像）を元に切っていた道もあった → 消した
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { trimSheetImage } from "@/app/lib/pdf-trim";
-import { CUSTOMER_PAGE } from "@/app/lib/property-pickups";
+import { SEND_PAGE, serverRenderIsOriginal } from "@/app/lib/pickup-send-image";
 
 export const maxDuration = 60;
 const MAX_ITEMS = 10;
@@ -54,23 +58,19 @@ export async function POST(req: NextRequest) {
   const results = await Promise.all(rows.map(async (r) => {
     if (r.trim_image_url && !body.force) return { id: r.id, trim_image_url: r.trim_image_url, reused: true };
     try {
-      // 元は PDF（Blob）。無ければ1ページ目の画像から切る
-      let source: Buffer | null = null;
-      if (r.pdf_blob_url) {
-        const res = await fetch(r.pdf_blob_url, { signal: AbortSignal.timeout(15_000) });
-        if (res.ok) {
-          const b64 = Buffer.from(await res.arrayBuffer()).toString("base64");
-          const png = await renderPdfPageToPng(b64, { page: CUSTOMER_PAGE, scale: 2, maxPixels: 4_000_000 });
-          if (png) source = png.png;
-        }
+      // 元は PDF（Blob）だけ。page_image_url（書体を差し替えて描いた画像）からは作らない
+      if (!r.pdf_blob_url) return { id: r.id, trim_image_url: null, error: "元の資料（PDF）が無い" };
+      const res = await fetch(r.pdf_blob_url, { signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) return { id: r.id, trim_image_url: null, error: `資料を取れない（HTTP ${res.status}）` };
+      const b64 = Buffer.from(await res.arrayBuffer()).toString("base64");
+      const png = await renderPdfPageToPng(b64, { page: SEND_PAGE, scale: 2, maxPixels: 4_000_000 });
+      if (!png) return { id: r.id, trim_image_url: null, error: "資料を画像にできない" };
+      if (!serverRenderIsOriginal(png.textDraws)) {
+        return { id: r.id, trim_image_url: null, error: "資料の書体（MS ゴシック）がサーバーに無く、元の資料と同じ文字で画像にできません。パソコンで開いて押してください", font_missing: true };
       }
-      if (!source && r.page_image_url) {
-        const res = await fetch(r.page_image_url, { signal: AbortSignal.timeout(15_000) });
-        if (res.ok) source = Buffer.from(await res.arrayBuffer());
-      }
-      if (!source) return { id: r.id, trim_image_url: null, error: "資料の画像を作れない（PDF も画像も無い）" };
-      const trimmed = await trimSheetImage(source);
-      if (!trimmed) return { id: r.id, trim_image_url: null, error: "トリミングに失敗" };
+      // JPEG にするだけ（keepRatio 1＝切り取らない）
+      const trimmed = await trimSheetImage(png.png, { keepRatio: 1 });
+      if (!trimmed) return { id: r.id, trim_image_url: null, error: "画像にできない" };
       const blob = await put(`pickups/trim/${r.batch_id.replace(/\.pdf$/i, "")}_${r.id}_${stamp}.jpg`, trimmed.jpeg, { access: "public", contentType: "image/jpeg" });
       const { error: uErr } = await supabase.from("property_pickups").update({ trim_image_url: blob.url }).eq("id", r.id);
       if (uErr) console.warn("[property-pickups/trim] 保存できない:", uErr.message);

@@ -25,14 +25,18 @@ export function needsTrimBeforeAnalysis(r: PickupImageRow): boolean {
   return pickAnalysisImageUrl(r) == null;
 }
 
+import { pickSendImageUrl } from "./pickup-send-image";
+
 /**
  * 「💾 画像保存」で手元（スマホの写真）に保存する画像。お客様に送る1ページ目（弊社帯替え）だけ。
  * 2026-09-24 竹内「画像トリミングボタンを画像保存にして、押したら選択しているのが一括で携帯に保存される形にする」:
  *   トリミング（送る形）→ 文字層が取れた回の1ページ目（page_image_url）→ 無し（null＝先にトリミングしてから保存）。
  *   ⚠ 元付業者の資料（2ページ目・agent_image_url・AD の記載あり）は**絶対に選ばない**（引数の型にも入れない）
+ * 2026-09-27 竹内「そのままの画像つかったら大丈夫」: 保存した画像はお客様に送られるので、送る画像と同じ決まり（pickSendImageUrl）。
+ *   page_image_url（サーバーが書体を Noto Sans JP に差し替えて描いた画像）は選ばない → 無ければ null（＝先に元の資料から画像にする）
  */
 export function pickSaveImageUrl(r: { trim_image_url?: string | null; page_image_url?: string | null; pdf_has_text?: boolean | null }): string | null {
-  return pickAnalysisImageUrl({ trim_image_url: r.trim_image_url, page_image_url: r.page_image_url, pdf_has_text: r.pdf_has_text });
+  return pickSendImageUrl({ trim_image_url: r.trim_image_url });
 }
 
 /** 保存するファイル名（端末で使えない文字を外す）。「3_エスリード難波AGREA_405.jpg」 */

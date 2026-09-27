@@ -739,18 +739,22 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
     setBusy(`trim:${b.batch_id}`);
     setMsg("✂️ 物件資料を画像にしています…（1件 数秒）");
     try {
-      // 2026-09-24 竹内「元の物件資料をトリミングすれば良いだけ」: 元の資料をこのパソコンで描いて切る（いつも見ている資料と同じ見た目）。
+      // 2026-09-24 竹内「元の物件資料をトリミングすれば良いだけ」: 元の資料をこのパソコンで描く（いつも見ている資料と同じ見た目）。
       //   画面側で描けなかった物件だけ、サーバー側で描く予備に回す
-      const { trimPdfPageInBrowser, blobToBase64 } = await import("@/app/lib/pdf-trim-browser");
+      // 2026-09-27 竹内「そのままの画像つかったら大丈夫」: 切り取らず・書体を差し替えずに描く（renderOriginalPageInBrowser）。
+      //   端末に資料の書体が無い時（iPhone 等）はサーバーの予備に回し、サーバーも書体のまま描けない資料（リアプロ）は作らずに理由を出す
+      const { renderOriginalPageInBrowser, blobToBase64 } = await import("@/app/lib/pdf-trim-browser");
       const images: Array<{ id: number; jpeg_base64: string }> = [];
       const fallbackIds: number[] = [];
+      const reasons: string[] = [];
       for (const it of targets) {
         if (!it.pdf_blob_url) { fallbackIds.push(it.id); continue; }
         try {
-          const jpeg = await trimPdfPageInBrowser(it.pdf_blob_url);
+          const jpeg = await renderOriginalPageInBrowser(it.pdf_blob_url);
           images.push({ id: it.id, jpeg_base64: await blobToBase64(jpeg) });
         } catch (e) {
           console.warn("[pickup] 画面で描けない → サーバーに回す:", it.id, e);
+          if (e instanceof Error && e.name === "OriginalFontMissingError") reasons.push(e.message);
           fallbackIds.push(it.id);
         }
       }
@@ -764,7 +768,8 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
         if (res.status === 413) return { ok: false, error: "画像が大きすぎて送れませんでした（HTTP 413）" };
         return await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` })) as TrimJson;
       };
-      if (images.length > 0 && fallbackIds.length > 0) await post({ item_ids: fallbackIds, force: true });
+      // 2026-09-27: 予備の結果を読む（旧は読まずに捨てていた＝作れなかった物件が黙って AIX から落ちていた）
+      const fallbackJson = images.length > 0 && fallbackIds.length > 0 ? await readJson(await post({ item_ids: fallbackIds, force: true })) : null;
       let json: TrimJson;
       if (images.length > 0) {
         // 2026-09-27 YUMA の E2E: 10件の画像を1回で送ると本文が Vercel の上限（約4.5MB）を超えて 413 → AIX物件ピックアップに移れなかった
@@ -777,8 +782,15 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
       } else {
         json = await readJson(await post({ item_ids: fallbackIds, force: true }));   // 押すたびに作り直す
       }
-      if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "失敗");
-      setMsg(`✂️ ${json.trimmed}件の物件資料を画像にしました。下の画像は「💾 保存」で手元に落とせます。「AIX物件ピックアップ（1件なら物件オススメ）」で送れます`);
+      if (fallbackJson) json = { ok: json.ok || fallbackJson.ok, trimmed: (json.trimmed ?? 0) + (fallbackJson.trimmed ?? 0), items: [...(json.items ?? []), ...(fallbackJson.items ?? [])], error: json.error ?? fallbackJson.error };
+      const failedIds = new Set((json.items ?? []).filter((x) => x.error).map((x) => x.id));
+      const failedNames = targets.filter((it) => failedIds.has(it.id)).map((it) => it.property_name);
+      if (!json.ok || failedNames.length > 0) {
+        await load();
+        const why = reasons[0] ?? json.items?.find((x) => x.error)?.error ?? json.error ?? "失敗";
+        throw new Error(failedNames.length > 0 ? `${failedNames.length}件（${failedNames.slice(0, 3).join("・")}${failedNames.length > 3 ? " 等" : ""}）を元の資料の画像にできませんでした: ${why}` : why);
+      }
+      setMsg(`📄 ${json.trimmed}件の物件資料を元のまま画像にしました。下の画像は「💾 保存」で手元に落とせます。「AIX物件ピックアップ（1件なら物件オススメ）」で送れます`);
       await load();
       onChange?.();
       return true;
@@ -1124,7 +1136,7 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
             <a href={img} target="_blank" rel="noreferrer" className="shrink-0 relative" onClick={(e) => openImage(e, img, `${it.property_name}${it.room_no ? `_${it.room_no}` : ""}.jpg`)}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={img} alt="" loading="lazy" decoding="async" className="rounded-md object-cover" style={{ width: 88, height: 62, border: "1px solid #e0e0e0", background: "#fff" }} />
-              {it.trim_image_url && <span className="absolute -top-1 -left-1 text-[9px] font-bold px-1 rounded" style={{ background: "#6a1b9a", color: "#fff" }}>✂️ 送る形</span>}
+              {it.trim_image_url && <span className="absolute -top-1 -left-1 text-[9px] font-bold px-1 rounded" style={{ background: "#6a1b9a", color: "#fff" }}>📄 送る資料</span>}
             </a>
           )}
           <div className="flex-1 min-w-0">

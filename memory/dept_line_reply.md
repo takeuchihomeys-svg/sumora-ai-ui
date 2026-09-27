@@ -7519,3 +7519,12 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 決まりでは AIX の場面: 室内写真・初期費用について/を説明・保証会社・見積書・電話の場面の候補なのにブレインが下書き（情報・ブレインの見直し用）
 - **お客様役の過去の記録に当てた結果**: 9/27 の見積書送る（#264・first_contact_wait-0144）が本文だけで一言なし＝「AIX の後の一言が無い」。他の往復（物件確認した・ピックアップ・内覧へ・待ち合わせ）は4種とも0（影の下書きは当時作っていないので AIX の番の二重・別の道は未検査）
 - 設計知見2件（汎用/監査/お客様役・ブレイン診断/見積書/お客様役）
+
+## 2026-09-27 お客様に送る物件の画像は元の資料のページそのまま（竹内「物件はいま文字とか入れなおしてるけど、そのままの画像つかったら大丈夫」）
+- **調べた事実**（保存済みの資料 103件・Vercel Blob の写し・サイトには触れていない）: 1物件の資料は全部2ページ（奇数＝弊社帯〔蓮産業〕・偶数＝元付業者〔AD・手数料〕）。リアプロ 85件は書体（MS-Gothic）を**埋め込んでいない**、itandi 18件は全部埋め込み。
+  - 加工していた所: ①サーバーの page_image_url（property-pickups-server・merge-pdfs の後段）は ctx.font を全部 Noto Sans JP に置き換えて描く＝「文字を入れなおした」画像 ②/api/property-pickups/trim の予備（サーバー）も同じ描き方＋page_image_url から作る道 ③画面の描画（pdf-trim-browser）は MS ゴシックの無い端末（iPhone 等）でも別の書体で描いて通していた ④切り取り（cropRectForSheet）は 9/24 から 100%＝実害なし。見積書・物件出しのグループ送信（結合 PDF のリンク）は資料の画像を使っていない
+  - どこで使っていたか: AIX【物件ピックアップ】【物件オススメ】の受け渡し（GET ?ids＝trim ?? page）・💾画像保存（trim → 文字層のある page）・送った記録（pickup-sent-plan の画像の数え方）・お客様役（scripts/customer-sim.ts＝trim ?? page・別担当）。読み取り（画像で分析・sheet-read・DeepSeek の image_lines）は page/agent を読むだけ
+- **直し**: 送る画像は `pickSendImageUrl`（app/lib/pickup-send-image.ts・純関数）＝trim_image_url だけ（page・agent は選ばない）。受け渡し・画像保存・送った記録が同じ関数。画面の描画 `renderOriginalPageInBrowser`（切り取りなし・奇数ページ SEND_PAGE=1・fontExtraProperties で「端末の書体で描く」書体を取り、文字の幅で端末にあるか測る → 無ければ投げる）。サーバーの予備は描いた文字（fillText）0回＝埋め込みの資料（itandi）だけ作る。売上サポは予備の結果を読み、作れなかった物件名と理由を出して AIX に移らない（旧は読まずに捨て、物件が黙って AIX から落ちていた）。読み取りは変えていない
+- **監査** `npx tsx --env-file=.env.local scripts/audit-pickup-send-image.ts [--days=14] [--fix]`（このパソコンの Chrome で描いた物を元の資料の基準に・差 2.0 未満＝元の資料）: 14日 42行。送る画像 trim 33件＝元の資料 12・差し替え 21、届いた画像 31件＝元の資料 8・差し替え 23。**差し替えは全部 YUMA のテスト**（1684×1189 の画像・お客様役の 1548×1093 の荒い JPEG・page_image_url をそのまま）。本番のお客様への pickup 経由の送信は 0。送っていない行の差し替え 0（--fix の対象なし）
+- テスト `app/lib/__tests__/pickup-send-image.test.ts`（27）・既存 pickup-sent-plan（30）・property-pickups（44）・pickup-review-order（62）・pickup-image-analysis（23）の期待を新しい決まりに
+- 残り: お客様役（scripts/customer-sim.ts・customer-sim-material）が trim ?? page で page_image_url（差し替え）を送る＝別担当に伝える。スマホ（MS ゴシックなし）の売上サポではリアプロの資料を画像にできない（パソコンで押す）。

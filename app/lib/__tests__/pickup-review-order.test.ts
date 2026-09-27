@@ -187,7 +187,8 @@ console.log("■ 画像保存はお客様に送る1ページ目だけ（元付�
 {
   const agent = "https://x.public.blob.vercel-storage.com/pickups/a_p2.png";
   t("トリミングがあればそれ", pickSaveImageUrl({ trim_image_url: "T.jpg", page_image_url: "P.png", pdf_has_text: true }) === "T.jpg");
-  t("無ければ文字のある1ページ目", pickSaveImageUrl({ trim_image_url: null, page_image_url: "P.png", pdf_has_text: true }) === "P.png");
+  // 2026-09-27: 保存した画像はお客様に送られる → 書体を差し替えた page_image_url は選ばない（先に元の資料から画像にする）
+  t("無ければ null（文字のある1ページ目でも書体を差し替えた画像は選ばない）", pickSaveImageUrl({ trim_image_url: null, page_image_url: "P.png", pdf_has_text: true }) == null);
   t("文字の無い1ページ目は選ばない（先にトリミング）", pickSaveImageUrl({ trim_image_url: null, page_image_url: "P.png", pdf_has_text: false }) == null);
   const withAgent = { trim_image_url: null, page_image_url: null, pdf_has_text: true, agent_image_url: agent };
   t("元付の資料（agent_image_url）しか無い時も null", pickSaveImageUrl(withAgent) == null);

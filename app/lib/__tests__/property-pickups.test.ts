@@ -58,7 +58,8 @@ console.log("── ★ 説明文（AD・🌟）がお客様に出ない（出�
   t("★ 受け渡しの鍵は6つだけ（id・rank・物件名・号室・会話・画像）", JSON.stringify(Object.keys(h).sort()) === JSON.stringify(["conversation_id", "id", "image_url", "property_name", "rank", "room_no"]), Object.keys(h));
   t("★ 受け渡しの中身に AD・🌟・広告料・利益・説明文が無い", !FORBIDDEN.test(JSON.stringify(h)) && !JSON.stringify(h).includes("80,000円"), h);
   t("★ 画像はトリミング優先・元付の画像は渡さない", h.image_url === "https://blob/t.jpg" && !JSON.stringify(h).includes("agent"));
-  t("★ トリミングが無ければ1ページ目", toPickupHandoffItem({ ...dbRow, trim_image_url: null }).image_url === "https://blob/p.png");
+  // 2026-09-27 竹内「そのままの画像つかったら大丈夫」: page_image_url はサーバーが書体を差し替えて描いた画像なので渡さない（null＝売上サポが先に元の資料から作る）
+  t("★ 元の資料の画像が無ければ null（書体を差し替えた page_image_url は渡さない）", toPickupHandoffItem({ ...dbRow, trim_image_url: null }).image_url === null);
   // 経路そのものの確認（ソースの静的検査）: send の API から LINE への送信が無い・GET ?ids= が説明文を読まない
   const root = join(__dirname, "..", "..", "..");
   const sendSrc = readFileSync(join(root, "app", "api", "property-pickups", "send", "route.ts"), "utf8").replace(/^\s*\/\/.*$/gmu, "");

@@ -19,6 +19,7 @@ import { isSameProperty, normalizeRoomNo } from "./sent-property-record";
 import { isCustomerRow, rowChannel } from "./sent-delivery";
 import { parseRentFromSummary } from "./property-summary-parse";
 import { parsePropertyFacts } from "./property-brain";
+import { pickSendImageUrl } from "./pickup-send-image";
 
 /**
  * 2026-09-27 YUMA の E2E（AIXツール → AIX物件ピックアップ 5件）: お客様に送った行（channel=pickup）の家賃・AD の月数が全部 null だった
@@ -98,7 +99,8 @@ export function planPickupSentWrites(input: {
   const skipped: PickupSkip[] = [];
 
   const pickups = [...input.pickups].sort((a, b) => a.rank - b.rank || a.id - b.id);
-  const imgOf = (p: PickupForRecord) => p.trim_image_url ?? p.page_image_url ?? null;
+  // 2026-09-27: 送る画像は元の資料のページだけ（toPickupHandoffItem と同じ pickSendImageUrl）＝画像の数の数え方も同じにする
+  const imgOf = (p: PickupForRecord) => pickSendImageUrl(p);
   const withImage = pickups.filter((p) => !!imgOf(p));
 
   // 画像の数が合わない → 位置で対応を付けられないので何も書かない（誤記録0）
