@@ -7354,7 +7354,27 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **実行** `scripts/customer-sim.ts`（本番の入口を呼ぶ・内部認証は `.env.prod` の値を読む）: お客様役を入れる → ブレインと下書きを待つ（conversations.suggested_aix_meta、消えていれば brain_decision_logs）→ AIX なしは下書きを、会話だけで作れる AIX（condition_hearing・application_push・followup_revive・greeting_viewing）は `/api/aix/action` で作って `/api/send-line-message` で YUMA に実送信し、画面と同じ記録（messages・会話・判断の結果・log-aix-usage）を書く。**材料が要る AIX（物件・見積書・管理会社の回答・日程）は送らずに止める** → 画面で送ってからもう一度動かすと続きから。`--step`（1往復）・`--no-send`（送る直前で止める）・`--dry`（作るだけ）・`--list`・`--reset`。直近30分に竹内さんの本物の発言があれば止まる（`--force` で進む）
 - **記録と検査**: 1往復ずつ「お客様役の文・ブレインの判断（AIX・reply_mode・段階・並行検索・方向）・下書き・送った文・トークの上の状況の1行・送った事実/送った物件/タスク/AIX要対応/カレンダーの増え方・費用」を表示し、`%TEMP%/sumora-customer-sim/<run>.jsonl` に残す。検査は決定論（`auditSimTurn`）: お待たせ・作業メモ・創作の疑い（会話に無い金額・日付・時刻・号室）・約束の言い直し（物件を送らないままピックアップ宣言をもう一度）・状況の取り違え（筋書きの expect_stage とブレインの段階／状況表示のずれ）
 - テスト: `app/lib/__tests__/customer-sim.test.ts`（57件・本物の会話は 403・webhook は署名の後にだけ処理・lib に本体が1つ・通知の3か所だけに判定）
-- 残り: cron の定時一覧（hot・要対応フラグ等）はテスト用の会話を外していない（手動テストと同じ）。テンプレートの材料が要る AIX の自動化は未
+- 残り: cron の定時一覧（hot・要対応フラグ等）はテスト用の会話を外していない（手動テストと同じ）。テンプレートの材料が要る AIX の自動化は未 → 下の「材料の要る AIX も送る」で対応
+
+### 2026-09-27 お客様役: 材料の要る AIX も保存済みの材料で送る（竹内「見積書や物件資料は保存されてると思うから使いながらためしていく／AIXもテストでおくるかたちにする」）
+- **材料の選び方（純関数）** `app/lib/customer-sim-material.ts`（テスト `app/lib/__tests__/customer-sim-material.test.ts` 50件）
+  - 見積書送る: その会話の `estimate_records`＋送った時の画像（その AIX の送信の前2分〜後5秒のこちらの画像）＋本文。金額と画像が揃う物だけ・主のお部屋の見積書が無ければ止める・他の会話の物は使わない。生成は画面と同じく画像を読み直す（Vision は deepseek-all でも Claude のまま＝画像は DeepSeek に回らない設計・1回 約$0.01）→ 見出しの建物名だけ保存済みの名前に手直し（#264 は画像がコンフォリア…406・本文だけ エステムコート大阪WEST に置き換えた物）・was_edited=true。**金額が保存済みの値と食い違えば送らない**（`alignEstimateText`）
+  - 物件確認した: 設定「募集中」（check_pattern=available）だけ。資料は同じ建物のピックアップの画像。mgmt_* 等（管理会社の回答が要る型）は止める。御見積書は同封しない（保存済みは全部送った物）
+  - 物件ピックアップした／オススメ: YUMA のお客様の `property_pickups` のうち送っていない・画像のある物を点の順に3件／1件（画像は画面の handoff と同じ trim→page）→ 送った後に `/api/property-pickups/send` の mark_sent（sent_properties もそこが書く）
+  - 内覧へ！: お客様の発言の日時（明日以降・「土曜の午後か日曜の午前」を2つに分けて読む）→ 無ければ明日・明後日の固定の候補。時間確保（calendar_events）は**作らない**
+  - 待ち合わせ場所: お客様が選んだ日時（時刻）→ こちらの候補 → 固定。物件は主のお部屋、住所は資料の本文の「所在地」だけ。文は画面（AixModal の時間あり）と同じ固定文（テストで一字一句照合）。記録は log-aix-usage の meeting_*（sent_facts・viewing_history）。内覧の予定（calendar_events）は**作らない**。`viewings`（内覧のアナウンスの cron が読む表）には入らない
+  - 止める（理由つき）: acknowledge_check（管理会社宛て）・cost_explain・cost_breakdown・guarantor_info（入力値が保存されていない）・phone_call／phone_followup
+- **planStaffAction(meta, pool)** → `aix_material`（材料つき）／`aix_needs_material`（reason つき）。pool を渡さない時は従来どおり止める
+- **実行** `scripts/customer-sim.ts`: 画面と同じ API・引数・順番（画像をまとめて send-line-message → 本文 → messages を1行ずつ → log-aix-usage に画面の meta）。`--at-step=N` で N 段目から。1往復の表示と jsonl に「使った材料・画像の枚数・作らなかった物」
+- **検査に「材料の取りこぼし」**（渡した材料の金額・日付・時刻・物件名が送った文に無い）。材料の事実は創作の疑いの根拠にも足す
+- **手元の LINE を通さない経路**（send-line-message・未 commit の3つの鍵）: 送った通の数だけ `simstaff-…` の id を返す（画像をまとめた時も1枚ずつ messages.line_message_id に入る）
+- **回した結果（手元・DeepSeek の段・9/27）**: 4段「見積もりの反応＋内覧したい」→ 内覧へ！（固定の候補 9/28・9/29）／5段「土曜の午後か日曜の午前」→ 内覧へ！（10/3 14:00〜・10/4 10:30〜）／6段「10/4 10:30・現地待ち合わせで大丈夫？」→ 待ち合わせ場所（住所は資料から）＝筋書きの終わり。追加で 物件確認した（募集中）・物件ピックアップした（3件・mark_sent）・見積書送る（#264 読み直し・金額一致）も1往復ずつ通した。AIX要対応・カレンダー・viewings は0件。Claude はブレイン（fresh・戦略の層・full）と見積書の画像の読み取りだけ
+- **見つかった問題（報告・未修正）**
+  - ブレインの段階に viewing が出ない: fresh の出力の説明が「hearing・proposing・applying・contract」で viewing が無い。本番30日 status=viewing の13件は proposing 12・hearing 1・viewing 0（穴:G1）
+  - 会話の方向の段階（conversation_direction.current_phase）が戦略の文の語で決まる（detectPhaseFromBrainMeta）: 「…から申込へつなげる」で applying、再/また/別で hearing。本番30日 applying 37件中12件がブレインの段階と食い違い。generate-reply の【現在フェーズの参考】に届く
+  - お客様の「内覧したい」で物件確認のタスク（line_tasks property_check）が自動で作られる（line-webhook-text の PROPERTY_CHECK_KEYWORDS・既存の決まり）
+  - ブレインの戦略の層（generate-draft-bg-async の「会話全体の戦略」）の llm_usage_logs に action・conversation_id が無い → 会話ごとの費用（お客様役の費用表示）から漏れる（1回 約$0.03）
+- 片付け: 9/27 01:13 の見積書の sent_facts（estimateFor が「エステムコート大阪WEST 406号室」のまま＝状況の表示に406号室が出ていた）を置き換え後の名前にそろえた
 
 ## 2026-09-27 気に入ったお部屋への見積もりの依頼は AIX【見積書送る】（竹内「この場面は見積書を正解にする」・YUMA 事例）
 - **場面**: YUMA でこちらが送ったエステムコート大阪WEST に「いいですね」→「見積もりお願いできますか」。ブレインは AIX【物件確認した】（募集状況を確認し報告）

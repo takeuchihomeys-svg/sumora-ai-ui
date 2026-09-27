@@ -6,6 +6,7 @@
 import scenariosJson from "@/app/lib/customer-sim-scenarios.json";
 import { isMetaNarrationLine, isWorkNoteLine, isNotACustomerReply } from "@/app/lib/meta-narration";
 import { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE } from "@/app/lib/reply-context";
+import { pickSimMaterial, type SimAixMaterial, type SimMaterialPool } from "@/app/lib/customer-sim-material";
 
 // ─── 筋書き ───
 
@@ -185,9 +186,14 @@ export type SimAuditInput = {
   stateConflicts?: number;
   /** 根拠の追加材料（送った物件名・見積の金額など、会話以外で知っている事実の文字列） */
   groundingExtra?: ReadonlyArray<string>;
+  /**
+   * 材料の要る AIX を送った時: 使った材料の事実のうち、送った文に入っているべき物（物件名・金額・日付・時刻）。
+   * 1つも入っていなければ「材料の取りこぼし」（材料を渡したのに文に出ていない＝別の物件・金額で書いた疑い）
+   */
+  materialMustShow?: ReadonlyArray<string>;
 };
 
-export type SimAuditFinding = { kind: "waited" | "work_note" | "invented" | "repeat_promise" | "stage_mismatch" | "state_conflict"; detail: string };
+export type SimAuditFinding = { kind: "waited" | "work_note" | "invented" | "repeat_promise" | "stage_mismatch" | "state_conflict" | "material_missing"; detail: string };
 
 const KIND_JA: Record<SimAuditFinding["kind"], string> = {
   waited: "お待たせ",
@@ -196,6 +202,7 @@ const KIND_JA: Record<SimAuditFinding["kind"], string> = {
   repeat_promise: "約束の言い直し",
   stage_mismatch: "状況の取り違え（段階）",
   state_conflict: "状況の取り違え（表示のずれ）",
+  material_missing: "材料の取りこぼし",
 };
 export function simAuditKindJa(k: SimAuditFinding["kind"]): string { return KIND_JA[k]; }
 
@@ -250,6 +257,11 @@ export function auditSimTurn(input: SimAuditInput): SimAuditFinding[] {
     f.push({ kind: "stage_mismatch", detail: `筋書き=${input.expectStage}／ブレイン=${input.brainStage}` });
   }
   if ((input.stateConflicts ?? 0) > 0) f.push({ kind: "state_conflict", detail: `ずれ ${input.stateConflicts} 件` });
+  if (sent && input.materialMustShow && input.materialMustShow.length > 0) {
+    const flat = toHalf(sent).replace(/[s,]/g, "");
+    const missing = input.materialMustShow.filter((x) => x && !flat.includes(toHalf(x).replace(/[s,]/g, "")));
+    if (missing.length > 0) f.push({ kind: "material_missing", detail: `文に無い: ${missing.slice(0, 4).join("・")}` });
+  }
   return f;
 }
 
@@ -268,22 +280,31 @@ export const SIM_TEXT_ONLY_AIX: ReadonlySet<string> = new Set([
 
 export type SimStaffPlan =
   | { kind: "aix"; action: string; checkPattern: string | null }
-  | { kind: "aix_needs_material"; action: string }
+  | { kind: "aix_material"; action: string; checkPattern: string | null; material: SimAixMaterial }
+  | { kind: "aix_needs_material"; action: string; reason: string }
   | { kind: "draft" }
   | { kind: "wait" };
 
 /**
  * ブレインの判断から、スタッフ役が何をするか（純関数）。
- *   reply_mode=aix で action があれば AIX。会話だけで作れる AIX は作って送る／材料が要る AIX は止めて人に渡す。
+ *   reply_mode=aix で action があれば AIX。会話だけで作れる AIX は作って送る。
+ *   材料の要る AIX は、材料の候補（pool・customer-sim-material）から保存済みの材料を選べれば送る（aix_material）／
+ *   選べなければ止めて理由を出す（aix_needs_material）。pool を渡さない時は材料の要る AIX は全部止める（従来どおり）。
  *   それ以外は下書きを送る。判断がまだ無ければ待つ。
  */
-export function planStaffAction(meta: { action?: string | null; reply_mode?: string | null; check_pattern?: string | null } | null | undefined): SimStaffPlan {
+export function planStaffAction(
+  meta: { action?: string | null; reply_mode?: string | null; check_pattern?: string | null } | null | undefined,
+  pool?: SimMaterialPool | null,
+): SimStaffPlan {
   if (!meta) return { kind: "wait" };
   const action = meta.action ?? null;
+  const checkPattern = meta.check_pattern ?? null;
   if (meta.reply_mode === "aix" && action) {
-    return SIM_TEXT_ONLY_AIX.has(action)
-      ? { kind: "aix", action, checkPattern: meta.check_pattern ?? null }
-      : { kind: "aix_needs_material", action };
+    if (SIM_TEXT_ONLY_AIX.has(action)) return { kind: "aix", action, checkPattern };
+    if (!pool) return { kind: "aix_needs_material", action, reason: "材料の候補を渡していない" };
+    const pick = pickSimMaterial(action, checkPattern, pool);
+    if (!pick.ok) return { kind: "aix_needs_material", action, reason: pick.reason };
+    return { kind: "aix_material", action, checkPattern: pick.material.kind === "check_result" ? pick.material.checkPattern : checkPattern, material: pick.material };
   }
   return { kind: "draft" };
 }

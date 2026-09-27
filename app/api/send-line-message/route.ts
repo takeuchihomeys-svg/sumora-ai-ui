@@ -7,6 +7,7 @@ import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { buildCallRequestFlex, callUrlSettingKey, isValidLineCallUrl } from "@/app/lib/phone-call";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 
 // 宣言直後のブレイン再分析（after 内で最大 ~20秒待ち＋分析）に余裕を持たせる
 export const maxDuration = 120;
@@ -118,8 +119,11 @@ export async function POST(req: NextRequest) {
   // conversations.account が null/wrong でも line_contacts から正しいアカウントを解決
   const accountKey = await resolveAccountKey(line_user_id, account);
   const token = getToken(accountKey);
+  // 2026-09-27 お客様役の DeepSeek の段（手元の開発サーバー）: 手元には LINE の鍵が無いので、YUMA だけ LINE には送らず記録だけ進める。
+  //   鍵3つ（手元＝isTestModeAllowed・LOCAL_SIM_SKIP_LINE_PUSH=1・テスト用の会話）。本番（Vercel）では isTestModeAllowed が false なので通らない
+  const skipLinePush = !token && isTestModeAllowed(process.env) && process.env.LOCAL_SIM_SKIP_LINE_PUSH === "1" && isTestConversation(conversation_id);
 
-  if (!token) {
+  if (!token && !skipLinePush) {
     return NextResponse.json({ ok: false, error: `LINE token not configured for account: ${accountKey}` }, { status: 500 });
   }
 
@@ -149,7 +153,9 @@ export async function POST(req: NextRequest) {
 
   let res: Response | null = null;
   let sentMessageIds: string[] = [];
-  for (let pi = 0; pi < pushes.length; pi++) {
+  // 送った通の数だけ id を返す（画像をまとめて送った時も1枚ずつ messages.line_message_id に入る・LINE の応答と同じ形）
+  if (skipLinePush) sentMessageIds = pushes.flat().map(() => `simstaff-${crypto.randomUUID()}`);
+  for (let pi = 0; pi < (skipLinePush ? 0 : pushes.length); pi++) {
     res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },

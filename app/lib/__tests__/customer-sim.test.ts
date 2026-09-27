@@ -151,7 +151,7 @@ async function main() {
     const f8 = sim.auditSimTurn({ sentText: "かしこまりました！！ご確認ありがとうございます😊", historyBefore: hist, expectStage: "hearing", brainStage: "hearing" });
     t("ふつうの文は何も拾わない", f8.length === 0, JSON.stringify(f8));
     const sum = sim.summarizeSimAudit([{ findings: f1 }, { findings: f3 }, { findings: f7 }]);
-    t("要約は種類ごとの件数", sum.find((s) => s.kind === "waited")?.count === 1 && sum.find((s) => s.kind === "invented")?.count === 1 && sum.length === 6);
+    t("要約は種類ごとの件数", sum.find((s) => s.kind === "waited")?.count === 1 && sum.find((s) => s.kind === "invented")?.count === 1 && sum.length === 7);
   }
 
   console.log("── スタッフ役の決め方");

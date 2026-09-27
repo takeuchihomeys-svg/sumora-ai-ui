@@ -6,7 +6,11 @@
 //         ②本番の流れのまま: 下書きの起動（bg-async）→ブレイン（Claude）→返信の生成（DeepSeek）を待つ
 //         ③スタッフ役: ブレインが AIX（会話だけで作れる種類）を選んだら本番の /api/aix/action で作って送る／AIX なしなら下書きを送る
 //           （送るのは本番の /api/send-line-message ＝ YUMA の LINE に実際に届く。記録は画面の送信と同じ形で messages・会話・判断の結果へ）
-//           材料が要る AIX（物件・見積書・管理会社の回答・日程）は送らずに止める → 画面で送ってから、もう一度このスクリプトを動かすと続きから
+//           材料が要る AIX（見積書・物件確認した・物件ピックアップ/オススメ・内覧へ・待ち合わせ）は、保存済みの材料（YUMA の見積書・
+//           ピックアップの画像/資料・会話の日時／固定の候補・「募集中」の設定）を app/lib/customer-sim-material.ts で選んで、
+//           画面（AixModal・page.tsx）と同じ API・同じ引数・同じ順番（画像をまとめて→本文）・同じ記録（messages・log-aix-usage・mark_sent）で送る。
+//           材料が揃わない AIX（管理会社の回答・保証会社・電話 等）だけ止めて理由を出す → 画面で送ってからもう一度動かすと続きから
+//           画面が送った後に作るカレンダー（待ち合わせ後の内覧の予定・内覧へ！の時間確保）は作らない（お客様役の決まり）
 //         ④記録: お客様役の文・ブレインの判断・下書き・送った文・トークの上の状況・送った事実の変化・費用・検査
 //
 // 使い方（本番の入口に CUSTOMER_SIM_ENABLED=1 が入っていること）:
@@ -17,6 +21,7 @@
 //   npx tsx --env-file=.env.local scripts/customer-sim.ts --dry                                        … お客様役の文を作るだけ（入れない・送らない）
 //   その他: --rounds=N（往復の上限・既定12）／--reset（筋書きの最初から）／--text="…"（この1回はお客様役の文を固定）
 //           --base=http://localhost:3000（入口の場所）／--force（直近30分に竹内さんの本物の発言があっても進める）
+//           --at-step=N（筋書きの N 段目から始める・1始まり。途中の会話から続ける時）
 //   内部認証の値は環境変数 INTERNAL_API_SECRET、無ければ .env.prod から読む（画面に出さない）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync } from "node:fs";
@@ -30,6 +35,10 @@ import {
 } from "../app/lib/customer-sim";
 import { draftToSendableText } from "../app/lib/draft-text";
 import { getCustomerState } from "../app/lib/customer-state-server";
+import {
+  addressFromPdfText, alignEstimateText, buildMeetingPlaceText, describeSimMaterial, groundingOfMaterial, mustShowOfMaterial,
+  type SimAixMaterial, type SimMaterialPool, type SimEstimateSource, type SimPickupSource,
+} from "../app/lib/customer-sim-material";
 
 const CONV = YUMA_CONVERSATION_ID;
 const args = process.argv.slice(2);
@@ -74,10 +83,15 @@ function loadState(scenarioId: string): State {
   mkdirSync(DIR, { recursive: true });
   if (!flag("reset") && existsSync(STATE_FILE)) {
     const s = JSON.parse(readFileSync(STATE_FILE, "utf8")) as State;
-    if (s.scenarioId === scenarioId && !s.finished) return s;
+    if (s.scenarioId === scenarioId && !s.finished) {
+      const at = Number(arg("at-step") ?? 0) | 0;
+      if (at >= 1) s.cursor = { stepIndex: at - 1, turnsOnStep: 0 };
+      return s;
+    }
   }
   const now = new Date();
-  return { runId: `${scenarioId}-${now.toISOString().replace(/[:.]/g, "").slice(0, 15)}`, scenarioId, cursor: { stepIndex: 0, turnsOnStep: 0 }, round: 0, startedAt: now.toISOString(), finished: false };
+  const at = Number(arg("at-step") ?? 0) | 0;
+  return { runId: `${scenarioId}-${now.toISOString().replace(/[:.]/g, "").slice(0, 15)}`, scenarioId, cursor: { stepIndex: at >= 1 ? at - 1 : 0, turnsOnStep: 0 }, round: 0, startedAt: now.toISOString(), finished: false };
 }
 const saveState = (s: State) => writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
 
@@ -88,9 +102,9 @@ async function recentMessages(limit = 30): Promise<MsgRow[]> {
   if (error) throw new Error(`messages: ${error.message}`);
   return ((data ?? []) as MsgRow[]).reverse();
 }
-type ConvRow = { line_user_id: string; account: string | null; customer_name: string | null; status: string | null; ai_draft: string | null; suggested_aix_meta: Record<string, unknown> | null };
+type ConvRow = { line_user_id: string; account: string | null; customer_name: string | null; status: string | null; ai_draft: string | null; suggested_aix_meta: Record<string, unknown> | null; property_customer_id: string | null };
 async function conv(): Promise<ConvRow> {
-  const { data, error } = await sb.from("conversations").select("line_user_id, account, customer_name, status, ai_draft, suggested_aix_meta").eq("id", CONV).maybeSingle();
+  const { data, error } = await sb.from("conversations").select("line_user_id, account, customer_name, status, ai_draft, suggested_aix_meta, property_customer_id").eq("id", CONV).maybeSingle();
   if (error || !data) throw new Error(`conversations: ${error?.message ?? "なし"}`);
   return data as ConvRow;
 }
@@ -130,23 +144,28 @@ async function waitForBrainAndDraft(customerAt: string): Promise<{ meta: Record<
   return { meta, draft: draftToSendableText(c.ai_draft), waitedMs: Date.now() - t0 };
 }
 
-async function generateAix(action: string, checkPattern: string | null, c: ConvRow, msgs: MsgRow[]): Promise<string | null> {
+type AixGenResponse = { message_text?: string; notice?: string; error?: string; estimate_sent?: boolean; prop_cost_notes?: string[]; parsed_estimate?: unknown };
+async function generateAixRaw(action: string, checkPattern: string | null, c: ConvRow, msgs: MsgRow[], extra: Record<string, unknown> = {}, conversationMatch = true): Promise<{ text: string | null; raw: AixGenResponse }> {
   const res = await fetch(`${BASE}/api/aix/action`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       action, account: c.account ?? "sumora", conversation_id: CONV, customer_name: c.customer_name ?? "",
-      conversation_match: true, ...(checkPattern ? { check_pattern: checkPattern } : {}),
+      ...(conversationMatch ? { conversation_match: true } : {}), ...(checkPattern ? { check_pattern: checkPattern } : {}),
       recent_messages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text ?? "", rawCreatedAt: m.created_at, isAix: !!m.is_aix_generated, imageUrl: m.image_url ?? undefined })),
+      ...extra,
     }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(180_000),
   });
-  const j = await res.json().catch(() => ({})) as { message_text?: string; notice?: string; error?: string };
+  const j = await res.json().catch(() => ({})) as AixGenResponse;
   if (!res.ok) throw new Error(`AIX の生成に失敗: HTTP ${res.status} ${j.error ?? ""}`);
-  return draftToSendableText(j.message_text ?? null);
+  return { text: draftToSendableText(j.message_text ?? null), raw: j };
+}
+async function generateAix(action: string, checkPattern: string | null, c: ConvRow, msgs: MsgRow[]): Promise<string | null> {
+  return (await generateAixRaw(action, checkPattern, c, msgs)).text;
 }
 
 /** 画面の送信（page.tsx の handleSend / sendMessageText）と同じ記録で送る */
-async function sendAsStaff(text: string, isAix: boolean, c: ConvRow, aixType: string | null, checkPattern: string | null, predicted: string | null): Promise<{ lineMessageId: string | null }> {
+async function sendAsStaff(text: string, isAix: boolean, c: ConvRow, aixType: string | null, checkPattern: string | null, predicted: string | null, logExtra: Record<string, unknown> = {}): Promise<{ lineMessageId: string | null }> {
   const res = await fetch(`${BASE}/api/send-line-message`, {
     method: "POST", headers: authHeaders(),
     body: JSON.stringify({ line_user_id: c.line_user_id, message: text, account: c.account ?? "sumora", conversation_id: CONV, origin: isAix ? "aix" : "manual" }),
@@ -167,11 +186,171 @@ async function sendAsStaff(text: string, isAix: boolean, c: ConvRow, aixType: st
   if (isAix && aixType) {
     await fetch(`${BASE}/api/log-aix-usage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: CONV, aix_type: aixType, conversation_status: c.status, suggested_action: predicted, line_message_id: lineMessageId, sent_at: now, check_pattern: checkPattern, generated_text: text, was_edited: false }),
+      body: JSON.stringify({ conversation_id: CONV, aix_type: aixType, conversation_status: c.status, suggested_action: predicted, line_message_id: lineMessageId, sent_at: now, check_pattern: checkPattern, generated_text: text, was_edited: false, ...logExtra }),
       signal: AbortSignal.timeout(30_000),
     }).catch((e) => console.warn("  log-aix-usage 失敗:", e instanceof Error ? e.message : e));
   }
   return { lineMessageId };
+}
+
+// ─── 材料の要る AIX（保存済みの材料で・画面と同じ経路で送る） ───
+
+/** 材料の候補を DB から集める（YUMA の会話・YUMA のお客様の物だけ） */
+async function loadMaterialPool(c: ConvRow, msgs: MsgRow[]): Promise<SimMaterialPool> {
+  const [est, logs, imgs, pk, sp, st] = await Promise.all([
+    sb.from("estimate_records").select("id, conversation_id, property_name, room_no, initial_cost_yen, discount_yen, aix_usage_log_id, estimated_at, created_at")
+      .eq("conversation_id", CONV).order("created_at", { ascending: false }).limit(10),
+    sb.from("aix_usage_logs").select("id, generated_text, sent_at, created_at").eq("conversation_id", CONV).eq("aix_type", "estimate_sheet").order("created_at", { ascending: false }).limit(10),
+    sb.from("messages").select("image_url, created_at").eq("conversation_id", CONV).eq("sender", "staff").not("image_url", "is", null).order("created_at", { ascending: false }).limit(80),
+    c.property_customer_id
+      ? sb.from("property_pickups").select("id, batch_id, property_name, room_no, trim_image_url, page_image_url, pdf_blob_url, pdf_text, summary_text, rank, complete_rank, complete_group_id, status, sent_at, conversation_id")
+        .eq("property_customer_id", c.property_customer_id).order("complete_rank", { ascending: true, nullsFirst: false }).order("rank", { ascending: true }).limit(60)
+      : Promise.resolve({ data: [], error: null }),
+    sb.from("sent_properties").select("property_name, room_no, sent_at, delivery").eq("conversation_id", CONV).order("sent_at", { ascending: false }).limit(40),
+    getCustomerState(CONV).catch(() => null),
+  ]);
+  for (const [name, r] of [["estimate_records", est], ["aix_usage_logs", logs], ["messages", imgs], ["property_pickups", pk], ["sent_properties", sp]] as const) {
+    if (r.error) throw new Error(`材料の読み込みに失敗（${name}）: ${r.error.message}`);
+  }
+  const logById = new Map(((logs.data ?? []) as Array<{ id: string; generated_text: string | null; sent_at: string | null; created_at: string }>).map((l) => [l.id, l]));
+  const imgRows = (imgs.data ?? []) as Array<{ image_url: string; created_at: string }>;
+  const estimates: SimEstimateSource[] = ((est.data ?? []) as Array<{ id: number; conversation_id: string; property_name: string; room_no: string | null; initial_cost_yen: number | null; discount_yen: number | null; aix_usage_log_id: string | null; estimated_at: string | null }>).map((e) => {
+    const log = e.aix_usage_log_id ? logById.get(e.aix_usage_log_id) : undefined;
+    // 送った時の見積書の画像: その AIX の送信時刻の前2分〜後5秒に、こちらが送った画像（画面は画像→本文の順で送る）
+    const at = Date.parse(log?.sent_at ?? log?.created_at ?? e.estimated_at ?? "");
+    const img = Number.isFinite(at) ? imgRows.filter((m) => { const t = Date.parse(m.created_at); return t >= at - 120_000 && t <= at + 5_000; }).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0] : undefined;
+    return { recordId: e.id, conversationId: e.conversation_id, propertyName: e.property_name, roomNo: e.room_no, initialCostYen: e.initial_cost_yen, discountYen: e.discount_yen, imageUrl: img?.image_url ?? null, sentText: log?.generated_text ?? null, estimatedAt: e.estimated_at };
+  });
+  const pickups: SimPickupSource[] = ((pk.data ?? []) as Array<{ id: number; batch_id: string | null; property_name: string; room_no: string | null; trim_image_url: string | null; page_image_url: string | null; pdf_blob_url: string | null; pdf_text: string | null; summary_text: string | null; rank: number | null; complete_rank: number | null; complete_group_id: string | null; status: string | null; sent_at: string | null; conversation_id: string | null }>)
+    .filter((p) => !p.conversation_id || p.conversation_id === CONV)
+    .map((p) => ({
+      // 画面の handoff と同じ画像（trim → page・app/lib/property-pickups.ts）
+      id: p.id, propertyName: p.property_name, roomNo: p.room_no, imageUrl: p.trim_image_url ?? p.page_image_url ?? null, pdfUrl: p.pdf_blob_url, summaryText: p.summary_text,
+      address: addressFromPdfText(p.pdf_text), rank: p.complete_rank ?? p.rank, status: p.status, sentAt: p.sent_at, completeGroupId: p.complete_group_id, batchId: p.batch_id,
+    }));
+  const sentNames: string[] = [];
+  for (const r of (sp.data ?? []) as Array<{ property_name: string | null; room_no: string | null; delivery: string | null }>) {
+    if (r.delivery === "line_group") continue;
+    const n = `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}`.trim();
+    if (n && !sentNames.includes(n)) sentNames.push(n);
+  }
+  const state = st as Awaited<ReturnType<typeof getCustomerState>>;
+  const focus = state?.focusKey ? state.properties.find((r) => r.key === state.focusKey) ?? null : null;
+  return {
+    conversationId: CONV, estimates, pickups, sentPropertyNames: sentNames, focusPropertyName: focus?.name ?? null,
+    history: msgs.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })), nowMs: Date.now(),
+  };
+}
+
+/** 画像をまとめて送る（page.tsx の sendImagesBatch と同じ: 1回の送信・届いた画像を1枚ずつ messages に・会話の行を更新） */
+async function sendImagesAsStaff(urls: string[], c: ConvRow, aixType: string): Promise<string[]> {
+  const res = await fetch(`${BASE}/api/send-line-message`, {
+    method: "POST", headers: authHeaders(),
+    body: JSON.stringify({ line_user_id: c.line_user_id, image_urls: urls, account: c.account ?? "sumora", conversation_id: CONV, origin: "aix", aix_type: aixType }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const j = await res.json().catch(() => ({})) as { ok?: boolean; sentMessageIds?: string[]; error?: string };
+  const ids = j.sentMessageIds ?? [];
+  const delivered = res.ok && j.ok ? urls : urls.slice(0, ids.length);
+  if (delivered.length === 0) throw new Error(`画像を送れませんでした: HTTP ${res.status} ${j.error ?? ""}`);
+  for (let i = 0; i < delivered.length; i++) {
+    const at = new Date(Date.now() + i).toISOString();
+    const { error } = await sb.from("messages").insert({ conversation_id: CONV, sender: "staff", text: "[画像]", image_url: delivered[i], created_at: at, is_aix_generated: true, ...(ids[i] ? { line_message_id: ids[i] } : {}) });
+    if (error) throw new Error(`messages（画像）の記録に失敗: ${error.message}`);
+  }
+  const upgrade = c.status === "hearing";
+  await sb.from("conversations").update({ last_message: "[画像]", last_sender: "staff", updated_at: new Date().toISOString(), ai_draft: null, suggested_aix_meta: null, ...(upgrade ? { status: "proposing" } : {}) }).eq("id", CONV);
+  return delivered;
+}
+
+type MaterialSendResult = { text: string | null; images: number; label: string; note?: string; skippedAfterSend: string[] };
+
+/**
+ * 材料の要る AIX を送る。生成・送信・記録は画面（AixModal・page.tsx）と同じ API・引数・順番（画像→本文→記録）。
+ *   画面が送った後に作るカレンダー（待ち合わせ後の内覧の予定・内覧へ！の時間確保）は作らない（お客様役の決まり）
+ */
+async function sendWithMaterial(action: string, checkPattern: string | null, material: SimAixMaterial, c: ConvRow, msgs: MsgRow[], predicted: string | null, noSend: boolean): Promise<MaterialSendResult> {
+  const skippedAfterSend: string[] = [];
+  const done = async (text: string, images: string[], logExtra: Record<string, unknown>, label: string): Promise<MaterialSendResult> => {
+    if (noSend) return { text: null, images: 0, label: `${label}（--no-send: 送る直前で止めた）`, note: `送る予定: 画像${images.length}枚／${one(text, 300)}`, skippedAfterSend };
+    const delivered = images.length ? await sendImagesAsStaff(images, c, action) : [];
+    await sendAsStaff(text, true, c, action, checkPattern, predicted, logExtra);
+    return { text, images: delivered.length, label, skippedAfterSend };
+  };
+  switch (material.kind) {
+    case "estimate": {
+      // 画面の見積書送る（1件）: image_url（見積書）→ サーバーが画像を読んで金額文 → [見積書] をまとめて送る → 本文（AixModal 2503-2514・3311-3331）
+      const g = await generateAixRaw(action, null, c, msgs, { image_url: material.imageUrl }, false);
+      if (!g.text) throw new Error("見積書の生成が空");
+      const aligned = alignEstimateText(g.text, material);
+      if (!aligned) throw new Error(`生成の金額が保存済みの値（初期費用 ${material.initialCostYen}・割引 ${material.discountYen}）と食い違う → 送らない: ${one(g.text, 160)}`);
+      return done(aligned.text, [material.imageUrl], { was_edited: aligned.edited, conversation_match: false }, `AIX【estimate_sheet】を保存済みの見積書で送る${aligned.edited ? "（物件名を保存済みの名前に手直し）" : ""}`);
+    }
+    case "check_result": {
+      // 画面の物件確認した（available）: 物件ごとの資料と状態を渡す → [資料] → 本文（AixModal 2388-2485・3159-3261）
+      const extra: Record<string, unknown> = {
+        property_count: 1, sent_property_count: Math.max(1, await loadSentCount()), staff_note: "", prop_statuses: ["available"], property_names: [material.propertyName],
+        property_vacancy_dates: [""], estimate_image_urls: [null], all_properties_available: true,
+        ...(material.imageUrl ? { image_url: material.imageUrl, image_urls: [material.imageUrl] } : {}),
+      };
+      const g = await generateAixRaw(action, "available", c, msgs, extra, true);
+      if (!g.text) throw new Error("物件確認した の生成が空");
+      return done(g.text, material.imageUrl ? [material.imageUrl] : [], {
+        conversation_match: true, property_names: [material.propertyName], prop_statuses: ["available"], estimate_sent: g.raw.estimate_sent === true, prop_cost_notes: g.raw.prop_cost_notes ?? null,
+      }, `AIX【property_check_result/available】を設定「${material.setting}」で送る`);
+    }
+    case "pickups": {
+      const items = material.items;
+      const urls = items.map((p) => p.imageUrl).filter((u): u is string => !!u);
+      if (action === "property_recommendation") {
+        // 画面の物件オススメ: image_url（資料・必須）→ [資料] → 本文（AixModal 2179-2210・3271-3299）
+        const g = await generateAixRaw(action, null, c, msgs, { image_url: urls[0] }, false);
+        if (!g.text) throw new Error("物件オススメの生成が空");
+        const r = await done(g.text, [urls[0]], { conversation_match: false }, `AIX【property_recommendation】をピックアップ#${items[0].id}で送る`);
+        if (!noSend) await markPickupsSent(items.slice(0, 1), null);
+        return r;
+      }
+      // 画面の物件ピックアップした（売上サポから）: image_urls・pickup_ids → [画像まとめて] → 本文 → 送った印（mark_sent）
+      const g = await generateAixRaw(action, null, c, msgs, { image_urls: urls, pickup_ids: items.map((p) => p.id), send_mode: "normal" }, true);
+      if (!g.text) throw new Error("物件ピックアップした の生成が空");
+      const r = await done(g.text, urls, { conversation_match: true, send_mode: "normal" }, `AIX【property_send】をピックアップ${items.length}件で送る`);
+      if (!noSend) await markPickupsSent(items, urls);
+      return r;
+    }
+    case "viewing_slots": {
+      // 画面の内覧へ！（会話を合わせる）: calendar_info（候補の日時）・property_name → 本文だけ（AixModal 2601-2639）
+      const calendarInfo = material.slots.map((s) => `${s.label} ${s.start}${s.end ? `〜${s.end}` : ""}`).join("\n");
+      const g = await generateAixRaw(action, null, c, msgs, { calendar_info: calendarInfo, ...(material.propertyName ? { property_name: material.propertyName } : {}) }, true);
+      if (!g.text) throw new Error("内覧へ！の生成が空");
+      skippedAfterSend.push("内覧へ！の【時間確保】（calendar_events）は作らない");
+      return done(g.text, [], { conversation_match: true }, `AIX【viewing_invite】を候補（${material.source === "conversation" ? "会話から" : "固定"}）で送る`);
+    }
+    case "meeting": {
+      // 画面の待ち合わせ場所（時間あり）: API を呼ばずに画面の固定文 → 本文だけ（AixModal 2581-2592）。記録は meeting_*（sent_facts・viewing_history）
+      const text = buildMeetingPlaceText(material);
+      skippedAfterSend.push("待ち合わせ後の内覧の予定（calendar_events）は作らない");
+      return done(text, [], {
+        meeting_property_name: material.propertyName, meeting_property_address: material.address, meeting_date: material.date, meeting_time: material.time,
+      }, `AIX【meeting_place】を ${material.date} ${material.time}（${material.source === "conversation" ? "会話から" : "固定"}）で送る`);
+    }
+  }
+}
+
+async function loadSentCount(): Promise<number> {
+  const { data } = await sb.from("sent_properties").select("property_name").eq("conversation_id", CONV).limit(100);
+  return new Set(((data ?? []) as Array<{ property_name: string | null }>).map((r) => r.property_name ?? "")).size;
+}
+
+/** 送った印（page.tsx の mark_sent と同じ /api/property-pickups/send・LINE には何も送らない） */
+async function markPickupsSent(items: SimPickupSource[], imageUrls: string[] | null): Promise<void> {
+  const batches = [...new Set(items.map((p) => p.batchId).filter(Boolean))].join(",");
+  if (!batches) return;
+  const res = await fetch(`${BASE}/api/property-pickups/send`, {
+    method: "POST", headers: authHeaders(),
+    body: JSON.stringify({ batch_id: batches, item_ids: items.map((p) => p.id), action: "mark_sent", sent_by: "aix", ...(imageUrls ? { image_urls: imageUrls } : {}), conversation_id: CONV }),
+    signal: AbortSignal.timeout(30_000),
+  }).catch((e) => { console.warn("  mark_sent 失敗:", e instanceof Error ? e.message : e); return null; });
+  if (res && !res.ok) console.warn(`  mark_sent 失敗: HTTP ${res.status}`);
 }
 
 async function changesSince(sinceIso: string): Promise<{ facts: string[]; props: string[]; tasks: string[]; aixItems: number; calendar: number }> {
@@ -217,6 +396,8 @@ type Row = {
   brain: { action: string | null; reply_mode: string | null; direction: string | null; parallel_search: boolean | null; stage: string | null } | null;
   plan: string; draft: string | null; sent: string | null; sentKind: string | null; headline: string; conflicts: number;
   changes: Awaited<ReturnType<typeof changesSince>> | null; usd: number; simUsd: number; waitedSec: number; findings: SimAuditFinding[]; note?: string;
+  /** 使った材料（材料の要る AIX を送った時）・送った画像の枚数・画面では作るが作らなかった物 */
+  material?: string | null; images?: number; skippedAfterSend?: string[];
 };
 
 function printRow(r: Row) {
@@ -226,7 +407,9 @@ function printRow(r: Row) {
   else console.log(`  ブレイン: 判断が来なかった（${r.waitedSec}秒）`);
   console.log(`  スタッフ役: ${r.plan}`);
   if (r.draft && r.draft !== r.sent) console.log(`  下書き: ${one(r.draft, 200)}`);
+  if (r.material) console.log(`  使った材料: ${r.material}${r.images ? `・画像${r.images}枚` : ""}`);
   console.log(`  送った文${r.sentKind ? `（${r.sentKind}）` : ""}: ${r.sent ? one(r.sent, 300) : "（送っていない）"}`);
+  if (r.skippedAfterSend?.length) console.log(`  作らなかった物: ${r.skippedAfterSend.join("／")}`);
   console.log(`  状況の表示: ${r.headline}${r.conflicts ? `（⚠ずれ ${r.conflicts}）` : ""}`);
   if (r.changes) console.log(`  変化: 送った事実[${r.changes.facts.join(", ") || "-"}] 送った物件[${r.changes.props.join(", ") || "-"}] タスク[${r.changes.tasks.join(", ") || "-"}] AIX要対応+${r.changes.aixItems} カレンダー+${r.changes.calendar < 0 ? "?" : r.changes.calendar}`);
   console.log(`  費用: この往復 $${r.usd.toFixed(4)}（うちお客様役 $${r.simUsd.toFixed(5)}）`);
@@ -297,16 +480,26 @@ async function main() {
       direction: (m.reply_direction_label as string | null) ?? (m.reply_direction as string | null) ?? null,
       parallel_search: (m.parallel_search as { on?: boolean } | undefined)?.on ?? null, stage: (m.checkpoint_stage as string | null) ?? null,
     } : null;
-    const plan = planStaffAction(meta as { action?: string | null; reply_mode?: string | null; check_pattern?: string | null } | null);
+    const poolMsgs = await recentMessages();
+    const pool = await loadMaterialPool(c, poolMsgs);
+    const plan = planStaffAction(meta as { action?: string | null; reply_mode?: string | null; check_pattern?: string | null } | null, pool);
     const historyBefore: SimHistoryItem[] = (await recentMessages()).map((x) => ({ sender: x.sender, text: x.text, isAix: x.is_aix_generated, hasImage: !!x.image_url, createdAt: x.created_at }));
 
     let sent: string | null = null, sentKind: string | null = null, planLabel = "", note: string | undefined;
     let stop = false;
+    let materialLabel: string | null = null, images = 0, skippedAfterSend: string[] = [], material: SimAixMaterial | null = null;
     try {
       if (plan.kind === "wait") { planLabel = "判断が来ないので止める"; stop = true; }
       else if (plan.kind === "aix_needs_material") {
-        planLabel = `AIX【${plan.action}】は材料（物件・見積書・回答・日程）が要る → 送らずに止める`;
+        planLabel = `AIX【${plan.action}】は材料が揃わない（${plan.reason}）→ 送らずに止める`;
         note = "画面で AIX を送ってから、もう一度同じ命令で続きから進みます"; stop = true;
+      } else if (plan.kind === "aix_material") {
+        material = plan.material;
+        materialLabel = describeSimMaterial(plan.material);
+        const r = await sendWithMaterial(plan.action, plan.checkPattern, plan.material, c, poolMsgs, brain?.action ?? null, flag("no-send"));
+        planLabel = r.label; images = r.images; skippedAfterSend = r.skippedAfterSend;
+        if (r.note) note = r.note;
+        if (r.text) { sent = r.text; sentKind = `AIX ${plan.action}${plan.checkPattern ? `/${plan.checkPattern}` : ""}`; } else stop = true;
       } else if (plan.kind === "aix") {
         const text = await generateAix(plan.action, plan.checkPattern, c, msgs);
         planLabel = `AIX【${plan.action}】を本番の生成で作って送る`;
@@ -329,11 +522,13 @@ async function main() {
     const cost = await costSince(roundStart);
     const findings = auditSimTurn({
       sentText: sent, historyBefore, brainStage: brain?.stage ?? null, expectStage: usedStepIndex === null ? null : (scenario.steps[usedStepIndex]?.expect_stage ?? null), stateConflicts: st.conflicts,
-      groundingExtra: [...changes.props],
+      groundingExtra: [...changes.props, ...(material ? groundingOfMaterial(material) : [])],
+      materialMustShow: material && sent ? mustShowOfMaterial(material) : undefined,
     });
     const row: Row = {
       round: state.round, step: stepLabel, at: jst(customerAt), customer: customerText, customerSource, goalReached, brain, plan: planLabel,
       draft, sent, sentKind, headline: st.headline, conflicts: st.conflicts, changes, usd: cost.usd, simUsd, waitedSec: Math.round(waitedMs / 1000), findings, note,
+      material: materialLabel, images, skippedAfterSend,
     };
     rows.push(row);
     appendFileSync(logFile, JSON.stringify({ ...row, costByModel: cost.byModel }) + "\n");
