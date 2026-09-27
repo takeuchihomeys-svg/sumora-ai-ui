@@ -84,7 +84,25 @@ export type AuditLite = {
   /** 入れようとした条件（rp_update_days＝その回の更新日） */
   intended?: Record<string, unknown> | null;
   ext_version?: string | null;
+  /** 検索中の失敗（拡張の _auditFinish の error＝fill-done の時間切れ・例外・見張り 85秒・タブが応答しない）。無い回は null */
+  error?: string | null;
+  error_kind?: string | null;
 };
+
+/**
+ * 2026-09-27 竹内「重い順から治す」（YUMA の点検 24 → Cron が自動の広げて 3e82fb32 を積んだ）: 「検索していない（失敗）」と「検索して0件」を分ける。
+ *   検索できていない回 = error が付き、読んだ・送ったの数が無い（fill-done の時間切れ・例外・見張り・タブが応答しない）。
+ *   もう1つ: started のまま IN_PROGRESS_MS を過ぎて結果も無い（拡張が止まって閉じられなかった）。
+ *   ⚠ 5分の待ち切れ（検索は押せたが送信の完了が来ない）は result に batch_timed_out が付く＝検索はした回なのでここに入れない
+ */
+export function runDidNotSearch(a: AuditLite, nowMs: number): boolean {
+  const r = a.result;
+  const noCounts = r == null || (r.sent_count == null && r.read_rows == null && r.property_count == null);
+  if (!noCounts) return false;
+  if (a.error || a.error_kind) return true;
+  const at = Date.parse(String(a.created_at ?? ""));
+  return a.status === "started" && Number.isFinite(at) && nowMs - at >= IN_PROGRESS_MS;
+}
 
 /**
  * 個別の検索（trigger=single）の is_wide が正しく残る拡張の版。2.5.27 までは finished が is_wide=false で上書きし、
@@ -208,6 +226,8 @@ export function decideWiden(input: DecideInput): WidenDecision {
   if (input.commands.some((c) => sameSite(c) && (c.status === "pending" || c.status === "running"))) return { action: "skip", reason: "queued" };
   // まだ検索中の回がある
   if (runs.some((r) => r.status === "started" && nowMs - ms(r.created_at) < IN_PROGRESS_MS)) return { action: "wait", reason: "in_progress" };
+  // 検索できなかった回（失敗）は0件と数えない＝広げない。地域→駅の2パスの片方だけの失敗も、足りるかが分からないので広げない（分からない時は検索しない側）
+  if (runs.some((r) => runDidNotSearch(r, nowMs))) return { action: "skip", reason: "pinpoint_failed" };
   // 地域→駅の2パスの1つ目が終わったところ（2つ目がこれから始まる）
   const latestFin = ms(latest.finished_at) || ms(latest.created_at);
   if (latest.pass === "ward" && nowMs - latestFin < BOTH_PASS_WAIT_MS) return { action: "wait", reason: "both_pass" };

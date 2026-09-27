@@ -147,7 +147,7 @@ function rest() {
       "setTimeout 1000": [1, "PDF のアップロードのやり直し（サーバー）"], "setInterval 25000": [1, "Supabase Realtime の心拍"],
       "setTimeout 8000": [1, "Realtime の再接続"], "setTimeout 15000": [2, "Realtime の再接続・タブ読み込みの期限"],
       "setTimeout 6000": [1, "取得の期限（abort）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
-      "setTimeout 10000": [1, "バッジを消す"],
+      "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [1, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab）"],
     },
     "bulk-dl.js": {
       "setTimeout 200": [1, "checkbox の差し込みのやり直し（内部）"], "setTimeout 35000": [1, "判定の応答の期限（fail-open）"],

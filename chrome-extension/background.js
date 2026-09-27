@@ -19,6 +19,8 @@ import "./search-audit.js";
 import "./search-override.js";
 // 2026-09-27 竹内「拡張ツールは人間らしい動きをするために全て時間ランダムにする」: 待ち時間のばらつき（self.AxlxHumanWait・popup/content/ページの中と同じ1つ）
 import "./human-wait.js";
+// 2026-09-27 v2.5.32 竹内「重い順から治す」: 一括検索の前のタブの確かめ・地域が空なら検索しない・失敗の知らせ（self.AxlxBatchGuard・純関数）
+import "./batch-guard.js";
 
 // 待ち時間のばらつき（human-wait.js）。settle＝ページが落ち着くのを待つ固定の秒数（元より短くしない）／
 //   poll＝条件を見る間隔（平均は元と同じ・回数で打ち切る待ちの長さは変えない）。読めない時は元の値。
@@ -1279,7 +1281,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // 2026-09-18 竹内「一括検索したお客さんも項目のところに日付と一括検索した日にちをいれる」:
             //   個別検索（popup.js）は search_history を書いていたが、一括検索は1行も書いていなかった。
             //   同じ関数（search-history.js）で記録し、顧客リストの RP/IT/RE グリッドが一括の分も埋まるようにする
-            _recordBulkSearch(_bc, _bulkSite, _bulkIsWide);
             // fill-done → axlx-batch-customer-done を待ってから次顧客へ（混線防止）
             // reins は bulk-dl.js 自動送信なし → ウェイターなしでスキップ
             if (_bulkFillDone) {
@@ -1291,6 +1292,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 _bulkSite === "itandi" ? "itandi" : "リアプロ"
               );
             }
+            // 2026-09-27 v2.5.32: 記録は検索を押せた後（失敗して投げた回は記録しない）
+            _recordBulkSearch(_bc, _bulkSite, _bulkIsWide);
             // レインズは fill-done で閉じる（_auditOnFillDone）
             if (_bulkAudit && _bulkSite !== "reins") _auditFinish(_bulkAudit.runId, {});
           } catch (_be) {
@@ -1307,7 +1310,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               fetch(SUMORA_BATCH_API + "/api/notify-group", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: "⚠【検索できなかった】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索ができませんでした（0件とは限りません）", group_key: "pickup_group_id" })
+                body: JSON.stringify({ text: (self.AxlxBatchGuard && self.AxlxBatchGuard.failureNotice({ customerName: _bc.customer_name, siteLabel: _bulkSiteLabel, error: _be })) || ("⚠【検索できなかった】" + _bc.customer_name + "さんの" + _bulkSiteLabel + "検索ができませんでした（0件とは限りません）"), group_key: "pickup_group_id" })
               }).catch(function() {});
             }
           }
@@ -2357,19 +2360,34 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       console.log("[fill-done-waiter] _batchShouldStop 検知 → stopped:true で解決");
       resolve({ timedOut: false, stopped: true, error: null });
     }, 500);
-    entry.timer = setTimeout(function () {
+    var onTimeout = function (extra) {
       clearInterval(stopInterval);
+      clearTimeout(entry.timer);
       var idx = _fillDoneWaiters.indexOf(entry);
       if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
       // 2026-09-18: 捨てたことを覚えておく。後から届くこの顧客の fill-done で
       //   次の顧客の待ちが解決される（＝違うお客さんの条件で送られる）のを防ぐ
       _markFillDoneAbandoned(entry.customerId);
-      console.warn("[fill-done-waiter] タイムアウト customerId=" + entry.customerId + " site=" + entry.site);
-      resolve({ timedOut: true, error: null });
-    }, timeoutMs || 90000);
+      console.warn("[fill-done-waiter] タイムアウト customerId=" + entry.customerId + " site=" + entry.site + (extra ? "（" + extra + "）" : ""));
+      resolve({ timedOut: true, error: null, cancelled: !!extra });
+    };
+    entry.timer = setTimeout(onTimeout, timeoutMs || 90000);
+    // 2026-09-27 v2.5.32: タブを読み直して1回やり直す時は待ちを始めから数え直す（_restartFillDoneWaiter）／
+    //   検索しないと決めた時（タブが応答しない・地域が決まらない）は90秒を待たずに閉じる（_endFillDoneWaiter）
+    entry.restart = function () { clearTimeout(entry.timer); entry.timer = setTimeout(onTimeout, timeoutMs || 90000); };
+    entry.end = function (why) { onTimeout(why || "検索しない"); };
     _fillDoneWaiters.push(entry);
   });
 }
+function _findFillDoneWaiter(site, customerId) {
+  for (var i = 0; i < _fillDoneWaiters.length; i++) {
+    var w = _fillDoneWaiters[i];
+    if (String(w.customerId) === String(customerId) && (!site || !w.site || w.site === site)) return w;
+  }
+  return null;
+}
+function _restartFillDoneWaiter(site, customerId) { var w = _findFillDoneWaiter(site, customerId); if (w && w.restart) w.restart(); }
+function _endFillDoneWaiter(site, customerId, why) { var w = _findFillDoneWaiter(site, customerId); if (w && w.end) w.end(why); }
 
 // ── 全ページ送信完了（axlx-batch-customer-done）待機インフラ ─────────────────────────
 // bulk-dl.js が tryNext→全ページ完了時に chrome.runtime.sendMessage で通知する。
@@ -2459,6 +2477,36 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     return true;
   }
   return false;
+});
+
+// 2026-09-27 v2.5.32 page-script が条件の入力を始めた合図（content.js が中継）。一括検索の _batchAutofill が待つ
+var _fillStartWaiters = [];
+function _createFillStartWaiter(customerId, timeoutMs) {
+  var entry = { customerId: customerId ? String(customerId) : null, resolve: null, timer: null };
+  var p = new Promise(function (resolve) {
+    entry.resolve = resolve;
+    entry.timer = setTimeout(function () {
+      var i = _fillStartWaiters.indexOf(entry);
+      if (i >= 0) _fillStartWaiters.splice(i, 1);
+      resolve(false);
+    }, timeoutMs || 25000);
+  });
+  _fillStartWaiters.push(entry);
+  return p;
+}
+chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  if (!msg || msg.type !== "axlx-fill-started") return false;
+  var cid = msg.customerId ? String(msg.customerId) : null;
+  // ID の付いていない合図（手動の入力等）は、待ちが1つだけの時にだけ当てる（取り違えない）
+  var hit = _fillStartWaiters.filter(function (w) { return cid ? w.customerId === cid : _fillStartWaiters.length === 1; });
+  hit.forEach(function (w) {
+    clearTimeout(w.timer);
+    var i = _fillStartWaiters.indexOf(w);
+    if (i >= 0) _fillStartWaiters.splice(i, 1);
+    w.resolve(true);
+  });
+  sendResponse({ ok: true });
+  return true;
 });
 
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
@@ -2876,6 +2924,7 @@ async function _runBatchSearch(command) {
       var _totalPassCount = 0;
       var _passFailed = 0; // 2026-09-25: 失敗・5分の待ち切れのパスの数（全部だめなら「0件」ではなく「検索できなかった」と送る）
       var _passCountUnknown = 0; // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）のパスの数
+      var _searchRecorded = false; // 2026-09-27 v2.5.32: 検索日の記録は検索を押せた回だけ（お客様×サイトで1回）
       for (var k = 0; k < areaModePasses.length; k++) {
         if (k > 0) {
           // 地域→駅の切り替えインターバル（5〜10秒）
@@ -2903,7 +2952,7 @@ async function _runBatchSearch(command) {
           // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
           var resolvedBatchConds = await _batchAutofill(effectiveCustomer, batchSite, batchIsWide, cmdPayload, _batchAudit);
           // AIXツールの一括検索も検索日を記録する（拡張の手動の一括と同じ・顧客リストの RP/IT/RE のグリッドが埋まる）
-          if (isWebBrain && k === 0) _recordBulkSearch(customer, batchSite, batchIsWide);
+          // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 記録は検索が終わってから（下・失敗した回は記録しない。旧はここで記録し、90秒の時間切れでも「検索した日」が付いた）
           var _passCount = 0;
           if (batchSite === "itandi") {
             // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
@@ -2931,6 +2980,8 @@ async function _runBatchSearch(command) {
             await new Promise(function(r) { setTimeout(r, 2000 + Math.floor(Math.random() * 2000)); });
           }
           _totalPassCount += (_passCount || 0);
+          // ここまで来た＝検索を押せた（fill-done を受け取った）。お客様×サイトで1回だけ記録（地域→駅の2パスは先に成功した方で）
+          if (isWebBrain && !_searchRecorded) { _searchRecorded = true; _recordBulkSearch(customer, batchSite, batchIsWide); }
           if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeLastOutcome.timedOut) _passFailed++;
           // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）は「0件」の集計に入れない
           if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeLastOutcome.countUnknown) _passCountUnknown++;
@@ -2946,6 +2997,23 @@ async function _runBatchSearch(command) {
             return;
           }
           console.error("[batch] error:", effectiveCustomer.id, batchSite, areaModePasses[k] || "auto", e);
+          // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 1パスの回の失敗（fill-done の時間切れ・タブが応答しない・地域が決まらない・例外）を
+          //   ピックアップ用グループに1回知らせる（旧は何も送らず、命令が error で閉じるだけ）。地域→駅の2パスは下の集計が1回知らせる。
+          //   5分の待ち切れは _scrapeAndSendRealpro が知らせる（投げないのでここには来ない＝2回言わない）
+          if (!_isMultiPass && self.AxlxBatchGuard) {
+            var _failText = self.AxlxBatchGuard.failureNotice({
+              customerName: customer.customer_name,
+              siteLabel: batchSite === "itandi" ? "itandi" : batchSite === "reins" ? "レインズ" : "リアプロ",
+              error: e,
+            });
+            if (_failText) {
+              fetch(SUMORA_BATCH_API + "/api/notify-group", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: _failText, group_key: "pickup_group_id" })
+              }).catch(function() {});
+            }
+          }
           batchErrors.push(effectiveCustomer.id + "/" + batchSite + "/" + (areaModePasses[k] || "auto") + ": " + ((e && e.message) || e));
         }
       }
@@ -3035,13 +3103,19 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   await _rememberSearchMode(customer && customer.id, site, isWide);
 
   var allTabs = await chrome.tabs.query({});
-  var existing = allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
+  // 2026-09-27 v2.5.32: リアプロは main.php のタブを先に選ぶ（content.js・page-script.js が入るのは main.php だけ。
+  //   旧は URL の前方一致の最初のタブ＝ログインの画面や別のページのタブを掴むと、popup は答えてもページが動かず90秒で時間切れ）
+  var existing = (site === "realnetpro" && self.AxlxBatchGuard)
+    ? self.AxlxBatchGuard.pickRealproTab(allTabs)
+    : allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
   var tab = existing;
   if (!tab) {
     tab = await chrome.tabs.create({ url: siteUrls[site], active: false });
     await _batchWaitForTabComplete(tab.id);
     await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
   }
+  // 2026-09-27 v2.5.32 竹内「重い順から治す」①: 拡張の読み直し・ログインのし直しの後の動かないタブをそのまま使わない（だめなら開き直す・それでもだめなら検索しない）
+  if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun);
 
   var conds = _buildBatchConditions(customer, isWide, opts);
   // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
@@ -3094,35 +3168,79 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     // popup.js 経由で完全条件構築（Dijkstra路線展開・API判定含む）を実行する
     // 個別検索（axlx-webapp-search）と同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → page-script.js
     // ★ switch-customer を先に送り、resolveLocalFirst はその後実行（フォーム入力を即時開始させるため）
-    // content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
-    try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id) }); } catch(_) {}
-    var batchRpSwitched = await new Promise(function(resolve) {
-      chrome.tabs.sendMessage(tab.id, {
-        type:         "axlx-switch-customer",
-        customerId:   String(customer.id),
-        customerName: customer.customer_name || null,
-        site:         "realpro",
-        areaMode:     customer.area_mode || null,
-        is_wide:      isWide,
-        auto_send_all: false,
-        // 検索の点検（ブレインの時だけ）: popup が同じ run_id で started（入れようとした条件）を送り、page-script に渡す
-        auditRunId:   auditRun ? auditRun.runId : null,
-        trigger:      auditRun ? auditRun.trigger : null,
-        commandId:    auditRun ? auditRun.commandId : null,
-        searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
-      }, function(resp) {
-        if (chrome.runtime.lastError) {
-          console.warn("[batchAutofill] realnetpro axlx-switch-customer error:", chrome.runtime.lastError.message);
-          resolve(false); return;
-        }
-        resolve(!!(resp && resp.ok));
+    // 2026-09-27 v2.5.32 竹内「重い順から治す」:
+    //   ① 入力を始めた合図（page-script の fill-started）が来ない・switch-customer が届かない時は、タブを読み直して1回だけやり直す
+    //      （旧は合図を見ず、ページが動かないまま90秒の fill-done 待ちで時間切れ＝点検 24・26）
+    //   ② 代わりの直接入力は、先に地域を決め、地域が空なら検索しない（旧は地域を決める前に条件を渡していた＝区のお客様は場所なしの全件検索の恐れ）
+    var _G = self.AxlxBatchGuard;
+    var _cidStr = String(customer.id);
+    var _runId = auditRun && auditRun.runId;
+    var _sendSwitch = function () {
+      return new Promise(function(resolve) {
+        chrome.tabs.sendMessage(tab.id, {
+          type:         "axlx-switch-customer",
+          customerId:   _cidStr,
+          customerName: customer.customer_name || null,
+          site:         "realpro",
+          areaMode:     customer.area_mode || null,
+          is_wide:      isWide,
+          auto_send_all: false,
+          // 検索の点検（ブレインの時だけ）: popup が同じ run_id で started（入れようとした条件）を送り、page-script に渡す
+          auditRunId:   auditRun ? auditRun.runId : null,
+          trigger:      auditRun ? auditRun.trigger : null,
+          commandId:    auditRun ? auditRun.commandId : null,
+          searchOverride: _searchOverride, // 2026-09-27 その回だけの一時調整（無ければ null）
+        }, function(resp) {
+          if (chrome.runtime.lastError) {
+            console.warn("[batchAutofill] realnetpro axlx-switch-customer error:", chrome.runtime.lastError.message);
+            resolve({ ok: false, why: String(chrome.runtime.lastError.message || "lastError").slice(0, 120) }); return;
+          }
+          resolve({ ok: !!(resp && resp.ok), why: resp && resp.ok ? null : ("popup: " + ((resp && resp.reason) || "ok=false")) });
+        });
       });
-    });
-    if (!batchRpSwitched) {
-      // フォールバック: underbar.js / popup.js 未応答 → 解決済み条件で直接 fill
-      console.warn("[batchAutofill] realnetpro: axlx-switch-customer 未応答 → executeScript fallback");
-      _auditStep(auditRun && auditRun.runId, "popup_fallback", "switch-customer 未応答 → 直接入力");
+    };
+    var _startTimeout = _G ? _G.FILL_START_TIMEOUT_MS : 25000;
+    var _started = false;
+    for (var _attempt = 0; _attempt < 2 && !_started; _attempt++) {
+      if (_attempt > 0) {
+        // 1回だけやり直す: タブを開き直し（main.php）・fill-done の待ちを数え直してから
+        tab = await _ensureRealproTab(tab, auditRun, _lastWhy && /^popup|Receiving end|Could not establish/.test(_lastWhy) ? "content_script_dead" : "page_script_dead");
+        _restartFillDoneWaiter("realnetpro", _cidStr);
+      }
+      // content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
+      try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: _cidStr }); } catch(_) {}
+      var _startP = _createFillStartWaiter(_cidStr, _startTimeout);
+      var _sw = await _sendSwitch();
+      var _lastWhy = _sw.why;
+      if (_sw.ok) {
+        _started = await _startP;
+        if (!_started) {
+          _lastWhy = "fill-started が " + Math.round(_startTimeout / 1000) + "秒来ない";
+          console.warn("[batchAutofill] realnetpro: popup は応答したがページが入力を始めない（" + (_attempt + 1) + "回目）");
+          _auditStep(_runId, "no_fill_start", (_attempt + 1) + "回目: " + _lastWhy);
+        }
+      } else {
+        _auditStep(_runId, "switch_fail", (_attempt + 1) + "回目: " + (_sw.why || "未応答"));
+      }
+    }
+    if (!_started && _sw && _sw.ok) {
+      // popup には届くのにページが2回とも入力を始めない → 検索しない（90秒待たない）
+      _endFillDoneWaiter("realnetpro", _cidStr, "入力が始まらない");
+      throw new Error("AXLX_NO_FILL_START: リアプロのページが条件の入力を始めませんでした（読み直して1回やり直しても）");
+    }
+    if (!_started) {
+      // フォールバック: underbar.js / popup.js 未応答（読み直した後も）→ 先に地域を決めてから直接 fill
+      console.warn("[batchAutofill] realnetpro: axlx-switch-customer 未応答 → 地域を決めてから直接入力");
+      _auditStep(_runId, "popup_fallback", "switch-customer 未応答 → 直接入力（" + (_lastWhy || "未応答") + "）");
+      await _applyRealproResolved(conds, isWide);
+      var _gate = _G ? _G.locationGate(conds) : { ok: true, mode: "unknown" };
       _auditPostIntended(auditRun, site, conds);
+      if (!_gate.ok) {
+        _auditStep(_runId, "no_location", "希望エリア「" + (customer.desired_area || "") + "」から地域を決められない → 検索しない");
+        _endFillDoneWaiter("realnetpro", _cidStr, "地域なし");
+        throw new Error("AXLX_NO_LOCATION: 希望エリアから地域を決められないため検索しません（全件検索の防止）");
+      }
+      var _fbStartP = _createFillStartWaiter(_cidStr, _startTimeout);
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",
@@ -3132,27 +3250,14 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         },
         args: [conds]
       });
-    }
-    // switch-customer 送信後に _resolveLocalFirst を実行（_scrapeAndSendRealpro 用の条件補完）
-    // フォーム入力はすでに popup.js 側で開始済みのため、ここでのAPI呼び出しが遅延しても問題なし
-    if ((conds.areas && conds.areas.length) || (conds.lines && conds.lines.length) || (conds.stations && conds.stations.length)) {
-      try {
-        var resolvedRealnetpro = await _resolveLocalFirst(conds, isWide);
-        if (resolvedRealnetpro.city_codes && resolvedRealnetpro.city_codes.length) {
-          conds.city_codes = resolvedRealnetpro.city_codes;
-        }
-        if (resolvedRealnetpro.route_ids && resolvedRealnetpro.route_ids.length) {
-          conds.route_ids = resolvedRealnetpro.route_ids;
-        }
-        if (resolvedRealnetpro.station_names && resolvedRealnetpro.station_names.length) {
-          conds.station_names = resolvedRealnetpro.station_names;
-        }
-        if (resolvedRealnetpro.detail_ward) {
-          conds.detail_ward = resolvedRealnetpro.detail_ward;
-        }
-      } catch (e) {
-        console.warn("[batchAutofill] realnetpro resolve失敗（デフォルト条件で続行）:", e.message || e);
+      if (!(await _fbStartP)) {
+        _endFillDoneWaiter("realnetpro", _cidStr, "直接入力も始まらない");
+        throw new Error("AXLX_NO_FILL_START: リアプロのページが条件の入力を始めませんでした（直接入力でも）");
       }
+    } else {
+      // switch-customer 送信後に _resolveLocalFirst を実行（_scrapeAndSendRealpro 用の条件補完）
+      // フォーム入力はすでに popup.js 側で開始済みのため、ここでのAPI呼び出しが遅延しても問題なし
+      await _applyRealproResolved(conds, isWide);
     }
   } else if (site === "itandi") {
     // popup.js 経由で完全条件構築（ITANDI_LINE_MAP_FILL・Dijkstra路線展開含む）を実行する
@@ -3214,6 +3319,22 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     });
   }
   // 解決済み条件を返す（呼び出し元でスクレイプ+比較に再利用できるようにする）
+  return conds;
+}
+
+// リアプロの場所（区のコード・路線・駅・詳細の区）を決めて conds に入れる（旧は _batchAutofill の中にあった物を1つに）。
+//   2026-09-27 v2.5.32: 直接入力の経路はこれを「条件をページへ渡す前」に呼ぶ（地域が空なら locationGate で検索しない）
+async function _applyRealproResolved(conds, isWide) {
+  if (!((conds.areas && conds.areas.length) || (conds.lines && conds.lines.length) || (conds.stations && conds.stations.length))) return conds;
+  try {
+    var r = await _resolveLocalFirst(conds, isWide);
+    if (r.city_codes && r.city_codes.length) conds.city_codes = r.city_codes;
+    if (r.route_ids && r.route_ids.length) conds.route_ids = r.route_ids;
+    if (r.station_names && r.station_names.length) conds.station_names = r.station_names;
+    if (r.detail_ward) conds.detail_ward = r.detail_ward;
+  } catch (e) {
+    console.warn("[batchAutofill] realnetpro resolve失敗（デフォルト条件で続行）:", e.message || e);
+  }
   return conds;
 }
 
@@ -3286,12 +3407,77 @@ async function _pingTab(tabId, timeoutMs) {
         done = true;
         clearTimeout(timer);
         if (chrome.runtime.lastError) { resolve(false); return; }
-        resolve(!!(resp && resp.pong));
+        // 2026-09-27 v2.5.32: リアプロの content.js は ok しか返していなかった（pong だけ見ていて、いつも「応答なし」だった）
+        resolve(!!(resp && (resp.pong || resp.ok)));
       });
     } catch (e) {
       if (!done) { done = true; clearTimeout(timer); resolve(false); }
     }
   });
+}
+
+// 2026-09-27 v2.5.32 竹内「重い順から治す」: 一括検索の前にリアプロのタブが動くかを確かめる（batch-guard.js realproTabPlan に渡す形）。
+//   url: タブの場所／pong: content.js が答えたか／page: page-script.js が答えたか（古い content.js は page を返さない＝null）
+async function _probeRealproTab(tabId) {
+  var url = "";
+  try { var t = await chrome.tabs.get(tabId); url = (t && (t.url || t.pendingUrl)) || ""; } catch (_) { return { url: "", pong: false, page: null, gone: true }; }
+  var resp = await new Promise(function (resolve) {
+    var done = false;
+    var timer = setTimeout(function () { if (!done) { done = true; resolve(null); } }, 1500);
+    try {
+      chrome.tabs.sendMessage(tabId, { type: "axlx-ping" }, function (r) {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        if (chrome.runtime.lastError) { resolve({ err: chrome.runtime.lastError.message || "lastError" }); return; }
+        resolve(r || null);
+      });
+    } catch (e) { if (!done) { done = true; clearTimeout(timer); resolve({ err: (e && e.message) || String(e) }); } }
+  });
+  var pong = !!(resp && !resp.err && (resp.pong || resp.ok));
+  return { url: url, pong: pong, page: pong && typeof resp.page === "boolean" ? resp.page : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
+}
+
+// 背面（hidden）のリアプロのタブを、そのウィンドウの中で前に出す（ウィンドウの前後・最小化は触らない）。
+//   2026-09-27 点検 26: 背面のタブは入力に約10分かかり、fill-done の90秒を過ぎてから物件が届いた
+async function _bringRealproTabFront(tab, runId, vis) {
+  try {
+    await chrome.tabs.update(tab.id, { active: true });
+    _auditStep(runId, "tab_front", "背面のタブ（" + vis + "）を前に出した");
+    await new Promise(function (r) { setTimeout(r, _settleMs(600)); });
+    var p = await _probeRealproTab(tab.id);
+    if (p.vis === "hidden") _auditStep(runId, "tab_hidden", "前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+  } catch (e) { console.warn("[batchAutofill] タブを前に出せない:", e && e.message); }
+}
+
+// 使える状態のリアプロのタブを返す（だめなら main.php を開き直して1回だけ確かめ直す）。それでもだめなら投げる（検索しない）
+async function _ensureRealproTab(tab, auditRun, why) {
+  var G = self.AxlxBatchGuard;
+  var runId = auditRun && auditRun.runId;
+  var probe = await _probeRealproTab(tab.id);
+  var plan = G ? G.realproTabPlan(probe) : { action: probe.pong ? "use" : "reload", reason: probe.pong ? "alive" : "content_script_dead" };
+  if (plan.action === "use" && !why) {
+    if (plan.front) await _bringRealproTabFront(tab, runId, probe.vis);
+    return tab;
+  }
+  var reason = why || plan.reason;
+  console.warn("[batchAutofill] リアプロのタブを読み直します: " + reason + (probe.err ? "（" + probe.err + "）" : "") + " url=" + String(probe.url).slice(0, 80));
+  _auditStep(runId, "tab_reload", (G ? G.reasonJa(reason) : reason) + (probe.err ? " / " + probe.err : ""));
+  if (probe.gone) {
+    tab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: false });
+  } else {
+    await chrome.tabs.update(tab.id, { url: "https://www.realnetpro.com/main.php" });
+  }
+  await _batchWaitForTabComplete(tab.id);
+  await new Promise(function (r) { setTimeout(r, _settleMs(1800)); });
+  var probe2 = await _probeRealproTab(tab.id);
+  var plan2 = G ? G.realproTabPlan(probe2) : { action: probe2.pong ? "use" : "reload", reason: "content_script_dead" };
+  _auditStep(runId, "tab_check", plan2.action === "use" ? "読み直して応答あり" : "読み直しても " + (G ? G.reasonJa(plan2.reason) : plan2.reason) + " url=" + String(probe2.url).slice(0, 60));
+  if (plan2.action !== "use") {
+    // ログインが切れていると main.php がログインの画面等に移る（url が main.php でない）
+    throw new Error("AXLX_TAB_DEAD: リアプロのタブが応答しません（読み直しても・" + (G ? G.reasonJa(plan2.reason) : plan2.reason) + "）");
+  }
+  if (plan2.front) await _bringRealproTabFront(tab, runId, probe2.vis);
+  return tab;
 }
 
 async function _webappAutofill(site, conditions) {

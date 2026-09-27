@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-09-27 v2.5.32 一括検索の「検索していないのに検索したことにする」を止める（**拡張の再読み込み必須**）
+竹内「リアプロログインした／重い順から治す／YUMAはテスト用やからあらゆるパターンで一連のテストする」
+- **検索1回（2.5.31・ログインし直した後）**: YUMA のテスト顧客の条件を「北区・福島区／1K・1LDK／9万／築25年／徒歩10／バストイレ別」に入れ直し（other_requests「2階以上」は外した・履歴4行）→ 05:30:04Z に web_brain を1回（命令 adc6ff2f・05:30:34 に拾われた）→ 点検 26: popup の経路で入れようとした値は登録どおり（city_codes 27127・27103・札なし）→ **05:32:24 に fill-done 90秒の時間切れで error**。ところが **05:40:34 にページが送信し、05:41 に物件10件（通す3・保留7・ラ・フォーレ東天満 703・ブランメゾン堀川 705・AVER新野田 901 等・全部北区/福島区・号室は資料どおり 00105・0808）が届いた**。止まったのではなく入力に約10分かかった＝**背面のタブで Chrome がタイマーを間引いた**（2.5.31 の⑤の見立てどおり）。遅れた fill-done は run が閉じた後なので点検に残らず、search_history.realpro_p は 05:31:01（失敗扱いの前に記録）
+  - 自動の広げてを止めるため、拾われない印（automation_commands 6b06ee88・status=cancelled・payload.chain・test_block）を入れた（修正 pinpoint_failed の反映前の一時の手当て）
+  - 1cccb35a は 05:00 に「3時間なかった」で閉じていた
+- **① タブ（background.js・batch-guard.js・content.js・page-script.js）**:
+  - リアプロは main.php のタブを先に選ぶ（`pickRealproTab`・旧は URL の前方一致の最初＝ログインの画面等を掴むとページが動かない）
+  - 使う前に確かめる `_ensureRealproTab`: content.js の axlx-ping に **pong・page（page-script が postMessage に答えるか）・vis** を返させ（旧は ok だけで、`_pingTab` は pong を見ていた＝いつも応答なし）、`realproTabPlan` で main.php でない／content.js が答えない／page-script が答えない → main.php を開き直して1回だけ確かめ直す。だめなら `AXLX_TAB_DEAD` で検索しない。**背面（hidden）なら `_bringRealproTabFront`（そのウィンドウの中でタブを前に出すだけ・ウィンドウは触らない）**
+  - page-script が入力を始めた時に `aixlinx-fill-started` → content.js → background `axlx-fill-started`。switch-customer の後 25秒（FILL_START_TIMEOUT_MS）合図が無い・switch が届かない時は、タブを開き直し・fill-done の待ちを数え直して（`_restartFillDoneWaiter`）**1回だけ**やり直す。popup に届くのに2回とも始まらなければ `AXLX_NO_FILL_START`（90秒待たずに `_endFillDoneWaiter`）
+  - popup_fallback の段に lastError の本文を残す。点検の段に tab_reload・tab_check・tab_front・tab_hidden・switch_fail・no_fill_start・no_location
+- **② 直接入力の経路**: 先に `_applyRealproResolved`（旧は switch の後に解決）→ `locationGate`（page-script の decideLocationMode と同じ）→ 入れようとした値の記録 → ページへ渡す。地域が空なら `AXLX_NO_LOCATION` で検索しない（全件検索の防止）
+- **③ 広げて（サーバー・app/lib/search-widen-chain.ts）**: `runDidNotSearch`（error があって読んだ・送った数が無い／started のまま15分）が1つでもある回は `skip: pinpoint_failed`。server の AUDIT_COLS に error・error_kind。5分の待ち切れ（batch_timed_out）は検索した回として今まで通り。⚠ 点検 26 のように「失敗と記録されたが後から物件が届いた」回も広げない（分からない時は検索しない側）
+- **④ 検索日と知らせ**: `_recordBulkSearch` は `_scrapeAndSendRealpro` の後（検索を押せた回だけ・お客様×サイトで1回・手動の一括も同じ）。1パスの回の失敗はピックアップ用グループに `failureNotice` で1回（「⚠【検索できなかった】〇〇さんのリアプロ検索ができませんでした（理由・0件とは限りません）」・fill-done の時間切れは「後から物件が届くことがあります」を添える・止めた回は送らない）。売上番長グループには送らない
+- テスト: `tests/chrome-extension/batch-guard.test.js`（54）・human-wait の KEEP に 1500（タブの確かめの期限）・`app/lib/__tests__/search-widen-chain.test.ts`（57・点検 24/25/26 の形）・既存の拡張テスト全部・search-audit-check/condition-drift/timing・tsc 0
+- **竹内さんに頼むこと**: 拡張を 2.5.32 に再読み込み → **リアプロのタブを F5**（パターン5）→ YUMA のテスト顧客で一括検索を1回（人が押す程度）→ `scripts/search-audit-timeline.ts --customer=509cd061-60cc-49a9-8c5a-4f356c4a5f88` で tab_front／fill_start の段・90秒以内の fill-done を確かめる
+- **まだの事**: ウィンドウが最小化・他のウィンドウに隠れている時は前に出しても hidden のまま（tab_hidden の段で分かる）／遅れて届いた fill-done を点検に残す（run が閉じた後は捨てている）／時間切れの後もページは検索を続ける＝次のお客様と重なる恐れ（1人ずつの AIXツールの一括では起きにくい）／itandi は同じ確かめをまだ入れていない
+
+## 2026-09-27 YUMA の徹底テスト: 2.5.31 の本物の検索1回は検索せずに終わった（コードは直していない）
+- 条件を DB で直接変更（北区・福島区／1K・1LDK／9万／築25／徒歩10／バストイレ別・履歴にも記録）→ 本番 trigger に web_brain（realnetpro・ピンポイント）を1回 → 命令 d18eb3c6・点検 24: begin → popup_fallback（37ms・switch-customer 未応答）→ 90秒で fill-done 時間切れ。filled/ops/stall すべて null＝ページ側が動いていない
+- 一番の候補: 拡張を 2.5.31 に再読み込みした後、開いていたリアプロのタブを読み直していない（パターン5）。自動の経路では防げない
+- 見つかった問題（未対応・設計知見に登録）:
+  - 高: background.js:3037-3044 が既存タブの生死を見ない・3101-3120 が lastError の中身を捨てる／fallback の枝（3117-3133）が場所の解決（_resolveLocalFirst）より前に aixlinx-fill を送る＝場所なしの全件検索の危険。点検の AREA_UNRESOLVED と DeepSeek の見立ては誤診
+  - 中: search-widen-chain.ts:190-235 decideWiden が失敗と0件を区別せず、Cron が広げて 3e82fb32 を積んだ（4秒で Cannot access contents of the page・点検 25）
+  - 低: background.js:2905 が fill-done 前に search_history.realpro_p を書く（失敗でも 03:04:37 が残った）／single pass の catch（2938-2949）がピックアップ用グループに「検索できなかった」を送らない／fallback の intended は広げる前の値
+- 確かめられなかった物: 入れた値＝新しい条件（CONDITION_STALE なし）・ops/dl:* の時刻のばらつき・号室が資料の文字のまま・👑/画像で分析/自動完了・merge-pdfs の時間切れ
+- 残り: 11:00 の自動便 1cccb35a（auto_schedule・is_wide）が pending（拾われなければ 05:00Z ごろ error で閉じる）。テスト顧客の条件はその後お客様役の読み取りで梅田・7万・「1K・1DK」に変わっている
+- 竹内さんに頼む事: リアプロのタブを F5 で読み直し・ログイン確認 → 同じ入口で1回だけ検索し直す（条件は入れ直してから）
+
 ## 2026-09-27 v2.5.31 残りの課題（古い条件の競争の残り・点検の食い違い・操作ごとの時刻・止まった段・資料の号室）（**拡張の再読み込み必須**）
 竹内「2000回試すなど危ないやり方なのでやらない（リアプロの運営）もっと人間が試した形で試す／物件の資料の中の文字変えなくても…1枚目や3枚目奇数は弊社、2枚目や4枚目偶数は元付業者と交互／文字抜かなくてそのまま使う／残っている課題も改善する」
 - **① ウェブアプリの自動入力（pendingPopupCmd）の2経路も読み直しを待つ（popup.js）**: 開いた時（loadCustomers の後）と開いている時（storage.onChanged）の2か所を `_runPendingPopupCmd(cmd, via)` の1つにし、2.5.30 と同じ「開く → `_awaitFreshPreload(6000)` → 地域/駅の軸 → 軸を固定（currentAreaMode）→ 人の間（0.8〜1.2秒）→ 押す」。開く間は一時調整を復元しない（try/finally）。旧は 0.8〜1.2秒の setTimeout で古い欄のまま押していた

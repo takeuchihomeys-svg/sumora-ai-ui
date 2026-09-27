@@ -22,6 +22,7 @@ function audit(p: Partial<AuditLite> & { min: number }): AuditLite {
     site: p.site ?? "realpro", mode: p.mode ?? "brain_normal", trigger: p.trigger ?? "web_brain", is_wide: p.is_wide === undefined ? false : p.is_wide,
     pass: p.pass ?? null, result: p.result === undefined ? { sent_count: 3, read_rows: 3 } : p.result, customer_snapshot: p.customer_snapshot === undefined ? NEW_SNAP : p.customer_snapshot,
     intended: p.intended ?? { rp_update_days: null }, ext_version: p.ext_version ?? "2.5.28",
+    error: p.error ?? null, error_kind: p.error_kind ?? null,
   };
 }
 function rows(n: number, pass: number, o: Partial<PickupLite> & { min: number }): PickupLite[] {
@@ -113,6 +114,29 @@ console.log("■ 広げない（止める）");
   t("広げての行はピンポイントの数に入れない", widenRows.action === "widen" && widenRows.chain.pass_count === 5, widenRows);
   const olderRows = D({ audits: [audit({ min: 20 })], rows: [...rows(2, 2, { min: 15 }), ...rows(9, 9, { min: 60 })] });
   t("前の回の行は数えない", olderRows.action === "widen" && olderRows.chain.pass_count === 2, olderRows);
+}
+
+console.log("■ 検索していない（失敗）と検索して0件を分ける（2026-09-27 点検 24 → 自動の広げて 3e82fb32 の形）");
+{
+  const FILL_TIMEOUT = "リアプロ 検索完了シグナル（fill-done）が90秒以内に届きませんでした。";
+  const p24 = audit({ min: 10, result: null, error: FILL_TIMEOUT });
+  t("点検 24（fill-done の時間切れ・result なし）の後の Cron → 広げない（pinpoint_failed）", D({ audits: [p24], rows: [] }).reason === "pinpoint_failed", D({ audits: [p24], rows: [] }));
+  t("点検の finished から呼んでも広げない", D({ audits: [p24], rows: [], fromAuditFinish: true }).reason === "pinpoint_failed");
+  const p25 = audit({ min: 10, result: null, error: "Cannot access contents of the page. Extension manifest must request permission to access the respective host." });
+  t("点検 25 の形（タブに触れない・例外）も広げない", D({ audits: [p25], rows: [] }).reason === "pinpoint_failed");
+  const watchdog = audit({ min: 10, result: null, error: "page-script側エラー（スキップ）: watchdog-timeout: 85秒以内に条件入力が完了しませんでした（全件検索防止のため中止）" });
+  t("見張り（85秒）で止まった回も広げない", D({ audits: [watchdog], rows: [] }).reason === "pinpoint_failed");
+  const stale = audit({ min: 40, status: "started", finished_at: null, result: null });
+  t("started のまま15分を過ぎて結果も無い回（閉じられなかった）も広げない", D({ audits: [stale], rows: [] }).reason === "pinpoint_failed");
+  const zero = audit({ min: 12, result: { sent_count: 0, read_rows: 0 } });
+  t("検索して0件（error なし・数あり）は今まで通り広げる", D({ audits: [zero], rows: [] }).action === "widen");
+  const batchTimeout = audit({ min: 20, result: { batch_timed_out: true } as never, error: null });
+  t("5分の待ち切れ（検索は押せた・error なし）は失敗に入れない（今まで通り行を待ってから決める）", D({ audits: [batchTimeout], rows: [] }).reason !== "pinpoint_failed");
+  const errWithCounts = audit({ min: 12, result: { sent_count: 34, read_rows: 48 }, error: "送信の一部に失敗" });
+  t("error があっても読んだ・送った数がある回は検索した回（失敗に入れない）", D({ audits: [errWithCounts], rows: rows(3, 1, { min: 11 }) }).reason !== "pinpoint_failed");
+  const bothWard = audit({ min: 25, pass: "ward", result: { sent_count: 2, read_rows: 2 } });
+  const bothStationFail = audit({ min: 20, pass: "station", result: null, error: FILL_TIMEOUT });
+  t("地域→駅の2パスの片方が失敗した回も広げない（足りるかが分からない）", D({ audits: [bothWard, bothStationFail], rows: rows(2, 2, { min: 22 }) }).reason === "pinpoint_failed");
 }
 
 console.log("■ 更新日（広げての回もピンポイントと同じ新着の幅）");

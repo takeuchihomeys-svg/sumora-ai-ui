@@ -17,7 +17,7 @@ import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
 export type ChainTrigger = "complete" | "audit" | "sweep";
 export type ChainResult = { site: string; decision: WidenDecision; commandId: string | null; error: string | null; dry: boolean };
 
-const AUDIT_COLS = "run_id, created_at, finished_at, status, site, mode, trigger, is_wide, pass, command_id, result, customer_snapshot, intended, ext_version";
+const AUDIT_COLS = "run_id, created_at, finished_at, status, site, mode, trigger, is_wide, pass, command_id, result, customer_snapshot, intended, ext_version, error, error_kind";
 
 export function widenChainEnabled(): boolean {
   return process.env.SEARCH_WIDEN_CHAIN !== "off";

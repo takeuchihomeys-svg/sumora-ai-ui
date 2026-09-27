@@ -203,12 +203,45 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
   }
 })();
 
+// 2026-09-27 v2.5.32 page-script.js が生きているか（ページの中へ postMessage で聞き、答えを待つ）。答えが無ければ false
+function _axPingPage(timeoutMs) {
+  return new Promise(function (resolve) {
+    var id = "p" + Date.now() + Math.random().toString(36).slice(2, 8);
+    var done = false;
+    var onMsg = function (e) {
+      if (e.source !== window || !e.data || e.data.from !== "axlx-page-pong" || e.data.id !== id) return;
+      finish(true);
+    };
+    var finish = function (v) { if (done) return; done = true; window.removeEventListener("message", onMsg); resolve(v); };
+    window.addEventListener("message", onMsg);
+    setTimeout(function () { finish(false); }, timeoutMs || 700);
+    try { window.postMessage({ from: "axlx-page-ping", id: id }, "*"); } catch (_) { finish(false); }
+  });
+}
+
+// 2026-09-27 v2.5.32 page-script.js が条件の入力を始めた合図（aixlinx-fill-started）を background へ中継する。
+//   一括検索は合図が来なければタブを読み直して1回だけやり直す（90秒の時間切れを待たない）
+window.addEventListener("message", function (e) {
+  if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-started") return;
+  try {
+    chrome.runtime.sendMessage({
+      type: "axlx-fill-started",
+      site: "realnetpro",
+      customerId: e.data.customerId || _pendingFillCustomerId || null,
+      runId: e.data.runId || null,
+    }, function () { void chrome.runtime.lastError; });
+  } catch (_) { /* 拡張の読み直し等で切れている時は何もしない */ }
+});
+
 // background.js からの自動入力トリガー（executeScript を使わずに sendMessage 経由で呼ぶ）
 var _pendingFillCustomerId = null; // axlx-set-fill-customer で設定される現在処理中の顧客ID
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     if (msg.type === "axlx-ping") {
-      sendResponse({ ok: true });
+      // 2026-09-27 v2.5.32: background の _pingTab は pong を見ていたのに、ここは ok しか返さず「いつも応答なし」になっていた。
+      //   pong と、page-script.js が答えるか（page）も返す（一括検索の前のタブの確かめ・batch-guard.js realproTabPlan）
+      //   vis: このタブが見えているか（hidden の背面のタブはタイマーが間引かれ、入力が遅れる＝点検 26）
+      _axPingPage(700).then(function (page) { sendResponse({ ok: true, pong: true, page: page, vis: document.visibilityState }); });
       return true;
     }
     // fill-done relay に customerId を付与するため、autofill 前に顧客IDをセットしておく

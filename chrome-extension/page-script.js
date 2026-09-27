@@ -885,6 +885,8 @@
     _auditReset(cond && cond._audit_run_id);
     _auditStepP('fill_start', cond && cond.area_mode);
     _auditStepP('vis', document.visibilityState);
+    // 2026-09-27 v2.5.32 入力を始めた合図（content.js → background）。一括検索はこれが来なければタブを読み直して1回だけやり直す
+    try { window.postMessage({ from: 'aixlinx-fill-started', customerId: _fillCustomerId || null, runId: _fillRunId || null }, '*'); } catch (_) {}
     if (!cond) { notifyDone(); return; }
 
     // 連続検索対応: モーダルを閉じる → フォームを手動クリア → 条件入力 の順で実行
@@ -1991,6 +1993,12 @@
     // 詳細ボタンのクリックは background.js の Step 5 が chrome.tabs.onUpdated で
     // 捕捉しながら行う。page-script.js は search triggered を通知するだけでよい。
     // （旧実装で _fwPoll/_fwScanRows がクリックすると background.js と二重クリックになるため廃止）
+  });
+
+  // 2026-09-27 v2.5.32 content.js の「page-script は生きているか」に答える（一括検索の前のタブの確かめ）
+  window.addEventListener("message", function(e) {
+    if (e.source !== window || !e.data || e.data.from !== "axlx-page-ping") return;
+    window.postMessage({ from: "axlx-page-pong", id: e.data.id }, "*");
   });
 
   window.addEventListener("message", function(e) {
