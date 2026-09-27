@@ -2,7 +2,7 @@
 //   決まり: 物件確認はお客様から依頼があった時だけ（memory feedback_property_check_on_request・判定は customerRequestedPropertyCheck）。
 //   お客様の発言は scripts/audit-property-check-task.ts（本番120日）で次にスタッフが何を送ったかと並べて読んだ実物（名前は伏せた）。
 // 実行: npx tsx app/lib/__tests__/property-check-task.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { detectTaskTypeByKeywords, decideAutoTask, isViewingWishOnlyTurn } from "../property-check-task";
+import { detectTaskTypeByKeywords, decideAutoTask, isViewingWishOnlyTurn, isEstimateAskForOurRoomTurn } from "../property-check-task";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -65,11 +65,12 @@ it("b0314a3d 8/23: こちらが送ったお部屋に「ここも内覧したい�
   );
   eq(decideAutoTask("ここも内覧したいそうです！", h), null);
 });
-it("内覧の希望と一緒に空き・費用を聞いた（2c434b28「空室あれば内覧」・ad97cd40「初期費用しりたいです！…内覧お願いしたい」）→ 作る", () => {
+it("内覧の希望と一緒に空きを聞いた（2c434b28「空室あれば内覧」）→ 内覧の希望だけではない／こちらが送ったお部屋への「初期費用しりたい」（ad97cd40）→ 作らない（見積書送るの場面）", () => {
   eq(isViewingWishOnlyTurn(hist({ sender: "customer", text: "空室あるか確認お願いできますか？🙇‍♀️ 空室あれば内覧したいと思ってます！" })), false);
   const h = hist({ sender: "staff", text: "🌟アービングNeo岸里玉出 302号室 新着でかなり条件のいいお部屋となります！！ https://example.com/a" },
     { sender: "customer", text: "こちら初期費用しりたいです！ 駐車場ありますか？" }, { sender: "customer", text: "あした18時から内覧お願いしたいです" });
-  eq(decideAutoTask("あした18時から内覧お願いしたいです", h), "property_check");
+  eq(isViewingWishOnlyTurn(h), false);
+  eq(decideAutoTask("あした18時から内覧お願いしたいです", h), null);
 });
 it("「まだ空いてますか」は枠でなく募集の質問 → 内覧の希望だけに数えない", () => {
   eq(isViewingWishOnlyTurn(hist({ sender: "customer", text: "この部屋まだ空いてますか？内覧したいです" })), false);
@@ -89,6 +90,43 @@ it("直前の会話が読めない時は語だけ（旧の動き）。ただし�
   eq(decideAutoTask("空室確認お願いします", []), "property_check");
   eq(decideAutoTask("内覧したいです", []), null);
   eq(decideAutoTask("内覧したいです", null), null);
+});
+
+console.log("\n■ こちらが送ったお部屋への費用・見積もりの依頼では作らない（2026-09-27 竹内「初期費用しりたいはAIXの初期費用おくるから見積書おくってる」）");
+const OUR_ROOM: M = { sender: "staff", text: "🌟アービングNeo岸里玉出 302号室 新着でかなり条件のいいお部屋となります！！ https://example.com/a" };
+it("ad97cd40 9/22: こちらが URL で送ったお部屋に「こちら初期費用しりたいです！」→ 見積書の場面（作らない）", () => {
+  eq(isEstimateAskForOurRoomTurn(hist(OUR_ROOM, { sender: "customer", text: "こちら初期費用しりたいです！" })), true);
+});
+it("こちらが送ったお部屋に「このお部屋いくらですか？」「見積もりお願いします」→ 作らない", () => {
+  const t1 = "このお部屋の初期費用いくらですか？";
+  eq(decideAutoTask(t1, hist(OUR_ROOM, { sender: "customer", text: t1 })), null);
+  eq(isEstimateAskForOurRoomTurn(hist(OUR_ROOM, { sender: "customer", text: "こちらの物件の見積もりお願いしたいです！" })), true);
+});
+it("お客様が持ち込んだ物件（画像）の費用の質問 → 今まで通り作る（まず募集状況の確認）", () => {
+  const t = "この物件の初期費用しりたいです";
+  const h = hist(OUR_ROOM, { sender: "customer", text: "[画像]" }, { sender: "customer", text: t });
+  eq(isEstimateAskForOurRoomTurn(h), false);
+  // 語の一覧の候補（「初期費用確認」）に当たる文でも、持ち込みなら今まで通り作る
+  const t2 = "この物件の初期費用確認お願いしたいです";
+  eq(decideAutoTask(t2, hist(OUR_ROOM, { sender: "customer", text: "[画像]" }, { sender: "customer", text: t2 })), "property_check");
+});
+it("前の番でお客様が画像を送り、こちらは「確認させて頂きます」だけ → 持ち込み物件のまま（作る側）", () => {
+  const h = hist({ sender: "customer", text: "[画像]" }, { sender: "staff", text: "〇〇さん 202号室確認させて頂きます！！" }, { sender: "customer", text: "このお部屋の初期費用も知りたいです" });
+  eq(isEstimateAskForOurRoomTurn(h), false);
+});
+it("持ち込み物件でも、こちらが募集中と答えた後の費用の依頼 → 結果を伝えたお部屋（作らない）", () => {
+  const h = hist({ sender: "customer", text: "[画像]" }, { sender: "staff", text: "確認させて頂きましたところ202号室現在募集中となります！！" }, { sender: "customer", text: "このお部屋の初期費用も知りたいです" });
+  eq(isEstimateAskForOurRoomTurn(h), true);
+});
+it("費用と一緒に空き・別のお部屋を聞いた → 作る側（物件確認した＋同封／物件出しの場面）", () => {
+  eq(isEstimateAskForOurRoomTurn(hist(OUR_ROOM, { sender: "customer", text: "このお部屋まだ空いてますか？初期費用いくらですか？" })), false);
+  eq(isEstimateAskForOurRoomTurn(hist(OUR_ROOM, { sender: "customer", text: "このお部屋の初期費用知りたいです。他の物件も探してほしいです" })), false);
+});
+it("お部屋の出所が無い（何も送っていない）→ 当てない", () => {
+  eq(isEstimateAskForOurRoomTurn(hist({ sender: "staff", text: "よろしくお願いします！！" }, { sender: "customer", text: "このお部屋の初期費用しりたいです" })), false);
+});
+it("見積書へのお礼（「見積もりありがとうございます」）は依頼に数えない", () => {
+  eq(isEstimateAskForOurRoomTurn(hist(OUR_ROOM, { sender: "customer", text: "見積もりありがとうございます！" })), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

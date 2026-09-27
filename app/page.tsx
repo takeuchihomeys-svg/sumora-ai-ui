@@ -19,7 +19,7 @@ import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
-import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./lib/brain-meta-restore";
+import { BRAIN_AIX_LABELS, sameAixAction, resolveAixButtonView, aixDismissKey, isAixListBadge, latestCustomerTs, type KeptAix } from "./lib/aix-button-view";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
@@ -285,57 +285,8 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   // 2026-09-15 \u7af9\u5185\uff08YUYA \u4e8b\u4f8b\uff09: \u7269\u4ef6\u3054\u3068\u306e\u4fdd\u8a3c\u4f1a\u793e\u540d\u30fb\u7a2e\u985e\u306e\u6848\u5185\uff08\u56fa\u5b9a\u6587\u9762\uff0f\u4f1a\u8a71\u3092\u5408\u308f\u305b\u308b\uff09
   guarantor_info:          { label: "\u4fdd\u8a3c\u4f1a\u793e\u306b\u3064\u3044\u3066",        color: "#3949AB", templateCategory: "" },
 };
-// \u8133\u99c6\u52d5\u30d2\u30f3\u30c8\uff08suggested_aix_meta.action\uff09\u2192 AIX\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u3002
-// \u30e9\u30d9\u30eb\u304c\u5b58\u5728\u3059\u308b action \u306f\u300cAIX\u30a2\u30af\u30b7\u30e7\u30f3\u300d\u3068\u3057\u3066\u4e0b\u90e8AIX\u30ab\u30fc\u30c9\u306b\u7d71\u5408\u8868\u793a\u3059\u308b
-// \uff08\u4e0a\u90e8\u6307\u793a\u30d0\u30ca\u30fc\u306f\u51fa\u3055\u306a\u3044\uff09\u3002\u5b58\u5728\u3057\u306a\u3044\u5834\u5408\u306f\u5f93\u6765\u3069\u304a\u308a\u6307\u793a\u30c6\u30ad\u30b9\u30c8\u306e\u307f\u8868\u793a\u3002
-const BRAIN_AIX_LABELS: Record<string, string> = {
-  estimate_sheet:          "AIX \u898b\u7a4d\u66f8\u9001\u308b",
-  property_check_result:   "AIX \u7269\u4ef6\u78ba\u8a8d\u3057\u305f",
-  acknowledge_check:       "AIX \u78ba\u8a8d\u3057\u307e\u3059",
-  viewing_invite:          "AIX \u5185\u89a7\u65e5\u8abf\u6574",
-  meeting_place:           "AIX \u5f85\u3061\u5408\u308f\u305b",
-  application_push:        "AIX \u7533\u8fbc\u3078\uff01",
-  property_send:           "AIX \u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7",
-  property_recommendation: "AIX \u7269\u4ef6\u30aa\u30b9\u30b9\u30e1",
-  condition_hearing:       "AIX \u6761\u4ef6\u30d2\u30a2\u30ea\u30f3\u30b0",
-  followup_revive:         "AIX \u8ffd\u5ba2\u3059\u308b",
-  greeting_viewing:        "AIX \u5185\u89a7\u6328\u62f6",
-  // brain \u4fe1\u53f77\uff087\u65e5\u4ee5\u4e0a\u9001\u4ed8\u306a\u3057\uff09\u30fb\u4fe1\u53f7TikTok \u7531\u6765\u306e\u63d0\u6848\u3092\u30dc\u30bf\u30f3\u4ed8\u304d\u30d0\u30ca\u30fc\u3067\u8868\u793a\u3059\u308b\u305f\u3081\u8ffd\u52a0\u3002
-  // AIX_ACTION_META\uff08\u7269\u4ef6\u3092\u63a2\u3059\uff09\u30fbaix-taxonomy \u306e AIX_BUTTON_LABELS \u3068\u8868\u8a18\u3092\u63c3\u3048\u308b\u3002
-  // \u30af\u30ea\u30c3\u30af\u7d4c\u8def: runBrainAix \u2192 openAixDirect("property_search") \u2192 AixModal\uff08\u578bunion/\u8a2d\u5b9a\u306b\u5b9a\u7fa9\u6e08\u307f\u30fb\u914d\u7dda\u78ba\u8a8d\u6e08\u307f 2026-08\uff09
-  property_search:         "AIX \u7269\u4ef6\u3092\u63a2\u3059",
-  cost_explain:            "AIX \u521d\u671f\u8cbb\u7528\u3092\u8aac\u660e",
-  cost_breakdown:          "AIX \u521d\u671f\u8cbb\u7528\u306b\u3064\u3044\u3066",
-  phone_call:              "AIX \u96fb\u8a71\u3092\u304b\u3051\u308b",
-  // 2026-09-15 \u7af9\u5185\uff08YUYA \u4e8b\u4f8b\uff09: \u304a\u5ba2\u69d8\u304c\u4fdd\u8a3c\u4f1a\u793e\u305d\u306e\u3082\u306e\u3092\u5c0b\u306d\u305f\u6642\u306b\u30d6\u30ec\u30a4\u30f3\u304c\u9078\u3076\uff08\u5834\u9762 S3\u30fbguarantor_question\uff09
-  guarantor_info:          "AIX \u4fdd\u8a3c\u4f1a\u793e\u306b\u3064\u3044\u3066",
-};
-
-// AIX \u304c\u5fc5\u8981\u304b\u3069\u3046\u304b\u306f\u30d6\u30ec\u30a4\u30f3\u3060\u3051\u304c\u5224\u65ad\u3059\u308b\uff082026-09-12 \u7af9\u5185\u65b9\u91dd\uff09\u3002
-// \u30d6\u30ec\u30a4\u30f3\u306e\u5224\u65ad\u304c\u300c\u6700\u65b0\u306e\u9867\u5ba2\u767a\u8a00\u300d\u3092\u898b\u305f\u5f8c\u306e\u3082\u306e\u304b\u3092\u8fd4\u3059\u3002\u753b\u9762\u306e AIX \u8a98\u5c0e\uff08P3\u301cP8 \u30d0\u30ca\u30fc\u30fbAIX \u30dc\u30bf\u30f3\u306e\u70b9\u6ec5\u30fb
-// \u300c\u78ba\u8a8d\u3057\u305f\u300d\u30b7\u30e7\u30fc\u30c8\u30ab\u30c3\u30c8\uff09\u306f\u3059\u3079\u3066\u3053\u306e\u5224\u5b9a\u3092\u901a\u3059\u3002\u30d6\u30ec\u30a4\u30f3\u304c\u5224\u65ad\u3057\u3066\u3044\u306a\u3044 AIX \u3092\u51fa\u3059\u3068\u3001\u8aa4\u308a\u3092\u5b66\u7fd2\u3067\u76f4\u305b\u305a\u7d1b\u3089\u308f\u3057\u3044\u305f\u3081\u3002
-// requireTs=false: analyzed_msg_ts \u3092\u6301\u305f\u306a\u3044\u5224\u65ad\uff08\u751f\u6210\u6642\u306e SUGGESTED_AIX \u30c8\u30ec\u30fc\u30e9\u30fc\u3002\u751f\u6210\u5074\u3067\u30d6\u30ec\u30a4\u30f3\u306e\u9bae\u5ea6\u3092\u78ba\u8a8d\u6e08\u307f\uff09\u3082\u8a8d\u3081\u308b
-// 2026-09-13 監査: 旧 8000ms。返信生成の鮮度判定（5秒）と食い違い、5〜8秒の間は画面が AIX を出すのに生成はそのアクションを落としていた → 同じ値を使う
-const BRAIN_AIX_FRESHNESS_MS = BRAIN_FRESHNESS_TOLERANCE_MS;
-function isBrainAixFresh(
-  meta: { analyzed_msg_ts?: string | null } | null | undefined,
-  msgs: Message[],
-  requireTs = true,
-): boolean {
-  if (!meta) return false;
-  const latestCustomerMsgTs = msgs.filter((m) => m.sender === "customer").at(-1)?.rawCreatedAt ?? null;
-  if (!meta.analyzed_msg_ts) return !requireTs;
-  if (!latestCustomerMsgTs) return false;
-  return new Date(meta.analyzed_msg_ts).getTime() >= new Date(latestCustomerMsgTs).getTime() - BRAIN_AIX_FRESHNESS_MS;
-}
-
-// \u753b\u9762\u306e AIX \u63d0\u6848\u304c\u30d6\u30ec\u30a4\u30f3\u306e\u5224\u65ad\u3068\u540c\u3058 AIX \u304b\u3002property_check \u306f property_check_result \u306e\u65e7\u540d\u306a\u306e\u3067\u540c\u4e00\u8996\u3059\u308b
-// \uff08acknowledge_check \u306f\u7ba1\u7406\u4f1a\u793e\u5b9b\u3066\u306e\u5225\u30dc\u30bf\u30f3\u306a\u306e\u3067\u540c\u4e00\u8996\u3057\u306a\u3044\uff1d\u30d6\u30ec\u30a4\u30f3\u3068\u9055\u3046\u30dc\u30bf\u30f3\u3092\u958b\u304b\u305b\u306a\u3044\uff09
-function sameAixAction(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return false;
-  const norm = (x: string) => (x === "property_check" ? "property_check_result" : x);
-  return norm(a) === norm(b);
-}
+// 2026-09-27: BRAIN_AIX_LABELS・isBrainAixFresh・sameAixAction と AIX のボタンの表示の判定は app/lib/aix-button-view.ts に移した
+//   （画面の表示を本番のデータ・お客様役の検査に当てられるように。決まり: AIX が要るか・どの AIX かはブレインだけが判断する）
 
 // templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
 const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
@@ -745,7 +696,14 @@ export default function Home() {
   const finalCheckSkipRef = useRef(false);
   // 送信時チェック中の二重実行防止（チェックの2.8s待ちの間の連打ガード）
   const finalCheckBusyRef = useRef(false);
-  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
+  type KeptAixState = { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional"; closing_strategy?: string; template_hint?: string; analyzed_msg_ts?: string | null; turn_ts?: string | null };
+  const [suggestedAix, setSuggestedAixRaw] = useState<KeptAixState | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
+  // 2026-09-27 AIX のボタンのズレ（B）: 生成で届いた控え（SUGGESTED_AIX・aix_required）は analyzed_msg_ts を持たず、
+  //   鮮度を見ずに次のお客様の発言の後も点滅・帯を出していた → 控えた時の最新のお客様の発言の時刻（turn_ts）を付ける
+  const latestCustTsRef = useRef<string | null>(null);
+  const setSuggestedAix = useCallback((v: KeptAixState | null) => {
+    setSuggestedAixRaw(v ? { ...v, turn_ts: v.analyzed_msg_ts ?? latestCustTsRef.current } : null);
+  }, []);
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
@@ -2752,18 +2710,9 @@ export default function Home() {
   //   旧: suggested_next_aix（ブレイン外の AIX Worker が書く列）でもバッジを出していた → ブレインの判断のみに統一
   //   条件は aix-action-items.syncAixActionItem と同じ: 実在の AIX ボタン・reply_mode=aix・cached（今回の発言を見ていない判断）でない
   //   （6〜8月の旧形式 meta の action="follow_up"/"null" 等でバッジが出ていたのも止まる）
-  const isAixBadge = (c: Conversation) => {
-    const m = c.suggestedAixMeta as { action?: string | null; reply_mode?: string | null; source?: string | null; first_contact_pickup?: string | null; decision_source?: string | null } | null | undefined;
-    if (!m || m.source === "cached") return false;
-    // スタッフの宣言（見積書・物件ピックアップ）を履行する AIX は、最後の発言がスタッフでも AIX要対応（竹内 2026-09-12）
-    // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている会話（signal:pending_pickup）も同じ扱い
-    //   （宣言した時点でボールはこちら側。最後の発言がスタッフでも AIX要対応）
-    const byStaffPromise = /^(promise:|signal:pending_pickup)/.test(m.decision_source ?? "");
-    if (c.lastSender !== "customer" && !byStaffPromise) return false;
-    // 初回にお客様が条件を送ってきた会話（挨拶の下書きを出しつつ、次は AIX【物件ピックアップした】）も AIX要対応
-    if (m.first_contact_pickup) return true;
-    return !!m.action && !!BRAIN_AIX_LABELS[m.action] && m.reply_mode === "aix";
-  };
+  //   2026-09-27（D）: 読み込み済みのメッセージがあれば鮮度も見る（分析中に届いた発言の前の判断でバッジを出さない。判定は aix-button-view.isAixListBadge）
+  const isAixBadge = (c: Conversation) =>
+    isAixListBadge({ meta: c.suggestedAixMeta as Parameters<typeof isAixListBadge>[0]["meta"], lastSender: c.lastSender ?? null, messages: c.messages });
   // 一覧の「要対応」バッジ条件（手動フラグ or 顧客最終発言から12時間以上・未読）。バッジ・AIX絞り込みで共有する
   const isNeedsActionBadge = (c: Conversation) => {
     if (flaggedConvIds.has(c.id)) return true;
@@ -2928,40 +2877,47 @@ export default function Home() {
   // 2026-09-12 竹内方針: AIX が必要かどうかはブレインだけが判断する。ブレインが判断していない AIX を
   // バナーや点滅で出すと紛らわしく、誤った判断を学習で直せないため、画面の AIX 誘導はすべてこの値だけを見る。
   // 下書き表示時に suggestedAixMeta は null 化され、同じブレインの判断が suggestedAix に退避されるので、そちらも読む。
-  const brainAixAction = useMemo<string | null>(() => {
-    const msgs: Message[] = selectedConversation.messages || [];
-    const fromMeta = selectedConversation.suggestedAixMeta as { action?: string | null; analyzed_msg_ts?: string | null } | null;
-    if (fromMeta?.action) return isBrainAixFresh(fromMeta, msgs) ? fromMeta.action : null;
-    const kept = suggestedAix as { action?: string | null; analyzed_msg_ts?: string | null } | null;
-    if (kept?.action) return isBrainAixFresh(kept, msgs, false) ? kept.action : null;
-    return null;
-  }, [selectedConversation.suggestedAixMeta, selectedConversation.messages, suggestedAix]);
+  useEffect(() => {
+    latestCustTsRef.current = latestCustomerTs(selectedConversation.messages || []);
+  }, [selectedConversation.messages]);
+  // 2026-09-27 竹内「AIXのボタンが表示されるタイミングとかもズレや問題、違うのが出たりする場合そこのズレも修正する」:
+  //   点滅・帯・ブレインのカード・2択・AIX ボタンを隠すか・メニューのおすすめ枠は resolveAixButtonView（app/lib/aix-button-view.ts）1つで決める。
+  //   却下（✕・押下）の鍵は「会話＋判断」（aixDismissKey）。旧は会話 id だけで、同じタブの間は次の判断でも二度と出なかった（G）
+  const aixDismissKeyNow = useMemo(() => {
+    const id = selectedConversation?.id ?? "";
+    const meta = selectedConversation.suggestedAixMeta as { action?: string | null; analyzed_msg_ts?: string | null; two_choice_mode?: boolean } | null;
+    return aixDismissKey(id, meta ?? { analyzed_msg_ts: latestCustomerTs(selectedConversation.messages || []), action: "" });
+  }, [selectedConversation?.id, selectedConversation.suggestedAixMeta, selectedConversation.messages]);
+  const aixView = useMemo(() => {
+    const id = selectedConversation?.id ?? "";
+    const k = aixDismissKeyNow;
+    return resolveAixButtonView({
+      meta: selectedConversation.suggestedAixMeta ?? null,
+      kept: suggestedAix as KeptAix,
+      messages: selectedConversation.messages || [],
+      lastSender: selectedConversation.lastSender ?? null,
+      activeAixFlow: activeAixFlow ?? null,
+      viewingTemplatePending: !!suggestViewingTemplateMap[id],
+      dismissed: {
+        brainHint: dismissedBrainHintIds.has(k),
+        viewingSpecific: dismissedViewingSpecificIds.has(k),
+        meetingPlace: dismissedMeetingPlaceIds.has(k),
+        newListing: dismissedNewListingIds.has(k),
+        viewingInvite: dismissedViewingInviteIds.has(k),
+        estimateSheet: dismissedEstimateSheetIds.has(k),
+      },
+    });
+  }, [selectedConversation?.id, selectedConversation.suggestedAixMeta, selectedConversation.messages, selectedConversation.lastSender, suggestedAix, activeAixFlow,
+      suggestViewingTemplateMap, aixDismissKeyNow, dismissedBrainHintIds, dismissedViewingSpecificIds, dismissedMeetingPlaceIds, dismissedNewListingIds, dismissedViewingInviteIds, dismissedEstimateSheetIds]);
+  // ブレインが「今の顧客発言に対して AIX が必要」と判断した AIX（無ければ null）。
+  // 2026-09-12 竹内方針: AIX が必要かどうかはブレインだけが判断する。画面の AIX 誘導はすべてこの値だけを見る。
+  const brainAixAction = aixView.brainAixAction;
 
   // AIX「物件確認した」ボタンに誘導（点滅・「確認した」ショートカット）: ブレインが property_check_result と判断した時だけ
   // 旧: ステータス availability_check や直前のスタッフ文言（「確認出来次第」等）で点滅 → ブレインの判断と無関係に出ていたため廃止
-  const guideToCheckResult = useMemo(() => {
-    return !activeAixFlow && sameAixAction(brainAixAction, "property_check_result");
-  }, [brainAixAction, activeAixFlow]);
+  const guideToCheckResult = aixView.checkShortcut;
 
-  // 待ち合わせ誘導: ブレインが meeting_place と判断した場合のみ
-  const guideToMeetingPlace = useMemo(() => {
-    return !activeAixFlow && brainAixAction === "meeting_place";
-  }, [brainAixAction, activeAixFlow]);
-
-  // お客様が内覧希望を示した場合 → AIX 内覧日調整バナー: ブレインが viewing_invite と判断した場合のみ
-  // 旧: クライアント側キーワード検知（内覧したい等）でも発火 → ブレインが判断していないバナーになるため廃止
-  const guideToViewingSpecific = useMemo(() => {
-    if (activeAixFlow) return false;
-    const _msgs: Message[] = selectedConversation.messages || [];
-    const lastSender = selectedConversation.lastSender ?? _msgs[_msgs.length - 1]?.sender;
-    if (lastSender !== "customer") return false;
-    return brainAixAction === "viewing_invite";
-  }, [selectedConversation.messages, selectedConversation.lastSender, brainAixAction, activeAixFlow]);
-
-  // 新着物件待ちパターン: ブレインが property_send と判断した場合のみ
-  const guideToNewListingRecommend = useMemo(() => {
-    return !activeAixFlow && brainAixAction === "property_send";
-  }, [brainAixAction, activeAixFlow]);
+  // 待ち合わせ・内覧（最後がお客様の時だけ）・物件ピックアップの帯もブレインの判断だけで出す（旧の guideTo* は aixView.earlyBanner に畳んだ）
 
   // P8（suggest-next-action）の AIX バナー: ブレインが同じ AIX を判断している時だけ出す。
   // ブレインが「AIX なし」や別の AIX と判断している時は出さない（生成ボタンのグレー化・注意文もこれに従う）
@@ -8357,7 +8313,8 @@ export default function Home() {
 
 
               {/* 2択モード中（two_choice_mode=true かつ カード未却下）は通常AIXボタンを非表示（重複操作防止） */}
-              {!(selectedConversation?.suggestedAixMeta?.two_choice_mode && !dismissedBrainHintIds.has(selectedConversation?.id ?? "")) && (
+              {/* 2026-09-27（F）: 隠すのは2択のカードを実際に出している時だけ（旧は判断に2択があれば鮮度・カードの有無を見ずに隠していた） */}
+              {!aixView.aixMenuButtonHidden && (
               <button
                 onClick={() => {
                   if (activeAixFlow) {
@@ -8381,11 +8338,11 @@ export default function Home() {
                 className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm active:scale-95 transition-all duration-75 ${
                   activeAixFlow
                     ? "border-transparent text-white"
-                    : guideToCheckResult
+                    : aixView.pulse === "property_check_result"
                       ? "border-[#4CAF50] bg-white text-[#2E7D32] animate-pulse ring-2 ring-[#4CAF50] ring-offset-1"
-                      : guideToMeetingPlace
+                      : aixView.pulse === "meeting_place"
                         ? "border-[#00838F] bg-white text-[#00838F] animate-pulse ring-2 ring-[#00838F] ring-offset-1"
-                        : (brainAixAction === "estimate_sheet")
+                        : aixView.pulse === "estimate_sheet"
                           ? "border-[#FF9800] bg-white text-[#E65100] animate-pulse ring-2 ring-[#FF9800] ring-offset-1"
                           : "border-[#d1d7db] bg-white text-[#111b21]"
                 }`}
@@ -8559,8 +8516,7 @@ export default function Home() {
               const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
               const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
 
-              // AIX鮮度チェック: analyzed_msg_tsが最新顧客メッセージより古い場合はバナーを出さない（判定は isBrainAixFresh に一本化）
-              const aixMetaIsFresh: boolean = isBrainAixFresh(selectedConversation.suggestedAixMeta as { analyzed_msg_ts?: string | null } | null, msgs);
+              // AIX鮮度チェック: analyzed_msg_ts が最新顧客メッセージより古い判断では帯・カードを出さない（aixView.metaFresh・resolveAixButtonView に一本化）
 
               // P0: 番号付きテンプレート連動 / 追客初期費用テンプレート誘導
               const nextTmpl = suggestNextTemplateMap[id];
@@ -8685,43 +8641,45 @@ export default function Home() {
               // P3.2.5: お客様が特定日を質問形で提案 → AIX 内覧へ！内覧日指定ありで時間調整
               // 診断修正: 「日付が届いた」は直近顧客メッセージに日付・時間帯表現が実際にある時のみ表示。
               // 旧実装はハードコード文言で、日付検知と無関係に表示され虚偽の説明になっていた
-              if (guideToViewingSpecific && !dismissedViewingSpecificIds.has(id)) {
+              // 2026-09-27: P3.2.5〜P4.5 の帯・P5 のカードは aixView（resolveAixButtonView）で決める。却下の鍵は aixKey（会話＋判断）
+              const aixKey = aixDismissKeyNow;
+              if (aixView.earlyBanner === "viewing_specific") {
                 const customerSentDate = /[0-9０-９]{1,2}\s*月\s*[0-9０-９]{1,2}\s*日|[0-9０-９]{1,2}\s*日(?!曜)|来週|今週末?|週末|土日|祝日|[月火水木金土日]曜|午前|午後|[0-9０-９]{1,2}\s*時/.test(lastCustomerText);
                 return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-blue-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>{customerSentDate ? "日付が届いた → 内覧日指定ありで時間を返す" : "内覧の希望あり → AIX 内覧へ！で日程調整"}</span>
-                  <button onClick={() => { setDismissedViewingSpecificIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setAixInitViewingSpecific(true); openAixDirect("viewing_invite"); }}
+                  <button onClick={() => { setDismissedViewingSpecificIds((prev) => new Set([...prev, aixKey])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setAixInitViewingSpecific(true); openAixDirect("viewing_invite"); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>AIX 内覧へ！</button>
-                  <button onClick={() => setDismissedViewingSpecificIds((prev) => new Set([...prev, id]))}
+                  <button onClick={() => setDismissedViewingSpecificIds((prev) => new Set([...prev, aixKey]))}
                     className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
                 </div>
                 );
               }
 
               // P3.3: お客様が内覧日時を確定 → AIX 待ち合わせへ！
-              if (aixMetaIsFresh && guideToMeetingPlace && !dismissedMeetingPlaceIds.has(id)) return (
+              if (aixView.earlyBanner === "meeting_place_guide") return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-600 bg-teal-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-teal-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>内覧日時が確定 → AIX 待ち合わせで確定文を送る</span>
-                  <button onClick={() => { setDismissedMeetingPlaceIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); }}
+                  <button onClick={() => { setDismissedMeetingPlaceIds((prev) => new Set([...prev, aixKey])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
-                  <button onClick={() => setDismissedMeetingPlaceIds((prev) => new Set([...prev, id]))}
+                  <button onClick={() => setDismissedMeetingPlaceIds((prev) => new Set([...prev, aixKey]))}
                     className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
                 </div>
               );
 
               // P3.4: property_send → AIX物件ピックアップを直接起動
-              if (aixMetaIsFresh && guideToNewListingRecommend && !dismissedNewListingIds.has(id)) return (
+              if (aixView.earlyBanner === "property_send") return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2">
                   <div className="flex items-center gap-2">
-                    <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); }}
+                    <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, aixKey])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); }}
                       className="flex-1 rounded-full px-3 py-1.5 text-[12px] font-bold text-white text-left"
                       style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>
                       <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                       AIX 物件ピックアップ
                     </button>
-                    <button onClick={() => { setDismissedNewListingIds((prev) => { const n = new Set([...prev, id]); sessionStorage.setItem("dismissedNewListingIds", JSON.stringify([...n])); return n; }) }}
+                    <button onClick={() => { setDismissedNewListingIds((prev) => { const n = new Set([...prev, aixKey]); sessionStorage.setItem("dismissedNewListingIds", JSON.stringify([...n])); return n; }) }}
                       className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
                   </div>
                   <p className="text-[11px] text-blue-600 mt-1 pl-1">Chrome拡張（リアプロ/itandi/レインズ）で検索 → AIX物件オススメで送付</p>
@@ -8730,20 +8688,14 @@ export default function Home() {
 
               // P3.5: AIX-METAが viewing_invite を指示 → AIX 内覧へ！
               // 診断修正(内覧バナー誤表示): 最終送信者が顧客の場合のみ（物件送付・返信直後の残留メタで出さない）
-              if (
-                aixMetaIsFresh &&
-                selectedConversation.suggestedAixMeta?.action === "viewing_invite" &&
-                customerIsLastSender &&
-                !suggestViewingTemplateMap[id] &&
-                !dismissedViewingInviteIds.has(id)
-              ) return (
+              if (aixView.earlyBanner === "viewing_invite") return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-sky-400 bg-sky-50 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-bold text-sky-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>お客様が興味あり → AIX 内覧へ！で日程調整</span>
-                    <button onClick={() => { setDismissedViewingInviteIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); }}
+                    <button onClick={() => { setDismissedViewingInviteIds((prev) => new Set([...prev, aixKey])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); }}
                       className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                       style={{ background: "linear-gradient(135deg, #0288d1, #0277bd)" }}>AIX 内覧へ！</button>
-                    <button onClick={() => setDismissedViewingInviteIds((prev) => new Set([...prev, id]))}
+                    <button onClick={() => setDismissedViewingInviteIds((prev) => new Set([...prev, aixKey]))}
                       className="shrink-0 text-sky-400 text-[11px] font-bold">✕</button>
                   </div>
                   {/* 2026-09-12 段1: 出どころはブレインの meta だけ（生成トレーラーの note を混ぜない） */}
@@ -8752,21 +8704,17 @@ export default function Home() {
               );
 
               // P3.6: AIX-METAが meeting_place を指示 → AIX 待ち合わせ！
-              if (
-                aixMetaIsFresh &&
-                selectedConversation.suggestedAixMeta?.action === "meeting_place" &&
-                !dismissedMeetingPlaceIds.has(id)
-              ) return (
+              if (aixView.earlyBanner === "meeting_place_meta") return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-bold text-teal-700 flex-1">
                       <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                       お客様が日程確定 → AIX 待ち合わせで場所を確認！
                     </span>
-                    <button onClick={() => { setDismissedMeetingPlaceIds(prev => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
+                    <button onClick={() => { setDismissedMeetingPlaceIds(prev => new Set([...prev, aixKey])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
                       className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                       style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
-                    <button onClick={() => setDismissedMeetingPlaceIds(prev => new Set([...prev, id]))}
+                    <button onClick={() => setDismissedMeetingPlaceIds(prev => new Set([...prev, aixKey]))}
                       className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
                   </div>
                   {selectedConversation.suggestedAixMeta?.note && <p className="text-[10px] text-teal-600 mt-1 pl-1 leading-relaxed">{selectedConversation.suggestedAixMeta.note}</p>}
@@ -8775,22 +8723,18 @@ export default function Home() {
 
               // P4.5: brain が estimate_sheet を指示 → 見積書で費用をご案内しましょう！
               // （P3.7フロントキーワード判定は削除済み。brain判断に一本化）
-              if (
-                aixMetaIsFresh &&
-                selectedConversation.suggestedAixMeta?.action === "estimate_sheet" &&
-                !dismissedEstimateSheetIds.has(id)
-              ) return (
+              if (aixView.earlyBanner === "estimate_sheet") return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>見積書で費用をご案内しましょう！</span>
                     <button onClick={() => {
-                      setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
+                      setDismissedEstimateSheetIds((prev) => new Set([...prev, aixKey]));
                       // 2026-09-16 竹内（H さん事例）: 旧はテンプレート一覧。AIX【見積書送る】の道に通す（やることタスクの作成も openEstimateFlow に集約）
                       openEstimateFlow();
                     }}
                       className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                       style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 見積書</button>
-                    <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
+                    <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, aixKey]))}
                       className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
                   </div>
                   {selectedConversation.suggestedAixMeta?.note && <p className="text-[10px] text-orange-600 mt-1 pl-1 leading-relaxed">{selectedConversation.suggestedAixMeta.note}</p>}
@@ -8857,13 +8801,13 @@ export default function Home() {
               // P5.1（[AIX誘導中]誘導）・P5.5 等の後続バナーへフォールスルーする。
               // brain の自由記述 note だけのカードが P5 枠を占有し、配下バナーを全部隠す問題の対処。
               // 2択モード（two_choice_mode）は action="" でも成立する独立UIのため例外的に通す。
-              const hasValidAixAction = !!(brainMeta?.action && BRAIN_AIX_LABELS[brainMeta.action]);
-              if (aixMetaIsFresh && brainMeta?.note && (hasValidAixAction || brainMeta.two_choice_mode) && !dismissedBrainHintIds.has(id) && !(brainMeta.action === "viewing_invite" && !customerIsLastSender)) {
+              // 2026-09-27（E・F）: カードの有無は aixView.card（note が空でも出す・2択／2つ目の AIX がある時は単独の帯より先にカード）
+              if (aixView.card && brainMeta) {
                 const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
                 const brainAction = brainMeta.action as AixActionType;
                 const runBrainAix = () => {
-                  setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                  setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
                   setShowAixMenu(false);
                   setAixInspectLabel(null);
                   if (brainAction === "estimate_sheet") {
@@ -8913,7 +8857,7 @@ export default function Home() {
                           <svg className="inline shrink-0" style={{marginRight:"3px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                           どちらで対応しますか？
                         </span>
-                        <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                        <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))}
                           className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
                       </div>
                       <div className="flex gap-2">
@@ -8923,7 +8867,7 @@ export default function Home() {
                             // ブレインが AIX を選んでいればそのボタンを開く（物件ピックアップ・見積書送る 等）。
                             // 選んでいなければ従来どおり物件オススメ
                             if (brainBtnLabel) { runBrainAix(); return; }
-                            setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                            setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
                             setShowAixMenu(false);
                             setAixInspectLabel(null);
                             setActiveAixFlow("property_recommendation" as AixActionType);
@@ -8936,7 +8880,7 @@ export default function Home() {
                         <button
                           onClick={() => {
                             logTwoChoice("reply");
-                            setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                            setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
                             generateReply();
                           }}
                           className="flex-1 rounded-xl px-3 py-2 text-[12px] font-bold text-white text-center active:opacity-80 leading-tight"
@@ -8963,7 +8907,7 @@ export default function Home() {
                         {(brainMeta.alt_actions ?? []).filter((a) => a !== brainAction && BRAIN_AIX_LABELS[a]).map((alt) => (
                           <button key={alt}
                             onClick={() => {
-                              setDismissedBrainHintIds((prev) => new Set([...prev, id]));
+                              setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
                               setShowAixMenu(false);
                               setAixInspectLabel(null);
                               setActiveAixFlow(alt as AixActionType);
@@ -8976,15 +8920,17 @@ export default function Home() {
                           </button>
                         ))}
                       </div>
-                      <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                      <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))}
                         className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
                     </div>
+                    {brainMeta.note && (
                     <div className="mt-1.5 border-t border-violet-200 pt-1.5">
                       <p className="text-xs text-violet-700 leading-relaxed">
                         <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                         {brainMeta.note}
                       </p>
                     </div>
+                    )}
                   </div>
                 );
                 // ボタンなし（未知アクション）: 従来どおり指示テキストのみのコンパクト表示
@@ -8994,7 +8940,7 @@ export default function Home() {
                       <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                       {brainMeta.note}
                     </span>
-                    <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                    <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))}
                       className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
                   </div>
                 );
@@ -9007,17 +8953,17 @@ export default function Home() {
               if (
                 selectedConversation.aiDraft === "[AIX誘導中]" &&
                 selectedConversation.lastSender === "customer" &&
-                !dismissedBrainHintIds.has(id)
+                !dismissedBrainHintIds.has(aixKey)
               ) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-400 bg-violet-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-violet-700 flex-1 min-w-0">
                     <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                     スタッフ対応が必要です。AIXまたは手動で返信してください
                   </span>
-                  <button onClick={() => { setDismissedBrainHintIds((prev) => new Set([...prev, id])); setAixInspectLabel(null); setShowAixMenu(true); }}
+                  <button onClick={() => { setDismissedBrainHintIds((prev) => new Set([...prev, aixKey])); setAixInspectLabel(null); setShowAixMenu(true); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #7C3AED, #6D28D9)" }}>AIXを開く</button>
-                  <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, id]))}
+                  <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))}
                     className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
                 </div>
               );
@@ -10763,7 +10709,7 @@ export default function Home() {
           }}
           onSendCallButton={sendCallButton}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown> }) => {
             // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
             {
               const h = pickupHandoffRef.current;
@@ -10908,6 +10854,10 @@ export default function Home() {
                   // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
                   guarantor_properties: meta?.guarantorProperties ?? null,
                   parallel_screening: meta?.parallelScreening ?? null,
+                  // 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」: 画面で選んだピッカー・入力値
+                  //   （check_pattern / app_sub_mode / send_mode 以外）。整えるのはサーバー（app/lib/aix-pickers.ts sanitizePickerChoices）。
+                  //   誰に確認したか（管理会社／代表／オーナー／近隣月極）はこの画面の ref にしか無いのでここで足す
+                  picker_choices: { ...(meta?.pickerChoices ?? {}), check_who: propertyCheckSubTypeRef.current },
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;
@@ -14491,17 +14441,14 @@ export default function Home() {
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
-                  const isSuggested = !!(suggestedAixAction && item.actionType === suggestedAixAction);
-                  const isHighlighted =
-                    isSuggested ||
-                    (guideToCheckResult && item.label === "物件確認した（募集状況）") ||
-                    (guideToMeetingPlace && item.label === "待ち合わせ場所") ||
-                    (selectedConversation.suggestedAixMeta?.action === "estimate_sheet" && item.label === "見積書送る");
+                  // 2026-09-27（H）: おすすめ枠はブレインの今の判断の AIX だけ（旧は頻度の推薦 /api/aix/suggest・古い判断の見積書でも光っていた）。
+                  //   /api/aix/suggest の値（suggestedAixAction）は学習の記録（predicted_action）にだけ使う
+                  const isHighlighted = sameAixAction(item.actionType, aixView.menuHighlight);
                   const highlightColor =
-                    isSuggested ? item.color :
-                    guideToCheckResult && item.label === "物件確認した（募集状況）" ? "#4CAF50" :
-                    guideToMeetingPlace && item.label === "待ち合わせ場所" ? "#00838F" :
-                    (selectedConversation.suggestedAixMeta?.action === "estimate_sheet" && item.label === "見積書送る") ? "#FF9800" : "";
+                    !isHighlighted ? "" :
+                    item.actionType === "property_check_result" ? "#4CAF50" :
+                    item.actionType === "meeting_place" ? "#00838F" :
+                    item.actionType === "estimate_sheet" ? "#FF9800" : item.color;
                   return (
                     <div
                       key={item.label}
@@ -14542,7 +14489,7 @@ export default function Home() {
                           <div className="px-4 py-5 flex-1">
                             <div className="text-[15px] font-bold text-[#111b21] leading-snug flex items-center gap-2">
                               {item.label}
-                              {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: item.color }}>おすすめ</span>}
+                              {isHighlighted && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: highlightColor || item.color }}>おすすめ</span>}
                             </div>
                             <div className="text-[12px] text-[#546e7a] leading-normal mt-1.5">{item.sub}</div>
                           </div>

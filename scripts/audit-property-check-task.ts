@@ -6,9 +6,11 @@
 //   ・customerRequestedPropertyCheck（/api/line-tasks と同じ判定・直前20通）の結果
 //   ・次にスタッフが送った AIX（72時間以内の最初の1つ）: 物件確認した／内覧へ（viewing_invite）／待ち合わせ／見積書送る／他／無し
 // 2026-09-27 竹内「内覧したいといわれたら内覧日調整」: 内覧の希望だけの連投は作らない（isViewingWishOnlyTurn）。当て直すと 作る→作らない 2件（次の AIX なし）
+// 2026-09-27 竹内「初期費用しりたいはAIXの初期費用おくるから見積書おくってる」: こちらが送ったお部屋への費用・見積もりの依頼は作らない（isEstimateAskForOurRoomTurn）。
+//   下の「見積もりの線」は語の一覧に当たらない連投も含めて、この判定が true の連投の次の AIX を数える（線の裏付け）
 // 実行: npx tsx --env-file=.env.local scripts/audit-property-check-task.ts   （DAYS=120・SHOW=12）
 import { createClient } from "@supabase/supabase-js";
-import { detectTaskTypeByKeywords, decideAutoTask } from "../app/lib/property-check-task";
+import { detectTaskTypeByKeywords, decideAutoTask, isEstimateAskForOurRoomTurn } from "../app/lib/property-check-task";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!);
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
@@ -52,9 +54,27 @@ async function main() {
       const kind = OTHER_RE.test(m.text) ? "確認・空室・費用の語" : VIEW_ONLY_RE.test(m.text) ? "内覧・見学の語だけ" : "他";
       const t0 = Date.parse(m.created_at);
       const nx = (aixBy.get(cid) ?? []).find((a) => { const t = Date.parse(a.sent_at); return t > t0 && t - t0 <= 72 * 3600e3; });
-      add(`${kind}｜判定=${gate ? "作る" : "作らない"}`, nextKind(nx?.aix_type), `${m.created_at.slice(0, 10)} ${cid.slice(0, 8)} 「${mask(m.text).slice(0, 70)}」`);
+      const estOurs = isEstimateAskForOurRoomTurn(recent);
+      add(`${kind}｜判定=${gate ? "作る" : "作らない"}${estOurs ? "｜見積もりの線" : ""}`, nextKind(nx?.aix_type), `${m.created_at.slice(0, 10)} ${cid.slice(0, 8)} 「${mask(m.text).slice(0, 70)}」`);
     }
   }
+  // 見積もりの線: 連投の最後の発言ごと（語の一覧に関係なく）
+  const est: Cell = { n: 0, next: {}, ex: [] };
+  for (const [cid, list] of byConv) {
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (m.sender !== "customer" || (list[i + 1] && list[i + 1].sender === "customer")) continue;
+      const recent = list.slice(Math.max(0, i - 19), i + 1).map((x) => ({ sender: x.sender, text: x.text }));
+      if (!isEstimateAskForOurRoomTurn(recent)) continue;
+      const t0 = Date.parse(m.created_at);
+      const nx = (aixBy.get(cid) ?? []).find((a) => { const t = Date.parse(a.sent_at); return t > t0 && t - t0 <= 72 * 3600e3; });
+      const nk = nextKind(nx?.aix_type) + (nx?.check_pattern ? `(${nx.check_pattern})` : "");
+      est.n++; est.next[nk] = (est.next[nk] ?? 0) + 1; if (est.ex.length < SHOW) est.ex.push(`[${nk}] ${m.created_at.slice(0, 10)} ${cid.slice(0, 8)} 「${mask(recent.filter((x, j) => j >= recent.length - 3 && x.sender === "customer").map((x) => x.text ?? "").join(" / ")).slice(0, 90)}」`);
+    }
+  }
+  console.log(`
+■■ 見積もりの線（こちらのお部屋への費用・見積もりの依頼・全連投）${est.n}件  次の AIX: ${Object.entries(est.next).sort((a, b) => b[1] - a[1]).map(([a, b]) => `${a} ${b}`).join("・")}`);
+  est.ex.forEach((e) => console.log("   " + e));
   for (const k of Object.keys(table).sort()) {
     const c = table[k];
     console.log(`\n■ ${k}  ${c.n}件  次の AIX: ${Object.entries(c.next).sort((a, b) => b[1] - a[1]).map(([a, b]) => `${a} ${b}`).join("・")}`);

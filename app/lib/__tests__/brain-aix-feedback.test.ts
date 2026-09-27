@@ -149,6 +149,29 @@ describe("resolveBrainCheckPattern（check_pattern の出どころ）", () => {
     expect(resolveBrainCheckPattern("property_check_result", null, null, "近くに月極ありますか")?.check_pattern).toBe("nearby_parking");
     expect(resolveBrainCheckPattern("property_check_result", null, null, "")).toBe(null);
   });
+  // 2026-09-27 竹内「それぞれのピッカーを理解したらもっと意味が分かる」: 持ち込み物件（募集状況が未確認）への条件の質問は、先に募集状況
+  it("今回の連投でお客様が URL を持ち込んで条件を聞いた（58ae93f3 9/22「ウェスト宮ノ下…ここもエアコン不可ですか？？」）→ 物件確認した（募集状況）・check_pattern 空", () => {
+    const k = resolveBrainCheckPattern("property_check_result", null, null, "ウェスト宮ノ下 5階 https://suumo.jp/x by SUUMO\n追ってすみません💦 ここもエアコン不可ですか？？");
+    expect(k?.ui_button).toBe("物件確認した（募集状況）");
+    expect(k?.check_pattern).toBe("");
+    expect(/物件なかった（募集終了）/.test(k?.note ?? "")).toBe(true);
+  });
+  it("画像の持ち込み＋入居日（8590144d 9/24「入居日等含めてマッチしそうですか？」・S2 の証拠）→ 物件確認した（募集状況）", () => {
+    const text = "こちら抑えて頂いた物件の同じ階の角部屋が空いているの見つけたのですが、こちら入居日等含めてマッチしそうですか？";
+    const e = detectAixSceneEvidence({ latestCustomerTurn: text, hasCustomerImage: true });
+    const k = resolveBrainCheckPattern("property_check_result", e, null, text, { hasImage: true });
+    expect(k?.ui_button).toBe("物件確認した（募集状況）");
+  });
+  it("持ち込みでもお客様が「空いてないとは思う」と言った（58ae93f3 9/23）→ 条件のまま", () => {
+    const k = resolveBrainCheckPattern("property_check_result", null, null, "今空いてないとは思うんですが、ここの2階のこの部屋もエアコン取付不可ですかね\nアモーレ本町ウエスト 2階 https://suumo.jp/y");
+    expect(k?.check_pattern).toBe("mgmt_equipment");
+  });
+  it("持ち込みが無い条件の質問（fecda03f「こちらペット2匹可能でしょうか？」）→ 条件のまま", () => {
+    expect(resolveBrainCheckPattern("property_check_result", null, null, "こちらペット2匹可能でしょうか？")?.check_pattern).toBe("mgmt_pet");
+  });
+  it("室内写真（S11 の信号）は持ち込みでも室内写真のまま", () => {
+    expect(resolveBrainCheckPattern("property_check_result", null, "interior_photo", "https://suumo.jp/z 室内の写真ありますか", { hasImage: true })?.check_pattern).toBe("interior_photo");
+  });
 });
 
 describe("feedbackGateRate（降格ゲートの読み先）", () => {

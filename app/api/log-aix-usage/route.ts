@@ -5,6 +5,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SummaryJson } from "@/app/api/customer-summary/route";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」: 画面で選んだピッカー・入力値の記録（picker_choices）
+import { sanitizePickerChoices } from "@/app/lib/aix-pickers";
 
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
@@ -219,9 +221,11 @@ export async function POST(req: NextRequest) {
       parallel_screening?: boolean | null;
       /** 予約送信の予約時点（まだ送っていない）。約束のカレンダーは実送信で同期する */
       scheduled?: boolean;
+      /** 2026-09-27: 画面で選んだピッカー・入力値（check_pattern / app_sub_mode / send_mode 以外）。鍵と値は app/lib/aix-pickers.ts の AIX_PICKERS */
+      picker_choices?: unknown;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled, picker_choices } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -239,7 +243,9 @@ export async function POST(req: NextRequest) {
       previousAction = (prevRow?.aix_type as string) ?? null;
     }
 
-    const { data: insertedLog, error } = await supabase.from("aix_usage_logs").insert({
+    // 2026-09-27: ピッカーの選択（知らない鍵・選択肢に無い値は落とす）。空なら null
+    const pickerChoices = sanitizePickerChoices(aix_type, picker_choices, { checkPattern: check_pattern ?? null, appSubMode: app_sub_mode ?? null, sendMode: send_mode ?? null });
+    const logRowInsert = {
       conversation_id,
       aix_type,
       template_id: template_id ?? null,
@@ -277,7 +283,16 @@ export async function POST(req: NextRequest) {
         : null,
       // 改善3-c: スタッフが入力したフリーワードキーワード（aix-template-generate の続き文ragQuery に注入する）
       send_keyword: typeof send_keyword === "string" && send_keyword.trim() ? send_keyword.trim().slice(0, 200) : null,
-    }).select("id, created_at").maybeSingle();
+      picker_choices: pickerChoices,
+    };
+    let { data: insertedLog, error } = await supabase.from("aix_usage_logs").insert(logRowInsert).select("id, created_at").maybeSingle();
+    // 列を足す前の DB（migrate-schema 未適用）でも AIX の記録そのものは落とさない（picker_choices だけ外して入れ直す）
+    if (error && /picker_choices/.test(error.message)) {
+      console.warn("[log-aix-usage] picker_choices 列が無いので外して記録:", error.message);
+      const { picker_choices: _omit, ...withoutPicker } = logRowInsert;
+      void _omit;
+      ({ data: insertedLog, error } = await supabase.from("aix_usage_logs").insert(withoutPicker).select("id, created_at").maybeSingle());
+    }
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 

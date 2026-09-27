@@ -5,8 +5,8 @@
 //   ここは純関数だけ（supabase を読み込まない）。DB の読み書きは cron/brain-aix-eval と brain-core が持つ。
 //   ・trigger_action_rules は使わない（category トリガーで keyword_rule に混ざるため）。書き先は brain_aix_feedback。
 //   ・場面（S1〜S7）は「証拠」。ここでも AIX を決めない（ブレインへの実績欄とLLMが null の時の信号だけに使う）。
-import { detectAixSceneEvidence, type AixSceneEvidence } from "./aix-scene-evidence";
-import { detectPropertyCheckPattern, propertyCheckKindFor, type PropertyCheckKind } from "./aix-taxonomy";
+import { AVAILABILITY_URL_RE, detectAixSceneEvidence, type AixSceneEvidence } from "./aix-scene-evidence";
+import { availabilityFirstKind, detectPropertyCheckPattern, propertyCheckKindFor, type PropertyCheckKind } from "./aix-taxonomy";
 
 /** 対にする窓（次の判断が来なければ24時間まで） */
 export const PAIR_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -261,19 +261,29 @@ export function sceneSignalFallback(e: AixSceneEvidence | null | undefined): { a
  *   2) 今回の顧客発言の場面の証拠が S2/S3 で check_pattern を持つ時はそれ
  *   3) それ以外は detectPropertyCheckPattern を **未返信の顧客発言だけ** に当てる
  *      （旧: 直近8件・スタッフ文込み。メッセージ単位の判定に会話全体を使わない原則に合わせる）
+ *   4) 2026-09-27: 1)〜3) が条件・交渉のピッカー（mgmt_* 等）でも、今回の連投でお客様が物件を持ち込んだ（画像・URL＝募集状況が未確認）なら
+ *      「物件確認した（募集状況）」にする（availabilityFirstKind・check_pattern は空）。お客様自身が「空いてないとは思う」と言った時は条件のまま
+ *      （58ae93f3「今空いてないとは思うんですが…エアコン取付不可ですかね」→ スタッフは条件だけ答えた）
  */
+const CUSTOMER_KNOWS_ENDED_RE = /空いて(?:い)?ない(?:と|とは)[^。\n]{0,4}(?:思|分か|わか)|埋まって(?:る|いる)(?:と|とは)[^。\n]{0,4}(?:思|分か|わか)/;
 export function resolveBrainCheckPattern(
   finalAix: string | null,
   evidence: AixSceneEvidence | null | undefined,
   sceneSignalCheckPattern: string | null,
   unrepliedCustomerText: string,
+  opts?: { hasImage?: boolean },
 ): PropertyCheckKind | null {
   if (finalAix !== "property_check_result") return null;
-  if (sceneSignalCheckPattern) return propertyCheckKindFor(sceneSignalCheckPattern);
-  if (evidence && (evidence.scene === "S2_move_in" || evidence.scene === "S3_screening" || evidence.scene === "S11_other_room") && evidence.checkPattern) {
-    return propertyCheckKindFor(evidence.checkPattern);
+  const kind = sceneSignalCheckPattern
+    ? propertyCheckKindFor(sceneSignalCheckPattern)
+    : evidence && (evidence.scene === "S2_move_in" || evidence.scene === "S3_screening" || evidence.scene === "S11_other_room") && evidence.checkPattern
+      ? propertyCheckKindFor(evidence.checkPattern)
+      : detectPropertyCheckPattern(unrepliedCustomerText);
+  if (kind && kind.ui_button === "確認した（条件・交渉）" && (opts?.hasImage || AVAILABILITY_URL_RE.test(unrepliedCustomerText))
+    && !CUSTOMER_KNOWS_ENDED_RE.test(unrepliedCustomerText)) {
+    return availabilityFirstKind(kind.topic);
   }
-  return detectPropertyCheckPattern(unrepliedCustomerText);
+  return kind;
 }
 
 /**

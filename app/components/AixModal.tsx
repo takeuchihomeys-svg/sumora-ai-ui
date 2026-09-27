@@ -112,7 +112,7 @@ interface AixModalProps {
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string; pickerChoices?: Record<string, unknown> }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -1252,6 +1252,54 @@ export default function AixModal({
   // 全力サポート専用
   const [zenryokuArea, setZenryokuArea] = useState<string>("");
   const [zenryokuMemo, setZenryokuMemo] = useState<string>("");
+
+  // 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」:
+  //   check_pattern / send_mode / app_sub_mode 以外のピッカーの選択・入力値を送信時に集めて onAfterSend → log-aix-usage の picker_choices へ。
+  //   鍵と選択肢の一覧・整え方は app/lib/aix-pickers.ts（AIX_PICKERS・sanitizePickerChoices）。ここは画面の状態を読むだけ
+  const collectPickerChoices = (): Record<string, unknown> => {
+    switch (actionType) {
+      case "property_check_result":
+        return {
+          floor_plan: checkFloorPlan, other_room: otherRoomStatus, mgmt_availability_status: mgmtAvailabilityStatus,
+          mgmt_cost_type: mgmtCostType, proxy_result: proxyResult, parking: mgmtParkingAvailability,
+          parking_vacancy: mgmtParkingVacancy ?? nearbyParkingVacancy, pet_policy: mgmtPetPolicy, guarantor_type: mgmtGuarantorType,
+          guidance: mgmtGuidanceType ?? mgmtGuarantorPushType, move_in_period: moveInPeriod, move_in_month: moveInMonth, vacate_date: moveInVacateDate,
+          sent_property_count: sentPropertyCount, check_property_count: checkPropertyCount, viewing_continue: checkViewingContinue,
+          application_invite: checkApplicationInvite, all_available: checkAllAvailable, estimate_text: checkIncludeEstimateText,
+          recommend_index: checkRecommendProp, has_estimate_image: !!checkEstimateFile || checkPropEstimates.some(Boolean),
+        };
+      case "property_send":
+        return { new_arrival_apply: newArrivalApply, include_viewing: includeCalendar, image_count: sendImageFiles.length, vacating_count: vacatingProperties.length };
+      case "property_recommendation":
+        return { pickup_type: initialPickupType, situation_kind: situationKind, is_new_arrival: isNewArrival, focus_points: recommendFocusPoints, simple: recSimpleMode, has_estimate_image: !!recommendEstimateFile };
+      case "estimate_sheet":
+        return { estimate_count: estimateMultiMode ? "multi" : "single", with_appeal: estimateWithAppeal, campaign: estimateCampaign, has_property_image: !!estimatePropertyFile };
+      case "viewing_invite":
+        return { viewing_mode: viewingRescheduleMode ? "日程変更" : viewingSpecificMode ? "内覧日指定あり" : viewingIsVacancy ? "退去予定物件" : "通常", include_calendar: includeCalendar };
+      case "meeting_place":
+        return { has_time: !!meetingTime.trim(), meeting_date: meetingDate, meeting_time: meetingTime };
+      case "application_push":
+        return { push_type: appPushType, appeal_points: appAppealPoints, living_type: appFormatLivingType, guarantor_kind: appFormatGuarantorType };
+      case "followup_revive":
+        return { followup_sub_mode: followupSubMode };
+      case "acknowledge_check":
+        return { ack_preset: ackCheckPreset };
+      case "condition_hearing":
+        return { hearing_mode: hearingConvMatchMode ? "conv_match" : "generate" };
+      case "cost_explain":
+        return { cost_explain_mode: costMechanism ? "mechanism" : costNoFee ? "no_fee" : "fee", fee_label: costFeeLabel };
+      case "cost_breakdown":
+        return { image_count: cbImages.length };
+      case "guarantor_info":
+        return { parallel: giParallel, card_count: giCards.length };
+      case "phone_call":
+        return { has_purpose: !!phonePurpose.trim() };
+      case "zenryoku_support":
+        return { has_area: !!zenryokuArea.trim() };
+      default:
+        return {};
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -3096,6 +3144,7 @@ export default function AixModal({
         // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
         guarantorProperties: actionType === "guarantor_info" && lastGuarantorPropsRef.current.length > 0 ? lastGuarantorPropsRef.current : undefined,
         parallelScreening: actionType === "guarantor_info" ? lastGuarantorParallelRef.current : undefined,
+        pickerChoices: collectPickerChoices(),
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -3114,7 +3163,7 @@ export default function AixModal({
       try {
         setLoading(true);
         await sendAsAix(hearingFormText);
-        onAfterSend?.({ suggestPropertySend: true, suggestTemplateCategory: "ヒアリング【AIX】" });
+        onAfterSend?.({ suggestPropertySend: true, suggestTemplateCategory: "ヒアリング【AIX】", pickerChoices: { hearing_mode: "form_only" } });
         onClose();
       } catch {
         setError("フォーム送信に失敗しました");
@@ -3223,6 +3272,7 @@ export default function AixModal({
             const capturedPropCostNotes = [...lastPropCostNotesRef.current];
             // 改善3-c: キーワードも遅延送信パスでキャプチャ
             const capturedSendKeyword = sendKeyword.trim();
+            const capturedPickerChoices = collectPickerChoices();
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               // UX改善①: 学習は実際に送信が完了した後にのみ実行する
@@ -3248,6 +3298,7 @@ export default function AixModal({
                 estimateSent: capturedEstimateSent || undefined,
                 propCostNotes: capturedPropCostNotes.length > 0 ? capturedPropCostNotes : undefined,
                 sendKeyword: capturedSendKeyword || undefined,
+                pickerChoices: capturedPickerChoices,
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
@@ -3341,7 +3392,7 @@ export default function AixModal({
           const sendFn = async () => {
             await capturedOnSend(capturedForm, undefined, true);
             // バナー・テンプレ誘導はフォームが実際に送信された後にのみ発火（カウントダウンキャンセル時は出さない）
-            capturedOnAfterSend?.({ suggestPropertySend: true, suggestTemplateCategory: "ヒアリング【AIX】" });
+            capturedOnAfterSend?.({ suggestPropertySend: true, suggestTemplateCategory: "ヒアリング【AIX】", pickerChoices: { hearing_mode: "conv_match" } });
           };
           onDelayedSend?.(HEARING_FORM_DELAY_SEC, sendFn); // 親がsetTimeoutを管理（カウントダウン表示・キャンセル可能）
           setLoading(false);
@@ -3431,6 +3482,7 @@ export default function AixModal({
         // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
         guarantorProperties: actionType === "guarantor_info" && lastGuarantorPropsRef.current.length > 0 ? lastGuarantorPropsRef.current : undefined,
         parallelScreening: actionType === "guarantor_info" ? lastGuarantorParallelRef.current : undefined,
+        pickerChoices: collectPickerChoices(),
       });
       onClose();
     } catch (err) {

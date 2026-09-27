@@ -1,6 +1,6 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-09-26
+最終更新: 2026-09-27
 
 ---
 
@@ -7445,3 +7445,77 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 9b9b81ba の申込へ〔guard:viewing〕3回（9/15・9/24・スタッフは内覧へ）は、退去予定の補正をお部屋ごとにした 4d0e90d1（9/27）の前。今のコードで当て直すと3回とも補正しない（no_hold_advice・viewing_offered・switched_to_other_property）
 - 見送り: ad97cd40 9/22「neoとこの二件行きたいです」がまだ申込へ〔guard:viewing・hold_advised〕（退去予定の通からお部屋名が取れない形・1件）／こちらが送ったお部屋への「初期費用しりたい」で物件確認のタスクが作られる（ad97cd40・見積書の場面＝focused-estimate-request と同じ線をタスクにも当てるかは未）／前置きの「内覧・申込の提案は募集状況の確認の後」は持ち込み物件の文脈の行なので残した
 - テスト `app/lib/__tests__/property-check-task.test.ts` 13件（実物5つを追加）・設計知見1件（ブレイン診断／穴:G3／内覧）
+
+## 2026-09-27 トーク画面の AIX のボタンの出る時・出る種類のズレ（竹内「AIXのボタンが表示されるタイミングとかもズレや問題、違うのが出たりする場合そこのズレも修正する／ここも設計知見に入れて行っていく」）
+- **判定を1つの純関数に**: `app/lib/aix-button-view.ts` の `resolveAixButtonView`（点滅・「✓ 確認した」・P3.2.5〜P4.5 の帯・P5 のカード／2択・AIX ボタンを隠すか・メニューのおすすめ枠・一覧の AIX バッジ）。page.tsx はこれを呼ぶだけ（BRAIN_AIX_LABELS・isBrainAixFresh・sameAixAction もここへ移した）。`legacy: true` で旧の動きを再現できる
+- **画面の経路**: 読むのは `conversations.suggested_aix_meta`（ブレインが書く・お客様の発言の webhook とスタッフの送信で null・下書きを表示すると null＋手元の控え suggestedAix）。更新は 30秒ごとの全件の読み直し（conversations は Realtime の publication に入っていない・9/21 のコメントのまま）。鮮度は analyzed_msg_ts ≥ 最新のお客様の発言 − 5秒
+- **本番で測った**（`scripts/audit-aix-button.ts`・判断の記録がある 9/5〜・YUMA 除く）:
+  - 遅れ: お客様の発言 → その発言を見た判断の保存 中央 27秒・90% 43秒（＋画面の読み直し最大30秒）。スタッフが返すまでに判断が来なかった番 41.5%（多くは判断より先に返した番）
+  - 古い判断の書き込み 75件（AIX 要対応 60・分析中に届いた2通目の前の判断）。51件は中央20秒で新しい判断に置き換わる。カード・帯は鮮度で隠れていたが、**一覧の AIX バッジは鮮度を見ていなかった**（延べ約2,470分）→ D
+  - 押した AIX とその時の画面（549回）: 表示＝押した 145（26%）・表示≠押した 83（内訳 物件ピックアップ→物件オススメ 24・物件確認した→見積書 15・確認します→物件確認した 8…＝多くはブレインとスタッフの判断の違い）・表示なし（同じ番にスタッフが先に送って判断が消えた後）228・（判断がまだ）40・（古い判断）36・（AIX なし）10
+  - ブレインが AIX を出した番 725: 同じ AIX を押した 155・別の AIX 73・通常の返信 359・何もせず 138。通常の返信を先に送った後に同じ番でその AIX を押した 36（中央47分後・押す時にはカードが消えていた）
+  - 今の判断（last_brain_meta 154会話）: **2択 4件のうち3件（慶次・わっち・じゅな・どれも物件ピックアップ）が物件ピックアップの帯に隠れて2択が出ず AIX ボタンも隠れていた**・2つ目の AIX 2件とも帯に隠れていた → E
+  - ブレインの記録と画面が読む値の食い違い（補正の前・後）: 150/150 一致＝0件（focused-estimate 等の補正は保存の前に済んでいる）
+- **直したズレ**（テスト `app/lib/__tests__/aix-button-view.test.ts` 24件）:
+  - A 今の判断が「AIX なし」でも手元の控えの AIX に落ちていた → 今の判断がある時は控えを見ない（実測0・予防）
+  - B 生成で届いた控え（SUGGESTED_AIX・aix_required）は analyzed_msg_ts が無く、次のお客様の発言の後も点滅・帯が出た → 控えた時の最新のお客様の発言（turn_ts）を付けて鮮度を見る
+  - C 控えの AIX を送った後も次の発言まで点滅・✓確認したが残った → 判断の後に AIX を送っていたら使わない（DB は送信で消える・別の端末も読み直しで消える）
+  - D 一覧のバッジに鮮度（読み込み済みのメッセージがある行だけ）
+  - E 2択・2つ目の AIX がある判断は単独の帯（内覧・待ち合わせ・物件ピックアップ・見積書）で隠さずカードを出す
+  - F カードは note が空でも出す・AIX ボタンを隠すのは2択のカードを実際に出している時だけ（旧は古い2択の判断でも隠して押す道が無くなった）
+  - G 帯・カードの ✕／押下は会話 id だけで記録され、同じタブの間は次の判断でも二度と出なかった（sessionStorage に残る・98会話で2回以上の AIX の判断）→ 鍵を「会話＋判断（見た発言・AIX・2択）」に（`aixDismissKey`）
+  - H AIX メニューのおすすめ枠は頻度の推薦（/api/aix/suggest）と古い判断の見積書でも光っていた → ブレインの今の判断の AIX だけ（/api/aix/suggest の値は学習の記録 predicted_action にだけ残す）
+- **ビルド**: tsc 通過（scripts/yuma-aix-daily-greeting-test.ts と scripts/peek-snapshot.ts の `main` 重複は前からの物）。`next build` は開発サーバーとぶつからないよう本体の外の複製（node_modules は junction・turbopack.root を親に）で通した
+- **お客様役の検査に使う**: `resolveAixButtonView({ meta: suggested_aix_meta, messages: [{sender, rawCreatedAt: created_at, isAix: is_aix_generated}], lastSender })` → `summarizeAixButtonView` で「画面が出す AIX（帯・カード・2択・点滅・なし）」。ブレインの判断・押した AIX と並べてズレを数える（scripts/customer-sim.ts への組み込みは別の担当）
+- **未決（竹内さんに聞く）**: 通常の返信を先に送ると、AIX要対応（売上番長グループの一覧）は pending のままなのに画面のカードは消える（上の 36件）。返信の後も AIX要対応が残っている間はカードを残すか
+- **見送り**: 表示の遅れを縮める（選んだ会話だけ5秒ごとに判断を読む）は、メッセージ自体も30秒の読み直しで届くので効きが小さい／/api/aix/suggest に鮮度を見ずに brain_action を渡す（e101a27d・学習の記録の経路）／下書き＋AIX の判断（返信モード）で下書きを表示するとカードが消えて点滅だけになる設計（「返信＋AIX 誘導の同時表示を防ぐ」の意図・返信モードで AIX を持つ判断は初回の7件だけ）
+
+## 2026-09-27 「初期費用しりたい」は見積書送る・各 AIX のピッカーを理解する・ピッカーの記録（竹内「初期費用しりたいはAIXの初期費用おくるから見積書おくってる／物件なければ物件確認したの募集終了していたのピッカーから／それぞれのピッカーを理解したらもっと意味が分かる」「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」）
+- memory `feedback_cost_request_estimate_or_ended`
+### A. こちらが送ったお部屋への費用・見積の依頼では物件確認のタスクを作らない
+- `app/lib/property-check-task.ts` `isEstimateAskForOurRoomTurn`（decideAutoTask の最後の関門）: 今回の連投が費用・見積の依頼（`FOCUSED_ESTIMATE_ASK_RE`・ひらがなの「しりたい」を足した）／持ち込み（画像・URL・号室）・空きの質問・別のお部屋の依頼が無い／今回より前で一番新しい「お部屋の出所」がこちらの送付・結果（URL・🌟・号室・募集中・御見積書。「確認させて頂きます」だけの受付は数えない）→ 作らない。出所がお客様の画像・URL なら今まで通り作る（まず募集状況の確認）
+- 監査 `scripts/audit-property-check-task.ts`（120日）: 作る→作らない 2件（ad97cd40 9/16「こちら初期費用しりたいです！ 駐車場ありますか？／あした18時から内覧」・110b3053 6/08「ここは初期費用いくらぐらい…平野南の物件内覧したい」）。この判定が当たる連投（語の一覧に関係なく）102件の次の AIX: 見積書送る 55・なし 31・物件確認した 6（available 5・mgmt_initial_cost 1）・内覧へ 4
+- ブレイン側（`resolveFocusedEstimateRequest`）もしりたいで見積もりの依頼が 241→244 連投。ad97cd40 は内覧も聞いているので also_viewing（ブレインに任せる・変わらず）
+- テスト `property-check-task.test.ts` 21件（8件追加）
+### B-1. ピッカーの一覧（定義は `app/lib/aix-pickers.ts` の AIX_PICKERS 1か所・値と文言は画面の実物）
+| AIX | ピッカー（記録の列） | 選択肢（値＝画面の文言） | 選ぶ場面 | 実送信180日 |
+|---|---|---|---|---|
+| 物件確認した（募集状況） | 確認結果（check_pattern） | available＝物件あった／alternative＝別の部屋が募集してた／unavailable＝物件なかった（「募集終了していた」）／exclusive＝専任物件だった／move_in_date＝入居日確認した／interior_photo＝室内写真を確認した／other_room_check＝別の部屋について確認した | 結果はスタッフが確認して選ぶ。持ち込み物件の確認・費用の質問は 物件あった＋御見積書同封（入居日・設備の答えも添える）。見積書を作ろうとして終わっていたら 物件なかった | 185・9・38・0・0・6・0 |
+| 確認した（条件・交渉） | 誰に（picker_choices.check_who）→何を（check_pattern） | 管理会社: mgmt_availability・vacate_date・mgmt_move_in・mgmt_initial_cost（**交渉**）・mgmt_proxy・mgmt_guarantor・mgmt_parking・mgmt_pet・mgmt_equipment／代表・オーナー: 初期費用・その他（owner_other）／近隣: nearby_parking | 募集中と分かっているお部屋の条件を管理会社に確かめた結果。費用を知りたいだけは見積書送る | mgmt_* 計15・owner_other 1 |
+| 物件ピックアップした | send_mode | normal 初回まとめ／new_arrival 新着まとめ／widen 条件広げまとめ／alternative 代替物件送り | 代替は 物件なかった の後 | 137・148・48・3（記録なし46） |
+| 物件オススメ | picker_choices.pickup_type | 新規ピックアップ・新着1件・継続ピックアップ・条件広げピックアップ・代替ピックアップ・現状伝えて1件（子: situation_kind） | 1件に絞る時 | 記録なし544 |
+| 見積書送る | picker_choices.estimate_count | single 1件／multi 複数件（申込誘導・キャンペーン・物件資料） | 物件が届いた・こちらが送ったお部屋への費用の依頼 | 記録なし234 |
+| 内覧日調整 | picker_choices.viewing_mode | 通常／退去予定物件／内覧日指定あり／日程変更 | 内覧の希望（日時を言った→指定あり） | 記録なし96 |
+| 待ち合わせ | picker_choices.has_time・meeting_date・meeting_time | 時間あり（固定文）／なし（LLM） | 内覧日が決まった | 記録なし64 |
+| 申込へ | app_sub_mode（子は picker_choices） | push 申込誘導／confirm 申込確定／format 申込フォーマット／docs_request 書類依頼（子: simple・scheduled・hold_view／単独・同居／緊急連絡先・連帯保証人） | 申込を決めた→format | 6・4・58・3 |
+| 追客する | picker_choices.followup_sub_mode | apply_supplement／search_continue（apply_push は申込へ push） | | 3 |
+| 確認します | picker_choices.ack_preset | daihyo_initial_cost／kanri_boshu | | 5 |
+| 条件ヒアリング | picker_choices.hearing_mode | generate／conv_match／form_only | | 40 |
+| 初期費用を説明 | picker_choices.cost_explain_mode | fee／no_fee／mechanism | | 2 |
+| 挨拶（内覧前・後） | **記録なし（AIX として残らない・返信の下書きに入れて普通に送る）** | before／after→apply・apply_guide・confirm（estimate・freeword）・search（new・expand・change） | | — |
+- 記録の追加: `aix_usage_logs.picker_choices`（jsonb・migrate-schema・本番 DB に適用済み `scripts/apply-aix-picker-choices-column.ts`）。AixModal `collectPickerChoices`（送信の3か所＋条件ヒアリングの2か所）→ page.tsx の log-aix-usage の body（＋ check_who は page の ref）→ route の `sanitizePickerChoices`（知らない鍵・選択肢に無い値・親の選択と合わない子は落とす・列が無い DB では picker_choices だけ外して記録）
+- 監査 `npx tsx --env-file=.env.local scripts/audit-aix-pickers.ts`（① AIX × ピッカーの値 × 直前のお客様の連投の型 ② ブレイン × スタッフ）
+### B-3. ブレインはピッカーの意味を分かっていたか
+- ブレインの check_pattern は LLM でなくコード（`resolveBrainCheckPattern`: 信号→場面の証拠 S2/S3→未返信の文の語 detectPropertyCheckPattern）。30日: スタッフが物件確認したを押した107回・前24時間の判断あり60・ボタン一致32。ピッカーの話題（募集状況／室内写真／入居日／条件）の一致は **27/32 → 直した後 30/32**
+- ずれ①（直した）: 持ち込み物件（募集状況が未確認）への条件の質問に mgmt_*（確認した（条件・交渉））。スタッフは 募集状況側 31 対 条件側 2（180日）。→ 今回の連投に画像・URL があれば `availabilityFirstKind`（物件確認した（募集状況）・check_pattern 空・ノートに結果ごとのピッカー）。「空いてないとは思う」は条件のまま
+- ずれ②（ノートで直した）: ブレイン=見積書送る → スタッフ=物件なかった（d25e07d1・1191b1eb「初期費用いくらでしょうか？」→ FORESTA は1番手で契約）。`AIX_STAFF_NOTES.estimate_sheet` に「作る時に募集が終わっていたら 物件確認した→物件なかった（募集終了）」
+- 残り（見送り）: 3d9b67d7（物件名だけの持ち込み「ハイツ秋桜の2階8号の初期費用」→ mgmt_guarantor のまま）・ad97cd40（画像＋「ここ部屋の写真あります？」→ S11 は画像同送を S1 に回す決まり）
+- 前置き（STATIC_BRAIN_SYSTEM・AIX_CAPABILITY_MAP）は変えていない＝1時間キャッシュは作り直さない（ノート・check_pattern はコードで後から付く）
+- テスト `aix-pickers.test.ts` 17件・`brain-aix-feedback.test.ts` 38件（5件追加）
+### お客様役（scripts/customer-sim.ts は触っていない）への組み込み
+- `pickerForScene({ aixType, turnText, hasImage, roomStatus, sentPropertyCount, afterEnded, widened, estimateCount, vacatingRoom, reschedule })` → `{ field, value, label, reason }`。物件確認した は保存済みの材料の募集状況（roomStatus: ended→物件なかった・other_room→別の部屋・exclusive→専任・他→物件あった／室内写真の依頼→室内写真）で選ぶ
+- 組み込み: `planStaffAction`（app/lib/customer-sim.ts）で action が決まった後に pickerForScene を呼び、field が check_pattern / send_mode / app_sub_mode ならその列・それ以外は log-aix-usage の body の `picker_choices: { [field]: value }` に入れる（sanitize が知らない値を落とす）
+
+### 2026-09-27 お客様役: 影の道（--shadow）＝選ばなかった方も作って突き合わせる（竹内「YUMAとLINEする際AIXもくみあわせておこなう／返信もAIXも仮定して送る形でズレなくしていく／設計知見と協力しておこなっていく」）
+- **形**: 1往復ごとに、ブレインが選んだ道（AIX か下書き）は今まで通り送り、**選ばなかった方を「送ったと仮定して」作る（送らない・送った記録を作らない）**。AIX の番＝影の下書き（generate-reply）＋並べた AIX の影／下書きの番＝影の候補 AIX（ブレインの action〈reply_mode が aix でない時〉・場面の証拠の候補・alt_actions）を /api/aix/action で
+  - 判定（純関数）`app/lib/customer-sim-shadow.ts` judgeShadowTurn・作る側 `app/lib/customer-sim-shadow-run.ts`・テスト `app/lib/__tests__/customer-sim-shadow.test.ts`（55件）・監査 `scripts/audit-sim-shadow.ts`
+  - 実行: `scripts/customer-sim.ts --shadow`（`--shadow-base=http://localhost:3000` 既定＝手元の LLM_TEST_MODE=deepseek-all。本番の入口では作らない／`--shadow-images` で画像を読む AIX〈見積書・物件確認した・ピックアップ/オススメ〉も作る）。**--shadow なしは今までと同じ**（検査の要約も影の4種は1件以上の時だけ並ぶ）
+  - 1往復の表示と jsonl に「影の下書き／影の AIX（作らなかった理由）／見積書の2通目（coverLetter・送らない）」と、検査に「影:」の4種
+- **generate-reply の書かない呼び方**: body `shadowNoWrite: true`（SHADOW_NO_WRITE_FIELD）かつ isTestConversation の時だけ、ai_draft・ai_draft_check・draft_pending_at・reply_mode_shadow_logs・closing_strategy_logs・body_block_code・古い判断の再分析・keep-warm の記録・申込期間のまとめを書かない（費用の llm_usage_logs は残る）。本物の会話では無視。確かめ: YUMA で影の下書きを作って会話の行・sent_facts・aix_usage_logs・messages・reply_mode_shadow_logs が変わらない、llm は deepseek-v4-pro/reply_generate だけ
+- **ズレの4種と線**（本番180日・グループと YUMA を除く）
+  - 下書きが AIX と別の道: 物件ピックアップ/オススメ×見積書を送る宣言（条件つき「お気に召されましたお部屋…御見積書」は除く）＝生成の下書き8通のうちスタッフが7通消し、残り1通も条件つきに直した／こちらが送ったお部屋の見積書送る×確認の宣言＝2/2消した／待ち合わせ×日程を聞く。**スタッフ自身の送信（AIX の番 677）に当てると0**
+  - 下書きが AIX の送る物を書いた（AIX の番＝二重・下書きの番＝本来 AIX）: 表は aix-taxonomy の forbid と memory の決まり。申込へ×フォーム本体 1/1 消した・内覧の場面×候補日時 2/2 消した・室内写真×撮影 1/2・初期費用について×中身 0/1（残ったのは決まりの前の送信）。スタッフ自身の送信には 内覧の候補日時 26/236（11%）・募集中の断言 15・写真 6 等が当たる＝決まりの前の手打ちが中心（待ち合わせの場所は手打ちでも31%書くので下書きの番では見ない）
+  - AIX の後の一言が無い: 実送信で過半数の型だけ（見積書送る 137/164・申込へ 47/61・物件オススメ 60/84）。画面の一言の出所は送信後の同じ種類のテンプレのバナー（page.tsx B5）。aix/action の見積書の coverLetter は画面では送っていない（学習に保存だけ）
+  - 決まりでは AIX の場面: 室内写真・初期費用について/を説明・保証会社・見積書・電話の場面の候補なのにブレインが下書き（情報・ブレインの見直し用）
+- **お客様役の過去の記録に当てた結果**: 9/27 の見積書送る（#264・first_contact_wait-0144）が本文だけで一言なし＝「AIX の後の一言が無い」。他の往復（物件確認した・ピックアップ・内覧へ・待ち合わせ）は4種とも0（影の下書きは当時作っていないので AIX の番の二重・別の道は未検査）
+- 設計知見2件（汎用/監査/お客様役・ブレイン診断/見積書/お客様役）

@@ -3715,6 +3715,11 @@ CREATE TABLE IF NOT EXISTS apply_period_summaries (
 );
 ALTER TABLE apply_period_summaries DISABLE ROW LEVEL SECURITY;
 
+-- 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」:
+--   aix_usage_logs に画面で選んだピッカー・入力値（check_pattern / app_sub_mode / send_mode 以外）を1つの jsonb で残す。
+--   鍵と選択肢は app/lib/aix-pickers.ts の AIX_PICKERS（書くのは /api/log-aix-usage の sanitizePickerChoices）
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS picker_choices JSONB DEFAULT NULL;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

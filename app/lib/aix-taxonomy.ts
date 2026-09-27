@@ -77,7 +77,7 @@ export const AIX_STAFF_NOTES: Record<string, string> = {
   //   （実送信 S8: 返信なし24.3%／物件カード56.8%／再宣言5.4%）。宣言は最初の1回だけと明記する
   property_send:           "AIX【物件ピックアップした】を押してください: お客様が条件を伝えた/変更した場面です。まだ宣言していなければ「お探しします」の旨を返信し（既に宣言済みで未送付なら再宣言せず、物件そのものを送る）、Chrome拡張で検索して物件URLが揃ったらこのボタンでカバーメッセージを生成して一緒に送ります",
   property_recommendation: "AIX【物件オススメ】を押してください: 同棟別号室の依頼・「初期費用を抑えたい」等、条件に最も合う1件に絞って再提案する場面です。1件に絞った詳細訴求文を生成します",
-  estimate_sheet:          "AIX【見積書送る】を押してください: お客様が初期費用・見積を質問しています（最ホット・即対応対象）。見積書画像を読み取って自動計算＋カバーメッセージを生成します（金額の手打ち・AI生成はNG）",
+  estimate_sheet:          "AIX【見積書送る】を押してください: お客様が初期費用・見積を質問しています（最ホット・即対応対象）。見積書画像を読み取って自動計算＋カバーメッセージを生成します（金額の手打ち・AI生成はNG）。御見積書を作る時にお部屋の募集が終わっていたら、見積書ではなく AIX【物件確認した】→ピッカー「物件なかった」（募集終了）で報告する（2026-09-27 竹内）",
   viewing_invite:          "AIX【内覧日調整】を押してください: お客様が内覧希望を表明しています。内覧候補日時の提示はこのボタン専用（候補日時の手打ち・AI生成は禁止）。日程を選択して内覧案内を送信します",
   meeting_place:           "AIX【待ち合わせ】を押してください: 内覧の日時・物件が確定した場面です。物件住所入りの待ち合わせ確定メッセージを生成します",
   greeting_viewing:        "AIX【内覧挨拶】を押してください: 内覧当日・前後の挨拶/フォローの場面です。シーンに合わせたフォローメッセージを生成します",
@@ -194,6 +194,23 @@ export const AVAILABILITY_CHECK_PICKER_LABELS: Record<string, string> = {
 export function availabilityCheckButtonLabel(checkPattern: string | null | undefined): string | null {
   const l = checkPattern ? AVAILABILITY_CHECK_PICKER_LABELS[checkPattern] : undefined;
   return l ? `物件確認した→${l}` : null;
+}
+
+/**
+ * お客様が今回の連投で持ち込んだ物件（画像・URL＝募集状況をまだ確認していない）への条件の質問（入居日・保証会社・初期費用・設備 等）。
+ * 先にやることは募集状況の確認なので「物件確認した（募集状況）」。結果のピッカーはスタッフが確認して選ぶ（check_pattern は空＝ブレインは結果を決めない）。
+ * 2026-09-27 竹内「それぞれのピッカーを理解したらもっと意味が分かる」: 実送信180日（グループ・YUMA 除く）で、持ち込み物件＋条件の語の連投に
+ *   スタッフが押した物件確認したのピッカーは 募集状況側（物件あった・なかった・別の部屋）31 対 条件側（mgmt_*）2。
+ *   ブレインが mgmt_*（「確認した（条件・交渉）」）を出してスタッフが募集状況で報告した実物: 58ae93f3（URL＋エアコン）・d3f7f5f3（画像＋保証）・
+ *   d25e07d1（URL＋初期費用→募集中＋御見積書同封）・8590144d（画像＋入居日→募集中・退去予定）。scripts/audit-aix-pickers.ts
+ */
+export function availabilityFirstKind(topic: string): PropertyCheckKind {
+  return {
+    check_pattern: "",
+    ui_button: "物件確認した（募集状況）",
+    topic,
+    note: `AIX【物件確認した（募集状況）】を押してください: お客様が送ってきた物件（${topic}の質問つき）はまだ募集状況を確認していません。ピッカーは確認した結果で選ぶ → 物件あった（御見積書同封・${topic}の答えもこの報告に添える）／物件なかった（募集終了）／別の部屋が募集してた／専任物件だった。${topic}だけを先に「確認した（条件・交渉）」で答えない`,
+  };
 }
 
 export function propertyCheckKindFor(pattern: string | null | undefined): PropertyCheckKind | null {

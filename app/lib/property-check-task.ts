@@ -16,7 +16,8 @@
 //   ここで内覧の希望だけの連投を外す（customerRequestedPropertyCheck 自体は /api/line-tasks・画面の判定と共有なので変えない）。
 //   作る側に残す物: 連投に物件そのもの（画像・URL・号室）＝持ち込み物件／空き・募集・費用・見積・入居日・審査・確認の依頼の語。
 //   線は scripts/audit-property-check-task.ts（120日）で前後を読んで引いた（dept_line_reply.md 2026-09-27）。
-import { customerRequestedPropertyCheck, propertySpecifiedBy } from "@/app/lib/aix-scene-evidence";
+import { AVAILABILITY_URL_RE, customerRequestedPropertyCheck, propertySpecifiedBy } from "@/app/lib/aix-scene-evidence";
+import { FOCUSED_ESTIMATE_ASK_RE, VACANCY_ASK_RE } from "@/app/lib/focused-estimate-request";
 import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
 import { VIEWING_INTENT_RE, allVacancyWordsAreSlots } from "@/app/lib/scene-patterns";
 
@@ -82,6 +83,56 @@ export function isViewingWishOnlyTurn(recentMessages: ReadonlyArray<{ sender: st
   return true;
 }
 
+/** こちらがお部屋を送った・結果を伝えた発言（URL・🌟・号室の見出し・募集中・御見積書）。「確認させて頂きます」だけの受付は含めない */
+const STAFF_ROOM_SENT_RE = /https?:\/\/|🌟|【[^】\n]{2,40}】|号室|募集中|ご紹介可能|(?:御|お)見積書|初期費用さらに|円割引させて頂き/;
+const STAFF_ROOM_RESULT_RE = /https?:\/\/|募集中|ご紹介可能|(?:御|お)見積書|初期費用さらに|円割引させて頂き/;
+const STAFF_ACK_ONLY_RE = /確認(?:させて|して)(?:頂|いただ)きます|確認(?:致|いた)します|お調べ(?:致|いた)します/;
+/** 別のお部屋・新しい条件の依頼（focused-estimate-request の OTHER_PROPERTY_OR_CONDITION_RE の一部と同じ形） */
+const OTHER_ROOM_ASK_RE = /(別|他|違う|ほか)の?(お?部屋|物件)|探して(欲しい|ほしい|ください|下さい|もらえ|頂け|いただけ)/;
+
+/**
+ * 今回のお客様の連投が「こちらが送ったお部屋への費用・見積もりの依頼」か（「初期費用しりたい」「いくらですか」「見積もりお願いします」）。
+ * true の時は物件確認のタスクを作らない（答えは AIX【見積書送る】＝ブレインの focused-estimate-request と同じ線。
+ *   2026-09-27 竹内「初期費用しりたいはAIXの初期費用おくるから見積書おくってる」・memory feedback_cost_request_estimate_or_ended）。
+ * こちらのお部屋かは、今回の連投より前で一番新しい「お部屋の出所」で決める:
+ *   こちらの送付・結果（URL・🌟・号室・募集中・御見積書）→ こちら／お客様の画像・URL → お客様の持ち込み（今まで通り＝まず募集状況の確認）。
+ * 作る側に残す物: 連投に持ち込み物件（画像・URL・号室）／空き・募集の質問（物件確認した＋御見積書同封で1通に答える場面）／
+ *   別のお部屋の依頼／お部屋の出所が見つからない
+ * @param recentMessages oldest-first・今回のお客様の発言まで
+ */
+export function isEstimateAskForOurRoomTurn(recentMessages: ReadonlyArray<{ sender: string; text?: string | null }>): boolean {
+  const msgs = [...recentMessages];
+  while (msgs.length && msgs[msgs.length - 1].sender !== "customer") msgs.pop();
+  const turn: string[] = [];
+  let hasCustomerImage = false;
+  let i = msgs.length - 1;
+  for (; i >= 0 && msgs[i].sender === "customer"; i--) {
+    const t = (msgs[i].text ?? "").trim();
+    if (/^\[画像\]/.test(t)) hasCustomerImage = true;
+    else if (t) turn.unshift(t);
+  }
+  const text = turn.join("\n");
+  if (!text || !FOCUSED_ESTIMATE_ASK_RE.test(text)) return false;
+  const specBy = propertySpecifiedBy(text, { hasCustomerImage });
+  if (specBy === "image" || specBy === "url" || specBy === "room_no") return false;
+  if (VACANCY_ASK_RE.test(text) || OTHER_ROOM_ASK_RE.test(text)) return false;
+  // 今回の連投より前で一番新しいお部屋の出所
+  for (; i >= 0; i--) {
+    const m = msgs[i];
+    const t = (m.text ?? "").trim();
+    if (!t) continue;
+    if (m.sender === "customer") {
+      if (/^\[画像\]/.test(t) || AVAILABILITY_URL_RE.test(t)) return false; // お客様の持ち込み
+      continue;
+    }
+    if (!STAFF_ROOM_SENT_RE.test(t)) continue;
+    // 「〇〇号室確認させて頂きます」だけの受付はお部屋の出所に数えない（結果・送付の語がある時だけ）
+    if (STAFF_ACK_ONLY_RE.test(t) && !STAFF_ROOM_RESULT_RE.test(t)) continue;
+    return true;
+  }
+  return false;
+}
+
 /**
  * 作るタスクの種類。物件確認は customerRequestedPropertyCheck（/api/line-tasks と同じ判定）も通り、
  * 内覧の希望だけの連投でない時だけ。
@@ -98,5 +149,7 @@ export function decideAutoTask(
   if (!customerRequestedPropertyCheck({ recentMessages })) return null;
   // 内覧の希望だけ → 物件確認のタスクは作らない（2026-09-27 竹内さん決定・上の説明）
   if (isViewingWishOnlyTurn(recentMessages)) return null;
+  // こちらが送ったお部屋への費用・見積もりの依頼 → 答えは AIX【見積書送る】。物件確認のタスクは作らない（2026-09-27 竹内・上の説明）
+  if (isEstimateAskForOurRoomTurn(recentMessages)) return null;
   return "property_check";
 }

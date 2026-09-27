@@ -3296,7 +3296,7 @@ ${history}`;
     // 近隣月極・保証会社等）を判定し、「物件確認した（募集状況）」と「確認した（条件・交渉）」の
     // どちらのUIボタンをどのサブパターンで押すべきかを note で具体的に明示する。
     // 2026-09-12 段2: 出どころは 場面の信号 → 場面の証拠（S2/S3）→ 未返信の顧客発言だけに detectPropertyCheckPattern（resolveBrainCheckPattern）
-    const checkKind = resolveBrainCheckPattern(finalAix, sceneEvidence, sceneSignalCheckPattern, unrepliedTurn.text);
+    const checkKind = resolveBrainCheckPattern(finalAix, sceneEvidence, sceneSignalCheckPattern, unrepliedTurn.text, { hasImage: unrepliedTurn.hasImage });
     // finalAix=null時のnote改善: 従来はLLM生文字列（parsed.action）がそのまま note に入り
     // 「ボタン特定不能なフリーテキスト」表示になっていた。既知ボタンへ写像できる場合は
     // 参考ボタン名を明示した具体的指示に整形する（actionは""のまま＝強制はしない）。
@@ -3325,7 +3325,7 @@ ${history}`;
     //   ⚠ ボトルネックにしない: ブレインの返しを待たせない（応答の後ろで走らせる＝waitUntil）。Jev が遅い・落ちても所要時間と判断は変わらない。
     if (isJevEnabled() && !isPostApplyStatus(convStatus) && finalAix && hasPickerQuestion(finalAix)) {
       const brainActionForShadow = finalAix;
-      const brainCpForShadow = checkKind?.check_pattern ?? null;
+      const brainCpForShadow = checkKind?.check_pattern || null;
       const shadow = (async () => {
         try {
           const msgsForJev = [...typedMessages].reverse().slice(-8)
@@ -3359,7 +3359,8 @@ ${history}`;
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
       note: staffNote,
-      check_pattern: checkKind?.check_pattern ?? null,
+      // 2026-09-27: 持ち込み物件の募集状況が先（availabilityFirstKind）は check_pattern が空＝結果はスタッフが選ぶ → null で残す
+      check_pattern: checkKind?.check_pattern || null,
       source,
       enforcement_level: enforcementLevel,
       closing_strategy: parsed.closing_strategy || undefined,
