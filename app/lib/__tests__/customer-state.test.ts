@@ -291,6 +291,37 @@ it("画像の読み取り文の「内見予約」はお客様の内覧希望に�
   ] }));
   if (s.stage === "viewing_arranging") throw new Error("画像の文で内覧調整中にした");
 });
+// 2026-09-27（brain-stage の監査 scripts/audit-brain-stage.ts で見つけた実物・ブレインの段階を viewing に上げる根拠になるので外す）
+it("資料を「拝見します」は内覧の希望にしない（d416295c「娘と拝見します」）", () => {
+  const s = resolveCustomerState(base({ messages: [
+    S("2026-09-23T00:46:00Z", "YUMAさんお世話になっております！！ 西九条駅周辺からYUMAさんにオススメできるお部屋を7件ピックアップさせて頂きました😊！！", true),
+    C("2026-09-23T05:10:00Z", "お世話になります。 ありがとうございます。娘と拝見します。"),
+  ] }));
+  if (s.stage === "viewing_arranging") throw new Error("資料の拝見で内覧調整中にした");
+});
+it("「拝見させていただきます」（62d01e33 型）も内覧の希望にしない", () => {
+  const s = resolveCustomerState(base({ messages: [
+    S("2026-09-21T00:46:00Z", "お部屋ピックアップさせて頂きました😊！！", true),
+    C("2026-09-21T05:10:00Z", "お世話になっております! ありがとうございます!拝見させていただきます!"),
+  ] }));
+  if (s.stage === "viewing_arranging") throw new Error("資料の拝見で内覧調整中にした");
+});
+it("仮定の「もし内見したい場合は…」は内覧の希望にしない（f4134685）", () => {
+  const s = resolveCustomerState(base({ messages: [
+    S("2026-09-03T00:46:00Z", "お部屋ピックアップさせて頂きました😊！！", true),
+    C("2026-09-03T05:10:00Z", "ありがとうございます。 もし内見したい場合はLINEでお伝えして大丈夫ですか？"),
+  ] }));
+  if (s.stage === "viewing_arranging") throw new Error("仮定で内覧調整中にした");
+});
+it("「内見可能ですか？」「住之江は一度内覧したいです」は今まで通り内覧調整中（8a77820b・1ce07422）", () => {
+  for (const text of ["レジュールアッシュ内見可能ですか？", "住之江は一度内覧したいです"]) {
+    const s = resolveCustomerState(base({ messages: [
+      S("2026-09-24T03:00:00Z", "お部屋ピックアップさせて頂きました😊！！", true),
+      C("2026-09-25T03:00:00Z", text),
+    ] }));
+    expect(s.stage).toBe("viewing_arranging");
+  }
+});
 it("成約・失注は状態が正", () => {
   expect(resolveCustomerState(base({ status: "closed_won", messages: [S("2026-09-24T03:00:00Z", "ありがとうございます！！")] })).stage).toBe("won");
   expect(resolveCustomerState(base({ status: "closed_lost", messages: [S("2026-09-24T03:00:00Z", "ありがとうございます！！")] })).stage).toBe("dropped");

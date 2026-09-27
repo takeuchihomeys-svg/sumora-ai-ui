@@ -7395,3 +7395,21 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 送付記録: 画像の読み取り（extract-property-info）が**生成の時点**（02:12:17・送信は 02:12:50）で sent_properties に channel=recommendation・room「0206」・rent 63000 の行を書く。送信時の読み取りは既読を使い duplicate_skipped。＝生成して送らなかった時も「送った」行が残る形（既存の設計・未対応）
 - **抜けを直した**: お客様に送った行（channel=pickup）の家賃・AD の月数が全部 null → `pickupRentAd`（pickup-sent-plan.ts・merge-pdfs と同じ読み方）で説明文から入れる。send の API は説明文を読まない決まり（property-pickups.test の静的検査）なので、DB に書くだけの pickup-sent-record で引く
 - 片付け: YUMA に送った物（ピックアップ 5件＋オススメ 1件）・AIX要対応は作られていない（line_tasks なし）
+
+## 2026-09-27 ブレインの段階に内覧（viewing）・会話の方向の段階を段階から（竹内「この問題直して大丈夫」・穴:G1）
+- 上の「見つかった問題」の1つ目・2つ目を直した（3つ目の物件確認のタスク・4つ目の戦略の層の費用の記録は未）
+- **段階の補正（純関数）** `app/lib/brain-stage.ts` `correctBrainStage`（テスト `app/lib/__tests__/brain-stage.test.ts` 19件）: customer-state が内覧の場面（内覧調整中・内覧予定・内覧後14日以内）なら LLM の hearing / proposing / 空 を viewing に**上げるだけ**。
+  applying・contract・viewing は下げない（内覧後の「入居できたら」は先へ進んでいる／customer-state の内覧の希望は語の一覧なので漏れがある）。申込以降・見送りは触らない。日時の無い内覧調整中で今回 condition_change_type が立った時は上げない（3db9db75「芦原橋らへんも探してほしい」）
+  - brain-core: `analyzeConversation` の許可リストの後で補正（補正時は meta.checkpoint_stage_llm に元の値・ログ `brain:stage-corrected`）。上の信号の AIX（fallbackPhase）は LLM の値のまま＝AIX の判断は変えていない。戦略の層も `saveBrainStrategy` で同じ補正（片方だけ上げると phase_change が毎ターン出て戦略の分析が回り続ける）
+  - 出力の説明（STATIC_BRAIN_SYSTEM）に `viewing(内覧の調整中〜内覧後の検討中)` を足した（1時間キャッシュの前置きが1回作り直し・下の確かめ方）
+- **方向の段階** `resolveDirectionPhase`: 旧 detectPhaseFromBrainMeta（戦略の文の語）を消した。status の申込以降→applying／保存する判断（今回＋戦略の合成・補正済み）の段階（contract は applying）／無ければ status から（status=viewing は proposing）／申込経験者は hearing に落とさない。
+  PHASE_ACTION_CANDIDATES.viewing に application_push・property_check_result・property_send を足した。generate-reply【現在フェーズの参考】の viewing の名前を「内覧調整・内覧後フォロー中」に
+  - 読み手（全部確かめた）: generate-reply【現在フェーズの参考】・brain-core の prevPhase（アクション別ルールの候補）・customer-state の PHASE_MISMATCH（ずれの info）・viewings/route.ts（内覧登録で viewing を書く＝そのまま）。suggested_aix_button は方向の段階で決まるが読む所は prevAix（候補に足すだけ）
+- **customer-state の内覧の希望から外した**: 資料を「拝見します／拝見させていただきます」（d416295c「娘と拝見します」）・仮定「もし内見したい場合は」（f4134685）。120日の顧客発言で旧の希望383通のうち変わるのは23通・全部正しく外れた（目で読んだ）
+- **監査** `npx tsx --env-file=.env.local scripts/audit-brain-stage.ts`（DAYS=30・SHOW=all）: 本番30日138会話（申込前111）
+  - ブレインの段階が変わる 8件（全部 proposing→viewing・申込以降0）: 内覧予定2（110b3053・719c1854）・内覧調整中4（f2967621・1ce07422・2fcd0fa3・8a77820b）・内覧後2（c7ca2f04・db3722a5）。⚠ db3722a5 はお客様が「今回は見送り」と言った後（customer-state は他決の語だけを見送りにする）＝前の proposing も合っていない
+  - 方向の段階が変わる 50件: proposing→hearing 16（段階 hearing・物件未送付）・applying→proposing 12（戦略の文に申込の語があるだけ）・viewing→proposing 11（戦略の文に内覧の語）・hearing→applying 4（LLM が applying）等
+  - status=viewing の11会話は customer-state では全部内覧の場面でない（審査管理の同期の古い値）＝ブレインの proposing はほぼ正しかった
+- 確かめ: YUMA（内覧予定 10/4）で保存しない実呼び出し（scripts/yuma-brain-decision.ts）→ 新しい説明で LLM 自身が viewing（前は applying）。お客様役1往復（段5・--no-send）→ 段階 viewing・方向 viewing・AIX要対応/カレンダー +0
+- **キャッシュの確かめ方**（デプロイ後）: `llm_usage_logs` の action LIKE 'brain%'・デプロイ後 → 最初の1〜2行が新しい sys_key_full で cache_write_1h≈39k、以降は同じ鍵で cache_read≈39.8k（直前の本番は a815422c…）。約$0.24を1回
+- 見送り: YUMA で LLM が内覧予定中に applying と言った時の下げ（業者の会話 599db03e「採寸内覧」は applying が正しい・説明の直しで LLM 自身が viewing を言うようになった）。next_staff_action（【現在フェーズの参考】の「次の一手」）はまだ next_steps の語で決まる

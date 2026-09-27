@@ -456,7 +456,13 @@ const IMAGE_TEXT_RE = /^\s*\[画像\]/;
  * 取りやめの語そのもの、または内覧・日付の語と一緒の時だけにする
  */
 export const VIEWING_CANCEL_STRICT_RE = /キャンセル|中止|延期|行けなく(?:なり|なっ)|(?:内覧|内見|見学|明日|明後日|当日|予定)[^\n]{0,15}(?:難しく|都合が(?:悪|つか)|やめ|見送)/;
-const VIEWING_WISH_NEGATE_RE =/まだ|考えて(?:い)?ません|考えてない|後で|いったん|一旦|しません|しないです|もう少し|もっと|他も|ほかも/;
+/**
+ * 送った資料を「拝見します」（見ておきます）は内覧の希望ではない（2026-09-27 d416295c「娘と拝見します」→ こちら「ごゆっくり娘様とご確認ください」）。
+ * 語だけ外して残りで内覧の希望を見る（「内覧で拝見します」は内覧の語で当たる）
+ */
+const MATERIAL_REVIEW_RE = /拝見(?:致|いた)?し(?:ます|ました)|拝見させて(?:頂|いただ)きます/g;
+// 2026-09-27: 仮定の「もし内見したい場合はLINEでお伝えして大丈夫ですか？」（f4134685）を内覧の希望にしない（ブレインの段階を viewing に上げる根拠にもなるため）
+const VIEWING_WISH_NEGATE_RE =/まだ|考えて(?:い)?ません|考えてない|後で|いったん|一旦|しません|しないです|もう少し|もっと|他も|ほかも|(?:たい|希望の?|する)場合|したくなったら/;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 本体
@@ -842,7 +848,7 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
     const t = nfkc(m.text);
     // 画像の読み取り文（「[画像] 物件情報 … 内見予約」）はお客様の言葉ではない
     if (IMAGE_TEXT_RE.test(t)) continue;
-    const wish = t.split(/\n|(?<=[。！!？?])/).some((s) => CUSTOMER_VIEWING_WISH_RE.test(s) && !VIEWING_WISH_NEGATE_RE.test(s) && !CUSTOMER_VIEWING_CANCEL_RE.test(s));
+    const wish = t.split(/\n|(?<=[。！!？?])/).map((s) => s.replace(MATERIAL_REVIEW_RE, "")).some((s) => CUSTOMER_VIEWING_WISH_RE.test(s) && !VIEWING_WISH_NEGATE_RE.test(s) && !CUSTOMER_VIEWING_CANCEL_RE.test(s));
     if (wish) ev.push({ t: ms(m.createdAt), stage: "viewing_arranging", source: "customer_viewing_wish" });
     if (isDecidedElsewhere(t)) ev.push({ t: ms(m.createdAt), stage: "dropped", source: "customer_decided_elsewhere" });
   }

@@ -5268,7 +5268,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     const phaseLabels: Record<string, string> = {
       hearing: "条件ヒアリング中",
       proposing: "物件提案中",
-      viewing: "内覧調整中",
+      // 2026-09-27: 方向の段階はブレインの段階（viewing＝内覧の調整中〜内覧後の検討中）から決めるようになった → 内覧後も含む名前に
+      viewing: "内覧調整・内覧後フォロー中",
       applying: "申込段階",
     };
     // AIX-META一元化: conversation_direction は戦略指示ではなく「現在フェーズの参考（事実情報）」として注入する
