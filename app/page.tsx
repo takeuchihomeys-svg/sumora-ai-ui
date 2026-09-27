@@ -22,6 +22,8 @@ import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
+// 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
+import { useNewArrivalCards, useNewArrivalCounts, NewArrivalCardSlot, NewArrivalListBadge } from "./components/NewArrivalCard";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
 import { limitSlotsPerDay } from "./lib/viewing-slots";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
@@ -2841,6 +2843,8 @@ export default function Home() {
     );
   }, [filteredConversations, conversations, selectedId]);
 
+  const nacTalk = useNewArrivalCards(selectedConversation.id || null);
+  const nacCounts = useNewArrivalCounts();
   // 会話を開いた時に、その会話で最後に送った AIX を DB から読む（テンプレート一覧を送った AIX のカテゴリで開くため）
   useEffect(() => {
     const cid = selectedConversation.id;
@@ -7025,6 +7029,7 @@ export default function Home() {
                       </div>
 
                       {/* 本文プレビュー: 薄色・右端に余白 */}
+                      <NewArrivalListBadge count={nacCounts[conversation.id]} />
                       <div className="truncate text-[11px] text-[#b0b8be]">
                         {conversation.lastMessage}
                       </div>
@@ -7704,6 +7709,7 @@ export default function Home() {
                   const isCustomer = message.sender === "customer";
                   const elems = [];
                   if (showDate) {
+                  elems.push(<NewArrivalCardSlot key={`nac-${idx}`} talk={nacTalk} prevAt={idx > 0 ? displayMessages[idx - 1].rawCreatedAt : null} curAt={message.rawCreatedAt} />);
                     elems.push(
                       <div key={`date-${idx}`} className="flex items-center gap-3 py-2">
                         <div className="h-px flex-1 bg-[#e9edef]" />
@@ -7942,6 +7948,7 @@ export default function Home() {
                     </div>
                   );
                   return elems;
+                  if (idx === displayMessages.length - 1) elems.push(<NewArrivalCardSlot key="nac-tail" talk={nacTalk} prevAt={message.rawCreatedAt} curAt={null} />);
                 });
               })()}
               {generating && (

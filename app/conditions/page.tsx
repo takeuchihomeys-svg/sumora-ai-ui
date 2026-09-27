@@ -236,6 +236,15 @@ export default function ConditionsPage() {
   //   ピックアップは別タブに入っていて、一覧の行からは見えなかった。お客様の行に「🧠 物件 N件」を出し、押すとそのお客様の会話風画面を開く
   const [pickupPending, setPickupPending] = useState<Map<string, number>>(new Map());
   const [pickupFocus, setPickupFocus] = useState<string | null>(null);
+  // 2026-09-27 LINE のトーク画面の「新着物件カード」から来た時（/conditions?pickup=<お客様の鍵>&batch=<回>）: そのお客様のその回を開く
+  const [pickupFocusBatch, setPickupFocusBatch] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const u = new URLSearchParams(window.location.search);
+      const p = u.get("pickup");
+      if (p) { setPickupFocus(p); setPickupFocusBatch(u.get("batch")); setTab("pickup"); }
+    } catch { /* 無ければ普段どおり */ }
+  }, []);
   /** 新着物件の合計（タブのバッジ・スタッフ全員で共有の既読を引いた数） */
   const [newTotal, setNewTotal] = useState(0);
   const loadPickupPending = useCallback(async () => {
@@ -915,7 +924,7 @@ export default function ConditionsPage() {
         //   下ナビは 37px＋max(8px, safe-area) で、ノッチの iPhone では 71px と外の pb-16（64px）より 7px 高い → その差だけ内側で足す。
         //   PC（md 以上）は今のまま（min-h は auto に戻し、pb-16）
         <div className="flex-1 min-h-0 pb-[max(0px,calc(env(safe-area-inset-bottom)_-_27px))] md:min-h-[auto] md:pb-16">
-          <PickupReview focusKey={pickupFocus} onChange={() => void loadPickupPending()} />
+          <PickupReview focusKey={pickupFocus} focusBatch={pickupFocusBatch} onChange={() => void loadPickupPending()} />
         </div>
       )}
       {/* ── 新着物件タブ（2026-09-25 竹内「右の一覧の項目を新着物件に」）: ブレインが通した物件があるお客様を新着の順に・チェックして一括検索 ── */}

@@ -2410,3 +2410,11 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - **後から届いた回**（`joinableGroupId`）: まとめの最後の行から30分以内（最初の行から3時間以内）に届いた行は新しいまとめを作らず前のまとめに足し、finishCompleteGroup がまとめ全体で順位と 👑 を付け直す（画面の回 groupPickupRounds と同じ30分）
 - **画像で分析（自動）は届くたびに読まない**: お客様の分かる回は finishCompleteGroup がまとめた全件から**点の高い順**に最大20件を1回で読む（`pickAutoTargets` を順位→点の順に）。お客様の分からない回だけ従来通り届いた時に読む。資料の読み取り（property_image_detail・間取りの事実）は物件ごとに1回＝判定に要るので届いた時のまま。条件の要約は文が変わらなければ呼ばない
 - **変えていない**: merge-pdfs の🌟（DeepSeek・回ごと）と物件出しグループへの送信は回ごとのまま（7回に分かれた回は🌟が6回に散った）。売上サポの 👑 はまとめ全体の1つ
+
+## 2026-09-27 LINE のトーク画面に「新着物件カード」（スタッフだけ・拡張のコードは変えていない）
+- 竹内「AIXツールで採点された新着物件をトーク画面に折りたたみで。押したら AIXツールのそのグループへ。確認したか分かるように。一覧にも新着 N件・未確認」
+- **中身**（`app/lib/new-arrival-card.ts`・純関数＋`__tests__/new-arrival-card.test.ts`）: AIXツールと同じ回（`groupPickupRounds`）ごとに1枚。件数（通す・保留・外す候補・サイト）／検索した条件（その回の直前3時間以内・同じサイトの `search_audits.intended` →「北区・福島区／〜9万／1K・1LDK／30㎡〜／築25年／徒歩10分」）／種類（更新日で絞った回＝新着・写しに送った日が無い＝新規・それ以外＝追加・🎯/🔎・📝 メモの条件）
+- **確認済み**: 新しい列なし。通すの全部が `status≠pending`（送った・見送り）か `seen_at`（AIXツールで開いた）→ ✅。1件でも残れば「未確認（通す N件）」。カードの［AIXツールでこの回を開く］は `/conditions?pickup=<お客様>&batch=<回>` を別タブで開き（PickupReview の focusBatch でその回へスクロール）、`/api/property-pickups/seen` を入れる
+- **一覧の印**: `/api/property-pickups/talk?view=counts`（`new-arrivals.summarizeNewArrivals`＝AIXツールの新着と同じ数）→「🆕 新着 N件・未確認」
+- **お客様に出ない**: カードは React の表示だけ（messages に入れない・送信・下書き・ブレインの材料に渡らない）。API `/api/property-pickups/talk` は読むだけ
+- 注意: AIXツールの詳細は直近3回分だけ読むので、古い回のカードから来た時はスクロールせず一番下

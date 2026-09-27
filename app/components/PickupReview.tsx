@@ -374,7 +374,7 @@ function buildBubbles(c: Customer): Bubble[] {
  *   "new"    … 新着物件のタブ。新着のあるお客様を新着の新しい順に上・丸は新着の数・2行目に「🆕 新着2件・〇〇 7.2万」。
  *              各行にチェック → 下の「🧠 一括検索」（ピンポイント／広げて × リアプロ／itandi／レインズ）＝拡張のブレインの PC が検索
  */
-export default function PickupReview({ focusKey = null, onChange, mode = "pickup" }: { focusKey?: string | null; onChange?: () => void; mode?: "pickup" | "new" } = {}) {
+export default function PickupReview({ focusKey = null, focusBatch = null, onChange, mode = "pickup" }: { focusKey?: string | null; focusBatch?: string | null; onChange?: () => void; mode?: "pickup" | "new" } = {}) {
   const isNewMode = mode === "new";
   // 2026-09-24 竹内「開くとき重いのは画像を全部読み取っているから。お客さんの詳細を開いた時に読み込まれるように。
   //   全て読み込むと重いから限定して読み込む。並びは LINE の一覧と連動して変わる。UI の幅も LINE の一覧と同じ」:
@@ -616,11 +616,24 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
     requestAnimationFrame(go);
     window.setTimeout(go, 350);
   };
+  // 2026-09-27 LINE のトーク画面の「新着物件カード」から来た時（focusBatch）: 開いた時はその回の吹き出しへ移る（見つからなければ一番下）
+  const focusBatchDone = useRef(false);
   useEffect(() => {
     if (!detail || !stickBottomRef.current) return;
     stickBottomRef.current = false;
+    if (focusBatch && !focusBatchDone.current && (detail.batches ?? []).some((b) => b.batch_id === focusBatch)) {
+      focusBatchDone.current = true;
+      const go = () => {
+        const box = scrollBoxRef.current;
+        const el = box ? [...box.querySelectorAll<HTMLElement>("[data-batch-ids]")].find((x) => (x.dataset.batchIds ?? "").split(",").includes(focusBatch)) : null;
+        if (el) el.scrollIntoView({ block: "start" });
+      };
+      requestAnimationFrame(go);
+      window.setTimeout(go, 350);
+      return;
+    }
     scrollToBottom();
-  }, [detail]);
+  }, [detail]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (vp.kb) scrollToBottom(); }, [vp.kb]);
   const openImage = (e: React.MouseEvent, url: string | null | undefined, name: string, opts?: { noSave?: boolean }) => {
     e.stopPropagation();
@@ -1292,7 +1305,7 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
             lastDay = day;
             let row: React.ReactNode;
             if (bb.kind === "brain") row = (
-            <div key={`b${i}`} className="flex items-end gap-1.5">
+            <div key={`b${i}`} className="flex items-end gap-1.5" data-batch-ids={bb.batch.batch_id}>
               <Icon bg="#1565C0">🧠</Icon>
               {/* 2026-09-25 物件カードに幅を使う（スマホ 360〜420px で表が3列に収まるよう、吹き出しは残りの幅いっぱい） */}
               <div className={`${LEFT_BUBBLE} flex-1 !max-w-full md:!max-w-[92%]`}>
