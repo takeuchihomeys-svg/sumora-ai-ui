@@ -26,9 +26,17 @@ export default function PickupPrerenderPage() {
         return;
       }
       try {
-        const r = await prerenderPickupImages({ authHeader: INTERNAL_AUTH_HEADER, ids: ids.length ? ids : undefined, onLog: add });
-        add(r.message);
-        notify({ ok: true, made: r.made, listed: r.listed, failed: r.failed.length, fontMissing: r.fontMissing });
+        // 2026-09-27: 1回10件×10分おきだと 32件の回がそろうまで約47分かかった（その間スマホで押すと画像が無い）。
+        //   拡張が裏の画面を閉じる4分の手前（3分20秒）まで、残りが0になるか作れなくなるまで続けて回す
+        const startedAt = Date.now();
+        let made = 0, listed = 0, failed = 0, fontMissing = false;
+        for (;;) {
+          const r = await prerenderPickupImages({ authHeader: INTERNAL_AUTH_HEADER, ids: ids.length ? ids : undefined, onLog: add });
+          add(r.message);
+          made += r.made; listed += r.listed; failed += r.failed.length; fontMissing = r.fontMissing;
+          if (ids.length || r.listed === 0 || r.made === 0 || r.fontMissing || Date.now() - startedAt > 200_000) break;
+        }
+        notify({ ok: true, made, listed, failed, fontMissing });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         add(`⚠ ${msg}`);
