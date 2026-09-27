@@ -11,7 +11,7 @@ import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { trimSheetImage } from "@/app/lib/pdf-trim";
-import { SEND_PAGE, serverRenderIsOriginal } from "@/app/lib/pickup-send-image";
+import { SEND_PAGE, serverRenderIsOriginal, SERVER_FONT_MISSING_MESSAGE } from "@/app/lib/pickup-send-image";
 
 export const maxDuration = 60;
 const MAX_ITEMS = 10;
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
       const png = await renderPdfPageToPng(b64, { page: SEND_PAGE, scale: 2, maxPixels: 4_000_000 });
       if (!png) return { id: r.id, trim_image_url: null, error: "資料を画像にできない" };
       if (!serverRenderIsOriginal(png.textDraws)) {
-        return { id: r.id, trim_image_url: null, error: "資料の書体（MS ゴシック）がサーバーに無く、元の資料と同じ文字で画像にできません。パソコンで開いて押してください", font_missing: true };
+        return { id: r.id, trim_image_url: null, error: SERVER_FONT_MISSING_MESSAGE, font_missing: true };
       }
       // JPEG にするだけ（keepRatio 1＝切り取らない）
       const trimmed = await trimSheetImage(png.png, { keepRatio: 1 });

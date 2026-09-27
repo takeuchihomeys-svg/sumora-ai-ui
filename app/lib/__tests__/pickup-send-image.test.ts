@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   pickSendImageUrl, requestedFamilyFromSubstitution, requestedSystemFamilies, judgeOriginalRender, serverRenderIsOriginal, fontMissingMessage, SEND_PAGE,
+  needsPrerender, PC_PRERENDER_HINT, SERVER_FONT_MISSING_MESSAGE, PRERENDER_MAX_AGE_DAYS,
 } from "../pickup-send-image";
 import { CUSTOMER_PAGE, AGENT_PAGE, toPickupHandoffItem } from "../property-pickups";
 import { pickSaveImageUrl } from "../pickup-image-url";
@@ -76,6 +77,29 @@ console.log("■ 経路（ソースの静的検査）");
   const review = readFileSync(join(root, "app/components/PickupReview.tsx"), "utf8");
   t("売上サポは元の資料のまま描く関数を使う", /renderOriginalPageInBrowser/.test(review) && !/trimPdfPageInBrowser/.test(review));
   t("売上サポは予備の結果を読む（作れなかった物件を黙って落とさない）", /const fallbackJson = /.test(review));
+}
+
+console.log("\n■ パソコンが先に作る（needsPrerender・2026-09-27 竹内「そのままの蓮産業の画像で保存していたらそのまま使える」）");
+{
+  const now = Date.parse("2026-09-27T09:00:00Z");
+  // 未桜さんの B-RISE弁天 801（#628・9/26 05:42 に届いた・画像なし・pending）の形
+  const miou = { pdf_blob_url: "https://x.blob/pickups/a.pdf", trim_image_url: null, status: "pending", expired_at: null, created_at: "2026-09-26T05:42:02.156Z" };
+  t("画像の無い未送信の行は作る（未桜さんの #628）", needsPrerender(miou, now));
+  t("送る画像がある行は作らない", !needsPrerender({ ...miou, trim_image_url: "https://x/t.jpg" }, now));
+  t("資料（PDF）の無い行は作らない", !needsPrerender({ ...miou, pdf_blob_url: null }, now));
+  t("送った行は作らない", !needsPrerender({ ...miou, status: "sent" }, now));
+  t("期限切れの行は作らない", !needsPrerender({ ...miou, expired_at: "2026-09-27T00:00:00Z" }, now));
+  t("日数を過ぎた行は作らない", !needsPrerender({ ...miou, created_at: new Date(now - (PRERENDER_MAX_AGE_DAYS + 1) * 86400000).toISOString() }, now));
+  t("届いた時刻が読めない行は作らない", !needsPrerender({ ...miou, created_at: null }, now));
+  t("スマホの文は何をすれば送れるかを言う", fontMissingMessage(["MS Gothic"]).includes(PC_PRERENDER_HINT) && PC_PRERENDER_HINT.includes("パソコンで売上サポを開く"));
+  t("サーバーの予備の文も同じ", SERVER_FONT_MISSING_MESSAGE.includes(PC_PRERENDER_HINT));
+  const root2 = process.cwd();
+  const pre = readFileSync(join(root2, "app/lib/pickup-prerender-browser.ts"), "utf8");
+  t("先に作る画像も元の資料のまま描く関数", /renderOriginalPageInBrowser/.test(pre) && !/from\s+["']\.\/pdf-trim["']/.test(pre));
+  t("書体が無い端末では1件目で止める（差し替えた画像を作らない）", /OriginalFontMissingError[\s\S]{0,300}break;/.test(pre));
+  const rv = readFileSync(join(root2, "app/components/PickupReview.tsx"), "utf8");
+  t("売上サポをパソコンで開いた時も先に作る（書体のある端末だけ）", /if \(!deviceHasRealproFont\(\)\) return;\s*const r = await prerenderPickupImages/.test(rv));
+  t("AIX を押した時は画像のある行を描き直さない", /const noImage = targets\.filter\(\(it\) => !it\.trim_image_url\)/.test(rv));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

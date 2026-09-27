@@ -52,9 +52,36 @@ export type OriginalRenderJudge =
   | { ok: true }
   | { ok: false; reason: "font_missing" | "no_text_drawn"; missing: string[]; message: string };
 
+/**
+ * 元の資料の画像がまだ無い時に、何をすれば送れるか（スタッフ向け・スマホで押した時に出る）。
+ * 2026-09-27 竹内「なぜ送れないのか？画像をそのままの蓮産業の画像で保存していたらそのまま使える」:
+ *   資料が届いた時点でパソコン（拡張・MS ゴシックあり）が画像を先に作って保存する（/pickup-prerender）。スマホはその画像を使うだけ
+ */
+export const PC_PRERENDER_HINT = "パソコンの拡張でまだ画像が作られていません（パソコンで売上サポを開くと作られます。数分後にもう一度押してください）";
+
 /** 端末に書体が無い時の文（スタッフ向け） */
 export function fontMissingMessage(missing: readonly string[]): string {
-  return `この端末には資料の書体（${missing.join("・")}）が無く、元の資料と同じ文字で画像にできません。パソコンで開いて押してください`;
+  return `この端末には資料の書体（${missing.join("・")}）が無く、元の資料と同じ文字で画像にできません。${PC_PRERENDER_HINT}`;
+}
+
+/** サーバーの予備でも元の資料のまま描けない時の文（リアプロの資料＝MS ゴシックの埋め込みなし） */
+export const SERVER_FONT_MISSING_MESSAGE = `資料の書体（MS ゴシック）がサーバーに無く、元の資料と同じ文字で画像にできません。${PC_PRERENDER_HINT}`;
+
+/** パソコンが先に画像を作る範囲（届いてからの日数）。古い行は送らないので作らない */
+export const PRERENDER_MAX_AGE_DAYS = 7;
+/** 1回に作る数（1件 数秒・画面を止めない量） */
+export const PRERENDER_BATCH = 10;
+
+/**
+ * パソコンが先に「送る画像」を作っておく行か（純関数）。
+ * 元の資料（PDF）があり・送る画像がまだ無く・送っていない（pending）・期限切れでない・届いてから PRERENDER_MAX_AGE_DAYS 日以内
+ */
+export function needsPrerender(r: { pdf_blob_url?: string | null; trim_image_url?: string | null; status?: string | null; expired_at?: string | null; created_at?: string | null }, nowMs: number = Date.now()): boolean {
+  if (!r.pdf_blob_url || r.trim_image_url) return false;
+  if (r.status !== "pending" || r.expired_at) return false;
+  const t = r.created_at ? Date.parse(r.created_at) : NaN;
+  if (!Number.isFinite(t)) return false;
+  return nowMs - t <= PRERENDER_MAX_AGE_DAYS * 86_400_000;
 }
 
 /**

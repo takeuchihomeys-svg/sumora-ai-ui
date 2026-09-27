@@ -449,6 +449,26 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   }, [loadList, loadDetail]);
 
   useEffect(() => { void loadList(); }, [loadList]);
+  // 2026-09-27 竹内「画像をそのままの蓮産業の画像で保存していたらそのまま使える」: パソコン（MS ゴシックあり）で開いた時、
+  //   送る画像がまだ無い行（7日以内・pending）を裏で元の資料の1ページ目のまま画像にして保存しておく（スマホはそれを使う）。
+  //   主の道は拡張の裏の画面（/pickup-prerender）。ここは予備。書体の無い端末（iPhone 等）では回さない。1回開いた時に1回だけ
+  const prerenderedRef = useRef(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (prerenderedRef.current) return;
+      prerenderedRef.current = true;
+      void (async () => {
+        try {
+          const { prerenderPickupImages, deviceHasRealproFont } = await import("@/app/lib/pickup-prerender-browser");
+          if (!deviceHasRealproFont()) return;
+          const r = await prerenderPickupImages({ authHeader: INTERNAL_AUTH_HEADER });
+          if (r.made > 0) { console.log("[pickup] 送る画像を先に作った:", r.message); void load(); }
+        } catch (e) { console.warn("[pickup] 送る画像を先に作れない（押した時に作る）:", e); }
+      })();
+    }, 4000);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     const pcid = detail?.property_customer_id;
     if (!pcid) { setAuditRuns([]); return; }

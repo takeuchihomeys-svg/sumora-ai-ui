@@ -7538,6 +7538,7 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **監査** `npx tsx --env-file=.env.local scripts/audit-pickup-send-image.ts [--days=14] [--fix]`（このパソコンの Chrome で描いた物を元の資料の基準に・差 2.0 未満＝元の資料）: 14日 42行。送る画像 trim 33件＝元の資料 12・差し替え 21、届いた画像 31件＝元の資料 8・差し替え 23。**差し替えは全部 YUMA のテスト**（1684×1189 の画像・お客様役の 1548×1093 の荒い JPEG・page_image_url をそのまま）。本番のお客様への pickup 経由の送信は 0。送っていない行の差し替え 0（--fix の対象なし）
 - テスト `app/lib/__tests__/pickup-send-image.test.ts`（27）・既存 pickup-sent-plan（30）・property-pickups（44）・pickup-review-order（62）・pickup-image-analysis（23）の期待を新しい決まりに
 - 残り: お客様役（scripts/customer-sim.ts・customer-sim-material）が trim ?? page で page_image_url（差し替え）を送る＝別担当に伝える。スマホ（MS ゴシックなし）の売上サポではリアプロの資料を画像にできない（パソコンで押す）。
+- **同日の続き（未桜さん・スマホで物件オススメが送れなかった）**: 画像を「押した時」でなく「資料が届いた時」にパソコンで先に作って保存する形にした。拡張 v2.5.33 の裏の画面（offscreen → iframe /pickup-prerender）＋売上サポをパソコンで開いた時。スマホは保存済みの trim_image_url をそのまま使う。無い時の文は PC_PRERENDER_HINT。埋める道具 scripts/prerender-pickup-images.ts（9/27 に 65行埋めた・未桜さん #628 を含む）。詳細は memory/dept_search_tool.md の v2.5.33
 
 ## 2026-09-27 YUMA の徹底テスト（検索 → ピックアップ → AIX 実送信 → お客様役）の結果（竹内「YUMAでテスト徹底的に・設計知見と協力して」・コードは直していない）
 - 通った物: 物件ピックアップ10件（chunkTrimImages で2回に分けて 200/200・mark_sent 10・sent_properties/sent_image_properties 10行ずつ・88418817 の直しは効いている）／オススメの号室は資料の「0205」のまま・家賃等の数字は資料どおり／生成だけの回は sent_* の行0（送った時だけ書く）／条件の語（「1K、1LDK」「バストイレ別」）は欄の文字のまま

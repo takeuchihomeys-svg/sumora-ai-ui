@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-09-27 v2.5.33 お客様に送る物件の画像をパソコンで先に作って保存する（**拡張の再読み込み必須**）
+竹内（未桜さん・スマホで AIX物件オススメ →「資料の書体（MS ゴシック）がサーバーに無く…パソコンで開いて押してください」で送れない）「なぜ送れないのか？画像をそのままの蓮産業の画像で保存していたらそのまま使える。ここちゃんとできるようにする」
+- **原因**: リアプロの資料は MS ゴシックを埋め込んでいない → 元の見た目の画像は MS ゴシックのある Windows の Chrome でしか作れない（02747cfc でサーバー・iPhone では作らずに止める形にした）。画像は「押した時」にだけ作っていたので、スマホで押すと作れず止まった
+- **直し（A＝拡張が主）**: background.js `_runPrerender`＝merge-pdfs の送信が成功した90秒後（`_schedulePrerender`）と10分おき（alarm `axlx-prerender-sweep`）に、`/api/property-pickups/prerender?count=1`（数だけ・認証なし）を聞き、1件以上なら **chrome.offscreen（新しい許可 "offscreen"・reason IFRAME_SCRIPTING）** で `prerender-offscreen.html` を開く → iframe でウェブアプリの `/pickup-prerender` → 画面が `renderOriginalPageInBrowser`（切り取りなし・書体の確認つき）で描いて `/api/property-pickups/trim`（images）に置く → postMessage → offscreen → background が閉じる（来なくても4分で閉じる alarm）。拡張に pdf.js は入れていない（ウェブアプリの pdf.js を iframe で使う）。リアプロ・itandi のサイトには触れない（Blob の PDF だけ）
+- **B（予備）**: 売上サポ（PickupReview）をパソコン（MS ゴシックあり）で開いた4秒後に同じ処理を1回（`deviceHasRealproFont` が無い端末＝iPhone では回さない）
+- 対象の行＝`needsPrerender`（pickup-send-image.ts・純関数）: PDF あり・trim なし・pending・期限内・7日以内。書体が無い端末では1件目で止めて何も作らない
+- スマホの文: 「…パソコンの拡張でまだ画像が作られていません（パソコンで売上サポを開くと作られます。数分後にもう一度押してください）」（`PC_PRERENDER_HINT`）
+- 埋める道具: `npx tsx --env-file=.env.prod scripts/prerender-pickup-images.ts [--ids=628] [--days=7] [--dry]`（このパソコンのヘッドレス Chrome で描き本番の trim に置く）。9/27 に 7日以内の画像なし 65行を全部埋めた（未桜さん #628 B-RISE弁天 801 を含む・リアプロは全部 MS Gothic で描けた・itandi は埋め込み）
+- YUMA で確かめ: #707 ブランメゾン堀川 705 を先に作った画像（蓮産業の帯・MS ゴシック・ページ全体）で AIX物件オススメを生成 → YUMA に画像＋本文を実送信・mark_sent 1
+- テスト: `tests/chrome-extension/prerender.test.js`（19）・`app/lib/__tests__/pickup-send-image.test.ts`（40）・拡張の既存テスト全部・tsc 0・next build 成功
+- **竹内さんに頼むこと**: 拡張を 2.5.33 に再読み込み（offscreen の許可が増える）→ 次に資料が届いた後、拡張の service worker のコンソールに「[AX] 送る画像を作った」・storage の lastPrerender を確かめる
+- まだの事: パソコンが消えている間に届いた資料は、次にパソコンが付いた時（10分おき）か売上サポを開いた時に作られる
+
 ## 2026-09-27 v2.5.32 一括検索の「検索していないのに検索したことにする」を止める（**拡張の再読み込み必須**）
 竹内「リアプロログインした／重い順から治す／YUMAはテスト用やからあらゆるパターンで一連のテストする」
 - **検索1回（2.5.31・ログインし直した後）**: YUMA のテスト顧客の条件を「北区・福島区／1K・1LDK／9万／築25年／徒歩10／バストイレ別」に入れ直し（other_requests「2階以上」は外した・履歴4行）→ 05:30:04Z に web_brain を1回（命令 adc6ff2f・05:30:34 に拾われた）→ 点検 26: popup の経路で入れようとした値は登録どおり（city_codes 27127・27103・札なし）→ **05:32:24 に fill-done 90秒の時間切れで error**。ところが **05:40:34 にページが送信し、05:41 に物件10件（通す3・保留7・ラ・フォーレ東天満 703・ブランメゾン堀川 705・AVER新野田 901 等・全部北区/福島区・号室は資料どおり 00105・0808）が届いた**。止まったのではなく入力に約10分かかった＝**背面のタブで Chrome がタイマーを間引いた**（2.5.31 の⑤の見立てどおり）。遅れた fill-done は run が閉じた後なので点検に残らず、search_history.realpro_p は 05:31:01（失敗扱いの前に記録）

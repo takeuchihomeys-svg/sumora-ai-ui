@@ -470,8 +470,77 @@ async function callMergeApi(payload) {
   if (!data.ok) throw new Error(data.error || "APIエラー");
   // 2026-09-25 v2.5.23 売上サポに届いた（ブレイン ON）お客様は、最後の送信から10分半後にまとめを頼む（10分の自動まとめ・下の _schedulePickupIdle）
   if (brainMode && payload && payload.property_customer_id) _schedulePickupIdle(String(payload.property_customer_id), 0);
+  // 2026-09-27 v2.5.33 資料が売上サポに届いた → 送る画像（元の資料の1ページ目そのまま）をこのパソコンで先に作る（下の _runPrerender）
+  _schedulePrerender(PRERENDER_AFTER_MERGE_MS);
   return data;
 }
+
+// ── 売上サポ: お客様に送る物件の画像をこのパソコンで先に作る（2026-09-27・v2.5.33）────────────────
+// 竹内「なぜ送れないのか？画像をそのままの蓮産業の画像で保存していたらそのまま使える。ここちゃんとできるようにする」
+//   リアプロの資料は MS ゴシックを埋め込んでいないので、元の見た目の画像は MS ゴシックのある所（このパソコンの Chrome）でしか作れない
+//   （サーバー・iPhone では作らない決まり＝commit 02747cfc）。スマホで AIX を押すと「画像にできない」で止まっていた。
+//   → 資料が届いた後（送信の90秒後）と10分おきに、裏の画面（chrome.offscreen）でウェブアプリの /pickup-prerender を開き、
+//     画像の無い行（7日以内・未送信）を描いて property_pickups.trim_image_url に置かせる。スマホはその画像をそのまま使う。
+//   先に数だけ聞き（認証なし・数だけ）、0件なら裏の画面は開かない。書体の確認は画面（renderOriginalPageInBrowser）がする。
+//   リアプロ・itandi のサイトには触れない（Vercel Blob の写しの PDF を読むだけ）。お客様・LINE には何も送らない
+var PRERENDER_ALARM = "axlx-prerender";
+var PRERENDER_SWEEP_ALARM = "axlx-prerender-sweep";
+var PRERENDER_CLOSE_ALARM = "axlx-prerender-close";
+var PRERENDER_AFTER_MERGE_MS = 90 * 1000;
+var PRERENDER_PAGE_URL = "https://sumora-ai-ui.vercel.app/pickup-prerender";
+var PRERENDER_COUNT_URL = "https://sumora-ai-ui.vercel.app/api/property-pickups/prerender?count=1";
+function _schedulePrerender(delayMs) {
+  try { chrome.alarms.create(PRERENDER_ALARM, { when: Date.now() + Math.max(delayMs || 0, 1000) }); }
+  catch (e) { console.warn("[AX] 送る画像の予約ができない（10分おきの見回りで作る）:", e && e.message); }
+}
+chrome.alarms.get(PRERENDER_SWEEP_ALARM, function (existing) {
+  if (!existing) chrome.alarms.create(PRERENDER_SWEEP_ALARM, { delayInMinutes: 1, periodInMinutes: 10 });
+});
+async function _closePrerenderDoc() {
+  try { if (chrome.offscreen && chrome.offscreen.closeDocument) await chrome.offscreen.closeDocument(); } catch (_) { /* 開いていない */ }
+  try { chrome.alarms.clear(PRERENDER_CLOSE_ALARM); } catch (_) {}
+}
+async function _runPrerender(trigger) {
+  if (!chrome.offscreen || !chrome.offscreen.createDocument) return { skipped: "no_offscreen" };
+  var count = 0;
+  try {
+    var r = await fetch(PRERENDER_COUNT_URL, { cache: "no-store", signal: AbortSignal.timeout(10000) });
+    var j = await r.json();
+    count = j && j.ok ? Number(j.count) || 0 : 0;
+  } catch (e) { return { skipped: "count_failed", error: e && e.message }; }
+  if (count === 0) return { skipped: "none" };
+  try {
+    await chrome.offscreen.createDocument({
+      url: "prerender-offscreen.html?src=" + encodeURIComponent(PRERENDER_PAGE_URL + "?via=ext&t=" + Date.now()),
+      reasons: ["IFRAME_SCRIPTING"],
+      justification: "物件資料（PDF）を MS ゴシックで描いて、お客様に送る画像を先に作る"
+    });
+  } catch (e) {
+    // 1つしか開けない＝前の回がまだ動いている
+    return { skipped: "busy", error: e && e.message };
+  }
+  // 終わりの知らせ（axlx-prerender-done）が来なくても4分で閉じる
+  chrome.alarms.create(PRERENDER_CLOSE_ALARM, { when: Date.now() + 4 * 60 * 1000 });
+  console.log("[AX] 送る画像を作り始めた:", trigger, count + "件");
+  return { started: true, count: count };
+}
+chrome.alarms.onAlarm.addListener(function (alarm) {
+  if (!alarm) return;
+  if (alarm.name === PRERENDER_ALARM || alarm.name === PRERENDER_SWEEP_ALARM) {
+    _runPrerender(alarm.name === PRERENDER_ALARM ? "after_merge" : "sweep").catch(function (e) { console.warn("[AX] 送る画像を作れない:", e && e.message); });
+  } else if (alarm.name === PRERENDER_CLOSE_ALARM) {
+    _closePrerenderDoc();
+  }
+});
+chrome.runtime.onMessage.addListener(function (msg, sender) {
+  if (!msg || msg.type !== "axlx-prerender-done") return;
+  // 裏の画面（この拡張の中）からだけ受ける
+  if (!sender || sender.id !== chrome.runtime.id) return;
+  var res = msg.result || {};
+  console.log("[AX] 送る画像を作った:", JSON.stringify(res));
+  try { chrome.storage.local.set({ lastPrerender: { at: new Date().toISOString(), result: res } }); } catch (_) {}
+  _closePrerenderDoc();
+});
 
 // ── 売上サポ: 10分の自動まとめ（2026-09-25・v2.5.23）──────────────────────────────
 // 竹内「毎回完了おすよりも最後にスタッフモードで指定したお客さん（例 yuma さん物件完了後）10分たてば自動的に送られた物件まとめて、
