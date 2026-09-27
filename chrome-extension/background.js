@@ -2875,6 +2875,7 @@ async function _runBatchSearch(command) {
       var _isMultiPass = areaModePasses.length > 1;
       var _totalPassCount = 0;
       var _passFailed = 0; // 2026-09-25: 失敗・5分の待ち切れのパスの数（全部だめなら「0件」ではなく「検索できなかった」と送る）
+      var _passCountUnknown = 0; // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）のパスの数
       for (var k = 0; k < areaModePasses.length; k++) {
         if (k > 0) {
           // 地域→駅の切り替えインターバル（5〜10秒）
@@ -2931,6 +2932,8 @@ async function _runBatchSearch(command) {
           }
           _totalPassCount += (_passCount || 0);
           if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeLastOutcome.timedOut) _passFailed++;
+          // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）は「0件」の集計に入れない
+          if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeLastOutcome.countUnknown) _passCountUnknown++;
           // レインズは fill-done で閉じる（_auditOnFillDone）。ここで閉じるのはリアプロ・itandi
           if (_batchAudit && batchSite !== "reins") _auditFinish(_batchAudit.runId, {});
         } catch (e) {
@@ -2947,7 +2950,7 @@ async function _runBatchSearch(command) {
         }
       }
       // B3修正: area_mode='both' で全パス合計0件の場合のみ1回だけ通知（重複送信防止）
-      if (_isMultiPass && _totalPassCount === 0 && customer.customer_name) {
+      if (_isMultiPass && _totalPassCount === 0 && _passCountUnknown === 0 && customer.customer_name) {
         var _bothSiteLabel = batchSite === "itandi" ? "itandi" : "リアプロ";
         // 2026-09-25: 全パスが失敗・待ち切れなら「0件」ではなく「検索できなかった」（0件とは限らない）
         var _bothText = _passFailed >= areaModePasses.length
@@ -3647,10 +3650,13 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     _propCount = 0;
   } else {
     console.log("[scrapeAndCompare] 全ページ送信完了 customer=" + customerId);
+    // 2026-09-27 v2.5.30: 件数の無い完了（bulk-dl の送信エラー・次ページへ進めない＝「送信済みがあるので0件と言わない」の合図）を
+    //   0件と数えていた → YUMA の実検索で34件送れていたのに「🔍【物件0件】」がグループに出た。件数が分からない時は0件と言わない
+    _scrapeLastOutcome.countUnknown = !(batchDone && batchDone.propertyCount != null);
     _propCount = (batchDone && batchDone.propertyCount) ? batchDone.propertyCount : 0;
   }
   // 0件時 → LINEグループへアナウンス（timedOut 分岐で既に通知済みの場合は重複しない）
-  if (_propCount === 0 && !(batchDone && batchDone.timedOut) && !suppressZeroNotify && customerName) {
+  if (_propCount === 0 && !_scrapeLastOutcome.countUnknown && !(batchDone && batchDone.timedOut) && !suppressZeroNotify && customerName) {
     fetch(SUMORA_BATCH_API + "/api/notify-group", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

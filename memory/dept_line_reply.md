@@ -7387,3 +7387,11 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - `aix-scene-stats` の「先に募集状況の確認」は持ち込みの場面だけと書き直した（旧の設計知見「費用や見積もりを聞かれても実務は先に募集状況の確認」は持ち込みの数字が混ざっていた）
 - 確かめ: 本番の YUMA の今の会話で保存しない関数（scripts/yuma-brain-decision.ts）→ 直す前・後とも estimate_sheet（2通目まで見れば LLM も選ぶ）。customer-state は stage=interested・focus=エステムコート大阪WEST（sentByUs）・決まりの判定 hit
 - 設計知見2件（ブレイン診断／穴:G3／見積書、ブレイン診断／穴:G2／鮮度）
+
+## 2026-09-27 AIXツール → AIX【物件ピックアップ】／【物件オススメ】の連動を YUMA で実送信して確かめた（竹内「資料の文字も抜けないようにそのまま」）
+- **① 複数 → 物件ピックアップ**: 既定のチェック（点の高い10件）のままだと `/api/property-pickups/trim` が **HTTP 413**（画像10枚≒6MB が Vercel の本文の上限を超える）でトークに移れなかった → `chunkTrimImages`（pickup-aix-handoff.ts・約3MB ずつ）で分けて送るように直した（**デプロイ後に10件で再確認が要る**）。5件に減らすと aix=property_send・pickup=5件・画像5枚・送信・送った印5件・sent_properties（channel=pickup）5行・sent_image_properties 5行まで通った
+  - 本文: 「YUMAさん／大阪市浪速区・天王寺区から家賃8万円以内・1K・駅徒歩10分以内・バストイレ別オートロックでYUMAさんにオススメできるお部屋ピックアップさせて頂きました！！／お手隙の際にご査収ください😌！！」＝物件の数字は画像のまま。条件の語は登録の条件から（間取りは「1K、1DK、1LDK」→ 送る物件に合わせて 1K、「バストイレ別・オートロック」の「・」が落ちた＝LLM の言い回し・未対応）
+- **② 1件 → 物件オススメ**: aix=property_recommendation・pickup=1件・資料1枚。本文の項目は資料の全文（pdf_text）と画像で全部裏が取れた（物件名・桜川 徒歩6分・礼金なし・63,000円・管理費10,000円・1K・洋室約7.4帖〈間取り図〉・角部屋・バストイレ別・オートロック・宅配ボックス・ネット使用料不要）。号室は資料の「0206」→「206」
+  - 送付記録: 画像の読み取り（extract-property-info）が**生成の時点**（02:12:17・送信は 02:12:50）で sent_properties に channel=recommendation・room「0206」・rent 63000 の行を書く。送信時の読み取りは既読を使い duplicate_skipped。＝生成して送らなかった時も「送った」行が残る形（既存の設計・未対応）
+- **抜けを直した**: お客様に送った行（channel=pickup）の家賃・AD の月数が全部 null → `pickupRentAd`（pickup-sent-plan.ts・merge-pdfs と同じ読み方）で説明文から入れる。send の API は説明文を読まない決まり（property-pickups.test の静的検査）なので、DB に書くだけの pickup-sent-record で引く
+- 片付け: YUMA に送った物（ピックアップ 5件＋オススメ 1件）・AIX要対応は作られていない（line_tasks なし）

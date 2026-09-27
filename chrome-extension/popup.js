@@ -3408,6 +3408,28 @@ let _adjDraftCustomerId  = null;  // このセッションで履歴保存済み�
 let _adjSaveTimer        = null;  // oninput → localStorage 保存のデバウンスタイマー
 let _adjRestoreSuppressed = false; // 自動バッチ（pendingPopupCmd）中は履歴の自動復元をしない
 
+// ── 2026-09-27 自動の検索（一括・ブレイン・AIX・17時便）は、押す前に登録の条件の読み直しを待つ（v2.5.30）──
+// YUMA の実検索（点検 22）で、アプリで条件を変えた直後のブレインの検索が「古い条件」で入力された
+//   （登録＝浪速区・天王寺区・〜8万・1K/1DK/1LDK・築20年 → 入れた値＝西区・大正区・天王寺区・浪速区・7.5万・1K/1DK・築30年）。
+//   原因: 画面を開いた時に読んだお客様の一覧（allCustomers）で欄を作り、読み直し（fetchFreshCustomer）は非同期のまま
+//   0.8〜1.2秒後に自動で押していた（読み直しが間に合わないと古い値で検索。区だけはサーバーの search-params が新しい区を足して混ざる）。
+//   → openInstructions の読み直しを約束（_freshPreloadPromise）で持ち、自動で押す経路は押す前に待つ（最長6秒・読めなければ今まで通り）。
+//   読み直しの後の欄の作り直しでも、開いた時の「一時調整を復元しない」（メモの上書きの回）をそのまま守る（旧は戻した後に復元していた）。
+let _freshPreloadPromise = null;
+function _withRestoreSuppressed(sup, fn) {
+  const prev = _adjRestoreSuppressed;
+  if (sup) _adjRestoreSuppressed = true;
+  try { fn(); } finally { _adjRestoreSuppressed = prev; }
+}
+async function _awaitFreshPreload(maxMs) {
+  const p = _freshPreloadPromise;
+  if (!p) return false;
+  return Promise.race([
+    p.then(() => true, () => false),
+    new Promise((res) => setTimeout(() => res(false), maxMs)),
+  ]);
+}
+
 // 一時調整の上書きモードを判定: "ward" | "station" | null（null=顧客デフォルトで検索）
 function computeTempAdjOverride() {
   const w = document.getElementById("adj-area-ward")?.value.trim()    || "";
@@ -3787,6 +3809,7 @@ function openInstructions(siteKey) {
   // webappからは "realnetpro" で来るが SITE_CONFIG のキーは "realpro"
   if (siteKey === "realnetpro") siteKey = "realpro";
   selectedSite = siteKey;
+  _freshPreloadPromise = null; // 前に開いた時の読み直しを待たない（下の3サイトの所で置き直す）
   const cfg = SITE_CONFIG[siteKey];
 
   document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
@@ -3816,13 +3839,16 @@ function openInstructions(siteKey) {
     preloadAdjForm(selectedCustomer);
     wireAdjSaveBtn(selectedCustomer);
     setupAreaModeSelector(selectedCustomer, "itandi");
-    fetchFreshCustomer(selectedCustomer?.id).then(fresh => {
+    const _supAtOpen_it = _adjRestoreSuppressed;
+    _freshPreloadPromise = fetchFreshCustomer(selectedCustomer?.id).then(fresh => {
       if (!fresh) return;
       syncFreshToCache(fresh);
       if (_searchOverrideHeld(fresh.id)) return; // AIXツールの指示の回（欄と軸を戻さない）
-      preloadAdjForm(selectedCustomer);
-      wireAdjSaveBtn(selectedCustomer);
-      setupAreaModeSelector(selectedCustomer, "itandi");
+      _withRestoreSuppressed(_supAtOpen_it, () => {
+        preloadAdjForm(selectedCustomer);
+        wireAdjSaveBtn(selectedCustomer);
+        setupAreaModeSelector(selectedCustomer, "itandi");
+      });
     });
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "🔍 itandiで自動検索";
@@ -4270,13 +4296,16 @@ function openInstructions(siteKey) {
 
     // ── 駅/地域 切替ボタン（混在条件の検出） ──────────────────────────
     setupAreaModeSelector(c0, "realpro");
-    fetchFreshCustomer(c0?.id).then(fresh => {
+    const _supAtOpen_rp = _adjRestoreSuppressed;
+    _freshPreloadPromise = fetchFreshCustomer(c0?.id).then(fresh => {
       if (!fresh) return;
       syncFreshToCache(fresh);
       if (_searchOverrideHeld(fresh.id)) return; // AIXツールの指示の回（欄と軸を戻さない）
-      preloadAdjForm(c0);
-      wireAdjSaveBtn(c0);
-      setupAreaModeSelector(c0, "realpro");
+      _withRestoreSuppressed(_supAtOpen_rp, () => {
+        preloadAdjForm(c0);
+        wireAdjSaveBtn(c0);
+        setupAreaModeSelector(c0, "realpro");
+      });
     });
 
     autofillBtn.onclick = async () => {
@@ -4763,13 +4792,16 @@ function openInstructions(siteKey) {
     preloadAdjForm(c0);
     wireAdjSaveBtn(c0);
     setupAreaModeSelector(c0, "reins");
-    fetchFreshCustomer(c0?.id).then(fresh => {
+    const _supAtOpen_rn = _adjRestoreSuppressed;
+    _freshPreloadPromise = fetchFreshCustomer(c0?.id).then(fresh => {
       if (!fresh) return;
       syncFreshToCache(fresh);
       if (_searchOverrideHeld(fresh.id)) return; // AIXツールの指示の回（欄と軸を戻さない）
-      preloadAdjForm(c0);
-      wireAdjSaveBtn(c0);
-      setupAreaModeSelector(c0, "reins");
+      _withRestoreSuppressed(_supAtOpen_rn, () => {
+        preloadAdjForm(c0);
+        wireAdjSaveBtn(c0);
+        setupAreaModeSelector(c0, "reins");
+      });
     });
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ REINSに自動入力";
@@ -5408,6 +5440,8 @@ document.addEventListener("DOMContentLoaded", () => {
             var _ovP = (e.data.searchOverride && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(e.data.searchOverride) : null;
             if (_ovP) _adjRestoreSuppressed = true;
             try { openInstructions(e.data.site); } finally { _adjRestoreSuppressed = false; }
+            // 2026-09-27 v2.5.30: 登録の条件の読み直しが欄に入ってから押す（間に合わないと古い条件で検索していた）
+            if (!(await _awaitFreshPreload(6000))) console.warn("[popup] 登録の条件を読み直せないまま自動入力します（手元の値）");
             if (e.data.areaMode === 'station' || e.data.areaMode === 'ward') {
               var mBtn = document.getElementById(
                 e.data.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward'
@@ -5717,6 +5751,8 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           var _ovR = (msg.searchOverride && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(msg.searchOverride) : null;
           if (_ovR) _adjRestoreSuppressed = true;
           try { openInstructions(msg.site); } finally { _adjRestoreSuppressed = false; }
+          // 2026-09-27 v2.5.30: 登録の条件の読み直しが欄に入ってから押す（間に合わないと古い条件で検索していた）
+          if (!(await _awaitFreshPreload(6000))) console.warn("[popup] 登録の条件を読み直せないまま自動入力します（手元の値）");
           // areaMode が指定されていればモードをセット
           // ※ modeBtn.click() は _areaModeSource="user" にしてしまいAPIによる自動補正を封じるため
           //   一括検索（DB設定）では "auto" に留め、臨機応変フォールバックが働くようにする

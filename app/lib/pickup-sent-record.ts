@@ -11,7 +11,7 @@ import { planPickupSentWrites, type ExistingSentRow, type PickupForRecord } from
 
 export type PickupSentRecordResult = { inserted: number; updated: number; images: number; skipped: string[]; error?: string };
 
-const EXISTING_COLS = "id, property_name, room_no, image_url, source, delivery, channel, pickup_id, sent_at, ad_yen";
+const EXISTING_COLS = "id, property_name, room_no, image_url, source, delivery, channel, pickup_id, sent_at, ad_yen, rent, ad_months";
 
 export async function recordPickupSent(opts: {
   pickups: Array<PickupForRecord & { conversation_id: string | null; property_customer_id: string | null }>;
@@ -31,6 +31,15 @@ export async function recordPickupSent(opts: {
       pcid = (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
     }
     const ids = opts.pickups.map((p) => p.id);
+    // 2026-09-27: 家賃・AD の月数を送った行に残すため、説明文をここ（DB に書くだけの所）で引く。
+    //   send の API は説明文を読まない決まり（LINE に説明文を出さない・property-pickups.test の静的検査）なので、API には持ち込まない。
+    //   説明文は planPickupSentWrites が数字（家賃・AD の月数）を読むだけで、どこにも送らない。
+    const summaryById = new Map<number, string | null>();
+    if (opts.pickups.some((p) => p.summary_text === undefined)) {
+      const { data: sums } = await supabase.from("property_pickups").select("id, summary_text").in("id", ids);
+      for (const r of (sums ?? []) as Array<{ id: number; summary_text: string | null }>) summaryById.set(r.id, r.summary_text);
+    }
+    const pickupsWithSummary = opts.pickups.map((p) => (p.summary_text === undefined ? { ...p, summary_text: summaryById.get(p.id) ?? null } : p));
     const [byConv, byPickup] = await Promise.all([
       supabase.from("sent_properties").select(EXISTING_COLS).eq("conversation_id", conversationId).order("sent_at", { ascending: false }).limit(200),
       supabase.from("sent_properties").select(EXISTING_COLS).in("pickup_id", ids),
@@ -41,7 +50,7 @@ export async function recordPickupSent(opts: {
     for (const r of [...(byConv.data ?? []), ...(byPickup.data ?? [])] as ExistingSentRow[]) existingMap.set(r.id, r);
 
     const plan = planPickupSentWrites({
-      pickups: opts.pickups,
+      pickups: pickupsWithSummary,
       deliveredImageUrls: opts.deliveredImageUrls,
       existing: [...existingMap.values()],
       conversationId,

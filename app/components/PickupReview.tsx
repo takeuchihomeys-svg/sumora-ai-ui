@@ -17,7 +17,7 @@ import { summarizeWebBrainProgress, webBrainBlockReason, type WebBrainSite, type
 // 2026-09-25 検索の点検: 回の見出しに「この回の検索: 駅 3/4・東三国が入っていない」（純関数だけ・サーバーの物は import しない）
 import { pickAuditForRound } from "@/app/lib/search-audit-check";
 // 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ（一番オススメだから）」
-import { buildPickupAixHref, pickupAixButtonLabel, PICKUP_AIX_MAX } from "@/app/lib/pickup-aix-handoff";
+import { buildPickupAixHref, pickupAixButtonLabel, PICKUP_AIX_MAX, chunkTrimImages, TRIM_POST_BUDGET_CHARS } from "@/app/lib/pickup-aix-handoff";
 // 2026-09-27 竹内「メモ欄に条件を送ったら、それに連動して検索」: メモの検索の指示 → 一時調整の要約 → 確かめて［実行］（軽い物だけ import）
 import { looksLikeSearchInstruction, overrideLine, overrideJudgeLine, overrideRulerKey, type SearchOverride, type RegisteredConditions, type OverrideSite } from "@/app/lib/search-override";
 // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。ピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるように」（純関数だけ）
@@ -758,11 +758,25 @@ export default function PickupReview({ focusKey = null, onChange, mode = "pickup
         method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
         body: JSON.stringify(payload),
       });
+      type TrimJson = { ok: boolean; trimmed?: number; items?: Array<{ id: number; error?: string }>; error?: string };
+      const readJson = async (res: Response): Promise<TrimJson> => {
+        // 2026-09-27: 送る量が大きすぎると Vercel が JSON でない 413 を返す（res.json() が読めず理由が分からなかった）
+        if (res.status === 413) return { ok: false, error: "画像が大きすぎて送れませんでした（HTTP 413）" };
+        return await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` })) as TrimJson;
+      };
       if (images.length > 0 && fallbackIds.length > 0) await post({ item_ids: fallbackIds, force: true });
-      const res = images.length > 0
-        ? await post({ images })
-        : await post({ item_ids: fallbackIds, force: true });   // 押すたびに作り直す
-      const json = await res.json() as { ok: boolean; trimmed?: number; items?: Array<{ id: number; error?: string }>; error?: string };
+      let json: TrimJson;
+      if (images.length > 0) {
+        // 2026-09-27 YUMA の E2E: 10件の画像を1回で送ると本文が Vercel の上限（約4.5MB）を超えて 413 → AIX物件ピックアップに移れなかった
+        //   （3件では通っていた）。送る量が約3MB を超えないように分けて送る（1枚が大きくても1枚ずつは必ず送る）。
+        const chunks = chunkTrimImages(images, TRIM_POST_BUDGET_CHARS);
+        const parts: TrimJson[] = [];
+        for (const chunk of chunks) parts.push(await readJson(await post({ images: chunk })));
+        const trimmed = parts.reduce((a, p) => a + (p.trimmed ?? 0), 0);
+        json = { ok: parts.some((p) => p.ok), trimmed, items: parts.flatMap((p) => p.items ?? []), error: parts.find((p) => !p.ok)?.error };
+      } else {
+        json = await readJson(await post({ item_ids: fallbackIds, force: true }));   // 押すたびに作り直す
+      }
       if (!json.ok) throw new Error(json.error || json.items?.find((x) => x.error)?.error || "失敗");
       setMsg(`✂️ ${json.trimmed}件の物件資料を画像にしました。下の画像は「💾 保存」で手元に落とせます。「AIX物件ピックアップ（1件なら物件オススメ）」で送れます`);
       await load();

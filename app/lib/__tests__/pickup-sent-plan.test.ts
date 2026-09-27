@@ -129,5 +129,36 @@ console.log("── 経路の取り違えを起こさない（2026-09-24 反証�
   t("別の pickup_id が付いた行には合流しない（insert）", r.inserts.length === 1 && r.updates.length === 0, r);
 }
 
+console.log("── 2026-09-27 家賃・AD の月数を説明文から入れる（YUMA E2E: お客様に送った行が全部 null だった）──");
+{
+  // 実物の説明文（property_pickups 698・694）
+  const s698 = "【1🌟】エステムコート難波センチュリオ\n63,000円 9,760円\n1K 18.97㎡\n南海本線「難波」徒歩2分\nAD 2ヶ月";
+  const s694 = "【7🌟】グランエクラ今宮戎 502号室\n62,000円 7,000円\n1K 22.6㎡\n高野線「今宮戎」徒歩3分\nAD 2ヶ月";
+  const r = planPickupSentWrites({
+    ...base,
+    pickups: [{ ...P(698, 1, "エステムコート難波センチュリオ", null, "a.jpg"), summary_text: s698 }, { ...P(694, 7, "グランエクラ今宮戎", "502", "b.jpg"), summary_text: s694 }],
+    deliveredImageUrls: ["sa.jpg", "sb.jpg"],
+    existing: [],
+  });
+  t("家賃は説明文の賃料（管理費を足さない）", r.inserts[0]?.rent === 63000 && r.inserts[1]?.rent === 62000, r.inserts.map((x) => x.rent));
+  t("AD の月数も入る", r.inserts[0]?.ad_months === 2 && r.inserts[1]?.ad_months === 2, r.inserts.map((x) => x.ad_months));
+  const noSum = planPickupSentWrites({ ...base, pickups: [P(1, 1, "物件A", "101", "a.jpg")], deliveredImageUrls: ["s.jpg"], existing: [] });
+  t("説明文が無ければ null のまま（作らない）", noSum.inserts[0]?.rent === null && noSum.inserts[0]?.ad_months === null, noSum.inserts[0]);
+  const merged = planPickupSentWrites({
+    ...base,
+    pickups: [{ ...P(698, 1, "エステムコート難波センチュリオ", null, "a.jpg"), summary_text: s698 }],
+    deliveredImageUrls: ["sa.jpg"],
+    existing: [E({ id: "v1", property_name: "エステムコート難波センチュリオ", image_url: "sa.jpg", source: "vision", delivery: "customer" })],
+  });
+  t("画像の読み取りが先に書いた行に合流する時も、空いていれば家賃・AD を足す", merged.updates[0]?.patch.rent === 63000 && merged.updates[0]?.patch.ad_months === 2, merged.updates);
+  const kept = planPickupSentWrites({
+    ...base,
+    pickups: [{ ...P(698, 1, "エステムコート難波センチュリオ", null, "a.jpg"), summary_text: s698 }],
+    deliveredImageUrls: ["sa.jpg"],
+    existing: [E({ id: "v2", property_name: "エステムコート難波センチュリオ", image_url: "sa.jpg", source: "vision", delivery: "customer", rent: 61000 })],
+  });
+  t("既に入っている家賃は上書きしない", !("rent" in (kept.updates[0]?.patch ?? {})), kept.updates);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -17,6 +17,21 @@
 //     URL は pickup_id → property_pickups.pdf_url でたどれる。
 import { isSameProperty, normalizeRoomNo } from "./sent-property-record";
 import { isCustomerRow, rowChannel } from "./sent-delivery";
+import { parseRentFromSummary } from "./property-summary-parse";
+import { parsePropertyFacts } from "./property-brain";
+
+/**
+ * 2026-09-27 YUMA の E2E（AIXツール → AIX物件ピックアップ 5件）: お客様に送った行（channel=pickup）の家賃・AD の月数が全部 null だった
+ *   （グループに共有した行 line_group には merge-pdfs が説明文から入れている）。ブレイン・文の生成が「送った物件の家賃」を読めないので、
+ *   同じ説明文（property_pickups.summary_text）から同じ読み方（merge-pdfs と同じ parseRentFromSummary・parsePropertyFacts）で入れる。
+ *   読めない時は null のまま（作らない）。
+ */
+export function pickupRentAd(summary: string | null | undefined): { rent: number | null; ad_months: number | null } {
+  if (!summary) return { rent: null, ad_months: null };
+  const rent = parseRentFromSummary(summary);
+  const facts = parsePropertyFacts(summary);
+  return { rent: rent ?? null, ad_months: facts.adMonths ?? null };
+}
 
 export type PickupForRecord = {
   id: number;
@@ -24,6 +39,8 @@ export type PickupForRecord = {
   property_name: string;
   room_no: string | null;
   ad_yen: number | null;
+  /** 説明文（家賃・AD の月数を読む。無ければ null のまま） */
+  summary_text?: string | null;
   trim_image_url: string | null;
   page_image_url: string | null;
 };
@@ -39,6 +56,8 @@ export type ExistingSentRow = {
   pickup_id?: number | null;
   sent_at: string | null;
   ad_yen?: number | null;
+  rent?: number | null;
+  ad_months?: number | null;
 };
 
 export type PickupSentInsert = {
@@ -52,6 +71,8 @@ export type PickupSentInsert = {
   channel: "pickup";
   pickup_id: number;
   ad_yen: number | null;
+  rent: number | null;
+  ad_months: number | null;
   sent_at: string;
   property_url: null;
 };
@@ -114,6 +135,9 @@ export function planPickupSentWrites(input: {
       if (hitChannel === null) patch.channel = "pickup";
       if (!hit.image_url && img) patch.image_url = img;
       if (hit.ad_yen == null && p.ad_yen != null) patch.ad_yen = p.ad_yen;
+      const ra = pickupRentAd(p.summary_text);
+      if (hit.rent == null && ra.rent != null) patch.rent = ra.rent;
+      if (hit.ad_months == null && ra.ad_months != null) patch.ad_months = ra.ad_months;
       if (hit.source === "vision" && (hitChannel === null || hitChannel === "pickup")) patch.source = "aix:property_send";
       updates.push({ id: hit.id, pickupId: p.id, patch });
     } else {
@@ -128,6 +152,7 @@ export function planPickupSentWrites(input: {
         channel: "pickup",
         pickup_id: p.id,
         ad_yen: p.ad_yen ?? null,
+        ...pickupRentAd(p.summary_text),
         sent_at: input.now,
         property_url: null,
       });

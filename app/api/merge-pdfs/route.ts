@@ -190,6 +190,19 @@ async function pushLineMessage(groupId: string, text: string) {
   }
 }
 
+/**
+ * 2026-09-27: 資料1件の取得。時間切れ（AbortSignal.timeout）だけ1回やり直し、それでも時間切れなら null（呼ぶ側がその物件を外す）。
+ * セッション切れ（HTML）・HTTP エラーはそのまま投げる（再ログインの案内が要るので止める）。
+ */
+async function fetchPdfRetryOnTimeout(url: string, cookieStr: string): Promise<string | null> {
+  const isTimeout = (e: unknown) => e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError" || /aborted due to timeout/i.test(e.message));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { return await fetchPdfAsBase64(url, cookieStr); }
+    catch (e) { if (!isTimeout(e)) throw e; }
+  }
+  return null;
+}
+
 async function fetchPdfAsBase64(url: string, cookieStr: string): Promise<string> {
   const headers: Record<string, string> = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -258,6 +271,8 @@ export async function POST(req: NextRequest) {
     let pdfsLoaded = false;
     /** 送付済みを外した後に残した元の並びの番号（PDF を後で取る時に同じ組で落とす） */
     let keptIndexes: number[] | null = null;
+    /** 2026-09-27 時間切れで外した物件の1行（LINE の本文の最後に出す） */
+    let timeoutNotice = "";
     const loadPdfs = async (): Promise<NextResponse | null> => {
       pdfsLoaded = true;
       if (pdf_urls && pdf_urls.length > 0) {
@@ -270,9 +285,26 @@ export async function POST(req: NextRequest) {
           );
         }
         // cookie_str なしでも公開URL（Vercel Blob等）は取得可能
-        pdfBase64List = await Promise.all(
-          pdf_urls.map((url) => fetchPdfAsBase64(url, cookie_str ?? ""))
-        );
+        // 2026-09-27 YUMA の実検索: リアプロの資料1件の取得が15秒の期限を超え、束（2件）ごと HTTP 500
+        //   「The operation was aborted due to timeout」→ 拡張は「セッション切れ」の案内を出し、その束の物件が欠けた。
+        //   → 時間切れの1件だけ1回やり直し、それでも取れない物件はこの束から外して残りを送る（外した物件は LINE の本文の最後に出す）。
+        //   セッション切れ（HTML が返る）・HTTP エラーは今まで通り止める（再ログインの案内が要る）。全件が時間切れの時も止める。
+        const settled = await Promise.all(pdf_urls.map((url) => fetchPdfRetryOnTimeout(url, cookie_str ?? "")));
+        const failed = settled.map((b, i) => (b === null ? i : -1)).filter((i) => i >= 0);
+        if (failed.length === settled.length) throw new Error("The operation was aborted due to timeout（資料の取得が全件時間切れ・やり直しも失敗）");
+        if (failed.length > 0) {
+          const failedSet = new Set(failed);
+          const names = failed.map((i) => parseSummaryHead(property_summaries?.[i] ?? "")?.propertyName || `資料${i + 1}`);
+          console.warn(JSON.stringify({ tag: "merge-pdfs:pdf-timeout-dropped", total: settled.length, dropped: failed.length, names }));
+          timeoutNotice = `⚠ 資料を取れなかった物件（時間切れ・${failed.length}件）: ${names.join("・")}`;
+          pdf_urls = pdf_urls.filter((_, i) => !failedSet.has(i));
+          if (property_summaries && property_summaries.length > 0) {
+            // 説明文と資料の並びが合わない時は外せない（組がずれる）＝今まで通り止める
+            if (property_summaries.length !== settled.length) throw new Error("The operation was aborted due to timeout（資料の取得が時間切れ）");
+            property_summaries = renumberSummaries(property_summaries.filter((_, i) => !failedSet.has(i)));
+          }
+        }
+        pdfBase64List = settled.filter((b): b is string => b !== null);
       } else if (pdf_data && pdf_data.length > 0) {
         pdfBase64List = pdf_data;
       } else {
@@ -447,9 +479,7 @@ export async function POST(req: NextRequest) {
           ? await rankAndAnnotateSummariesDetailed(summariesWithAd, rankConditions, rankMaterials)
           : null;
         const rankedSummaries = rankOutcome ? rankOutcome.summaries : summariesWithAd;
-        const lineNotice = rankOutcome?.status === "failed"
-          ? [excludedNotice, RANK_FAILED_NOTICE].filter(Boolean).join("\n")
-          : excludedNotice;
+        const lineNotice = [excludedNotice, timeoutNotice, rankOutcome?.status === "failed" ? RANK_FAILED_NOTICE : ""].filter(Boolean).join("\n");
         const lineText = buildLineMessage(
           blob.url,
           name,

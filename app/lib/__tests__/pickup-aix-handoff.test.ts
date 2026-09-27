@@ -1,7 +1,7 @@
 // 2026-09-25 竹内「複数選択なら AIX 物件ピックアップ・1件なら AIX 物件オススメ」— 売上サポ → トークの AIX の受け渡し
 // 実行: npx tsx app/lib/__tests__/pickup-aix-handoff.test.ts
 import { pickTopForAix, defaultAixChecks } from "../pickup-review-order";
-import { aixTypeForPickupCount, pickupAixButtonLabel, buildPickupAixHref, parsePickupAixHandoff, planPickupMarkSent, PICKUP_AIX_MAX } from "../pickup-aix-handoff";
+import { aixTypeForPickupCount, pickupAixButtonLabel, buildPickupAixHref, parsePickupAixHandoff, planPickupMarkSent, PICKUP_AIX_MAX, chunkTrimImages, TRIM_POST_BUDGET_CHARS } from "../pickup-aix-handoff";
 
 const WJ = String.fromCharCode(0x2060);
 const plain = (s: string) => s.split(WJ).join("");
@@ -82,6 +82,20 @@ t("ボタン: 10件はそのまま物件ピックアップ", plain(pickupAixButt
   t("外す候補・送った物・72時間切れは選ばない（点なしは後）", pickTopForAix(mixed).join(",") === "4,5", pickTopForAix(mixed));
   const checks = defaultAixChecks([{ items }, { items: [mk(31, 50), mk(32, 60, { verdict: "drop" })] }]);
   t("既定のチェック: 回ごとに10件まで・外す候補は外す", Object.values(checks).filter(Boolean).length === 11 && checks[20] && !checks[1] && checks[31] && !checks[32], checks);
+}
+
+console.log("■ 画面で切った画像を分けて送る（2026-09-27 E2E: 10件を1回で送ると HTTP 413）");
+{
+  const im = (id: number, kb: number) => ({ id, jpeg_base64: "A".repeat(kb * 1000) });
+  // 実物の大きさの目安: 10件で上限（約4.5MB）を超えた
+  const ten = Array.from({ length: 10 }, (_, i) => im(i + 1, 600));
+  const ch = chunkTrimImages(ten);
+  t("10件×600KB → どの束も約3MB 以下", ch.every((c) => c.reduce((a, x) => a + x.jpeg_base64.length, 0) <= TRIM_POST_BUDGET_CHARS), ch.map((c) => c.length));
+  t("並びと件数はそのまま（抜けない・重ならない）", ch.flat().map((x) => x.id).join(",") === "1,2,3,4,5,6,7,8,9,10");
+  t("小さい3件は1回で送る（前と同じ）", chunkTrimImages([im(1, 300), im(2, 300), im(3, 300)]).length === 1);
+  const big = chunkTrimImages([im(1, 100), im(2, 3500), im(3, 100)]);
+  t("1枚で上限を超える画像もその1枚だけで送る（捨てない）", big.length === 3 && big[1].length === 1 && big[1][0].id === 2, big.map((c) => c.map((x) => x.id)));
+  t("0件 → 束なし", chunkTrimImages([]).length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

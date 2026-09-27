@@ -104,7 +104,7 @@ function rest() {
 
   console.log("\n■ ② 読み込みの配線");
   const manifest = JSON.parse(read("manifest.json"));
-  eq("manifest の版 2.5.29", manifest.version, "2.5.29");
+  ok("manifest の版 2.5.29 以上", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005029);
   const cs = manifest.content_scripts;
   const first = cs[0];
   eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js の順", first.js, ["human-wait.js", "search-audit.js"]);
@@ -232,7 +232,7 @@ function rest() {
   ok("トグル: 並び替えはリンクへの遷移（クリックで切り替えない）", /location\.href = _sortHref/.test(doStart));
   ok("checked の判定・クリックの関数は変えていない（_clickIfUnchecked が残る）", /function _clickIfUnchecked\(el\) \{ if \(!el\.checked\) _clickEl\(el\); \}/.test(read("page-script.js")));
   ok("見張り（85秒・240秒・90秒）の長さは変えていない", /\}, 85000\);/.test(read("page-script.js")) && /\}, 240000\);/.test(it) && /90000/.test(read("reins-page-script.js")));
-  ok("拡張の再読み込み: 版を上げた（2.5.29）", manifest.version === "2.5.29");
+  ok("拡張の再読み込み: 版を上げた（2.5.29 以上）", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005029);
 
   console.log("\n■ 全ファイル node --check");
   const { execFileSync } = require("child_process");

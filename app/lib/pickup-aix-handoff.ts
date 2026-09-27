@@ -87,3 +87,24 @@ export function planPickupMarkSent<F>(p: {
   const intact = sent.length === p.handoffFiles.length && sent.every((f, i) => f === p.handoffFiles[i]);
   return { itemIds, imageUrls: p.aix === "property_send" && intact ? [...p.sentImageUrls] : [] };
 }
+
+/**
+ * 2026-09-27 YUMA の E2E（AIXツール → AIX物件ピックアップ 10件）: 画面で切った資料の画像（JPEG の base64）を
+ *   /api/property-pickups/trim に1回で全部送ると、本文が Vercel の関数の上限（約4.5MB）を超えて HTTP 413 になり、
+ *   トークの AIX に移れなかった（3件では通っていた）。→ 1回に送る量を約3MB（base64 の文字数）までに分ける。
+ *   1枚だけで上限を超える画像もその1枚だけで送る（捨てない・並びは変えない）。
+ */
+export const TRIM_POST_BUDGET_CHARS = 3_000_000;
+export function chunkTrimImages<T extends { jpeg_base64: string }>(images: readonly T[], budgetChars: number = TRIM_POST_BUDGET_CHARS): T[][] {
+  const out: T[][] = [];
+  let cur: T[] = [];
+  let size = 0;
+  for (const im of images) {
+    const n = im.jpeg_base64.length;
+    if (cur.length > 0 && size + n > budgetChars) { out.push(cur); cur = []; size = 0; }
+    cur.push(im);
+    size += n;
+  }
+  if (cur.length > 0) out.push(cur);
+  return out;
+}
