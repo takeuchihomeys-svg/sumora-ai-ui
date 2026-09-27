@@ -23,7 +23,7 @@
 //     （background.js の _runBatch: お客様 → サイトの二重ループ）同じお客様のリアプロ・itandi・レインズは数分おきに続けて届き、10分の静けさで1つに寄る。
 //     1回ずつ届いた回を寄せても順位と 👑 が「まとめた全件」になるだけで、送った物・判定は変えない（悪くならない）
 //   - 境目: ちょうど10分（now − 最後 ＝ 600000ms）でまとめる（>=）。未来の時刻（時計のずれ）はまとめない
-import { pickCustomerBest, compareOverall, type BestCandidateRow, type BestBasis } from "./pickup-best";
+import { pickCustomerBest, compareOverall, overallPoints, imageBonusPoints, type BestCandidateRow, type BestBasis } from "./pickup-best";
 import { overrideRulerKey } from "./search-override";
 
 /** 「完了」でまとめる行の古さの上限（時間）。前の完了より後の行は complete_group_id が空なので、実際は「前の完了以降・最大24時間」 */
@@ -98,6 +98,7 @@ const matchOf = (r: CompleteRankRow): number | null => num(r.image_analysis?.mat
  * まとめた全件の並び（外す候補は最後 → 画面・👑 と同じ1本の並び compareOverall）。
  * 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。まとめたうえで結果をだす」: 並びの決め方を画面・👑 と1つにした
  *   （旧は 判定の点 → 画像の点 → 合う数 → 判定。今は 判定の点 → 判定 → 画像の点 → 上限前の点 → 合う数 → 🌟 → 新しい回 → 順位 → id）
+ * 2026-09-27 竹内「ここは合わせる」（版 b）: 先頭は合計（判定の点＋画像の加点・pickup-image-bonus）
  */
 export function compareCompleteGroup(a: CompleteRankRow, z: CompleteRankRow): number {
   const dropA = a.verdict === "drop" ? 1 : 0, dropZ = z.verdict === "drop" ? 1 : 0;
@@ -114,6 +115,9 @@ export type CompleteRanking = {
   bestBasis: "image" | "score" | null;
   bestMatch: number | null;
   bestScore: number | null;
+  /** 2026-09-27 版 b: 👑 の合計（判定の点＋画像の加点）と画像の加点（分析待ち・要確認は null） */
+  bestTotal: number | null;
+  bestBonus: number | null;
   /** まとめた回の数・件数 */
   batches: number;
   items: number;
@@ -149,6 +153,8 @@ export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: {
     order, bestId, bestBasis,
     bestMatch: best ? matchOf(best) : null,
     bestScore: best ? num(best.score) : null,
+    bestTotal: best ? overallPoints(best) : null,
+    bestBonus: best ? imageBonusPoints(best) : null,
     batches: new Set(rows.map((r) => r.batch_id)).size,
     items: rows.length,
     imageScored: rows.filter((r) => matchOf(r) != null).length,

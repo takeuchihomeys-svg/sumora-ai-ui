@@ -1,4 +1,4 @@
-// app/lib/pickup-listing-text.ts（純関数・import なし・画面とサーバーで共用）
+// app/lib/pickup-listing-text.ts（純関数・import は純関数の pickup-image-bonus だけ・画面とサーバーで共用）
 // 売上サポのピックアップの物件カードに、物件資料（PDF の文字層 pdf_text）の文字をそのまま出すための読み取り。
 //
 // 2026-09-27 竹内（YUMA テストの AIXツールのスクショを見て）:
@@ -11,6 +11,9 @@
 //     AD は元付業者のページ（偶数ページ）の末尾にある → 文字層の中で最後に出る物を採る（弊社帯の奇数ページには書かれない）。
 //     「広告掲載 可」「webサービス広告掲載 [許可]」は AD ではない（「広告料」「広告費」だけ・値は数字か なし）。無ければ出さない
 //   - 説明文の「AD 2ヶ月」（拡張の一覧の列・資料から足した行）は資料の文字ではないので札には使わない（カードの AD のマスは今まで通り）
+
+import { imageBonusOf, signedPoints, totalPointsLabel, type ImageAnalysisForBonus } from "./pickup-image-bonus";
+import { assumedAdAgentOf, assumedAdStamp } from "./agent-ad-assume";
 
 /** AD の見出し（リアプロの元付は「A D」と空白が入る・全角も） */
 const AD_HEAD = String.raw`(?<![A-Za-zＡ-Ｚａ-ｚ])(?:A\s?D|Ａ\s?Ｄ)(?![A-Za-zＡ-Ｚａ-ｚ])|広告料|広告費`;
@@ -43,6 +46,18 @@ export function listingAdText(pdfText: string | null | undefined): string | null
   if (hits.length) return last.slice(hits[hits.length - 1].index).trim();
   const all = [...t.matchAll(AD_PHRASE_RE)].map((m) => m[0].trim()).filter(Boolean);
   return all.length ? all[all.length - 1] : null;
+}
+
+/**
+ * 物件名の横の AD の札（2026-09-27）: 資料の文字のまま（listingAdText）。資料に AD の値が無く、元付業者の決まりでみなした時
+ *   （竹内「株式会社アズ・スタットは AD 記載なくても基本的に 200% あるから 200% とみなす」）は「AD 200%（アズ・スタット）」
+ *   ＝資料の文字ではなく、みなした値だと分かる形。どちらも無ければ null
+ */
+export function listingAdStamp(pdfText: string | null | undefined): string | null {
+  const verbatim = listingAdText(pdfText);
+  if (verbatim) return verbatim;
+  const ag = assumedAdAgentOf(pdfText);
+  return ag ? assumedAdStamp(ag) : null;
 }
 
 /**
@@ -84,6 +99,7 @@ export function cardRoom(roomNo: string | null | undefined, roomText: string | n
 }
 
 // ── 画像で分析をカードにまとめる（2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。点数のと画像で分析がわかれていたらみにくい」）──
+// 2026-09-27 竹内「ここは合わせる」: 画像は判定の点に足す分（画像の加点・pickup-image-bonus）で見せる。0〜100 の割合は詳細の中だけ
 
 export type ImageAnalysisLike = {
   match?: unknown; match_raw?: unknown; ok_count?: unknown;
@@ -94,7 +110,7 @@ export type ImageAnalysisLike = {
 
 /** カードの「🔍 画像」の札の状態 */
 export type ImageChip =
-  | { kind: "scored"; match: number; ok: number; ng: number; text: string }
+  | { kind: "scored"; match: number; ok: number; ng: number; text: string; bonus: number | null; covered: number }
   | { kind: "needs_check"; text: string }
   | { kind: "unscored"; text: string }
   | { kind: "waiting"; text: string };
@@ -104,14 +120,17 @@ export type ImageChip =
  *   分析済み・点あり →「🔍 画像 86点（◎5・×1）」／物件と資料が合わない →「🔍 画像 要確認」／分析したが点なし →「🔍 画像 点なし」／
  *   まだ分析していない → showWaiting の時だけ「🔍 画像の分析待ち」（画像で確かめる希望が無いお客様では出さない＝null）
  */
-export function imageChipOf(a: ImageAnalysisLike, showWaiting: boolean): ImageChip | null {
+export function imageChipOf(a: ImageAnalysisLike, showWaiting: boolean, reasonCodes?: ReadonlyArray<string> | null): ImageChip | null {
   if (!a) return showWaiting ? { kind: "waiting", text: "🔍 画像の分析待ち" } : null;
   if (a.review?.status === "要確認") return { kind: "needs_check", text: "🔍 画像 要確認" };
   const checks = Array.isArray(a.checks) ? (a.checks as Array<{ result?: string }>) : [];
   const ok = checks.filter((c) => c?.result === "ok").length;
   const ng = checks.filter((c) => c?.result === "ng").length;
   if (typeof a.match === "number" && Number.isFinite(a.match)) {
-    return { kind: "scored", match: a.match, ok, ng, text: `🔍 画像 ${a.match}点${checks.length ? `（◎${ok}・×${ng}）` : ""}` };
+    // 2026-09-27 版 b: 判定に足した点（判定と同じ希望は数えない）。◎× も足した希望だけ数える。希望と答えが読めない古い形は前の見せ方（足していない）
+    const b = imageBonusOf({ reason_codes: reasonCodes ?? null, image_analysis: a as ImageAnalysisForBonus });
+    if (b) return { kind: "scored", match: a.match, ok: b.ok, ng: b.ng, bonus: b.points, covered: b.covered, text: `🔍 画像 ${signedPoints(b.points)}点${b.ok + b.ng ? `（◎${b.ok}・×${b.ng}）` : ""}` };
+    return { kind: "scored", match: a.match, ok, ng, bonus: null, covered: 0, text: `🔍 画像 ${a.match}点${checks.length ? `（◎${ok}・×${ng}）` : ""}` };
   }
   return { kind: "unscored", text: "🔍 画像 点なし" };
 }
@@ -129,9 +148,9 @@ export function roundImageLine(items: ReadonlyArray<{ image_analysis?: ImageAnal
   return `🔍 画像で分析 ${done.length}/${items.length}件${extra ? `（${extra}）` : ""}`;
 }
 
-/** 👑 の行の点（「判定 162点・画像 86点」）。画像の点が無ければ判定の点だけ */
-export function pointsLabel(score: number | null | undefined, a: ImageAnalysisLike): string {
-  const s = typeof score === "number" ? `判定 ${score}点` : "判定 －";
-  const m = a && a.review?.status !== "要確認" && typeof a.match === "number" ? `・画像 ${a.match}点` : "";
-  return `${s}${m}`;
+/**
+ * 👑 の行の点。2026-09-27 版 b:「合計 169点（判定 163・画像 +6）」／分析待ち・要確認・古い形は「判定 163点」
+ */
+export function pointsLabel(score: number | null | undefined, a: ImageAnalysisLike, reasonCodes?: ReadonlyArray<string> | null): string {
+  return totalPointsLabel({ score: typeof score === "number" ? score : null, reason_codes: reasonCodes ?? null, image_analysis: a as ImageAnalysisForBonus });
 }

@@ -24,7 +24,11 @@ export async function enrichSummariesWithPdfAd(summaries: string[], pdfBase64Lis
         if (!t.hasText) return;
         const ad = parseAdFromPages(t.pageTexts ?? null, t.text); // 2026-09-27: AD は元付業者のページ（偶数）から
         // 資料に「広告費 なし」＝ AD なし（parsePropertyFacts が 0 と読む・不明とは分ける）
-        const line = ad.adMonths === 0 ? "AD なし" : ad.adMonths != null ? `AD ${String(ad.adMonths).replace(/\.0$/, "")}ヶ月` : ad.adYen != null ? `AD ${ad.adYen.toLocaleString()}円` : null;
+        // 2026-09-27 資料に AD の値が無く元付業者がアズ・スタット → 200% とみなした行（parsePropertyFacts が「みなし」の印も読む）
+        const { assumedAdAgentOf, assumedAdSummaryLine } = await import("@/app/lib/agent-ad-assume");
+        const { agentPagesText } = await import("@/app/lib/property-pickups");
+        const ag = ad.adMonths == null && ad.adYen == null ? assumedAdAgentOf(t.pageTexts && t.pageTexts.length >= 2 ? agentPagesText(t.pageTexts) : t.text) : null;
+        const line = ad.adMonths === 0 ? "AD なし" : ad.adMonths != null ? `AD ${String(ad.adMonths).replace(/\.0$/, "")}ヶ月` : ad.adYen != null ? `AD ${ad.adYen.toLocaleString()}円` : ag ? assumedAdSummaryLine(ag) : null;
         if (!line) return;
         out[i] = s.replace(/\s*$/, "") + `\n${line}`;
         added++;

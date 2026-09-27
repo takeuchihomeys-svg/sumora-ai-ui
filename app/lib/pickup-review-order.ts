@@ -7,12 +7,12 @@
 //   「外す候補 20 と出てるが、なんで全部外す候補 20 でばらつきないのか。今回なんで外されているのか理由が分かれば大きい」
 //     → 点の横に理由の札（減点・外す理由が先・何点引いたか）。材料が読めずに点が動かない時は「材料なし」も札で出す
 //       （点が横並びの原因は『材料が無い』か『同じ理由が全件に当たった』のどちらか。画面で一目で分かるように）
-import { BASE_SCORE, reasonJa, reasonPoints } from "./property-brain";
+import { BASE_SCORE, reasonJa, reasonPoints, ngHitCodes } from "./property-brain";
 import { PICKUP_AIX_MAX } from "./pickup-aix-handoff";
 import { compareOverall } from "./pickup-best";
 
 /** 2026-09-27 判定・画像で分析の点・回の時刻（あれば）も並びに使う（pickup-best.compareOverall） */
-export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null; verdict?: string | null; created_at?: string | null; image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null };
+export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null; verdict?: string | null; created_at?: string | null; reason_codes?: string[] | null; image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null };
 
 /**
  * 並びの比べ方: 点の高い順（点なしは最後）→ 同点は DeepSeek の🌟★／🌟 → 順位 → id。
@@ -36,7 +36,7 @@ export function sortForReview<T extends ReviewOrderRow>(items: ReadonlyArray<T>,
 
 // ── AIX に渡す物件のチェック（2026-09-26）。page.tsx が import する pickup-aix-handoff に判定の部品を持ち込まないよう、並びの隣に置く ──
 /** AIX に渡せる候補の行（未確認・外す候補でない・72時間切れでない） */
-export type AixPickRow = { id: number; rank: number; recommended: number; score: number | null; status: string; verdict: string | null; expired?: boolean };
+export type AixPickRow = { id: number; rank: number; recommended: number; score: number | null; status: string; verdict: string | null; expired?: boolean; reason_codes?: string[] | null };
 const aixCandidate = (r: AixPickRow) => r.status === "pending" && r.verdict !== "drop" && !r.expired;
 
 /**
@@ -48,11 +48,46 @@ export function pickTopForAix<T extends AixPickRow>(items: ReadonlyArray<T>, bes
   return sortForReview(items.filter(aixCandidate), bestId ?? null).slice(0, max).map((r) => r.id);
 }
 
-/** 詳細を開いた時の既定のチェック: まとめの回ごとに、点の高い順に PICKUP_AIX_MAX 件まで（それより下はチェックを外しておく） */
+/**
+ * 2026-09-27 竹内「物件ピックアップの場合、質の高い10件のボタン、3件ではない10件で行う」
+ *   ＋「質の高い物件は NG 条件の物件が入ってたら10件にならなくても入れない」「お客さんからの NG 条件がある物件は選択されないようにする」:
+ *   「✨ 質の高い10件を選ぶ」ボタンが選ぶ物件（純関数）。
+ *   - 候補: 未送信（送信済み・見送りは選ばない）・保存期間の切れていない物・判定が通す（か判定なし）で、判定の札に NG が1つも無い物
+ *     （NG の見分けは property-brain.ngHitCodes＝今の判定の外す候補・保留の理由・書いた条件の ×・必須の ×。新しい語の一覧は作らない）
+ *   - 並び: 画面と同じ1本の並び（合計＝判定の点＋画像の加点 → …・sortForReview）・👑 が候補なら先頭
+ *   - max 件（AIX 物件ピックアップの上限 PICKUP_AIX_MAX＝10）まで。足りなくても NG の物件で埋めない
+ *   返す物: 選んだ id・NG で除いた件数（未送信の物だけ数える）
+ */
+export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX): { ids: number[]; ngExcluded: number } {
+  const base = items.filter((r) => r.status === "pending" && !r.expired);
+  const isNg = (r: T) => r.verdict === "drop" || r.verdict === "hold" || ngHitCodes(r.reason_codes).length > 0;
+  const ok = base.filter((r) => !isNg(r));
+  return { ids: sortForReview(ok, bestId ?? null).slice(0, max).map((r) => r.id), ngExcluded: base.length - ok.length };
+}
+
+/** ボタンの文字（「✨ 質の高い10件を選ぶ」・10件に足りない時は「✨ 質の高い9件を選ぶ」） */
+export function qualityPickLabel(n: number): string {
+  return `✨ 質の高い${n}件を選ぶ`;
+}
+
+/** 選んだ後の知らせ（「✨ 質の高い9件を選びました（NG 条件・保留の物件は選びません・3件）」） */
+export function qualityPickMessage(picked: number, ngExcluded: number, max = PICKUP_AIX_MAX): string {
+  const ng = ngExcluded > 0 ? `NG 条件・保留の物件は選びません・${ngExcluded}件` : "";
+  const short = picked < max ? `${max}件に足りません` : "";
+  const tail = [short, ng].filter(Boolean).join("・");
+  return picked === 0
+    ? `選べる物件がありません${ng ? `（${ng}）` : ""}`
+    : `✨ 質の高い${picked}件を選びました${tail ? `（${tail}）` : ""}`;
+}
+
+/**
+ * 詳細を開いた時の既定のチェック: まとめの回ごとに、点の高い順に PICKUP_AIX_MAX 件まで（それより下はチェックを外しておく）。
+ * 2026-09-27 竹内「お客さんからの NG 条件がある物件は選択されないようにする」: 既定のチェックも「✨ 質の高い10件」と同じ（pickQualityTop・NG／保留は付けない）
+ */
 export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T> }>, bestId?: number | null, max = PICKUP_AIX_MAX): Record<number, boolean> {
   const out: Record<number, boolean> = {};
   for (const r of rounds) {
-    const top = new Set(pickTopForAix(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max));
+    const top = new Set(pickQualityTop(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max).ids);
     for (const it of r.items) out[it.id] = top.has(it.id);
   }
   return out;

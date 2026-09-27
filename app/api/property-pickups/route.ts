@@ -14,7 +14,7 @@ import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
-import { listingAdText, listingRoomText, nameWithRoom } from "@/app/lib/pickup-listing-text";
+import { listingAdStamp, listingRoomText, nameWithRoom } from "@/app/lib/pickup-listing-text";
 import { dropDiscountFromRow, isDiscountCompareCode } from "@/app/lib/property-brain";
 import { widenChainNotes, type ChainCommandLite, type PickupLite } from "@/app/lib/search-widen-chain";
 import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
@@ -148,7 +148,7 @@ async function buildList(since: string) {
   const nowMs = Date.now();
   const [pk, sp, roundOf, na] = await Promise.all([
     // 2026-09-27 一覧の 👑 も詳細と同じ1本の並び（判定の点 → 画像の点）: 画像で分析の点だけ JSON から引く（分析の全文は返さない）・号室も
-    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, room_no, recommended, status, sent_at, score, verdict, reason_codes, search_override, ia_match:image_analysis->match, ia_raw:image_analysis->match_raw, ia_ok:image_analysis->ok_count, ia_review:image_analysis->review->>status")
+    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, room_no, recommended, status, sent_at, score, verdict, reason_codes, search_override, ia_match:image_analysis->match, ia_raw:image_analysis->match_raw, ia_ok:image_analysis->ok_count, ia_review:image_analysis->review->>status, ia_wants:image_analysis->wants, ia_checks:image_analysis->checks")
       .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
     supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at, property_name")
       .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
@@ -167,8 +167,9 @@ async function buildList(since: string) {
   // 2026-09-25 竹内「まとめられていない」: 一覧の「🧠 N件」も、短い間に届いた回（リアプロ・itandi）をまとめた1回分で数える
   // 2026-09-25 一覧の「🧠 N件・👑名前」: 一番オススメは DeepSeek の🌟★ ではなく 👑（まとめの best_id → 無ければ判定の点の1位・同点は🌟）
   type BestLite = { id: number; created_at: string; batch_id: string; rank: number; status: string; recommended: number; property_name: string; room_no?: string | null; score: number | null; verdict: string | null; search_override?: unknown;
-    image_analysis?: { match?: unknown; match_raw?: unknown; ok_count?: unknown; review?: { status?: unknown } } | null };
-  type BestLiteDb = BestLite & { ia_match?: unknown; ia_raw?: unknown; ia_ok?: unknown; ia_review?: unknown };
+    reason_codes?: string[] | null;
+    image_analysis?: { match?: unknown; match_raw?: unknown; ok_count?: unknown; review?: { status?: unknown }; wants?: unknown; checks?: unknown } | null };
+  type BestLiteDb = BestLite & { ia_match?: unknown; ia_raw?: unknown; ia_ok?: unknown; ia_review?: unknown; ia_wants?: unknown; ia_checks?: unknown };
   type BatchSum = { batch_id: string; created_at: string; site: string | null; round_id: string | null; count: number; rows: BestLite[] };
   const batchesSeen = new Map<string, Map<string, BatchSum>>();
   // 2026-09-27 付け直し（backfill-drop-discount-codes --apply）の前の行も、割引と AD の比べの札を外した点・判定で 👑 を決める（詳細と同じ）。
@@ -184,10 +185,10 @@ async function buildList(since: string) {
   }
   for (const rx of listRows) {
     const d = (rx.reason_codes ?? []).some(isDiscountCompareCode) ? dropDiscountFromRow({ ...rx, summary_text: summaryOf.get(rx.id) ?? "" }) : null;
-    const { reason_codes: _rc, ...r0 } = d ? { ...rx, score: d.score, verdict: d.verdict } : rx;
-    void _rc;
-    const { ia_match, ia_raw, ia_ok, ia_review, ...rest } = r0;
-    const r = { ...rest, image_analysis: ia_match === undefined && ia_review === undefined ? null : { match: ia_match, match_raw: ia_raw, ok_count: ia_ok, review: ia_review ? { status: ia_review } : undefined } };
+    // 2026-09-27 版 b: 👑 は合計（判定の点＋画像の加点）。加点は判定の札と画像の希望・答えから（pickup-image-bonus・詳細と同じ）
+    const r0 = d ? { ...rx, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes } : rx;
+    const { ia_match, ia_raw, ia_ok, ia_review, ia_wants, ia_checks, ...rest } = r0;
+    const r = { ...rest, image_analysis: ia_match === undefined && ia_review === undefined ? null : { match: ia_match, match_raw: ia_raw, ok_count: ia_ok, review: ia_review ? { status: ia_review } : undefined, wants: ia_wants, checks: ia_checks } };
     const key = r.property_customer_id ?? `conv:${r.conversation_id ?? r.batch_id}`;
     const c = byKey.get(key) ?? { key, property_customer_id: r.property_customer_id, conversation_id: r.conversation_id, customer_name: r.customer_name, pending: 0, last_pickup_at: null, batch_count: 0, last_batch: null, sent: { pickup: 0, recommendation: 0, other: 0, last_at: null } };
     if (!c.conversation_id && r.conversation_id) c.conversation_id = r.conversation_id;
@@ -391,7 +392,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   for (let i = 0; i < shownIds.length; i += 100) {
     const { data: tx, error: txErr } = await supabase.from("property_pickups").select("id, pdf_text").in("id", shownIds.slice(i, i + 100));
     if (txErr) { console.warn("[property-pickups] 資料の文字を読めない（号室・AD の札なし）:", txErr.message); break; }
-    for (const t of (tx ?? []) as Array<{ id: number; pdf_text: string | null }>) listingOf.set(t.id, { ad_text: listingAdText(t.pdf_text), room_text: listingRoomText(t.pdf_text) });
+    for (const t of (tx ?? []) as Array<{ id: number; pdf_text: string | null }>) listingOf.set(t.id, { ad_text: listingAdStamp(t.pdf_text), room_text: listingRoomText(t.pdf_text) });
   }
   const withListing = <T extends { id: number }>(it: T) => ({ ...it, ad_text: listingOf.get(it.id)?.ad_text ?? null, room_text: listingOf.get(it.id)?.room_text ?? null });
   const batches = batches0.map((b) => ({ ...b, items: b.items.map(withListing) }));

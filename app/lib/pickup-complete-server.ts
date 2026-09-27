@@ -133,7 +133,8 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       const d = dropDiscountFromRow(r);
       const { reason_codes: _c, reasons_ja: _j, summary_text: _s, ...rest } = r;
       void _c; void _j; void _s;
-      return (d ? { ...rest, score: d.score, verdict: d.verdict } : rest) as CompleteRankRow;
+      // 2026-09-27 版 b: 画像の加点（判定と同じ希望を二重に数えない）に判定の札が要るので reason_codes は残す（割引の比べを外した後の物）
+      return (d ? { ...rest, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes } : { ...rest, reason_codes: r.reason_codes ?? null }) as CompleteRankRow;
     });
     // 👑 の決め方はお客様ごと（画像で分析が必要＝画像の点・不要＝判定の点）。画面の詳細 API と同じ customerImageNeed → bestBasisFor
     const basis = await loadBestBasis(input.propertyCustomerId, rows);
@@ -149,7 +150,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       batch_ids: [...new Set(rows.map((r) => r.batch_id))],
       sites,
       best_id: ranking.bestId, best_basis: ranking.bestBasis,
-      result: { basis_rule: bestRuleTag(basis), items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
+      result: { basis_rule: bestRuleTag(basis), items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, best_total: ranking.bestTotal, best_bonus: ranking.bestBonus, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
     }).eq("group_id", input.groupId);
     if (cErr) console.warn("[pickup-complete] まとめの結果を書けない:", cErr.message);
     // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: 判定・画像の読み取り・順位が済んだこの時に、

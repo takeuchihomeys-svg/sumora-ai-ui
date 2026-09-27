@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-09-27 売上サポ: 画像の点を判定の点に合わせる・質の高い10件のボタン・AD 1ヶ月未満は保留・アズ・スタットは AD 200%（拡張は変えていない）
+竹内（e86ed5cc への答え）「ここは合わせる」「物件ピックアップの場合、質の高い10件のボタン、3件ではない10件で行う」「質の高い物件は NG 条件の物件が入ってたら10件にならなくても入れない」「AD 1ヶ月未満の物件は点数かなり落とす／アズ・スタットは AD 記載なくても基本的に 200% とみなす」
+- **合わせ方（pickup-image-bonus.ts・純関数）**: 合計＝判定の点＋画像の加点。加点は画像の希望（設備でまとめる）のうち、判定に同じ設備の ○× の札（EQUIP_*／IMAGE_*・PET_NG。_UNLISTED/_ASK は決まっていない扱い）が**無い物だけ**を、判定の設備の札と同じ物差しで: ○ 必須・NG +5／ふつう +3・× 必須・NG −10／ふつう −5・？0、合計 +15〜−20。分析待ち・要確認・希望の一覧の無い古い形は加点なし（判定の点のまま・画面に「判定の点だけで並べています」）。並び `compareOverall`: 合計 → 判定 → 判定の点 → 画像の点 → … → 🌟。版 `score+imagebonus@2026-09-27b`
+- **見せ方**: 丸い札＝合計（下に小さく「163+4」）・点数のマスの見出し「判定の点」・札「🔍 画像 +4点（◎3・×1）」・👑「合計 167点（判定 163・画像 +4）」・詳細の希望ごとに +3／（判定に入っている・足さない）
+- **YUMA の回**: 完了のまとめ4つの 👑 は変わらない（cg_509cd061_706 は #712 165−2=163 と #708 162+1=163 が並び判定の点で #712・716 は #728 167）。上から5件が入れ替わるまとめ 2。付け直しの道具 `scripts/backfill-image-bonus-crowns.ts`（見るだけ・--apply で best_id・順位・basis_rule を書く）
+- **✨ 質の高い10件を選ぶ**（回の下のボタン・`pickup-review-order.pickQualityTop`）: 未送信・期限内・判定が通す・NG の札なし（`property-brain.ngHitCodes`＝外す候補・保留の理由・書いた条件の ×・必須の ×）を合計の順に10件（👑 が先頭）。足りなくても NG／保留で埋めない（「✨ 質の高い7件を選びました（10件に足りません・NG 条件・保留の物件は選びません・6件）」）。詳細を開いた時の既定のチェック（defaultAixChecks）も同じ。選んだ物は下の「AIX物件ピックアップ」で pickup-aix-handoff に渡る
+- **AD 1ヶ月未満**: AD_UNDER_1M −8→−15・AD_NONE −10→−20 を**保留**（HOLD_REASON_CODES）に＝AD の段・ピンポイント・全部合うが 0点になり、通す 150〜165 → 約100（保留の帯 98〜107）。AD 不明（記載なし・読めない）は今まで通り 0点・通す。お客様の NG ではないので ngHitCodes には数えない
+- **アズ・スタット**（`agent-ad-assume.ts`）: 資料の元付業者のページに「株式会社アズ・スタット」（アズスタット・ｱｽﾞ･ｽﾀｯﾄ・az-stat.com）があり AD の値が無い（「A D」だけ）→ 2ヶ月とみなす（AD_HIGH +20・0点の印 AD_ASSUMED_AGENT）。拡張経由（pickup-rank の説明文の補い「AD 2ヶ月（アズ・スタット・記載なしのため200%とみなす）」）と売上サポの記録（property-pickups-server）の両方。札は物件名の横に「AD 200%（アズ・スタット）」（listingAdStamp・資料に値があれば資料の文字のまま）
+- **過去の行**（`scripts/backfill-low-ad-rules.ts`・見るだけで）: 保存の151行に AD 1ヶ月未満・なしは0行・アズ・スタットは12行（#621〜627・#748〜752・通すのまま +20）・👑 が変わるまとめ 0。送った物件（sent_properties）の AD が分かる 2,275件中 1ヶ月未満は 20件
+- テスト: pickup-image-bonus 39・agent-ad-assume 22・fit-balance 168（案B の例の点を付け直し）・structure-ad-weights 110・pickup-score-audit 82・pickup-card-view 90・pickup-best 20・pickup-review-order 62・pickup-complete 33・pickup-aix-handoff 41・pickup-listing-text 59・pickup-auto-complete 45・property-brain 90 ほか 0 failed・tsc 0・next build 成功
+- 親が流す物（デプロイの後）: `npx tsx --env-file=.env.local scripts/backfill-low-ad-rules.ts --apply` → `scripts/backfill-image-bonus-crowns.ts --apply`
+
 ## 2026-09-27 v2.5.34 ITANDI の「募集条件更新 N日以内」にリアプロと同じ更新日を入れる（**拡張の再読み込み必須**）
 竹内（ITANDI の賃貸物件検索のスクショ）「ITANDI のここの更新日、リアプロではボタン押すけど、ここでは更新日に合わせて入力できるようにする。そうすれば更新に沿って物件検索できるから」「リアプロはボタンで選択やけど ITANDI は入力となる（更新日）」
 - **日数の出どころはリアプロと同じ**: popup の更新日の欄（`#adj-update-days`・preloadAdjForm が c.rp_update_days か送った日から 1/3/7/14）→ ITANDI の conditions に `rp_update_days`（popup.js）。ITANDI の画面でも更新日の欄を見せる（手で変えるとリアプロと同じく DB に書く）。一括・自動便・web_brain の直接入力の経路は `_buildBatchConditions` の rp_update_days がもともとサイトを問わず入っている。?sumora_cid の経路（itandi-content.js）はリアプロの content.js と同じく渡していない

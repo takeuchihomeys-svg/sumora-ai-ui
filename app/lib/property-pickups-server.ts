@@ -8,7 +8,9 @@
 import { supabase } from "@/app/lib/supabase";
 import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
-import { buildPickupRows, parseAdFromPages, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
+import { buildPickupRows, parseAdFromPages, agentPagesText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
+// 2026-09-27 竹内「株式会社アズ・スタットは AD 記載なくても基本的に 200% あるから 200% とみなす」（純関数）
+import { assumedAdAgentOf } from "@/app/lib/agent-ad-assume";
 import { judgeProperty, parsePropertyFacts, applyImageFacts, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
@@ -181,6 +183,11 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         const ad = parseAdFromPages(pdfPageTexts, pdfText);
         if (ad.adMonths != null) facts.adMonths = ad.adMonths;
         else if (ad.adYen != null) facts.adYen = ad.adYen;
+        else {
+          // 資料に AD の値が無い: 元付業者の決まり（アズ・スタット＝200%）でみなす（元付業者のページ・無ければ全文）
+          const ag = assumedAdAgentOf(Array.isArray(pdfPageTexts) && pdfPageTexts.length >= 2 ? agentPagesText(pdfPageTexts) : pdfText);
+          if (ag) { facts.adMonths = ag.adMonths; facts.adAssumedBy = ag.name; }
+        }
       }
       if (pdfText) {
         const t = parseListingTerms(pdfText);
@@ -254,6 +261,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
           const ad = parseAdFromPages(droppedPages.get(d.index) ?? null, text);
           if (ad.adMonths != null) facts.adMonths = ad.adMonths;
           else if (ad.adYen != null) facts.adYen = ad.adYen;
+          else { const pg = droppedPages.get(d.index) ?? null; const ag = assumedAdAgentOf(pg && pg.length >= 2 ? agentPagesText(pg) : text); if (ag) { facts.adMonths = ag.adMonths; facts.adAssumedBy = ag.name; } }
         }
         const dt = text ? parseListingTerms(text) : null;
         if (dt) fillFactsFromTerms(facts, dt);

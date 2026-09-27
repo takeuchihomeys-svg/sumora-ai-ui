@@ -109,7 +109,8 @@ console.log("■ 項目ごとの点（案B）: 合う緑・合わない赤・要
   t("保留の物件の AD は 0点（保留の物件なので0点）", cell(held, "ad")?.points === 0 && cell(held, "ad")?.note === "保留の物件なので0点", cell(held, "ad"));
   t("敷礼あり（抑えたい人）→ 赤 −15", cell(held, "deposit")?.tone === "ng" && cell(held, "deposit")?.points === -15, cell(held, "deposit"));
   const none = buildPickupCardView({ ...R370, reason_codes: ["RENT_OK", "AD_NONE", "PROFIT_NEGATIVE"] });
-  t("AD なし → 赤 −20（割引の方が大きい）", cell(none, "ad")?.tone === "ng" && cell(none, "ad")?.points === -20, cell(none, "ad"));
+  // 2026-09-27 AD なし −10 → −20（竹内「AD 1ヶ月未満の物件は点数かなり落とす」）。古い行の PROFIT_NEGATIVE −10 と合わせて −30
+  t("AD なし → 赤 −30（AD なし −20・割引の方が大きい −10）", cell(none, "ad")?.tone === "ng" && cell(none, "ad")?.points === -30, cell(none, "ad"));
   const noAd = buildPickupCardView({ ...R370, summary_text: "【1】X\n80,000円", ad_yen: null, reason_codes: ["RENT_OK"] });
   t("AD の札が無い行でも AD の項目は出す（要確認）", cell(noAd, "ad")?.value === DASH && cell(noAd, "ad")?.note === "要確認", cell(noAd, "ad"));
 }

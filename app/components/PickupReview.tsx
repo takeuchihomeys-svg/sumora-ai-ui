@@ -9,7 +9,9 @@ import { bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/
 // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」「物件名に号室もいれる」「AD は物件名の横にもスタンプで」（純関数・import なし）
 import { nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel, type ImageChip } from "@/app/lib/pickup-listing-text";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
-import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks } from "@/app/lib/pickup-review-order";
+import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage } from "@/app/lib/pickup-review-order";
+// 2026-09-27 竹内「ここは合わせる」: 画像の点を判定の点に足す（画像の加点・判定と同じ希望は数えない・純関数）
+import { imageBonusOf, signedPoints, IMAGE_BONUS_MAX, IMAGE_BONUS_MIN, type ImageAnalysisForBonus } from "@/app/lib/pickup-image-bonus";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
 import type { PickupTerms } from "@/app/lib/pickup-terms";
 import { PICKUP_EXPIRED_LABEL, PICKUP_EXPIRED_ACTION_NOTE } from "@/app/lib/pickup-retention";
@@ -334,7 +336,7 @@ function AdStamp({ text }: { text: string | null | undefined }) {
   const { core, rest } = splitAdStamp(text);
   return (
     <span className="inline-flex max-w-full items-baseline gap-0.5 rounded px-1.5 py-[2px] align-middle text-[10px] font-bold leading-tight break-words"
-      style={{ background: "#fff3e0", color: "#bf360c", border: "1px solid #ffcc80" }} title={`資料の AD の欄: ${text}`}>
+      style={{ background: "#fff3e0", color: "#bf360c", border: "1px solid #ffcc80" }} title={/^AD \d+%（[^）]+）$/.test(text) ? `資料に AD の記載なし・元付業者の決まりで ${text} とみなした（2026-09-27 竹内さん）` : `資料の AD の欄: ${text}`}>
       <span className="whitespace-nowrap">{core}</span>{rest && <span className="font-normal" style={{ color: "#8d6e63" }}>{rest}</span>}
     </span>
   );
@@ -355,7 +357,7 @@ function buildBubbles(c: Customer): Bubble[] {
     if (trimmed.length) out.push({ kind: "trim", at: b.created_at + "~", batch: b, items: trimmed });
     // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる。まとめたうえで結果をだす。点数のと画像で分析がわかれていたらみにくい」:
     //   「🔍 画像で分析しました」の別の吹き出し（別の一番・別の並び）はやめ、物件カード（🧠 の吹き出し）の中に画像の点・内訳・🌟 を入れた。
-    //   一番（👑）と並びは判定の点 → 同じ点なら画像の点の1本（pickup-best.compareOverall）
+    //   一番（👑）と並びは合計（判定の点＋画像の加点）の1本（pickup-best.compareOverall・2026-09-27 版 b）
     const sent = b.items.filter((it) => it.status === "sent");
     const skipped = b.items.filter((it) => it.status === "skipped");
     if (sent.length) {
@@ -1156,7 +1158,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     const stop = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
     // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」: 画像の点・◎× の数・要確認・分析待ちを建物の段の札に
     //   「分析待ち」は未送信の物だけ（送信済み・見送りはもう分析しない）
-    const imgChip = imageChipOf(it.image_analysis as Parameters<typeof imageChipOf>[0], showImageWaiting && it.status === "pending");
+    const imgChip = imageChipOf(it.image_analysis as Parameters<typeof imageChipOf>[0], showImageWaiting && it.status === "pending", it.reason_codes ?? null);
+    // 2026-09-27 竹内「ここは合わせる」: 丸い札は合計（判定の点＋画像の加点）。加点なし（分析待ち・要確認）は判定の点のまま
+    const bonus = imageBonusOf({ reason_codes: it.reason_codes ?? null, image_analysis: it.image_analysis as ImageAnalysisForBonus });
+    const bonusLines = new Map((bonus?.lines ?? []).map((l) => [l.id, l] as const));
+    const total = cv.mark.score != null && bonus ? cv.mark.score + bonus.points : null;
     // 2026-09-27 竹内「物件名に号室もいれる」（号室は資料の文字のまま・0 を落とさない）
     const room = cardRoom(cv.room, it.room_text);
     // 建物の段の文字（物件名・号室・AD の札・住所・沿線と徒歩）
@@ -1202,7 +1208,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                 : <span className="text-[10px] font-bold whitespace-nowrap px-1 rounded" style={{ color: "#78909c", background: "#eceff1" }}>この回で一番</span>)}
               {!isBest && it.recommended > 0 && <span className="text-[10px] whitespace-nowrap" style={{ color: "#bf8f00" }} title="DeepSeek が選んだ候補（点が並んだ時の順番に使う）">🌟 候補</span>}
               {imgChip && <span className="text-[10px] font-bold whitespace-nowrap px-1 py-[1px] rounded" style={IMAGE_CHIP_STYLE[imgChip.kind]}
-                title={imgChip.kind === "scored" ? "画像で分析の点（判定の点が同じ時の順番に使う）。内訳は「詳細 ▾」" : imgChip.kind === "needs_check" ? "物件と資料が一致しない（点は出さない）" : imgChip.kind === "waiting" ? "まだ画像で分析していません（下の「🔍 画像で分析」）" : "資料から読めず点が付かなかった"}>{imgChip.text}</span>}
+                title={imgChip.kind === "scored" ? (imgChip.bonus != null ? `判定の点に足した画像の点（判定に入っている希望${imgChip.covered ? ` ${imgChip.covered}件` : ""}は二重に数えない・○ +3／必須 +5・× −5／必須 −10・${IMAGE_BONUS_MIN}〜+${IMAGE_BONUS_MAX}）。画像で分析 ${imgChip.match}点。内訳は「詳細 ▾」` : `画像で分析 ${imgChip.match}点（古い形で判定の点には足していない）`) : imgChip.kind === "needs_check" ? "物件と資料が一致しない（点は出さない）" : imgChip.kind === "waiting" ? "まだ画像で分析していません（下の「🔍 画像で分析」）" : "資料から読めず点が付かなかった"}>{imgChip.text}</span>}
               {!pending && <span className="text-[10px] text-[#90a4ae]">{it.status === "sent" ? "送信済" : "見送り"}</span>}
               {/* 2026-09-27 案A: 条件の違う回が混ざった時だけ、メモの条件で判定した物件に印（点の物差しが違う） */}
               {roundOverrideNote(b.items)?.mixed && overrideJudgeLine(it.search_override) && <span className="text-[9px] font-bold whitespace-nowrap px-1 rounded" style={{ background: "#ede7f6", color: "#4527a0" }}>📝 メモの条件で判定</span>}
@@ -1211,9 +1217,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
             <div className="hidden md:block">{nameBlock}</div>
           </div>
           {/* 点数の丸い札（リアプロの「○75点」） */}
-          <div className="shrink-0 flex h-[46px] w-[46px] flex-col items-center justify-center rounded-full leading-none" style={{ border: `2px solid ${ms.color}`, background: ms.bg, color: ms.color }} title={cv.mark.label}>
+          <div className="shrink-0 flex h-[46px] w-[46px] flex-col items-center justify-center rounded-full leading-none" style={{ border: `2px solid ${ms.color}`, background: ms.bg, color: ms.color }}
+            title={total != null && bonus ? `合計 ${total}点＝判定 ${cv.mark.score}点＋画像 ${signedPoints(bonus.points)}点（並び・👑 はこの合計）` : cv.mark.label}>
             <span className="text-[13px] font-bold">{cv.mark.symbol}</span>
-            <span className="text-[11px] font-bold tabular-nums mt-0.5">{cv.mark.score != null ? `${cv.mark.score}点` : "－"}</span>
+            <span className="text-[11px] font-bold tabular-nums mt-0.5">{total != null ? `${total}点` : cv.mark.score != null ? `${cv.mark.score}点` : "－"}</span>
+            {total != null && bonus && <span className="text-[8px] tabular-nums mt-0.5 opacity-80">{cv.mark.score}{signedPoints(bonus.points)}</span>}
           </div>
         </div>
         <div className="md:hidden px-2 pb-2 -mt-0.5" style={{ background: crown ? "#fff8e1" : "#fffdfb" }}>{nameBlock}</div>
@@ -1221,7 +1229,9 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
             お客様が書いた条件の項目が先（茶色の見出し）→ 全部合う → AD → 書いていない条件 → 事実。項目ごとに点（＋20）と「初期費用を抑えたい・一致」。
             合う＝緑・合わない＝赤・要確認＝灰。スマホは3列の格子で横に流れない・パソコンは6列 */}
         <div className="grid grid-cols-3 md:grid-cols-6 gap-px" style={{ background: "#d7ccc8", borderTop: "1px solid #d7ccc8" }}>
-          {cv.cells.map((c) => {
+          {cv.cells.map((c0) => {
+            // 2026-09-27 画像を足した時、点数のマスは「判定の点」（丸い札の合計と見分ける）
+            const c = c0.key === "score" && total != null ? { ...c0, head: "判定の点" } : c0;
             const tone = c.tone ? CELL_TONE[c.tone] : null;
             return (
               <div key={c.key} className="flex min-w-0 flex-col" style={{ background: tone?.bg ?? "#fff" }} title={c.codes?.length ? c.codes.join(" ") : undefined}>
@@ -1292,9 +1302,15 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                             {MARK[r] ?? "？"} <span className="font-bold">{w.text}</span>
                             <span className="ml-1 text-[9px]" style={{ color: "#90a4ae" }}>（{w.source}{w.ng ? "・NG" : ""}{w.must ? "・必須" : ""}）</span>
                             {c?.why && r !== "unknown" && <span className="ml-1" style={{ color: "#607d8b" }}>— {c.why}</span>}
+                            {/* 2026-09-27 竹内「ここは合わせる」: 判定の点に足した点／判定に入っている希望（二重に数えない） */}
+                            {(() => { const l = bonusLines.get(w.id); if (!l || l.result === "unknown") return null;
+                              return l.covered
+                                ? <span className="ml-1 text-[9px]" style={{ color: "#90a4ae" }}>（判定に入っている・足さない）</span>
+                                : <span className="ml-1 text-[9px] font-bold tabular-nums">{signedPoints(l.points)}</span>; })()}
                           </div>
                         );
                       })}
+                      {bonus && <div className="text-[9px] mt-0.5" style={{ color: "#607d8b" }}>判定の点に足した画像の点: {signedPoints(bonus.points)}{bonus.raw !== bonus.points ? `（${signedPoints(bonus.raw)} を ${IMAGE_BONUS_MIN}〜+${IMAGE_BONUS_MAX} に）` : ""}{bonus.covered ? `・判定に入っている希望 ${bonus.covered}件は二重に数えない` : ""}</div>}
                     </div>
                   )}
                 </div>
@@ -1450,9 +1466,9 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                   return (
                     <>
                       {bi && <div className="text-[11px] font-bold mb-1.5 px-2 py-1 rounded-lg" style={rbGlobal ? { background: "#fff8e1", color: "#8d6e00" } : { background: "#f5f5f5", color: "#78909c" }}>
-                        {rbGlobal ? "👑 一番オススメ" : "この回で一番（全体の👑は別の回）"}: 【{bi.rank}】{itemTitle(bi)}（{basisImage ? `画像の点 ${(bi.image_analysis as { match: number }).match}点` : pointsLabel(bi.score, bi.image_analysis as Parameters<typeof pointsLabel>[1])}）
+                        {rbGlobal ? "👑 一番オススメ" : "この回で一番（全体の👑は別の回）"}: 【{bi.rank}】{itemTitle(bi)}（{basisImage ? `画像の点 ${(bi.image_analysis as { match: number }).match}点` : pointsLabel(bi.score, bi.image_analysis as Parameters<typeof pointsLabel>[1], bi.reason_codes ?? null)}）
                         <div className="text-[10px] font-normal mt-0.5" style={{ color: "#8d6e63" }}>
-                          並び: 判定の点 → 同じ点なら画像で分析の点 → 🌟{showWaiting && waiting > 0 ? `（画像の分析待ち ${waiting}件・分析すると同じ点の順番が変わることがあります）` : ""}</div>
+                          並び: 合計（判定の点＋画像の点）→ 同じ点なら判定の点 → 🌟{showWaiting && waiting > 0 ? `（画像の分析待ち ${waiting}件は判定の点だけで並べています・分析すると順位が変わることがあります）` : ""}</div>
                       </div>}
                       <div className="flex flex-col gap-2.5">
                         {sortForReview(bb.batch.items, rb).map((it) => renderCard(it, bb.batch, rb, rbGlobal, showWaiting))}
@@ -1490,6 +1506,24 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                         </button>
                       )}
                     </div>
+                    {/* 2026-09-27 竹内「物件ピックアップの場合、質の高い10件のボタン、3件ではない10件で行う」
+                        ＋「質の高い物件は NG 条件の物件が入ってたら10件にならなくても入れない」: 未送信・NG／保留なし・合計の高い順に10件まで（pickQualityTop）。
+                        選んだ物件はこの下の「AIX物件ピックアップ」でそのまま AIX に渡る（pickup-aix-handoff・10件まで） */}
+                    {(() => {
+                      const bid = open.best && bb.batch.items.some((x) => x.id === open.best?.id) ? open.best.id : null;
+                      const q = pickQualityTop(bb.batch.items, bid);
+                      const sel = bb.batch.items.filter((it) => checked[it.id] && it.status === "pending").length;
+                      return (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-[#607d8b] leading-snug">{sel}件を選択中{q.ngExcluded ? `・NG 条件・保留の物件 ${q.ngExcluded}件は選びません` : ""}</span>
+                          <button type="button" disabled={!!busy || q.ids.length === 0 || batchExpired(bb.batch)}
+                            title="未送信で NG 条件（保留・外す候補の理由）に当たらない物件を、合計（判定の点＋画像の点）の高い順に10件まで選ぶ。10件に足りなくても NG の物件では埋めない"
+                            onClick={() => { const pick = new Set(q.ids); setChecked((p) => { const n = { ...p }; for (const it of bb.batch.items) n[it.id] = pick.has(it.id); return n; }); setMsg(qualityPickMessage(q.ids.length, q.ngExcluded)); }}
+                            className="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-full" style={{ background: "#ede7f6", color: "#4527a0", opacity: busy || q.ids.length === 0 || batchExpired(bb.batch) ? 0.4 : 1 }}>
+                            {q.ids.length ? qualityPickLabel(q.ids.length) : "✨ 質の高い物件なし（NG 条件）"}</button>
+                        </div>
+                      );
+                    })()}
                     <div className="flex gap-2">
                       <button disabled={!!busy || batchExpired(bb.batch)} onClick={() => void sendViaAix(open, bb.batch)}
                         title="LINE の会話画面で AIX を開き、選んだ物件の資料画像（1ページ目）をセットする（1件＝物件オススメ・2件以上＝物件ピックアップした）"
@@ -1550,7 +1584,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
               <div className={LEFT_BUBBLE}>
                 {/* 2026-09-25 竹内「画像で分析必要なお客さんなら画像で分析の点、不要なお客さんは判定した点」: 何で決めたか（basis）と、まとめた回か直近の回かを出す */}
                 {/* 2026-09-27 竹内「まとめたうえで結果をだす」: 判定の点 → 同じ点なら画像で分析の点（1本の並び）で決めた一番。物件名は号室つき・AD の札も */}
-                <div className="text-xs font-bold mb-1">👑 一番オススメ（全体・{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析の点" : "判定の点 → 画像で分析の点"}）</div>
+                <div className="text-xs font-bold mb-1">👑 一番オススメ（全体・{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析の点" : "合計＝判定の点＋画像の点"}）</div>
                 <div className="text-[13px] font-bold px-2 py-1.5 rounded-lg" style={{ background: "#fff8e1", color: "#e65100" }}>
                   【{bst.rank}】{nameWithRoom(bst.property_name, cardRoom(bst.room_no, bst.room_text))}（{bestPointLabel(bst)}）
                   {bst.ad_text && <div className="mt-0.5"><AdStamp text={bst.ad_text} /></div>}
@@ -1576,7 +1610,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                   {bst.tied_names.length > 0 && <div>同点: {bst.tied_names.join("・")}</div>}
                   {bst.unscored > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.unscored}件は資料から読めず未判定</div>}
                   {(bst.needs_check ?? 0) > 0 && <div style={{ color: "#e65100" }}>⚠ {bst.needs_check}件は要確認（物件と資料が一致しない・点なし）</div>}
-                  {bst.not_analyzed > 0 && <div>{bst.not_analyzed}件は画像の分析待ち（分析すると同じ点の物件の順番が変わることがあります）</div>}
+                  {bst.not_analyzed > 0 && <div>{bst.not_analyzed}件は画像の分析待ち（判定の点だけで並べています・分析すると順位や👑が変わることがあります）</div>}
                 </div>
                 {bBatch && bItem && bItem.status === "pending" && (
                   <button disabled={!!busy} onClick={() => void sendViaAix(open, bBatch, [bItem])}

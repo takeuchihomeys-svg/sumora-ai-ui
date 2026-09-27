@@ -202,7 +202,8 @@ console.log("■ AD の段（ほかの項目の約1.3倍・2ヶ月以上はは�
   // 2026-09-25 案B: AD なし −5 → −10（竹内「AD 1未満は点数低く・なかなかお勧めしない」）
   // 2026-09-27 竹内「AD はこっち側で自由に変えられるものやから（割引との比べは）影響しない」: 利益が出ない −10 保留（PROFIT_NEGATIVE）は付けない
   //   → AD なしは −10 だけ（保留にしない・全部合うも AD 不明の物件と同じく付く）
-  t("AD なしは −10 だけ（不明より下・割引との比べで保留にしない・全部合うは付く）", d(adn) === -10 && none.reasonCodes.includes("FIT_ALL_HALF") && adn.reasonCodes.includes("FIT_ALL_HALF") && adn.reasonCodes.includes("AD_NONE") && !adn.reasonCodes.includes("PROFIT_NEGATIVE") && adn.verdict === "pass", [d(adn), adn.reasonCodes]);
+  // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」: AD なしは −20・保留（全部合う +8 も付かない＝不明より 28点下）
+  t("AD なしは −20・保留（不明より 28点下・割引との比べは付けない・全部合うは付かない）", d(adn) === -28 && none.reasonCodes.includes("FIT_ALL_HALF") && !adn.reasonCodes.includes("FIT_ALL_HALF") && adn.reasonCodes.includes("AD_NONE") && !adn.reasonCodes.includes("PROFIT_NEGATIVE") && adn.verdict === "hold", [d(adn), adn.reasonCodes]);
   t("割引をまかなえる（AD_COVERS_DISCOUNT）も付けない（割引との比べは判定に入れない）", !m2.reasonCodes.includes("AD_COVERS_DISCOUNT"), m2.reasonCodes);
   const low = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1LDK\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), p);
   t("AD 40,000 < 割引 42,000 でも保留にしない（利益の目安 −2,000 は記録だけ）", !low.reasonCodes.includes("PROFIT_NEGATIVE") && low.verdict === "pass" && low.profitYen === -2_000, [low.verdict, low.reasonCodes]);

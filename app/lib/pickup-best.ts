@@ -22,6 +22,7 @@
 //   - 保留・外す候補は、同じ点の時に通す物件より先に 👑 にしない（前の決まり・verdictOrder）。判定の点で決める時は外す候補を候補にしない
 import { imageAnalysisNeed, extractImageWants, dedupeWantsByTopic, type ImageWant, type ImageAnalysisNeed } from "./image-wants";
 import { overrideRulerKey } from "./search-override";
+import { imageBonusOf, signedPoints, type ImageAnalysisForBonus } from "./pickup-image-bonus";
 
 export type BestCandidateRow = {
   id: number;
@@ -37,6 +38,8 @@ export type BestCandidateRow = {
   /** 判定の点（property-brain の score）。2026-09-25 画像で分析が不要なお客様の 👑 はこの点で決める */
   score?: number | null;
   image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null;
+  /** 2026-09-27 判定の札（画像の加点で判定と同じ希望を二重に数えないため・pickup-image-bonus） */
+  reason_codes?: string[] | null;
   /** 2026-09-27 案A: その回をメモの上書きで判定した印（property_pickups.search_override）。無い行＝登録の条件で判定 */
   search_override?: unknown;
 };
@@ -72,6 +75,9 @@ export type CustomerBest = {
   match: number | null;
   /** 判定の点（無い物件は null） */
   score: number | null;
+  /** 2026-09-27 画像の加点（判定と同じ希望を外した分・分析待ち／要確認は null）と合計（判定の点＋加点） */
+  bonus: number | null;
+  total: number | null;
   /** 何で 👑 を決めたか（image＝画像で分析の点／score＝判定の点）。お客様の決まりの点が無くて補った時は実際に使った方 */
   basis: BestBasis;
   /** 同じ点の他の物件（id） */
@@ -108,30 +114,45 @@ export function bestBasisFor(_need?: Pick<ImageAnalysisNeed, "level"> | null): B
  *   （YUMA の回: 判定 162点・画像 86点で並んだ 705 と 703 → 👑 は🌟の 703・画像の吹き出しは順位の上の 705）。
  *   → 一番と並びの決め方を1つにした（compareOverall）: 判定の点 → 判定（通す＞保留＞外す候補）→ 画像で分析の点 → 上限前の点 →「合う」の数 → 🌟★/🌟 → 新しい回 → 順位 → id。
  *   画像の点は判定の点に足さない: 判定の点には資料の設備欄・間取り図の読み取り（EQUIP_*／IMAGE_*）が既に入っていて、足すと同じ希望を二重に数える。
- *   9/25 竹内「総合的に判定されたのみにする」の決まり（👑 は判定の点）もそのまま。画像の点は「判定の点が同じ時の順番」に使う
- *   （画像の点をどれだけ重く足すかは竹内さんの判断待ち＝未決）。画面の吹き出しの 👑・並び・「完了」のまとめの順位と best_id が全部この1つを使う
+ *   画面の吹き出しの 👑・並び・「完了」のまとめの順位と best_id が全部この1つを使う
+ * 2026-09-27 竹内「ここは合わせる」（版 b）: 画像の点を判定の点に**足して**並べる＝合計（判定の点＋画像の加点・pickup-image-bonus）。
+ *   画像の加点は 0〜100 の割合ではなく、判定に同じ設備の札が無い希望だけを判定の設備の札と同じ物差し（○ +3/+5・× −5/−10・+15〜−20）で足した物
+ *   （判定の EQUIP_*／IMAGE_* にもう入っている希望は数えない＝二重に数えない）。分析待ち・要確認の物件は加点なし（判定の点のまま）。
+ *   並び: 合計 → 判定（通す＞保留＞外す候補）→ 判定の点 → 画像で分析の点 → 上限前の点 →「合う」の数 → 🌟★/🌟 → 新しい回 → 順位 → id
  */
-export const BEST_RULE_TAG = "score+image@2026-09-27";
+export const BEST_RULE_TAG = "score+imagebonus@2026-09-27b";
 /** まとめ（property_pickup_completions.result.basis_rule）に残す決まりの名前。決まりが変わった前のまとめの best_id は使わない（並べ直す） */
 export function bestRuleTag(basis: BestBasis): string {
   return basis === "score" ? BEST_RULE_TAG : basis;
 }
 
-type OverallRow = { id: number; rank: number; recommended?: number | null; score?: number | null; verdict?: string | null; created_at?: string | null; image_analysis?: { match?: unknown; match_raw?: unknown; review?: unknown; [k: string]: unknown } | null };
+type OverallRow = { id: number; rank: number; recommended?: number | null; score?: number | null; verdict?: string | null; created_at?: string | null; reason_codes?: ReadonlyArray<string> | null; image_analysis?: { match?: unknown; match_raw?: unknown; review?: unknown; [k: string]: unknown } | null };
 /** 画像で分析の点（要確認＝物件と資料が合わない時は点として使わない） */
 export function imageMatchOf(r: Pick<OverallRow, "image_analysis">): number | null {
   const a = r.image_analysis;
   if (!a || (a.review as { status?: unknown } | undefined)?.status === "要確認") return null;
   return typeof a.match === "number" && Number.isFinite(a.match) ? a.match : null;
 }
-/** 1本の並び（判定の点 → 判定 → 画像の点 → 上限前の点 →「合う」の数 → 🌟 → 新しい回 → 順位 → id）。点の無い物は後ろ */
+/** 画像の加点（分析待ち・要確認は null） */
+export function imageBonusPoints(r: Pick<OverallRow, "reason_codes" | "image_analysis">): number | null {
+  return imageBonusOf({ reason_codes: r.reason_codes, image_analysis: r.image_analysis as ImageAnalysisForBonus })?.points ?? null;
+}
+/** 合計（判定の点＋画像の加点）。判定の点が無ければ null・分析待ち／要確認は判定の点のまま */
+export function overallPoints(r: Pick<OverallRow, "score" | "reason_codes" | "image_analysis">): number | null {
+  if (typeof r.score !== "number" || !Number.isFinite(r.score)) return null;
+  return r.score + (imageBonusPoints(r) ?? 0);
+}
+/** 1本の並び（合計 → 判定 → 判定の点 → 画像の点 → 上限前の点 →「合う」の数 → 🌟 → 新しい回 → 順位 → id）。点の無い物は後ろ */
 export function compareOverall(a: OverallRow, z: OverallRow): number {
-  const sa = typeof a.score === "number" ? a.score : null, sz = typeof z.score === "number" ? z.score : null;
+  const sa = overallPoints(a), sz = overallPoints(z);
   if (sa != null && sz != null && sa !== sz) return sz - sa;
   if (sa == null && sz != null) return 1;
   if (sa != null && sz == null) return -1;
   const v = verdictOrder(a) - verdictOrder(z);
   if (v) return v;
+  // 合計が同じなら判定の点が高い方（画像で足した分より判定の札の方が確か）
+  const ja = typeof a.score === "number" ? a.score : null, jz = typeof z.score === "number" ? z.score : null;
+  if (ja != null && jz != null && ja !== jz) return jz - ja;
   const ma = imageMatchOf(a), mz = imageMatchOf(z);
   if (ma != null && mz != null && ma !== mz) return mz - ma;
   if (ma == null && mz != null) return 1;
@@ -175,11 +196,13 @@ export function roundBestId(rows: ReadonlyArray<BestCandidateRow>, basis: BestBa
   return pickCustomerBest(rows, { basis, windowHours: 24 * 365 })?.id ?? null;
 }
 
-/** 👑 の点の出し方（画面の文言）。画像＝「85点」／判定＝「判定 72点」 */
-export function bestPointLabel(b: Pick<CustomerBest, "basis" | "match" | "score">): string {
+/**
+ * 👑 の点の出し方（画面の文言）。画像＝「85点」／判定だけ（分析待ち・要確認）＝「判定 163点」／
+ * 2026-09-27 画像を足した時＝「合計 169点（判定 163・画像 +6）」（並びに使った合計を先に・内訳を後ろに）
+ */
+export function bestPointLabel(b: Pick<CustomerBest, "basis" | "match" | "score"> & { bonus?: number | null }): string {
   if (b.basis === "image" && b.match != null) return `${b.match}点`;
-  // 2026-09-27 画像で分析をまとめた: 判定の点で決めた 👑 にも画像の点を並べる（同じ点の時は画像の点で決めた）
-  if (b.score != null) return `判定 ${b.score}点${b.match != null ? `・画像 ${b.match}点` : ""}`;
+  if (b.score != null) return b.bonus != null ? `合計 ${b.score + b.bonus}点（判定 ${b.score}・画像 ${signedPoints(b.bonus)}）` : `判定 ${b.score}点`;
   return b.match != null ? `${b.match}点` : "点なし";
 }
 
@@ -231,7 +254,8 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
     : (scoreScored.length ? "score" : imageScored.length ? "image" : null);
   if (!basis) return null;
   const cands = basis === "image" ? imageScored : scoreScored;
-  const primary = (r: BestCandidateRow): number => (basis === "image" ? m(r) : sc(r)) as number;
+  // 2026-09-27 版 b: 判定の点で決める時の「同じ点」は合計（判定の点＋画像の加点）で見る
+  const primary = (r: BestCandidateRow): number => (basis === "image" ? m(r) : overallPoints(r)) as number;
   // 同じ点の後: 🌟★/🌟 → 新しい回 → 元の順位 → id
   const tail = (a: BestCandidateRow, z: BestCandidateRow) =>
     (z.recommended - a.recommended) || (Date.parse(z.created_at) - Date.parse(a.created_at)) || (a.rank - z.rank) || (a.id - z.id);
@@ -245,7 +269,7 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   const tied = sorted.filter((r) => r.id !== best.id && primary(r) === primary(best));
   return {
     id: best.id, batch_id: best.batch_id, rank: best.rank, property_name: best.property_name, room_no: best.room_no ?? null,
-    match: m(best), score: sc(best), basis,
+    match: m(best), score: sc(best), bonus: imageBonusPoints(best), total: overallPoints(best), basis,
     tied_ids: tied.map((r) => r.id), tied_names: tied.map((r) => r.property_name),
     scored: imageScored.length,
     unscored: inWindow.filter((r) => r.image_analysis && m(r) == null && !isNeedsCheck(r)).length,

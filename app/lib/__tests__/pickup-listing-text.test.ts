@@ -85,7 +85,8 @@ console.log("■ 画像で分析をカードの札に");
   const items2 = [{ image_analysis: a86, status: "pending" }, { image_analysis: null, status: "sent" }, { image_analysis: null, status: "skipped" }, { image_analysis: null, status: "pending" }];
   t("分析待ちは未送信だけを数える（送信済み・見送りは数えない）", roundImageLine(items2) === "🔍 画像で分析 1/4件（分析待ち 1件）", roundImageLine(items2));
   t("1件も分析していなければ回の1行は出さない", roundImageLine([{ image_analysis: null }]) === null);
-  t("👑 の行の点: 「判定 162点・画像 86点」", pointsLabel(162, a86) === "判定 162点・画像 86点" && pointsLabel(107, null) === "判定 107点");
+  // 2026-09-27 版 b: 画像は判定の点に足す分で見せる。希望の一覧が無い古い形（a86）は足さない＝判定の点だけ（新しい形は pickup-image-bonus.test）
+  t("👑 の行の点: 古い形・分析なしは「判定 162点」", pointsLabel(162, a86) === "判定 162点" && pointsLabel(107, null) === "判定 107点", pointsLabel(162, a86));
 }
 
 // ── YUMA の回 cg_509cd061_706 の実物（reason_codes・点・画像の点） ──
