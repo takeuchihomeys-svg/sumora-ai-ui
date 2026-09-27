@@ -7,6 +7,7 @@ import scenariosJson from "@/app/lib/customer-sim-scenarios.json";
 import { isMetaNarrationLine, isWorkNoteLine, isNotACustomerReply } from "@/app/lib/meta-narration";
 import { STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE } from "@/app/lib/reply-context";
 import { pickSimMaterial, type SimAixMaterial, type SimMaterialPool } from "@/app/lib/customer-sim-material";
+import type { ShadowKind } from "@/app/lib/customer-sim-shadow";
 
 // ─── 筋書き ───
 
@@ -193,7 +194,7 @@ export type SimAuditInput = {
   materialMustShow?: ReadonlyArray<string>;
 };
 
-export type SimAuditFinding = { kind: "waited" | "work_note" | "invented" | "repeat_promise" | "stage_mismatch" | "state_conflict" | "material_missing"; detail: string };
+export type SimAuditFinding = { kind: "waited" | "work_note" | "invented" | "repeat_promise" | "stage_mismatch" | "state_conflict" | "material_missing" | ShadowKind; detail: string };
 
 const KIND_JA: Record<SimAuditFinding["kind"], string> = {
   waited: "お待たせ",
@@ -203,6 +204,11 @@ const KIND_JA: Record<SimAuditFinding["kind"], string> = {
   stage_mismatch: "状況の取り違え（段階）",
   state_conflict: "状況の取り違え（表示のずれ）",
   material_missing: "材料の取りこぼし",
+  // 影の道（customer-sim-shadow.ts judgeShadowTurn・--shadow の時だけ出る）
+  draft_conflicts_aix: "影: 下書きが AIX と別の道",
+  draft_does_aix_job: "影: 下書きが AIX の送る物を書いた",
+  aix_followup_missing: "影: AIX の後の一言が無い",
+  aix_scene_skipped: "影: 決まりでは AIX の場面",
 };
 export function simAuditKindJa(k: SimAuditFinding["kind"]): string { return KIND_JA[k]; }
 
@@ -268,7 +274,11 @@ export function auditSimTurn(input: SimAuditInput): SimAuditFinding[] {
 /** 検査の要約（種類ごとの件数） */
 export function summarizeSimAudit(rows: ReadonlyArray<{ findings: ReadonlyArray<SimAuditFinding> }>): Array<{ kind: SimAuditFinding["kind"]; label: string; count: number }> {
   const kinds = Object.keys(KIND_JA) as SimAuditFinding["kind"][];
-  return kinds.map((k) => ({ kind: k, label: KIND_JA[k], count: rows.reduce((n, r) => n + r.findings.filter((x) => x.kind === k).length, 0) }));
+  // 影の道の4種（--shadow の時だけ出る）は1件以上ある時だけ並べる（--shadow なしの要約は今までと同じ7種）
+  const SHADOW_ONLY = new Set<string>(["draft_conflicts_aix", "draft_does_aix_job", "aix_followup_missing", "aix_scene_skipped"]);
+  return kinds
+    .map((k) => ({ kind: k, label: KIND_JA[k], count: rows.reduce((n, r) => n + r.findings.filter((x) => x.kind === k).length, 0) }))
+    .filter((s) => !SHADOW_ONLY.has(s.kind) || s.count > 0);
 }
 
 // ─── スタッフ側の決め方（ブレインの判断 → 何を送るか） ───

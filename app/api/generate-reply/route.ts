@@ -250,6 +250,7 @@ import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-r
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { SHADOW_NO_WRITE_FIELD } from "@/app/lib/customer-sim-shadow";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -2908,6 +2909,10 @@ async function handleGenerateReply(req: NextRequest) {
   // includeStopReason=true（generate-pending-drafts の品質ゲート用）の場合のみ、
   // 本文の後に <<<STOP_REASON:xxx>>> トレーラーを付加する（UIからの通常呼び出しには影響しない）
   let includeStopReason = false;
+  // 2026-09-27 お客様役の影の下書き（テスト用の会話だけ）: 生成はするが会話・ログに何も書かない（ai_draft・ai_draft_check・
+  //   draft_pending_at・reply_mode_shadow_logs・closing_strategy_logs・body_block_code・古い判断の再分析 after・申込期間のまとめ）。
+  //   body.shadowNoWrite=true かつ isTestConversation の時だけ（本物の会話では無視）。llm_usage_logs（費用）は残る
+  let shadowNoWrite = false;
   // reply_modeゲート: 自動生成経路（bg-async/cron/generate-draft-bg）のみtrueが渡される。
   // brain(suggested_aix_meta.reply_mode)が"aix"なら自動ドラフト生成を中止する
   let enforceReplyModeGate = false;
@@ -2973,6 +2978,8 @@ async function handleGenerateReply(req: NextRequest) {
         brainAnalyzedAt?: string | null;
       } | null;
       includeStopReason?: boolean;
+      /** お客様役の影の下書き（テスト用の会話だけ・何も書かない） */
+      shadowNoWrite?: boolean;
       propertyStatus?: PropertyStatus;
       // ─── テンプレート最適化モード用フィールド ───
       templateText?: string;        // 指定するとテンプレート最適化モードが有効になる
@@ -2996,6 +3003,7 @@ async function handleGenerateReply(req: NextRequest) {
     state = body.state;
     conversationId = body.conversationId || "";
     includeStopReason = body.includeStopReason === true;
+    shadowNoWrite = (body as Record<string, unknown>)[SHADOW_NO_WRITE_FIELD] === true && isTestConversation(conversationId);
     enforceReplyModeGate = body.enforceReplyModeGate === true;
     lineDisplayName = (body.customerName || "").trim();
     recentMessages = body.recentMessages || [];
@@ -3042,6 +3050,8 @@ async function handleGenerateReply(req: NextRequest) {
   }
 
   const isTemplateOptimize = templateText.length > 0;
+  /** 会話・ログに書いてよいか（お客様役の影の下書きは書かない） */
+  const persist = !shadowNoWrite;
   // 2026-09-13 監査: どの経路の生成か（ティア率を経路別に測るため step2-tier・tpo_debug に残す）。
   //   bg_async_direct=ブレイン直列の自動生成 / auto=自動（cron 等・DB から判断を読む）/ manual=画面の再生成 / manual_hint=返信ヒント付き・✨ / template_optimize
   const generationCaller: "bg_async_direct" | "auto" | "template_optimize" | "manual_hint" | "manual" =
@@ -3248,7 +3258,7 @@ async function handleGenerateReply(req: NextRequest) {
     if (conversationId) {
       const ap = await loadApplyPeriodNote(conversationId, deepseekCutoff);
       applyPeriodNote = ap.note;
-      if (ap.missing) {
+      if (ap.missing && persist) {
         const cid = conversationId;
         try { after(() => ensureApplyPeriodSummary(cid).then(() => {}, () => {})); } catch { /* after の外（テスト等）は sweep に任せる */ }
       }
@@ -5340,7 +5350,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     }
     // 手動生成でブレインの判断が古い時: 生成はブロックせず、ブレインを後ろで起動する（結果は画面のリアルタイム更新で P5 カードに届く）。
     //   bg-async / cron 経路（enforceReplyModeGate=true）は自前でブレインを直列実行するので起動しない。60秒以内に分析済みなら二重起動しない
-    if (conversationId && !enforceReplyModeGate && !isTemplateOptimize && replyAixInput && !brainDecision?.fresh
+    if (persist && conversationId && !enforceReplyModeGate && !isTemplateOptimize && replyAixInput && !brainDecision?.fresh
         && !replyAixInput.isFirstReply && !(replyAixInput.conversationStatus && DRAFT_SKIP_STATUSES.has(replyAixInput.conversationStatus))) {
       const analyzedAtMs = brainGate?.brainAnalyzedAt ? new Date(brainGate.brainAnalyzedAt).getTime() : NaN;
       if (Number.isNaN(analyzedAtMs) || Date.now() - analyzedAtMs > 60_000) {
@@ -5725,7 +5735,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               }
               // 2026-09-17 竹内（返信生成の keep-warm）: usage が届いた＝Anthropic がこの prefix を読んだ／書いた（キャッシュに実在する）ので、ここで初めて記録する。
               //   gen1・gen2 で同じ prefix なので1回だけ。after は brain_decision_logs.body_block_code の記録と同じくストリームの中から登録できる
-              if (cacheUsage && warmPrefix && !warmPrefixRecorded) {
+              if (persist && cacheUsage && warmPrefix && !warmPrefixRecorded) {
                 warmPrefixRecorded = true;
                 const wp = warmPrefix;
                 try { after(() => recordWarmPrefix(wp)); } catch (e) { console.warn("[generate-reply] warm prefix record skipped:", e instanceof Error ? e.message : e); }
@@ -6246,7 +6256,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   console.log(JSON.stringify({ tag: "aix:body-block-without-brain-aix", conversationId, code: unresolved.code, brainAction: brainDecision?.action ?? null, fresh: brainDecision?.fresh ?? false }));
                   // 2026-09-12 段2: 同じ会話で最新のブレインの判断の行に body_block_code を残す（ブレインの学習材料・fail-open）
                   const blockCode = unresolved.code;
-                  after(async () => {
+                  if (persist) after(async () => {
                     try {
                       const { data: lastDec } = await supabase
                         .from("brain_decision_logs")
@@ -6506,7 +6516,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // 純ルールベース分類器の結果を reply_mode_shadow_logs に追記するだけ（上書きなし・1行1メッセージ）。
             // 返信内容・SUGGESTED_AIX・レスポンスには一切影響しない（fire-and-forget）。
             // ※テンプレート最適化モードは会話への返信生成ではないためログを残さない（書き込みゲート）
-            if (conversationId && message && !isTemplateOptimize) {
+            if (persist && conversationId && message && !isTemplateOptimize) {
               const _shadowClassify = (() => {
                 try {
                   // history のスタッフ行プレフィックスは「スモラ:」（route内の履歴フォーマット準拠）
@@ -6552,7 +6562,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
                 // fire-and-forget — closing_strategyが生成されたらログに保存
                 // 2026-09-27: テスト用の会話（YUMA）は締め戦略の答え合わせ（成約・失注で書き戻す）に入れない
-                if (suggestedAix.closing_strategy && conversationId && !isTestConversation(conversationId)) {
+                if (persist && suggestedAix.closing_strategy && conversationId && !isTestConversation(conversationId)) {
                   supabase.from("closing_strategy_logs").insert({
                     conversation_id: conversationId,
                     closing_strategy: suggestedAix.closing_strategy,
@@ -6574,7 +6584,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）
             // ※テンプレート最適化モードは conversationId を読み取り専用（summaryJson・引用コンテキスト等）にのみ使用し、
             //   会話の ai_draft を絶対に上書きしない（書き込みゲート）
-            if (conversationId && !isTemplateOptimize) {
+            if (persist && conversationId && !isTemplateOptimize) {
               // M-3: max_tokens で切れた場合は ai_draft に保存しない（尻切れ文をスタッフがそのまま送信する事故を防止）
               // pending 解除のみ行う（attempted_at は残す＝10分間リトライしない）
               const isTruncated = String(genStopReason ?? "") === "max_tokens";
@@ -6663,7 +6673,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // ストリームを先に閉じてクライアントの generating=true を即解放する
             // Supabaseのクリーンアップは fire-and-forget でバックグラウンド実行
             try { controller.close(); } catch { /* already closed */ }
-            if (conversationId && !isTemplateOptimize) {
+            if (persist && conversationId && !isTemplateOptimize) {
               void supabase
                 .from("conversations")
                 .update({ draft_pending_at: null })
@@ -6685,7 +6695,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止（毎分Cronの無限再試行対策）
     // ※ draft_attempted_at は意図的に触らない（残す＝10分間はorphanedクエリでリトライされない）
     // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
-    if (conversationId && !isTemplateOptimize) {
+    if (persist && conversationId && !isTemplateOptimize) {
       try {
         await supabase.from("conversations").update({ draft_pending_at: null }).eq("id", conversationId);
       } catch (clearErr) {

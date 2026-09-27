@@ -22,6 +22,9 @@
 //   その他: --rounds=N（往復の上限・既定12）／--reset（筋書きの最初から）／--text="…"（この1回はお客様役の文を固定）
 //           --base=http://localhost:3000（入口の場所）／--force（直近30分に竹内さんの本物の発言があっても進める）
 //           --at-step=N（筋書きの N 段目から始める・1始まり。途中の会話から続ける時）
+//           --shadow（影の道: ブレインが選ばなかった方も作って突き合わせる・送らない。app/lib/customer-sim-shadow.ts）
+//             --shadow-base=http://localhost:3000（影を作る入口・既定は手元＝LLM_TEST_MODE=deepseek-all の開発サーバ。本番の入口では作らない）
+//             --shadow-images（画像を読む AIX〈見積書・物件確認した・ピックアップ/オススメ〉も影で作る・Vision は Claude のまま）
 //   内部認証の値は環境変数 INTERNAL_API_SECRET、無ければ .env.prod から読む（画面に出さない）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync } from "node:fs";
@@ -39,6 +42,9 @@ import {
   addressFromPdfText, alignEstimateText, buildMeetingPlaceText, describeSimMaterial, groundingOfMaterial, mustShowOfMaterial,
   type SimAixMaterial, type SimMaterialPool, type SimEstimateSource, type SimPickupSource,
 } from "../app/lib/customer-sim-material";
+import { sameBuilding } from "../app/lib/customer-sim-material";
+import { judgeShadowTurn, summarizeShadow, type ShadowFinding } from "../app/lib/customer-sim-shadow";
+import { runShadowTurn, generateReplyAcceptsShadow, isLocalBase, type ShadowTurnResult } from "../app/lib/customer-sim-shadow-run";
 
 const CONV = YUMA_CONVERSATION_ID;
 const args = process.argv.slice(2);
@@ -50,6 +56,11 @@ const SETTLE_MS = Math.max(0, Number(arg("settle") ?? 15) * 1000);
 const BRAIN_WAIT_MS = Math.max(30, Number(arg("wait") ?? 240)) * 1000;
 const DIR = join(tmpdir(), "sumora-customer-sim");
 const STATE_FILE = join(DIR, "state.json");
+// 影の道（--shadow の時だけ）: 手元の開発サーバで作る。generate-reply が書かない呼び方を持つ時だけ影の下書きを作る
+const SHADOW = flag("shadow");
+const SHADOW_BASE = (arg("shadow-base") ?? "http://localhost:3000").replace(/\/$/, "");
+const SHADOW_DRAFT_OK = SHADOW && isLocalBase(SHADOW_BASE) && existsSync("app/api/generate-reply/route.ts")
+  && generateReplyAcceptsShadow(readFileSync("app/api/generate-reply/route.ts", "utf8"));
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -263,7 +274,7 @@ async function sendImagesAsStaff(urls: string[], c: ConvRow, aixType: string): P
   return delivered;
 }
 
-type MaterialSendResult = { text: string | null; images: number; label: string; note?: string; skippedAfterSend: string[] };
+type MaterialSendResult = { text: string | null; images: number; label: string; note?: string; skippedAfterSend: string[]; /** 見積書送るの2通目（AIX が作るカバー文・画面は送らない） */ coverLetter?: string | null };
 
 /**
  * 材料の要る AIX を送る。生成・送信・記録は画面（AixModal・page.tsx）と同じ API・引数・順番（画像→本文→記録）。
@@ -284,7 +295,8 @@ async function sendWithMaterial(action: string, checkPattern: string | null, mat
       if (!g.text) throw new Error("見積書の生成が空");
       const aligned = alignEstimateText(g.text, material);
       if (!aligned) throw new Error(`生成の金額が保存済みの値（初期費用 ${material.initialCostYen}・割引 ${material.discountYen}）と食い違う → 送らない: ${one(g.text, 160)}`);
-      return done(aligned.text, [material.imageUrl], { was_edited: aligned.edited, conversation_match: false }, `AIX【estimate_sheet】を保存済みの見積書で送る${aligned.edited ? "（物件名を保存済みの名前に手直し）" : ""}`);
+      const r = await done(aligned.text, [material.imageUrl], { was_edited: aligned.edited, conversation_match: false }, `AIX【estimate_sheet】を保存済みの見積書で送る${aligned.edited ? "（物件名を保存済みの名前に手直し）" : ""}`);
+      return { ...r, coverLetter: (g.raw as { coverLetter?: string }).coverLetter ?? null };
     }
     case "check_result": {
       // 画面の物件確認した（available）: 物件ごとの資料と状態を渡す → [資料] → 本文（AixModal 2388-2485・3159-3261）
@@ -398,6 +410,8 @@ type Row = {
   changes: Awaited<ReturnType<typeof changesSince>> | null; usd: number; simUsd: number; waitedSec: number; findings: SimAuditFinding[]; note?: string;
   /** 使った材料（材料の要る AIX を送った時）・送った画像の枚数・画面では作るが作らなかった物 */
   material?: string | null; images?: number; skippedAfterSend?: string[];
+  /** 影の道（--shadow）: 選ばなかった方（送らない）と突き合わせのズレ */
+  shadow?: (Omit<ShadowTurnResult, "findings"> & { coverLetter?: string | null }) | null; shadowFindings?: ShadowFinding[];
 };
 
 function printRow(r: Row) {
@@ -413,6 +427,11 @@ function printRow(r: Row) {
   console.log(`  状況の表示: ${r.headline}${r.conflicts ? `（⚠ずれ ${r.conflicts}）` : ""}`);
   if (r.changes) console.log(`  変化: 送った事実[${r.changes.facts.join(", ") || "-"}] 送った物件[${r.changes.props.join(", ") || "-"}] タスク[${r.changes.tasks.join(", ") || "-"}] AIX要対応+${r.changes.aixItems} カレンダー+${r.changes.calendar < 0 ? "?" : r.changes.calendar}`);
   console.log(`  費用: この往復 $${r.usd.toFixed(4)}（うちお客様役 $${r.simUsd.toFixed(5)}）`);
+  if (r.shadow) {
+    if (r.shadow.chosen === "aix") console.log(`  影の下書き（送らない）: ${r.shadow.draft ? one(r.shadow.draft, 200) : `作らなかった（${r.shadow.draftSkipped ?? r.shadow.draftError ?? "-"}）`}`);
+    if (r.shadow.coverLetter) console.log(`  影の AIX の後の一言（AIX が作った2通目・送らない）: ${one(r.shadow.coverLetter, 160)}`);
+    for (const c of r.shadow.candidates) console.log(`  影の AIX【${c.action}${c.checkPattern ? `/${c.checkPattern}` : ""}】（${c.source}）: ${c.text ? one(c.text, 160) : `作らなかった（${c.skipped ?? c.error ?? "-"}）`}`);
+  }
   if (r.findings.length) console.log(`  ⚠ 検査: ${r.findings.map((f) => `${simAuditKindJa(f.kind)}（${f.detail}）`).join(" ／ ")}`);
   if (r.note) console.log(`  メモ: ${r.note}`);
 }
@@ -485,9 +504,25 @@ async function main() {
     const plan = planStaffAction(meta as { action?: string | null; reply_mode?: string | null; check_pattern?: string | null } | null, pool);
     const historyBefore: SimHistoryItem[] = (await recentMessages()).map((x) => ({ sender: x.sender, text: x.text, isAix: x.is_aix_generated, hasImage: !!x.image_url, createdAt: x.created_at }));
 
+    // ── 影の道（--shadow）: 送る前に、ブレインが見たのと同じ会話で「選ばなかった方」を作る（送らない・送った記録を作らない） ──
+    const focusSentByUs = !!pool.focusPropertyName && pool.sentPropertyNames.some((n) => sameBuilding(n, pool.focusPropertyName));
+    let shadow: ShadowTurnResult | null = null;
+    if (SHADOW && plan.kind !== "wait") {
+      const chosen = plan.kind === "draft" ? "draft" as const : "aix" as const;
+      shadow = await runShadowTurn(
+        { base: SHADOW_BASE, conversationId: CONV, draftAccepted: SHADOW_DRAFT_OK, withImages: flag("shadow-images") },
+        {
+          chosen, meta: meta as Parameters<typeof runShadowTurn>[1]["meta"],
+          aix: plan.kind !== "draft" ? { action: plan.action, checkPattern: plan.kind === "aix_needs_material" ? null : plan.checkPattern } : null,
+          draftText: chosen === "draft" ? draft : null, conv: c, msgs: poolMsgs, pool, sentPropertyCount: pool.sentPropertyNames.length, focusSentByUs,
+        },
+      ).catch((e): ShadowTurnResult => ({ chosen, candidates: [], findings: [], draftError: e instanceof Error ? e.message : String(e) }));
+    }
+
     let sent: string | null = null, sentKind: string | null = null, planLabel = "", note: string | undefined;
     let stop = false;
     let materialLabel: string | null = null, images = 0, skippedAfterSend: string[] = [], material: SimAixMaterial | null = null;
+    let shadowCover: string | null = null;
     try {
       if (plan.kind === "wait") { planLabel = "判断が来ないので止める"; stop = true; }
       else if (plan.kind === "aix_needs_material") {
@@ -497,7 +532,7 @@ async function main() {
         material = plan.material;
         materialLabel = describeSimMaterial(plan.material);
         const r = await sendWithMaterial(plan.action, plan.checkPattern, plan.material, c, poolMsgs, brain?.action ?? null, flag("no-send"));
-        planLabel = r.label; images = r.images; skippedAfterSend = r.skippedAfterSend;
+        planLabel = r.label; images = r.images; skippedAfterSend = r.skippedAfterSend; shadowCover = r.coverLetter ?? null;
         if (r.note) note = r.note;
         if (r.text) { sent = r.text; sentKind = `AIX ${plan.action}${plan.checkPattern ? `/${plan.checkPattern}` : ""}`; } else stop = true;
       } else if (plan.kind === "aix") {
@@ -516,6 +551,11 @@ async function main() {
       planLabel += ` → 失敗: ${e instanceof Error ? e.message : e}`; stop = true;
     }
 
+    // 影: AIX を送った番は「AIX の後の一言」（お客様役は一言を送らない＝followupSent=false）
+    const shadowFindings: ShadowFinding[] = [...(shadow?.findings ?? [])];
+    if (shadow && sent && sentKind?.startsWith("AIX ") && plan.kind !== "draft" && plan.kind !== "wait") {
+      shadowFindings.push(...judgeShadowTurn({ chosen: "aix", aix: { action: plan.action, checkPattern: plan.kind === "aix_needs_material" ? null : plan.checkPattern, text: sent }, draftText: null, followupSent: false }));
+    }
     if (sent) await sleep(SETTLE_MS); // 送った後の記録（送った事実・ブレインの再分析）が落ち着くのを待つ
     const st = await stateLine();
     const changes = await changesSince(roundStart);
@@ -525,10 +565,13 @@ async function main() {
       groundingExtra: [...changes.props, ...(material ? groundingOfMaterial(material) : [])],
       materialMustShow: material && sent ? mustShowOfMaterial(material) : undefined,
     });
+    for (const f of shadowFindings) findings.push({ kind: f.kind, detail: f.detail });
     const row: Row = {
       round: state.round, step: stepLabel, at: jst(customerAt), customer: customerText, customerSource, goalReached, brain, plan: planLabel,
       draft, sent, sentKind, headline: st.headline, conflicts: st.conflicts, changes, usd: cost.usd, simUsd, waitedSec: Math.round(waitedMs / 1000), findings, note,
       material: materialLabel, images, skippedAfterSend,
+      shadow: shadow ? { chosen: shadow.chosen, draft: shadow.draft, draftSkipped: shadow.draftSkipped, draftError: shadow.draftError, candidates: shadow.candidates, coverLetter: shadowCover } : null,
+      shadowFindings,
     };
     rows.push(row);
     appendFileSync(logFile, JSON.stringify({ ...row, costByModel: cost.byModel }) + "\n");
@@ -546,6 +589,7 @@ async function main() {
     console.log(`\n══ 要約（${rows.length}往復・${state.finished ? "筋書きの終わり" : `段 ${state.cursor.stepIndex + 1}/${scenario.steps.length} で停止`}）`);
     console.log(`  送った: ${rows.filter((r) => r.sent).length}（AIX ${rows.filter((r) => r.sentKind?.startsWith("AIX")).length}・下書き ${rows.filter((r) => r.sentKind === "下書き").length}）`);
     console.log(`  検査: ${sum.map((s) => `${s.label} ${s.count}`).join("／")}`);
+    if (SHADOW) console.log(`  影の道: ${summarizeShadow(rows).map((s) => `${s.label} ${s.count}`).join("／")}（影の下書き: ${SHADOW_DRAFT_OK ? "作る" : "作らない＝generate-reply に書かない呼び方がまだ無い"}・入口 ${SHADOW_BASE}）`);
     console.log(`  費用: 合計 $${total.toFixed(4)}（1往復あたり $${(total / rows.length).toFixed(4)}・うちお客様役の DeepSeek $${simTotal.toFixed(5)}）`);
     console.log(`  記録: ${logFile}`);
     if (state.finished) console.log("  筋書きの最後まで進みました（次に同じ筋書きを動かすと最初から）");
