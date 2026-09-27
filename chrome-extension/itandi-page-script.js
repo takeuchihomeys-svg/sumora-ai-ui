@@ -106,8 +106,85 @@
       var w = v("station_walk_minutes:lteq"); if (w !== undefined) f.walk = w;
       var a = v("building_age:lteq"); if (a !== undefined) f.age = a;
       f.layouts = [].slice.call(document.querySelectorAll("input[name='room_layout:in']:checked")).map(function (x) { return String(x.id || x.value || ""); }).slice(0, 20);
+      // v2.5.34: 「募集条件更新 N日以内」の欄に見えている文字（""＝なし）。欄が見つからない時は入れない（サーバーは比べない）
+      //   名前だけで見つけた欄（how="name"）は打っていないので読まない（別の欄の値を更新日と取り違えない）
+      var ud = _itFindUpdateDaysField();
+      if (ud && ud.how === "label") f.update_days = String(ud.el.value == null ? "" : ud.el.value).slice(0, 20);
     } catch (e) { f.read_error = String((e && e.message) || e).slice(0, 100); }
     return f;
+  }
+
+  // ── 募集条件更新 N日以内（v2.5.34・itandi-update-days.js）──
+  // 2026-09-27 竹内「リアプロはボタンで選択やけど ITANDI は入力となる（更新日）」: リアプロと同じ日数（cond.rp_update_days）を欄に打つ。
+  //   日数が無い時は空のまま（前の値が残っていたら空にする）。入った値を読み直してから検索を押す（ずれたまま押さない）
+  function _itUD() { return (typeof self !== "undefined" ? self : window).AxlxItandiUpdateDays; }
+  function _itFindUpdateDaysField() {
+    var UD = _itUD();
+    if (!UD) return null;
+    // 探す範囲は検索フォーム（一覧の表まで textContent を読まない）。フォームが分からない時は body
+    var rentEl = document.querySelector('input[name="rent:lteq"]');
+    var formEl = rentEl && rentEl.closest ? rentEl.closest("form") : null;
+    return UD.findField(formEl || document.body);
+  }
+  function _itUpdateDaysEnv() {
+    return {
+      later: function (fn, ms) { setTimeout(fn, ms); },
+      hd: _hd, sd: _sd,
+      setVal: function (el, v) {
+        var proto = String(el.tagName).toUpperCase() === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, "value").set.call(el, String(v));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+      fire: function (el, type) { el.dispatchEvent(new Event(type, { bubbles: true })); },
+      // 人が欄を押した形（mousedown → focus → mouseup → click）。一覧（MUI の Autocomplete）は mousedown で開く
+      press: function (el) {
+        ["mousedown", "mouseup", "click"].forEach(function (t, i) {
+          el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+          if (i === 0 && el.focus) el.focus();
+        });
+      },
+      click: function (el) { el.click(); },
+      // ⚠ Escape で閉じない（178行目）。欄を離れて閉じる
+      blur: function (el) { if (el.blur) el.blur(); },
+      options: function (el) {
+        var lbId = el.getAttribute && (el.getAttribute("aria-controls") || el.getAttribute("aria-owns"));
+        var lb = lbId ? document.getElementById(lbId) : null;
+        return [].slice.call((lb || document).querySelectorAll('[role="option"]')).filter(isVis);
+      },
+    };
+  }
+  // next(ok, errMsg): ok=false の時だけ検索を押さない（前の値が残って空にもできない）
+  function _itFillUpdateDays(cond, next) {
+    var UD = _itUD();
+    var want = UD ? UD.normDays(cond && cond.rp_update_days) : null;
+    var rec = function (o) { if (_itAudit) _itAudit.update_days = o; _itStep("update_days", o.status + (o.want != null ? ":" + o.want : "")); };
+    if (!UD) { rec({ status: "module_missing", want: null }); next(true); return; }
+    var found = null;
+    try { found = _itFindUpdateDaysField(); } catch (e) { found = null; }
+    // v2.5.34 反証の検証: 名前だけで見つけた欄（how="name"）には打たない（別の欄に日数を打つおそれ）。name だけ記録して、欄が無い扱い
+    if (!found || found.how !== "label") {
+      if (want !== null) console.warn("[AX] itandi 募集条件更新の欄が見つかりません（" + want + "日以内を入れずに検索）" + (found ? " 名前の候補=" + found.name : ""));
+      rec({ status: want === null ? "no_field" : "field_missing", want: want, how: found ? found.how : null, name: found ? found.name : null });
+      next(true); return;
+    }
+    // 途中で例外が出ても検索は止めない（点検に error を残して次へ）。next は1回だけ呼ぶ
+    var settled = false;
+    var env = _itUpdateDaysEnv();
+    var onErr = function (e) {
+      if (settled) return; settled = true;
+      console.warn("[AX] itandi 募集条件更新の入力で例外:", e);
+      rec({ status: "error", want: want, how: found.how, error: String((e && e.message) || e).slice(0, 100) });
+      next(true);
+    };
+    env.later = function (fn, ms) { setTimeout(function () { if (settled) return; try { fn(); } catch (e) { onErr(e); } }, ms); };
+    try { UD.run(found.el, want, env, function (r) {
+      if (settled) return; settled = true;
+      r.how = found.how; r.name = found.name;
+      rec(r);
+      console.log("[AX] itandi 募集条件更新:", want === null ? "なし" : want + "日以内", "→", r.status, "（欄=" + (r.got || "空") + "）");
+      if (r.status === "stuck") next(false, "itandi 募集条件更新の欄に前の値（" + r.got + "）が残り空にできない");
+      else next(true);
+    }); } catch (e) { onErr(e); }
   }
   function _itPack() {
     if (!_itAudit) return null;
@@ -1071,6 +1148,10 @@
                             document.querySelector("input[name*='layout']");
           if (layoutInput || _afterModalPolled >= 3000) {
             clearInterval(_afterModalPoll);
+            // v2.5.34: 更新日（募集条件更新 N日以内）を先に入れる。後の fillRemainingFields のペットの欄を開くクリックが
+            //   打っている途中の欄から focus を奪わないように（欄を離れると一覧の入力が戻ることがある）
+            _itFillUpdateDays(cond, function (udOk, udErr) {
+            if (!udOk) { showItandiWarnToast(udErr); _safeDone(udErr); return; }
             fillRemainingFields(cond);
             setTimeout(function () {
               // 検索の点検: 押す直前のフォームを読み戻す・検索ボタンが押せたか
@@ -1084,6 +1165,7 @@
                 _safeDone();
               }, 500);
             }, _sd(1000)); // 検索ボタンを押すまで: 1.0〜1.35秒（ペットの欄を開く待ち 0.70〜0.95秒より必ず後）
+            }); // _itFillUpdateDays
           }
         }, 100);
       }

@@ -98,6 +98,11 @@ export type Filled = {
   lines_missing?: MissingItem[] | null;
   click_fails?: Array<{ what: string; text?: string | null; sample?: string[] | null }> | null;
   reset_fail?: string | null;
+  /** 2026-09-27 v2.5.34 itandi: 「募集条件更新 N日以内」の欄に入れた結果（itandi-update-days.js の run の返り）。
+   *  status: kept／set（一覧から選んだ）／set_typed（打っただけ・確定は未確認）／cleared／out_of_range（一覧に無い日数→なしで検索）／
+   *  not_accepted（欄が日数を受け付けず空で検索）／stuck（前の値が残り検索しなかった）／
+   *  field_missing（欄が見つからない・名前だけで見つけた欄には打たない）／no_field（入れる日数が無く欄も無い）／module_missing／error */
+  update_days?: { status?: string | null; want?: number | null; before?: string | null; got?: string | null; how?: string | null; name?: string | null; how_set?: string | null } | null;
   /** 場所の入れ方（station / route / area / none）。page-script の判定のまま */
   area_path?: string | null;
   /** 条件を外して検索した（例: 駅が選べず駅なしで検索） */
@@ -228,6 +233,16 @@ function parseIntLoose(raw: unknown): number | null {
   if (!m) return null;
   const n = Number(m[0]);
   return n > 0 ? n : null;
+}
+
+/** 更新日の欄の文字 → 日数（itandi 用: "0" は当日＝0 のまま・""／「なし」は null）。数字が無ければ null */
+function parseDaysKeepZero(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : null;
+  const s = String(raw).normalize("NFKC").replace(/\s+/g, "");
+  if (!s || s === "-1" || /なし/.test(s)) return null;
+  const m = s.match(/^(\d+)/);
+  return m ? Number(m[1]) : null;
 }
 
 /** 間取りの文字 → 間取りの札（1K・1LDK…）。「ワンルーム」は 1R、「5K以上」は 5K_OVER */
@@ -406,12 +421,31 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
     }
   }
 
-  // ── 更新日（リアプロだけ）──
-  if (site === "realpro" && form && "update_days" in form) {
-    const intendedDays = i?.rp_update_days != null ? parseIntLoose(i.rp_update_days) : null;
-    const filledDays = parseIntLoose(form.update_days);
-    if (intendedDays != null && filledDays !== intendedDays) {
-      add("UPDATE_DAYS", "bad", `update_days:${siteKey}:not_filled`, "更新日が入っていない", `入れようとした=${intendedDays}日・入った=${filledDays ?? "指定なし"}`);
+  // ── 更新日（リアプロ: select[name=update_date]／itandi: 「募集条件更新 N日以内」の欄・v2.5.34 から）──
+  //   itandi の欄は「0」（当日）と「なし」（空）が別の値 → 0 を残す読み方。リアプロは今までどおり（先頭の選択肢の値を 0 と読まない）
+  const udStatus = site === "itandi" ? (f?.update_days?.status ?? null) : null;
+  if (site === "itandi" && udStatus === "field_missing") {
+    const want = i?.rp_update_days != null ? parseDaysKeepZero(i.rp_update_days) : null;
+    add("UI_NOT_FOUND", "warn", `ui_not_found:${siteKey}:update_days:募集条件更新`, "募集条件更新（N日以内）の欄が見つからない",
+      `入れようとした=${want ?? "指定なし"}日・更新日で絞らずに検索した${f?.update_days?.name ? `（名前だけで見つけた候補=${f.update_days.name}・打っていない）` : ""}`);
+  }
+  if ((site === "realpro" || site === "itandi") && form && "update_days" in form) {
+    const parseDays = site === "itandi" ? parseDaysKeepZero : parseIntLoose;
+    const intendedDays = i?.rp_update_days != null ? parseDays(i.rp_update_days) : null;
+    const filledDays = parseDays(form.update_days);
+    if (site === "itandi" && udStatus === "out_of_range" && intendedDays != null && filledDays == null) {
+      // 一覧（なし/0〜9）に無い日数（14 等）は打たずに「なし」（広い側・漏れない）で検索した＝決まりどおり → ok の札で残すだけ。
+      //   9 に丸めると狭くなり物件が漏れるので丸めない（v2.5.34 反証の検証）
+      add("UPDATE_DAYS", "ok", `update_days:${siteKey}:out_of_range`, `更新日（${intendedDays}日以内）は ITANDI の選択肢に無いので指定なしで検索した`, `入れようとした=${intendedDays}日・入った=指定なし（広い側）`);
+    } else if (site === "itandi" && udStatus === "set_typed" && intendedDays != null && filledDays === intendedDays) {
+      // 一覧から選べず、打った文字が欄に見えているだけ（値として確定したかは画面の文字では分からない）→ 作りを確かめるまで warn
+      add("UPDATE_DAYS", "warn", `update_days:${siteKey}:typed_unverified`, `更新日（${intendedDays}日以内）は打っただけで、検索に効いたか確かめられていない`, `欄に見えている文字=${filledDays}・一覧の選択肢から選べなかった`);
+    } else if (intendedDays != null && filledDays !== intendedDays) {
+      if (udStatus === "not_accepted") {
+        add("UPDATE_DAYS", "warn", `update_days:${siteKey}:not_accepted`, `更新日（${intendedDays}日以内）を欄が受け付けず、指定なしで検索した`, `入れようとした=${intendedDays}日・入った=${filledDays ?? "指定なし"}（itandi の選択肢は なし/0〜9）`);
+      } else {
+        add("UPDATE_DAYS", "bad", `update_days:${siteKey}:not_filled`, "更新日が入っていない", `入れようとした=${intendedDays}日・入った=${filledDays ?? "指定なし"}`);
+      }
     } else if (intendedDays == null && filledDays != null) {
       add("UPDATE_DAYS", "bad", `update_days:${siteKey}:leftover`, "前の更新日が残っていた", `入れようとした=指定なし・入った=${filledDays}日`);
     }
@@ -443,6 +477,8 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
     add("CONDITION_STALE", "bad", `condition_stale:${siteKey}`, `登録の条件と${driftFields.size}項目ちがう（古い条件で検索したおそれ）`,
       driftItems.map((x) => x.title).join("／"));
   }
+  // 更新日は drift に入れない（v2.5.34 反証: 自動便の 1日 ↔ 手で決めた 7 で毎回 bad・古い条件の数にも入った・リアプロにも効いた）。
+  //   更新日は上の UPDATE_DAYS（入れようとした値↔入った値・決まりとの違い differs）だけが言う
   for (const d of driftItems) {
     add("CONDITION_DRIFT", d.severity, `condition_drift:${siteKey}:${d.field}:${d.kind}`, d.title, `${d.detail}${d.source === "intended" ? "（読み戻しが無いので入れようとした値）" : ""}`);
   }

@@ -3435,6 +3435,7 @@ function _buildBatchConditions(c, isWide, opts) {
     city: c.city || null,
     // 2026-09-19 竹内: 自動便だけ更新日・並び順・ページ数を指定する（手動の一括検索は null＝今までどおり）
     //   更新日は page-script.js が select[name="update_date"] に入れる（個別検索と同じ欄）
+    //   v2.5.34: ITANDI の直接入力の経路でも同じ値を itandi-page-script.js が「募集条件更新 N日以内」の欄に打つ（null＝空のまま）
     rp_update_days: _rpDays,
     sort_order: autoSched ? (autoSched.sort || null) : null,
     max_pages: autoSched ? (autoSched.max_pages || null) : null

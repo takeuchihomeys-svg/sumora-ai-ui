@@ -117,8 +117,33 @@ console.log("── ④ 更新日（リアプロ・任務 A の effectiveRpUpdat
   const leftover = runSearchAuditChecks({ ...base, intended: { ...base.intended, rp_update_days: null }, filled: { ...base.filled, form: { ...base.filled!.form, update_days: "7" } } }, NOW);
   t("前の 7 が残った → bad leftover", leftover.checks.some((c) => c.cause_key === "update_days:realpro:leftover"));
   t("決まり（1）と違う（指定なし）→ warn differs", leftover.checks.some((c) => c.cause_key === "update_days:realpro:differs" && c.severity === "warn"));
+  // 2026-09-27 v2.5.34: itandi も「募集条件更新 N日以内」に入れるようになった → 読み戻しに update_days がある回は比べる
   const itandi = runSearchAuditChecks({ ...base, site: "itandi", filled: { ...base.filled, form: { update_days: "" } } }, NOW);
-  t("itandi は更新日を比べない", !itandi.checks.some((c) => c.code === "UPDATE_DAYS"));
+  t("itandi（v2.5.34〜）: 入れようとした 1・入った 空 → bad update_days:itandi:not_filled", itandi.checks.some((c) => c.cause_key === "update_days:itandi:not_filled" && c.severity === "bad"), itandi.checks.map((c) => c.code).join());
+  const itOk = runSearchAuditChecks({ ...base, site: "itandi", filled: { ...base.filled, form: { update_days: "1" } } }, NOW);
+  t("itandi: 入った 1 → 札なし", !itOk.checks.some((c) => c.code === "UPDATE_DAYS"), itOk.checks.map((c) => c.code).join());
+  const itOld = runSearchAuditChecks({ ...base, site: "itandi", filled: { ...base.filled, form: { rent_max: "8" } } }, NOW);
+  t("itandi の古い版（読み戻しに update_days が無い）は比べない", !itOld.checks.some((c) => c.code === "UPDATE_DAYS"), itOld.checks.map((c) => c.code).join());
+  const itZero = runSearchAuditChecks({ ...base, site: "itandi", intended: { ...base.intended, rp_update_days: null }, filled: { ...base.filled, form: { update_days: "0" } } }, NOW);
+  t("itandi: 「0」（当日）が残った → leftover（0 を指定なしと読まない）", itZero.checks.some((c) => c.cause_key === "update_days:itandi:leftover"), itZero.checks.map((c) => c.code).join());
+  const itNashi = runSearchAuditChecks({ ...base, site: "itandi", intended: { ...base.intended, rp_update_days: null }, filled: { ...base.filled, form: { update_days: "なし" } } }, NOW);
+  t("itandi: 「なし」は指定なし → leftover なし", !itNashi.checks.some((c) => c.cause_key === "update_days:itandi:leftover"), itNashi.checks.map((c) => c.code).join());
+  const it14 = runSearchAuditChecks({ ...base, site: "itandi", intended: { ...base.intended, rp_update_days: 14 }, filled: { ...base.filled, update_days: { status: "not_accepted", want: 14 }, form: { update_days: "" } } }, NOW);
+  t("itandi: 14 を欄が受け付けず空で検索 → warn not_accepted（bad の not_filled にしない）", it14.checks.some((c) => c.cause_key === "update_days:itandi:not_accepted" && c.severity === "warn") && !it14.checks.some((c) => c.cause_key === "update_days:itandi:not_filled"), it14.checks.map((c) => c.code).join());
+  // v2.5.34 反証の検証: 一覧（なし/0〜9）に無い 14 は打たずに「なし」で検索（広い側・漏れない）→ ok の札だけ（warn で点検を埋めない）
+  const itOut = runSearchAuditChecks({ ...base, site: "itandi", intended: { ...base.intended, rp_update_days: 14 }, filled: { ...base.filled, update_days: { status: "out_of_range", want: 14 }, form: { update_days: "" } } }, NOW);
+  t("itandi: 14 は一覧に無い → ok out_of_range（warn・bad なし）", itOut.checks.some((c) => c.cause_key === "update_days:itandi:out_of_range" && c.severity === "ok") && !itOut.checks.some((c) => /update_days:itandi:(not_filled|not_accepted)/.test(c.cause_key)), itOut.checks.map((c) => c.cause_key).join());
+  const itOutBad = runSearchAuditChecks({ ...base, site: "itandi", intended: { ...base.intended, rp_update_days: 14 }, filled: { ...base.filled, update_days: { status: "out_of_range", want: 14 }, form: { update_days: "3" } } }, NOW);
+  t("itandi: out_of_range なのに前の 3 が見えている → bad not_filled（ok にしない）", itOutBad.checks.some((c) => c.cause_key === "update_days:itandi:not_filled" && c.severity === "bad"), itOutBad.checks.map((c) => c.cause_key).join());
+  // 打っただけ（一覧から選べていない）で見えている文字は一致 → 検索に効いたか分からない → warn typed_unverified
+  const itTyped = runSearchAuditChecks({ ...base, site: "itandi", filled: { ...base.filled, update_days: { status: "set_typed", want: 1 }, form: { update_days: "1" } } }, NOW);
+  t("itandi: 打っただけ（set_typed）→ warn typed_unverified", itTyped.checks.some((c) => c.cause_key === "update_days:itandi:typed_unverified" && c.severity === "warn"), itTyped.checks.map((c) => c.cause_key).join());
+  const itSet = runSearchAuditChecks({ ...base, site: "itandi", filled: { ...base.filled, update_days: { status: "set", want: 1 }, form: { update_days: "1" } } }, NOW);
+  t("itandi: 一覧から選んだ（set）→ 札なし", !itSet.checks.some((c) => c.code === "UPDATE_DAYS"), itSet.checks.map((c) => c.cause_key).join());
+  const itMissing = runSearchAuditChecks({ ...base, site: "itandi", filled: { ...base.filled, update_days: { status: "field_missing", want: 1 }, form: { rent_max: "8" } } }, NOW);
+  t("itandi: 欄が見つからない → UI_NOT_FOUND warn（更新日で絞らずに検索）", itMissing.checks.some((c) => c.cause_key === "ui_not_found:itandi:update_days:募集条件更新" && c.severity === "warn"), itMissing.checks.map((c) => c.code).join());
+  const rpZero = runSearchAuditChecks({ ...base, intended: { ...base.intended, rp_update_days: null }, filled: { ...base.filled, form: { ...base.filled!.form, update_days: "0" } } }, NOW);
+  t("リアプロの「0」は今までどおり指定なし（leftover にしない）", !rpZero.checks.some((c) => c.cause_key === "update_days:realpro:leftover"), rpZero.checks.map((c) => c.code).join());
   const noSel = runSearchAuditChecks({ ...base, filled: { ...base.filled, form: { rent_max: "80000" } } }, NOW);
   t("更新日の欄が読めない（select が無い）時は比べない", !noSel.checks.some((c) => c.code === "UPDATE_DAYS" && c.severity === "bad"));
 }

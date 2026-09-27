@@ -3882,6 +3882,9 @@ function openInstructions(siteKey) {
 
   if (siteKey === "itandi") {
     adjForm.style.display = "block";
+    // v2.5.34: 更新日の欄を ITANDI でも見せる（ここの日数を「募集条件更新 N日以内」に入れる・手で変えるとリアプロと同じく DB に書く）
+    const updateDaysRowIt = document.getElementById("adj-update-days-row");
+    if (updateDaysRowIt) updateDaysRowIt.style.display = "flex";
     preloadAdjForm(selectedCustomer);
     wireAdjSaveBtn(selectedCustomer);
     setupAreaModeSelector(selectedCustomer, "itandi");
@@ -3919,6 +3922,9 @@ function openInstructions(siteKey) {
       const adjFloor     = document.getElementById("adj-floor").value.trim();
       const adjStructure = document.getElementById("adj-structure").value.trim();
       const adjPet       = document.getElementById("adj-pet").checked;
+      // v2.5.34 竹内「リアプロはボタンで選択やけど ITANDI は入力となる（更新日）」: リアプロと同じ更新日の欄（preloadAdjForm が入れる）の日数を
+      //   ITANDI の「募集条件更新 N日以内」に打つ（itandi-page-script.js）。「指定なし」は null＝欄を空のまま
+      const adjUpdateDaysIt = document.getElementById("adj-update-days")?.value || "";
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
 
       // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
@@ -4232,6 +4238,7 @@ function openInstructions(siteKey) {
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
         station_names: stationNames,
         select_all_line_stations: _selectAllLineStations_it,
+        rp_update_days: adjUpdateDaysIt ? Number(adjUpdateDaysIt) : null, // 募集条件更新 N日以内（v2.5.34）
         unknown_tokens: unknownTokens.length > 0 ? unknownTokens : null,
       };
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
@@ -4260,6 +4267,7 @@ function openInstructions(siteKey) {
         structure_types: conditions.structure_types,
         building_age:    conditions.building_age,
         floor_plan:      conditions.floor_plan,
+        update_days:     conditions.rp_update_days ? conditions.rp_update_days + "日以内" : "指定なし",
       });
       // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる
       _auditTag("itandi", selectedCustomer, conditions);

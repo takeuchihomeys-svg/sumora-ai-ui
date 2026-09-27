@@ -141,5 +141,19 @@ console.log("── ⑧ 見張りで止まった時の様子（拡張 v2.5.31 �
   t("stall の読み戻し（入れ終わっていない値）は点検の比べに使わない", v.checks.map((c) => c.code).join() === "ERROR_WATCHDOG", v.checks.map((c) => c.code).join());
 }
 
+console.log("── ⑨ 更新日は「登録の条件のずれ」に入れない（v2.5.34 反証の検証で外した）— UPDATE_DAYS だけが言う");
+{
+  // 反証: 自動便（今日の新着＝1日）で手で決めた 7 があると「更新日が登録より狭い（bad）」が毎回出て、CONDITION_STALE の数にも入った（リアプロにも効いた）
+  const C7 = { ...SNAP, rp_update_days: 7 };
+  const rpAuto = conditionDrift({ site: "realpro", customer: C7, intended: { rp_update_days: 1 }, form: { update_days: "1" } });
+  t("リアプロの自動便（登録 7・入れた 1・入った 1）→ drift に更新日を出さない", !rpAuto.items.some((x) => (x.field as string) === "update_days"));
+  const itAuto = conditionDrift({ site: "itandi", customer: C7, intended: { rp_update_days: 1 }, form: { update_days: "1" } });
+  t("itandi の自動便も同じ → drift に更新日を出さない", !itAuto.items.some((x) => (x.field as string) === "update_days"));
+  const v = runSearchAuditChecks({ site: "realpro", customer_snapshot: C7, created_at: "2026-09-27T02:00:00Z", intended: { rp_update_days: 1, rent_max: 80000 }, filled: { search_clicked: true, form: { update_days: "1", rent_max: "80000" } }, result: { read_rows: 5 } }, NOW);
+  t("点検: 自動便のリアプロで更新日の bad が出ない（決まりと違うは warn の differs だけ）", !v.checks.some((c) => c.severity === "bad" && /update_days/.test(c.cause_key)) && v.checks.some((c) => c.cause_key === "update_days:realpro:differs" && c.severity === "warn"), v.checks.map((c) => c.cause_key).join());
+  const v2 = runSearchAuditChecks({ site: "itandi", customer_snapshot: C7, created_at: "2026-09-27T02:00:00Z", intended: { rp_update_days: 7, rent_max: 80000 }, filled: { search_clicked: true, form: { update_days: "" } }, result: { read_rows: 5 } }, NOW);
+  t("itandi で入らなかった時は UPDATE_DAYS not_filled が1回だけ言う", v2.checks.filter((c) => c.cause_key.includes("update_days")).map((c) => c.cause_key).join() === "update_days:itandi:not_filled", v2.checks.map((c) => c.cause_key).join());
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
