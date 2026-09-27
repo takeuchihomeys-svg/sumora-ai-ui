@@ -9,8 +9,16 @@
 //   その判定を通っていなかった（「内覧したい」「見学したい」だけで作る）。
 //   → 語の一覧は「候補」にだけ使い、物件確認は customerRequestedPropertyCheck も通った時だけ作る（作成の判定を1か所にそろえる）。
 //   線は scripts/audit-property-check-task.ts（実送信・次にスタッフが押した AIX）で引いた。
-import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
+//
+// 2026-09-27 竹内さん決定「内覧したいといわれたら内覧日調整となる／AIXの内覧調整」（memory feedback_viewing_request_aix）:
+//   お客様の内覧の希望（内覧・内見・見学したい）だけでは物件確認のタスクを作らない（やることは日程の調整＝AIX【内覧へ】viewing_invite）。
+//   customerRequestedPropertyCheck の定義では「物件を指した内覧の依頼」も依頼に入るため（YUMA「こちらのお部屋、ぜひ内覧したい」）、
+//   ここで内覧の希望だけの連投を外す（customerRequestedPropertyCheck 自体は /api/line-tasks・画面の判定と共有なので変えない）。
+//   作る側に残す物: 連投に物件そのもの（画像・URL・号室）＝持ち込み物件／空き・募集・費用・見積・入居日・審査・確認の依頼の語。
+//   線は scripts/audit-property-check-task.ts（120日）で前後を読んで引いた（dept_line_reply.md 2026-09-27）。
+import { customerRequestedPropertyCheck, propertySpecifiedBy } from "@/app/lib/aix-scene-evidence";
 import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
+import { VIEWING_INTENT_RE, allVacancyWordsAreSlots } from "@/app/lib/scene-patterns";
 
 export const PROPERTY_CHECK_KEYWORDS = [
   "物件確認", "初期費用確認", "初期費用を確認",
@@ -39,9 +47,45 @@ export function detectTaskTypeByKeywords(text: string): "property_check" | "prop
   return null;
 }
 
+/** 内覧の希望と一緒でも物件確認に残す依頼の語（「空いて」は下で枠かどうかを見る。空き・募集・費用・見積・入居日・審査・確認の依頼） */
+//   費用・見積・確認は「依頼の形」だけ（YUMA「見積もりありがとうございます…内覧したい」の御礼・「内容を確認して、内覧も」のお客様自身の確認は数えない）
+const CHECK_ASK_WITH_VIEWING_RE = new RegExp([
+  /空(?:き|室)|募集|まだ(?:あり|空|残|大丈夫)|埋ま|申込(?:み)?(?:入って|は入|ありま)/.source,
+  /(?:見積|初期費用|費用)[^\n。！!]{0,10}?(?:お願い|出して|頂け|いただけ|欲し|ほし|知りたい|しりたい|教えて|くださ|下さ|ですか|ますか|[？?])|いくら/.source,
+  /入居(?:日|可能|でき|出来)|審査/.source,
+  /確認(?:してほしい|して(?:もら|頂|いただ|くだ|下さ)|お願い|をお願い|(?:でき|出来)(?:ます|ません))|住所/.source,
+].join("|"));
+
 /**
- * 作るタスクの種類。物件確認は customerRequestedPropertyCheck（/api/line-tasks と同じ判定）も通った時だけ。
- * @param recentMessages oldest-first・今回のお客様の発言まで（無ければ語だけで判定＝旧の動き）
+ * 今回のお客様の連投が「内覧の希望だけ」か（持ち込み物件でも確認の依頼でもない）。
+ * true の時は物件確認のタスクを作らない（内覧日の調整＝AIX【内覧へ】の場面）。
+ * @param recentMessages oldest-first・今回のお客様の発言まで
+ */
+export function isViewingWishOnlyTurn(recentMessages: ReadonlyArray<{ sender: string; text?: string | null }>): boolean {
+  const msgs = [...recentMessages];
+  while (msgs.length && msgs[msgs.length - 1].sender !== "customer") msgs.pop();
+  const turn: string[] = [];
+  let hasCustomerImage = false;
+  for (let i = msgs.length - 1; i >= 0 && msgs[i].sender === "customer"; i--) {
+    const t = (msgs[i].text ?? "").trim();
+    if (/^\[画像\]/.test(t)) hasCustomerImage = true;
+    else if (t) turn.unshift(t);
+  }
+  const text = turn.join("\n");
+  if (!text || !VIEWING_INTENT_RE.test(text)) return false;
+  // 持ち込み物件（画像・URL・号室）は今まで通り物件確認
+  const specBy = propertySpecifiedBy(text, { hasCustomerImage });
+  if (specBy === "image" || specBy === "url" || specBy === "room_no") return false;
+  if (CHECK_ASK_WITH_VIEWING_RE.test(text)) return false;
+  // 「空いて」は内覧の枠（「日程はいつ頃空いていますか」＝YUMA の実物）なら依頼に数えない（detectAvailabilityCheckContext と同じ見方）
+  if (/空いて/.test(text) && !allVacancyWordsAreSlots(text)) return false;
+  return true;
+}
+
+/**
+ * 作るタスクの種類。物件確認は customerRequestedPropertyCheck（/api/line-tasks と同じ判定）も通り、
+ * 内覧の希望だけの連投でない時だけ。
+ * @param recentMessages oldest-first・今回のお客様の発言まで（無ければ語だけで判定＝旧の動き・内覧の希望だけは除く）
  */
 export function decideAutoTask(
   text: string,
@@ -49,6 +93,10 @@ export function decideAutoTask(
 ): "property_check" | "property_send" | null {
   const kind = detectTaskTypeByKeywords(text);
   if (kind !== "property_check") return kind;
-  if (!recentMessages || recentMessages.length === 0) return kind;
-  return customerRequestedPropertyCheck({ recentMessages }) ? "property_check" : null;
+  // 直前の会話が読めない時は語だけ（旧の動き）。ただし今回の文だけで内覧の希望だけと分かる物は作らない
+  if (!recentMessages || recentMessages.length === 0) return isViewingWishOnlyTurn([{ sender: "customer", text }]) ? null : kind;
+  if (!customerRequestedPropertyCheck({ recentMessages })) return null;
+  // 内覧の希望だけ → 物件確認のタスクは作らない（2026-09-27 竹内さん決定・上の説明）
+  if (isViewingWishOnlyTurn(recentMessages)) return null;
+  return "property_check";
 }

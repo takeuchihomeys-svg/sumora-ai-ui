@@ -5,6 +5,7 @@
 //   ・語の種類（内覧・見学だけ／物件確認・空室・初期費用）
 //   ・customerRequestedPropertyCheck（/api/line-tasks と同じ判定・直前20通）の結果
 //   ・次にスタッフが送った AIX（72時間以内の最初の1つ）: 物件確認した／内覧へ（viewing_invite）／待ち合わせ／見積書送る／他／無し
+// 2026-09-27 竹内「内覧したいといわれたら内覧日調整」: 内覧の希望だけの連投は作らない（isViewingWishOnlyTurn）。当て直すと 作る→作らない 2件（次の AIX なし）
 // 実行: npx tsx --env-file=.env.local scripts/audit-property-check-task.ts   （DAYS=120・SHOW=12）
 import { createClient } from "@supabase/supabase-js";
 import { detectTaskTypeByKeywords, decideAutoTask } from "../app/lib/property-check-task";

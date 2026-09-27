@@ -2,7 +2,7 @@
 //   決まり: 物件確認はお客様から依頼があった時だけ（memory feedback_property_check_on_request・判定は customerRequestedPropertyCheck）。
 //   お客様の発言は scripts/audit-property-check-task.ts（本番120日）で次にスタッフが何を送ったかと並べて読んだ実物（名前は伏せた）。
 // 実行: npx tsx app/lib/__tests__/property-check-task.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { detectTaskTypeByKeywords, decideAutoTask } from "../property-check-task";
+import { detectTaskTypeByKeywords, decideAutoTask, isViewingWishOnlyTurn } from "../property-check-task";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -36,9 +36,43 @@ it("見積書の後の「内覧もお願いしたいです」だけ（物件を�
 it("「内覧したいです」だけ（9b9b81ba 9/14・次は内覧へ）→ 作らない", () => {
   eq(decideAutoTask("内覧したいです", hist({ sender: "staff", text: "お送りさせて頂きました！" }, { sender: "customer", text: "内覧したいです" })), null);
 });
-it("物件を指した内覧の依頼（「こちらの物件も内覧したいですー」）→ 作る", () => {
+it("持ち込みの画像と同じ連投の「こちらの物件も内覧したいですー」→ 作る（持ち込み物件）", () => {
   const text = "こちらの物件も内覧したいですー";
   eq(decideAutoTask(text, hist({ sender: "customer", text: "[画像]" }, { sender: "customer", text })), "property_check");
+});
+
+console.log("\n■ 内覧の希望だけでは作らない（2026-09-27 竹内「内覧したいといわれたら内覧日調整となる／AIXの内覧調整」）");
+it("YUMA 9/27: 見積書の後の「こちらのお部屋、ぜひ内覧したい…日程はいつ頃空いていますか？」→ 作らない（御礼の「見積もり」・枠の「空いて」は依頼に数えない）", () => {
+  const text = "見積もりありがとうございます！思ったより安くて嬉しいです😊 こちらのお部屋、ぜひ内覧したいのですが日程はいつ頃空いていますか？";
+  const h = hist({ sender: "customer", text: "エステムコート大阪WESTの初期費用っていくらくらいになりますか？" }, ...AFTER_ESTIMATE, { sender: "customer", text });
+  eq(isViewingWishOnlyTurn(h), true);
+  eq(decideAutoTask(text, h), null);
+});
+it("5045ccd6 6/06: 募集中と答えたお部屋の内覧の日の変更＋「こちらの物件も内覧したいですー」（画像なし）→ 作らない", () => {
+  const h = hist(
+    { sender: "customer", text: "こちらまだ空いてますか？" },
+    { sender: "staff", text: "お世話になっております！！ エステイトE森ノ宮の201号室ですが、現在もまだ募集中です！！ 6月末退居予定のお部屋となりますので、7月1日以降のご内覧が可能となります！！" },
+    { sender: "customer", text: "お世話になっております！ 本日の内覧なのですが16時からに変更していただきたいですm(_ _)m" },
+    { sender: "customer", text: "こちらの物件も内覧したいですー" },
+  );
+  eq(decideAutoTask("こちらの物件も内覧したいですー", h), null);
+});
+it("b0314a3d 8/23: こちらが送ったお部屋に「ここも内覧したいそうです！」→ 作らない", () => {
+  const h = hist(
+    { sender: "staff", text: "お待たせいたしました！！ 本日ご内覧可能な洋室広めのオススメできるお部屋フォレ長堀南605号室の1部屋となります！！ （室内イメージ） https://example.com/x" },
+    { sender: "customer", text: "駅近はもうないですよね？😭" },
+    { sender: "customer", text: "ここも内覧したいそうです！" },
+  );
+  eq(decideAutoTask("ここも内覧したいそうです！", h), null);
+});
+it("内覧の希望と一緒に空き・費用を聞いた（2c434b28「空室あれば内覧」・ad97cd40「初期費用しりたいです！…内覧お願いしたい」）→ 作る", () => {
+  eq(isViewingWishOnlyTurn(hist({ sender: "customer", text: "空室あるか確認お願いできますか？🙇‍♀️ 空室あれば内覧したいと思ってます！" })), false);
+  const h = hist({ sender: "staff", text: "🌟アービングNeo岸里玉出 302号室 新着でかなり条件のいいお部屋となります！！ https://example.com/a" },
+    { sender: "customer", text: "こちら初期費用しりたいです！ 駐車場ありますか？" }, { sender: "customer", text: "あした18時から内覧お願いしたいです" });
+  eq(decideAutoTask("あした18時から内覧お願いしたいです", h), "property_check");
+});
+it("「まだ空いてますか」は枠でなく募集の質問 → 内覧の希望だけに数えない", () => {
+  eq(isViewingWishOnlyTurn(hist({ sender: "customer", text: "この部屋まだ空いてますか？内覧したいです" })), false);
 });
 it("お客様が物件の URL を送って空きと内覧を聞いた（110b3053 9/02）→ 作る", () => {
   const text = "ここはいくらになりますか内覧は可能ですか？ 【賃貸マンション】 南海高野線 我孫子前駅 徒歩9分 https://www.homes.co.jp/chintai/room/xxxx/";
@@ -51,9 +85,10 @@ it("空室の確認の依頼（2c434b28 9/09「空室あるか確認お願いで
 it("物件出しの候補はそのまま（物件確認の判定は通さない）", () => {
   eq(decideAutoTask("他にも物件探してほしいです", hist({ sender: "customer", text: "他にも物件探してほしいです" })), "property_send");
 });
-it("直前の会話が読めない時は語だけ（旧の動き）", () => {
-  eq(decideAutoTask("内覧したいです", []), "property_check");
-  eq(decideAutoTask("内覧したいです", null), "property_check");
+it("直前の会話が読めない時は語だけ（旧の動き）。ただし内覧の希望だけの文は作らない", () => {
+  eq(decideAutoTask("空室確認お願いします", []), "property_check");
+  eq(decideAutoTask("内覧したいです", []), null);
+  eq(decideAutoTask("内覧したいです", null), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
