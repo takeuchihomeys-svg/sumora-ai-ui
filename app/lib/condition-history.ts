@@ -1,5 +1,23 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// ── 根拠の発言（source_message_id）の書き方 ─────────────────────────────
+// 2026-09-30 竹内（黒明様の事例）「条件の欄の各項目に根拠の発言を持たせる」: 旧は履歴 186行のうち source_message_id が入っていたのは2行だけで、
+//   誰がどの発言で書いたかを追えなかった（経路C・ブレインの橋は履歴そのものを書いていなかった）。
+//   列は TEXT のまま（migrate 不要）"<書き手>:<messages.id>" の形で入れる。書き手: p4／path_c／brain_bridge／condition_brain／format／screen_edit
+export type ConditionWriter = "p4" | "path_c" | "brain_bridge" | "condition_brain" | "format" | "screen_edit" | "scope_temporary" | "other";
+export function conditionSourceTag(writer: ConditionWriter, messageId?: string | null): string {
+  return messageId ? `${writer}:${messageId}` : writer;
+}
+/** source_message_id を書き手と発言の id に分ける（旧の自由文・null も受ける） */
+export function parseConditionSource(s: string | null | undefined): { writer: ConditionWriter | null; messageId: string | null } {
+  const v = String(s ?? "").trim();
+  if (!v) return { writer: null, messageId: null };
+  const m = v.match(/^(p4|path_c|brain_bridge|condition_brain|format|screen_edit)(?::([0-9a-f-]{36}))?$/i);
+  if (m) return { writer: m[1].toLowerCase() as ConditionWriter, messageId: m[2] ?? null };
+  if (/^[0-9a-f-]{36}$/i.test(v)) return { writer: "other", messageId: v };
+  return { writer: /一時|temporary/i.test(v) ? "scope_temporary" : "other", messageId: null };
+}
+
 // ── 条件変更履歴の記録（property_condition_history INSERT）────────────────────
 // property_customers は最新値しか持たないため、条件フィールドの変更を履歴化して
 // brain の condition_change_type 推測を事実で接地させる。

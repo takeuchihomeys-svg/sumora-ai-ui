@@ -19,7 +19,10 @@ import { runBrainAndNotify } from "@/app/lib/brain-core";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
 import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
 import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
-import { recordConditionHistory } from "@/app/lib/condition-history";
+import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
+// 2026-09-30 竹内（黒明様の事例）「お客さんの条件か、ただ物件 SUUMO 等のサイト送ってきているだけか」: 入口の見分け（純関数）。
+//   条件の欄に書く全経路（正式フォーマットのカジュアル更新・P4・経路C）で、発言のうち条件として読んでよい部分だけを使う
+import { classifyConditionTurn, gateExtractedConditions, decideAreaMode, isApplyPaperText, PORTAL_URL_RE, type ConditionTurn } from "@/app/lib/condition-source-gate";
 // 2026-09-27 竹内（野口さん「もう少し家賃あげて」・未桜さん「7畳以上の部屋」）: 抽出した家賃・広さを決定論で直す（家賃を上げて＝上限を上げる・下限は言った時だけ・帖→㎡）
 import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo } from "@/app/lib/rent-raise";
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
@@ -70,7 +73,7 @@ export const ACCOUNTS: AccountConfig[] = [
 // 顧客が自発的に条件を漏らした場合に P4 抽出を発火させるための語彙正規表現。
 // 2026-09-29 要望の項目化の監査: 1語だけの「カウンターキッチン」「収納多めでお願いいたします」「駅近だと大変ありがたいです」が入口に来ていなかった → 設備・その他の要望の語を足した
 //   （180日の発言 9,829通のうち新たに入口に来るのは約90通＝週3〜4通・大半は「収納多めで」「初期費用安いとこないですか」等の要望。質問・不具合の話は下の Haiku の分類が落とす。エアコンは入居後の不具合の話が多いので足していない）
-const CUSTOMER_CONDITION_VOCAB_RE = /ペット|(?:バス|風呂|トイレ).*別|オートロック|洗面|駐車場|広さ|㎡|帖|畳|築\d|万円|エリア|駅.*徒歩|間取り|日当たり|洗濯機.*置|ベランダ|[2-9]階以上|角部屋|独立洗面|宅配ボックス|インターネット|Wi.Fi|2LDK|1LDK|1K|ガスコンロ|IHコンロ|コンロ\s*[2-3２３二三]口|カウンターキッチン|対面(?:式)?キッチン|システムキッチン|収納|クローゼット|追い?[焚炊]き|浴室乾燥|エレベーター|温水洗浄|ウォシュレット|築浅|新築|駅近|リビング\s*\d|初期費用.{0,10}(?:抑え|安く|安い)/;
+const CUSTOMER_CONDITION_VOCAB_RE = /ペット|(?:バス|風呂|トイレ).*別|オートロック|洗面|駐車場|広さ|㎡|帖|畳|築\d|万円|エリア|駅.*徒歩|間取り|日当たり|洗濯機.*置|ベランダ|(?:[0-9０-９]+|[一二三四五六七八九十]+)階以上|階以外|最上階|高層階|角部屋|独立洗面|宅配ボックス|インターネット|Wi.Fi|2LDK|1LDK|1K|ガスコンロ|IHコンロ|コンロ\s*[2-3２３二三]口|カウンターキッチン|対面(?:式)?キッチン|システムキッチン|収納|クローゼット|追い?[焚炊]き|浴室乾燥|エレベーター|温水洗浄|ウォシュレット|築浅|新築|駅近|リビング\s*\d|初期費用.{0,10}(?:抑え|安く|安い)/;
 // ── 同一ユーザーのレート制限（3秒以内の連続AI解析をスキップ）─────────────
 // 注意: このMapはインスタンス内のみ有効（Vercelサーバーレスでは複数インスタンスが
 // 並行動作するためベストエフォート）。クロスインスタンスの実質的な保護は
@@ -499,7 +502,7 @@ export async function handleTextMessage(
   if (!applyFormDetected && isFormatMessage(text)) {
     after(async () => {
       try {
-        await autoParseFormat(db, userId, convId, text, account);
+        await autoParseFormat(db, userId, convId, text, account, insertedMsgId);
       } catch (e) { console.error("[autoParseFormat]", e); }
     });
   }
@@ -558,9 +561,11 @@ export async function handleTextMessage(
   }
 
   // after() C: エリア指定検知 → resolve-area抽出 → desired_area更新 + LINE通知
-  if (isAreaSpecificationMessage(text)) {
+  // 2026-09-30: 申込の書類（applyFormDetected）の時は動かさない（黒明様: 転職先の書式の「勤務先所在地 西中島南方駅最寄り」を地域の指定と読んだ）。
+  //   判定の中でも入口の見分け（condition-source-gate）で書類・物件の問い合わせを外し、条件の部分だけを resolve-area に渡す
+  if (!applyFormDetected && isAreaSpecificationMessage(text)) {
     after(async () => {
-      await detectAndAnnounceAreaChange(db, convId, text)
+      await detectAndAnnounceAreaChange(db, convId, text, insertedMsgId)
         .catch((e) => console.warn("[detectAndAnnounceAreaChange]", e));
     });
   }
@@ -573,7 +578,7 @@ export async function handleTextMessage(
         const { data: cs } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();
         const status = (cs?.status as string | null) ?? "";
         if (!["hearing", "property_search", "hot", "proposing"].includes(status)) return;
-        await extractConditionsFromCasualReply(db, convId, text);
+        await extractConditionsFromCasualReply(db, convId, text, insertedMsgId);
       } catch (e) {
         console.warn("[line-webhook] extractConditionsFromCasualReply:", e);
       }
@@ -656,9 +661,13 @@ const PROPERTY_LISTING_SHAPE_RE = /(?:物件名|交通|所在地|価格|物件�
 function isFormatMessage(text: string): boolean {
   // 物件ポータルの共有文（物件名：／交通：／所在地：…）は条件フォーマットではない（物件の家賃・間取りで条件を上書きしない）
   if (PROPERTY_LISTING_SHAPE_RE.test(text)) return false;
+  // 2026-09-30: 申込・審査の書類（書式の貼り返し「・勤務先名 ／・勤務先所在地 …」）は条件ではない（condition-source-gate）
+  if (isApplyPaperText(text)) return false;
   // 物件サイトURLが含まれる場合、残りテキストに変更意図キーワードがなければ条件フォーマットとみなさない
   // （SUUMO等のURLカードに付くタイトル「十三 1LDK 9階」を条件更新と誤解析するバグ防止）
-  if (isPropertySiteUrl(text)) {
+  // 2026-09-30: 5サイト（isPropertySiteUrl）の外のポータル（nifty・賃貸EX の share.google・homemate・smocca 等）も同じ扱い
+  //   （180日で 114通がすり抜け、「【空室あり!】-パティオライブ・1K(布忍駅 / 松原市東新町)…|賃貸EX」が最初の条件として登録されていた）
+  if (isPropertySiteUrl(text) || PORTAL_URL_RE.test(text)) {
     const textOnly = text.replace(/https?:\/\/[^\s]+/g, "").trim();
     if (textOnly.length < 15) return false;
     const hasChangeIntent = [
@@ -713,13 +722,20 @@ function isFormatMessage(text: string): boolean {
 
 // エリア指定メッセージ検知（autoParseFormatのisFormatMessageより先に通過したもの専用）
 // 保守的条件: 市区町村サフィックス付きトークンが2個以上、またはトリガーワードと1個以上の組み合わせ
-function isAreaSpecificationMessage(text: string): boolean {
-  if (isFormatMessage(text)) return false; // autoParseFormat handles this
+function isAreaSpecificationMessage(fullText: string): boolean {
+  if (isFormatMessage(fullText)) return false; // autoParseFormat handles this
   // 2026-09-12 竹内（じゅにあ事例）: お客様が物件のリンク（athome 等）や物件情報（物件名／交通／所在地）を送ってきたのは
   //   「物件シェア＝物件確認（募集状況確認＋御見積書）」であって地域指定ではない。旧は物件情報の「交通：〇〇駅」「所在地」を
   //   地域指定と読み、希望エリアに沿線の駅を丸ごと追加して【地域指定】をグループに流していた（7件の物件で希望エリアが河内長野・藤井寺まで膨張）。
   //   判定は条件の自動抽出（extractConditionsFromCasualReply）と同じ isPropertySiteUrl ＋ 物件情報の形
-  if (isPropertySiteUrl(text) || PROPERTY_LISTING_SHAPE_RE.test(text)) return false;
+  if (isPropertySiteUrl(fullText) || PROPERTY_LISTING_SHAPE_RE.test(fullText)) return false;
+  // 2026-09-30 竹内（黒明様の事例）: 旧は文のどこかに「〇〇駅」があれば真（誰の・何のための場所かを見ていない）で、
+  //   転職先の書式の「勤務先所在地 西中島南方駅最寄り」・物件の問い合わせ（「大国町駅付近にある、ララプレイス…の空き」）でも動いた
+  //   （180日の当て直しで Path C が動く発言 108通のうち 20通が条件の発言ではない）。入口の見分けで条件の部分だけを見る
+  const turn = classifyConditionTurn(fullText);
+  if (!turn.conditionText) return false;
+  // 「夕方あたり」「月末頃」（時間）は場所の指定ではない
+  const text = turn.conditionText.replace(/(?:夕方|朝|昼|夜|午前|午後|月末|月初|週末|中旬|上旬|下旬|初旬|[0-9０-９]+時)(?:あたり|辺り|頃|ごろ)/g, " ");
   // 自転車 + 分数 → エリア指定として扱う（自転車圏内→駅リスト展開）
   if (/自転車|チャリ/.test(text) && /\d+分/.test(text)) return true;
 
@@ -799,7 +815,7 @@ function buildConditionNote(parsed: Record<string, unknown>): string {
 
 // ── Haiku 分類プロンプト（条件メッセージかどうかを文脈付きで判定）──
 const CLASSIFY_CONDITION_SYSTEM_PROMPT = `あなたは日本の不動産業者のアシスタントです。
-お客さんのLINEメッセージを以下の4種類に分類し、JSONのみ返してください。
+お客さんのLINEメッセージを以下の5種類に分類し、JSONのみ返してください。
 
 ${CONDITION_FORMAT_TEMPLATE}
 
@@ -807,7 +823,12 @@ ${CONDITION_FORMAT_TEMPLATE}
 - "formal_format": 上記フォーマットに沿った条件一覧。①〜番号付き条件項目が3つ以上含まれる。
 - "condition_change": 特定条件を変更したい表現（「エリアを〜に変えたい」「やっぱり〜で」「〜にしてほしい」等）
 - "condition_add": 条件を追加したい表現（「〜も追加で」「〜もOKです」「〜も良いです」等）
+- "property_inquiry": 特定の1件の物件・お部屋の話（こちらが送った物件やお客さんが見つけた物件の空き状況・入居日・費用・階・号室・抑えて・内見の話）。探す条件ではない
 - "not_condition": 上記以外（挨拶・感謝・質問・申込書類・内覧日程・物件感想・プロフィール送付等）
+
+【"property_inquiry" と条件の見分け】
+- 「4階のお部屋は11月初旬で入居出来るなら良かった」「11階の方を抑えつつ」「〇〇（建物名）の203は空いてますか」→ property_inquiry（その物件の話で、階・入居時期・建物名は条件ではない）
+- 「11階以上がいい」「2階以上で探して」「西中島南方にも広げたい」→ condition_change / condition_add（探す条件そのもの）
 
 【必ず "not_condition" にするもの】
 - 「①申込書 ②本人確認書類」のような申込手続きに関する番号付きリスト
@@ -817,16 +838,20 @@ ${CONDITION_FORMAT_TEMPLATE}
 - 会話の流れと無関係な番号付きリスト
 
 返すJSON:
-{"type":"formal_format"|"condition_change"|"condition_add"|"not_condition","confidence":0.0〜1.0}
+{"type":"formal_format"|"condition_change"|"condition_add"|"property_inquiry"|"not_condition","confidence":0.0〜1.0}
 
 JSONのみ。説明不要。`;
 
 // ── Haiku で条件メッセージを分類（フォーマット知識 + 会話文脈を利用）──
+// 2026-09-30: 「物件の問い合わせ（property_inquiry）」を1つ足した（新しい呼び出しは増やさない・同じ1回の分類に選択肢を足すだけ）。
+//   呼び出し側は not_condition と同じく条件を書かない。影（Jev）には not_condition として渡す（Jev の4択は変えない）
+type ConditionMessageType = "formal_format" | "condition_change" | "condition_add" | "property_inquiry" | "not_condition";
+const shadowType = (t: ConditionMessageType) => (t === "property_inquiry" ? "not_condition" : t);
 async function classifyConditionMessage(
   anthropic: Anthropic,
   customerText: string,
   recentContext: Array<{ sender: string; text: string }>,
-): Promise<{ type: "formal_format" | "condition_change" | "condition_add" | "not_condition"; confidence: number }> {
+): Promise<{ type: ConditionMessageType; confidence: number }> {
   const contextLines = recentContext
     .map((m) => `[${m.sender === "staff" ? "スタッフ" : "お客さん"}] ${m.text.slice(0, 150)}`)
     .join("\n");
@@ -843,7 +868,7 @@ async function classifyConditionMessage(
     const m = raw.match(/\{[\s\S]*\}/);
     if (!m) return { type: "not_condition", confidence: 0 };
     const parsed = JSON.parse(m[0]) as { type?: string; confidence?: number };
-    const validTypes = ["formal_format", "condition_change", "condition_add", "not_condition"] as const;
+    const validTypes = ["formal_format", "condition_change", "condition_add", "property_inquiry", "not_condition"] as const;
     const t = validTypes.find((v) => v === parsed.type) ?? "not_condition";
     return { type: t, confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5 };
   } catch {
@@ -925,18 +950,20 @@ async function inferAreaMode(db: ReturnType<typeof getDb>, rawArea: string): Pro
     const variants = [token, token.replace(/[町村]$/, ""), token.replace(PFX_RE, ""), token.replace(PFX_RE, "").replace(/[町村]$/, "")];
     return variants.some(v => stationNames.has(v));
   }
-  function isRegion(token: string): boolean {
-    return /[市区郡]/.test(token) || /(?:市内|府内|県内|都内)$/.test(token);
-  }
-
-  const stCount = tokens.filter(t => isStation(t)).length;
-  const rgCount = tokens.filter(t => isRegion(t)).length;
-  if (stCount > 0) return 'station';
-  if (rgCount > 0) return 'ward';
-  return 'auto';
+  // 2026-09-30（黒明様の事例）: 旧は「駅が1つでもあれば station」で、区の指定（大阪市西区・大阪市浪速区）に駅が1つ足されただけで区が検索から落ちた
+  //   （9/29 の検索2回が wards:[]）。classify-area-modes の cron・拡張の setupAreaModeSelector と同じ「駅＋〇〇区の混在は ward」にそろえる（純関数 decideAreaMode）
+  return decideAreaMode(tokens, isStation);
 }
 
-async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, convId: string, text: string, account: AccountConfig) {
+async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, convId: string, text: string, account: AccountConfig, sourceMsgId: string | null = null) {
+  // 2026-09-30 入口の見分け（condition-source-gate）: 物件の問い合わせ・書類だけの文は条件として読まない。
+  //   物件の話と条件が同居した文は条件の節だけを読む（うちのフォーマット＝condition_form はそのまま）
+  const turnAP = classifyConditionTurn(text);
+  if (!turnAP.conditionText) {
+    console.log(JSON.stringify({ tag: "autoParseFormat:skip-property-inquiry", convId, kind: turnAP.kind, dropped: turnAP.dropped.map((d) => d.reason).slice(0, 4) }));
+    return;
+  }
+  const parseText = turnAP.kind === "mixed" ? turnAP.conditionText : text;
   // ── 重複実行防止: 同じテキストを既に処理済みなら即リターン ──────────
   const { data: alreadyDone } = await db
     .from("property_customers")
@@ -944,10 +971,11 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
     .eq("line_user_id", userId)
     .eq("raw_format_text", text)
     .maybeSingle();
-  if (alreadyDone?.id) return;
+  if (alreadyDone?.id) { console.log(JSON.stringify({ tag: "autoParseFormat:skip-already-done", convId })); return; }
 
   // ── レート制限: 同一ユーザーの3秒以内の連続送信はAI解析をスキップ ──
   if (isRateLimited(userId)) {
+    console.log(JSON.stringify({ tag: "autoParseFormat:skip-rate-limited", convId }));
     return;
   }
 
@@ -982,10 +1010,10 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
     // 影（Jev）: 決定論で確定した回は「硬い正解」として並べる（Jev が正式フォーマットを当てられるかの答え合わせ）
     shadowConditionClassify(convId, text, recentContext, { type: "formal_format", confidence: 1, source: "deterministic" });
   } else {
-    const classification = await classifyConditionMessage(anthropic, text, recentContext);
+    const classification = await classifyConditionMessage(anthropic, parseText, recentContext);
     // 影（Jev）: Haiku と同じ入力で聞いて並べるだけ。判断は下の Haiku の答えのまま
-    shadowConditionClassify(convId, text, recentContext, { type: classification.type, confidence: classification.confidence, source: "haiku" });
-    if (classification.type === "not_condition" || classification.confidence < 0.6) {
+    shadowConditionClassify(convId, parseText, recentContext, { type: shadowType(classification.type), confidence: classification.confidence, source: "haiku" });
+    if (classification.type === "not_condition" || classification.type === "property_inquiry" || classification.confidence < 0.6) {
       console.log(`[autoParseFormat] skip: type=${classification.type} confidence=${classification.confidence}`);
       return;
     }
@@ -994,7 +1022,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
 
   // ── Step 2: Sonnet 5 でフィールド抽出 ──────────────────────────────
   // URLを除去してからClaudeに渡す（物件サイトURLパラメータの誤解釈防止）
-  const cleanText = text.replace(/https?:\/\/[^\s]+/g, "[URL省略]").trim();
+  const cleanText = parseText.replace(/https?:\/\/[^\s]+/g, "[URL省略]").trim();
   let parsed: Record<string, unknown>;
   try {
     const res = await anthropic.messages.create({
@@ -1013,9 +1041,11 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
     });
     const raw = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
-    if (!match) return;
+    if (!match) { console.warn(JSON.stringify({ tag: "autoParseFormat:parse-no-json", convId, head: raw.slice(0, 80) })); return; }
     parsed = JSON.parse(match[0]) as Record<string, unknown>;
-  } catch {
+  } catch (e) {
+    // 2026-09-30: 黙って落ちていた（YUMA の確認で「エリアを西中島南方にも広げたい」がこの経路で書かれず、原因が見えなかった）→ 理由だけ残す
+    console.warn(JSON.stringify({ tag: "autoParseFormat:parse-failed", convId, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
     return;
   }
 
@@ -1078,11 +1108,11 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   }
 
   // ── 会話レコードを取得（紐付け済み顧客IDを確認）──────────────────
+  // 2026-09-30: 会話は line_user_id ではなくこの発言の会話（convId）で引く（同じ LINE の id の会話が複数ある時に別の会話の紐付けを読まない）
   const { data: conv } = await db
     .from("conversations")
     .select("customer_name, property_customer_id")
-    .eq("line_user_id", userId)
-    .limit(1)
+    .eq("id", convId)
     .maybeSingle();
 
   // プロフィールが取れなかった場合は会話の名前を使う
@@ -1098,12 +1128,13 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   }
 
   // ── property_customers を line_user_id で検索（カジュアル更新マージ用に条件フィールドも取得）──
-  const { data: existing } = await db
-    .from("property_customers")
-    .select("id, customer_name, desired_area, floor_plan, rent_min, rent_max, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests")
-    .eq("line_user_id", userId)
-    .limit(1)
-    .maybeSingle();
+  // 2026-09-30（YUMA の確認で発覚）: 会話が紐付いているお客様の行を先に使う。旧は line_user_id だけで引き、同じ LINE の id の行が
+  //   2つ以上ある時（紐付け 231会話のうち 4会話＝YUMA と本物のお客様3人）に**紐付いていない古い行**へ条件を書いていた
+  //   （YUMA の 9/27「難波あたりの1LDK・家賃10万まで」は画面の紐付け先 509cd061 ではなく古い行 ba838ac7 に入っていた）
+  const PC_COND_COLS = "id, customer_name, desired_area, floor_plan, rent_min, rent_max, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests";
+  const { data: existing } = conv?.property_customer_id
+    ? await db.from("property_customers").select(PC_COND_COLS).eq("id", conv.property_customer_id as string).maybeSingle()
+    : await db.from("property_customers").select(PC_COND_COLS).eq("line_user_id", userId).limit(1).maybeSingle();
 
   let customerId: string;
   let isNewCustomer = false;
@@ -1133,6 +1164,12 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       parsed = g.extracted;
       if (g.notes.length) console.log(JSON.stringify({ tag: "autoParseFormat:condition-guards", convId, notes: g.notes }));
     }
+    // 2026-09-30 入口の関所: 新しく足す値のうち物件の話にだけある値・地名でない語（「4階のお部屋」）を落とす（今ある値は消さない）
+    {
+      const gg = gateExtractedConditions(parsed, turnAP, existingRec);
+      if (gg.dropped.length) console.log(JSON.stringify({ tag: "autoParseFormat:source-gate", convId, dropped: gg.dropped }));
+      parsed = gg.extracted;
+    }
     let intentResult = classifyByKeywords(text, existingConds.desired_area as string | null);
     if (!intentResult) {
       intentResult = await classifyByAI(anthropic, text, existingConds.desired_area as string | null);
@@ -1155,6 +1192,9 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       await db.from("property_customers")
         .update({ ...parsedFields, customer_name: resolvedName })
         .eq("id", customerId);
+      // 2026-09-30: 正式フォーマットの上書きも履歴に残す（根拠の発言＝この条件の一覧。旧は残していなかった＝希望エリアの語の根拠を辿れない）
+      void recordConditionHistory(db, customerId, existing as Record<string, unknown>, parsedFields, conditionSourceTag("format", sourceMsgId))
+        .catch((e) => console.warn("[condition-history] autoParseFormat formal:", e));
       // エリア条件が含まれている場合は area_mode を即時推定・更新
       if (parsedFields.desired_area) {
         const _area = parsedFields.desired_area as string;
@@ -1177,7 +1217,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
         .update({ ...baseFields, ...mergedConds, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
         .eq("id", customerId);
       // 2026-09-27: カジュアル更新も条件の履歴に残す（旧は残していなかった＝未桜さんの 9/27 の言い直しが履歴に無い）
-      void recordConditionHistory(db, customerId, existing as Record<string, unknown>, mergedConds as Record<string, unknown>)
+      void recordConditionHistory(db, customerId, existing as Record<string, unknown>, mergedConds as Record<string, unknown>, conditionSourceTag("format", sourceMsgId))
         .catch((e) => console.warn("[condition-history] autoParseFormat:", e));
       await appendAdditionalConditions(customerId, intent);
     }
@@ -1201,7 +1241,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       await db.from("property_customers")
         .update({ ...baseFields, ...mergedConds, line_user_id: userId, customer_name: resolvedName, last_property_sent_at: null, rp_update_days: null })
         .eq("id", customerId);
-      void recordConditionHistory(db, customerId, linkedConds as Record<string, unknown> | null, mergedConds as Record<string, unknown>)
+      void recordConditionHistory(db, customerId, linkedConds as Record<string, unknown> | null, mergedConds as Record<string, unknown>, conditionSourceTag("format", sourceMsgId))
         .catch((e) => console.warn("[condition-history] autoParseFormat:", e));
       await appendAdditionalConditions(customerId, intent);
     }
@@ -1262,12 +1302,22 @@ function mergeFreeText(existing: string | null | undefined, extracted: string | 
 async function extractConditionsFromCasualReply(
   db: ReturnType<typeof getDb>,
   convId: string,
-  customerText: string,
+  fullCustomerText: string,
+  sourceMsgId: string | null = null,
 ): Promise<void> {
   // 顧客テキスト側の最低限フィルタ（完全に無関係なメッセージを除外してAPI節約）
-  if (/^https?:\/\/\S+$/.test(customerText.trim())) return; // URLのみは対象外
-  if (isPropertySiteUrl(customerText)) return; // 物件サイトURL含む → 物件シェアであり条件更新ではない
-  if (customerText.length < 3) return;
+  if (/^https?:\/\/\S+$/.test(fullCustomerText.trim())) return; // URLのみは対象外
+  if (isPropertySiteUrl(fullCustomerText)) return; // 物件サイトURL含む → 物件シェアであり条件更新ではない
+  if (fullCustomerText.length < 3) return;
+  // 2026-09-30 竹内（黒明様の事例）: 入口の見分け。物件の問い合わせ（「4階のお部屋は11月初旬で…11階の方を抑えつつ」）・書類・物件のスクショは
+  //   条件の欄に書かない（物件確認はお客様の依頼として別の流れ＝ブレイン・property-check-task が見る）。同居の文は条件の節だけを読む。
+  //   以降の決定論の拾い・Haiku の分類・読み取りはすべて条件の部分（customerText）だけに当てる
+  const turn: ConditionTurn = classifyConditionTurn(fullCustomerText);
+  if (!turn.conditionText) {
+    console.log(JSON.stringify({ tag: "P4:skip-property-inquiry", convId, kind: turn.kind, dropped: turn.dropped.map((d) => d.reason).slice(0, 4) }));
+    return;
+  }
+  const customerText = turn.conditionText;
 
   // スタッフの直近3件を取得（1件だけだと「ご希望は？」の後に別メッセージが来たとき文脈を失う）
   const { data: recentStaffMsgs } = await db
@@ -1281,7 +1331,9 @@ async function extractConditionsFromCasualReply(
 
   const staffTexts = (recentStaffMsgs ?? []).map((m) => (m.text as string).slice(0, 200));
   if (staffTexts.length === 0) return;
-  const combinedStaffText = staffTexts.join(" ");
+  // 2026-09-30: 聞き取り中かの判定に、特定のお部屋の文（「1104号室家賃67,500円のお部屋の方でお間違いないでしょうか」・🌟の物件の文・御見積書）は数えない。
+  //   黒明様の回は P4 の入口がこの文の「家賃」だけで開いた（お客様の文は条件の語に当たっていなかった）
+  const combinedStaffText = staffTexts.filter((t) => !/🌟|号室|【[^】]{2,40}】|御見積書|」\s*駅?\s*徒歩/.test(t)).join(" ");
 
   // スタッフメッセージ群が条件ヒアリング文脈かを確認
   const hasStrongCondSignal = /ご希望|希望エリア|希望間取り|希望家賃|ご予算|入居時期|初期費用|こだわり|徒歩.*何分|何分.*徒歩|築年数|通勤|電車.*駅|.*駅まで.*分/.test(combinedStaffText);
@@ -1311,7 +1363,12 @@ async function extractConditionsFromCasualReply(
   const recentContext = staffTexts.reverse().map((t) => ({ sender: "staff" as const, text: t }));
   const p4Class = await classifyConditionMessage(anthropicP4, customerText, recentContext);
   // 影（Jev）: Haiku と同じ入力で聞いて並べるだけ。判断は下の Haiku の答えのまま
-  shadowConditionClassify(convId, customerText, recentContext, { type: p4Class.type, confidence: p4Class.confidence, source: "haiku" });
+  shadowConditionClassify(convId, customerText, recentContext, { type: shadowType(p4Class.type), confidence: p4Class.confidence, source: "haiku" });
+  // 物件の問い合わせと読んだ時は決定論の拾い（家賃を上げて等）があっても書かない（「この物件の家賃7万以内になりますか」の家賃を上限にしない）
+  if (p4Class.type === "property_inquiry" && (p4Class.confidence >= 0.6 || !deterministicCondHit)) {
+    console.log(JSON.stringify({ tag: "P4:skip-haiku-property-inquiry", convId, confidence: p4Class.confidence }));
+    return;
+  }
   if ((p4Class.type === "not_condition" || p4Class.confidence < 0.6) && !deterministicCondHit) {
     console.log(`[P4] skip: type=${p4Class.type} confidence=${p4Class.confidence}`);
     return;
@@ -1417,7 +1474,7 @@ ${customerText.slice(0, 600)}
   }
 
   // after() C（resolve-area正規化）と競合するため、エリア指定メッセージでは desired_area を書かない
-  if (isAreaSpecificationMessage(customerText)) delete extracted.desired_area;
+  if (isAreaSpecificationMessage(fullCustomerText)) delete extracted.desired_area;
 
   // 2026-09-29 要望の項目化の監査: LLM が初期費用上限を返さなかった時だけ、発言の「初期費用○万以内／以下／くらい」で埋める（決定論）
   if (typeof extracted.initial_cost_limit !== "number") {
@@ -1438,6 +1495,13 @@ ${customerText.slice(0, 600)}
     .maybeSingle();
 
   const existingPcRec = existingPc as unknown as Record<string, unknown> | null;
+  // 2026-09-30 入口の関所（condition-source-gate）: 新しく足す値のうち、地名でない語（「4階のお部屋」）・条件の部分に根拠が無い語・
+  //   物件の話の中にだけある値（「11月初旬」）・物件の話や依頼だけの節（「11階の方を抑えつつ」「新着でご連絡」）を落とす。今ある値は消さない
+  {
+    const gg = gateExtractedConditions(extracted, turn, existingPcRec);
+    if (gg.dropped.length) console.log(JSON.stringify({ tag: "P4:source-gate", convId, dropped: gg.dropped }));
+    extracted = gg.extracted;
+  }
   // 2026-09-27 家賃・広さの決まり（rent-raise.ts）: 「家賃を上げて」＝登録の上限 +2万（金額を言えばその金額）・
   //   下限はお客様が言った時だけ（野口さん: スタッフの文「合計88,000円」を下限と読んだ）・「N帖以上」→ floor_area_min。
   //   相対の上げはここ（P4）だけが行う（ブレインの橋・条件ブレインは follow で家賃に触らない＝二重に上げない）
@@ -1511,7 +1575,7 @@ ${customerText.slice(0, 600)}
       }
     }
     console.log(`[line-webhook] P4 条件抽出: conv=${convId} fields=${Object.keys(updates).join(",")}`);
-    void recordConditionHistory(db, pcId, existingPc as Record<string, unknown> | null, updates)
+    void recordConditionHistory(db, pcId, existingPc as Record<string, unknown> | null, updates, conditionSourceTag("p4", sourceMsgId))
       .catch((e) => console.warn("[condition-history] P4:", e));
 
     // 変更があった場合のみ新着要望バナーにPENDINGエントリを追加（スタッフへの物件再検索通知）
@@ -1699,9 +1763,13 @@ async function autoDetectTask(
 async function detectAndAnnounceAreaChange(
   db: ReturnType<typeof getDb>,
   convId: string,
-  msgText: string,
+  fullMsgText: string,
+  sourceMsgId: string | null = null,
 ): Promise<void> {
   try {
+    // 2026-09-30 入口の見分け: resolve-area には条件の部分だけを渡す（物件の問い合わせの節・書類の行の地名を足さない）
+    const msgText = classifyConditionTurn(fullMsgText).conditionText;
+    if (!msgText) return;
     // conversations から property_customer_id を取得
     const { data: conv } = await db
       .from("conversations")
@@ -1755,6 +1823,9 @@ async function detectAndAnnounceAreaChange(
     await db.from("property_customers")
       .update({ desired_area: merged, updated_at: new Date().toISOString() })
       .eq("id", pc.id as string);
+    // 2026-09-30: 経路C も条件の履歴に残す（旧は残していなかった＝見張り（search_audits.last_change・screen-watch）から見えず、黒明様の西中島南方を誰が書いたか追えなかった）
+    void recordConditionHistory(db, pc.id as string, { desired_area: oldArea }, { desired_area: merged }, conditionSourceTag("path_c", sourceMsgId))
+      .catch((e) => console.warn("[condition-history] Path C:", e));
     // エリアが更新されたので area_mode を即時推定・上書き
     {
       const mode = await inferAreaMode(db, merged);

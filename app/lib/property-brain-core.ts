@@ -320,9 +320,19 @@ async function notifyContradiction(
 // メイン: 条件更新ブレイン
 export async function runConditionBrain(
   convId: string,
-  messageText: string
+  fullMessageText: string
 ): Promise<ConditionUpdates | null> {
   const { supabase } = await import("@/app/lib/supabase");
+  // 2026-09-30 竹内（黒明様の事例）「お客さんの条件か、ただ物件 SUUMO 等のサイト送ってきているだけか」: 入口の見分け（condition-source-gate）。
+  //   物件の問い合わせ・物件のスクショ・書類だけの発言では条件を更新しない。同居の文は条件の部分だけを LLM に渡す
+  //   （この経路は送った物件の一覧も文脈に持つので、根拠の無い駅を足さないよう出口の手前でも関所に当てる）
+  const { classifyConditionTurn, gateExtractedConditions } = await import("@/app/lib/condition-source-gate");
+  const turn = classifyConditionTurn(fullMessageText);
+  if (!turn.conditionText) {
+    console.log(JSON.stringify({ tag: "conditionBrain:skip-property-inquiry", convId, kind: turn.kind, dropped: turn.dropped.map((d) => d.reason).slice(0, 4) }));
+    return null;
+  }
+  const messageText = turn.conditionText;
 
   // ── 顧客ID取得 ────────────────────────────────────────────────────────────
   const { data: conv } = await supabase
@@ -404,7 +414,17 @@ export async function runConditionBrain(
   const cur = ctx.customer;
   const guarded = applyConditionGuards(messageText, { rent_max: cur.rentMax ?? null, rent_min: cur.rentMin ?? null, floor_area_min: cur.floorAreaMin ?? null }, parsed.updates ?? {}, "follow");
   if (guarded.notes.length) console.log(JSON.stringify({ tag: "conditionBrain:condition-guards", convId, notes: guarded.notes }));
-  const updates = guarded.extracted;
+  // 2026-09-30 入口の関所: 新しく足す値のうち地名でない語・条件の部分に根拠の無い語（文脈の送った物件の駅）・物件の話にだけある値を落とす（今ある値は消さない）
+  let updates = guarded.extracted;
+  {
+    const keys = Object.keys(updates);
+    const { data: cur0 } = keys.length
+      ? await supabase.from("property_customers").select(keys.join(",")).eq("id", customerId).maybeSingle()
+      : { data: null };
+    const gg = gateExtractedConditions(updates, turn, (cur0 ?? null) as Record<string, unknown> | null);
+    if (gg.dropped.length) console.log(JSON.stringify({ tag: "conditionBrain:source-gate", convId, dropped: gg.dropped }));
+    updates = gg.extracted;
+  }
   const hasUpdates = Object.keys(updates).length > 0;
 
   // ── 矛盾通知（updates に関係なく実行）───────────────────────────────────
@@ -437,8 +457,10 @@ export async function runConditionBrain(
     return null;
   }
   {
-    const { recordConditionHistory } = await import("@/app/lib/condition-history");
-    void recordConditionHistory(supabase, customerId, (oldRow ?? null) as Record<string, unknown> | null, updates)
+    const { recordConditionHistory, conditionSourceTag } = await import("@/app/lib/condition-history");
+    const { data: lastCust } = await supabase.from("messages").select("id").eq("conversation_id", convId).eq("sender", "customer")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    void recordConditionHistory(supabase, customerId, (oldRow ?? null) as Record<string, unknown> | null, updates, conditionSourceTag("condition_brain", (lastCust?.id as string | undefined) ?? null))
       .catch((e) => console.warn("[condition-history] conditionBrain:", e));
   }
 

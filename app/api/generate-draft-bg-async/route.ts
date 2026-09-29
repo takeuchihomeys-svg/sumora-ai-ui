@@ -15,6 +15,10 @@ import { MSG_SEP } from "@/app/lib/reply-context";
 import { shouldSkipDraftAfterClosing } from "@/app/lib/previous-send-note";
 import { DRAFT_SENTINEL_NO_REPLY } from "@/app/lib/draft-text";
 import { applyConditionGuards } from "@/app/lib/rent-raise";
+// 2026-09-30 入口の見分け（お客様の条件か・物件の問い合わせか）と、条件の履歴の根拠の発言
+import { classifyConditionTurn, gateExtractedConditions, mergeAreaForBrainBridge } from "@/app/lib/condition-source-gate";
+import { classifyByKeywords } from "@/app/lib/condition-intent";
+import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { resolveConditionChangeScope } from "@/app/lib/condition-change-scope";
 import { jstParts } from "@/app/lib/jst-date";
 
@@ -121,6 +125,15 @@ async function applyBrainConditionChange(
 ): Promise<void> {
   const focus = BRAIN_CONDITION_FOCUS[conditionChangeType];
   if (!focus) return;
+  // 2026-09-30 竹内（黒明様の事例）「お客さんの条件か、ただ物件 SUUMO 等のサイト送ってきているだけか」: 入口の見分け（condition-source-gate）。
+  //   連投（MSG_SEP つなぎ・画像の書き起こしを含む）のうち、物件の問い合わせ・物件ページのスクショ・書類を外し、条件の部分だけを読む。
+  //   旧はここに見分けが一切無く、物件情報の貼り付け（旭区・住吉区）・物件のスクショ（桜川）で希望エリアを丸ごと上書きし、履歴も残していなかった
+  const turn = classifyConditionTurn(targetMessage);
+  if (!turn.conditionText) {
+    console.log(JSON.stringify({ tag: "bg-async:bridge-skip-property-inquiry", convId, kind: turn.kind, dropped: turn.dropped.map((d) => d.reason).slice(0, 4) }));
+    return;
+  }
+  targetMessage = turn.conditionText;
 
   const { data: pc } = await db.from("property_customers")
     .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")
@@ -167,6 +180,24 @@ async function applyBrainConditionChange(
     if (g.notes.length) console.log(JSON.stringify({ tag: "bg-async:condition-guards", convId, notes: g.notes }));
   }
 
+  // 2026-09-30 入口の関所: 新しく足す値のうち地名でない語・条件の部分に根拠の無い語・物件の話にだけある値を落とす（今ある値は消さない）
+  {
+    const gg = gateExtractedConditions(extracted, turn, pc as Record<string, unknown> | null);
+    if (gg.dropped.length) console.log(JSON.stringify({ tag: "bg-async:bridge-source-gate", convId, dropped: gg.dropped }));
+    extracted = gg.extracted;
+  }
+  // 2026-09-30: 希望エリアは「差し替え」の言葉（〜じゃなくて・〜に変えて・やっぱり）がある時だけ置き換え、それ以外は今のエリアに足す（mergeAreaForBrainBridge）。
+  //   旧は常に丸ごと上書きで、YUMA の確認（本番の旧コード・9/30 00:46 JST）でも「エリアを西中島南方にも広げたい」の連投から
+  //   「西本町、西中島南方、天満橋、北浜」に上書きし、登録の「大阪市北区・大阪市福島区」を消した（西本町は物件の問い合わせの建物名・履歴なし）。
+  //   除外（「〇〇は無しで」）はここでは書かない（P4／カジュアル更新の除外の処理に任せる）
+  {
+    const curArea = String((pc as Record<string, unknown> | null)?.desired_area ?? "");
+    const newArea = typeof extracted.desired_area === "string" ? extracted.desired_area : "";
+    const merged = mergeAreaForBrainBridge({ current: curArea, extracted: newArea, conditionText: targetMessage, conditionChangeType, intent: classifyByKeywords(targetMessage, curArea)?.intent ?? null });
+    if (merged === null) delete extracted.desired_area;
+    else if (newArea) extracted.desired_area = merged;
+  }
+
   const updates: Record<string, unknown> = {};
   const changedFields: Record<string, unknown> = {};
   for (const f of focus.fields) {
@@ -183,6 +214,13 @@ async function applyBrainConditionChange(
   await db.from("property_customers")
     .update({ ...updates, updated_at: new Date().toISOString(), ...(conditionActuallyChanged ? { last_property_sent_at: null, rp_update_days: null } : {}) })
     .eq("id", pcId);
+  // 2026-09-30: ブレインの橋も条件の履歴に残す（旧は残していなかった）。根拠の発言は今回のお客様の最後の発言
+  {
+    const { data: lastCust } = await db.from("messages").select("id").eq("conversation_id", convId).eq("sender", "customer")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    void recordConditionHistory(db, pcId, pc as Record<string, unknown> | null, updates, conditionSourceTag("brain_bridge", (lastCust?.id as string | undefined) ?? null))
+      .catch((e) => console.warn("[condition-history] brain-bridge:", e));
+  }
 
   // 条件が実際に変わった場合は会話を要対応にセット（スタッフが未読のまま解除していても再フラグ）
   if (conditionActuallyChanged) {

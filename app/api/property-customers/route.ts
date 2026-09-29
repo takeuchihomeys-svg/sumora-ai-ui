@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { recordConditionHistory } from "@/app/lib/condition-history";
+import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { itemizeWants, type WantsCustomerLike } from "@/app/lib/customer-wants";
 
 // 条件変更履歴の追跡対象フィールド（condition-history.ts の TRACKED と同一）
@@ -178,7 +178,7 @@ export async function PATCH(req: NextRequest) {
 
   // 条件変更を履歴化（fire-and-forget・UPDATE成功後のみ）
   if (trackedInPatch.length > 0) {
-    void recordConditionHistory(supabase, String(id), oldConditionRow, fields)
+    void recordConditionHistory(supabase, String(id), oldConditionRow, fields, conditionSourceTag("screen_edit"))
       .catch((e) => console.warn("[condition-history] PATCH:", e));
   }
 
