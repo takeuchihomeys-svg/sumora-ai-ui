@@ -2,7 +2,7 @@
 // 2026-09-27 竹内「こういうの来たら AIX モードだと家賃を上げて物件検索する形になっているか。今回のお客さん家賃10万までなので12万円まで上げる」
 // 文は本番のお客様の実物（2026-03〜09-27 の「家賃・予算 × 上げ/高くても」を全部拾った21通）と竹内さんの例。
 // 実行: npx tsx app/lib/__tests__/rent-raise.test.ts（全 PASS で exit 0）
-import { detectRentRaiseRequest, computeRaisedRentMax, statesRentMin, applyRentGuards, applyConditionGuards, roomJoMinInText, joToFloorAreaMin, floorAreaMinFromJo, isSingleRoomPlan, DEFAULT_RENT_RAISE_YEN } from "../rent-raise";
+import { detectRentRaiseRequest, computeRaisedRentMax, statesRentMin, applyRentGuards, applyConditionGuards, roomJoMinInText, joToFloorAreaMin, floorAreaMinFromJo, isSingleRoomPlan, RENT_RAISE_RULE, rentRaiseRate, defaultRaisedRentMax } from "../rent-raise";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -42,9 +42,34 @@ eq("上げたくない", kind("家賃は上げたくないです"), null);
 eq("徒歩の上限", kind("徒歩の上限を上げてもいいです"), null);
 eq("初期費用の予算", kind("初期費用の予算を上げても大丈夫です"), null);
 
-console.log("■ 上限の計算（竹内さん: 10万→12万）");
-eq("既定 +2万", computeRaisedRentMax(100000, { kind: "default", evidence: "" }), 120000);
-eq("既定の幅は2万", DEFAULT_RENT_RAISE_YEN, 20000);
+console.log("■ 金額の無い上げ幅＝家賃の帯（2026-09-27 竹内: 7万 → 8万台／10万 → 11.5万／15万 → 18万・高いほど率を上げる）");
+{
+  const v7 = defaultRaisedRentMax(70000);
+  t("竹内さんの例 7万 → 8万台", v7 >= 80000 && v7 < 90000, String(v7));
+  eq("竹内さんの例 10万 → 11.5万", defaultRaisedRentMax(100000), 115000);
+  eq("竹内さんの例 15万 → 18万", defaultRaisedRentMax(150000), 180000);
+  eq("computeRaisedRentMax の既定も同じ（10万）", computeRaisedRentMax(100000, { kind: "default", evidence: "" }), 115000);
+  // 率は家賃が高いほど上がる（下がらない）・点の間は連続
+  let prev = 0, mono = true, cont = true;
+  for (let y = 40000; y <= 300000; y += 1000) {
+    const r = rentRaiseRate(y);
+    if (r + 1e-12 < prev) mono = false;
+    if (y > 40000 && Math.abs(r - rentRaiseRate(y - 1000)) > 0.0011) cont = false;
+    prev = r;
+  }
+  t("率は家賃が高いほど下がらない", mono);
+  t("率は連続（1千円で 0.1% より大きく飛ばない）", cont);
+  // 上げた後は必ず今より上・5千円単位・最低の幅（丸めで 5千円まで縮むことはある）
+  let ok = true, bad = "";
+  for (let y = 30000; y <= 400000; y += 1000) {
+    const v = defaultRaisedRentMax(y);
+    if (!(v > y && v % RENT_RAISE_RULE.roundYen === 0 && v - y >= RENT_RAISE_RULE.minDeltaYen - RENT_RAISE_RULE.roundYen / 2)) { ok = false; bad = y + "→" + v; break; }
+  }
+  t("上げた後は今より上・5千円単位・最低の幅", ok, bad);
+  let monoV = true;
+  for (let y = 30000; y <= 400000; y += 1000) if (defaultRaisedRentMax(y) < defaultRaisedRentMax(y - 1000)) monoV = false;
+  t("上げた後の値は今の上限が高いほど下がらない", monoV);
+}
 eq("+1万", computeRaisedRentMax(100000, { kind: "delta", deltaYen: 10000, evidence: "" }), 110000);
 eq("金額 11万", computeRaisedRentMax(100000, { kind: "absolute", toYen: 110000, evidence: "" }), 110000);
 eq("金額が今以下 → 上げない", computeRaisedRentMax(100000, { kind: "absolute", toYen: 90000, evidence: "" }), null);
@@ -65,7 +90,7 @@ console.log("■ 抽出に当てる（P4）");
   // 実物: Haiku がスタッフの文「合計88,000円」を下限と読んだ
   const r = applyRentGuards("もう少し家賃あげて、他の部屋もいただけたら、ありがたいです!", { rent_max: 100000, rent_min: null },
     { rent_min: 88000, other_requests: "現在提示された物件より家賃を上げた複数の他物件を希望" }, "p4");
-  eq("野口: 下限 88000 を外す・上限 10万→12万", { min: r.extracted.rent_min, max: r.extracted.rent_max, other: !!r.extracted.other_requests }, { min: undefined, max: 120000, other: true });
+  eq("野口: 下限 88000 を外す・上限 10万→11.5万（帯の決まり）", { min: r.extracted.rent_min, max: r.extracted.rent_max, other: !!r.extracted.other_requests }, { min: undefined, max: 115000, other: true });
 }
 {
   const r = applyRentGuards("家賃の上限を11万まで上げても大丈夫です", { rent_max: 90000 }, { rent_max: 110000 }, "p4");
@@ -73,7 +98,7 @@ console.log("■ 抽出に当てる（P4）");
 }
 {
   const r = applyRentGuards("もう少し家賃上げて良いので", { rent_max: 80000 }, { rent_max: 70000 }, "p4");
-  eq("LLM が下げた上限を上書き: 8万→10万", r.extracted.rent_max, 100000);
+  eq("LLM が下げた上限を上書き: 8万→9万（帯の決まり 8万×15%=9.2万→9万）", r.extracted.rent_max, 90000);
 }
 {
   const r = applyRentGuards("家賃8万〜10万で探してます", { rent_max: 90000 }, { rent_min: 80000, rent_max: 100000 }, "p4");

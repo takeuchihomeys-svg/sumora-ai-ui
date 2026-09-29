@@ -19,7 +19,8 @@ export type CommandRowLike = { id: string; created_at?: string | null; customer_
 /** コマンドの行から、この回（お客様）に使う上書きを決める（純関数） */
 export function pickupOverrideFromCommand(cmd: CommandRowLike | null | undefined, propertyCustomerId: string | null, nowMs = Date.now()): PickupSearchOverride | null {
   if (!cmd || !propertyCustomerId) return null;
-  if (cmd.payload?.source !== "web_brain") return null;
+  // 2026-09-27: AIX の検索（source=aix）にも載る（ブレインが「今回だけ」と決めたお客様の言い直し・condition-scope-server.ts）
+  if (cmd.payload?.source !== "web_brain" && cmd.payload?.source !== "aix") return null;
   if (!(cmd.customer_ids ?? []).map(String).includes(String(propertyCustomerId))) return null;
   const at = Date.parse(String(cmd.created_at ?? ""));
   if (!Number.isFinite(at) || nowMs - at > LINK_MAX_AGE_MS || at - nowMs > 5 * 60_000) return null;

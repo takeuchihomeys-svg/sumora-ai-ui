@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-09-29 ブレインの回は★物件出し★グループへ「解析が終わった時に1回」だけ知らせる・PDF は付けない（**拡張は変えていない・版は上げていない**）
+竹内（★物件出し★(3) のスクショ: 検索のたびに「未桜さん 物件（リアプロ）／一番オススメ…」＋PDF が届く）「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする…PDF もここに添付しなくて大丈夫（ブレインの際）。ブレイン以外の状態なら今まで通りここのグループに共有する」。「売上番長のグループ」＝★物件出し★＝`pickup_group_id`（竹内さん確認済み）。本当の売上番長グループ `group_id` の「AIX要対応」は触っていない
+- **旧の流れ**: 拡張の検索 → `/api/merge-pdfs` が検索（束）のたびに本文（お客様名・🌟一番オススメ・一覧）＋結合 PDF のリンクを pickup_group_id へ push。ブレイン（拡張の brain_mode）の時だけ同じ所で売上サポ（property_pickups）に記録 → 最後の行から3分静かになると自動まとめ（cron pickup-auto-complete／拡張の alarm／詳細を開いた時）→ finishCompleteGroup が画像で分析＋順位＋👑。エラー・0件の知らせ（拡張の notify-group・pickup_group_id）は別で今まで通り
+- **新**: 決まりは `app/lib/pickup-group-announce.ts`（純関数）`groupNoticePlan`: brain_mode=true・スタッフモード以外・お客様（property_customer_id）が分かる回 → 検索のたびには送らない（deferred）。それ以外（通常・手動の一括・スタッフモード・お客様不明）は今まで通り。`PICKUP_GROUP_DEFER=off` で全部元に戻る
+  - merge-pdfs: deferred の回は push せず、記録に `group_notice='deferred'` を付ける。**記録できなかった時（失敗・0行・列が無い・説明文なし）は今まで通りの本文＋PDF を送る**（fallbackPush）。「全件送付済み」の知らせもブレインの回は送らない（ログ merge-pdfs:group-deferred）。応答に group_deferred:true（拡張は読んでいない）
+  - finishCompleteGroup（順位・👑 を書いた後）→ `pickup-group-announce-server.announceCompleteGroup`: まとめに deferred の行があり、まだ知らせていない行がある時だけ1回。文＝「🧠 AIXツールの解析が終わりました／〇〇さん 物件（リアプロ 20・itandi 12）／👑 一番オススメ（合計 167点・判定 163・画像 +4）＋説明文／【2】〜【6】上位5件（未送信・外す候補以外・合計の点・保留の印）／全N件（通す・保留・外す候補）／▶ AIXツールで見る /conditions?pickup=<お客様>&batch=<まとめの最初の回>」。拡張の🌟の印は出さない。解析が途中で止まった（status=error）時は件数とリンクだけ
+  - 二重に送らない: `property_pickup_completions.announced_item_ids`／`announced_at` を**送る前に条件付き UPDATE で取る**（Cron・alarm・やり直しが重なっても1つ）。遅れて届いた回が前のまとめに足された時だけ「（追加分を含めて並べ直しました）」で1回。LINE の失敗は `announce_error`（送り直さない）
+- DB: `property_pickups.group_notice`・`property_pickup_completions.announced_item_ids/announced_at/announce_error`（migrate-schema に追加・本番に適用済み 9/29）
+- テスト: `app/lib/__tests__/pickup-group-announce.test.ts`（44）・pickup-complete 33・pickup-auto-complete 45 ほか 0 failed。YUMA の cg_509cd061_716 で文を組み立て（送っていない）＝👑 #728 が DB の best_id と一致
+- **竹内さんに頼むこと**: デプロイ後、ブレイン ON の PC で YUMA（509cd061）を1回検索 → 検索のたびの本文と PDF が★物件出し★に来ない・3〜5分後に「🧠 AIXツールの解析が終わりました」が1通だけ届く・リンクで AIXツールのその回が開く。ブレイン OFF／スタッフモードの検索は今まで通り来る
+
+## 2026-09-27 v2.5.37 AIX の検索（source=aix）にも「今回だけ」の上書き（search_override）を重ねる（**拡張の再読み込み必須**）
+竹内「一時調整か、そもそもの条件の切り替えかの判断をブレインが行う」
+- **サーバー**: ブレインが条件の言い直しを temporary（今回だけ）と決めたら、登録の条件は直さず、その発言の条件を SearchOverride にして AIX の検索コマンドの payload.search_override に載せる（app/lib/condition-change-scope.ts・condition-scope-server.ts・aix-action-items.ts）。permanent は今まで通り登録の条件を直す（v2.5.36 の方針）
+- **拡張**: search-override.js に `sourceAllows(source)`（web_brain・aix だけ true）。background の2か所（_runBatchSearch の searchOverride・_batchAutofill の _searchOverride）を `isWebBrain` から `sourceAllows` に。自動便・手動の一括は今まで通り重ねない。サーバーの判定の結び（search-override-link.ts pickupOverrideFromCommand）も aix を結ぶ
+- テスト: tests/chrome-extension/search-override.test.js（63）・auto-run の版の固定を 2.5.37 に・拡張の既存テスト全部通過
+- **確かめること（再読み込み後）**: AIX の回でコンソールに `[batch] AIXツールのメモの一時調整（この回だけ）: …` が出るのは、ブレインが今回だけと決めた言い直しの回だけ（ふつうの AIX の回は出ない）
+
 ## 2026-09-27 洋室の帖数（ROOM_JO_*）を判定に追加（竹内「7畳以上は帖数が資料に書かれていなかったら間取り図から読み取る」）
 - app/lib/room-jo.ts: お客様の「7畳以上」を読む（前後・程度は1帖下まで一致）。資料の文字（1K[洋:6.5畳]・[9.3xK]・[洋室7.1] 等）から居室の一番広い帖数。書いていなければ間取り図の読み取り（property_sheet_facts.rooms）
 - 札: ROOM_JO_OK +3／資料の文字で狭い ROOM_JO_NG −15 外す候補／図の読みだけで狭い ROOM_JO_IMG_NG −10 保留（図の帖数の誤読の実例 #711 9.3→6.5・#745 があるため外さない）／読めない ROOM_JO_UNKNOWN 0点 要確認

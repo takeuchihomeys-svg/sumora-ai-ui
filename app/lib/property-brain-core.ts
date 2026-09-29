@@ -396,7 +396,8 @@ export async function runConditionBrain(
   }
 
   // 2026-09-27 家賃の決まり（rent-raise.ts・follow）: 旧の判断ルール2「もう少し予算上げられます→ +1〜2万」は LLM 任せで揺れ（野口さんの回は上げなかった）、
-  //   P4 と両方で上げると二重になる。相対の上げは P4（決定論・+2万）だけが行い、ここは家賃の上限に触らない。下限はお客様が言った時だけ
+  //   P4 と両方で上げると二重になる。相対の上げは P4（決定論・帯の決まり RENT_RAISE_RULE）だけが行い、ここは家賃の上限に触らない。下限はお客様が言った時だけ
+  //   2026-09-27: ブレインが「今回だけ」と決めた番はここに来ない（brain-core runBrainAndNotify が条件ブレインを動かさない・condition-change-scope.ts）
   const { applyConditionGuards } = await import("@/app/lib/rent-raise");
   const cur = ctx.customer;
   const guarded = applyConditionGuards(messageText, { rent_max: cur.rentMax ?? null, rent_min: cur.rentMin ?? null, floor_area_min: cur.floorAreaMin ?? null }, parsed.updates ?? {}, "follow");

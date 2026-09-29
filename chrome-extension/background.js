@@ -2962,7 +2962,8 @@ async function _runBatchSearch(command) {
   // 2026-09-27 竹内「『大正駅で検索する』なら駅は大正駅だけで検索…拡張ツールの一時調整の部分で合わせる形」:
   //   AIXツールのメモ欄の検索の指示（payload.search_override）は web_brain の回だけ・この回だけお客様の写しに重ねる
   //   （お客様の登録の条件・拡張に保存した一時調整は書き換えない。popup には axlx-switch-customer の searchOverride で渡す＝_batchAutofill）
-  var searchOverride = (isWebBrain && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(cmdPayload.search_override) : null;
+  //   v2.5.37: AIX の検索（source=aix）にも重ねる＝ブレインが「今回だけ」と決めたお客様の言い直し（登録の条件は直さない回）
+  var searchOverride = (cmdPayload && self.AxlxSearchOverride && self.AxlxSearchOverride.sourceAllows(cmdPayload.source)) ? self.AxlxSearchOverride.sanitize(cmdPayload.search_override) : null;
   if (searchOverride) console.log("[batch] AIXツールのメモの一時調整（この回だけ）: " + self.AxlxSearchOverride.describe(searchOverride));
   // 2026-09-27 案A: この回の merge-pdfs に search_command_id を付ける（判定も上書きで）。上書きの無いコマンドは付けない
   _searchOverrideLink = searchOverride ? { commandId: String(command.id), customerIds: targets.map(function (c) { return String(c.id); }) } : null;
@@ -3231,7 +3232,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   var conds = _buildBatchConditions(customer, isWide, opts);
   // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
   //   popup はお客様の登録の条件から欄を作り直すので、同じ上書きを searchOverride で渡して一時調整の欄に入れさせる（pass は area_mode）
-  var _searchOverride = (opts && opts.source === "web_brain" && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(opts.search_override) : null;
+  var _searchOverride = (opts && self.AxlxSearchOverride && self.AxlxSearchOverride.sourceAllows(opts.source)) ? self.AxlxSearchOverride.sanitize(opts.search_override) : null;
   // 検索の点検: page-script が fill-done に audit を載せて返す印（popup を通らない経路でも同じ run に届くように）
   if (auditRun) conds._audit_run_id = auditRun.runId;
   // 2026-09-27 自動便の指定を popup にも渡す（旧は popup の経路に届かず、午後の便でも更新日＝人ごと・AD 順・3ページだった）

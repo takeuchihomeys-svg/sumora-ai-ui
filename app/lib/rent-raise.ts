@@ -11,8 +11,9 @@
 //   ③条件ブレイン（runConditionBrain・Sonnet）の「相対的変更は +1〜2万」も LLM 任せで、この回は上げなかった。
 //
 // 決まり（竹内さん）:
-//   - お客様が家賃を上げてと頼んだら、家賃の上限を上げる。上げ幅は既定 +2万（10万→12万）。お客様が金額を言えばその金額
-//     （「11万まで上げても」＝11万・「1万上げて」＝+1万）。
+//   - お客様が家賃を上げてと頼んだら、家賃の上限を上げる。お客様が金額を言えばその金額
+//     （「11万まで上げても」＝11万・「1万上げて」＝+1万）。金額が無い時の上げ幅は家賃の帯で変える（RENT_RAISE_RULE・下）。
+//     2026-09-27 竹内「家賃が高いほど率を上げる。7万 → 8万台／10万 → 11.5万／15万 → 18万」（旧は一律 +2万）。
 //   - 家賃の下限は、お客様がはっきり下限を言った時だけ入れる（「8万以上」「8万〜10万」「下限」）。
 //
 // 置き場所: 登録の条件（property_customers.rent_max）を上げる。search_override（その回だけ）にしない理由は
@@ -23,6 +24,50 @@
 // 二重に上げない: 相対の上げ（金額なし・「1万上げて」）は P4（webhook・ブレインより先に走る）だけが行う。
 //   ブレインの条件の橋（generate-draft-bg-async）と条件ブレイン（property-brain-core）は、相対の上げの番では家賃に触らない。
 
+// ── 金額の無い「家賃を上げて」の上げ幅（1か所の表・学習で直す時はここだけ）──────────────────────
+// 2026-09-27 竹内「家賃が高いほど率を上げる。7万 → 8万台／10万 → 11.5万／15万 → 18万」「この決まりはまた詳細を学習していったらいける」
+//   式: 上げた後 = 5千円単位に丸める( 今の上限 + max(最低の幅, 今の上限 × 率(今の上限)) )
+//   率: 10万以下 15%・10万〜15万 は 15%→20% をまっすぐつなぐ・15万以上 20%（点の間は連続）
+//   最低の幅 1万（安い帯で 15% だと 5万→5.75万＝検索の欄の刻みでほぼ変わらない）
+//   丸め: 5千円単位の近い方（ちょうど真ん中は上へ）。丸めても今の上限より上がらない時は1刻み上げる
+//   例の3点: 7万 → 8万（8.05万→8万・8万台）／10万 → 11.5万／15万 → 18万（テストで固定）
+//   学習: scripts/audit-rent-raise-bands.ts がスタッフが実際に上げた幅（条件の履歴）とこの表の値を並べる。直す時は rates の点を動かす
+export const RENT_RAISE_RULE: {
+  /** 率の点（家賃の上限 → 率）。点の間はまっすぐつなぐ・端より外は端の率 */
+  rates: ReadonlyArray<{ atYen: number; rate: number }>;
+  minDeltaYen: number;
+  roundYen: number;
+} = {
+  rates: [
+    { atYen: 100000, rate: 0.15 },
+    { atYen: 150000, rate: 0.20 },
+  ],
+  minDeltaYen: 10000,
+  roundYen: 5000,
+};
+
+/** 今の上限での上げる率（点の間はまっすぐつなぐ） */
+export function rentRaiseRate(currentMax: number, rule = RENT_RAISE_RULE): number {
+  const pts = [...rule.rates].sort((a, b) => a.atYen - b.atYen);
+  if (!pts.length) return 0;
+  if (currentMax <= pts[0].atYen) return pts[0].rate;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    if (currentMax <= b.atYen) return a.rate + (b.rate - a.rate) * (currentMax - a.atYen) / (b.atYen - a.atYen);
+  }
+  return pts[pts.length - 1].rate;
+}
+
+/** 金額の無い「家賃を上げて」の上げた後の上限（円） */
+export function defaultRaisedRentMax(currentMax: number, rule = RENT_RAISE_RULE): number {
+  const delta = Math.max(rule.minDeltaYen, currentMax * rentRaiseRate(currentMax, rule));
+  const step = rule.roundYen;
+  let v = Math.floor((currentMax + delta) / step + 0.5 + 1e-9) * step;
+  if (v <= currentMax) v = (Math.floor(currentMax / step) + 1) * step;
+  return v;
+}
+
+/** @deprecated 2026-09-27 帯の決まり（RENT_RAISE_RULE）に変えた。旧の一律の幅（記録のため残す・計算には使わない） */
 export const DEFAULT_RENT_RAISE_YEN = 20000;
 
 export type RentRaiseRequest =
@@ -70,7 +115,7 @@ function yenOf(num: string, unit: string, sen?: string): number | null {
 
 /**
  * お客様の文が「家賃を上げて（上げてよい）」の依頼か。違えば null。
- * 金額: 「11万まで」「12万でも」＝absolute（上げた後の上限）・「1万上げて」「5千円アップ」＝delta・金額なし＝default（+2万）
+ * 金額: 「11万まで」「12万でも」＝absolute（上げた後の上限）・「1万上げて」「5千円アップ」＝delta・金額なし＝default（帯の決まり RENT_RAISE_RULE）
  */
 export function detectRentRaiseRequest(text: string): RentRaiseRequest | null {
   // 特定のお部屋の交渉（「二匹で交渉してほしいです / 少し家賃上がってもいーので」実物 533b20d0）は検索の上限の話でない
@@ -103,11 +148,11 @@ export function detectRentRaiseRequest(text: string): RentRaiseRequest | null {
 }
 
 /** 上げた後の上限（上げられない＝登録の上限が無い相対の上げ・上がらない金額 → null） */
-export function computeRaisedRentMax(currentMax: number | null | undefined, req: RentRaiseRequest, defaultDelta = DEFAULT_RENT_RAISE_YEN): number | null {
+export function computeRaisedRentMax(currentMax: number | null | undefined, req: RentRaiseRequest): number | null {
   const cur = typeof currentMax === "number" && currentMax > 0 ? currentMax : null;
   if (req.kind === "absolute") return cur !== null && req.toYen <= cur ? null : req.toYen;
   if (cur === null) return null;
-  return cur + (req.kind === "delta" ? req.deltaYen : defaultDelta);
+  return req.kind === "delta" ? cur + req.deltaYen : defaultRaisedRentMax(cur);
 }
 
 /** お客様が家賃の下限をはっきり言ったか（「8万以上」「8万〜10万」「8万から」「下限」「最低」） */
@@ -153,7 +198,7 @@ export function applyRentGuards(
     } else {
       const next = computeRaisedRentMax(curMax, raise);
       if (next !== null) {
-        if (out.rent_max !== next) notes.push(`rent_max ${curMax ?? "なし"} → ${next}（${raise.kind === "absolute" ? "お客様の金額" : raise.kind === "delta" ? `+${raise.deltaYen}` : `既定 +${DEFAULT_RENT_RAISE_YEN}`}）`);
+        if (out.rent_max !== next) notes.push(`rent_max ${curMax ?? "なし"} → ${next}（${raise.kind === "absolute" ? "お客様の金額" : raise.kind === "delta" ? `+${raise.deltaYen}` : "帯の決まり"}）`);
         out.rent_max = next;
       } else if (typeof out.rent_max === "number" && typeof curMax === "number" && out.rent_max < curMax) {
         notes.push(`rent_max ${out.rent_max} を外した（上げての依頼で上限が下がる）`);

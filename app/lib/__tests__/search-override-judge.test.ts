@@ -112,7 +112,9 @@ console.log("── コマンドから結ぶ（pickupOverrideFromCommand）");
   eq("web_brain・同じお客様・新しい → 上書き", pickupOverrideFromCommand(cmd, "pc1", now)?.override.floor_plan, "1LDK");
   eq("コマンドの id を残す", pickupOverrideFromCommand(cmd, "pc1", now)?.command_id, cmd.id);
   eq("別のお客様 → 結ばない", pickupOverrideFromCommand(cmd, "pc2", now), null);
-  eq("web_brain でない → 結ばない", pickupOverrideFromCommand({ ...cmd, payload: { source: "aix", search_override: OV_1LDK } }, "pc1", now), null);
+  // 2026-09-27: aix（ブレインが「今回だけ」と決めたお客様の言い直し）も結ぶ。自動便・手動の一括は結ばない
+  eq("aix の今回だけの上書き → 結ぶ", pickupOverrideFromCommand({ ...cmd, payload: { source: "aix", search_override: OV_1LDK } }, "pc1", now)?.command_id ?? null, cmd.id);
+  eq("自動便 → 結ばない", pickupOverrideFromCommand({ ...cmd, payload: { source: "auto_schedule", search_override: OV_1LDK } }, "pc1", now), null);
   eq("古いコマンド → 結ばない", pickupOverrideFromCommand({ ...cmd, created_at: new Date(now - LINK_MAX_AGE_MS - 1000).toISOString() }, "pc1", now), null);
   eq("上書きが空 → 結ばない", pickupOverrideFromCommand({ ...cmd, payload: { source: "web_brain", search_override: EMPTY } }, "pc1", now), null);
   eq("知らない駅は関所で落ちる（上書きが空になれば結ばない）", pickupOverrideFromCommand({ ...cmd, payload: { source: "web_brain", search_override: ov({ location: { mode: "only", stations: ["ほげほげ"], lines: [], areas: [] } }) } }, "pc1", now), null);

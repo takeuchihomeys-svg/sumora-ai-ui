@@ -14,6 +14,7 @@ import { MSG_SEP } from "@/app/lib/reply-context";
 import { shouldSkipDraftAfterClosing } from "@/app/lib/previous-send-note";
 import { DRAFT_SENTINEL_NO_REPLY } from "@/app/lib/draft-text";
 import { applyConditionGuards } from "@/app/lib/rent-raise";
+import { resolveConditionChangeScope } from "@/app/lib/condition-change-scope";
 import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
@@ -550,7 +551,13 @@ export async function POST(req: NextRequest) {
       }
 
       // 脳-DBブリッジ: 条件変更検出 → DB自動更新（返信プロンプト注入だけでなくDB側にも反映）
-      if (brainGateDirect?.meta?.condition_change_type && conv.property_customer_id) {
+      // 2026-09-27 ブレインが「今回だけ」（temporary）・「条件の話でない」（none）と決めた番は登録の条件を書かない
+      //   （その回だけの上書きは brain-core が AIX の検索に載せる・condition-change-scope.ts）
+      const bridgeScope = brainGateDirect?.meta?.condition_change_type
+        ? resolveConditionChangeScope({ text: effectiveTargetMessage, brainScope: brainGateDirect.meta.condition_change_scope })
+        : null;
+      if (bridgeScope && bridgeScope.scope !== "permanent") console.log(JSON.stringify({ tag: "bg-async:bridge-skip-scope", convId, ...bridgeScope }));
+      if (brainGateDirect?.meta?.condition_change_type && conv.property_customer_id && bridgeScope?.scope === "permanent") {
         void applyBrainConditionChange(
           db,
           conv.property_customer_id as string,

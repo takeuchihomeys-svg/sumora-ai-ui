@@ -68,7 +68,13 @@ console.log("\n■ 配線（読み込み・2か所の受け口・中継）");
   ok("popup.html が popup.js より先に読む", html.indexOf('src="search-override.js"') > 0 && html.indexOf('src="search-override.js"') < html.indexOf('src="popup.js"'));
   const bg = read("background.js");
   ok("background が import", /import "\.\/search-override\.js";/.test(bg));
-  ok("web_brain の回だけ sanitize", /isWebBrain && self\.AxlxSearchOverride\) \? self\.AxlxSearchOverride\.sanitize\(cmdPayload\.search_override\)/.test(bg));
+  // v2.5.37: web_brain（メモの指示）と aix（ブレインが「今回だけ」と決めたお客様の言い直し）の回だけ sanitize
+  ok("重ねてよい出どころの時だけ sanitize（コマンド）", /sourceAllows\(cmdPayload\.source\)\) \? self\.AxlxSearchOverride\.sanitize\(cmdPayload\.search_override\)/.test(bg));
+  ok("重ねてよい出どころの時だけ sanitize（popup へ渡す）", /sourceAllows\(opts\.source\)\) \? self\.AxlxSearchOverride\.sanitize\(opts\.search_override\)/.test(bg));
+  eq("出どころ web_brain は重ねる", S.sourceAllows("web_brain"), true);
+  eq("出どころ aix は重ねる（v2.5.37）", S.sourceAllows("aix"), true);
+  eq("自動便は重ねない", S.sourceAllows("auto_schedule"), false);
+  eq("出どころなし（手動の一括）は重ねない", S.sourceAllows(undefined), false);
   ok("お客様の写しに重ねる（元の targets は変えない）", /applyToCustomer\(targets\[i\], searchOverride\)/.test(bg));
   ok("点検に上書きを渡す", /search_override: searchOverride/.test(bg));
   eq("popup への axlx-switch-customer（リアプロ・itandi）の2つとも searchOverride を渡す", (bg.match(/searchOverride: _searchOverride/g) || []).length, 2);

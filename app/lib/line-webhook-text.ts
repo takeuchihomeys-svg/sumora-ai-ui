@@ -20,6 +20,7 @@ import { BG_ASYNC_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { recordConditionHistory } from "@/app/lib/condition-history";
 // 2026-09-27 竹内（野口さん「もう少し家賃あげて」・未桜さん「7畳以上の部屋」）: 抽出した家賃・広さを決定論で直す（家賃を上げて＝上限を上げる・下限は言った時だけ・帖→㎡）
 import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo } from "@/app/lib/rent-raise";
+import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
 import { detectTaskTypeByKeywords, decideAutoTask } from "@/app/lib/property-check-task";
@@ -1123,6 +1124,8 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
     return { mergedConds, intent: intentResult.intent };
   };
 
+  // 2026-09-27 カジュアル更新（正式フォームでない言い直し）で「今回だけ」の語があれば登録の条件を書かない（condition-change-scope.ts）
+  const casualScope = isFormalFormat ? { ok: true, evidence: null } : preBrainMayWriteRegistered(text);
   if (existing?.id) {
     customerId = existing.id as string;
     if (isFormalFormat) {
@@ -1142,6 +1145,9 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
           }
         });
       }
+    } else if (!casualScope.ok) {
+      // 2026-09-27 お客様が「今回だけ」と言った言い直しは登録の条件を書かない（condition-change-scope.ts・その回だけの上書きはブレインの後）
+      console.log(JSON.stringify({ tag: "autoParseFormat:skip-temporary-scope", convId, evidence: casualScope.evidence }));
     } else {
       // カジュアル更新 → インテント分類 → スマートマージ（「追加」「除外」「変更」を正しく処理）
       const { mergedConds, intent } = await computeCasualUpdate(existing as Record<string, unknown>);
@@ -1161,6 +1167,8 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       await db.from("property_customers")
         .update({ ...parsedFields, line_user_id: userId, customer_name: resolvedName })
         .eq("id", customerId);
+    } else if (!casualScope.ok) {
+      console.log(JSON.stringify({ tag: "autoParseFormat:skip-temporary-scope", convId, evidence: casualScope.evidence }));
     } else {
       // カジュアル更新 → 既存条件フィールドを取得してマージ
       const { data: linkedConds } = await db.from("property_customers")
@@ -1263,6 +1271,12 @@ async function extractConditionsFromCasualReply(
   const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null;
   const customerMentionsCondition = CUSTOMER_CONDITION_VOCAB_RE.test(customerText || "") || deterministicCondHit;
   if (!isConditionContext && !customerMentionsCondition) return;
+  // 2026-09-27 竹内「一時調整か、そもそもの条件の切り替えか」（condition-change-scope.ts）: お客様が「今回だけ・ついでに・参考に・〜にした場合の物件も」と
+  //   言った時は登録の条件を書かない（ブレインより先に走るので文の語だけで決める）。その回だけの上書きはブレインの後に brain-core が AIX の検索に載せる
+  {
+    const sc = preBrainMayWriteRegistered(customerText);
+    if (!sc.ok) { console.log(JSON.stringify({ tag: "P4:skip-temporary-scope", convId, evidence: sc.evidence })); return; }
+  }
 
   // Haiku で「本当に条件メッセージか」を分類（フォーマット知識＋文脈利用）
   const anthropicP4 = new Anthropic({

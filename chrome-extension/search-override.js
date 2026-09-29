@@ -174,5 +174,11 @@
     return p.join("・") || "上書きなし";
   }
 
-  return { sanitize: sanitize, isEmpty: isEmpty, applyToCustomer: applyToCustomer, formValues: formValues, describe: describe, FLOOR_PLAN_RE: FLOOR_PLAN_RE };
+  /**
+   * 上書きを重ねてよいコマンドの出どころ。web_brain＝AIXツールのメモの検索の指示／aix＝ブレインが「今回だけ」と決めたお客様の言い直し
+   * （2026-09-27 v2.5.37・サーバーの condition-scope-server.ts が payload.search_override に入れる）。自動便・手動の一括は重ねない
+   */
+  function sourceAllows(source) { return source === "web_brain" || source === "aix"; }
+
+  return { sanitize: sanitize, isEmpty: isEmpty, applyToCustomer: applyToCustomer, formValues: formValues, describe: describe, sourceAllows: sourceAllows, FLOOR_PLAN_RE: FLOOR_PLAN_RE };
 });

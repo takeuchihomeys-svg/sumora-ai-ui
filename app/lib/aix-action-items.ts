@@ -15,6 +15,7 @@ import { supabase } from "@/app/lib/supabase";
 import { buildAixActionNotice, isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
+import type { SearchOverride } from "@/app/lib/search-override";
 import { staffTextFulfillsAixItem, brainPausedCustomer } from "@/app/lib/aix-item-cleanup";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
@@ -53,8 +54,11 @@ export async function syncAixActionItem(input: {
     /** 2026-09-27 取り下げの判定（brainPausedCustomer）が読む: 判断の出どころ・保留の型・意図 */
     decision_source?: string | null; hesitancy_pattern?: string | null; customer_intent?: string | null;
   } | null;
+  /** 2026-09-27 ブレインが「今回だけ」と決めた条件の言い直し（condition-scope-server.ts）→ AIX の検索にその回だけ重ねる。無ければ登録の条件で検索 */
+  searchOverride?: SearchOverride | null;
 }): Promise<void> {
   const { conversationId, customerName, meta } = input;
+  const searchOverride = input.searchOverride ?? null;
   // cached は今回の顧客発言を見ていない判断なので使わない
   if (!meta || meta.source === "cached") return;
   // 2026-09-27 お客様役（テスト・YUMA）の番: 要対応の登録・売上番長グループへの通知・物件の自動検索をしない
@@ -129,7 +133,7 @@ export async function syncAixActionItem(input: {
     if (open.action === action && (open.check_pattern ?? null) === checkPattern) {
       // 同じ指示は再通知しない。ただし物件ピックアップ待ちのままお客様が条件を変えた時は、新しい条件で検索し直す
       if (AIX_AUTO_SEARCH_ACTIONS.has(action!) && meta.condition_change_type) {
-        await enqueueAixPropertySearch(conversationId, action!).catch((e) =>
+        await enqueueAixPropertySearch(conversationId, action!, searchOverride).catch((e) =>
           console.warn("[aix-action-items] re-enqueue on condition change failed:", conversationId, e instanceof Error ? e.message : e));
       }
       return;
@@ -147,7 +151,7 @@ export async function syncAixActionItem(input: {
   }
   await pushToHanbancyoGroup(buildAixActionNotice(customerName, action!, checkPattern));
   if (AIX_AUTO_SEARCH_ACTIONS.has(action!)) {
-    await enqueueAixPropertySearch(conversationId, action!).catch((e) =>
+    await enqueueAixPropertySearch(conversationId, action!, searchOverride).catch((e) =>
       console.warn("[aix-action-items] enqueue auto search failed:", conversationId, e instanceof Error ? e.message : e));
   }
 }
@@ -162,7 +166,7 @@ const AIX_AUTO_SEARCH_SITES = ["realnetpro"];
  * payload.source="aix" のコマンドは AIX モードの PC だけが claim する（/api/automation/pending ?aix=1）。
  * 物件出し顧客（property_customers）に紐付いていない会話は条件が無いので積まない。同じ顧客の未実行・実行中があれば積まない。
  */
-async function enqueueAixPropertySearch(conversationId: string, action: string): Promise<void> {
+async function enqueueAixPropertySearch(conversationId: string, action: string, searchOverride: SearchOverride | null = null): Promise<void> {
   const { data: conv } = await supabase
     .from("conversations").select("property_customer_id, line_user_id").eq("id", conversationId).maybeSingle();
   let customerId = (conv?.property_customer_id as string | null | undefined) ?? null;
@@ -179,16 +183,23 @@ async function enqueueAixPropertySearch(conversationId: string, action: string):
   if (!customerId) return;
   const { data: existing } = await supabase
     .from("automation_commands")
-    .select("id")
+    .select("id, status, payload")
     .in("status", ["pending", "running"])
     .contains("customer_ids", [customerId])
     .limit(1);
-  if (existing && existing.length > 0) return;
+  if (existing && existing.length > 0) {
+    // 2026-09-27 まだ拾われていない AIX の検索があり、今回だけの上書きが決まった → その検索に載せる（拾われた後・他の出どころの検索は変えない）
+    const ex = existing[0] as { id: string; status: string; payload: Record<string, unknown> | null };
+    if (searchOverride && ex.status === "pending" && ex.payload?.source === "aix") {
+      await supabase.from("automation_commands").update({ payload: { ...ex.payload, search_override: searchOverride } }).eq("id", ex.id).eq("status", "pending");
+    }
+    return;
+  }
   const { error } = await supabase.from("automation_commands").insert({
     command_type: "batch_property_search",
     customer_ids: [customerId],
     sites: AIX_AUTO_SEARCH_SITES,
-    payload: { source: "aix", aix_action: action, conversation_id: conversationId, is_wide: false },
+    payload: { source: "aix", aix_action: action, conversation_id: conversationId, is_wide: false, ...(searchOverride ? { search_override: searchOverride } : {}) },
     status: "pending",
   });
   if (error) console.warn("[aix-action-items] automation insert failed:", error.message);
