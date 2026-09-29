@@ -2794,7 +2794,9 @@ async function _pollAndRunBatch() {
     //   pending のまま残すと後でモードを戻した時に古い便が走るので、見送りとして閉じる（画面の履歴に理由が残る）
     // 2026-09-25: ブレインが独立の切り替えになった後も同じ（AxlxModeCore.behavior の runAutoSchedule = AIX かつ ブレインOFF）。
     //   自動便は ?aix=1 の PC（AIX連動）にしか届かないので、ここに来るのは ブレイン×AIX の時だけ（旧「ブレイン」と同じ動き）。
-    if (cmd.command_type !== "stop_all" && cmd.payload && cmd.payload.source === "auto_schedule" && await isBrainModeOn()) {
+    // 2026-09-29 竹内「ブレインの AIX モードで午前11時頃と午後17時頃の一括検索が行われていない」: 9/28・9/29 の午前の便（38・39人）が全部ここで見送りになっていた。
+    //   今は runAutoSchedule（mode-core）が false の時だけ見送る＝ブレイン×AIX でも走る
+    if (cmd.command_type !== "stop_all" && cmd.payload && cmd.payload.source === "auto_schedule" && _bh.runAutoSchedule === false) {
       console.log("[batch] ブレインモード中 → 自動便を見送り: " + cmd.id);
       await _updateBatchCommand(cmd.id, { status: "cancelled", error_message: "ブレインモード中のため自動便（AIX連動）は実行しない", completed_at: new Date().toISOString() });
       return;

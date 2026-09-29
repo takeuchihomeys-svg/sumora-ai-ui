@@ -100,7 +100,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.37");
+  eq("manifest の版", mf.version, "2.5.38");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("リアプロの bulk-dl より前に auto-run.js", cs.includes("send-pairing.js,auto-run.js,bulk-dl.js"));
   ok("ITANDI の itandi-bulk-dl より前に auto-run.js", cs.includes("send-pairing.js,auto-run.js,itandi-row-parse.js,itandi-bulk-dl.js"));

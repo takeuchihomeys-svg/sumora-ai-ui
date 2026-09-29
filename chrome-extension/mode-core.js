@@ -62,7 +62,7 @@
   //   brainDrop       … 判定の drop を実際に外してよいか（サーバーの PROPERTY_BRAIN_DROP=on の時だけ効く。スタッフは常に外さない）
   //   brainNote       … LINE（売上番長グループ）の説明文の末尾に「🧠 ブレイン判定 …」の1ブロックを付けるか
   //   recordPickup    … merge-pdfs に brain_mode=true を送る＝売上サポ（property_pickups）に1回分を記録（画像化・DeepSeek の費用あり）
-  //   runAutoSchedule … 11:00/17:00 の自動便（auto_schedule）を実行するか（ブレイン中は見送り＝2026-09-24 竹内「ブレインモードなら AIX の自動便は連動しない」）
+  //   runAutoSchedule … 11:00/17:00 の自動便（auto_schedule）を実行するか（2026-09-29 からブレイン中も走らせる。旧 9/24「ブレインモードなら見送り」は廃止）
   //   claimBrainCommands … ウェブの AIXツールの一括検索（web_brain）を受け取るか（pending?brain=1・ブレインかつスタッフでない）
   function behavior(mode, brain) {
     var m = MODES.indexOf(mode) >= 0 ? mode : "normal";
@@ -91,7 +91,9 @@
       completeGroup: b,
       // 自動便は AIX の PC にしか届かない（pending?aix=1）。ブレイン×AIX は旧「ブレイン」と同じく見送り
       //   → 竹内さんに確認: ブレイン×AIX を選んだ時は自動便も走らせるか（今は旧「ブレイン」と同じ＝見送り）
-      runAutoSchedule: m === "aix" && !b,
+      // 2026-09-29 竹内「ブレインの AIX モードで午前11時頃と午後17時頃の一括検索が行われていない」→ ブレイン×AIX でも自動便を走らせる（9/24 の「ブレイン中は見送り」をやめる）。
+      //   ブレインの回として売上サポに記録し、★物件出し★へは解析後に1回アナウンス（pickup-group-announce）
+      runAutoSchedule: m === "aix",
       // 2026-09-25 竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」:
       //   ウェブの AIXツールの一括検索（automation_commands.payload.source="web_brain"）を受け取るか（pending?brain=1）。
       //   ブレインの PC だけ。🧠×スタッフは受け取らない（スタッフは自動化を無視する＝claimCommands と同じ線・別のブレインの PC が拾う）

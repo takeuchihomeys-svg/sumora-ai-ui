@@ -15,9 +15,9 @@ eq("旧「AIX連動」", M.readState({ staffMode: false, aixMode: true, brainMod
 eq("旧「ブレイン」= ブレイン×AIX", M.readState({ staffMode: false, aixMode: true, brainMode: true }, NOW), { mode: "aix", brain: true, staffExpired: false });
 eq("何も入っていない（初めての PC）", M.readState({}, NOW), { mode: "normal", brain: false, staffExpired: false });
 eq("undefined でも落ちない", M.readState(undefined, NOW), { mode: "normal", brain: false, staffExpired: false });
-eq("旧「ブレイン」の動き = 新 ブレイン×AIX の動き（自動便は見送り・判定・記録・印）",
+eq("ブレイン×AIX の動き（2026-09-29 から自動便も走る・判定・記録・印）",
   (({ claimAix, runAutoSchedule, brainJudge, recordPickup, brainNote, brainDrop }) => ({ claimAix, runAutoSchedule, brainJudge, recordPickup, brainNote, brainDrop }))(M.behavior("aix", true)),
-  { claimAix: true, runAutoSchedule: false, brainJudge: true, recordPickup: true, brainNote: true, brainDrop: true });
+  { claimAix: true, runAutoSchedule: true, brainJudge: true, recordPickup: true, brainNote: true, brainDrop: true }); // 2026-09-29 ブレイン×AIX でも自動便を走らせる
 
 console.log("\n■ スタッフの2時間の TTL（残す）");
 eq("1時間59分 → まだスタッフ", M.readState({ staffMode: true, staffModeAt: NOW - 2 * H + 60000 }, NOW).mode, "staff");
@@ -56,7 +56,7 @@ eq("スタッフ",        pick(M.behavior("staff", false)),  "000000000");
 eq("AIX連動",         pick(M.behavior("aix", false)),    "111100001");
 eq("ブレイン×通常",   pick(M.behavior("normal", true)),  "101111110");
 eq("ブレイン×スタッフ（判定・まとめ・記録・外さない・自動化は止めたまま）", pick(M.behavior("staff", true)), "000010110");
-eq("ブレイン×AIX（旧「ブレイン」）", pick(M.behavior("aix", true)), "111111110");
+eq("ブレイン×AIX（2026-09-29 から自動便も走る）", pick(M.behavior("aix", true)), "111111111");
 eq("知らないモード → 通常扱い", pick(M.behavior("brain", false)), pick(M.behavior("normal", false)));
 
 console.log("\n■ 人が選んだ物は減らさない（スタッフは常に外さない・除外しない）");
