@@ -23,6 +23,8 @@ import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAre
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
+// 2026-09-29 Jev の影の運用（分類）: Haiku の 4 択と同じ入力を仮名化して Jev に聞き、jev_shadow_logs に並べるだけ（本番の動きは変えない）
+import { shadowConditionClassify } from "@/app/lib/condition-classify-shadow-server";
 import { detectTaskTypeByKeywords, decideAutoTask } from "@/app/lib/property-check-task";
 // 2026-09-27: お客様役（テスト）の番では売上番長グループ・鈴木さんへの通知を出さない
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
@@ -969,8 +971,12 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   let isFormalFormat = true;
   if (deterministicForm) {
     console.log(`[autoParseFormat] 決定論でフォーマット確定（分類をスキップ）: conv=${convId}`);
+    // 影（Jev）: 決定論で確定した回は「硬い正解」として並べる（Jev が正式フォーマットを当てられるかの答え合わせ）
+    shadowConditionClassify(convId, text, recentContext, { type: "formal_format", confidence: 1, source: "deterministic" });
   } else {
     const classification = await classifyConditionMessage(anthropic, text, recentContext);
+    // 影（Jev）: Haiku と同じ入力で聞いて並べるだけ。判断は下の Haiku の答えのまま
+    shadowConditionClassify(convId, text, recentContext, { type: classification.type, confidence: classification.confidence, source: "haiku" });
     if (classification.type === "not_condition" || classification.confidence < 0.6) {
       console.log(`[autoParseFormat] skip: type=${classification.type} confidence=${classification.confidence}`);
       return;
@@ -1287,6 +1293,8 @@ async function extractConditionsFromCasualReply(
   });
   const recentContext = staffTexts.reverse().map((t) => ({ sender: "staff" as const, text: t }));
   const p4Class = await classifyConditionMessage(anthropicP4, customerText, recentContext);
+  // 影（Jev）: Haiku と同じ入力で聞いて並べるだけ。判断は下の Haiku の答えのまま
+  shadowConditionClassify(convId, customerText, recentContext, { type: p4Class.type, confidence: p4Class.confidence, source: "haiku" });
   if ((p4Class.type === "not_condition" || p4Class.confidence < 0.6) && !deterministicCondHit) {
     console.log(`[P4] skip: type=${p4Class.type} confidence=${p4Class.confidence}`);
     return;

@@ -7654,3 +7654,13 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **YUMA で本物のブレイン（Claude・時刻の印なしで DeepSeek に回らず）**: 未桜さんの文 permanent・野口さんの文 temporary（竹内さん「今回だけ 12.5万」と同じ向き）・「15万までにした場合」temporary・「ついでに難波」temporary・「条件変更したくて…11万…心斎橋」permanent。入れた発言は消した
 - テスト: app/lib/__tests__/condition-change-scope.test.ts（33・実物の文）・rent-raise.test.ts（68・例の3点）・search-override-judge（58）ほか・tsc 0
 - **まだの事**: none の時に P4 が先に書いた分は戻さない（P4 は自分の分類器で条件の文と決めた物だけ書く）。temporary の上書きは AIX の検索に載せるだけで、スタッフの画面の帯には出していない（ログ condition-scope:temporary）
+
+## 2026-09-29（追記）Jev の影の運用 — 本番に鍵が入った日の確認と、3つ目の影「お客様の発言の分類」
+
+竹内さん「質を落とさずにできる所（決まった選択肢・正解の記録がある・今の判定が言葉の一覧）から。最初は影→正答率を測って上回った物だけ切り替え」
+- **本番の鍵**: Vercel production に `TYPESAFE_API_KEY` は入っている（`vercel env ls` で名前だけ確認・値は見ない）。READY（9/29 13:12 JST）後 70 分の実測: jev_shadow_logs 0 行・llm_usage_logs `jev:*` 0 行。**理由は機会が無かっただけ**（ピッカー付きボタンの判断は申込以降の 1 件だけ・お客様の画像 0 件）。既存の影が動くかは次のピッカー付きボタンで分かる
+- **前提の訂正**: 「DeepSeek の action=classify 週345回」は全部 `env=local:deepseek-all`（9/26-27 のお客様役テスト）。本番の分類は **Haiku の classifyConditionMessage**（4択・7日で120回・中央値660ms）
+- **足した影（分類）**: `app/lib/condition-classify-jev.ts`（純関数・4択の choice・state は Haiku と同じ材料＋うちのフォーマットの説明）＋ `condition-classify-shadow-server.ts`（仮名化 createMasker・申込以降は渡さない・waitUntil・fail-open）。呼び出しは `line-webhook-text.ts` の autoParseFormat（決定論で確定した回も `brain_source='deterministic'`＝硬い正解）と P4 の 2 か所に 1 行ずつ。記録は `jev_shadow_logs.kind='classify_condition'`（列 `brain_prob`・`brain_source` 追加・migrate-schema 同時・DB 反映済み）。aix-jev の影の行にも `kind`（aix_picker／aix_full）を付けた
+- **正答率の測り方** `scripts/audit-jev-shadow.ts`（読むだけ）: ①ピッカー＝aix_usage_logs の実際の押下（同じボタン・3日以内の最初）②送った物件＝スタッフの返しの語（audit-own-property-image と同じ）③分類＝決定論の回は硬い正解・Haiku の回は一致率＋入口（通す／落とす）の一致率・食い違いは仮名化した本文を出して目で読む
+- 手元で Jev を直接呼ぶ評価（`scripts/eval-jev-aix.ts`）は .env.local に鍵が無いので未実行。竹内さんが `.env.local` に `TYPESAFE_API_KEY=...` を入れた後 `npx tsx --env-file=.env.local scripts/eval-jev-aix.ts --days=365 --per-type=40`
+- テスト: condition-classify-jev 26／aix-jev 53／own-property-jev 19／pii-pseudonym 90／pii-mask-brain 7・tsc 通過。設計知見 1 件。コミットは親

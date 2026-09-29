@@ -200,6 +200,8 @@ export async function evaluateAixWithJev(
 
 /** 影の運用の1行（jev_shadow_logs）。ブレインの判断と並べて後で答え合わせする */
 export type JevShadowRow = {
+  /** 何を聞いた行か（"aix_full"＝全ボタンの問い ／ "aix_picker"＝ボタン決定後のピッカー）。他の影は own_property・classify_condition */
+  kind: "aix_full" | "aix_picker";
   conversation_id: string;
   customer_msg_at: string | null;
   brain_action: string | null;
@@ -231,7 +233,7 @@ export function toShadowRow(
 ): JevShadowRow {
   const d = ev.decision;
   return {
-    conversation_id: conversationId, customer_msg_at: customerMsgAt,
+    kind: "aix_full", conversation_id: conversationId, customer_msg_at: customerMsgAt,
     brain_action: brain?.action ?? null, brain_check_pattern: brain?.check_pattern ?? null, brain_send_mode: brain?.send_mode ?? null,
     jev_action: d.aix, jev_action_prob: d.aixProb, jev_check_topic: d.checkTopic, jev_check_topic_prob: d.checkTopicProb,
     jev_check_pattern: d.checkPattern, jev_photo_request_prob: d.photoRequestProb, jev_confidence: d.aixConfidence,
@@ -251,7 +253,7 @@ export function toPickerShadowRow(
   picker: { decision: PickerJevDecision; raw: JevResult },
 ): JevShadowRow {
   return {
-    conversation_id: conversationId, customer_msg_at: customerMsgAt,
+    kind: "aix_picker", conversation_id: conversationId, customer_msg_at: customerMsgAt,
     brain_action: brain.action, brain_check_pattern: brain.check_pattern ?? null, brain_send_mode: brain.send_mode ?? null,
     jev_action: null, jev_action_prob: null, jev_check_topic: null, jev_check_topic_prob: null, jev_check_pattern: null,
     jev_photo_request_prob: null, jev_confidence: picker.decision.confidence,
