@@ -13,7 +13,10 @@ import { loadCustomerSummaryPrefixInputs } from "@/app/lib/customer-summary-prom
 function getModel(conversationId?: string | null) {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
-    maxTokens: 600,
+    // 2026-09-29 Sonnet 5.5 との比べ（scripts/eval-sonnet55.ts）: 12項目の JSON は Sonnet 5 で 488〜596 トークン（上限 600 にほぼ届く）、
+    //   5.5 は少し長く 8件中5件が 600 で切れて JSON が読めなかった（読めないと summaryJson={} のまま保存される＝黙って壊れる）。
+    //   上限は払う額に入らない（出した分だけ）ので 900 に上げる
+    maxTokens: 900,
     // Sonnet 5 は thinking 省略時に adaptive がデフォルトON → maxTokens 600 が thinking に全消費され
     // JSON本文が空になるリスクがあるため明示的に無効化する（generate-reply と同パターン）
     thinking: { type: "disabled" },

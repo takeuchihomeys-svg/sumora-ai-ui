@@ -8,7 +8,7 @@ const days = Number(arg("days") ?? "1");
 
 // 単価（$/1M）: 入力・キャッシュ読み・5分書き・1時間書き・出力
 const PRICE: Record<string, [number, number, number, number, number]> = {
-  haiku: [1, 0.1, 1.25, 2, 5], sonnet: [3, 0.3, 3.75, 6, 15], opus: [5, 0.5, 6.25, 10, 25],
+  haiku: [1, 0.1, 1.25, 2, 5], sonnet: [2, 0.2, 2.5, 4, 10] /* 公式 Sonnet 5 / 5.5（app/lib/llm-price.ts・2026-09-29 直し） */, opus: [5, 0.5, 6.25, 10, 25],
 };
 type Row = { created_at: string; route: string | null; action: string | null; model: string | null; status: number | null; stream: boolean | null; stop_reason: string | null;
   input_uncached: number; cache_read: number; cache_write_5m: number; cache_write_1h: number; cache_write: number; output_tokens: number; thinking_tokens: number; duration_ms: number | null; conversation_id: string | null };

@@ -15,7 +15,7 @@ const nightKey = (iso: string) => {
   return d.toISOString().slice(0, 10);
 };
 
-const PRICE: Record<string, [number, number, number, number, number]> = { haiku: [1, 0.1, 1.25, 2, 5], sonnet: [3, 0.3, 3.75, 6, 15], opus: [5, 0.5, 6.25, 10, 25], deepseek: [0.28, 0.028, 0, 0, 0.42] };
+const PRICE: Record<string, [number, number, number, number, number]> = { haiku: [1, 0.1, 1.25, 2, 5], sonnet: [2, 0.2, 2.5, 4, 10] /* 公式 Sonnet 5 / 5.5（app/lib/llm-price.ts・2026-09-29 直し） */, opus: [5, 0.5, 6.25, 10, 25], deepseek: [0.28, 0.028, 0, 0, 0.42] };
 type Usage = { created_at: string; action: string | null; model: string | null; input_uncached: number; cache_read: number; cache_write_5m: number; cache_write_1h: number; cache_write: number; output_tokens: number; thinking_tokens: number; conversation_id: string | null };
 function tier(m: string | null) { const s = (m ?? "").toLowerCase(); return s.includes("haiku") ? "haiku" : s.includes("opus") ? "opus" : s.includes("deepseek") ? "deepseek" : "sonnet"; }
 function usd(r: Usage): number {

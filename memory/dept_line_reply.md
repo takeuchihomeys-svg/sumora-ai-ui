@@ -7682,3 +7682,11 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **費用の見込み**: 温め1巡 ≈$0.016（6つ）・最大 13巡/日 → 週 ≤$1.4。今の書き直しは週 ≈$8（rule 1.6・anomaly 0.2・context 1.8・revision 3.7・summary 0.5・next 0.3）。営業時間内の書き直しが消えれば週 ≈$4 減（夜・朝一・DB 更新の分は残る）
 - **確かめ方**: `npx tsx --env-file=.env.local scripts/audit-llm-unnamed.ts --days=7` の ⑦（本物×温めの 鍵の種類数・書き直し・hit/cold）と ⑧（日別×鍵。次の一手が毎日替わらなくなったか）。翌日以降: 本物の writes が営業時間中に減る・`*_warm` は hit が大半で cold が2回続かない。1週間で判断（3日で判断しない）
 - テスト: `app/lib/__tests__/prefix-warm.test.ts`（57・env 不要）。final-check-rules / final-check-scope / llm-usage-recorder / brain-warm / reply-warm-prefix / llm-test-mode / brain-system-blocks も通過
+
+## 2026-09-29 Sonnet 5 → Sonnet 5.5 を出口の1か所で切り替えられるようにした（竹内「費用も抑えて質が上がるなら置き換える。設計知見と協力して」）
+- 仕組み: `app/lib/claude-model-map.ts`（純関数 mapClaudeModelRequest＋送る手順 sendWithClaudeModelMap）を llm-usage-recorder の記録の包みの内側で呼ぶ（記録＝実際に送ったモデル・thinking）。39ファイルは書き換えていない。
+- 環境変数（両方そろった時だけ動く・既定は何も変わらない）: `CLAUDE_SONNET_MODEL=claude-sonnet-5-5` ＋ `CLAUDE_SONNET55_ACTIONS=...`（`*`・`final_check_*`・`-reply_generate`）。名札1つで同じ前置きの組（本物＋温め: brain_fresh/brain_full/brain_fresh_claude/brain-warm・reply_generate/keep-warm・customer_summary(_warm)・final_check_X/final_check_warm_X）が丸ごと替わる。返信生成（名札なし）は system 先頭「ハードゲート」で reply_generate と見なす。
+- 写し: thinking disabled→between_tools・effort xhigh/max→high・temperature/top_p/top_k を落とす・tool_choice any/tool の呼び出しは替えない（app 以下 0件）。5.5 の応答が 400 か断り（refusal・JSON 応答のみ）なら元の本文で Sonnet 5 に1回送り直す。
+- 比べ（scripts/eval-sonnet55.ts・読むだけ・合計 $1.70）: context_check 17件で指摘は 16/17 同じ・誤検知 0/9 両方・$0.0042 vs 0.0043・中央 2.2s→1.6s ／ ブレイン 8件で JSON 8/8 両方・スタッフの手と一致 2/8→3/8・$0.041 vs 0.042・7.9s→5.8s ／ customer-summary は 5.5 が長く上限 600 で 5/8 切れた → maxTokens 900 に上げて 7/7（+6.6%/回・9.0s→5.6s）。断り 0/41。
+- おすすめの順: ①customer_summary・final_check_context_check・final_check_revision（温めごと）②brain_fresh（最大の費用・同額で速く一致も上）③reply_generate は最後（お客様に届く本文が直接変わる）。切り替えた日は前置きの書き直し（ブレイン 45k×$4/M≈$0.18 等）が1回ずつ出る。
+- 単価表: `app/lib/llm-price.ts`（公式）。scripts の Sonnet 5 は $3/$15 → $2/$10 に直した。llm_usage_daily.est_usd も migrate-schema で直した（DB への適用は別）。

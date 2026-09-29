@@ -3380,7 +3380,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_action ON llm_usage_logs(action, c
 CREATE INDEX IF NOT EXISTS idx_llm_usage_logs_sys_key_full_created ON llm_usage_logs(sys_key_full, created_at DESC);
 
 -- 日次の集計（JST の日付）。input_equiv = 入力単価に換算したトークン（読み0.1・5分書き1.25・1時間書き2・出力5）
--- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet $3・Opus $5 で計算。コンソールの日次費用と照合して単価を直す
+-- est_usd は目安: 入力単価（1M トークンあたり）Haiku $1・Sonnet 5/5.5 $2・Opus 5 $5・Opus 5.5 $4 で計算（2026-09-29 公式に直した・下の注記）
 CREATE OR REPLACE VIEW llm_usage_daily AS
 SELECT
   (created_at AT TIME ZONE 'Asia/Tokyo')::date AS day_jst,
@@ -3395,9 +3395,14 @@ SELECT
       + GREATEST(cache_write - cache_write_5m - cache_write_1h, 0) * 1.25 + output_tokens * 5.0) AS input_equiv,
   ROUND(SUM((input_uncached + cache_read * 0.1 + cache_write_5m * 1.25 + cache_write_1h * 2.0
       + GREATEST(cache_write - cache_write_5m - cache_write_1h, 0) * 1.25 + output_tokens * 5.0)
-      * CASE WHEN model ILIKE '%haiku%' THEN 1.0 WHEN model ILIKE '%opus%' THEN 5.0 ELSE 3.0 END) / 1000000.0, 4) AS est_usd
+      * CASE WHEN model ILIKE '%haiku%' THEN 1.0 WHEN model ILIKE '%opus-5-5%' THEN 4.0 WHEN model ILIKE '%opus%' THEN 5.0 WHEN model ILIKE '%sonnet-4%' THEN 3.0 ELSE 2.0 END
+      -- Opus 5.5 だけ読みが入力の 0.05 倍（$0.20）＝上の 0.1 倍から半分を引く
+      - CASE WHEN model ILIKE '%opus-5-5%' THEN cache_read * 0.2 ELSE 0 END) / 1000000.0, 4) AS est_usd
 FROM llm_usage_logs
 GROUP BY 1, 2, 3, 4;
+-- 2026-09-29 竹内「Sonnet を Sonnet 5.5 に置き換えたら費用高くなるか」: 単価を公式（platform.claude.com・app/lib/llm-price.ts）に直した。
+--   旧は Sonnet を $3（Sonnet 5 の $3 への値上げは中止・正は $2/$10）で数えていて est_usd が 1.5 倍に出ていた。
+--   Sonnet 5 / 5.5 $2・Haiku 4.5 $1・Opus 5 $5・Opus 5.5 $4（読み $0.20）・Sonnet 4.x $3。DeepSeek 等は目安外（ELSE 2.0 のまま・別に数える）
 
 -- ── llm_job_attempts: cron の LLM 処理の物ごとの失敗回数・処理済みの印（2026-09-14 API の漏れ調査）──
 -- 失敗時に処理済みの印を付けない cron が同じ物を毎回送り直していた（申込到達会話の学習 7日で29回 等）。

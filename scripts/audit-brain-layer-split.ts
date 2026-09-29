@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const BRAIN_ROUTES = ["/api/generate-draft-bg-async", "/api/line-webhook", "/api/send-line-message", "/api/cron/brain-sweep", "/api/cron/generate-pending-drafts"];
-const SONNET = { in: 3, read: 0.3, write: 3.75, out: 15 };
+const SONNET = { in: 2, read: 0.2, write: 2.5, out: 10 }; // 公式 Sonnet 5 / 5.5（app/lib/llm-price.ts・2026-09-29 直し）
 const DS_PRO = { in: 0.66, read: 0.022, write: 0.66, out: 1.98 };
 const cost = (r: { input_uncached: number; cache_read: number; cache_write: number; output_tokens: number }, p: typeof SONNET) =>
   (r.input_uncached * p.in + r.cache_read * p.read + r.cache_write * p.write + r.output_tokens * p.out) / 1e6;

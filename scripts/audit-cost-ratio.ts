@@ -13,7 +13,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0)) || 0;
-const INPUT_PRICE: Record<string, number> = { "claude-sonnet-5": 3, "claude-haiku-4-5-20251001": 1, "claude-opus-5": 15, "claude-sonnet-4-6": 3 };
+const INPUT_PRICE: Record<string, number> = { "claude-sonnet-5": 2, "claude-sonnet-5-5": 2, "claude-haiku-4-5-20251001": 1, "claude-opus-5": 5, "claude-opus-5-5": 4, "claude-sonnet-4-6": 3 } /* 公式（app/lib/llm-price.ts・2026-09-29 直し。Opus 5.5 の読みは 0.05 倍で下の倍率とずれる） */;
 
 /** 画面（Claude Console・UTC）の日別合計。9/20 はツールチップの実数、他はグラフの目視 */
 const CONSOLE: Record<string, number> = {

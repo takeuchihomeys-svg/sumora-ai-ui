@@ -8,7 +8,8 @@ const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.
 /** 1M トークンあたりの単価（USD）。2026-09 時点 */
 const PRICE: Record<string, { in: number; cacheRead: number; cacheWrite: number; out: number }> = {
   "claude-sonnet-4-5": { in: 3, cacheRead: 0.3, cacheWrite: 3.75, out: 15 },
-  "claude-sonnet-5": { in: 3, cacheRead: 0.3, cacheWrite: 3.75, out: 15 },
+  "claude-sonnet-5-5": { in: 2, cacheRead: 0.2, cacheWrite: 2.5, out: 10 }, // 公式（app/lib/llm-price.ts・2026-09-29 直し）
+  "claude-sonnet-5": { in: 2, cacheRead: 0.2, cacheWrite: 2.5, out: 10 },
   "claude-haiku-4-5": { in: 1, cacheRead: 0.1, cacheWrite: 1.25, out: 5 },
   "deepseek-v4-pro": { in: 0.66, cacheRead: 0.022, cacheWrite: 0.66, out: 1.98 },
   "deepseek-flash": { in: 0.15, cacheRead: 0.003, cacheWrite: 0.15, out: 0.6 },

@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const PRICE = {
-  "claude-sonnet": { in: 3, read: 0.3, write: 3.75, out: 15 },
+  "claude-sonnet": { in: 2, read: 0.2, write: 2.5, out: 10 }, // 公式 Sonnet 5 / 5.5（app/lib/llm-price.ts・2026-09-29 直し）
   "deepseek-v4-pro": { in: 0.66, read: 0.022, write: 0.66, out: 1.98 },
   "deepseek-flash": { in: 0.15, read: 0.003, write: 0.15, out: 0.6 },
 };

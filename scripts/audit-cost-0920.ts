@@ -43,7 +43,7 @@ const usd = (v: number) => `$${v.toFixed(2)}`;
 
 /** 入力単価（$/1M）。llm_usage_daily.est_usd と同じ定義 */
 const INPUT_PRICE: Record<string, number> = {
-  "claude-sonnet-5": 3, "claude-haiku-4-5-20251001": 1, "claude-opus-5": 15, "claude-sonnet-4-6": 3,
+  "claude-sonnet-5": 2, "claude-sonnet-5-5": 2, "claude-haiku-4-5-20251001": 1, "claude-opus-5": 5, "claude-opus-5-5": 4, "claude-sonnet-4-6": 3, // 公式（app/lib/llm-price.ts・2026-09-29 直し）
 };
 const isClaude = (m: string) => m.startsWith("claude-");
 

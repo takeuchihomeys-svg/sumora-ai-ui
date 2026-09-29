@@ -15,6 +15,7 @@
 //   この2つは Anthropic に送らない（送る前に取り除く）。sys_key_full は system 全ブロックを "\n\n" で結合した全文のハッシュ（プロンプト変更の検出用）。
 
 import { usageEnvLabel } from "./llm-test-mode";
+import { sendWithClaudeModelMap, type ClaudeModelEnv } from "./claude-model-map";
 
 /** 呼び出し側が付ける印（Anthropic には送らない）。AIX の種類・LINE の会話 ID */
 export const LLM_ACTION_HEADER = "x-sumora-llm-action";
@@ -298,6 +299,8 @@ export type RecorderDeps = {
   route: () => string | null;
   now?: () => number;
   env?: string | null;
+  /** Sonnet 5.5 の置き換えの環境変数（テスト用。既定は呼んだ時点の process.env） */
+  modelEnv?: () => ClaudeModelEnv;
 };
 
 /** Anthropic の /v1/messages だけを記録する。記録の失敗・遅れで本来の応答を止めない（応答は元の Response をそのまま返す） */
@@ -313,6 +316,12 @@ export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: Recorde
     const init = marks.init;
     const isMessages = isAnthropic && url.pathname === "/v1/messages" && (init?.method ?? "POST").toUpperCase() === "POST";
     if (!isMessages) return original(input, init);
+    // 2026-09-29 竹内「Sonnet を Sonnet 5.5 に置き換え」: 名札で選んだ呼び出しだけ Sonnet 5 → 5.5 に写す（claude-model-map・既定は何もしない）。
+    //   写しは記録の内側＝下の sendAndRecord が「実際に送った本文」（model・thinking_mode）を記録する。断り／400 の時の Sonnet 5 への送り直しも1行ずつ残る
+    return sendWithClaudeModelMap((inp, initX) => sendAndRecord(inp, initX, marks), input, init, marks.action, deps.modelEnv?.() ?? (process.env as ClaudeModelEnv));
+  };
+
+  async function sendAndRecord(input: RequestInfo | URL, init: RequestInit | undefined, marks: { action: string | null; conversationId: string | null }): Promise<Response> {
     const started = now();
     let route: string | null = null;
     try { route = deps.route(); } catch { route = null; }
@@ -342,7 +351,7 @@ export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: Recorde
       );
     } catch { /* clone できない応答は記録しない */ }
     return res;
-  };
+  }
 }
 
 function buildRow(route: string | null, req: ReqInfo, u: UsageInfo, status: number, errorType: string | null, durationMs: number, requestId: string | null, env: string | null): LlmUsageRow {
@@ -367,7 +376,12 @@ export function wrapFetchStripSumoraMarks(original: FetchLike): FetchLike {
     const url = requestUrl(input);
     const probed = probeResponse(url);
     if (probed) return Promise.resolve(probed);
-    return original(input, url && url.hostname === "api.anthropic.com" ? extractSumoraMarks(init).init : init);
+    if (!url || url.hostname !== "api.anthropic.com") return original(input, init);
+    const marks = extractSumoraMarks(init);
+    // 2026-09-29: 記録を止めている時も Sonnet 5.5 の置き換え（名札で選ぶ）は同じ手順で行う（記録の有無で送るモデルが変わらない）
+    const isMessages = url.pathname === "/v1/messages" && (marks.init?.method ?? "POST").toUpperCase() === "POST";
+    if (!isMessages) return original(input, marks.init);
+    return sendWithClaudeModelMap(original, input, marks.init, marks.action);
   };
 }
 

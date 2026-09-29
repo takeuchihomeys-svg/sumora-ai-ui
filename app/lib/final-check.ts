@@ -772,7 +772,8 @@ function companyFactsForCheck(ctx: FinalCheckContext): string {
 // cache_control、動的部（brain判定・現在時刻・STAGE・顧客メッセージ・draft）を後続に分離。
 // 旧実装は nowJstString()（毎分変化）が検査項目4の中に埋め込まれておりプレフィックスを
 // 毎分無効化していたため、【現在時刻】ブロックとして動的部へ移動した（検査内容は同一）。
-function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
+// 2026-09-29: scripts/eval-sonnet55.ts（Sonnet 5 と 5.5 の比べ）が本番と同じ前置きを作るため export（動きは変えない）
+export function buildContextCheckPrompt(draft: string, ctx: FinalCheckContext): PromptBlock[] {
   // TPO場面（感謝返し・ネガ文脈・強推し直後 等）。生成側が意図的に話題を絞った局面を
   // 「不足」と誤検出しないための文脈（generate-reply の tpoNoteForLLM と同一値）
   const tpoPart = ctx.tpoLabel
@@ -2915,7 +2916,8 @@ AIXボタン（物件送付・見積提示・内見日程調整等の具体的�
 
 修正後の文章のみを出力してください（説明・前置き不要）。`;
 
-function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): PromptBlock[] {
+// 2026-09-29: scripts/eval-sonnet55.ts（Sonnet 5 と 5.5 の比べ）が本番と同じ前置きを作るため export（動きは変えない）
+export function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): PromptBlock[] {
   const brainNote = ctx.brainContextJson
     ? `\n[BRAIN_META]（返信の目指すべき方向性・修正後もこの方向性を維持すること）\n${ctx.brainContextJson}\n[/BRAIN_META]\n`
     : "";

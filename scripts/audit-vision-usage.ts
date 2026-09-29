@@ -13,7 +13,7 @@ import { createClient } from "@supabase/supabase-js";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const DAYS = Number((process.argv.find((a) => a.startsWith("--days=")) ?? "--days=14").split("=")[1]);
 // Sonnet5 / DeepSeek-V4.1-Flash（ピーク）の $/M
-const SONNET = { in: 3, out: 15 }, DS = { in: 0.30, out: 1.20 };
+const SONNET = { in: 2, out: 10 } /* 公式 Sonnet 5（app/lib/llm-price.ts・2026-09-29 直し） */, DS = { in: 0.30, out: 1.20 };
 
 async function main() {
   const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();

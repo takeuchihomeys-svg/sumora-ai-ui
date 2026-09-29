@@ -88,7 +88,7 @@ const jst = (iso: string | null | undefined) => iso ? new Date(new Date(iso).get
 const one = (s: string | null | undefined, n = 80) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
 // 単価（$/1M）: 入力・キャッシュ読み・5分書き・1時間書き・出力（scripts/peek-brain-cost-day.ts と同じ）
-const PRICE: Record<string, [number, number, number, number, number]> = { haiku: [1, 0.1, 1.25, 2, 5], sonnet: [3, 0.3, 3.75, 6, 15], opus: [5, 0.5, 6.25, 10, 25], deepseek: [0.28, 0.028, 0, 0, 0.42] };
+const PRICE: Record<string, [number, number, number, number, number]> = { haiku: [1, 0.1, 1.25, 2, 5], sonnet: [2, 0.2, 2.5, 4, 10] /* 公式 Sonnet 5 / 5.5（app/lib/llm-price.ts・2026-09-29 直し） */, opus: [5, 0.5, 6.25, 10, 25], deepseek: [0.28, 0.028, 0, 0, 0.42] };
 type UsageRow = { model: string | null; action: string | null; input_uncached: number; cache_read: number; cache_write: number; cache_write_5m: number; cache_write_1h: number; output_tokens: number; thinking_tokens: number };
 function usd(r: UsageRow): number {
   const m = (r.model ?? "").toLowerCase();

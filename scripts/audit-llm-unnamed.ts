@@ -6,29 +6,26 @@
 //   名札（x-sumora-llm-action）を付けた後は ② が空に近づくのが正常（残った物が「まだ名前の無い呼び出し」）。
 //
 // 単価（$/M・公式）:
-//   Anthropic: Sonnet 入力3／5分書き3.75／1h書き6／読み0.3／出力15、Haiku 1／1.25／2／0.1／5、Opus 5／6.25／10／0.5／25
+//   Anthropic: app/lib/llm-price.ts（公式）。Sonnet 5 / 5.5 入力2／5分書き2.5／1h書き4／読み0.2／出力10、Haiku 1／1.25／2／0.1／5、Opus 5 5／6.25／10／0.5／25、Opus 5.5 4／5／8／0.2／20
+//   （2026-09-29 まで Sonnet を 3／15 で数えていて費用が 1.5 倍に出ていた）
 //   DeepSeek（api-docs.deepseek.com/quick_start/pricing）: flash 未命中0.15／命中0.003／出力0.6、v4-pro 0.66／0.022／1.98。
 //     ピーク（UTC 01-04・06-10 の平日＝JST 10-13・15-19）は2倍。画像は1枚 ≈1,600 トークンが入力に足される
 //
 // 実行: npx tsx --env-file=.env.local scripts/audit-llm-unnamed.ts [--days=7] [--env=production] [--top=60]
 import { createClient } from "@supabase/supabase-js";
+import { claudePriceOf, claudeUsageUsd } from "@/app/lib/llm-price";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=").slice(1).join("=");
 const days = Number(arg("days", "7"));
 const envFilter = arg("env", "production");
 const top = Number(arg("top", "60"));
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0)) || 0;
-const PRICE: Record<string, [number, number, number, number, number]> = {
-  "claude-sonnet-5": [3, 3.75, 6, 0.3, 15], "claude-sonnet-4-6": [3, 3.75, 6, 0.3, 15],
-  "claude-haiku-4-5-20251001": [1, 1.25, 2, 0.1, 5], "claude-haiku-4-5": [1, 1.25, 2, 0.1, 5],
-  "claude-opus-5": [5, 6.25, 10, 0.5, 25],
-};
 const DS: Record<string, [number, number, number]> = { "deepseek-flash": [0.15, 0.003, 0.6], "deepseek-v4-pro": [0.66, 0.022, 1.98] };
 export const isDeepseekPeak = (iso: string) => { const d = new Date(iso); const h = d.getUTCHours(); const w = d.getUTCDay(); return w >= 1 && w <= 5 && ((h >= 1 && h < 4) || (h >= 6 && h < 10)); };
 export function estimateUsd(r: Record<string, unknown>): number {
   const m = String(r.model);
-  const p = PRICE[m];
-  if (p) return (n(r.input_uncached) * p[0] + n(r.cache_write_5m) * p[1] + n(r.cache_write_1h) * p[2] + n(r.cache_read) * p[3] + n(r.output_tokens) * p[4]) / 1e6;
+  const p = claudePriceOf(m);
+  if (p) return claudeUsageUsd({ model: m, input_uncached: n(r.input_uncached), cache_write_5m: n(r.cache_write_5m), cache_write_1h: n(r.cache_write_1h), cache_read: n(r.cache_read), output_tokens: n(r.output_tokens) }, p);
   const d = DS[m];
   if (d) return (n(r.input_uncached) * d[0] + n(r.cache_read) * d[1] + n(r.output_tokens) * d[2]) / 1e6 * (isDeepseekPeak(String(r.created_at)) ? 2 : 1);
   return 0;
