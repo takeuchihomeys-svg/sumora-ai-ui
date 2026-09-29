@@ -107,7 +107,8 @@ function rest() {
   ok("manifest の版 2.5.29 以上", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005029);
   const cs = manifest.content_scripts;
   const first = cs[0];
-  eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js の順", first.js, ["human-wait.js", "search-audit.js"]);
+  // v2.5.40: 画面の文字の受け口（snapshot-core.js）を後ろに足した（先頭の2つの順は変えない）
+  eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "search-audit.js", "snapshot-core.js"]);
   eq("先頭の段は document_start（後の段の content script より先に読む）", first.run_at, "document_start");
   for (const site of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]) {
     ok(`先頭の段が ${site} を含む`, first.matches.includes(site));
@@ -149,6 +150,7 @@ function rest() {
       "setTimeout 8000": [1, "Realtime の再接続"], "setTimeout 15000": [2, "Realtime の再接続・タブ読み込みの期限"],
       "setTimeout 6000": [1, "取得の期限（abort）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
       "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [1, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab）"],
+      "setTimeout 3000": [1, "画面の文字の応答の期限（v2.5.40 _snapDom・ページを触らない）"],
     },
     "bulk-dl.js": {
       "setTimeout 200": [1, "checkbox の差し込みのやり直し（内部）"], "setTimeout 35000": [1, "判定の応答の期限（fail-open）"],

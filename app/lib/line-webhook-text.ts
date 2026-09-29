@@ -25,6 +25,9 @@ import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAre
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
+// 2026-09-29 お客様の要望を 設備／NG／その他 の欄に節ごとに振り分ける（純関数）
+import { routeConditionText, formOtherWants, initialCostLimitFromText } from "@/app/lib/customer-wants";
+const strOrNull = (v: unknown): string | null => (typeof v === "string" ? v : Array.isArray(v) ? v.map(String).join("・") : v == null ? null : String(v));
 // 2026-09-29 Jev の影の運用（分類）: Haiku の 4 択と同じ入力を仮名化して Jev に聞き、jev_shadow_logs に並べるだけ（本番の動きは変えない）
 import { shadowConditionClassify } from "@/app/lib/condition-classify-shadow-server";
 import { detectTaskTypeByKeywords, decideAutoTask } from "@/app/lib/property-check-task";
@@ -65,7 +68,9 @@ export const ACCOUNTS: AccountConfig[] = [
 // ── P4: 顧客メッセージ自体に条件語彙が含まれるかの判定 ─────────────────────
 // スタッフ側がヒアリング文脈でなくても（内覧調整中・物件フィードバック中など）、
 // 顧客が自発的に条件を漏らした場合に P4 抽出を発火させるための語彙正規表現。
-const CUSTOMER_CONDITION_VOCAB_RE = /ペット|(?:バス|風呂|トイレ).*別|オートロック|洗面|駐車場|広さ|㎡|帖|畳|築\d|万円|エリア|駅.*徒歩|間取り|日当たり|洗濯機.*置|ベランダ|[2-9]階以上|角部屋|独立洗面|宅配ボックス|インターネット|Wi.Fi|2LDK|1LDK|1K/;
+// 2026-09-29 要望の項目化の監査: 1語だけの「カウンターキッチン」「収納多めでお願いいたします」「駅近だと大変ありがたいです」が入口に来ていなかった → 設備・その他の要望の語を足した
+//   （180日の発言 9,829通のうち新たに入口に来るのは約90通＝週3〜4通・大半は「収納多めで」「初期費用安いとこないですか」等の要望。質問・不具合の話は下の Haiku の分類が落とす。エアコンは入居後の不具合の話が多いので足していない）
+const CUSTOMER_CONDITION_VOCAB_RE = /ペット|(?:バス|風呂|トイレ).*別|オートロック|洗面|駐車場|広さ|㎡|帖|畳|築\d|万円|エリア|駅.*徒歩|間取り|日当たり|洗濯機.*置|ベランダ|[2-9]階以上|角部屋|独立洗面|宅配ボックス|インターネット|Wi.Fi|2LDK|1LDK|1K|ガスコンロ|IHコンロ|コンロ\s*[2-3２３二三]口|カウンターキッチン|対面(?:式)?キッチン|システムキッチン|収納|クローゼット|追い?[焚炊]き|浴室乾燥|エレベーター|温水洗浄|ウォシュレット|築浅|新築|駅近|リビング\s*\d|初期費用.{0,10}(?:抑え|安く|安い)/;
 // ── 同一ユーザーのレート制限（3秒以内の連続AI解析をスキップ）─────────────
 // 注意: このMapはインスタンス内のみ有効（Vercelサーバーレスでは複数インスタンスが
 // 並行動作するためベストエフォート）。クロスインスタンスの実質的な保護は
@@ -1028,6 +1033,14 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
     }
   }
 
+  // 2026-09-29 竹内「設備系は設備のところ・NG は NG・その他はその他に1つ1つ」: 正式フォーマット・カジュアル更新とも、読み取った自由文を節ごとに振り分ける。
+  //   フォームの「【その他ご要望】⇒…」の行は決定論で足す（監査で LLM が丸ごと落とした人がいた・重複は振り分けが除く）
+  {
+    const formOther = formOtherWants(text);
+    const routed = routeConditionText({ preferences: strOrNull(parsed.preferences), ng_points: strOrNull(parsed.ng_points), other_requests: [strOrNull(parsed.other_requests), formOther].filter(Boolean).join("・") || null });
+    for (const f of ["preferences", "ng_points", "other_requests"] as const) parsed[f] = routed[f];
+  }
+
   // isFormalFormat は Step 1 の AI 分類結果を使用（丸数字カウントは廃止）
 
   // ── 保存フィールドを準備 ──────────────────────────────────────────
@@ -1277,7 +1290,8 @@ async function extractConditionsFromCasualReply(
   const isConditionContext = (hasStrongCondSignal || hasMedCondSignal) && !isViewingContext;
   // 顧客メッセージ自体に条件語彙が含まれる場合もOR発火（内覧調整中等に漏れる条件を拾う）
   // 2026-09-27: 「もう少し家賃あげて」（語の一覧に当たらない）・「7畳以上」も決定論で拾う
-  const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null;
+  // 2026-09-29 「初期費用10万以下で探して欲しい」も決定論で拾う（監査で列が空の人が9人・値引きの相談の文は除く＝customer-wants.initialCostLimitFromText）
+  const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null || initialCostLimitFromText(customerText) !== null;
   const customerMentionsCondition = CUSTOMER_CONDITION_VOCAB_RE.test(customerText || "") || deterministicCondHit;
   if (!isConditionContext && !customerMentionsCondition) return;
   // 2026-09-27 竹内「一時調整か、そもそもの条件の切り替えか」（condition-change-scope.ts）: お客様が「今回だけ・ついでに・参考に・〜にした場合の物件も」と
@@ -1404,6 +1418,18 @@ ${customerText.slice(0, 600)}
 
   // after() C（resolve-area正規化）と競合するため、エリア指定メッセージでは desired_area を書かない
   if (isAreaSpecificationMessage(customerText)) delete extracted.desired_area;
+
+  // 2026-09-29 要望の項目化の監査: LLM が初期費用上限を返さなかった時だけ、発言の「初期費用○万以内／以下／くらい」で埋める（決定論）
+  if (typeof extracted.initial_cost_limit !== "number") {
+    const icl = initialCostLimitFromText(customerText);
+    if (icl != null) extracted.initial_cost_limit = icl;
+  }
+
+  // 2026-09-29 竹内「設備系は設備のところにまとめる・NG は NG・その他はその他に1つ1つ」: 読み取った自由文を節ごとに振り分ける（決定論・customer-wants）
+  {
+    const routed = routeConditionText({ preferences: strOrNull(extracted.preferences), ng_points: strOrNull(extracted.ng_points), other_requests: strOrNull(extracted.other_requests) });
+    for (const f of ["preferences", "ng_points", "other_requests"] as const) { if (routed[f]) extracted[f] = routed[f]; else delete extracted[f]; }
+  }
 
   const { data: existingPc } = await db
     .from("property_customers")

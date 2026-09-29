@@ -449,6 +449,17 @@ body {
   font-size: 11px; color: #1565c0; font-weight: 600;
   word-break: break-word; overflow-wrap: anywhere;
 }
+/* 2026-09-29 v2.5.39 要望の項目（設備＝緑・NG＝赤・その他＝灰。検索には入らない・見えるだけ） */
+.want-items { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.want-chip {
+  display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+  font-size: 10px; line-height: 14px; padding: 1px 7px; border-radius: 10px; border: 1px solid #cfd8dc; background: #f5f7f8; color: #37474f;
+}
+.want-chip b { font-size: 8px; font-weight: 700; opacity: .7; }
+.want-chip i { font-style: normal; font-size: 8px; color: #b26a00; }
+.want-chip.k-equip { border-color: #81c784; background: #e8f5e9; color: #1b5e20; }
+.want-chip.k-ng { border-color: #ef9a9a; background: #ffebee; color: #b71c1c; }
+.want-chip.note { opacity: .55; }
 
 /* 旧チップ（削除予定・互換維持） */
 .cond-chips { display: flex; flex-wrap: wrap; gap: 5px; }

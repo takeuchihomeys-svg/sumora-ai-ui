@@ -24,6 +24,8 @@
   // 2026-09-27 v2.5.31: 操作ごとの時刻（ページの段・資料の送信の段）を足したので 40 → 120
   var MAX_STEPS = 120;
   var MAX_AUDIT_BYTES = 8192;
+  // 入れようとした駅の名前の上限（サーバーの screen-watch-expect.ts INTENT_STATION_CAP と同じ）
+  var STATION_NAMES_MAX = 300;
 
   // お客様の条件のうち写す欄（名前・電話・LINE の ID は入れない）
   var SNAPSHOT_FIELDS = [
@@ -37,6 +39,8 @@
     "station_names", "route_ids", "city_codes", "detail_ward", "detail_area", "town_names", "itandi_lines", "ward_names", "ward_name",
     "reins_station_pairs", "reins_line", "unknown_tokens", "area_min", "area_max", "structure_types", "pet_ok", "shikirei_free",
     "select_all_line_stations", "sort_order", "max_pages",
+    // 2026-09-29 v2.5.39 通勤の到達時間で選んだ駅（数だけ・commute-reach reachAudit の形）
+    "commute",
   ];
 
   function newRunId(now) {
@@ -89,7 +93,8 @@
       var k = INTENDED_FIELDS[i];
       var v = cond[k];
       if (v === undefined) continue;
-      if (Array.isArray(v)) v = capArray(v, 80);
+      // 2026-09-29 見張り（決め方のズレ）: 通勤の到達駅（最大240）と表の期待を比べるため、駅の名前だけ 80 → 300
+      if (Array.isArray(v)) v = capArray(v, k === "station_names" ? STATION_NAMES_MAX : 80);
       else if (typeof v === "string") v = v.slice(0, 300);
       out[k] = v;
     }
@@ -360,6 +365,7 @@
     SEND_TIMEOUT_MS: SEND_TIMEOUT_MS,
     MAX_STEPS: MAX_STEPS,
     MAX_AUDIT_BYTES: MAX_AUDIT_BYTES,
+    STATION_NAMES_MAX: STATION_NAMES_MAX,
     SNAPSHOT_FIELDS: SNAPSHOT_FIELDS,
     newRunId: newRunId,
     maskDigits: maskDigits,

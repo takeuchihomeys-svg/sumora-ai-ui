@@ -62,9 +62,11 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
         .eq("property_customer_id", input.propertyCustomerId).lt("sent_at", first.created_at);
       sentBefore = count ?? null;
     }
+    // 2026-09-29 見張り: 条件が入り切っていない・0件の疑いの印の付いた回（読めない時は []＝今まで通り）
+    const watchBlocked = await import("@/app/lib/screen-watch-server").then((m) => m.watchBlockedRunIds(input.propertyCustomerId, site, since)).catch(() => [] as string[]);
     const decision = decideWiden({
       site, audits, rows: (pk.data ?? []) as PickupLite[], commands: cmds, nowMs,
-      sentBeforeSession: sentBefore, fromAuditFinish: input.trigger === "audit",
+      sentBeforeSession: sentBefore, fromAuditFinish: input.trigger === "audit", watchBlocked,
     });
     out.decision = decision;
     if (decision.action !== "widen" || dry) return out;

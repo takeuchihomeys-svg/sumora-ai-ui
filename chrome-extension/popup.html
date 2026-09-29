@@ -46,6 +46,12 @@
     <!-- モードの帯（組み合わせで文言と色が変わる・mode-core.js banner）。通常×ブレインOFF の時は出さない。
          スタッフモードは消し忘れ防止のため常に目立たせる -->
     <div id="mode-banner" class="mode-banner" style="display:none"></div>
+    <!-- 2026-09-29 v2.5.40 拡張の版と「画面の写真」の許可（snapshot-popup.js）。版が古いまま動いていないかを小窓で見分ける -->
+    <div id="snap-perm" style="display:none;align-items:center;gap:6px;padding:3px 10px;font-size:11px;color:#475569;background:#f1f5f9;border-bottom:1px solid #e2e8f0">
+      <span id="snap-ver"></span>
+      <span id="snap-perm-state"></span>
+      <button type="button" id="snap-perm-btn" style="display:none;margin-left:auto;padding:2px 8px;font-size:11px;font-weight:700;border:none;border-radius:6px;background:#0ea5e9;color:#fff;cursor:pointer">📷 画面の共有を許可</button>
+    </div>
 
     <!-- ▼ VIEW 1: お客さん一覧 -->
     <div id="view-list" class="view active">
@@ -350,6 +356,7 @@
   <!-- 2026-09-25 路線のつながり（サーバーと同じデータ・同じ関数の自動生成）と通勤の候補の駅（popup.js より先に読む） -->
   <script src="osaka-transit.js"></script>
   <script src="commute-candidates.js"></script>
+  <script src="commute-reach.js"></script>
   <!-- 2026-09-18 竹内: 検索日の記録（サイト×モード）。background.js と同じ物を使う（popup.js より先に読む） -->
   <script src="search-history.js"></script>
   <script src="mode-core.js"></script>
@@ -359,5 +366,7 @@
   <script src="search-override.js"></script>
   <script src="temp-adj-base.js"></script>
   <script src="popup.js"></script>
+  <!-- 2026-09-29 v2.5.40 拡張の版と画面の写真の許可（popup.js とは別の小さなファイル・popup.js を触らない） -->
+  <script src="snapshot-popup.js"></script>
 </body>
 </html>

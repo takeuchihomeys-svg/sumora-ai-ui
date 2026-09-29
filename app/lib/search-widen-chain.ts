@@ -203,6 +203,9 @@ export type DecideInput = {
   sentBeforeSession?: number | null;
   /** 検索の点検の finished から呼んだ（物件が届かない回だけ決める。送れる物件があった回はまとめの時に決める） */
   fromAuditFinish?: boolean;
+  /** 2026-09-29 見張り（screen-watch）: 「条件が入り切っていない・0件の疑い」の印（search_audits.watch.block_widen）が付いた回の run_id。
+   *  このピンポイントの回（続けて検索した回）に1つでも入っていれば自動の広げてを止める */
+  watchBlocked?: ReadonlyArray<string>;
 };
 
 /** 足りるか・広げるか（純関数）。広げる時は積むコマンドの payload.chain を返す */
@@ -218,6 +221,8 @@ export function decideWiden(input: DecideInput): WidenDecision {
   if (!latest.trigger || latest.trigger === "scrape_compare") return { action: "skip", reason: "trigger" };
   if (runs.some((r) => r.trigger === "single" && !versionAtLeast(r.ext_version, SINGLE_IS_WIDE_FIXED_VERSION))) return { action: "skip", reason: "old_ext_single" };
   if (runs.some(hasOverride)) return { action: "skip", reason: "override" };
+  // 見張りが「条件が入り切っていない検索」と見た回は、足りない理由が検索の失敗かもしれない＝広げて上塗りしない（人が見る）
+  if (input.watchBlocked?.length && runs.some((r) => input.watchBlocked!.includes(r.run_id))) return { action: "skip", reason: "watch_blocked" };
   const startMs = sess.startMs;
   // 1回だけ: この回の後に自動の広げてを積んだ・同じお客様×サイトの広げてが積まれている／走っている
   const cmdSite = commandSiteOf(site);

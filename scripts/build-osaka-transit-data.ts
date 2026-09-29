@@ -145,5 +145,35 @@ ${js.split("\n").map((l) => (l ? "  " + l : l)).join("\n")}
 `;
   writeFileSync(join(root, "chrome-extension/osaka-transit.js"), umd, "utf8");
   console.log(`chrome-extension/osaka-transit.js: 路線 ${Object.keys(data.lines).length}・直通 ${data.services.length}・まとまり ${Object.keys(data.groups).length}・座標 ${Object.keys(data.coords).length}・拡張の駅名 ${Object.keys(extNames).length}・${Math.round(umd.length / 1024)}KB`);
+
+  // ───────────────────────── 拡張用: chrome-extension/commute-reach.js（UMD・self.AxlxCommuteReach） ─────────────────────────
+  // 2026-09-29 竹内「梅田まで電車で30分等の時…梅田駅に30分の駅が選択される場面が抜かれてしまっている」
+  //   app/lib/commute-reach-core.ts（通勤の条件 → 到達時間で駅を選ぶ・import なし）を JS に変換して書き出す。データは持たない
+  //   （路線のつながりは osaka-transit.js の self.AxlxOsakaTransit を呼ぶ側が渡す）。拡張側でこのファイルを編集しない。
+  const reachSrc = readFileSync(join(root, "app/lib/commute-reach-core.ts"), "utf8");
+  const reachJs = ts.transpileModule(reachSrc, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, removeComments: false } }).outputText;
+  const reachUmd = `// chrome-extension/commute-reach.js — 自動生成（scripts/build-osaka-transit-data.ts）。手で編集しない。
+// 生成: ${stamp}
+// 中身: app/lib/commute-reach-core.ts（通勤の条件 → 目的の駅に N 分以内で着く駅・路線・区間。JS に変換）。
+// 使い方（拡張）: self.AxlxCommuteReach.planCommuteReach({ commute_station, commute_minutes, desired_area }, self.AxlxOsakaTransit,
+//   { extLinesOf: (駅名) => STATION_LINE_MAP[駅名] || null, lineOrderOf: (路線) => LINE_STATION_ORDER[路線] || [] })
+//   → { extStations（検索に入れる駅・分の短い順）, lines（リアプロ内部名）, segments（レインズの from/to）, capped, skipped }
+//   ／ .reachAudit(plan)（点検の記録に載せる数だけの形）／ .reachSummary(plan)（ログの1行）。サーバーは app/lib/commute-reach.ts の同じ関数。
+/* eslint-disable */
+(function (root, factory) {
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.AxlxCommuteReach = api;
+})(typeof self !== "undefined" ? self : (typeof globalThis !== "undefined" ? globalThis : this), function () {
+  "use strict";
+  var exports = {};
+  // ───── app/lib/commute-reach-core.ts（変換） ─────
+${reachJs.split("\n").map((l) => (l ? "  " + l : l)).join("\n")}
+  exports.version = "${stamp}";
+  return exports;
+});
+`;
+  writeFileSync(join(root, "chrome-extension/commute-reach.js"), reachUmd, "utf8");
+  console.log(`chrome-extension/commute-reach.js: ${Math.round(reachUmd.length / 1024)}KB`);
 }
 buildExtension().catch((e) => { console.error(e); process.exit(1); });

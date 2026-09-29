@@ -62,3 +62,42 @@ export function usageFromAnthropic(model: string, u: Record<string, unknown> | n
     cache_write_5m: w5, cache_write_1h: w1, cache_write: num(x.cache_creation_input_tokens), output_tokens: num(x.output_tokens),
   };
 }
+
+// ── 別クラウド（DeepSeek・Jev）の単価（2026-09-29 見張り＝screen-watch の費用の上限のために足した）──────────────
+// DeepSeek（公式 api-docs.deepseek.com/quick_start/pricing を 2026-09-29 に引いた）: 表の値は混雑していない時間の単価。
+//   混雑時（平日 UTC 01-04・06-10＝JST 10-13・15-19・中国の祝日を除く）は全部2倍。
+//   deepseek-flash : 一致 $0.003／不一致 $0.15／出力 $0.6
+//   deepseek-v4-pro: 一致 $0.022／不一致 $0.66／出力 $1.98
+// Jev（typesafe.ai のトップ「$42 Per Billion input tokens」＝ $0.042/100万・出力の単価は書かれていない＝jev-client の既存の注記どおり無料で数える）
+export type AltPrice = { in: number; read: number; out: number; peakDouble: boolean };
+export const ALT_PRICES: ReadonlyArray<{ re: RegExp; label: string; price: AltPrice }> = [
+  { re: /deepseek-v4-pro|deepseek-pro/, label: "DeepSeek pro", price: { in: 0.66, read: 0.022, out: 1.98, peakDouble: true } },
+  { re: /deepseek/, label: "DeepSeek flash", price: { in: 0.15, read: 0.003, out: 0.6, peakDouble: true } },
+  { re: /^jev:|jev-/, label: "Jev", price: { in: 0.042, read: 0.042, out: 0, peakDouble: false } },
+];
+
+/** DeepSeek・Jev のモデル名（llm_usage_logs.model）→ 単価。知らない名前は null */
+export function altPriceOf(model: string | null | undefined): AltPrice | null {
+  const m = String(model ?? "");
+  return ALT_PRICES.find((x) => x.re.test(m))?.price ?? null;
+}
+
+/** DeepSeek の混雑時間か（平日 UTC 01-04・06-10） */
+export function isDeepseekPeakAt(iso: string | number | Date): boolean {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return false;
+  const h = d.getUTCHours(), w = d.getUTCDay();
+  return w >= 1 && w <= 5 && ((h >= 1 && h < 4) || (h >= 6 && h < 10));
+}
+
+/**
+ * llm_usage_logs の1行（別クラウド）→ $。input_uncached＝一致しなかった入力・cache_read＝一致した入力（recordAltUsage の形）。
+ *   opts.alwaysPeak＝常に混雑時の2倍で数える（上限の関所は安全側にこれを使う）。知らないモデルは 0
+ */
+export function altUsageUsd(r: UsageLike & { created_at?: string | null }, opts: { alwaysPeak?: boolean } = {}): number {
+  const p = altPriceOf(r.model);
+  if (!p) return 0;
+  const base = (num(r.input_uncached) * p.in + num(r.cache_read) * p.read + num(r.output_tokens) * p.out) / 1e6;
+  const peak = p.peakDouble && (opts.alwaysPeak || (r.created_at ? isDeepseekPeakAt(r.created_at) : false));
+  return peak ? base * 2 : base;
+}

@@ -108,6 +108,8 @@ export type AnnounceInput = {
   stopped?: boolean;
   /** 上位に並べる件数（👑 を除く） */
   topN?: number;
+  /** 2026-09-29 見張り（screen-watch）: この回の検索の注意（「⚠ 条件が入り切っていない検索（東三国が入っていない）」）。件数の行の後に1行ずつ */
+  watchNotes?: ReadonlyArray<string>;
 };
 
 const SITE_LABEL: Record<string, string> = { realpro: "リアプロ", realnetpro: "リアプロ", itandi: "itandi", reins: "レインズ" };
@@ -185,6 +187,7 @@ export function buildAnnouncement(i: AnnounceInput): string {
   lines.push(LINE);
   const cnt = [`通す ${counts.pass}`, counts.hold ? `保留 ${counts.hold}` : "", counts.drop ? `外す候補 ${counts.drop}` : ""].filter(Boolean).join("・");
   lines.push(`全${i.items.length}件（${cnt}）`);
+  for (const n of (i.watchNotes ?? []).slice(0, 3)) if (n) lines.push(n);
   if (i.link) {
     lines.push("▶ AIXツールで見る");
     lines.push(i.link);

@@ -68,6 +68,9 @@ console.log("\n■ failureNotice（ピックアップ用グループに1回・0�
   ok("地域が決まらない → 全件検索を防ぐため検索していない", /全件検索を防ぐため検索していません/.test(G.failureNotice({ customerName: "A", error: new Error("AXLX_NO_LOCATION: …") })));
   ok("点検 25 の形（ページに触れない）", /ページに触れませんでした/.test(G.failureNotice({ customerName: "A", error: "Cannot access contents of the page. Extension manifest must request permission" })));
   ok("見張り（85秒）", /途中で止まりました/.test(G.failureNotice({ customerName: "A", error: "page-script側エラー（スキップ）: watchdog-timeout: 85秒以内に…" })));
+  // v2.5.40: 1回の検索の見張り（snapshot-core describeStall の実際の文）は「fill-done」を含むが、見張りの理由で知らせる
+  const _deadlineMsg = "見張りの時間切れ（25分）: 隼斗さん・itandi・待っていた物=検索の完了（fill-done）と全ページの送信・最後の合図=fill-done";
+  ok("見張りの時間切れ（fill-done を含む文でも fill-done の理由にしない）", /上限の時間を過ぎた/.test(G.failureNotice({ customerName: "A", error: new Error(_deadlineMsg) })));
   eq("止めた回（__BATCH_STOPPED__）は知らせない", G.failureNotice({ customerName: "A", error: new Error("__BATCH_STOPPED__") }), null);
   eq("名前が無い時は知らせない（誰か分からない）", G.failureNotice({ customerName: "", error: "x" }), null);
   ok("内部のメッセージ（英語・AXLX_）は載せない", !/AXLX_|Cannot|fill-done/.test(G.failureNotice({ customerName: "A", error: "AXLX_NO_LOCATION: Cannot fill-done" })));
@@ -92,11 +95,13 @@ console.log("\n■ background.js の順番（静的に確かめる）");
   ok("直接入力: 地域が空なら AXLX_NO_LOCATION で検索しない", /if \(!_gate\.ok\) \{[\s\S]{0,300}throw new Error\("AXLX_NO_LOCATION/.test(fb));
   ok("popup_fallback の段に理由（lastError）を残す", /"popup_fallback", "switch-customer 未応答 → 直接入力（" \+ \(_lastWhy/.test(rp));
   const rb = bg.slice(bg.indexOf("async function _runBatchSearch"), bg.indexOf("function _recordBulkSearch("));
-  const iAuto = rb.indexOf("await _batchAutofill(effectiveCustomer");
-  const iScrape = rb.indexOf("_passCount = await _scrapeAndSendRealpro(", iAuto);
+  // v2.5.40: 1回の検索の見張り（_passGuard.race）で包んだ形も読む
+  const iAuto = rb.search(/await (?:_passGuard\.race\()?_batchAutofill\(effectiveCustomer/);
+  const iScrape = iAuto < 0 ? -1 : iAuto + rb.slice(iAuto).search(/_passCount = await (?:_passGuard\.race\()?_scrapeAndSendRealpro\(/);
   const iRec = rb.indexOf("_recordBulkSearch(customer, batchSite, batchIsWide)");
   ok("検索日は検索を押せた後（_scrapeAndSendRealpro の後）に記録", iAuto > 0 && iScrape > iAuto && iRec > iScrape, { iAuto, iScrape, iRec });
-  ok("失敗した1パスの回はピックアップ用グループに1回知らせる（2パスは集計が知らせる）", /if \(!_isMultiPass && self\.AxlxBatchGuard\) \{[\s\S]{0,300}failureNotice\([\s\S]{0,800}group_key: "pickup_group_id"/.test(rb));
+  // 2026-09-29 見張り: 見張りが止めたサイト（ログイン切れ等）の失敗は1人ずつ知らせない（サーバーの1通だけ）＝ && !_watchStopped を足した
+  ok("失敗した1パスの回はピックアップ用グループに1回知らせる（2パスは集計が知らせる）", /if \(!_isMultiPass && self\.AxlxBatchGuard(?: && !_watchStopped)?\) \{[\s\S]{0,300}failureNotice\([\s\S]{0,800}group_key: "pickup_group_id"/.test(rb));
   ok("売上番長グループには送らない（この節の通知は pickup_group_id だけ）", !/sales|uriage|group_key: "(?!pickup_group_id)/.test(rb.slice(rb.indexOf("failureNotice"), rb.indexOf("failureNotice") + 800)));
   const mb = bg.slice(bg.indexOf('[manual-bulk-search] (" + (_bi+1)'), bg.indexOf('[manual-bulk-search] ✔ 完了'));
   ok("手動の一括も検索日は送信の完了の後", mb.indexOf("await _scrapeAndSendRealpro(") > 0 && mb.indexOf("_recordBulkSearch(_bc") > mb.indexOf("await _scrapeAndSendRealpro("));

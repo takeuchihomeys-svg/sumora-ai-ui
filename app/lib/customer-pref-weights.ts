@@ -416,6 +416,10 @@ export function backtestPrefWeights(eps: ReadonlyArray<Episode>, base: (code: st
 }
 
 // ─── 学んだ表・切り替え ───────────────────────────────────────────────────────
+// 2026-09-29 毎週の学習に組み込んだ（竹内「組み込む」）: 表は DB（scoring_pref_weights の active）が正。/api/cron/scoring-pref-learning（日曜 20:40 UTC）が
+//   材料を作り直し → 学び → 当て直し → 良くなった時だけ表を更新（customer-pref-learning-server.runPrefLearning・鍵 CUSTOMER_PREF_LEARNING_AUTO_APPLY 既定 on）。
+//   判定は customer-pref-learning-server.prefWeightForCustomer（DB の表・空なら null＝今まで通り・CUSTOMER_PREF_WEIGHTS=off で止める）を渡す。
+//   下の定数 LEARNED_PREF_WEIGHTS／PREF_WEIGHTS_DEFAULT_ON はコードに書く版（当て直しスクリプト用・本番の判定は DB の表を読む）
 
 /**
  * 2026-09-29 の当て直し（scripts/backtest-customer-pref-weights.ts・400日・383回・109人）で学んだ表。

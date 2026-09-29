@@ -2931,6 +2931,79 @@ CREATE TABLE IF NOT EXISTS scoring_learning_runs (
 CREATE INDEX IF NOT EXISTS idx_scoring_learning_runs_created ON scoring_learning_runs(created_at DESC);
 ALTER TABLE scoring_learning_runs DISABLE ROW LEVEL SECURITY;
 
+-- ── scoring_pref_weights / scoring_pref_learning_runs / scoring_pref_reads: お客様ごとのこだわりの倍率の表と、毎週の学習の結果（2026-09-29追加）──
+-- 竹内「（お客様ごとの採点の倍率を毎週の学習に）組み込む」「DeepSeek で分析できるかな？ 物件検索ブレイン（DeepSeek）の部分が分析する形」
+-- scoring_pref_weights: 条件の種類 × こだわりの強さ → 倍率の表（weights＝{家族:{strong:1.25, stated:1.0}}・app/lib/customer-pref-weights.ts）。
+--   status は proposed / active / retired / rejected。active は1つだけ（無ければ倍率なし＝今まで通りの点）。前の版へは retired を active に戻す（version 0＝表なし）。
+-- scoring_pref_learning_runs: 毎週の測り（確かめ用の前後・帯・通す／保留の変化）・前の表・後の表・DeepSeek の読み（強さ・訴求・仮説）・週のまとめ（10行・グループには送らない）。
+--   書き手: /api/cron/scoring-pref-learning（毎週日曜 20:40 UTC＝月曜 JST 5:40）と app/lib/customer-pref-learning-server.ts
+-- scoring_pref_reads: DeepSeek が読んだ物（kind=customer/appeal/hypothesis・key＝お客様の鍵／回の id・input_hash＝渡した文のハッシュ）。同じ材料は二度読まない
+CREATE TABLE IF NOT EXISTS scoring_pref_weights (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  version INTEGER NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','active','retired','rejected')),
+  weights JSONB NOT NULL DEFAULT '{}',
+  base_version INTEGER,
+  source TEXT NOT NULL DEFAULT 'learning',
+  run_id BIGINT,
+  note TEXT,
+  backtest JSONB,
+  activated_at TIMESTAMPTZ,
+  retired_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scoring_pref_weights_active ON scoring_pref_weights((status)) WHERE status = 'active';
+ALTER TABLE scoring_pref_weights DISABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS scoring_pref_learning_runs (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  dry BOOLEAN NOT NULL DEFAULT false,
+  data_until TIMESTAMPTZ,
+  days INTEGER,
+  episodes_total INTEGER,
+  train_n INTEGER,
+  holdout_n INTEGER,
+  counts JSONB,
+  active_version INTEGER,
+  base JSONB,
+  weighted JSONB,
+  gain NUMERIC,
+  bands JSONB,
+  verdict_flips JSONB,
+  learned JSONB,
+  by_customer JSONB,
+  decision TEXT,
+  improved BOOLEAN NOT NULL DEFAULT false,
+  applied BOOLEAN NOT NULL DEFAULT false,
+  applied_version INTEGER,
+  apply_reason TEXT,
+  table_before JSONB,
+  table_after JSONB,
+  strength_compare JSONB,
+  llm_backtest JSONB,
+  llm JSONB,
+  weekly_summary TEXT,
+  weekly_summary_source TEXT,
+  duration_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_scoring_pref_learning_runs_created ON scoring_pref_learning_runs(created_at DESC);
+ALTER TABLE scoring_pref_learning_runs DISABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS scoring_pref_reads (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMPTZ,
+  kind TEXT NOT NULL,
+  key TEXT NOT NULL,
+  input_hash TEXT,
+  result JSONB,
+  ok BOOLEAN NOT NULL DEFAULT false,
+  model TEXT,
+  cost_usd NUMERIC,
+  conversation_id TEXT,
+  UNIQUE (kind, key)
+);
+ALTER TABLE scoring_pref_reads DISABLE ROW LEVEL SECURITY;
+
 -- ── property_brain_judgments: 物件検索ブレインの判定記録（2026-09-23追加）──
 -- 拡張のブレインモードが /api/property-brain/judge に送った物件1件ごとの pass/hold/drop・点数・理由コード・
 -- 読んだ事実（facts）と説明文（summary_text）。影の運用の間に「外す候補をスタッフが実際に送ったか」（誤削除）を
@@ -3740,6 +3813,97 @@ ALTER TABLE apply_period_summaries DISABLE ROW LEVEL SECURITY;
 --   aix_usage_logs に画面で選んだピッカー・入力値（check_pattern / app_sub_mode / send_mode 以外）を1つの jsonb で残す。
 --   鍵と選択肢は app/lib/aix-pickers.ts の AIX_PICKERS（書くのは /api/log-aix-usage の sanitizePickerChoices）
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS picker_choices JSONB DEFAULT NULL;
+
+-- ── 拡張の心拍と「今の画面」（2026-09-29 v2.5.40 竹内「なぜ固まっているのか」「画面開いているのも目で見ることができるのが理想」）──
+-- 9/29: 検索は 10:57 に終わっていて帯が残っていただけ・16:32 の午後の便の見送りは v2.5.38 より前の拡張（再読み込みしていない PC）。
+--   「その PC が今どの版で何をしているか」が分からず後から推すしかなかった → 心拍・拾った版・画面の写真を残す。
+-- automation_commands.picked_ext_version / picked_install_id: pending で claim した拡張の版と PC（x-ext-version / x-ext-install）
+ALTER TABLE automation_commands ADD COLUMN IF NOT EXISTS picked_ext_version TEXT;
+ALTER TABLE automation_commands ADD COLUMN IF NOT EXISTS picked_install_id TEXT;
+-- extension_devices: PC ごと1行（拡張が初回に作る UUID）を1分ごとの心拍で上書き（書き手 app/lib/extension-snapshots-server.ts heartbeatAndPoll）
+CREATE TABLE IF NOT EXISTS extension_devices (
+  install_id TEXT PRIMARY KEY,
+  device_label TEXT,
+  ext_version TEXT,
+  mode TEXT,
+  batch_running BOOLEAN NOT NULL DEFAULT false,
+  batch_command_id TEXT,
+  batch_started_at TIMESTAMPTZ,
+  last_progress_at TIMESTAMPTZ,
+  current_customer_id TEXT,
+  current_site TEXT,
+  waiting_for TEXT,
+  can_capture BOOLEAN NOT NULL DEFAULT false,
+  staff_mode BOOLEAN NOT NULL DEFAULT false,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- extension_snapshots: kind=request（画面から「今の画面を撮る」）／result（拡張が撮った物: タブごとの写真の URL・ページの文字・拡張の状態・ログの末尾）。
+--   写真は Vercel Blob（ext-snapshots/・推測できない名前）。14日で行も写真も消す（/api/cron/search-audit-sweep）。
+--   ⚠ 写真・帯の文にお客様の名前が入るので RLS 有効・ポリシーなし＝サービスロールだけ。DeepSeek の見立てには渡さない
+CREATE TABLE IF NOT EXISTS extension_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  kind TEXT NOT NULL CHECK (kind IN ('request', 'result')),
+  status TEXT CHECK (status IS NULL OR status IN ('requested', 'done', 'error')),
+  trigger TEXT CHECK (trigger IS NULL OR trigger IN ('stall', 'pass_deadline', 'waiter_timeout', 'fill_timeout', 'request', 'run_end')),
+  request_id BIGINT,
+  requested_by TEXT,
+  install_id TEXT,
+  device_label TEXT,
+  ext_version TEXT,
+  mode TEXT,
+  batch_command_id TEXT,
+  audit_run_id TEXT,
+  property_customer_id TEXT,
+  band_text TEXT,
+  can_capture BOOLEAN,
+  tabs JSONB,
+  stall JSONB,
+  log_tail JSONB,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_extension_snapshots_created ON extension_snapshots(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_extension_snapshots_install ON extension_snapshots(install_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_extension_snapshots_requested ON extension_snapshots(created_at) WHERE kind = 'request';
+CREATE INDEX IF NOT EXISTS idx_extension_snapshots_request_id ON extension_snapshots(request_id) WHERE request_id IS NOT NULL;
+ALTER TABLE extension_devices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE extension_snapshots ENABLE ROW LEVEL SECURITY;
+
+-- ── 見張り（2026-09-29 竹内「拡張ツールでひらいているページの画面をみて判断できる事もできるのか？」・app/lib/screen-watch*.ts）──
+-- search_audits: intent（ブレインの意図を1つの形に・started の後）／expect（別の道で出した期待）／decision_drift（決め方のズレ）／
+--   watch（見張りの印: ラベル・動き・自動の広げてを止める block_widen・★物件出し★の⚠の1行 notice）
+ALTER TABLE search_audits ADD COLUMN IF NOT EXISTS intent JSONB;
+ALTER TABLE search_audits ADD COLUMN IF NOT EXISTS expect JSONB;
+ALTER TABLE search_audits ADD COLUMN IF NOT EXISTS decision_drift JSONB;
+ALTER TABLE search_audits ADD COLUMN IF NOT EXISTS watch JSONB;
+-- screen_watch_events: 要所ごとに1行（①決定論 det_*・②Jev jev_*（影の間は記録だけ）・③DeepSeek ds_*・④裁定 arbiter・動き・費用・予算の状態）。
+--   material は仮名化済みの小さな材料だけ（名前は入れない）。outcome は24時間後に見回りが結ぶ（hit／false_alarm／miss／ok）
+--   jev_shadow_logs は conversation_id が NOT NULL なので使わない（同じ型で列に持つ）
+CREATE TABLE IF NOT EXISTS screen_watch_events (
+  id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), jst_date DATE NOT NULL,
+  run_id TEXT, command_id TEXT, install_id TEXT, property_customer_id TEXT, site TEXT,
+  checkpoint TEXT NOT NULL CHECK (checkpoint IN ('filled','results','done','stall')),
+  det_label TEXT, det_rules TEXT[], det_hard BOOLEAN,
+  jev_label TEXT, jev_prob DOUBLE PRECISION, jev_ms INT, jev_mode TEXT,
+  ds_label TEXT, ds_image BOOLEAN, ds_note TEXT, arbiter JSONB,
+  final_label TEXT NOT NULL, action TEXT, action_reason TEXT,
+  budget_state TEXT CHECK (budget_state IS NULL OR budget_state IN ('ok','capped','no_key')), cost_usd NUMERIC(10,6),
+  material JSONB,
+  outcome TEXT, outcome_detail JSONB, outcome_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_sw_events_created ON screen_watch_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sw_events_run ON screen_watch_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_sw_events_day_label ON screen_watch_events(jst_date, final_label);
+CREATE INDEX IF NOT EXISTS idx_sw_events_outcome_pending ON screen_watch_events(created_at) WHERE outcome IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sw_events_customer_site ON screen_watch_events(property_customer_id, site, created_at DESC);
+-- screen_watch_settings: 自動で調整する線（件数の幅の倍率・Jev から DeepSeek に回す線）の版。active は1つ（前の版は retired）
+CREATE TABLE IF NOT EXISTS screen_watch_settings (
+  id BIGSERIAL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','active','retired')),
+  thresholds JSONB NOT NULL, backtest JSONB, reason TEXT
+);
+ALTER TABLE screen_watch_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE screen_watch_settings ENABLE ROW LEVEL SECURITY;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

@@ -133,8 +133,11 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       .eq("complete_group_id", input.groupId).limit(500);
     if (error) { out.error = error.message; return out; }
     // 2026-09-27 付け直し（backfill-drop-discount-codes --apply）の前の行も、割引と AD の比べの札を外した点・判定で並べる（画面の詳細 API と同じ）
+    // 2026-09-29 お客様ごとのこだわりの倍率（判定に渡した物と同じ・表が空なら null＝今まで通り）
+    const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
+    const prefW = await prefWeightForCustomer(supabase, input.propertyCustomerId);
     const rows = ((data ?? []) as Array<CompleteRankRow & { reason_codes?: string[] | null; reasons_ja?: string[] | null; summary_text?: string | null }>).map((r) => {
-      const d = dropDiscountFromRow(r);
+      const d = dropDiscountFromRow(r, prefW);
       const { reason_codes: _c, reasons_ja: _j, summary_text: _s, ...rest } = r;
       void _c; void _j; void _s;
       // 2026-09-27 版 b: 画像の加点（判定と同じ希望を二重に数えない）に判定の札が要るので reason_codes は残す（割引の比べを外した後の物）

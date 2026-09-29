@@ -4,6 +4,7 @@ import {
   AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, pendingSourceOrFilter,
   isClaimableNow, isPickerWaitExpired,
 } from "@/app/lib/automation-sources";
+import { claimExtVersion, claimInstallId, isMissingColumnError } from "@/app/lib/extension-snapshots";
 
 export async function GET(req: NextRequest) {
   // 修正10: 共有シークレット認証（AUTOMATION_API_KEY 設定時のみ強制。未設定なら従来通り許可）
@@ -97,12 +98,29 @@ export async function GET(req: NextRequest) {
   // 修正3: 条件付きUPDATE + .select() で claim 成功を確認する。
   // 複数PCが同時にポーリングした場合、先に claim した方だけが実行権を得る。
   // 0行更新（= 他のPCが先に claim 済み）なら command: null を返して二重実行を防ぐ。
-  const { data: claimed, error: updErr } = await supabase
+  // 2026-09-29 拾った拡張の版と PC（x-ext-version / x-ext-install・v2.5.40 から）を行に残す。
+  //   9/29 16:32 の午後の便の見送りは v2.5.38 より前の拡張だったが、版の記録が search_audits にしか無く後から推すしかなかった。
+  //   列（picked_ext_version / picked_install_id）がまだ無い DB でも claim を止めない（列が無いと言われたら版なしで claim し直す）
+  const extVersion = claimExtVersion(req.headers.get("x-ext-version"));
+  const extInstall = claimInstallId(req.headers.get("x-ext-install"));
+  const claimUpdate: Record<string, unknown> = { status: "running", picked_up_at: new Date().toISOString() };
+  if (extVersion) claimUpdate.picked_ext_version = extVersion;
+  if (extInstall) claimUpdate.picked_install_id = extInstall;
+  let { data: claimed, error: updErr } = await supabase
     .from("automation_commands")
-    .update({ status: "running", picked_up_at: new Date().toISOString() })
+    .update(claimUpdate)
     .eq("id", cmd.id)
     .eq("status", "pending")
     .select();
+  if (updErr && (extVersion || extInstall) && isMissingColumnError(updErr)) {
+    console.warn("[automation/pending] picked_ext_version の列が無い → 版なしで claim（migrate-schema を流すと残る）:", updErr.message);
+    ({ data: claimed, error: updErr } = await supabase
+      .from("automation_commands")
+      .update({ status: "running", picked_up_at: claimUpdate.picked_up_at })
+      .eq("id", cmd.id)
+      .eq("status", "pending")
+      .select());
+  }
 
   if (updErr) {
     return NextResponse.json({ error: updErr.message }, { status: 500 });

@@ -186,8 +186,12 @@ async function buildList(since: string) {
     if (stErr) break;
     for (const t of (st ?? []) as Array<{ id: number; summary_text: string | null }>) summaryOf.set(t.id, t.summary_text);
   }
+  // 2026-09-29 お客様ごとのこだわりの倍率（判定に渡した物と同じ・表が空なら null＝今まで通り）。お客様ごとに1回だけ引く
+  const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
+  const prefWOf = new Map<string, ((code: string) => number) | null>();
+  for (const pcId of new Set(listRows.filter((r) => (r.reason_codes ?? []).some(isDiscountCompareCode)).map((r) => r.property_customer_id).filter((x): x is string => !!x))) prefWOf.set(pcId, await prefWeightForCustomer(supabase, pcId));
   for (const rx of listRows) {
-    const d = (rx.reason_codes ?? []).some(isDiscountCompareCode) ? dropDiscountFromRow({ ...rx, summary_text: summaryOf.get(rx.id) ?? "" }) : null;
+    const d = (rx.reason_codes ?? []).some(isDiscountCompareCode) ? dropDiscountFromRow({ ...rx, summary_text: summaryOf.get(rx.id) ?? "" }, rx.property_customer_id ? prefWOf.get(rx.property_customer_id) ?? null : null) : null;
     // 2026-09-27 版 b: 👑 は合計（判定の点＋画像の加点）。加点は判定の札と画像の希望・答えから（pickup-image-bonus・詳細と同じ）
     const r0 = d ? { ...rx, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes } : rx;
     const { ia_match, ia_raw, ia_ok, ia_review, ia_wants, ia_checks, ...rest } = r0;
@@ -370,8 +374,11 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   const nowMs = Date.now();
   // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 付け直し（backfill-drop-discount-codes --apply）の前の行も、
   //   割引と AD の比べの札を外した点・判定・理由で出す（札・保留・👑 の並びが、付け直した後と同じになる）
+  // 2026-09-29 お客様ごとのこだわりの倍率（判定に渡した物と同じ・表が空なら null＝今まで通り）
+  const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
+  const prefW = await prefWeightForCustomer(supabase, pcid ?? ((pk.data ?? []) as Row[]).find((r) => r.property_customer_id)?.property_customer_id ?? null);
   const rows = ((pk.data ?? []) as Row[]).map((r) => {
-    const d = dropDiscountFromRow(r);
+    const d = dropDiscountFromRow(r, prefW);
     const r2 = d ? { ...r, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes, reasons_ja: d.reasons_ja } : r;
     return withPickupRetention(r2, nowMs);
   });

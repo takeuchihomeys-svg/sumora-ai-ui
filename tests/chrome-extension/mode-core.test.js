@@ -90,7 +90,9 @@ eq("帯: 通常×なし は出さない", M.banner("normal", false), null);
 eq("帯: スタッフ", M.banner("staff", false).cls, "staff");
 eq("帯: ブレイン×スタッフ", M.banner("staff", true).cls, "brain-staff");
 eq("帯: AIX", M.banner("aix", false).cls, "aix");
-eq("帯: ブレイン×AIX は自動便の見送りを書く", /自動便は見送り/.test(M.banner("aix", true).text), true);
+// 2026-09-29 v2.5.40: 旧は「自動便は見送り」を正にしていた（v2.5.38 で自動便を走らせた後も文だけ古いまま＝小窓が「今も見送る」と誤解させた）
+eq("帯: ブレイン×AIX は自動便も実行すると書く（見送りと書かない）", /自動便も実行/.test(M.banner("aix", true).text) && !/見送り/.test(M.banner("aix", true).text), true);
+eq("帯の文と動きが合う: ブレイン×AIX は runAutoSchedule=true", M.behavior("aix", true).runAutoSchedule, true);
 eq("帯: ブレイン×通常", M.banner("normal", true).cls, "brain");
 eq("帯: スタッフの帯は2時間で自動OFFを書く", [M.banner("staff", false).text, M.banner("staff", true).text].every((t) => /2時間で自動OFF/.test(t)), true);
 

@@ -11,7 +11,7 @@ import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromPages, agentPagesText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
 // 2026-09-27 竹内「株式会社アズ・スタットは AD 記載なくても基本的に 200% あるから 200% とみなす」（純関数）
 import { assumedAdAgentOf } from "@/app/lib/agent-ad-assume";
-import { judgeProperty, parsePropertyFacts, applyImageFacts, applyRoomJoToJudgment, fillFactsFromTerms, isSentRoom, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
+import { judgeProperty, parsePropertyFacts, applyImageFacts, applyRoomJoToJudgment, fillFactsFromTerms, isSentRoom, ldkJoFromText, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
 import { buildPickupTerms } from "@/app/lib/pickup-terms";
@@ -134,6 +134,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     const searchMode = input.searchMode === "pinpoint" || input.searchMode === "widen" ? input.searchMode : null;
     const loaded = await loadProfile(input.propertyCustomerId, searchOverride);
     const profile = loaded?.profile ?? null;
+    // 2026-09-29 お客様ごとのこだわりの倍率（scoring_pref_weights の active・customer-pref-learning-server）。表が空なら null＝今まで通りの点。
+    //   判定（judgeProperty）と、判定の後で点を付け直す関数（applyRoomJoToJudgment・applyImageFacts）に **同じ物** を渡す（渡さないと倍率なしの点に静かに戻る）
+    const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
+    const prefW = await prefWeightForCustomer(supabase, input.propertyCustomerId);
     const sentIdx = new Set<number>();
     if (profile && profile.history.sentCount > 0) input.summaries.forEach((s, i) => { try { if (isSentRoom(parsePropertyFacts(s), profile)) sentIdx.add(i); } catch { /* 読めない物は送付済みにしない */ } });
     const dd = dedupeSameBuilding(input.summaries, { isSent: (i) => sentIdx.has(i) });
@@ -206,6 +210,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         if (facts.areaSqm == null) { const a = parseListingText(pdfText).areaSqm; if (a != null) facts.areaSqm = a; }
         // 2026-09-27 居室の帖数（説明文に無い時は資料の文字層の「間取タイプ 1K[洋:6.5畳]」）。読めない時は売上サポの間取り図の読み取りで付け直す
         if (facts.roomJo == null) { const jo = roomJoFromText(pdfText, facts.floorPlan); if (jo != null) { facts.roomJo = jo; facts.roomJoFrom = "資料"; } }
+        // 2026-09-29 リビングの帖数（「リビング8帖以上」の希望・資料の文字層だけ）
+        if (facts.ldkJo == null) { const lj = ldkJoFromText(pdfText); if (lj != null) facts.ldkJo = lj; }
       }
       factsOf.set(i, facts);
       locOf.set(i, locateItem(summary, pdfText, loaded?.location ?? null));
@@ -249,7 +255,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const lc = locOf.get(i);
       it.location = lc?.saved ?? null;
       if (profile && facts) {
-        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null, searchMode }); } catch { it.judgment = null; }
+        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null, searchMode, prefWeight: prefW }); } catch { it.judgment = null; }
       }
       if (tm && tm.t.hasText) {
         try { it.terms = buildPickupTerms(tm.t, profile, { equipment: e?.match ?? null, filled: tm.filled }); } catch { it.terms = null; }
@@ -280,7 +286,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         if (facts.areaSqm == null && text) { const a = parseListingText(text).areaSqm; if (a != null) facts.areaSqm = a; }
         const dl = locateItem(input.summaries[d.index], text, loaded?.location ?? null);
         let judgment: Judgment | null = null;
-        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes, searchMode }); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes, searchMode, prefWeight: prefW }); } catch { judgment = null; }
         droppedAd.push({ pdfUrl, judgment });
       }
     }
@@ -349,11 +355,11 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         detailSourceOf.set(i, source);
         it.imageLines = detail.lines; out.imageRead++;
         // 2026-09-27 資料の画像の行（「間取り: 1K【洋6帖】」）に帖数があれば、洋室の帖数の要確認を付け直す
-        if (it.judgment && profile?.roomJoWant) it.judgment = applyRoomJoToJudgment(it.judgment, profile.roomJoWant, roomJoFromText(detail.lines.join("\n"), it.judgment.facts.floorPlan), "資料");
+        if (it.judgment && profile?.roomJoWant) it.judgment = applyRoomJoToJudgment(it.judgment, profile.roomJoWant, roomJoFromText(detail.lines.join("\n"), it.judgment.facts.floorPlan), "資料", prefW);
       }
       if (facts?.facts) {
         it.imageFacts = facts.facts;
-        if (it.judgment) it.judgment = applyImageFacts(it.judgment, facts.facts);
+        if (it.judgment) it.judgment = applyImageFacts(it.judgment, facts.facts, prefW);
         if (!it.imageLines) out.imageRead++;
       }
       void i;

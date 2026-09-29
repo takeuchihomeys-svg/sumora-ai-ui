@@ -38,7 +38,7 @@ import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { assumedAdAgentInLine, assumedAdAgentOf } from "./agent-ad-assume";
-import { roomJoWantOf, roomJoFromText, judgeRoomJo, type RoomJoWant } from "./room-jo";
+import { roomJoWantOf, roomJoFromText, judgeRoomJo, readRoomJoItems, maxJoOfKinds, type RoomJoWant } from "./room-jo";
 
 // ─── 型 ──────────────────────────────────────────────────────────────────────
 
@@ -74,6 +74,8 @@ export type PropertyFacts = {
    */
   roomJo?: number | null;
   roomJoFrom?: "資料" | "間取り図" | null;
+  /** 2026-09-29 リビング（LDK・LD）の帖数（資料の文字だけ・room-jo.ts）。不明は持たない */
+  ldkJo?: number | null;
   rawText: string;
 };
 
@@ -196,6 +198,8 @@ export type CustomerProfile = {
   sqmMin?: number | null;
   /** 2026-09-27 洋室の帖数の希望（「7畳以上の部屋」「1K(7畳)以上」→ 7・room-jo.ts）。無ければ持たない */
   roomJoWant?: RoomJoWant | null;
+  /** 2026-09-29 リビングの帖数の希望（「リビング8帖以上」「LDK12帖以上」→ 8・12・room-jo.ts）。竹内「リビング○帖以上等もその他の項目で加点」 */
+  ldkJoWant?: RoomJoWant | null;
   /** 2026-09-25 築年の列が空で、自由文に「新築」「築浅」「新しめ」がある時の年数の目安（情報の札だけ） */
   ageTextMax?: { years: number; word: string } | null;
   /** 2026-09-25 案B お客様が書いた条件の強さ（築浅の自由文・駅近・家賃を低くしたい）。readWrittenWants。無い呼び出し元は「書いていない」扱い */
@@ -362,6 +366,10 @@ export const REASON_JA: Record<string, string> = {
   ROOM_JO_SOFT_NG: "洋室の帖数が希望（目安）より狭い",
   ROOM_JO_IMG_NG: "間取り図の読みでは洋室が希望より狭い（資料に帖数なし・要確認）",
   ROOM_JO_UNKNOWN: "要確認: 洋室の帖数（資料・間取り図で読めない）",
+  // 2026-09-29 竹内「リビング○帖以上等もその他の項目で加点」: リビング（LDK・LD）の帖数（資料の文字だけ。図の読みは当てない）
+  LDK_JO_OK: "リビングの帖数が希望以上",
+  LDK_JO_NG: "リビングの帖数が希望より狭い",
+  LDK_JO_UNKNOWN: "要確認: リビングの帖数（資料に帖数なし）",
   BUILDING_AGE_TEXT_OK: "築年が「築浅・新築」の希望に合う",
   BUILDING_AGE_TEXT_OVER: "築年が「築浅・新築」の希望より古い",
   // 2026-09-25 竹内「エリアの部分、把握できれば理想」「通勤の部分も沿線の知識」（area-want.ts・osaka-geo.ts・transit-route.ts）
@@ -577,6 +585,8 @@ export const REASON_POINTS: Record<string, number> = {
   // 2026-09-27 洋室の帖数（希望以上 +3＝広さの ○ と同じ・狭い −15 外す候補・目安より狭い −10 保留・読めない 0点の要確認）
   //   間取り図の読みだけで狭い −10 保留（ROOM_JO_IMG_NG・図の帖数の読み違いが実物で 4件あったので外す候補にしない）
   ROOM_JO_OK: 3, ROOM_JO_NG: -15, ROOM_JO_SOFT_NG: -10, ROOM_JO_IMG_NG: -10, ROOM_JO_UNKNOWN: 0,
+  // 2026-09-29 リビングの帖数（希望以上 +3・狭い −10 保留＝洋室と違い外す候補にしない（LDK の帖数の書き方は資料で揺れる）・読めない 0点の要確認）
+  LDK_JO_OK: 3, LDK_JO_NG: -10, LDK_JO_UNKNOWN: 0,
   // 2026-09-25 案B: 築浅の自由文の○×は 0点の札（全部合うの数に入る）。点は段の札（AGE_W*）で数える（旧 ○ +3）
   BUILDING_AGE_TEXT_OK: 0, BUILDING_AGE_TEXT_OVER: 0,
   // 2026-09-25 エリア・通勤（外す候補にしない。以外に当たる時だけ保留）
@@ -796,6 +806,8 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
   }
   // 2026-09-27 居室の帖数（説明文に「1K[洋:6.5畳]」があれば・名前の行は見ない）
   const roomJoOfSummary = roomJoFromText(restText, floorPlan);
+  // 2026-09-29 リビング（LDK・LD）の帖数（「1LDK[LDK11.9 x 洋4.4]」「LDK11.2帖」）。DK は数えない（リビングではない）
+  const ldkJoOfSummary = ldkJoFromText(restText);
 
   // 築年
   let buildingAge: number | null = null;
@@ -814,6 +826,7 @@ export function parsePropertyFacts(summary: string | null | undefined, data?: Pr
     ...(roomNo ? { roomNo } : {}),
     ...(adAssumedBy ? { adAssumedBy } : {}),
     ...(roomJoOfSummary != null ? { roomJo: roomJoOfSummary, roomJoFrom: "資料" as const } : {}),
+    ...(ldkJoOfSummary != null ? { ldkJo: ldkJoOfSummary } : {}),
     rawText: raw,
   };
 }
@@ -1023,7 +1036,12 @@ export function detectWantsLowInitialCost(c: CustomerLike): boolean {
   for (const f of fields) {
     const s = String(f ?? "");
     if (!s) continue;
-    if (LOW_INITIAL_COST_RE.test(s) && !LOW_INITIAL_COST_NEG_RE.test(s)) return true;
+    // 2026-09-29 要望の項目化の監査: 否定の語は「節ごと」に見る（旧は欄ごと＝「できるだけ初期費用抑えたい。築年数はこだわらない」が
+    //   別の節の「こだわらない」で消えていた）。節の区切りに「・」は使わない（「敷金・礼金なし」「初期費用・家賃は安い」を割らない）。
+    //   全 311人に当てて変わるのは f56dfd70 の1人だけ（false→true・正しい側）
+    for (const cl of s.normalize("NFKC").split(/[\n。、,，/／]/)) {
+      if (LOW_INITIAL_COST_RE.test(cl) && !LOW_INITIAL_COST_NEG_RE.test(cl)) return true;
+    }
   }
   const lim = num(c.initial_cost_limit);
   // 0 は「未入力」と区別できない（実データで 0 の人に「負担が増えてもよい」がいた）ので 1〜150,000 だけ
@@ -1245,6 +1263,7 @@ const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"],
   SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNKNOWN: ["広さ", "unread"],
   ROOM_JO_OK: ["洋室の帖数", "ok"], ROOM_JO_NG: ["洋室の帖数", "ng"], ROOM_JO_SOFT_NG: ["洋室の帖数", "ng"], ROOM_JO_IMG_NG: ["洋室の帖数", "ng"], ROOM_JO_UNKNOWN: ["洋室の帖数", "unread"],
+  LDK_JO_OK: ["リビングの帖数", "ok"], LDK_JO_NG: ["リビングの帖数", "ng"], LDK_JO_UNKNOWN: ["リビングの帖数", "unread"],
   WALK_OK: ["徒歩", "ok"], WALK_SLIGHTLY_OVER: ["徒歩", "soft_ng"], WALK_OVER: ["徒歩", "ng"],
   WALK_TEXT_OK: ["徒歩", "ok"], WALK_TEXT_OVER: ["徒歩", "soft_ng"], WALK_TEXT_FAR: ["徒歩", "soft_ng"],
   BUILDING_AGE_OK: ["築年", "ok"], BUILDING_AGE_WIDE: ["築年", "wide"], BUILDING_AGE_SLIGHTLY_OVER: ["築年", "soft_ng"], BUILDING_AGE_OVER: ["築年", "ng"],
@@ -1414,6 +1433,7 @@ export function buildCustomerProfile(
     floorPlanAlt: parseFloorPlanAlt(customer, floorPlanWant),
     sqmMin: sqmMin ?? null,
     roomJoWant: roomJoWantOfCustomer(customer),
+    ldkJoWant: ldkJoWantOfCustomer(customer),
     ageTextMax,
     floorPlanWant,
     walkMax: walkMaxUse,
@@ -1511,6 +1531,21 @@ export function roomJoWantOfCustomer(c: CustomerLike): RoomJoWant | null {
   return roomJoWantOf([c.preferences, c.other_requests, c.additional_conditions, c.floor_plan, c.layout, formPlanLines(c.raw_format_text)]);
 }
 
+/** 2026-09-29 リビングの帖数の希望（「リビング8帖以上」「LDK12帖以上」）。材料は洋室と同じ欄 */
+export function ldkJoWantOfCustomer(c: CustomerLike): RoomJoWant | null {
+  return roomJoWantOf([c.preferences, c.other_requests, c.additional_conditions, c.floor_plan, c.layout, formPlanLines(c.raw_format_text)], "LDK");
+}
+/** 資料の文字（説明文・文字層）からリビング（LDK・LD）の一番広い帖数。DK は数えない。読めなければ null */
+export function ldkJoFromText(text: string | null | undefined): number | null {
+  return maxJoOfKinds(readRoomJoItems(text), ["LDK"]);
+}
+/** リビングの帖数の札（純関数）。希望が無ければ何も付けない。目安の希望（「10帖前後」）は1帖下まで ok（judgeRoomJo と同じ） */
+export function ldkJoCodes(want: RoomJoWant | null | undefined, jo: number | null | undefined): string[] {
+  if (!want) return [];
+  const r = judgeRoomJo(want, jo);
+  return r === "unknown" ? ["LDK_JO_UNKNOWN"] : r === "ok" ? ["LDK_JO_OK"] : ["LDK_JO_NG"];
+}
+
 /**
  * 洋室の帖数の札（純関数・judgeProperty と applyRoomJoToRow で同じ線）。希望が無ければ何も付けない。
  *   外す候補（ROOM_JO_NG）は資料の文字で読めた帖数だけ。間取り図の読みで狭い時は保留（ROOM_JO_IMG_NG）:
@@ -1558,8 +1593,8 @@ export function applyRoomJoToRow(
 }
 
 /** 判定（Judgment）に後から読めた居室の帖数を当てる（ROOM_JO_UNKNOWN の時だけ・applyRoomJoToRow と同じ線）。当たらなければそのまま */
-export function applyRoomJoToJudgment(j: Judgment, want: RoomJoWant | null | undefined, jo: number | null | undefined, from: "資料" | "間取り図"): Judgment {
-  const r = applyRoomJoToRow({ reason_codes: j.reasonCodes, score: j.score, verdict: j.verdict }, want, jo, from);
+export function applyRoomJoToJudgment(j: Judgment, want: RoomJoWant | null | undefined, jo: number | null | undefined, from: "資料" | "間取り図", prefWeight?: ((code: string) => number) | null): Judgment {
+  const r = applyRoomJoToRow({ reason_codes: j.reasonCodes, score: j.score, verdict: j.verdict }, want, jo, from, prefWeight);
   if (!r) return j;
   const flagCodes = r.reason_codes.filter((c) => DROP_REASON_CODES.has(c) || isHoldCode(c));
   return { ...j, score: r.score, verdict: r.verdict, reasonCodes: r.reason_codes, flagCodes, reasonsJa: r.reasons_ja,
@@ -1687,6 +1722,10 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   //   （売上サポに届いた後の間取り図の読み取りで applyRoomJoToRow が付け直す）
   for (const code of roomJoCodes(profile.roomJoWant ?? null, facts.roomJo ?? null, facts.roomJoFrom ?? "資料")) {
     add(code, reasonPoints(code), code === "ROOM_JO_NG" ? "drop" : code === "ROOM_JO_SOFT_NG" || code === "ROOM_JO_IMG_NG" ? "hold" : undefined);
+  }
+  // 2026-09-29 リビングの帖数（「リビング8帖以上」）: 資料の文字で読めた LDK の帖数だけ（狭い＝保留・読めない＝0点の要確認）
+  for (const code of ldkJoCodes(profile.ldkJoWant ?? null, facts.ldkJo ?? null)) {
+    add(code, reasonPoints(code), code === "LDK_JO_NG" ? "hold" : undefined);
   }
 
   // 徒歩
@@ -1903,6 +1942,7 @@ export const HOLD_REASON_CODES = new Set([
   "ALREADY_SENT_SAME_ROOM", // 2026-09-25 号室で初めて当たる同じ部屋（外す候補にしない）
   "ROOM_JO_SOFT_NG", // 2026-09-27 洋室の帖数が目安（「7畳前後」）より1帖を超えて狭い
   "ROOM_JO_IMG_NG", // 2026-09-27 資料に帖数が無く、間取り図の読みで狭い（読み違いがあるので保留どまり）
+  "LDK_JO_NG", // 2026-09-29 リビングの帖数が希望より狭い（保留どまり）
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」（通す→保留に落ちる程度）。AD 不明（記載なし・読めない）は今まで通り 0点の要確認（保留にしない）
   "AD_UNDER_1M", "AD_NONE",
 ]);

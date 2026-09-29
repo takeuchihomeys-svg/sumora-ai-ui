@@ -78,8 +78,10 @@ export async function announceCompleteGroup(input: {
     for (const f of flags) { const k = f.site ?? "unknown"; sites[k] = (sites[k] ?? 0) + 1; }
     const first = [...flags].sort((a, z) => String(a.created_at ?? "").localeCompare(String(z.created_at ?? "")) || a.id - z.id)[0];
     const customerName = [...flags].reverse().find((f) => f.customer_name)?.customer_name ?? null;
+    // 2026-09-29 見張り: この回の検索の注意（条件が入り切っていない・0件の疑い）を1行ずつ（読めない時は出さない）
+    const watchNotes = await import("@/app/lib/screen-watch-server").then((m) => m.watchNoticeLines(input.propertyCustomerId, first?.created_at ?? null)).catch(() => [] as string[]);
     const text = buildAnnouncement({
-      customerName, sites, items, bestId: input.bestId, update: plan.update, stopped: input.stopped,
+      customerName, sites, items, bestId: input.bestId, update: plan.update, stopped: input.stopped, watchNotes,
       link: announceLink(BASE_URL, input.propertyCustomerId, first?.batch_id ?? null),
     });
     out.text = text;
@@ -115,5 +117,30 @@ export async function announceCompleteGroup(input: {
     return out;
   } finally {
     console.log(JSON.stringify({ tag: "property-pickups:group-announce", group: input.groupId, sent: out.sent, dry: out.dry, skipped: out.skipped, update: out.update, new_items: out.newIds.length, stopped: !!input.stopped, error: out.error }));
+  }
+}
+
+/**
+ * 2026-09-29 見張り（screen-watch）: ★物件出し★グループ（pickup_group_id）だけに1通送る。
+ *   売上番長グループ（group_id）へは送らない＝pickup_group_id が無い・group_id と同じ時は送らずに理由を返す（merge-pdfs の getGroupId のような group_id への逃げはしない）
+ */
+export async function pushPickupGroupNotice(text: string): Promise<{ sent: boolean; error: string | null }> {
+  try {
+    if (!HANBANCYO_TOKEN) return { sent: false, error: "LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN が未設定" };
+    const { data, error } = await supabase.from("hanbancyo_settings").select("key, value").in("key", ["pickup_group_id", "group_id"]);
+    if (error) return { sent: false, error: error.message };
+    const m = new Map(((data ?? []) as Array<{ key: string; value: string | null }>).map((r) => [r.key, r.value]));
+    const pick = (m.get("pickup_group_id") ?? "").trim();
+    if (!pick) return { sent: false, error: "pickup_group_id が無い（売上番長グループには送らない）" };
+    if (pick === (m.get("group_id") ?? "").trim()) return { sent: false, error: "pickup_group_id が group_id と同じ（売上番長グループには送らない）" };
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${HANBANCYO_TOKEN}` },
+      body: JSON.stringify({ to: pick, messages: [{ type: "text", text: text.slice(0, 4900) }] }),
+    });
+    if (!res.ok) return { sent: false, error: `LINE API エラー HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}` };
+    return { sent: true, error: null };
+  } catch (e) {
+    return { sent: false, error: e instanceof Error ? e.message : String(e) };
   }
 }

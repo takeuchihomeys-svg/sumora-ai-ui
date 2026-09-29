@@ -16,6 +16,8 @@
   let evalCache          = {};    // AI評価キャッシュ（キー: 顧客ID|物件名|号室|家賃 → 結果 or Promise）
                                   // MutationObserver 再実行での重複APIコールを防ぐ。顧客切替時にリセット
   let patternHints       = [];    // 類似顧客の勝ちパターン（property_selection_patterns由来）。顧客切替でリセット
+  let bandMeta           = null;  // 2026-09-29 v2.5.40 { at }: 条件（axlx_score_data）を書いた時刻（background が書く）
+  let bandRun            = null;  // 2026-09-29 v2.5.40 { running, at, customerName, site }: 一括の回の始まり・終わり（background が書く）
 
   // ── HTML エスケープ ─────────────────────────────────────────────
   function esc(s) {
@@ -745,12 +747,21 @@
     else if (c.last_touch_date) conds.push("更新日:絞らず");
     else if ("last_touch_date" in c) conds.push("初回(更新日なし)");
 
+    // 2026-09-29 v2.5.40 竹内「ブレインのAIX検索モードが隼斗さんで止まってしまっている」: 実は 10:57 に検索は終わっていて、
+    //   この帯（axlx_score_data）が消されずに、後で開いたリアプロ・ITANDI のどのページにも出ていた（固まって見えた）。
+    //   → 帯に「▶ 一括検索中（誰・どこ）」か「待機中・最終の条件 hh:mm」を出し、待機中は薄い色にする（今のページの検索とは関係ない印）。
+    //   状態は background が chrome.storage.session に書く（axlx_run_state＝一括の回の始まり・終わり／axlx_score_meta＝条件を書いた時刻）
+    var SC = (typeof self !== "undefined" && self.AxlxSnapshotCore) || null;
+    var st = SC ? SC.bandStatus(bandMeta, bandRun, Date.now()) : { state: "idle", label: "" };
+    var idle = st.state !== "running";
+
     var bar = document.createElement("div");
     bar.id = BAR_ID;
+    bar.setAttribute("data-state", st.state);
     bar.style.cssText = [
       "position:fixed;top:0;left:50%;transform:translateX(-50%);",
       "z-index:2147483640;",
-      "background:rgba(13,27,62,0.94);color:#fff;",
+      idle ? "background:rgba(71,85,105,0.82);color:#f1f5f9;" : "background:rgba(13,27,62,0.94);color:#fff;",
       "padding:5px 14px;border-radius:0 0 10px 10px;",
       "font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
       "display:flex;align-items:center;gap:8px;flex-wrap:nowrap;",
@@ -763,8 +774,14 @@
         patternHints.slice(0, 3).map(esc).join("&nbsp;&#183;&nbsp;") + "</span>"
       : "";
 
+    var stateHtml = st.label
+      ? "<span id='axlx-score-state' style='flex-shrink:0;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;white-space:nowrap;" +
+        (idle ? "background:rgba(255,255,255,0.18);color:#e2e8f0;" : "background:#16a34a;color:#fff;") + "'>" + esc(st.label) + "</span>"
+      : "";
+
     bar.innerHTML =
-      "<span style='font-weight:700;color:#64b5f6;flex-shrink:0;'>&#128100; " + esc(c.customer_name || "") + ":</span>" +
+      stateHtml +
+      "<span style='font-weight:700;color:" + (idle ? "#cbd5e1" : "#64b5f6") + ";flex-shrink:0;'>&#128100; " + esc(c.customer_name || "") + ":</span>" +
       "<span style='color:#e0e0e0;'>" + conds.map(esc).join("&nbsp;/&nbsp;") + "</span>" +
       hintsHtml +
       "<span style='margin-left:6px;display:flex;gap:3px;flex-shrink:0;'>" +
@@ -786,9 +803,11 @@
   function loadAndScore() {
     if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.session) return;
     try {
-      chrome.storage.session.get("axlx_score_data", function (data) {
+      chrome.storage.session.get(["axlx_score_data", "axlx_score_meta", "axlx_run_state"], function (data) {
         if (!data || !data.axlx_score_data) return;
         storedConditions = data.axlx_score_data;
+        bandMeta = data.axlx_score_meta || null;
+        bandRun = data.axlx_run_state || null;
         // 顧客が変わった場合は送済みリスト・AI評価キャッシュをリセットしてフェッチ
         if (storedConditions.property_customer_id) {
           sentPropertiesList = null;
@@ -823,7 +842,14 @@
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
     try {
       chrome.storage.onChanged.addListener(function (changes, area) {
-        if (area !== "session" || !changes.axlx_score_data) return;
+        if (area !== "session") return;
+        // 2026-09-29 v2.5.40 一括の回の始まり・終わり／条件を書いた時刻 → 帯の状態の札だけ描き直す（出ている時だけ）
+        if (changes.axlx_score_meta || changes.axlx_run_state) {
+          if (changes.axlx_score_meta) bandMeta = changes.axlx_score_meta.newValue || null;
+          if (changes.axlx_run_state) bandRun = changes.axlx_run_state.newValue || null;
+          if (!changes.axlx_score_data && storedConditions && document.getElementById(BAR_ID)) showConditionBar();
+        }
+        if (!changes.axlx_score_data) return;
         storedConditions = changes.axlx_score_data.newValue;
         if (!storedConditions) return;
         // 顧客切り替えを検出したら送済みリスト・AI評価キャッシュをリセット・再フェッチ

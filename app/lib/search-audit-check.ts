@@ -25,7 +25,7 @@ export type AuditSite = "realpro" | "itandi" | "reins";
 export type CheckCode =
   | "STATION_MISSING" | "ROUTE_MISSING" | "AREA_UNRESOLVED" | "CONDITION_MISREAD" | "RENT_MISMATCH"
   | "FLOOR_PLAN_DROPPED" | "UPDATE_DAYS" | "LOCATION_MODE" | "RESET_FAILED" | "UI_NOT_FOUND" | "CONDITION_DRIFT" | "CONDITION_STALE"
-  | "ZERO_UNCONFIRMED" | "ZERO_CONFIRMED" | "SENT_LT_READ" | "STALLED" | `ERROR_${string}`;
+  | "ZERO_UNCONFIRMED" | "ZERO_CONFIRMED" | "SENT_LT_READ" | "STALLED" | "COMMUTE_REACH" | `ERROR_${string}`;
 
 export type AuditCheck = {
   code: CheckCode;
@@ -49,6 +49,19 @@ export type CustomerSnapshot = RpUpdateDaysCustomer & {
   walk_minutes?: number | null;
   building_age?: number | null;
   commute_station?: string | null;
+  commute_minutes?: number | null;
+};
+
+/** 2026-09-29 v2.5.39 通勤の到達時間で選んだ駅（拡張の commute-reach reachAudit の形・駅名は載せず数だけ） */
+export type IntendedCommute = {
+  targets?: Array<{ target?: string | null; minutes?: number | null; source?: string | null }> | null;
+  stations?: number | null;
+  total?: number | null;
+  capped?: boolean | null;
+  lines?: number | null;
+  transfers?: number | null;
+  /** concrete_area＝希望エリアが具体的なので広げなかった */
+  skipped?: string | null;
 };
 
 /** 拡張が入れようとした条件（popup の conditions・background の _buildBatchConditions の写し） */
@@ -72,6 +85,8 @@ export type Intended = {
   reins_line?: string | null;
   unknown_tokens?: string[] | null;
   is_wide?: boolean | null;
+  select_all_line_stations?: boolean | null;
+  commute?: IntendedCommute | null;
 };
 
 export type FormReadback = {
@@ -282,6 +297,8 @@ export function classifyError(error: string | null | undefined): string | null {
   const e = String(error ?? "").trim();
   if (!e) return null;
   if (/__BATCH_STOPPED__|ストップ/.test(e)) return "stopped";
+  // 2026-09-29 v2.5.40 拡張の見張り（1回の検索の上限・snapshot-core PASS_DEADLINE_MS）で閉じて次のお客様へ進んだ回
+  if (/見張りの時間切れ|__PASS_DEADLINE__/.test(e)) return "pass_deadline";
   if (/watchdog/i.test(e)) return "watchdog";
   if (/fill-done|検索完了シグナル/.test(e)) return "fill_timeout";
   if (/全ページ送信完了|5分/.test(e)) return "batch_timeout";
@@ -333,6 +350,7 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
       : kind === "ui" ? "画面の部品が見つからなかった"
       : kind === "network" ? "サーバーとのやり取りに失敗"
       : kind === "not_logged_in" ? "サイトにログインしていなかった"
+      : kind === "pass_deadline" ? "1回の検索が上限の時間を過ぎた（見張りで次のお客様へ）"
       : "検索中の失敗";
     add(code, "bad", `${kind === "ui" ? "ui_not_found" : "error"}:${siteKey}:${keyPart(kind === "ui" ? a.error : kind)}`, title, String(a.error ?? kind));
   }
@@ -377,6 +395,28 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
   }
   if (i && c?.desired_area && String(c.desired_area).trim() && !hasAnyArea(i) && kind !== "no_area") {
     add("AREA_UNRESOLVED", "bad", `area_unresolved:${siteKey}:all`, "場所の条件が1つも入っていない", `希望エリア「${String(c.desired_area).slice(0, 60)}」から駅・路線・市区が作れなかった`);
+  }
+
+  // ── 通勤の到達時間で選んだ駅（2026-09-29 v2.5.39）──
+  //   拡張が「梅田まで30分」等から目的の駅に N 分以内で着く駅を入れた回は info で残す（駅名は載せず数だけ）。
+  //   通勤の条件（列に分がある・希望エリアに「◯◯まで◯分」）があるのに intended.commute が無く駅が少ない回は warn（古い拡張・読めなかった）
+  const cm = i?.commute ?? null;
+  const commuteText = String(c?.desired_area ?? "").normalize("NFKC");
+  const hasCommuteWant = (!!c?.commute_station && typeof c?.commute_minutes === "number" && c.commute_minutes > 0)
+    || /(?:まで|から|へ|に)\s*(?:は)?\s*(?:電車|地下鉄|JR)?\s*(?:で)?\s*(?:約)?\d{1,3}\s*分/.test(commuteText) || /通勤\s*\d{1,3}\s*分/.test(commuteText);
+  if (cm && Array.isArray(cm.targets) && cm.targets.length) {
+    const tg = cm.targets.map((t) => `${t.target ?? "?"}まで${t.minutes ?? "?"}分`).join("・");
+    const key0 = `${keyPart(cm.targets[0]?.target)}:${cm.targets[0]?.minutes ?? "-"}`;
+    if (cm.skipped) {
+      add("COMMUTE_REACH", "ok", `commute_reach:${siteKey}:skipped:${keyPart(cm.skipped)}`, `通勤の条件（${tg}）はあるが駅は広げなかった`,
+        cm.skipped === "concrete_area" ? "希望エリアが具体的な駅・地名なので、その場所で検索した（通勤の列だけの時の決まり）" : String(cm.skipped));
+    } else {
+      add("COMMUTE_REACH", "ok", `commute_reach:${siteKey}:${key0}`, `通勤の到達時間で駅を選んだ（${tg}・${cm.stations ?? "?"}駅・${cm.lines ?? "?"}路線）`,
+        `乗り換え${cm.transfers ?? 1}回まで${cm.capped ? `・${cm.total ?? "?"}駅を上限で切った（所要の短い順）` : ""}`);
+    }
+  } else if (hasCommuteWant && stationMode && intendedStations.length > 0 && intendedStations.length < 10 && !i?.select_all_line_stations) {
+    add("COMMUTE_REACH", "warn", `commute_reach:${siteKey}:not_expanded`, "通勤の条件があるのに到達時間で駅を選んでいない",
+      `駅 ${intendedStations.length} 件だけ（通勤=${c?.commute_station ?? "-"}:${c?.commute_minutes ?? "-"}・希望エリア「${commuteText.slice(0, 40)}」）。拡張が v2.5.39 より前か、目的の駅が路線図に無い`);
   }
 
   // ── 場所の入れ方（駅か地域か）──
@@ -550,6 +590,9 @@ export function causeTitle(causeKey: string): string {
     case "sent_lt_read": return `${siteJa}: 送れる物件を送り切れない`;
     case "stalled": return `${siteJa}: 途中で止まった（${a}）`;
     case "error": return a === "not_logged_in" ? `${siteJa}: ログインしていない` : `${siteJa}: 失敗（${a}）`;
+    // 2026-09-29 見張りの週のまとめの提案（screen-watch-server.weeklyScreenWatch）。形は watch_rule:<規則>／decision:commute_missing:<目的の駅>
+    case "watch_rule": return `見張りの規則の見直し（誤警報が多い: ${site}）`;
+    case "decision": return site === "commute_missing" ? `通勤の到達駅が抜けやすい（${a}）` : `決め方のズレ（${site}${a ? `・${a}` : ""}）`;
     default: return causeKey;
   }
 }

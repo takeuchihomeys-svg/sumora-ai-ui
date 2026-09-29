@@ -178,12 +178,14 @@
           setVal(getField(baseIdx), pair.line);
           await sleep(_sd(800)); // SELECTのオプション読み込みを待つ
           var stName = (pair.station || "").replace(/駅$/, "").trim();
+          // 2026-09-29 v2.5.39 通勤の到達時間: 沿線の中の「◯駅〜◯駅」の範囲（station_to）。無ければ今まで通り同じ駅
+          var stToName = (pair.station_to || pair.station || "").replace(/駅$/, "").trim();
           if (stName) {
             var stFromEl = getField(baseIdx + 1);
             var stToEl   = getField(baseIdx + 2);
             // SELECTならselectByText（表示テキストで選択）、失敗時はsetValでフォールバック
             if (!selectByText(stFromEl, stName)) setVal(stFromEl, stName);
-            if (!selectByText(stToEl,   stName)) setVal(stToEl,   stName);
+            if (!selectByText(stToEl,   stToName)) setVal(stToEl,   stToName);
           }
         }
       } else {

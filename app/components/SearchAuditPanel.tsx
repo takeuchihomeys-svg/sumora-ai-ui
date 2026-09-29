@@ -6,6 +6,8 @@
 // 回ごと: 直近の検索の1回ずつ（見出し「この回の検索: 駅 3/4・東三国が入っていない」）。
 // 決まり（札・見出し）は app/lib/search-audit-check.ts（純関数）。ここは /api/search-audits を読んで描くだけ（サーバー専用の物は import しない）
 import { useCallback, useEffect, useState } from "react";
+// 2026-09-29 v2.5.40 「📷 拡張の画面」（PC ごとの版・心拍・止まった時／頼んだ時の画面の写真）→ 同日「👁 見張り」を上に足した（ScreenWatchLive）
+import ExtensionSnapshotsView from "@/app/components/ExtensionSnapshotsView";
 
 type Diagnosis = { cause_ja?: string; fix_ja?: string; where?: { file?: string; function?: string }; is_genuine_zero?: boolean | null; confidence?: number; reused_from?: string; failed?: boolean };
 type Cause = {
@@ -32,7 +34,7 @@ function fmt(iso: string | null | undefined): string {
 }
 
 export default function SearchAuditPanel({ onClose, extVersion }: { onClose: () => void; extVersion?: string }) {
-  const [view, setView] = useState<"causes" | "runs">("causes");
+  const [view, setView] = useState<"causes" | "runs" | "ext">("causes");
   const [days, setDays] = useState<7 | 30>(7);
   const [causes, setCauses] = useState<Cause[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -45,6 +47,7 @@ export default function SearchAuditPanel({ onClose, extVersion }: { onClose: () 
   const [filter, setFilter] = useState<"open" | "all">("open");
 
   const load = useCallback(async () => {
+    if (view === "ext") return; // 「📷 拡張の画面」は ExtensionSnapshotsView が自分で読む
     setLoading(true); setErr("");
     try {
       if (view === "causes") {
@@ -87,9 +90,9 @@ export default function SearchAuditPanel({ onClose, extVersion }: { onClose: () 
       </div>
 
       <div className="flex gap-2 border-b border-[#e9edef] px-4 py-2 text-[12px]">
-        {(["causes", "runs"] as const).map((v) => (
+        {(["causes", "runs", "ext"] as const).map((v) => (
           <button key={v} onClick={() => setView(v)} className={`rounded-full px-3 py-1 font-bold ${view === v ? "bg-[#1565C0] text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}>
-            {v === "causes" ? "原因ごと" : "回ごと"}
+            {v === "causes" ? "原因ごと" : v === "runs" ? "回ごと" : "👁 見張り・📷 画面"}
           </button>
         ))}
         <span className="mx-1 w-px bg-[#e9edef]" />
@@ -168,6 +171,8 @@ export default function SearchAuditPanel({ onClose, extVersion }: { onClose: () 
             })}
           </>
         )}
+
+        {view === "ext" && <ExtensionSnapshotsView />}
 
         {view === "runs" && (
           <>

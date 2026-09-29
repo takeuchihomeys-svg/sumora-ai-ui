@@ -2186,8 +2186,21 @@ function buildCondData(c, mode = "pinpoint") {
     preferences:  c.preferences || null,
     ngPoints:     c.ng_points || null,
     otherReqs:    c.other_requests || null,
+    // 2026-09-29 v2.5.39 要望の項目（サーバーの /api/property-customers が customer-wants.itemizeWants で作る。検索には入れない・見えるだけ）
+    wantItems:    Array.isArray(c.want_items) ? c.want_items : null,
     isWide:       mode === "wide",
   };
+}
+
+// 2026-09-29 v2.5.39 竹内「1つ1つ分かりやすく（カウンターキッチン等）。設備系は設備・NG は NG・その他はその他」:
+//   要望の項目を札で見せる（設備＝緑・NG＝赤・その他＝灰。「採点外」＝採点の札が無い要望・🔎＝検索の入力に入る物）。
+//   拡張は項目を作らない（サーバーの want_items を表示するだけ＝読み取りの決まりは1か所）
+function _wantChipsHtml(items) {
+  if (!Array.isArray(items) || !items.length) return "";
+  const k = (w) => (w.kind === "設備" ? "k-equip" : w.kind === "NG" ? "k-ng" : "k-other");
+  return `<div class="want-items">${items.map((w) =>
+    `<span class="want-chip ${k(w)}${w.note ? " note" : ""}" title="${esc(`${w.kind}｜出所: ${w.source || ""}｜採点: ${w.scoring || "効いていない"}`)}"><b>${esc(w.kind)}</b>${esc(w.label || "")}${w.strong ? "[必須]" : ""}${w.soft ? "（できれば）" : ""}${!w.scoring && !w.note ? "<i>採点外</i>" : ""}${w.search ? "<i>🔎</i>" : ""}</span>`
+  ).join("")}</div>`;
 }
 
 // preferencesテキストから面積下限を抽出（例: "25平米以上" → 25）
@@ -2753,7 +2766,7 @@ function openSiteView(customer) {
   summaryEl.innerHTML = _condRows.length
     ? `${_modeBadge ? `<div class="cond-mode-bar">${_modeBadge}</div>` : ""}<div class="cond-grid">${_condRows.map(r =>
         `<div class="cond-row${r.full ? " full" : ""}"><span class="cond-label">${esc(r.label)}</span><span class="cond-val">${esc(r.value)}</span></div>`
-      ).join("")}</div>`
+      ).join("")}</div>${_wantChipsHtml(d.wantItems)}`
     : `<div class="cond-empty">物件条件が未登録です。先に物件条件ページで登録してください。</div>`;
 
   // 追加条件の表示・最新条件ボタン
@@ -3593,6 +3606,39 @@ function renderCommuteCandidates(c) {
   }
 }
 
+// ── 通勤の到達時間で駅を選ぶ（2026-09-29 v2.5.39 竹内「梅田まで電車で30分等の時、梅田駅の沿線は選択されるが、梅田駅に30分の駅が選択される場面が抜かれてしまっている」）──
+// 決め方: commute-reach.js（self.AxlxCommuteReach・app/lib/commute-reach-core.ts の変換）。路線のつながりは osaka-transit.js。
+//   通勤の列（commute_station・commute_minutes）と希望エリアの文（「梅田まで電車で30分」）から、目的の駅に N 分以内（乗り換え1回まで）で着く駅を
+//   拡張の辞書の駅名で出す → リアプロ（駅＋その駅の沿線）・itandi（駅＋路線）・レインズ（沿線×駅の範囲）の既存の入力に渡す。サイトの表記はここで作らない。
+//   手で駅を入れた時（一時調整の駅欄）はスタッフの指定を優先して広げない。到達時間が読めない時は null（旧の transitRe の展開が今まで通り動く）。
+function _extLinesOfForReach(w) {
+  if (STATION_LINE_MAP[w]) return STATION_LINE_MAP[w];
+  const learned = LEARNED_STATION_MAP[w]?.realpro_lines;
+  if (learned && learned.length) return learned;
+  if (_dbStationRouteMap && _dbStationRouteMap[w]) {
+    const v = _dbStationRouteMap[w];
+    return Array.isArray(v) ? v : (v.realpro_lines || []);
+  }
+  return null;
+}
+function planCommuteReachFor(c, areaText, manualStation) {
+  const T = (typeof self !== "undefined" && self.AxlxOsakaTransit) || null;
+  const R = (typeof self !== "undefined" && self.AxlxCommuteReach) || null;
+  if (!T || !R || !c || manualStation) return null;
+  try {
+    const plan = R.planCommuteReach(
+      { commute_station: c.commute_station || null, commute_minutes: c.commute_minutes || null, desired_area: areaText || "" },
+      T,
+      { extLinesOf: _extLinesOfForReach, lineOrderOf: (l) => LINE_STATION_ORDER[l] || LEARNED_LINE_ORDER[l] || [] },
+    );
+    if (!plan) return null;
+    return { plan, audit: R.reachAudit(plan), summary: R.reachSummary(plan) };
+  } catch (e) {
+    console.warn("[AX] 通勤の到達時間の読み取りに失敗（旧の展開で続行）:", e);
+    return null;
+  }
+}
+
 // 履歴チップ（直近3件）を地域/駅フィールド下に描画。クリックで再適用
 function renderTempAdjChips(cid) {
   const box = document.getElementById("adj-history-chips");
@@ -4208,6 +4254,28 @@ function openInstructions(siteKey) {
         });
       }
 
+      // 2026-09-29 v2.5.39 通勤の到達時間で駅を選ぶ（リアプロと同じ決め方・itandi は駅＋その駅の路線）
+      let _commuteAudit_it = null;
+      const _reachIt = planCommuteReachFor(c, rawArea, computeTempAdjOverride() === "station");
+      if (_reachIt) {
+        _commuteAudit_it = _reachIt.audit;
+        if (_reachIt.plan.extStations.length > 0 && _lockedMode_itandi !== "ward" && !(_areaModeSource === "user" && isWardArea_itandi)) {
+          _reachIt.plan.lines.forEach(l => {
+            const v = ITANDI_LINE_MAP_FILL[l];
+            (Array.isArray(v) ? v : (v ? [v] : [])).forEach(m => { if (!itandiLines.includes(m)) itandiLines.push(m); });
+          });
+          stationNames = [...new Set([...(stationNames || []), ..._reachIt.plan.extStations])];
+          if (isWardArea_itandi) {
+            isWardArea_itandi = false;
+            currentAreaMode = "station";
+            updateAreaModeUI();
+          }
+          console.log("[AX] itandi 通勤の到達時間で駅を選択: " + _reachIt.summary + " → 路線 " + itandiLines.length);
+        } else {
+          console.log("[AX] itandi 通勤の条件はあるが駅は広げない: " + _reachIt.summary);
+        }
+      }
+
       // 「梅田まで電車1本」: リアプロと同じ判定で乗り換えなしの沿線を選び、itandi でも各路線の駅をすべて選択する
       let _selectAllLineStations_it = false;
       const _direct_it = resolveDirectCommute(rawArea);
@@ -4258,6 +4326,8 @@ function openInstructions(siteKey) {
         preferences: c.preferences || c.notes || null,
         ward_name:   isWardArea_itandi ? wardName : null,
         ward_names:  isWardArea_itandi && allNeighborhoodWards.length > 0 ? allNeighborhoodWards : null,
+        // 2026-09-29 v2.5.39 通勤の到達時間で選んだ駅（数だけ・点検の記録用）
+        commute:     _commuteAudit_it,
         // 区ごとの町域トークンマップ: { "大阪市城東区": ["稲田本町","稲田新町"], "東大阪市": ["川保本町"] }
         ward_town_map: (() => {
           if (!isWardArea_itandi || searchMode === "wide" || neighborhoodTokens.length === 0) return null;
@@ -4637,9 +4707,28 @@ function openInstructions(siteKey) {
           }
         }
       }
+      // 2026-09-29 v2.5.39 通勤の到達時間で駅を選ぶ（列＋希望エリアの文・乗り換え1回まで）。駅とその沿線を入れ、駅モードに昇格
+      //   旧: 下の transitRe（「まで電車で30分」の「で」を読めず・通勤の列を読まない・古い路線図）。到達時間が読めない時だけ旧のまま
+      let _commuteAudit = null;
+      // 手で駅欄を編集した回（一時調整優先＝computeTempAdjOverride が station）はスタッフの指定を優先して広げない（欄の中身は preload で登録の条件が入るので「欄が空でない」では判定しない）
+      const _reach = planCommuteReachFor(c, adjAreaClean, _tempAdjOverride === "station");
+      if (_reach) {
+        _commuteAudit = _reach.audit;
+        if (_reach.plan.extStations.length > 0) {
+          _reach.plan.extStations.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+          _reach.plan.lines.forEach(l => { const r = lineNameToRouteId(l); if (r && !route_ids.includes(r)) route_ids.push(r); });
+          if (currentAreaMode !== 'station') {
+            currentAreaMode = 'station';
+            updateAreaModeUI && updateAreaModeUI();
+          }
+          console.log("[AX] 通勤の到達時間で駅を選択: " + _reach.summary);
+        } else {
+          console.log("[AX] 通勤の条件はあるが駅は広げない: " + _reach.summary);
+        }
+      }
       // ★ station/ward モードに関わらず常に実行: 通勤時間パターン（「梅田から20分以内」等）のDijkstra展開
       // ward モードに切り替わっても Dijkstra で駅を展開し、強制的に station モードに昇格させる
-      {
+      if (!_reach) {
         const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(徒歩|電車|バス|歩いて)?(\d+)分/g;
         let _tm;
         while ((_tm = transitRe.exec(adjAreaClean)) !== null) {
@@ -4810,6 +4899,8 @@ function openInstructions(siteKey) {
           route_ids,
           station_names: realpro_station_names,
           select_all_line_stations: _selectAllLineStations,
+          // 2026-09-29 v2.5.39 通勤の到達時間で選んだ駅（数だけ・点検の記録用。page-script は多数の駅の押し方・止まった時の進め方に使う）
+          commute:       _commuteAudit,
           detail_area:   effectiveDetailArea,
           detail_ward:   effectiveDetailWard,
           town_names:    customerTownNames,
@@ -4982,6 +5073,19 @@ function openInstructions(siteKey) {
           if (reinsStationPairs.length >= 3) break;
         }
       }
+      // 2026-09-29 v2.5.39 通勤の到達時間: 駅モードなら沿線×「◯駅〜◯駅」の範囲（駅の多い沿線から3つ）で置き換える
+      //   旧は目的の駅そのもの（「梅田」1駅）だけ入れていた。手で駅を入れた時は今まで通り
+      let _commuteAudit_rn = null;
+      const _reachRn = isStationMode ? planCommuteReachFor(c0, rawArea, computeTempAdjOverride() === "station") : null;
+      if (_reachRn) {
+        _commuteAudit_rn = _reachRn.audit;
+        const _segs = _reachRn.plan.segments.filter(sg => sg.from && sg.to).slice(0, 3);
+        if (_segs.length) {
+          reinsStationPairs.length = 0;
+          _segs.forEach(sg => reinsStationPairs.push({ line: REINS_LINE_MAP[sg.line] || sg.line, station: sg.from, station_to: sg.to }));
+          console.log("[AX] reins 通勤の到達時間で沿線×駅の範囲: " + _reachRn.summary, reinsStationPairs);
+        }
+      }
       // API補完: 路線名トークン由来の REINS 路線名ペアを追加（上記ループで見逃した路線）
       if (isStationMode && apiData?.reins?.station_pairs) {
         apiData.reins.station_pairs.forEach(p => {
@@ -5007,6 +5111,8 @@ function openInstructions(siteKey) {
         area_max:       adjAreaMax ? Number(adjAreaMax) : (adjC.floor_area_max || null),
         reins_station_pairs: isStationMode ? reinsStationPairs : [],
         reins_line:     isStationMode ? reinsLine : null,
+        // 2026-09-29 v2.5.39 通勤の到達時間で選んだ駅（数だけ・点検の記録用）
+        commute:        _commuteAudit_rn,
         station_name:   isStationMode ? (reinsStationPairs[0]?.station || null) : null,
         ward_name:      !isStationMode ? rawArea : null,
         // 区ごとに1行ずつ入れるため、解決済みフル区名の配列を渡す（最大3件）

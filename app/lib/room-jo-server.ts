@@ -29,7 +29,9 @@ export async function applyRoomJoAfterAnalysis(
     const c = await supabase.from("property_customers").select(CUSTOMER_COLS).eq("id", row.property_customer_id).limit(1);
     if (c.error) { console.warn("[room-jo] お客様を引けない:", c.error.message); return null; }
     const want = roomJoWantOfCustomer(((c.data ?? [])[0] ?? {}) as CustomerLike);
-    const r = applyRoomJoToRow(row, want, got.jo, got.from);
+    // 2026-09-29 お客様ごとのこだわりの倍率（判定に渡した物と同じ・表が空なら null＝今まで通り）
+    const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
+    const r = applyRoomJoToRow(row, want, got.jo, got.from, await prefWeightForCustomer(supabase, row.property_customer_id));
     if (!r) return null;
     // 札から作れない一文（同じ建物の省略の知らせ等・先頭に付く）は残す
     const derived = new Set((row.reason_codes ?? []).map(reasonJa));

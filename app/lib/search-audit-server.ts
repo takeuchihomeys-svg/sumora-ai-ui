@@ -174,7 +174,7 @@ function toAuditInput(row: Partial<SearchAuditRow>): AuditInput {
 }
 
 /** phase=finished: 足して点検し、原因を数える。見立てが要るかを返す */
-export async function recordFinished(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string; needsAi: boolean; severity?: AuditSeverity; cause_key?: string | null }> {
+export async function recordFinished(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string; needsAi: boolean; severity?: AuditSeverity; cause_key?: string | null; /** この呼び出しが回を閉じて数えた（2通目・見回りが先に閉じた時は false）＝見張りの C3 はこの時だけ */ counted?: boolean }> {
   const runId = body.run_id as string;
   const cols = rowFromBody(body);
   const { row, error } = await loadRow(runId);
@@ -195,7 +195,7 @@ export async function recordFinished(body: Record<string, unknown>): Promise<{ o
   const keys = Array.from(new Set(counted.map((c) => c.cause_key))).slice(0, 10);
   const b = await bumpCauses(keys, runId, merged.site ?? null, nowIso);
   if (b.errors.length) console.warn("[search-audit] 原因の数を足せない:", b.errors.slice(0, 3).join(" / "));
-  return { ok: true, needsAi: ai, severity: v.severity, cause_key: v.cause_key };
+  return { ok: true, needsAi: ai, severity: v.severity, cause_key: v.cause_key, counted: true };
 }
 
 /** 見立て（同じ原因に7日以内の見立てがあれば呼ばずに写す）。結果の状態を返す */

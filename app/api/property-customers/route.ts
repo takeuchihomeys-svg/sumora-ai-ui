@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { recordConditionHistory } from "@/app/lib/condition-history";
+import { itemizeWants, type WantsCustomerLike } from "@/app/lib/customer-wants";
 
 // 条件変更履歴の追跡対象フィールド（condition-history.ts の TRACKED と同一）
 const CONDITION_TRACKED_FIELDS = [
@@ -79,6 +80,8 @@ export async function GET(req: NextRequest) {
   const convMap = new Map((convData || []).map((c) => [c.property_customer_id, c]));
   const result = (data || []).map((c) => ({
     ...c,
+    // 2026-09-29 要望の項目（設備／NG／その他・純関数 customer-wants.itemizeWants）。拡張の popup の条件の表示が読む（検索には入れない）
+    want_items: itemizeWants(c as WantsCustomerLike),
     is_linked: convMap.has(c.id),
     linked_conversation: convMap.get(c.id) ?? null,
   }));

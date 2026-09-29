@@ -621,6 +621,10 @@
     });
   }
 
+  // 2026-09-29 v2.5.39 通勤の到達時間で選んだ多数の駅（cond.commute・60駅超）は 25〜60ms で押す（電車1本の全駅選択と同じ考え・90秒の fill-done に収める）
+  var _stGapFast = false;
+  function _stGapMin() { return _stGapFast ? 25 : 90; }
+  function _stGapMax() { return _stGapFast ? 60 : 200; }
   // 駅名でボタン/チェックボックスをクリック
   function selectStationsByName(names) {
     if (!names || !names.length) return;
@@ -653,7 +657,7 @@
             if (_stKey && _seenStValues[_stKey]) { found = true; continue; }
             if (_stKey) _seenStValues[_stKey] = true;
             // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
-            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, 90, 200);
+            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, _stGapMin(), _stGapMax());
             found = true;
           }
         }
@@ -695,7 +699,7 @@
       for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
         if (getDirectText(els[i]) === clean) {
-          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, 90, 200);
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, _stGapMin(), _stGapMax());
           found = true;
         }
       }
@@ -706,7 +710,7 @@
         if (!isVisible(els[i])) continue;
         var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if (ft === clean && els[i].children.length === 0) {
-          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, 90, 200);
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, _stGapMin(), _stGapMax());
           found = true;
         }
       }
@@ -718,7 +722,7 @@
         var dt = getDirectText(els[i]);
         if (dt.length >= 2 && clean.length >= 2 &&
             (dt.startsWith(clean) || clean.startsWith(dt))) {
-          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, 90, 200);
+          if (!isElChecked(els[i])) enqueueHumanClick(els[i], _fireClickIfUnchecked, _stGapMin(), _stGapMax());
           found = true;
         }
       }
@@ -733,7 +737,7 @@
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
           if (inp) {
             // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
-            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, 90, 200);
+            if (!inp.checked) enqueueHumanClick(inp, _clickIfUnchecked, _stGapMin(), _stGapMax());
             found = true;
           }
         }
@@ -750,7 +754,7 @@
           if (sptxt === clean || (sptxt.length >= 2 && clean.length >= 2 &&
               (sptxt.startsWith(clean) || clean.startsWith(sptxt)))) {
             // ★ 修正(Bug2): _clickEl → _clickIfUnchecked（実行時checkedガード）
-            if (!sinp.checked) enqueueHumanClick(sinp, _clickIfUnchecked, 90, 200);
+            if (!sinp.checked) enqueueHumanClick(sinp, _clickIfUnchecked, _stGapMin(), _stGapMax());
             found = true;
           }
         }
@@ -859,6 +863,7 @@
   }
 
   function fillRealpro(cond) {
+    _stGapFast = !!(cond && cond.commute && cond.station_names && cond.station_names.length > 60);
     // 重複実行防止: popupパス(underbar→postMessage)とbackgroundパス(content.js→postMessage)が
     // 同時に aixlinx-fill を送ると fillRealpro が2回呼ばれてDOMレースが起きる
     if (window._axFillRunning) {
@@ -1742,6 +1747,8 @@
                 // 駅ページには選んだ沿線の全駅が出る（拡張の路線駅マップより網羅的）ので、見えている駅を全部チェックする。
                 // 前回試行から選択数が増えない（サイト側の選択上限等）ときは選べた駅で進める（全件検索にはしない）。
                 var _selAllPrevChecked = -1;
+                // 2026-09-29 v2.5.39 通勤の到達時間で選んだ多数の駅: サイト側の選択上限などで増えなくなったら選べた駅で進む（全件検索にはしない）
+                var _cmPrevChecked = -1, _cmStall = 0;
                 function selectAllLineStations() {
                   var inputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_id[]"]'))
                     .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); });
@@ -1873,6 +1880,16 @@
                           _allMatchedChecked = true;
                         }
                       }
+                    }
+                    if (cond.commute && !_allMatchedChecked && _checkedCount >= 1) {
+                      if (_checkedCount === _cmPrevChecked && ++_cmStall >= 3) {
+                        console.warn("[AX] STEP D(通勤の到達時間): " + _checkedCount + "/" + (cond.station_names || []).length + "駅で選択が止まった → 選べた駅で検索");
+                        showWarnToast("通勤の駅を" + _checkedCount + "/" + (cond.station_names || []).length + "駅選択しました");
+                        _auditStepP("commute_stall", _checkedCount + "/" + (cond.station_names || []).length);
+                        return true;
+                      }
+                      if (_checkedCount !== _cmPrevChecked) _cmStall = 0;
+                      _cmPrevChecked = _checkedCount;
                     }
                     return _allMatchedChecked && _checkedCount >= 1;
                   },

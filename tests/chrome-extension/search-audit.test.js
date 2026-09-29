@@ -37,7 +37,9 @@ function ok(name, c) { eq(name, !!c, true); }
   console.log("\n■ 入れようとした条件の写し");
   const it = A.pickIntended({ rent_max: 80000, station_names: ["東三国", "新大阪"], _audit_run_id: "sa_x", customerName: "x", rp_update_days: 7 });
   eq("見る欄だけ", Object.keys(it).sort(), ["rent_max", "rp_update_days", "station_names"]);
-  eq("駅の配列は80まで", A.pickIntended({ station_names: Array.from({ length: 200 }, (_, i) => "駅" + i) }).station_names.length, 80);
+  // 2026-09-29 見張り: 駅の名前だけ 300 まで（通勤の到達駅 240 と表の期待を比べる）。ほかの配列は 80 のまま
+  eq("駅の名前の配列は300まで", A.pickIntended({ station_names: Array.from({ length: 400 }, (_, i) => "駅" + i) }).station_names.length, 300);
+  eq("ほかの配列は80まで", A.pickIntended({ route_ids: Array.from({ length: 200 }, (_, i) => i) }).route_ids.length, 80);
 
   console.log("\n■ audit は 8KB まで");
   const big = { v: 1, site: "itandi", stations_missing: Array.from({ length: 60 }, (_, i) => ({ name: "駅" + i, line: "JR京都線", label_count: 40, sample: Array.from({ length: 40 }, (_, j) => "ラベル" + j) })), form: { stations: Array.from({ length: 300 }, (_, i) => "駅" + i) }, steps: Array.from({ length: 40 }, (_, i) => ({ k: "s" + i })) };
@@ -124,7 +126,8 @@ function ok(name, c) { eq(name, !!c, true); }
   const root = path.join(__dirname, "..", "..", "chrome-extension");
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
   // 2026-09-27 v2.5.29: 同じ先頭の段の前に待ち時間のばらつき（human-wait.js）が入った（search-audit.js は他の content script より先のまま）
-  eq("content_scripts の先頭の段が human-wait.js → search-audit.js", manifest.content_scripts[0].js, ["human-wait.js", "search-audit.js"]);
+  // 2026-09-29 v2.5.40: 画面の文字の受け口（snapshot-core.js）を後ろに足した
+  eq("content_scripts の先頭の段が human-wait.js → search-audit.js → snapshot-core.js", manifest.content_scripts[0].js, ["human-wait.js", "search-audit.js", "snapshot-core.js"]);
   ok("3サイトで読む", ["realnetpro.com", "itandibb.com", "system.reins.jp"].every((h) => manifest.content_scripts[0].matches.some((m) => m.includes(h))));
   ok("web_accessible_resources にある", manifest.web_accessible_resources[0].resources.includes("search-audit.js"));
   ok("版は 2.5.25 以上", (() => { const [a, b, c] = manifest.version.split(".").map(Number); return a > 2 || (a === 2 && (b > 5 || (b === 5 && c >= 25))); })());

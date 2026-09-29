@@ -121,7 +121,10 @@ export async function POST(req: NextRequest) {
     // 2026-09-24 竹内「設備面も見るように」「202号室なら2階」: ここ（拡張の判定）は PDF が無いので、説明文から読めた分だけ
     //   （号室から推した階・説明文に書いてある設備）で売上サポと同じ EQUIP_* を付ける。記載なし（要確認）はここでは付けない
     const equipWants = parseEquipmentWants(customer);
-    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants) }));
+    // 2026-09-29 お客様ごとのこだわりの倍率（scoring_pref_weights の active・表が空なら null＝今まで通り）。付け直す関数にも同じ物を渡す
+    const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
+    const prefW = await prefWeightForCustomer(supabase, customerId);
+    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
     let imageRead = 0, imageOk = 0, imageFailed = 0;
@@ -138,7 +141,7 @@ export async function POST(req: NextRequest) {
           if (r.status === "fulfilled" && r.value.facts) {
             imageOk++;
             const t = targets[k];
-            judgments[t.i] = applyImageFacts(t.j, r.value.facts);
+            judgments[t.i] = applyImageFacts(t.j, r.value.facts, prefW);
           } else imageFailed++;   // 2026-09-25: DeepSeek が2回とも答えなかった＝「読み取れなかった」（判定は変えない・Claude では埋めない）
         });
       }

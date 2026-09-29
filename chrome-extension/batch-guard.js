@@ -85,7 +85,10 @@
     if (!name) return null;
     var site = i.siteLabel || "リアプロ";
     var why;
-    if (/AXLX_TAB_DEAD|タブが応答しません/.test(msg)) why = "リアプロのタブが応答しません（読み直してもだめでした）";
+    // 2026-09-29 v2.5.40 見張り（1回の検索の上限）で閉じて次のお客様へ進んだ回。
+    //   見張りの文は「待っていた物=検索の完了（fill-done）…・最後の合図=fill-done」を含むので、fill-done の判定より先に見る
+    if (/__PASS_DEADLINE__|見張りの時間切れ/.test(msg)) why = "1回の検索が上限の時間を過ぎたので次のお客様へ進みました（画面の写真を AIXツールの「🔍 検索の点検」→「📷 拡張の画面」に残しています）";
+    else if (/AXLX_TAB_DEAD|タブが応答しません/.test(msg)) why = "リアプロのタブが応答しません（読み直してもだめでした）";
     else if (/AXLX_NO_FILL_START|入力を始めませんでした/.test(msg)) why = "ページが条件の入力を始めませんでした（読み直して1回やり直してもだめでした）";
     else if (/AXLX_NO_LOCATION|地域を決められない/.test(msg)) why = "希望エリアから地域を決められませんでした（全件検索を防ぐため検索していません）";
     else if (/fill-done/.test(msg)) why = "条件の入力が時間内に終わりませんでした。ページが遅れて検索を続け、後から物件が届くことがあります";

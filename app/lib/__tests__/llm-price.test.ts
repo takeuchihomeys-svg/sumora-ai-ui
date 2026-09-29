@@ -1,6 +1,6 @@
 // 2026-09-29: Claude の単価表（公式）を1か所に。scripts の表は Sonnet 5 を $3/$15 にしていて費用が 1.5 倍に出ていた
 // 実行: npx tsx app/lib/__tests__/llm-price.test.ts
-import { claudePriceOf, claudeUsageUsd, usageFromAnthropic } from "../llm-price";
+import { claudePriceOf, claudeUsageUsd, usageFromAnthropic, altPriceOf, altUsageUsd, isDeepseekPeakAt } from "../llm-price";
 
 let failed = 0;
 function eq(name: string, a: unknown, b: unknown) {
@@ -24,5 +24,13 @@ eq("1行の費用: 入力1万・読み4万・1h書き1万・出力千（Sonnet 5
 eq("内訳の無い古い書き込みは 5分書きで数える", round(claudeUsageUsd({ model: "claude-sonnet-5", cache_write: 1_000 })), round(1_000 * 2.5 / 1e6));
 eq("応答の usage を読む", usageFromAnthropic("claude-sonnet-5", { input_tokens: 5, cache_read_input_tokens: 7, cache_creation_input_tokens: 3, cache_creation: { ephemeral_1h_input_tokens: 3 }, output_tokens: 2 }),
   { model: "claude-sonnet-5", input_uncached: 5, cache_read: 7, cache_write_5m: 0, cache_write_1h: 3, cache_write: 3, output_tokens: 2 });
+// 2026-09-29 見張り: DeepSeek（公式 api-docs.deepseek.com/quick_start/pricing）・Jev（typesafe.ai「$42 Per Billion input tokens」）
+eq("DeepSeek flash の単価", altPriceOf("deepseek-flash"), { in: 0.15, read: 0.003, out: 0.6, peakDouble: true });
+eq("DeepSeek pro の単価", altPriceOf("deepseek-v4-pro"), { in: 0.66, read: 0.022, out: 1.98, peakDouble: true });
+eq("Jev の単価（出力は数えない）", altPriceOf("jev:jev-latest"), { in: 0.042, read: 0.042, out: 0, peakDouble: false });
+eq("混雑時間（平日 UTC 01-04・06-10）", [isDeepseekPeakAt("2026-09-29T01:30:00Z"), isDeepseekPeakAt("2026-09-29T05:00:00Z"), isDeepseekPeakAt("2026-09-27T02:00:00Z")], [true, false, false]);
+eq("混雑時は2倍", round(altUsageUsd({ model: "deepseek-flash", input_uncached: 1e6, created_at: "2026-09-29T02:00:00Z" })), 0.3);
+eq("上限の計算は常に2倍", round(altUsageUsd({ model: "deepseek-flash", output_tokens: 1e6, created_at: "2026-09-27T02:00:00Z" }, { alwaysPeak: true })), 1.2);
+eq("Claude は別クラウドの表では 0", altUsageUsd({ model: "claude-sonnet-5", input_uncached: 1e6 }), 0);
 console.log(failed ? `\n${failed} failed` : "\nall passed");
 process.exit(failed ? 1 : 0);

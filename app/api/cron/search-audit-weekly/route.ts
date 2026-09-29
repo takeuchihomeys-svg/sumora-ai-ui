@@ -5,6 +5,7 @@
 //   ?dry=1 … 数えるだけ（書かない・DeepSeek を呼ばない）
 import { NextRequest, NextResponse } from "next/server";
 import { weeklySearchAudit } from "@/app/lib/search-audit-server";
+import { weeklyScreenWatch } from "@/app/lib/screen-watch-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 export const maxDuration = 120;
@@ -17,7 +18,10 @@ export async function GET(req: NextRequest) {
   }
   const dry = req.nextUrl.searchParams.get("dry") === "1";
   const logId = dry ? null : await startCronLog("search-audit-weekly");
-  const report = await weeklySearchAudit({ dry });
-  await finishCronLog(logId, report.ok, report as unknown as Record<string, unknown>, report.errors[0]);
-  return NextResponse.json(report, { status: report.ok ? 200 : 500 });
+  const base = await weeklySearchAudit({ dry });
+  // 2026-09-29 見張りの週のまとめ（ラベル別・段ごとの当たり・抜けやすい駅・DeepSeek のまとめ1回・線の自動調整）。失敗しても点検のまとめは止めない
+  const screen_watch = await weeklyScreenWatch({ dry }).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+  const report = { ...base, screen_watch };
+  await finishCronLog(logId, base.ok, report as unknown as Record<string, unknown>, base.errors[0]);
+  return NextResponse.json(report, { status: base.ok ? 200 : 500 });
 }

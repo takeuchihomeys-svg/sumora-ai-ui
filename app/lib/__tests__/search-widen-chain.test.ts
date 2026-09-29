@@ -95,6 +95,9 @@ console.log("■ 広げない（止める）");
   t("ブレイン×スタッフ（人が選んで送る）", D({ audits: [audit({ min: 20, mode: "brain_staff" })], rows: rows(2, 0, { min: 15 }) }).action === "skip");
   t("メモの上書きの回（人が範囲を決めた）", D({ audits: [audit({ min: 20, customer_snapshot: { ...NEW_SNAP, _search_override: { location: "大正駅" } } })], rows: rows(2, 0, { min: 15 }) }).action === "skip");
   t("レインズ（物件が届かない）", D({ site: "reins", audits: [audit({ min: 20, site: "reins" })] }).action === "skip");
+  // 2026-09-29 見張り: 「条件が入り切っていない・0件の疑い」の印の付いた回（search_audits.watch.block_widen）は広げて上塗りしない
+  t("見張りの印の付いたピンポイントの回", D({ audits: [audit({ min: 20, run_id: "sa_w" })], rows: rows(2, 0, { min: 15 }), watchBlocked: ["sa_w"] }).reason === "watch_blocked");
+  t("見張りの印が別の（前の）回だけなら今まで通り広げる", D({ audits: [audit({ min: 20, run_id: "sa_now" })], rows: rows(2, 0, { min: 15 }), watchBlocked: ["sa_old"] }).action === "widen");
   t("個別の検索は 2.5.28 より前の拡張では広げない（広げての個別の検索が is_wide=false で記録されていた）", D({ audits: [audit({ min: 20, trigger: "single", ext_version: "2.5.27" })], rows: rows(2, 0, { min: 15 }) }).reason === "old_ext_single");
   t("個別の検索も 2.5.28 からは広げる", D({ audits: [audit({ min: 20, trigger: "single", ext_version: "2.5.28" })], rows: rows(2, 0, { min: 15 }) }).action === "widen");
   t("比較の検索（scrape_compare）", D({ audits: [audit({ min: 20, trigger: "scrape_compare" })], rows: rows(2, 0, { min: 15 }) }).action === "skip");
