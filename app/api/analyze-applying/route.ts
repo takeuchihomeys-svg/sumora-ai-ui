@@ -193,7 +193,9 @@ async function callSonnet(systemPrompt: string, userPrompt: string): Promise<App
   try {
     const res = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 3000,
+      // 2026-09-29 Sonnet 5.5 への切り替え前の点検: 本番14日で 84回中68回が 3000 で切れていた（stop_reason=max_tokens・後ろの段階が落ち、閉じ直しで救うだけ）。
+      //   5.5 は出力が長め。上限は払う額に入らない（出した分だけ）ので 8000 に上げる（非ストリームで安全な範囲）
+      max_tokens: 8000,
       // 思考を明示的に止める（省略すると思考が 3000 の枠を使い、JSON が途中で切れて毎回やり直しになる）
       thinking: { type: "disabled" },
       system: [

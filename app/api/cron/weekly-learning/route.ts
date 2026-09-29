@@ -226,7 +226,8 @@ ${recentAnswersText}
   try {
     const res = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 2000,
+      // 2026-09-29 Sonnet 5.5 への切り替え前の点検: 本番14日で 77回中6回が 2000 で切れ、JSON が読めず空の結果になっていた → 4000
+      max_tokens: 4000,
       // Sonnet 5 は thinking 省略時に adaptive がデフォルトON → max_tokens を食い潰すため明示的に無効化
       thinking: { type: "disabled" },
       system: [
