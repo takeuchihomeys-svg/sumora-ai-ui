@@ -1,7 +1,9 @@
 ﻿import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { NextResponse } from "next/server";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, defaultHeaders: sumoraLlmMarks("extract_vacancy_date") });
 
 export async function POST(req: Request) {
   try {

@@ -1,4 +1,5 @@
 ﻿import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
@@ -410,7 +411,8 @@ export async function POST(req: NextRequest) {
     apiKey: process.env.ANTHROPIC_API_KEY!,
     timeout: 120_000,
     maxRetries: 1,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("learn_aix_weekly") },
   });
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();

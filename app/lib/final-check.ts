@@ -17,6 +17,8 @@
 
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 import { stripMetaNarration, isMetaNarrationLine } from "./meta-narration";
+// 2026-09-29 API 費用の調査: 最終チェックの Claude 呼び出し（7日で Sonnet 281回・Haiku 343回）が llm_usage_logs で名前なしだった → 名札だけ付ける（動きは変えない）
+import { sumoraLlmMarks } from "./llm-usage-recorder";
 import { logLlmUsage, type AnthropicUsageLike } from "./llm-usage-log";
 // 2026-09-13: 最終チェックに渡す会社ルールを「禁止」優先・ルールの切れ目で選ぶ（旧: 先頭から 20,000字で切断）
 import { selectRulesForCheckCached } from "./final-check-rules";
@@ -294,12 +296,12 @@ const MODEL_CHECK_DEEP = "claude-sonnet-5";           // context_check（会話�
 const MODEL_REVISION   = "claude-sonnet-5";           // 返信文の実際の書き直し
 
 // ─── チェック呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
-async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 2400, model = MODEL_CHECK_DEEP): Promise<RawIssue[]> {
+async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 2400, model = MODEL_CHECK_DEEP, action = "final_check"): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks(action) },
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
@@ -2659,7 +2661,7 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
   const timed = (i: number, attempt: 0 | 1) => {
     const p = passes[i];
     const s = Date.now();
-    return callSonnet(p.prompt, passTimeoutMs(p.pass, remain(), attempt, cap), 2400, p.model).then((v) => { passMs[p.pass] = Date.now() - s; return v; });
+    return callSonnet(p.prompt, passTimeoutMs(p.pass, remain(), attempt, cap), 2400, p.model, `final_check_${p.pass}`).then((v) => { passMs[p.pass] = Date.now() - s; return v; });
   };
   const settled: PromiseSettledResult<RawIssue[]>[] = await Promise.allSettled(passes.map((_, i) => timed(i, 0)));
   // 落ちたパスだけ同じプロンプトで1回再送（タイムアウト / 5xx / 529 のみ。残り 4s 未満なら再送しない）
@@ -2939,7 +2941,7 @@ export async function runGroundedRevision(
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("final_check_revision") },
       body: JSON.stringify({
         model: MODEL_REVISION,
         max_tokens: Math.max(2000, Math.ceil(draft.length * 2.5)),
@@ -3122,7 +3124,7 @@ ${targets.map((i, idx) => `${idx + 1}. 「${i.evidence}」`).join("\n")}
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("final_check_verify") },
       body: JSON.stringify({
         model: MODEL_CHECK_FAST,
         max_tokens: 800,
@@ -3273,7 +3275,7 @@ async function runDiffRecheck(
   const targets = check1Issues.filter((i) => i.pass !== "meta" && i.code !== "UNCHECKED_AUTO_SEND" && !OBSERVE_ONLY_CODES.has(i.code));
 
   try {
-    const raw = await callSonnet(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS, MODEL_CHECK_FAST);
+    const raw = await callSonnet(buildDiffRecheckPrompt(revised, targets, ctx), timeoutMs, DIFF_RECHECK_MAX_TOKENS, MODEL_CHECK_FAST, "final_check_recheck");
     for (const r of raw) {
       const evidence = (r.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード・runFinalCheckと同一）

@@ -5,10 +5,12 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 import { isUsableExampleText, isUsableAiDraft, EXCLUDE_FAILED_SENT_LIKE } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 
 export const maxDuration = 300;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 120_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 120_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("learn_corpus2skill") } });
 
 const STATE_NORMALIZE: Record<string, string> = {
   condition_hearing: "hearing", property_search: "hearing",

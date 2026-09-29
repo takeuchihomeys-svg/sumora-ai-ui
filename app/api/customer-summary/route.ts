@@ -1,12 +1,14 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+// 2026-09-29 API 費用の調査: 要約の Sonnet（7日で198回・$4.8）が llm_usage_logs で名前なしだった → 名札と会話 ID だけ付ける（動きは変えない）
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 
-function getModel() {
+function getModel(conversationId?: string | null) {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 600,
@@ -16,7 +18,8 @@ function getModel() {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     // 2026-09-14: LangChain の既定は再試行6回（7回送信）・タイムアウトは SDK 既定の10分。AIX 送信のたびに呼ばれるので絞る
     maxRetries: 2,
-    clientOptions: { timeout: 45_000 },
+    // 印のヘッダは出口（llm-usage-recorder）が取り除くので Anthropic には届かない（reply-generation-model と同じ渡し方）
+    clientOptions: { timeout: 45_000, defaultHeaders: sumoraLlmMarks("customer_summary", conversationId) },
   });
 }
 
@@ -512,7 +515,7 @@ export async function POST(req: NextRequest) {
     // prompt cache: 静的なシステムプロンプト（SYSTEM 定数 or ai_prompts の上書き）を
     // コンテンツブロック配列 + cache_control でキャッシュする。動的な顧客情報（info）は
     // HumanMessage 側のみに置き、絶対に cache_control を付けない。
-    const res = await getModel().invoke([
+    const res = await getModel(c.conversation_id ?? null).invoke([
       new SystemMessage({
         content: [
           { type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } },

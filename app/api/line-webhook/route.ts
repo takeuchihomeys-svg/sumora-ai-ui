@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
 import { PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { shouldSetApplyingImageFlag } from "@/app/lib/applying-promotion";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { imageTextForSave, imageTypeForSave } from "@/app/lib/id-document-guard";
@@ -488,6 +489,8 @@ async function extractImageContent(
         "Content-Type": "application/json",
         "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
         "anthropic-version": "2023-06-01",
+        // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+        ...sumoraLlmMarks("webhook_image_vision"),
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5",

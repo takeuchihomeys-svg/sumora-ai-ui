@@ -2176,6 +2176,19 @@ async function handleAction(request: NextRequest): Promise<Response> {
         return ids.map((id) => byId.get(id)!);
       } catch { return []; }
     })();
+    // 2026-09-29 API 費用: 送る画像（再アップロード済みの URL）と行が同じ並びで分かるのはここだけ。行の image_lines／文字層を
+    //   その URL で image_details に先に写す（応答は待たせない・after）。送った後の ensureImageDetail が DeepSeek の画像読み（30秒・$0.006）を呼ばずに済む
+    if (pickupRowsForFacts.length > 0 && conversationId) {
+      const primeUrls = (action === "property_send" ? (image_urls as unknown[]) : [image_url]).map((u) => (typeof u === "string" ? u.trim() : ""));
+      const pairs = pickupRowsForFacts.map((row, i) => ({ imageUrl: primeUrls[i] ?? "", row: { image_lines: row.image_lines, pdf_text: row.pdf_text } }));
+      after(async () => {
+        try {
+          const { primeImageDetailsFromPickups } = await import("@/app/lib/image-detail-store");
+          const r = await primeImageDetailsFromPickups(String(conversationId), pairs);
+          console.log(JSON.stringify({ tag: "image-detail:prime", conversationId, action, ...r }));
+        } catch (e) { console.warn("[aix] image_details の先写しに失敗:", e instanceof Error ? e.message : e); }
+      });
+    }
     const pickupFacts: PickupFact[] = action === "property_send" ? pickupRowsForFacts.map((r) => parsePickupFact(r)) : [];
     const pickupWards = action === "property_send" ? pickupRowsForFacts.map((r) => wardOfPickupRow(r)) : [];
     const recMoveInFact = action === "property_recommendation" && pickupRowsForFacts.length === 1 ? moveInFactOfPickup(pickupRowsForFacts[0]) : null;

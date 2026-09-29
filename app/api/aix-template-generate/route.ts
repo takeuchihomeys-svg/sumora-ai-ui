@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+// 2026-09-29 API 費用の調査: 名札を付ける（llm-alt-provider は system の先頭の語で既に "aix_template" と見なしている＝同じ名前なので回し方は変わらない）
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { resolveBrainMetaForGeneration, BRAIN_META_RESTORE_COLUMNS, type BrainMetaRow } from "@/app/lib/brain-meta-load";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
@@ -1499,6 +1501,7 @@ export async function POST(req: NextRequest) {
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
           "anthropic-beta": "prompt-caching-2024-07-31",
+          ...sumoraLlmMarks("aix_template"),
         },
         body: JSON.stringify({
           model: "claude-sonnet-5",

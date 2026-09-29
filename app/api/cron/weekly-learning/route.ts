@@ -5,6 +5,7 @@ import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isUsableExampleText, isUsableAiDraft } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
 
@@ -43,7 +44,8 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
   timeout: 120_000,
   maxRetries: 1,
-  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("learn_weekly") },
 });
 
 // ── AI質問起票ガード ───────────────────────────────────────────────────────────

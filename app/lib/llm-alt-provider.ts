@@ -24,13 +24,28 @@ import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { parseCutoffMark, countCutoffLeaks, type CutoffMark } from "./post-apply";
 import { currentDeepseekScope } from "./deepseek-scope";
 import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, type LlmTestMode } from "./llm-test-mode";
+import { AIX_PICKERS } from "./aix-pickers";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
-export type AltProvider = "azure" | "bedrock" | "deepseek";
+export type AltProvider = "azure" | "bedrock" | "deepseek" | "qwen";
 
 /** DeepSeek 本家 API（OpenAI 互換）。Azure と同じ変換処理がそのまま使える */
 export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
+/**
+ * 2026-09-29 竹内「昨日かなり DeepSeek で API 費用を使った。更に節約できないか」— 記事の型「固定の長い前置きは DeepSeek のキャッシュ、
+ *   毎回変わる短い入力（分類・仕分け・前処理）は Qwen Flash（最安）」の**作りだけ**（鍵が無いので動かさない・既定は OFF）。
+ *   Alibaba Cloud Model Studio の国際版（シンガポール）・OpenAI 互換。モデルは qwen3.7-flash（公式料金 2026-09-29: 入力 $0.03／出力 $0.13 per 1M・32k 以下、
+ *   暗黙のコンテキストキャッシュ命中は入力の 20%）。qwen3.8-flash は $0.15／$0.47 で DeepSeek flash と同等なので、判定・分類の用途は 3.7-flash。
+ *   対象は本番7日で $8.7 の「前置きが短く毎回変わる入力だけ」の判定（resolve_area・suggest_next_action・reply_example_learn・recommend_templates・
+ *   classify_condition…）。本文を書く物（返信・AIX）・ブレインは対象にしない。
+ *   使い方: QWEN_API_KEY を入れ、LLM_ALT_ROUTES=resolve_area=qwen,suggest_next_action=qwen のように**名前ごと**に書く（"all" は作らない）。
+ *   歯止め（自動返信・申込以降・時刻の線の印・失敗は Claude に戻す・記録）は DeepSeek と同じ出口を通る。
+ *   ⚠ 思考の切り方が違う: DeepSeek は thinking:{type:"disabled"}、DashScope は enable_thinking:false（toOpenAIBody の thinkingStyle）
+ *   ⚠ キャッシュの usage の形が違う: usage.prompt_tokens_details.cached_tokens（fromOpenAIResponse が cache_read に写す）
+ */
+export const QWEN_ENDPOINT = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions";
+export const QWEN_DEFAULT_MODEL = "qwen3.7-flash";
 /**
  * 文生成の既定は **deepseek-v4-pro**（2026-09-19 竹内「deepseek-v4-proで文生成した方が良いね V4.1よりも」）。
  *
@@ -80,7 +95,89 @@ export type AltProviderConfig = {
    * 本番（Vercel・NODE_ENV=production）では readTestMode が必ず null を返す＝常に null（今までどおり）。
    */
   testMode: LlmTestMode | null;
+  /**
+   * 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES=resolve_area=qwen,classify_condition=deepseek）。
+   * 書いた名前だけ、その相手（provider の鍵・モデル）に回す。鍵の無い相手は落とす（fail-closed）。空なら今までどおり LLM_ALT_ACTIONS だけ
+   */
+  routes: Map<string, AltProviderConfig>;
 };
+
+/** 相手（provider）ごとの宛先・鍵・モデル。欠けていれば null */
+export type ProviderTarget = { provider: AltProvider; endpoint: string; apiKey: string; model: string };
+
+/** 環境変数から相手（provider）ごとの宛先・鍵・モデルだけを読む（純関数）。欠けていれば null */
+export function readProviderTarget(env: EnvLike, provider: string): ProviderTarget | null {
+  const p = (provider ?? "").trim().toLowerCase();
+  if (p === "azure") {
+    const endpoint = (env.AZURE_AI_ENDPOINT ?? "").trim();
+    const apiKey = (env.AZURE_AI_KEY ?? "").trim();
+    const model = (env.AZURE_AI_MODEL ?? "").trim();
+    if (!endpoint || !apiKey || !model) return null;
+    return { provider: "azure", endpoint, apiKey, model };
+  }
+  if (p === "bedrock") {
+    const region = (env.BEDROCK_REGION ?? "").trim();
+    const model = (env.BEDROCK_DEEPSEEK_MODEL_ID ?? "").trim();
+    if (!region || !model || !env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) return null;
+    return { provider: "bedrock", endpoint: region, apiKey: "", model };
+  }
+  if (p === "deepseek") {
+    const apiKey = (env.LLM_ALT_DEEPSEEK_KEY ?? env.DEEPSEEK_API_KEY ?? "").trim();
+    const model = (env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL).trim();
+    if (!apiKey || !model) return null;
+    return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model };
+  }
+  if (p === "qwen") {
+    // 鍵は QWEN_API_KEY だけ（DEEPSEEK_API_KEY を流用しない＝別の会社）。無ければ何もしない
+    const apiKey = (env.QWEN_API_KEY ?? "").trim();
+    const model = (env.QWEN_MODEL ?? QWEN_DEFAULT_MODEL).trim();
+    const endpoint = (env.QWEN_ENDPOINT ?? QWEN_ENDPOINT).trim();
+    if (!apiKey || !model || !endpoint) return null;
+    return { provider: "qwen", endpoint, apiKey, model };
+  }
+  return null;
+}
+
+/**
+ * LLM_ALT_ROUTES（"resolve_area=qwen,suggest_next_action=qwen"）を読む（純関数）。
+ * 形が崩れた項目・知らない相手・鍵の無い相手は落とす。"all"・"*" は受け付けない（全部いっぺんに替えない）。
+ * 返す値は 名前 → 相手
+ */
+export function readAltRoutes(env: EnvLike): Map<string, ProviderTarget> {
+  const out = new Map<string, ProviderTarget>();
+  const raw = (env.LLM_ALT_ROUTES ?? "").trim();
+  if (!raw) return out;
+  for (const part of raw.split(",")) {
+    const [nameRaw, provRaw] = part.split("=");
+    const name = (nameRaw ?? "").trim();
+    const prov = (provRaw ?? "").trim().toLowerCase();
+    if (!name || !prov || name === "all" || name === "*") continue;
+    // 本文・ブレイン・物件の読み取りは名前ごとの振り分けでも回さない（isAltRouteDenied）
+    if (isAltRouteDenied(name)) { console.warn(`[llm-alt] LLM_ALT_ROUTES の ${name} は振り分けられない名前なので無視`); continue; }
+    const target = readProviderTarget(env, prov);
+    if (!target) continue;
+    out.set(name, target);
+  }
+  return out;
+}
+
+/**
+ * 名前ごとの振り分け（LLM_ALT_ROUTES）に書けない名前（2026-09-29 検証の反証: 旧は brain 以外を何でも通し、
+ * 鍵を入れた日に `reply_generate=qwen` の1行でお客様への本文の相手が替わった）。
+ *   ・お客様に届く本文: 返信生成（reply_generate）・AIX テンプレ生成（aix_template）・AIX の本文（AIX_PICKERS の全種類と property_send_* 等の派生）
+ *   ・ブレイン（brain / brain_*・2026-09-23 竹内「毎回の分析もクロード」）
+ *   ・物件の判断・読み取り（NO_CLAUDE_FALLBACK_ACTIONS＝DeepSeek 直・Qwen には回さない）
+ * 振り分けてよいのは判定・分類・前処理（resolve_area・suggest_next_action・classify_condition・recommend_templates・reply_example_learn 等）だけ
+ */
+export function isAltRouteDenied(name: string): boolean {
+  const n = (name ?? "").trim();
+  if (!n) return true;
+  if (n === "reply_generate" || n === "aix_template") return true;
+  if (n === "brain" || n.startsWith("brain_")) return true;
+  if (NO_CLAUDE_FALLBACK_ACTIONS.has(n)) return true;
+  for (const aix of Object.keys(AIX_PICKERS)) if (n === aix || n.startsWith(`${aix}_`)) return true;
+  return false;
+}
 
 /**
  * 環境変数から設定を読む。欠けていたら null（＝何もしない）。
@@ -100,11 +197,19 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   // 2026-09-26 テスト用の切り替え（LLM_TEST_MODE=deepseek-all）。本番（Vercel・NODE_ENV=production）では必ず null＝下は今までと同じ
   const testMode = readTestMode(env);
   // テスト用の切り替えだけで LLM_ALT_PROVIDER が無い時は DeepSeek 本家（鍵は LLM_ALT_DEEPSEEK_KEY / DEEPSEEK_API_KEY）
-  const provider = (env.LLM_ALT_PROVIDER ?? "").trim().toLowerCase() || (testMode ? "deepseek" : "");
+  // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）。LLM_ALT_PROVIDER が無くても、振り分けだけで有効になる（最初の相手を主にする）
+  const routeTargets = readAltRoutes(env);
+  const firstRouteProvider = routeTargets.size > 0 ? [...routeTargets.values()][0].provider : "";
+  const explicitProvider = (env.LLM_ALT_PROVIDER ?? "").trim().toLowerCase();
+  const provider = explicitProvider || (testMode ? "deepseek" : "") || firstRouteProvider;
   const actionsRaw = (env.LLM_ALT_ACTIONS ?? "").trim();
-  if (!actionsRaw && !testMode) return null;
-  const actions = new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
-  if (actions.size === 0 && !testMode) return null;
+  if (!actionsRaw && !testMode && routeTargets.size === 0) return null;
+  // 2026-09-29 検証の反証: 主の相手（LLM_ALT_PROVIDER）もテスト用の切り替えも無く**振り分けだけ**の時は、主は無い（振り分けた名前だけ回す）。
+  //   旧は最初の振り分けの相手が主になり、LLM_ALT_ACTIONS=reply_generate が残っていると本文が Qwen に行った（PROVIDER 無しなら旧来は null＝Claude）
+  const routesOnly = !explicitProvider && !testMode;
+  if (routesOnly && actionsRaw) console.warn("[llm-alt] LLM_ALT_PROVIDER が無いので LLM_ALT_ACTIONS は効かない（振り分け LLM_ALT_ROUTES の名前だけ回す）");
+  const actions = routesOnly ? new Set<string>() : new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
+  if (actions.size === 0 && !testMode && routeTargets.size === 0) return null;
   // 2026-09-23 竹内「これなら質落ちるから毎回の分析もクロードの方が良いね」:
   //   ブレインは**毎回の分析（brain_fresh）も会話全体の分析（brain_full）も Claude のまま**。既定では回さない。
   //   一度 DeepSeek に回して実測した結果（scripts/shadow-brain-deepseek.ts・10会話・同じ入力で両方を走らせた）:
@@ -119,19 +224,18 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const fallbackToAnthropic = (env.LLM_ALT_FALLBACK ?? "on") !== "off";
   // 2026-09-21 竹内「自動返信の部分もDeepsheekに切り替える」→ 既定 on。戻す時は LLM_ALT_AUTO_SEND=off
   const allowAutoSend = (env.LLM_ALT_AUTO_SEND ?? "on").trim().toLowerCase() !== "off";
-  if (provider === "azure") {
-    const endpoint = (env.AZURE_AI_ENDPOINT ?? "").trim();
-    const apiKey = (env.AZURE_AI_KEY ?? "").trim();
-    const model = (env.AZURE_AI_MODEL ?? "").trim();
-    if (!endpoint || !apiKey || !model) return null;
-    return { provider: "azure", endpoint, apiKey, model, actions, fallbackToAnthropic, allowAutoSend, testMode };
+  // 相手ごとの宛先・鍵・モデルは readProviderTarget（azure / bedrock / deepseek / qwen）。主の相手が欠けていれば null（今までどおり）
+  const main = readProviderTarget(env, provider);
+  if (!main) return null;
+  // 名前ごとの振り分けの相手は、主と同じ歯止め（fallback・自動返信・testMode）を持ち、actions は空・routes は持たない
+  const routes = new Map<string, AltProviderConfig>();
+  for (const [name, target] of routeTargets) {
+    routes.set(name, { ...target, actions: new Set<string>(), fallbackToAnthropic, allowAutoSend, testMode, routes: new Map() });
   }
-  if (provider === "bedrock") {
-    const region = (env.BEDROCK_REGION ?? "").trim();
-    const model = (env.BEDROCK_DEEPSEEK_MODEL_ID ?? "").trim();
-    if (!region || !model || !env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) return null;
-    return { provider: "bedrock", endpoint: region, apiKey: "", model, actions, fallbackToAnthropic, allowAutoSend, testMode };
-  }
+  return { ...main, actions, fallbackToAnthropic, allowAutoSend, testMode, routes };
+}
+
+/** 参考（2026-09-19 の判断・readProviderTarget に移した）:
   // DeepSeek 本家。OpenAI 互換なので Azure と同じ変換（toOpenAIBody / fromOpenAIResponse）で通る。
   // 既に DEEPSEEK_API_KEY が物件評価・駅名解決で使われているので、鍵はそれを流用する。
   //
@@ -145,13 +249,11 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   // 2026-09-19 竹内「AIX用と返信用分けた方が良いかな？」:
   //   DEEPSEEK_API_KEY は既に物件評価・駅名解決が使っており、そのまま使うと費用が混ざる。
   //   DeepSeek のキャッシュはアカウント単位なので**鍵を分けてもキャッシュは共有される**（分けて損がない）。
-  if (provider === "deepseek") {
-    const apiKey = (env.LLM_ALT_DEEPSEEK_KEY ?? env.DEEPSEEK_API_KEY ?? "").trim();
-    const model = (env.DEEPSEEK_MODEL ?? DEEPSEEK_DEFAULT_MODEL).trim();
-    if (!apiKey || !model) return null;
-    return { provider: "deepseek", endpoint: DEEPSEEK_ENDPOINT, apiKey, model, actions, fallbackToAnthropic, allowAutoSend, testMode };
-  }
-  return null;
+ */
+
+/** この名前の呼び出しを実際に受ける相手（名前ごとの振り分けがあればそれ・無ければ主） */
+export function targetConfigFor(cfg: AltProviderConfig, routeName: string | null): AltProviderConfig {
+  return (routeName && cfg.routes?.get(routeName)) || cfg;
 }
 
 /**
@@ -175,6 +277,8 @@ export const NO_CLAUDE_FALLBACK_ACTIONS: ReadonlySet<string> = new Set([
 export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string | null, systemHead: string | null = null): boolean {
   if (!cfg || !routeName) return false;
   if (cfg.actions.has(routeName)) return true;
+  // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）に書いた名前
+  if (cfg.routes?.has(routeName)) return true;
   // 2026-09-23: ブレインは層で名札を分けた（brain_fresh / brain_full）。設定に古い "brain" と書いてあれば両方を指す
   if (routeName.startsWith("brain_") && cfg.actions.has("brain")) return true;
   return routedByTestMode(cfg, routeName, systemHead);
@@ -380,7 +484,9 @@ export function flattenContent(content: string | AnthropicBlock[] | undefined): 
 export function toOpenAIBody(
   body: AnthropicBody,
   model: string,
-  opts: { disableThinking?: boolean; allowStream?: boolean; jsonSchemaToJsonMode?: boolean } = {},
+  opts: { disableThinking?: boolean; allowStream?: boolean; jsonSchemaToJsonMode?: boolean;
+    /** 思考の切り方。deepseek（既定）= thinking:{type:"disabled"}／qwen（DashScope）= enable_thinking:false */
+    thinkingStyle?: "deepseek" | "qwen" } = {},
 ): Record<string, unknown> | null {
   // 2026-09-19 竹内「返信の部分も deepseek に切り替えよかな」: 変換（createSseConverter）を
   //   用意した相手だけ 1文字ずつの形を通す。用意していない相手（Bedrock 等）は今までどおり対象外。
@@ -406,12 +512,16 @@ export function toOpenAIBody(
   const thinking = opts.disableThinking
     ? (body.thinking?.type === "enabled" ? body.thinking : { type: "disabled" as const })
     : undefined;
+  // 2026-09-29 Qwen（DashScope の OpenAI 互換）は thinking の形を知らないので enable_thinking で切る（判定・分類の用途は常に切る）
+  const thinkingField = !thinking ? {}
+    : opts.thinkingStyle === "qwen" ? { enable_thinking: thinking.type === "enabled" }
+    : { thinking };
   return {
     model,
     messages,
     ...(typeof body.max_tokens === "number" ? { max_tokens: body.max_tokens } : {}),
     ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-    ...(thinking ? { thinking } : {}),
+    ...thinkingField,
     ...(schemaNote ? { response_format: { type: "json_object" } } : {}),
     // 1文字ずつの形。usage は最後の chunk で受け取る（include_usage）
     ...(body.stream && opts.allowStream ? { stream: true, stream_options: { include_usage: true } } : {}),
@@ -433,14 +543,17 @@ export function fromOpenAIResponse(json: {
   usage?: {
     prompt_tokens?: number; completion_tokens?: number;
     prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number;
+    /** OpenAI 互換の共通の形（Qwen／DashScope はここに暗黙キャッシュの命中を返す） */
+    prompt_tokens_details?: { cached_tokens?: number };
   };
 }, model: string): Record<string, unknown> {
   const text = json.choices?.[0]?.message?.content ?? "";
   const finish = json.choices?.[0]?.finish_reason ?? "stop";
   const u = json.usage;
-  const cacheHit = u?.prompt_cache_hit_tokens ?? 0;
-  // DeepSeek は prompt_tokens = 一致 + 不一致。新規入力は「不一致」の方（無ければ従来どおり prompt_tokens）
-  const uncached = u?.prompt_cache_miss_tokens ?? u?.prompt_tokens ?? 0;
+  // 2026-09-29 Qwen は prompt_tokens_details.cached_tokens（OpenAI 互換の共通の形）。DeepSeek の形が無い時だけそちらを見る
+  const cacheHit = u?.prompt_cache_hit_tokens ?? u?.prompt_tokens_details?.cached_tokens ?? 0;
+  // DeepSeek は prompt_tokens = 一致 + 不一致。新規入力は「不一致」の方（無ければ prompt_tokens − 命中）
+  const uncached = u?.prompt_cache_miss_tokens ?? Math.max(0, (u?.prompt_tokens ?? 0) - cacheHit);
   return {
     id: `alt_${Date.now().toString(36)}`,
     type: "message",
@@ -554,11 +667,15 @@ async function callOpenAICompatible(
   const allowStream = cfg.provider === "deepseek";
   // テスト用の切り替えの時だけ構造化出力を JSON モードに移す（本番の経路は今までどおり）
   const testShape = !!cfg.testMode;
-  const payload = toOpenAIBody(body, cfg.model, { disableThinking: cfg.provider === "deepseek", allowStream, jsonSchemaToJsonMode: testShape });
+  // 2026-09-29 Qwen も思考は既定で切る（判定・分類の用途）。切り方は DashScope の enable_thinking
+  const payload = toOpenAIBody(body, cfg.model, {
+    disableThinking: cfg.provider === "deepseek" || cfg.provider === "qwen", allowStream, jsonSchemaToJsonMode: testShape,
+    thinkingStyle: cfg.provider === "qwen" ? "qwen" : "deepseek",
+  });
   if (!payload) return null;
   const res = await originalFetch(cfg.endpoint, {
     method: "POST",
-    headers: cfg.provider === "deepseek"
+    headers: cfg.provider === "deepseek" || cfg.provider === "qwen"
       ? { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` }
       // Azure は api-key / Authorization のどちらでも通るので両方送る
       : { "Content-Type": "application/json", "api-key": cfg.apiKey, Authorization: `Bearer ${cfg.apiKey}` },
@@ -730,16 +847,18 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
 
     const started = Date.now();
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);
+    // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）があればその相手（Qwen 等）・無ければ主の相手
+    const target = targetConfigFor(cfg, routeName);
     try {
       const writeUsage = (usage: Record<string, number>, ms: number, errorType: string | null = null) => recordAltUsage({
-        model: cfg.model, action: routeName, conversationId,
+        model: target.model, action: routeName, conversationId,
         usage, status: 200, errorType, durationMs: ms, stream: !!body.stream,
         sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
-      const res = cfg.provider === "bedrock"
-        ? await callBedrock(cfg, body)
+      const res = target.provider === "bedrock"
+        ? await callBedrock(target, body)
         // 1文字ずつの形は応答を読み切ってから usage が分かるので、コールバックで受ける（切れた時も errorType 付きで1行）
-        : await callOpenAICompatible(cfg, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType));
+        : await callOpenAICompatible(target, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType));
       if (!res) {
         // 物件の判断・読み取りは変換できなくても Claude に倒さない（呼び出し側が「読み取れなかった」の印を付ける）
         if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: DeepSeek に送れない形（Claude には倒さない）`);
@@ -748,7 +867,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
         return original(input as RequestInfo, init); // 画像等は今までどおり
       }
       const ms = Date.now() - started;
-      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: cfg.provider, model: cfg.model, stream: !!body.stream, ms, ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
+      console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: target.provider, model: target.model, stream: !!body.stream, ms, ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
       // 2026-09-19 本番の検証で見つけた穴: fetch の出口の記録は Anthropic 宛てだけを見るので、
       //   別クラウドに回った分は1行も残らなかった（費用も質も後から追えない）。ここで自分で書く。
       //   1文字ずつの形は上のコールバックで書くので、ここでは読み切りの形だけ
@@ -763,7 +882,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       console.warn("[llm-alt] failed:", String(e));
       // 失敗も1行残す（フォールバックの回数が後から数えられる）
       recordAltUsage({
-        model: cfg.model, action: routeName, conversationId, usage: {},
+        model: target.model, action: routeName, conversationId, usage: {},
         status: 0, errorType: "alt_failed", durationMs: Date.now() - started,
         sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
       });
@@ -780,7 +899,9 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
   (globalThis.fetch as unknown as Record<string, unknown>)[ALT_FETCH_MARK] = true;
   (globalThis.fetch as unknown as Record<symbol, unknown>)[ALT_INNER_BOX] = box;
   installed = true;
-  console.log("[llm-alt] installed", JSON.stringify({ provider: cfg.provider, model: cfg.model, actions: [...cfg.actions], ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
+  console.log("[llm-alt] installed", JSON.stringify({ provider: cfg.provider, model: cfg.model, actions: [...cfg.actions],
+    ...(cfg.routes.size > 0 ? { routes: [...cfg.routes.entries()].map(([k, v]) => `${k}=${v.provider}:${v.model}`) } : {}),
+    ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
   if (cfg.testMode) console.warn(`[llm-test-mode] ${cfg.testMode}: ブレイン以外の Claude 呼び出しを ${cfg.provider}（${cfg.model}）に回す・失敗しても Claude に戻さない（ローカル専用）`);
   return true;
 }

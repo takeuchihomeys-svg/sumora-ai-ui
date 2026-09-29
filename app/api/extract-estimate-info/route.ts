@@ -1,4 +1,5 @@
 ﻿import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { NextRequest, NextResponse } from "next/server";
 
 export interface ExtractedEstimate {
@@ -74,7 +75,8 @@ export async function POST(req: NextRequest) {
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
     timeout: 60_000,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("extract_estimate") },
   });
 
   try {

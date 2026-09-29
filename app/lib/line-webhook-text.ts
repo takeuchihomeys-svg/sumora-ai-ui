@@ -8,6 +8,8 @@
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-29 API 費用の調査: webhook の分類（Haiku 120回/7日）・条件の読み取り（Sonnet 16回）・P4 が名前なしだった → 名札だけ付ける（動きは変えない）
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
 import { resolveApplyingPromotion } from "@/app/lib/applying-promotion";
 import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/lib/condition-intent";
@@ -830,7 +832,8 @@ async function classifyConditionMessage(
       max_tokens: 64,
       system: [{ type: "text", text: CLASSIFY_CONDITION_SYSTEM_PROMPT, cache_control: { type: "ephemeral", ttl: "1h" } }],
       messages: [{ role: "user", content: userContent }],
-    });
+    // 2026-09-29: 分類は autoParseFormat と P4 の2つの client から呼ばれるので、呼び出しごとの headers で同じ名札にする（記録だけ・動きは変えない）
+    }, { headers: sumoraLlmMarks("classify_condition") });
     const raw = (res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim();
     const m = raw.match(/\{[\s\S]*\}/);
     if (!m) return { type: "not_condition", confidence: 0 };
@@ -947,7 +950,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
     apiKey: process.env.ANTHROPIC_API_KEY,
     timeout: 30_000,
     maxRetries: 1,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("webhook_condition_parse") },
   });
 
   // ── Step 1: Haiku で分類（フォーマット知識＋会話文脈を使用） ────────
@@ -1289,7 +1292,7 @@ async function extractConditionsFromCasualReply(
     apiKey: process.env.ANTHROPIC_API_KEY,
     timeout: 15_000,
     maxRetries: 1,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("p4_condition_parse") },
   });
   const recentContext = staffTexts.reverse().map((t) => ({ sender: "staff" as const, text: t }));
   const p4Class = await classifyConditionMessage(anthropicP4, customerText, recentContext);

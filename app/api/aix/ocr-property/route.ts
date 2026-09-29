@@ -1,9 +1,11 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 
 export const maxDuration = 30;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), timeout: 25_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), timeout: 25_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("ocr_property") } });
 
 // 専任物件ピッカー用: 物件スクショから物件名・号室をOCR（Sonnet 5）
 const OCR_SYSTEM = `この画像から物件名と号室を読み取ってください。

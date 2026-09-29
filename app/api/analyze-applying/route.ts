@@ -6,6 +6,7 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 import { extractSelfInitiatedSends } from "@/app/lib/brain-core";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 
@@ -39,7 +40,8 @@ const APPLYING_STATUSES = ["applying", "approved", "application", "screening", "
 // Sonnet 呼び出しは1件20〜40秒かかるため maxDuration=300 に収まる件数に制限
 const MAX_PER_RUN = 5;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 60_000, maxRetries: 1 });
+// 2026-09-29 API 費用の調査: 申込到達会話の学習の Sonnet（7日で51回・$4.3）が llm_usage_logs で名前なしだった → 名札だけ付ける
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 60_000, maxRetries: 1, defaultHeaders: sumoraLlmMarks("learn_applying") });
 
 // CRON_SECRET（Vercel cron / analyze-diffs トリガー）または
 // INTERNAL_API_SECRET（requireInternalAuth）のどちらかで認証する

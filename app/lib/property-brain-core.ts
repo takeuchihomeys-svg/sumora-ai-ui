@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
+// 2026-09-29 API 費用の調査: 条件管理 AI の Sonnet（7日で63回・$0.4）が llm_usage_logs で名前なしだった → 名札だけ付ける（動きは変えない）
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import {
   buildPropertyBrainContext,
   formatContextForPrompt,
@@ -154,7 +156,7 @@ export async function runPropertyBrain(
   // Phase 2: Claude Sonnet に渡す
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("condition_brain") },
   });
 
   const dynamicPrompt = buildDynamicPrompt(ctx);
@@ -343,7 +345,7 @@ export async function runConditionBrain(
   // ── Claude Sonnet-5 呼び出し ─────────────────────────────────────────────
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
-    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("condition_brain_search") },
   });
 
   const contextText = formatContextForPrompt(ctx);

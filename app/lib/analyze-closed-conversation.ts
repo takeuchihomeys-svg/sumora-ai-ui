@@ -2,6 +2,8 @@
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 
 // ── 申込/成約/失注確定時の会話全体分析（Opus 4.8）─────────────────────────────────
 // conversations.status が applying / closed_won / closed_lost に変わった瞬間に呼ばれ、
@@ -48,6 +50,7 @@ async function callOpus(prompt: string): Promise<string> {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        ...sumoraLlmMarks("learn_closed_conversation"),
       },
       body: JSON.stringify({
         model: "claude-opus-5",

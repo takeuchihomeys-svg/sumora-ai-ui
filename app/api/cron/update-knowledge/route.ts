@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { generateEmbedding, upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { isUsableExampleText } from "@/app/lib/example-hygiene";
 import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
@@ -20,6 +22,7 @@ async function callHaiku(prompt: string): Promise<string> {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        ...sumoraLlmMarks("learn_update_knowledge"),
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",

@@ -2552,3 +2552,17 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - **お客様に出ない**: カードは React の表示だけ（messages に入れない・送信・下書き・ブレインの材料に渡らない）。API `/api/property-pickups/talk` は読むだけ
 - 注意: AIXツールの詳細は直近3回分だけ読むので、古い回のカードから来た時はスクロールせず一番下
 - 2026-09-27 追記（竹内「自分の部分で日時と出たら分かりやすい」「オススメだけは資料も」）: カードをスタッフの吹き出しと同じ右側・左に時刻（HH:MM）で出す。日付の区切りはカードの日で出す（`newArrivalElems` が lastDate を受けて返す＝旧は次の吹き出しの区切りより上に出て日またぎで前日の下に並んでいた）。1件を推す回（送った件数／未送信なら通すの件数が1＝`aixTypeForPickupCount`）だけ `roundRecommend` で資料の画像（`pickSendImageUrl`＝trim_image_url）を小さく出す・押すと大きく・画像無しは物件名だけ。複数件の回は件数だけ
+
+## 2026-09-29 API 費用: 資料の中身の読み取りを「文字層があれば文字層・無い時だけ画像」に（サーバーだけ・拡張の再読み込み不要）
+- 竹内さん「昨日かなり DeepSeek で API 費用を使った。更に節約できないか」。9/28 の DeepSeek $7.2（公式料金）のうち property_image_detail が $6.0（1,024回・出力＝推論 6,200 トークン/回・30秒）。上の「残り②推論なしで足りるか正解表で測る」の答え: **画像のまま推論なしは「2人入居不可→可」の反転が 12件中1件**あるので入れず、**文字層（PDF の文字そのもの）を推論なしで読む**（12件の影で 89% 同じ行・1.6秒・$0.001・反転なし・保証会社名と帖数はむしろ正確）
+- 作り: `app/lib/property-detail-source.ts`（純関数 `detailSourceFor`＝文字層 200字以上＋見出し3種以上で text・白い表は image／`reusableLinesByPdfUrl`＝同じ pdf_url の 7日以内の行から写す／`readPropertyDetailFromText`＝callDeepSeekRead 推論なし・温度0・max 1,500・action `property_text_detail`）。`recordPickupBatch` は 写し → 文字層 → 画像 の順。間取り図の有無（readFloorPlanFacts）は画像のまま
+- 送った画像の読み直し `ensureImageDetail`（send-line-message の after・引用返信）は先に property_pickups（trim/page/agent_image_url）を引いて image_lines か文字層で済ませ、無い時（スタッフが手で送った画像）だけ画像を 60秒で読む（旧 25秒は 9/28 に 37/67 が時間切れ＝費用だけ払って材料なし）
+- 直近7日の行 1,219 件: text 1,204・image 0・none 15（見出し 9〜18 種）。写せる行 11%。実物 3件の実測: 1.3〜1.6秒・出力 211〜277・落ちたのは長い「設備」の行 1件（設備の質問は listing-equipment が文字層を決定論で読むので影響小）。文字層の行に「駐車場: 敷地内駐車場／16,500円」のように駐車場の料金が乗る事がある（PDF の文字そのものなので誤読ではない・本文に金額を書かない線は生成側のまま）
+- 確かめ方: `npx tsx --env-file=.env.local scripts/audit-detail-source.ts --days=7`（日別に property_image_detail が数十回・property_text_detail が大半・text の平均出力 300 前後・失敗 0〜数件なら正常）。見込み: 9/28 型の平日で property_image_detail 週 $30 → text $5（−$25）
+- Qwen（判定・分類の最安の相手）は `llm-alt-provider.ts` に provider "qwen"＋`LLM_ALT_ROUTES` の**作りだけ**（鍵 QWEN_API_KEY・既定 OFF・.env.local にも本番にも無い）
+- **同日の検証の反証で直した所（4つ）**:
+  - ①送った画像の読み直し（ensureImageDetail）は URL で property_pickups を引いても当たらない（AixModal が File として再アップロード＝`…/property-images/aix/<会話>/<時刻>_<乱数>.png`・直近7日 150枚中 134枚）→ 生成の時（`/api/aix/action` の pickupRowsForFacts の直後・after）に行の image_lines か文字層の読み取りを**送る画像の URL で image_details に先に写す**（`primeImageDetailsFromPickups`・ログ `image-detail:prime`）。送った後は表にあるので画像読みを呼ばない。スタッフが手で送った画像だけ画像を 60秒で読む
+  - ②写し（同じ pdf_url の 7日以内の行）は**文字層が無い行だけ**（`planDetailSource`）。文字層読みは $0.001 で写しの節約は週 $0.1・同じ部屋の2回読みは 89/92 で行が違う（画像読みの揺れ）＝写しは揺れと古さを持ち込むだけ。直近7日で実際に写す行は 0
+  - ③文字層の読み取りが失敗したら旧どおり画像に倒す（ログ `property-pickups:text-detail-fallback`）・鍵が無い環境では呼ばず記録もしない
+  - ④`image_details.model` に出所を付ける（`text:deepseek-flash`／`reuse`／`image:deepseek-flash`／`pickup_lines`／`pickup_text:deepseek-flash`・`detailModelLabel`・列追加なし）。audit-detail-source.ts ④で model 別に数える（旧の "deepseek-flash" は 9/29 より前）
+  - ⑤`LLM_ALT_ROUTES` に本文（reply_generate・aix_template・AIX 全種類と派生・brain_*・物件の読み取り）は書けない（`isAltRouteDenied`・warn で無視）。`LLM_ALT_PROVIDER` が無い時は `LLM_ALT_ACTIONS` を効かせない（振り分けた名前だけ・本文は Claude のまま）

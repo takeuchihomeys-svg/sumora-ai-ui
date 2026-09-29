@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { runBrainAndNotify, type BrainGateSnapshot } from "@/app/lib/brain-core";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数・入口で止める）
 import { decideNightDeferNow } from "@/app/lib/brain-night-defer";
@@ -130,7 +131,8 @@ async function applyBrainConditionChange(
   //   本プロンプト（約2,200トークン）ではサイレントに無効（毎回フル価格）になるため付与しない。
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" },
+    // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01", ...sumoraLlmMarks("condition_category_parse") },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 300,

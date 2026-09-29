@@ -17,6 +17,8 @@ import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
 import { buildPickupTerms } from "@/app/lib/pickup-terms";
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 import { readPropertyImageDetail } from "@/app/lib/property-image-read";
+// 2026-09-29 資料の中身は文字層があれば文字層から（画像の推論の出力が費用の 96%）・同じ物件は 7日以内の行から写す
+import { detailSourceFor, readPropertyDetailFromText, reusableLinesByPdfUrl, planDetailSource, detailModelLabel, type TextDetailResult } from "@/app/lib/property-detail-source";
 import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
 import { dedupeSameBuilding, dedupeNoteJa } from "@/app/lib/pickup-dedupe";
 import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, toPickupLocation, type AreaWant, type CommuteWant, type PickupLocation } from "@/app/lib/area-want";
@@ -117,8 +119,9 @@ async function loadProfile(propertyCustomerId: string | null, searchOverride: Pi
   };
 }
 
-export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; deduped: number; noTextDraw: number; autoAnalyzed: number; autoLevel: string | null; summaryCalled: boolean; groupNotice: "deferred" | null; error: string | null }> {
-  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, deduped: 0, noTextDraw: 0, autoAnalyzed: 0, autoLevel: null as string | null, summaryCalled: false, groupNotice: null as "deferred" | null, error: null as string | null };
+export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; detailFromText: number; detailReused: number; deduped: number; noTextDraw: number; autoAnalyzed: number; autoLevel: string | null; summaryCalled: boolean; groupNotice: "deferred" | null; error: string | null }> {
+  // 2026-09-29: detailFromText＝資料の中身を文字層から読んだ件数・detailReused＝7日以内の同じ物件の行から写した件数（画像を読んだ回数は imageRead − この2つ）
+  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, detailFromText: 0, detailReused: 0, deduped: 0, noTextDraw: 0, autoAnalyzed: 0, autoLevel: null as string | null, summaryCalled: false, groupNotice: null as "deferred" | null, error: null as string | null };
   const startedAt = Date.now();
   try {
     if (input.summaries.length === 0) return out;
@@ -296,17 +299,54 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     //   ②お客様の希望に画像でしか分からない語（バストイレ別・独立洗面・収納・南向き・2階以上）があれば、その有無で判定を更新
     //   失敗は判定を変えない（設計知見: 推論モデルは答え0文字で失敗する・失敗は記録に残さない）
     //   読むのは**元付業者の資料（2ページ目）**。無ければ1ページ目（竹内「偶数ページを画像として判断すればより正確」）
-    const targets = items.map((it, i) => ({ it, i })).filter((x) => x.it.agentImageUrl || x.it.pageImageUrl).slice(0, IMAGE_READ_MAX_PER_BATCH);
+    // 2026-09-29 竹内「昨日かなり DeepSeek で API 費用を使った。更に節約できないか」（property-detail-source.ts に経緯）:
+    //   ①文字層がある資料は画像を送らず、文字層を DeepSeek（推論なし・温度0・$0.001・1.6秒）で読む（9/28 は 973/973 行が文字層あり）
+    //   ②文字層が無い／薄い（白い表）資料は、同じ印刷用 URL（pdf_url）の行が 7日以内に image_lines を持っていれば写す（同じ物件を二度読まない）
+    //   ③それも無ければ今までどおり画像（推論 low）。文字層の読み取りが失敗した時も画像に倒す
+    //   （写しを文字層の行に使わない理由は property-detail-source.ts の頭・検証の反証: 写しは画像読みの揺れと古さを持ち込むだけで節約は週 $0.1）
+    //   希望の照合（readFloorPlanFacts・間取り図の有無）は画像でしか分からないので今までどおり画像
+    const reusable = await (async () => {
+      // 写すのは文字層が無い行だけなので、その行の pdf_url だけ引く（全行が文字層ありなら DB を読まない）
+      const urls = [...new Set(items.filter((it) => detailSourceFor(it.pdfText, !!(it.agentImageUrl || it.pageImageUrl)) !== "text").map((it) => it.pdfUrl).filter((u): u is string => !!u))];
+      if (urls.length === 0) return new Map<string, string[]>();
+      try {
+        const { data, error } = await supabase.from("property_pickups").select("pdf_url, image_lines, created_at")
+          .in("pdf_url", urls).not("image_lines", "is", null).gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
+          .order("created_at", { ascending: false }).limit(200);
+        if (error) { console.warn("[property-pickups] 前の回の image_lines を引けない:", error.message); return new Map<string, string[]>(); }
+        return reusableLinesByPdfUrl((data ?? []) as Array<{ pdf_url: string | null; image_lines: unknown; created_at: string | null }>, Date.now());
+      } catch (e) { console.warn("[property-pickups] 前の回の image_lines を引けない:", e instanceof Error ? e.message : e); return new Map<string, string[]>(); }
+    })();
+    const targets = items.map((it, i) => ({ it, i }))
+      .filter((x) => x.it.agentImageUrl || x.it.pageImageUrl || detailSourceFor(x.it.pdfText, false) === "text")
+      .slice(0, IMAGE_READ_MAX_PER_BATCH);
     out.withImage = items.filter((it) => it.pageImageUrl || it.agentImageUrl).length;
+    // 行ごとの出所（image_details.model に残す・items と rows は同じ並び）
+    const detailSourceOf = new Map<number, string>();
     await Promise.allSettled(targets.map(async ({ it, i }) => {
-      const url = (it.agentImageUrl ?? it.pageImageUrl) as string;
+      const url = (it.agentImageUrl ?? it.pageImageUrl) ?? null;
       // 設備欄で ○/× が決まった希望（バストイレ別・独立洗面・南向き・2階以上）は画像で読み直さない（judgeProperty の imageChecks）
       const wants = it.judgment ? it.judgment.imageChecks : (profile?.imageWants ?? []);
-      const [detail, facts] = await Promise.all([
-        readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS }),
-        wants.length > 0 ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 60_000) }) : Promise.resolve(null),
+      // 2026-09-29 検証の反証: 写しは**文字層が無い行だけ**（planDetailSource・文字層がある行は毎回文字層で読む＝$0.001 で正確・新しい）
+      const plan = planDetailSource(it.pdfText, !!url, it.pdfUrl ? reusable.get(it.pdfUrl) ?? null : null);
+      let source: string = plan.source;
+      const [detail0, facts] = await Promise.all([
+        plan.source === "reuse" ? Promise.resolve({ kind: "property" as const, lines: plan.lines, raw: "" })
+          : plan.source === "text" ? readPropertyDetailFromText(it.pdfText as string, { conversationId })
+          : plan.source === "image" && url ? readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS })
+          : Promise.resolve({ kind: "other" as const, lines: [] as string[], raw: "" }),
+        wants.length > 0 && url ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 60_000) }) : Promise.resolve(null),
       ]);
+      let detail: { kind: string; lines: string[]; raw: string } = detail0;
+      // 文字層の読み取りが失敗（DeepSeek の一時障害・空返事2回）したら旧どおり画像に倒す（費用は失敗した回だけ）
+      if (plan.source === "text" && (detail0 as TextDetailResult).failed && url) {
+        detail = await readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS });
+        source = "image";
+        console.warn(JSON.stringify({ tag: "property-pickups:text-detail-fallback", batch: input.batchId.slice(0, 40), i }));
+      }
+      if (source === "reuse") out.detailReused++; else if (source === "text") out.detailFromText++;
       if (detail.kind === "property" && detail.lines.length > 0) {
+        detailSourceOf.set(i, source);
         it.imageLines = detail.lines; out.imageRead++;
         // 2026-09-27 資料の画像の行（「間取り: 1K【洋6帖】」）に帖数があれば、洋室の帖数の要確認を付け直す
         if (it.judgment && profile?.roomJoWant) it.judgment = applyRoomJoToJudgment(it.judgment, profile.roomJoWant, roomJoFromText(detail.lines.join("\n"), it.judgment.facts.floorPlan), "資料");
@@ -362,8 +402,10 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     out.withText = rows.filter((r) => r.pdf_has_text).length;
     out.withBlob = rows.filter((r) => r.pdf_blob_url).length;
     // 画像から読んだ条件は、引用返信・ブレインが同じ表（image_details）から引けるように残す（既存の仕組みと同じ鍵＝画像の URL）
-    const detailRows = rows.filter((r) => (r.agent_image_url || r.page_image_url) && r.image_lines && r.image_lines.length > 0)
-      .map((r) => ({ image_url: (r.agent_image_url ?? r.page_image_url) as string, conversation_id: conversationId, kind: "property", lines: r.image_lines, model: "deepseek-flash", read_at: new Date().toISOString() }));
+    //   model 列に出所（text:／reuse／image:）を付ける（2026-09-29・detailModelLabel。列は text なので列追加なし）
+    const detailModel = (process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash").trim();
+    const detailRows = rows.map((r, i) => ({ r, i })).filter(({ r }) => (r.agent_image_url || r.page_image_url) && r.image_lines && r.image_lines.length > 0)
+      .map(({ r, i }) => ({ image_url: (r.agent_image_url ?? r.page_image_url) as string, conversation_id: conversationId, kind: "property", lines: r.image_lines, model: detailModelLabel(detailSourceOf.get(i) ?? "image", detailModel), read_at: new Date().toISOString() }));
     if (detailRows.length > 0) {
       const { error: dErr } = await supabase.from("image_details").upsert(detailRows, { onConflict: "image_url" });
       if (dErr) console.warn("[property-pickups] image_details に残せない:", dErr.message);

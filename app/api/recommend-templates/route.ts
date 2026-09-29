@@ -16,6 +16,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-29 API 費用の調査: テンプレのおすすめの Sonnet（7日で57回・$1.5・キャッシュなし）が名前なしだった → 名札だけ付ける
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 
 export const maxDuration = 30;
 
@@ -139,6 +141,7 @@ export async function POST(req: NextRequest) {
     // 2. Sonnet でおすすめを判断（ギャップ分析が複雑なため）
     const client = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+      defaultHeaders: sumoraLlmMarks("recommend_templates"),
     });
 
     // サブカテゴリ情報をテンプレラベルから読み取り可能にする説明を生成

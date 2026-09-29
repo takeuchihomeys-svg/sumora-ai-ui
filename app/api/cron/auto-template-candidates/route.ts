@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { attemptKey, loadBlockedItems, markAttemptDone, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
@@ -10,7 +11,8 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 export const maxDuration = 120;
 const CONVERT_JOB = "auto-template-candidates:convert";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000 });
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000, defaultHeaders: sumoraLlmMarks("learn_template_candidates") });
 const MODEL = "claude-haiku-4-5-20251001";
 
 // AIX後続テンプレートのAI候補自動生成バッチ

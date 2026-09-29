@@ -6,6 +6,7 @@ import {
   readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
   isAutoSendCall, isPostApplyCall, isPostApplyStatus, willRouteAlt, createSseConverter,
   DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_FLASH_MODEL,
+  readProviderTarget, readAltRoutes, targetConfigFor, isAltRouteDenied, QWEN_ENDPOINT, QWEN_DEFAULT_MODEL,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 import { AIX_SHARED_SYSTEM_PREFIX, buildSystemBlocks } from "../aix-system-blocks";
@@ -436,6 +437,55 @@ console.log("── 応答は Anthropic の形に戻す（呼び出し側は違�
   t("★ model が DeepSeek（あとで費用と品質を見分けられる）", r.model === "DeepSeek-V4-Flash");
   t("length で切れたら max_tokens", fromOpenAIResponse({ choices: [{ message: { content: "…" }, finish_reason: "length" }] }, "m").stop_reason === "max_tokens");
   t("応答が空でも落ちない", fromOpenAIResponse({}, "m").content !== undefined);
+}
+
+console.log("── ★ Qwen（名前ごとの振り分け・2026-09-29「作りだけ」・既定 OFF）");
+{
+  const DS: Record<string, string | undefined> = { LLM_ALT_PROVIDER: "deepseek", DEEPSEEK_API_KEY: "k", LLM_ALT_ACTIONS: "reply_generate" };
+  t("★ QWEN_API_KEY が無ければ qwen の相手は作れない（何もしない）", readProviderTarget({}, "qwen") === null && readProviderTarget({ QWEN_MODEL: "qwen3.7-flash" }, "qwen") === null);
+  const q = readProviderTarget({ QWEN_API_KEY: "qk" }, "qwen")!;
+  t("★ 鍵があれば国際版の OpenAI 互換の宛先・既定は qwen3.7-flash", q !== null && q.endpoint === QWEN_ENDPOINT && q.model === QWEN_DEFAULT_MODEL && q.provider === "qwen");
+  t("DEEPSEEK_API_KEY を Qwen に流用しない（別の会社）", readProviderTarget({ DEEPSEEK_API_KEY: "k" }, "qwen") === null);
+
+  t("★ LLM_ALT_ROUTES が無ければ振り分けは空（今までどおり）", readAltRoutes(DS).size === 0);
+  const routes = readAltRoutes({ ...DS, QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen, suggest_next_action=qwen,classify_condition=deepseek,brain_fresh=qwen,all=qwen,*=qwen,bad,x=openai" });
+  t("★ 書いた名前だけ・相手ごとに解決（resolve_area/suggest_next_action → qwen・classify_condition → deepseek）",
+    routes.get("resolve_area")?.provider === "qwen" && routes.get("suggest_next_action")?.model === "qwen3.7-flash" && routes.get("classify_condition")?.provider === "deepseek");
+  t("★ all・*・ブレイン・形の崩れ・知らない相手は落とす", routes.size === 3 && !routes.has("all") && !routes.has("*") && !routes.has("brain_fresh") && !routes.has("x"));
+  t("★ 鍵の無い相手への振り分けは落とす（fail-closed）", readAltRoutes({ ...DS, LLM_ALT_ROUTES: "resolve_area=qwen" }).size === 0);
+  // 2026-09-29 検証の反証: 本文・AIX の本文・ブレイン・物件の読み取りは振り分けに書いても落ちる
+  const denied = readAltRoutes({ ...DS, QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "reply_generate=qwen,aix_template=qwen,property_send=qwen,property_send_new_arrival=qwen,property_recommendation=qwen,estimate_sheet=qwen,viewing_invite=qwen,zenryoku_support=qwen,property_image_detail=qwen,property_rank=qwen,brain=qwen,resolve_area=qwen" });
+  t("★ reply_generate・AIX の本文（property_send 等と派生）・物件の読み取り・ブレインは振り分けに書いても落ちる（resolve_area だけ残る）", denied.size === 1 && denied.has("resolve_area"));
+  t("★ isAltRouteDenied: 本文と AIX 全種類は不可・判定と分類は可", isAltRouteDenied("reply_generate") && isAltRouteDenied("property_check_result_available") && isAltRouteDenied("cost_breakdown") && isAltRouteDenied("property_image_read") && isAltRouteDenied("brain_full") && isAltRouteDenied("")
+    && !isAltRouteDenied("resolve_area") && !isAltRouteDenied("suggest_next_action") && !isAltRouteDenied("classify_condition") && !isAltRouteDenied("recommend_templates") && !isAltRouteDenied("reply_example_learn"));
+
+  const cfg = readAltConfig({ ...DS, QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen" })!;
+  t("★ 主は DeepSeek のまま・振り分けは routes に入る", cfg.provider === "deepseek" && cfg.routes.size === 1 && cfg.routes.get("resolve_area")?.provider === "qwen");
+  t("★ 振り分けた名前は回す・書いていない名前は今までどおり", shouldRouteAlt(cfg, "resolve_area") && shouldRouteAlt(cfg, "reply_generate") && !shouldRouteAlt(cfg, "suggest_next_action") && !shouldRouteAlt(cfg, "classify"));
+  t("★ 相手の解決: 振り分けた名前は Qwen・それ以外は主", targetConfigFor(cfg, "resolve_area").provider === "qwen" && targetConfigFor(cfg, "reply_generate").provider === "deepseek" && targetConfigFor(cfg, null).provider === "deepseek");
+  t("振り分けの相手は主と同じ歯止め（fallback・自動返信）を持つ", cfg.routes.get("resolve_area")!.fallbackToAnthropic === cfg.fallbackToAnthropic && cfg.routes.get("resolve_area")!.allowAutoSend === cfg.allowAutoSend);
+  const onlyRoutes = readAltConfig({ QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen" });
+  t("★ LLM_ALT_PROVIDER / LLM_ALT_ACTIONS が無くても振り分けだけで有効（主は最初の相手・actions は空）", onlyRoutes !== null && onlyRoutes.provider === "qwen" && onlyRoutes.actions.size === 0 && shouldRouteAlt(onlyRoutes, "resolve_area") && !shouldRouteAlt(onlyRoutes, "reply_generate"));
+  t("★ 振り分けが空・主の指定も無ければ今までどおり null", readAltConfig({ QWEN_API_KEY: "qk" }) === null && readAltConfig({ QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "" }) === null);
+  // 2026-09-29 検証の反証: PROVIDER 無し＋振り分けだけの時に LLM_ALT_ACTIONS が残っていても主（最初の相手）に本文が行かない
+  const leak = readAltConfig({ QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen", LLM_ALT_ACTIONS: "reply_generate,property_send" })!;
+  t("★ LLM_ALT_PROVIDER が無ければ LLM_ALT_ACTIONS は効かない（振り分けた名前だけ・本文は Claude のまま）", leak !== null && leak.actions.size === 0 && shouldRouteAlt(leak, "resolve_area") && !shouldRouteAlt(leak, "reply_generate") && !shouldRouteAlt(leak, "property_send"));
+  t("LLM_ALT_PROVIDER がある時は今までどおり LLM_ALT_ACTIONS も効く", readAltConfig({ ...DS, QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen" })!.actions.has("reply_generate"));
+  t("willRouteAlt も振り分けを見る（仮名化の判断がズレない）", willRouteAlt("resolve_area", {}, { ...DS, QWEN_API_KEY: "qk", LLM_ALT_ROUTES: "resolve_area=qwen" }) && !willRouteAlt("resolve_area", {}, DS));
+
+  const src = { system: "s", messages: [{ role: "user", content: "u" }], max_tokens: 256 };
+  const qb = toOpenAIBody(src as Parameters<typeof toOpenAIBody>[0], "qwen3.7-flash", { disableThinking: true, thinkingStyle: "qwen" })!;
+  t("★ Qwen 宛ては enable_thinking:false で思考を切る（thinking の形は送らない）", qb.enable_thinking === false && !("thinking" in qb));
+  const db = toOpenAIBody(src as Parameters<typeof toOpenAIBody>[0], "deepseek-flash", { disableThinking: true, thinkingStyle: "deepseek" })!;
+  t("DeepSeek 宛ては今までどおり thinking:{type:disabled}", JSON.stringify(db.thinking) === JSON.stringify({ type: "disabled" }) && !("enable_thinking" in db));
+  const r = fromOpenAIResponse({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 700 } } }, "qwen3.7-flash") as { usage: Record<string, number> };
+  t("★ Qwen の暗黙キャッシュ（prompt_tokens_details.cached_tokens）を cache_read に写し、新規入力は差し引く",
+    r.usage.cache_read_input_tokens === 700 && r.usage.input_tokens === 300);
+  const r2 = fromOpenAIResponse({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_cache_hit_tokens: 900, prompt_cache_miss_tokens: 100 } }, "deepseek-flash") as { usage: Record<string, number> };
+  t("DeepSeek の形はそのまま（一致 900・不一致 100）", r2.usage.cache_read_input_tokens === 900 && r2.usage.input_tokens === 100);
+  const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
+  t("★ 出口は振り分けた相手（target）で呼び・記録する（主の model を書かない）", /const target = targetConfigFor\(cfg, routeName\)/.test(provider) && /model: target\.model, action: routeName/.test(provider));
+  t("★ .env.local に QWEN_API_KEY / LLM_ALT_ROUTES は無い（既定 OFF・鍵が無いので動かさない）", !/^(QWEN_API_KEY|LLM_ALT_ROUTES)=/m.test((() => { try { return readFileSync(".env.local", "utf8"); } catch { return ""; } })()));
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);

@@ -1,5 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+// 2026-09-29 API 費用の調査: ナレッジの一括判定の Sonnet（7日で200回・$1.2）が名前なしだった → 名札だけ付ける
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { canInsertAiQuestion, buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
 import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
 
@@ -92,7 +94,7 @@ export async function GET(req: NextRequest) {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         signal: AbortSignal.timeout(25_000),
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", ...sumoraLlmMarks("knowledge_bulk_judge") },
         body: JSON.stringify({
           model: "claude-sonnet-5",
           max_tokens: 500,

@@ -40,6 +40,26 @@ export const LLM_POST_APPLY_HEADER = "x-sumora-llm-post-apply";
  */
 export const LLM_CUTOFF_HEADER = "x-sumora-llm-deepseek-cutoff";
 
+/**
+ * 2026-09-29 竹内「昨日かなり DeepSeek で API 費用を使った。更に節約できないか調査」:
+ *   llm_usage_logs の名前なし（action=null）の Claude が本番7日で Sonnet 1,556回 $43・Haiku 2,705回 $10 あり、
+ *   どの処理かは route × system の先頭80字でしか読めなかった（final-check の3パス・customer-summary・resolve-area・
+ *   suggest-next-action・学習の cron 等）。呼び出し側はこの1関数で印を作り、fetch の headers／SDK の defaultHeaders に足す。
+ *   出口（extractSumoraMarks）が読んで記録し、Anthropic には送らない。
+ *   ⚠ 動きは変えない: llm-alt-provider が別クラウドに回すのは LLM_ALT_ACTIONS に書いた名前だけ（ここで付ける名前は書かれていない＝今までどおり）。
+ *   ⚠ 名前は "brain" で始めない（llm-test-mode.isBrainCall がブレインと見なして、テスト用の切り替えから外してしまう）。
+ *   非 ASCII は encodeURIComponent（extractSumoraMarks が戻す。aix-system-blocks.llmMetaHeaderValue と同じ）
+ */
+export function sumoraLlmMarks(action: string, conversationId?: string | null): Record<string, string> {
+  const enc = (v: string) => (/^[\x20-\x7e]*$/.test(v) ? v : encodeURIComponent(v));
+  const a = (action ?? "").trim();
+  if (!a) return {};
+  const out: Record<string, string> = { [LLM_ACTION_HEADER]: enc(a) };
+  const c = (conversationId ?? "").trim();
+  if (c) out[LLM_CONVERSATION_HEADER] = enc(c);
+  return out;
+}
+
 export type LlmUsageRow = {
   route: string | null;
   model: string | null;

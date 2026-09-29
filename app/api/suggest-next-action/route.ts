@@ -1,5 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-29 API 費用の調査: 次の一手の Haiku（7日で428回・$2.1）が llm_usage_logs で名前なしだった → 名札だけ付ける
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
@@ -8,7 +10,7 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 30;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("suggest_next_action") } });
 
 // ラベル参照は normalizeStatus() 適用後のみ行うため、正規化後に到達しうるキーだけ持つ
 // （contract/lost/closed_*/approved は BRAIN_SKIP_STATUSES で先に除外され、旧名は normalizeStatus で吸収される）

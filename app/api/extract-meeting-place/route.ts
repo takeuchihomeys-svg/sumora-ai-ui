@@ -1,9 +1,11 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 
 export const maxDuration = 30;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), defaultHeaders: sumoraLlmMarks("extract_meeting_place") });
 
 const MEETING_PLACE_SYSTEM = `この画像から賃貸物件の建物名と住所を読み取ってください。
 物件図面・物件資料・物件サイト・LINE会話・REINS資料など様々な形式が入力されます。

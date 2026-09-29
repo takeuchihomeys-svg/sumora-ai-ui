@@ -2,6 +2,8 @@
 import { waitUntil } from "@vercel/functions";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-29 API 費用の調査: AIX 送信後の学習・メタの差分パッチの Haiku（7日で170回）が名前なしだった → 名札だけ付ける
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import type { SummaryJson } from "@/app/api/customer-summary/route";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts）
 import { isTestConversation } from "@/app/lib/test-conversations";
@@ -109,6 +111,7 @@ async function runGapAnalysis(opts: {
 
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    defaultHeaders: sumoraLlmMarks("aix_usage_gap_learn"),
   });
 
   const prompt = `賃貸仲介AIの「次のアクション予測」の精度改善分析をしてください。
@@ -484,6 +487,7 @@ export async function POST(req: NextRequest) {
             // 3. Haiku でメタを差分パッチ（既存のトップレベル import を再利用）
             const patchClient = new Anthropic({
               apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+              defaultHeaders: sumoraLlmMarks("aix_meta_patch", conversation_id),
             });
 
             const patchRes = await patchClient.messages.create({

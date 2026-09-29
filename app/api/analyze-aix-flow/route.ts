@@ -1,15 +1,17 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { excludeTestConversations } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   timeout: 45_000,
-  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" },
+  defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("learn_aix_flow") },
 });
 
 // JST日付文字列を返す

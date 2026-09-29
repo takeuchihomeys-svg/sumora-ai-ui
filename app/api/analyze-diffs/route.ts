@@ -10,12 +10,14 @@ import { EXCLUDE_FAILED_SENT_LIKE } from "@/app/lib/example-hygiene";
 // 2026-09-18 保存する action_type が「取りに行く呼び出しのある値」かを門で確かめる（届かない行を新しく作らない）
 import { normalizePromptRuleActionType } from "@/app/lib/prompt-rule-registry";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 300;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+// 2026-09-29 API 費用の調査: 差分学習の Sonnet（7日で118回・$1.0）が llm_usage_logs で名前なしだった → 名札だけ付ける
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("learn_diffs") } });
 
 // ── 失敗example バックオフ（2026-08-18追加）──
 // 従来は分析失敗時に diff_analyzed_at を null にリセットしていたため、常に失敗する
@@ -475,6 +477,7 @@ async function autoJudgeKnowledge(
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        ...sumoraLlmMarks("learn_diffs_judge"),
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",

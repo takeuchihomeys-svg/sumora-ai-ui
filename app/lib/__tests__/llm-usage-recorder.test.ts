@@ -1,6 +1,6 @@
 // 2026-09-14 API 漏れ調査: 使用量を出口（fetch）で DB に残す。約30経路が未記録・返信生成の出力が常に0・ログ検索で集計できない、の解消
 // 実行: npx tsx app/lib/__tests__/llm-usage-recorder.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { parseAnthropicRequest, parseUsageFromJson, parseUsageFromSse, wrapFetchWithLlmUsageRecorder, wrapFetchStripSumoraMarks, type LlmUsageRow, LLM_CHAIN_PROBE_HOST, LLM_CHAIN_PROBE_HEADER, ensureLlmFetchChainInDev } from "../llm-usage-recorder";
+import { parseAnthropicRequest, parseUsageFromJson, parseUsageFromSse, wrapFetchWithLlmUsageRecorder, wrapFetchStripSumoraMarks, type LlmUsageRow, LLM_CHAIN_PROBE_HOST, LLM_CHAIN_PROBE_HEADER, ensureLlmFetchChainInDev, sumoraLlmMarks, LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER } from "../llm-usage-recorder";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 async function it(name: string, fn: () => void | Promise<void>) {
@@ -218,6 +218,28 @@ await it("探りの URL は記録の包みが答える（外に出さない・�
 });
 await it("本番・instrumentation を通っていない手元のスクリプトでは探らない", async () => {
   expect(await ensureLlmFetchChainInDev()).toBe("skipped"); // テストは instrumentation を通っていない
+});
+// 2026-09-29 名前なしの Claude 呼び出しに名札を付ける1関数（動きは変えない・出口が読んで取り除く）
+await it("sumoraLlmMarks: 名札と会話 ID を headers の形で作る（非 ASCII は encode・空なら何も付けない）", () => {
+  expect(JSON.stringify(sumoraLlmMarks("final_check_rule_check"))).toBe(JSON.stringify({ [LLM_ACTION_HEADER]: "final_check_rule_check" }));
+  expect(JSON.stringify(sumoraLlmMarks("customer_summary", "conv-1"))).toBe(JSON.stringify({ [LLM_ACTION_HEADER]: "customer_summary", [LLM_CONVERSATION_HEADER]: "conv-1" }));
+  expect(sumoraLlmMarks("最終チェック")[LLM_ACTION_HEADER]).toBe(encodeURIComponent("最終チェック"));
+  expect(JSON.stringify(sumoraLlmMarks("", "conv-1"))).toBe("{}");
+  expect(JSON.stringify(sumoraLlmMarks("x", "  "))).toBe(JSON.stringify({ [LLM_ACTION_HEADER]: "x" }));
+});
+await it("sumoraLlmMarks で付けた印は出口で行の action / conversation_id になり、Anthropic には届かない", async () => {
+  const rows: LlmUsageRow[] = [];
+  let sent: Record<string, string> = {};
+  const f = wrapFetchWithLlmUsageRecorder(async (_i, init) => { sent = Object.fromEntries(new Headers(init?.headers).entries()); return new Response(JSON.stringify({ model: "claude-haiku-4-5-20251001", usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { "content-type": "application/json" } }); },
+    { insert: async (r) => { rows.push(r); }, keepAlive: (p) => { void p; }, route: () => "/api/resolve-area" });
+  await f("https://api.anthropic.com/v1/messages", { method: "POST", body: JSON.stringify({ model: "claude-haiku-4-5-20251001" }), headers: { "x-api-key": "k", ...sumoraLlmMarks("resolve_area", "c9") } });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(rows.length).toBe(1);
+  expect(rows[0].action).toBe("resolve_area");
+  expect(rows[0].conversation_id).toBe("c9");
+  expect(LLM_ACTION_HEADER in sent).toBe(false);
+  expect(LLM_CONVERSATION_HEADER in sent).toBe(false);
+  expect(sent["x-api-key"]).toBe("k");
 });
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-09-29 API 費用の調査: 地域の解釈の Haiku（7日で751回・$2.3・キャッシュ最低長未満で命中0）が名前なしだった → 名札だけ付ける
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import OpenAI from "openai";
 
 const _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -786,7 +788,7 @@ export async function POST(req: NextRequest) {
     // 理由: parseTokens が自然言語構造を破壊するため「阪急茨木市まで30分で通える沿線」の
     //       commute制約が失われていた。全文渡しで自然言語の意味を正確に取得する。
     if (desired_area.trim()) {
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31" } });
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("resolve_area") } });
 
       const systemPrompt = `あなたは大阪府の不動産検索システムの自然言語解析エンジンです。
 エリア希望文字列から不動産検索に必要な情報を構造化して抽出してください。

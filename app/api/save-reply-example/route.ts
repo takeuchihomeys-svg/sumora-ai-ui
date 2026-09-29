@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
+// 2026-09-29 API 費用の調査: 送信後の学習（Sonnet 165回・Haiku 206回／7日）が llm_usage_logs で名前なしだった → 名札だけ付ける
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
 // 2026-09-09 Fable5 みく事例: 送信文の姿勢フラグ（締め種別・復唱率・温度）。route.ts tpo_debug.stance_draft と同じ関数群（deriveCloserSignals / evalConditionEcho）
@@ -137,6 +139,7 @@ async function callClaude(model: string, prompt: string, maxTokens = 1024): Prom
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        ...sumoraLlmMarks("reply_example_learn"),
       },
       body: JSON.stringify({
         model,

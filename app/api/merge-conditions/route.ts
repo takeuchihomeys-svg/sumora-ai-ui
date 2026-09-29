@@ -1,7 +1,9 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 
-const anthropic = new Anthropic();
+// 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
+const anthropic = new Anthropic({ defaultHeaders: sumoraLlmMarks("merge_conditions") });
 
 interface CustomerInput {
   move_in_time?: string | null;

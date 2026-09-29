@@ -2,15 +2,18 @@
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
+import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-21 竹内「なにかエラー起きている部分あるのか調査」: 途中で切れた JSON から完結分だけ拾う
 import { parseJsonArrayLoose } from "@/app/lib/json-array-salvage";
 
 export const maxDuration = 300;
 
+// 2026-09-29 API 費用の調査: Opus の整理（7日で6回・$0.9）が名前なしだった → 名札だけ付ける
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
   timeout: 120_000,
   maxRetries: 1,
+  defaultHeaders: sumoraLlmMarks("learn_rule_organize"),
 });
 
 const KNOWN_ACTION_TYPES = new Set([
