@@ -107,6 +107,8 @@ export type FinishResult = {
   ranking: CompleteRanking | null;
   ms: number;
   error: string | null;
+  /** 2026-09-29 ★物件出し★グループへのアナウンス（ブレインの回だけ） */
+  announce?: { sent: boolean; skipped: string | null; update: boolean; error: string | null } | null;
   /** 2026-09-27 ピンポイントの回が足りなかった時に広げてを積んだか（サイトごと） */
   widen?: Array<{ site: string; action: string; reason: string; command: string | null }>;
 };
@@ -118,6 +120,8 @@ export type FinishResult = {
 export async function finishCompleteGroup(input: { groupId: string; claimedIds: number[]; propertyCustomerId: string; conversationId: string | null; deadlineAt?: number }): Promise<FinishResult> {
   const t0 = Date.now();
   const out: FinishResult = { groupId: input.groupId, analyzed: 0, analyzeLevel: null, analyzeTargets: 0, ranking: null, ms: 0, error: null };
+  /** 解析が途中で止まった時のアナウンス用（読めた所まで） */
+  let rowsForAnnounce: CompleteRankRow[] = [];
   try {
     if (input.claimedIds.length) {
       const { autoAnalyzeBatch } = await import("@/app/lib/pickup-auto-analyze");
@@ -136,6 +140,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       // 2026-09-27 版 b: 画像の加点（判定と同じ希望を二重に数えない）に判定の札が要るので reason_codes は残す（割引の比べを外した後の物）
       return (d ? { ...rest, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes } : { ...rest, reason_codes: r.reason_codes ?? null }) as CompleteRankRow;
     });
+    rowsForAnnounce = rows;
     // 👑 の決め方はお客様ごと（画像で分析が必要＝画像の点・不要＝判定の点）。画面の詳細 API と同じ customerImageNeed → bestBasisFor
     const basis = await loadBestBasis(input.propertyCustomerId, rows);
     const ranking = rankCompleteGroup(rows, { basis });
@@ -153,6 +158,10 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       result: { basis_rule: bestRuleTag(basis), items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, best_total: ranking.bestTotal, best_bonus: ranking.bestBonus, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
     }).eq("group_id", input.groupId);
     if (cErr) console.warn("[pickup-complete] まとめの結果を書けない:", cErr.message);
+    // 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする…PDF もここに添付しなくて大丈夫（ブレインの際）」:
+    //   ブレインの回（merge-pdfs が検索のたびの本文を送らず group_notice=deferred を付けた行）がこのまとめにあれば、★物件出し★グループへ1回だけ知らせる
+    //   （順位・👑 はこのまとめの物・二重に送らない・失敗してもまとめは終わっている）
+    out.announce = await announceSafe({ groupId: input.groupId, propertyCustomerId: input.propertyCustomerId, order: ranking.order.map((o) => o.id), bestId: ranking.bestId, rows });
     // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形」: 判定・画像の読み取り・順位が済んだこの時に、
     //   ピンポイントの回の「通す」が足りなければ同じお客様×サイトで広げてを1回だけ積む（search-widen-chain-server・失敗してもまとめは終わっている）
     try {
@@ -164,10 +173,23 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
   } catch (e) {
     out.error = e instanceof Error ? e.message : String(e);
     await supabase.from("property_pickup_completions").update({ status: "error", finished_at: new Date().toISOString(), result: { error: out.error } }).eq("group_id", input.groupId).then(() => undefined, () => undefined);
+    // 止まった時もブレインの回は何も届かないままにしない（件数と AIXツールのリンクだけ・並びは付いていない）
+    if (rowsForAnnounce.length && !out.announce) out.announce = await announceSafe({ groupId: input.groupId, propertyCustomerId: input.propertyCustomerId, order: null, bestId: null, rows: rowsForAnnounce, stopped: true });
     return out;
   } finally {
     out.ms = Date.now() - t0;
-    console.log(JSON.stringify({ tag: "property-pickups:complete-finish", group: input.groupId, claimed: input.claimedIds.length, analyzed: out.analyzed, level: out.analyzeLevel, best: out.ranking?.bestId ?? null, basis: out.ranking?.bestBasis ?? null, items: out.ranking?.items ?? 0, ms: out.ms, error: out.error, widen: out.widen ?? null }));
+    console.log(JSON.stringify({ tag: "property-pickups:complete-finish", group: input.groupId, claimed: input.claimedIds.length, analyzed: out.analyzed, level: out.analyzeLevel, best: out.ranking?.bestId ?? null, basis: out.ranking?.bestBasis ?? null, items: out.ranking?.items ?? 0, ms: out.ms, error: out.error, widen: out.widen ?? null, announce: out.announce ?? null }));
+  }
+}
+
+/** まとめのアナウンス（pickup-group-announce-server）。投げない */
+async function announceSafe(a: { groupId: string; propertyCustomerId: string; order: number[] | null; bestId: number | null; rows: CompleteRankRow[]; stopped?: boolean }): Promise<FinishResult["announce"]> {
+  try {
+    const { announceCompleteGroup } = await import("@/app/lib/pickup-group-announce-server");
+    const r = await announceCompleteGroup({ ...a, rows: a.rows as unknown as Parameters<typeof announceCompleteGroup>[0]["rows"] });
+    return { sent: r.sent, skipped: r.skipped, update: r.update, error: r.error };
+  } catch (e) {
+    return { sent: false, skipped: null, update: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

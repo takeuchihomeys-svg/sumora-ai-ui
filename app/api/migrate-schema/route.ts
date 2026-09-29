@@ -2389,6 +2389,14 @@ CREATE TABLE IF NOT EXISTS property_pickup_completions (
 );
 CREATE INDEX IF NOT EXISTS idx_property_pickup_completions_customer ON property_pickup_completions(property_customer_id, created_at DESC);
 ALTER TABLE property_pickup_completions DISABLE ROW LEVEL SECURITY;
+-- 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする…PDF もここに添付しなくて大丈夫（ブレインの際）。
+--   ブレイン以外の状態なら今まで通りここのグループに共有する」（★物件出し★＝pickup_group_id）:
+--   group_notice='deferred'＝merge-pdfs がこの回の本文・PDF をグループに送らなかった（ブレイン）。解析の完了で1回アナウンスする（pickup-group-announce.ts）
+--   announced_item_ids／announced_at＝そのまとめで知らせた行（二重に送らない・条件付き UPDATE で先に取る）／announce_error＝LINE の失敗
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS group_notice TEXT;
+ALTER TABLE property_pickup_completions ADD COLUMN IF NOT EXISTS announced_item_ids BIGINT[];
+ALTER TABLE property_pickup_completions ADD COLUMN IF NOT EXISTS announced_at TIMESTAMPTZ;
+ALTER TABLE property_pickup_completions ADD COLUMN IF NOT EXISTS announce_error TEXT;
 -- 2026-09-25 竹内「文章の部分も要約できるようにする」: 条件の自由文のうち決定論で読めない節だけ DeepSeek で要約した物（condition-summary-server.ts）
 --   condition_summary_hash＝自由文のハッシュ＋版（文が変わらない限り DeepSeek を呼ばない）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS condition_summary JSONB;

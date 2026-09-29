@@ -12,6 +12,7 @@ import { parseRentFromSummary } from "@/app/lib/property-summary-parse";
 import { waitUntil } from "@vercel/functions";
 // 2026-09-24: 送った時の AD を送付記録に残す（見積書の割引と結び付けて利益を出す材料）
 import { parsePropertyFacts } from "@/app/lib/property-brain";
+import { groupNoticePlan } from "@/app/lib/pickup-group-announce";
 import { enrichSummariesFromPdf, rankAndAnnotateSummariesDetailed, buildRankMaterials, loadRankConditions, RANK_FAILED_NOTICE } from "@/app/lib/pickup-rank";
 import { isPlaceholderName } from "@/app/lib/listing-text";
 
@@ -341,6 +342,13 @@ export async function POST(req: NextRequest) {
     //   スタッフが自分で選んで送る時は、意図して選んだ物なので1件も減らさない。
     //   ⚠ 記録（sent_properties への書き込み）は**止めない**。次に自動で送る時に外すための材料なので。
     const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== true;
+
+    // 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする。その時アナウンス入れる形で、
+    //   PDF もここに添付しなくて大丈夫（ブレインの際）。ブレイン以外の状態なら今まで通りここのグループに共有する」
+    //   （★物件出し★＝pickup_group_id。group_id の「AIX要対応」は別の物で触らない）
+    //   ブレイン（スタッフモード以外・お客様が分かる回）は検索のたびの本文と PDF のリンクを送らず、行に group_notice=deferred を付けて
+    //   解析の完了（finishCompleteGroup）が1回だけ知らせる。決まりは pickup-group-announce.ts（戻す時は PICKUP_GROUP_DEFER=off）
+    const notice = groupNoticePlan({ sendToLine: !!send_to_line, brainMode: brain_mode, staffMode: staff_mode, hasCustomer: !!resolvedCustomerId, deferEnv: process.env.PICKUP_GROUP_DEFER });
     if (staff_mode === true) {
       console.log(JSON.stringify({ tag: "merge-pdfs:staff-mode", note: "スタッフモードなので送付済みの除外をしない" }));
     }
@@ -394,7 +402,9 @@ export async function POST(req: NextRequest) {
     //   反証 2026-09-25: pdf_data の経路（レインズ・pdf_urls が無い）も外した PDF を同じ組で落とすようにしたので、
     //   全件外れた時に「有効なPDFページがありませんでした」（400）にならないよう、説明文が0件になった時もここで知らせる
     if (send_to_line && excludedNotice && ((pdf_urls && pdf_urls.length === 0) || (property_summaries && property_summaries.length === 0))) {
-      const groupId = await getGroupId();
+      const groupId = notice.perSearch ? await getGroupId() : null;
+      // ブレインの回は検索のたびには知らせない（この回は売上サポに行が増えない＝解析の完了のアナウンスにも出ない・記録だけ）
+      if (!notice.perSearch) console.log(JSON.stringify({ tag: "merge-pdfs:group-deferred", kind: "all_already_sent", reason: notice.reason }));
       if (groupId && HANBANCYO_TOKEN) {
         const nameWithSan = customer_name ? (customer_name.endsWith("さん") ? customer_name : `${customer_name}さん`) : "";
         await pushLineMessage(groupId, `${nameWithSan} 物件（${site === "itandi" ? "itandi" : "リアプロ"}）\n今回の候補はすべて送付済みでした。\n${excludedNotice}`)
@@ -490,7 +500,14 @@ export async function POST(req: NextRequest) {
             (pdf_urls && pdf_urls.some(u => !u.includes("realnetpro"))) ? "itandi" : "リアプロ",
           lineNotice,
         );
-        await pushLineMessage(groupId, lineText);
+        // ブレインの回は送らない（解析の完了で1回アナウンス）。売上サポに記録できなかった時だけ下で今まで通り送る
+        if (notice.perSearch) await pushLineMessage(groupId, lineText);
+        else console.log(JSON.stringify({ tag: "merge-pdfs:group-deferred", kind: "search", reason: notice.reason, items: rankedSummaries?.length ?? 0 }));
+        /** 記録できず解析のアナウンスが来ない時の戻し（今まで通りの本文と PDF のリンク） */
+        const fallbackPush = (why: string) => {
+          console.warn(JSON.stringify({ tag: "merge-pdfs:group-deferred-fallback", why }));
+          return pushLineMessage(groupId, lineText).catch((e) => console.warn("[merge-pdfs] 戻しの送信に失敗:", e instanceof Error ? e.message : String(e)));
+        };
 
         // 2026-09-24 竹内「ピックアップしたのを一度アプリの売上サポに飛ばして…スタッフは確認してお客さんに送るだけ」:
         //   1回分を property_pickups に残す（PDF の文字層・判定・🌟・物件ごとの PDF）。応答は待たせない（waitUntil）。
@@ -499,6 +516,7 @@ export async function POST(req: NextRequest) {
         //   画像化と DeepSeek の読み取り（費用・時間）をブレインモード以外に広げない。
         if (brain_mode === true) {
           const summariesForPickup = rankedSummaries && rankedSummaries.length > 0 ? rankedSummaries : (property_summaries ?? []);
+          if (notice.deferred && !(summariesForPickup.length > 0 && (resolvedCustomerId || conversation_id))) await fallbackPush("no_summaries");
           if (summariesForPickup.length > 0 && (resolvedCustomerId || conversation_id)) {
             const pdfUrlsForPickup = summariesForPickup.map((_, i) => (pdf_urls?.[i] && /realnetpro\.com/.test(pdf_urls[i]) ? pdf_urls[i] : null));
             const base64ForPickup = summariesForPickup.map((_, i) => pdfBase64List[i] ?? null);
@@ -512,7 +530,14 @@ export async function POST(req: NextRequest) {
               summaries: summariesForPickup, pdfUrls: pdfUrlsForPickup, pdfBase64List: base64ForPickup,
               searchOverride,
               searchMode: body.search_mode === "pinpoint" || body.search_mode === "widen" ? body.search_mode : null,
-            }))).catch((e) => console.warn("[merge-pdfs] property_pickups の記録に失敗:", e instanceof Error ? e.message : String(e)));
+              groupNotice: notice.deferred ? "deferred" : null,
+            }))).then(async (rec) => {
+              // 印を付けて記録できなかった（失敗・0行・列が無い）＝解析のアナウンスが来ない → 今まで通りグループに送る
+              if (notice.deferred && (rec.error || rec.rows === 0 || rec.groupNotice !== "deferred")) await fallbackPush(rec.error ? "record_error" : rec.rows === 0 ? "no_rows" : "no_mark");
+            }).catch(async (e) => {
+              console.warn("[merge-pdfs] property_pickups の記録に失敗:", e instanceof Error ? e.message : String(e));
+              if (notice.deferred) await fallbackPush("record_throw");
+            });
             try { waitUntil(job); } catch { /* Vercel 以外 */ }
           }
         }
@@ -661,7 +686,7 @@ export async function POST(req: NextRequest) {
           try { waitUntil(touchJob); } catch { await touchJob; }
         }
 
-        return NextResponse.json({ ok: true, line_sent: true, url: blob.url });
+        return NextResponse.json({ ok: true, line_sent: true, url: blob.url, ...(notice.deferred ? { group_deferred: true } : {}) });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[merge-pdfs] LINE送信失敗:", msg);

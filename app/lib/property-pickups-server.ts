@@ -71,6 +71,12 @@ export type RecordPickupInput = {
    *   null＝分からない（古い拡張）→ 加点しない・画面にも印を出さない
    */
   searchMode?: "pinpoint" | "widen" | null;
+  /**
+   * 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする」:
+   *   merge-pdfs がこの回の本文を★物件出し★グループに送らなかった（ブレイン）時は "deferred"。行（property_pickups.group_notice）に残し、
+   *   解析の完了（finishCompleteGroup）が1回だけアナウンスする（pickup-group-announce.ts）
+   */
+  groupNotice?: "deferred" | null;
 };
 
 /** お客様の会話（LINE の宛先）を物件顧客から引く（最新1件） */
@@ -111,8 +117,8 @@ async function loadProfile(propertyCustomerId: string | null, searchOverride: Pi
   };
 }
 
-export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; deduped: number; noTextDraw: number; autoAnalyzed: number; autoLevel: string | null; summaryCalled: boolean; error: string | null }> {
-  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, deduped: 0, noTextDraw: 0, autoAnalyzed: 0, autoLevel: null as string | null, summaryCalled: false, error: null as string | null };
+export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; deduped: number; noTextDraw: number; autoAnalyzed: number; autoLevel: string | null; summaryCalled: boolean; groupNotice: "deferred" | null; error: string | null }> {
+  const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, deduped: 0, noTextDraw: 0, autoAnalyzed: 0, autoLevel: null as string | null, summaryCalled: false, groupNotice: null as "deferred" | null, error: null as string | null };
   const startedAt = Date.now();
   try {
     if (input.summaries.length === 0) return out;
@@ -322,8 +328,17 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       customerName: input.customerName, site: input.site,
     }, items).map((r) => (searchOverride && loaded ? { ...r, search_override: searchOverride } : r))
       // 2026-09-27 ピンポイントか広げてか（分からない回は列を出さない＝列を足す前の DB にも書ける）
-      .map((r) => (searchMode ? { ...r, search_mode: searchMode } : r));
+      .map((r) => (searchMode ? { ...r, search_mode: searchMode } : r))
+      // 2026-09-29 ブレインの回（★物件出し★グループへは解析の完了で1回知らせる）
+      .map((r) => (input.groupNotice === "deferred" ? { ...r, group_notice: "deferred" } : r));
     let ins = await supabase.from("property_pickups").insert(rows).select("id");
+    // 2026-09-29: group_notice 列を本番に足す前に動いても記録は残す（印が落ちる＝groupNotice null を返し、merge-pdfs が今まで通りグループに送る）
+    let noticeStored = input.groupNotice === "deferred";
+    if (ins.error && /group_notice/.test(ins.error.message)) {
+      console.warn("[property-pickups] group_notice 列が無いので外して記録:", ins.error.message);
+      noticeStored = false;
+      ins = await supabase.from("property_pickups").insert(rows.map((r) => { const { group_notice: _g, ...rest } = r as typeof r & { group_notice?: unknown }; void _g; return rest; })).select("id");
+    }
     // 2026-09-27: search_mode 列を本番に足す前に動いても記録は残す（加点は判定で済んでいる・印だけ落ちる）
     if (ins.error && /search_mode/.test(ins.error.message)) {
       console.warn("[property-pickups] search_mode 列が無いので外して記録:", ins.error.message);
@@ -342,6 +357,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     const { error } = ins;
     if (error) { out.error = error.message; return out; }
     out.rows = rows.length;
+    out.groupNotice = noticeStored ? "deferred" : null;
     const insertedIds = ((ins.data ?? []) as Array<{ id: number }>).map((r) => r.id);
     out.withText = rows.filter((r) => r.pdf_has_text).length;
     out.withBlob = rows.filter((r) => r.pdf_blob_url).length;
@@ -379,6 +395,6 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     out.error = e instanceof Error ? e.message : String(e);
     return out;
   } finally {
-    console.log(JSON.stringify({ tag: "property-pickups:record", batch: input.batchId.slice(0, 40), customer: input.propertyCustomerId?.slice(0, 8) ?? null, override: input.searchOverride ? (input.searchOverride.command_id?.slice(0, 8) ?? "yes") : null, search_mode: input.searchMode ?? null, ...out }));
+    console.log(JSON.stringify({ tag: "property-pickups:record", batch: input.batchId.slice(0, 40), customer: input.propertyCustomerId?.slice(0, 8) ?? null, override: input.searchOverride ? (input.searchOverride.command_id?.slice(0, 8) ?? "yes") : null, search_mode: input.searchMode ?? null, group_notice_in: input.groupNotice ?? null, ...out }));
   }
 }
