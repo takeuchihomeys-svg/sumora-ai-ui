@@ -95,6 +95,8 @@ export async function GET(req: NextRequest) {
       // 2026-09-24: ブレインの温め（brain-sweep）が claim 用に同じ表へ 'brain:'+sys_key_full の行を置く（model も同じ "claude-sonnet-5"）。
       //   use_count 0 で minUseCount に落ちるが、型でも混ぜない（use_count の既定が変わっても返信生成の温めがブレインの行を拾わない）
       .not("hash", "like", "brain:%")
+      // 2026-09-29: 最終チェック・お客様の要約・次の一手の温め（prefix-warm-server）の claim 行（'warm:'+名札+鍵）も型で混ぜない
+      .not("hash", "like", "warm:%")
       .gte("last_used_at", recentCutoff)
       .gte("use_count", KEEP_WARM_DEFAULTS.minUseCount)
       .order("last_used_at", { ascending: false })

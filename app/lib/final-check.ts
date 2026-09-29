@@ -295,6 +295,70 @@ const MODEL_CHECK_FAST = "claude-haiku-4-5-20251001"; // rule_check / anomaly_sc
 const MODEL_CHECK_DEEP = "claude-sonnet-5";           // context_check（会話理解が複雑）
 const MODEL_REVISION   = "claude-sonnet-5";           // 返信文の実際の書き直し
 
+// ─── 固定の前置きは system・変わる部分は user（2026-09-29 竹内「クロードの部分、キャッシュを営業時間中温める」）──────
+// 旧: 3パス・書き直しの全文を user の content blocks で送っていた。並びは既に「固定→動的」で cache_control も固定の末尾にあったが、
+//   system が無いので llm_usage_logs の sys_key / sys_key_full / sys_head が null になり、①鍵の種類数（前置きが揺れていないか）
+//   ②「最後の本物の呼び出し」（温めの相手）を表から追えなかった。本番7日（9/22〜29）の実測: 鍵は1種類ずつ（DB ルール更新で3回替わっただけ）で、
+//   命中しない原因は前置きの揺れではなく**営業時間中でも1時間以上空く**こと（rule_check 27.5k の書き直し 29回・書き直し 26k 24回・context 10k 30回）。
+// 新: cache_control 付きの先頭ブロックを system、残りを user に置く（文面は1文字も変えない。Anthropic の前方一致は tools→system→messages の順なので
+//   キャッシュの並びも同じ）。温め（app/lib/prefix-warm*.ts）は buildFinalCheckWarmBodies で**同じ関数**から前置きを作る。
+//   ⚠ この移動で本番の最初の1回だけキャッシュの作り直しが起きる（Haiku 27k≈$0.05・Sonnet 10k≈$0.06／26k≈$0.16）。
+/** 先頭の cache_control 付きブロック（固定の前置き）を system に、残り（動的）を user に分ける純関数。文字列の prompt は system なし */
+export function splitPromptForRequest(prompt: PromptContent): { system: PromptBlock[] | null; user: string | PromptBlock[] } {
+  if (typeof prompt === "string") return { system: null, user: prompt };
+  let n = 0;
+  while (n < prompt.length && prompt[n].cache_control) n++;
+  if (n === 0) return { system: null, user: prompt };
+  const rest = prompt.slice(n);
+  return { system: prompt.slice(0, n), user: rest.length ? rest : "." };
+}
+
+export type FinalCheckRequestBody = {
+  model: string;
+  max_tokens: number;
+  thinking: { type: "disabled" };
+  output_config?: { format: { type: "json_schema"; schema: typeof ISSUE_SCHEMA } };
+  system?: PromptBlock[];
+  messages: Array<{ role: "user"; content: string | PromptBlock[] }>;
+};
+
+/** 純関数。本物（callSonnet / runGroundedRevision）と温めが同じ形の body を作る（鍵に入るのは model・output_config・system） */
+export function buildFinalCheckRequestBody(prompt: PromptContent, model: string, maxTokens: number, opts: { structured: boolean }): FinalCheckRequestBody {
+  const { system, user } = splitPromptForRequest(prompt);
+  return {
+    model,
+    max_tokens: maxTokens,
+    thinking: { type: "disabled" },
+    ...(opts.structured ? { output_config: { format: { type: "json_schema" as const, schema: ISSUE_SCHEMA } } } : {}),
+    ...(system ? { system } : {}),
+    messages: [{ role: "user", content: user }],
+  };
+}
+
+export type FinalCheckWarmPass = "rule_check" | "anomaly_scan" | "context_check" | "revision";
+export type FinalCheckWarmInputs = { dbRules: string; finalCheckRules: string };
+export type FinalCheckWarmBody = { pass: FinalCheckWarmPass; model: string; body: FinalCheckRequestBody & { system: PromptBlock[] } };
+
+/**
+ * 温め用の body（max_tokens 1・user "."）。前置きは本物と同じ build*Prompt（draft 空・お客様固有の材料なし）から取る＝
+ * 固定の前置きが draft や会話に依存していない事の証明でもある（テスト prefix-warm.test.ts で固定）。
+ * dbRules は generate-reply が渡す物と同じ文字列（getCachedPromptRules("generate_reply", …)）、finalCheckRules は "final_check" 専用ルール
+ */
+export function buildFinalCheckWarmBodies(inputs: FinalCheckWarmInputs): FinalCheckWarmBody[] {
+  const ctx: FinalCheckContext = { dbRules: inputs.dbRules || undefined, finalCheckRules: inputs.finalCheckRules || undefined };
+  const mk = (pass: FinalCheckWarmPass, prompt: PromptBlock[], model: string, structured: boolean): FinalCheckWarmBody | null => {
+    const { system } = splitPromptForRequest(prompt);
+    if (!system) return null;
+    return { pass, model, body: { ...buildFinalCheckRequestBody(system, model, 1, { structured }), system, messages: [{ role: "user", content: "." }] } };
+  };
+  return [
+    mk("rule_check", buildRuleCheckPrompt("", ctx), MODEL_CHECK_FAST, true),
+    mk("anomaly_scan", buildAnomalyScanPrompt("", ctx), MODEL_CHECK_FAST, true),
+    mk("context_check", buildContextCheckPrompt("", ctx), MODEL_CHECK_DEEP, true),
+    mk("revision", buildSonnetRevisionPrompt("", [], ctx), MODEL_REVISION, false),
+  ].filter((x): x is FinalCheckWarmBody => x !== null);
+}
+
 // ─── チェック呼び出し（raw fetch・Vision実装と同パターン・SDK依存なし）────────────
 async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 2400, model = MODEL_CHECK_DEEP, action = "final_check"): Promise<RawIssue[]> {
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
@@ -302,13 +366,7 @@ async function callSonnet(prompt: PromptContent, timeoutMs: number, maxTokens = 
     method: "POST",
     signal: AbortSignal.timeout(timeoutMs),
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks(action) },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      thinking: { type: "disabled" },
-      output_config: { format: { type: "json_schema", schema: ISSUE_SCHEMA } },
-      messages: [{ role: "user", content: prompt }],
-    }),
+    body: JSON.stringify(buildFinalCheckRequestBody(prompt, model, maxTokens, { structured: true })),
   });
   if (!res.ok) throw new Error(`final-check ${model} HTTP ${res.status}`);
   const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string; usage?: AnthropicUsageLike };
@@ -2942,12 +3000,8 @@ export async function runGroundedRevision(
       method: "POST",
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("final_check_revision") },
-      body: JSON.stringify({
-        model: MODEL_REVISION,
-        max_tokens: Math.max(2000, Math.ceil(draft.length * 2.5)),
-        thinking: { type: "disabled" },
-        messages: [{ role: "user", content: buildSonnetRevisionPrompt(draft, issues, ctx) }],
-      }),
+      // 2026-09-29: 固定の2ブロック（指示・会社ルール）は system、動的は user（splitPromptForRequest。文面は同じ）
+      body: JSON.stringify(buildFinalCheckRequestBody(buildSonnetRevisionPrompt(draft, issues, ctx), MODEL_REVISION, Math.max(2000, Math.ceil(draft.length * 2.5)), { structured: false })),
     });
     if (!res.ok) return null;
     const data = await res.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string; usage?: AnthropicUsageLike };

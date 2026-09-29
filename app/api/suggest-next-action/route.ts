@@ -7,6 +7,8 @@ import { normalizeStatus } from "@/app/lib/status-normalize";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { PROPERTY_CHECK_RESULT_LABEL, PROPERTY_CHECK_RESULT_DESCRIPTION } from "@/app/lib/aix-taxonomy";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+import { buildSuggestNextActionSystemBlocks } from "@/app/lib/suggest-next-action-prompt";
+import { loadSuggestNextActionPrefixInputs } from "@/app/lib/suggest-next-action-prompt-server";
 
 export const maxDuration = 30;
 
@@ -658,32 +660,19 @@ export async function POST(req: NextRequest) {
 
   // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイドを並列取得 ----
   // ※成約貢献率（aix_action_attribution）は冒頭の並列取得で取得済み（attrMap / avgWinRateMap を再利用）
-  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }, { data: boundaryRuleRows }] = await Promise.all([
-    supabase.from("ai_prompts")
-      .select("key, content")
-      .like("key", "aix_logic_%"),
+  // 2026-09-29 竹内「クロードの部分、キャッシュを営業時間中温める」: 固定の前置きの材料（aix_logic_*・aix_flow_guide・BOUNDARY-* ルール）は
+  //   suggest-next-action-prompt-server.ts の同じ関数で読む（温め prefix-warm も同じ関数＝1文字もずれない）。
+  //   f-3: 線引きルールは生成側（generate-reply / AIX）だけでなく提案判断（ai_fallback）にも注入し、役割分担が提案側にも反映されるようにする
+  const [prefixInputs, { data: patternRows }] = await Promise.all([
+    loadSuggestNextActionPrefixInputs(),
     supabase.from("action_pattern_logs")
       .select("action_type, customer_msg_summary")
       .eq("conversation_status", currentStatus)
       .order("created_at", { ascending: false })
       .limit(60),
-    // aix_flow_guide（analyze-aix-flow cron の学習成果）
-    supabase.from("ai_prompts")
-      .select("content")
-      .eq("key", "aix_flow_guide")
-      .maybeSingle(),
-    // f-3: 確定済み線引きルール（BOUNDARY-* / ai-feedback の aix_boundary 回答由来）。
-    // 生成側（generate-reply / AIX）だけでなく提案判断（Sonnet ai_fallback）にも注入し、
-    // AIXと通常返信の役割分担が提案側にも反映されるようにする
-    supabase.from("ai_prompt_rules")
-      .select("rule_key, action_type, rule_text")
-      .like("rule_key", "BOUNDARY-%")
-      .eq("is_active", true)
-      .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(50),
   ]);
 
-  const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
+  const aixFlowGuide = prefixInputs.aixFlowGuide;
 
   // Layer1-3統合: trigger_action_rules 上位20件(confidence順)をHaikuに渡す候補リストとして取得
   let topRuleRows: Array<{ action_type: string | null; keyword: string | null; confidence: number | null }> = [];
@@ -733,10 +722,6 @@ export async function POST(req: NextRequest) {
         "- " + (r.action_type ?? "") + "（信頼度: " + ((r.confidence ?? 0)).toFixed(2) + "、KW例: 「" + (r.keyword ?? "").slice(0, 15) + "」）"
       ).join("\n") + "\n（絶対ルールが優先。不該当時の参考）\n\n"
     : "";
-
-  const aixLogicSection = (aixLogicRows ?? [])
-    .map((r) => (r.content as string))
-    .join("\n\n---\n\n");
 
   // アクション頻度集計
   const freq: Record<string, number> = {};
@@ -802,30 +787,6 @@ ${examples || "  (なし)"}
 `
     : "";
 
-  // f-3: 確定済み線引きルール（BOUNDARY-*）を整形。
-  // -gr（generate_reply側）と -aix（AIXアクション側）は同一 rule_text のペアで保存されるため、
-  // アクション別ルール（-aix）を優先して rule_text で重複排除し、action_type ラベル付きで注入する
-  const boundaryRules = ((boundaryRuleRows ?? []) as Array<{ rule_key: string; action_type: string | null; rule_text: string | null }>)
-    .filter((r) => (r.rule_text ?? "").trim())
-    .sort((a, b) => Number(b.rule_key.endsWith("-aix")) - Number(a.rule_key.endsWith("-aix")));
-  const seenBoundaryTexts = new Set<string>();
-  const boundaryLines: string[] = [];
-  for (const r of boundaryRules) {
-    const text = (r.rule_text as string).trim();
-    if (seenBoundaryTexts.has(text)) continue;
-    seenBoundaryTexts.add(text);
-    const label = r.action_type && r.action_type !== "generate_reply" ? `[${r.action_type}]` : "[通常返信]";
-    boundaryLines.push(`- ${label} ${text.slice(0, 200)}`);
-    if (boundaryLines.length >= 20) break;
-  }
-  const boundarySection = boundaryLines.length
-    ? `### 確定済みの役割分担ルール（AIXと通常返信の線引き・竹内さん確認済み・最優先で遵守）\n${boundaryLines.join("\n")}`
-    : "";
-
-  const aixLogicGuide = (aixLogicSection || boundarySection)
-    ? `## 各AIXボタンの発動条件（管理UIで設定済み）\n${[aixLogicSection, boundarySection].filter(Boolean).join("\n\n---\n\n")}\n\n`
-    : "";
-
   // JST現在日時（YYYY/M/D H:MM形式）
   const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const jstNowStr = `${jstNow.getUTCFullYear()}/${jstNow.getUTCMonth() + 1}/${jstNow.getUTCDate()} ${jstNow.getUTCHours()}:${String(jstNow.getUTCMinutes()).padStart(2, "0")}`;
@@ -872,37 +833,12 @@ ${examples || "  (なし)"}
     ? `## 予測精度が低いアクション（直近30日実績・提案は慎重に。他に妥当な候補があればそちらを優先）\n${lowAccuracyLines.join("\n")}\n\n`
     : "";
 
-  // フロー運用ガイドは「## 指示」やJSON出力指示より前（system側）に注入する（後置するとフォーマット遵守が弱まる）
-  // 改善15: analyze-aix-flow の出力上限（800字指示・max_tokens 1000）と整合させて末尾切れを防ぐ
-  // 中6: ガイド未学習（空）の場合はセクション自体を省略（過去パターン + 基礎フロー知識で判断）
-  const flowGuideSection = aixFlowGuide
-    ? `## AIXフロー運用ガイド（学習済み）
-${aixFlowGuide.slice(0, 1000)}
-
-`
-    : "";
-
-  // prompt cache 対策: 静的な大型テキスト（aixLogicGuide / flowGuideSection はDB更新時のみ変化・10K字超）を
-  // system の先頭ブロックに集約して cache_control を付与する。毎分変わる現在時刻（jstNowStr）や
+  // フロー運用ガイド・絶対ルール・各AIXボタンの発動条件は system 側（「## 指示」やJSON出力指示より前）。
+  // prompt cache 対策: 静的な大型テキストを system の先頭ブロックに集約して cache_control（1h）を付け、毎分変わる現在時刻（jstNowStr）や
   // 会話固有の情報（顧客名・会話履歴等）はキャッシュ境界より後ろの user メッセージ側に置く。
   // ※ 以前は jstNowStr がプロンプト2行目にあり、後続の大型ガイドが毎分キャッシュ無効化されていた
-  const staticSystem = `あなたは不動産営業AIのアドバイザーです。
-
-## 絶対ルール（必ず最初に確認すること）
-以下のパターンに該当する場合は、他の情報より優先してそのアクションを返すこと。
-
-- application_push確定条件：顧客メッセージに「申し込み」「申込」「決めます」「決めたい」「こちらで申」「入居申込」のいずれかを含む
-- viewing_invite確定条件：「内覧」「内見」「見学したい」「見学希望」「現地確認」「見に行」「みに行」のいずれかを含む。ただし「退去予定」「退去後」「空き予定」が同居する場合はproperty_check_resultを優先
-- property_check_result確定条件：物件URL（suumo/athome/homes/chintai等）が含まれる、または「まだありますか」「空いていますか」「空室ですか」「まだ残って」等の空室確認、または「保証会社」「保証料」「審査」「ペット可」「駐車場」「礼金交渉」等の物件固有条件の質問
-- estimate_sheet確定条件：「費用」「初期費用」「いくら」「スモ割」「割引」のいずれかを含む。ただし物件固有条件（保証会社・ペット等）と同居する場合はproperty_check_resultを優先
-- meeting_place確定条件：日付時刻（月曜/3月5日/午後/AM/PM等）と確定表現（伺います/で大丈夫/でお願い/確定/行けます）が同時に含まれる
-- applyingステータス時：会話ステータスが"applying" → application_push確定
-
----
-
-不動産賃貸営業の基本フロー: ヒアリング → 物件提案 → 内覧 → 見積 → 申込 の順で顧客を次のステップへ進める。
-
-${aixLogicGuide}${flowGuideSection}`.trim();
+  // 2026-09-29: 組み立ては suggest-next-action-prompt.ts（[0]=絶対ルール＋発動条件・[1]=毎日替わるフロー運用ガイド。文面は同じ・切れ目だけ）
+  const systemBlocks = buildSuggestNextActionSystemBlocks(prefixInputs);
 
   const prompt = `${brainMetaSection}${ragKnowledgeSection}${candidatesSection}${attributionSection}${accuracySection}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
@@ -935,10 +871,8 @@ ${recentText}
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 100,
-      // 営業フロー基礎知識（ハードコード）＋大型ガイドを静的 system として先頭に置き prompt cache を効かせる
-      system: [
-        { type: "text" as const, text: staticSystem, cache_control: { type: "ephemeral", ttl: "1h" } },
-      ],
+      // 営業フロー基礎知識（ハードコード）＋大型ガイドを静的 system として先頭に置き prompt cache を効かせる（1h・温めは prefix-warm）
+      system: systemBlocks,
       messages: [{ role: "user", content: prompt }],
     });
 

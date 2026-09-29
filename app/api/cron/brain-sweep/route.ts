@@ -12,6 +12,8 @@ import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { jstDayStartMs } from "@/app/lib/jst-date";
 import { MSG_SEP } from "@/app/lib/reply-context";
 import { pendingApplySummaryConversations, ensureApplyPeriodSummary } from "@/app/lib/apply-period-summary-server";
+// 2026-09-29 竹内「クロードの部分、キャッシュを営業時間中温める」: 最終チェック4段・お客様の要約・次の一手の前置きもここ（対象0件の分岐）で温める
+import { tryPrefixWarms, compactPrefixWarmResults, PREFIX_WARM_QUIET_REASONS, type PrefixWarmResult } from "@/app/lib/prefix-warm-server";
 
 // ── brain-sweep: 脳分析バックストップ（5分毎）─────────────────────────────
 // FIX(Fable5 #2): 分析の主経路は line-webhook のイベント駆動（顧客メッセージ受信 =
@@ -280,8 +282,17 @@ export async function GET(req: NextRequest) {
       if (!warm.warmed && warm.reason !== "too_soon" && !warm.reason.startsWith("outside_hours_jst") && warm.reason !== "disabled") {
         console.log(JSON.stringify({ tag: "brain-warm:skip", reason: warm.reason, gapMinutes: warm.gapMinutes ?? null, key: warm.key ?? null }));
       }
-      await finishCronLog(runLogId, true, { processed: 0, warm });
-      return NextResponse.json({ ok: true, processed: 0, warm });
+      // 2026-09-29: 最終チェック4段・お客様の要約・次の一手の前置き（prefix-warm-server）。ブレインの温めと同じ窓（50〜58分・JST 9〜22）。
+      //   失敗しても sweep を壊さない。too_soon / no_prior_call / disabled / 時間帯外は console に出さず cron_run_logs の result だけに残す
+      const prefixWarm = await tryPrefixWarms(Date.now()).catch((e): PrefixWarmResult[] => [{ name: "*", warmed: false, reason: "error:" + (e instanceof Error ? e.message : String(e)).slice(0, 200) }]);
+      for (const r of prefixWarm) {
+        if (!r.warmed && !PREFIX_WARM_QUIET_REASONS.has(r.reason) && !r.reason.startsWith("outside_hours_jst")) {
+          console.log(JSON.stringify({ tag: "prefix-warm:skip", name: r.name, reason: r.reason, gapMinutes: r.gapMinutes ?? null, key: r.key ?? null }));
+        }
+      }
+      const prefixWarmCompact = compactPrefixWarmResults(prefixWarm);
+      await finishCronLog(runLogId, true, { processed: 0, warm, prefixWarm: prefixWarmCompact });
+      return NextResponse.json({ ok: true, processed: 0, warm, prefixWarm: prefixWarmCompact });
     }
 
     let processed = 0;

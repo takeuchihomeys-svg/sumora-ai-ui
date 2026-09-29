@@ -81,6 +81,29 @@ async function main() {
   table("④ DeepSeek の日別 × action", ds, (r) => `${jstDay(String(r.created_at))} ｜ ${r.action ?? "(名前なし)"} ｜ ${r.model}`, false, 400);
   const brainMarker = (r: Record<string, unknown>) => /スモラAI|会話全体の戦略|記録係/.test(String(r.sys_head ?? ""));
   table("⑤ ブレイン系（system の先頭の語）の名札の付き方（日別）", rows.filter((r) => String(r.model).startsWith("claude") && (brainMarker(r) || String(r.action ?? "").startsWith("brain"))), (r) => `${jstDay(String(r.created_at))} ｜ ${r.action ?? "(名前なし)"}`, false, 200);
+  // 2026-09-29 竹内「クロードの部分、キャッシュを営業時間中温める」: 温める3つ（最終チェック4段・お客様の要約・次の一手）の前置きの鍵の種類数と書き直しの回数、温めの効き。
+  //   正常: 本物は鍵が1〜2種類（DB ルール／ガイドの更新で替わるだけ）・writes が営業時間中に減る・温め（*_warm）は hit が大半で cold が続かない
+  const warmReal = ["final_check_rule_check", "final_check_anomaly_scan", "final_check_context_check", "final_check_revision", "customer_summary", "suggest_next_action"];
+  const warmNames = ["final_check_warm_rule_check", "final_check_warm_anomaly_scan", "final_check_warm_context_check", "final_check_warm_revision", "customer_summary_warm", "suggest_next_action_warm"];
+  const wr = rows.filter((r) => String(r.model).startsWith("claude") && (warmReal.includes(String(r.action)) || warmNames.includes(String(r.action))));
+  if (wr.length) {
+    console.log(`\n=== ⑦ 温める3つの前置き（本物 × 温め）: 鍵の種類数・書き直し・命中（日別の鍵の替わりは ⑧） ===`);
+    const m = new Map<string, { b: B; keys: Set<string>; writes: number; hit: number; cold: number; dyn: number; none: number }>();
+    for (const r of wr) {
+      const k = `${r.action} ｜ ${String(r.model).replace("claude-", "").slice(0, 12)}`;
+      const e = m.get(k) ?? { b: mk(), keys: new Set<string>(), writes: 0, hit: 0, cold: 0, dyn: 0, none: 0 };
+      add(e.b, r); if (r.sys_key_full) e.keys.add(String(r.sys_key_full));
+      const read = n(r.cache_read), write = n(r.cache_write_1h) + n(r.cache_write_5m);
+      if (write > 0) e.writes++;
+      if (write === 0 && read > 0) e.hit++; else if (write > 0 && read > 0) e.dyn++; else if (write > 0) e.cold++; else e.none++;
+      m.set(k, e);
+    }
+    for (const [k, e] of [...m.entries()].sort((a, c) => (a[0] < c[0] ? -1 : 1))) {
+      line(k, e.b);
+      console.log(`        鍵 ${e.keys.size}種類 ／ 書き直し ${e.writes}回 ／ hit ${e.hit}・前払い(dynamic_rewrite) ${e.dyn}・cold ${e.cold}・no_cache ${e.none}`);
+    }
+    table("⑧ 温める3つの前置き: 日別 × action × 鍵（鍵が日ごとに替わる＝前置きに毎日変わる物が混ざっている）", wr.filter((r) => warmReal.includes(String(r.action))), (r) => `${jstDay(String(r.created_at))} ｜ ${r.action} ｜ ${String(r.sys_key_full ?? "(system なし)")}`, false, 200);
+  }
   // DeepSeek の画像の読み取り: 出力（推論）が費用の大半か
   const pid = ds.filter((r) => r.action === "property_image_detail");
   if (pid.length) {
