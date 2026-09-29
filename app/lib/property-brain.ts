@@ -1305,9 +1305,14 @@ export function settleFitBonus(codes: readonly string[]): string[] {
   return s.code ? [...base, s.code] : base;
 }
 
-/** 札から点（50＋合計・0〜SCORE_MAX・必須の × は上限20）。judgeProperty・applyImageFacts・applyEquipmentMatch と同じ */
-export function scoreFromCodes(codes: readonly string[]): number {
-  const s = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + reasonPoints(c), 0)));
+/**
+ * 札から点（50＋合計・0〜SCORE_MAX・必須の × は上限20）。judgeProperty・applyImageFacts・applyEquipmentMatch と同じ。
+ *   2026-09-29 prefWeight（お客様ごとのこだわりの倍率・customer-pref-weights.prefWeightResolver）を渡すと札の点は round(点 × 倍率)。
+ *   渡さなければ今まで通り（テストの「50＋札の点の合計」はこの形）
+ */
+export function scoreFromCodes(codes: readonly string[], prefWeight?: ((code: string) => number) | null): number {
+  const pts = prefWeight ? (c: string) => Math.round(reasonPoints(c) * prefWeight(c)) : reasonPoints;
+  const s = Math.max(0, Math.min(SCORE_MAX, BASE_SCORE + codes.reduce((a, c) => a + pts(c), 0)));
   return codes.includes(EQUIP_CAP_CODE) ? Math.min(s, EQUIP_STRONG_NG_CAP) : s;
 }
 
@@ -1531,6 +1536,8 @@ export function applyRoomJoToRow(
   want: RoomJoWant | null | undefined,
   jo: number | null | undefined,
   from: "資料" | "間取り図" = "間取り図",
+  /** 2026-09-29 判定に渡したお客様ごとの倍率（customer-pref-weights）。同じ物を渡す（無ければ今まで通り） */
+  prefWeight?: ((code: string) => number) | null,
 ): { score: number; verdict: Verdict; reason_codes: string[]; reasons_ja: string[]; result: "ok" | "ng" } | null {
   const old = [...(row.reason_codes ?? [])];
   if (!want || !old.includes("ROOM_JO_UNKNOWN")) return null;
@@ -1540,8 +1547,8 @@ export function applyRoomJoToRow(
   codes.push(...next);
   codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
   codes = settleFitBonus(codes);
-  const stored = typeof row.score === "number" ? row.score : scoreFromCodes(old);
-  const score = Math.max(0, Math.min(SCORE_MAX, stored + (scoreFromCodes(codes) - scoreFromCodes(old))));
+  const stored = typeof row.score === "number" ? row.score : scoreFromCodes(old, prefWeight);
+  const score = Math.max(0, Math.min(SCORE_MAX, stored + (scoreFromCodes(codes, prefWeight) - scoreFromCodes(old, prefWeight))));
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
@@ -1577,6 +1584,12 @@ export type JudgeOptions = {
    *   pinpoint なら SEARCH_PINPOINT（+10・保留なら 0点の _HELD）。widen・null（分からない）は何も付けない。売上サポの recordPickupBatch だけが渡す
    */
   searchMode?: "pinpoint" | "widen" | null;
+  /**
+   * 2026-09-29 お客様ごとのこだわりの倍率（customer-pref-weights.prefWeightForJudge）。札 → 倍率。渡すと札の点が round(点 × 倍率) になる
+   *   （AD・材料の無い札・FIT・SEARCH・IMAGE は倍率 1 のまま＝あちらで決める）。渡さなければ今まで通りの点。
+   *   2026-09-29 の当て直しでは良くなる帯が無く、既定では渡さない（PREF_WEIGHTS_DEFAULT_ON=false）
+   */
+  prefWeight?: ((code: string) => number) | null;
 };
 
 /** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
@@ -1790,7 +1803,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   const fitted = settleFitBonus(codes);
   codes.splice(0, codes.length, ...fitted);
   // 点は常に 50＋札の点の合計（重みの版があれば版の点）。上限 SCORE_MAX・必須（strong）の × は上限 20（scoreFromCodes）
-  score = scoreFromCodes(codes);
+  //   お客様ごとの倍率（opts.prefWeight）があれば札の点 × 倍率（無ければ今まで通り）
+  score = scoreFromCodes(codes, opts.prefWeight);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
@@ -1823,8 +1837,11 @@ export function isSentRoom(facts: Pick<PropertyFacts, "name" | "roomNo">, profil
   return profile.history.sentBuildings.has(normalizeBuildingName(facts.name));
 }
 
-/** 画像（間取り図）の読み取り結果を判定に足す。false は hold（落とさない）・true は加点・null は何もしない */
-export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined): Judgment {
+/**
+ * 画像（間取り図）の読み取り結果を判定に足す。false は hold（落とさない）・true は加点・null は何もしない。
+ *   prefWeight: judgeProperty に渡した物と同じ倍率（渡した判定を付け直す時は同じ物を渡す。無ければ今まで通り）
+ */
+export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined, prefWeight?: ((code: string) => number) | null): Judgment {
   if (!img) return j;
   const codes = [...j.reasonCodes];
   const flagCodes = [...j.flagCodes];
@@ -1851,7 +1868,7 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined)
   // 2026-09-25 反証レビュー: j.score は上限 200 で丸めた後の値なので、そこから足し引きすると「50＋札の合計」とずれる
   //   （素点 230 の物件に画像の × −10 で 190＝本当は 220→200）。札が決まった後に 50＋合計 で付け直す。
   //   必須の × の上限20も素点から掛け直す（反証レビュー 2026-09-24・scoreFromCodes）
-  score = scoreFromCodes(codes);
+  score = scoreFromCodes(codes, prefWeight);
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || passLineScore(codes, score) < 40 ? "hold" : "pass");
   const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
@@ -1918,6 +1935,8 @@ export function ngHitCodes(codes: ReadonlyArray<string> | null | undefined): str
 export function applyEquipmentMatch(
   j: { reasonCodes: string[] },
   m: EquipmentMatch | null | undefined,
+  /** 2026-09-29 判定に渡したお客様ごとの倍率（customer-pref-weights）。同じ物を渡す（無ければ今まで通り） */
+  prefWeight?: ((code: string) => number) | null,
 ): { score: number; verdict: Verdict; reasonCodes: string[]; flagCodes: string[]; reasonsJa: string[] } {
   const decided = new Set<string>((m?.rows ?? []).filter((r) => r.result !== "unlisted").map((r) => r.want.key));
   const imageDecided = (c: string) => {
@@ -1934,7 +1953,7 @@ export function applyEquipmentMatch(
   codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
   // 2026-09-25 案B: 設備の ○× が変わったら全部合うの札も付け直す
   codes = settleFitBonus(codes);
-  const score = scoreFromCodes(codes);
+  const score = scoreFromCodes(codes, prefWeight);
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
@@ -1963,7 +1982,7 @@ export function isDiscountCompareCode(c: string): boolean {
  */
 export function rejudgeWithoutDiscount(
   reasonCodes: readonly string[],
-  opts: { adMonths?: number | null } = {},
+  opts: { adMonths?: number | null; /** 2026-09-29 判定に渡したお客様ごとの倍率（同じ物を渡す） */ prefWeight?: ((code: string) => number) | null } = {},
 ): { changed: boolean; score: number; verdict: Verdict; reasonCodes: string[]; flagCodes: string[]; reasonsJa: string[] } {
   const had = reasonCodes.some(isDiscountCompareCode);
   let codes = reasonCodes.filter((c) => !isDiscountCompareCode(c));
@@ -1977,7 +1996,7 @@ export function rejudgeWithoutDiscount(
     codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
     codes = settleFitBonus(codes);
   }
-  const score = scoreFromCodes(codes);
+  const score = scoreFromCodes(codes, opts.prefWeight);
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
@@ -1995,15 +2014,15 @@ export function rejudgeWithoutDiscount(
  */
 export function dropDiscountFromRow(row: {
   reason_codes?: readonly string[] | null; reasons_ja?: readonly string[] | null; score?: number | null; verdict?: string | null; summary_text?: string | null;
-}): { score: number; verdict: Verdict; reason_codes: string[]; reasons_ja: string[]; negative: boolean } | null {
+}, prefWeight?: ((code: string) => number) | null): { score: number; verdict: Verdict; reason_codes: string[]; reasons_ja: string[]; negative: boolean } | null {
   const codes = row.reason_codes ?? [];
   if (!codes.some(isDiscountCompareCode)) return null;
   const f = parsePropertyFacts(row.summary_text ?? "");
   const adMonths = f.adMonths ?? (f.adYen != null && f.rentYen ? f.adYen / f.rentYen : null);
-  const j = rejudgeWithoutDiscount(codes, { adMonths });
+  const j = rejudgeWithoutDiscount(codes, { adMonths, prefWeight });
   const negative = codes.includes("PROFIT_NEGATIVE");
   const stored = typeof row.score === "number" ? row.score : null;
-  const score = negative && stored != null ? Math.max(0, Math.min(SCORE_MAX, stored + (j.score - scoreFromCodes(codes)))) : (stored ?? j.score);
+  const score = negative && stored != null ? Math.max(0, Math.min(SCORE_MAX, stored + (j.score - scoreFromCodes(codes, prefWeight)))) : (stored ?? j.score);
   const old = row.verdict === "pass" || row.verdict === "hold" || row.verdict === "drop" ? row.verdict : null;
   const verdict: Verdict = negative ? j.verdict : (old ?? j.verdict);
   const reasons_ja = negative ? j.reasonsJa : (row.reasons_ja ?? []).filter((x) => !/割引/.test(x));
@@ -2023,7 +2042,7 @@ const OLD_LOW_AD_POINTS: Record<string, number> = { AD_UNDER_1M: -8, AD_NONE: -1
  */
 export function applyAdRulesToRow(row: {
   reason_codes?: readonly string[] | null; score?: number | null; verdict?: string | null; pdf_text?: string | null;
-}): { score: number; verdict: Verdict; reason_codes: string[]; reasons_ja: string[]; change: "low_ad" | "assumed_agent" } | null {
+}, prefWeight?: ((code: string) => number) | null): { score: number; verdict: Verdict; reason_codes: string[]; reasons_ja: string[]; change: "low_ad" | "assumed_agent" } | null {
   const old = [...(row.reason_codes ?? [])];
   if (!old.length) return null;
   let codes = old.slice();
@@ -2042,9 +2061,9 @@ export function applyAdRulesToRow(row: {
   const held = codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c));
   codes = settleHeldAd(codes, held);
   codes = settleFitBonus(codes);
-  const oldPts = scoreFromCodes(old) + old.reduce((s, c) => s + (c in OLD_LOW_AD_POINTS ? OLD_LOW_AD_POINTS[c] - reasonPoints(c) : 0), 0);
+  const oldPts = scoreFromCodes(old, prefWeight) + old.reduce((s, c) => s + (c in OLD_LOW_AD_POINTS ? OLD_LOW_AD_POINTS[c] - reasonPoints(c) : 0), 0);
   const stored = typeof row.score === "number" ? row.score : oldPts;
-  const score = Math.max(0, Math.min(SCORE_MAX, stored + (scoreFromCodes(codes) - oldPts)));
+  const score = Math.max(0, Math.min(SCORE_MAX, stored + (scoreFromCodes(codes, prefWeight) - oldPts)));
   const drops = codes.filter((c) => DROP_REASON_CODES.has(c));
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");

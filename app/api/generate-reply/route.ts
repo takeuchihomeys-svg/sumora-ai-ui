@@ -255,6 +255,8 @@ import { resolveTemplateOptimizeMessage, pickerModeNote, applyPickerToTemplate, 
 import { fetchStaffTemplateExamples } from "@/app/lib/template-optimize-examples-server";
 import { replaceWaitedOpening } from "@/app/lib/waited-scope";
 import { SHADOW_NO_WRITE_FIELD } from "@/app/lib/customer-sim-shadow";
+// 2026-09-29 竹内（林田さん「ガスコンロはついてないのですか？」）: 送った物件の設備の質問は資料から読んだ事実を材料に（equipment-question.ts）
+import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -3986,6 +3988,13 @@ async function handleGenerateReply(req: NextRequest) {
       ? await resolveOwnPropertyForTurn(conversationId, recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })))
       : null;
     const ownPropertyReturnedAll = ownProperty?.all ?? false;
+    // 2026-09-29 竹内（林田さん「ガスコンロはついてないのですか？」「設備ついていれば設備や間取りにもある」）:
+    //   お客様が送った物件の設備を聞いた時だけ、対象の物件（決定論）と資料の設備欄から読んだ事実を材料に渡す（質問でなければ何もしない・枠 12秒）。
+    //   答えてよいのは設備欄に有ると書いてある物だけ・コンロは言い切らない・無い／分からないは断言しない（equipment-question.ts）
+    const equipmentAnswer = !isTemplateOptimize
+      ? await loadEquipmentAnswerWithin(12_000, { conversationId, customerText: message ?? "" })
+      : null;
+    if (equipmentAnswer) console.info("[equipment-answer]", JSON.stringify({ conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
     const confirmCtx: ConfirmationContextVerdict = resolveConfirmationContext({
       customerMessage: message ?? "",
       lastStaffMessage: lastStaffMsgForSearch,
@@ -5447,7 +5456,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-09-17 a🤫 事例: お客様が物件を2件以上送ってきた場面だけ「名前を並べたら数は書かない」を渡す
         + (customerSentMultipleProperties ? `\n\n${VAGUE_QUANTIFIER_NOTE}` : "")
         // 2026-09-18 ゆうこ事例: 今日すでに全力サポートを送っている時だけ「もう書かない」を渡す
-        + (fullSupportSentToday ? `\n\n${buildFullSupportNote(true)}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+        + (fullSupportSentToday ? `\n\n${buildFullSupportNote(true)}` : "")
+        // 2026-09-29 林田さん事例: 送った物件の設備の質問＝資料から読んだ事実（質問の時だけ・毎回変わる所）
+        + (equipmentAnswer?.note ? `\n\n${equipmentAnswer.note}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）

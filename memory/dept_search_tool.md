@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-09-29 採点: お客様ごとのこだわりの倍率（形だけ入れた・**表は空＝点は今まで通り**・拡張は変えていない）
+竹内「お客さんの希望の条件によって加点を変動…実際に送った物件で実績しても学べる」
+- `app/lib/customer-pref-weights.ts`（純関数・56テスト）: 条件の種類×強さ→倍率（1.0〜2.0）の表1つ。judgeProperty `opts.prefWeight`・付け直す関数（applyImageFacts・applyEquipmentMatch・rejudgeWithoutDiscount・dropDiscountFromRow・applyAdRulesToRow・applyRoomJoToRow・scoreGapNote）も同じ物を受け取る。切替 `CUSTOMER_PREF_WEIGHTS=on/off`（既定 off）
+- 安全の線: 加点にだけ掛ける・AD 以外の加点は倍率後も 15点（AD2ヶ月 20÷1.3）まで・AD/FIT/SEARCH/IMAGE/_UNKNOWN は ×1・学ぶのは 10回以上かつ 8人以上（1人3回まで）・悪い帯が1つ／通す⇔保留の変化が1件でもあれば使わない
+- 当て直し（`build-customer-pref-episodes.ts` → `backtest-customer-pref-weights.ts`・読むだけ・383回108人）: 時期 0.435→0.435・お客様で分ける 0.450→0.450／0.458→0.458＝変更なし → 表は空。本番の判定（property-pickups-server）には**繋いでいない**
+- 売上サポの回（家賃・エリア・築年の札が揃う回）が増えたら同じ2本で当て直し、良くなった時だけ表に書いて繋ぐ
+
+## 2026-09-29 売上サポ: 審査中・商談中はチェックに入れない・新規のお客様は AD の高い物件を優先（拡張は変えていない）
+竹内（9/28・未桜さんのスクショ #787 ファステート難波SOUTHベック 306＝資料の現況「商談中」・162点に既定でチェック）「審査中と出ているのは物件ピックアップのチェックのところに入れない」＋「新規のお客さんは他に10件あれば AD1 は入れない。AD1.5 以上、更に AD2 以上を優先。AD2 以上で8件ない場合が AD1 も。スコアリングとは別（利益）。新着なら必要」
+- 決まり `app/lib/pickup-ad-priority.ts`（純関数）: AD の段は判定の札から（AD_HIGH 系・アズ・スタットのみなし＝AD2／AD_1_5M＝AD1.5／AD_1M＝AD1／無し＝不明）。`selectByAdPriority`＝点の並びの候補を AD2 → AD1.5 →（**AD2 が8件未満の時だけ**）AD1・不明で10件まで。新規＝回が届いた時点でまだ物件をお送りしていない（`isFirstProposalRound`・sent_properties のご提案＝共有・物件確認・見積書を除く）。お送りした後の回（新着）は今まで通り
+- `pickup-review-order.pickQualityTop(items, bestId, max, {firstProposal})`：審査中・商談中（`dealStatusOf`＝API の deal_status → terms.evidence.moveIn）を除く＋新規なら AD の段。`defaultAixChecks(..., {firstProposalSentAt})`・✨ボタン・知らせ（dealExcluded・adExcluded）が同じ結果。10件に絞る時（pickTopForAix）は審査中・商談中が一番後ろ。**手で選ぶのは可**（AIX に渡す前に confirm）
+- 詳細 API（/api/property-pickups view=detail）: 行に `deal_status`（pdf_text も読む）・お客様に `first_proposal_sent_at`（読めない時は項目なし＝今まで通り）
+- 監査 `scripts/audit-pickup-ad-priority.ts`（読むだけ）: 9/1 以降 64回。旧の既定のチェックに審査中/商談中 54件（32回）→0。新規の回 9 のうち選ぶ物件が変わる 5回・AD で外れる 7件（田邉さんの回: AD2 が14件あるのに AD1 の5件が送られていた→新は AD2 だけ10件）。「AD2≥8 かつ AD1.5 以上<10」の回は0（8件と10件の読み方の差は過去には出ない）
+- **9/29 反証で直した**: ①審査中・商談中の確かめ（confirm）が「💾 画像保存」に付いていて AIX に渡すボタンで聞いていなかった → 純関数 `pickup-review-order.dealConfirmMessage` を sendViaAix（👑 の1件送りも）の10件に絞った後に置き、画像保存からは外した ②新規の判定が sent_properties を会話IDだけで読み、別の会話で送り済みのお客様（652d039f・9/16 に10件）を新規と扱っていた → 会話 or お客様（property_customer_id）で読み、delivery は読んだ後に絞る。監査も同じに直して **新規の回 9→7・選ぶ物件が変わる回 5→4・AD で外れる 7件**（最初のご提案の時刻が変わったお客様 3人）
+- 資料の現況の読み: 1,219行で terms と pdf_text の読みは154行すべて一致。文字の無い資料（#1〜#45 の初期の15行）だけ読めない
+- **未決**: ①AD 不明を AD1 と同じ段にした ②👑（点の1位）は変えていない＝まとめ64件中11件の 👑 が審査中/商談中 ③新規の 👑 が AD1 の時も既定のチェックから外れる
+- テスト `app/lib/__tests__/pickup-ad-priority.test.ts`（41・田邉さん #799〜#826・未桜さん #787 の実物）
+
 ## 2026-09-29 v2.5.38 ブレイン×AIX でも 11時頃・17時頃の自動便を走らせる（**拡張の再読み込み必須**）
 - 竹内「ブレインの AIX モードで午前11時頃と午後17時頃の一括検索が行われていない」: 9/28・9/29 の午前の便（38・39人）・9/28 の午後の便が全部「ブレインモード中のため自動便（AIX連動）は実行しない」で cancelled になっていた（9/24 の決まり「ブレインなら AIX の自動便は連動しない」が残っていた）
 - mode-core の runAutoSchedule を AIX なら true に（ブレインの有無によらない）。background の見送りは runAutoSchedule が false の時だけ
@@ -19,6 +37,15 @@
 - DB: `property_pickups.group_notice`・`property_pickup_completions.announced_item_ids/announced_at/announce_error`（migrate-schema に追加・本番に適用済み 9/29）
 - テスト: `app/lib/__tests__/pickup-group-announce.test.ts`（44）・pickup-complete 33・pickup-auto-complete 45 ほか 0 failed。YUMA の cg_509cd061_716 で文を組み立て（送っていない）＝👑 #728 が DB の best_id と一致
 - **竹内さんに頼むこと**: デプロイ後、ブレイン ON の PC で YUMA（509cd061）を1回検索 → 検索のたびの本文と PDF が★物件出し★に来ない・3〜5分後に「🧠 AIXツールの解析が終わりました」が1通だけ届く・リンクで AIXツールのその回が開く。ブレイン OFF／スタッフモードの検索は今まで通り来る
+
+## 2026-09-29 スタッフが実際に送った物件 × 採点のズレを数える仕組み（読むだけ・**重みは直していない**・拡張は変えていない）
+竹内（9/28）「実際どの物件をオススメでスタッフは送っているかで…お客さん毎に訴求する点…こだわり条件が強い場合スコアリングの加点が変わる、そこの率を分析する仕組を作る」
+- 純関数 `app/lib/recommend-score-drift.ts`（テスト `app/lib/__tests__/recommend-score-drift.test.ts` 43・実物の札と🌟の本文）＋ `scripts/audit-recommend-vs-score.ts [--days=180] [--pool] [--show=3] [--out=x.json]`（DB に書かない・LLM なし・YUMA 除く・お客様は会話 ID の先頭8文字だけ）
+- 材料: 売上サポの回（保存の点・札・complete_rank・👑＝まとめの best_id）× 72時間以内（次の回まで）にお客様に届いた送付＋🌟（recommendation_snapshots）／🌟の回は今の判定で付け直し（scoring-learning の loadEpisodes）。比べる相手は🌟（無ければ送った物の点の一番）
+- 出す物: 🌟の点の順位・👑＝🌟の率・👑 と違う回で差がついた札／条件の種類（家族）× こだわりの強さ（strong/stated/none）の「選んだ物が満たす率・候補全体・👑」「差が重みか材料の欠けか」／訴求（🌟の本文）が採点に見えていたか／ピックアップの送信が点の上位 N 件どおりか
+- **最初の結果（180日）**: 売上サポで🌟と結べた回 5（👑＝🌟 2・🌟の点の順位 1,1,6,8,9）。🌟の回 220（比べられる 130・全部同点 90・🌟が1位 23%・👑＝🌟 36%・🌟が3位以内 56%）。👑 と違う回の差の大半は材料の欠け（AD 35回・間取り 26回＝🌟の物件は画像で送って AD・間取りが読めていない）。重みの差は築年 7・エリア 4・家賃 3 回ほど。訴求は家賃・広さ・初期費用・駅近・敷礼0・間取りが上位だが、採点が🌟の物件で見えていたのは 0〜17%（設備は 0%）。こだわりの強さで🌟の順位は変わらない（相対順位 強い 0.386・弱い 0.395・普通 0.422。お客様 弱い 62・普通 20・強い 18。9/29 の実行にそろえた）
+- 9/29 再確認: 🌟の時点の候補（recommendation_snapshots.candidates）は家賃ありが 1,899件中 359件（8月分は 0）＝🌟の回の「家賃 RENT_UNKNOWN 174件」は組み立ての誤りでなく材料の欠け。訴求の表は「全部の回」と「売上サポの回だけ（材料が揃う）」に分けた。売上サポの回では家賃・駅近・敷礼0・初期費用の訴求は 100% 採点が見ていて、見えていないのは設備（オートロック 4/4・独立洗面台・浴室乾燥機・宅配ボックス）だけ
+- **次にやる事（竹内さんの判断）**: 重みを直す前に🌟の物件の材料（AD・間取り・設備）を候補に埋める。売上サポの回（9/24〜）が増えたら週1回このスクリプトを回して「足りない候補／強すぎる候補」を見る
 
 ## 2026-09-27 v2.5.37 AIX の検索（source=aix）にも「今回だけ」の上書き（search_override）を重ねる（**拡張の再読み込み必須**）
 竹内「一時調整か、そもそもの条件の切り替えかの判断をブレインが行う」

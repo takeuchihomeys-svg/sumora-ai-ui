@@ -258,10 +258,12 @@ export function buildPickupCardView(row: PickupCardInput): PickupCardView {
  *   ②上限（200）で丸めた →「上限200（素点 X）」 ③必須の × で上限20 →「必須の×で上限20（素点 X）」
  *   竹内「各項目の点数…見ていてスコアリングのずれも気づきやすい」: 黙って合わない数字を並べない
  */
-export function scoreGapNote(reasonCodes: readonly string[] | null, stored: number | null): string | null {
+export function scoreGapNote(reasonCodes: readonly string[] | null, stored: number | null, prefWeight?: ((code: string) => number) | null): string | null {
   if (!reasonCodes || reasonCodes.length === 0 || stored == null) return null;
-  const raw = BASE_SCORE + reasonCodes.reduce((a, c) => a + reasonPoints(c), 0);
-  const now = scoreFromCodes(reasonCodes);
+  // 2026-09-29 お客様ごとの倍率（customer-pref-weights）で判定した行は、同じ倍率を渡して比べる（渡さないと倍率の分を「今の配点では」と誤って出す）
+  const pts = prefWeight ? (c: string) => Math.round(reasonPoints(c) * prefWeight(c)) : reasonPoints;
+  const raw = BASE_SCORE + reasonCodes.reduce((a, c) => a + pts(c), 0);
+  const now = scoreFromCodes(reasonCodes, prefWeight);
   if (now !== stored) return `今の配点では ${now}点`;
   if (raw === stored) return null;
   if (reasonCodes.includes(EQUIP_CAP_CODE) && raw > EQUIP_STRONG_NG_CAP) return `必須の×で上限${EQUIP_STRONG_NG_CAP}（素点 ${raw}）`;

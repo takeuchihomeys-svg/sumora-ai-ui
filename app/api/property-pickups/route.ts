@@ -15,6 +15,9 @@ import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
 import { groupPickupRounds } from "@/app/lib/pickup-card-view";
 import { listingAdStamp, listingRoomText, nameWithRoom } from "@/app/lib/pickup-listing-text";
+// 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックに入れない」「新規のお客さんは AD の高い物件を優先」（純関数）
+import { pickupDealStatus } from "@/app/lib/listing-deal-status";
+import { firstProposalSentAt, type SentLite as ProposalSentLite } from "@/app/lib/pickup-ad-priority";
 import { dropDiscountFromRow, isDiscountCompareCode } from "@/app/lib/property-brain";
 import { widenChainNotes, type ChainCommandLite, type PickupLite } from "@/app/lib/search-widen-chain";
 import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
@@ -388,17 +391,34 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   // 2026-09-27 竹内「物件名に号室もいれる」「AD の項目は重要なので物件名の横にもスタンプでいれる」: 資料の文字（pdf_text）から
   //   号室名と AD の欄を資料の文字のまま読んで行に付ける（pickup-listing-text.ts）。資料の全文は画面に返さない（出す行の分だけ別に読む）
   const shownIds = batches0.flatMap((b) => b.items.map((it) => it.id));
-  const listingOf = new Map<number, { ad_text: string | null; room_text: string | null }>();
+  const listingOf = new Map<number, { ad_text: string | null; room_text: string | null; deal_status: string | null }>();
+  const termsOf = new Map(rows.map((r) => [r.id, (r as { terms?: { evidence?: { moveIn?: string | null } | null } | null }).terms ?? null]));
   for (let i = 0; i < shownIds.length; i += 100) {
     const { data: tx, error: txErr } = await supabase.from("property_pickups").select("id, pdf_text").in("id", shownIds.slice(i, i + 100));
     if (txErr) { console.warn("[property-pickups] 資料の文字を読めない（号室・AD の札なし）:", txErr.message); break; }
-    for (const t of (tx ?? []) as Array<{ id: number; pdf_text: string | null }>) listingOf.set(t.id, { ad_text: listingAdStamp(t.pdf_text), room_text: listingRoomText(t.pdf_text) });
+    for (const t of (tx ?? []) as Array<{ id: number; pdf_text: string | null }>) listingOf.set(t.id, { ad_text: listingAdStamp(t.pdf_text), room_text: listingRoomText(t.pdf_text),
+      // 2026-09-28 資料の現況の申込の状況（審査中・商談中）。表の照合の根拠（terms.evidence.moveIn）→ 資料の文字の「現況/入居時期」の順
+      deal_status: pickupDealStatus({ terms: termsOf.get(t.id) ?? null, pdf_text: t.pdf_text }) });
   }
-  const withListing = <T extends { id: number }>(it: T) => ({ ...it, ad_text: listingOf.get(it.id)?.ad_text ?? null, room_text: listingOf.get(it.id)?.room_text ?? null });
+  const withListing = <T extends { id: number }>(it: T) => ({ ...it, ad_text: listingOf.get(it.id)?.ad_text ?? null, room_text: listingOf.get(it.id)?.room_text ?? null, deal_status: listingOf.get(it.id)?.deal_status ?? null });
   const batches = batches0.map((b) => ({ ...b, items: b.items.map(withListing) }));
   const first = rows[0] ?? null;
   const convId = conv ?? first?.conversation_id ?? null;
-  const { data: cv } = convId ? await supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : { data: null };
+  // 2026-09-28 新規のお客様か（まだ物件を直接お送りしていない）: 一番古いお送りの行（sent_history は新しい40件だけなので別に読む）
+  //   2026-09-29 反証: 会話IDだけで読むと、別の会話で送り済みのお客様（652d039f: 9/16 に別の会話で10件）を新規と扱う
+  //   → sent-image-record.knownPropertyNames と同じく「会話 or お客様」で読む。delivery（お客様に届けた送付）は読んだ後に絞る（.or を2つ重ねない）
+  const custId = pcid ?? (first as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+  const firstSentQ = (() => {
+    if (!convId && !custId) return Promise.resolve<string | null | undefined>(undefined);
+    let q = supabase.from("sent_properties").select("sent_at, channel, delivery, source");
+    q = convId && custId ? q.or(`conversation_id.eq.${convId},property_customer_id.eq.${custId}`) : convId ? q.eq("conversation_id", convId) : q.eq("property_customer_id", custId as string);
+    return Promise.resolve(q.order("sent_at", { ascending: true }).limit(300))
+      .then((r) => (r.error ? undefined : firstProposalSentAt(((r.data ?? []) as ProposalSentLite[]).filter((x) => x.delivery == null || x.delivery === "customer"))), () => undefined);
+  })();
+  const [{ data: cv }, firstSent] = await Promise.all([
+    convId ? supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : Promise.resolve({ data: null }),
+    firstSentQ,
+  ]);
   const c = cv as { customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null } | null;
   // 画像で確かめる希望: 分析済みの回に保存した希望（会話・訴求込み）があればそれ、無ければ条件欄だけで軽く判定（pickup-best.customerImageNeed）
   const cond = (condRes.data ?? null) as { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
@@ -447,6 +467,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       line: c ? { profile_image_url: c.profile_image_url, updated_at: c.updated_at, account: c.account, status: c.status, last_sender: c.last_sender } : null,
       sent_history: (sentRes.data ?? []) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
       has_more_batches: rounds.length > nBatches,
+      // 2026-09-28 一番最初に物件をお送りした時刻（null＝まだ・読めない時は項目なし＝画面は今まで通りの選び方）
+      ...(firstSent !== undefined ? { first_proposal_sent_at: firstSent } : {}),
       best,
       image_need: imageNeed,
       condition_summary: sum ? { line: sum.line, uncheckable: sum.uncheckable, ai: sum.ai.length > 0 } : null,

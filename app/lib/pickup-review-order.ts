@@ -10,6 +10,9 @@
 import { BASE_SCORE, reasonJa, reasonPoints, ngHitCodes } from "./property-brain";
 import { PICKUP_AIX_MAX } from "./pickup-aix-handoff";
 import { compareOverall } from "./pickup-best";
+// 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックのところに入れない」「新規のお客さんは AD1 を入れない・AD2 以上を優先」（純関数）
+import { listingDealStatus } from "./listing-deal-status";
+import { selectByAdPriority, isFirstProposalRound } from "./pickup-ad-priority";
 
 /** 2026-09-27 判定・画像で分析の点・回の時刻（あれば）も並びに使う（pickup-best.compareOverall） */
 export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null; verdict?: string | null; created_at?: string | null; reason_codes?: string[] | null; image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null };
@@ -36,8 +39,30 @@ export function sortForReview<T extends ReviewOrderRow>(items: ReadonlyArray<T>,
 
 // ── AIX に渡す物件のチェック（2026-09-26）。page.tsx が import する pickup-aix-handoff に判定の部品を持ち込まないよう、並びの隣に置く ──
 /** AIX に渡せる候補の行（未確認・外す候補でない・72時間切れでない） */
-export type AixPickRow = { id: number; rank: number; recommended: number; score: number | null; status: string; verdict: string | null; expired?: boolean; reason_codes?: string[] | null };
+export type AixPickRow = { id: number; rank: number; recommended: number; score: number | null; status: string; verdict: string | null; expired?: boolean; reason_codes?: string[] | null;
+  /** 2026-09-28 資料の現況の申込の状況（審査中・商談中）。詳細 API が pdf_text から読んだ値。無ければ terms.evidence.moveIn から読む */
+  deal_status?: string | null; terms?: { evidence?: { moveIn?: string | null } | null } | null };
 const aixCandidate = (r: AixPickRow) => r.status === "pending" && r.verdict !== "drop" && !r.expired;
+
+/**
+ * 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックのところに入れない」（9/27「商談中は審査中と同じ」）:
+ *   資料の現況が審査中・商談中の部屋か（資料の文字のまま・listing-deal-status）。既定のチェック・質の高い10件・10件に絞る時に使う
+ */
+export function dealStatusOf(r: Pick<AixPickRow, "deal_status" | "terms">): "審査中" | "商談中" | null {
+  if (r.deal_status === "審査中" || r.deal_status === "商談中") return r.deal_status;
+  return listingDealStatus({ evidenceMoveIn: r.terms?.evidence?.moveIn ?? null });
+}
+
+/**
+ * 2026-09-29 反証: 手でチェックした審査中・商談中の部屋を AIX に渡す前に確かめる文（無ければ null＝確かめない）。
+ *   確かめる所は AIX に渡すボタン（sendViaAix・👑 の1件送りも）。画像の保存では聞かない
+ */
+export function dealConfirmMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_status" | "terms"> & { property_name?: string | null; room_no?: string | null }>): string | null {
+  const deal = rows.map((r) => ({ r, st: dealStatusOf(r) })).filter((x) => x.st);
+  if (deal.length === 0) return null;
+  const names = deal.map(({ r, st }) => `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}：${st}`).join("、");
+  return `資料の現況が審査中・商談中の物件が${deal.length}件入っています（${names}）。このまま AIX に渡しますか？`;
+}
 
 /**
  * 点の高い順（画面の並び sortForReview と同じ・👑 を先頭）に max 件まで選ぶ。
@@ -45,7 +70,10 @@ const aixCandidate = (r: AixPickRow) => r.status === "pending" && r.verdict !== 
  *   既定のチェックが「未確認で外す候補以外 全部」＝20件になり、押すと「10件までにしてください」で止まっていた。
  */
 export function pickTopForAix<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX): number[] {
-  return sortForReview(items.filter(aixCandidate), bestId ?? null).slice(0, max).map((r) => r.id);
+  // 2026-09-28 手でチェックした審査中・商談中の部屋は、絞る時に一番後ろ（先に外れる）
+  const cand = items.filter(aixCandidate);
+  const open = cand.filter((r) => !dealStatusOf(r)), deal = cand.filter((r) => dealStatusOf(r));
+  return [...sortForReview(open, bestId ?? null), ...sortForReview(deal, bestId ?? null)].slice(0, max).map((r) => r.id);
 }
 
 /**
@@ -58,11 +86,24 @@ export function pickTopForAix<T extends AixPickRow>(items: ReadonlyArray<T>, bes
  *   - max 件（AIX 物件ピックアップの上限 PICKUP_AIX_MAX＝10）まで。足りなくても NG の物件で埋めない
  *   返す物: 選んだ id・NG で除いた件数（未送信の物だけ数える）
  */
-export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX): { ids: number[]; ngExcluded: number } {
+/*
+ * 2026-09-28 竹内:
+ *   ①「審査中と出ているのは物件ピックアップのチェックのところに入れない」→ 資料の現況が審査中・商談中の部屋は選ばない（dealExcluded に数える・NG が先）
+ *   ②「新規のお客さんの物件ピックアップの際…AD1 の物件は入れない。AD1.5 以上で、更に AD2 以上が優先。AD2 以上で8件ない場合が AD1 も」
+ *     → opts.firstProposal（まだ物件を1件もお送りしていないお客様の回）の時だけ、点の並びの後に AD の段で選ぶ（pickup-ad-priority.selectByAdPriority）。
+ *       adExcluded＝点の順だけなら入っていたのに AD の段で外れた数。お送りした後の回（新着）は今まで通り点の順
+ */
+export type QualityPick = { ids: number[]; ngExcluded: number; dealExcluded: number; adExcluded: number; firstProposal: boolean };
+export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposal?: boolean } = {}): QualityPick {
   const base = items.filter((r) => r.status === "pending" && !r.expired);
   const isNg = (r: T) => r.verdict === "drop" || r.verdict === "hold" || ngHitCodes(r.reason_codes).length > 0;
-  const ok = base.filter((r) => !isNg(r));
-  return { ids: sortForReview(ok, bestId ?? null).slice(0, max).map((r) => r.id), ngExcluded: base.length - ok.length };
+  const notNg = base.filter((r) => !isNg(r));
+  const ok = notNg.filter((r) => !dealStatusOf(r));
+  const sorted = sortForReview(ok, bestId ?? null);
+  const firstProposal = !!opts.firstProposal;
+  if (!firstProposal) return { ids: sorted.slice(0, max).map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: 0, firstProposal };
+  const sel = selectByAdPriority(sorted, max);
+  return { ids: sel.picked.map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: sel.adSkipped.length, firstProposal };
 }
 
 /** ボタンの文字（「✨ 質の高い10件を選ぶ」・10件に足りない時は「✨ 質の高い9件を選ぶ」） */
@@ -71,12 +112,16 @@ export function qualityPickLabel(n: number): string {
 }
 
 /** 選んだ後の知らせ（「✨ 質の高い9件を選びました（NG 条件・保留の物件は選びません・3件）」） */
-export function qualityPickMessage(picked: number, ngExcluded: number, max = PICKUP_AIX_MAX): string {
+export function qualityPickMessage(picked: number, ngExcluded: number, max = PICKUP_AIX_MAX, extra: { dealExcluded?: number; adExcluded?: number } = {}): string {
   const ng = ngExcluded > 0 ? `NG 条件・保留の物件は選びません・${ngExcluded}件` : "";
+  // 2026-09-28 審査中・商談中／新規のお客様の AD の段
+  const deal = (extra.dealExcluded ?? 0) > 0 ? `審査中・商談中は選びません・${extra.dealExcluded}件` : "";
+  const ad = (extra.adExcluded ?? 0) > 0 ? `新規のお客様は AD の高い物件を優先・AD1 など${extra.adExcluded}件を外しました` : "";
+  const why = [ng, deal, ad].filter(Boolean).join("・");
   const short = picked < max ? `${max}件に足りません` : "";
-  const tail = [short, ng].filter(Boolean).join("・");
+  const tail = [short, why].filter(Boolean).join("・");
   return picked === 0
-    ? `選べる物件がありません${ng ? `（${ng}）` : ""}`
+    ? `選べる物件がありません${why ? `（${why}）` : ""}`
     : `✨ 質の高い${picked}件を選びました${tail ? `（${tail}）` : ""}`;
 }
 
@@ -84,10 +129,15 @@ export function qualityPickMessage(picked: number, ngExcluded: number, max = PIC
  * 詳細を開いた時の既定のチェック: まとめの回ごとに、点の高い順に PICKUP_AIX_MAX 件まで（それより下はチェックを外しておく）。
  * 2026-09-27 竹内「お客さんからの NG 条件がある物件は選択されないようにする」: 既定のチェックも「✨ 質の高い10件」と同じ（pickQualityTop・NG／保留は付けない）
  */
-export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T> }>, bestId?: number | null, max = PICKUP_AIX_MAX): Record<number, boolean> {
+/**
+ * 2026-09-28 opts.firstProposalSentAt: お客様へ一番最初に物件をお送りした時刻（null＝まだ・undefined＝分からない）。
+ *   回（created_at）がそれより前なら「新規のお客様の回」＝AD の段で選ぶ（pickup-ad-priority.isFirstProposalRound）
+ */
+export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T>; created_at?: string | null }>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposalSentAt?: string | null } = {}): Record<number, boolean> {
   const out: Record<number, boolean> = {};
   for (const r of rounds) {
-    const top = new Set(pickQualityTop(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max).ids);
+    const firstProposal = isFirstProposalRound(r.created_at, opts.firstProposalSentAt);
+    const top = new Set(pickQualityTop(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max, { firstProposal }).ids);
     for (const it of r.items) out[it.id] = top.has(it.id);
   }
   return out;

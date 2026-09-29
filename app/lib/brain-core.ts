@@ -112,6 +112,8 @@ import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedK
 import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch";
 // 2026-09-27 ③: 資料の現況が「審査中」のお送りしたお部屋をブレインに渡す（資料の文字のまま）
 import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
+// 2026-09-29 送った物件の設備の質問＝資料の設備欄から読んだ事実（equipment-question.ts・林田さん事例）
+import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -2295,6 +2297,14 @@ export async function analyzeConversation(
     customerStateBlockText += buildScreeningRoomsBrainText((pickRows ?? []) as Array<{ property_name: string | null; room_no: string | null; terms?: { evidence?: { moveIn?: string | null } | null } | null; pdf_text?: string | null }>);
   } catch (e) {
     console.warn("[brain-core] screening rooms block failed:", conversationId, e instanceof Error ? e.message : e);
+  }
+  // 2026-09-29 竹内（林田さん「ガスコンロはついてないのですか？」）: 送った物件の設備の質問の時だけ、対象の物件（決定論）と
+  //   資料の設備欄から読んだ事実を渡す（本文で答えるか・確かめて AIX【物件確認した】で答えるかの材料）。毎回変わる並び（3）の中。
+  //   質問でなければ DB も引かない。枠 12秒を過ぎたら今まで通り（equipment-answer-server）
+  const equipmentAnswer = await loadEquipmentAnswerWithin(12_000, { conversationId, customerText: unrepliedTurn.text });
+  if (equipmentAnswer?.note) {
+    customerStateBlockText += `\n\n${equipmentAnswer.note}`;
+    console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
   let viewingsText = customerStateText ? "" : viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {

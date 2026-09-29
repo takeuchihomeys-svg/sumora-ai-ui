@@ -9,7 +9,8 @@ import { bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/
 // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」「物件名に号室もいれる」「AD は物件名の横にもスタンプで」（純関数・import なし）
 import { nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel, type ImageChip } from "@/app/lib/pickup-listing-text";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
-import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage } from "@/app/lib/pickup-review-order";
+import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage, dealConfirmMessage } from "@/app/lib/pickup-review-order";
+import { isFirstProposalRound } from "@/app/lib/pickup-ad-priority";
 // 2026-09-27 竹内「ここは合わせる」: 画像の点を判定の点に足す（画像の加点・判定と同じ希望は数えない・純関数）
 import { imageBonusOf, signedPoints, IMAGE_BONUS_MAX, IMAGE_BONUS_MIN, type ImageAnalysisForBonus } from "@/app/lib/pickup-image-bonus";
 import { floorLabel, NOT_NEEDED_CLAUSE_RE, type PickupEquipment } from "@/app/lib/pickup-equipment";
@@ -52,6 +53,8 @@ type Item = {
   search_mode?: string | null;
   /** 2026-09-27 資料の文字のまま: AD の欄（「A D 2ヶ月（税込）（-1万）」）と号室名（「0808」）。詳細 API が pdf_text から読む（無ければ null） */
   ad_text?: string | null; room_text?: string | null;
+  /** 2026-09-28 資料の現況の申込の状況（審査中・商談中）。詳細 API が読む（無ければ null・画面は terms からも読む） */
+  deal_status?: string | null;
 };
 
 /** 2026-09-27 カードの検索の種類の印（🎯 ピンポイント／🔎 広げて）。分からない行は出さない */
@@ -87,7 +90,9 @@ type Customer = { key: string; property_customer_id: string | null; conversation
   /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
   condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null;
   /** 2026-09-27 自動で広げた回の説明（サイトごと・詳細だけ） */
-  widen_chain?: Array<ChainNote & { at: string | null }> };
+  widen_chain?: Array<ChainNote & { at: string | null }>;
+  /** 2026-09-28 一番最初に物件をお送りした時刻（null＝まだ＝新規のお客様・項目なし＝分からない→今まで通りの選び方） */
+  first_proposal_sent_at?: string | null };
 /** 一覧の行（軽い要約だけ。画像・本文は開いた時に読む） */
 type ListCustomer = {
   key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null;
@@ -440,7 +445,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
       if (resetChecks) {
         // 既定のチェック: 未確認のうち「外す候補」以外を、まとめの回ごとに点の高い順（👑 を先頭）で AIX に渡せる10件まで
         // 2026-09-26 竹内のスクショ「AIX物件ピックアップ（20件）」: 旧は外す候補以外を全部チェック＝20件で、押すと「10件までに」で止まっていた
-        setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null));
+        // 2026-09-28 審査中・商談中は付けない・新規のお客様の回は AD の高い物件を優先（pickup-review-order・pickup-ad-priority）
+        setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null, PICKUP_AIX_MAX, { firstProposalSentAt: json.customer.first_proposal_sent_at }));
       }
       return json.customer;
     } catch (e) {
@@ -1025,6 +1031,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     if (targets.length > PICKUP_AIX_MAX) { setMsg(`AIX で一度に送れるのは${PICKUP_AIX_MAX}件までです（今 ${targets.length}件にチェック。${PICKUP_AIX_MAX}件以下にしてください）`); return; }
     const convId = c.conversation_id ?? b.conversation_id;
     if (!convId) { setMsg("このお客様は LINE の会話に紐付いていません（お客さん画面で紐付けてから）"); return; }
+    // 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックのところに入れない」: 既定・質の高い10件では選ばない。
+    //   手で選んだ時（👑 の1件送りも）は渡せる（番手の申込で良いと確かめた等）が、AIX に渡す前に確かめる
+    //   2026-09-29 反証: 前は「💾 画像保存」の方に付いていて、AIX に渡すボタンでは確かめていなかった
+    const dealMsg = dealConfirmMessage(targets);
+    if (dealMsg && typeof window !== "undefined" && !window.confirm(dealMsg)) return;
     const noImage = targets.filter((it) => !it.trim_image_url);
     if (noImage.length > 0 && !(await trim(b, noImage))) return;
     // 2026-09-25: 1件＝AIX【物件オススメ】（資料をセット）・2件以上＝AIX【物件ピックアップした】（画像を並べてセット）
@@ -1519,14 +1530,15 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                         選んだ物件はこの下の「AIX物件ピックアップ」でそのまま AIX に渡る（pickup-aix-handoff・10件まで） */}
                     {(() => {
                       const bid = open.best && bb.batch.items.some((x) => x.id === open.best?.id) ? open.best.id : null;
-                      const q = pickQualityTop(bb.batch.items, bid);
+                      // 2026-09-28 新規のお客様の回（まだ物件をお送りしていない）は AD の高い物件を優先・審査中/商談中は選ばない
+                      const q = pickQualityTop(bb.batch.items, bid, PICKUP_AIX_MAX, { firstProposal: isFirstProposalRound(bb.batch.created_at, open.first_proposal_sent_at) });
                       const sel = bb.batch.items.filter((it) => checked[it.id] && isPickupCheckable(it.status)).length;
                       return (
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[#607d8b] leading-snug">{sel}件を選択中{q.ngExcluded ? `・NG 条件・保留の物件 ${q.ngExcluded}件は選びません` : ""}</span>
+                          <span className="text-[10px] text-[#607d8b] leading-snug">{sel}件を選択中{q.ngExcluded ? `・NG 条件・保留の物件 ${q.ngExcluded}件は選びません` : ""}{q.dealExcluded ? `・審査中/商談中 ${q.dealExcluded}件は選びません` : ""}{q.firstProposal ? `・新規のお客様: AD2以上を優先${q.adExcluded ? `（AD1 など ${q.adExcluded}件を外す）` : ""}` : ""}</span>
                           <button type="button" disabled={!!busy || q.ids.length === 0 || batchExpired(bb.batch)}
-                            title="未送信で NG 条件（保留・外す候補の理由）に当たらない物件を、合計（判定の点＋画像の点）の高い順に10件まで選ぶ。10件に足りなくても NG の物件では埋めない"
-                            onClick={() => { const pick = new Set(q.ids); setChecked((p) => { const n = { ...p }; for (const it of bb.batch.items) n[it.id] = pick.has(it.id); return n; }); setMsg(qualityPickMessage(q.ids.length, q.ngExcluded)); }}
+                            title="未送信で NG 条件（保留・外す候補の理由）に当たらない物件を、合計（判定の点＋画像の点）の高い順に10件まで選ぶ。10件に足りなくても NG の物件では埋めない。資料の現況が審査中・商談中の部屋は選ばない。新規のお客様（まだ物件をお送りしていない）は AD2以上 → AD1.5 → （AD2以上が8件未満の時だけ）AD1 の順"
+                            onClick={() => { const pick = new Set(q.ids); setChecked((p) => { const n = { ...p }; for (const it of bb.batch.items) n[it.id] = pick.has(it.id); return n; }); setMsg(qualityPickMessage(q.ids.length, q.ngExcluded, PICKUP_AIX_MAX, { dealExcluded: q.dealExcluded, adExcluded: q.adExcluded })); }}
                             className="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-full" style={{ background: "#ede7f6", color: "#4527a0", opacity: busy || q.ids.length === 0 || batchExpired(bb.batch) ? 0.4 : 1 }}>
                             {q.ids.length ? qualityPickLabel(q.ids.length) : "✨ 質の高い物件なし（NG 条件）"}</button>
                         </div>

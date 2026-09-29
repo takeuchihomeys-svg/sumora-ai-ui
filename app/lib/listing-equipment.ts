@@ -234,6 +234,70 @@ function firstMatch(text: string, res: RegExp[] | undefined): string | null {
   return null;
 }
 
+/** ok の式に当たった所のうち、直後（当たった語の括弧の中も含む）に否定・残置が続く最初の物（readEquipmentItemsFromText 専用） */
+const NEG_AFTER = /^[:：・]?[（(]?(?:なし|無し|無(?!料)|ナシ|ﾅｼ|不可|残置)/;
+function negatedOk(text: string, res: RegExp[] | undefined): { evidence: string; leftover: boolean } | null {
+  for (const re of res ?? []) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    for (const m of text.matchAll(g)) {
+      if (!m[0]) continue;
+      const end = (m.index ?? 0) + m[0].length;
+      const inner = m[0].match(/[（(]([^)）]{0,6})[)）]$/)?.[1] ?? "";
+      const after = text.slice(end, end + 6);
+      if (/残置/.test(inner) || /^[（(]?残置/.test(after)) return { evidence: text.slice(m.index ?? 0, end + (/^[（(]?残置[)）]?/.exec(after)?.[0].length ?? 0)), leftover: true };
+      if (/^(?:なし|無し|無(?!料)|ナシ|不可)$/.test(inner)) return { evidence: m[0], leftover: false };
+      const n = NEG_AFTER.exec(after);
+      if (n) return { evidence: m[0] + n[0], leftover: false };
+    }
+  }
+  return null;
+}
+
+/**
+ * 2026-09-29 反証: お客様の設備の質問で、売上サポの資料の文字層（parseListingEquipment）を使う時の安全側の直し。
+ *   ok の項目のうち、文字の中に「〇〇なし」「〇〇(残置)」の書き方がある物だけを ng／unlisted に下げる（上げることは無い）。
+ *   採点（parseListingEquipment そのもの）は変えない
+ */
+export function downgradeNegatedItems(items: Record<EquipKey, EquipFact>, raw: string | null | undefined): Record<EquipKey, EquipFact> {
+  const scope = squash(norm(raw));
+  if (!scope) return items;
+  const out = { ...items };
+  for (const [key, rule] of Object.entries(RULES) as Array<[EquipKey, Rule]>) {
+    if (key === "no_guarantor" || out[key]?.status !== "ok") continue;
+    const neg = negatedOk(scope, rule.ok);
+    if (neg) out[key] = neg.leftover ? { status: "unlisted", evidence: null, hint: neg.evidence } : { status: "ng", evidence: neg.evidence };
+  }
+  return out;
+}
+
+/**
+ * 2026-09-29 お客様の設備の質問（equipment-question.ts）: 資料の画像から写した「設備欄の文字」だけを、同じ決まり（RULES）で読む。
+ *   parseListingEquipment は文字層の全体（見出し・表）が前提なので、欄の文字だけの時はこちら。ok を先に見る・書いていない物は unlisted（同じ）
+ */
+export function readEquipmentItemsFromText(raw: string | null | undefined): Record<EquipKey, EquipFact> {
+  const items = emptyItems();
+  const scope = squash(norm(raw));
+  if (!scope) return items;
+  for (const [key, rule] of Object.entries(RULES) as Array<[EquipKey, Rule]>) {
+    // 2026-09-29 反証: 「エアコンなし」「オートロック無し」「追焚なし」「浴室乾燥機無」を ok と読み、お客様に「備わったお部屋」と答えてよい材料になっていた
+    //   （ok の式に否定の先読みが無い・ok を先に見るため）。この経路はお客様への答えに直結するので、ok に当たった語のすぐ後ろ（「：」「（」を挟んでも）に
+    //   なし／無（無料は除く）／不可 が続けば ng、「残置」（前の入居者の物・設備ではない）なら unlisted に倒す。1か所でも否定があれば ok にしない。
+    //   parseListingEquipment（採点）にも同じ穴があるが、採点への影響は別の話なので今は直さない
+    if (key !== "no_guarantor") {
+      const neg = negatedOk(scope, rule.ok);
+      if (neg) {
+        items[key] = neg.leftover ? { status: "unlisted", evidence: null, hint: neg.evidence } : { status: "ng", evidence: neg.evidence };
+        continue;
+      }
+    }
+    const ok = firstMatch(scope, rule.ok);
+    if (ok) { items[key] = { status: "ok", evidence: ok }; continue; }
+    const ng = firstMatch(scope, rule.ng);
+    if (ng) items[key] = { status: "ng", evidence: ng };
+  }
+  return items;
+}
+
 /** 見出しだけの行（「設 備」のように字間が空いても良い）の位置 */
 function headingIndex(text: string, label: string): number {
   const re = new RegExp(`(?:^|\\n)[ \\t]*${label.split("").join("[ \\t]*")}[ \\t]*(?=\\n|$)`);

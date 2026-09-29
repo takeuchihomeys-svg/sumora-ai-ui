@@ -149,6 +149,14 @@ export function scoreOf(codes: string[], base: (code: string) => number, w?: Wei
 }
 
 /**
+ * AD 以外の加点の上限（AD 2ヶ月の物件に付く AD の札の点の合計 ÷ adPriorityRatio）。
+ *   学習（proposeWeights・boundsFor）と、お客様ごとのこだわりの倍率（customer-pref-weights.prefWeightResolver）で同じ線を使う（2026-09-29）
+ */
+export function adCapOf(pointsOf: (code: string) => number, adPriorityRatio: number = LEARNING_CONFIG.adPriorityRatio, adTwoMonthCodes: readonly string[] = DEFAULT_AD_TWO_MONTH_CODES): number {
+  return adTwoMonthCodes.reduce((a, c) => a + Math.max(0, pointsOf(c)), 0) / adPriorityRatio;
+}
+
+/**
  * その札が取ってよい範囲（今の点 from・動かす上限・向き・AD の方針）。
  *   adCap: AD 以外の加点の上限（AD 2ヶ月以上の合計 ÷ 1.3）
  */
@@ -334,7 +342,7 @@ export function proposeWeights(train: Episode[], base: (code: string) => number,
   const eps = usableEpisodes(train);
   const stats = codeStats(eps);
   const w0 = (c: string) => weightOf(c, base, current);
-  const adCap = adTwoMonthCodes.reduce((a, c) => a + Math.max(0, w0(c)), 0) / cfg.adPriorityRatio;
+  const adCap = adCapOf(w0, cfg.adPriorityRatio, adTwoMonthCodes);
   const skipped: Proposal["skipped"] = [];
   const learn: string[] = [];
   for (const [code, st] of Object.entries(stats)) {
