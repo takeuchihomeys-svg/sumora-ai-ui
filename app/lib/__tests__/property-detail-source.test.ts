@@ -6,7 +6,8 @@
 //   材料は売上サポの行（property_pickups.pdf_text）の実物の形（リアプロの元付資料の文字層）を短くした物。
 import {
   detailSourceFor, countDetailLabels, reusableLinesByPdfUrl, buildTextDetailUser, planDetailSource, detailModelLabel, pickupRowDetailPlan,
-  PROPERTY_TEXT_DETAIL_SYSTEM, DETAIL_TEXT_MIN_CHARS, DETAIL_TEXT_MAX_CHARS, PROPERTY_TEXT_DETAIL_MAX_TOKENS,
+  pickupRowForProperty, dropUngroundedLines,
+  PROPERTY_TEXT_DETAIL_SYSTEM, PROPERTY_TRANSCRIPT_DETAIL_SYSTEM, DETAIL_TEXT_MIN_CHARS, DETAIL_TEXT_MAX_CHARS, PROPERTY_TEXT_DETAIL_MAX_TOKENS,
 } from "../property-detail-source";
 import { parseDetailResult, PROPERTY_IMAGE_DETAIL_PROMPT } from "../property-image-read";
 
@@ -182,10 +183,62 @@ it("★ 影の比較（12件）で返った形: 保証会社名・帖数・入�
   expect(r.lines.find((l) => l.startsWith("入居条件"))).toBe("入居条件: 2人入居不可 事務所利用不可");
   expect(r.lines.find((l) => l.startsWith("保証会社"))).toBe("保証会社: 要（オリコフォレントインシュア）");
 });
+console.log("\n── 2026-09-29 送った画像を物件名・号室で売上サポの行に結ぶ（pickupRowForProperty）──");
+const LINK_NOW = Date.parse("2026-09-29T13:00:00Z");
+const PK = [
+  { id: 1, property_name: "プレサンス梅田東ベータ", room_no: "1403", created_at: "2026-09-29T12:29:00Z" },
+  { id: 2, property_name: "プレサンス梅田東ベータ", room_no: "1403", created_at: "2026-09-27T12:29:00Z" },
+  { id: 3, property_name: "ファーストフィオーレ福島野田Ⅱ", room_no: "0806", created_at: "2026-09-29T12:29:00Z" },
+  { id: 4, property_name: "エステムコート難波サウスプレイスⅣラグジー", room_no: "401", created_at: "2026-09-20T00:00:00Z" },
+];
+it("★ 読みの揺れ（ブ/プ・号室の先頭0）でも同じ物件の新しい行に結ぶ（本番の読み「プレサンス梅田東ベータ 1403」）", () => {
+  expect(pickupRowForProperty({ propertyName: "プレサンス梅田東ベータ", roomNumber: "01403" }, PK, LINK_NOW)?.id).toBe(1);
+  expect(pickupRowForProperty({ propertyName: "ファーストフィオーレ福島野田II", roomNumber: "806" }, PK, LINK_NOW)?.id).toBe(3);
+});
+it("★ 別の部屋・号室が読めない・建物の番号が違う・7日より古い行には結ばない（画像の読み取りへ）", () => {
+  expect(pickupRowForProperty({ propertyName: "プレサンス梅田東ベータ", roomNumber: "1402" }, PK, LINK_NOW)).toBe(null);
+  expect(pickupRowForProperty({ propertyName: "プレサンス梅田東ベータ", roomNumber: "" }, PK, LINK_NOW)).toBe(null);
+  expect(pickupRowForProperty({ propertyName: "ファーストフィオーレ福島野田", roomNumber: "0806" }, PK, LINK_NOW)).toBe(null);
+  expect(pickupRowForProperty({ propertyName: "エステムコート難波サウスプレイスⅣラグジー", roomNumber: "401" }, PK, LINK_NOW)).toBe(null);
+  expect(pickupRowForProperty(null, PK, LINK_NOW)).toBe(null);
+});
+
+console.log("\n── 2026-09-29 文字層の読み取りで作った可否の行を落とす（dropUngroundedLines）──");
+it("★ 文字層に「ペット」が無いのに「ペット: 不可」（指示の例を写した・監査 #1798 清水谷喜多ビル）は落とす", () => {
+  const text = "間取タイプ 1K\n駐車場 なし\n【水廻り】 バス・トイレ別・洗濯機置場（屋外）\n【条件】 保証会社利用必須";
+  const r = dropUngroundedLines(["間取り: 1K", "ペット: 不可", "洗濯機置場: 屋外", "保証会社: 保証会社利用必須"], text);
+  expect(r.dropped.join("|")).toBe("ペット: 不可");
+  expect(r.kept.length).toBe(3);
+});
+it("★ 康煕部首（保証⼈・駐⾞場）や行の途中の空白で入った文字層でも、書いてある行は落とさない（誤削除0）", () => {
+  const text = "連帯保証⼈ 不要\n駐⾞場 空有\nオートバイ 置 場 有\nペ ット 相談";
+  const r = dropUngroundedLines(["連帯保証人: 不要", "駐車場: 空有", "バイク置場: 有", "ペット: 相談"], text);
+  expect(r.dropped.length).toBe(0);
+});
+it("表に無い項目（設備・入居条件・構造）は触らない", () => {
+  const r = dropUngroundedLines(["設備: エアコン", "入居条件: 単身者限定", "構造: RC造"], "何も無い");
+  expect(r.kept.length).toBe(3);
+});
+
 it("文字層が物件の資料でない（見積書）なら中身を書き出さない", () => {
   const r = parseDetailResult(`{"kind":"estimate","lines":["初期費用: ○○円"]}`);
   expect(r.kind).toBe("estimate");
   expect(r.lines.length).toBe(0);
+});
+
+// ─── 2026-09-29（B・その2）送った画像の書き写しを読む時の指示 ───
+it("書き写し用の指示は文字層の指示の文面を保ち（前置きを変えない）、2部屋以上の一覧と「6階建」の2つだけ足す", () => {
+  expect(PROPERTY_TRANSCRIPT_DETAIL_SYSTEM.includes("資料の画像を書き写した文字です。")).toBe(true);
+  expect(PROPERTY_TEXT_DETAIL_SYSTEM.includes("資料（PDF）から取り出した文字です。")).toBe(true);
+  expect(PROPERTY_TRANSCRIPT_DETAIL_SYSTEM.includes("2部屋以上の一覧")).toBe(true);
+  expect(PROPERTY_TRANSCRIPT_DETAIL_SYSTEM.includes("6階建")).toBe(true);
+  expect(PROPERTY_TEXT_DETAIL_SYSTEM.includes("2部屋以上")).toBe(false);
+});
+it("★ 書き写しに言葉の無い可否は落ちる（Goパレス福島の書き写し＝ペットの字なし）", () => {
+  const transcript = ["号室: 203 / 家賃: 64,000 / 状況: 10/末", "《室内設備》", "室内洗濯パン", "③駐輪代は各部屋1台無料"].join(String.fromCharCode(10));
+  const g = dropUngroundedLines(["現況: 203号室 10/末", "ペット: 不可", "洗濯機置場: 室内洗濯パン", "駐輪場: 各部屋1台無料"], transcript);
+  expect(g.dropped.join("|")).toBe("ペット: 不可");
+  expect(g.kept.length).toBe(3);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

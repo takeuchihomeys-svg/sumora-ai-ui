@@ -40,17 +40,72 @@
    *   sort           … "updated"（午後・更新順）／"ad"（午前・AD 高い順）
    *   max_pages      … 午後 1・午前 3
    */
+  //   2026-09-29 v2.5.41 更新日の計画（payload.update_days_plan・サーバーが「前回の検索から空いた時間を覆う所まで」広げた値）:
+  //     payloadForCustomer がそのお客様の分を _update_days に写した payload は、自動便（午前・午後）でも web_brain でも
+  //     その値を popup の経路にも渡す（rp_update_days・null＝指定なしは rp_update_days_none）。計画の無い payload は今までどおり
   function optsFromPayload(payload) {
-    if (!isAuto(payload)) return null;
+    var plan = decidedDays(payload);
+    if (!isAuto(payload)) {
+      if (!plan) return null;
+      return { mode: null, rp_update_days: plan.days, rp_update_days_none: plan.days == null, sort: null, max_pages: null };
+    }
     var pm = payload.mode === "pm";
     var days = payload.rp_update_days != null ? Number(payload.rp_update_days) : NaN;
     var pages = Number(payload.max_pages);
     return {
       mode: pm ? "pm" : "am",
-      rp_update_days: pm && isFinite(days) && days > 0 ? days : null,
+      rp_update_days: plan ? plan.days : (pm && isFinite(days) && days > 0 ? days : null),
+      rp_update_days_none: !!(plan && plan.days == null),
       sort: payload.sort === "updated" ? "updated" : (payload.sort === "ad" ? "ad" : null),
       max_pages: isFinite(pages) && pages > 0 ? Math.floor(pages) : null,
     };
+  }
+
+  /** payloadForCustomer が決めた更新日（{days}・days=null は指定なし）。無ければ null */
+  function decidedDays(payload) {
+    var d = payload && typeof payload === "object" ? payload._update_days : null;
+    if (!d || typeof d !== "object") return null;
+    var n = d.days == null ? null : Number(d.days);
+    return { days: n != null && isFinite(n) && n > 0 ? Math.floor(n) : null };
+  }
+
+  /**
+   * 2026-09-29 v2.5.41 命令の payload → このお客様の分（update_days_plan.by_customer[id].days を rp_update_days と _update_days に写す）。
+   *   計画の無い命令・そのお客様の分が無い時は元の payload をそのまま返す（今までどおり）
+   *   2026-09-30 点検の直し: 計画はサーバーが**積んだ時刻**（cron 10:00／16:00）で空いた時間を数えている。実際の検索は not_before
+   *     （10:15〜11:15 のばらつき＋お客様の間）の後なので、積んだ時は 23時間でも検索する時は 25時間になり、1日以内では前回との間が漏れる
+   *     （点検 search-audit-check の gap_uncovered は検索を始めた時刻で数える＝そちらと同じ時刻で決め直す）。
+   *     e.last_search_at があれば**今の時刻で**要る日数を数え直し、広げるだけ（狭めない）。線は app/lib/search-update-days.ts と同じ（余裕 0.5時間・1/3/7/14・超えたら指定なし）
+   */
+  var UPDATE_CHOICES = [1, 3, 7, 14];
+  var UPDATE_GRACE_HOURS = 0.5;
+  function widenForNow(days, lastIso, nowMs) {
+    if (days == null || !lastIso) return { days: days, widened: false, gap_hours: null };
+    var t = Date.parse(lastIso);
+    var now = Number(nowMs);
+    if (!isFinite(t) || !isFinite(now) || t > now + 60000) return { days: days, widened: false, gap_hours: null };
+    var gapH = Math.max(0, (now - t) / 3600000);
+    var need = Math.max(1, Math.ceil(Math.max(0, gapH - UPDATE_GRACE_HOURS) / 24));
+    if (days >= need) return { days: days, widened: false, gap_hours: gapH };
+    var cover = null;
+    for (var i = 0; i < UPDATE_CHOICES.length; i++) if (UPDATE_CHOICES[i] >= need) { cover = UPDATE_CHOICES[i]; break; }
+    return { days: cover, widened: true, gap_hours: gapH };
+  }
+  function payloadForCustomer(payload, customerId, nowMs) {
+    if (!payload || typeof payload !== "object" || customerId == null) return payload || null;
+    var plan = payload.update_days_plan;
+    var e = plan && plan.by_customer ? plan.by_customer[String(customerId)] : null;
+    if (!e || typeof e !== "object" || !("days" in e)) return payload;
+    var n = e.days == null ? null : Number(e.days);
+    var days = n != null && isFinite(n) && n > 0 ? Math.floor(n) : null;
+    var w = widenForNow(days, e.last_search_at || null, nowMs != null ? nowMs : Date.now());
+    var out = Object.assign({}, payload);
+    out.rp_update_days = w.days;
+    out._update_days = {
+      days: w.days, widened: !!e.widened || w.widened,
+      gap_hours: w.gap_hours != null ? Math.round(w.gap_hours * 10) / 10 : (e.gap_hours == null ? null : Number(e.gap_hours)),
+    };
+    return out;
   }
 
   /** storage に置く形（お客様×サイトの印付き） */
@@ -58,7 +113,7 @@
     if (!opts || customerId == null) return null;
     return {
       customerId: String(customerId), site: String(site || ""), mode: opts.mode,
-      rp_update_days: opts.rp_update_days, sort: opts.sort, max_pages: opts.max_pages,
+      rp_update_days: opts.rp_update_days, rp_update_days_none: !!opts.rp_update_days_none, sort: opts.sort, max_pages: opts.max_pages,
       at: Number(nowMs) || 0,
     };
   }
@@ -140,6 +195,7 @@
   return {
     STORAGE_KEY: STORAGE_KEY, TTL_MS: TTL_MS,
     isAuto: isAuto, optsFromPayload: optsFromPayload, record: record, forCustomer: forCustomer,
+    payloadForCustomer: payloadForCustomer, decidedDays: decidedDays,
     pageLimit: pageLimit, allowAdSort: allowAdSort,
     planSites: planSites, hasItandiTab: hasItandiTab,
     siteGapMs: siteGapMs, customerGapMs: customerGapMs, skippedNote: skippedNote,

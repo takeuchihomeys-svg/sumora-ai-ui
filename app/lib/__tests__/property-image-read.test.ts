@@ -3,7 +3,7 @@
 //
 // 2026-09-20 竹内「その画像の読み込みに限定して deepseek V4.1 Flash のモデルを使う」
 // 材料は**本番で実際に返ってきた応答**（scripts/verify-deepseek-vision2.ts の実測）。
-import { parseReadResult, PROPERTY_IMAGE_MAX_TOKENS, PROPERTY_IMAGE_MODEL_DEFAULT } from "../property-image-read";
+import { parseReadResult, parseDetailResult, clipLongLine, propertyImageReadThinking, parseTranscript, sentImageDetailMode, PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS, PROPERTY_IMAGE_TRANSCRIBE_PROMPT, PROPERTY_IMAGE_READ_NO_THINKING_MAX_TOKENS, PROPERTY_IMAGE_MAX_TOKENS, PROPERTY_IMAGE_MODEL_DEFAULT } from "../property-image-read";
 import { resolveReadProperty } from "../property-name-match";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -92,8 +92,63 @@ it("★ max_tokens が十分大きい（小さいと推論で使い切って空�
   expect(PROPERTY_IMAGE_MAX_TOKENS).atLeast(4000);
 });
 
+console.log("\n── 2026-09-29 推論なしの読み取りと行の形 ──");
+it("★ 物件名などの読み取りは既定で推論なし（PROPERTY_IMAGE_READ_THINKING=on で旧に戻る）", () => {
+  expect(propertyImageReadThinking({})).toBe(false);
+  expect(propertyImageReadThinking({ PROPERTY_IMAGE_READ_THINKING: "on" })).toBe(true);
+  expect(PROPERTY_IMAGE_READ_NO_THINKING_MAX_TOKENS).atLeast(1500);
+});
+it("★ 設備欄を全部写した長い行（推論なし・125〜978字）は捨てずに区切りで120字以内に切る", () => {
+  const long = "設備: " + Array.from({ length: 40 }, (_, i) => `設備${i}`).join("、");
+  const r = parseDetailResult(JSON.stringify({ kind: "property", lines: [long, "ペット: 不可"] }));
+  expect(r.lines.length).toBe(2);
+  expect(r.lines[0].startsWith("設備: 設備0、設備1")).toBe(true);
+  expect(r.lines[0].length <= 120).toBe(true);
+  expect(/、$/.test(r.lines[0])).toBe(false);
+});
+it("区切りの無い長い地の文は今まで通り捨てる", () => {
+  expect(clipLongLine("備考: " + "あ".repeat(200)).length > 120).toBe(true);
+  const r = parseDetailResult(JSON.stringify({ kind: "property", lines: ["備考: " + "あ".repeat(200)] }));
+  expect(r.lines.length).toBe(0);
+});
+it("★ 値が空の行（「ペット: 」）・資料の空欄の横線（「駐車場: ー」）は材料にしない", () => {
+  const r = parseDetailResult(JSON.stringify({ kind: "property", lines: ["ペット: ", "楽器:", "駐車場: ー", "駐輪場: －", "間取り: 1K"] }));
+  expect(r.lines.join("|")).toBe("間取り: 1K");
+});
+
 it("既定のモデルは DeepSeek-V4.1-Flash（deepseek-flash）", () => {
   expect(PROPERTY_IMAGE_MODEL_DEFAULT).toBe("deepseek-flash");
+});
+
+
+// ─── 2026-09-29（B・その2）書き写し → 文字の読み取り ───
+console.log("\n■ parseTranscript / sentImageDetailMode");
+it("1行目の種類を分け、本文は2行目から（本番の書き写しの形）", () => {
+  const t = parseTranscript("【物件の資料】\n物件名: HRフロントリーガル城北\n駐車場: なし\n備考: ●ペット飼育可");
+  expect(t.kind).toBe("property");
+  expect(t.body.startsWith("物件名:")).toBe(true);
+});
+it("見積書・本人確認書類・その他は種類だけ（本文は使わない側で捨てる）", () => {
+  expect(parseTranscript("【見積書】").kind).toBe("estimate");
+  expect(parseTranscript("【本人確認書類・申込書】").kind).toBe("document");
+  expect(parseTranscript("【その他】\n").kind).toBe("other");
+});
+it("種類の行が無ければ kind=null・本文は全部（文字の読み取りに種類を決めさせる）", () => {
+  const t = parseTranscript("間取り: 1K\n構造: RC");
+  expect(t.kind).toBe(null);
+  expect(t.body).toBe("間取り: 1K\n構造: RC");
+});
+it("コードブロックで囲まれても読む", () => {
+  expect(parseTranscript("```\n【物件の資料】\n間取り: 1K\n```").kind).toBe("property");
+});
+it("既定は書き写し・SENT_IMAGE_DETAIL_MODE=image で旧の画像読み", () => {
+  expect(sentImageDetailMode({})).toBe("transcribe");
+  expect(sentImageDetailMode({ SENT_IMAGE_DETAIL_MODE: "image" })).toBe("image");
+  expect(sentImageDetailMode({ SENT_IMAGE_DETAIL_MODE: " IMAGE " })).toBe("image");
+});
+it("書き写しは推論なしで上限 3000（上限は費用にならない・推論が無いので空応答にならない）", () => {
+  expect(PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS).toBe(3000);
+  expect(PROPERTY_IMAGE_TRANSCRIBE_PROMPT.includes("判断は不要")).toBe(true);
 });
 
 console.log(`\n${failed === 0 ? "✅ 全 PASS" : "❌ 失敗あり"}  ${passed} passed / ${failed} failed`);

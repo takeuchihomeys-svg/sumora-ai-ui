@@ -242,7 +242,11 @@ export async function callVisionAlt(
         max_tokens: opts?.maxTokens ?? VISION_ALT_MAX_TOKENS,
         // 出力の大半が推論（実測 4,661〜5,998 のうち答えは200前後）で、これが遅さの原因。
         // VISION_ALT_EFFORT=low で推論を軽くできる（未設定なら既定のまま）
-        ...(effort ? { reasoning_effort: effort } : {}),
+        // 2026-09-29: VISION_ALT_EFFORT=none で推論を切れる（thinking disabled）。**既定は low のまま**。
+        //   low の出力 1,700〜4,000 のうち答えは 135〜180（残りは推論）。YUMA で同じ資料（プレサンス梅田東ベータ）を3回ずつ比べると、
+        //   推論なしは 6〜7秒・出力 135〜183 だが「インターネット無料」（資料は『インターネット対応・モバイルwifi付』）を 2/3回・
+        //   「リビングをしっかり取った洋室7.5帖の1K」（1K にリビングは無い）を作った。low（15〜28秒）は 0/2回＝文の質が落ちるので切らない
+        ...(effort === "none" ? { thinking: { type: "disabled" } } : effort ? { reasoning_effort: effort } : {}),
         messages: [
           ...(system ? [{ role: "system", content: system }] : []),
           { role: "user", content: oaContent },

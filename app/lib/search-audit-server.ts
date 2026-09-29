@@ -12,6 +12,7 @@ import {
   type AuditCheck, type AuditInput, type AuditSeverity,
 } from "@/app/lib/search-audit-check";
 import { diagnoseSearchAudit, SEARCH_AUDIT_ACTION, type SearchAuditDiagnosis } from "@/app/lib/search-audit-diagnose";
+import { auditUpdateContext } from "@/app/lib/search-update-days-server";
 
 export const STALL_MINUTES = 20;
 export const REUSE_DIAGNOSIS_DAYS = 7;
@@ -161,8 +162,9 @@ export async function bumpCauses(keys: string[], runId: string, site: string | n
   return { ok, errors };
 }
 
-function toAuditInput(row: Partial<SearchAuditRow>): AuditInput {
+function toAuditInput(row: Partial<SearchAuditRow>, extra: Pick<AuditInput, "command_payload" | "last_search_at"> = {}): AuditInput {
   return {
+    ...extra, customer_id: row.property_customer_id ?? null,
     site: row.site ?? null, status: row.status ?? null, trigger: row.trigger ?? null, is_wide: row.is_wide ?? null, area_mode: row.area_mode ?? null,
     customer_snapshot: (row.customer_snapshot ?? null) as AuditInput["customer_snapshot"],
     intended: (row.intended ?? null) as AuditInput["intended"],
@@ -182,7 +184,9 @@ export async function recordFinished(body: Record<string, unknown>): Promise<{ o
   if (row && row.status !== "started") return { ok: true, needsAi: false, severity: row.severity ?? undefined, cause_key: row.cause_key }; // 2通目は数えない
   const nowIso = new Date().toISOString();
   const merged: Partial<SearchAuditRow> = { ...(row ?? {}), ...cols, status: "finished", finished_at: nowIso, created_at: row?.created_at ?? nowIso };
-  const v = runSearchAuditChecks(toAuditInput(merged));
+  // 2026-09-29 v2.5.41 更新日の決まり（命令の payload・計画）と前回の検索（空いた日数を覆えたか）を点検に渡す。読めなければ今まで通り
+  const upd = await auditUpdateContext(supabase as never, merged);
+  const v = runSearchAuditChecks(toAuditInput(merged, upd));
   const ai = needsDiagnosis(v);
   const patch = { ...cols, status: "finished" as const, finished_at: nowIso, checks: v.checks, severity: v.severity, cause_key: v.cause_key, ai_status: ai ? "pending" : "skipped" };
   const w = row

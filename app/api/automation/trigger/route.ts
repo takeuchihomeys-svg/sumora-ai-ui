@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { pendingSourceOrFilter } from "@/app/lib/automation-sources";
 import { buildWebBrainCommands, isWebBrainSite, queuedKey, webBrainBlockReason, WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
 import { sanitizeSearchOverride } from "@/app/lib/search-override-read";
+import { planPayload } from "@/app/lib/search-update-days";
+import { planUpdateDaysFor } from "@/app/lib/search-update-days-server";
 
 /**
  * 2026-09-25 竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」「更新日も拡張ツールと連動」:
@@ -46,6 +48,20 @@ async function queueWebBrain(
     for (const cid of r.customer_ids ?? []) for (const s of r.sites ?? []) { queued.add(queuedKey(String(cid), s)); openIdOf.set(queuedKey(String(cid), s), r.id); }
   }
   const { rows, skipped } = buildWebBrainCommands(customers, site, !!body.is_wide, { queued, searchOverride });
+  // 2026-09-29 v2.5.41 更新日: 今までの決まり（rp-update-days）を、前回の検索（このサイトで最後に終わった回）から空いた時間を覆う所まで広げる。
+  //   拡張は payload.update_days_plan の値を popup の経路でも使う（旧は popup が payload を見ず、その場の決まりで入れていた）。レインズは更新日なし
+  if (rows.length > 0 && site !== "reins") {
+    try {
+      const plans = await planUpdateDaysFor(supabase, rows.map((r) => ({ id: r.customer_ids[0], baseDays: r.payload.rp_update_days })), [site]);
+      const byPlan = new Map(plans.map((x) => [x.id, x.plan]));
+      for (const r of rows) {
+        const plan = byPlan.get(r.customer_ids[0]);
+        if (!plan) continue;
+        r.payload.rp_update_days = plan.days;
+        (r.payload as Record<string, unknown>).update_days_plan = planPayload([{ id: r.customer_ids[0], plan }]);
+      }
+    } catch (e) { console.warn("[automation/trigger] 更新日の計画を作れない（今までの決まり）:", e instanceof Error ? e.message : String(e)); }
+  }
   let inserted: Array<{ id: string; customer_ids: string[] }> = [];
   if (rows.length > 0) {
     const { data, error } = await supabase.from("automation_commands").insert(rows).select("id, customer_ids");

@@ -53,6 +53,12 @@
     return String(s).replace(/\d[\d\-‐－ー ]{8,}\d/g, "＊＊＊");
   }
 
+  // 2026-09-29 v2.5.41: 日時の欄は伏せない。maskDigits は「2026-09-26T02:50…」の日付を電話番号の形（数字とハイフン10字以上）として
+  //   「＊＊＊T02:50…」にしていた → サーバーの点検が前回物件を出した日を読めず、更新日の「決まり」が毎回「指定なし」になり
+  //   UPDATE_DAYS differs の誤警報が 9/22〜 の 90件になっていた。日時（ISO の形）は個人の情報ではないのでそのまま送る
+  var DATE_FIELDS = { last_property_sent_at: true, property_viewed_at: true };
+  var ISO_RE = /^\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
   function snapshotCustomer(c) {
     if (!c || typeof c !== "object") return null;
     var out = {};
@@ -60,6 +66,7 @@
       var k = SNAPSHOT_FIELDS[i];
       var v = c[k];
       if (v === undefined || v === null || v === "") continue;
+      if (typeof v === "string" && DATE_FIELDS[k] && ISO_RE.test(v.trim())) { out[k] = v.trim().slice(0, 40); continue; }
       if (typeof v === "string") v = maskDigits(v).slice(0, 400);
       out[k] = v;
     }

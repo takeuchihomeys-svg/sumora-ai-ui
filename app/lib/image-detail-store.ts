@@ -14,8 +14,8 @@
 // ⚠ 読むのは**こちらが送った画像だけ**。お客様の画像は line-webhook が既に Vision で書き起こしており、
 //   身分証が写っている事がある（設計知見「画像は伏せようがない」）。この関数を customer の画像に使わない。
 import { supabase } from "@/app/lib/supabase";
-import { readPropertyImageDetail, type ImageKind, type DetailResult } from "@/app/lib/property-image-read";
-import { pickupRowDetailPlan, readPropertyDetailFromText, detailModelLabel } from "@/app/lib/property-detail-source";
+import { readPropertyImageDetail, readPropertyImageDetailByTranscript, sentImageDetailMode, sharedPropertyImageRead, SENT_IMAGE_READ_TIMEOUT_MS, type ImageKind, type DetailResult } from "@/app/lib/property-image-read";
+import { pickupRowDetailPlan, readPropertyDetailFromText, detailModelLabel, pickupRowForProperty, PICKUP_LINK_MAX_AGE_DAYS } from "@/app/lib/property-detail-source";
 import { loadDeepseekCutoff, isAfterCutoff } from "@/app/lib/post-apply";
 
 export type ImageDetail = { kind: ImageKind; lines: string[] };
@@ -58,6 +58,44 @@ async function detailFromPickupRow(imageUrl: string, conversationId: string | nu
     return await detailFromPickupRows(rows, conversationId);
   } catch (e) {
     console.warn("[image-detail] pickup row lookup failed:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/**
+ * 送った画像を**物件名・号室で**その会話の売上サポの行に結ぶ（URL・行 ID で結べなかった時）。
+ * 物件名は sent_image_properties の記録を先に見る（売上サポから送った時は送る前に書かれている＝読み取り0回）。
+ * 無ければ recordSentImageProperty と同じ読み取り（sharedPropertyImageRead・推論なし・3秒）を待つ＝物件名の読み取りは1枚1回のまま。
+ * 一覧の画像（物件が2件以上）は結ばない（どの部屋の資料か決められない）。失敗しても投げない（null＝画像の条件の読み取りへ）
+ */
+async function detailFromPickupByProperty(imageUrl: string, conversationId: string | null): Promise<PickupDetail | null> {
+  if (!conversationId) return null;
+  try {
+    const { data: rows, error } = await supabase.from("property_pickups")
+      .select("property_name, room_no, image_lines, pdf_text, created_at").eq("conversation_id", conversationId)
+      .gte("created_at", new Date(Date.now() - PICKUP_LINK_MAX_AGE_DAYS * 86_400_000).toISOString())
+      .order("created_at", { ascending: false }).limit(200);
+    if (error) { console.warn("[image-detail] pickup rows (by property) read failed:", error.message); return null; }
+    type Row = PickupRowLite & { property_name: string | null; room_no: string | null; created_at: string | null };
+    const list = (rows ?? []) as Row[];
+    if (list.length === 0) return null;   // 売上サポの行が無い会話は物件名を読みに行かない
+    const { data: sipRow } = await supabase.from("sent_image_properties").select("property_name, room_no").eq("image_url", imageUrl).maybeSingle();
+    const sip = sipRow as { property_name: string | null; room_no: string | null } | null;
+    let item: { propertyName: string; roomNumber: string } | null = sip?.property_name ? { propertyName: sip.property_name, roomNumber: sip.room_no ?? "" } : null;
+    let via: "record" | "read" = "record";
+    if (!item) {
+      const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS });
+      if (!read.isProperty || read.items.length !== 1) return null;
+      item = { propertyName: read.items[0].propertyName, roomNumber: read.items[0].roomNumber };
+      via = "read";
+    }
+    const row = pickupRowForProperty(item, list, Date.now());
+    if (!row) return null;
+    const d = await detailFromPickupRows([row], conversationId);
+    if (d) console.log(JSON.stringify({ tag: "image-detail:pickup-by-property", conversationId, via, source: d.source, lines: d.lines.length }));
+    return d;
+  } catch (e) {
+    console.warn("[image-detail] pickup by property failed:", e instanceof Error ? e.message : e);
     return null;
   }
 }
@@ -144,8 +182,20 @@ export async function ensureImageDetail(
     //   9/28 は送った 67枚のうち 37回が 25秒の時間切れ＝費用だけ払って材料が残っていなかった。
     //   ① 行に image_lines があれば写す（DeepSeek を呼ばない）②文字層があれば文字層から読む（推論なし・1.6秒）
     //   ③ どちらも無い（スタッフが手で送った画像等）だけ今までどおり画像を読む。時間切れは 25秒 → 60秒（成功の平均が 30秒）
-    const fromPickup = await detailFromPickupRow(imageUrl, conversationId);
-    const read = fromPickup ?? await readPropertyImageDetail(imageUrl, { timeoutMs: opts?.timeoutMs ?? IMAGE_DETAIL_TIMEOUT_MS });
+    // 2026-09-29 API 費用（その2）: AIX の送付・オススメは URL でも行 ID でも行に結べない事が多い（9/29 夕方の送付は全部）。
+    //   物件名・号室（記録済みか、recordSentImageProperty と共有する推論なしの読み取り1回）でその会話の売上サポの行に結ぶ
+    //   （detailFromPickupByProperty・7日で 283枚中 78枚）。結べない時だけ画像を読む（下の書き写しの2段）。
+    const fromPickup = await detailFromPickupRow(imageUrl, conversationId)
+      ?? await detailFromPickupByProperty(imageUrl, conversationId);
+    // 2026-09-29（B・その2）結べない画像は「書き写し（推論なし）→ 文字の読み取り（推論なし）」（readPropertyImageDetailByTranscript）。
+    //   監査 scripts/audit-image-read-grounding.ts（ocr）・scripts/audit-sent-image-transcribe.ts。失敗した時だけ旧の画像読み（推論 low）に倒す。
+    //   SENT_IMAGE_DETAIL_MODE=image で旧に戻す
+    const timeoutMs = opts?.timeoutMs ?? IMAGE_DETAIL_TIMEOUT_MS;
+    const read = fromPickup
+      ?? (sentImageDetailMode() === "transcribe"
+        ? await readPropertyImageDetailByTranscript(imageUrl, { timeoutMs, conversationId })
+        : await readPropertyImageDetail(imageUrl, { timeoutMs }));
+    const imageSource = fromPickup ? fromPickup.source : ("via" in read && read.via === "transcribe" ? "transcribe" : "image");
     // 読めなかった（推論で使い切った・HTTPエラー）時は**残さない**。
     //   "other" を残すと次の機会に読み直せなくなる（読み取りの失敗と「物件資料ではない」は別）
     const failed = read.kind === "other" && read.lines.length === 0;
@@ -155,12 +205,12 @@ export async function ensureImageDetail(
     }
     // model 列に出所を付ける（pickup_lines／pickup_text:…／image:…・detailModelLabel）
     const { error } = await supabase.from("image_details").upsert(
-      { image_url: imageUrl, conversation_id: conversationId, kind: read.kind, lines: read.lines, model: detailModelLabel(fromPickup ? fromPickup.source : "image", process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash") },
+      { image_url: imageUrl, conversation_id: conversationId, kind: read.kind, lines: read.lines, model: detailModelLabel(imageSource, process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash") },
       { onConflict: "image_url" },
     );
     console.log(JSON.stringify({
       tag: "image-detail:read", conversationId, kind: read.kind, lines: read.lines.length,
-      source: fromPickup ? fromPickup.source : "image",
+      source: imageSource,
       tokens: read.usage, error: error?.message ?? null,
     }));
     return { kind: read.kind, lines: read.lines };

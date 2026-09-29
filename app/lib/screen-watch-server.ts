@@ -22,6 +22,10 @@ import {
 import { buildSearchIntent, independentExpectation, decisionDrift, intentSummary, expectSummary, type SearchIntent, type SearchExpect, type DecisionDrift } from "@/app/lib/screen-watch-expect";
 import { runSearchAuditChecks, type AuditInput, type AuditCheck } from "@/app/lib/search-audit-check";
 import { isMissingColumnError } from "@/app/lib/extension-snapshots";
+import { auditUpdateContext } from "@/app/lib/search-update-days-server";
+import { hoursSince, neededDays } from "@/app/lib/search-update-days";
+import { itemizeWants } from "@/app/lib/customer-wants";
+import type { JevBrainMaterial } from "@/app/lib/screen-watch";
 import { altUsageUsd } from "@/app/lib/llm-price";
 
 let _admin: SupabaseClient | null = null;
@@ -105,7 +109,7 @@ async function loadAudit(sb: SupabaseClient, runId: string | null | undefined): 
   return (data as AuditRow | null) ?? null;
 }
 
-const CUSTOMER_COLS = "id, customer_name, line_user_id, desired_area, commute_station, commute_minutes, rent_max, floor_plan, area_mode, adjacent_ok, preferences, other_requests, ng_points, additional_conditions, initial_cost_limit, structure_types, building_age, walk_minutes, pet";
+const CUSTOMER_COLS = "id, customer_name, line_user_id, desired_area, commute_station, commute_minutes, rent_max, rent_min, floor_plan, floor_area_min, area_mode, adjacent_ok, preferences, other_requests, ng_points, additional_conditions, initial_cost_limit, structure_types, building_age, walk_minutes, pet";
 async function loadCustomer(sb: SupabaseClient, pcid: string | null | undefined): Promise<Record<string, unknown> | null> {
   if (!pcid) return null;
   const { data, error } = await sb.from("property_customers").select(CUSTOMER_COLS).eq("id", pcid).maybeSingle();
@@ -212,6 +216,41 @@ function siteKey(s: string | null | undefined): string | null {
   return v || null;
 }
 
+/** 更新日の材料（その回の入れようとした日数・前回の検索から空いた時間） */
+function updateMaterial(row: AuditRow | null, lastSearchAt: string | null): WatchMaterial["update"] {
+  if (!row) return null;
+  const v = row.intended?.rp_update_days;
+  const days = typeof v === "number" && v > 0 ? v : typeof v === "string" && Number(v) > 0 ? Number(v) : null;
+  const start = Date.parse(row.created_at);
+  const gap = hoursSince(lastSearchAt, Number.isFinite(start) ? start : Date.now());
+  return { days, gap_hours: gap == null ? null : Math.round(gap * 10) / 10, need_days: neededDays(gap), last_search_at: lastSearchAt };
+}
+
+/**
+ * Jev に渡すブレインの材料（名前は入れない・自由文は伏せる）。見張りは意図を渡してよい（memory feedback_jev_brain_materials）
+ *   2026-09-29 竹内「顧客名はアカウント名やから…質が落ちる可能性あるなら防がなくて大丈夫だが、質が落ちないなら防ぐ」:
+ *   画面の様子（止まり・ログイン・条件の入り方）の判断に名前は使わない＝伏せても質は落ちない → 今まで通り伏せる
+ */
+function jevBrainMaterial(customer: Record<string, unknown> | null, row: AuditRow | null, intent: SearchIntent | null, update: WatchMaterial["update"], mk: (s: unknown) => string): JevBrainMaterial | null {
+  if (!customer && !row) return null;
+  const c = customer ?? {};
+  const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+  const snapOverride = !!(row?.customer_snapshot && (row.customer_snapshot as Record<string, unknown>)._search_override);
+  let wants: string[] = [];
+  try { wants = customer ? itemizeWants(customer as never).map((w) => `${w.kind === "その他" ? "" : `${w.kind}:`}${w.label}`) : []; } catch { wants = []; }
+  return {
+    conditions: customer ? {
+      desired_area: mk(c.desired_area).slice(0, 120) || null, area_mode: c.area_mode ?? null, rent_max: num(c.rent_max), rent_min: num(c.rent_min),
+      floor_plan: c.floor_plan ?? null, floor_area_min: num(c.floor_area_min), walk_minutes: num(c.walk_minutes), building_age: num(c.building_age), pet: c.pet ?? null,
+    } : null,
+    wants: wants.map((w) => mk(w)),
+    commute: c.commute_station ? `${mk(c.commute_station)}まで${num(c.commute_minutes) ?? "?"}分` : null,
+    scope: snapOverride || intent?.override ? "temporary" : customer ? "permanent" : null,
+    intent: intent ? intentSummary(intent) : null,
+    update_days: update ? { days: update.days, gap_hours: update.gap_hours, need_days: update.need_days } : null,
+  };
+}
+
 /** 入れようとした場所の数（駅＋区・市＋レインズの駅）。分からなければ null */
 function areaSizeOf(i: Record<string, unknown> | null): number | null {
   if (!i) return null;
@@ -220,9 +259,10 @@ function areaSizeOf(i: Record<string, unknown> | null): number | null {
   return n > 0 ? n : null;
 }
 
-const toAuditInput = (row: AuditRow, patch: Partial<AuditRow>): AuditInput => {
+const toAuditInput = (row: AuditRow, patch: Partial<AuditRow>, extra: Pick<AuditInput, "command_payload" | "last_search_at"> = {}): AuditInput => {
   const r = { ...row, ...patch };
   return {
+    ...extra, customer_id: r.property_customer_id ?? null,
     site: r.site, status: r.status, trigger: r.trigger, is_wide: r.is_wide, area_mode: r.area_mode,
     customer_snapshot: r.customer_snapshot as never, intended: r.intended as never, filled: r.filled as never, steps: r.steps as never,
     result: r.result as never, error: r.error, error_kind: r.error_kind, created_at: r.created_at,
@@ -262,7 +302,9 @@ export async function runCheckpoint(input: CheckpointInput, nowMs = Date.now()):
 
     // 札（決定論の点検）: C1 は届いた読み戻しで点検をその場で当てる・C3 は行の札・C2／C4 は画面の文字だけ
     let checks: AuditCheck[] = [];
-    if (row && input.checkpoint === "filled" && input.filled) checks = runSearchAuditChecks(toAuditInput(row, { filled: input.filled, status: "started", result: null, error: null, error_kind: null }), nowMs).checks;
+    // 2026-09-29 v2.5.41 更新日: 命令の payload（計画）と前回の検索（最後に終わった回）を点検に渡す（C1＝入ったか・空いた分を覆えたか）
+    const updCtx = sb && row && (input.checkpoint === "filled" || input.checkpoint === "results") ? await auditUpdateContext(sb, row) : { command_payload: null, last_search_at: null };
+    if (row && input.checkpoint === "filled" && input.filled) checks = runSearchAuditChecks(toAuditInput(row, { filled: input.filled, status: "started", result: null, error: null, error_kind: null }, updCtx), nowMs).checks;
     if (row && input.checkpoint === "done") checks = row.checks ?? [];
     // 決め方のズレ（C1 だけ・同じズレを C3 で2回言わない）
     let intent: SearchIntent | null = null, expect: SearchExpect | null = null, decision: DecisionDrift | null = null, customer: Record<string, unknown> | null = null;
@@ -282,6 +324,7 @@ export async function runCheckpoint(input: CheckpointInput, nowMs = Date.now()):
       range, read_rows: input.checkpoint === "done" ? (row?.result?.read_rows as number | undefined) ?? null : null,
       decision: decision ? { severity: decision.severity, items: decision.items } : null, is_wide: isWide,
       area_size: areaSizeOf(row?.intended ?? null),
+      update: updateMaterial(row, updCtx.last_search_at),
     };
     const det = detectScreenState(material, t);
     const action = actionFor(det.label, { hard: det.hard });
@@ -381,7 +424,10 @@ async function afterDecision(c: AfterCtx): Promise<void> {
     bumpInflight("jev", 1);
     try {
       const { jevSystemOne } = await import("@/app/lib/jev-client");
-      const r = await jevSystemOne({ state: jevStateFor(llmMaterial, masked, det), questions: JEV_QUESTIONS as never, action: JEV_ACTION, timeoutMs: 4_000 });
+      // ブレインの材料（登録の条件・要望・通勤・今回だけか・意図・前回からの時間）。C1 以外はここでお客様を読む（Jev を呼ぶ時だけ）
+      const cust = c.customer ?? (sb && pcid ? await loadCustomer(sb, pcid) : null);
+      const brain = jevBrainMaterial(cust, row, c.intent ?? row?.intent ?? null, material.update ?? null, mk);
+      const r = await jevSystemOne({ state: jevStateFor(llmMaterial, masked, det, brain), questions: JEV_QUESTIONS as never, action: JEV_ACTION, timeoutMs: 4_000 });
       const p = r ? parseJevLabel(r.answers as never) : null;
       if (r) { jev = { label: p?.label ?? "unparsed", prob: p?.prob ?? null, ms: r.ms }; cost += (r.usage.input_tokens * 0.042) / 1e6; }
     } finally { bumpInflight("jev", -1); }
@@ -456,12 +502,15 @@ async function afterDecision(c: AfterCtx): Promise<void> {
   if (action.stopSite && site) notified = await sendStopNotice(sb, det, site, input.commandId ?? row?.command_id ?? null, evCols, nowMs);
 
   // search_audits に見張りの印（自動の広げてを止める・⚠ の1行）
-  if (sb && runId && (finalLabel !== "normal" || c.decision)) {
-    const watch = { label: finalLabel, action: action.kind, block_widen: action.blockWiden, notice: det.notice, checkpoint: material.checkpoint, at: new Date(nowMs).toISOString() };
+  if (sb && runId && (finalLabel !== "normal" || c.decision || det.update_notice)) {
     const prevWatch = row?.watch ?? null;
+    // 2026-09-29 v2.5.41 更新日の1行（ラベルは変えない）は前の印に重ねて残す（★物件出し★のまとめに1行）
+    const updNotice = det.update_notice ?? ((prevWatch as { update_notice?: string | null } | null)?.update_notice ?? null);
+    const watch = { label: finalLabel, action: action.kind, block_widen: action.blockWiden, notice: det.notice, update_notice: updNotice, checkpoint: material.checkpoint, at: new Date(nowMs).toISOString() };
     const keepBlock = !!(prevWatch && (prevWatch as { block_widen?: boolean }).block_widen);
     const patch: Record<string, unknown> = {};
     if (finalLabel !== "normal" || !prevWatch) patch.watch = keepBlock ? { ...watch, block_widen: true, notice: det.notice ?? (prevWatch as { notice?: string }).notice ?? null } : watch;
+    else if (det.update_notice) patch.watch = { ...(prevWatch as Record<string, unknown>), update_notice: det.update_notice };
     if (c.decision) patch.decision_drift = c.decision;
     if (c.intent && !row?.intent) patch.intent = c.intent;
     if (c.expect && !row?.expect) patch.expect = c.expect;
@@ -486,7 +535,8 @@ async function afterDecision(c: AfterCtx): Promise<void> {
         checks: (material.checks ?? []).filter((x) => x.severity !== "ok" && x.code !== "UPDATE_DAYS").slice(0, 6).map((x) => x.title ?? x.code),
         decision_missing: c.decision?.missing ?? [], decision_extra: c.decision?.extra ?? [],
         intent_places: c.intent ? { stations: c.intent.stations.slice(0, 60), wards: c.intent.wards } : null,
-        notice: det.notice, waiting_for: material.waiting_for ?? null, idle_min: material.idle_min ?? null, thresholds_id: c.thresholdsId,
+        notice: det.notice, update: material.update ?? null, update_items: det.update_items.slice(0, 4), update_notice: det.update_notice,
+        waiting_for: material.waiting_for ?? null, idle_min: material.idle_min ?? null, thresholds_id: c.thresholdsId,
         snapshot_id: input.snapshotId ?? null, reason: det.reason.slice(0, 200), cause_key: causeKey,
       },
     };
@@ -556,14 +606,19 @@ export async function watchNoticeLines(pcid: string, sinceIso: string | null): P
     const sb = admin();
     if (!sb) return [];
     const since = sinceIso ? new Date(Date.parse(sinceIso) - 40 * 60_000).toISOString() : new Date(Date.now() - 3 * 3600_000).toISOString();
-    const { data, error } = await sb.from("search_audits").select("watch").eq("property_customer_id", pcid).gte("created_at", since).limit(20);
+    const { data, error } = await sb.from("search_audits").select("watch, result").eq("property_customer_id", pcid).gte("created_at", since).limit(20);
     if (error) return [];
     const out: string[] = [];
-    for (const r of (data ?? []) as Array<{ watch: { notice?: string | null } | null }>) {
-      const n = r.watch?.notice;
-      if (n && !out.includes(n)) out.push(n);
+    let skipped = 0;
+    for (const r of (data ?? []) as Array<{ watch: { notice?: string | null; update_notice?: string | null } | null; result: { sent_skipped?: number | null } | null }>) {
+      for (const n of [r.watch?.notice, r.watch?.update_notice]) if (n && !out.includes(n)) out.push(n);
+      const k = r.result?.sent_skipped;
+      if (typeof k === "number" && k > 0) skipped += k;
     }
-    return out.slice(0, 3);
+    // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: 飛ばした数を1行
+    const lines = out.slice(0, 3);
+    if (skipped > 0) lines.push(`（送付済みの部屋 ${skipped}件は飛ばしました・資料もダウンロードしていません）`);
+    return lines;
   } catch { return []; }
 }
 

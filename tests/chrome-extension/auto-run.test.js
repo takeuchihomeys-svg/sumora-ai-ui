@@ -16,11 +16,11 @@ console.log("\n■ optsFromPayload（自動便の指定）");
 {
   const pm = { source: "auto_schedule", mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1, is_wide: false };
   const am = { source: "auto_schedule", mode: "am", rp_update_days: 3, sort: "ad", max_pages: 3, is_wide: true };
-  eq("午後の便: 更新日1・更新順・1ページ", R.optsFromPayload(pm), { mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1 });
-  eq("午前の便: 更新日は上書きしない（popup が手で決めた値→前回出した日から）・AD・3ページ", R.optsFromPayload(am), { mode: "am", rp_update_days: null, sort: "ad", max_pages: 3 });
+  eq("午後の便: 更新日1・更新順・1ページ", R.optsFromPayload(pm), { mode: "pm", rp_update_days: 1, rp_update_days_none: false, sort: "updated", max_pages: 1 });
+  eq("午前の便: 更新日は上書きしない（popup が手で決めた値→前回出した日から）・AD・3ページ", R.optsFromPayload(am), { mode: "am", rp_update_days: null, rp_update_days_none: false, sort: "ad", max_pages: 3 });
   eq("web_brain は null（今までどおり）", R.optsFromPayload({ source: "web_brain", rp_update_days: 3 }), null);
   eq("手動（payload なし）は null", R.optsFromPayload(null), null);
-  eq("変な値は null に", R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: "x", sort: "zzz", max_pages: -1 }), { mode: "pm", rp_update_days: null, sort: null, max_pages: null });
+  eq("変な値は null に", R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: "x", sort: "zzz", max_pages: -1 }), { mode: "pm", rp_update_days: null, rp_update_days_none: false, sort: null, max_pages: null });
 }
 
 console.log("\n■ record / forCustomer（storage の印）");
@@ -78,7 +78,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("自動便は planSites でサイトを決める（お客様ごと）", /_AR\.planSites\(sites, \{ isAuto: true, hasItandiTab: _AR\.hasItandiTab\(await chrome\.tabs\.query\(\{\}\)\) \}\)/.test(bg));
   ok("サイトの間は siteGapMs（2つ目のサイトから・自動便だけ）", /if \(j > 0 && autoSched && _AR\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(bg));
   ok("お客様の間は自動便だけ customerGapMs", /\(autoSched && _AR\) \? _AR\.customerGapMs\(\) : 3000 \+ Math\.floor\(Math\.random\(\) \* 5000\)/.test(bg));
-  ok("お客様×サイトごとに storage へ指定を置く", /_arSet\[_AR\.STORAGE_KEY\] = _AR\.record\(effectiveCustomer\.id, batchSite, _autoOpts, Date\.now\(\)\)/.test(bg));
+  ok("お客様×サイトごとに storage へ指定を置く", /_arSet\[_AR\.STORAGE_KEY\] = _AR\.record\(effectiveCustomer\.id, batchSite, _AR\.optsFromPayload\(_custPayload\) \|\| _autoOpts, Date\.now\(\)\)/.test(bg));
   ok("コマンドの終わりに指定を消す（finally）", /finally \{[\s\S]{0,400}chrome\.storage\.local\.remove\(self\.AxlxAutoRun\.STORAGE_KEY\)/.test(bg));
   ok("全部失敗の判定は実際に回した数で（飛ばした ITANDI を失敗と数えない）", /var totalAttempts = _siteAttempts;/.test(bg));
   ok("switch-customer に autoRun（リアプロ・ITANDI の2か所）", (bg.match(/autoRun:\s+_autoRunMsg/g) || []).length === 2);
@@ -87,7 +87,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("underbar が autoRun を popup へ渡す", /autoRun: msg\.autoRun \|\| null/.test(ub));
   const pp = read("popup.js");
   ok("popup: 2つの受け口で押す前に載せ、押した直後に戻す", (pp.match(/_applyAutoRunToForm\(aBtn, /g) || []).length === 2 && (pp.match(/_restoreAutoRun\(_arUndo[PR]\);/g) || []).length === 2);
-  ok("popup: 更新日の欄は値を入れるだけ（change を出さない＝DB に書かない）", /undo\.prevDays = el\.value; el\.value = String\(ar\.rp_update_days\);/.test(pp) && !/_applyAutoRunToForm[\s\S]{0,900}dispatchEvent/.test(pp.slice(pp.indexOf("function _applyAutoRunToForm"), pp.indexOf("function _restoreAutoRun"))));
+  ok("popup: 更新日の欄は値を入れるだけ（change を出さない＝DB に書かない）", /undo\.prevDays = el\.value; el\.value = ar\.rp_update_days \? String\(ar\.rp_update_days\) : "";/.test(pp) && !/_applyAutoRunToForm[\s\S]{0,900}dispatchEvent/.test(pp.slice(pp.indexOf("function _applyAutoRunToForm"), pp.indexOf("function _restoreAutoRun"))));
   ok("popup: リアプロの条件に sort_order・max_pages（自動便だけ）", /sort_order: _autoSort,\s*max_pages: _autoMaxPages,/.test(pp));
   ok("popup: ITANDI の条件に sort_order・max_pages", /sort_order: _autoSort_it,\s*max_pages: _autoMaxPages_it,/.test(pp));
   ok("popup: dataset は await より前に読む", /const _autoSort = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp) && /const _autoSort_it = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp));
@@ -100,10 +100,10 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.40");
+  eq("manifest の版", mf.version, "2.5.41");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("リアプロの bulk-dl より前に auto-run.js", cs.includes("send-pairing.js,auto-run.js,bulk-dl.js"));
-  ok("ITANDI の itandi-bulk-dl より前に auto-run.js", cs.includes("send-pairing.js,auto-run.js,itandi-row-parse.js,itandi-bulk-dl.js"));
+  ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,bulk-dl.js"));
+  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-bulk-dl.js"));
   ok("auto-run.js は _ で始まらない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 

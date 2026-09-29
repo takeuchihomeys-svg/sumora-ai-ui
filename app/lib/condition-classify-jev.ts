@@ -11,6 +11,9 @@
 //   ・本番の動きは変えない（Haiku の答えで今までどおり進み、Jev の答えは jev_shadow_logs.kind='classify_condition' に並べるだけ）
 //   ・失敗しても止めない（fail-open・鍵が無ければ何もしない）。応答を待たせない（waitUntil）
 //   ・state は**仮名化した後**の文だけ（呼び出し側が pii-pseudonym の createMasker で伏せる）。申込以降の会話は渡さない
+//   ・2026-09-29「材料は渡す・答えは渡さない」（aix-jev-materials）はここには足さない: この影の役目は**今の Haiku と同じ入力**で4択が一致するかを測ること
+//     （Haiku も会話の文だけで分類している）。登録の条件などを Jev にだけ渡すと、食い違いが「判定の差」か「材料の差」か分からなくなる。
+//     材料を足すなら Haiku 側と同時に（本番の分類を変える話なので別に測ってから）
 //   ・正解の記録: ①決定論（isFilledSumoraForm が確定させた回＝brain_source='deterministic'）は硬い正解 ②Haiku の答え（brain_source='haiku'）は
 //     「今の判定との一致」で、食い違いは人が目で読む（scripts/audit-jev-shadow.ts）
 import { CONDITION_FORMAT_TEMPLATE } from "./condition-format";

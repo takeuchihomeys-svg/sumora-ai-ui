@@ -73,14 +73,18 @@ async function main() {
 
   for (const l of sample) {
     const { data: msgs } = await sb.from("messages").select("sender, text, created_at, is_aix_generated")
-      .eq("conversation_id", l.conversation_id).lt("created_at", l.created_at).order("created_at", { ascending: false }).limit(8);
-    const rows = ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null }>).reverse();
+      .eq("conversation_id", l.conversation_id).lt("created_at", l.created_at).order("created_at", { ascending: false }).limit(30);
+    // 2026-09-29: aix_usage_logs.created_at は**送った後**に付く（sent_at より約2秒後）ので、押した時刻で切るとその AIX 自身の本文が入る（答えの漏れ）。
+    //   場面は「その前の最後のお客様の発言」までにする（ブレイン・本番の影が走る瞬間と同じ）。scripts/eval-jev-aix-materials.ts と同じ切り方
+    const all = ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null }>).reverse();
+    const lastCustIdx = all.map((m) => m.sender).lastIndexOf("customer");
+    const rows = lastCustIdx >= 0 ? all.slice(0, lastCustIdx + 1).slice(-8) : [];
     if (rows.length === 0) continue;
     const partyName = nameOf.get(l.conversation_id) ?? "";
     const masker = createMasker({ conversationId: l.conversation_id, customerName: partyName || null, knownNames });
     const masked = rows.map((m) => ({ sender: m.sender, text: masker.maskBlock(m.text ?? ""), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
     const { count: sentCount } = await sb.from("sent_properties").select("id", { count: "exact", head: true })
-      .eq("conversation_id", l.conversation_id).lt("sent_at", l.created_at);
+      .eq("conversation_id", l.conversation_id).lt("sent_at", rows[rows.length - 1].created_at);
     if (WITH_AIX) {
       const ev = await evaluateAixWithJev({ messages: masked, status: l.conversation_status, sentPropertyCount: sentCount ?? null, conversationId: l.conversation_id, timeoutMs: 15_000 });
       if (!ev) { failed++; continue; }

@@ -701,6 +701,7 @@
           property_pool:       propertyPool,
           customer_conditions: customerConditions || null,
           site:                "itandi",
+          sent_skipped:        _itPageSkipped || 0, // 2026-09-29 v2.5.41 このページで送付済みの部屋として選ばなかった数
         }, function (resp) {
           finalizeSend();
           lineBtn.disabled    = false;
@@ -791,9 +792,11 @@
   // axlx-batch-customer-done に「ページ数・読んだ行数・送った数・0件と決めた理由・件数表示の生の文字・URL」を載せる。
   // background は、ブレインの時だけその回の記録に足す。件数表示の場所は確かめていないので、画面の文字から「N件」の形を探して生のまま残す
   var _itAuditRes = null;
+  var _itPageSkipped = 0;
   function _itAuditResult(extra) {
     var base = _itAuditRes || { pages: 0, read_rows: 0, sent_count: 0 };
     var r = { site: "itandi", pages: base.pages, read_rows: base.read_rows, sendable_rows: null, sent_count: base.sent_count, zero_reason: null, url: String(location.href || "").slice(0, 300) };
+    if (base.sent_skipped) r.sent_skipped = base.sent_skipped; // 2026-09-29 v2.5.41 送付済みの部屋として選ばなかった数
     try {
       var A = self.AxlxSearchAudit;
       if (A && document.body) {
@@ -887,11 +890,45 @@
     });
   }
 
+  // ── 2026-09-29 v2.5.41 送付済みの部屋（background が一括の1人ごとに storage.session に置く・chrome-extension/sent-skip.js）──
+  // 竹内「一度送ったことがある物件はダウンロードもしないようにすれば更に問題なく物件検索できる。人間の動きのように」:
+  //   建物名＋号室（itandi-row-parse の一覧の行の読み）が送付済みの部屋と同じ行は選ばない＝資料の PDF を開かない（モーダルも開かない）。
+  //   号室が無い・名前が読めない行は選ぶ（迷ったら飛ばさない）。スタッフモードは飛ばさない
+  var _sentRoomsStored = null;
+  function _SK() { return (typeof self !== "undefined" ? self : window).AxlxSentSkip || null; }
+  try {
+    var _skKey = _SK() ? _SK().STORAGE_KEY : "axlx_sent_rooms";
+    chrome.storage.session.get([_skKey], function (r) { _sentRoomsStored = (r && r[_skKey]) || null; });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area === "session" && ch[_skKey]) _sentRoomsStored = ch[_skKey].newValue || null;
+    });
+  } catch (_) {}
+  function _applySentSkipIt(customerId) {
+    var SK = _SK();
+    var idx = SK && !_staffModeOn ? SK.indexFor(_sentRoomsStored, customerId, Date.now()) : null;
+    if (!idx) return 0;
+    var n = 0, names = [];
+    tracked.forEach(function (t) {
+      if (!t.cb.checked) return;
+      var info = extractPropertyInfo(t.btn);
+      if (info && info.room && SK.isSentRoom(idx, info.name, info.room)) {
+        t.cb.checked = false; checkedKeys.delete(t.rowKey); n++;
+        if (names.length < 5) names.push(info.name + " " + info.room);
+      }
+    });
+    if (n) console.log("[AXLX itandi] 送付済みの部屋 " + n + "件は選ばない（資料を開かない）: " + names.join("・"));
+    return n;
+  }
+
   function _autoSendOnePage(customerName, customerId, customerConditions, onComplete) {
     // BUG-B修正: 顧客切り替え時に前顧客のrowKeyを必ずリセット（混入バグ対策）
     checkedKeys.clear();
     // 全選択
     tracked.forEach(function(t) { t.cb.checked = true; checkedKeys.add(t.rowKey); });
+    // 2026-09-29 v2.5.41 送付済みの部屋は選ばない
+    var _pageSkipped = _applySentSkipIt(customerId);
+    if (_itAuditRes) _itAuditRes.sent_skipped = (_itAuditRes.sent_skipped || 0) + _pageSkipped;
+    _itPageSkipped = _pageSkipped;
     updateBar();
     var targets = tracked.filter(function(t) { return t.cb.checked; });
     if (_itAuditRes) { _itAuditRes.pages += 1; _itAuditRes.read_rows += targets.length; } // 検索の点検: ページ数・読んだ行数

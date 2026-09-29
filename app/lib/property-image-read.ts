@@ -22,6 +22,7 @@
 //   content が空のまま finish_reason="length"。これを「画像を読めない」と誤判定した。
 //   reasoning_content の中では画像をちゃんと見ていた（"Image shows property name: RISIN..."）。
 //   ⚠ thinking:{type:"disabled"} は最速（1.4秒・推論0）だが「本町橋」を「本町筋」と誤読したので使わない。
+//     → 2026-09-29 に物件名の読み取り（readPropertyImage）だけ推論なしに変えた（ファイル末尾の注記・照合で会話の物件名に寄せる）。条件の行は推論 low のまま
 
 export const PROPERTY_IMAGE_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
 /** DeepSeek-V4.1-Flash。DeepSeek 側で新しい名前が出たら PROPERTY_IMAGE_MODEL で差し替える */
@@ -114,7 +115,23 @@ export type DetailResult = { kind: ImageKind; lines: string[]; raw: string; usag
 
 const KIND_OK = new Set<ImageKind>(["property", "estimate", "document", "other"]);
 /** 中身が無い事を言っているだけの行（「不明」「記載なし」）。材料に入れると AI が「記載なし」と答えてしまう */
-const EMPTY_VALUE_RE = /[:：]\s*(?:不明|記載なし|なし|-|—|―|不詳|未記載|読み取れ(?:ない|ません)|空欄)\s*$/;
+// 2026-09-29: 値が空の行（「ペット: 」・文字層の読み取りで出た）と「ー」「－」（資料の空欄の横線）も同じ扱いにする
+const EMPTY_VALUE_RE = /[:：]\s*(?:不明|記載なし|なし|-|—|―|ー|－|不詳|未記載|読み取れ(?:ない|ません)|空欄)?\s*$/;
+
+/**
+ * 120字を超える行（設備欄を全部写した行）を、区切り（、・，／ 空白）の所で 120字以内に切る（純関数）。
+ * 2026-09-29: 推論なしの読み取りは設備欄を要約せずに全部写す（125〜978字）ので、旧は「120字超は捨てる」で設備の行が丸ごと落ちていた
+ *   （監査 scripts/audit-sent-image-combined-read.ts: 30枚中 19〜20行）。区切りが無い長い行は今まで通り捨てる（地の文の可能性）
+ */
+export function clipLongLine(s: string, max = 120): string {
+  if (s.length <= max) return s;
+  const head = s.slice(0, max + 1);
+  const cut = Math.max(head.lastIndexOf("、"), head.lastIndexOf("・"), head.lastIndexOf("，"), head.lastIndexOf(","), head.lastIndexOf("／"), head.lastIndexOf(" "));
+  // 見出し（「設備:」）より後ろで切れる時だけ
+  const colon = s.search(/[:：]/);
+  if (cut <= Math.max(colon + 4, 20)) return s;
+  return s.slice(0, cut).replace(/[、・，,／\s]+$/, "");
+}
 
 /** 読み取り結果から「項目: 値」の行だけを取り出す（純関数・テストはここに当てる） */
 export function parseDetailResult(content: string): DetailResult {
@@ -129,7 +146,7 @@ export function parseDetailResult(content: string): DetailResult {
     const kind: ImageKind = KIND_OK.has(kindRaw) ? kindRaw : "other";
     if (kind !== "property") return { kind, lines: [], raw };
     const lines = (Array.isArray(parsed.lines) ? parsed.lines : [])
-      .map((x) => String(x ?? "").replace(/\s+/g, " ").trim())
+      .map((x) => clipLongLine(String(x ?? "").replace(/\s+/g, " ").trim()))
       .filter((s) => s.length >= 2 && s.length <= 120)
       .filter((s) => /[:：]/.test(s))          // 「項目: 値」の形だけ（地の文・感想を入れない）
       .filter((s) => !EMPTY_VALUE_RE.test(s))  // 「不明」「記載なし」は材料にしない
@@ -201,7 +218,8 @@ function recordImageReadUsage(action: string, model: string, u: DeepSeekUsage | 
       model, action, conversationId: null,
       usage: { input_tokens: miss, output_tokens: u?.completion_tokens ?? 0, cache_read_input_tokens: hit },
       status, errorType, durationMs: Date.now() - startedAt,
-      sysHead: action === "property_image_detail" ? PROPERTY_IMAGE_DETAIL_PROMPT.slice(0, 200) : PROPERTY_IMAGE_PROMPT.slice(0, 200),
+      sysHead: action === "property_image_detail" ? PROPERTY_IMAGE_DETAIL_PROMPT.slice(0, 200)
+        : action === "property_image_transcribe" ? PROPERTY_IMAGE_TRANSCRIBE_PROMPT.slice(0, 200) : PROPERTY_IMAGE_PROMPT.slice(0, 200),
       sysKeyFull: null, maxTokens,
     });
   }).catch(() => {});
@@ -294,11 +312,13 @@ export function parseReadResult(content: string): ReadResult {
  */
 export async function readPropertyImage(
   imageUrl: string,
-  opts?: { apiKey?: string; model?: string; timeoutMs?: number },
+  opts?: { apiKey?: string; model?: string; timeoutMs?: number; thinking?: boolean },
 ): Promise<ReadResult> {
   const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
   const model = (opts?.model ?? process.env.PROPERTY_IMAGE_MODEL ?? PROPERTY_IMAGE_MODEL_DEFAULT).trim();
   if (!apiKey || !imageUrl) return { items: [], isProperty: false, raw: "" };
+  const thinking = opts?.thinking ?? propertyImageReadThinking();
+  const maxTokens = thinking ? PROPERTY_IMAGE_MAX_TOKENS : PROPERTY_IMAGE_READ_NO_THINKING_MAX_TOKENS;
   const startedAt = Date.now();
   try {
     const res = await fetch(PROPERTY_IMAGE_ENDPOINT, {
@@ -306,7 +326,9 @@ export async function readPropertyImage(
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        max_tokens: PROPERTY_IMAGE_MAX_TOKENS,   // ⚠ 小さくすると推論で使い切って空応答になる
+        max_tokens: maxTokens,   // ⚠ 推論ありで小さくすると推論で使い切って空応答になる
+        // 2026-09-29: 推論なし・温度0（下の PROPERTY_IMAGE_READ_NO_THINKING_MAX_TOKENS の注記）
+        ...(thinking ? {} : { thinking: { type: "disabled" }, temperature: 0 }),
         messages: [{ role: "user", content: [
           { type: "text", text: PROPERTY_IMAGE_PROMPT },
           { type: "image_url", image_url: { url: imageUrl } },
@@ -315,16 +337,189 @@ export async function readPropertyImage(
       signal: AbortSignal.timeout(opts?.timeoutMs ?? 60_000),
     });
     if (!res.ok) {
-      recordImageReadUsage("property_image_read", model, undefined, res.status, startedAt, "http_error", PROPERTY_IMAGE_MAX_TOKENS);
+      recordImageReadUsage("property_image_read", model, undefined, res.status, startedAt, "http_error", maxTokens);
       return { items: [], isProperty: false, raw: `HTTP ${res.status}` };
     }
     const j = await res.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: DeepSeekUsage };
     const out = parseReadResult(String(j.choices?.[0]?.message?.content ?? ""));
     out.usage = { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cacheHit: j.usage?.prompt_cache_hit_tokens ?? 0 };
-    recordImageReadUsage("property_image_read", model, j.usage, 200, startedAt, null, PROPERTY_IMAGE_MAX_TOKENS);
+    recordImageReadUsage("property_image_read", model, j.usage, 200, startedAt, null, maxTokens);
     return out;
   } catch (e) {
-    recordImageReadUsage("property_image_read", model, undefined, 0, startedAt, e instanceof Error ? e.name : "error", PROPERTY_IMAGE_MAX_TOKENS);
+    recordImageReadUsage("property_image_read", model, undefined, 0, startedAt, e instanceof Error ? e.name : "error", maxTokens);
     return { items: [], isProperty: false, raw: "" };
   }
+}
+
+// ─── 2026-09-29 竹内「更に節約できないか」（送る側の画像の読み取りの無駄）──────────────────
+// 【何が無駄だったか（本番 llm_usage_logs 9/29 18:37・18:50・19:14）】送った画像1枚ごとに send-line-message の after が
+//   ① recordSentImageProperty → readPropertyImage（物件名・号室・家賃…）… 推論は**既定の重さ**（reasoning_effort を送っていなかった）＝出力 1,900〜6,700・11〜30秒
+//   ② ensureImageDetail → readPropertyImageDetail（条件の行・推論 low）… 出力 2,100〜9,100・12〜39秒
+//   を同じ時刻に別々に呼んでいた。9/29 の直し（売上サポの行を先に引く）は AIX に pickup_ids が来た時と URL が行と同じ時だけ効き、
+//   9/29 夕方の送付（62d01e33・f2967621・d25e07d1）はどれもその経路に乗らなかった（その会話の売上サポの行に無い物件・行 ID なし）。
+// 【直し】
+//   ① 物件名・号室・家賃などの読み取りは**推論なし・温度0**（出力 150〜500・3〜5秒）。
+//      監査 scripts/audit-sent-image-combined-read.ts（本番で送った画像・照合済みの記録と比べる）で物件名・号室・家賃が推論ありと同じだった。
+//      名前の読み違い（9/20 の「本町橋→本町筋」）は照合（resolveReadProperty）がその会話の物件名に寄せる。
+//   ② 同じ URL の読み取りは1つの約束（Promise）を共有する（sharedPropertyImageRead）。ensureImageDetail が物件名を知りたい時は
+//      記録の側と同じ読み取りを待つだけ＝物件名の読み取りは1枚1回。物件名と号室がその会話の売上サポの行に当たれば
+//      行の image_lines か文字層（推論なし・$0.001）で条件の行を作り、画像の条件の読み取り（推論 low・30秒）を呼ばない。
+//   ③ **条件の行（readPropertyImageDetail）は推論 low のまま残す**（出口の決定論: 誤りが0でなければ入れない）。
+//      監査 scripts/audit-image-read-grounding.ts（PDF の文字層を正解の元に）で、推論なしは資料に無い可否を作った
+//      （「ペット: 不可」「連帯保証人: 不要」＝指示の例を写す・24件中 6〜33行。推論 low は 1〜5行）・ペット／洗濯機置場／駐輪場の行も落ちた。
+//      1回で両方を読む案（scripts/audit-image-both-prompt.ts）も同じ理由で入れなかった。
+//   ④ 2026-09-29（その2）: ③の「条件の行を推論なしで直接書かせる」の代わりに、**書き写し（推論なし）→ 文字層と同じ読み方**の2段
+//      （readPropertyImageDetailByTranscript・下）を送った画像の既定にした。判断（可否）を画像の読み取りにさせないので例を写さない。
+//      監査（30枚ずつ・2通り）:
+//        PDF の文字層を正解に（audit-image-read-grounding.ts）… 旧（推論 low）作った 3〜4・落ちた 28/119・出力 6,223・31秒
+//                                                            → 新 作った 0〜4・落ちた 22〜26/124・出力 1,055〜1,434・13〜15秒
+//        本番で送った画像（audit-sent-image-transcribe.ts・保存済みの行と1行ずつ）… 旧どうしの揺れ（同じ画像の読み直し）保存済みだけ 22 に対し
+//          新 保存済みだけ 16〜19（退去予定は現況・入居可能日の行に入った物が大半）・出力 1,266〜1,362・9〜11秒
+//      作った行は旧も新も同じ種類の読み違い（プレサンス松屋町グレースの「※プレサポ安心24」を旧の推論 low も新も「ペット飼育不可」と読む）＝推論の有無の差ではない。
+//      新で見つけて直した物: 部屋の一覧（Goパレス福島 3室「状況 10/末」）が行から落ちた → 書き写しに一覧の写し方・文字の読み取りに
+//      「2部屋以上なら現況の1行に」（PROPERTY_TRANSCRIPT_DETAIL_SYSTEM）。1部屋でも畳むと入居可能日「即入」を 14件落としたので2部屋以上に限った。
+//      旧の保存済みの誤り（高殿サンクの「ペット: 不可」「所在階: 3階」＝資料に無い／レオンコンフォート難波クレアの「洗濯機置場: 室外」＝資料は室内）は新では出なかった。
+// 【戻し方】PROPERTY_IMAGE_READ_THINKING=on で①を旧の推論ありに戻す。SENT_IMAGE_DETAIL_MODE=image で④を旧の画像読み（推論 low）に戻す。
+
+// ─── 2026-09-29（B・その2）条件の行を「書き写す（推論なし）→ 文字層と同じ読み方」の2段で作る案 ─────────────
+// 推論なしで条件の行を直接書かせると、可否を**判断**させる所で指示の例を写した（上の【直し】③）。
+// 書き写しだけなら判断が無い（見出しと値をそのまま写す＝文字を読むだけ）。写しを文字層の読み取り（readPropertyDetailFromText・
+// 出口の dropUngroundedLines＝写しに言葉の無い可否は落とす）に渡せば、文字層がある資料と同じ形で行が作れる。
+// 監査 scripts/audit-image-read-grounding.ts の ocr（PDF の文字層を正解の元に・作った行／落ちた行を推論 low と並べる）で決める。
+export const PROPERTY_IMAGE_TRANSCRIBE_PROMPT = `この画像の文字を、書いてあるとおりに書き写してください（書き写しだけ。説明・要約・判断は不要）。
+1行目は画像の種類を次のどれか1つで書く: 【物件の資料】【見積書】【本人確認書類・申込書】【その他】
+【物件の資料】（マイソク・募集図面・間取り図）の時だけ、2行目から書き写す:
+- 表の欄は「見出し: 値」の形で1行ずつ。値が空欄の見出しは写さない
+- 部屋の一覧の表（号室・家賃・状況・入居時期など）は1部屋1行で「号室: 203 / 状況: 10/末」のように列の見出しと値の組で写す
+- 設備・条件・備考・特約の欄は書いてある言葉を全部写す（○・✕・チェックの印が付いていれば印もそのまま）
+- 大きな文字の宣伝の文句（「インターネット無料」など）も写す
+- 地図・周辺の施設・会社の案内は写さなくてよい
+- 読めない文字は飛ばす。画像に無い言葉を足さない・推測しない
+【物件の資料】以外は1行目だけで終わる（中身は写さない）`;
+/** 書き写しの上限（推論なし＝出力は写した文字だけ。資料1枚で 600〜1,500 前後の見込み・上限は費用にならない） */
+export const PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS = 3000;
+
+const TRANSCRIBE_KIND: Array<[RegExp, ImageKind]> = [
+  [/^【?物件の資料】?/, "property"], [/^【?見積書】?/, "estimate"], [/^【?本人確認書類/, "document"], [/^【?その他】?/, "other"],
+];
+/**
+ * 書き写しの1行目（種類）と本文を分ける（純関数）。1行目に種類が無ければ kind=null（本文は全部＝文字層の読み取りに種類を決めさせる）
+ */
+export function parseTranscript(text: string): { kind: ImageKind | null; body: string } {
+  const t = String(text ?? "").replace(/\r/g, "").replace(/^```[a-z]*\n?|\n?```$/g, "").trim();
+  const [first, ...rest] = t.split("\n");
+  const head = (first ?? "").trim();
+  for (const [re, kind] of TRANSCRIBE_KIND) if (re.test(head)) return { kind, body: rest.join("\n").trim() };
+  return { kind: null, body: t };
+}
+
+/** 送った画像の条件の行をどう読むか（既定は書き写し・SENT_IMAGE_DETAIL_MODE=image で旧の推論 low の画像読みに戻す） */
+export function sentImageDetailMode(env: Record<string, string | undefined> = process.env): "transcribe" | "image" {
+  return (env.SENT_IMAGE_DETAIL_MODE ?? "").trim().toLowerCase() === "image" ? "image" : "transcribe";
+}
+
+/**
+ * 画像1枚の条件の行を「書き写し（推論なし・温度0）→ 文字層と同じ読み方（readPropertyDetailFromText・推論なし・出口の dropUngroundedLines）」で作る。
+ * 書き写しか文字の読み取りが失敗した時は旧の画像読み（readPropertyImageDetail・推論 low）に倒す＝材料は減らさない（費用は失敗した回だけ）。
+ * 物件の資料以外（見積書・本人確認書類・その他）は中身を書き出さない（kind だけ・書き写しの本文も文字の読み取りに渡さない）。
+ * 費用は llm_usage_logs に action="property_image_transcribe"（書き写し）＋ "property_text_detail"（文字の読み取り）で残る。
+ */
+export async function readPropertyImageDetailByTranscript(
+  imageUrl: string,
+  opts?: { apiKey?: string; model?: string; timeoutMs?: number; conversationId?: string | null },
+): Promise<DetailResult & { via: "transcribe" | "image_fallback" }> {
+  const apiKey = (opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim();
+  const model = (opts?.model ?? process.env.PROPERTY_IMAGE_MODEL ?? PROPERTY_IMAGE_MODEL_DEFAULT).trim();
+  if (!apiKey || !imageUrl) return { kind: "other", lines: [], raw: "", via: "transcribe" };
+  const budget = opts?.timeoutMs ?? 60_000;
+  const startedAt = Date.now();
+  const fallback = async (why: string) => {
+    console.warn(JSON.stringify({ tag: "image-detail:transcribe-fallback", why, imageUrl: imageUrl.slice(-40) }));
+    const left = Math.max(10_000, budget - (Date.now() - startedAt));
+    return { ...(await readPropertyImageDetail(imageUrl, { apiKey, model, timeoutMs: left })), via: "image_fallback" as const };
+  };
+  let text = "";
+  let usage: DeepSeekUsage | undefined;
+  // 書き写しは1回だけ読み直す（監査で 30枚中1枚が一時的な HTTP 400 で旧の画像読み＝出力 6,179 に倒れた。書き写しの読み直しは出力 1,000 前後）
+  let why = "";
+  for (let attempt = 0; attempt < 2 && !text; attempt++) {
+    const t1 = Date.now();
+    const left = budget - (t1 - startedAt);
+    if (attempt > 0 && left < 20_000) break;
+    try {
+      const res = await fetch(PROPERTY_IMAGE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          max_tokens: PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS,
+          thinking: { type: "disabled" }, temperature: 0,
+          messages: [{ role: "user", content: [
+            { type: "text", text: PROPERTY_IMAGE_TRANSCRIBE_PROMPT },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ] }],
+        }),
+        signal: AbortSignal.timeout(Math.min(left, 45_000)),
+      });
+      if (!res.ok) {
+        recordImageReadUsage("property_image_transcribe", model, undefined, res.status, t1, "http_error", PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS);
+        why = `http_${res.status}`;
+        continue;
+      }
+      const j = await res.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: DeepSeekUsage };
+      text = String(j.choices?.[0]?.message?.content ?? "").trim();
+      usage = j.usage;
+      recordImageReadUsage("property_image_transcribe", model, j.usage, 200, t1, text ? null : "empty", PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS);
+      if (!text) why = "transcribe_empty";
+    } catch (e) {
+      recordImageReadUsage("property_image_transcribe", model, undefined, 0, t1, e instanceof Error ? e.name : "error", PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS);
+      why = "transcribe_error";
+    }
+  }
+  if (!text) return await fallback(why || "transcribe_empty");
+  const tr = parseTranscript(text);
+  const tUsage = { input: usage?.prompt_tokens ?? 0, output: usage?.completion_tokens ?? 0, cacheHit: usage?.prompt_cache_hit_tokens ?? 0 };
+  // 物件の資料以外は中身を書き出さない（本文を文字の読み取りにも渡さない）
+  if (tr.kind && tr.kind !== "property") return { kind: tr.kind, lines: [], raw: "", usage: tUsage, via: "transcribe" };
+  // 資料と言ったが写した文字が無い（室内写真・間取り図だけ等）＝書き出す行が無い
+  if (tr.kind === "property" && tr.body.replace(/\s+/g, "").length < 10) return { kind: "property", lines: [], raw: text, usage: tUsage, via: "transcribe" };
+  const { readPropertyDetailFromText, PROPERTY_TRANSCRIPT_DETAIL_SYSTEM } = await import("./property-detail-source");
+  const left = Math.max(5_000, budget - (Date.now() - startedAt));
+  const d = await readPropertyDetailFromText(tr.body, { apiKey, model, timeoutMs: left, conversationId: opts?.conversationId ?? null, system: PROPERTY_TRANSCRIPT_DETAIL_SYSTEM });
+  if (d.failed) return await fallback("text_read_failed");
+  return {
+    kind: tr.kind ?? d.kind, lines: d.kind === "property" || tr.kind === "property" ? d.lines : [], raw: d.raw,
+    usage: { input: tUsage.input + (d.usage?.input ?? 0), output: tUsage.output + (d.usage?.output ?? 0), cacheHit: (tUsage.cacheHit ?? 0) + (d.usage?.cacheHit ?? 0) },
+    via: "transcribe",
+  };
+}
+
+/** 送った画像の物件名などの読み取りの時間切れ（recordSentImageProperty と ensureImageDetail が同じ読み取りを待つので同じ値） */
+export const SENT_IMAGE_READ_TIMEOUT_MS = 80_000;
+
+/** 推論なしの時の上限（答えだけ・一覧の画像 9室でも 1,500 前後。上限は費用にならない） */
+export const PROPERTY_IMAGE_READ_NO_THINKING_MAX_TOKENS = 3000;
+
+/** 物件名などの読み取りで推論を使うか（既定は使わない・PROPERTY_IMAGE_READ_THINKING=on で旧に戻す） */
+export function propertyImageReadThinking(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PROPERTY_IMAGE_READ_THINKING ?? "").trim().toLowerCase() === "on";
+}
+
+/**
+ * 同じ URL の物件名などの読み取りを処理の中で1つにまとめる（recordSentImageProperty と ensureImageDetail が並んで走っても1回）。
+ * 読めなかった結果は持たない（次の機会に読み直せるように）。3分で忘れる（募集状況は日で変わるので長く持たない）
+ */
+const SHARED_READ_TTL_MS = 3 * 60_000;
+const sharedReads = new Map<string, { at: number; p: Promise<ReadResult> }>();
+export function sharedPropertyImageRead(imageUrl: string, opts?: { timeoutMs?: number }): Promise<ReadResult> {
+  const now = Date.now();
+  for (const [k, v] of sharedReads) if (now - v.at > SHARED_READ_TTL_MS) sharedReads.delete(k);
+  const hit = sharedReads.get(imageUrl);
+  if (hit) return hit.p;
+  const p = readPropertyImage(imageUrl, { timeoutMs: opts?.timeoutMs }).then((r) => {
+    if (r.items.length === 0 && !r.raw.startsWith("{")) sharedReads.delete(imageUrl);
+    return r;
+  }, (e) => { sharedReads.delete(imageUrl); throw e; });
+  sharedReads.set(imageUrl, { at: now, p });
+  return p;
 }

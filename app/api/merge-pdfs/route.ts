@@ -262,6 +262,8 @@ export async function POST(req: NextRequest) {
        *   property_pickups.search_mode に残し、ピンポイントの物件に加点（SEARCH_PINPOINT）。無い・知らない値は「分からない」（加点しない）
        */
       search_mode?: string | null;
+      /** 2026-09-29 v2.5.41 拡張がこのページで送付済みの部屋として選ばなかった数（資料をダウンロードしていない）。ページの最初の束だけに付く */
+      ext_sent_skipped?: number | null;
     };
 
     const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode, brain_mode } = body;
@@ -489,7 +491,10 @@ export async function POST(req: NextRequest) {
           ? await rankAndAnnotateSummariesDetailed(summariesWithAd, rankConditions, rankMaterials)
           : null;
         const rankedSummaries = rankOutcome ? rankOutcome.summaries : summariesWithAd;
-        const lineNotice = [excludedNotice, timeoutNotice, rankOutcome?.status === "failed" ? RANK_FAILED_NOTICE : ""].filter(Boolean).join("\n");
+        // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: 拡張が一覧で飛ばした数を1行
+        const extSkipped = typeof body.ext_sent_skipped === "number" && body.ext_sent_skipped > 0 ? Math.floor(body.ext_sent_skipped) : 0;
+        const extSkipNotice = extSkipped ? `（送付済みの部屋 ${extSkipped}件は飛ばしました・資料もダウンロードしていません）` : "";
+        const lineNotice = [excludedNotice, extSkipNotice, timeoutNotice, rankOutcome?.status === "failed" ? RANK_FAILED_NOTICE : ""].filter(Boolean).join("\n");
         const lineText = buildLineMessage(
           blob.url,
           name,

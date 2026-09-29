@@ -50,6 +50,24 @@
 - **9/29 夕方の仕上げ**: ①落ちていた `commute-reach.test.js`「到達時間が読めない時だけ旧の transitRe（if (!_reach)）」は**実装は正しく、テストの文字列一致が LF を前提にしていた**（この PC は core.autocrlf=true で popup.js の作業フォルダの写しが CRLF・リポジトリの中身は LF）→ テストを `\r?\n` の正規表現に（意図は同じ）。拡張のテスト 17本すべて通過 ②**今のお客様の通勤の条件（120日・32人）に当てた**: 読めて広げる 17人・具体的な希望エリアで広げない 2人（d919e4da 七道15分＋堺の駅の並び・dbb17e27 大日駅）・読めない 13人（車／自転車／タクシーの分・分の無い列・電車1本＝旧の resolveDirectCommute）。「大阪駅まで30分圏内」（c75ae398）＝290駅→上限で 240駅・乗り換えで着く駅 111（野田阪神9・堺筋本町10・阿波座11・蒲生四丁目13・九条13 等＝**梅田の沿線でない駅が入る**）・十三3・新大阪5・京橋6・尼崎10・吹田11・江坂11・天王寺14・千里中央19・茨木21・西宮北口22・守口市23・門真市24、高槻・堺東・三ノ宮は入らない。**上限 240 で 26〜30分の 50駅（芦屋・夙川・摂津富田・古川橋・七道 等）が切れている**（上限で切れるのは 9人: 梅田30分・梅田＋なんば30分・梅田＋太子橋＋清水30分・本町＋阿波座30分・なんば30分・玉造30分・北加賀屋45分・西九条45分・梅田＋なんば40分）＝リアプロの fill-done 90秒との兼ね合い。実の検索で時間に余裕があれば上限を上げる
 - **竹内さんに頼む確かめ**: 拡張を再読み込み → YUMA の希望エリアを「梅田まで電車で30分」（または通勤の列 梅田・30）にして**1回だけ**リアプロで検索 → コンソールに `[AX] 通勤の到達時間で駅を選択: 梅田まで30分（乗り換え1回まで）→ 2xx駅・3x路線` → 駅モーダルで十三・江坂・京橋・野田阪神などが選ばれ高槻市・堺東は選ばれない → 点検の記録に「通勤の到達時間で駅を選んだ」の札。時間が 90秒に収まるかを見る（収まらなければ上限 240 を下げる）
 
+## 2026-09-29 採点: 家賃は「安いほど良い」ではなく「条件の中で見る」（RENT_BAND_RULE・拡張は変えていない・commit / push は親）
+竹内（R さん: 条件 7万〜8万なのに上位オススメ7件が 7万円未満・👑 CityLife ディナスティ新大阪 602 は 4.6万＋管理費1万で 132点）「家賃帯が低ければ低い方が良いわけではない。8万円以内なら出来る限り8万円に近い方が全体的に条件良い部屋多い…お客さんの希望の条件に合った物件を見つけるのが仕事」
+- **原因**: 旧は上限内なら RENT_OK +15 で一律・下限は下限の85%未満で RENT_BELOW_MIN −3（情報の札・FIT_ALL +15 も付いた）。いつもは検索が下限を守っていただけで、R さんの回（search_audits #156）は検索の条件が効かず 3万〜22万が混ざった
+- **直し**（`app/lib/property-brain.ts` の家賃の所だけ）: 1か所の表 `RENT_BAND_RULE`（＋`RENT_BAND_POINTS` を REASON_POINTS に展開）・純関数 `rentPositionCodes(total, profile, rentOnly)`・`readRentTarget`（目安の額）・切り替え `setRentBandEnabled`／環境変数 `RENT_BAND_SCORING=off`（旧に戻る）
+  - 上限内の位置（管理費込み ÷ 上限）: 90%以上 `RENT_BAND_UPPER` 0／85〜90% `RENT_BAND_MID` 0／80〜85% `RENT_BAND_LOWER` −8／8割未満 `RENT_BAND_LOW` −8（RENT_OK +15 に足す＝家賃の家族の最大は +15 のまま・AD の1.3倍の方針を崩さない）
+  - 下限: 管理費込みで下限の95%未満 → `RENT_UNDER_MIN`（−10・**保留**・RENT_OK を付けない・家賃の外れ＝FIT・NG の札にも数える）／95%以上で下限未満 → `RENT_NEAR_MIN`（0点の知らせ・スタッフは選んでいる 11/54）。旧の `RENT_BELOW_MIN` は保存済みの行と切った時だけ（−3 のまま）
+  - 目安の額（条件欄の「できれば60000円程度」「家賃10万くらい（管理費込みで12万上限）」「基本家賃10万位」）: 帯の代わりに `RENT_TARGET_NEAR`（±5%・0）／`_MID`（±12%・−5）／`_FAR`（−10）。「込」が額の前に無ければ家賃だけと比べる。目安がある人には RENT_CHEAP_* を付けない。読めたのは 311人中 3人（c464e864・68c56bf3・c46fe3b6）
+  - 目安の無い「家賃は安い方が良い」（RENT_CHEAP_*）の人: 帯を付けない（`cheapWithoutTarget: "neutral"`・当て直しで band と差なし）
+  - 上限を超えた物（RENT_WIDE・SLIGHTLY_OVER・OVER_*）は今まで通り
+- **画面**: `pickup-card-view.ts` 家賃の欄の言い方（「予算・上限寄り（相場に見合う）」「下限未満」「目安の額に近い」「予算・上限の8割未満（安すぎ）」）・8割未満／下限を少し下回るは緑にしない。`pickup-review-order.ts` CHIP_JA に札を足した
+- **当て直し** `scripts/backtest-rent-band.ts`（読むだけ・180日・旧と新で loadEpisodes を2回読む・売上サポの回は保存の札に家賃の札だけ付け直す）: 家賃の札が変わった回 81・お客様で 7:3 → 学び用 43回・14人で表を選んだ（相対順位 旧 0.365 → 0.306）→ 確かめ用 38回・9人: 相対順位 0.405 → 0.360・1位 38.3→39.0%・3位以内 55.3→63.2%。変わった回だけ: 1位 43.0→45.1%・3位以内 65.4→70.4%・選んだ物の順位 上がった 19・下がった 6。全体 520回: 相対順位 0.486 → 0.478。安さを発言した人 91回 0.557 → 0.530（悪くならない）・欄に書いた人 42回 変わらず・目安ありは 2回・1人（スタッフは目安10万より上の 11.1〜11.5万を送っていた・既知の家賃どうしの並びは変わらず）
+- **R さんの27件**: 旧の上位1〜6（CityLife 132・清水谷喜多 128・心斎橋SPOT21 125 …すべて 7万未満）は下限未満の保留（44〜65点）→ 通すのは プロシード 704（7.4万）118・エグゼ 804（7.5万・築1）115・アムールセゾン（6.9万・下限を少し下回る）115・シャーンティⅡ 107・レオン弁天町 104 の5件。帯の中の 1LDK は元から0件（検索が崩れた回なので採点だけでは良い候補は増えない）
+- **ついでに直した**: `scoring-learning-server.loadEpisodes` のページの並びに id を足した（property_candidate_pools を sent_at だけで並べていて、同じ期間を2回読むと回が 270／271・数十回入れ替わっていた＝毎週の重みの学習の材料が読むたびに揺れていた）
+- テスト: `app/lib/__tests__/rent-band.test.ts`（56・R さんの実物の家賃＋管理費・条件欄の実物の言い回し）・`area-commute.test.ts` の下限の2件を新しい決まりに
+- **拡張で直す事（C さんの範囲・触っていない）**: ①検索の結果が入れた家賃・間取りを守っているかの点検（#156 は条件なしの一覧が届いたのに見張りが warn だけ）②🌟に渡す条件の文に下限を入れる（popup.js「予算8万円以内」だけ）③共益費込みのチェックが回で入ったり入らなかったり（#156 は入らず）
+- **残り**: ①円の AD を安い家賃で割って月数にする（100,000円 ÷ 46,000円＝2.17ヶ月で AD_HIGH）②1K・1R を 1LDK 希望に「近い」+5（matchFloorPlan）③「初期費用激安希望」が初期費用を抑えたいに読めない ④scoring-learning の特徴 rent_ratio は「低いほど良い」の向きのまま（診断の表だけ）⑤目安の額の発言（「できれば6万」）は条件欄に入らないと効かない（条件の混入の作業の範囲）
+- **9/30 反証の見直し**: ①目安の額の実物 c46fe3b6「共益費込み、できれば60000円程度」は「共益費込み」が前の節にあり家賃だけと比べていた（家賃5.5万＋共益費5千＝計6万が「少し離れる」−5）→ `readRentTarget` で**同じ行の前の節**に「管理費込・共益費込」があれば管理費込み（別の行は効かない）・テスト4件（計60）②残した穴: 「できれば独立洗面(家賃の安さ優先)」の「家賃の安さ」を `RENT_CHEAP_RE` が読めない（安い・安め・安く だけ）＝この1人は安い部屋に帯の −8 が付く（RENT_CHEAP_RE は customer-wants.ts＝条件の混入の作業も使うので触っていない）③下限の95%未満の保留は強い: 当て直しでスタッフが選んだ下限未満 4/21（エステムコート難波WEST-SIDE AD2 108→55 など）④毎週の重みの学習は RENT_BAND_*・RENT_UNDER_MIN の点も動かせる（凍結の札に入れていない）
+
 ## 2026-09-29 採点: お客様ごとの倍率を**毎週の学習に組み込んだ**（表は DB・今は空＝点は今まで通り・拡張は変えていない）
 竹内「（お客様ごとの採点の倍率を毎週の学習に）組み込む」「ここは DeepSeek で分析できるかな？ 物件検索ブレイン（DeepSeek）の部分が分析する形」
 - **毎週どう回るか**: Vercel cron `/api/cron/scoring-pref-learning`（日曜 20:40 UTC＝月曜 JST 5:40・重みの学習 scoring-learning 20:10 の30分後・maxDuration 300）
@@ -2650,3 +2668,30 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
   - ③文字層の読み取りが失敗したら旧どおり画像に倒す（ログ `property-pickups:text-detail-fallback`）・鍵が無い環境では呼ばず記録もしない
   - ④`image_details.model` に出所を付ける（`text:deepseek-flash`／`reuse`／`image:deepseek-flash`／`pickup_lines`／`pickup_text:deepseek-flash`・`detailModelLabel`・列追加なし）。audit-detail-source.ts ④で model 別に数える（旧の "deepseek-flash" は 9/29 より前）
   - ⑤`LLM_ALT_ROUTES` に本文（reply_generate・aix_template・AIX 全種類と派生・brain_*・物件の読み取り）は書けない（`isAltRouteDenied`・warn で無視）。`LLM_ALT_PROVIDER` が無い時は `LLM_ALT_ACTIONS` を効かせない（振り分けた名前だけ・本文は Claude のまま）
+
+## 2026-09-29 v2.5.41 更新日を生かす（決まりの誤報を直す・前回の検索から空いた分を覆う・見張りに更新日）／一度送った部屋は一覧で選ばない（**拡張の再読み込み必須**・DB の表・列の追加なし・commit / push は親が行う）【担当 C】
+竹内「更新日もちゃんと確認する。更新日を生かすことによって最新の物件の検索や新規物件のもれがないようにするのが目的」「一度送ったことがある物件はダウンロードもしないようにすれば更に問題なく物件検索できる。人間の動きのように」「顧客名はアカウント名やから…質が落ちないなら防ぐ」
+- **UPDATE_DAYS の warn 90件（9/22〜）の正体**: 決まり（expected）の出所は `search-audit-check` → `rp-update-days.effectiveRpUpdateDays(customer_snapshot)`。ところが**拡張の search-audit.js `maskDigits` が写しの日時「2026-09-26T02:50…」を電話番号の形（数字とハイフン10字以上）として「＊＊＊T02:50…」に伏せていた** → 前回物件を出した日が読めず、決まりは毎回「指定なし」＝differs 92件は全部この誤報（＋午後の便＝1・web_brain＝サーバーが積んだ値を知らなかった）。直し: ①search-audit.js は日時の欄（last_property_sent_at・property_viewed_at の ISO の形）を伏せない ②`expectedUpdateDays`（計画 → 午後の便 1 → web_brain／午前の便の payload → 写し。**写しが伏せ字の古い行は「分からない」＝言わない**）③recordFinished・見張り C1 が命令の payload と前回の検索を読む（`search-update-days-server.auditUpdateContext`）。当て直し（`scripts/audit-update-days.ts`・9/22〜 150回）: **differs 92 → 8**（残る8件は全部 web_brain で popup が payload の更新日を見ず、その場の決まりで入れていた本物＝下の③で直した）・typed_unverified 2（ITANDI で一覧から選べず打っただけ＝本物・未対応）
+- **決め方**（`app/lib/search-update-days.ts` 純関数）: 今までの決まり（午後＝1・午前＝手で決めた値→前回物件を出した日から・web_brain＝rp-update-days）を、**前回の検索（そのお客様×サイトで最後に終わった回＝search_audits finished・失敗なし・時間切れなし）から空いた時間を覆う所まで広げる（狭めない）**。時間で数える（「1日以内」＝24時間と読む狭い側・余裕0.5時間）→ 要る日数 → 1/3/7/14 の覆う物・14 でも足りなければ指定なし（ITANDI は同じ値・14 は「なし」）。前回が分からなければ今まで通り。ブレインでない PC の回は search_audits に無い＝前回が古く見える＝広い側（漏れない）
+  - 積む所: cron `auto-property-search`（午前は1人ずつ rp_update_days を計画の値に・午後は1コマンドのまま `payload.update_days_plan.by_customer[id]`）・`/api/automation/trigger`（web_brain・レインズは無し）・`search-widen-chain-server`（広げての回はピンポイントの回の値をそのまま計画に）
+  - 拡張: `auto-run.js payloadForCustomer`（そのお客様の分を rp_update_days と `_update_days` に写す）→ `optsFromPayload` が**自動便でも web_brain でも** popup の経路に渡す（旧は午後の便しか popup に届かず、web_brain・午前は popup がその場の決まりで入れていた）・`rp_update_days_none`＝指定なし。background は1人ごとに `_custPayload` を `_batchAutofill`・`_buildBatchConditions`・自動便の印の3か所に
+- **点検・見張りの更新日**（search-audit-check の UPDATE_DAYS に足した札・見張りは**ラベルを変えない**＝検索を止める理由にしない・規則 `update:<種類>` と★物件出し★のまとめの1行 `watch.update_notice` だけ）:
+  - C1 入ったか（not_filled・leftover・not_accepted・typed_unverified＝今まで通り）＋ **gap_uncovered**「更新日（1日以内）では前回の検索から空いた分を覆えていない」
+  - C2 **rows_outside**: 一覧の行の先頭のセル（見出し「部屋名更新日」＝「309 4日前 閲覧済」）の経過が指定の日数の外（表示は切り捨てなので N日以内で「N日前」までは中）が2件以上かつ2割以上。画面（snapshot-core `updateAgesOf`・readDom の update_ages・リアプロだけ）と bulk-dl が読んだ行（result.update_ages）の両方
+  - C3 **cut_by_pages**: max_pages で打ち切った（bulk-dl／itandi-bulk-dl の page_limit）。当て直しで 40回（午前・web_brain・手の一括の3ページ）
+  - 当て直しで gap_uncovered は 0回・計画が広げる回も 0回（9/22〜 のブレインの回はほぼ毎日検索できていた）＝穴は「便が失敗・見送りで日が空いた時」に出る形。ITANDI の一覧の更新日は読んでいない（形を確かめていない）
+- **Jev（見張り）にブレインの材料**: `jevStateFor(…, brain)` に 登録の条件（希望エリアは伏せた文字・家賃・間取り・広さ・徒歩・築年・ペット）・要望の項目（customer-wants）・通勤の到達時間・今回だけか切り替えか・検索の意図（intentSummary）・前回からの時間と要る日数・更新日の見立て。**お客様の名前は入れない**（画面の様子の判断に名前は要らない＝伏せても質は落ちない）。1回確かめた: state 1.6KB・435ms・入力 859トークン（≈$0.00004）・normal 0.96
+- **一度送った部屋は選ばない**（`chrome-extension/sent-skip.js`＝self.AxlxSentSkip・純関数）:
+  - 出所は sent_properties 1つ（★物件出し★への共有＝merge-pdfs が次の送信で建物ごとに外す物・お客様に送った物＝AIX物件ピックアップ等）。`/api/automation/sent-rooms?customer_id=`（`app/lib/sent-rooms-server.ts`・建物名と号室だけ・号室の無い行は返さない）→ background `_loadSentRooms`（一括の1人ごと・6秒で切る・**スタッフモードは空**）→ chrome.storage.session `axlx_sent_rooms`（30分）→ bulk-dl `_applySentSkip`・itandi-bulk-dl `_applySentSkipIt` が全選択の直後にチェックを外す＝**資料の PDF を取りに行かない・ITANDI は資料のモーダルを開かない・判定にも渡さない**
+  - 同じ部屋＝建物名（normalizePropertyName の写しで**完全一致**）＋号室（先頭の0を落とす・**英字付きは英字ごと**＝「A0205」と「B0205」は別）。同じ建物の別の部屋・Ⅱ/Ⅲ・「サウス」と「サウスタワー」・名前が「物件」・号室が読めない行は飛ばさない（迷ったら飛ばさない）。サーバー（merge-pdfs）の建物ごとの除外は今まで通り（こちらはその手前の「確実に同じ部屋」だけ）
+  - 数: 点検 result.sent_skipped・★物件出し★の本文「（送付済みの部屋 N件は飛ばしました・資料もダウンロードしていません）」（ブレインでない回＝merge-pdfs の ext_sent_skipped・ページの最初の束／ブレインの回＝解析の完了のアナウンスに watchNoticeLines が1行）・全部飛ばして0件の時は「🔍【新しい物件なし】…送付済みの部屋だけでした」（「0件」と言わない）
+  - **当て込み**（`scripts/audit-sent-skip.ts`・9/15〜 候補の記録 4,164回・86人・候補 33,177件）: 号室が読める候補 5,617件（リアプロの先頭のセルは 9/25 から記録）→ **飛ばす 857件**（リアプロ 822・ITANDI 35）。誤一致の確かめ（リアプロの資料の id＝factsheet.php?id=）: 前に選んだ同じ部屋と id が同じ 447件・**id が違う 8件は全部 家賃・間取り・㎡・AD が同じ＝同じ部屋の掲載し直し（誤一致 0）**・前の候補が無く id で確かめられない 402件（名前＋号室の完全一致・例を目で読んだ）。最初の案（号室を normalizeRoomNo だけで比べる）は「HOPE CITY天神橋 A0205」が英字を落として別の棟に当たり得た → 英字ごとに直した
+  - ⚠ 見つけた物（直していない・別の担当の範囲）: sent_properties.property_url は全部「www.realnetpro.com/common/factsheet.php」（`?id=` を落としている）＝部屋の鍵になっていない（保存値は URL として読めず normalizePropertyUrl が "" を返すので誤除外は起きていない）。部屋の鍵にするなら id を残す形に直す
+- テスト: `app/lib/__tests__/search-update-days.test.ts`（36・伏せ字の行に differs を付けない・午後の便／web_brain／計画の決まり・49時間で1日以内→gap・3ページで打ち切り・一覧の更新日・見張りはラベルを変えない・Jev の材料に名前が無い・拡張の写しと TS の正規化が一致）・`tests/chrome-extension/sent-skip.test.js`（48・号室と更新日の読み・同じ部屋だけ・英字の号室・計画が popup の経路へ・配線）・既存（auto-run 59・human-wait 214・screen-watch・snapshot-core・search-audit-check 100・screen-watch 79 等）通過。版 2.5.41（auto-run・snapshot-core・screen-watch の版の固定を上げた）
+- **竹内さんに頼むこと**: ①ブレインの PC で**拡張を再読み込み**（小窓のヘッダーが「拡張 v2.5.41」）②YUMA で**リアプロ1回だけ**一括（AIXツールの一括検索）→ 点検の記録に result.sent_skipped（YUMA は送付済みの部屋 244件）・update_ages が付き、★物件出し★（ブレインでない時）に「送付済みの部屋 N件は飛ばしました」が出るか。更新日の欄が計画の値（コンソール「[batch] 更新日の計画: …」）になっているか ③ITANDI は1回（YUMA）で「[AXLX itandi] 送付済みの部屋 N件は選ばない」
+- **未決**: ①cut_by_pages（3ページで打ち切り）は warn のまま数える（40回/週）＝ページの上限を上げるか・更新順の時だけにするかは竹内さんの判断 ②ITANDI の typed_unverified（一覧から選べず打っただけ）2件は未対応 ③「1日以内」が24時間か暦の日かは実物で未確認（24時間と読む＝広い側）
+
+
+## 2026-09-30 点検（v2.5.41 のまま）: 更新日の計画を検索する時刻で数え直す
+- 計画（update_days_plan）はサーバーが積んだ時刻（cron 10:00／16:00・web_brain は押した時）で「前回の検索から空いた時間」を数えていた。実際の検索は not_before（10:15〜11:15＋お客様の間）の後なので、積んだ時 23時間でも検索する時 25時間になり 1日以内では前回との間が漏れる（点検の gap_uncovered は検索を始めた時刻で数える＝食い違う）。
+- 直し: `auto-run.js payloadForCustomer(payload, id, nowMs)` が by_customer[id].last_search_at から**今の時刻で**要る日数を数え直し、広げるだけ（狭めない・余裕 0.5時間・1/3/7/14・超えたら指定なし＝search-update-days.ts と同じ線）。テスト `tests/chrome-extension/sent-skip.test.js`（今の時刻に依らない形に直し＋6件）。

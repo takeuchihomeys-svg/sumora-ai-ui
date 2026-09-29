@@ -285,6 +285,7 @@
       count_number: typeof dom.count_number === "number" ? dom.count_number : countNumberOf(dom.count_text),
       page_text: dom.page_text || null, alert_text: dom.alert_text || null, modal_text: dom.modal_text || null,
       text_head: dom.text_head || null, band_text: dom.band_text || null, visibility: dom.visibility || null,
+      update_ages: dom.update_ages || null,
     } : null;
     return {
       brain: true, checkpoint: checkpoint, run_id: c.runId || null, command_id: c.commandId != null ? String(c.commandId) : null,
@@ -292,6 +293,27 @@
       install_id: c.installId || null, ext_version: c.extVersion || null, dom: d, dom_error: c.domError || null,
       filled: c.filled || null, error: c.error ? String(c.error).slice(0, 500) : null,
     };
+  }
+
+  /**
+   * 2026-09-29 v2.5.41 リアプロの一覧の行の更新日（見出し「部屋名更新日」の「309 4日前 閲覧済」）の経過の日数（見張りの C2）。
+   *   行の頭が号室＋「N日前／N時間前／N分前」の形だけ数える（他の文の「3日前」は数えない）。サーバーの search-update-days.ageDaysOfCell と同じ読み
+   */
+  var ROW_AGE_RE = /^\s*[A-Za-z]?-?\d{1,5}[A-Za-z]?\s+(\d{1,4})\s*(分|時間|日|週間|ヶ月|か月|カ月)前/;
+  function updateAgesOf(lines) {
+    var n = 0, max = null, sample = [];
+    for (var i = 0; i < lines.length && i < 4000; i++) {
+      var s = String(lines[i] || "");
+      if (s.normalize) s = s.normalize("NFKC");
+      var m = s.match(ROW_AGE_RE);
+      if (!m) continue;
+      var k = Number(m[1]), u = m[2];
+      var d = u === "分" ? k / 1440 : u === "時間" ? k / 24 : u === "日" ? k : u === "週間" ? k * 7 : k * 30;
+      if (!isFinite(d)) continue;
+      n++; max = max == null ? d : Math.max(max, d);
+      if (sample.length < 150) sample.push(Math.round(d * 100) / 100);
+    }
+    return n ? { n: n, max_days: max, sample: sample } : null;
   }
 
   function readDom(doc, loc) {
@@ -368,6 +390,7 @@
       selected_count: textOf("axlx-count") || textOf("axlx-itandi-count"),
       bulk_bar_shown: shown("axlx-bar") || shown("axlx-itandi-bar"),
       text_head: clip(bodyText, 300),
+      update_ages: siteOfUrl(href) === "realpro" ? updateAgesOf(lines) : null,
       form: form,
       mask_rects: maskRects,
       viewport: viewport,
@@ -418,6 +441,7 @@
     bytesToBase64: bytesToBase64,
     scaledSize: scaledSize,
     readDom: readDom,
+    updateAgesOf: updateAgesOf,
     MASK_SEL: MASK_SEL,
     WATCH_STOP_TTL_MS: WATCH_STOP_TTL_MS,
     countNumberOf: countNumberOf,

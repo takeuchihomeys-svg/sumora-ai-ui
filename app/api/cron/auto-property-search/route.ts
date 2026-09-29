@@ -6,6 +6,8 @@ import {
   AUTO_SEARCH_SITES, autoStartAtMs, notBeforeSchedule,
   type AutoSearchMode, type AutoSearchCustomer,
 } from "@/app/lib/auto-search-schedule";
+import { planPayload, type UpdateDaysPlan } from "@/app/lib/search-update-days";
+import { planUpdateDaysFor } from "@/app/lib/search-update-days-server";
 
 export const maxDuration = 60;
 
@@ -32,7 +34,7 @@ export const maxDuration = 60;
 //     より前は /api/automation/pending が渡さない。3時間の期限も not_before から数える
 //   ・?dry_run=1 で積まずに、誰を・何時から（not_before）を返す
 
-type Row = AutoSearchCustomer & { customer_name?: string | null; desired_area?: string | null; area?: string | null };
+type Row = AutoSearchCustomer & { customer_name?: string | null; desired_area?: string | null; area?: string | null; rp_update_days?: number | null };
 
 export async function GET(req: NextRequest) {
   const mode = (req.nextUrl.searchParams.get("mode") === "pm" ? "pm" : "am") as AutoSearchMode;
@@ -44,7 +46,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from("property_customers")
     // 2026-09-19 竹内「物件出ししたお客さんっていうのは送信じゃなくて確認したお客さんも含む」→ property_viewed_at も取る
-    .select("id, customer_name, status, last_property_sent_at, property_viewed_at, created_at, desired_area, area")
+    .select("id, customer_name, status, last_property_sent_at, property_viewed_at, created_at, desired_area, area, rp_update_days")
     .limit(1000);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -78,7 +80,7 @@ export async function GET(req: NextRequest) {
     for (const id of ((r.customer_ids as string[] | null) ?? [])) openIds.add(String(id));
   }
 
-  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null; not_before?: string }> = [];
+  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null; not_before?: string; update_days?: string }> = [];
   const skipped: Array<{ id: string; name: string | null; why: string }> = [];
   const byId = new Map(rows.map((r) => [String(r.id), r]));
 
@@ -90,10 +92,26 @@ export async function GET(req: NextRequest) {
     return true;
   });
 
+  // 2026-09-29 v2.5.41 竹内「更新日を生かすことによって最新の物件の検索や新規物件のもれがないように」:
+  //   今までの決まり（午後＝1・午前＝手で決めた値→前回物件を出した日から）を、前回の検索（そのお客様×サイトの最後に終わった回）から
+  //   空いた時間を覆う所まで広げる（狭めない・14 でも足りなければ指定なし）。拡張は payload.update_days_plan.by_customer[id].days を使う
+  const plans = new Map<string, UpdateDaysPlan>();
+  try {
+    const entries = toQueue.map((t) => {
+      const manual = byId.get(t.id)?.rp_update_days;
+      const base = mode === "pm" ? buildAutoSearchPayload(mode, null, now).rp_update_days : (typeof manual === "number" && manual > 0 ? manual : t.rpUpdateDays);
+      return { id: t.id, baseDays: base };
+    });
+    for (const e of await planUpdateDaysFor(supabase, entries, AUTO_SEARCH_SITES, now)) plans.set(e.id, e.plan);
+  } catch (e) { console.warn("[auto-property-search] 更新日の計画を作れない（今までの決まり）:", e instanceof Error ? e.message : String(e)); }
+  const planNote = (id: string) => plans.get(id)?.reason;
+
   if (isBatchedRun(mode)) {
     // 17時（pm）: 全員が同じ条件なので**1コマンドにまとめて**拡張の一括検索で回す
     //   （竹内 2026-09-19「17:00の検索はピンポイント検索で一括で行うようにする」）
-    const payload = { ...buildAutoSearchPayload(mode, null, now), not_before: new Date(autoStartAtMs(mode, jstDate)).toISOString() };
+    //   更新日だけはお客様ごとの計画（update_days_plan）で広げる（前回の検索から2日以上空いた人を 1日以内で探さない）
+    const payload = { ...buildAutoSearchPayload(mode, null, now), not_before: new Date(autoStartAtMs(mode, jstDate)).toISOString(),
+      ...(plans.size ? { update_days_plan: planPayload(toQueue.filter((t) => plans.has(t.id)).map((t) => ({ id: t.id, plan: plans.get(t.id)! }))) } : {}) };
     if (toQueue.length > 0 && !dryRun) {
       const { error: insErr } = await supabase.from("automation_commands").insert({
         command_type: "batch_property_search",
@@ -105,18 +123,20 @@ export async function GET(req: NextRequest) {
       if (insErr) {
         for (const t of toQueue) skipped.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, why: `積めなかった: ${insErr.message}` });
       } else {
-        for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before });
+        for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id) });
       }
     } else {
-      for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before });
+      for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id) });
     }
   } else {
     // 11時（am）: 更新日が人ごとに違うので1人1コマンド。開始は1人ずつ不規則な間でずらす（notBeforeSchedule）
     const nbById = new Map(notBeforeSchedule(mode, jstDate, toQueue.map((t) => t.id)).map((x) => [x.id, x.notBeforeMs]));
     for (const t of toQueue) {
       const c = byId.get(t.id);
-      const payload = { ...buildAutoSearchPayload(mode, t, now), not_before: new Date(nbById.get(t.id) ?? autoStartAtMs(mode, jstDate)).toISOString() };
-      if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before }); continue; }
+      const plan = plans.get(t.id);
+      const payload = { ...buildAutoSearchPayload(mode, t, now), not_before: new Date(nbById.get(t.id) ?? autoStartAtMs(mode, jstDate)).toISOString(),
+        ...(plan ? { rp_update_days: plan.days, update_days_plan: planPayload([{ id: t.id, plan }]) } : {}) };
+      if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id) }); continue; }
       const { error: insErr } = await supabase.from("automation_commands").insert({
         command_type: "batch_property_search",
         customer_ids: [t.id],
@@ -125,7 +145,7 @@ export async function GET(req: NextRequest) {
         status: "pending",
       });
       if (insErr) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: `積めなかった: ${insErr.message}` }); continue; }
-      queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: payload.rp_update_days, not_before: payload.not_before });
+      queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id) });
     }
   }
 

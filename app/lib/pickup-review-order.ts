@@ -169,6 +169,16 @@ const CHIP_JA: Record<string, string> = {
   FREE_RENT_MATCH: "フリーレント（希望に一致）",
   // 2026-09-25 家賃下限・間取りの「も可」・広さ・エリア・通勤
   RENT_BELOW_MIN: "家賃が下限よりかなり安い",
+  // 2026-09-29 家賃の位置（property-brain RENT_BAND_RULE）
+  RENT_UNDER_MIN: "家賃が下限未満",
+  RENT_NEAR_MIN: "家賃が下限を少し下回る",
+  RENT_BAND_UPPER: "家賃は上限寄り（相場に見合う）",
+  RENT_BAND_MID: "家賃は上限の85〜90%",
+  RENT_BAND_LOWER: "家賃は上限の80〜85%",
+  RENT_BAND_LOW: "家賃が上限の8割未満（安すぎ）",
+  RENT_TARGET_NEAR: "家賃が目安の額に近い",
+  RENT_TARGET_MID: "家賃が目安の額から少し離れる",
+  RENT_TARGET_FAR: "家賃が目安の額から離れる",
   FLOOR_PLAN_ALT_MATCH: "間取り「も可」の型",
   SQM_UNDER: "広さが希望の9割未満",
   SQM_UNKNOWN: "広さは要確認",

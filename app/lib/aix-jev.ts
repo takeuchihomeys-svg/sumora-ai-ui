@@ -19,6 +19,7 @@
 //   ・state は**仮名化した後**の文だけ入れる（呼び出し側の責任。ここは純関数）。
 //   ・Jev は state を「データ」として読む。指示文で誘導しない（質問文と選択肢の説明で決める）。
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
+import type { AixJevMaterials } from "./aix-jev-materials";
 import { jevSystemOne, type JevAnswer, type JevQuestion, type JevResult } from "./jev-client";
 
 // ─── 選択肢: AIX ボタン ────────────────────────────────────────────────────────
@@ -42,6 +43,23 @@ export const JEV_AIX_OPTIONS: Record<string, string> = {
   phone_call:              "お客様が電話で話したいと言い、電話をかける案内をする場面",
   phone_followup:          "電話が終わった後のまとめを送る場面",
   guarantor_info:          "保証会社の名前・種類・並行審査について聞かれた場面",
+};
+
+/**
+ * 材料（customer_materials）がある時の選択肢の説明の差し替え。材料の欄を名指しして、記録の事実で分かれる所を分ける。
+ * 2026-09-29 実測（scripts/eval-jev-aix-materials.ts）: 材料を入れても説明が会話の言葉だけだと Jev は材料を使わなかった（60場面で答えが変わったのは5〜7場面）。
+ *   分かれ目はどれも実データで確かめた物だけ（ブレインの答えは入れない）:
+ *   ・内覧日調整／待ち合わせ: 待ち合わせ（meeting_place）の 74%（51/69）は直前72時間に内覧日調整あり、内覧日調整の 73%（76/104）は無し（aix_usage_logs 120日）
+ *   ・見積書送る／初期費用について: 金額の質問・見積の依頼は見積書送る、中身の質問は見積書の後（brain-core の使いどころ基準 2026-09-12/15 竹内）
+ *   ・物件検索: スタッフが押した回は 0（120日）。お客様が物件を求めた時は物件ピックアップした（brain-core の property_search の注記）
+ */
+export const JEV_AIX_OPTIONS_WITH_MATERIALS: Record<string, string> = {
+  ...JEV_AIX_OPTIONS,
+  estimate_sheet:  "お客様が気に入った・送ってきた物件の初期費用の御見積書を作って送る場面（見積を頼まれた・初期費用はいくらか聞かれた・物件の画像が届いた・見積書の後に総額や追加分を確かめられた）",
+  cost_breakdown:  "御見積書を送った後（customer_materials.records.estimate_sent が true）に、初期費用の中身（何が含まれるか・家賃だけで入居できるか）を聞かれた場面。金額を聞かれた・見積を頼まれただけなら estimate_sheet",
+  viewing_invite:  "内覧したい・内覧できるかと言われ、内覧の日程をこちらから打診・調整する場面（まだ日程の案内をしていない時が多い）",
+  meeting_place:   "内覧の日程を案内した後（customer_materials.recent_aix に直近の viewing_invite がある）、お客様が日時を指定・了承した時に、内覧の確定と待ち合わせ場所・時間を案内する場面",
+  property_search: "拡張ツールで物件を検索するだけの操作（お客様への文は作らない）。お客様が物件を求めた・他の物件も見たい・条件を足した時は property_send",
 };
 
 // ─── 選択肢: 物件確認したの「何を確認するか」 ─────────────────────────────────
@@ -106,6 +124,11 @@ export type JevStateInput = {
   lastAixType?: string | null;
   /** 何通まで入れるか（既定 8） */
   limit?: number;
+  /**
+   * 2026-09-29 竹内「材料は渡す・答えは渡さない」: ブレインが同じ場面で見ている材料（要約・登録の条件・段階・台帳・直近の AIX・今回だけ／切り替えの語）。
+   * aix-jev-materials.buildAixJevMaterials で組む（仮名化済み・ブレインの結論は入らない）。無ければ今までと同じ state
+   */
+  materials?: AixJevMaterials | null;
 };
 
 /** Jev に渡す state（JSON）。個人情報は呼び出し側で仮名化済みの前提 */
@@ -122,16 +145,25 @@ export function buildJevState(input: JevStateInput): Record<string, unknown> {
     properties_sent_by_staff: input.sentPropertyCount ?? null,
     estimate_sent: input.estimateSent ?? null,
     last_aix_pressed: input.lastAixType ?? null,
+    ...(input.materials ? { customer_materials: input.materials } : {}),
   };
 }
 
 // ─── questions ────────────────────────────────────────────────────────────────
-export function buildAixJevQuestions(): Record<string, JevQuestion> {
+/**
+ * 材料（customer_materials）がある時だけ質問の文に足す一文。材料の読み方（どれが事実か）を示すだけで、答えの方向は書かない。
+ * 2026-09-29 実測（scripts/eval-jev-aix-materials.ts・60場面）: 質問の文が「latest_customer_message と conversation を読み」だけだと、
+ *   材料を足しても答えが変わったのは 7/60 場面で、見積書を送っていない（estimate_sent=false）のに「初期費用について」を選ぶ等、材料を読んでいなかった
+ */
+export const JEV_MATERIALS_HINT = "customer_materials はこの会話の記録から取った事実（登録の条件・今の段階・送った物件と見積書・案内済みの内覧・直近にスタッフが送った AIX・今回だけ／切り替えの語）。会話と合わせて読む";
+
+export function buildAixJevQuestions(opts: { withMaterials?: boolean } = {}): Record<string, JevQuestion> {
+  const hint = opts.withMaterials ? `。${JEV_MATERIALS_HINT}` : "";
   return {
     next_aix: {
       type: "choice",
-      instructions: "latest_customer_message と conversation を読み、スタッフが今押すべき AIX ボタンを1つ選ぶ",
-      criteria: JEV_AIX_OPTIONS,
+      instructions: `latest_customer_message と conversation を読み、スタッフが今押すべき AIX ボタンを1つ選ぶ${hint}`,
+      criteria: opts.withMaterials ? JEV_AIX_OPTIONS_WITH_MATERIALS : JEV_AIX_OPTIONS,
     },
     check_topic: {
       type: "choice",
@@ -190,7 +222,7 @@ export async function evaluateAixWithJev(
   input: JevStateInput & { conversationId?: string | null; timeoutMs?: number; env?: Record<string, string | undefined>; fetchImpl?: typeof fetch },
 ): Promise<AixJevEvaluation | null> {
   const raw = await jevSystemOne({
-    state: buildJevState(input), questions: buildAixJevQuestions(),
+    state: buildJevState(input), questions: buildAixJevQuestions({ withMaterials: !!input.materials }),
     action: "aix_picker", conversationId: input.conversationId ?? null, timeoutMs: input.timeoutMs, env: input.env, fetchImpl: input.fetchImpl,
   });
   if (!raw) return null;
@@ -327,10 +359,32 @@ export function hasPickerQuestion(aixType: string | null | undefined): boolean {
   return !!aixType && aixType in AIX_PICKER_CATALOG;
 }
 
-export function buildPickerQuestion(aixType: string): JevQuestion | null {
+/**
+ * 材料がある時のピッカーの説明の差し替え（キーは AIX_PICKER_CATALOG と同じ・選択肢は増やさない）。
+ * 2026-09-29 実測（aix_usage_logs 90日・物件ピックアップした）: 新規（normal）の 84%（119/141）は前に物件を送っていない、
+ *   新着（new_arrival）の 91%（142/156）は前に送っている。材料を入れても説明が変わらないと Jev は送った数を見ずに新規を選んでいた
+ *   （送った数 15件の場面で新規 0.91）。
+ */
+export const PICKER_OPTIONS_WITH_MATERIALS: Record<string, Record<string, string>> = {
+  property_send: {
+    normal:      "新規物件: まだ物件を送っていない（customer_materials.records.properties_sent が 0）お客様に、希望条件に合う物件を初めて送る",
+    new_arrival: "新着物件: 以前に物件を送った後（customer_materials.records.properties_sent が1件以上）、新しく出た物件を追加で送る（継続のご紹介・他の物件も見たい）",
+    widen:       "条件を広げた: お客様が条件を変えた・広げた（エリア・家賃・間取りを足した・上げた）、または希望どおりの物件が無く条件を広げて探した物件を送る",
+    alternative: "代替: 気に入っていた物件が満室・紹介不可だったので、代わりの物件を送る",
+  },
+  property_recommendation: {
+    normal:      "通常: まだ物件を送っていない（customer_materials.records.properties_sent が 0）お客様に、希望条件に合う物件を勧める",
+    new_arrival: "新着物件: 以前に物件を送った後（customer_materials.records.properties_sent が1件以上）、新しく出た物件を勧める",
+    widen:       "条件を広げた: お客様が条件を変えた・広げた、または希望どおりの物件が無く条件を広げて探した物件を勧める",
+  },
+};
+
+export function buildPickerQuestion(aixType: string, opts: { withMaterials?: boolean } = {}): JevQuestion | null {
   const c = AIX_PICKER_CATALOG[aixType];
   if (!c) return null;
-  return { type: "choice", instructions: c.question, criteria: c.options };
+  if (!opts.withMaterials) return { type: "choice", instructions: c.question, criteria: c.options };
+  const over = PICKER_OPTIONS_WITH_MATERIALS[aixType];
+  return { type: "choice", instructions: `${c.question}。${JEV_MATERIALS_HINT}`, criteria: over ? { ...c.options, ...over } : c.options };
 }
 
 export type PickerJevDecision = {
@@ -358,7 +412,7 @@ export function parsePickerJevAnswer(aixType: string, answer: JevAnswer | undefi
 export async function evaluatePickerWithJev(
   input: JevStateInput & { aixType: string; conversationId?: string | null; timeoutMs?: number; env?: Record<string, string | undefined>; fetchImpl?: typeof fetch },
 ): Promise<{ decision: PickerJevDecision; raw: JevResult } | null> {
-  const q = buildPickerQuestion(input.aixType);
+  const q = buildPickerQuestion(input.aixType, { withMaterials: !!input.materials });
   if (!q) return null;
   const state = { ...buildJevState(input), chosen_aix_button: AIX_BUTTON_LABELS[input.aixType] ?? input.aixType };
   const raw = await jevSystemOne({

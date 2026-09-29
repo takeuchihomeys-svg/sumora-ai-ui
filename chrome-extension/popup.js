@@ -3761,9 +3761,11 @@ let _searchOverrideHold = null; // { cid, until, timer }
 function _applyAutoRunToForm(btn, ar) {
   if (!btn || !ar || typeof ar !== "object") return null;
   const undo = { btn, prevDays: null, daysEl: null };
-  if (ar.rp_update_days) {
+  // 2026-09-29 v2.5.41 更新日の計画（前回の検索から空いた時間を覆う所まで広げた値）は自動便でも web_brain でも入れる。
+  //   rp_update_days_none＝14日でも覆えない→「指定なし」（広い側・漏れない）
+  if (ar.rp_update_days || ar.rp_update_days_none) {
     const el = document.getElementById("adj-update-days");
-    if (el) { undo.daysEl = el; undo.prevDays = el.value; el.value = String(ar.rp_update_days); }
+    if (el) { undo.daysEl = el; undo.prevDays = el.value; el.value = ar.rp_update_days ? String(ar.rp_update_days) : ""; }
   }
   if (ar.sort) btn.dataset.auto_sort = String(ar.sort);
   if (ar.max_pages) btn.dataset.auto_max_pages = String(ar.max_pages);

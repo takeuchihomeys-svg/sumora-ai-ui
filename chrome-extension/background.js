@@ -28,6 +28,8 @@ import "./osaka-transit.js";
 import "./commute-reach.js";
 // 2026-09-29 v2.5.40 竹内「なぜ固まっているのか」「画面開いているのも目で見ることができるのが理想」: 心拍・画面の写真・一括の見張り（self.AxlxSnapshotCore）
 import "./snapshot-core.js";
+// 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: 送付済みの部屋を一覧で選ばない（self.AxlxSentSkip）
+import "./sent-skip.js";
 
 // ── 2026-09-29 v2.5.40 SW のログの末尾（画面の写真に添える・最大80行） ──
 //   console.log / warn / error をそのまま出したうえで、メモリの輪に貯める（storage.session へは15秒に1回まで）。
@@ -1008,6 +1010,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           //   （会話にも物件顧客にも紐付かず、ブレインも文生成も読めない）。customer_id は既にこの関数が
           //   受け取っていて log-property-candidates には渡していたので、同じ値をそのまま渡す。
           property_customer_id: customer_id || null,
+          // 2026-09-29 v2.5.41 このページで送付済みの部屋として選ばなかった数（★物件出し★の本文に1行・ページの最初の束だけ）
+          ext_sent_skipped: msg.sent_skipped || null,
         });
 
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
@@ -1084,6 +1088,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           site:                msg.site || null,
           // 2026-09-20: リアプロ経路と同じ（上のコメント参照）。msg.customer_id は進捗通知で既に使っている値
           property_customer_id: msg.customer_id || null,
+          // 2026-09-29 v2.5.41 このページで送付済みの部屋として選ばなかった数（★物件出し★の本文に1行）
+          ext_sent_skipped: msg.sent_skipped || null,
         });
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
       } catch (e) {
@@ -3112,6 +3118,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     // _scrapeAndSendRealpro の待機を解除して次顧客へ進む（propertyCount: 0 なら0件確定）
     // 検索の点検: ページ数・読んだ行数・送れる行数・0件の理由・件数表示の生の文字をその回に足す（待ちを解く前に＝閉じる前に届くように）
     _auditOnBatchDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null);
+    // 2026-09-29 v2.5.41 送付済みで飛ばした数（0件の知らせを「新しい物件なし」に言い分ける）
+    if (msg.customerId != null) _lastSentSkipped[String(msg.customerId)] = (msg.audit && msg.audit.sent_skipped) || 0;
     _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null);
     _watchProgress("送信の終わり");
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
@@ -3564,6 +3572,12 @@ async function _runBatchSearch(command) {
         var effectiveCustomer = areaModePasses[k]
           ? Object.assign({}, customer, { area_mode: areaModePasses[k] })
           : customer;
+        // 2026-09-29 v2.5.41 更新日の計画（payload.update_days_plan・前回の検索から空いた時間を覆う所まで広げた値）をこのお客様の分に写す。
+        //   計画の無い命令は元の payload のまま（今までどおり）
+        var _custPayload = (_AR && _AR.payloadForCustomer) ? _AR.payloadForCustomer(cmdPayload, effectiveCustomer.id) : cmdPayload;
+        if (_custPayload && _custPayload._update_days) console.log("[batch] 更新日の計画: " + (_custPayload._update_days.days ? _custPayload._update_days.days + "日以内" : "指定なし") + (_custPayload._update_days.widened ? "（前回の検索から" + _custPayload._update_days.gap_hours + "時間・広げた）" : "") + " customer=" + effectiveCustomer.id);
+        // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: このお客様の送付済みの部屋を読んでおく（スタッフモードは読まない＝選ばない物を作らない）
+        await _loadSentRooms(effectiveCustomer.id);
         // 検索の点検: この1回（お客様×サイト×パス）の記録を始める（ブレインの時だけ・それ以外は null）
         var _batchAudit = await _auditBegin({
           site: batchSite, customer_id: effectiveCustomer.id, customer: effectiveCustomer,
@@ -3583,14 +3597,14 @@ async function _runBatchSearch(command) {
           // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
           // 自動便の指定をこのお客様×サイトに付けて置く（popup の経路でも bulk-dl・itandi-bulk-dl がページ数・並びを守る）
           if (_AR && _autoOpts) {
-            var _arSet = {}; _arSet[_AR.STORAGE_KEY] = _AR.record(effectiveCustomer.id, batchSite, _autoOpts, Date.now());
+            var _arSet = {}; _arSet[_AR.STORAGE_KEY] = _AR.record(effectiveCustomer.id, batchSite, _AR.optsFromPayload(_custPayload) || _autoOpts, Date.now());
             try { await chrome.storage.local.set(_arSet); } catch (_) {}
           }
           var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
             ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
             : null;
           // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
-          var resolvedBatchConds = await _passGuard.race(_batchAutofill(effectiveCustomer, batchSite, batchIsWide, cmdPayload, _batchAudit), PASS_AUTOFILL_PHASE_MS);
+          var resolvedBatchConds = await _passGuard.race(_batchAutofill(effectiveCustomer, batchSite, batchIsWide, _custPayload, _batchAudit), PASS_AUTOFILL_PHASE_MS);
           _watchSet({ waitingFor: batchSite === "reins" ? "レインズの入力" : "検索の完了（fill-done）と全ページの送信" });
           // AIXツールの一括検索も検索日を記録する（拡張の手動の一括と同じ・顧客リストの RP/IT/RE のグリッドが埋まる）
           // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 記録は検索が終わってから（下・失敗した回は記録しない。旧はここで記録し、90秒の時間切れでも「検索した日」が付いた）
@@ -3602,7 +3616,7 @@ async function _runBatchSearch(command) {
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, cmdPayload),
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, _custPayload),
               "itandi",
               _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             ));
@@ -3613,7 +3627,7 @@ async function _runBatchSearch(command) {
               fillDoneP,
               String(effectiveCustomer.id),
               effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, cmdPayload),
+              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, _custPayload),
               null,         // siteLabel → "リアプロ" (default)
               _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             ));
@@ -3718,6 +3732,36 @@ async function _runBatchSearch(command) {
   // 見張りが止めたサイトで見送ったお客様（失敗ではない・知らせはサーバーの1通）
   if (_watchSkipped.length) doneUpdates.error_message = ((doneUpdates.error_message ? doneUpdates.error_message + " / " : "") + "見張りで見送り（" + (_watchStop ? _watchStop.reason : "") + "）: " + _watchSkipped.join("・")).slice(0, 1900);
   await _updateBatchCommand(command.id, doneUpdates);
+}
+
+/**
+ * 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないようにすれば更に問題なく物件検索できる。人間の動きのように」:
+ *   一括検索の1人ごとに、そのお客様に送付済みの部屋（建物名＋号室）を読んで chrome.storage.session に置く。
+ *   bulk-dl.js・itandi-bulk-dl.js が一覧で同じ部屋を選ばない（＝資料をダウンロードしない）。
+ *   スタッフモードの時は空（スタッフが選んで送る時は1件も減らさない・merge-pdfs と同じ）。読めない時も空＝今まで通り全部選ぶ（検索は止めない）
+ */
+var _lastSentSkipped = {};
+async function _loadSentRooms(customerId) {
+  if (customerId != null) _lastSentSkipped[String(customerId)] = 0;
+  var SK = self.AxlxSentSkip;
+  if (!SK || customerId == null) return;
+  var rec = { customerId: String(customerId), rooms: [], at: Date.now() };
+  try {
+    if (await isStaffModeOn()) { rec.staff = true; }
+    else {
+      var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (_) {} }, 6000) : null;
+      var headers = await _getAutomationKeyHeader();
+      var res = await fetch(SUMORA_BATCH_API + "/api/automation/sent-rooms?customer_id=" + encodeURIComponent(String(customerId)), { headers: headers, signal: ctrl ? ctrl.signal : undefined });
+      if (timer) clearTimeout(timer);
+      var j = res.ok ? await res.json() : null;
+      if (j && Array.isArray(j.rooms)) rec.rooms = j.rooms.slice(0, 3000);
+      console.log("[batch] 送付済みの部屋: " + rec.rooms.length + "件（一覧で選ばない・号室の無い送付 " + ((j && j.without_room) || 0) + "件は飛ばさない） customer=" + customerId);
+    }
+  } catch (e) {
+    console.warn("[batch] 送付済みの部屋を読めない（全部選ぶ＝今まで通り）:", e && e.message);
+  }
+  try { var o = {}; o[SK.STORAGE_KEY] = rec; await chrome.storage.session.set(o); } catch (_) {}
 }
 
 /**
@@ -4547,11 +4591,15 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     _propCount = (batchDone && batchDone.propertyCount) ? batchDone.propertyCount : 0;
   }
   // 0件時 → LINEグループへアナウンス（timedOut 分岐で既に通知済みの場合は重複しない）
+  //   2026-09-29 v2.5.41: 送付済みの部屋だけだった（全部飛ばした）時は「0件」と言わず「新しい物件なし・N件は送付済み」
+  var _skippedHere = _lastSentSkipped[String(customerId)] || 0;
   if (_propCount === 0 && !_scrapeLastOutcome.countUnknown && !(batchDone && batchDone.timedOut) && !suppressZeroNotify && customerName) {
     fetch(SUMORA_BATCH_API + "/api/notify-group", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした", group_key: "pickup_group_id" })
+      body: JSON.stringify({ text: _skippedHere > 0
+        ? "🔍【新しい物件なし】" + customerName + "さんの" + _site + "検索は送付済みの部屋だけでした（" + _skippedHere + "件は飛ばしました・資料もダウンロードしていません）"
+        : "🔍【物件0件】" + customerName + "さんの" + _site + "検索が0件でした", group_key: "pickup_group_id" })
     }).catch(function() {});
   }
   return _propCount;

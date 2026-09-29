@@ -22,6 +22,7 @@
 //   金額・住所・駅徒歩・面積を書かない線（PROPERTY_IMAGE_DETAIL_PROMPT と同じ）もそのまま。
 
 import { parseDetailResult, type DetailResult } from "./property-image-read";
+import { resolveReadProperty } from "./property-name-match";
 
 export type DetailSource = "text" | "image" | "none";
 
@@ -71,6 +72,20 @@ export const PROPERTY_TEXT_DETAIL_SYSTEM = `次に渡す文字は、賃貸物件
 - **金額・住所・駅徒歩・専有面積は書かない**（別の所で扱う）
 - 値は資料の文字をそのまま短く写す。推測しない。「不明」「記載なし」という行も作らない
 - 文字の並びが崩れていても（表の行と列が入れ替わって見えても）見出しと値の組を読む`;
+
+/**
+ * 2026-09-29（B・その2）送った画像を**書き写した文字**（readPropertyImageDetailByTranscript）から読む時の指示。
+ * 文字層の指示（上）に2つ足しただけ（上の文面は売上サポの文字層の読み取りの前置きキャッシュのため変えない）:
+ *   ① 2部屋以上の一覧（号室ごとの状況）を現況の1行にまとめる … 監査で Goパレス福島（3室とも「状況 10/末」）の退去予定が行から落ちた
+ *      （「部屋の一覧があれば」だけだと1部屋の資料でも入居可能日「即入」を現況に畳んだ＝30枚中14件 → 2部屋以上に限った）
+ *   ② 「6階建」を所在階にしない … 同じ資料で「所在階: 6階建」を作った（建物の階数）
+ */
+export const PROPERTY_TRANSCRIPT_DETAIL_SYSTEM = PROPERTY_TEXT_DETAIL_SYSTEM
+  .replace("賃貸物件の資料（PDF）から取り出した文字です。", "賃貸物件の資料の画像を書き写した文字です。")
+  + `
+- 2部屋以上の一覧（「号室: 203 / 状況: 10/末」の行が2つ以上）がある時だけ、その状況を「現況: 203号室 10/末・205号室 10/末」の形で1行にまとめる。
+  1部屋の資料の「現況」「入居可能日（入居時期）」の欄はいつも通りそれぞれの行にする
+- 所在階は部屋の階だけ（「6階建」「地上10階」は建物の階数なので所在階にしない）`;
 
 /** 読み直しでも同じ形（前置きの先頭一致を保つ） */
 export function buildTextDetailUser(pdfText: string): string {
@@ -125,6 +140,7 @@ export function planDetailSource(pdfText: string | null | undefined, hasImage: b
  * image_details.model に残す出所付きのモデル名（列は text なので列追加なし・migrate-schema の変更不要）。
  *   "text:deepseek-flash"（文字層）／"reuse"（同じ物件の写し）／"image:deepseek-flash"（画像・推論 low）／
  *   "pickup_lines"（送った画像を売上サポの行の image_lines から写した）／"pickup_text:deepseek-flash"（売上サポの行の文字層）
+ *   ／"transcribe:deepseek-flash"（送った画像を書き写して文字で読んだ・2026-09-29 readPropertyImageDetailByTranscript）
  * 後から「この行は画像で読んだのか写しか」を表だけで追える（scripts/audit-detail-source.ts が model 別に数える）
  */
 export function detailModelLabel(source: string, model: string | null | undefined): string {
@@ -148,6 +164,68 @@ export function pickupRowDetailPlan(
   return null;
 }
 
+/** 売上サポの行を物件名・号室で結ぶ時に見る日数（prime と同じく資料の行は7日で古くなる＝募集状況・退去予定が変わる） */
+export const PICKUP_LINK_MAX_AGE_DAYS = 7;
+
+/**
+ * 送った画像の物件（物件名・号室）に当たる、その会話の売上サポの行を1つ選ぶ（純関数）。
+ * 2026-09-29 API 費用: AIX が送る画像は再アップロードで URL が変わり（URL では結べない）、行 ID が来るのは売上サポから開いた時だけ。
+ *   本番 7日: 送った画像 283枚のうち 78枚（28%）は物件名・号室がその会話の売上サポの行と一致した（URL・行 ID では 0枚）。
+ *   物件名は照合（resolveReadProperty＝会話の物件名に寄せる・建物の番号 Ⅱ/III が違えば寄せない）、号室は先頭の0を外して一致。
+ *   号室が読めない（空）・行に号室が無い時は結ばない（同じ建物の別の部屋の資料を使わない）。一致が複数なら新しい行。
+ * @param rows その会話の直近 PICKUP_LINK_MAX_AGE_DAYS 日の行（新しい順でなくてよい）
+ */
+export function pickupRowForProperty<R extends { property_name: string | null; room_no: string | null; created_at: string | null }>(
+  item: { propertyName: string | null | undefined; roomNumber: string | null | undefined } | null,
+  rows: R[],
+  nowMs: number,
+): R | null {
+  if (!item?.propertyName) return null;
+  const room = (s: string | null | undefined) => String(s ?? "").trim().replace(/号室\s*$/, "").replace(/^0+(?=\d)/, "");
+  const r0 = room(item.roomNumber);
+  if (!r0) return null;
+  const minAt = nowMs - PICKUP_LINK_MAX_AGE_DAYS * 86_400_000;
+  const fresh = rows.filter((r) => r.property_name && room(r.room_no) === r0 && Number.isFinite(Date.parse(r.created_at ?? "")) && Date.parse(r.created_at!) >= minAt);
+  if (fresh.length === 0) return null;
+  const hit = resolveReadProperty({ propertyName: item.propertyName, roomNumber: item.roomNumber ?? "" }, [...new Set(fresh.map((r) => r.property_name as string))]);
+  if (!hit) return null;
+  const same = fresh.filter((r) => (r.property_name as string).trim() === hit.propertyName);
+  same.sort((a, b) => Date.parse(b.created_at!) - Date.parse(a.created_at!));
+  return same[0] ?? null;
+}
+
+/**
+ * 可否・有無の項目 → 文字層にその項目が「書いてある」と言える言葉（どれか1つ）。
+ * 2026-09-29 監査 scripts/audit-image-read-grounding.ts: 文字層の読み取り（推論なし）は 24件中 4〜6行、
+ *   文字層に言葉の無い可否を作った（「ペット: 不可」＝指示の例を写す・「連帯保証人: 保証人不要」）。
+ */
+export const GROUNDED_LABEL_WORDS: Record<string, RegExp> = {
+  ペット: /ペット|犬|猫|動物/,
+  楽器: /楽器|ピアノ/,
+  連帯保証人: /保証人/,
+  駐車場: /駐車|パーキング/,
+  駐輪場: /駐輪|自転車/,
+  バイク置場: /バイク|原付|二輪|オートバイ/,
+  洗濯機置場: /洗濯/,
+  フリーレント: /フリーレント/,
+};
+
+/**
+ * 文字層から読んだ行のうち、可否・有無の項目で**文字層にその言葉が1つも無い行**を落とす（純関数・出口の決定論）。
+ * 文字層の読み取りは文字しか見ていないので、言葉が無い行は必ず作った行＝誤削除は起きない（画像の読み取りには使わない: アイコンは文字層に無い）。
+ * 文字層は康煕部首（⼈・⾞）や行の途中の空白で入る事があるので NFKC・空白を外して見る。上の表に無い項目（設備・入居条件・構造…）は触らない
+ */
+export function dropUngroundedLines(lines: string[], sourceText: string): { kept: string[]; dropped: string[] } {
+  const text = String(sourceText ?? "").normalize("NFKC").replace(/\s+/g, "");
+  const kept: string[] = []; const dropped: string[] = [];
+  for (const l of lines) {
+    const label = l.normalize("NFKC").replace(/\s+/g, "").split(/[:：]/)[0] ?? "";
+    const re = GROUNDED_LABEL_WORDS[label];
+    if (re && !re.test(text)) dropped.push(l); else kept.push(l);
+  }
+  return { kept, dropped };
+}
+
 export type TextDetailResult = DetailResult & { ms: number; model: string; failed: boolean };
 
 /**
@@ -157,8 +235,9 @@ export type TextDetailResult = DetailResult & { ms: number; model: string; faile
  */
 export async function readPropertyDetailFromText(
   pdfText: string,
-  opts?: { apiKey?: string; model?: string; timeoutMs?: number; conversationId?: string | null },
+  opts?: { apiKey?: string; model?: string; timeoutMs?: number; conversationId?: string | null; system?: string },
 ): Promise<TextDetailResult> {
+  const system = opts?.system ?? PROPERTY_TEXT_DETAIL_SYSTEM;
   const startedAt = Date.now();
   const { callDeepSeekRead, VISION_ALT_MODEL_DEFAULT } = await import("./vision-alt-provider");
   const model = (opts?.model ?? process.env.PROPERTY_IMAGE_MODEL ?? VISION_ALT_MODEL_DEFAULT).trim();
@@ -167,7 +246,7 @@ export async function readPropertyDetailFromText(
   // 鍵が無い環境（ローカル）では呼ばず・記録もしない（画像版 readPropertyImageDetail と同じ。旧は行ごとに status 0 の行が llm_usage_logs に残った）
   if (!(opts?.apiKey ?? process.env.DEEPSEEK_API_KEY ?? "").trim()) return { kind: "other", lines: [], raw: "", ms: 0, model, failed: true };
   const budget = opts?.timeoutMs ?? PROPERTY_TEXT_DETAIL_TIMEOUT_MS;
-  const read = await callDeepSeekRead(PROPERTY_TEXT_DETAIL_SYSTEM, buildTextDetailUser(text),
+  const read = await callDeepSeekRead(system, buildTextDetailUser(text),
     { maxTokens: PROPERTY_TEXT_DETAIL_MAX_TOKENS, timeoutMs: budget, apiKey: opts?.apiKey, model },
     (t) => { const r = parseDetailResult(t); return r.kind === "other" && r.lines.length === 0 && !/"kind"\s*:\s*"other"/.test(t) ? null : r; },
     { retryIf: (elapsed) => budget - elapsed >= 3_000, retryTimeoutMs: (elapsed) => budget - elapsed });
@@ -178,12 +257,16 @@ export async function readPropertyDetailFromText(
         model: a.res?.model ?? model, action: "property_text_detail", conversationId: opts?.conversationId ?? null,
         usage: { input_tokens: a.res?.usage.cacheMiss ?? 0, output_tokens: a.res?.usage.output ?? 0, cache_read_input_tokens: a.res?.usage.cacheHit ?? 0 },
         status: a.res ? 200 : 0, errorType: a.ok ? null : a.res ? "empty_or_unparsable" : "no_response",
-        durationMs: a.ms, sysHead: a.retry ? "【読み直し】" + PROPERTY_TEXT_DETAIL_SYSTEM.slice(0, 180) : PROPERTY_TEXT_DETAIL_SYSTEM.slice(0, 200),
+        durationMs: a.ms, sysHead: a.retry ? "【読み直し】" + system.slice(0, 180) : system.slice(0, 200),
         sysKeyFull: null, maxTokens: PROPERTY_TEXT_DETAIL_MAX_TOKENS,
       });
     }
   }).catch(() => {});
-  const v = read.value;
-  if (!v) return { kind: "other", lines: [], raw: read.res?.text ?? "", ms, model: read.res?.model ?? model, failed: true };
+  const v0 = read.value;
+  if (!v0) return { kind: "other", lines: [], raw: read.res?.text ?? "", ms, model: read.res?.model ?? model, failed: true };
+  // 2026-09-29: 文字層に言葉の無い可否の行（作った行）を落とす（dropUngroundedLines・誤削除0）
+  const g = dropUngroundedLines(v0.lines, text.slice(0, DETAIL_TEXT_MAX_CHARS));
+  if (g.dropped.length) console.log(JSON.stringify({ tag: "text-detail:ungrounded-dropped", conversationId: opts?.conversationId ?? null, dropped: g.dropped }));
+  const v = { ...v0, lines: g.kept };
   return { ...v, usage: read.res ? { input: read.res.usage.input, output: read.res.usage.output, cacheHit: read.res.usage.cacheHit } : undefined, ms, model: read.res?.model ?? model, failed: false };
 }

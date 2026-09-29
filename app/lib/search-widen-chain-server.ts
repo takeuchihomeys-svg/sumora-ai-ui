@@ -76,7 +76,9 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
       command_type: "batch_property_search",
       customer_ids: [input.propertyCustomerId],
       sites: [commandSiteOf(site)],
-      payload: { source: WEB_BRAIN_SOURCE, is_wide: true, rp_update_days: rp, chain: decision.chain },
+      // 2026-09-29 v2.5.41 更新日はピンポイントの回と同じ値を「決めた値」として渡す（拡張は update_days_plan を popup の経路でも使う）
+      payload: { source: WEB_BRAIN_SOURCE, is_wide: true, rp_update_days: rp, chain: decision.chain,
+        update_days_plan: { v: 1, by_customer: { [input.propertyCustomerId]: { days: rp, base_days: rp, gap_hours: null, last_search_at: null, widened: false } } } },
       status: "pending",
     };
     const { data: ins, error } = await supabase.from("automation_commands").insert(row).select("id").single();

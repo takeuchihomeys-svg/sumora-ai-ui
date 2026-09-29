@@ -45,6 +45,56 @@
     return A ? A.forCustomer(_autoRunStored, customerId, "realnetpro", Date.now()) : null;
   }
 
+  // ── 2026-09-29 v2.5.41 送付済みの部屋（background が一括の1人ごとに storage.session に置く・chrome-extension/sent-skip.js）──
+  // 竹内「一度送ったことがある物件はダウンロードもしないようにすれば更に問題なく物件検索できる。人間の動きのように」:
+  //   全ページ送る時に、建物名＋号室がそのお客様に送付済みの部屋と同じ行は選ばない（資料の PDF を取りに行かない・判定にも渡さない）。
+  //   号室が無い・名前が読めない行は選ぶ（迷ったら飛ばさない）。スタッフモードは飛ばさない
+  var _sentRoomsStored = null;
+  function _SK() { return (typeof self !== "undefined" ? self : window).AxlxSentSkip || null; }
+  try {
+    var _skKey = _SK() ? _SK().STORAGE_KEY : "axlx_sent_rooms";
+    chrome.storage.session.get([_skKey], function (r) { _sentRoomsStored = (r && r[_skKey]) || null; });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area === "session" && ch[_skKey]) _sentRoomsStored = ch[_skKey].newValue || null;
+    });
+  } catch (_) {}
+
+  /**
+   * 選んだ行のうち送付済みの部屋のチェックを外す（数える）＋一覧の更新日の経過を数える（点検の C2・count が true の時だけ）。
+   *   先頭のセル（見出し「部屋名更新日」）「309 4日前 閲覧済」から号室と更新日を読む。見出しが別の物の時は読まない
+   */
+  function _applySentSkip(state, count) {
+    var SK = _SK();
+    if (!SK || !state) return { skipped: 0 };
+    var idx = _staffModeOn ? null : SK.indexFor(_sentRoomsStored, state.customerId, Date.now());
+    if (!idx && !count) return { skipped: 0 };
+    var skipped = 0, names = [];
+    var ages = state.updateAges || { n: 0, max_days: null, sample: [] };
+    tracked.forEach(function (t) {
+      if (!t.cb.checked) return;
+      var card;
+      try { card = extractCard(t.btn); } catch (_) { return; }
+      var labels = card && card.headerIdx && card.headerIdx.labels;
+      if (labels && labels.length && !/部屋|号室/.test(String(labels[0] || ""))) return;
+      var c0 = card && card.cells ? card.cells[0] : null;
+      if (count) {
+        var a = SK.ageDaysOfCell(c0);
+        if (a != null) { ages.n++; ages.max_days = ages.max_days == null ? a : Math.max(ages.max_days, a); if (ages.sample.length < 150) ages.sample.push(Math.round(a * 100) / 100); }
+      }
+      if (!idx) return;
+      var room = SK.roomFromRealproCell(c0);
+      if (room && SK.isSentRoom(idx, card.name, room)) { t.cb.checked = false; skipped++; if (names.length < 5) names.push(card.name + " " + room); }
+    });
+    if (count) {
+      state.updateAges = ages;
+      state.sentSkipped = (state.sentSkipped || 0) + skipped;
+      state.pageSkipped = skipped;
+      if (skipped) console.log("[AXLX bulk-dl] 送付済みの部屋 " + skipped + "件は選ばない（資料をダウンロードしない）: " + names.join("・"));
+    }
+    updateBar();
+    return { skipped: skipped };
+  }
+
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
 
@@ -1404,6 +1454,9 @@
       }
     } catch (_) {}
     if (r.read_rows === 0) r.zero_reason = "no_rows";
+    // 2026-09-29 v2.5.41 送付済みで選ばなかった数・一覧の更新日の経過（点検の C2）
+    if (state && state.sentSkipped) r.sent_skipped = state.sentSkipped;
+    if (state && state.updateAges && state.updateAges.n > 0) r.update_ages = state.updateAges;
     var _tl = _ttake();
     if (_tl) r.timings = _tl;
     return Object.assign(r, extra || {});
@@ -1438,7 +1491,7 @@
         if (countEl2) countEl2.textContent = "次ページ遷移エラー";
       } else {
         // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
-        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0 });
+        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null });
         // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
         try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
@@ -1468,8 +1521,17 @@
     // 全チェックボックス選択
     tracked.forEach(function (t) { t.cb.checked = true; });
     updateBar();
+    // 2026-09-29 v2.5.41 送付済みの部屋は選ばない（数えるのはこのページで1回）
+    var _skCounted = tracked.length > 0;
+    var _sk0 = _applySentSkip(state, _skCounted);
 
     var urls = getSelectedUrls();
+    if (!urls.length && _sk0.skipped > 0) {
+      // このページの行が全部送付済み＝送る物が無い（待たずに次のページへ）
+      console.log("[AXLX bulk-dl] P" + state.currentPage + " は全部送付済みの部屋 → 資料を取らずに次へ");
+      onDone(true, 0);
+      return;
+    }
     if (!urls.length) {
       // DOM がまだレンダリング中の可能性があるため最大4秒ポーリングして待つ
       var _pollWait = 0;
@@ -1477,6 +1539,8 @@
         inject();
         tracked.forEach(function (t) { t.cb.checked = true; });
         updateBar();
+        _applySentSkip(state, !_skCounted && tracked.length > 0);
+        if (!_skCounted && tracked.length > 0) _skCounted = true;
         var urls2 = getSelectedUrls();
         _pollWait += 200;
         if (urls2.length > 0 || _pollWait >= 4000) {
@@ -1534,6 +1598,8 @@
           customer_id: state.customerId || null,
           customer_conditions: state.customerConditions || null,
           site: "realpro",
+          // 2026-09-29 v2.5.41 このページで送付済みの部屋として選ばなかった数（ページの最初の束だけ・★物件出し★に1行）
+          sent_skipped: batchIndex === 0 ? (state.pageSkipped || 0) : 0,
         }, function (resp) {
           if (chrome.runtime.lastError) {
             clearAutoSendState();

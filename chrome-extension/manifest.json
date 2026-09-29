@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.5.40",
+  "version": "2.5.41",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -69,7 +69,7 @@
     },
     {
       "matches": ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*"],
-      "js": ["send-pairing.js", "auto-run.js", "bulk-dl.js"],
+      "js": ["send-pairing.js", "auto-run.js", "sent-skip.js", "bulk-dl.js"],
       "run_at": "document_idle"
     },
     {
@@ -95,7 +95,7 @@
     },
     {
       "matches": ["https://itandibb.com/*"],
-      "js": ["send-pairing.js", "auto-run.js", "itandi-row-parse.js", "itandi-bulk-dl.js"],
+      "js": ["send-pairing.js", "auto-run.js", "sent-skip.js", "itandi-row-parse.js", "itandi-bulk-dl.js"],
       "run_at": "document_idle"
     },
     {

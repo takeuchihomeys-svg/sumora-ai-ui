@@ -309,7 +309,7 @@ function isWrittenCode(code: string): boolean {
   if (/^(?:ZERO_ZERO|ZERO_ZERO_INFERRED|INITIAL_COST_UNKNOWN|FREE_RENT|FREE_RENT_UNLISTED|CONTRACT_FIXED|AGE_N5|AGE_N10|WALK_NEAR_N|COMMUTE_INFO)$/.test(code)) return false;
   if (/^(?:ALREADY_SENT|AD_|PROFIT_NEGATIVE|FIT_)/.test(code)) return false;
   if (fitVerdictOf(code)) return true;
-  return /^(?:AGE_W|AGE_COL_|WALK_NEAR_W|WALK_TEXT_|RENT_CHEAP_|RENT_ABOVE_USUAL|RENT_BELOW_MIN|RENT_MAX_UNRELIABLE|FREE_RENT_MATCH|CONTRACT_|RENEWAL_FEE_|INITIAL_COST_)/.test(code);
+  return /^(?:AGE_W|AGE_COL_|WALK_NEAR_W|WALK_TEXT_|RENT_CHEAP_|RENT_ABOVE_USUAL|RENT_BELOW_MIN|RENT_UNDER_MIN|RENT_NEAR_MIN|RENT_BAND_|RENT_TARGET_|RENT_MAX_UNRELIABLE|FREE_RENT_MATCH|CONTRACT_|RENEWAL_FEE_|INITIAL_COST_)/.test(code);
 }
 
 /** 項目の中の札の合い方 → 色（外れが1つでもあれば赤・無くて ○ があれば緑・幅の中・要確認の順） */
@@ -325,6 +325,8 @@ function toneOfCodes(codes: string[], key: string): CellTone {
   if (key === "sent") return codes.some((c) => c === "ALREADY_SENT" || c === "ALREADY_SENT_SAME_ROOM") ? "ng" : "info";
   const vs = codes.map((c) => fitVerdictOf(c)?.v).filter(Boolean);
   if (vs.some((v) => v === "ng" || v === "soft_ng") || codes.some((c) => /^(?:WALK_TEXT_OVER|WALK_TEXT_FAR|AGE_W_OLD|RENT_ABOVE_USUAL|CONTRACT_FIXED)$/.test(c))) return "ng";
+  // 2026-09-29 家賃が上限の85%未満・目安の額から離れる・下限を少し下回る（RENT_BAND_RULE）は緑にしない（予算内でも安すぎ＝質に注意）
+  if (codes.some((c) => /^(?:RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_FAR|RENT_NEAR_MIN)$/.test(c))) return "wide";
   if (vs.includes("ok") || codes.some((c) => /^(?:AGE_W|AGE_COL_|WALK_NEAR_W|RENT_CHEAP_|FREE_RENT_MATCH)/.test(c))) return "ok";
   if (vs.includes("wide")) return "wide";
   if (vs.includes("unread") || codes.some((c) => /_UNKNOWN$|_UNLISTED$|_ASK$/.test(c))) return "unread";
@@ -334,7 +336,17 @@ function toneOfCodes(codes: string[], key: string): CellTone {
 /** 「初期費用を抑えたい」「駅近」など、項目の希望の言い方 */
 function wantWordOf(key: string, codes: string[], strongEquip?: ReadonlySet<string>): string {
   const has = (re: RegExp) => codes.some((c) => re.test(c));
-  if (key === "rent") return has(/^RENT_CHEAP_/) ? "家賃を低く" : "予算";
+  if (key === "rent") {
+    // 2026-09-29 家賃の位置（RENT_BAND_RULE）: 上限寄り・下限未満・目安の額が分かる言い方
+    if (has(/^RENT_UNDER_MIN$/)) return "下限未満";
+    if (has(/^RENT_NEAR_MIN$/)) return "下限を少し下回る";
+    if (has(/^RENT_TARGET_NEAR$/)) return "目安の額に近い";
+    if (has(/^RENT_TARGET_/)) return "目安の額から離れる";
+    if (has(/^RENT_BAND_UPPER$/)) return "予算・上限寄り（相場に見合う）";
+    if (has(/^RENT_BAND_LOW$/)) return "予算・上限の8割未満（安すぎ）";
+    if (has(/^RENT_BAND_(?:LOWER|MID)$/)) return "予算・やや安め";
+    return has(/^RENT_CHEAP_/) ? "家賃を低く" : "予算";
+  }
   if (key === "deposit") return has(/^INITIAL_COST_OVER_LIMIT$/) && !has(/^(?:ZERO_ZERO_MATCH|INITIAL_COST_NOT_ZERO)$/) ? "初期費用の上限" : "初期費用を抑えたい";
   if (key === "madori") return has(/^SQM_/) && !has(/^FLOOR_PLAN_/) ? "広さ" : "間取り";
   if (key === "walk") return has(/^(?:WALK_TEXT_|WALK_NEAR_W)/) ? "駅近" : "徒歩";

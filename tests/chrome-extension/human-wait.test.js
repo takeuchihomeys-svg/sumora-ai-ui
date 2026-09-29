@@ -148,7 +148,7 @@ function rest() {
       "setTimeout 35000": [2, "レインズの新タブの見張りの期限"], "setTimeout 500": [1, "タブが既に読み込み済みかの予備の確認"],
       "setTimeout 1000": [1, "PDF のアップロードのやり直し（サーバー）"], "setInterval 25000": [1, "Supabase Realtime の心拍"],
       "setTimeout 8000": [1, "Realtime の再接続"], "setTimeout 15000": [2, "Realtime の再接続・タブ読み込みの期限"],
-      "setTimeout 6000": [1, "取得の期限（abort）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
+      "setTimeout 6000": [2, "取得の期限（abort）・送付済みの部屋の取得の期限（v2.5.41 _loadSentRooms・サイトを触らない）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
       "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [1, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab）"],
       "setTimeout 3000": [1, "画面の文字の応答の期限（v2.5.40 _snapDom・ページを触らない）"],
     },

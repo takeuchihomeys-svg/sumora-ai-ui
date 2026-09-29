@@ -192,6 +192,10 @@ export type CustomerProfile = {
   mentions?: { renewal: boolean; contract: boolean; freeRent: boolean };
   /** 2026-09-25 家賃の下限（使える時だけ・上限より小さい） */
   rentMin?: number | null;
+  /** 2026-09-29 お客様が上限より下に言った家賃の目安の額（readRentTarget・無ければ null） */
+  rentTarget?: number | null;
+  /** 目安の額が管理費・共益費込みの言い方か（「共益費込で7万円くらい」）。false は家賃だけと比べる（「家賃10万くらい（管理費込みで12万上限）」） */
+  rentTargetWithAdmin?: boolean;
   /** 2026-09-25 「1DKも可」「厳しければ2LDK」の間取り（本命より少し低い点。本命に入っている型は入れない） */
   floorPlanAlt?: FloorPlanWant | null;
   /** 2026-09-25 広さの下限（㎡・列 floor_area_min か間取りの希望の「30平米以上」） */
@@ -281,6 +285,137 @@ export function wideRentBuffer(rentMax: number): number {
 export const WIDE_AGE_YEARS = 5;
 /** 拡張の広さの幅（popup.js buildCondData の −5㎡。⚠ 2026-09-25 時点で手順の表示だけで自動入力には入っていない） */
 export const WIDE_SQM = 5;
+
+/**
+ * 2026-09-29 家賃は「安いほど良い」ではなく「条件の中で見る」（1か所の表・線と点はここだけで変える）。
+ *   竹内「家賃帯が低ければ低い方が良いわけではない。8万円以内なら出来る限り8万円に近い方が全体的に条件良い部屋多い。
+ *   家賃は相場を見て元付業者が判断している。家賃8万円までの条件で6万円の物件だと築年数が古すぎたり設備面が悪かったり質が悪い可能性。
+ *   お客さんもおおよその相場を分かった上で限度額を出している」（R さん: 条件 7万〜8万で上位オススメ7件が 7万円未満・👑 は 4.6万＋管理費1万）。
+ *   旧: 上限内なら RENT_OK +15 で一律・下限は下限の85%未満で −3 の情報の札だけ（下限を下回っても FIT_ALL +15 が付いた）。
+ *
+ * ■ 位置 ＝（家賃＋管理費）÷ 上限。RENT_OK（+15）に帯の札を足す（帯の札は 0 か減点だけ＝家賃の家族の最大は今まで通り +15。
+ *   AD 2ヶ月の札 ÷ 1.3（adCapOf・15点）を超えない＝「AD は他の項目の1.3倍」の方針を崩さない）。
+ *   線は scripts/audit-rent-band.ts（180日・同じ回の選んだ 102／選ばない 297）: 選ばれやすさ 90〜95% 1.55・95〜100% 1.09・85〜90% 0.86・
+ *   80〜85% 0.43・70〜80% 1.19（7%/5%・件数が少ない）・70%未満 0〜0.56。🌟 585件の中央 0.95・申込直前の🌟 中央 0.99。
+ *   同じ回の中で家賃が高いほど築年が新しく（−0.28）広く（+0.22）設備が多い（+0.18）＝「上限寄りほど質が高い」は裏付けあり。
+ *   点の大きさは scripts/backtest-rent-band.ts（スタッフが選んで送った回・7割で決めて3割で確かめる）で選んだ。
+ * ■ 下限（rent_min がある時）: 管理費込みで下限を下回ったら RENT_OK を付けず RENT_UNDER_MIN（保留・家賃の外れ＝全部合うの数でも外れ）。
+ *   下限との差が小さい（下限 × nearMinRatio 以上）は RENT_NEAR_MIN（減点だけ・保留にしない）。
+ *   rent_min は拡張の検索では「賃料」の欄（管理費を含まない）に入るので、判定は管理費込みで比べる（下限に甘い側）。
+ * ■ 目安の額（お客様が「できれば6万円程度」「家賃10万くらい（管理費込みで12万上限）」と上限より下の額を言った時・readRentTarget）:
+ *   帯の札の代わりに目安との近さの札（RENT_TARGET_*）。この時は家賃の安さの札（RENT_CHEAP_*）は付けない（目安の近くを一番高く）。
+ * ■ 目安の額の無い「家賃は安い方が良い」（RENT_CHEAP_* の人）: cheapWithoutTarget で決める（"band"＝他の人と同じ帯の札も付ける／"neutral"＝帯の札を付けない）
+ * ■ 上限を超えた部屋（RENT_WIDE・RENT_SLIGHTLY_OVER・RENT_OVER_*）は今まで通り（この表は上限内だけ）。
+ * ■ 戻す時は enabled=false か環境変数 RENT_BAND_SCORING=off（旧の RENT_OK 一律＋下限の85%未満 −3 に戻る）
+ */
+export const RENT_BAND_RULE = {
+  enabled: true,
+  /** 上限内の帯（上から順に当てる）。points は RENT_OK に足す点 */
+  //   点は当て直し（2026-09-29・180日・家賃の札が変わった回 81・お客様で 7:3）で学び用 43回・14人の1番の表を採った:
+  //   相対順位 旧 0.365 → 0.306（1位 47.1→50.5%・3位以内 74.4→76.7%）。確かめ用 38回・9人: 旧 0.405 → 0.360（1位 38.3→39.0%・3位以内 55.3→63.2%）。
+  //   表どうしの差は小さい（相対順位 0.306〜0.327）。85〜90% を −3 にした表は学び用で 0.316（確かめ用では 0.350 と少し良い）＝差は揺れの内。
+  //   札ごとの選ばれる率（札が変わった回）: 上限寄り 70/220・85〜90% 24/92・80〜85% 1/34・8割未満 9/34・下限を少し下回る 11/54・下限未満 4/21
+  bands: [
+    { minRatio: 0.90, code: "RENT_BAND_UPPER", points: 0 },
+    { minRatio: 0.85, code: "RENT_BAND_MID", points: 0 },
+    { minRatio: 0.80, code: "RENT_BAND_LOWER", points: -8 },
+    { minRatio: 0, code: "RENT_BAND_LOW", points: -8 },
+  ],
+  /** 下限: 下限 × nearMinRatio 以上なら RENT_NEAR_MIN（保留にしない・位置の札はそのまま）・それ未満は RENT_UNDER_MIN（保留） */
+  nearMinRatio: 0.95,
+  //   下限を少し下回る物はスタッフが選んでいる（11/54）＝ −3・−5 は当て直しで悪くなった → 0点の知らせ
+  nearMinPoints: 0,
+  belowMinPoints: -10,
+  /** 目安の額との差（÷ 目安）: near 以内が一番・mid 以内が次・それより離れると far */
+  target: { nearPct: 0.05, midPct: 0.12, nearPoints: 0, midPoints: -5, farPoints: -10 },
+  cheapWithoutTarget: "neutral" as "band" | "neutral",
+} as const;
+/** 帯の札・下限・目安の札の点（REASON_POINTS に入れる） */
+export const RENT_BAND_POINTS: Record<string, number> = {
+  ...Object.fromEntries(RENT_BAND_RULE.bands.map((b) => [b.code, b.points])),
+  RENT_NEAR_MIN: RENT_BAND_RULE.nearMinPoints,
+  RENT_UNDER_MIN: RENT_BAND_RULE.belowMinPoints,
+  RENT_TARGET_NEAR: RENT_BAND_RULE.target.nearPoints,
+  RENT_TARGET_MID: RENT_BAND_RULE.target.midPoints,
+  RENT_TARGET_FAR: RENT_BAND_RULE.target.farPoints,
+};
+let rentBandEnabledOverride: boolean | null = null;
+/** 当て直し（scripts/backtest-rent-band.ts）で旧と新を並べるための切り替え。null で表と環境変数に従う */
+export function setRentBandEnabled(on: boolean | null): void { rentBandEnabledOverride = on; }
+export function rentBandEnabled(): boolean {
+  if (rentBandEnabledOverride != null) return rentBandEnabledOverride;
+  if (typeof process !== "undefined" && process.env?.RENT_BAND_SCORING === "off") return false;
+  return RENT_BAND_RULE.enabled;
+}
+
+/**
+ * 上限内・下限の家賃の札（純関数・judgeProperty の家賃の所から呼ぶ）。total は管理費込み。
+ *   返す code の1つ目が家賃の合い方（RENT_OK か RENT_UNDER_MIN）、後ろは位置の札。上限を超えた時・上限が無い時は下限だけを見る
+ */
+export function rentPositionCodes(
+  total: number,
+  p: { rentMax: number | null; rentMin?: number | null; rentTarget?: number | null; rentTargetWithAdmin?: boolean; written?: WrittenWants | null },
+  /** 家賃だけ（管理費を含まない）。目安の額が家賃だけの言い方の時に比べる（無ければ total） */
+  rentOnly?: number | null,
+): Array<{ code: string; hold?: boolean }> {
+  const R = RENT_BAND_RULE;
+  const min = p.rentMin ?? null;
+  // 下限を少し下回る（下限の95%以上）は保留にせず、上限内の位置の札に「下限を少し下回る」を足す（下の表の nearMinPoints）
+  const nearMin = min != null && total < min;
+  if (nearMin && total < min * R.nearMinRatio) return [{ code: "RENT_UNDER_MIN", hold: true }];
+  if (p.rentMax == null || total > p.rentMax) return nearMin ? [{ code: "RENT_NEAR_MIN" }] : [];
+  const out: Array<{ code: string; hold?: boolean }> = [{ code: "RENT_OK" }];
+  const target = p.rentTarget ?? null;
+  const ratio = total / p.rentMax;
+  if (target != null) {
+    const x = p.rentTargetWithAdmin ? total : (rentOnly ?? total);
+    const d = Math.abs(x - target) / target;
+    out.push({ code: d <= R.target.nearPct ? "RENT_TARGET_NEAR" : d <= R.target.midPct ? "RENT_TARGET_MID" : "RENT_TARGET_FAR" });
+  } else if (!(p.written?.rentCheap && R.cheapWithoutTarget === "neutral")) {
+    const band = R.bands.find((b) => ratio >= b.minRatio);
+    if (band) out.push({ code: band.code });
+  }
+  if (nearMin) out.push({ code: "RENT_NEAR_MIN" });
+  return out;
+}
+
+/**
+ * お客様が上限より下に言った家賃の目安の額（「できれば60000円程度」「家賃10万くらい（管理費込みで12万上限）」）。無ければ null。
+ *   2026-09-29 全お客様 311人の条件欄で確かめた（scripts/backtest-rent-band.ts の --targets）:
+ *   読む＝額の後に「くらい・ぐらい・程度・前後・位」か、前に「できれば・出来れば・理想・本来の希望・なるべく」がある額。
+ *   読まない＝「まで・以内・以下・上限・MAX」が続く額（上限の言い方: 「9.5万くらいまで上げておk」「10万円前後まで」「8万以内が理想」）・
+ *   「〜」の後の額（「7〜8万円くらい」＝幅の上）・初期費用／敷礼／駐車場／収入の節・上限の97%以上（上限そのもの）・下限未満。
+ *   材料は readWrittenWants と同じ条件欄（preferences・other_requests・additional_conditions。raw_format_text は古い写しなので読まない）
+ */
+export function readRentTarget(c: CustomerLike, rentMin: number | null, rentMax: number | null): { yen: number; withAdmin: boolean } | null {
+  if (rentMax == null) return null;
+  const t = [c.preferences, c.other_requests, c.additional_conditions].filter(Boolean).map((s) => String(s).normalize("NFKC")).join("\n");
+  // 2026-09-30 反証: 実物「共益費込み、できれば60000円程度、…」は「共益費込み」が前の節にあり、節だけ見ると家賃だけ（withAdmin=false）に
+  //   なっていた（家賃 55,000＋共益費 5,000＝計 6万 の部屋が目安から 8% 離れる扱い）→ 同じ行の前の節に「管理費込・共益費込」があれば管理費込み
+  const clauses: Array<{ cl: string; linePre: string }> = [];
+  for (const line of t.split("\n")) {
+    let pos = 0;
+    for (const cl of line.split(/[、。,，／/]/)) { const at = line.indexOf(cl, pos); clauses.push({ cl, linePre: line.slice(0, Math.max(0, at)) }); pos = Math.max(pos, at + cl.length); }
+  }
+  for (const { cl, linePre } of clauses) {
+    if (/初期|敷|礼金|仲介|駐車|年収|収入|給料|月給|貯金|予算総額/.test(cl)) continue;
+    const re = /(\d+(?:\.\d+)?)\s*万\s*円?|(\d{2},?\d{3})\s*円/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(cl))) {
+      const yen = m[1] ? Math.round(parseFloat(m[1]) * 10_000) : parseInt(m[2].replace(/,/g, ""), 10);
+      const before = cl.slice(Math.max(0, m.index - 10), m.index);
+      const after = cl.slice(m.index + m[0].length, m.index + m[0].length + 8);
+      if (/^\s*(?:台)?\s*(?:くらい|ぐらい|程度|前後|位)?\s*(?:まで|以内|以下|上限|迄)/.test(after) || /(?:MAX|max|上限|〜|~|～|-|ー)\s*$/.test(before)) continue;
+      const soft = /^\s*(?:台)?\s*(?:くらい|ぐらい|程度|前後|位)/.test(after) || /(?:できれば|出来れば|理想|本来の希望|なるべく)[^\d]{0,8}$/.test(before);
+      if (!soft) continue;
+      if (yen < 20_000 || yen >= rentMax * 0.97) continue;
+      if (rentMin != null && yen < rentMin) continue;
+      // 額より前に「管理費込・共益費込・込み」があれば管理費込みの額（無ければ家賃だけの額として家賃と比べる）
+      return { yen, withAdmin: /(?:管理費|共益費)?込/.test(cl.slice(0, m.index)) || /(?:管理費|共益費)込/.test(linePre) };
+    }
+  }
+  return null;
+}
 /**
  * 点の上限（下限 0）。2026-09-25 に 130→200: 条件が全部合う物件は AD なしで 50＋156＝156 前後に届き、130 で切ると
  *   AD の差（1ヶ月 +15／2ヶ月 +30／3ヶ月 +35）が消えていた（竹内「AD は報酬なので重要・200%以上は追加で点」）。
@@ -354,6 +489,16 @@ export const REASON_JA: Record<string, string> = {
   FREE_RENT_UNLISTED: "要確認: フリーレント",
   // 2026-09-25 竹内「家賃の下限入れる」「1DKも可の場合、1DKも入れるが評価はお客さんの希望の間取りの方が点数少し高め」
   RENT_BELOW_MIN: "家賃が下限よりかなり安い（下限の85%未満）",
+  // 2026-09-29 家賃の位置（RENT_BAND_RULE）: 下限を下回る部屋は保留（RENT_UNDER_MIN）。旧の RENT_BELOW_MIN（−3 の情報の札）は保存済みの行と切り替えの旧の決まりだけ
+  RENT_UNDER_MIN: "家賃が下限未満（管理費込み・保留）",
+  RENT_NEAR_MIN: "家賃が下限を少し下回る（下限の95%以上）",
+  RENT_BAND_UPPER: "家賃は予算の上限寄り（相場に見合う）",
+  RENT_BAND_MID: "家賃は上限の85〜90%",
+  RENT_BAND_LOWER: "家賃は上限の80〜85%（安め）",
+  RENT_BAND_LOW: "家賃が上限の8割未満（相場より安い＝質に注意）",
+  RENT_TARGET_NEAR: "家賃がお客様の目安の額に近い（±5%）",
+  RENT_TARGET_MID: "家賃がお客様の目安の額から少し離れる（±12%）",
+  RENT_TARGET_FAR: "家賃がお客様の目安の額から離れている",
   FLOOR_PLAN_ALT_MATCH: "間取りが「も可」の型に一致（本命ではない）",
   SQM_OK: "広さは希望以上",
   SQM_SLIGHTLY_UNDER: "広さが希望を少し下回る（9割以上）",
@@ -578,8 +723,11 @@ export const REASON_POINTS: Record<string, number> = {
   CONTRACT_FIXED: -5, CONTRACT_NORMAL: 0, CONTRACT_UNKNOWN: 0,
   RENEWAL_FEE_NONE: 0, RENEWAL_FEE_SET: 0, RENEWAL_FEE_UNKNOWN: 0,
   FREE_RENT_MATCH: 3, FREE_RENT: 0, FREE_RENT_UNLISTED: 0,
-  // 2026-09-25 家賃下限・間取りの「も可」・広さ・築浅の自由文（下限と築浅は情報の札。保留にしない）
+  // 2026-09-25 家賃下限・間取りの「も可」・広さ・築浅の自由文（築浅は情報の札。保留にしない）
+  //   2026-09-29 家賃の位置・下限・目安の額の点は RENT_BAND_RULE の表（下限未満は RENT_UNDER_MIN の保留）。
+  //   RENT_BELOW_MIN（旧の −3 の情報の札）は保存済みの行と RENT_BAND_SCORING=off の時だけ
   RENT_BELOW_MIN: -3,
+  ...RENT_BAND_POINTS,
   FLOOR_PLAN_ALT_MATCH: 8,
   SQM_OK: 3, SQM_SLIGHTLY_UNDER: 0, SQM_UNDER: -10, SQM_UNKNOWN: 0,
   // 2026-09-27 洋室の帖数（希望以上 +3＝広さの ○ と同じ・狭い −15 外す候補・目安より狭い −10 保留・読めない 0点の要確認）
@@ -1257,7 +1405,7 @@ export function writtenWeightCodes(codes: readonly string[], f: WeightFacts, w: 
 /** 書いた条件の種類と、その札の合い方（ok＝合う／wide＝広げた検索の幅の中／soft_ng・ng＝外れ／unread＝読めない・要確認）。条件の札でなければ null */
 export type FitVerdict = "ok" | "wide" | "soft_ng" | "ng" | "unread";
 const FIT_TABLE: Record<string, [string, FitVerdict]> = {
-  RENT_OK: ["家賃", "ok"], RENT_WIDE: ["家賃", "wide"], RENT_SLIGHTLY_OVER: ["家賃", "soft_ng"], RENT_OVER_110: ["家賃", "ng"], RENT_OVER_130: ["家賃", "ng"], RENT_UNKNOWN: ["家賃", "unread"],
+  RENT_OK: ["家賃", "ok"], RENT_UNDER_MIN: ["家賃", "ng"], RENT_WIDE: ["家賃", "wide"], RENT_SLIGHTLY_OVER: ["家賃", "soft_ng"], RENT_OVER_110: ["家賃", "ng"], RENT_OVER_130: ["家賃", "ng"], RENT_UNKNOWN: ["家賃", "unread"],
   ZERO_ZERO_MATCH: ["初期費用（敷礼0）", "ok"], INITIAL_COST_NOT_ZERO: ["初期費用（敷礼0）", "ng"], INITIAL_COST_OVER_LIMIT: ["初期費用の上限", "ng"],
   FLOOR_PLAN_MATCH: ["間取り", "ok"], FLOOR_PLAN_ALT_MATCH: ["間取り", "ok"], FLOOR_PLAN_WIDE: ["間取り", "wide"], FLOOR_PLAN_NEAR: ["間取り", "wide"],
   FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"],
@@ -1424,12 +1572,16 @@ export function buildCustomerProfile(
   const walkMaxUse = walkMax != null && walkMax > 0 ? walkMax : null;
   const ageMaxUse = buildingAgeMax != null && buildingAgeMax > 0 ? buildingAgeMax : null;
   const ageTextMax = ageMaxUse != null ? null : detectAgeText(customer);
+  const rentMinUse = rentMin != null && rentMin >= 10_000 && !notes.includes("RENT_MAX_UNRELIABLE") && (rentMax == null || rentMin < rentMax) ? rentMin : null;
+  const rentTarget = readRentTarget(customer, rentMinUse, rentMax);
 
   return {
     rentMax, notes,
     written: readWrittenWants(customer, { rentMax, walkMax: walkMaxUse, buildingAgeMax: ageMaxUse, ageTextMax }),
     // 下限は上限より小さい時だけ。上限が入力誤り（上限＜下限・3万未満）の人は下限も信じない
-    rentMin: rentMin != null && rentMin >= 10_000 && !notes.includes("RENT_MAX_UNRELIABLE") && (rentMax == null || rentMin < rentMax) ? rentMin : null,
+    rentMin: rentMinUse,
+    rentTarget: rentTarget?.yen ?? null,
+    rentTargetWithAdmin: rentTarget?.withAdmin ?? false,
     floorPlanAlt: parseFloorPlanAlt(customer, floorPlanWant),
     sqmMin: sqmMin ?? null,
     roomJoWant: roomJoWantOfCustomer(customer),
@@ -1662,7 +1814,11 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     const inWide = total <= wideCap || (facts.rentYen <= wideCap && ratio <= RENT_RATIO_HOLD);
     // 超過額（管理費込み）。比の線に加えて金額の線（上限＋1万円までは保留にしない・＋2万円までは外す候補にしない）
     const overYen = total - profile.rentMax;
-    if (ratio <= 1.0) add("RENT_OK", 15);
+    if (ratio <= 1.0) {
+      // 2026-09-29 上限内は位置・下限・目安の額で札を分ける（RENT_BAND_RULE・rentPositionCodes）。切ってあれば旧の一律 +15
+      if (rentBandEnabled()) for (const r of rentPositionCodes(total, profile, facts.rentYen)) add(r.code, r.code === "RENT_OK" ? 15 : reasonPoints(r.code), r.hold ? "hold" : undefined);
+      else add("RENT_OK", 15);
+    }
     else if (inWide) add("RENT_WIDE", reasonPoints("RENT_WIDE"));
     else if (ratio <= RENT_RATIO_HOLD || overYen <= RENT_OVER_SOFT_YEN) add("RENT_SLIGHTLY_OVER", 0);
     else if (ratio <= RENT_RATIO_DROP || overYen <= RENT_OVER_DROP_MIN_YEN) add("RENT_OVER_110", -20, "hold");
@@ -1672,9 +1828,11 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     if (med != null && (profile.history.rentRatioN ?? RENT_USUAL_MIN_SENT) >= RENT_USUAL_MIN_SENT && ratio > med + 0.15) add("RENT_ABOVE_USUAL", -5);
   }
   // 家賃の下限（2026-09-25 竹内「家賃の下限入れる」）: 下限の 85% 未満の時だけ情報の札（−3・保留にしない。安い物件を外す理由にはしない）
+  //   2026-09-29 新しい決まり（RENT_BAND_RULE）では上の上限内の所で見る。上限が無い人だけここで下限を見る
   if (profile.rentMin != null && facts.rentYen != null) {
     const total = facts.rentYen + (facts.adminFeeYen ?? 0);
-    if (total < profile.rentMin * RENT_MIN_RATIO) add("RENT_BELOW_MIN", reasonPoints("RENT_BELOW_MIN"));
+    if (!rentBandEnabled()) { if (total < profile.rentMin * RENT_MIN_RATIO) add("RENT_BELOW_MIN", reasonPoints("RENT_BELOW_MIN")); }
+    else if (profile.rentMax == null) for (const r of rentPositionCodes(total, profile)) add(r.code, reasonPoints(r.code), r.hold ? "hold" : undefined);
   }
 
   // 敷金・礼金
@@ -1827,7 +1985,11 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   for (const code of writtenWeightCodes(codes, {
     buildingAge: facts.buildingAge, walkMinutes: facts.walkMinutes,
     rentRatio: rentTotal != null && profile.rentMax ? rentTotal / profile.rentMax : null, adMonths: adMonthsEff,
-  }, profile.written)) add(code, reasonPoints(code), isHoldCode(code) ? "hold" : undefined);
+  }, profile.written)) {
+    // 2026-09-29 目安の額がある人は目安との近さ（RENT_TARGET_*）で見る＝安いほど良い札は付けない（RENT_BAND_RULE）
+    if (/^RENT_CHEAP_/.test(code) && profile.rentTarget != null && rentBandEnabled()) continue;
+    add(code, reasonPoints(code), isHoldCode(code) ? "hold" : undefined);
+  }
 
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
@@ -1923,13 +2085,15 @@ function isNewPositive(c: string): boolean {
     // 2026-09-27 ピンポイントの回で見つかった
     || c === PINPOINT_CODE
     // 広げた検索の幅の内側（希望より少しだけ低い加点）
+    // 2026-09-29 家賃が予算の上限寄り・目安の額に近い（RENT_BAND_RULE）
+    || c === "RENT_BAND_UPPER" || c === "RENT_TARGET_NEAR"
     || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c)
     // 案B（書いた条件の重み・全部合う）
     || /^(?:ZERO_ZERO_INFERRED|AGE_W5|AGE_W10|AGE_W15|AGE_COL_W5|AGE_COL_W10|WALK_NEAR_W5|WALK_NEAR_W7|WALK_TEXT_OK|RENT_CHEAP_W80|RENT_CHEAP_W90|RENT_CHEAP_W95)(?:_MUST|_SOFT)?$|^FIT_(?:ALL|ALL_HALF|ONE_MISS|ONE_MISS_HALF)$/.test(c);
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -1945,6 +2109,8 @@ export const HOLD_REASON_CODES = new Set([
   "LDK_JO_NG", // 2026-09-29 リビングの帖数が希望より狭い（保留どまり）
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」（通す→保留に落ちる程度）。AD 不明（記載なし・読めない）は今まで通り 0点の要確認（保留にしない）
   "AD_UNDER_1M", "AD_NONE",
+  // 2026-09-29 家賃が下限未満（下限の95%未満・管理費込み。RENT_BAND_RULE）
+  "RENT_UNDER_MIN",
 ]);
 const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 

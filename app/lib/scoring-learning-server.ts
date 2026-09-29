@@ -58,9 +58,11 @@ export async function loadEpisodes(sb: SupabaseClient, opts: { until: string; da
   const snapRows = snaps.filter((s) => s.conversation_id !== YUMA_CONVERSATION_ID && s.property_customer_id);
   counts.snapshot_rows = snaps.length;
 
+  // 2026-09-29 ページの並びに id を足す（sent_at だけだと同じ時刻の行がページの境目で抜けたり重なったりし、読むたびに回の組が変わっていた＝
+  //   同じ期間を続けて2回読むと拡張の回が 270 と 271・中身も数十回入れ替わった。scripts/backtest-rent-band.ts で見つけた。下の3つも同じ）
   const pools = want.has("pool")
     ? await all((a, b) => sb.from("property_candidate_pools").select("id, property_customer_id, site, candidates, sent_at")
-      .gte("sent_at", sinceIso).lt("sent_at", untilIso).order("sent_at").range(a, b) as never, 300)
+      .gte("sent_at", sinceIso).lt("sent_at", untilIso).order("sent_at").order("id").range(a, b) as never, 300)
     : [];
   counts.pool_rows = pools.length;
 
@@ -86,9 +88,9 @@ export async function loadEpisodes(sb: SupabaseClient, opts: { until: string; da
     const { data, error } = await sb.from("property_customers").select(CUST_COLS).in("id", c);
     if (error) throw new Error(error.message);
     for (const r of (data ?? []) as Row[]) custs.set(r.id, r);
-    hist.push(...await all((a, b) => sb.from("property_condition_history").select("property_customer_id, changed_field, old_value, created_at").in("property_customer_id", c).range(a, b) as never));
-    sents.push(...await all((a, b) => sb.from("sent_properties").select("property_customer_id, property_name, room_no, rent, delivery, source, sent_at").in("property_customer_id", c).gte("sent_at", sentSince).lt("sent_at", sentUntil).range(a, b) as never));
-    pats.push(...await all((a, b) => sb.from("property_selection_patterns").select("property_customer_id, selling_points, selection_label, created_at").in("property_customer_id", c).lt("created_at", untilIso).range(a, b) as never));
+    hist.push(...await all((a, b) => sb.from("property_condition_history").select("property_customer_id, changed_field, old_value, created_at").in("property_customer_id", c).order("id").range(a, b) as never));
+    sents.push(...await all((a, b) => sb.from("sent_properties").select("property_customer_id, property_name, room_no, rent, delivery, source, sent_at").in("property_customer_id", c).gte("sent_at", sentSince).lt("sent_at", sentUntil).order("id").range(a, b) as never));
+    pats.push(...await all((a, b) => sb.from("property_selection_patterns").select("property_customer_id, selling_points, selection_label, created_at").in("property_customer_id", c).lt("created_at", untilIso).order("id").range(a, b) as never));
   }
   const histOf = groupBy(hist, "property_customer_id"), sentOf = groupBy(sents, "property_customer_id"), patOf = groupBy(pats, "property_customer_id");
 

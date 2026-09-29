@@ -7,7 +7,8 @@ import { resolveConditionChangeScope, normalizeBrainScope } from "@/app/lib/cond
 import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
-import { evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow } from "@/app/lib/aix-jev";
+import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow, toShadowRow } from "@/app/lib/aix-jev";
+import { buildAixJevMaterials } from "@/app/lib/aix-jev-materials";
 import { waitUntil } from "@vercel/functions";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
@@ -3357,21 +3358,38 @@ ${history}`;
     //   scripts/eval-jev-aix.ts と突き合わせて正答率を測り、上回れば suggested_aix_meta の初期値に繋ぐ（確率の線は実測で決める）。
     //   鍵（TYPESAFE_API_KEY）が無ければ何もしない。個人情報は返信生成と同じ名前一覧で伏せる（maskPII・maskNames）。申込以降は渡さない。
     //   ⚠ ボトルネックにしない: ブレインの返しを待たせない（応答の後ろで走らせる＝waitUntil）。Jev が遅い・落ちても所要時間と判断は変わらない。
-    if (isJevEnabled() && !isPostApplyStatus(convStatus) && finalAix && hasPickerQuestion(finalAix)) {
-      const brainActionForShadow = finalAix;
+    // 2026-09-29 竹内「材料は渡す・答えは渡さない」（memory feedback_jev_brain_materials）: ブレインがこの場面で**もう読んだ**材料
+    //   （pc＝要約・登録の条件・NG／customerState＝段階／brainLedger＝台帳／aixLogs＝直近の AIX／今回の発言の「今回だけ・切り替え」の語）を
+    //   aix-jev-materials で組んで渡す（DB は読み直さない）。ブレインの結論（finalAix・checkKind・parsed の各欄）は材料に入れない＝影の比べの独立性。
+    //   実測（scripts/eval-jev-aix-materials.ts・60場面・押した時刻でなくその前のお客様の発言で切る）: ピッカー 25.0%→43.8%・AIX 23.3%→43.3%。
+    //   JEV_SHADOW_AIX_FULL=1 の時だけ「全ボタンから1つ」も聞く（既定は聞かない＝竹内「AIX ボタンを選ぶのは今まで通り」・比べたい時の手元のテスト用）
+    const jevFullShadow = process.env.JEV_SHADOW_AIX_FULL === "1";
+    if (isJevEnabled() && !isPostApplyStatus(convStatus) && ((finalAix && hasPickerQuestion(finalAix)) || jevFullShadow)) {
+      const brainActionForShadow = finalAix ?? null;
       const brainCpForShadow = checkKind?.check_pattern || null;
       const shadow = (async () => {
         try {
+          const maskForJev = (s: string) => maskPII(s, maskNames);
           const msgsForJev = [...typedMessages].reverse().slice(-8)
-            .map((m) => ({ sender: m.sender, text: maskPII(m.text ?? "", maskNames), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
-          const picker = await evaluatePickerWithJev({
-            aixType: brainActionForShadow, messages: msgsForJev, status: convStatus, sentPropertyCount: brainLedger.facts.propertiesSentCount,
-            lastAixType: aixLogs[0]?.aix_type ?? null, conversationId, timeoutMs: 5_000,
+            .map((m) => ({ sender: m.sender, text: maskForJev(m.text ?? ""), createdAt: m.created_at, isAix: !!m.is_aix_generated }));
+          const materials = buildAixJevMaterials({
+            customer: pc, state: customerState, ledger: brainLedger.facts, latestCustomerText: unrepliedTurn.text, mask: maskForJev,
+            recentAix: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at })),
           });
-          if (!picker) return;
+          const jevInput = {
+            messages: msgsForJev, status: convStatus, sentPropertyCount: brainLedger.facts.propertiesSentCount,
+            lastAixType: aixLogs[0]?.aix_type ?? null, materials, conversationId, timeoutMs: 5_000,
+          };
+          const [picker, full] = await Promise.all([
+            brainActionForShadow && hasPickerQuestion(brainActionForShadow) ? evaluatePickerWithJev({ ...jevInput, aixType: brainActionForShadow }) : Promise.resolve(null),
+            jevFullShadow ? evaluateAixWithJev(jevInput) : Promise.resolve(null),
+          ]);
           const lastCust = typedMessages.find((m) => m.sender === "customer");
-          await recordJevShadow(supabase, toPickerShadowRow(conversationId, lastCust?.created_at ?? null, { action: brainActionForShadow, check_pattern: brainCpForShadow }, picker));
-          console.log(JSON.stringify({ tag: "jev:shadow", conversationId, brain: brainActionForShadow, brainCp: brainCpForShadow, picker: picker.decision.picker, pickerValue: picker.decision.pickerValue, p: Number(picker.decision.prob.toFixed(2)), ms: picker.raw.ms }));
+          const brainForShadow = { action: brainActionForShadow, check_pattern: brainCpForShadow };
+          if (full) await recordJevShadow(supabase, toShadowRow(conversationId, lastCust?.created_at ?? null, brainForShadow, full, picker));
+          else if (picker && brainActionForShadow) await recordJevShadow(supabase, toPickerShadowRow(conversationId, lastCust?.created_at ?? null, { action: brainActionForShadow, check_pattern: brainCpForShadow }, picker));
+          else return;
+          console.log(JSON.stringify({ tag: "jev:shadow", conversationId, brain: brainActionForShadow, brainCp: brainCpForShadow, jevAix: full?.decision.aix ?? null, picker: picker?.decision.picker ?? null, pickerValue: picker?.decision.pickerValue ?? null, p: picker ? Number(picker.decision.prob.toFixed(2)) : null, materials: materials ? Object.keys(materials) : [], ms: picker?.raw.ms ?? full?.raw.ms ?? null }));
         } catch (e) {
           console.warn("[jev-shadow] skipped:", e instanceof Error ? e.message : String(e));
         }

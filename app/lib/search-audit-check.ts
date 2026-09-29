@@ -18,6 +18,7 @@
 //   ・0件は「件数表示が 0 と読めた」時だけ確かめ済み（warn）。それ以外の0件（25秒ボタンが出なかった等）は確かめていない（bad）
 import { effectiveRpUpdateDays, type RpUpdateDaysCustomer } from "./rp-update-days";
 import { conditionDrift } from "./search-condition-drift";
+import { agesOutside, coversGap, fmtGap, hoursSince, neededDays, planFor, type UpdateAges } from "./search-update-days";
 
 export type AuditSeverity = "ok" | "warn" | "bad";
 export type AuditSite = "realpro" | "itandi" | "reins";
@@ -148,6 +149,12 @@ export type AuditResult = {
   url?: string | null;
   batch_timed_out?: boolean | null;
   fill_timed_out?: boolean | null;
+  /** 2026-09-29 v2.5.41 ページの上限（max_pages）で打ち切った時のページ数（bulk-dl tryNext）。無ければ最後まで見た */
+  page_limit?: number | null;
+  /** 2026-09-29 v2.5.41 一覧の行の更新日の経過（リアプロの「309 4日前」・bulk-dl が読んだ行だけ） */
+  update_ages?: UpdateAges | null;
+  /** 2026-09-29 v2.5.41 そのお客様に送付済みの部屋として選ばなかった（ダウンロードしなかった）行の数 */
+  sent_skipped?: number | null;
 };
 
 export type AuditStep = { at?: number | string | null; k: string; d?: string | null };
@@ -167,6 +174,15 @@ export type AuditInput = {
   error_kind?: string | null;
   /** 検索を始めた時刻（更新日の決まりを当てる基準）。無ければ now */
   created_at?: string | null;
+  /**
+   * 2026-09-29 v2.5.41 その回の命令の payload（source・mode・rp_update_days・update_days_plan）。
+   *   更新日の「決まり」は出どころで違う（午後の便＝1・web_brain／午前の便＝サーバーが積んだ値・計画があれば計画）。無ければお客様の写しから
+   */
+  command_payload?: Record<string, unknown> | null;
+  /** 2026-09-29 v2.5.41 前回の検索（同じお客様×サイトで、この回より前に最後まで終わった回）の時刻。分からなければ null */
+  last_search_at?: string | null;
+  /** 2026-09-29 v2.5.41 その回のお客様の id（payload の計画を引く） */
+  customer_id?: string | null;
 };
 
 export type AuditVerdict = {
@@ -316,6 +332,35 @@ export function classifyError(error: string | null | undefined): string | null {
 function stepSummary(steps: AuditStep[] | null | undefined): string {
   const s = arr(steps);
   return s.length ? s[s.length - 1].k : "none";
+}
+
+/** 写しの日時が伏せ字になっている（v2.5.40 までの拡張の maskDigits が「2026-09-26T…」を電話番号の形として伏せた） */
+function maskedDate(v: unknown): boolean {
+  return typeof v === "string" && /＊/.test(v);
+}
+
+/**
+ * 2026-09-29 v2.5.41 その回の更新日の「決まり」（出どころごと）。known=false は決まりが分からない（言わない）。
+ *   ①命令の計画（payload.update_days_plan・前回の検索から空いた日数で広げた値）②午後の便＝1（PM_LATEST）
+ *   ③サーバーが積んだ値（web_brain・午前の便の payload.rp_update_days）④お客様の写しから rp-update-days（手の一括・個別の検索）
+ *   写しの日時が伏せ字の古い行は④が読めない → 分からない
+ */
+export function expectedUpdateDays(a: Pick<AuditInput, "command_payload" | "customer_snapshot" | "created_at" | "customer_id">, nowMs: number = Date.now()): { known: boolean; days: number | null; from: string } {
+  const p = a.command_payload ?? null;
+  const plan = planFor(p, a.customer_id ?? null);
+  if (plan) return { known: true, days: plan.days ?? null, from: plan.widened ? "前回の検索から空いた日数で広げた計画" : "計画" };
+  const src = typeof p?.source === "string" ? p.source : null;
+  if (src === "auto_schedule" && p?.mode === "pm") return { known: true, days: 1, from: "午後の便（本日の更新日付）" };
+  if ((src === "web_brain" || src === "auto_schedule") && p && "rp_update_days" in p) {
+    const v = p.rp_update_days;
+    return { known: true, days: typeof v === "number" && v > 0 ? v : null, from: src === "web_brain" ? "AIXツールの一括検索が積んだ値" : "午前の便が積んだ値" };
+  }
+  const c = a.customer_snapshot ?? null;
+  if (!c) return { known: false, days: null, from: "写しなし" };
+  const manual = typeof c.rp_update_days === "number" && c.rp_update_days > 0 ? c.rp_update_days : null;
+  if (manual == null && (maskedDate(c.last_property_sent_at) || maskedDate(c.property_viewed_at))) return { known: false, days: null, from: "写しの日時が伏せ字（v2.5.40 まで）" };
+  const base = a.created_at ? Date.parse(a.created_at) : nowMs;
+  return { known: true, days: effectiveRpUpdateDays(c, Number.isFinite(base) ? base : nowMs), from: manual != null ? "手で決めた値" : "前回物件を出した日から" };
 }
 
 /**
@@ -489,12 +534,34 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
     } else if (intendedDays == null && filledDays != null) {
       add("UPDATE_DAYS", "bad", `update_days:${siteKey}:leftover`, "前の更新日が残っていた", `入れようとした=指定なし・入った=${filledDays}日`);
     }
-    if (c) {
-      const base = a.created_at ? Date.parse(a.created_at) : nowMs;
-      const expected = effectiveRpUpdateDays(c, Number.isFinite(base) ? base : nowMs);
-      if (expected !== intendedDays) {
-        add("UPDATE_DAYS", "warn", `update_days:${siteKey}:differs`, "更新日が決まりと違う", `決まり=${expected ?? "指定なし"}・入れた=${intendedDays ?? "指定なし"}（一時調整なら問題なし）`);
-      }
+    // 2026-09-29 v2.5.41: 「決まり」を出どころごとに（9/22〜の warn 90件のうち differs 90件は、決まりの側が誤っていた）:
+    //   ①拡張の search-audit.js maskDigits が写しの日時「2026-09-26T02:50…」を電話番号の形として「＊＊＊T02:50…」に伏せていた
+    //     → 前回物件を出した日が読めず、決まりは毎回「指定なし」になっていた（写しの日時は v2.5.41 から伏せない・古い行は決まりが分からない＝言わない）
+    //   ②午後の便（全員 1）・web_brain（サーバーが積んだ値）・計画（前回の検索から空いた日数で広げた値）を知らなかった
+    const expected = expectedUpdateDays(a, nowMs);
+    if (expected.known && expected.days !== intendedDays) {
+      add("UPDATE_DAYS", "warn", `update_days:${siteKey}:differs`, "更新日が決まりと違う", `決まり=${expected.days ?? "指定なし"}（${expected.from}）・入れた=${intendedDays ?? "指定なし"}（一時調整なら問題なし）`);
+    }
+    // 前回の検索から空いた時間を、実際に入った日数（読み戻しが無ければ入れようとした日数）で覆えているか
+    const usedDays = udStatus === "out_of_range" ? null : (form.update_days != null ? filledDays : intendedDays);
+    const startMs = a.created_at ? Date.parse(a.created_at) : nowMs;
+    const gapH = hoursSince(a.last_search_at ?? null, Number.isFinite(startMs) ? startMs : nowMs);
+    if (gapH != null && !coversGap(usedDays, gapH)) {
+      add("UPDATE_DAYS", "warn", `update_days:${siteKey}:gap_uncovered`, `更新日（${usedDays}日以内）では前回の検索から空いた分を覆えていない`,
+        `前回の検索=${String(a.last_search_at).slice(0, 16).replace("T", " ")}（${fmtGap(gapH)}前）・要る日数=${neededDays(gapH)}日・入った=${usedDays}日（間に更新された物件が漏れるおそれ）`);
+    }
+  }
+  // ── 更新日の中の物件を最後まで見たか（C3）・一覧の更新日が指定の中か（C2）──
+  if (site === "realpro" || site === "itandi") {
+    const daysUsed = i?.rp_update_days != null ? parseIntLoose(i.rp_update_days) : null;
+    if (r?.page_limit && daysUsed != null) {
+      add("UPDATE_DAYS", "warn", `update_days:${siteKey}:cut_by_pages`, `更新日（${daysUsed}日以内）の物件を${r.page_limit}ページで打ち切った`,
+        `ページの上限（${r.page_limit}ページ）で次のページを見ていない${r.count_number != null ? `（件数 ${r.count_number}・読んだ ${r.read_rows ?? "?"}行）` : ""}`);
+    }
+    const out = agesOutside(daysUsed, r?.update_ages ?? null);
+    if (out?.bad) {
+      add("UPDATE_DAYS", "warn", `update_days:${siteKey}:rows_outside`, `一覧に更新日（${daysUsed}日以内）より古い物件が混ざっている`,
+        `${out.outside}/${out.total}行が${daysUsed}日より前の更新（最大 ${r?.update_ages?.max_days != null ? Math.floor(r.update_ages.max_days) : "?"}日前）＝更新日の絞りが効いていないおそれ`);
     }
   }
 

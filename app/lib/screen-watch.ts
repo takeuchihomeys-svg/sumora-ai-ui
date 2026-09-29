@@ -13,6 +13,7 @@
 // 費用: 1日の上限 SCREEN_WATCH_DAILY_USD（既定 $10）。上限は常に混雑時の2倍で数え、超えたら①だけで続ける（検索は止めない）。
 // ⚠ UPDATE_DAYS の warn（更新日の違い）は異常として扱わない（9/28 の点検の札の半分以上がこれ＝数えると誤警報だらけ）。
 import { createMasker } from "./pii-pseudonym";
+import { agesOutside, fmtGap, type UpdateAges } from "./search-update-days";
 
 // ─── 型 ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,8 @@ export type WatchDom = {
   text_head?: string | null;
   band_text?: string | null;
   visibility?: string | null;
+  /** 2026-09-29 v2.5.41 リアプロの一覧の行の更新日の経過（snapshot-core readDom・「309 4日前」の形） */
+  update_ages?: UpdateAges | null;
 };
 
 /** 点検の札（search-audit-check の AuditCheck の必要な所だけ） */
@@ -64,6 +67,11 @@ export type WatchMaterial = {
   is_wide?: boolean | null;
   /** 入れようとした場所の数（駅＋区・市）。広い検索（AREA_WIDE 以上）は件数が多くても「条件が効いていない」と言わない */
   area_size?: number | null;
+  /**
+   * 2026-09-29 v2.5.41 更新日（竹内「更新日を生かすことによって最新の物件の検索や新規物件のもれがないように」）:
+   *   days＝その回の更新日（入れようとした値）・gap_hours＝前回の検索（最後に終わった回）から空いた時間・need_days＝覆うのに要る日数
+   */
+  update?: { days: number | null; gap_hours: number | null; need_days: number | null; last_search_at: string | null } | null;
 };
 /** これ以上の駅・区で検索した回は、件数の絶対の上限（3,000）で疑わない（大阪市内全部・通勤の到達駅 240 など） */
 export const AREA_WIDE = 15;
@@ -77,7 +85,47 @@ export type Detection = {
   reason: string;
   /** ★物件出し★に足す1行（条件が入り切っていない等）。無ければ null */
   notice: string | null;
+  /**
+   * 2026-09-29 v2.5.41 更新日の見張り（C1 入ったか・前回から空いた分を覆えたか／C2 一覧の更新日が中か／C3 ページで打ち切ったか）。
+   *   ラベル（止める・広げてを止める）は変えない＝更新日は検索を止める理由にしない。★物件出し★の知らせに1行足すだけ
+   */
+  update_items: UpdateFinding[];
+  update_notice: string | null;
 };
+
+export type UpdateFinding = { code: string; severity: "warn" | "bad"; title: string };
+
+/** 点検の札の鍵（update_days:<site>:<種類>）→ 見張りに出す種類。differs（決まりとの違い）は材料の違いなので出さない */
+const UPDATE_KINDS: Record<string, "warn" | "bad"> = {
+  not_filled: "bad", leftover: "bad", not_accepted: "warn", typed_unverified: "warn", gap_uncovered: "warn", cut_by_pages: "warn", rows_outside: "warn",
+};
+
+/** 更新日の見張り（純関数）。点検の札（C1・C3）と一覧の更新日（C2 の画面の文字）から */
+export function updateDaysFindings(m: WatchMaterial): { items: UpdateFinding[]; notice: string | null } {
+  const items: UpdateFinding[] = [];
+  const seen = new Set<string>();
+  for (const c of m.checks ?? []) {
+    if (!c || c.code !== "UPDATE_DAYS" || c.severity === "ok") continue;
+    const kind = String(c.cause_key ?? "").split(":")[2] ?? "";
+    const sev = UPDATE_KINDS[kind];
+    if (!sev || seen.has(kind)) continue;
+    seen.add(kind);
+    items.push({ code: kind, severity: sev, title: String(c.title ?? kind) });
+  }
+  const days = m.update?.days ?? null;
+  const out = m.checkpoint === "results" ? agesOutside(days, m.dom?.update_ages ?? null) : null;
+  if (out?.bad && !seen.has("rows_outside")) {
+    items.push({ code: "rows_outside", severity: "warn", title: `一覧に更新日（${days}日以内）より古い物件が混ざっている（${out.outside}/${out.total}行）` });
+  }
+  const pick = (k: string) => items.find((x) => x.code === k);
+  const gap = pick("gap_uncovered"), rows = pick("rows_outside"), cut = pick("cut_by_pages"), nf = pick("not_filled") ?? pick("leftover");
+  const notice = nf ? `⚠ 更新日が意図どおりに入っていない（${clip(nf.title, 40)}）`
+    : gap ? `⚠ 更新日（${days ?? "?"}日以内）では前回の検索から空いた${fmtGap(m.update?.gap_hours ?? null)}を覆えていない（間の新着が漏れるおそれ）`
+    : rows ? "⚠ 更新日の絞りが効いていないおそれ（古い更新の物件が一覧に混ざっている）"
+    : cut ? `⚠ ${clip(cut.title, 50)}（残りのページの新着を見ていない）`
+    : null;
+  return { items, notice };
+}
 
 // ─── 設定（環境変数） ────────────────────────────────────────────────────────
 
@@ -229,7 +277,10 @@ export function detectScreenState(m: WatchMaterial, t: WatchThresholds = DEFAULT
   const drift = m.decision && m.decision.severity !== "ok" ? m.decision : null;
   if (drift) rules.push(`decision:${drift.items[0]?.kind ?? "drift"}`);
 
-  const out = (label: WatchLabel, hard: boolean, reason: string, notice: string | null = null): Detection => ({ label, rules, hard, reason, notice });
+  // 更新日（ラベルは変えない・規則と1行だけ）
+  const upd = updateDaysFindings(m);
+  for (const u of upd.items.slice(0, 4)) rules.push(`update:${u.code}`);
+  const out = (label: WatchLabel, hard: boolean, reason: string, notice: string | null = null): Detection => ({ label, rules, hard, reason, notice, update_items: upd.items, update_notice: upd.notice });
   if (loginHard || loginUrl || loginText) {
     return out("login_expired", loginHard, loginErr ? "拡張の失敗の文が未ログイン" : loginUrl ? "タブの URL がログインの画面" : `ログインの文: ${clip(d.alert_text || d.modal_text || d.title, 60)}`);
   }
@@ -402,9 +453,32 @@ export const JEV_QUESTIONS = {
   },
 };
 
+/**
+ * 2026-09-29 v2.5.41 Jev に渡すブレインの材料（見張りは意図を渡してよい・memory feedback_jev_brain_materials）:
+ *   登録の条件・要望の項目・通勤の到達時間・今回だけか切り替えか・検索の意図・前回の検索からの時間。
+ *   お客様の名前は入れない（竹内「顧客名はアカウント名やから…質が落ちないなら防ぐ」＝画面の様子の判断に名前は要らない＝伏せても質は落ちない）
+ */
+export type JevBrainMaterial = {
+  conditions?: Record<string, unknown> | null;
+  wants?: string[] | null;
+  commute?: string | null;
+  scope?: "temporary" | "permanent" | null;
+  intent?: string | null;
+  update_days?: { days: number | null; gap_hours: number | null; need_days: number | null } | null;
+};
+
 /** Jev に渡す state（仮名化済みの文字だけ・各120字） */
-export function jevStateFor(m: WatchMaterial, masked: { count?: string; alert?: string; modal?: string }, det: Detection): Record<string, unknown> {
+export function jevStateFor(m: WatchMaterial, masked: { count?: string; alert?: string; modal?: string }, det: Detection, brain: JevBrainMaterial | null = null): Record<string, unknown> {
   return {
+    ...(brain ? { brain: {
+      conditions: brain.conditions ?? null,
+      wants: (brain.wants ?? []).slice(0, 12).map((w) => clip(w, 30)),
+      commute: brain.commute ? clip(brain.commute, 60) : null,
+      scope: brain.scope ?? null,
+      intent: brain.intent ? clip(brain.intent, 200) : null,
+      update_days: brain.update_days ?? null,
+    } } : {}),
+    update_findings: det.update_items.slice(0, 4).map((u) => clip(u.title, 60)),
     checkpoint: m.checkpoint,
     site: m.site ?? null,
     count_text: clip(masked.count, 120) || null,

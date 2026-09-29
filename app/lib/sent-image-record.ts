@@ -63,7 +63,7 @@ export async function recordSentImageProperty(opts: {
   const channel = channelFromSource(source);
   const out: SentImageRecordResult = { read: "failed", matched: false, propertyName: null, roomNo: null, sentProperties: "skipped" };
   try {
-    const [{ readPropertyImage }, { resolveReadProperty }, { isSameProperty }] = await Promise.all([
+    const [{ sharedPropertyImageRead, SENT_IMAGE_READ_TIMEOUT_MS }, { resolveReadProperty }, { isSameProperty }] = await Promise.all([
       import("@/app/lib/property-image-read"),
       import("@/app/lib/property-name-match"),
       import("@/app/lib/sent-property-record"),
@@ -89,7 +89,9 @@ export async function recordSentImageProperty(opts: {
         console.log(JSON.stringify({ tag: "deepseek-cutoff:skip-image-read", route: "sent-image-record", conversationId }));
         return out;
       }
-      const read = await readPropertyImage(imageUrl, { timeoutMs: 80_000 });
+      // 2026-09-29 API 費用: 推論なし・温度0（property-image-read.ts 末尾の注記）。同じ画像を ensureImageDetail が物件名で
+      //   売上サポの行に結ぶ時もこの1回の読み取りを待つだけ（sharedPropertyImageRead＝同じ URL は1回）
+      const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS });
       out.tokens = read.usage ?? null;
       // 見積書・本人確認書類は物件として記録しない
       if (!read.isProperty || read.items.length === 0) { out.read = !read.isProperty && read.raw.startsWith("{") ? "not_property" : "failed"; return out; }

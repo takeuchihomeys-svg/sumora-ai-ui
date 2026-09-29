@@ -63,7 +63,7 @@ console.log("\n■ その他");
 {
   ok("search-audit.js: 駅の名前だけ 300 まで", /STATION_NAMES_MAX = 300/.test(read("search-audit.js")));
   const mf = JSON.parse(read("manifest.json"));
-  ok("manifest の版は 2.5.40 のまま（まだ出していない 2.5.40 に同乗）", mf.version === "2.5.40");
+  ok("manifest の版は 2.5.41（v2.5.41 で更新日の見張り・送付済みの部屋を選ばない）", mf.version === "2.5.41");
   ok("拡張の中に「_」で始まるファイルを置いていない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 
