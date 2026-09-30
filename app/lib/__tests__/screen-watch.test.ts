@@ -187,5 +187,31 @@ console.log("\n■ 設定・結果の結び付け・線の調整");
   t("線の形が壊れていれば既定", JSON.stringify(sanitizeThresholds({ countLo: 9, countHi: "x" })) === JSON.stringify(DEFAULT_THRESHOLDS));
 }
 
+console.log("\n■ v2.5.48 リアプロのログインの画面（本番の写真 extension_snapshots #23・#27・見張り #216・#217・#230・#231 は normal だった）");
+{
+  // #27: ページの文字が読めたログインの画面
+  const a = detectScreenState(m({ dom: { url: "https://www.realnetpro.com/index.php", title: "リアプロBB+仲介ログイン画面", count_text: null, count_number: null } }));
+  t("index.php＋題「ログイン画面」→ login_expired・硬い", a.label === "login_expired" && a.hard && a.rules.includes("login:url") && a.rules.includes("login:title"), a);
+  // #23: ページの文字が取れない（dom_error）→ タブの題と URL だけ
+  const b = detectScreenState(m({ checkpoint: "stall", dom_error: "Could not establish connection. Receiving end does not exist.", dom: { url: "https://www.realnetpro.com/index.php", title: "リアプロBB+仲介ログイン画面" } }));
+  t("文字が取れなくても題と URL で login_expired（止まりより先）", b.label === "login_expired" && b.hard, b);
+  const c = detectScreenState(m({ dom: { url: "https://www.realnetpro.com/", title: "" } }));
+  t("リアプロのルートもログインの画面", c.label === "login_expired", c);
+  const d = detectScreenState(m({ dom: { url: "https://www.realnetpro.com/main.php?method=estate", title: "リアプロBB+仲介", count_text: "16,042棟", count_number: 16042 } }));
+  t("検索の画面（main.php）は今まで通り（ログインと読まない）", d.label !== "login_expired", d);
+  const e = detectScreenState(m({ site: "itandi", dom: { url: "https://itandibb.com/rent_rooms/list", title: "賃貸居住用部屋検索 | ITANDI BB" } }));
+  t("ITANDI の一覧は normal", e.label === "normal", e);
+  const f = detectScreenState(m({ dom: { url: "https://www.realnetpro.com/main.php", title: "リアプロBB+仲介", alert_text: "お知らせ: ログイン方法の変更について", count_text: "全 120 件", count_number: 120 } }));
+  t("本文のお知らせの「ログイン」は見ない（題だけ）", f.label === "normal", f);
+  // #216・#217: 画面の材料が無い done（失敗の文だけ）
+  const g = detectScreenState(m({ checkpoint: "done", error: "AXLX_TAB_DEAD: リアプロのタブが応答しません（読み直しても・検索の画面（main.php）ではない）" }));
+  t("失敗の文が「検索の画面（main.php）ではない」→ login_expired（疑い・硬くない）", g.label === "login_expired" && !g.hard && g.rules.includes("login:tab_not_search") && !!g.notice, g);
+  t("疑いは止めない（flag）", actionFor(g.label, { hard: g.hard }).kind === "flag" && !actionFor(g.label, { hard: g.hard }).stopSite);
+  const h = detectScreenState(m({ site: "itandi", checkpoint: "done", error: "AXLX_TAB_DEAD: ITANDI のタブが検索の画面になりません（開き直しても・ITANDI の検索の画面（賃貸の部屋の一覧）ではない（物件の詳細・ログインの画面等））" }));
+  t("ITANDI の同じ失敗も login_expired（疑い）", h.label === "login_expired" && !h.hard, h);
+  const i = detectScreenState(m({ checkpoint: "done", error: "AXLX_NO_FILL_START: リアプロのページが条件の入力を始めませんでした" }));
+  t("入力が始まらないは今まで通り止まり（ログインと読まない）", i.label === "stuck", i);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

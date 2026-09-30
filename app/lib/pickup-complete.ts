@@ -24,6 +24,7 @@
 //     1回ずつ届いた回を寄せても順位と 👑 が「まとめた全件」になるだけで、送った物・判定は変えない（悪くならない）
 //   - 境目: ちょうど10分（now − 最後 ＝ 600000ms）でまとめる（>=）。未来の時刻（時計のずれ）はまとめない
 import { pickCustomerBest, compareOverall, overallPoints, imageBonusPoints, type BestCandidateRow, type BestBasis } from "./pickup-best";
+import { dropGhostSingles } from "@/app/lib/search-audit-ghost";
 import { overrideRulerKey } from "./search-override";
 
 /** 「完了」でまとめる行の古さの上限（時間）。前の完了より後の行は complete_group_id が空なので、実際は「前の完了以降・最大24時間」 */
@@ -285,7 +286,7 @@ export function completeAuthOk(h: { authorization: string | null; automationKey:
 export const SEARCH_HOLD_MAX_MS = 30 * 60_000;
 export const NEXT_SITE_WAIT_MS = 4 * 60_000;
 
-export type HoldAudit = { created_at: string; finished_at: string | null; status: string | null; site: string | null; command_id: string | null };
+export type HoldAudit = { created_at: string; finished_at: string | null; status: string | null; site: string | null; command_id: string | null; /** 2026-09-30 幽霊の行の見分けに使う（無ければ今まで通り） */ trigger?: string | null };
 export type HoldCommand = { id: string; status: string | null; sites: string[] | null };
 
 const holdSite = (s: string | null | undefined): string => {
@@ -297,7 +298,10 @@ const holdSite = (s: string | null | undefined): string => {
 };
 
 /** そのお客様の検索がまだ続いているか（純関数）。hold なら until（ms）まで待つ */
-export function searchHold(audits: ReadonlyArray<HoldAudit>, commands: ReadonlyArray<HoldCommand>, now: number): { hold: boolean; until: number | null; reason: string | null } {
+export function searchHold(auditsAll: ReadonlyArray<HoldAudit>, commands: ReadonlyArray<HoldCommand>, now: number): { hold: boolean; until: number | null; reason: string | null } {
+  // 2026-09-30 v2.5.48 幽霊の行（一括の行の直後に同じサイトで出た trigger=single＝同じ自動入力の2本目）では待たない・数えない。
+  //   旧: 幽霊の行が started のまま残ると 30分「検索中」と読んでまとめを待ち、最後に終わった行が幽霊（命令なし）だと次のサイトの待ちも外れた
+  const audits = dropGhostSingles(auditsAll.map((a) => ({ ...a, property_customer_id: "_" })));
   const at = (s: string | null | undefined) => Date.parse(String(s ?? ""));
   const open = audits.filter((a) => a.status === "started" && Number.isFinite(at(a.created_at)) && now - at(a.created_at) < SEARCH_HOLD_MAX_MS && at(a.created_at) <= now + 60_000);
   if (open.length) {

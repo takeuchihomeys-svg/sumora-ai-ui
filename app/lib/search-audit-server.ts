@@ -5,6 +5,7 @@
 // 2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」
 // 静かに壊れないために: DB の error は全部見て返す（data ?? [] で握り潰さない）・見立ては「成功して保存した数」を返す。
 import { supabase } from "@/app/lib/supabase";
+import { ghostSourceOf, GHOST_WINDOW_MS, type GhostRowLite } from "@/app/lib/search-audit-ghost";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import { DEEPSEEK_FLASH_MODEL } from "@/app/lib/llm-alt-provider";
 import {
@@ -162,7 +163,7 @@ export async function bumpCauses(keys: string[], runId: string, site: string | n
   return { ok, errors };
 }
 
-function toAuditInput(row: Partial<SearchAuditRow>, extra: Pick<AuditInput, "command_payload" | "last_search_at" | "sent_rooms" | "downloaded_rooms"> = {}): AuditInput {
+function toAuditInput(row: Partial<SearchAuditRow>, extra: Pick<AuditInput, "command_payload" | "last_search_at" | "sent_rooms" | "downloaded_rooms" | "ghost_of"> = {}): AuditInput {
   return {
     ...extra, customer_id: row.property_customer_id ?? null,
     site: row.site ?? null, status: row.status ?? null, trigger: row.trigger ?? null, is_wide: row.is_wide ?? null, area_mode: row.area_mode ?? null,
@@ -204,6 +205,20 @@ export async function sentContextFor(row: Partial<SearchAuditRow>): Promise<Pick
   } catch { return {}; }
 }
 
+/** 2026-09-30 v2.5.48 その行が幽霊の行か（同じお客様の直前の行を読む・読めない時は何も言わない） */
+export async function ghostContextFor(row: Partial<SearchAuditRow>): Promise<Pick<AuditInput, "ghost_of">> {
+  try {
+    if (row.trigger !== "single" || row.command_id || !row.property_customer_id || !row.created_at) return {};
+    const t = Date.parse(row.created_at);
+    if (!Number.isFinite(t)) return {};
+    const { data, error } = await supabase.from("search_audits").select("run_id, property_customer_id, site, trigger, command_id, created_at")
+      .eq("property_customer_id", row.property_customer_id).gte("created_at", new Date(t - GHOST_WINDOW_MS - 5_000).toISOString()).lte("created_at", row.created_at).limit(20);
+    if (error) return {};
+    const src = ghostSourceOf(row as GhostRowLite, (data ?? []) as GhostRowLite[]);
+    return src ? { ghost_of: { trigger: src.trigger ?? null, gap_ms: t - Date.parse(String(src.created_at)) } } : {};
+  } catch { return {}; }
+}
+
 /** phase=finished: 足して点検し、原因を数える。見立てが要るかを返す */
 export async function recordFinished(body: Record<string, unknown>): Promise<{ ok: boolean; error?: string; needsAi: boolean; severity?: AuditSeverity; cause_key?: string | null; /** この呼び出しが回を閉じて数えた（2通目・見回りが先に閉じた時は false）＝見張りの C3 はこの時だけ */ counted?: boolean }> {
   const runId = body.run_id as string;
@@ -217,7 +232,9 @@ export async function recordFinished(body: Record<string, unknown>): Promise<{ o
   const upd = await auditUpdateContext(supabase as never, merged);
   // 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードしたか（SENT_SELECTED）の材料
   const sentCtx = await sentContextFor(merged);
-  const auditIn = toAuditInput(merged, { ...upd, ...sentCtx });
+  // 2026-09-30 v2.5.48 幽霊の行（一括の行の直後に同じお客様・同じサイトで出た single）には DOUBLE_FILL の札
+  const ghost = await ghostContextFor(merged);
+  const auditIn = toAuditInput(merged, { ...upd, ...sentCtx, ...ghost });
   const v = runSearchAuditChecks(auditIn);
   const ai = needsDiagnosis(v);
   const sel = sentSelectedOf(auditIn);

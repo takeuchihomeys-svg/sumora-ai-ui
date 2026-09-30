@@ -30,7 +30,9 @@ export type CheckCode =
   | "FLOOR_PLAN_DROPPED" | "UPDATE_DAYS" | "LOCATION_MODE" | "RESET_FAILED" | "UI_NOT_FOUND" | "CONDITION_DRIFT" | "CONDITION_STALE"
   | "ZERO_UNCONFIRMED" | "ZERO_CONFIRMED" | "SENT_LT_READ" | "STALLED" | "COMMUTE_REACH"
   // 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードした（見張り）／ITANDI の条件が効いていない検索（止めた・入れ直し）
-  | "SENT_SELECTED" | "ITANDI_GUARD" | `ERROR_${string}`;
+  | "SENT_SELECTED" | "ITANDI_GUARD"
+  // 2026-09-30 v2.5.48 同じ自動入力が2本走った（一括の行の直後の trigger=single＝幽霊の行・search-audit-ghost.ts）
+  | "DOUBLE_FILL" | `ERROR_${string}`;
 
 export type AuditCheck = {
   code: CheckCode;
@@ -199,6 +201,8 @@ export type ItandiGuardRecord = {
 export type AuditStep = { at?: number | string | null; k: string; d?: string | null };
 
 export type AuditInput = {
+  /** 2026-09-30 v2.5.48 この行が幽霊の行（一括の行の直後の single）なら、元の一括の行の種類と間（search-audit-ghost.ts・recordFinished が足す） */
+  ghost_of?: { trigger?: string | null; gap_ms?: number | null } | null;
   site?: string | null;
   status?: string | null;
   trigger?: string | null;
@@ -423,6 +427,12 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
   const form = f?.form ?? null;
   const c = a.customer_snapshot ?? null;
   const r = a.result ?? null;
+
+  // ── 同じ自動入力の2本目（幽霊の行）──
+  if (a.ghost_of) {
+    add("DOUBLE_FILL", "bad", `double_fill:${siteKey}`, "同じ自動入力が2本走った（一括の回の2本目）",
+      `一括の回（${a.ghost_of.trigger ?? "?"}）の ${Math.round((a.ghost_of.gap_ms ?? 0) / 1000)}秒後に同じお客様・同じサイトで single の入力が始まった。拡張 v2.5.48 より前の版（受け口が2つ）の PC＝拡張の再読み込みが要る`);
+  }
 
   // ── 止まった・失敗した ──
   if (a.status === "abandoned") {
@@ -835,6 +845,7 @@ export function causeTitle(causeKey: string): string {
     case "zero_confirmed": return `${siteJa}: 0件（件数表示も0）`;
     case "sent_lt_read": return `${siteJa}: 送れる物件を送り切れない`;
     case "sent_selected": return `${siteJa}: 送付済みの部屋を選んだ・ダウンロードした`;
+    case "double_fill": return `${siteJa}: 同じ自動入力が2本走った（古い版の拡張）`;
     case "itandi_guard": return `${siteJa}: 条件が効いていない検索（${a === "ext" ? "拡張側" : a === "site" ? "ITANDI 側" : "判断つかず"}・${b === "fixed" ? "入れ直しで直った" : b === "unfixed" ? "直らず見送り" : "入れ直していない"}）`;
     case "stalled": return `${siteJa}: 途中で止まった（${a}）`;
     case "error": return a === "not_logged_in" ? `${siteJa}: ログインしていない` : `${siteJa}: 失敗（${a}）`;

@@ -220,6 +220,14 @@ export function expectedCountRange(samples: ReadonlyArray<CountSample>, t: Pick<
 
 const LOGIN_TEXT_RE = /ログインしてください|ログインが必要|再度ログイン|ログインし直|セッション(?:が切れ|の有効期限|がタイムアウト)|未ログイン/;
 const LOGIN_URL_RE = /\/(?:login|signin|sign_in|auth)(?:[/?.#]|$)|[?&](?:method|page)=login/i;
+// 2026-09-30 v2.5.48 ログインの画面をサイトの形で見分ける（本番の写真 extension_snapshots #23・#27: リアプロのログイン切れは
+//   url=https://www.realnetpro.com/index.php・題「リアプロBB+仲介ログイン画面」。LOGIN_URL_RE（/login 等）にも LOGIN_TEXT_RE（ログインしてください 等）にも当たらず、
+//   results・done とも normal と読んでいた＝#216・#217・#230・#231）。検索の画面は main.php なので、リアプロの index.php・ルートはログインの画面
+const LOGIN_URL_SITE_RE = /^https?:\/\/(?:www\.)?realnetpro\.com\/(?:index\.php)?(?:[?#]|$)/i;
+/** タブの題（「…ログイン画面」「ログイン | …」）。本文のお知らせの「ログイン」は見ない（題だけ） */
+const LOGIN_TITLE_RE = /ログイン(?:画面|ページ)|^\s*(?:ログイン|Login|Sign in)\s*(?:[|｜\-–:：]|$)/i;
+/** 拡張の失敗の文: 検索の画面にならない（開き直しても）＝ログインの画面に移った形がほとんど（background _ensureRealproTab / _ensureItandiTab） */
+const TAB_NOT_SEARCH_RE = /AXLX_TAB_DEAD[^\n]*(?:main\.php|検索の画面)/;
 const SITE_ERROR_RE = /メンテナンス中|ただいまメンテナンス|アクセスが集中|エラーが発生しました|Service Unavailable|Internal Server Error|503|502 Bad Gateway/;
 /** 予告・お知らせの形（日付・時刻・予定）。今起きているエラーの強い文（SITE_ERROR_NOW_RE）が無い時だけ「お知らせ」とみなす */
 const SITE_NOTICE_RE = /お知らせ|予定|予告|実施|\d{1,2}\s*[\/月]\s*\d{1,2}|\d{1,2}:\d{2}\s*[〜～~-]/;
@@ -238,6 +246,7 @@ function errKindOf(error: string | null | undefined, kind: string | null | undef
   if (/fill-done|検索完了シグナル|AXLX_NO_FILL_START/.test(e)) return "fill_timeout";
   if (/全ページ送信完了|5分/.test(e)) return "batch_timeout";
   if (/未ログイン|ログインしてください|ログインしてから|セッションが見つかりません/.test(e)) return "not_logged_in";
+  if (TAB_NOT_SEARCH_RE.test(e)) return "tab_not_search";
   if (/メンテナンス|アクセスが集中/.test(e)) return "site_error";
   return "exception";
 }
@@ -256,12 +265,17 @@ export function detectScreenState(m: WatchMaterial, t: WatchThresholds = DEFAULT
   const checks = (m.checks ?? []).filter((c) => c && c.code);
 
   // ログイン切れ
-  const loginUrl = LOGIN_URL_RE.test(String(d.url ?? ""));
-  const loginText = LOGIN_TEXT_RE.test(texts);
+  const loginUrl = LOGIN_URL_RE.test(String(d.url ?? "")) || LOGIN_URL_SITE_RE.test(String(d.url ?? ""));
+  const loginTitle = LOGIN_TITLE_RE.test(String(d.title ?? ""));
+  const loginText = LOGIN_TEXT_RE.test(texts) || loginTitle;
   const loginErr = kind === "not_logged_in";
+  // 検索の画面にならないタブ（画面の材料が無くても拡張の失敗の文で分かる）。ログイン切れの疑い＝硬くはしない（止めない・ラベルだけ正しく）
+  const loginTab = kind === "tab_not_search";
   if (loginUrl) rules.push("login:url");
-  if (loginText) rules.push("login:text");
+  if (loginTitle) rules.push("login:title");
+  else if (loginText) rules.push("login:text");
   if (loginErr) rules.push("login:error");
+  if (loginTab) rules.push("login:tab_not_search");
   const loginHard = (loginUrl || loginText) && !countKnown || loginErr;
   // サイトのエラー
   const siteText = SITE_ERROR_RE.test(texts);
@@ -299,10 +313,13 @@ export function detectScreenState(m: WatchMaterial, t: WatchThresholds = DEFAULT
   for (const u of upd.items.slice(0, 4)) rules.push(`update:${u.code}`);
   const sentNotice = sentSelectedNotice(checks);
   if (sentNotice) rules.push("sent:selected");
+  // 2026-09-30 v2.5.48 同じ自動入力が2本走った回（点検の札 DOUBLE_FILL・bad）。ラベルは変えない（止まり・時間切れはそのラベルのまま）・規則に残す
+  if (checks.some((c) => c.code === "DOUBLE_FILL" && c.severity === "bad")) rules.push("double_fill");
   const out = (label: WatchLabel, hard: boolean, reason: string, notice: string | null = null): Detection => ({ label, rules, hard, reason, notice, update_items: upd.items, update_notice: upd.notice, sent_notice: sentNotice });
   if (loginHard || loginUrl || loginText) {
     return out("login_expired", loginHard, loginErr ? "拡張の失敗の文が未ログイン" : loginUrl ? "タブの URL がログインの画面" : `ログインの文: ${clip(d.alert_text || d.modal_text || d.title, 60)}`);
   }
+  if (loginTab) return out("login_expired", false, `検索の画面にならない（ログイン切れの疑い）: ${clip(m.error, 80)}`, "⚠ 検索の画面が開けませんでした（ログイン切れの疑い・ログインし直してください）");
   // 2026-09-29 検証: ITANDI は件数の文が読めない（search_audits の count_text は全部 null）ので「件数が出ていれば止めない」が効かない。
   //   予告のお知らせ（「メンテナンス中のお知らせ（10/1 2:00〜）」）は今のエラーではない → 強い文（ただいま・アクセス集中・5xx）が無ければ硬くしない
   const siteNoticeOnly = siteText && SITE_NOTICE_RE.test(texts) && !SITE_ERROR_NOW_RE.test(texts);

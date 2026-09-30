@@ -75,6 +75,29 @@ export function pickClaimable<T extends { payload?: unknown }>(commands: Readonl
   return ok.find((c) => srcOf(c) !== "auto_schedule") ?? ok[0] ?? null;
 }
 /**
+ * 2026-09-30 v2.5.48 手の命令（AIXツールの一括検索＝web_brain）が「リアプロがログインの画面の PC」に渡って失敗した
+ *   （YUMA の2回とも待機中の PC 38f4be8b が先に拾い、リアプロは AXLX_TAB_DEAD）。
+ *   拡張は拾いに来る時に、リアプロのタブが検索の画面（main.php）でなければ ?rp=0 を付ける。
+ *   その PC には、リアプロを含む web_brain の命令を積んでから RP_NOT_READY_DEFER_MS の間は渡さない（＝状態の良い PC に先に拾わせる）。
+ *   過ぎたら渡す（ブレインの PC が1台だけの時に止めない・ITANDI の分は進み、リアプロは今まで通り理由付きで見送る）。
+ *   自動便（auto_schedule）・AIX は今まで通り（対象は手の命令だけ）。サイトへのアクセスは増えない
+ */
+export const RP_NOT_READY_DEFER_MS = 3 * 60 * 1000;
+export function deferForRealproNotReady(
+  row: { created_at?: string | null; payload?: unknown; sites?: ReadonlyArray<string> | null; command_type?: string | null },
+  pc: { rpReady: boolean }, nowMs: number,
+): boolean {
+  if (pc.rpReady) return false;
+  if (row.command_type === "stop_all") return false;
+  const src = row.payload && typeof row.payload === "object" ? (row.payload as Record<string, unknown>).source : null;
+  if (src !== "web_brain") return false;
+  const sites = Array.isArray(row.sites) ? row.sites : [];
+  if (!sites.some((x) => x === "realnetpro" || x === "realpro")) return false;
+  const s = waitStartMs(row);
+  if (s === null) return false;
+  return nowMs - s < RP_NOT_READY_DEFER_MS;
+}
+/**
  * 拾い手を待つ3時間の数え始め＝not_before（あれば）・無ければ積んだ時刻。
  * 例: 10:00 に積んで not_before 11:02 の自動便は 14:02 まで待つ（積んだ時刻から数えると窓の遅い側の分だけ短くなる）
  */

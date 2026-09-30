@@ -6,12 +6,13 @@
 //   search_audits はブレインの PC の回だけ（スタッフの手の検索・ブレインでない PC の回は無い）→ 前回が実際より古く見えるだけ＝広い側（漏れない）。
 //   読めない時は「記録なし」＝今までの決まりのまま（検索は止めない）。
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { dropGhostSingles } from "@/app/lib/search-audit-ghost";
 import { planUpdateDays, stopLinesBySite, type UpdateDaysPlan } from "./search-update-days";
 
 /** 見る範囲（これより前の回は無い物として扱う＝指定なしまで広がる前に今までの決まりに任せる） */
 const LOOKBACK_DAYS = 30;
 
-type AuditLite = { property_customer_id: string | null; site: string | null; created_at: string; error: string | null; error_kind: string | null; result: Record<string, unknown> | null };
+type AuditLite = { property_customer_id: string | null; site: string | null; created_at: string; error: string | null; error_kind: string | null; result: Record<string, unknown> | null; trigger?: string | null; command_id?: string | null };
 
 export function siteOfCommand(s: string | null | undefined): string | null {
   const v = String(s ?? "").toLowerCase();
@@ -37,13 +38,14 @@ export async function lastCompleteSearches(
   const nowMs = opts.nowMs ?? Date.now();
   const since = new Date(nowMs - LOOKBACK_DAYS * 86400_000).toISOString();
   for (let i = 0; i < ids.length; i += 50) {
-    let q = sb.from("search_audits").select("property_customer_id, site, created_at, error, error_kind, result")
+    let q = sb.from("search_audits").select("property_customer_id, site, created_at, error, error_kind, result, trigger, command_id")
       .in("property_customer_id", ids.slice(i, i + 50)).eq("status", "finished").gte("created_at", since)
       .order("created_at", { ascending: false }).limit(2000);
     if (opts.beforeIso) q = q.lt("created_at", opts.beforeIso);
     const { data, error } = await q;
     if (error) { console.warn("[update-days] 前回の検索を読めない（今までの決まりのまま）:", error.message); continue; }
-    for (const r of (data ?? []) as AuditLite[]) {
+    // 2026-09-30 v2.5.48 幽霊の行（一括の行の直後に同じお客様・同じサイトで出た trigger=single＝同じ自動入力の2本目）は「前回の検索」に数えない
+    for (const r of dropGhostSingles((data ?? []) as AuditLite[])) {
       const id = String(r.property_customer_id ?? "");
       const site = siteOfCommand(r.site);
       if (!id || !site || !completed(r)) continue;

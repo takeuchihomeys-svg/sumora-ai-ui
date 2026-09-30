@@ -117,7 +117,7 @@ export async function claimCompleteGroup(propertyCustomerId: string, meta: Compl
 export async function searchHoldFor(propertyCustomerId: string, now = Date.now()): Promise<{ hold: boolean; until: number | null; reason: string | null }> {
   try {
     const since = new Date(now - SEARCH_HOLD_MAX_MS - 10 * 60_000).toISOString();
-    const a = await supabase.from("search_audits").select("created_at, finished_at, status, site, command_id")
+    const a = await supabase.from("search_audits").select("created_at, finished_at, status, site, command_id, trigger")
       .eq("property_customer_id", propertyCustomerId).gte("created_at", since).order("created_at", { ascending: false }).limit(20);
     if (a.error) return { hold: false, until: null, reason: null };
     const audits = (a.data ?? []) as HoldAudit[];

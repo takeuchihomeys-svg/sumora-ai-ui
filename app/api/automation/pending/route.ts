@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import {
   AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, pendingSourceOrFilter,
-  pickClaimable, isPickerWaitExpired, pickerActiveAt,
+  pickClaimable, isPickerWaitExpired, pickerActiveAt, deferForRealproNotReady,
 } from "@/app/lib/automation-sources";
 import { claimExtVersion, claimInstallId, isMissingColumnError } from "@/app/lib/extension-snapshots";
 
@@ -50,6 +50,8 @@ export async function GET(req: NextRequest) {
   //   どの PC もブレインでないまま 3時間経ったものは error で閉じる。拾い手の決まりは app/lib/automation-sources.ts の1か所
   const aixMode = req.nextUrl.searchParams.get("aix") === "1";
   const brainMode = req.nextUrl.searchParams.get("brain") === "1";
+  // v2.5.48: リアプロのタブが検索の画面でない PC（?rp=0）には、リアプロを含む手の命令を少しの間渡さない（deferForRealproNotReady）
+  const rpReady = req.nextUrl.searchParams.get("rp") !== "0";
   const nowMs = Date.now();
   const expireBefore = new Date(nowMs - WAIT_FOR_PICKER_MS).toISOString();
   const nowIso = new Date(nowMs).toISOString();
@@ -107,7 +109,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: selErr.message }, { status: 500 });
   }
   // 2026-09-30 今渡してよい物の中で自動便でない物（手の検索・AIX・広げての続き）を先に（自動便60人の後ろで何時間も待たせない・pickClaimable）
-  const cmd = pickClaimable(commands ?? [], nowMs);
+  const cmd = pickClaimable((commands ?? []).filter((c) => !deferForRealproNotReady(c, { rpReady }, nowMs)), nowMs);
   if (!cmd) {
     return NextResponse.json({ command: null });
   }

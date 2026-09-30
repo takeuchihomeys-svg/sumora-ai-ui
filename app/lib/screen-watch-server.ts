@@ -291,7 +291,9 @@ export async function runCheckpoint(input: CheckpointInput, nowMs = Date.now()):
         const sd = s.data as { tabs: Array<Record<string, unknown>> | null; stall: Record<string, unknown> | null; band_text: string | null };
         const want = siteKey((sd.stall?.watch as Record<string, unknown> | undefined)?.site as string | undefined) ?? siteKey(input.site);
         snapTab = (sd.tabs ?? []).find((t) => siteKey(t.site as string) === want) ?? (sd.tabs ?? [])[0] ?? null;
-        dom = (snapTab?.dom as WatchDom | undefined) ?? null;
+        // v2.5.48: ページの文字が取れないタブ（dom_error・拡張の中身が答えない）でも、タブの題と URL は写真の行にある → ログインの画面の見分けに使う
+        dom = (snapTab?.dom as WatchDom | undefined) ?? (snapTab && (snapTab.url || snapTab.title)
+          ? ({ url: (snapTab.url as string | undefined) ?? null, title: (snapTab.title as string | undefined) ?? null } as WatchDom) : null);
         domError = (snapTab?.dom_error as string | undefined) ?? null;
         snapBand = sd.band_text;
         if (!input.site && want) input.site = want;
