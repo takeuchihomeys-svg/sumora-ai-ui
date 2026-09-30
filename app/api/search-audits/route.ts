@@ -10,6 +10,8 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import {
   validRunId, recordStarted, recordFinished, runDiagnosis, listCauses, listRuns, setCauseStatus, latestWeekly,
 } from "@/app/lib/search-audit-server";
+import { supabase } from "@/app/lib/supabase";
+import { buildDailyDigest, digestLines, type DailyAuditRow } from "@/app/lib/search-audit-daily";
 
 export const dynamic = "force-dynamic";
 // 見立て（DeepSeek 20秒×最大2回）を応答の後に走らせる
@@ -98,6 +100,24 @@ export async function GET(req: NextRequest) {
     const cid = sp.get("customer_id");
     const r = await listRuns(days, { customerId: cid && /^[A-Za-z0-9-]{1,64}$/.test(cid) ? cid : null, limit: Number(sp.get("limit") ?? 200) || 200 });
     return NextResponse.json({ ok: !r.error, ...r }, { status: r.error ? 500 : 200, headers: CORS });
+  }
+  if (view === "daily") {
+    // 2026-09-30 今日のまとめ（その場で数える・LLM なし）。?date=2026-09-30 でその日の分
+    const dp = sp.get("date");
+    const jstDate = dp && /^\d{4}-\d{2}-\d{2}$/.test(dp) ? dp : new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+    const from = new Date(`${jstDate}T00:00:00+09:00`).toISOString();
+    const to = new Date(Date.parse(from) + 86400_000).toISOString();
+    const rows: DailyAuditRow[] = [];
+    for (let i = 0; i < 10_000; i += 1000) {
+      const r = await supabase.from("search_audits")
+        .select("created_at, finished_at, site, area_mode, trigger, status, error, error_kind, checks, ext_version")
+        .gte("created_at", from).lt("created_at", to).order("created_at").range(i, i + 999);
+      if (r.error) return NextResponse.json({ ok: false, error: r.error.message }, { status: 500, headers: CORS });
+      rows.push(...((r.data ?? []) as DailyAuditRow[]));
+      if (!r.data || r.data.length < 1000) break;
+    }
+    const digest = buildDailyDigest(rows);
+    return NextResponse.json({ ok: true, date: jstDate, alerts: digest.alerts, lines: digestLines(digest), digest }, { headers: CORS });
   }
   if (view === "weekly") {
     const w = await latestWeekly();

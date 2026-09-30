@@ -39,6 +39,7 @@ export default function SearchAuditPanel({ onClose, extVersion }: { onClose: () 
   const [causes, setCauses] = useState<Cause[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [weekly, setWeekly] = useState<Weekly | null>(null);
+  const [daily, setDaily] = useState<{ date: string; alerts: string[]; lines: string[] } | null>(null);
   const [runsWindow, setRunsWindow] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
@@ -51,12 +52,15 @@ export default function SearchAuditPanel({ onClose, extVersion }: { onClose: () 
     setLoading(true); setErr("");
     try {
       if (view === "causes") {
-        const [c, w] = await Promise.all([
+        const [c, w, d] = await Promise.all([
           fetch(`/api/search-audits?view=causes&days=${days}`, { cache: "no-store" }).then((r) => r.json()),
           fetch(`/api/search-audits?view=weekly`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+          // 2026-09-30 今日のまとめ（その日の検索を数えて「知らせる事」を出す・search-audit-daily.ts）。読めなくても他は出す
+          fetch(`/api/search-audits?view=daily`, { cache: "no-store" }).then((r) => r.json()).catch(() => null),
         ]);
         if (!c.ok) throw new Error(c.error ?? "読み込めない");
         setCauses(c.causes ?? []); setRunsWindow(c.runs_window ?? 0); setWeekly(w && w.ok ? w : null);
+        setDaily(d && d.ok ? { date: String(d.date ?? ""), alerts: Array.isArray(d.alerts) ? d.alerts : [], lines: Array.isArray(d.lines) ? d.lines : [] } : null);
       } else {
         const r = await fetch(`/api/search-audits?view=runs&days=${days}&limit=150`, { cache: "no-store" }).then((x) => x.json());
         if (!r.ok) throw new Error(r.error ?? "読み込めない");
@@ -111,6 +115,14 @@ export default function SearchAuditPanel({ onClose, extVersion }: { onClose: () 
 
         {view === "causes" && (
           <>
+            {daily && daily.lines.length > 0 && (
+              <div className={`mb-3 rounded-xl border px-3 py-2 ${daily.alerts.length ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+                <div className="text-[12px] font-bold text-slate-700">📅 今日のまとめ（{daily.date}）</div>
+                {daily.lines.map((l, i) => (
+                  <div key={i} className={`text-[12px] leading-relaxed ${l.startsWith("■") ? "mt-1 font-bold text-slate-600" : "text-slate-700"}`}>{l}</div>
+                ))}
+              </div>
+            )}
             {weekly?.result?.summary?.summary_ja && (
               <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
                 <div className="text-[11px] font-bold text-sky-800">今週のまとめ（{fmt(weekly.at)}・DeepSeek）</div>
