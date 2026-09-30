@@ -503,10 +503,31 @@ async function callMergeApi(payload) {
   const searchCommandId = _searchCommandIdFor(payload && payload.property_customer_id);
   // 2026-09-27 この送信がピンポイントの検索か広げての検索か（ブレインの時だけ・分からない時は付けない＝サーバーは加点しない）
   const searchMode = brainMode && payload && payload.property_customer_id ? await _searchModeFor(payload.property_customer_id, payload.site) : null;
+  // v2.5.49 物件の付け先の見張り（batch-guard.js sendOwner）: 一括の回が走っている間は、送る相手が「今そのサイトで検索している回のお客様」か照らす。
+  //   違えば送らない（点検の段 owner_mismatch に残る＝サーバーの札 OWNER_MISMATCH）。相手が空なら回のお客様で送る。
+  //   サーバー（merge-pdfs）にも回のお客様（batch_owner）を渡し、同じ照らしをもう一度させる（名前と ID の食い違いもそこで見る）
+  let _own = null;
+  try { _own = self.AxlxBatchGuard && self.AxlxBatchGuard.sendOwner ? self.AxlxBatchGuard.sendOwner(_batchWatch, _batchLoopAlive, payload && payload.site, payload && payload.property_customer_id) : null; } catch (_) { _own = null; }
+  if (_own && _own.batch && !_own.ok) {
+    const _why = "送る相手 " + String(payload.property_customer_id).slice(0, 8) + "（" + (payload.customer_name || "名前なし") + "）が、検索している回のお客様 " + _own.ownerId.slice(0, 8) + "（" + (_own.ownerName || "名前なし") + "）と違う";
+    console.warn("[owner] 送らない: " + _why);
+    _auditStep(_own.runId, "owner_mismatch", _why);
+    throw new Error("AXLX_OWNER_MISMATCH: " + _why);
+  }
+  if (_own && _own.batch && _own.fill) {
+    _auditStep(_own.runId, "owner_fill", "送る相手が空だったので検索している回のお客様で送る");
+    payload = { ...payload, property_customer_id: _own.ownerId, customer_name: payload.customer_name || _own.ownerName || null };
+  }
+  // 相手の ID は合っているが見出しの名前が違う（名前ずれ）→ 回のお客様の名前で送り、点検の段に残す
+  if (_own && _own.batch && _own.ok && !_own.fill && self.AxlxBatchGuard.nameDrift && self.AxlxBatchGuard.nameDrift(_own.ownerName, payload.customer_name)) {
+    _auditStep(_own.runId, "owner_name_drift", "見出しの名前「" + String(payload.customer_name).slice(0, 30) + "」が回のお客様「" + String(_own.ownerName).slice(0, 30) + "」と違う → 回のお客様の名前で送る");
+    payload = { ...payload, customer_name: _own.ownerName };
+  }
+  const batchOwner = _own && _own.batch ? { customer_id: _own.ownerId, customer_name: _own.ownerName, run_id: _own.runId, command_id: _own.commandId } : null;
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, staff_mode: staffMode, brain_mode: brainMode, ...(searchCommandId ? { search_command_id: searchCommandId } : {}), ...(searchMode ? { search_mode: searchMode } : {}) }),
+    body: JSON.stringify({ ...payload, staff_mode: staffMode, brain_mode: brainMode, ...(searchCommandId ? { search_command_id: searchCommandId } : {}), ...(searchMode ? { search_mode: searchMode } : {}), ...(batchOwner ? { batch_owner: batchOwner } : {}) }),
     signal: AbortSignal.timeout(85000), // Vercel maxDuration=90s より5s短く設定（旧60sだと多PDF時にクライアント側が先にタイムアウト）
   });
   if (!resp.ok) {

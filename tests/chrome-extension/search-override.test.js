@@ -128,7 +128,7 @@ console.log("\n■ 案A（2026-09-27）: 上書きの回の merge-pdfs に searc
   eq("別のお客様 → 付けない", f({ commandId: "cmd-1", customerIds: ["c1"] })("c2"), null);
   eq("上書きの検索でない（印なし）→ 付けない", f(null)("c1"), null);
   eq("お客様の id が無い送信 → 付けない", f({ commandId: "cmd-1", customerIds: ["c1"] })(null), null);
-  const merge = bg.slice(bg.indexOf("async function callMergeApi"), bg.indexOf("async function callMergeApi") + 2000);
+  const merge = bg.slice(bg.indexOf("async function callMergeApi"), bg.indexOf("async function callMergeApi") + 5000);
   ok("callMergeApi が body に search_command_id を付ける（付く時だけ）", merge.includes("...(searchCommandId ? { search_command_id: searchCommandId } : {})"));
   ok("中身（上書き）は merge-pdfs に送らない（サーバーがコマンドの行から引き直す）", !merge.includes("search_override"));
   ok("_runBatchSearch が上書きのある時だけ印を置く", bg.includes("_searchOverrideLink = searchOverride ? { commandId: String(command.id)"));
@@ -154,7 +154,7 @@ console.log("\n■ v2.5.47 階（竹内 9/30「一時的に1階も含む場合�
   // サイトの検索は階で絞っていない（登録の「2階以上」も検索では絞らない＝判定で見る）→ 1階を含める回はサイトの欄を触らなくてよい
   const sites = ["page-script.js", "itandi-page-script.js", "reins-page-script.js"].map(read).join("\n");
   ok("サイトの自動入力に階の欄の操作が無い（登録の2階以上も検索では絞っていない＝1階は検索に入る）", !/floor_min|階以上/.test(sites));
-  ok("manifest 2.5.48", JSON.parse(read("manifest.json")).version === "2.5.48");
+  ok("manifest 2.5.49", JSON.parse(read("manifest.json")).version === "2.5.49");
 }
 
 console.log("\n■ 今ある一時調整の項目がその回だけ効く（popup の欄 → 各サイトの組み立て）");

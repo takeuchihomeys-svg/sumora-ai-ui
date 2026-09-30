@@ -150,7 +150,59 @@
     return "⚠【検索できなかった】" + name + "さんの" + site + "検索ができませんでした（" + why + "・0件とは限りません）";
   }
 
+  // ── v2.5.49 物件の付け先（送る相手）の見張り ──
+  // 2026-09-30 竹内「監視のところでちゃんと入り込まんように対策する／お客さんの名前ずれてないか監視する」:
+  //   v2.5.47 までは ITANDI の物件が「検索したお客様」でなく前のお客様に付いた（16:39〜19:02 の 161件・未送信のうちに外した）。
+  //   v2.5.48 で送る側（itandi-bulk-dl）は一括の回のお客様で送るようにしたが、それは同じ所の中の直し＝また別の経路でずれても気づけない。
+  //   ここは送信の出口（background の callMergeApi・3サイト共通）で、別の材料＝「今この PC がそのサイトで検索している回のお客様」
+  //   （_batchWatch・同時の回は lanes[site]）と照らす。一括の回が走っていない時（手の検索・スタッフの送信）は何も見ない。
+  function siteKey(s) {
+    var v = String(s || "").toLowerCase();
+    if (/itandi/.test(v)) return "itandi";
+    if (/real/.test(v)) return "realnetpro";
+    if (/reins/.test(v)) return "reins";
+    return v || null;
+  }
+  /**
+   * @param watch  background の _batchWatch（{ customerId, customerName, site, runId, commandId, lanes? }）
+   * @param alive  一括の回が走っているか（_batchLoopAlive）
+   * @param site   送ろうとしている物のサイト
+   * @param customerId 送ろうとしている相手
+   * @returns { batch:false } ＝見ない ／ { batch:true, ok, fill, ownerId, ownerName, runId, commandId, reason }
+   *   ok:false（mismatch）＝送らない。fill:true ＝相手が空だったので回のお客様で送る
+   */
+  function normName(s) {
+    var v = String(s == null ? "" : s);
+    try { v = v.normalize("NFKC"); } catch (_) {}
+    return v.replace(/(さん|様)\s*$/, "").replace(/[\s　]+/g, "");
+  }
+  /** 相手の ID は同じだが、見出しに載せる名前が回のお客様の名前と違う（名前ずれ）。どちらかが空なら見ない */
+  function nameDrift(ownerName, sendName) {
+    var a = normName(ownerName), b = normName(sendName);
+    return !!a && !!b && a !== b;
+  }
+  function sendOwner(watch, alive, site, customerId) {
+    if (!alive || !watch) return { batch: false, ok: true };
+    var k = siteKey(site);
+    if (!k) return { batch: false, ok: true };
+    var w = null;
+    if (watch.lanes) {
+      for (var key in watch.lanes) {
+        if (Object.prototype.hasOwnProperty.call(watch.lanes, key) && siteKey(key) === k && watch.lanes[key] && !watch.lanes[key].done) w = watch.lanes[key];
+      }
+    }
+    if (!w && siteKey(watch.site) === k) w = watch;
+    if (!w || !w.customerId) return { batch: false, ok: true };
+    var base = { batch: true, ownerId: String(w.customerId), ownerName: w.customerName || null, runId: w.runId || null, commandId: w.commandId || null };
+    if (!customerId) return Object.assign(base, { ok: true, fill: true, reason: "no_customer" });
+    var same = String(customerId) === base.ownerId;
+    return Object.assign(base, { ok: same, fill: false, reason: same ? null : "mismatch" });
+  }
+
   return {
+    siteKey: siteKey,
+    sendOwner: sendOwner,
+    nameDrift: nameDrift,
     pickRealproTab: pickRealproTab,
     pickItandiTab: pickItandiTab,
     itandiTabPlan: itandiTabPlan,

@@ -21,6 +21,7 @@ import { conditionDrift } from "./search-condition-drift";
 import { agesOutside, coversGap, fmtGap, hoursSince, neededDays, planFor, type UpdateAges } from "./search-update-days";
 import { buildSentRoomIndex, isSentRoom } from "./sent-room-match";
 import { SEARCH_MAX_PAGES } from "./auto-search-schedule";
+import { ownerStepsFrom } from "./pickup-owner";
 
 export type AuditSeverity = "ok" | "warn" | "bad";
 export type AuditSite = "realpro" | "itandi" | "reins";
@@ -32,7 +33,9 @@ export type CheckCode =
   // 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードした（見張り）／ITANDI の条件が効いていない検索（止めた・入れ直し）
   | "SENT_SELECTED" | "ITANDI_GUARD"
   // 2026-09-30 v2.5.48 同じ自動入力が2本走った（一括の行の直後の trigger=single＝幽霊の行・search-audit-ghost.ts）
-  | "DOUBLE_FILL" | `ERROR_${string}`;
+  | "DOUBLE_FILL"
+  // 2026-09-30 v2.5.49 物件の付け先が検索している回のお客様と違った（送らなかった）／見出しの名前が違った（pickup-owner.ts）
+  | "OWNER_MISMATCH" | `ERROR_${string}`;
 
 export type AuditCheck = {
   code: CheckCode;
@@ -432,6 +435,16 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
   if (a.ghost_of) {
     add("DOUBLE_FILL", "bad", `double_fill:${siteKey}`, "同じ自動入力が2本走った（一括の回の2本目）",
       `一括の回（${a.ghost_of.trigger ?? "?"}）の ${Math.round((a.ghost_of.gap_ms ?? 0) / 1000)}秒後に同じお客様・同じサイトで single の入力が始まった。拡張 v2.5.48 より前の版（受け口が2つ）の PC＝拡張の再読み込みが要る`);
+  }
+
+  // ── 物件の付け先のずれ（拡張 v2.5.49 が送信の出口で止めた・名前を直した）──
+  {
+    const own = ownerStepsFrom(a.steps);
+    if (own.mismatch.length > 0) {
+      add("OWNER_MISMATCH", "bad", `owner_mismatch:${siteKey}`, `物件の付け先が別のお客様になっていた（${own.mismatch.length}回・送っていない）`, own.mismatch[0]);
+    } else if (own.nameDrift.length > 0) {
+      add("OWNER_MISMATCH", "warn", `owner_name_drift:${siteKey}`, `見出しのお客様の名前がずれていた（${own.nameDrift.length}回・直して送った）`, own.nameDrift[0]);
+    }
   }
 
   // ── 止まった・失敗した ──

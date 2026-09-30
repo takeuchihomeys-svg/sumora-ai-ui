@@ -15,6 +15,7 @@ import { parsePropertyFacts } from "@/app/lib/property-brain";
 import { groupNoticePlan } from "@/app/lib/pickup-group-announce";
 import { enrichSummariesFromPdf, rankAndAnnotateSummariesDetailed, buildRankMaterials, loadRankConditions, RANK_FAILED_NOTICE } from "@/app/lib/pickup-rank";
 import { isPlaceholderName } from "@/app/lib/listing-text";
+import { checkPickupOwner, type BatchOwner } from "@/app/lib/pickup-owner";
 
 // 2026-09-24: 応答は今まで通り早く返し、売上サポへの記録（waitUntil）で DeepSeek が資料を読む時間（1枚 27〜40秒・並列）を確保するため 300 に
 export const maxDuration = 300;
@@ -264,6 +265,8 @@ export async function POST(req: NextRequest) {
       search_mode?: string | null;
       /** 2026-09-29 v2.5.41 拡張がこのページで送付済みの部屋として選ばなかった数（資料をダウンロードしていない）。ページの最初の束だけに付く */
       ext_sent_skipped?: number | null;
+      /** 2026-09-30 v2.5.49 一括の回の送信だけ: 拡張が「今そのサイトで検索している回のお客様」を渡してくる（pickup-owner.ts・相手と違えば受け取らない） */
+      batch_owner?: BatchOwner | null;
     };
 
     const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode, brain_mode } = body;
@@ -339,6 +342,15 @@ export async function POST(req: NextRequest) {
     }
     // 拡張が古くて property_customer_id を渡してこない時は名前から引き直す（同名が複数なら引かない）
     if (!resolvedCustomerId && !conversation_id) resolvedCustomerId = await lookupCustomerByName(customer_name);
+
+    // 2026-09-30 v2.5.49 物件の付け先の関所（2枚目の壁・1枚目は拡張の callMergeApi）: 一括の回の送信で、相手が検索している回のお客様と違えば
+    //   受け取らない（売上サポの記録も ★物件出し★ への共有もしない）。9/30 に ITANDI の 161件が前のお客様に付いた（拡張 v2.5.47 まで）。
+    //   batch_owner の無い送信（手の検索・スタッフ・古い版）は今まで通り
+    const ownerVerdict = checkPickupOwner({ resolvedCustomerId, batchOwner: body.batch_owner ?? null, postedName: customer_name ?? null });
+    if (!ownerVerdict.ok) {
+      console.warn(JSON.stringify({ tag: "pickup_owner_mismatch", site: site ?? null, to: resolvedCustomerId, owner: body.batch_owner?.customer_id ?? null, run_id: body.batch_owner?.run_id ?? null, detail: ownerVerdict.detail }));
+      return NextResponse.json({ ok: false, error: `AXLX_OWNER_MISMATCH: ${ownerVerdict.detail}` }, { status: 409 });
+    }
 
     // 2026-09-21 竹内「スタッフモードで送るときはちゃんとLINEに共有できるように。これを省く（スタッフモード）の時」
     //   スタッフが自分で選んで送る時は、意図して選んだ物なので1件も減らさない。
