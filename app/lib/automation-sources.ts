@@ -98,6 +98,19 @@ export function deferForRealproNotReady(
   return nowMs - s < RP_NOT_READY_DEFER_MS;
 }
 /**
+ * 2026-09-30 拾う PC を指定した命令（payload.target_install）は、その PC にだけ渡す。
+ *   ブレインの PC が複数ある時、待機中の別の PC（サイトがログイン画面のまま）が先に拾ってテストにならなかった（YUMA 19:07・19:14）。
+ *   指定が無い命令は今まで通り（どの PC でも拾える）。stop_all は指定があっても全部の PC に渡す
+ */
+export function notForThisInstall(
+  row: { payload?: unknown; command_type?: string | null }, installId: string | null,
+): boolean {
+  if (row.command_type === "stop_all") return false;
+  const t = row.payload && typeof row.payload === "object" ? (row.payload as Record<string, unknown>).target_install : null;
+  if (typeof t !== "string" || !t) return false;
+  return t !== installId;
+}
+/**
  * 拾い手を待つ3時間の数え始め＝not_before（あれば）・無ければ積んだ時刻。
  * 例: 10:00 に積んで not_before 11:02 の自動便は 14:02 まで待つ（積んだ時刻から数えると窓の遅い側の分だけ短くなる）
  */

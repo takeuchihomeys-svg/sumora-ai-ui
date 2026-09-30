@@ -3,7 +3,7 @@
 //   ＋ どの PC がどの出どころを拾うか（automation-sources.ts）
 // 実行: npx tsx app/lib/__tests__/web-brain-search.test.ts（全 PASS で exit 0）
 import { buildWebBrainCommands, webBrainBlockReason, summarizeWebBrainProgress, queuedKey, isWebBrainSite, WEB_BRAIN_MAX_CUSTOMERS } from "../web-brain-search";
-import { excludedSourcesFor, pendingSourceOrFilter, isReusableForManualTrigger, BRAIN_EXPIRE_MESSAGE, deferForRealproNotReady, pickClaimable, RP_NOT_READY_DEFER_MS } from "../automation-sources";
+import { excludedSourcesFor, pendingSourceOrFilter, isReusableForManualTrigger, BRAIN_EXPIRE_MESSAGE, deferForRealproNotReady, pickClaimable, RP_NOT_READY_DEFER_MS, notForThisInstall } from "../automation-sources";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -84,6 +84,13 @@ console.log("── v2.5.48 リアプロがログインの画面の PC（?rp=0�
   const pick = (rp: boolean, now: number) => pickClaimable(list.filter((c) => !deferForRealproNotReady(c, { rpReady: rp }, now)), now)?.id;
   t("rp=0 の PC は手の命令を譲って自動便を拾う", pick(false, n0 + 20_000) === "auto", String(pick(false, n0 + 20_000)));
   t("状態の良い PC は手の命令を先に拾う（今まで通り）", pick(true, n0 + 20_000) === "90aee87c");
+  // 2026-09-30 拾う PC の指定（YUMA 19:07・19:14 は待機中の別の PC がログイン画面のまま拾った）
+  const aimed = { payload: { source: "web_brain", target_install: "74a7a6fa" }, command_type: "batch_property_search" };
+  t("★ 指定した PC でない PC には渡さない", notForThisInstall(aimed, "38f4be8b"));
+  t("指定した PC には渡す", !notForThisInstall(aimed, "74a7a6fa"));
+  t("PC の名乗りが無い拡張には渡さない", notForThisInstall(aimed, null));
+  t("指定が無い命令は今まで通りどの PC にも渡す", !notForThisInstall({ payload: { source: "web_brain" } }, "38f4be8b") && !notForThisInstall({ payload: null }, null));
+  t("止める命令（stop_all）は指定があっても渡す", !notForThisInstall({ ...aimed, command_type: "stop_all" }, "38f4be8b"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import {
   AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, pendingSourceOrFilter,
-  pickClaimable, isPickerWaitExpired, pickerActiveAt, deferForRealproNotReady,
+  pickClaimable, isPickerWaitExpired, pickerActiveAt, deferForRealproNotReady, notForThisInstall,
 } from "@/app/lib/automation-sources";
 import { claimExtVersion, claimInstallId, isMissingColumnError } from "@/app/lib/extension-snapshots";
 
@@ -109,7 +109,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: selErr.message }, { status: 500 });
   }
   // 2026-09-30 今渡してよい物の中で自動便でない物（手の検索・AIX・広げての続き）を先に（自動便60人の後ろで何時間も待たせない・pickClaimable）
-  const cmd = pickClaimable((commands ?? []).filter((c) => !deferForRealproNotReady(c, { rpReady }, nowMs)), nowMs);
+  // 2026-09-30 拾う PC を指定した命令（payload.target_install）は、その PC にだけ渡す（notForThisInstall）
+  const askInstall = claimInstallId(req.headers.get("x-ext-install"));
+  const cmd = pickClaimable((commands ?? []).filter((c) => !deferForRealproNotReady(c, { rpReady }, nowMs) && !notForThisInstall(c, askInstall)), nowMs);
   if (!cmd) {
     return NextResponse.json({ command: null });
   }

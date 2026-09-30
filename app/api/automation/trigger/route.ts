@@ -5,6 +5,7 @@ import { buildWebBrainCommands, normalizeWebBrainSites, planWebBrainFold, queued
 import { sanitizeSearchOverride } from "@/app/lib/search-override-read";
 import { planPayload } from "@/app/lib/search-update-days";
 import { planUpdateDaysFor } from "@/app/lib/search-update-days-server";
+import { claimInstallId } from "@/app/lib/extension-snapshots";
 
 /**
  * 2026-09-25 竹内「チェックした物の一括検索。拡張ツールでブレインモードに選択していたら連動して検索。ブレインモードのみで連動」「更新日も拡張ツールと連動」:
@@ -14,7 +15,7 @@ import { planUpdateDaysFor } from "@/app/lib/search-update-days-server";
  */
 async function queueWebBrain(
   supabase: SupabaseClient,
-  body: { customer_ids?: string[]; sites?: string[]; is_wide?: boolean; search_override?: unknown },
+  body: { customer_ids?: string[]; sites?: string[]; is_wide?: boolean; search_override?: unknown; target_install?: string },
 ): Promise<[Record<string, unknown>, { status: number }]> {
   // 2026-09-30 v2.5.42 竹内「リアプロと itandi、お客さんそれぞれ同時に完了するようにする」: リアプロ＋itandi の2つを1人1コマンドに載せてよい
   const sites = normalizeWebBrainSites(body.sites ?? null);
@@ -66,6 +67,9 @@ async function queueWebBrain(
   }
   // 2026-09-30 v2.5.42 リアプロを押した後に itandi を押した時: まだ拾われていない同じお客様の命令に itandi を足す（1人ずつ両サイトを続けて回す）。
   //   足すのは pending の間だけ（条件付き UPDATE・拾われた後は新しく積む）
+  // 2026-09-30 拾う PC の指定（テスト用・1人の時だけ）: payload.target_install の PC にだけ渡す（pending の notForThisInstall）
+  const targetInstall = ids.length === 1 ? claimInstallId(body.target_install ?? null) : null;
+  if (targetInstall) for (const r of rows) (r.payload as Record<string, unknown>).target_install = targetInstall;
   let folded = 0;
   let toInsert = rows;
   const foldedIds: string[] = [];
@@ -114,6 +118,8 @@ export async function POST(req: NextRequest) {
     brain?: boolean;
     /** 2026-09-27 メモ欄の検索の指示（その回だけの一時調整・brain:true の時だけ） */
     search_override?: unknown;
+    /** 2026-09-30 拾う PC の指定（テスト用・brain:true で1人の時だけ） */
+    target_install?: string;
   };
 
   if (body.brain === true) return NextResponse.json(...(await queueWebBrain(supabase, body)));
