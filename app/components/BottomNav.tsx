@@ -70,6 +70,15 @@ const IconReceipt = ({ active }: { active?: boolean }) => (
   </svg>
 );
 
+// 2026-10-01 LINE の見張り（/watch・読むだけ）
+const IconEye = ({ active }: { active?: boolean }) => (
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={active ? 2.4 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>
+    <circle cx="12" cy="12" r="3" fill={active ? "currentColor" : "none"}/>
+  </svg>
+);
+
 type Props = {
   unreadCount?: number;
   hidden?: boolean;
@@ -108,6 +117,14 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
       label: "カレンダー",
       icon: <IconCalendar active={pathname === "/calendar"} />,
       isActive: pathname === "/calendar",
+      hasUnread: false,
+    },
+    {
+      // 2026-10-01 竹内「LINE の監視の部分にうつる」: 見張りの画面（今待っているお客様・AI の案と実際・約束・カレンダー・検索）
+      href: "/watch",
+      label: "見張り",
+      icon: <IconEye active={pathname === "/watch"} />,
+      isActive: pathname === "/watch",
       hasUnread: false,
     },
     {
