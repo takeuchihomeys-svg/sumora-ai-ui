@@ -25,6 +25,7 @@
 import { stationsInText, wardsInText, linesInText, normStation, normWard, isKnownStation } from "./osaka-geo";
 import { isApplicationFormMessage } from "./application-form-detect";
 import { isFilledSumoraForm } from "./condition-format";
+import { walkMinutesInText } from "./walk-minutes-text";
 
 /** 1通（または連投）の種類 */
 export type ConditionTurnKind =
@@ -131,6 +132,9 @@ function hasGeo(s: string): boolean {
 /** 依頼だけで条件の語も地名も無い節 */
 export function isRequestOnlyClause(s: string): boolean {
   const t = nf(s);
+  // 2026-09-30 YUMA「これからは駅10分以内でお願いします」: 「徒歩」の語が無い駅からの分数（駅 N 分以内）は条件の語の一覧に当たらず、
+  //   「お願いします」だけの依頼として捨てていた（P4 が登録の徒歩を書けない）→ 徒歩の上限と読める節は条件の節（walk-minutes-text.ts と同じ読み）
+  if (walkMinutesInText(t) !== null) return false;
   return REQUEST_ONLY_RE.test(t) && !COND_VOCAB_RE.test(t) && !hasGeo(t);
 }
 

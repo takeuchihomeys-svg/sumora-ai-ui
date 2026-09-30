@@ -8,6 +8,8 @@ const CHECK_PATTERN_TOPIC: Record<string, string> = {
   nearby_parking: "近隣月極駐車場",
   mgmt_initial_cost: "初期費用・礼金等の交渉",
   mgmt_guarantor: "保証会社・審査",
+  // 2026-09-30 竹内「管理会社の名前は『確認した』から送るようにする」（画面のピッカー「管理会社について」と同じ語）
+  mgmt_company: "管理会社について",
   mgmt_pet: "ペット可否",
   vacate_date: "退去予定日",
   mgmt_move_in: "入居可能日",

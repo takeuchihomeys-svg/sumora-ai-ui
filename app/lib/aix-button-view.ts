@@ -31,6 +31,7 @@
 //        新しいお客様の発言（新しい判断）。返信をまだ送っていない間（下書きを出して判断が消えただけ）は今まで通り出さない
 
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./brain-meta-restore";
+import { propertyCheckKindFor } from "./aix-taxonomy";
 
 /** ブレインの action → 画面の AIX ボタンの名前（page.tsx の BRAIN_AIX_LABELS をここに移した。表記は aix-taxonomy と揃える） */
 export const BRAIN_AIX_LABELS: Record<string, string> = {
@@ -51,6 +52,18 @@ export const BRAIN_AIX_LABELS: Record<string, string> = {
   phone_call:              "AIX 電話をかける",
   guarantor_info:          "AIX 保証会社について",
 };
+
+/**
+ * ブレインのカード・2択のボタンの名前。property_check_result は画面のボタンが2つあるので check_pattern で分ける。
+ * 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: 旧は check_pattern が条件側（入居可能日・設備・管理会社 等）でも
+ *   カードは「AIX 物件確認した」と出ていた（押すと開くのは「確認した（条件・交渉）」のピッカー）。
+ *   条件側＝「AIX 確認した（条件・交渉）」／募集状況・室内写真・未定＝「AIX 物件確認した」（実在しない action は undefined）
+ */
+export function brainAixButtonLabel(action: string | null | undefined, checkPattern?: string | null): string | undefined {
+  if (!action) return undefined;
+  if (action === "property_check_result" && propertyCheckKindFor(checkPattern)?.ui_button === "確認した（条件・交渉）") return "AIX 確認した（条件・交渉）";
+  return BRAIN_AIX_LABELS[action];
+}
 
 export type AixViewMeta = {
   action?: string | null;

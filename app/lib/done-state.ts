@@ -265,8 +265,11 @@ export function buildFollowUpDoneNote(ledger: ActionLedger | null): string {
   if (f.pickupPromisedUnfulfilled) open.push("ピックアップ");
   if (f.estimatePromisedUnfulfilled) open.push("御見積書の作成");
   if (f.confirmationPromisedUnfulfilled) open.push(`${f.confirmationPromisedObject ?? ""}確認`);
-  if (done.length === 0 && open.length === 0) return "";
-  return `\n【📒 済んだ事（連投の途中でも変わらない確定事実）】${done.length ? done.join("／") : "送付・報告の記録なし"}${open.length ? `。約束済み（まだ果たしていない）: ${open.join("・")}` : ""}。→ 済んだ事を「これから行います」と書かない。約束済みの事をもう一度約束しない。`;
+  // 2026-09-30: 連投の途中でも「内覧はまだ決まっていない」は変わらない（台帳の注記が空になる経路でも先走らせない）
+  const vf = f.viewingFlow;
+  const notYet = vf && !vf.confirmed && (vf.stage === "proposing" || vf.stage === "date_agreed") ? "内覧はまだ決まっていない（待ち合わせ場所は未案内）。内覧を決まった予定として書かない。" : "";
+  if (done.length === 0 && open.length === 0) return notYet ? `\n【📒 済んだ事（連投の途中でも変わらない確定事実）】${notYet}` : "";
+  return `\n【📒 済んだ事（連投の途中でも変わらない確定事実）】${notYet}${done.length ? done.join("／") : "送付・報告の記録なし"}${open.length ? `。約束済み（まだ果たしていない）: ${open.join("・")}` : ""}。→ 済んだ事を「これから行います」と書かない。約束済みの事をもう一度約束しない。`;
 }
 
 /**

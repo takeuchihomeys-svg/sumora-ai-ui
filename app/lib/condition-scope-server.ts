@@ -10,7 +10,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { recordConditionHistory } from "@/app/lib/condition-history";
 import {
-  planScopeRevert, hasRegisteredConditions, labelScopeOutcome, scoreScopeDecisions, SCOPE_REVERT_FIELDS,
+  planScopeRevert, hasRegisteredConditions, labelScopeOutcome, scoreScopeDecisions, stripRevertedAutoNotes, SCOPE_REVERT_FIELDS,
   type HistoryRowLite, type ScopeDecision, type ScopeOutcome,
 } from "@/app/lib/condition-change-scope";
 import { buildTemporaryOverride } from "@/app/lib/condition-scope-override";
@@ -24,12 +24,17 @@ export async function applyTemporaryScope(input: {
   /** その発言の時刻（ブレインの analyzed_msg_ts）。これより前の履歴は戻さない */
   sinceIso: string | null | undefined;
   decision: ScopeDecision;
+  /**
+   * 2026-09-30 上書きだけ作る（登録の条件は戻さない）。未返信の束で、最後の発言は切り替え（か条件の話でない）だが
+   *   前の発言に「今回だけ」がある時（「今回だけ1階も」→「これからは駅10分以内で」）: 前の発言の上書きは残し、最後の発言で書かれた登録の変更は戻さない
+   */
+  overrideOnly?: boolean;
 }): Promise<{ override: SearchOverride | null; reverted: Record<string, unknown>; notes: string[]; downgraded?: boolean; propertyCustomerId?: string | null }> {
   const empty = { override: null, reverted: {}, notes: [] as string[] };
   const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", input.conversationId).maybeSingle();
   const pcId = (conv?.property_customer_id as string | null | undefined) ?? null;
   if (!pcId) return empty;
-  const cols = [...SCOPE_REVERT_FIELDS, "area_mode", "pet", "floor_area_max"].join(",");
+  const cols = [...SCOPE_REVERT_FIELDS, "area_mode", "pet", "floor_area_max", "additional_conditions"].join(",");
   const { data: pcRow } = await supabase.from("property_customers").select(cols).eq("id", pcId).maybeSingle();
   const pc = (pcRow ?? null) as Record<string, unknown> | null;
   if (!pc) return empty;
@@ -37,7 +42,12 @@ export async function applyTemporaryScope(input: {
 
   let reverted: Record<string, unknown> = {};
   const notes: string[] = [];
-  let plan: { updates: Record<string, unknown>; skipped: string[] } = { updates: {}, skipped: [] };
+  let plan: { updates: Record<string, unknown>; skipped: string[]; written: Record<string, unknown> } = { updates: {}, skipped: [], written: {} };
+  if (input.overrideOnly) {
+    const builtOnly = buildTemporaryOverride(input.text, pc as RegisteredConditions);
+    console.log(JSON.stringify({ tag: "condition-scope:temporary", conversationId: input.conversationId, pcId, by: input.decision.by, evidence: input.decision.evidence, override_only: true, override: builtOnly.override, notes: builtOnly.notes }));
+    return { override: builtOnly.override, reverted: {}, notes: builtOnly.notes, propertyCustomerId: pcId };
+  }
   if (input.sinceIso) {
     const since = new Date(Date.parse(input.sinceIso) - 10_000).toISOString();
     const { data: hist } = await supabase.from("property_condition_history")
@@ -53,7 +63,11 @@ export async function applyTemporaryScope(input: {
   }
   if (plan.skipped.length) notes.push(...plan.skipped.map((s) => `戻さない: ${s}`));
   if (Object.keys(plan.updates).length) {
-    const { error } = await supabase.from("property_customers").update({ ...plan.updates, updated_at: new Date().toISOString() }).eq("id", pcId);
+    // 2026-09-30 戻す列の「新着要望」の行（[…|auto] 家賃上限: 120000）も外す（今回だけの値を追加条件に残さない）
+    const stripped = stripRevertedAutoNotes(pc.additional_conditions as string | null | undefined, plan.written);
+    const noteFix = stripped.removed.length ? { additional_conditions: stripped.text } : {};
+    if (stripped.removed.length) notes.push(`追加条件から外した: ${stripped.removed.join("・")}`);
+    const { error } = await supabase.from("property_customers").update({ ...plan.updates, ...noteFix, updated_at: new Date().toISOString() }).eq("id", pcId);
     if (error) notes.push(`戻せなかった: ${error.message}`);
     else {
       reverted = plan.updates;

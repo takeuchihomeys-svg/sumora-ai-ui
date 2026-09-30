@@ -3,7 +3,7 @@ import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
-import { resolveConditionChangeScope, normalizeBrainScope } from "@/app/lib/condition-change-scope";
+import { resolveScopeForBundle, normalizeBrainScope } from "@/app/lib/condition-change-scope";
 import { buildSentProps, buildSentPropsText } from "@/app/lib/sent-props-text";
 // 2026-09-23 竹内: Jev（TypeSafe AI）をブレインの判定部品に。まずは影の運用（jev_shadow_logs に並べて記録するだけ）
 import { isJevEnabled } from "@/app/lib/jev-client";
@@ -60,7 +60,8 @@ import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
-import { buildActionLedger, buildLedgerLinesForBrain } from "@/app/lib/action-ledger";
+import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain } from "@/app/lib/action-ledger";
+import { isViewingFixTopic } from "@/app/lib/viewing-premature";
 // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている間は「反応待ち」にしない（AIX【物件ピックアップした】を立てる）
 import { resolvePendingPickup } from "@/app/lib/pending-pickup";
 // 2026-09-23 竹内「家賃交渉は基本できないものだからいれない」: していない約束を入口（返信の方向）で落とす
@@ -407,7 +408,7 @@ const AIX_CAPABILITY_MAP = `
 - property_search: 【物件検索統括】の物件検索推奨度が★★★（7日以上送付なし or 送付0件）の時
 - application_push: 内覧完了後に顧客が前向きな時、または顧客が自分から申込の意思を示した時。審査不安の「解消」を先回りする場面でも有効（申込確定の言質は不要）。見積送付後の「ありがとうございます」「いいですね」等の前向き反応だけでは選ばない（内覧のご案内が先＝viewing_invite。黄金フロー順）
 - viewing_invite（内覧日調整を送った後）: 顧客が「それ以外だと何日」「土日は可能ですか」「他の日程は」等、別の日程を尋ねたら viewing_invite（候補日時は AIX で送る。本文で日程を手打ちしない）。具体的な日時を指定して依頼したら meeting_place（2026-09-12 竹内）
-- viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 確定済み未来→meeting_place / 当日・完了後→greeting_viewing ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
+- viewing_invite / meeting_place / greeting_viewing: 【内覧履歴・予定】を必ず見る。日程未確定→viewing_invite / 日と開始時刻が決まった（待ち合わせ場所は未送信）→meeting_place / 待ち合わせ場所を送信済み（＝内覧確定・未来）→もう一度は選ばない（日時・場所の変更を頼まれた時だけ）/ 当日・完了後→greeting_viewing。【内覧の流れ】の段がある時はその段階を正とする ※viewing_invite は顧客メッセージに内覧希望が示された場合に選ぶ。「内覧行きたいらしいですが」「内覧可能ですか」「見に行きたい」等の間接・伝聞・打診表現も内覧希望として viewing_invite を選ぶこと。スタッフが物件を送った後に顧客が内覧・内見・見学・見に行く等のキーワードで反応した場合も viewing_invite。ただしスタッフが送った物件情報内の「〇月〇日以降内覧可能」「内覧可」等の文言をトリガーにしない（顧客メッセージ内のキーワードのみ対象）。物件送付直後で顧客がまだ反応していない場合は aix:null（何も提案しない）が正解
 - 成約の典型順（黄金フロー）: condition_hearing → property_send → property_recommendation → estimate_sheet → viewing_invite → meeting_place → application_push（property_check_result は顧客が物件URLを送ってきた時の割り込みアクションであり順序フローに含めない）
 `.trim();
 
@@ -459,7 +460,7 @@ const REPLY_STYLE_RULES = `
 ③ 退去予定日・入居可能日・最短入居日 → 橋渡しのみ（「最短のご入居日につきまして管理会社に確認させていただきます」）。審査3日〜10日+契約手続きの実データ回答が正でありAIの楽観約束は引越し手配等の実害
 ④ 審査進捗・審査通過可能性（「通りますか」「夜職だと厳しいですか」）→ 橋渡しのみ。スタッフ自身が「通過率は過去の滞納に左右されるので分からない」と明言している。「通りそうです」の生成は重大ハルシネーション。管理会社に確認した保証会社名・種類（独立系＝審査基準が緩い 等）・並行審査の勧めはスタッフが AIX【保証会社について】で送る（本文で保証会社名・審査の緩さを書かない）
 ④' 【2026-09-30 竹内・みこと事例】審査・入居までの**期間と流れ**、必要書類、本人確認書類の質問（「審査通るまでどのくらいの期間見といたらいいですか」「申込から入居まで何日くらいですか」「必要書類は何ですか」「マイナンバーカードで大丈夫ですか」）は④ではない → **aix は null・本文で答える**（管理会社に確認する話ではない。「確認させて頂きます」で返さない）。答えは材料の【📝 お客様の手続きの質問】の事実（申込→保証会社の審査 3日〜10日程→契約のお手続き→ご入居）で、実送信365日・22通すべて本文の回答（この質問の後に 物件確認した／確認します／保証会社について を押した回は0）。入居できる日は物件で変わる（即入居か退去予定か）ので、材料に資料の入居時期がある時は資料の文字のまま・無い時は断言しない
-【「物件確認した」と「確認した」は別の AIX（2026-09-30 竹内）】aix は同じ property_check_result でも画面のボタンは2つ: 「物件確認した（募集状況）」＝**物件そのもの**のこと（空き・募集状況・募集終了・別の部屋・室内写真）／「確認した（条件・交渉）」＝**設備・入居（入居可能日・退去予定）・ペット・駐車場・保証会社・初期費用の交渉など管理会社に確認が要る事**。どちらも「確認した結果を報告する」ボタンで、お客様の質問が来ただけ・確認の要らない一般の質問（審査の期間・流れ・必要書類）では選ばない。材料に【🔎 お客様が聞いた入居・ペット・駐車場】【🔧 お客様が聞いた設備】があり「資料に記載あり」の項目は本文で資料のとおりに答える（aix は null）／「資料では答えられない」項目は property_check_result（確認した（条件・交渉））
+【「物件確認した」と「確認した」は別の AIX（2026-09-30 竹内）】aix は同じ property_check_result でも画面のボタンは2つ: 「物件確認した（募集状況）」＝**物件そのもの**のこと（空き・募集状況・募集終了・別の部屋・室内写真）／「確認した（条件・交渉）」＝**設備・入居（入居可能日・退去予定）・管理会社そのもの（名前・連絡先）・ペット・駐車場・保証会社・初期費用の交渉など管理会社に確認が要る事**。「この物件の管理会社はどこですか」は空きの質問ではない → property_check_result（確認した（条件・交渉）→管理会社について）。管理会社の名前は本文で言い切らず AIX から送る。どちらも「確認した結果を報告する」ボタンで、お客様の質問が来ただけ・確認の要らない一般の質問（審査の期間・流れ・必要書類）では選ばない。材料に【🔎 お客様が聞いた入居・ペット・駐車場】【🔧 お客様が聞いた設備】があり「資料に記載あり」の項目は本文で資料のとおりに答える（aix は null）／「資料では答えられない」項目は property_check_result（確認した（条件・交渉））
 ⑤ 値下げ交渉の可否と結果 → 橋渡しのみ。「安くなります」は期待値誤誘導（実会話で「家賃減額・礼金減額は考えていないとのこと」と否決された実績あり）
 ⑤' 【絶対NG・2026-09-23 竹内「家賃交渉は基本できないものだからいれない」】家賃・賃料の値下げ（減額・値引き）を**これから交渉・確認する**と書くこと。reply_direction・closing_strategy・key_topics・next_steps・winning_pattern のどこにも入れない。
 　　実送信の線（365日・スタッフ送信12,417通）: 家賃・賃料の値下げを これから交渉/確認する未来形 = **0通**。下書きに出た予告形3件は3件ともスタッフが削除している。
@@ -2140,7 +2141,7 @@ export async function analyzeConversation(
   const ownPropertyText = ownProperty && ownProperty.ours > 0
     ? `\n・お客様が今回送ってきた物件${ownProperty.items}件のうち${ownProperty.ours}件は、こちらが前に送った物件（記録で照合済み）。${ownPropertyReturnedAll ? "新しく見つけた物件ではないので、募集状況の確認（property_check_result）の理由にしない。お客様の言葉（気に入った・もっと見たい・内覧したい 等）で判断する。" : "残りはこちらの記録に無い物件。"}`
     : "";
-  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}${ownPropertyText}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
+  const ledgerText = `\n【行動台帳（確定事実・我々が実際にしたこと／宣言しただけのこと）】${brainLedger.summary}${buildLedgerLinesForBrain(brainLedger)}${ownPropertyText}${buildViewingFlowForBrain(brainLedger)}\n※「宣言（promised）」は未実行。物件送付0件の間は reply_direction に「再度／改めて／追加で」を書かない。`;
 
   // ─── 申込が近い合図（2026-09-20 竹内「ここなら申込になりそうなお客さんだと分析して、そこから申込の流れにいく形」）───
   // 実データ（申込到達21件 vs 30日以上動いていない未到達105件）で線を引いた決定論の合図。
@@ -2840,6 +2841,19 @@ ${history}`;
       finalAix = "viewing_invite";
       decisionSource = "signal:scene_S4_date_alt";
     }
+    // 2026-09-30 竹内さん「内覧調整→日にち決定→待ち合わせ場所＝確定 の流れをちゃんと」:
+    //   候補日を出した後、お客様が今回 日＋開始時刻を返した（内覧の流れの段階＝date_agreed・今回＝date_time）のに LLM が 内覧調整 のままの時は 待ち合わせ場所 に直す。
+    //   実送信180日（scripts/audit-viewing-stage.ts）: この形の次の内覧の AIX は 待ち合わせ場所 41・内覧調整 4（91%）。
+    //   外れの実物＝3d9b67d7「内見は9/14の12:00からでお願いしたいです！」・d25e07d1「10:30〜11:00でお願いしたいです！」が内覧調整のままだった。
+    //   見積・確認など他の AIX を選んだ時は変えない（ブレインの判断のまま）。別日程の問い合わせ（S4'）は上で内覧調整にしてある
+    {
+      const vf = brainLedger.facts.viewingFlow;
+      if (!promiseAix && vf && finalAix === "viewing_invite" && vf.stage === "date_agreed" && vf.currentReply === "date_time" && sceneEvidence?.reasonCode !== "viewing_date_alternative") {
+        finalAix = "meeting_place";
+        decisionSource = "signal:viewing_flow_date_time";
+      }
+      if (vf && vf.stage !== "none" && vf.stage !== "done") console.info("[brain:viewing-flow]", JSON.stringify({ conversationId, stage: vf.stage, confirmed: vf.confirmed, label: vf.label, lastReply: vf.lastReply, currentReply: vf.currentReply, askedDay: vf.askedDay, reason: vf.reason, aix: finalAix, source: decisionSource }));
+    }
     // 2026-09-12 竹内（あや事例）「費用の安さについて不審になられたり聞かれた場合は AIX 初期費用を説明から送る」:
     //   「仲介手数料無しで大丈夫でしょうか？…安いのには何か理由があるのでしょうか？」は「初期費用」を含むため 見積書送る に倒れていた
     //   （見積書は送付済み）。場面の証拠 S8（aix-scene-evidence・customerDoubtsCheapness）なら 見積書送る／確認します／AIX なし を 初期費用を説明 にする。
@@ -2900,6 +2914,22 @@ ${history}`;
     if (!promiseAix && sceneEvidence?.scene === "S2_move_in" && finalAix === "acknowledge_check") {
       finalAix = "property_check_result";
       decisionSource = "correction:scene_S2_check_result";
+    }
+    // 2026-09-30 竹内（みこと 15:14「それと審査の件ですがこの物件の管理会社はどこですか？？」）
+    //   「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて。物件確認したと確認したがごっちゃになっている」:
+    //   管理会社そのもの（名前・どこ・連絡先）の質問（場面の証拠 mgmt_company_question）→ AIX【確認した（条件・交渉）→管理会社について】。
+    //   LLM が 物件確認した を選んだ時は check_pattern だけ証拠の mgmt_company になる（resolveBrainCheckPattern）。
+    //   AIX なしで既存の信号も無い時は場面の信号（sceneSignalFallback・S3）が入れる。ここは 確認します を挟まない分だけ直す（S2 と同じ考え）。
+    //   資料に管理会社名があっても返信で言い切らない（竹内さんの言葉どおり「確認したから送る」を優先）。
+    //   申込以降は今の対象外 → 場面の信号で入った分は外す（LLM が自分で選んだ判断はそのまま）
+    if (!promiseAix && sceneEvidence?.reasonCode === "mgmt_company_question") {
+      if (isPostApplyStatus(convStatus)) {
+        if (decisionSource === "signal:scene_S3") { finalAix = null; sceneSignalCheckPattern = null; decisionSource = null; }
+      } else if (finalAix === "acknowledge_check") {
+        finalAix = "property_check_result";
+        sceneSignalCheckPattern = "mgmt_company";
+        decisionSource = "correction:scene_mgmt_company_check_result";
+      }
     }
     // 2026-09-30 竹内（みこと事例）: 手続きの質問（審査・入居までの期間と流れ・必要書類・本人確認書類）は返信で答える。
     //   LLM は「④審査進捗・通過可能性 → 橋渡し」に寄せて 物件確認した（check_pattern なし）を選んでいた（穴:G1 入口が無い）。
@@ -3175,7 +3205,11 @@ ${history}`;
       ? keyTopicsGuard.items.filter((t) => !/管理会社|確認(?:し|する|のうえ|して)|問い?合わせ/.test(t))
       : focusedEstimateOverride !== null
       ? keyTopicsGuard.items.filter((t) => !/募集状況|空室|空き状況/.test(t))
-      : keyTopicsGuard.items;
+      // 2026-09-30: 内覧が未確定（候補日のやり取り中・日にちは決まったが待ち合わせ前）で、今回の発言が日にちの返事でない時は
+      //   「10/2の内覧日確定」「内覧希望日の回答確認」を必須の話題にしない（みことさん: 別の質問への返信に毎回入り、下書きが決まった予定として書いた）
+      : ((vf) => vf && !vf.confirmed && (vf.stage === "proposing" || vf.stage === "date_agreed" || vf.stage === "wished") && (vf.currentReply === "none" || vf.currentReply == null) && !vf.currentWish
+          ? keyTopicsGuard.items.filter((t) => !isViewingFixTopic(t) && !/(?:内覧|内見)[^\n]{0,10}(?:回答|返答|返事|催促|希望日)/.test(t))
+          : keyTopicsGuard.items)(brainLedger.facts.viewingFlow);
 
     // avoid_topics: ルール⑤（来阪・常時）+ ルール②（費用質問なし）をコード側で決定論的に強制
     const avoidSet = new Set(
@@ -3498,7 +3532,11 @@ ${history}`;
       enforcement_level: enforcementLevel,
       closing_strategy: parsed.closing_strategy || undefined,
       // 2026-09-30: 決定論で返信に倒した・2択にした時は、LLM が別の AIX のつもりで入れたテンプレ・次の手順（「管理会社に確認」）を出さない
-      template_hint: procedureDecision || confirmTopicReply ? undefined : templateHint,
+      // 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: ボタンが「確認した（条件・交渉）」の時に
+      //   LLM のテンプレ「物件確認した（募集状況）」を並べない（みこと「管理会社はどこ」の判断に付いていた）
+      template_hint: procedureDecision || confirmTopicReply ? undefined
+        : checkKind?.ui_button === "確認した（条件・交渉）" && (templateHint ?? "").includes("物件確認した（募集状況）") ? undefined
+        : templateHint,
       next_steps: procedureDecision || confirmTopicReply ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
@@ -4708,9 +4746,14 @@ async function analyzeAndSaveBrainMetaInner(
               suggAixButton = "greeting_viewing";
               isHot = true;
             } else {
-              // 内覧日確定・未来 → meeting_place（待ち合わせ案内）
+              // 内覧日確定・未来
               viewingPhaseDetail = "confirmed_future";
-              suggAixButton = "meeting_place";
+              // 2026-09-30（穴:G6）: viewing_history の未来の行は AIX【待ち合わせ場所】の送信で作られる（sent-facts）。
+              //   旧はそれを見て「確定済み未来 → meeting_place」＝送った後にもう一度待ち合わせを勧めていた。
+              //   待ち合わせを送ってあれば勧めない（ブレインが今回 meeting_place を選んだ＝変更の依頼の時だけ出す）。手で入れた予定（待ち合わせ未送信）は従来どおり
+              const { data: mpRows } = await supabase.from("aix_usage_logs").select("id").eq("conversation_id", conversationId)
+                .eq("aix_type", "meeting_place").gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString()).limit(1);
+              suggAixButton = (mpRows?.length ?? 0) > 0 ? (brainAix === "meeting_place" ? "meeting_place" : null) : "meeting_place";
             }
           } else if (pastViewing) {
             // 内覧済み → greeting_viewing（内覧後フォロー）
@@ -5036,10 +5079,14 @@ export async function runBrainAndNotify(
   //   ブレインが今回の顧客発言を見て AIX 必要と判断した時だけ「〇〇さん → AIX【ボタン】」を1件通知し、一覧（cron）で✅管理する
   // 2026-09-27 竹内「一時調整か、そもそもの条件の切り替えかをブレインが判断」: 条件の言い直しの置き場所（condition-change-scope.ts）。
   //   temporary＝P4 がこの発言で書いた登録の条件を戻し、この発言の条件をその回だけの上書きにして AIX の検索に載せる（積む前に await）
-  const scopeDecision = snapshot.meta.condition_change_type && msgText
-    ? resolveConditionChangeScope({ text: msgText, brainScope: snapshot.meta.condition_change_scope })
+  // 2026-09-30 msgText は未返信の発言の束（区切り U+2063）。判断は発言ごと（resolveScopeForBundle）:
+  //   最後の発言＝今回の判断（P4 の書き込みを戻すか・記録）／前の発言の「今回だけ」は上書きにだけ残す。
+  //   旧は束の全文を1回で判断し、先の「今回だけ1階も」に当たって後の「これからは…」「…に変えて」まで今回だけになり、P4 が書いた登録の変更まで戻していた
+  const scopeBundle = snapshot.meta.condition_change_type && msgText
+    ? resolveScopeForBundle({ text: msgText, brainScope: snapshot.meta.condition_change_scope })
     : null;
-  if (scopeDecision) console.log(JSON.stringify({ tag: "brain:condition-scope", conversationId, cond: snapshot.meta.condition_change_type, brain: snapshot.meta.condition_change_scope ?? null, ...scopeDecision }));
+  const scopeDecision = scopeBundle?.decision ?? null;
+  if (scopeDecision) console.log(JSON.stringify({ tag: "brain:condition-scope", conversationId, cond: snapshot.meta.condition_change_type, brain: snapshot.meta.condition_change_scope ?? null, ...scopeDecision, parts: scopeBundle?.parts ?? 1, earlier_temporary: !!(scopeBundle?.temporaryText && scopeDecision.scope !== "temporary") }));
   void (async () => {
     try {
       let searchOverride: import("@/app/lib/search-override").SearchOverride | null = null;
@@ -5047,21 +5094,35 @@ export async function runBrainAndNotify(
         let applied: Awaited<ReturnType<typeof import("@/app/lib/condition-scope-server").applyTemporaryScope>> | null = null;
         try {
           const { applyTemporaryScope } = await import("@/app/lib/condition-scope-server");
-          applied = await applyTemporaryScope({ conversationId, text: msgText, sinceIso: snapshot.meta?.analyzed_msg_ts ?? null, decision: scopeDecision });
+          // 上書きは「今回だけ」の発言だけから作る（束の中の切り替えの発言の条件を今回だけにしない）
+          applied = await applyTemporaryScope({ conversationId, text: scopeBundle?.temporaryText ?? msgText, sinceIso: snapshot.meta?.analyzed_msg_ts ?? null, decision: scopeDecision });
           searchOverride = applied.override;
         } catch (e) {
           console.warn("[brain-core] temporary scope failed:", conversationId, e instanceof Error ? e.message : e);
         }
         // 2026-09-30 判断を1か所に残す（週のまとめがその後のスタッフの動きと照らして当たり外れを付ける）
         void import("@/app/lib/condition-scope-server").then(({ recordScopeDecision }) => recordScopeDecision({
-          conversationId, messageTs: snapshot.meta?.analyzed_msg_ts ?? null, text: msgText, decision: scopeDecision,
+          conversationId, messageTs: snapshot.meta?.analyzed_msg_ts ?? null, text: scopeBundle?.lastText ?? msgText, decision: scopeDecision,
           brainScope: snapshot.meta?.condition_change_scope ?? null, conditionChangeType: snapshot.meta?.condition_change_type ?? null,
           override: applied?.override ?? null, reverted: applied?.reverted ?? null, downgraded: applied?.downgraded, propertyCustomerId: applied?.propertyCustomerId ?? null,
         })).catch(() => undefined);
       } else if (scopeDecision && msgText) {
+        // 最後の発言は切り替え（か条件の話でない）。前の未返信の発言に「今回だけ」があれば、その上書きだけ残す（登録は戻さない）
+        let keptOverride: import("@/app/lib/search-override").SearchOverride | null = null;
+        if (scopeBundle?.temporaryText) {
+          try {
+            const { applyTemporaryScope } = await import("@/app/lib/condition-scope-server");
+            const kept = await applyTemporaryScope({ conversationId, text: scopeBundle.temporaryText, sinceIso: null, decision: { scope: "temporary", by: "text_temporary", evidence: null }, overrideOnly: true });
+            keptOverride = kept.override;
+            searchOverride = kept.override;
+          } catch (e) {
+            console.warn("[brain-core] earlier temporary override failed:", conversationId, e instanceof Error ? e.message : e);
+          }
+        }
         void import("@/app/lib/condition-scope-server").then(({ recordScopeDecision }) => recordScopeDecision({
-          conversationId, messageTs: snapshot.meta?.analyzed_msg_ts ?? null, text: msgText, decision: scopeDecision,
+          conversationId, messageTs: snapshot.meta?.analyzed_msg_ts ?? null, text: scopeBundle?.lastText ?? msgText, decision: scopeDecision,
           brainScope: snapshot.meta?.condition_change_scope ?? null, conditionChangeType: snapshot.meta?.condition_change_type ?? null,
+          override: keptOverride,
         })).catch(() => undefined);
       }
       const { syncAixActionItem } = await import("@/app/lib/aix-action-items");
@@ -5090,7 +5151,8 @@ export async function runBrainAndNotify(
     void (async () => {
       try {
         const { runConditionBrain } = await import("@/app/lib/property-brain-core");
-        await runConditionBrain(conversationId, msgText);
+        // 2026-09-30 束の中の「今回だけ」の発言は渡さない（登録の条件を書く経路のため）
+        await runConditionBrain(conversationId, scopeBundle?.permanentText ?? msgText);
       } catch (e) {
         console.warn("[brain-core] condition brain signal:", e instanceof Error ? e.message : e);
       }

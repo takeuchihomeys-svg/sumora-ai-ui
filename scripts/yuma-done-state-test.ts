@@ -132,6 +132,29 @@ const SCENES: Scene[] = [
     bad: new RegExp(`(?:内覧|内見)(?:時|の際|当日)|(?:内覧|内見)[^\\n。！!]{0,10}(?:よろしく|宜しく|楽しみ|お待ちして)|${D2.md.replace("/", "\\/")}|(?<![0-9])${D2.md.split("/")[1]}日`),
     note: "決まっていない内覧を決まった予定として書かない（日時・内覧の時に〜・内覧へのよろしく）",
   })),
+  // 2026-09-30 竹内さん「内覧調整→日にち決定→待ち合わせ場所＝確定 の流れをちゃんと・先走らないように」（viewing-flow.ts の段階ごとの通し）
+  //   S10 内覧したい（wished）→ S11 日だけ返る（proposing）→ S12 日＋時刻（date_agreed）→ S13 日にち決定の後に別の質問 → S14 待ち合わせ場所の後（confirmed）に別の質問
+  ...((): Scene[] => {
+    const wish: SceneMsg = { s: "customer", text: "テストハイツ梅田 302号室内覧したいです！", min: 200 };
+    const invite: SceneMsg = { s: "staff", text: `YUMAさん\nお世話になっております！！\n\n${D2.md}日ですと13:00〜16:00ご内覧可能です！！\nYUMAさんご都合如何でしょうか😌！！`, min: 180, aix: { type: "viewing_invite", template_name: "内覧日調整" } };
+    const agree: SceneMsg = { s: "customer", text: `では${D2.md.split("/")[1]}日の14時からでお願いします！`, min: 60 };
+    const meeting: SceneMsg = { s: "staff", text: `かしこまりました！！\n${D2.md}（${D2.wd}）14:00〜ご案内させて頂きます！！\n\n${D2.md} 14:00にテストハイツ梅田 302号室\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n住所: 大阪府大阪市北区テスト町1丁目2-3`, min: 40, aix: { type: "meeting_place", template_name: "待ち合わせ" } };
+    const otherQ = "ちなみにこのお部屋ってネット無料ですか？";
+    const notFixed = new RegExp(`(?:内覧|内見)(?:時|の際|当日)|(?:内覧|内見)[^\\n。！!]{0,10}(?:よろしく|宜しく|楽しみ|お待ちして)|待ち合わせ|現地エントランス`);
+    return [
+      { id: "S10", hole: "内覧の流れ wished", label: "内覧したい（候補日は未提示）", msgs: [{ ...wish, min: 1 }],
+        bad: /[0-9]{1,2}\s*[\/月]\s*[0-9]{1,2}|[0-9]{1,2}:[0-9]{2}|待ち合わせ|現地エントランス/, note: "AIX=viewing_invite・本文で日時を作らない" },
+      { id: "S11", hole: "内覧の流れ proposing", label: "候補日の後に日だけ返る「その次の日はどうですか？」", msgs: [wish, invite, { s: "customer", text: "その次の日はどうですか？", min: 1 }],
+        bad: notFixed, note: "AIX=viewing_invite（もう1回）・内覧を決まった予定として書かない・空きを作らない" },
+      { id: "S12", hole: "内覧の流れ date_agreed", label: "候補日の後に日＋開始時刻「では〇日の14時からでお願いします！」", msgs: [wish, invite, { ...agree, min: 1 }],
+        bad: /(?:内覧|内見)(?:時|の際)に|現地エントランス|住所/, note: "AIX=meeting_place・待ち合わせの場所は本文で作らない（日時を受ける一言はよい）" },
+      { id: "S13", hole: "内覧の流れ date_agreed＋別の質問", label: `日にち決定（待ち合わせ前）の後に別の質問「${otherQ}」`,
+        msgs: [wish, invite, agree, { s: "staff", text: `かしこまりました！！\n${D2.md}日14:00からはよろしくお願いいたします😊！！\n待ち合わせ場所追ってご連絡させていただきます！！`, min: 50 }, { s: "customer", text: otherQ, min: 1 }],
+        bad: notFixed, note: "質問にだけ答える・内覧の時に〜／当日よろしく を書かない（待ち合わせ場所は未送信＝未確定）" },
+      { id: "S14", hole: "内覧の流れ confirmed＋別の質問", label: `AIX 待ち合わせ場所の後に別の質問「${otherQ}」`, msgs: [wish, invite, agree, meeting, { s: "customer", text: otherQ, min: 1 }],
+        bad: /ご都合(?:の)?よろしいお日にち|ご都合如何/, note: "AIX は meeting_place をもう一度出さない・内覧当日の話は書いてよい・日程調整に戻さない" },
+    ];
+  })(),
 ];
 
 // 下書き全体で見る物（場面によらず）

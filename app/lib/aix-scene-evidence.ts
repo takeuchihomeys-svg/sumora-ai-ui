@@ -17,7 +17,7 @@ import { customerRequestsPhoneCall } from "./phone-call";
 import { isRoomPhotoRequest, stripPhotoWordsForViewing, PROPERTY_NAME_LIKE_RE } from "./room-photo-request";
 import { isProcedureReplyText } from "./procedure-question";
 import {
-  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
+  allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, MGMT_COMPANY_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE, OTHER_ROOM_LAYOUT_Q_RE, OTHER_ROOM_SEARCH_RE,
 } from "./scene-patterns";
 
@@ -65,7 +65,8 @@ export type AixSceneEvidence = {
 // ─── 募集状況の質問（旧 route.ts detectAvailabilityCheckContext。route.ts の availabilityCheckNote もこの関数を使う）───
 export const AVAILABILITY_URL_RE = /https?:\/\/|suumo|homes\.co\.jp|athome|itandi|rea-?pro|リアプロ|レインズ|ietty|chintai/i;
 export const AVAILABILITY_PROPERTY_RE = /マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|アパート|グランド|シャトー|[0-9０-９]{2,4}\s*号室|(?:この|こちらの|その|さっきの|先ほどの)(?:物件|お?部屋)|物件資料|物件/;
-const AVAILABILITY_EXPLICIT_RE = /空(?:き|いて|いている|室)|募集(?:中|状況|して|出て|され)|まだ(?:あり|空|募集|残|大丈夫)|埋ま(?:って|り)|申込(?:み)?(?:入って|は入|ありま)/;
+/** 空き・募集状況そのものを聞く語（「この物件…ですか」の形だけでは当たらない）。check_pattern の分かれ目（resolveBrainCheckPattern）も同じ語で見る */
+export const AVAILABILITY_EXPLICIT_RE =/空(?:き|いて|いている|室)|募集(?:中|状況|して|出て|され)|まだ(?:あり|空|募集|残|大丈夫)|埋ま(?:って|り)|申込(?:み)?(?:入って|は入|ありま)/;
 const AVAILABILITY_QUESTION_RE = /ありますか|あります？|ますか|ですか|でしょうか|いかが|どう(?:です|でしょう)|教えて|知りたい|[?？]/;
 const AVAILABILITY_EXCLUDE_RE = /見積|初期費用|スモ割|総額|内覧|内見|見学/;
 
@@ -260,6 +261,19 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   物件が特定できなくても、こちらが送った物件があればその物件の代理契約の質問（実データ: カイナ・タクミ・yasuki とも直前の送付物件について）
   if (PROXY_CHECK_REQUEST_RE.test(msg) && !PROXY_SEARCH_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_proxy", timing: "after_confirm", chained: null, reasonCode: "proxy_contract_question", propertySpecifiedBy: specBy ?? "context" });
+  }
+  // 2026-09-30 竹内（みこと 15:14「それと審査の件ですがこの物件の管理会社はどこですか？？」）
+  //   「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて。物件確認したと確認したがごっちゃになっている」:
+  //   管理会社そのもの（名前・どこ・連絡先）の質問 → AIX【確認した（条件・交渉）→管理会社について】（check_pattern=mgmt_company）。
+  //   旧: 「この物件」＋「ですか」の形だけで下の S1 募集状況（availability_question）に当たり、AIX【物件確認した（募集状況）】になっていた。
+  //   物件を指していなくても、こちらが送った物件があればその物件の管理会社の質問（07-23 d3245ba7「こちらの管理会社ってどこになりますか？」）。
+  //   同じ連投で物件を持ち込んだ（URL・画像）時は上の S1（募集状況の確認が先）。空き・募集状況も同じ連投で聞いた時は下の S1 のまま
+  //   （物件確認したの報告に答えを添えられる）。保証会社そのものの質問が一緒の時は下の AIX【保証会社について】を先に見る。
+  //   実送信（365日・当たり7通）: スタッフは全部本文で社名を答えた（AIX を押した回 0）＝ピッカーが無かった。資料の名前を返信で言い切らず、
+  //   スタッフが資料・管理会社で確かめた名前を AIX から送る形にする（scripts/audit-check-button-split.ts）
+  if (MGMT_COMPANY_Q_RE.test(msg) && !o.hasCustomerImage && !AVAILABILITY_URL_RE.test(msg) && !AVAILABILITY_EXPLICIT_RE.test(msg)
+    && !(SCREENING_Q_RE.test(msg) && GUARANTOR_Q_RE.test(msg)) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
+    return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_company", timing: "after_confirm", chained: null, reasonCode: "mgmt_company_question", propertySpecifiedBy: specBy ?? "context" });
   }
   // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時は AIX【保証会社について】（物件ごとの会社名・種類を一覧で）。
   //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけで、「保証会社は緩そうなところでしょうか？」（物件を指す語なし・

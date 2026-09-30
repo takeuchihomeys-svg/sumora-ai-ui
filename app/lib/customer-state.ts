@@ -32,6 +32,7 @@ import {
 } from "./action-ledger";
 import { resolveViewingThread, STAFF_VIEWING_DONE_RE, CUSTOMER_VIEWING_WISH_RE, CUSTOMER_VIEWING_CANCEL_RE } from "./viewing-thread";
 import { resolveViewingScheduled } from "./done-state";
+import { viewingFlowStageDetail } from "./viewing-flow";
 import { normalizePropertyName, similarity, MATCH_MIN_SCORE } from "./property-name-match";
 import { customerSharedPropertyNames } from "./customer-property-names";
 import { isApplicationFormMessage } from "./application-form-detect";
@@ -839,10 +840,13 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
     // 待ち合わせの記録は無いが、こちらの出した日時をお客様が受けた（done-state と同じ判定）
     const thread = resolveViewingThread(msgs.map((m) => ({ sender: m.sender, text: m.text ?? "", rawCreatedAt: m.createdAt })), { nowMs: now });
     const vs = resolveViewingScheduled({ appointment: ledger.facts.viewingAppointment, viewingDone: ledger.facts.viewingDone, thread, customerText: cust.at(-1)?.text ?? null, nowMs: now });
-    if (vs.scheduled && vs.source !== "meeting_place") {
+    // 2026-09-30 竹内さん「内覧調整→日にち決定→待ち合わせ場所＝確定」: お客様がこちらの日時を受けただけ（待ち合わせ場所は未送信）は
+    //   まだ「内覧予定」ではない（旧は待ち合わせ済みと同じ「内覧予定」の帯になり、台帳・下書きの「まだ決まっていない」と食い違った）。
+    //   「内覧調整中・日にち決定（待ち合わせ場所は未送信）」として下の段階の一言で出す（viewing-flow の date_agreed）
+    if (vs.scheduled && vs.source === "staff_meeting_text") {
       const p = parseSlotLabel(vs.label, now);
       if (!p.ymd || p.ymd >= todayYmd) {
-        upcoming = { ymd: p.ymd, time: p.time, label: p.ymd ? viewingLabel(p.ymd, p.time) : "日時は履歴で確認", roomKey: null, name: null, inferred: false, source: vs.source === "customer_accepted" ? "customer_accepted" : "staff_meeting_text" };
+        upcoming = { ymd: p.ymd, time: p.time, label: p.ymd ? viewingLabel(p.ymd, p.time) : "日時は履歴で確認", roomKey: null, name: null, inferred: false, source: "staff_meeting_text" };
       }
     }
   }
@@ -899,6 +903,12 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
     stageDetail = upcoming.label;
     const vEv = [...ev].reverse().find((e) => e.stage === "viewing_scheduled");
     since = vEv?.t ?? since;
+  }
+  // 内覧の流れの段階（viewing-flow の1関数・台帳と同じ値）: 内覧調整中の中身（候補日を提示・お返事待ち／日にち決定・待ち合わせ場所は未送信）
+  {
+    const vf = ledger.facts.viewingFlow;
+    if (vf && !upcoming && vf.stage === "date_agreed" && stage !== "viewed") { stage = "viewing_arranging"; stageDetail = viewingFlowStageDetail(vf); }
+    else if (vf && stage === "viewing_arranging" && !stageDetail) stageDetail = viewingFlowStageDetail(vf);
   }
   // 状態（スタッフが決める・申込以降は正）
   if (status && WON_STATUSES.has(status)) { stage = "won"; stageDetail = null; }

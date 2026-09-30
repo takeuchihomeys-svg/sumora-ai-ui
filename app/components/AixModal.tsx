@@ -92,7 +92,7 @@ interface AixModalProps {
   initialInputText?: string;
   autoConvMatch?: boolean;
   // 2026-09-17 竹内（a🤫 事例）: interior_photo（室内写真を確認した）もブレインから初期値で渡る
-  initialCheckPattern?: "available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
+  initialCheckPattern?: "available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
@@ -776,9 +776,9 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "other_room_check" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(initialCheckPattern ?? null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "other_room_check" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(initialCheckPattern ?? null);
   // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
-  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_proxy" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking" || checkPattern === "owner_other";
+  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_proxy" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_company" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking" || checkPattern === "owner_other";
   // 代理契約の確認結果（2026-09-16 竹内・カイナ事例）: 入れるのは可能／不可だけ。物件名は下の共通の入力（mgmtGuarantorPropertyName）を使う
   const [proxyResult, setProxyResult] = useState<"可能" | "不可" | null>(null);
   // 募集状況確認専用: 募集している / 募集終了した
@@ -4425,7 +4425,7 @@ export default function AixModal({
                 </span>
                 <div>
                   <div className="text-[13px] font-bold text-[#111b21]">
-                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : <>管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_proxy" ? "代理契約" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
+                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : checkPattern === "owner_other" ? "オーナーに確認した（その他）" : <>管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_proxy" ? "代理契約" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_company" ? "管理会社について" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
                   </div>
                   <div className="text-[10px] text-[#8696a0]">確認内容を入力するだけでAIが報告文を作成します</div>
                 </div>
@@ -4849,8 +4849,8 @@ export default function AixModal({
               {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && checkPattern !== "mgmt_proxy") || mgmtCostType === "negotiation") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
-                    {checkPattern === "vacate_date" ? "または直接入力・補足" : checkPattern === "mgmt_equipment" ? "確認した設備状況" : "確認した内容"}
-                    {(checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_equipment") && <span className="text-red-400 ml-1">*</span>}
+                    {checkPattern === "vacate_date" ? "または直接入力・補足" : checkPattern === "mgmt_equipment" ? "確認した設備状況" : checkPattern === "mgmt_company" ? "管理会社の名前（連絡先を伝える時は連絡先も）" : "確認した内容"}
+                    {(checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_company") && <span className="text-red-400 ml-1">*</span>}
                   </p>
                   <textarea
                     value={inputText}
@@ -4858,6 +4858,7 @@ export default function AixModal({
                     placeholder={
                       checkPattern === "vacate_date" ? "例：退去予定日：7月31日退去確定"
                       : checkPattern === "mgmt_equipment" ? "例：エアコン・給湯器新品、追い焚き付き、独立洗面台あり 等"
+                      : checkPattern === "mgmt_company" ? "例：株式会社〇〇（資料の元付業者・管理会社の欄のとおりに）"
                       : "例：礼金なし交渉成功、または礼金交渉できなかった等"
                     }
                     rows={2}
@@ -4868,6 +4869,8 @@ export default function AixModal({
                       ? "退去日を選ぶとAIが内覧可能時期も自動で計算します"
                       : checkPattern === "mgmt_equipment"
                       ? "確認した設備状況を入力してください（エアコン・給湯器・バス・トイレ等）"
+                      : checkPattern === "mgmt_company"
+                      ? "資料・管理会社で確かめた名前をそのまま入力してください（AI は名前を作りません・入力した文字のまま送ります）"
                       : "交渉の結果を入力してください（例：礼金1→0に交渉成功）"}
                   </p>
                 </div>

@@ -1978,8 +1978,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       //   AIX の全経路（LLM が書く通・固定文・物件なかったの固定文）がここを通るので、その日の挨拶は1か所で決める（daily-greeting）。
       //   消す方は全アクション。付ける方はお客様に物件・確認結果を届ける通だけ（代理契約の返答は実送信で挨拶なし・管理会社宛ては付けない）
       const addGreetingHere = (currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
-        && check_pattern !== "mgmt_proxy";
-      const daily = applyDailyGreeting(sendCleaned, { staffSentToday: staffMessagedToday, greetingPhrase: addGreetingHere ? greetingPhrase : "", name: familyName ? name : "" });
+        && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company";
+      const daily =applyDailyGreeting(sendCleaned, { staffSentToday: staffMessagedToday, greetingPhrase: addGreetingHere ? greetingPhrase : "", name: familyName ? name : "" });
       if (daily.action !== "none") {
         console.log(JSON.stringify({ tag: "aix:daily-greeting", action: currentAction, conversationId, result: daily.action, staffMessagedToday }));
         sendCleaned = daily.text;
@@ -4722,7 +4722,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
     // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用・駐車場・ペット飼育・設備・募集状況）＋ 近隣月極駐車場確認 ──────────
     } else if (
       action === "property_check_result" &&
-      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
+      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_proxy" || check_pattern === "mgmt_company" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking" || check_pattern === "owner_other")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
       // 2026-09-16 竹内（カイナ事例）: 代理契約の可否。入れるのは物件名と可能／不可だけで、あとは会話に合わせる
@@ -4831,6 +4831,21 @@ ${guidanceRule}`,
   - 足す場合（可能）: 内覧の話が出ていなければ「よろしければ一度お部屋ご内覧如何でしょうか😊！！」
   - 不可の時は足さない（代わりの提案はスタッフが別の AIX で送る）
 ・「審査に通る」「大丈夫です」など確認していない断定はしない`,
+        },
+        // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」
+        //   実送信の型（手打ち・挨拶なしの2行）:
+        //   「レジュールアッシュ北大阪GRAND STAGE／こちら管理会社は株式会社エマスタイルという管理会社となります！！」（9/30 みこと）・
+        //   「お部屋管理会社は株式会社TAPPという会社となります！！」（9/11 62d01e33）
+        mgmt_company: {
+          label: "管理会社",
+          format: `[物件名]
+こちら管理会社は[管理会社名]という管理会社となります！！`,
+          rules: `・**この2行だけで終えるのが基本**（実際にスタッフが送っている形）。挨拶（お世話になっております等）・時候の挨拶は書かない＝1行目から始める
+・[管理会社名]はスタッフ入力の文字のまま使う（1文字も変えない・略さない・「株式会社」を足さない／外さない）。スタッフ入力に無い会社名は絶対に書かない
+・スタッフ入力に連絡先（電話番号 等）がある時だけ、3行目に「ご連絡先は[連絡先]となります！！」を足す（入力の文字のまま）。入力に無い電話番号・住所・営業時間は書かない
+・[物件名]が特定できない時は1行目を省き「お部屋の管理会社は[管理会社名]という管理会社となります！！」の1行にする
+・保証会社名・審査の通りやすさ・空き状況など、スタッフが入れていない事は書かない
+${guidanceRule}`,
         },
         mgmt_move_in: {
           label: "入居可能日",
@@ -5054,14 +5069,24 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : "")
 ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         currentAction,
         // 代理契約はお客様の依頼への返答＝挨拶を付けない（実送信の形。カイナ 9/16 11:48）
-        check_pattern !== "mgmt_proxy" && greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
+        // 管理会社名の返答も同じ（実送信 9/11・9/30 は挨拶なしの1〜2行）
+        check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company" && greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : undefined
       );
       // 挨拶フレーズを渡さなくても LLM が「〇〇さんお世話になっております！！」を書くので出口で落とす（本番4回とも付いた）
-      if (check_pattern === "mgmt_proxy") {
+      if (check_pattern === "mgmt_proxy" || check_pattern === "mgmt_company") {
         const sg = stripHeadGreeting(message_text);
         if (sg.count) {
           message_text = sg.text;
-          console.log(JSON.stringify({ tag: "aix:proxy-head-greeting-stripped", conversationId }));
+          console.log(JSON.stringify({ tag: check_pattern === "mgmt_proxy" ? "aix:proxy-head-greeting-stripped" : "aix:mgmt-company-head-greeting-stripped", conversationId }));
+        }
+      }
+      // 2026-09-30 竹内「管理会社の名前は『確認した』から送る」: 名前はスタッフが入れた文字のまま（1文字でも違えば固定の文に差し替える＝出口の決定論）
+      if (check_pattern === "mgmt_company") {
+        const companyInput = mgmtInfo.split("\n").map((l) => l.trim()).filter(Boolean);
+        const companyName = companyInput[0] ?? "";
+        if (companyName && !message_text.includes(companyName)) {
+          console.log(JSON.stringify({ tag: "aix:mgmt-company-name-fallback", conversationId }));
+          message_text = [`お部屋の管理会社は${companyName}という管理会社となります！！`, ...companyInput.slice(1)].join("\n");
         }
       }
       // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）

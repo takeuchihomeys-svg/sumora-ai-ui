@@ -63,6 +63,7 @@ const CHECK_PATTERN_UI_LABELS: Record<string, string> = {
   mgmt_move_in: '確認した（条件・交渉）→管理会社に確認した→入居日',
   mgmt_initial_cost: '確認した（条件・交渉）→管理会社に確認した→初期費用',
   mgmt_guarantor: '確認した（条件・交渉）→管理会社に確認した→保証会社',
+  mgmt_company: '確認した（条件・交渉）→管理会社に確認した→管理会社について',
   mgmt_parking: '確認した（条件・交渉）→管理会社に確認した→駐車場',
   mgmt_pet: '確認した（条件・交渉）→管理会社に確認した→ペット飼育',
   mgmt_equipment: '確認した（条件・交渉）→管理会社に確認した→設備',

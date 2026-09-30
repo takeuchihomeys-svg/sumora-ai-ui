@@ -26,6 +26,7 @@ import { classifyConditionTurn, gateExtractedConditions, decideAreaMode, isApply
 // 2026-09-27 竹内（野口さん「もう少し家賃あげて」・未桜さん「7畳以上の部屋」）: 抽出した家賃・広さを決定論で直す（家賃を上げて＝上限を上げる・下限は言った時だけ・帖→㎡）
 import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo } from "@/app/lib/rent-raise";
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
+import { walkMinutesInText } from "@/app/lib/walk-minutes-text";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
 // 2026-09-29 お客様の要望を 設備／NG／その他 の欄に節ごとに振り分ける（純関数）
@@ -1344,7 +1345,10 @@ async function extractConditionsFromCasualReply(
   // 顧客メッセージ自体に条件語彙が含まれる場合もOR発火（内覧調整中等に漏れる条件を拾う）
   // 2026-09-27: 「もう少し家賃あげて」（語の一覧に当たらない）・「7畳以上」も決定論で拾う
   // 2026-09-29 「初期費用10万以下で探して欲しい」も決定論で拾う（監査で列が空の人が9人・値引きの相談の文は除く＝customer-wants.initialCostLimitFromText）
-  const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null || initialCostLimitFromText(customerText) !== null;
+  // 2026-09-30 YUMA「これからは駅10分以内でお願いします」: 語の一覧（駅…徒歩）に当たらず、スタッフの直前の文も聞き取りでなかったので P4 が始まらず、
+  //   ブレインが「条件そのものを変える」と決めても登録の徒歩が変わらなかった → 「駅 N 分以内／徒歩 N 分以内」も決定論で拾う（walk-minutes-text.ts）
+  const walkDet = walkMinutesInText(customerText || "");
+  const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null || initialCostLimitFromText(customerText) !== null || walkDet !== null;
   const customerMentionsCondition = CUSTOMER_CONDITION_VOCAB_RE.test(customerText || "") || deterministicCondHit;
   if (!isConditionContext && !customerMentionsCondition) return;
   // 2026-09-27 竹内「一時調整か、そもそもの条件の切り替えか」（condition-change-scope.ts）: お客様が「今回だけ・ついでに・参考に・〜にした場合の物件も」と
@@ -1482,6 +1486,9 @@ ${customerText.slice(0, 600)}
     const icl = initialCostLimitFromText(customerText);
     if (icl != null) extracted.initial_cost_limit = icl;
   }
+
+  // 2026-09-30 徒歩: LLM が返さなかった時だけ、発言の「駅 N 分以内／徒歩 N 分以内」で埋める（決定論・通勤の「〇〇駅まで N 分」は読まない）
+  if (typeof extracted.walk_minutes !== "number" && walkDet !== null) extracted.walk_minutes = walkDet;
 
   // 2026-09-29 竹内「設備系は設備のところにまとめる・NG は NG・その他はその他に1つ1つ」: 読み取った自由文を節ごとに振り分ける（決定論・customer-wants）
   {

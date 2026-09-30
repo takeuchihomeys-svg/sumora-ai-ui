@@ -5,8 +5,9 @@
 //   ここは純関数だけ（supabase を読み込まない）。DB の読み書きは cron/brain-aix-eval と brain-core が持つ。
 //   ・trigger_action_rules は使わない（category トリガーで keyword_rule に混ざるため）。書き先は brain_aix_feedback。
 //   ・場面（S1〜S7）は「証拠」。ここでも AIX を決めない（ブレインへの実績欄とLLMが null の時の信号だけに使う）。
-import { AVAILABILITY_URL_RE, detectAixSceneEvidence, type AixSceneEvidence } from "./aix-scene-evidence";
-import { availabilityFirstKind, detectPropertyCheckPattern, propertyCheckKindFor, type PropertyCheckKind } from "./aix-taxonomy";
+import { AVAILABILITY_EXPLICIT_RE, AVAILABILITY_URL_RE, detectAixSceneEvidence, type AixSceneEvidence } from "./aix-scene-evidence";
+import { availabilityFirstKind, availabilityKind, detectPropertyCheckPattern, propertyCheckKindFor, type PropertyCheckKind } from "./aix-taxonomy";
+import { allVacancyWordsAreSlots } from "./scene-patterns";
 
 /** 対にする窓（次の判断が来なければ24時間まで） */
 export const PAIR_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -264,6 +265,9 @@ export function sceneSignalFallback(e: AixSceneEvidence | null | undefined): { a
  *   4) 2026-09-27: 1)〜3) が条件・交渉のピッカー（mgmt_* 等）でも、今回の連投でお客様が物件を持ち込んだ（画像・URL＝募集状況が未確認）なら
  *      「物件確認した（募集状況）」にする（availabilityFirstKind・check_pattern は空）。お客様自身が「空いてないとは思う」と言った時は条件のまま
  *      （58ae93f3「今空いてないとは思うんですが…エアコン取付不可ですかね」→ スタッフは条件だけ答えた）
+ *   5) 2026-09-30: 条件の話題が無い時は質問の中身で決める（空き・募集状況の語／持ち込み → 物件確認した（募集状況）・どちらも無い → null）
+ * ここが「物件確認した（募集状況）」と「確認した（条件・交渉）」の分かれ目の1か所（話題の語は aix-taxonomy CHECK_PATTERN_DETECTORS・
+ *   管理会社そのものは scene-patterns MGMT_COMPANY_Q_RE・監査は scripts/audit-check-button-split.ts）
  */
 const CUSTOMER_KNOWS_ENDED_RE = /空いて(?:い)?ない(?:と|とは)[^。\n]{0,4}(?:思|分か|わか)|埋まって(?:る|いる)(?:と|とは)[^。\n]{0,4}(?:思|分か|わか)/;
 export function resolveBrainCheckPattern(
@@ -283,7 +287,19 @@ export function resolveBrainCheckPattern(
     && !CUSTOMER_KNOWS_ENDED_RE.test(unrepliedCustomerText)) {
     return availabilityFirstKind(kind.topic);
   }
-  return kind;
+  if (kind) return kind;
+  // 5) 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: 条件の話題（設備・入居・管理会社・保証会社・駐車場・ペット・交渉）が
+  //    無い時は、質問の中身で決める。空き・募集状況の語がある／物件を持ち込んだ（画像・URL）→「物件確認した（募集状況）」とはっきり書く。
+  //    どちらの語も無い（「この物件…ですか」の形だけ・お礼だけ 等）→ null＝どちらとも決めない（帯は2つの区別を書いた文のまま）。
+  //    実送信365日: スタッフが押した 物件確認した 283件の直前の連投 — 語が無い 251件は募集状況側 242・条件側 9
+  //    （条件側は初期費用の交渉・設備の続きで、語からは決められない＝スタッフがピッカーで選ぶ）
+  const t = unrepliedCustomerText ?? "";
+  // 「明日ってまだ空いてますか」の「空いて」は内覧の枠（detectAvailabilityCheckContext と同じ線）
+  const asksAvailability = AVAILABILITY_EXPLICIT_RE.test(t) && !(allVacancyWordsAreSlots(t) && !/空(?:き|室)|募集|埋ま/.test(t));
+  // 画像は物件の持ち込みと読めた時だけ（場面の証拠 S1。身分証・見積書の画像を「空きの確認」と書かない）
+  const broughtImage = !!opts?.hasImage && evidence?.scene === "S1_vacancy";
+  if (broughtImage || AVAILABILITY_URL_RE.test(t) || asksAvailability) return availabilityKind();
+  return null;
 }
 
 /**

@@ -4440,7 +4440,8 @@ async function handleGenerateReply(req: NextRequest) {
     //   ブレインの方向「…10/2の内覧へ進め」・話題「10/2（金）13:00〜16:00の内覧日確定」を、生成は「決まった予定」と読み
     //   「ご内覧時に内覧担当から詳しく打ち合わせ」を書いた。内覧が決まるのは待ち合わせの案内（台帳の viewingAppointment）の時だけ。
     //   ブレインの判断は消さず、生成に渡す時だけ「まだ決まっていない」を添える（入口）。出口は action-ledger の viewing_presumed
-    const viewingConfirmedForGen = !!ledger.facts.viewingAppointment || !!ledger.facts.viewingDeclared;
+    //   2026-09-30（続き）: 確定の線は内覧の流れの1関数（viewing-flow の confirmed＝待ち合わせ場所の送信か確定の宣言）。出口 viewing_presumed と同じ値
+    const viewingConfirmedForGen = ledger.facts.viewingFlow ? ledger.facts.viewingFlow.confirmed : (!!ledger.facts.viewingAppointment || !!ledger.facts.viewingDeclared);
     const brainDirForGen = (d: string | null | undefined): string | null => annotateUnconfirmedViewing(d ?? null, viewingConfirmedForGen);
     const pairDirection = buildPairDirection(pairContext, {
       brainReplyDirection: brainDirForGen(brainStrategy?.reply_direction), brainFresh: brainLocalFresh, strategy: brainStrategy,

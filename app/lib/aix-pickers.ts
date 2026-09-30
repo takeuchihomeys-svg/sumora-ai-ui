@@ -69,6 +69,7 @@ export const CONDITION_CHECK_OPTIONS: PickerOption[] = [
   { value: "mgmt_initial_cost", label: "初期費用について", when: "管理会社に初期費用の**交渉**（礼金・消臭代を外せるか等）をした結果。費用を知りたいだけの依頼は見積書送る" },
   { value: "mgmt_proxy", label: "代理契約について", when: "代理契約の可否（可能／不可）" },
   { value: "mgmt_guarantor", label: "保証会社について（審査面）", when: "募集中と分かっているお部屋の保証会社・保証人・審査の条件" },
+  { value: "mgmt_company", label: "管理会社について", when: "管理会社そのもの（名前・どこ・連絡先）を聞かれた。資料・管理会社で確かめた名前を送る（2026-09-30 竹内「管理会社の名前は『確認した』から送る」）" },
   { value: "mgmt_parking", label: "駐車場について", when: "物件の駐車場の有無・料金・空き" },
   { value: "mgmt_pet", label: "ペット飼育について", when: "ペット可否・条件" },
   { value: "mgmt_equipment", label: "設備について", when: "設備の有無（エアコン・洗濯機置場 等）" },

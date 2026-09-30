@@ -21,7 +21,8 @@ import {
 import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
-import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration, UNCONFIRMED_VIEWING_LEDGER_LINE } from './viewing-premature';
+import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
+import { resolveViewingFlow, buildViewingFlowLedgerLine, buildViewingFlowBrainText, type ViewingFlow } from './viewing-flow';
 // 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
 import { GUARANTOR_TYPE_SHORT, GUARANTOR_TYPE_LABELS, normalizeGuarantorType } from './guarantor-companies';
 // 保存済みの旧 "licc" は信用系と読む（2026-09-26 種類は3つ）
@@ -103,6 +104,11 @@ export interface LedgerFacts {
    *   viewing_presumed の免除と「まだ決まっていない」の行を出さない判定だけに使う（viewingAppointment＝決まった内覧の注記には入れない）
    */
   viewingDeclared?: { dateMD: string; at: string } | null;
+  /**
+   * 2026-09-30 竹内さん「内覧調整→日にち決定→待ち合わせ場所＝確定 の流れを先走らないように」: 内覧の流れの今の段階（viewing-flow.ts の1関数）。
+   *   ブレインの材料・返信生成の台帳の注記・画面の帯（customer-state）・出口の関所（viewing_presumed＝flow.confirmed）が同じ値を見る
+   */
+  viewingFlow?: ViewingFlow;
   propertiesSentCount: number;
   propertiesSentNames: string[];
   lastPropertiesSentAt: string | null;
@@ -662,6 +668,11 @@ export function buildLedgerLinesForBrain(ledger: ActionLedger, max = 8): string 
   return `\n【こちらが送ったこと・約束したこと（行動台帳・古→新・確定事実）】\n${lines.join('\n')}`;
 }
 
+/** ブレインに渡す内覧の流れの段（毎回変わる側＝user 側。none・内覧後は空） */
+export function buildViewingFlowForBrain(ledger: ActionLedger): string {
+  return ledger.facts.viewingFlow ? buildViewingFlowBrainText(ledger.facts.viewingFlow) : '';
+}
+
 /** 直前スタッフ発言に対応する台帳エントリを選ぶ。
  *  2026-09-10 Fable5 Sさん事例: AIX 送信は page.tsx → line-tasks/complete により、その会話の全 pending タスクを
  *  直後に completed にするため `line_tasks.completed_at > aix.sent_at` が **構造上 常に成立**する
@@ -930,10 +941,18 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     }
     return null;
   })();
+  // 内覧の流れの段階（候補日を出した→日にちが決まった→待ち合わせ場所＝確定→内覧後）。確定の線は上の viewingAppointment / viewingDeclared
+  const viewingFlow = resolveViewingFlow({
+    messages: msgs,
+    inviteAts: merged.filter((e) => e.kind === 'viewing_invited' && e.source === 'aix_log').map((e) => e.at),
+    meetings: merged.filter((e) => e.kind === 'meeting_place_sent').map((e) => ({ at: e.at, dateMD: e.detail.appointment?.dateMD ?? null, time: e.detail.appointment?.time ?? null })),
+    appointment: viewingAppointment, declared: viewingDeclared, done: viewingDone, nowMs: now,
+  });
   const facts: LedgerFacts = {
     viewingAppointment,
     viewingDone,
     viewingDeclared,
+    viewingFlow,
     propertiesSentCount: sentDone.reduce((n, e) => n + (e.detail.propertyCount ?? 1), 0),
     propertiesSentNames: uniq(sentDone.flatMap((e) => e.detail.propertyNames ?? [])),
     lastPropertiesSentAt: sentDone.at(-1)?.at ?? null,
@@ -1107,7 +1126,9 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   }
   // 2026-09-30 竹内さん（みことさん事例）: 内覧の打診はしたが、まだ決まっていない（待ち合わせ未案内）。
   //   旧は「決まっている」時の行しか無く、ブレインの方向「10/2の内覧へ進め」を生成が「決まった予定」と読んだ
-  if (f.viewingInvited && !f.viewingAppointment && !f.viewingDeclared && !f.viewingDone) lines.push(UNCONFIRMED_VIEWING_LEDGER_LINE);
+  // 2026-09-30（続き）: 「内覧打診」の累積（何週間前の打診でも出ていた）ではなく、内覧の流れの段階（viewing-flow）で出し分ける。
+  //   候補日のやり取り中／日にちは決まったが待ち合わせ場所は未案内／お客様が希望・候補日は未提示 の3つ。古い打診（7日動いていない・枠が過ぎた）は出さない
+  { const fl = f.viewingFlow ? buildViewingFlowLedgerLine(f.viewingFlow) : ''; if (fl && !f.viewingDone) lines.push(fl); }
   if (f.viewingAppointment) {
     // 2026-09-20 竹内（まりあさん事例）: 旧注記は「ご案内させて頂きます」ごと禁止していたが、
     //   スタッフの実送信の正解はまさに「本日16時お部屋ご案内させて頂きます！」＝その語を使う。
@@ -1240,7 +1261,7 @@ export const DONE_PRESUPPOSING_VOCAB: DonePresupVocab[] = [
     //   （そのまま h.fixed を使うと「ご都合いかがでしょうか？ご内覧時に〜」の前半の質問ごと消えた）
     detect: (s) => { const h = findPrematureViewing(s)[0]; return h ? { evidence: h.evidence, fixed: s.replace(h.sentence, h.fixed).trim() } : null; },
     exemptWhen: (o) => customerMentionsFixedViewing(o.customerMessage) ? 'customer_fixed_viewing' : null,
-    requires: (f) => !!f.viewingAppointment || !!f.viewingDeclared,
+    requires: (f) => f.viewingFlow ? f.viewingFlow.confirmed : (!!f.viewingAppointment || !!f.viewingDeclared),
     requiresLabel: '内覧が決まっている（AIX 待ち合わせ場所・本文の待ち合わせの案内・こちらの確定の宣言が今日以降にある）', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
     label: '「ご内覧時に〜」「〇日のご内覧もよろしく」（内覧が決まっている前提）', fix: () => '' },
   { key: 'redo_apply', re: new RegExp(`(?:再度|改めて|もう一度)${NX}{0,12}?お申込`),

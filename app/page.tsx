@@ -19,7 +19,7 @@ import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
-import { BRAIN_AIX_LABELS, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
+import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 // 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
@@ -914,7 +914,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_proxy" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
   // オーナーに確認した（その他）: 中間フォーム用state
   const [showOwnerOtherForm, setShowOwnerOtherForm] = useState(false);
   const [ownerOtherWhat, setOwnerOtherWhat] = useState("");
@@ -2943,6 +2943,13 @@ export default function Home() {
   // AIX「物件確認した」ボタンに誘導（点滅・「確認した」ショートカット）: ブレインが property_check_result と判断した時だけ
   // 旧: ステータス availability_check や直前のスタッフ文言（「確認出来次第」等）で点滅 → ブレインの判断と無関係に出ていたため廃止
   const guideToCheckResult = aixView.checkShortcut;
+  // 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: ショートカットの名前と開くピッカーをブレインの check_pattern で分ける。
+  //   条件側（入居可能日・設備・管理会社・保証会社 等）＝「✓ 確認した」でそのピッカーを開く／それ以外（募集状況・室内写真・未定）＝「✓ 物件確認した」
+  const guideCheckPattern = useMemo(() => {
+    const m = (aixView.pendingMeta ?? selectedConversation.suggestedAixMeta ?? null) as { action?: string | null; check_pattern?: string | null } | null;
+    const cp = m && sameAixAction(m.action, "property_check_result") ? m.check_pattern ?? null : null;
+    return cp && brainAixButtonLabel("property_check_result", cp) === "AIX 確認した（条件・交渉）" ? cp : null;
+  }, [aixView.pendingMeta, selectedConversation.suggestedAixMeta]);
 
   // 待ち合わせ・内覧（最後がお客様の時だけ）・物件ピックアップの帯もブレインの判断だけで出す（旧の guideTo* は aixView.earlyBanner に畳んだ）
 
@@ -8394,11 +8401,17 @@ export default function Home() {
               {/* ✅ 確認したショートカットボタン（AIXフロー中・確認誘導なし時は非表示） */}
               {!activeAixFlow && guideToCheckResult && (
                 <button
-                  onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
+                  onClick={() => {
+                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result");
+                    // 条件側はブレインのピッカーを開く（代表・オーナー・その他の時は AIX メニューの「確認した（条件・交渉）」から）
+                    const CP_OK = ["vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+                    if (guideCheckPattern && (CP_OK as readonly string[]).includes(guideCheckPattern)) setAixInitCheckPattern(guideCheckPattern as (typeof CP_OK)[number]);
+                    openAixDirect("property_check_result");
+                  }}
                   className="shrink-0 rounded-full border border-[#4CAF50] bg-white px-3 py-1.5 text-xs font-bold text-[#2E7D32] shadow-sm active:scale-95 transition-all duration-75"
-                  title="AIX「確認した」を直接開く"
+                  title={guideCheckPattern ? "AIX「確認した（条件・交渉）」を直接開く" : "AIX「物件確認した（募集状況）」を直接開く"}
                 >
-                  ✓ 確認した
+                  {guideCheckPattern ? "✓ 確認した" : "✓ 物件確認した"}
                 </button>
               )}
 
@@ -8842,7 +8855,8 @@ export default function Home() {
               // 2択モード（two_choice_mode）は action="" でも成立する独立UIのため例外的に通す。
               // 2026-09-27（E・F）: カードの有無は aixView.card（note が空でも出す・2択／2つ目の AIX がある時は単独の帯より先にカード）
               if (aixView.card && brainMeta) {
-                const brainBtnLabel = BRAIN_AIX_LABELS[brainMeta.action];
+                // 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: check_pattern が条件側なら「AIX 確認した（条件・交渉）」
+                const brainBtnLabel = brainAixButtonLabel(brainMeta.action, (brainMeta as { check_pattern?: string | null }).check_pattern ?? null);
                 const brainBtnColor = AIX_ACTION_META[brainMeta.action]?.color ?? "#7C3AED";
                 const brainAction = brainMeta.action as AixActionType;
                 const runBrainAix = () => {
@@ -8863,7 +8877,7 @@ export default function Home() {
                     setActiveAixFlow(brainAction);
                     // 2026-09-12 段1: ブレインが決めた check_pattern（mgmt_move_in 等）をそのままモーダルに渡す（判定し直さない）
                     const brainCp = (brainMeta as { check_pattern?: string | null }).check_pattern ?? null;
-                    const BRAIN_CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_guarantor", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+                    const BRAIN_CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
                     if (brainAction === "property_check_result" && brainCp && (BRAIN_CP_OK as readonly string[]).includes(brainCp)) {
                       setAixInitCheckPattern(brainCp as (typeof BRAIN_CP_OK)[number]);
                     }
@@ -13560,6 +13574,17 @@ export default function Home() {
                   </>
                 },
                 {
+                  // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」
+                  key: "mgmt_company",
+                  label: "管理会社について",
+                  desc: "管理会社の名前・連絡先を聞かれた時に、確かめた管理会社を報告",
+                  hint: "",
+                  icon: <>
+                    <rect x="25" y="22" width="22" height="30" rx="2" stroke="#546E7A" strokeWidth="1.8"/>
+                    <path d="M30 29h4M38 29h4M30 35h4M38 35h4M30 41h4M38 41h4M33 52v-5h6v5" stroke="#546E7A" strokeWidth="1.6" strokeLinecap="round"/>
+                  </>
+                },
+                {
                   key: "mgmt_parking",
                   label: "駐車場について",
                   desc: "駐車場の有無・料金・空きを管理会社に確認した結果",
@@ -13604,7 +13629,7 @@ export default function Home() {
                     <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_company" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button

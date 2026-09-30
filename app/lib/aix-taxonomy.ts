@@ -9,7 +9,7 @@
 // prompt-management の aix_logic_property_check）では property_check_result を
 // 「物件確認した（募集状況）」と「確認した（条件・交渉）」の両方を包含するタイプとして説明すること。
 // 各ラベルマップの説明文は下の PROPERTY_CHECK_RESULT_LABEL / PROPERTY_CHECK_RESULT_DESCRIPTION に統一する。
-import { PROXY_CONTRACT_RE } from "./scene-patterns";
+import { PROXY_CONTRACT_RE, MGMT_COMPANY_Q_RE } from "./scene-patterns";
 
 export const AIX_BUTTON_TAXONOMY = {
   property_check_result: {
@@ -18,6 +18,7 @@ export const AIX_BUTTON_TAXONOMY = {
     sub_buttons: {
       "確認した（条件・交渉）": [
         "mgmt_proxy",        // 管理会社: 代理契約の可否（2026-09-16 竹内・カイナ事例）
+        "mgmt_company",      // 管理会社そのもの: 名前・連絡先（2026-09-30 竹内・みこと事例「管理会社の名前は『確認した』から送る」）
         "mgmt_guarantor",    // 管理会社: 保証会社・保証人
         "mgmt_initial_cost", // 管理会社: 初期費用交渉
         "mgmt_parking",      // 管理会社: 駐車場
@@ -36,7 +37,7 @@ export const PROPERTY_CHECK_RESULT_LABEL = "物件確認した／確認した（
 
 // 全ラベルマップ共通の property_check_result 統一説明文
 export const PROPERTY_CHECK_RESULT_DESCRIPTION =
-  "空室・退去日・入居可能日・代理契約の可否・保証会社・初期費用交渉・駐車場・ペット可否など、管理会社・代表・オーナー・近隣月極への確認結果を報告する（check_patternで切替）";
+  "空室・退去日・入居可能日・代理契約の可否・管理会社の名前や連絡先・保証会社・初期費用交渉・駐車場・ペット可否など、管理会社・代表・オーナー・近隣月極への確認結果を報告する（check_patternで切替）";
 
 // ─── AIXボタン種別アナウンス統一マップ（2026-08）──────────────────────────────
 // 従来 generate-reply の AIX_ACTION_NOTES と brain-core の AIX_BRAIN_NOTES が二重管理され
@@ -75,7 +76,7 @@ export const AIX_STAFF_NOTES: Record<string, string> = {
   // 2026-09-30 竹内（みこと事例）「『物件確認した』と『確認した』は別の AIX。物件確認した＝物件についてのこと。確認した＝設備や入居のことや管理会社に確認が必要な部分」:
   //   旧の文は「管理会社・オーナー・近隣月極から回答が届いた場面です」と言い切り、お客様の質問（審査の期間）にもそのまま出ていた。
   //   check_pattern が決まらない時だけ出る文なので、場面を言い切らず2つの AIX の区別を書く
-  property_check_result:   "確認した結果をお客様に報告する AIX です（2つは別のボタン）→ 物件そのもの（空き・募集状況・募集終了・別の部屋）の結果ならAIX【物件確認した（募集状況）】、設備・入居可能日・退去予定・ペット可否・駐車場・保証会社・初期費用交渉など管理会社に確認が要る事の結果ならAIX【確認した（条件・交渉）】を押してください: 確認した内容を顧客への結果報告文に変換します（結果報告の手打ちはNG）。審査・入居までの期間と流れ、必要書類のご質問は確認不要なので返信で答えます",
+  property_check_result:   "確認した結果をお客様に報告する AIX です（2つは別のボタン）→ 物件そのもの（空き・募集状況・募集終了・別の部屋）の結果ならAIX【物件確認した（募集状況）】、設備・入居可能日・退去予定・管理会社の名前や連絡先・ペット可否・駐車場・保証会社・初期費用交渉など管理会社に確認が要る事の結果ならAIX【確認した（条件・交渉）】を押してください: 確認した内容を顧客への結果報告文に変換します（結果報告の手打ちはNG）。審査・入居までの期間と流れ、必要書類のご質問は確認不要なので返信で答えます",
   // 2026-09-23 S8 の実測: 「まず「お探しします」の旨を返信し」がブレインの方向に写り、未履行の宣言の後の短い了承にも同じ約束の3通目を書かせていた
   //   （実送信 S8: 返信なし24.3%／物件カード56.8%／再宣言5.4%）。宣言は最初の1回だけと明記する
   property_send:           "AIX【物件ピックアップした】を押してください: お客様が条件を伝えた/変更した場面です。まだ宣言していなければ「お探しします」の旨を返信し（既に宣言済みで未送付なら再宣言せず、物件そのものを送る）、Chrome拡張で検索して物件URLが揃ったらこのボタンでカバーメッセージを生成して一緒に送ります",
@@ -150,6 +151,9 @@ const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegEx
   { pattern: "nearby_parking",    topic: "近隣月極駐車場",         re: /月極|近隣[^\n]{0,10}駐車場|周辺[^\n]{0,10}駐車場/ },
   // 2026-09-16 竹内（カイナ事例）: 代理契約の可否は保証会社・審査より先に見る（「親御様連帯保証人…代理契約可能」は代理契約が主題）
   { pattern: "mgmt_proxy",        topic: "代理契約の可否",         re: PROXY_CONTRACT_RE },
+  // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする。物件確認したじゃなくて」:
+  //   管理会社そのもの（名前・どこ・連絡先）。保証会社より先に見る（「それぞれの管理会社と保証会社お教えいただけますでしょうか」06-15 e68fd1e2）
+  { pattern: "mgmt_company",      topic: "管理会社（名前・連絡先）", re: MGMT_COMPANY_Q_RE },
   { pattern: "mgmt_initial_cost", topic: "初期費用・礼金等の交渉", re: /(礼金|敷金|初期費用|フリーレント|家賃)[^\n]{0,12}(交渉|減額|値引|割引|下げ|無料)|(交渉|減額|値引)[^\n]{0,10}(礼金|敷金|初期費用)/ },
   { pattern: "mgmt_guarantor",    topic: "保証会社・保証人",       re: /保証会社|連帯保証|保証人/ },
   { pattern: "mgmt_pet",          topic: "ペット可否",             re: /ペット|猫[^\n]{0,6}(飼|可|OK)|犬[^\n]{0,6}(飼|可|OK)/ },
@@ -213,6 +217,22 @@ export function availabilityFirstKind(topic: string): PropertyCheckKind {
     ui_button: "物件確認した（募集状況）",
     topic,
     note: `AIX【物件確認した（募集状況）】を押してください: お客様が送ってきた物件（${topic}の質問つき）はまだ募集状況を確認していません。ピッカーは確認した結果で選ぶ → 物件あった（御見積書同封・${topic}の答えもこの報告に添える）／物件なかった（募集終了）／別の部屋が募集してた／専任物件だった。${topic}だけを先に「確認した（条件・交渉）」で答えない`,
+  };
+}
+
+/**
+ * お客様が空き・募集状況そのものを聞いている（「まだ空いてますか」「募集してますか」）・物件を持ち込んだ（画像・URL）時の
+ * 「物件確認した（募集状況）」。結果のピッカー（物件あった／なかった／別の部屋／専任）はスタッフが確認して選ぶので check_pattern は空。
+ * 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: 旧は check_pattern が決まらないと2つのボタンを併記した帯になっていた。
+ *   質問の中身が空き・募集状況だと分かる時は「物件確認した（募集状況）」とはっきり書く（resolveBrainCheckPattern）。
+ *   実送信365日: スタッフが押した 物件確認した 283件のうち募集状況側 267・条件側 16（scripts/audit-check-button-split.ts）
+ */
+export function availabilityKind(): PropertyCheckKind {
+  return {
+    check_pattern: "",
+    ui_button: "物件確認した（募集状況）",
+    topic: "空き・募集状況",
+    note: "AIX【物件確認した（募集状況）】を押してください: お客様が物件そのもの（空き・募集状況）の確認を求めています。ピッカーは確認した結果で選ぶ → 物件あった（募集中）／物件なかった（募集終了）／別の部屋が募集してた／専任物件だった（結果報告の手打ちはNG）。設備・入居可能日・管理会社・保証会社など条件の確認の結果は AIX【確認した（条件・交渉）】で送る（別のボタン）",
   };
 }
 
@@ -289,6 +309,7 @@ export const AIX_LINE_NOTES: Record<string, string> = {
 const CHECK_PATTERN_TOPICS: Record<string, string> = {
   nearby_parking:    "近隣月極駐車場",
   mgmt_proxy:        "代理契約の可否",
+  mgmt_company:      "管理会社（名前・連絡先）",
   mgmt_initial_cost: "初期費用・礼金等の交渉",
   mgmt_guarantor:    "保証会社・保証人",
   mgmt_pet:          "ペット可否",

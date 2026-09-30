@@ -85,6 +85,7 @@ function labelFor(action: string, checkPattern: string | null): string {
   if (checkPattern === "mgmt_move_in") return "確認した（条件・交渉）→入居可能日";
   if (checkPattern === "vacate_date") return "確認した（条件・交渉）→退去予定日";
   if (checkPattern === "mgmt_guarantor") return "確認した（条件・交渉）→保証会社（審査面）";
+  if (checkPattern === "mgmt_company") return "確認した（条件・交渉）→管理会社について";
   return AIX_BUTTON_LABELS[action] ?? action;
 }
 
@@ -127,6 +128,19 @@ function sceneS3(reason: string): SceneHit {
       scene: "S3_screening", reason_code: reason, chained: null,
       urgency: "15分以内に橋渡し→保証会社確認後に AIX【保証会社について】で一覧を案内", highlight: false,
       extra: "物件ごとの保証会社名と種類（独立系＝審査基準が緩い／信販系／信用系）はスタッフが確認して AIX【保証会社について】で送る。本文で会社名・通りやすさを書かない。",
+    };
+  }
+  // 2026-09-30 竹内（みこと事例）「管理会社の名前は『確認した』から送るようにする」: 管理会社そのもの（名前・連絡先）の質問。
+  //   名前・連絡先はスタッフが資料・管理会社で確かめて AIX【確認した（条件・交渉）→管理会社について】で送る。本文で社名を言い切らない。
+  //   橋渡しの定型文は置かない（実送信365日・7通はスタッフがその場で社名を答えていて「確認します」の型が無い＝創作しない）
+  if (reason === "mgmt_company_question") {
+    return {
+      action: "property_check_result", check_pattern: "mgmt_company", label: labelFor("property_check_result", "mgmt_company"),
+      timing: "after_confirm", bridge: null,
+      forbidden: [], forbiddenText: "管理会社の名前・連絡先・電話番号をテキストで書くこと（資料に書いてあっても言い切らない。結果は AIX【確認した（条件・交渉）→管理会社について】で送る）／募集状況の確認の宣言（空きの質問ではない）",
+      scene: "S3_screening", reason_code: reason, chained: null,
+      urgency: "資料で管理会社を確かめてすぐ AIX【確認した（条件・交渉）→管理会社について】", highlight: false,
+      extra: "お客様の質問は管理会社そのもの（名前・連絡先）。物件の空き・募集状況の質問ではないので AIX【物件確認した（募集状況）】は使わない。",
     };
   }
   return {

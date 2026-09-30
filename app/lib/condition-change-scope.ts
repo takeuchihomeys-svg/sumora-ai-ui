@@ -161,6 +161,47 @@ export function resolveConditionChangeScope(input: { text: string | null | undef
   return { scope: "permanent", by: "default", evidence: null };
 }
 
+// ─────────────────────────── 未返信の発言の束（2026-09-30） ───────────────────────────
+// ブレインの後の判断に渡る文（msgText）は、未返信のお客様の発言を区切り（reply-context MSG_SEP＝U+2063）でつないだ物。
+//   YUMA の通しテスト: 先の発言「今回だけ1階も見たいです」が未返信のまま「これからは駅10分以内でお願いします」「やっぱり1Kに変えてください」が来ると、
+//   束の中の「今回だけ」に当たって後の発言まで今回だけ（temporary）になり、P4 が書いた登録の変更（間取り 1K）まで戻された。
+//   直し: 判断は発言ごと。
+//     ・最後の発言＝今回の判断（文の語 → ブレイン → 既定）。P4 の書き込みを戻す・記録に残す・条件の橋／条件ブレインを動かすかはこれで決める
+//     ・前の発言＝文の語だけ（ブレインの欄は最後の発言への答えなので使わない）。「今回だけ」の語がある発言は、返信するまでその回の上書きに残す
+//   上書き（その回だけの検索の条件）は「今回だけ」の発言だけから作る（temporaryText）。登録を書く側（橋・条件ブレイン）には今回だけの発言を渡さない（permanentText）
+export const BUNDLE_SEP = "\u2063";
+export type BundleScope = {
+  /** 最後の発言の判断（今回の判断） */
+  decision: ScopeDecision;
+  lastText: string;
+  /** 今回だけの発言をつないだ物（その回の上書きの元）。無ければ null */
+  temporaryText: string | null;
+  /** 今回だけでない発言をつないだ物（登録を書く側に渡す文）。無ければ null */
+  permanentText: string | null;
+  parts: number;
+};
+export function resolveScopeForBundle(input: { text: string | null | undefined; brainScope?: unknown; registered?: Record<string, unknown> | null }): BundleScope {
+  const raw = String(input.text ?? "");
+  const parts = raw.split(BUNDLE_SEP).map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 1) {
+    const d = resolveConditionChangeScope(input);
+    const only = parts[0] ?? raw;
+    return { decision: d, lastText: only, temporaryText: d.scope === "temporary" ? only : null, permanentText: d.scope === "permanent" ? only : null, parts: parts.length };
+  }
+  const last = parts[parts.length - 1];
+  const decision = resolveConditionChangeScope({ text: last, brainScope: input.brainScope, registered: input.registered });
+  const temp: string[] = [], perm: string[] = [];
+  for (const p of parts.slice(0, -1)) {
+    // 前の発言は文の語だけ: 強い今回だけ → 今回だけ／期間の「これから」→ 切り替え／弱い今回だけ → 今回だけ／それ以外は切り替え側（今まで通り登録を書く側に渡る）
+    const isTemp = !!temporaryScopeCue(p) || (!futurePermanentScopeCue(p) && !!weakTemporaryScopeCue(p));
+    (isTemp ? temp : perm).push(p);
+  }
+  if (decision.scope === "temporary") temp.push(last);
+  else if (decision.scope === "permanent") perm.push(last);
+  const join = (a: string[]) => (a.length ? a.join(`\n${BUNDLE_SEP}\n`) : null);
+  return { decision, lastText: last, temporaryText: join(temp), permanentText: join(perm), parts: parts.length };
+}
+
 /**
  * ブレインより先に走る経路（P4・フォームの読み取り）が登録の条件を書いてよいか（「今回だけ」の語が無い時だけ書く）。
  *   強い語は必ず止める。弱い語（一旦・とりあえず）は登録の条件がある人（registered を渡して空でない）の時だけ止める
@@ -182,6 +223,46 @@ const NUMERIC_REVERT = new Set(["rent_max", "rent_min", "floor_area_min", "walk_
 
 export type HistoryRowLite = { changed_field: string; old_value: string | null; new_value: string | null; created_at: string };
 
+/** P4・ブレインの橋が additional_conditions に足す行「[9/30 17:23|auto] 家賃上限: 120000」の見出し（line-webhook-text FIELD_LABELS と同じ字） */
+export const REVERT_NOTE_LABELS: Record<string, string> = {
+  desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限", floor_area_min: "広さ(㎡以上)", walk_minutes: "徒歩分数", building_age: "築年数",
+};
+/**
+ * 2026-09-30 YUMA「一旦家賃12万で」: 登録の家賃は 9万に戻したのに、追加条件に「[9/30 17:23|auto] 家賃上限: 120000」が残った
+ *   （新着要望の帯・自由文を読む判定に今回だけの値が残る）。戻した列について、その発言で足された行の「見出し: 書いた値」だけを外す（純関数）。
+ *   written: 列 → P4 が書いた値（履歴の最後の new_value）。一番後ろの auto の行から探し、見出しと値がそのまま一致する所だけ（無ければ何もしない）。
+ *   同じ行の他の項目（こだわり等）は残す・行が空になれば行ごと外す・人が書いた行（|auto でない）は触らない
+ */
+export function stripRevertedAutoNotes(additional: string | null | undefined, written: Record<string, unknown>): { text: string | null; removed: string[] } {
+  const src = String(additional ?? "");
+  const removed: string[] = [];
+  if (!src.trim()) return { text: additional == null ? null : src, removed };
+  const lines = src.split("\n");
+  for (const [field, val] of Object.entries(written)) {
+    const label = REVERT_NOTE_LABELS[field];
+    if (!label || val == null || String(val) === "") continue;
+    const seg = `${label}: ${String(val)}`;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(/^(\[[^\]]*\|auto\]\s?)(.*)$/);
+      if (!m) continue;
+      const body = m[2];
+      const at = body.indexOf(seg);
+      if (at < 0) continue;
+      // 値の途中で切らない（「家賃上限: 120000」が「家賃上限: 1200000」の頭に当たらない）
+      const after = body.slice(at + seg.length);
+      const before = body.slice(0, at);
+      if (after && !after.startsWith("、")) continue;
+      if (before && !before.endsWith("、")) continue;
+      const rest = (before + after.replace(/^、/, "")).replace(/、$/, "").trim();
+      if (rest) lines[i] = m[1] + rest; else lines.splice(i, 1);
+      removed.push(seg);
+      break;
+    }
+  }
+  const out = lines.join("\n").trim();
+  return { text: out ? out : null, removed };
+}
+
 /**
  * ブレインが「今回だけ」と決めた時に、P4 がこの発言で書いた登録の条件を戻す値を決める（純関数）。
  *   その発言の時刻（少し前から）より後の履歴だけ・列ごとに一番古い old_value へ戻す。
@@ -192,11 +273,13 @@ export function planScopeRevert(
   current: Record<string, unknown> | null | undefined,
   sinceIso: string,
   opts: { slackMs?: number; keepNewFields?: boolean } = {},
-): { updates: Record<string, unknown>; skipped: string[] } {
+): { updates: Record<string, unknown>; skipped: string[]; written: Record<string, unknown> } {
   const since = Date.parse(sinceIso) - (opts.slackMs ?? 10_000);
   const updates: Record<string, unknown> = {};
   const skipped: string[] = [];
-  if (!Number.isFinite(since)) return { updates, skipped };
+  /** 戻す列 → この発言で書かれていた値（追加条件の行から同じ値を外すのに使う・stripRevertedAutoNotes） */
+  const written: Record<string, unknown> = {};
+  if (!Number.isFinite(since)) return { updates, skipped, written };
   const byField = new Map<string, HistoryRowLite[]>();
   for (const r of rows) {
     if (!(SCOPE_REVERT_FIELDS as readonly string[]).includes(r.changed_field)) continue;
@@ -214,8 +297,9 @@ export function planScopeRevert(
     if (ov == null || ov === "") updates[f] = null;
     else if (NUMERIC_REVERT.has(f)) { const n = Number(ov); if (Number.isFinite(n)) updates[f] = n; else skipped.push(`${f}（数字でない ${ov}）`); }
     else updates[f] = ov;
+    if (f in updates) written[f] = last.new_value;
   }
-  return { updates, skipped };
+  return { updates, skipped, written };
 }
 
 // ─────────────────────────── 当たり外れ（2026-09-30） ───────────────────────────

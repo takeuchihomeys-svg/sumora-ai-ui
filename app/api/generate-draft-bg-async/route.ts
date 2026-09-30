@@ -20,7 +20,7 @@ import { classifyConditionTurn, gateExtractedConditions, mergeAreaForBrainBridge
 import { classifyByKeywords } from "@/app/lib/condition-intent";
 import { FREE_TEXT_CONDITION_FIELDS, mergeFreeTextClauses } from "@/app/lib/condition-merge";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
-import { resolveConditionChangeScope } from "@/app/lib/condition-change-scope";
+import { resolveScopeForBundle } from "@/app/lib/condition-change-scope";
 import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
@@ -603,16 +603,18 @@ export async function POST(req: NextRequest) {
       // 脳-DBブリッジ: 条件変更検出 → DB自動更新（返信プロンプト注入だけでなくDB側にも反映）
       // 2026-09-27 ブレインが「今回だけ」（temporary）・「条件の話でない」（none）と決めた番は登録の条件を書かない
       //   （その回だけの上書きは brain-core が AIX の検索に載せる・condition-change-scope.ts）
-      const bridgeScope = brainGateDirect?.meta?.condition_change_type
-        ? resolveConditionChangeScope({ text: effectiveTargetMessage, brainScope: brainGateDirect.meta.condition_change_scope })
+      // 2026-09-30 判断は発言ごと（未返信の束の先の「今回だけ」で後の切り替えの発言まで止めない・橋には今回だけの発言を渡さない）
+      const bridgeBundle = brainGateDirect?.meta?.condition_change_type
+        ? resolveScopeForBundle({ text: effectiveTargetMessage, brainScope: brainGateDirect.meta.condition_change_scope })
         : null;
+      const bridgeScope = bridgeBundle?.decision ?? null;
       if (bridgeScope && bridgeScope.scope !== "permanent") console.log(JSON.stringify({ tag: "bg-async:bridge-skip-scope", convId, ...bridgeScope }));
       if (brainGateDirect?.meta?.condition_change_type && conv.property_customer_id && bridgeScope?.scope === "permanent") {
         void applyBrainConditionChange(
           db,
           conv.property_customer_id as string,
           convId,
-          effectiveTargetMessage,
+          bridgeBundle?.permanentText ?? effectiveTargetMessage,
           brainGateDirect.meta.condition_change_type as string,
         ).catch((e) => console.warn("[bg-async] brain-condition-bridge error:", e));
       }
