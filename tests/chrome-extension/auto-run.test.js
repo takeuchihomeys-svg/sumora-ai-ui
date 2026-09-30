@@ -87,7 +87,8 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   const ub = read("underbar.js");
   ok("underbar が autoRun を popup へ渡す", /autoRun: msg\.autoRun \|\| null/.test(ub));
   const pp = read("popup.js");
-  ok("popup: 2つの受け口で押す前に載せ、押した直後に戻す", (pp.match(/_applyAutoRunToForm\(aBtn, /g) || []).length === 2 && (pp.match(/_restoreAutoRun\(_arUndo[PR]\);/g) || []).length === 2);
+  // v2.5.48: 受け口は1本（_openAndClickAutofill）。押す前に載せ、押した直後に戻す
+  ok("popup: 押す前に載せ、押した直後に戻す（受け口は1本）", (pp.match(/_applyAutoRunToForm\(aBtn, d\.autoRun\)/g) || []).length === 1 && /aBtn\.click\(\);[\s\S]{0,400}if \(o\.autoRun\) _restoreAutoRun\(arUndo\);/.test(pp) && /_runSwitchCustomer\(d\) \{\s*return _openAndClickAutofill\(d, \{[^}]*autoRun: true/.test(pp));
   ok("popup: 更新日の欄は値を入れるだけ（change を出さない＝DB に書かない）", /undo\.prevDays = el\.value; el\.value = ar\.rp_update_days \? String\(ar\.rp_update_days\) : "";/.test(pp) && !/_applyAutoRunToForm[\s\S]{0,900}dispatchEvent/.test(pp.slice(pp.indexOf("function _applyAutoRunToForm"), pp.indexOf("function _restoreAutoRun"))));
   ok("popup: リアプロの条件に sort_order・max_pages（自動便だけ）", /sort_order: _autoSort,\s*max_pages: _autoMaxPages,/.test(pp));
   ok("popup: ITANDI の条件に sort_order・max_pages", /sort_order: _autoSort_it,\s*max_pages: _autoMaxPages_it,/.test(pp));
@@ -102,7 +103,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.47");
+  eq("manifest の版", mf.version, "2.5.48");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
   ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));

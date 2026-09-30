@@ -32,6 +32,22 @@
   }
 
   /**
+   * v2.5.48 命令を拾いに行く前に: リアプロのタブが検索の画面（main.php）か。
+   *   true＝main.php のタブがある／false＝リアプロのタブはあるが main.php が1つも無い（ログインの画面等）／null＝リアプロのタブが無い（分からない＝今まで通り）
+   *   false の時だけ /api/automation/pending に rp=0 を付ける（サーバーがリアプロを含む手の命令を少しの間ほかの PC に譲る）
+   */
+  function realproReady(tabs) {
+    var list = Array.isArray(tabs) ? tabs : [];
+    var any = false;
+    for (var i = 0; i < list.length; i++) {
+      var u = list[i] && typeof list[i].url === "string" ? list[i].url : "";
+      if (REALPRO_MAIN_RE.test(u)) return true;
+      if (REALPRO_ANY_RE.test(u)) any = true;
+    }
+    return any ? false : null;
+  }
+
+  /**
    * そのタブをそのまま使うか・開き直すか。probe = { url, pong, page }
    *   pong: content.js が axlx-ping に答えたか（拡張を読み直した後の古いタブは答えない）
    *   page: page-script.js が答えたか（true/false・古い content.js は page を返さない＝null は「分からない」で使う）
@@ -73,7 +89,9 @@
     if (!ITANDI_LIST_RE.test(url)) return { action: "reload", reason: "not_itandi_list" };
     if (!p.pong) return { action: "reload", reason: "content_script_dead" };
     if (p.list === false) return { action: "reload", reason: "not_itandi_list" };
-    return { action: "use", reason: "alive" };
+    // v2.5.48: 背面のタブ（hidden）は Chrome がタイマーを間引く → 前に出してから入力させる（リアプロの front と同じ・vis が無い古い中身は出さない）
+    //   2026-09-30 YUMA（順の回）: 背面のまま資料を3件取った所で「物件資料出力」の窓が開いたまま止まり、5分無進捗
+    return { action: "use", reason: "alive", front: p.vis === "hidden" };
   }
 
   var REASON_JA = {
@@ -137,6 +155,7 @@
     pickItandiTab: pickItandiTab,
     itandiTabPlan: itandiTabPlan,
     realproTabPlan: realproTabPlan,
+    realproReady: realproReady,
     reasonJa: reasonJa,
     locationGate: locationGate,
     failureNotice: failureNotice,

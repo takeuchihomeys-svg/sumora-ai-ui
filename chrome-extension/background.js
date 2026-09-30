@@ -1254,7 +1254,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           console.log("[webapp-search] itandiタブ:", _itandiTab.url);
           // itandi-content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
-          try { await chrome.tabs.sendMessage(_itandiTab.id, { type: "axlx-set-fill-customer", customerId: String(_cid) }); } catch(_) {}
+          try { await chrome.tabs.sendMessage(_itandiTab.id, { type: "axlx-set-fill-customer", customerId: String(_cid), customerName: _custName }); } catch(_) {}
 
           // underbar.js → popup.js 経由でリアプロと同じ仕組みで自動入力
           var _directOk = await new Promise(function(resolve) {
@@ -3417,6 +3417,11 @@ async function _pollAndRunBatch() {
     var _qs = [];
     if (_bh.claimAix) _qs.push("aix=1");
     if (_bh.claimBrainCommands) _qs.push("brain=1");
+    // v2.5.48: リアプロのタブがログインの画面等（main.php が1つも無い）なら rp=0 → サーバーがリアプロを含む手の命令を少しの間ほかの PC に譲る
+    //   （2026-09-30 YUMA の手の命令が2回ともログイン切れの PC に渡って AXLX_TAB_DEAD）。タブを読むだけ・サイトには触らない
+    try {
+      if (self.AxlxBatchGuard && self.AxlxBatchGuard.realproReady && self.AxlxBatchGuard.realproReady(await chrome.tabs.query({})) === false) _qs.push("rp=0");
+    } catch (_) {}
     // 2026-09-30 v2.5.42 竹内「お客さん毎に…次のお客さんに移る等の動きで。また動き方もロボットみたいじゃなくて人間のように」:
     //   1人1コマンド（AIXツールの一括検索・午前の便）は、前の人を終えてから人がお客様を開き直す間（auto-run.js nextCommandGapMs）を置いてから拾う。
     //   ⚠ /pending は取った時点で running にする（claim）ので、間は取りに行く**前**に見る（コマンドは pending のまま＝他の PC が拾ってもよい）。
@@ -4035,7 +4040,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     await new Promise(function(r) { setTimeout(r, 1800 + Math.floor(Math.random() * 900)); });
   }
   // 2026-09-27 v2.5.32 竹内「重い順から治す」①: 拡張の読み直し・ログインのし直しの後の動かないタブをそのまま使わない（だめなら開き直す・それでもだめなら検索しない）
-  if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun);
+  if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun, null, customer && customer.id);
   // v2.5.45 ITANDI も同じ: 一覧の画面でない・拡張の読み直しの後で中身が答えないタブは一覧を1回開き直す。それでもだめならこのサイトを飛ばす（理由を残す）
   if (site === "itandi") tab = await _ensureItandiTab(tab, auditRun, customer && customer.id);
 
@@ -4131,7 +4136,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     for (var _attempt = 0; _attempt < 2 && !_started; _attempt++) {
       if (_attempt > 0) {
         // 1回だけやり直す: タブを開き直し（main.php）・fill-done の待ちを数え直してから
-        tab = await _ensureRealproTab(tab, auditRun, _lastWhy && /^popup|Receiving end|Could not establish/.test(_lastWhy) ? "content_script_dead" : "page_script_dead");
+        tab = await _ensureRealproTab(tab, auditRun, _lastWhy && /^popup|Receiving end|Could not establish/.test(_lastWhy) ? "content_script_dead" : "page_script_dead", _cidStr);
         _restartFillDoneWaiter("realnetpro", _cidStr);
       }
       // content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
@@ -4190,7 +4195,8 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     // popup.js 経由で完全条件構築（ITANDI_LINE_MAP_FILL・Dijkstra路線展開含む）を実行する
     // リアプロと同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → itandi-page-script.js
     // itandi-content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
-    try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id) }); } catch(_) {}
+    // v2.5.48: itandi-bulk-dl.js もこの合図を受け、自動の送信は「この入力を始めさせたお客様」で送る（popup の今の選択を後から読まない・名前も渡す）
+    try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id), customerName: customer.customer_name || null }); } catch(_) {}
     var batchItandiSwitched = await new Promise(function(resolve) {
       chrome.tabs.sendMessage(tab.id, {
         type:          "axlx-switch-customer",
@@ -4426,7 +4432,7 @@ async function _bringRealproTabFront(tab, runId, vis) {
 }
 
 // 使える状態のリアプロのタブを返す（だめなら main.php を開き直して1回だけ確かめ直す）。それでもだめなら投げる（検索しない）
-async function _ensureRealproTab(tab, auditRun, why) {
+async function _ensureRealproTab(tab, auditRun, why, customerId) {
   var G = self.AxlxBatchGuard;
   var runId = auditRun && auditRun.runId;
   var probe = await _probeRealproTab(tab.id);
@@ -4450,6 +4456,9 @@ async function _ensureRealproTab(tab, auditRun, why) {
   _auditStep(runId, "tab_check", plan2.action === "use" ? "読み直して応答あり" : "読み直しても " + (G ? G.reasonJa(plan2.reason) : plan2.reason) + " url=" + String(probe2.url).slice(0, 60));
   if (plan2.action !== "use") {
     // ログインが切れていると main.php がログインの画面等に移る（url が main.php でない）
+    // v2.5.48: 待ち手（fill-done）を今閉じる（ITANDI と同じ）。旧は飛ばした約90秒後に「fill-done-waiter タイムアウト」が出て
+    //   画面の写真を撮り、そのたびにタブを切り替えていた（2026-09-30 YUMA・ログイン切れの PC）
+    if (customerId != null) { try { _endFillDoneWaiter("realnetpro", String(customerId), "リアプロのタブが検索の画面でない"); } catch (_) {} }
     throw new Error("AXLX_TAB_DEAD: リアプロのタブが応答しません（読み直しても・" + (G ? G.reasonJa(plan2.reason) : plan2.reason) + "）");
   }
   if (plan2.front) await _bringRealproTabFront(tab, runId, probe2.vis);
@@ -4473,7 +4482,20 @@ async function _probeItandiTab(tabId) {
     } catch (e) { if (!done) { done = true; clearTimeout(timer); resolve({ err: (e && e.message) || String(e) }); } }
   });
   var pong = !!(resp && !resp.err && resp.pong);
-  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
+  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
+}
+
+// v2.5.48 背面（hidden）の ITANDI のタブを、そのウィンドウの中で前に出す（ウィンドウの前後・最小化は触らない・リアプロの _bringRealproTabFront と同じ）。
+//   2026-09-30 YUMA（順の回・lane_mode「タブが無い（itandi）」）: 背面のまま資料を3件取った所で「物件資料出力」の窓が開いたまま止まり、5分無進捗で終わった。
+//   同時の回は2つの窓でどちらも前面の時だけ（parallel-sites.js）なので、ここで前に出すのは順の回（リアプロは終わっている）
+async function _bringItandiTabFront(tab, runId, vis) {
+  try {
+    await chrome.tabs.update(tab.id, { active: true });
+    _auditStep(runId, "tab_front", "ITANDI: 背面のタブ（" + vis + "）を前に出した");
+    await new Promise(function (r) { setTimeout(r, _settleMs(600)); });
+    var p = await _probeItandiTab(tab.id);
+    if (p.vis === "hidden") _auditStep(runId, "tab_hidden", "ITANDI: 前に出しても見えていない（ウィンドウが最小化・隠れている可能性）");
+  } catch (e) { console.warn("[batchAutofill] ITANDI のタブを前に出せない:", e && e.message); }
 }
 
 // 使える状態の ITANDI のタブを返す。だめなら一覧（/rent_rooms/list）を1回だけ開き直す（人がブックマークから一覧を開く形・読み直しを連打しない）。
@@ -4484,7 +4506,10 @@ async function _ensureItandiTab(tab, auditRun, customerId) {
   var runId = auditRun && auditRun.runId;
   var probe = await _probeItandiTab(tab.id);
   var plan = G.itandiTabPlan(probe);
-  if (plan.action === "use") return tab;
+  if (plan.action === "use") {
+    if (plan.front) await _bringItandiTabFront(tab, runId, probe.vis);
+    return tab;
+  }
   console.warn("[batchAutofill] ITANDI のタブを一覧に戻します: " + G.reasonJa(plan.reason) + (probe.err ? "（" + probe.err + "）" : "") + " url=" + String(probe.url).slice(0, 80));
   _auditStep(runId, "tab_reload", "ITANDI: " + G.reasonJa(plan.reason) + (probe.err ? " / " + probe.err : ""));
   if (probe.gone) {
@@ -4502,6 +4527,7 @@ async function _ensureItandiTab(tab, auditRun, customerId) {
     if (customerId != null) { try { _endFillDoneWaiter("itandi", String(customerId), "ITANDI のタブが検索の画面でない"); } catch (_) {} }
     throw new Error("AXLX_TAB_DEAD: ITANDI のタブが検索の画面になりません（開き直しても・" + G.reasonJa(plan2.reason) + "）");
   }
+  if (plan2.front) await _bringItandiTabFront(tab, runId, probe2.vis);
   return tab;
 }
 

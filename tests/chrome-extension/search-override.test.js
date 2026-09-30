@@ -82,9 +82,10 @@ console.log("\n■ 配線（読み込み・2か所の受け口・中継）");
   ok("underbar が popup へ searchOverride を中継", /searchOverride: msg\.searchOverride \|\| null/.test(ub));
   const pp = read("popup.js");
   // パターン8（同じ処理が2か所）: runtime.onMessage と postMessage の両方の受け口で同じ関数を使う
-  eq("2つの受け口の両方で欄に入れる", (pp.match(/_applySearchOverrideToForm\(_ov[RP],/g) || []).length, 2);
-  eq("2つの受け口の両方で押した後に戻す予約", (pp.match(/_afterSearchOverrideClick\(_ov[RP]\)/g) || []).length, 2);
-  eq("2つの受け口の両方で保存済みの一時調整の復元を止める", (pp.match(/if \(_ov[RP]\) _adjRestoreSuppressed = true;/g) || []).length, 2);
+  // v2.5.48: 受け口は1本（_openAndClickAutofill）になった＝同じ処理の写しは無い
+  eq("受け口（1本）で欄に入れる", (pp.match(/_applySearchOverrideToForm\(ov, d\.areaMode, c\)/g) || []).length, 1);
+  eq("受け口（1本）で押した後に戻す予約", (pp.match(/if \(ovApplied\) _afterSearchOverrideClick\(ov\);/g) || []).length, 1);
+  eq("受け口（1本）で保存済みの一時調整の復元を止める", (pp.match(/if \(o\.suppressRestore \|\| ov\) _adjRestoreSuppressed = true;/g) || []).length, 1);
   eq("fetchFreshCustomer の読み直し3か所で欄と軸を戻さない", (pp.match(/if \(_searchOverrideHeld\(fresh\.id\)\) return;/g) || []).length, 3);
   // 5大バグの型: 入れるだけ（input の出来事を出さない＝履歴に保存しない）・トグルの click を重ねない
   const fn = pp.slice(pp.indexOf("function _applySearchOverrideToForm"), pp.indexOf("function _afterSearchOverrideClick"));
@@ -153,7 +154,7 @@ console.log("\n■ v2.5.47 階（竹内 9/30「一時的に1階も含む場合�
   // サイトの検索は階で絞っていない（登録の「2階以上」も検索では絞らない＝判定で見る）→ 1階を含める回はサイトの欄を触らなくてよい
   const sites = ["page-script.js", "itandi-page-script.js", "reins-page-script.js"].map(read).join("\n");
   ok("サイトの自動入力に階の欄の操作が無い（登録の2階以上も検索では絞っていない＝1階は検索に入る）", !/floor_min|階以上/.test(sites));
-  ok("manifest 2.5.47", JSON.parse(read("manifest.json")).version === "2.5.47");
+  ok("manifest 2.5.48", JSON.parse(read("manifest.json")).version === "2.5.48");
 }
 
 console.log("\n■ 今ある一時調整の項目がその回だけ効く（popup の欄 → 各サイトの組み立て）");

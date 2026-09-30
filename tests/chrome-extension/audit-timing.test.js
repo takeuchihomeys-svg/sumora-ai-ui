@@ -15,14 +15,16 @@ const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return "";
 (async () => {
   const popup = read("popup.js");
   console.log("■ ① ウェブアプリの自動入力（pendingPopupCmd）の2経路も、登録の条件の読み直しを待ってから押す");
-  const fn = grab(popup, "async function _runPendingPopupCmd(");
-  ok("共通の関数 _runPendingPopupCmd がある", fn.length > 0);
+  // v2.5.48: 芯は _openAndClickAutofill（background の切替と同じ1本）。_runPendingPopupCmd はそれを呼ぶだけ
+  const core = grab(popup, "async function _openAndClickAutofill(");
+  const fn = core + "\n" + grab(popup, "function _runPendingPopupCmd(");
+  ok("共通の関数 _runPendingPopupCmd がある（芯は _openAndClickAutofill）", core.length > 0 && /function _runPendingPopupCmd\(cmd, via\) \{\s*return _openAndClickAutofill\(cmd, \{[^}]*suppressRestore: true[^}]*requireVisible: true, lockAreaMode: true \}\);/.test(popup));
   ok("開いた時（loadCustomers の後）と開いている時（storage.onChanged）の両方がこの関数を呼ぶ",
     /_runPendingPopupCmd\(cmd, "load"\)/.test(popup) && /_runPendingPopupCmd\(cmd, "changed"\)/.test(popup));
   ok("旧: 読み直しを待たずに 0.8〜1.2秒で押す setTimeout（_autoClickDelay）が残っていない", !/_autoClickDelay/.test(popup));
-  const iOpen = fn.indexOf("openInstructions(cmd.site)"), iWait = fn.indexOf("await _awaitFreshPreload(6000)"), iMode = fn.indexOf("btn-mode-station"), iLock = fn.indexOf("lockedAreaMode = currentAreaMode"), iClick = fn.indexOf("aBtn.click()");
+  const iOpen = fn.indexOf("openInstructions(d.site)"), iWait = fn.indexOf("await _awaitFreshPreload(6000)"), iMode = fn.indexOf("btn-mode-station"), iLock = fn.indexOf("lockedAreaMode = currentAreaMode"), iClick = fn.indexOf("aBtn.click()");
   ok("開く → 待つ → 地域/駅の軸 → 軸を固定 → 押す の順", iOpen > 0 && iWait > iOpen && iMode > iWait && iLock > iMode && iClick > iLock, [iOpen, iWait, iMode, iLock, iClick].join(","));
-  ok("開く時は一時調整を復元しない（try/finally で必ず戻す）", /_adjRestoreSuppressed = true;\s*try \{ openInstructions\(cmd\.site\); \} finally \{ _adjRestoreSuppressed = false; \}/.test(fn));
+  ok("開く時は一時調整を復元しない（try/finally で必ず戻す）", /if \(o\.suppressRestore \|\| ov\) _adjRestoreSuppressed = true;\s*try \{ openInstructions\(d\.site\); \} finally \{ _adjRestoreSuppressed = false; \}/.test(fn));
   ok("押す前の人の間は乱数（800〜1200ms）", /setTimeout\(r, 800 \+ Math\.floor\(Math\.random\(\) \* 400\)\)/.test(fn));
   ok("自動の印（automated・auto_send_all・area_mode_locked）を押した後に消す", /delete aBtn\.dataset\.automated;[\s\S]*delete aBtn\.dataset\.area_mode_locked;/.test(fn));
 

@@ -43,6 +43,25 @@
     "commute",
   ];
 
+  // ── v2.5.48 同じ「お客様の切り替え」が2回届く（popup の iframe は background の tabs.sendMessage を
+  //   ①chrome.runtime.onMessage で直接 ②underbar.js の中継（postMessage）の2つで受ける）──
+  // 2026-09-30 本番（search_audits・ITANDI の一括の回すべて）: 6〜13秒遅れで trigger=single の行が付き、ページの段が全部そちらに付いた
+  //   ＝自動入力を2回押していた。2回目は点検の控え（_pendingAuditCtx）が1回目に使われた後なので run_id が新しく作られ、
+  //   ページ側の「同じ条件の2回目は動かさない」（itandi-form-guard fillKey）も run_id の違いで外れた。区のお客様は2本が所在地の窓でぶつかり 240秒の watchdog。
+  //   直し: 入口（popup）で同じ お客様×サイト×点検の回 の2回目を受けない。受け取りはほぼ同時なので窓は短く（入れ直し＝9秒以上後 は通す）
+  var SWITCH_DUP_WINDOW_MS = 4000;
+  function switchKey(d) {
+    var x = d || {};
+    return [x.customerId == null ? "" : String(x.customerId), x.site || "", x.auditRunId || "", x.is_wide ? "w" : "p", x.areaMode || ""].join("|");
+  }
+  /** prev: { key, at }。同じ鍵が windowMs 以内なら2回目（true） */
+  function isDuplicateSwitch(prev, key, now, windowMs) {
+    if (!prev || !key || prev.key !== key) return false;
+    var w = windowMs == null ? SWITCH_DUP_WINDOW_MS : windowMs;
+    var d = Number(now) - Number(prev.at);
+    return d >= 0 && d < w;
+  }
+
   function newRunId(now) {
     var t = typeof now === "number" ? now : Date.now();
     return "sa_" + t.toString(36) + "_" + Math.random().toString(36).slice(2, 10);
@@ -375,6 +394,7 @@
     STATION_NAMES_MAX: STATION_NAMES_MAX,
     SNAPSHOT_FIELDS: SNAPSHOT_FIELDS,
     newRunId: newRunId,
+    SWITCH_DUP_WINDOW_MS: SWITCH_DUP_WINDOW_MS, switchKey: switchKey, isDuplicateSwitch: isDuplicateSwitch,
     maskDigits: maskDigits,
     snapshotCustomer: snapshotCustomer,
     pickIntended: pickIntended,

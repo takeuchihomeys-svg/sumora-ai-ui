@@ -355,17 +355,39 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
 const _resolveAreaCache = new Map(); // key: `${area}|${mode}`, value: { data, ts }
 let _fillDoneWatchdog = null; // fill-done 25秒タイムアウト監視タイマー
 // ── 検索の点検（2026-09-25 竹内「ブレインモードで物件自動検索や一括検索した際に、検索がちゃんとされていなかったら原因を見つけられるようにする」）──
-// background の一括検索は axlx-switch-customer で run_id・起動の種類・コマンド ID を渡してくる（ここに60秒だけ置く）。
+// background の一括検索は axlx-switch-customer で run_id・起動の種類・コマンド ID を渡してくる（v2.5.48: 押すボタンに直接持たせる・_clickAuditCtx）。
 // 自動入力を page-script に渡す直前（_auditTag）に、ブレインの時だけ started（入れようとした条件・お客様の条件の写し）を送り、
 // conditions._audit_run_id を載せる → page-script が fill-done に audit を載せて返す。個別の検索は run_id をここで作る（trigger=single）
-var _pendingAuditCtx = null; // { runId, trigger, commandId, at }
-function _setPendingAuditCtx(d) {
-  _pendingAuditCtx = d && (d.auditRunId || d.trigger) ? { runId: d.auditRunId || null, trigger: d.trigger || null, commandId: d.commandId || null, at: Date.now() } : null;
-}
-function _auditTag(site, customer, conditions) {
+// v2.5.48 同じ「お客様の切り替え」の2回目を受けない（search-audit.js isDuplicateSwitch）。
+//   この iframe は background の tabs.sendMessage を ①chrome.runtime.onMessage ②underbar.js の中継（postMessage）の両方で受け、自動入力を2回押していた
+//   （2026-09-30 ITANDI の一括の回すべてに trigger=single の行・区のお客様は2本が所在地の窓でぶつかり 240秒の watchdog）
+//   根本の直しは「受け口を underbar の中継の1本にする」（_runSwitchCustomer）。これは保険で、鍵の記録は実際にボタンを押す直前だけ
+//   （先に着いた側が「顧客なし」等で何もせず終わった時に、もう片方まで捨てない）
+var _lastSwitchSeen = null; // { key, at }
+function _isDupSwitch(d) {
   try {
-    var ctx = _pendingAuditCtx && Date.now() - _pendingAuditCtx.at < 60000 ? _pendingAuditCtx : null;
-    _pendingAuditCtx = null;
+    var A = self.AxlxSearchAudit;
+    if (!A || !A.isDuplicateSwitch) return false;
+    var key = A.switchKey(d), now = Date.now();
+    if (A.isDuplicateSwitch(_lastSwitchSeen, key, now)) {
+      console.log("[popup] 同じ切り替えの2回目は受けない（" + (now - _lastSwitchSeen.at) + "ms 後） customerId=" + (d && d.customerId) + " site=" + (d && d.site));
+      return true;
+    }
+    _lastSwitchSeen = { key: key, at: now };
+  } catch (_) {}
+  return false;
+}
+// v2.5.48 点検の文脈（run_id・起動の種類・コマンド ID）は「1回使い切りの置き場」に置かず、押すボタンに直接持たせる。
+//   旧は _pendingAuditCtx（60秒・1回読んだら消す）で、同じ指示で2回押されると2本目は文脈なし＝trigger=single の幽霊の行になっていた。
+//   onclick は最初（await の前）に _clickAuditCtx で受け取り、_auditTag に渡す。手で押した時は null（single）
+function _clickAuditCtx(btn) {
+  var c = (btn && btn._axlxAuditCtx) || null;
+  if (btn) btn._axlxAuditCtx = null;
+  return c;
+}
+function _auditTagWith(ctx, site, customer, conditions) { return _auditTag(site, customer, conditions, ctx); }
+function _auditTag(site, customer, conditions, ctx) {
+  try {
     var A = self.AxlxSearchAudit, core = self.AxlxModeCore;
     if (!A || !core || !conditions) return conditions;
     var st = _modeState();
@@ -3419,6 +3441,7 @@ let _adjLastEditedField  = null;  // "ward" | "station" | null — 最後に手�
 let _adjDirty            = false; // 一時調整5フィールド（地域/駅/賃料/面積min/max）に編集があったか
 let _adjDraftCustomerId  = null;  // このセッションで履歴保存済みの顧客ID（連続編集は先頭エントリを更新）
 let _adjSaveTimer        = null;  // oninput → localStorage 保存のデバウンスタイマー
+let _itandiFillRunningAt = 0; // v2.5.48 ITANDI の自動入力の実行中の印（始めた時刻・0＝走っていない）
 let _adjRestoreSuppressed = false; // 自動バッチ（pendingPopupCmd）中は履歴の自動復元をしない
 
 // ── 2026-09-27 自動の検索（一括・ブレイン・AIX・17時便）は、押す前に登録の条件の読み直しを待つ（v2.5.30）──
@@ -3449,45 +3472,94 @@ async function _awaitFreshPreload(maxMs) {
 //   → 同じ考え方: 開く → 登録の条件の読み直し（_freshPreloadPromise）を待つ（最長6秒・読めなければ今まで通り）
 //     → 地域/駅の軸を押す（読み直しの作り直しで軸が戻らないよう待った後）→ 人の間 → 押す。
 //   押す時の軸は待った後の currentAreaMode で固定する（API の非同期の補正で変わらないように・旧と同じ）。
-async function _runPendingPopupCmd(cmd, via) {
-  var c = (allCustomers || []).find(function(x) {
-    return String(x.id) === String(cmd.customerId);
-  });
-  if (!c) return;
-  openSiteView(c);
-  if (!cmd.site) return;
-  // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
-  if (cmd.is_wide) {
-    var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
-    if (wBtnEl) wBtnEl.click();
-  } else {
-    var pBtnEl = document.querySelector('.mode-btn[data-mode="pinpoint"]');
-    if (pBtnEl) pBtnEl.click();
-  }
-  // 自動バッチ: 一時調整履歴の自動復元をしない（検索条件を確定的に保つ）。読み直しの後の作り直しも同じ印を守る（_supAtOpen_*）
-  _adjRestoreSuppressed = true;
-  try { openInstructions(cmd.site); } finally { _adjRestoreSuppressed = false; }
-  // v2.5.31: 登録の条件の読み直しが欄に入ってから押す（間に合わないと古い条件で検索していた）
-  if (!(await _awaitFreshPreload(6000))) console.warn("[popup] 登録の条件を読み直せないまま自動入力します（手元の値・" + via + "）");
-  // 'both' のとき: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
-  if (cmd.areaMode === 'station' || cmd.areaMode === 'ward' || cmd.areaMode === 'both') {
-    var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
-    if (btnEl) btnEl.click();
-  }
-  // Step ④ auto-click: autofill-btn をユーザー操作に近い遅延で自動クリックする
-  var lockedAreaMode = currentAreaMode; // 顧客切替・API非同期コールバックによる上書きを防ぐ
-  await new Promise(function(r) { setTimeout(r, 800 + Math.floor(Math.random() * 400)); }); // 800-1200ms
-  var aBtn = document.getElementById('autofill-btn');
-  if (aBtn && aBtn.style.display !== 'none') {
-    aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
-    aBtn.dataset.auto_send_all = cmd.auto_send_all ? "1" : "";
-    aBtn.dataset.area_mode_locked = lockedAreaMode;
-    aBtn.click();
-    delete aBtn.dataset.automated;
-    delete aBtn.dataset.auto_send_all;
-    delete aBtn.dataset.area_mode_locked;
+// ==AXLX-SWITCH-CORE-BEGIN==
+// v2.5.48 「お客様を開く → サイトの手順を開く → 登録の条件の読み直しを待つ → 軸 → 人の間 → 自動入力のボタンを押す」の1本。
+//   旧は同じ流れの写しが3つ（ウェブアプリの pendingPopupCmd・underbar の中継・chrome.runtime.onMessage）あり、
+//   background の tabs.sendMessage 1回を 中継 と onMessage の両方が受けて、自動入力のボタンを2回押していた
+//   （リアプロは onclick が disabled にするので偶然止まり、ITANDI は歯止めが無く2本が同じフォームを触った＝区のお客様は 240秒の watchdog・
+//    点検に trigger=single の幽霊の行）。受け口は underbar の中継の1本だけにし、答え（押したか）を正直に返す。
+//   返り値 { ok, reason?, dup? }: ok は「ボタンを押した」時だけ（dup は同じ指示の2回目で、1回目が押している）
+var SWITCH_CLICK_DEADLINE_MS = 16000; // これより遅れたら押さない（underbar は 20秒で「答えなし」を返し、background が代わりの入力をする＝二重に入れない）
+async function _openAndClickAutofill(d, o) {
+  o = o || {};
+  var t0 = Date.now();
+  try {
+    if (o.waitCustomersMs) {
+      // allCustomers ロード完了待ち（初回ロード時の非同期フェッチ完了前に届く場合を吸収）
+      var deadline = t0 + o.waitCustomersMs;
+      while ((!allCustomers || !allCustomers.length) && Date.now() < deadline) {
+        await new Promise(function(r) { setTimeout(r, _popupPd(100)); });
+      }
+    }
+    var c = (allCustomers || []).find(function(x) { return String(x.id) === String(d.customerId); });
+    if (!c) {
+      console.warn("[popup] " + (o.via || "switch") + ": 顧客が見つかりません id=", d.customerId);
+      return { ok: false, reason: "customer-not-found" };
+    }
+    openSiteView(c);
+    if (!d.site) return { ok: false, reason: "no-site" };
+    // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
+    var modeEl = document.querySelector(d.is_wide ? '.mode-btn[data-mode="wide"]' : '.mode-btn[data-mode="pinpoint"]');
+    if (modeEl) modeEl.click();
+    // 2026-09-27 AIXツールのメモの一時調整がある回は、保存済みの一時調整を復元しない（書かれていない条件は登録のまま）。
+    //   ウェブアプリの自動入力（suppressRestore）は常に復元しない（検索条件を確定的に保つ）
+    var ov = (!o.noOverride && d.searchOverride && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(d.searchOverride) : null;
+    if (o.suppressRestore || ov) _adjRestoreSuppressed = true;
+    try { openInstructions(d.site); } finally { _adjRestoreSuppressed = false; }
+    // 登録の条件の読み直しが欄に入ってから押す（間に合わないと古い条件で検索していた・v2.5.30／31）
+    if (!(await _awaitFreshPreload(6000))) console.warn("[popup] 登録の条件を読み直せないまま自動入力します（手元の値・" + (o.via || "switch") + "）");
+    // 'both'（ウェブアプリ）: 1回目は ward として実行（2回目の station は webapp が 10秒後に発火）
+    var am = (d.areaMode === 'both' && o.allowBoth) ? 'ward' : d.areaMode;
+    if (am === 'station' || am === 'ward') {
+      var mBtn = document.getElementById(am === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
+      if (mBtn) {
+        mBtn.click(); // UI更新（active class 切り替え）
+        // 一括検索（DB設定の area_mode）は "db"＝自動補正しない（旧は onMessage の側だけが付けていた）
+        if (o.areaSource) _areaModeSource = o.areaSource;
+      }
+    }
+    var lockedAreaMode = currentAreaMode; // 顧客切替・API非同期コールバックによる上書きを防ぐ
+    await new Promise(function(r) { setTimeout(r, 800 + Math.floor(Math.random() * 400)); }); // 800-1200ms
+    var aBtn = document.getElementById('autofill-btn');
+    if (!aBtn || (o.requireVisible && aBtn.style.display === 'none')) return { ok: false, reason: "no-autofill-btn" };
+    if (o.deadlineMs && Date.now() - t0 > o.deadlineMs) {
+      console.warn("[popup] " + (o.via || "switch") + ": 遅すぎるので押さない（" + (Date.now() - t0) + "ms）");
+      return { ok: false, reason: "too-late" };
+    }
+    // 同じ指示の2回目は押さない。鍵の記録は「実際に押す直前」（先に着いた側が顧客なし等で何もせず終わっても、もう片方を捨てない）
+    if (o.dedupe && _isDupSwitch(d)) return { ok: true, dup: true };
+    var ovApplied = ov ? _applySearchOverrideToForm(ov, d.areaMode, c) : false;
+    var arUndo = o.autoRun ? _applyAutoRunToForm(aBtn, d.autoRun) : null;
+    // 点検の文脈は押すボタンに直接持たせる（onclick が最初に受け取る・_clickAuditCtx）
+    aBtn._axlxAuditCtx = (d.auditRunId || d.trigger) ? { runId: d.auditRunId || null, trigger: d.trigger || null, commandId: d.commandId || null } : null;
+    aBtn.dataset.automated = "1"; // 自動であることを onclick ハンドラに伝える
+    aBtn.dataset.auto_send_all = d.auto_send_all ? "1" : "";
+    if (o.lockAreaMode) aBtn.dataset.area_mode_locked = lockedAreaMode;
+    try {
+      aBtn.click(); // display:noneでもonclickは発火する
+    } finally {
+      delete aBtn.dataset.automated;
+      delete aBtn.dataset.auto_send_all;
+      delete aBtn.dataset.area_mode_locked;
+      aBtn._axlxAuditCtx = null;
+    }
+    if (o.autoRun) _restoreAutoRun(arUndo);
+    if (ovApplied) _afterSearchOverrideClick(ov);
+    return { ok: true };
+  } catch (e) {
+    console.error("[popup] " + (o.via || "switch") + " error:", e);
+    return { ok: false, reason: "exception: " + String((e && e.message) || e).slice(0, 80) };
   }
 }
+// ウェブアプリの自動入力（pendingPopupCmd・開いた時／開いている時）
+function _runPendingPopupCmd(cmd, via) {
+  return _openAndClickAutofill(cmd, { via: "pendingPopupCmd/" + via, suppressRestore: true, noOverride: true, allowBoth: true, requireVisible: true, lockAreaMode: true });
+}
+// background の一括検索・個別の検索（axlx-switch-customer → underbar の中継）。受け口はここ1本
+function _runSwitchCustomer(d) {
+  return _openAndClickAutofill(d, { via: "switch-customer", waitCustomersMs: 5000, areaSource: "db", autoRun: true, dedupe: true, deadlineMs: SWITCH_CLICK_DEADLINE_MS });
+}
+// ==AXLX-SWITCH-CORE-END==
 
 // 一時調整の上書きモードを判定: "ward" | "station" | null（null=顧客デフォルトで検索）
 function computeTempAdjOverride() {
@@ -3987,7 +4059,19 @@ function openInstructions(siteKey) {
     // ボタン表示と同時に未登録地名チェック（クリック前に気づける）
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
+    // v2.5.48 実行中の印: 走っている間の2回目は受けない（リアプロは disabled で止まるが ITANDI には歯止めが無かった）。
+    //   終わり・例外で必ず外す（finally）。万一戻らない時のため 60秒より古い印は無効
     autofillBtn.onclick = async () => {
+      if (_itandiFillRunningAt && Date.now() - _itandiFillRunningAt < 60000) {
+        console.log("[popup] itandi の自動入力は実行中 → 2回目は受けない");
+        _clickAuditCtx(autofillBtn);
+        return;
+      }
+      _itandiFillRunningAt = Date.now();
+      const _auditCtx_it = _clickAuditCtx(autofillBtn); // await 前に取得
+      try { await _itandiAutofillRun(_auditCtx_it); } finally { _itandiFillRunningAt = 0; }
+    };
+    const _itandiAutofillRun = async (_auditCtx_it) => {
       const isAutomated_itandi = !!autofillBtn.dataset.automated;
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
@@ -4382,7 +4466,7 @@ function openInstructions(siteKey) {
         update_days:     conditions.rp_update_days ? conditions.rp_update_days + "日以内" : "指定なし",
       });
       // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる
-      _auditTag("itandi", selectedCustomer, conditions);
+      _auditTag("itandi", selectedCustomer, conditions, _auditCtx_it);
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
       if (isUnderbar) {
         window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
@@ -4475,6 +4559,7 @@ function openInstructions(siteKey) {
     });
 
     autofillBtn.onclick = async () => {
+      const _auditCtx_rp = _clickAuditCtx(autofillBtn); // v2.5.48 await 前に取得（点検の文脈は click に直接渡る）
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
       const isAutomated = !!autofillBtn.dataset.automated;
       const isAutoSendAll = !!autofillBtn.dataset.auto_send_all;
@@ -4887,7 +4972,7 @@ function openInstructions(siteKey) {
         action: "autofill",
         source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
         // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる（_auditTag）
-        conditions: _auditTag("realpro", c, {
+        conditions: _auditTagWith(_auditCtx_rp, "realpro", c, {
           area_mode:     _lockedMode || currentAreaMode,
           rent_min:      readAdjRentMin(c, rpEffectiveRentMax),
           rent_max:      rpEffectiveRentMax,
@@ -5000,6 +5085,7 @@ function openInstructions(siteKey) {
     autofillBtn.textContent = "⚡ REINSに自動入力";
     autofillBtn.className = "autofill-btn";
     autofillBtn.onclick = async () => {
+      const _auditCtx_re = _clickAuditCtx(autofillBtn); // v2.5.48 await 前に取得
       const adjC = buildAdjCustomer(c0);
       renderInstrSteps("reins", adjC);
 
@@ -5163,7 +5249,7 @@ function openInstructions(siteKey) {
         floor_plan:    conditions.floor_plan,
       });
       // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる
-      _auditTag("reins", c0, conditions);
+      _auditTag("reins", c0, conditions, _auditCtx_re);
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs[0]) return;
         chrome.tabs.sendMessage(tabs[0].id, {
@@ -5542,59 +5628,10 @@ document.addEventListener("DOMContentLoaded", () => {
       // chrome.runtime.sendMessage のiframe frame登録ラグを回避するため
       // background.js → tabs.sendMessage → underbar.js → postMessage → ここ の経路を使う
       if (e.data?.from === "underbar-parent" && e.data?.action === "switch-customer") {
-        (async function() {
-          // allCustomers ロード完了待ち（初回ロード時の非同期フェッチ完了前に届く場合を吸収 Bug 1 fix）
-          var deadline = Date.now() + 5000;
-          while ((!allCustomers || !allCustomers.length) && Date.now() < deadline) {
-            await new Promise(function(r) { setTimeout(r, _popupPd(100)); });
-          }
-          var c = (allCustomers || []).find(function(x) {
-            return String(x.id) === String(e.data.customerId);
-          });
-          if (!c) {
-            console.warn("[popup] switch-customer postMessage: 顧客が見つかりません id=", e.data.customerId);
-            return;
-          }
-          openSiteView(c);
-          if (e.data.site) {
-            // 顧客切替のたびに searchMode を明示的にセット（前顧客の wide 状態が引き継がれるバグを防止）
-            if (e.data.is_wide) {
-              var wBtn = document.querySelector('.mode-btn[data-mode="wide"]');
-              if (wBtn) wBtn.click();
-            } else {
-              var pBtn = document.querySelector('.mode-btn[data-mode="pinpoint"]');
-              if (pBtn) pBtn.click();
-            }
-            // 2026-09-27 AIXツールのメモの一時調整がある回は、保存済みの一時調整を復元しない（書かれていない条件は登録のまま）
-            var _ovP = (e.data.searchOverride && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(e.data.searchOverride) : null;
-            if (_ovP) _adjRestoreSuppressed = true;
-            try { openInstructions(e.data.site); } finally { _adjRestoreSuppressed = false; }
-            // 2026-09-27 v2.5.30: 登録の条件の読み直しが欄に入ってから押す（間に合わないと古い条件で検索していた）
-            if (!(await _awaitFreshPreload(6000))) console.warn("[popup] 登録の条件を読み直せないまま自動入力します（手元の値）");
-            if (e.data.areaMode === 'station' || e.data.areaMode === 'ward') {
-              var mBtn = document.getElementById(
-                e.data.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward'
-              );
-              if (mBtn) mBtn.click();
-            }
-            await new Promise(function(r) {
-              setTimeout(r, 800 + Math.floor(Math.random() * 400));
-            });
-            var aBtn = document.getElementById('autofill-btn');
-            if (aBtn) {
-              _setPendingAuditCtx(e.data); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
-              var _ovAppliedP = _ovP ? _applySearchOverrideToForm(_ovP, e.data.areaMode, c) : false;
-              var _arUndoP = _applyAutoRunToForm(aBtn, e.data.autoRun);
-              aBtn.dataset.automated = "1";
-              aBtn.dataset.auto_send_all = e.data.auto_send_all ? "1" : "";
-              aBtn.click();
-              delete aBtn.dataset.automated;
-              delete aBtn.dataset.auto_send_all;
-              _restoreAutoRun(_arUndoP);
-              if (_ovAppliedP) _afterSearchOverrideClick(_ovP);
-            }
-          }
-        })();
+        // v2.5.48 受け口はここ1本（chrome.runtime.onMessage の側は消した）。押したかどうかを underbar に正直に返す（reqId）
+        _runSwitchCustomer(e.data).then(function (r) {
+          try { window.parent.postMessage({ from: "axlx-switch-result", reqId: e.data.reqId || null, ok: !!(r && r.ok), reason: (r && r.reason) || null, dup: !!(r && r.dup) }, "*"); } catch (_) {}
+        });
       }
     });
   }
@@ -5850,82 +5887,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 })();
 
-// ── axlx-switch-customer: 連続顧客切替メッセージハンドラ ──────────────────────
-// background.js から送られてくる { type: "axlx-switch-customer", customerId, site, areaMode }
-// を受け取り、ポップアップを即座に該当顧客・サイトに切り替えて autofill を自動実行する。
-chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
-  if (msg.type === "axlx-switch-customer") {
-    (async function() {
-      try {
-        // allCustomers からIDで顧客を検索
-        var c = (allCustomers || []).find(function(x) {
-          return String(x.id) === String(msg.customerId);
-        });
-        if (!c) {
-          console.warn("[popup] axlx-switch-customer: 顧客が見つかりません id=", msg.customerId);
-          sendResponse({ ok: false, reason: "customer not found" });
-          return;
-        }
-        // 顧客サイト選択ビューに切り替え（selectedCustomer を更新し view-site を表示）
-        openSiteView(c);
-        if (msg.site) {
-          // wide モードを正しく切り替え（else がないと前顧客の wide が引き継がれる）
-          if (msg.is_wide) {
-            var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
-            if (wBtnEl) wBtnEl.click();
-          } else {
-            var pBtnEl = document.querySelector('.mode-btn[data-mode="pinpoint"]');
-            if (pBtnEl) pBtnEl.click();
-          }
-          // サイト別手順ビューを開く（selectedSite を更新）
-          // 2026-09-27 AIXツールのメモの一時調整がある回は、保存済みの一時調整を復元しない（書かれていない条件は登録のまま）
-          var _ovR = (msg.searchOverride && self.AxlxSearchOverride) ? self.AxlxSearchOverride.sanitize(msg.searchOverride) : null;
-          if (_ovR) _adjRestoreSuppressed = true;
-          try { openInstructions(msg.site); } finally { _adjRestoreSuppressed = false; }
-          // 2026-09-27 v2.5.30: 登録の条件の読み直しが欄に入ってから押す（間に合わないと古い条件で検索していた）
-          if (!(await _awaitFreshPreload(6000))) console.warn("[popup] 登録の条件を読み直せないまま自動入力します（手元の値）");
-          // areaMode が指定されていればモードをセット
-          // ※ modeBtn.click() は _areaModeSource="user" にしてしまいAPIによる自動補正を封じるため
-          //   一括検索（DB設定）では "auto" に留め、臨機応変フォールバックが働くようにする
-          if (msg.areaMode === 'station' || msg.areaMode === 'ward') {
-            var modeBtn = document.getElementById(
-              msg.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward'
-            );
-            if (modeBtn) {
-              modeBtn.click(); // UI更新（active class 切り替え）
-              _areaModeSource = "db"; // DB設定の area_mode は自動補正しない（"user"と同等）
-            }
-          }
-          // DOM レンダリング完了を待って autofill-btn をクリック
-          await new Promise(function(resolve) {
-            setTimeout(resolve, 800 + Math.floor(Math.random() * 400));
-          });
-          var aBtn = document.getElementById('autofill-btn');
-          if (aBtn) {
-            _setPendingAuditCtx(msg); // 検索の点検: background が作った run_id を自動入力の直前まで持つ
-            var _ovAppliedR = _ovR ? _applySearchOverrideToForm(_ovR, msg.areaMode, c) : false;
-            var _arUndoR = _applyAutoRunToForm(aBtn, msg.autoRun);
-            aBtn.dataset.auto_send_all = msg.auto_send_all ? "1" : "";
-            aBtn.click(); // display:noneでもonclickは発火する
-            delete aBtn.dataset.auto_send_all;
-            _restoreAutoRun(_arUndoR);
-            if (_ovAppliedR) _afterSearchOverrideClick(_ovR);
-            sendResponse({ ok: true });
-          } else {
-            sendResponse({ ok: false });
-          }
-        } else {
-          // Bug 3 fix: msg.site が falsy の場合も必ず sendResponse を呼ぶ（チャンネル放置防止）
-          sendResponse({ ok: false, reason: "no-site" });
-        }
-      } catch(e) {
-        console.error("[popup] axlx-switch-customer error:", e);
-        sendResponse({ ok: false });
-      }
-    })();
-    return true; // 非同期 sendResponse のためチャンネルを開いたままにする
-  }
-});
+// ── axlx-switch-customer ──
+// v2.5.48: ここにあった chrome.runtime.onMessage の受け口は消した。background の tabs.sendMessage 1回を
+//   underbar.js の中継（postMessage → 上の "underbar-parent"）とここの両方が受け、自動入力のボタンを2回押していたため。
+//   受け口は underbar の中継の1本だけ（_runSwitchCustomer）。このファイルに switch-customer の onMessage を足さないこと
+//   （tests/chrome-extension/switch-once.test.js が固定）
 
 // ── 一括検索ツールバーボタン ──────────────────────────────────────
 (function() {

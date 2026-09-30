@@ -82,7 +82,7 @@ console.log("\n■ background.js の順番（静的に確かめる）");
   const bg = read("background.js");
   ok("batch-guard.js を読む", /import "\.\/batch-guard\.js";/.test(bg));
   const af = bg.slice(bg.indexOf("async function _batchAutofill("), bg.indexOf("async function _applyRealproResolved("));
-  ok("リアプロのタブは main.php を先に選び、使う前に確かめる", /pickRealproTab\(allTabs\)/.test(af) && af.indexOf("pickRealproTab") < af.indexOf('if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun);'));
+  ok("リアプロのタブは main.php を先に選び、使う前に確かめる", /pickRealproTab\(allTabs\)/.test(af) && af.indexOf("pickRealproTab") < af.indexOf('if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun, null, customer && customer.id);'));
   const rp = af.slice(af.indexOf('if (site === "realnetpro") {\n'), af.indexOf('} else if (site === "itandi") {'));
   ok("入力を始めた合図を待ち、来なければ読み直して1回だけやり直す（2回まで）", /_attempt < 2 && !_started/.test(rp) && /_createFillStartWaiter\(_cidStr/.test(rp) && /_ensureRealproTab\(tab, auditRun,/.test(rp) && /_restartFillDoneWaiter\("realnetpro", _cidStr\)/.test(rp));
   ok("2回とも始まらなければ検索しない（90秒待たずに閉じる）", /_endFillDoneWaiter\("realnetpro", _cidStr, "入力が始まらない"\);\s*throw new Error\("AXLX_NO_FILL_START/.test(rp));

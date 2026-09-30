@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-09-30 v2.5.48 ITANDI の物件が別のお客様に付く・同じ自動入力が2本走る・背面の ITANDI・リアプロを飛ばした後の待ち手・ログイン画面の見落とし・状態の悪い PC に手の命令（**拡張の再読み込み必須**・DB の表・列の追加なし・**サーバーはデプロイが要る**・未コミット）
+YUMA の検索と見張りのテスト（9/30 16:22〜）で見つかった物を重い順に直した。**本番の PC はまだ 2.5.47（18:25 時点）＝再読み込みするまで ①② は起き続ける**。
+- **① ITANDI の一覧が別のお客様に付く（本番で発生中・最優先）**: property_pickups で 🐥・yasuki さんの回が ℳ さん（382d4296）に（16:39 18件・16:51 16件・16:53 18件）、YUMA の 17:18 の回が yasuki さん（458cbd41）に（17:30 15件）、18:23 の yasuki さんの18件も区（住之江・住吉・平野）が本人の条件と違う。本人には合図が来ず background は5分無進捗
+  - 原因の形: `itandi-bulk-dl.js` は送る直前に popup（無ければ storage の最後に選んだお客様）へ「今のお客様は？」と聞くだけ＝別の所の状態を後から読む。なぜ前の人が返るか（popup の切り替えが2本目の入力とぶつかる等）は特定していないが、読む先を変えた
+  - 直し: background が入力の直前に必ず送る `axlx-set-fill-customer`（名前も載せた）を itandi-bulk-dl も受け、入力を始めた合図の時に結び（`_itBound`）、検索の完了で送信の相手に確定（`_itRunBound`）。自動の送信・0件の合図は `_getSendCustomer` → 純関数 `itandi-guard.js bindFillCustomer / sendCustomer`（90秒より古い控えは結ばない＝手の検索は今まで通り popup／popup と違う人なら一括の回のお客様で送り、popup の名前・条件は使わない）。取り違えを直した回は点検の result に `customer_fix {from,to}`・コンソール「⚠ popup の答えたお客様（…）は、この入力を始めたお客様（…）と違う」
+- **② 同じ自動入力が2本走る（v2.5.45 の歯止めが効いていなかった）**: popup の iframe は background の tabs.sendMessage を chrome.runtime.onMessage と underbar の中継の両方で受ける。2本目は点検の run_id が新しく作られ、ページ側の鍵（条件を丸ごと）も一致しなかった → 区のお客様は2本が所在地の窓でぶつかり 240秒の watchdog（9/30 区モード 7回中6回・18:15 もまだ発生）
+  - 直し: 入口 `popup.js _isDupSwitch`（`search-audit.js switchKey / isDuplicateSwitch`＝お客様×サイト×点検の回×広げて×エリアの形・4秒以内の2回目は受けない・入れ直し（9秒以上後）は通す）＋ページ側の鍵 `itandi-form-guard.js fillKey` から `_audit_run_id` を外す
+  - **②の根本の直し（同日・追記）= 受け口を1本に**: 原因は background の `chrome.tabs.sendMessage(axlx-switch-customer)` 1回を、同じタブの (A) `underbar.js` の中継 → popup の window message と (B) popup の `chrome.runtime.onMessage` の両方が受け、自動入力のボタンを2回 click していた事（リアプロは onclick が disabled にするので偶然止まり、ITANDI は歯止めなし。点検の文脈 `_pendingAuditCtx` が1回使い切りで2本目が trigger=single の幽霊の行）。`_isDupSwitch` だけだと、先に着いた側が「顧客なし」で何もせず終わった時にもう片方まで捨てる穴があった
+    - `popup.js`: (B) を消した。3つの写し（pendingPopupCmd・中継・onMessage）を1つの芯 **`_openAndClickAutofill(d, o)`**（印 `// ==AXLX-SWITCH-CORE-BEGIN/END==`）に。`_runSwitchCustomer`（中継・`_areaModeSource="db"`・try/catch・遅すぎたら押さない 16秒）／`_runPendingPopupCmd`（ウェブアプリ・今まで通りの軸の固定）。返り値 `{ ok, reason, dup }`＝ok は押した時だけ。`_isDupSwitch` の鍵の記録は**押す直前**。点検の文脈は置き場をやめ、押すボタンに直接（`aBtn._axlxAuditCtx` → onclick の最初の `_clickAuditCtx` → `_auditTag(…, ctx)`）。ITANDI の onclick に実行中の印 `_itandiFillRunningAt`（走っている間の2回目を受けない・finally で外す・60秒より古い印は無効）
+    - `underbar.js`: 渡しただけで ok を返さない。reqId を付けて渡し、popup の答え（`axlx-switch-result`）を待って返す（20秒答えが無ければ `popup-no-answer`＝background が代わりの入力。popup は16秒より遅れたら押さない＝二重に入れない）
+    - `background.js`: 個別の ITANDI の `_customer.customer_name`（宣言より前の参照）→ `_custName`
+    - **このファイルに switch-customer の chrome.runtime.onMessage を足さない**（`tests/chrome-extension/switch-once.test.js` 43 が固定: 模型の画面で芯と中継を動かし「1回の指示で click が1回」「同時に2回届いても1回」「顧客なしの後の同じ指示は押す」「遅すぎたら押さない」「答えを待って返す」「実行中の印」）。古い形を固定していた audit-timing／auto-run／search-override／fresh-before-autoclick／send-customer の文字の確かめを新しい形に
+    - **サーバー（幽霊の行を数えない）**: 新 `app/lib/search-audit-ghost.ts`（純関数: 一括の行の 40秒以内に同じお客様・同じサイトで出た trigger=single・命令なし＝幽霊）。`search-update-days-server.ts lastCompleteSearches`（前回の検索にしない）・`pickup-complete.ts searchHold`（幽霊の started で30分待たない・次のサイトの待ちは本物の行で決める・`pickup-complete-server` は trigger を読む）・`search-audit-check.ts` に札 **DOUBLE_FILL（bad）**（`search-audit-server.ts ghostContextFor` が回の終わりに直前の行を読む）・`screen-watch.ts` の規則 `double_fill`。テスト `app/lib/__tests__/search-audit-ghost.test.ts` 30（本番の行 249→250・252→253・269→270 の時刻そのまま）
+    - 拡張のテスト 28本・tsc 通過。**本番の PC での確かめはまだ**（再読み込み後に、点検に single の行が付かない事・`DOUBLE_FILL` が出ない事を見る）
+- **③ 順の回で ITANDI のタブを前に出す**: `batch-guard.js itandiTabPlan` が `front`（vis=hidden の時）を返し、`background.js _bringItandiTabFront`（窓の前後・最小化は触らない・点検の段 tab_front／tab_hidden）。`itandi-content.js` の pong に vis。同時の回は元から前面の時だけ
+- **④ リアプロを飛ばした後の待ち手**: `_ensureRealproTab` に customerId を渡し、AXLX_TAB_DEAD で投げる前に `_endFillDoneWaiter("realnetpro", …)`（90秒後の「fill-done-waiter タイムアウト」と写真・タブの切り替えが出ない）
+- **⑤ 見張りがログイン画面を normal と読む（サーバー）**: `screen-watch.ts` にリアプロの index.php・ルート（LOGIN_URL_SITE_RE）・タブの題「…ログイン画面」（LOGIN_TITLE_RE）・拡張の失敗の文 AXLX_TAB_DEAD…main.php／検索の画面（tab_not_search＝硬くしない・知らせ「ログイン切れの疑い」）。`screen-watch-server.ts` はページの文字が取れないタブ（dom_error）でも写真の行の題と URL を材料にする
+- **⑥ 手の命令が状態の悪い PC に渡る**: 拡張は拾いに行く時にリアプロのタブが main.php でなければ `rp=0`（`batch-guard.js realproReady`・タブを読むだけ）→ サーバー `automation-sources.ts deferForRealproNotReady`（リアプロを含む web_brain の命令を積んでから3分はその PC に渡さない・過ぎたら渡す＝1台だけの時に止めない・自動便と AIX は今まで通り）・`/api/automation/pending`
+- **直していない（軽い）**: ⑦見張りの sent_selected の誤警報の疑い（送付が★物件出し★への共有＝delivery=shared・選んだ行が号室なし）。次に同じ札が出たら delivery と号室で絞る
+- **テスト**: 新 `tests/chrome-extension/send-customer.test.js`（68・取り違えの実例・2回目の切り替え・鍵・タブを前に・待ち手・配線・版）。版の固定を 2.5.48 に。拡張のテスト 27本すべて通過・`screen-watch.test.ts` 89・`web-brain-search.test.ts` 35・tsc 通過
+- **本番のデータ（触っていない・竹内さんの判断で外す）**: ℳ さんの ITANDI の候補 id 2343〜2360・2368〜2383・2384〜2401（52件・🐥／yasuki さんの回）、yasuki さんの 2426〜2440（15件・YUMA の回）と 2509〜2526（18件・別のお客様の回の疑い）。すべて status=pending・未送信。🐥 さん 2471〜2475・のあち さん 2485〜2497 も同じ時間帯なので区を見て確かめる
+- **竹内さんに頼むこと**: ①自動便を回す PC 全部で拡張を再読み込み（小窓が「拡張 v2.5.48」）→ ITANDI・リアプロのタブを1回読み直す ②上の候補を売上サポで外す ③デプロイ後に YUMA で「🏠📋 リアプロ＋itandi」を1回 → 点検に trigger=single の行が付かない・ITANDI の候補が YUMA に付く・コンソール「fill-done 受信 → 全ページ自動送信 armed（送る相手 509cd061）」 ④`38f4be8b` の PC はリアプロにログインし直す
+
 ## 2026-09-30 v2.5.47 一時調整に「階」＋「今回だけ／条件そのものを変える」の判断の強化（**拡張の再読み込み必須**・**migrate-schema を流す**（condition_scope_decisions の表）・commit は worktree の枝・push は親）
 竹内「一時的に1階も含む場合は、検索して1階の物件も含めて送ったら大丈夫、その際だけ。階数以外の家賃でも、拡張ツールの一時調整の部分を上手く活用すればできるので、そのように行う。一時調整でその一回限定して行うか、そもそもの条件自体を変えるのかの判断の部分も強化する必要あるので、物件検索のブレインの部分にはそこの部分も強化する」
 - **YUMA で見つかった穴**: 「今回だけ1階も見たい」→ ブレインは今回だけと判断したが、一時調整（search_override）に階の欄が無く、登録の「2階以上」のまま採点された（1階の物件が × で送る候補に入らない）
@@ -1844,7 +1867,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ## 🔁 引き継ぎ事項（次セッションへ）
 
-- 現在のバージョン: **v2.5.47**（manifest.json 記載・2026-09-30 一時調整に階（floor_min）・今回だけ／切り替えの判断の強化）
+- 現在のバージョン: **v2.5.48**（manifest.json 記載・2026-09-30 ITANDI の送る相手を一括の回のお客様に・同じ切り替えの2回目を受けない）
 - **2026-09-14 賃料下限 実機確認待ち（v2.5.6）**: 拡張を再読み込み → 一時調整の「賃料下限」に 60000 を入れて各サイトで検索。リアプロ＝賃料の下限プルダウンが 6万（無ければ直下の選択肢）／itandi＝賃料の下限欄に 6、コンソール `[AX] itandi 賃料下限: 6万`（`rent:gteq が見つかりません` が出たら欄の name を DevTools で確認）／レインズ＝賃料FROM に 6、コンソール `[AX] 賃料下限 FROM(idx75)`（`idx75 が賃料FROM欄と確認できない` が出たら idx を調べ直す）
 - **2026-09-14 itandi 実機確認待ち（v2.5.5）**: 拡張を再読み込み → 駅の多い条件（SATOKO♪ 様の広げて検索など）で itandi 自動検索 → 駅チェックが途切れず続き、途中で数十秒止まらないか。コンソール `[AX] 駅クリック:` が連続して出ること・`watchdog: 240s` が出ないこと
 - **2026-09-12 itandi「電車1本」実機確認待ち**: みく様で itandi 自動入力 → 路線13本が順に選ばれ、各路線の駅が全部チェックされて検索まで進むか。コンソール `[AX] 電車1本: <路線> の駅 X/Y 選択` と `沿線の駅を計N駅選択`。150秒 watchdog（v2.5.4 で85秒から延長）に掛かるならクリック間隔・路線後待機を詰める。兵庫・京都側の駅も必要なら都道府県タブ切替の DOM 確認から

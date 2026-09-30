@@ -124,7 +124,7 @@ console.log("\n■ 心拍（running のまま30分で戻す見張りに掛けな
 {
   const bg = read("background.js");
   ok("_watchProgress が10分おきに heartbeat を送る", /if \(_batchWatch\.commandId && now - _heartbeatAt > 10 \* 60000\) \{\s*\n\s*_heartbeatAt = now;\s*\n\s*try \{ _updateBatchCommand\(_batchWatch\.commandId, \{ heartbeat: true \}\); \} catch \(_\) \{\}/.test(bg));
-  ok("版 2.5.47", JSON.parse(read("manifest.json")).version === "2.5.47");
+  ok("版 2.5.48", JSON.parse(read("manifest.json")).version === "2.5.48");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

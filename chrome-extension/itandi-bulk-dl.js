@@ -607,6 +607,35 @@
     }, 800);
   }
 
+  // ── v2.5.48 自動の送信の相手は「この入力を始めさせた一括の回のお客様」（itandi-guard.js bindFillCustomer / sendCustomer）──
+  // 2026-09-30 本番: 🐥 さん・yasuki さんの ITANDI の一覧が ℳ さんに、YUMA の一覧が yasuki さんに付いた（property_pickups）。
+  //   旧は送る直前に popup／storage へ「今のお客様は？」と聞くだけ＝別の所の状態を後から読む形で、前の人が返っても気付けなかった。
+  //   background は入力の直前に axlx-set-fill-customer（誰の入力か）を必ず送る → 入力を始めた合図の時に結び（_itBound）、
+  //   検索の完了（fill-done）で送信の相手として確定（_itRunBound）。手の送信（ボタン）・手の検索は今まで通り popup に聞く。
+  var _itFillCtx = null;   // { id, name, at } 直近の axlx-set-fill-customer
+  var _itBound = null;     // 入力を始めた合図の時に結んだお客様 { id, name }
+  var _itRunBound = null;  // 検索の完了で確定した、この自動の送信の相手
+  var _itCustomerFix = null; // 取り違えを直した回（点検の result に残す）
+  try {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      if (!msg || msg.type !== "axlx-set-fill-customer") return;
+      _itFillCtx = msg.customerId ? { id: String(msg.customerId), name: msg.customerName || null, at: Date.now() } : null;
+      // 答えは itandi-content.js が返す（ここは受けるだけ）
+    });
+  } catch (_) {}
+  function _getSendCustomer(manual, cb) {
+    getCustomerFromPopup(function (name, id, conditions) {
+      var G = _G();
+      if (manual || !G || !G.sendCustomer) { cb(name, id, conditions); return; }
+      var who = G.sendCustomer({ name: name, id: id, conditions: conditions }, _itRunBound);
+      if (who.mismatch) {
+        console.warn("[AXLX itandi] ⚠ popup の答えたお客様（" + String(who.mismatch).slice(0, 8) + "）は、この入力を始めたお客様（" + String(who.id).slice(0, 8) + "）と違う → 入力を始めたお客様で送る");
+        _itCustomerFix = { from: String(who.mismatch).slice(0, 36), to: String(who.id).slice(0, 36) };
+      }
+      cb(who.name, who.id, who.conditions);
+    });
+  }
+
   // ── LINE送信メイン ────────────────────────────────────────────────────
   function onSendToLine() {
     var targets = tracked.filter(function (t) { return t.cb.checked; });
@@ -854,7 +883,9 @@
     _itUpdateStop = null;
     var _totalSentCount = 0; // 全ページ合計送信件数（axlx-batch-customer-done に渡す）
     _itAuditRes = { pages: 0, read_rows: 0, sent_count: 0 };
-    getCustomerFromPopup(function(customerName, customerId, customerConditions) {
+    _itCustomerFix = null;
+    _getSendCustomer(_manual, function(customerName, customerId, customerConditions) {
+      if (_itCustomerFix && _itAuditRes) _itAuditRes.customer_fix = _itCustomerFix;
       // 2026-09-30 v2.5.42 竹内「ITANDI で条件指定ちゃんとできていなければ件数多すぎるバグ…」:
       //   1ページ目の資料を1件も開く前に、行（家賃・間取り・所在地）と件数の文字を background に見せる（itandi-guard.js）。
       //   一括の回で「条件が効いていない形」なら資料を取りに行かずに止め、background が1回だけ入れ直す（手動の送信は見ない）
@@ -1110,6 +1141,8 @@
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "axlx-itandi-autofill-initiated") return;
     _autofillInitiated = true;
+    // v2.5.48: この入力を始めさせたお客様を結ぶ（一括の回だけ・手の検索は null＝popup に聞く）
+    _itBound = _G() && _G().bindFillCustomer ? _G().bindFillCustomer(_itFillCtx, Date.now()) : null;
     _preAutofillBtns = new Set(findMaterialBtns());
     _pendingAutoSendDispatched = false;
     // 前顧客の0件検出タイマーが残っていたら停止（次顧客のコンテキストで誤発火しないよう）
@@ -1125,7 +1158,8 @@
     if (e.data.skip) { _autofillInitiated = false; console.log("[AXLX itandi] 検索を押していない回（" + String(e.data.error || "").slice(0, 60) + "）→ 送信を始めない"); return; }
     _autoSendArmed = true;
     _autofillInitiated = false;
-    console.log("[AXLX itandi] fill-done 受信 → 全ページ自動送信 armed");
+    _itRunBound = _itBound; // v2.5.48 この検索の結果を送る相手（一括の回のお客様・手の検索は null）
+    console.log("[AXLX itandi] fill-done 受信 → 全ページ自動送信 armed" + (_itRunBound ? "（送る相手 " + String(_itRunBound.id).slice(0, 8) + "）" : ""));
     // DOMがまだ更新中の場合がある → 1.5秒後に明示的にinject()を呼んで新ボタンを検出
     setTimeout(function() { inject(); }, 900 + Math.floor(Math.random() * 1300));
     // 0件確定ポーリング: 15秒以内に物件資料ボタンが出現しなければ0件確定
@@ -1141,7 +1175,7 @@
       _autoSendArmed = false;
       _pendingAutoSendDispatched = true;
       console.log("[AXLX itandi] 15秒経過・物件なし確定 → 0件としてaxlx-batch-customer-done送信");
-      getCustomerFromPopup(function(_n, customerId) {
+      _getSendCustomer(false, function(_n, customerId) {
         try {
           chrome.runtime.sendMessage(
             { type: "axlx-batch-customer-done", customerId: customerId || null, propertyCount: 0, audit: (function () { _itAuditRes = null; return _itAuditResult({ zero_reason: "no_rows_15s" }); })() },

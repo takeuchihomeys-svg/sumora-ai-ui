@@ -195,7 +195,41 @@
       "）。条件を入れ直しても直らないため、今回の ITANDI は見送りました（資料はダウンロードしていません）";
   }
 
+  // ── v2.5.48 送る相手（誰の物件か）は「この入力を始めさせた一括の回のお客様」で決める ──
+  // 2026-09-30 本番（search_audits 252・258・265／property_pickups 16:39・16:51・16:53・17:30）:
+  //   🐥 さん・yasuki さんの ITANDI の一覧（34件）が ℳ さんに、YUMA の一覧（15件）が yasuki さんに付いた。
+  //   旧は送る直前に popup（無ければ storage の最後に選んだお客様）へ「今のお客様は？」と聞いていた＝別の所が持つ状態を後から読む形。
+  //   background は入力の直前に必ず axlx-set-fill-customer（誰の入力か）を ITANDI のタブへ送るので、それを「入力を始めた合図」の時に結び、
+  //   自動の送信はその人で送る。popup の答えが同じ人なら popup の名前・条件を使い、違う人なら popup の名前・条件は使わない（条件の文は別の人の物）。
+  /** set-fill-customer が届いてから入力を始めた合図までの上限（popup の読み直し最長6秒＋人の間＋余裕）。これを過ぎた合図は手の検索として結ばない */
+  var FILL_BIND_WINDOW_MS = 90000;
+  /**
+   * 入力を始めた合図（autofill-initiated）の時に、その回のお客様を決める。
+   *   fillCtx: { id, name, at }（axlx-set-fill-customer を受けた時の控え）／ 無い・古い → null（手の検索＝今まで通り popup に聞く）
+   */
+  function bindFillCustomer(fillCtx, now, windowMs) {
+    var c = fillCtx || null;
+    if (!c || c.id == null || String(c.id) === "") return null;
+    var w = windowMs == null ? FILL_BIND_WINDOW_MS : windowMs;
+    var age = Number(now) - Number(c.at);
+    if (!(age >= 0 && age <= w)) return null;
+    return { id: String(c.id), name: c.name ? String(c.name) : null };
+  }
+  /**
+   * 送る相手。popup: { name, id, conditions }（popup／storage の答え）・bound: bindFillCustomer の答え（無ければ null）
+   *   → { name, id, conditions, source: "popup"|"batch", mismatch: 取り違えていた popup の id か null }
+   */
+  function sendCustomer(popup, bound) {
+    var p = popup || {};
+    var pid = p.id != null && String(p.id) !== "" ? String(p.id) : null;
+    if (!bound || !bound.id) return { name: p.name || null, id: pid, conditions: p.conditions || null, source: "popup", mismatch: null };
+    if (pid === String(bound.id)) return { name: p.name || bound.name || null, id: pid, conditions: p.conditions || null, source: "batch", mismatch: null };
+    // 別の人（か答えなし）: 一括の回のお客様で送る。popup の名前・条件は別の人の物なので使わない
+    return { name: bound.name || null, id: String(bound.id), conditions: null, source: "batch", mismatch: pid || "(none)" };
+  }
+
   return {
+    FILL_BIND_WINDOW_MS: FILL_BIND_WINDOW_MS, bindFillCustomer: bindFillCustomer, sendCustomer: sendCustomer,
     MAX_ROWS: MAX_ROWS, COUNT_MAX: COUNT_MAX, MIN_JUDGED: MIN_JUDGED, OUTSIDE_RATE: OUTSIDE_RATE, RENT_SLACK: RENT_SLACK, RENT_SLACK_WIDE: RENT_SLACK_WIDE,
     readCount: readCount, layoutKey: layoutKey, wantLayouts: wantLayouts, rentMaxYen: rentMaxYen, wantWards: wantWards,
     evaluate: evaluate, capForPage: capForPage, retryGapMs: retryGapMs, reasonsJa: reasonsJa, skipNotice: skipNotice,

@@ -77,8 +77,17 @@
     return typeof prev.at === "number" && now - prev.at >= 0 && now - prev.at < w;
   }
   // 条件の形を比べる鍵（点検の run_id は同じ回なら同じ・無い時もある＝そのまま入れる）
+  // v2.5.48: 点検の run_id（_audit_run_id）は鍵に入れない。2回目の依頼は popup が run_id を新しく作る事があり
+  //   （1回目が控えを使った後）、run_id の違いだけで「別の依頼」と読んで2本目を動かしていた（9/30 の ITANDI の一括の回すべて）
   function fillKey(cond) {
-    try { return JSON.stringify(cond == null ? null : cond); } catch (e) { return null; }
+    try {
+      if (cond && typeof cond === "object" && !Array.isArray(cond)) {
+        var c = {};
+        Object.keys(cond).forEach(function (k) { if (k !== "_audit_run_id") c[k] = cond[k]; });
+        return JSON.stringify(c);
+      }
+      return JSON.stringify(cond == null ? null : cond);
+    } catch (e) { return null; }
   }
 
   // ── fill-done の中継: ページの失敗は検索を押していない＝そのサイトを飛ばす（skip）──

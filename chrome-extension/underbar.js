@@ -488,6 +488,7 @@
   // ── background.js からの顧客切替指示を popup.js iframe に中継 ────────────────
   // chrome.runtime.sendMessage でiframe直接に届けると frame登録ラグで失敗するため
   // chrome.tabs.sendMessage(content script経路) → postMessage(iframe) の2段中継を使う
+  var SWITCH_REPLY_TIMEOUT_MS = 20000; // popup の上限（お客様の一覧 5秒＋読み直し 6秒＋人の間 1.2秒）より長く・popup の「遅すぎるので押さない」16秒より長く
   chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     if (msg.type !== "axlx-switch-customer") return false;
 
@@ -500,9 +501,34 @@
         return;
       }
       console.log("[underbar] postMessage → popup.js送信");
+      // v2.5.48 返事を正直に: 旧は渡しただけで ok を返していた（popup が「顧客なし」で何もしなくても ok＝background は入力が始まったと思って待ち続けた）。
+      //   popup が自動入力のボタンを押した／押せなかったの答え（axlx-switch-result・reqId で対応）を待って返す。
+      //   SWITCH_REPLY_TIMEOUT_MS 答えが無ければ ok:false（background が代わりの入力をする。popup は 16秒より遅れたら押さない＝二重に入れない）
+      var reqId = "sw_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      var answered = false;
+      var onResult = function (ev) {
+        var r = ev && ev.data;
+        if (!r || r.from !== "axlx-switch-result" || r.reqId !== reqId) return;
+        if (!iframe || ev.source !== iframe.contentWindow) return;
+        if (answered) return;
+        answered = true;
+        clearTimeout(timer);
+        window.removeEventListener("message", onResult);
+        console.log("[underbar] popup.js の答え ok=", !!r.ok, r.reason || "", r.dup ? "(dup)" : "");
+        sendResponse({ ok: !!r.ok, reason: r.reason || null, dup: !!r.dup });
+      };
+      var timer = setTimeout(function () {
+        if (answered) return;
+        answered = true;
+        window.removeEventListener("message", onResult);
+        console.warn("[underbar] popup.js が " + SWITCH_REPLY_TIMEOUT_MS + "ms 答えない");
+        sendResponse({ ok: false, reason: "popup-no-answer" });
+      }, SWITCH_REPLY_TIMEOUT_MS);
+      window.addEventListener("message", onResult);
       iframe.contentWindow.postMessage({
         from:         "underbar-parent",
         action:       "switch-customer",
+        reqId:        reqId,
         customerId:   msg.customerId,
         customerName: msg.customerName,
         site:         msg.site,
@@ -518,7 +544,6 @@
         // 2026-09-27 自動便の指定（午後の便の更新日・更新順・ページ数。自動便でなければ null）
         autoRun: msg.autoRun || null,
       }, "*");
-      sendResponse({ ok: true });
     };
 
     if (!iframe) {
