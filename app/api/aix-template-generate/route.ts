@@ -37,7 +37,7 @@ import {
   type RecommendationScenario, type PropertySendFacts,
 } from "@/app/lib/recommendation-frame";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（aix/action と同じ物）
-import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
+import { resolvePropertySendState, describePropertySendState, readPropertyStateFromText } from "@/app/lib/property-send-state";
 // 2026-09-18 竹内「テンプレートよくわからん文生成される」: ブレインの判断の整形と渡し方を返信生成と揃える
 import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
 // 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
@@ -70,6 +70,10 @@ import { applyDailyGreeting } from "@/app/lib/daily-greeting";
 import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 2026-09-30 竹内「2通目の言い回しが AI くさい。実際使っている言い回しが出るように／場面で違う／資料も読み取ったのを渡す」:
+//   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
+import { buildSecondSceneNote, buildSecondMaterialNote, vacatingFromMaterial, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, type SecondMaterialRow } from "@/app/lib/second-message-scene";
+import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
 
 export const maxDuration = 60;
 
@@ -156,7 +160,7 @@ AIXボタンで送付した（または送付予定の）構造化メッセー�
 【禁止ワード・表現】
 ━━━━━━━━━━━━━━━━━━━━
 × 「スモラ」という会社名 → 「弊社」
-× 「コスパ」表現 → 「好条件」「お値打ちな条件」
+× 「コスパ」表現 → 「好条件」
 × 「共益費込み」→「家賃管理費込」
 × 「即入居可能」→ 会話に明記がなければ絶対に書かない
 × 「承りました」「ご確認のほど」「確認中です」「少々お待ちください」
@@ -1293,7 +1297,8 @@ export async function POST(req: NextRequest) {
   //   直前に AIX で送った1通目を材料として渡す。実測（scripts/audit-aix-chain-coherence.ts・90日・1,419組）で
   //   スタッフは1通目を見て2通目を書いており、重複はほぼ0（未来形0.2%／ご査収の重ね3.1%／挨拶の重ね2.0%）。
   //   渡していなかったので、AI は会話履歴だけを頼りに書いて1通目と噛み合わない文を作れてしまっていた。
-  const aixChainNote = buildAixChainNote(sentMessage);
+  // 物件オススメの直後の2通目は、形を second-message-scene が決める → 1通目との関係（重ねない物）だけを渡す
+  const aixChainNote = buildAixChainNote(sentMessage, { recommendScene: actionType === "property_recommendation" });
   if (aixChainNote) {
     console.log(JSON.stringify({ tag: "aix-template-generate:chain-note", actionType, len: (sentMessage ?? "").length }));
   }
@@ -1336,19 +1341,34 @@ export async function POST(req: NextRequest) {
   //   採点は1通目の物件（見出しの建物名・号室）に当たる行だけ使う。読めなければ「ご査収」に倒れる（押しすぎない）。
   //   ⚠ 上の ctaGuidance（一般の CTA 率）とは別の請求として二重に入れない: 物件オススメの時はこちらだけを渡す
   let recCta: RecommendCtaDecision | null = null;
+  // 2026-09-30 竹内「資料もちゃんとよみとった方がよいなら、読みとったのを AIX テンプレートの部分にも渡す」:
+  //   1通目の物件に当たる売上サポの行（採点と同じ行）から、資料の現況・駅・築年・敷金礼金・ご希望に合う点を読む（AD・点数は渡さない）
+  let materialRow: SecondMaterialRow | null = null;
+  // 物件オススメの直後の2通目か（形は second-message-scene が決める）
+  const isRecSecond = actionType === "property_recommendation" && !!(sentMessage ?? "").trim();
+  // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
+  let secondNotViewable = recommendState.notViewable;
+  let secondViewableFrom: string | null = recommendState.viewableFrom;
   if (actionType === "property_recommendation") {
     try {
       let pickup: PickupLookupRow | null = null;
       const head = headOfFirstMessage(sentMessage);
       if (conversationId && head) {
-        const { data } = await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, created_at")
+        const { data } = await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, created_at, terms, location, equipment")
           .eq("conversation_id", conversationId).eq("room_no", head.room).order("created_at", { ascending: false }).limit(20);
         pickup = pickupForFirstMessage((data ?? []) as PickupLookupRow[], head);
+        materialRow = (pickup as SecondMaterialRow | null) ?? null;
+      }
+      if (isRecSecond) {
+        const fromFirst = readPropertyStateFromText(sentMessage ?? "");
+        const fromMaterial = vacatingFromMaterial(materialRow);
+        if (fromFirst.vacancyDate) { secondNotViewable = fromFirst.notViewable; secondViewableFrom = fromFirst.viewableFrom; }
+        else if (fromMaterial !== null) { secondNotViewable = fromMaterial; secondViewableFrom = null; }
       }
       recCta = resolveRecommendCta({
         pickup,
         reaction: readCustomerReaction(Array.isArray(recentMessages) ? recentMessages : []),
-        notViewable: recommendState.notViewable,
+        notViewable: secondNotViewable,
       });
       console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta", kind: recCta.kind, appeal: recCta.appeal, notViewable: recCta.notViewable, reason: recCta.reason, pickupFound: !!pickup, firstHasSame: hasClosingKind(sentMessage, recCta.kind) }));
     } catch (e) {
@@ -1356,13 +1376,32 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── 2026-09-30 竹内「2通目の言い回しが AI くさい」: 物件オススメの直後の2通目の形（場面ごとの実送信の実物）と資料の事実 ──
+  //   出所は「手本が届いていない」ではなく「最後に置いた指示が実送信の形と逆」だった（見立て・要点を1つ・続きの一言・呼びかけ35%）。
+  //   この場面では、1通目用・AIX 全種類の平均から作った指示（buildLengthNote・この種別の書き方・シナリオの演出の指示・段落構成・フレーズ集）を渡さず、
+  //   場面の形を1か所（second-message-scene）から渡す（設計知見「同じ事実について書くなと書けを別の場所から渡さない」）
+  const secondPropertyLabel = (() => { const h = headOfFirstMessage(sentMessage); return h ? `${h.name} ${h.room}号室` : null; })();
+  const secondMaterialNote = isRecSecond ? buildSecondMaterialNote(materialRow) : "";
+  const secondSceneNote = isRecSecond
+    ? buildSecondSceneNote({
+        scene: secondSceneOf(recommendationScenario),
+        vacating: secondNotViewable,
+        name: resolvedCustomerName,
+        propertyLabel: secondPropertyLabel,
+        sentCount: recommendState.sentSource === "brain" ? recommendState.sentPropertyCount : null,
+      })
+    : "";
+  if (isRecSecond) {
+    console.log(JSON.stringify({ tag: "aix-template-generate:second-scene", scene: secondSceneOf(recommendationScenario), scenario: recommendationScenario, vacating: secondNotViewable, material: !!secondMaterialNote }));
+  }
+
   const userPrompt = [
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
-    lengthNote,
-    actionGuide ? `・この種別の書き方: ${actionGuide}` : "",
+    isRecSecond ? "" : lengthNote,
+    actionGuide && !isRecSecond ? `・この種別の書き方: ${actionGuide}` : "",
     // 「1件特にオススメ」の訴求シナリオ（冒頭・比較表現の可否・CTA強度を決定する最優先指示）
-    recommendationScenario
+    recommendationScenario && !isRecSecond
       ? `・訴求シナリオ（禁止制約はこちらを優先・冒頭フレーズは⭐実例の文体から多様に学ぶこと）:\n${RECOMMENDATION_SCENARIO_GUIDES[recommendationScenario]}${pickupType && PICKUP_TYPE_NOTES[pickupType] ? `\n${PICKUP_TYPE_NOTES[pickupType]}` : ""}`
       : "",
     // 冒頭フレームは事実の宣言。シナリオごとに使ってはいけない表現をリテラルで明示する
@@ -1373,7 +1412,8 @@ export async function POST(req: NextRequest) {
     SELECTION_CLAIM_NOTE,
     // 2026-09-18 竹内（𝒮 さん事例）: ブレインが知っている状況（送付済み件数・まだ内覧できるか）を
     //   そのまま文の指示にする。「物件1件しか送っていない場合は お送りした中でも の部分はいれない」
-    actionType === "property_recommendation"
+    // 物件オススメの直後の2通目では渡さない（締めは recommend-cta・比較の言い方の可否は場面の形が決める＝同じ事を2か所から言わない）
+    actionType === "property_recommendation" && !isRecSecond
       ? buildRecommendClosingNote({
           sentPropertyCount: recommendState.sentPropertyCount,
           notViewable: recommendState.notViewable,
@@ -1387,7 +1427,7 @@ export async function POST(req: NextRequest) {
           return `・送付文脈（この種別の書き方より優先）:\n${PROPERTY_SEND_CONTEXT_GUIDE[ctx]}\n・文脈判定に使った事実: ピックアップ種別=${pickupType ?? "不明"} / 今回より前の物件送付回数=${priorSentPropertyCount}回`;
         })()
       : "",
-    signalCtaOverride
+    signalCtaOverride && !isRecSecond
       ? `・CTA強度の上書き（購買シグナル優先 — アクション種別の書き方より優先）: ${signalCtaOverride}`
       : "",
     recommendationScenario
@@ -1420,7 +1460,7 @@ export async function POST(req: NextRequest) {
       : `・お客様名: 取得できていない（実名不明）\n  → 名前で呼びかけないこと。「〇〇さん」等の伏せ字を書くことは絶対禁止。冒頭は名前なしで「お世話になっております！！」から始める（本日送信済みなら挨拶行なしで本題から。「お待たせ致しました」は禁止語）`,
     `・現在のフェーズ: ${stateLabel}`,
     customerSummary
-      ? `・お客様プロフィール（AI分析・決まるパターン）: ${customerSummary}\n  → このお客様に刺さる訴求軸（例: 審査通りやすさ・費用の安さ・設備・立地等）を読み取り、物件の特徴と結びつけた訴求に使うこと`
+      ? `・お客様プロフィール（AI分析・決まるパターン）: ${customerSummary}${isRecSecond ? "" : "\n  → このお客様に刺さる訴求軸（例: 審査通りやすさ・費用の安さ・設備・立地等）を読み取り、物件の特徴と結びつけた訴求に使うこと"}`
       : "",
     resolvedCustomerConditions
       ? `・希望条件（DB）: ${resolvedCustomerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。`
@@ -1441,10 +1481,10 @@ export async function POST(req: NextRequest) {
     brainMeta?.property_search_params?.ng_points
       ? `・NG条件（絶対にこれらを物件の魅力・合致点として言及しない）: ${brainMeta.property_search_params.ng_points}`
       : "",
-    resolvedCustomerConditions || brainMeta?.property_search_params
+    (resolvedCustomerConditions || brainMeta?.property_search_params) && !isRecSecond
       ? `※顧客希望条件に合致するポイントを訴求する際は「（物件の具体的特徴）なので条件に合います」という形で物件のデータを根拠として示すこと。条件名だけを羅列しない。\n※訴求は【文章構造の原則】の段落構成に沿って、設備・立地・費用を別々の段落に分けて書くこと（1文に詰め込まない）。特に費用制約（家賃上限・初期費用を抑えたい）がある場合、礼金0円・フリーレント等の費用面メリットが会話/AIXメッセージに記載されていれば必ず1つ言及すること。`
       : "",
-    staffSentToday ? `・本日すでにスタッフが送信済み（挨拶行なし。名前行のみ「〇〇さん」または本題から始める。「お世話になっております」の再使用・「お待たせ致しました」は禁止）` : "",
+    staffSentToday && isRecSecond ? `・本日すでにスタッフが送信済み（挨拶の行は書かない。「お世話になっております」・「お待たせ致しました」は禁止）` : staffSentToday ? `・本日すでにスタッフが送信済み（挨拶行なし。名前行のみ「〇〇さん」または本題から始める。「お世話になっております」の再使用・「お待たせ致しました」は禁止）` : "",
     noEmoji ? `・絵文字禁止モード: 絵文字を一切使わないこと` : "",
     "",
     pendingSection
@@ -1453,8 +1493,11 @@ export async function POST(req: NextRequest) {
     `━━━━━━━━━━━━━━━━━━━━\n【会話履歴（事実確認と流れの把握に使う）】\n━━━━━━━━━━━━━━━━━━━━\nこの履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない・同じ内容を繰り返さない。\n${history || "なし"}`,
     "",
     examplesSection,
-    phrasesSection,
-    `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。` +
+    // フレーズ集（phrase_dictionary）は「これ以上ない条件のお部屋です」等の評する言い回しが並ぶ → 物件オススメの直後の2通目では渡さない（形は実物で渡す）
+    isRecSecond ? "" : phrasesSection,
+    isRecSecond
+      ? `この会話の流れ・お客様の状況に合った「${actionLabel}」の直後の2通目を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。出力は本文のみ。`
+      : `この会話の流れ・お客様の状況に合った「${actionLabel}」の橋渡し文を1通生成してください。金額・空室状況・日程・物件名は上記の会話履歴/AIXメッセージに記載がある事実のみ使い、なければ言及しないこと。⭐実例の文体・テンポを忠実に再現すること。` +
     // 2026-09-20 竹内「残る差もテストして改善する」:
     //   ②は「呼びかけるなら実名で」という意味だが、LLM は「毎回呼びかける」と読んでいた
     //   （YUMA の2通目で名前呼びかけ100%・実送信の2通目は35.1%）。
@@ -1475,9 +1518,12 @@ export async function POST(req: NextRequest) {
     //   YUMA で測ると申込の誘導が 100%（実送信8.8%）になり、前に置いた上書きは効かなかった。
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
     aixChainNote,
+    // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く
+    secondMaterialNote,
+    secondSceneNote,
     // CTA の有無は**お客様の反応と AIX の種類**で決める（実測・cta-guidance）。最後に置くのは上と同じ理由
     recCta
-      ? buildSecondMessageCtaNote(recCta, { firstMessage: sentMessage, viewableFrom: recommendState.viewableFrom })
+      ? buildSecondMessageCtaNote(recCta, { firstMessage: sentMessage, viewableFrom: isRecSecond ? secondViewableFrom : recommendState.viewableFrom })
       : (ctaGuidance?.note ?? ""),
   ].filter(Boolean).join("\n");
 
@@ -1605,6 +1651,39 @@ export async function POST(req: NextRequest) {
           }, { status: 200 });
         }
         text = retryText;
+      }
+    }
+
+    // ── 2通目の言い回しの出口（2026-09-30 竹内「言い回しが AI くさい。208号室など号室だけのところいれへんし、強みですなどもいれていない」）──
+    //   AI だけが書いてスタッフが書かない言い回し（強みです・ならでは・珍しい・好条件です・お値打ち・魅力です・かと思います・号室だけで呼ぶ 等）と、
+    //   手本の物件名・駅・金額の持ち込みを検査し、当たれば1回だけ作り直す。本文は書き換えない（言い回しの置き換えは文を壊す）。
+    //   線: scripts/audit-second-message-phrasing.ts（365日・実送信の2通目 477組）でこの検査に当たる実送信は 0 ＝ 誤って作り直しになる数 0。
+    //   作り直しても残った時は、当たりの少ない方を返して warn を残す（入力欄で人が読んで送る。止めはしない）
+    if (isRecSecond) {
+      const allowed = `${sentMessage ?? ""}\n${secondMaterialNote}`;
+      const styleHits = (t: string) => {
+        const cost = unfoundedCostClaim(t, materialRow, sentMessage);
+        return [...findAiPhrases(t).map((h) => `「${h.match}」`), ...leakedExampleFacts(t, allowed).map((f) => `手本の「${f}」`), ...(cost ? [`「${cost}」（資料では敷金か礼金があるお部屋）`] : [])];
+      };
+      const hits = styleHits(text);
+      if (hits.length > 0) {
+        console.warn(JSON.stringify({ tag: "aix-template-generate:second-style-retry", hits, head: text.slice(0, 80) }));
+        const retry = await callClaude(
+          userPrompt +
+          `\n\n━━━━━━━━━━━━━━━━━━━━\n【🚨 作り直し（前回の出力はスタッフが書かない言い回しだった）】\n━━━━━━━━━━━━━━━━━━━━\n` +
+          `前回の出力:\n${text}\n\n` +
+          `この中の ${hits.join("・")} は、スタッフの実際の2通目には1通も無い書き方です。\n` +
+          `・言い回しを言い換えるのではなく、【この2通目の形】の実物と同じ形で最初から書き直す。\n` +
+          `・物件は建物名から書く（号室だけで呼ばない）。理由は事実をつないで「かなりオススメ出来るお部屋となります！！」で結ぶ。\n` +
+          `出力は本文のみ。`,
+        );
+        const retryText = retry.ok && retry.text ? fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text : "";
+        const still = retryText ? styleHits(retryText) : hits;
+        if (retryText && still.length < hits.length && !isNotACustomerReply(stripMetaNarration(retryText).text)
+          && foreignRoomsInSecond(retryText, sentMessage).length === 0) {
+          text = retryText;
+        }
+        if (still.length > 0) console.warn(JSON.stringify({ tag: "aix-template-generate:second-style-left", hits: still, head: (retryText || text).slice(0, 80) }));
       }
     }
 
@@ -1820,6 +1899,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // 物件オススメの直後の2通目: 絵文字が1つも無ければ最後の「！！」の直前に 😊（実送信で絵文字なしは 11%・位置は文末が 86%。足すだけ）
+    if (isRecSecond) {
+      // 「YUMAさんかなりオススメ出来る」→「YUMAさんにかなりオススメ出来る」（実送信 814 対 3）
+      const ni = fixMissingNi(text);
+      if (ni.fixed > 0) { console.log(JSON.stringify({ tag: "aix-template-generate:second-ni-fixed", fixed: ni.fixed })); text = ni.text; }
+    }
+    if (isRecSecond && !noEmoji) {
+      const em = ensureOneEmoji(text);
+      if (em.added) { console.log(JSON.stringify({ tag: "aix-template-generate:second-emoji-added" })); text = em.text; }
+    }
     // 2026-09-22 竹内: 今日すでにこちらが送っていれば、冒頭の「お世話になっております」を落とす（AIX 本体の finalize と同じ関数）
     if (staffSentToday) {
       const daily = applyDailyGreeting(text, { staffSentToday: true, greetingPhrase: "", name: "" });

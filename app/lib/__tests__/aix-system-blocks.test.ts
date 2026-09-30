@@ -133,7 +133,9 @@ it("ヘッダ名と値の整形（非 ASCII は encodeURIComponent・ASCII は�
 
 // ── 本番の経路が prefix で始まることを固定 ──
 it("aix/action の「会話を合わせる」系 11 経路の system は `${GENERATION_SYSTEM}\\n\\n${SMORA_COMMON_RULES}\\n\\n` で始まる（自動分割の前提）", () => {
-  const src = fs.readFileSync(path.join(__dirname, "..", "..", "api", "aix", "action", "route.ts"), "utf8");
+  // 2026-09-30: Windows の作業ツリーは core.autocrlf=true で route.ts が CRLF になり、下の正規表現（LF 前提）が落ちていた（本番のプロンプトは無関係:
+  //   テンプレート文字列の中の改行は実行時に LF に正規化される＝キャッシュの前置きは割れていない）。読む時に LF にそろえる
+  const src = fs.readFileSync(path.join(__dirname, "..", "..", "api", "aix", "action", "route.ts"), "utf8").replace(/\r\n/g, "\n");
   const names = ["adaptStaticSystem", "psmStaticSystem", "convMatchVISystem", "convMatchSystem", "pcrStaticSystem", "hearingCMSystem", "mpSystem", "followupCMSystem", "cbStaticSystem", "pfStaticSystem", "giStaticSystem"];
   for (const n of names) {
     const re = new RegExp(`const ${n} = \\\`\\$\\{GENERATION_SYSTEM\\}\\n\\n\\$\\{SMORA_COMMON_RULES\\}\\n\\n`);

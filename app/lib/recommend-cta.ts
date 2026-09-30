@@ -188,6 +188,19 @@ export function setRecommendClosing(
   const paras = paragraphs(src);
   const last = paras[paras.length - 1] ?? "";
   if (last === line) return { text: text, applied: [] };
+  // 2026-09-30 YUMA の2通目: 最後の段落が「退去予定のお部屋となります！！⏎お気に召されましたらお申込し…」の2行で、
+  //   段落まるごとは締めと見なされず、同じ締めがもう1回足された（同じ文が2回）。最後の段落の**最後の行**が締めの定型ならそこを見る
+  const lastLines = last.split("\n").map((x) => x.trim()).filter(Boolean);
+  const tailLine = lastLines[lastLines.length - 1] ?? "";
+  if (lastLines.length >= 2) {
+    if (tailLine === line) return { text: text, applied: [] };
+    const tailKind = closingKindOfParagraph(tailLine);
+    if (tailKind) {
+      lastLines[lastLines.length - 1] = line;
+      paras[paras.length - 1] = lastLines.join("\n");
+      return { text: paras.join("\n\n"), applied: [`closing:${tailKind}->${kind}`] };
+    }
+  }
   const lastKind = closingKindOfParagraph(last);
   if (lastKind) {
     paras[paras.length - 1] = line;
@@ -239,7 +252,8 @@ export function buildSecondMessageCtaNote(
   const L: string[] = ["【この2通目の締め（1件を特にオススメする通・刺さり具合で決まる。上の CTA の指示より優先）】"];
   if (already) {
     L.push(`・1通目が既に同じ締め（${d.kind === "viewing" ? "内覧の誘導" : d.kind === "apply" ? "申込の誘導" : "ご査収"}）で終わっている → **2通目では重ねない**。`
-      + `1通目の物件の見立てを1つだけ添えて終わる（誘導・ご査収を繰り返さない）。`);
+      // 2026-09-30 竹内「言い回しが AI くさい」: 「見立てを1つだけ添えて」と書くと評論の一文（〜ならではの強みです）が作られた → 指示の語から外す
+      + `オススメの文で終わる（誘導・ご査収を繰り返さない）。`);
   } else if (d.kind === "viewing") {
     L.push(`・お客様に刺さる物件（${d.reason}）で、今ご内覧頂ける → 締めは内覧の誘導 1文。実送信の形「${VIEWING_CLOSING_LINE}」のまま`);
   } else if (d.kind === "apply") {
@@ -247,6 +261,7 @@ export function buildSecondMessageCtaNote(
   } else {
     L.push(`・そこまで刺さるとは言い切れない（${d.reason}） → 押さず、実送信の形「${RECEIPT_CLOSING_LINE}」で締める`);
   }
+  L.push("・締めの一文は上の形のまま（言い回しを足さない・変えない）。締めの後に別の一文（「気になる点があれば〜」等）を足さない");
   L.push("・1通目に出ている物件だけを書く。**別の物件を持ち出して比べない**（「こちらの方が」「私個人的には」も書かない）。していない約束を足さない");
   return L.join("\n");
 }

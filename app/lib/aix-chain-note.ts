@@ -144,7 +144,7 @@ export function foreignRoomsInSecond(secondText: string | null | undefined, firs
  * 1通目を踏まえた指示ブロック。1通目が無い・何も読み取れない時は空文字（何も主張しない）。
  * ⚠ ここは**入口**（材料を渡す）。本文を書き換える出口は作らない。
  */
-export function buildAixChainNote(firstMessage: string | null | undefined): string {
+export function buildAixChainNote(firstMessage: string | null | undefined, o: { recommendScene?: boolean } = {}): string {
   const f = readFirstMessage(firstMessage);
   const t = (firstMessage ?? "").trim();
   if (!t) return "";
@@ -169,6 +169,11 @@ export function buildAixChainNote(firstMessage: string | null | undefined): stri
   L.push("　④「必ず守る2点」の①（段落構成に従う）");
   L.push("　⑤「必ず守る2点」の②（呼びかけは実名のみ）— **呼びかけを毎回付ける意味ではない**");
   L.push("あれは**1通目（物件を送る本体）**の作り方。1通目は既に送信済みで、上に全文がある。");
+  // 2026-09-30 竹内「2通目の言い回しが AI くさい」: 物件オススメの直後の2通目は、形を second-message-scene.ts（場面ごとの実送信の実物）が決める。
+  //   ここから下の「続きの一言／見立てを伝えて終わってよい／呼びかけ35%・物件名36%」は AIX 全種類の平均で、物件オススメの直後
+  //   （呼びかけ85%・かなりオススメ出来るお部屋79%・お気に召されましたら67%）とは逆を向いていた → その場面では渡さない（同じ事を2か所から別の言葉で渡さない）
+  const slim = o.recommendScene === true;
+  if (!slim) {
   L.push("2通目は**続きの一言**。宣言・設備・立地・費用を並べ直さない。");
   // 2026-09-20 竹内「残る差もテストして改善する」:
   //   「CTA も毎回は付けない」と書いたら YUMA で 申込0%・内覧0% になった（実送信は申込8.8%・内覧6.1%）。
@@ -188,6 +193,9 @@ export function buildAixChainNote(firstMessage: string | null | undefined): stri
   L.push("・条件の復唱（家賃・間取り・駅徒歩・築年）… 31%。**推す理由として1つだけなら書いてよい**");
   L.push("　（禁じているのは「・」で並べ直すことであって、文の中で1つ触れるのは実送信どおり）");
   L.push("・絵文字は52%・「！！」は65%。付けすぎない。");
+  } else {
+    L.push("1通目の（オススメポイント）の箇条書き・金額の行を並べ直さない。");
+  }
   const rules: string[] = [];
   if (f.declaredDone.length > 0) {
     rules.push(`1通目で${f.declaredDone.map((d) => DONE_JA[d]).join("・")}と伝えている。同じことを${f.declaredDone.map((d) => FUTURE_NG[d]).join("／")}のように**これからやる形で書かない**（実送信1,419組でこの重複は0.2%）`);
@@ -199,10 +207,10 @@ export function buildAixChainNote(firstMessage: string | null | undefined): stri
   if (f.propertyLabels.length > 0) {
     rules.push(`1通目で触れている物件: ${f.propertyLabels.join("・")}。2通目でこれ以外の物件名・号室を出さない（会話履歴の別物件を持ち出さない）`);
   }
-  if (rules.length === 0) return "";
+  if (rules.length === 0) return slim ? L.join("\n") : "";
   L.push("");
   L.push("【2通目の書き方（1通目との関係）】");
   for (const r of rules) L.push(`・${r}`);
-  L.push("・2通目は1通目の中身を前提にして、**次の一歩**だけを書く。長さは120字前後（実送信の中央値）");
+  if (!slim) L.push("・2通目は1通目の中身を前提にして、**次の一歩**だけを書く。長さは120字前後（実送信の中央値）");
   return L.join("\n");
 }
