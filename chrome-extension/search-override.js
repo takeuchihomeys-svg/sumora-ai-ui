@@ -57,6 +57,9 @@
     ov.area_max = num(x.area_max, 10, 200);
     if (ov.area_min != null && ov.area_max != null && ov.area_min >= ov.area_max) ov.area_min = null;
     ov.pet = x.pet === true ? true : null;
+    // v2.5.47 階（1＝1階も含める・N＝N階以上）。形が違えば捨てる。無い時は欄を作らない（古い payload と同じ形のまま）
+    var fm = floorMin(x.floor_min);
+    if (fm != null) ov.floor_min = fm;
     ov.site = SITES.indexOf(x.site) >= 0 ? x.site : null;
     ov.is_wide = typeof x.is_wide === "boolean" ? x.is_wide : null;
     return isEmpty(ov) ? null : ov;
@@ -65,8 +68,15 @@
   function isEmpty(ov) {
     if (!ov) return true;
     return !ov.location && !ov.floor_plan && ov.rent_max == null && ov.rent_min == null && ov.walk_minutes == null &&
-      ov.building_age == null && ov.area_min == null && ov.area_max == null && ov.pet == null;
+      ov.building_age == null && ov.area_min == null && ov.area_max == null && ov.pet == null && ov.floor_min == null;
   }
+
+  /** 階の上書き（1〜30 の整数だけ）。サーバーの search-override.ts normFloorMin と同じ */
+  function floorMin(v) {
+    var n = typeof v === "number" ? v : (v == null || v === "" ? NaN : Number(v));
+    return isFinite(n) && Math.floor(n) === n && n >= 1 && n <= 30 ? n : null;
+  }
+  function floorLabel(n) { var f = floorMin(n); return f == null ? null : f === 1 ? "1階も含める" : f + "階以上"; }
 
   function splitArea(s) {
     return String(s || "").split(/[・、,]+/).map(function (t) { return t.trim(); }).filter(Boolean);
@@ -113,6 +123,9 @@
     if (ov.area_min != null) out.floor_area_min = ov.area_min;
     if (ov.area_max != null) out.floor_area_max = ov.area_max;
     if (ov.pet) out.pet = true;
+    // v2.5.47 階: サイトの検索は階で絞っていない（登録の「2階以上」も検索では絞らず判定で見ている）ので、写しに印を残すだけ
+    //   （検索の点検 customer_snapshot と _buildBatchConditions が「この回は1階も含める」を読める）。判定はサーバーが同じ上書きで行う
+    if (floorMin(ov.floor_min) != null) out.floor_min = floorMin(ov.floor_min);
     out._search_override = ov;
     return out;
   }
@@ -151,6 +164,8 @@
     if (ov && ov.area_min != null) r.area_min = String(ov.area_min);
     if (ov && ov.area_max != null) r.area_max = String(ov.area_max);
     if (ov && ov.pet) r.pet = true;
+    // v2.5.47 階: 一時調整の欄に階は無い（サイトも階で絞らない）→ 値だけ返す（popup は帯・コンソールに出すだけ）
+    if (ov && floorMin(ov.floor_min) != null) r.floor_min = floorMin(ov.floor_min);
     return r;
   }
 
@@ -171,6 +186,7 @@
     if (ov.building_age != null) p.push("築" + ov.building_age + "年");
     if (ov.area_min != null || ov.area_max != null) p.push((ov.area_min != null ? ov.area_min : "") + "〜" + (ov.area_max != null ? ov.area_max : "") + "㎡");
     if (ov.pet) p.push("ペット相談");
+    if (floorLabel(ov.floor_min)) p.push(floorLabel(ov.floor_min));
     return p.join("・") || "上書きなし";
   }
 
@@ -180,5 +196,5 @@
    */
   function sourceAllows(source) { return source === "web_brain" || source === "aix"; }
 
-  return { sanitize: sanitize, isEmpty: isEmpty, applyToCustomer: applyToCustomer, formValues: formValues, describe: describe, sourceAllows: sourceAllows, FLOOR_PLAN_RE: FLOOR_PLAN_RE };
+  return { sanitize: sanitize, isEmpty: isEmpty, applyToCustomer: applyToCustomer, formValues: formValues, describe: describe, sourceAllows: sourceAllows, floorMin: floorMin, floorLabel: floorLabel, FLOOR_PLAN_RE: FLOOR_PLAN_RE };
 });

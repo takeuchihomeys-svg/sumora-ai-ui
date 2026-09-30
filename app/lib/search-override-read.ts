@@ -2,7 +2,7 @@
 // AIXツールのメモ欄の検索の指示の「読み」（サーバー用・osaka-geo の駅・区・路線の表を使う）。形と画面の1行は search-override.ts。
 // 2026-09-27 竹内「こちらからの文を DeepSeek の物件検索 AI が要約して、拡張ツールに渡す形」
 import { stationsInText, wardsInText, linesInText, normStation, normWard, isKnownStation } from "./osaka-geo";
-import { looksLikeSearchInstruction, normText, isEmptyOverride, OVERRIDE_SITES, type OverrideSite, type SearchOverride, type RegisteredConditions, type OverrideSummary } from "./search-override";
+import { looksLikeSearchInstruction, normText, isEmptyOverride, floorMinInText, normFloorMin, OVERRIDE_SITES, type OverrideSite, type SearchOverride, type RegisteredConditions, type OverrideSummary } from "./search-override";
 
 // ─────────────────────────── 3. 文の中の根拠 ───────────────────────────
 
@@ -84,7 +84,8 @@ function scopeWordsInText(text: string): { wide: boolean; pinpoint: boolean } {
   return { wide: /(広げ|広く|広め|ワイド)/.test(t), pinpoint: /(ピンポイント|絞って|絞る|絞り)/.test(t) };
 }
 
-const ADD_RE = /(も(?:追加|足|入れ|含め|加え|検索|探|で)|を?追加|足して|加えて|含めて)/;
+// 2026-09-30 「福島区も見てみたい」「大正駅もお願い」（お客様の今回だけの文）も足す（旧は「だけ」で読み、登録の場所を消していた）
+const ADD_RE = /(も(?:追加|足|入れ|含め|加え|検索|探|で|見|みて|お願い|おねがい|OK|ok|いい|良い|大丈夫|可)|を?追加|足して|加えて|含めて)/;
 const EXCLUDE_RE = /(以外|を?外して|抜いて|除いて|除外)/;
 
 // ─────────────────────────── 4. 決定論の読み（DeepSeek が読めない時の代わり） ───────────────────────────
@@ -142,6 +143,7 @@ export function parseDeterministic(memo: string, reg?: RegisteredConditions | nu
     rent_max_man, rent_min_man,
     walk_minutes: walk, building_age: age, area_min: area, area_max: null,
     pet: /ペット(?:可|相談|OK|ok)/.test(t) ? true : null,
+    floor_min: floorMinInText(t),
     site: siteInText(t),
     scope: sc.pinpoint ? "pinpoint" : sc.wide && !wideOnCondition ? "wide" : null,
     unclear,
@@ -264,6 +266,14 @@ export function validateOverride(raw: Record<string, unknown> | null, memo: stri
   if (raw.pet === true) {
     if (/ペット|犬|猫/.test(t) && !/ペット(?:不可|なし|無し|いらない|不要)/.test(t)) ov.pet = true; else dropped.push("ペット（文に無い）");
   }
+  // 階（2026-09-30）: 文の中の階の言い方（決定論 floorMinInText）だけを根拠にする。DeepSeek の前置きには欄が無い（前置きを変えない＝キャッシュを保つ）ので、
+  //   文に「1階も」「3階以上」があれば DeepSeek の答えに無くても入れる。DeepSeek が別の値を言った時は文の値（落とした物に残す）
+  {
+    const fromText = floorMinInText(t);
+    const fromRaw = normFloorMin(raw.floor_min);
+    if (fromRaw != null && fromRaw !== fromText) dropped.push(`階 ${fromRaw}（文に無い）`);
+    if (fromText != null) ov.floor_min = fromText;
+  }
   if (typeof raw.site === "string" && raw.site) {
     const s = siteInText(t);
     if (s && s === raw.site) ov.site = s; else dropped.push(`サイト「${raw.site}」（文に無い）`);
@@ -308,6 +318,8 @@ export function sanitizeSearchOverride(x: unknown): SearchOverride | null {
   ov.area_max = inRange(o.area_max, 10, 200);
   if (ov.area_min != null && ov.area_max != null && ov.area_min >= ov.area_max) ov.area_min = null;
   ov.pet = o.pet === true ? true : null;
+  const fm = normFloorMin(o.floor_min);
+  if (fm != null) ov.floor_min = fm;
   ov.site = typeof o.site === "string" && (OVERRIDE_SITES as readonly string[]).includes(o.site) ? o.site as OverrideSite : null;
   ov.is_wide = typeof o.is_wide === "boolean" ? o.is_wide : null;
   return isEmptyOverride(ov) ? null : ov;

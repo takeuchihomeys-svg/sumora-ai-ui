@@ -4961,12 +4961,25 @@ export async function runBrainAndNotify(
     try {
       let searchOverride: import("@/app/lib/search-override").SearchOverride | null = null;
       if (scopeDecision?.scope === "temporary" && msgText) {
+        let applied: Awaited<ReturnType<typeof import("@/app/lib/condition-scope-server").applyTemporaryScope>> | null = null;
         try {
           const { applyTemporaryScope } = await import("@/app/lib/condition-scope-server");
-          searchOverride = (await applyTemporaryScope({ conversationId, text: msgText, sinceIso: snapshot.meta?.analyzed_msg_ts ?? null, decision: scopeDecision })).override;
+          applied = await applyTemporaryScope({ conversationId, text: msgText, sinceIso: snapshot.meta?.analyzed_msg_ts ?? null, decision: scopeDecision });
+          searchOverride = applied.override;
         } catch (e) {
           console.warn("[brain-core] temporary scope failed:", conversationId, e instanceof Error ? e.message : e);
         }
+        // 2026-09-30 判断を1か所に残す（週のまとめがその後のスタッフの動きと照らして当たり外れを付ける）
+        void import("@/app/lib/condition-scope-server").then(({ recordScopeDecision }) => recordScopeDecision({
+          conversationId, messageTs: snapshot.meta?.analyzed_msg_ts ?? null, text: msgText, decision: scopeDecision,
+          brainScope: snapshot.meta?.condition_change_scope ?? null, conditionChangeType: snapshot.meta?.condition_change_type ?? null,
+          override: applied?.override ?? null, reverted: applied?.reverted ?? null, downgraded: applied?.downgraded, propertyCustomerId: applied?.propertyCustomerId ?? null,
+        })).catch(() => undefined);
+      } else if (scopeDecision && msgText) {
+        void import("@/app/lib/condition-scope-server").then(({ recordScopeDecision }) => recordScopeDecision({
+          conversationId, messageTs: snapshot.meta?.analyzed_msg_ts ?? null, text: msgText, decision: scopeDecision,
+          brainScope: snapshot.meta?.condition_change_scope ?? null, conditionChangeType: snapshot.meta?.condition_change_type ?? null,
+        })).catch(() => undefined);
       }
       const { syncAixActionItem } = await import("@/app/lib/aix-action-items");
       await syncAixActionItem({

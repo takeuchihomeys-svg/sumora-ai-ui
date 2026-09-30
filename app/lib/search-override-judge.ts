@@ -12,10 +12,11 @@
 //   - 面積: 下限は sqmMin（判定は上限を見ない＝検索が絞る）
 //   - 徒歩・築年: 列を上書き（自由文の「新築」「築浅」の目安は、築年の列があれば使わない＝今の buildCustomerProfile の決まり）
 //   - ペット: 相談可を希望に
+//   - 階（2026-09-30）: 1＝自由文の欄の階の希望（2階以上・1階NG・3階以上）の節を外す／N＝外して「N階以上」を足す（search-override.ts stripFloorWants）
 //   - サイト・広げて/ピンポイント は判定を変えない（判定はいつも広げた検索の幅を見ている）
 // 判定・👑・画像で分析の対象・カードの「書いた条件」は全部このプロフィール（と重ねた条件欄）から作るので、同じ値を見る（四者同名）。
 import { buildCustomerProfile, normalizeFloorPlanWant, type CustomerLike, type CustomerProfile, type SentRowLike, type PatternRowLike } from "./property-brain";
-import { isEmptyOverride, type SearchOverride } from "./search-override";
+import { isEmptyOverride, normFloorMin, stripFloorWants, type SearchOverride } from "./search-override";
 
 /** 条件欄のうち上書きで変わる列（property-pickups-server の loadProfile が引く列と同じ名前） */
 export type OverridableCustomer = CustomerLike & {
@@ -48,8 +49,28 @@ export function overlayCustomerForOverride<C extends OverridableCustomer>(c: C, 
   if (ov.area_min != null) out.floor_area_min = ov.area_min;
   if (ov.area_max != null) out.floor_area_max = ov.area_max;
   if (ov.pet) out.pet = true;
+  // 階（2026-09-30 竹内「一時的に1階も含む場合は、検索して1階の物件も含めて送ったら大丈夫、その際だけ」）:
+  //   登録の階の希望は自由文の欄（こだわり・NG・その他・フォームの原文）にしか無い → その回の写しから階の希望の節を外す（1＝1階も含める）。
+  //   N階以上（N≥2）はその節を外したうえで「N階以上」をこだわりの欄に足す。登録の条件（DB）は変えない（写しだけ）
+  const fm = normFloorMin(ov.floor_min);
+  if (fm != null) {
+    const w = out as C & Record<string, unknown>;
+    for (const f of FLOOR_TEXT_FIELDS) {
+      const v = w[f];
+      if (typeof v !== "string" || !v) continue;
+      const r = stripFloorWants(v, f);
+      if (r.removed.length) (w as Record<string, unknown>)[f] = r.text;
+    }
+    if (fm >= 2) {
+      const pref = typeof w.preferences === "string" && w.preferences.trim() ? `${w.preferences}、` : "";
+      (w as Record<string, unknown>).preferences = `${pref}${fm}階以上`;
+    }
+  }
   return out;
 }
+
+/** 階の希望を読む自由文の欄（property-brain・listing-equipment・customer-wants・image-wants が読む欄＝全部） */
+const FLOOR_TEXT_FIELDS = ["preferences", "ng_points", "other_requests", "additional_conditions", "raw_format_text", "notes"] as const;
 
 /**
  * 判定の材料（重ねた条件欄とプロフィール）を作る。上書きが無ければ buildCustomerProfile と同じ。

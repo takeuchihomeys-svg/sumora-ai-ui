@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { weeklySearchAudit } from "@/app/lib/search-audit-server";
 import { weeklyScreenWatch } from "@/app/lib/screen-watch-server";
+import { weeklyConditionScope } from "@/app/lib/condition-scope-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 export const maxDuration = 120;
@@ -21,7 +22,9 @@ export async function GET(req: NextRequest) {
   const base = await weeklySearchAudit({ dry });
   // 2026-09-29 見張りの週のまとめ（ラベル別・段ごとの当たり・抜けやすい駅・DeepSeek のまとめ1回・線の自動調整）。失敗しても点検のまとめは止めない
   const screen_watch = await weeklyScreenWatch({ dry }).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
-  const report = { ...base, screen_watch };
+  // 2026-09-30 条件の言い直しの「今回だけ／切り替え」の判断の当たり外れ（condition_scope_decisions・その後のスタッフの動きで付ける）。失敗しても止めない
+  const condition_scope = await weeklyConditionScope({ dry }).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+  const report = { ...base, screen_watch, condition_scope };
   await finishCronLog(logId, base.ok, report as unknown as Record<string, unknown>, base.errors[0]);
   return NextResponse.json(report, { status: base.ok ? 200 : 500 });
 }

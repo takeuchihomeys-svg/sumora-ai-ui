@@ -44,6 +44,14 @@ export type SearchOverride = {
   area_max: number | null;
   /** ペット相談（true だけ。外す指示は扱わない） */
   pet: true | null;
+  /**
+   * 階（2026-09-30 竹内「一時的に1階も含む場合は、検索して1階の物件も含めて送ったら大丈夫、その際だけ」）。
+   *   1＝1階も含める（登録の「2階以上」「1階NG」をその回だけ外す）／N（2〜30）＝N階以上（その回だけ）／null・無し＝登録のまま。
+   *   古い行（2026-09-30 より前の property_pickups.search_override・payload）には無いので省略可にしている。
+   *   サイトの検索の欄には入れない（リアプロ・ITANDI・レインズとも拡張は階で絞っていない＝登録の「2階以上」も検索では絞っていない）。
+   *   効くのは判定（search-override-judge.ts overlayCustomerForOverride が条件欄の写しの階の希望を外す／足す）
+   */
+  floor_min?: number | null;
   site: OverrideSite | null;
   /** true＝広げて／false＝ピンポイント／null＝指定なし */
   is_wide: boolean | null;
@@ -179,7 +187,98 @@ export function parseModelJson(text: string): Record<string, unknown> | null {
 export function isEmptyOverride(ov: SearchOverride | null | undefined): boolean {
   if (!ov) return true;
   return !ov.location && !ov.floor_plan && ov.rent_max == null && ov.rent_min == null && ov.walk_minutes == null && ov.building_age == null
-    && ov.area_min == null && ov.area_max == null && ov.pet == null;
+    && ov.area_min == null && ov.area_max == null && ov.pet == null && ov.floor_min == null;
+}
+
+// ─────────────────────────── 階（2026-09-30） ───────────────────────────
+
+/** 階の上書きの形（1〜30 の整数だけ）。それ以外は null */
+export function normFloorMin(v: unknown): number | null {
+  const n = typeof v === "number" ? v : v == null || v === "" ? NaN : Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 30 ? n : null;
+}
+
+/** 階の1語（「1階も含める」「3階以上」）。画面の1行・カード・拡張の describe と同じ言い方 */
+export function floorMinLabel(n: number | null | undefined): string | null {
+  const f = normFloorMin(n);
+  return f == null ? null : f === 1 ? "1階も含める" : `${f}階以上`;
+}
+
+const KANJI_NUM: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+const floorNum = (s: string): number | null => {
+  const t = s.normalize("NFKC");
+  if (/^\d{1,2}$/.test(t)) return Number(t);
+  if (t.length === 1 && KANJI_NUM[t]) return KANJI_NUM[t];
+  if (/^十[一二三四五六七八九]$/.test(t)) return 10 + KANJI_NUM[t[1]];
+  return null;
+};
+/** 「2階以上はエレベーター必須」「3階以上ならオートロック」＝その階の時だけの設備の希望（階の希望ではない）。listing-equipment.conditionalFloorOf と同じ考え（軽い版） */
+const CONDITIONAL_FLOOR_RE = /階以上\s*(?:は|なら|の場合(?:は)?|の時(?:は)?|だと|であれば)\s*(?:エレベ|EV|オートロック|宅配|エアコン|駐|バス|独立|洗面|ペット)/i;
+/** 1階を含めてよい（その回だけでも・ずっとでも）の言い方 */
+const FLOOR_ONE_OK_RE = /(?<![0-9０-９一二三四五六七八九十])(?:1|１|一)\s*階(?:の(?:お部屋|部屋|物件))?\s*(?:も|でも|を含め|も含め|含め|OK|ok|オッケー|可|大丈夫|問題な|構わ|いい|良い|よい)|階数(?:は|も)?\s*(?:問わ|気にしな|こだわらな|どこでも|何階でも|なんでも)|何階でも/;
+/** 1階は避けたい（＝2階以上） */
+const FLOOR_ONE_NG_RE = /(?<![0-9０-９一二三四五六七八九十])(?:1|１|一)\s*階\s*(?:は|が)?\s*(?:NG|ng|不可|嫌|いや|避け|以外|×|なし|無し|ダメ|だめ|じゃない|じゃ無い|でない|ではない)/;
+const FLOOR_AT_LEAST_RE = /([0-9０-９]{1,2}|十?[一二三四五六七八九十])\s*階\s*以上/g;
+
+/**
+ * 文の中の階の指定（その回だけの上書き・メモの検索の指示に使う）。
+ *   「1階も見たい」「1階でもいい」「階数は問わない」→ 1 ／「3階以上」→ 3 ／「1階NG」「1階以外」→ 2 ／無い・食い違い（1階もOK と 1階NG が両方）→ null
+ *   「2階以上はエレベーター必須」（その階の時だけの設備の希望）は階の指定にしない
+ */
+export function floorMinInText(text: string | null | undefined): number | null {
+  const t = String(text ?? "").normalize("NFKC");
+  if (!/階/.test(t)) return null;
+  const oneOk = FLOOR_ONE_OK_RE.test(t) && !/(?<![0-9０-９一二三四五六七八九十])(?:1|１|一)\s*階\s*(?:も|でも)?\s*(?:NG|ng|不可|嫌|避け|ダメ|だめ)/.test(t);
+  const oneNg = FLOOR_ONE_NG_RE.test(t);
+  let atLeast: number | null = null;
+  for (const m of t.matchAll(FLOOR_AT_LEAST_RE)) {
+    const rest = t.slice(m.index ?? 0);
+    if (CONDITIONAL_FLOOR_RE.test(rest.slice(0, 40))) continue;
+    const n = floorNum(m[1]);
+    if (n != null && n >= 2 && n <= 30) atLeast = atLeast == null ? n : Math.max(atLeast, n);
+  }
+  const below = oneNg ? 2 : null;
+  const need = atLeast ?? below;
+  if (oneOk && need != null) return null; // 「1階もOK」と「2階以上」が両方＝読めない（勝手に決めない）
+  if (oneOk) return 1;
+  return need;
+}
+
+/** 自由文の欄のうち階の希望の節（「2階以上」「1階NG」「3階以上が理想」）か。「2階以上はエレベーター必須」は階の希望ではない */
+function isFloorWantClause(c: string, field: string): boolean {
+  const t = c.normalize("NFKC").trim();
+  if (!t || !/階/.test(t)) return false;
+  if (CONDITIONAL_FLOOR_RE.test(t)) return false;
+  if (/階建|階部分|最上階|角部屋/.test(t) && !/階以上|階以下|階未満/.test(t)) return false;
+  if (FLOOR_ONE_NG_RE.test(t)) return true;
+  if (/([0-9０-９]{1,2}|十?[一二三四五六七八九十])\s*階\s*(?:以上|未満)/.test(t)) return true;
+  if (/[0-9０-９]{1,2}\s*階\s*以下/.test(t) && (field === "ng_points" || /NG|不可|嫌|避け|×/.test(t))) return true;
+  if (/高層|上の階|上層階/.test(t)) return true;
+  if (field === "ng_points" && /^(?:1|１|一)\s*階$/.test(t)) return true;
+  return false;
+}
+
+/**
+ * 自由文の欄から階の希望の節だけを外す（その回だけ 1階も含める時に、判定の写しに使う）。純関数・元の文は変えない。
+ *   節の区切りは「、。,\n／/・」（「バス・トイレ別」の「・」は割らない）。外した節が無ければ元の文のまま返す
+ */
+export function stripFloorWants(text: string | null | undefined, field = "preferences"): { text: string | null; removed: string[] } {
+  if (text == null) return { text: null, removed: [] };
+  const src = String(text);
+  if (!/階/.test(src)) return { text: src, removed: [] };
+  const guarded = src.replace(/(バス|風呂|浴室|トイレ)[・･](トイレ|バス|風呂|浴室)/g, "$1\u0000$2");
+  const parts = guarded.split(/([、。,，\n／/・])/);
+  const removed: string[] = [];
+  const kept: string[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const clause = parts[i];
+    const sep = parts[i + 1] ?? "";
+    if (isFloorWantClause(clause.replace(/\u0000/g, "・"), field)) { removed.push(clause.replace(/\u0000/g, "・").trim()); continue; }
+    kept.push(clause + sep);
+  }
+  if (!removed.length) return { text: src, removed };
+  const out = kept.join("").replace(/\u0000/g, "・").replace(/([、。,，／/・])\s*(?=[、。,，／/・])/g, "").replace(/^[\s、。,，／/・]+|[\s、,，／/・]+$/g, "").trim();
+  return { text: out || null, removed };
 }
 
 
@@ -222,6 +321,8 @@ export function overrideLine(ov: SearchOverride | null, reg: RegisteredCondition
   else if (ov?.area_min != null) parts.push(`${ov.area_min}㎡以上`);
   else if (ov?.area_max != null) parts.push(`${ov.area_max}㎡まで`);
   if (ov?.pet) parts.push("ペット相談");
+  const fl = floorMinLabel(ov?.floor_min);
+  if (fl) parts.push(fl);
   const site = opts.site ?? ov?.site ?? "realnetpro";
   const wide = opts.isWide ?? ov?.is_wide ?? false;
   parts.push(siteLabelJa(site));
@@ -261,7 +362,7 @@ export function overrideRulerKey(x: unknown): string {
   if (!p) return "";
   const ov = p.override;
   const loc = ov.location ? `${ov.location.mode}:${[...ov.location.stations].sort().join(",")}|${[...ov.location.lines].sort().join(",")}|${[...ov.location.areas].sort().join(",")}` : "";
-  return JSON.stringify([loc, ov.floor_plan ?? "", ov.rent_max ?? "", ov.rent_min ?? "", ov.walk_minutes ?? "", ov.building_age ?? "", ov.area_min ?? "", ov.area_max ?? "", ov.pet ? 1 : ""]);
+  return JSON.stringify([loc, ov.floor_plan ?? "", ov.rent_max ?? "", ov.rent_min ?? "", ov.walk_minutes ?? "", ov.building_age ?? "", ov.area_min ?? "", ov.area_max ?? "", ov.pet ? 1 : "", ...(normFloorMin(ov.floor_min) != null ? [`f${normFloorMin(ov.floor_min)}`] : [])]);
 }
 
 /** 上書きした項目だけの短い説明（例「大正駅だけ・1LDK・家賃〜8万」）。画面の1行と判定の記録に使う */
@@ -284,6 +385,8 @@ export function overrideShortLabel(ov: SearchOverride | null | undefined): strin
   else if (ov.area_min != null) parts.push(`${ov.area_min}㎡以上`);
   else if (ov.area_max != null) parts.push(`${ov.area_max}㎡まで`);
   if (ov.pet) parts.push("ペット相談");
+  const fl = floorMinLabel(ov.floor_min);
+  if (fl) parts.push(fl);
   return parts.join("・");
 }
 

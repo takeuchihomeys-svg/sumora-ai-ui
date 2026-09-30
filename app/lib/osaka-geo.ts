@@ -514,6 +514,14 @@ export function wardsInText(text: string): Array<{ ward: string; index: number; 
       // 「西淀川区」の中の「川区」を拾わないように、区の前の字から最長で当てる
       const idx = (m.index ?? 0);
       push(n, idx, m[0]);
+    } else if (!pre) {
+      // 2026-09-30: 前に仮名が続く「とりあえず福島区も」「今回だけ福島区も」は「えず福島区」「だけ福島区」を1語に読んで落としていた
+      //   → 最長で読めない時だけ、前を1字ずつ削って知っている区に当たる所を採る（最長を先に試すのは今まで通り）
+      for (let k = 1; k < m[2].length - 1; k++) {
+        const tail = m[2].slice(k);
+        const nt = normWard(tail);
+        if (nt) { push(nt, (m.index ?? 0) + k, tail); break; }
+      }
     }
   }
   for (const w of WARD_COORDS.keys()) {

@@ -134,5 +134,42 @@ console.log("\n■ 案A（2026-09-27）: 上書きの回の merge-pdfs に searc
   ok("呼び出し元の finally で必ず消す（止めた・失敗した時も）", /finally \{\s*_searchOverrideLink = null;/.test(bg));
 }
 
+console.log("\n■ v2.5.47 階（竹内 9/30「一時的に1階も含む場合は、検索して1階の物件も含めて送ったら大丈夫、その際だけ」）");
+{
+  const OV_F1 = Object.assign({}, OV_TAISHO, { location: null, floor_min: 1 });
+  eq("階だけの上書きも重ねる（空にしない）", S.sanitize({ floor_min: 1 }), { v: 1, location: null, floor_plan: null, rent_max: null, rent_min: null, walk_minutes: null, building_age: null, area_min: null, area_max: null, pet: null, site: null, is_wide: null, floor_min: 1 });
+  eq("形の違う階は捨てる", [S.sanitize({ floor_min: 0 }), S.sanitize({ floor_min: 31 }), S.sanitize({ floor_min: 1.5 }), S.sanitize({ floor_min: "x" })], [null, null, null, null]);
+  eq("文字の数字は読む", S.sanitize({ floor_min: "3" }).floor_min, 3);
+  ok("古い payload（階の欄なし）は今まで通りの形（floor_min の欄を作らない）", !("floor_min" in S.sanitize(OV_TAISHO)));
+  ok("isEmpty: 階だけでも空でない", !S.isEmpty(OV_F1));
+  eq("describe", [S.describe(OV_F1), S.describe(Object.assign({}, OV_TAISHO, { floor_min: 3 }))], ["1階も含める", "大正駅だけ・3階以上"]);
+  const before = JSON.stringify(CUST);
+  const c = S.applyToCustomer(CUST, OV_F1);
+  eq("写しに階の印（検索の点検・_buildBatchConditions が読める）", [c.floor_min, c._search_override.floor_min], [1, 1]);
+  eq("階だけの上書きは場所・家賃・間取りを変えない", [c.desired_area, c.rent_max, c.floor_plan, c.area_mode], ["大正区・西区", 75000, "1K〜1DK", "ward"]);
+  eq("元のお客様は変えない", JSON.stringify(CUST), before);
+  const fv = S.formValues(OV_F1, { station: "", ward: "大正区" }, null);
+  eq("一時調整の欄: 階は値だけ（欄に入れる物は無い・場所の欄を触らない）", [fv.floor_min, "station" in fv, "ward" in fv, "floor" in fv], [1, false, false, false]);
+  // サイトの検索は階で絞っていない（登録の「2階以上」も検索では絞らない＝判定で見る）→ 1階を含める回はサイトの欄を触らなくてよい
+  const sites = ["page-script.js", "itandi-page-script.js", "reins-page-script.js"].map(read).join("\n");
+  ok("サイトの自動入力に階の欄の操作が無い（登録の2階以上も検索では絞っていない＝1階は検索に入る）", !/floor_min|階以上/.test(sites));
+  ok("manifest 2.5.47", JSON.parse(read("manifest.json")).version === "2.5.47");
+}
+
+console.log("\n■ 今ある一時調整の項目がその回だけ効く（popup の欄 → 各サイトの組み立て）");
+{
+  const pop = read("popup.js");
+  const apply = pop.slice(pop.indexOf("function _applySearchOverrideToForm"), pop.indexOf("function _afterSearchOverrideClick"));
+  for (const [id, key] of [["adj-floor", "floor"], ["adj-rent-max", "rent_max"], ["adj-rent-min", "rent_min"], ["adj-walk", "walk"], ["adj-age", "age"], ["adj-area-min", "area_min"], ["adj-area-max", "area_max"]]) {
+    ok(`欄 ${id} に ${key} を入れる`, apply.includes(`set("${id}", v.${key})`));
+  }
+  ok("ペットは checked", apply.includes('document.getElementById("adj-pet")'));
+  const fv = S.formValues({ v: 1, location: null, floor_plan: "1LDK", rent_max: 120000, rent_min: 60000, walk_minutes: 10, building_age: 15, area_min: 25, area_max: 40, pet: true, site: null, is_wide: null }, {}, null);
+  eq("formValues の全項目", [fv.floor, fv.rent_max, fv.rent_min, fv.walk, fv.age, fv.area_min, fv.area_max, fv.pet], ["1LDK", "120000", "60000", "10", "15", "25", "40", true]);
+  const adj = pop.slice(pop.indexOf("function buildAdjCustomer"), pop.indexOf("function buildAdjCustomer") + 4000);
+  for (const id of ["adj-rent-max", "adj-walk", "adj-age", "adj-floor"]) ok(`各サイトの組み立て（buildAdjCustomer）が ${id} を読む`, adj.includes(`"${id}"`));
+  ok("面積・賃料下限は組み立ての直前で欄から読む", pop.includes('getElementById("adj-area-max")') && pop.includes("readAdjRentMin(c,"));
+}
+
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

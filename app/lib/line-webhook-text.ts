@@ -1184,7 +1184,8 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   };
 
   // 2026-09-27 カジュアル更新（正式フォームでない言い直し）で「今回だけ」の語があれば登録の条件を書かない（condition-change-scope.ts）
-  const casualScope = isFormalFormat ? { ok: true, evidence: null } : preBrainMayWriteRegistered(text);
+  //   2026-09-30: 登録の条件（existing）を渡す＝弱い語（一旦・とりあえず）は条件がある人の時だけ止める（初めての条件の文は書く）
+  const casualScope = isFormalFormat ? { ok: true, evidence: null } : preBrainMayWriteRegistered(text, (existing ?? null) as Record<string, unknown> | null);
   if (existing?.id) {
     customerId = existing.id as string;
     if (isFormalFormat) {

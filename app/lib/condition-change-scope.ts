@@ -18,17 +18,38 @@
 //     この発言の条件をその回だけの上書き（search_override）にして AIX の検索（source=aix）に載せる（condition-scope-override.ts）
 //   - ブレインの条件の橋（generate-draft-bg-async）・条件ブレイン（property-brain-core）: temporary なら登録の条件を書かない
 //   決定論の関所（rent-raise.ts の家賃を上げて・帖→㎡）は、permanent なら登録の条件へ・temporary なら上書きへ、同じ計算で入る（置き場所だけが変わる）
+//
+// 2026-09-30 強化（竹内「一時調整でその一回限定して行うか、そもそもの条件自体を変えるのかの判断の部分も強化する」・YUMA「今回だけ1階も」）:
+//   決め方を5段に（上から順に・最初に決まった物）:
+//   1. 強い「今回だけ」の語（今回だけ・今回は〜も・今だけ・1回だけ・一時的・試しに・ついでに・参考に見たい・比較・〜した場合の物件も）→ temporary
+//      ただし「今回だけじゃなく」「今回だけでなく」は今回だけの語にしない
+//   2. 期間の「これから」の語（これからは・今後は・次から・以降は・この先・ずっと）→ permanent（期間を言い切っている＝切り替え）
+//   3. 弱い「今回だけ」の語（一旦・いったん・とりあえず・ひとまず・取り急ぎ）→ temporary（text_temporary_weak）
+//      ただし登録の条件がまだ無い人（初めての条件の文「とりあえず梅田で1Kで探してます」）には使わない＝戻す先の条件が無い。
+//      registered を渡さない呼び出し（ブレインの後）は condition-scope-server.ts が「戻す先が空なら切り替えのまま」で守る
+//   4. 切り替えの語（条件変更・〜に変えて・〜に変更・やっぱり・〜じゃなくて・〜で探してます 等）→ permanent
+//   5. ブレインの condition_change_scope → 6. 既定 permanent
+//   弱い語（3）を切り替えの語（4）より先にする理由: 竹内 9/30「誤って条件そのものを変える（出口）は慎重に・一時調整（入口）は広めでよい」。
+//     「一旦1Kに変えて」は今回だけで検索（登録は変えない）→ 本当に切り替えなら次の言い直し・スタッフの手直しで直る（害が小さい）。
+//   実データ（2026-09-30 監査 scripts/audit-condition-scope.ts・180日のお客様の発言 9,884件）: 「今回だけ」の語を言うお客様はほぼいない
+//     （条件の語＋期間／変更の語の文 103件のうち、スタッフの返事が「ひとまず」「一旦」で今回だけだった物は2件）。
+//     「〜でもいい」「〜でも大丈夫」（13＋8件）はスタッフが「〜も含めて」「条件に加え」と返し、登録の条件に足す物（切り替え側）→ 今回だけの語にしない
 
 /** none＝検索条件の話ではない（お客様が送った物件・特定の物件の質問・見積依頼）。ブレインの cond の札の付け過ぎ（2026-09-27 監査: cond ありの番の約3/4）を止める */
 export type ConditionChangeScope = "permanent" | "temporary" | "none";
-export type ScopeDecidedBy = "text_temporary" | "text_permanent" | "brain" | "default";
+export type ScopeDecidedBy = "text_temporary" | "text_temporary_weak" | "text_permanent_future" | "text_permanent" | "brain" | "default";
 export type ScopeDecision = { scope: ConditionChangeScope; by: ScopeDecidedBy; evidence: string | null };
 
 const norm = (s: string | null | undefined) => String(s ?? "").normalize("NFKC").replace(/\s+/g, " ");
 
 // 「今回だけ」の語。検索の条件の話の文でだけ使う（呼び出し元はブレインの condition_change_type・P4 の抽出がある時だけ呼ぶ）
 const TEMPORARY_RES: ReadonlyArray<RegExp> = [
-  /今回(?:だけ|のみ|限り|に限って|に限り)/,
+  // 「今回だけじゃなく（これからも）」「今回だけでなく」は今回だけの語ではない（2026-09-30）
+  /今回(?:だけ|のみ|限り|に限って|に限り)(?!\s?(?:じゃ|では|で)?な[くい])/,
+  // 2026-09-30 YUMA「今回は1階も見てみたい」: 「今回は〜も（見たい・探して・OK）」も今回だけ（断りの「今回は見送ります」は temporaryScopeCue の頭で外す）
+  /今回は[^。!?！？\n]{0,20}?(?:も|でも)[^。!?！？\n]{0,12}?(?:見|探|含|OK|ok|大丈夫|いい|良い|可|構わ|送)/,
+  /今だけ/,
+  /(?:1|一)(?:回|度)(?:だけ|限り)/,
   /一時的に?/,
   /(?:試しに|ためしに|お試しで)/,
   // 「参考に致します」（送った物件のお礼）は外す＝参考に「見たい・知りたい・教えて・送って」の形だけ（2026-09-27 監査 Gen 事例）
@@ -40,10 +61,31 @@ const TEMPORARY_RES: ReadonlyArray<RegExp> = [
   /(?:にした|だった|とした|になった|上げた|広げた)場合(?:の|で|は)?(?:物件|お部屋|部屋|もの|とこ)?(?:も|って|は)?\s?(?:見|知り|教え|送|あり|あれ|どう|気にな)/,
   /(?:にした|だった)ら(?:どんな|どう|いくら|ありま|あるか)/,
 ];
+// 弱い「今回だけ」の語（2026-09-30）。「一旦家賃12万で」「とりあえず福島区も」＝ひとまずその条件で見る（登録の条件は変えない）。
+//   初めての条件の文（「とりあえず梅田で1Kで探してます」）にも出るので、登録の条件がある人だけに使う（resolveConditionChangeScope の registered）
+const WEAK_TEMPORARY_RES: ReadonlyArray<RegExp> = [
+  /(?:一旦|いったん|とりあえず|取り敢えず|取りあえず|ひとまず|取り急ぎ)/,
+  // 本番「一度、一階のお部屋もお願いしたいです！」＝一度（試しに）〜も見たい。「一度内覧したい」は「も」が無いので当たらない
+  /一度[、,\s]?[^。!?！？\n]{0,20}?も(?:見|探|お願い|おねがい|送)/,
+];
+// 期間の「これから」の語（2026-09-30）。言い切っている＝切り替え。弱い「今回だけ」の語より強い（「とりあえず今後は1Kで」は切り替え）
+//   「今後ともよろしく」「今後もよろしく」（挨拶）・「10月以降の入居」（入居時期）は入れない
+const FUTURE_PERMANENT_RES: ReadonlyArray<RegExp> = [
+  /これから(?:は|先)/,
+  /これからも(?!\s?(?:よろしく|宜しく|お願い))/,
+  /今後(?:は|の(?:条件|希望|検索))/,
+  /今後も(?!\s?(?:よろしく|宜しく|お願い))/,
+  /次(?:回)?から(?:は)?/,
+  /(?:これ|次回|今回)以降/,
+  /この先(?:は)?/,
+  /ずっと(?:この|その)?条件/,
+];
 // 「切り替え」の語（今後ずっとこの条件で）
 const PERMANENT_RES: ReadonlyArray<RegExp> = [
   /条件(?:を|の)?(?:変更|変え|切り替え|切替|見直)/,
   /(?:に|へ)(?:変更|切り替え|切替)/,
+  // 2026-09-30 「やっぱり1Kに変えて」「2LDKに変えたい」
+  /(?:に|へ)変え(?:て|たい|ます|る)/,
   /(?:やっぱり|やっぱ|やはり)/,
   /(?:ではなく|じゃなくて|じゃなく|ではなくて)/,
   /(?:で|を)探して(?:ます|います|る|いきたい|行きたい|おります)/,
@@ -68,9 +110,29 @@ export function temporaryScopeCue(text: string | null | undefined): string | nul
   return firstHit(t, TEMPORARY_RES);
 }
 
-/** お客様の文の「切り替え」の語（無ければ null） */
+/** お客様の文の「切り替え」の語（無ければ null）。期間の「これから」の語も含む（aix-jev-materials の材料と同じ読み） */
 export function permanentScopeCue(text: string | null | undefined): string | null {
-  return firstHit(norm(text), PERMANENT_RES);
+  const t = norm(text);
+  return firstHit(t, FUTURE_PERMANENT_RES) ?? firstHit(t, PERMANENT_RES);
+}
+
+/** 期間の「これから」の語（これからは・今後は・次から・以降）。無ければ null */
+export function futurePermanentScopeCue(text: string | null | undefined): string | null {
+  return firstHit(norm(text), FUTURE_PERMANENT_RES);
+}
+
+/** 弱い「今回だけ」の語（一旦・とりあえず・ひとまず）。無ければ null。断りの文（「今回は見送ります」）は temporaryScopeCue と同じく外す */
+export function weakTemporaryScopeCue(text: string | null | undefined): string | null {
+  const t = norm(text);
+  if (!t) return null;
+  return firstHit(t, WEAK_TEMPORARY_RES);
+}
+
+/** 登録の条件がある人か（希望エリア・家賃の上限・間取りのどれか）。弱い「今回だけ」の語は、戻す先の条件がある人だけに使う */
+export function hasRegisteredConditions(r: Record<string, unknown> | null | undefined): boolean {
+  if (!r) return false;
+  const s = (v: unknown) => (v == null ? "" : String(v).trim());
+  return !!(s(r.desired_area) || s(r.floor_plan) || (Number(r.rent_max) > 0));
 }
 
 /** ブレインの出力の欄を読む（形が違えば null） */
@@ -80,21 +142,38 @@ export function normalizeBrainScope(v: unknown): ConditionChangeScope | null {
   return s === "permanent" || s === "temporary" || s === "none" ? s : null;
 }
 
-/** 条件の言い直しの置き場所を決める（上の 1〜4 の順） */
-export function resolveConditionChangeScope(input: { text: string | null | undefined; brainScope?: unknown }): ScopeDecision {
+/**
+ * 条件の言い直しの置き場所を決める（上の 1〜6 の順）。
+ *   registered: その発言の前の登録の条件（分かる時だけ）。渡して空なら弱い「今回だけ」の語は使わない（初めての条件の文）。
+ *   渡さない時（ブレインの後）は使う＝condition-scope-server.ts が「戻す先の条件が空なら切り替えのまま」で守る
+ */
+export function resolveConditionChangeScope(input: { text: string | null | undefined; brainScope?: unknown; registered?: Record<string, unknown> | null }): ScopeDecision {
   const tmp = temporaryScopeCue(input.text);
   if (tmp) return { scope: "temporary", by: "text_temporary", evidence: tmp };
-  const perm = permanentScopeCue(input.text);
+  const future = futurePermanentScopeCue(input.text);
+  if (future) return { scope: "permanent", by: "text_permanent_future", evidence: future };
+  const weak = weakTemporaryScopeCue(input.text);
+  if (weak && (input.registered === undefined || hasRegisteredConditions(input.registered))) return { scope: "temporary", by: "text_temporary_weak", evidence: weak };
+  const perm = firstHit(norm(input.text), PERMANENT_RES);
   if (perm) return { scope: "permanent", by: "text_permanent", evidence: perm };
   const b = normalizeBrainScope(input.brainScope);
   if (b) return { scope: b, by: "brain", evidence: null };
   return { scope: "permanent", by: "default", evidence: null };
 }
 
-/** ブレインより先に走る経路（P4・フォームの読み取り）が登録の条件を書いてよいか（「今回だけ」の語が無い時だけ書く） */
-export function preBrainMayWriteRegistered(text: string | null | undefined): { ok: boolean; evidence: string | null } {
+/**
+ * ブレインより先に走る経路（P4・フォームの読み取り）が登録の条件を書いてよいか（「今回だけ」の語が無い時だけ書く）。
+ *   強い語は必ず止める。弱い語（一旦・とりあえず）は登録の条件がある人（registered を渡して空でない）の時だけ止める
+ *   （渡さない P4 は書く→ブレインが今回だけと決めたら condition-scope-server が戻す）。期間の「これから」の語があれば書く
+ */
+export function preBrainMayWriteRegistered(text: string | null | undefined, registered?: Record<string, unknown> | null): { ok: boolean; evidence: string | null } {
   const tmp = temporaryScopeCue(text);
-  return tmp ? { ok: false, evidence: tmp } : { ok: true, evidence: null };
+  if (tmp) return { ok: false, evidence: tmp };
+  if (registered !== undefined && hasRegisteredConditions(registered) && !futurePermanentScopeCue(text)) {
+    const weak = weakTemporaryScopeCue(text);
+    if (weak) return { ok: false, evidence: weak };
+  }
+  return { ok: true, evidence: null };
 }
 
 /** 登録の条件を戻す時に見る列（検索に効く列だけ。こだわり・NG の文字の列は戻さない＝メモとして残る） */
@@ -112,7 +191,7 @@ export function planScopeRevert(
   rows: ReadonlyArray<HistoryRowLite>,
   current: Record<string, unknown> | null | undefined,
   sinceIso: string,
-  opts: { slackMs?: number } = {},
+  opts: { slackMs?: number; keepNewFields?: boolean } = {},
 ): { updates: Record<string, unknown>; skipped: string[] } {
   const since = Date.parse(sinceIso) - (opts.slackMs ?? 10_000);
   const updates: Record<string, unknown> = {};
@@ -130,9 +209,83 @@ export function planScopeRevert(
     const first = sorted[0], last = sorted[sorted.length - 1];
     if (String(current?.[f] ?? "") !== String(last.new_value ?? "")) { skipped.push(`${f}（履歴の後に変わっている）`); continue; }
     const ov = first.old_value;
+    // 2026-09-30 弱い「今回だけ」の語（一旦・とりあえず）の時は、この発言で初めて入った列（元が空）は戻さない＝初めての条件を消さない
+    if ((ov == null || ov === "") && opts.keepNewFields) { skipped.push(`${f}（この発言で初めて入った列・弱い語なので残す）`); continue; }
     if (ov == null || ov === "") updates[f] = null;
     else if (NUMERIC_REVERT.has(f)) { const n = Number(ov); if (Number.isFinite(n)) updates[f] = n; else skipped.push(`${f}（数字でない ${ov}）`); }
     else updates[f] = ov;
   }
   return { updates, skipped };
+}
+
+// ─────────────────────────── 当たり外れ（2026-09-30） ───────────────────────────
+// 竹内「一時調整でその一回限定して行うか、そもそもの条件自体を変えるのかの判断の部分も強化する」:
+//   判断（condition_scope_decisions の1行）を、その後のスタッフの動きと照らして「どちらが正しかったか」を決める（純関数）。
+//   週のまとめ（condition-scope-server.ts weeklyConditionScope）と過去の監査（scripts/audit-condition-scope.ts）が同じ物差しを使う。
+//   物差し（上から・最初に決まった物）:
+//   1. スタッフが登録の条件を手で直した（履歴の書き手 screen_edit／manual）→ 72時間以内に元に戻した＝temporary／戻さない＝permanent
+//      （P4・ブレインの橋など自動の書き手は判断を受けた側なので物差しにしない。scope:temporary の戻しも同じ）
+//   2. スタッフがメモの一時調整で検索した（web_brain の search_override）＝temporary
+//   3. スタッフの返事の言い方: 今回は・ひとまず・一旦・試しに＝temporary／今後は・条件を変更・条件に加え・も含めて・外し・新しい条件で＝permanent
+//   4. どれも無い＝unknown（当たり外れに数えない）
+export type ScopeOutcome = "permanent" | "temporary" | "unknown";
+export type ScopeFollowup = {
+  /** 判断の後の条件の履歴（source_message_id の書き手で人の手直しを見分ける） */
+  history: ReadonlyArray<HistoryRowLite & { source_message_id?: string | null }>;
+  /** 判断の後のスタッフのメモの一時調整の検索（automation_commands の web_brain で search_override がある物）の時刻 */
+  overrideAt: ReadonlyArray<string>;
+  /** 判断の後のスタッフの返事（最初の数通） */
+  staffTexts: ReadonlyArray<{ text: string | null; created_at: string }>;
+};
+const STAFF_TEMP_RE = /今回(?:は|だけ|のみ)|ひとまず|一旦|いったん|とりあえず|試しに|参考まで/;
+const STAFF_PERM_RE = /今後は|これからは|(?:ご)?条件(?:を|も)?(?:変更|切り替え|追加|加え)|条件に加え|も含めて|外し(?:て|、)|新しい(?:ご)?条件|改めて(?:ピックアップ|お探し|お部屋)/;
+const HUMAN_WRITER_RE = /^(?:screen_edit|manual)/i;
+
+export function labelScopeOutcome(decidedAtIso: string, f: ScopeFollowup, opts: { windowMs?: number; revertMs?: number } = {}): { truth: ScopeOutcome; evidence: string } {
+  const t0 = Date.parse(decidedAtIso);
+  const win = opts.windowMs ?? 72 * 3600_000;
+  if (!Number.isFinite(t0)) return { truth: "unknown", evidence: "時刻が読めない" };
+  const inWin = (iso: string, w = win) => { const t = Date.parse(iso); return Number.isFinite(t) && t >= t0 - 60_000 && t <= t0 + w; };
+  // 1. 人の手直し
+  const human = f.history.filter((h) => HUMAN_WRITER_RE.test(String(h.source_message_id ?? "")) && (SCOPE_REVERT_FIELDS as readonly string[]).includes(h.changed_field));
+  const firstHuman = human.filter((h) => inWin(h.created_at)).sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
+  if (firstHuman) {
+    const revertWin = opts.revertMs ?? 72 * 3600_000;
+    const back = f.history.find((h) => h.changed_field === firstHuman.changed_field && h.created_at > firstHuman.created_at
+      && Date.parse(h.created_at) - Date.parse(firstHuman.created_at) <= revertWin && String(h.new_value ?? "") === String(firstHuman.old_value ?? ""));
+    return back
+      ? { truth: "temporary", evidence: `人が ${firstHuman.changed_field} を直して元に戻した` }
+      : { truth: "permanent", evidence: `人が ${firstHuman.changed_field} を直したまま（${String(firstHuman.old_value ?? "").slice(0, 20)}→${String(firstHuman.new_value ?? "").slice(0, 20)}）` };
+  }
+  // 2. メモの一時調整で検索
+  const ov = f.overrideAt.find((iso) => inWin(iso));
+  if (ov) return { truth: "temporary", evidence: "スタッフがメモの一時調整で検索" };
+  // 3. スタッフの返事（24時間以内の最初の3通）
+  const replies = f.staffTexts.filter((s) => inWin(s.created_at, 24 * 3600_000) && s.text).sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, 3);
+  for (const r of replies) {
+    const txt = String(r.text).normalize("NFKC");
+    const tm = txt.match(STAFF_TEMP_RE), pm = txt.match(STAFF_PERM_RE);
+    if (tm && !pm) return { truth: "temporary", evidence: `返事「${tm[0]}」` };
+    if (pm && !tm) return { truth: "permanent", evidence: `返事「${pm[0]}」` };
+  }
+  return { truth: "unknown", evidence: "スタッフの動きから決められない" };
+}
+
+/** 判断の当たり外れを数える（週のまとめ・監査）。unknown・none は数えない */
+export function scoreScopeDecisions(rows: ReadonlyArray<{ scope: string; by: string; truth: ScopeOutcome }>): {
+  n: number; hit: number; wrongPermanent: number; wrongTemporary: number; byRule: Record<string, { n: number; hit: number }>;
+} {
+  let n = 0, hit = 0, wrongPermanent = 0, wrongTemporary = 0;
+  const byRule: Record<string, { n: number; hit: number }> = {};
+  for (const r of rows) {
+    if (r.truth === "unknown" || (r.scope !== "permanent" && r.scope !== "temporary")) continue;
+    n++;
+    const ok = r.scope === r.truth;
+    if (ok) hit++;
+    else if (r.scope === "permanent") wrongPermanent++; // 今回だけなのに登録を直した（出口の誤り＝重い）
+    else wrongTemporary++; // 切り替えなのに今回だけ（入口の誤り＝次の言い直しで直る）
+    const b = (byRule[r.by] ??= { n: 0, hit: 0 });
+    b.n++; if (ok) b.hit++;
+  }
+  return { n, hit, wrongPermanent, wrongTemporary, byRule };
 }

@@ -2364,6 +2364,31 @@ ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS seen_by TEXT;
 --   その回をどの上書きで判定したか {command_id, override}（search-override.ts の PickupSearchOverride・無い行＝登録の条件で判定）。
 --   👑 は物差し（上書き）が混ざる時に一番新しい回の物差しの物件だけから選ぶ（pickup-best.sameRulerCandidates）
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_override JSONB;
+-- 2026-09-30 竹内「一時調整でその一回限定して行うか、そもそもの条件自体を変えるのかの判断の部分も強化する」:
+--   お客様の条件の言い直しを「今回だけ（その回の上書き）／切り替え（登録を直す）／条件の話でない」のどれと判断したかを1か所に残す
+--   （brain-core → condition-scope-server.recordScopeDecision）。週のまとめ（search-audit-weekly → weeklyConditionScope）が
+--   72時間後にその後のスタッフの動き（人の手直し・メモの一時調整・返事）で outcome（permanent/temporary/unknown）を付け、規則ごとの当たりを出す
+CREATE TABLE IF NOT EXISTS condition_scope_decisions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  conversation_id TEXT NOT NULL,
+  property_customer_id UUID,
+  message_ts TIMESTAMPTZ,
+  text_head TEXT,
+  scope TEXT NOT NULL,
+  decided_by TEXT NOT NULL,
+  evidence TEXT,
+  brain_scope TEXT,
+  condition_change_type TEXT,
+  search_override JSONB,
+  reverted JSONB,
+  outcome TEXT,
+  outcome_evidence TEXT,
+  outcome_recorded_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_condition_scope_decisions_created ON condition_scope_decisions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_condition_scope_decisions_pc ON condition_scope_decisions(property_customer_id, created_at DESC);
+ALTER TABLE condition_scope_decisions DISABLE ROW LEVEL SECURITY;
 -- 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。検索結果はピンポイント検索で行ったか広げて検索を行ったかも分かるように」:
 --   その回を見つけた検索の種類（拡張 v2.5.28〜 が merge-pdfs に送る・無い行＝分からない）。ピンポイントの物件は判定で +10（SEARCH_PINPOINT）。
 --   ピンポイントの回の「通す」が足りない時は同じお客様・同じサイトで広げてを1回だけ自動で積む（search-widen-chain.ts・automation_commands.payload.chain）

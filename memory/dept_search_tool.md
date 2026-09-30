@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-09-30 v2.5.47 一時調整に「階」＋「今回だけ／条件そのものを変える」の判断の強化（**拡張の再読み込み必須**・**migrate-schema を流す**（condition_scope_decisions の表）・commit は worktree の枝・push は親）
+竹内「一時的に1階も含む場合は、検索して1階の物件も含めて送ったら大丈夫、その際だけ。階数以外の家賃でも、拡張ツールの一時調整の部分を上手く活用すればできるので、そのように行う。一時調整でその一回限定して行うか、そもそもの条件自体を変えるのかの判断の部分も強化する必要あるので、物件検索のブレインの部分にはそこの部分も強化する」
+- **YUMA で見つかった穴**: 「今回だけ1階も見たい」→ ブレインは今回だけと判断したが、一時調整（search_override）に階の欄が無く、登録の「2階以上」のまま採点された（1階の物件が × で送る候補に入らない）
+- **調べて分かったこと**: 拡張はリアプロ・ITANDI・レインズとも**階で検索を絞っていない**（page-script／itandi-page-script／reins-page-script に階の操作は0か所）。登録の「2階以上」「1階NG」は自由文の欄（こだわり・NG・その他・フォームの原文）にだけあり、**採点（property-brain の imageWants floor_2_plus・listing-equipment の floor2）で効いている**。→ 1階を含める回はサイトの欄を触らなくてよく、直すのは判定の写し
+- **一時調整に階（floor_min）**: 1＝1階も含める・N＝N階以上・無い＝登録のまま（古い行・payload には欄が無い＝省略可）
+  - サーバー: `app/lib/search-override.ts`（型・isEmptyOverride・画面の1行・物差しの鍵（階がある時だけ要素を足す＝旧の鍵は変わらない）・短い説明「1階も含める」・`floorMinInText`（「1階も」「一階のお部屋も」「階数は問わない」→1／「3階以上」→3／「1階以外」→2／「2階以上はエレベーター必須」は階の希望にしない／「11階の部屋でもいい」を1階と読まない）・`stripFloorWants`（節ごとに外す・「バス・トイレ」の「・」は割らない・「13階建」は外さない））
+  - 読み: `search-override-read.ts` parseDeterministic／validateOverride（**文の中の階の言い方だけを根拠**・DeepSeek の前置きは変えていない＝キャッシュを保つ・DeepSeek が文に無い階を言ったら落とす）／sanitizeSearchOverride（1〜30 の整数）
+  - 判定: `search-override-judge.ts` overlayCustomerForOverride が写しの自由文の欄（preferences・ng_points・other_requests・additional_conditions・raw_format_text・notes）から階の希望の節を外す（N≥2 は外して「N階以上」を足す）。登録の条件（DB）は変えない
+  - 拡張 `chrome-extension/search-override.js`: sanitize（floor_min・形が違えば捨てる・無い時は欄を作らない）・isEmpty・applyToCustomer（写しに floor_min の印＝点検の customer_snapshot に残る）・formValues（値だけ・欄は無い）・describe（帯・コンソール「1階も含める」）。サイトの自動入力は変えていない
+- **今ある一時調整の項目の確認**: 間取り・家賃上限/下限・徒歩・築年・面積上限/下限・ペットは popup の `_applySearchOverrideToForm` → 欄 → 各サイトの組み立て（buildAdjCustomer・readAdjRentMin・adj-area-max）で読まれている（抜け無し・テストで固定）
+- **今回だけ／切り替えの判断の強化**（`app/lib/condition-change-scope.ts`・5段）: ①強い今回だけ（今回だけ・今回は〜も見たい・今だけ・1回だけ・一時的・試しに・ついでに・参考に見たい・比較・〜した場合の物件も／「今回だけじゃなく」は除く）→ ②期間の「これから」（これからは・今後は・次から・今回以降／「今後とも」「10月以降の入居」は除く）→ 切り替え ③弱い今回だけ（一旦・とりあえず・ひとまず・取り急ぎ・「一度、〜も」）→ 今回だけ（**登録の条件がある人だけ**・初めての条件の文は切り替え）④切り替えの語（〜に変えて を追加）⑤ブレイン ⑥既定 切り替え。弱い語を切り替えの語より先にしたのは竹内「出口（条件そのものを変える）は慎重に・入口（一時調整）は広め」
+  - P4・フォームの読み取り（ブレインより先）: 強い語は必ず止める・弱い語は登録の条件を渡した時だけ止める（line-webhook-text のカジュアル更新は existing を渡す）
+  - ブレインの後（condition-scope-server applyTemporaryScope）: 弱い語はこの発言で初めて入った列を戻さない・戻す先が空なら切り替えのまま（初めての条件を消さない）
+  - 「〜も見てみたい」の場所は足す（ADD_RE に も見・もお願い 等）。`osaka-geo.wardsInText` が「とりあえず福島区」「今回だけ福島区」の区を落としていた（前の仮名ごと1語に読む）のを直した
+- **判断を1か所に**: 表 `condition_scope_decisions`（migrate-schema に追加・**本番はまだ作っていない**＝作るまで記録は warn 1回で飛ばす）。brain-core が判断ごとに1行（scope・decided_by・根拠の語・ブレインの欄・上書き・戻した列）。週のまとめ（search-audit-weekly → `weeklyConditionScope`）が 72時間後にその後のスタッフの動き（`labelScopeOutcome`: 人の手直しを戻したか・メモの一時調整・返事の「ひとまず／条件に加え」）で outcome を付け、規則ごとの当たりを出す（cron_run_logs に残る）
+- **実データ（scripts/audit-condition-scope.ts・180日のお客様の発言 9,889件→条件の言い直しらしい文 408件）**: 正解が決まるのは38件（切り替え37・今回だけ1）。旧も新も 37/38（97.4%）・答えが変わったのは2件（どちらも「一旦」・正解は決められない）。お客様が「今回だけ」と言うことはほぼ無い＝既定の切り替えは実データと合っている。外れの1件（d99ab7e6「ひとまず大阪市内から」）はスタッフが場所を仮に決めた回でお客様の条件（ペット可）は切り替えで正しい＝物差しの揺れ
+- テスト: `app/lib/__tests__/condition-scope-floor.test.ts`（76）・`tests/chrome-extension/search-override.test.js`（89）・既存の condition-change-scope 33・search-override 61・search-override-judge 58・拡張 26本・版の固定を 2.5.47 に
+- **竹内さんが確かめること（再読み込み後・YUMA dd34f5b0…）**: ①拡張を再読み込み（2.5.47）・`/api/migrate-schema` を流す ②YUMA の登録のこだわりに「2階以上」がある事を確かめる ③お客様役で「今回だけ1階も見たいです」→ ログ `brain:condition-scope` が temporary/text_temporary・`condition-scope:temporary` の override が `{floor_min:1}`・登録の「2階以上」はそのまま・condition_scope_decisions に1行 ④AIX の検索（payload.search_override.floor_min=1）で拡張のコンソール `[batch] AIXツールのメモの一時調整（この回だけ）: 1階も含める`・popup の帯も同じ ⑤売上サポのその回のカードに「この回はメモの条件（1階も含める）で判定」・1階の物件が 2階以上× で落ちていない ⑥次の自動便（上書きなし）では1階の物件はまた 2階以上×（登録のまま）⑦「一旦家賃12万で」＝今回だけ（登録の家賃は変わらず上書き12万）・「これからは駅10分以内で」＝登録の徒歩が10分に ⑧片付け（YUMA の条件を戻す・AIX要対応の通知）
+
 ## 2026-09-30 v2.5.46 ITANDI の前のお客様の条件を1つずつ外してから入れる（ボタンに頼らない）（**拡張の再読み込み必須**・DB の表・列の追加なし・サーバーは変えていない・commit は親）
 竹内「（ITANDI に）消去ボタンは無いので、リアプロのように、一度入っているのを全部抜いて、新しいお客さんに切り替わるたびにお客さんの条件入れたら出来る」
 - **根拠（本番の画面の文字）**: extension_snapshots 9/30 の ITANDI のタブの text_head。選んだ区・駅は見出しと「〜で絞り込み」のボタンの間にチップで並ぶ（13:50「所在地 大阪市天王寺区 大阪市浪速区 大阪市城東区 大阪市鶴見区 所在地で絞り込み 路線・駅 東淀川 … 谷町六丁目 路線・駅で絞り込み」・空の時は「所在地 所在地で絞り込み 路線・駅 路線・駅で絞り込み」）。form.filled に出る欄は rent:lteq / rent:gteq / floor_area_amount:gteq・lteq / station_walk_minutes:lteq / building_age:lteq / offer_conditions_updated_at:gteq（更新日）/ val（並び）だけ。**チップの×の DOM（tag・class）は写真と文字では分からない** → 外せなかった時に形を点検の reset.hint に残す
@@ -1825,7 +1844,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ## 🔁 引き継ぎ事項（次セッションへ）
 
-- 現在のバージョン: **v2.5.36**（manifest.json 記載・2026-09-27 一時調整は保存した時の登録の条件と同じ時だけ戻す temp-adj-base.js）
+- 現在のバージョン: **v2.5.47**（manifest.json 記載・2026-09-30 一時調整に階（floor_min）・今回だけ／切り替えの判断の強化）
 - **2026-09-14 賃料下限 実機確認待ち（v2.5.6）**: 拡張を再読み込み → 一時調整の「賃料下限」に 60000 を入れて各サイトで検索。リアプロ＝賃料の下限プルダウンが 6万（無ければ直下の選択肢）／itandi＝賃料の下限欄に 6、コンソール `[AX] itandi 賃料下限: 6万`（`rent:gteq が見つかりません` が出たら欄の name を DevTools で確認）／レインズ＝賃料FROM に 6、コンソール `[AX] 賃料下限 FROM(idx75)`（`idx75 が賃料FROM欄と確認できない` が出たら idx を調べ直す）
 - **2026-09-14 itandi 実機確認待ち（v2.5.5）**: 拡張を再読み込み → 駅の多い条件（SATOKO♪ 様の広げて検索など）で itandi 自動検索 → 駅チェックが途切れず続き、途中で数十秒止まらないか。コンソール `[AX] 駅クリック:` が連続して出ること・`watchdog: 240s` が出ないこと
 - **2026-09-12 itandi「電車1本」実機確認待ち**: みく様で itandi 自動入力 → 路線13本が順に選ばれ、各路線の駅が全部チェックされて検索まで進むか。コンソール `[AX] 電車1本: <路線> の駅 X/Y 選択` と `沿線の駅を計N駅選択`。150秒 watchdog（v2.5.4 で85秒から延長）に掛かるならクリック間隔・路線後待機を詰める。兵庫・京都側の駅も必要なら都道府県タブ切替の DOM 確認から
