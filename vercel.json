@@ -73,6 +73,10 @@
       "schedule": "0 0 * * 1"
     },
     {
+      "path": "/api/cron/search-audit-daily",
+      "schedule": "40 10 * * *"
+    },
+    {
       "path": "/api/cron/scoring-learning",
       "schedule": "10 20 * * 0"
     },
