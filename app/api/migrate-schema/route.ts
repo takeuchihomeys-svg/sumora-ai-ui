@@ -1346,6 +1346,22 @@ ALTER TABLE calendar_events ALTER COLUMN conversation_id TYPE TEXT USING convers
 ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS is_done BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_calendar_events_pending ON calendar_events(start_at) WHERE is_done = false;
 
+-- calendar_event_deletions: 自動で消したカレンダーの予定の控え（2026-09-30 竹内: お客様が決まった内覧を取りやめた時に予定を自動で消す）
+--   消す前の行の中身（event_row）を残してから消す＝戻す時は event_row を calendar_events に入れ直す。この表に残せない時は消さない
+--   （app/lib/viewing-cancel-calendar-server.ts・止める時は VIEWING_CANCEL_AUTO=off）
+CREATE TABLE IF NOT EXISTS calendar_event_deletions (
+  id BIGSERIAL PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  conversation_id TEXT,
+  reason TEXT NOT NULL,
+  trigger_text TEXT,
+  trigger_at TIMESTAMPTZ,
+  event_row JSONB NOT NULL,
+  deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_event_deletions_conv ON calendar_event_deletions(conversation_id, deleted_at DESC);
+ALTER TABLE calendar_event_deletions DISABLE ROW LEVEL SECURITY;
+
 -- ── 追加カラム（2026-07-12）──
 
 -- aix_feature_suggestions: 実装メモ用カラム + 実装完了インデックス

@@ -60,7 +60,8 @@ import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { viewingReportBlockForBrain } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-09 Fable5 行動台帳: 「我々が何をしたか（done）／何をすると言ったか（promised）」を generate-reply と同じ関数で構築しブレインにも渡す
-import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain } from "@/app/lib/action-ledger";
+import { buildActionLedger, buildLedgerLinesForBrain, buildViewingFlowForBrain, type LedgerInput } from "@/app/lib/action-ledger";
+import { cancelViewingCalendarOnCustomerCancel } from "@/app/lib/viewing-cancel-calendar-server";
 import { isViewingFixTopic } from "@/app/lib/viewing-premature";
 // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている間は「反応待ち」にしない（AIX【物件ピックアップした】を立てる）
 import { resolvePendingPickup } from "@/app/lib/pending-pickup";
@@ -1250,6 +1251,18 @@ export async function sendBrainWarm(b: BrainSystemBlocks): Promise<BrainWarmUsag
  * 品質ゲートは自分自身の経路の採択率（SOURCE_ACCEPT_RATE:{action}:{source}）を読む。
  * （旧実装は analysis_step1 という他コンポーネントのキーを読んでいたバグがあった）
  */
+/** 今回の連投で決まった内覧の取りやめを読んだ会話の台帳の入力（分析 → 保存の流れへの受け渡し・メモリだけ） */
+const pendingViewingCancel = new Map<string, LedgerInput>();
+/** 保存まで行う本番の流れだけが呼ぶ: 控えがあれば、応答を待たせずにカレンダーの決まった内覧の予定を消す（viewing-cancel-calendar-server.ts） */
+function runViewingCancelIfPending(conversationId: string): void {
+  const ledgerInput = pendingViewingCancel.get(conversationId);
+  if (!ledgerInput) return;
+  pendingViewingCancel.delete(conversationId);
+  const task = () => cancelViewingCalendarOnCustomerCancel({ conversationId, ledgerInput })
+    .then(() => undefined, (e) => console.error(JSON.stringify({ tag: "viewing-cancel:failed", conversationId, step: "run", error: e instanceof Error ? e.message : String(e) })));
+  try { after(task); } catch { void task(); }
+}
+
 export async function analyzeConversation(
   conversationId: string,
   isUrgent: boolean,
@@ -2125,13 +2138,20 @@ export async function analyzeConversation(
   const pcrLoopWarning = aixFlow.pcrLoopWarning;
   const aixHistoryText = aixFlow.text;
   // 2026-09-09 Fable5 行動台帳: last_aix_history（AIX 3件・時刻なし・宣言/実行の区別なし）を補強。手打ち送付・宣言も含む確定事実を brain に渡す
-  const brainLedger = buildActionLedger({
+  const brainLedgerInput: LedgerInput = {
     recentAixRows: aixLogs.map((l) => ({ aix_type: l.aix_type, check_pattern: l.check_pattern ?? null, created_at: l.created_at, sent_at: l.sent_at ?? null, line_message_id: l.line_message_id, property_names: l.property_names ?? null, estimate_sent: l.estimate_sent ?? null, template_name: l.template_name ?? null, prop_statuses: l.prop_statuses ?? null, generated_text: (l as { generated_text?: string | null }).generated_text ?? null })),
     messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
     lineTasks: ((openTasksResult.data ?? []) as Array<{ task_type: string; status: string; created_at: string; resolved_at: string | null }>).map((t) => ({ task_type: t.task_type, status: t.status, created_at: t.created_at, completed_at: t.resolved_at })),
     lastCustomerAt: typedMessages.find((m) => m.sender === "customer")?.created_at ?? null,
     recordedFacts,
-  });
+  };
+  const brainLedger = buildActionLedger(brainLedgerInput);
+  // 2026-09-30 竹内: お客様が今回の連投で決まった内覧を取りやめた時は、カレンダーの決まった内覧の予定（と申込ツールのカレンダーの行）を消す。
+  //   判定は内覧の流れ（viewing-flow）の値だけ・消す線は viewing-cancel-calendar.ts・応答は待たせない・二重に走っても同じ結果・VIEWING_CANCEL_AUTO=off で止まる
+  //   ※ ここ（analyzeConversation）は監査・影の試し実行からも呼ばれるので DB には書かない。台帳の入力を控えるだけで、
+  //     消すのは保存まで行う本番の流れ（analyzeAndSaveBrainMetaInner → runViewingCancelIfPending）
+  if (brainLedger.facts.viewingFlow?.reason === "customer_cancelled_after_confirm" && typedMessages[0]?.sender === "customer") pendingViewingCancel.set(conversationId, brainLedgerInput);
+  else pendingViewingCancel.delete(conversationId);
   // 2026-09-14: 要約1行だけでなく、何を・いつ・どの物件に送った／約束したか（台帳の行・中身つき）も毎回渡す（送った内容は鮮度が最も高い事実）
   // 2026-09-22 竹内（𝓡さん事例）「こっちが送った物件をお客さんが送ってくることもある」:
   //   お客様が送ってきたスクショがこちらの送った物件か（記録で照合）を確定事実として渡す。生成（generate-reply）と同じ関数・同じ結果。
@@ -4444,6 +4464,8 @@ async function analyzeAndSaveBrainMetaInner(
       totalMsgCount: totalMsgCount ?? 0,
     },
   );
+  // 2026-09-30 竹内: 今回の連投で決まった内覧が取りやめになっていたら、カレンダーの予定を消す（LLM の結果に依らない決定論・応答は待たせない）
+  runViewingCancelIfPending(conversationId);
   if (!meta) {
     // H3(Fable5): 失敗時も brain_analyzed_at を記録 → sweep の30分バックオフに使用。
     // これが無いと決定的に失敗する会話が5分毎に永久リトライされ（最大288 Haiku呼び出し/日/行）、

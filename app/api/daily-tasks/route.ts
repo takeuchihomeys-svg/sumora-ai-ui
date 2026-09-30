@@ -102,6 +102,7 @@ export async function DELETE(req: NextRequest) {
   // sync_key: こちらのカレンダーの予定を消した時に、その予定から入れた申込ツールの行（dt_sumora_cal_<id>）だけを消す（無ければ何も起きない）
   const syncKey = searchParams.get("sync_key");
   if (syncKey !== null && !isValidSyncKey(syncKey)) return NextResponse.json({ error: "invalid sync_key" }, { status: 400 });
+  //   （サーバーの中から消す時は同じ処理の viewing-cancel-calendar-server.ts deleteScreeningTaskBySyncKey）
   const id = syncKey !== null ? screeningTaskIdFor(syncKey) : searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
