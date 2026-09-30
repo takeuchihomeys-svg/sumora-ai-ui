@@ -120,6 +120,8 @@
     if (/__PASS_DEADLINE__|見張りの時間切れ/.test(msg)) why = "1回の検索が上限の時間を過ぎたので次のお客様へ進みました（画面の写真を AIXツールの「🔍 検索の点検」→「📷 拡張の画面」に残しています）";
     else if (/AXLX_TAB_DEAD|タブが応答しません/.test(msg)) why = /ITANDI/.test(msg) ? "ITANDI のタブが検索の画面になりません（一覧を開き直してもだめでした・ログイン切れの可能性）" : "リアプロのタブが応答しません（読み直してもだめでした）";
     // v2.5.45 ITANDI の検索のボタンが押せなかった（入力の誤り・3,000件超）。理由は page-script の日本語のまま
+    // v2.5.46 ITANDI の前のお客様の条件を外せなかった（欄の名前は page-script の日本語のまま）→ 混ざった条件で検索しないで飛ばした
+    else if (/AXLX_RESET_FAILED/.test(msg)) why = "前のお客様の条件を画面から外せませんでした（" + (msg.split("AXLX_RESET_FAILED:")[1] || "").trim().slice(0, 70) + "）";
     else if (/AXLX_SEARCH_BLOCKED/.test(msg)) why = "検索のボタンが押せませんでした（" + (msg.split("AXLX_SEARCH_BLOCKED:")[1] || "").trim().slice(0, 60) + "）";
     else if (/AXLX_NO_FILL_START|入力を始めませんでした/.test(msg)) why = "ページが条件の入力を始めませんでした（読み直して1回やり直してもだめでした）";
     else if (/AXLX_NO_LOCATION|地域を決められない/.test(msg)) why = "希望エリアから地域を決められませんでした（全件検索を防ぐため検索していません）";

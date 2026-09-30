@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-09-30 v2.5.46 ITANDI の前のお客様の条件を1つずつ外してから入れる（ボタンに頼らない）（**拡張の再読み込み必須**・DB の表・列の追加なし・サーバーは変えていない・commit は親）
+竹内「（ITANDI に）消去ボタンは無いので、リアプロのように、一度入っているのを全部抜いて、新しいお客さんに切り替わるたびにお客さんの条件入れたら出来る」
+- **根拠（本番の画面の文字）**: extension_snapshots 9/30 の ITANDI のタブの text_head。選んだ区・駅は見出しと「〜で絞り込み」のボタンの間にチップで並ぶ（13:50「所在地 大阪市天王寺区 大阪市浪速区 大阪市城東区 大阪市鶴見区 所在地で絞り込み 路線・駅 東淀川 … 谷町六丁目 路線・駅で絞り込み」・空の時は「所在地 所在地で絞り込み 路線・駅 路線・駅で絞り込み」）。form.filled に出る欄は rent:lteq / rent:gteq / floor_area_amount:gteq・lteq / station_walk_minutes:lteq / building_age:lteq / offer_conditions_updated_at:gteq（更新日）/ val（並び）だけ。**チップの×の DOM（tag・class）は写真と文字では分からない** → 外せなかった時に形を点検の reset.hint に残す
+- **直したこと**
+  - `itandi-form-guard.js`（純関数）: `FILTER_ROWS`（所在地・路線/駅の見出しとボタンの文字）・`CLEAR_TEXT_FIELDS`（家賃の上下・面積の上下・駅徒歩・築年数）・`CLEAR_CHECK_NAMES`（room_layout:in・structure_type:in・option_id:all_in）・`CLEAR_CHECK_LABELS`（敷金なし・礼金なし・敷金・礼金なし）・`chipNames`（行の文字の断片 → チップ）・`isDeleteControl`（×・svg・aria-label 削除・class delete/close/remove）・`leftovers`（読み戻し → 残っている欄）・`resetSummary`（cleared／leftover／leftover_other）・`resetFailText`・`foreignChips`（入れた後に前の区・駅が混ざっていないか）
+  - `itandi-page-script.js` の fill の最初: **`_itResetForm`** ＝「条件削除」等のボタンがあれば押す（無いのが普通）→ ①打つ欄を空に（setReactVal＋欄を離れる）②チェックを外す（label の中の input を押す）③チップを1つずつ×で外す（押す時に行を読み直して先頭から・svg は MouseEvent・確かめの窓が出たら はい・絞り込みの窓が開いたら閉じる・Escape は使わない）。1つごとに人の間 `_hd(450)` → **読み戻して空か確かめる**（残ればもう1回まで）→ 空なら今まで通り入力（`_afterReset`）。**空にならない欄があれば `AXLX_RESET_FAILED: 所在地（…）・路線・駅（…）`（skip）＝そのお客様の ITANDI だけ飛ばす**（点検の reset_fail に欄の名前・★物件出し★に「前のお客様の条件を画面から外せませんでした（…）・0件とは限りません」）
+  - チップの行＝ボタンから上へ「見出しで始まり、ボタンの前に何かある」一番近い入れ物（ボタンだけの入れ物は「所在地」で始まるので行にしない・他の行のボタンや家賃の欄を含む所まで上がらない）。**行が決まらない時は読めない扱い**（大きな入れ物を行にすると他の欄の見出しをチップと取り違えて毎回飛ばす）
+  - 外さない物: 並び（val）・更新日（募集条件更新の段が今まで通り空にする／入れる）・管理費込み（毎回入れる）・絞り込みの窓の中・一覧の行のチェック（name で決めた物とラベルだけ触る）。名前の分からない打つ欄（物件名など）は空にしてみるが、残っても失敗にしない（reset.leftover_other）
+  - 点検（filled）: `reset = { cleared: [欄], leftover: [欄], ops, ms, hint?, leftover_other?, unreadable?, after: { wards, stations, foreign, unmatched_stations } }`。**reset_fail は外せなかった時・入れた後に前の区・駅が混ざった時だけ**（旧はボタンが無いと毎回付いた＝RESET_FAILED は付かないのが正常に）。混ざったのは検索を止めず札だけ（外して空を確かめた後なので、入れる途中の誤り）。駅の表記ゆれ（unmatched_stations）は札にしない
+  - `batch-guard.js` failureNotice に AXLX_RESET_FAILED・`background.js` `_compactFill` に reset（ITANDI の入れ直しの1回目の読み戻し）
+  - 旧の副作用も直る: お客様に値が無い欄（築年数・駅徒歩・面積・下限）は前のお客様の値のままだった → 毎回空にしてから入れる
+- **テスト**: 新 `tests/chrome-extension/itandi-reset.test.js`（67・本番の画面の文字そのまま）。jsdom の模型の画面（scratchpad・リポジトリには入れない）で ×が svg／ボタン → 26操作・約10秒で全部外れて入力へ・×が無い → 外せず `AXLX_RESET_FAILED`（skip・reset.hint に `span < div.Tag < div.chips`）を確かめた。既存の版の固定を 2.5.46・human-wait の残ったチップの間の固定・form-guard の配線。拡張のテスト 26本すべて通過・tsc 通過
+- **まだ分からない事**: ITANDI のチップの×の本当の形（svg か button か・チップを押すと外れる作りか）。外せなければ点検の reset.hint と steps（chip_no_ctl）に出る → それを見て `_itChipDeleteCtl` を直す
+- **竹内さんに頼むこと**: ①自動便を回す PC 全部で拡張を再読み込み（小窓が「拡張 v2.5.46」）→ ITANDI のタブを1回読み直す ②YUMA で「🏠📋 リアプロ＋itandi」を1回 → ITANDI の画面で所在地・駅のチップが1つずつ消えてから入る・コンソール「[AX] itandi 前の条件を外した」／外せなければ「[AX] itandi 前の条件を消せない: 所在地（…）」と画面の上に赤い帯（その時はチップの×の形を点検から直す）
+
 ## 2026-09-30 v2.5.45 ITANDI の検索が止まる件（「fill-done が245秒以内に届きませんでした」・5分無進捗）（**拡張の再読み込み必須**・DB の表・列の追加なし・サーバーは変えていない・commit は親）
 竹内さんが拡張のエラー画面で見つけた「[batch] error: b5e25ca4… itandi auto Error: itandi 検索完了シグナル（fill-done）が245秒以内に届きませんでした」。
 - **原因（本番の証拠）**: search_audits（9/26〜9/30 の ITANDI の回）と extension_snapshots（12:52〜13:50 の ITANDI の写真・ページの文字・ログ）

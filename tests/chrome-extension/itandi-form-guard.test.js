@@ -112,11 +112,11 @@ ok("watchdog は『途中で止まりました』", /条件の入力が途中で
 
 console.log("\n⑦ 配線");
 const mf = JSON.parse(read("manifest.json"));
-eq("manifest の版", mf.version, "2.5.45");
+eq("manifest の版", mf.version, "2.5.46");
 const main = mf.content_scripts.find((c) => c.world === "MAIN" && c.js.indexOf("itandi-page-script.js") >= 0);
 eq("itandi のページの中の段に form-guard（page-script より前）", main && main.js, ["human-wait.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 const ps = read("itandi-page-script.js");
-ok("page-script: リセットは form-guard の isResetLabel（条件削除）", /FG\.isResetLabel\(t\)/.test(ps) && /"条件削除"/.test(ps));
+ok("page-script: 条件削除のボタンがあれば isResetLabel で押す（v2.5.46 は無くても1つずつ外す）", /FG\.isResetLabel\(b\.textContent\)/.test(ps) && /_itResetForm\(function \(res\)/.test(ps));
 ok("page-script: リセットは確かめの窓でも止まらない（押す間だけ confirm を はい）", /window\.confirm = function/.test(ps) && /finally \{ window\.confirm = _oc; \}/.test(ps));
 ok("page-script: 家賃の上限は rentText(…, \"max\")", /rentText\(cond\.rent_max, "max"\)/.test(ps));
 ok("page-script: 家賃の下限は rentText(…, \"min\")", /rentText\(cond\.rent_min, "min"\)/.test(ps));

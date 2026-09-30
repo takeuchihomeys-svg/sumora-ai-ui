@@ -90,7 +90,167 @@
     return d.skip ? { error: String(d.error), pageError: String(d.error) } : { error: null, pageError: String(d.error) };
   }
 
+  // ── ④ v2.5.46 前のお客様の条件を1つずつ外す（ボタンに頼らない）──
+  // 2026-09-30 竹内「（ITANDI に）消去ボタンは無いので、リアプロのように、一度入っているのを全部抜いて、新しいお客さんに切り替わるたびにお客さんの条件入れたら出来る」
+  //   本番の画面の文字（extension_snapshots 9/30 12:31〜14:27 の text_head）:
+  //     「… 管理会社 所在地 大阪市天王寺区 大阪市浪速区 所在地で絞り込み 路線・駅 東淀川 新大阪 … 谷町六丁目 路線・駅で絞り込み 駅徒歩 …」
+  //   ＝選んだ区・駅は「所在地」「路線・駅」の見出しと「〜で絞り込み」のボタンの間にチップで並ぶ（前のお客様の分が積み上がっていた）。
+  //   読み戻しの欄（form.filled）: rent:lteq / rent:gteq / floor_area_amount:gteq / floor_area_amount:lteq / station_walk_minutes:lteq /
+  //     building_age:lteq / offer_conditions_updated_at:gteq（更新日・itandi-update-days.js が空にする）/ val（並び・条件ではない）
+  var FILTER_ROWS = [
+    { key: "wards", ja: "所在地", label: "所在地",
+      buttons: ["所在地で絞り込み", "所在地で絞り込む", "所在地を絞り込む", "エリアで絞り込む", "エリアを絞り込む", "エリアで絞り込み", "地域で絞り込む", "地域を絞り込む", "地域で絞り込み"] },
+    { key: "stations", ja: "路線・駅", label: "路線・駅",
+      buttons: ["路線・駅で絞り込み", "路線・駅で絞り込む", "路線・駅を絞り込む", "路線で絞り込む", "路線で絞り込み", "沿線・駅で絞り込む", "沿線・駅で絞り込み", "沿線・駅を絞り込む"] },
+  ];
+  // 打つ欄（このファイルの page-script が値を入れる name）。空にしてから入れる（旧: お客様に値が無い欄は前の値のまま＝築年数・駅徒歩が残った）
+  var CLEAR_TEXT_FIELDS = [
+    { name: "rent:lteq", ja: "家賃の上限" },
+    { name: "rent:gteq", ja: "家賃の下限" },
+    { name: "floor_area_amount:gteq", ja: "専有面積の下限" },
+    { name: "floor_area_amount:lteq", ja: "専有面積の上限" },
+    { name: "station_walk_minutes:lteq", ja: "駅徒歩" },
+    { name: "building_age:lteq", ja: "築年数" },
+  ];
+  // 外すチェック（name で分かる物）。管理費込み（totalRentCheck）は毎回入れるので外さない（keep）
+  var CLEAR_CHECK_NAMES = [
+    { name: "room_layout:in", ja: "間取り" },
+    { name: "structure_type:in", ja: "構造" },
+    { name: "option_id:all_in", ja: "設備・こだわり" },
+  ];
+  // 外すチェック（name が分からずラベルの文字で分かる物）。画面の文字「敷金なし 礼金なし」
+  var CLEAR_CHECK_LABELS = ["敷金なし", "礼金なし", "敷金・礼金なし", "敷金礼金なし"];
+  // 空にしない文字の欄: 並び（val）・更新日（募集条件更新の段が空にする／入れる）
+  var KEEP_TEXT_RE = /^(val|offer_conditions_updated_at:gteq)$|sort|order/i;
+  function keepTextName(name) { return !name || KEEP_TEXT_RE.test(String(name)); }
+
+  // 欄が空か（ITANDI の一覧の欄は空の時「指定なし」を見せることがある）
+  function isEmptyValue(v) { var s = squash(v); return s === "" || s === "指定なし"; }
+
+  // チップの文字（行の中の文字の断片から、見出し・ボタン・×を除いた物）
+  var CHIP_NOISE = { "×": 1, "✕": 1, "x": 1, "X": 1, "削除": 1, "閉じる": 1, "close": 1, "clear": 1 };
+  function chipNames(texts, rowKey) {
+    var row = FILTER_ROWS.filter(function (r) { return r.key === rowKey; })[0];
+    var out = [];
+    (Array.isArray(texts) ? texts : []).forEach(function (t) {
+      var s = squash(t);
+      if (!s || CHIP_NOISE[s]) return;
+      if (row && (s === squash(row.label) || row.buttons.some(function (b) { return squash(b) === s; }))) return;
+      // 見出しと他の行の見出しの断片（「駅徒歩」「分以内」等）はチップでない
+      //   空の時の案内の文字（出る画面なら）もチップでない＝空を「残っている」と言わない
+      if (/^(駅徒歩|分以内|賃料|万円|〜|~|指定なし|未選択|選択なし|選択してください|すべて|全て)$/.test(s)) return;
+      if (out.indexOf(s) < 0) out.push(s);
+    });
+    return out;
+  }
+
+  // チップの「外す」部品か（×・削除の aria-label／title・class の delete/remove/close/clear）
+  //   o: { tag, text, aria, title, cls }。文字のある部品（区・駅の名前・〜で絞り込み）は外す部品にしない
+  var DEL_ATTR_RE = /削除|外す|取り消|閉じる|remove|delete|clear|close|cancel/i;
+  var DEL_CLASS_RE = /delete|remove|close|clear|cancel|cross|xmark|times/i;
+  function isDeleteControl(o) {
+    var x = o || {};
+    var text = squash(x.text);
+    if (text && !CHIP_NOISE[text]) return false;
+    if (CHIP_NOISE[text]) return true;
+    if (DEL_ATTR_RE.test(String(x.aria || "")) || DEL_ATTR_RE.test(String(x.title || ""))) return true;
+    if (DEL_CLASS_RE.test(String(x.cls || ""))) return true;
+    // 文字の無いボタン・アイコン（svg）はチップの中なら外す部品（チップの名前の部品とは別）
+    var tag = String(x.tag || "").toLowerCase();
+    return tag === "button" || tag === "svg" || x.role === "button";
+  }
+
+  // 読み戻し（state）から残っている欄を並べる
+  // state: { chips: { wards: [...], stations: [...] }, texts: [{ name, value }], checks: [{ name, label }] }
+  // 返り値: [{ field, ja, values }]（空＝全部外れている）
+  function leftovers(state) {
+    var st = state || {};
+    var out = [];
+    var chips = st.chips || {};
+    FILTER_ROWS.forEach(function (r) {
+      var v = Array.isArray(chips[r.key]) ? chips[r.key].filter(Boolean) : [];
+      if (v.length) out.push({ field: r.key, ja: r.ja, values: v.slice(0, 30) });
+    });
+    (Array.isArray(st.texts) ? st.texts : []).forEach(function (t) {
+      if (!t || isEmptyValue(t.value) || keepTextName(t.name)) return;
+      var def = CLEAR_TEXT_FIELDS.filter(function (d) { return d.name === t.name; })[0];
+      out.push({ field: String(t.name), ja: def ? def.ja : "その他の入力（" + String(t.name).slice(0, 30) + "）", values: [String(t.value).slice(0, 20)], other: !def });
+    });
+    var byCheck = {};
+    (Array.isArray(st.checks) ? st.checks : []).forEach(function (c) {
+      if (!c) return;
+      var def = CLEAR_CHECK_NAMES.filter(function (d) { return d.name === c.name; })[0];
+      var key = def ? def.name : "label:" + squash(c.label || c.name);
+      if (!byCheck[key]) { byCheck[key] = { field: key, ja: def ? def.ja : "敷金・礼金", values: [] }; out.push(byCheck[key]); }
+      byCheck[key].values.push(String(c.label || c.id || c.name || "").slice(0, 20));
+    });
+    return out;
+  }
+
+  // 外す前と後の読み戻しから、点検（filled.reset）に残す形
+  //   cleared: 前に値があって外れた欄 ／ leftover: 外した後も残っている欄（どちらも欄の名前）
+  function resetSummary(before, after) {
+    var b = leftovers(before), all = leftovers(after);
+    var aKeys = all.map(function (x) { return x.field; });
+    // 名前の分からない欄（物件名・管理会社など・このファイルが入れない欄）は空にしてみるが、残っても失敗にしない（leftover_other に残す）。
+    //   画面の作りが変わって空にできない欄が1つ出ただけで、全部のお客様の ITANDI を毎回飛ばさないため
+    var a = all.filter(function (x) { return !x.other; });
+    var other = all.filter(function (x) { return x.other; }).map(function (x) { return x.field; });
+    return {
+      cleared: b.filter(function (x) { return aKeys.indexOf(x.field) < 0; }).map(function (x) { return x.field; }),
+      leftover: a.map(function (x) { return x.field; }),
+      leftover_other: other,
+      leftover_ja: a.map(function (x) { return x.ja + "（" + x.values.slice(0, 4).join("・") + (x.values.length > 4 ? " ほか" + (x.values.length - 4) : "") + "）"; }),
+    };
+  }
+  function resetFailText(summary) {
+    var s = summary || {};
+    var ja = Array.isArray(s.leftover_ja) ? s.leftover_ja : [];
+    return ja.length ? ("前の条件を消せない: " + ja.join("・")).slice(0, 160) : null;
+  }
+
+  // 入れた後、このお客様の条件だけになっているか（前の区・駅が混ざっていないか）
+  //   after: { wards: [...], stations: [...] }（入れた後のチップ）
+  //   want:  { mode: "area"|"station"|"none", wards: [...], stations: [...]（別名込み）, selectAll: 駅を路線ごとに全部選ぶ回 }
+  //   返り値: { foreign: [...混ざった物（はっきり外れの物だけ）], unmatched_stations: [...当たらない駅（別名・表記ゆれがあるので札にしない）] }
+  function wardShort(w) { var s = squash(w).replace(/内$/, ""); var m = s.match(/^.+?[市郡]([^市郡]+[区町村])$/); return m ? m[1] : s; }
+  function stationKey(s) { return squash(s).replace(/[（(].*?[）)]/g, "").replace(/駅$/, ""); }
+  function foreignChips(after, want) {
+    var a = after || {}, w = want || {};
+    var wards = Array.isArray(a.wards) ? a.wards : [], stations = Array.isArray(a.stations) ? a.stations : [];
+    var foreign = [], unmatched = [];
+    if (w.mode === "station") wards.forEach(function (c) { foreign.push("所在地:" + c); });
+    if (w.mode === "area") stations.forEach(function (c) { foreign.push("駅:" + c); });
+    if (w.mode === "area") {
+      var ws = (Array.isArray(w.wards) ? w.wards : []).map(function (x) { return squash(x).replace(/内$/, ""); }).filter(Boolean);
+      wards.forEach(function (c) {
+        var cs = squash(c);
+        var hit = ws.some(function (x) { return cs.indexOf(x) === 0 || x.indexOf(cs) === 0 || cs.indexOf(wardShort(x)) >= 0; });
+        if (!hit && ws.length) foreign.push("所在地:" + c);
+      });
+    }
+    if (w.mode === "station" && !w.selectAll) {
+      var ss = (Array.isArray(w.stations) ? w.stations : []).map(stationKey).filter(Boolean);
+      stations.forEach(function (c) { if (ss.length && ss.indexOf(stationKey(c)) < 0) unmatched.push(c); });
+    }
+    return { foreign: foreign.slice(0, 20), unmatched_stations: unmatched.slice(0, 20) };
+  }
+
   return {
+    FILTER_ROWS: FILTER_ROWS,
+    CLEAR_TEXT_FIELDS: CLEAR_TEXT_FIELDS,
+    CLEAR_CHECK_NAMES: CLEAR_CHECK_NAMES,
+    CLEAR_CHECK_LABELS: CLEAR_CHECK_LABELS,
+    keepTextName: keepTextName,
+    isDeleteControl: isDeleteControl,
+    isEmptyValue: isEmptyValue,
+    chipNames: chipNames,
+    leftovers: leftovers,
+    resetSummary: resetSummary,
+    resetFailText: resetFailText,
+    foreignChips: foreignChips,
+    /** 1つ外すごとの人の間（ms・humanDelay で散らす） */
+    RESET_STEP_MS: 450,
     RESET_LABELS: RESET_LABELS,
     isResetLabel: isResetLabel,
     rentText: rentText,

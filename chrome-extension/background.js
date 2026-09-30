@@ -4905,6 +4905,8 @@ function _compactFill(f) {
     click_fails: Array.isArray(f.click_fails) ? f.click_fails.slice(0, 5).map(function (c) { return { what: c && c.what ? String(c.what).slice(0, 40) : null, text: c && c.text ? String(c.text).slice(0, 40) : null }; }) : [],
     stations_missing: names(f.stations_missing), lines_missing: names(f.lines_missing),
     reset_fail: f.reset_fail ? String(f.reset_fail).slice(0, 120) : null,
+    // v2.5.46 前の条件を外した結果（外した欄・残った欄の名前だけ）
+    reset: f.reset ? { cleared: Array.isArray(f.reset.cleared) ? f.reset.cleared.slice(0, 12) : [], leftover: Array.isArray(f.reset.leftover) ? f.reset.leftover.slice(0, 12) : [] } : null,
     update_days: f.update_days && f.update_days.status ? { status: f.update_days.status } : null,
     area_path: f.area_path || null, fallback: f.fallback || null,
   };

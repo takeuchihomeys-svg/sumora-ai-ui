@@ -229,7 +229,8 @@ function rest() {
   ok("ペットの欄の待ちは _sd(700)", /clickLabel\("ペット相談"\);\n\s*\}, _sd\(700\)\)/.test(it));
   ok("検索を押す待ちは _sd(1000)", /\}, _sd\(1000\)\); \/\/ 検索ボタンを押すまで/.test(it));
   ok(`ペットの最長 ${HW.settleRange(700).hi} < 検索の最短 ${HW.settleRange(1000).lo}`, HW.settleRange(700).hi < HW.settleRange(1000).lo);
-  ok("itandi の残ったチップを消す間も毎回ちがう（旧 i*250 の等間隔）", !/i \* 250/.test(it) && /_chipAt \+= _hd\(250\)/.test(it));
+  // v2.5.46: 前の条件は1つずつ外す（外すたびに人の間 _hd(RESET_STEP_MS)＝毎回ちがう・等間隔でない）
+  ok("itandi の前の条件を外す間も毎回ちがう（旧 i*250 の等間隔）", !/i \* 250/.test(it) && /setTimeout\(next, _hd\(FG\.RESET_STEP_MS\)\)/.test(it));
 
   console.log("\n■ 5大バグの型に当たらない");
   ok("トグル: 並び替えはリンクへの遷移（クリックで切り替えない）", /location\.href = _sortHref/.test(doStart));

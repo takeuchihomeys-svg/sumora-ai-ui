@@ -96,7 +96,7 @@
   function _itAuditReset(runId) {
     _itRunId = runId || null;
     _itDiag = {};
-    _itAudit = _itRunId ? { v: 1, site: "itandi", search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, area_path: null, fallback: null, steps: [] } : null;
+    _itAudit = _itRunId ? { v: 1, site: "itandi", search_clicked: null, form: null, stations_ok: [], stations_missing: [], lines_missing: [], click_fails: [], reset_fail: null, reset: null, area_path: null, fallback: null, steps: [] } : null;
   }
   function _itStep(k, d) {
     if (!_itAudit) return;
@@ -201,6 +201,7 @@
         ["stations_missing", "lines_missing", "click_fails"].forEach(function (k) { a[k] = (a[k] || []).slice(0, 6).map(function (m) { if (m && m.sample) m.sample = m.sample.slice(0, 3); return m; }); });
         a.stations_ok = (a.stations_ok || []).slice(0, 20);
         a.steps = (a.steps || []).slice(-8);
+        if (a.reset && a.reset.after) { a.reset.after.stations = (a.reset.after.stations || []).slice(0, 15); a.reset.after.unmatched_stations = (a.reset.after.unmatched_stations || []).slice(0, 5); }
         a.truncated = true;
       }
       return a;
@@ -1062,6 +1063,247 @@
     })();
   }
 
+  // ── v2.5.46 前のお客様の条件を1つずつ外す（ボタンに頼らない）──
+  // 2026-09-30 竹内「（ITANDI に）消去ボタンは無いので、リアプロのように、一度入っているのを全部抜いて、新しいお客さんに切り替わるたびにお客さんの条件入れたら出来る」
+  //   v2.5.45 は「条件削除」のボタンを探して押す形だった（無ければ前の所在地・駅のチップが積み上がる）。
+  //   ここでは ①所在地・路線/駅のチップ（見出しと「〜で絞り込み」のボタンの間）を1つずつ×で外す ②打つ欄（家賃・面積・駅徒歩・築年数ほか）を空に
+  //   ③間取り・構造・設備・敷金/礼金なしのチェックを外す → 読み戻して空になったことを確かめてから入れる。空にならない欄があれば
+  //   その欄の名前を付けて失敗（AXLX_RESET_FAILED）＝このお客様の ITANDI は飛ばす（前の条件が混ざった検索をしない）。
+  //   チップの DOM は画面の文字（extension_snapshots）でしか確かめられていない → 外せなかった時は部品の形（tag・class）を点検の reset.hint に残す
+  function _itFormRoot() {
+    var r = document.querySelector('input[name="rent:lteq"]');
+    return (r && r.closest && r.closest("form")) || null;
+  }
+  function _itInDialog(el) { return !!(el && el.closest && el.closest('[role="dialog"]')); }
+  function _itVisAny(el) { try { var r = el.getBoundingClientRect(); return r.width > 0 || r.height > 0; } catch (e) { return false; } }
+  function _itFilterBtn(rowDef) {
+    var names = rowDef.buttons.map(norm);
+    return [].slice.call(document.querySelectorAll("button, [role='button']")).filter(function (b) { return isVis(b) && !_itInDialog(b); })
+      .find(function (b) { return names.indexOf(norm(b.textContent)) >= 0; }) || null;
+  }
+  // 「所在地」「路線・駅」の行: ボタンから上へ、見出しの文字で始まる一番近い入れ物（他の行の絞り込みボタン・家賃の欄を含む所まで上がらない）
+  function _itFilterRow(rowDef) {
+    var FG = _itFG();
+    var btn = _itFilterBtn(rowDef);
+    if (!btn) return null;
+    var others = FG.FILTER_ROWS.filter(function (r) { return r.key !== rowDef.key; });
+    var sq = function (x) { return String(x || "").replace(/[\s　]+/g, ""); };
+    var lab = sq(rowDef.label), bt = sq(btn.textContent);
+    var el = btn.parentElement;
+    for (var i = 0; el && i < 8; i++, el = el.parentElement) {
+      if (el.querySelector('input[name="rent:lteq"]')) break;
+      var hasOther = others.some(function (o) { var ob = _itFilterBtn(o); return ob && el.contains(ob); });
+      if (hasOther) break;
+      // 見出しで始まり、ボタンの前に何かある（ボタンだけの入れ物「所在地で絞り込み」も「所在地」で始まるので、それは行にしない）
+      var tx = sq(el.textContent);
+      if (tx.indexOf(lab) === 0 && tx.indexOf(bt) > 0) return { row: el, btn: btn };
+    }
+    // 行が決まらない時は読めない扱い（上の大きな入れ物を行にすると、他の欄の見出しをチップと取り違えて毎回「消せない」になる）
+    return null;
+  }
+  // 行の中のチップの文字（ボタンの中の文字は除く）。返り値 [{ name, node }]
+  function _itChipNodes(rowDef, found) {
+    var FG = _itFG();
+    var f = found || _itFilterRow(rowDef);
+    if (!f) return null;
+    var nodes = [];
+    try {
+      var w = document.createTreeWalker(f.row, NodeFilter.SHOW_TEXT, null);
+      var n;
+      while ((n = w.nextNode())) {
+        if (f.btn.contains(n)) continue;
+        var t = (n.nodeValue || "").trim();
+        if (!t) continue;
+        var pe = n.parentElement;
+        if (pe && !_itVisAny(pe)) continue;
+        nodes.push({ text: t, node: n });
+      }
+    } catch (e) { return null; }
+    var names = FG.chipNames(nodes.map(function (x) { return x.text; }), rowDef.key);
+    return names.map(function (nm) {
+      var hit = nodes.find(function (x) { return x.text.replace(/[\s　]+/g, "").normalize("NFKC") === nm; });
+      return { name: nm, node: hit ? hit.node : null };
+    });
+  }
+  // 1つのチップの「外す」部品（×・削除のアイコン）。チップの入れ物は名前を1つだけ含む所まで
+  function _itChipDeleteCtl(chip, row, filterBtn) {
+    var FG = _itFG();
+    if (!chip.node || !chip.node.parentElement) return null;
+    var el = chip.node.parentElement;
+    for (var up = 0; el && el !== row && up < 4; up++, el = el.parentElement) {
+      if (el.contains(filterBtn)) break;
+      var cands = [].slice.call(el.querySelectorAll("button, [role='button'], svg, [aria-label], [title], [class*='elete'], [class*='emove'], [class*='lose'], [class*='lear'], [class*='ancel']"));
+      var ctl = cands.find(function (d) {
+        if (d.contains(chip.node) || d === filterBtn || d.contains(filterBtn) || !_itVisAny(d)) return false;
+        return FG.isDeleteControl({ tag: d.tagName, text: d.textContent, aria: d.getAttribute("aria-label"), title: d.getAttribute("title"), cls: String(d.getAttribute("class") || ""), role: d.getAttribute("role") });
+      });
+      if (ctl) return ctl;
+    }
+    // 外す部品が無い時: チップそのものがボタン（押すと外れる作り）ならそれ
+    var b = chip.node.parentElement.closest ? chip.node.parentElement.closest("button, [role='button']") : null;
+    if (b && b !== filterBtn && row.contains(b) && !b.contains(filterBtn)) return b;
+    return null;
+  }
+  // 部品の形（外せなかった時の手掛かり・名前は入れない）
+  function _itDomHint(chip) {
+    var out = [];
+    try {
+      var el = chip && chip.node ? chip.node.parentElement : null;
+      for (var i = 0; el && i < 4; i++, el = el.parentElement) {
+        out.push(String(el.tagName).toLowerCase() + (el.getAttribute("class") ? "." + String(el.getAttribute("class")).trim().split(/\s+/).slice(0, 3).join(".") : "") + (el.getAttribute("role") ? "[role=" + el.getAttribute("role") + "]" : "") + "(" + el.children.length + ")");
+      }
+    } catch (e) {}
+    return out.join(" < ").slice(0, 240);
+  }
+  // 人が押した形（svg は click() が無い＝ MouseEvent を送る）
+  function _itPress(el) {
+    ["mousedown", "mouseup", "click"].forEach(function (t) {
+      try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
+    });
+  }
+  // 押した後に確かめの窓（削除しますか）が出たら「はい」側・絞り込みの窓が開いたら閉じる（Escape は使わない）
+  function _itAfterPress() {
+    try {
+      var dlg = document.querySelector('[role="dialog"]');
+      if (!dlg || !isVis(dlg)) return;
+      var ok = [].slice.call(dlg.querySelectorAll("button")).filter(isVis).find(function (b) { return /^(削除する|削除|OK|はい|実行)$/.test(norm(b.textContent)); });
+      if (ok) { ok.click(); return; }
+      var cl = dlg.querySelector('button[aria-label="閉じる"], button[aria-label="close"], button[aria-label="Close"]');
+      if (cl) cl.click();
+    } catch (e) {}
+  }
+  // 読み戻し（純関数 leftovers に渡す形）
+  function _itReadResetState() {
+    var FG = _itFG();
+    var root = _itFormRoot();
+    var st = { chips: {}, texts: [], checks: [], unreadable: [] };
+    FG.FILTER_ROWS.forEach(function (r) {
+      var cs = _itChipNodes(r);
+      if (cs === null) { st.unreadable.push(r.key); st.chips[r.key] = []; }
+      else st.chips[r.key] = cs.map(function (c) { return c.name; });
+    });
+    var seen = [];
+    FG.CLEAR_TEXT_FIELDS.forEach(function (d) {
+      var el = (root || document).querySelector('input[name="' + d.name + '"]');
+      if (el) { seen.push(el); st.texts.push({ name: d.name, value: el.value }); }
+    });
+    // フォームの中のその他の打つ欄（物件名・部屋番号・管理会社など・並びと更新日は除く）
+    if (root) {
+      [].slice.call(root.querySelectorAll("input[name]")).forEach(function (el) {
+        var ty = String(el.type || "text").toLowerCase();
+        if (["text", "search", "number", "tel", ""].indexOf(ty) < 0 || seen.indexOf(el) >= 0 || _itInDialog(el)) return;
+        if (FG.keepTextName(el.name)) return;
+        st.texts.push({ name: el.name, value: el.value });
+      });
+    }
+    FG.CLEAR_CHECK_NAMES.forEach(function (d) {
+      [].slice.call((root || document).querySelectorAll('input[type="checkbox"][name="' + d.name + '"]:checked')).forEach(function (inp) {
+        if (_itInDialog(inp)) return;
+        var lbl = inp.closest ? inp.closest("label") : null;
+        st.checks.push({ name: d.name, label: lbl ? lbl.textContent.replace(/\s+/g, "").slice(0, 20) : String(inp.id || inp.value || ""), el: inp });
+      });
+    });
+    [].slice.call((root || document).querySelectorAll("label")).forEach(function (l) {
+      var t = (l.textContent || "").replace(/[\s　]/g, "");
+      if (FG.CLEAR_CHECK_LABELS.indexOf(t) < 0 || _itInDialog(l)) return;
+      var inp = l.querySelector('input[type="checkbox"]') || (l.htmlFor ? document.getElementById(l.htmlFor) : null);
+      if (inp && inp.checked) st.checks.push({ name: "", label: t, el: inp });
+    });
+    return st;
+  }
+  function _itPlainState(st) {
+    return { chips: st.chips, texts: st.texts.map(function (t) { return { name: t.name, value: t.value }; }), checks: st.checks.map(function (c) { return { name: c.name, label: c.label }; }) };
+  }
+  // 1つずつ外す（人の間を空けて順に）。done() は全部の操作が終わった後に1回
+  function _itClearOnce(done, ops) {
+    var FG = _itFG();
+    var root = _itFormRoot();
+    var queue = [];
+    var st = _itReadResetState();
+    // ① 打つ欄を空に
+    st.texts.forEach(function (t) {
+      if (FG.isEmptyValue(t.value) || FG.keepTextName(t.name)) return;
+      queue.push(function () {
+        var el = (root || document).querySelector('input[name="' + t.name + '"]');
+        if (el && !FG.isEmptyValue(el.value)) { setReactVal(el, ""); _itLeave(el); ops.push("text:" + t.name); }
+      });
+    });
+    // ② チェックを外す（label の中の input を押す＝React に届く）
+    st.checks.forEach(function (c) {
+      queue.push(function () { if (c.el && c.el.checked) { c.el.click(); ops.push("check:" + (c.name || c.label)); } });
+    });
+    // ③ チップを1つずつ外す（外すたびに並びが変わるので、押す時に読み直して先頭を外す）
+    FG.FILTER_ROWS.forEach(function (r) {
+      var n = (st.chips[r.key] || []).length;
+      for (var i = 0; i < n; i++) {
+        queue.push(function () {
+          var f = _itFilterRow(r);
+          var cs = f ? _itChipNodes(r, f) : null;
+          if (!cs || !cs.length) return;
+          for (var k = 0; k < cs.length; k++) {
+            var ctl = _itChipDeleteCtl(cs[k], f.row, f.btn);
+            if (ctl) { _itPress(ctl); ops.push("chip:" + r.key); setTimeout(_itAfterPress, _hd(250)); return; }
+          }
+          ops.push("chip_no_ctl:" + r.key);
+        });
+      }
+    });
+    var i = 0;
+    (function next() {
+      if (i >= queue.length) { done(queue.length); return; }
+      try { queue[i++](); } catch (e) { ops.push("err:" + String((e && e.message) || e).slice(0, 40)); }
+      setTimeout(next, _hd(FG.RESET_STEP_MS));
+    })();
+  }
+  // done({ ok, summary, hint, error })
+  function _itResetForm(done) {
+    var FG = _itFG();
+    if (!FG || !FG.leftovers) { done({ ok: true, summary: null, skipped: "module_missing" }); return; }
+    var ops = [];
+    var before;
+    try { before = _itPlainState(_itReadResetState()); }
+    catch (e0) { done({ ok: false, summary: null, error: "読み戻しで例外: " + String((e0 && e0.message) || e0).slice(0, 80) }); return; }
+    var t0 = Date.now();
+    // 「条件削除」等のボタンがあれば先に押す（無い画面が普通・押しても下の手順で必ず確かめる）
+    var startDelay = 0;
+    var rb = [].slice.call(document.querySelectorAll("button")).find(function (b) { return FG.isResetLabel(b.textContent) && isVis(b) && !_itInDialog(b); });
+    if (rb) { _itClickReset(rb); ops.push("reset_btn:" + rb.textContent.trim().slice(0, 10)); startDelay = _sd(900); if (_itAudit) _itAudit.reset_btn = rb.textContent.trim().slice(0, 20); }
+    var pass = 0;
+    function verify() { try {
+      var afterSt = _itReadResetState();
+      var after = _itPlainState(afterSt);
+      var summary = FG.resetSummary(before, after);
+      var left = summary.leftover;
+      if (left.length && pass < 2) { run(); return; } // もう1回だけ（外すと並びが変わる・遅れて描き直す画面）
+      summary.ops = ops.length;
+      summary.ms = Date.now() - t0;
+      if (afterSt.unreadable.length) summary.unreadable = afterSt.unreadable;
+      var hint = null;
+      if (left.length) {
+        hint = {};
+        FG.FILTER_ROWS.forEach(function (r) { var cs = _itChipNodes(r); if (cs && cs.length) hint[r.key] = _itDomHint(cs[0]); });
+        hint.ops = ops.slice(-12);
+      }
+      done({ ok: !left.length, summary: summary, hint: hint });
+    } catch (e) { done({ ok: false, summary: null, error: "外した後の読み戻しで例外: " + String((e && e.message) || e).slice(0, 80) }); } }
+    function run() {
+      pass++;
+      try { _itClearOnce(function (n) { setTimeout(verify, n ? _sd(600) : 0); }, ops); }
+      catch (e1) { done({ ok: false, summary: null, error: "外す途中で例外: " + String((e1 && e1.message) || e1).slice(0, 80) }); }
+    }
+    setTimeout(function () { try { run(); } catch (e) { done({ ok: false, summary: null, error: String((e && e.message) || e).slice(0, 100) }); } }, startDelay);
+  }
+  // 入れた後のチップ（このお客様の条件だけか）
+  function _itAfterFillChips(cond, hasArea, hasLines, wardNames) {
+    var FG = _itFG();
+    if (!FG || !FG.foreignChips) return null;
+    var st = _itReadResetState();
+    var stations = [];
+    (cond.station_names || []).forEach(function (s) { getStationAliases(String(s).replace(/駅$/, "")).forEach(function (a) { stations.push(a); }); });
+    var chk = FG.foreignChips(st.chips, { mode: hasArea ? "area" : hasLines ? "station" : "none", wards: wardNames, stations: stations, selectAll: !!cond.select_all_line_stations });
+    return { wards: (st.chips.wards || []).slice(0, 30), stations: (st.chips.stations || []).slice(0, 60), foreign: chk.foreign, unmatched_stations: chk.unmatched_stations };
+  }
+
   // 2026-09-18 竹内（一括検索の混線）: 直前に受け取った「誰の自動入力か」。fill が開始時に取り込む
   var _pendingFillCid = null;
   var _lastFillReq = null; // v2.5.45 直前の自動入力の依頼 { key, at }（同じ依頼の2回目を動かさない）
@@ -1112,41 +1354,32 @@
       setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 5000);
     }
 
-    // 連続検索対応: 前回の条件をリセット
-    var _resetBtn = [].slice.call(document.querySelectorAll("button")).find(function(b) {
-      var t = b.textContent.trim();
-      var r = b.getBoundingClientRect();
-      // v2.5.45: ITANDI のボタンは「条件削除」（9/26 以降ずっと見つからず、前のお客様の所在地・駅が積み上がっていた）
-      var FG = _itFG();
-      var isReset = FG ? FG.isResetLabel(t) : ["条件削除","条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0;
-      return isReset && (r.width > 0 || r.height > 0);
-    });
-    var _resetDelay = 0;
-    if (_resetBtn) { _itClickReset(_resetBtn); _resetDelay = _sd(900); if (_itAudit) _itAudit.reset_btn = _resetBtn.textContent.trim().slice(0, 20); _itStep("reset", _resetBtn.textContent.trim().slice(0, 20)); console.log("[AX] 条件リセット実行（" + _resetBtn.textContent.trim() + "）"); }
-    else {
-      // ★ 修正(Bug1): 所在地選択はチップ積み上げ方式で解除処理がないため、
-      // リセットボタン未発見時は前回検索の区チップが残留したまま追加される。
-      // 発見できない場合を必ず可視化し、残留チップ（削除×ボタン付きタグ）の個別削除を試みる
-      console.warn("[AX] ⚠️ 条件リセットボタン未発見: 前回の所在地チップが残留している可能性があります");
-      if (_itAudit) _itAudit.reset_fail = "条件リセットのボタンが見つからない（前の所在地が残るおそれ）";
-      var _chipCloseBtns = [].slice.call(document.querySelectorAll("button, [role='button']")).filter(function(b) {
-        var t = (b.textContent || "").trim();
-        var aria = b.getAttribute && (b.getAttribute("aria-label") || "");
-        var r = b.getBoundingClientRect();
-        if (!(r.width > 0 || r.height > 0)) return false;
-        // チップの削除ボタン: テキストが「×」「✕」のみ、または aria-label が削除系
-        return t === "×" || t === "✕" || /削除|remove|delete/i.test(aria);
-      });
-      if (_chipCloseBtns.length) {
-        console.log("[AX] 残留チップ削除ボタンを " + _chipCloseBtns.length + " 件クリック");
-        // 1件ずつ押す間も毎回ばらつかせる（旧: 0・250・500…の等間隔）
-        var _chipAt = 0;
-        _chipCloseBtns.forEach(function(b, i) { if (i > 0) _chipAt += _hd(250); setTimeout(function() { try { b.click(); } catch (e) {} }, _chipAt); });
-        _resetDelay = _chipAt + _sd(400);
+    // v2.5.46 前のお客様の条件を1つずつ外して、空になったのを読み戻してから入れる（ITANDI に消去のボタンは無い・竹内 9/30）。
+    //   空にならない欄があれば、その欄の名前を付けて返す（このお客様の ITANDI は飛ばす＝前の条件が混ざった検索をしない）
+    _itStep("reset_start", null);
+    _itResetForm(function (res) {
+      if (_dead) return;
+      if (_itAudit) {
+        _itAudit.reset = res && res.summary ? { cleared: res.summary.cleared, leftover: res.summary.leftover, ops: res.summary.ops, ms: res.summary.ms } : null;
+        if (_itAudit.reset && res.summary.unreadable) _itAudit.reset.unreadable = res.summary.unreadable;
+        if (_itAudit.reset && res.summary.leftover_other && res.summary.leftover_other.length) _itAudit.reset.leftover_other = res.summary.leftover_other;
+        if (_itAudit.reset && res.hint) _itAudit.reset.hint = res.hint;
       }
-    }
+      if (!res || !res.ok) {
+        var _rf = (res && res.summary && _itFG().resetFailText(res.summary)) || ("前の条件を消せない: " + ((res && res.error) || "理由不明"));
+        if (_itAudit) _itAudit.reset_fail = _rf;
+        _itStep("reset_fail", (res && res.summary ? res.summary.leftover.join(",") : (res && res.error) || "").slice(0, 100));
+        console.warn("[AX] itandi " + _rf + "（このお客様の ITANDI は検索しない）", res && res.hint);
+        showItandiWarnToast(_rf);
+        _safeDone("AXLX_RESET_FAILED: " + _rf.replace(/^前の条件を消せない: /, ""));
+        return;
+      }
+      _itStep("reset", res.summary ? "外した " + res.summary.cleared.length + "欄・" + res.summary.ops + "操作" : "module_missing");
+      console.log("[AX] itandi 前の条件を外した", res.summary ? res.summary.cleared : "(form-guard なし)");
+      setTimeout(_afterReset, _hd(300));
+    });
 
-    setTimeout(function() { try {
+    function _afterReset() { try {
 
     // 未登録地名の警告（NEIGHBORHOOD_WARD_MAPに未登録のトークンをコンソールに表示）
     if (cond.unknown_tokens && cond.unknown_tokens.length) {
@@ -1237,6 +1470,16 @@
                 if (_dead) return;
                 // 検索の点検: 押す直前のフォームを読み戻す・検索ボタンが押せたか
                 if (_itAudit) _itAudit.form = _itReadForm();
+                // v2.5.46 入れた後のチップ（このお客様の条件だけか・前の区・駅が混ざっていないか）を点検に残す。
+                //   外した後に空を確かめているので、混ざるのは入れる途中の誤り（別の区を押した等）だけ → 検索は止めず札（reset_fail）にする
+                if (_itAudit) { try {
+                  var _ac = _itAfterFillChips(cond, hasArea, hasLines, wardNames);
+                  if (_ac) {
+                    _itAudit.reset = _itAudit.reset || {};
+                    _itAudit.reset.after = _ac;
+                    if (_ac.foreign.length) { _itAudit.reset_fail = ("入れた後に前の条件が混ざっている: " + _ac.foreign.slice(0, 6).join("・")).slice(0, 160); _itStep("reset_mixed", _ac.foreign.slice(0, 4).join(",")); }
+                  }
+                } catch (eAc) {} }
                 if (why) {
                   if (_itAudit) { _itAudit.search_clicked = false; _itAudit.search_blocked = { code: why.code, texts: (texts || []).slice(0, 4) }; }
                   _itStep("search_blocked", why.code);
@@ -1296,7 +1539,7 @@
       console.error('[AX] fill exception', err);
       _safeDone('fill-exception: ' + String(err));
     }
-    }, _resetDelay); // 連続検索リセット待機
+    } // _afterReset（v2.5.46: 前の条件を外して確かめた後）
   }
 
   window.addEventListener("message", function (e) {
