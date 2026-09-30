@@ -101,10 +101,16 @@ export function buildRecommendApplyLineNote(o: {
   moveInWish: string | null;
   /** 審査期間（14日）を引いた余裕日数。間に合わない・分からない時は null */
   marginDays: number | null;
+  /**
+   * 2026-09-30: 締め（内覧誘導／申込誘導／ご査収）は recommend-cta.ts が刺さり具合で決めて別の行で渡す（竹内さんの明示の指示）。
+   * true の時は「基本は書かない」「今ご内覧頂ける→書かない」「退去予定→誘導は必須ではない」の行を出さない（食い違う指示を同じ請求に入れない）。
+   * 審査期間の一文・見積書同封・入居希望日の行はそのまま。
+   */
+  ctaDecided?: boolean;
 }): string {
   const lines: string[] = [];
   lines.push(`【申込の一文と入居時期 — 実送信の率（${S.measuredAt}・物件オススメ${S.n}件）】`);
-  lines.push(
+  if (!o.ctaDecided) lines.push(
     `・物件オススメの段階で申込の一文（お申込みでお部屋を抑える等）を添えるのは実送信${S.sent.pct}%。` +
     `AIが書いた${S.ai.n}件のうち${S.aiRemoved.n}件をスタッフが消し、AIが書かない時にスタッフが自分から足したのは${S.staffAdded.pct}% → 基本は書かない。` +
     `申込の一文はスタッフが見積書・物件確認した の段階で添える（成約側 ${APPLY_LINE_STAGE_RATES.estimate_sheet.sentPct}〜${APPLY_LINE_STAGE_RATES.property_check_result.sentPct}%）。`,
@@ -120,7 +126,9 @@ export function buildRecommendApplyLineNote(o: {
   }
   // ⚠ immediateMoveIn の行は出さない（反証者の指摘）: 1/61 は本文に「空室のため即入居可能」がある通（物件側）を数えた率で、
   //   この旗は customer_conditions（お客様側）を見る＝出所が違う。同じ268件で条件側の即入居希望は3件だけ。既定の「書かない」に任せる
-  if (o.notViewable) {
+  if (o.ctaDecided) {
+    // 締めは【この通の締め】の行に従う（recommend-cta.ts）
+  } else if (o.notViewable) {
     lines.push(
       `・このお部屋は退去予定でまだご内覧頂けない${o.viewableFrom ? `（${o.viewableFrom}以降にご内覧可能）` : ""} → 締めに誘導を入れるなら内覧誘導ではなく申込誘導（誘導がある通では申込${S.vacatingClosingWhenCta.apply}件 vs 内覧${S.vacatingClosingWhenCta.viewing}件）。` +
       `ただし締めの誘導自体は必須ではない（退去予定の通で誘導なし${S.vacatingClosing.nonePct}%）。`,
@@ -137,7 +145,7 @@ export function buildRecommendApplyLineNote(o: {
   // 反証者の指摘（2026-09-23）: 同じリクエストに訴求シナリオの「CTAは内覧誘導または申込誘導（中〜強）」や
   //   購買シグナル peak の「申込直結CTA」も届くので、どちらが優先かを1行で決める（計測が衝突で濁らないように）。
   //   スタッフの指定＞ブレインの購買シグナル peak＞この率。それ以外の一般的な CTA 指示よりはこの率が優先
-  lines.push(
+  if (!o.ctaDecided) lines.push(
     `・優先: スタッフが申込誘導を指定した時、またはブレインの購買シグナルが peak の時はそちらに従う。` +
     `それ以外で訴求シナリオ等の一般的な「申込CTA」の指示と食い違う時は、この実送信の率のとおり書かない。`,
   );

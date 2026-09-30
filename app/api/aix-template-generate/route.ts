@@ -56,6 +56,7 @@ import { isNotACustomerReply, stripMetaNarration } from "@/app/lib/meta-narratio
 import { isGroupConversationName } from "@/app/lib/line-target";
 // 2026-09-21 竹内「付けるかはブレインが判断する／お客さんの反応見て刺さっているなら誘導する」
 import { resolveCtaGuidance } from "@/app/lib/cta-guidance";
+import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage, hasClosingKind, type RecommendCtaDecision, type PickupLookupRow } from "@/app/lib/recommend-cta";
 // お客様の反応の分類は返信生成・往復文脈と同じ関数（四者同名）
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
@@ -1330,6 +1331,31 @@ export async function POST(req: NextRequest) {
     }
   })();
 
+  // ── 2026-09-30 竹内「1件オススメは特にオススメ。刺さる→内覧誘導／刺さりそうだが退去予定→退去予定と伝えて申込誘導／
+  //   そこまで刺さらなそう→お手隙の際にご査収ください」: 1通目と同じ関数（app/lib/recommend-cta.ts）で締めを決める。
+  //   採点は1通目の物件（見出しの建物名・号室）に当たる行だけ使う。読めなければ「ご査収」に倒れる（押しすぎない）。
+  //   ⚠ 上の ctaGuidance（一般の CTA 率）とは別の請求として二重に入れない: 物件オススメの時はこちらだけを渡す
+  let recCta: RecommendCtaDecision | null = null;
+  if (actionType === "property_recommendation") {
+    try {
+      let pickup: PickupLookupRow | null = null;
+      const head = headOfFirstMessage(sentMessage);
+      if (conversationId && head) {
+        const { data } = await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, created_at")
+          .eq("conversation_id", conversationId).eq("room_no", head.room).order("created_at", { ascending: false }).limit(20);
+        pickup = pickupForFirstMessage((data ?? []) as PickupLookupRow[], head);
+      }
+      recCta = resolveRecommendCta({
+        pickup,
+        reaction: readCustomerReaction(Array.isArray(recentMessages) ? recentMessages : []),
+        notViewable: recommendState.notViewable,
+      });
+      console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta", kind: recCta.kind, appeal: recCta.appeal, notViewable: recCta.notViewable, reason: recCta.reason, pickupFound: !!pickup, firstHasSame: hasClosingKind(sentMessage, recCta.kind) }));
+    } catch (e) {
+      console.warn("[aix-template-generate] recommend-cta failed:", e instanceof Error ? e.message : e);
+    }
+  }
+
   const userPrompt = [
     `━━━━━━━━━━━━━━━━━━━━\n【今回生成する橋渡し文】\n━━━━━━━━━━━━━━━━━━━━`,
     `・AIXボタン種別: ${actionLabel}`,
@@ -1450,7 +1476,9 @@ export async function POST(req: NextRequest) {
     //   設計知見「同じ事実について書くなと書けを別の場所から渡さない」→ 最後に1回だけ明示して上書きする。
     aixChainNote,
     // CTA の有無は**お客様の反応と AIX の種類**で決める（実測・cta-guidance）。最後に置くのは上と同じ理由
-    ctaGuidance?.note ?? "",
+    recCta
+      ? buildSecondMessageCtaNote(recCta, { firstMessage: sentMessage, viewableFrom: recommendState.viewableFrom })
+      : (ctaGuidance?.note ?? ""),
   ].filter(Boolean).join("\n");
 
   // ── DB学習資産の第2システムブロック（TTLキャッシュ内はbyte-stable → prompt cache対象）──
@@ -1727,6 +1755,15 @@ export async function POST(req: NextRequest) {
       if (closing.applied.length > 0) {
         console.log(JSON.stringify({ tag: "aix-template-generate:recommend-closing", applied: closing.applied, state: describePropertySendState(exitState) }));
         text = closing.text;
+      }
+      // 2026-09-30: 締めを刺さり具合の3つに揃える（1通目が既に同じ締めなら重ねない＝何もしない）。
+      //   消すのは「定型だけの最後の段落」だけ・無ければ足す（recommend-cta.ts）
+      if (recCta && !hasClosingKind(sentMessage, recCta.kind)) {
+        const cta = setRecommendClosing(text, recCta.kind);
+        if (cta.applied.length > 0) {
+          console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta-closing", kind: recCta.kind, applied: cta.applied }));
+          text = cta.text;
+        }
       }
     }
 

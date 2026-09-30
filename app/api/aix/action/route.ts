@@ -61,6 +61,7 @@ import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentR
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
+import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildFirstMessageCtaNote, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
 import { buildRecommendApplyLineNote, detectRecommendApplyLine, detectImmediateMoveInWish } from "@/app/lib/apply-line-rates";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
@@ -2162,14 +2163,14 @@ async function handleAction(request: NextRequest): Promise<Response> {
     //   画面が渡した画像の枚数と行の数が同じ時だけ使う（スタッフが画像を外した・足した時は並びが合わない）
     // 2026-09-27 竹内「重い順から治す」: 区（所在地）・入居時期も同じ行から読む（app/lib/aix-material-facts.ts）。
     //   物件オススメ（1件）も売上サポから来た時は行 ID が来る（画面がセットした資料のまま送る時だけ）
-    type PickupRowForFacts = { id: number; property_name: string | null; summary_text: string | null; image_lines: string[] | null; location: { ward?: string | null } | null; pdf_text: string | null; terms: PickupMaterialRow["terms"] };
+    type PickupRowForFacts = { id: number; property_name: string | null; summary_text: string | null; image_lines: string[] | null; location: { ward?: string | null } | null; pdf_text: string | null; terms: PickupMaterialRow["terms"]; verdict?: string | null; reason_codes?: string[] | null };
     const pickupRowsForFacts: PickupRowForFacts[] = await (async () => {
       if ((action !== "property_send" && action !== "property_recommendation") || !conversationId || !Array.isArray(body.pickup_ids)) return [];
       const ids = (body.pickup_ids as unknown[]).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0).slice(0, 20);
       const imgCount = action === "property_send" ? (Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0) : (image_url ? 1 : 0);
       if (ids.length === 0 || ids.length !== imgCount) return [];
       try {
-        const { data } = await supabase.from("property_pickups").select("id, property_name, summary_text, image_lines, location, pdf_text, terms")
+        const { data } = await supabase.from("property_pickups").select("id, property_name, summary_text, image_lines, location, pdf_text, terms, verdict, reason_codes")
           .in("id", ids).eq("conversation_id", conversationId);
         const byId = new Map(((data ?? []) as PickupRowForFacts[]).map((r) => [r.id, r]));
         if (byId.size !== ids.length) return [];
@@ -2268,6 +2269,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const accountName = ACCOUNT_NAMES[String(account || "sumora")] ?? "スモラ";
 
     // ── 🏠 物件オススメ ───────────────────────────────────────────
+    let recCtaDecision: RecommendCtaDecision | null = null;
     if (action === "property_recommendation") {
       if (!image_url) throw new Error("物件資料画像が必要です");
 
@@ -2466,7 +2468,18 @@ ${SMORA_COMMON_RULES}`;
         moveInWish: recMoveIn.wish,
         marginDays: recMoveIn.marginDays,
       };
-      const recApplyLineNote = "\n\n" + buildRecommendApplyLineNote(recApplyLineInput);
+      // 2026-09-30 竹内「1件オススメは特にオススメ。刺さる物件は内覧誘導・刺さりそうだが退去予定は退去予定と伝えて申込誘導・
+      //   そこまで刺さらなそうならお手隙の際にご査収ください」: 締めは刺さり具合で3つのどれかに決める（app/lib/recommend-cta.ts・
+      //   2通目も同じ関数）。採点（売上サポの行 ID がある時だけ）とお客様の直近の反応で決め、分からない時はご査収。
+      //   ⚠ 9/23 の「申込の一文は基本書かない」（実送信6%）は上書きされる＝竹内さんの明示の指示が実測より先（申込の一文の材料はこの決定に従う）
+      recCtaDecision = resolveRecommendCta({
+        pickup: pickupRowsForFacts.length === 1 ? pickupRowsForFacts[0] : null,
+        reaction: readCustomerReaction(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []),
+        notViewable: recSendState.notViewable,
+      });
+      console.log(JSON.stringify({ tag: "aix:recommend-cta", conversationId, kind: recCtaDecision.kind, appeal: recCtaDecision.appeal, notViewable: recCtaDecision.notViewable, reason: recCtaDecision.reason }));
+      const recApplyLineNote = "\n\n" + buildRecommendApplyLineNote({ ...recApplyLineInput, ctaDecided: true })
+        + "\n\n" + buildFirstMessageCtaNote(recCtaDecision, { viewableFrom: recSendState.viewableFrom });
       // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ「出力の最初の文字は必ず🌟」を外す。
       //   キャッシュされる静的ブロック（全顧客共通）は触らず、動的ブロックで上書きする（鍵を割らない）
       const situationSystemOverride = isSituationKind(body.situation_kind)
@@ -2625,6 +2638,14 @@ ${SMORA_COMMON_RULES}`;
         if (closing.applied.length > 0) {
           console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, state: describePropertySendState(sendState) }));
           message_text = closing.text;
+        }
+        // 2026-09-30: 締めを刺さり具合の3つ（内覧誘導／申込誘導／ご査収）に揃える。消すのは「定型だけの最後の段落」だけ・無ければ足す
+        if (recCtaDecision && !body.simple_mode) {
+          const cta = setRecommendClosing(message_text, recCtaDecision.kind);
+          if (cta.applied.length > 0) {
+            console.log(JSON.stringify({ tag: "aix:recommend-cta-closing", conversationId, kind: recCtaDecision.kind, applied: cta.applied }));
+            message_text = cta.text;
+          }
         }
         // 2026-09-21: 冒頭フレームが事実と食い違っていないかを**測る**（テンプレート側と同じ関数）。
         //   ⚠ ここでは本文を書き換えない。比較表現を落とすのは上の fixRecommendClosing の担当で、
