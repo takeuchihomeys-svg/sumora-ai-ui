@@ -8,31 +8,10 @@ import PickupReview from "@/app/components/PickupReview";
 // 2026-09-25 竹内「ブレインモードで…検索がちゃんとされていなかったら原因を見つけられるようにする」: 🔍 検索の点検
 import SearchAuditPanel from "@/app/components/SearchAuditPanel";
 // 2026-09-29 竹内「その他の項目で1つ1つまとめる（ガスコンロ・カウンターキッチン・リビング○帖以上・初期費用○円以内 等）…見て分かりやすいように」
-import { itemizeWants, type WantsCustomerLike, type WantKind } from "@/app/lib/customer-wants";
-
-/**
- * お客様の要望の項目（設備／NG／その他）を1つ1つの札で見せる（純関数 customer-wants.itemizeWants・欄の文から毎回作る）。
- *   札の色: 設備＝緑・NG＝赤・その他＝灰。「採点外」＝採点の札が無い要望（抜けが見える）・🔍＝画像で確かめる対象・🔎検索＝拡張の検索の入力に入る
- */
-function WantChips({ c }: { c: Record<string, unknown> }) {
-  const items = itemizeWants(c as unknown as WantsCustomerLike);
-  if (!items.length) return null;
-  const cls = (k: WantKind) => (k === "設備" ? "bg-emerald-50 border-emerald-300 text-emerald-900" : k === "NG" ? "bg-rose-50 border-rose-300 text-rose-900" : "bg-slate-50 border-slate-300 text-slate-700");
-  return (
-    <div className="flex flex-wrap gap-1 pt-1" aria-label="要望の項目">
-      {items.map((w) => (
-        <span key={w.key} title={`${w.kind}｜出所: ${w.source}｜採点: ${w.scoring ?? "効いていない"}${w.image ? "｜画像で確かめる" : ""}${w.search ? "｜検索の入力に入る" : ""}`}
-          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] leading-4 max-w-full ${cls(w.kind)} ${w.note ? "opacity-60" : ""}`}>
-          <span className="text-[9px] opacity-70 shrink-0">{w.kind}</span>
-          <span className="truncate">{w.label}{w.strong ? "[必須]" : ""}{w.soft ? "（できれば）" : ""}</span>
-          {!w.scoring && !w.note ? <span className="text-[9px] text-amber-700 shrink-0">採点外</span> : null}
-          {w.image ? <span className="text-[9px] shrink-0">🔍</span> : null}
-          {w.search ? <span className="text-[9px] shrink-0">🔎検索</span> : null}
-        </span>
-      ))}
-    </div>
-  );
-}
+//   札は売上サポの一番上の「🔎 お客様の条件」（PickupConditionsBar）と同じ部品（2026-09-30 app/components/WantChips.tsx へ移した）
+import WantChips from "@/app/components/WantChips";
+// 2026-09-30 条件の行も売上サポの「🔎 お客様の条件」と同じ関数（二重に作らない）
+import { customerConditionItems, type ConditionCustomerLike } from "@/app/lib/customer-condition-view";
 
 function SendTaskListButton() {
   const [sending, setSending] = useState(false);
@@ -225,6 +204,8 @@ export default function ConditionsPage() {
   const [announceView, setAnnounceView] = useState<"today" | "all">("today");
   const [listFilter, setListFilter] = useState<Status | "all">("all");
   const [showModal, setShowModal] = useState(false);
+  /** 2026-09-30 売上サポの「🔎 お客様の条件」から条件を直した時に、開いている会話の条件を読み直す合図（保存のたびに +1） */
+  const [condSavedVersion, setCondSavedVersion] = useState(0);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
   const [form, setForm] = useState<Omit<Customer, "id" | "created_at" | "updated_at">>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -534,6 +515,7 @@ export default function ConditionsPage() {
         return;
       }
       setShowModal(false);
+      setCondSavedVersion((v) => v + 1);
       load();
     } catch (e) {
       console.error("[save] error:", e);
@@ -950,13 +932,18 @@ export default function ConditionsPage() {
         //   下ナビは 37px＋max(8px, safe-area) で、ノッチの iPhone では 71px と外の pb-16（64px）より 7px 高い → その差だけ内側で足す。
         //   PC（md 以上）は今のまま（min-h は auto に戻し、pb-16）
         <div className="flex-1 min-h-0 pb-[max(0px,calc(env(safe-area-inset-bottom)_-_27px))] md:min-h-[auto] md:pb-16">
-          <PickupReview focusKey={pickupFocus} focusBatch={pickupFocusBatch} onChange={() => void loadPickupPending()} />
+          {/* 2026-09-30 会話の一番上の「🔎 お客様の条件」の ✏️ 条件編集 → この画面の既存の編集（openEdit）。保存したら条件を読み直す */}
+          <PickupReview focusKey={pickupFocus} focusBatch={pickupFocusBatch} onChange={() => void loadPickupPending()}
+            onEditConditions={(pcid) => { const c = customers.find((x) => x.id === pcid); if (c) void openEdit(c); else window.location.href = `/customers?id=${encodeURIComponent(pcid)}`; }}
+            conditionsVersion={condSavedVersion} />
         </div>
       )}
       {/* ── 新着物件タブ（2026-09-25 竹内「右の一覧の項目を新着物件に」）: ブレインが通した物件があるお客様を新着の順に・チェックして一括検索 ── */}
       {tab === "new" && (
         <div className="flex-1 min-h-0 pb-[max(0px,calc(env(safe-area-inset-bottom)_-_27px))] md:min-h-[auto] md:pb-16">
-          <PickupReview mode="new" onChange={() => void loadPickupPending()} />
+          <PickupReview mode="new" onChange={() => void loadPickupPending()}
+            onEditConditions={(pcid) => { const c = customers.find((x) => x.id === pcid); if (c) void openEdit(c); else window.location.href = `/customers?id=${encodeURIComponent(pcid)}`; }}
+            conditionsVersion={condSavedVersion} />
         </div>
       )}
       {tab === "announce" && (loading ? (
@@ -1085,24 +1072,8 @@ export default function ConditionsPage() {
                     const isLinked = linkedIds.has(c.id);
 
                     // 表示する条件項目
-                    const condItems: { label: string; value: string }[] = [];
-                    if (c.move_in_time) condItems.push({ label: "入居時期", value: c.move_in_time });
-                    if (c.desired_area || c.area) condItems.push({ label: "エリア", value: (c.desired_area || c.area)! });
-                    if (rent) condItems.push({ label: "家賃", value: rent });
-                    if (c.walk_minutes) condItems.push({ label: "徒歩", value: `${c.walk_minutes}分以内` });
-                    if (c.floor_plan || c.layout) condItems.push({ label: "間取り", value: (c.floor_plan || c.layout)! });
-                    if (c.floor_area_min || c.floor_area_max) {
-                      const fMin = c.floor_area_min ? `${c.floor_area_min}㎡以上` : "";
-                      const fMax = c.floor_area_max ? `〜${c.floor_area_max}㎡` : "";
-                      condItems.push({ label: "広さ", value: `${fMin}${fMax}` });
-                    }
-                    if (c.building_age) condItems.push({ label: "築年数", value: `${c.building_age}年以内` });
-                    if (c.initial_cost_limit) condItems.push({ label: "初期費用", value: `${Math.floor(c.initial_cost_limit / 10000)}万以内` });
-                    if (c.pet != null) condItems.push({ label: "ペット", value: c.pet ? "飼育あり" : "不可" });
-                    if (c.commute_station) condItems.push({ label: "通勤先", value: `${c.commute_station}${c.commute_minutes ? `(${c.commute_minutes}分)` : ""}` });
-                    if (/敷礼なし|敷金礼金なし|敷金礼金0|敷金0礼金0/.test(`${c.preferences ?? ""} ${c.ng_points ?? ""} ${c.other_requests ?? ""}`)) {
-                      condItems.push({ label: "敷礼", value: "敷礼なし" });
-                    }
+                    // 2026-09-30 売上サポの一番上の「🔎 お客様の条件」と同じ関数（customer-condition-view.ts・二重に作らない。家賃は管理費込み・7.5万は丸めない）
+                    const condItems: { label: string; value: string }[] = customerConditionItems(c as unknown as ConditionCustomerLike);
 
                     return (
                       <div key={c.id}>
@@ -1379,7 +1350,8 @@ export default function ConditionsPage() {
       {/* ── 詳細編集モーダル ── */}
       {showModal && (
         <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-end justify-center"
+          // 2026-09-30 z-[70]: スマホの売上サポの会話（fixed z-[60]）の上から「✏️ 条件編集」で開くため
+          className="fixed inset-0 z-[70] bg-black/40 flex items-end justify-center"
           onMouseDown={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}
         >
           <div className="w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[75vh] flex flex-col">

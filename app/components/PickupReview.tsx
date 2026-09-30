@@ -29,6 +29,9 @@ import { sentBadgesFor } from "@/app/lib/pickup-sent-badge";
 import { looksLikeSearchInstruction, overrideLine, overrideJudgeLine, overrideRulerKey, type SearchOverride, type RegisteredConditions, type OverrideSite } from "@/app/lib/search-override";
 // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形。ピンポイント検索で行ったか広げて検索を行ったかもちゃんと分かるように」（純関数だけ）
 import { normalizeSearchMode, roundSearchModeLine, type ChainNote } from "@/app/lib/search-widen-chain";
+// 2026-09-30 竹内「ここにも分かりやすいようにお客さんの条件を入れておく」: 会話の一番上に常に出す「🔎 お客様の条件」（純関数と画面の部品だけ）
+import PickupConditionsBar from "@/app/components/PickupConditionsBar";
+import { latestOverrideLabel } from "@/app/lib/customer-condition-view";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -89,6 +92,8 @@ type Customer = { key: string; property_customer_id: string | null; conversation
   best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null; room_text?: string | null; ad_text?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
   /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
   condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null;
+  /** 2026-09-30 お客様の物件探しの条件（property_customers の列そのまま・会話の一番上の「🔎 お客様の条件」の材料） */
+  customer_conditions?: Record<string, unknown> | null;
   /** 2026-09-27 自動で広げた回の説明（サイトごと・詳細だけ） */
   widen_chain?: Array<ChainNote & { at: string | null }>;
   /** 2026-09-28 一番最初に物件をお送りした時刻（null＝まだ＝新規のお客様・項目なし＝分からない→今まで通りの選び方） */
@@ -390,7 +395,13 @@ function buildBubbles(c: Customer): Bubble[] {
  *   "new"    … 新着物件のタブ。新着のあるお客様を新着の新しい順に上・丸は新着の数・2行目に「🆕 新着2件・〇〇 7.2万」。
  *              各行にチェック → 下の「🧠 一括検索」（ピンポイント／広げて × リアプロ／itandi／レインズ）＝拡張のブレインの PC が検索
  */
-export default function PickupReview({ focusKey = null, focusBatch = null, onChange, mode = "pickup" }: { focusKey?: string | null; focusBatch?: string | null; onChange?: () => void; mode?: "pickup" | "new" } = {}) {
+export default function PickupReview({ focusKey = null, focusBatch = null, onChange, mode = "pickup", onEditConditions, conditionsVersion = 0 }: {
+  focusKey?: string | null; focusBatch?: string | null; onChange?: () => void; mode?: "pickup" | "new";
+  /** 2026-09-30 「🔎 お客様の条件」の ✏️ 条件編集（親の既存の編集を開く）。無ければボタンを出さない */
+  onEditConditions?: (pcid: string) => void;
+  /** 2026-09-30 親で条件を保存したら増える数。変わったら開いている会話の条件を読み直す */
+  conditionsVersion?: number;
+} = {}) {
   const isNewMode = mode === "new";
   // 2026-09-24 竹内「開くとき重いのは画像を全部読み取っているから。お客さんの詳細を開いた時に読み込まれるように。
   //   全て読み込むと重いから限定して読み込む。並びは LINE の一覧と連動して変わる。UI の幅も LINE の一覧と同じ」:
@@ -467,6 +478,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   }, [loadList, loadDetail]);
 
   useEffect(() => { void loadList(); }, [loadList]);
+  // 2026-09-30 親（売上サポ）で ✏️ 条件編集を保存した → 開いている会話の「🔎 お客様の条件」を読み直す（最初の 0 では読まない）
+  useEffect(() => {
+    if (!conditionsVersion || !openRef.current) return;
+    void loadDetail(openRef.current, nBatchesRef.current, false);
+  }, [conditionsVersion, loadDetail]);
   // 2026-09-27 竹内「画像をそのままの蓮産業の画像で保存していたらそのまま使える」: パソコン（MS ゴシックあり）で開いた時、
   //   送る画像がまだ無い行（7日以内・pending）を裏で元の資料の1ページ目のまま画像にして保存しておく（スマホはそれを使う）。
   //   主の道は拡張の裏の画面（/pickup-prerender）。ここは予備。書体の無い端末（iPhone 等）では回さない。1回開いた時に1回だけ
@@ -1396,6 +1412,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
           {lineHref && <a href={lineHref} className="text-xs text-[#06C755] font-bold">LINE を開く</a>}
           <button onClick={() => void load()} className="text-xs text-[#1565C0] font-bold">{detailLoading ? "…" : "更新"}</button>
         </div>
+        {/* 2026-09-30 竹内「ここにも分かりやすいようにお客さんの条件を入れておく。スタッフが見れるのと、AIXツールの画面を監視するようになった際も分かりやすい」:
+            ヘッダーのすぐ下（スクロールの外＝いつでも見える）に物件探しの条件。畳んで2〜3行・タップで全部。今回だけの一時調整は一番新しい回の印（紫） */}
+        <PickupConditionsBar conditions={open.customer_conditions ?? null} pcid={open.property_customer_id}
+          overrideLabel={latestOverrideLabel(open.batches.length ? open.batches[open.batches.length - 1].items : [])}
+          summary={open.condition_summary ?? null} onEdit={onEditConditions} />
         {msg && <div className="mx-3 mt-2 text-xs px-3 py-2 rounded-lg shrink-0" style={{ background: "#e3f2fd", color: "#0d47a1" }}>{msg}</div>}
         <div ref={scrollBoxRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-4 md:py-3">
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
@@ -1467,14 +1488,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                     {line ?? "🔍 画像で分析"}{autos.length ? `・自動で読みました ${autos.length}件${lab ? `（推奨: ${lab}）` : ""}` : ""}</div>;
                 })()}
                 {/* 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約と、資料で照らせない条件（スタッフ向け）。
-                    2026-09-25 竹内「内訳や分析した内容等は折りたたんで詳細押したら出る」→ 畳んでおく */}
-                {open.condition_summary && (open.condition_summary.line || open.condition_summary.uncheckable.length > 0) && (
-                  <details className="mb-1.5 text-[10px] leading-snug">
-                    <summary className="cursor-pointer font-bold" style={{ color: "#455a64" }}>📝 条件の要約{open.condition_summary.uncheckable.length ? `・照らせない条件 ${open.condition_summary.uncheckable.length}` : ""}</summary>
-                    {open.condition_summary.line && <div className="mt-0.5 break-words" style={{ color: "#455a64" }}>{open.condition_summary.line}</div>}
-                    {open.condition_summary.uncheckable.length > 0 && <div className="mt-0.5 break-words" style={{ color: "#78909c" }}>照らせない条件: {open.condition_summary.uncheckable.join("／")}</div>}
-                  </details>
-                )}
+                    2026-09-30 会話の一番上の「🔎 お客様の条件」（PickupConditionsBar）を開いた中へ移した（回ごとに同じ物を畳んで繰り返さない） */}
                 {(() => {
                   // 2026-09-24 竹内「並び順は物件オススメが一番上でスコアリング順にする」
                   // 2026-09-25 竹内「お客さんにベストな物件が一番オススメ」（野口さんの回: 162点に🌟★・164点に🌟）:

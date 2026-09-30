@@ -328,6 +328,12 @@ async function readNewArrivalCandidates(nowMs: number): Promise<{ rows: NewArriv
   }
 }
 
+/**
+ * 2026-09-30 詳細で読むお客様の条件の列。画像で確かめる希望（customerImageNeed）の4列に、会話の一番上の「🔎 お客様の条件」の列を足した物
+ *   （トーク画面の顧客カード app/page.tsx と同じ property_customers が出所）
+ */
+const CUSTOMER_CONDITION_COLUMNS = "preferences, ng_points, other_requests, additional_conditions, desired_area, area, floor_plan, layout, rent_min, rent_max, max_rent, walk_minutes, building_age, move_in_time, initial_cost_limit, floor_area_min, floor_area_max, pet, commute_station, commute_minutes, exclusion_areas, structure_types, created_at";
+
 // ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────
 async function buildDetail(pcid: string | null, conv: string | null, nBatches: number) {
   // 2026-09-25 竹内「10分たてば自動的に送られた物件まとめて」: 開いた時に、最後に届いた行から10分を過ぎたまとめ前の回があればその場でまとめる
@@ -346,7 +352,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   sq = conv ? sq.eq("conversation_id", conv) : sq.eq("property_customer_id", pcid as string);
   // 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨」: 条件欄だけの軽い判定（会話・訴求は引かない・DeepSeek も呼ばない）
   const pcRes = pcid
-    ? supabase.from("property_customers").select("preferences, ng_points, other_requests, additional_conditions").eq("id", pcid).maybeSingle()
+    ? supabase.from("property_customers").select(CUSTOMER_CONDITION_COLUMNS).eq("id", pcid).maybeSingle()
     : Promise.resolve({ data: null });
   // 2026-09-25 竹内「文章の部分も要約できるように」: 条件の要約（決定論＋保存済みの DeepSeek の要約・ここでは DeepSeek を呼ばない）と照らせない条件
   const sumRes = pcid ? loadConditionSummary(pcid, { allowLlm: false }).catch(() => null) : Promise.resolve(null);
@@ -479,6 +485,9 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       best,
       image_need: imageNeed,
       condition_summary: sum ? { line: sum.line, uncheckable: sum.uncheckable, ai: sum.ai.length > 0 } : null,
+      // 2026-09-30 竹内「一番上にお客さんの物件探している条件を入れておく」: 会話の一番上の「🔎 お客様の条件」の材料
+      //   （property_customers の列そのまま・整形は画面の customer-condition-view.ts）
+      customer_conditions: condRes.data ?? null,
       // 2026-09-27 自動で広げた回の説明（サイトごと・24時間以内）。画面は回の見出しの下に出す
       widen_chain: widenChainNotes(chainCmds, rows.map((r) => ({ id: r.id, created_at: r.created_at, site: r.site, verdict: r.verdict, search_mode: r.search_mode ?? null })) as PickupLite[], nowMs)
         .map((n) => ({ ...n, at: chainCmds.find((c) => (c.payload?.chain?.site ?? "") === n.site)?.created_at ?? null })),
