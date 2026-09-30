@@ -2182,11 +2182,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
     //   売上サポの画面（underReviewBlockMessage）の次の2枚目の壁。売上サポから来た行の資料の現況が審査中なら文を作らない（送らせない）。
     //   商談中は今まで通り（画面の確認つき）。行が分からない送信（手で画像を入れた AIX）はここでは見られない
     {
-      const underReview = pickupRowsForFacts.filter((r) => pickupDealStatus({ terms: r.terms as { evidence?: { moveIn?: string | null } | null } | null, pdf_text: r.pdf_text }) === "審査中");
+      const underReview = pickupRowsForFacts.filter((r) => pickupDealStatus({ terms: r.terms as { evidence?: { moveIn?: string | null } | null } | null, pdf_text: r.pdf_text }) === "審査中" || pickupDealStatus({ terms: r.terms as { evidence?: { moveIn?: string | null } | null } | null, pdf_text: r.pdf_text }) === "商談中");
       if (underReview.length > 0) {
         const names = underReview.map((r) => r.property_name ?? "").filter(Boolean).slice(0, 5).join("、");
         console.warn(JSON.stringify({ tag: "aix:under-review-blocked", conversationId, action, ids: underReview.map((r) => r.id) }));
-        return NextResponse.json({ ok: false, error: `資料の現況が審査中の物件は送れません（${names}）。売上サポでチェックを外してから送ってください` }, { status: 200 });
+        return NextResponse.json({ ok: false, error: `資料の現況が審査中・商談中の物件は送れません（${names}）。売上サポでチェックを外してから送ってください` }, { status: 200 });
       }
     }
     // 2026-09-29 API 費用: 送る画像（再アップロード済みの URL）と行が同じ並びで分かるのはここだけ。行の image_lines／文字層を

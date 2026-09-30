@@ -65,8 +65,8 @@ export function dealStatusOf(r: Pick<AixPickRow, "deal_status" | "terms">): "審
  *   確かめる所は AIX に渡すボタン（sendViaAix・👑 の1件送りも）。画像の保存では聞かない
  */
 export function dealConfirmMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_status" | "terms"> & { property_name?: string | null; room_no?: string | null }>): string | null {
-  // 2026-09-30 審査中は確認でなく送れない（underReviewBlockMessage）。ここで確かめるのは商談中だけ
-  const deal = rows.map((r) => ({ r, st: dealStatusOf(r) })).filter((x) => x.st === "商談中");
+  // 2026-09-30 審査中・商談中は確認でなく送れない（underReviewBlockMessage が先に止める）。ここに来る行は無い（null）＝呼び出しの形だけ残す
+  const deal = rows.map((r) => ({ r, st: dealStatusOf(r) })).filter((x) => x.st && x.st !== "審査中" && x.st !== "商談中");
   if (deal.length === 0) return null;
   const names = deal.map(({ r, st }) => `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}：${st}`).join("、");
   return `資料の現況が商談中の物件が${deal.length}件入っています（${names}）。このまま AIX に渡しますか？`;
@@ -79,10 +79,11 @@ export function dealConfirmMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_st
  *   サーバー側の2枚目の壁は /api/aix/action（pickup_ids の行の資料を pickupDealStatus で読む）
  */
 export function underReviewBlockMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_status" | "terms"> & { property_name?: string | null; room_no?: string | null }>): string | null {
-  const hit = rows.filter((r) => dealStatusOf(r) === "審査中");
+  // 同日 竹内「1から4全てその提案通り」: 商談中も審査中と同じく送れない（9/27「商談中は審査中と同じ」）
+  const hit = rows.map((r) => ({ r, st: dealStatusOf(r) })).filter((x) => x.st === "審査中" || x.st === "商談中");
   if (hit.length === 0) return null;
-  const names = hit.slice(0, 5).map((r) => `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}`).join("、");
-  return `資料の現況が審査中の物件は送れません（${names}${hit.length > 5 ? " ほか" : ""}）。チェックを外してから送ってください`;
+  const names = hit.slice(0, 5).map(({ r, st }) => `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}：${st}`).join("、");
+  return `資料の現況が審査中・商談中の物件は送れません（${names}${hit.length > 5 ? " ほか" : ""}）。チェックを外してから送ってください`;
 }
 
 /**

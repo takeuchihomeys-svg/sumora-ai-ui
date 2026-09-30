@@ -121,13 +121,14 @@ console.log("■ AIX に渡す前の確かめ（2026-09-29 反証: 画像保存�
   const open = { ...mk(2, 1, 0, 150, A2), property_name: "空室の物件", room_no: null };
   t("審査中・商談中が無ければ聞かない（null）", dealConfirmMessage([open]) === null);
   const m = dealConfirmMessage([open, miou]);
-  t("商談中が1件あれば名前・号室・現況を書いて聞く", m === "資料の現況が商談中の物件が1件入っています（未桜さんの候補 302：商談中）。このまま AIX に渡しますか？", m);
+  t("商談中は確認でなく送れない（確認の文は出さない）", m === null, String(m));
   // 2026-09-30 竹内「審査中の物件送らない」: 審査中は確認でなく送れない（旧: 審査中も確認の件数に数えていた）
-  t("審査中は確認の件数に数えない（商談中の1件だけ）", (dealConfirmMessage([{ deal_status: "審査中", terms: null, property_name: "A" }, miou]) ?? "").includes("1件"));
+  t("審査中・商談中は確認の件数に数えない（null）", dealConfirmMessage([{ deal_status: "審査中", terms: null, property_name: "A" }, miou]) === null);
   const blk = underReviewBlockMessage([{ deal_status: "審査中", terms: null, property_name: "FEEL UMEDA (フィールウメダ)", room_no: "202" }, open]);
-  t("★ 審査中が入っていれば送れない文（名前・号室）", blk === "資料の現況が審査中の物件は送れません（FEEL UMEDA (フィールウメダ) 202）。チェックを外してから送ってください", blk);
+  t("★ 審査中が入っていれば送れない文（名前・号室）", blk === "資料の現況が審査中・商談中の物件は送れません（FEEL UMEDA (フィールウメダ) 202：審査中）。チェックを外してから送ってください", blk);
   t("資料の現況（退去予定/相談/審査中）からも読む", underReviewBlockMessage([{ ...mk(2665, 1, 0, 158, A2, "退去予定/相談/審査中"), property_name: "FEEL UMEDA", room_no: "202" }]) !== null);
-  t("商談中・空室だけなら止めない（null）", underReviewBlockMessage([miou, open]) === null);
+  t("★ 商談中も送れない（竹内 9/30「提案通り」）", (underReviewBlockMessage([miou, open]) ?? "").includes("未桜さんの候補 302：商談中"));
+  t("空室だけなら止めない（null）", underReviewBlockMessage([open]) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
