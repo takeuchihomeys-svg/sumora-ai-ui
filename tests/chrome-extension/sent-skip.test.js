@@ -11,7 +11,7 @@ let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 function ok(name, c) { eq(name, !!c, true); }
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 
 console.log("\n■ 号室・更新日の読み（リアプロの一覧の先頭のセル「部屋名更新日」・本番の候補の記録の実物）");
 {
@@ -96,7 +96,7 @@ console.log("\n■ 配線（拡張の再読み込み後に効く所）");
 {
   const bg = read("background.js");
   ok("background: sent-skip.js を読み込む", /import "\.\/sent-skip\.js";/.test(bg));
-  ok("background: 1人ごとに送付済みの部屋を読む（計画の写しの直後）", /var _custPayload = [\s\S]{0,600}await _loadSentRooms\(effectiveCustomer\.id\);/.test(bg));
+  ok("background: 1人ごとに送付済みの部屋を読む（計画の写しの直後）", /var _custPayload = [\s\S]{0,600}await _loadSentRooms\(effectiveCustomer\.id, batchSite\);/.test(bg));
   ok("background: スタッフモードは空（飛ばさない）", /if \(await isStaffModeOn\(\)\) \{ rec\.staff = true; \}/.test(bg));
   ok("background: 計画の payload を自動入力と直接入力の両方に", /_batchAutofill\(effectiveCustomer, batchSite, batchIsWide, _custPayload, _batchAudit\)/.test(bg) && (bg.match(/_buildBatchConditions\(effectiveCustomer, batchIsWide, _custPayload\)/g) || []).length === 2);
   ok("background: 飛ばした数を merge-pdfs へ（リアプロ・ITANDI）", (bg.match(/ext_sent_skipped: msg\.sent_skipped \|\| null/g) || []).length === 2);
@@ -112,8 +112,8 @@ console.log("\n■ 配線（拡張の再読み込み後に効く所）");
   ok("itandi-bulk-dl: スタッフモードは飛ばさない", /SK && !_staffModeOn \? SK\.indexFor\(/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("manifest: リアプロ・ITANDI の一括の前に sent-skip.js", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,bulk-dl.js") && cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,itandi-bulk-dl.js"));
-  eq("manifest の版", mf.version, "2.5.42");
+  ok("manifest: リアプロ・ITANDI の一括の前に sent-skip.js", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js") && cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
+  eq("manifest の版", mf.version, "2.5.43");
   const sa = read("search-audit.js");
   ok("search-audit: 日時の欄は伏せない（v2.5.40 までは「＊＊＊T…」になっていた）", /DATE_FIELDS\[k\] && ISO_RE\.test\(v\.trim\(\)\)/.test(sa));
   const A = require("../../chrome-extension/search-audit.js");

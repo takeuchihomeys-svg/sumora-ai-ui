@@ -8,7 +8,7 @@ const T = require("../../chrome-extension/temp-adj-base.js");
 let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 
 // 未桜さんの実物（登録の条件は 9/27 の言い直しの後）
 const MISAKI_NOW = { id: "45e5a835", desired_area: "大国町", area_mode: "station", rent_min: 65000, rent_max: 90000, floor_area_min: 25, floor_area_max: null, floor_plan: "1K" };

@@ -13,7 +13,7 @@ const vm = require("vm");
 const HW = require("../../chrome-extension/human-wait.js");
 
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 let pass = 0, fail = 0;
 function ok(name, cond, detail) { cond ? pass++ : fail++; console.log((cond ? "  ✓ " : "  ✗ ") + name + (cond || !detail ? "" : "\n      " + detail)); }
 function eq(name, a, b) { const c = JSON.stringify(a) === JSON.stringify(b); ok(name, c, `expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`); }
@@ -108,7 +108,7 @@ function rest() {
   const cs = manifest.content_scripts;
   const first = cs[0];
   // v2.5.40: 画面の文字の受け口（snapshot-core.js）を後ろに足した（先頭の2つの順は変えない）
-  eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "search-audit.js", "snapshot-core.js"]);
+  eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
   eq("先頭の段は document_start（後の段の content script より先に読む）", first.run_at, "document_start");
   for (const site of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]) {
     ok(`先頭の段が ${site} を含む`, first.matches.includes(site));

@@ -10,7 +10,7 @@ let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 function ok(name, c) { eq(name, !!c, true); }
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 const NOW = Date.UTC(2026, 8, 29, 7, 32, 0); // 16:32 JST
 const MIN = 60 * 1000;
 
@@ -161,7 +161,7 @@ console.log("\n■ 配線（background・score-overlay・popup・manifest）");
   ok("popup.html: 許可ボタンと snapshot-popup.js（popup.js の後）", /id="snap-perm-btn"/.test(html) && html.indexOf('src="snapshot-popup.js"') > html.indexOf('src="popup.js"'));
   ok("snapshot-popup.js: <all_urls> を人のクリックで頼む", /chrome\.permissions\.request\(ORIGINS/.test(read("snapshot-popup.js")) && /"<all_urls>"/.test(read("snapshot-popup.js")));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.42");
+  eq("manifest の版", mf.version, "2.5.43");
   eq("manifest: optional_host_permissions に <all_urls>（最初から持たせない）", [mf.optional_host_permissions, (mf.host_permissions || []).includes("<all_urls>")], [["<all_urls>"], false]);
   ok("manifest: 3サイトの content script（document_start）に snapshot-core.js", mf.content_scripts.some((c) => c.run_at === "document_start" && c.js.includes("snapshot-core.js") && c.matches.some((m) => /itandibb/.test(m)) && c.matches.some((m) => /reins/.test(m)) && c.matches.some((m) => /realnetpro/.test(m))));
   ok("manifest: tabs の権限（captureVisibleTab の窓・タブを読む）", mf.permissions.includes("tabs"));

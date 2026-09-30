@@ -175,7 +175,8 @@ async function countHistory(sb: SupabaseClient, pcid: string | null, site: strin
   if (!au.error) for (const r of (au.data ?? []) as Array<{ created_at: string; result: Record<string, unknown> | null; severity: string | null; cause_key: string | null }>) {
     const okRun = r.severity !== "bad" || String(r.cause_key ?? "").startsWith("update_days");
     const n = r.result?.read_rows ?? r.result?.property_count;
-    if (okRun && typeof n === "number" && !r.result?.batch_timed_out) out.push({ count: n, kind: "rows", at: r.created_at });
+    // 2026-09-30 v2.5.43 更新日順で前回の検索より古い行で止めた回は、読んだ行が少ないのが決まり＝件数の目安に入れない
+    if (okRun && typeof n === "number" && !r.result?.batch_timed_out && !r.result?.stopped_at_last_search) out.push({ count: n, kind: "rows", at: r.created_at });
   }
   return out.sort((a, b) => (a.at < b.at ? 1 : -1)).map(({ count, kind }) => ({ count, kind }));
 }
@@ -322,6 +323,7 @@ export async function runCheckpoint(input: CheckpointInput, nowMs = Date.now()):
       error_kind: input.checkpoint === "done" ? row?.error_kind ?? null : null,
       stall_kind: input.stallKind ?? null, idle_min: input.idleMin ?? null, waiting_for: input.waitingFor ?? null,
       range, read_rows: input.checkpoint === "done" ? (row?.result?.read_rows as number | undefined) ?? null : null,
+      update_stopped: input.checkpoint === "done" ? !!row?.result?.stopped_at_last_search : false,
       decision: decision ? { severity: decision.severity, items: decision.items } : null, is_wide: isWide,
       area_size: areaSizeOf(row?.intended ?? null),
       update: updateMaterial(row, updCtx.last_search_at),
@@ -541,6 +543,8 @@ async function afterDecision(c: AfterCtx): Promise<void> {
         // 2026-09-30 v2.5.42 送付済みの部屋: 飛ばした数（拡張の sent-skip）・選んだ／ダウンロードした数（点検の SENT_SELECTED）
         sent: material.checkpoint === "done" ? { skipped: numOrNull(row?.result?.sent_skipped), selected: numOrNull(row?.result?.sent_selected) } : null,
         sent_notice: det.sent_notice,
+        // 2026-09-30 v2.5.43 更新日順で前回の検索より古い行で止めた（止めた行の更新日・前回の時刻・ページ）
+        update_stop: material.checkpoint === "done" ? (row?.result?.stopped_at_last_search ?? null) : null,
         waiting_for: material.waiting_for ?? null, idle_min: material.idle_min ?? null, thresholds_id: c.thresholdsId,
         snapshot_id: input.snapshotId ?? null, reason: det.reason.slice(0, 200), cause_key: causeKey,
       },

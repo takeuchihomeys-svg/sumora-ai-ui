@@ -17,7 +17,7 @@ const path = require("path");
 const UD = require("../../chrome-extension/itandi-update-days.js");
 
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 let pass = 0, fail = 0;
 function ok(name, cond, detail) { cond ? pass++ : fail++; console.log((cond ? "  ✓ " : "  ✗ ") + name + (cond || !detail ? "" : "\n      " + detail)); }
 function eq(name, a, b) { const c = JSON.stringify(a) === JSON.stringify(b); ok(name, c, `expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`); }

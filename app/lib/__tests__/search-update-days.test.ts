@@ -6,7 +6,7 @@
 //   9/22〜 の UPDATE_DAYS の warn 90件（differs 90・typed_unverified 2）の実物の形を固定する
 import { createRequire } from "module";
 import {
-  planUpdateDays, neededDays, coverChoice, coversGap, hoursSince, ageDaysOfCell, agesOutside, planPayload, planFor,
+  planUpdateDays, neededDays, coverChoice, coversGap, hoursSince, ageDaysOfCell, agesOutside, planPayload, planFor, stopLinesBySite,
 } from "../search-update-days";
 import { runSearchAuditChecks, expectedUpdateDays, type AuditInput } from "../search-audit-check";
 import { detectScreenState, updateDaysFindings, jevStateFor, type WatchMaterial } from "../screen-watch";
@@ -117,6 +117,42 @@ console.log("\n■ 拡張の写し（sent-skip.js）が TS と同じ答え（四
   const cells = ["309 4日前 閲覧済", "0405 4時間前 閲覧済", "1001 30分前", "401 2週間前", "309 閲覧済"];
   const badA = cells.filter((c) => SK.ageDaysOfCell(c) !== ageDaysOfCell(c));
   t("更新日の経過の読みが一致", badA.length === 0, badA);
+}
+
+console.log("\n■ v2.5.43 更新日順の止める線（サイトごとの前回の検索・条件が変わった後は作らない）");
+{
+  const last = { realpro: "2026-09-28T01:15:00.000Z", itandi: "2026-09-28T01:40:00.000Z" };
+  t("両サイト → 両方の線", JSON.stringify(stopLinesBySite(last, ["realnetpro", "itandi"], null)) === JSON.stringify(last));
+  t("これから検索するサイトだけ（リアプロだけの命令は itandi を入れない）", JSON.stringify(stopLinesBySite(last, ["realnetpro"], null)) === JSON.stringify({ realpro: last.realpro }));
+  t("条件の変更が前回の検索の後 → そのサイトの線は作らない（前回は今の条件で見ていない）", stopLinesBySite(last, ["realnetpro", "itandi"], "2026-09-28T02:00:00.000Z") === null);
+  t("条件の変更がリアプロの後・ITANDI の前 → ITANDI だけ", JSON.stringify(stopLinesBySite(last, ["realnetpro", "itandi"], "2026-09-28T01:30:00.000Z")) === JSON.stringify({ itandi: last.itandi }));
+  t("条件の変更がちょうど同じ時刻 → 作らない（境界は止めない側）", JSON.stringify(stopLinesBySite(last, ["realnetpro", "itandi"], last.realpro)) === JSON.stringify({ itandi: last.itandi }));
+  t("条件の変更が前回より前 → 両方", JSON.stringify(stopLinesBySite(last, ["realnetpro", "itandi"], "2026-09-20T00:00:00.000Z")) === JSON.stringify(last));
+  t("前回の検索が無い → null", stopLinesBySite(undefined, ["realnetpro"], null) === null && stopLinesBySite({}, ["itandi"], null) === null);
+  t("読めない時刻は入れない・レインズは線を持たない", stopLinesBySite({ realpro: "x", itandi: last.itandi }, ["realnetpro", "itandi", "reins"], null)?.realpro === undefined);
+  const plan = planUpdateDays({ baseDays: 1, lastSearchAt: last.realpro, nowMs: now, lastBySite: last });
+  const p = planPayload([{ id: "c1", plan }]);
+  t("計画の payload に last_by_site（拡張の update-order-stop.lastSearchFor が読む）", JSON.stringify(p.by_customer.c1.last_by_site) === JSON.stringify(last));
+  const p0 = planPayload([{ id: "c2", plan: planUpdateDays({ baseDays: 3, lastSearchAt: null, nowMs: now }) }]);
+  t("線が無い時は null（止めない）", p0.by_customer.c2.last_by_site === null);
+  const UO = require_("../../../chrome-extension/update-order-stop.js") as { lastSearchFor(e: unknown, site: string): string | null };
+  t("拡張: サイトの線を読む（realnetpro → realpro）", UO.lastSearchFor(p.by_customer.c1, "realnetpro") === last.realpro && UO.lastSearchFor(p.by_customer.c1, "itandi") === last.itandi);
+  t("拡張: last_by_site が無い（古いサーバー・広げての回）→ last_search_at に頼らず止めない", UO.lastSearchFor({ days: 1, last_search_at: last.realpro }, "realnetpro") === null);
+}
+
+console.log("\n■ v2.5.43 止めた回の点検（C3）: 0件でも「検索できていない」にしない");
+{
+  const stop = { site: "realpro", page: 1, index: 0, row_text: "309 4日前", newest_at: "2026-09-26T08:00:00.000Z", last_search_at: "2026-09-28T01:15:00.000Z", inferred_order: false };
+  const base: AuditInput = { site: "realpro", status: "finished", intended: { rp_update_days: 3 }, filled: { form: { update_days: "3" } }, created_at: new Date(now).toISOString() };
+  const z = runSearchAuditChecks({ ...base, result: { read_rows: 0, property_count: 0, pages: 1, stopped_at_last_search: stop } }, now).checks;
+  t("1ページ目の先頭で止めた0件 → ZERO_UNCONFIRMED（bad）にしない", !z.some((c) => c.code === "ZERO_UNCONFIRMED"), z.map((c) => c.code));
+  t("→ 「前回の検索の後に更新された新しい物件なし」（ZERO_CONFIRMED・warn）", z.some((c) => c.code === "ZERO_CONFIRMED" && /no_newer_than_last/.test(String(c.cause_key))));
+  t("止めた事は ok の札で残す（止めた行・前回の時刻）", z.some((c) => c.severity === "ok" && /stopped_at_last_search/.test(String(c.cause_key)) && /前回の検索=2026-09-28 01:15/.test(String(c.detail ?? ""))), z.filter((c) => c.severity === "ok"));
+  const z2 = runSearchAuditChecks({ ...base, result: { read_rows: 0, property_count: 0, pages: 1 } }, now).checks;
+  t("止めていない0件は今まで通り ZERO_UNCONFIRMED", z2.some((c) => c.code === "ZERO_UNCONFIRMED"));
+  const mDone: WatchMaterial = { checkpoint: "done", site: "realpro", checks: z, read_rows: 0, range: { median: 12, low: 5, high: 30, n: 6, screenMedian: null, screenN: 0 }, update_stopped: true };
+  t("見張り C3: 止めた回の read_rows=0 は「0件の疑い」にしない", detectScreenState(mDone).label !== "zero_suspicious", detectScreenState(mDone));
+  t("見張り C3: 止めていない回は今まで通り 0件の疑い", detectScreenState({ ...mDone, checks: z2, update_stopped: false }).label === "zero_suspicious");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

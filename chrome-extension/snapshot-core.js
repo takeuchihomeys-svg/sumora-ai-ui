@@ -407,6 +407,23 @@
         catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e).slice(0, 200) }); }
         return false;
       });
+      // 2026-09-30 v2.5.43 同時に動かせるかの実測（parallel-sites.js）: このタブの見え方と、1秒のタイマーが戻るまでの遅れ（背面のタブは間引かれて遅れる）。
+      //   サイトには触らない（読み込み直し・クリックなし）。答えは非同期（return true）
+      chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+        if (!msg || msg.type !== "axlx-lane-probe") return false;
+        try {
+          var P = (typeof self !== "undefined" ? self : window).AxlxParallelSites || null;
+          var timerMs = (P && P.PROBE_TIMER_MS) || 1000;
+          var startedAt = Date.now();
+          setTimeout(function () {
+            try {
+              var vs = document.visibilityState || null;
+              sendResponse(P ? P.probeResult(vs, startedAt, Date.now()) : { ok: true, visibilityState: vs, lagMs: Math.max(0, Date.now() - startedAt - timerMs) });
+            } catch (e) { try { sendResponse({ ok: false, error: String((e && e.message) || e).slice(0, 120) }); } catch (_) {} }
+          }, timerMs);
+        } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e).slice(0, 120) }); return false; }
+        return true;
+      });
     }
   } catch (_) { /* 受け口が作れなくてもページは止めない */ }
 

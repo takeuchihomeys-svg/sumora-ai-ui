@@ -8,7 +8,7 @@ let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 function ok(name, c) { eq(name, !!c, true); }
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 
 const OV_TAISHO = { v: 1, location: { mode: "only", stations: ["大正"], lines: [], areas: [] }, floor_plan: null, rent_max: null, rent_min: null, walk_minutes: null, building_age: null, area_min: null, area_max: null, pet: null, site: null, is_wide: null };
 const CUST = { id: "c1", customer_name: "テスト", desired_area: "大正区・西区", area_mode: "ward", rent_max: 75000, rent_min: null, floor_plan: "1K〜1DK", walk_minutes: 10, lines: ["x"], stations: ["y"] };

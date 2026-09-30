@@ -60,6 +60,17 @@ console.log("\n■ ② 検索が続いている間はまとめない（3分の�
   const it2 = { created_at: iso(NOW + 5 * MIN), finished_at: null as string | null, status: "started", site: "itandi", command_id: "cmd1" };
   t("通し: 10:07（リアプロの物件から3分）は ITANDI の途中 → 待つ", searchHold([rp2, it2], cmd, NOW + 7 * MIN).hold);
   t("通し: 10:15（ITANDI が 10:12 に終わり物件が届いた後）→ 待たない＝1回だけまとまる", !searchHold([rp2, { ...it2, status: "finished", finished_at: iso(NOW + 12 * MIN) }], cmd, NOW + 15 * MIN).hold);
+
+  // 2026-09-30 v2.5.43 同時の回: リアプロ 10:00 開始・ITANDI 10:00:10 開始（ずらし 3〜15秒）。どちらが先に終わっても、両方が終わるまで待つ
+  const rpP = { created_at: iso(NOW), finished_at: null as string | null, status: "started", site: "realpro", command_id: "cmd1" };
+  const itP = { created_at: iso(NOW + 10_000), finished_at: null as string | null, status: "started", site: "itandi", command_id: "cmd1" };
+  t("同時: 両方が走っている → 待つ", searchHold([rpP, itP], cmd, NOW + 3 * MIN).hold);
+  t("同時: リアプロが先に終わり ITANDI が途中 → 待つ", searchHold([{ ...rpP, status: "finished", finished_at: iso(NOW + 4 * MIN) }, itP], cmd, NOW + 8 * MIN).hold);
+  t("同時: ITANDI が先に終わりリアプロが途中（終わる順が入れ替わる）→ 待つ", searchHold([rpP, { ...itP, status: "finished", finished_at: iso(NOW + 3 * MIN) }], cmd, NOW + 7 * MIN).hold);
+  t("同時: 両方終わった（どちらの順でも）→ 待たない＝両サイトの後に1回",
+    !searchHold([{ ...rpP, status: "finished", finished_at: iso(NOW + 9 * MIN) }, { ...itP, status: "finished", finished_at: iso(NOW + 5 * MIN) }], cmd, NOW + 13 * MIN).hold
+    && !searchHold([{ ...rpP, status: "finished", finished_at: iso(NOW + 5 * MIN) }, { ...itP, status: "finished", finished_at: iso(NOW + 9 * MIN) }], cmd, NOW + 13 * MIN).hold);
+  t("同時: ITANDI の回がまだ始まっていない一瞬（ずらしの間）にリアプロが終わっても → 待つ（next_site）", /next_site:itandi/.test(searchHold([{ ...rpP, status: "finished", finished_at: iso(NOW + 5_000) }], cmd, NOW + 6_000).reason ?? ""));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -9,7 +9,7 @@ let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 function ok(name, c) { eq(name, !!c, true); }
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 function seq(values) { let i = 0; return () => values[i++ % values.length]; }
 
 console.log("\n■ optsFromPayload（自動便の指定）");
@@ -27,7 +27,7 @@ console.log("\n■ record / forCustomer（storage の印）");
 {
   const o = R.optsFromPayload({ source: "auto_schedule", mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1 });
   const st = R.record("c1", "itandi", o, 1000);
-  eq("同じお客様・同じサイト → 指定", R.forCustomer(st, "c1", "itandi", 2000), { mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1 });
+  eq("同じお客様・同じサイト → 指定（v2.5.43 前回の検索の時刻 last_search_at も・置いていなければ null）", R.forCustomer(st, "c1", "itandi", 2000), { mode: "pm", rp_update_days: 1, sort: "updated", max_pages: 1, last_search_at: null });
   eq("別のお客様 → null（前のお客様の指定を使わない）", R.forCustomer(st, "c2", "itandi", 2000), null);
   eq("別のサイト → null", R.forCustomer(st, "c1", "realnetpro", 2000), null);
   eq("古い（20分より前）→ null", R.forCustomer(st, "c1", "itandi", 1000 + R.TTL_MS + 1), null);
@@ -77,9 +77,9 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("background が auto-run.js を import", /import "\.\/auto-run\.js";/.test(bg));
   ok("自動便は planSites でサイトを決める（お客様ごと）", /_AR\.planSites\(sites, \{ isAuto: true, hasItandiTab: _AR\.hasItandiTab\(await chrome\.tabs\.query\(\{\}\)\) \}\)/.test(bg));
   // 2026-09-30 v2.5.42: AIXツールの一括検索（1人にリアプロ＋itandi）も同じ人の間（自動便だけではない）
-  ok("サイトの間は siteGapMs（2つ目のサイトから・一括の回すべて）", /if \(j > 0 && _AR\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(bg));
+  ok("サイトの間は siteGapMs（2つ目のサイトから・一括の回すべて・順の回・見張りが止めたサイトの前は置かない）", /if \(j > 0 && _AR && !_stopApplies\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(bg));
   ok("お客様の間は自動便だけ customerGapMs", /\(autoSched && _AR\) \? _AR\.customerGapMs\(\) : 3000 \+ Math\.floor\(Math\.random\(\) \* 5000\)/.test(bg));
-  ok("お客様×サイトごとに storage へ指定を置く", /_arSet\[_AR\.STORAGE_KEY\] = _AR\.record\(effectiveCustomer\.id, batchSite, _AR\.optsFromPayload\(_custPayload\) \|\| _autoOpts, Date\.now\(\)\)/.test(bg));
+  ok("お客様×サイトごとに storage へ指定を置く（v2.5.43 by_site に並べる・前回の検索の時刻も）", /_arMem = _AR\.withSite\(_arMem, _AR\.record\(effectiveCustomer\.id, batchSite, _arOptsNow, Date\.now\(\), \{ last_search_at: _uoLast \}\)\);\s*var _arSet = \{\}; _arSet\[_AR\.STORAGE_KEY\] = _arMem;/.test(bg));
   ok("コマンドの終わりに指定を消す（finally）", /finally \{[\s\S]{0,400}chrome\.storage\.local\.remove\(self\.AxlxAutoRun\.STORAGE_KEY\)/.test(bg));
   ok("全部失敗の判定は実際に回した数で（飛ばした ITANDI を失敗と数えない）", /var totalAttempts = _siteAttempts;/.test(bg));
   ok("switch-customer に autoRun（リアプロ・ITANDI の2か所）", (bg.match(/autoRun:\s+_autoRunMsg/g) || []).length === 2);
@@ -102,10 +102,10 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.42");
+  eq("manifest の版", mf.version, "2.5.43");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,bulk-dl.js"));
-  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,itandi-bulk-dl.js"));
+  ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
+  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
   ok("auto-run.js は _ で始まらない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 

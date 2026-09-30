@@ -12,8 +12,8 @@ function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok
 function ok(name, c) { eq(name, !!c, true); }
 const ROOT = path.join(__dirname, "../..");
 const EXT = path.join(ROOT, "chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
-const readRoot = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
+const readRoot = (f) => fs.readFileSync(path.join(ROOT, f), "utf8").replace(/\r\n/g, "\n");
 const seq = (vals) => { let i = 0; return () => vals[i++ % vals.length]; };
 
 console.log("\n■ 回す順（1コマンドの中はお客様 → リアプロ → ITANDI）");
@@ -25,13 +25,13 @@ console.log("\n■ 回す順（1コマンドの中はお客様 → リアプロ 
   const bg = read("background.js");
   ok("background: sites は orderSites で並べる", /var sites = \(self\.AxlxAutoRun && self\.AxlxAutoRun\.orderSites\) \? self\.AxlxAutoRun\.orderSites\(command\.sites \|\| \["reins"\]\)/.test(bg));
   const loopI = bg.indexOf("for (var i = 0; i < targets.length; i++) {"), loopJ = bg.indexOf("for (var j = 0; j < custSites.length; j++) {");
-  ok("background: お客様のループの中にサイトのループ（サイトごとに全員を回さない）", loopI > 0 && loopJ > loopI && loopJ - loopI < 3000);
+  ok("background: お客様のループの中にサイトのループ（サイトごとに全員を回さない）", loopI > 0 && loopJ > loopI && loopJ - loopI < 6000 && bg.indexOf("_runLanesParallel(customer", loopI) < loopJ); // v2.5.43 同時の回（_runLanesParallel）もお客様のループの中
   ok("background: 次のお客様の間（processed_customers）はサイトのループの後", bg.indexOf("processed_customers: i + 1", loopJ) > loopJ);
 }
 
 console.log("\n■ 人の間（毎回ちがう・機械的に同じ間隔にしない・サイトへのアクセスは増やさない）");
 {
-  ok("同じお客様の次のサイトまでの間は一括の回すべて（自動便だけではない）", /if \(j > 0 && _AR\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(read("background.js")));
+  ok("同じお客様の次のサイトまでの間は一括の回すべて（自動便だけではない・順の回）", /if \(j > 0 && _AR && !_stopApplies\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(read("background.js")));
   eq("次のコマンドまでの間はお客様の間と同じ幅（15〜60秒・一息 90〜200秒）", [R.nextCommandGapMs(seq([0.9, 0])), R.nextCommandGapMs(seq([0.9, 0.999999])), R.nextCommandGapMs(seq([0.05, 0])), R.nextCommandGapMs(seq([0.05, 0.999999]))], [15000, 60000, 90000, 200000]);
   const vals = new Set(); for (let i = 0; i < 12; i++) vals.add(R.nextCommandGapMs(seq([0.5, i / 12])));
   ok("同じ長さが続かない（12回で12通り）", vals.size === 12);

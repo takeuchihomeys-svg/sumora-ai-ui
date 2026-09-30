@@ -12,7 +12,7 @@ function ok(name, cond) { cond ? pass++ : fail++; console.log((cond ? "  ✓ " :
 function eq(name, a, b) { const c = JSON.stringify(a) === JSON.stringify(b); c ? pass++ : fail++; console.log((c ? "  ✓ " : "  ✗ ") + name + (c ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 
 const dir = path.join(__dirname, "..", "..", "chrome-extension");
-const read = (f) => fs.readFileSync(path.join(dir, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(dir, f), "utf8").replace(/\r\n/g, "\n");
 
 console.log("\n■ ブラウザと同じ形（self）で読む");
 const sandbox = { console };

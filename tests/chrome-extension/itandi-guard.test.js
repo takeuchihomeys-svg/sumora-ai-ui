@@ -10,7 +10,7 @@ let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`)); }
 function ok(name, c) { eq(name, !!c, true); }
 const EXT = path.join(__dirname, "../../chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 
 console.log("\n■ 上限の値（本番の分布: 116回・中央値 2・p95 17・上位 126, 45, 41 → 50 なら普段は切れず 126 だけ切れる）");
 {
@@ -104,7 +104,7 @@ console.log("\n■ 配線（itandi-bulk-dl・background・manifest）");
   ok("background が itandi-guard.js を import", /^import "\.\/itandi-guard\.js";/m.test(bg));
   ok("background: 見分けは一括の回のお客様の条件（_itandiGuardCtx）だけ・別のお客様・手動は進む", /String\(ctx\.customerId\) !== String\(msg\.customerId\)\) \{\s*sendResponse\(\{ action: "proceed"/.test(bg));
   ok("background: ITANDI の回の前に条件を置き、後で消す", /_itandiGuardCtx = \{\s*customerId: String\(effectiveCustomer\.id\), isWide: batchIsWide, attempt: 0/.test(bg) && /_itandiGuardCtx = null;/.test(bg));
-  ok("background: 止めたら1回だけ入れ直す（_itandiGuardRetry・見張りの中）", /if \(_scrapeLastOutcome\.guard && _scrapeLastOutcome\.guard\.suspect\) \{\s*_passCount = await _passGuard\.race\(_itandiGuardRetry\(/.test(bg));
+  ok("background: 止めたら1回だけ入れ直す（_itandiGuardRetry・見張りの中）", /if \(_scrapeOutcomeFor\("itandi"\)\.guard && _scrapeOutcomeFor\("itandi"\)\.guard\.suspect\) \{\s*_passCount = await _passGuard\.race\(_itandiGuardRetry\(/.test(bg));
   ok("background: 入れ直しの前に人の間（retryGapMs）・1回目の読み戻しを控える", /var gap = G \? G\.retryGapMs\(\)/.test(bg) && /var firstFill = _compactFill\(run && run\.filled\);/.test(bg));
   ok("background: 入れ直しは1回だけ（attempt=1・連続の再試行の loop が無い）", /_itandiGuardCtx\.attempt = 1;/.test(bg) && !/for \([^)]*attempt[^)]*\) \{[\s\S]{0,300}_itandiGuardRetry/.test(bg));
   const retryBody = bg.slice(bg.indexOf("async function _itandiGuardRetry"), bg.indexOf("// ===== END: 自動化バッチ検索 ====="));
@@ -113,7 +113,7 @@ console.log("\n■ 配線（itandi-bulk-dl・background・manifest）");
   ok("background: 待ち手に guard を渡す（guard_stopped の時だけ）", /guard: \(audit && audit\.guard_stopped && audit\.guard\) \? audit\.guard : null/.test(bg));
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("manifest: itandi-guard.js は itandi-bulk-dl.js より前", cs.some((c) => /itandi-guard\.js,itandi-bulk-dl\.js/.test(c)));
+  ok("manifest: itandi-guard.js は itandi-bulk-dl.js より前", cs.some((c) => /itandi-guard\.js,(?:update-order-stop\.js,)?itandi-bulk-dl\.js/.test(c)));
   ok("manifest の版 2.5.42 以上", mf.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005042);
   ok("拡張の中に「_」で始まるファイルを置いていない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }

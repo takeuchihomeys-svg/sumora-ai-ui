@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const EXT = path.join(__dirname, "..", "..", "chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 let pass = 0, fail = 0;
 const ok = (name, cond) => { if (cond) { pass++; console.log("  ✓ " + name); } else { fail++; console.log("  ✗ " + name); } };
 
@@ -52,9 +52,9 @@ const ok = (name, cond) => { if (cond) { pass++; console.log("  ✓ " + name); }
   ok("中で投げても印は元に戻る", vm.runInContext("try { _withRestoreSuppressed(true, () => { throw new Error('y'); }); } catch (_) {} String(_adjRestoreSuppressed)", ctx) === "false");
 
   console.log("\n■ ④ 件数の分からない完了を「0件」と言わない（background）");
-  ok("件数が無い完了は countUnknown", /_scrapeLastOutcome\.countUnknown = !\(batchDone && batchDone\.propertyCount != null\);/.test(bg));
-  ok("1パスの0件の知らせは件数が分かる時だけ", /if \(_propCount === 0 && !_scrapeLastOutcome\.countUnknown && !\(batchDone && batchDone\.timedOut\)/.test(bg));
-  ok("2パス（both）の集計も件数の分からないパスがあれば0件と言わない", /_totalPassCount === 0 && _passCountUnknown === 0 && customer\.customer_name/.test(bg) && /_scrapeLastOutcome\.countUnknown\) _passCountUnknown\+\+/.test(bg));
+  ok("件数が無い完了は countUnknown", /_out\.countUnknown = !\(batchDone && batchDone\.propertyCount != null\);/.test(bg));
+  ok("1パスの0件の知らせは件数が分かる時だけ", /if \(_propCount === 0 && !_out\.countUnknown && !\(batchDone && batchDone\.timedOut\)/.test(bg));
+  ok("2パス（both）の集計も件数の分からないパスがあれば0件と言わない", /_totalPassCount === 0 && _passCountUnknown === 0 && customer\.customer_name/.test(bg) && /_scrapeOutcomeFor\(batchSite\)\.countUnknown\) _passCountUnknown\+\+/.test(bg));
   const bulk = read("bulk-dl.js");
   ok("bulk-dl の送信エラーは件数を付けない（＝分からない）のまま", /audit: _auditResult\(state, \{ send_error: String\(errMsg2\)/.test(bulk) && !/propertyCount: state\.sentCount \|\| 0, audit: _auditResult\(state, \{ send_error/.test(bulk));
 

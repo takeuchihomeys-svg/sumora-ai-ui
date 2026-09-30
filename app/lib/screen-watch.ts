@@ -63,6 +63,8 @@ export type WatchMaterial = {
   range?: CountRange | null;
   /** C3: 読んだ行数（件数の文が無い時の代わり） */
   read_rows?: number | null;
+  /** C3: 2026-09-30 v2.5.43 更新日順で前回の検索より古い行で止めた回（読んだ行が少ない・0 でも検索できていないのではない） */
+  update_stopped?: boolean | null;
   decision?: DecisionLite | null;
   is_wide?: boolean | null;
   /** 入れようとした場所の数（駅＋区・市）。広い検索（AREA_WIDE 以上）は件数が多くても「条件が効いていない」と言わない */
@@ -283,7 +285,7 @@ export function detectScreenState(m: WatchMaterial, t: WatchThresholds = DEFAULT
   if (jump) rules.push(`wrong:count_jump_x${t.countJumpX}`);
   // 0件の疑い
   const zeroScreen = cnt === 0 && !!m.range && m.range.low >= 3;
-  const zeroRows = m.checkpoint === "done" && m.read_rows === 0 && !!m.range && m.range.low >= 3;
+  const zeroRows = m.checkpoint === "done" && m.read_rows === 0 && !!m.range && m.range.low >= 3 && !m.update_stopped;
   const zeroCheck = checks.some((c) => c.code === "ZERO_UNCONFIRMED" && c.severity === "bad");
   if (zeroScreen) rules.push("zero:screen_below_history");
   if (zeroRows) rules.push("zero:rows_below_history");

@@ -809,6 +809,8 @@
     if (base.sent_skipped) r.sent_skipped = base.sent_skipped; // 2026-09-29 v2.5.41 送付済みの部屋として選ばなかった数
     // 2026-09-30 v2.5.42 選んだ部屋（見張りが送付済みの部屋を選んでいないか確かめる）
     if (base.picked_rooms && base.picked_rooms.length) r.picked_rooms = base.picked_rooms.slice(0, 150);
+    // 2026-09-30 v2.5.43 更新日順で前回の検索より古い行で止めた（点検の result・見張りの C3）
+    if (_itUpdateStop) r.stopped_at_last_search = _itUpdateStop;
     try {
       var A = self.AxlxSearchAudit;
       if (A && document.body) {
@@ -848,6 +850,8 @@
     _itManualRun = !!_manual;
     _itPicked = 0;
     _itRowCut = false;
+    _itUpdateCarry = null; // 2026-09-30 v2.5.43 更新順の止め（この回の持ち越し）
+    _itUpdateStop = null;
     var _totalSentCount = 0; // 全ページ合計送信件数（axlx-batch-customer-done に渡す）
     _itAuditRes = { pages: 0, read_rows: 0, sent_count: 0 };
     getCustomerFromPopup(function(customerName, customerId, customerConditions) {
@@ -887,6 +891,19 @@
           try {
             chrome.runtime.sendMessage(
               { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult({ row_limit: _rowMax }) },
+              function () { void chrome.runtime.lastError; }
+            );
+          } catch (_) {}
+          return;
+        }
+        // 2026-09-30 v2.5.43 更新日順の一覧で前回の検索より古い行まで来た → 次のページは開かない（update-order-stop.js）
+        if (!_manual && _itUpdateStop && clickNextPageAvailable()) {
+          _autoSendInProgress = false;
+          _pendingAutoSendDispatched = false;
+          console.log("[AXLX itandi] 前回の検索より古い行まで来た → 次のページは開かない totalSent=" + _totalSentCount);
+          try {
+            chrome.runtime.sendMessage(
+              { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult() },
               function () { void chrome.runtime.lastError; }
             );
           } catch (_) {}
@@ -1018,6 +1035,41 @@
     return n;
   }
 
+  // ── 2026-09-30 v2.5.43 竹内「更新順で検索していたら、その更新順以降は見なくて大丈夫」（chrome-extension/update-order-stop.js）──
+  //   ITANDI の一覧の並びは実物で確かめていないので「並びが分からない」扱い: 行の「更新」の語の近くの日付（「更新日 2026/09/29」「3日前に更新」等）が
+  //   読めて、10行以上そろって新しい→古いの時だけ更新日順とみなし、前回の検索（このお客様×ITANDI・last_search_at）より古い行から先は選ばず次のページも開かない。
+  //   ⚠ 止めるのは「前回の検索より古い行」であって「送付済みの行」ではない（送付済みでも新しく更新された部屋は見る。送付済みの飛ばしは _applySentSkipIt のまま）。
+  //   読めない・前回が分からない・並びが更新日順でない時は今まで通り（ページの上限まで）。手動の送信・スタッフモードは見ない
+  var _itUpdateCarry = null;
+  var _itUpdateStop = null;
+  function _UO() { return (typeof self !== "undefined" ? self : window).AxlxUpdateOrderStop || null; }
+  function _itRowTextOf(btn) {
+    var el = btn;
+    for (var i = 0; i < 14 && el && !(/円/.test(el.innerText || "") && /㎡/.test(el.innerText || "")); i++) el = el.parentElement;
+    return el ? String(el.innerText || "").replace(/\s+/g, " ").slice(0, 400) : "";
+  }
+  function _applyUpdateOrderStopIt(customerId) {
+    var U = _UO();
+    if (!U || _itManualRun || _staffModeOn || _itUpdateStop || !tracked.length) return null;
+    var opts = _autoRunFor(customerId);
+    var lastIso = opts && opts.last_search_at ? String(opts.last_search_at) : null;
+    if (!lastIso) return null;
+    var now = Date.now();
+    var rows = tracked.map(function (t) {
+      var txt = "";
+      try { txt = _itRowTextOf(t.btn); } catch (_) {}
+      return { newest: txt ? U.newestPossibleMs(txt, now, { requireLabel: true }) : null, text: txt.slice(0, 60) };
+    });
+    var dec = U.decideStop({ rows: rows, lastSearchMs: Date.parse(lastIso), nowMs: now, order: "unknown", carry: _itUpdateCarry });
+    _itUpdateCarry = dec.carry;
+    if (dec.stopIndex < 0) return null;
+    _itUpdateStop = U.stopRecord(dec.carry, _itAuditRes ? (_itAuditRes.pages || 0) + 1 : null, lastIso, "itandi");
+    var n = 0;
+    tracked.slice(dec.stopIndex).forEach(function (t) { if (t.cb.checked) { t.cb.checked = false; checkedKeys.delete(t.rowKey); n++; } });
+    console.log("[AXLX itandi] " + (U.describeStop(_itUpdateStop) || "前回の検索より古い行で止めた") + " → この行から先の " + n + "件は選ばず、次のページも開かない");
+    return _itUpdateStop;
+  }
+
   function _autoSendOnePage(customerName, customerId, customerConditions, onComplete) {
     // BUG-B修正: 顧客切り替え時に前顧客のrowKeyを必ずリセット（混入バグ対策）
     checkedKeys.clear();
@@ -1027,6 +1079,8 @@
     var _pageSkipped = _applySentSkipIt(customerId);
     if (_itAuditRes) _itAuditRes.sent_skipped = (_itAuditRes.sent_skipped || 0) + _pageSkipped;
     _itPageSkipped = _pageSkipped;
+    // 2026-09-30 v2.5.43 更新日順なら前回の検索より古い行から先は選ばない（送付済みの飛ばしの後・物件数の上限の前）
+    _applyUpdateOrderStopIt(customerId);
     // 2026-09-30 v2.5.42 1回の物件数の上限（手動の送信は見ない）: 上限を超えた行は選ばない（資料を開かない）
     var G = _G();
     if (G && !_itManualRun) {

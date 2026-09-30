@@ -6,7 +6,7 @@
 //   search_audits はブレインの PC の回だけ（スタッフの手の検索・ブレインでない PC の回は無い）→ 前回が実際より古く見えるだけ＝広い側（漏れない）。
 //   読めない時は「記録なし」＝今までの決まりのまま（検索は止めない）。
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { planUpdateDays, type UpdateDaysPlan } from "./search-update-days";
+import { planUpdateDays, stopLinesBySite, type UpdateDaysPlan } from "./search-update-days";
 
 /** 見る範囲（これより前の回は無い物として扱う＝指定なしまで広がる前に今までの決まりに任せる） */
 const LOOKBACK_DAYS = 30;
@@ -75,7 +75,39 @@ export async function planUpdateDaysFor(
 ): Promise<Array<{ id: string; plan: UpdateDaysPlan }>> {
   let last = new Map<string, Record<string, string>>();
   try { last = await lastCompleteSearches(sb, entries.map((e) => e.id), { nowMs }); } catch (e) { console.warn("[update-days] 計画を作れない（今までの決まりのまま）:", e instanceof Error ? e.message : String(e)); }
-  return entries.map((e) => ({ id: String(e.id), plan: planUpdateDays({ baseDays: e.baseDays, lastSearchAt: oldestLast(last.get(String(e.id)), sites), nowMs }) }));
+  // 2026-09-30 v2.5.43 サイトごとの止める線（条件が前回の検索の後に変わったサイトは作らない・条件の変更が読めない時は誰にも作らない）
+  let changes: Map<string, string> | null = null;
+  try { changes = last.size ? await lastConditionChanges(sb, [...last.keys()], nowMs) : new Map(); } catch (e) { changes = null; console.warn("[update-days] 条件の変更を読めない:", e instanceof Error ? e.message : String(e)); }
+  return entries.map((e) => {
+    const id = String(e.id);
+    const lastBySite = changes ? stopLinesBySite(last.get(id), sites, changes.get(id) ?? null) : null;
+    return { id, plan: planUpdateDays({ baseDays: e.baseDays, lastSearchAt: oldestLast(last.get(id), sites), nowMs, lastBySite }) };
+  });
+}
+
+/**
+ * 2026-09-30 v2.5.43 お客様ごとの条件の最後の変更（property_condition_history・見る範囲の中だけ）。
+ *   更新日順の一覧で「前回の検索より古い行」で止める線を、条件が変わった後の検索に使わないため。読めない時は null（＝止める線を作らない）
+ */
+export async function lastConditionChanges(
+  sb: SupabaseClient, customerIds: ReadonlyArray<string>, nowMs: number = Date.now(),
+): Promise<Map<string, string> | null> {
+  const out = new Map<string, string>();
+  const ids = [...new Set(customerIds.map(String).filter(Boolean))];
+  if (!ids.length) return out;
+  const since = new Date(nowMs - LOOKBACK_DAYS * 86400_000).toISOString();
+  for (let i = 0; i < ids.length; i += 50) {
+    const { data, error } = await sb.from("property_condition_history").select("property_customer_id, created_at")
+      .in("property_customer_id", ids.slice(i, i + 50)).gte("created_at", since).order("created_at", { ascending: false }).limit(2000);
+    if (error) { console.warn("[update-days] 条件の変更を読めない（止める線は作らない）:", error.message); return null; }
+    for (const r of (data ?? []) as Array<{ property_customer_id: string | null; created_at: string | null }>) {
+      const id = String(r.property_customer_id ?? "");
+      if (!id || !r.created_at) continue;
+      const prev = out.get(id);
+      if (!prev || prev < r.created_at) out.set(id, r.created_at);
+    }
+  }
+  return out;
 }
 
 /** 点検（C1・C3）用: その回の命令の payload と、同じお客様×サイトの前回の検索 */

@@ -169,6 +169,16 @@ export type AuditResult = {
   guard_stopped?: boolean | null;
   /** 2026-09-30 v2.5.42 サーバーが数えた「送付済みの部屋を選んだ・ダウンロードした」数（recordFinished が足す） */
   sent_selected?: number | null;
+  /**
+   * 2026-09-30 v2.5.43 更新日順の一覧で「前回の検索より古い行」で止めた（拡張 update-order-stop.js stopRecord）。
+   *   止めた行から先は選ばず・次のページも開いていない＝0件でも「検索できていない」ではない
+   */
+  stopped_at_last_search?: UpdateOrderStop | null;
+};
+
+export type UpdateOrderStop = {
+  site?: string | null; page?: number | null; index?: number | null; row_text?: string | null;
+  newest_at?: string | null; last_search_at?: string | null; inferred_order?: boolean | null;
 };
 
 export type ItandiGuardRecord = {
@@ -651,7 +661,16 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
   if (r && !r.batch_timed_out && !kind) {
     const readRows = typeof r.read_rows === "number" ? r.read_rows : null;
     zero = readRows === 0 || (readRows == null && r.property_count === 0 && r.sendable_rows == null);
-    if (zero) {
+    const uo = r.stopped_at_last_search ?? null;
+    if (uo) {
+      // 2026-09-30 v2.5.43 更新日順で前回の検索より古い行で止めた（止めた行・前回の時刻）。止めた事そのものは異常ではない（ok）
+      add("UPDATE_DAYS", "ok", `update_days:${siteKey}:stopped_at_last_search`, "更新日順で前回の検索より古い行で止めた",
+        `${uo.page ?? "?"}ページ目の${uo.index != null ? uo.index + 1 : "?"}行目（更新 ${String(uo.newest_at ?? "?").slice(0, 16).replace("T", " ")}まで）・前回の検索=${String(uo.last_search_at ?? "?").slice(0, 16).replace("T", " ")}${uo.inferred_order ? "・並びは行から更新日順とみなした" : ""}`);
+    }
+    if (zero && uo) {
+      // 選んだ行が0で、止めた行より前は無い／送付済みで飛ばした行だけ＝前回の検索の後に更新された新しい物件が無い（検索できていないのではない）
+      add("ZERO_CONFIRMED", "warn", `zero_confirmed:${siteKey}:no_newer_than_last`, "0件（前回の検索の後に更新された新しい物件なし）", `前回の検索=${String(uo.last_search_at ?? "?").slice(0, 16).replace("T", " ")}・止めた行=${uo.page ?? "?"}ページ目の${uo.index != null ? uo.index + 1 : "?"}行目・送付済みで飛ばした=${r.sent_skipped ?? 0}・件数表示=${r.count_text ?? "?"}`);
+    } else if (zero) {
       const confirmed = r.count_number === 0 || r.zero_reason === "count_text_zero";
       if (confirmed) add("ZERO_CONFIRMED", "warn", `zero_confirmed:${siteKey}`, "0件（画面の件数も0）", `件数表示=${r.count_text ?? "?"}`);
       else add("ZERO_UNCONFIRMED", "bad", `zero_unconfirmed:${siteKey}:${keyPart(r.zero_reason || "unknown")}`, "0件（検索できていたか確かめられない）",

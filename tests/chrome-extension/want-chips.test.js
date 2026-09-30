@@ -3,7 +3,7 @@
 // 実行: node tests/chrome-extension/want-chips.test.js
 const fs = require("fs");
 const path = require("path");
-const read = (f) => fs.readFileSync(path.join(__dirname, "..", "..", "chrome-extension", f), "utf8");
+const read = (f) => fs.readFileSync(path.join(__dirname, "..", "..", "chrome-extension", f), "utf8").replace(/\r\n/g, "\n");
 let passed = 0, failed = 0;
 const ok = (name, cond) => { if (cond) { passed++; console.log(`  OK  ${name}`); } else { failed++; console.log(`  NG  ${name}`); } };
 

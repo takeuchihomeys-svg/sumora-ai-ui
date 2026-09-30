@@ -95,6 +95,52 @@
     return { skipped: skipped };
   }
 
+  // ── 2026-09-30 v2.5.43 竹内「更新順で検索していたら、その更新順以降は見なくて大丈夫」（chrome-extension/update-order-stop.js）──
+  //   更新日順（新しい順）の一覧では、行の更新日（先頭のセル「309 4日前」「0405 2時間前」）が「このお客様×リアプロの前回の検索の時刻」
+  //   （background が auto-run の record に載せる last_search_at＝サーバーの update_days_plan.by_customer[id].last_by_site.realpro）より
+  //   古くなった行から先は選ばず、次のページも開かない。
+  //   ⚠ 止めるのは「前回の検索より古い行」であって「送付済みの行」ではない（送付済みでも新しく更新された部屋は見る。送付済みの飛ばしは _applySentSkip のまま）。
+  //   前回の時刻が無い・読めない・AD 高い順（多くの回）・並びが分からない（読めて単調な行が10行未満）時は今まで通り（ページの上限まで）。スタッフモードは見ない
+  function _UO() { return (typeof self !== "undefined" ? self : window).AxlxUpdateOrderStop || null; }
+  function _firstCellOf(t) {
+    try {
+      var card = extractCard(t.btn);
+      var labels = card && card.headerIdx && card.headerIdx.labels;
+      if (labels && labels.length && !/部屋|号室/.test(String(labels[0] || ""))) return null;
+      return card && card.cells ? card.cells[0] : null;
+    } catch (_) { return null; }
+  }
+  function _uncheckFromStop(state) {
+    var s = state && state.updateStop;
+    if (!s || s.page !== state.currentPage || s.index == null) return 0;
+    var n = 0;
+    tracked.slice(s.index).forEach(function (t) { if (t.cb.checked) { t.cb.checked = false; n++; } });
+    return n;
+  }
+  function _applyUpdateOrderStop(state) {
+    var U = _UO();
+    if (!U || !state || _staffModeOn || !tracked.length) return null;
+    if (state.updateStop) { _uncheckFromStop(state); updateBar(); return state.updateStop; }
+    if (state.uoPage === state.currentPage) return null; // このページは見た
+    var opts = _autoRunFor(state.customerId);
+    var lastIso = opts && opts.last_search_at ? String(opts.last_search_at) : null;
+    state.uoPage = state.currentPage;
+    if (!lastIso) return null;
+    var now = Date.now();
+    var rows = tracked.map(function (t) {
+      var c0 = _firstCellOf(t);
+      return { newest: c0 ? U.newestPossibleMs(c0, now) : null, text: c0 || "" };
+    });
+    var dec = U.decideStop({ rows: rows, lastSearchMs: Date.parse(lastIso), nowMs: now, order: U.orderForRealpro(location.href, opts), carry: state.updateCarry || null });
+    state.updateCarry = dec.carry;
+    if (dec.stopIndex < 0) return null;
+    state.updateStop = U.stopRecord(dec.carry, state.currentPage, lastIso, "realpro");
+    var n = _uncheckFromStop(state);
+    updateBar();
+    console.log("[AXLX bulk-dl] " + (U.describeStop(state.updateStop) || "前回の検索より古い行で止めた") + " → この行から先の " + n + "件は選ばず、次のページも開かない");
+    return state.updateStop;
+  }
+
   /**
    * 2026-09-30 v2.5.42 竹内「画面見るところで、前に共有した物件はダウンロードされないようになっているのか読み取って」:
    *   資料を取りに行く直前に、一覧でチェックが入っている行（＝ダウンロードする部屋）の建物名＋号室を読んで残す（150件まで）。
@@ -1480,6 +1526,8 @@
     if (state && state.updateAges && state.updateAges.n > 0) r.update_ages = state.updateAges;
     // 2026-09-30 v2.5.42 一覧で実際にチェックが入っていた部屋（見張りが送付済みの部屋を選んでいないか確かめる・150件まで）
     if (state && state.pickedRooms && state.pickedRooms.length) r.picked_rooms = state.pickedRooms.slice(0, 150);
+    // 2026-09-30 v2.5.43 更新順で前回の検索より古い行で止めた（止めた行の更新日・前回の時刻・ページ）→ 点検の result・見張りの C3
+    if (state && state.updateStop) r.stopped_at_last_search = state.updateStop;
     var _tl = _ttake();
     if (_tl) r.timings = _tl;
     return Object.assign(r, extra || {});
@@ -1495,6 +1543,15 @@
     var _arOpts = _autoRunFor(state.customerId);
     // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 既定を 3 → 5（1か所の定数 auto-run.js DEFAULT_MAX_PAGES・読めない時も 5）
     var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages)) || (_AR() ? _AR().pageLimit(_arOpts, null) : null) || (_AR() && _AR().DEFAULT_MAX_PAGES) || 5;
+    // 2026-09-30 v2.5.43 更新順で前回の検索より古い行まで来た → 次のページは開かない（ページの上限より前に終える＝サイトへのアクセスが減る）
+    if (state.updateStop && hasNextPageBtn()) {
+      clearAutoSendState();
+      var countElStop = document.getElementById("axlx-count");
+      if (countElStop) countElStop.textContent = "前回の検索まで見た → 次へ";
+      console.log("[AXLX bulk-dl] 前回の検索より古い行まで来た（P" + state.currentPage + "）→ " + (state.sentCount || 0) + "件送信。次のページは開かない。");
+      try { chrome.runtime.sendMessage({ type: "axlx-batch-customer-done", customerId: state.customerId || null, propertyCount: state.sentCount || 0, audit: _auditResult(state) }, function() { void chrome.runtime.lastError; }); } catch (_) {}
+      return;
+    }
     if (state.currentPage >= _maxPages && hasNextPageBtn()) {
       clearAutoSendState();
       var countElLimit = document.getElementById("axlx-count");
@@ -1515,7 +1572,7 @@
         if (countEl2) countEl2.textContent = "次ページ遷移エラー";
       } else {
         // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
-        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null, pickedRooms: state.pickedRooms || null });
+        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null, pickedRooms: state.pickedRooms || null, updateCarry: state.updateCarry || null });
         // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
         try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
@@ -1548,8 +1605,15 @@
     // 2026-09-29 v2.5.41 送付済みの部屋は選ばない（数えるのはこのページで1回）
     var _skCounted = tracked.length > 0;
     var _sk0 = _applySentSkip(state, _skCounted);
+    // 2026-09-30 v2.5.43 更新順の一覧は前回の検索より古い行から先を選ばない（送付済みの飛ばしの後・止めても送付済みの数え方は変えない）
+    _applyUpdateOrderStop(state);
 
     var urls = getSelectedUrls();
+    if (!urls.length && state.updateStop) {
+      console.log("[AXLX bulk-dl] P" + state.currentPage + " は前回の検索より新しい行が無い → 資料を取らずに終える");
+      onDone(true, 0);
+      return;
+    }
     if (!urls.length && _sk0.skipped > 0) {
       // このページの行が全部送付済み＝送る物が無い（待たずに次のページへ）
       console.log("[AXLX bulk-dl] P" + state.currentPage + " は全部送付済みの部屋 → 資料を取らずに次へ");
@@ -1565,7 +1629,9 @@
         updateBar();
         _applySentSkip(state, !_skCounted && tracked.length > 0);
         if (!_skCounted && tracked.length > 0) _skCounted = true;
+        _applyUpdateOrderStop(state); // 2026-09-30 v2.5.43 選び直した後も止めた行から先は選ばない
         var urls2 = getSelectedUrls();
+        if (!urls2.length && state.updateStop) { clearInterval(_pollTimer); onDone(true, 0); return; }
         _pollWait += 200;
         if (urls2.length > 0 || _pollWait >= 4000) {
           clearInterval(_pollTimer);

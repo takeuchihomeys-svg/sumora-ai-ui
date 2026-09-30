@@ -32,6 +32,10 @@ import "./snapshot-core.js";
 import "./sent-skip.js";
 // 2026-09-30 v2.5.42 竹内「ITANDI も一回での上限を作る。物件数で」「ITANDI で条件指定ちゃんとできていなければ…」: 条件が効いていない検索の見分け（self.AxlxItandiGuard）
 import "./itandi-guard.js";
+// 2026-09-30 v2.5.43 竹内「拡張ツールはリアプロと ITANDI を開いているので、同時に動かす形でも大丈夫ならそれで行う」: 同時に動かせるかの判定・2本の合流（self.AxlxParallelSites）
+import "./parallel-sites.js";
+// 2026-09-30 v2.5.43 竹内「更新順で検索していたら、その更新順以降は見なくて大丈夫」: 前回の検索の時刻の読み（self.AxlxUpdateOrderStop）
+import "./update-order-stop.js";
 
 // ── 2026-09-29 v2.5.40 SW のログの末尾（画面の写真に添える・最大80行） ──
 //   console.log / warn / error をそのまま出したうえで、メモリの輪に貯める（storage.session へは15秒に1回まで）。
@@ -2432,9 +2436,12 @@ function _sweepAbandonedFillDoneIds() {
   });
 }
 
-function _markFillDoneAbandoned(customerId) {
+// 2026-09-30 v2.5.43 同時の回（同じお客様のリアプロと ITANDI が並んで走る）: 捨てた記録はお客様×サイト（鍵 "id|site"）。
+//   旧はお客様だけだったので、ITANDI の待ちを捨てるとリアプロの fill-done まで「遅れて届いた」と無視された
+function _abandonKey(customerId, site) { return String(customerId) + "|" + (site || ""); }
+function _markFillDoneAbandoned(customerId, site) {
   if (!customerId) return;
-  _abandonedFillDoneIds.set(String(customerId), Date.now());
+  _abandonedFillDoneIds.set(_abandonKey(customerId, site), Date.now());
   _sweepAbandonedFillDoneIds(); // 無限に溜めない
 }
 
@@ -2442,8 +2449,19 @@ function _markFillDoneAbandoned(customerId) {
  * 捨てた記録を消す（その顧客をもう一度検索し直す時に、遅延シグナル扱いのまま詰まらないように）。
  * 一括検索は1人につき1回 _createFillDoneWaiter を作るので、作る時に必ず消す。
  */
-function _clearFillDoneAbandoned(customerId) {
-  if (customerId) _abandonedFillDoneIds.delete(String(customerId));
+function _clearFillDoneAbandoned(customerId, site) {
+  if (customerId) _abandonedFillDoneIds.delete(_abandonKey(customerId, site));
+}
+
+// その合図のサイトで捨てたお客様の ID（サイトの分からない記録・合図は両方に効かせる＝取り違えない側）
+function _abandonedIdsFor(site) {
+  var out = new Set();
+  _abandonedFillDoneIds.forEach(function (_at, key) {
+    var i = key.lastIndexOf("|");
+    var id = i >= 0 ? key.slice(0, i) : key, s = i >= 0 ? key.slice(i + 1) : "";
+    if (!site || !s || s === site) out.add(id);
+  });
+  return out;
 }
 
 function _notifyFillDone(site, customerId, error) {
@@ -2452,7 +2470,7 @@ function _notifyFillDone(site, customerId, error) {
   var sel = self.AxlxFillDoneMatch.selectWaiters(
     _fillDoneWaiters,
     { site: site || null, customerId: customerId || null },
-    new Set(Array.from(_abandonedFillDoneIds.keys()))
+    _abandonedIdsFor(site || null)
   );
   if (!sel.resolve.length) {
     console.warn("[fill-done] 解決しない（" + sel.reason + "） customerId=" + customerId + " site=" + site
@@ -2476,7 +2494,7 @@ function _fillDoneTimeoutMs(site) {
 
 function _createFillDoneWaiter(site, customerId, timeoutMs) {
   // 2026-09-18: この顧客を新しく待ち始める＝前回「捨てた」記録は用済み（再検索が詰まらないように消す）
-  _clearFillDoneAbandoned(customerId);
+  _clearFillDoneAbandoned(customerId, site);
   return new Promise(function (resolve) {
     var entry = { site: site || null, customerId: customerId || null, resolve: resolve, timer: null };
     // Fix 3: _batchShouldStop を 500ms ごとにポーリングし、true になったら即解決する。
@@ -2497,7 +2515,7 @@ function _createFillDoneWaiter(site, customerId, timeoutMs) {
       if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
       // 2026-09-18: 捨てたことを覚えておく。後から届くこの顧客の fill-done で
       //   次の顧客の待ちが解決される（＝違うお客さんの条件で送られる）のを防ぐ
-      _markFillDoneAbandoned(entry.customerId);
+      _markFillDoneAbandoned(entry.customerId, entry.site);
       console.warn("[fill-done-waiter] タイムアウト customerId=" + entry.customerId + " site=" + entry.site + (extra ? "（" + extra + "）" : ""));
       // 2026-09-29 v2.5.40 本当の時間切れの時だけ画面を撮る（検索しないと決めて閉じた時＝extra ありは撮らない）
       if (!extra) _snapOnEvent("fill_timeout", "検索の完了の合図（fill-done）が来ない customer=" + entry.customerId + " site=" + entry.site);
@@ -2526,13 +2544,16 @@ function _endFillDoneWaiter(site, customerId, why) { var w = _findFillDoneWaiter
 // _scrapeAndSendRealpro はこの Promise が解決するまで次顧客への移行を待つ。
 var _batchCustomerDoneWaiters = [];
 
-function _notifyBatchCustomerDone(customerId, propertyCount, audit) {
+// 2026-09-30 v2.5.43 同時の回（リアプロと ITANDI が同じお客様で並んで走る）: 待ち手はサイトも持ち、合図の送り主のタブの URL（site）で当てる。
+//   site が分からない合図（旧の経路）は今までどおりお客様 ID だけで当てる（待ちが1本の時）
+function _waiterSiteMatch(w, site) { return !site || !w.site || String(w.site) === String(site); }
+function _notifyBatchCustomerDone(customerId, propertyCount, audit, site) {
   var target = null;
   // 厳密一致優先
   if (customerId) {
     for (var _bdi = 0; _bdi < _batchCustomerDoneWaiters.length; _bdi++) {
       var _bdw = _batchCustomerDoneWaiters[_bdi];
-      if (_bdw.customerId && String(_bdw.customerId) === String(customerId)) { target = _bdw; break; }
+      if (_bdw.customerId && String(_bdw.customerId) === String(customerId) && _waiterSiteMatch(_bdw, site)) { target = _bdw; break; }
     }
   } else {
     for (var _bdi2 = 0; _bdi2 < _batchCustomerDoneWaiters.length; _bdi2++) {
@@ -2541,7 +2562,7 @@ function _notifyBatchCustomerDone(customerId, propertyCount, audit) {
     }
   }
   if (!target) {
-    console.warn('[AX] _notifyBatchCustomerDone: no waiter matched for', customerId);
+    console.warn('[AX] _notifyBatchCustomerDone: no waiter matched for', customerId, site || "");
     return;  // resolve しない・タイムアウト自然消化
   }
   clearInterval(target.stopInterval);
@@ -2552,15 +2573,15 @@ function _notifyBatchCustomerDone(customerId, propertyCount, audit) {
   target.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null, guard: (audit && audit.guard_stopped && audit.guard) ? audit.guard : null });
 }
 
-function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
+function _createBatchCustomerDoneWaiter(customerId, timeoutMs, site) {
   return new Promise(function(resolve) {
-    var entry = { customerId: customerId || null, resolve: resolve, timer: null, stopInterval: null, timeoutMs: timeoutMs || 300000 };
+    var entry = { customerId: customerId || null, site: site || null, resolve: resolve, timer: null, stopInterval: null, timeoutMs: timeoutMs || 300000 };
     var _expire = function() {
       clearInterval(entry.stopInterval);
       var idx = _batchCustomerDoneWaiters.indexOf(entry);
       if (idx >= 0) _batchCustomerDoneWaiters.splice(idx, 1);
-      console.warn("[batch-done-waiter] " + entry.timeoutMs / 1000 + "秒（無進捗）タイムアウト customer=" + entry.customerId);
-      _snapOnEvent("waiter_timeout", "全ページの送信の終わりの合図が " + entry.timeoutMs / 1000 + "秒来ない customer=" + entry.customerId);
+      console.warn("[batch-done-waiter] " + entry.timeoutMs / 1000 + "秒（無進捗）タイムアウト customer=" + entry.customerId + (entry.site ? " site=" + entry.site : ""));
+      _snapOnEvent("waiter_timeout", "全ページの送信の終わりの合図が " + entry.timeoutMs / 1000 + "秒来ない customer=" + entry.customerId + (entry.site ? " site=" + entry.site : ""));
       resolve({ timedOut: true });
     };
     // 「固定5分」→「無進捗5分」に変更:
@@ -2587,18 +2608,19 @@ function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
 }
 
 // ── 全ページ送信の進捗ハートビート受信 → 該当waiterのタイムアウトを延長 ──
-function _notifyBatchProgress(customerId) {
-  var target = null;
+function _notifyBatchProgress(customerId, site) {
+  var targets = [];
   if (customerId) {
     for (var _bpi = 0; _bpi < _batchCustomerDoneWaiters.length; _bpi++) {
       var _bpw = _batchCustomerDoneWaiters[_bpi];
-      if (_bpw.customerId && String(_bpw.customerId) === String(customerId)) { target = _bpw; break; }
+      if (_bpw.customerId && String(_bpw.customerId) === String(customerId) && _waiterSiteMatch(_bpw, site)) targets.push(_bpw);
     }
   }
   // customerId null / 不一致でも最古のwaiterにフォールバック（顧客は直列処理のため安全）
-  if (!target && _batchCustomerDoneWaiters.length) target = _batchCustomerDoneWaiters[0];
-  if (target && target.resetTimer) target.resetTimer();
-  _watchProgress("送信の進み");
+  //   2026-09-30 v2.5.43 同時の回で site が分からない時は両方を延ばす（違う方を切らせない側）
+  if (!targets.length && _batchCustomerDoneWaiters.length) targets = _batchCustomerDoneWaiters.length === 1 ? [_batchCustomerDoneWaiters[0]] : _batchCustomerDoneWaiters.slice();
+  targets.forEach(function (t) { if (t.resetTimer) t.resetTimer(); });
+  _watchProgress("送信の進み", site || (targets[0] && targets[0].site) || null);
 }
 
 // ── 2026-09-29 v2.5.40 一括の見張り・心拍・画面の写真 ─────────────────────────────
@@ -2658,20 +2680,47 @@ function _persistWatch(force) {
   try { chrome.storage.session.set({ batchWatch: _batchWatch }).catch(function () {}); } catch (_) {}
 }
 
-function _watchSet(patch) {
+// 2026-09-30 v2.5.43 同時の回（リアプロと ITANDI が同じお客様で並んで走る）: 見張りは本（サイト）ごとに _batchWatch.lanes[site] に持つ。
+//   site を渡した更新は、その本があればその本だけを直し、上の段は2本のまとめ（parallel-sites.js summarizeLanes: 待っている物は2本分・
+//   最後に進んだ時刻は終わっていない本の一番古い物＝片方が進んでも止まっている方を隠さない）。本が無い（順の回）時は今まで通り上の段を直す
+function _watchLane(site) {
+  return (site && _batchWatch && _batchWatch.lanes && _batchWatch.lanes[site]) || null;
+}
+function _watchSummarize(now) {
+  var P = self.AxlxParallelSites;
+  if (P && _batchWatch && _batchWatch.lanes) P.summarizeLanes(_batchWatch, now);
+}
+function _watchSet(patch, site) {
+  var lane = _watchLane(site);
+  if (lane) {
+    var nowL = Date.now();
+    Object.assign(lane, patch || {});
+    lane.lastProgressAt = nowL;
+    _watchSummarize(nowL);
+    _persistWatch(true);
+    return;
+  }
   var prev = _batchWatch || {};
   var next = Object.assign({}, prev, patch || {});
   next.lastProgressAt = Date.now();
   _batchWatch = next;
+  _watchSummarize(next.lastProgressAt);
   _persistWatch(true);
   if (prev.customerId !== next.customerId || prev.site !== next.site || !prev.commandId) _setRunState(true);
 }
 
-function _watchProgress(what) {
+function _watchProgress(what, site) {
   if (!_batchWatch || !_batchLoopAlive) return;
   var now = Date.now();
-  _batchWatch.lastProgressAt = now;
-  if (what) _batchWatch.lastEvent = what;
+  var lane = _watchLane(site);
+  if (lane) {
+    lane.lastProgressAt = now;
+    if (what) lane.lastEvent = what;
+  } else {
+    _batchWatch.lastProgressAt = now;
+  }
+  _watchSummarize(now);
+  if (what) _batchWatch.lastEvent = what + (lane ? "（" + site + "）" : "");
   _persistWatch(false);
   if (now - _lockRefreshedAt > 60000) {
     _lockRefreshedAt = now;
@@ -2687,10 +2736,10 @@ function _watchClear() {
 }
 
 // 送信の終わりの待ちを置き去りにする（見張りの時間切れの時だけ）。stopped で解く＝遅れて動いても知らせ・件数を書かない
-function _abandonBatchCustomerDoneWaiter(customerId) {
+function _abandonBatchCustomerDoneWaiter(customerId, site) {
   for (var i = 0; i < _batchCustomerDoneWaiters.length; i++) {
     var w = _batchCustomerDoneWaiters[i];
-    if (w.customerId && String(w.customerId) === String(customerId)) {
+    if (w.customerId && String(w.customerId) === String(customerId) && _waiterSiteMatch(w, site)) {
       clearInterval(w.stopInterval);
       clearTimeout(w.timer);
       _batchCustomerDoneWaiters.splice(i, 1);
@@ -2702,25 +2751,46 @@ function _abandonBatchCustomerDoneWaiter(customerId) {
 }
 
 // 1回の検索（お客様×サイト×パス）の見張り。race(p) は上限を過ぎたら「見張りの時間切れ: …」で投げる
+// 2026-09-30 v2.5.43 ctx.lane=true（同時の回）: この回の見張りは _batchWatch.lanes[ctx.site] に置き、時間切れもその本だけを見る（もう片方の本は止めない）
 function _startPassGuard(ctx) {
   var SC = self.AxlxSnapshotCore;
   var id = ++_passGuardSeq;
   var limit = SC ? SC.passDeadlineMs(ctx.site) : 20 * 60 * 1000;
-  _watchSet(Object.assign({}, ctx, { guardId: id, passStartedAt: Date.now(), waitingFor: "条件の入力（タブの確かめ・popup）", lastEvent: null }));
+  var laneSite = ctx.lane ? ctx.site : null;
+  var base = Object.assign({}, ctx, { guardId: id, passStartedAt: Date.now(), waitingFor: "条件の入力（タブの確かめ・popup）", lastEvent: null });
+  delete base.lane;
+  if (laneSite && _batchWatch) {
+    _batchWatch.lanes = _batchWatch.lanes || {};
+    _batchWatch.lanes[laneSite] = Object.assign({}, base, { lastProgressAt: Date.now(), done: false });
+    _watchSet({}, laneSite);
+  } else {
+    laneSite = null;
+    _watchSet(base);
+  }
   var done = false;
   var fired = false;
   var rejectFn = null;
   var expired = new Promise(function (_resolve, reject) { rejectFn = reject; });
   expired.catch(function () {}); // race が拾わなかった時に「未処理の失敗」を出さない
+  // この回の見張り（同時の回はその本を上に重ねた物）。別の回に替わっていれば null
+  function _mine() {
+    if (!_batchWatch) return null;
+    if (laneSite) {
+      var l = _watchLane(laneSite);
+      return l && l.guardId === id ? self.AxlxParallelSites.laneView(_batchWatch, laneSite) : null;
+    }
+    return _batchWatch.guardId === id ? _batchWatch : null;
+  }
   function fire(phaseNote) {
-    if (done || fired || !_batchWatch || _batchWatch.guardId !== id) return;
+    var mine = _mine();
+    if (done || fired || !mine) return;
     fired = true;
-    var why = (SC ? SC.describeStall(_batchWatch, Date.now(), "pass_deadline") : "見張りの時間切れ") + (phaseNote ? "・" + phaseNote : "");
+    var why = (SC ? SC.describeStall(mine, Date.now(), "pass_deadline") : "見張りの時間切れ") + (phaseNote ? "・" + phaseNote : "");
     console.error("[batch-watch] " + why + " → この回を閉じて次のお客様へ");
     _snapOnEvent("pass_deadline", why);
     // 置き去りの待ちを解く（遅れて届く合図で次のお客様の待ちが解けない・古い回が知らせを送らないように）
     try { _endFillDoneWaiter(ctx.site, ctx.customerId, "見張りの時間切れ"); } catch (_) {}
-    try { _abandonBatchCustomerDoneWaiter(ctx.customerId); } catch (_) {}
+    try { _abandonBatchCustomerDoneWaiter(ctx.customerId, ctx.site); } catch (_) {}
     var err = new Error(why);
     err.passDeadline = true;
     rejectFn(err);
@@ -2735,7 +2805,11 @@ function _startPassGuard(ctx) {
       Promise.resolve(p).then(clear, clear);
       return Promise.race([p, expired]);
     },
-    done: function () { done = true; clearTimeout(timer); },
+    done: function () {
+      done = true; clearTimeout(timer);
+      var l = laneSite ? _watchLane(laneSite) : null;
+      if (l && l.guardId === id) { l.done = true; _watchSummarize(Date.now()); _persistWatch(false); }
+    },
   };
 }
 // 条件の入力の段（_batchAutofill: タブの確かめ・popup への受け渡し・入力を始めた合図）の上限。ふだんは1〜2分
@@ -3001,13 +3075,19 @@ async function _snapPollTick() {
         _snapOnEvent("stall", "ロックだけ残っている（SW の作り直し等で一括の回が消えた）: " + SC.describeStall(w, now, "stall"));
       }
     } else if (w) {
-      var key = SC.stallKey(w);
-      var dec = SC.shouldSnapStall({ running: true, lastProgressAt: w.lastProgressAt, key: key, snappedKeys: _snapStallKeys }, now);
-      if (dec.snap) {
-        _snapStallKeys.push(key);
-        var why = SC.describeStall(w, now, "stall");
-        console.warn("[batch-watch] " + why);
-        _snapOnEvent("stall", why);
+      // 2026-09-30 v2.5.43 同時の回は本（サイト）ごとに見る（片方が進んでいても止まっている方を撮る）。順の回は [w] のまま
+      var _views = self.AxlxParallelSites ? self.AxlxParallelSites.activeLaneViews(w) : [w];
+      for (var _vi = 0; _vi < _views.length; _vi++) {
+        var wv = _views[_vi];
+        var key = SC.stallKey(wv);
+        var dec = SC.shouldSnapStall({ running: true, lastProgressAt: wv.lastProgressAt, key: key, snappedKeys: _snapStallKeys }, now);
+        if (dec.snap) {
+          _snapStallKeys.push(key);
+          var why = SC.describeStall(wv, now, "stall");
+          console.warn("[batch-watch] " + why);
+          _snapOnEvent("stall", why);
+          break; // 撮るのは1回（写真は両方のタブを撮る）
+        }
       }
     }
     if (_snapStallKeys.length > 20) _snapStallKeys = _snapStallKeys.slice(-20);
@@ -3093,7 +3173,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     if (i >= 0) _fillStartWaiters.splice(i, 1);
     w.resolve(true);
   });
-  _watchProgress("入力を始めた");
+  _watchProgress("入力を始めた", msg.site === "itandi" ? "itandi" : "realnetpro");
   sendResponse({ ok: true });
   return true;
 });
@@ -3105,7 +3185,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     } else {
       console.log("[fill-done] 受信 site=" + (msg.site || "unknown"));
     }
-    _watchProgress("fill-done" + (msg.error ? "（エラー）" : ""));
+    _watchProgress("fill-done" + (msg.error ? "（エラー）" : ""), msg.site === "itandi" ? "itandi" : msg.site === "reins" ? "reins" : "realnetpro");
     // 検索の点検: page-script の audit（押せた・押せなかった駅・検索直前のフォームの読み戻し）をその回に足す（ブレインの時だけ）
     if (msg.runId) _auditOnFillDone(msg, _sender);
     // レインズは待ち（_createFillDoneWaiter）を作らないので解決しない（点検の記録だけ）
@@ -3117,22 +3197,37 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 });
 
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  // 2026-09-30 v2.5.43 合図の送り主のタブ（realnetpro／itandi）＝どの待ち手・どの見張りの1本か（同時の回で取り違えない）
+  var _msgSite = _siteOfSender(_sender, msg);
   if (msg && msg.type === "axlx-batch-customer-done") {
     // _scrapeAndSendRealpro の待機を解除して次顧客へ進む（propertyCount: 0 なら0件確定）
     // 検索の点検: ページ数・読んだ行数・送れる行数・0件の理由・件数表示の生の文字をその回に足す（待ちを解く前に＝閉じる前に届くように）
     _auditOnBatchDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null);
     // 2026-09-29 v2.5.41 送付済みで飛ばした数（0件の知らせを「新しい物件なし」に言い分ける）
-    if (msg.customerId != null) _lastSentSkipped[String(msg.customerId)] = (msg.audit && msg.audit.sent_skipped) || 0;
-    _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null);
-    _watchProgress("送信の終わり");
+    if (msg.customerId != null) _lastSentSkipped[_sentSkipKey(msg.customerId, _msgSite)] = (msg.audit && msg.audit.sent_skipped) || 0;
+    _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null, _msgSite);
+    _watchProgress("送信の終わり", _msgSite);
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
   }
   if (msg && msg.type === "axlx-batch-progress") {
     // 全ページ送信の進捗ハートビート → 無進捗タイムアウトをリセット（次顧客への早すぎる移行を防ぐ）
-    _notifyBatchProgress(msg.customerId || null);
+    _notifyBatchProgress(msg.customerId || null, _msgSite);
   }
   return false;
 });
+// 合図の送り主のタブの URL → realnetpro／itandi／reins（無ければ audit.site（realpro→realnetpro）→ null）
+function _siteOfSender(sender, msg) {
+  var P = self.AxlxParallelSites;
+  var s = P && sender && sender.tab ? P.siteOfSenderUrl(sender.tab.url) : null;
+  if (s) return s;
+  var a = msg && msg.audit && msg.audit.site ? String(msg.audit.site) : (msg && msg.site ? String(msg.site) : null);
+  if (a === "realpro" || a === "realnetpro") return "realnetpro";
+  if (a === "itandi") return "itandi";
+  if (a === "reins") return "reins";
+  return null;
+}
+// 送付済みで飛ばした数の鍵（お客様×サイト。サイトが分からない時はお客様だけ）
+function _sentSkipKey(customerId, site) { return String(customerId) + (site ? "|" + site : ""); }
 
 // ── 2026-09-30 v2.5.42 ITANDI: 資料を開く前の見分け（itandi-bulk-dl → ここ → 止める／進む）──
 // 竹内「ITANDI で条件指定ちゃんとできていなければ件数多すぎるバグ（3000件以上の表示など）される可能性ある…」:
@@ -3526,6 +3621,7 @@ async function _runBatchSearch(command) {
   var _AR = self.AxlxAutoRun || null;
   var _autoOpts = (_AR && autoSched) ? _AR.optsFromPayload(autoSched) : null;
   try { if (_AR) await chrome.storage.local.remove(_AR.STORAGE_KEY); } catch (_) {}
+  var _arMem = null; // 2026-09-30 v2.5.43 自動便の指定・止める線の写し（同時の回はサイトごとに by_site へ）
   var _autoSkipped = []; // ITANDI のタブが無くて飛ばしたお客様
   var _siteAttempts = 0; // 実際に回したお客様×サイトの数（全部失敗の判定に使う）
   // 2026-09-25 竹内「更新日も拡張ツールと連動」: payload の rp_update_days は出どころを問わず使う（_buildBatchConditions）。
@@ -3553,6 +3649,177 @@ async function _runBatchSearch(command) {
 
   var batchErrors = []; // 修正12: サイト別の失敗を集約してサーバーへ可視化する
 
+  // 2026-09-30 v2.5.43 1人×1サイトの回（地域→駅の2パスを含む）。順の回も同時の回もここを通る（var はこの関数の中だけ＝2本が並んでも混ざらない）。
+  //   laneMode=true の時は見張り（_batchWatch.lanes[site]）・待ち手・時間切れがこのサイトだけで閉じる（片方の失敗がもう片方を止めない）
+  //   返り: { cancelled }（止める要求＝呼び出し元が命令を cancelled にする）／{ skipped }（見張りが止めたサイト）
+  async function _runSiteLane(customer, batchSite, laneMode, laneNote) {
+    // 2026-09-29 見張り: ログイン切れ・サイトのエラーで見張りが止めたサイトは、次のお客様の境目から見送る（1人ずつの失敗の知らせは出さない）
+    if (_watchSkipSite(customer, batchSite)) return { skipped: true };
+    _siteAttempts++;
+    // area_mode='both': 地域（ward）と駅（station）を別々に2回検索・送信
+    var areaModePasses = (customer.area_mode === 'both') ? ['ward', 'station'] : [null];
+    // B3修正: both顧客は各パスの0件通知を抑制し、ループ後に合計0件なら1回だけ通知する
+    var _isMultiPass = areaModePasses.length > 1;
+    var _totalPassCount = 0;
+    var _passFailed = 0; // 2026-09-25: 失敗・5分の待ち切れのパスの数（全部だめなら「0件」ではなく「検索できなかった」と送る）
+    var _passCountUnknown = 0; // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）のパスの数
+    var _searchRecorded = false; // 2026-09-27 v2.5.32: 検索日の記録は検索を押せた回だけ（お客様×サイトで1回）
+    for (var k = 0; k < areaModePasses.length; k++) {
+      if (k > 0) {
+        // 地域→駅の切り替えインターバル（5〜10秒）
+        var _betweenModeDelay = 5000 + Math.floor(Math.random() * 5000);
+        console.log("[batch] both顧客: 地域→駅 切り替え待機 " + _betweenModeDelay + "ms");
+        await new Promise(function(r) { setTimeout(r, _betweenModeDelay); });
+      }
+      var effectiveCustomer = areaModePasses[k]
+        ? Object.assign({}, customer, { area_mode: areaModePasses[k] })
+        : customer;
+      // 2026-09-29 v2.5.41 更新日の計画（payload.update_days_plan・前回の検索から空いた時間を覆う所まで広げた値）をこのお客様の分に写す。
+      //   計画の無い命令は元の payload のまま（今までどおり）
+      var _custPayload = (_AR && _AR.payloadForCustomer) ? _AR.payloadForCustomer(cmdPayload, effectiveCustomer.id) : cmdPayload;
+      if (_custPayload && _custPayload._update_days) console.log("[batch] 更新日の計画: " + (_custPayload._update_days.days ? _custPayload._update_days.days + "日以内" : "指定なし") + (_custPayload._update_days.widened ? "（前回の検索から" + _custPayload._update_days.gap_hours + "時間・広げた）" : "") + " customer=" + effectiveCustomer.id);
+      // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: このお客様の送付済みの部屋を読んでおく（スタッフモードは読まない＝選ばない物を作らない）
+      await _loadSentRooms(effectiveCustomer.id, batchSite);
+      // 検索の点検: この1回（お客様×サイト×パス）の記録を始める（ブレインの時だけ・それ以外は null）
+      var _batchAudit = await _auditBegin({
+        site: batchSite, customer_id: effectiveCustomer.id, customer: effectiveCustomer,
+        trigger: isWebBrain ? "web_brain" : "bulk_queue", command_id: command.id,
+        is_wide: batchIsWide, area_mode: effectiveCustomer.area_mode || null, pass: areaModePasses[k] || null,
+        search_override: searchOverride, // 2026-09-27 どの上書きで検索したか（点検に残す）
+      });
+      // 2026-09-30 v2.5.43 同時か順か（その理由）を点検の段に残す
+      if (_batchAudit && laneNote) _auditStep(_batchAudit.runId, "lane_mode", laneNote);
+      // 2026-09-29 v2.5.40 見張り: この1回（お客様×サイト×パス）の上限（AxlxSnapshotCore.PASS_DEADLINE_MS）を過ぎたら
+      //   「見張りの時間切れ」で投げて下の catch に入れ（点検・命令の error_message・★物件出し★の失敗の知らせに理由が残る）、次のお客様へ進む
+      var _passGuard = _startPassGuard({
+        lane: laneMode, commandId: String(command.id), customerId: String(effectiveCustomer.id), customerName: effectiveCustomer.customer_name || null,
+        site: batchSite, pass: areaModePasses[k] || null, runId: _batchAudit ? _batchAudit.runId : null,
+      });
+      try {
+        // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
+        // モーダル操作/ページロードで60秒を超えることがあるため リアプロ90秒・itandi245秒（FILL_DONE_TIMEOUT_MS）
+        // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
+        // 自動便の指定をこのお客様×サイトに付けて置く（popup の経路でも bulk-dl・itandi-bulk-dl がページ数・並びを守る）
+        // 2026-09-30 v2.5.43 更新日順の一覧で「前回の検索より古い行」で止める線（このお客様×サイトの前回の検索・サーバーの update_days_plan.last_by_site）も載せる。
+        //   自動便でない回（web_brain）でも線がある時は置く（ページ数・並びの指定は無い＝bulk-dl は今まで通り）。広げての回・一時調整の回は線を置かない（前回と条件が違う）
+        //   同時の回は2本が同じ鍵に書くので、サイトごとに by_site へ並べる（_arMem＝この SW の中の写し・読み直して書く間に片方を消さない）
+        var _uoLast = (!batchIsWide && !searchOverride && self.AxlxUpdateOrderStop && cmdPayload && cmdPayload.update_days_plan && cmdPayload.update_days_plan.by_customer)
+          ? self.AxlxUpdateOrderStop.lastSearchFor(cmdPayload.update_days_plan.by_customer[String(effectiveCustomer.id)], batchSite) : null;
+        var _arOptsNow = _AR ? (_AR.optsFromPayload(_custPayload) || _autoOpts || (_uoLast ? {} : null)) : null;
+        if (_AR && _arOptsNow) {
+          _arMem = _AR.withSite(_arMem, _AR.record(effectiveCustomer.id, batchSite, _arOptsNow, Date.now(), { last_search_at: _uoLast }));
+          var _arSet = {}; _arSet[_AR.STORAGE_KEY] = _arMem;
+          try { await chrome.storage.local.set(_arSet); } catch (_) {}
+          if (_uoLast) console.log("[batch] 更新日順なら前回の検索（" + String(_uoLast).slice(0, 16).replace("T", " ") + "）より古い行で止める customer=" + effectiveCustomer.id + " site=" + batchSite);
+        }
+        var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
+          ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
+          : null;
+        // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
+        var resolvedBatchConds = await _passGuard.race(_batchAutofill(effectiveCustomer, batchSite, batchIsWide, _custPayload, _batchAudit), PASS_AUTOFILL_PHASE_MS);
+        _watchSet({ waitingFor: batchSite === "reins" ? "レインズの入力" : "検索の完了（fill-done）と全ページの送信" }, batchSite);
+        // AIXツールの一括検索も検索日を記録する（拡張の手動の一括と同じ・顧客リストの RP/IT/RE のグリッドが埋まる）
+        // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 記録は検索が終わってから（下・失敗した回は記録しない。旧はここで記録し、90秒の時間切れでも「検索した日」が付いた）
+        var _passCount = 0;
+        if (batchSite === "itandi") {
+          // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
+          // itandi-bulk-dl.js の autoSendAllPages が axlx-batch-customer-done シグナルを送信する
+          // 2026-09-30 v2.5.42 資料を開く前の見分け（itandi-guard.js）に、このお客様の条件を渡す（一括の回だけ）
+          _itandiGuardCtx = {
+            customerId: String(effectiveCustomer.id), isWide: batchIsWide, attempt: 0, runId: _batchAudit ? _batchAudit.runId : null,
+            cond: { rent_max: effectiveCustomer.rent_max, floor_plan: effectiveCustomer.floor_plan, desired_area: effectiveCustomer.desired_area, area_mode: effectiveCustomer.area_mode },
+          };
+          _passCount = await _passGuard.race(_scrapeAndSendRealpro(
+            fillDoneP,
+            String(effectiveCustomer.id),
+            effectiveCustomer.customer_name || null,
+            resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, _custPayload),
+            "itandi",
+            _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
+          ));
+          // 2026-09-30 v2.5.42 竹内「ITANDI 検索ちゃんとできていなければ、そこ修正するか、修正効かなければ…」:
+          //   条件が効いていない形で止めた（資料は1件も開いていない）→ 人が結果を見直す間を置いて、1回だけ条件を入れ直す（連続の再試行はしない）。
+          //   直ればそのまま続ける・直らなければこのお客様の ITANDI は見送り＋★物件出し★に1行。原因の分け方はサーバーの点検（itandi_guard:<原因>:<直った/直らない>）
+          if (_scrapeOutcomeFor("itandi").guard && _scrapeOutcomeFor("itandi").guard.suspect) {
+            _passCount = await _passGuard.race(_itandiGuardRetry({
+              customer: effectiveCustomer, isWide: batchIsWide, payload: _custPayload, audit: _batchAudit, first: _scrapeOutcomeFor("itandi").guard, suppressZero: _isMultiPass,
+            }));
+          }
+          _itandiGuardCtx = null;
+        } else if (batchSite === "realnetpro") {
+          // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
+          // （従来は autofill + 3秒 sleep のみで結果がどこにも届かなかった）
+          _passCount = await _passGuard.race(_scrapeAndSendRealpro(
+            fillDoneP,
+            String(effectiveCustomer.id),
+            effectiveCustomer.customer_name || null,
+            resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, _custPayload),
+            null,         // siteLabel → "リアプロ" (default)
+            _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
+          ));
+        } else {
+          await new Promise(function(r) { setTimeout(r, 2000 + Math.floor(Math.random() * 2000)); });
+        }
+        _totalPassCount += (_passCount || 0);
+        // ここまで来た＝検索を押せた（fill-done を受け取った）。お客様×サイトで1回だけ記録（地域→駅の2パスは先に成功した方で）
+        if (isWebBrain && !_searchRecorded) { _searchRecorded = true; _recordBulkSearch(customer, batchSite, batchIsWide); }
+        if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeOutcomeFor(batchSite).timedOut) _passFailed++;
+        // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）は「0件」の集計に入れない
+        if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeOutcomeFor(batchSite).countUnknown) _passCountUnknown++;
+        // レインズは fill-done で閉じる（_auditOnFillDone）。ここで閉じるのはリアプロ・itandi
+        if (_batchAudit && batchSite !== "reins") _auditFinish(_batchAudit.runId, {});
+        _passGuard.done();
+      } catch (e) {
+        _passGuard.done();
+        _itandiGuardCtx = null; // 2026-09-30 v2.5.42 見分けの条件はこの回だけ（失敗した回の後の手の検索に残さない）
+        _passFailed++;
+        if (_batchAudit) _auditFinish(_batchAudit.runId, (e && e.passDeadline) ? { error: e, error_kind: "pass_deadline" } : { error: e });
+        // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
+        if (e && e.message === "__BATCH_STOPPED__") {
+          console.log("[batch] __BATCH_STOPPED__ 受信 → バッチ中断（" + batchSite + "）");
+          return { cancelled: true };
+        }
+        console.error("[batch] error:", effectiveCustomer.id, batchSite, areaModePasses[k] || "auto", e);
+        // 2026-09-29 見張り: 失敗した時の画面（ログインの画面・メンテナンス等）を見張りに聞く（最長8秒）。止める答えなら知らせはサーバーの1通だけ
+        if (_batchAudit) await _watchOnPassError(batchSite, effectiveCustomer.id, command.id, _batchAudit.runId, e);
+        var _watchStopped = !!(self.AxlxSnapshotCore && self.AxlxSnapshotCore.watchStopApplies(_watchStop, batchSite, Date.now()));
+        // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 1パスの回の失敗（fill-done の時間切れ・タブが応答しない・地域が決まらない・例外）を
+        //   ピックアップ用グループに1回知らせる（旧は何も送らず、命令が error で閉じるだけ）。地域→駅の2パスは下の集計が1回知らせる。
+        //   5分の待ち切れは _scrapeAndSendRealpro が知らせる（投げないのでここには来ない＝2回言わない）
+        if (!_isMultiPass && self.AxlxBatchGuard && !_watchStopped) {
+          var _failText = self.AxlxBatchGuard.failureNotice({
+            customerName: customer.customer_name,
+            siteLabel: batchSite === "itandi" ? "itandi" : batchSite === "reins" ? "レインズ" : "リアプロ",
+            error: e,
+          });
+          if (_failText) {
+            fetch(SUMORA_BATCH_API + "/api/notify-group", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: _failText, group_key: "pickup_group_id" })
+            }).catch(function() {});
+          }
+        }
+        batchErrors.push(effectiveCustomer.id + "/" + batchSite + "/" + (areaModePasses[k] || "auto") + ": " + ((e && e.message) || e));
+      }
+    }
+    // B3修正: area_mode='both' で全パス合計0件の場合のみ1回だけ通知（重複送信防止）
+    if (_isMultiPass && _totalPassCount === 0 && _passCountUnknown === 0 && customer.customer_name) {
+      var _bothSiteLabel = batchSite === "itandi" ? "itandi" : "リアプロ";
+      // 2026-09-25: 全パスが失敗・待ち切れなら「0件」ではなく「検索できなかった」（0件とは限らない）
+      var _bothText = _passFailed >= areaModePasses.length
+        ? "⚠【検索できなかった】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が途中で止まりました（0件とは限りません）"
+        : "🔍【物件0件】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が0件でした";
+      fetch(SUMORA_BATCH_API + "/api/notify-group", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: _bothText, group_key: "pickup_group_id" })
+      }).catch(function() {});
+    }
+    return { cancelled: false };
+  }
+
+
   for (var i = 0; i < targets.length; i++) {
     // ストップフラグをチェック（同期フラグを優先、フォールバックで storage も確認）
     if (_batchShouldStop) {
@@ -3579,178 +3846,56 @@ async function _runBatchSearch(command) {
         console.log("[batch] 自動便: ITANDI のタブが開いていない → ITANDI を飛ばす customer=" + customer.id);
       }
     }
-    for (var j = 0; j < custSites.length; j++) {
-      // Fix 4: サイト間でも同期フラグを確認し、ストップ要求があれば即中断する
-      if (_batchShouldStop) {
-        console.log("[batch] Fix4: _batchShouldStop 検知 (j=" + j + ") → バッチ中断");
+    // 2026-09-30 v2.5.43 竹内「拡張ツールはリアプロと ITANDI を開いているので、同時に動かす形でも大丈夫ならそれで行う」:
+    //   このお客様にリアプロと ITANDI の両方がある時、同時に動かせるかを拡張が確かめる（parallel-sites.js decideParallel:
+    //   2つのタブが別々の窓・どちらも前面・窓が最小化でない・見えている（visibilityState）・1秒のタイマーが1.5秒以内に戻る）。
+    //   満たす時だけ2本（リアプロ・数秒〜十数秒ずらして ITANDI）を並べて走らせ、両方終わる（時間切れ・見送りも）のを待ってから次のお客様へ。
+    //   満たさない時は v2.5.42 の順（リアプロ → 人の間 → ITANDI）。理由はログと点検の段（lane_mode）に残す。サイトへのアクセスの数は同じ
+    var _lanePlan = await _decideLanes(custSites);
+    var _laneNote = self.AxlxParallelSites ? self.AxlxParallelSites.describeDecision(_lanePlan) : null;
+    if (_lanePlan.reason !== "single_site") console.log("[batch] " + (_laneNote || _lanePlan.reason) + " customer=" + customer.id);
+    if (_lanePlan.parallel) {
+      // 上の段は「誰の回か」だけ（帯・心拍）。本ごとの見張りは _startPassGuard（lane）が lanes[site] に置く
+      _watchSet({ customerId: String(customer.id), customerName: customer.customer_name || null, site: "realnetpro", pass: null, runId: null, guardId: null, waitingFor: "リアプロ・ITANDI を同時に" });
+      _batchWatch.lanes = {};
+    } else if (_batchWatch) {
+      delete _batchWatch.lanes;
+    }
+    if (_lanePlan.parallel) {
+      var _laneRes = await _runLanesParallel(customer, _runSiteLane, _laneNote);
+      if (_laneRes.cancelled || _batchShouldStop) {
         await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
         return;
       }
-      var batchSite = custSites[j];
-      // 2026-09-29 見張り: ログイン切れ・サイトのエラーで見張りが止めたサイトは、次のお客様の境目から見送る（1人ずつの失敗の知らせは出さない）
-      if (_watchSkipSite(customer, batchSite)) continue;
-      // 2026-09-27 竹内「同じお客様のリアプロと ITANDI は続けて走る…間を人の動きのようにばらつかせる」
-      // 2026-09-30 v2.5.42 自動便だけでなく AIXツールの一括検索（1人にリアプロ＋itandi）も同じ間（人が次のサイトのタブに移って見る間・毎回ちがう）
-      if (j > 0 && _AR) {
-        var _siteGap = _AR.siteGapMs();
-        console.log("[batch] 同じお客様の次のサイト（" + batchSite + "）まで " + _siteGap + "ms");
-        await new Promise(function(r) { setTimeout(r, _siteGap); });
+      _laneRes.errors.forEach(function (x) { batchErrors.push(x); });
+      if (_batchWatch) delete _batchWatch.lanes;
+    } else {
+      for (var j = 0; j < custSites.length; j++) {
+        // Fix 4: サイト間でも同期フラグを確認し、ストップ要求があれば即中断する
         if (_batchShouldStop) {
+          console.log("[batch] Fix4: _batchShouldStop 検知 (j=" + j + ") → バッチ中断");
           await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
           return;
         }
-      }
-      _siteAttempts++;
-      // area_mode='both': 地域（ward）と駅（station）を別々に2回検索・送信
-      var areaModePasses = (customer.area_mode === 'both') ? ['ward', 'station'] : [null];
-      // B3修正: both顧客は各パスの0件通知を抑制し、ループ後に合計0件なら1回だけ通知する
-      var _isMultiPass = areaModePasses.length > 1;
-      var _totalPassCount = 0;
-      var _passFailed = 0; // 2026-09-25: 失敗・5分の待ち切れのパスの数（全部だめなら「0件」ではなく「検索できなかった」と送る）
-      var _passCountUnknown = 0; // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）のパスの数
-      var _searchRecorded = false; // 2026-09-27 v2.5.32: 検索日の記録は検索を押せた回だけ（お客様×サイトで1回）
-      for (var k = 0; k < areaModePasses.length; k++) {
-        if (k > 0) {
-          // 地域→駅の切り替えインターバル（5〜10秒）
-          var _betweenModeDelay = 5000 + Math.floor(Math.random() * 5000);
-          console.log("[batch] both顧客: 地域→駅 切り替え待機 " + _betweenModeDelay + "ms");
-          await new Promise(function(r) { setTimeout(r, _betweenModeDelay); });
-        }
-        var effectiveCustomer = areaModePasses[k]
-          ? Object.assign({}, customer, { area_mode: areaModePasses[k] })
-          : customer;
-        // 2026-09-29 v2.5.41 更新日の計画（payload.update_days_plan・前回の検索から空いた時間を覆う所まで広げた値）をこのお客様の分に写す。
-        //   計画の無い命令は元の payload のまま（今までどおり）
-        var _custPayload = (_AR && _AR.payloadForCustomer) ? _AR.payloadForCustomer(cmdPayload, effectiveCustomer.id) : cmdPayload;
-        if (_custPayload && _custPayload._update_days) console.log("[batch] 更新日の計画: " + (_custPayload._update_days.days ? _custPayload._update_days.days + "日以内" : "指定なし") + (_custPayload._update_days.widened ? "（前回の検索から" + _custPayload._update_days.gap_hours + "時間・広げた）" : "") + " customer=" + effectiveCustomer.id);
-        // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: このお客様の送付済みの部屋を読んでおく（スタッフモードは読まない＝選ばない物を作らない）
-        await _loadSentRooms(effectiveCustomer.id);
-        // 検索の点検: この1回（お客様×サイト×パス）の記録を始める（ブレインの時だけ・それ以外は null）
-        var _batchAudit = await _auditBegin({
-          site: batchSite, customer_id: effectiveCustomer.id, customer: effectiveCustomer,
-          trigger: isWebBrain ? "web_brain" : "bulk_queue", command_id: command.id,
-          is_wide: batchIsWide, area_mode: effectiveCustomer.area_mode || null, pass: areaModePasses[k] || null,
-          search_override: searchOverride, // 2026-09-27 どの上書きで検索したか（点検に残す）
-        });
-        // 2026-09-29 v2.5.40 見張り: この1回（お客様×サイト×パス）の上限（AxlxSnapshotCore.PASS_DEADLINE_MS）を過ぎたら
-        //   「見張りの時間切れ」で投げて下の catch に入れ（点検・命令の error_message・★物件出し★の失敗の知らせに理由が残る）、次のお客様へ進む
-        var _passGuard = _startPassGuard({
-          commandId: String(command.id), customerId: String(effectiveCustomer.id), customerName: effectiveCustomer.customer_name || null,
-          site: batchSite, pass: areaModePasses[k] || null, runId: _batchAudit ? _batchAudit.runId : null,
-        });
-        try {
-          // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
-          // モーダル操作/ページロードで60秒を超えることがあるため リアプロ90秒・itandi245秒（FILL_DONE_TIMEOUT_MS）
-          // customerId を渡して他顧客の遅延 fill-done が誤解決しないよう保護する
-          // 自動便の指定をこのお客様×サイトに付けて置く（popup の経路でも bulk-dl・itandi-bulk-dl がページ数・並びを守る）
-          if (_AR && _autoOpts) {
-            var _arSet = {}; _arSet[_AR.STORAGE_KEY] = _AR.record(effectiveCustomer.id, batchSite, _AR.optsFromPayload(_custPayload) || _autoOpts, Date.now());
-            try { await chrome.storage.local.set(_arSet); } catch (_) {}
-          }
-          var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
-            ? _createFillDoneWaiter(batchSite, String(effectiveCustomer.id), _fillDoneTimeoutMs(batchSite))
-            : null;
-          // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
-          var resolvedBatchConds = await _passGuard.race(_batchAutofill(effectiveCustomer, batchSite, batchIsWide, _custPayload, _batchAudit), PASS_AUTOFILL_PHASE_MS);
-          _watchSet({ waitingFor: batchSite === "reins" ? "レインズの入力" : "検索の完了（fill-done）と全ページの送信" });
-          // AIXツールの一括検索も検索日を記録する（拡張の手動の一括と同じ・顧客リストの RP/IT/RE のグリッドが埋まる）
-          // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 記録は検索が終わってから（下・失敗した回は記録しない。旧はここで記録し、90秒の時間切れでも「検索した日」が付いた）
-          var _passCount = 0;
-          if (batchSite === "itandi") {
-            // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
-            // itandi-bulk-dl.js の autoSendAllPages が axlx-batch-customer-done シグナルを送信する
-            // 2026-09-30 v2.5.42 資料を開く前の見分け（itandi-guard.js）に、このお客様の条件を渡す（一括の回だけ）
-            _itandiGuardCtx = {
-              customerId: String(effectiveCustomer.id), isWide: batchIsWide, attempt: 0, runId: _batchAudit ? _batchAudit.runId : null,
-              cond: { rent_max: effectiveCustomer.rent_max, floor_plan: effectiveCustomer.floor_plan, desired_area: effectiveCustomer.desired_area, area_mode: effectiveCustomer.area_mode },
-            };
-            _passCount = await _passGuard.race(_scrapeAndSendRealpro(
-              fillDoneP,
-              String(effectiveCustomer.id),
-              effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, _custPayload),
-              "itandi",
-              _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
-            ));
-            // 2026-09-30 v2.5.42 竹内「ITANDI 検索ちゃんとできていなければ、そこ修正するか、修正効かなければ…」:
-            //   条件が効いていない形で止めた（資料は1件も開いていない）→ 人が結果を見直す間を置いて、1回だけ条件を入れ直す（連続の再試行はしない）。
-            //   直ればそのまま続ける・直らなければこのお客様の ITANDI は見送り＋★物件出し★に1行。原因の分け方はサーバーの点検（itandi_guard:<原因>:<直った/直らない>）
-            if (_scrapeLastOutcome.guard && _scrapeLastOutcome.guard.suspect) {
-              _passCount = await _passGuard.race(_itandiGuardRetry({
-                customer: effectiveCustomer, isWide: batchIsWide, payload: _custPayload, audit: _batchAudit, first: _scrapeLastOutcome.guard, suppressZero: _isMultiPass,
-              }));
-            }
-            _itandiGuardCtx = null;
-          } else if (batchSite === "realnetpro") {
-            // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
-            // （従来は autofill + 3秒 sleep のみで結果がどこにも届かなかった）
-            _passCount = await _passGuard.race(_scrapeAndSendRealpro(
-              fillDoneP,
-              String(effectiveCustomer.id),
-              effectiveCustomer.customer_name || null,
-              resolvedBatchConds || _buildBatchConditions(effectiveCustomer, batchIsWide, _custPayload),
-              null,         // siteLabel → "リアプロ" (default)
-              _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
-            ));
-          } else {
-            await new Promise(function(r) { setTimeout(r, 2000 + Math.floor(Math.random() * 2000)); });
-          }
-          _totalPassCount += (_passCount || 0);
-          // ここまで来た＝検索を押せた（fill-done を受け取った）。お客様×サイトで1回だけ記録（地域→駅の2パスは先に成功した方で）
-          if (isWebBrain && !_searchRecorded) { _searchRecorded = true; _recordBulkSearch(customer, batchSite, batchIsWide); }
-          if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeLastOutcome.timedOut) _passFailed++;
-          // 2026-09-27 v2.5.30: 件数の分からない完了（送信エラー等）は「0件」の集計に入れない
-          if ((batchSite === "itandi" || batchSite === "realnetpro") && _scrapeLastOutcome.countUnknown) _passCountUnknown++;
-          // レインズは fill-done で閉じる（_auditOnFillDone）。ここで閉じるのはリアプロ・itandi
-          if (_batchAudit && batchSite !== "reins") _auditFinish(_batchAudit.runId, {});
-          _passGuard.done();
-        } catch (e) {
-          _passGuard.done();
-          _itandiGuardCtx = null; // 2026-09-30 v2.5.42 見分けの条件はこの回だけ（失敗した回の後の手の検索に残さない）
-          _passFailed++;
-          if (_batchAudit) _auditFinish(_batchAudit.runId, (e && e.passDeadline) ? { error: e, error_kind: "pass_deadline" } : { error: e });
-          // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
-          if (e && e.message === "__BATCH_STOPPED__") {
-            console.log("[batch] __BATCH_STOPPED__ 受信 → バッチ中断");
+        var batchSite = custSites[j];
+        var _stopApplies = !!(self.AxlxSnapshotCore && self.AxlxSnapshotCore.watchStopApplies(_watchStop, batchSite, Date.now()));
+        // 2026-09-27 竹内「同じお客様のリアプロと ITANDI は続けて走る…間を人の動きのようにばらつかせる」
+        // 2026-09-30 v2.5.42 自動便だけでなく AIXツールの一括検索（1人にリアプロ＋itandi）も同じ間（人が次のサイトのタブに移って見る間・毎回ちがう）
+        //   見張りが止めたサイト（見送り）の前には間を置かない（旧と同じ）
+        if (j > 0 && _AR && !_stopApplies) {
+          var _siteGap = _AR.siteGapMs();
+          console.log("[batch] 同じお客様の次のサイト（" + batchSite + "）まで " + _siteGap + "ms");
+          await new Promise(function(r) { setTimeout(r, _siteGap); });
+          if (_batchShouldStop) {
             await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
             return;
           }
-          console.error("[batch] error:", effectiveCustomer.id, batchSite, areaModePasses[k] || "auto", e);
-          // 2026-09-29 見張り: 失敗した時の画面（ログインの画面・メンテナンス等）を見張りに聞く（最長8秒）。止める答えなら知らせはサーバーの1通だけ
-          if (_batchAudit) await _watchOnPassError(batchSite, effectiveCustomer.id, command.id, _batchAudit.runId, e);
-          var _watchStopped = !!(self.AxlxSnapshotCore && self.AxlxSnapshotCore.watchStopApplies(_watchStop, batchSite, Date.now()));
-          // 2026-09-27 v2.5.32 竹内「重い順から治す」④: 1パスの回の失敗（fill-done の時間切れ・タブが応答しない・地域が決まらない・例外）を
-          //   ピックアップ用グループに1回知らせる（旧は何も送らず、命令が error で閉じるだけ）。地域→駅の2パスは下の集計が1回知らせる。
-          //   5分の待ち切れは _scrapeAndSendRealpro が知らせる（投げないのでここには来ない＝2回言わない）
-          if (!_isMultiPass && self.AxlxBatchGuard && !_watchStopped) {
-            var _failText = self.AxlxBatchGuard.failureNotice({
-              customerName: customer.customer_name,
-              siteLabel: batchSite === "itandi" ? "itandi" : batchSite === "reins" ? "レインズ" : "リアプロ",
-              error: e,
-            });
-            if (_failText) {
-              fetch(SUMORA_BATCH_API + "/api/notify-group", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: _failText, group_key: "pickup_group_id" })
-              }).catch(function() {});
-            }
-          }
-          batchErrors.push(effectiveCustomer.id + "/" + batchSite + "/" + (areaModePasses[k] || "auto") + ": " + ((e && e.message) || e));
         }
-      }
-      // B3修正: area_mode='both' で全パス合計0件の場合のみ1回だけ通知（重複送信防止）
-      if (_isMultiPass && _totalPassCount === 0 && _passCountUnknown === 0 && customer.customer_name) {
-        var _bothSiteLabel = batchSite === "itandi" ? "itandi" : "リアプロ";
-        // 2026-09-25: 全パスが失敗・待ち切れなら「0件」ではなく「検索できなかった」（0件とは限らない）
-        var _bothText = _passFailed >= areaModePasses.length
-          ? "⚠【検索できなかった】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が途中で止まりました（0件とは限りません）"
-          : "🔍【物件0件】" + customer.customer_name + "さんの" + _bothSiteLabel + "検索が0件でした";
-        fetch(SUMORA_BATCH_API + "/api/notify-group", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: _bothText, group_key: "pickup_group_id" })
-        }).catch(function() {});
+        var _seqRes = await _runSiteLane(customer, batchSite, false, custSites.length > 1 ? _laneNote : null);
+        if (_seqRes && _seqRes.cancelled) {
+          await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
+          return;
+        }
       }
     }
     await _updateBatchCommand(command.id, { processed_customers: i + 1 });
@@ -3803,8 +3948,9 @@ async function _runBatchSearch(command) {
  *   スタッフモードの時は空（スタッフが選んで送る時は1件も減らさない・merge-pdfs と同じ）。読めない時も空＝今まで通り全部選ぶ（検索は止めない）
  */
 var _lastSentSkipped = {};
-async function _loadSentRooms(customerId) {
-  if (customerId != null) _lastSentSkipped[String(customerId)] = 0;
+// 2026-09-30 v2.5.43 site を渡すとそのサイトの飛ばした数だけ数え直す（同時の回でもう片方の数を消さない）
+async function _loadSentRooms(customerId, site) {
+  if (customerId != null) { _lastSentSkipped[String(customerId)] = 0; if (site) _lastSentSkipped[_sentSkipKey(customerId, site)] = 0; }
   var SK = self.AxlxSentSkip;
   if (!SK || customerId == null) return;
   var rec = { customerId: String(customerId), rooms: [], at: Date.now() };
@@ -4605,8 +4751,12 @@ async function _scrapeAndCompareForCustomer(customer) {
 // （area_mode='both' の2パス重複通知防止用）
 // 2026-09-25: 直前の1回が「5分の待ち切れ」だったか（both の集計で「0件」と「検索できなかった」を分けるため）
 var _scrapeLastOutcome = { timedOut: false };
+// 2026-09-30 v2.5.43 同時の回: 直前の1回の結果はサイトごと（realnetpro／itandi）。_scrapeLastOutcome は最後に終わった物（旧の読み手のため残す）
+var _scrapeOutcomeBySite = {};
+function _scrapeOutcomeFor(site) { return _scrapeOutcomeBySite[site] || _scrapeLastOutcome; }
 async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions, siteLabel, suppressZeroNotify) {
   var _site = siteLabel || "リアプロ";
+  var _siteKey = siteLabel === "itandi" ? "itandi" : "realnetpro";
   // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
   if (fillDone && fillDone.stopped) {
@@ -4623,18 +4773,20 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   // axlx-batch-customer-done シグナルで全ページ送信完了を待つ（最大5分）
   // これにより次顧客のautofillがページを書き換える前に現顧客の送信が確実に完了する
   console.log("[scrapeAndCompare] fill-done 受信 → 全ページ送信完了を待機 customer=" + customerId);
-  var batchDone = await _createBatchCustomerDoneWaiter(customerId, 300000);
+  var batchDone = await _createBatchCustomerDoneWaiter(customerId, 300000, _siteKey);
   if (batchDone && batchDone.stopped) {
     throw new Error("__BATCH_STOPPED__");
   }
   var _propCount = 0;
-  _scrapeLastOutcome = { timedOut: false };
+  var _out = { timedOut: false };
+  _scrapeLastOutcome = _out;
+  _scrapeOutcomeBySite[_siteKey] = _out;
   if (batchDone && batchDone.timedOut) {
     console.warn("[scrapeAndCompare] 全ページ送信完了シグナルが5分以内に届きませんでした（次顧客へ続行） customer=" + customerId);
     // 2026-09-25 竹内（検索の点検）: 5分の待ち切れは「0件」と限らない（読み取り・送信が途中で止まった）→ LINE では「⚠ 検索できなかった」に分ける。
     //   旧は「タイムアウト = 0件の可能性が高い」として「🔍【物件0件】」を送っていた（本当は検索できていない回も0件に見えた）
     // suppressZeroNotify=true の場合は呼び出し元が集計後に1回だけ通知するためここではスキップ
-    _scrapeLastOutcome = { timedOut: true };
+    _out.timedOut = true;
     var _toRun = _auditOpenRunId(customerId, siteLabel === "itandi" ? "itandi" : "realpro");
     if (_toRun) { _auditTracker.attachResult(_toRun, { batch_timed_out: true }); _auditStep(_toRun, "batch_timeout", "5分無進捗"); }
     if (!suppressZeroNotify && customerName) {
@@ -4649,15 +4801,15 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     console.log("[scrapeAndCompare] 全ページ送信完了 customer=" + customerId);
     // 2026-09-27 v2.5.30: 件数の無い完了（bulk-dl の送信エラー・次ページへ進めない＝「送信済みがあるので0件と言わない」の合図）を
     //   0件と数えていた → YUMA の実検索で34件送れていたのに「🔍【物件0件】」がグループに出た。件数が分からない時は0件と言わない
-    _scrapeLastOutcome.countUnknown = !(batchDone && batchDone.propertyCount != null);
+    _out.countUnknown = !(batchDone && batchDone.propertyCount != null);
     _propCount = (batchDone && batchDone.propertyCount) ? batchDone.propertyCount : 0;
     // 2026-09-30 v2.5.42 ITANDI: 条件が効いていない形で資料を取りに行かずに止めた（呼び出し元が1回だけ入れ直す・0件とは言わない）
-    _scrapeLastOutcome.guard = (batchDone && batchDone.guard) || null;
+    _out.guard = (batchDone && batchDone.guard) || null;
   }
   // 0件時 → LINEグループへアナウンス（timedOut 分岐で既に通知済みの場合は重複しない）
   //   2026-09-29 v2.5.41: 送付済みの部屋だけだった（全部飛ばした）時は「0件」と言わず「新しい物件なし・N件は送付済み」
-  var _skippedHere = _lastSentSkipped[String(customerId)] || 0;
-  if (_propCount === 0 && !_scrapeLastOutcome.countUnknown && !(batchDone && batchDone.timedOut) && !suppressZeroNotify && customerName) {
+  var _skippedHere = _lastSentSkipped[_sentSkipKey(customerId, _siteKey)] || _lastSentSkipped[String(customerId)] || 0;
+  if (_propCount === 0 && !_out.countUnknown && !(batchDone && batchDone.timedOut) && !suppressZeroNotify && customerName) {
     fetch(SUMORA_BATCH_API + "/api/notify-group", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4700,14 +4852,14 @@ async function _itandiGuardRetry(o) {
   var why = G ? G.reasonsJa(o.first.reasons) : String(o.first.reasons || "");
   console.warn("[batch] ITANDI の検索に条件が効いていない形（" + why + "）→ " + Math.round(gap / 1000) + "秒おいて1回だけ入れ直す customer=" + cid);
   _auditStep(runId, "itandi_guard_retry", why + " → " + Math.round(gap / 1000) + "秒おいて入れ直す");
-  _watchSet({ waitingFor: "ITANDI の条件の入れ直しまでの間（" + Math.round(gap / 1000) + "秒）" });
+  _watchSet({ waitingFor: "ITANDI の条件の入れ直しまでの間（" + Math.round(gap / 1000) + "秒）" }, "itandi");
   await new Promise(function (r) { setTimeout(r, gap); });
   if (_batchShouldStop) throw new Error("__BATCH_STOPPED__");
   if (_itandiGuardCtx && String(_itandiGuardCtx.customerId) === cid) _itandiGuardCtx.attempt = 1;
   var fillDoneP2 = _createFillDoneWaiter("itandi", cid, _fillDoneTimeoutMs("itandi"));
   var conds2 = await _batchAutofill(o.customer, "itandi", o.isWide, o.payload, o.audit);
   var n = await _scrapeAndSendRealpro(fillDoneP2, cid, name, conds2 || _buildBatchConditions(o.customer, o.isWide, o.payload), "itandi", !!o.suppressZero);
-  var second = _scrapeLastOutcome.guard;
+  var second = _scrapeOutcomeFor("itandi").guard;
   var fixed = !(second && second.suspect);
   var rec = {
     suspect: true, reasons: o.first.reasons || [],
@@ -4720,7 +4872,7 @@ async function _itandiGuardRetry(o) {
     console.log("[batch] ITANDI: 入れ直したら条件が効いた → そのまま続けた（" + (n || 0) + "件）customer=" + cid);
     _auditStep(runId, "itandi_guard_fixed", "入れ直しで直った");
   } else {
-    _scrapeLastOutcome.guardSkipped = true;
+    _scrapeOutcomeFor("itandi").guardSkipped = true;
     _auditStep(runId, "itandi_guard_skip", "入れ直しても直らない → このお客様の ITANDI は見送り");
     var text = G ? G.skipNotice(name, (second && second.reasons && second.reasons.length) ? second.reasons : o.first.reasons) : null;
     if (text) {
@@ -4731,6 +4883,104 @@ async function _itandiGuardRetry(o) {
     }
   }
   return n;
+}
+
+// ── 2026-09-30 v2.5.43 リアプロと ITANDI を同時に動かす（parallel-sites.js）─────────────────────
+// 竹内「拡張ツールはリアプロと ITANDI を開いているので、同時に動かす形でも大丈夫ならそれで行う」
+//   v2.5.42 が順にした理由（背面のタブは Chrome がタイマーを間引く・見張りと待ち手が1本）を、判定と本ごとの見張り・待ち手で外した。
+//   判定を満たさない PC・お客様は v2.5.42 の順のまま（理由はログと点検の段 lane_mode）
+
+// そのタブの見え方と1秒のタイマーの遅れを content script（snapshot-core.js の受け口 axlx-lane-probe）に聞く。答えが無ければ ok:false
+async function _laneProbe(tabId) {
+  var P = self.AxlxParallelSites;
+  if (tabId == null || !P) return { ok: false, error: "no_tab" };
+  try {
+    return await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type: "axlx-lane-probe" }, { frameId: 0 }),
+      new Promise(function (r) { setTimeout(function () { r({ ok: false, error: "no_answer" }); }, P.PROBE_WAIT_MS); }),
+    ]) || { ok: false, error: "empty" };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e).slice(0, 120) };
+  }
+}
+
+// このお客様のサイトを同時に動かしてよいか（タブ・窓の形を先に見て、満たす時だけ実測する＝満たさない時はタブに何も送らない）
+async function _decideLanes(sites) {
+  var P = self.AxlxParallelSites;
+  var list = Array.isArray(sites) ? sites : [];
+  if (!P) return { parallel: false, reason: list.indexOf("itandi") >= 0 && list.indexOf("realnetpro") >= 0 ? "no_module" : "single_site", lanes: [] };
+  try {
+    var flagSt = await chrome.storage.local.get(P.STORAGE_FLAG);
+    var flag = flagSt ? flagSt[P.STORAGE_FLAG] : undefined;
+    var tabs = await chrome.tabs.query({});
+    var wins = [];
+    try { wins = await chrome.windows.getAll({}); } catch (_) { wins = []; }
+    var okProbe = { ok: true, visibilityState: "visible", lagMs: 0 };
+    var pre = P.decideParallel({ sites: list, tabs: tabs, windows: wins, probes: { realnetpro: okProbe, itandi: okProbe }, flag: flag });
+    if (!pre.parallel) return pre;
+    var probes = {};
+    var got = await Promise.all([_laneProbe(pre.tabs.realnetpro), _laneProbe(pre.tabs.itandi)]);
+    probes.realnetpro = got[0]; probes.itandi = got[1];
+    var d = P.decideParallel({ sites: list, tabs: tabs, windows: wins, probes: probes, flag: flag });
+    d.probes = { realnetpro: got[0], itandi: got[1] };
+    return d;
+  } catch (e) {
+    return { parallel: false, reason: "probe_failed", lanes: [], error: String((e && e.message) || e).slice(0, 120) };
+  }
+}
+
+/**
+ * 1人のお客様のリアプロと ITANDI を2本で走らせ、両方が終わる（時間切れ・見送りも）のを待つ。
+ *   ・リアプロを先に始め、ITANDI は laneStartOffsetMs（3〜15秒）ずらす（ずらす間も止める要求を見る）
+ *   ・各本は自分の見張り（_startPassGuard lane・リアプロ20分・ITANDI 25分）で閉じる。合流の上限（joinBudgetMs）はその保険
+ *   ・合流の上限を過ぎた本は、待ちを解いて（fill-done は end・送信の終わりは stopped）置き去りにする＝遅れて動いても知らせ・件数を書かない
+ * @returns {{ cancelled: boolean, errors: string[], timedOut: boolean, pending: string[] }}
+ */
+async function _runLanesParallel(customer, runLane, laneNote) {
+  var P = self.AxlxParallelSites, SC = self.AxlxSnapshotCore;
+  var cid = String(customer.id);
+  var offset = P.laneStartOffsetMs();
+  var passes = customer.area_mode === "both" ? 2 : 1;
+  var budget = P.joinBudgetMs(["realnetpro", "itandi"], function (s) { return SC ? SC.passDeadlineMs(s) : 20 * 60 * 1000; }, passes, offset);
+  console.log("[batch] 同時: リアプロを始め、ITANDI は " + offset + "ms 後に始める（両方が終わるまで最長 " + Math.round(budget / 60000) + "分）customer=" + cid);
+  var t0 = Date.now();
+  var pRp = runLane(customer, "realnetpro", true, laneNote);
+  var pIt = (async function () {
+    var until = Date.now() + offset;
+    while (Date.now() < until) {
+      if (_batchShouldStop) return { cancelled: true };
+      await new Promise(function (r) { setTimeout(r, Math.min(500, Math.max(0, until - Date.now()))); });
+    }
+    if (_batchShouldStop) return { cancelled: true };
+    return runLane(customer, "itandi", true, laneNote);
+  })();
+  var joined = await P.joinLanes([{ site: "realnetpro", promise: pRp }, { site: "itandi", promise: pIt }], budget);
+  var out = { cancelled: false, errors: [], timedOut: !!joined.timedOut, pending: joined.pending || [] };
+  ["realnetpro", "itandi"].forEach(function (s) {
+    var r = joined.results[s];
+    if (!r) return;
+    if (r.ok && r.value && r.value.cancelled) out.cancelled = true;
+    if (!r.ok) {
+      // 本の中の失敗は1パスずつ拾っている（ここに来るのは想定外の失敗だけ）。もう片方は止めない
+      var msg = (r.error && r.error.message) || String(r.error);
+      if (msg === "__BATCH_STOPPED__") out.cancelled = true;
+      else { console.error("[batch] 同時の本（" + s + "）が想定外の失敗:", r.error); out.errors.push(cid + "/" + s + "/lane: " + msg); }
+    }
+  });
+  if (joined.timedOut) {
+    var why = "両方が終わるのを待つ上限（" + Math.round(budget / 60000) + "分）を過ぎた: " + (customer.customer_name || cid) + "さん・待っていた本=" + out.pending.join("・");
+    console.error("[batch-watch] " + why + " → 置き去りにして次のお客様へ");
+    _snapOnEvent("pass_deadline", why);
+    out.pending.forEach(function (s) {
+      try { _endFillDoneWaiter(s, cid, "合流の時間切れ"); } catch (_) {}
+      try { _abandonBatchCustomerDoneWaiter(cid, s); } catch (_) {}
+      out.errors.push(cid + "/" + s + "/lane: " + why);
+    });
+  }
+  console.log("[batch] 同時: " + (customer.customer_name || cid) + "さんのリアプロ・ITANDI が終わった（" + Math.round((Date.now() - t0) / 1000) + "秒"
+    + (joined.results.realnetpro ? "・リアプロ " + Math.round(joined.results.realnetpro.ms / 1000) + "秒" : "")
+    + (joined.results.itandi ? "・ITANDI " + Math.round(joined.results.itandi.ms / 1000) + "秒" : "") + "）");
+  return out;
 }
 
 // ===== END: 自動化バッチ検索 =====

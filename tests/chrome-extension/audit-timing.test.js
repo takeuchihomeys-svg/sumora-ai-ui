@@ -7,7 +7,7 @@ const path = require("path");
 const vm = require("vm");
 const { execFileSync } = require("child_process");
 const EXT = path.join(__dirname, "..", "..", "chrome-extension");
-const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8");
+const read = (f) => fs.readFileSync(path.join(EXT, f), "utf8").replace(/\r\n/g, "\n");
 let pass = 0, fail = 0;
 const ok = (name, cond, extra) => { if (cond) { pass++; console.log("  ✓ " + name); } else { fail++; console.log("  ✗ " + name + (extra ? "\n      " + extra : "")); } };
 const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return ""; let d = 0, j = src.indexOf("{", s); for (; j < src.length; j++) { if (src[j] === "{") d++; else if (src[j] === "}") { d--; if (d === 0) break; } } return src.slice(s, j + 1); };

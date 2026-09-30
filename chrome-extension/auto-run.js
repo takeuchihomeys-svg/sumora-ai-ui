@@ -108,24 +108,53 @@
     return out;
   }
 
-  /** storage に置く形（お客様×サイトの印付き） */
-  function record(customerId, site, opts, nowMs) {
+  /**
+   * storage に置く形（お客様×サイトの印付き）。
+   *   2026-09-30 v2.5.43 extra.last_search_at＝このお客様×サイトの前回の検索の時刻（更新順の一覧で「前回より古い行」で止める線・update-order-stop.js）
+   */
+  function record(customerId, site, opts, nowMs, extra) {
     if (!opts || customerId == null) return null;
+    var e = extra || {};
     return {
       customerId: String(customerId), site: String(site || ""), mode: opts.mode,
       rp_update_days: opts.rp_update_days, rp_update_days_none: !!opts.rp_update_days_none, sort: opts.sort, max_pages: opts.max_pages,
+      last_search_at: e.last_search_at ? String(e.last_search_at) : null,
       at: Number(nowMs) || 0,
     };
+  }
+
+  /**
+   * 2026-09-30 v2.5.43 同時の回（リアプロと ITANDI が同じお客様で並んで走る）: storage の鍵は1つなので、サイトごとの record を by_site に並べて置く。
+   *   stored が旧の形（1つの record）でも、by_site の形でも受ける。rec が null なら stored のまま
+   */
+  function withSite(stored, rec) {
+    if (!rec) return stored || null;
+    var by = {};
+    if (stored && typeof stored === "object") {
+      if (stored.by_site && typeof stored.by_site === "object") Object.keys(stored.by_site).forEach(function (k) { by[k] = stored.by_site[k]; });
+      else if (stored.site) by[String(stored.site)] = stored;
+    }
+    // 別のお客様の分は持ち越さない（同時の回は同じお客様だけ）
+    Object.keys(by).forEach(function (k) { if (!by[k] || String(by[k].customerId) !== String(rec.customerId)) delete by[k]; });
+    by[String(rec.site || "")] = rec;
+    return { by_site: by, customerId: String(rec.customerId), at: Number(rec.at) || 0 };
   }
 
   /** storage の値が「このお客様（とサイト）の今の自動便」の物なら指定を返す。違う・古い・無い → null */
   function forCustomer(stored, customerId, site, nowMs) {
     if (!stored || typeof stored !== "object" || customerId == null) return null;
+    // by_site の形（v2.5.43）: そのサイトの record を取り出して今までどおりに読む
+    if (stored.by_site && typeof stored.by_site === "object") {
+      var picked = site ? stored.by_site[String(site)] : null;
+      if (!picked && !site) { var ks = Object.keys(stored.by_site); picked = ks.length ? stored.by_site[ks[0]] : null; }
+      stored = picked || null;
+      if (!stored) return null;
+    }
     if (String(stored.customerId) !== String(customerId)) return null;
     if (site && stored.site && String(stored.site) !== String(site)) return null;
     var age = (Number(nowMs) || 0) - (Number(stored.at) || 0);
     if (!(age >= 0) || age > TTL_MS) return null;
-    return { mode: stored.mode, rp_update_days: stored.rp_update_days, sort: stored.sort, max_pages: stored.max_pages };
+    return { mode: stored.mode, rp_update_days: stored.rp_update_days, sort: stored.sort, max_pages: stored.max_pages, last_search_at: stored.last_search_at || null };
   }
 
   /**
@@ -220,7 +249,7 @@
 
   return {
     STORAGE_KEY: STORAGE_KEY, TTL_MS: TTL_MS,
-    isAuto: isAuto, optsFromPayload: optsFromPayload, record: record, forCustomer: forCustomer,
+    isAuto: isAuto, optsFromPayload: optsFromPayload, record: record, withSite: withSite, forCustomer: forCustomer,
     payloadForCustomer: payloadForCustomer, decidedDays: decidedDays,
     pageLimit: pageLimit, allowAdSort: allowAdSort, DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES,
     planSites: planSites, hasItandiTab: hasItandiTab, orderSites: orderSites,

@@ -67,6 +67,11 @@ export type UpdateDaysPlan = {
   base_days: number | null;
   /** 前回の検索（最後に終わった回）の時刻（リアプロと ITANDI の古い方）。無ければ null */
   last_search_at: string | null;
+  /**
+   * 2026-09-30 v2.5.43 サイトごとの前回の検索（realpro／itandi → その回の開始時刻）。更新日順の一覧で「前回より古い行」で止める線（拡張 update-order-stop.js）。
+   *   前回の検索の後にお客様の条件が変わったサイトは入れない（前回は今の条件で見ていない＝止めると漏れる）。無ければ null＝止めない
+   */
+  last_by_site?: Record<string, string> | null;
   /** 空いた時間（時間・小数1桁） */
   gap_hours: number | null;
   /** 空いた時間を覆うのに要る日数 */
@@ -82,12 +87,13 @@ export type UpdateDaysPlan = {
  * lastSearchAt は「そのお客様の、これから検索するサイトの中で一番古い最後の回」（どのサイトも覆う＝1つの値で両方に使う）。
  * どのサイトにも記録が無い時は base のまま。
  */
-export function planUpdateDays(i: { baseDays: number | null; lastSearchAt: string | null; nowMs: number }): UpdateDaysPlan {
+export function planUpdateDays(i: { baseDays: number | null; lastSearchAt: string | null; nowMs: number; lastBySite?: Record<string, string> | null }): UpdateDaysPlan {
+  const lbs = i.lastBySite && Object.keys(i.lastBySite).length ? { ...i.lastBySite } : null;
   const gap = hoursSince(i.lastSearchAt, i.nowMs);
   const need = neededDays(gap);
   const base = i.baseDays == null ? null : Number(i.baseDays) || null;
   if (need == null) {
-    return { days: base, base_days: base, last_search_at: null, gap_hours: null, need_days: null, widened: false, reason: "前回の検索の記録なし（今までの決まり）" };
+    return { days: base, base_days: base, last_search_at: null, last_by_site: lbs, gap_hours: null, need_days: null, widened: false, reason: "前回の検索の記録なし（今までの決まり）" };
   }
   const cover = coverChoice(need);
   const days = widerDays(base, cover);
@@ -96,7 +102,31 @@ export function planUpdateDays(i: { baseDays: number | null; lastSearchAt: strin
   const reason = widened
     ? `前回の検索から${fmtGap(g)}空いた → ${base}日以内では覆えないので${days == null ? "指定なし" : `${days}日以内`}に広げた`
     : `前回の検索から${fmtGap(g)}（${base == null ? "指定なし" : `${base}日以内`}で覆える）`;
-  return { days, base_days: base, last_search_at: i.lastSearchAt, gap_hours: g, need_days: need, widened, reason };
+  return { days, base_days: base, last_search_at: i.lastSearchAt, last_by_site: lbs, gap_hours: g, need_days: need, widened, reason };
+}
+
+/**
+ * 2026-09-30 v2.5.43 竹内「更新順で検索していたら、その更新順以降は見なくて大丈夫」: サイトごとの「前回の検索」（止める線）。
+ *   last＝サイト（realpro／itandi）→ 最後に終わった回の開始時刻。これから検索するサイトだけ。
+ *   conditionChangedAt（お客様の条件の最後の変更＝property_condition_history）が前回の検索より後（同じ時刻も）のサイトは入れない
+ *   （前回は今の条件で見ていない＝前回より古い行でも今の条件では初めて見る）。読めない時刻も入れない。どのサイトも無ければ null
+ */
+export function stopLinesBySite(
+  last: Record<string, string> | undefined | null, sites: ReadonlyArray<string>, conditionChangedAt: string | null | undefined,
+): Record<string, string> | null {
+  if (!last) return null;
+  const changed = conditionChangedAt ? Date.parse(conditionChangedAt) : NaN;
+  const out: Record<string, string> = {};
+  for (const s of sites) {
+    const v = String(s ?? "").toLowerCase();
+    const k = v === "realnetpro" || v === "realpro" ? "realpro" : v === "itandi" ? "itandi" : null;
+    const at = k ? last[k] : undefined;
+    const t = at ? Date.parse(at) : NaN;
+    if (!k || !at || !Number.isFinite(t)) continue;
+    if (Number.isFinite(changed) && changed >= t) continue;
+    out[k] = at;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 export function fmtGap(hours: number | null): string {
@@ -106,11 +136,11 @@ export function fmtGap(hours: number | null): string {
 }
 
 /** お客様ごとの計画（payload.update_days_plan の形）。拡張は by_customer[id].days を更新日に使う */
-export type UpdateDaysPlanPayload = { v: 1; by_customer: Record<string, { days: number | null; base_days: number | null; gap_hours: number | null; last_search_at: string | null; widened: boolean }> };
+export type UpdateDaysPlanPayload = { v: 1; by_customer: Record<string, { days: number | null; base_days: number | null; gap_hours: number | null; last_search_at: string | null; last_by_site?: Record<string, string> | null; widened: boolean }> };
 
 export function planPayload(entries: ReadonlyArray<{ id: string; plan: UpdateDaysPlan }>): UpdateDaysPlanPayload {
   const by: UpdateDaysPlanPayload["by_customer"] = {};
-  for (const e of entries) by[String(e.id)] = { days: e.plan.days, base_days: e.plan.base_days, gap_hours: e.plan.gap_hours, last_search_at: e.plan.last_search_at, widened: e.plan.widened };
+  for (const e of entries) by[String(e.id)] = { days: e.plan.days, base_days: e.plan.base_days, gap_hours: e.plan.gap_hours, last_search_at: e.plan.last_search_at, last_by_site: e.plan.last_by_site ?? null, widened: e.plan.widened };
   return { v: 1, by_customer: by };
 }
 
