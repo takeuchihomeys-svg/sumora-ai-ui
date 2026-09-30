@@ -7,7 +7,7 @@ import {
   RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS, MAX_TARGETS_PER_RUN, PM_LATEST, SEARCH_MAX_PAGES,
   AUTO_SEARCH_SITES, LEGACY_AM_IS_WIDE, START_WINDOWS, MIN_DAY_TO_DAY_DIFF_SEC, seededRandom, startOffsetSec, autoStartAtMs, customerGapSec, notBeforeSchedule,
 } from "../auto-search-schedule";
-import { isClaimableNow, isPickerWaitExpired, waitStartMs, WAIT_FOR_PICKER_MS } from "../automation-sources";
+import { isClaimableNow, isPickerWaitExpired, waitStartMs, WAIT_FOR_PICKER_MS, pickerActiveAt, MAX_WAIT_WHILE_ACTIVE_MS, pickClaimable } from "../automation-sources";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -202,6 +202,15 @@ console.log("── ★ /api/automation/pending は not_before より前を渡�
   t("14:05 はまだ閉じない", !isPickerWaitExpired(row, Date.parse(iso("2026-09-28T14:05:00"))));
   t("14:11 に閉じる", isPickerWaitExpired(row, Date.parse(iso("2026-09-28T14:11:00"))));
   t("not_before の無い物は積んだ時刻から（今までどおり）", isPickerWaitExpired({ created_at: iso("2026-09-28T07:00:00"), payload: {} }, now) && WAIT_FOR_PICKER_MS === 3 * 3600 * 1000);
+  // 2026-09-30 午前の便60人×1人1命令を1台が順に拾う: 後ろの人は「前の人が終わってから」3時間を数える
+  const late = { created_at: iso("2026-09-30T10:00:00"), payload: { source: "auto_schedule", not_before: iso("2026-09-30T11:40:00") } };
+  const active = Date.parse(iso("2026-09-30T16:20:00")); // 拾い手が最後に動いた（前の人が終わった）
+  t("★ 拾い手が動いている間は閉じない（not_before 11:40 から4時間50分・前の人が終わって10分）", !isPickerWaitExpired(late, Date.parse(iso("2026-09-30T16:30:00")), active));
+  t("拾い手が無い（動きが無い）なら今まで通り 14:41 に閉じる", isPickerWaitExpired(late, Date.parse(iso("2026-09-30T14:41:00")), null));
+  t("拾い手が最後に動いてから3時間で閉じる", isPickerWaitExpired(late, Date.parse(iso("2026-09-30T19:21:00")), active) && !isPickerWaitExpired(late, Date.parse(iso("2026-09-30T19:19:00")), active));
+  t("延ばすのは not_before から12時間まで（夜通しの古い指示で検索しない）", isPickerWaitExpired(late, Date.parse(iso("2026-09-30T23:41:00")), Date.parse(iso("2026-09-30T23:30:00"))) && MAX_WAIT_WHILE_ACTIVE_MS === 12 * 3600 * 1000);
+  t("not_before より前の動きは使わない（今まで通り）", isPickerWaitExpired(late, Date.parse(iso("2026-09-30T14:41:00")), Date.parse(iso("2026-09-30T11:00:00"))));
+  t("pickerActiveAt: picked_up_at・completed_at の一番新しい物", pickerActiveAt([{ picked_up_at: iso("2026-09-30T12:00:00"), completed_at: iso("2026-09-30T12:07:00") }, { picked_up_at: iso("2026-09-30T12:09:00"), completed_at: null }]) === Date.parse(iso("2026-09-30T12:09:00")) && pickerActiveAt([]) === null);
 }
 
 console.log("── 配線（cron・pending・vercel.json）");
@@ -213,8 +222,23 @@ console.log("── 配線（cron・pending・vercel.json）");
   t("★ 午前の便は1人ずつ notBeforeSchedule", /notBeforeSchedule\(mode, jstDate, toQueue\.map/.test(cron));
   t("同じ日・同じ便の二重積みの防止は今までどおり", /\.eq\("payload->>jst_date", jstDate\)/.test(cron));
   const pend = fs.readFileSync(path.join(root, "app/api/automation/pending/route.ts"), "utf8");
-  t("★ pending は isClaimableNow で選ぶ", /\.find\(\(c\) => isClaimableNow\(c\.payload, nowMs\)\)/.test(pend));
-  t("★ 期限は isPickerWaitExpired（not_before から）", /isPickerWaitExpired\(r, nowMs\)/.test(pend));
+  t("★ pending は pickClaimable で選ぶ（isClaimableNow・自動便でない物が先）", pend.includes("const cmd = pickClaimable(commands ?? [], nowMs);"));
+  {
+    const iso2 = (j: string) => new Date(`${j}+09:00`).toISOString();
+    const q = [
+      { id: "am1", payload: { source: "auto_schedule", not_before: iso2("2026-09-30T11:00:00") } },
+      { id: "am2", payload: { source: "auto_schedule", not_before: iso2("2026-09-30T11:02:00") } },
+      { id: "wb", payload: { source: "web_brain" } },
+      { id: "pm1", payload: { source: "auto_schedule", not_before: iso2("2026-09-30T16:20:00") } },
+    ];
+    const at = (h: string) => Date.parse(iso2(`2026-09-30T${h}:00`));
+    t("★ 手の検索（web_brain）は自動便の残りより先に渡す", pickClaimable(q, at("14:00"))?.id === "wb");
+    t("自動便どうしは古い順（午前の続きが先）", pickClaimable(q.filter((x) => x.id !== "wb"), at("16:30"))?.id === "am1");
+    t("not_before 前の物は渡さない", pickClaimable([q[3]], at("16:00")) === null);
+  }
+  t("★ 期限は isPickerWaitExpired（not_before から・拾い手が動いている間は前の人が終わってから）", /isPickerWaitExpired\(r, nowMs, activeAt\)/.test(pend) && pend.includes("const activeAt = await activeAtFor(sources);"));
+  const upd = fs.readFileSync(path.join(root, "app/api/automation/update/route.ts"), "utf8");
+  t("★ 心拍: update が running の行の picked_up_at を新しくする（30分の見張りに戻させない）", upd.includes("const heartbeat = body.heartbeat === true || typeof body.processed_customers === \"number\";") && upd.includes(".update({ picked_up_at: new Date().toISOString() })") && upd.includes(".eq(\"status\", \"running\");"));
   const vj = JSON.parse(fs.readFileSync(path.join(root, "vercel.json"), "utf8"));
   const am = vj.crons.find((c: { path: string }) => c.path === "/api/cron/auto-property-search?mode=am");
   const pm = vj.crons.find((c: { path: string }) => c.path === "/api/cron/auto-property-search?mode=pm");

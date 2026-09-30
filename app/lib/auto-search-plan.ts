@@ -37,6 +37,11 @@ export type AutoSearchStateInput = {
   last_condition_change_at: string | null;
   /** サイトごとの前回の検索（search_audits の最後に終わった回・realpro／itandi） */
   last_search_by_site?: Record<string, string> | null;
+  /**
+   * 2026-09-30 午後の便の選び方: 今日（JST の0時から）の検索で「通す」になった候補の数（property_pickups verdict=pass・広げても含む）。
+   *   undefined＝読めない（午後は回す＝検索は止めない側）
+   */
+  pass_today?: number | null;
 };
 
 /** 物件検索の対象にしない状態（申込以降・終了・保留）。auto-search-schedule の EXCLUDED_STATUS と同じ */
@@ -53,6 +58,12 @@ export const DORMANT_TIMES_PER_WEEK = 2;
 export const NEW_UPDATE_DAYS = 14;
 /** 1回のページの上限（auto-search-schedule.SEARCH_MAX_PAGES と同じ・拡張 DEFAULT_MAX_PAGES） */
 export const PLAN_MAX_PAGES = 5;
+/**
+ * 2026-09-30 竹内「午後の便は今日の更新がないか見るだけやから、もっと限定的にすれば大丈夫」「午前で物件がなかった場合のお客さんだけに限定する」:
+ *   午後の便は「今日の検索で通す候補が0件の人」だけ（pmRunDecision）・全員（新規も）更新順・更新日1日（前回の検索が無い人だけ空きで広げる）・
+ *   前回の検索（午前）以降だけ（止める線あり）・2ページ（リアプロ・ITANDI とも）・自動の広げて（chain）は積まない（新規の広げては午前だけ）
+ */
+export const PM_PLAN = { sort: "updated" as const, stop_at_last: true, max_pages: 2, widen_chain: false, note: "午後: 今日の候補0件の人だけ・更新順・更新日1日・午前以降だけ・2ページ・広げてなし" };
 
 const DAY_MS = 86_400_000;
 const ms = (s: string | null | undefined) => { const v = Date.parse(String(s ?? "")); return Number.isFinite(v) ? v : NaN; };
@@ -111,6 +122,8 @@ export type AutoSearchPlan = {
   /** 更新順の一覧で「前回の検索より古い行」で止める（2.5.43 update-order-stop・update_days_plan.last_by_site） */
   stop_at_last: boolean;
   max_pages: number;
+  /** この回の後に自動の広げて（search-widen-chain）を積んでよいか（午後の便は false） */
+  widen_chain: boolean;
   reason: string;
 };
 
@@ -124,7 +137,7 @@ export const PLAN_TABLE: Record<Exclude<AutoSearchState, "off">, Row> = {
   dormant:      { sort: "updated", days: "since_last", stop_at_last: true,  runs: "am_twice_week", note: "止まっている: 週2回（午前）・更新順・前回の検索以降だけ" },
 };
 
-/** 状態の優先（小さいほど先・上限40で切る）: ③言い直し → ①新規 → 要対応 → ②動いている → ④止まっている */
+/** 状態の優先（小さいほど先・上限 MAX_TARGETS_PER_RUN で切る）: ③言い直し → ①新規 → 要対応 → ②動いている → ④止まっている */
 export function priorityOfState(state: AutoSearchState, status?: string | null): number {
   if (state === "cond_changed") return 0;
   if (state === "new") return 1;
@@ -168,10 +181,20 @@ export function planFor(
   if (state === "off") return null;
   const row = PLAN_TABLE[state];
   if (row.runs === "am_twice_week") {
-    if (mode !== "am") return null;
+    // 週2回の人はその日だけ。午後は、その日で午前に候補が得られなかった時だけ（selectPlannedTargets が pass_today で絞る）
     if (!dormantWeekdays(jstDate, customerId).includes(jstWeekday(jstDate))) return null;
   }
   let days: number | null;
+  if (mode === "pm") {
+    // 午後は全員「前回の検索以降」（新規も）。前回の検索が無い人だけ、新規は14・届けた人は最後に届けた日から（planUpdateDays が空きで広げる）
+    if (ctx.lastSearchAt && Number.isFinite(ms(ctx.lastSearchAt))) days = 1;
+    else {
+      const d = jstDaysSince(ctx.lastProposalAt ?? null, ctx.nowMs ?? Date.now());
+      days = d == null ? NEW_UPDATE_DAYS : d <= 1 ? 1 : d <= 3 ? 3 : d <= 7 ? 7 : 14;
+    }
+    const stopPm = PM_PLAN.stop_at_last && ctx.stopAtLast !== false;
+    return { state, sort: PM_PLAN.sort, is_wide: false, days, stop_at_last: stopPm, max_pages: PM_PLAN.max_pages, widen_chain: PM_PLAN.widen_chain, reason: PM_PLAN.note + (!stopPm ? "（止める線は切ってある）" : "") };
+  }
   if (row.days === "new") days = NEW_UPDATE_DAYS;
   else if (ctx.lastSearchAt && Number.isFinite(ms(ctx.lastSearchAt))) days = 1; // 前回の検索からの空きは planUpdateDays が覆う
   else {
@@ -179,7 +202,7 @@ export function planFor(
     days = d == null ? NEW_UPDATE_DAYS : d <= 1 ? 1 : d <= 3 ? 3 : d <= 7 ? 7 : 14;
   }
   const stop = row.stop_at_last && ctx.stopAtLast !== false;
-  return { state, sort: row.sort, is_wide: false, days, stop_at_last: stop, max_pages: PLAN_MAX_PAGES, reason: row.note + (row.stop_at_last && !stop ? "（止める線は切ってある）" : "") };
+  return { state, sort: row.sort, is_wide: false, days, stop_at_last: stop, max_pages: PLAN_MAX_PAGES, widen_chain: true, reason: row.note + (row.stop_at_last && !stop ? "（止める線は切ってある）" : "") };
 }
 
 /** 環境変数（サーバーだけが読む。拡張は payload に従うだけ） */
@@ -187,7 +210,27 @@ export function planEnv(env: Record<string, string | undefined> = process.env): 
   return { legacy: env.AUTO_SEARCH_PLAN === "legacy", stopAtLast: env.AUTO_SEARCH_STOP_AT_LAST !== "off" };
 }
 
-export type PlannedTarget = { id: string; state: AutoSearchState; stateReason: string; priority: number; plan: AutoSearchPlan };
+/** runReason … この便に入れた理由（午後の便は「今日の候補0件」の中身・dry_run に出す） */
+export type PlannedTarget = { id: string; state: AutoSearchState; stateReason: string; priority: number; plan: AutoSearchPlan; runReason?: string };
+
+/** JST の今日の0時（UTC ミリ秒） */
+export function jstMidnightMs(nowMs: number): number {
+  return Date.parse(`${new Date(nowMs + 9 * 3600_000).toISOString().slice(0, 10)}T00:00:00+09:00`);
+}
+
+/**
+ * 午後の便に入れるか（2026-09-30 竹内「午前で物件がなかった場合のお客さんだけに限定する」）。
+ *   今日の検索で通す候補が1件でもあれば入れない。0件なら入れる（午前に回らなかった・失敗・見送り・時間切れの人も＝今日まだ候補を得ていない）。
+ *   候補の数が読めない時は入れる（検索は止めない側）。午前の命令がまだ残っている人は cron が「未実行・実行中のコマンドあり」で飛ばす（午前の続きを待つ）
+ */
+export function pmRunDecision(i: AutoSearchStateInput, nowMs: number): { run: boolean; why: string } {
+  const n = i.pass_today;
+  if (n === undefined || n === null || !Number.isFinite(Number(n))) return { run: true, why: "今日の候補の数が読めない（回す）" };
+  if (Number(n) > 0) return { run: false, why: `今日の検索で通す候補 ${n}件（午後は回さない）` };
+  const mid = jstMidnightMs(nowMs);
+  const searchedToday = Object.values(i.last_search_by_site ?? {}).some((x) => Number.isFinite(ms(x)) && ms(x) >= mid);
+  return { run: true, why: searchedToday ? "今日の検索で通す候補0件" : "今日まだ検索が終わっていない（午前に回らなかった・失敗・見送り・時間切れ）" };
+}
 
 /**
  * 今日のこの便の対象（状態 → 計画 → 優先の順 → 上限）。off・この便で回さない人は外す（skipped に理由）
@@ -208,7 +251,13 @@ export function selectPlannedTargets(
     const lastSearchAt = sites.length ? sites.reduce((a, b) => (ms(a) < ms(b) ? a : b)) : null;
     const plan = planFor(state, mode, jstDate, String(i.id), { lastSearchAt, lastProposalAt: i.last_proposal_at, nowMs, stopAtLast: opts.stopAtLast });
     if (!plan) { notThisRun.push({ id: String(i.id), state, why: state === "dormant" ? "週2回の日でない（止まっている）" : "この便では回さない" }); continue; }
-    picked.push({ id: String(i.id), state, stateReason: reason, priority: priorityOfState(state, i.status), plan });
+    let runReason: string | undefined;
+    if (mode === "pm") {
+      const d = pmRunDecision(i, nowMs);
+      if (!d.run) { notThisRun.push({ id: String(i.id), state, why: d.why }); continue; }
+      runReason = d.why;
+    }
+    picked.push({ id: String(i.id), state, stateReason: reason, priority: priorityOfState(state, i.status), plan, ...(runReason ? { runReason } : {}) });
   }
   // 同じ優先の中は前回の検索が古い順（窓が空きを覆うので枠から落ちても遅れるだけ）→ id
   const lastOf = new Map(inputs.map((i) => {
@@ -221,7 +270,7 @@ export function selectPlannedTargets(
 }
 
 /** payload.plan_by_customer の1人分（拡張が読む形） */
-export type PlanPayloadEntry = { state: AutoSearchState; sort: "ad" | "updated"; is_wide: false; days: number | null; stop_at_last: boolean; max_pages: number; reason: string };
+export type PlanPayloadEntry = { state: AutoSearchState; sort: "ad" | "updated"; is_wide: false; days: number | null; stop_at_last: boolean; max_pages: number; widen_chain: boolean; reason: string };
 
 /** payload.plan_by_customer（お客様 id → 計画）。days は更新日の計画（planUpdateDays）で広げた後の値を渡す */
 export function planByCustomerPayload(entries: ReadonlyArray<{ id: string; plan: AutoSearchPlan; days?: number | null }>): Record<string, PlanPayloadEntry> {
@@ -230,7 +279,7 @@ export function planByCustomerPayload(entries: ReadonlyArray<{ id: string; plan:
     out[String(e.id)] = {
       state: e.plan.state, sort: e.plan.sort, is_wide: false,
       days: e.days === undefined ? e.plan.days : e.days,
-      stop_at_last: e.plan.stop_at_last, max_pages: e.plan.max_pages, reason: e.plan.reason,
+      stop_at_last: e.plan.stop_at_last, max_pages: e.plan.max_pages, widen_chain: e.plan.widen_chain, reason: e.plan.reason,
     };
   }
   return out;

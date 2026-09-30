@@ -43,22 +43,56 @@
   //   2026-09-29 v2.5.41 更新日の計画（payload.update_days_plan・サーバーが「前回の検索から空いた時間を覆う所まで」広げた値）:
   //     payloadForCustomer がそのお客様の分を _update_days に写した payload は、自動便（午前・午後）でも web_brain でも
   //     その値を popup の経路にも渡す（rp_update_days・null＝指定なしは rp_update_days_none）。計画の無い payload は今までどおり
+  //   2026-09-30 v2.5.44 お客様ごとの計画（payload.plan_by_customer[id]・payloadForCustomer が _plan に写す）の sort・max_pages を上の値より先に使う。
+  //     自動便でない命令（web_brain）でも、上に sort・max_pages がある時（search-widen-chain が積む広げての続き）はそれを使う
+  //     （旧は web_brain なら sort=null＝AD 順・ページは既定。手の AIXツールの一括検索は sort も max_pages も無い＝今まで通り）
+  function _sortOf(v) { return v === "updated" ? "updated" : (v === "ad" ? "ad" : null); }
+  function _pagesOf(v) { var n = Number(v); return isFinite(n) && n > 0 ? Math.floor(n) : null; }
   function optsFromPayload(payload) {
     var plan = decidedDays(payload);
+    var pl = (payload && typeof payload === "object" && payload._plan && typeof payload._plan === "object") ? payload._plan : null;
     if (!isAuto(payload)) {
-      if (!plan) return null;
-      return { mode: null, rp_update_days: plan.days, rp_update_days_none: plan.days == null, sort: null, max_pages: null };
+      var s = (pl && pl.sort) || _sortOf(payload && payload.sort);
+      var mp = (pl && pl.max_pages) || _pagesOf(payload && payload.max_pages);
+      if (!plan && !s && !mp) return null;
+      return { mode: null, rp_update_days: plan ? plan.days : null, rp_update_days_none: !!(plan && plan.days == null), sort: s || null, max_pages: mp || null };
     }
     var pm = payload.mode === "pm";
     var days = payload.rp_update_days != null ? Number(payload.rp_update_days) : NaN;
-    var pages = Number(payload.max_pages);
     return {
       mode: pm ? "pm" : "am",
       rp_update_days: plan ? plan.days : (pm && isFinite(days) && days > 0 ? days : null),
       rp_update_days_none: !!(plan && plan.days == null),
-      sort: payload.sort === "updated" ? "updated" : (payload.sort === "ad" ? "ad" : null),
-      max_pages: isFinite(pages) && pages > 0 ? Math.floor(pages) : null,
+      sort: (pl && pl.sort) || _sortOf(payload.sort),
+      max_pages: (pl && pl.max_pages) || _pagesOf(payload.max_pages),
     };
+  }
+
+  /**
+   * 2026-09-30 v2.5.44 命令の payload.plan_by_customer[id]（サーバー app/lib/auto-search-plan.ts planByCustomerPayload）を読む。
+   *   { state, sort: "ad"|"updated"|null, stop_at_last: true|false|null, max_pages, widen_chain }。そのお客様の分が無い・読めない → null（今まで通り）
+   */
+  function planForCustomer(payload, customerId) {
+    var p = payload && typeof payload === "object" ? payload.plan_by_customer : null;
+    if (!p || typeof p !== "object" || customerId == null) return null;
+    var e = p[String(customerId)];
+    if (!e || typeof e !== "object") return null;
+    return {
+      state: e.state ? String(e.state) : null,
+      sort: _sortOf(e.sort),
+      stop_at_last: e.stop_at_last === true ? true : (e.stop_at_last === false ? false : null),
+      max_pages: _pagesOf(e.max_pages),
+      widen_chain: typeof e.widen_chain === "boolean" ? e.widen_chain : null,
+    };
+  }
+
+  /**
+   * 2026-09-30 v2.5.44 更新順の一覧で「前回の検索より古い行」で止める線を置いてよいか。
+   *   計画が stop_at_last:false（新規・条件の言い直し＝前回と違う見方で読む回）の人は、last_by_site があっても止めない。計画が無ければ今まで通り（置いてよい）
+   */
+  function stopLineAllowed(custPayload) {
+    var pl = custPayload && typeof custPayload === "object" ? custPayload._plan : null;
+    return !(pl && pl.stop_at_last === false);
   }
 
   /** payloadForCustomer が決めた更新日（{days}・days=null は指定なし）。無ければ null */
@@ -91,15 +125,20 @@
     for (var i = 0; i < UPDATE_CHOICES.length; i++) if (UPDATE_CHOICES[i] >= need) { cover = UPDATE_CHOICES[i]; break; }
     return { days: cover, widened: true, gap_hours: gapH };
   }
+  //   2026-09-30 v2.5.44 そのお客様の計画（plan_by_customer[id]）を _plan に写す（sort・stop_at_last・max_pages をお客様ごとに）
   function payloadForCustomer(payload, customerId, nowMs) {
     if (!payload || typeof payload !== "object" || customerId == null) return payload || null;
+    var pl = planForCustomer(payload, customerId);
     var plan = payload.update_days_plan;
     var e = plan && plan.by_customer ? plan.by_customer[String(customerId)] : null;
-    if (!e || typeof e !== "object" || !("days" in e)) return payload;
+    var hasDays = !!(e && typeof e === "object" && ("days" in e));
+    if (!hasDays && !pl) return payload;
+    var out = Object.assign({}, payload);
+    if (pl) out._plan = pl; else delete out._plan;
+    if (!hasDays) return out;
     var n = e.days == null ? null : Number(e.days);
     var days = n != null && isFinite(n) && n > 0 ? Math.floor(n) : null;
     var w = widenForNow(days, e.last_search_at || null, nowMs != null ? nowMs : Date.now());
-    var out = Object.assign({}, payload);
     out.rp_update_days = w.days;
     out._update_days = {
       days: w.days, widened: !!e.widened || w.widened,
@@ -170,7 +209,11 @@
     return (isFinite(n) && n > 0) ? Math.floor(n) : (fallback == null ? null : fallback);
   }
 
-  /** リアプロの結果を AD 高い順へ並べ替えてよいか（午後の便＝更新順の時は並べ替えない） */
+  /**
+   * リアプロの結果を AD 高い順へ並べ替えてよいか（午後の便＝更新順の時は並べ替えない）。
+   *   2026-09-30 v2.5.44 opts はお客様×サイトの record（payloadForCustomer → optsFromPayload）なので、お客様ごとに決まる
+   *   （sort "ad" の人＝新規・言い直しだけ並べ替え・"updated" の人はしない・広げての続きの sort="updated" もしない）
+   */
   function allowAdSort(opts) {
     return !(opts && opts.sort === "updated");
   }
@@ -250,7 +293,7 @@
   return {
     STORAGE_KEY: STORAGE_KEY, TTL_MS: TTL_MS,
     isAuto: isAuto, optsFromPayload: optsFromPayload, record: record, withSite: withSite, forCustomer: forCustomer,
-    payloadForCustomer: payloadForCustomer, decidedDays: decidedDays,
+    payloadForCustomer: payloadForCustomer, decidedDays: decidedDays, planForCustomer: planForCustomer, stopLineAllowed: stopLineAllowed,
     pageLimit: pageLimit, allowAdSort: allowAdSort, DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES,
     planSites: planSites, hasItandiTab: hasItandiTab, orderSites: orderSites,
     siteGapMs: siteGapMs, customerGapMs: customerGapMs, nextCommandGapMs: nextCommandGapMs, skippedNote: skippedNote,

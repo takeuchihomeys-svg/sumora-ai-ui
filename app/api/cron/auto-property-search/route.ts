@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
   let planMode: "plan" | "legacy" = env.legacy ? "legacy" : "plan";
   let planNoteAll: string | null = env.legacy ? "AUTO_SEARCH_PLAN=legacy" : null;
   const planById = new Map<string, AutoSearchPlan>();
-  const stateById = new Map<string, { state: AutoSearchState; reason: string }>();
+  const stateById = new Map<string, { state: AutoSearchState; reason: string; runReason?: string }>();
   let stateBreakdown: Record<string, number> | null = null;
   let notThisRun: Array<{ id: string; name: string | null; state: string; why: string }> = [];
   let overLimit: Array<{ id: string; name: string | null; state: string }> = [];
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
       const nameOf = (id: string) => rows.find((r) => String(r.id) === id)?.customer_name ?? null;
       notThisRun = sel.notThisRun.map((x) => ({ id: x.id, name: nameOf(x.id), state: STATE_JA[x.state], why: x.why }));
       overLimit = sel.overLimit.map((x) => ({ id: x.id, name: nameOf(x.id), state: STATE_JA[x.state] }));
-      for (const t of sel.targets) { planById.set(t.id, t.plan); stateById.set(t.id, { state: t.state, reason: t.stateReason }); }
+      for (const t of sel.targets) { planById.set(t.id, t.plan); stateById.set(t.id, { state: t.state, reason: t.stateReason, runReason: t.runReason }); }
       // reason は今までの2つの値の型に合わせる（新規と言い直しは new_customer・その他は recent_sent）。状態は plan_by_customer に
       targets = sel.targets.map((t) => ({ id: t.id, reason: t.state === "new" || t.state === "cond_changed" ? "new_customer" : "recent_sent", rpUpdateDays: t.plan.days }));
     } catch (e) {
@@ -116,7 +116,10 @@ export async function GET(req: NextRequest) {
     for (const id of ((r.customer_ids as string[] | null) ?? [])) openIds.add(String(id));
   }
 
-  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null; not_before?: string; update_days?: string; state?: AutoSearchState; sort?: "ad" | "updated" }> = [];
+  const queued: Array<{ id: string; name: string | null; reason: string; rp_update_days: number | null; not_before?: string; update_days?: string; state?: AutoSearchState; sort?: "ad" | "updated"; stop_at_last?: boolean; max_pages?: number; run_reason?: string }> = [];
+  // v2.5.44 dry_run・報告の明細（並び・止める線・ページ・この便に入れた理由）
+  const stateOf = (id: string) => stateById.get(id)?.state;
+  const planCols = (id: string) => ({ state: stateOf(id), sort: planById.get(id)?.sort, stop_at_last: planById.get(id)?.stop_at_last, max_pages: planById.get(id)?.max_pages, run_reason: stateById.get(id)?.runReason });
   const skipped: Array<{ id: string; name: string | null; why: string }> = [];
   const byId = new Map(rows.map((r) => [String(r.id), r]));
 
@@ -147,10 +150,13 @@ export async function GET(req: NextRequest) {
   // お客様ごとの計画（拡張が読む形）。days は更新日の計画で広げた後の値（計画が作れなければ元の値）
   const planByCustomer = (ts: ReadonlyArray<AutoSearchTarget>) =>
     planByCustomerPayload(ts.filter((t) => planById.has(t.id)).map((t) => ({ id: t.id, plan: planById.get(t.id)!, days: plans.has(t.id) ? plans.get(t.id)!.days : planById.get(t.id)!.days })));
-  const stateOf = (id: string) => stateById.get(id)?.state;
   const legacyAm = planMode === "legacy" && mode === "am";
 
-  if (isBatchedRun(mode)) {
+  // 2026-09-30 午後の便も計画の時は1人1命令（午前と同じ形・not_before を1人ずつずらす）。
+  //   理由: 1命令に何十人も入れると1命令が数時間になり、/api/automation/pending の「running のまま30分で pending に戻す」見張りに掛かる
+  //   （picked_up_at は拾った時刻のまま＝別の AIX の PC が同じ命令を拾い直して二重に検索し得る）。1人1命令なら1命令は1人分（中央値 約5〜7分）で、
+  //   途中で止まっても残りの人は別の PC が続けられる。AUTO_SEARCH_PLAN=legacy の時だけ今まで通り1命令で一括
+  if (isBatchedRun(mode) && planMode === "legacy") {
     // 17時（pm）: 全員が同じ条件なので**1コマンドにまとめて**拡張の一括検索で回す
     //   （竹内 2026-09-19「17:00の検索はピンポイント検索で一括で行うようにする」）
     //   更新日だけはお客様ごとの計画（update_days_plan）で広げる（前回の検索から2日以上空いた人を 1日以内で探さない）
@@ -170,13 +176,15 @@ export async function GET(req: NextRequest) {
       if (insErr) {
         for (const t of toQueue) skipped.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, why: `積めなかった: ${insErr.message}` });
       } else {
-        for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), state: stateOf(t.id), sort: planById.get(t.id)?.sort });
+        for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), ...planCols(t.id) });
       }
     } else {
-      for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), state: stateOf(t.id), sort: planById.get(t.id)?.sort });
+      for (const t of toQueue) queued.push({ id: t.id, name: byId.get(t.id)?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), ...planCols(t.id) });
     }
   } else {
-    // 11時（am）: 更新日が人ごとに違うので1人1コマンド。開始は1人ずつ不規則な間でずらす（notBeforeSchedule）
+    // 11時（am）・計画の時の午後: 更新日が人ごとに違うので1人1コマンド。開始は1人ずつ不規則な間でずらす（notBeforeSchedule）。
+    //   後ろの人は前の人が終わってから拾われる（pending は古い順に1件ずつ・拡張は1人を終えて人の間を置いてから次を拾う）。
+    //   not_before は「これより前は拾わない」だけ。拾い手が動いている間は3時間の期限を延ばす（automation-sources.isPickerWaitExpired）
     const nbById = new Map(notBeforeSchedule(mode, jstDate, toQueue.map((t) => t.id)).map((x) => [x.id, x.notBeforeMs]));
     for (const t of toQueue) {
       const c = byId.get(t.id);
@@ -188,7 +196,7 @@ export async function GET(req: NextRequest) {
         // v2.5.44: 1人1命令なので上の並びもその人の計画に（古い拡張も並びは合う）。legacy は今までの「午前は広げて」
         ...(cp ? { sort: cp.sort, is_wide: false, max_pages: cp.max_pages, plan_by_customer: pbc } : {}),
         ...(legacyAm ? { is_wide: LEGACY_AM_IS_WIDE } : {}) };
-      if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), state: stateOf(t.id), sort: planById.get(t.id)?.sort }); continue; }
+      if (dryRun) { queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), ...planCols(t.id) }); continue; }
       const { error: insErr } = await supabase.from("automation_commands").insert({
         command_type: "batch_property_search",
         customer_ids: [t.id],
@@ -197,7 +205,7 @@ export async function GET(req: NextRequest) {
         status: "pending",
       });
       if (insErr) { skipped.push({ id: t.id, name: c?.customer_name ?? null, why: `積めなかった: ${insErr.message}` }); continue; }
-      queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), state: stateOf(t.id), sort: planById.get(t.id)?.sort });
+      queued.push({ id: t.id, name: c?.customer_name ?? null, reason: t.reason, rp_update_days: plans.get(t.id)?.days ?? payload.rp_update_days, not_before: payload.not_before, update_days: planNote(t.id), ...planCols(t.id) });
     }
   }
 
@@ -209,7 +217,9 @@ export async function GET(req: NextRequest) {
     plan_mode: planMode,
     ...(planNoteAll ? { plan_note: planNoteAll } : {}),
     rule: planMode === "plan"
-      ? `お客様の状態で選ぶ（実際の送付・発言・条件の変更）: ③言い直し・①新規＝AD 順・更新日14日・止める線なし／②送った後・要対応＝更新順・前回の検索以降だけ${env.stopAtLast ? "（止める線あり）" : "（止める線は切ってある）"}／④止まっている＝週2回（午前）・更新順。全員ピンポイント・5ページ・上限${lim}人（③→①→要対応→②→④）・${mode === "pm" ? "1コマンドで一括" : "1人1コマンド"}`
+      ? (mode === "pm"
+        ? `午後: 今日の検索で通す候補が0件の人だけ（午前に回らなかった・失敗・時間切れの人も）・全員 更新順・更新日1日（前回の検索が無い人は空きで広げる）・午前以降だけ${env.stopAtLast ? "（止める線あり）" : "（止める線は切ってある）"}・2ページ・広げてなし・上限${lim}人・1人1コマンド（午前の命令が残っている人は午前の続きを待つ）`
+        : `お客様の状態で選ぶ（実際の送付・発言・条件の変更）: ③言い直し・①新規＝AD 順・更新日14日・止める線なし／②送った後・要対応＝更新順・前回の検索以降だけ${env.stopAtLast ? "（止める線あり）" : "（止める線は切ってある）"}／④止まっている＝週2回・更新順。全員ピンポイント・5ページ・上限${lim}人（③→①→要対応→②→④）・1人1コマンド`)
       : mode === "pm"
       ? "本日の更新日付（更新日1日以内）・更新順・5ページまで・ピンポイント検索・1コマンドで一括（1人ずつリアプロ→ITANDI）"
       : `直近${RECENT_SENT_DAYS}日に物件出しした人（送信 or 確認）＋登録${NEW_CUSTOMER_DAYS}日以内でまだ出していない人・更新日は前回出した日から・AD高い順・広げて検索・1人1コマンド`,
@@ -219,7 +229,7 @@ export async function GET(req: NextRequest) {
       not_this_run: notThisRun.length, over_limit: overLimit.length,
       ...(dryRun ? { not_this_run_detail: notThisRun, over_limit_detail: overLimit } : {}),
     } : {}),
-    batched: isBatchedRun(mode),
+    batched: isBatchedRun(mode) && planMode === "legacy",
     sites: [...AUTO_SEARCH_SITES],
     // 今日のこの便の開始（JST の窓の中・日ごとに変わる）
     start_at_jst: new Date(autoStartAtMs(mode, jstDate) + 9 * 3600 * 1000).toISOString().slice(11, 19),

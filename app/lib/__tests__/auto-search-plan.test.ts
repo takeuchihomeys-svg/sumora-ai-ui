@@ -4,7 +4,7 @@
 // 実行: npx tsx app/lib/__tests__/auto-search-plan.test.ts
 import {
   classifyAutoSearchState, planFor, selectPlannedTargets, dormantWeekdays, priorityOfState, planByCustomerPayload, planOfPayload, planEnv,
-  PLAN_TABLE, NEW_UPDATE_DAYS, PLAN_MAX_PAGES, OFF_AFTER_DAYS, type AutoSearchStateInput,
+  PLAN_TABLE, NEW_UPDATE_DAYS, PLAN_MAX_PAGES, OFF_AFTER_DAYS, PM_PLAN, pmRunDecision, type AutoSearchStateInput,
 } from "../auto-search-plan";
 import { SEARCH_MAX_PAGES, MAX_TARGETS_PER_RUN } from "../auto-search-schedule";
 import * as fs from "fs";
@@ -51,8 +51,8 @@ t("申込中・保留・条件なし・送付が読めない → 対象外",
 t("8日目で止まっている（7日は動いている）", classifyAutoSearchState({ ...DORMANT, last_proposal_at: "2026-09-22T03:00:00Z", last_customer_msg_at: null }, NOW).state === "dormant"
   && classifyAutoSearchState({ ...DORMANT, last_proposal_at: "2026-09-23T03:00:00Z", last_customer_msg_at: null }, NOW).state === "active");
 
-console.log("── 回し方の表（朝・夕）");
-for (const mode of ["am", "pm"] as const) {
+console.log("── 回し方の表（午前）");
+for (const mode of ["am"] as const) {
   const n = planFor("new", mode, DATE, NEW_HOT.id)!;
   t(`★ ${mode}: 新規は AD 順・更新日14・止める線なし・ピンポイント・5ページ`, n.sort === "ad" && n.days === NEW_UPDATE_DAYS && n.days === 14 && !n.stop_at_last && n.is_wide === false && n.max_pages === 5, n);
   const c = planFor("cond_changed", mode, DATE, COND.id)!;
@@ -61,6 +61,26 @@ for (const mode of ["am", "pm"] as const) {
   t(`★ ${mode}: 送った後は更新順・前回の検索以降だけ（止める線・元の更新日1＝空きで広げる）`, a.sort === "updated" && a.stop_at_last && a.days === 1, a);
   const h = planFor("dormant_hot", mode, DATE, DORMANT_HOT.id, { lastProposalAt: DORMANT_HOT.last_proposal_at, nowMs: NOW })!;
   t(`★ ${mode}: 要対応で止まっている人は毎日・更新順（前回の検索の記録なし→最後に届けた17日前から＝14）`, !!h && h.sort === "updated" && h.stop_at_last && h.days === 14, h);
+}
+console.log("── 午後の便（2026-09-30 竹内「午後の便は今日の更新がないか見るだけ…もっと限定的に」）");
+{
+  const afterAm = "2026-09-30T02:10:00Z"; // 今日の午前の検索
+  for (const [st, id] of [["new", NEW_HOT.id], ["cond_changed", COND.id], ["active", ACTIVE.id], ["dormant_hot", DORMANT_HOT.id]] as const) {
+    const p = planFor(st, "pm", DATE, id, { lastSearchAt: afterAm, nowMs: NOW })!;
+    t(`★ pm ${st}: 更新順・更新日1・午前以降だけ（止める線）・2ページ・広げてなし（新規も AD 順にしない）`, !!p && p.sort === "updated" && p.days === 1 && p.stop_at_last && p.max_pages === 2 && p.widen_chain === false && p.is_wide === false, p);
+  }
+  const noSearchNew = planFor("new", "pm", DATE, NEW_HOT.id, { nowMs: NOW })!;
+  t("pm: 前回の検索が無い新規は更新日14（空きで広げる）・並びは更新順", noSearchNew.days === 14 && noSearchNew.sort === "updated", noSearchNew);
+  const noSearchAct = planFor("active", "pm", DATE, ACTIVE.id, { lastProposalAt: ACTIVE.last_proposal_at, nowMs: NOW })!;
+  t("pm: 前回の検索が無い送った後の人は最後に届けた日から（7日前→7）・更新順", noSearchAct.days === 7 && noSearchAct.sort === "updated");
+  t("pm の表は1か所（PM_PLAN）: 2ページ・広げてなし・止める線あり", PM_PLAN.max_pages === 2 && PM_PLAN.widen_chain === false && PM_PLAN.stop_at_last && PM_PLAN.sort === "updated");
+  t("午前は広げての続きを許す（widen_chain）", planFor("new", "am", DATE, NEW_HOT.id)!.widen_chain === true);
+  t("AUTO_SEARCH_STOP_AT_LAST=off は午後も止める線なし", planFor("active", "pm", DATE, "x", { lastSearchAt: afterAm, stopAtLast: false })!.stop_at_last === false);
+  const NOW_PM = Date.parse("2026-09-30T16:00:00+09:00");
+  t("★ 今日の検索で通す候補が1件でもあれば午後は回さない", pmRunDecision({ ...ACTIVE, pass_today: 3 }, NOW_PM).run === false);
+  t("★ 午前に検索して候補0件 → 回す（理由: 今日の検索で候補0件）", (() => { const d = pmRunDecision({ ...ACTIVE, pass_today: 0, last_search_by_site: { realpro: afterAm } }, NOW_PM); return d.run && d.why.startsWith("今日の検索で通す候補0件"); })());
+  t("★ 今日まだ検索が終わっていない（午前に回らなかった・失敗・時間切れ）→ 回す", (() => { const d = pmRunDecision({ ...ACTIVE, pass_today: 0, last_search_by_site: { realpro: "2026-09-29T02:00:00Z" } }, NOW_PM); return d.run && d.why.startsWith("今日まだ検索が終わっていない"); })());
+  t("候補の数が読めない → 回す（検索は止めない側）", pmRunDecision({ ...ACTIVE, pass_today: undefined }, NOW_PM).run === true);
 }
 t("前回の検索が無い送った後の人: 最後に届けた日から（7日前→7）", planFor("active", "am", DATE, ACTIVE.id, { lastProposalAt: ACTIVE.last_proposal_at, nowMs: NOW })!.days === 7);
 t("週1回の AD 順は無い（送った後はどの曜日も更新順）", [0, 1, 2, 3, 4, 5, 6].every((k) => {
@@ -73,13 +93,14 @@ t("AUTO_SEARCH_STOP_AT_LAST=off → 止める線なし", planFor("active", "am",
   && planEnv({ AUTO_SEARCH_STOP_AT_LAST: "off" }).stopAtLast === false && planEnv({}).stopAtLast === true && planEnv({ AUTO_SEARCH_PLAN: "legacy" }).legacy === true);
 t("対象外はどの便にも入れない", planFor("off", "am", DATE, "x") === null);
 
-console.log("── 止まっている人は週2回（午前だけ・曜日はお客様ごと）");
+console.log("── 止まっている人は週2回（その日の午前・午後はその日で午前の候補0件の時だけ＝selectPlannedTargets）");
 {
   const week = Array.from({ length: 7 }, (_, k) => new Date(Date.parse("2026-09-28T12:00:00+09:00") + k * 86400_000 + 9 * 3600_000).toISOString().slice(0, 10)); // 月〜日
   for (const c of [DORMANT, DORMANT2]) {
     const am = week.filter((d) => planFor("dormant", "am", d, c.id) !== null).length;
-    const pm = week.filter((d) => planFor("dormant", "pm", d, c.id) !== null).length;
-    t(`★ ${c.id}: 1週間で午前2回・午後0回`, am === 2 && pm === 0, { am, pm, days: dormantWeekdays(DATE, c.id) });
+    const pmDays = week.filter((d) => planFor("dormant", "pm", d, c.id) !== null);
+    const amDays = week.filter((d) => planFor("dormant", "am", d, c.id) !== null);
+    t(`★ ${c.id}: 1週間で午前2回・午後はその2日だけ（候補0件の時）`, am === 2 && JSON.stringify(pmDays) === JSON.stringify(amDays), { am, pmDays, days: dormantWeekdays(DATE, c.id) });
   }
   const wd = dormantWeekdays(DATE, DORMANT.id);
   t("2つの曜日は2日以上離す", wd.length === 2 && Math.min((wd[1] - wd[0] + 7) % 7, (wd[0] - wd[1] + 7) % 7) >= 2, wd);
@@ -101,14 +122,20 @@ console.log("── 今日の対象（本番の実物の10人 × 朝夕）");
     && am.targets[0].state === "cond_changed" && am.targets.findIndex((x) => x.id === DORMANT_HOT.id) < am.targets.findIndex((x) => x.id === ACTIVE.id)
     && am.targets.findIndex((x) => x.id === ACTIVE_HOT.id) < am.targets.findIndex((x) => x.id === ACTIVE.id), order);
   t("要対応（hot）の動いている人は要対応の段", priorityOfState("active", "hot") === 2 && priorityOfState("active", "property_search") === 3 && priorityOfState("dormant", null) === 4);
-  const pm = selectPlannedTargets(all, "pm", DATE, NOW);
-  t("午後は止まっている人（週2回）を回さない", !pm.targets.some((x) => x.state === "dormant") && pm.notThisRun.filter((x) => x.state === "dormant").length === 2);
+  const NOW_PM = Date.parse("2026-09-30T16:00:00+09:00");
+  // 午後: 午前で候補が出た人（pass_today>0）は回さない。0件の人・今日まだの人だけ
+  const withPass = all.map((x, k) => ({ ...x, pass_today: k % 2 === 0 ? 2 : 0 }));
+  const pm = selectPlannedTargets(withPass, "pm", DATE, NOW_PM);
+  t("★ 午後は今日の候補0件の人だけ（候補のある人は notThisRun に理由）", pm.targets.every((x) => withPass.find((y) => y.id === x.id)!.pass_today === 0)
+    && pm.notThisRun.some((x) => x.why.startsWith("今日の検索で通す候補 2件")), pm.targets.map((x) => x.id));
+  t("★ 午後の対象には理由（runReason）が付く", pm.targets.length > 0 && pm.targets.every((x) => typeof x.runReason === "string" && x.runReason.length > 0));
+  t("午後: 止まっている人は週2回の日でなければ回さない", !pm.targets.some((x) => x.state === "dormant") && pm.notThisRun.filter((x) => x.state === "dormant" && x.why.startsWith("週2回の日でない")).length === 2);
   const cut = selectPlannedTargets(all, "am", DATE, NOW, { limit: 3 });
-  t("上限で切る（上位から・残りは overLimit）", cut.targets.length === 3 && cut.overLimit.length === am.targets.length - 3 && cut.targets.map((x) => x.id).join() === am.targets.slice(0, 3).map((x) => x.id).join() && MAX_TARGETS_PER_RUN === 40);
+  t("上限で切る（上位から・残りは overLimit）", cut.targets.length === 3 && cut.overLimit.length === am.targets.length - 3 && cut.targets.map((x) => x.id).join() === am.targets.slice(0, 3).map((x) => x.id).join() && MAX_TARGETS_PER_RUN === 60);
   // payload の形（拡張が読む）
   const pbc = planByCustomerPayload(am.targets.map((x) => ({ id: x.id, plan: x.plan, days: x.state === "active" ? 3 : x.plan.days })));
   const e = pbc[ACTIVE.id];
-  t("★ plan_by_customer[id] = { state, sort, is_wide:false, days, stop_at_last, max_pages, reason }", !!e && Object.keys(e).join() === "state,sort,is_wide,days,stop_at_last,max_pages,reason" && e.days === 3 && e.sort === "updated" && e.stop_at_last === true, e);
+  t("★ plan_by_customer[id] = { state, sort, is_wide:false, days, stop_at_last, max_pages, widen_chain, reason }", !!e && Object.keys(e).join() === "state,sort,is_wide,days,stop_at_last,max_pages,widen_chain,reason" && e.days === 3 && e.sort === "updated" && e.stop_at_last === true && e.widen_chain === true, e);
   t("planOfPayload で読める・無い人は undefined", planOfPayload({ plan_by_customer: pbc }, NEW_HOT.id)?.sort === "ad" && planOfPayload({ plan_by_customer: pbc }, "nobody") === undefined && planOfPayload({}, NEW_HOT.id) === undefined);
 }
 
@@ -125,6 +152,9 @@ console.log("── 配線");
   const route = fs.readFileSync(path.join(root, "app/api/cron/auto-property-search/route.ts"), "utf8");
   t("cron: 状態で選ぶ（selectPlannedTargets・loadStateInputs）・legacy で今まで", route.includes("selectPlannedTargets(") && route.includes("loadStateInputs(") && route.includes("selectAutoSearchTargets(withCondition"));
   t("cron: payload に plan_by_customer・dry_run に状態の内訳", route.includes("plan_by_customer: pbc") && route.includes("states: stateBreakdown"));
+  t("★ cron: 計画の時は午後も1人1命令（一括は legacy だけ）", route.includes(`if (isBatchedRun(mode) && planMode === "legacy") {`));
+  t("cron: dry_run の明細に午後の対象の理由", route.includes("run_reason: stateById.get(id)?.runReason"));
+  t("材料: 今日の候補（property_pickups verdict=pass）を読む", fs.readFileSync(path.join(root, "app/lib/auto-search-plan-server.ts"), "utf8").includes(`.eq("verdict", "pass").gte("created_at", mid)`));
   const srv = fs.readFileSync(path.join(root, "app/lib/auto-search-plan-server.ts"), "utf8");
   t("材料に last_property_sent_at を読まない・isProposalSend を使う", !srv.includes(".select(\"id, last_property_sent_at") && !/select\([^)]*last_property_sent_at/.test(srv) && srv.includes("isProposalSend("));
 }

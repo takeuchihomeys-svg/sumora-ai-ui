@@ -2639,6 +2639,7 @@ var _batchLoopAlive = false;
 var _batchWatch = null;
 var _watchSavedAt = 0;
 var _lockRefreshedAt = 0;
+var _heartbeatAt = 0; // 2026-09-30 v2.5.44 命令の心拍（_watchProgress）
 var _runStateAt = 0;
 var _passGuardSeq = 0;
 var _snapBusy = false;
@@ -2725,6 +2726,13 @@ function _watchProgress(what, site) {
   if (now - _lockRefreshedAt > 60000) {
     _lockRefreshedAt = now;
     try { chrome.storage.local.set({ batchRunning: { running: true, startedAt: now } }).catch(function () {}); } catch (_) {}
+  }
+  // 2026-09-30 v2.5.44 心拍: 動いている命令の picked_up_at をサーバーで新しくする（10分おき）。/api/automation/pending の
+  //   「running のまま30分で pending に戻す」見張りに、動いている長い命令（1人で ITANDI 2パス等）を戻させない（別の PC の二重の検索を防ぐ）。
+  //   サーバーへの1通だけ・サイトへのアクセスは増えない
+  if (_batchWatch.commandId && now - _heartbeatAt > 10 * 60000) {
+    _heartbeatAt = now;
+    try { _updateBatchCommand(_batchWatch.commandId, { heartbeat: true }); } catch (_) {}
   }
   if (now - _runStateAt > 5 * 60000) _setRunState(true); // 帯の「一括検索中」が15分で古く見えないように
 }
@@ -3680,6 +3688,8 @@ async function _runBatchSearch(command) {
       if (_custPayload && _custPayload._update_days) console.log("[batch] 更新日の計画: " + (_custPayload._update_days.days ? _custPayload._update_days.days + "日以内" : "指定なし") + (_custPayload._update_days.widened ? "（前回の検索から" + _custPayload._update_days.gap_hours + "時間・広げた）" : "") + " customer=" + effectiveCustomer.id);
       // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: このお客様の送付済みの部屋を読んでおく（スタッフモードは読まない＝選ばない物を作らない）
       await _loadSentRooms(effectiveCustomer.id, batchSite);
+      // 2026-09-30 v2.5.44 お客様ごとの計画（plan_by_customer[id]: 状態・並び・止める線・ページ）
+      if (_custPayload && _custPayload._plan) console.log("[batch] 計画: " + (_custPayload._plan.state || "-") + " 並び=" + (_custPayload._plan.sort || "-") + " 止める線=" + _custPayload._plan.stop_at_last + " ページ=" + (_custPayload._plan.max_pages || "-") + " customer=" + effectiveCustomer.id);
       // 検索の点検: この1回（お客様×サイト×パス）の記録を始める（ブレインの時だけ・それ以外は null）
       var _batchAudit = await _auditBegin({
         site: batchSite, customer_id: effectiveCustomer.id, customer: effectiveCustomer,
@@ -3703,7 +3713,9 @@ async function _runBatchSearch(command) {
         // 2026-09-30 v2.5.43 更新日順の一覧で「前回の検索より古い行」で止める線（このお客様×サイトの前回の検索・サーバーの update_days_plan.last_by_site）も載せる。
         //   自動便でない回（web_brain）でも線がある時は置く（ページ数・並びの指定は無い＝bulk-dl は今まで通り）。広げての回・一時調整の回は線を置かない（前回と条件が違う）
         //   同時の回は2本が同じ鍵に書くので、サイトごとに by_site へ並べる（_arMem＝この SW の中の写し・読み直して書く間に片方を消さない）
-        var _uoLast = (!batchIsWide && !searchOverride && self.AxlxUpdateOrderStop && cmdPayload && cmdPayload.update_days_plan && cmdPayload.update_days_plan.by_customer)
+        //   2026-09-30 v2.5.44 計画が stop_at_last:false の人（新規・条件の言い直し）は last_by_site があっても線を置かない（auto-run.js stopLineAllowed）
+        var _uoLast = (!batchIsWide && !searchOverride && self.AxlxUpdateOrderStop && cmdPayload && cmdPayload.update_days_plan && cmdPayload.update_days_plan.by_customer
+          && (!_AR || !_AR.stopLineAllowed || _AR.stopLineAllowed(_custPayload)))
           ? self.AxlxUpdateOrderStop.lastSearchFor(cmdPayload.update_days_plan.by_customer[String(effectiveCustomer.id)], batchSite) : null;
         var _arOptsNow = _AR ? (_AR.optsFromPayload(_custPayload) || _autoOpts || (_uoLast ? {} : null)) : null;
         if (_AR && _arOptsNow) {
@@ -4293,8 +4305,10 @@ function _applyCommuteReach(conds, site) {
 // 3つ目の引数 opts はコマンドの payload（または手動の一括検索の { rp_update_days }）。
 //   rp_update_days … 出どころを問わず使う（2026-09-25 竹内「更新日も拡張ツールと連動」・web_brain／手動の一括／自動便）
 //   sort / max_pages … 自動便（source="auto_schedule"）だけ（手動の一括検索は今までどおり）
+//   2026-09-30 v2.5.44 sort / max_pages は auto-run.js optsFromPayload の1か所から（お客様ごとの計画 plan_by_customer[id]・広げての続きの上の sort・max_pages も）。
+//     手動の一括検索・AIXツールの一括検索（sort も max_pages も無い）は今まで通り null
 function _buildBatchConditions(c, isWide, opts) {
-  var autoSched = (opts && opts.source === "auto_schedule") ? opts : null;
+  var _arOpts = (self.AxlxAutoRun && opts) ? self.AxlxAutoRun.optsFromPayload(opts) : null;
   var _rpDays = opts && opts.rp_update_days != null ? (Number(opts.rp_update_days) || null) : null;
   // desired_area (文字列) → areas (配列) 変換
   var areaArr = [];
@@ -4324,8 +4338,8 @@ function _buildBatchConditions(c, isWide, opts) {
     //   更新日は page-script.js が select[name="update_date"] に入れる（個別検索と同じ欄）
     //   v2.5.34: ITANDI の直接入力の経路でも同じ値を itandi-page-script.js が「募集条件更新 N日以内」の欄に打つ（null＝空のまま）
     rp_update_days: _rpDays,
-    sort_order: autoSched ? (autoSched.sort || null) : null,
-    max_pages: autoSched ? (autoSched.max_pages || null) : null
+    sort_order: _arOpts ? (_arOpts.sort || null) : null,
+    max_pages: _arOpts ? (_arOpts.max_pages || null) : null
   };
 }
 

@@ -62,6 +62,18 @@ export function isClaimableNow(payload: unknown, nowMs: number): boolean {
   const nb = notBeforeMs(payload);
   return nb === null || nb <= nowMs;
 }
+
+/**
+ * 2026-09-30 自動便が60人×1人1命令（1人 約7〜9分＝午前だけで7〜9時間）になったので、古い順のままだと
+ *   その間に積まれた手の検索（AIXツールの一括検索・AIX の指示・広げての続き）が何時間も自動便の後ろで待つ。
+ *   今渡してよい物の中で、自動便（auto_schedule）でない物を先に渡す（同じ種類の中は古い順のまま）。
+ *   自動便どうし（午前の残り → 午後）は古い順＝午前の続きが先。サイトへのアクセスは増えない（順番だけ）
+ */
+export function pickClaimable<T extends { payload?: unknown }>(commands: ReadonlyArray<T>, nowMs: number): T | null {
+  const ok = commands.filter((c) => isClaimableNow(c.payload, nowMs));
+  const srcOf = (c: T) => (c.payload && typeof c.payload === "object" ? (c.payload as Record<string, unknown>).source : null);
+  return ok.find((c) => srcOf(c) !== "auto_schedule") ?? ok[0] ?? null;
+}
 /**
  * 拾い手を待つ3時間の数え始め＝not_before（あれば）・無ければ積んだ時刻。
  * 例: 10:00 に積んで not_before 11:02 の自動便は 14:02 まで待つ（積んだ時刻から数えると窓の遅い側の分だけ短くなる）
@@ -72,7 +84,31 @@ export function waitStartMs(row: { created_at?: string | null; payload?: unknown
   const c = row.created_at ? Date.parse(row.created_at) : NaN;
   return Number.isFinite(c) ? c : null;
 }
-export function isPickerWaitExpired(row: { created_at?: string | null; payload?: unknown }, nowMs: number): boolean {
+/**
+ * 2026-09-30 竹内「午前の便に時間制限があるなら改善する」: 自動便は60人×1人1命令で、1台の PC が1人ずつ（1人 約7〜9分）拾っていく。
+ *   not_before から3時間で閉じると、拾い手が動いているのに後ろの人（開始から3時間より後に番が来る人）が「PC がなかった」で閉じていた。
+ *   → 拾い手が動いている間（同じ拾い手の出どころの命令を最後に拾った・終えた時刻 pickerActiveAtMs）は、そこから3時間を数える
+ *     （＝前の人が終わってから数える）。延ばすのは not_before から MAX_WAIT_WHILE_ACTIVE_MS まで（夜通しの古い指示で検索しない）。
+ *   拾い手がいない（3時間どの命令も拾われていない）時は今まで通り閉じる。サイトへのアクセスは増えない（待つ長さだけ）
+ */
+export const MAX_WAIT_WHILE_ACTIVE_MS = 12 * 60 * 60 * 1000;
+export function isPickerWaitExpired(row: { created_at?: string | null; payload?: unknown }, nowMs: number, pickerActiveAtMs?: number | null): boolean {
   const s = waitStartMs(row);
-  return s !== null && nowMs - s > WAIT_FOR_PICKER_MS;
+  if (s === null) return false;
+  let start = s;
+  const a = Number(pickerActiveAtMs);
+  if (pickerActiveAtMs != null && Number.isFinite(a) && a > start) start = Math.min(a, s + MAX_WAIT_WHILE_ACTIVE_MS - WAIT_FOR_PICKER_MS);
+  return nowMs - start > WAIT_FOR_PICKER_MS;
+}
+
+/** 拾い手が最後に動いた時刻（命令の picked_up_at・completed_at の一番新しい物）。無ければ null */
+export function pickerActiveAt(rows: ReadonlyArray<{ picked_up_at?: string | null; completed_at?: string | null }>): number | null {
+  let best: number | null = null;
+  for (const r of rows ?? []) {
+    for (const v of [r?.picked_up_at, r?.completed_at]) {
+      const t = v ? Date.parse(v) : NaN;
+      if (Number.isFinite(t) && (best === null || t > best)) best = t;
+    }
+  }
+  return best;
 }

@@ -235,6 +235,11 @@ export type DecideInput = {
   /** 2026-09-30 v2.5.44 そのピンポイントの回を積んだ命令の計画（payload.plan_by_customer[id].state） */
   originState?: string | null;
   /**
+   * 2026-09-30 竹内「午後の便は…もっと限定的に」: そのピンポイントの回を積んだ命令の計画が自動の広げてを許すか
+   *   （payload.plan_by_customer[id].widen_chain・午後の便は false）。false の時は広げない（新規の広げては午前だけ）。無い命令は今まで通り
+   */
+  originWidenChain?: boolean | null;
+  /**
    * 2026-09-30 v2.5.44 送った後（additional）は「毎回0件なら」でなく累計の線（cumulativeWiden）で広げる。
    *   audits・rows・commands は CUMULATIVE_LOOKBACK_DAYS 日分を渡す。SEARCH_WIDEN_CUMULATIVE=off で今までの1回ごと
    */
@@ -288,6 +293,8 @@ export function decideWiden(input: DecideInput): WidenDecision {
   if (!latest.trigger || latest.trigger === "scrape_compare") return { action: "skip", reason: "trigger" };
   if (runs.some((r) => r.trigger === "single" && !versionAtLeast(r.ext_version, SINGLE_IS_WIDE_FIXED_VERSION))) return { action: "skip", reason: "old_ext_single" };
   if (runs.some(hasOverride)) return { action: "skip", reason: "override" };
+  // 午後の便（計画の widen_chain=false）から続く広げては積まない
+  if (input.originWidenChain === false) return { action: "skip", reason: "plan_no_chain" };
   // 見張りが「条件が入り切っていない検索」と見た回は、足りない理由が検索の失敗かもしれない＝広げて上塗りしない（人が見る）
   if (input.watchBlocked?.length && runs.some((r) => input.watchBlocked!.includes(r.run_id))) return { action: "skip", reason: "watch_blocked" };
   const startMs = sess.startMs;

@@ -103,6 +103,31 @@ async function lastConditionChangesOf(sb: SupabaseClient, ids: string[], nowMs: 
   return out;
 }
 
+/**
+ * 2026-09-30 午後の便の選び方: 今日（JST の0時から）の検索で「通す」になった候補の数（property_pickups verdict=pass）。
+ *   読めない時は null を返す（呼ぶ側は pass_today=undefined＝午後は回す）
+ */
+async function passTodayOf(sb: SupabaseClient, ids: string[], nowMs: number): Promise<Map<string, number> | null> {
+  try {
+    const mid = new Date(Date.parse(`${new Date(nowMs + 9 * 3600_000).toISOString().slice(0, 10)}T00:00:00+09:00`)).toISOString();
+    const out = new Map<string, number>();
+    for (const part of chunks(ids, CHUNK)) {
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb.from("property_pickups").select("id, property_customer_id")
+          .in("property_customer_id", part).eq("verdict", "pass").gte("created_at", mid).order("created_at", { ascending: true }).range(from, from + 999);
+        if (error) throw new Error(error.message);
+        const rows = (data ?? []) as Array<{ property_customer_id: string | null }>;
+        for (const r of rows) if (r.property_customer_id) out.set(String(r.property_customer_id), (out.get(String(r.property_customer_id)) ?? 0) + 1);
+        if (rows.length < 1000) break;
+      }
+    }
+    return out;
+  } catch (e) {
+    console.warn("[auto-search-plan] 今日の候補を読めない（午後は回す）:", e instanceof Error ? e.message : String(e));
+    return null;
+  }
+}
+
 const maxIso = (a: string | null | undefined, b: string | null | undefined) => (!a ? b ?? null : !b ? a : Date.parse(a) >= Date.parse(b) ? a : b);
 
 /** 状態の判定の材料をまとめて読む（候補のお客様＝対象外の状態・条件なしの人も含めてよい＝判定が off にする） */
@@ -114,11 +139,12 @@ export async function loadStateInputs(sb: SupabaseClient, customers: ReadonlyArr
   const convIds = [...new Set([...convOf.values()].flat())];
   const custOfConv = new Map<string, string>();
   for (const [cid, cs] of convOf) for (const v of cs) custOfConv.set(v, cid);
-  const [sends, lastMsg, changes, lastSearch] = await Promise.all([
+  const [sends, lastMsg, changes, lastSearch, passToday] = await Promise.all([
     sendsOf(sb, ids, convIds),
     lastCustomerMessages(sb, convIds, nowMs),
     lastConditionChangesOf(sb, ids, nowMs),
     lastCompleteSearches(sb, ids, { nowMs }),
+    passTodayOf(sb, ids, nowMs),
   ]);
   const first = new Map<string, string>();
   const last = new Map<string, string>();
@@ -144,6 +170,7 @@ export async function loadStateInputs(sb: SupabaseClient, customers: ReadonlyArr
       last_customer_msg_at: msg,
       last_condition_change_at: changes.get(id) ?? null,
       last_search_by_site: lastSearch.get(id) ?? null,
+      pass_today: passToday ? passToday.get(id) ?? 0 : undefined,
     };
   });
 }

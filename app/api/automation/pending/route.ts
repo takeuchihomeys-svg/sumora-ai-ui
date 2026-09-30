@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import {
   AIX_ONLY_SOURCES, BRAIN_ONLY_SOURCES, WAIT_FOR_PICKER_MS, AIX_EXPIRE_MESSAGE, BRAIN_EXPIRE_MESSAGE, pendingSourceOrFilter,
-  isClaimableNow, isPickerWaitExpired,
+  pickClaimable, isPickerWaitExpired, pickerActiveAt,
 } from "@/app/lib/automation-sources";
 import { claimExtVersion, claimInstallId, isMissingColumnError } from "@/app/lib/extension-snapshots";
 
@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
 
   // 修正2: サーバー側ウォッチドッグ — running のまま30分以上放置されたコマンドを pending に戻す
   // （拡張SWクラッシュ等でコマンドが永久に running のまま止まるのを防ぐ）
+  // 2026-09-30 picked_up_at は拡張の心拍（/api/automation/update の heartbeat・お客様ごとの進み）で新しくなる＝動いている長い命令は戻さない
   const staleBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
   const { error: staleErr } = await supabase
     .from("automation_commands")
@@ -54,7 +55,22 @@ export async function GET(req: NextRequest) {
   const nowIso = new Date(nowMs).toISOString();
   // 2026-09-27 竹内「開始時間を毎日ランダムに」: 3時間は payload.not_before（あれば）から数える（isPickerWaitExpired）。
   //   not_before は積んだ時刻より後なので、積んだ時刻が3時間より前の物だけを候補に取り、JS で決める
+  // 2026-09-30 自動便は60人×1人1命令を1台が順に拾う（1人 約7〜9分）: 拾い手が動いている間は「前の人が終わってから」3時間を数える
+  //   （同じ出どころの命令の最後の picked_up_at・completed_at。isPickerWaitExpired）。拾い手がいない時は今まで通り not_before から3時間で閉じる
+  const activeAtFor = async (sources: readonly string[]): Promise<number | null> => {
+    const { data, error } = await supabase
+      .from("automation_commands")
+      .select("picked_up_at, completed_at")
+      .in("payload->>source", [...sources])
+      .not("picked_up_at", "is", null)
+      .gte("picked_up_at", expireBefore)
+      .order("picked_up_at", { ascending: false })
+      .limit(20);
+    if (error) { console.warn("[automation/pending] picker activity select error:", error.message); return null; }
+    return pickerActiveAt((data ?? []) as Array<{ picked_up_at: string | null; completed_at: string | null }>);
+  };
   const closeExpired = async (sources: readonly string[], message: string) => {
+    const activeAt = await activeAtFor(sources);
     const { data: cand, error: candErr } = await supabase
       .from("automation_commands")
       .select("id, created_at, payload")
@@ -63,7 +79,7 @@ export async function GET(req: NextRequest) {
       .lt("created_at", expireBefore)
       .limit(200);
     if (candErr) { console.warn("[automation/pending] expire select error:", candErr.message); return; }
-    const ids = (cand ?? []).filter((r) => isPickerWaitExpired(r, nowMs)).map((r) => r.id);
+    const ids = (cand ?? []).filter((r) => isPickerWaitExpired(r, nowMs, activeAt)).map((r) => r.id);
     if (ids.length === 0) return;
     const { error: expErr } = await supabase
       .from("automation_commands")
@@ -82,15 +98,16 @@ export async function GET(req: NextRequest) {
   const sourceFilter = pendingSourceOrFilter({ aix: aixMode, brain: brainMode });
   if (sourceFilter) pendingQuery = pendingQuery.or(sourceFilter);
   // 2026-09-27: not_before（自動便の開始時刻）より前の物は渡さない。古い順に見て、今渡してよい最初の1件
-  //   （自動便は1回に最大40件・時刻待ちの物の後ろに積まれた手動の検索が埋もれないよう多めに取る）
+  //   （自動便は1回に最大60件×午前と午後・時刻待ちの物の後ろに積まれた手動の検索が埋もれないよう多めに取る）
   const { data: commands, error: selErr } = await pendingQuery
     .order("created_at", { ascending: true })
-    .limit(100);
+    .limit(200);
 
   if (selErr) {
     return NextResponse.json({ error: selErr.message }, { status: 500 });
   }
-  const cmd = (commands ?? []).find((c) => isClaimableNow(c.payload, nowMs));
+  // 2026-09-30 今渡してよい物の中で自動便でない物（手の検索・AIX・広げての続き）を先に（自動便60人の後ろで何時間も待たせない・pickClaimable）
+  const cmd = pickClaimable(commands ?? [], nowMs);
   if (!cmd) {
     return NextResponse.json({ command: null });
   }

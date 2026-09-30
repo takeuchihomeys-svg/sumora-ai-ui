@@ -81,7 +81,7 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
     const decision = decideWiden({
       site, audits, rows: (pk.data ?? []) as PickupLite[], commands: cmds, nowMs,
       sentBeforeSession: sentBefore, fromAuditFinish: input.trigger === "audit", watchBlocked,
-      firstProposalAt, originState: origin.state, cumulative,
+      firstProposalAt, originState: origin.state, originWidenChain: origin.widenChain, cumulative,
     });
     out.decision = decision;
     if (decision.action !== "widen" || dry) return out;
@@ -118,17 +118,20 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
 /**
  * そのお客様×サイトの一番新しいピンポイントの回（3時間以内）を積んだ命令の出どころと計画の状態。読めない時は両方 null（今まで通り）
  */
-async function originOf(audits: ReadonlyArray<AuditLite>, site: string, pcid: string, nowMs: number): Promise<{ source: string | null; state: string | null }> {
+async function originOf(audits: ReadonlyArray<AuditLite>, site: string, pcid: string, nowMs: number): Promise<{ source: string | null; state: string | null; widenChain: boolean | null }> {
+  const none = { source: null, state: null, widenChain: null };
   try {
     const sess = pinpointSession(audits, site, nowMs);
     const ids = [...new Set((sess?.runs ?? []).map((r) => r.command_id).filter((x): x is string => !!x))];
-    if (!ids.length) return { source: null, state: null };
+    if (!ids.length) return none;
     const { data, error } = await supabase.from("automation_commands").select("id, created_at, payload").in("id", ids);
-    if (error || !data?.length) return { source: null, state: null };
+    if (error || !data?.length) return none;
     const newest = (data as Array<{ created_at: string; payload: Record<string, unknown> | null }>).sort((a, z) => z.created_at.localeCompare(a.created_at))[0];
     const src = typeof newest.payload?.source === "string" ? (newest.payload.source as string) : null;
-    return { source: src, state: planOfPayload(newest.payload, pcid)?.state ?? null };
-  } catch { return { source: null, state: null }; }
+    const plan = planOfPayload(newest.payload, pcid);
+    // 2026-09-30 午後の便の計画は widen_chain=false（自動の広げてを積まない）
+    return { source: src, state: plan?.state ?? null, widenChain: typeof plan?.widen_chain === "boolean" ? plan.widen_chain : null };
+  } catch { return none; }
 }
 
 /** まとめの行のサイトごとに決める（finishCompleteGroup の最後） */

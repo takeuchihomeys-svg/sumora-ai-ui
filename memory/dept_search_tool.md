@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-09-30 v2.5.44（拡張）＋自動便の上限60・午後は午前の候補0件の人だけ・時間制限の直し（**拡張の再読み込み必須**・DB の表・列の追加なし・統合の枝で 2.5.43＋2.5.44 サーバーの上に載せた）
+竹内「自動便の上限を60に（A）」「午後の便は今日の更新がないか見るだけやから、もっと限定的に」「午前で物件がなかった場合のお客さんだけに限定する、午後の便は。また午前の便に時間制限があるなら改善する」
+- **拡張: お客様ごとの計画を読む**（`auto-run.js`）: `planForCustomer(payload, id)` が `payload.plan_by_customer[id]` の sort・stop_at_last・max_pages・widen_chain を読み、`payloadForCustomer` が写しの `_plan` に置く → `optsFromPayload` は `_plan` の sort・max_pages を上の値より先に使う（無ければ今まで通り）。record（お客様×サイト）に載るので `allowAdSort` はお客様ごと（sort=ad の人だけ AD 並べ替え・updated の人はしない）。`background._buildBatchConditions` の sort_order・max_pages も `optsFromPayload` の1か所から（旧は命令の上の値だけ＝1命令に何人もいると全員同じだった）
+- **拡張: 止める線**: `stopLineAllowed(_custPayload)`＝計画が `stop_at_last:false`（新規・言い直し）の人は `update_days_plan.by_customer[id].last_by_site` があっても線を置かない（background `_uoLast`）
+- **拡張: 広げての続き（chain・web_brain）**: 上の `sort`・`max_pages` を読む（旧は web_brain なら sort=null＝AD 順・ページは既定）。sort=updated（送った後の広げて）は AD 並べ替えをしない・page-script は並びを既定（更新順）へ戻す。手の AIXツールの一括検索（sort も max_pages も無い）は今まで通り
+- **AIX モード（🧠 でない）の PC が web_brain＋chain_picker を実行できるか**: 拡張に web_brain を弾く所は無い（拾った後の見送りは auto_schedule×ブレイン中だけ・pending は mode-core の claimAix で ?aix=1 → サーバーが chain_picker=aix_or_brain を渡す）。ただし**検索の点検（search_audits）・売上サポ（property_pickups）の記録はブレインの PC だけ**（今まで通り）＝AIX だけの PC が回した自動便・広げては止める線・今日の候補・広げての判定の材料に残らない（テスト `auto-plan.test.js` で配線を固定）
+- **心拍**: 拡張 `_watchProgress` が10分おきに `/api/automation/update {heartbeat:true}`・サーバーは running の行の `picked_up_at` を新しくする（お客様ごとの processed_customers でも）。`/api/automation/pending` の「running のまま30分で pending に戻す」見張りが、動いている長い命令を戻して別の PC に二重に拾わせない
+- **サーバー: 上限 60**（`auto-search-schedule.MAX_TARGETS_PER_RUN`・計画も同じ定数）
+- **サーバー: 午後の便**（`auto-search-plan.PM_PLAN`・`pmRunDecision`）: 今日（JST 0時から）の検索で通す候補（property_pickups verdict=pass）が0件の人だけ（午前に回らなかった・失敗・見送り・時間切れの人も）。全員（新規も）更新順・更新日1（前回の検索が無い人だけ空きで広げる）・午前以降だけ（止める線）・2ページ・**広げてなし**（`widen_chain:false` → `decideWiden` が `plan_no_chain` で止める）。午前の命令が残っている人は積まない（午前の続きを待つ＝cron の openIds）。候補の数が読めない時は回す。dry_run の明細に `run_reason`
+- **サーバー: 午後も1人1命令**（計画の時。AUTO_SEARCH_PLAN=legacy だけ1命令で一括）。理由: 午後40〜60人×1人 約6.5分＝4〜6時間の1命令は30分の見張りに掛かる。1人1命令なら1命令は1人分・止まっても残りを別の PC が続けられる
+- **サーバー: 期限**（`automation-sources.isPickerWaitExpired(row, now, pickerActiveAt)`）: 拾い手が動いている間（同じ出どころの命令の最後の picked_up_at・completed_at）は「前の人が終わってから」3時間を数える・not_before から最大12時間。拾い手がいなければ今まで通り not_before から3時間
+- **サーバー: 渡す順**（`pickClaimable`）: 今渡してよい物の中で自動便でない物（手の一括・AIX・広げての続き）を先に。自動便どうしは古い順（午前の残り → 午後）
+- **見積もり**（`scripts/audit-auto-search-dryrun.ts`・読むだけ・1人 午前 8.5分／午後 6.5分）: 午前60人は開始（10:15〜11:15）から約8.5時間＝19時台まで・午後の便はその後ろ（午前の命令が残る人は待つ・午後の命令は午前の残りの後に拾われる）。9/30 の材料で午後の見込み40人・20人は午前の続き待ち
+- テスト: 新 `tests/chrome-extension/auto-plan.test.js`（36）・`auto-search-plan.test.ts`（56）・`auto-search-schedule.test.ts`（90）・`search-widen-chain.test.ts`（74）
+- **戻す**: 午後を1命令・午前は広げて＝`AUTO_SEARCH_PLAN=legacy`／止める線を切る＝`AUTO_SEARCH_STOP_AT_LAST=off`／送った後の累計の線＝`SEARCH_WIDEN_CUMULATIVE=off`
+
 ## 2026-09-30 v2.5.44（サーバー）自動便をお客様の状態で分ける（**拡張は変えていない**・DB の表・列の追加なし・commit は worktree の枝・push は親）
 竹内さんの決定（設計 wf_7b9c28ba の未決への答え・memory project_search_cadence_plan）を**サーバー側だけ**実装。拡張が plan_by_customer を読む所は 2.5.43 の上に親が載せる（→ 上の v2.5.44（拡張）で載せた）。
 - **状態**（`app/lib/auto-search-plan.ts classifyAutoSearchState`・上から順）: off（申込以降・保留・条件なし・送付が読めない・送付/発言/条件の変更/登録のどれも30日超）→ new（お客様に届けたご提案が0件＝`isProposalSend`・登録日数で切らない）→ cond_changed（届けた後で、7日以内の条件の変更が前回の検索（サイトの古い方）より後／前回の検索なし）→ active（実際の送付かお客様の発言が7日以内・JST の日付）→ dormant_hot（止まっているが status=hot）→ dormant。**last_property_sent_at は使わない**（merge-pdfs が自動検索の回でも今に書く）。材料は `auto-search-plan-server.ts loadStateInputs`（sent_properties をお客様 or 会話で・delivery=customer/null・messages.sender=customer 45日・property_condition_history・search_audits の前回）

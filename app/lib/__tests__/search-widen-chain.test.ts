@@ -7,6 +7,8 @@ import {
   type AuditLite, type PickupLite, type ChainCommandLite,
 } from "../search-widen-chain";
 import { PICKUP_AIX_MAX } from "../pickup-aix-handoff";
+import * as fs from "fs";
+import * as path from "path";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -201,6 +203,13 @@ console.log("■ v2.5.44 送った後の累計の線（3回以上・48時間以�
   t("3日前に広げた → 7日に1回まで（広げない）", weekly.action === "skip" && weekly.reason.includes("widened_within_7d"), weekly);
   const newCust = D({ audits: [now1], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: null });
   t("新規は累計の線を使わない（10件未満なら今まで通り広げる）", newCust.action === "widen" && newCust.chain.kind === "new", newCust);
+  // 2026-09-30 竹内「午後の便は…もっと限定的に」: 午後の便（計画の widen_chain=false）から続く広げては積まない（新規の広げては午前だけ）
+  const pmNew = D({ audits: [now1], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: null, originWidenChain: false });
+  t("★ 午後の便の回（widen_chain=false）は新規でも広げない", pmNew.action === "skip" && pmNew.reason === "plan_no_chain", pmNew);
+  const amNew = D({ audits: [now1], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: null, originWidenChain: true });
+  t("午前の便の回（widen_chain=true）・計画の無い回は今まで通り広げる", amNew.action === "widen" && D({ audits: [now1], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: null, originWidenChain: null }).action === "widen", amNew);
+  const srvSrc = fs.readFileSync(path.join(__dirname, "..", "search-widen-chain-server.ts"), "utf8");
+  t("配線: 積んだ命令の plan_by_customer[id].widen_chain を decideWiden に渡す", srvSrc.includes("originWidenChain: origin.widenChain") && srvSrc.includes("plan?.widen_chain"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

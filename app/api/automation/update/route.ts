@@ -45,7 +45,21 @@ export async function POST(req: NextRequest) {
   if (typeof body.error_message === "string") updates.error_message = body.error_message.slice(0, 2000);
   if (typeof body.completed_at === "string") updates.completed_at = body.completed_at;
 
+  // 2026-09-30 心拍: 拡張が動いている命令（running）の picked_up_at を新しくする（heartbeat・お客様ごとの進み processed_customers）。
+  //   /api/automation/pending の「running のまま30分で pending に戻す」見張りは picked_up_at で数えるので、長い命令（1人で ITANDI 2パス等）を
+  //   動いている最中に pending へ戻して別の PC に二重に拾わせない。running の行だけ直す（閉じた・戻された行は起こさない）
+  const heartbeat = body.heartbeat === true || typeof body.processed_customers === "number";
+  if (heartbeat) {
+    const { error: hbErr } = await supabase
+      .from("automation_commands")
+      .update({ picked_up_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("status", "running");
+    if (hbErr) console.warn("[automation/update] heartbeat error:", hbErr.message);
+  }
+
   if (Object.keys(updates).length === 0) {
+    if (heartbeat) return NextResponse.json({ ok: true, heartbeat: true });
     return NextResponse.json({ error: "no valid fields" }, { status: 400 });
   }
 

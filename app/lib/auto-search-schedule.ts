@@ -55,8 +55,13 @@ export const RECENT_SENT_DAYS = 3;
  * 3日で切ると 5人前後で、直近3日に物件出しした人と同じ「今動いている人」だけが残る。
  */
 export const NEW_CUSTOMER_DAYS = 3;
-/** 1回に積む上限（多すぎると 11:00〜17:00 の間に終わらない）。優先順位の高い順に切る */
-export const MAX_TARGETS_PER_RUN = 40;
+/**
+ * 1回に積む上限。優先順位の高い順に切る。
+ * 2026-09-30 竹内さん決定（A）: 40 → 60。1人あたり 約7〜9分（ITANDI の入力と資料が大半）なので午前の60人は 7〜9時間かかる
+ *   → 後ろの人の命令が「3時間の期限」で閉じないよう、期限は拾い手が動いている間は延ばす（automation-sources.isPickerWaitExpired）。
+ *   午後の便は午前の候補が0件の人だけ（auto-search-plan）・午前の命令が残っている人は午前の続きを待つ（cron の openIds）
+ */
+export const MAX_TARGETS_PER_RUN = 60;
 const DAY_MS = 86_400_000;
 
 /** JST の日付（YYYY-MM-DD）に揃える */
