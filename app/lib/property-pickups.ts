@@ -156,7 +156,8 @@ export const AGENT_PAGE = 2;
 const AD_LABEL = String.raw`(?:(?<![A-Za-z])A\s?D(?![A-Za-z])|広告料|広告費)`;
 const AD_MONTHS_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(?:家賃|賃料)?\\s*(\\d+(?:\\.\\d+)?)\\s*(?:ヶ月|ヵ月|カ月|か月|ケ月|ヶ|%)`, "i");
 const AD_YEN_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(\\d{4,7})\\s*円`, "i");
-const AD_NONE_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(?:なし|無し|無(?![料])|0\\s*(?:%|ヶ月|ヵ月|カ月|か月|円)?(?![\\d.]))`, "i");
+const AD_MAN_YEN_RE = new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(\\d{1,3}(?:\\.\\d+)?)\\s*万\\s*円`, "i");
+const AD_NONE_RE =new RegExp(`${AD_LABEL}\\s*[:：]?\\s*(?:なし|無し|無(?![料])|0\\s*(?:%|ヶ月|ヵ月|カ月|か月|円)?(?![\\d.]))`, "i");
 /**
  * 資料のページごとの文字から AD を読む（2026-09-27 竹内「1枚目や3枚目奇数は弊社、2枚目や4枚目偶数は元付業者と交互」）。
  *   AD は元付業者の資料（偶数ページ）に書かれる → 2ページ以上ある資料は偶数ページだけから読む（弊社帯の奇数ページの文字で当てない）。
@@ -185,6 +186,9 @@ export function parseAdFromText(text: string | null | undefined): { adMonths: nu
   }
   const y = t.match(AD_YEN_RE);
   if (y) return { adMonths: null, adYen: parseInt(y[1], 10) };
+  // 2026-09-30 itandi の「広告費 10.7 万円」（#837・#951 は札に出ていたのに採点は AD 不明だった）
+  const man = t.match(AD_MAN_YEN_RE);
+  if (man) return { adMonths: null, adYen: Math.round(parseFloat(man[1]) * 10_000) };
   if (AD_NONE_RE.test(t)) return { adMonths: 0, adYen: null };
   return { adMonths: null, adYen: null };
 }

@@ -42,8 +42,11 @@ export function listingAdText(pdfText: string | null | undefined): string | null
   if (!t.trim()) return null;
   const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
   const last = lines[lines.length - 1] ?? "";
+  // 2026-09-30 最後の行の「最初の」見出しから（旧は最後の見出し）。TIO岸和田 103（#1952）の最後の行
+  //   「A D 1ヶ月（税込）（礼金1ヵ月の場合は広告料2.0ヶ月）」で、括弧の中の条件付きの「広告料2.0ヶ月）」を札にしていた
+  //   （採点は AD 1ヶ月・画面の札は 2.0ヶ月＝竹内さんの見た食い違い）。欄の見出しは行の中で先に出る（付け足しの括弧は後ろ）
   const hits = [...last.matchAll(LAST_LINE_RE)];
-  if (hits.length) return last.slice(hits[hits.length - 1].index).trim();
+  if (hits.length) return last.slice(hits[0].index).trim();
   const all = [...t.matchAll(AD_PHRASE_RE)].map((m) => m[0].trim()).filter(Boolean);
   return all.length ? all[all.length - 1] : null;
 }
@@ -68,6 +71,31 @@ export function splitAdStamp(text: string): { core: string; rest: string } {
   const m = text.match(/^(.*?(?:[\d０-９][\d０-９.,，．]*[ \t　]?(?:ヶ月|ヵ月|カ月|か月|ケ月|ヶ[⽉月]?|%|％|円|万円)?|なし|無し)(?:[（(]税[込抜][）)])?)([\s\S]*)$/u);
   if (!m) return { core: text, rest: "" };
   return { core: m[1], rest: m[2] };
+}
+
+/**
+ * 2026-09-30 札の芯（splitAdStamp の core）から AD の月数（採点と同じ物差し）。読めなければ null。
+ *   「A D 2ヶ月（税込）」→ 2／「A D 250％」→ 2.5／「広告費 なし」→ 0／「A D 98000円」→ 円÷家賃（家賃が無ければ null）／
+ *   「AD 200%（アズ・スタット）」（みなしの札）→ 2。付け足しの括弧（「（礼金1ヵ月の場合は広告料2.0ヶ月）」）は読まない
+ */
+export function adMonthsOfStamp(stamp: string | null | undefined, rentYen?: number | null): number | null {
+  if (!stamp) return null;
+  const core = splitAdStamp(stamp).core
+    .replace(/[０-９．，％]/g, (c) => (c === "．" ? "." : c === "，" ? "," : c === "％" ? "%" : String.fromCharCode(c.charCodeAt(0) - 0xfee0)))
+    .replace(/⽉/g, "月").replace(/,/g, "");
+  if (/(?:なし|無し)\s*$/.test(core)) return 0;
+  const m = core.match(/(\d+(?:\.\d+)?)\s*(ヶ月|ヵ月|カ月|か月|ケ月|ヶ|%|万円|円)?\s*(?:[（(]税[込抜][）)])?\s*$/);
+  if (!m) return null;
+  const v = parseFloat(m[1]);
+  const unit = m[2] ?? "";
+  if (unit === "%") return v / 100;
+  if (unit === "円" || unit === "万円") {
+    const yen = unit === "万円" ? v * 10_000 : v;
+    return rentYen && rentYen > 0 ? Math.round((yen / rentYen) * 100) / 100 : null;
+  }
+  // 単位の無い「AD2.5(WEB申込)」「AD3」（リアプロの元付の書き方・#1199）は月数。大きな数（円の書き漏れ）は読まない
+  if (!unit) return v > 0 && v <= 5 ? v : null;
+  return v <= 12 ? v : null;
 }
 
 /** 資料の「号室名 703（7階部分）」の号室（資料の文字のまま・無ければ null） */

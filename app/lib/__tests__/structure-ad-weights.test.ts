@@ -195,15 +195,17 @@ console.log("■ AD の段（ほかの項目の約1.3倍・2ヶ月以上はは�
   const sc = (ad: string) => judgeProperty(parsePropertyFacts(base + (ad ? `\n${ad}` : "")), p);
   const none = sc(""), m1 = sc("AD 1ヶ月"), m15 = sc("AD 1.5ヶ月"), m2 = sc("AD 2ヶ月"), m25 = sc("A D 250%(税込)"), m3 = sc("AD 3ヶ月"), m4 = sc("AD 4ヶ月"), adn = sc("AD なし");
   const d = (j: typeof none) => j.score - none.score;
-  t("段（竹内: 150%以上は1.15倍・200%以上は1.3倍）: 1ヶ月 +15 ／1.5ヶ月 +17 ／2ヶ月以上 +20（2.5・3・4ヶ月も +20）", [d(m1), d(m15), d(m2), d(m25), d(m3), d(m4)].join(",") === "15,17,20,20,20,20", [d(m1), d(m15), d(m2), d(m25), d(m3), d(m4)]);
-  t("2ヶ月は家賃の上限内（+15）の約1.3倍", Math.abs(d(m2) / REASON_POINTS.RENT_OK - 1.33) < 0.05);
-  t("倍率: 1.5ヶ月は1ヶ月の約1.15倍・2ヶ月は約1.3倍（2ヶ月以上は一律）", Math.abs(d(m15) / d(m1) - 1.15) < 0.05 && Math.abs(d(m2) / d(m1) - 1.3) < 0.05 && d(m25) === d(m2) && d(m3) === d(m2));
+  // 2026-09-30 竹内「AD1 の加点は 0 くらいで、AD1.5 がプラス 10 点、AD2 がプラス 22 点等」（旧 9/25: 1ヶ月 +15 ／1.5ヶ月 +17 ／2ヶ月以上 +20）
+  t("段（2026-09-30）: 1ヶ月 0 ／1.5ヶ月 +10 ／2ヶ月 +22 ／2.5ヶ月 +25 ／3ヶ月以上 +28（4ヶ月も +28）", [d(m1), d(m15), d(m2), d(m25), d(m3), d(m4)].join(",") === "0,10,22,25,28,28", [d(m1), d(m15), d(m2), d(m25), d(m3), d(m4)]);
+  t("AD1 と AD2 の差（22）は家賃の上限内（+15）・間取り一致（+15）の1つより大きい", d(m2) - d(m1) > REASON_POINTS.RENT_OK && d(m2) - d(m1) > REASON_POINTS.FLOOR_PLAN_MATCH);
+  t("2ヶ月より上は小さな段（+3 ずつ）", d(m25) - d(m2) === 3 && d(m3) - d(m25) === 3 && d(m4) === d(m3));
   t("AD 不明は 0点（一段下げない）・要確認の札", none.reasonCodes.includes("AD_UNKNOWN") && reasonPoints("AD_UNKNOWN") === 0 && reasonJa("AD_UNKNOWN").startsWith("要確認"));
   // 2026-09-25 案B: AD なし −5 → −10（竹内「AD 1未満は点数低く・なかなかお勧めしない」）
   // 2026-09-27 竹内「AD はこっち側で自由に変えられるものやから（割引との比べは）影響しない」: 利益が出ない −10 保留（PROFIT_NEGATIVE）は付けない
   //   → AD なしは −10 だけ（保留にしない・全部合うも AD 不明の物件と同じく付く）
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」: AD なしは −20・保留（全部合う +8 も付かない＝不明より 28点下）
-  t("AD なしは −20・保留（不明より 28点下・割引との比べは付けない・全部合うは付かない）", d(adn) === -28 && none.reasonCodes.includes("FIT_ALL_HALF") && !adn.reasonCodes.includes("FIT_ALL_HALF") && adn.reasonCodes.includes("AD_NONE") && !adn.reasonCodes.includes("PROFIT_NEGATIVE") && adn.verdict === "hold", [d(adn), adn.reasonCodes]);
+  // 2026-09-30 AD1 が 0点になった分、AD なしは −35（不明より 43点下＝−35 と全部合うの半分 8）
+  t("AD なしは −35・保留（不明より 43点下・割引との比べは付けない・全部合うは付かない）", d(adn) === -43 && none.reasonCodes.includes("FIT_ALL_HALF") && !adn.reasonCodes.includes("FIT_ALL_HALF") && adn.reasonCodes.includes("AD_NONE") && !adn.reasonCodes.includes("PROFIT_NEGATIVE") && adn.verdict === "hold", [d(adn), adn.reasonCodes]);
   t("割引をまかなえる（AD_COVERS_DISCOUNT）も付けない（割引との比べは判定に入れない）", !m2.reasonCodes.includes("AD_COVERS_DISCOUNT"), m2.reasonCodes);
   const low = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1LDK\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), p);
   t("AD 40,000 < 割引 42,000 でも保留にしない（利益の目安 −2,000 は記録だけ）", !low.reasonCodes.includes("PROFIT_NEGATIVE") && low.verdict === "pass" && low.profitYen === -2_000, [low.verdict, low.reasonCodes]);
@@ -230,7 +232,7 @@ console.log("■ 保留の物件は AD だけで通す物件より上に来な�
   t("画像の × で保留 → AD_HIGH が _HELD・点は 50＋合計", img.verdict === "hold" && img.reasonCodes.includes("AD_HIGH_HELD") && img.score === BASE_SCORE + img.reasonCodes.reduce((a, c) => a + reasonPoints(c), 0), [img.score, img.reasonCodes]);
   // 付け直し（applyEquipmentMatch）: 保留の札が無くなれば AD の点を戻す
   const back = applyEquipmentMatch({ reasonCodes: ["RENT_OK", "AD_HIGH_HELD", "EQUIP_ELEVATOR_NG"] }, null);
-  t("付け直しで保留の札が無くなれば AD の点に戻す", back.reasonCodes.includes("AD_HIGH") && !back.reasonCodes.includes("AD_HIGH_HELD") && back.verdict === "pass" && back.score === 85, back);
+  t("付け直しで保留の札が無くなれば AD の点に戻す", back.reasonCodes.includes("AD_HIGH") && !back.reasonCodes.includes("AD_HIGH_HELD") && back.verdict === "pass" && back.score === 50 + 15 + 22, back);
   t("settleHeldAd は AD の段以外に触らない", JSON.stringify(settleHeldAd(["RENT_OK", "AD_NONE", "AD_1M", "AD_COVERS_DISCOUNT"], true)) === JSON.stringify(["RENT_OK", "AD_NONE", "AD_1M_HELD", "AD_COVERS_DISCOUNT"]));
 }
 

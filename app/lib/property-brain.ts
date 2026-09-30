@@ -730,6 +730,26 @@ export function equipmentReasonCodes(m: EquipmentMatch | null | undefined): stri
  *   画像の読み取り（IMAGE_*）は applyImageFacts: _OK +5・_NG −10（imageReasonPoints）
  */
 export const BASE_SCORE = 50;
+/**
+ * AD の点（1か所の表・2026-09-30 竹内さんの線）。
+ *   竹内「AD1 で加点高すぎる。AD1 の加点は 0 くらいで、AD1.5 がプラス 10 点、AD2 がプラス 22 点等…AD1 はあって当たり前で、
+ *   逆に AD1 未満は他に物件ある場合はお客さんに出さないレベル。AD1 か 2 かで売り上げは倍…他の基準よりも AD はより重要」
+ *   段の札は累積（judgeProperty の add）: 1〜1.5ヶ月＝AD_1M／1.5〜2ヶ月＝AD_1M＋AD_1_5M／2ヶ月以上＝AD_HIGH（＋2.5ヶ月以上 AD_2_5M・3ヶ月以上 AD_VERY_HIGH）。
+ *     AD1   … 0（当たり前・AD 不明の 0 と同じ段。旧 +15 は他の項目の「条件に合う」と同じ重さで、AD1 と AD2 の差が 5点しかなかった）
+ *     AD1.5 … +10（0＋10）
+ *     AD2   … +22（旧 +20）。同じ回の「通す AD2」と「通す AD1」の差 22点＝他の項目の1つの差（家賃・間取り・駅の +15 まで・学習の上限 adCapOf も 22÷1.3＝16）で覆らない
+ *     AD2.5 … +25・AD3 以上 … +28（2ヶ月から +3 ずつ。売上は AD の月数に比例＝上に行くほど上げるが、段は小さく:
+ *             実送信で同じ回の AD3 以上と AD2 は AD3 以上が選ばれたのが 21回中 23.8%（AD3 の部屋は条件の落ちる物が多い）。
+ *             scripts/backtest-ad-points.ts: +0/+0 は確かめ用の相対順位 0.4526、+3/+3 は 0.4454（全部 0.4714）、+4/+4 は 0.4458、+6/+6 は 0.4471）
+ *     AD 1ヶ月未満 … −30＋保留（AD1 との差 30 を保つ・旧 −15 は AD1 +15 との差 30）／AD なし（資料に「なし」）… −35＋保留
+ *     AD 不明（読めない）… 0（AD1 と同じ段・要確認の札）。実送信の選ばれる率は AD 不明 20%・AD1 17%・AD1.5 20%・AD2 以上 29% で、
+ *             不明を AD1 より下げる根拠が無い（多くは拡張の一覧に AD の列が無いだけ）。上げもしない（確かめるまで AD2 と同じにはしない）
+ *   学習（scoring-learning.isFrozenCode）・お客様ごとの倍率（customer-pref-weights）は AD の札を動かさない（isAdCode）
+ */
+export const AD_TIER_POINTS = {
+  AD_1M: 0, AD_1_5M: 10, AD_HIGH: 22, AD_2_5M: 3, AD_VERY_HIGH: 3,
+  AD_UNDER_1M: -30, AD_NONE: -35,
+} as const;
 export const REASON_POINTS: Record<string, number> = {
   RENT_OK: 15, RENT_SLIGHTLY_OVER: 0, RENT_OVER_110: -20, RENT_OVER_130: -35, RENT_ABOVE_USUAL: -5, RENT_UNKNOWN: 0, RENT_MAX_UNRELIABLE: 0,
   ZERO_ZERO_MATCH: 20, ZERO_ZERO: 8, INITIAL_COST_NOT_ZERO: -15, INITIAL_COST_OVER_LIMIT: -10, INITIAL_COST_UNKNOWN: 0,
@@ -745,7 +765,8 @@ export const REASON_POINTS: Record<string, number> = {
   //   2026-09-27 AD_COVERS_DISCOUNT・PROFIT_NEGATIVE（利益が出ない −10 保留）は付けなくなった（竹内「AD はこっち側で自由に変えられる」）。
   //   下の点は付け直す前の古い行を読むためだけに残す（rejudgeWithoutDiscount で外す）
   //   保留・外す候補の物件の AD は *_HELD の札で 0点（条件が合わない物件を AD だけで上げない）
-  AD_UNKNOWN: 0, PROFIT_NEGATIVE: -10, AD_COVERS_DISCOUNT: 0, AD_1M: 15, AD_1_5M: 2, AD_HIGH: 20, AD_2_5M: 0, AD_VERY_HIGH: 0,
+  //   2026-09-30 段の点は AD_TIER_POINTS（AD1 0・AD1.5 +10・AD2 +22・AD2.5 +25・AD3 +28）。上の 9/25 の点（15/17/20）は旧
+  AD_UNKNOWN: 0, PROFIT_NEGATIVE: -10, AD_COVERS_DISCOUNT: 0, ...AD_TIER_POINTS,
   PET_NG: -15,
   // 2026-09-25 資料の表の募集の条件（listing-terms.ts）
   MOVE_IN_OK: 5, MOVE_IN_LATE: -10, MOVE_IN_UNKNOWN: 0,
@@ -782,7 +803,8 @@ export const REASON_POINTS: Record<string, number> = {
   ALREADY_SENT_OTHER_ROOM: -3, FLOOR_PLAN_SAME_CLASS: 8, FLOOR_PLAN_LARGER: 5,
   // AD なし: 旧 −5 → 2026-09-25 案B −10（竹内「AD 1未満は点数低く・なかなかお勧めしない」）
   //   2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」: −10 → −20 ＋保留（AD 0.5ヶ月の −15 より下に並ぶ）
-  AD_NONE: -20,
+  //   2026-09-30 竹内「AD1 未満は他に物件ある場合はお客さんに出さないレベル」→ AD_TIER_POINTS の表（−35・保留）
+  AD_NONE: AD_TIER_POINTS.AD_NONE,
   // 号室を読んで初めて当たる「同じ部屋を送付済み」（旧は当たらなかった形）は保留 −10（外す候補にしない）
   ALREADY_SENT_SAME_ROOM: -10,
   // ── 2026-09-25 案B（竹内さん決定・scripts/audit-fit-balance.ts の PLAN_B・例の25問は fit-balance.test.ts）──────────────
@@ -813,7 +835,8 @@ export const REASON_POINTS: Record<string, number> = {
   // AD 1ヶ月未満（0 より大きく 1 未満・利益が出ない保留の札が無い時）−8。AD なしは −10（旧 −5）。AD 不明は 0 のまま
   //   2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」: −8 → −15 ＋保留（HOLD_REASON_CODES）。
   //   保留になると AD の段・ピンポイント（+10）・全部合う（+15）が 0点になるので、条件の合う通す物件（150〜165点）が 約100点（保留の物件の帯 98〜107）まで下がる
-  AD_UNDER_1M: -15,
+  //   2026-09-30 AD1 が 0点になった分、差（AD1 → 1ヶ月未満 30点）を保つため −15 → −30（AD_TIER_POINTS）
+  AD_UNDER_1M: AD_TIER_POINTS.AD_UNDER_1M,
   // 2026-09-27 元付業者の決まりで AD をみなした印（0点の知らせ・点は AD の段 AD_HIGH で付く）
   AD_ASSUMED_AGENT: 0,
   // 全部合う +15・1つだけ外れ +5（書いた条件のうち読めた物で数える・条件2つなら半分・保留の物件には付けない）
@@ -1971,11 +1994,11 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     add("AD_UNKNOWN", 0); missing.push("ad");
   } else {
     if (adYen != null) profitYen = adYen - profile.discountYen;
-    // 資料に「広告費 なし」＝ AD 0（読めない null とは別）。AD 0.5ヶ月（AD_UNDER_1M −8）より下に並ぶよう AD_NONE を足す（今は −10）
+    // 資料に「広告費 なし」＝ AD 0（読めない null とは別）。AD 0.5ヶ月（AD_UNDER_1M）より下に並ぶよう AD_NONE を足す（点は AD_TIER_POINTS・今は −35 と −30）
     if (adMonthsEff != null && adMonthsEff <= 0) add("AD_NONE", reasonPoints("AD_NONE"), "hold");
     // 2026-09-27 資料に AD が無く、元付業者の決まりでみなした（アズ・スタット＝200%）印（0点・段の札は下で付く）
     if (facts.adAssumedBy) add("AD_ASSUMED_AGENT", 0);
-    // 2026-09-25 段（重ねて足す・REASON_POINTS の説明）: 1ヶ月 7 ／1.5ヶ月 10 ／2ヶ月 20 ／2.5ヶ月 23 ／3ヶ月以上 26。
+    // 段（重ねて足す・点は AD_TIER_POINTS）: 2026-09-30 1ヶ月 0 ／1.5ヶ月 10 ／2ヶ月 22 ／2.5ヶ月 25 ／3ヶ月以上 28。
     //   0.01 の余裕は「AD 250%」→2.5 の丸め・円÷家賃の割り算の端数（159,999円/80,000円）で段を落とさないため
     const am = adMonthsEff != null ? adMonthsEff + 0.01 : null;
     if (am != null && am >= 1 && am < 2) add("AD_1M", reasonPoints("AD_1M"));

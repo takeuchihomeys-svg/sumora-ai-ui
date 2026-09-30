@@ -64,7 +64,7 @@ console.log("■ カード（リアプロの物件一覧の並び）");
   t("敷金/礼金 なし なし +20（初期費用を抑えたい・一致）・緑", cell(v, "deposit")?.points === 20 && cell(v, "deposit")?.note === "初期費用を抑えたい・一致" && cell(v, "deposit")?.tone === "ok" && cell(v, "deposit")?.written === true, cell(v, "deposit"));
   t("間取り/㎡ は間取り＋広さの点（15＋3）", cell(v, "madori")?.points === 18, cell(v, "madori"));
   t("駅徒歩 4分・+10（徒歩・一致）", cell(v, "walk")?.value === "4分" && cell(v, "walk")?.points === 10 && cell(v, "walk")?.note === "徒歩・一致", cell(v, "walk"));
-  t("AD は必ず出す・2ヶ月 +20 緑", cell(v, "ad")?.points === 20 && cell(v, "ad")?.tone === "ok", cell(v, "ad"));
+  t("AD は必ず出す・2ヶ月 +22 緑（2026-09-30 の表）", cell(v, "ad")?.points === 22 && cell(v, "ad")?.tone === "ok", cell(v, "ad"));
   t("事実だけの項目は点なし（部屋/階）", cell(v, "room")?.points == null && cell(v, "room")?.written === false);
 
   // id 369: 償却の記載なし・入居 9月下旬
@@ -104,13 +104,16 @@ console.log("■ 項目ごとの点（案B）: 合う緑・合わない赤・要
   t("設備 宅配ボックス 記載なし → 灰・要確認", cell(v, "eq:DELIVERY_BOX")?.tone === "unread" && cell(v, "eq:DELIVERY_BOX")?.value === DASH, cell(v, "eq:DELIVERY_BOX"));
   t("全部合うの行: 1つだけ外れ +5", cell(v, "fit")?.points === 5 && /1つ外れ/.test(cell(v, "fit")?.note ?? ""), cell(v, "fit"));
   t("書いていない敷礼0: +8（書いていない）・見出しは薄い（written=false）", cell(v, "deposit")?.points === 8 && cell(v, "deposit")?.note === "書いていない" && cell(v, "deposit")?.written === false, cell(v, "deposit"));
-  t("項目の点の合計＋50 ＝ 判定の点（札が全部どこかの項目に入る）", 50 + v.cells.reduce((a, c) => a + (c.points ?? 0), 0) === 50 + 0 + 8 + 15 + 0 + 10 + 5 + 0 + 12 + 5 + 0 + 0 + 15 + 5, v.cells.map((c) => [c.key, c.points]));
+  // 2026-09-30 AD1（AD_1M）は 0点（竹内「AD1 はあって当たり前」）
+  t("項目の点の合計＋50 ＝ 判定の点（札が全部どこかの項目に入る）", 50 + v.cells.reduce((a, c) => a + (c.points ?? 0), 0) === 50 + 0 + 8 + 15 + 0 + 10 + 5 + 0 + 12 + 5 + 0 + 0 + 0 + 5, v.cells.map((c) => [c.key, c.points]));
+  t("AD1 は 0点・緑にしない・「AD1 は当たり前（0点）」", cell(v, "ad")?.points === 0 && cell(v, "ad")?.tone === "info" && cell(v, "ad")?.note === "AD1 は当たり前（0点）", cell(v, "ad"));
   const held = buildPickupCardView({ ...R370, verdict: "hold", reason_codes: ["RENT_OK", "INITIAL_COST_NOT_ZERO", "AD_HIGH_HELD"] });
   t("保留の物件の AD は 0点（保留の物件なので0点）", cell(held, "ad")?.points === 0 && cell(held, "ad")?.note === "保留の物件なので0点", cell(held, "ad"));
   t("敷礼あり（抑えたい人）→ 赤 −15", cell(held, "deposit")?.tone === "ng" && cell(held, "deposit")?.points === -15, cell(held, "deposit"));
   const none = buildPickupCardView({ ...R370, reason_codes: ["RENT_OK", "AD_NONE", "PROFIT_NEGATIVE"] });
   // 2026-09-27 AD なし −10 → −20（竹内「AD 1ヶ月未満の物件は点数かなり落とす」）。古い行の PROFIT_NEGATIVE −10 と合わせて −30
-  t("AD なし → 赤 −30（AD なし −20・割引の方が大きい −10）", cell(none, "ad")?.tone === "ng" && cell(none, "ad")?.points === -30, cell(none, "ad"));
+  // 2026-09-30 AD なし −20 → −35（AD1 が 0点になった分の差を保つ）。古い行の PROFIT_NEGATIVE −10 と合わせて −45
+  t("AD なし → 赤 −45（AD なし −35・割引の方が大きい −10）", cell(none, "ad")?.tone === "ng" && cell(none, "ad")?.points === -45, cell(none, "ad"));
   const noAd = buildPickupCardView({ ...R370, summary_text: "【1】X\n80,000円", ad_yen: null, reason_codes: ["RENT_OK"] });
   t("AD の札が無い行でも AD の項目は出す（要確認）", cell(noAd, "ad")?.value === DASH && cell(noAd, "ad")?.note === "要確認", cell(noAd, "ad"));
 }
@@ -185,17 +188,17 @@ t("リアプロ／itandi", siteLabel("realpro") === "リアプロ" && siteLabel(
 
 console.log("■ 点数の項目の一言（項目の合計＋50 と合計点が合わない時だけ・反証レビュー 2026-09-25）");
 {
-  const codes = ["RENT_OK", "ZERO_ZERO_MATCH", "FLOOR_PLAN_MATCH", "AD_HIGH"]; // 50+15+20+15+20 = 120
-  t("一致する時は何も出さない", scoreGapNote(codes, 120) === null);
-  t("保存が前の配点（案B の前の行）", scoreGapNote(codes, 110) === "今の配点では 120点", scoreGapNote(codes, 110));
+  const codes = ["RENT_OK", "ZERO_ZERO_MATCH", "FLOOR_PLAN_MATCH", "AD_HIGH"]; // 50+15+20+15+22 = 122（2026-09-30 AD2 +22）
+  t("一致する時は何も出さない", scoreGapNote(codes, 122) === null);
+  t("保存が前の配点（案B の前の行）", scoreGapNote(codes, 110) === "今の配点では 122点", scoreGapNote(codes, 110));
   const big = [...codes, "AD_1_5M", "WALK_OK", "AGE_W5", "RENT_CHEAP_W80", "SQM_OK", "AREA_STATION_MATCH", "FIT_ALL", "EQUIP_BATH_TOILET_OK", "COMMUTE_OK", "MOVE_IN_OK", "AGE_COL_W5", "AD_VERY_HIGH"];
   const gb = scoreGapNote(big, 200);
   t("上限200で丸めた時は素点を出す", gb != null && gb.startsWith("上限200（素点 "), gb);
   const cap = [...codes, "EQUIP_BATH_TOILET_NG", "EQUIP_MUST_NG_CAP"];
-  t("必須の × の上限20", scoreGapNote(cap, 20) === "必須の×で上限20（素点 110）", scoreGapNote(cap, 20));
+  t("必須の × の上限20", scoreGapNote(cap, 20) === "必須の×で上限20（素点 112）", scoreGapNote(cap, 20));
   t("札が無い古い行・点なしは出さない", scoreGapNote(null, 100) === null && scoreGapNote(codes, null) === null);
   const v = buildPickupCardView({ ...R370, reason_codes: codes, score: 110 });
-  t("カードの点数の項目に一言が付く", cell(v, "score")?.note === "今の配点では 120点", cell(v, "score"));
+  t("カードの点数の項目に一言が付く", cell(v, "score")?.note === "今の配点では 122点", cell(v, "score"));
 }
 
 console.log("■ 必須の設備が × ／読めない時も「必須」（YUMA テスト お客様E 2026-09-25）");

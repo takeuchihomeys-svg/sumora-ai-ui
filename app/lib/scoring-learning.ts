@@ -12,7 +12,7 @@
 //
 // ■ 決めたこと（動かさない所）
 //   ・AD の重みは学習で弱めない（竹内さんの方針: AD 2ヶ月以上は高く・他の約1.3倍）。上げる向きだけ許す。
-//     AD 以外の加点の札は「AD 2ヶ月の物件に付く AD の札の合計 ÷ 1.3」を超えて上げない（AD の段は判定で変わるので、呼ぶ側が judgeProperty で作って渡す）。
+//     AD 以外の加点の札は「AD 2ヶ月の物件に付く AD の札の合計 ÷ adPriorityRatio（1.45）」を超えて上げない（AD の段は判定で変わるので、呼ぶ側が judgeProperty で作って渡す）。
 //   ・外す候補の札（送付済み・家賃の大幅超え）と、材料が無いだけの札（_UNKNOWN・_UNLISTED・要確認）は学ばない
 //     （材料の欠けを学ぶと「データがある方が選ばれる」を覚えてしまう）。画像の札（IMAGE_*）は候補に材料が無いので学ばない。
 //   ・1回に動かす量は ±MAX_STEP 点まで・動かす札は MAX_CHANGES 個まで・札の向き（加点／減点）は変えない。
@@ -88,8 +88,12 @@ export const LEARNING_CONFIG = {
   learningRate: 30,
   /** 今の重みへの引き戻し（大きいほど動かない） */
   l2: 0.0002,
-  /** AD 2ヶ月以上の合計 ÷ これ ＝ AD 以外の加点の札の上限 */
-  adPriorityRatio: 1.3,
+  /**
+   * AD 2ヶ月以上の合計 ÷ これ ＝ AD 以外の加点の札の上限。
+   *   2026-09-30 AD_HIGH 20 → 22（竹内「AD1 か 2 かで売り上げは倍・他の基準よりも AD はより重要」）: 1.3 のままだと上限が 15 → 16 に上がり、
+   *   AD が強くなった分だけ他の札も上がってしまう → 1.45（floor(22÷1.45)=15・上限は今まで通り 15点）。AD2 は他の1つの加点の約1.45倍
+   */
+  adPriorityRatio: 1.45,
 } as const;
 export type LearningConfig = { [K in keyof typeof LEARNING_CONFIG]: number };
 
@@ -158,7 +162,7 @@ export function adCapOf(pointsOf: (code: string) => number, adPriorityRatio: num
 
 /**
  * その札が取ってよい範囲（今の点 from・動かす上限・向き・AD の方針）。
- *   adCap: AD 以外の加点の上限（AD 2ヶ月以上の合計 ÷ 1.3）
+ *   adCap: AD 以外の加点の上限（AD 2ヶ月以上の合計 ÷ adPriorityRatio）
  */
 export function boundsFor(code: string, from: number, cfg: Pick<LearningConfig, "maxStep">, adCap: number): { lo: number; hi: number } {
   const ad = isAdCode(code);
@@ -170,7 +174,7 @@ export function boundsFor(code: string, from: number, cfg: Pick<LearningConfig, 
   // AD は弱めない
   if (ad && from > 0) lo = Math.max(lo, from);
   if (ad && from < 0) hi = Math.min(hi, from);
-  // AD 以外の加点は「AD 2ヶ月の物件の AD の点の合計 ÷ 1.3」を超えない（今すでに超えている札は今の点まで）
+  // AD 以外の加点は「AD 2ヶ月の物件の AD の点の合計 ÷ adPriorityRatio」を超えない（今すでに超えている札は今の点まで）
   if (!ad && from > 0) hi = Math.min(hi, Math.max(from, Math.floor(adCap)));
   return { lo, hi: Math.max(lo, hi) };
 }
@@ -470,6 +474,9 @@ export function sanitizeWeights(raw: unknown, maxAbs = 60): WeightMap | null {
     if (!/^[A-Z0-9_]{2,64}$/.test(k)) return null;
     if (typeof v !== "number" || !Number.isFinite(v) || Math.abs(v) > maxAbs) return null;
     if (DROP_RULE_CODES.has(k)) continue; // 外す候補の札は版でも変えない
+    // 2026-09-30 竹内「AD は他の基準より重要」: AD の段の点は竹内さんの線（property-brain AD_TIER_POINTS）だけ。版に入っていても使わない
+    //   （学習は isFrozenCode で提案しない。手で作った版・古い版に AD の札があっても AD の点を上書きさせない）
+    if (isAdCode(k)) continue;
     out[k] = Math.round(v);
   }
   return out;

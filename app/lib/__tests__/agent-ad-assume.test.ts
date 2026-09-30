@@ -3,7 +3,7 @@
 // 実行: npx tsx app/lib/__tests__/agent-ad-assume.test.ts
 // 資料の文字・説明文は property_pickups #621（Luxe難波南 204・リアプロ）の実物（元付業者のページの末尾）。お客様の情報は無い
 import { assumedAdAgentOf, assumedAdStamp, assumedAdSummaryLine, assumedAdAgentInLine } from "../agent-ad-assume";
-import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyAdRulesToRow, reasonPoints, reasonJa, HOLD_REASON_CODES, ngHitCodes } from "../property-brain";
+import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyAdRulesToRow, reasonPoints, reasonJa, HOLD_REASON_CODES, ngHitCodes, AD_TIER_POINTS } from "../property-brain";
 import { listingAdStamp, listingAdText, splitAdStamp } from "../pickup-listing-text";
 import { parseAdFromText } from "../property-pickups";
 
@@ -42,7 +42,7 @@ console.log("■ 判定（説明文にみなしの行を足す → 2ヶ月の段
   t("読み: 2ヶ月・みなした元付業者", f.adMonths === 2 && f.adAssumedBy === "アズ・スタット", f);
   const plain = judgeProperty(parsePropertyFacts(AZ_SUMMARY), p);
   const az = judgeProperty(f, p);
-  t("AD 不明（0点）→ 200%（AD_HIGH +20）・通すのまま", plain.reasonCodes.includes("AD_UNKNOWN") && az.reasonCodes.includes("AD_HIGH") && az.reasonCodes.includes("AD_ASSUMED_AGENT") && az.score - plain.score === 20 && az.verdict === "pass", [plain.score, az.score, az.reasonCodes]);
+  t("AD 不明（0点）→ 200%（AD_HIGH +22・2026-09-30 の表）・通すのまま", plain.reasonCodes.includes("AD_UNKNOWN") && az.reasonCodes.includes("AD_HIGH") && az.reasonCodes.includes("AD_ASSUMED_AGENT") && az.score - plain.score === AD_TIER_POINTS.AD_HIGH && AD_TIER_POINTS.AD_HIGH === 22 && az.verdict === "pass", [plain.score, az.score, az.reasonCodes]);
   t("印は 0点・日本語で分かる", reasonPoints("AD_ASSUMED_AGENT") === 0 && /アズ・スタット/.test(reasonJa("AD_ASSUMED_AGENT")) && az.reasonsJa.some((x) => /アズ・スタット/.test(x)));
   const written = parsePropertyFacts(`${AZ_SUMMARY}\nAD 1ヶ月`);
   t("ふつうの「AD 1ヶ月」の行はみなしの印を付けない", written.adAssumedBy === undefined && written.adMonths === 1);
@@ -55,8 +55,9 @@ console.log("■ AD 1ヶ月未満は点数をかなり落とす（通す→保�
   const half = judgeProperty(parsePropertyFacts(`${AZ_SUMMARY}\nAD 0.5ヶ月`), p);
   const none = judgeProperty(parsePropertyFacts(`${AZ_SUMMARY}\nAD なし`), p);
   const unknown = judgeProperty(parsePropertyFacts(AZ_SUMMARY), p);
-  t("AD 0.5ヶ月: −15・保留", half.reasonCodes.includes("AD_UNDER_1M") && reasonPoints("AD_UNDER_1M") === -15 && half.verdict === "hold", half.reasonCodes);
-  t("AD なし: −20・保留（0.5ヶ月より下）", none.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -20 && none.verdict === "hold" && none.score < half.score, [none.score, half.score]);
+  // 2026-09-30 竹内「AD1 未満は他に物件ある場合はお客さんに出さないレベル」: −15 → −30（AD1 が 0点になった分、AD1 との差 30 を保つ）
+  t("AD 0.5ヶ月: −30・保留", half.reasonCodes.includes("AD_UNDER_1M") && reasonPoints("AD_UNDER_1M") === -30 && half.verdict === "hold", half.reasonCodes);
+  t("AD なし: −35・保留（0.5ヶ月より下）", none.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -35 && none.verdict === "hold" && none.score < half.score, [none.score, half.score]);
   t("AD 1ヶ月（通す）との差は 30点以上", one.verdict === "pass" && one.score - half.score >= 30, [one.score, half.score]);
   t("AD 不明（記載なし・読めない）は今まで通り 0点・保留にしない", unknown.reasonCodes.includes("AD_UNKNOWN") && unknown.verdict === "pass");
   t("保留の理由の表に入った", HOLD_REASON_CODES.has("AD_UNDER_1M") && HOLD_REASON_CODES.has("AD_NONE"));
@@ -68,13 +69,13 @@ console.log("■ 保存済みの行に当てる（applyAdRulesToRow）");
   // #621 の実物の札（AD 不明・通す 164）
   const r621 = { reason_codes: ["RENT_OK", "RENT_ABOVE_USUAL", "ZERO_ZERO", "FLOOR_PLAN_MATCH", "WALK_OK", "BUILDING_AGE_OK", "AD_UNKNOWN", "EQUIP_BATH_TOILET_MUST_OK", "AREA_WARD_MATCH", "SEARCH_PINPOINT", "FIT_ALL"], score: 164, verdict: "pass", pdf_text: AZ_PDF };
   const a = applyAdRulesToRow(r621);
-  t("#621 アズ・スタット: 164 → 184（AD 200% +20）・通すのまま", !!a && a.change === "assumed_agent" && a.score === 184 && a.verdict === "pass" && a.reason_codes.includes("AD_HIGH") && !a.reason_codes.includes("AD_UNKNOWN"), a);
+  t("#621 アズ・スタット: 164 → 186（AD 200% +22）・通すのまま", !!a && a.change === "assumed_agent" && a.score === 186 && a.verdict === "pass" && a.reason_codes.includes("AD_HIGH") && !a.reason_codes.includes("AD_UNKNOWN"), a);
   t("元付業者が違えば当てない", applyAdRulesToRow({ ...r621, pdf_text: "株式会社エイブル\nA D" }) === null);
   // AD 0.5ヶ月の通す行（前の決まりで −8・全部合う +15・ピンポイント +10）
   const low = { reason_codes: ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK", "AD_UNDER_1M", "SEARCH_PINPOINT", "FIT_ALL"], score: 140, verdict: "pass" };
   const b = applyAdRulesToRow(low)!;
-  // 140 − 7（−8→−15）− 15（全部合う）− 10（ピンポイントが 0点）＝ 108・保留
-  t("AD 0.5ヶ月の通す行: 140 → 108・保留（全部合う・ピンポイントが 0点）", b.change === "low_ad" && b.score === 108 && b.verdict === "hold" && b.reason_codes.includes("SEARCH_PINPOINT_HELD") && !b.reason_codes.includes("FIT_ALL"), b);
+  // 140 − 22（−8→−30・2026-09-30 の表）− 15（全部合う）− 10（ピンポイントが 0点）＝ 93・保留（9/27 の付け直しの時は −15 で 108）
+  t("AD 0.5ヶ月の通す行: 140 → 93・保留（全部合う・ピンポイントが 0点）", b.change === "low_ad" && b.score === 93 && b.verdict === "hold" && b.reason_codes.includes("SEARCH_PINPOINT_HELD") && !b.reason_codes.includes("FIT_ALL"), b);
   t("当たらない行は null", applyAdRulesToRow({ reason_codes: ["RENT_OK", "AD_HIGH"], score: 150, verdict: "pass" }) === null);
 }
 

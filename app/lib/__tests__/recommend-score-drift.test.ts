@@ -36,7 +36,7 @@ console.log("■ 札 → 条件の種類・状態");
   t("広げた幅の中は中（RENT_WIDE・AREA_STATION_WIDE）", codeState("RENT_WIDE") === "mid" && codeState("AREA_STATION_WIDE") === "mid");
   t("0点でも名前で読む（BUILDING_AGE_TEXT_OK は ok・BUILDING_AGE_TEXT_OVER は ng）", codeState("BUILDING_AGE_TEXT_OK") === "ok" && codeState("BUILDING_AGE_TEXT_OVER") === "ng");
   const f = familiesOf(LEON_503);
-  t("実物: レオンコンフォート 503 の AD は ok・20点（アズ・スタットのみなし 0点＋2ヶ月以上 20点）", f.ad?.state === "ok" && f.ad.points === 20, JSON.stringify(f.ad));
+  t("実物: レオンコンフォート 503 の AD は ok・22点（アズ・スタットのみなし 0点＋2ヶ月以上 22点・2026-09-30 の表）", f.ad?.state === "ok" && f.ad.points === 22, JSON.stringify(f.ad));
   t("実物: 全部合う（FIT_ALL）・ピンポイント・送付済みは条件の種類に数えない", !("fit" in f) && !("pinpoint" in f));
   const g = familiesOf(TOJIMA_0405);
   t("実物: 都島北通り 0405 は家賃 ng（幅の中＋いつもより高い）・初期費用 ng・AD は中で 0点（保留）",

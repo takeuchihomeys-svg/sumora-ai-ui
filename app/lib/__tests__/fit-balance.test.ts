@@ -53,32 +53,37 @@ const W_EKICHIKA: WrittenWants = { ...W_FULL, walkText: { max: 10, strength: "no
 const FULL = ["RENT_OK", "ZERO_ZERO_MATCH", "FLOOR_PLAN_MATCH", "WALK_OK", "BUILDING_AGE_TEXT_OK", "AREA_STATION_MATCH", "EQUIP_BATH_TOILET_OK", "MOVE_IN_OK"];
 const swap = (from: string, to: string) => FULL.map((c) => (c === from ? to : c));
 type Ex = { id: string; say: string; w: WrittenWants; hi: Cand; lo: Cand; want: ">" | ">=" | "~<="; b: [number, number] };
+// 2026-09-30 竹内「AD1 で加点高すぎる。AD1 の加点は 0 くらいで、AD1.5 がプラス 10 点、AD2 がプラス 22 点等…
+//   AD1 か 2 かで売り上げは倍に変わるので、他の基準よりも AD はより重要」（property-brain AD_TIER_POINTS）で向きが変わった例:
+//   a1〜a4（全部合う AD1 と、書いた条件が1つ外れた AD2）… 旧は AD1 が 15〜20点上 → 今は同じくらい（差 3点以内）
+//   a5・f1・g1・i（AD が半段〜2段上の物件と、書いた条件の段が少し良い AD1）… 旧は AD1 が上 → 今は AD の高い方が上
+//   点（b）は今の表の点。旧の点は b_old（9/25 案B の audit の数字）
 const EXAMPLES: Ex[] = [
-  { id: "a1", say: "(a) 全条件一致・AD 1ヶ月 ＞ 築浅の希望だけ外れ（築18年）・AD 2ヶ月", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("築18 AD2", swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER"), 2, { age: 18 }), want: ">", b: [166, 150] },
-  { id: "a2", say: "(a) 全条件一致・AD 1ヶ月 ＞ 徒歩だけ少し超え（14分）・AD 2ヶ月", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("徒歩14 AD2", swap("WALK_OK", "WALK_SLIGHTLY_OVER"), 2, { walk: 14 }), want: ">", b: [166, 146] },
-  { id: "a3", say: "(a) 全条件一致・AD 1ヶ月 ＞ エリアだけ離れ（4km超）・AD 2ヶ月", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("エリア外れ AD2", swap("AREA_STATION_MATCH", "AREA_FAR"), 2), want: ">", b: [166, 148] },
-  { id: "a4", say: "(a) 全条件一致・AD 1ヶ月 ＞ 家賃だけ少し超え（上限＋1万円以内・幅の外）・AD 2ヶ月", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("家賃少し超え AD2", swap("RENT_OK", "RENT_SLIGHTLY_OVER"), 2, { rentRatio: 1.08 }), want: ">", b: [166, 146] },
-  { id: "a5", say: "(a) 全条件一致・AD 1ヶ月 ＞ 築浅外れ・AD 3ヶ月＋フリーレント（野口さんの形）", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("築18 AD3 FR", [...swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER"), "FREE_RENT_MATCH"], 3, { age: 18 }), want: ">", b: [166, 153] },
-  { id: "b", say: "(b) 全条件一致・AD 2ヶ月 ＞ 全条件一致・AD 1ヶ月（利益）", w: W_FULL, hi: mk("全一致 AD2", FULL, 2), lo: mk("全一致 AD1", FULL, 1), want: ">", b: [171, 166] },
-  { id: "b2", say: "(b) 全条件一致・AD 1.5ヶ月 ＞ 全条件一致・AD 1ヶ月", w: W_FULL, hi: mk("全一致 AD1.5", FULL, 1.5), lo: mk("全一致 AD1", FULL, 1), want: ">", b: [168, 166] },
-  { id: "c1", say: "(c) 築浅だけ外れ・AD 1ヶ月 ≧ 全条件一致・AD 0.5ヶ月（同じくらいか下）", w: W_FULL, hi: mk("築18 AD1", swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER"), 1, { age: 18 }), lo: mk("全一致 AD0.5", FULL, 0.5), want: "~<=", b: [145, 121] }, // 2026-09-27 AD 1ヶ月未満は保留（−15・全部合うなし）
-  { id: "c2", say: "(c) 徒歩だけ少し超え・AD 1ヶ月 ≧ 全条件一致・AD 0.5ヶ月（同じくらいか下）", w: W_FULL, hi: mk("徒歩14 AD1", swap("WALK_OK", "WALK_SLIGHTLY_OVER"), 1, { walk: 14 }), lo: mk("全一致 AD0.5", FULL, 0.5), want: "~<=", b: [141, 121] },
-  { id: "c3", say: "(c) 隣の駅（幅の内側）・AD 1ヶ月 ≧ 全条件一致・AD 0.5ヶ月", w: W_FULL, hi: mk("隣の駅 AD1", swap("AREA_STATION_MATCH", "AREA_STATION_WIDE"), 1), lo: mk("全一致 AD0.5", FULL, 0.5), want: "~<=", b: [164, 121] },
-  { id: "d", say: "(d) 必須のオートロック × ・AD 3ヶ月 は 全条件一致・AD なし より下", w: W_FULL, hi: mk("全一致 ADなし", FULL, 0), lo: mk("必須× AD3", [...FULL, "EQUIP_AUTOLOCK_NG", EQUIP_CAP_CODE], 3), want: ">", b: [116, 20] }, // 2026-09-27 AD なしは保留（−20・全部合うなし）
-  { id: "d2", say: "(d) 家賃1割超え（保留）・AD 3ヶ月 は 全条件一致・AD 1未満 より下", w: W_FULL, hi: mk("全一致 AD0.5", FULL, 0.5), lo: mk("家賃超え AD3", swap("RENT_OK", "RENT_OVER_110"), 3), want: ">", b: [121, 101] },
-  { id: "e", say: "(e) AD 順: AD 1ヶ月未満 ＞ AD なし（同じ物件）", w: W_FULL, hi: mk("AD0.5", FULL, 0.5), lo: mk("ADなし", FULL, 0), want: ">=", b: [121, 116] },
-  { id: "e2", say: "(e) AD 順: AD 1ヶ月 ＞ AD 1ヶ月未満（同じ物件）", w: W_FULL, hi: mk("AD1", FULL, 1), lo: mk("AD0.5", FULL, 0.5), want: ">", b: [166, 121] },
-  { id: "e3", say: "(e) AD 不明（読めない）は下げない: AD 不明 ＞ AD 1ヶ月未満", w: W_FULL, hi: mk("AD不明", FULL, null), lo: mk("AD0.5", FULL, 0.5), want: ">", b: [151, 121] },
-  { id: "f1", say: "(f) 築浅を書いた人: 築5年・AD 1ヶ月 ＞ 築9年・AD 1.5ヶ月（段で新しい方）", w: W_FULL, hi: mk("築5 AD1", FULL, 1, { age: 5 }), lo: mk("築9 AD1.5", FULL, 1.5, { age: 9 }), want: ">", b: [170, 168] },
-  { id: "f2", say: "(f) 築年を書いていない人: 築18年・AD 2ヶ月 ＞ 築5年・AD 1ヶ月（書いていない条件で AD を覆さない）", w: W_PLAIN, hi: mk("築18 AD2", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK"], 2, { age: 18 }), lo: mk("築5 AD1", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK"], 1, { age: 5 }), want: ">", b: [125, 123] },
-  { id: "g1", say: "(g) 家賃を低くしたい人: 上限の0.8・AD 1ヶ月 ＞ 上限の0.98・AD 1.5ヶ月", w: W_CHEAP, hi: mk("0.8 AD1", FULL, 1, { rentRatio: 0.8 }), lo: mk("0.98 AD1.5", FULL, 1.5, { rentRatio: 0.98 }), want: ">", b: [174, 168] },
-  { id: "g2", say: "(g) 家賃を書いていない人: 上限の0.98・AD 1.5ヶ月 ＞ 上限の0.8・AD 1ヶ月", w: W_FULL, hi: mk("0.98 AD1.5", FULL, 1.5, { rentRatio: 0.98 }), lo: mk("0.8 AD1", FULL, 1, { rentRatio: 0.8 }), want: ">", b: [168, 166] },
-  { id: "h1", say: "(h) 敷礼0を書いた人: 敷礼0・AD 1ヶ月 ＞ 敷礼あり（保留）・AD 2ヶ月", w: W_FULL, hi: mk("敷礼0 AD1", FULL, 1), lo: mk("敷礼あり AD2", swap("ZERO_ZERO_MATCH", "INITIAL_COST_NOT_ZERO"), 2), want: ">", b: [166, 101] },
-  { id: "h2", say: "(h) 敷礼0を書いていない人: 敷礼あり・AD 2ヶ月 ≧ 敷礼0・AD 1ヶ月（AD の差が勝つか同じくらい）", w: W_PLAIN, hi: mk("敷礼あり AD2", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK"], 2), lo: mk("敷礼0 AD1", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK", "ZERO_ZERO"], 1), want: "~<=", b: [126, 129] },
-  { id: "i", say: "(i) 駅近を書いた人: 徒歩3分・AD 1ヶ月 ＞ 徒歩9分・AD 1.5ヶ月", w: W_EKICHIKA, hi: mk("徒歩3 AD1", FULL, 1, { walk: 3 }), lo: mk("徒歩9 AD1.5", FULL, 1.5, { walk: 9 }), want: ">", b: [171, 168] },
-  { id: "i2", say: "(i) 駅近を書いていない人: 徒歩9分・AD 1.5ヶ月 ＞ 徒歩3分・AD 1ヶ月", w: W_FULL, hi: mk("徒歩9 AD1.5", FULL, 1.5, { walk: 9 }), lo: mk("徒歩3 AD1", FULL, 1, { walk: 3 }), want: ">", b: [168, 166] },
-  { id: "j", say: "(j) 設備: 必須の設備○・AD 1ヶ月 と 普通の設備○だけ・AD 1ヶ月 → 必須の方が上", w: W_FULL, hi: mk("必須○", [...FULL, "EQUIP_AUTOLOCK_MUST_OK"], 1), lo: mk("普通○のみ", FULL, 1), want: ">", b: [171, 166] },
-  { id: "k", say: "(k) 隣の駅だから大幅に下げない: 希望の駅・AD 1ヶ月 と 隣の駅・AD 1ヶ月 の差が 5点以内", w: W_FULL, hi: mk("希望の駅 AD1", FULL, 1), lo: mk("隣の駅 AD1", swap("AREA_STATION_MATCH", "AREA_STATION_WIDE"), 1), want: "~<=", b: [166, 164] },
+  { id: "a1", say: "(a) 全条件一致・AD 1ヶ月 ≒ 築浅の希望だけ外れ（築18年）・AD 2ヶ月（旧は AD1 が上）", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("築18 AD2", swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER"), 2, { age: 18 }), want: "~<=", b: [151, 152] }, // b_old 166/150
+  { id: "a2", say: "(a) 全条件一致・AD 1ヶ月 ≒ 徒歩だけ少し超え（14分）・AD 2ヶ月（旧は AD1 が上）", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("徒歩14 AD2", swap("WALK_OK", "WALK_SLIGHTLY_OVER"), 2, { walk: 14 }), want: "~<=", b: [151, 148] }, // b_old 166/146
+  { id: "a3", say: "(a) 全条件一致・AD 1ヶ月 ≒ エリアだけ離れ（4km超）・AD 2ヶ月（旧は AD1 が上）", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("エリア外れ AD2", swap("AREA_STATION_MATCH", "AREA_FAR"), 2), want: "~<=", b: [151, 150] }, // b_old 166/148
+  { id: "a4", say: "(a) 全条件一致・AD 1ヶ月 ≒ 家賃だけ少し超え（上限＋1万円以内・幅の外）・AD 2ヶ月（旧は AD1 が上）", w: W_FULL, hi: mk("全一致 AD1", FULL, 1), lo: mk("家賃少し超え AD2", swap("RENT_OK", "RENT_SLIGHTLY_OVER"), 2, { rentRatio: 1.08 }), want: "~<=", b: [151, 148] }, // b_old 166/146
+  { id: "a5", say: "(a) 築浅外れ・AD 3ヶ月＋フリーレント（野口さんの形）＞ 全条件一致・AD 1ヶ月（旧は逆）", w: W_FULL, hi: mk("築18 AD3 FR", [...swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER"), "FREE_RENT_MATCH"], 3, { age: 18 }), lo: mk("全一致 AD1", FULL, 1), want: ">", b: [161, 151] }, // b_old 153/166
+  { id: "b", say: "(b) 全条件一致・AD 2ヶ月 ＞ 全条件一致・AD 1ヶ月（利益・差 22）", w: W_FULL, hi: mk("全一致 AD2", FULL, 2), lo: mk("全一致 AD1", FULL, 1), want: ">", b: [173, 151] }, // b_old 171/166
+  { id: "b2", say: "(b) 全条件一致・AD 1.5ヶ月 ＞ 全条件一致・AD 1ヶ月（差 10）", w: W_FULL, hi: mk("全一致 AD1.5", FULL, 1.5), lo: mk("全一致 AD1", FULL, 1), want: ">", b: [161, 151] }, // b_old 168/166
+  { id: "c1", say: "(c) 築浅だけ外れ・AD 1ヶ月 ≧ 全条件一致・AD 0.5ヶ月（同じくらいか下）", w: W_FULL, hi: mk("築18 AD1", swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER"), 1, { age: 18 }), lo: mk("全一致 AD0.5", FULL, 0.5), want: "~<=", b: [130, 106] }, // 2026-09-27 AD 1ヶ月未満は保留（2026-09-30 −30・全部合うなし）
+  { id: "c2", say: "(c) 徒歩だけ少し超え・AD 1ヶ月 ≧ 全条件一致・AD 0.5ヶ月（同じくらいか下）", w: W_FULL, hi: mk("徒歩14 AD1", swap("WALK_OK", "WALK_SLIGHTLY_OVER"), 1, { walk: 14 }), lo: mk("全一致 AD0.5", FULL, 0.5), want: "~<=", b: [126, 106] },
+  { id: "c3", say: "(c) 隣の駅（幅の内側）・AD 1ヶ月 ≧ 全条件一致・AD 0.5ヶ月", w: W_FULL, hi: mk("隣の駅 AD1", swap("AREA_STATION_MATCH", "AREA_STATION_WIDE"), 1), lo: mk("全一致 AD0.5", FULL, 0.5), want: "~<=", b: [149, 106] },
+  { id: "d", say: "(d) 必須のオートロック × ・AD 3ヶ月 は 全条件一致・AD なし より下", w: W_FULL, hi: mk("全一致 ADなし", FULL, 0), lo: mk("必須× AD3", [...FULL, "EQUIP_AUTOLOCK_NG", EQUIP_CAP_CODE], 3), want: ">", b: [101, 20] }, // 2026-09-27 AD なしは保留（2026-09-30 −35・全部合うなし）
+  { id: "d2", say: "(d) 家賃1割超え（保留）・AD 3ヶ月 は 全条件一致・AD 1未満 より下", w: W_FULL, hi: mk("全一致 AD0.5", FULL, 0.5), lo: mk("家賃超え AD3", swap("RENT_OK", "RENT_OVER_110"), 3), want: ">", b: [106, 101] },
+  { id: "e", say: "(e) AD 順: AD 1ヶ月未満 ＞ AD なし（同じ物件）", w: W_FULL, hi: mk("AD0.5", FULL, 0.5), lo: mk("ADなし", FULL, 0), want: ">=", b: [106, 101] },
+  { id: "e2", say: "(e) AD 順: AD 1ヶ月 ＞ AD 1ヶ月未満（同じ物件）", w: W_FULL, hi: mk("AD1", FULL, 1), lo: mk("AD0.5", FULL, 0.5), want: ">", b: [151, 106] },
+  { id: "e3", say: "(e) AD 不明（読めない）は下げない: AD 不明（＝AD1 と同じ 0点）＞ AD 1ヶ月未満", w: W_FULL, hi: mk("AD不明", FULL, null), lo: mk("AD0.5", FULL, 0.5), want: ">", b: [151, 106] },
+  { id: "f1", say: "(f) 築浅を書いた人: 築9年・AD 1.5ヶ月 ＞ 築5年・AD 1ヶ月（旧は築の段で新しい方が上）", w: W_FULL, hi: mk("築9 AD1.5", FULL, 1.5, { age: 9 }), lo: mk("築5 AD1", FULL, 1, { age: 5 }), want: ">", b: [161, 155] }, // b_old 168/170
+  { id: "f2", say: "(f) 築年を書いていない人: 築18年・AD 2ヶ月 ＞ 築5年・AD 1ヶ月（書いていない条件で AD を覆さない）", w: W_PLAIN, hi: mk("築18 AD2", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK"], 2, { age: 18 }), lo: mk("築5 AD1", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK"], 1, { age: 5 }), want: ">", b: [127, 108] },
+  { id: "g1", say: "(g) 家賃を低くしたい人: 上限の0.98・AD 1.5ヶ月 ＞ 上限の0.8・AD 1ヶ月（旧は安い方が上）", w: W_CHEAP, hi: mk("0.98 AD1.5", FULL, 1.5, { rentRatio: 0.98 }), lo: mk("0.8 AD1", FULL, 1, { rentRatio: 0.8 }), want: ">", b: [161, 159] }, // b_old 168/174
+  { id: "g2", say: "(g) 家賃を書いていない人: 上限の0.98・AD 1.5ヶ月 ＞ 上限の0.8・AD 1ヶ月", w: W_FULL, hi: mk("0.98 AD1.5", FULL, 1.5, { rentRatio: 0.98 }), lo: mk("0.8 AD1", FULL, 1, { rentRatio: 0.8 }), want: ">", b: [161, 151] },
+  { id: "h1", say: "(h) 敷礼0を書いた人: 敷礼0・AD 1ヶ月 ＞ 敷礼あり（保留）・AD 2ヶ月", w: W_FULL, hi: mk("敷礼0 AD1", FULL, 1), lo: mk("敷礼あり AD2", swap("ZERO_ZERO_MATCH", "INITIAL_COST_NOT_ZERO"), 2), want: ">", b: [151, 101] },
+  { id: "h2", say: "(h) 敷礼0を書いていない人: 敷礼あり・AD 2ヶ月 ＞ 敷礼0・AD 1ヶ月（AD の差が勝つ）", w: W_PLAIN, hi: mk("敷礼あり AD2", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK"], 2), lo: mk("敷礼0 AD1", ["RENT_OK", "FLOOR_PLAN_MATCH", "WALK_OK", "ZERO_ZERO"], 1), want: ">", b: [128, 114] }, // b_old 126/129
+  { id: "i", say: "(i) 駅近を書いた人: 徒歩9分・AD 1.5ヶ月 ＞ 徒歩3分・AD 1ヶ月（旧は近い方が上）", w: W_EKICHIKA, hi: mk("徒歩9 AD1.5", FULL, 1.5, { walk: 9 }), lo: mk("徒歩3 AD1", FULL, 1, { walk: 3 }), want: ">", b: [161, 156] }, // b_old 168/171
+  { id: "i2", say: "(i) 駅近を書いていない人: 徒歩9分・AD 1.5ヶ月 ＞ 徒歩3分・AD 1ヶ月", w: W_FULL, hi: mk("徒歩9 AD1.5", FULL, 1.5, { walk: 9 }), lo: mk("徒歩3 AD1", FULL, 1, { walk: 3 }), want: ">", b: [161, 151] },
+  { id: "j", say: "(j) 設備: 必須の設備○・AD 1ヶ月 と 普通の設備○だけ・AD 1ヶ月 → 必須の方が上", w: W_FULL, hi: mk("必須○", [...FULL, "EQUIP_AUTOLOCK_MUST_OK"], 1), lo: mk("普通○のみ", FULL, 1), want: ">", b: [156, 151] },
+  { id: "k", say: "(k) 隣の駅だから大幅に下げない: 希望の駅・AD 1ヶ月 と 隣の駅・AD 1ヶ月 の差が 5点以内", w: W_FULL, hi: mk("希望の駅 AD1", FULL, 1), lo: mk("隣の駅 AD1", swap("AREA_STATION_MATCH", "AREA_STATION_WIDE"), 1), want: "~<=", b: [151, 149] },
 ];
 
 console.log("■ 例の25問（案B・本番の純関数で点を出す）");
@@ -87,7 +92,7 @@ for (const ex of EXAMPLES) {
   const a = score(ex.hi, ex.w), b = score(ex.lo, ex.w);
   const ok = ex.want === ">" ? a.score > b.score : ex.want === ">=" ? a.score >= b.score : ex.id === "k" ? a.score - b.score <= 5 : a.score >= b.score - 5;
   t(`${ex.id} ${ex.say}: ${a.score} vs ${b.score}`, ok, { hi: a.codes, lo: b.codes });
-  t(`${ex.id} 点が audit の案B と同じ（${ex.b[0]} vs ${ex.b[1]}）`, a.score === ex.b[0] && b.score === ex.b[1], { got: [a.score, b.score], hi: a.codes, lo: b.codes });
+  t(`${ex.id} 点が今の表の点（${ex.b[0]} vs ${ex.b[1]}）`, a.score === ex.b[0] && b.score === ex.b[1], { got: [a.score, b.score], hi: a.codes, lo: b.codes });
 }
 
 console.log("■ 札の点（案B の数字）");
@@ -103,7 +108,8 @@ console.log("■ 札の点（案B の数字）");
   t("設備 ○ 必須 +5・普通 +3・できれば +2", reasonPoints("EQUIP_AUTOLOCK_MUST_OK") === 5 && reasonPoints("EQUIP_AUTOLOCK_OK") === 3 && reasonPoints("EQUIP_AUTOLOCK_SOFT_OK") === 2);
   t("全部合う +15（半分 +8）・1つだけ外れ +5（半分 +3）", P.FIT_ALL === 15 && P.FIT_ALL_HALF === 8 && P.FIT_ONE_MISS === 5 && P.FIT_ONE_MISS_HALF === 3);
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」: AD なし −10→−20・1ヶ月未満 −8→−15（どちらも保留）
-  t("AD なし −20・1ヶ月未満 −15・不明 0・1ヶ月 +15・1.5ヶ月 +17・2ヶ月 +20", P.AD_NONE === -20 && P.AD_UNDER_1M === -15 && P.AD_UNKNOWN === 0 && P.AD_1M === 15 && P.AD_1M + P.AD_1_5M === 17 && P.AD_HIGH === 20);
+  // 2026-09-30 竹内「AD1 の加点は 0 くらいで、AD1.5 がプラス 10 点、AD2 がプラス 22 点等」: AD なし −35・1ヶ月未満 −30（AD1 との差を保つ）
+  t("AD なし −35・1ヶ月未満 −30・不明 0・1ヶ月 0・1.5ヶ月 +10・2ヶ月 +22・2.5ヶ月 +25・3ヶ月 +28", P.AD_NONE === -35 && P.AD_UNDER_1M === -30 && P.AD_UNKNOWN === 0 && P.AD_1M === 0 && P.AD_1M + P.AD_1_5M === 10 && P.AD_HIGH === 22 && P.AD_HIGH + P.AD_2_5M === 25 && P.AD_HIGH + P.AD_2_5M + P.AD_VERY_HIGH === 28);
   const NEW = Object.keys(P).filter((c) => /^(?:AGE_|WALK_NEAR|WALK_TEXT|RENT_CHEAP|FIT_|AD_UNDER_1M|ZERO_ZERO_INFERRED)/.test(c));
   t(`新しい札は全部 日本語がある（${NEW.length}札）`, NEW.every((c) => reasonJa(c) !== c), NEW.filter((c) => reasonJa(c) === c));
   // 2026-09-27 AD 1ヶ月未満（AD_UNDER_1M）だけは保留にした（竹内「点数かなり落とす」）
@@ -182,7 +188,7 @@ const sum50 = (codes: string[]) => BASE_SCORE + codes.reduce((a, c) => a + reaso
   t("徒歩の列が空・駅近を書いた人: 徒歩6分 → WALK_NEAR_W7＋WALK_TEXT_OK", d2.reasonCodes.includes("WALK_NEAR_W7") && d2.reasonCodes.includes("WALK_TEXT_OK"), d2.reasonCodes);
 
   const e = J("【6】F 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD なし", plain);
-  t("AD なし −20・保留（割引との比べは付けない）", e.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -20 && e.verdict === "hold", e.reasonCodes);
+  t("AD なし −35・保留（割引との比べは付けない）", e.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -35 && e.verdict === "hold", e.reasonCodes);
   const f = J("【7】G 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD 0.5ヶ月", plain, {}, []);
   // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 割引との比べ（PROFIT_NEGATIVE）は付けない → 家賃があっても AD_UNDER_1M −8（保留にしない）
   t("AD 0.5ヶ月・家賃あり → AD_UNDER_1M −15・保留（割引との比べは付けない）", f.reasonCodes.includes("AD_UNDER_1M") && !f.reasonCodes.includes("PROFIT_NEGATIVE") && f.verdict === "hold", f.reasonCodes);
@@ -277,17 +283,19 @@ console.log("■ 例題: ピンポイントの加点（SEARCH_PINPOINT）");
   const AGE_MISS = swap("BUILDING_AGE_TEXT_OK", "BUILDING_AGE_TEXT_OVER");
   const WALK_MISS = swap("WALK_OK", "WALK_SLIGHTLY_OVER");
   const PX: Array<{ id: string; say: string; hi: Cand; lo: Cand; b: [number, number] }> = [
-    { id: "PP1", say: "札も AD も同じなら ピンポイント ＞ 広げて", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("全一致 AD1", FULL, 1), b: [176, 166] },
-    { id: "PP2", say: "ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 1ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD1", NEAR, 1), b: [176, 164] },
-    { id: "PP3", say: "ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 1.5ヶ月（加点の前は同点）", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD1.5", NEAR, 1.5), b: [176, 166] },
-    { id: "PP4", say: "同じくらい（加点の前の差 3点）なら ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 2ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD2", NEAR, 2), b: [176, 169] },
-    { id: "PN1", say: "条件にずっと合う広げては下げない: 広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 築浅外れ・AD 1ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("築18 AD1", AGE_MISS, 1, { age: 18 })), b: [164, 155] },
-    { id: "PN2", say: "広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 徒歩少し超え・AD 2ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("徒歩14 AD2", WALK_MISS, 2, { walk: 14 })), b: [164, 156] },
-    { id: "PN3", say: "広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 築浅外れ・AD 2ヶ月（一番きわどい・差 4点）", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("築18 AD2", AGE_MISS, 2, { age: 18 })), b: [164, 160] },
-    { id: "PN4", say: "AD 1ヶ月未満はおすすめしにくい: 広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 全一致・AD 0.5ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("全一致 AD0.5", FULL, 0.5)), b: [164, 131] },
-    { id: "PN5", say: "広げて 隣の駅＋家賃の幅・AD 2ヶ月 ＞ ピンポイント 築浅外れ・AD 1ヶ月", hi: mk("隣の駅+家賃幅 AD2", NEAR_RENT, 2), lo: pin(mk("築18 AD1", AGE_MISS, 1, { age: 18 })), b: [164, 155] },
-    { id: "PN6", say: "保留のピンポイントは加点しない: 広げて 隣の駅・AD 0.5ヶ月（2026-09-27 から保留）＞ ピンポイント 家賃1割超え・AD 3ヶ月（保留）", hi: mk("隣の駅 AD0.5", NEAR, 0.5), lo: pin(mk("家賃超え AD3", swap("RENT_OK", "RENT_OVER_110"), 3)), b: [119, 101] },
-    { id: "REF", say: "（決めた向き）札が全部同じ: ピンポイント AD 1ヶ月 ＞ 広げて AD 2ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("全一致 AD2", FULL, 2), b: [176, 171] },
+    // 2026-09-30 AD の表（AD1 0・AD1.5 +10・AD2 +22）: AD1 → AD2 の差 22 がピンポイント +10 より大きくなり、PP4・PN2・PN3・REF の向きが変わった
+    //   （竹内「AD1 か 2 かで売り上げは倍…他の基準よりも AD はより重要」＝ピンポイントの加点で AD2 を AD1 の下にしない）。点は今の表（旧の点は b_old）
+    { id: "PP1", say: "札も AD も同じなら ピンポイント ＞ 広げて", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("全一致 AD1", FULL, 1), b: [161, 151] }, // b_old 176/166
+    { id: "PP2", say: "ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 1ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD1", NEAR, 1), b: [161, 149] }, // b_old 176/164
+    { id: "PP3", say: "ピンポイント 全一致・AD 1ヶ月 ＞ 広げて 隣の駅・AD 1.5ヶ月", hi: pin(mk("全一致 AD1", FULL, 1)), lo: mk("隣の駅 AD1.5", NEAR, 1.5), b: [161, 159] }, // b_old 176/166
+    { id: "PP4", say: "広げて 隣の駅・AD 2ヶ月 ＞ ピンポイント 全一致・AD 1ヶ月（2026-09-30 から・旧は逆）", hi: mk("隣の駅 AD2", NEAR, 2), lo: pin(mk("全一致 AD1", FULL, 1)), b: [171, 161] }, // b_old 169/176
+    { id: "PN1", say: "条件にずっと合う広げては下げない: 広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 築浅外れ・AD 1ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("築18 AD1", AGE_MISS, 1, { age: 18 })), b: [149, 140] }, // b_old 164/155
+    { id: "PN2", say: "ピンポイント 徒歩少し超え・AD 2ヶ月 ＞ 広げて 隣の駅・AD 1ヶ月（2026-09-30 から・旧は逆）", hi: pin(mk("徒歩14 AD2", WALK_MISS, 2, { walk: 14 })), lo: mk("隣の駅 AD1", NEAR, 1), b: [158, 149] }, // b_old 156/164
+    { id: "PN3", say: "ピンポイント 築浅外れ・AD 2ヶ月 ＞ 広げて 隣の駅・AD 1ヶ月（2026-09-30 から・旧は逆）", hi: pin(mk("築18 AD2", AGE_MISS, 2, { age: 18 })), lo: mk("隣の駅 AD1", NEAR, 1), b: [162, 149] }, // b_old 160/164
+    { id: "PN4", say: "AD 1ヶ月未満はおすすめしにくい: 広げて 隣の駅・AD 1ヶ月 ＞ ピンポイント 全一致・AD 0.5ヶ月", hi: mk("隣の駅 AD1", NEAR, 1), lo: pin(mk("全一致 AD0.5", FULL, 0.5)), b: [149, 116] }, // b_old 164/131
+    { id: "PN5", say: "広げて 隣の駅＋家賃の幅・AD 2ヶ月 ＞ ピンポイント 築浅外れ・AD 1ヶ月", hi: mk("隣の駅+家賃幅 AD2", NEAR_RENT, 2), lo: pin(mk("築18 AD1", AGE_MISS, 1, { age: 18 })), b: [166, 140] }, // b_old 164/155
+    { id: "PN6", say: "保留のピンポイントは加点しない: 広げて 隣の駅・AD 0.5ヶ月（2026-09-27 から保留）＞ ピンポイント 家賃1割超え・AD 3ヶ月（保留）", hi: mk("隣の駅 AD0.5", NEAR, 0.5), lo: pin(mk("家賃超え AD3", swap("RENT_OK", "RENT_OVER_110"), 3)), b: [104, 101] }, // b_old 119/101
+    { id: "REF", say: "札が全部同じ: 広げて AD 2ヶ月 ＞ ピンポイント AD 1ヶ月（2026-09-30 から・旧の決めた向きは逆）", hi: mk("全一致 AD2", FULL, 2), lo: pin(mk("全一致 AD1", FULL, 1)), b: [173, 161] }, // b_old 171/176
   ];
   for (const ex of PX) {
     const a = score(ex.hi, W_FULL), b = score(ex.lo, W_FULL);

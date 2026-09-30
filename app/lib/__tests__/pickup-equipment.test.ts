@@ -156,7 +156,8 @@ console.log("■ 保存済みの判定に付け直す（applyEquipmentMatch）")
   // id 50 の形: 家賃・徒歩・AD と画像（2階以上・バストイレ別・独立洗面）のコード
   const stored = ["RENT_OK", "INITIAL_COST_UNKNOWN", "WALK_OK", "AD_COVERS_DISCOUNT", "AD_1M", "IMAGE_BATH_TOILET_SEPARATE_OK", "IMAGE_SEPARATE_WASHSTAND_OK", "IMAGE_FLOOR_2_PLUS_OK"];
   // 2026-09-25 AD の段の配点（まかなえる 0・1ヶ月 +15）: 50＋15＋0（家賃不明）＋10＋0＋15＋5×3 = 105
-  t("前提: 保存の点は 105", BASE_SCORE + stored.reduce((a, c) => a + reasonPoints(c), 0) === 105);
+  // 2026-09-30 AD1 は 0点（竹内「AD1 はあって当たり前」）→ 105 − 15 = 90
+  t("前提: 保存の点は 90（AD1 0点）", BASE_SCORE + stored.reduce((a, c) => a + reasonPoints(c), 0) === 90);
   const b = buildBatchEquipment([{ key: 1, pdfText: IT_405 }, { key: 3, pdfText: IT_1512 }], HONOKA_COND);
   const r = applyEquipmentMatch({ reasonCodes: stored }, b.rows[0].match);
   t("家賃・徒歩・AD のコードは残る", ["RENT_OK", "WALK_OK", "AD_1M"].every((c) => r.reasonCodes.includes(c)), r.reasonCodes);
@@ -164,7 +165,7 @@ console.log("■ 保存済みの判定に付け直す（applyEquipmentMatch）")
   t("割引との比べの札（AD_COVERS_DISCOUNT）は外す", !r.reasonCodes.includes("AD_COVERS_DISCOUNT"), r.reasonCodes);
   t("設備欄で決まった画像のコードは外す（二重に数えない）", !r.reasonCodes.some((c) => c.startsWith("IMAGE_")), r.reasonCodes);
   // 2026-09-25 案B: 付け直しで書いた条件が 家賃・徒歩＋設備5つ＝全部合う +15。バス・トイレ別は必須（+5）で設備 +14 → 119
-  t("点: 50＋15＋10＋0＋15＋14＋全部合う15 = 119", r.score === 119 && r.verdict === "pass" && r.reasonCodes.includes("FIT_ALL"), [r.score, r.reasonCodes]);
+  t("点: 50＋15＋10＋0（AD1）＋14＋全部合う15 = 104", r.score === 104 && r.verdict === "pass" && r.reasonCodes.includes("FIT_ALL"), [r.score, r.reasonCodes]);
   const again = applyEquipmentMatch({ reasonCodes: r.reasonCodes }, b.rows[0].match);
   t("2回付け直しても同じ（冪等）", JSON.stringify(again) === JSON.stringify(r));
   const hold = applyEquipmentMatch({ reasonCodes: ["RENT_OK", "RENT_OVER_110"] }, null);

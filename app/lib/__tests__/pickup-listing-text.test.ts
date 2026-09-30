@@ -3,7 +3,7 @@
 //   「AD の項目は重要なので物件名の横にもスタンプでいれる」
 // 実行: npx tsx app/lib/__tests__/pickup-listing-text.test.ts
 // 値は YUMA のテスト顧客（竹内さん本人のテスト用）の回 cg_509cd061_706（property_pickups #706〜715）と 9/20〜 の資料の実物（お客様の個人情報は無い）
-import { listingAdText, listingRoomText, nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel } from "../pickup-listing-text";
+import { listingAdText, listingRoomText, nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel, adMonthsOfStamp } from "../pickup-listing-text";
 import { rejudgeWithoutDiscount, applyEquipmentMatch, dropDiscountFromRow } from "../property-brain";
 import { compareOverall, pickCustomerBest, roundBestId, bestRuleTag, BEST_RULE_TAG, type BestCandidateRow } from "../pickup-best";
 import { sortForReview } from "../pickup-review-order";
@@ -48,6 +48,30 @@ console.log("■ AD の札は資料の文字のまま（最後の行＝元付業
   t("itandi: 広告費 なし", listingAdText(IT_NONE) === "広告費 なし");
   t("itandi: 康熙部首の「⽉」もそのまま", listingAdText(IT_KANGXI) === "広告費 2 ヶ⽉", listingAdText(IT_KANGXI));
   t("資料の文字が無ければ null", listingAdText(null) === null && listingAdText("") === null);
+  // 2026-09-30 売上サポ TIO岸和田 103（#1952・朱莉さんの回）: 札「広告料2.0ヶ月）」↔ 採点「AD 1ヶ月」の食い違い。
+  //   最後の行の「最後の」見出し（括弧の中の条件付きの広告料）を採っていた → 行の最初の見出しから（付け足しの括弧はそのまま残る）
+  const TIO = "■ カギ所在：現地キーBOX1001 工事キー有\n■ お問合せ先に指定があります：09087484555\nA D 1ヶ月（税込）（礼金1ヵ月の場合は広告料2.0ヶ月）";
+  t("#1952 TIO岸和田: 札は「A D 1ヶ月（税込）（礼金1ヵ月の場合は広告料2.0ヶ月）」（採点の AD 1ヶ月と同じ）", listingAdText(TIO) === "A D 1ヶ月（税込）（礼金1ヵ月の場合は広告料2.0ヶ月）", listingAdText(TIO));
+  const tioSplit = splitAdStamp(listingAdText(TIO)!);
+  t("#1952 札の芯は「A D 1ヶ月（税込）」・条件付きの 2.0ヶ月は付け足し", tioSplit.core === "A D 1ヶ月（税込）" && tioSplit.rest === "（礼金1ヵ月の場合は広告料2.0ヶ月）", tioSplit);
+  t("#1952 札の月数は 1（採点と同じ物差し）", adMonthsOfStamp(listingAdText(TIO)) === 1);
+  const MYUPURE = "A D 2ヶ月（税込）（(礼0・AD2か礼1・AD3※10月契約締結限定)支払パターンA 賃料の2カ月）";
+  t("#1937 ミュプレ江坂: 札は欄の頭「A D 2ヶ月（税込）…」（旧は括弧の中の「AD3※…」）", listingAdText(`物件名 ミュプレ江坂\n${MYUPURE}`) === MYUPURE && adMonthsOfStamp(MYUPURE) === 2);
+  const SRES = "AD 200％（税込）（賃料のみ。「AD2・礼金0」か「AD3・礼金1」）";
+  t("#1332 S-RESIDENCE淀屋橋: 札は「AD 200％（税込）…」・2ヶ月", listingAdText(`物件名 S-RESIDENCE淀屋橋\n${SRES}`) === SRES && adMonthsOfStamp(SRES) === 2);
+}
+
+console.log("■ 札の月数（adMonthsOfStamp・採点と同じ物差し）");
+{
+  t("A D 2ヶ月（税込）（-1万）→ 2", adMonthsOfStamp("A D 2ヶ月（税込）（-1万）") === 2);
+  t("A D 100％ → 1・委託業務報酬 250％（税込）→ 2.5", adMonthsOfStamp("A D 100％") === 1 && adMonthsOfStamp("委託業務報酬 250％（税込）") === 2.5);
+  t("広告費 なし → 0", adMonthsOfStamp("広告費 なし") === 0);
+  t("広告費 2 ヶ⽉（康熙部首）→ 2", adMonthsOfStamp("広告費 2 ヶ⽉") === 2);
+  t("A D 98000円 → 家賃 98,000円なら 1・家賃が無ければ null", adMonthsOfStamp("A D 98000円", 98_000) === 1 && adMonthsOfStamp("A D 98000円") === null);
+  t("広告費 10.7 万円（家賃 53,500円）→ 2", adMonthsOfStamp("広告費 10.7 万円", 53_500) === 2);
+  t("単位の無い「AD2.5(WEB申込)」→ 2.5", adMonthsOfStamp("AD2.5(WEB申込)。条件外または礼金なしの場合はAD2です。）") === 2.5);
+  t("みなしの札「AD 200%（アズ・スタット）」→ 2", adMonthsOfStamp("AD 200%（アズ・スタット）") === 2);
+  t("無い札は null", adMonthsOfStamp(null) === null && adMonthsOfStamp("") === null);
   const s1 = splitAdStamp("A D 2ヶ月（税込）（-1万）");
   t("札の芯と付け足し: 「A D 2ヶ月（税込）」＋「（-1万）」（つなぐと元の文字）", s1.core === "A D 2ヶ月（税込）" && s1.rest === "（-1万）", s1);
   const s2 = splitAdStamp("A D 200％（契約事務手数料10,000円(税込)）");
@@ -98,27 +122,28 @@ const R713 = [...BASE, "PROFIT_NEGATIVE", "AD_1M_HELD", "EQUIP_BATH_TOILET_UNLIS
 const R706 = [...BASE, "PROFIT_NEGATIVE", "AD_1M_HELD", "EQUIP_BATH_TOILET_MUST_OK", "EQUIP_FLOOR2_NG", "AREA_WARD_MATCH", "COMMUTE_OK", "AGE_COL_W10", "SEARCH_PINPOINT_HELD"];
 
 console.log("■ 割引と AD の比べを外して付け直す（rejudgeWithoutDiscount・保存済みの行）");
+// 2026-09-30 AD の表（AD1 +15→0・AD1.5 +17→+10・AD2 +20→+22）で点を付け直した（下の点は今の表・括弧は 9/27 の時の点）
 {
   const p = rejudgeWithoutDiscount(PASS_2M);
-  t("#708（通す・162点）: AD_COVERS_DISCOUNT（0点）を外すだけ・点と判定は同じ", p.changed && p.score === 162 && p.verdict === "pass" && !p.reasonCodes.includes("AD_COVERS_DISCOUNT"), [p.score, p.verdict]);
+  t("#708（通す・164点・9/27 は 162）: AD_COVERS_DISCOUNT（0点）を外すだけ・点と判定は同じ", p.changed && p.score === 164 && p.verdict === "pass" && !p.reasonCodes.includes("AD_COVERS_DISCOUNT"), [p.score, p.verdict]);
   const r710 = rejudgeWithoutDiscount(R710);
-  t("#710 インザグレイス天神橋 603: 保留 107 → 通す 159（AD 1.5ヶ月の段・ピンポイント・全部合う が戻る）", r710.verdict === "pass" && r710.score === 159
+  t("#710 インザグレイス天神橋 603: 保留 107 → 通す 152（9/27 は 159・AD 1.5ヶ月の段・ピンポイント・全部合う が戻る）", r710.verdict === "pass" && r710.score === 152
     && ["AD_1M", "AD_1_5M", "SEARCH_PINPOINT", "FIT_ALL"].every((c) => r710.reasonCodes.includes(c)) && !r710.reasonCodes.some((c) => c.endsWith("_HELD")) && !r710.flagCodes.length, [r710.score, r710.reasonCodes]);
   const r712 = rejudgeWithoutDiscount(R712);
-  t("#712 リブリー野田 501: 保留 115 → 通す 165", r712.verdict === "pass" && r712.score === 165, [r712.score, r712.reasonCodes]);
+  t("#712 リブリー野田 501: 保留 115 → 通す 150（9/27 は 165）", r712.verdict === "pass" && r712.score === 150, [r712.score, r712.reasonCodes]);
   const r713 = rejudgeWithoutDiscount(R713);
-  t("#713 イーストヴィラ梅田 0808: 保留 107 → 通す 157", r713.verdict === "pass" && r713.score === 157, [r713.score]);
+  t("#713 イーストヴィラ梅田 0808: 保留 107 → 通す 142（9/27 は 157）", r713.verdict === "pass" && r713.score === 142, [r713.score]);
   const r706 = rejudgeWithoutDiscount(R706);
   t("#706 エストドミール野田 00105: 2階以上の × が残るので保留のまま（97 → 107・AD の段は 0点のまま）", r706.verdict === "hold" && r706.score === 107 && r706.reasonCodes.includes("AD_1M_HELD") && r706.flagCodes.includes("EQUIP_FLOOR2_NG"), [r706.score, r706.reasonCodes]);
   t("理由の日本語に「ADより割引が大きい」が残らない", ![r710, r712, r713, r706].some((x) => x.reasonsJa.some((s) => /割引/.test(s))));
   // 付け直す前の画面（詳細 API）と付け直し（backfill）で同じ1行の直し（dropDiscountFromRow）
   const d712 = dropDiscountFromRow({ reason_codes: R712, reasons_ja: ["ADより割引が大きい（利益が出ない）"], score: 115, verdict: "hold", summary_text: "" });
-  t("1行の直し #712: 保存 115・保留 → 165・通す（札の差を保存の点に足す）", !!d712 && d712.score === 165 && d712.verdict === "pass" && d712.negative && !d712.reason_codes.includes("PROFIT_NEGATIVE"), d712);
+  t("1行の直し #712: 保存 115・保留 → 150・通す（札の差を保存の点に足す）", !!d712 && d712.score === 150 && d712.verdict === "pass" && d712.negative && !d712.reason_codes.includes("PROFIT_NEGATIVE"), d712);
   const d708 = dropDiscountFromRow({ reason_codes: PASS_2M, reasons_ja: ["AD で割引をまかなえる", "間取りが合う"], score: 162, verdict: "pass", summary_text: "" });
-  t("1行の直し #708: まかなえるの知らせだけ → 点・判定そのまま・割引の一文だけ外す", !!d708 && d708.score === 162 && d708.verdict === "pass" && !d708.negative && d708.reasons_ja.join() === "間取りが合う", d708);
+  t("1行の直し #708: まかなえるの知らせだけ → 点・判定そのまま・割引の一文だけ外す", !!d708 && d708.score === 162 /* 保存の点のまま */ && d708.verdict === "pass" && !d708.negative && d708.reasons_ja.join() === "間取りが合う", d708);
   t("1行の直し: 札の無い行は null（そのまま使う）", dropDiscountFromRow({ reason_codes: ["RENT_OK"], score: 100, verdict: "pass" }) === null && dropDiscountFromRow({ reason_codes: null }) === null);
   const dOld = dropDiscountFromRow({ reason_codes: R712, score: 90, verdict: "hold", summary_text: "" });
-  t("1行の直し: 前の配点の古い行は保存の点＋差（90＋50＝140）", !!dOld && dOld.score === 140, dOld);
+  t("1行の直し: 前の配点の古い行は保存の点＋差（90＋35＝125）", !!dOld && dOld.score === 125, dOld);
   t("割引の比べが無い行は changed=false", rejudgeWithoutDiscount(["RENT_OK", "AD_HIGH"]).changed === false);
   t("冪等（付け直した札をもう一度通しても同じ）", JSON.stringify(rejudgeWithoutDiscount(r710.reasonCodes).reasonCodes) === JSON.stringify(r710.reasonCodes) && rejudgeWithoutDiscount(r710.reasonCodes).score === r710.score);
   t("AD 1ヶ月未満だった行（旧は AD_UNDER_1M を付けなかった）は adMonths が分かれば AD_UNDER_1M −8", rejudgeWithoutDiscount(["RENT_OK", "PROFIT_NEGATIVE"], { adMonths: 0.5 }).reasonCodes.includes("AD_UNDER_1M"));

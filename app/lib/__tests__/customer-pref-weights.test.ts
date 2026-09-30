@@ -48,17 +48,20 @@ console.log("■ 点（50＋Σ round(点 × 倍率)）");
   const w = prefWeightResolver(STRENGTH, table);
   const s0 = prefScoreOf(AIA, base, null), s1 = prefScoreOf(AIA, base, w);
   // FLOOR_PLAN_MATCH 15 は AD の線で 15 のまま・AREA_WARD_MATCH 8 → 15（線）
-  t(`倍率なし ${s0}（実物 152）・倍率あり ${s1}（+0 +7）`, s0 === 152 && s1 === 152 + 0 + 7);
+  // 2026-09-30 AD の表（AD_HIGH 20 → 22）で実物の 152 → 154
+  t(`倍率なし ${s0}（実物 152・AD2 +22 で 154）・倍率あり ${s1}（+0 +7）`, s0 === 154 && s1 === 154 + 0 + 7);
   const e0 = prefScoreOf(EXE, base, null), e1 = prefScoreOf(EXE, base, w);
   // FLOOR_PLAN_WIDE 8 → 12・AREA_WARD_MATCH 8 → 15
-  t(`選ばなかった物 ${e0}（実物 114）→ ${e1}`, e0 === 114 && e1 === 114 + 4 + 7);
+  // 2026-09-30 AD1 +15 → 0 で実物の 114 → 99
+  t(`選ばなかった物 ${e0}（実物 114・AD1 0点で 99）→ ${e1}`, e0 === 99 && e1 === 99 + 4 + 7);
   t("上限 200・下限 0", prefScoreOf(Array(20).fill("FLOOR_PLAN_MATCH"), base, null) === 200 && prefScoreOf(Array(20).fill("RENT_OVER_130"), base, null) === 0);
 }
 
 console.log("■ AD の線（AD 以外の加点は AD 2ヶ月の札 ÷ 1.3 を超えない・feedback_ad_scoring）");
 {
   const cap = Math.floor(adCapOf(base));
-  t(`AD の線は floor(AD_HIGH 20 ÷ 1.3) = ${cap}`, cap === 15);
+  // 2026-09-30 AD_HIGH 20 → 22 と比 1.3 → 1.45 を一緒に変えた（線は 15 のまま）
+  t(`AD の線は floor(AD_HIGH 22 ÷ 1.45) = ${cap}`, cap === 15);
   const all: PrefWeightTable = {};
   const strong: Record<string, "strong"> = {};
   const POS = ["FLOOR_PLAN_MATCH", "FLOOR_PLAN_WIDE", "AREA_WARD_MATCH", "AREA_NEAR", "RENT_OK", "WALK_OK", "ZERO_ZERO", "SQM_OK", "AGE_N5", "MOVE_IN_OK", "EQUIP_BATH_TOILET_MUST_OK", "EQUIP_BATH_TOILET_OK"];
@@ -78,10 +81,10 @@ console.log("■ judgeProperty への入り方（opts.prefWeight）");
   const prof = buildCustomerProfile(cust, [], [], null, { today: "2026-09-28" });
   const f = parsePropertyFacts("【1】AIA難波南 102号室", { rank: 1, name: "AIA難波南", rent: 85000, floor_plan: "1K", ad_months: 2, deposit_months: 0, key_money_months: 0 });
   const j0 = judgeProperty(f, prof, 0, { today: "2026-09-28" });
-  // 実物の札: RENT_OK ZERO_ZERO FLOOR_PLAN_MATCH AD_HIGH FIT_ALL_HALF（116点）
+  // 実物の札: RENT_OK ZERO_ZERO FLOOR_PLAN_MATCH AD_HIGH FIT_ALL_HALF（116点・2026-09-30 の AD の表で 118点）
   const w = prefWeightResolver({ initial_cost: "strong", floor_plan: "strong" }, { initial_cost: { strong: 2 }, floor_plan: { strong: 2 } });
   const j1 = judgeProperty(f, prof, 0, { today: "2026-09-28", prefWeight: w });
-  t("渡さなければ今まで通り（50＋札の合計）", j0.score === scoreFromCodes(j0.reasonCodes) && j0.score === 50 + j0.reasonCodes.reduce((a, c) => a + baseReasonPoints(c), 0) && j0.score === 116);
+  t("渡さなければ今まで通り（50＋札の合計）", j0.score === scoreFromCodes(j0.reasonCodes) && j0.score === 50 + j0.reasonCodes.reduce((a, c) => a + baseReasonPoints(c), 0) && j0.score === 118);
   t("渡すと札は同じで点だけ変わる（ZERO_ZERO 8 → 15・FLOOR_PLAN_MATCH は AD の線で 15 のまま）", JSON.stringify(j1.reasonCodes) === JSON.stringify(j0.reasonCodes) && j1.score === j0.score + 7, `${j0.score} → ${j1.score}`);
   t("scoreFromCodes に同じ倍率を渡すと同じ点", scoreFromCodes(j1.reasonCodes, w) === j1.score);
   t("AD の札には効かない（AD_HIGH の家族 ad は表に無い）", judgeProperty(f, prof, 0, { today: "2026-09-28", prefWeight: prefWeightResolver({ ad: "strong" }, { ad: { strong: 2 } } as PrefWeightTable) }).score === j0.score);

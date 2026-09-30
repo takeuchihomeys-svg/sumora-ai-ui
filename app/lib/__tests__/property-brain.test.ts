@@ -163,11 +163,12 @@ console.log("── 判定（決定論・drop は実送信でほぼ0の形だけ
     const ad25 = judgeProperty(parsePropertyFacts(base + "\nAD 2.5ヶ月"), p);
     const ad3 = judgeProperty(parsePropertyFacts(base + "\nAD 3ヶ月"), p);
     const adYen2 = judgeProperty(parsePropertyFacts(base + "\nAD 160,000円"), p);
-    t("★ AD なし < 1ヶ月 < 2ヶ月 ＝ 3ヶ月（2ヶ月以上は1.3倍で一律）", none.score < ad1.score && ad1.score < ad2.score && ad2.score === ad3.score, JSON.stringify([none.score, ad1.score, ad2.score, ad3.score]));
-    // 2026-09-25 竹内「AD は2ヶ月以上だと点数が高い形・ほかの項目の約1.3倍」: 1ヶ月 +7 → 2ヶ月 +20（家賃上限内 +15 の約1.3倍）
-    t("★ 2ヶ月は1ヶ月より高い（1ヶ月 +15 → 2ヶ月 +20＝1.3倍）", ad2.score - ad1.score === 5, JSON.stringify([ad1.score, ad2.score]));
-    t("★ 2ヶ月の段は家賃の上限内（+15）の約1.3倍", Math.abs((ad2.score - none.score) / REASON_POINTS.RENT_OK - 1.3) < 0.1, JSON.stringify([none.score, ad2.score]));
-    t("★ 2.5ヶ月（250%）は AD_HIGH＋AD_2_5M（3ヶ月の札は付かない）", ad25.reasonCodes.includes("AD_HIGH") && ad25.reasonCodes.includes("AD_2_5M") && !ad25.reasonCodes.includes("AD_VERY_HIGH") && ad25.score === ad2.score && ad3.score === ad25.score, JSON.stringify([ad2.score, ad25.score, ad3.score]));
+    // 2026-09-30 竹内「AD1 の加点は 0 くらいで、AD1.5 がプラス 10 点、AD2 がプラス 22 点等…AD1 はあって当たり前」（AD_TIER_POINTS）
+    const ad15 = judgeProperty(parsePropertyFacts(base + "\nAD 1.5ヶ月"), p);
+    t("★ AD 不明 ＝ 1ヶ月（0点・当たり前）< 1.5ヶ月 < 2ヶ月 < 2.5ヶ月 < 3ヶ月", none.score === ad1.score && ad1.score < ad15.score && ad15.score < ad2.score && ad2.score < ad25.score && ad25.score < ad3.score, JSON.stringify([none.score, ad1.score, ad15.score, ad2.score, ad25.score, ad3.score]));
+    t("★ 1ヶ月 0 → 1.5ヶ月 +10 → 2ヶ月 +22 → 2.5ヶ月 +25 → 3ヶ月 +28", ad15.score - ad1.score === 10 && ad2.score - ad1.score === 22 && ad25.score - ad1.score === 25 && ad3.score - ad1.score === 28, JSON.stringify([ad1.score, ad15.score, ad2.score, ad25.score, ad3.score]));
+    t("★ AD1 と AD2 の差（22）は他の項目の1つの点（家賃の上限内 +15）より大きい", ad2.score - ad1.score > REASON_POINTS.RENT_OK && ad2.score - ad1.score > REASON_POINTS.FLOOR_PLAN_MATCH, JSON.stringify([ad1.score, ad2.score]));
+    t("★ 2.5ヶ月（250%）は AD_HIGH＋AD_2_5M（3ヶ月の札は付かない）", ad25.reasonCodes.includes("AD_HIGH") && ad25.reasonCodes.includes("AD_2_5M") && !ad25.reasonCodes.includes("AD_VERY_HIGH") && ad3.reasonCodes.includes("AD_VERY_HIGH"), JSON.stringify([ad2.score, ad25.score, ad3.score]));
     t("★ 円だけの AD 160,000（家賃 80,000）は2ヶ月扱い", adYen2.reasonCodes.includes("AD_HIGH") && adYen2.score === ad2.score, JSON.stringify([adYen2.score, ad2.score]));
     t("★ 理由の日本語に AD が出る", ad2.reasonsJa.includes("ADが高い（2ヶ月以上）") && ad1.reasonsJa.includes("AD 1ヶ月以上"));
     // AD が高くても条件の hold は覆らない
