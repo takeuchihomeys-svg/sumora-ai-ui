@@ -468,6 +468,8 @@ export const REASON_JA: Record<string, string> = {
   FLOOR_PLAN_NEAR: "間取りが近い（部屋数は同じ）",
   FLOOR_PLAN_WIDE: "間取りが広げた検索の型（LDK の希望に同じ部屋数の DK）",
   FLOOR_PLAN_MISMATCH: "間取りが希望と違う",
+  // 2026-09-30 竹内（c さん・2LDK 希望に 1K を50件出した）: 希望より部屋数が少ない K／DK／R は「違う」でなく外す
+  FLOOR_PLAN_TOO_SMALL: "間取りが希望より小さい（部屋数が足りない・外す）",
   // 2026-09-25 任務B（実際の🌟で「間取り不一致」の保留が 35件・うち希望より大きい間取り 5人9件・2DK↔1LDK 4人5件）
   FLOOR_PLAN_SAME_CLASS: "間取りが希望と同じ広さの級（2DK↔1LDK）",
   FLOOR_PLAN_LARGER: "間取りが希望より広い",
@@ -753,7 +755,7 @@ export const AD_TIER_POINTS = {
 export const REASON_POINTS: Record<string, number> = {
   RENT_OK: 15, RENT_SLIGHTLY_OVER: 0, RENT_OVER_110: -20, RENT_OVER_130: -35, RENT_ABOVE_USUAL: -5, RENT_UNKNOWN: 0, RENT_MAX_UNRELIABLE: 0,
   ZERO_ZERO_MATCH: 20, ZERO_ZERO: 8, INITIAL_COST_NOT_ZERO: -15, INITIAL_COST_OVER_LIMIT: -10, INITIAL_COST_UNKNOWN: 0,
-  FLOOR_PLAN_MATCH: 15, FLOOR_PLAN_NEAR: 5, FLOOR_PLAN_MISMATCH: -15,
+  FLOOR_PLAN_MATCH: 15, FLOOR_PLAN_NEAR: 5, FLOOR_PLAN_MISMATCH: -15, FLOOR_PLAN_TOO_SMALL: -35,
   WALK_OK: 10, WALK_SLIGHTLY_OVER: -5, WALK_OVER: -15,
   BUILDING_AGE_OK: 5, BUILDING_AGE_SLIGHTLY_OVER: -3, BUILDING_AGE_OVER: -10,
   ALREADY_SENT: -30,
@@ -1210,6 +1212,25 @@ export function isLargerPlan(want: FloorPlanWant, plan: string | null | undefine
   return want.plans.every((w) => rooms > parseInt(w[0], 10));
 }
 
+/**
+ * 2026-09-30 竹内「なんで 2LDK でピックアップするとお客さんに伝えているのに、1K でピックアップしているのか」（c さん・2LDK／14万）:
+ *   検索に間取りが入らないまま取れた 1K・1DK 50件が「間取りが希望と違う（保留 −15）」で売上サポに並び、その中の一番に 👑 と
+ *   「この物件を AIX物件オススメで送る」が付いた。希望のどの型よりも部屋数が少なく、LDK でもない（K・DK・R）物件は外す候補にする。
+ *   部屋数が同じ型違い（1LDK 希望の 1DK＝near）・同じ広さの級（2DK↔1LDK）・「も可」・広げた検索の型は今まで通り（ここには来ない）。
+ *   部屋数が1つ少ない LDK（2LDK 希望の 1LDK）は保留のまま（広い 1LDK を送る事がある）。希望が読めない・何でも可の時は見ない
+ */
+export function isTooSmallPlan(want: FloorPlanWant, plan: string | null | undefined): boolean {
+  const p = normalizeFloorPlanToken(plan);
+  if (!p || want.any) return false;
+  if (/LDK$/.test(p)) return false;
+  const rooms = parseInt(p[0], 10);
+  if (!Number.isFinite(rooms)) return false;
+  // 希望の一番小さい部屋数（書いた型・「1LDK以上」の下限）。どちらも無ければ見ない
+  const wantRooms = [...want.plans.map((w) => parseInt(w[0], 10)), ...(want.minRank != null ? [Math.floor(want.minRank / 10)] : [])].filter((n) => Number.isFinite(n));
+  if (wantRooms.length === 0) return false;
+  return rooms < Math.min(...wantRooms);
+}
+
 export function matchFloorPlan(want: FloorPlanWant, plan: string | null | undefined): FloorPlanMatch {
   const p = normalizeFloorPlanToken(plan);
   if (!p || want.any) return "unknown";
@@ -1460,7 +1481,7 @@ const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   RENT_OK: ["家賃", "ok"], RENT_UNDER_MIN: ["家賃", "ng"], RENT_WIDE: ["家賃", "wide"], RENT_SLIGHTLY_OVER: ["家賃", "soft_ng"], RENT_OVER_110: ["家賃", "ng"], RENT_OVER_130: ["家賃", "ng"], RENT_UNKNOWN: ["家賃", "unread"],
   ZERO_ZERO_MATCH: ["初期費用（敷礼0）", "ok"], INITIAL_COST_NOT_ZERO: ["初期費用（敷礼0）", "ng"], INITIAL_COST_OVER_LIMIT: ["初期費用の上限", "ng"],
   FLOOR_PLAN_MATCH: ["間取り", "ok"], FLOOR_PLAN_ALT_MATCH: ["間取り", "ok"], FLOOR_PLAN_WIDE: ["間取り", "wide"], FLOOR_PLAN_NEAR: ["間取り", "wide"],
-  FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"],
+  FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"], FLOOR_PLAN_TOO_SMALL: ["間取り", "ng"],
   SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNKNOWN: ["広さ", "unread"],
   ROOM_JO_OK: ["洋室の帖数", "ok"], ROOM_JO_NG: ["洋室の帖数", "ng"], ROOM_JO_SOFT_NG: ["洋室の帖数", "ng"], ROOM_JO_IMG_NG: ["洋室の帖数", "ng"], ROOM_JO_UNKNOWN: ["洋室の帖数", "unread"],
   LDK_JO_OK: ["リビングの帖数", "ok"], LDK_JO_NG: ["リビングの帖数", "ng"], LDK_JO_UNKNOWN: ["リビングの帖数", "unread"],
@@ -1913,6 +1934,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   else if (fpm === "near") add("FLOOR_PLAN_NEAR", 5);
   else if (isSameClassPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_SAME_CLASS", reasonPoints("FLOOR_PLAN_SAME_CLASS"));
   else if (isLargerPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_LARGER", reasonPoints("FLOOR_PLAN_LARGER"));
+  // 2026-09-30 希望より部屋数が少ない K／DK／R（2LDK 希望に 1K・1DK・3LDK 希望に 2DK）は外す候補（👑・既定の選び方に入れない）
+  else if (fpm === "mismatch" && isTooSmallPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_TOO_SMALL", reasonPoints("FLOOR_PLAN_TOO_SMALL"), "drop");
   else if (fpm === "mismatch") add("FLOOR_PLAN_MISMATCH", -15, "hold");
   else if (facts.floorPlan == null) missing.push("floor_plan");
 
@@ -2150,7 +2173,8 @@ function isNewInfo(c: string): boolean {
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
 // 2026-09-27 ROOM_JO_NG: 洋室の帖数が希望より狭い（竹内「7帖未満は外す」）
-export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG"]);
+// 2026-09-30 FLOOR_PLAN_TOO_SMALL: 間取りが希望より小さい（c さん・2LDK 希望に 1K）
+export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG", "FLOOR_PLAN_TOO_SMALL"]);
 export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件

@@ -280,6 +280,8 @@ window.addEventListener("message", function (e) {
       audit: e.data.audit || null,
       // ⚠ error ではなく pageError（点検の記録だけに使う）。error で渡すと _notifyFillDone が検索を止める動きに変わる（今まで中継していなかった＝動きは変えない）
       pageError: e.data.error || null,
+      // v2.5.50 検索を押す前の関所で止めた時（gate）だけ error で渡す＝background はこのお客様のリアプロを飛ばす（検索していないので取りに行かない）
+      error: e.data.gate ? (e.data.error || "AXLX_FILL_INCOMPLETE") : null,
     }, function () {
       void chrome.runtime.lastError;
     });

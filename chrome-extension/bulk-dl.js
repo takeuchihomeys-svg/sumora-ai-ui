@@ -1836,6 +1836,8 @@
   // Step2: fill-done 受信 → arm（スナップショット外の新結果が出たら Case A で発動）
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-fill-done") return;
+    // v2.5.50 検索を押す前の関所で止めた合図（検索していない）→ 構えない（画面に残っている前の一覧を取りに行かない）
+    if (e.data.gate) { _autofillInitiated = false; console.warn("[AXLX bulk-dl] fill-done（関所で止めた）→ 自動送信は構えない: " + (e.data.error || "")); return; }
     if (!_autofillInitiated) return;
     _autoSendArmed = true;
     _autofillInitiated = false;

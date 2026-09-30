@@ -43,6 +43,9 @@ console.log("\n■ 知らせる事");
   const ghost = buildDailyDigest([row({}), row({ trigger: "single", checks: [{ code: "DOUBLE_FILL", severity: "bad", cause_key: "double_fill:itandi", title: "同じ自動入力が2本走った", detail: "" }] })]);
   t("★ 2本走りは知らせ、幽霊の行は回数に入れない", ghost.double_fill === 1 && ghost.runs === 1 && ghost.alerts.some((a) => a.includes("2本走った")));
 
+  const plan = buildDailyDigest([row({ site: "realpro", checks: [{ code: "FLOOR_PLAN_DROPPED", severity: "bad", cause_key: "floor_plan_dropped:realpro", title: "間取りが入っていない", detail: "入れようとした=2LDK" }] })]);
+  t("★ 間取りが入らないまま検索した回は1回でも知らせる（c さん 9/30 14:13）", plan.plan_dropped === 1 && plan.alerts.some((a) => a.includes("間取りが入らないまま")));
+
   const login = buildDailyDigest([row({ site: "realpro", error: "AXLX_TAB_DEAD: リアプロのタブが応答しません" }), row({ error: "AXLX_TAB_DEAD: ITANDI のタブが検索の画面になりません" }), row({})]);
   t("ログイン切れが2回以上で知らせる", login.login_expired === 2 && login.alerts.some((a) => a.includes("ログイン切れ")));
 

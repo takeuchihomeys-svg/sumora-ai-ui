@@ -3492,6 +3492,13 @@ async function _openAndClickAutofill(d, o) {
       }
     }
     var c = (allCustomers || []).find(function(x) { return String(x.id) === String(d.customerId); });
+    // v2.5.50 手元の一覧（キャッシュ）に居ないお客様（登録したばかり等）は、一覧を取り直してもう1回探す。
+    //   2026-09-30 c さん: ここで「顧客が見つからない」→ background の代わりの直接入力になり、間取りが入らないまま検索した
+    if (!c && d.customerId) {
+      try { await loadCustomers(true); } catch (_) {}
+      c = (allCustomers || []).find(function(x) { return String(x.id) === String(d.customerId); });
+      if (c) console.log("[popup] " + (o.via || "switch") + ": 一覧を取り直して見つかった id=", d.customerId);
+    }
     if (!c) {
       console.warn("[popup] " + (o.via || "switch") + ": 顧客が見つかりません id=", d.customerId);
       return { ok: false, reason: "customer-not-found" };

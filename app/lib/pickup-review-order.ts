@@ -191,6 +191,7 @@ const CHIP_JA: Record<string, string> = {
   INITIAL_COST_NOT_ZERO: "敷金か礼金あり",
   INITIAL_COST_OVER_LIMIT: "敷礼が初期費用の上限超",
   FLOOR_PLAN_MISMATCH: "間取りが希望と違う",
+  FLOOR_PLAN_TOO_SMALL: "間取りが希望より小さい",
   WALK_OVER: "徒歩が希望の1.5倍超",
   WALK_SLIGHTLY_OVER: "徒歩が希望を少し超過",
   BUILDING_AGE_OVER: "築年が希望超過",

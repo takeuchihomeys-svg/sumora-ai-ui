@@ -141,6 +141,8 @@
     // v2.5.46 ITANDI の前のお客様の条件を外せなかった（欄の名前は page-script の日本語のまま）→ 混ざった条件で検索しないで飛ばした
     else if (/AXLX_RESET_FAILED/.test(msg)) why = "前のお客様の条件を画面から外せませんでした（" + (msg.split("AXLX_RESET_FAILED:")[1] || "").trim().slice(0, 70) + "）";
     else if (/AXLX_SEARCH_BLOCKED/.test(msg)) why = "検索のボタンが押せませんでした（" + (msg.split("AXLX_SEARCH_BLOCKED:")[1] || "").trim().slice(0, 60) + "）";
+    // v2.5.50 検索を押す前の関所: 入れるはずの間取りが画面に入らなかった → 条件の合わない物件を取らないよう検索していない
+    else if (/AXLX_FILL_INCOMPLETE/.test(msg)) why = "条件が画面に入り切りませんでした（" + (msg.split("AXLX_FILL_INCOMPLETE:")[1] || "").trim().slice(0, 70) + "・条件の合わない物件を取らないよう検索していません）";
     else if (/AXLX_NO_FILL_START|入力を始めませんでした/.test(msg)) why = "ページが条件の入力を始めませんでした（読み直して1回やり直してもだめでした）";
     else if (/AXLX_NO_LOCATION|地域を決められない/.test(msg)) why = "希望エリアから地域を決められませんでした（全件検索を防ぐため検索していません）";
     else if (/fill-done/.test(msg)) why = "条件の入力が時間内に終わりませんでした。ページが遅れて検索を続け、後から物件が届くことがあります";

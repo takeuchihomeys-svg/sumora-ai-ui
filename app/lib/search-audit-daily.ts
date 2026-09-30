@@ -29,6 +29,7 @@ export type DailyDigest = {
   double_fill: number;
   owner_mismatch: number;
   login_expired: number;
+  plan_dropped: number;
   versions: Array<{ version: string; runs: number }>;
   alerts: string[];
 };
@@ -68,7 +69,7 @@ export function buildDailyDigest(rows: ReadonlyArray<DailyAuditRow>): DailyDiges
   const groups = new Map<string, { site: string; mode: string; runs: number; failed: number; mins: number[]; errs: Map<string, number> }>();
   const causes = new Map<string, { title: string; count: number }>();
   const versions = new Map<string, number>();
-  let failed = 0, doubleFill = 0, ownerMismatch = 0, loginExpired = 0;
+  let failed = 0, doubleFill = 0, ownerMismatch = 0, loginExpired = 0, planDropped = 0;
   for (const r of rows) {
     const site = String(r.site ?? "?"), mode = String(r.area_mode ?? "-");
     const key = `${site}:${mode}`;
@@ -89,6 +90,8 @@ export function buildDailyDigest(rows: ReadonlyArray<DailyAuditRow>): DailyDiges
     for (const c of r.checks ?? []) {
       if (c.severity !== "bad") continue;
       if (c.code === "OWNER_MISMATCH") ownerMismatch++;
+      // 2026-09-30 c さん（2LDK 希望に 1K を50件）: 間取りが入らないまま検索した回は1回でも知らせる
+      if (c.code === "FLOOR_PLAN_DROPPED") planDropped++;
       const x = causes.get(c.cause_key) ?? causes.set(c.cause_key, { title: c.title, count: 0 }).get(c.cause_key)!;
       x.count++;
     }
@@ -110,6 +113,7 @@ export function buildDailyDigest(rows: ReadonlyArray<DailyAuditRow>): DailyDiges
     }
   }
   if (ownerMismatch > 0) alerts.push(`物件の付け先が別のお客様になりかけた回が ${ownerMismatch}回（送っていない）`);
+  if (planDropped > 0) alerts.push(`間取りが入らないまま検索した回が ${planDropped}回（条件の合わない物件を取った疑い・拡張 v2.5.50 からは検索の前に止める）`);
   if (doubleFill > 0) alerts.push(`同じ自動入力が2本走った回が ${doubleFill}回（拡張が v2.5.48 より前の PC）`);
   if (loginExpired >= 2) alerts.push(`検索の画面でない（ログイン切れ等）で飛ばした回が ${loginExpired}回`);
   if (versionList.length > 1) {
@@ -117,7 +121,7 @@ export function buildDailyDigest(rows: ReadonlyArray<DailyAuditRow>): DailyDiges
     const old = versionList.filter((v) => verLt(v.version, newest));
     if (old.length) alerts.push(`古い版の拡張で動いた回がある（最新 ${newest}・${old.map((v) => `${v.version} が${v.runs}回`).join("、")}）＝その PC の再読み込みが要る`);
   }
-  return { runs, failed, groups: groupList, bad_causes: badCauses, double_fill: doubleFill, owner_mismatch: ownerMismatch, login_expired: loginExpired, versions: versionList, alerts };
+  return { runs, failed, groups: groupList, bad_causes: badCauses, double_fill: doubleFill, owner_mismatch: ownerMismatch, login_expired: loginExpired, plan_dropped: planDropped, versions: versionList, alerts };
 }
 
 /** 人が読む形（AIXツールの画面・スクリプトの出力） */

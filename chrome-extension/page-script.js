@@ -459,12 +459,14 @@
   // errMsg を渡すと fill-done メッセージに error フィールドが付き、
   // content.js → background.js へ中継されてログ・デバッグ材料になる。
   // 正常系は引数なしで呼ぶこと。
-  function notifyDone(errMsg) {
+  function notifyDone(errMsg, gate) {
     window._axFillRunning = false; // 次回呼び出しのためにフラグをリセット
     if (_doneNotified) return;
     _doneNotified = true;
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
     var msg = { from: 'aixlinx-fill-done' };
+    // v2.5.50 検索を押す前の関所で止めた（検索していない）＝この合図で物件を取りに行かせない
+    if (gate) msg.gate = true;
     // 2026-09-18: この入力を始めた時の顧客 ID をそのまま返す（誰の完了かを送る側が持つ）
     if (_fillCustomerId) msg.customerId = _fillCustomerId;
     if (errMsg) msg.error = String(errMsg).slice(0, 300);
@@ -548,6 +550,22 @@
   // 旧 alertStop は alert() ブロッキングにより無人運転で fill-done が届かなくなるため廃止。
   // タイムアウト時は各モーダル経路のフォールバック関数（条件なし検索）を使うこと。
 
+  // v2.5.50 検索を押す前の関所の材料（fillRealpro が入れるはずの間取りを置く・無ければ見ない）
+  var _axExpect = null;
+  var _axGateRetried = false;
+  /** 入れるはずの間取りのうち、画面でチェックが付いている物が1つも無ければ理由の文（あれば null） */
+  function _axGateMissing() {
+    try {
+      if (!_axExpect || !_axExpect.layoutVals || !_axExpect.layoutVals.length) return null;
+      var want = _axExpect.layoutVals.map(String);
+      var checked = Array.prototype.slice.call(document.querySelectorAll('input[name="room_layout_id[]"]:checked'))
+        .filter(function (cb) { return want.indexOf(String(cb.value)) >= 0; });
+      if (checked.length > 0) return null;
+      var total = document.querySelectorAll('input[name="room_layout_id[]"]').length;
+      return '間取り（' + String(_axExpect.floorPlan || '').slice(0, 30) + '）が画面に入っていない（間取りの欄 ' + total + '個・チェック 0）';
+    } catch (e) { return null; }
+  }
+
   // 検索ボタンをクリック
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
   function clickSearch() {
@@ -555,6 +573,24 @@
     if (isClickQueueBusy()) {
       if (_audit && !_audit._searchWaitMarked) { _audit._searchWaitMarked = true; _auditStepP('search_wait', 'queue=' + _clickQueue.length); }
       setTimeout(clickSearch, _pd(200)); return;
+    }
+    // v2.5.50 検索を押す前の関所: 入れるはずの間取りが画面に1つも入っていなければ検索しない（人の間で1回だけ入れ直す）。
+    //   2026-09-30 c さん（2LDK・14万・中央区／浪速区）: popup が「顧客が見つからない」で代わりの直接入力になり、間取りが1つも入らないまま
+    //   検索 → 179行を読んで 1K・1DK を50件売上サポに出した（点検は後から FLOOR_PLAN_DROPPED を付けただけで止めなかった）。
+    //   止めた時は fill-done に gate:true を付ける（content.js が error として中継＝background はこのお客様のリアプロを理由付きで飛ばす・bulk-dl は構えない）
+    var gateMiss = _axGateMissing();
+    if (gateMiss) {
+      if (!_axGateRetried) {
+        _axGateRetried = true;
+        _auditStepP('gate_retry', gateMiss);
+        try { setCheckboxes("room_layout_id[]", _axExpect.layoutVals); } catch (_) {}
+        setTimeout(clickSearch, _pd(800)); return;
+      }
+      _auditStepP('gate_stop', gateMiss);
+      if (_audit) _audit.form = _readRealproForm();
+      console.warn('[AX] 検索を押す前の関所で止めた: ' + gateMiss);
+      notifyDone('AXLX_FILL_INCOMPLETE: ' + gateMiss, true);
+      return;
     }
     if (_audit) { delete _audit._searchWaitMarked; _auditStepP('search', null); }
     // 優先: div.go_search（リアプロのメイン検索ボタン）
@@ -877,6 +913,7 @@
     // fill-done 保証: 実行開始時にフラグをリセットし、85秒のフェイルセーフを仕掛ける
     // （background.js 側のタイムアウト90秒より必ず先に発火させる）
     _doneNotified = false;
+    _axExpect = null; _axGateRetried = false; // v2.5.50 検索を押す前の関所の材料（このお客様の分を下で置く）
     if (_watchdogTimer) clearTimeout(_watchdogTimer);
     _watchdogTimer = setTimeout(function() {
       // 条件入力が未完了のまま clickSearch すると全件検索→LINE誤送信になるため検索しない。
@@ -1145,7 +1182,9 @@
         "6LDK","メゾネット"
       ];
       // 短縮表記を正規化: "1L以上" → "1LDK以上"、"2L〜3L" → "2LDK〜3LDK"
-      var fpStr = cond.floor_plan.trim().replace(/(\d)L(?!\w)/g, '$1LDK');
+      // v2.5.50 全角の数字・英字は半角にそろえる（登録「２K　2DK 2LDK」の ２K が型として読めていなかった）
+      var fpStr = String(cond.floor_plan).replace(/[Ａ-Ｚａ-ｚ０-９]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
+        .toUpperCase().trim().replace(/(\d)L(?!\w)/g, '$1LDK');
       var vals = [];
       var ijouMatch = fpStr.match(/^(.+?)以上$/);
       var rangeMatch = fpStr.match(/^(.+?)[～〜](.+?)$/);
@@ -1231,7 +1270,10 @@
           }
         });
       }
-      if (vals.length) setCheckboxes("room_layout_id[]", vals);
+      if (vals.length) {
+        setCheckboxes("room_layout_id[]", vals);
+        _axExpect = { layoutVals: vals.slice(), floorPlan: String(cond.floor_plan) }; // v2.5.50 検索を押す前に入ったか確かめる
+      }
     }
     if (cond.structure_types && cond.structure_types.length > 0) {
       var sVals = cond.structure_types.map(function(s){ return STRUCTURE_MAP[s]; }).filter(Boolean);

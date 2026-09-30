@@ -196,10 +196,13 @@ console.log("── 判定（決定論・drop は実送信でほぼ0の形だけ
   const nb = judgeProperty(parsePropertyFacts(SUMMARY_A), bad);
   t("rent_max が使えない時は家賃で落とさない", nb.verdict === "pass" && nb.reasonCodes.includes("RENT_MAX_UNRELIABLE"));
 
-  // 実送信の形: 2LDK・3LDK 希望に 1K（512件）→ hold であって drop ではない
+  // 旧（〜2026-09-30）: 「実送信の形: 2LDK・3LDK 希望に 1K（512件）→ hold であって drop ではない」としていた。
+  // 2026-09-30 竹内「なんで 2LDK でピックアップするとお客さんに伝えているのに、1K でピックアップしているのか」（c さん・1K を50件・👑 まで付いた）:
+  //   希望より部屋数が少ない K／DK／R は外す（FLOOR_PLAN_TOO_SMALL・drop）。直近30日にお客様へ送った 109件に該当は 0件
+  //   （scripts/audit-floor-plan-too-small.ts）。旧の 512件の出所（★物件出し★への共有を含む数だったかどうか）は確かめていない
   const fam = buildCustomerProfile({ rent_max: 120_000, floor_plan: "2LDK・3LDK" });
   const mis = judgeProperty(parsePropertyFacts(SUMMARY_A), fam);
-  t("2LDK・3LDK 希望に 1K → hold（FLOOR_PLAN_MISMATCH）・drop にしない", mis.verdict === "hold" && mis.reasonCodes.includes("FLOOR_PLAN_MISMATCH"));
+  t("2LDK・3LDK 希望に 1K → drop（FLOOR_PLAN_TOO_SMALL・外す候補）", mis.verdict === "drop" && mis.reasonCodes.includes("FLOOR_PLAN_TOO_SMALL") && !mis.reasonCodes.includes("FLOOR_PLAN_MISMATCH"));
 
   // 送付済みの建物は drop 候補
   const sentP = buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }, [{ property_name: "【2】エスリード新北野", rent: 58_000 }]);
