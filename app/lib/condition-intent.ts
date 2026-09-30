@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { detectConditionExpansion } from "@/app/lib/condition-expansion";
 
 export type ConditionIntent = "FORMAL" | "ADD" | "REPLACE" | "EXCLUDE";
 
@@ -24,10 +25,14 @@ export function classifyByKeywords(text: string, existingArea?: string | null): 
   // ADD: 追加意図キーワード
   const addPatterns = ["追加", "も見たい", "も含め", "も検討", "プラス", "も良い", "もOK", "も可", "もあり", "もお願い", "もいいです", "も希望"];
   if (addPatterns.some((k) => text.includes(k))) return { intent: "ADD", confidence: "keyword" };
-
   // REPLACE: 差し替え意図キーワード
   const replacePatterns = ["じゃなくて", "ではなく", "に変えて", "に変更", "やっぱり", "にしてほしい"];
   if (replacePatterns.some((k) => text.includes(k))) return { intent: "REPLACE", confidence: "keyword" };
+
+  // 2026-09-30（YUMA の入口テスト）: 「天満橋の方にも広げて探してもらえますか」は上の語に当たらず AI で REPLACE に倒れ、
+  //   希望エリア「福島・野田・中津」が「天満橋」に置き換わった。追加・許容の言い方は condition-expansion（実データ 36件で作った決定論）で決める（差し替えの語がある時は上の REPLACE が先）
+  if (/にも\s*(?:広げ|拡げ)/.test(text) || detectConditionExpansion(text).expanded) return { intent: "ADD", confidence: "keyword" };
+
 
   return null; // 判定不能 → AI分類へ
 }

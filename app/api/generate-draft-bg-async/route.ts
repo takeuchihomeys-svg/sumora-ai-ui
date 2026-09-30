@@ -18,6 +18,7 @@ import { applyConditionGuards } from "@/app/lib/rent-raise";
 // 2026-09-30 入口の見分け（お客様の条件か・物件の問い合わせか）と、条件の履歴の根拠の発言
 import { classifyConditionTurn, gateExtractedConditions, mergeAreaForBrainBridge } from "@/app/lib/condition-source-gate";
 import { classifyByKeywords } from "@/app/lib/condition-intent";
+import { FREE_TEXT_CONDITION_FIELDS, mergeFreeTextClauses } from "@/app/lib/condition-merge";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { resolveConditionChangeScope } from "@/app/lib/condition-change-scope";
 import { jstParts } from "@/app/lib/jst-date";
@@ -204,8 +205,17 @@ async function applyBrainConditionChange(
     const v = extracted[f];
     if (v === null || v === undefined || v === "") continue;
     if (BRAIN_NUMERIC.has(f) && typeof v !== "number") continue;
-    updates[f] = v;
     const existing = (pc as Record<string, unknown> | null)?.[f];
+    // 2026-09-30（YUMA の入口テスト）: 自由文の欄は丸ごと上書きせず節ごとに足す。旧は equip_add の橋が P4 の書いた
+    //   「バストイレ別、独立洗面台、2階以上・11階以上[必須]」を「11階以上、眺めがいい部屋」に置き換えていた（condition-merge.mergeFreeTextClauses）
+    if ((FREE_TEXT_CONDITION_FIELDS as readonly string[]).includes(f)) {
+      const merged = mergeFreeTextClauses(typeof existing === "string" ? existing : null, String(v));
+      if (merged == null || merged === existing) continue;
+      updates[f] = merged;
+      changedFields[f] = merged;
+      continue;
+    }
+    updates[f] = v;
     if (existing !== v) changedFields[f] = v;
   }
   if (Object.keys(updates).length === 0) return;

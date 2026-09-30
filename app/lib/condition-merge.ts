@@ -13,6 +13,42 @@ export type ConditionFields = {
   other_requests?: string | null;
 };
 
+/** 自由文の条件の欄（こだわり・NG・その他）。言い直しでも丸ごと差し替えず、節ごとに足す */
+export const FREE_TEXT_CONDITION_FIELDS = ["preferences", "ng_points", "other_requests"] as const;
+
+const clauseKey = (s: string) => s.normalize("NFKC").replace(/\[[^\]]*\]/g, "").replace(/\s+/g, "").trim();
+
+/**
+ * 自由文の条件の欄を節ごとに足す（今ある節は1つも消さない・同じ節は足さない）。
+ *
+ * 2026-09-30 YUMA の条件の入口テストで発覚（2件とも本番の経路）:
+ *   ①「エリアなんですけど天満橋の方にも広げて探してもらえますか？」→ 意図が REPLACE に倒れ、その他の欄
+ *     「ガスコンロ、カウンターキッチン、リビング8帖以上、初期費用15万円以内、収納多め」が「エリアを天満橋方面にも広げて探す」の1つに置き換わった
+ *   ②「あと階数は11階以上がいいです！眺めがいい部屋が良くて」→ P4 が正しく「…2階以上・11階以上[必須]」に足した直後、
+ *     ブレインの橋（equip_add）がこだわりの欄を「11階以上、眺めがいい部屋」に丸ごと上書きし、バストイレ別・独立洗面台・2階以上が消えた
+ *   自由文の欄の丸ごと差し替えは「誤削除」になる（分析強化の原則・出口は誤削除0）。取り消しは除外（EXCLUDE）の経路でだけ行う。
+ * 区切りは「・」「、」「,」改行を同じに扱い、「・」でつなぐ（正式フォーマットは「・」・ブレインの橋は「、」で書いていて、
+ *   同じ中身でも毎回履歴が1行増えていた）。「11階以上[必須]」と「11階以上」は同じ節として今ある方を残す。
+ * 足す物が無ければ今の値をそのまま返す（区切りを書き換えない＝履歴を増やさない）。
+ */
+export function mergeFreeTextClauses(existing: string | null | undefined, extracted: string | null | undefined): string | null {
+  const split = (s: string | null | undefined) => String(s ?? "").split(/[・、,，\n]/).map((x) => x.trim()).filter(Boolean);
+  const cur = split(existing);
+  const add = split(extracted);
+  if (!add.length) return existing?.trim() ? existing : null;
+  if (!cur.length) return add.filter((x, i) => add.findIndex((y) => clauseKey(y) === clauseKey(x)) === i).join("・");
+  const seen = new Set(cur.map(clauseKey));
+  const fresh: string[] = [];
+  for (const a of add) {
+    const k = clauseKey(a);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    fresh.push(a);
+  }
+  if (!fresh.length) return existing as string;
+  return [...cur, ...fresh].join("・");
+}
+
 export function mergeConditions(
   existing: ConditionFields,
   parsed: ConditionFields,
@@ -69,17 +105,9 @@ export function mergeConditions(
           ? `${prev}・${parsed.floor_plan}`
           : parsed.floor_plan;
     }
-    if (parsed.preferences) {
-      const prev = existing.preferences ?? "";
-      result.preferences = prev ? `${prev}・${parsed.preferences}` : parsed.preferences;
-    }
-    if (parsed.ng_points) {
-      const prev = existing.ng_points ?? "";
-      result.ng_points = prev ? `${prev}・${parsed.ng_points}` : parsed.ng_points;
-    }
-    if (parsed.other_requests) {
-      const prev = existing.other_requests ?? "";
-      result.other_requests = prev ? `${prev}。${parsed.other_requests}` : parsed.other_requests;
+    // 2026-09-30 自由文の欄は節ごとに足す（同じ節を二重に足さない）
+    for (const f of FREE_TEXT_CONDITION_FIELDS) {
+      if (parsed[f]) result[f] = mergeFreeTextClauses(existing[f], parsed[f]);
     }
     // 数値系: 新値があれば上書き
     if (parsed.rent_max != null) result.rent_max = parsed.rent_max;
@@ -93,9 +121,13 @@ export function mergeConditions(
   }
 
   // REPLACE: AIが非nullで返したフィールドのみ上書き（最小破壊）
+  // 2026-09-30: 自由文の欄（こだわり・NG・その他）は差し替えでも節ごとに足す（丸ごと上書きで今の条件を消さない・mergeFreeTextClauses）
   const result = { ...existing };
+  const freeText = new Set<string>(FREE_TEXT_CONDITION_FIELDS);
   for (const [k, v] of Object.entries(parsed)) {
-    if (v != null) (result as Record<string, unknown>)[k] = v;
+    if (v == null) continue;
+    if (freeText.has(k)) (result as Record<string, unknown>)[k] = mergeFreeTextClauses((existing as Record<string, string | null | undefined>)[k], String(v));
+    else (result as Record<string, unknown>)[k] = v;
   }
   return result;
 }
