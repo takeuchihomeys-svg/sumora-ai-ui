@@ -72,10 +72,18 @@ export function resolveTwoChoice(o: {
    *   写真の依頼は内覧の段階にも来る（2/17 会話）ので、この理由だけ proposing|viewing を許す。申込以降は出さない
    */
   roomPhotoRequest?: boolean;
+  /**
+   * 2026-09-30 竹内（みこと事例）: 手続きの質問（審査・入居までの期間と流れ）で、対象のお部屋の入居時期が資料で分からない。
+   *   ブレインが「AIX【確認した→入居可能日】」を**決めた**時（decision_source=rule:procedure_question_move_in_unknown）。
+   *   返信で期間と流れを説明する（入居日は断言しない）か、管理会社に確認して AIX で入居可能日まで答えるかはスタッフが選ぶ。
+   *   内覧の調整中にも来る質問なので段階は問わない（申込以降はブレイン側で外している）
+   */
+  procedureMoveInUnknown?: boolean;
 }): TwoChoiceVerdict {
   const no = (reason: string): TwoChoiceVerdict => ({ two: false, reason });
   const t = (o.customerText ?? "").trim();
   if (!t) return no("no_customer_text");
+  if (o.procedureMoveInUnknown) return { two: true, reason: "procedure_move_in_unknown" };
   if (o.roomPhotoRequest) {
     if (o.checkpointStage !== "proposing" && o.checkpointStage !== "viewing") return no("not_proposing");
     if (o.sentPropertyCount <= 0) return no("no_sent_property");

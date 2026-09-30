@@ -229,6 +229,7 @@ import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 //   1回構築し、生成（【📒 我々の行動台帳】・往復文脈・hedge.searched・締め）・検査（final-check runLedgerChecks）・tpo_debug → reply_context_snapshot が同一オブジェクトを参照
 import { buildActionLedger, buildLedgerNote, buildLastStaffAnnotation, applyLedgerAutoFix, type ActionLedger, type LedgerAixRow, type LedgerTask, type RecordedFact } from "@/app/lib/action-ledger";
 // 2026-09-26 竹内「ここの部分改善する根本的に」: 済んだ事・もう言った約束・決まった内覧を入口で1回だけ決める（純関数・done-state.ts の冒頭を見る）
+import { annotateUnconfirmedViewing, isViewingFixTopic } from "@/app/lib/viewing-premature";
 import { latestStaffBlock, withoutWaitFormPromises, findWaitFormPromises, WAIT_FORM_ACK_HINT, resolveViewingScheduled, buildViewingScheduledNote, isWholeShortAck, buildFollowUpDoneNote, customerAnsweredByAix, viewingHoursOf, viewingAckLine, type ViewingScheduled } from "@/app/lib/done-state";
 import { resolveViewingThread } from "@/app/lib/viewing-thread";
 import { loadRecordedFacts } from "@/app/lib/sent-facts";
@@ -257,6 +258,7 @@ import { replaceWaitedOpening } from "@/app/lib/waited-scope";
 import { SHADOW_NO_WRITE_FIELD } from "@/app/lib/customer-sim-shadow";
 // 2026-09-29 竹内（林田さん「ガスコンロはついてないのですか？」）: 送った物件の設備の質問は資料から読んだ事実を材料に（equipment-question.ts）
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
+import { loadProcedureAnswerWithin } from "@/app/lib/procedure-answer-server";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -3995,6 +3997,13 @@ async function handleGenerateReply(req: NextRequest) {
       ? await loadEquipmentAnswerWithin(12_000, { conversationId, customerText: message ?? "" })
       : null;
     if (equipmentAnswer) console.info("[equipment-answer]", JSON.stringify({ conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
+    // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」）「申込から審査、入居までの期間と流れを説明する部分、返信すれば大丈夫」
+    //   「物件が退去予定か即入居可能かで入居日が変わる（物件資料から）。資料に記載があればそこで答えて大丈夫」:
+    //   手続きの質問の時だけ、流れの事実と主のお部屋の資料の入居時期（保存済みの行）を材料に渡す（質問でなければ何もしない・枠 8秒・申込以降は渡さない）
+    const procedureAnswer = !isTemplateOptimize && !postApplyConversation && !!conversationId
+      ? await loadProcedureAnswerWithin(8_000, { conversationId, customerText: message ?? "" })
+      : null;
+    if (procedureAnswer) console.info("[procedure-answer]", JSON.stringify({ conversationId, kinds: procedureAnswer.plan.question.kinds, mode: procedureAnswer.plan.mode, target: procedureAnswer.plan.target?.name ?? null, moveIn: procedureAnswer.plan.moveIn?.why ?? null, source: procedureAnswer.source }));
     const confirmCtx: ConfirmationContextVerdict = resolveConfirmationContext({
       customerMessage: message ?? "",
       lastStaffMessage: lastStaffMsgForSearch,
@@ -4427,8 +4436,14 @@ async function handleGenerateReply(req: NextRequest) {
       }));
     }
     if (pairContext.cellGuard.concernDemoted) console.warn("[cell-guard]", pairContext.cellGuard.reason);
+    // 2026-09-30 竹内さん（みことさん事例）「内覧確定していないのに内覧のこと自動返信で入れてしまっている」:
+    //   ブレインの方向「…10/2の内覧へ進め」・話題「10/2（金）13:00〜16:00の内覧日確定」を、生成は「決まった予定」と読み
+    //   「ご内覧時に内覧担当から詳しく打ち合わせ」を書いた。内覧が決まるのは待ち合わせの案内（台帳の viewingAppointment）の時だけ。
+    //   ブレインの判断は消さず、生成に渡す時だけ「まだ決まっていない」を添える（入口）。出口は action-ledger の viewing_presumed
+    const viewingConfirmedForGen = !!ledger.facts.viewingAppointment || !!ledger.facts.viewingDeclared;
+    const brainDirForGen = (d: string | null | undefined): string | null => annotateUnconfirmedViewing(d ?? null, viewingConfirmedForGen);
     const pairDirection = buildPairDirection(pairContext, {
-      brainReplyDirection: brainStrategy?.reply_direction ?? null, brainFresh: brainLocalFresh, strategy: brainStrategy,
+      brainReplyDirection: brainDirForGen(brainStrategy?.reply_direction), brainFresh: brainLocalFresh, strategy: brainStrategy,
     });
     // ラベル: tpoNoteForLLM ↔ prompts「■ 場面【…】」↔ final-check WAIT_TPO_RE（after_wait の検討中セルは「検討中フォロー」を含めて WE DO 免除を維持）
     const pairTpoLabel = pairContext.rule ? `${pairContext.rule.tpoLabel}（往復: ${pairContext.summary}。${pairContext.rule.length}）` : null;
@@ -4526,19 +4541,22 @@ async function handleGenerateReply(req: NextRequest) {
         return `${d.direction}。WE DO例:「${d.weDo}」。禁止: ${d.forbid}`;
       }
       // S-3: reply_direction は message-local。fresh の時のみ採用し、stale なら state 別フォールバックへ
-      if (brainFreshForMessage && !isCachedMeta && brainMeta?.reply_direction) return brainMeta.reply_direction;
+      if (brainFreshForMessage && !isCachedMeta && brainMeta?.reply_direction) return brainDirForGen(brainMeta.reply_direction);
       // 2026-09-10 Fable5 Sさん事例（原因D）: T3（suggested_aix_meta=null）でも last_brain_meta の
       //   conversation-scope な reply_direction は「会話全体の方針」として使える（1メッセージ古くても壊れない）。
       //   brain-sweep が「5分以内に補填する」というコメントは実測 899/900 失敗で虚偽だった。
       if (brainStrategySource === "last_brain_meta" && brainStrategy?.reply_direction) {
-        return `${brainStrategy.reply_direction}（※直近の分析結果に基づく会話全体の方針。今回のメッセージの中身は本文から読み取ること）`;
+        return `${brainDirForGen(brainStrategy.reply_direction)}（※直近の分析結果に基づく会話全体の方針。今回のメッセージの中身は本文から読み取ること）`;
       }
       // A-4: state 別フォールバック（固定文「WE DO宣言を1文添える」の廃止）
       return STATE_FALLBACK_DIRECTION[phaseGuideKey] ?? null;
     })();
     const effectiveKeyTopics: string[] = (() => {
       // S-3: key_topics も message-local。stale/cached では採用しない
-      const freshTopics = brainFreshForMessage && !isCachedMeta ? (brainMeta?.key_topics ?? []) : [];
+      // 2026-09-30（みことさん事例）: 「10/2（金）13:00〜16:00の内覧日確定」を必須の話題にすると、未確定の内覧を決まった予定として書く。
+      //   待ち合わせ未案内の時は、内覧の日時・確定の話題を必須から外す（ブレインの判断そのものは保存済みのまま）
+      const freshTopics = (brainFreshForMessage && !isCachedMeta ? (brainMeta?.key_topics ?? []) : [])
+        .filter((t) => viewingConfirmedForGen || !isViewingFixTopic(t));
       if (isConditionPresented) {
         return freshTopics.length > 0 ? freshTopics : ["エリア・家賃条件を受け取り即ピックアップ宣言"];
       }
@@ -5036,7 +5054,7 @@ async function handleGenerateReply(req: NextRequest) {
       //   **生成プロンプトに1文字も入らない**（実測で56.3%が差し替わっていた）。
       //   型（どう書くか）はそのまま、ブレインの中身（何について書くか）を1行足す。詳細は brain-specific-note.ts
       const brainSpecific = buildBrainSpecificNote({
-        brainDirection: brainMeta?.reply_direction ?? null,
+        brainDirection: brainDirForGen(brainMeta?.reply_direction),
         effectiveDirection: effectiveReplyDirection,
         fresh: brainFreshForMessage && !isCachedMeta,
         // 型が「新しい提案をしない」と言っている場面（ここで足すと書けと書くなの衝突になる）
@@ -5458,7 +5476,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-09-18 ゆうこ事例: 今日すでに全力サポートを送っている時だけ「もう書かない」を渡す
         + (fullSupportSentToday ? `\n\n${buildFullSupportNote(true)}` : "")
         // 2026-09-29 林田さん事例: 送った物件の設備の質問＝資料から読んだ事実（質問の時だけ・毎回変わる所）
-        + (equipmentAnswer?.note ? `\n\n${equipmentAnswer.note}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+        + (equipmentAnswer?.note ? `\n\n${equipmentAnswer.note}` : "")
+        // 2026-09-30 みこと事例: 手続きの質問（審査・入居までの期間と流れ・必要書類）＝流れの事実と資料の入居時期（質問の時だけ）
+        + (procedureAnswer?.note ? `\n\n${procedureAnswer.note}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）

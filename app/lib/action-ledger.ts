@@ -21,6 +21,7 @@ import {
 import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
+import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration, UNCONFIRMED_VIEWING_LEDGER_LINE } from './viewing-premature';
 // 2026-09-15 竹内（YUYA 事例）: 保証会社の種類の日本語は guarantor-companies の1表から（依存ゼロの純関数モジュールなので循環しない）
 import { GUARANTOR_TYPE_SHORT, GUARANTOR_TYPE_LABELS, normalizeGuarantorType } from './guarantor-companies';
 // 保存済みの旧 "licc" は信用系と読む（2026-09-26 種類は3つ）
@@ -97,6 +98,11 @@ export interface LedgerFacts {
    *   旧: 待ち合わせを日付だけで見ていて、内覧が終わりお礼を送った後も当日中は「この内覧は決まっている」と渡していた
    */
   viewingDone: { appointment: ViewingAppointment; thankedAt: string } | null;
+  /**
+   * 2026-09-30（みことさん事例）: こちらの本文で内覧を確定と宣言した（待ち合わせの語が無い形・オンライン内覧 等）。今日以降・内覧後のお礼の前だけ。
+   *   viewing_presumed の免除と「まだ決まっていない」の行を出さない判定だけに使う（viewingAppointment＝決まった内覧の注記には入れない）
+   */
+  viewingDeclared?: { dateMD: string; at: string } | null;
   propertiesSentCount: number;
   propertiesSentNames: string[];
   lastPropertiesSentAt: string | null;
@@ -905,9 +911,29 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     }
     return now - ms(lastMeeting.at) <= 48 * 3600 * 1000 ? { ...a, day: 'unknown', sentAt: lastMeeting.at } : null;
   })();
+  // 2026-09-30（みことさん事例の監査）: 待ち合わせの語の無い、こちらの内覧の確定の宣言（オンライン内覧・お客様が日時を決めた返事）。
+  //   今日以降の日付で、その後に内覧後のお礼が無いものだけ。viewing_presumed（決まっていない内覧を決まった予定として書く）の免除だけに使う
+  const viewingDeclared = ((): LedgerFacts['viewingDeclared'] => {
+    const today = jstDayStartMs(now);
+    const p = jstParts(now);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.sender !== 'staff') continue;
+      const at = ms(m.createdAt);
+      const dateMD = findStaffViewingDeclaration(m.text, at);
+      if (!dateMD) continue;
+      if (msgs.slice(i + 1).some((x) => x.sender === 'staff' && STAFF_VIEWING_DONE_RE.test((x.text ?? '').normalize('NFKC')))) return null;
+      const [mo, d] = dateMD.split('/').map(Number);
+      const y = mo < p.m - 6 ? p.y + 1 : mo > p.m + 6 ? p.y - 1 : p.y;
+      if (Date.UTC(y, mo - 1, d) - 9 * 3600 * 1000 < today) return null;
+      return { dateMD, at: m.createdAt ?? '' };
+    }
+    return null;
+  })();
   const facts: LedgerFacts = {
     viewingAppointment,
     viewingDone,
+    viewingDeclared,
     propertiesSentCount: sentDone.reduce((n, e) => n + (e.detail.propertyCount ?? 1), 0),
     propertiesSentNames: uniq(sentDone.flatMap((e) => e.detail.propertyNames ?? [])),
     lastPropertiesSentAt: sentDone.at(-1)?.at ?? null,
@@ -1079,6 +1105,9 @@ export function buildActionLedgerNote(ledger: ActionLedger, opts: { customerName
   if (f.viewingDone) {
     lines.push(`→ 内覧は**実施済み**（${`${f.viewingDone.appointment.dateMD ?? ''} ${f.viewingDone.appointment.time ?? ''}`.trim()}・${fmtJst(f.viewingDone.thankedAt)} に内覧後のお礼も送付済み）。今は内覧後（お客様の検討・申込を待つ段階）。内覧前・当日の段取りの言葉（これから会う予定・楽しみにしている・道中の気遣い・ご案内の予告）は書かない。`);
   }
+  // 2026-09-30 竹内さん（みことさん事例）: 内覧の打診はしたが、まだ決まっていない（待ち合わせ未案内）。
+  //   旧は「決まっている」時の行しか無く、ブレインの方向「10/2の内覧へ進め」を生成が「決まった予定」と読んだ
+  if (f.viewingInvited && !f.viewingAppointment && !f.viewingDeclared && !f.viewingDone) lines.push(UNCONFIRMED_VIEWING_LEDGER_LINE);
   if (f.viewingAppointment) {
     // 2026-09-20 竹内（まりあさん事例）: 旧注記は「ご案内させて頂きます」ごと禁止していたが、
     //   スタッフの実送信の正解はまさに「本日16時お部屋ご案内させて頂きます！」＝その語を使う。
@@ -1139,6 +1168,10 @@ export interface DonePresupVocab {
   exemptOnDeliverable?: boolean;
   /** 未実行時の代替。生成ノート・検査 suggestion・自動修正の三者で同じ文 */
   fix: (m: string, o: { name: string; ledger: ActionLedger }) => string;
+  /** 2026-09-30: 正規表現1つで表せない語（過去・仮定の除外／語だけ外して文の中身は残す）。あれば re の代わりにこれで探し、fixed をそのまま使う */
+  detect?: (sentence: string) => { evidence: string; fixed: string } | null;
+  /** 2026-09-30: お客様の今回の発言で免除する時の理由（無ければ null） */
+  exemptWhen?: (o: PresupOpts) => string | null;
 }
 const NX = '[^\\n。！!]';
 const NOT_CUST = `(?!${NX}{0,24}(?:いただ|頂い|頂け|ください|下さい))`;
@@ -1195,6 +1228,21 @@ export const DONE_PRESUPPOSING_VOCAB: DonePresupVocab[] = [
     requires: (f) => f.meetingPlaceSent || f.viewingInvited,
     requiresLabel: '待ち合わせ案内 または 内覧打診 ≥1（その会話で内覧の話が一度でも出ている）', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
     label: '「本日はご内覧頂きありがとうございました」（内覧が完了している前提）', fix: () => '' },
+  // 2026-09-30 竹内さん（みことさん事例）「内覧確定していないのに内覧のこと自動返信で入れてしまっている。
+  //   内覧のことについて伝えるのは内覧が確定（AIX の待ち合わせ場所）を行ったうえで行う形」:
+  //   10/2 を打診しただけ（お客様は 3日を聞き返した＝未確定）の会話で「ご内覧時に内覧担当から詳しく打ち合わせ…」
+  //   「内覧時に内覧担当より詳しくご案内…」が自動返信で2通送られた。
+  //   【線】内覧が決まっている＝台帳の viewingAppointment（AIX 待ち合わせ場所・こちらの本文の待ち合わせの案内。今日以降・内覧後のお礼の前）。
+  //   判定と直し方は viewing-premature.ts（過去の話・仮定の文は当てない・語だけ外して答えは残す）。
+  //   実送信365日の監査は scripts/audit-viewing-premature.ts（結果は viewing-premature.ts の冒頭）
+  { key: 'viewing_presumed', re: /(?:ご内覧|内覧|ご内見|内見|ご見学|見学|お会い)/,
+    // 2026-09-30 見直し: ここの文の区切りは「？」で切らない（findPrematureViewing は切る）。当たった部分だけを差し替える
+    //   （そのまま h.fixed を使うと「ご都合いかがでしょうか？ご内覧時に〜」の前半の質問ごと消えた）
+    detect: (s) => { const h = findPrematureViewing(s)[0]; return h ? { evidence: h.evidence, fixed: s.replace(h.sentence, h.fixed).trim() } : null; },
+    exemptWhen: (o) => customerMentionsFixedViewing(o.customerMessage) ? 'customer_fixed_viewing' : null,
+    requires: (f) => !!f.viewingAppointment || !!f.viewingDeclared,
+    requiresLabel: '内覧が決まっている（AIX 待ち合わせ場所・本文の待ち合わせの案内・こちらの確定の宣言が今日以降にある）', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
+    label: '「ご内覧時に〜」「〇日のご内覧もよろしく」（内覧が決まっている前提）', fix: () => '' },
   { key: 'redo_apply', re: new RegExp(`(?:再度|改めて|もう一度)${NX}{0,12}?お申込`),
     requires: ['applicationGuided'], requiresLabel: '申込打診 ≥1', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
     label: '「再度お申込み」（申込が1度成立している前提）', fix: (m) => m.replace(REDO, '') },
@@ -1228,7 +1276,10 @@ export function checkDonePresupposition(text: string, ledger: ActionLedger, o: P
   const asksMore = CUSTOMER_ASKS_MORE_RE.test(o.customerMessage ?? '');
   for (const v of DONE_PRESUPPOSING_VOCAB) {
     for (const s of sentences) {
-      const m = s.match(v.re);
+      // 2026-09-30: detect がある語は detect の結果（語と直した文）をそのまま使う
+      const det = v.detect ? v.detect(s) : null;
+      if (v.detect && !det) continue;
+      const m: string[] | null = det ? [det.evidence] : s.match(v.re);
       if (!m) continue;
       const need = requiredKeys(v, m[0]);
       const missing = typeof need === 'function' ? (need(ledger.facts) ? [] : ['propertiesSent' as LedgerFactKey]) : need.filter((k) => !hasFact(ledger.facts, k));
@@ -1237,8 +1288,9 @@ export function checkDonePresupposition(text: string, ledger: ActionLedger, o: P
       else if (v.exemptOnDeliverable && o.isDeliverableReply) exempt = 'deliverable_reply';
       else if (v.exemptOnCustomerRef && custRef) exempt = `customer_ref:${custRef[0]}`;
       else if (v.exemptOnCustomerAsksMore && asksMore) exempt = 'customer_asks_more';
+      else if (v.exemptWhen) exempt = v.exemptWhen(o);
       const rep = v.fix(m[0], { name: o.name, ledger });
-      const fixed = (rep === '' ? '' : s.replace(m[0], rep)).replace(/^[、,]/, '');
+      const fixed = det ? det.fixed : (rep === '' ? '' : s.replace(m[0], rep)).replace(/^[、,]/, '');
       out.push({ key: v.key, code: v.code, severity: v.severity, label: v.label, requiresLabel: v.requiresLabel, evidence: m[0], sentence: s, missing, exempt, fixed });
       break; // 語ごとに最初の1文だけ（修正ループの evidence 一意性）
     }
@@ -1259,6 +1311,8 @@ export function applyLedgerAutoFix(text: string, ledger: ActionLedger, o: Presup
     const m = cur.match(COMPLETED_SEND_RE);
     if (m) { cur = cur.replace(m[0], 'ピックアップ出来次第お送りさせて頂きます'); applied.push(`promise_echo:「${m[0]}」→未来形`); }
   }
+  // 2026-09-30: 文ごと外した後に残る「！」だけの行を落とす（文の区切りが1文字ずつのため「…😌！！」の2つ目の「！」が残る）
+  if (applied.length) cur = cur.replace(/^[ \t]*[！!]+[ \t]*$/gm, '');
   return { text: cur.replace(/\n{3,}/g, '\n\n'), applied };
 }
 

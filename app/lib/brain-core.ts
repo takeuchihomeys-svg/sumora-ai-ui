@@ -115,6 +115,9 @@ import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch"
 import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 // 2026-09-29 送った物件の設備の質問＝資料の設備欄から読んだ事実（equipment-question.ts・林田さん事例）
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
+// 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
+import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
+import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote } from "@/app/lib/procedure-question";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -455,6 +458,8 @@ const REPLY_STYLE_RULES = `
 ②' 保証会社そのもの（「保証会社はどこですか」「保証会社は緩そうなところですか」「〇〇保証の物件はありますか」）→ aix: guarantor_info（物件ごとの会社名・種類を AIX【保証会社について】で一覧に。本文は「保証会社確認させて頂きます」の受付だけ・会社名や通りやすさを書かない）。審査の通りやすさだけの質問（「審査厳しいですか」）は property_check_result（保証会社・審査面）
 ③ 退去予定日・入居可能日・最短入居日 → 橋渡しのみ（「最短のご入居日につきまして管理会社に確認させていただきます」）。審査3日〜10日+契約手続きの実データ回答が正でありAIの楽観約束は引越し手配等の実害
 ④ 審査進捗・審査通過可能性（「通りますか」「夜職だと厳しいですか」）→ 橋渡しのみ。スタッフ自身が「通過率は過去の滞納に左右されるので分からない」と明言している。「通りそうです」の生成は重大ハルシネーション。管理会社に確認した保証会社名・種類（独立系＝審査基準が緩い 等）・並行審査の勧めはスタッフが AIX【保証会社について】で送る（本文で保証会社名・審査の緩さを書かない）
+④' 【2026-09-30 竹内・みこと事例】審査・入居までの**期間と流れ**、必要書類、本人確認書類の質問（「審査通るまでどのくらいの期間見といたらいいですか」「申込から入居まで何日くらいですか」「必要書類は何ですか」「マイナンバーカードで大丈夫ですか」）は④ではない → **aix は null・本文で答える**（管理会社に確認する話ではない。「確認させて頂きます」で返さない）。答えは材料の【📝 お客様の手続きの質問】の事実（申込→保証会社の審査 3日〜10日程→契約のお手続き→ご入居）で、実送信365日・22通すべて本文の回答（この質問の後に 物件確認した／確認します／保証会社について を押した回は0）。入居できる日は物件で変わる（即入居か退去予定か）ので、材料に資料の入居時期がある時は資料の文字のまま・無い時は断言しない
+【「物件確認した」と「確認した」は別の AIX（2026-09-30 竹内）】aix は同じ property_check_result でも画面のボタンは2つ: 「物件確認した（募集状況）」＝**物件そのもの**のこと（空き・募集状況・募集終了・別の部屋・室内写真）／「確認した（条件・交渉）」＝**設備・入居（入居可能日・退去予定）・ペット・駐車場・保証会社・初期費用の交渉など管理会社に確認が要る事**。どちらも「確認した結果を報告する」ボタンで、お客様の質問が来ただけ・確認の要らない一般の質問（審査の期間・流れ・必要書類）では選ばない。材料に【🔎 お客様が聞いた入居・ペット・駐車場】【🔧 お客様が聞いた設備】があり「資料に記載あり」の項目は本文で資料のとおりに答える（aix は null）／「資料では答えられない」項目は property_check_result（確認した（条件・交渉））
 ⑤ 値下げ交渉の可否と結果 → 橋渡しのみ。「安くなります」は期待値誤誘導（実会話で「家賃減額・礼金減額は考えていないとのこと」と否決された実績あり）
 ⑤' 【絶対NG・2026-09-23 竹内「家賃交渉は基本できないものだからいれない」】家賃・賃料の値下げ（減額・値引き）を**これから交渉・確認する**と書くこと。reply_direction・closing_strategy・key_topics・next_steps・winning_pattern のどこにも入れない。
 　　実送信の線（365日・スタッフ送信12,417通）: 家賃・賃料の値下げを これから交渉/確認する未来形 = **0通**。下書きに出た予告形3件は3件ともスタッフが削除している。
@@ -2307,6 +2312,30 @@ export async function analyzeConversation(
     customerStateBlockText += `\n\n${equipmentAnswer.note}`;
     console.log(JSON.stringify({ tag: "brain:equipment-answer", conversationId, topics: equipmentAnswer.question.topics, mode: equipmentAnswer.plan.mode, sources: equipmentAnswer.sources }));
   }
+  // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」→ 画面は AIX【物件確認した】）
+  //   「この場合は AIX の確認したではない…申込から審査、入居までの期間と流れを説明する部分、返信すれば大丈夫」
+  //   「物件が退去予定か即入居可能かで入居日が変わる（物件資料から）。資料を読み取って分からなかったら AIX をそのまま送れるように。資料に記載があればそこで答えて大丈夫」
+  //   手続きの質問の時だけ、主のお部屋の資料の入居時期（保存済みの行）を読んで材料に渡す。質問でなければ DB も引かない（枠 8秒・過ぎたら今まで通り）。
+  //   お客様が今回の連投で物件（画像・URL）を持ち込んだ時は主のお部屋の資料を当てない（別の物件の話かもしれない）
+  const focusRoomForMaterial = (() => {
+    const r = customerState?.focusKey ? customerState.properties.find((x) => x.key === customerState.focusKey) ?? null : null;
+    return r && r.status !== "ended" && !unrepliedTurn.hasImage && !/https?:\/\//.test(unrepliedTurn.text)
+      ? { name: r.building, roomNo: r.room, vacating: r.vacating } : null;
+  })();
+  const procedureAnswer: ProcedureAnswerMaterial | null = isPostApplyStatus(convStatus) ? null
+    : await loadProcedureAnswerWithin(8_000, { conversationId, customerText: unrepliedTurn.text, target: focusRoomForMaterial });
+  if (procedureAnswer?.note) {
+    customerStateBlockText += `\n\n${procedureAnswer.note}`;
+    console.log(JSON.stringify({ tag: "brain:procedure-answer", conversationId, kinds: procedureAnswer.plan.question.kinds, mode: procedureAnswer.plan.mode, target: procedureAnswer.plan.target?.name ?? null, moveIn: procedureAnswer.plan.moveIn?.why ?? null, source: procedureAnswer.source }));
+  }
+  //   「確認した」系（入居可能日・ペット・駐車場）の質問: 主のお部屋の資料に記載があれば資料で答える／無ければ AIX【確認した】（設備は上の equipment-answer）
+  const confirmTopicsAsked = procedureAnswer || isPostApplyStatus(convStatus) ? []
+    : detectConfirmTopics(unrepliedTurn.text, { moveInAsked: sceneEvidence?.scene === "S2_move_in" });
+  const confirmTopic: ConfirmTopicMaterial | null = await loadConfirmTopicRoutesWithin(8_000, { conversationId, topics: confirmTopicsAsked, target: focusRoomForMaterial });
+  if (confirmTopic?.note) {
+    customerStateBlockText += `\n\n${confirmTopic.note}`;
+    console.log(JSON.stringify({ tag: "brain:confirm-topic", conversationId, target: confirmTopic.target.name, routes: confirmTopic.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: confirmTopic.source }));
+  }
   let viewingsText = customerStateText ? "" : viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {
         let s = `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`;
@@ -2872,6 +2901,42 @@ ${history}`;
       finalAix = "property_check_result";
       decisionSource = "correction:scene_S2_check_result";
     }
+    // 2026-09-30 竹内（みこと事例）: 手続きの質問（審査・入居までの期間と流れ・必要書類・本人確認書類）は返信で答える。
+    //   LLM は「④審査進捗・通過可能性 → 橋渡し」に寄せて 物件確認した（check_pattern なし）を選んでいた（穴:G1 入口が無い）。
+    //   上書きするのは AIX なし／物件確認した／確認します／保証会社について だけ（内覧・見積書・ピックアップ等の判断はそのまま）。
+    //   他の場面の証拠（空き状況・室内写真・電話 等）が同じ連投にある時は触らない。入居日の質問（S2）だけは下の資料の決まりに乗せる。
+    //   ・資料に入居時期がある／入居時期が要らない（必要書類だけ）／対象のお部屋が無い → AIX なし（返信）
+    //   ・対象のお部屋の入居時期が資料で分からない → 「返信か AIX【確認した→入居可能日】か」の2択（feedback_two_choice_aix）
+    //   実送信（365日・当たり22通）: 全部本文で回答・上の AIX を押した回 0（scripts/audit-procedure-question.ts）
+    let procedureDecision: "reply" | "two_choice" | null = null;
+    const procedureQ = detectProcedureQuestion(unrepliedTurn.text);
+    if (!promiseAix && isProcedureReplyQuestion(procedureQ) && !isPostApplyStatus(convStatus) && !unrepliedTurn.hasImage
+      && (!sceneEvidence || sceneEvidence.scene === "S2_move_in")
+      && (finalAix === null || finalAix === "property_check_result" || finalAix === "acknowledge_check" || finalAix === "guarantor_info")) {
+      if (procedureAnswer?.plan.mode === "two_choice") {
+        finalAix = "property_check_result";
+        sceneSignalCheckPattern = "mgmt_move_in";
+        decisionSource = "rule:procedure_question_move_in_unknown";
+        procedureDecision = "two_choice";
+      } else {
+        finalAix = null;
+        sceneSignalCheckPattern = null;
+        decisionSource = "rule:procedure_question_reply";
+        procedureDecision = "reply";
+      }
+    }
+    // 2026-09-30 竹内「確認した＝設備や入居のことや管理会社に確認が必要な部分。物件資料に記載があればそこで答えて大丈夫」:
+    //   入居可能日・ペット・駐車場の質問で、主のお部屋の資料に答えが全部書いてある → AIX【確認した】ではなく返信（資料の文字のまま）。
+    //   1つでも資料で分からない → 従来どおり AIX【確認した（条件・交渉）】（ブレインの選んだ AIX は変えない）。上書きは 物件確認した／確認します だけ
+    let confirmTopicReply = false;
+    if (!promiseAix && !procedureDecision && confirmTopic?.allInMaterial && !isPostApplyStatus(convStatus)
+      && (!sceneEvidence || sceneEvidence.scene === "S2_move_in")
+      && (finalAix === "property_check_result" || finalAix === "acknowledge_check")) {
+      finalAix = null;
+      sceneSignalCheckPattern = null;
+      decisionSource = "rule:confirm_topic_in_material";
+      confirmTopicReply = true;
+    }
     // 2026-09-27 竹内（YUMA の返信テスト）「この場面は見積書を正解にする」: こちらが送ったお部屋（エステムコート大阪WEST）に「いいですね」→
     //   「見積もりお願いできますか」で、LLM が 物件確認した（募集状況を確認し報告）を選んだ。
     //   主のお部屋（customer-state の focus）がこちらの送ったお部屋で、今回の連投が見積もりの依頼なら 見積書送る（focused-estimate-request.ts）。
@@ -3086,7 +3151,13 @@ ${history}`;
     //   この場面の正解として既にナレッジにある形（8381c035「今の物件で家賃交渉を試みない→条件に合う別の物件を再ピックアップ」）
     // 2026-09-27: 主のお部屋への見積もりの依頼で 見積書送る に上書きした時は、LLM の方向（「募集状況を確認し結果を報告する」）を見積書に合わせる
     //   （方向を残すと返信が「募集状況確認させて頂きます」と AIX と食い違う）
-    const replyDirection = focusedEstimateOverride !== null
+    // 2026-09-30: 手続きの質問を返信に倒した時は、LLM の方向（「審査期間を管理会社に確認して報告する」）を返信で答える方向に合わせる
+    //   （残すと下書きが「確認させて頂きます」と書く）。資料で答える時も同じ
+    const procedureDirection = procedureDecision && procedureAnswer ? procedureReplyDirection(procedureAnswer.plan)
+      : procedureDecision ? "審査・入居までの期間と流れ／必要書類のご質問に本文で答える（管理会社への確認の宣言はしない）"
+      : confirmTopicReply && confirmTopic ? `${confirmTopic.routes.map((r) => r.lines.join("／")).join("・")} を資料のとおりに本文で答える（管理会社への確認の宣言はしない）`.slice(0, 120)
+      : null;
+    const replyDirection = procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
       ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
       : rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
 
@@ -3099,7 +3170,10 @@ ${history}`;
     const keyTopicsGuard = stripRentNegotiationFromList(keyTopicsRaw, { customerAsked: custRentAsk });
     // 2026-09-27: 主のお部屋への見積もりの依頼で 見積書送る に上書きした時は、LLM が物件確認した のつもりで入れた「募集状況確認」を必須内容から外す
     //   （残すと返信が「募集状況確認させて頂きます」を約束し、物件確認のやることが立つ）
-    const keyTopics = focusedEstimateOverride !== null
+    const keyTopics = procedureDirection !== null
+      // 2026-09-30: 返信で答えると決めた時は、LLM が確認のつもりで入れた「管理会社に確認」を必須内容から外す
+      ? keyTopicsGuard.items.filter((t) => !/管理会社|確認(?:し|する|のうえ|して)|問い?合わせ/.test(t))
+      : focusedEstimateOverride !== null
       ? keyTopicsGuard.items.filter((t) => !/募集状況|空室|空き状況/.test(t))
       : keyTopicsGuard.items;
 
@@ -3109,6 +3183,8 @@ ${history}`;
         .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
         .map((t) => t.trim().slice(0, 20))
     );
+    // 2026-09-30: 手続きの質問を返信で答える時は、LLM の「審査期間の断言」等の禁止を外す（期間は会社の事実 3日〜10日程で答える）
+    if (procedureDecision) for (const t of [...avoidSet]) if (/審査期間|期間の断言|入居までの期間/.test(t)) avoidSet.delete(t);
     avoidSet.add("来阪"); // ルール⑤: ブランド絶対ルール（LLM出力に依存しない）
     avoidSet.delete("ご来阪"); // 来阪に正規化（generate-reply側で言い換え禁止を指示するため1語で足りる）
     // 家賃交渉を方向・必須内容から落とした時は、本文にも書かせない（出口で本文を書き換えない代わりの入口の守り）
@@ -3307,18 +3383,21 @@ ${history}`;
       // 2026-09-23 竹内: 室内の写真の依頼は「AIX【物件確認した→室内写真を確認した】か返信か」の2択（手元に写真があるかはスタッフしか知らない）。
       //   合図は**ブレインの決定**（decision_source）＝証拠だけで立てると、promise:pickup 等で別の AIX になった回に写真と無関係な左ボタンが出る
       roomPhotoRequest: decisionSource === "signal:scene_S11_room_photo",
+      // 2026-09-30: 手続きの質問で対象のお部屋の入居時期が資料で分からない → 返信（期間と流れ）か AIX【確認した→入居可能日】かの2択
+      procedureMoveInUnknown: procedureDecision === "two_choice",
     });
     const isTwoChoiceMode: boolean = twoChoiceVerdict.two;
     // reply_direction_label: 10字以内。LLM出力を優先、なければ customer_intent から補完
     const rawRdLabel = typeof parsed.reply_direction_label === "string" ? parsed.reply_direction_label.trim() : "";
     const replyDirectionLabel: string | undefined = isTwoChoiceMode
-      ? (rawRdLabel.slice(0, 10) || ((): string => {
+      ? ((twoChoiceVerdict.reason === "procedure_move_in_unknown" ? "" : rawRdLabel.slice(0, 10)) || ((): string => {
           // 2026-09-16 竹内（あや事例）: 検討して持ち帰った場面の返信は「ごゆっくりご検討ください＋出次第また送る」（実データ13件）
           if (twoChoiceVerdict.reason === "considering") return "検討見守り";
           // 2026-09-17 竹内（慶次事例）: 謝って預けた場面の返信は「受け止め＋ピックアップの約束」（実送信「とんでもございません！！…お送りさせて頂きます」）
           if (twoChoiceVerdict.reason === "apology_entrust") return "受け止め";
           // 2026-09-23: 写真の依頼の返信側は受付の一文（写真の有無・撮影の約束は書かない）
           if (twoChoiceVerdict.reason === "room_photo_request") return "写真の受付";
+          if (twoChoiceVerdict.reason === "procedure_move_in_unknown") return "審査の流れ";
           if (customerIntentFinal === "question") return "条件説明";
           if (customerIntentFinal === "consultation") return "相場説明";
           if (customerIntentFinal === "negative") return "不安解消";
@@ -3340,6 +3419,8 @@ ${history}`;
       ? "返信不要（こちらの締めの後のお礼・お客様からの連絡待ち）。次の物件が見つかったら AIX【物件ピックアップした】か【物件オススメ】で送る"
       : viewingDayWait
       ? "返信不要（本日の内覧の送り出し済み・お客様のお礼だけ）。内覧が終わったら AIX【挨拶】→内覧後 で挨拶を送る（ピッカーで内覧の終了後に）"
+      : procedureDecision === "two_choice" && procedureAnswer
+      ? procedureTwoChoiceNote(procedureAnswer.plan)
       : finalAix
       ? buildAixStaffNote(finalAix, checkKind)
       : freeTextAixKey
@@ -3416,8 +3497,10 @@ ${history}`;
       source,
       enforcement_level: enforcementLevel,
       closing_strategy: parsed.closing_strategy || undefined,
-      template_hint: templateHint,
-      next_steps: Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
+      // 2026-09-30: 決定論で返信に倒した・2択にした時は、LLM が別の AIX のつもりで入れたテンプレ・次の手順（「管理会社に確認」）を出さない
+      template_hint: procedureDecision || confirmTopicReply ? undefined : templateHint,
+      next_steps: procedureDecision || confirmTopicReply ? undefined
+        : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
       two_choice_mode: isTwoChoiceMode || undefined,
       reply_direction_label: replyDirectionLabel,

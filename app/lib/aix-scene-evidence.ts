@@ -15,6 +15,7 @@ import { customerAsksCostComposition } from "./cost-breakdown";
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, staffOffersViewing } from "./move-out-context";
 import { customerRequestsPhoneCall } from "./phone-call";
 import { isRoomPhotoRequest, stripPhotoWordsForViewing, PROPERTY_NAME_LIKE_RE } from "./room-photo-request";
+import { isProcedureReplyText } from "./procedure-question";
 import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE, OTHER_ROOM_LAYOUT_Q_RE, OTHER_ROOM_SEARCH_RE,
@@ -230,7 +231,12 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   前提は見積る物件があること（送付物件・見積書の後・物件の特定）。物件が1件も無い一般的な質問は本文（初期費用を抑える一文）。
   //   安さへの不安（S8）・見積書の後の総額の確認（S6'）は、そちらの場面を優先する
   //   実データ（240日・誤検出を除いた後）: スタッフは御見積書の項目（鍵交換は含む・火災保険は別途・日割家賃は入居日次第）で答えていた
-  if (customerAsksCostComposition(msg) && !customerDoubtsCheapness(msg)
+  // 2026-09-30 みこと事例: 手続きの質問（審査の期間・入居までの流れ・必要書類）だけの連投か（下の S9・S3・S1 の誤当たりを外す）。
+  //   「審査はどのくらいかかりますか」の「かかりますか」が費用の中身（S9）に、「この物件の審査…ですか」が募集状況（S1）に当たるため。
+  //   費用の語・空きの語が同じ連投にある時は従来どおりその場面を見る
+  const procedureOnly = isProcedureReplyText(msg);
+  const procedureNoCost = procedureOnly && !/費用|家賃|敷金|礼金|保険|料金|お金|金額|円/.test(msg);
+  if (!procedureNoCost && customerAsksCostComposition(msg) && !customerDoubtsCheapness(msg)
     && (hasEstimateBefore(o) || (o.sentPropertyCount ?? 0) > 0 || specified)
     && !(hasEstimateBefore(o) && customerConfirmsEstimateTotal(msg))) {
     return ev({ scene: "S9_cost_breakdown", candidateAction: "cost_breakdown", checkPattern: null, timing: "now", chained: null, reasonCode: "cost_breakdown_question", propertySpecifiedBy: specBy });
@@ -259,13 +265,19 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけで、「保証会社は緩そうなところでしょうか？」（物件を指す語なし・
   //   送付済み物件5件）への実送信は保証会社の一覧（YUYA 17:27/17:31）だった。物件を指していなくても、こちらが送った物件があればその物件の保証会社の質問。
   //   審査の通りやすさだけの質問（「審査厳しいですか」）は従来どおり 物件確認した→保証会社
-  if (SCREENING_Q_RE.test(msg) && GUARANTOR_Q_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
+  // 2026-09-30 竹内（みこと「審査通るまでどのくらいの期間見といたらいいですか？」）「この場合は AIX の確認したではない…返信すれば大丈夫」:
+  //   審査の期間・入居までの期間と流れ・必要書類（手続きの質問）は管理会社に確認する話ではない → S3（審査・保証会社の確認）にしない。
+  //   「審査通るまで」「保証会社の審査はどのくらい」は SCREENING_Q_RE の「審査通」「保証会社の審査」に当たるので、ここで外す。
+  //   通りやすさ・保証会社そのもの（どこ・種類）が同じ連投にある時は従来どおり（procedure-question isProcedureReplyText が false）。
+  //   実送信（365日・当たり22通）: スタッフは全部本文で答え、物件確認した／確認します／保証会社について を押した回は 0（scripts/audit-procedure-question.ts）
+  if (!procedureOnly && SCREENING_Q_RE.test(msg) && GUARANTOR_Q_RE.test(msg) && (specified || (o.sentPropertyCount ?? 0) > 0)) {
     return ev({ scene: "S3_screening", candidateAction: "guarantor_info", checkPattern: null, timing: "after_confirm", chained: null, reasonCode: "guarantor_question", propertySpecifiedBy: specBy ?? "context" });
   }
-  if (SCREENING_Q_RE.test(msg) && specified) {
+  if (!procedureOnly && SCREENING_Q_RE.test(msg) && specified) {
     return ev({ scene: "S3_screening", candidateAction: "property_check_result", checkPattern: "mgmt_guarantor", timing: "after_confirm", chained: null, reasonCode: "screening_question", propertySpecifiedBy: specBy });
   }
-  if (!slotQuestion && specified && detectAvailabilityCheckContext(ownReturned ? normalizeCustomerText(msg) : msg)) {
+  if (!slotQuestion && specified && !(procedureOnly && !AVAILABILITY_EXPLICIT_RE.test(msg) && !AVAILABILITY_URL_RE.test(msg))
+    && detectAvailabilityCheckContext(ownReturned ? normalizeCustomerText(msg) : msg)) {
     return ev({ scene: "S1_vacancy", candidateAction: "property_check_result", checkPattern: null, timing: "after_confirm", chained: estimateDeclare ? "estimate_sheet" : null, reasonCode: "availability_question", propertySpecifiedBy: specBy });
   }
 
@@ -301,7 +313,8 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   }
 
   // S7 条件変更
-  if (AIX_CONDITION_CHANGE_RE.test(msg)) {
+  //   2026-09-30: 「パスポートでも大丈夫でしょうか？」（07-29 b771af1f・本人確認書類の質問）は条件の変更ではない（条件の語が無い手続きの質問は外す）
+  if (AIX_CONDITION_CHANGE_RE.test(msg) && !(procedureOnly && !/家賃|万|エリア|駅|間取り|築|広さ|㎡|階|区|徒歩|ペット|駐車/.test(msg))) {
     return ev({ scene: "S7_condition_change", candidateAction: "property_send", checkPattern: null, timing: "now", chained: null, reasonCode: "condition_change" });
   }
 

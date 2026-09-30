@@ -59,6 +59,16 @@ const SCENES: Scene[] = [
     forbidNote: "キャンセル料がかかると言う",
     actual: "キャンセルにつきまして、保証会社の審査が通る前であればキャンセル料は一切かかりませんのでご安心ください😊！！",
   },
+  {
+    // 2026-09-30 竹内（みこと・内覧調整中）: AI「初期費用の分割払いは難しいですが…」→ 分割はカード支払いのみ可能・カード手数料として合計金額に3.24%
+    id: "⑤初期費用の分割は難しいか",
+    msg: "ありがとうございます。\n初期費用分割は難しいですよね🥲",
+    want: /(クレジット|カード)[^。\n]{0,30}分割|分割[^。\n]{0,30}(クレジット|カード)/,
+    wantNote: "クレジットカード支払いなら分割が可能（カード手数料3.24%）",
+    forbid: /分割[^。！!？?\n]{0,14}(難し|出来(ません|かね)|でき(ません|かね)|不可|対応(して)?(おりません|いません|おらず))/,
+    forbidNote: "「分割は難しい／出来ない」と断定（前の AI はこれを書いた）",
+    actual: "初期費用クレジットカード支払いの場合のみ分割可能となります😊！！／クレジットカードお支払いの場合別途カード手数料としまして、3.24%必要となります！！",
+  },
 ];
 
 async function main() {
@@ -87,7 +97,8 @@ async function main() {
   let foreign = 0;
 
   let ok = 0, ngWant = 0, ngForbid = 0, empty = 0;
-  for (const s of SCENES) {
+  const ONLY = process.env.ONLY ?? ""; // 例 ONLY=⑤ で1場面だけ
+  for (const s of SCENES.filter((x) => !ONLY || x.id.startsWith(ONLY))) {
     for (let k = 0; k < reps; k++) {
       const body = {
         message: s.msg, customerMessages: [s.msg], state: String(c.status ?? "proposing"),
