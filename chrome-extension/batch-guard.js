@@ -47,7 +47,37 @@
     return { action: "use", reason: "alive", front: p.vis === "hidden" };
   }
 
+  // ── v2.5.45 ITANDI のタブ（旧は itandibb.com の最初のタブをそのまま使っていた＝物件の詳細・ログインの画面でも入力を始めた）──
+  var ITANDI_LIST_RE = /^https:\/\/itandibb\.com\/rent_rooms\/list(?:[?#/]|$)/;
+  var ITANDI_ANY_RE = /^https:\/\/itandibb\.com\//;
+  /** ITANDI のタブのうち使う物: 検索の一覧（/rent_rooms/list）を先に。無ければ他の ITANDI のページ */
+  function pickItandiTab(tabs) {
+    var list = Array.isArray(tabs) ? tabs : [];
+    var hit = null, any = null;
+    for (var i = 0; i < list.length; i++) {
+      var u = list[i] && typeof list[i].url === "string" ? list[i].url : "";
+      if (!hit && ITANDI_LIST_RE.test(u)) hit = list[i];
+      if (!any && ITANDI_ANY_RE.test(u)) any = list[i];
+    }
+    return hit || any || null;
+  }
+  /**
+   * ITANDI のタブをそのまま使うか・一覧を開き直すか。probe = { url, pong, list }
+   *   pong: itandi-content.js が axlx-ping に答えたか（拡張を読み直した後の古いタブは答えない）
+   *   list: 答えた中身が一覧の場所か（無い＝古い版は url だけで見る）
+   */
+  function itandiTabPlan(probe) {
+    var p = probe || {};
+    var url = typeof p.url === "string" ? p.url : "";
+    if (!url) return { action: "reload", reason: "no_url" };
+    if (!ITANDI_LIST_RE.test(url)) return { action: "reload", reason: "not_itandi_list" };
+    if (!p.pong) return { action: "reload", reason: "content_script_dead" };
+    if (p.list === false) return { action: "reload", reason: "not_itandi_list" };
+    return { action: "use", reason: "alive" };
+  }
+
   var REASON_JA = {
+    not_itandi_list: "ITANDI の検索の画面（賃貸の部屋の一覧）ではない（物件の詳細・ログインの画面等）",
     not_main_php: "検索の画面（main.php）ではない",
     no_url: "タブの場所が分からない",
     content_script_dead: "拡張の中身が応答しない（拡張の読み直しの後にページを読み直していない等）",
@@ -88,7 +118,9 @@
     // 2026-09-29 v2.5.40 見張り（1回の検索の上限）で閉じて次のお客様へ進んだ回。
     //   見張りの文は「待っていた物=検索の完了（fill-done）…・最後の合図=fill-done」を含むので、fill-done の判定より先に見る
     if (/__PASS_DEADLINE__|見張りの時間切れ/.test(msg)) why = "1回の検索が上限の時間を過ぎたので次のお客様へ進みました（画面の写真を AIXツールの「🔍 検索の点検」→「📷 拡張の画面」に残しています）";
-    else if (/AXLX_TAB_DEAD|タブが応答しません/.test(msg)) why = "リアプロのタブが応答しません（読み直してもだめでした）";
+    else if (/AXLX_TAB_DEAD|タブが応答しません/.test(msg)) why = /ITANDI/.test(msg) ? "ITANDI のタブが検索の画面になりません（一覧を開き直してもだめでした・ログイン切れの可能性）" : "リアプロのタブが応答しません（読み直してもだめでした）";
+    // v2.5.45 ITANDI の検索のボタンが押せなかった（入力の誤り・3,000件超）。理由は page-script の日本語のまま
+    else if (/AXLX_SEARCH_BLOCKED/.test(msg)) why = "検索のボタンが押せませんでした（" + (msg.split("AXLX_SEARCH_BLOCKED:")[1] || "").trim().slice(0, 60) + "）";
     else if (/AXLX_NO_FILL_START|入力を始めませんでした/.test(msg)) why = "ページが条件の入力を始めませんでした（読み直して1回やり直してもだめでした）";
     else if (/AXLX_NO_LOCATION|地域を決められない/.test(msg)) why = "希望エリアから地域を決められませんでした（全件検索を防ぐため検索していません）";
     else if (/fill-done/.test(msg)) why = "条件の入力が時間内に終わりませんでした。ページが遅れて検索を続け、後から物件が届くことがあります";
@@ -100,6 +132,8 @@
 
   return {
     pickRealproTab: pickRealproTab,
+    pickItandiTab: pickItandiTab,
+    itandiTabPlan: itandiTabPlan,
     realproTabPlan: realproTabPlan,
     reasonJa: reasonJa,
     locationGate: locationGate,

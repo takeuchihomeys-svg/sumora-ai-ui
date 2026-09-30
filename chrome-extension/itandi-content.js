@@ -131,6 +131,11 @@
   if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
       // ── itandi スクレイプ ─────────────────────────────────────────────────
+      // v2.5.45 タブの確かめ（background の _ensureItandiTab）: 中身が生きているか・検索の一覧（/rent_rooms/list）か
+      if (msg.type === "axlx-ping") {
+        sendResponse({ pong: true, list: /^\/rent_rooms\/list/.test(location.pathname), vis: document.visibilityState });
+        return true;
+      }
       if (msg.type === "axlx-scrape-itandi") {
         var props = _scrapeItandiPropertiesFromPage();
         sendResponse({ properties: props });
@@ -180,6 +185,9 @@
         audit: e.data.audit || null,
         // ⚠ error ではなく pageError（点検の記録だけに使う）。error で渡すと _notifyFillDone が検索を止める動きに変わる（今まで中継していなかった＝動きは変えない）
         pageError: e.data.error || null,
+        // v2.5.45: page-script が「検索を押す前に止まった」（skip）時だけ error で渡す → background はこのサイトを飛ばして次へ
+        //   （旧: 押していない検索の結果を5分待ち「5分無進捗」になっていた。9/30 の ITANDI の batch_timeout・watchdog）
+        error: e.data.skip && e.data.error ? String(e.data.error) : null,
       }, function () {
         void chrome.runtime.lastError;
       });

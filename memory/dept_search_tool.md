@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-09-30 v2.5.45 ITANDI の検索が止まる件（「fill-done が245秒以内に届きませんでした」・5分無進捗）（**拡張の再読み込み必須**・DB の表・列の追加なし・サーバーは変えていない・commit は親）
+竹内さんが拡張のエラー画面で見つけた「[batch] error: b5e25ca4… itandi auto Error: itandi 検索完了シグナル（fill-done）が245秒以内に届きませんでした」。
+- **原因（本番の証拠）**: search_audits（9/26〜9/30 の ITANDI の回）と extension_snapshots（12:52〜13:50 の ITANDI の写真・ページの文字・ログ）
+  - ①**リセットのボタンが見つからない**: ITANDI のボタンの文字は「**条件削除**」（写真の検索の左）。旧の探し方は 条件全削除/条件クリア/全クリア/クリア だけ → **9/26（2.5.25）以降の ITANDI の全ての回が reset_fail**。前のお客様の所在地のチップと路線・駅のチップが積み上がる（13:50 のページの文字: 所在地 天王寺区・浪速区・城東区・鶴見区＋駅 25駅）→ 12:52 の写真「**該当物件数が多すぎます。3,000件以内になるように条件を追加してください**」で検索のボタンが灰色（押せない）
+  - ②**家賃 84,999円 →「8.4999」**: 13:01 R さん（家賃〜8.4999万）の後の写真「正しく入力されていない項目があります」「**賃料（上限）は5桁以内で入力して下さい**」・該当件数 0・検索のボタンが灰色。以降のお客様も赤い文が残ったまま
+  - ③押せない（disabled）ボタンを click() しても例外にならず search_clicked=true・fill-done は ok → 一覧は前の結果（未桜さんの「49 戸」）のまま5人続けて同じ → itandi-bulk-dl は新しい行を待ち **5分無進捗（batch_timeout）**（12:39・13:01・13:03・13:25・13:34・13:45）
+  - ④**区のお客様の watchdog-timeout**（13:34・13:45・9/28 の4回）: 最後の段が update_days（kept/set_typed）。更新日の欄の関数（_itFillUpdateDays）の中から呼ぶ残りの入力で例外が出ると、settled の後の onErr が**黙って捨て**、240秒の見張りまで何も起きない。見張りの fill-done の error は中継されず（pageError だけ）、background はさらに5分待った。fill-done が 245秒で来ない（竹内さんのエラー）は同じ詰まりの別の形（9/28 は fill_timeout が4回）
+  - ⑤同じ自動入力が**2回届く**: popup の iframe が background の tabs.sendMessage と underbar の中継の両方で switch-customer を受け自動入力を2回押す → 点検の段 location・lines_done・update_days が毎回2つ・fill-done もログに2回（2回目は no-match）。2本の入力が同じフォームを同時に触っていた
+  - 版とは関係なし（2.5.37 の 9/28 から同じ）。今日の自動便の ITANDI は全部 2.5.42 の PC（ブレインの PC は 13:48 に 2.5.44 に再読み込み）
+- **直したこと**
+  - 新 `itandi-form-guard.js`（純関数・world:MAIN の段で page-script の前）: `isResetLabel`（条件削除＋旧の文字）・`rentText(v, "max"|"min")`（5文字以内・上限は切り下げ 84,999→8.499・下限は切り上げ）・`searchBlock`（赤い文 invalid ＞ 3,000件超 too_many ＞ disabled）・`isDuplicateFill`（同じ条件が8秒以内）・`relayError`
+  - `itandi-page-script.js`: リセットは「条件削除」を押す（押す間だけ window.confirm を「はい」・画面の確かめが出たら押す・点検に reset_btn）／家賃は rentText＋欄を離れる（focusout）／**押す前に検索のボタンと赤い文を見る**（最長8秒・件数の数え直しを待つ）→ 押せなければ押さずに `AXLX_SEARCH_BLOCKED: <理由>`（点検に search_blocked）／残りの入力の例外を捕まえて `fill-exception(remaining)`／**失敗の fill-done は skip:true**（見張りの watchdog も）／返した後（_dead）の遅れたタイマーは検索を押さない／同じ依頼の2回目は動かさない（段 dup_fill）
+  - `itandi-content.js`: skip の時だけ **error** で中継（pageError は今まで通り）→ background の「page-script側エラー（スキップ）」でそのお客様の ITANDI を飛ばして次へ（5分待たない・★物件出し★に「⚠【検索できなかった】…検索のボタンが押せませんでした（…）・0件とは限りません」）。axlx-ping に答える（pong・一覧か）
+  - `itandi-bulk-dl.js`: skip の fill-done では送信を始めない（一覧は前のお客様の結果のまま）
+  - `batch-guard.js`: `pickItandiTab`（/rent_rooms/list のタブを先に）・`itandiTabPlan`（一覧でない・中身が答えない → 一覧を開き直す）・知らせの文（ITANDI のタブ・押せなかった）
+  - `background.js`: `_batchAutofill` の ITANDI は pickItandiTab ＋ `_ensureItandiTab`（一覧を**1回だけ**開き直す・だめなら待ち手を閉じて `AXLX_TAB_DEAD: ITANDI のタブが検索の画面になりません`＝そのサイトだけ飛ばす・点検の段 tab_reload/tab_check）
+  - manifest 2.5.45（MAIN の段に itandi-form-guard.js）
+- **13:49 のリアプロ AXLX_TAB_DEAD**（検索の画面 main.php ではない）: 拡張の再読み込み直後。main.php を開き直しても main.php にならない＝ログインの画面に移った等（12:31〜12:45 の 2.5.41 の PC の写真もリアプロのログインの画面）。コードの誤りではない（今まで通り読み直して1回確かめ・だめなら飛ばす）
+- **テスト**: 新 `tests/chrome-extension/itandi-form-guard.test.js`（104・本番の写真の文字そのまま・家賃の境界・重複・タブ・知らせ・配線）。既存の版の固定（auto-plan／auto-run／parallel-sites／sent-skip／snapshot-core）を 2.5.45 に・manifest の段（human-wait／itandi-update-days）に form-guard・human-wait の background の固定の待ち（タブの応答の期限 1500 が2つ）。拡張のテスト 25本すべて通過・tsc 通過
+- **まだ分からない事**: 「条件削除」を押した時に確かめが出るか（出ても止まらない作り）・ITANDI の赤い文が値を直しても残るか（残れば検索を押さずに飛ばす＝点検の search_blocked に残る）・区のお客様の例外の中身（次に起きたら点検の error に `fill-exception(remaining): …` で出る）
+- **竹内さんに頼むこと**: ①ブレインの PC（と自動便を回す PC 全部）で拡張を再読み込み（小窓が「拡張 v2.5.45」）→ **ITANDI のタブも1回読み直す**（拡張の読み直しの後の古いタブは答えない＝今回から自動で一覧を開き直すが、1回目は読み直した方が早い）②ITANDI の画面の左下「条件削除」を1回押して積み上がった所在地・駅を消しておく（次の検索から拡張が毎回押す）③YUMA で「🏠📋 リアプロ＋itandi」を1回 → コンソール「[AX] 条件リセット実行（条件削除）」・点検の段に reset・fill-done が1回（dup_fill の段）・一覧の件数がお客様ごとに変わる
+
 ## 2026-09-30 v2.5.44（拡張）＋自動便の上限60・午後は午前の候補0件の人だけ・時間制限の直し（**拡張の再読み込み必須**・DB の表・列の追加なし・統合の枝で 2.5.43＋2.5.44 サーバーの上に載せた）
 竹内「自動便の上限を60に（A）」「午後の便は今日の更新がないか見るだけやから、もっと限定的に」「午前で物件がなかった場合のお客さんだけに限定する、午後の便は。また午前の便に時間制限があるなら改善する」
 - **拡張: お客様ごとの計画を読む**（`auto-run.js`）: `planForCustomer(payload, id)` が `payload.plan_by_customer[id]` の sort・stop_at_last・max_pages・widen_chain を読み、`payloadForCustomer` が写しの `_plan` に置く → `optsFromPayload` は `_plan` の sort・max_pages を上の値より先に使う（無ければ今まで通り）。record（お客様×サイト）に載るので `allowAdSort` はお客様ごと（sort=ad の人だけ AD 並べ替え・updated の人はしない）。`background._buildBatchConditions` の sort_order・max_pages も `optsFromPayload` の1か所から（旧は命令の上の値だけ＝1命令に何人もいると全員同じだった）

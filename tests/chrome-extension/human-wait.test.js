@@ -121,7 +121,7 @@ function rest() {
   }
   const mainWorld = cs.find((c) => c.world === "MAIN" && c.js.includes("itandi-page-script.js"));
   // v2.5.34: 間に itandi-update-days.js（募集条件更新 N日以内・itandi-update-days.test.js）。human-wait.js が先頭なのは変えない
-  eq("itandi のページの中の段: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", mainWorld && mainWorld.js, ["human-wait.js", "itandi-update-days.js", "itandi-page-script.js"]);
+  eq("itandi のページの中の段: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", mainWorld && mainWorld.js, ["human-wait.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
   const war = manifest.web_accessible_resources[0];
   ok("web_accessible_resources に human-wait.js（リアプロ・レインズのページへ <script> で入れる）", war.resources.includes("human-wait.js"));
   ok("web_accessible_resources の対象にリアプロとレインズ", war.matches.some((m) => /realnetpro/.test(m)) && war.matches.some((m) => /reins/.test(m)));
@@ -149,7 +149,7 @@ function rest() {
       "setTimeout 1000": [1, "PDF のアップロードのやり直し（サーバー）"], "setInterval 25000": [1, "Supabase Realtime の心拍"],
       "setTimeout 8000": [1, "Realtime の再接続"], "setTimeout 15000": [2, "Realtime の再接続・タブ読み込みの期限"],
       "setTimeout 6000": [2, "取得の期限（abort）・送付済みの部屋の取得の期限（v2.5.41 _loadSentRooms・サイトを触らない）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
-      "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [1, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab）"],
+      "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [2, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab・v2.5.45 _probeItandiTab）"],
       "setTimeout 3000": [1, "画面の文字の応答の期限（v2.5.40 _snapDom・ページを触らない）"],
     },
     "bulk-dl.js": {

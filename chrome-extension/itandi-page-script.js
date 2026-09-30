@@ -9,12 +9,18 @@
   function _sd(ms) { var H = _hw(); return H ? H.settleDelay(ms) : ms; }
   function _pd(ms) { var H = _hw(); return H ? H.pollDelay(ms) : ms; }
 
+  // v2.5.45 ITANDI のフォームの決まり（itandi-form-guard.js・同じ world:MAIN の段で先に読む）。読めない時は旧の動き
+  function _itFG() { return (typeof self !== "undefined" ? self : window).AxlxItandiFormGuard; }
+
   function setReactVal(el, val) {
     var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
     setter.call(el, String(val));
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
+
+  // v2.5.45 人が欄を打ち終えて離れた形（focusout）。ITANDI の入力の確かめ（「5桁以内」等の赤い文）は欄を離れた時に出し直す
+  function _itLeave(el) { try { el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); el.dispatchEvent(new FocusEvent("blur")); } catch (e) {} }
 
   function tick(el) {
     if (el && !el.checked) el.click();
@@ -1004,8 +1010,61 @@
     }
   }
 
+  // v2.5.45「条件削除」を押す。確かめの窓（window.confirm）が出る作りでもページが止まらないように、押す間だけ「はい」で答える。
+  //   画面の中の確かめ（role=dialog に 削除する/OK/はい）が出たら人と同じくそれを押す（出なければ何もしない）
+  function _itClickReset(btn) {
+    var _oc = window.confirm;
+    try { window.confirm = function () { _itStep("reset_confirm", "confirm"); return true; }; btn.click(); }
+    finally { window.confirm = _oc; }
+    setTimeout(function () {
+      try {
+        var dlg = document.querySelector("[role=\"dialog\"]");
+        if (!dlg || !isVis(dlg) || dlg.querySelector("input[name=\"regionName\"]")) return;
+        var ok = [].slice.call(dlg.querySelectorAll("button")).filter(isVis).find(function (b) { return /^(削除する|削除|OK|はい|実行)$/.test(norm(b.textContent)); });
+        if (ok) { ok.click(); _itStep("reset_confirm", norm(ok.textContent).slice(0, 10)); }
+      } catch (e) {}
+    }, _hd(350));
+  }
+
+  // v2.5.45 検索のボタンを押してよいか（件数の数え直しを待つ）。done(null)＝押してよい／done({code, ja})＝押さない
+  function _itSearchBtn() {
+    var n = norm("検索");
+    var btns = [].slice.call(document.querySelectorAll("button")).filter(isVis);
+    return btns.find(function (b) { return norm(b.textContent) === n; }) || btns.find(function (b) { return norm(b.textContent).includes(n) && !/条件|保存/.test(b.textContent); }) || null;
+  }
+  function _itBlockTexts() {
+    // 画面の赤い文（検索のボタンの近くの「正しく入力されていない…」「賃料（上限）は5桁以内…」「該当物件数が多すぎます…」）
+    var out = [];
+    try {
+      [].slice.call(document.querySelectorAll("p, span, div, li")).forEach(function (el) {
+        if (out.length >= 8 || el.children.length > 2) return;
+        var t = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 120) return;
+        if (/正しく入力されていない|で入力して下さい|で入力してください|桁以内|該当物件数が多すぎ|件以内になるように/.test(t) && isVis(el) && out.indexOf(t) < 0) out.push(t);
+      });
+    } catch (e) {}
+    return out;
+  }
+  function _itSearchState() {
+    var b = _itSearchBtn();
+    return { found: !!b, disabled: !!(b && (b.disabled || b.getAttribute("aria-disabled") === "true")), texts: _itBlockTexts(), btn: b };
+  }
+  function _itWaitSearchReady(done) {
+    var FG = _itFG();
+    if (!FG) { done(null, _itSearchBtn()); return; }
+    var until = Date.now() + FG.SEARCH_READY_WAIT_MS;
+    (function look() {
+      var st = _itSearchState();
+      var why = FG.searchBlock(st);
+      if (!why) { done(null, st.btn); return; }
+      if (Date.now() >= until) { done(why, st.btn, st.texts); return; }
+      setTimeout(look, _pd(700));
+    })();
+  }
+
   // 2026-09-18 竹内（一括検索の混線）: 直前に受け取った「誰の自動入力か」。fill が開始時に取り込む
   var _pendingFillCid = null;
+  var _lastFillReq = null; // v2.5.45 直前の自動入力の依頼 { key, at }（同じ依頼の2回目を動かさない）
 
   function fill(cond) {
     // 240秒ウォッチドッグ: フリーズ/例外時にbackground.jsを強制解放
@@ -1018,18 +1077,25 @@
     _itAuditReset(cond && cond._audit_run_id);
     var _myRunId = _itRunId;
     _itStep("fill_start", cond && cond.area_mode);
+    // v2.5.45: 時間切れ・失敗で返した後は、この回の続き（遅れて動くタイマー）が検索を押さない（次のお客様の入力と重ねない）
+    var _dead = false;
     var _watchdog = setTimeout(function () {
       console.warn("[AX] watchdog: 240s timeout — fill-done強制送信");
-      var wmsg = { from: "aixlinx-fill-done", error: "watchdog-timeout" };
+      _dead = true;
+      // skip: 検索を押していない → background はこのサイトを飛ばす（押していない検索の結果を5分待たない）
+      var wmsg = { from: "aixlinx-fill-done", error: "watchdog-timeout", skip: true };
       if (_fillCid) wmsg.customerId = _fillCid;
       if (_myRunId && _myRunId === _itRunId) { wmsg.runId = _myRunId; _itStep("watchdog", "240秒"); wmsg.audit = _itPack(); }
       window.postMessage(wmsg, "*");
     }, 240000);
     function _safeDone(errMsg) {
+      if (_dead) return; // 時間切れで返した後・もう返した後は2回目を送らない
+      _dead = true;
       clearTimeout(_watchdog);
       var msg = { from: "aixlinx-fill-done" };
       if (_fillCid) msg.customerId = _fillCid;
-      if (errMsg) msg.error = errMsg;
+      // v2.5.45: ここで返す失敗はどれも検索を押す前（所在地・路線・更新日・例外・押せない検索）→ skip（そのサイトを飛ばす）
+      if (errMsg) { msg.error = errMsg; msg.skip = true; }
       if (_myRunId && _myRunId === _itRunId) { msg.runId = _myRunId; if (errMsg) _itStep("done_error", errMsg); msg.audit = _itPack(); }
       window.postMessage(msg, "*");
     }
@@ -1050,10 +1116,13 @@
     var _resetBtn = [].slice.call(document.querySelectorAll("button")).find(function(b) {
       var t = b.textContent.trim();
       var r = b.getBoundingClientRect();
-      return ["条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0 && (r.width > 0 || r.height > 0);
+      // v2.5.45: ITANDI のボタンは「条件削除」（9/26 以降ずっと見つからず、前のお客様の所在地・駅が積み上がっていた）
+      var FG = _itFG();
+      var isReset = FG ? FG.isResetLabel(t) : ["条件削除","条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0;
+      return isReset && (r.width > 0 || r.height > 0);
     });
     var _resetDelay = 0;
-    if (_resetBtn) { _resetBtn.click(); _resetDelay = _sd(600); console.log("[AX] 条件リセット実行"); }
+    if (_resetBtn) { _itClickReset(_resetBtn); _resetDelay = _sd(900); if (_itAudit) _itAudit.reset_btn = _resetBtn.textContent.trim().slice(0, 20); _itStep("reset", _resetBtn.textContent.trim().slice(0, 20)); console.log("[AX] 条件リセット実行（" + _resetBtn.textContent.trim() + "）"); }
     else {
       // ★ 修正(Bug1): 所在地選択はチップ積み上げ方式で解除処理がないため、
       // リセットボタン未発見時は前回検索の区チップが残留したまま追加される。
@@ -1119,14 +1188,17 @@
     // ── STEP 1: 賃料（最初に入力）────────────────────────────────────────
     if (cond.rent_max) {
       var rentVal = cond.rent_max > 1000 ? cond.rent_max / 10000 : cond.rent_max;
+      // v2.5.45: ITANDI は「5桁以内」。84,999円→「8.4999」は弾かれて検索のボタンが押せなくなる → 5文字以内（8.499）に切り下げ
+      if (_itFG()) { var _rt = _itFG().rentText(cond.rent_max, "max"); if (_rt) rentVal = _rt; }
       var rentEl = document.querySelector('input[name="rent:lteq"]');
-      if (rentEl) setReactVal(rentEl, rentVal);
+      if (rentEl) { setReactVal(rentEl, rentVal); _itLeave(rentEl); }
     }
     // 賃料下限（一時調整 v2.5.6）: 面積と同じ命名規則 name:gteq。欄が無ければ何もしない
     if (cond.rent_min) {
       var rentMinVal = cond.rent_min > 1000 ? cond.rent_min / 10000 : cond.rent_min;
+      if (_itFG()) { var _rtm = _itFG().rentText(cond.rent_min, "min"); if (_rtm) rentMinVal = _rtm; }
       var rentMinEl = document.querySelector('input[name="rent:gteq"]');
-      if (rentMinEl) { setReactVal(rentMinEl, rentMinVal); console.log('[AX] itandi 賃料下限:', rentMinVal + '万'); }
+      if (rentMinEl) { setReactVal(rentMinEl, rentMinVal); _itLeave(rentMinEl); console.log('[AX] itandi 賃料下限:', rentMinVal + '万'); }
       else console.warn('[AX] itandi 賃料下限の欄(rent:gteq)が見つかりません');
     }
     tick(document.querySelector('input[name="totalRentCheck"]'));
@@ -1150,21 +1222,40 @@
             clearInterval(_afterModalPoll);
             // v2.5.34: 更新日（募集条件更新 N日以内）を先に入れる。後の fillRemainingFields のペットの欄を開くクリックが
             //   打っている途中の欄から focus を奪わないように（欄を離れると一覧の入力が戻ることがある）
+            if (_dead) return;
             _itFillUpdateDays(cond, function (udOk, udErr) {
+            if (_dead) return;
             if (!udOk) { showItandiWarnToast(udErr); _safeDone(udErr); return; }
-            fillRemainingFields(cond);
-            setTimeout(function () {
-              // 検索の点検: 押す直前のフォームを読み戻す・検索ボタンが押せたか
-              if (_itAudit) _itAudit.form = _itReadForm();
-              var _searched = clickBtn("検索");
-              if (_itAudit) {
-                _itAudit.search_clicked = !!_searched;
-                if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });
-              }
-              setTimeout(function () {
-                _safeDone();
-              }, 500);
-            }, _sd(1000)); // 検索ボタンを押すまで: 1.0〜1.35秒（ペットの欄を開く待ち 0.70〜0.95秒より必ず後）
+            // v2.5.45: ここで投げた例外は _itFillUpdateDays の中で黙って捨てられ（settled の後の onErr）、240秒の時間切れになっていた
+            //   （9/28・9/30 の区のお客様の watchdog-timeout: 最後の段が update_days）→ 捕まえて理由付きで返す
+            try { fillRemainingFields(cond); }
+            catch (errR) { console.error("[AX] 残りの条件の入力で例外", errR); _safeDone("fill-exception(remaining): " + String((errR && errR.message) || errR).slice(0, 100)); return; }
+            setTimeout(function () { try {
+              if (_dead) return;
+              // v2.5.45: 押す前にボタンと画面の赤い文を見る（押せない disabled のボタンを click() しても「押せた」になり、一覧は前のお客様の結果のまま5分待っていた）
+              _itWaitSearchReady(function (why, btn, texts) { try {
+                if (_dead) return;
+                // 検索の点検: 押す直前のフォームを読み戻す・検索ボタンが押せたか
+                if (_itAudit) _itAudit.form = _itReadForm();
+                if (why) {
+                  if (_itAudit) { _itAudit.search_clicked = false; _itAudit.search_blocked = { code: why.code, texts: (texts || []).slice(0, 4) }; }
+                  _itStep("search_blocked", why.code);
+                  console.warn("[AX] itandi 検索を押さない: " + why.ja, texts || []);
+                  _safeDone("AXLX_SEARCH_BLOCKED: " + why.ja);
+                  return;
+                }
+                var _searched = false;
+                if (btn) { btn.click(); _searched = true; } else _searched = clickBtn("検索");
+                if (_itAudit) {
+                  _itAudit.search_clicked = !!_searched;
+                  if (!_searched) _itAudit.click_fails.push({ what: "search", text: "検索", sample: [].slice.call(document.querySelectorAll("button")).filter(isVis).map(function (b) { return b.textContent.trim().slice(0, 20); }).slice(0, 8) });
+                }
+                if (!_searched) { _safeDone("AXLX_SEARCH_BLOCKED: 検索のボタンが見つからない"); return; }
+                setTimeout(function () {
+                  _safeDone();
+                }, 500);
+              } catch (errS) { _safeDone("fill-exception(search): " + String((errS && errS.message) || errS).slice(0, 100)); } });
+            } catch (errT) { _safeDone("fill-exception(search): " + String((errT && errT.message) || errT).slice(0, 100)); } }, _sd(1000)); // 検索ボタンを押すまで: 1.0〜1.35秒（ペットの欄を開く待ち 0.70〜0.95秒より必ず後）
             }); // _itFillUpdateDays
           }
         }, 100);
@@ -1210,6 +1301,19 @@
 
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "axlx-itandi-fill-exec") return;
+    // v2.5.45: 同じ依頼が2回届く（popup の iframe が background の tabs.sendMessage と underbar の中継の両方で switch-customer を受け、
+    //   自動入力を2回押す）→ 同じフォームを2本の入力が同時に触っていた（点検の段 location・lines_done・update_days が毎回2つ・fill-done も2回）。
+    //   同じ条件が8秒以内にもう一度来たら2回目は動かさない（誰の分かの ID だけ受け取る）
+    var FG = _itFG();
+    var _key = FG ? FG.fillKey(e.data.conditions) : null;
+    var _now = Date.now();
+    if (FG && FG.isDuplicateFill(_lastFillReq, _key, _now)) {
+      if (!_pendingFillCid && e.data.customerId) _pendingFillCid = e.data.customerId;
+      console.log("[AX] itandi 同じ自動入力の2回目は動かさない（" + (_now - _lastFillReq.at) + "ms 後）");
+      _itStep("dup_fill", (_now - _lastFillReq.at) + "ms");
+      return;
+    }
+    _lastFillReq = { key: _key, at: _now };
     // 2026-09-18: 誰の入力かを覚えてから実行する（fill が fill-done に載せて返す）
     _pendingFillCid = e.data.customerId || null;
     fill(e.data.conditions);

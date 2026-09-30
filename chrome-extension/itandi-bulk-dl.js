@@ -1121,6 +1121,8 @@
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill-done") return;
     if (!_autofillInitiated) return;
+    // v2.5.45: 検索を押す前に止まった回（skip）は一覧が前のお客様の結果のまま → 送らない（background はこのサイトを飛ばす）
+    if (e.data.skip) { _autofillInitiated = false; console.log("[AXLX itandi] 検索を押していない回（" + String(e.data.error || "").slice(0, 60) + "）→ 送信を始めない"); return; }
     _autoSendArmed = true;
     _autofillInitiated = false;
     console.log("[AXLX itandi] fill-done 受信 → 全ページ自動送信 armed");

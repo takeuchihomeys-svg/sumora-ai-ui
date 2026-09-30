@@ -4022,9 +4022,12 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   var allTabs = await chrome.tabs.query({});
   // 2026-09-27 v2.5.32: リアプロは main.php のタブを先に選ぶ（content.js・page-script.js が入るのは main.php だけ。
   //   旧は URL の前方一致の最初のタブ＝ログインの画面や別のページのタブを掴むと、popup は答えてもページが動かず90秒で時間切れ）
+  // v2.5.45: ITANDI は検索の一覧（/rent_rooms/list）のタブを先に選ぶ（旧は最初の itandibb.com のタブ＝物件の詳細の画面でも使っていた）
   var existing = (site === "realnetpro" && self.AxlxBatchGuard)
     ? self.AxlxBatchGuard.pickRealproTab(allTabs)
-    : allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
+    : (site === "itandi" && self.AxlxBatchGuard && self.AxlxBatchGuard.pickItandiTab)
+      ? self.AxlxBatchGuard.pickItandiTab(allTabs)
+      : allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
   var tab = existing;
   if (!tab) {
     tab = await chrome.tabs.create({ url: siteUrls[site], active: false });
@@ -4033,6 +4036,8 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
   }
   // 2026-09-27 v2.5.32 竹内「重い順から治す」①: 拡張の読み直し・ログインのし直しの後の動かないタブをそのまま使わない（だめなら開き直す・それでもだめなら検索しない）
   if (site === "realnetpro") tab = await _ensureRealproTab(tab, auditRun);
+  // v2.5.45 ITANDI も同じ: 一覧の画面でない・拡張の読み直しの後で中身が答えないタブは一覧を1回開き直す。それでもだめならこのサイトを飛ばす（理由を残す）
+  if (site === "itandi") tab = await _ensureItandiTab(tab, auditRun, customer && customer.id);
 
   var conds = _buildBatchConditions(customer, isWide, opts);
   // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
@@ -4448,6 +4453,55 @@ async function _ensureRealproTab(tab, auditRun, why) {
     throw new Error("AXLX_TAB_DEAD: リアプロのタブが応答しません（読み直しても・" + (G ? G.reasonJa(plan2.reason) : plan2.reason) + "）");
   }
   if (plan2.front) await _bringRealproTabFront(tab, runId, probe2.vis);
+  return tab;
+}
+
+// v2.5.45 ITANDI のタブを確かめる（itandi-content.js の axlx-ping）。{ url, pong, list, err, gone }
+async function _probeItandiTab(tabId) {
+  var url = "";
+  try { var t = await chrome.tabs.get(tabId); url = (t && (t.url || t.pendingUrl)) || ""; } catch (e) { return { url: "", pong: false, list: null, err: "tab_gone", gone: true }; }
+  var resp = await new Promise(function (resolve) {
+    var done = false;
+    var timer = setTimeout(function () { if (!done) { done = true; resolve(null); } }, 1500);
+    try {
+      chrome.tabs.sendMessage(tabId, { type: "axlx-ping" }, function (r) {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        if (chrome.runtime.lastError) { resolve({ err: chrome.runtime.lastError.message || "lastError" }); return; }
+        resolve(r || null);
+      });
+    } catch (e) { if (!done) { done = true; clearTimeout(timer); resolve({ err: (e && e.message) || String(e) }); } }
+  });
+  var pong = !!(resp && !resp.err && resp.pong);
+  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
+}
+
+// 使える状態の ITANDI のタブを返す。だめなら一覧（/rent_rooms/list）を1回だけ開き直す（人がブックマークから一覧を開く形・読み直しを連打しない）。
+//   それでもだめ（ログインの画面に移る等）なら投げる → このお客様の ITANDI だけ飛ばし、失敗の知らせと点検に理由が残る
+async function _ensureItandiTab(tab, auditRun, customerId) {
+  var G = self.AxlxBatchGuard;
+  if (!G || !G.itandiTabPlan) return tab;
+  var runId = auditRun && auditRun.runId;
+  var probe = await _probeItandiTab(tab.id);
+  var plan = G.itandiTabPlan(probe);
+  if (plan.action === "use") return tab;
+  console.warn("[batchAutofill] ITANDI のタブを一覧に戻します: " + G.reasonJa(plan.reason) + (probe.err ? "（" + probe.err + "）" : "") + " url=" + String(probe.url).slice(0, 80));
+  _auditStep(runId, "tab_reload", "ITANDI: " + G.reasonJa(plan.reason) + (probe.err ? " / " + probe.err : ""));
+  if (probe.gone) {
+    tab = await chrome.tabs.create({ url: "https://itandibb.com/rent_rooms/list", active: false });
+  } else {
+    await chrome.tabs.update(tab.id, { url: "https://itandibb.com/rent_rooms/list" });
+  }
+  await _batchWaitForTabComplete(tab.id);
+  await new Promise(function (r) { setTimeout(r, _settleMs(2200)); });
+  var probe2 = await _probeItandiTab(tab.id);
+  var plan2 = G.itandiTabPlan(probe2);
+  _auditStep(runId, "tab_check", plan2.action === "use" ? "ITANDI: 一覧を開き直して応答あり" : "ITANDI: 開き直しても " + G.reasonJa(plan2.reason) + " url=" + String(probe2.url).slice(0, 60));
+  if (plan2.action !== "use") {
+    // 待ち手（fill-done）を今閉じる（245秒の時間切れ・その写真を出さない）
+    if (customerId != null) { try { _endFillDoneWaiter("itandi", String(customerId), "ITANDI のタブが検索の画面でない"); } catch (_) {} }
+    throw new Error("AXLX_TAB_DEAD: ITANDI のタブが検索の画面になりません（開き直しても・" + G.reasonJa(plan2.reason) + "）");
+  }
   return tab;
 }
 
