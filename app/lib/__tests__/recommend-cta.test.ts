@@ -7,7 +7,7 @@
 // 実行: npx tsx app/lib/__tests__/recommend-cta.test.ts（全 PASS で exit 0）
 import {
   resolveRecommendCta, appealFromPickup, setRecommendClosing, readClosingKind, hasClosingKind,
-  buildFirstMessageCtaNote, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage,
+  buildFirstMessageCtaNote, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage, hasClosingSentence,
   VIEWING_CLOSING_LINE, RECEIPT_CLOSING_LINE, APPLY_CLOSING_LINE,
 } from "../recommend-cta";
 
@@ -201,6 +201,53 @@ describe("締めの言い回しの揺れ（お気に召しましたら）", () =
     const r = setRecommendClosing(YUMA_208, "receipt");
     expect(/お気に召/.test(r.text)).toBe(false);
     expect(r.text.trimEnd().endsWith("お手隙の際にご査収ください😊！！")).toBe(true);
+  });
+});
+
+// 2026-09-30 夜 YUMA の実送信（資料が居住中の2件の2通目）: モデルが退去予定の文と同じ行に申込の誘導を続けて書き、
+//   「定型だけの段落・行」と見分けられず同じ締めがもう1行足された（申込の誘導が2回届いた）。下の2通は LINE に届いた本文そのまま
+describe("締めが本文の行の途中・行末に既にある（文単位で見る）", () => {
+  const APPLY = "お気に召されましたらお申込しお部屋抑えさせて頂きます😊！！";
+  const BODY_703 = "お送りさせて頂きましたお部屋の中でも特にレオンコンフォート梅田北 703号室がバス・トイレ別・2020年築で築年数浅く、YUMAさんにかなりオススメ出来るお部屋となります！！\n\n退去予定のお部屋となり、2026年11月中旬が最短での入居可能時期となります！！" + APPLY;
+  const SENT_703 = BODY_703 + "\n\n" + APPLY; // 実際に届いた形（同じ締めが2回）
+  const BODY_107 = "お送りさせて頂きましたお部屋の中でも特にレオパレス天満 107号室が大阪天満宮駅徒歩7分・バス・トイレ別で、YUMAさんにかなりオススメ出来るお部屋となります！！\n\n退去予定のお部屋となり、2026年11月中旬が最短での入居可能時期となります！！" + APPLY;
+  const count = (t: string) => (t.match(/お申込しお部屋抑えさせて頂きます/g) ?? []).length;
+  it("★ レオンコンフォート梅田北 703: モデルの出力（行末に申込の誘導）に同じ締めを足さない", () => {
+    const r = setRecommendClosing(BODY_703, "apply");
+    expect(r.text).toBe(BODY_703);
+    expect(r.applied.length).toBe(0);
+    expect(count(r.text)).toBe(1);
+  });
+  it("★ レオパレス天満 107: 同じ", () => {
+    const r = setRecommendClosing(BODY_107, "apply");
+    expect(count(r.text)).toBe(1);
+    expect(r.applied.length).toBe(0);
+  });
+  it("★ 実際に届いた形（2回）に当てると、最後の定型だけの段落を落として1回にする（本文は落とさない）", () => {
+    const r = setRecommendClosing(SENT_703, "apply");
+    expect(count(r.text)).toBe(1);
+    expect(r.text).toBe(BODY_703);
+  });
+  it("行末に申込の誘導がある本文の後ろに、別の種類（内覧の誘導）の定型だけの段落 → その段落だけ落とす", () => {
+    const r = setRecommendClosing(BODY_703 + "\n\n" + VIEWING_CLOSING_LINE, "apply");
+    expect(r.text).toBe(BODY_703);
+  });
+  it("hasClosingSentence / hasClosingKind: 行の途中の締めも読む（2通目が1通目の締めを重ねないための確認）", () => {
+    expect(hasClosingSentence(BODY_703, "apply")).toBe(true);
+    expect(hasClosingSentence(BODY_703, "viewing")).toBe(false);
+    expect(hasClosingKind(BODY_703, "apply")).toBe(true);
+    expect(hasClosingSentence("10月15日退去予定のため、10月16日以降ご内覧可能となります！！", "viewing")).toBe(false);
+    expect(hasClosingSentence("かなりオススメ出来るお部屋となります！！お手隙の際にご査収ください😊！！", "receipt")).toBe(true);
+  });
+  it("締めがどこにも無い本文には今まで通り足す", () => {
+    const body = "お送りさせて頂きましたお部屋の中でも特にレオパレス天満 107号室が大阪天満宮駅徒歩7分で、YUMAさんにかなりオススメ出来るお部屋となります！！\n\n退去予定のお部屋となり、11月中旬ごろご入居可能となります！！";
+    const r = setRecommendClosing(body, "apply");
+    expect(r.text).toBe(body + "\n\n" + APPLY);
+  });
+  it("午後の実物（お気に召しましたら…の揺れ）も1回のまま", () => {
+    const t208 = "🌟S-RESIDENCE福島玉川Deux 208号室\n\n…YUMAさんにかなりオススメ出来るお部屋となります！！\n\nお気に召しましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！\n\n" + VIEWING_CLOSING_LINE;
+    const r = setRecommendClosing(t208, "viewing");
+    expect((r.text.match(/ご案内させて頂きます/g) ?? []).length).toBe(1);
   });
 });
 

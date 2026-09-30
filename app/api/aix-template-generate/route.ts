@@ -37,7 +37,7 @@ import {
   type RecommendationScenario, type PropertySendFacts,
 } from "@/app/lib/recommendation-frame";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（aix/action と同じ物）
-import { resolvePropertySendState, describePropertySendState, readPropertyStateFromText } from "@/app/lib/property-send-state";
+import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
 // 2026-09-18 竹内「テンプレートよくわからん文生成される」: ブレインの判断の整形と渡し方を返信生成と揃える
 import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
 // 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
@@ -72,8 +72,10 @@ import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-30 竹内「2通目の言い回しが AI くさい。実際使っている言い回しが出るように／場面で違う／資料も読み取ったのを渡す」:
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
-import { buildSecondSceneNote, buildSecondMaterialNote, vacatingFromMaterial, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, type SecondMaterialRow } from "@/app/lib/second-message-scene";
+import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, type SecondMaterialRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
+// 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
+import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
 
 export const maxDuration = 60;
 
@@ -1347,6 +1349,8 @@ export async function POST(req: NextRequest) {
   // 物件オススメの直後の2通目か（形は second-message-scene が決める）
   const isRecSecond = actionType === "property_recommendation" && !!(sentMessage ?? "").trim();
   // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
+  //   2026-10-01: 1通目（aix/action）と同じ関数 resolveRecommendViewable で決める（判定を2か所に持たない）
+  let secondViewable: RecommendViewable = { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom, line: null, source: "brain" };
   let secondNotViewable = recommendState.notViewable;
   let secondViewableFrom: string | null = recommendState.viewableFrom;
   if (actionType === "property_recommendation") {
@@ -1360,10 +1364,9 @@ export async function POST(req: NextRequest) {
         materialRow = (pickup as SecondMaterialRow | null) ?? null;
       }
       if (isRecSecond) {
-        const fromFirst = readPropertyStateFromText(sentMessage ?? "");
-        const fromMaterial = vacatingFromMaterial(materialRow);
-        if (fromFirst.vacancyDate) { secondNotViewable = fromFirst.notViewable; secondViewableFrom = fromFirst.viewableFrom; }
-        else if (fromMaterial !== null) { secondNotViewable = fromMaterial; secondViewableFrom = null; }
+        secondViewable = resolveRecommendViewable({ text: sentMessage, material: materialRow, brain: { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom } });
+        secondNotViewable = secondViewable.notViewable;
+        secondViewableFrom = secondViewable.viewableFrom;
       }
       recCta = resolveRecommendCta({
         pickup,
@@ -1389,10 +1392,12 @@ export async function POST(req: NextRequest) {
         name: resolvedCustomerName,
         propertyLabel: secondPropertyLabel,
         sentCount: recommendState.sentSource === "brain" ? recommendState.sentPropertyCount : null,
+        vacatingLine: secondViewable.line,
+        firstMentionsVacating: mentionsVacating(sentMessage),
       })
     : "";
   if (isRecSecond) {
-    console.log(JSON.stringify({ tag: "aix-template-generate:second-scene", scene: secondSceneOf(recommendationScenario), scenario: recommendationScenario, vacating: secondNotViewable, material: !!secondMaterialNote }));
+    console.log(JSON.stringify({ tag: "aix-template-generate:second-scene", scene: secondSceneOf(recommendationScenario), scenario: recommendationScenario, vacating: secondNotViewable, viewableSource: secondViewable.source, vacatingLine: secondViewable.line, material: !!secondMaterialNote }));
   }
 
   const userPrompt = [
@@ -1837,6 +1842,11 @@ export async function POST(req: NextRequest) {
       }
       // 2026-09-30: 締めを刺さり具合の3つに揃える（1通目が既に同じ締めなら重ねない＝何もしない）。
       //   消すのは「定型だけの最後の段落」だけ・無ければ足す（recommend-cta.ts）
+      // 2026-10-01: 退去予定の一文の字を決まった形に戻す・同じ行に続けて書いた締めの文を次の段落に分ける（1通目と同じ関数・文は消さない）
+      if (isRecSecond) {
+        const tidy = tidyVacatingAndClosing(text, secondViewable);
+        if (tidy.applied.length > 0) { console.log(JSON.stringify({ tag: "aix-template-generate:second-vacating-tidy", applied: tidy.applied })); text = tidy.text; }
+      }
       if (recCta && !hasClosingKind(sentMessage, recCta.kind)) {
         const cta = setRecommendClosing(text, recCta.kind);
         if (cta.applied.length > 0) {
@@ -1900,6 +1910,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 物件オススメの直後の2通目: 絵文字が1つも無ければ最後の「！！」の直前に 😊（実送信で絵文字なしは 11%・位置は文末が 86%。足すだけ）
+    // 2026-10-01: 資料から退去予定と分かっていて、1通目も2通目も退去予定に触れていない → 決まった一文を締めの直前に入れる（足すだけ・1通目と同じ関数）
+    if (isRecSecond && !mentionsVacating(sentMessage)) {
+      const vl = ensureVacatingLine(text, secondViewable);
+      if (vl.added) { console.log(JSON.stringify({ tag: "aix-template-generate:second-vacating-line-added", line: secondViewable.line })); text = vl.text; }
+    }
     if (isRecSecond) {
       // 「YUMAさんかなりオススメ出来る」→「YUMAさんにかなりオススメ出来る」（実送信 814 対 3）
       const ni = fixMissingNi(text);

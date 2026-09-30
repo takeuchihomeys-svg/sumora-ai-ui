@@ -62,6 +62,8 @@ import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildFirstMessageCtaNote, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
+// 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、2通目（aix-template-generate）と同じ関数・同じ材料（売上サポの行の資料の現況）で決める
+import { resolveRecommendViewable, buildVacatingLineNote, ensureVacatingLine, tidyVacatingAndClosing, type RecommendViewable, type ViewableMaterialRow } from "@/app/lib/recommend-viewable";
 import { pickupDealStatus } from "@/app/lib/listing-deal-status";
 import { buildRecommendApplyLineNote, detectRecommendApplyLine, detectImmediateMoveInWish } from "@/app/lib/apply-line-rates";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
@@ -2282,6 +2284,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
 
     // ── 🏠 物件オススメ ───────────────────────────────────────────
     let recCtaDecision: RecommendCtaDecision | null = null;
+    let recViewable: RecommendViewable | null = null;
     if (action === "property_recommendation") {
       if (!image_url) throw new Error("物件資料画像が必要です");
 
@@ -2471,10 +2474,20 @@ ${SMORA_COMMON_RULES}`;
       // 2026-09-23 竹内「実際の成約データや直近のLINEを参考にずれをなくす」: 申込の一文を添えるかは**率を渡して選ばせる**
       //   （物件オススメで申込の一文は実送信6.0%・AIが書いた48件の73%をスタッフが消す。必須にできる状況が無い＝入口で率を渡す。
       //    出口で落とさない: 実送信に16件の正当な用例があり誤削除0にできない）。動的ブロックに入れて静的ブロックのキャッシュを割らない
+      // 2026-10-01 竹内さんの YUMA の実送信（資料が「現況居住中 入居可能時期2026年11月中旬」の2件）: 1通目が退去予定に触れず内覧の誘導で締め、
+      //   2通目は「退去予定…お申込し」＝食い違った。recSendState（ブレインの判断・会話全体）は今回の物件の資料の現況を見ていない。
+      //   → スタッフが入れた退去予定日 → 売上サポの行の資料の現況 → ブレインの判断 の順（2通目と同じ関数 resolveRecommendViewable）
+      const recView = resolveRecommendViewable({
+        text: move_out_date ? `${String(move_out_date)}退去予定` : null,
+        material: pickupRowsForFacts.length === 1 ? (pickupRowsForFacts[0] as ViewableMaterialRow) : null,
+        brain: { notViewable: recSendState.notViewable, viewableFrom: recSendState.viewableFrom },
+      });
+      recViewable = recView;
+      console.log(JSON.stringify({ tag: "aix:recommend-viewable", conversationId, notViewable: recView.notViewable, viewableFrom: recView.viewableFrom, source: recView.source, line: recView.line }));
       const recMoveIn = moveInMarginDays(recWishSource, todayJST);
       const recApplyLineInput = {
-        notViewable: recSendState.notViewable,
-        viewableFrom: recSendState.viewableFrom,
+        notViewable: recView.notViewable,
+        viewableFrom: recView.viewableFrom,
         hasEstimate: has_estimate === true,
         immediateMoveIn: detectImmediateMoveInWish(`${conditionsText ?? ""}\n${extra_input ? String(extra_input) : ""}`),
         moveInWish: recMoveIn.wish,
@@ -2487,11 +2500,13 @@ ${SMORA_COMMON_RULES}`;
       recCtaDecision = resolveRecommendCta({
         pickup: pickupRowsForFacts.length === 1 ? pickupRowsForFacts[0] : null,
         reaction: readCustomerReaction(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []),
-        notViewable: recSendState.notViewable,
+        notViewable: recView.notViewable,
       });
       console.log(JSON.stringify({ tag: "aix:recommend-cta", conversationId, kind: recCtaDecision.kind, appeal: recCtaDecision.appeal, notViewable: recCtaDecision.notViewable, reason: recCtaDecision.reason }));
       const recApplyLineNote = "\n\n" + buildRecommendApplyLineNote({ ...recApplyLineInput, ctaDecided: true })
-        + "\n\n" + buildFirstMessageCtaNote(recCtaDecision, { viewableFrom: recSendState.viewableFrom });
+        + "\n\n" + buildFirstMessageCtaNote(recCtaDecision, { viewableFrom: recView.viewableFrom })
+        // 資料から退去予定と分かった時: 退去予定を伝える一文（実送信の形）をそのまま書かせる（動的ブロック＝静的 system のキャッシュは変えない）
+        + (buildVacatingLineNote(recView) ? "\n\n" + buildVacatingLineNote(recView) : "");
       // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ「出力の最初の文字は必ず🌟」を外す。
       //   キャッシュされる静的ブロック（全顧客共通）は触らず、動的ブロックで上書きする（鍵を割らない）
       const situationSystemOverride = isSituationKind(body.situation_kind)
@@ -2645,11 +2660,17 @@ ${SMORA_COMMON_RULES}`;
         });
         const closing = fixRecommendClosing(message_text, {
           sentPropertyCount: sendState.sentPropertyCount,
-          notViewable: sendState.notViewable,
+          // 資料の現況・スタッフの入力で決まっていればそれが正（ブレインの判断は会話全体の物）
+          notViewable: recViewable && recViewable.source !== "brain" ? recViewable.notViewable : sendState.notViewable,
         });
         if (closing.applied.length > 0) {
           console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, state: describePropertySendState(sendState) }));
           message_text = closing.text;
+        }
+        // 2026-10-01: 退去予定の一文の字を決まった形に戻す・同じ行に続けて書いた締めの文を次の段落に分ける（2通目と同じ関数・文は消さない）
+        if (recCtaDecision && !body.simple_mode) {
+          const tidy = tidyVacatingAndClosing(message_text, recViewable);
+          if (tidy.applied.length > 0) { console.log(JSON.stringify({ tag: "aix:recommend-vacating-tidy", conversationId, applied: tidy.applied })); message_text = tidy.text; }
         }
         // 2026-09-30: 締めを刺さり具合の3つ（内覧誘導／申込誘導／ご査収）に揃える。消すのは「定型だけの最後の段落」だけ・無ければ足す
         if (recCtaDecision && !body.simple_mode) {
@@ -2658,6 +2679,11 @@ ${SMORA_COMMON_RULES}`;
             console.log(JSON.stringify({ tag: "aix:recommend-cta-closing", conversationId, kind: recCtaDecision.kind, applied: cta.applied }));
             message_text = cta.text;
           }
+        }
+        // 2026-10-01: 資料から退去予定と分かっているのに本文が退去予定に1度も触れていない → 決まった一文を締めの直前に入れる（足すだけ・2通目と同じ関数）
+        if (recViewable && !body.simple_mode) {
+          const vl = ensureVacatingLine(message_text, recViewable);
+          if (vl.added) { console.log(JSON.stringify({ tag: "aix:recommend-vacating-line-added", conversationId, line: recViewable.line })); message_text = vl.text; }
         }
         // 2026-09-21: 冒頭フレームが事実と食い違っていないかを**測る**（テンプレート側と同じ関数）。
         //   ⚠ ここでは本文を書き換えない。比較表現を落とすのは上の fixRecommendClosing の担当で、

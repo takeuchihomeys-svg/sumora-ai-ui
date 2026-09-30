@@ -144,9 +144,35 @@ export function readClosingKind(text: string | null | undefined): RecommendCtaKi
   return closingKindOfParagraph(last);
 }
 
-/** 文全体に、その種類の締めが（どの段落にでも）あるか。2通目が1通目の締めを重ねないための確認 */
+/** 文全体に、その種類の締めが（どの段落・どの行の途中にでも）あるか。2通目が1通目の締めを重ねないための確認 */
 export function hasClosingKind(text: string | null | undefined, kind: RecommendCtaKind): boolean {
-  return paragraphs(text ?? "").some((p) => closingKindOfParagraph(p) === kind);
+  return paragraphs(text ?? "").some((p) => closingKindOfParagraph(p) === kind) || hasClosingSentence(text, kind);
+}
+
+// 2026-09-30 YUMA の実送信（資料が居住中の2件の2通目）: モデルが退去予定の文と**同じ行**に申込の誘導を続けて書き、
+//   「定型だけの段落／行」と見分けられず同じ締めがもう1行足された（申込の誘導が2回届いた）:
+//     「退去予定のお部屋となり、2026年11月中旬が最短での入居可能時期となります！！お気に召されましたらお申込しお部屋抑えさせて頂きます😊！！
+//
+//       お気に召されましたらお申込しお部屋抑えさせて頂きます😊！！」
+//   同じ日の午後にも「お気に召しましたら…」の揺れで2回届いている。段落・行ではなく**文**で「締めが既にあるか」を見る
+const SENT_APPLY_RE = /お気に召(?:され|し)(?:まし)?たら?[^。！!？?\n]{0,40}?(?:申込|抑え|押さえ)[^。！!？?\n]{0,24}/;
+const SENT_VIEWING_RE = /お気に召(?:され|し)(?:まし)?たら?[^。！!？?\n]{0,60}?(?:ご案内|ご内覧)(?:させて(?:頂|いただ)き|いたし|致し)(?:ます|ましたら)/;
+const SENT_RECEIPT_RE = /お手隙の際に(?:ごゆっくり)?(?:ご査収|ご確認|ご検討)(?:ください|下さい)/;
+
+/** 文に切る（「！」「。」「？」と改行で切る） */
+function sentencesOf(t: string): string[] {
+  return (t.match(/[^。！!？?\n]+[。！!？?]*/g) ?? []).map((s) => s.trim()).filter(Boolean);
+}
+/** 1文の締めの種類（申込と内覧の両方の語がある文は申込＝「お申込しお部屋抑えた状態でご案内」） */
+function closingKindOfSentence(s: string): RecommendCtaKind | null {
+  if (SENT_RECEIPT_RE.test(s)) return "receipt";
+  if (SENT_APPLY_RE.test(s)) return "apply";
+  if (SENT_VIEWING_RE.test(s)) return "viewing";
+  return null;
+}
+/** 本文のどこか（行の途中・行末でも）に、その種類の締めの文が既にあるか（文単位） */
+export function hasClosingSentence(text: string | null | undefined, kind: RecommendCtaKind): boolean {
+  return sentencesOf(text ?? "").some((s) => closingKindOfSentence(s) === kind);
 }
 
 const paragraphs = (t: string) => t.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
@@ -187,6 +213,19 @@ export function setRecommendClosing(
   const line = CLOSING_LINE[kind];
   const paras = paragraphs(src);
   const last = paras[paras.length - 1] ?? "";
+  // 同じ種類の締めの文が本文のどこかに既にある（行の途中・行末でも）→ 足さない。
+  //   最後の段落が**別の種類**の定型だけなら、その段落だけ落とす（締めが2種類並ばないように。落とすのは定型だけの段落）
+  if (hasClosingSentence(src, kind)) {
+    const lk = closingKindOfParagraph(last);
+    if (lk && lk !== kind && paras.length >= 2 && hasClosingSentence(paras.slice(0, -1).join("\n\n"), kind)) {
+      return { text: paras.slice(0, -1).join("\n\n"), applied: [`closing:${lk}->removed(has ${kind})`] };
+    }
+    // 最後の段落が同じ種類の定型で、手前にも同じ締めの文がある（＝2回書かれている）→ 最後の段落を落とす
+    if (lk === kind && paras.length >= 2 && hasClosingSentence(paras.slice(0, -1).join("\n\n"), kind)) {
+      return { text: paras.slice(0, -1).join("\n\n"), applied: [`closing:dup(${kind})->removed`] };
+    }
+    if (!lk) return { text: text, applied: [] };
+  }
   if (last === line) return { text: text, applied: [] };
   // 2026-09-30 YUMA の2通目: 最後の段落が「退去予定のお部屋となります！！⏎お気に召されましたらお申込し…」の2行で、
   //   段落まるごとは締めと見なされず、同じ締めがもう1回足された（同じ文が2回）。最後の段落の**最後の行**が締めの定型ならそこを見る

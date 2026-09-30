@@ -136,7 +136,8 @@ main();
 // ── 出口の全件監査: 実送信の本文に3つの締めを当てて、何が変わるかを見る（誤削除0の確認）──
 function outputAudit(list: Row2[]) {
   console.log("\n=== 出口の全件監査（実送信1件 " + list.length + "通に、3つの締めをそれぞれ当てる）===");
-  const paras = (t: string) => t.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  // 2026-10-01: 行で比べる（最後の段落が「退去予定の一文⏎締め」の2行の時、締めの行だけを差し替える＝段落で比べると段落ごと落ちたように見える）
+  const paras = (t: string) => t.split(/\n/).map((p) => p.trim()).filter(Boolean);
   for (const kind of ["viewing", "apply", "receipt"] as RecommendCtaKind[]) {
     let same = 0, replaced = 0, added = 0, skipped = 0, lost = 0;
     const replacedForms = new Map<string, number>();

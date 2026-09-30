@@ -101,14 +101,15 @@ const ROW_2670: SecondMaterialRow = { // レオパレス天満 107（居住中�
   property_name: "レオパレス天満", room_no: "107",
   terms: { deposit: 0, keyMoney: 2, moveIn: { kind: "date", current: "occupied", availableFrom: "2026-11-11" }, evidence: { moveIn: "現況居住中 入居可能時期2026年11月中旬" } },
 };
-const ROW_ZERO: SecondMaterialRow = { terms: { deposit: 0, keyMoney: 0, moveIn: { current: "leaving" }, evidence: { moveIn: "退去予定(10/17)/相談" } } };
+const ROW_ZERO: SecondMaterialRow = { terms: { deposit: 0, keyMoney: 0, moveIn: { kind: "consult", current: "leaving" }, evidence: { moveIn: "退去予定/相談" } } };
 {
   const n = buildSecondMaterialNote(ROW_2676);
   t("空室・駅・築年・礼金あり・合う点・記載なし・設備が入る", /空室（ご内覧頂けるお部屋）/.test(n) && /玉川駅 徒歩4分/.test(n) && /2023年10月/.test(n) && /礼金あり/.test(n) && /バス・トイレ別／希望の区（福島区）/.test(n) && /ガスコンロ／対面キッチン/.test(n) && /独立洗面台・浴室乾燥機/.test(n), n);
   t("礼金ありの物件に「敷金礼金なし」と書けるとは渡さない", /「敷金礼金なし」「初期費用を抑える事ができ」は書かない/.test(n));
   t("社内向けの事（駐車場なし・最上階でない・AD）は渡さない", !/駐車場|最上階|15階建|AD/.test(n));
-  t("★ 居住中の行 → 退去予定のお部屋（「居住中」の字は渡さない）＋入居可能時期", /退去予定のお部屋（まだご内覧頂けない）／入居可能時期（資料）: 2026年11月中旬/.test(buildSecondMaterialNote(ROW_2670)) && !/居住中/.test(buildSecondMaterialNote(ROW_2670)), buildSecondMaterialNote(ROW_2670));
-  t("敷金礼金どちらもなし → 書ける", /どちらもなし/.test(buildSecondMaterialNote(ROW_ZERO)) && /退去予定\(10\/17\)/.test(buildSecondMaterialNote(ROW_ZERO)));
+  // 2026-10-01: 退去予定の一文は recommend-viewable が1つ作る（1通目と同じ）→ 資料の事実の側には「居住中」の字も入居可能時期の年も渡さない
+  t("★ 居住中の行 → 退去予定のお部屋（「居住中」「2026年」の字は渡さない）", /・現況: 退去予定のお部屋（まだご内覧頂けない）/.test(buildSecondMaterialNote(ROW_2670)) && !/居住中|2026年|最短/.test(buildSecondMaterialNote(ROW_2670)), buildSecondMaterialNote(ROW_2670));
+  t("敷金礼金どちらもなし → 書ける", /どちらもなし/.test(buildSecondMaterialNote(ROW_ZERO)) && /退去予定のお部屋/.test(buildSecondMaterialNote(ROW_ZERO)));
   t("行が無い・何も読めない → 空", buildSecondMaterialNote(null) === "" && buildSecondMaterialNote({}) === "");
   t("vacatingFromMaterial: vacant=false / occupied・leaving=true / 不明=null", vacatingFromMaterial(ROW_2676) === false && vacatingFromMaterial(ROW_2670) === true && vacatingFromMaterial(ROW_ZERO) === true && vacatingFromMaterial({}) === null);
 }
@@ -135,6 +136,12 @@ console.log("\n■ 場面の形（入口）");
   t("(b) 新着の形・比較の言い方は書かない指示", b.includes("新着で1件YUMAさんにオススメ出来るお部屋が募集に出ました！！") && b.includes("「お送りさせて頂きましたお部屋の中でも」とは書かない"));
   t("(c) 1件だけの形", c.includes("こちらのお部屋如何でしょうか😊！！") && c.includes("「お送りさせて頂きましたお部屋の中でも」「新着で」とは書かない"));
   t("(d) 退去予定の時だけ退去予定の一文の指示・退去予定の実物が先", d.includes("退去予定のお部屋: ") && !a.includes("退去予定のお部屋: ") && d.indexOf("アドバンス大阪セレーネ") < d.indexOf("Luxe難波西2"));
+  // 2026-10-01: 退去予定の一文は決まった形をそのまま渡す／1通目が既に伝えていれば書かせない（退去予定の実物も見せない）
+  const LINE = "退去予定のお部屋となり、11月中旬ごろご入居可能となります！！";
+  const dl = buildSecondSceneNote({ ...base, scene: "compare", vacating: true, vacatingLine: LINE });
+  t("★ 退去予定の一文をそのまま渡す・同じ行に締めを続けない指示", dl.includes(`このまま書く「${LINE}」`) && dl.includes("同じ行に締めの文を続けない") && !/最短での入居可能時期/.test(dl));
+  const df = buildSecondSceneNote({ ...base, scene: "compare", vacating: true, vacatingLine: LINE, firstMentionsVacating: true });
+  t("★ 1通目が退去予定を伝えている → 2通目では書かない指示・退去予定の実物を見せない", df.includes("退去予定の事は1通目で伝えてある") && !df.includes(LINE) && !df.includes("アドバンス大阪セレーネ"));
   t("空室の場面に退去予定の実物を見せない", !a.includes("退去予定") && !c.includes("退去予定"));
   // 指示の語は本文に出る → AI の言い回しを指示に入れない
   for (const n of [a, b, c, d]) {

@@ -30,6 +30,7 @@
 //   物件名・駅・金額はその時の物 → 今回の文に持ち込んでいないかを出口（leakedExampleFacts）で見る。
 
 import type { RecommendationScenario } from "./recommendation-frame";
+import { readMaterialViewable } from "./recommend-viewable";
 
 export type SecondSceneKey = "compare" | "new_listing" | "single";
 
@@ -154,12 +155,12 @@ export type SecondMaterialRow = {
   } | null;
 };
 
-/** 資料の現況から「退去予定（まだご内覧頂けない）」か。分からなければ null */
+/**
+ * 資料の現況から「退去予定（まだご内覧頂けない）」か。分からなければ null。
+ * 2026-10-01: 判定は recommend-viewable.ts の1本（1通目 aix/action と同じ関数）。退去予定日が資料にあって既に過ぎていれば false
+ */
 export function vacatingFromMaterial(row: SecondMaterialRow | null | undefined): boolean | null {
-  const cur = row?.terms?.moveIn?.current ?? null;
-  if (cur === "leaving" || cur === "occupied") return true;
-  if (cur === "vacant") return false;
-  return null;
+  return readMaterialViewable(row).notViewable;
 }
 
 /** お客様に書いてよい設備（資料に「あり」と出ている物だけ・資料の字のまま）。社内向けの項目（構造の判定・駐車場なし等）は出さない */
@@ -175,16 +176,10 @@ export function buildSecondMaterialNote(row: SecondMaterialRow | null | undefine
   const t = row.terms ?? null;
   const ev = t?.evidence ?? null;
   const vac = vacatingFromMaterial(row);
-  if (ev?.moveIn || vac !== null) {
-    const raw = ev?.moveIn ?? "";
-    if (vac === true && !/退去予定/.test(raw)) {
-      // 資料の現況が「居住中」の行: お客様への言い方は「退去予定のお部屋」。資料の「居住中」をそのまま渡すと「現在ご入居中のため」と書かれた（YUMA 9/30）
-      const when = raw.match(/入居可能時期\s*([^\s]+)/)?.[1] ?? "";
-      L.push(`・現況: 退去予定のお部屋（まだご内覧頂けない）${/[0-9０-９]+\s*[年月]/.test(when) ? `／入居可能時期（資料）: ${when}` : ""}`);
-    } else {
-      L.push(`・現況（資料）: ${raw || (vac ? "退去予定" : "空室")} → ${vac === true ? "退去予定のお部屋（まだご内覧頂けない）" : vac === false ? "空室（ご内覧頂けるお部屋）" : "内覧できるかは資料から分からない"}`);
-    }
-  }
+  // 現況: お客様への言い方だけを渡す（資料の「居住中」の字・入居可能時期の年は渡さない＝退去予定の一文は recommend-viewable が実送信の形で1つ作る）
+  if (vac === true) L.push("・現況: 退去予定のお部屋（まだご内覧頂けない）");
+  else if (vac === false) L.push("・現況: 空室（ご内覧頂けるお部屋）");
+  else if (ev?.moveIn) L.push(`・現況（資料）: ${ev.moveIn} → 内覧できるかは資料から分からない`);
   const st = (row.location?.stations ?? []).filter((s) => s?.station && typeof s.walk === "number").slice(0, 2);
   if (st.length) L.push(`・駅: ${st.map((s) => `${s.line ? `${s.line} ` : ""}${s.station}駅 徒歩${s.walk}分`).join("／")}`);
   if (ev?.built) L.push(`・築年（資料）: ${ev.built.replace(/^築年数/, "")}${t?.newBuild ? "（新築）" : ""}`);
@@ -220,6 +215,10 @@ export type SecondSceneInput = {
   propertyLabel: string | null;
   /** これまでに送った物件の件数（分かれば） */
   sentCount?: number | null;
+  /** 退去予定を伝える一文（recommend-viewable が資料から作った実送信の形）。無ければ null */
+  vacatingLine?: string | null;
+  /** 1通目が既に退去予定を伝えている（2通目では繰り返さない） */
+  firstMentionsVacating?: boolean;
 };
 
 const SCENE_LABEL: Record<SecondSceneKey, string> = {
@@ -238,7 +237,9 @@ export function buildSecondSceneNote(i: SecondSceneInput): string {
   const label = i.propertyLabel ?? "（1通目の見出しの建物名と号室）";
   const pool = SECOND_MESSAGE_EXAMPLES[i.scene];
   // 退去予定の時は退去予定の実物を先に、空室の時は空室の実物だけ
-  const picked = (i.vacating ? [...pool.filter((e) => e.vacating), ...pool.filter((e) => !e.vacating)] : pool.filter((e) => !e.vacating)).slice(0, 4);
+  // 退去予定の一文を2通目に書く時だけ退去予定の実物を先に見せる。1通目が既に伝えている時は見せない（見せると同じ一文を重ねる）
+  const writeVacating = i.vacating && !i.firstMentionsVacating;
+  const picked = (writeVacating ? [...pool.filter((e) => e.vacating), ...pool.filter((e) => !e.vacating)] : pool.filter((e) => !e.vacating)).slice(0, 4);
   const L: string[] = [];
   L.push("【この2通目の形（物件オススメの直後。ここより前の指示と食い違う所はこちらが正）】");
   L.push(`場面: ${SCENE_LABEL[i.scene]}${typeof i.sentCount === "number" && i.sentCount > 0 ? `（これまでにお送りした物件 ${i.sentCount}件）` : ""}／${i.vacating ? "退去予定のお部屋（まだご内覧頂けない）" : "空室のお部屋（ご内覧頂ける）"}`);
@@ -259,8 +260,12 @@ export function buildSecondSceneNote(i: SecondSceneInput): string {
   L.push("　理由を別の文に切り出さない。事実をつないで「かなりオススメ出来るお部屋となります！！」で結び、その後に設備や感想の文を足さない。");
   L.push("　敷金礼金・初期費用の事は、【資料の事実】に「敷金・礼金: どちらもなし」とある時だけ書く。");
   L.push(`・物件は建物名から書く（${label}）。号室だけで呼ばない（実送信477組で0通）。2回目からは「こちらのお部屋」。`);
-  if (i.vacating) {
-    L.push("・退去予定のお部屋: 退去予定日・ご内覧可能日は、1通目か【資料の事実】に日付がある時だけ「（退去予定日）退去予定のため、（その翌日）以降ご内覧可能となります！！」の形で書く。退去の日付が無ければ「退去予定のお部屋となります！！」とだけ書く（日付・理由の言葉を作らない。【資料の事実】に入居可能時期がある時は「退去予定のお部屋となり、（資料の入居可能時期）が最短での入居可能時期となります！！」）。1通目が既に退去予定の一文を書いていれば重ねない。");
+  if (i.vacating && i.firstMentionsVacating) {
+    L.push("・退去予定のお部屋: 退去予定の事は1通目で伝えてある。2通目では退去予定・入居可能時期の一文を書かない（繰り返さない）。内覧の誘導も書かない。");
+  } else if (i.vacating && i.vacatingLine) {
+    L.push(`・退去予定のお部屋: 退去予定を伝える一文はこのまま書く「${i.vacatingLine}」（言い回し・日付を変えない。年や「居住中」は書かない）。オススメの文の次に、1行だけの段落として置く。同じ行に締めの文を続けない。`);
+  } else if (i.vacating) {
+    L.push("・退去予定のお部屋: 退去予定日が1通目にある時だけ「（退去予定日）退去予定のため、（その翌日）以降ご内覧可能となります！！」の形で書く。日付が無ければ「退去予定のお部屋となります！！」とだけ書く（日付・理由の言葉を作らない）。1行だけの段落として置き、同じ行に締めの文を続けない。");
   }
   L.push("・最後は締めの1文だけ（下の【この2通目の締め】の指示のとおり）。締めの後に「気になる点があれば〜」等の一文を足さない。");
   L.push("・文の終わりは「！！」。「。」で終わる文にしない（実送信で0.3%）。");
