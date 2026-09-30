@@ -357,7 +357,15 @@ export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
       continue;
     }
     if (st.stage === "confirmed") {
-      if (CANCEL_RE.test(text) && !parseCustomerDay(text, t)) { st.lastReply = "cancel"; set("none", "customer_cancelled_after_confirm", t); continue; }
+      // 2026-09-30 YUMA の実送信テスト: 待ち合わせの後の「2日の内覧は一度キャンセルさせてください」が取りやめと読まれず確定のまま残り、
+      //   ブレインが内覧の希望として候補日の AIX を勧めた。旧は「日の語があれば取りやめではない（日の変更）」としていたが、
+      //   決まっている日そのものを指した取りやめ（「2日の内覧は」）は取りやめ。別の日への変更の語（変更・別日・ずらし・◯日にして）がある時だけ下の変更の扱いへ
+      {
+        const cancelDay = CANCEL_RE.test(text) ? parseCustomerDay(text, t) : null;
+        const confirmedDay = st.label?.split(" ")[0] ?? null;
+        const wantsChange = /変更|別日|別の日|ずらし|代わりに|(?:[0-9]{1,2}\s*日|曜日?)(?:に|へ)(?:して|変え|でき|お願い)/.test(text);
+        if (CANCEL_RE.test(text) && (!cancelDay || (cancelDay === confirmedDay && !wantsChange))) { st.lastReply = "cancel"; set("none", "customer_cancelled_after_confirm", t); continue; }
+      }
       // 確定の後の変更（「30日の方が助かるんですけど変更お願いしても」「8月4日の12時過ぎなら大丈夫です」）:
       //   日＋時刻がそろえば待ち合わせを送り直す・日だけなら内覧調整をもう1回（実送信: cdf07418・0133b787）
       const v = classifyCustomerDateReply(text.replace(CANCEL_RE, ""), { atMs: t, offeredDays: [], knownDay: null });

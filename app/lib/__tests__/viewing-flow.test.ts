@@ -139,6 +139,23 @@ it("確定の後「いったんキャンセルでお願いいたします。」�
   const f = resolveViewingFlow({ ...CONFIRMED_BASE, appointment: null, messages: [...WON, c("9/12", "09:00", "いったんキャンセルでお願いいたします。")], nowMs: Date.parse(at("9/12", "09:01")) });
   expect(f.stage).toBe("none");
 });
+// 2026-09-30 YUMA の実送信テスト: 待ち合わせ（9/14 16:00）の後の取りやめが確定のまま残り、ブレインが候補日の AIX を勧めた
+it("確定の後「14日の内覧は一度キャンセルさせてください」（決まっている日を指した取りやめ）→ none・台帳に予約が残っていても確定に戻さない", () => {
+  const f = resolveViewingFlow({ ...CONFIRMED_BASE, messages: [...WON, c("9/12", "09:00", "14日の内覧は一度キャンセルさせてください")], nowMs: Date.parse(at("9/12", "09:01")) });
+  expect(f.stage).toBe("none"); expect(f.reason).toBe("customer_cancelled_after_confirm"); expect(viewingFlowNextAix(f)).toBe(null);
+});
+it("確定の後「今回の内覧はキャンセルでお願いします」→ none（台帳に予約が残っていても）", () => {
+  const f = resolveViewingFlow({ ...CONFIRMED_BASE, messages: [...WON, c("9/12", "09:00", "今回の内覧はキャンセルでお願いします")], nowMs: Date.parse(at("9/12", "09:01")) });
+  expect(f.stage).toBe("none");
+});
+it("確定の後、2通続けての取りやめ（1通にまとめて渡っても）→ none", () => {
+  const f = resolveViewingFlow({ ...CONFIRMED_BASE, messages: [...WON, c("9/12", "09:00", "14日の内覧は一度キャンセルさせてください\n今回の内覧はキャンセルでお願いします")], nowMs: Date.parse(at("9/12", "09:01")) });
+  expect(f.stage).toBe("none");
+});
+it("確定の後「14日キャンセルで15日に変更できますか」（別の日への変更）→ 取りやめにしない（内覧調整をもう1回）", () => {
+  const f = resolveViewingFlow({ ...CONFIRMED_BASE, messages: [...WON, c("9/12", "09:00", "すみません14日キャンセルで、15日に変更できますか？")], nowMs: Date.parse(at("9/12", "09:01")) });
+  expect(f.stage === "none").toBe(false);
+});
 it("候補日の後「日程調整してまた連絡させて頂きます。」→ proposing・保留・催促しない（次の AIX なし）", () => {
   const f = resolveViewingFlow({ messages: [...WON.slice(0, 2), c("9/11", "11:00", "日程調整してまた連絡させて頂きます。")], inviteAts: [at("9/11", "10:30")], nowMs: Date.parse(at("9/11", "11:01")) });
   expect(f.stage).toBe("proposing"); expect(f.currentReply).toBe("hold"); expect(viewingFlowNextAix(f)).toBe(null);
