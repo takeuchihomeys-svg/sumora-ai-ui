@@ -40,7 +40,15 @@ console.log("\n■ popup: 一覧に居ないお客様は取り直してから探
   ok("見つからなければ loadCustomers(true) で取り直してもう1回探す", /if \(!c && d\.customerId\) \{[\s\S]{0,200}await loadCustomers\(true\)/.test(fn));
   ok("取り直しても居なければ customer-not-found", /reason: "customer-not-found"/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  ok("manifest の版 2.5.50", mf.version === "2.5.50");
+  ok("manifest の版 2.5.51", mf.version === "2.5.51");
+}
+
+console.log("\n■ v2.5.51 ITANDI の広げて検索は築年数も＋5年（リアプロと同じ）");
+{
+  const it = pp.slice(pp.indexOf("rent_max:        itandiEffectiveRentMax,"), pp.indexOf("rent_max:        itandiEffectiveRentMax,") + 1200);
+  ok("ITANDI の条件: 広げての時だけ築年数を＋5年", it.includes('return searchMode === "wide" ? baseAge + 5 : baseAge;'));
+  ok("築年数の希望が無い人は指定なしのまま", it.includes("if (!baseAge) return null;"));
+  ok("リアプロは今まで通り＋5年", pp.includes('searchMode === "wide" ? adjC.building_age + 5 : adjC.building_age'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -4408,7 +4408,13 @@ function openInstructions(siteKey) {
         area_mode:       _lockedMode_itandi || currentAreaMode,
         shikirei_free:   !!(document.getElementById("adj-shikirei-free")?.checked),
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
-        building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
+        // v2.5.51 竹内「ITANDI 築年数広げる」: 広げて検索の時はリアプロと同じく築年数を＋5年（旧は家賃だけ広げて築年数は登録のまま＝
+        //   点検の「築年数が登録より狭い」が 9/30 だけで 27回）。ピンポイントは今まで通り
+        building_age:    (() => {
+          const baseAge = adjAge ? Number(adjAge) : (c.building_age ? Number(c.building_age) : null);
+          if (!baseAge) return null;
+          return searchMode === "wide" ? baseAge + 5 : baseAge;
+        })(),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
         is_wide:         searchMode === "wide",
         area_min:        adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
