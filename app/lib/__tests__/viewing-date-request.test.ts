@@ -91,12 +91,14 @@ it("物件送付の定型「お気に召されましたらご案内させて頂�
 it("「7/12日以降でお部屋ご案内可能です」は案内（日程調整に進む）", () => expect(staffOffersViewing("7/11日退去予定のお部屋で7/12日以降でお部屋ご案内可能です！！")).toBe(true));
 it("退去予定の話が無ければ補正しない", () => expect(moveOutBlocksViewing([{ sender: "customer", text: "内覧したいです" }], "newest_first")).toBe(false));
 
-// ─── 内覧可能な時間帯（2026-09-15 竹内: 10:30〜18:30・2時間以上の幅） ───
+// ─── 内覧可能な時間帯 ───
+// 2026-09-30 竹内: 始まり 11:00〜終了 18:30・1件なら1〜2時間の枠・長い空きは切る（旧 2026-09-15: 10:30〜18:30・2時間以上・最大3時間）。
+//   決まりは viewing-slot-plan.ts（細かいテストは viewing-slot-plan.test.ts）。ここは calcSlots が同じ決まりを通ること
 const hm = (s: string) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
-it("隼斗 9/18（予定 14:00〜15:30・14:00〜）→ 10:30〜13:00 と 16:30〜18:30", () => expect(calcSlots([[hm("14:00"), hm("15:30")], [hm("14:00"), hm("15:00")]]).join(" ")).toBe("10:30〜13:00 16:30〜18:30"));
-it("2時間に満たない空きは出さない（予定 12:00〜13:00 → 前は 10:30〜11:00 の30分で出さない）", () => expect(calcSlots([[hm("12:00"), hm("13:00")]]).join(" ")).toBe("14:00〜17:00"));
-it("予定が無い日の最初の枠は 10:30 から（1枠は最大3時間）", () => expect(calcSlots([]).join(" ")).toBe("10:30〜13:30"));
-it("案内時間の初期値は 10:30〜18:30", () => expect(`${VIEWING_DAY_START}〜${VIEWING_DAY_END}`).toBe("10:30〜18:30"));
+it("隼斗 9/18（予定 14:00〜15:30・14:00〜）→ 11:00〜13:00 と 16:30〜18:30", () => expect(calcSlots([[hm("14:00"), hm("15:30")], [hm("14:00"), hm("15:00")]]).join(" ")).toBe("11:00〜13:00 16:30〜18:30"));
+it("予定 12:00〜13:00 → 前は空かない（11:00 開始で前後1時間）・後ろは2時間ずつに切る", () => expect(calcSlots([[hm("12:00"), hm("13:00")]]).join(" ")).toBe("14:00〜16:00 16:00〜18:00"));
+it("予定が無い日は 13:00 から2時間ずつ", () => expect(calcSlots([]).join(" ")).toBe("13:00〜15:00 15:00〜17:00 17:00〜18:30"));
+it("案内時間の初期値は 11:00〜18:30", () => expect(`${VIEWING_DAY_START}〜${VIEWING_DAY_END}`).toBe("11:00〜18:30"));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

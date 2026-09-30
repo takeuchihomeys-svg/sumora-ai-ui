@@ -5,6 +5,7 @@ import BottomNav from "../components/BottomNav";
 import { registerSW, requestNotifPermission, showNotif } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 import { VIEWING_METHOD_PENDING } from "../lib/meeting-calendar";
+import { buildScreeningTaskPayload, isValidSyncKey, shouldSyncViewingToScreening } from "../lib/screening-calendar-sync";
 // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】」: お客様への約束の行は印を出し、履行するまで残る
 import { isPromiseMustNotes } from "../lib/promise-calendar";
 
@@ -355,6 +356,8 @@ export default function CalendarPage() {
 
     try {
       let error;
+      // 2026-09-30: 申込ツールの行の鍵に使うので、入れた予定の id を受け取る
+      let savedId: string | number | null = editingEvent ? editingEvent.id : null;
       if (editingEvent) {
         ({ error } = await supabase
           .from("calendar_events")
@@ -362,18 +365,25 @@ export default function CalendarPage() {
           .eq("id", editingEvent.id)
           .abortSignal(AbortSignal.timeout(15_000)));
       } else {
-        ({ error } = await supabase
+        const res = await supabase
           .from("calendar_events")
           .insert(payload)
-          .abortSignal(AbortSignal.timeout(15_000)));
+          .select("id")
+          .abortSignal(AbortSignal.timeout(15_000))
+          .maybeSingle();
+        error = res.error;
+        savedId = (res.data as { id: string | number } | null)?.id ?? null;
       }
 
       if (error) { setFormError("保存に失敗しました"); return; }
 
       // 申込ツールにも同期（副次処理：失敗しても予定本体は保存済みなのでブロックしない）
-      if (form.sync_to_screening && !editingEvent) {
+      // 2026-09-30 竹内「内覧カレンダー登録したら、申込ツールのカレンダーにも連動して入れる」:
+      //   行の鍵＝この予定の id（app/lib/screening-calendar-sync.ts）。新しい予定はチェックがある時に入れる。
+      //   既にある予定を直した時は、この予定から入れた行が申込ツールにある時だけ日時・中身を直す（update_only＝無ければ何もしない・旧の行と二重にしない）
+      const endTimeStr = form.end_at && !form.all_day ? form.end_at.slice(11, 16) : "";
+      if (!editingEvent && form.sync_to_screening) {
         const cfg = EVENT_TYPE_CONFIG[form.event_type];
-        const endTimeStr = form.end_at ? form.end_at.slice(11, 16) : "";
         try {
           await fetch("/api/daily-tasks", {
             method: "POST",
@@ -384,11 +394,18 @@ export default function CalendarPage() {
               date: dateStr,
               time: timeStr,
               end_time: endTimeStr,
+              ...(savedId !== null && isValidSyncKey(savedId) ? { sync_key: String(savedId) } : {}),
             }),
             signal: AbortSignal.timeout(15_000),
           });
         } catch {
           // 同期失敗は無視（予定本体は保存済み。申込ツール側だけ後で手動追加すればよい）
+        }
+      } else if (editingEvent && shouldSyncViewingToScreening(form.event_type, finalNotes)) {
+        const p = buildScreeningTaskPayload({ eventId: editingEvent.id, eventType: form.event_type, title: form.title, customerName: form.customer_name, ymd: dateStr, start: timeStr, end: endTimeStr, notes: finalNotes });
+        if (p) {
+          void fetch("/api/daily-tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...p, update_only: true }), signal: AbortSignal.timeout(15_000) })
+            .catch(() => { /* 申込ツール側だけ古いまま残る。予定本体は保存済み */ });
         }
       }
 
@@ -405,6 +422,9 @@ export default function CalendarPage() {
   const deleteEvent = async (id: string) => {
     if (!confirm("この予定を削除しますか？")) return;
     await supabase.from("calendar_events").delete().eq("id", id);
+    // 2026-09-30: この予定から申込ツールに入れた行（dt_sumora_cal_<id>）も消す＝取りやめた内覧が申込ツールのカレンダーに残らない。
+    //   鍵の無い旧の行・申込ツールで手で入れた行には当たらない（id が違う）
+    if (isValidSyncKey(id)) void fetch(`/api/daily-tasks?sync_key=${encodeURIComponent(String(id))}`, { method: "DELETE", signal: AbortSignal.timeout(15_000) }).catch(() => {});
     fetchAll();
   };
 

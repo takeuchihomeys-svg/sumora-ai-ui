@@ -2,54 +2,21 @@ import { supabase } from "./supabase";
 import { jstParts, jstYmd } from "./jst-date";
 import { isViewingHoldNotes } from "./viewing-hold";
 
+import { planDaySlots, isOutingViewingNotes, VIEWING_DAY_START, VIEWING_DAY_END, type SlotBusy } from "./viewing-slot-plan";
+
 const WEEKDAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
 const DAY_MS = 86_400_000;
-// 2026-09-15 竹内「時間10:30〜18:30まで可能にする。物件の内覧の場所もあるので今まで通り2時間以上の幅にする」
-//   （旧 11:00〜18:00。隼斗事例: スタッフの実送信は 9/18「10:30〜11:30 17:00〜18:30」）
-const WORK_START = 10 * 60 + 30; // 10:30
-const WORK_END   = 18 * 60 + 30; // 18:30
+// 2026-09-30 竹内「内覧は1件なら1〜2時間の枠・件数で枠を増やす・予定の住所と移動時間も入れる・始まり 11:00〜終了 18:30」
+//   枠の決まり（開始と終了の範囲・件数ごとの長さ・予定との間の空け方・長い空きの切り方）は viewing-slot-plan.ts の1か所。
+//   （旧 2026-09-15: 10:30〜18:30・予定の前後1時間・2時間以上の空き・1枠は最大3時間）
 /** 内覧の案内時間の初期値（カレンダーの空き枠が無い日を手で ON にした時など） */
-export const VIEWING_DAY_START = "10:30";
-export const VIEWING_DAY_END   = "18:30";
+export { VIEWING_DAY_START, VIEWING_DAY_END };
 /** 基準の3日（本日・明日・明後日）に足せる日の上限。お客様の希望日＋退去予定日以降の日が両方入るので 8 日 */
 const MAX_EXTRA_DAYS = 8;
-const MIN_SLOT   = 2 * 60;  // 物件間の移動があるので2時間以上の空きだけ
-const MAX_SLOT   = 3 * 60;
-const BUFFER     = 60;      // 予定の前後に確保する最低バッファ（1時間）
 
-const minToStr = (m: number) =>
-  `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
-
-
-/** 予定（分の区間）から内覧可能な時間帯を出す（10:30〜18:30・予定の前後1時間・2時間以上の空き・1枠は最大3時間） */
-export function calcSlots(busy: Array<[number, number]>): string[] {
-  // 各予定の前後にBUFFER分の余裕を追加（内覧はその予定の1時間前後を空ける）
-  const buffered: Array<[number, number]> = busy.map(([s, e]) => [
-    Math.max(s - BUFFER, WORK_START),
-    Math.min(e + BUFFER, WORK_END),
-  ]);
-  const sorted = buffered.filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
-  const merged: Array<[number, number]> = [];
-  for (const [s, e] of sorted) {
-    if (merged.length > 0 && s < merged[merged.length - 1][1]) {
-      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], e);
-    } else {
-      merged.push([s, e]);
-    }
-  }
-  const slots: string[] = [];
-  let cursor = WORK_START;
-  const blocks: Array<[number, number]> = [...merged, [WORK_END, WORK_END]];
-  for (const [bs, be] of blocks) {
-    const freeStart = cursor;
-    const freeEnd   = Math.min(bs, WORK_END);
-    const freeLen   = freeEnd - freeStart;
-    if (freeLen >= MIN_SLOT) {
-      slots.push(`${minToStr(freeStart)}〜${minToStr(Math.min(freeStart + MAX_SLOT, freeEnd))}`);
-    }
-    cursor = Math.max(cursor, Math.min(be, WORK_END));
-  }
-  return slots;
+/** 予定（分の区間）から内覧可能な時間帯を出す（出かけない予定として扱う＝前後1時間）。決まりは viewing-slot-plan.ts planDaySlots */
+export function calcSlots(busy: Array<[number, number]>, opts: { count?: number | null } = {}): string[] {
+  return planDaySlots({ busy: busy.map(([start, end]) => ({ start, end })), count: opts.count }).slots;
 }
 
 export type CalendarDayResult = {
@@ -70,7 +37,8 @@ export async function fetchCalendarSlots(
   extraYmds: ReadonlyArray<string> = [],
   // 2026-09-16 竹内（カイナ事例）: そのお客様自身の「時間確保」（前に送った候補）は、そのお客様への提案では空き扱いにする
   //   （他のお客様に対しては確保として埋まったまま）。決まったら確保は消える
-  opts: { ignoreHoldsForConversationId?: string | null } = {},
+  // 2026-09-30 竹内: 内覧の件数（枠の長さ）と内覧する物件の場所（前後の予定との間の空け方）も渡せる。無ければ 1件・場所は不明
+  opts: { ignoreHoldsForConversationId?: string | null; viewingCount?: number | null; viewingPlace?: string | null } = {},
 ): Promise<{
   days: CalendarDayResult[];
   infoString: string; // AIに渡す文字列
@@ -119,12 +87,6 @@ export async function fetchCalendarSlots(
   const nowMin = now.hour * 60 + now.minute;
   const jstMin = (iso: string) => { const p = jstParts(iso); return p.hour * 60 + p.minute; };
 
-  // スロット文字列（"10:00〜13:00"）の終了時刻を分に変換
-  const slotEndMin = (slot: string): number => {
-    const m = slot.match(/〜(\d{1,2}):(\d{2})/);
-    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
-  };
-
   for (let i = 0; i < allYmds.length; i++) {
     const dateKey = allYmds[i];
     const [yy, mo, dd] = dateKey.split("-").map(Number);
@@ -142,7 +104,7 @@ export async function fetchCalendarSlots(
     const label = label_prefix ? `${label_prefix} ${month}/${date}(${wd})` : `${month}/${date}(${wd})`;
     const shortLabel = label_prefix ? `${label_prefix}(${month}/${date}${wd})` : `${month}/${date}(${wd})`;
 
-    const busy: Array<[number, number]> = [];
+    const busy: SlotBusy[] = [];
 
     for (const ev of events) {
       if (jstYmd(ev.start_at) !== dateKey) continue;
@@ -151,12 +113,13 @@ export async function fetchCalendarSlots(
         // それ以外の全日イベント（会議メモ・リマインダー等）は時間をブロックしない
         const isClosedDay = /定休|休業|休み|休日|お休み|closed|holiday/i.test(ev.title || "") || ev.event_type === "holiday";
         if (isClosedDay) {
-          busy.push([WORK_START, WORK_END]);
+          busy.push({ start: 0, end: 24 * 60 });
         }
       } else {
         const sm = jstMin(ev.start_at);
         const em = ev.end_at ? jstMin(ev.end_at) : sm + 60;
-        busy.push([Math.max(sm, WORK_START), Math.min(em, WORK_END)]);
+        // 場所はメモ（住所・物件名）から読む。決まった内覧（物件・住所のある予定）だけ「出かける予定」＝場所が読めなければ長めに空ける
+        busy.push({ start: sm, end: Math.max(em, sm), text: ev.notes, outing: isOutingViewingNotes(ev.event_type, ev.notes) });
       }
     }
 
@@ -173,26 +136,17 @@ export async function fetchCalendarSlots(
           const [eh, emin] = t.end_time.split(":").map(Number);
           em = (eh || 0) * 60 + (emin || 0);
         }
-        busy.push([Math.max(sm, WORK_START), Math.min(em, WORK_END)]);
+        busy.push({ start: sm, end: Math.max(em, sm), text: t.content });
       }
     }
 
-    let slots      = calcSlots(busy);
+    // 枠の決まりは planDaySlots（11:00〜18:30 の中・件数で長さ・予定との間は場所で空ける・長い空きは切る）。
+    //   当日は今から1時間後以降に始まる枠だけ（旧: 終わりが今より後なら出していた＝始まりが過ぎた枠も出ていた）
+    const slots      = planDaySlots({ busy, count: opts.viewingCount, place: opts.viewingPlace, notBeforeMin: i === 0 ? nowMin : null }).slots;
     const noEvents   = busy.length === 0;
-
-    // 今日（i===0）は現在時刻を過ぎたスロットを除外
-    if (i === 0) {
-      slots = slots.filter(s => slotEndMin(s) > nowMin);
-    }
-
     const fullyBooked = !noEvents && slots.length === 0;
-
-    let defaultSlots = ["13:00〜16:00", "16:00〜18:30"];
-
-    // 今日のデフォルトスロットも現在時刻で絞り込む
-    if (i === 0) {
-      defaultSlots = defaultSlots.filter(s => slotEndMin(s) > nowMin);
-    }
+    // 予定の無い日は 13:00 から（planDaySlots が予定なしの日をそう扱う）。出すのは2つまで（旧の既定 13:00〜16:00 / 16:00〜18:30 と同じ数）
+    const defaultSlots = noEvents ? slots.slice(0, 2) : [];
 
     if (noEvents && defaultSlots.length === 0) {
       // 今日・予定なし・全スロット時間切れ → 案内不可扱い

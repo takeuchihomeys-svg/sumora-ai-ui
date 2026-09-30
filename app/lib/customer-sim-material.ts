@@ -258,13 +258,17 @@ export function extractDateMentions(text: string | null | undefined, nowMs: numb
   return out;
 }
 
-/** 明日以降の固定の候補（会話に日時が無い時）: 明日 11:00〜14:00・明後日 14:00〜17:00 */
+/**
+ * 明日以降の固定の候補（会話に日時が無い時）: 明日 11:00〜13:00・明後日 14:00〜16:00。
+ * 2026-09-30 竹内「内覧は1件なら1〜2時間の枠・始まり 11:00〜終了 18:30」: スタッフ役の候補も本番の枠の決まり（viewing-slot-plan.ts）と同じ形にする
+ *   （旧 11:00〜14:00・14:00〜17:00 の3時間。日にちだけの時は 10:30〜18:30 の丸1日を出していた）
+ */
 export function fixedViewingSlots(nowMs: number): SimViewingSlot[] {
   const today = ymdOf(nowMs);
   const todayStart = Date.UTC(today.y, today.m - 1, today.d) - JST;
   return [
-    { ms: todayStart + DAY, start: "11:00", end: "14:00" },
-    { ms: todayStart + 2 * DAY, start: "14:00", end: "17:00" },
+    { ms: todayStart + DAY, start: "11:00", end: "13:00" },
+    { ms: todayStart + 2 * DAY, start: "14:00", end: "16:00" },
   ].map((s) => ({ ymd: ymdOf(s.ms).ymd, label: dayLabel(s.ms), start: s.start, end: s.end }));
 }
 
@@ -284,7 +288,7 @@ export function pickViewingSlots(pool: SimMaterialPool): SimMaterialPick {
   const propertyName = pool.focusPropertyName ?? pool.sentPropertyNames[0] ?? null;
   if (ds.length > 0) {
     const slots = ds.slice(0, 3).map((d) => {
-      const [start, end] = d.time ? [d.time, null] : d.ampm === "am" ? ["10:30", "12:30"] : d.ampm === "pm" ? ["14:00", "17:00"] : ["10:30", "18:30"];
+      const [start, end] = d.time ? [d.time, null] : d.ampm === "am" ? ["11:00", "13:00"] : d.ampm === "pm" ? ["14:00", "16:00"] : ["13:00", "15:00"];
       return { ymd: d.ymd, label: d.label, start, end };
     });
     return { ok: true, material: { kind: "viewing_slots", slots, source: "conversation", propertyName } };

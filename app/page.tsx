@@ -29,6 +29,7 @@ import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib
 import { limitSlotsPerDay } from "./lib/viewing-slots";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
 import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_METHOD_PENDING } from "./lib/meeting-calendar";
+import { buildScreeningTaskPayload, isValidSyncKey } from "./lib/screening-calendar-sync";
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
@@ -5335,6 +5336,17 @@ export default function Home() {
       }
       // 待ち合わせが決まったので、この会話のそれまでの自動の内覧の予定（ブレインの「内覧調整」・候補日時の提示から自動で作られた予定）は済みにする
       //   （内覧担当がカレンダーで本当の内覧と見間違えない・空き枠を埋めない）。内覧方法を入れた予定・この日より後の予定は触らない
+      // 2026-09-30 竹内「内覧カレンダー登録したら、申込ツールのカレンダーにも連動して入れる」:
+      //   旧は予定の画面で「保存」を押した時だけ申込ツールに入った（閉じると入らない）。決まった内覧はここで入れる。
+      //   行の鍵はこの予定の id（同じ内覧は何回送っても1行・日時を変えて送り直せば同じ行が変わる）。画面は待たせない
+      if (eventId !== null) {
+        const payload = buildScreeningTaskPayload({ eventId, eventType: "viewing", title, customerName: o.customerName, ymd: when.ymd, start: when.start, end: when.end, notes: row.notes });
+        if (payload) {
+          void fetch("/api/daily-tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(15_000) })
+            .then((r) => { if (!r.ok) console.warn("[meeting-calendar] 申込ツールへの連動に失敗:", r.status); })
+            .catch((e) => console.warn("[meeting-calendar] 申込ツールへの連動に失敗:", e));
+        }
+      }
       const { data: olderAuto } = await supabase.from("calendar_events")
         .select("id, notes")
         .eq("conversation_id", o.convId).eq("event_type", "viewing").eq("is_done", false)
@@ -10305,10 +10317,16 @@ export default function Home() {
                       all_day: isAllDay,
                       notes: builtNotes,
                     };
-                    const { error: insertError } = calendarEditingEventId
-                      ? await supabase.from("calendar_events").update(eventRow).eq("id", calendarEditingEventId).abortSignal(AbortSignal.timeout(15_000))
-                      : await supabase.from("calendar_events").insert(eventRow).abortSignal(AbortSignal.timeout(15_000));
-                    if (insertError) throw insertError;
+                    // 2026-09-30: 申込ツールの行の鍵に使うので、入れた予定の id を受け取る
+                    let savedEventId: number | string | null = calendarEditingEventId;
+                    if (calendarEditingEventId) {
+                      const { error: updateError } = await supabase.from("calendar_events").update(eventRow).eq("id", calendarEditingEventId).abortSignal(AbortSignal.timeout(15_000));
+                      if (updateError) throw updateError;
+                    } else {
+                      const { data: inserted, error: insertError } = await supabase.from("calendar_events").insert(eventRow).select("id").abortSignal(AbortSignal.timeout(15_000)).maybeSingle();
+                      if (insertError) throw insertError;
+                      savedEventId = (inserted as { id: number | string } | null)?.id ?? null;
+                    }
 
                     // 会話フラグ更新（失敗してもカレンダー登録は成立しているのでUIは進める）
                     void supabase
@@ -10330,6 +10348,9 @@ export default function Home() {
                         date: calendarDate,
                         time: calendarTime,
                         end_time: calendarEndTime || "",
+                        // 2026-09-30 竹内「申込ツールのカレンダーにも連動」: 行の鍵＝この予定の id。
+                        //   待ち合わせの送信直後に入れた行（同じ鍵）があれば直すだけ＝同じ内覧が申込ツールに2行にならない（旧は保存のたびに新しい行）
+                        ...(savedEventId !== null && isValidSyncKey(savedEventId) ? { sync_key: String(savedEventId) } : {}),
                       }),
                       signal: AbortSignal.timeout(15_000),
                     }).catch((e) => console.error("[calendar-save] daily-tasks sync failed", e));

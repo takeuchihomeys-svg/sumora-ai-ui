@@ -12,6 +12,7 @@ import { resolveViewingThread } from "../lib/viewing-thread";
 import { requestedViewingDatesFromMessages, buildViewingSpecificMessage, latestCustomerTurnText, type RequestedViewingDate } from "../lib/viewing-date-request";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
 import { pickDaySlots, limitSlotsPerDay } from "../lib/viewing-slots";
+import { placeKeyOf } from "../lib/viewing-slot-plan";
 // 2026-09-19 竹内（あい事例）: 2通目は既定で付けない。ボタンを押した時だけセットする
 import { canOfferSecondMessage, buildSecondMessage } from "../lib/aix-second-message";
 import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
@@ -1039,6 +1040,13 @@ export default function AixModal({
   const [viewingPropertyName, setViewingPropertyName] = useState("");
   const [viewingPropImagePreview, setViewingPropImagePreview] = useState("");
   const [isExtractingPropertyName, setIsExtractingPropertyName] = useState(false);
+  // 2026-09-30 竹内「内覧は1件なら1〜2時間の枠・件数も含めて時間の枠ふやす・予定の住所も踏まえて移動時間も含めて考える」:
+  //   件数（枠の長さ）と内覧のエリア（前後の予定との間の空け方）。決まりは app/lib/viewing-slot-plan.ts
+  const [viewingInviteCount, setViewingInviteCount] = useState(1);
+  const [viewingInviteArea, setViewingInviteArea] = useState("");
+  const viewingInvitePlace = `${viewingInviteArea} ${viewingIsVacancy ? viewingVacancyName : viewingPropertyName}`.trim();
+  // 取り直しの合図は「読めた場所」だけ（1字打つたびに取り直さない）
+  const viewingInvitePlaceKey = placeKeyOf(viewingInvitePlace);
 
   // 内覧へ！内覧日指定あり専用
   const [viewingSpecificMode, setViewingSpecificMode] = useState(!!initialViewingSpecificMode);
@@ -1551,7 +1559,7 @@ export default function AixModal({
         // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は退去日の翌日から連続6日も取りに行く（直近3日は全部内覧できない日なので）
         //   お客様の希望日を先に渡す（fetchCalendarSlots は渡された順に先着で採る）
         const extraYmds = [...viewingRequested.map((r) => r.ymd), ...(viewingVacancyFromYmd ? vacancyExtraYmds(viewingVacancyMoveOut) : [])];
-        const { days } = await fetchCalendarSlots(extraYmds, { ignoreHoldsForConversationId: conversationId ?? null });
+        const { days } = await fetchCalendarSlots(extraYmds, { ignoreHoldsForConversationId: conversationId ?? null, viewingCount: viewingInviteCount, viewingPlace: viewingInvitePlace });
         setViewingCalendarDays(days);
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {
@@ -1587,7 +1595,7 @@ export default function AixModal({
     })();
   // 退去予定日は画像の読み取りで後から入る（非同期）ので deps に入れて取り直す
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actionType, viewingRequestedKey, viewingVacancyFromYmd]);
+  }, [actionType, viewingRequestedKey, viewingVacancyFromYmd, viewingInviteCount, viewingInvitePlaceKey]);
 
   // ⑤ ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット（複数日対応）
   // recentMessages を deps に含める（マウント時にメッセージ未着でも、到着後に再実行される）
@@ -6615,7 +6623,7 @@ export default function AixModal({
                     <input
                       value={viewingSpecificTimes}
                       onChange={(e) => setViewingSpecificTimes(e.target.value)}
-                      placeholder="例：10:30〜11:30 17:00〜18:30"
+                      placeholder="例：11:00〜13:00 16:30〜18:30"
                       className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
                     />
                   </div>
@@ -6707,6 +6715,27 @@ export default function AixModal({
           {actionType === "viewing_invite" && (
             <div className="mb-4">
               <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（カレンダーから自動取得）</p>
+              {/* 2026-09-30 竹内: 件数で枠の長さ（1件＝1〜2時間）・エリアで前後の予定との間（移動時間）を決める */}
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-[#54656f]">
+                <span className="font-bold">件数</span>
+                {[1, 2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setViewingInviteCount(n)}
+                    className={`rounded-full px-2.5 py-1 font-bold ${viewingInviteCount === n ? "bg-emerald-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}
+                  >{n === 4 ? "4件〜" : `${n}件`}</button>
+                ))}
+                <input
+                  value={viewingInviteArea}
+                  onChange={(e) => setViewingInviteArea(e.target.value)}
+                  placeholder="エリア（任意・例: 浪速区／東大阪市）"
+                  className="min-w-0 flex-1 rounded-lg border border-[#d1d7db] bg-white px-2 py-1 text-[11px] outline-none focus:border-emerald-400"
+                />
+              </div>
+              {viewingInvitePlaceKey && (
+                <p className="mb-2 text-[10px] text-[#8696a0]">📍 {viewingInvitePlaceKey}（他の予定との間はこの場所からの移動時間で空けます）</p>
+              )}
               {/* 2026-09-19 竹内（a🤫 事例）: 退去予定物件は退去日の翌日から。退去前の日は出さない */}
               {viewingVacancyFromYmd && (
                 <p className="mb-2 rounded-lg bg-orange-50 px-2.5 py-1.5 text-[11px] font-bold text-orange-700">
