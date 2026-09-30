@@ -189,5 +189,20 @@ describe("1通目の物件に当たる採点の行", () => {
   });
 });
 
+// 2026-09-30 YUMA の実送信（S-RESIDENCE福島玉川Deux 208）: 本文が「お気に召しましたら…」（召し）で締めたのを締めと見分けられず、
+//   同じ誘導がもう1行足されて2回届いた
+describe("締めの言い回しの揺れ（お気に召しましたら）", () => {
+  const YUMA_208 = "🌟S-RESIDENCE福島玉川Deux 208号室\n\n2023年10月築で築年数浅く、玉川駅徒歩4分・家賃管理費込81,000円の1K（22.56㎡）で、YUMAさんにかなりオススメ出来るお部屋となります！！\n\n独立洗面台や浴室乾燥機も備わっております。空室のため即入居可能です。\n\nお気に召しましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！";
+  it("★「お気に召しましたら…ご案内」も締めとして読み、誘導を2回にしない", () => {
+    const r = setRecommendClosing(YUMA_208, "viewing");
+    expect((r.text.match(/ご案内させて頂きます/g) ?? []).length).toBe(1);
+  });
+  it("ご査収に揃える時は「お気に召しましたら…」の行を置き換える", () => {
+    const r = setRecommendClosing(YUMA_208, "receipt");
+    expect(/お気に召/.test(r.text)).toBe(false);
+    expect(r.text.trimEnd().endsWith("お手隙の際にご査収ください😊！！")).toBe(true);
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
