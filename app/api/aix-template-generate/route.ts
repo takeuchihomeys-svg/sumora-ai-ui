@@ -46,7 +46,7 @@ import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-27 竹内さん決定で上書き: AIX でも使わない（許す一覧は空＝全部落とす・手本も置き換えて見せる）
 import { isWaitedAllowed, neutralizeWaitedInExample } from "@/app/lib/waited-scope";
 // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前の1通目を読んで2通目の材料にする
-import { buildAixChainNote } from "@/app/lib/aix-chain-note";
+import { buildAixChainNote, foreignRoomsInSecond } from "@/app/lib/aix-chain-note";
 // 2026-09-20 竹内「生成される文が長すぎる」: 長さの目安を実測から渡す＋生成後に記録する
 import { buildLengthNote, checkLength } from "@/app/lib/template-length";
 // 2026-09-20 竹内: 禁止語の整形（夜間挨拶・承知→かしこまりました・挨拶の重複）を返信生成・AIX 本体と同じ関数で
@@ -1539,6 +1539,45 @@ export async function POST(req: NextRequest) {
         `[aix-template-generate] 伏せ字の呼びかけ「〇〇さん」を検出 → ${resolvedCustomerName ? `「${resolvedCustomerName}さん」に置換` : "呼びかけごと削除"}`,
       );
       text = nameFix.text;
+    }
+
+    // ── 2通目の出口（2026-09-30 YUMA の実送信テスト: 物件オススメ → 2通目で 4回中4回おかしな文が届いた）──────────
+    //   ① 作業メモ・渡した指示の復唱（「【2通目】お客様が選びやすい形で、ひとこと添える。…」「…橋渡し文を書きます。／---／本文」）
+    //   ② 1通目と別の物件の話（1通目 203号室 → 2通目「ファーストフィオーレ難波ウエスト901号室は…」）
+    //   どちらも入口（aix-chain-note）では止まらなかった。ここで検査して1回だけ作り直し、直らなければ本文として返さない（入力欄に入れない）。
+    //   検査は純関数（meta-narration.ts isNotACustomerReply・aix-chain-note.ts foreignRoomsInSecond）。1通目が無い生成は今まで通り
+    if (sentMessage) {
+      const secondProblem = (t: string): string | null => {
+        const cleaned = stripMetaNarration(t).text;
+        if (!cleaned.trim() || isNotACustomerReply(cleaned)) return "お客様に送る本文ではなく、作業メモや指示の復唱になっている";
+        // 別の号室を見るのは物件オススメ（1通目が1件の物件）の時だけ。物件ピックアップは1通目の本文に全部の物件名が出ない
+        //   （画像で複数送り、2通目で「お送りした中でも特に◯◯ 302号室が」と1件を推すのが実送信の形＝scripts/audit-second-message-exit.ts で 699組中17組が1通目に無い号室）
+        const foreign = actionType === "property_recommendation" ? foreignRoomsInSecond(cleaned, sentMessage) : [];
+        if (foreign.length > 0) return `1通目に無い物件（${foreign.map((r) => `${r}号室`).join("・")}）の話が入っている`;
+        return null;
+      };
+      const problem = secondProblem(text);
+      if (problem) {
+        console.warn(JSON.stringify({ tag: "aix-template-generate:second-retry", actionType, problem, head: text.slice(0, 80) }));
+        const retry = await callClaude(
+          userPrompt +
+          `\n\n━━━━━━━━━━━━━━━━━━━━\n【🚨 作り直し（前回の出力は使えない）】\n━━━━━━━━━━━━━━━━━━━━\n` +
+          `前回の出力は「${problem}」ため使えません。\n` +
+          `・お客様にそのまま送る本文だけを書く。見出し（【…】）・区切り線・自分の作業の説明・ここに書かれた指示の言い回しは書かない。\n` +
+          `・物件の話をするなら、直前に送った1通目の物件だけ。会話履歴にある別の物件の名前・号室・金額は出さない。\n` +
+          `出力は本文のみ。`,
+        );
+        const retryText = retry.ok && retry.text ? fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text : "";
+        const still = retryText ? secondProblem(retryText) : "作り直しに失敗した";
+        if (still) {
+          console.error(JSON.stringify({ tag: "aix-template-generate:second-blocked", actionType, problem: still, head: (retryText || text).slice(0, 80) }));
+          return NextResponse.json({
+            ok: false,
+            error: `2通目の文を作れませんでした（${still}・送信欄には入れていません）。もう一度生成してください。`,
+          }, { status: 200 });
+        }
+        text = retryText;
+      }
     }
 
     // ── 訴求フレーム違反の決定論ガード（生成後チェック＋1回だけ再生成）──────────

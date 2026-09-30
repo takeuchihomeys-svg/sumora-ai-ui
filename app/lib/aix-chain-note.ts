@@ -107,6 +107,39 @@ const FUTURE_NG: Record<FirstMessageFacts["declaredDone"][number], string> = {
   viewing_guide: "「ご案内させて頂きます」（既に案内済みのため）",
 };
 
+const toHalfDigits = (s: string) => s.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+/** 号室の比べ方: 半角にして先頭の 0 を落とす（資料の「0205」と本文の「205号室」は同じ部屋） */
+const roomKey = (s: string) => toHalfDigits(s).replace(/^0+(?=\d)/, "");
+const ROOM_MENTION_RE = /([0-9０-９]{2,4})[\s　]*号室/g;
+
+/**
+ * 出口の検査: 2通目の本文に、1通目に無い号室（＝別の物件）が出ていないか。出ていればその号室の一覧を返す（無ければ空）。
+ *
+ * 2026-09-30 YUMA の実送信テスト（物件オススメ → 2通目）で、4回中2回、2通目が別の物件の話になった:
+ *   1通目「🌟Ｇｏ　Ｐａｌａｃｅ　Ｆｕｋｕｓｈｉｍａ 203号室」→ 2通目「ファーストフィオーレ難波ウエスト901号室は…75,000円の角部屋で…」
+ *   1通目「🌟FEEL UMEDA (フィールウメダ) 202」→ 2通目「Ｇｏ　Ｐａｌａｃｅ　Ｆｕｋｕｓｈｉｍａ203号室は…私個人的にはこちらがオススメです」
+ *   入口（buildAixChainNote の「これ以外の物件名・号室を出さない」）は渡っていたのに守られなかった＝入口だけでは止まらない。
+ * 線: 1通目から物件（名前＋号室）が1つ以上読めた時だけ見る。2通目の「◯◯◯号室」の番号が1通目のどの号室とも違えば別の物件。
+ *   名前は比べない（全角・半角・空白・「号室」の有無で書き方が揺れるため。番号で十分に分かれる）。
+ *   ここは本文を書き換えない。呼び出し側（aix-template-generate）が1回だけ作り直し、直らなければ入力欄に入れない。
+ */
+export function foreignRoomsInSecond(secondText: string | null | undefined, firstMessage: string | null | undefined): string[] {
+  const firstRooms = new Set<string>();
+  for (const label of readFirstMessage(firstMessage).propertyLabels) {
+    const m = label.match(/([0-9]{2,4})号室$/);
+    if (m) firstRooms.add(roomKey(m[1]));
+  }
+  if (firstRooms.size === 0) return [];
+  const out: string[] = [];
+  ROOM_MENTION_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ROOM_MENTION_RE.exec(secondText ?? "")) !== null) {
+    const k = roomKey(m[1]);
+    if (!firstRooms.has(k) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
 /**
  * 1通目を踏まえた指示ブロック。1通目が無い・何も読み取れない時は空文字（何も主張しない）。
  * ⚠ ここは**入口**（材料を渡す）。本文を書き換える出口は作らない。
