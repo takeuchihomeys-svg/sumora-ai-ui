@@ -134,7 +134,8 @@ console.log("■ 点の表（REASON_POINTS）と judgeProperty・applyImageFacts
         let expE = Math.max(0, Math.min(SCORE_MAX, rawE));
         if (je.reasonCodes.includes("EQUIP_MUST_NG_CAP")) expE = Math.min(expE, 20);
         if (expE !== je.score) bad.push({ eq: true, codes: je.reasonCodes, rawE, score: je.score });
-        if (je.verdict === "drop" && !j.flagCodes.some((c) => c === "ALREADY_SENT" || c === "RENT_OVER_130")) bad.push({ eqDrop: true, codes: je.reasonCodes });
+        // 2026-09-30 AD1未満の 1K・売上5万円未満と AD なし（AD_UNDER_1M_NEVER・AD_NONE）も「送らない」＝外す候補（ad-under1-policy.ts）。設備欄で外す候補が増えないことを見るテストなので、この2つは元から外す候補として数える
+        if (je.verdict === "drop" && !j.flagCodes.some((c) => c === "ALREADY_SENT" || c === "RENT_OVER_130" || c === "AD_UNDER_1M_NEVER" || c === "AD_NONE")) bad.push({ eqDrop: true, codes: je.reasonCodes });
       }
     }
   }

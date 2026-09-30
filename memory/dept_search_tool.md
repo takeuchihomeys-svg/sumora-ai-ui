@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-09-30 採点・選び方: AD1ヶ月未満は基本的に送らない（1K・売上5万円未満は外す候補・売上5万円以上は他に無い時／しばらく送れていない時だけ）（**拡張は変えていない**・DB の表・列の追加なし・**サーバーはデプロイが要る**・未コミット＝commit / push は親）
+竹内「AD1未満の物件は基本的に送らない。家賃10万で AD0.5 等 売上5万以上ある場合で、他に物件ない場合やお客さんにしばらく新着物件送れていない人などは送っても良い。しかし 1K の AD1未満はきほんおくらない」。
+- **実物**（scripts/audit-ad-under1.ts・9/24 以降の property_pickups 2000行・YUMA 除く）: AD1未満 105行（AD0.5系 89・AD なし 16）＝**全部が保留か外す候補で、既に既定の選び方には入っていなかった**。お客様へ実際に届けた物（status=sent 24件・sent_properties と会話＋建物名で突き合わせできた 37件）に AD1未満は **0件**。間取り別は 1LDK 42・2LDK 27・1K 11・2DK 7・3LDK 6・1DK 5 ほか、売上別は 5万円未満 57・5万円以上 48。
+- **決めた線**（app/lib/ad-under1-policy.ts の adUnder1Policy・1か所）: 売上＝家賃×AD の月数（円で書いてあればその円・管理費は含めない）／1K の範囲＝1K・1R・1SK・ワンルーム（1DK・1LDK は含めない）。**never**（1K か売上5万円未満）→ 札 AD_UNDER_1M_NEVER＝外す候補（DROP）・**fallback**（売上5万円以上で 1K でない）→ AD_UNDER_1M_FALLBACK＝保留（HOLD）・点はどちらも −30（AD1 との差を保つ）。AD なし（売上0）は AD_NONE のまま**外す候補に移した**（旧は保留）。売上が読めない・間取りが読めない時は never にしない（外す側は確かな時だけ）。AD 不明・アズ・スタットのみなしは対象外（na）。
+- **選び方**（pickQualityTop・defaultAixChecks）: never・旧の札（AD_UNDER_1M）は既定に入れない。fallback は「AD の低さだけが保留の理由（他の NG なし・−30 が無ければ通す線40超）」の行だけ、①ほかに選べる物件が1件も無い時 ②そのお客様に最後のご提案から**8日以上**送れていない時（自動検索の「止まっている」と同じ線・ACTIVE_DAYS=7）だけ、通常の候補の後ろに足す（材料が無い・一度も送っていない時は「他に無い時だけ」）。最後の送付は API の last_proposal_sent_at（roomHist から lastProposalSentAt＝届けたご提案だけ・共有・物件確認・見積書は数えない）。画面の知らせに「AD1ヶ月未満は選びません・N件」「AD1ヶ月未満（売上5万円以上）をN件入れました＝ほかに選べる物件が無いため／しばらく新着を送れていないため」。
+- **手で選んだ時**: sendViaAix で adUnder1ConfirmMessage（審査中・商談中の dealConfirmMessage の次・OK なら送れる）。10件に絞る時は AD1未満が審査中・商談中の前で先に外れる。
+- **当て直し**（保存済みの行は付け直さない・「ここからで大丈夫」の前例）: 候補 105行のうち never 59・fallback 46（間取り不明・売上不明を含む）・**誤って外す（届けた物が never）0**。穴埋めが入る回は 124回中 ほかに無い 2＋しばらく 1（線を 3〜14日で動かしても 2〜4回＝日数はほとんど効かない）。
+- **既存テストの期待を変えた所**（AD なし＝売上0＝外す候補／AD 0.5・売上5万円未満＝NEVER）: pickup-review-order・agent-ad-assume・fit-balance・structure-ad-weights・pickup-score-audit（各コメントに理由）。新しいテスト app/lib/__tests__/ad-under1-policy.test.ts（73件・実物の行のまま）。
+- **触った所**: ad-under1-policy.ts（新）・property-brain.ts（表・writtenWeightCodes・judgeProperty・rejudgeWithoutDiscount・ngHitCodes）・pickup-review-order.ts・pickup-ad-priority.ts（pickupAdTier・lastProposalSentAt）・pickup-card-view.ts・recommend-score-drift.ts・app/api/property-pickups/route.ts・app/components/PickupReview.tsx・scripts/audit-ad-under1.ts。
+- **未決・残し**: ①旧の札の保存済みの行（AD_UNDER_1M）は保留のまま＝穴埋めに入らない（付け直しは竹内さんの判断待ち）②新着カード（new-arrivals.ts）は verdict=pass だけ数える＝穴埋めの対象外 ③👑 は pass が無い回で保留の穴埋め行が選ばれうる（外す候補は選ばれない）。
+
+---
+
 ## 2026-09-30 v2.5.50 検索を押す前の関所（間取り）・一覧に居ないお客様・間取りが小さい物件は外す（**拡張の再読み込み必須**・DB の表・列の追加なし）
 竹内「なんで 2LDK でピックアップするとお客さんに伝えているのに、1K でピックアップしているのか、根本的な原因見つけて改善する。他にも同じように間違い起きるようになっていないか確認」（c さん e6c7f775・2LDK／14万／中央区・浪速区・9/30 14:13 のリアプロ）。
 - **起きた事**: 点検の段 `switch_fail=popup: customer not found` → `tab_reload` → background の代わりの直接入力。家賃と区は入ったが**間取りのチェックが1つも入らないまま検索** → 179行・5ページを読み、1K・1DK を50件（#2131〜#2180）売上サポへ。採点は「間取りが希望と違う」（保留 −15）どまりで、全件保留の一番に 👑 と「この物件を AIX物件オススメで送る」が付いた。点検は後から `FLOOR_PLAN_DROPPED`（bad）を付けただけ。

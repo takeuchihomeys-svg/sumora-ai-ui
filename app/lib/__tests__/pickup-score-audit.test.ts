@@ -47,7 +47,8 @@ console.log("■ E2 「広告費 なし」は AD 0（不明と分ける）・AD 
   t("AD なし → AD_NONE（割引との比べの PROFIT_NEGATIVE は付けない）", none.reasonCodes.includes("AD_NONE") && !none.reasonCodes.includes("PROFIT_NEGATIVE"), none.reasonCodes);
   t("AD なし（旧は不明と同じ）は AD 0.5ヶ月より下", none.score < half.score, [none.score, half.score]);
   t("AD 不明は今まで通り減点しない（AD_UNKNOWN 0）", unk.reasonCodes.includes("AD_UNKNOWN") && !unk.reasonCodes.includes("AD_NONE"), unk.reasonCodes);
-  t("AD なしは外す候補にしない", none.verdict !== "drop");
+  // 2026-09-30 竹内「AD1未満は基本的に送らない」: AD なしは売上0＝外す候補（旧は保留）
+  t("AD なしは外す候補（売上0・送らない）", none.verdict === "drop");
 }
 
 console.log("■ E3 「2階以上はエレベーター必須」は階の希望ではない（id 2・1階の部屋が🌟★なのに上限20点だった）");
@@ -152,7 +153,8 @@ console.log("■ 新しい札の点の表・日本語・50＋合計＝score");
   const NEW = ["ALREADY_SENT_OTHER_ROOM", "FLOOR_PLAN_SAME_CLASS", "FLOOR_PLAN_LARGER", "AD_NONE"];
   t("新しい札は全部 点の表と日本語がある", [...NEW, "ALREADY_SENT_SAME_ROOM"].every((c) => c in REASON_POINTS && reasonJa(c) !== c));
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」: AD なし（AD_NONE）は保留にした（外す候補にはしない）
-  t("新しい札は外す候補・保留のコードに入れない（AD なしだけ保留）", NEW.every((c) => !DROP_REASON_CODES.has(c) && (c === "AD_NONE" ? HOLD_REASON_CODES.has(c) : !HOLD_REASON_CODES.has(c))));
+  // 2026-09-30 AD なしは外す候補に移した（旧は保留・売上0で AD1未満の送らない側と同じ）
+  t("新しい札は外す候補・保留のコードに入れない（AD なしだけ外す候補）", NEW.every((c) => c === "AD_NONE" ? DROP_REASON_CODES.has(c) && !HOLD_REASON_CODES.has(c) : !DROP_REASON_CODES.has(c) && !HOLD_REASON_CODES.has(c)));
   t("同じ部屋（号室で当たる）は保留で外す候補ではない", HOLD_REASON_CODES.has("ALREADY_SENT_SAME_ROOM") && !DROP_REASON_CODES.has("ALREADY_SENT_SAME_ROOM"));
   const bad = all.filter((j) => !j.reasonCodes.includes("EQUIP_MUST_NG_CAP") && sum50(j) !== j.score);
   t(`全ての判定で 50＋札の点の合計＝score（${all.length}件）`, bad.length === 0, bad.map((j) => [j.name, j.score, j.reasonCodes]));

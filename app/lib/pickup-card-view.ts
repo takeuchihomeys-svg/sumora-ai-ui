@@ -315,7 +315,7 @@ function isWrittenCode(code: string): boolean {
 /** 項目の中の札の合い方 → 色（外れが1つでもあれば赤・無くて ○ があれば緑・幅の中・要確認の順） */
 function toneOfCodes(codes: string[], key: string): CellTone {
   if (key === "ad") {
-    if (codes.some((c) => /^(?:AD_NONE|AD_UNDER_1M|PROFIT_NEGATIVE)$/.test(c))) return "ng";
+    if (codes.some((c) => /^(?:AD_NONE|AD_UNDER_1M(?:_NEVER|_FALLBACK)?|PROFIT_NEGATIVE)$/.test(c))) return "ng";
     if (codes.some((c) => c.endsWith(AD_HELD_SUFFIX))) return "info";
     // 2026-09-30 竹内「AD1 はあって当たり前」: AD1（AD_1M だけ・0点）は緑にしない。AD1.5 以上が緑
     if (codes.some((c) => /^(?:AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)$/.test(c))) return "ok";
@@ -402,7 +402,9 @@ export function buildFitCells(reasonCodes: readonly string[] | null, facts: Reco
       const f = summarizeFit(reasonCodes);
       note = f.miss === 0 ? `書いた条件 ${f.n}つ全部` : `${f.n}つ中 ${f.miss}つ外れ`;
     } else if (key === "ad") note = g.codes.some((c) => c.endsWith(AD_HELD_SUFFIX)) ? "保留の物件なので0点" : g.codes.includes("AD_UNKNOWN") ? "要確認" : g.codes.includes("PROFIT_NEGATIVE") ? "割引の方が大きい"
-      : g.codes.includes("AD_UNDER_1M") || g.codes.includes("AD_NONE") ? "AD1未満・他に物件があれば出さない"
+      : g.codes.includes("AD_UNDER_1M_NEVER") || g.codes.includes("AD_NONE") ? "AD1未満（1K か売上5万円未満）・送らない"
+      : g.codes.includes("AD_UNDER_1M_FALLBACK") ? "AD1未満（売上5万円以上）・他に無い時だけ"
+      : g.codes.includes("AD_UNDER_1M") ? "AD1未満・他に物件があれば出さない"
       : g.codes.includes("AD_1M") && !g.codes.includes("AD_1_5M") ? "AD1 は当たり前（0点）" : null;
     else if (key === "search") note = g.codes.some((c) => c.endsWith(AD_HELD_SUFFIX)) ? "🎯 ピンポイント・保留の物件なので0点" : "🎯 ピンポイントで見つかった";
     else if (key === "sent") note = g.codes.includes("ALREADY_SENT_OTHER_ROOM") ? "同じ建物の別の部屋" : "送り直しか確認";

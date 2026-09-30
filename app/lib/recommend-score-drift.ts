@@ -91,7 +91,7 @@ export function codeState(code: string): CodeState {
   if (codeFamily(c) === "ad") {
     if (/^AD_(?:HIGH|2_5M|VERY_HIGH|ASSUMED_AGENT)$/.test(c)) return "ok";
     if (/^AD_(?:1M|1_5M)$/.test(c)) return "mid";
-    if (/^(?:AD_UNDER_1M|AD_NONE|PROFIT_NEGATIVE)$/.test(c)) return "ng";
+    if (/^(?:AD_UNDER_1M(?:_NEVER|_FALLBACK)?|AD_NONE|PROFIT_NEGATIVE)$/.test(c)) return "ng";
     return "info";
   }
   if (/_OK_MAX$/.test(c)) return "ok";

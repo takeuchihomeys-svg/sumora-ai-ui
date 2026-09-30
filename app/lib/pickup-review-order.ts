@@ -8,6 +8,8 @@
 //     → 点の横に理由の札（減点・外す理由が先・何点引いたか）。材料が読めずに点が動かない時は「材料なし」も札で出す
 //       （点が横並びの原因は『材料が無い』か『同じ理由が全件に当たった』のどちらか。画面で一目で分かるように）
 import { BASE_SCORE, reasonJa, reasonPoints, ngHitCodes } from "./property-brain";
+// 2026-09-30 竹内「AD1未満の物件は基本的に送らない…他に物件ない場合や、しばらく新着物件送れていない人は送っても良い」（純関数）
+import { adUnder1KindOfCodes, isStaleForAdUnder1, AD_UNDER1_FALLBACK_CODE } from "./ad-under1-policy";
 import { PICKUP_AIX_MAX } from "./pickup-aix-handoff";
 import { compareOverall } from "./pickup-best";
 // 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックのところに入れない」「新規のお客さんは AD1 を入れない・AD2 以上を優先」（純関数）
@@ -70,6 +72,19 @@ export function dealConfirmMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_st
 }
 
 /**
+ * 2026-09-30 竹内「AD1未満の物件は基本的に送らない」: 手で選んだ AD1ヶ月未満の物件を AIX に渡す前に確かめる文（無ければ null＝確かめない）。
+ *   審査中・商談中の確認（dealConfirmMessage）と同じ形。スタッフが意図して送るのは止めない（「OK」で送れる）＝止めるのは既定の選び方だけ。
+ *   "never"（1K・売上5万円未満・AD なし）と "fallback"（売上5万円以上）で言い方を分ける。旧の札（AD_UNDER_1M）も AD1未満として出す
+ */
+export function adUnder1ConfirmMessage(rows: ReadonlyArray<{ reason_codes?: ReadonlyArray<string> | null; property_name?: string | null; room_no?: string | null }>): string | null {
+  const hit = rows.map((r) => ({ r, k: adUnder1KindOfCodes(r.reason_codes) })).filter((x) => x.k);
+  if (hit.length === 0) return null;
+  const word = (k: "never" | "fallback" | "legacy" | null) => (k === "fallback" ? "AD1未満（売上5万円以上）" : k === "never" ? "AD1未満（1K か売上5万円未満）" : "AD1未満");
+  const names = hit.slice(0, 5).map(({ r, k }) => `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}：${word(k)}`).join("、");
+  return `AD が1ヶ月未満の物件が${hit.length}件入っています（${names}${hit.length > 5 ? " ほか" : ""}）。AD1未満は基本的に送らない決まりです。このまま AIX に渡しますか？`;
+}
+
+/**
  * 点の高い順（画面の並び sortForReview と同じ・👑 を先頭）に max 件まで選ぶ。
  * 2026-09-26 竹内のスクショ「AIX物件ピックアップ（20件）」: リアプロの一括が 2件ずつ7回に分かれて届いた回（20件・外す候補 0）で、
  *   既定のチェックが「未確認で外す候補以外 全部」＝20件になり、押すと「10件までにしてください」で止まっていた。
@@ -77,8 +92,10 @@ export function dealConfirmMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_st
 export function pickTopForAix<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX): number[] {
   // 2026-09-28 手でチェックした審査中・商談中の部屋は、絞る時に一番後ろ（先に外れる）
   const cand = items.filter(aixCandidate);
-  const open = cand.filter((r) => !dealStatusOf(r)), deal = cand.filter((r) => dealStatusOf(r));
-  return [...sortForReview(open, bestId ?? null), ...sortForReview(deal, bestId ?? null)].slice(0, max).map((r) => r.id);
+  // 2026-09-30 AD1ヶ月未満の物件も手で選んだ時は残すが、絞る時は審査中・商談中の前・ほかの後ろ（先に外れる）
+  const low = cand.filter((r) => !dealStatusOf(r) && adUnder1KindOfCodes(r.reason_codes) != null);
+  const open = cand.filter((r) => !dealStatusOf(r) && adUnder1KindOfCodes(r.reason_codes) == null), deal = cand.filter((r) => dealStatusOf(r));
+  return [...sortForReview(open, bestId ?? null), ...sortForReview(low, bestId ?? null), ...sortForReview(deal, bestId ?? null)].slice(0, max).map((r) => r.id);
 }
 
 /**
@@ -125,8 +142,27 @@ export function sentConfirmMessage<T extends Pick<AixPickRow, "id" | "status" | 
   return `このお客様に送付済みの部屋が${hit.length}件入っています（${names}${hit.length > 5 ? " ほか" : ""}）。もう一度送りますか？`;
 }
 
-export type QualityPick = { ids: number[]; ngExcluded: number; dealExcluded: number; adExcluded: number; firstProposal: boolean; sentExcluded?: number };
-export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposal?: boolean; sentBefore?: ReadonlySet<number> | null } = {}): QualityPick {
+/**
+ * 2026-09-30 竹内「AD1未満の物件は基本的に送らない。売上5万以上ある場合で、他に物件ない場合や、お客さんにしばらく新着物件送れていない人などは送っても良い。
+ *   しかし 1K の AD1未満はきほんおくらない」:
+ *   ・AD1未満のうち "never"（AD_UNDER_1M_NEVER＝1K か売上5万円未満・AD_NONE）と旧の AD_UNDER_1M は既定の候補に入れない（外す候補・保留のまま）
+ *   ・"fallback"（AD_UNDER_1M_FALLBACK＝売上5万円以上で 1K でない）は、他の条件に外れが無く（AD の低さだけが保留の理由）、
+ *     ①ほかに選べる物件が1件も無い時 ②そのお客様にしばらく新着を送れていない時（opts.staleSinceLastSend）だけ、通常の候補の後ろに足す
+ *   ・「AD の低さだけが保留の理由」= 他の保留・外す候補・NG の札が無く、AD の −30 が無ければ通す線（40点）を超える点
+ */
+const FALLBACK_AD_PENALTY = Math.abs(reasonPoints(AD_UNDER1_FALLBACK_CODE));
+export function isAdUnder1FallbackRow(r: { verdict?: string | null; score?: number | null; reason_codes?: ReadonlyArray<string> | null }): boolean {
+  if (adUnder1KindOfCodes(r.reason_codes) !== "fallback") return false;
+  if (r.verdict === "drop" || ngHitCodes(r.reason_codes).length > 0) return false;
+  return r.score != null && r.score + FALLBACK_AD_PENALTY >= 40;
+}
+
+export type QualityPick = { ids: number[]; ngExcluded: number; dealExcluded: number; adExcluded: number; firstProposal: boolean; sentExcluded?: number;
+  /** AD1未満で選ばなかった件数（never・旧の札・穴埋めに入らなかった fallback） */
+  adUnder1Excluded?: number;
+  /** AD1未満（売上5万円以上）を穴埋めで入れた件数と理由（no_other＝ほかに選べる物件が無い・stale＝しばらく送れていない） */
+  adUnder1Filled?: number; adUnder1FillWhy?: "no_other" | "stale" | null };
+export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposal?: boolean; sentBefore?: ReadonlySet<number> | null; staleSinceLastSend?: boolean } = {}): QualityPick {
   // 2026-09-30 v2.5.42 送付済みの部屋（別の回で届けた同じ部屋）は既定の候補に入れない
   const sentSet = opts.sentBefore ?? null;
   const all = items.filter((r) => r.status === "pending" && !r.expired);
@@ -137,9 +173,20 @@ export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, be
   const ok = notNg.filter((r) => !dealStatusOf(r));
   const sorted = sortForReview(ok, bestId ?? null);
   const firstProposal = !!opts.firstProposal;
-  if (!firstProposal) return { ids: sorted.slice(0, max).map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: 0, firstProposal, sentExcluded };
-  const sel = selectByAdPriority(sorted, max);
-  return { ids: sel.picked.map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: sel.adSkipped.length, firstProposal, sentExcluded };
+  let ids: number[]; let adExcluded = 0;
+  if (!firstProposal) ids = sorted.slice(0, max).map((r) => r.id);
+  else { const sel = selectByAdPriority(sorted, max); ids = sel.picked.map((r) => r.id); adExcluded = sel.adSkipped.length; }
+  // AD1未満（売上5万円以上）の穴埋め: ほかに1件も選べない時か、しばらく送れていない時だけ・通常の候補の後ろ（点の順）
+  const lowAll = base.filter((r) => adUnder1KindOfCodes(r.reason_codes) != null && isNg(r));
+  const pool = sortForReview(lowAll.filter((r) => isAdUnder1FallbackRow(r) && !dealStatusOf(r)), bestId ?? null);
+  const fillWhy: "no_other" | "stale" | null = pool.length === 0 || ids.length >= max ? null : ids.length === 0 ? "no_other" : opts.staleSinceLastSend ? "stale" : null;
+  const filled = fillWhy ? pool.slice(0, max - ids.length) : [];
+  if (filled.length) ids = [...ids, ...filled.map((r) => r.id)];
+  // 数え方: AD の低さだけで外れた行（AD1未満の札があり、ほかの NG が無い）は adUnder1Excluded に分け、NG・保留の件数（ngExcluded）に混ぜない
+  const adOnly = lowAll.filter((r) => ngHitCodes(r.reason_codes).length === 0);
+  const ngExcluded = (base.length - notNg.length) - adOnly.length;
+  return { ids, ngExcluded, dealExcluded: notNg.length - ok.length, adExcluded, firstProposal, sentExcluded,
+    adUnder1Excluded: adOnly.length - filled.length, adUnder1Filled: filled.length, adUnder1FillWhy: filled.length ? fillWhy : null };
 }
 
 /** ボタンの文字（「✨ 質の高い10件を選ぶ」・10件に足りない時は「✨ 質の高い9件を選ぶ」） */
@@ -148,13 +195,19 @@ export function qualityPickLabel(n: number): string {
 }
 
 /** 選んだ後の知らせ（「✨ 質の高い9件を選びました（NG 条件・保留の物件は選びません・3件）」） */
-export function qualityPickMessage(picked: number, ngExcluded: number, max = PICKUP_AIX_MAX, extra: { dealExcluded?: number; adExcluded?: number; sentExcluded?: number } = {}): string {
+export function qualityPickMessage(picked: number, ngExcluded: number, max = PICKUP_AIX_MAX, extra: { dealExcluded?: number; adExcluded?: number; sentExcluded?: number;
+  adUnder1Excluded?: number; adUnder1Filled?: number; adUnder1FillWhy?: "no_other" | "stale" | null } = {}): string {
   const ng = ngExcluded > 0 ? `NG 条件・保留の物件は選びません・${ngExcluded}件` : "";
   // 2026-09-28 審査中・商談中／新規のお客様の AD の段
   const deal = (extra.dealExcluded ?? 0) > 0 ? `審査中・商談中は選びません・${extra.dealExcluded}件` : "";
   const ad = (extra.adExcluded ?? 0) > 0 ? `新規のお客様は AD の高い物件を優先・AD1 など${extra.adExcluded}件を外しました` : "";
   const sent = (extra.sentExcluded ?? 0) > 0 ? `送付済みの部屋は選びません・${extra.sentExcluded}件` : "";
-  const why = [ng, deal, ad, sent].filter(Boolean).join("・");
+  // 2026-09-30 AD1ヶ月未満: 外した件数／売上5万円以上の物件を穴埋めで入れた理由（ほかに選べる物件が無い・しばらく新着を送れていない）
+  const low = (extra.adUnder1Excluded ?? 0) > 0 ? `AD1ヶ月未満は選びません・${extra.adUnder1Excluded}件` : "";
+  const fill = (extra.adUnder1Filled ?? 0) > 0
+    ? `AD1ヶ月未満（売上5万円以上）を${extra.adUnder1Filled}件入れました＝${extra.adUnder1FillWhy === "stale" ? "しばらく新着を送れていないため" : "ほかに選べる物件が無いため"}`
+    : "";
+  const why = [ng, deal, ad, sent, low, fill].filter(Boolean).join("・");
   const short = picked < max ? `${max}件に足りません` : "";
   const tail = [short, why].filter(Boolean).join("・");
   return picked === 0
@@ -170,12 +223,15 @@ export function qualityPickMessage(picked: number, ngExcluded: number, max = PIC
  * 2026-09-28 opts.firstProposalSentAt: お客様へ一番最初に物件をお送りした時刻（null＝まだ・undefined＝分からない）。
  *   回（created_at）がそれより前なら「新規のお客様の回」＝AD の段で選ぶ（pickup-ad-priority.isFirstProposalRound）
  */
-export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T>; created_at?: string | null }>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposalSentAt?: string | null; sentHistory?: ReadonlyArray<SentHistLite> | null } = {}): Record<number, boolean> {
+export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T>; created_at?: string | null }>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposalSentAt?: string | null; sentHistory?: ReadonlyArray<SentHistLite> | null;
+  /** 2026-09-30 お客様へ届けた最後のご提案の送付（null＝一度も無い・undefined＝分からない）。AD1未満（売上5万円以上）の穴埋めの「しばらく送れていない」に使う */
+  lastProposalSentAt?: string | null } = {}): Record<number, boolean> {
   const out: Record<number, boolean> = {};
   for (const r of rounds) {
     const firstProposal = isFirstProposalRound(r.created_at, opts.firstProposalSentAt);
     const sentBefore = opts.sentHistory ? sentBeforeIds(r.items, opts.sentHistory) : null;
-    const top = new Set(pickQualityTop(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max, { firstProposal, sentBefore }).ids);
+    const staleSinceLastSend = isStaleForAdUnder1(r.created_at, opts.lastProposalSentAt);
+    const top = new Set(pickQualityTop(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max, { firstProposal, sentBefore, staleSinceLastSend }).ids);
     for (const it of r.items) out[it.id] = top.has(it.id);
   }
   return out;
@@ -261,6 +317,8 @@ const CHIP_JA: Record<string, string> = {
   WALK_TEXT_OK: "駅近の希望内", WALK_TEXT_OVER: "駅近の希望を超える", WALK_TEXT_FAR: "駅近の希望を大きく超える",
   RENT_CHEAP_W80: "家賃が上限の8割以下（安くしたい）", RENT_CHEAP_W90: "家賃が上限の9割以下（安くしたい）", RENT_CHEAP_W95: "家賃が上限の95%以下（安くしたい）",
   AD_UNDER_1M: "AD 1ヶ月未満",
+  AD_UNDER_1M_NEVER: "AD 1ヶ月未満（1K か売上5万円未満・送らない）",
+  AD_UNDER_1M_FALLBACK: "AD 1ヶ月未満（売上5万円以上・他に無い時だけ）",
   FIT_ALL: "書いた条件に全部合う", FIT_ALL_HALF: "書いた条件（2つ）に全部合う", FIT_ONE_MISS: "書いた条件の1つだけ外れ", FIT_ONE_MISS_HALF: "書いた条件（2つ）の1つだけ外れ",
 };
 

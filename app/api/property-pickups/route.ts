@@ -17,7 +17,7 @@ import { groupPickupRounds } from "@/app/lib/pickup-card-view";
 import { listingAdStamp, listingRoomText, nameWithRoom } from "@/app/lib/pickup-listing-text";
 // 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックに入れない」「新規のお客さんは AD の高い物件を優先」（純関数）
 import { pickupDealStatus } from "@/app/lib/listing-deal-status";
-import { firstProposalSentAt, type SentLite as ProposalSentLite } from "@/app/lib/pickup-ad-priority";
+import { firstProposalSentAt, lastProposalSentAt, type SentLite as ProposalSentLite } from "@/app/lib/pickup-ad-priority";
 import { dropDiscountFromRow, isDiscountCompareCode } from "@/app/lib/property-brain";
 import { widenChainNotes, type ChainCommandLite, type PickupLite } from "@/app/lib/search-widen-chain";
 import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
@@ -498,6 +498,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       has_more_batches: rounds.length > nBatches,
       // 2026-09-28 一番最初に物件をお送りした時刻（null＝まだ・読めない時は項目なし＝画面は今まで通りの選び方）
       ...(firstSent !== undefined ? { first_proposal_sent_at: firstSent } : {}),
+      // 2026-09-30 お客様へ届けた一番最近のご提案の送付（AD1未満の穴埋め「しばらく新着を送れていない」の材料・読めない時は項目なし＝「他に無い時だけ」）
+      ...(roomHist ? { last_proposal_sent_at: lastProposalSentAt(roomHist.filter((x) => x.delivery == null || x.delivery === "customer") as ProposalSentLite[]) } : {}),
       best,
       image_need: imageNeed,
       condition_summary: sum ? { line: sum.line, uncheckable: sum.uncheckable, ai: sum.ai.length > 0 } : null,

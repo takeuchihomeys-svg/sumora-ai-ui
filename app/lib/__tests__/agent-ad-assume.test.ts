@@ -3,7 +3,7 @@
 // 実行: npx tsx app/lib/__tests__/agent-ad-assume.test.ts
 // 資料の文字・説明文は property_pickups #621（Luxe難波南 204・リアプロ）の実物（元付業者のページの末尾）。お客様の情報は無い
 import { assumedAdAgentOf, assumedAdStamp, assumedAdSummaryLine, assumedAdAgentInLine } from "../agent-ad-assume";
-import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyAdRulesToRow, reasonPoints, reasonJa, HOLD_REASON_CODES, ngHitCodes, AD_TIER_POINTS } from "../property-brain";
+import { buildCustomerProfile, judgeProperty, parsePropertyFacts, applyAdRulesToRow, reasonPoints, reasonJa, HOLD_REASON_CODES, DROP_REASON_CODES, ngHitCodes, AD_TIER_POINTS } from "../property-brain";
 import { listingAdStamp, listingAdText, splitAdStamp } from "../pickup-listing-text";
 import { parseAdFromText } from "../property-pickups";
 
@@ -56,12 +56,14 @@ console.log("■ AD 1ヶ月未満は点数をかなり落とす（通す→保�
   const none = judgeProperty(parsePropertyFacts(`${AZ_SUMMARY}\nAD なし`), p);
   const unknown = judgeProperty(parsePropertyFacts(AZ_SUMMARY), p);
   // 2026-09-30 竹内「AD1 未満は他に物件ある場合はお客さんに出さないレベル」: −15 → −30（AD1 が 0点になった分、AD1 との差 30 を保つ）
-  t("AD 0.5ヶ月: −30・保留", half.reasonCodes.includes("AD_UNDER_1M") && reasonPoints("AD_UNDER_1M") === -30 && half.verdict === "hold", half.reasonCodes);
-  t("AD なし: −35・保留（0.5ヶ月より下）", none.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -35 && none.verdict === "hold" && none.score < half.score, [none.score, half.score]);
+  // 2026-09-30 竹内「AD1未満は基本的に送らない・1K の AD1未満はきほんおくらない」: この例は 1K・売上 39,000円（78,000×0.5）＝送らない側（AD_UNDER_1M_NEVER・外す候補・点は同じ −30）。
+  //   AD なしは売上0＝外す候補（旧は保留）。保留のまま穴埋めに使える形（売上5万円以上・1K でない）は ad-under1-policy.test.ts
+  t("AD 0.5ヶ月（1K・売上3.9万円）: −30・送らない（外す候補）", half.reasonCodes.includes("AD_UNDER_1M_NEVER") && reasonPoints("AD_UNDER_1M_NEVER") === -30 && reasonPoints("AD_UNDER_1M") === -30 && half.verdict === "drop", half.reasonCodes);
+  t("AD なし: −35・外す候補（0.5ヶ月より下）", none.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -35 && none.verdict === "drop" && none.score < half.score, [none.score, half.score]);
   t("AD 1ヶ月（通す）との差は 30点以上", one.verdict === "pass" && one.score - half.score >= 30, [one.score, half.score]);
   t("AD 不明（記載なし・読めない）は今まで通り 0点・保留にしない", unknown.reasonCodes.includes("AD_UNKNOWN") && unknown.verdict === "pass");
-  t("保留の理由の表に入った", HOLD_REASON_CODES.has("AD_UNDER_1M") && HOLD_REASON_CODES.has("AD_NONE"));
-  t("お客様の NG 条件には数えない（質の高い10件は保留で別に外す）", ngHitCodes(["AD_UNDER_1M", "AD_NONE"]).length === 0);
+  t("保留・外す候補の理由の表に入った（旧の AD_UNDER_1M と穴埋め用は保留・送らない側の 2つは外す候補）", HOLD_REASON_CODES.has("AD_UNDER_1M") && HOLD_REASON_CODES.has("AD_UNDER_1M_FALLBACK") && DROP_REASON_CODES.has("AD_UNDER_1M_NEVER") && DROP_REASON_CODES.has("AD_NONE") && !HOLD_REASON_CODES.has("AD_NONE"));
+  t("お客様の NG 条件には数えない（質の高い10件は判定で別に外す）", ngHitCodes(["AD_UNDER_1M", "AD_NONE", "AD_UNDER_1M_NEVER", "AD_UNDER_1M_FALLBACK"]).length === 0);
 }
 
 console.log("■ 保存済みの行に当てる（applyAdRulesToRow）");

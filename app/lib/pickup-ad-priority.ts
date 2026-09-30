@@ -36,7 +36,7 @@ export function pickupAdTier(codes: ReadonlyArray<string> | null | undefined): P
   if (set.has("AD_HIGH") || set.has("AD_2_5M") || set.has("AD_VERY_HIGH") || set.has("AD_ASSUMED_AGENT")) return "ad2";
   if (set.has("AD_1_5M")) return "ad15";
   if (set.has("AD_1M")) return "ad1";
-  if (set.has("AD_UNDER_1M") || set.has("AD_NONE")) return "low";
+  if (set.has("AD_UNDER_1M") || set.has("AD_UNDER_1M_NEVER") || set.has("AD_UNDER_1M_FALLBACK") || set.has("AD_NONE")) return "low";
   return "unknown";
 }
 
@@ -105,6 +105,23 @@ export function firstProposalSentAt(sends: ReadonlyArray<SentLite>): string | nu
     const ms = Date.parse(s.sent_at);
     if (!Number.isFinite(ms)) continue;
     if (best == null || ms < best) { best = ms; bestIso = s.sent_at; }
+  }
+  return bestIso;
+}
+
+/**
+ * お客様へ届けた一番最近のご提案の送付の時刻（無ければ null＝一度も無い）。
+ * 2026-09-30 竹内「お客さんにしばらく新着物件送れていない人」（AD1未満の穴埋めの条件・ad-under1-policy.isStaleForAdUnder1）。
+ *   グループ共有（shared）・物件確認・見積書は数えない（isProposalSend）。last_property_sent_at は自動検索で書き換わるので使わない
+ */
+export function lastProposalSentAt(sends: ReadonlyArray<SentLite>): string | null {
+  let best: number | null = null;
+  let bestIso: string | null = null;
+  for (const s of sends) {
+    if (!s.sent_at || !isProposalSend(s)) continue;
+    const ms = Date.parse(s.sent_at);
+    if (!Number.isFinite(ms)) continue;
+    if (best == null || ms > best) { best = ms; bestIso = s.sent_at; }
   }
   return bestIso;
 }

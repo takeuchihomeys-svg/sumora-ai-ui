@@ -38,6 +38,7 @@ import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { assumedAdAgentInLine, assumedAdAgentOf } from "./agent-ad-assume";
+import { adUnder1Policy, adUnder1CodeFor, isAdUnder1Code, AD_UNDER1_LEGACY_CODE, type AdUnder1Input } from "./ad-under1-policy";
 import { roomJoWantOf, roomJoFromText, judgeRoomJo, readRoomJoItems, maxJoOfKinds, type RoomJoWant } from "./room-jo";
 
 // ─── 型 ──────────────────────────────────────────────────────────────────────
@@ -484,7 +485,7 @@ export const REASON_JA: Record<string, string> = {
   ALREADY_SENT_OTHER_ROOM: "同じ建物を送付済み（この部屋は送った部屋に無い・号室を確認）",
   ALREADY_SENT_SAME_ROOM: "この部屋は送付済み（送り直しか確認）",
   AD_UNKNOWN: "要確認: AD（読めない・0点）",
-  AD_NONE: "AD なし（資料に「広告費 なし」・保留）",
+  AD_NONE: "AD なし（資料に「広告費 なし」・売上0・外す候補）",
   AD_HIGH: "ADが高い（2ヶ月以上）",
   AD_1M: "AD 1ヶ月以上",
   AD_1_5M: "AD 1.5ヶ月以上",
@@ -584,6 +585,9 @@ export const REASON_JA: Record<string, string> = {
   RENT_CHEAP_W80_MUST: "家賃が上限の8割以下（家賃を低くが必須）", RENT_CHEAP_W90_MUST: "家賃が上限の9割以下（家賃を低くが必須）", RENT_CHEAP_W95_MUST: "家賃が上限の95%以下（家賃を低くが必須）",
   RENT_CHEAP_W80_SOFT: "家賃が上限の8割以下（できれば家賃を低く）", RENT_CHEAP_W90_SOFT: "家賃が上限の9割以下（できれば家賃を低く）", RENT_CHEAP_W95_SOFT: "家賃が上限の95%以下（できれば家賃を低く）",
   AD_UNDER_1M: "AD 1ヶ月未満（報酬が少ない・保留）",
+  // 2026-09-30 竹内「AD1未満は基本的に送らない…1K の AD1未満はきほんおくらない」（ad-under1-policy.ts）
+  AD_UNDER_1M_NEVER: "AD 1ヶ月未満で売上5万円未満か 1K（送らない・外す候補）",
+  AD_UNDER_1M_FALLBACK: "AD 1ヶ月未満だが売上5万円以上（他に無い時・しばらく送れていない時だけ・保留）",
   AD_ASSUMED_AGENT: "AD 200%とみなした（元付がアズ・スタット・資料に記載なし）",
   FIT_ALL: "書いた条件に全部合う", FIT_ALL_HALF: "書いた条件（2つ）に全部合う", FIT_ONE_MISS: "書いた条件のうち1つだけ外れ", FIT_ONE_MISS_HALF: "書いた条件（2つ）のうち1つだけ外れ",
   // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」
@@ -751,6 +755,8 @@ export const BASE_SCORE = 50;
 export const AD_TIER_POINTS = {
   AD_1M: 0, AD_1_5M: 10, AD_HIGH: 22, AD_2_5M: 3, AD_VERY_HIGH: 3,
   AD_UNDER_1M: -30, AD_NONE: -35,
+  // 2026-09-30 AD1未満の2つの札（点は AD_UNDER_1M と同じ −30・違いは外す候補か保留か＝ad-under1-policy.ts）
+  AD_UNDER_1M_NEVER: -30, AD_UNDER_1M_FALLBACK: -30,
 } as const;
 export const REASON_POINTS: Record<string, number> = {
   RENT_OK: 15, RENT_SLIGHTLY_OVER: 0, RENT_OVER_110: -20, RENT_OVER_130: -35, RENT_ABOVE_USUAL: -5, RENT_UNKNOWN: 0, RENT_MAX_UNRELIABLE: 0,
@@ -1434,7 +1440,9 @@ export function readWrittenWants(c: CustomerLike, p: { rentMax: number | null; w
 const strengthSuffix = (s: WantStrength) => (s === "strong" ? "_MUST" : s === "soft" ? "_SOFT" : "");
 
 /** 案B の重みを決める物件の値（judgeProperty の facts から・例のテストは直接） */
-export type WeightFacts = { buildingAge: number | null; walkMinutes: number | null; /** 家賃（管理費込み）÷ 上限 */ rentRatio: number | null; /** AD の月数（円は家賃で月数に直した物） */ adMonths: number | null };
+export type WeightFacts = { buildingAge: number | null; walkMinutes: number | null; /** 家賃（管理費込み）÷ 上限 */ rentRatio: number | null; /** AD の月数（円は家賃で月数に直した物） */ adMonths: number | null;
+  /** 2026-09-30 AD1未満の扱い（売上・1K）を決める材料。渡さない呼び出し（試算の監査など）は旧の札 AD_UNDER_1M のまま */
+  adPolicy?: AdUnder1Input };
 
 /**
  * 2026-09-25 案B: 書いた条件の重み・AD 1ヶ月未満の札（純関数）。codes は judgeProperty が付けた札（保留の _HELD 前でも後でもよい）。
@@ -1471,7 +1479,11 @@ export function writtenWeightCodes(codes: readonly string[], f: WeightFacts, w: 
   const am = f.adMonths;
   const hasTier = codes.some((c) => /^(?:AD_1M|AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)(?:_HELD)?$/.test(c) || c === "AD_UNKNOWN" || c === "AD_NONE");
   // 2026-09-27 割引と AD の比べ（PROFIT_NEGATIVE）は付けなくなった（judgeProperty）→ AD 1ヶ月未満はいつもこの札（報酬の低さだけを見る）
-  if (am != null && am > 0 && am + 0.01 < 1 && !hasTier) out.push("AD_UNDER_1M");
+  if (am != null && am > 0 && am + 0.01 < 1 && !hasTier) {
+    // 2026-09-30 1K・売上5万円未満は「送らない側」（AD_UNDER_1M_NEVER・外す候補）／それ以外は「他に無い時だけ」（AD_UNDER_1M_FALLBACK・保留）
+    const code = f.adPolicy ? adUnder1CodeFor(adUnder1Policy({ ...f.adPolicy, adMonths: f.adPolicy.adMonths ?? am }).policy) : null;
+    out.push(code ?? AD_UNDER1_LEGACY_CODE);
+  }
   return out;
 }
 
@@ -2018,7 +2030,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   } else {
     if (adYen != null) profitYen = adYen - profile.discountYen;
     // 資料に「広告費 なし」＝ AD 0（読めない null とは別）。AD 0.5ヶ月（AD_UNDER_1M）より下に並ぶよう AD_NONE を足す（点は AD_TIER_POINTS・今は −35 と −30）
-    if (adMonthsEff != null && adMonthsEff <= 0) add("AD_NONE", reasonPoints("AD_NONE"), "hold");
+    // 2026-09-30 竹内「AD1未満は基本的に送らない」: 売上0なので外す候補（旧は保留）
+    if (adMonthsEff != null && adMonthsEff <= 0) add("AD_NONE", reasonPoints("AD_NONE"), "drop");
     // 2026-09-27 資料に AD が無く、元付業者の決まりでみなした（アズ・スタット＝200%）印（0点・段の札は下で付く）
     if (facts.adAssumedBy) add("AD_ASSUMED_AGENT", 0);
     // 段（重ねて足す・点は AD_TIER_POINTS）: 2026-09-30 1ヶ月 0 ／1.5ヶ月 10 ／2ヶ月 22 ／2.5ヶ月 25 ／3ヶ月以上 28。
@@ -2060,10 +2073,11 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   for (const code of writtenWeightCodes(codes, {
     buildingAge: facts.buildingAge, walkMinutes: facts.walkMinutes,
     rentRatio: rentTotal != null && profile.rentMax ? rentTotal / profile.rentMax : null, adMonths: adMonthsEff,
+    adPolicy: { adMonths: facts.adMonths, adYen: facts.adYen, rentYen: facts.rentYen, floorPlan: facts.floorPlan },
   }, profile.written)) {
     // 2026-09-29 目安の額がある人は目安との近さ（RENT_TARGET_*）で見る＝安いほど良い札は付けない（RENT_BAND_RULE）
     if (/^RENT_CHEAP_/.test(code) && profile.rentTarget != null && rentBandEnabled()) continue;
-    add(code, reasonPoints(code), isHoldCode(code) ? "hold" : undefined);
+    add(code, reasonPoints(code), DROP_REASON_CODES.has(code) ? "drop" : isHoldCode(code) ? "hold" : undefined);
   }
 
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
@@ -2174,7 +2188,8 @@ function isNewInfo(c: string): boolean {
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
 // 2026-09-27 ROOM_JO_NG: 洋室の帖数が希望より狭い（竹内「7帖未満は外す」）
 // 2026-09-30 FLOOR_PLAN_TOO_SMALL: 間取りが希望より小さい（c さん・2LDK 希望に 1K）
-export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG", "FLOOR_PLAN_TOO_SMALL"]);
+// 2026-09-30 AD_UNDER_1M_NEVER・AD_NONE: AD1未満で 1K か売上5万円未満（AD なし＝売上0）＝送らない（竹内「AD1未満は基本的に送らない・1K の AD1未満はきほんおくらない」）
+export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG", "FLOOR_PLAN_TOO_SMALL", "AD_UNDER_1M_NEVER", "AD_NONE"]);
 export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件
@@ -2184,7 +2199,8 @@ export const HOLD_REASON_CODES = new Set([
   "ROOM_JO_IMG_NG", // 2026-09-27 資料に帖数が無く、間取り図の読みで狭い（読み違いがあるので保留どまり）
   "LDK_JO_NG", // 2026-09-29 リビングの帖数が希望より狭い（保留どまり）
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」（通す→保留に落ちる程度）。AD 不明（記載なし・読めない）は今まで通り 0点の要確認（保留にしない）
-  "AD_UNDER_1M", "AD_NONE",
+  // 2026-09-30 AD_NONE は外す候補に移した（DROP_REASON_CODES）。AD_UNDER_1M は付け直す前の旧の行のため残す・AD_UNDER_1M_FALLBACK＝売上5万円以上の穴埋め用
+  "AD_UNDER_1M", "AD_UNDER_1M_FALLBACK",
   // 2026-09-29 家賃が下限未満（管理費込み。2026-09-30 から保留の線は下限の家賃帯ごと＝〜7万台 85%・8〜9万台 80%・10万以上 75%・RENT_BAND_RULE.minHoldTiers）
   "RENT_UNDER_MIN",
 ]);
@@ -2201,7 +2217,7 @@ export function ngHitCodes(codes: ReadonlyArray<string> | null | undefined): str
   for (const raw of codes ?? []) {
     const c = raw.endsWith(AD_HELD_SUFFIX) ? raw.slice(0, -AD_HELD_SUFFIX.length) : raw;
     // AD の低さ（AD_UNDER_1M・AD_NONE）は保留だがお客様の NG 条件ではない（質の高い10件は判定の保留で別に外す）
-    if (c === "AD_UNDER_1M" || c === "AD_NONE") continue;
+    if (isAdUnder1Code(c)) continue;
     if (DROP_REASON_CODES.has(c) || isHoldCode(c) || c === EQUIP_CAP_CODE || fitVerdictOf(c)?.v === "ng") { if (!out.includes(c)) out.push(c); }
   }
   return out;
@@ -2264,16 +2280,17 @@ export function isDiscountCompareCode(c: string): boolean {
  */
 export function rejudgeWithoutDiscount(
   reasonCodes: readonly string[],
-  opts: { adMonths?: number | null; /** 2026-09-29 判定に渡したお客様ごとの倍率（同じ物を渡す） */ prefWeight?: ((code: string) => number) | null } = {},
+  opts: { adMonths?: number | null; /** 2026-09-29 判定に渡したお客様ごとの倍率（同じ物を渡す） */ prefWeight?: ((code: string) => number) | null; /** 2026-09-30 AD1未満の扱いの材料（家賃・円・間取り） */ adPolicy?: AdUnder1Input } = {},
 ): { changed: boolean; score: number; verdict: Verdict; reasonCodes: string[]; flagCodes: string[]; reasonsJa: string[] } {
   const had = reasonCodes.some(isDiscountCompareCode);
   let codes = reasonCodes.filter((c) => !isDiscountCompareCode(c));
   const am = opts.adMonths;
-  const hasTier = codes.some((c) => /^(?:AD_1M|AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)(?:_HELD)?$/.test(c) || c === "AD_UNKNOWN" || c === "AD_NONE" || c === "AD_UNDER_1M");
+  const hasTier = codes.some((c) => /^(?:AD_1M|AD_1_5M|AD_HIGH|AD_2_5M|AD_VERY_HIGH)(?:_HELD)?$/.test(c) || c === "AD_UNKNOWN" || isAdUnder1Code(c));
   // 保留を解く・全部合うを付け直すのは PROFIT_NEGATIVE（−10・保留）があった時だけ。AD_COVERS_DISCOUNT（0点の知らせ）だけの行は外すだけ
   //   （前の配点の古い行で、割引と関係ない全部合う・AD の段まで付け直さない）
   const hadNegative = reasonCodes.includes("PROFIT_NEGATIVE");
-  if (hadNegative && am != null && am > 0 && am + 0.01 < 1 && !hasTier) codes.push("AD_UNDER_1M");
+  // 2026-09-30 opts.adPolicy（売上・1K の材料）があれば AD_UNDER_1M_NEVER／_FALLBACK・無ければ旧の AD_UNDER_1M
+  if (hadNegative && am != null && am > 0 && am + 0.01 < 1 && !hasTier) codes.push((opts.adPolicy ? adUnder1CodeFor(adUnder1Policy({ ...opts.adPolicy, adMonths: opts.adPolicy.adMonths ?? am }).policy) : null) ?? AD_UNDER1_LEGACY_CODE);
   if (hadNegative) {
     codes = settleHeldAd(codes, codes.some((c) => DROP_REASON_CODES.has(c) || isHoldCode(c)));
     codes = settleFitBonus(codes);
@@ -2301,7 +2318,7 @@ export function dropDiscountFromRow(row: {
   if (!codes.some(isDiscountCompareCode)) return null;
   const f = parsePropertyFacts(row.summary_text ?? "");
   const adMonths = f.adMonths ?? (f.adYen != null && f.rentYen ? f.adYen / f.rentYen : null);
-  const j = rejudgeWithoutDiscount(codes, { adMonths, prefWeight });
+  const j = rejudgeWithoutDiscount(codes, { adMonths, prefWeight, adPolicy: { adMonths: f.adMonths, adYen: f.adYen, rentYen: f.rentYen, floorPlan: f.floorPlan } });
   const negative = codes.includes("PROFIT_NEGATIVE");
   const stored = typeof row.score === "number" ? row.score : null;
   const score = negative && stored != null ? Math.max(0, Math.min(SCORE_MAX, stored + (j.score - scoreFromCodes(codes, prefWeight)))) : (stored ?? j.score);

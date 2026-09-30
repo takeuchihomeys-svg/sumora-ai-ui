@@ -113,7 +113,8 @@ console.log("■ 札の点（案B の数字）");
   const NEW = Object.keys(P).filter((c) => /^(?:AGE_|WALK_NEAR|WALK_TEXT|RENT_CHEAP|FIT_|AD_UNDER_1M|ZERO_ZERO_INFERRED)/.test(c));
   t(`新しい札は全部 日本語がある（${NEW.length}札）`, NEW.every((c) => reasonJa(c) !== c), NEW.filter((c) => reasonJa(c) === c));
   // 2026-09-27 AD 1ヶ月未満（AD_UNDER_1M）だけは保留にした（竹内「点数かなり落とす」）
-  t("新しい札は保留・外す候補にしない（AD 1ヶ月未満だけ保留）", NEW.every((c) => c === "AD_UNDER_1M" ? HOLD_REASON_CODES.has(c) && !DROP_REASON_CODES.has(c) : !HOLD_REASON_CODES.has(c) && !DROP_REASON_CODES.has(c)));
+  // 2026-09-30 AD1未満は2つに分けた: AD_UNDER_1M_NEVER＝1K か売上5万円未満（外す候補）／AD_UNDER_1M_FALLBACK＝売上5万円以上（保留・穴埋め用）／AD_UNDER_1M＝旧の行（保留）
+  t("新しい札は保留・外す候補にしない（AD 1ヶ月未満だけ保留・送らない側の NEVER だけ外す候補）", NEW.every((c) => c === "AD_UNDER_1M_NEVER" ? DROP_REASON_CODES.has(c) : /^AD_UNDER_1M/.test(c) ? HOLD_REASON_CODES.has(c) && !DROP_REASON_CODES.has(c) : !HOLD_REASON_CODES.has(c) && !DROP_REASON_CODES.has(c)));
   t("設備の強さの札の日本語「オートロック（必須）○（資料）」", reasonJa("EQUIP_AUTOLOCK_MUST_OK") === "オートロック（必須）○（資料）", reasonJa("EQUIP_AUTOLOCK_MUST_OK"));
   t("学習: FIT_* と AD_UNDER_1M・AD_NONE は動かさない（凍結）", isFrozenCode("FIT_ALL") && isFrozenCode("FIT_ONE_MISS_HALF") && isFrozenCode("AD_UNDER_1M") && isFrozenCode("AD_NONE"));
   t("学習: 書いた条件の重み（AGE_W5 等）は学ぶ札", !isFrozenCode("AGE_W5") && !isFrozenCode("RENT_CHEAP_W80"));
@@ -188,14 +189,17 @@ const sum50 = (codes: string[]) => BASE_SCORE + codes.reduce((a, c) => a + reaso
   t("徒歩の列が空・駅近を書いた人: 徒歩6分 → WALK_NEAR_W7＋WALK_TEXT_OK", d2.reasonCodes.includes("WALK_NEAR_W7") && d2.reasonCodes.includes("WALK_TEXT_OK"), d2.reasonCodes);
 
   const e = J("【6】F 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD なし", plain);
-  t("AD なし −35・保留（割引との比べは付けない）", e.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -35 && e.verdict === "hold", e.reasonCodes);
+  // 2026-09-30 AD なしは売上0＝送らない（外す候補・旧は保留）
+  t("AD なし −35・外す候補（割引との比べは付けない）", e.reasonCodes.includes("AD_NONE") && reasonPoints("AD_NONE") === -35 && e.verdict === "drop", e.reasonCodes);
   const f = J("【7】G 101\n70,000円\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD 0.5ヶ月", plain, {}, []);
   // 2026-09-27 竹内「AD はこっち側で自由に変えられる」: 割引との比べ（PROFIT_NEGATIVE）は付けない → 家賃があっても AD_UNDER_1M −8（保留にしない）
-  t("AD 0.5ヶ月・家賃あり → AD_UNDER_1M −15・保留（割引との比べは付けない）", f.reasonCodes.includes("AD_UNDER_1M") && !f.reasonCodes.includes("PROFIT_NEGATIVE") && f.verdict === "hold", f.reasonCodes);
+  // 2026-09-30 この例は 家賃70,000円×0.5＝売上3.5万円（5万円未満）＝送らない側（AD_UNDER_1M_NEVER・−30・外す候補）
+  t("AD 0.5ヶ月・家賃あり（売上3.5万円）→ AD_UNDER_1M_NEVER −30・外す候補（割引との比べは付けない）", f.reasonCodes.includes("AD_UNDER_1M_NEVER") && reasonPoints("AD_UNDER_1M_NEVER") === -30 && !f.reasonCodes.includes("PROFIT_NEGATIVE") && f.verdict === "drop", f.reasonCodes);
   const g = J("【8】H 101\n1LDK\n敷なし 礼なし\n○○駅 徒歩6分\nAD 0.5ヶ月", plain);
-  t("AD 0.5ヶ月・家賃が読めない → AD_UNDER_1M −8", g.reasonCodes.includes("AD_UNDER_1M"), g.reasonCodes);
+  // 2026-09-30 売上が読めない（家賃も円も無い）時は「送らない側」にしない（誤って外さない）＝穴埋め用の AD_UNDER_1M_FALLBACK（保留）
+  t("AD 0.5ヶ月・家賃が読めない → AD_UNDER_1M_FALLBACK −30（売上が読めないので外す候補にしない）", g.reasonCodes.includes("AD_UNDER_1M_FALLBACK") && !g.reasonCodes.includes("AD_UNDER_1M_NEVER") && g.verdict === "hold", g.reasonCodes);
   const g1 = J("【9】I 101\n1LDK\nAD 1ヶ月", plain);
-  t("AD 1ヶ月 → AD_UNDER_1M を付けない", !g1.reasonCodes.includes("AD_UNDER_1M"), g1.reasonCodes);
+  t("AD 1ヶ月 → AD_UNDER_1M を付けない", !g1.reasonCodes.some((c) => /^AD_UNDER_1M/.test(c)), g1.reasonCodes);
 
   // 送った物件から推した敷礼0（選定パターンの過半が「敷礼0円」）
   const hist = [1, 2, 3].map(() => ({ selling_points: ["敷礼0円"], selection_label: "selected" }));
