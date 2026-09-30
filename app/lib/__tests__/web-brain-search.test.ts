@@ -59,7 +59,8 @@ console.log("── どの PC がどの出どころを拾うか（/api/automatio
   t("★ ブレインの PC（AIX でない）: aix・自動便を渡さない＝web_brain は渡す", excludedSourcesFor({ aix: false, brain: true }).join() === "aix,auto_schedule");
   t("🧠×AIX の PC: 全部渡す（自動便は拡張が見送る）", pendingSourceOrFilter({ aix: true, brain: true }) === null);
   t("フィルタの形（旧と同じ書き方に web_brain を足しただけ）", pendingSourceOrFilter({ aix: false, brain: false }) === "payload->>source.is.null,and(payload->>source.neq.aix,payload->>source.neq.auto_schedule,payload->>source.neq.web_brain)", String(pendingSourceOrFilter({ aix: false, brain: false })));
-  t("旧 ?aix=1 の PC と同じ（web_brain が無ければ絞らない＝前は絞っていなかった）", pendingSourceOrFilter({ aix: true, brain: false }) === "payload->>source.is.null,and(payload->>source.neq.web_brain)");
+  t("旧 ?aix=1 の PC と同じ（web_brain が無ければ絞らない＝前は絞っていなかった）＋ v2.5.44 自動便から続いた広げて（chain_picker）は拾う", pendingSourceOrFilter({ aix: true, brain: false }) === "payload->>source.is.null,and(payload->>source.neq.web_brain),payload->>chain_picker.eq.aix_or_brain", String(pendingSourceOrFilter({ aix: true, brain: false })));
+  t("v2.5.44 ブレインの PC（AIX でない）は chain_picker を足さない（web_brain は元から拾う）", !String(pendingSourceOrFilter({ aix: false, brain: true })).includes("chain_picker"));
   t("手で押した一括（force なし）は web_brain・aix・自動便を再利用しない", !isReusableForManualTrigger("web_brain") && !isReusableForManualTrigger("aix") && !isReusableForManualTrigger("auto_schedule") && isReusableForManualTrigger(null));
 }
 

@@ -5,7 +5,7 @@
 import {
   rpUpdateDaysFor, selectAutoSearchTargets, buildAutoSearchPayload, lastPropertyTouchAt, isBatchedRun,
   RECENT_SENT_DAYS, NEW_CUSTOMER_DAYS, MAX_TARGETS_PER_RUN, PM_LATEST, SEARCH_MAX_PAGES,
-  AUTO_SEARCH_SITES, START_WINDOWS, MIN_DAY_TO_DAY_DIFF_SEC, seededRandom, startOffsetSec, autoStartAtMs, customerGapSec, notBeforeSchedule,
+  AUTO_SEARCH_SITES, LEGACY_AM_IS_WIDE, START_WINDOWS, MIN_DAY_TO_DAY_DIFF_SEC, seededRandom, startOffsetSec, autoStartAtMs, customerGapSec, notBeforeSchedule,
 } from "../auto-search-schedule";
 import { isClaimableNow, isPickerWaitExpired, waitStartMs, WAIT_FOR_PICKER_MS } from "../automation-sources";
 import * as fs from "fs";
@@ -115,7 +115,8 @@ console.log("── 11時の便（AD高い順・更新日は人ごと）");
   t("★ 更新日は人ごとの値（3日以内）", p.rp_update_days === 3);
   // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」（3 → 5・拡張の既定 DEFAULT_MAX_PAGES と同じ）
   t("ページは 5ページまで（SEARCH_MAX_PAGES）", p.max_pages === 5 && SEARCH_MAX_PAGES === 5);
-  t("★ 11時は広げて検索（2026-09-19 竹内）", p.is_wide === true);
+  // 2026-09-30 v2.5.44 竹内さんの決定: 午前もピンポイントから（AUTO_SEARCH_PLAN=legacy の時だけ LEGACY_AM_IS_WIDE＝広げて）
+  t("★ 11時もピンポイント（v2.5.44・旧 2026-09-19 の広げては legacy だけ）", p.is_wide === false && LEGACY_AM_IS_WIDE === true);
   t("日付が入る（同じ日に二重で積まないための鍵）", p.jst_date === "2026-09-19");
   t("source で見分けられる", p.source === "auto_schedule" && p.mode === "am");
 }

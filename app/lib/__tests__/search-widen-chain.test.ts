@@ -167,5 +167,41 @@ console.log("■ 画面の1行");
   t("回の1行: どちらも分からない回は出さない", roundSearchModeLine([{ search_mode: null }, {}]) === null);
 }
 
+console.log("■ v2.5.44 新規か送った後かは実際に届けた送付で・並びとページ");
+{
+  // 写しは「送った」（merge-pdfs が自動検索で書いた汚れ）でも、実際にお客様へ届けた送付が無ければ新規
+  t("写しが汚れていても実際の送付が無ければ new", classifyKind(OLD_SNAP, null, { firstProposalAt: null }) === "new");
+  t("実際の送付がこの回より前 → additional／後 → new", classifyKind(NEW_SNAP, null, { firstProposalAt: iso(600), sessionStartMs: NOW - 20 * 60_000 }) === "additional"
+    && classifyKind(OLD_SNAP, null, { firstProposalAt: iso(5), sessionStartMs: NOW - 20 * 60_000 }) === "new");
+  t("計画の状態が一番（言い直し＝new・止まっている＝additional）", classifyKind(OLD_SNAP, null, { originState: "cond_changed", firstProposalAt: iso(9999) }) === "new"
+    && classifyKind(NEW_SNAP, null, { originState: "dormant", firstProposalAt: null }) === "additional");
+  t("読めない（undefined）時は今までの写し", classifyKind(OLD_SNAP, null, { firstProposalAt: undefined }) === "additional");
+  const dn = D({ audits: [audit({ min: 20, customer_snapshot: OLD_SNAP })], rows: rows(6, 4, { min: 15 }), firstProposalAt: null });
+  t("新規の広げて: sort=ad・max_pages=5", dn.action === "widen" && dn.chain.kind === "new" && dn.chain.sort === "ad" && dn.chain.max_pages === 5, dn);
+  const da = D({ audits: [audit({ min: 20, customer_snapshot: OLD_SNAP, intended: { rp_update_days: 1 } })], rows: rows(3, 0, { min: 15 }) });
+  t("累計の線を切った時（今まで通り1回の0件で広げる）: sort=updated", da.action === "widen" && da.chain.sort === "updated" && da.chain.cumulative == null && da.reason === "additional_none", da);
+}
+
+console.log("■ v2.5.44 送った後の累計の線（3回以上・48時間以上 通す0件・7日に1回）");
+{
+  const H = 60;
+  const snap = OLD_SNAP;
+  const now1 = audit({ min: 20, customer_snapshot: snap, intended: { rp_update_days: 1 } });
+  const one = D({ audits: [now1], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: iso(20 * 24 * H) });
+  t("今回の1回だけ（0件）→ 広げない", one.action === "skip" && one.reason.startsWith("cumulative_not_yet:runs_1"), one);
+  const past = [audit({ min: 30 * H, run_id: "p1", customer_snapshot: snap }), audit({ min: 54 * H, run_id: "p2", customer_snapshot: snap })];
+  const three = D({ audits: [now1, ...past], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: iso(20 * 24 * H) });
+  t("3回・54時間 通す0件 → 広げる（更新日7日・更新順）", three.action === "widen" && three.reason === "additional_cumulative" && three.chain.rp_update_days === 7 && three.chain.sort === "updated" && three.chain.cumulative?.runs === 3, three);
+  const short = D({ audits: [now1, audit({ min: 10 * H, run_id: "q1", customer_snapshot: snap }), audit({ min: 30 * H, run_id: "q2", customer_snapshot: snap })], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: iso(20 * 24 * H) });
+  t("3回でも30時間 → まだ広げない", short.action === "skip" && short.reason.includes("zero_"), short);
+  const passed1 = D({ audits: [now1, ...past], rows: [...rows(3, 0, { min: 15 }), ...rows(2, 1, { min: 40 * H - 5, complete_group_id: "g0" })], cumulative: true, firstProposalAt: iso(20 * 24 * H) });
+  t("40時間前に通す物件があった → その後の回で数える（2回）→ 広げない", passed1.action === "skip" && passed1.reason.includes("runs_2"), passed1);
+  const recentChain: ChainCommandLite = { id: "c1", created_at: iso(3 * 24 * H), status: "done", sites: ["realnetpro"], customer_ids: ["x"], payload: { source: "web_brain", is_wide: true, chain: { from: "pinpoint", kind: "additional", pass_count: 0, threshold: 1, pinpoint_run_ids: [], pinpoint_started_at: iso(3 * 24 * H), site: "realpro", rp_update_days: 7 } } };
+  const weekly = D({ audits: [now1, ...past], rows: rows(3, 0, { min: 15 }), commands: [recentChain], cumulative: true, firstProposalAt: iso(20 * 24 * H) });
+  t("3日前に広げた → 7日に1回まで（広げない）", weekly.action === "skip" && weekly.reason.includes("widened_within_7d"), weekly);
+  const newCust = D({ audits: [now1], rows: rows(3, 0, { min: 15 }), cumulative: true, firstProposalAt: null });
+  t("新規は累計の線を使わない（10件未満なら今まで通り広げる）", newCust.action === "widen" && newCust.chain.kind === "new", newCust);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

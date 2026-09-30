@@ -143,6 +143,14 @@ export type WidenChainInfo = {
   site: "realpro" | "itandi";
   /** 広げての回の更新日（ピンポイントの回と同じ値＝同じ新着の幅で広げる。null＝絞らない） */
   rp_update_days: number | null;
+  /**
+   * 2026-09-30 v2.5.44 広げての回のリアプロの並び（新規＝ad・送った後＝updated）とページの上限。
+   *   広げる中身は拡張の今の「広げて検索」のまま（段は作らない）
+   */
+  sort?: "ad" | "updated";
+  max_pages?: number;
+  /** 送った後の累計の線で広げた時の材料（直近のピンポイントの回の数・送れる物件0件の時間） */
+  cumulative?: { runs: number; zero_hours: number } | null;
 };
 
 export type WidenDecision =
@@ -159,7 +167,23 @@ const ms = (s: string | null | undefined) => { const v = Date.parse(String(s ?? 
  *   merge-pdfs は送るたびに last_property_sent_at を今に書き直すので、判定の時のお客様の行ではなく検索を始めた時の写しを見る。
  *   写しが無い時は予備: その回より前の送付の記録の件数（0なら新規）
  */
-export function classifyKind(snapshot: Record<string, unknown> | null | undefined, sentBeforeSession: number | null): WidenKind {
+export function classifyKind(
+  snapshot: Record<string, unknown> | null | undefined, sentBeforeSession: number | null,
+  actual: { firstProposalAt?: string | null; sessionStartMs?: number; originState?: string | null } = {},
+): WidenKind {
+  // 2026-09-30 v2.5.44 竹内さんの決定「状態の判定は実際にお客様へ届けた送付で」:
+  //   ① 自動便の計画（plan_by_customer の state）があればそれ（新規・条件の言い直し＝new／それ以外＝additional）
+  //   ② 実際にお客様へ届けた最初の送付（isProposalSend）がこの回より後／無い＝new・前＝additional
+  //   ③ 読めない時だけ今までの写し（last_property_sent_at は merge-pdfs が自動検索の回でも書くので汚れている）
+  const os = actual.originState ?? null;
+  if (os === "new" || os === "cond_changed") return "new";
+  if (os === "active" || os === "dormant" || os === "dormant_hot") return "additional";
+  if (actual.firstProposalAt !== undefined) {
+    if (actual.firstProposalAt === null) return "new";
+    const f = Date.parse(actual.firstProposalAt);
+    if (Number.isFinite(f) && actual.sessionStartMs != null && Number.isFinite(actual.sessionStartMs)) return f >= actual.sessionStartMs ? "new" : "additional";
+    if (Number.isFinite(f)) return "additional";
+  }
   if (snapshot && typeof snapshot === "object") {
     const has = (k: string) => typeof snapshot[k] === "string" && Number.isFinite(Date.parse(snapshot[k] as string));
     return has("last_property_sent_at") || has("property_viewed_at") ? "additional" : "new";
@@ -206,7 +230,50 @@ export type DecideInput = {
   /** 2026-09-29 見張り（screen-watch）: 「条件が入り切っていない・0件の疑い」の印（search_audits.watch.block_widen）が付いた回の run_id。
    *  このピンポイントの回（続けて検索した回）に1つでも入っていれば自動の広げてを止める */
   watchBlocked?: ReadonlyArray<string>;
+  /** 2026-09-30 v2.5.44 実際にお客様へ届けた最初の送付（null＝まだ・undefined＝読めない） */
+  firstProposalAt?: string | null;
+  /** 2026-09-30 v2.5.44 そのピンポイントの回を積んだ命令の計画（payload.plan_by_customer[id].state） */
+  originState?: string | null;
+  /**
+   * 2026-09-30 v2.5.44 送った後（additional）は「毎回0件なら」でなく累計の線（cumulativeWiden）で広げる。
+   *   audits・rows・commands は CUMULATIVE_LOOKBACK_DAYS 日分を渡す。SEARCH_WIDEN_CUMULATIVE=off で今までの1回ごと
+   */
+  cumulative?: boolean;
 };
+
+// ── 送った後の累計の線（2026-09-30 v2.5.44 竹内さんの決定） ────────────────────────────
+// 送った後の回は「前回の検索以降だけ」なので新着が0件なのは正常。1回ごとの「0件なら広げる」をやめ、
+//   直近のピンポイントの回が3回以上・48時間以上送れる物件（通す）が0件・広げては7日に1回まで、の時だけ広げる。
+//   実データ: 広げての回から送った物件は 728行中1件（0.1%）・自動で広げた29回からの送付は0件（設計 wf_7b9c28ba）
+export const CUMULATIVE_MIN_RUNS = 3;
+export const CUMULATIVE_ZERO_HOURS = 48;
+export const CUMULATIVE_EVERY_DAYS = 7;
+export const CUMULATIVE_LOOKBACK_DAYS = 7;
+/** 累計の線で広げる時の更新日（前回以降の窓では狭すぎる・広げての回は止める線なし） */
+export const CUMULATIVE_WIDEN_DAYS = 7;
+
+export function cumulativeWiden(i: { site: string; audits: ReadonlyArray<AuditLite>; rows: ReadonlyArray<PickupLite>; commands: ReadonlyArray<ChainCommandLite>; nowMs: number }):
+  { ok: boolean; reason: string; runs: number; zeroHours: number | null } {
+  const sk = pickupSiteOf(i.site);
+  const cmdSite = commandSiteOf(sk);
+  const since = i.nowMs - CUMULATIVE_LOOKBACK_DAYS * 86400_000;
+  const lastChain = i.commands.filter((c) => c.payload?.chain && (c.sites ?? []).some((s) => commandSiteOf(s) === cmdSite) && ms(c.created_at) >= i.nowMs - CUMULATIVE_EVERY_DAYS * 86400_000);
+  if (lastChain.length) return { ok: false, reason: "widened_within_7d", runs: 0, zeroHours: null };
+  const runs = i.audits
+    .filter((a) => pickupSiteOf(a.site) === sk && a.is_wide === false && a.status === "finished" && a.mode !== "brain_staff" && ms(a.created_at) >= since && !runDidNotSearch(a, i.nowMs))
+    .sort((a, z) => ms(a.created_at) - ms(z.created_at));
+  // 続けて検索した回（地域→駅の2パス）は1回に数える
+  const sessions: number[] = [];
+  for (const r of runs) { const t = ms(r.created_at); if (!sessions.length || t - sessions[sessions.length - 1] > SESSION_GAP_MS) sessions.push(t); }
+  const passTimes = i.rows.filter((r) => pickupSiteOf(r.site) === sk && r.verdict === "pass" && normalizeSearchMode(r.search_mode) !== "widen" && ms(r.created_at) >= since).map((r) => ms(r.created_at));
+  const lastPass = passTimes.length ? Math.max(...passTimes) : null;
+  const after = sessions.filter((t) => lastPass == null || t > lastPass);
+  const zeroFrom = lastPass ?? (sessions.length ? sessions[0] : null);
+  const zeroHours = zeroFrom == null ? null : Math.round(((i.nowMs - zeroFrom) / 3600_000) * 10) / 10;
+  if (after.length < CUMULATIVE_MIN_RUNS) return { ok: false, reason: `runs_${after.length}_of_${CUMULATIVE_MIN_RUNS}`, runs: after.length, zeroHours };
+  if (zeroHours == null || zeroHours < CUMULATIVE_ZERO_HOURS) return { ok: false, reason: `zero_${zeroHours ?? 0}h_of_${CUMULATIVE_ZERO_HOURS}h`, runs: after.length, zeroHours };
+  return { ok: true, reason: "cumulative", runs: after.length, zeroHours };
+}
 
 /** 足りるか・広げるか（純関数）。広げる時は積むコマンドの payload.chain を返す */
 export function decideWiden(input: DecideInput): WidenDecision {
@@ -244,22 +311,37 @@ export function decideWiden(input: DecideInput): WidenDecision {
   if (!rows.length && (sentAny || sentUnknown) && nowMs - latestFin < ROWS_WAIT_MS) return { action: "wait", reason: "rows_coming" };
   // 届いた行がまだまとめられていない（判定・画像の読み取りの途中）→ まとめの時に決める
   if (rows.some((r) => !r.complete_group_id)) return { action: "wait", reason: "not_complete" };
-  const kind = classifyKind(runs[runs.length - 1].customer_snapshot ?? latest.customer_snapshot ?? null, input.sentBeforeSession ?? null);
+  const kind = classifyKind(runs[runs.length - 1].customer_snapshot ?? latest.customer_snapshot ?? null, input.sentBeforeSession ?? null,
+    { firstProposalAt: input.firstProposalAt, sessionStartMs: startMs, originState: input.originState ?? null });
   const threshold = passThreshold(kind);
   const passCount = rows.filter((r) => r.verdict === "pass").length;
   if (passCount >= threshold) return { action: "enough", reason: "enough", kind, passCount, threshold };
+  // 送った後は累計の線（1回の0件では広げない）
+  let cumulative: { runs: number; zero_hours: number } | null = null;
+  if (kind === "additional" && input.cumulative) {
+    const c = cumulativeWiden({ site: site as string, audits: input.audits, rows: input.rows, commands: input.commands, nowMs });
+    if (!c.ok) return { action: "skip", reason: `cumulative_not_yet:${c.reason}` };
+    cumulative = { runs: c.runs, zero_hours: c.zeroHours ?? 0 };
+  }
   return {
     action: "widen",
-    reason: kind === "new" ? "new_under_threshold" : "additional_none",
+    reason: kind === "new" ? "new_under_threshold" : cumulative ? "additional_cumulative" : "additional_none",
     chain: {
       from: "pinpoint", kind, pass_count: passCount, threshold,
       pinpoint_run_ids: runs.map((r) => r.run_id).slice(0, 5),
       pinpoint_started_at: new Date(startMs).toISOString(),
       site: site as "realpro" | "itandi",
-      rp_update_days: sessionRpUpdateDays(runs, startMs),
+      rp_update_days: cumulative ? CUMULATIVE_WIDEN_DAYS : sessionRpUpdateDays(runs, startMs),
+      // 2026-09-30 v2.5.44 新規＝AD 順・送った後＝更新順（竹内さんの決定）・ページの上限5
+      sort: kind === "new" ? "ad" : "updated",
+      max_pages: CHAIN_MAX_PAGES,
+      cumulative,
     },
   };
 }
+
+/** 広げての回のページの上限（auto-search-schedule.SEARCH_MAX_PAGES・拡張 DEFAULT_MAX_PAGES と同じ 5） */
+export const CHAIN_MAX_PAGES = 5;
 
 /**
  * 広げての回の更新日: ピンポイントの回に実際に入れようとした値（intended.rp_update_days）。無ければ検索を始めた時の写しから同じ決まりで。
@@ -300,7 +382,7 @@ export function widenChainNotes(commands: ReadonlyArray<ChainCommandLite>, rows:
     const site = pickupSiteOf(ch.site) as "realpro" | "itandi" | null;
     if (!site || seen.has(site)) continue;
     seen.add(site);
-    const head = `🎯 ピンポイントで通す物件が ${ch.pass_count}件（${ch.kind === "new" ? `新規は${ch.threshold}件そろうまで` : "新着・追加は1件も無い時"}）→ 🔎 自動で広げて検索`;
+    const head = `🎯 ピンポイントで通す物件が ${ch.pass_count}件（${ch.kind === "new" ? `新規は${ch.threshold}件そろうまで` : ch.cumulative ? `送った後: 直近${ch.cumulative.runs}回・${Math.round(ch.cumulative.zero_hours)}時間 送れる物件なし` : "新着・追加は1件も無い時"}）→ 🔎 自動で広げて検索`;
     const widened = rows.filter((r) => pickupSiteOf(r.site) === site && normalizeSearchMode(r.search_mode) === "widen" && ms(r.created_at) >= ms(c.created_at));
     const widePass = widened.filter((r) => r.verdict === "pass").length;
     const siteJa = SITE_JA[site] ?? site;

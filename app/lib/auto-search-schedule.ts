@@ -187,8 +187,15 @@ export const AM_DAILY = {
   sort: "ad" as const,
   /** 2026-09-30 v2.5.42 3 → 5ページ（SEARCH_MAX_PAGES） */
   maxPages: SEARCH_MAX_PAGES,
-  isWide: true,
+  /**
+   * 2026-09-30 v2.5.44 竹内さんの決定: 午前もピンポイントから（足りなければ新規だけ chain の広げて）。
+   *   お客様ごとの並び・更新日・止める線は auto-search-plan（payload.plan_by_customer）。
+   *   AUTO_SEARCH_PLAN=legacy の時だけ今までの「午前は広げて」（LEGACY_AM_IS_WIDE）
+   */
+  isWide: false,
 };
+/** AUTO_SEARCH_PLAN=legacy の午前の便（v2.5.43 まで＝広げて検索） */
+export const LEGACY_AM_IS_WIDE = true;
 
 export type AutoSearchPayload = {
   source: "auto_schedule";
@@ -208,6 +215,11 @@ export type AutoSearchPayload = {
    * 拾い手を待つ3時間もここから数える（automation-sources.ts）。payload の中なので新しい列は無い
    */
   not_before?: string;
+  /**
+   * 2026-09-30 v2.5.44 お客様ごとの計画（auto-search-plan.planByCustomerPayload）。
+   *   { [customerId]: { state, sort, is_wide:false, days, stop_at_last, max_pages, reason } }。無い命令（legacy）は今まで通り上の値
+   */
+  plan_by_customer?: Record<string, unknown>;
 };
 
 /**

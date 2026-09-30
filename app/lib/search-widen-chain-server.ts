@@ -9,10 +9,13 @@
 // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形（おススメの物件や新着物件がなければ）」
 import { supabase } from "@/app/lib/supabase";
 import {
-  decideWiden, commandSiteOf, pickupSiteOf, LOOKBACK_MS, ROWS_WAIT_MS,
+  decideWiden, commandSiteOf, pickupSiteOf, pinpointSession, LOOKBACK_MS, ROWS_WAIT_MS, CUMULATIVE_LOOKBACK_DAYS,
   type AuditLite, type PickupLite, type ChainCommandLite, type WidenDecision,
 } from "@/app/lib/search-widen-chain";
 import { WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
+import { CHAIN_PICKER_AIX_OR_BRAIN } from "@/app/lib/automation-sources";
+import { planOfPayload } from "@/app/lib/auto-search-plan";
+import { firstProposalAtFor } from "@/app/lib/auto-search-plan-server";
 
 export type ChainTrigger = "complete" | "audit" | "sweep";
 export type ChainResult = { site: string; decision: WidenDecision; commandId: string | null; error: string | null; dry: boolean };
@@ -22,10 +25,14 @@ const AUDIT_COLS = "run_id, created_at, finished_at, status, site, mode, trigger
 export function widenChainEnabled(): boolean {
   return process.env.SEARCH_WIDEN_CHAIN !== "off";
 }
+/** 2026-09-30 v2.5.44 送った後の累計の線（off で今までの「1回ごとに0件なら」） */
+export function widenCumulativeEnabled(): boolean {
+  return process.env.SEARCH_WIDEN_CUMULATIVE !== "off";
+}
 
-/** web_brain のコマンドのうち、そのお客様の物（直近 LOOKBACK＋6時間） */
-async function loadCommands(pcid: string, nowMs: number): Promise<ChainCommandLite[]> {
-  const since = new Date(nowMs - LOOKBACK_MS - 6 * 3600_000).toISOString();
+/** web_brain のコマンドのうち、そのお客様の物（直近 LOOKBACK＋6時間・累計の線の時は7日） */
+async function loadCommands(pcid: string, nowMs: number, cumulative = false): Promise<ChainCommandLite[]> {
+  const since = new Date(nowMs - (cumulative ? CUMULATIVE_LOOKBACK_DAYS * 86400_000 : LOOKBACK_MS + 6 * 3600_000)).toISOString();
   const { data, error } = await supabase.from("automation_commands")
     .select("id, created_at, status, sites, customer_ids, payload")
     .contains("customer_ids", [pcid]).eq("payload->>source", WEB_BRAIN_SOURCE).gte("created_at", since)
@@ -46,17 +53,22 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
   try {
     if (!commandSiteOf(site)) { out.decision = { action: "skip", reason: "site" }; return out; }
     const since = new Date(nowMs - LOOKBACK_MS).toISOString();
-    const [au, pk, cmds] = await Promise.all([
-      supabase.from("search_audits").select(AUDIT_COLS).eq("property_customer_id", input.propertyCustomerId).gte("created_at", since).order("created_at", { ascending: false }).limit(40),
-      supabase.from("property_pickups").select("id, created_at, site, verdict, search_mode, complete_group_id").eq("property_customer_id", input.propertyCustomerId).gte("created_at", since).limit(500),
-      loadCommands(input.propertyCustomerId, nowMs),
+    // 2026-09-30 v2.5.44 累計の線は7日分の回・行・広げてを見る（決まりの中の1回分の判定は今まで通り3時間で切る）
+    const cumulative = widenCumulativeEnabled();
+    const histSince = cumulative ? new Date(nowMs - CUMULATIVE_LOOKBACK_DAYS * 86400_000).toISOString() : since;
+    const [au, pk, cmds, firstProposalAt] = await Promise.all([
+      supabase.from("search_audits").select(AUDIT_COLS).eq("property_customer_id", input.propertyCustomerId).gte("created_at", histSince).order("created_at", { ascending: false }).limit(cumulative ? 200 : 40),
+      supabase.from("property_pickups").select("id, created_at, site, verdict, search_mode, complete_group_id").eq("property_customer_id", input.propertyCustomerId).gte("created_at", histSince).order("created_at", { ascending: false }).limit(cumulative ? 2000 : 500),
+      loadCommands(input.propertyCustomerId, nowMs, cumulative),
+      // 新規か送った後かは実際にお客様へ届けた送付で（読めない時は undefined＝今までの写し）
+      firstProposalAtFor(supabase, input.propertyCustomerId),
     ]);
     if (au.error) throw new Error(`検索の点検を読めない: ${au.error.message}`);
     if (pk.error) throw new Error(`売上サポを読めない: ${pk.error.message}`);
     const audits = (au.data ?? []) as AuditLite[];
     // 写し（customer_snapshot）が無い回の予備: その回より前の送付の記録の件数
     let sentBefore: number | null = null;
-    const first = audits.filter((a) => pickupSiteOf(a.site) === site).slice(-1)[0];
+    const first = audits.filter((a) => pickupSiteOf(a.site) === site && a.created_at >= since).slice(-1)[0];
     if (first && !first.customer_snapshot) {
       const { count } = await supabase.from("sent_properties").select("id", { count: "exact", head: true })
         .eq("property_customer_id", input.propertyCustomerId).lt("sent_at", first.created_at);
@@ -64,9 +76,12 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
     }
     // 2026-09-29 見張り: 条件が入り切っていない・0件の疑いの印の付いた回（読めない時は []＝今まで通り）
     const watchBlocked = await import("@/app/lib/screen-watch-server").then((m) => m.watchBlockedRunIds(input.propertyCustomerId, site, since)).catch(() => [] as string[]);
+    // 2026-09-30 v2.5.44 ピンポイントの回を積んだ命令（自動便か・その人の計画の状態）
+    const origin = await originOf(audits, site, input.propertyCustomerId, nowMs);
     const decision = decideWiden({
       site, audits, rows: (pk.data ?? []) as PickupLite[], commands: cmds, nowMs,
       sentBeforeSession: sentBefore, fromAuditFinish: input.trigger === "audit", watchBlocked,
+      firstProposalAt, originState: origin.state, cumulative,
     });
     out.decision = decision;
     if (decision.action !== "widen" || dry) return out;
@@ -77,7 +92,10 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
       customer_ids: [input.propertyCustomerId],
       sites: [commandSiteOf(site)],
       // 2026-09-29 v2.5.41 更新日はピンポイントの回と同じ値を「決めた値」として渡す（拡張は update_days_plan を popup の経路でも使う）
+      // 2026-09-30 v2.5.44 並び（新規＝ad・送った後＝updated）とページの上限を上にも載せる。自動便から続いた広げては AIX モードの PC も拾える印
       payload: { source: WEB_BRAIN_SOURCE, is_wide: true, rp_update_days: rp, chain: decision.chain,
+        sort: decision.chain.sort, max_pages: decision.chain.max_pages,
+        ...(origin.source === "auto_schedule" ? { chain_picker: CHAIN_PICKER_AIX_OR_BRAIN, chain_origin: "auto_schedule" } : {}),
         update_days_plan: { v: 1, by_customer: { [input.propertyCustomerId]: { days: rp, base_days: rp, gap_hours: null, last_search_at: null, widened: false } } } },
       status: "pending",
     };
@@ -95,6 +113,22 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
         ...(out.decision.action === "widen" ? { kind: out.decision.chain.kind, pass: out.decision.chain.pass_count, threshold: out.decision.chain.threshold } : out.decision.action === "enough" ? { kind: out.decision.kind, pass: out.decision.passCount } : {}) }));
     }
   }
+}
+
+/**
+ * そのお客様×サイトの一番新しいピンポイントの回（3時間以内）を積んだ命令の出どころと計画の状態。読めない時は両方 null（今まで通り）
+ */
+async function originOf(audits: ReadonlyArray<AuditLite>, site: string, pcid: string, nowMs: number): Promise<{ source: string | null; state: string | null }> {
+  try {
+    const sess = pinpointSession(audits, site, nowMs);
+    const ids = [...new Set((sess?.runs ?? []).map((r) => r.command_id).filter((x): x is string => !!x))];
+    if (!ids.length) return { source: null, state: null };
+    const { data, error } = await supabase.from("automation_commands").select("id, created_at, payload").in("id", ids);
+    if (error || !data?.length) return { source: null, state: null };
+    const newest = (data as Array<{ created_at: string; payload: Record<string, unknown> | null }>).sort((a, z) => z.created_at.localeCompare(a.created_at))[0];
+    const src = typeof newest.payload?.source === "string" ? (newest.payload.source as string) : null;
+    return { source: src, state: planOfPayload(newest.payload, pcid)?.state ?? null };
+  } catch { return { source: null, state: null }; }
 }
 
 /** まとめの行のサイトごとに決める（finishCompleteGroup の最後） */

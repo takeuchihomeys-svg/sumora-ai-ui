@@ -15,6 +15,13 @@ export const WAIT_FOR_PICKER_MS = 3 * 60 * 60 * 1000;
 export const AIX_EXPIRE_MESSAGE = "AIXモードのPCが3時間なかったため未実行で終了";
 export const BRAIN_EXPIRE_MESSAGE = "ブレインモードのPCが3時間なかったため未実行で終了";
 
+/**
+ * 2026-09-30 v2.5.44 自動便（auto_schedule）のピンポイントから続いた広げて（chain・source は web_brain のまま）の印 payload.chain_picker。
+ *   自動便は AIX モードの PC が拾うので、続きの広げても AIX モードの PC（ブレインでなくても）が拾えるようにする
+ *   （今までは web_brain＝🧠 の PC だけ → 🧠 OFF・AIX の PC しか無い日は誰も拾わず3時間で閉じていた）
+ */
+export const CHAIN_PICKER_AIX_OR_BRAIN = "aix_or_brain";
+
 /** この PC に渡さない出どころ */
 export function excludedSourcesFor(pc: { aix: boolean; brain: boolean }): string[] {
   const out: string[] = [];
@@ -30,7 +37,9 @@ export function excludedSourcesFor(pc: { aix: boolean; brain: boolean }): string
 export function pendingSourceOrFilter(pc: { aix: boolean; brain: boolean }): string | null {
   const ex = excludedSourcesFor(pc);
   if (ex.length === 0) return null;
-  return `payload->>source.is.null,and(${ex.map((s) => `payload->>source.neq.${s}`).join(",")})`;
+  const base = `payload->>source.is.null,and(${ex.map((s) => `payload->>source.neq.${s}`).join(",")})`;
+  // AIX の PC（ブレインでない）は、自動便から続いた広げて（web_brain＋chain_picker）も拾う
+  return pc.aix && !pc.brain ? `${base},payload->>chain_picker.eq.${CHAIN_PICKER_AIX_OR_BRAIN}` : base;
 }
 
 /** 手で押したウェブの一括検索（force なし）が「今動いているコマンド」として再利用してよい行か（拾い手の決まっている物は別物） */
