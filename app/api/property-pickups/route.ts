@@ -9,7 +9,7 @@ import { waitUntil } from "@vercel/functions";
 import { pickCustomerBest, bestBasisFor, bestRuleTag, customerImageNeed } from "@/app/lib/pickup-best";
 import { COMPLETE_BEST_WINDOW_HOURS } from "@/app/lib/pickup-complete";
 import { claimIdleComplete } from "@/app/lib/pickup-complete-server";
-import { sortForReview } from "@/app/lib/pickup-review-order";
+import { sortForReview, sentBeforeIds, type SentHistLite } from "@/app/lib/pickup-review-order";
 import { pickSaveImageUrl } from "@/app/lib/pickup-image-url";
 import { withPickupRetention } from "@/app/lib/pickup-retention";
 import { loadConditionSummary } from "@/app/lib/condition-summary-server";
@@ -428,10 +428,24 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     return Promise.resolve(q.order("sent_at", { ascending: true }).limit(300))
       .then((r) => (r.error ? undefined : firstProposalSentAt(((r.data ?? []) as ProposalSentLite[]).filter((x) => x.delivery == null || x.delivery === "customer"))), () => undefined);
   })();
-  const [{ data: cv }, firstSent] = await Promise.all([
+  // 2026-09-30 YUMA の送付テスト: 送付済みの部屋の照合（売上サポの確かめ・既定のチェック・👑）が sent_history（新しい40行）だけを見ていて、
+  //   41行目より前に送った部屋（YUMA: 9/27 に送ったパークサイド岡山 301）を別の回から選んでも「送付済み」の確かめが出なかった。
+  //   照合用に建物名と号室だけを会話 or お客様で広く読む（拡張の /api/automation/sent-rooms と同じ広さ・表示用の sent_history は40行のまま）
+  const roomHistQ: Promise<SentHistLite[] | null> = (() => {
+    if (!convId && !custId) return Promise.resolve(null);
+    let q = supabase.from("sent_properties").select("property_name, room_no, delivery, source, channel, sent_at");
+    q = convId && custId ? q.or(`conversation_id.eq.${convId},property_customer_id.eq.${custId}`) : convId ? q.eq("conversation_id", convId) : q.eq("property_customer_id", custId as string);
+    return Promise.resolve(q.order("sent_at", { ascending: false }).limit(1000))
+      .then((r) => (r.error ? null : ((r.data ?? []) as SentHistLite[])), () => null);
+  })();
+  const [{ data: cv }, firstSent, roomHist] = await Promise.all([
     convId ? supabase.from("conversations").select("customer_name, profile_image_url, updated_at, account, status, last_sender").eq("id", convId).maybeSingle() : Promise.resolve({ data: null }),
     firstSentQ,
+    roomHistQ,
   ]);
+  // 👑 に送付済みの部屋（別の回で届けた同じ部屋・完全一致）を選ばない（既定のチェックと同じ線・sent-room-match）
+  const sentBeforeSet = sentBeforeIds(rows.map((r) => ({ id: r.id, status: r.status, property_name: r.property_name, room_no: r.room_no, room_text: listingOf.get(r.id)?.room_text ?? null })), roomHist ?? (sentRes.data as SentHistLite[] | null) ?? []);
+  const notSentBefore = <T extends { id: number }>(xs: T[]): T[] => (sentBeforeSet.size ? xs.filter((x) => !sentBeforeSet.has(x.id)) : xs);
   const c = cv as { customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null } | null;
   // 画像で確かめる希望: 分析済みの回に保存した希望（会話・訴求込み）があればそれ、無ければ条件欄だけで軽く判定（pickup-best.customerImageNeed）
   const cond = (condRes.data ?? null) as { preferences?: string | null; ng_points?: string | null; other_requests?: string | null; additional_conditions?: string | null } | null;
@@ -457,10 +471,10 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     });
     // 2026-09-27 決まりの名前に版を付けた（bestRuleTag・判定の点 → 画像の点の1本の並び）。前の版のまとめは best_id を使わず並べ直す
     const preferId = cp?.status === "done" && cp.best_id != null && !reanalyzed && cp.result?.basis_rule === bestRuleTag(basis) ? Number(cp.best_id) : null;
-    bestRaw = pickCustomerBest(groupRows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId });
+    bestRaw = pickCustomerBest(notSentBefore(groupRows), { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId });
     bestFrom = "complete";
   } else {
-    bestRaw = pickCustomerBest(rows, { basis });
+    bestRaw = pickCustomerBest(notSentBefore(rows), { basis });
   }
   // 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: 一番の物件の画像（お客様に送る1ページ目だけ・元付は返さない）
   const bestRow = bestRaw ? rows.find((r) => r.id === bestRaw.id) ?? null : null;
@@ -479,6 +493,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       last_at: rows[0]?.created_at ?? "",
       line: c ? { profile_image_url: c.profile_image_url, updated_at: c.updated_at, account: c.account, status: c.status, last_sender: c.last_sender } : null,
       sent_history: (sentRes.data ?? []) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
+      // 2026-09-30 送付済みの部屋の照合用（建物名・号室・届け先だけ・最大1000行）。画面の確かめ・既定のチェックは sent_history（40行）より先にこちらを使う
+      ...(roomHist ? { sent_room_history: roomHist } : {}),
       has_more_batches: rounds.length > nBatches,
       // 2026-09-28 一番最初に物件をお送りした時刻（null＝まだ・読めない時は項目なし＝画面は今まで通りの選び方）
       ...(firstSent !== undefined ? { first_proposal_sent_at: firstSent } : {}),

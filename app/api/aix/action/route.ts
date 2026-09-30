@@ -73,7 +73,7 @@ import { buildApplicationNote, applicationBulletNote } from "@/app/lib/applicati
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
-import { wardOfPickupRow, moveInFactOfPickup, buildMoveInFactNote, findMoveInClaimConflict, findPickupAreaConflict, buildPickupWardNote, sanitizeSentPropertyCount, findCheckStatusContradiction, findCheckResultMoveInClaim, hasStaffMoveInClaim, PAST_MOVE_IN_CLAIM_NOTE, type PickupMaterialRow } from "@/app/lib/aix-material-facts";
+import { wardOfPickupRow, moveInFactOfPickup, buildMoveInFactNote, findMoveInClaimConflict, findPickupAreaConflict, buildPickupWardNote, sanitizeSentPropertyCount, findCheckStatusContradiction, findCheckResultMoveInClaim, hasStaffMoveInClaim, PAST_MOVE_IN_CLAIM_NOTE, alignStarHeadToMaterial, type PickupMaterialRow } from "@/app/lib/aix-material-facts";
 import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, restoreConditionDots, type PickupFact } from "@/app/lib/pickup-send-facts";
 // 2026-09-16 竹内（𝒮 さん事例）: 会話の時刻（履歴の行に時刻が無い）・「先程」の直し
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
@@ -2162,14 +2162,14 @@ async function handleAction(request: NextRequest): Promise<Response> {
     //   画面が渡した画像の枚数と行の数が同じ時だけ使う（スタッフが画像を外した・足した時は並びが合わない）
     // 2026-09-27 竹内「重い順から治す」: 区（所在地）・入居時期も同じ行から読む（app/lib/aix-material-facts.ts）。
     //   物件オススメ（1件）も売上サポから来た時は行 ID が来る（画面がセットした資料のまま送る時だけ）
-    type PickupRowForFacts = { id: number; summary_text: string | null; image_lines: string[] | null; location: { ward?: string | null } | null; pdf_text: string | null; terms: PickupMaterialRow["terms"] };
+    type PickupRowForFacts = { id: number; property_name: string | null; summary_text: string | null; image_lines: string[] | null; location: { ward?: string | null } | null; pdf_text: string | null; terms: PickupMaterialRow["terms"] };
     const pickupRowsForFacts: PickupRowForFacts[] = await (async () => {
       if ((action !== "property_send" && action !== "property_recommendation") || !conversationId || !Array.isArray(body.pickup_ids)) return [];
       const ids = (body.pickup_ids as unknown[]).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0).slice(0, 20);
       const imgCount = action === "property_send" ? (Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0) : (image_url ? 1 : 0);
       if (ids.length === 0 || ids.length !== imgCount) return [];
       try {
-        const { data } = await supabase.from("property_pickups").select("id, summary_text, image_lines, location, pdf_text, terms")
+        const { data } = await supabase.from("property_pickups").select("id, property_name, summary_text, image_lines, location, pdf_text, terms")
           .in("id", ids).eq("conversation_id", conversationId);
         const byId = new Map(((data ?? []) as PickupRowForFacts[]).map((r) => [r.id, r]));
         if (byId.size !== ids.length) return [];
@@ -2192,6 +2192,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const pickupFacts: PickupFact[] = action === "property_send" ? pickupRowsForFacts.map((r) => parsePickupFact(r)) : [];
     const pickupWards = action === "property_send" ? pickupRowsForFacts.map((r) => wardOfPickupRow(r)) : [];
     const recMoveInFact = action === "property_recommendation" && pickupRowsForFacts.length === 1 ? moveInFactOfPickup(pickupRowsForFacts[0]) : null;
+    // 2026-09-30: 物件オススメの見出し「🌟建物 号室」を資料の字に揃えられなかった時の注意（揃えた時は null のまま）
+    let recHeadMismatch: string | null = null;
     if (pickupFacts.length) console.log(JSON.stringify({ tag: "aix:pickup-facts", conversationId, facts: pickupFacts, wards: pickupWards }));
     if (recMoveInFact) console.log(JSON.stringify({ tag: "aix:recommendation-move-in-fact", conversationId, fact: recMoveInFact }));
     // 出口（注意だけ・本文は書き換えない）: 今回の物件と食い違う間取り・家賃上限・地域／前回の送付の約束の写し／資料と合わない即入居
@@ -2199,7 +2201,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (action === "property_recommendation") {
         const mi = findMoveInClaimConflict(text, recMoveInFact);
         if (mi) console.log(JSON.stringify({ tag: "aix:recommendation-move-in-conflict", conversationId, note: mi }));
-        return mi ? `⚠ ${mi}` : "";
+        return [mi ? `⚠ ${mi}` : "", recHeadMismatch ? `⚠ ${recHeadMismatch}` : ""].filter(Boolean).join("\n");
       }
       if (action !== "property_send") return "";
       const notes = findPickupSendConflicts(text, pickupFacts, pastPickupSendTexts, [DEADLINE_SUPPORT_LINE, ...INSERTED_PROMISE_LINES], customer_conditions ? String(customer_conditions) : null);
@@ -2594,6 +2596,14 @@ ${SMORA_COMMON_RULES}`;
         const fixed = ensureSituationOpening(message_text, situationOpeningLine(situationKind, situationOpts));
         if (fixed.added) console.log(JSON.stringify({ tag: "aix:situation-opening-added", action: currentAction, conversationId, kind: situationKind }));
         message_text = fixed.text;
+      }
+      // 2026-09-30 YUMA の送付テスト: 売上サポから来た1件（行 ID＝セットした資料のまま＝その行の資料と確か）は、
+      //   見出し「🌟建物 号室」の建物名を資料の字に揃える（資料「天神橋筋六丁目」→ 本文「天神橋六丁目」。送った後の物件名の照合が
+      //   この見出しを拾い、sent_properties に誤った名前で残る＝同じ部屋の「送付済み」の確かめに当たらない）。本文は触らない
+      if (pickupRowsForFacts.length === 1 && pickupRowsForFacts[0].property_name) {
+        const al = alignStarHeadToMaterial(message_text, { propertyName: pickupRowsForFacts[0].property_name });
+        if (al.changed) { console.log(JSON.stringify({ tag: "aix:recommendation-head-aligned", conversationId, from: al.from, to: al.to })); message_text = al.text; }
+        else if (al.mismatch) { recHeadMismatch = al.mismatch; console.warn(JSON.stringify({ tag: "aix:recommendation-head-mismatch", conversationId, note: al.mismatch })); }
       }
       // 2026-09-18 竹内（𝒮 さん事例）「状況に合わせて、物件申込誘導するのと、物件1件しか送っていない場合は
       //   お送りさせて頂いたお部屋の中でもの部分はいれない」:

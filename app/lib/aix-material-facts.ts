@@ -14,6 +14,7 @@
 //
 // 監査: scripts/audit-aix-material-facts.ts（実送信の過去分に当てて前後を目で読む）
 import { wardOfAddress, wardsInText } from "./osaka-geo";
+import { normalizePropertyName, similarity } from "./property-name-match";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ① 送る物件の区（ピックアップの地域）
@@ -249,4 +250,42 @@ export function starHeadBuilding(text: string | null | undefined): string | null
   const first = String(text ?? "").split("\n").find((l) => l.trim().startsWith("🌟"));
   const m = first?.match(STAR_HEAD_ROOM_RE);
   return m ? m[1].trim() : null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ⑥ 物件オススメの見出し「🌟建物 号室」を資料の物件名に合わせる（出口の決定論）
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// 2026-09-30 YUMA の送付テスト（竹内「リアプロと ITANDI、YUMA に物件送る形で大量にテスト」）:
+//   売上サポから来た物件オススメ（pickup_ids＝セットした資料のまま・その行の資料だと確か）で、資料の「プレサンス天神橋筋六丁目ヴォワール」を
+//   本文の見出しに「🌟プレサンス天神橋六丁目ヴォワール 603号室」（「筋」が落ちた）と書いた。資料の文字は変えない決まり
+//   （feedback_pickup_material_verbatim）に反し、さらに送った後の物件名の照合（sent-image-record の辞書）が本文の見出しを
+//   正しい名前として拾い、sent_properties に誤った名前で残った → 同じ部屋を別の回から選んでも「送付済み」の確かめ
+//   （sent-room-match の完全一致）に当たらない。
+//   本番の実送信 21日（scripts/tmp-audit-star-header-name.ts）: 売上サポの資料と字が違う見出し 12件（Ⅵ→VI・サウスブレイス・ラグジャー 等）。
+//   ⚠ 行 ID が無い時は別の物件（スプランディッド本町グラン↔堀江）もあるので**直さない**。直すのは行 ID が1件で届いた時だけ。
+//   直すのは見出しの行の建物名だけ（号室・本文は触らない）。行 ID＝その資料なので Ⅳ↔Ⅵ のような読み違いも資料の字に直す。似ていない（0.5 未満）時は直さない
+//   ＝別の物件を書いた疑いは直さず注意だけ（誤って別の名前に書き換えない）。
+
+export type StarHeadAlign = { text: string; changed: boolean; from?: string; to?: string; mismatch?: string };
+const STAR_HEAD_SPLIT_RE = /^(\s*🌟\s*)(.+?)([\s　]+[A-Za-zＡ-Ｚ]?[0-9０-９]{1,5}[A-Za-zＡ-Ｚ]?\s*(?:号室)?\s*)$/;
+
+export function alignStarHeadToMaterial(text: string, material: { propertyName: string | null | undefined }): StarHeadAlign {
+  const name = String(material.propertyName ?? "").trim();
+  const lines = String(text ?? "").split("\n");
+  const idx = lines.findIndex((l) => l.trim().startsWith("🌟"));
+  if (!name || idx < 0) return { text, changed: false };
+  const m = lines[idx].match(STAR_HEAD_SPLIT_RE);
+  if (!m) return { text, changed: false };
+  const written = m[2].trim();
+  if (normalizePropertyName(written) === normalizePropertyName(name)) {
+    // 記号・空白の違いだけでも資料の字に揃える（Ⅵ↔VI のような字の違いは normalize で同じにならないので下へ）
+    if (written === name) return { text, changed: false };
+  }
+  const sim = similarity(written, name);
+  if (sim < 0.5) {
+    return { text, changed: false, mismatch: `見出しの物件名「${written}」が資料の「${name}」と違います` };
+  }
+  lines[idx] = `${m[1]}${name}${m[3]}`;
+  return { text: lines.join("\n"), changed: true, from: written, to: name };
 }

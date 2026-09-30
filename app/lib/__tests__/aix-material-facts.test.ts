@@ -4,7 +4,7 @@
 import {
   addressOfPdfText, wardOfPickupRow, wardsInPickupLine, findPickupAreaConflict, buildPickupWardNote,
   moveInFactOfPickup, buildMoveInFactNote, findMoveInClaimConflict, findCheckResultMoveInClaim, hasStaffMoveInClaim,
-  sanitizeSentPropertyCount, findCheckStatusContradiction, starHeadBuilding,
+  sanitizeSentPropertyCount, findCheckStatusContradiction, starHeadBuilding, alignStarHeadToMaterial,
 } from "../aix-material-facts";
 import { splitPropertyName } from "../customer-state";
 import { matchKnownProperty, buildingNumeral } from "../property-name-match";
@@ -119,6 +119,29 @@ console.log("■ ⑥ 状況の表示は資料の文字のまま（照合の鍵�
   t("英字付き 005B", c?.display === "ミカーサ 005B号室" && c.room === "5B", c);
   const d = splitPropertyName("【1】ジュネスニッコー 1003号室");
   t("先頭の番号は外す", d?.display === "ジュネスニッコー 1003号室", d);
+}
+
+
+// ⑥ 物件オススメの見出しを資料の物件名に（2026-09-30 YUMA の実物: 資料「プレサンス天神橋筋六丁目ヴォワール」→ 本文「筋」落ち）
+{
+  const gen = "🌟プレサンス天神橋六丁目ヴォワール 603号室\n\n敷金礼金なし・家賃管理費込77,000円の1Kで、YUMAさんにかなりオススメ出来るお部屋となります！！";
+  const r = alignStarHeadToMaterial(gen, { propertyName: "プレサンス天神橋筋六丁目ヴォワール" });
+  t("⑥ 筋が落ちた見出しを資料の字に", r.changed && r.text.split("\n")[0] === "🌟プレサンス天神橋筋六丁目ヴォワール 603号室", r);
+  t("⑥ 本文は変えない", r.text.split("\n").slice(1).join("\n") === gen.split("\n").slice(1).join("\n"));
+  const r2 = alignStarHeadToMaterial("🌟S-RESIDENCE天満Gracis 304\n\n本文", { propertyName: "S-RESIDENCE天満Gracis" });
+  t("⑥ 同じなら何もしない", !r2.changed && r2.text === "🌟S-RESIDENCE天満Gracis 304\n\n本文");
+  const r3 = alignStarHeadToMaterial("🌟エステムコート難波サウスプレイスVIラグジー 0805\n本文", { propertyName: "エステムコート難波サウスプレイスⅥラグジー" });
+  t("⑥ VI→Ⅵ（資料の字）", r3.changed && r3.text.startsWith("🌟エステムコート難波サウスプレイスⅥラグジー 0805"), r3);
+  const r4 = alignStarHeadToMaterial("🌟エステムコート難波サウスプレイスⅣラグジー 0805\n本文", { propertyName: "エステムコート難波サウスプレイスⅥラグジー" });
+  t("⑥ 行 ID＝その資料なので Ⅳ の読み違いも資料の Ⅵ に", r4.changed && r4.text.startsWith("🌟エステムコート難波サウスプレイスⅥラグジー 0805"), r4);
+  const r5 = alignStarHeadToMaterial("🌟スプランディッド本町グラン 1002\n本文", { propertyName: "アーバネックス堺筋本町" });
+  t("⑥ 似ていない名前は直さず注意", !r5.changed && !!r5.mismatch, r5);
+  const r6 = alignStarHeadToMaterial("🌟ORSUS大阪福島 0506号室\n本文", { propertyName: "ORSUS大阪福島(旧リヴェント福島)" });
+  t("⑥ 括弧の旧名が落ちた見出しは資料の字に", r6.changed && r6.text.startsWith("🌟ORSUS大阪福島(旧リヴェント福島) 0506号室"), r6);
+  const r7 = alignStarHeadToMaterial("🌟L-IDEA MINAMIHORIE 405号室\n\n敷金礼金なし",{ propertyName: "L-IDEA　MINAMIHORIE（リデア南堀江）" });
+  t("⑥ ITANDI の実物: 括弧の読みがなが落ちた見出しを資料の字に（全角空白も資料のまま）", r7.changed && r7.text.startsWith("🌟L-IDEA　MINAMIHORIE（リデア南堀江） 405号室"), r7);
+  t("⑥ 🌟の見出しが無ければ何もしない", !alignStarHeadToMaterial("本文だけ", { propertyName: "X" }).changed);
+  t("⑥ 号室の無い見出しは触らない", !alignStarHeadToMaterial("🌟プレサンス天神橋六丁目ヴォワール\n本文", { propertyName: "プレサンス天神橋筋六丁目ヴォワール" }).changed);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

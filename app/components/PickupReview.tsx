@@ -9,7 +9,7 @@ import { bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/
 // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」「物件名に号室もいれる」「AD は物件名の横にもスタンプで」（純関数・import なし）
 import { nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel, type ImageChip } from "@/app/lib/pickup-listing-text";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
-import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage, dealConfirmMessage, sentBeforeIds, sentConfirmMessage } from "@/app/lib/pickup-review-order";
+import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage, dealConfirmMessage, sentBeforeIds, sentConfirmMessage, type SentHistLite } from "@/app/lib/pickup-review-order";
 import { isFirstProposalRound } from "@/app/lib/pickup-ad-priority";
 // 2026-09-27 竹内「ここは合わせる」: 画像の点を判定の点に足す（画像の加点・判定と同じ希望は数えない・純関数）
 import { imageBonusOf, signedPoints, IMAGE_BONUS_MAX, IMAGE_BONUS_MIN, type ImageAnalysisForBonus } from "@/app/lib/pickup-image-bonus";
@@ -87,7 +87,7 @@ type Batch = { batch_id: string; created_at: string; site: string | null; conver
 type Note = { id: number; created_at: string; batch_id: string | null; text: string; author: string | null };
 type LineLite = { profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null };
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
-type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; has_more_batches?: boolean;
+type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; sent_room_history?: SentHistLite[] | null; has_more_batches?: boolean;
   /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
   best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null; room_text?: string | null; ad_text?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
   /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
@@ -458,7 +458,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
         // 2026-09-26 竹内のスクショ「AIX物件ピックアップ（20件）」: 旧は外す候補以外を全部チェック＝20件で、押すと「10件までに」で止まっていた
         // 2026-09-28 審査中・商談中は付けない・新規のお客様の回は AD の高い物件を優先（pickup-review-order・pickup-ad-priority）
         // 2026-09-30 v2.5.42 送付済みの部屋（別の回で届けた同じ部屋・建物名＋号室の完全一致）は既定のチェックに入れない
-        setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null, PICKUP_AIX_MAX, { firstProposalSentAt: json.customer.first_proposal_sent_at, sentHistory: json.customer.sent_history ?? null }));
+        setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null, PICKUP_AIX_MAX, { firstProposalSentAt: json.customer.first_proposal_sent_at, sentHistory: json.customer.sent_room_history ?? json.customer.sent_history ?? null }));
       }
       return json.customer;
     } catch (e) {
@@ -1057,7 +1057,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     const dealMsg = dealConfirmMessage(targets);
     if (dealMsg && typeof window !== "undefined" && !window.confirm(dealMsg)) return;
     // 2026-09-30 v2.5.42 竹内「一度送った物件はお客さんごとに再度送らないようにする」: 送付済みの部屋（完全一致）・送信済みの印の行を手で選んだ時は確かめる（OK なら意図した送り直し）
-    const sentMsg = sentConfirmMessage(targets, c.sent_history ?? null);
+    const sentMsg = sentConfirmMessage(targets, c.sent_room_history ?? c.sent_history ?? null);
     if (sentMsg && typeof window !== "undefined" && !window.confirm(sentMsg)) return;
     const noImage = targets.filter((it) => !it.trim_image_url);
     if (noImage.length > 0 && !(await trim(b, noImage))) return;
@@ -1552,7 +1552,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                     {(() => {
                       const bid = open.best && bb.batch.items.some((x) => x.id === open.best?.id) ? open.best.id : null;
                       // 2026-09-28 新規のお客様の回（まだ物件をお送りしていない）は AD の高い物件を優先・審査中/商談中は選ばない
-                      const q = pickQualityTop(bb.batch.items, bid, PICKUP_AIX_MAX, { firstProposal: isFirstProposalRound(bb.batch.created_at, open.first_proposal_sent_at), sentBefore: sentBeforeIds(bb.batch.items, open.sent_history ?? null) });
+                      const q = pickQualityTop(bb.batch.items, bid, PICKUP_AIX_MAX, { firstProposal: isFirstProposalRound(bb.batch.created_at, open.first_proposal_sent_at), sentBefore: sentBeforeIds(bb.batch.items, open.sent_room_history ?? open.sent_history ?? null) });
                       const sel = bb.batch.items.filter((it) => checked[it.id] && isPickupCheckable(it.status)).length;
                       return (
                         <div className="flex items-center justify-between gap-2">
