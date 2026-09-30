@@ -13,7 +13,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { AI_PHRASE_RULES, findAiPhrases, roomOnlyMentions, styleStatsOf, sceneOfSecond, ensureOneEmoji, fixMissingNi, type SecondScene } from "../app/lib/second-message-style";
 import { leakedExampleFacts, unfoundedCostClaim, vacatingFromMaterial, SECOND_MESSAGE_EXAMPLES, type SecondMaterialRow } from "../app/lib/second-message-scene";
-import { headOfFirstMessage, pickupForFirstMessage, type PickupLookupRow } from "../app/lib/recommend-cta";
+import { headOfFirstMessage, pickupForFirstMessage, hasClosingSentence, type PickupLookupRow } from "../app/lib/recommend-cta";
 import { isTestConversation } from "../app/lib/test-conversations";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -204,6 +204,34 @@ ${p.second}`);
     console.log(`\n━━ 1通目が「🌟…かなりオススメ出来るお部屋となります」の形 ${fs.length}組 ／ 2通目でも「オススメ出来るお部屋」を重ねる ${dup.length}（${pct(dup.length, fs.length)}）・物件名＋号室を書く ${pct(fs.filter((p) => styleStatsOf(p.second).nameRoom).length, fs.length)}・お気に召されましたら ${pct(fs.filter((p) => /お気に召され/.test(p.second)).length, fs.length)}・ご査収 ${pct(fs.filter((p) => /ご査収/.test(p.second)).length, fs.length)}・見積書 ${pct(fs.filter((p) => /見積/.test(p.second)).length, fs.length)}・退去予定 ${pct(fs.filter((p) => /退去/.test(p.second)).length, fs.length)}`);
     console.log(`   長さ 中央値 ${med(fs.map((p) => p.second.length))}字`);
     for (const p of [...fs].sort((x, y) => (x.at < y.at ? 1 : -1)).slice(0, SHOW)) console.log(`     [${p.at.slice(0, 10)}${p.won ? "・成約側" : ""}] 1通目: ${one(p.first).slice(0, 110)}\n        → 2通目: ${one(p.second).slice(0, 360)}`);
+  }
+
+  if (args.includes("--closing-pairs")) {
+    // 2026-10-01 竹内さん了承「実送信の形に合わせる」(a): 1通目の締め × 2通目の締め（同じ締めを2通で重ねるのが実送信の形か）
+    //   (b): 物件ピックアップ（複数）の後の2通目の形（どの物件を推すか・言い回し）
+    const kindOf = (t: string): string => {
+      const k = [hasClosingSentence(t, "apply") ? "申込" : "", hasClosingSentence(t, "viewing") ? "内覧" : "", hasClosingSentence(t, "receipt") ? "ご査収" : ""].filter(Boolean);
+      return k.length ? k.join("+") : "なし";
+    };
+    for (const [label, f] of [
+      ["物件オススメ（1通目が🌟の形）", (p: Pair) => p.aix === "property_recommendation" && /^\s*🌟/.test(p.first)],
+      ["物件オススメ（全部）", (p: Pair) => p.aix === "property_recommendation"],
+      ["物件ピックアップ（複数）の後", (p: Pair) => p.aix === "property_send"],
+    ] as Array<[string, (p: Pair) => boolean]>) {
+      const set = pairs.filter(f);
+      const tab = new Map<string, number>();
+      for (const p of set) { const k = `${kindOf(p.first)} → ${kindOf(p.second)}`; tab.set(k, (tab.get(k) ?? 0) + 1); }
+      console.log(`\n━━ ${label}: ${set.length}組 ／ 1通目の締め → 2通目の締め`);
+      for (const [k, n] of [...tab].sort((x, y) => y[1] - x[1])) console.log(`   ${k.padEnd(22)} ${String(n).padStart(4)}（${pct(n, set.length)}）`);
+      const same = set.filter((p) => { const a = kindOf(p.first), b = kindOf(p.second); return a !== "なし" && b !== "なし" && a.split("+").some((x) => b.split("+").includes(x)); });
+      console.log(`   1通目に締めがある ${set.filter((p) => kindOf(p.first) !== "なし").length}組のうち2通目で同じ締めを重ねる ${same.length}`);
+      for (const p of same.slice(0, Math.min(SHOW, 6))) console.log(`     1通目末: …${one(p.first).slice(-70)}\n       2通目: ${one(p.second).slice(0, 220)}`);
+    }
+    // (b) 物件ピックアップの後の2通目の形
+    const pu = pairs.filter((p) => p.aix === "property_send");
+    const st = pu.map((p) => styleStatsOf(p.second));
+    console.log(`\n━━ 物件ピックアップ（複数）の後の2通目 ${pu.length}組: 中でも特に ${pct(pu.filter((p) => /中でも特に/.test(p.second)).length, pu.length)}・かなりオススメ出来るお部屋 ${pct(pu.filter((p) => /かなりオススメ(?:出来|でき)るお部屋/.test(p.second)).length, pu.length)}・建物名＋号室 ${pct(st.filter((s) => s.nameRoom).length, pu.length)}・お気に召されましたら ${pct(pu.filter((p) => /お気に召され/.test(p.second)).length, pu.length)}・ご査収 ${pct(pu.filter((p) => /ご査収/.test(p.second)).length, pu.length)}・長さ 中央値 ${med(pu.map((p) => p.second.length))}字`);
+    for (const p of [...pu].sort((x, y) => (x.at < y.at ? 1 : -1)).slice(0, SHOW)) console.log(`     [${p.at.slice(0, 10)}${p.won ? "・成約側" : ""}] 1通目: ${one(p.first).slice(0, 90)}\n        → 2通目: ${one(p.second).slice(0, 300)}`);
   }
 
   if (DRAFTS) {

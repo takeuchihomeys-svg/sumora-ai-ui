@@ -194,6 +194,56 @@ function closingKindOfParagraph(p: string): RecommendCtaKind | null {
 
 export type SetClosingResult = { text: string; applied: string[] };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 1通目は締めを書かない（締めは2通目に1回だけ）
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-01 竹内「物件オススメ締めの部分 状況的に2通目だけでも大丈夫 内覧の締めの部分は。実際に送ってる LINE の方が違和感ある可能性もある。構成として」:
+//   締め（内覧誘導／申込誘導／ご査収）は流れの中で1回。2通目（AIX テンプレート）が続く流れでは2通目に置く。
+//   実送信（scripts/audit-first-message-phrasing.ts --follow・365日・YUMA と申込以降を除く）:
+//     AIX の1通目 526通のうち、続けて2通目を送った 442通（84.0%・9月以降 83.4%・場面別 82〜90%）。
+//     その 442通の1通目は 89.4% が締め無し（事実の行で終わる: 敷金礼金・初期費用 28%／ネット無料 23%／退去予定・入居時期 20%…）、
+//     2通目は締め無し→内覧 150・ご査収 113・申込 35・内覧+ご査収 30・申込+ご査収 25（締めあり 89%）。
+//   ＝「1通目は事実で終える・締めは2通目」が実送信の構成。9/30 の「1通目にも締めを必ず付ける」（setRecommendClosing）はやめた。
+//   ⚠ 2通目を送らなかった時（16%）は1通目が締め無しで届く（実送信でも2通目が無かった84通の1通目は 84.5% が締め無し）。竹内さんの判断待ち（報告に案）。
+
+/** 締めの文の書き出し（名前の呼びかけ＋「お気に召されましたら」「お手隙の際に」） */
+const CLOSING_START_RE = /^(?:[^、。！!\n]{0,14}さん[、,]?)?(?:お気に召(?:され|し)(?:まし)?たら?|お手隙の際に)/;
+
+/**
+ * 出口（1通目）: 締めの文（内覧誘導・申込誘導・ご査収）だけを落とす。事実の文は1文字も消さない。
+ * 落とすのは「お気に召されましたら／お手隙の際に」で始まり、締めの種類が読める文だけ（文の途中から誘導に続く文＝「〜のお部屋となりますので、お気に召されましたら…」は触らない）。
+ */
+export function removeRecommendClosing(text: string): { text: string; removed: string[] } {
+  const src = String(text ?? "");
+  if (!src.trim()) return { text: src, removed: [] };
+  const removed: string[] = [];
+  const lines = src.split("\n").map((line) => {
+    const t = line.trim();
+    if (!t) return line;
+    const sents = t.match(/[^。！!？?\n]+[。！!？?]*/g) ?? [t];
+    const keep = sents.filter((s) => {
+      const st = s.trim();
+      if (CLOSING_START_RE.test(st) && closingKindOfSentence(st)) { removed.push(st); return false; }
+      return true;
+    });
+    if (keep.length === sents.length) return line;
+    const rebuilt = keep.join("").trim();
+    return rebuilt ? rebuilt : null;
+  }).filter((l): l is string => l !== null);
+  if (removed.length === 0) return { text: src, removed };
+  const out = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return { text: out, removed };
+}
+
+/** 1通目に渡す指示（締めを書かない）。退去予定の一文は recommend-viewable の指示が別に渡す */
+export function buildFirstMessageNoClosingNote(): string {
+  return [
+    "【この通の終わり方】",
+    "・この通は物件の事実の文で終える。締めの誘導（ご都合よろしいお日にちにご案内／お申込しお部屋抑え／お手隙の際にご査収ください）はこの通に書かない（締めは続けて送る次の通に1回だけ置く）。",
+    "・退去予定のお部屋は、退去予定を伝える一文を最後の段落に置いて終える。",
+  ].join("\n");
+}
+
 /**
  * 締めを決めた種類に揃える（出口）。
  * ・最後の段落が「締めの定型だけ」（ご査収／内覧誘導／申込誘導）なら、それを決めた種類の定型に差し替える。
@@ -287,13 +337,13 @@ export function buildSecondMessageCtaNote(
   d: RecommendCtaDecision,
   o: { firstMessage?: string | null; viewableFrom?: string | null } = {},
 ): string {
-  const already = hasClosingKind(o.firstMessage, d.kind);
+  // 2026-10-01 竹内さん了承「実送信の形に合わせる」(a): 1通目が同じ締めで終わっていても、2通目にも締めを付ける。
+  //   実送信（scripts/audit-second-message-phrasing.ts --closing-pairs・365日）: 1通目が🌟の物件オススメ 224組のうち1通目に締めがある 20組 →
+  //   2通目にも締め 17（85%）・同じ種類 10（ご査収→ご査収 7／申込→申込 2／…）。ピックアップの後は 1通目に締め 45組 → 同じ種類 25。
+  //   ＝「重ねない」は実送信の形ではなかった（旧: 1通目と同じ締めなら2通目はオススメの文で終える）。firstMessage は受けるだけ（呼び出し側の互換）
+  void o.firstMessage;
   const L: string[] = ["【この2通目の締め（1件を特にオススメする通・刺さり具合で決まる。上の CTA の指示より優先）】"];
-  if (already) {
-    L.push(`・1通目が既に同じ締め（${d.kind === "viewing" ? "内覧の誘導" : d.kind === "apply" ? "申込の誘導" : "ご査収"}）で終わっている → **2通目では重ねない**。`
-      // 2026-09-30 竹内「言い回しが AI くさい」: 「見立てを1つだけ添えて」と書くと評論の一文（〜ならではの強みです）が作られた → 指示の語から外す
-      + `オススメの文で終わる（誘導・ご査収を繰り返さない）。`);
-  } else if (d.kind === "viewing") {
+  if (d.kind === "viewing") {
     L.push(`・お客様に刺さる物件（${d.reason}）で、今ご内覧頂ける → 締めは内覧の誘導 1文。実送信の形「${VIEWING_CLOSING_LINE}」のまま`);
   } else if (d.kind === "apply") {
     L.push(`・刺さりそうだが退去予定でまだご内覧頂けない${o.viewableFrom ? `（${o.viewableFrom}以降にご内覧可能）` : ""}（${d.reason}） → 退去予定と伝えて、申込の誘導 1文。実送信の形「${APPLY_CLOSING_LINE}」のまま（内覧の誘導は書かない）`);

@@ -7,7 +7,7 @@
 // 実行: npx tsx app/lib/__tests__/recommend-cta.test.ts（全 PASS で exit 0）
 import {
   resolveRecommendCta, appealFromPickup, setRecommendClosing, readClosingKind, hasClosingKind,
-  buildFirstMessageCtaNote, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage, hasClosingSentence,
+  buildFirstMessageCtaNote, buildSecondMessageCtaNote, removeRecommendClosing, pickupForFirstMessage, headOfFirstMessage, hasClosingSentence,
   VIEWING_CLOSING_LINE, RECEIPT_CLOSING_LINE, APPLY_CLOSING_LINE,
 } from "../recommend-cta";
 
@@ -138,13 +138,14 @@ describe("2通目", () => {
     expect(paras[paras.length - 1]).toContain("気になる点があれば");
     expect(r.text).toContain("2018年築と築浅です");
   });
-  it("★ 1通目が既に同じ締めなら2通目の指示は「重ねない」＋別の物件を比べない", () => {
+  // 2026-10-01 竹内「締めは2通目だけでも大丈夫・構成として」＋了承「実送信の形に合わせる」: 2通目には必ず締め（1通目は締めを書かない）
+  it("★ 1通目が同じ締めで終わっていても2通目の指示に締めを出す（旧「重ねない」はやめた）＋別の物件を比べない", () => {
     const d = resolveRecommendCta({ pickup: { verdict: "hold", reason_codes: ["RENT_OK"] }, notViewable: false }); // receipt
     expect(hasClosingKind(R3_FIRST, "receipt")).toBe(true);
     const n = buildSecondMessageCtaNote(d, { firstMessage: R3_FIRST });
-    expect(n).toContain("重ねない");
+    expect(n).notToContain("重ねない");
+    expect(n).toContain(RECEIPT_CLOSING_LINE);
     expect(n).toContain("別の物件を持ち出して比べない");
-    expect(n).notToContain(RECEIPT_CLOSING_LINE);
   });
   it("1通目に締めが無ければ2通目の指示に実送信の形を出す", () => {
     const d = resolveRecommendCta({ pickup: PASS_ALL, notViewable: false });
@@ -248,6 +249,38 @@ describe("締めが本文の行の途中・行末に既にある（文単位で�
     const t208 = "🌟S-RESIDENCE福島玉川Deux 208号室\n\n…YUMAさんにかなりオススメ出来るお部屋となります！！\n\nお気に召しましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！\n\n" + VIEWING_CLOSING_LINE;
     const r = setRecommendClosing(t208, "viewing");
     expect((r.text.match(/ご案内させて頂きます/g) ?? []).length).toBe(1);
+  });
+});
+
+// 2026-10-01 竹内「物件オススメ締めの部分 状況的に2通目だけでも大丈夫・構成として」: 1通目は締めの文を落とす（事実の文は1文字も消さない）
+describe("1通目は締めを書かない（removeRecommendClosing）", () => {
+  // YUMA に 9/30 15:22 に届いた1通目（実物そのまま）
+  const LEON = "🌟レオンコンフォート梅田北 703号室\n\n家賃管理費込75,000円・1K・21.37㎡で、YUMAさんにかなりオススメ出来るお部屋となります！！\n\n2020年1月築（築6年）の室内も綺麗な1Kで、独立洗面台や室内洗濯機置場、システムキッチンも備わっております！！収納スペース・シューズボックスもあり収納面もしっかり確保されております！！中崎町駅徒歩9分・中津駅徒歩10分と梅田へも出やすい立地です！！\n\n退去予定のお部屋となり、11月中旬ごろご入居可能となります！！\n\nお気に召されましたらお申込しお部屋抑えさせて頂きます😊！！";
+  it("★ 実物（退去予定＋申込の誘導）: 締めの段落だけ落ちて、退去予定の一文で終わる", () => {
+    const r = removeRecommendClosing(LEON);
+    expect(r.removed.length).toBe(1);
+    expect(r.text).toBe(LEON.replace("\n\nお気に召されましたらお申込しお部屋抑えさせて頂きます😊！！", ""));
+  });
+  it("★ 9/30 13:04 の実物（内覧の誘導が2回）: 2回とも落ちる", () => {
+    const t = "🌟S-RESIDENCE福島玉川Deux 208号室\n\n2023年10月築で築年数浅く、玉川駅徒歩4分・家賃管理費込81,000円の1K（22.56㎡）で、YUMAさんにかなりオススメ出来るお部屋となります！！\n\nお気に召しましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！\n\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！";
+    const r = removeRecommendClosing(t);
+    expect(r.removed.length).toBe(2);
+    expect(r.text).toBe("🌟S-RESIDENCE福島玉川Deux 208号室\n\n2023年10月築で築年数浅く、玉川駅徒歩4分・家賃管理費込81,000円の1K（22.56㎡）で、YUMAさんにかなりオススメ出来るお部屋となります！！");
+  });
+  it("ご査収（R3 の1通目）・名前つき（〇〇さんお気に召されましたら）も落ちる", () => {
+    expect(removeRecommendClosing(R3_FIRST).text).toBe(R3_FIRST.replace("\n\nお手隙の際にご査収ください😊！！", ""));
+    const t = "🌟X 101\n\n家賃管理費込77,500円の2DKとなります！！\n\n327さんお気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！";
+    expect(removeRecommendClosing(t).text).toBe("🌟X 101\n\n家賃管理費込77,500円の2DKとなります！！");
+  });
+  it("同じ行の事実の文は残して締めの文だけ落とす", () => {
+    const t = "🌟X 101\n\n空室のため即入居可能です！！お手隙の際にご査収ください😊！！";
+    expect(removeRecommendClosing(t).text).toBe("🌟X 101\n\n空室のため即入居可能です！！");
+  });
+  it("文の途中から誘導に続く文（〜ので、お気に召されましたら）・見積書の行は触らない", () => {
+    const t1 = "🌟X 101\n\n空室・即入居可能のお部屋となりますので、静岡さんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！";
+    expect(removeRecommendClosing(t1).removed.length).toBe(0);
+    const t2 = "🌟X 101\n\nインターネット無料で毎月の通信費も抑えられます！！\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！";
+    expect(removeRecommendClosing(t2).text).toBe(t2);
   });
 });
 

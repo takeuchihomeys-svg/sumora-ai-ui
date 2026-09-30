@@ -31,6 +31,7 @@
 
 import type { RecommendationScenario } from "./recommendation-frame";
 import { readMaterialViewable } from "./recommend-viewable";
+import { sortForReview, type ReviewOrderRow } from "./pickup-review-order";
 
 export type SecondSceneKey = "compare" | "new_listing" | "single";
 
@@ -199,6 +200,34 @@ export function buildSecondMaterialNote(row: SecondMaterialRow | null | undefine
   if (eq.length) L.push(`・資料にある設備: ${[...new Set(eq)].join("・")}`);
   if (L.length === 0) return "";
   return ["【1通目の物件の資料の事実（資料の字のまま。理由に使うのはここと1通目に書いてある事だけ）】", ...L].join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 物件ピックアップ（複数）の直後の2通目: どの物件を推すか
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 売上サポの行（送った印つき）。並び（sortForReview）と資料の事実・採点に使う所だけ */
+export type PickupPushRow = SecondMaterialRow & ReviewOrderRow & {
+  sent_at?: string | null;
+  verdict?: string | null;
+  reason_codes?: string[] | null;
+};
+
+/**
+ * 2026-10-01 竹内さん了承「実送信の形に合わせる」(b): AIX【物件ピックアップ】で複数の資料を送った直後の2通目は、
+ *   物件オススメの2通目と同じ形（「お送りさせて頂きましたお部屋の中でも特に◯◯ 号室が〜、◯◯さんにかなりオススメ出来るお部屋となります！！」＋締め）。
+ * 推す物件 = 送った画像の1枚目（売上サポの並び＝👑一番オススメが先頭・次に点の順 sortForReview と同じ並び）。
+ *   実送信（scripts/audit-pickup-second-push.ts・365日）: ピックアップの後に1件を推した29組で、推したのは 1枚目 16（55%）・最後 3・それ以外 10。
+ *   AD・家賃の最大／最安で決めている形は読めなかった（AD が2件以上読める組 0）→ 並びの先頭を推す。締めは recommend-cta（その行の採点）で決める。
+ * 行が2件未満（1件だけ送った・売上サポを通らずに送った）の時は null（今まで通り）。送った回は一番新しい送った時刻から10分以内の行。
+ */
+export function pickPickupSecondTarget<T extends PickupPushRow>(rows: ReadonlyArray<T>): T | null {
+  const sent = rows.filter((r) => r.sent_at && !Number.isNaN(Date.parse(r.sent_at)));
+  if (sent.length < 2) return null;
+  const last = Math.max(...sent.map((r) => Date.parse(r.sent_at!)));
+  const batch = sent.filter((r) => last - Date.parse(r.sent_at!) <= 10 * 60_000);
+  if (batch.length < 2) return null;
+  return sortForReview(batch)[0] ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -201,7 +201,10 @@ export function buildAixChainNote(firstMessage: string | null | undefined, o: { 
     rules.push(`1通目で${f.declaredDone.map((d) => DONE_JA[d]).join("・")}と伝えている。同じことを${f.declaredDone.map((d) => FUTURE_NG[d]).join("／")}のように**これからやる形で書かない**（実送信1,419組でこの重複は0.2%）`);
   }
   if (f.hasGreeting) rules.push("1通目に挨拶（お世話になっております等）が入っている。2通目に挨拶行を重ねない（実送信で重ねるのは2.0%）");
-  if (f.hasReceipt) rules.push("1通目が「ご査収ください」で締めている。2通目で「ご査収ください」を繰り返さない（実送信で重ねるのは3.1%）");
+  // 2026-10-01 竹内さん了承「実送信の形に合わせる」: 物件オススメ／ピックアップの直後の2通目は、1通目がご査収で終わっていても2通目に締めを付けるのが実送信の形
+  //   （scripts/audit-second-message-phrasing.ts --closing-pairs: 物件オススメで1通目がご査収 12組 → 2通目もご査収 8・ピックアップの後 45組 → 2通目もご査収 25）。
+  //   3.1% は AIX 全種類の平均（見積書・確認した等を含む）→ その場面（slim）では渡さない。締めは recommend-cta が決める
+  if (f.hasReceipt && !slim) rules.push("1通目が「ご査収ください」で締めている。2通目で「ご査収ください」を繰り返さない（実送信で重ねるのは3.1%）");
   if (f.hasAmount) rules.push("1通目に金額（初期費用）が入っている。2通目で金額・割引額・節約額を書き直さない（数字は1通目が正）");
   if (f.hasSinglePick) rules.push("1通目で既に1件に絞って推している。2通目で別の1件を推し直さない");
   if (f.propertyLabels.length > 0) {

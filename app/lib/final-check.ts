@@ -2174,7 +2174,7 @@ type BannedPattern = { re: RegExp; code: string; msg: string; sug: string; onlyT
   /** 履歴（allHist）に一致すれば免除（例: 見積送付済みなら金額言及可） */
   skipIfHistRe?: RegExp };
 const BANNED_PATTERNS: BannedPattern[] = [
-  { re: /コスパ/, code: "BANNED_WORD", msg: "「コスパ」表現は禁止", sug: "「好条件」「お値打ちな条件」に変更" },
+  { re: /コスパ/, code: "BANNED_WORD", msg: "「コスパ」表現は禁止", sug: "「好条件のお部屋」に変更" },
   { re: /仲介手数料[^\n。]{0,8}割引/, code: "FABRICATED_POLICY_DET", msg: "仲介手数料は固定（割引不可）", sug: "「初期費用を最大限割引」に変更", blockAlways: true },
   // G6: 旧 /即入居可能/ 行は MOVEIN_DATE_ASSERTION（「即」head・block）が包含するため削除（二重指摘防止）
   // G26/G7: 「すぐに」約束は文脈に関係なく誤り（HASTY_PROMISE を block 固定。bridge 実例からも除去済み）

@@ -61,7 +61,7 @@ import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentR
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
-import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildFirstMessageCtaNote, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
+import { resolveRecommendCta, readCustomerReaction, removeRecommendClosing, buildFirstMessageNoClosingNote, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、2通目（aix-template-generate）と同じ関数・同じ材料（売上サポの行の資料の現況）で決める
 import { resolveRecommendViewable, buildVacatingLineNote, ensureVacatingLine, tidyVacatingAndClosing, type RecommendViewable, type ViewableMaterialRow } from "@/app/lib/recommend-viewable";
 import { pickupDealStatus } from "@/app/lib/listing-deal-status";
@@ -70,7 +70,10 @@ import { buildRecommendApplyLineNote, detectRecommendApplyLine, detectImmediateM
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
 // 2026-09-21 竹内「複数物件送った中では『お送りさせて頂きましたお部屋の中でも〜』／新着物件なら新着物件の言い回し」
 //   訴求シナリオの判定・ガイド・検査（aix-template-generate と同じ物を見る）
-import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation } from "@/app/lib/recommendation-frame";
+import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation, isExampleFrameCompatible } from "@/app/lib/recommendation-frame";
+// 2026-10-01 竹内「1通目の言い回しも2通目と同じやり方で直す」: 1通目の形（スタッフが書いた実物）・出口の語・文末の揃え・手本の選別
+import { findFirstAiPhrases, isCleanFirstExample, isFirstRecommendation, unifyBangEnding } from "@/app/lib/first-message-style";
+import { buildFirstSceneNote, leakedFirstExampleFacts, newArrivalOpening } from "@/app/lib/first-message-scene";
 // 2026-09-21 竹内「申込ありボタンは物件毎につける。そうすれば、どの物件が申込ありなのか判断できるから」
 import { buildApplicationNote, applicationBulletNote } from "@/app/lib/application-status-note";
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
@@ -312,15 +315,21 @@ async function getPhrases(category: string, customerName?: string): Promise<stri
 
 // 物件オススメの実例（☆つき）を取得してAIの参考文として返す
 async function getPropertyExamples(): Promise<string> {
+  // 2026-10-01 竹内「1通目の言い回しが AI くさい」: ここは conversation_state の☆を8件そのまま出していて、物件オススメは1件だけ
+  //   （他は審査・挨拶の返信）、しかもその1件が AI の下書きのまま送った文（「室内も綺麗な状態」「暮らしやすい作りとなっております」
+  //   「なんば・梅田へも出やすい立地です」＝YUMA に届いた語そのもの）だった。
+  //   → 物件オススメの1通目の形（🌟物件名）の物だけ・AI だけの言い回しを含む物は見せない（first-message-style・入口は厳しくてよい）
   const { data } = await supabase
     .from("ai_reply_examples")
     .select("sent_reply")
     .in("conversation_state", ["property_recommendation", "proposing"])
     .eq("is_starred", true)
-    .limit(8)
+    .limit(60)
     .order("created_at", { ascending: false });
   if (!data || data.length === 0) return "";
   return (data as { sent_reply: string }[])
+    .filter((r) => isFirstRecommendation(r.sent_reply) && isCleanFirstExample(r.sent_reply))
+    .slice(0, 3)
     .map((r, i) => `【実例${i + 1}】\n${neutralizeWaitedInExample(r.sent_reply)}`)
     .join("\n\n---\n\n");
 }
@@ -698,6 +707,10 @@ async function getAixPropertyExamples(
 ): Promise<string> {
   type Row = { customer_message: string; sent_reply: string; is_starred: boolean };
   let rows: Row[] = [];
+  // 2026-10-01: 物件オススメの1通目の送信文は大半が AI の下書きのまま（559通中515通）。AI だけの言い回し・AI の下書きで多い語を含む送信文は
+  //   手本に見せない（入口・first-message-style.isCleanFirstExample）。見せないだけで本文は変えない
+  //   1通目の形（🌟物件名）でない送信文（2通目の「〜が…かなりオススメ出来るお部屋となります！！」＋締め の形）も1通目の手本にしない
+  const keep = (t: string) => actionType !== "property_recommendation" || (isCleanFirstExample(t) && isFirstRecommendation(t));
 
   // pgvector主経路: キーワード先頭の検索クエリで「この状況に合う実例」を引く
   if (queryText?.trim() && process.env.OPENAI_API_KEY) {
@@ -710,7 +723,7 @@ async function getAixPropertyExamples(
           filter_action: actionType,
         });
         rows = ((data ?? []) as Array<Row & { similarity: number }>)
-          .filter(r => (r.similarity ?? 0) >= 0.45 && (r.sent_reply ?? "").trim())
+          .filter(r => (r.similarity ?? 0) >= 0.45 && (r.sent_reply ?? "").trim() && keep(r.sent_reply))
           .sort((a, b) => (b.similarity + (b.is_starred ? 0.15 : 0)) - (a.similarity + (a.is_starred ? 0.15 : 0)))
           .slice(0, 4);
       }
@@ -729,8 +742,8 @@ async function getAixPropertyExamples(
         .eq("aix_action", actionType)
         .order("is_starred", { ascending: false })
         .order("created_at", { ascending: false })
-        .limit(5);
-      rows = (data ?? []) as Row[];
+        .limit(actionType === "property_recommendation" ? 30 : 5);
+      rows = ((data ?? []) as Row[]).filter((r) => keep(r.sent_reply ?? "")).slice(0, 5);
     } catch {
       return "";
     }
@@ -2301,7 +2314,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
 
 [物件の最大の強みを1〜2点・簡潔に。お客様の希望条件に最も響くポイントを選ぶ。例：「家賃8万円台・敷金礼金なし」「築浅・ペット可」など。★「敷礼0円」「敷金礼金なし」は敷金が0円かつ礼金が0円の場合のみ書いてよい（どちらか一方でも金額がある場合は絶対に書かない）★お客様が駅・エリアを希望していない場合は「〇〇駅徒歩〇分」をここに入れない]、[お客様名]にかなりオススメ出来るお部屋となります！！
 
-[物件のオススメポイントを2〜4文・シンプルな文章でまとめる。箇条書き禁止。家賃・間取り・設備の中からお客様の希望条件に合った特徴を優先して自然な文章にまとめる。長い説明や肉付けは不要]
+[物件の事実を1〜2文（多くて3文）。箇条書き禁止。1文に書く事実は1〜2つ（間取りと広さ・家賃・築年・駅徒歩・設備）で、設備を並べるのは1文に3つまで。お客様の希望条件に合った事実を優先する。資料に無い感想の文は書かない]
 
 [締め文 — 以下の条件で使い分ける]
 ・退去予定が明示または画像から読み取れる場合：「[退去予定日]退去予定のため、[退去翌日]以降にご内覧可能です！！」
@@ -2322,6 +2335,7 @@ ${MOVE_IN_TIMING_RULE}
 ・[お客様名]はユーザーメッセージで渡されたお客様名をそのまま使うこと（すでに「さん」が付いているため「さん」を重ねて付けない）・呼び方は最初から最後まで一貫して変えない
 ・お客様名の前後に助詞（「にも」「からも」「ても」等）が来る場合でも、名前を省略・切断しない。例：「〜のお部屋となります！！もえかさんにかなりオススメ〜」のように名前全体を必ず使うこと
 ・「！！」（全角感嘆符2つ）を使用する（スモラスタイル）・「！」1つは使わない
+・文の終わりは全部「！！」にする（「。」で終わる文を混ぜない）
 ・絵文字は 😊 のみ・最大1個まで・なくてもよい
 ・数字は具体的に（「63,000円」「徒歩7分」「6帖」など）
 ・箇条書き（「・」始まりの行）は使わない。自然な文章で書く
@@ -2504,7 +2518,8 @@ ${SMORA_COMMON_RULES}`;
       });
       console.log(JSON.stringify({ tag: "aix:recommend-cta", conversationId, kind: recCtaDecision.kind, appeal: recCtaDecision.appeal, notViewable: recCtaDecision.notViewable, reason: recCtaDecision.reason }));
       const recApplyLineNote = "\n\n" + buildRecommendApplyLineNote({ ...recApplyLineInput, ctaDecided: true })
-        + "\n\n" + buildFirstMessageCtaNote(recCtaDecision, { viewableFrom: recView.viewableFrom })
+        // 2026-10-01 竹内「締めは2通目だけでも大丈夫・構成として」: 1通目は締めを書かず事実で終える（締めは2通目に1回だけ・recommend-cta.removeRecommendClosing の説明）
+        + "\n\n" + buildFirstMessageNoClosingNote()
         // 資料から退去予定と分かった時: 退去予定を伝える一文（実送信の形）をそのまま書かせる（動的ブロック＝静的 system のキャッシュは変えない）
         + (buildVacatingLineNote(recView) ? "\n\n" + buildVacatingLineNote(recView) : "");
       // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ「出力の最初の文字は必ず🌟」を外す。
@@ -2546,9 +2561,10 @@ ${SMORA_COMMON_RULES}`;
         //     消す時に残すのは必ず「かなりオススメ出来る」側（22件中22件・「かなり条件のいい」を残したのは0件）
         //   → 新着であることは**1文に織り込む**（並べない）。
         //   ⚠ 出口では消さない。実送信にも 87件（6.0%）あり、誤削除0にできないため（入口だけ直す）。
-        ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の直後の冒頭一文で「新着で募集に出たお部屋であること」を伝えること。\n`
-          + `⚠ ただし「新着でかなり条件のいいお部屋となります！！」と「〜さんにかなりオススメ出来るお部屋となります！！」を**2文に分けて並べない**（同じ意味の訴求が2回続くため）。\n`
-          + `1文に織り込む。例:「新着で募集に出た、${name}にかなりオススメ出来るお部屋となります！！」`
+        // 2026-10-01: 例の「新着で募集に出た、〇〇さんにかなりオススメ出来るお部屋となります！！」はスタッフの文 4,427通で0通（作った文）だった。
+        //   スタッフの新着の1通目は「1件新着で〇〇さんにかなりオススメ出来るお部屋が募集に出ました！！」（51通）→ その1文をそのまま渡す
+        ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の行の次の冒頭の1文は「${newArrivalOpening(name)}」（スタッフの新着の1通目の形そのまま）。\n`
+          + `⚠ この1文と「〜さんにかなりオススメ出来るお部屋となります！！」を**2文に分けて並べない**（同じ意味の訴求が2回続くため）。`
         : "";
       // 類似条件顧客の実績から「刺さりやすいポイント」をプロンプトに注入
       // データが溜まるほど精度UP。データなし（初期）は空文字でスキップ。
@@ -2597,16 +2613,31 @@ ${SMORA_COMMON_RULES}`;
       // 生成ログに残す（後から「何に決まったか」を測れるように）
       conditionsSnapshot.scenario = recScenario;
       const scenarioNote = buildScenarioNote(recScenario);
+      // 2026-10-01 竹内「1通目の言い回しが AI くさい」: 画面は AIX を押した時に勝率順の先頭テンプレート（今は「①【新着】1件オススメ」＝構成「① 新着報告」）を
+      //   自動で見本・構成として付ける。比較の場面（シナリオ compare 等）にも「新着報告」の構成が届いていた（シナリオの禁止と逆）。
+      //   シナリオが決まっていて、見本・構成の冒頭の言い方がシナリオと食い違う時は渡さない（同じ判定 isExampleFrameCompatible）
+      const recTemplateOk = !recScenario || (isExampleFrameCompatible(template_sample ?? "", recScenario)
+        && isExampleFrameCompatible((template_structure ?? []).map((b) => `${b.label}：${b.text}`).join("\n"), recScenario));
+      if (!recTemplateOk && (templateSampleNote || templateStructureNote)) console.log(JSON.stringify({ tag: "aix:recommend-template-dropped", conversationId, scenario: recScenario }));
 
-      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}${scenarioNote}`;
+      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${recTemplateOk ? templateSampleNote + templateStructureNote : ""}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}${scenarioNote}`;
 
       const knowledgeSection = knowledge ? `\n\n【物件オススメ時のノウハウ】\n${knowledge}` : "";
       // aix_property実例（実送信文・⭐顧客反応あり優先）があれば☆手動実例より優先。両方ある場合は実送信文を先に置く
       const examplesSection = (recPropertyExamples ? recPropertyExamples : "") + (examples ? `\n\n【スモラの実際の物件オススメ文（実例）】\n${examples}` : "");
-      const phrasesSection = phraseText ? `\n\n【よく使うフレーズ】\n${phraseText}` : "";
-      const recUserTextFinal = userText + recWinningNote + knowledgeSection + examplesSection + phrasesSection + (recStarNote
+      // 2026-10-01: フレーズ集（phrase_dictionary）は「これ以上ない条件のお部屋です」「かなりコストパフォーマンスの良いお部屋」
+      //   「駅近でかなり便利な立地です」等の評する言い回しとピックアップ・申込の文が並ぶ（1通目の本文の手本ではない）→ 1通目には渡さない（2通目と同じ）
+      // 1通目の書き方（スタッフが書いた1通目の形と実物）は最後に置く（設計知見「手本が届いていても、最後に置いた指示の言葉が勝つ」）。
+      //   シンプルモード（箇条書きだけ）・探した現状を先に書く型は形が違うので付けない
+      const firstSceneNote = body.simple_mode || situationKind ? "" : "\n\n" + buildFirstSceneNote({
+        isNew: !!body.is_new_arrival || recScenario === "new_listing",
+        vacating: recView.notViewable,
+        name: familyName || "",
+        compare: recScenario === "compare",
+      });
+      const recUserTextFinal = userText + recWinningNote + knowledgeSection + examplesSection + (recStarNote
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + recStarNote
-        : "");
+        : "") + firstSceneNote;
 
       const content = [
         { type: "text", text: recUserTextFinal },
@@ -2615,6 +2646,27 @@ ${SMORA_COMMON_RULES}`;
       ];
 
       message_text = await callClaudeVision(recSystemSpec, content, currentAction, recSystemDynamic || undefined);
+      // ── 2026-10-01 竹内「1通目の言い回しが AI くさい」: 出口（作り直し1回・本文は書き換えない）──
+      //   スタッフの文全体 4,427通で0通の言い回し（使いやすい設備・暮らしやすい作り・〜作りとなっております・〜へもすぐ／出やすい立地・安心の作り・
+      //   新生活のスタート・強み・ならでは・これ以上ない）と、手本の物件名の持ち込みを検査し、当たれば1回だけ作り直す。
+      //   線: scripts/audit-first-message-phrasing.ts（スタッフが書いた1通目 0/33・直した時に足した 0/11 ＝ 誤って作り直しになる数 0）。
+      //   作り直しは動的ブロックの末尾に足すだけ（静的 system のキャッシュは割らない）。残ったら当たりの少ない方を使い、止めはしない（人が読んで送る）
+      if (!body.simple_mode && !situationKind) {
+        const allowed = [extraInputStr, conditionsText ?? "", ...pickupRowsForFacts.map((r) => `${r.property_name ?? ""}\n${r.pdf_text ?? ""}`)].join("\n");
+        const firstHits = (t: string) => [...findFirstAiPhrases(t).map((h) => `「${h.match}」`), ...leakedFirstExampleFacts(t, allowed).map((f) => `手本の「${f}」`)];
+        const hits = firstHits(message_text);
+        if (hits.length > 0) {
+          console.warn(JSON.stringify({ tag: "aix:first-style-retry", conversationId, hits, head: message_text.slice(0, 80) }));
+          const retryNote = `\n\n【🚨 作り直し（前回の出力はスタッフが書かない言い回しだった）】\n前回の出力の ${hits.join("・")} は、スタッフの1通目には1通も無い書き方です。`
+            + `言い換えるのではなく、【この1通目の書き方】の実物と同じ形で最初から書き直す（本文は資料の事実を1〜2文・事実で結ぶ・文の終わりは「！！」）。出力は本文のみ。`;
+          try {
+            const retry = await callClaudeVision(recSystemSpec, content, currentAction, (recSystemDynamic || "") + retryNote);
+            const still = firstHits(retry);
+            if (retry.trim() && still.length < hits.length && !isNotACustomerReply(retry)) message_text = retry;
+            if (still.length > 0) console.warn(JSON.stringify({ tag: "aix:first-style-left", conversationId, hits: still }));
+          } catch (e) { console.warn("[aix] first-style retry failed:", e instanceof Error ? e.message : e); }
+        }
+      }
       // 2026-09-23: 申込の一文の効き具合を**測る**（本文は変えない）。2週間後に audit-recommend-apply-line.ts と併せて見る
       {
         const applyLine = detectRecommendApplyLine(message_text);
@@ -2672,18 +2724,27 @@ ${SMORA_COMMON_RULES}`;
           const tidy = tidyVacatingAndClosing(message_text, recViewable);
           if (tidy.applied.length > 0) { console.log(JSON.stringify({ tag: "aix:recommend-vacating-tidy", conversationId, applied: tidy.applied })); message_text = tidy.text; }
         }
-        // 2026-09-30: 締めを刺さり具合の3つ（内覧誘導／申込誘導／ご査収）に揃える。消すのは「定型だけの最後の段落」だけ・無ければ足す
+        // 2026-09-30 は締めを刺さり具合の3つに揃えて足していた（setRecommendClosing）。
+        // 2026-10-01 竹内「物件オススメ締めの部分 状況的に2通目だけでも大丈夫・構成として」: 1通目は締めの文を落とす（締めは2通目に1回だけ）。
+        //   実送信: AIX の1通目の後に2通目を続けて送った 84%・その1通目の 89% は締め無し（recommend-cta.ts の説明）。事実の文は消さない。
+        //   締めの種類（刺さり具合）は2通目（aix-template-generate）が同じ関数 resolveRecommendCta で決めて置く
         if (recCtaDecision && !body.simple_mode) {
-          const cta = setRecommendClosing(message_text, recCtaDecision.kind);
-          if (cta.applied.length > 0) {
-            console.log(JSON.stringify({ tag: "aix:recommend-cta-closing", conversationId, kind: recCtaDecision.kind, applied: cta.applied }));
-            message_text = cta.text;
+          const rc = removeRecommendClosing(message_text);
+          if (rc.removed.length > 0) {
+            console.log(JSON.stringify({ tag: "aix:recommend-closing-removed", conversationId, kind: recCtaDecision.kind, removed: rc.removed }));
+            message_text = rc.text;
           }
         }
         // 2026-10-01: 資料から退去予定と分かっているのに本文が退去予定に1度も触れていない → 決まった一文を締めの直前に入れる（足すだけ・2通目と同じ関数）
         if (recViewable && !body.simple_mode) {
           const vl = ensureVacatingLine(message_text, recViewable);
           if (vl.added) { console.log(JSON.stringify({ tag: "aix:recommend-vacating-line-added", conversationId, line: recViewable.line })); message_text = vl.text; }
+        }
+        // 2026-10-01 竹内「文末の『。』と『！！』の混在」: 混ざっている時だけ文末の「。」を「！！」に揃える（語は消さない。
+        //   スタッフが書いた1通目 33通で掛かる通 0・「。」で終わる文 0。全部「。」の通・URL・箇条書きの行は触らない）
+        {
+          const ub = unifyBangEnding(message_text);
+          if (ub.changed > 0) { console.log(JSON.stringify({ tag: "aix:first-bang-unified", conversationId, changed: ub.changed })); message_text = ub.text; }
         }
         // 2026-09-21: 冒頭フレームが事実と食い違っていないかを**測る**（テンプレート側と同じ関数）。
         //   ⚠ ここでは本文を書き換えない。比較表現を落とすのは上の fixRecommendClosing の担当で、

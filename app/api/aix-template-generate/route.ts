@@ -72,7 +72,7 @@ import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-30 竹内「2通目の言い回しが AI くさい。実際使っている言い回しが出るように／場面で違う／資料も読み取ったのを渡す」:
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
-import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, type SecondMaterialRow } from "@/app/lib/second-message-scene";
+import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
 import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
@@ -1300,7 +1300,8 @@ export async function POST(req: NextRequest) {
   //   スタッフは1通目を見て2通目を書いており、重複はほぼ0（未来形0.2%／ご査収の重ね3.1%／挨拶の重ね2.0%）。
   //   渡していなかったので、AI は会話履歴だけを頼りに書いて1通目と噛み合わない文を作れてしまっていた。
   // 物件オススメの直後の2通目は、形を second-message-scene が決める → 1通目との関係（重ねない物）だけを渡す
-  const aixChainNote = buildAixChainNote(sentMessage, { recommendScene: actionType === "property_recommendation" });
+  // 2026-10-01: ピックアップの後に推す物件が決まった時も同じ（下で pickupPush が決まったら作り直す）
+  let aixChainNote = buildAixChainNote(sentMessage, { recommendScene: actionType === "property_recommendation" });
   if (aixChainNote) {
     console.log(JSON.stringify({ tag: "aix-template-generate:chain-note", actionType, len: (sentMessage ?? "").length }));
   }
@@ -1346,17 +1347,35 @@ export async function POST(req: NextRequest) {
   // 2026-09-30 竹内「資料もちゃんとよみとった方がよいなら、読みとったのを AIX テンプレートの部分にも渡す」:
   //   1通目の物件に当たる売上サポの行（採点と同じ行）から、資料の現況・駅・築年・敷金礼金・ご希望に合う点を読む（AD・点数は渡さない）
   let materialRow: SecondMaterialRow | null = null;
-  // 物件オススメの直後の2通目か（形は second-message-scene が決める）
-  const isRecSecond = actionType === "property_recommendation" && !!(sentMessage ?? "").trim();
+  // 2026-10-01 竹内さん了承「実送信の形に合わせる」(b): 物件ピックアップ（複数）の直後の2通目も、物件オススメの2通目と同じ形にする。
+  //   推す物件は売上サポで送った行（送った印つき）の並びの先頭（=送った画像の1枚目・👑が先頭）。行が2件以上読めない時は今まで通り
+  let pickupPush: PickupPushRow | null = null;
+  if (actionType === "property_send" && (sentMessage ?? "").trim() && conversationId) {
+    try {
+      const sinceIso = new Date(Date.now() - 2 * 3600_000).toISOString();
+      const { data } = await supabase.from("property_pickups")
+        .select("id, rank, recommended, score, verdict, reason_codes, created_at, image_analysis, property_name, room_no, terms, location, equipment, sent_at")
+        .eq("conversation_id", conversationId).gte("sent_at", sinceIso).order("sent_at", { ascending: false }).limit(20);
+      pickupPush = pickPickupSecondTarget((data ?? []) as PickupPushRow[]);
+      console.log(JSON.stringify({ tag: "aix-template-generate:pickup-push", rows: (data ?? []).length, target: pickupPush ? `${pickupPush.property_name} ${pickupPush.room_no}` : null }));
+    } catch (e) {
+      console.warn("[aix-template-generate] pickup-push failed:", e instanceof Error ? e.message : e);
+    }
+  }
+  const pickupPushLabel = pickupPush?.property_name && pickupPush.room_no ? `${pickupPush.property_name} ${String(pickupPush.room_no).replace(/号室$/, "")}号室` : null;
+  // 物件オススメ（またはピックアップで推す物件が決まった）の直後の2通目か（形は second-message-scene が決める）
+  const isRecSecond = !!(sentMessage ?? "").trim() && (actionType === "property_recommendation" || !!pickupPushLabel);
+  if (pickupPushLabel) aixChainNote = buildAixChainNote(sentMessage, { recommendScene: true });
   // 退去予定（まだご内覧頂けない）: 1通目の本文の退去予定日 → 資料の現況 → ブレインの判断 の順（ブレインの判断は会話全体の物で、別の物件の事がある）
   //   2026-10-01: 1通目（aix/action）と同じ関数 resolveRecommendViewable で決める（判定を2か所に持たない）
   let secondViewable: RecommendViewable = { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom, line: null, source: "brain" };
   let secondNotViewable = recommendState.notViewable;
   let secondViewableFrom: string | null = recommendState.viewableFrom;
-  if (actionType === "property_recommendation") {
+  if (actionType === "property_recommendation" || pickupPushLabel) {
     try {
-      let pickup: PickupLookupRow | null = null;
-      const head = headOfFirstMessage(sentMessage);
+      let pickup: PickupLookupRow | null = pickupPush as PickupLookupRow | null;
+      if (pickupPush) materialRow = pickupPush;
+      const head = pickupPush ? null : headOfFirstMessage(sentMessage);
       if (conversationId && head) {
         const { data } = await supabase.from("property_pickups").select("property_name, room_no, verdict, reason_codes, created_at, terms, location, equipment")
           .eq("conversation_id", conversationId).eq("room_no", head.room).order("created_at", { ascending: false }).limit(20);
@@ -1364,7 +1383,8 @@ export async function POST(req: NextRequest) {
         materialRow = (pickup as SecondMaterialRow | null) ?? null;
       }
       if (isRecSecond) {
-        secondViewable = resolveRecommendViewable({ text: sentMessage, material: materialRow, brain: { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom } });
+        // ピックアップの1通目は複数の物件の宣言なので、退去予定日は推す物件の資料だけから読む
+        secondViewable = resolveRecommendViewable({ text: pickupPush ? null : sentMessage, material: materialRow, brain: { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom } });
         secondNotViewable = secondViewable.notViewable;
         secondViewableFrom = secondViewable.viewableFrom;
       }
@@ -1383,21 +1403,28 @@ export async function POST(req: NextRequest) {
   //   出所は「手本が届いていない」ではなく「最後に置いた指示が実送信の形と逆」だった（見立て・要点を1つ・続きの一言・呼びかけ35%）。
   //   この場面では、1通目用・AIX 全種類の平均から作った指示（buildLengthNote・この種別の書き方・シナリオの演出の指示・段落構成・フレーズ集）を渡さず、
   //   場面の形を1か所（second-message-scene）から渡す（設計知見「同じ事実について書くなと書けを別の場所から渡さない」）
-  const secondPropertyLabel = (() => { const h = headOfFirstMessage(sentMessage); return h ? `${h.name} ${h.room}号室` : null; })();
+  const secondPropertyLabel = pickupPushLabel ?? (() => { const h = headOfFirstMessage(sentMessage); return h ? `${h.name} ${h.room}号室` : null; })();
+  // ピックアップの後は「複数の中で1件」の場面（送ったばかりの複数の資料から推す）
+  // 2026-10-01: 1通目が既に「1件新着で…募集に出ました」と新着を伝えている時は、2通目は新着の宣言も「お送りさせて頂きましたお部屋の中でも」も重ねず、
+  //   1件だけの形（「◯◯ 号室が〜、◯◯さんにかなりオススメ出来るお部屋となります！！」）にする（ローカル生成で新着の1通目の後に比較の書き出しが付いた）
+  const firstDeclaresNew = !pickupPushLabel && /新着/.test(sentMessage ?? "") && /募集に(?:出|で)ました/.test(sentMessage ?? "");
+  const secondScene = pickupPushLabel ? "compare" as const : firstDeclaresNew ? "single" as const : secondSceneOf(recommendationScenario);
+  // 2通目の出口（別の物件の号室が出ていないか）で「1通目の物件」として見る文。ピックアップの後は推す物件だけ
+  const secondFirstForCheck = pickupPushLabel ? `🌟${pickupPushLabel}` : sentMessage;
   const secondMaterialNote = isRecSecond ? buildSecondMaterialNote(materialRow) : "";
   const secondSceneNote = isRecSecond
     ? buildSecondSceneNote({
-        scene: secondSceneOf(recommendationScenario),
+        scene: secondScene,
         vacating: secondNotViewable,
         name: resolvedCustomerName,
         propertyLabel: secondPropertyLabel,
         sentCount: recommendState.sentSource === "brain" ? recommendState.sentPropertyCount : null,
         vacatingLine: secondViewable.line,
-        firstMentionsVacating: mentionsVacating(sentMessage),
+        firstMentionsVacating: pickupPushLabel ? false : mentionsVacating(sentMessage),
       })
     : "";
   if (isRecSecond) {
-    console.log(JSON.stringify({ tag: "aix-template-generate:second-scene", scene: secondSceneOf(recommendationScenario), scenario: recommendationScenario, vacating: secondNotViewable, viewableSource: secondViewable.source, vacatingLine: secondViewable.line, material: !!secondMaterialNote }));
+    console.log(JSON.stringify({ tag: "aix-template-generate:second-scene", scene: secondScene, pickupPush: pickupPushLabel, scenario: recommendationScenario, vacating: secondNotViewable, viewableSource: secondViewable.source, vacatingLine: secondViewable.line, material: !!secondMaterialNote }));
   }
 
   const userPrompt = [
@@ -1425,8 +1452,8 @@ export async function POST(req: NextRequest) {
           viewableFrom: recommendState.viewableFrom,
         })
       : "",
-    // 「物件ピックアップした」の送付文脈（初回 / 継続 / 新着 / 条件広げ）
-    actionType === "property_send"
+    // 「物件ピックアップした」の送付文脈（初回 / 継続 / 新着 / 条件広げ）。推す物件が決まった2通目（isRecSecond）では渡さない（形は second-message-scene）
+    actionType === "property_send" && !isRecSecond
       ? (() => {
           const ctx = resolvePropertySendContext({ pickupType, priorSentPropertyCount });
           return `・送付文脈（この種別の書き方より優先）:\n${PROPERTY_SEND_CONTEXT_GUIDE[ctx]}\n・文脈判定に使った事実: ピックアップ種別=${pickupType ?? "不明"} / 今回より前の物件送付回数=${priorSentPropertyCount}回`;
@@ -1631,7 +1658,7 @@ export async function POST(req: NextRequest) {
         if (!cleaned.trim() || isNotACustomerReply(cleaned)) return "お客様に送る本文ではなく、作業メモや指示の復唱になっている";
         // 別の号室を見るのは物件オススメ（1通目が1件の物件）の時だけ。物件ピックアップは1通目の本文に全部の物件名が出ない
         //   （画像で複数送り、2通目で「お送りした中でも特に◯◯ 302号室が」と1件を推すのが実送信の形＝scripts/audit-second-message-exit.ts で 699組中17組が1通目に無い号室）
-        const foreign = actionType === "property_recommendation" ? foreignRoomsInSecond(cleaned, sentMessage) : [];
+        const foreign = isRecSecond ? foreignRoomsInSecond(cleaned, secondFirstForCheck) : [];
         if (foreign.length > 0) return `1通目に無い物件（${foreign.map((r) => `${r}号室`).join("・")}）の話が入っている`;
         return null;
       };
@@ -1665,7 +1692,7 @@ export async function POST(req: NextRequest) {
     //   線: scripts/audit-second-message-phrasing.ts（365日・実送信の2通目 477組）でこの検査に当たる実送信は 0 ＝ 誤って作り直しになる数 0。
     //   作り直しても残った時は、当たりの少ない方を返して warn を残す（入力欄で人が読んで送る。止めはしない）
     if (isRecSecond) {
-      const allowed = `${sentMessage ?? ""}\n${secondMaterialNote}`;
+      const allowed = `${sentMessage ?? ""}\n${secondMaterialNote}\n${pickupPushLabel ?? ""}`;
       const styleHits = (t: string) => {
         const cost = unfoundedCostClaim(t, materialRow, sentMessage);
         return [...findAiPhrases(t).map((h) => `「${h.match}」`), ...leakedExampleFacts(t, allowed).map((f) => `手本の「${f}」`), ...(cost ? [`「${cost}」（資料では敷金か礼金があるお部屋）`] : [])];
@@ -1685,7 +1712,7 @@ export async function POST(req: NextRequest) {
         const retryText = retry.ok && retry.text ? fixNamePlaceholderAddress(retry.text, resolvedCustomerName).text : "";
         const still = retryText ? styleHits(retryText) : hits;
         if (retryText && still.length < hits.length && !isNotACustomerReply(stripMetaNarration(retryText).text)
-          && foreignRoomsInSecond(retryText, sentMessage).length === 0) {
+          && foreignRoomsInSecond(retryText, secondFirstForCheck).length === 0) {
           text = retryText;
         }
         if (still.length > 0) console.warn(JSON.stringify({ tag: "aix-template-generate:second-style-left", hits: still, head: (retryText || text).slice(0, 80) }));
@@ -1847,7 +1874,8 @@ export async function POST(req: NextRequest) {
         const tidy = tidyVacatingAndClosing(text, secondViewable);
         if (tidy.applied.length > 0) { console.log(JSON.stringify({ tag: "aix-template-generate:second-vacating-tidy", applied: tidy.applied })); text = tidy.text; }
       }
-      if (recCta && !hasClosingKind(sentMessage, recCta.kind)) {
+      // 2026-10-01 竹内さん了承(a): 1通目が同じ締めでも2通目に締めを付ける（実送信: 1通目に締め20組→2通目にも締め17・同じ種類10）
+      if (recCta) {
         const cta = setRecommendClosing(text, recCta.kind);
         if (cta.applied.length > 0) {
           console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta-closing", kind: recCta.kind, applied: cta.applied }));
@@ -1911,7 +1939,7 @@ export async function POST(req: NextRequest) {
 
     // 物件オススメの直後の2通目: 絵文字が1つも無ければ最後の「！！」の直前に 😊（実送信で絵文字なしは 11%・位置は文末が 86%。足すだけ）
     // 2026-10-01: 資料から退去予定と分かっていて、1通目も2通目も退去予定に触れていない → 決まった一文を締めの直前に入れる（足すだけ・1通目と同じ関数）
-    if (isRecSecond && !mentionsVacating(sentMessage)) {
+    if (isRecSecond && (pickupPushLabel || !mentionsVacating(sentMessage))) {
       const vl = ensureVacatingLine(text, secondViewable);
       if (vl.added) { console.log(JSON.stringify({ tag: "aix-template-generate:second-vacating-line-added", line: secondViewable.line })); text = vl.text; }
     }
