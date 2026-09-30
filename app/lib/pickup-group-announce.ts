@@ -91,6 +91,8 @@ export type AnnounceItem = {
   summary_text?: string | null;
   property_name?: string | null;
   room_no?: string | null;
+  /** 2026-09-30 v2.5.42 このお客様に別の回で届けた部屋と同じ（建物名＋号室の完全一致・sent-room-match）。上位には並べない */
+  sent_before?: boolean;
 };
 
 export type AnnounceInput = {
@@ -166,11 +168,12 @@ export function buildAnnouncement(i: AnnounceInput): string {
     if (best) {
       lines.push(LINE);
       const pts = announcePoints(best);
-      lines.push(`👑 一番オススメ${pts ? `（${pts}）` : ""}`);
+      lines.push(`👑 一番オススメ${pts ? `（${pts}）` : ""}${best.sent_before ? "（⚠ この部屋は送付済み）" : ""}`);
       lines.push(...itemLines(best));
     }
     // 上位（👑 を除く・外す候補と送信済み・見送りは出さない）
-    const rest = i.items.filter((it) => it.id !== i.bestId && it.verdict !== "drop" && isOpen(it)).slice(0, topN);
+    // 2026-09-30 v2.5.42 竹内「一度送った物件はお客さんごとに再度送らないようにする」: 送付済みの部屋（別の回で届けた同じ部屋）も上位に並べない
+    const rest = i.items.filter((it) => it.id !== i.bestId && it.verdict !== "drop" && isOpen(it) && !it.sent_before).slice(0, topN);
     if (rest.length) {
       lines.push(LINE);
       rest.forEach((it, k) => {
@@ -187,6 +190,8 @@ export function buildAnnouncement(i: AnnounceInput): string {
   lines.push(LINE);
   const cnt = [`通す ${counts.pass}`, counts.hold ? `保留 ${counts.hold}` : "", counts.drop ? `外す候補 ${counts.drop}` : ""].filter(Boolean).join("・");
   lines.push(`全${i.items.length}件（${cnt}）`);
+  const sentN = i.items.filter((it) => it.sent_before && isOpen(it)).length;
+  if (sentN > 0) lines.push(`（送付済みの部屋 ${sentN}件は並べていません）`);
   for (const n of (i.watchNotes ?? []).slice(0, 3)) if (n) lines.push(n);
   if (i.link) {
     lines.push("▶ AIXツールで見る");

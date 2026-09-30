@@ -770,6 +770,16 @@
     processNext(0);
   }
 
+  // ── 次ページボタンがあるか（押さない）: 上限ちょうどで選び終えた時、次のページがある時だけ「上限で打ち切った」と記録する ──
+  function clickNextPageAvailable() {
+    var btn = Array.from(document.querySelectorAll("button,a[href]")).find(function (b) {
+      if (b.tagName === "BUTTON" && b.disabled) return false;
+      var t = b.textContent.trim();
+      return t === "次へ" || t === "次のページ" || t === ">" || t === "›" || t === "→";
+    });
+    return !!btn;
+  }
+
   // ── 次ページボタンをクリック ─────────────────────────────────────────────
   function clickNextPage() {
     var btns = Array.from(document.querySelectorAll("button,a[href]"));
@@ -797,6 +807,8 @@
     var base = _itAuditRes || { pages: 0, read_rows: 0, sent_count: 0 };
     var r = { site: "itandi", pages: base.pages, read_rows: base.read_rows, sendable_rows: null, sent_count: base.sent_count, zero_reason: null, url: String(location.href || "").slice(0, 300) };
     if (base.sent_skipped) r.sent_skipped = base.sent_skipped; // 2026-09-29 v2.5.41 送付済みの部屋として選ばなかった数
+    // 2026-09-30 v2.5.42 選んだ部屋（見張りが送付済みの部屋を選んでいないか確かめる）
+    if (base.picked_rooms && base.picked_rooms.length) r.picked_rooms = base.picked_rooms.slice(0, 150);
     try {
       var A = self.AxlxSearchAudit;
       if (A && document.body) {
@@ -833,14 +845,56 @@
       return;
     }
     _autoSendInProgress = true;
+    _itManualRun = !!_manual;
+    _itPicked = 0;
+    _itRowCut = false;
     var _totalSentCount = 0; // 全ページ合計送信件数（axlx-batch-customer-done に渡す）
     _itAuditRes = { pages: 0, read_rows: 0, sent_count: 0 };
     getCustomerFromPopup(function(customerName, customerId, customerConditions) {
+      // 2026-09-30 v2.5.42 竹内「ITANDI で条件指定ちゃんとできていなければ件数多すぎるバグ…」:
+      //   1ページ目の資料を1件も開く前に、行（家賃・間取り・所在地）と件数の文字を background に見せる（itandi-guard.js）。
+      //   一括の回で「条件が効いていない形」なら資料を取りに行かずに止め、background が1回だけ入れ直す（手動の送信は見ない）
+      _itPrecheck(customerId, _manual, function (pre) {
+        if (pre && pre.action === "stop") {
+          _autoSendInProgress = false;
+          _pendingAutoSendDispatched = false;
+          tracked.forEach(function (t) { t.cb.checked = false; });
+          checkedKeys.clear();
+          updateBar();
+          _itAuditRes = { pages: 1, read_rows: tracked.length, sent_count: 0 };
+          console.warn("[AXLX itandi] 条件が効いていない形 → 資料をダウンロードせずに止める: " + ((pre.guard && pre.guard.reasons) || []).join("・"));
+          try {
+            chrome.runtime.sendMessage(
+              { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: null, audit: _itAuditResult({ guard: pre.guard || null, guard_stopped: true }) },
+              function () { void chrome.runtime.lastError; }
+            );
+          } catch (_) {}
+          return;
+        }
+        _runAllPages(customerName, customerId, customerConditions);
+      });
+    });
+    function _runAllPages(customerName, customerId, customerConditions) {
       _autoSendOnePage(customerName, customerId, customerConditions, function done(ok, count) {
         if (ok && count) _totalSentCount += count;
         if (_itAuditRes) _itAuditRes.sent_count = _totalSentCount;
+        // 2026-09-30 v2.5.42 竹内「ITANDI も一回での上限を作る。物件数で」: 1回で選ぶ物件の数の上限（itandi-guard.js MAX_ROWS）。手動の送信は今までどおり
+        if (!_manual && (_itRowCut || (_G() && _itPicked >= _G().MAX_ROWS && clickNextPageAvailable()))) {
+          _autoSendInProgress = false;
+          _pendingAutoSendDispatched = false;
+          var _rowMax = _G() ? _G().MAX_ROWS : null;
+          console.log("[AXLX itandi] 1回の物件数の上限（" + _rowMax + "件）→ 次へ totalSent=" + _totalSentCount);
+          try {
+            chrome.runtime.sendMessage(
+              { type: "axlx-batch-customer-done", customerId: customerId, propertyCount: _totalSentCount, audit: _itAuditResult({ row_limit: _rowMax }) },
+              function () { void chrome.runtime.lastError; }
+            );
+          } catch (_) {}
+          return;
+        }
         // 2026-09-27 竹内「ITANDI もおねがい」: 自動便はページ数に上限（午後の便 1・午前の便 3＝リアプロと同じ）。手動・他の一括は今までどおり全ページ
-        var _itLimit = _AR() ? _AR().pageLimit(_autoRunFor(customerId), null) : null;
+        // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 一括の回（自動便の指定が無い web_brain 等）も既定の上限（auto-run.js DEFAULT_MAX_PAGES）
+        var _itLimit = _AR() ? _AR().pageLimit(_autoRunFor(customerId), _AR().DEFAULT_MAX_PAGES || null) : null;
         if (_itLimit && _itAuditRes && _itAuditRes.pages >= _itLimit && !_manual) {
           _autoSendInProgress = false;
           _pendingAutoSendDispatched = false;
@@ -887,6 +941,50 @@
           }, 1200 + Math.floor(Math.random() * 1600));
         }, 600 + Math.floor(Math.random() * 1000));
       });
+    }
+  }
+
+  // ── 2026-09-30 v2.5.42 ITANDI の1回の上限（物件数）・条件が効いていない検索の見分け（chrome-extension/itandi-guard.js）──
+  function _G() { return (typeof self !== "undefined" ? self : window).AxlxItandiGuard || null; }
+  var _itManualRun = false;
+  var _itPicked = 0;      // この回で選んだ（資料を取りに行った）物件の数
+  var _itRowCut = false;  // 上限で選ばなかった行があった
+  var _IT_PRECHECK_WAIT_MS = 4000; // background の答えの期限（来なければ今まで通り進む）
+  /** 1ページ目の行と件数を background に見せ、止めるか聞く。手動の送信・一括でない回・答えが無い時は進む */
+  function _itPrecheck(customerId, manual, cb) {
+    var G = _G();
+    if (manual || !G || !tracked.length) { cb({ action: "proceed" }); return; }
+    var rows = [];
+    try {
+      tracked.slice(0, 40).forEach(function (t) {
+        var info = extractPropertyInfo(t.btn) || {};
+        rows.push({ rentYen: info.rentYen != null ? info.rentYen : null, layout: info.layout || null, address: info.address || null, name: info.name || null, room: info.room || null });
+      });
+    } catch (_) {}
+    var count = null;
+    try { count = G.readCount(String((document.body && document.body.innerText) || "").slice(0, 30000)); } catch (_) {}
+    var answered = false;
+    var timer = setTimeout(function () { if (answered) return; answered = true; cb({ action: "proceed", why: "no_answer" }); }, _IT_PRECHECK_WAIT_MS);
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-itandi-precheck", customerId: customerId || null, rows: rows, count: count, rows_total: tracked.length }, function (resp) {
+        void chrome.runtime.lastError;
+        if (answered) return;
+        answered = true;
+        clearTimeout(timer);
+        cb(resp && resp.action ? resp : { action: "proceed" });
+      });
+    } catch (_) {
+      if (!answered) { answered = true; clearTimeout(timer); cb({ action: "proceed" }); }
+    }
+  }
+  /** 選んだ部屋（建物名＋号室）を点検に残す（見張りが送付済みの部屋を選んでいないか確かめる・150件まで） */
+  function _itRememberPicked(targets) {
+    if (!_itAuditRes) return;
+    var list = _itAuditRes.picked_rooms || (_itAuditRes.picked_rooms = []);
+    targets.forEach(function (t) {
+      if (list.length >= 150) return;
+      var info = extractPropertyInfo(t.btn) || {};
+      if (info.name && info.name !== "物件") list.push({ n: String(info.name).slice(0, 60), r: info.room ? String(info.room).slice(0, 12) : null });
     });
   }
 
@@ -929,8 +1027,21 @@
     var _pageSkipped = _applySentSkipIt(customerId);
     if (_itAuditRes) _itAuditRes.sent_skipped = (_itAuditRes.sent_skipped || 0) + _pageSkipped;
     _itPageSkipped = _pageSkipped;
+    // 2026-09-30 v2.5.42 1回の物件数の上限（手動の送信は見ない）: 上限を超えた行は選ばない（資料を開かない）
+    var G = _G();
+    if (G && !_itManualRun) {
+      var _checkedNow = tracked.filter(function (t) { return t.cb.checked; });
+      var _allow = G.capForPage(_itPicked, _checkedNow.length, G.MAX_ROWS);
+      if (_allow < _checkedNow.length) {
+        _checkedNow.slice(_allow).forEach(function (t) { t.cb.checked = false; checkedKeys.delete(t.rowKey); });
+        _itRowCut = true;
+        console.log("[AXLX itandi] 1回の物件数の上限 " + G.MAX_ROWS + "件 → このページは " + _allow + "件だけ選ぶ（" + (_checkedNow.length - _allow) + "件は選ばない）");
+      }
+    }
     updateBar();
     var targets = tracked.filter(function(t) { return t.cb.checked; });
+    _itPicked += targets.length;
+    _itRememberPicked(targets);
     if (_itAuditRes) { _itAuditRes.pages += 1; _itAuditRes.read_rows += targets.length; } // 検索の点検: ページ数・読んだ行数
     if (!targets.length) { onComplete(true); return; }
     var lineBtn = document.getElementById("axlx-itandi-line-btn");

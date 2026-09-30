@@ -160,13 +160,20 @@ export function selectAutoSearchTargets(
  *   → リアプロの**既定が更新順**。拡張は sort="updated" の時だけ並び替えを**既定へ戻す**（前の検索の値が残る画面のため）。
  * 2026-09-19 竹内「17:00の検索はピンポイント検索で一括で行うようにする」→ is_wide=false・1コマンドにまとめる
  */
+/**
+ * 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 自動便（午前・午後）・AIXツールの一括検索・広げての回の1回のページの上限（リアプロ・ITANDI とも）。
+ *   拡張の既定（chrome-extension/auto-run.js DEFAULT_MAX_PAGES）と同じ値（テストで固定）。午後の便は更新日1日以内で絞っているので、
+ *   5ページあれば当日の新着を切らない（旧 1ページは v2.5.41 の点検で cut_by_pages＝残りのページの新着を見ていない、が出ていた）
+ */
+export const SEARCH_MAX_PAGES = 5;
+
 export const PM_LATEST = {
   /** 本日の更新日付＝更新日「1日以内」で絞る */
   rpUpdateDays: 1,
   /** 並び替えを既定（＝更新順）に戻す */
   sort: "updated" as const,
-  /** 1ページだけ（3ページまで行かない） */
-  maxPages: 1,
+  /** 2026-09-30 v2.5.42 1ページ → 5ページ（更新日1日以内の中を最後まで見る・上限は SEARCH_MAX_PAGES） */
+  maxPages: SEARCH_MAX_PAGES,
   /** ピンポイント検索（条件を広げない） */
   isWide: false,
 };
@@ -178,7 +185,8 @@ export const PM_LATEST = {
  */
 export const AM_DAILY = {
   sort: "ad" as const,
-  maxPages: 3,
+  /** 2026-09-30 v2.5.42 3 → 5ページ（SEARCH_MAX_PAGES） */
+  maxPages: SEARCH_MAX_PAGES,
   isWide: true,
 };
 

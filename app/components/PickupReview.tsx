@@ -9,7 +9,7 @@ import { bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/
 // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」「物件名に号室もいれる」「AD は物件名の横にもスタンプで」（純関数・import なし）
 import { nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel, type ImageChip } from "@/app/lib/pickup-listing-text";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
-import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage, dealConfirmMessage } from "@/app/lib/pickup-review-order";
+import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage, dealConfirmMessage, sentBeforeIds, sentConfirmMessage } from "@/app/lib/pickup-review-order";
 import { isFirstProposalRound } from "@/app/lib/pickup-ad-priority";
 // 2026-09-27 竹内「ここは合わせる」: 画像の点を判定の点に足す（画像の加点・判定と同じ希望は数えない・純関数）
 import { imageBonusOf, signedPoints, IMAGE_BONUS_MAX, IMAGE_BONUS_MIN, type ImageAnalysisForBonus } from "@/app/lib/pickup-image-bonus";
@@ -446,7 +446,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
         // 既定のチェック: 未確認のうち「外す候補」以外を、まとめの回ごとに点の高い順（👑 を先頭）で AIX に渡せる10件まで
         // 2026-09-26 竹内のスクショ「AIX物件ピックアップ（20件）」: 旧は外す候補以外を全部チェック＝20件で、押すと「10件までに」で止まっていた
         // 2026-09-28 審査中・商談中は付けない・新規のお客様の回は AD の高い物件を優先（pickup-review-order・pickup-ad-priority）
-        setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null, PICKUP_AIX_MAX, { firstProposalSentAt: json.customer.first_proposal_sent_at }));
+        // 2026-09-30 v2.5.42 送付済みの部屋（別の回で届けた同じ部屋・建物名＋号室の完全一致）は既定のチェックに入れない
+        setChecked(defaultAixChecks(toRounds(json.customer.batches), json.customer.best?.id ?? null, PICKUP_AIX_MAX, { firstProposalSentAt: json.customer.first_proposal_sent_at, sentHistory: json.customer.sent_history ?? null }));
       }
       return json.customer;
     } catch (e) {
@@ -716,21 +717,24 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   const [bulkProgress, setBulkProgress] = useState<WebBrainProgress | null>(null);
   const pickedIds = useMemo(() => Object.keys(picked).filter((k) => picked[k]), [picked]);
   const togglePicked = (pcid: string) => setPicked((p) => ({ ...p, [pcid]: !p[pcid] }));
-  const startBulk = async (site: WebBrainSite) => {
-    const block = webBrainBlockReason(pickedIds.length, site);
+  // 2026-09-30 v2.5.42 竹内「リアプロと itandi、お客さんそれぞれ同時に完了するようにする」: 「リアプロ＋itandi」は1人1コマンドに両方（拡張が1人ずつ両サイトを終えてから次の人へ）
+  const startBulk = async (siteArg: WebBrainSite | WebBrainSite[]) => {
+    const sites = Array.isArray(siteArg) ? siteArg : [siteArg];
+    const site = sites[0];
+    const block = webBrainBlockReason(pickedIds.length, sites);
     if (block) { setBulkMsg(`⚠️ ${block}`); return; }
     setBulkBusy(true);
     setBulkMsg("");
     try {
       const res = await fetch("/api/automation/trigger", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customer_ids: pickedIds, sites: [site], is_wide: bulkWide, brain: true }),
+        body: JSON.stringify({ customer_ids: pickedIds, sites, is_wide: bulkWide, brain: true }),
       });
       const json = await res.json() as { ok?: boolean; error?: string; queued?: number; already?: number; missing?: number; commandIds?: string[] };
       if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
       // 拡張（このパソコンがブレインなら）に「すぐ拾って」。ほかのブレインの PC は30秒ごとの見回りで拾う
       try { window.postMessage({ from: "aixlinx-webapp-poll-now" }, "*"); } catch { /* 拡張が無い端末（スマホ）は見回りに任せる */ }
-      const siteJa = site === "itandi" ? "itandi" : site === "reins" ? "レインズ（条件を入れるだけ）" : "リアプロ";
+      const siteJa = sites.length > 1 ? "リアプロ＋itandi（1人ずつ両方を終えてから次の人へ）" : site === "itandi" ? "itandi" : site === "reins" ? "レインズ（条件を入れるだけ）" : "リアプロ";
       setBulkMsg(`🧠 ${siteJa}・${bulkWide ? "広げて" : "ピンポイント"}で ${json.queued ?? 0}人を積みました${json.already ? `（${json.already}人はもう積んであります）` : ""}${json.missing ? `（${json.missing}人は見つかりません）` : ""}`);
       setPicked({});
       if (json.commandIds?.length) setBulkRun({ ids: json.commandIds, sinceMs: Date.now() });
@@ -1036,6 +1040,9 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     //   2026-09-29 反証: 前は「💾 画像保存」の方に付いていて、AIX に渡すボタンでは確かめていなかった
     const dealMsg = dealConfirmMessage(targets);
     if (dealMsg && typeof window !== "undefined" && !window.confirm(dealMsg)) return;
+    // 2026-09-30 v2.5.42 竹内「一度送った物件はお客さんごとに再度送らないようにする」: 送付済みの部屋（完全一致）・送信済みの印の行を手で選んだ時は確かめる（OK なら意図した送り直し）
+    const sentMsg = sentConfirmMessage(targets, c.sent_history ?? null);
+    if (sentMsg && typeof window !== "undefined" && !window.confirm(sentMsg)) return;
     const noImage = targets.filter((it) => !it.trim_image_url);
     if (noImage.length > 0 && !(await trim(b, noImage))) return;
     // 2026-09-25: 1件＝AIX【物件オススメ】（資料をセット）・2件以上＝AIX【物件ピックアップした】（画像を並べてセット）
@@ -1531,14 +1538,14 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                     {(() => {
                       const bid = open.best && bb.batch.items.some((x) => x.id === open.best?.id) ? open.best.id : null;
                       // 2026-09-28 新規のお客様の回（まだ物件をお送りしていない）は AD の高い物件を優先・審査中/商談中は選ばない
-                      const q = pickQualityTop(bb.batch.items, bid, PICKUP_AIX_MAX, { firstProposal: isFirstProposalRound(bb.batch.created_at, open.first_proposal_sent_at) });
+                      const q = pickQualityTop(bb.batch.items, bid, PICKUP_AIX_MAX, { firstProposal: isFirstProposalRound(bb.batch.created_at, open.first_proposal_sent_at), sentBefore: sentBeforeIds(bb.batch.items, open.sent_history ?? null) });
                       const sel = bb.batch.items.filter((it) => checked[it.id] && isPickupCheckable(it.status)).length;
                       return (
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[10px] text-[#607d8b] leading-snug">{sel}件を選択中{q.ngExcluded ? `・NG 条件・保留の物件 ${q.ngExcluded}件は選びません` : ""}{q.dealExcluded ? `・審査中/商談中 ${q.dealExcluded}件は選びません` : ""}{q.firstProposal ? `・新規のお客様: AD2以上を優先${q.adExcluded ? `（AD1 など ${q.adExcluded}件を外す）` : ""}` : ""}</span>
                           <button type="button" disabled={!!busy || q.ids.length === 0 || batchExpired(bb.batch)}
                             title="未送信で NG 条件（保留・外す候補の理由）に当たらない物件を、合計（判定の点＋画像の点）の高い順に10件まで選ぶ。10件に足りなくても NG の物件では埋めない。資料の現況が審査中・商談中の部屋は選ばない。新規のお客様（まだ物件をお送りしていない）は AD2以上 → AD1.5 → （AD2以上が8件未満の時だけ）AD1 の順"
-                            onClick={() => { const pick = new Set(q.ids); setChecked((p) => { const n = { ...p }; for (const it of bb.batch.items) n[it.id] = pick.has(it.id); return n; }); setMsg(qualityPickMessage(q.ids.length, q.ngExcluded, PICKUP_AIX_MAX, { dealExcluded: q.dealExcluded, adExcluded: q.adExcluded })); }}
+                            onClick={() => { const pick = new Set(q.ids); setChecked((p) => { const n = { ...p }; for (const it of bb.batch.items) n[it.id] = pick.has(it.id); return n; }); setMsg(qualityPickMessage(q.ids.length, q.ngExcluded, PICKUP_AIX_MAX, { dealExcluded: q.dealExcluded, adExcluded: q.adExcluded, sentExcluded: q.sentExcluded })); }}
                             className="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-full" style={{ background: "#ede7f6", color: "#4527a0", opacity: busy || q.ids.length === 0 || batchExpired(bb.batch) ? 0.4 : 1 }}>
                             {q.ids.length ? qualityPickLabel(q.ids.length) : "✨ 質の高い物件なし（NG 条件）"}</button>
                         </div>
@@ -1858,7 +1865,17 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                   ))}
                 </div>
               </div>
-              <div className="mt-2 flex gap-1.5">
+              {(() => {
+                const both: WebBrainSite[] = ["realnetpro", "itandi"];
+                const blockBoth = webBrainBlockReason(pickedIds.length, both);
+                return (
+                  <button type="button" disabled={bulkBusy || !!blockBoth} onClick={() => void startBulk(both)} title={blockBoth ?? "1人ずつ リアプロ → itandi を終えてから次のお客様へ（分析もお客様ごとに1回）"}
+                    className="mt-2 w-full rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-40" style={{ background: "linear-gradient(90deg,#1565C0,#00897b)" }}>
+                    {bulkBusy ? "…" : "🏠📋 リアプロ＋itandi"}<span className="block text-[9px] font-normal leading-tight">1人ずつ両方を終えてから次のお客様へ</span>
+                  </button>
+                );
+              })()}
+              <div className="mt-1.5 flex gap-1.5">
                 {([["realnetpro", "🏠 リアプロ"], ["itandi", "📋 itandi"], ["reins", "🔍 レインズ"]] as const).map(([site, label]) => {
                   const block = webBrainBlockReason(pickedIds.length, site);
                   return (

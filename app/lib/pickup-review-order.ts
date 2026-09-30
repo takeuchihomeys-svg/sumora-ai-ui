@@ -13,6 +13,9 @@ import { compareOverall } from "./pickup-best";
 // 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックのところに入れない」「新規のお客さんは AD1 を入れない・AD2 以上を優先」（純関数）
 import { listingDealStatus } from "./listing-deal-status";
 import { selectByAdPriority, isFirstProposalRound } from "./pickup-ad-priority";
+// 2026-09-30 v2.5.42 竹内「一度送った物件はお客さんごとに再度送らないようにする」: 拡張の sent-skip と同じ完全一致（建物名＋号室）
+import { buildSentRoomIndex, pickSentRooms } from "./sent-room-match";
+import { isCustomerRow } from "./sent-delivery";
 
 /** 2026-09-27 判定・画像で分析の点・回の時刻（あれば）も並びに使う（pickup-best.compareOverall） */
 export type ReviewOrderRow = { id: number; rank: number; recommended: number; score: number | null; verdict?: string | null; created_at?: string | null; reason_codes?: string[] | null; image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null };
@@ -40,6 +43,8 @@ export function sortForReview<T extends ReviewOrderRow>(items: ReadonlyArray<T>,
 // ── AIX に渡す物件のチェック（2026-09-26）。page.tsx が import する pickup-aix-handoff に判定の部品を持ち込まないよう、並びの隣に置く ──
 /** AIX に渡せる候補の行（未確認・外す候補でない・72時間切れでない） */
 export type AixPickRow = { id: number; rank: number; recommended: number; score: number | null; status: string; verdict: string | null; expired?: boolean; reason_codes?: string[] | null;
+  /** 2026-09-30 v2.5.42 送付済みの部屋の照合（建物名＋号室の完全一致） */
+  property_name?: string | null; room_no?: string | null; room_text?: string | null;
   /** 2026-09-28 資料の現況の申込の状況（審査中・商談中）。詳細 API が pdf_text から読んだ値。無ければ terms.evidence.moveIn から読む */
   deal_status?: string | null; terms?: { evidence?: { moveIn?: string | null } | null } | null };
 const aixCandidate = (r: AixPickRow) => r.status === "pending" && r.verdict !== "drop" && !r.expired;
@@ -93,17 +98,48 @@ export function pickTopForAix<T extends AixPickRow>(items: ReadonlyArray<T>, bes
  *     → opts.firstProposal（まだ物件を1件もお送りしていないお客様の回）の時だけ、点の並びの後に AD の段で選ぶ（pickup-ad-priority.selectByAdPriority）。
  *       adExcluded＝点の順だけなら入っていたのに AD の段で外れた数。お送りした後の回（新着）は今まで通り点の順
  */
-export type QualityPick = { ids: number[]; ngExcluded: number; dealExcluded: number; adExcluded: number; firstProposal: boolean };
-export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposal?: boolean } = {}): QualityPick {
-  const base = items.filter((r) => r.status === "pending" && !r.expired);
+/** 送った記録（詳細 API の sent_history の1行・pickup-sent-badge と同じ出所） */
+export type SentHistLite = { property_name: string | null; room_no: string | null; delivery?: string | null; source?: string | null; channel?: string | null; sent_at?: string | null };
+
+/**
+ * 2026-09-30 v2.5.42 竹内「画面監視して、一度送った物件はお客さんごとに再度送らないようにする形で」:
+ *   そのお客様に**届けた**（★物件出し★への共有は除く）部屋と、建物名＋号室が完全に同じ行（拡張 sent-skip.js と同じ線・sent-room-match）。
+ *   同じ建物の別の部屋・号室の読めない行は入れない（迷ったら外さない）。status=sent の行（この売上サポから送った印）は元から別扱い
+ */
+export function sentBeforeIds<T extends Pick<AixPickRow, "id" | "status" | "property_name" | "room_no" | "room_text">>(items: ReadonlyArray<T>, history: ReadonlyArray<SentHistLite> | null | undefined): Set<number> {
+  const rows = (history ?? []).filter((h) => h && isCustomerRow({ delivery: h.delivery ?? null, source: h.source ?? null } as never));
+  if (!rows.length) return new Set();
+  const idx = buildSentRoomIndex(rows);
+  return new Set(pickSentRooms(items.filter((it) => it.status !== "sent"), idx).map((it) => it.id));
+}
+
+/**
+ * 手で選んだ行に送付済みの部屋（完全一致）か送信済みの印の行があれば、AIX に渡す前に確かめる文（無ければ null）。
+ *   スタッフが意図して送り直す時は「OK」で送れる（止めるのは既定の選び方だけ）
+ */
+export function sentConfirmMessage<T extends Pick<AixPickRow, "id" | "status" | "property_name" | "room_no" | "room_text">>(rows: ReadonlyArray<T>, history: ReadonlyArray<SentHistLite> | null | undefined): string | null {
+  const before = sentBeforeIds(rows, history);
+  const hit = rows.filter((r) => before.has(r.id) || r.status === "sent");
+  if (!hit.length) return null;
+  const names = hit.slice(0, 5).map((r) => `${r.property_name ?? ""}${(r.room_no ?? r.room_text) ? ` ${r.room_no ?? r.room_text}` : ""}`).join("、");
+  return `このお客様に送付済みの部屋が${hit.length}件入っています（${names}${hit.length > 5 ? " ほか" : ""}）。もう一度送りますか？`;
+}
+
+export type QualityPick = { ids: number[]; ngExcluded: number; dealExcluded: number; adExcluded: number; firstProposal: boolean; sentExcluded?: number };
+export function pickQualityTop<T extends AixPickRow>(items: ReadonlyArray<T>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposal?: boolean; sentBefore?: ReadonlySet<number> | null } = {}): QualityPick {
+  // 2026-09-30 v2.5.42 送付済みの部屋（別の回で届けた同じ部屋）は既定の候補に入れない
+  const sentSet = opts.sentBefore ?? null;
+  const all = items.filter((r) => r.status === "pending" && !r.expired);
+  const base = sentSet && sentSet.size ? all.filter((r) => !sentSet.has(r.id)) : all;
+  const sentExcluded = all.length - base.length;
   const isNg = (r: T) => r.verdict === "drop" || r.verdict === "hold" || ngHitCodes(r.reason_codes).length > 0;
   const notNg = base.filter((r) => !isNg(r));
   const ok = notNg.filter((r) => !dealStatusOf(r));
   const sorted = sortForReview(ok, bestId ?? null);
   const firstProposal = !!opts.firstProposal;
-  if (!firstProposal) return { ids: sorted.slice(0, max).map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: 0, firstProposal };
+  if (!firstProposal) return { ids: sorted.slice(0, max).map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: 0, firstProposal, sentExcluded };
   const sel = selectByAdPriority(sorted, max);
-  return { ids: sel.picked.map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: sel.adSkipped.length, firstProposal };
+  return { ids: sel.picked.map((r) => r.id), ngExcluded: base.length - notNg.length, dealExcluded: notNg.length - ok.length, adExcluded: sel.adSkipped.length, firstProposal, sentExcluded };
 }
 
 /** ボタンの文字（「✨ 質の高い10件を選ぶ」・10件に足りない時は「✨ 質の高い9件を選ぶ」） */
@@ -112,12 +148,13 @@ export function qualityPickLabel(n: number): string {
 }
 
 /** 選んだ後の知らせ（「✨ 質の高い9件を選びました（NG 条件・保留の物件は選びません・3件）」） */
-export function qualityPickMessage(picked: number, ngExcluded: number, max = PICKUP_AIX_MAX, extra: { dealExcluded?: number; adExcluded?: number } = {}): string {
+export function qualityPickMessage(picked: number, ngExcluded: number, max = PICKUP_AIX_MAX, extra: { dealExcluded?: number; adExcluded?: number; sentExcluded?: number } = {}): string {
   const ng = ngExcluded > 0 ? `NG 条件・保留の物件は選びません・${ngExcluded}件` : "";
   // 2026-09-28 審査中・商談中／新規のお客様の AD の段
   const deal = (extra.dealExcluded ?? 0) > 0 ? `審査中・商談中は選びません・${extra.dealExcluded}件` : "";
   const ad = (extra.adExcluded ?? 0) > 0 ? `新規のお客様は AD の高い物件を優先・AD1 など${extra.adExcluded}件を外しました` : "";
-  const why = [ng, deal, ad].filter(Boolean).join("・");
+  const sent = (extra.sentExcluded ?? 0) > 0 ? `送付済みの部屋は選びません・${extra.sentExcluded}件` : "";
+  const why = [ng, deal, ad, sent].filter(Boolean).join("・");
   const short = picked < max ? `${max}件に足りません` : "";
   const tail = [short, why].filter(Boolean).join("・");
   return picked === 0
@@ -133,11 +170,12 @@ export function qualityPickMessage(picked: number, ngExcluded: number, max = PIC
  * 2026-09-28 opts.firstProposalSentAt: お客様へ一番最初に物件をお送りした時刻（null＝まだ・undefined＝分からない）。
  *   回（created_at）がそれより前なら「新規のお客様の回」＝AD の段で選ぶ（pickup-ad-priority.isFirstProposalRound）
  */
-export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T>; created_at?: string | null }>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposalSentAt?: string | null } = {}): Record<number, boolean> {
+export function defaultAixChecks<T extends AixPickRow>(rounds: ReadonlyArray<{ items: ReadonlyArray<T>; created_at?: string | null }>, bestId?: number | null, max = PICKUP_AIX_MAX, opts: { firstProposalSentAt?: string | null; sentHistory?: ReadonlyArray<SentHistLite> | null } = {}): Record<number, boolean> {
   const out: Record<number, boolean> = {};
   for (const r of rounds) {
     const firstProposal = isFirstProposalRound(r.created_at, opts.firstProposalSentAt);
-    const top = new Set(pickQualityTop(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max, { firstProposal }).ids);
+    const sentBefore = opts.sentHistory ? sentBeforeIds(r.items, opts.sentHistory) : null;
+    const top = new Set(pickQualityTop(r.items, r.items.some((x) => x.id === bestId) ? bestId : null, max, { firstProposal, sentBefore }).ids);
     for (const it of r.items) out[it.id] = top.has(it.id);
   }
   return out;

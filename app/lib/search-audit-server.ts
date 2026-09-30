@@ -8,7 +8,7 @@ import { supabase } from "@/app/lib/supabase";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import { DEEPSEEK_FLASH_MODEL } from "@/app/lib/llm-alt-provider";
 import {
-  runSearchAuditChecks, needsDiagnosis, causeTitle, normalizeSite, versionGte, auditHeadline, parseMan,
+  runSearchAuditChecks, needsDiagnosis, causeTitle, normalizeSite, versionGte, auditHeadline, parseMan, sentSelectedOf, itandiGuardWeekly,
   type AuditCheck, type AuditInput, type AuditSeverity,
 } from "@/app/lib/search-audit-check";
 import { diagnoseSearchAudit, SEARCH_AUDIT_ACTION, type SearchAuditDiagnosis } from "@/app/lib/search-audit-diagnose";
@@ -162,7 +162,7 @@ export async function bumpCauses(keys: string[], runId: string, site: string | n
   return { ok, errors };
 }
 
-function toAuditInput(row: Partial<SearchAuditRow>, extra: Pick<AuditInput, "command_payload" | "last_search_at"> = {}): AuditInput {
+function toAuditInput(row: Partial<SearchAuditRow>, extra: Pick<AuditInput, "command_payload" | "last_search_at" | "sent_rooms" | "downloaded_rooms"> = {}): AuditInput {
   return {
     ...extra, customer_id: row.property_customer_id ?? null,
     site: row.site ?? null, status: row.status ?? null, trigger: row.trigger ?? null, is_wide: row.is_wide ?? null, area_mode: row.area_mode ?? null,
@@ -173,6 +173,35 @@ function toAuditInput(row: Partial<SearchAuditRow>, extra: Pick<AuditInput, "com
     result: (row.result ?? null) as AuditInput["result"],
     error: row.error ?? null, error_kind: row.error_kind ?? null, created_at: row.created_at ?? null,
   };
+}
+
+/**
+ * 2026-09-30 v2.5.42 竹内「画面見るところで、前に共有した物件はダウンロードされないようになっているのか読み取って」「一度送った物件はお客さんごとに再度送らない」:
+ *   回の終わり（C3）に、この回より前にそのお客様へ送付済みの部屋（sent_properties・/api/automation/sent-rooms と同じ出所）と、
+ *   この回でダウンロードした部屋（property_candidate_pools＝資料を取りに行った候補）を読んで点検に渡す（SENT_SELECTED）。
+ *   スタッフモードの回（スタッフが選んで送る＝飛ばさない決まり）・レインズ・お客様の分からない回は見ない。読めない時は何も言わない
+ */
+export async function sentContextFor(row: Partial<SearchAuditRow>): Promise<Pick<AuditInput, "sent_rooms" | "downloaded_rooms">> {
+  try {
+    const pcid = row.property_customer_id;
+    const site = row.site;
+    if (!pcid || (site !== "realpro" && site !== "itandi") || row.mode === "brain_staff") return {};
+    const startIso = row.created_at ?? new Date().toISOString();
+    const { sentRoomsFor } = await import("@/app/lib/sent-rooms-server");
+    const sr = await sentRoomsFor(supabase as never, pcid, { beforeIso: startIso });
+    if (sr.error || !sr.rooms.length) return {};
+    const { roomOfCandidate } = await import("@/app/lib/sent-room-match");
+    const pools = await supabase.from("property_candidate_pools").select("site, candidates, sent_at").eq("property_customer_id", pcid)
+      .gte("sent_at", new Date(Date.parse(startIso) - 60_000).toISOString()).order("sent_at").order("id").limit(80);
+    const downloaded: Array<{ name: string | null; room: string | null }> = [];
+    if (!pools.error) {
+      for (const p of (pools.data ?? []) as Array<{ site: string | null; candidates: Array<{ name?: string | null; room_no?: string | null; cells?: string[] | null }> | null }>) {
+        if ((normalizeSite(p.site) ?? p.site) !== site) continue;
+        for (const c of p.candidates ?? []) { const x = roomOfCandidate(c); if (x.name && x.room) downloaded.push(x); }
+      }
+    }
+    return { sent_rooms: sr.rooms, downloaded_rooms: downloaded.slice(0, 400) };
+  } catch { return {}; }
 }
 
 /** phase=finished: 足して点検し、原因を数える。見立てが要るかを返す */
@@ -186,9 +215,14 @@ export async function recordFinished(body: Record<string, unknown>): Promise<{ o
   const merged: Partial<SearchAuditRow> = { ...(row ?? {}), ...cols, status: "finished", finished_at: nowIso, created_at: row?.created_at ?? nowIso };
   // 2026-09-29 v2.5.41 更新日の決まり（命令の payload・計画）と前回の検索（空いた日数を覆えたか）を点検に渡す。読めなければ今まで通り
   const upd = await auditUpdateContext(supabase as never, merged);
-  const v = runSearchAuditChecks(toAuditInput(merged, upd));
+  // 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードしたか（SENT_SELECTED）の材料
+  const sentCtx = await sentContextFor(merged);
+  const auditIn = toAuditInput(merged, { ...upd, ...sentCtx });
+  const v = runSearchAuditChecks(auditIn);
   const ai = needsDiagnosis(v);
-  const patch = { ...cols, status: "finished" as const, finished_at: nowIso, checks: v.checks, severity: v.severity, cause_key: v.cause_key, ai_status: ai ? "pending" : "skipped" };
+  const sel = sentSelectedOf(auditIn);
+  const resultPatch = sel && sel.count > 0 ? { result: { ...((merged.result ?? {}) as Record<string, unknown>), sent_selected: sel.count } } : {};
+  const patch = { ...cols, ...resultPatch, status: "finished" as const, finished_at: nowIso, checks: v.checks, severity: v.severity, cause_key: v.cause_key, ai_status: ai ? "pending" : "skipped" };
   const w = row
     ? await supabase.from("search_audits").update(patch).eq("run_id", runId).eq("status", "started").select("run_id")
     : await supabase.from("search_audits").insert({ run_id: runId, ...patch }).select("run_id");
@@ -399,11 +433,13 @@ export function parseWeekly(text: string): { summary_ja: string; priorities: Arr
 }
 
 /** 週のまとめ: 原因ごとの7日の数を付け直し、上位5件を DeepSeek で1回まとめる（LINE には送らない） */
-export async function weeklySearchAudit(opts?: { dry?: boolean }): Promise<{ ok: boolean; runs: number; top: CauseCount[]; summary: ReturnType<typeof parseWeekly>; updated: number; errors: string[] }> {
+export async function weeklySearchAudit(opts?: { dry?: boolean }): Promise<{ ok: boolean; runs: number; top: CauseCount[]; summary: ReturnType<typeof parseWeekly>; updated: number; errors: string[]; itandi_guard?: ReturnType<typeof itandiGuardWeekly> }> {
   const errors: string[] = [];
   const { rows, error } = await rowsSince(7, "run_id, created_at, site, checks, cause_key, ai_diagnosis");
   if (error) return { ok: false, runs: 0, top: [], summary: null, updated: 0, errors: [error] };
   const counts = countCauses(rows);
+  // 2026-09-30 v2.5.42 ITANDI の条件が効いていない検索（原因×直った/直らない）・送付済みの部屋を選んだ回・物件数の上限（週のまとめに残す＝次に直す所を学ぶ）
+  const guardWeek = itandiGuardWeekly(rows as unknown as Array<{ checks?: AuditCheck[] | null }>);
   let updated = 0;
   if (!opts?.dry) {
     const all = await supabase.from("search_audit_causes").select("cause_key, count_7d");
@@ -424,7 +460,8 @@ export async function weeklySearchAudit(opts?: { dry?: boolean }): Promise<{ ok:
       const d = (withDiag?.ai_diagnosis ?? null) as Partial<SearchAuditDiagnosis> | null;
       return `${k + 1}. ${t.cause_key}（${t.title}）: ${t.count}回（うち重い${t.bad}回）${d?.cause_ja ? ` 見立て: ${d.cause_ja}` : ""}${d?.fix_ja ? ` 直し方の案: ${d.fix_ja}` : ""}`;
     });
-    const read = await callDeepSeekRead(WEEKLY_SYSTEM_PROMPT, `【直近7日の検索 ${rows.length}回・原因の上位】\n${lines.join("\n")}`, { maxTokens: 600, timeoutMs: 30_000, model: DEEPSEEK_FLASH_MODEL }, parseWeekly,
+    const guardText = guardWeek.lines.length ? `\n【ITANDI の見分け・送付済みの部屋】\n${guardWeek.lines.join("\n")}` : "";
+    const read = await callDeepSeekRead(WEEKLY_SYSTEM_PROMPT, `【直近7日の検索 ${rows.length}回・原因の上位】\n${lines.join("\n")}${guardText}`, { maxTokens: 600, timeoutMs: 30_000, model: DEEPSEEK_FLASH_MODEL }, parseWeekly,
       // 読み直しは答えが崩れた時だけ（30秒の待ち切れは同じ原因で呼び直さない・maxDuration 120 にも収まる）
       { retryIf: (elapsedMs) => elapsedMs < 28_000 });
     for (const a of read.attempts) {
@@ -438,7 +475,7 @@ export async function weeklySearchAudit(opts?: { dry?: boolean }): Promise<{ ok:
     summary = read.value;
     if (!summary) errors.push("週のまとめ: DeepSeek が読める答えを返さなかった");
   }
-  return { ok: errors.length === 0, runs: rows.length, top, summary, updated, errors };
+  return { ok: errors.length === 0, runs: rows.length, top, summary, updated, errors, itandi_guard: guardWeek };
 }
 
 /** 最新の週のまとめ（cron_run_logs から） */

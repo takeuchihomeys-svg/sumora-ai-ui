@@ -502,15 +502,17 @@ async function afterDecision(c: AfterCtx): Promise<void> {
   if (action.stopSite && site) notified = await sendStopNotice(sb, det, site, input.commandId ?? row?.command_id ?? null, evCols, nowMs);
 
   // search_audits に見張りの印（自動の広げてを止める・⚠ の1行）
-  if (sb && runId && (finalLabel !== "normal" || c.decision || det.update_notice)) {
+  if (sb && runId && (finalLabel !== "normal" || c.decision || det.update_notice || det.sent_notice)) {
     const prevWatch = row?.watch ?? null;
     // 2026-09-29 v2.5.41 更新日の1行（ラベルは変えない）は前の印に重ねて残す（★物件出し★のまとめに1行）
     const updNotice = det.update_notice ?? ((prevWatch as { update_notice?: string | null } | null)?.update_notice ?? null);
-    const watch = { label: finalLabel, action: action.kind, block_widen: action.blockWiden, notice: det.notice, update_notice: updNotice, checkpoint: material.checkpoint, at: new Date(nowMs).toISOString() };
+    // 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードした（C3）も同じく前の印に重ねて残す
+    const sentNotice = det.sent_notice ?? ((prevWatch as { sent_notice?: string | null } | null)?.sent_notice ?? null);
+    const watch = { label: finalLabel, action: action.kind, block_widen: action.blockWiden, notice: det.notice, update_notice: updNotice, sent_notice: sentNotice, checkpoint: material.checkpoint, at: new Date(nowMs).toISOString() };
     const keepBlock = !!(prevWatch && (prevWatch as { block_widen?: boolean }).block_widen);
     const patch: Record<string, unknown> = {};
     if (finalLabel !== "normal" || !prevWatch) patch.watch = keepBlock ? { ...watch, block_widen: true, notice: det.notice ?? (prevWatch as { notice?: string }).notice ?? null } : watch;
-    else if (det.update_notice) patch.watch = { ...(prevWatch as Record<string, unknown>), update_notice: det.update_notice };
+    else if (det.update_notice || det.sent_notice) patch.watch = { ...(prevWatch as Record<string, unknown>), ...(det.update_notice ? { update_notice: det.update_notice } : {}), ...(det.sent_notice ? { sent_notice: det.sent_notice } : {}) };
     if (c.decision) patch.decision_drift = c.decision;
     if (c.intent && !row?.intent) patch.intent = c.intent;
     if (c.expect && !row?.expect) patch.expect = c.expect;
@@ -536,6 +538,9 @@ async function afterDecision(c: AfterCtx): Promise<void> {
         decision_missing: c.decision?.missing ?? [], decision_extra: c.decision?.extra ?? [],
         intent_places: c.intent ? { stations: c.intent.stations.slice(0, 60), wards: c.intent.wards } : null,
         notice: det.notice, update: material.update ?? null, update_items: det.update_items.slice(0, 4), update_notice: det.update_notice,
+        // 2026-09-30 v2.5.42 送付済みの部屋: 飛ばした数（拡張の sent-skip）・選んだ／ダウンロードした数（点検の SENT_SELECTED）
+        sent: material.checkpoint === "done" ? { skipped: numOrNull(row?.result?.sent_skipped), selected: numOrNull(row?.result?.sent_selected) } : null,
+        sent_notice: det.sent_notice,
         waiting_for: material.waiting_for ?? null, idle_min: material.idle_min ?? null, thresholds_id: c.thresholdsId,
         snapshot_id: input.snapshotId ?? null, reason: det.reason.slice(0, 200), cause_key: causeKey,
       },
@@ -600,6 +605,8 @@ export async function watchBlockedRunIds(pcid: string, site: string, sinceIso: s
   } catch { return []; }
 }
 
+function numOrNull(v: unknown): number | null { return typeof v === "number" && Number.isFinite(v) ? v : null; }
+
 /** ★物件出し★のまとめの知らせに足す1行（この回の検索の注意）。読めない時は [] */
 export async function watchNoticeLines(pcid: string, sinceIso: string | null): Promise<string[]> {
   try {
@@ -610,8 +617,8 @@ export async function watchNoticeLines(pcid: string, sinceIso: string | null): P
     if (error) return [];
     const out: string[] = [];
     let skipped = 0;
-    for (const r of (data ?? []) as Array<{ watch: { notice?: string | null; update_notice?: string | null } | null; result: { sent_skipped?: number | null } | null }>) {
-      for (const n of [r.watch?.notice, r.watch?.update_notice]) if (n && !out.includes(n)) out.push(n);
+    for (const r of (data ?? []) as Array<{ watch: { notice?: string | null; update_notice?: string | null; sent_notice?: string | null } | null; result: { sent_skipped?: number | null } | null }>) {
+      for (const n of [r.watch?.notice, r.watch?.update_notice, r.watch?.sent_notice]) if (n && !out.includes(n)) out.push(n);
       const k = r.result?.sent_skipped;
       if (typeof k === "number" && k > 0) skipped += k;
     }

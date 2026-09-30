@@ -95,6 +95,27 @@
     return { skipped: skipped };
   }
 
+  /**
+   * 2026-09-30 v2.5.42 竹内「画面見るところで、前に共有した物件はダウンロードされないようになっているのか読み取って」:
+   *   資料を取りに行く直前に、一覧でチェックが入っている行（＝ダウンロードする部屋）の建物名＋号室を読んで残す（150件まで）。
+   *   サーバーの点検（search-audit-check SENT_SELECTED）が、そのお客様の送付済みの部屋（/api/automation/sent-rooms と同じ出所）と照らす
+   */
+  function _rememberPicked(state) {
+    var SK = _SK();
+    if (!state) return;
+    var list = state.pickedRooms || (state.pickedRooms = []);
+    tracked.forEach(function (t) {
+      if (!t.cb.checked || list.length >= 150) return;
+      var card;
+      try { card = extractCard(t.btn); } catch (_) { return; }
+      if (!card || !card.name) return;
+      var labels = card.headerIdx && card.headerIdx.labels;
+      var roomCell = labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")) ? null : (card.cells ? card.cells[0] : null);
+      var room = SK && roomCell ? SK.roomFromRealproCell(roomCell) : null;
+      list.push({ n: String(card.name).slice(0, 60), r: room ? String(room).slice(0, 12) : null });
+    });
+  }
+
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
 
@@ -1457,6 +1478,8 @@
     // 2026-09-29 v2.5.41 送付済みで選ばなかった数・一覧の更新日の経過（点検の C2）
     if (state && state.sentSkipped) r.sent_skipped = state.sentSkipped;
     if (state && state.updateAges && state.updateAges.n > 0) r.update_ages = state.updateAges;
+    // 2026-09-30 v2.5.42 一覧で実際にチェックが入っていた部屋（見張りが送付済みの部屋を選んでいないか確かめる・150件まで）
+    if (state && state.pickedRooms && state.pickedRooms.length) r.picked_rooms = state.pickedRooms.slice(0, 150);
     var _tl = _ttake();
     if (_tl) r.timings = _tl;
     return Object.assign(r, extra || {});
@@ -1470,7 +1493,8 @@
     //   自動便は conditions.max_pages（サーバーの payload → background → conditions）で上限を変える
     //   2026-09-27: conditions は popup の経路では文字列（max_pages が読めない）→ background が置いた自動便の指定からも読む（auto-run.js）
     var _arOpts = _autoRunFor(state.customerId);
-    var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages)) || (_AR() ? _AR().pageLimit(_arOpts, null) : null) || 3;
+    // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 既定を 3 → 5（1か所の定数 auto-run.js DEFAULT_MAX_PAGES・読めない時も 5）
+    var _maxPages = (state.customerConditions && Number(state.customerConditions.max_pages)) || (_AR() ? _AR().pageLimit(_arOpts, null) : null) || (_AR() && _AR().DEFAULT_MAX_PAGES) || 5;
     if (state.currentPage >= _maxPages && hasNextPageBtn()) {
       clearAutoSendState();
       var countElLimit = document.getElementById("axlx-count");
@@ -1491,7 +1515,7 @@
         if (countEl2) countEl2.textContent = "次ページ遷移エラー";
       } else {
         // クリック成功後にstateを更新（失敗時にdirty stateが残らないようにする）
-        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null });
+        setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName, customerConditions: state.customerConditions || null, customerId: state.customerId || null, sentCount: state.sentCount || 0, readCount: state.readCount || 0, sendableCount: state.sendableCount || 0, sentSkipped: state.sentSkipped || 0, updateAges: state.updateAges || null, pickedRooms: state.pickedRooms || null });
         // 進捗ハートビート: ページ遷移も「進行中」として background のタイムアウトをリセット
         try { chrome.runtime.sendMessage({ type: "axlx-batch-progress", customerId: state.customerId || null }, function () { void chrome.runtime.lastError; }); } catch (_) {}
         // AJAX: 次のinject()でCase Bが拾えるようにリセット
@@ -1561,6 +1585,7 @@
 
     function _doSend(sendUrls) {
       state.readCount = (state.readCount || 0) + sendUrls.length; // 検索の点検: 読んだ行数
+      _rememberPicked(state); // 2026-09-30 v2.5.42 一覧で実際にチェックが入っている部屋（見張りの C2・C3）
       // 2026-09-18: urls / 説明文 / 学習用データを別々に作って slice で対応づけるのをやめ、
       //   1件 = 1つの組にしてから分ける。組のまま切るので、バッチ境界でもズレない。
       // 2026-09-23: ブレインモードなら送信前に判定（外す物を外す・失敗なら全件）。判定はページ単位（最大4秒＋API 30秒）。

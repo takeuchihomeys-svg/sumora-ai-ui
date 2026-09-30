@@ -76,7 +76,8 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   const bg = read("background.js");
   ok("background が auto-run.js を import", /import "\.\/auto-run\.js";/.test(bg));
   ok("自動便は planSites でサイトを決める（お客様ごと）", /_AR\.planSites\(sites, \{ isAuto: true, hasItandiTab: _AR\.hasItandiTab\(await chrome\.tabs\.query\(\{\}\)\) \}\)/.test(bg));
-  ok("サイトの間は siteGapMs（2つ目のサイトから・自動便だけ）", /if \(j > 0 && autoSched && _AR\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(bg));
+  // 2026-09-30 v2.5.42: AIXツールの一括検索（1人にリアプロ＋itandi）も同じ人の間（自動便だけではない）
+  ok("サイトの間は siteGapMs（2つ目のサイトから・一括の回すべて）", /if \(j > 0 && _AR\) \{\s*var _siteGap = _AR\.siteGapMs\(\);/.test(bg));
   ok("お客様の間は自動便だけ customerGapMs", /\(autoSched && _AR\) \? _AR\.customerGapMs\(\) : 3000 \+ Math\.floor\(Math\.random\(\) \* 5000\)/.test(bg));
   ok("お客様×サイトごとに storage へ指定を置く", /_arSet\[_AR\.STORAGE_KEY\] = _AR\.record\(effectiveCustomer\.id, batchSite, _AR\.optsFromPayload\(_custPayload\) \|\| _autoOpts, Date\.now\(\)\)/.test(bg));
   ok("コマンドの終わりに指定を消す（finally）", /finally \{[\s\S]{0,400}chrome\.storage\.local\.remove\(self\.AxlxAutoRun\.STORAGE_KEY\)/.test(bg));
@@ -93,17 +94,18 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("popup: dataset は await より前に読む", /const _autoSort = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp) && /const _autoSort_it = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp));
   const bd = read("bulk-dl.js");
   ok("bulk-dl: 午後の便（更新順）は AD 高い順へ並べ替えない", /if \(!isAdDesc && _adSortOk\) \{/.test(bd));
-  ok("bulk-dl: ページ上限は conditions → 自動便の指定 → 3", /\(_AR\(\) \? _AR\(\)\.pageLimit\(_arOpts, null\) : null\) \|\| 3;/.test(bd));
+  // 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 既定は auto-run.js DEFAULT_MAX_PAGES（5）・読めない時も 5
+  ok("bulk-dl: ページ上限は conditions → 自動便の指定 → 既定 5", /\(_AR\(\) \? _AR\(\)\.pageLimit\(_arOpts, null\) : null\) \|\| \(_AR\(\) && _AR\(\)\.DEFAULT_MAX_PAGES\) \|\| 5;/.test(bd));
   ok("bulk-dl: 指定は realnetpro の物だけ読む", /forCustomer\(_autoRunStored, customerId, "realnetpro", Date\.now\(\)\)/.test(bd));
   const ib = read("itandi-bulk-dl.js");
   ok("itandi-bulk-dl: 自動便のページ上限で次へ（手動は全ページのまま）", /if \(_itLimit && _itAuditRes && _itAuditRes\.pages >= _itLimit && !_manual\) \{/.test(ib));
   ok("itandi-bulk-dl: 上限で止めた時も完了の合図（audit 付き・page_limit）", /_itAuditResult\(\{ page_limit: _itLimit \}\)/.test(ib));
   ok("itandi-bulk-dl: 指定は itandi の物だけ読む", /forCustomer\(_autoRunStored, customerId, "itandi", Date\.now\(\)\)/.test(ib));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.41");
+  eq("manifest の版", mf.version, "2.5.42");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,bulk-dl.js"));
-  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-bulk-dl.js"));
+  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,itandi-bulk-dl.js"));
   ok("auto-run.js は _ で始まらない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 

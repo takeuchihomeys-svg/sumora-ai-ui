@@ -271,3 +271,49 @@ export function completeAuthOk(h: { authorization: string | null; automationKey:
   if (env.automationKey) return h.automationKey === env.automationKey;
   return true;
 }
+
+// ── 2026-09-30 v2.5.42 お客様の検索が続いている間はまとめない（両サイトがそろってから1回だけ）──────────────────
+// 竹内「リアプロと itandi、お客さんそれぞれ同時に完了するようにする…そうすれば分析もお客さん毎に出来る」:
+//   自動便・AIXツールの一括検索は1人ずつ リアプロ → ITANDI と続けて回すが、ITANDI は入力と資料の取得に 4〜25分かかり
+//   （search_audits の ITANDI の回の中央値 6.5分）、リアプロの最後の物件から3分の静けさで先にまとまって ★物件出し★に知らせ、
+//   ITANDI の物件が届くと「追加分を含めて並べ直しました」でもう1回知らせていた（1人に2回）。
+//   → 3分の静けさに加えて「そのお客様の検索がまだ続いているか」を検索の点検（search_audits）と命令（automation_commands）で見る:
+//     ① 始まって終わっていない回がある（SEARCH_HOLD_MAX_MS より新しい物だけ・止まった回は見張りが20分で閉じる）
+//     ② 最後に終わった回の命令が動いていて、そのお客様でまだ始まっていないサイトがある（NEXT_SITE_WAIT_MS の間だけ・
+//        ITANDI のタブが無い PC で ITANDI を飛ばした時も、その間を過ぎればまとめる）
+//   「完了」ボタン（スタッフがすぐまとめたい時）は待たない。まとめの行を取る所は今まで通り（冪等）
+export const SEARCH_HOLD_MAX_MS = 30 * 60_000;
+export const NEXT_SITE_WAIT_MS = 4 * 60_000;
+
+export type HoldAudit = { created_at: string; finished_at: string | null; status: string | null; site: string | null; command_id: string | null };
+export type HoldCommand = { id: string; status: string | null; sites: string[] | null };
+
+const holdSite = (s: string | null | undefined): string => {
+  const v = String(s ?? "").toLowerCase();
+  if (v.includes("itandi")) return "itandi";
+  if (v.includes("reins")) return "reins";
+  if (v.includes("real")) return "realpro";
+  return v;
+};
+
+/** そのお客様の検索がまだ続いているか（純関数）。hold なら until（ms）まで待つ */
+export function searchHold(audits: ReadonlyArray<HoldAudit>, commands: ReadonlyArray<HoldCommand>, now: number): { hold: boolean; until: number | null; reason: string | null } {
+  const at = (s: string | null | undefined) => Date.parse(String(s ?? ""));
+  const open = audits.filter((a) => a.status === "started" && Number.isFinite(at(a.created_at)) && now - at(a.created_at) < SEARCH_HOLD_MAX_MS && at(a.created_at) <= now + 60_000);
+  if (open.length) {
+    const latest = Math.max(...open.map((a) => at(a.created_at)));
+    return { hold: true, until: latest + SEARCH_HOLD_MAX_MS, reason: `searching:${[...new Set(open.map((a) => holdSite(a.site)))].join(",")}` };
+  }
+  const fin = audits.filter((a) => a.status !== "started" && Number.isFinite(at(a.finished_at))).sort((x, y) => at(y.finished_at) - at(x.finished_at));
+  const last = fin[0];
+  if (last?.command_id) {
+    const cmd = commands.find((c) => String(c.id) === String(last.command_id));
+    const lastFin = at(last.finished_at);
+    if (cmd && (cmd.status === "running" || cmd.status === "pending") && now - lastFin < NEXT_SITE_WAIT_MS) {
+      const begun = new Set(audits.filter((a) => String(a.command_id ?? "") === String(cmd.id)).map((a) => holdSite(a.site)));
+      const remaining = [...new Set((cmd.sites ?? []).map(holdSite))].filter((s) => s && s !== "reins" && !begun.has(s));
+      if (remaining.length) return { hold: true, until: lastFin + NEXT_SITE_WAIT_MS, reason: `next_site:${remaining.join(",")}` };
+    }
+  }
+  return { hold: false, until: null, reason: null };
+}

@@ -11,11 +11,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type SentRoom = { name: string; room: string };
 
-export async function sentRoomsFor(sb: SupabaseClient, customerId: string): Promise<{ rooms: SentRoom[]; rows: number; without_room: number; error: string | null }> {
+/**
+ * opts.beforeIso（2026-09-30 v2.5.42 見張り）: その時刻より前に送った物だけ（検索の回の後に送った部屋を「選んだのは誤り」と数えない）
+ * opts.customerOnly（送る側）: お客様に届けた物だけ（★物件出し★への共有 delivery=shared を除く＝pickup-sent-badge と同じ）
+ */
+export async function sentRoomsFor(sb: SupabaseClient, customerId: string, opts: { beforeIso?: string | null; customerOnly?: boolean } = {}): Promise<{ rooms: SentRoom[]; rows: number; without_room: number; error: string | null }> {
   const out = new Map<string, SentRoom>();
   let rows = 0, withoutRoom = 0;
-  const take = (list: Array<{ property_name: string | null; room_no: string | null }>) => {
+  const take = (list: Array<{ property_name: string | null; room_no: string | null; delivery?: string | null }>) => {
     for (const r of list) {
+      if (opts.customerOnly && r.delivery === "shared") continue;
       rows++;
       const name = String(r.property_name ?? "").trim();
       const room = String(r.room_no ?? "").trim();
@@ -24,13 +29,17 @@ export async function sentRoomsFor(sb: SupabaseClient, customerId: string): Prom
       if (!out.has(k)) out.set(k, { name: name.slice(0, 80), room: room.slice(0, 12) });
     }
   };
-  const a = await sb.from("sent_properties").select("property_name, room_no").eq("property_customer_id", customerId).limit(5000);
+  let qa = sb.from("sent_properties").select("property_name, room_no, delivery").eq("property_customer_id", customerId);
+  if (opts.beforeIso) qa = qa.lt("sent_at", opts.beforeIso);
+  const a = await qa.limit(5000);
   if (a.error) return { rooms: [], rows: 0, without_room: 0, error: a.error.message };
   take((a.data ?? []) as Array<{ property_name: string | null; room_no: string | null }>);
   const conv = await sb.from("conversations").select("id").eq("property_customer_id", customerId).limit(10);
   const convIds = ((conv.data ?? []) as Array<{ id: string }>).map((c) => c.id);
   if (convIds.length) {
-    const b = await sb.from("sent_properties").select("property_name, room_no").in("conversation_id", convIds).is("property_customer_id", null).limit(5000);
+    let qb = sb.from("sent_properties").select("property_name, room_no, delivery").in("conversation_id", convIds).is("property_customer_id", null);
+    if (opts.beforeIso) qb = qb.lt("sent_at", opts.beforeIso);
+    const b = await qb.limit(5000);
     if (!b.error) take((b.data ?? []) as Array<{ property_name: string | null; room_no: string | null }>);
   }
   return { rooms: [...out.values()], rows, without_room: withoutRoom, error: null };

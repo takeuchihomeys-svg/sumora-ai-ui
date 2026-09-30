@@ -30,6 +30,8 @@ import "./commute-reach.js";
 import "./snapshot-core.js";
 // 2026-09-29 v2.5.41 竹内「一度送ったことがある物件はダウンロードもしないように」: 送付済みの部屋を一覧で選ばない（self.AxlxSentSkip）
 import "./sent-skip.js";
+// 2026-09-30 v2.5.42 竹内「ITANDI も一回での上限を作る。物件数で」「ITANDI で条件指定ちゃんとできていなければ…」: 条件が効いていない検索の見分け（self.AxlxItandiGuard）
+import "./itandi-guard.js";
 
 // ── 2026-09-29 v2.5.40 SW のログの末尾（画面の写真に添える・最大80行） ──
 //   console.log / warn / error をそのまま出したうえで、メモリの輪に貯める（storage.session へは15秒に1回まで）。
@@ -2524,7 +2526,7 @@ function _endFillDoneWaiter(site, customerId, why) { var w = _findFillDoneWaiter
 // _scrapeAndSendRealpro はこの Promise が解決するまで次顧客への移行を待つ。
 var _batchCustomerDoneWaiters = [];
 
-function _notifyBatchCustomerDone(customerId, propertyCount) {
+function _notifyBatchCustomerDone(customerId, propertyCount, audit) {
   var target = null;
   // 厳密一致優先
   if (customerId) {
@@ -2546,7 +2548,8 @@ function _notifyBatchCustomerDone(customerId, propertyCount) {
   clearTimeout(target.timer);
   var _bdIdx = _batchCustomerDoneWaiters.indexOf(target);
   if (_bdIdx >= 0) _batchCustomerDoneWaiters.splice(_bdIdx, 1);
-  target.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null });
+  // 2026-09-30 v2.5.42 ITANDI の「条件が効いていない形で止めた」（audit.guard）を待ち手に渡す（_scrapeAndSendRealpro → 1回だけ入れ直す）
+  target.resolve({ ok: true, propertyCount: propertyCount != null ? propertyCount : null, guard: (audit && audit.guard_stopped && audit.guard) ? audit.guard : null });
 }
 
 function _createBatchCustomerDoneWaiter(customerId, timeoutMs) {
@@ -3120,7 +3123,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     _auditOnBatchDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null);
     // 2026-09-29 v2.5.41 送付済みで飛ばした数（0件の知らせを「新しい物件なし」に言い分ける）
     if (msg.customerId != null) _lastSentSkipped[String(msg.customerId)] = (msg.audit && msg.audit.sent_skipped) || 0;
-    _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null);
+    _notifyBatchCustomerDone(msg.customerId || null, msg.propertyCount != null ? msg.propertyCount : null, msg.audit || null);
     _watchProgress("送信の終わり");
     // Webアプリへの進捗通知は _runBatchSearch の顧客ループ完了後に一元化（リアプロ/itandi/レインズ全サイト対応）
   }
@@ -3128,6 +3131,27 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     // 全ページ送信の進捗ハートビート → 無進捗タイムアウトをリセット（次顧客への早すぎる移行を防ぐ）
     _notifyBatchProgress(msg.customerId || null);
   }
+  return false;
+});
+
+// ── 2026-09-30 v2.5.42 ITANDI: 資料を開く前の見分け（itandi-bulk-dl → ここ → 止める／進む）──
+// 竹内「ITANDI で条件指定ちゃんとできていなければ件数多すぎるバグ（3000件以上の表示など）される可能性ある…」:
+//   一括の回（_runBatchSearch が今の ITANDI のお客様の条件を _itandiGuardCtx に置く）だけ判定する。手動の検索・別のお客様の合図は進む
+var _itandiGuardCtx = null; // { customerId, cond: {rent_max, floor_plan, desired_area, area_mode}, isWide, attempt, runId }
+chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  if (!msg || msg.type !== "axlx-itandi-precheck") return false;
+  var G = self.AxlxItandiGuard;
+  var ctx = _itandiGuardCtx;
+  if (!G || !ctx || msg.customerId == null || String(ctx.customerId) !== String(msg.customerId)) {
+    sendResponse({ action: "proceed", why: !ctx ? "no_batch" : "other_customer" });
+    return false;
+  }
+  var ev = G.evaluate({ rows: msg.rows || [], count: msg.count || null, cond: ctx.cond, isWide: ctx.isWide });
+  var guard = { suspect: ev.suspect, reasons: ev.reasons, judged: ev.judged, outside: ev.outside, count: ev.count, count_text: msg.count && msg.count.text ? String(msg.count.text).slice(0, 80) : null, rows_total: msg.rows_total || null, samples: ev.samples, attempt: ctx.attempt };
+  ctx.last = guard;
+  if (ctx.runId) _auditStep(ctx.runId, "itandi_precheck", (ev.suspect ? "条件が効いていない形: " + G.reasonsJa(ev.reasons) : "問題なし") + "（読めた行 " + ev.judged + "・外 " + ev.outside.any + (ev.count != null ? "・件数 " + ev.count : "") + "・" + (ctx.attempt + 1) + "回目）");
+  console.log("[batch] ITANDI の見分け（" + (ctx.attempt + 1) + "回目）: " + (ev.suspect ? "止める " + G.reasonsJa(ev.reasons) : "進む") + " 行=" + ev.judged + " 外=" + ev.outside.any + " 件数=" + ev.count);
+  sendResponse({ action: ev.suspect ? "stop" : "proceed", guard: guard });
   return false;
 });
 
@@ -3290,6 +3314,16 @@ async function _pollAndRunBatch() {
     var _qs = [];
     if (_bh.claimAix) _qs.push("aix=1");
     if (_bh.claimBrainCommands) _qs.push("brain=1");
+    // 2026-09-30 v2.5.42 竹内「お客さん毎に…次のお客さんに移る等の動きで。また動き方もロボットみたいじゃなくて人間のように」:
+    //   1人1コマンド（AIXツールの一括検索・午前の便）は、前の人を終えてから人がお客様を開き直す間（auto-run.js nextCommandGapMs）を置いてから拾う。
+    //   ⚠ /pending は取った時点で running にする（claim）ので、間は取りに行く**前**に見る（コマンドは pending のまま＝他の PC が拾ってもよい）。
+    //   10分より先の値（時計のずれ・古い値）は信じない。サイトへのアクセスは増えない
+    var _gapSt = await chrome.storage.local.get(["batchNextNotBefore"]);
+    var _nb = Number(_gapSt && _gapSt.batchNextNotBefore) || 0;
+    if (_nb > Date.now() && _nb - Date.now() < 10 * 60 * 1000) {
+      console.log("[batch] 前のお客様からの間（あと " + Math.round((_nb - Date.now()) / 1000) + "秒）→ 次の見回りで拾う");
+      return;
+    }
     // 2026-09-29 v2.5.40: 拾った拡張の版と PC を渡す（サーバーが claim した行に残す＝「どの版が拾った・見送ったか」を DB で見分ける。
     //   9/29 16:32 の午後の便の見送りは v2.5.38 より前の拡張だったが、版の記録が search_audits にしか無く後から推すしかなかった）
     var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending" + (_qs.length ? "?" + _qs.join("&") : ""), {
@@ -3378,7 +3412,16 @@ async function _pollAndRunBatch() {
       _watchClear(); // 2026-09-29 v2.5.40 見張りを消す＝帯は「待機中」・止まりの写真も撮らない
       // 2026-09-27 自動便の指定（午後の便の1ページ・更新順等）もこのコマンドの間だけ（後の手動の検索に残さない）
       try { if (self.AxlxAutoRun) await chrome.storage.local.remove(self.AxlxAutoRun.STORAGE_KEY); } catch (_) {}
-      await chrome.storage.local.set({ batchRunning: null, batchCommandId: null });
+      // 2026-09-30 v2.5.42 1人1コマンドの回（AIXツールの一括検索・午前の便）の後は、次のお客様を拾うまで人の間を置く（上の _gapSt）
+      var _nextGap = null;
+      try {
+        var _src = cmd.payload && cmd.payload.source;
+        if (cmd.command_type !== "stop_all" && (_src === "web_brain" || _src === "auto_schedule") && (cmd.customer_ids || []).length === 1 && self.AxlxAutoRun && self.AxlxAutoRun.nextCommandGapMs) {
+          _nextGap = self.AxlxAutoRun.nextCommandGapMs();
+          console.log("[batch] 次のお客様まで " + Math.round(_nextGap / 1000) + "秒の間");
+        }
+      } catch (_) {}
+      await chrome.storage.local.set({ batchRunning: null, batchCommandId: null, batchNextNotBefore: _nextGap ? Date.now() + _nextGap : 0 });
     }
   } catch (e) {
     // MV3 Service Worker起動直後の一時的なfetch失敗は無視（次の30秒ポーリングで自動回復）
@@ -3466,7 +3509,10 @@ async function _runBatchSearch(command) {
     });
   }
 
-  var sites = command.sites || ["reins"];
+  // 2026-09-30 v2.5.42 竹内「リアプロと itandi、お客さんそれぞれ同時に完了するようにする。YUMA ならリアプロと itandi 完了して、次のお客さんに移る」:
+  //   1コマンドに両サイトがある時（自動便・AIXツールの一括検索の「リアプロ＋itandi」）は、お客様1人ずつ リアプロ → ITANDI の順に終えてから次のお客様へ
+  //   （下の二重ループ＝お客様 → サイト。サイトごとに全員を回さない）。並びはここ1か所（auto-run.js orderSites）
+  var sites = (self.AxlxAutoRun && self.AxlxAutoRun.orderSites) ? self.AxlxAutoRun.orderSites(command.sites || ["reins"]) : (command.sites || ["reins"]);
   // 修正5: is_wide をキュー経路（trigger API → payload.is_wide）から伝搬
   var batchIsWide = !!(command.is_wide || (command.payload && command.payload.is_wide));
   // 2026-09-19 竹内「毎日11:00に…／17:00に今日出た新規物件を…（更新順・1ページだけ）」:
@@ -3543,10 +3589,11 @@ async function _runBatchSearch(command) {
       var batchSite = custSites[j];
       // 2026-09-29 見張り: ログイン切れ・サイトのエラーで見張りが止めたサイトは、次のお客様の境目から見送る（1人ずつの失敗の知らせは出さない）
       if (_watchSkipSite(customer, batchSite)) continue;
-      // 2026-09-27 竹内「同じお客様のリアプロと ITANDI は続けて走る…間を人の動きのようにばらつかせる」（自動便だけ）
-      if (j > 0 && autoSched && _AR) {
+      // 2026-09-27 竹内「同じお客様のリアプロと ITANDI は続けて走る…間を人の動きのようにばらつかせる」
+      // 2026-09-30 v2.5.42 自動便だけでなく AIXツールの一括検索（1人にリアプロ＋itandi）も同じ間（人が次のサイトのタブに移って見る間・毎回ちがう）
+      if (j > 0 && _AR) {
         var _siteGap = _AR.siteGapMs();
-        console.log("[batch] 自動便: 次のサイト（" + batchSite + "）まで " + _siteGap + "ms");
+        console.log("[batch] 同じお客様の次のサイト（" + batchSite + "）まで " + _siteGap + "ms");
         await new Promise(function(r) { setTimeout(r, _siteGap); });
         if (_batchShouldStop) {
           await _updateBatchCommand(command.id, { status: "cancelled", completed_at: new Date().toISOString() });
@@ -3612,6 +3659,11 @@ async function _runBatchSearch(command) {
           if (batchSite === "itandi") {
             // itandi の場合: リアプロと同じく fill-done + batch-customer-done を待つ形に統一
             // itandi-bulk-dl.js の autoSendAllPages が axlx-batch-customer-done シグナルを送信する
+            // 2026-09-30 v2.5.42 資料を開く前の見分け（itandi-guard.js）に、このお客様の条件を渡す（一括の回だけ）
+            _itandiGuardCtx = {
+              customerId: String(effectiveCustomer.id), isWide: batchIsWide, attempt: 0, runId: _batchAudit ? _batchAudit.runId : null,
+              cond: { rent_max: effectiveCustomer.rent_max, floor_plan: effectiveCustomer.floor_plan, desired_area: effectiveCustomer.desired_area, area_mode: effectiveCustomer.area_mode },
+            };
             _passCount = await _passGuard.race(_scrapeAndSendRealpro(
               fillDoneP,
               String(effectiveCustomer.id),
@@ -3620,6 +3672,15 @@ async function _runBatchSearch(command) {
               "itandi",
               _isMultiPass  // suppressZeroNotify: both顧客は呼び出し元が集計して1回通知
             ));
+            // 2026-09-30 v2.5.42 竹内「ITANDI 検索ちゃんとできていなければ、そこ修正するか、修正効かなければ…」:
+            //   条件が効いていない形で止めた（資料は1件も開いていない）→ 人が結果を見直す間を置いて、1回だけ条件を入れ直す（連続の再試行はしない）。
+            //   直ればそのまま続ける・直らなければこのお客様の ITANDI は見送り＋★物件出し★に1行。原因の分け方はサーバーの点検（itandi_guard:<原因>:<直った/直らない>）
+            if (_scrapeLastOutcome.guard && _scrapeLastOutcome.guard.suspect) {
+              _passCount = await _passGuard.race(_itandiGuardRetry({
+                customer: effectiveCustomer, isWide: batchIsWide, payload: _custPayload, audit: _batchAudit, first: _scrapeLastOutcome.guard, suppressZero: _isMultiPass,
+              }));
+            }
+            _itandiGuardCtx = null;
           } else if (batchSite === "realnetpro") {
             // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
             // （従来は autofill + 3秒 sleep のみで結果がどこにも届かなかった）
@@ -3645,6 +3706,7 @@ async function _runBatchSearch(command) {
           _passGuard.done();
         } catch (e) {
           _passGuard.done();
+          _itandiGuardCtx = null; // 2026-09-30 v2.5.42 見分けの条件はこの回だけ（失敗した回の後の手の検索に残さない）
           _passFailed++;
           if (_batchAudit) _auditFinish(_batchAudit.runId, (e && e.passDeadline) ? { error: e, error_kind: "pass_deadline" } : { error: e });
           // Fix 3/4: __BATCH_STOPPED__ は正常なキャンセルなので re-throw して全ループを抜ける
@@ -4589,6 +4651,8 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     //   0件と数えていた → YUMA の実検索で34件送れていたのに「🔍【物件0件】」がグループに出た。件数が分からない時は0件と言わない
     _scrapeLastOutcome.countUnknown = !(batchDone && batchDone.propertyCount != null);
     _propCount = (batchDone && batchDone.propertyCount) ? batchDone.propertyCount : 0;
+    // 2026-09-30 v2.5.42 ITANDI: 条件が効いていない形で資料を取りに行かずに止めた（呼び出し元が1回だけ入れ直す・0件とは言わない）
+    _scrapeLastOutcome.guard = (batchDone && batchDone.guard) || null;
   }
   // 0件時 → LINEグループへアナウンス（timedOut 分岐で既に通知済みの場合は重複しない）
   //   2026-09-29 v2.5.41: 送付済みの部屋だけだった（全部飛ばした）時は「0件」と言わず「新しい物件なし・N件は送付済み」
@@ -4603,6 +4667,70 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     }).catch(function() {});
   }
   return _propCount;
+}
+
+/**
+ * 2026-09-30 v2.5.42 ITANDI の「条件が効いていない形」を1回だけ入れ直す（_runBatchSearch の ITANDI の回から）。
+ *   ・1回目の読み戻し（入れようとした値が欄に入ったか）を先に控える（入れ直すと上書きされる）＝原因の分け方（拡張側か ITANDI 側か）の材料
+ *   ・人が結果を見直して条件の画面に戻る間（9〜22秒・itandi-guard.js retryGapMs）→ いつもと同じ入力の流れ（popup・人の間）でもう一度
+ *   ・直らなければこのお客様の ITANDI は見送り（資料は開いていない）＋★物件出し★に1行（pickup_group_id）
+ *   連続の再試行はしない（1回だけ・サイトへのアクセスを増やしすぎない）
+ */
+function _compactFill(f) {
+  if (!f || typeof f !== "object") return null;
+  var names = function (a) { return Array.isArray(a) ? a.slice(0, 10).map(function (x) { return x && x.name ? String(x.name).slice(0, 30) : String(x).slice(0, 30); }) : []; };
+  return {
+    search_clicked: f.search_clicked != null ? !!f.search_clicked : null,
+    form: f.form || null,
+    click_fails: Array.isArray(f.click_fails) ? f.click_fails.slice(0, 5).map(function (c) { return { what: c && c.what ? String(c.what).slice(0, 40) : null, text: c && c.text ? String(c.text).slice(0, 40) : null }; }) : [],
+    stations_missing: names(f.stations_missing), lines_missing: names(f.lines_missing),
+    reset_fail: f.reset_fail ? String(f.reset_fail).slice(0, 120) : null,
+    update_days: f.update_days && f.update_days.status ? { status: f.update_days.status } : null,
+    area_path: f.area_path || null, fallback: f.fallback || null,
+  };
+}
+async function _itandiGuardRetry(o) {
+  var G = self.AxlxItandiGuard;
+  var cid = String(o.customer.id);
+  var name = o.customer.customer_name || null;
+  var runId = o.audit ? o.audit.runId : null;
+  var run = runId && _auditTracker ? _auditTracker.get(runId) : null;
+  var firstFill = _compactFill(run && run.filled);
+  var gap = G ? G.retryGapMs() : 15000;
+  var why = G ? G.reasonsJa(o.first.reasons) : String(o.first.reasons || "");
+  console.warn("[batch] ITANDI の検索に条件が効いていない形（" + why + "）→ " + Math.round(gap / 1000) + "秒おいて1回だけ入れ直す customer=" + cid);
+  _auditStep(runId, "itandi_guard_retry", why + " → " + Math.round(gap / 1000) + "秒おいて入れ直す");
+  _watchSet({ waitingFor: "ITANDI の条件の入れ直しまでの間（" + Math.round(gap / 1000) + "秒）" });
+  await new Promise(function (r) { setTimeout(r, gap); });
+  if (_batchShouldStop) throw new Error("__BATCH_STOPPED__");
+  if (_itandiGuardCtx && String(_itandiGuardCtx.customerId) === cid) _itandiGuardCtx.attempt = 1;
+  var fillDoneP2 = _createFillDoneWaiter("itandi", cid, _fillDoneTimeoutMs("itandi"));
+  var conds2 = await _batchAutofill(o.customer, "itandi", o.isWide, o.payload, o.audit);
+  var n = await _scrapeAndSendRealpro(fillDoneP2, cid, name, conds2 || _buildBatchConditions(o.customer, o.isWide, o.payload), "itandi", !!o.suppressZero);
+  var second = _scrapeLastOutcome.guard;
+  var fixed = !(second && second.suspect);
+  var rec = {
+    suspect: true, reasons: o.first.reasons || [],
+    first: { reasons: o.first.reasons || [], judged: o.first.judged, outside: o.first.outside, count: o.first.count, count_text: o.first.count_text || null, samples: (o.first.samples || []).slice(0, 5) },
+    first_fill: firstFill,
+    retry: { tried: true, fixed: fixed, reasons: second ? (second.reasons || []) : [], judged: second ? second.judged : null, outside: second ? second.outside : null, count: second ? second.count : null, gap_ms: gap },
+  };
+  try { if (runId && _auditTracker) _auditTracker.attachResult(runId, { guard: rec, guard_stopped: !fixed }); } catch (_) {}
+  if (fixed) {
+    console.log("[batch] ITANDI: 入れ直したら条件が効いた → そのまま続けた（" + (n || 0) + "件）customer=" + cid);
+    _auditStep(runId, "itandi_guard_fixed", "入れ直しで直った");
+  } else {
+    _scrapeLastOutcome.guardSkipped = true;
+    _auditStep(runId, "itandi_guard_skip", "入れ直しても直らない → このお客様の ITANDI は見送り");
+    var text = G ? G.skipNotice(name, (second && second.reasons && second.reasons.length) ? second.reasons : o.first.reasons) : null;
+    if (text) {
+      fetch(SUMORA_BATCH_API + "/api/notify-group", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text, group_key: "pickup_group_id" })
+      }).catch(function () {});
+    }
+  }
+  return n;
 }
 
 // ===== END: 自動化バッチ検索 =====

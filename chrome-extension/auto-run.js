@@ -128,6 +128,13 @@
     return { mode: stored.mode, rp_update_days: stored.rp_update_days, sort: stored.sort, max_pages: stored.max_pages };
   }
 
+  /**
+   * 2026-09-30 v2.5.42 竹内「ページの上限は 5 ページまで上げる」: 一括の回（自動便・AIXツールの一括検索・広げての回）のページの上限（リアプロ・ITANDI とも）。
+   *   ここ1か所（bulk-dl・itandi-bulk-dl が読む・サーバーの自動便 auto-search-schedule.ts の max_pages も 5・点検の cut_by_pages はこの値で打ち切った回）
+   *   ITANDI は別に1回の物件数の上限（itandi-guard.js MAX_ROWS）もある
+   */
+  var DEFAULT_MAX_PAGES = 5;
+
   /** ページの上限（指定が無ければ既定＝今までどおり） */
   function pageLimit(opts, fallback) {
     var n = opts && Number(opts.max_pages);
@@ -185,6 +192,25 @@
     return breath ? Math.round(90000 + r * 110000) : Math.round(15000 + r * 45000);
   }
 
+  /**
+   * 2026-09-30 v2.5.42 竹内「お客さん毎にリアプロと itandi 完了して、次のお客さんに移る…動き方もロボットみたいじゃなくて人間のように」:
+   *   1人1コマンド（AIXツールの一括検索 web_brain・午前の便）の時、1人を終えてから次のコマンドを拾うまでの間（ミリ秒）。
+   *   30秒おきの見回りのままだと「終わった直後に次の人」が機械的に続く → お客様の間（customerGapMs）と同じ幅で揺らす。
+   *   ⚠ 間を足すだけで、サイトへのアクセス（検索・ページ・資料）の数は増やさない
+   */
+  function nextCommandGapMs(rng) {
+    return customerGapMs(rng);
+  }
+
+  /** 1コマンドの中でサイトを並べる（同じお客様はリアプロ → ITANDI の順・無いサイトは足さない・重複は1つ・レインズは最後） */
+  function orderSites(sites) {
+    var list = Array.isArray(sites) ? sites : [];
+    var rank = { realnetpro: 0, realpro: 0, itandi: 1, reins: 2 };
+    var seen = {}, out = [];
+    list.forEach(function (s) { var k = String(s || ""); if (k && !seen[k]) { seen[k] = 1; out.push(k); } });
+    return out.sort(function (a, b) { return (rank[a] == null ? 9 : rank[a]) - (rank[b] == null ? 9 : rank[b]); });
+  }
+
   /** 飛ばしたサイトを完了の記録に残す文（無ければ null） */
   function skippedNote(skippedSites) {
     var list = Array.isArray(skippedSites) ? skippedSites : [];
@@ -196,8 +222,8 @@
     STORAGE_KEY: STORAGE_KEY, TTL_MS: TTL_MS,
     isAuto: isAuto, optsFromPayload: optsFromPayload, record: record, forCustomer: forCustomer,
     payloadForCustomer: payloadForCustomer, decidedDays: decidedDays,
-    pageLimit: pageLimit, allowAdSort: allowAdSort,
-    planSites: planSites, hasItandiTab: hasItandiTab,
-    siteGapMs: siteGapMs, customerGapMs: customerGapMs, skippedNote: skippedNote,
+    pageLimit: pageLimit, allowAdSort: allowAdSort, DEFAULT_MAX_PAGES: DEFAULT_MAX_PAGES,
+    planSites: planSites, hasItandiTab: hasItandiTab, orderSites: orderSites,
+    siteGapMs: siteGapMs, customerGapMs: customerGapMs, nextCommandGapMs: nextCommandGapMs, skippedNote: skippedNote,
   };
 });

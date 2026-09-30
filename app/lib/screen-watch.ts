@@ -91,13 +91,28 @@ export type Detection = {
    */
   update_items: UpdateFinding[];
   update_notice: string | null;
+  /**
+   * 2026-09-30 v2.5.42 竹内「画面見るところで、前に共有した物件はダウンロードされないようになっているのか読み取って」:
+   *   送付済みの部屋を選んだ・ダウンロードした（点検の SENT_SELECTED・C3）→ ★物件出し★のまとめに1行。ラベルは変えない（検索は止めない）
+   */
+  sent_notice: string | null;
 };
+
+/** 送付済みの部屋の見張り（純関数）: 点検の SENT_SELECTED の札 → 1行（例「⚠ 送付済みの部屋を2件ダウンロードしていた」） */
+export function sentSelectedNotice(checks: ReadonlyArray<{ code?: string | null; severity?: string | null; title?: string | null; detail?: string | null }> | null | undefined): string | null {
+  const c = (checks ?? []).find((x) => x && x.code === "SENT_SELECTED" && x.severity !== "ok");
+  if (!c) return null;
+  const n = Number((String(c.title ?? "").match(/(\d+)件/) ?? [])[1]);
+  return `⚠ 送付済みの部屋を${Number.isFinite(n) && n > 0 ? `${n}件` : ""}ダウンロードしていた（${clip(String(c.detail ?? "").split("（")[0], 40)}）`;
+}
 
 export type UpdateFinding = { code: string; severity: "warn" | "bad"; title: string };
 
 /** 点検の札の鍵（update_days:<site>:<種類>）→ 見張りに出す種類。differs（決まりとの違い）は材料の違いなので出さない */
 const UPDATE_KINDS: Record<string, "warn" | "bad"> = {
   not_filled: "bad", leftover: "bad", not_accepted: "warn", typed_unverified: "warn", gap_uncovered: "warn", cut_by_pages: "warn", rows_outside: "warn",
+  // 2026-09-30 v2.5.42 ITANDI の1回の物件数の上限で打ち切った（C3）
+  cut_by_rows: "warn",
 };
 
 /** 更新日の見張り（純関数）。点検の札（C1・C3）と一覧の更新日（C2 の画面の文字）から */
@@ -118,7 +133,7 @@ export function updateDaysFindings(m: WatchMaterial): { items: UpdateFinding[]; 
     items.push({ code: "rows_outside", severity: "warn", title: `一覧に更新日（${days}日以内）より古い物件が混ざっている（${out.outside}/${out.total}行）` });
   }
   const pick = (k: string) => items.find((x) => x.code === k);
-  const gap = pick("gap_uncovered"), rows = pick("rows_outside"), cut = pick("cut_by_pages"), nf = pick("not_filled") ?? pick("leftover");
+  const gap = pick("gap_uncovered"), rows = pick("rows_outside"), cut = pick("cut_by_pages") ?? pick("cut_by_rows"), nf = pick("not_filled") ?? pick("leftover");
   const notice = nf ? `⚠ 更新日が意図どおりに入っていない（${clip(nf.title, 40)}）`
     : gap ? `⚠ 更新日（${days ?? "?"}日以内）では前回の検索から空いた${fmtGap(m.update?.gap_hours ?? null)}を覆えていない（間の新着が漏れるおそれ）`
     : rows ? "⚠ 更新日の絞りが効いていないおそれ（古い更新の物件が一覧に混ざっている）"
@@ -280,7 +295,9 @@ export function detectScreenState(m: WatchMaterial, t: WatchThresholds = DEFAULT
   // 更新日（ラベルは変えない・規則と1行だけ）
   const upd = updateDaysFindings(m);
   for (const u of upd.items.slice(0, 4)) rules.push(`update:${u.code}`);
-  const out = (label: WatchLabel, hard: boolean, reason: string, notice: string | null = null): Detection => ({ label, rules, hard, reason, notice, update_items: upd.items, update_notice: upd.notice });
+  const sentNotice = sentSelectedNotice(checks);
+  if (sentNotice) rules.push("sent:selected");
+  const out = (label: WatchLabel, hard: boolean, reason: string, notice: string | null = null): Detection => ({ label, rules, hard, reason, notice, update_items: upd.items, update_notice: upd.notice, sent_notice: sentNotice });
   if (loginHard || loginUrl || loginText) {
     return out("login_expired", loginHard, loginErr ? "拡張の失敗の文が未ログイン" : loginUrl ? "タブの URL がログインの画面" : `ログインの文: ${clip(d.alert_text || d.modal_text || d.title, 60)}`);
   }

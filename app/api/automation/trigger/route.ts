@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { pendingSourceOrFilter } from "@/app/lib/automation-sources";
-import { buildWebBrainCommands, isWebBrainSite, queuedKey, webBrainBlockReason, WEB_BRAIN_SOURCE } from "@/app/lib/web-brain-search";
+import { buildWebBrainCommands, normalizeWebBrainSites, planWebBrainFold, queuedKey, webBrainBlockReason, WEB_BRAIN_SOURCE, type PendingWebBrain } from "@/app/lib/web-brain-search";
 import { sanitizeSearchOverride } from "@/app/lib/search-override-read";
 import { planPayload } from "@/app/lib/search-update-days";
 import { planUpdateDaysFor } from "@/app/lib/search-update-days-server";
@@ -16,10 +16,12 @@ async function queueWebBrain(
   supabase: SupabaseClient,
   body: { customer_ids?: string[]; sites?: string[]; is_wide?: boolean; search_override?: unknown },
 ): Promise<[Record<string, unknown>, { status: number }]> {
-  const site = body.sites?.[0];
-  if (!isWebBrainSite(site) || (body.sites?.length ?? 0) !== 1) return [{ ok: false, error: "sites は realnetpro / itandi / reins のどれか1つ" }, { status: 400 }];
+  // 2026-09-30 v2.5.42 竹内「リアプロと itandi、お客さんそれぞれ同時に完了するようにする」: リアプロ＋itandi の2つを1人1コマンドに載せてよい
+  const sites = normalizeWebBrainSites(body.sites ?? null);
+  if (!sites) return [{ ok: false, error: "sites は realnetpro / itandi / reins のどれか1つ、または realnetpro と itandi の2つ" }, { status: 400 }];
+  const site = sites[0];
   const ids = [...new Set((body.customer_ids ?? []).map((s) => String(s)).filter(Boolean))];
-  const block = webBrainBlockReason(ids.length, site);
+  const block = webBrainBlockReason(ids.length, sites);
   if (block) return [{ ok: false, error: block }, { status: 400 }];
   // 2026-09-27 メモ欄の検索の指示（その回だけの一時調整）。関所を通した物だけ payload に入れる（1人だけ・知らない欄は捨てる）
   const searchOverride = body.search_override != null ? sanitizeSearchOverride(body.search_override) : null;
@@ -47,12 +49,12 @@ async function queueWebBrain(
   for (const r of (open ?? []) as Array<{ id: string; customer_ids: string[] | null; sites: string[] | null }>) {
     for (const cid of r.customer_ids ?? []) for (const s of r.sites ?? []) { queued.add(queuedKey(String(cid), s)); openIdOf.set(queuedKey(String(cid), s), r.id); }
   }
-  const { rows, skipped } = buildWebBrainCommands(customers, site, !!body.is_wide, { queued, searchOverride });
+  const { rows, skipped } = buildWebBrainCommands(customers, sites, !!body.is_wide, { queued, searchOverride });
   // 2026-09-29 v2.5.41 更新日: 今までの決まり（rp-update-days）を、前回の検索（このサイトで最後に終わった回）から空いた時間を覆う所まで広げる。
   //   拡張は payload.update_days_plan の値を popup の経路でも使う（旧は popup が payload を見ず、その場の決まりで入れていた）。レインズは更新日なし
   if (rows.length > 0 && site !== "reins") {
     try {
-      const plans = await planUpdateDaysFor(supabase, rows.map((r) => ({ id: r.customer_ids[0], baseDays: r.payload.rp_update_days })), [site]);
+      const plans = await planUpdateDaysFor(supabase, rows.map((r) => ({ id: r.customer_ids[0], baseDays: r.payload.rp_update_days })), sites.filter((x) => x !== "reins"));
       const byPlan = new Map(plans.map((x) => [x.id, x.plan]));
       for (const r of rows) {
         const plan = byPlan.get(r.customer_ids[0]);
@@ -62,15 +64,33 @@ async function queueWebBrain(
       }
     } catch (e) { console.warn("[automation/trigger] 更新日の計画を作れない（今までの決まり）:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-09-30 v2.5.42 リアプロを押した後に itandi を押した時: まだ拾われていない同じお客様の命令に itandi を足す（1人ずつ両サイトを続けて回す）。
+  //   足すのは pending の間だけ（条件付き UPDATE・拾われた後は新しく積む）
+  let folded = 0;
+  let toInsert = rows;
+  const foldedIds: string[] = [];
+  if (rows.length > 0 && site !== "reins") {
+    const pend = await supabase.from("automation_commands").select("id, customer_ids, sites, payload")
+      .eq("status", "pending").eq("payload->>source", WEB_BRAIN_SOURCE).gte("created_at", since).limit(200);
+    if (!pend.error) {
+      const plan = planWebBrainFold(rows, (pend.data ?? []) as PendingWebBrain[]);
+      const failed = new Set<string>();
+      for (const f of plan.fold) {
+        const u = await supabase.from("automation_commands").update({ sites: f.sites }).eq("id", f.commandId).eq("status", "pending").select("id");
+        if (u.error || !u.data?.length) failed.add(f.customerId); else { folded++; foldedIds.push(f.commandId); }
+      }
+      toInsert = [...plan.insert, ...rows.filter((r) => failed.has(r.customer_ids[0]))];
+    }
+  }
   let inserted: Array<{ id: string; customer_ids: string[] }> = [];
-  if (rows.length > 0) {
-    const { data, error } = await supabase.from("automation_commands").insert(rows).select("id, customer_ids");
+  if (toInsert.length > 0) {
+    const { data, error } = await supabase.from("automation_commands").insert(toInsert).select("id, customer_ids");
     if (error) return [{ ok: false, error: error.message }, { status: 500 }];
     inserted = (data ?? []) as Array<{ id: string; customer_ids: string[] }>;
   }
   // 進み具合は積んだ物＋まだ終わっていない同じ検索の両方を見る
-  const commandIds = [...inserted.map((r) => r.id), ...skipped.map((cid) => openIdOf.get(queuedKey(cid, site))).filter((v): v is string => !!v)];
-  return [{ ok: true, brain: true, site, queued: inserted.length, already: skipped.length, missing: missing.length, commandIds, search_override: searchOverride }, { status: 200 }];
+  const commandIds = [...inserted.map((r) => r.id), ...foldedIds, ...skipped.map((cid) => openIdOf.get(queuedKey(cid, site))).filter((v): v is string => !!v)];
+  return [{ ok: true, brain: true, site, sites, queued: inserted.length + folded, folded, already: skipped.length, missing: missing.length, commandIds, search_override: searchOverride }, { status: 200 }];
 }
 
 export async function POST(req: NextRequest) {

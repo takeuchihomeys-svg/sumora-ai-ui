@@ -155,7 +155,7 @@ export async function GET(req: NextRequest) {
     jst_date: jstDate,
     dry_run: dryRun,
     rule: mode === "pm"
-      ? "本日の更新日付（更新日1日以内）・更新順・1ページだけ・ピンポイント検索・1コマンドで一括"
+      ? "本日の更新日付（更新日1日以内）・更新順・5ページまで・ピンポイント検索・1コマンドで一括（1人ずつリアプロ→ITANDI）"
       : `直近${RECENT_SENT_DAYS}日に物件出しした人（送信 or 確認）＋登録${NEW_CUSTOMER_DAYS}日以内でまだ出していない人・更新日は前回出した日から・AD高い順・広げて検索・1人1コマンド`,
     batched: isBatchedRun(mode),
     sites: [...AUTO_SEARCH_SITES],

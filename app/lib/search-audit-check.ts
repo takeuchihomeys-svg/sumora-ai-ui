@@ -19,6 +19,8 @@
 import { effectiveRpUpdateDays, type RpUpdateDaysCustomer } from "./rp-update-days";
 import { conditionDrift } from "./search-condition-drift";
 import { agesOutside, coversGap, fmtGap, hoursSince, neededDays, planFor, type UpdateAges } from "./search-update-days";
+import { buildSentRoomIndex, isSentRoom } from "./sent-room-match";
+import { SEARCH_MAX_PAGES } from "./auto-search-schedule";
 
 export type AuditSeverity = "ok" | "warn" | "bad";
 export type AuditSite = "realpro" | "itandi" | "reins";
@@ -26,7 +28,9 @@ export type AuditSite = "realpro" | "itandi" | "reins";
 export type CheckCode =
   | "STATION_MISSING" | "ROUTE_MISSING" | "AREA_UNRESOLVED" | "CONDITION_MISREAD" | "RENT_MISMATCH"
   | "FLOOR_PLAN_DROPPED" | "UPDATE_DAYS" | "LOCATION_MODE" | "RESET_FAILED" | "UI_NOT_FOUND" | "CONDITION_DRIFT" | "CONDITION_STALE"
-  | "ZERO_UNCONFIRMED" | "ZERO_CONFIRMED" | "SENT_LT_READ" | "STALLED" | "COMMUTE_REACH" | `ERROR_${string}`;
+  | "ZERO_UNCONFIRMED" | "ZERO_CONFIRMED" | "SENT_LT_READ" | "STALLED" | "COMMUTE_REACH"
+  // 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードした（見張り）／ITANDI の条件が効いていない検索（止めた・入れ直し）
+  | "SENT_SELECTED" | "ITANDI_GUARD" | `ERROR_${string}`;
 
 export type AuditCheck = {
   code: CheckCode;
@@ -155,6 +159,31 @@ export type AuditResult = {
   update_ages?: UpdateAges | null;
   /** 2026-09-29 v2.5.41 そのお客様に送付済みの部屋として選ばなかった（ダウンロードしなかった）行の数 */
   sent_skipped?: number | null;
+  /** 2026-09-30 v2.5.42 一覧で実際にチェックが入っていた部屋（建物名 n・号室 r・150件まで） */
+  picked_rooms?: Array<{ n?: string | null; r?: string | null }> | null;
+  /** 2026-09-30 v2.5.42 ITANDI の1回の物件数の上限で打ち切った（上限の数） */
+  row_limit?: number | null;
+  /** 2026-09-30 v2.5.42 ITANDI の条件が効いていない形の見分け（itandi-guard.js・background の入れ直しの記録） */
+  guard?: ItandiGuardRecord | null;
+  /** 2026-09-30 v2.5.42 見分けで止めたまま（資料をダウンロードしていない） */
+  guard_stopped?: boolean | null;
+  /** 2026-09-30 v2.5.42 サーバーが数えた「送付済みの部屋を選んだ・ダウンロードした」数（recordFinished が足す） */
+  sent_selected?: number | null;
+};
+
+export type ItandiGuardRecord = {
+  suspect?: boolean;
+  reasons?: string[];
+  judged?: number | null;
+  outside?: { rent?: number; layout?: number; area?: number; any?: number } | null;
+  count?: number | null;
+  count_text?: string | null;
+  samples?: string[];
+  attempt?: number;
+  first?: { reasons?: string[]; judged?: number | null; outside?: Record<string, number> | null; count?: number | null; count_text?: string | null; samples?: string[] } | null;
+  /** 1回目の読み戻し（入れ直すと上書きされるので控えた物） */
+  first_fill?: Filled | null;
+  retry?: { tried?: boolean; fixed?: boolean; reasons?: string[]; judged?: number | null; outside?: Record<string, number> | null; count?: number | null; gap_ms?: number | null } | null;
 };
 
 export type AuditStep = { at?: number | string | null; k: string; d?: string | null };
@@ -183,6 +212,13 @@ export type AuditInput = {
   last_search_at?: string | null;
   /** 2026-09-29 v2.5.41 その回のお客様の id（payload の計画を引く） */
   customer_id?: string | null;
+  /**
+   * 2026-09-30 v2.5.42 そのお客様にこの回より前に送付済みの部屋（sent_properties・/api/automation/sent-rooms と同じ出所）。
+   *   無い（読めない）時は SENT_SELECTED を見ない
+   */
+  sent_rooms?: Array<{ name: string; room: string }> | null;
+  /** 2026-09-30 v2.5.42 この回でダウンロードした部屋（property_candidate_pools＝資料を取りに行った候補） */
+  downloaded_rooms?: Array<{ name: string | null; room: string | null }> | null;
 };
 
 export type AuditVerdict = {
@@ -202,7 +238,7 @@ const SEV_RANK: Record<AuditSeverity, number> = { ok: 0, warn: 1, bad: 2 };
 const CODE_ORDER: string[] = [
   "STALLED", "ERROR_", "UI_NOT_FOUND", "STATION_MISSING", "ROUTE_MISSING", "AREA_UNRESOLVED", "LOCATION_MODE",
   "CONDITION_STALE", "RENT_MISMATCH", "FLOOR_PLAN_DROPPED", "CONDITION_DRIFT", "UPDATE_DAYS", "CONDITION_MISREAD", "RESET_FAILED", "ZERO_UNCONFIRMED",
-  "SENT_LT_READ", "ZERO_CONFIRMED",
+  "SENT_LT_READ", "ZERO_CONFIRMED", "ITANDI_GUARD", "SENT_SELECTED",
 ];
 
 function codeRank(code: string): number {
@@ -556,7 +592,12 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
     const daysUsed = i?.rp_update_days != null ? parseIntLoose(i.rp_update_days) : null;
     if (r?.page_limit && daysUsed != null) {
       add("UPDATE_DAYS", "warn", `update_days:${siteKey}:cut_by_pages`, `更新日（${daysUsed}日以内）の物件を${r.page_limit}ページで打ち切った`,
-        `ページの上限（${r.page_limit}ページ）で次のページを見ていない${r.count_number != null ? `（件数 ${r.count_number}・読んだ ${r.read_rows ?? "?"}行）` : ""}`);
+        `ページの上限（${r.page_limit}ページ）で次のページを見ていない${r.count_number != null ? `（件数 ${r.count_number}・読んだ ${r.read_rows ?? "?"}行）` : ""}${r.page_limit < SEARCH_MAX_PAGES && !(a.command_payload && (a.command_payload as { max_pages?: unknown }).max_pages) ? `・上限が今の${SEARCH_MAX_PAGES}ページより少ない（v2.5.41 以前の拡張）` : ""}`);
+    }
+    // 2026-09-30 v2.5.42 ITANDI の1回の物件数の上限（itandi-guard.js MAX_ROWS）で打ち切った（C3・見張りの ⚠ の1行にも）
+    if (r?.row_limit) {
+      add("UPDATE_DAYS", "warn", `update_days:${siteKey}:cut_by_rows`, `1回の物件数の上限（${r.row_limit}件）で打ち切った`,
+        `上限の${r.row_limit}件を選んだ所で次のページを見ていない（読んだ ${r.read_rows ?? "?"}行）`);
     }
     const out = agesOutside(daysUsed, r?.update_ages ?? null);
     if (out?.bad) {
@@ -624,10 +665,129 @@ export function runSearchAuditChecks(a: AuditInput, nowMs: number = Date.now()):
     add("ERROR_BATCH_TIMEOUT", "bad", `error:${siteKey}:batch_timeout`, "結果を読み終わる合図が5分届かなかった", "0件とは限らない（読み取り・送信が途中で止まった）");
   }
 
+  // ── 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードした（見張り・sent-skip の結果の確かめ）──
+  const sel = sentSelectedOf(a);
+  if (sel && sel.count > 0) {
+    add("SENT_SELECTED", "warn", `sent_selected:${siteKey}`, `送付済みの部屋を${sel.count}件選んだ・ダウンロードした`,
+      `${sel.names.slice(0, 4).join("・")}（一覧でチェック ${sel.picked}・資料 ${sel.downloaded}・送付済みの部屋 ${sel.sentRooms}件と照らした）`);
+  } else if (sel && typeof r?.sent_skipped === "number" && r.sent_skipped > 0) {
+    add("SENT_SELECTED", "ok", `sent_selected:${siteKey}:none`, `送付済みの部屋 ${r.sent_skipped}件は選ばなかった`, `選んだ・ダウンロードした部屋に送付済みは無い（照らした送付済み ${sel.sentRooms}件）`);
+  }
+
+  // ── 2026-09-30 v2.5.42 ITANDI の条件が効いていない検索（止めた・1回だけ入れ直した）。原因を 拡張側／ITANDI 側／判断つかず に分ける ──
+  const g = r?.guard ?? null;
+  if (g && (g.suspect || g.first)) {
+    const gc = itandiGuardCause(a);
+    const tried = !!g.retry?.tried;
+    const fixed = tried && !!g.retry?.fixed;
+    const outcome = !tried ? "no_retry" : fixed ? "fixed" : "unfixed";
+    const why = (g.first?.reasons ?? g.reasons ?? []).map((x) => GUARD_REASON_JA[x] ?? x).join("・") || "条件の外の物件が多い";
+    add("ITANDI_GUARD", fixed ? "warn" : "bad", `itandi_guard:${siteKey}:${gc.cause}:${outcome}`,
+      `条件が効いていない検索（${GUARD_CAUSE_JA[gc.cause]}・${fixed ? "入れ直しで直った" : tried ? "入れ直しても直らず見送り" : "入れ直していない"}）`,
+      `${why}${g.first?.count != null ? `・件数 ${g.first.count}` : ""}${g.first?.judged != null ? `・行 ${g.first.judged}のうち外 ${g.first?.outside?.any ?? "?"}` : ""}／根拠: ${gc.evidence.join("・")}`);
+  }
+
   checks.sort((x, y) => SEV_RANK[y.severity] - SEV_RANK[x.severity] || codeRank(x.code) - codeRank(y.code));
   const severity: AuditSeverity = checks.length ? checks[0].severity : "ok";
   const cause_keys = uniq(checks.map((x) => x.cause_key)).slice(0, 10);
   return { checks, severity, cause_key: checks[0]?.cause_key ?? null, cause_keys, zero };
+}
+
+const GUARD_REASON_JA: Record<string, string> = {
+  count_over: "件数が 3,000件を超えている", rent_outside: "家賃が上限を超える物件が多い", layout_outside: "希望に無い間取りが多い",
+  area_outside: "希望の区の外の物件が多い", rows_outside: "条件の外の物件が多い",
+};
+export type GuardCause = "ext" | "site" | "unknown";
+export const GUARD_CAUSE_JA: Record<GuardCause, string> = { ext: "拡張側（欄に入っていない・押せない）", site: "ITANDI 側（入れた値は合っているのに結果が条件を守っていない）", unknown: "判断つかず（読み戻しが無い）" };
+
+/** 条件の読み戻しの札のうち「拡張が欄に入れられなかった」と読める物（1回目の読み戻しに当てる） */
+function extSideEvidence(c: AuditCheck): boolean {
+  if (c.severity === "ok") return false;
+  // RESET_FAILED は入れない: ITANDI は「条件リセットのボタンが見つからない」が全回（28/28・scripts/audit-itandi-guard.ts 2026-09-30）に付く＝分ける材料にならない
+  if (["UI_NOT_FOUND", "STATION_MISSING", "ROUTE_MISSING", "AREA_UNRESOLVED", "LOCATION_MODE", "RENT_MISMATCH", "FLOOR_PLAN_DROPPED", "CONDITION_STALE"].includes(c.code)) return true;
+  // 登録の条件とのズレは「欄が入っていない・余分・広い（higher）」だけ（狭い lower は結果が条件の外に出る理由にならない）
+  if (c.code === "CONDITION_DRIFT" && c.severity === "bad" && /:(missing|extra|higher|not_filled)$/.test(c.cause_key)) return true;
+  if (c.code === "UPDATE_DAYS" && /:(not_filled|leftover)$/.test(c.cause_key)) return true;
+  return c.code.startsWith("ERROR_");
+}
+
+/**
+ * 2026-09-30 v2.5.42 竹内「拡張ツールの部分が問題なのか ITANDI への登録がちゃんと入らなかったのかが原因となるので、その点も併せて確認して」:
+ *   ITANDI の条件が効いていない検索の原因を分ける（純関数・学習の材料）。材料は**1回目の**読み戻し（入れ直す前・guard.first_fill）:
+ *   ①拡張側（ext）… 読み戻しで欄が入っていない・押せない・前の条件が残った（STATION_MISSING・RENT_MISMATCH・UI_NOT_FOUND 等）
+ *   ②ITANDI 側（site）… 読み戻しは入れようとした値どおりなのに、結果が家賃・間取り・区を守っていない（ITANDI の保存条件・サイトの挙動）
+ *   ③判断つかず（unknown）… 読み戻しが無い（古い版・直接入力の経路）
+ */
+export function itandiGuardCause(a: AuditInput): { cause: GuardCause; evidence: string[] } {
+  const g = a.result?.guard ?? null;
+  const fill = (g?.first_fill ?? null) || a.filled || null;
+  if (!fill || (fill.form == null && fill.search_clicked == null && !arr(fill.click_fails).length)) return { cause: "unknown", evidence: ["読み戻しが無い"] };
+  const v = runSearchAuditChecks({ ...a, filled: fill, result: { ...(a.result ?? {}), guard: null, guard_stopped: null, picked_rooms: null }, sent_rooms: null, downloaded_rooms: null, error: null, error_kind: null, status: "finished" });
+  const ev = v.checks.filter(extSideEvidence);
+  if (ev.length) return { cause: "ext", evidence: ev.slice(0, 4).map((c) => c.title) };
+  if (fill.search_clicked === false) return { cause: "ext", evidence: ["検索ボタンが押せなかった"] };
+  if (fill.form == null) return { cause: "unknown", evidence: ["欄の読み戻しが無い"] };
+  return { cause: "site", evidence: ["入れた値は読み戻しで合っている"] };
+}
+
+/**
+ * 2026-09-30 v2.5.42 送付済みの部屋を選んだ・ダウンロードした数（純関数・sent-room-match の完全一致＝拡張の sent-skip と同じ線）。
+ *   送付済みの一覧が無い（読めない）時は null（言わない）
+ */
+export function sentSelectedOf(a: Pick<AuditInput, "sent_rooms" | "downloaded_rooms" | "result">): { count: number; picked: number; downloaded: number; names: string[]; sentRooms: number } | null {
+  if (!a.sent_rooms || !a.sent_rooms.length) return null;
+  const idx = buildSentRoomIndex(a.sent_rooms);
+  if (!idx.size) return null;
+  const keys = new Map<string, string>();
+  let picked = 0, downloaded = 0;
+  for (const p of arr(a.result?.picked_rooms)) {
+    if (p && isSentRoom(idx, p.n ?? null, p.r ?? null)) { picked++; keys.set(`${p.n}|${p.r}`, `${p.n} ${p.r}`); }
+  }
+  for (const d of arr(a.downloaded_rooms)) {
+    if (d && isSentRoom(idx, d.name, d.room)) { downloaded++; keys.set(`${d.name}|${d.room}`, `${d.name} ${d.room}`); }
+  }
+  return { count: keys.size, picked, downloaded, names: [...keys.values()], sentRooms: idx.size };
+}
+
+/**
+ * 2026-09-30 v2.5.42 週のまとめ（search-audit-weekly）: ITANDI の条件が効いていない検索を 原因（拡張側／ITANDI 側／判断つかず）×
+ *   結果（入れ直しで直った／直らず見送り／入れ直していない）で数える＋送付済みの部屋を選んだ回・物件数の上限で打ち切った回（純関数）。
+ *   「どの直し方が効いたか」を学ぶ材料: 直った回の原因の割合・直らなかった回の原因の割合
+ */
+export function itandiGuardWeekly(rows: ReadonlyArray<{ checks?: AuditCheck[] | null }>): {
+  guard: Record<GuardCause, { fixed: number; unfixed: number; no_retry: number }>;
+  guardRuns: number; fixRate: number | null; sentSelectedRuns: number; sentSelectedRooms: number; rowCutRuns: number; pageCutRuns: number; lines: string[];
+} {
+  const guard: Record<GuardCause, { fixed: number; unfixed: number; no_retry: number }> = {
+    ext: { fixed: 0, unfixed: 0, no_retry: 0 }, site: { fixed: 0, unfixed: 0, no_retry: 0 }, unknown: { fixed: 0, unfixed: 0, no_retry: 0 },
+  };
+  let guardRuns = 0, sentSelectedRuns = 0, sentSelectedRooms = 0, rowCutRuns = 0, pageCutRuns = 0;
+  for (const r of rows) {
+    const cs = arr(r.checks);
+    const g = cs.find((c) => c.code === "ITANDI_GUARD");
+    if (g) {
+      const [, , cause, outcome] = g.cause_key.split(":");
+      const k = (cause === "ext" || cause === "site" ? cause : "unknown") as GuardCause;
+      const o = outcome === "fixed" || outcome === "unfixed" ? outcome : "no_retry";
+      guard[k][o]++;
+      guardRuns++;
+    }
+    const s = cs.find((c) => c.code === "SENT_SELECTED" && c.severity !== "ok");
+    if (s) { sentSelectedRuns++; const n = Number((s.title.match(/(\d+)件/) ?? [])[1]); if (Number.isFinite(n)) sentSelectedRooms += n; }
+    if (cs.some((c) => /:cut_by_rows$/.test(c.cause_key))) rowCutRuns++;
+    if (cs.some((c) => /:cut_by_pages$/.test(c.cause_key))) pageCutRuns++;
+  }
+  const tried = (["ext", "site", "unknown"] as GuardCause[]).reduce((a, k) => a + guard[k].fixed + guard[k].unfixed, 0);
+  const fixedAll = (["ext", "site", "unknown"] as GuardCause[]).reduce((a, k) => a + guard[k].fixed, 0);
+  const fixRate = tried ? Math.round((fixedAll / tried) * 100) / 100 : null;
+  const lines: string[] = [];
+  if (guardRuns) {
+    const part = (k: GuardCause, ja: string) => guard[k].fixed + guard[k].unfixed + guard[k].no_retry ? `${ja} ${guard[k].fixed + guard[k].unfixed + guard[k].no_retry}回（直った ${guard[k].fixed}・直らず ${guard[k].unfixed}${guard[k].no_retry ? `・入れ直していない ${guard[k].no_retry}` : ""}）` : "";
+    lines.push(`ITANDI の条件が効いていない検索 ${guardRuns}回: ${[part("ext", "拡張側"), part("site", "ITANDI 側"), part("unknown", "判断つかず")].filter(Boolean).join("／")}${fixRate != null ? `・入れ直しで直った率 ${Math.round(fixRate * 100)}%` : ""}`);
+  }
+  if (sentSelectedRuns) lines.push(`送付済みの部屋を選んだ・ダウンロードした回 ${sentSelectedRuns}回（${sentSelectedRooms}部屋）`);
+  if (rowCutRuns) lines.push(`ITANDI の物件数の上限で打ち切った回 ${rowCutRuns}回`);
+  return { guard, guardRuns, fixRate, sentSelectedRuns, sentSelectedRooms, rowCutRuns, pageCutRuns, lines };
 }
 
 /** DeepSeek に見立てを頼むか（bad か、warn の0件だけ） */
@@ -655,6 +815,8 @@ export function causeTitle(causeKey: string): string {
     case "zero_unconfirmed": return `${siteJa}: 0件（確かめられない・${a}）`;
     case "zero_confirmed": return `${siteJa}: 0件（件数表示も0）`;
     case "sent_lt_read": return `${siteJa}: 送れる物件を送り切れない`;
+    case "sent_selected": return `${siteJa}: 送付済みの部屋を選んだ・ダウンロードした`;
+    case "itandi_guard": return `${siteJa}: 条件が効いていない検索（${a === "ext" ? "拡張側" : a === "site" ? "ITANDI 側" : "判断つかず"}・${b === "fixed" ? "入れ直しで直った" : b === "unfixed" ? "直らず見送り" : "入れ直していない"}）`;
     case "stalled": return `${siteJa}: 途中で止まった（${a}）`;
     case "error": return a === "not_logged_in" ? `${siteJa}: ログインしていない` : `${siteJa}: 失敗（${a}）`;
     // 2026-09-29 見張りの週のまとめの提案（screen-watch-server.weeklyScreenWatch）。形は watch_rule:<規則>／decision:commute_missing:<目的の駅>

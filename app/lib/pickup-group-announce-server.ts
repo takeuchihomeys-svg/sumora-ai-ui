@@ -69,10 +69,21 @@ export async function announceCompleteGroup(input: {
     const byId = new Map(flags.map((f) => [f.id, f]));
     const rowById = new Map(input.rows.map((r) => [r.id, r]));
     const orderIds = input.order && input.order.length ? input.order : ids;
+    // 2026-09-30 v2.5.42 このお客様に届けた部屋（完全一致・★物件出し★への共有は除く）の印。読めない時は付けない（今まで通り）
+    let sentBefore = new Set<number>();
+    try {
+      const { sentRoomsFor } = await import("@/app/lib/sent-rooms-server");
+      const { buildSentRoomIndex, pickSentRooms } = await import("@/app/lib/sent-room-match");
+      const sr = await sentRoomsFor(supabase as never, input.propertyCustomerId, { customerOnly: true });
+      if (!sr.error && sr.rooms.length) {
+        const idx = buildSentRoomIndex(sr.rooms);
+        sentBefore = new Set(pickSentRooms(input.rows.map((r) => ({ id: r.id, property_name: (r as { property_name?: string | null }).property_name ?? null, room_no: (r as { room_no?: string | null }).room_no ?? null })), idx).map((x) => x.id));
+      }
+    } catch { /* 印なしで続ける */ }
     const items: AnnounceItem[] = orderIds.map((id) => {
       const r = rowById.get(id);
       const f = byId.get(id);
-      return { ...(r ?? { id }), id, summary_text: f?.summary_text ?? r?.summary_text ?? null };
+      return { ...(r ?? { id }), id, summary_text: f?.summary_text ?? r?.summary_text ?? null, sent_before: sentBefore.has(id) };
     });
     const sites: Record<string, number> = {};
     for (const f of flags) { const k = f.site ?? "unknown"; sites[k] = (sites[k] ?? 0) + 1; }

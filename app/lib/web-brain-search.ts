@@ -23,6 +23,21 @@ export function isWebBrainSite(v: unknown): v is WebBrainSite {
   return typeof v === "string" && (WEB_BRAIN_SITES as readonly string[]).includes(v);
 }
 
+/**
+ * 2026-09-30 v2.5.42 竹内「リアプロと itandi、お客さんそれぞれ同時に完了するようにする。YUMA ならリアプロと itandi 完了して、次のお客さんに移る」:
+ *   1人1コマンドに「リアプロ＋itandi」の両方を載せてよい（拡張は同じお客様の リアプロ → ITANDI を続けて回してから次のお客様へ）。
+ *   受け付ける形: 1サイト（リアプロ・itandi・レインズ）か、リアプロ＋itandi の2つ（並びはリアプロ → itandi にそろえる）。それ以外は null
+ */
+export function normalizeWebBrainSites(v: unknown): WebBrainSite[] | null {
+  const list = Array.isArray(v) ? v : [v];
+  const uniq = [...new Set(list.map((x) => String(x ?? "")))];
+  if (!uniq.length || !uniq.every(isWebBrainSite)) return null;
+  if (uniq.length === 1) return [uniq[0] as WebBrainSite];
+  if (uniq.length === 2 && uniq.includes("realnetpro") && uniq.includes("itandi")) return ["realnetpro", "itandi"];
+  return null;
+}
+const siteList = (site: WebBrainSite | ReadonlyArray<WebBrainSite>): WebBrainSite[] => (Array.isArray(site) ? [...site] : [site as WebBrainSite]);
+
 export type WebBrainPayload = {
   source: typeof WEB_BRAIN_SOURCE; is_wide: boolean; rp_update_days: number | null;
   /** 2026-09-27 AIXツールのメモ欄の検索の指示（その回だけの一時調整・search-override.ts）。無ければ登録の条件のまま */
@@ -36,6 +51,33 @@ export type WebBrainCommandRow = {
   status: "pending";
 };
 
+/** まだ拾われていない（pending）同じお客様の web_brain の命令（別のサイトで積んだ物） */
+export type PendingWebBrain = { id: string; customer_ids: string[] | null; sites: string[] | null; payload: { is_wide?: boolean | null; search_override?: unknown } | null };
+
+/**
+ * 2026-09-30 v2.5.42 リアプロを押した後に itandi を押した時（別々に積むと「全員のリアプロ → 全員の itandi」の順に回る）、
+ *   まだ拾われていない同じお客様の命令（同じ ピンポイント／広げて・一時調整の上書きが無い）に新しいサイトを足す＝1人ずつ両サイトを続けて回す。
+ *   足せない行（上書き付き・広げてが違う・もう拾われた）は今まで通り新しく積む（純関数）
+ */
+export function planWebBrainFold(rows: ReadonlyArray<WebBrainCommandRow>, pending: ReadonlyArray<PendingWebBrain>): { fold: Array<{ commandId: string; customerId: string; sites: WebBrainSite[] }>; insert: WebBrainCommandRow[] } {
+  const fold: Array<{ commandId: string; customerId: string; sites: WebBrainSite[] }> = [];
+  const insert: WebBrainCommandRow[] = [];
+  const used = new Set<string>();
+  for (const r of rows) {
+    const cid = r.customer_ids[0];
+    const hit = r.customer_ids.length === 1 && !r.payload.search_override ? pending.find((pc) =>
+      !used.has(pc.id) && (pc.customer_ids ?? []).length === 1 && String(pc.customer_ids![0]) === String(cid)
+      && !!pc.payload?.is_wide === !!r.payload.is_wide && !pc.payload?.search_override
+      && r.sites.some((s) => !(pc.sites ?? []).includes(s))) : undefined;
+    if (!hit) { insert.push(r); continue; }
+    const merged = normalizeWebBrainSites([...(hit.sites ?? []), ...r.sites]);
+    if (!merged) { insert.push(r); continue; }
+    used.add(hit.id);
+    fold.push({ commandId: hit.id, customerId: String(cid), sites: merged });
+  }
+  return { fold, insert };
+}
+
 /** 同じお客様・同じサイトの一括検索がまだ終わっていない（pending/running）時の鍵 */
 export function queuedKey(customerId: string, site: string): string { return `${customerId}::${site}`; }
 
@@ -45,7 +87,7 @@ export function queuedKey(customerId: string, site: string): string { return `${
  */
 export function buildWebBrainCommands(
   customers: ReadonlyArray<RpUpdateDaysCustomer & { id: string }>,
-  site: WebBrainSite,
+  site: WebBrainSite | ReadonlyArray<WebBrainSite>,
   isWide: boolean,
   opts: { nowMs?: number; queued?: ReadonlySet<string>; searchOverride?: SearchOverride | null } = {},
 ): { rows: WebBrainCommandRow[]; skipped: string[] } {
@@ -57,11 +99,13 @@ export function buildWebBrainCommands(
     const id = String(c.id);
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    if (opts.queued?.has(queuedKey(id, site))) { skipped.push(id); continue; }
+    // 2026-09-30 v2.5.42 両サイトの時は、まだ終わっていない同じサイトの検索だけを除く（全部積んであれば積まない）
+    const want = siteList(site).filter((s) => !opts.queued?.has(queuedKey(id, s)));
+    if (!want.length) { skipped.push(id); continue; }
     rows.push({
       command_type: "batch_property_search",
       customer_ids: [id],
-      sites: [site],
+      sites: want,
       payload: { source: WEB_BRAIN_SOURCE, is_wide: !!isWide, rp_update_days: effectiveRpUpdateDays(c, nowMs), ...(opts.searchOverride ? { search_override: opts.searchOverride } : {}) },
       status: "pending",
     });
@@ -70,9 +114,9 @@ export function buildWebBrainCommands(
 }
 
 /** 選んだ人数とサイトで押せるか（押せない時は理由） */
-export function webBrainBlockReason(count: number, site: WebBrainSite): string | null {
+export function webBrainBlockReason(count: number, site: WebBrainSite | ReadonlyArray<WebBrainSite>): string | null {
   if (count <= 0) return "お客様にチェックを入れてください";
-  if (site === "reins" && count > REINS_MAX_CUSTOMERS) return "レインズは条件を入れるだけなので1人ずつです（次の人の条件で上書きされます）";
+  if (siteList(site).includes("reins") && count > REINS_MAX_CUSTOMERS) return "レインズは条件を入れるだけなので1人ずつです（次の人の条件で上書きされます）";
   if (count > WEB_BRAIN_MAX_CUSTOMERS) return `一度に積めるのは${WEB_BRAIN_MAX_CUSTOMERS}人までです`;
   return null;
 }

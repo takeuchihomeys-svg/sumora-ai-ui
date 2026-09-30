@@ -16,7 +16,7 @@
 //   止まった時: まとめ ID を付けた後に読み取り・順位が途中で切れた（関数の打ち切り等）まとめは status=running のまま残る
 //     → Cron が 15分を過ぎた running を1回だけ retry に変えて（条件付き UPDATE で取る）finishCompleteGroup をやり直す（保存済みの分析は読まない）
 import { supabase } from "@/app/lib/supabase";
-import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow } from "@/app/lib/pickup-complete";
+import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, searchHold, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, SEARCH_HOLD_MAX_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow, type HoldAudit, type HoldCommand } from "@/app/lib/pickup-complete";
 import { bestBasisFor, bestRuleTag, customerImageNeed, type BestBasis } from "@/app/lib/pickup-best";
 import { dropDiscountFromRow } from "@/app/lib/property-brain";
 
@@ -32,6 +32,8 @@ export type ClaimResult = {
   conversationId: string | null;
   /** quietMs を付けて呼んだ時、まだ最後の行から quietMs 経っていない（まとめない）。dueAt＝まとめてよくなる時刻 */
   notDue: boolean;
+  /** 2026-09-30 v2.5.42 そのお客様の検索がまだ続いている（別のサイトの回の途中・次のサイトが始まる前）ので待った理由 */
+  holdReason?: string | null;
   dueAt: string | null;
   error: string | null;
 };
@@ -58,6 +60,16 @@ export async function claimCompleteGroup(propertyCustomerId: string, meta: Compl
       if (last != null && !isQuietFor(last, now, opts.quietMs)) {
         out.ok = true; out.notDue = true; out.dueAt = new Date(last + opts.quietMs).toISOString();
         return out;
+      }
+      // 2026-09-30 v2.5.42 竹内「お客さん毎にリアプロと itandi 完了して、次のお客さんに移る…分析もお客さん毎に」:
+      //   静かでも、そのお客様の検索（ITANDI の回・次のサイト）が続いている間はまとめない＝両サイトがそろってから1回だけ解析・★物件出し★に1回
+      if (last != null) {
+        const h = await searchHoldFor(propertyCustomerId, now);
+        if (h.hold && h.until != null) {
+          out.ok = true; out.notDue = true; out.holdReason = h.reason;
+          out.dueAt = new Date(Math.max(h.until, now + 60_000)).toISOString();
+          return out;
+        }
       }
     }
     const t = selectCompleteTargets(rows, now);
@@ -96,6 +108,29 @@ export async function claimCompleteGroup(propertyCustomerId: string, meta: Compl
     if (!(meta.trigger === "idle" && !out.claimedIds.length && !out.error)) {
       console.log(JSON.stringify({ tag: "property-pickups:complete-claim", customer: propertyCustomerId.slice(0, 8), group: out.groupId, claimed: out.claimedIds.length, sites: out.sites, already: out.already, trigger: meta.trigger, mode: meta.mode, by: meta.requestedBy, error: out.error }));
     }
+  }
+}
+
+/**
+ * 2026-09-30 v2.5.42 そのお客様の検索が続いているか（search_audits の直近の回＋その命令）。読めない時は待たない（今まで通りまとめる）
+ */
+export async function searchHoldFor(propertyCustomerId: string, now = Date.now()): Promise<{ hold: boolean; until: number | null; reason: string | null }> {
+  try {
+    const since = new Date(now - SEARCH_HOLD_MAX_MS - 10 * 60_000).toISOString();
+    const a = await supabase.from("search_audits").select("created_at, finished_at, status, site, command_id")
+      .eq("property_customer_id", propertyCustomerId).gte("created_at", since).order("created_at", { ascending: false }).limit(20);
+    if (a.error) return { hold: false, until: null, reason: null };
+    const audits = (a.data ?? []) as HoldAudit[];
+    if (!audits.length) return { hold: false, until: null, reason: null };
+    const ids = [...new Set(audits.map((x) => x.command_id).filter((x): x is string => !!x))].slice(0, 10);
+    let commands: HoldCommand[] = [];
+    if (ids.length) {
+      const c = await supabase.from("automation_commands").select("id, status, sites").in("id", ids);
+      if (!c.error) commands = (c.data ?? []) as HoldCommand[];
+    }
+    return searchHold(audits, commands, now);
+  } catch {
+    return { hold: false, until: null, reason: null };
   }
 }
 
@@ -232,6 +267,8 @@ export type SweepReport = {
   due: number;
   waiting: number;
   claimed: Array<{ customer: string; group: string | null; items: number; best: number | null; basis: string | null; error: string | null }>;
+  /** 2026-09-30 v2.5.42 静かだが検索が続いていて待ったお客様の数 */
+  held?: number;
   retried: Array<{ group: string; best: number | null; error: string | null }>;
   error: string | null;
   ms: number;
@@ -264,8 +301,14 @@ export async function runAutoCompleteSweep(opts: { now?: number; dry?: boolean; 
     }
     const deadlineAt = opts.deadlineAt ?? Date.now() + 200_000;
     const jobs: Array<Promise<void>> = [];
-    for (const d of sel.due.slice(0, SWEEP_MAX_CUSTOMERS)) {
+    // 2026-09-30 v2.5.42 検索が続いていて待ったお客様（notDue）は数に入れない（待つ人で3枠が埋まって他の人がまとまらない、を防ぐ・見るのは最大10人）
+    let taken = 0, looked = 0;
+    for (const d of sel.due) {
+      if (taken >= SWEEP_MAX_CUSTOMERS || looked >= SWEEP_MAX_CUSTOMERS + 7) break;
+      looked++;
       const claim = await claimCompleteGroup(d.property_customer_id, { trigger: "idle", mode: null, requestedBy: "cron" }, now, { quietMs: AUTO_COMPLETE_QUIET_MS });
+      if (claim.notDue) { out.held = (out.held ?? 0) + 1; continue; }
+      taken++;
       const rec = { customer: d.property_customer_id.slice(0, 8), group: claim.groupId, items: claim.claimedIds.length, best: null as number | null, basis: null as string | null, error: claim.error };
       out.claimed.push(rec);
       if (claim.ok && claim.groupId && claim.claimedIds.length) {
