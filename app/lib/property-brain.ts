@@ -299,8 +299,10 @@ export const WIDE_SQM = 5;
  *   80〜85% 0.43・70〜80% 1.19（7%/5%・件数が少ない）・70%未満 0〜0.56。🌟 585件の中央 0.95・申込直前の🌟 中央 0.99。
  *   同じ回の中で家賃が高いほど築年が新しく（−0.28）広く（+0.22）設備が多い（+0.18）＝「上限寄りほど質が高い」は裏付けあり。
  *   点の大きさは scripts/backtest-rent-band.ts（スタッフが選んで送った回・7割で決めて3割で確かめる）で選んだ。
- * ■ 下限（rent_min がある時）: 管理費込みで下限を下回ったら RENT_OK を付けず RENT_UNDER_MIN（保留・家賃の外れ＝全部合うの数でも外れ）。
- *   下限との差が小さい（下限 × nearMinRatio 以上）は RENT_NEAR_MIN（減点だけ・保留にしない）。
+ * ■ 下限（rent_min がある時）: 管理費込みで 下限 × 保留の線（minHoldTiers・下限の家賃帯ごと）を下回ったら RENT_OK を付けず RENT_UNDER_MIN
+ *   （保留・家賃の外れ＝全部合うの数でも外れ）。線以上〜下限未満は保留にしない（位置の札はそのまま）: 下限 × nearMinRatio 以上は RENT_NEAR_MIN（0点の知らせ）、
+ *   保留の線〜下限 × nearMinRatio は RENT_UNDER_MIN_SOFT（軽い減点＝上限寄りの部屋より上に来ない）。
+ *   2026-09-30 竹内「家賃の下限 95% を保留は強すぎる。85% 程までいけるが、そこは家賃帯による。家賃高い人とかもっと幅持って良い」→ 線を下限の家賃帯ごとに
  *   rent_min は拡張の検索では「賃料」の欄（管理費を含まない）に入るので、判定は管理費込みで比べる（下限に甘い側）。
  * ■ 目安の額（お客様が「できれば6万円程度」「家賃10万くらい（管理費込みで12万上限）」と上限より下の額を言った時・readRentTarget）:
  *   帯の札の代わりに目安との近さの札（RENT_TARGET_*）。この時は家賃の安さの札（RENT_CHEAP_*）は付けない（目安の近くを一番高く）。
@@ -321,10 +323,28 @@ export const RENT_BAND_RULE = {
     { minRatio: 0.80, code: "RENT_BAND_LOWER", points: -8 },
     { minRatio: 0, code: "RENT_BAND_LOW", points: -8 },
   ],
-  /** 下限: 下限 × nearMinRatio 以上なら RENT_NEAR_MIN（保留にしない・位置の札はそのまま）・それ未満は RENT_UNDER_MIN（保留） */
+  /** 下限の保留の線（下限＝rent_min の額で上から順に当てる）: 管理費込みで 下限 × holdRatio 未満は RENT_UNDER_MIN（保留）、
+   *  線以上〜下限未満は保留にしない（位置の札はそのまま・下の nearMinRatio で RENT_NEAR_MIN／RENT_UNDER_MIN_SOFT に分ける）。 */
+  //   2026-09-30 旧は一律 0.95 → 竹内「85% 程までいける・家賃帯による・家賃高い人はもっと幅」で下限の家賃帯ごとに。
+  //   線は scripts/audit-rent-min-bands.ts（180日・家賃＋管理費 ÷ その時点の下限・下限のあるお客様だけ）:
+  //   同じ回で選んだ下限未満の物は どれも 0.91 以上（0.95 の線では 3件が保留）・届いた送付の下限未満は 0.80〜0.99・
+  //   🌟の下限未満は〜7万台で 0.80〜0.97（申込の直前の🌟に 0.88）・8〜9万台は下限未満の🌟がある人が 14人中6人（〜7万台は 0〜3人）＝高い帯ほど下限を割って選ぶ。
+  //   保留になる数（前の 0.95 → 今）: 同じ回で選んだ 3→0・選ばない 15→0・届いた送付 12→3・🌟 14→6（残りは管理費の読めない 0.80・条件が後から変わったと見られる2人）。
+  //   8万以上の線（0.80・0.75）は実データが薄く（同じ回の候補に 8万以上の下限未満は 0件）竹内さんの「家賃高い人はもっと幅」に合わせた（円で 1.6万・2.5万まで）
+  minHoldTiers: [
+    { minFrom: 100_000, holdRatio: 0.75 },
+    { minFrom: 80_000, holdRatio: 0.80 },
+    { minFrom: 0, holdRatio: 0.85 },
+  ] as ReadonlyArray<{ minFrom: number; holdRatio: number }>,
+  /** 下限 × nearMinRatio 以上〜下限未満＝RENT_NEAR_MIN（下限を少し下回る）・保留の線〜下限 × nearMinRatio＝RENT_UNDER_MIN_SOFT */
   nearMinRatio: 0.95,
   //   下限を少し下回る物はスタッフが選んでいる（11/54）＝ −3・−5 は当て直しで悪くなった → 0点の知らせ
   nearMinPoints: 0,
+  //   2026-09-30 保留の線〜下限の95%（保留を外した所）の軽い減点。0 だと保留から外れた選ばない物（16件）が選んだ物と並び、
+  //   R さんの 心斎橋SPOT21（築42・6.0万）が 2位に上がった（竹内「上限寄りを評価」とぶつかる）。当て直し（backtest-rent-band・前の直し→今）:
+  //   0／−3／−5 で 札が変わった回の相対順位 0.355／0.321／0.334（前の直し 0.300）・確かめ用 0.349／0.355／0.360（同 0.360）→ −3。
+  //   札ごとの選ばれる率: この札 4/20（全体 27%）・スタッフが選んだのに保留だった下限未満 4/21 → 0/1
+  softMinPoints: -3,
   belowMinPoints: -10,
   /** 目安の額との差（÷ 目安）: near 以内が一番・mid 以内が次・それより離れると far */
   target: { nearPct: 0.05, midPct: 0.12, nearPoints: 0, midPoints: -5, farPoints: -10 },
@@ -334,11 +354,17 @@ export const RENT_BAND_RULE = {
 export const RENT_BAND_POINTS: Record<string, number> = {
   ...Object.fromEntries(RENT_BAND_RULE.bands.map((b) => [b.code, b.points])),
   RENT_NEAR_MIN: RENT_BAND_RULE.nearMinPoints,
+  RENT_UNDER_MIN_SOFT: RENT_BAND_RULE.softMinPoints,
   RENT_UNDER_MIN: RENT_BAND_RULE.belowMinPoints,
   RENT_TARGET_NEAR: RENT_BAND_RULE.target.nearPoints,
   RENT_TARGET_MID: RENT_BAND_RULE.target.midPoints,
   RENT_TARGET_FAR: RENT_BAND_RULE.target.farPoints,
 };
+/** 下限の保留の線（下限 × この割合 未満は RENT_UNDER_MIN の保留）。下限の額で RENT_BAND_RULE.minHoldTiers を引く */
+export function rentMinHoldRatio(rentMin: number): number {
+  const tiers = RENT_BAND_RULE.minHoldTiers;
+  return (tiers.find((t) => rentMin >= t.minFrom) ?? tiers[tiers.length - 1]).holdRatio;
+}
 let rentBandEnabledOverride: boolean | null = null;
 /** 当て直し（scripts/backtest-rent-band.ts）で旧と新を並べるための切り替え。null で表と環境変数に従う */
 export function setRentBandEnabled(on: boolean | null): void { rentBandEnabledOverride = on; }
@@ -360,10 +386,11 @@ export function rentPositionCodes(
 ): Array<{ code: string; hold?: boolean }> {
   const R = RENT_BAND_RULE;
   const min = p.rentMin ?? null;
-  // 下限を少し下回る（下限の95%以上）は保留にせず、上限内の位置の札に「下限を少し下回る」を足す（下の表の nearMinPoints）
+  // 下限を下回っても保留の線（下限の家賃帯ごと・rentMinHoldRatio）以上なら保留にせず、上限内の位置の札に「下限を下回る」を足す（nearMinPoints）
   const nearMin = min != null && total < min;
-  if (nearMin && total < min * R.nearMinRatio) return [{ code: "RENT_UNDER_MIN", hold: true }];
-  if (p.rentMax == null || total > p.rentMax) return nearMin ? [{ code: "RENT_NEAR_MIN" }] : [];
+  if (nearMin && total < min * rentMinHoldRatio(min)) return [{ code: "RENT_UNDER_MIN", hold: true }];
+  const nearCode = nearMin && total < min * R.nearMinRatio ? "RENT_UNDER_MIN_SOFT" : "RENT_NEAR_MIN";
+  if (p.rentMax == null || total > p.rentMax) return nearMin ? [{ code: nearCode }] : [];
   const out: Array<{ code: string; hold?: boolean }> = [{ code: "RENT_OK" }];
   const target = p.rentTarget ?? null;
   const ratio = total / p.rentMax;
@@ -375,7 +402,7 @@ export function rentPositionCodes(
     const band = R.bands.find((b) => ratio >= b.minRatio);
     if (band) out.push({ code: band.code });
   }
-  if (nearMin) out.push({ code: "RENT_NEAR_MIN" });
+  if (nearMin) out.push({ code: nearCode });
   return out;
 }
 
@@ -492,6 +519,8 @@ export const REASON_JA: Record<string, string> = {
   // 2026-09-29 家賃の位置（RENT_BAND_RULE）: 下限を下回る部屋は保留（RENT_UNDER_MIN）。旧の RENT_BELOW_MIN（−3 の情報の札）は保存済みの行と切り替えの旧の決まりだけ
   RENT_UNDER_MIN: "家賃が下限未満（管理費込み・保留）",
   RENT_NEAR_MIN: "家賃が下限を少し下回る（下限の95%以上）",
+  // 2026-09-30 下限の保留の線を下限の家賃帯ごとに（RENT_BAND_RULE.minHoldTiers）: 線より上〜下限の95%未満は保留にせず軽い減点
+  RENT_UNDER_MIN_SOFT: "家賃が下限を下回る（保留の線より上・下限の95%未満）",
   RENT_BAND_UPPER: "家賃は予算の上限寄り（相場に見合う）",
   RENT_BAND_MID: "家賃は上限の85〜90%",
   RENT_BAND_LOWER: "家賃は上限の80〜85%（安め）",
@@ -2093,7 +2122,7 @@ function isNewPositive(c: string): boolean {
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -2109,7 +2138,7 @@ export const HOLD_REASON_CODES = new Set([
   "LDK_JO_NG", // 2026-09-29 リビングの帖数が希望より狭い（保留どまり）
   // 2026-09-27 竹内「AD 1ヶ月未満の物件は点数かなり落とす」（通す→保留に落ちる程度）。AD 不明（記載なし・読めない）は今まで通り 0点の要確認（保留にしない）
   "AD_UNDER_1M", "AD_NONE",
-  // 2026-09-29 家賃が下限未満（下限の95%未満・管理費込み。RENT_BAND_RULE）
+  // 2026-09-29 家賃が下限未満（管理費込み。2026-09-30 から保留の線は下限の家賃帯ごと＝〜7万台 85%・8〜9万台 80%・10万以上 75%・RENT_BAND_RULE.minHoldTiers）
   "RENT_UNDER_MIN",
 ]);
 const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);

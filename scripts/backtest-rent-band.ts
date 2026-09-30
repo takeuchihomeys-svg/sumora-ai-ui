@@ -9,6 +9,7 @@
 //   pickup        … 保存済みの札（旧）に、資料の家賃（factsFromPickup）とその時点の条件で家賃の札だけ付け直す（新・rejudgeRentCodes）
 // ■ 安さを望むお客様: 条件欄（RENT_CHEAP_RE＝written.rentCheap・目安の額 rentTarget）と、その回より前の発言（audit-rent-band と同じ語）
 // ■ 出す物: 全体・材料ごと・お客様の種類ごとの前後／点の表の候補（学び用で選ぶ→確かめ用で見る）／R さんの回の前後の並び／目安の額を読めたお客様
+// ■ 2026-09-30 前の直し（下限の保留の線 一律 0.95・--prev-hold=0.95）→ 今の表（下限の家賃帯ごと minHoldTiers）の比べ・保留から外れた物・RENT_UNDER_MIN_SOFT の点の候補
 //
 // 実行: npx tsx --env-file=.env.local scripts/backtest-rent-band.ts [--days=180] [--out=path.json]
 import { createClient } from "@supabase/supabase-js";
@@ -47,7 +48,7 @@ function changedEpisodeIds(b: Episode[], a: Episode[]): string[] {
   const m = new Map(a.map((e) => [e.id, e]));
   return b.filter((e) => { const x = m.get(e.id); return x && x.cands.some((c, i) => c.codes.join() !== e.cands[i]?.codes.join()); }).map((e) => e.id);
 }
-const RENT_NEW =/^RENT_(?:BAND_|TARGET_|NEAR_MIN$|UNDER_MIN$)/;
+const RENT_NEW =/^RENT_(?:BAND_|TARGET_|NEAR_MIN$|UNDER_MIN$|UNDER_MIN_SOFT$)/;
 const isHold = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 
 /**
@@ -82,6 +83,14 @@ async function main() {
   setRentBandEnabled(true);
   (RENT_BAND_RULE as { cheapWithoutTarget: string }).cheapWithoutTarget = "band";
   const after = await loadEpisodes(sb as never, { until, days: DAYS, sources: ["snapshot", "pool"] });
+  // 2026-09-30 前の直し（下限の保留の線が一律 0.95）と今の表（下限の家賃帯ごと）を並べる。--prev-hold=0.95 で前の線
+  const PREV_HOLD = Number(args["prev-hold"] ?? "0.95");
+  const curTiers = RENT_BAND_RULE.minHoldTiers;
+  const setTiers = (t: ReadonlyArray<{ minFrom: number; holdRatio: number }>) => { (RENT_BAND_RULE as { minHoldTiers: unknown }).minHoldTiers = t; };
+  const prevTiers = [{ minFrom: 0, holdRatio: PREV_HOLD }];
+  setTiers(prevTiers);
+  const prevLoad = await loadEpisodes(sb as never, { until, days: DAYS, sources: ["snapshot", "pool"] });
+  setTiers(curTiers);
   console.log("■ 件数（旧）", before.counts, "\n■ 件数（新）", after.counts);
 
   // ── お客様（回 → お客様） ──
@@ -127,7 +136,7 @@ async function main() {
     return "言っていない";
   };
 
-  const pkBefore: Episode[] = [], pkAfter: Episode[] = [];
+  const pkBefore: Episode[] = [], pkAfter: Episode[] = [], pkPrev: Episode[] = [];
   const pkCust = new Map<string, string>();
   const kindOfEp = new Map<string, string>();
   const groups = new Map<string, Row[]>();
@@ -138,13 +147,16 @@ async function main() {
     const p = profAt(pc, at);
     const e0 = episodeFromPickups(rows, []);
     if (!e0 || !p) continue;
-    const rows2 = rows.map((r) => {
+    const rejudgeRows = () => rows.map((r) => {
       let f: Row = {}; try { f = factsFromPickup(r) as Row; } catch { /* 読めない */ }
       const rent = num(f.rent); const total = rent != null ? rent + (num(f.admin_fee_yen) ?? 0) : null;
       return { ...r, reason_codes: rejudgeRentCodes((Array.isArray(r.reason_codes) ? r.reason_codes : []) as string[], total, p, rent) };
     });
-    const e1 = episodeFromPickups(rows2, [])!;
-    pkBefore.push(e0); pkAfter.push(e1);
+    const e1 = episodeFromPickups(rejudgeRows(), [])!;
+    setTiers(prevTiers);
+    const eP = episodeFromPickups(rejudgeRows(), [])!;
+    setTiers(curTiers);
+    pkBefore.push(e0); pkAfter.push(e1); pkPrev.push(eP);
     kindOfEp.set(e0.id, kindOf(pc, at));
     pkCust.set(e0.id, pc);
   }
@@ -166,6 +178,7 @@ async function main() {
   const B = [...before.episodes, ...pkBefore];
   const A_band = [...after.episodes, ...pkAfter];
   const A_neutral = stripBand(A_band);
+  const P_neutral = stripBand([...prevLoad.episodes, ...pkPrev]);
   const base = (over: Record<string, number>) => (c: string) => (c in over ? over[c] : baseReasonPoints(c));
   const fmt = (m: RankMetrics) => `${m.episodes}回 1位 ${pct(m.top1)}・3位以内 ${pct(m.top3)}・相対順位 ${m.relRank}・全部同点 ${m.allTied}`;
   const cmp = (title: string, b: Episode[], a: Episode[], over: Record<string, number> = {}) => {
@@ -255,6 +268,47 @@ async function main() {
   if (args.detail) for (const m of moves.filter((x) => x.after < x.before).slice(0, 6)) { console.log(`    上がった ${m.id}（${m.kind}・${m.n}件）: ${m.before} → ${m.after}`); show(m.id); }
   out.moves = moves;
 
+  // ── 2026-09-30 前の直し（下限の保留の線 一律 PREV_HOLD）→ 今の表（下限の家賃帯ごと・minHoldTiers） ──
+  {
+    const pIds = new Set(changedEpisodeIds(P_neutral, A_neutral));
+    console.log(`
+■ 前の直し（下限の保留の線 一律 ${PREV_HOLD}）→ 今の表（${curTiers.map((t) => `下限${t.minFrom / 10000}万〜 ${t.holdRatio}`).join("・")}）`);
+    out.prev_all = cmp("全部の回（前の直し → 今）", P_neutral, A_neutral);
+    out.prev_changed = cmp(`札が変わった回（${pIds.size}回）`, P_neutral.filter((e) => pIds.has(e.id)), A_neutral.filter((e) => pIds.has(e.id)));
+    out.prev_train = cmp("学び用（お客様で分けた7割）", pick(P_neutral, idsTr), pick(A_neutral, idsTr));
+    out.prev_holdout = cmp("確かめ用（お客様で分けた3割）", pick(P_neutral, idsHo), pick(A_neutral, idsHo));
+    const pm = new Map(P_neutral.map((e) => [e.id, e]));
+    let u = 0, d = 0, same2 = 0;
+    const mv: Row[] = [];
+    for (const e of P_neutral) { const a = am.get(e.id); if (!a || !pIds.has(e.id)) continue; const r0 = rankOf(e), r1 = rankOf(a); if (r1 < r0) u++; else if (r1 > r0) d++; else same2++; mv.push({ id: e.id, kind: kindOfEp.get(e.id), n: e.cands.length, before: r0, after: r1 }); }
+    console.log(`  選んだ物の一番良い順位（前の直し → 今）: 上がった ${u}・下がった ${d}・同じ ${same2}`);
+    const sc = (codes: string[]) => 50 + codes.reduce((a, k) => a + (W && k in W ? W[k] : baseReasonPoints(k)), 0);
+    const held = (codes: string[]) => codes.some((c) => DROP_REASON_CODES.has(c) || isHold(c));
+    // 保留から外れた物（選んだ／選ばない）
+    let relCh = 0, relNo = 0;
+    for (const id of pIds) { const e0 = pm.get(id)!, e1 = am.get(id)!; e1.cands.forEach((c, i) => { if (held(e0.cands[i].codes) && !held(c.codes)) { if (c.chosen) relCh++; else relNo++; } }); }
+    console.log(`  保留から外れた物: 選んだ ${relCh}・選ばない ${relNo}`);
+    out.prev_released = { chosen: relCh, others: relNo };
+    for (const m of mv) {
+      console.log(`    ${m.after < m.before ? "上がった" : m.after > m.before ? "下がった" : "同じ"} ${m.id}（${m.kind}・${m.n}件）: ${m.before} → ${m.after}`);
+      const e0 = pm.get(m.id)!, e1 = am.get(m.id)!;
+      const rows = e1.cands.map((c, i) => ({ c, s0: sc(e0.cands[i].codes), s1: sc(c.codes), h0: held(e0.cands[i].codes), h1: held(c.codes) })).sort((a, b) => b.s1 - a.s1);
+      for (const r of rows) console.log(`      ${r.c.chosen ? "★" : "  "} ${String(r.c.key).slice(0, 22).padEnd(22)} 比 ${r.c.feats.rent_ratio ?? "-"}・築 ${r.c.feats.building_age ?? "-"}・AD ${r.c.feats.ad_months ?? "-"}  ${r.s0}${r.h0 ? "保留" : ""} → ${r.s1}${r.h1 ? "保留" : ""}  ${r.c.codes.filter((k) => /^RENT_/.test(k)).join(",")}`);
+    }
+    out.prev_moves = mv;
+    // 保留の線〜下限の95% の軽い減点（RENT_UNDER_MIN_SOFT）の点を比べる（前の直し → 今・同じ回の組）
+    console.log("  保留を外した所の点（RENT_UNDER_MIN_SOFT）の候補:");
+    out.prev_soft = {};
+    for (const v of [0, -3, -5, -8, -10]) {
+      const over = { RENT_UNDER_MIN_SOFT: v };
+      const f = (eps: Episode[]) => rankMetrics(eps, base(over), W);
+      const all2 = f(A_neutral), ch = f(A_neutral.filter((e) => pIds.has(e.id))), tr = f(pick(A_neutral, idsTr)), ho = f(pick(A_neutral, idsHo));
+      let dn = 0; for (const e of P_neutral) { const a = am.get(e.id); if (a && pIds.has(e.id) && rankOf(a, over) > rankOf(e)) dn++; }
+      out.prev_soft[v] = { all: all2, changed: ch, train: tr, holdout: ho, worse: dn };
+      console.log(`    ${String(v).padStart(3)}: 全部 相対 ${all2.relRank}・変わった回 相対 ${ch.relRank}（1位 ${pct(ch.top1)}・3位以内 ${pct(ch.top3)}）・学び用 ${tr.relRank}・確かめ用 ${ho.relRank}・選んだ物の順位が下がった回 ${dn}`);
+    }
+  }
+
   // ── R さんの回（9/29・リアプロ・27件）: 保存の札（旧）と家賃の札の付け直し（新）の並び ──
   {
     const ids = String(args.rids ?? "1772-1798").split("-").map(Number);
@@ -272,12 +326,16 @@ async function main() {
         const total = rent != null ? rent + (adm ?? 0) : null;
         const c0 = (Array.isArray(r.reason_codes) ? r.reason_codes : []) as string[];
         const c1 = rejudgeRentCodes(c0, total, p, rent);
-        return { id: r.id, name: `${String(r.property_name ?? "").slice(0, 16)} ${r.room_no ?? ""}`.trim(), plan: f.floor_plan ?? "", age: num(f.building_age), total, ratio: total != null && p.rentMax ? +(total / p.rentMax).toFixed(2) : null,
+        setTiers(prevTiers);
+        const cP = rejudgeRentCodes(c0, total, p, rent);
+        setTiers(curTiers);
+        return { sP: scoreFromCodes(cP), hP: isHeld(cP), id: r.id, name: `${String(r.property_name ?? "").slice(0, 16)} ${r.room_no ?? ""}`.trim(), plan: f.floor_plan ?? "", age: num(f.building_age), total, ratio: total != null && p.rentMax ? +(total / p.rentMax).toFixed(2) : null,
           s0: scoreFromCodes(c0), s1: scoreFromCodes(c1), h0: isHeld(c0), h1: isHeld(c1), rentCodes: c1.filter((k) => /^RENT_/.test(k)).join(",") };
       });
       const r0 = [...list].sort((a, b) => Number(a.h0) - Number(b.h0) || b.s0 - a.s0), r1 = [...list].sort((a, b) => Number(a.h1) - Number(b.h1) || b.s1 - a.s1);
-      console.log("  新の順 | 旧の順 | id | 物件 | 間取り | 築 | 家賃＋管理費（÷上限） | 旧の点 → 新の点 | 家賃の札");
-      r1.forEach((x, i) => console.log(`  ${String(i + 1).padStart(2)} | ${String(r0.indexOf(x) + 1).padStart(2)} | ${x.id} | ${x.name.padEnd(20)} | ${x.plan} | ${x.age ?? "-"} | ${x.total ?? "-"}（${x.ratio ?? "-"}） | ${x.s0}${x.h0 ? "保留" : ""} → ${x.s1}${x.h1 ? "保留" : ""} | ${x.rentCodes}`));
+      const rP = [...list].sort((a, b) => Number(a.hP) - Number(b.hP) || b.sP - a.sP);
+      console.log(`  今の順 | 前の直しの順 | 旧の順 | id | 物件 | 間取り | 築 | 家賃＋管理費（÷上限・÷下限） | 旧の点 → 前の直し（一律 ${PREV_HOLD}） → 今 | 家賃の札`);
+      r1.forEach((x, i) => console.log(`  ${String(i + 1).padStart(2)} | ${String(rP.indexOf(x) + 1).padStart(2)} | ${String(r0.indexOf(x) + 1).padStart(2)} | ${x.id} | ${x.name.padEnd(20)} | ${x.plan} | ${x.age ?? "-"} | ${x.total ?? "-"}（${x.ratio ?? "-"}・${x.total != null && p.rentMin ? (x.total / p.rentMin).toFixed(2) : "-"}） | ${x.s0}${x.h0 ? "保留" : ""} → ${x.sP}${x.hP ? "保留" : ""} → ${x.s1}${x.h1 ? "保留" : ""} | ${x.rentCodes}`));
       out.r_round = r1;
     }
   }

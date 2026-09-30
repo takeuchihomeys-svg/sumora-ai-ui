@@ -3,7 +3,7 @@
 // 物件は R さんの 9/29 のピックアップ（リアプロ・id 1772〜1798）の実物の家賃＋管理費、条件は R さんの登録（下限 70,000・上限 79,999・1LDK）。
 // 目安の額は property_customers の条件欄の実物の言い回し（名前・電話・番地は無い）
 import {
-  buildCustomerProfile, judgeProperty, parsePropertyFacts, rentPositionCodes, readRentTarget, setRentBandEnabled, rentBandEnabled,
+  buildCustomerProfile, judgeProperty, parsePropertyFacts, rentPositionCodes, readRentTarget, setRentBandEnabled, rentBandEnabled, rentMinHoldRatio,
   RENT_BAND_RULE, RENT_BAND_POINTS, REASON_POINTS, HOLD_REASON_CODES, reasonJa, reasonPoints, BASE_SCORE, fitVerdictOf, ngHitCodes, type CustomerLike,
 } from "../property-brain";
 import { buildFitCells } from "../pickup-card-view";
@@ -39,7 +39,39 @@ console.log("■ R さんの回（下限 70,000・上限 79,999）");
   const amour = judgeProperty(parsePropertyFacts(L("アムールセゾン 503", "64,000円", "5,000円", "2DK")), pR);
   t("アムールセゾン（6.4万＋5千＝6.9万・下限の98.6%）→ 保留にしない・下限を少し下回る知らせ", amour.reasonCodes.includes("RENT_NEAR_MIN") && amour.reasonCodes.includes("RENT_OK") && !amour.flagCodes.includes("RENT_NEAR_MIN"));
   const spot = judgeProperty(parsePropertyFacts(L("心斎橋SPOT21 604", "55,000円", "5,000円")), pR);
-  t("心斎橋SPOT21（6.0万・下限の86%・旧は札なし）→ 下限未満の保留", spot.reasonCodes.includes("RENT_UNDER_MIN") && spot.verdict === "hold");
+  // 2026-09-30 竹内「下限 95% を保留は強すぎる。85% 程までいける」→ 下限7万台の保留の線は 85%（59,500円）
+  t("心斎橋SPOT21（6.0万・下限の86%）→ 保留にしない・下限を下回る軽い減点（RENT_UNDER_MIN_SOFT）", spot.reasonCodes.includes("RENT_UNDER_MIN_SOFT") && spot.reasonCodes.includes("RENT_OK") && !spot.flagCodes.some((c) => /^RENT_/.test(c)));
+  t("心斎橋SPOT21 は上限の75%＝8割未満の札も付く（安いほど良いではない）", spot.reasonCodes.includes("RENT_BAND_LOW"));
+  t("心斎橋SPOT21 は上限寄りの プロシード 704（7.4万）より下", spot.score < pro.score);
+  const spotHalf = judgeProperty(parsePropertyFacts(L("心斎橋SPOT21 604", "55,000円", "5,000円")), pR);
+  t("SPOT21 と上限寄りの差は 帯の点＋軽い減点（AD 等は同じ形の資料）", pro.score - spotHalf.score === RENT_BAND_POINTS.RENT_BAND_UPPER - RENT_BAND_POINTS.RENT_BAND_LOW - RENT_BAND_POINTS.RENT_UNDER_MIN_SOFT);
+  const edge = judgeProperty(parsePropertyFacts(L("線の上", "59,500円", "0円")), pR), under = judgeProperty(parsePropertyFacts(L("線の下", "59,400円", "0円")), pR);
+  t("下限7万: 59,500円（85%ちょうど）は保留にしない・59,400円は保留", edge.verdict === "pass" && edge.reasonCodes.includes("RENT_UNDER_MIN_SOFT") && under.reasonCodes.includes("RENT_UNDER_MIN") && under.verdict === "hold");
+}
+
+console.log("■ 下限の保留の線（下限の家賃帯ごと・2026-09-30）");
+{
+  t("線の表: 〜7万台 0.85・8〜9万台 0.80・10万以上 0.75", [50_000, 60_000, 79_999, 80_000, 99_999, 100_000, 150_000].map(rentMinHoldRatio).join(",") === "0.85,0.85,0.85,0.8,0.8,0.75,0.75");
+  t("高い帯ほど低い割合まで許す（線は下がるだけ）", RENT_BAND_RULE.minHoldTiers.every((x, i, a) => i === 0 || a[i - 1].minFrom > x.minFrom && a[i - 1].holdRatio <= x.holdRatio));
+  t("軽い減点は保留の札ではない・点は 0 か減点", !HOLD_REASON_CODES.has("RENT_UNDER_MIN_SOFT") && REASON_POINTS.RENT_UNDER_MIN_SOFT === RENT_BAND_RULE.softMinPoints && RENT_BAND_RULE.softMinPoints <= 0);
+  t("軽い減点の札の言葉", reasonJa("RENT_UNDER_MIN_SOFT").includes("下限を下回る"));
+  const codes = (total: number, p: CustomerLike) => rentPositionCodes(total, buildCustomerProfile(p)).map((r) => `${r.code}${r.hold ? "(保留)" : ""}`).join(",");
+  // 6万台: 実物（当て直し pool 0860f578・6540cd7d: スタッフが選んで送った）エステムコート難波WEST-SIDE大阪ドーム前 55,000円・下限 60,000・上限 70,000（AD 2）
+  const p6 = { rent_min: 60_000, rent_max: 70_000 };
+  t("6万台: エステムコート難波WEST-SIDE（5.5万・下限の92%・スタッフが選んだ）→ 保留にしない（前の直しでは保留）", codes(55_000, p6) === "RENT_OK,RENT_BAND_LOW,RENT_UNDER_MIN_SOFT");
+  t("6万台: 下限の98%（5.9万）→ 少し下回る（0点の知らせ）", codes(59_000, p6) === "RENT_OK,RENT_BAND_LOWER,RENT_NEAR_MIN");
+  t("6万台: シャトレ下新庄（4.8万・下限の80%）→ 保留", codes(48_000, p6) === "RENT_UNDER_MIN(保留)");
+  // 8〜9万台: 実物の🌟 グランパシフィック長橋スクエア 82,000円（下限 90,000・上限 100,000）／フォーラム池田・渋谷 73,000円（下限 80,000・上限 90,000）
+  t("9万台: グランパシフィック長橋スクエア（8.2万・下限の91%・🌟）→ 保留にしない", codes(82_000, { rent_min: 90_000, rent_max: 100_000 }) === "RENT_OK,RENT_BAND_LOWER,RENT_UNDER_MIN_SOFT");
+  t("8万台: フォーラム池田・渋谷（7.3万・下限の91%・🌟）→ 保留にしない", codes(73_000, { rent_min: 80_000, rent_max: 90_000 }) === "RENT_OK,RENT_BAND_LOWER,RENT_UNDER_MIN_SOFT");
+  t("8万台: 下限の80%（6.4万）は保留にしない・6.3万は保留（7万台より幅が広い）", codes(64_000, { rent_min: 80_000, rent_max: 90_000 }).endsWith("RENT_UNDER_MIN_SOFT") && codes(63_000, { rent_min: 80_000, rent_max: 90_000 }) === "RENT_UNDER_MIN(保留)");
+  t("同じ 85% 未満でも 7万台は保留・8万台は保留にしない（家賃帯による）", codes(59_000, { rent_min: 70_000, rent_max: 80_000 }) === "RENT_UNDER_MIN(保留)" && !codes(67_000, { rent_min: 80_000, rent_max: 90_000 }).includes("保留"));
+  // 10万以上: 下限 100,000・上限 110,000（実物の🌟 ル・レーヴ今津サウス 80,000円・クリエオーレ西郷通 97,000円）
+  const p10 = { rent_min: 100_000, rent_max: 110_000 };
+  t("10万: クリエオーレ西郷通（9.7万・下限の97%）→ 少し下回る", codes(97_000, p10) === "RENT_OK,RENT_BAND_MID,RENT_NEAR_MIN");
+  t("10万: ル・レーヴ今津サウス（8.0万・下限の80%）→ 保留にしない", codes(80_000, p10) === "RENT_OK,RENT_BAND_LOW,RENT_UNDER_MIN_SOFT");
+  t("10万: 下限の75%（7.5万）は保留にしない・7.4万は保留", codes(75_000, p10).endsWith("RENT_UNDER_MIN_SOFT") && codes(74_000, p10) === "RENT_UNDER_MIN(保留)");
+  t("上限が無い人も同じ線（下限だけを見る）", codes(76_000, { rent_min: 100_000 }) === "RENT_UNDER_MIN_SOFT" && codes(74_000, { rent_min: 100_000 }) === "RENT_UNDER_MIN(保留)" && codes(98_000, { rent_min: 100_000 }) === "RENT_NEAR_MIN");
 }
 
 console.log("■ 下限の無いお客様（上限 80,000）: 帯");

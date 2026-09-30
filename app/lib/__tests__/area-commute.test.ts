@@ -148,7 +148,7 @@ console.log("■ 家賃下限・間取りの「も可」・広さ・築浅（pro
   t("下限は上限より小さい時だけ使う", p1.rentMin === 60_000 && buildCustomerProfile({ rent_max: 50_000, rent_min: 60_000 }).rentMin === null);
   const j1 = judgeProperty(parsePropertyFacts(S("45,000円", "1LDK")), p1);
   // 2026-09-29 家賃の位置（RENT_BAND_RULE）: 下限を下回る物は RENT_UNDER_MIN の保留（旧: 下限の85%未満で RENT_BELOW_MIN −3・保留にしない）。細かい線は rent-band.test.ts
-  t("下限の95%未満 → RENT_UNDER_MIN（保留・RENT_OK は付かない）", j1.reasonCodes.includes("RENT_UNDER_MIN") && j1.flagCodes.includes("RENT_UNDER_MIN") && !j1.reasonCodes.includes("RENT_OK"));
+  t("下限の保留の線未満（45,000/60,000＝75%・2026-09-30 から線は下限7万台まで 85%）→ RENT_UNDER_MIN（保留・RENT_OK は付かない）", j1.reasonCodes.includes("RENT_UNDER_MIN") && j1.flagCodes.includes("RENT_UNDER_MIN") && !j1.reasonCodes.includes("RENT_OK"));
   const j2 = judgeProperty(parsePropertyFacts(S("58,000円", "1LDK")), p1);
   t("下限の95%以上（58,000/60,000）は保留にしない（RENT_NEAR_MIN の知らせ）", j2.reasonCodes.includes("RENT_NEAR_MIN") && j2.reasonCodes.includes("RENT_OK") && !j2.flagCodes.length);
 
