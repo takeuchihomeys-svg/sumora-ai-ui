@@ -65,10 +65,24 @@ export function dealStatusOf(r: Pick<AixPickRow, "deal_status" | "terms">): "審
  *   確かめる所は AIX に渡すボタン（sendViaAix・👑 の1件送りも）。画像の保存では聞かない
  */
 export function dealConfirmMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_status" | "terms"> & { property_name?: string | null; room_no?: string | null }>): string | null {
-  const deal = rows.map((r) => ({ r, st: dealStatusOf(r) })).filter((x) => x.st);
+  // 2026-09-30 審査中は確認でなく送れない（underReviewBlockMessage）。ここで確かめるのは商談中だけ
+  const deal = rows.map((r) => ({ r, st: dealStatusOf(r) })).filter((x) => x.st === "商談中");
   if (deal.length === 0) return null;
   const names = deal.map(({ r, st }) => `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}：${st}`).join("、");
-  return `資料の現況が審査中・商談中の物件が${deal.length}件入っています（${names}）。このまま AIX に渡しますか？`;
+  return `資料の現況が商談中の物件が${deal.length}件入っています（${names}）。このまま AIX に渡しますか？`;
+}
+
+/**
+ * 2026-09-30 竹内「審査中の物件送らない。確認する」（YUMA のテストで FEEL UMEDA 202＝資料の現況「審査中」をオススメとして送った）:
+ *   手でチェックした審査中の部屋は AIX に渡さない（確認の「OK」で送れる形をやめた）。止める文を返す（無ければ null）。
+ *   9/28 の「手で選んだ時は確認つきで渡せる」は、審査中については上書き（商談中は今まで通り dealConfirmMessage の確認）。
+ *   サーバー側の2枚目の壁は /api/aix/action（pickup_ids の行の資料を pickupDealStatus で読む）
+ */
+export function underReviewBlockMessage(rows: ReadonlyArray<Pick<AixPickRow, "deal_status" | "terms"> & { property_name?: string | null; room_no?: string | null }>): string | null {
+  const hit = rows.filter((r) => dealStatusOf(r) === "審査中");
+  if (hit.length === 0) return null;
+  const names = hit.slice(0, 5).map((r) => `${r.property_name ?? ""}${r.room_no ? ` ${r.room_no}` : ""}`).join("、");
+  return `資料の現況が審査中の物件は送れません（${names}${hit.length > 5 ? " ほか" : ""}）。チェックを外してから送ってください`;
 }
 
 /**

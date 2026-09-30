@@ -62,6 +62,7 @@ import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildFirstMessageCtaNote, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
+import { pickupDealStatus } from "@/app/lib/listing-deal-status";
 import { buildRecommendApplyLineNote, detectRecommendApplyLine, detectImmediateMoveInWish } from "@/app/lib/apply-line-rates";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（AIX / テンプレート共通）
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
@@ -2177,6 +2178,17 @@ async function handleAction(request: NextRequest): Promise<Response> {
         return ids.map((id) => byId.get(id)!);
       } catch { return []; }
     })();
+    // 2026-09-30 竹内「審査中の物件送らない。確認する」（YUMA のテストで FEEL UMEDA 202＝資料の現況「審査中」をオススメとして送った）:
+    //   売上サポの画面（underReviewBlockMessage）の次の2枚目の壁。売上サポから来た行の資料の現況が審査中なら文を作らない（送らせない）。
+    //   商談中は今まで通り（画面の確認つき）。行が分からない送信（手で画像を入れた AIX）はここでは見られない
+    {
+      const underReview = pickupRowsForFacts.filter((r) => pickupDealStatus({ terms: r.terms as { evidence?: { moveIn?: string | null } | null } | null, pdf_text: r.pdf_text }) === "審査中");
+      if (underReview.length > 0) {
+        const names = underReview.map((r) => r.property_name ?? "").filter(Boolean).slice(0, 5).join("、");
+        console.warn(JSON.stringify({ tag: "aix:under-review-blocked", conversationId, action, ids: underReview.map((r) => r.id) }));
+        return NextResponse.json({ ok: false, error: `資料の現況が審査中の物件は送れません（${names}）。売上サポでチェックを外してから送ってください` }, { status: 200 });
+      }
+    }
     // 2026-09-29 API 費用: 送る画像（再アップロード済みの URL）と行が同じ並びで分かるのはここだけ。行の image_lines／文字層を
     //   その URL で image_details に先に写す（応答は待たせない・after）。送った後の ensureImageDetail が DeepSeek の画像読み（30秒・$0.006）を呼ばずに済む
     if (pickupRowsForFacts.length > 0 && conversationId) {

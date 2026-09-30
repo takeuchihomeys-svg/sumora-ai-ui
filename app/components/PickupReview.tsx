@@ -9,7 +9,7 @@ import { bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/
 // 2026-09-27 竹内「画像で分析の部分も上の部分にまとめる」「物件名に号室もいれる」「AD は物件名の横にもスタンプで」（純関数・import なし）
 import { nameWithRoom, cardRoom, splitAdStamp, imageChipOf, roundImageLine, pointsLabel, type ImageChip } from "@/app/lib/pickup-listing-text";
 import { needsTrimBeforeAnalysis, pickSaveImageUrl, saveImageFileName } from "@/app/lib/pickup-image-url";
-import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage, dealConfirmMessage, adUnder1ConfirmMessage, sentBeforeIds, sentConfirmMessage, type SentHistLite } from "@/app/lib/pickup-review-order";
+import { sortForReview, buildReasonView, formatScoreBreakdown, pickTopForAix, defaultAixChecks, pickQualityTop, qualityPickLabel, qualityPickMessage, dealConfirmMessage, underReviewBlockMessage, adUnder1ConfirmMessage, sentBeforeIds, sentConfirmMessage, type SentHistLite } from "@/app/lib/pickup-review-order";
 import { isFirstProposalRound } from "@/app/lib/pickup-ad-priority";
 import { isStaleForAdUnder1 } from "@/app/lib/ad-under1-policy";
 // 2026-09-27 竹内「ここは合わせる」: 画像の点を判定の点に足す（画像の加点・判定と同じ希望は数えない・純関数）
@@ -1057,6 +1057,9 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     // 2026-09-28 竹内「審査中と出ているのは物件ピックアップのチェックのところに入れない」: 既定・質の高い10件では選ばない。
     //   手で選んだ時（👑 の1件送りも）は渡せる（番手の申込で良いと確かめた等）が、AIX に渡す前に確かめる
     //   2026-09-29 反証: 前は「💾 画像保存」の方に付いていて、AIX に渡すボタンでは確かめていなかった
+    // 2026-09-30 竹内「審査中の物件送らない」: 審査中は確認でなく送れない（商談中は今まで通り確認）
+    const reviewBlock = underReviewBlockMessage(targets);
+    if (reviewBlock) { setMsg(reviewBlock); return; }
     const dealMsg = dealConfirmMessage(targets);
     if (dealMsg && typeof window !== "undefined" && !window.confirm(dealMsg)) return;
     // 2026-09-30 竹内「AD1未満の物件は基本的に送らない」: 手で選んだ AD1ヶ月未満の物件（1K・売上5万円未満・AD なし・売上5万円以上の穴埋め用）は審査中・商談中と同じ形で確かめる（OK なら送れる）
