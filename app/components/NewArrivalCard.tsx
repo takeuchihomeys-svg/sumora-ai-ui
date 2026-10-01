@@ -7,6 +7,7 @@
 // ・押す → AIXツール（/conditions?pickup=…&batch=…）を別タブで開き、その回へ移る。同時に既読（seen_at）を入れる＝確認済み
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { cardsBetween, cardHeadline, confirmLabel, pickupReviewHref, type NewArrivalCard } from "@/app/lib/new-arrival-card";
+import { LIST_CHIP, LIST_CHIP_TONE } from "@/app/lib/list-row-chip";
 
 const AUTH = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -60,12 +61,14 @@ export function useNewArrivalCounts(): Record<string, number> {
   return counts;
 }
 
-/** トーク一覧の行に出す「🆕 新着 N件・未確認」 */
+/** トーク一覧の行に出す「新着 N件・未確認」
+ *  2026-10-01 竹内「重要な部分だけのこす・洗練させる」: 一覧の札の形（list-row-chip）に揃え、🆕 の絵文字を外す。
+ *  数は未確認の分だけなので「未確認」は残す（行の2段目・本文の前に並ぶ） */
 export function NewArrivalListBadge({ count }: { count: number | undefined }) {
   if (!count) return null;
   return (
-    <span className="w-fit self-start shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold" style={{ background: "#fff3e0", color: "#e65100" }} title="AIXツールで採点した新着物件（スタッフだけの表示）">
-      🆕 新着 {count}件・未確認
+    <span className={`${LIST_CHIP} ${LIST_CHIP_TONE.newArrival}`} title="AIXツールで採点した新着物件・未確認（スタッフだけの表示）">
+      新着 {count}件・未確認
     </span>
   );
 }

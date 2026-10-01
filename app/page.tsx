@@ -24,6 +24,7 @@ import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 // 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
 import { useNewArrivalCards, useNewArrivalCounts, newArrivalElems, NewArrivalListBadge } from "./components/NewArrivalCard";
+import { LIST_CHIP, LIST_CHIP_TONE, propertyCheckTone } from "./lib/list-row-chip";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
 import { limitSlotsPerDay } from "./lib/viewing-slots";
@@ -6931,6 +6932,7 @@ export default function Home() {
                     {/* 2026-09-19 竹内「自動返信に切り替えているお客さんは、このアカウントの下の部分に
                         自動返信バッチつけてわかりやすいようにする」
                         名前行はバッジで既に一杯（アカウント・要対応・🔥・必ず・出し中…）なので、アイコンの下に置く。
+                        （2026-10-01 名前行の札は整理して減らしたが、自動返信は送り方の安全に関わるのでアイコンの下のまま残す）
                         色はヘッダーの自動ボタン（#06C755）と同じ＝画面のどこで見ても同じ意味 */}
                     <div className="flex shrink-0 flex-col items-center gap-1">
                     <div className="relative">
@@ -6973,26 +6975,83 @@ export default function Home() {
                     )}
                     </div>
 
-                    <div className="relative min-w-0 flex-1 pr-10">
-                      {/* 時間・未読バッジ: 絶対配置で高さに影響させない */}
-                      <div className="absolute right-0 top-0 flex flex-col items-end gap-1">
-                        <span className="text-[11px] text-[#667781]">
-                          {formatListTime(conversation.updatedAt)}
+                    {/* 2026-10-01 竹内「表示されている、要対応や毎日物件出しや🔥の絵文字を外に表示せずバックグラウンドにまわす。
+                        AIXや新着の物件や未確認等の重要な部分だけをのこす。LINEトークの色等はこのまま連携された状態で、デザインを洗練させる」
+                        行は2段に固定する（どの行も同じ高さ＝LINE と同じ読み方）:
+                          1段目: 名前（太字）・アカウント・担当 …………………… 時刻
+                          2段目: 印（新着の未確認・必ず・物件確認の待ち）＋本文 …… AIX・未読
+                        行に出さなくなった物（データ・判定はそのまま。背景・絞り込み・件数は今まで通り動く）:
+                          ・要対応 → 行の背景（橙）が同じ判定で既に出している。▼の絞り込み「要対応」と右上の顔ボタン・長押しメニュー
+                          ・毎日／物件出し／新規／検討中（✓・!）→ 売上サポの「今日対応が必要 N名」・会話上部の条件パネル
+                          ・🔥 → ▼の絞り込み「あついお客さん」・長押しメニュー
+                          ・🏠出し中（物件を送る・見積書対応中の やること）→ 会話の中の帯・長押しメニュー
+                          ・👀内覧済・管理ツールでやりとり中・✨AI返信案 → 会話の中（申込以降はアイコンの点と行の青で分かる）
+                        札の形と色は app/lib/list-row-chip.ts の1か所 */}
+                    <div className="min-w-0 flex-1">
+                      {/* 1段目: 名前が主役。補足（アカウント・担当）は灰色の小さな札・時刻は右端 */}
+                      <div className="flex h-5 min-w-0 items-center gap-1.5">
+                        <span className="min-w-0 truncate text-[15px] font-semibold leading-5 text-[#111b21]">
+                          {conversation.customerName}
                         </span>
-                        {unreadCount > 0 && (
-                          <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">
-                            {unreadCount}
+                        <span className={`${LIST_CHIP} ${LIST_CHIP_TONE.muted}`}>
+                          {getAccountMeta(conversation.account).label}
+                        </span>
+                        {assignees[conversation.id] && (
+                          <span className={`${LIST_CHIP} ${LIST_CHIP_TONE.muted}`}>
+                            {assignees[conversation.id]}
                           </span>
                         )}
-                        {/* AI返信案が準備済み（開くと自動セットされる） */}
-                        {conversation.aiDraft && conversation.lastSender === "customer" && (
-                          <span className="text-[11px] leading-none" title="AI返信案あり">✨</span>
-                        )}
+                        {statusFilter === "flagged" && (() => {
+                          // 要対応の絞り込みの中だけ: 今日返信したか（AIX／手動）。絞り込みの作業用なので他の一覧では出さない
+                          const jstToday = new Date(Math.floor((Date.now() + 9 * 3600000) / 86400000) * 86400000 - 9 * 3600000);
+                          let hasAixToday = false;
+                          let hasStaffToday = false;
+                          for (const m of conversation.messages) {
+                            if (m.sender === "staff" && m.rawCreatedAt && new Date(m.rawCreatedAt) >= jstToday) {
+                              if (m.isAix) hasAixToday = true;
+                              else hasStaffToday = true;
+                            }
+                          }
+                          if (hasAixToday) return <span key="today-reply-badge" className={`${LIST_CHIP} ${LIST_CHIP_TONE.muted}`} title="今日AIXで返信済み">AIX済</span>;
+                          if (hasStaffToday) return <span key="today-reply-badge" className={`${LIST_CHIP} ${LIST_CHIP_TONE.muted}`} title="今日手動で返信済み">返信済</span>;
+                          return null;
+                        })()}
+                        <span className="ml-auto shrink-0 pl-1 text-[11px] tabular-nums leading-5 text-[#8696a0]">
+                          {formatListTime(conversation.updatedAt)}
+                        </span>
+                      </div>
+
+                      {/* 2段目: 印 → 本文（残りの幅で1行に切る）→ 右端に AIX・未読 */}
+                      <div className="mt-1 flex h-[18px] min-w-0 items-center gap-1">
+                        <NewArrivalListBadge count={nacCounts[conversation.id]} />
+                        {(() => {
+                          // 並び（filteredConversations）と同じ関数で日数を出す。お客様への約束・未履行（カレンダーの【必ず】）
+                          const days = promiseOverdueDays(openPromises[conversation.id], Date.now());
+                          if (days === null) return null;
+                          return (
+                            <span className={`${LIST_CHIP} ${LIST_CHIP_TONE.promise}`} title="お客様への約束・未履行（カレンダーの【必ず】）">
+                              必ず{days > 0 ? ` ${days}日` : ""}
+                            </span>
+                          );
+                        })()}
+                        {(activeTasks[conversation.id] ?? []).map((task) => {
+                          // 物件確認の待ち（お客様から依頼された確認）だけ残す。日数で色が強くなる
+                          if (task.task_type !== "property_check") return null;
+                          const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);
+                          return (
+                            <span key={task.id} className={`${LIST_CHIP} ${propertyCheckTone(days)}`} title="物件確認の待ち（お客様から依頼）">
+                              確認中{days > 0 ? ` ${days}日` : ""}
+                            </span>
+                          );
+                        })}
+                        <span className="min-w-0 flex-1 truncate text-[12.5px] leading-[18px] text-[#667781]">
+                          {conversation.lastMessage}
+                        </span>
                         {/* AIXバッジ: 次にAIXボタンで対応すべき顧客 */}
                         {/* action="" （ボタン写像不能）のメタではバッジを出さない: 押すボタンが無いのにAIX扱いされる誤誘導を防ぐ */}
                         {isAixBadge(conversation) && (
                           <span
-                            className="rounded-full bg-[#7C3AED] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none"
+                            className={`${LIST_CHIP} ${LIST_CHIP_TONE.aix} font-bold`}
                             title={`AIX推奨: ${
                               AIX_ACTION_META[
                                 conversation.suggestedNextAix ?? conversation.suggestedAixMeta?.action ?? ""
@@ -7005,104 +7064,11 @@ export default function Home() {
                             AIX
                           </span>
                         )}
-                      </div>
-
-                      {/* 名前行: 高さ固定で位置ブレなし */}
-                      <div className="mb-0.5 flex h-5 min-w-0 items-center gap-1.5 overflow-hidden">
-                        <span className="truncate text-[14px] font-medium text-[#111b21]">
-                          {conversation.customerName}
-                        </span>
-                        {(() => {
-                          const acct = getAccountMeta(conversation.account);
-                          return (
-                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${acct.color}`}>
-                              {acct.label}
-                            </span>
-                          );
-                        })()}
-                        {(conversation.status === "applying" || conversation.status === "closed_won" || STATUS_ALIAS[conversation.status] === "applying") && (
-                          <span className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
-                            管理ツールでやりとり中
+                        {unreadCount > 0 && (
+                          <span className={`${LIST_CHIP} ${LIST_CHIP_TONE.unread} min-w-[18px] justify-center px-1 font-bold tabular-nums`}>
+                            {unreadCount}
                           </span>
                         )}
-                        {(() => {
-                          const linked = linkedCustomerMap[conversation.id];
-                          if (!linked?.propertyStatus) return null;
-                          // 申込以降（PROPERTY_STATUS_LABELSにないステータス）はバッジを表示しない
-                          if (!PROPERTY_STATUS_LABELS[linked.propertyStatus]) return null;
-                          const label = PROPERTY_STATUS_LABELS[linked.propertyStatus];
-                          const color = PROPERTY_STATUS_COLORS[linked.propertyStatus] ?? "bg-gray-100 text-gray-400";
-                          const needs = propertyNeedsAction(linked.propertyStatus, linked.lastPropertySentAt);
-                          return (
-                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${color}`}>
-                              {label}{needs ? " !" : " ✓"}
-                            </span>
-                          );
-                        })()}
-                        {assignees[conversation.id] && (
-                          <span className="shrink-0 rounded-full bg-[#e3f2fd] px-1.5 py-0.5 text-[10px] font-bold text-[#1565C0]">
-                            {assignees[conversation.id]}
-                          </span>
-                        )}
-                        {isNeedsActionBadge(conversation) && (
-                          <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
-                            要対応
-                          </span>
-                        )}
-                        {hotConvIds.has(conversation.id) && (
-                          <span className="shrink-0 leading-none text-sm">🔥</span>
-                        )}
-                        {conversation.hasViewed && (
-                          <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
-                            👀内覧済
-                          </span>
-                        )}
-                        {statusFilter === "flagged" && (() => {
-                          const jstToday = new Date(Math.floor((Date.now() + 9 * 3600000) / 86400000) * 86400000 - 9 * 3600000);
-                          let hasAixToday = false;
-                          let hasStaffToday = false;
-                          for (const m of conversation.messages) {
-                            if (m.sender === "staff" && m.rawCreatedAt && new Date(m.rawCreatedAt) >= jstToday) {
-                              if (m.isAix) hasAixToday = true;
-                              else hasStaffToday = true;
-                            }
-                          }
-                          if (hasAixToday) return <span key="today-reply-badge" className="shrink-0 leading-none text-sm" title="今日AIXで返信済み">✅</span>;
-                          if (hasStaffToday) return <span key="today-reply-badge" className="shrink-0 leading-none text-sm" title="今日手動で返信済み">☑</span>;
-                          return null;
-                        })()}
-                        {(() => {
-                          // 並び（filteredConversations）と同じ関数で日数を出す。バッジの日数＝上に来る順番の根拠
-                          const days = promiseOverdueDays(openPromises[conversation.id], Date.now());
-                          if (days === null) return null;
-                          return <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white" title="お客様への約束・未履行（カレンダーの【必ず】）。一覧の一番上に出ます">🔴必ず{days > 0 ? ` ${days}日` : ""}</span>;
-                        })()}
-                        {(activeTasks[conversation.id] ?? []).map((task) => {
-                          if (task.task_type === "property_check") {
-                            const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);
-                            const color = days >= 7
-                              ? "bg-red-100 text-red-700"
-                              : days >= 3
-                              ? "bg-orange-100 text-orange-700"
-                              : "bg-purple-100 text-purple-700";
-                            return (
-                              <span key={task.id} className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${color}`}>
-                                🔍確認中{days > 0 ? ` ${days}日` : ""}
-                              </span>
-                            );
-                          }
-                          return (
-                            <span key={task.id} className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
-                              🏠出し中
-                            </span>
-                          );
-                        })}
-                      </div>
-
-                      <NewArrivalListBadge count={nacCounts[conversation.id]} />
-                      {/* 本文プレビュー: 薄色・右端に余白 */}
-                      <div className="truncate text-[11px] text-[#b0b8be]">
-                        {conversation.lastMessage}
                       </div>
                     </div>
                   </button>
