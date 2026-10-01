@@ -12,6 +12,10 @@ import { AUTO_REPLY_SKIP_STATUSES } from "./auto-reply-policy";
 import { isTestConversation } from "./test-conversations";
 import { BRAIN_AIX_LABELS } from "./aix-button-view";
 import { hasViewingCancelRequestLine } from "./viewing-cancel-calendar";
+// 2段目（2026-10-01）: 判定（保存済み＝毎晩の cron／まだの番はその場で同じ規則で仮に）・毎日のまとめ・場面ごとの一致率
+import { staffWindowOf, judgeTurn, verdictLine, type Verdict, type VerdictDetail, type WindowPress } from "./line-watch-judge";
+import { sceneStats, finalCheckStats, type StatTurn, type SceneStat, type FcStats } from "./line-watch-daily";
+import { STAFF_ACT_JA } from "./customer-sim-shadow";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -75,7 +79,13 @@ function openTurnOf(msgs: ReadonlyArray<Msg>): { start: string; last: string; te
   return { start: msgs[i].created_at, last, text: msgs.slice(i).map((m) => m.text ?? "").join("\n") };
 }
 
-export type LineWatchOptions = { includeTest?: boolean; nowMs?: number };
+export type LineWatchOptions = {
+  includeTest?: boolean; nowMs?: number;
+  /** 「AI の案と実際」を何日分出すか（1〜7・既定1＝24時間）。👍✋で物差しを直す時は長めに */
+  turnDays?: number;
+  /** 場面ごとの一致率・最終チェックを今の控えから計算する（既定は毎晩のまとめの結果を出すだけ＝重い読みをしない） */
+  live?: boolean;
+};
 
 export async function loadLineWatch(sb: SupabaseClient, opt: LineWatchOptions = {}) {
   const nowMs = opt.nowMs ?? Date.now();
@@ -138,18 +148,26 @@ export async function loadLineWatch(sb: SupabaseClient, opt: LineWatchOptions = 
     waiting.sort((a, b) => b.businessMin - a.businessMin || a.turnAt.localeCompare(b.turnAt));
   }
 
-  // ── 2. AI の案と実際（直近24時間の番・控えの表から） ──
+  // ── 2. AI の案と実際（直近 turnDays 日の番・控えの表から） ──
+  //   2段目: 判定は毎晩の cron（line-watch-eval）が書いた物を出す。まだの番（今日の番）は同じ規則（judgeTurn）でその場で仮に出す（書かない）
   type TurnRow = {
-    conversationId: string; name: string | null; turnAt: string; scene: string; brain: string; draftVersions: number; draftHead: string; sentinel: string | null;
+    id: number | null; conversationId: string; name: string | null; turnAt: string; scene: string; brain: string; draftVersions: number; draftHead: string; sentinel: string | null;
     draftAt: string | null; staffHead: string; staffAt: string | null; staffAix: boolean; compare: string; sim: number | null; kinds: string[]; draftBeforeStaff: boolean | null; finalCheck: string;
+    verdict: Verdict | null; verdictStored: boolean; verdictText: string; reason: string | null; factDiff: boolean; uncertain: boolean;
+    review: string | null; reviewVerdict: string | null; reviewNote: string | null;
   };
   const turns: TurnRow[] = [];
+  const turnDays = Math.min(7, Math.max(1, Math.floor(opt.turnDays ?? 1)));
+  let reviewReady = false;
   if (capture.tableReady) {
-    const r = await sb.from("line_watch_turns")
-      .select("conversation_id, customer_turn_at, customer_last_at, conv_status, draft_first, draft_last, draft_last_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, tpo_label, final_check")
-      .gte("customer_turn_at", iso(nowMs - DAY)).order("customer_turn_at", { ascending: false }).order("id").limit(300);
+    const base = "id, conversation_id, customer_turn_at, customer_last_at, conv_status, draft_first, draft_last, draft_last_at, draft_versions, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, final_check, verdict, verdict_detail";
+    const q = (cols: string) => sb.from("line_watch_turns").select(cols)
+      .gte("customer_turn_at", iso(nowMs - turnDays * DAY)).order("customer_turn_at", { ascending: false }).order("id").limit(turnDays > 1 ? 600 : 300);
+    // 👍✋の列は2段目の SQL を流した後から（流す前は列なしで読む＝画面は開く）
+    let r = await q(`${base}, verdict_review, verdict_review_verdict, verdict_review_note`);
+    if (r.error) r = await q(base); else reviewReady = true;
     if (r.error) errors.turns = r.error.message;
-    const rows = ((r.data ?? []) as Array<Record<string, unknown>>).filter((t) => keep(String(t.conversation_id)));
+    const rows = ((r.data ?? []) as unknown as Array<Record<string, unknown>>).filter((t) => keep(String(t.conversation_id)));
     const ids = rows.map((t) => String(t.conversation_id));
     const names = await convsByIds(sb, ids);
     const since = rows.reduce((m, t) => Math.min(m, Date.parse(String(t.customer_turn_at))), nowMs);
@@ -157,27 +175,47 @@ export async function loadLineWatch(sb: SupabaseClient, opt: LineWatchOptions = 
     if (m.error) errors.turns_messages = m.error;
     const byConv = new Map<string, Msg[]>();
     for (const x of m.rows) byConv.set(x.conversation_id, [...(byConv.get(x.conversation_id) ?? []), x]);
+    // 押した AIX（仮の判定に使う）
+    const pressBy = new Map<string, WindowPress[]>();
+    {
+      const uniq = [...new Set(ids)];
+      for (let i = 0; i < uniq.length; i += 100) {
+        const pr = await sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, created_at").in("conversation_id", uniq.slice(i, i + 100)).gte("created_at", iso(since - HOUR)).not("aix_type", "is", null).order("created_at").limit(2000);
+        if (pr.error) { errors.turns_aix = pr.error.message; break; }
+        for (const p of (pr.data ?? []) as Array<WindowPress & { conversation_id: string }>) pressBy.set(p.conversation_id, [...(pressBy.get(p.conversation_id) ?? []), p]);
+      }
+    }
     for (const t of rows) {
       const cid = String(t.conversation_id);
-      const lastCust = String(t.customer_last_at ?? t.customer_turn_at);
       const msgs = byConv.get(cid) ?? [];
-      // 番の窓: この番の最後のお客様の発言の後〜次のお客様の発言（最大24時間）
-      const nextCust = msgs.find((x) => x.sender === "customer" && x.created_at > lastCust)?.created_at ?? iso(Date.parse(lastCust) + DAY);
-      const staff = msgs.filter((x) => x.sender !== "customer" && x.created_at > lastCust && x.created_at < nextCust);
-      const staffText = staff.filter((x) => !x.is_aix_generated).map((x) => x.text ?? "").join("\n").trim();
-      const staffAix = staff.some((x) => x.is_aix_generated === true);
+      // 番の窓と返事のまとまり（line-watch-judge.ts の staffWindowOf＝cron と同じ切り方）
+      const w = staffWindowOf({ customerTurnAt: String(t.customer_turn_at), msgs, presses: pressBy.get(cid) ?? [], nowMs });
+      const burst = w.texts.filter((x) => x.burst);
+      const staffText = burst.map((x) => x.text).join("\n").trim();
+      const staffAix = w.presses.length > 0 || w.aixMessages > 0;
       const cmp = draftVsStaff(t.draft_last as string | null, staffText, t.draft_sentinel as string | null);
       const scene = sceneKeyOf({ brainAction: t.brain_action as string | null, brainReplyMode: t.brain_reply_mode as string | null, tpoLabel: t.tpo_label as string | null, convStatus: t.conv_status as string | null });
-      const staffAt = staff[0]?.created_at ?? null;
+      const staffAt = w.staffFirstAt;
       const draftAt = (t.draft_last_at as string | null) ?? null;
+      const stored = (t.verdict as Verdict | null) ?? null;
+      const live = stored ? null : judgeTurn({
+        draft: t.draft_last as string | null, sentinel: t.draft_sentinel as string | null, brainAction: t.brain_action as string | null, brainReplyMode: t.brain_reply_mode as string | null,
+        convStatus: t.conv_status as string | null, hasBrain: Number(t.brain_versions ?? 0) > 0, window: w,
+      });
+      const verdict = stored ?? live?.verdict ?? null;
+      const detail = (stored ? (t.verdict_detail as VerdictDetail | null) : live?.detail) ?? null;
       turns.push({
+        id: typeof t.id === "number" ? t.id : Number(t.id) || null,
         conversationId: cid, name: names.get(cid)?.customer_name ?? null, turnAt: String(t.customer_turn_at), scene: scene.label,
         brain: scene.path === "AIX" ? aixLabel(String(t.brain_action ?? "")) || scene.label : "返信",
         draftVersions: Number(t.draft_versions ?? 0), draftHead: head(t.draft_last as string | null, 120), sentinel: (t.draft_sentinel as string | null) ?? null, draftAt,
         staffHead: head(staffText, 120), staffAt, staffAix,
         compare: staffAix && !staffText ? "aix_only" : cmp.kind, sim: cmp.sim, kinds: cmp.diff?.kinds ?? [],
-        draftBeforeStaff: draftAt && staffAt ? draftAt <= staffAt : null,
+        draftBeforeStaff: draftAt && staffAt ? Date.parse(draftAt) <= Date.parse(staffAt) : null,
         finalCheck: finalCheckLine(compactFinalCheck(t.final_check)),
+        verdict, verdictStored: !!stored, verdictText: verdictLine(verdict, detail, STAFF_ACT_JA), reason: detail?.reason ?? null,
+        factDiff: !!detail?.fact_diff, uncertain: !!detail?.uncertain,
+        review: (t.verdict_review as string | null) ?? null, reviewVerdict: (t.verdict_review_verdict as string | null) ?? null, reviewNote: (t.verdict_review_note as string | null) ?? null,
       });
     }
   }
@@ -281,11 +319,31 @@ export async function loadLineWatch(sb: SupabaseClient, opt: LineWatchOptions = 
     for (const x of sw.ready) search.push({ kind: "ready", conversationId: x.conversation_id, name: names.get(x.conversation_id)?.customer_name ?? null, at: x.latestAt, detail: `送れる資料 ${x.count}件` });
   }
 
+  // ── 7. 今日のまとめ（毎晩の cron line-watch-daily の最新の結果）・場面ごとの一致率・最終チェックの段ごと ──
+  type DailyView = { startedAt: string; ok: boolean | null; date: string | null; lines: string[]; alerts: string[]; scenes: SceneStat[]; fc: FcStats | null; c7: { measured: boolean; reason?: string; findings: Array<Record<string, unknown>> } | null };
+  let daily: DailyView | null = null;
+  {
+    const r = await sb.from("cron_run_logs").select("started_at, ok, result_json").eq("cron_name", "line-watch-daily").not("result_json", "is", null).order("started_at", { ascending: false }).limit(1);
+    if (r.error) errors.daily = r.error.message;
+    const row = (r.data?.[0] ?? null) as { started_at: string; ok: boolean | null; result_json: Record<string, unknown> | null } | null;
+    const rj = row?.result_json as { date?: string; lines?: string[]; daily?: { alerts?: string[]; scenes?: SceneStat[]; fc?: FcStats; c7?: DailyView["c7"] } } | null;
+    if (row && rj) daily = { startedAt: row.started_at, ok: row.ok, date: rj.date ?? null, lines: rj.lines ?? [], alerts: rj.daily?.alerts ?? [], scenes: rj.daily?.scenes ?? [], fc: rj.daily?.fc ?? null, c7: rj.daily?.c7 ?? null };
+  }
+  let liveStats: { scenes: SceneStat[]; fc: FcStats; turns: number } | null = null;
+  if (opt.live && capture.tableReady) {
+    const rows: Array<StatTurn & { final_check: unknown }> = [];
+    const r = await readAll<StatTurn & { final_check: unknown }>((from, to) => sb.from("line_watch_turns").select("conversation_id, customer_turn_at, scene_key, verdict, verdict_detail, final_check")
+      .gte("customer_turn_at", iso(nowMs - 35 * DAY)).order("customer_turn_at").order("id").range(from, to), 20_000);
+    if (r.error) errors.live = r.error;
+    rows.push(...r.rows.filter((t) => keep(t.conversation_id)));
+    liveStats = { scenes: sceneStats(rows, nowMs), fc: finalCheckStats(rows, nowMs), turns: rows.length };
+  }
+
   const summary = {
     waiting: waiting.length, late: waiting.filter((w) => w.late).length, waitingOutOfScope, waitingStale,
     turns: turns.length, promises: promises.filter((p) => p.customerActive).length, aix: aixItems.length,
     calendar: calendar.length, search: search.length,
   };
-  return { ok: true as const, generatedAt: iso(nowMs), capture, summary, waiting, turns, promises, aixItems, calendar, deletions, search, errors };
+  return { ok: true as const, generatedAt: iso(nowMs), capture, summary, waiting, turns, turnDays, reviewReady, promises, aixItems, calendar, deletions, search, daily, liveStats, errors };
 }
 export type LineWatchPayload = Awaited<ReturnType<typeof loadLineWatch>>;

@@ -140,6 +140,17 @@ function names(s: string): Set<string> {
 }
 const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));
 
+/** 事実の語（金額・日時・物件・呼びかけの名前）。classifyEdit の money/datetime/property/name と同じ物差し（見張りの判定 line-watch-judge.ts が使う） */
+export type FactKind = "money" | "datetime" | "property" | "name";
+export function factTokensOf(text: string): Record<FactKind, Set<string>> {
+  const t = String(text ?? "");
+  return { money: tokenSet(t, MONEY_RES), datetime: tokenSet(t, DATETIME_RES), property: propertyTokens(t), name: names(t) };
+}
+/** 比べる時の形（絵文字・空白・感嘆符の数・句点の揺れを落とす）。classifyEdit の「tiny＝同じ中身」と同じ */
+export function editCore(s: string): string {
+  return core(String(s ?? ""));
+}
+
 /**
  * 生成された文と送った文の差（純関数）。
  * @param generated AI の下書き・AIX の生成文（空なら呼ばない＝手打ち）

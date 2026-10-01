@@ -4155,6 +4155,18 @@ FOR EACH ROW
 WHEN (OLD.ai_draft IS DISTINCT FROM NEW.ai_draft OR OLD.ai_draft_check IS DISTINCT FROM NEW.ai_draft_check OR OLD.suggested_aix_meta IS DISTINCT FROM NEW.suggested_aix_meta)
 EXECUTE FUNCTION capture_line_watch_turn();
 
+-- ── LINE の見張り 2段目（2026-10-01 竹内「見張りの2段目おこなう」・設計 line-watch-design.md §3.2）──
+-- 判定の規則の版と、画面の👍／✋（物差しの校正）の列。本番に流す SQL と外し方は scripts/line-watch-stage2-migration.sql（同じ文）
+ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS judge_version TEXT;
+ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS verdict_review TEXT;
+ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS verdict_review_verdict TEXT;
+ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS verdict_review_rule TEXT;
+ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS verdict_review_note TEXT;
+ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS verdict_reviewed_at TIMESTAMPTZ;
+-- 未判定の番を拾う索引（毎晩の cron）・場面ごとの集計の索引
+CREATE INDEX IF NOT EXISTS idx_line_watch_turns_unevaluated ON line_watch_turns(customer_turn_at) WHERE evaluated_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_line_watch_turns_scene ON line_watch_turns(scene_key, customer_turn_at DESC);
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

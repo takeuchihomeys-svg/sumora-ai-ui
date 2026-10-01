@@ -265,6 +265,14 @@
       "schedule": "20 11 * * *"
     },
     {
+      "path": "/api/cron/line-watch-eval",
+      "schedule": "40 11 * * *"
+    },
+    {
+      "path": "/api/cron/line-watch-daily",
+      "schedule": "50 11 * * *"
+    },
+    {
       "path": "/api/analyze-applying",
       "schedule": "30 12 * * 0"
     },
