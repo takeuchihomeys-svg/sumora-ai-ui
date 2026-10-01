@@ -16,6 +16,7 @@
 //
 // 実行: npx tsx --env-file=.env.local scripts/yuma-snapshot.ts save
 //       npx tsx --env-file=.env.local scripts/yuma-scene-gap.ts [SCENE=S4] [REPS=3] [ONLY=A,B] [OUT=path.json]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { MSG_SEP } from "../app/lib/reply-context";
@@ -256,6 +257,7 @@ async function runCase(c: Case, T0: string, log: (o: Record<string, unknown>) =>
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-scene-gap-s4");
   const scene = process.env.SCENE ?? "S4";
   const only = (process.env.ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const cases = (CASES[scene] ?? []).filter((c) => !only.length || only.includes(c.id));

@@ -7,6 +7,7 @@
 // 場面: こちらが物件資料を2件送る → お客様がその2件のスクショ＋「この物件良さそうですが、もう少し見てみたいので、送っていただきたいです」
 // ⚠ 書き込みを伴う（YUMA に場面と、架空の画像URLの記録を入れて、確認後に必ず消す）
 // 実行: npx tsx --env-file=.env.local scripts/yuma-own-property-test.ts [--runs=2]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -17,6 +18,7 @@ const CONFIRM_RE = /募集状況(?:を)?確認|空室確認|空き状況(?:を)?
 const FAIL_RE = /生成に失敗|AI返信の生成/;
 
 async function main() {
+  await requireTestServer(BASE, "yuma-own-property-test");
   const now = Date.now();
   const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
   const urls = [`https://example.invalid/yuma-own-${now}-1.jpg`, `https://example.invalid/yuma-own-${now}-2.jpg`];

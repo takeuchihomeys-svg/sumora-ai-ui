@@ -15,6 +15,7 @@
 //
 // ⚠ 書き込みあり。YUMA だけ。他の実測エージェントと同時に使わないよう ai_draft_check に印を置き、毎回確かめる。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-scene-gap-s6.ts [REPS=3] [ONLY=id,id] [SKIP_BRAIN=1]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { matchCompanyFacts } from "../app/lib/company-facts";
@@ -263,6 +264,7 @@ async function directGenerate(body: Record<string, unknown>): Promise<{ text: st
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-scene-gap-s6");
   writeFileSync(OUT, `=== S6 会社の事実 YUMA 再現 ${RUN_ID} REPS=${REPS} ===\n`, "utf8");
   const only = (process.env.ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const scenes = only.length ? SCENES.filter((s) => only.some((o) => s.id.startsWith(o))) : SCENES;

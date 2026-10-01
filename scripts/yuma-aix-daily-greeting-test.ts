@@ -4,6 +4,7 @@
 //   B: 会話の指定なし・前回の送信は昨日 → 付く
 // ⚠ A は aix_generate_log に生成の記録が1行残る（送信はしない）
 // 実行: npx tsx scripts/yuma-aix-daily-greeting-test.ts
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const y = new Date(Date.now() - 26 * 3600_000).toISOString();
 const base = {
@@ -14,6 +15,7 @@ const base = {
   ],
 };
 async function main() {
+  await requireTestServer(BASE, "yuma-aix-daily-greeting-test");
   const cases: Array<[string, Record<string, unknown>, boolean]> = [
     ["A YUMA（今日すでに送った）", { ...base, conversation_id: "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7" }, false],
     ["B 会話の指定なし（今日はじめて）", base, true],

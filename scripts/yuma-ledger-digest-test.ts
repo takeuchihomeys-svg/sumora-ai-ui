@@ -19,6 +19,7 @@
 //
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、生成後に必ず消す）。テスト会話 YUMA だけで動かす。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-ledger-digest-test.ts [REPS=3]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -118,6 +119,7 @@ async function sweepLeftovers() {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-ledger-digest-test");
   const reps = Number(process.env.REPS ?? 3);
   const label = (process.env.LEDGER_DIGEST ?? "on").toLowerCase() === "off" ? "①なし（LEDGER_DIGEST=off）" : "①あり";
   console.log(`=== ${label} ／ ${SCENES.length}場面 × ${reps}回 ===`);

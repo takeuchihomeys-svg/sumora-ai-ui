@@ -13,6 +13,7 @@
 //
 // 実行: npx tsx --env-file=.env.local scripts/yuma-scene-gap-s3.ts [REPS=3] [ONLY=1,2] [BACKUP=scripts/.yuma-backup.json]
 //   事前に dev サーバ（npm run dev・3000）と yuma-snapshot.ts save。
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { MSG_SEP } from "../app/lib/reply-context";
@@ -152,6 +153,7 @@ async function directGenerate(body: unknown): Promise<string> {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-scene-gap-s3");
   const reps = Number(process.env.REPS ?? 3);
   const only = (process.env.ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean).map(Number);
   const cases = CASES.filter((_, i) => !only.length || only.includes(i + 1));

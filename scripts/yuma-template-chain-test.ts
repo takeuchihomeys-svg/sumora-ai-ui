@@ -11,6 +11,7 @@
 //   1通目「ご査収」41.2% → 2通目にも書く **3.1%** ／ 1通目に挨拶 50.8% → 2通目にも書く **2.0%**
 //   2通目の中身: 物件名39.7% / 条件の復唱35.5% / 見積書18.2% / 気に召されましたら10.1%
 //   2通目の長さ: 中央値120字
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -29,6 +30,7 @@ const CHECKS: Array<{ key: string; re: RegExp; want: "no" | "yes" }> = [
 ];
 
 async function main() {
+  await requireTestServer(BASE, "yuma-template-chain-test");
   const { data: conv } = await sb.from("conversations").select("id, customer_name, status").eq("id", YUMA).maybeSingle();
   const c = (conv ?? {}) as Record<string, unknown>;
   const { data: ms } = await sb.from("messages").select("sender, text, created_at, is_aix_generated")

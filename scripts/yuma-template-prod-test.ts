@@ -18,6 +18,7 @@
 //   ③ 生成文にあってはいけない形が無いか
 //
 // ⚠ 生成のみ。LINE へは送らない。
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { resolveCtaGuidance } from "../app/lib/cta-guidance";
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "../app/lib/reply-context";
@@ -76,6 +77,7 @@ const CASES: Array<{ id: string; action: string; category: string; first: string
 ];
 
 async function main() {
+  await requireTestServer(BASE, "yuma-template-prod-test");
   const rounds = Number(process.env.ROUNDS ?? 1);
 
   // ── 画面と同じ材料を集める ──

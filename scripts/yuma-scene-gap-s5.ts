@@ -13,6 +13,7 @@
 //     conversations は控え（scripts/.yuma-backup-S5.json）から戻す。
 //
 // 実行: npx tsx --env-file=.env.local scripts/yuma-scene-gap-s5.ts [REPS=3] [BASE_URL=http://localhost:3000] [ONLY=A,B]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
@@ -170,6 +171,7 @@ function pickNames(conv: Record<string, unknown>, pc: PcRow | null, msgs: MsgRow
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-scene-gap-s5");
   const only = (process.env.ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const samples = SAMPLES.filter((s) => !only.length || only.includes(s.key));
   for (const s of samples) if (!s.messageId && s.findText) {

@@ -3,6 +3,7 @@
 //   原因: 伏せ字処理が材料の塊ごと「[お申込み情報を受け取りました]」に差し替え、LLM に会話もブレインの判断も届いていなかった
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、確認後に必ず消す）
 // 実行: npx tsx --env-file=.env.local scripts/yuma-apply-misread-test.ts [--runs=2]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -11,6 +12,7 @@ const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const RUNS = Number((process.argv.find((a) => a.startsWith("--runs=")) ?? "--runs=2").split("=")[1]);
 
 async function main() {
+  await requireTestServer(BASE, "yuma-apply-misread-test");
   const now = Date.now(); const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
   const scene = [
     { sender: "staff", text: "【ペット飼育時条件】\n①南堀江アパートメントグランデ ペット飼育時敷金1ヶ月\n②コバルト心斎橋EAST １頭につき3000円 ※現在リノベーション工事中", created_at: iso(40 * 60_000) },

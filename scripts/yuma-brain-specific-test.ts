@@ -15,6 +15,7 @@
 //
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、生成後に必ず消す）。テスト会話 YUMA だけで動かす。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-brain-specific-test.ts [REPS=3]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -84,6 +85,7 @@ async function sweepLeftovers() {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-brain-specific-test");
   const reps = Number(process.env.REPS ?? 3);
   const label = (process.env.BRAIN_SPECIFIC ?? "on").toLowerCase() === "off" ? "なし（BRAIN_SPECIFIC=off）" : "あり";
   console.log(`=== ブレインの中身を渡す: ${label} ／ ${SCENES.length}場面 × ${reps}回 ===`);

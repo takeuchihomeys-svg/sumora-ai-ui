@@ -10,6 +10,7 @@
 //   ・本文は書き換えない（注意は画面のテキストボックスの外）
 //
 // ⚠ 書き込みを伴う（テスト用の行を入れて最後に消す）。テスト会話 YUMA だけで動かす。
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -18,6 +19,7 @@ const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const MARK = "ZZ重複テスト館";
 
 async function main() {
+  await requireTestServer(BASE, "yuma-duplicate-notice-test");
   // ── 準備: 「既に送った物件」を1件入れる ──
   const { data: conv } = await sb.from("conversations").select("customer_name, status, property_customer_id").eq("id", YUMA).maybeSingle();
   const c = (conv ?? {}) as Record<string, unknown>;

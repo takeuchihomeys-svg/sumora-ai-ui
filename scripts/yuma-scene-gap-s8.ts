@@ -19,6 +19,7 @@
 //     conversations は控え（scripts/.yuma-backup-S8.json）から戻す。
 //
 // 実行: npx tsx --env-file=.env.local scripts/yuma-scene-gap-s8.ts [REPS=3] [BASE_URL=http://localhost:3000] [ONLY=A,B]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { isRentNegotiationPromise } from "../app/lib/rent-negotiation-guard";
@@ -211,6 +212,7 @@ async function yumaFloorMs(): Promise<number> {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-scene-gap-s8");
   const only = (process.env.ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const samples = SAMPLES.filter((s) => !only.length || only.includes(s.key));
   const T0 = new Date().toISOString();

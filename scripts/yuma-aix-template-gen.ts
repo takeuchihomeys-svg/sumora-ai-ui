@@ -5,6 +5,7 @@
 //   送信はしない（/api/aix-template-generate は文を返すだけ）。YUMA への書き込みは生成の記録（llm_usage_logs 等）だけ。
 //
 // 実行: SIM_BASE=http://localhost:3310 npx tsx --env-file=.env.local scripts/yuma-aix-template-gen.ts --scene=est1,est2 --n=3 [--cta=viewing|apply]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { styleStatsOf } from "../app/lib/second-message-style";
 import { dedupeRepeatedEmoji } from "../app/lib/emoji-repeat";
@@ -36,6 +37,7 @@ const SCENES: Scene[] = [
 ];
 
 async function main() {
+  await requireTestServer(BASE, "yuma-aix-template-gen");
   const { data: ms } = await sb.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", Y).order("created_at", { ascending: false }).limit(10);
   const base = ((ms ?? []) as Array<Record<string, unknown>>).reverse().map((m) => ({ sender: String(m.sender), text: String(m.text ?? ""), rawCreatedAt: String(m.created_at), isAix: !!m.is_aix_generated }));
   const { data: pcr } = await sb.from("property_customers").select("ai_summary").eq("conversation_id", Y).limit(1);

@@ -19,6 +19,7 @@
 //   ・ブレインの判断は scripts/yuma-brain-decision.ts（保存しない）を各木で動かす（前の木には自動で複写）
 // 実行: npx tsx --env-file=.env.local scripts/yuma-done-state-test.ts [S1 S2 ...]   （N=3・OUT=結果の JSON）
 //        npx tsx --env-file=.env.local scripts/yuma-done-state-test.ts --cleanup    （途中で落ちた時の片付けだけ）
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -312,6 +313,7 @@ async function main() {
   if (leftover) { console.log("前回の控えが残っている → 先に片付ける"); await cleanup(leftover); }
   const only = args.filter((a) => /^S\d+$/.test(a));
   const scenes = only.length ? SCENES.filter((s) => only.includes(s.id)) : SCENES;
+  for (const [sd, u] of [["before", BEFORE_URL], ["after", AFTER_URL]] as const) if (SIDES.includes(sd)) await requireTestServer(u, "yuma-done-state-test");
   for (const u of [BEFORE_URL, AFTER_URL]) {
     const ok = await fetch(u).then(() => true, () => false);
     if (!ok) { console.log(`⚠ サーバーが無い: ${u}`); return; }

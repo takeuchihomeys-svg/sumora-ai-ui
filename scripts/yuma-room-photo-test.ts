@@ -11,6 +11,7 @@
 // ⚠ 書き込みを伴う。始める前に yuma-snapshot.ts save、終わったら restore。
 //   副作用の片付け: 入れたメッセージ・aix_action_items（AIX要対応）・brain_decision_logs を消す（売上番長グループへの通知だけは戻せない）。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-room-photo-test.ts [REPS=2]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -57,6 +58,7 @@ async function cleanup() {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-room-photo-test");
   const reps = Number(process.env.REPS ?? 2);
   const { data: conv } = await sb.from("conversations").select("status, customer_name, has_viewed").eq("id", YUMA).maybeSingle();
   const c = (conv ?? {}) as Record<string, unknown>;

@@ -9,6 +9,7 @@
 //
 // ⚠ 書き込みを伴う（下書き欄が書き換わる）。前後で yuma-snapshot.ts save/restore すること。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-conflict-probe.ts
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -19,6 +20,7 @@ const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const CUSTOMER = "やっぱり家賃4万円以内で、猫2匹なので広めでお願いします";
 
 async function main() {
+  await requireTestServer(BASE, "yuma-conflict-probe");
   const { data: conv } = await sb.from("conversations")
     .select("customer_name, status, has_viewed, suggested_aix_meta").eq("id", YUMA).maybeSingle();
   const c = (conv ?? {}) as Record<string, unknown>;

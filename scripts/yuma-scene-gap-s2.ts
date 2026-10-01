@@ -20,6 +20,7 @@
 //
 // 実行: dev サーバー（3000）が動いている状態で
 //   npx tsx --env-file=.env.local scripts/yuma-scene-gap-s2.ts [REPS=3] [ONLY=A,B] [IDLE_SEC=180] [BASE_URL=...]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -160,6 +161,7 @@ async function generateDirect(body: Record<string, unknown>, sinceBrainMs: numbe
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-scene-gap-s2");
   const reps = Number(process.env.REPS ?? 3);
   const only = (process.env.ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const scenes = SCENES.filter((s) => !only.length || only.includes(s.key));

@@ -89,6 +89,10 @@ async function main() {
 main().catch((e) => { console.error(e); process.exitCode = 1; })
   .finally(async () => { /* 自分の行を消す */ if (h) await h.finish(); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
 ```
+- **開発サーバを HTTP で叩くスクリプト**（2026-10-02 竹内「テストはテストやで」）は、最初のリクエストの前に
+  `await requireTestServer(BASE, "名前")`（`scripts/lib/dev-server-test-guard.ts`）。手元（localhost）以外の URL・`GET /api/test/llm-mode`（開発サーバだけが答える・本番は 404）で
+  テストの印が無いサーバ・スクリプトとサーバの印の食い違いは止める。終わる時に開発サーバの行（env=local:<印>・script: 以外の route）を model・回数・費用で出す（他の担当の行を含みうる）。
+  10/02 に yuma-* の HTTP のスクリプト 37本に入れた（yuma-trim-send-test は本番の API を確かめる物なので外した）。
 - `h.finish()` は記録の書き込みを待ってから、この回の行（route=`script:<名前>`）を model・回数・費用で出す。deepseek-all で Claude があれば・止めた呼び出しがあれば終了コード 1。
 - 開発サーバ経由（/api/...）の呼び出しは route が `/api/...` になるので、`scripts/test-llm-usage.ts --since=<h.t0>` で数える。
 - 2026-10-01 に入口へ載せ替えたスクリプト: yuma-aix-scene-brain-test・yuma-brain-1001-test・yuma-estimate-handoff-test・yuma-first-reply-echo-test・yuma-replay-scenarios・

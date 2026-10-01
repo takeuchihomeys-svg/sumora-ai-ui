@@ -7,6 +7,7 @@
 //
 // ⚠ 書き込みを伴う（YUMA に場面の2通を入れて、確認後に必ず消す）。テスト会話 YUMA だけで動かす。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-no-reply-test.ts
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -62,6 +63,7 @@ async function waitForResult(timeoutMs = 240_000): Promise<string> {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-no-reply-test");
   let ok = 0, ng = 0;
   for (const s of SCENES) {
     const now = Date.now();

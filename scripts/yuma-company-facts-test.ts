@@ -14,6 +14,7 @@
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、生成後に必ず消す）。テスト会話 YUMA だけで動かす。
 // ⚠ 前に save / 後に restore: npx tsx --env-file=.env.local scripts/yuma-snapshot.ts save|restore
 // 実行: npx tsx --env-file=.env.local scripts/yuma-company-facts-test.ts [REPS=2]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { matchCompanyFacts } from "../app/lib/company-facts";
 
@@ -108,6 +109,7 @@ async function sweepLeftovers() {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-company-facts-test");
   const reps = Number(process.env.REPS ?? 2);
   console.log(`=== 会社の事実が届くか（YUMA・本番と同じ経路）／ ${SCENES.length}場面 × ${reps}回 ===\n`);
   // 先に判定側（コード）が当たることを確かめる。ここが外れていたら生成を待つ意味がない

@@ -13,6 +13,7 @@
 // ⚠ テストの見方: ①下書きが出たか ②内覧前の文（会う予定・楽しみ・道中の気遣い）が無いか を別々に出す。3回動かす。
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、確認後に必ず消す）。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-after-viewing-test.ts [--runs=3]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -30,6 +31,7 @@ function jst(dayOffset: number, hm: string): string {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-after-viewing-test");
   // 今が当日 20:30 より前なら、場面の時刻が未来になってしまう
   const nowJstH = new Date(Date.now() + 9 * 3600_000).getUTCHours();
   if (nowJstH < 21) { console.log("⚠ 日本時間 21時以降に動かす（場面の時刻が未来になるため）"); return; }

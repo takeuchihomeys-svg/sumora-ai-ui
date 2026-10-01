@@ -15,6 +15,7 @@
 //
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、確認後に必ず消す）。テスト会話 YUMA だけで動かす。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-application-stage-test.ts
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { resolveApplicationStage } from "../app/lib/application-stage";
 
@@ -130,6 +131,7 @@ async function runScene(s: Scene) {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-application-stage-test");
   console.log(`=== 申込の状況を正しく読めているか（YUMA・本番と同じ bg-async 経由）===`);
   const results: Array<{ name: string; stageOk: boolean; draftOk: boolean | null }> = [];
   for (const s of SCENES) {

@@ -6,6 +6,7 @@
 //
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、確認後に必ず消す）。テスト会話 YUMA だけで動かす。
 // 実行: REPS=2 npx tsx --env-file=.env.local scripts/yuma-notation-waited-test.ts
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { checkNotationMix } from "../app/lib/notation-mix";
 
@@ -94,6 +95,7 @@ const PREV_WAITED = "YUMAさんお待たせ致しました！！\n\n西区・港
 const PREV_NORMAL = "YUMAさんお世話になっております！！\n\n西区・港区周辺からYUMAさんにオススメできるお部屋ピックアップさせて頂きました😊！！\n\nお手隙の際にご査収ください😌！！";
 
 async function main() {
+  await requireTestServer(BASE, "yuma-notation-waited-test");
   const reps = Number(process.env.REPS ?? 2);
   console.log(`=== ① AIX【物件ピックアップ】— 「お待たせ」を許す場面（実送信 45.7%）===`);
   console.log(`実測で分かれた唯一の軸: 前回も使っていた → 55.8% ／ 使っていなかった → 22.6%`);

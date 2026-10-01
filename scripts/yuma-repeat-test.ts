@@ -22,6 +22,7 @@
 // ⚠ 書き込みを伴う（YUMA に場面の2通を入れて、生成後に必ず消す）。テスト会話 YUMA だけで動かす。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-repeat-test.ts
 //   ※ 前に save / 後に restore: npx tsx --env-file=.env.local scripts/yuma-snapshot.ts save|restore
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { predicateOf, splitClauses, messageSimilarity } from "../app/lib/phrase-shape";
 
@@ -150,6 +151,7 @@ async function sweepLeftovers() {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-repeat-test");
   const only = process.env.ONLY ? process.env.ONLY.split(",") : null;
   // 同じ場面を何回ずつ回すか。
   // ⚠ 1回ずつだと生成のばらつきに埋もれて、直した効果か偶然かが分からない

@@ -5,6 +5,7 @@
 //   送信はしない（/api/aix/action は文を返すだけ）。
 //
 // 実行: SIM_BASE=http://localhost:3310 npx tsx --env-file=.env.local scripts/yuma-aix-action-gen.ts --scene=pcr1,pcr2 [--n=1]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { dedupeRepeatedEmoji } from "../app/lib/emoji-repeat";
 
@@ -40,6 +41,7 @@ const SCENES: Scene[] = [
 ];
 
 async function main() {
+  await requireTestServer(BASE, "yuma-aix-action-gen");
   const { data: c } = await sb.from("conversations").select("account, customer_name, status, line_user_id").eq("id", Y).single();
   const cc = c as { account: string; customer_name: string; status: string };
   if (cc.customer_name !== "YUMA") throw new Error("not YUMA");

@@ -9,6 +9,7 @@
 //                      （止まらなければ LINE が宛先不明で弾くだけ）
 //   黒明さんの個人 ID には一切送らない。
 // 実行: npx tsx --env-file=.env.local scripts/yuma-send-target-test.ts
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -27,6 +28,7 @@ async function send(to: string, conversationId: string) {
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-send-target-test");
   const { data: conv } = await sb.from("conversations").select("line_user_id, send_blocked_reason").eq("id", YUMA).maybeSingle();
   const yumaTo = String((conv as { line_user_id?: string } | null)?.line_user_id ?? "");
   if (!yumaTo) { console.log("YUMA の宛先が読めない"); return; }

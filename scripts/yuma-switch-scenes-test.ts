@@ -12,6 +12,7 @@
 // 前提: 前の木 .claude/worktrees/tmp-fix-before（git worktree add --detach … HEAD・node_modules は junction・.env.local を複写）
 // 実行: npx tsx --env-file=.env.local scripts/yuma-switch-scenes-test.ts [ID ...]   （REPLAY=scripts/.switch-replay.json・GEN=・N=1・OUT=）
 //        npx tsx --env-file=.env.local scripts/yuma-switch-scenes-test.ts --cleanup
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -188,6 +189,7 @@ async function main() {
   const all = JSON.parse(readFileSync(REPLAY, "utf8")) as Replay[];
   const only = args.filter((a) => !a.startsWith("--"));
   const cases = only.length ? all.filter((r) => only.includes(r.id)) : all;
+  for (const g of GEN) await requireTestServer(g === "before" ? BEFORE_URL : AFTER_URL, "yuma-switch-scenes-test");
   for (const g of GEN) { const u = g === "before" ? BEFORE_URL : AFTER_URL; if (!(await fetch(u).then(() => true, () => false))) { console.log(`⚠ サーバーが無い: ${u}`); return; } }
   const results: Array<Record<string, unknown>> = [];
   const s = await begin();

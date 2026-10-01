@@ -10,6 +10,7 @@
 //   長さ 中央値136字・3行
 //
 // ⚠ /api/aix/action は**文を返すだけ**（LINE 送信は別 API）。ここでは送信しないので安全。
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -33,6 +34,7 @@ const ELEMENTS: Array<{ key: string; re: RegExp; sent: number }> = [
 ];
 
 async function main() {
+  await requireTestServer(BASE, "yuma-aix-pickup-test");
   const { data: conv } = await sb.from("conversations").select("id, customer_name, status, account").eq("id", YUMA).maybeSingle();
   const c = (conv ?? {}) as Record<string, unknown>;
   const { data: ms } = await sb.from("messages").select("sender, text, image_url, created_at, is_aix_generated")

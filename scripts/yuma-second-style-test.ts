@@ -13,6 +13,7 @@
 //     全力サポート 0.7 ／ ごゆっくり 0.0 ／ 絵文字 57.5/63.0/51.8 ／ ！！ 61.5/64.2/**64.9**
 //
 // ⚠ 生成のみ。LINE へは送らない。
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -77,6 +78,7 @@ const REACTIONS: Array<{ id: string; text: string; expect: "誘う" | "誘わな
 ];
 
 async function main() {
+  await requireTestServer(BASE, "yuma-second-style-test");
   const rounds = Number(process.env.ROUNDS ?? 2);
   const { data: conv } = await sb.from("conversations").select("customer_name, status").eq("id", YUMA).maybeSingle();
   const c = (conv ?? {}) as Record<string, unknown>;

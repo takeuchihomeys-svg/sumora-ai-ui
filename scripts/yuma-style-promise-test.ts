@@ -4,6 +4,7 @@
 //   B: お客様の質問「こちら2年ごとに更新料かかりますか？」（何卒は実送信 5.6%・説明の行に絵文字 1.7%）
 // ⚠ 書き込みを伴う（YUMA に場面を入れて、確認後に必ず消す）
 // 実行: npx tsx --env-file=.env.local scripts/yuma-style-promise-test.ts [--runs=2]
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -48,6 +49,7 @@ async function run(label: string, scene: S[], check: (body: string) => string[])
 }
 
 async function main() {
+  await requireTestServer(BASE, "yuma-style-promise-test");
   const now = Date.now(); const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
   await run("A 約束から130時間・催促", [
     { sender: "customer", text: "1度この物件で代理契約可能か確認していただけますでしょうか？", created_at: iso(131 * 3600_000) },

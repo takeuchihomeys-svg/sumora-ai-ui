@@ -15,6 +15,7 @@
 //
 // ⚠ 書き込みを伴う（YUMA に場面の2通を入れて、確認後に必ず消す）。テスト会話 YUMA だけで動かす。
 // 実行: REPS=2 npx tsx --env-file=.env.local scripts/yuma-quality-test.ts
+import { requireTestServer } from "./lib/dev-server-test-guard"; // 2026-10-02 竹内「テストはテストやで」: 送る前に開発サーバのテストの印を確かめる（手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
 import { messageSimilarity } from "../app/lib/phrase-shape";
 import { classifySentKind, checkSentShape, NANITOZO_RATE, LINE_CHARS_P90 } from "../app/lib/sent-shape";
@@ -77,6 +78,7 @@ async function waitForDraft(timeoutMs = 240_000) {
 type Issue = { code?: string; severity?: string; message?: string };
 
 async function main() {
+  await requireTestServer(BASE, "yuma-quality-test");
   const reps = Number(process.env.REPS ?? 1);
   let styleShown = 0, factShown = 0, reuse = 0, longLine = 0, rareOpener = 0, nanitozoOdd = 0, judged = 0, want = 0;
   const sims: number[] = [];
