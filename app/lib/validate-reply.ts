@@ -3,6 +3,7 @@
 import { fillNameSlot } from "./reply-context";
 // 2026-09-11 竹内方針1・4・5（統合設計 §1）: 後処理の決定論修正（承知→かしこまりました・すぐに除去・誤字）は依存ゼロの2モジュールが唯一の定義
 import { normalizeBannedPhrasing } from "./banned-phrasing";
+import { polishConditionEcho } from "./condition-echo-polish";
 import { applyTypoAutoFix } from "./typo-check";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件は「お送り頂きました物件」（共有文の駅名・徒歩分で呼ばない）
 import { normalizeSharedPropertyReference } from "./shared-property-ref";
@@ -575,14 +576,22 @@ export function applySurfaceFixes(
   const u = unifyAddressAliases(out, opts?.customerName, opts?.aliases);
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }
   const b = normalizeBannedPhrasing(out);
-  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup) {
+  // 2026-10-01: 「くらい」→「程」だけが当たった時に本文へ戻していなかった（条件に b.kurai が無く、b.text が捨てられていた）
+  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup || b.kurai) {
     out = b.text;
     if (b.shochi) applied.push(`SHOCHI_TO_KASHIKOMARI×${b.shochi}`);
     if (b.hasty) applied.push(`HASTY_ADVERB_REMOVED×${b.hasty}`);
     if (b.uketamawari) applied.push(`BARE_UKETAMAWARI_TO_KASHIKOMARI×${b.uketamawari}`); // 2026-09-12 竹内方針B
     if (b.night) applied.push(`NIGHT_GREETING_REMOVED×${b.night}`);   // 2026-09-12 竹内（Aoi 事例）: 夜間挨拶を返信に入れない
     if (b.greetDup) applied.push(`GREETING_DEDUPED×${b.greetDup}`);   // 2026-09-12 竹内: 挨拶を重ねない
+    if (b.kurai) applied.push(`KURAI_TO_HODO×${b.kurai}`);            // 2026-09-22 竹内「くらいって等使わない」
   }
+  // 2026-10-01 竹内「初回返信の条件を読み直すところ…全域つけたり…スタッフが改善している」:
+  //   条件の復唱（ピックアップの文）にスタッフが同じように入れている手直しだけ（今は 間取りの か→または）。
+  //   「全域」を足すのは監査で止めた（下書きの「周辺から」をスタッフが直さず送る組の方が多い）→ 入口で扱う。
+  //   線の引き方と監査は condition-echo-polish.ts の冒頭・scripts/audit-condition-echo-polish.ts
+  const ce = polishConditionEcho(out);
+  if (ce.applied.length) { out = ce.text; applied.push(...ce.applied); }
   const t = applyTypoAutoFix(out, { customerName: canonOf(opts?.customerName), now: opts?.now });
   if (t.applied.length) {
     out = t.text; applied.push(...t.applied);
