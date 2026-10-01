@@ -2510,6 +2510,26 @@ function renderList(customers) {
     });
   });
 
+  // 2026-10-01 一覧から案内を始める（▶案内＝次の検索を規則で選ぶ／P・広＝そのサイト・その検索）
+  list.querySelectorAll(".guide-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const c = allCustomers.find((x) => String(x.id) === btn.dataset.id);
+      if (!c) return;
+      const g = decideGuideNext(c.search_history);
+      startGuideFor(c, g.site, g.mode);
+    });
+  });
+  list.querySelectorAll(".ssh-guide").forEach((sp) => {
+    sp.style.cursor = "pointer";
+    sp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = sp.closest(".customer-item");
+      const c = row ? allCustomers.find((x) => String(x.id) === row.dataset.id) : null;
+      startGuideFor(c, sp.dataset.guideSite, sp.dataset.guideMode);
+    });
+  });
+
   list.querySelectorAll(".viewed-btn").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -2633,10 +2653,44 @@ function buildSshGrid(sh) {
     var wTip = w ? (s.tip + " 広げて: " + daysAgoText(w)) : (s.tip + " 広げて: 未検索");
     return '<div class="ssh-col">' +
       '<span class="ssh-site-label ' + s.cls + '">' + s.label + '</span>' +
-      '<span class="ssh-m ' + (p ? "ssh-hit" : "ssh-miss") + '" title="' + pTip + '">' + (p ? "✓" : "P") + '</span>' +
-      '<span class="ssh-m ' + (w ? "ssh-hit" : "ssh-miss") + '" title="' + wTip + '">' + (w ? "✓" : "広") + '</span>' +
+      // 2026-10-01 竹内「ここの一覧にリアプロ・ITANDI のボタン作って押したら反映されるように」: P／広 を押すとその検索の案内を始める（リアプロ・ITANDI）
+      '<span class="ssh-m ' + (p ? "ssh-hit" : "ssh-miss") + (s.key !== "reins" ? " ssh-guide" : "") + '"' + (s.key !== "reins" ? ' data-guide-site="' + s.key + '" data-guide-mode="pinpoint"' : "") + ' title="' + pTip + (s.key !== "reins" ? "（押すと案内を始める）" : "") + '">' + (p ? "✓" : "P") + '</span>' +
+      '<span class="ssh-m ' + (w ? "ssh-hit" : "ssh-miss") + (s.key !== "reins" ? " ssh-guide" : "") + '"' + (s.key !== "reins" ? ' data-guide-site="' + s.key + '" data-guide-mode="wide"' : "") + ' title="' + wTip + (s.key !== "reins" ? "（押すと案内を始める）" : "") + '">' + (w ? "✓" : "広") + '</span>' +
       '</div>';
   }).join('') + '</div>';
+}
+
+/**
+ * 2026-10-01 竹内「ボタン押したら、監視画面がリアプロって判断出来たらそのままリアプロ、ITANDI と判断したら ITANDI で」:
+ *   次にする検索（サイト×ピンポイント／広げて）を決まった規則で1つ選ぶ（今日の検索の記録 search_history から）。
+ *   順: リアプロのピンポイント → ITANDI のピンポイント → リアプロの広げて → ITANDI の広げて（memory feedback_search_per_customer_both_sites）。
+ *   ⚠ 広げては「通すが目安に足りない時」に要る。今はトークの物件カード・見張りの「あと N件」を見て押す（件数はここでは見ていない）
+ */
+function decideGuideNext(sh) {
+  var d = sh || {};
+  var today = function (iso) { return daysAgoText(iso) === "今日"; };
+  var order = [["realpro", "pinpoint", "リアプロのピンポイント"], ["itandi", "pinpoint", "ITANDI のピンポイント"], ["realpro", "wide", "リアプロの広げて"], ["itandi", "wide", "ITANDI の広げて"]];
+  for (var i = 0; i < order.length; i++) {
+    var key = order[i][0] + (order[i][1] === "pinpoint" ? "_p" : "_w");
+    if (!today(d[key])) return { site: order[i][0], mode: order[i][1], why: order[i][2] + "がまだ（今日）" };
+  }
+  return { site: null, mode: null, why: "今日は両サイトともピンポイント・広げて済み" };
+}
+
+/** そのお客様の案内を始める（拡張の画面のボタンを押すだけ・サイトは触らない＝その先は page-script の案内モード） */
+function startGuideFor(c, site, mode) {
+  if (!c) return;
+  if (site === "itandi") {
+    _pickupCompleteToast("ITANDI の案内モードは準備中です（勝手に入力しないよう、ITANDI の自動入力は止めています）", "info");
+    return;
+  }
+  if (site !== "realpro") { _pickupCompleteToast("今日は両サイトとも検索済みです", "info"); return; }
+  openSiteView(c);
+  searchMode = mode === "wide" ? "wide" : "pinpoint";
+  syncModeButtons();
+  openInstructions("realpro");
+  var b = document.getElementById("autofill-btn");
+  if (b) b.click();
 }
 
 function daysAgoText(isoStr) {
@@ -2679,6 +2733,7 @@ function renderCustomerRow(c, dimmed) {
       </div>
       <span class="s-badge badge-${esc(c.status)}">${esc(label)}</span>
       ${buildSshGrid(c.search_history)}
+      ${(function () { const g = decideGuideNext(c.search_history); return '<button class="guide-btn" data-id="' + esc(String(c.id)) + '" title="' + esc(g.why) + '" style="font-size:10px;padding:2px 6px;border-radius:8px;border:1px solid #ff8f00;background:#fff3e0;color:#e65100;cursor:pointer;white-space:nowrap">▶案内' + (g.site === "realpro" ? "RP" : g.site === "itandi" ? "IT" : "") + (g.mode === "wide" ? "広" : "") + '</button>'; })()}
       <button class="viewed-btn${isViewedToday(c) ? " viewed-done" : ""}" data-id="${esc(String(c.id))}">${isViewedToday(c) ? "☑" : "確認"}</button>
       <svg class="c-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
     </div>`;
@@ -4079,6 +4134,9 @@ function openInstructions(siteKey) {
       try { await _itandiAutofillRun(_auditCtx_it); } finally { _itandiFillRunningAt = 0; }
     };
     const _itandiAutofillRun = async (_auditCtx_it) => {
+      // 2026-10-01 ITANDI の案内モードができるまで、案内モード（guideMode・既定オン）の間は ITANDI の自動入力をしない（勝手に入力しない）
+      const _gmIt = await new Promise((res) => { try { chrome.storage.local.get(["guideMode"], (r) => res(r && r.guideMode)); } catch (_) { res(undefined); } });
+      if (_gmIt !== false) { _pickupCompleteToast("ITANDI の案内モードは準備中です。案内モードの間は ITANDI の自動入力は止めています（手で検索してください）", "info"); return; }
       const isAutomated_itandi = !!autofillBtn.dataset.automated;
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得

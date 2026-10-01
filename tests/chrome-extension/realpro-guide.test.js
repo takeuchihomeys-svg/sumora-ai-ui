@@ -78,5 +78,21 @@ const pp = read("popup.js");
 ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を置かない", /_gm\.guideMode !== false\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
 ok("page-script: 検索を押す所（clickSearch・見積用）も案内モードの間は押さない", /function clickSearch\(\) \{\s*if \(_guideOn\(\)\)/.test(ps) && /if \(_guideOn\(\)\) \{ window\.__axlxEstimateSearchResult/.test(ps));
 
+// ── ⑤ 2026-10-01 竹内「ここの一覧にリアプロ・ITANDI のボタン作って押したら反映されるように／監視画面がリアプロと判断できたらリアプロ」──
+{
+  const grab = (name) => { const m = pp.match(new RegExp("function " + name + "\\([^)]*\\) \\{[\\s\\S]*?\\n\\}")); return m ? m[0] : ""; };
+  // eslint-disable-next-line no-new-func
+  const mk = Function(grab("daysAgoText") + "\n" + grab("decideGuideNext") + "\nreturn decideGuideNext;")();
+  const now = new Date().toISOString();
+  const old = "2026-01-01T00:00:00Z";
+  ok("次の検索: 何もしていない → リアプロのピンポイント", eq([mk({}).site, mk({}).mode], ["realpro", "pinpoint"]));
+  ok("次の検索: リアプロのピンポイント済み → ITANDI のピンポイント", eq([mk({ realpro_p: now }).site, mk({ realpro_p: now }).mode], ["itandi", "pinpoint"]));
+  ok("次の検索: 両サイトのピンポイント済み → リアプロの広げて", eq([mk({ realpro_p: now, itandi_p: now }).site, mk({ realpro_p: now, itandi_p: now }).mode], ["realpro", "wide"]));
+  ok("次の検索: 昨日以前の検索は「まだ」扱い", mk({ realpro_p: old }).site === "realpro");
+  ok("次の検索: 全部済み → なし", mk({ realpro_p: now, itandi_p: now, realpro_w: now, itandi_w: now }).site === null);
+  ok("一覧: リアプロ・ITANDI の P／広 が押せる（レインズは除く）", /data-guide-site="' \+ s\.key \+ '" data-guide-mode="pinpoint"/.test(pp) && /s\.key !== "reins"/.test(pp) && /\.guide-btn/.test(pp));
+  ok("ITANDI: 案内モードの間は自動入力しない（準備中）", /_gmIt !== false\) \{ _pickupCompleteToast\("ITANDI の案内モードは準備中/.test(pp) && /if \(site === "itandi"\) \{\s*_pickupCompleteToast/.test(pp));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
