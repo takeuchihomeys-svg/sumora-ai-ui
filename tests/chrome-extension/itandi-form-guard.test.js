@@ -112,7 +112,7 @@ ok("watchdog は『途中で止まりました』", /条件の入力が途中で
 
 console.log("\n⑦ 配線");
 const mf = JSON.parse(read("manifest.json"));
-eq("manifest の版", mf.version, "2.5.63");
+eq("manifest の版", mf.version, "2.5.64");
 const main = mf.content_scripts.find((c) => c.world === "MAIN" && c.js.indexOf("itandi-page-script.js") >= 0);
 eq("itandi のページの中の段に form-guard（page-script より前）", main && main.js, ["human-wait.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 const ps = read("itandi-page-script.js");

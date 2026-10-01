@@ -126,8 +126,18 @@
   // ── 所在地・路線/駅のチップを読む（itandi-page-script.js _itFilterBtn/_itFilterRow/_itChipNodes/_itChipDeleteCtl の読むだけの写し）──
   function filterBtn(rowDef) {
     var names = rowDef.buttons.map(sq);
-    return [].slice.call(document.querySelectorAll("button, [role='button']")).filter(function (b) { return visible(b) && !inDialog(b) && !mine(b); })
+    var hit = [].slice.call(document.querySelectorAll("button, [role='button']")).filter(function (b) { return visible(b) && !inDialog(b) && !mine(b); })
       .filter(function (b) { return names.indexOf(sq(b.textContent)) >= 0; })[0] || null;
+    if (hit) return hit;
+    // 2026-10-01 竹内「所在地で絞り込み光ってないし」: 実画面の「所在地で絞り込み」は button／role=button で文字が完全一致する形ではなく、
+    //   見つからずに吹き出しだけが左上に出ていた → 文字が一致する一番内側の要素を探し、押せる親（button・a・role=button）があればそれを光らせる
+    var pool = [].slice.call(document.querySelectorAll("button, [role='button'], a, div, span, p, label")).filter(function (b) {
+      return !inDialog(b) && !mine(b) && names.indexOf(sq(b.textContent)) >= 0 && visible(b);
+    });
+    var inner = innermost(pool)[0] || null;
+    if (!inner) return null;
+    var up = inner.closest ? inner.closest("button, a, [role='button']") : null;
+    return up && !mine(up) && names.indexOf(sq(up.textContent)) >= 0 ? up : inner;
   }
   function filterRow(rowDef) {
     var F = FG();

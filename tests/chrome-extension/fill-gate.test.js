@@ -40,7 +40,7 @@ console.log("\n■ popup: 一覧に居ないお客様は取り直してから探
   ok("見つからなければ loadCustomers(true) で取り直してもう1回探す", /if \(!c && d\.customerId\) \{[\s\S]{0,200}await loadCustomers\(true\)/.test(fn));
   ok("取り直しても居なければ customer-not-found", /reason: "customer-not-found"/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  ok("manifest の版 2.5.63", mf.version === "2.5.63");
+  ok("manifest の版 2.5.64", mf.version === "2.5.64");
 }
 
 console.log("\n■ v2.5.58 ITANDI の広げて検索は築年数も＋5年（リアプロと同じ）");

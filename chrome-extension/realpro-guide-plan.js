@@ -108,6 +108,16 @@
     return vals;
   }
 
+  /** リアプロの「間取」の並び（実画面・左から右・上の段から下の段） */
+  var LAYOUT_GRID = ["ワンルーム", "スタジオタイプ", "1K", "1DK", "1LDK", "2K", "2DK", "2LDK", "3K", "3DK", "3LDK", "4K", "4DK", "4LDK", "5K", "5DK", "5LDK", "6LDK～", "6LDK~", "メゾネット"];
+  /** 横並びの欄の手順を画面の並び（左から右・上の段から）に並べ替える。並びに無い物は元の順で後ろ */
+  function gridOrder(vals, labelOf, grid) {
+    var rank = function (v) { var i = grid.indexOf(String(labelOf(v))); return i < 0 ? grid.length : i; };
+    return vals.map(function (v, k) { return { v: v, k: k }; })
+      .sort(function (a, b) { return rank(a.v) - rank(b.v) || a.k - b.k; })
+      .map(function (x) { return x.v; });
+  }
+
   /** 場所の決め方（page-script.js decideLocationMode と同じ）: station / route / area / none */
   function locationMode(c) {
     var st = c.station_names && c.station_names.length > 0, rt = c.route_ids && c.route_ids.length > 0;
@@ -132,30 +142,34 @@
     // 2026-10-01 竹内「リセット今回はしなくて大丈夫だったので、リセットは次のお客さんから」:
     //   前に案内したお客様がいて今回と違う時（前の条件が欄に残っている時）だけ（opts.withReset）
     if (o.withReset) push({ kind: "reset", label: "前のお客様の条件を消すため「リセット」を押してください" });
-    if (c.rent_min) push({ kind: "select", name: "rental_cost1", value: nearestDown(RENT_OPTS, c.rent_min), label: "賃料の下限を「" + man(nearestDown(RENT_OPTS, c.rent_min)) + "」に" });
-    if (c.rent_max) push({ kind: "select", name: "rental_cost2", value: nearestUp(RENT_OPTS, c.rent_max), label: "賃料の上限を「" + man(nearestUp(RENT_OPTS, c.rent_max)) + "」に" });
-    push({ kind: "check", name: "include_common_fee", value: null, want: true, label: "「管理費・共益費込み」にチェック" });
-    if (c.area_min) push({ kind: "select", name: "square_meter_l", value: nearestDown(AREA_OPTS, c.area_min), label: "面積の下限を「" + nearestDown(AREA_OPTS, c.area_min) + "㎡」に" });
-    if (c.area_max) push({ kind: "select", name: "square_meter_h", value: nearestUp(AREA_OPTS, c.area_max), label: "面積の上限を「" + nearestUp(AREA_OPTS, c.area_max) + "㎡」に" });
+    // 2026-10-01 竹内「リアプロも ITANDI も所在地のところから上から順に開かせていった方が分かりやすい」
+    //   「とにかく押しやすいように上から下で・横並びのところは左から右」:
+    //   手順はリアプロの左の欄の上から下の並び（所在地／沿線・駅 → 駅からの移動手段 → 更新日 → 賃料 → 管理費・共益費含む → 敷金・礼金なし
+    //   → 面積 → 築年数 → 間取（左から右・上の段から） → 構造 → 絞り込み条件（ペット相談）→ 検索）。入れる値は自動入力と同じ（並びだけ変えた）
+    var lm = locationMode(c);
+    var lines = (c.route_ids || []).map(function (r) { return ROUTE_LINE_MAP[String(r)]; }).filter(Boolean);
+    if (lm === "area" && c.city_codes && c.city_codes.length) push({ kind: "pick_city", codes: c.city_codes.map(String).slice(0, 40), label: "「所在地絞り込み」から区を選んでください（光っている区にチェック）" });
+    else if (lm === "station") push({ kind: "pick_station", names: c.station_names.slice(0, 40), lines: lines, label: "「沿線・駅絞り込み」から駅を選んでください（光っている駅にチェック）" });
+    else if (lm === "route") push({ kind: "pick_route", lines: lines, label: "「沿線・駅絞り込み」から路線を選んでください" });
     if (c.walk_minutes) {
       push({ kind: "select", name: "transportation_id", value: "1", label: "駅からの移動手段を「徒歩」に" });
       push({ kind: "text", name: "required_time", value: String(c.walk_minutes), label: "徒歩の分数に「" + c.walk_minutes + "」と入力" });
     }
+    if (c.rp_update_days) push({ kind: "select", name: "update_date", value: String(c.rp_update_days), label: "更新日を「" + c.rp_update_days + "日以内」に" });
+    if (c.rent_min) push({ kind: "select", name: "rental_cost1", value: nearestDown(RENT_OPTS, c.rent_min), label: "賃料の下限を「" + man(nearestDown(RENT_OPTS, c.rent_min)) + "」に" });
+    if (c.rent_max) push({ kind: "select", name: "rental_cost2", value: nearestUp(RENT_OPTS, c.rent_max), label: "賃料の上限を「" + man(nearestUp(RENT_OPTS, c.rent_max)) + "」に" });
+    push({ kind: "check", name: "include_common_fee", value: null, want: true, label: "「管理費・共益費込み」にチェック" });
+    if (c.shikirei_free) push({ kind: "check_text", text: "敷金・礼金なし", want: true, label: "「敷金・礼金なし」にチェック" });
+    if (c.area_min) push({ kind: "select", name: "square_meter_l", value: nearestDown(AREA_OPTS, c.area_min), label: "面積の下限を「" + nearestDown(AREA_OPTS, c.area_min) + "㎡」に" });
+    if (c.area_max) push({ kind: "select", name: "square_meter_h", value: nearestUp(AREA_OPTS, c.area_max), label: "面積の上限を「" + nearestUp(AREA_OPTS, c.area_max) + "㎡」に" });
     if (c.building_age) push({ kind: "select", name: "structured_date", value: nearestUp(AGE_OPTS, c.building_age), label: "築年数を「" + nearestUp(AGE_OPTS, c.building_age) + "年以内」に" });
-    floorPlanValues(c.floor_plan, !!c.is_wide).forEach(function (v) {
+    gridOrder(floorPlanValues(c.floor_plan, !!c.is_wide), function (v) { return FLOOR_LABEL[v] || v; }, LAYOUT_GRID).forEach(function (v) {
       push({ kind: "check", name: "room_layout_id[]", value: v, want: true, label: "間取り「" + (FLOOR_LABEL[v] || v) + "」にチェック" });
     });
     (c.structure_types || []).map(function (s) { return STRUCTURE_MAP[s]; }).filter(Boolean).forEach(function (v) {
       push({ kind: "check", name: "structured_type[]", value: v, want: true, label: "構造「" + (STRUCTURE_LABEL[v] || v) + "」にチェック" });
     });
     if (c.pet_ok) push({ kind: "check", name: "eq_rm[]", value: "113", want: true, label: "「ペット相談」にチェック" });
-    if (c.shikirei_free) push({ kind: "check_text", text: "敷金・礼金なし", want: true, label: "「敷金・礼金なし」にチェック" });
-    if (c.rp_update_days) push({ kind: "select", name: "update_date", value: String(c.rp_update_days), label: "更新日を「" + c.rp_update_days + "日以内」に" });
-    var lm = locationMode(c);
-    var lines = (c.route_ids || []).map(function (r) { return ROUTE_LINE_MAP[String(r)]; }).filter(Boolean);
-    if (lm === "station") push({ kind: "pick_station", names: c.station_names.slice(0, 40), lines: lines, label: "「沿線・駅絞り込み」から駅を選んでください（光っている駅にチェック）" });
-    else if (lm === "route") push({ kind: "pick_route", lines: lines, label: "「沿線・駅絞り込み」から路線を選んでください" });
-    else if (lm === "area" && c.city_codes && c.city_codes.length) push({ kind: "pick_city", codes: c.city_codes.map(String).slice(0, 40), label: "「所在地絞り込み」から区を選んでください（光っている区にチェック）" });
     push({ kind: "search", label: "最後に「検索」を押してください" });
     return { steps: steps, location: lm };
   }

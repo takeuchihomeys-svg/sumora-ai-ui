@@ -78,6 +78,17 @@
   var BATH_RE = /バス.*トイレ別|トイレ別|バストイレ別/i;
   // 敷金・礼金なしのラベルの文字（自動入力が探す物と同じ）
   var SHIKIREI_TEXTS = ["敷金・礼金なし", "敷金礼金なし", "敷礼なし"];
+  /** 2026-10-01 竹内「横並びのところは左から右」: ITANDI の間取り・構造の並び（実画面・左から右・上の段から下の段） */
+  var LAYOUT_GRID_IT = ["1R", "1K", "1DK", "1LDK", "2K", "2DK", "2LDK", "3K", "3DK", "3LDK", "4K", "4DK", "4LDK", "5K", "5DK", "5LDK"];
+  var STRUCTURE_GRID_IT = ["木造", "ブロック", "鉄筋ブロック", "鉄骨造", "軽量鉄骨造", "RC", "SRC", "PC", "HPC", "ALC", "CFT"];
+  function gridOrder(vals, labelOf, grid) {
+    var rank = function (v) { var i = grid.indexOf(String(labelOf(v))); return i < 0 ? grid.length : i; };
+    return vals.map(function (v, k) { return { v: v, k: k }; })
+      .sort(function (a, b) { return rank(a.v) - rank(b.v) || a.k - b.k; })
+      .map(function (x) { return x.v; });
+  }
+  /** 2026-10-01 実画面: 賃料のすぐ下に「敷金なし」「礼金なし」が別々にある */
+  var SHIKIREI_SPLIT = ["敷金なし", "礼金なし"];
 
   function getStationAliases(name) { return ITANDI_STATION_ALIAS_MAP[name] || [name]; }
   function layoutLabel(id) { return id === "5K_OVER" ? "5K以上" : id; }
@@ -206,13 +217,9 @@
 
     push({ kind: "clear", label: "前のお客様の条件が残っています。光っている所を外してください（×・チェックを外す・欄を空に）" });
 
-    var rMax = rentValue(c.rent_max, "max");
-    if (rMax) { want.texts["rent:lteq"] = rMax; push({ kind: "text", name: "rent:lteq", value: rMax, label: "賃料の上限に「" + rMax + "」と入力（万円）" }); }
-    var rMin = rentValue(c.rent_min, "min");
-    if (rMin) { want.texts["rent:gteq"] = rMin; push({ kind: "text", name: "rent:gteq", value: rMin, label: "賃料の下限に「" + rMin + "」と入力（万円）" }); }
-    wantCheck("totalRentCheck", null, null);
-    push({ kind: "check", name: "totalRentCheck", fid: null, labelText: null, label: "「管理費・共益費込み」にチェック" });
-
+    // 2026-10-01 竹内「リアプロも ITANDI も所在地のところから上から順に開かせていった方が分かりやすい」:
+    //   手順は ITANDI の検索画面の上から下の並び（所在地／路線・駅 → 駅徒歩 → 賃料・管理費込み・敷金なし・礼金なし → 間取り → 専有面積 → 築年数 → 構造
+    //   → 募集条件更新 → バス・トイレ別 → ペット相談 → 検索）。入れる値は自動入力と同じ（並びだけ変えた）
     var loc = locationOf(c);
     want.location = loc;
     if (loc.mode === "area") {
@@ -227,22 +234,30 @@
         label: "「路線・駅で絞り込み」で 近畿 → 大阪府 → 路線 " + loc.lines.join("・") + (loc.selectAll ? " の駅を全部" : loc.stations.length ? " → 駅 " + loc.stations.slice(0, 12).join("・") + (loc.stations.length > 12 ? " ほか" + (loc.stations.length - 12) + "駅" : "") : "") + " を選んで「確定」" });
     }
 
-    var U = UD();
-    var days = U ? U.normDays(c.rp_update_days) : null;
-    want.updateDays = days;
-    if (days !== null) push({ kind: "update_days", value: days, label: "「募集条件更新」に「" + days + "」日以内を入れる" + (days > 9 ? "（一覧に無い日数なら空のまま「この手順は済み」）" : "") });
-
-    if (c.area_min) { want.texts["floor_area_amount:gteq"] = String(c.area_min); push({ kind: "text", name: "floor_area_amount:gteq", value: String(c.area_min), label: "専有面積の下限に「" + c.area_min + "」と入力（㎡）" }); }
-    if (c.area_max) { want.texts["floor_area_amount:lteq"] = String(c.area_max); push({ kind: "text", name: "floor_area_amount:lteq", value: String(c.area_max), label: "専有面積の上限に「" + c.area_max + "」と入力（㎡）" }); }
     if (c.walk_minutes) { want.texts["station_walk_minutes:lteq"] = String(c.walk_minutes); push({ kind: "text", name: "station_walk_minutes:lteq", value: String(c.walk_minutes), label: "駅徒歩に「" + c.walk_minutes + "」分以内と入力" }); }
-    if (c.building_age) { want.texts["building_age:lteq"] = String(c.building_age); push({ kind: "text", name: "building_age:lteq", value: String(c.building_age), label: "築年数に「" + c.building_age + "」年以内と入力" }); }
 
-    layoutIds(c.floor_plan, !!c.is_wide).forEach(function (id) {
+    var rMin = rentValue(c.rent_min, "min");
+    if (rMin) { want.texts["rent:gteq"] = rMin; push({ kind: "text", name: "rent:gteq", value: rMin, label: "賃料の下限に「" + rMin + "」と入力（万円）" }); }
+    var rMax = rentValue(c.rent_max, "max");
+    if (rMax) { want.texts["rent:lteq"] = rMax; push({ kind: "text", name: "rent:lteq", value: rMax, label: "賃料の上限に「" + rMax + "」と入力（万円）" }); }
+    wantCheck("totalRentCheck", null, null);
+    push({ kind: "check", name: "totalRentCheck", fid: null, labelText: null, label: "「管理費・共益費込み」にチェック" });
+    if (c.shikirei_free) {
+      // 実画面は「敷金なし」「礼金なし」が別々のチェック（賃料のすぐ下）。旧の「敷金・礼金なし」の1つの文字は無いので飛ばされていた
+      want.labels = SHIKIREI_TEXTS.concat(SHIKIREI_SPLIT);
+      push({ kind: "check_text", texts: SHIKIREI_TEXTS.concat(["敷金なし"]), label: "「敷金なし」にチェック" });
+      push({ kind: "check_text", texts: ["礼金なし"], label: "「礼金なし」にチェック" });
+    }
+
+    gridOrder(layoutIds(c.floor_plan, !!c.is_wide), layoutLabel, LAYOUT_GRID_IT).forEach(function (id) {
       wantCheck("room_layout:in", id, layoutLabel(id));
       push({ kind: "check", name: "room_layout:in", fid: id, labelText: layoutLabel(id), exact: true, label: "間取り「" + layoutLabel(id) + "」にチェック" });
     });
+    if (c.area_min) { want.texts["floor_area_amount:gteq"] = String(c.area_min); push({ kind: "text", name: "floor_area_amount:gteq", value: String(c.area_min), label: "専有面積の下限に「" + c.area_min + "」と入力（㎡）" }); }
+    if (c.area_max) { want.texts["floor_area_amount:lteq"] = String(c.area_max); push({ kind: "text", name: "floor_area_amount:lteq", value: String(c.area_max), label: "専有面積の上限に「" + c.area_max + "」と入力（㎡）" }); }
+    if (c.building_age) { want.texts["building_age:lteq"] = String(c.building_age); push({ kind: "text", name: "building_age:lteq", value: String(c.building_age), label: "築年数に「" + c.building_age + "」年以内と入力" }); }
     var seenSt = {};
-    (c.structure_types || []).forEach(function (s) {
+    gridOrder((c.structure_types || []).slice(), function (s) { return STRUCTURE_LABEL_MAP[s] || s; }, STRUCTURE_GRID_IT).forEach(function (s) {
       var v = STRUCTURE_MAP[s] || null;
       var lt = STRUCTURE_LABEL_MAP[s] || s;
       var key = v || "label:" + lt;
@@ -251,17 +266,19 @@
       wantCheck("structure_type:in", v, lt);
       push({ kind: "check", name: "structure_type:in", fid: v, labelText: lt, alt: lt !== s ? s : null, label: "構造「" + lt + "」にチェック" });
     });
-    if (c.pet_ok) {
-      wantCheck("option_id:all_in", PET_ID, "ペット相談");
-      push({ kind: "check", name: "option_id:all_in", fid: PET_ID, labelText: "ペット相談", exact: true, section: "入居条件（その他）", label: "「ペット相談」にチェック" });
-    }
+
+    var U = UD();
+    var days = U ? U.normDays(c.rp_update_days) : null;
+    want.updateDays = days;
+    if (days !== null) push({ kind: "update_days", value: days, label: "「募集条件更新」に「" + days + "」日以内を入れる" + (days > 9 ? "（一覧に無い日数なら空のまま「この手順は済み」）" : "") });
+
     if (c.preferences && BATH_RE.test(c.preferences)) {
       wantCheck("option_id:all_in", BATH_ID, "バス・トイレ別");
       push({ kind: "check", name: "option_id:all_in", fid: BATH_ID, labelText: "バス・トイレ別", label: "「バス・トイレ別」にチェック" });
     }
-    if (c.shikirei_free) {
-      want.labels = SHIKIREI_TEXTS.slice();
-      push({ kind: "check_text", texts: SHIKIREI_TEXTS.slice(), label: "「敷金・礼金なし」にチェック" });
+    if (c.pet_ok) {
+      wantCheck("option_id:all_in", PET_ID, "ペット相談");
+      push({ kind: "check", name: "option_id:all_in", fid: PET_ID, labelText: "ペット相談", exact: true, section: "入居条件（その他）", label: "「ペット相談」にチェック" });
     }
     push({ kind: "search", label: "最後に「検索」を押してください" });
     return { steps: steps, location: loc.mode, want: want };
