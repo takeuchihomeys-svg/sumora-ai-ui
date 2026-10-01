@@ -35,6 +35,8 @@ import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } fr
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
+// 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
+import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
@@ -387,7 +389,7 @@ const AIX_CAPABILITY_MAP = `
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 既知条件をスキップした条件ヒアリングを生成
-- acknowledge_check: 管理会社への空室確認+見積書依頼を生成
+- acknowledge_check: 管理会社への空室確認+見積書依頼を生成（お客様宛てではない。物件の問い合わせでは選ばない＝property_check_result）
 - followup_revive: 追客・再接触メッセージを生成
 - property_check_result: 空室確認結果の報告文を生成（「物件確認した」）→ 2番手での申込が可能と判明した場合は+1分30秒で「（2番手・申込）」を顧客名の置換のみで自発送信する。【室内写真】お客様が室内の写真・動画・室内イメージURL を頼んだ（「室内の写真ありますか」「これ室内写真欲しいです」「お部屋の画像ありますでしょうか」「内見の動画欲しいです」「URLとかありますでしょうか」）→ check_pattern=interior_photo（AIX【物件確認した】→「室内写真を確認した」ピッカー。スタッフが手元の写真・室内イメージURL を物件名とあわせて送る。AI は使わない・本文は受付の一文だけ）。【重要】フリーレント可否・礼金/初期費用の交渉結果・ペット可否・駐車場有無・設備有無など管理会社に確認した結果はすべてこのボタンの「管理会社に確認した」サブパターンで報告する。acknowledge_check で確認を依頼した後に管理会社から回答が届いたら必ず property_check_result を選ぶこと。confirm前に結果を捏造してはいけない。【誤選択防止】顧客が「駐車場付きのお部屋がないか」「駐車場付きで探してほしい」等と言っている場合は property_check_result ではなく property_send を選ぶ（これは現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 = equip_add）
 - property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は「1件特にオススメ」で感情的フォローを追加する（実測1分22秒。原文そのままの送信実績はゼロなので"1件に絞って推す"思想のみ流用し全面リライトする）
@@ -399,13 +401,13 @@ const AIX_CAPABILITY_MAP = `
 - estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし）／初期費用・総額を質問してきた時点で迷わず選ぶ
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
 - 【お客様が自分で見つけた物件】顧客がポータルの物件URL（SUUMO 等）・物件の画像を送って「ここはどうでしょうか」「気になってます」「空いてますか」と聞いた時は property_check_result（スタッフが管理会社に募集状況・条件を確認し、その結果を AIX【物件確認した】で送る。最大限割引の御見積書を同封することが多い）。初期費用・見積を聞かれていれば estimate_sheet。acknowledge_check は管理会社宛ての確認依頼の文を作るボタンで、この場面では押されていない（実送信: URL を送ってきた後の最初の AIX 131回のうち 物件確認した 109・見積書送る 21・確認します 0。2026-10-01 竹内・和樹事例）。以前の「新着をピックアップしてお送りする」約束が未履行でも、お客様の物件の確認が先（同じ場面の31回中30回）
-- acknowledge_check: 管理会社への確認依頼の文を作る（お客様宛てではない）。お客様の持ち込み物件の次の一手には選ばない（上の【お客様が自分で見つけた物件】）。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
+- acknowledge_check: 管理会社への確認依頼の文を作る（お客様宛てではない）。物件の問い合わせ（お客様の持ち込み物件・URL・物件の画像・物件名＋空き／募集状況の質問）の次の一手には選ばない → いきなり property_check_result（2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」。実送信150日: 確認しますの押下は全体で6回・あなたが確認しますを出した後にスタッフが押したのは 物件確認した 14・見積書送る 7・確認します 0）。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（property_check_result / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・この事例）
 - estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・この事例）
 - estimate_sheet（【主のお部屋への見積もりの依頼】）: 【お客様の今の状況】の主のお部屋が**こちらが送ったお部屋**で、お客様が見積もり・初期費用の金額を頼んだ（「〇〇いいですね」→「見積もりお願いできますか」「こちらの初期費用いくらですか」）→ estimate_sheet。物件確認した（募集状況の確認）を先に挟まない（実送信52件中 見積書送る47・物件確認した＋御見積書同封2・物件確認のみ1）。お客様が持ち込んだお部屋（URL・画像）は従来どおり募集状況の確認＋御見積書／物件が決まっていない費用の質問は AIX なし／同じ連投で空き状況・内覧も聞かれた時はその判断に任せる（物件確認した＋御見積書同封は両方に1通で答えられる）（2026-09-27 竹内・YUMA 事例）
 - cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・この事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
-- cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・この事例）。境界: 金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
+- cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・この事例）。境界: 「家賃込みの価格ですか」「〇月分の家賃は初期費用に含まれていますか」と家賃込みかだけを聞いた時は AIX なし（本文で「初期費用は翌月分の前家賃込み」と答える・2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」・実送信は手打ちの返信）／金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
 - phone_call: 顧客がこちらと電話で話したい時（「ご相談があるのですがお電話では無理でしょうか？」「電話いける時間ありますか？」「1度お電話いただけませんか？」「物件の事で聞きたい事がありますのでお手隙の際電話いけますか？」）。他の話題が同じ発言にあっても電話の依頼を先に受ける。本文で電話番号・「こちらからお電話します」「〇時にお電話します」を作らない（2026-09-15 竹内・H 事例）。境界: 電話番号の質問・管理会社等から電話があった報告・他所への電話の相談・「電話は大丈夫です」は phone_call ではない
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
 - followup_revive: 【時間情報】の最終顧客メッセージが3日以上前で、予約送信済みメッセージが無い時
@@ -870,21 +872,25 @@ async function detectSignalBasedAixFallback(
       // 2026-10-01 竹内「画像が物件なのか物件以外なのか文字に出しておく」: 本文の見出し（image-label.ts）も見る。
       //   物件以外（ペット・人物の写真・手続きの画面・本人確認書類…）は見積書にしない（信号なし）
       const g = customerImageGroup(custText, it);
+      // 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」: 物件の画像は 物件確認した（旧: 確認します）。
+      //   実送信（150日）: 確認しますの押下は全体で6回・ブレインが 確認します を出した後にスタッフが押したのは 物件確認した 14・見積書送る 7・確認します 0
       if (it === "property_photo" || it === "floor_plan" || g === "property") {
-        return "acknowledge_check";
+        return "property_check_result";
       }
       if (g === "non_property" || g === "personal_document") return null;
       return "estimate_sheet";
     }
 
     // 信号4（AIX_CAPABILITY_MAP記載・コード未実装だった条件）:
-    // 顧客が物件URL・「空きありますか」等を送ってきて空室確認タスクが未起票 → acknowledge_check
+    // 顧客が物件URL・「空きありますか」等を送ってきて空室確認タスクが未起票 → 物件確認した
     // （確認前に内覧・申込の話へ進めないルール。property_check タスクが既にあれば回答待ちなので出さない）
+    // 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」: 旧は acknowledge_check（確認します）を返していた
+    //   （scripts/audit-ack-check-retire.ts: signal:acknowledge_check 6回・スタッフが 確認します を押した回 0）
     if (
       /https?:\/\/|空きあり|空いてます|まだ募集|募集中ですか|この物件/.test(custText) &&
       !pendingTaskTypes.includes("property_check")
     ) {
-      return "acknowledge_check";
+      return "property_check_result";
     }
 
     // 信号5（PHASE_TEMPLATE_HINTS/AIX_CAPABILITY_MAP記載・コード未実装だった条件）:
@@ -2858,6 +2864,7 @@ ${history}`;
     }
     // 2026-10-01 竹内（和樹事例）「ここは物件確認したから送る形なので、そのようにする」: お客様が自分で見つけた物件（ポータルの URL・物件の画像）を
     //   送って聞いた時に LLM が 確認します（管理会社宛ての確認依頼）を選んだ → 物件確認した（初期費用・見積を聞いていれば 見積書送る）に直す。
+    //   同日の続き「確認します あまり使わないので、いきなり物件確認したで大丈夫」: 場面の証拠が出ない「物件名 階 URL by SUUMO」の共有も対象にした
     //   実送信（7/17〜・URL を送ってきた後の最初の AIX 131回）: 物件確認した 109・見積書送る 21・確認します 0。
     //   判定は customer-property-inquiry.ts（純関数・テストあり）。LLM が他の AIX を選んだ時は変えない
     if (!promiseAix) {
@@ -2913,6 +2920,22 @@ ${history}`;
     if (!promiseAix && sceneEvidence?.scene === "S9_cost_breakdown" && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "acknowledge_check")) {
       finalAix = "cost_breakdown";
       decisionSource = "signal:scene_S9_cost_breakdown";
+    }
+    // 2026-10-01 竹内「『家賃込の価格でしょうか？』に対しては初期費用は前家賃込みとなっている…家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」:
+    //   今回の連投が「家賃込みか」の質問だけ（rent-included-question.rentIncludedOnlyTurn）なら AIX なし（返信で答える）。
+    //   実物 ひまり f2196d11 9/26: LLM は 初期費用について（cost_breakdown）・信号0.96 は「価格…でしょうか」で 見積書送る に倒れる形。
+    //   実送信（365日・家賃込みかだけ 4通）: 手打ちの返信 3（8b260f7e・5752c0d1×2）・AIX 初期費用について 1（下書き「家賃は含まれておりません」をスタッフが前家賃込みに直した）。
+    //   上書きするのは AIX なし／見積書送る／初期費用について／確認します／物件確認した だけ（内覧・申込・ピックアップ等の判断はそのまま）。
+    //   S9（初期費用の中身）にも当たる文（「9月末までの家賃は初期費用に含まれているってことですよね」）は家賃込みかの方を採る（中身の他の項目・日割・家賃だけで住めるか が無い時だけ）。
+    //   返信の事実は company-facts の rent_included（生成・最終チェックの両方に届く）
+    let rentIncludedReply = false;
+    if (!promiseAix && !isPostApplyStatus(convStatus) && rentIncludedOnlyTurn(unrepliedTurn.text)
+      && (!sceneEvidence || sceneEvidence.scene === "S9_cost_breakdown" || sceneEvidence.scene === "S6_estimate")
+      && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "cost_breakdown" || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
+      finalAix = null;
+      sceneSignalCheckPattern = null;
+      decisionSource = "rule:rent_included_reply";
+      rentIncludedReply = true;
     }
     // 2026-09-15 竹内（H 事例）「公式LINEから電話ボタンを送って電話に繋がるようにしている」:
     //   お客様が電話で話したい（「ご相談があるのですがお電話では無理でしょうか？」）→ AIX【電話をかける】（LINEコールのボタン＋案内文）。
@@ -3020,7 +3043,7 @@ ${history}`;
     //   室内写真（S11）・保証会社（S3）・安さへの不審（S8）・費用の中身（S9）・入居日の質問（S2）は、それぞれの決まり・ブレインの判断が先（S8/S9 は見積書送るも上書きする）。
     //   空き状況・内覧も同じ連投で聞かれた時は上書きしない（物件確認した＋御見積書同封なら両方に1通で答えられる）
     let focusedEstimateOverride: string | null = null;
-    if (!promiseAix && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")
+    if (!promiseAix && !rentIncludedReply && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")
       && sceneEvidence?.reasonCode !== "room_photo_request" && sceneEvidence?.reasonCode !== "guarantor_question"
       && sceneEvidence?.scene !== "S8_cost_doubt" && sceneEvidence?.scene !== "S9_cost_breakdown" && sceneEvidence?.scene !== "S2_move_in") {
       const focusRoom = customerState?.focusKey ? customerState.properties.find((p) => p.key === customerState.focusKey) ?? null : null;
@@ -3049,7 +3072,7 @@ ${history}`;
     const closedAck = resolveClosedAck(messagesOldestFirst.map((m) => ({ sender: m.sender, text: m.text })), customerAckAfter);
     const phaseNow = convStatus ? STATUS_TO_PHASE[convStatus] ?? null : null;
     let closedAckWait = false;
-    if (!promiseAix && closedAck.closed && brainLedger.facts.propertiesSentCount > 0
+    if (!promiseAix && !rentIncludedReply && closedAck.closed && brainLedger.facts.propertiesSentCount > 0
       && (phaseNow === "proposing" || phaseNow === "hearing")
       && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_send" || finalAix === "property_recommendation")) {
       finalAix = "property_send";
@@ -3086,7 +3109,8 @@ ${history}`;
       },
       { postApply: isPostApplyStatus(convStatus), customerWillSend: customerWillSendFirst },
     );
-    if (!promiseAix && !closedAckWait && !viewingDayWait && pendingPickup.pending && finalAix === null) {
+    // 2026-10-01: 家賃込みかの質問だけの連投（rule:rent_included_reply）は返信で答える番＝ピックアップの合図で AIX を立て直さない
+    if (!promiseAix && !closedAckWait && !viewingDayWait && !rentIncludedReply && pendingPickup.pending && finalAix === null) {
       finalAix = "property_send";
       decisionSource = "signal:pending_pickup";
       promiseAltAction = promiseAltAction ?? "property_recommendation";
@@ -3230,6 +3254,8 @@ ${history}`;
     const procedureDirection = procedureDecision && procedureAnswer ? procedureReplyDirection(procedureAnswer.plan)
       : procedureDecision ? "審査・入居までの期間と流れ／必要書類のご質問に本文で答える（管理会社への確認の宣言はしない）"
       : confirmTopicReply && confirmTopic ? `${confirmTopic.routes.map((r) => r.lines.join("／")).join("・")} を資料のとおりに本文で答える（管理会社への確認の宣言はしない）`.slice(0, 120)
+      // 2026-10-01 竹内（ひまり「家賃込の価格でしょうか？」）: 家賃込みかの質問だけ → 返信で答える方向（LLM の「初期費用について AIX で…」を残さない）
+      : rentIncludedReply ? "初期費用（御見積書の金額）は翌月分の前家賃込みであることを本文で答える（ご入居日によって別途日割家賃・金額は書かない）"
       : null;
     const replyDirection = procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
       ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
@@ -3578,10 +3604,10 @@ ${history}`;
       // 2026-09-30: 決定論で返信に倒した・2択にした時は、LLM が別の AIX のつもりで入れたテンプレ・次の手順（「管理会社に確認」）を出さない
       // 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: ボタンが「確認した（条件・交渉）」の時に
       //   LLM のテンプレ「物件確認した（募集状況）」を並べない（みこと「管理会社はどこ」の判断に付いていた）
-      template_hint: procedureDecision || confirmTopicReply ? undefined
+      template_hint: procedureDecision || confirmTopicReply || rentIncludedReply ? undefined
         : checkKind?.ui_button === "確認した（条件・交渉）" && (templateHint ?? "").includes("物件確認した（募集状況）") ? undefined
         : templateHint,
-      next_steps: procedureDecision || confirmTopicReply ? undefined
+      next_steps: procedureDecision || confirmTopicReply || rentIncludedReply ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
       two_choice_mode: isTwoChoiceMode || undefined,

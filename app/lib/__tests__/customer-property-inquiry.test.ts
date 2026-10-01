@@ -61,6 +61,20 @@ it("広告・通販の URL（実物 temu の招待）は持ち込みではない
 it("物件の語だけの S1（実物「銀行振込は何日に行えばいいですか？」の誤当たり等）は変えない＝URL・画像の持ち込みだけ", () => {
   expect(correctCustomerPropertyInquiryAix({ finalAix: "acknowledge_check", scene: { scene: "S1_vacancy", propertySpecifiedBy: "property_word" }, customerTurn: "この物件のいちばん広い部屋ありますか？" })).toBe(null);
 });
+// 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」: 場面の証拠なしで記録された SUUMO の共有の形（みこと 8a77820b 9/26）
+it("場面の証拠なしの「物件名 階 URL by SUUMO」の共有も 確認します → 物件確認した", () => {
+  const t = "レジュールアッシュ淡路駅前 1階\nhttps://suumo.jp/chintai/bc_100524898255/\nby SUUMO";
+  // 今の場面の判定では S1（URL）になるが、9/26 当時の判断は場面なしで記録されていた（場面が出ない時の保険）
+  const r = correctCustomerPropertyInquiryAix({ finalAix: "acknowledge_check", scene: null, customerTurn: t });
+  expect(r?.action).toBe("property_check_result");
+  // HOME'S の共有（3f36dfa6 9/24）も
+  const h = "【ホームズ】ピュアハイツ2[2LDK/賃料10.4万円/1階/55.19㎡]の賃貸アパート住宅情報 https://www.homes.co.jp/chintai/room/8d7a/";
+  expect(correctCustomerPropertyInquiryAix({ finalAix: "acknowledge_check", scene: null, customerTurn: h })?.action).toBe("property_check_result");
+});
+it("場面の証拠なしでポータル以外の URL（営業の案内 3d2e6dfc）・URL なしは変えない", () => {
+  expect(correctCustomerPropertyInquiryAix({ finalAix: "acknowledge_check", scene: null, customerTurn: "公式LINEへ突然失礼します🏠 貴社の公式LINEに、賃太郎の自動見積もり機能を追加しませんか？ https://example.com/x" })).toBe(null);
+  expect(correctCustomerPropertyInquiryAix({ finalAix: "acknowledge_check", scene: null, customerTurn: "お願いします" })).toBe(null);
+});
 it("S1 以外の場面（内覧 S4）は変えない", () => {
   expect(correctCustomerPropertyInquiryAix({ finalAix: "acknowledge_check", scene: { scene: "S4_viewing", propertySpecifiedBy: "url" }, customerTurn: KAZUKI_TURN })).toBe(null);
 });

@@ -16,7 +16,8 @@ const jst = (ymd: string, hm: string) => new Date(`${ymd}T${hm}:00+09:00`).toISO
 
 console.log("sceneKeyOf（本番の suggested_aix_meta の action × reply_mode の組）");
 it("property_send × aix → AIX:property_send", () => eq(sceneKeyOf({ brainAction: "property_send", brainReplyMode: "aix" }).key, "AIX:property_send"));
-it("acknowledge_check × aix → property_check_result に寄せる", () => eq(sceneKeyOf({ brainAction: "acknowledge_check", brainReplyMode: "aix" }).key, "AIX:property_check_result"));
+// 2026-10-01: normalizeAixForMatch が 確認します を 物件確認した に寄せなくなった（確認しますは別の場面として数える）
+it("acknowledge_check × aix → AIX:acknowledge_check（2026-10-01 から寄せない）", () => eq(sceneKeyOf({ brainAction: "acknowledge_check", brainReplyMode: "aix" }).key, "AIX:acknowledge_check"));
 it("空の action × auto_reply → 返信（tpo の場面）", () => eq(sceneKeyOf({ brainAction: "", brainReplyMode: "auto_reply", tpoLabel: "感謝返し（短い了承・感謝メッセージ。開口語「はい😊！！」一択）" }).key, "返信:短い了承・お礼"));
 it("空の action × aix → AIX:種類なし", () => eq(sceneKeyOf({ brainAction: "", brainReplyMode: "aix" }).key, "AIX:種類なし"));
 it("reply_mode なしの follow_up（AIX の種類の形）→ AIX", () => eq(sceneKeyOf({ brainAction: "follow_up", brainReplyMode: null }).key, "AIX:follow_up"));

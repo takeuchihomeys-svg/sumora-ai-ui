@@ -21,6 +21,7 @@
 
 import { isRoomPhotoRequest } from "./room-photo-request";
 import { detectProcedureQuestion, isProcedureReplyQuestion, PROCEDURE_FACTS } from "./procedure-question";
+import { isRentIncludedQuestion, RENT_INCLUDED_FACT } from "./rent-included-question";
 
 export type CompanyFact = {
   id: string;
@@ -137,6 +138,17 @@ export const COMPANY_FACTS: CompanyFact[] = [
     ask: /(日割|前家賃|初月|入居日.{0,8}(家賃|費用)|月末.{0,6}入居|いつから.{0,6}家賃)/,
     n: 373,
     fact: "ご入居日によって日割家賃が発生する。**1日入居の場合は前家賃1ヶ月分のみで日割家賃は発生しない**。2日以降の入居は「入居日〜月末の日割家賃」＋「翌月分の前家賃」が初期費用に含まれる。",
+  },
+  {
+    // 2026-10-01 竹内「『家賃込の価格でしょうか？』に対しては初期費用は前家賃込みとなっている、ここの説明もLINEで実際に何度か送っているから参考にする、
+    //   家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」:
+    //   実物 ひまり f2196d11 9/26 → AIX【初期費用について】の下書きが「いいえ、家賃は含まれておりません！！」（逆）・スタッフが「初期費用翌月分の前家賃込みとなります！！」に直した。
+    //   判定は rent-included-question.isRentIncludedQuestion（ブレインの入口と同じ関数・scripts/audit-rent-included-question.ts 365日 4通）。
+    //   prorated_rent（日割・前家賃の語）と両方当たってよい（日割の事実は同じ向き）
+    id: "rent_included",
+    ask: (t) => isRentIncludedQuestion(t),
+    n: 4,
+    fact: RENT_INCLUDED_FACT,
   },
   {
     id: "area",

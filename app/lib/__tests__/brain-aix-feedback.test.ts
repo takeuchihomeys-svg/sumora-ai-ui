@@ -43,9 +43,10 @@ describe("pairBrainDecisions", () => {
     expect(c.length).toBe(2);
     expect(c[1].created_at).toBe(at(200));
   });
-  it("acknowledge_check は property_check_result と同じ扱い", () => {
+  // 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」: 旧は同じ扱い（一致）＝ズレが一致率に出なかった
+  it("acknowledge_check と property_check_result は別の種類（確認しますを出して物件確認したが押されたら不一致）", () => {
     const p = pairBrainDecisions([dec("d1", 0, "acknowledge_check")], [press(5, "property_check_result", "c1", "mgmt_move_in")], NOW);
-    expect(p[0].matched).toBe(true);
+    expect(p[0].matched).toBe(false);
   });
   it("次の判断で打ち切る（押しは次の判断の窓に入る）", () => {
     const p = pairBrainDecisions([dec("d1", 0, "estimate_sheet"), dec("d2", 60, "viewing_invite")], [press(90, "viewing_invite")], NOW);
@@ -77,8 +78,9 @@ describe("aggregateBrainAixFeedback", () => {
     const decisions = [dec("a", 0, "acknowledge_check", "c1"), dec("b", 0, "acknowledge_check", "c2"), dec("c", 0, "acknowledge_check", "c3")];
     const presses = [press(5, "estimate_sheet", "c1"), press(5, "estimate_sheet", "c2"), press(5, "property_check_result", "c3")];
     const rows = aggregateBrainAixFeedback(pairBrainDecisions(decisions, presses, NOW), [], 30, 3);
-    const r = rows.find((x) => x.key === "action:property_check_result")!;
-    expect(r.n).toBe(3); expect(r.pressed).toBe(3); expect(r.matched).toBe(1); expect(r.alt_top[0].aix).toBe("estimate_sheet"); expect(r.alt_top[0].n).toBe(2);
+    // 2026-10-01: 確認します は自分の行（旧は property_check_result の行に寄せていた）
+    const r = rows.find((x) => x.key === "action:acknowledge_check")!;
+    expect(r.n).toBe(3); expect(r.pressed).toBe(3); expect(r.matched).toBe(0); expect(r.alt_top[0].aix).toBe("estimate_sheet"); expect(r.alt_top[0].n).toBe(2);
   });
   it("押されなかった判断は n に入るが pressed には入らない", () => {
     const decisions = [dec("a", 0, "estimate_sheet", "c1"), dec("b", 0, "estimate_sheet", "c2")];
@@ -176,9 +178,12 @@ describe("resolveBrainCheckPattern（check_pattern の出どころ）", () => {
 
 describe("feedbackGateRate（降格ゲートの読み先）", () => {
   const rows = [{ kind: "action" as const, action: "property_check_result", pressed: 20, matched: 6 }];
-  it("acknowledge_check は property_check_result の行を読む・分母は押された判断（pressed）", () => {
-    const r = feedbackGateRate(rows, "acknowledge_check");
+  it("分母は押された判断（pressed）", () => {
+    const r = feedbackGateRate(rows, "property_check_result");
     expect(r?.n).toBe(20); expect(r?.rate).toBe(0.3);
+  });
+  it("2026-10-01: acknowledge_check は property_check_result の行を読まない（自分の行が無ければ null）", () => {
+    expect(feedbackGateRate(rows, "acknowledge_check")).toBe(null);
   });
   it("押された判断が0件なら null（押されずテキストで返した判断だけで降格しない）", () => {
     expect(feedbackGateRate([{ kind: "action", action: "estimate_sheet", pressed: 0, matched: 0 }], "estimate_sheet")).toBe(null);

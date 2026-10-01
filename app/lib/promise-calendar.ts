@@ -11,6 +11,8 @@
 //   【必ず】の行は日付が過ぎても自動で完了にせず、それを履行する送信（物件送付・御見積書送付・確認結果の報告）で完了にする。
 import { jstParts } from "./jst-date";
 import { isConfirmPartyObject, confirmTopicForCheckPattern, type LedgerEntry, type LedgerKind } from "./action-ledger";
+// 2026-10-01 竹内（和樹事例）「『引き続き新着で…お送り』は『新着が出たら送る』約束として扱う」: ピックアップの約束がいつやる約束か（promise-timing.ts）
+import { classifyPickupPromiseTiming, isWaitPromiseNotes, PICKUP_TIMING_LABEL, WAIT_TIMINGS, type PickupPromiseTiming } from "./promise-timing";
 
 /** お客様への約束の印（notes の先頭）。この印がある行＝履行するまで消えない */
 export const PROMISE_MUST_MARK = "【必ず】";
@@ -35,8 +37,10 @@ function confirmAixLabel(object: string | null | undefined): string {
   const o = (object ?? "").trim();
   return o && CONDITION_TOPIC_RE.test(o) ? `確認した（条件・交渉）→${o}` : "物件確認した（確認結果を送る）";
 }
-const PROMISE_SPEC: Record<PromiseKind, { eventType: string; label: (o: { object?: string | null; estimateFor?: string[] }) => string; aix: (o: { object?: string | null }) => string; fulfilledBy: LedgerKind }> = {
-  pickup_declared: { eventType: "property_send", label: () => "物件ピックアップ送付", aix: () => "物件ピックアップした（または 物件オススメ）", fulfilledBy: "properties_sent" },
+type PromiseDetail = { object?: string | null; estimateFor?: string[]; timing?: PickupPromiseTiming };
+const PROMISE_SPEC: Record<PromiseKind, { eventType: string; label: (o: PromiseDetail) => string; aix: (o: { object?: string | null }) => string; fulfilledBy: LedgerKind }> = {
+  // 2026-10-01: 待ちの約束は「新着が出たら物件送付【新着待ち】」等（promise-timing.PICKUP_TIMING_LABEL）。今日・日付は従来の「物件ピックアップ送付」
+  pickup_declared: { eventType: "property_send", label: (o) => { const t = PICKUP_TIMING_LABEL[o.timing ?? "today"]; return `${t.label}${t.mark}`; }, aix: () => "物件ピックアップした（または 物件オススメ）", fulfilledBy: "properties_sent" },
   estimate_declared: { eventType: "estimate_sheet", label: (o) => o.estimateFor?.length ? `御見積書送付（${o.estimateFor.slice(0, 2).join("・")}${o.estimateFor.length > 2 ? " 他" : ""}）` : "御見積書送付", aix: () => "見積書送る", fulfilledBy: "estimate_sent" },
   confirmation_promised: { eventType: "follow_up", label: (o) => `${o.object ?? "確認事項"}の確認→ご連絡`, aix: (o) => confirmAixLabel(o.object), fulfilledBy: "confirmation_reported" },
 };
@@ -50,8 +54,6 @@ export function promiseAixActionOf(eventType: string | null | undefined): "prope
     default: return null;
   }
 }
-/** 外の出来事待ち（新着・募集が出次第）＝期日の無い約束。send-line-message の line_tasks と同じ除外。「で次第」の打ち間違いも（実データ 隼斗 ev526） */
-const EXTERNAL_WAIT_RE = /(?:新着|募集|出|見つかり)(?:が)?(?:出|で)?次第|新着[^\n。]{0,20}(?:出|で)次第/;
 /** 履行する done の種類 → 完了にする約束の種類 */
 const FULFILLS_PROMISE: Partial<Record<LedgerKind, PromiseKind>> = {
   properties_sent: "pickup_declared",
@@ -67,7 +69,7 @@ export function isPromiseMustNotes(notes: string | null | undefined): boolean {
   return (notes ?? "").trimStart().startsWith(PROMISE_MUST_MARK);
 }
 /** 約束の行の notes の1行目（【必ず】＋要件）。同じ要件の未完了の行があれば二重に作らない */
-export function promiseHeadline(kind: PromiseKind, detail: { object?: string | null; estimateFor?: string[] } = {}): string {
+export function promiseHeadline(kind: PromiseKind, detail: PromiseDetail = {}): string {
   return `${PROMISE_MUST_MARK}${PROMISE_SPEC[kind].label(detail)}`;
 }
 function jstLabel(iso: string): string {
@@ -113,16 +115,24 @@ export function promiseEventRows(
   const out: PromiseEventRow[] = [];
   for (const e of entries) {
     if (e.status !== "promised" || !isPromiseKind(e.kind)) continue;
-    // 竹内の既存方針（line_tasks と同じ）: 「新着が出次第お送り」は外の出来事待ちで、いつ届けるか決まっていない＝やることにしない
-    if (e.kind === "pickup_declared" && EXTERNAL_WAIT_RE.test(e.detail?.sentence ?? e.evidence ?? "")) continue;
-    const detail = { object: e.detail?.object ?? null, estimateFor: e.detail?.estimateFor ?? [] };
+    // 2026-10-01 竹内（和樹事例）「『引き続き新着で…お送り』は『新着が出たら送る』約束として扱う形、これはLINEみていてもそうなっている」:
+    //   ピックアップの約束がいつやる約束かを文から決める（promise-timing.classifyPickupPromiseTiming・実送信 979件で引いた線）。
+    //   新着待ち・お客様待ち・時期待ちは【今日中】を付けず、見出しを「新着が出たら物件送付【新着待ち】」等にする（期日の無い約束）。
+    //   旧: 「新着が出次第」（次第）だけは行を作らず（外の出来事待ち＝やることにしない・line_tasks と同じ）、それ以外は全部【今日中】。
+    //   今は次第の約束も【新着待ち】の行にする（約束は消さない・物件を送ったら完了＝同じ property_send・赤帯では「必ず N日」にしない）
+    const sentence = e.detail?.sentence ?? e.evidence ?? "";
+    const timing: PickupPromiseTiming | undefined = e.kind === "pickup_declared" ? classifyPickupPromiseTiming(sentence).timing : undefined;
+    const waiting = !!timing && WAIT_TIMINGS.has(timing);
+    const detail: PromiseDetail = { object: e.detail?.object ?? null, estimateFor: e.detail?.estimateFor ?? [], timing };
     const head = promiseHeadline(e.kind, detail);
     if (out.some((r) => r.notes.split("\n")[0] === head)) continue;
-    const label = head.slice(PROMISE_MUST_MARK.length);
+    // 件名（title）には待ちの印を入れない（「和樹 新着が出たら物件送付」）
+    const label = head.slice(PROMISE_MUST_MARK.length).replace(/【[^】]*待ち】$/, "");
     // 物件を送れば決まる約束（ピックアップ・御見積書）は今日中のタスク。カレンダーで一目で分かるよう頭に印を付ける
-    const today = TODAY_KINDS.has(e.kind) ? TODAY_MARK : "";
-    // 「明日確認してご連絡」と約束した分は翌日の午前中に置く（営業時間外の約束が当日の夜に埋もれない）
-    const startAt = promiseStartAt(o.sentAt, e.detail?.sentence ?? e.evidence ?? "");
+    //   2026-10-01: 待ちの約束と、日付の語（明日・週明け）がある約束には付けない（明日の約束に【今日中】が付いていた 𝑛𝑎 id 919）
+    const today = TODAY_KINDS.has(e.kind) && !waiting && timing !== "date" ? TODAY_MARK : "";
+    // 「明日確認してご連絡」と約束した分は翌日の午前中に置く（営業時間外の約束が当日の夜に埋もれない）。待ちの約束は約束した時のまま
+    const startAt = waiting ? o.sentAt : promiseStartAt(o.sentAt, sentence);
     out.push({
       title: `${today}${name ? `${name} ${label}` : label}`,
       event_type: PROMISE_SPEC[e.kind].eventType,
@@ -164,12 +174,14 @@ export function planPromiseInsert(
 // バッジの経過日数と並びは同じ関数から作る（表示と並びが食い違わない）。
 
 /** 一覧の並び・バッジが見る、その会話の未履行の約束（カレンダーの行の一部だけ） */
-export type OpenPromiseRef = { start_at: string };
+export type OpenPromiseRef = { start_at: string; notes?: string | null };
 
 /** その会話の一番古い未履行の約束の時刻（ms）。約束が無ければ null */
 export function oldestPromiseAtMs(promises: ReadonlyArray<OpenPromiseRef> | null | undefined): number | null {
   let oldest: number | null = null;
   for (const p of promises ?? []) {
+    // 2026-10-01: 新着待ち・お客様待ち・時期待ちの約束は期日が無い＝経過日数（「🔴必ず N日」）に数えない（和樹 id 951 の形）
+    if (isWaitPromiseNotes(p?.notes)) continue;
     const t = Date.parse(p?.start_at ?? "");
     if (!Number.isFinite(t)) continue;
     if (oldest === null || t < oldest) oldest = t;

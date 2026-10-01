@@ -35,6 +35,7 @@ import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewing
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
 import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
+import { isWaitPromiseNotes, waitPromiseBadge } from "./lib/promise-timing";
 // 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
 import { compareConversationOrder, sortMsOf } from "./lib/conversation-order";
 import { jstYmd } from "./lib/jst-date";
@@ -42,6 +43,8 @@ import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 import { effectiveRpUpdateDays } from "./lib/rp-update-days";
 import { parsePickupAixHandoff, planPickupMarkSent, type PickupAixType } from "./lib/pickup-aix-handoff";
+// 2026-10-01 竹内「見積書きかれたら LINE のところに見積書のがでて押したら見積書のツールのところに連携」
+import { buildEstimateHref, parseEstimateReturn, wantsLowInitialCostText } from "./lib/estimate-handoff";
 import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
@@ -817,6 +820,8 @@ export default function Home() {
   const [selectedImagePreviews, setSelectedImagePreviews] = useState<string[]>([]);
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
+  // 2026-10-01: 見積書作成から戻った時、AIX【物件オススメ】の ③見積書 にセットする画像
+  const [aixInitialEstimateFile, setAixInitialEstimateFile] = useState<File | null>(null);
   const [delayedSendCountdown, setDelayedSendCountdown] = useState(0);
   const delayedSendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const delayedSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -6136,6 +6141,41 @@ export default function Home() {
     })();
   }, [selectedConversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 2026-10-01 竹内「見積書きかれたら…見積書のツールのところに連携」: 見積書作成（/estimate?conv=…）で作った見積書の画像を持って戻る
+  //   /?conv=<会話>&est_img=<Blob の URL>&est_aix=estimate_sheet|property_recommendation → 会話が開いたら AIX にセットして開く（送るのはスタッフ）
+  const estimateReturnRef = useRef<{ conv: string; img: string; aix: "estimate_sheet" | "property_recommendation"; done: boolean } | null>(null);
+  useEffect(() => {
+    try {
+      const r = parseEstimateReturn(window.location.search);
+      if (r) estimateReturnRef.current = { conv: r.conversationId, img: r.imageUrl, aix: r.aix, done: false };
+    } catch { /* 無視 */ }
+  }, []);
+  useEffect(() => {
+    const r = estimateReturnRef.current;
+    if (!r || r.done || selectedConversation?.id !== r.conv) return;
+    r.done = true;
+    void (async () => {
+      try {
+        const blob = await (await fetch(r.img)).blob();
+        const file = new File([blob], `見積書_${Date.now()}.png`, { type: blob.type || "image/png" });
+        if (r.aix === "property_recommendation") {
+          setAixInitialEstimateFile(file);
+          setActiveAixFlow("property_recommendation");
+          await openAixDirect("property_recommendation");
+        } else {
+          setAixInitEstimateMulti(false);
+          setActiveAixFlow("estimate_sheet");
+          setAixInitialFile(file);
+          setAixModalType("estimate_sheet");
+        }
+      } catch (e) {
+        console.warn("[estimate→AIX] 画像を取れない:", e);
+      } finally {
+        try { window.history.replaceState(null, "", `/?conv=${encodeURIComponent(r.conv)}`); } catch { /* 無視 */ }
+      }
+    })();
+  }, [selectedConversation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 物件オススメ専用ピッカー（新規/追客/新着1件を選択してからAIXを開く）
   const openPropertyRecommendationPicker = (via: "direct" | "withImage") => {
     propertyPickerOpenFnRef.current = via;
@@ -7627,7 +7667,10 @@ export default function Home() {
               )}
               {split.now.map((p) => {
                 const lines = (p.notes ?? "").split("\n");
-                const head = (lines[0] ?? "").replace(PROMISE_MUST_MARK, "").replace(TODAY_MARK, "");
+                // 2026-10-01 竹内（和樹事例）「『引き続き新着で…お送り』は『新着が出たら送る』約束」: 待ちの約束（【新着待ち】等）は
+                //   「必ず N日」ではなく「新着が出たら送る」の印で出す（期日が無い・promise-timing.waitPromiseBadge）
+                const waitBadge = waitPromiseBadge(p.notes);
+                const head = (lines[0] ?? "").replace(PROMISE_MUST_MARK, "").replace(TODAY_MARK, "").replace(/【[^】]*待ち】$/, "");
                 const promiseLine = lines.find((l) => l.startsWith("約束: "))?.replace(/^約束: /, "") ?? "";
                 const aixLine = lines.find((l) => l.startsWith("AIX: "))?.replace(/^AIX: /, "").replace(/を送ったら完了$/, "") ?? "";
                 const days = Math.floor((Date.now() - new Date(p.start_at).getTime()) / 86400000);
@@ -7635,7 +7678,9 @@ export default function Home() {
                 return (
                   <button key={p.id} type="button" className="flex w-full items-start gap-2 text-left active:opacity-70"
                     onClick={() => { if (action) { setActiveAixFlow(action as AixActionType); openAixDirect(action as AixActionType); } }}>
-                    <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">必ず{days > 0 ? ` ${days}日` : ""}</span>
+                    {waitBadge
+                      ? <span className="shrink-0 rounded-full bg-[#5c6bc0] px-1.5 py-0.5 text-[9px] font-bold text-white">{waitBadge}</span>
+                      : <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">必ず{days > 0 ? ` ${days}日` : ""}</span>}
                     <span className="min-w-0 flex-1">
                       <span className="block text-[12px] font-bold text-[#b71c1c]">{head}{(lines[0] ?? "").includes(TODAY_MARK) ? "（今日中）" : ""}</span>
                       {promiseLine && <span className="block truncate text-[11px] text-[#c62828]">{promiseLine}</span>}
@@ -8990,6 +9035,21 @@ export default function Home() {
                           <p className="mt-0.5 text-center" style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</p>
                         )}
                         {/* 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（連絡待ちの時は 物件ピックアップ＋物件オススメ）。ブレインが alt_actions で渡した物だけ */}
+                        {/* 2026-10-01 竹内「初期費用を抑えるのが希望で、いきなり見積書を送って費用を抑えていることを説明する際は場面を活かす」:
+                            物件オススメに御見積書を同封した実送信 123/639（欄ができた 8/10 以降 28%）・同封の 73% が抑えたいお客様。強制しない（提案の小さな入口だけ） */}
+                        {/* 2026-10-01: ブレインが AIX【見積書送る】→ 見積書がまだ無ければここから見積書ツールへ（会話のお部屋・資料・AD をセット済み） */}
+                        {brainAction === "estimate_sheet" && (
+                          <a href={buildEstimateHref(selectedConversation.id)}
+                            className="mt-1.5 block w-full rounded-xl border border-orange-300 bg-white px-4 py-1.5 text-[12px] font-bold text-orange-700 text-center active:opacity-80">
+                            🧾 見積書を作る（見積書ツールへ・物件セット済み）
+                          </a>
+                        )}
+                        {brainAction === "property_recommendation" && selectedConversation.messages.some((m) => m.sender === "customer" && wantsLowInitialCostText(m.text)) && (
+                          <a href={buildEstimateHref(selectedConversation.id, "with_property")}
+                            className="mt-1.5 block w-full rounded-xl border border-orange-300 bg-white px-4 py-1.5 text-[12px] font-bold text-orange-700 text-center active:opacity-80">
+                            🧾 御見積書も作って同封する（初期費用を抑えたいお客様）
+                          </a>
+                        )}
                         {(brainMeta.alt_actions ?? []).filter((a) => a !== brainAction && BRAIN_AIX_LABELS[a]).map((alt) => (
                           <button key={alt}
                             onClick={() => {
@@ -10732,6 +10792,7 @@ export default function Home() {
           onScheduled={refreshScheduledMsgs}
           onVacatingDetected={(date) => setDetectedVacatingDate(date)}
           initialImageFile={aixInitialFile ?? undefined}
+          initialEstimateFile={aixInitialEstimateFile ?? undefined}
           linkedCustomer={(aixModalType === "property_recommendation" || aixModalType === "property_send") ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
           recentMessages={aixRecentMessages}
@@ -10761,6 +10822,7 @@ export default function Home() {
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
+            setAixInitialEstimateFile(null);
             setPendingAixFocusPoints([]);
             setPendingTemplateStructure(null);
             setPendingTemplateSample(null);
@@ -12934,6 +12996,15 @@ export default function Home() {
                 );
               })}
             </div>
+            {/* 2026-10-01 竹内「見積書きかれたら…押したら見積書のツールのところに連携」: 見積書がまだ無い時はツールで作る
+                （会話のお部屋・資料・AD をセットして開く。作ったらツールの「AIX にセットして LINE へ」でここに戻る） */}
+            {selectedConversation?.id && (
+              <a href={buildEstimateHref(selectedConversation.id)}
+                onClick={() => setShowEstimatePicker(false)}
+                className="mt-3 flex items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-[#FF9800] bg-[#FFF8E7] px-4 py-3 text-[13px] font-bold text-[#E65100] active:opacity-70">
+                🧾 見積書をまだ作っていない → 見積書ツールで作る（物件セット済み）
+              </a>
+            )}
             <button
               onClick={() => { setShowEstimatePicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
@@ -15049,7 +15120,8 @@ export default function Home() {
                           <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">要対応</span>
                           {hotConvIds.has(conv.id) && <span className="shrink-0 leading-none text-sm">🔥</span>}
                           {isAixRequired && <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">AIX必須</span>}
-                          {(openPromises[conv.id] ?? []).length > 0 && <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">🔴必ず</span>}
+                          {/* 2026-10-01: 新着待ち等の約束（期日なし）だけの会話には 🔴必ず を付けない（promise-timing.isWaitPromiseNotes） */}
+                          {(openPromises[conv.id] ?? []).some((p) => !isWaitPromiseNotes(p.notes)) && <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">🔴必ず</span>}
                           {(activeTasks[conv.id] ?? []).map((task) => {
                             if (task.task_type === "property_check") {
                               const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);

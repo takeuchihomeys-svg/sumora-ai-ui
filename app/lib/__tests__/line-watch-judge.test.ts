@@ -129,8 +129,9 @@ it("まとまりの中で別の AIX を押した → 別の事（AIX 違い）",
   const j = aixTurn("property_check_result", null, win("", [{ aix_type: "application_push", check_pattern: null, at: at(5), burst: true }]));
   eq([j.verdict, j.detail.reason], ["different", "aix_other"]);
 });
-it("acknowledge_check の判断・押した property_check_result は同じ種類", () => {
-  eq(aixTurn("acknowledge_check", null, win("", [{ aix_type: "property_check_result", check_pattern: null, at: at(5), burst: true }])).verdict, "same");
+// 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」: normalizeAixForMatch が寄せなくなった＝ズレとして見える
+it("acknowledge_check の判断・押した property_check_result は別の種類（2026-10-01 から）", () => {
+  eq(aixTurn("acknowledge_check", null, win("", [{ aix_type: "property_check_result", check_pattern: null, at: at(5), burst: true }])).verdict, "different");
 });
 it("確認の AIX を押さず、手打ちで確認の宣言 → 同じ事", () => {
   const j = aixTurn("acknowledge_check", null, win("Eさん\n先ほどはお電話ありがとうございました😊！！\nエスリード難波12階のお部屋募集予定か管理会社に確認させていただきます！！"));

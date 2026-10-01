@@ -52,9 +52,13 @@ it("確認結果の報告文（〜とのご連絡がございました）は約�
   const r2 = promiseEventRows(classifyStaffTextFacts("かしこまりました！！\n募集状況確認させて頂きます！！", null), { customerName: "A", conversationId: "c", sentAt: "2026-09-16T02:00:00Z" });
   expect(r2[0].notes).toContain("AIX: 【物件確認した（確認結果を送る）】");
 });
-it("「新着でオススメできるお部屋で次第お送り」（打ち間違い）も外の出来事待ち＝行にしない", () => {
+// 2026-10-01 竹内（和樹事例）「『新着が出たら送る』約束として扱う」: 旧は行にしなかった（外の出来事待ち）→ 期日の無い【新着待ち】の行にする（約束は消さない）
+it("「新着でオススメできるお部屋で次第お送り」（打ち間違い）も外の出来事待ち＝【新着待ち】の行（【今日中】なし）", () => {
   const rows = promiseEventRows(classifyStaffTextFacts("かしこまりました！！\n新着でオススメできるお部屋で次第お送りさせて頂きます！！", null), { customerName: "隼斗", conversationId: "c", sentAt: "2026-09-16T02:00:00Z" });
-  expect(rows.length).toBe(0);
+  expect(rows.length).toBe(1);
+  expect(rows[0].title).toBe("隼斗 新着が出たら物件送付");
+  expect(rows[0].notes.split("\n")[0]).toBe("【必ず】新着が出たら物件送付【新着待ち】");
+  expect(rows[0].event_type).toBe("property_send");
 });
 it("実行した送信（物件送付・見積書送付）は行を作らない・お客様名が無ければ要件だけ", () => {
   const rows = promiseEventRows(classifyStaffTextFacts("🌟エストレーラ 305号室\nお手隙の際にご査収ください😌！！", null), { customerName: null, conversationId: "c3", sentAt: "2026-09-16T02:00:00Z" });

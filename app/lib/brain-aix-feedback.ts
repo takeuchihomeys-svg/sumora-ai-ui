@@ -16,10 +16,16 @@ export const PRESS_COLLAPSE_MS = 30 * 60 * 1000;
 /** 集計を upsert する最小件数 */
 export const FEEDBACK_MIN_N = 10;
 
-/** acknowledge_check は property_check_result と同じ扱い（管理会社宛ての確認はログに残らないため） */
+/**
+ * 一致を見る AIX の種類（前後の空白だけ落とす）。
+ * 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」: 旧は acknowledge_check（確認します）を
+ *   property_check_result（物件確認した）と同じ扱いにしていた（管理会社宛ての確認はログに残らないため）。そのせいで
+ *   ブレインが 確認します を出してスタッフが 物件確認した を押した回（和樹事例）が「一致」になり、判断基準のズレが一致率に出なかった。
+ *   今は別の種類として数える（scripts/audit-ack-check-retire.ts・150日: 押された判断の一致 211/306=69.0% → 196/306=64.1%、
+ *   ブレイン=確認します 14/25 → 0/25）。これからのズレが見えるように、ここで寄せない
+ */
 export function normalizeAixForMatch(a: string | null | undefined): string {
-  const s = (a ?? "").trim();
-  return s === "acknowledge_check" ? "property_check_result" : s;
+  return (a ?? "").trim();
 }
 
 export type BrainDecisionRow = {
@@ -315,7 +321,7 @@ export function resolveBrainCheckPattern(
  * ブレインの降格ゲートが読む一致率（brain_aix_feedback kind=action）。行が無い時は null（フェイルオープン）。
  * 分母は「スタッフが何かの AIX を押した判断」（pressed）。押されずテキストで返した判断を不一致に数えると
  * どの action も一致率が1割前後になり、required がほぼ全部降格してしまうため（2026-09-12 基準: action あり 27/190・押された中では 27/56）。
- * acknowledge_check は property_check_result と同じ行を読む。
+ * 2026-10-01: acknowledge_check は自分の行（action:acknowledge_check）を読む（旧は property_check_result と同じ行）。
  */
 export function feedbackGateRate(
   rows: ReadonlyArray<Pick<FeedbackRow, "kind" | "action" | "pressed" | "matched">>,

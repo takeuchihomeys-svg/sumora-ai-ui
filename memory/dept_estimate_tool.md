@@ -1,6 +1,45 @@
 # #42 見積書ツール部署 倉庫
 
-> 更新者: #42-W / 最終更新: 2026-09-20
+> 更新者: #42-W / 最終更新: 2026-10-01
+
+---
+
+## 🔴 LINE → 見積書ツールの引き継ぎ（竹内・2026-10-01「見積書きかれたら…押したら見積書のツールに連携・送った物件がセットされた状態で・AD も分かるように・割引と最終確認だけスタッフ」・未コミット）
+
+**測った数字**（`scripts/audit-estimate-handoff.ts`・120日・YUMA 除く）
+- 見積書（AIX 見積書送る・本文あり）229通/92会話＝送った日に中央値2通（Q3 4）。見積書ツールの AI 読み取り 1日 中央値11回（記録 9/15〜）
+- 依頼（見積・初期費用の発言）→送付: 全体の中央値 933分／同じ日に送った分 中央値143分（Q1 40・Q3 308）
+- 見積書のお部屋: こちらが送った 34%・お客様の持ち込み 24%・分からない 42%。手で入れる物: 入居日は 99% 入れない（日割の注記）・割引 97%（中央値 44,000＝家賃の0.54ヶ月・アカウント差なし）
+- 物件オススメに御見積書を同封 123/639（19%・8/10 以降 28%）＝今回の連投に費用の依頼 4%（先回り）。ピックアップの後30分以内の見積書は 3%
+
+**流れ**
+1. LINE: 見積書送るピッカー（ブレインのカード・P4.5 バナー・AIX メニューの全部が通る）に「🧾 見積書をまだ作っていない → 見積書ツールで作る」／ブレインのカード（見積書送る）に「🧾 見積書を作る」／ブレインのカード（物件オススメ＋初期費用を抑えたいお客様）に「🧾 御見積書も作って同封する」（scene=with_property・提案だけ）
+2. `/estimate?conv=<会話>[&scene=with_property]` → `GET /api/estimate-handoff`（読むだけ・LLM なし・内部認証）
+3. ツール: アカウント・お部屋・資料（売上サポの資料画像＋PDF の文字／送った画像／お客様の画像）をセット → 決まっていれば **AI 読み取りまで自動**（「開いたら資料を AI で読み取る」既定 ON・端末に覚える）→ 読み取りが空の欄に会話の値（お客様名・物件名・号室・家賃）＝「自動: 出所」の札
+4. 割引: 目安（家賃×0.54ヶ月・Q1 0.39〜Q3 0.78／家賃が無い時だけ前の割引）＋「AD − 割引 ＝ 利益」。**押した時だけ入る**（割引はこちらが決める値）。AD は画面だけ（見積書の画像・本文には出ない）
+5. 「📎 AIX【見積書送る】にセットして LINE へ」: 見積書の画像を Blob に置き `/?conv=&est_img=&est_aix=` → 会話が開いたら AIX【見積書送る】（1件・画像セット済み）／同封の場面は AIX【物件オススメ】の ③見積書 にセット。**送るのはスタッフ**
+6. 監視の板（`EstimateWatchPanel`）: お客様・段階・見積書のお部屋（出所・家賃・AD・資料）と選び直し・警告（物件なし・募集終了・審査中/商談中・AD 不明・主のお部屋と違う）・ブレインの判断・最近の発言・送った物
+
+**お部屋の決め方**（`app/lib/estimate-handoff.ts` `buildHandoffEvents`＋`selectEstimateTarget`・決定論）
+- 出来事: お客様の引用（引用先の 🌟／【】／送った画像の sent_properties）＞名前を書いた＞持ち込み（画像の「物件名：」・共有文・URL）— こちらの最後の送付より新しい物。無ければ直近の 🌟／送付の回（回が複数なら決めない＝候補）。無ければ customer-state の主のお部屋
+- ⚠ 主のお部屋（customer-state）だけで選んだら当て直しで 8/40。出来事の順で 一致 28/60・1タップ以内 44/60（`scripts/try-estimate-handoff.ts --audit=60`）
+- 共有文の「URL の前の行」がお客様の文（「こちらの物件の初期費用をお伺いしたいです🙏🏻」）は名前にしない／条件フォームの【希望築年数】⇒ は物件にしない
+- 自動の読み取りは 審査中・商談中・募集終了・物件なし の時は止める
+
+**道具**
+```
+npx tsx app/lib/__tests__/estimate-handoff.test.ts                                  # 37件
+npx tsx --env-file=.env.local scripts/audit-estimate-handoff.ts                      # 測定（①〜⑥）
+npx tsx --env-file=.env.local scripts/try-estimate-handoff.ts <会話ID> | --audit=60   # 引き継ぎを目で読む／当て直し
+LLM_TEST_MODE=deepseek-all LLM_ALT_ACTIONS=reply_generate,brain_fresh,brain_full npx tsx --env-file=.env.local scripts/yuma-estimate-handoff-test.ts [estimate,quote,with_property] [--extract]
+```
+**YUMA（10/01）**: DeepSeek（ブレイン5・読み取り4）: estimate・quote → 見積書送る＋入口 estimate＋プレサンス梅田北ザ・ライブ 305（AD 65,000・家賃 65,000・割引目安 35,000・利益 30,000）。読み取り（資料の文字だけ）で 家賃65,000・管理費10,000・敷0・礼65,000・火災20,000・鍵33,000。最終（Claude）: 読み取り Sonnet＋画像で同じ値・ブレインは 3回中 estimate_sheet 1回（2回は AIX なし・同じ時間に他の作業が YUMA に書いていた）。
+⚠ ローカルの .env.local に INTERNAL_API_SECRET が無い → `/api/estimate-handoff` はローカルでは 401（本番は Vercel の値で動く・他の内部 API と同じ）
+
+**未決・次**
+- 割引の目安の線（0.54ヶ月）は竹内さんの確認待ち。AD 別の割引の決まり（AD2 なら〇〇まで等）は実データ（AD と結べた見積書 5件）が足りない
+- 見積書の画像を送った後の estimate_records に「ツールで作った（handoff）」の印を残す（ツールで作った割合・直した欄を数えるため）
+- 物件ピックアップ（複数）の後の「どれの見積書か」は候補を並べるだけ（自動で決めない）
 
 ---
 
@@ -127,7 +166,7 @@ VERIFY_BASE_URL=http://localhost:3000 npx tsx --env-file=.env.local scripts/veri
 | 火災保険0円→「別途支払い」表示 | ✅ 2026-07-22 完成 | estimate/page.tsx + fill-estimate/route.ts |
 | 毎月費用/初回費用の区切り行 | ✅ 2026-07-22 完成 | estimate/page.tsx + fill-estimate/route.ts |
 | 見積書履歴 | ❌ 未実装（APIはある） | generate-estimate/route.ts (GET) |
-| 顧客名の自動引き継ぎ（LINEから） | ❌ 未実装 | — |
+| 顧客名・物件・資料の自動引き継ぎ（LINEから） | 🚧 2026-10-01 実装（未コミット） | estimate/page.tsx・api/estimate-handoff |
 
 ---
 

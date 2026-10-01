@@ -69,6 +69,8 @@ interface AixModalProps {
   customerName: string;
   account?: string;
   initialImageFile?: File;
+  /** 2026-10-01: 見積書作成から戻った時の見積書の画像（AIX【物件オススメ】の ③見積書 にセット） */
+  initialEstimateFile?: File;
   linkedCustomer?: LinkedCustomer;
   customerConditions?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; rawCreatedAt?: string }>;
@@ -610,6 +612,7 @@ export default function AixModal({
   customerName,
   account,
   initialImageFile,
+  initialEstimateFile,
   linkedCustomer,
   customerConditions,
   recentMessages,
@@ -1262,6 +1265,14 @@ export default function AixModal({
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
   const [recommendEstimatePreview, setRecommendEstimatePreview] = useState<string>("");
+  // 2026-10-01 竹内「物件送るときも見積書併せて送る場合…場面を活かす」: 見積書作成で作った画像を ③見積書 にセット（送るのはスタッフ）
+  useEffect(() => {
+    if (!initialEstimateFile || actionType !== "property_recommendation") return;
+    setRecommendEstimateFile(initialEstimateFile);
+    const r = new FileReader();
+    r.onload = () => setRecommendEstimatePreview(String(r.result ?? ""));
+    r.readAsDataURL(initialEstimateFile);
+  }, [initialEstimateFile, actionType]);
   // 見積書送る専用: 物件資料（任意）
   const [estimatePropertyFile, setEstimatePropertyFile] = useState<File | null>(null);
   const [estimatePropertyPreview, setEstimatePropertyPreview] = useState<string>("");

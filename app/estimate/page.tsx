@@ -7,6 +7,9 @@ import BottomNav from "../components/BottomNav";
 import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は AIX【見積書送る】と同じ純関数から作る
 import { buildEstimateMessage, buildSavingsLine, calcSavings } from "../lib/estimate-body";
+// 2026-10-01 竹内「見積書きかれたら LINE のところに見積書のがでて押したら見積書のツールのところに連携・送った物件がセットされた状態で」
+import { parseEstimateHandoff, buildEstimateReturnHref, profitLine, suggestEstimateDiscount, type EstimateHandoff, type EstimateTarget } from "../lib/estimate-handoff";
+import EstimateWatchPanel from "../components/EstimateWatchPanel";
 
 type Account = "sumora" | "ieyasu" | "giga";
 type Step = "input" | "review";
@@ -245,6 +248,24 @@ function EstimatePageContent() {
 
   const searchParams = useSearchParams();
 
+  // ── LINE の会話からの引き継ぎ（/estimate?conv=…）──────────────────────────
+  // 2026-10-01 竹内「送った物件がセットされた状態で見積書つくれるようにして、AD も分かるようにすれば割引金額と最終確認だけスタッフ」
+  //   値は GET /api/estimate-handoff（読むだけ）。自動で入れた欄は「自動: 出所」を見せる（AIX の prefillTag と同じ考え）
+  const [handoff, setHandoff] = useState<EstimateHandoff | null>(null);
+  const [handoffError, setHandoffError] = useState("");
+  const [handoffTarget, setHandoffTarget] = useState<EstimateTarget | null>(null);
+  const [prefillSrc, setPrefillSrc] = useState<Record<string, string>>({});
+  const [materialLoading, setMaterialLoading] = useState(false);
+  const [returning, setReturning] = useState(false);
+  const [returnError, setReturnError] = useState("");
+  // 開いた時に AI 読み取りまで自動で進める（既定 ON・この端末に覚える）
+  const [autoRead, setAutoRead] = useState(true);
+  useEffect(() => { try { if (localStorage.getItem("estimate_handoff_auto_read") === "0") setAutoRead(false); } catch { /* 無視 */ } }, []);
+  const autoReadRef = useRef(true);
+  useEffect(() => { autoReadRef.current = autoRead; }, [autoRead]);
+  const handoffConv = parseEstimateHandoff(searchParams.toString());
+  const internalAuth = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
+
   // URLパラメータ自動セット（Chrome拡張 View2 からの遷移用）
   // ?autoMode=true&rent=X&customerName=Y&account=Z を検知して items を初期化し Step2 へ遷移する
   // deps は searchParams のみ。URL params はページマウント時点で確定しユーザー操作で変化しないため
@@ -339,8 +360,11 @@ function EstimatePageContent() {
 
   const removeImage = (idx: number) => setImages((p) => p.filter((_, i) => i !== idx));
 
-  const handleExtract = async () => {
-    if (images.length === 0 && !supplementaryText.trim()) {
+  const handleExtract = () => runExtract(images, supplementaryText);
+
+  // 2026-10-01: 引き継ぎの自動の読み取りは state の更新を待たずに材料を直接渡す（images / supplementaryText の閉包が古いまま呼ばれるため）
+  const runExtract = async (imgs: typeof images, supp: string, accountOverride?: Account) => {
+    if (imgs.length === 0 && !supp.trim()) {
       setExtractError("画像をアップロードするか補足情報を入力してください");
       return;
     }
@@ -351,8 +375,8 @@ function EstimatePageContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          images: images.map(({ base64, mimeType }) => ({ base64, mimeType })),
-          supplementaryText,
+          images: imgs.map(({ base64, mimeType }) => ({ base64, mimeType })),
+          supplementaryText: supp,
         }),
       });
       const data = await res.json() as { ok: boolean; extracted?: ExtractedEstimate; error?: string };
@@ -360,13 +384,113 @@ function EstimatePageContent() {
         setExtractError(data.error || "読み取りに失敗しました");
         return;
       }
-      setItems(toEditable(data.extracted, account, step1MoveInDate));
+      setItems(applyHandoffToItems(toEditable(data.extracted, accountOverride ?? account, step1MoveInDate)));
       setStep("review");
       setTimeout(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     } catch {
       setExtractError("ネットワークエラーが発生しました");
     } finally {
       setExtracting(false);
+    }
+  };
+
+  // ── 引き継ぎ: 読み取った後に会話から分かっている値を重ねる（読み取りが空の欄だけ・出所を残す）──
+  const handoffRef = useRef<EstimateHandoff | null>(null);
+  const targetRef = useRef<EstimateTarget | null>(null);
+  const applyHandoffToItems = (it: EditableItems): EditableItems => {
+    const h = handoffRef.current;
+    const t = targetRef.current;
+    if (!h) return it;
+    const src: Record<string, string> = {};
+    const out = { ...it };
+    if (!out.customerName && h.customerName) { out.customerName = h.customerName; src.customerName = "LINE の会話"; }
+    if (t?.name) {
+      if (!out.propertyName) { out.propertyName = t.name; src.propertyName = t.sourceLabel; }
+      else src.propertyName = "資料の読み取り";
+      if (!out.roomNumber && t.room) { out.roomNumber = t.room; src.roomNumber = t.sourceLabel; }
+    }
+    if (out.rent) src.rent = t?.rent && t.rent === out.rent ? "資料の読み取り（売上サポと一致）" : "資料の読み取り";
+    else if (t?.rent) { out.rent = t.rent; out.nextRent = t.rent; src.rent = "売上サポの資料"; }
+    // 割引はスタッフが決める（目安は画面に出し、押した時だけ入る）＝ここでは入れない
+    setPrefillSrc(src);
+    return out;
+  };
+
+  /** 画像の URL → base64（3MB を超える物は飛ばす） */
+  const urlToImage = async (url: string, name: string): Promise<{ base64: string; mimeType: string; name: string } | null> => {
+    try {
+      const blob = await (await fetch(url)).blob();
+      if (blob.size > 3 * 1024 * 1024) return null;
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result ?? "").split(",")[1] ?? "");
+        r.onerror = () => reject(new Error("read"));
+        r.readAsDataURL(blob);
+      });
+      return base64 ? { base64, mimeType: blob.type || "image/jpeg", name } : null;
+    } catch { return null; }
+  };
+
+  /** お部屋を選んだ（開いた時・選び直し）→ 資料の画像と文字をセットし、決まっていれば AI 読み取りまで進める */
+  const loadHandoffTarget = async (t: EstimateTarget, opts: { auto: boolean; account?: Account }) => {
+    targetRef.current = t;
+    setHandoffTarget(t);
+    setItems(null);
+    setStep("input");
+    setMaterialLoading(true);
+    try {
+      const imgs = (await Promise.all(t.materials.slice(0, 3).map((m) => urlToImage(m.url, m.label)))).filter((x): x is { base64: string; mimeType: string; name: string } => !!x);
+      const head = [t.name ? `物件名: ${t.name}` : "", t.room ? `号室: ${t.room}` : ""].filter(Boolean).join("\n");
+      const supp = [head, t.materialText ? `【売上サポの資料の文字】\n${t.materialText.slice(0, 4000)}` : ""].filter(Boolean).join("\n\n");
+      setImages(imgs);
+      setSupplementaryText(supp);
+      if (opts.auto && (imgs.length > 0 || t.materialText)) await runExtract(imgs, supp, opts.account);
+    } finally {
+      setMaterialLoading(false);
+    }
+  };
+
+  // 開いた時に1回だけ: 引き継ぎを読む → アカウント → お部屋 → （決まっていれば）AI 読み取り
+  const handoffStartedRef = useRef(false);
+  useEffect(() => {
+    if (!handoffConv || handoffStartedRef.current) return;
+    handoffStartedRef.current = true;
+    void (async () => {
+      try {
+        const r = await fetch(`/api/estimate-handoff?conversation_id=${encodeURIComponent(handoffConv.conversationId)}`, { headers: internalAuth, cache: "no-store" });
+        const j = await r.json() as { ok: boolean; handoff?: EstimateHandoff; error?: string };
+        if (!j.ok || !j.handoff) { setHandoffError(j.error || "会話の材料を読めませんでした"); return; }
+        handoffRef.current = j.handoff;
+        setHandoff(j.handoff);
+        setAccount(j.handoff.account);
+        const t = j.handoff.choice.target;
+        if (t) await loadHandoffTarget(t, { auto: j.handoff.choice.autoExtract && autoReadRef.current, account: j.handoff.account });
+      } catch {
+        setHandoffError("会話の材料を読めませんでした");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 作った見積書を画像にして Blob に置き、LINE の会話の AIX にセットして戻る（送るのはスタッフ） */
+  const handleReturnToLine = async () => {
+    if (!printRef.current || !items || !handoff) return;
+    setReturning(true);
+    setReturnError("");
+    try {
+      const canvas = await html2canvas(printRef.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true, logging: false });
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+      if (!blob) throw new Error("画像を作れませんでした");
+      const name = `estimates/${handoff.conversationId}/${Date.now()}.png`;
+      const up = await fetch(`/api/blob-upload?name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
+      const uj = await up.json() as { ok: boolean; url?: string; error?: string };
+      if (!uj.ok || !uj.url) throw new Error(uj.error || "画像を置けませんでした");
+      const aix = handoffConv?.mode === "with_property" ? "property_recommendation" : "estimate_sheet";
+      window.location.href = buildEstimateReturnHref(handoff.conversationId, uj.url, aix);
+    } catch (e) {
+      setReturnError(e instanceof Error ? e.message : "LINE に戻せませんでした");
+    } finally {
+      setReturning(false);
     }
   };
 
@@ -851,6 +975,28 @@ function EstimatePageContent() {
       {/* スクロール領域 */}
       <div className="flex-1 overflow-y-auto">
 
+        {/* ─── LINE の会話からの引き継ぎ（監視の板）── 2026-10-01 */}
+        {handoffConv && (
+          <div className="px-4 pt-4 flex flex-col gap-2">
+            {handoffError && <div className="rounded-xl bg-red-50 px-4 py-2 text-[12px] text-red-600">{handoffError}</div>}
+            {!handoff && !handoffError && <div className="rounded-xl bg-white px-4 py-2 text-[12px] text-[#667781]">会話の材料を読み込み中...</div>}
+            {handoff && (
+              <EstimateWatchPanel handoff={handoff} selected={handoffTarget} accent={cfg.accent}
+                onSelect={(t) => { void loadHandoffTarget(t, { auto: autoRead && (t.materials.length > 0 || !!t.materialText) && !t.dealStatus && !t.ended }); }} />
+            )}
+            {handoff && (
+              <div className="flex items-center justify-between text-[11px] text-[#667781]">
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" className="h-3.5 w-3.5" checked={autoRead}
+                    onChange={(e) => { setAutoRead(e.target.checked); try { localStorage.setItem("estimate_handoff_auto_read", e.target.checked ? "1" : "0"); } catch { /* 無視 */ } }} />
+                  開いたら資料を AI で読み取る
+                </label>
+                {(materialLoading || extracting) && <span>{materialLoading && !extracting ? "資料を取り込み中..." : "AI 読み取り中..."}</span>}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ─── STEP 1: 資料入力 ─── */}
         {step === "input" && (
           <div className="p-4 flex flex-col gap-4">
@@ -1169,6 +1315,28 @@ function EstimatePageContent() {
                     </tr>
                   </tfoot>
                 </table>
+                {/* 2026-10-01 割引はスタッフが決める: 目安（このお客様の前の割引／家賃×0.54ヶ月）と AD − 割引 ＝ 利益（スタッフにだけ見せる） */}
+                {handoff && (() => {
+                  // 読み取った家賃（無ければ売上サポの家賃）で目安を出し直す。AD 円が無く月数だけ分かる時は 月数×家賃
+                  const rentNow = items.rent || handoffTarget?.rent || null;
+                  const adYenNow = handoffTarget?.adYen ?? (handoffTarget?.adMonths != null && rentNow ? Math.round(handoffTarget.adMonths * rentNow) : null);
+                  const sug = suggestEstimateDiscount({ rent: rentNow, adYen: adYenNow, pastDiscounts: handoff.pastDiscounts });
+                  return (
+                    <div className="mt-2 rounded-xl border border-[#e1bee7] bg-[#faf5fc] px-3 py-2 text-[11px] text-[#6a1b9a]">
+                      <div className="font-bold">🎯 割引（スタッフが決める・最終確認）</div>
+                      {sug ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <span>目安 {sug.yen.toLocaleString()}円（{sug.basis}・{sug.lowYen.toLocaleString()}〜{sug.highYen.toLocaleString()}円）</span>
+                          <button onClick={() => updateItem("discountAmount", sug.yen)}
+                            className="rounded-full bg-[#8e24aa] px-2.5 py-0.5 text-[11px] font-bold text-white">目安を入れる</button>
+                        </div>
+                      ) : <div className="mt-1 text-[#9575cd]">目安を出せません（家賃・前の見積書が無い）</div>}
+                      {sug?.warning && <div className="mt-0.5 text-[#c62828]">⚠ {sug.warning}</div>}
+                      {sug?.pastMedianYen != null && <div className="mt-0.5 text-[#8e7cc3]">参考: このお客様に前に送った見積書の割引 {sug.pastMedianYen.toLocaleString()}円（別のお部屋）</div>}
+                      <div className="mt-1">{profitLine(adYenNow, items.discountAmount) ?? "AD が分からないので利益は出せません"}</div>
+                    </div>
+                  );
+                })()}
                 {/* クリーニング代 退去時清算トグル */}
                 <div className="mt-2 flex items-center gap-2 rounded-xl bg-[#f7f9fa] px-3 py-2">
                   <input
@@ -1247,7 +1415,10 @@ function EstimatePageContent() {
                       const val = items[key as keyof EditableItems];
                       return (
                         <div key={key}>
-                          <label className="mb-1 block text-[11px] text-[#667781]">{label}</label>
+                          <label className="mb-1 block text-[11px] text-[#667781]">
+                            {label}
+                            {prefillSrc[key as string] && <span className="ml-1.5 rounded bg-[#e8f5e9] px-1.5 py-0.5 text-[9px] text-[#2e7d32]">自動: {prefillSrc[key as string]}</span>}
+                          </label>
                           {derived ? (
                             // 自動計算フィールド → read-only表示
                             <div className="w-full rounded-xl border border-[#e9edef] bg-[#f5f6f7] px-3 py-2 text-[13px] text-[#667781]">
@@ -1385,6 +1556,23 @@ function EstimatePageContent() {
             >
               💬 LINE用テキストを生成
             </button>
+
+            {/* 2026-10-01 LINE の会話から来た時: 見積書の画像を AIX にセットして会話に戻る（送るのはスタッフ・ここでは送らない） */}
+            {handoff && (
+              <>
+                <button
+                  onClick={handleReturnToLine}
+                  disabled={returning}
+                  className="w-full rounded-full py-4 text-[15px] font-bold text-white shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg,#E65100,#F57C00)" }}
+                >
+                  {returning ? "画像を作って LINE に戻っています..." : handoffConv?.mode === "with_property"
+                    ? "📎 AIX【物件オススメ】の見積書にセットして LINE へ"
+                    : "📎 AIX【見積書送る】にセットして LINE へ"}
+                </button>
+                {returnError && <div className="rounded-xl bg-red-50 px-4 py-2 text-[12px] text-red-600">{returnError}</div>}
+              </>
+            )}
 
             {/* 画像化してLINEへ送るボタン */}
             <button

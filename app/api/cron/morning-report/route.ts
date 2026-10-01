@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { isWaitPromiseNotes } from "@/app/lib/promise-timing";
 
 export const maxDuration = 60;
 
@@ -610,7 +611,10 @@ export async function GET(req: NextRequest) {
       .neq("event_type", "viewing")
       .order("start_at", { ascending: true })
       .limit(80);
-    const all = (mustRows ?? []) as Array<{ id: number; title: string; start_at: string; notes: string | null }>;
+    const allRows = (mustRows ?? []) as Array<{ id: number; title: string; start_at: string; notes: string | null }>;
+    // 2026-10-01 竹内（和樹事例）: 新着待ち・お客様待ち・時期待ちの約束（期日なし・promise-timing）は未履行の一覧に混ぜず件数だけ添える
+    const waits = allRows.filter((m) => isWaitPromiseNotes(m.notes));
+    const all = allRows.filter((m) => !isWaitPromiseNotes(m.notes));
     const cutoff = Date.now() - 7 * 86_400_000;
     const musts = all.filter((m) => new Date(m.start_at).getTime() >= cutoff).slice(0, 30);
     const stale = all.filter((m) => new Date(m.start_at).getTime() < cutoff);
@@ -619,6 +623,7 @@ export async function GET(req: NextRequest) {
         const aix = (m.notes ?? "").split("\n").find((l) => l.startsWith("AIX: "))?.replace(/^AIX: /, "").replace(/を送ったら完了$/, "") ?? "";
         return `${i + 1}. ${m.title}（${relTime(m.start_at)}に約束）${aix ? `→ ${aix}` : ""}`;
       });
+      if (waits.length > 0) lines.push(`🆕 新着が出たら送る約束 ${waits.length}件（期日なし・物件を送ったら完了）`);
       if (stale.length > 0) lines.push(`⚠ 7日超の約束 ${stale.length}件（カレンダーで確認: ${stale.slice(0, 3).map((m) => m.title).join("・")}${stale.length > 3 ? " 他" : ""}）`);
       sections.push(`🔴 お客様との約束・未履行（${musts.length + stale.length}件）\n\n${lines.join("\n")}`);
     }

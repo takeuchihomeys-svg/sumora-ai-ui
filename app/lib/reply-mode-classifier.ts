@@ -260,10 +260,11 @@ export function classifyReplyMode(input: ClassifierInput): ClassifierResult {
   }
 
   // 物件URL・画像・空室確認の問い合わせ
+  // 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」: 影のログの提案も 物件確認した（旧: acknowledge_check）
   if (PROPERTY_URL_RE.test(msg) || hasImage(history) || PROPERTY_INQUIRY_RE.test(msg)) {
     return {
       mode: "hybrid",
-      suggestedAction: "acknowledge_check",
+      suggestedAction: "property_check_result",
       matchedRule: "hybrid_property_url",
       confidence: "medium",
       shortDraft: "",

@@ -19,6 +19,11 @@
 //
 // 入口か出口か: ブレインの判断の補正（本文は書き換えない）。直すのは「確認します」を選んだ時だけで、LLM が 物件確認した・見積書送る・
 //   物件ピックアップ（「こんなかんじがいいです！」＋URL＝条件の例示）を選んだ時は触らない（ブレインの判断のまま）。
+//
+// 2026-10-01 竹内（続き）「確認します あまり使わないので、いきなり物件確認したで大丈夫」:
+//   物件の問い合わせでは 確認します を出さない（プロンプトの基準・信号 3.5／4・この補正の3か所）。
+//   この補正は場面の証拠が出ない「物件名 階 URL by SUUMO」の共有（ポータルの URL）にも広げた。
+//   物件の語だけの S1（「この物件のいちばん広い部屋」「銀行振込は何日に」の誤当たり）は 150日で2件・1件は誤当たり＝広げない
 
 import { normalizeCustomerText } from "./reply-context";
 
@@ -35,10 +40,20 @@ export type InquirySceneLite = {
   propertySpecifiedBy?: string | null;
 } | null | undefined;
 
-/** お客様が物件そのもの（ポータルの URL・物件の画像）を持ち込んだターンか（場面の証拠 S1 ＋ 根拠が URL / 画像） */
+/**
+ * ポータルの物件 URL（SUUMO・HOME'S 等）。場面の証拠が出ない「物件名 階 URL by SUUMO」の共有の形（言葉が10字を超え、指名の語が無い）を拾う。
+ * 2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」の続き（scripts/audit-ack-check-retire.ts）:
+ *   場面の証拠なしで ブレインが 確認します を出した 82件のうち、ポータルの URL の共有（みこと 8a77820b「レジュールアッシュ淡路駅前 1階 https://suumo.jp/… by SUUMO」×4 等）が
+ *   場面 S1 の外にこぼれていた
+ */
+const PORTAL_URL_RE = /https?:\/\/\S*(?:suumo|homes\.co\.jp|athome|chintai|realestate\.yahoo|eheya|smocca|myhome\.nifty|apamanshop|minimini|ielove|goodrooms|canary|door\.ac|leopalace|homemate)/i;
+
+/** お客様が物件そのもの（ポータルの URL・物件の画像）を持ち込んだターンか（場面の証拠 S1 ＋ 根拠が URL / 画像。場面なしはポータルの URL だけ） */
 export function isCustomerBroughtProperty(o: { scene: InquirySceneLite; customerTurn: string | null | undefined }): boolean {
   const s = o.scene;
-  if (!s || s.scene !== "S1_vacancy") return false;
+  // 場面の証拠なし: ポータルの物件 URL を送ってきた時だけ（他の場面＝内覧・費用の中身 等が出ている時は触らない）
+  if (!s) return PORTAL_URL_RE.test(o.customerTurn ?? "");
+  if (s.scene !== "S1_vacancy") return false;
   // 画像は物件とは限らない（実例 ae3ffecb: 勤務先とのやり取りのスクショ＋「給料明細なのですが…」で S1 に当たっていた）。
   //   お客様の言葉が無い（画像だけ＝物件写真・間取り図の判定は場面の側）か、言葉が物件を指している時だけ持ち込みとみなす
   if (s.propertySpecifiedBy === "image") {

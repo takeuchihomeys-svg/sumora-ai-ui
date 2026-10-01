@@ -17,6 +17,7 @@
 //      無ければ stopAutoSend だけを返す（自動送信を止めるのは安全のため）
 import { AIX_ACTION_REPLY_DIRECTION, AIX_BUTTON_LABELS, AIX_STAFF_NOTES, availabilityCheckButtonLabel } from "./aix-taxonomy";
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
+import { rentIncludedOnlyTurn } from "./rent-included-question";
 import { BRIDGE_VACANCY_CHECK, BRIDGE_MOVEIN_CHECK, BRIDGE_SCREENING_CHECK, ASSERTION_REPLACEMENT } from "./scene-patterns";
 import {
   AVAILABILITY_URL_RE, AIX_PAYMENT_INTENT_RE, detectAixSceneEvidence, isConfirmationScene,
@@ -415,6 +416,10 @@ export type BodySafety = {
  */
 export function resolveBodySafety(evidence: AixSceneEvidence | null, o: SceneEvidenceInput): BodySafety | null {
   if (!evidence) return null;
+  // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」: 家賃込みかの質問だけの連投は S9（初期費用の中身）に当たっても
+  //   「本文で中身を説明しない」の安全を付けない（本文で「初期費用は翌月分の前家賃込み」と答える・事実は company-facts rent_included）。
+  //   判定はブレインの入口と同じ rent-included-question.rentIncludedOnlyTurn
+  if (evidence.scene === "S9_cost_breakdown" && rentIncludedOnlyTurn(o.latestCustomerTurn ?? "")) return null;
   const row = rowForEvidence(evidence, o);
   return {
     scene: evidence.scene, candidateAction: evidence.candidateAction, label: row.label,

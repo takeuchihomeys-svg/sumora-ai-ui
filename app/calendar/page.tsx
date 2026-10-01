@@ -8,6 +8,7 @@ import { VIEWING_METHOD_PENDING } from "../lib/meeting-calendar";
 import { buildScreeningTaskPayload, isValidSyncKey, shouldSyncViewingToScreening } from "../lib/screening-calendar-sync";
 // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】」: お客様への約束の行は印を出し、履行するまで残る
 import { isPromiseMustNotes } from "../lib/promise-calendar";
+import { isWaitPromiseNotes, waitPromiseBadge } from "../lib/promise-timing";
 
 type EventType = "viewing" | "contract" | "key_handover" | "other" | "application" | "phone" | "photo" | "property_send" | "estimate_sheet" | "follow_up";
 type KeyMethod = "現地" | "管理会社" | "itandi";
@@ -261,8 +262,9 @@ export default function CalendarPage() {
   const todayKey = formatDateKey(new Date());
   const dayEvents = eventsByDate[selectedKey] || [];
   const dayIds = new Set(dayEvents.map((e) => ("id" in e ? e.id : null)));
+  // 2026-10-01: 新着待ち・お客様待ち・時期待ちの約束（期日なし・promise-timing）は期限切れとして繰り越さない（約束した日に残る）
   const overdueMust: AnyEvent[] = events.filter((ev) =>
-    !ev.is_done && ev.event_type !== "viewing" && isPromiseMustNotes(ev.notes) && toJSTDateKey(new Date(ev.start_at)) < todayKey && !dayIds.has(ev.id));
+    !ev.is_done && ev.event_type !== "viewing" && isPromiseMustNotes(ev.notes) && !isWaitPromiseNotes(ev.notes) && toJSTDateKey(new Date(ev.start_at)) < todayKey && !dayIds.has(ev.id));
   const selectedEvents = [...overdueMust, ...dayEvents];
 
   const prevMonth = () => {
@@ -637,7 +639,7 @@ export default function CalendarPage() {
                     </span>
                   ) : isPromiseMustNotes(localEv.notes) && localEv.event_type !== "viewing" ? (
                     <span className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white bg-[#d32f2f]">
-                      {toJSTDateKey(new Date(localEv.start_at)) < formatDateKey(new Date()) ? "⚠ 期限切れ・約束" : "【必ず】約束"}
+                      {waitPromiseBadge(localEv.notes) ?? (toJSTDateKey(new Date(localEv.start_at)) < formatDateKey(new Date()) ? "⚠ 期限切れ・約束" : "【必ず】約束")}
                     </span>
                   ) : (
                     <span

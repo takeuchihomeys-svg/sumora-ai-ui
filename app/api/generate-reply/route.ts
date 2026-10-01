@@ -18,6 +18,8 @@ import { loadApplyPeriodNote, ensureApplyPeriodSummary } from "@/app/lib/apply-p
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
+// 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」（S9 の本文の置換を外す判定）
+import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { isRoomPhotoRequest } from "@/app/lib/room-photo-request";
 import { buildTemplateEchoNote } from "@/app/lib/template-echo-note";
 import { loadKnownCustomerNames, loadPartyAliases } from "@/app/lib/pii-known-names";
@@ -5682,7 +5684,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 estimateAllowed: estimateVerdict.mode !== "forbid",
                 // 2026-09-15 ゆうこ事例: ブレインが AIX【初期費用について】を選んだ時は本文で初期費用の中身を説明しない
                 //   ブレインが別の AIX（条件変更の物件ピックアップ 等）でも、今回の発言が初期費用の中身の質問（場面の証拠 S9）なら同じ
-                costBreakdownAix: effectiveAction === "cost_breakdown" || sceneEvidencePre?.scene === "S9_cost_breakdown",
+                // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」: 家賃込みかの質問だけの連投は S9 に当たっても
+                //   本文で「初期費用は翌月分の前家賃込み」と答える（YUMA 実測: 「初期費用に翌月分（9月分）の前家賃が含まれております」がこの置換で
+                //   「ご質問ありがとうございます」に消えた）。判定はブレインの入口と同じ rent-included-question.rentIncludedOnlyTurn
+                costBreakdownAix: effectiveAction === "cost_breakdown" || (sceneEvidencePre?.scene === "S9_cost_breakdown" && !rentIncludedOnlyTurn(message ?? "")),
                 protect: (s: string) => isCellRequiredSentence(s, pairContext),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
                 // 2026-09-26（穴3）: 決まった内覧の日時の復唱は「待ち合わせ確定」の置換（詳細はご連絡）にしない

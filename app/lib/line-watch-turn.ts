@@ -41,7 +41,7 @@ const AIX_ACTION_RE = /^[a-z][a-z0-9_]{1,60}$/;
 /**
  * 番の場面。
  * - 申込以降の状態（自動送信を止める状態と同じ8つ）は「対象外」（審査落ちで戻した会話は状態が申込前に戻るので対象に入る）
- * - ブレインが AIX（reply_mode=aix か、reply_mode が無く AIX の種類の action）→ AIX:<種類>（押し替えの acknowledge_check は property_check_result に寄せる）
+ * - ブレインが AIX（reply_mode=aix か、reply_mode が無く AIX の種類の action）→ AIX:<種類>（2026-10-01 から acknowledge_check は寄せない＝normalizeAixForMatch）
  * - reply_mode=aix で action が空 → AIX:種類なし
  * - それ以外は返信: tpo_label の場面（6つ）→ 無ければ intent → 無ければ その他
  */
