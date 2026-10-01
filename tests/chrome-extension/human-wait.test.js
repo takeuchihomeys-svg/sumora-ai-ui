@@ -160,6 +160,7 @@ function rest() {
       "setInterval 200": [1, "描画待ちの見る間隔（4秒で打ち切り）"], "setTimeout 50": [1, "fill-done 後の差し込みのやり直し（内部）"],
       "setTimeout 2000": [2, "新しい結果が出たかの予備の確認・load 後の差し込み"], "setInterval 1000": [1, "0件の確定の見る間隔（25秒で打ち切り）"],
       "setTimeout 400": [1, "MutationObserver の間引き"], "setTimeout 1200": [1, "起動時の差し込み"],
+      "setTimeout 20000": [1, "押した印刷用PDF をまとめて送るまでの待ち（v2.5.62・最後に押してから・サイトは触らない）"],
     },
     "content.js": { "setTimeout 400": [1, "MutationObserver の間引き"], "setInterval 3000": [1, "サイドバーの見張り"], "setTimeout 300": [1, "起動時"] },
     "itandi-bulk-dl.js": {

@@ -379,9 +379,35 @@
       if (r.row) r.row.classList.toggle("axlx-sent-hidden", sent && !showSent);
       if (sent) { hidden++; if (r.cb) r.cb.disabled = true; }
     });
+    checkSentBuildings(rows);
     ensureLayer();
     sentNote = sentIndex ? (hidden ? "このお客様に送付済みの部屋 " + hidden + "件を" + (showSent ? "表示しています（チェックはできません）" : "隠しています") : "このページに送付済みの部屋はありません") : "送付済みの部屋はまだありません";
+    if (sentBldCount) sentNote += "／送付済みの建物 " + sentBldCount + "件に印（送ってもサーバーが外します）";
     renderPanel();
+  }
+
+  // 2026-10-01 竹内「建物ごとはずすってのはみたら分かる状態になっているのかな？」「それでおこなう」:
+  //   号室の無い送付記録（9/21 ラパンジール道頓堀・今宮など）は部屋が決まらず上で隠れない。送るとサーバー（merge-pdfs）が建物ごとに外す。
+  //   → 一覧の行をサーバーの同じ判定（/api/automation/sent-check）に聞き、外される行に「送付済みの建物」の印（チェックを外すのは bulk-dl）
+  var _sentCheckSig = "", sentBldCount = 0;
+  function checkSentBuildings(rows) {
+    if (!session || !session.customerId) return;
+    var R = (typeof self !== "undefined" ? self : window).AxlxRealproRows;
+    if (!R || !R.markSentForServer) return;
+    var payload = rows.map(function (r) { return { name: r.name || "", room: r.room || "", url: r.url || null }; });
+    var sig = session.customerId + "#" + payload.map(function (p) { return p.name + "|" + p.room; }).join(",");
+    if (sig === _sentCheckSig) return;
+    _sentCheckSig = sig;
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-guide-sent-check", customerId: session.customerId, rows: payload }, function (resp) {
+        void chrome.runtime.lastError;
+        if (!resp || !resp.ok) return;
+        R.markSentForServer(resp.dropped || []);
+        // 号室まで一致して上で隠した行は数えない（印の数＝見えている行のうち送ると外れる数）
+        sentBldCount = (resp.dropped || []).filter(function (d) { var r = rows[d.index]; return !(r && r.row && r.row.classList.contains("axlx-sent-hidden")); }).length;
+        applySentHiding();
+      });
+    } catch (_) {}
   }
 
   // 案内モードの間は、拡張がページを自動でめくる「全ページ送る」を止める（押せない）

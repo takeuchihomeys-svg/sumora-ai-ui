@@ -346,6 +346,8 @@ export async function POST(req: NextRequest) {
     //     構造的に対応が保証されている（2026-09-18 の修正）。だから index を揃えて両方から落とせる。
     //   戻す時は環境変数 SKIP_SENT_PROPERTIES=off。
     let excludedNotice = "";
+    /** 2026-10-01 送付済みで外した件数（拡張の送信完了の表示に出す＝竹内「送信した際に分かれば大丈夫」） */
+    let excludedCount = 0;
     let resolvedCustomerId: string | null = property_customer_id ?? null;
     if (!resolvedCustomerId && conversation_id) {
       const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversation_id).maybeSingle();
@@ -409,6 +411,7 @@ export async function POST(req: NextRequest) {
         }));
         if (result.dropped.length > 0) {
           excludedNotice = buildExcludedNotice(result.dropped);
+          excludedCount = result.dropped.length;
           const keep = new Set(result.keep);
           if (pdf_urls) pdf_urls = pdf_urls.filter((_, i) => keep.has(i));
           if (source_urls) source_urls = source_urls.filter((_, i) => keep.has(i));
@@ -436,7 +439,7 @@ export async function POST(req: NextRequest) {
         await pushLineMessage(groupId, `${nameWithSan} 物件（${site === "itandi" ? "itandi" : "リアプロ"}）\n今回の候補はすべて送付済みでした。\n${excludedNotice}`)
           .catch((e) => console.warn("[merge-pdfs] 全件送付済みの通知に失敗:", e));
       }
-      return NextResponse.json({ ok: true, line_sent: true, all_already_sent: true, excluded: excludedNotice });
+      return NextResponse.json({ ok: true, line_sent: true, all_already_sent: true, excluded: excludedNotice, excluded_count: excludedCount });
     }
 
     // PDF データを収集（名前の無い説明文のために先に取った時は取り直さない）
@@ -715,7 +718,7 @@ export async function POST(req: NextRequest) {
           try { waitUntil(touchJob); } catch { await touchJob; }
         }
 
-        return NextResponse.json({ ok: true, line_sent: true, url: blob.url, ...(notice.deferred ? { group_deferred: true } : {}) });
+        return NextResponse.json({ ok: true, line_sent: true, url: blob.url, ...(notice.deferred ? { group_deferred: true } : {}), ...(excludedCount ? { excluded_count: excludedCount, excluded: excludedNotice } : {}) });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[merge-pdfs] LINE送信失敗:", msg);

@@ -379,12 +379,14 @@ async function _realproTabFor(sender) {
   return tabs[0].id;
 }
 
-/** urls の資料をタブの中で1件ずつ取る。戻り値は urls と同じ並び（取れなかった物は error） */
-async function fetchRealproPdfsInTab(tabId, urls) {
+/** urls の資料をタブの中で1件ずつ取る。戻り値は urls と同じ並び（取れなかった物は error）。
+ *  pressed（スタッフが「印刷用PDF」を押して開いた資料の URL）は、まず手元（ブラウザのキャッシュ）から読む＝リアプロにもう一度取りに行かない。
+ *  手元に無かった時だけ今まで通り取りに行く（from: "cache" | "network"） */
+async function fetchRealproPdfsInTab(tabId, urls, pressed) {
   const [res] = await chrome.scripting.executeScript({
     target: { tabId },
-    args: [urls],
-    func: async (list) => {
+    args: [urls, Array.isArray(pressed) ? pressed : []],
+    func: async (list, pressedList) => {
       const toB64 = (buf) => {
         const bytes = new Uint8Array(buf);
         let s = "";
@@ -393,6 +395,13 @@ async function fetchRealproPdfsInTab(tabId, urls) {
       };
       const out = [];
       for (const u of list) {
+        if (pressedList.indexOf(u) !== -1) {
+          try {
+            const rc = await fetch(u, { cache: "only-if-cached", mode: "same-origin", credentials: "include" });
+            const ctc = rc.headers.get("content-type") || "";
+            if (rc.ok && !ctc.includes("text/html")) { out.push({ b64: toB64(await rc.arrayBuffer()), from: "cache" }); continue; }
+          } catch (_) { /* 手元に無い → 下で取りに行く */ }
+        }
         try {
           const ctl = new AbortController();
           const timer = setTimeout(() => ctl.abort(), 30000);
@@ -401,7 +410,7 @@ async function fetchRealproPdfsInTab(tabId, urls) {
           const ct = r.headers.get("content-type") || "";
           if (!r.ok) { out.push({ error: "HTTP " + r.status }); continue; }
           if (ct.includes("text/html")) { out.push({ error: "session", html: true }); continue; }
-          out.push({ b64: toB64(await r.arrayBuffer()) });
+          out.push({ b64: toB64(await r.arrayBuffer()), from: "network" });
         } catch (e) {
           out.push({ error: (e && e.name === "AbortError") ? "timeout" : String((e && e.message) || e) });
         }
@@ -418,7 +427,10 @@ async function fetchRealproPdfsInTab(tabId, urls) {
  */
 async function realproPdfsToBlobUrls(sender, urls, baseName, customerId) {
   const tabId = await _realproTabFor(sender);
-  const got = await fetchRealproPdfsInTab(tabId, urls);
+  const pressed = await _getPressedPdfs();
+  const got = await fetchRealproPdfsInTab(tabId, urls, pressed);
+  const fromCache = got.filter((g) => g && g.b64 && g.from === "cache").length;
+  console.log("[realpro-pdf] 押して開いた資料を手元から:", fromCache, "/", urls.length);
   if (got.some((g) => g && g.html)) throw new Error("リアプロのセッションが切れています（資料の代わりにログイン画面が返りました）。リアプロに再ログインしてください。");
   const blobUrls = [], keptIdx = [], dropped = [];
   for (let i = 0; i < urls.length; i++) {
@@ -430,7 +442,89 @@ async function realproPdfsToBlobUrls(sender, urls, baseName, customerId) {
   }
   if (!blobUrls.length) throw new Error("リアプロの資料を1件も取れませんでした（" + dropped.map((d) => d.error).join("・") + "）");
   if (dropped.length) console.warn("[realpro-pdf] 取れなかった資料を外して送る:", dropped);
-  return { blobUrls, keptIdx, dropped };
+  return { blobUrls, keptIdx, dropped, fromCache };
+}
+
+// ── 押した「印刷用PDF」を送る物に入れる（v2.5.60）────────────────────────────
+// 2026-10-01 竹内「印刷用PDF おしたら転送されれば理想」:
+//   スタッフが一覧の「印刷用PDF」を押す → 資料のタブが開き終わる → 一覧のタブの中で「手元に残っている物だけ」で読めるか確かめる
+//   （cache: "only-if-cached"＝リアプロには行かない）→ 読めたら「押した資料」に覚え、一覧のその行にチェックを入れる。
+//   送る時（realproPdfsToBlobUrls）は押した資料を手元から読む＝リアプロに届くのはスタッフが押した1回だけ。
+//   覚えておくのは3時間（資料の鮮度）。拡張は押さない・開かない（タブが開いたのを見ているだけ）
+const _PRESSED_KEY = "axlx_pressed_pdfs";
+const _PRESSED_TTL_MS = 3 * 60 * 60 * 1000;
+const _FACTSHEET_RE = /^https:\/\/(www\.)?realnetpro\.com\/common\/factsheet\.php\?/;
+async function _getPressedPdfs() {
+  try {
+    const r = await chrome.storage.session.get(_PRESSED_KEY);
+    const m = (r && r[_PRESSED_KEY]) || {};
+    const now = Date.now();
+    return Object.keys(m).filter((u) => now - m[u] < _PRESSED_TTL_MS);
+  } catch (_) { return []; }
+}
+async function _addPressedPdf(url) {
+  try {
+    const r = await chrome.storage.session.get(_PRESSED_KEY);
+    const m = (r && r[_PRESSED_KEY]) || {};
+    const now = Date.now();
+    for (const u of Object.keys(m)) if (now - m[u] >= _PRESSED_TTL_MS) delete m[u];
+    m[url] = now;
+    await chrome.storage.session.set({ [_PRESSED_KEY]: m });
+  } catch (_) {}
+}
+// v2.5.62 2026-10-01 竹内「印刷用PDF おしたらダウンロードされるので、そのまま AIX ツールに転送されるようにする」:
+//   リアプロの「印刷用PDF」は開かずにダウンロードされる（実画面）→ ダウンロードの完了でも受け取る（タブで開いた時と同じ処理）。
+//   ダウンロードは止めない・消さない（スタッフのファイルはそのまま）
+chrome.downloads.onChanged.addListener((delta) => {
+  if (!delta || !delta.state || delta.state.current !== "complete") return;
+  chrome.downloads.search({ id: delta.id }, (items) => {
+    const it = items && items[0];
+    const u = it && ([it.url, it.finalUrl].find((x) => _FACTSHEET_RE.test(x || "")));
+    if (u) _capturePressedPdf(u, null, null);
+  });
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete" || !tab || !_FACTSHEET_RE.test(tab.url || "")) return;
+  _capturePressedPdf(tab.url, tabId, tab.openerTabId);
+});
+function _capturePressedPdf(url, tabId, openerTabId) {
+  (async () => {
+    // 一覧のタブ（開いた元のタブ → 無ければ資料でないリアプロのタブ）
+    let listTabId = null;
+    try {
+      if (openerTabId != null) {
+        const ot = await chrome.tabs.get(openerTabId);
+        if (ot && /realnetpro\.com/.test(ot.url || "") && !_FACTSHEET_RE.test(ot.url || "")) listTabId = ot.id;
+      }
+      if (listTabId == null) {
+        const tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://realnetpro.com/*"] });
+        const t = tabs.find((x) => x.id !== tabId && !_FACTSHEET_RE.test(x.url || ""));
+        if (t) listTabId = t.id;
+      }
+    } catch (_) {}
+    if (listTabId == null) return;
+    let ok = false, bytes = 0;
+    try {
+      const [res] = await chrome.scripting.executeScript({
+        target: { tabId: listTabId },
+        args: [url],
+        func: async (u) => {
+          try {
+            if (new URL(u).origin !== location.origin) return { ok: false };
+            const r = await fetch(u, { cache: "only-if-cached", mode: "same-origin", credentials: "include" });
+            const ct = r.headers.get("content-type") || "";
+            const buf = await r.arrayBuffer();
+            return { ok: r.ok && !ct.includes("text/html"), bytes: buf.byteLength };
+          } catch (_) { return { ok: false }; }
+        },
+      });
+      ok = !!(res && res.result && res.result.ok);
+      bytes = (res && res.result && res.result.bytes) || 0;
+    } catch (_) {}
+    if (ok) await _addPressedPdf(url);
+    // 手元に残らなくても「押した」ことは知らせる（送る時は今まで通り取りに行く・竹内さんの判断でまとめて送るのは可）
+    try { chrome.tabs.sendMessage(listTabId, { type: "axlx-pdf-captured", url, ok, bytes }); } catch (_) {}
+  })();
 }
 
 // ── ヘルパー: PDF 1件をVercel Blobにアップロードして公開URLを返す ──────────
@@ -1095,7 +1189,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           ext_sent_skipped: msg.sent_skipped || null,
         });
 
-        sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
+        sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url, from_cache: up.fromCache || 0,
+          // 2026-10-01 送付済みで外した件数と知らせ（merge-pdfs）・全部が送付済みだった回
+          excluded_count: data.excluded_count || 0, excluded: data.excluded || "", all_already_sent: !!data.all_already_sent });
       } catch (e) {
         sendResponse({ ok: false, error: e.message });
       }
@@ -1222,6 +1318,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ── PDF結合ダウンロード ───────────────────────────────────────────────────
   // 2026-10-01 案内モード（realpro-guide.js）: 一覧で隠すため、そのお客様に送付済みの部屋を読む（サーバーの記録を読むだけ・サイトには触らない）。
   //   一括の _loadSentRooms と違い、スタッフモードでも読む（竹内「一度送ったことある物件などは出ないようにする。監視画面が判断する形で」）
+  // 2026-10-01 竹内「建物ごとはずすってのはみたら分かる状態になっているのかな？」: 一覧の行を送ったらサーバーが送付済みとして外すかを聞く
+  //   （判定は merge-pdfs と同じ関数・/api/automation/sent-check。サーバーの記録を読むだけ・サイトには触らない）
+  if (msg.type === "axlx-guide-sent-check") {
+    (async () => {
+      try {
+        const headers = Object.assign({ "Content-Type": "application/json" }, await _getAutomationKeyHeader());
+        const res = await fetch(SUMORA_BATCH_API + "/api/automation/sent-check", {
+          method: "POST", headers, signal: AbortSignal.timeout(8000),
+          body: JSON.stringify({ customer_id: String(msg.customerId || ""), rows: Array.isArray(msg.rows) ? msg.rows.slice(0, 300) : [] }),
+        });
+        const j = res.ok ? await res.json() : null;
+        sendResponse({ ok: !!(j && j.ok), dropped: j && Array.isArray(j.dropped) ? j.dropped : [] });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "axlx-guide-sent-rooms") {
     (async () => {
       try {

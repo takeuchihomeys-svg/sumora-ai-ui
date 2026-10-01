@@ -528,11 +528,51 @@
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName, customerConditions, customerId) { mergePdfs(true, customerName, customerConditions, customerId); }); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { if (_forwardTimer) { clearTimeout(_forwardTimer); _forwardTimer = null; } getCustomerFromPopup(function (customerName, customerConditions, customerId) { mergePdfs(true, customerName, customerConditions, customerId); }); });
     document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
     document.getElementById("axlx-cache-btn").addEventListener("click", probeCache);
+  }
+
+  // v2.5.60 竹内「印刷用PDF おしたら転送されれば理想」: スタッフが押して開いた資料が手元に残ったら、その行にチェックを入れて印を付ける
+  //   （送る時は手元から読む＝リアプロに届くのは押した1回だけ・background の axlx-pdf-captured）。拡張はリンクを押さない
+  try {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      if (!msg || msg.type !== "axlx-pdf-captured") return;
+      var item = tracked.find(function (t) { return t.btn && t.btn.href === msg.url; });
+      if (!item) return;
+      item.cb.checked = true;  // 押した＝送る物（手元に残らなかった物も送る時に取りに行く）
+      var old = item.btn.parentNode && item.btn.parentNode.querySelector(".axlx-pressed-badge");
+      if (old) old.remove();
+      var b = document.createElement("span");
+      b.className = "axlx-pressed-badge";
+      b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;" + (msg.ok ? "background:#e8f5e9;color:#2e7d32;" : "background:#fff3e0;color:#e65100;");
+      b.textContent = msg.ok ? "✅ 受け取り済み" : "☑ 送る物に入れました";
+      b.title = msg.ok ? "押した資料を受け取りました。送る時はリアプロにもう一度取りに行きません" : "資料が手元に残らなかったので、送る時に取りに行きます";
+      item.btn.parentNode.insertBefore(b, item.btn.nextSibling);
+      updateBar();
+      scheduleForward();
+    });
+  } catch (_) {}
+
+  /**
+   * v2.5.62 竹内「印刷用PDF おしたら…そのまま AIX ツールに転送されるようにする」:
+   *   押すたびに送ると、押している途中で何回にも分かれて届く → 最後に押してから20秒押さなければ、チェックした物をまとめて送る
+   *   （「📤 売上番長に送る」を押したのと同じ道＝送付済みの除外・ブレイン・AIX ツールへの記録も同じ）。押せばすぐ送る・待ちは押すたびに延びる
+   */
+  var _forwardTimer = null;
+  function scheduleForward() {
+    var lineBtn = document.getElementById("axlx-line-btn");
+    if (!lineBtn || lineBtn.disabled) return;
+    if (_forwardTimer) clearTimeout(_forwardTimer);
+    var n = tracked.filter(function (t) { return t.cb.checked; }).length;
+    lineBtn.textContent = "⏳ 押した " + n + "件を まもなく送ります（押すと今すぐ）";
+    _forwardTimer = setTimeout(function () {
+      _forwardTimer = null;
+      if (lineBtn.disabled) return;
+      lineBtn.click();
+    }, 20000);
   }
 
   /**
@@ -1251,7 +1291,14 @@
           lineBtn.textContent = lineOrig;
           return;
         }
-        lineBtn.textContent = "✅ " + sendItems.length + "件 LINE送信完了！";
+        // 2026-10-01 竹内「送信した際に分かれば大丈夫」: サーバーが送付済みで外した数を引いて出す（旧は外す前の数を出していた）
+        var _exc = resp.excluded_count || 0;
+        if (resp.all_already_sent) {
+          lineBtn.textContent = "⚠ すべて送付済みでした（送信なし）";
+        } else {
+          lineBtn.textContent = "✅ " + Math.max(0, sendItems.length - _exc) + "件 送信完了" + (_exc ? "（送付済み " + _exc + "件は除外）" : "") + (resp.from_cache ? "・押した資料 " + resp.from_cache + "件は手元から" : "");
+        }
+        if (_exc && resp.excluded) lineBtn.title = resp.excluded;
         setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
       });
       });
@@ -2049,8 +2096,31 @@
           var labels = card && card.headerIdx && card.headerIdx.labels;
           var roomCol = !(labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")));
           var c0 = card && card.cells ? card.cells[0] : null;
-          return { name: card ? card.name : null, room: roomCol && SK ? SK.roomFromRealproCell(c0) : null, row: t.btn && t.btn.closest ? t.btn.closest("tr") : null, cb: t.cb };
+          return { name: card ? card.name : null, room: roomCol && SK ? SK.roomFromRealproCell(c0) : null, row: t.btn && t.btn.closest ? t.btn.closest("tr") : null, cb: t.cb, url: (t.btn && t.btn.href) || null };
         }).filter(Boolean);
+      },
+      /**
+       * 2026-10-01 竹内「建物ごとはずす…みたら分かる状態に」: 送るとサーバーが送付済みとして外す行（list() の番号）に印を付ける。
+       *   スタッフモードではサーバーが外さない（merge-pdfs の staff_mode）ので、印だけでチェックは外さない
+       */
+      markSentForServer: function (marks) {
+        var rows = this.list();
+        var n = 0;
+        document.querySelectorAll(".axlx-sent-bld-badge").forEach(function (el) { el.remove(); });
+        (Array.isArray(marks) ? marks : []).forEach(function (m) {
+          var r = rows[m.index];
+          if (!r || !r.cb) return;
+          var btn = r.cb.nextSibling;
+          var b = document.createElement("span");
+          b.className = "axlx-sent-bld-badge";
+          b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;background:#eceff1;color:#455a64;";
+          b.textContent = m.reason === "building" ? "送付済みの建物" : "送付済み";
+          b.title = _staffModeOn ? "このお客様に送ったことがあります（スタッフモードなので、チェックすれば送られます）" : "このお客様に送ったことがあります。送ってもサーバーが外すのでチェックを外しました";
+          if (!_staffModeOn && r.cb.checked) { r.cb.checked = false; n++; }
+          if (btn && btn.parentNode) btn.parentNode.insertBefore(b, btn.nextSibling); else r.cb.parentNode.appendChild(b);
+        });
+        if (n) updateBar();
+        return n;
       },
     };
   } catch (_) {}
