@@ -12,7 +12,9 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { analyzeConversation } from "../app/lib/brain-core";
+// 2026-10-01 ブレインは共通の入口（scripts/lib/llm-test-harness.ts）の後に読む（静的 import だと包む前の fetch を握り、Claude が記録0で走っていた）
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+let h: LlmTestHarness | null = null;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const Y = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 
@@ -26,6 +28,8 @@ async function sceneKey(label: string, status: string, hasStrategy: boolean): Pr
 
 async function main() {
   const out = process.argv[2];
+  h = await setupLlmTest("yuma-brain-decision");
+  const { analyzeConversation } = await import("../app/lib/brain-core");
   const { data: c } = await sb.from("conversations").select("status, property_customer_id, brain_strategy, conversation_direction").eq("id", Y).maybeSingle();
   const cc = (c ?? {}) as Record<string, unknown>;
   const strategy = (cc.brain_strategy ?? null) as never;
@@ -34,11 +38,13 @@ async function main() {
 
   const label = (process.env.BRAIN_CACHE_LABEL ?? "").trim();
   const cacheDir = process.env.BRAIN_CACHE_DIR ?? join(process.cwd(), "scripts", ".brain-cache");
-  const cacheFile = label ? join(cacheDir, `${label}-${await sceneKey(label, status, !!strategy)}.json`) : null;
+  // 2026-10-01: deepseek-all ではブレインも DeepSeek → 使い回しの鍵にテストの種類を入れる（DeepSeek の判断を最後の Claude の確かめで使い回さない）
+  const cacheFile = label ? join(cacheDir, `${label}-${h.run}-${await sceneKey(label, status, !!strategy)}.json`) : null;
   if (cacheFile && existsSync(cacheFile) && process.env.BRAIN_REFRESH !== "1") {
     writeFileSync(out, readFileSync(cacheFile, "utf8"), "utf8");
     console.log("brain reused", cacheFile);
-    setTimeout(() => process.exit(0), 100);
+    await h.finish();
+    setTimeout(() => process.exit(process.exitCode ?? 0), 100);
     return;
   }
 
@@ -53,6 +59,7 @@ async function main() {
   // 取れなかった回（null）は保存しない（次に取り直せるように）
   if (cacheFile && meta) { mkdirSync(cacheDir, { recursive: true }); writeFileSync(cacheFile, json, "utf8"); }
   console.log("brain done", !!meta, strategy ? "fresh" : "combined", cacheFile && meta ? `saved ${cacheFile}` : "");
-  setTimeout(() => process.exit(0), 500);
+  await h.finish();
+  setTimeout(() => process.exit(process.exitCode ?? 0), 500);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

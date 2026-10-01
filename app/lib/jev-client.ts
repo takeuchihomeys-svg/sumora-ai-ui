@@ -18,6 +18,7 @@
 //   ・鍵は環境変数（TYPESAFE_API_KEY）。無ければ何もしない（null）＝今までどおり。
 //   ・失敗しても本来の処理を止めない（fail-open・null を返す）。使用量は llm_usage_logs に1行残す（recordAltUsage）。
 import { recordAltUsage } from "./llm-usage-recorder";
+import { testConversationRefusal, noteTestBlocked } from "./llm-test-mode";
 
 export type JevQuestion =
   | { type: "noul"; instructions: string; criteria?: { true: string; false: string } }
@@ -72,6 +73,9 @@ export async function jevSystemOne(input: {
 }): Promise<JevResult | null> {
   const cfg = readJevConfig(input.env ?? process.env);
   if (!cfg) return null;
+  // 2026-10-01 テストの間は YUMA 以外の会話で呼ばない（10/01 に和樹さんの会話の再生で3回呼んでいた）。本番は readTestRun が null＝何もしない
+  const refusal = testConversationRefusal(process.env, input.conversationId ?? null, "Jev の呼び出し");
+  if (refusal) { noteTestBlocked(refusal); return null; }
   const started = Date.now();
   const doFetch = input.fetchImpl ?? fetch;
   try {

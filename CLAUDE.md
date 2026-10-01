@@ -24,6 +24,7 @@
 - Chrome拡張作業 → `memory/dept_search_tool.md` を必ず読む
 - 見積書作業 → `memory/dept_estimate_tool.md` を必ず読む
 - LINE返信AI作業 → `memory/dept_line_reply.md` を必ず読む
+- **🧪 テスト（YUMA・ブレイン・返信・AIX）を行う前に必ず `memory/test_protocol_brain.md` を読む**（YUMA だけ・試行錯誤は `LLM_TEST_MODE=deepseek-all`／最後の Claude は `LLM_TEST_FINAL_CLAUDE=1` で場面ごとに1〜2回・スクリプトは `scripts/lib/llm-test-harness.ts` を通す・報告に model/回数/費用。2026-10-01 竹内さん指示）
 - 部署詳細・チーム構成が必要な場合 → `AGENTS.md` を読む（常時ロードしない）
 
 ---
@@ -96,6 +97,12 @@ SELECT title, insight, rationale FROM system_design_thinking
 WHERE is_current = true
 ORDER BY created_at DESC LIMIT 10;
 ```
+
+### 🧪 テスト（YUMA・ブレイン・返信・AIX）を行う前に必ず `memory/test_protocol_brain.md` を読む（2026-10-01 竹内さん指示）
+「テスト行う際必ずこのやりかた（ブレインのぶぶん）読むようにしたらいける」。YUMA だけ／試行錯誤は全部 DeepSeek（`LLM_TEST_MODE=deepseek-all`・Claude に行く物は止まる）／
+最後の Claude は `LLM_TEST_FINAL_CLAUDE=1` で場面ごとに1〜2回／スクリプトは `scripts/lib/llm-test-harness.ts` の `setupLlmTest()` を最初に／
+本番の会話の材料は申込の書類の手前で切って伏せる／ワイルドカードで消さない／報告に model・回数・費用（`scripts/test-llm-usage.ts`）。
+テストを他のエージェント・Workflow に頼む時も、指示文に「memory/test_protocol_brain.md を読んでから」と書く。
 
 ### 分析（ブレイン）を強化・変更する時：最初に「分析強化の原則」を引く（重要）
 ブレイン・返信生成・AIX の判断を直す前に**必ず**読む。材料やルールを足す前に、届き方・鮮度・費用を測って構造を直す順番（2026-09-13 竹内さん指示）。

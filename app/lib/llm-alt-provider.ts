@@ -23,8 +23,10 @@ import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CON
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { parseCutoffMark, countCutoffLeaks, type CutoffMark } from "./post-apply";
 import { currentDeepseekScope } from "./deepseek-scope";
-import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, type LlmTestMode } from "./llm-test-mode";
+import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, strictClaudeBlockReason, testConversationRefusal, noteTestBlocked, LlmTestBlockedError, type LlmTestMode } from "./llm-test-mode";
 import { AIX_PICKERS } from "./aix-pickers";
+import { YUMA_CONVERSATION_ID } from "./test-conversations";
+import { testPiiRefusal } from "./test-pii-guard";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
@@ -286,7 +288,7 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
 
 /**
  * テスト用の切り替え（LLM_TEST_MODE=deepseek-all）**だけ**が理由で回すか。
- * ブレイン（brain_fresh / brain_full / 戦略の整理 / セーブデータ）は対象外（llm-test-mode.isBrainCall）。
+ * 2026-10-01 からブレイン（brain_fresh / brain_full / 戦略の整理 / セーブデータ / 取り直し）も対象（llm-test-mode.isTestModeTarget の説明）。
  * 鍵を重ねる: 設定を読んだ時（readTestMode）＋ここで実行中の環境をもう一度（isTestModeAllowed(process.env)）。
  */
 export function routedByTestMode(cfg: AltProviderConfig | null, routeName: string | null, systemHead: string | null = null): boolean {
@@ -802,31 +804,50 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     if (!body) return original(input as RequestInfo, init);
 
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-    // 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」:
-    //   人の目を通さずに送る文なので、既定では**何を指定していても**別のクラウドに回さない（最優先の歯止め）。
-    //   竹内「慣れて問題なければ切り変えていく」→ LLM_ALT_AUTO_SEND=on にした時だけ開く
-    if (isAutoSendCall(headers) && !cfg.allowAutoSend) return original(input as RequestInfo, init);
-    // 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」:
-    //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
-    //   かつこのツールの仕事は申込までなので、回す必要がそもそも無い。**スイッチは用意しない**
-    if (cfg.testMode && isPostApplyCall(headers)) console.warn("[llm-test-mode] 申込以降の会話は Claude のまま（個人情報の歯止め・YUMA は status_manual_back_at を最新に）");
-    if (isPostApplyCall(headers)) return original(input as RequestInfo, init);
     const sysHead = flattenContent(body.system);
     // 記録の sys_key_full は Anthropic 宛ての行と同じハッシュ（全文をそのまま入れない・2026-09-26 まで 75,016字の全文が入っていた）
     const sysKeyFull = systemFullKey(body.system);
     const routeName = resolveRouteName(headers.get(LLM_ACTION_HEADER), sysHead);
-    if (!shouldRouteAlt(cfg, routeName, sysHead)) return original(input as RequestInfo, init);
+    const scope = currentDeepseekScope();
+    const convForGate = headers.get(LLM_CONVERSATION_HEADER) ?? scope?.conversationId ?? null;
+    // テストの歯止めで止める時: llm_usage_logs に error_type=test_blocked の行（費用0）を残してから投げる（テストの間だけ通る）
+    const blockAndThrow = (msg: string): never => {
+      recordAltUsage({ model: "test-blocked", action: routeName, conversationId: convForGate, usage: {}, status: 0, errorType: "test_blocked",
+        durationMs: 0, sysHead, sysKeyFull, maxTokens: typeof body!.max_tokens === "number" ? body!.max_tokens : null });
+      throw noteTestBlocked(msg);
+    };
+    // 2026-10-01 竹内「1～4すべて改善する」: テストの間（deepseek-all／final-claude）は YUMA 以外の会話の呼び出しを断る（本番は readTestRun が null＝何もしない）
+    const refusal = testConversationRefusal(process.env, convForGate);
+    if (refusal) blockAndThrow(refusal);
+    // 2026-10-01: Claude に行く所は全部ここを通す。deepseek-all の間は黙って Claude に行かせず止める（LLM_TEST_ALLOW_CLAUDE に書いた名札だけ通す）。
+    //   本番・普段の手元（deepseek-all でない）は strictClaudeBlockReason が null ＝今までどおり original
+    const toClaude = (why: string): Promise<Response> => {
+      const blocked = strictClaudeBlockReason(process.env, { action: routeName, why });
+      if (blocked) blockAndThrow(blocked);
+      if (cfg.testMode) console.warn("[llm-test-mode] LLM_TEST_ALLOW_CLAUDE で Claude に通す", JSON.stringify({ route: routeName, why }));
+      return original(input as RequestInfo, init);
+    };
+    // 2026-09-19 竹内「自動返信モードのお客さんの返信はクロードのAPI使う形でいく」:
+    //   人の目を通さずに送る文なので、既定では**何を指定していても**別のクラウドに回さない（最優先の歯止め）。
+    //   竹内「慣れて問題なければ切り変えていく」→ LLM_ALT_AUTO_SEND=on にした時だけ開く
+    if (isAutoSendCall(headers) && !cfg.allowAutoSend) return toClaude("自動返信の会話（LLM_ALT_AUTO_SEND=off）");
+    // 2026-09-19 竹内「申込以降は渡さなくて大丈夫、申込までのツールなので」:
+    //   申込フェーズ以降は個人情報（本人確認書類・申込書・勤務先・年収・保証人）が集中し、
+    //   かつこのツールの仕事は申込までなので、回す必要がそもそも無い。**スイッチは用意しない**
+    if (isPostApplyCall(headers)) return toClaude("申込以降の会話（個人情報の歯止め・YUMA なら status_manual_back_at を最新に）");
+    if (!shouldRouteAlt(cfg, routeName, sysHead)) return toClaude("LLM_ALT_ACTIONS に無い名札");
 
     // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 二重の鍵。
     //   入口が線を引いた印（ヘッダ優先・無ければリクエストの箱）が無い会話の呼び出し・blocked は回さない。
     //   cut（線より後だけに切った）の時は、線より前のお客様の発言が本文に残っていないかを網で見る（入口の取りこぼしの最後の歯止め）
-    const scope = currentDeepseekScope();
-    const mark = parseCutoffMark(headers.get(LLM_CUTOFF_HEADER)) ?? scope?.mark ?? null;
-    const convForGate = headers.get(LLM_CONVERSATION_HEADER) ?? scope?.conversationId ?? null;
+    // 2026-10-01: テストの間だけ、YUMA（竹内さん本人のテスト用の会話）で印が無い呼び出しは「全部渡してよい」と読む
+    //   （10/01 08:03 の brain_fresh 30回は、スクリプトが印を置かずに呼んで黙って Claude に行っていた。YUMA 以外は上で断っている）
+    const markRaw = parseCutoffMark(headers.get(LLM_CUTOFF_HEADER)) ?? scope?.mark ?? null;
+    const mark: CutoffMark | null = markRaw ?? (cfg.testMode && convForGate === YUMA_CONVERSATION_ID ? { kind: "all" } as CutoffMark : null);
     const gate = cutoffGateDecision({ conversationId: convForGate, inScope: !!scope, mark });
     if (gate !== "route") {
       console.warn("[llm-alt] 時刻の線の印なし・渡さない会話 → Claude のまま", JSON.stringify({ route: routeName, gate, conversationId: convForGate }));
-      return original(input as RequestInfo, init);
+      return toClaude(`時刻の線（${gate}）`);
     }
     if (mark?.kind === "cut") {
       let leaks = -1;
@@ -834,9 +855,12 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       if (leaks !== 0) {
         // -1 ＝ 網の材料が読めない（fail-closed）
         console.warn("[llm-alt] 線より前のお客様の発言が本文に残っている → Claude のまま", JSON.stringify({ route: routeName, leaks, conversationId: convForGate }));
-        return original(input as RequestInfo, init);
+        return toClaude("線より前のお客様の発言が本文に残っている");
       }
     }
+    // 2026-10-01 再生の場面に記入済みの申込フォームが混ざり DeepSeek に渡った事故（⑦・会話 ae321772）: テストの間は個人の値がある本文を送らない（本番は null）
+    const piiRefusal = testPiiRefusal(process.env, altBodyText(body), "DeepSeek");
+    if (piiRefusal) blockAndThrow(piiRefusal);
     // 開発環境だけ: DeepSeek に送る本文を書き出す（線より前の中身が入っていないかを目で確かめる用・本番では VERCEL_ENV が付くので動かない）
     if (process.env.DEBUG_PROMPT_DIR && !process.env.VERCEL_ENV) {
       try {
@@ -862,9 +886,8 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       if (!res) {
         // 物件の判断・読み取りは変換できなくても Claude に倒さない（呼び出し側が「読み取れなかった」の印を付ける）
         if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: DeepSeek に送れない形（Claude には倒さない）`);
-        // テスト用の切り替えでも画像つきは DeepSeek（文字だけ）に送れないので Claude のまま。ログで分かるようにする
-        if (cfg.testMode) console.warn("[llm-test-mode] DeepSeek に送れない形（画像つき等）→ Claude のまま", JSON.stringify({ route: routeName }));
-        return original(input as RequestInfo, init); // 画像等は今までどおり
+        // テスト用の切り替えでも画像つきは DeepSeek（文字だけ）に送れない。2026-10-01: 黙って Claude にせず止める（extract_estimate 7回が漏れていた）
+        return toClaude("DeepSeek に送れない形（画像つき・1文字ずつの形 等）"); // 画像等は今までどおり（本番）
       }
       const ms = Date.now() - started;
       console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: target.provider, model: target.model, stream: !!body.stream, ms, ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
@@ -879,6 +902,8 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       }
       return res;
     } catch (e) {
+      // 2026-10-01 テストの歯止めで止めた物（画像つき等）は DeepSeek の失敗ではない＝そのまま投げる（本番では起きない）
+      if (e instanceof LlmTestBlockedError) throw e;
       console.warn("[llm-alt] failed:", String(e));
       // 失敗も1行残す（フォールバックの回数が後から数えられる）
       recordAltUsage({
@@ -891,7 +916,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       //   理由: 戻すと、費用が黙って Claude に漏れる＋「DeepSeek で回したつもりの結果」が実は Claude の結果になり、試行錯誤の比較が混ざる。
       //   最終チェック等の呼び出し側はそれぞれ失敗時の扱い（fail-open 等）を持っているので、テストではそれがそのまま見える。
       //   本番（testMode は常に null）はここを通らない＝今までどおり Anthropic にフォールバック
-      if (cfg.testMode) throw e;
+      if (cfg.testMode) { console.error(`[llm-test-mode] ⛔ DeepSeek が失敗（${routeName}）。テストの間は Claude に戻さない: ${String(e).slice(0, 200)}`); throw e; }
       if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw e; // 物件の判断・読み取りは Claude に倒さない
       return original(input as RequestInfo, init); // 失敗したら今までどおり Anthropic で返す
     }
@@ -902,6 +927,6 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
   console.log("[llm-alt] installed", JSON.stringify({ provider: cfg.provider, model: cfg.model, actions: [...cfg.actions],
     ...(cfg.routes.size > 0 ? { routes: [...cfg.routes.entries()].map(([k, v]) => `${k}=${v.provider}:${v.model}`) } : {}),
     ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
-  if (cfg.testMode) console.warn(`[llm-test-mode] ${cfg.testMode}: ブレイン以外の Claude 呼び出しを ${cfg.provider}（${cfg.model}）に回す・失敗しても Claude に戻さない（ローカル専用）`);
+  if (cfg.testMode) console.warn(`[llm-test-mode] ${cfg.testMode}: ブレインも含めて全部の Claude 呼び出しを ${cfg.provider}（${cfg.model}）に回す・Claude に行く物は止める（LLM_TEST_ALLOW_CLAUDE で名札ごとに通す）・失敗しても Claude に戻さない（ローカル専用・手順書 memory/test_protocol_brain.md）`);
   return true;
 }

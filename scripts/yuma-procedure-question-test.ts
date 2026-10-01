@@ -2,14 +2,19 @@
 //   お客様の発言を YUMA の messages に1通入れ、終わったら消す（conversations は触らない＝AIX要対応・通知なし）
 // 実行: BASE_URL=http://localhost:3137 npx tsx --env-file=.env.local scripts/yuma-procedure-question-test.ts [MSG=...]
 import { createClient } from "@supabase/supabase-js";
-import { analyzeConversation } from "../app/lib/brain-core";
-import { getCustomerState } from "../app/lib/customer-state-server";
+// 2026-10-01 共通の入口（scripts/lib/llm-test-harness.ts）の後にブレインを読む（静的 import だと包む前の fetch を握り Claude が記録0）。
+//   起動の印: LLM_TEST_MODE=deepseek-all（試行錯誤）か LLM_TEST_FINAL_CLAUDE=1（最後の確かめ）。手順書 memory/test_protocol_brain.md
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+let h: LlmTestHarness | null = null;
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const Y = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const BASE = process.env.BASE_URL ?? "http://localhost:3137";
 const MSG = process.env.MSG ?? "よろしくお願いします。\n本人確認書類がマイナンバー、パスポート両方あるのですが審査通るまでどのくらいの期間見といたらいいですか？";
 
 async function main() {
+  h = await setupLlmTest("yuma-procedure-question-test");
+  const { analyzeConversation } = await import("../app/lib/brain-core");
+  const { getCustomerState } = await import("../app/lib/customer-state-server");
   const { data: c } = await sb.from("conversations").select("status, customer_name, has_viewed, brain_strategy, conversation_direction").eq("id", Y).maybeSingle();
   const cc = (c ?? {}) as Record<string, unknown>;
   const st = await getCustomerState(Y);
@@ -46,7 +51,8 @@ async function main() {
   } finally {
     await sb.from("messages").delete().eq("id", (ins as { id: string }).id);
     console.log("\n片付け: 入れた発言を消した");
-    setTimeout(() => process.exit(0), 500);
+    if (h) await h.finish().catch((e) => console.warn("finish:", String(e)));
+    setTimeout(() => process.exit(process.exitCode ?? 0), 500);
   }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

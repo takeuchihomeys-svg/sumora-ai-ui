@@ -20,12 +20,12 @@ import { randomUUID } from "node:crypto";
 import { MSG_SEP } from "../app/lib/reply-context";
 
 type Analyze = typeof import("../app/lib/brain-core").analyzeConversation;
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+let h: LlmTestHarness | null = null;
 async function loadBrain(): Promise<Analyze> {
   // fetch の包みは brain-core を読み込む前（Anthropic SDK は作られた時点の fetch を握る）
-  try { const { installLlmUsageRecorder } = await import("../app/lib/llm-usage-recorder"); await installLlmUsageRecorder(); } catch (e) { console.warn("usage recorder:", String(e)); }
-  const { installAltProvider } = await import("../app/lib/llm-alt-provider");
-  const alt = installAltProvider();
-  console.log(`[alt] ${alt ? "差し替え有効（LLM_ALT_ACTIONS の経路は DeepSeek）" : "差し替えなし（Claude）"}`);
+  // 2026-10-01 共通の入口（scripts/lib/llm-test-harness.ts・手順書 memory/test_protocol_brain.md）: テストの種類の明示（deepseek-all／LLM_TEST_FINAL_CLAUDE=1）・包みの順・記録の待ち・Claude の歯止め・YUMA だけ
+  h = await setupLlmTest("yuma-first-reply-echo-test");
   return (await import("../app/lib/brain-core")).analyzeConversation;
 }
 
@@ -219,4 +219,4 @@ async function main() {
 }
 main()
   .catch((e) => { console.error(e); process.exitCode = 1; })
-  .finally(async () => { await removeScene(); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
+  .finally(async () => { await removeScene(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });

@@ -54,11 +54,11 @@ console.log("── ★ 鍵1: 明示しないと何もしない");
   t("手元で切り替え無しは local のまま", usageEnvLabel({ NODE_ENV: "development" }) === "local");
 }
 
-console.log("── ★ ブレインは対象外（Claude のまま）");
+console.log("── ★ 2026-10-01 からブレインも対象（竹内「ブレインの API もテストの時は DeepSeek・方向確定してからクロード」）");
 {
-  for (const name of ["brain_fresh", "brain_full", "brain-warm", "brain_fresh_claude", "brain"]) {
-    t(`名札 ${name} はブレイン`, isBrainCall(name, null));
-    t(`名札 ${name} は切り替えの対象外`, isTestModeTarget("deepseek-all", name, null) === false);
+  for (const name of ["brain_fresh", "brain_full", "brain-warm", "brain_fresh_claude", "brain", "brain_strategy", "brain_checkpoint"]) {
+    t(`名札 ${name} はブレイン（見分けは残す）`, isBrainCall(name, null));
+    t(`名札 ${name} も切り替えの対象（DeepSeek）`, isTestModeTarget("deepseek-all", name, null) === true);
   }
   t("最終チェック（名札なし・classify）は対象", isTestModeTarget("deepseek-all", "classify", "以下の各記述について、情報源に根拠があるかどうか") === true);
   t("返信本文（reply_generate）は対象", isTestModeTarget("deepseek-all", "reply_generate", "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート") === true);
@@ -80,10 +80,12 @@ console.log("── ★ llm-alt-provider への組み込み");
   t("DeepSeek の鍵が無ければ null（何もしない）", readAltConfig({ NODE_ENV: "development", LLM_TEST_MODE: "deepseek-all" }) === null);
   t("名札なし（判定・最終チェック）を回す", shouldRouteAlt(cfg, "classify", "以下の各記述について") === true);
   t("AIX（property_send）も回す", shouldRouteAlt(cfg, "property_send") === true);
-  t("brain_fresh は回さない", shouldRouteAlt(cfg, "brain_fresh") === false);
-  t("brain_full は回さない", shouldRouteAlt(cfg, "brain_full") === false);
-  t("ブレインの system（スモラAI）は回さない", shouldRouteAlt(cfg, resolveRouteName(null, "あなたはスモラAI。与えられた会話履歴を読んで"), "あなたはスモラAI。与えられた会話履歴を読んで") === false);
-  t("セーブデータ作りは回さない", shouldRouteAlt(cfg, "classify", "あなたは不動産賃貸仲介のLINE会話の記録係です。") === false);
+  t("brain_fresh も回す（10/01〜）", shouldRouteAlt(cfg, "brain_fresh") === true);
+  t("brain_full も回す", shouldRouteAlt(cfg, "brain_full") === true);
+  t("戦略の整理（brain_strategy）・セーブデータ（brain_checkpoint）・取り直し（brain_fresh_claude）も回す（10/01 に Claude へ漏れていた3つ）",
+    shouldRouteAlt(cfg, "brain_strategy") && shouldRouteAlt(cfg, "brain_checkpoint") && shouldRouteAlt(cfg, "brain_fresh_claude"));
+  t("ブレインの system（スモラAI）も回す", shouldRouteAlt(cfg, resolveRouteName(null, "あなたはスモラAI。与えられた会話履歴を読んで"), "あなたはスモラAI。与えられた会話履歴を読んで") === true);
+  t("セーブデータ作り（名札なしの形）も回す", shouldRouteAlt(cfg, "classify", "あなたは不動産賃貸仲介のLINE会話の記録係です。") === true);
   t("切り替えだけが理由か（routedByTestMode）", routedByTestMode(cfg, "classify") === true);
   const both = readAltConfig({ ...LOCAL, LLM_ALT_PROVIDER: "deepseek", LLM_ALT_ACTIONS: "reply_generate,brain_fresh" });
   t("LLM_ALT_ACTIONS に brain_fresh を明示した時は今までどおり回す（影の比較用）", shouldRouteAlt(both, "brain_fresh") === true);
@@ -92,7 +94,7 @@ console.log("── ★ llm-alt-provider への組み込み");
   t("切り替え無しの手元は reply_generate だけ回す", shouldRouteAlt(normal, "reply_generate") === true);
   t("willRouteAlt: 切り替えありで名札なしはマスクする側（回る）", willRouteAlt(null, {}, { ...LOCAL }) === true);
   t("willRouteAlt: 申込以降は回さない（個人情報の歯止めは切り替えでも同じ）", willRouteAlt(null, { postApply: true }, { ...LOCAL }) === false);
-  t("willRouteAlt: brain_fresh は回さない", willRouteAlt("brain_fresh", {}, { ...LOCAL }) === false);
+  t("willRouteAlt: brain_fresh も回る（10/01〜・ブレインの取り直しも DeepSeek）", willRouteAlt("brain_fresh", {}, { ...LOCAL }) === true);
 }
 
 console.log("── ★ 構造化出力（final-check の json_schema）を JSON モードに移すのは切り替えの時だけ");

@@ -12,7 +12,12 @@ import { createClient } from "@supabase/supabase-js";
 const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 
+// 2026-10-01 共通の入口（scripts/lib/llm-test-harness.ts・手順書 memory/test_protocol_brain.md）: 起動の印（deepseek-all／LLM_TEST_FINAL_CLAUDE=1）・包み・記録・YUMA だけ
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+let h: LlmTestHarness | null = null;
+
 async function main() {
+  h = await setupLlmTest("yuma-strategy-refresh");
   const { runStrategyRefresh } = await import("../app/lib/brain-core");
   const { data: before } = await sb.from("conversations").select("brain_strategy").eq("id", YUMA).maybeSingle();
   const prev = (before?.brain_strategy ?? null) as Record<string, unknown> | null;
@@ -33,4 +38,6 @@ async function main() {
   console.log(`steps  :`); for (const s of next.next_steps ?? []) console.log(`  - ${s}`);
   console.log(`\n→ 目で読む: Step に「既に押した AIX（上の一覧）」をもう一度書いていないか／次の段階になっているか`);
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+main()
+  .catch((e) => { console.error(e); process.exitCode = 1; })
+  .finally(async () => { if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });

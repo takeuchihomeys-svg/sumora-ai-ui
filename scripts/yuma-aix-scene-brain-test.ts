@@ -2,8 +2,8 @@
 // YUMA（テスト用の会話・竹内さん本人）に実物の場面を入れて、ブレインがどの AIX を選ぶかを見る。場面は毎回消す。
 //
 // 実行（試行錯誤＝ブレインも DeepSeek・起動コマンドにだけ付ける）:
-//   LLM_TEST_MODE=deepseek-all LLM_ALT_ACTIONS=reply_generate,brain_fresh,brain_full npx tsx --env-file=.env.local scripts/yuma-aix-scene-brain-test.ts [回数=3] [場面id,...]
-// 最終の確かめ（本番と同じ＝ブレインは Claude）: 先頭の2つを付けずに 回数=1 で
+//   LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/yuma-aix-scene-brain-test.ts [回数=3] [場面id,...]
+// 最終の確かめ（本番と同じ＝ブレインは Claude）: LLM_TEST_FINAL_CLAUDE=1 を付けて 回数=1 で（2026-10-01〜 どちらかが無いと止まる・手順書 memory/test_protocol_brain.md）
 //
 // 2026-10-01 竹内（和樹事例）「YUMAでテストもするように…DEEPSEEKで徹底的にテストしてクロードは最終調整」
 //   「他のAIXボタンでもちゃんとできているのか」→ 場面は想像で作らず、実際にスタッフがその AIX を押した直前のお客様の発言をそのまま使う。
@@ -13,12 +13,13 @@ import { createClient } from "@supabase/supabase-js";
 // ⚠ 差し替え（fetch を包む）は brain-core を読み込む前に入れる（Anthropic SDK は作られた時点の fetch を握る）。
 //   開発サーバでは instrumentation.ts が入れるが、tsx のスクリプトでは自分で入れないと LLM_ALT_ACTIONS を付けても Claude のまま
 //   （2026-10-01 に1回これで「DeepSeek のつもりが Claude」で回した）。使用量の記録も入れる（llm_usage_logs の model で確かめる）
+// 2026-10-01 共通の入口（scripts/lib/llm-test-harness.ts・手順書 memory/test_protocol_brain.md）に置き換え:
+//   テストの種類の明示・包みの順・記録の待ち・route=script:<名前>・deepseek-all で Claude を止める・YUMA だけ、を1か所で
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
 type Analyze = typeof import("../app/lib/brain-core").analyzeConversation;
+let h: LlmTestHarness | null = null;
 async function loadBrain(): Promise<Analyze> {
-  try { const { installLlmUsageRecorder } = await import("../app/lib/llm-usage-recorder"); await installLlmUsageRecorder(); } catch (e) { console.warn("usage recorder:", String(e)); }
-  const { installAltProvider } = await import("../app/lib/llm-alt-provider");
-  const alt = installAltProvider();
-  console.log(`[alt] ${alt ? "差し替え有効（LLM_ALT_ACTIONS の経路は DeepSeek）" : "差し替えなし（Claude）"}`);
+  h = await setupLlmTest("yuma-aix-scene-brain-test");
   return (await import("../app/lib/brain-core")).analyzeConversation;
 }
 
@@ -102,10 +103,12 @@ const SCENES: Scene[] = [
 ];
 
 async function insertScene(sc: Scene) {
-  const now = Date.now();
+  h!.assertSceneSafe(sc.turns.map((t) => t.t), sc.id);
+  // 2026-10-01: 他の実行も YUMA に場面を入れる → 自分の場面が一番新しくなるよう先の時刻（共通の入口の sceneTimes）
+  const times = h!.sceneTimes(sc.turns.length);
   const rows = sc.turns.map((t, i) => ({
     conversation_id: YUMA, sender: t.s, text: t.t, is_aix_generated: !!t.aix,
-    created_at: new Date(now - (sc.turns.length - i) * 4 * 60_000).toISOString(),
+    created_at: times[i],
   }));
   const ins = await sb.from("messages").insert(rows).select("id");
   if (ins.error) throw new Error(`場面を作れず: ${ins.error.message}`);
@@ -163,4 +166,4 @@ async function main() {
 }
 main()
   .catch((e) => { console.error(e); process.exitCode = 1; })
-  .finally(async () => { await removeScene(); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
+  .finally(async () => { await removeScene(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });

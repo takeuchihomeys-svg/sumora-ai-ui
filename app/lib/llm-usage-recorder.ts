@@ -14,8 +14,9 @@
 //   → 呼び出し側がリクエストの headers に x-sumora-llm-action / x-sumora-llm-conversation を付け、出口で読んで action / conversation_id に残す。
 //   この2つは Anthropic に送らない（送る前に取り除く）。sys_key_full は system 全ブロックを "\n\n" で結合した全文のハッシュ（プロンプト変更の検出用）。
 
-import { usageEnvLabel } from "./llm-test-mode";
-import { sendWithClaudeModelMap, type ClaudeModelEnv } from "./claude-model-map";
+import { usageEnvLabel, readTestRun, testConversationRefusal, strictClaudeBlockReason, noteTestBlocked } from "./llm-test-mode";
+import { sendWithClaudeModelMap, effectiveActionName, type ClaudeModelEnv } from "./claude-model-map";
+import { testPiiRefusal } from "./test-pii-guard";
 
 /** 呼び出し側が付ける印（Anthropic には送らない）。AIX の種類・LINE の会話 ID */
 export const LLM_ACTION_HEADER = "x-sumora-llm-action";
@@ -316,9 +317,20 @@ export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: Recorde
     const init = marks.init;
     const isMessages = isAnthropic && url.pathname === "/v1/messages" && (init?.method ?? "POST").toUpperCase() === "POST";
     if (!isMessages) return original(input, init);
+    // 2026-10-01 竹内「1～4すべて改善する」: テストの歯止めの最後の網（Claude に出る直前）。別クラウドの包みが無い・外れた時もここで止める。
+    //   本番・普段の手元は testClaudeExitBlock が null（readTestRun が null）＝今までどおり
+    const blocked = testClaudeExitBlock(init, marks);
+    if (blocked) {
+      let route: string | null = null;
+      try { route = deps.route(); } catch { route = null; }
+      const req = typeof init?.body === "string" ? parseAnthropicRequest(init.body) : parseAnthropicRequest("");
+      deps.keepAlive(deps.insert({ ...buildRow(route, req, emptyUsage(), 0, "test_blocked", 0, null, deps.env ?? null), action: marks.action, conversation_id: marks.conversationId }).catch(() => {}));
+      throw noteTestBlocked(blocked);
+    }
+    const sendInit = restoreTestApiKey(init);
     // 2026-09-29 竹内「Sonnet を Sonnet 5.5 に置き換え」: 名札で選んだ呼び出しだけ Sonnet 5 → 5.5 に写す（claude-model-map・既定は何もしない）。
     //   写しは記録の内側＝下の sendAndRecord が「実際に送った本文」（model・thinking_mode）を記録する。断り／400 の時の Sonnet 5 への送り直しも1行ずつ残る
-    return sendWithClaudeModelMap((inp, initX) => sendAndRecord(inp, initX, marks), input, init, marks.action, deps.modelEnv?.() ?? (process.env as ClaudeModelEnv));
+    return sendWithClaudeModelMap((inp, initX) => sendAndRecord(inp, initX, marks), input, sendInit, marks.action, deps.modelEnv?.() ?? (process.env as ClaudeModelEnv));
   };
 
   async function sendAndRecord(input: RequestInfo | URL, init: RequestInit | undefined, marks: { action: string | null; conversationId: string | null }): Promise<Response> {
@@ -381,8 +393,91 @@ export function wrapFetchStripSumoraMarks(original: FetchLike): FetchLike {
     // 2026-09-29: 記録を止めている時も Sonnet 5.5 の置き換え（名札で選ぶ）は同じ手順で行う（記録の有無で送るモデルが変わらない）
     const isMessages = url.pathname === "/v1/messages" && (marks.init?.method ?? "POST").toUpperCase() === "POST";
     if (!isMessages) return original(input, marks.init);
-    return sendWithClaudeModelMap(original, input, marks.init, marks.action);
+    // 2026-10-01: 記録を止めている時もテストの歯止めは同じ（本番は null）
+    const blocked = testClaudeExitBlock(marks.init, marks);
+    if (blocked) return Promise.reject(noteTestBlocked(blocked));
+    return sendWithClaudeModelMap(original, input, restoreTestApiKey(marks.init), marks.action);
   };
+}
+
+// ── 2026-10-01 テストの歯止め（Claude に出る直前の網）────────────────────────────────────────────
+// 竹内「テスト行う際必ずこのやりかた（ブレインのぶぶん）読むようにしたらいける。1～4すべて改善する」（手順書 memory/test_protocol_brain.md）
+//   別クラウドの包み（llm-alt-provider）が理由ごとに止めるのが本線。ここは包みが無い・外れた・LLM_ALT_* が欠けた時の最後の網。
+//   本番（Vercel・NODE_ENV=production）では readTestRun が null なので常に null。
+
+/** 名札が無い時の名前（返信生成だけ system の先頭で見分ける・他は "(名札なし)"） */
+function exitActionName(init: RequestInit | undefined, action: string | null): string | null {
+  if (action) return action;
+  try {
+    const sys = typeof init?.body === "string" ? systemText((JSON.parse(init.body) as { system?: unknown }).system) : null;
+    // 名札なしは llm-alt-provider.resolveRouteName と同じく "classify"（LLM_TEST_ALLOW_CLAUDE の名前を2か所で揃える）
+    return effectiveActionName(null, sys) ?? "classify";
+  } catch { return null; }
+}
+
+/** テストの間に Claude へ出してはいけない呼び出しなら、止める理由（日本語）。出してよい時・テストでない時は null */
+export function testClaudeExitBlock(init: RequestInit | undefined, marks: { action: string | null; conversationId: string | null }, env: Record<string, string | undefined> = process.env): string | null {
+  if (!readTestRun(env)) return null;
+  const refusal = testConversationRefusal(env, marks.conversationId);
+  if (refusal) return refusal;
+  const pii = testPiiRefusal(env, typeof init?.body === "string" ? init.body : "", "Claude");
+  if (pii) return pii;
+  return strictClaudeBlockReason(env, { action: exitActionName(init, marks.action), why: "Claude の出口まで来た（DeepSeek に回されなかった）" });
+}
+
+/**
+ * スクリプトの共通の入口（scripts/lib/llm-test-harness.ts）が deepseek-all の間だけ ANTHROPIC_API_KEY を偽の値に差し替える。
+ * 包みを通らずに Claude を呼ぶ物（包む前に作った SDK 等）は 401 で必ず落ち、黙って払う事が無くなる。
+ * 包みを通って LLM_TEST_ALLOW_CLAUDE で許した呼び出しだけ、ここで本物の鍵に戻して送る。差し替えていなければ何もしない（本番も）
+ */
+export const TEST_API_KEY_SENTINEL = "sumora-test-mode-claude-blocked";
+const REAL_KEY_SLOT = Symbol.for("sumora.testRealAnthropicKey");
+export function stashRealAnthropicKeyForTest(realKey: string): void {
+  (globalThis as unknown as Record<symbol, string>)[REAL_KEY_SLOT] = realKey;
+}
+function restoreTestApiKey(init: RequestInit | undefined): RequestInit | undefined {
+  const real = (globalThis as unknown as Record<symbol, string | undefined>)[REAL_KEY_SLOT];
+  const h = init?.headers;
+  if (!real || !h) return init;
+  const fix = (k: string, v: unknown) => (k.toLowerCase() === "x-api-key" && v === TEST_API_KEY_SENTINEL ? real : v) as string;
+  if (typeof Headers !== "undefined" && h instanceof Headers) {
+    if (h.get("x-api-key") !== TEST_API_KEY_SENTINEL) return init;
+    const copy = new Headers(h); copy.set("x-api-key", real); return { ...init, headers: copy };
+  }
+  if (Array.isArray(h)) return { ...init, headers: (h as [string, string][]).map(([k, v]) => [k, fix(k, v)] as [string, string]) };
+  if (typeof h === "object") {
+    const rec = h as Record<string, unknown>; const out: Record<string, string> = {};
+    for (const k of Object.keys(rec)) out[k] = fix(k, rec[k]);
+    return { ...init, headers: out };
+  }
+  return init;
+}
+
+// スクリプトの行を見分ける route（"script:yuma-aix-scene-brain-test" 等）。共通の入口だけが置く（本番・開発サーバは置かない＝今までどおり）
+const SCRIPT_ROUTE_SLOT = Symbol.for("sumora.llmScriptRoute");
+export function setScriptRouteLabel(label: string): void {
+  (globalThis as unknown as Record<symbol, string>)[SCRIPT_ROUTE_SLOT] = label;
+}
+function scriptRouteLabel(): string | null {
+  return (globalThis as unknown as Record<symbol, string | undefined>)[SCRIPT_ROUTE_SLOT] ?? null;
+}
+
+// 書き込みの待ち（スクリプトは終わる前に flushLlmUsage を待つ。process.exit で記録が落ちないように）。本番（NODE_ENV=production）では数えない
+const PENDING_SLOT = Symbol.for("sumora.llmUsagePending");
+function trackPending(p: Promise<unknown>): void {
+  if (process.env.NODE_ENV === "production") return;
+  const g = globalThis as unknown as Record<symbol, Set<Promise<unknown>> | undefined>;
+  const set = (g[PENDING_SLOT] ??= new Set());
+  set.add(p);
+  p.finally(() => set.delete(p)).catch(() => {});
+}
+/** 記録の書き込みを待つ（スクリプト用・最大 timeoutMs） */
+export async function flushLlmUsage(timeoutMs = 8000): Promise<number> {
+  const set = (globalThis as unknown as Record<symbol, Set<Promise<unknown>> | undefined>)[PENDING_SLOT];
+  if (!set || set.size === 0) return 0;
+  const n = set.size;
+  await Promise.race([Promise.allSettled([...set]), new Promise((r) => setTimeout(r, timeoutMs))]);
+  return n;
 }
 
 function installWrapped(g: { fetch: FetchLike & Record<PropertyKey, unknown> }, original: FetchLike & Record<PropertyKey, unknown>, wrapped: FetchLike): void {
@@ -412,8 +507,8 @@ function lazyAltRecorder(): AltRecorder | null {
       const { error } = await createClient(url, key, { auth: { persistSession: false } }).from("llm_usage_logs").insert(row);
       if (error && !warned) { warned = true; console.warn("[llm-usage-recorder] insert failed (lazy):", error.message); }
     },
-    keepAlive: (p: Promise<unknown>) => { import("@vercel/functions").then((m) => m.waitUntil(p)).catch(() => { /* Vercel 以外 */ }); },
-    route: () => null,
+    keepAlive: (p: Promise<unknown>) => { trackPending(p); import("@vercel/functions").then((m) => m.waitUntil(p)).catch(() => { /* Vercel 以外 */ }); },
+    route: () => scriptRouteLabel(),
     // 2026-09-26 テスト用の切り替え（llm-test-mode）が効いている時だけ "local:deepseek-all"。本番は VERCEL_ENV のまま
     env: usageEnvLabel(process.env),
   };
@@ -479,8 +574,9 @@ async function buildRecorderDeps(): Promise<AltRecorder | null> {
       const { error } = await db.from("llm_usage_logs").insert(row);
       if (error && !warned) { warned = true; console.warn("[llm-usage-recorder] insert failed:", error.message); }
     },
-    keepAlive: (p: Promise<unknown>) => { try { waitUntil(p); } catch { /* Vercel 以外 */ } },
-    route: () => workStore?.getStore()?.route ?? null,
+    keepAlive: (p: Promise<unknown>) => { trackPending(p); try { waitUntil(p); } catch { /* Vercel 以外 */ } },
+    // 2026-10-01: スクリプト（共通の入口）の行は route に "script:<名前>"（開発サーバ・本番は今までどおり Next の route／null）
+    route: () => workStore?.getStore()?.route ?? scriptRouteLabel(),
     // 2026-09-26 テスト用の切り替え（llm-test-mode）が効いている時だけ "local:deepseek-all"。本番は VERCEL_ENV のまま
     env: usageEnvLabel(process.env),
   };
@@ -499,8 +595,63 @@ export async function installLlmUsageRecorder(): Promise<boolean> {
   const original = g.fetch;
   // 別クラウド（DeepSeek）に回った呼び出しも同じ口から書く（llm-alt-provider が recordAltUsage を呼ぶ）
   altRecorder = deps;
+  cachedDeps = deps;
   const wrapped = wrapFetchWithLlmUsageRecorder(original.bind(globalThis), deps);
   installWrapped(g, original, wrapped);
+  return true;
+}
+
+// ── 2026-10-01 開発サーバの包みの外れを「外れた瞬間」に直す（Next の resetFetch）────────────────────────────
+// 竹内「1～4すべて改善する」の②（テストの LLM 呼び出しは全部記録する）: 10/01 の未記録の Claude（コンソールとの差 約$1.8）の大きい方は、
+//   開発サーバで Next が HMR のたびに globalThis.fetch を起動時の素の fetch に戻し（router-server の resetFetch）、
+//   包みの付け直し（ensureLlmFetchChainInDev）を持たない入口（aix-template-generate 等・Claude を呼ぶ 86 ファイルのうち付け直しは 4 か所）が
+//   素の fetch で Claude を呼んで記録0になった物（テンプレート生成 約27回）。入口ごとに足すのは追いつかないので、
+//   開発サーバだけ globalThis.fetch を「素の fetch に戻された時に同じ順で包み直す」形にする（instrumentation.ts が入れる）。
+//   本番（NODE_ENV=production・Vercel）では入れない＝今までどおり。止める時は LLM_DEV_FETCH_GUARD=off。
+let cachedDeps: AltRecorder | null = null;
+
+/** 記録の包みを同期で付け直す（開発サーバの見張り用・installLlmUsageRecorder の後だけ使える） */
+export function reinstallLlmUsageRecorderSync(): boolean {
+  const g = globalThis as unknown as { fetch: FetchLike & Record<PropertyKey, unknown> };
+  if (typeof g.fetch !== "function" || g.fetch[INSTALLED]) return false;
+  const original = g.fetch;
+  if (!cachedDeps) { installWrapped(g, original, wrapFetchStripSumoraMarks(original.bind(globalThis))); return false; }
+  altRecorder = cachedDeps;
+  installWrapped(g, original, wrapFetchWithLlmUsageRecorder(original.bind(globalThis), cachedDeps));
+  return true;
+}
+
+const DEV_GUARD_FLAG = Symbol.for("sumora.devFetchGuard");
+/**
+ * 開発サーバだけ: globalThis.fetch に「素の fetch（nativeFetch）を入れられたら rebuild で包み直す」見張りを付ける。
+ * 包み直しは rebuild の中で globalThis.fetch に代入する（見張りは素の fetch 以外の代入はそのまま受ける＝Next の patch-fetch 等も今までどおり）。
+ */
+export function installDevFetchGuard(nativeFetch: FetchLike, rebuild: () => void, env: Record<string, string | undefined> = process.env): boolean {
+  if (env.NODE_ENV === "production" || env.VERCEL || env.VERCEL_ENV || env.VERCEL_URL || env.AWS_LAMBDA_FUNCTION_NAME) return false;
+  if ((env.LLM_DEV_FETCH_GUARD ?? "").trim().toLowerCase() === "off") return false;
+  const g = globalThis as unknown as Record<symbol, unknown>;
+  if (g[DEV_GUARD_FLAG]) return true;
+  const desc = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  if (desc && desc.configurable === false) return false;
+  let current = (globalThis as unknown as { fetch: FetchLike }).fetch;
+  let rebuilding = false;
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true, enumerable: desc?.enumerable ?? true,
+    get: () => current,
+    set: (v: FetchLike) => {
+      current = v;
+      if (v === nativeFetch && !rebuilding) {
+        rebuilding = true;
+        try {
+          rebuild();
+          console.warn("[llm-usage-recorder] 開発サーバで fetch が素の fetch に戻されたので、その場で包み直しました（使用量の記録・絵文字の片割れ除去・別クラウド）");
+        } catch (e) {
+          console.warn("[llm-usage-recorder] 包み直しに失敗:", e instanceof Error ? e.message : e);
+        } finally { rebuilding = false; }
+      }
+    },
+  });
+  g[DEV_GUARD_FLAG] = true;
   return true;
 }
 

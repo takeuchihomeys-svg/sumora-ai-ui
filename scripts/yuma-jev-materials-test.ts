@@ -9,7 +9,10 @@
 // 実行: npx tsx --env-file=.env.local scripts/yuma-jev-materials-test.ts [場面の番号をカンマで]
 process.env.JEV_SHADOW_AIX_FULL = "1";
 import { createClient } from "@supabase/supabase-js";
-import { analyzeConversation } from "../app/lib/brain-core";
+// 2026-10-01 ブレインは共通の入口（scripts/lib/llm-test-harness.ts）の後に読む（静的 import だと包む前の fetch を握り Claude が記録0）。
+//   起動の印: LLM_TEST_MODE=deepseek-all か LLM_TEST_FINAL_CLAUDE=1（手順書 memory/test_protocol_brain.md）
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+let h: LlmTestHarness | null = null;
 import { buildAixJevMaterials } from "../app/lib/aix-jev-materials";
 import { loadCustomerStateInput } from "../app/lib/customer-state-server";
 import { resolveCustomerState } from "../app/lib/customer-state";
@@ -52,7 +55,9 @@ async function materialsNow() {
 }
 
 async function main() {
-  const pick = (process.argv[2] ?? "").split(",").map((s) => Number(s.trim())).filter((n) => n > 0);
+  h = await setupLlmTest("yuma-jev-materials-test");
+  const { analyzeConversation } = await import("../app/lib/brain-core");
+  const pick =(process.argv[2] ?? "").split(",").map((s) => Number(s.trim())).filter((n) => n > 0);
   const scenes = pick.length ? SCENES.filter((_, i) => pick.includes(i + 1)) : SCENES;
   const { data: c } = await sb.from("conversations").select("status, brain_strategy, conversation_direction").eq("id", Y).maybeSingle();
   const cc = (c ?? {}) as Record<string, unknown>;
@@ -97,6 +102,7 @@ async function main() {
       if (ids.length) await sb.from("messages").delete().in("id", ids);
     }
   }
-  setTimeout(() => process.exit(0), 500);
+  await h.finish();
+  setTimeout(() => process.exit(process.exitCode ?? 0), 500);
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch(async (e) => { console.error(e); if (h) await h.finish().catch(() => {}); process.exit(1); });

@@ -4,15 +4,15 @@
 //   判断の保存/AIX要対応/カレンダー/通知なし・場面は毎回消す）。
 //   GEN=1 で「AIX なし」になった場面の返信の下書きも作る（BASE_URL の開発サーバの /api/generate-reply・本文は DeepSeek）。
 // 実行（試行錯誤＝ブレインも DeepSeek）:
-//   LLM_TEST_MODE=deepseek-all LLM_ALT_ACTIONS=reply_generate,brain_fresh,brain_full npx tsx --env-file=.env.local scripts/yuma-brain-1001-test.ts [回数=3] [場面id,...]
-// 最終（本番と同じ＝ブレインは Claude）: 先頭の2つを付けずに 回数=1
+//   LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/yuma-brain-1001-test.ts [回数=3] [場面id,...]
+// 最終（本番と同じ＝ブレインは Claude）: LLM_TEST_FINAL_CLAUDE=1 を付けて 回数=1（2026-10-01〜 どちらかが無いと止まる・手順書 memory/test_protocol_brain.md）
 import { createClient } from "@supabase/supabase-js";
+// 2026-10-01 共通の入口（scripts/lib/llm-test-harness.ts）に置き換え（包みの順・記録の待ち・Claude の歯止め・YUMA だけ）
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
 type Analyze = typeof import("../app/lib/brain-core").analyzeConversation;
+let h: LlmTestHarness | null = null;
 async function loadBrain(): Promise<Analyze> {
-  try { const { installLlmUsageRecorder } = await import("../app/lib/llm-usage-recorder"); await installLlmUsageRecorder(); } catch (e) { console.warn("usage recorder:", String(e)); }
-  const { installAltProvider } = await import("../app/lib/llm-alt-provider");
-  const alt = installAltProvider();
-  console.log(`[alt] ${alt ? "差し替え有効（LLM_ALT_ACTIONS の経路は DeepSeek）" : "差し替えなし（Claude）"}`);
+  h = await setupLlmTest("yuma-brain-1001-test");
   return (await import("../app/lib/brain-core")).analyzeConversation;
 }
 
@@ -75,6 +75,7 @@ const SCENES: Scene[] = [
 ];
 
 async function insertScene(sc: Scene) {
+  h!.assertSceneSafe(sc.turns.map((t) => t.t), sc.id);
   const now = Date.now();
   const rows = sc.turns.map((t, i) => ({
     conversation_id: YUMA, sender: t.s, text: t.t, is_aix_generated: !!t.aix,
@@ -157,4 +158,4 @@ async function main() {
 }
 main()
   .catch((e) => { console.error(e); process.exitCode = 1; })
-  .finally(async () => { await removeScene(); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
+  .finally(async () => { await removeScene(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
