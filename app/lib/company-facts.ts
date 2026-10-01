@@ -62,6 +62,20 @@ export function isPaymentMethodQuestion(t: string): boolean {
   return false;
 }
 
+/**
+ * 初期費用を「いつ」払うかの質問か（純関数）。
+ * 2026-10-01 YUMA の再生（本番の会話 ab7ea742 9/25「初期費用の支払いはいつですか？」）: 支払い方法の拾い（isPaymentMethodQuestion）に「いつ」が無く、
+ *   事実が届かず DeepSeek の下書きが「管理会社の規定により異なるため、確認させて頂きます」になった（スタッフは「ご入居日から5日から1週間ほど前」と即答・穴:G1）。
+ *   線は scripts/audit-payment-timing.ts（365日・お客様の発言を全部読んだ）。
+ */
+export function isPaymentTimingQuestion(t: string): boolean {
+  const s = t ?? "";
+  if (/(?:支払|払い|払う|振込|振り込|入金)[^。\n]{0,10}(?:いつ|タイミング|時期|何日前|いつまで)/.test(s)) return true;
+  if (/(?:いつ|どのタイミング|何日前)[^。\n]{0,10}(?:支払|払|振込|振り込|入金)/.test(s)) return true;
+  if (/前払い(?:です|でしょう|ですよね)/.test(s)) return true;
+  return false;
+}
+
 export const COMPANY_FACTS: CompanyFact[] = [
   {
     id: "store",
@@ -149,6 +163,17 @@ export const COMPANY_FACTS: CompanyFact[] = [
     ask: (t) => isRentIncludedQuestion(t),
     n: 4,
     fact: RENT_INCLUDED_FACT,
+  },
+  {
+    // 2026-10-01 YUMA の再生（本番 ab7ea742 9/25「初期費用の支払いはいつですか？」）: 下書きが「管理会社の規定により異なるため、確認させて頂きます」。
+    //   スタッフは即答（365日・支払いの時期を書いた文7通: 「ご入居日から5日から1週間前程」4・「審査通過後、管理会社より請求書が来たタイミング」3・
+    //   両者は同じ流れ＝請求書は入居日の約1週間前に届く）。お客様の質問は365日で10通（scripts/audit-payment-timing.ts）。
+    //   保険料の後払い・家賃の支払いがいつからは外す（別の話）
+    id: "payment_timing",
+    ask: (t) => isPaymentTimingQuestion(t),
+    not: /保険|家賃(?:の)?(?:お?支払い?|払い)[^。\n]{0,6}いつから/,
+    n: 7,
+    fact: "初期費用のお支払いは**審査通過後、管理会社から請求書が届いたタイミング**で、目安は**ご入居日の5日〜1週間前**（ご入居日によって決まる）。それより前にお振込頂くことは無い。「管理会社に確認します」で返さず本文で答える。",
   },
   {
     id: "area",

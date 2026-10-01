@@ -37,6 +37,8 @@ import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
+import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
+import { phoneButtonJustSent } from "@/app/lib/phone-button-sent";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
@@ -809,7 +811,8 @@ async function detectSignalBasedAixFallback(
       const viewingReq = /(内覧|内見|見学).{0,4}(したい|希望|でき|いつ|日程|調整)/;
       const otherPropertyReq =
         /(安|抑え)[^。！!？?\n]{0,10}(物件|お?部屋)|(物件|お?部屋)[^。！!？?\n]{0,8}(ない(です|でしょう)?か|あります|ありません)/;
-      if (CUSTOMER_ESTIMATE_INTENT_RE.test(custBody) && !viewingReq.test(custText) && !otherPropertyReq.test(custText)) {
+      // 2026-10-01 YUMA の再生: 支払いの時期・方法／家賃の線の質問は見積書にしない（180日の実送信で見積書送る 0/11・cost-question-kind.ts）
+      if (CUSTOMER_ESTIMATE_INTENT_RE.test(custBody) && !viewingReq.test(custText) && !otherPropertyReq.test(custText) && !costQuestionNotEstimate(custText)) {
         return "estimate_sheet";
       }
     }
@@ -848,7 +851,7 @@ async function detectSignalBasedAixFallback(
     // （コスト懸念＝信号0.9・見積送付済み＝信号3 は上で先に除外済み）
     // 2026-09-08 Fable5: 語出現（/見積|初期費用/）ではなく、項目ラベル除去後の依頼・質問形（CUSTOMER_ESTIMATE_INTENT_RE）でのみ estimate_sheet
     //   （条件フォームの「⑦初期費用」ラベル・「初期費用を貯めてる途中」等の語出現では発火しない・四者同名）
-    if (propertyInPlay && !isConditionFormMessage(custText) && CUSTOMER_ESTIMATE_INTENT_RE.test(custText.replace(FORM_LABEL_RE, " "))) return "estimate_sheet";
+    if (propertyInPlay && !isConditionFormMessage(custText) && !costQuestionNotEstimate(custText) && CUSTOMER_ESTIMATE_INTENT_RE.test(custText.replace(FORM_LABEL_RE, " "))) return "estimate_sheet";
 
     // 信号TikTok（弊社SNS動画流入 → property_search）:
     // 弊社TikTok/Instagramの動画で物件に興味を持って問い合わせてきた顧客。
@@ -2945,6 +2948,12 @@ ${history}`;
       finalAix = "phone_call";
       decisionSource = "signal:scene_S10_phone_request";
     }
+    // 2026-10-01 YUMA の再生: こちらが電話のボタンを送った直後のお客様の返事（「14:30-15:00くらいに掛けても大丈夫でしょうか？」）にもう一度 電話をかける を出していた。
+    //   実送信（200日・ボタンの後の返事9番）でスタッフがもう一度押したのは0番＝返信で答える（app/lib/phone-button-sent.ts）
+    if (!promiseAix && finalAix === "phone_call" && phoneButtonJustSent([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })))) {
+      finalAix = null;
+      decisionSource = "rule:phone_button_already_sent";
+    }
     // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた（場面の証拠 S3・guarantor_question）→ AIX【保証会社について】。
     //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけ。「保証会社は緩そうなところでしょうか？」への実送信は保証会社の一覧。
     //   AIX なし／確認します／物件確認した を 保証会社について にする（他の AIX を選んだ時はそのまま）
@@ -3009,7 +3018,11 @@ ${history}`;
     const procedureQ = detectProcedureQuestion(unrepliedTurn.text);
     if (!promiseAix && isProcedureReplyQuestion(procedureQ) && !isPostApplyStatus(convStatus) && !unrepliedTurn.hasImage
       && (!sceneEvidence || sceneEvidence.scene === "S2_move_in")
-      && (finalAix === null || finalAix === "property_check_result" || finalAix === "acknowledge_check" || finalAix === "guarantor_info")) {
+      // 2026-10-01 YUMA の再生: 決定論の信号（signal:*）が立てた物件ピックアップ／オススメも返信に倒す（LLM が選んだ物はそのまま）。
+      //   「15日までに入居となると審査も…間に合うんですかね」に未履行の「新着で…随時お送り」の宣言から signal:property_send が立ち、下書きが出なかった。
+      //   実送信（365日・手続きの質問24番）: 24時間以内に物件を送ったのは1番だけ・返事は全部本文（scripts/audit-procedure-question.ts）
+      && (finalAix === null || finalAix === "property_check_result" || finalAix === "acknowledge_check" || finalAix === "guarantor_info"
+        || ((finalAix === "property_send" || finalAix === "property_recommendation") && String(decisionSource ?? "").startsWith("signal:")))) {
       if (procedureAnswer?.plan.mode === "two_choice") {
         finalAix = "property_check_result";
         sceneSignalCheckPattern = "mgmt_move_in";
@@ -3110,7 +3123,10 @@ ${history}`;
       { postApply: isPostApplyStatus(convStatus), customerWillSend: customerWillSendFirst },
     );
     // 2026-10-01: 家賃込みかの質問だけの連投（rule:rent_included_reply）は返信で答える番＝ピックアップの合図で AIX を立て直さない
-    if (!promiseAix && !closedAckWait && !viewingDayWait && !rentIncludedReply && pendingPickup.pending && finalAix === null) {
+    // 2026-10-01 YUMA の再生: 手続きの質問（rule:procedure_question_reply）・資料で答えられる確認（rule:confirm_topic_in_material）も返信で答える番。
+    //   「15日までに入居となると審査も…間に合うんですかね」（スタッフは審査と入居までの期間を手打ち）に、未履行の「新着で…随時お送り」の宣言から
+    //   物件ピックアップを立て直して下書きが出なかった（signal:pending_pickup・穴:G5）
+    if (!promiseAix && !closedAckWait && !viewingDayWait && !rentIncludedReply && procedureDecision !== "reply" && !confirmTopicReply && pendingPickup.pending && finalAix === null) {
       finalAix = "property_send";
       decisionSource = "signal:pending_pickup";
       promiseAltAction = promiseAltAction ?? "property_recommendation";

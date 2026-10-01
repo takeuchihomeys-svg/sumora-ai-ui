@@ -1,0 +1,364 @@
+{
+ "note": "場面ごとの正解の道（reply か AIX の種類）。src（会話IDの頭8桁＋時刻）で番を指す。個人情報なし。replay-scenarios-mine.ts --pick が読む",
+ "stage_ja": {
+  "first_contact": "初回",
+  "thanks": "相づち・お礼",
+  "cost": "費用",
+  "viewing": "内覧",
+  "url_inquiry": "物件の持ち込み(URL)",
+  "more_props": "他の物件",
+  "conditions": "条件の言い直し",
+  "decline_wait": "検討・保留",
+  "vacancy": "空き確認",
+  "apply": "申込の意思",
+  "meeting_date": "日時の確定",
+  "pet_parking": "ペット・審査",
+  "equipment": "設備・周辺",
+  "procedure": "手続き・期間",
+  "phone": "電話",
+  "rent_included": "家賃込み",
+  "other": "その他"
+ },
+ "scenarios": {
+  "a260169b 2026-09-30T13:36": {
+   "id": "first_contact_01",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "c024b7b9 2026-09-30T01:44": {
+   "id": "first_contact_02",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "63fa0c26 2026-09-29T09:22": {
+   "id": "first_contact_03",
+   "accept": [
+    "reply",
+    "property_check_result"
+   ],
+   "why": "初回に条件＋物件の持ち込み。スタッフは確認の宣言を手打ち・10/01 決定①で物件確認したも可"
+  },
+  "732692f2 2026-09-27T11:54": {
+   "id": "first_contact_04",
+   "accept": [
+    "reply",
+    "property_check_result",
+    "estimate_sheet"
+   ],
+   "why": "初回に物件画像の持ち込み。確認＋見積の宣言を手打ち"
+  },
+  "22bbce86 2026-09-26T08:52": {
+   "id": "first_contact_05",
+   "accept": [
+    "condition_hearing"
+   ],
+   "why": "スタッフは AIX【condition_hearing】"
+  },
+  "a260169b 2026-10-01T01:20": {
+   "id": "thanks_06",
+   "accept": [
+    "property_send",
+    "property_recommendation"
+   ],
+   "why": "スタッフは AIX【property_send+property_recommendation】"
+  },
+  "84434172 2026-09-29T03:02": {
+   "id": "thanks_07",
+   "accept": [
+    "viewing_invite"
+   ],
+   "why": "スタッフは AIX【viewing_invite】"
+  },
+  "206da1fa 2026-09-26T08:44": {
+   "id": "thanks_08",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "c024b7b9 2026-09-30T09:46": {
+   "id": "cost_09",
+   "accept": [
+    "estimate_sheet"
+   ],
+   "why": "スタッフは AIX【estimate_sheet】"
+  },
+  "8a77820b 2026-09-30T06:58": {
+   "id": "cost_10",
+   "accept": [
+    "reply"
+   ],
+   "why": "9/30 竹内: 分割はクレジットカード払いで可（手数料3.24%）。実送信の『分割は難しい』は今の決まりと逆",
+   "must": [
+    "カード|クレジット"
+   ],
+   "mustNot": [
+    "分割(?:払い)?は難しい"
+   ]
+  },
+  "ab7ea742 2026-09-25T08:18": {
+   "id": "cost_11",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "64380907 2026-09-29T14:46": {
+   "id": "cost_12",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "84434172 2026-09-28T09:11": {
+   "id": "cost_13",
+   "accept": [
+    "reply",
+    "estimate_sheet"
+   ],
+   "why": "見積もりの依頼。スタッフは作成の宣言を手打ち→後で見積書送る"
+  },
+  "69d56ee7 2026-09-22T08:35": {
+   "id": "viewing_14",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "fbffca3d 2026-09-17T10:19": {
+   "id": "viewing_15",
+   "accept": [
+    "viewing_invite"
+   ],
+   "why": "スタッフは AIX【viewing_invite】"
+  },
+  "ae18c038 2026-09-19T08:02": {
+   "id": "viewing_17",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "fecda03f 2026-09-20T14:26": {
+   "id": "url_inquiry_18",
+   "accept": [
+    "property_check_result"
+   ],
+   "why": "スタッフは AIX【property_check_result】"
+  },
+  "c024b7b9 2026-09-30T09:59": {
+   "id": "url_inquiry_19",
+   "accept": [
+    "reply",
+    "property_check_result"
+   ],
+   "why": "URL 4件の持ち込み。スタッフは確認の宣言・10/01 決定①で物件確認したも可"
+  },
+  "ab7ea742 2026-09-28T04:23": {
+   "id": "more_props_20",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "9faff2ec 2026-09-17T03:16": {
+   "id": "more_props_21",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "cf2963d4 2026-09-19T09:23": {
+   "id": "more_props_22",
+   "accept": [
+    "property_send",
+    "property_recommendation"
+   ],
+   "why": "スタッフは AIX【property_send】"
+  },
+  "69d56ee7 2026-09-21T06:36": {
+   "id": "conditions_23",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "9faff2ec 2026-09-18T10:05": {
+   "id": "conditions_24",
+   "accept": [
+    "property_recommendation",
+    "property_send"
+   ],
+   "why": "スタッフは AIX【property_recommendation】"
+  },
+  "fecda03f 2026-09-20T12:25": {
+   "id": "decline_wait_25",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "a0cfe4c4 2026-09-12T08:36": {
+   "id": "vacancy_27",
+   "accept": [
+    "property_check_result"
+   ],
+   "why": "スタッフは AIX【property_check_result】"
+  },
+  "f5e92bc6 2026-09-15T04:47": {
+   "id": "vacancy_28",
+   "accept": [
+    "property_check_result"
+   ],
+   "why": "スタッフは AIX【property_check_result】"
+  },
+  "3890f691 2026-09-10T12:14": {
+   "id": "vacancy_29",
+   "accept": [
+    "reply",
+    "viewing_invite"
+   ],
+   "why": "内覧の空き時間の質問。スタッフは候補を手打ち"
+  },
+  "a0cfe4c4 2026-09-12T13:09": {
+   "id": "apply_30",
+   "accept": [
+    "application_push"
+   ],
+   "why": "スタッフは AIX【application_push】"
+  },
+  "fecda03f 2026-09-22T03:02": {
+   "id": "apply_31",
+   "accept": [
+    "reply",
+    "application_push"
+   ],
+   "why": "申込の意思。スタッフは一言の後に申込へ"
+  },
+  "3890f691 2026-09-13T06:48": {
+   "id": "meeting_date_32",
+   "accept": [
+    "meeting_place"
+   ],
+   "why": "スタッフは AIX【meeting_place】"
+  },
+  "84434172 2026-09-29T03:38": {
+   "id": "meeting_date_33",
+   "accept": [
+    "meeting_place"
+   ],
+   "why": "スタッフは AIX【meeting_place】"
+  },
+  "58ae93f3 2026-09-29T04:54": {
+   "id": "meeting_date_34",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "fecda03f 2026-09-22T02:21": {
+   "id": "pet_parking_35",
+   "accept": [
+    "reply",
+    "property_check_result"
+   ],
+   "why": "ペット可否は確認した事実が要る（スタッフは確認済みの事実で答えた）"
+  },
+  "c795e4d7 2026-09-20T13:28": {
+   "id": "pet_parking_36",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "b2fc3867 2026-09-28T09:07": {
+   "id": "equipment_37",
+   "accept": [
+    "reply",
+    "property_check_result"
+   ],
+   "why": "設備は資料の設備欄で・言い切らない（9/29）"
+  },
+  "f193d13d 2026-09-17T08:23": {
+   "id": "equipment_38",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "8a77820b 2026-09-30T07:28": {
+   "id": "procedure_39",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "9d5c3c23 2026-08-05T05:30": {
+   "id": "procedure_40",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "ad97cd40 2026-09-19T09:26": {
+   "id": "phone_41",
+   "accept": [
+    "phone_call"
+   ],
+   "why": "スタッフは AIX【phone_call】"
+  },
+  "d46290ff 2026-09-15T03:00": {
+   "id": "phone_42",
+   "accept": [
+    "reply",
+    "phone_call"
+   ],
+   "why": "電話の相談。スタッフは電話のボタンの案内を手打ち"
+  },
+  "f2196d11 2026-09-26T08:14": {
+   "id": "rent_included_43",
+   "accept": [
+    "reply"
+   ],
+   "why": "10/01 竹内決定③: 家賃込みかだけの質問は AIX でなく返信（前家賃込み）",
+   "must": [
+    "前家賃"
+   ],
+   "mustNot": [
+    "含まれておりません|含まれていません"
+   ]
+  },
+  "c024b7b9 2026-10-01T02:40": {
+   "id": "other_44",
+   "accept": [
+    "reply"
+   ],
+   "why": "支払い方法。※9/30 の決まり（分割はカード）と実送信（一括のみ）が食い違う＝判断待ち"
+  },
+  "8a77820b 2026-09-30T06:26": {
+   "id": "other_45",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  },
+  "f895b126 2026-09-26T02:38": {
+   "id": "other_46",
+   "accept": [
+    "application_push"
+   ],
+   "why": "スタッフは AIX【application_push】"
+  },
+  "b3bae304 2026-09-30T03:50": {
+   "id": "other_47",
+   "accept": [
+    "reply"
+   ],
+   "why": "スタッフは返信（手打ち）"
+  }
+ }
+}

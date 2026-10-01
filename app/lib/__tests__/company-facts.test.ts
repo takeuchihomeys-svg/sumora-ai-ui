@@ -194,5 +194,16 @@ describe("形", () => {
   it("すべての事実に根拠の通数がある", () => { for (const f of COMPANY_FACTS) truthy(f.n > 0, f.id); });
 });
 
+// 2026-10-01 YUMA の再生（本番 ab7ea742・365日の質問10通）
+describe("初期費用を払う時期", () => {
+  it("「初期費用の支払いはいつですか？」→ payment_timing", () => truthy(ids("初期費用の支払いはいつですか？").includes("payment_timing")));
+  it("「初期費用はいつ払えばいいんですかね💦」→ payment_timing", () => truthy(ids("初期費用はいつ払えばいいんですかね💦").includes("payment_timing")));
+  it("「10/11から入居ってなった場合、そのお金はいつ払う感じなんですか？」→ payment_timing", () => truthy(ids("10/11から入居ってなった場合、そのお金はいつ払う感じなんですか？").includes("payment_timing")));
+  it("保険料の後払い・家賃がいつからは渡さない", () => {
+    falsy(ids("初回保険料はいくらになるんですか？ 後払いっていつ支払いになるんですか？").includes("payment_timing"));
+    falsy(ids("家賃支払いいつからですか？").includes("payment_timing"));
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => `- ${f}`).join("\n")); process.exit(1); }

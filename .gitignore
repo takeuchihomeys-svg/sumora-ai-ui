@@ -67,3 +67,7 @@ scripts/.yuma-scene-gap-*
 scripts/_*.ts
 # 2026-09-26 テストの3段の②: 場面ごとに Claude で1回取ったブレインの判断の置き場（scripts/yuma-brain-decision.ts）
 scripts/.brain-cache/
+# 2026-10-01 YUMA の再生テスト（scripts/yuma-replay-scenarios.ts）: 場面の文は本番の会話（名前・電話・メールは伏せた）なので入れない。
+#   作り直しは scripts/replay-scenarios-mine.ts --pick=scripts/replay-scenarios.keys.json（keys と expect は個人情報なし＝入れる）
+scripts/replay-scenarios.json
+scripts/.replay-out/
