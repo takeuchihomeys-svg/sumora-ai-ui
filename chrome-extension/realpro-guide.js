@@ -237,11 +237,20 @@
     if (!panel || !document.body.contains(panel)) {
       panel = document.createElement("div");
       panel.id = "axlx-guide-panel";
-      panel.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:2147483602;width:290px;background:#fff;border:2px solid #ff8f00;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.25);font:12px/1.5 sans-serif;color:#263238;padding:8px 10px;";
+      // 2026-10-01 竹内「右下の案内移動できないので、押せないため右上に移動する」: 右下は一括のバー・ページ送りと重なって押せなかった
+      //   → 既定は右上・見出しをつかんで動かせる（置いた場所はこの PC に覚える）
+      panel.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483602;width:290px;background:#fff;border:2px solid #ff8f00;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.25);font:12px/1.5 sans-serif;color:#263238;padding:8px 10px;";
+      try {
+        var pos = JSON.parse(localStorage.getItem("axlx_guide_pos") || "null");
+        if (pos && pos.left >= 0 && pos.top >= 0 && pos.left < window.innerWidth - 40 && pos.top < window.innerHeight - 40) {
+          panel.style.left = pos.left + "px"; panel.style.top = pos.top + "px"; panel.style.right = "auto";
+        }
+      } catch (_) {}
       panel.addEventListener("click", onPanelClick);
+      panel.addEventListener("mousedown", onPanelDragStart);
       document.body.appendChild(panel);
     }
-    var head = '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><b style="flex:1;color:#e65100">🔦 案内モード（押すのはスタッフ）</b>'
+    var head = '<div data-drag="1" title="つかんで動かせます" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:move;user-select:none"><b data-drag="1" style="flex:1;color:#e65100">⠿ 🔦 案内モード（押すのはスタッフ）</b>'
       + '<button data-a="mode" style="font-size:11px;padding:1px 6px;border-radius:9px;border:1px solid #ccc;background:' + (guideOn ? "#fff3e0" : "#eceff1") + '">' + (guideOn ? "ON" : "OFF") + "</button></div>";
     if (!guideOn) { panel.innerHTML = head + '<div style="color:#78909c">OFF の間は今まで通り拡張が入力します</div>'; return; }
     if (!session) { panel.innerHTML = head + '<div style="color:#78909c">拡張でお客様を選ぶと、ここに手順が出ます</div>'; return; }
@@ -259,6 +268,25 @@
       + '<div style="max-height:220px;overflow:auto;border-top:1px solid #eee;padding-top:4px">' + rows + "</div>"
       + (curEval && curEval.note ? '<div style="margin-top:4px;color:#c62828">' + esc(curEval.note) + "</div>" : "")
       + '<div style="margin-top:6px;display:flex;gap:6px"><button data-a="skip" style="flex:1">この手順は済み</button><button data-a="end" style="flex:1">案内をやめる</button></div>';
+  }
+  // 案内の枠を見出しでつかんで動かす（枠の位置を変えるだけ・サイトには触らない）
+  function onPanelDragStart(e) {
+    if (!e.target || !e.target.getAttribute || e.target.getAttribute("data-drag") !== "1" || !panel) return;
+    var r = panel.getBoundingClientRect();
+    var offX = e.clientX - r.left, offY = e.clientY - r.top;
+    function move(ev) {
+      var left = Math.max(0, Math.min(window.innerWidth - 60, ev.clientX - offX));
+      var top = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - offY));
+      panel.style.left = left + "px"; panel.style.top = top + "px"; panel.style.right = "auto";
+    }
+    function up() {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      try { var b = panel.getBoundingClientRect(); localStorage.setItem("axlx_guide_pos", JSON.stringify({ left: Math.round(b.left), top: Math.round(b.top) })); } catch (_) {}
+    }
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    e.preventDefault();
   }
   function onPanelClick(e) {
     var a = e.target && e.target.getAttribute && e.target.getAttribute("data-a");

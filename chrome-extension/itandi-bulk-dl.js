@@ -36,6 +36,25 @@
     });
   } catch (_) { /* ignore */ }
 
+  // ── 2026-10-01 竹内「ITANDIも画面表示光らせるようにする。検索の画面の入力は手動でそれ以外は今まで通りに、画像もそのままチェックして売上番長に送って解析させる流れ」──
+  //   案内モード（storage.local guideMode・既定オン＝itandi-guide.js）の間は、自動の送信・ページ送り（全ページ自動送信）を始めない（bulk-dl.js と同じ）。
+  //   チェックを付ける・「売上番長に送る」（スタッフが押す・このページのチェックした物）は今まで通り。
+  //   読み込みが間に合わない時も「案内モード」として止める（明示の OFF＝false の時だけ動く＝安全側）
+  var _guideOff = false;
+  try {
+    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !!(r && r.guideMode === false); });
+    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = ch.guideMode.newValue === false; });
+  } catch (_) {}
+  function _guideBlocksAuto(where) {
+    if (_guideOff) return false;
+    console.warn("[AXLX itandi] 案内モードのため自動の送信・ページ送りをしない（" + where + "）");
+    _autoSendArmed = false;
+    _autofillInitiated = false;
+    _autoSendInProgress = false;
+    if (_zeroDetectTimer) { clearInterval(_zeroDetectTimer); _zeroDetectTimer = null; }
+    return true;
+  }
+
   function ensurePdfHook() {
     if (pdfHookInjected) return;
     pdfHookInjected = true;
@@ -870,6 +889,7 @@
   // ── 全ページ自動送信 ─────────────────────────────────────────────────────
   // _manual=true で呼ぶとスタッフモードチェックをスキップ（手動ボタン押下用）
   function autoSendAllPages(_manual) {
+    if (_guideBlocksAuto("autoSendAllPages")) return; // 案内モードの間はページをめくって送らない（スタッフがチェックして「売上番長に送る」）
     if (_autoSendInProgress) return;
     if (!_manual && _staffModeOn) {
       console.log("[AXLX itandi] スタッフモード中 → autoSendAllPages をスキップ");
@@ -1102,6 +1122,7 @@
   }
 
   function _autoSendOnePage(customerName, customerId, customerConditions, onComplete) {
+    if (_guideBlocksAuto("_autoSendOnePage")) return; // 終わりの知らせ（onComplete）は返さない＝次のページへ進まない
     // BUG-B修正: 顧客切り替え時に前顧客のrowKeyを必ずリセット（混入バグ対策）
     checkedKeys.clear();
     // 全選択

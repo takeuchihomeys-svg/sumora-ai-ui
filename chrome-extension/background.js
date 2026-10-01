@@ -859,6 +859,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           items: msg.items || [],
           site: msg.site || "realpro",
           staff_mode: staffMode, // スタッフモード中はサーバーが apply_drop=false（人が選んだ物は減らさない）
+          // 2026-10-01 一覧の下見（bulk-dl brainPreview）: 記録も画像の読み取りもしない（judge の dry_run）
+          ...(msg.dry_run === true ? { dry_run: true } : {}),
         });
         sendResponse({ ok: true, data });
       } catch (e) {

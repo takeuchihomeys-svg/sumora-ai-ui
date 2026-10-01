@@ -91,7 +91,8 @@ ok("page-script: 検索を押す所（clickSearch・見積用）も案内モー�
   ok("次の検索: 昨日以前の検索は「まだ」扱い", mk({ realpro_p: old }).site === "realpro");
   ok("次の検索: 全部済み → なし", mk({ realpro_p: now, itandi_p: now, realpro_w: now, itandi_w: now }).site === null);
   ok("一覧: リアプロ・ITANDI の P／広 が押せる（レインズは除く）", /data-guide-site="' \+ s\.key \+ '" data-guide-mode="pinpoint"/.test(pp) && /s\.key !== "reins"/.test(pp) && /\.guide-btn/.test(pp));
-  ok("ITANDI: 案内モードの間は自動入力しない（準備中）", /_gmIt !== false\) \{ _pickupCompleteToast\("ITANDI の案内モードは準備中/.test(pp) && /if \(site === "itandi"\) \{\s*_pickupCompleteToast/.test(pp));
+  // v2.5.63: ITANDI の案内モードができた → 準備中の止めを外し、ITANDI もその検索の条件で案内を始める（詳しくは itandi-guide.test.js）
+  ok("ITANDI: P・広 から ITANDI の案内を始める（準備中の止めは無い）", !/ITANDI の案内モードは準備中/.test(pp) && /if \(site !== "realpro" && site !== "itandi"\)/.test(pp) && /openInstructions\(site\);/.test(pp));
 }
 
 // ── ⑥ 2026-10-01 v2.5.59 キャッシュ確認（竹内「それで一度試す」）: 手元に無い資料はリアプロに取りに行かない ──

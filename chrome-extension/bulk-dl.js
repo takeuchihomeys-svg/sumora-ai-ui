@@ -424,6 +424,7 @@
     });
     updateBar();
     injectSuumoButtons();
+    brainPreview();
 
     // Case A: fill-done 受信済み かつ スナップショット前にない新しい結果が出た
     if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
@@ -636,6 +637,60 @@
 
   // 1件 = 1つの組（url・説明文・学習用データ）にしてから送る。
   // 同じ組から作るので、PDF と説明文がズレようがない。
+  // ── 一覧の下見: ブレインの点数を行ごとに出す（2026-10-01）──────────────────
+  // 竹内「ここの点数のスコアリングも事前に可能なら、ちゃんと物件検索ブレインの判断の方でおこなう」:
+  //   建物の上の「◎85点」は拡張の中の簡易の点（score-overlay.js）で、送る時のブレインの判定とは別物だった。
+  //   → 一覧が出たら、送る時と同じ材料（説明文・data）で /api/property-brain/judge を dry_run で呼び（記録しない・画像も読まない＝決定論だけ）、
+  //     行ごとに「🧠 点・通す/保留/外す」を出す。出せた時は簡易の点（.axlx-score-badge）を隠す。送る時の判定（buildSendItemsBrain）は今まで通り
+  var _brainPrevSig = "";
+  var _VERDICT_JA = { pass: ["通す", "#2e7d32", "#e8f5e9"], hold: ["保留", "#ef6c00", "#fff3e0"], drop: ["外す", "#c62828", "#ffebee"] };
+  function brainPreview() {
+    if (!tracked.length) return;
+    try {
+      chrome.storage.local.get(["current_customer_id"], function (r) {
+        var cid = r && r.current_customer_id;
+        if (!cid) return;
+        var prepared = AxlxSendPairing.prepareItems(tracked.map(function (t) { return { url: t.btn.href, btn: t.btn }; }));
+        var items = prepared.items.map(function (it) {
+          var card = extractCard(it.btn);
+          return { btn: it.btn, url: it.url, summary: buildPropertySummary(card, it.rank - 1), data: buildPropertyData(card, it.rank - 1) };
+        });
+        if (!items.length) return;
+        var sig = cid + "#" + items.map(function (x) { return x.url; }).join(",");
+        if (sig === _brainPrevSig) return;
+        _brainPrevSig = sig;
+        chrome.runtime.sendMessage({
+          type: "axlx-brain-judge", dry_run: true, property_customer_id: cid, site: "realpro",
+          items: items.map(function (x) { var jd = Object.assign({}, x.data); delete jd.cells; delete jd.head; delete jd.bld_text; return { summary: x.summary, data: jd, url: x.url }; }),
+        }, function (resp) {
+          void chrome.runtime.lastError;
+          if (!resp || !resp.ok || !resp.data || !Array.isArray(resp.data.judgments)) { _brainPrevSig = ""; return; }
+          document.querySelectorAll(".axlx-brain-badge").forEach(function (el) { el.remove(); });
+          resp.data.judgments.forEach(function (j) {
+            var x = items[j.index];
+            if (!x || !x.btn || !x.btn.parentNode) return;
+            var v = _VERDICT_JA[j.verdict] || ["?", "#455a64", "#eceff1"];
+            var b = document.createElement("span");
+            b.className = "axlx-brain-badge";
+            b.style.cssText = "margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;vertical-align:middle;white-space:nowrap;color:" + v[1] + ";background:" + v[2] + ";";
+            b.textContent = "🧠 " + j.score + " " + v[0];
+            b.title = "物件検索ブレインの下見（送る時と同じ判定・記録しない）\n" + (Array.isArray(j.reasons_ja) ? j.reasons_ja.join("\n") : "");
+            x.btn.parentNode.insertBefore(b, x.btn.nextSibling);
+          });
+          if (!document.getElementById("axlx-brain-hide-simple")) {
+            var st = document.createElement("style");
+            st.id = "axlx-brain-hide-simple";
+            st.textContent = ".axlx-score-badge{display:none!important}";
+            document.head.appendChild(st);
+          }
+        });
+      });
+    } catch (_) {}
+  }
+  try {
+    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.current_customer_id) { _brainPrevSig = ""; brainPreview(); } });
+  } catch (_) {}
+
   function buildSendItems() {
     var prepared = AxlxSendPairing.prepareItems(
       getSelectedTargets().map(function (t) { return { url: t.btn.href, btn: t.btn }; })

@@ -2680,15 +2680,13 @@ function decideGuideNext(sh) {
 /** そのお客様の案内を始める（拡張の画面のボタンを押すだけ・サイトは触らない＝その先は page-script の案内モード） */
 function startGuideFor(c, site, mode) {
   if (!c) return;
-  if (site === "itandi") {
-    _pickupCompleteToast("ITANDI の案内モードは準備中です（勝手に入力しないよう、ITANDI の自動入力は止めています）", "info");
-    return;
-  }
-  if (site !== "realpro") { _pickupCompleteToast("今日は両サイトとも検索済みです", "info"); return; }
+  // 2026-10-01 竹内「ITANDIも画面表示光らせるようにする」: ITANDI もリアプロと同じく、その検索の条件で案内を始める
+  //   （ITANDI のタブで押す。条件は「🔍 itandiで自動検索」と同じ組み立て → itandi-page-script.js が案内モードなら入力せずに itandi-guide.js へ）
+  if (site !== "realpro" && site !== "itandi") { _pickupCompleteToast("今日は両サイトとも検索済みです", "info"); return; }
   openSiteView(c);
   searchMode = mode === "wide" ? "wide" : "pinpoint";
   syncModeButtons();
-  openInstructions("realpro");
+  openInstructions(site);
   var b = document.getElementById("autofill-btn");
   if (b) b.click();
 }
@@ -4134,9 +4132,11 @@ function openInstructions(siteKey) {
       try { await _itandiAutofillRun(_auditCtx_it); } finally { _itandiFillRunningAt = 0; }
     };
     const _itandiAutofillRun = async (_auditCtx_it) => {
-      // 2026-10-01 ITANDI の案内モードができるまで、案内モード（guideMode・既定オン）の間は ITANDI の自動入力をしない（勝手に入力しない）
+      // 2026-10-01 竹内「ITANDIも画面表示光らせるようにする。検索の画面の入力は手動でそれ以外は今まで通りに」:
+      //   案内モード（guideMode・既定オン）の間も条件は今まで通りここで組み立てて送る（広げての家賃・築年数＋5年・隣の駅も同じ）。
+      //   受け取った itandi-page-script.js が案内モードなら入力せずに案内（itandi-guide.js）へ渡す＝入力と検索はスタッフ
       const _gmIt = await new Promise((res) => { try { chrome.storage.local.get(["guideMode"], (r) => res(r && r.guideMode)); } catch (_) { res(undefined); } });
-      if (_gmIt !== false) { _pickupCompleteToast("ITANDI の案内モードは準備中です。案内モードの間は ITANDI の自動入力は止めています（手で検索してください）", "info"); return; }
+      const _guideIt = _gmIt !== false;
       const isAutomated_itandi = !!autofillBtn.dataset.automated;
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
@@ -4507,6 +4507,9 @@ function openInstructions(siteKey) {
         sort_order: _autoSort_it,
         max_pages: _autoMaxPages_it,
         unknown_tokens: unknownTokens.length > 0 ? unknownTokens : null,
+        // 2026-10-01 案内モード（itandi-guide.js）が誰の検索かを枠に出す（itandi-page-script の入力は使わない欄）
+        customer_id:   c.id || null,
+        customer_name: c.customer_name || null,
       };
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
@@ -4555,7 +4558,7 @@ function openInstructions(siteKey) {
       }
       // 検索日時をサイト別に記録（fire-and-forget）。2026-09-18: 一括検索と同じ関数に寄せた
       recordSearchForSelected("itandi");
-      autofillBtn.textContent = "✓ 自動検索中...";
+      autofillBtn.textContent = _guideIt ? "🔦 案内中（光った所を入力して検索）" : "✓ 自動検索中...";
       autofillBtn.classList.add("done");
       setTimeout(() => {
         autofillBtn.textContent = "🔍 itandiで自動検索";

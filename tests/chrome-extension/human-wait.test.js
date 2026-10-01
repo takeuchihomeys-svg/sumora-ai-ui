@@ -185,6 +185,7 @@ function rest() {
       "setTimeout 30000": [1, "期限"], "setInterval 300": [1, "見る間隔"], "setTimeout 50": [1, "表示の更新"], "setInterval 2000": [1, "見張り"],
     },
     "realpro-guide.js": { "setInterval 400": [1, "案内の光を見直す間隔（v2.5.58・画面を読むだけ・サイトを触らない）"], "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"], "setTimeout 1500": [1, "一覧の行が描かれるのを待つ"] },
+    "itandi-guide.js": { "setInterval 400": [1, "ITANDI の案内の光を見直す間隔（v2.5.63・画面を読むだけ・サイトを触らない）"] },
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },

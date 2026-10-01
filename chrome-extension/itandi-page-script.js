@@ -1304,6 +1304,9 @@
     return { wards: (st.chips.wards || []).slice(0, 30), stations: (st.chips.stations || []).slice(0, 60), foreign: chk.foreign, unmatched_stations: chk.unmatched_stations };
   }
 
+  // 2026-10-01 案内モード（<html data-axlx-guide> が "0" 以外）の間は拡張が入力も検索もしない（page-script.js の _guideOn と同じ）
+  function _guideOn() { return document.documentElement.getAttribute("data-axlx-guide") !== "0"; }
+
   // 2026-09-18 竹内（一括検索の混線）: 直前に受け取った「誰の自動入力か」。fill が開始時に取り込む
   var _pendingFillCid = null;
   var _lastFillReq = null; // v2.5.45 直前の自動入力の依頼 { key, at }（同じ依頼の2回目を動かさない）
@@ -1487,6 +1490,8 @@
                   _safeDone("AXLX_SEARCH_BLOCKED: " + why.ja);
                   return;
                 }
+                // 2026-10-01 入力の途中で案内モードに切り替わった時も、検索は押さない（押すのはスタッフ）
+                if (_guideOn()) { _itStep("guide_mode", "検索はスタッフ"); _safeDone("AXLX_SEARCH_BLOCKED: guide-mode: 検索はスタッフが押す"); return; }
                 var _searched = false;
                 if (btn) { btn.click(); _searched = true; } else _searched = clickBtn("検索");
                 if (_itAudit) {
@@ -1559,6 +1564,19 @@
     _lastFillReq = { key: _key, at: _now };
     // 2026-09-18: 誰の入力かを覚えてから実行する（fill が fill-done に載せて返す）
     _pendingFillCid = e.data.customerId || null;
+    // 2026-10-01 竹内「ITANDIも画面表示光らせるようにする。検索の画面の入力は手動でそれ以外は今まで通りに」:
+    //   案内モード（itandi-guide.js が <html data-axlx-guide="1"> を付ける・既定オン）の時は入力しない・押さない・前の条件も外さない。
+    //   案内（光らせてスタッフが入れる）に条件を渡し、待っている側には「検索を押していない」（skip）で完了を返す
+    //   （一括の流れが5分待たない・itandi-bulk-dl が自動の送信を始めない＝skip の回は armed にしない）。
+    //   既定は案内（印が付く前に依頼が届いても自動で入れない＝安全側）。OFF の印（"0"）が付いている時だけ今まで通り入力する
+    if (_guideOn()) {
+      var _gCid = e.data.customerId || null;
+      window.postMessage({ from: "axlx-itandi-guide-start", conditions: e.data.conditions || {}, customerId: _gCid }, "*");
+      var _gDone = { from: "aixlinx-fill-done", error: "guide-mode: 案内モードのため拡張は入力していません（スタッフが入力して検索）", skip: true };
+      if (_gCid) _gDone.customerId = _gCid;
+      window.postMessage(_gDone, "*");
+      return;
+    }
     fill(e.data.conditions);
   });
 })();
