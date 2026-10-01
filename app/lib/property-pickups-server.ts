@@ -21,6 +21,7 @@ import { readPropertyImageDetail } from "@/app/lib/property-image-read";
 import { detailSourceFor, readPropertyDetailFromText, reusableLinesByPdfUrl, planDetailSource, detailModelLabel, type TextDetailResult } from "@/app/lib/property-detail-source";
 import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
 import { dedupeSameBuilding, dedupeNoteJa } from "@/app/lib/pickup-dedupe";
+import { recentDuplicateIndexes, RECENT_DUP_WINDOW_MS, type RecentPickupRow } from "@/app/lib/pickup-recent-dup";
 import { parseAreaWant, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes, toPickupLocation, type AreaWant, type CommuteWant, type PickupLocation } from "@/app/lib/area-want";
 import { parseListingText } from "@/app/lib/listing-text";
 import { roomJoFromText } from "@/app/lib/room-jo";
@@ -119,6 +120,18 @@ async function loadProfile(propertyCustomerId: string | null, searchOverride: Pi
   };
 }
 
+/** そのお客様の直近の記録と照らして、回をまたいだ重複の番号を返す（読めない時は空＝外さない側） */
+async function recentDupIndexes(propertyCustomerId: string | null | undefined, summaries: ReadonlyArray<string>, pdfUrls: ReadonlyArray<string | null | undefined>): Promise<Set<number>> {
+  if (!propertyCustomerId || summaries.length === 0) return new Set();
+  try {
+    const sinceIso = new Date(Date.now() - RECENT_DUP_WINDOW_MS).toISOString();
+    const { data, error } = await supabase.from("property_pickups").select("property_name, room_no, pdf_url, created_at")
+      .eq("property_customer_id", propertyCustomerId).gte("created_at", sinceIso).limit(500);
+    if (error) return new Set();
+    return recentDuplicateIndexes(summaries, pdfUrls, (data ?? []) as RecentPickupRow[], Date.now());
+  } catch { return new Set(); }
+}
+
 export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; detailFromText: number; detailReused: number; deduped: number; noTextDraw: number; autoAnalyzed: number; autoLevel: string | null; summaryCalled: boolean; groupNotice: "deferred" | null; error: string | null }> {
   // 2026-09-29: detailFromText＝資料の中身を文字層から読んだ件数・detailReused＝7日以内の同じ物件の行から写した件数（画像を読んだ回数は imageRead − この2つ）
   const out = { rows: 0, withText: 0, withBlob: 0, withImage: 0, imageRead: 0, detailFromText: 0, detailReused: 0, deduped: 0, noTextDraw: 0, autoAnalyzed: 0, autoLevel: null as string | null, summaryCalled: false, groupNotice: null as "deferred" | null, error: null as string | null };
@@ -145,6 +158,16 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     if (dd.dropped.length > 0) {
       console.log(JSON.stringify({ tag: "property-pickups:dedupe", batch: input.batchId.slice(0, 40), kept: dd.keep.length, dropped: dd.dropped.map((d) => ({ rank: d.rank, name: d.name, area: d.areaSqm, rent: d.rentYen, keptRank: d.keptRank })) }));
     }
+    // 2026-10-01 竹内「同じ物件が2つ入ってしまう…2回送ってしまったのが原因…分析した時に省かれるように」:
+    //   回をまたいだ重複（同じお客様・同じ部屋を6時間以内にもう記録している）は AIX ツールに入れない（pickup-recent-dup.ts・線は実測）。
+    //   送る側（merge-pdfs・LINE グループ・sent_properties）は変えない＝スタッフモードの「人が選んだ物は減らさない」はそのまま。
+    //   ここ（画像・Blob・DeepSeek の前）で外して費用もかけない。数秒差で2回が並んで動いた時のために、行を入れる直前にもう一度見る
+    const recentDup = await recentDupIndexes(input.propertyCustomerId, input.summaries, input.pdfUrls);
+    const keepIdx = recentDup.size ? dd.keep.filter((i) => !recentDup.has(i)) : dd.keep;
+    if (recentDup.size) {
+      console.log(JSON.stringify({ tag: "property-pickups:recent-dup", batch: input.batchId.slice(0, 40), stage: "start", dropped: [...recentDup].map((i) => i + 1), kept: keepIdx.length }));
+    }
+    if (keepIdx.length === 0) return out;
     /** 判定の材料（説明文＋AD の補い）。判定は設備の照合（回の全部の行が要る）の後で行う */
     const factsOf = new Map<number, PropertyFacts>();
     // 2026-09-25 竹内「敷金礼金と入居時期、組み込みたい」: 資料の表（文字層）の募集の条件（listing-terms.ts・決定論・DeepSeek 0円）。
@@ -155,7 +178,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     const { put } = await import("@vercel/blob");
     const stamp = Date.now();
     const base = `pickups/${input.batchId.replace(/\.pdf$/i, "")}`;
-    const items: PickupItemInput[] = await Promise.all(dd.keep.map(async (i) => {
+    const items: PickupItemInput[] = await Promise.all(keepIdx.map(async (i) => {
       const summary = input.summaries[i];
       const b64 = input.pdfBase64List[i] ?? null;
       let pdfText: string | null = null;
@@ -242,14 +265,14 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     //   お客様の条件欄の希望と照らす。結果は property_pickups.equipment と判定（EQUIP_*）に入れる
     const eqBatch = buildBatchEquipment([
       // label は補いの根拠に出す名前（LINE の【n】と同じ番号。落とした部屋は「（省略）」付き）
-      ...items.map((it, k) => ({ key: `k${k}`, pdfText: it.pdfText, label: `【${dd.keep[k] + 1}】` })),
+      ...items.map((it, k) => ({ key: `k${k}`, pdfText: it.pdfText, label: `【${keepIdx[k] + 1}】` })),
       ...dd.dropped.map((d) => ({ key: `d${d.index}`, pdfText: droppedText.get(d.index) ?? null, label: `【${d.index + 1}】（省略した部屋）` })),
     ], loaded?.customer ?? null);
     const eqOf = new Map(eqBatch.rows.map((r) => [r.key, r]));
     items.forEach((it, k) => {
       const e = eqOf.get(`k${k}`);
       it.equipment = e?.saved ?? null;
-      const i = dd.keep[k];
+      const i = keepIdx[k];
       const facts = factsOf.get(i);
       const tm = termsOf.get(i);
       const lc = locOf.get(i);
@@ -369,7 +392,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     //   recommended は「点が並んだ時の順番」（pickCustomerBest の tail・compareForReview）の材料にだけ使う。
     //   ここで付け直さない理由: 画像で分析が要るお客様の 👑 はこの後の自動の読み取り（pickup-auto-analyze）の点で決まり、回をまたいで変わる
     //   （ここで判定の点で付け直すと、画面の 👑 と食い違う印が DB に残る）。DeepSeek が何を選んだかの記録も消えない
-    const rows = buildPickupRows({
+    let rows = buildPickupRows({
       batchId: input.batchId, propertyCustomerId: input.propertyCustomerId, conversationId,
       customerName: input.customerName, site: input.site,
     }, items).map((r) => (searchOverride && loaded ? { ...r, search_override: searchOverride } : r))
@@ -377,6 +400,13 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       .map((r) => (searchMode ? { ...r, search_mode: searchMode } : r))
       // 2026-09-29 ブレインの回（★物件出し★グループへは解析の完了で1回知らせる）
       .map((r) => (input.groupNotice === "deferred" ? { ...r, group_notice: "deferred" } : r));
+    // 入れる直前にもう一度（同じ部屋の別の回が先に入った時）
+    const lateDup = await recentDupIndexes(input.propertyCustomerId, rows.map((r) => r.summary_text), rows.map((r) => r.pdf_url ?? null));
+    if (lateDup.size) {
+      console.log(JSON.stringify({ tag: "property-pickups:recent-dup", batch: input.batchId.slice(0, 40), stage: "insert", dropped: lateDup.size }));
+      rows = rows.filter((_, k) => !lateDup.has(k));
+      if (rows.length === 0) return out;
+    }
     let ins = await supabase.from("property_pickups").insert(rows).select("id");
     // 2026-09-29: group_notice 列を本番に足す前に動いても記録は残す（印が落ちる＝groupNotice null を返し、merge-pdfs が今まで通りグループに送る）
     let noticeStored = input.groupNotice === "deferred";
