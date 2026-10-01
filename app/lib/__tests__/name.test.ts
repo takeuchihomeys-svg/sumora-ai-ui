@@ -1,7 +1,7 @@
 // 2026-09-11 竹内方針3: 呼び名（resolveAddressName / normalizeDisplayName / checkNameConsistency / unifyAddressAliases）の回帰テスト。
 //   実際に呼んでいる名前のまま・途中で変えない。名前・会話は匿名化した構成（実データの型だけを残す）
 // 実行: npx tsx app/lib/__tests__/name.test.ts（vitest 不要の自己完結ハーネス。全 PASS で exit 0）
-import { resolveAddressName, normalizeDisplayName, checkNameConsistency, unifyAddressAliases, applySurfaceFixes, canonOf, sameReading } from "../validate-reply";
+import { enforceCustomerName, resolveAddressName, normalizeDisplayName, checkNameConsistency, unifyAddressAliases, applySurfaceFixes, canonOf, sameReading } from "../validate-reply";
 import { buildFirstGreeting } from "../greeting";
 import { mergeHistoryForAddress } from "../address-history";
 
@@ -208,6 +208,26 @@ describe("後処理（別名を確定名へ統一）", () => {
     const r = applySurfaceFixes("翔太さんさんお世話になっております！！", { customerName: "高木", aliases: ["翔太"] });
     expect(r.text.startsWith("高木さん")).toBe(true);
     expect(r.text.includes("さんさん")).toBe(false);
+  });
+});
+
+describe("2026-10-02 人の実送信の監査（audit-exits-vs-human.ts）: 呼びかけの除去で文・事実を壊さない", () => {
+  it("「Sさんの方で」を消す時は「の方で」まで消す（「方でお気に…」にしない）", () => {
+    expect(enforceCustomerName("かしこまりました！！\nSさんの方でお気に召されましたお部屋はどちらになりますでしょうか😌！！", { customerName: "" }).cleaned)
+      .toBe("かしこまりました！！\nお気に召されましたお部屋はどちらになりますでしょうか😌！！");
+  });
+  it("「1件新着でcさんに」の件数・新着の前置きは残す", () => {
+    expect(enforceCustomerName("1件新着でcさんにオススメ出来る物件募集に出ました😊！！", { customerName: "" }).cleaned).toBe("1件新着でオススメ出来る物件募集に出ました😊！！");
+    expect(enforceCustomerName("新着で1件Eさんにかなりオススメできるお部屋となります！！", { customerName: "" }).cleaned).toBe("新着で1件かなりオススメできるお部屋となります！！");
+    expect(enforceCustomerName("新着で1件しちのさんにオススメ", { customerName: "しちの" }).cleaned).toBe("新着で1件しちのさんにオススメ");
+    // 名前の前に文の切れ端が付いている行は触らない（旧: 「敷地内駐車場付のお部屋で1件」まで消して「しょうじさんに…」にしていた）
+    const t = "敷地内駐車場付のお部屋で1件しょうじさんにオススメできる新着物件募集に出ました！！";
+    expect(enforceCustomerName(t, { customerName: "しょうじ" }).cleaned).toBe(t);
+    expect(enforceCustomerName(t, { customerName: "" }).cleaned).toBe(t);
+  });
+  it("「同様」の「様」は敬称ではない", () => {
+    const t = "③「商品紹介へ」進む\n④審査完了メールと同様の商品紹介ページへ遷移";
+    expect(enforceCustomerName(t, { customerName: "植田涼太" }).cleaned).toBe(t);
   });
 });
 

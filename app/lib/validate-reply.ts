@@ -130,9 +130,22 @@ export function enforceCustomerName(
   // 2026-09-26 YUMA の前後比較で発見: 「テストハイツ梅田とサンプルコート中津の駐車場…」の「サン」を敬称と読み、
   //   「YUMAさんプルコート中津」に書き換えて物件名を壊していた（前後どちらの木でも出る既存の不具合）。
   //   片仮名の「サン」の直後に片仮名が続く物は語の一部（サンハイツ・サンライズ・サンプル…）で敬称ではない → 置き換えない（置換を減らす向きだけ）
-  const lineHeadAddressRe = /(^|\n)([\s「]*)([^\s、。！!？?\n【】「」（）()・]{1,20})\s*(?:さん|サン(?![ァ-ヺー])|様|さま)([、,]?[ 　]*)([のがにをへ])?/g;
+  // 2026-10-02 人の実送信の監査（scripts/audit-exits-vs-human.ts・60日 2,516通）で見つけた壊し方3つ（どれも誤削除・誤置換）:
+  //   ①「Sさんの方でお気に召されましたお部屋は…」→ 呼びかけと「の」だけ消して「方でお気に召された…」（文が壊れる）→ 消す時は「の方で」まで一緒に消す
+  //   ②「1件新着でcさんにオススメ出来る物件」→「1件新着でc」を丸ごと名前と見て「1件新着で」まで消していた（事実が消える）→ 件数・新着の前置きは残す
+  //   ③「④審査完了メールと同様の商品紹介ページ」→「同様」の「様」を敬称と読み「植田涼太さんの商品紹介ページ」に書き換えていた → 同様・模様・仕様等の「様」は敬称ではない
+  const lineHeadAddressRe = /(^|\n)([\s「]*)([^\s、。！!？?\n【】「」（）()・]{1,20})\s*(?:さん|サン(?![ァ-ヺー])|(?<![同模仕多異有左])様|さま)([、,]?[ 　]*)(の方(?:で|から|に|も|は)?|[のがにをへ])?/g;
+  /** ②の前置き（「1件新着で」「新着で1件」「2件」）。名前ではないので残す */
+  const COUNT_PREFIX_RE = /^(?:新着で)?[0-9０-９一二三四五六七八九十]+件(?:新着で|で|も)?|^新着で/;
   cleaned = cleaned.replace(lineHeadAddressRe, (m, br: string, lead: string, base: string, tail: string, particle: string | undefined) => {
+    const pre = COUNT_PREFIX_RE.exec(base)?.[0] ?? "";
+    if (pre && pre.length >= base.length) return m;
+    if (pre) { lead = `${lead}${pre}`; base = base.slice(pre.length); }
     if (base === canonical) return m;
+    // 名前の前に文の切れ端が付いている（「敷地内駐車場付のお部屋で1件しょうじ」）＝どこからが名前か決められない → 触らない（誤削除0を優先）。
+    //   表示名の呼びかけ（S・c・💞・a🤫・Hayato.I・327）には「漢字・カナ＋助詞」の切れ端が入らない
+    if (canonical && base.endsWith(canonical)) return m;
+    if (base.length > 3 && /[一-龯々ァ-ヶ][でにをがはとものへ]|件/.test(base)) return m;
     // 実名の形をしているものは第三者名の可能性もあるため一切触らない（誤置換の防止）
     if (isPlausiblePersonName(base)) return m;
     // テンプレの未置換プレースホルダー（「〇〇さん」「アカウント名さん」「[名前]さん」等）は
@@ -577,8 +590,9 @@ export function applySurfaceFixes(
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }
   const b = normalizeBannedPhrasing(out);
   // 2026-10-01: 「くらい」→「程」だけが当たった時に本文へ戻していなかった（条件に b.kurai が無く、b.text が捨てられていた）
-  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup || b.kurai) {
+  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup || b.kurai || b.emoji) {
     out = b.text;
+    if (b.emoji) applied.push(`EMOJI_ALLOWLIST×${b.emoji}`);              // 2026-10-02 竹内「入れて良い絵文字だけ・女性の絵文字いれない」
     if (b.shochi) applied.push(`SHOCHI_TO_KASHIKOMARI×${b.shochi}`);
     if (b.hasty) applied.push(`HASTY_ADVERB_REMOVED×${b.hasty}`);
     if (b.uketamawari) applied.push(`BARE_UKETAMAWARI_TO_KASHIKOMARI×${b.uketamawari}`); // 2026-09-12 竹内方針B

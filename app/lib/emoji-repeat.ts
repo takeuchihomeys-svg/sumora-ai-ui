@@ -17,6 +17,8 @@
 // 見るのは文末の飾りの位置（「！！」「！」「。」の直前）の絵文字だけ。お客様の表示名（「🐈‍⬛さん」）や物件の見出し（🌟）は触らない。
 // 文字（言葉）は1文字も消さない。絵文字を替えるか外すだけ。
 
+import { enforceEmojiAllowlist } from "./emoji-allowlist";
+
 const EMOJI = "\\p{Extended_Pictographic}(?:\\uFE0F|\\u200D\\p{Extended_Pictographic})*";
 /** 文末の飾り: 絵文字（1〜2個）の直後に ！／!／。 */
 const TAIL_EMOJI_RE = new RegExp(`((?:${EMOJI}){1,2})(?=[！!。])`, "gu");
@@ -36,8 +38,25 @@ export type EmojiRepeatFix = { text: string; changes: Array<{ from: string; to: 
  * 1回目の絵文字はそのまま。文末の飾りが1つ以下の文は触らない。
  */
 export function dedupeRepeatedEmoji(text: string | null | undefined): EmojiRepeatFix {
-  const src = String(text ?? "");
-  const changes: EmojiRepeatFix["changes"] = [];
+  // 2026-10-02 竹内「絵文字は入れて良い絵文字だけにする。女性の絵文字いれない」: 返信・AIX・AIX テンプレートの最後はこの関数を通るので、
+  //   入れてよい絵文字だけにする処理（emoji-allowlist.ts・仕上げの normalizeBannedPhrasing と同じ関数）を先に当てる
+  const allow = enforceEmojiAllowlist(String(text ?? ""));
+  const src = allow.text;
+  const changes: EmojiRepeatFix["changes"] = allow.changes.map((c) => ({ from: c.from, to: c.to, sentence: "（入れてよい絵文字だけ）" }));
+  // 2026-10-02 竹内「初期のころ制約かけまくっていたので、理想の文がぶつかってしまって…そこもみつける」:
+  //   人の実送信（60日・AIX を除く手打ち 2,516通・scripts/audit-exits-vs-human.ts）をこの出口に通すと 77通が書き換わっていた。
+  //   中身は全部「😊…😊…😌」のように**既に違う絵文字を混ぜている文**（スタッフの初回返信の型「はじめまして😊／…😊／何卒…😌」）で、
+  //   2つ目の 😊 を 😌 に替えた結果、もともとあった締めの 😌 が「2回目」になって外れる（玉突き）。
+  //   上の線（96% は違う絵文字を混ぜる）は「全部同じ絵文字の文」を直す根拠で、混ぜている文を直す根拠ではない。
+  //   → 文末の飾りに違う絵文字が2種類以上ある文は触らない（直すのは全部同じ絵文字の文だけ＝YUMA 9:31 の形）。
+  {
+    const kinds = new Set<string>();
+    for (const line of src.split("\n")) {
+      if (/^\s*🌟/.test(line)) continue;
+      for (const m of line.matchAll(TAIL_EMOJI_RE)) for (const e of m[1].match(ONE_EMOJI_RE) ?? []) kinds.add(bare(e));
+    }
+    if (kinds.size >= 2) return { text: src, changes };
+  }
   const used = new Set<string>();
   // 行ごとに見る（物件の見出しの行「🌟…」は飾りではないので数えない）
   const lines = src.split("\n").map((line) => {

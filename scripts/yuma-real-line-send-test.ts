@@ -1,0 +1,270 @@
+// scripts/yuma-real-line-send-test.ts
+// 2026-10-02 竹内「YUMAで実際にLINEを送ってテストも行う。弱い部分見つけて強化する必要ある…とにかくぶつかるところや怪しい部分を見つけるのが必要」
+//
+// スタッフが体験する道を最後まで通す: お客様の通（YUMA に場面として入れる）→ ブレイン → 下書き（手元の開発サーバの /api/generate-reply・
+//   書かない呼び方）→ 画面と同じ送信前の関門（draftToSendableText・detectPlaceholders）→ **本番の送信 API（/api/send-line-message）で
+//   YUMA の LINE に実際に送る**（--send の時だけ）→ 届いた形の点検（下書きと送った文の差・LINE で崩れる形）。
+//   ・送り先は YUMA だけ（送る直前に会話の行を読み直し、id・名前・line_user_id が YUMA の物で、同じ line_user_id の会話が1つだけかを毎回確かめる）
+//   ・場面の通と送った通（messages）は自分の id だけ消す。送信の後で本番が書く記録（sent_facts・予定・AIX要対応）は前後を比べて報告し、
+//     自分の送信に結び付く物だけ消す
+//   ・試行錯誤は LLM_TEST_MODE=deepseek-all（送らない）、最後だけ LLM_TEST_FINAL_CLAUDE=1 --send（場面ごとに1回）
+//
+// 実行（手順書 memory/test_protocol_brain.md）:
+//   開発サーバ（写し）: LLM_TEST_MODE=deepseek-all REPLAY_FLOOR_FILE=<file> LINE_STAFF_GROUP_ID=invalid npx next dev --webpack -p 3489
+//   LLM_TEST_MODE=deepseek-all RLS_BASE=http://localhost:3489 REPLAY_FLOOR_FILE=<file> npx tsx --env-file=.env.local scripts/yuma-real-line-send-test.ts [--only=a,b]
+//   最後: 開発サーバも本スクリプトも LLM_TEST_FINAL_CLAUDE=1 にして --send（＋ --probe で書式の点検の1通・--images で画像のまとめ送り1回）
+import { createClient } from "@supabase/supabase-js";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { MSG_SEP } from "../app/lib/reply-context";
+import { draftToSendableText } from "../app/lib/draft-text";
+import { detectPlaceholders } from "../app/lib/validate-reply";
+import { ALLOWED_EMOJIS } from "../app/lib/emoji-allowlist";
+import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+
+type Analyze = typeof import("../app/lib/brain-core").analyzeConversation;
+let h: LlmTestHarness | null = null;
+
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
+const YUMA = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
+const BASE = process.env.RLS_BASE ?? "http://localhost:3489";
+const PROD = "https://sumora-ai-ui.vercel.app";
+const FLOOR_FILE = process.env.REPLAY_FLOOR_FILE ?? "";
+const args = process.argv.slice(2);
+const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
+const ONLY = arg("only").split(",").filter(Boolean);
+const SEND = args.includes("--send");
+const PROBE = args.includes("--probe");
+const IMAGES = args.includes("--images");
+const LABEL = arg("label", `rls-${new Date().toISOString().slice(5, 16).replace(/[:T-]/g, "")}`);
+const OUT_DIR = "scripts/.replay-out";
+
+type Turn = { sender: "staff" | "customer"; text: string };
+type Scene = { id: string; why: string; state: string; first?: boolean; turns: Turn[]; expect: Array<{ label: string; ok: (draft: string) => boolean }> };
+const FORM = "▶︎【お部屋お探し中！】\n\n（ご希望のお部屋探しご条件）\n①【ご入居の時期】⇒11月頃\n②【ご希望の家賃（◯万円〜◯万円）】⇒7万円くらい\n③【希望の広さ・間取り】⇒1Kか1DK\n④【希望築年数】特になし\n⑤【ご希望のエリア・駅名】⇒天満、扇町\n⑥【ご希望の駅徒歩分数】⇒10分\n⑦【初期費用の限度額】⇒20万\n⑧【その他ご要望あれば】⇒バストイレ別\n________________________\n※ 審査に不安な事がある方お気軽にお伝えください😊\n審査面柔軟にサポートさせて頂きます！";
+const female = (t: string) => /♀|\u{1F469}/u.test(t);
+const outsideAllow = (t: string) => {
+  const allowed = new Set<string>(ALLOWED_EMOJIS);
+  return [...t.matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]).filter((e) => !allowed.has(e) && /\p{Emoji_Presentation}/u.test(e));
+};
+const opener = (t: string) => (t.split("\n").map((l) => l.trim()).filter(Boolean).find((l) => !/お世話になっております|はじめまして/.test(l)) ?? "");
+
+/** 監査で見つけたぶつかり（2026-10-02）の場面。お客様の言い回しは実送信の形のまま（名前は YUMA） */
+const SCENES: Scene[] = [
+  { id: "late", why: "謝罪＋遅れの連絡（旧: かしこまりました→とんでもございません に書き換え・27通）・女性の絵文字", state: "viewing",
+    turns: [
+      { sender: "staff", text: "YUMAさんお世話になっております！！\n本日14:00にスプランディッド本町グラン現地エントランス前にてお待ちしております😊！！" },
+      { sender: "customer", text: "すみません道が混んでて10分ほど遅れます🙇‍♀️" },
+    ],
+    expect: [
+      { label: "冒頭がとんでもございませんでない", ok: (d) => !/^とんでも/.test(opener(d)) },
+      { label: "女性の絵文字なし", ok: (d) => !female(d) },
+    ] },
+  { id: "yesno", why: "はい／いいえで答える質問（旧: はい→かしこまりました に書き換え）", state: "proposing",
+    turns: [
+      { sender: "staff", text: "🌟エスリード長居 503\n家賃管理費込68,000円・御堂筋線「長居」駅徒歩3分、YUMAさんにかなりオススメ出来るお部屋となります😊！！\nお手隙の際にご査収ください😌！！" },
+      { sender: "customer", text: "ありがとうございます！こちらの物件って仮押さえとかできるんでしょうか？" },
+    ],
+    expect: [{ label: "女性の絵文字なし", ok: (d) => !female(d) }] },
+  { id: "apology", why: "謝っているだけ（受け止め＝とんでもございませんが正しい側）", state: "proposing",
+    turns: [
+      { sender: "staff", text: "かしこまりました！！\n天満・扇町周辺全域からYUMAさんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！" },
+      { sender: "customer", text: "何度もすみません🙇‍♀️ お手数おかけしますがよろしくお願いします" },
+    ],
+    expect: [
+      { label: "冒頭がかしこまりましたでない", ok: (d) => !/^かしこまりました/.test(opener(d)) },
+      { label: "女性の絵文字なし", ok: (d) => !female(d) },
+    ] },
+  { id: "ack", why: "了承・お礼だけ（はい😊！！ごゆっくり…の型）", state: "proposing",
+    turns: [
+      { sender: "staff", text: "🌟クリエオーレ喜連 303\n谷町線平野駅徒歩8分・家賃管理費込74,000円の1LDKで、YUMAさんにかなりオススメ出来るお部屋となります！！\nお手隙の際にご査収ください😌！！" },
+      { sender: "customer", text: "ありがとうございます！仕事終わりに見させて頂きます" },
+    ],
+    expect: [{ label: "冒頭がかしこまりましたでない", ok: (d) => !/^かしこまりました/.test(opener(d)) }] },
+  { id: "first", why: "初回の条件フォーム（挨拶行・絵文字の重なり・条件の復唱）", state: "first_reply", first: true,
+    turns: [{ sender: "customer", text: FORM }],
+    expect: [
+      { label: "はじめまして", ok: (d) => /はじめまして/.test(d) },
+      { label: "くらいを書かない", ok: (d) => !/くらい/.test(d) },
+    ] },
+];
+
+/** LINE で崩れる・お客様に見せたくない形（送る文そのものを見る） */
+function lineRenderRisks(t: string): string[] {
+  const r: string[] = [];
+  if (t.length > 5000) r.push(`5000字超（${t.length}）`);
+  if (/\*\*[^*]+\*\*/.test(t)) r.push("Markdown の太字 **");
+  if (/^\s{0,3}#{1,4}\s/m.test(t)) r.push("Markdown の見出し #");
+  if (/^\s*[-*]\s+/m.test(t)) r.push("Markdown の箇条書き -");
+  if (/\r/.test(t)) r.push("\\r（改行コード）");
+  if (/\n{3,}/.test(t)) r.push("空行が2つ以上続く");
+  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(t)) r.push("壊れた絵文字（サロゲートの片割れ）");
+  if (/<<<|>>>|\[返信不要\]|【[^】]*(?:判定|分析|作業)[^】]*】/.test(t)) r.push("仕組みの印・作業メモ");
+  if (female(t)) r.push("女性の絵文字");
+  const oa = outsideAllow(t);
+  if (oa.length) r.push(`入れてよい絵文字以外: ${oa.join("")}`);
+  if (/[ \t]+\n/.test(t)) r.push("行末の空白");
+  return r;
+}
+
+function secret(): string {
+  const e = (process.env.INTERNAL_API_SECRET ?? "").trim();
+  if (e) return e;
+  const l = readFileSync(".env.prod", "utf8").split(/\r?\n/).find((x) => x.startsWith("INTERNAL_API_SECRET=")) ?? "";
+  return l.slice("INTERNAL_API_SECRET=".length).trim().replace(/^"(.*)"$/, "$1");
+}
+
+/** 送る直前の宛先の確かめ（毎回 DB から読み直す）。YUMA 以外なら止める */
+async function verifyDestination(): Promise<{ lineUserId: string; account: string }> {
+  h!.assertYuma(YUMA, "LINE の送信");
+  const { data, error } = await sb.from("conversations").select("id, customer_name, line_user_id, account, send_blocked_reason").eq("id", YUMA).single();
+  if (error || !data) throw new Error(`宛先の会話を読めない: ${error?.message}`);
+  const c = data as { id: string; customer_name: string | null; line_user_id: string | null; account: string | null; send_blocked_reason: string | null };
+  if (c.id !== YUMA || c.customer_name !== "YUMA" || !c.line_user_id || c.send_blocked_reason) throw new Error(`宛先が YUMA でない／送れない: ${JSON.stringify({ id: c.id, name: c.customer_name, blocked: c.send_blocked_reason })}`);
+  const { count } = await sb.from("conversations").select("id", { count: "exact", head: true }).eq("line_user_id", c.line_user_id);
+  if (count !== 1) throw new Error(`同じ line_user_id の会話が ${count} 件（YUMA だけのはず）`);
+  return { lineUserId: c.line_user_id, account: c.account ?? "sumora" };
+}
+
+async function realSend(payload: Record<string, unknown>): Promise<{ ok: boolean; status: number; ids: string[]; error?: string }> {
+  const dest = await verifyDestination();
+  const body = { ...payload, line_user_id: dest.lineUserId, account: dest.account, conversation_id: YUMA };
+  const res = await fetch(`${PROD}/api/send-line-message`, {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret()}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
+  });
+  const j = await res.json().catch(() => ({})) as { ok?: boolean; sentMessageIds?: string[]; error?: string };
+  return { ok: res.ok && !!j.ok, status: res.status, ids: j.sentMessageIds ?? [], error: j.error };
+}
+
+let cleanup: string[] = [];
+const sentTexts: string[] = [];
+const sentLineIds: string[] = [];
+function writeFloor(floor: string | null, status = "proposing") {
+  if (!FLOOR_FILE) return;
+  writeFileSync(FLOOR_FILE, JSON.stringify(floor ? { conversationId: YUMA, floor, status } : {}));
+}
+async function insertRows(rows: Array<Record<string, unknown>>): Promise<Array<{ id: string; created_at: string; sender: string; text: string }>> {
+  const ins = await sb.from("messages").insert(rows).select("id, created_at, sender, text");
+  if (ins.error) throw new Error(`行を入れられず: ${ins.error.message}`);
+  const out = (ins.data ?? []) as Array<{ id: string; created_at: string; sender: string; text: string }>;
+  cleanup.push(...out.map((r) => r.id));
+  return out;
+}
+async function removeOwn() {
+  writeFloor(null);
+  if (!cleanup.length) return;
+  await sb.from("messages").delete().in("id", cleanup);
+  cleanup = [];
+}
+
+/** 本番の送信の後に書かれる YUMA の記録（前後で比べる） */
+async function sideRows(since: string) {
+  const out: Record<string, Array<Record<string, unknown>>> = {};
+  for (const [t, col] of [["sent_facts", "created_at"], ["calendar_events", "created_at"], ["viewing_history", "created_at"], ["aix_action_items", "created_at"], ["sent_image_properties", "created_at"], ["brain_decision_logs", "created_at"]] as const) {
+    const { data } = await sb.from(t).select("*").eq("conversation_id", YUMA).gte(col, since).limit(50);
+    out[t] = (data ?? []) as Array<Record<string, unknown>>;
+  }
+  return out;
+}
+
+async function main() {
+  h = await setupLlmTest("yuma-real-line-send-test");
+  const analyzeConversation: Analyze = (await import("../app/lib/brain-core")).analyzeConversation;
+  const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
+  if (!FLOOR_FILE) console.warn("⚠ REPLAY_FLOOR_FILE なし＝YUMA の過去の記録が場面に混ざる");
+  if (SEND && h.run !== "final-claude") throw new Error("--send は最後の確かめ（LLM_TEST_FINAL_CLAUDE=1）の時だけ");
+  if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR, { recursive: true });
+  const outFile = `${OUT_DIR}/${LABEL}.jsonl`;
+  writeFileSync(outFile, "");
+  const t0 = new Date().toISOString();
+  await h.waitUntilYumaQuiet([]);
+  const list = SCENES.filter((s) => !ONLY.length || ONLY.includes(s.id));
+  console.log(`=== YUMA 実送信テスト ${list.length}場面 label=${LABEL} send=${SEND} base=${BASE} ===`);
+  let sendSeq = 0;
+  for (const sc of list) {
+    try {
+      h.assertSceneSafe(sc.turns.map((t) => t.text), sc.id);
+      await h.waitUntilYumaQuiet(cleanup);
+      const times = h.sceneTimes(sc.turns.length + 1, { offsetMin: 30 + sendSeq * 5, stepSec: 60 });
+      const rows = await insertRows(sc.turns.map((t, i) => ({
+        conversation_id: YUMA, sender: t.sender, text: t.text, is_aix_generated: false, line_message_id: `rls-${randomUUID()}`, created_at: times[i],
+      })));
+      writeFloor(new Date(Date.parse(rows[0].created_at) - 1000).toISOString(), sc.first ? "hearing" : sc.state);
+      await new Promise((r) => setTimeout(r, 1200));
+      const meta = await runInDeepseekScope(async () => {
+        setDeepseekScope({ conversationId: YUMA, mark: { kind: "all" } });
+        return analyzeConversation(YUMA, true, sc.first ? "hearing" : sc.state, null, "brain", { autoSendEnabled: false, customerName: "YUMA", prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null });
+      }) as Record<string, unknown> | null;
+      const m = meta ?? {};
+      const custUnits = sc.turns.slice(sc.turns.map((t) => t.sender).lastIndexOf("staff") + 1).filter((t) => t.sender === "customer").map((t) => t.text);
+      const body = {
+        message: custUnits.join(MSG_SEP), customerMessages: custUnits, state: sc.state, conversationId: YUMA, customerName: "YUMA",
+        hasViewed: false, activeTaskTypes: [], hasStaffReplied: !sc.first,
+        recentMessages: rows.map((r) => ({ sender: r.sender, text: r.text, createdAt: r.created_at, isAix: false })),
+        brainMetaDirect: { meta: m, customerName: "YUMA", conversationDirection: (m.conversation_direction as Record<string, unknown> | undefined) ?? null, brainAnalyzedAt: new Date().toISOString() },
+        shadowNoWrite: true,
+      };
+      const res = await fetch(`${BASE}/api/generate-reply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(300_000) });
+      const raw = await res.text();
+      const nl = raw.indexOf("\n");
+      let text = raw;
+      try { JSON.parse(raw.slice(0, nl)); text = raw.slice(nl + 1); } catch { /* 1行目が本文 */ }
+      const fcm = text.match(/<<<FINAL_CHECK:([\s\S]*?)>>>/);
+      let fc: Record<string, unknown> | null = null; try { fc = fcm ? JSON.parse(fcm[1]) : null; } catch { fc = null; }
+      const draft = text.replace(/\n?<<<[A-Z_]{3,}:[\s\S]*?(?:>>>|$)/g, "").trim();
+      // 画面と同じ送信前の関門
+      const sendable = draftToSendableText(draft);
+      const placeholders = sendable ? detectPlaceholders(sendable) : [];
+      const toSend = sendable?.trim() ?? "";
+      const risks = lineRenderRisks(toSend);
+      const checks = sc.expect.map((e) => `${e.ok(toSend) ? "✓" : "✗"}${e.label}`);
+      const blocks = ((fc?.issues as Array<Record<string, unknown>> | undefined) ?? []).filter((i) => i.severity === "block").map((i) => String(i.code));
+      console.log(`\n【${sc.id}】${sc.why}\n  ブレイン: ${String(m.action ?? "-")} / ${String(m.reply_direction ?? "").slice(0, 60)}\n  下書き: ${draft.replace(/\n/g, " ⏎ ")}\n  送信前の関門: ${sendable === null ? "✗ 送れない（社内向け・生成失敗）" : sendable.trim() === draft ? "差なし" : "整形あり"}${placeholders.length ? ` ✗未置換 ${placeholders.join(" ")}` : ""}\n  最終チェックの block: ${blocks.join(",") || "なし"}\n  LINE の崩れ: ${risks.join(" / ") || "なし"}\n  期待: ${checks.join(" ")}`);
+      let sent: Awaited<ReturnType<typeof realSend>> | null = null;
+      if (SEND && toSend && !placeholders.length) {
+        sent = await realSend({ message: toSend, origin: "manual" });
+        sendSeq++;
+        console.log(`  ▶ 本番の送信: ${sent.ok ? `届いた（LINE id ${sent.ids.join(",")}）` : `失敗 ${sent.status} ${sent.error}`}`);
+        if (sent.ok) {
+          sentTexts.push(toSend); sentLineIds.push(...sent.ids);
+          await insertRows([{ conversation_id: YUMA, sender: "staff", text: toSend, is_aix_generated: false, line_message_id: sent.ids[0] ?? `rls-${randomUUID()}`, created_at: times[times.length - 1] }]);
+        }
+      }
+      appendFileSync(outFile, JSON.stringify({ id: sc.id, brain: m.action ?? null, draft, sendable, placeholders, risks, checks, blocks, sent }) + "\n");
+    } catch (e) {
+      console.log(`【${sc.id}】ERROR ${String(e).slice(0, 300)}`);
+    } finally {
+      await removeOwn();
+    }
+  }
+  // 書式の点検の1通（スタッフの実送信の形: 空行・見出しの🌟・絵文字・長い URL・全角の記号）
+  if (SEND && PROBE) {
+    const probe = "【テスト送信】YUMAさん（書式の点検・お客様には送っていません）\n\n🌟エスリード長居 503\n家賃管理費込68,000円・御堂筋線「長居」駅徒歩3分\n\nお手隙の際にご査収ください😌！！\nhttps://suumo.jp/chintai/jnc_000000000000/?bc=100000000000\n①②③ ㎡ ～ ￥11,000（税込） 🙇";
+    const r = await realSend({ message: probe, origin: "manual" });
+    console.log(`\n【probe】書式の点検: ${r.ok ? `届いた（${r.ids.join(",")}）` : `失敗 ${r.status} ${r.error}`}\n  LINE の崩れ（送った文の点検）: ${lineRenderRisks(probe).join(" / ") || "なし"}`);
+    if (r.ok) { sentTexts.push(probe); sentLineIds.push(...r.ids); }
+  }
+  // 画像のまとめ送り（AIX の物件ピックアップと同じ形: 画像2枚＋本文を1回の送信に）
+  if (SEND && IMAGES) {
+    const { data: imgs } = await sb.from("messages").select("image_url").eq("conversation_id", YUMA).eq("sender", "staff").not("image_url", "is", null).order("created_at", { ascending: false }).limit(2);
+    const urls = ((imgs ?? []) as Array<{ image_url: string }>).map((x) => x.image_url).filter(Boolean);
+    if (urls.length) {
+      const text = "【テスト送信】画像のまとめ送りの点検です（AIX の物件ピックアップと同じ形）\nお手隙の際にご査収ください😌！！";
+      const r = await realSend({ image_urls: urls, message: text, origin: "aix", aix_type: "property_send" });
+      console.log(`\n【images】画像${urls.length}枚＋本文: ${r.ok ? `届いた（${r.ids.length}通: ${r.ids.join(",")}）` : `失敗 ${r.status} ${r.error}`}`);
+      if (r.ok) { sentTexts.push(text); sentLineIds.push(...r.ids); }
+    }
+  }
+  if (SEND) {
+    // 本番の送信の後（after）に書かれた YUMA の記録を待って比べる
+    await new Promise((r) => setTimeout(r, 45_000));
+    const side = await sideRows(t0);
+    console.log("\n=== 送信の後に本番が書いた YUMA の記録（この回以降） ===");
+    for (const [t, rows] of Object.entries(side)) console.log(`  ${t}: ${rows.length}行 ${rows.slice(0, 4).map((r) => JSON.stringify(r).slice(0, 160)).join(" | ")}`);
+    writeFileSync(`${OUT_DIR}/${LABEL}-side.json`, JSON.stringify({ t0, sentTexts, sentLineIds, side }, null, 1));
+  }
+  console.log(`\n出力: ${outFile}`);
+}
+main()
+  .catch((e) => { console.error(e); process.exitCode = 1; })
+  .finally(async () => { await removeOwn(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 800); });

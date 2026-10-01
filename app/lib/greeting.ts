@@ -78,16 +78,23 @@ export type GreetingDecision = {
    * （その場で答える→「はい」／これから動く→「かしこまりました」）。enforceOpener が classifyReplyBody で使う
    */
   openerBodyRule?: boolean;
+  /**
+   * 2026-10-02: 竹内さんが場面を名指しで決めた開口語（みく事例＝申込の案内の後の迷いは かしこまりました／Hina 事例＝了承＋後押しは はい／
+   * 条件フォーム／はじめまして・催促の謝罪）。これが true の時だけ、出口（enforceOpener）が書いてある はい⇔かしこまりました を入れ替える。
+   * false（実データの割合で決めた場面）は、書いてある開口語を入れ替えない（人の実送信 46通を書き換えていたため・enforceOpener の注記）
+   */
+  openerStrict?: boolean;
 };
 
 /** DB（tpo_debug.greeting → reply_context_snapshot）・check-reply 転送用の軽量形 */
-export type GreetingDecisionLite = Pick<GreetingDecision, "kind" | "openingLine" | "nightPrefix" | "enforce" | "opener" | "openerAllowed" | "openerReason" | "reason" | "audit" | "openerBodyRule">;
+export type GreetingDecisionLite = Pick<GreetingDecision, "kind" | "openingLine" | "nightPrefix" | "enforce" | "opener" | "openerAllowed" | "openerReason" | "reason" | "audit" | "openerBodyRule" | "openerStrict">;
 export function toGreetingLite(d: GreetingDecision): GreetingDecisionLite {
   return {
     kind: d.kind, openingLine: d.openingLine, nightPrefix: d.nightPrefix, enforce: d.enforce,
     opener: d.opener, openerAllowed: d.openerAllowed, openerReason: d.openerReason, reason: d.reason, audit: d.audit,
     // 2026-09-18 竹内（ゆうこ事例）: 検査（final-check ⑦-e）も後処理と同じ線を見る（四者同名）
     openerBodyRule: d.openerBodyRule,
+    openerStrict: d.openerStrict,
   };
 }
 
@@ -218,24 +225,24 @@ export function resolveOpener(o: {
   applyGuideThinking?: boolean;
   /** 了承＋こちらが既に言ったことの後押しだけ（新しい依頼ではない）＝「はい」（2026-09-17 竹内・Hina 事例） */
   ackPush?: boolean;
-}): Pick<GreetingDecision, "opener" | "openerAllowed" | "openerReason" | "openerBodyRule"> {
-  const r = (opener: OpenerKind, openerAllowed: OpenerKind[], openerReason: string, openerBodyRule = false) =>
-    ({ opener, openerAllowed, openerReason, openerBodyRule });
+}): Pick<GreetingDecision, "opener" | "openerAllowed" | "openerReason" | "openerBodyRule" | "openerStrict"> {
+  const r = (opener: OpenerKind, openerAllowed: OpenerKind[], openerReason: string, openerBodyRule = false, openerStrict = false) =>
+    ({ opener, openerAllowed, openerReason, openerBodyRule, openerStrict });
   if (o.greetingKind === "first" || o.greetingKind === "late_apology") {
-    return r("none", ["none"], `${o.greetingKind}: 挨拶行が開口語を兼ねる（正解: はじめまして→開口語 0 件）`);
+    return r("none", ["none"], `${o.greetingKind}: 挨拶行が開口語を兼ねる（正解: はじめまして→開口語 0 件）`, false, true);
   }
   if (o.isDeliverableReply) return r("none", ["none", "hai"], "結果報告は物件名・結果・名前行から本題（正解: 結果報告の冒頭は お世話に／名前行／🌟物件名。お待たせは廃止）");
   // 2026-09-12 竹内（あや事例）「フォーマット送ってもらった事に対して感謝をする。感謝して物件ピックアップする事を伝える」
   //   → 開口語「かしこまりました」ではなく「ご条件お送り頂きありがとうございます😊！！」から（スタッフ実送信の型）
-  if (o.customerSentConditionForm) return r("none", ["none"], "お客様が条件フォームを送ってくれた → 開口語ではなく「ご条件お送り頂きありがとうございます😊！！」の感謝から");
+  if (o.customerSentConditionForm) return r("none", ["none"], "お客様が条件フォームを送ってくれた → 開口語ではなく「ご条件お送り頂きありがとうございます😊！！」の感謝から", false, true);
   // 2026-09-15 竹内（みく事例）「申込誘導してからの返信なので、はいではなくて、かしこまりましたでお客さんの気持ちを受け入れる形」
-  if (o.applyGuideThinking) return r("kashikomari", ["kashikomari"], "申込の案内の後の検討・迷い → 「かしこまりました」でお客様の気持ちを受け止める（竹内 みく事例）");
+  if (o.applyGuideThinking) return r("kashikomari", ["kashikomari"], "申込の案内の後の検討・迷い → 「かしこまりました」でお客様の気持ちを受け止める（竹内 みく事例）", false, true);
   // 2026-09-17 竹内（Hina 事例）「この場合は はい が答えとして正しい。かしこまりましただと違和感でる」:
   //   了承（承知しました）＋こちらが既に言ったことの後押し（「写真またお願いします」）は**新しい依頼ではない**ので受け止めの「はい」。
   //   実データ（365日・了承語で始まり「お願いします」を含む発言のうち開口語つきの返信19件）: 新しい中身が無い12件は「はい」、
   //   日時・追加の依頼・条件つきの7件は「かしこまりました」＝89%がこの線で分かれる（opener-ack-push.resolveAckPush）。
   //   旧: この通は kind=other・substance=[statement] で「分類不能: LLM の開口語を尊重」に落ち、LLM が かしこまりました を書いていた
-  if (o.ackPush) return r("hai", ["hai", "none"], "了承＋こちらが既に言ったことの後押し（新しい依頼ではない）→ 受け止めの「はい」（実データ 12/19。竹内 Hina 事例）");
+  if (o.ackPush) return r("hai", ["hai", "none"], "了承＋こちらが既に言ったことの後押し（新しい依頼ではない）→ 受け止めの「はい」（実データ 12/19。竹内 Hina 事例）", false, true);
   const kinds = new Set(o.substanceKinds ?? []);
   const asksAction = kinds.has("request") || kinds.has("condition") || kinds.has("schedule") || kinds.has("decision");
   switch (o.customerKind) {
@@ -410,7 +417,7 @@ function openerLiteral(k: OpenerKind, emoji: string): string {
  * 開口語層のみ（挨拶行を剥がした rest に対して呼ぶ）。LLM の開口語を尊重し、openerAllowed に無い時だけ置換／除去。
  * 無い時に足すことはしない（成約データに無い組合せを作らない）。承知／了解 → かしこまりました に正規化（正解 承知 4 vs かしこまりました 311）。
  */
-export function enforceOpener(rest: string, d: Pick<GreetingDecision, "opener" | "openerAllowed" | "openerBodyRule">): { rest: string; fixes: string[] } {
+export function enforceOpener(rest: string, d: Pick<GreetingDecision, "opener" | "openerAllowed" | "openerBodyRule" | "openerStrict">): { rest: string; fixes: string[] } {
   const fixes: string[] = [];
   const op = detectOpener(rest);
   if (!op) return { rest, fixes };
@@ -429,6 +436,28 @@ export function enforceOpener(rest: string, d: Pick<GreetingDecision, "opener" |
   if (d.openerAllowed.includes(op.opener)) {
     if (op.canonical) return { rest, fixes };
     if (!body) return { rest, fixes };
+    fixes.push(`開口語「${op.match.trim()}」を「${openerLiteral(op.opener, op.emoji)}」に正規化`);
+    return { rest: `${openerLiteral(op.opener, op.emoji)}\n${body}`, fixes };
+  }
+  // 2026-10-02 竹内「初期のころ制約かけまくっていたので、理想の文がぶつかってしまって…そこもみつける」:
+  //   人の実送信（60日・AIX を除く手打ち 2,516通・scripts/audit-exits-vs-human.ts）をこの出口に通すと、
+  //   はい⇔かしこまりました の入れ替え・開口語の除去が 46通あった。中身はどれも人として自然な開口語だった:
+  //     「今からでも大丈夫ですか？」→「はい！！お手隙の際にお電話おかけください！！」（→ かしこまりました に書き換えていた）
+  //     「抑えるだけ抑えててもいいんですか？」→「はい！！もちろんです😊！！」（同上）
+  //     「お願いします！」→「かしこまりました！！お部屋お申込みさせて頂きます！！」（→ はい に書き換えていた）
+  //   上の classifyReplyBody の実測でも「引き受け・承諾の中身」は はい77／かしこまりました227、「どちらとも取れない」は 10／9 で、
+  //   どちらも普通に使う＝出口で入れ替える根拠が無い（final-check の開口語も 9/21 に「一択」をやめている）。
+  //   → 竹内さんが場面を名指しした時（openerStrict）以外は、はい・かしこまりました を入れ替えない・消さない。
+  //     ただし「その場で答える中身」に かしこまりました は 1/29 なので、その時だけ はい にする（上の openerBodyRule と同じ線）。
+  //     了承・感想だけの場面（decision が はい）に かしこまりました で「ごゆっくりご確認ください」のように動かない中身は 2/39 なので、
+  //     その時も はい にする（T14）。かしこまりました を残すのは、中身が「これから動く・ご希望を飲む」時だけ。
+  if (!d.openerStrict && body && (op.opener === "hai" || op.opener === "kashikomari")) {
+    const bodyKind = classifyReplyBody(body);
+    if (op.opener === "kashikomari" && (bodyKind === "answer" || (d.opener === "hai" && bodyKind !== "undertake"))) {
+      fixes.push(`開口語「${op.match.trim()}」→「${openerLiteral("hai", op.emoji)}」（その場で答える返信＝はい。実データ はい28／かしこまりました1）`);
+      return { rest: `${openerLiteral("hai", op.emoji)}\n${body}`, fixes };
+    }
+    if (op.canonical) return { rest, fixes };
     fixes.push(`開口語「${op.match.trim()}」を「${openerLiteral(op.opener, op.emoji)}」に正規化`);
     return { rest: `${openerLiteral(op.opener, op.emoji)}\n${body}`, fixes };
   }

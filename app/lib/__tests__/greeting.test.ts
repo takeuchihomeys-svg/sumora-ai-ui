@@ -219,7 +219,10 @@ describe("2026-09-18 竹内（ゆうこ事例）: かしこまりました と �
     // これから動く側に新ルールは関与しない（ここが かしこまりました になるのは従来どおり
     //  「エリアの質問は substance に condition が付く → allowed=[かしこまりました/なし]」という既存の線）
     const move = "昭和町駅周辺の治安について管理会社に確認させて頂きます！！";
-    expect(enforceOpening(`はい😊！！\n${move}`, d).cleaned).toBe(`かしこまりました😊！！\n${move}`);
+    // 2026-10-02: 「はい」＋これから動く中身は入れ替えない（実データ はい77／かしこまりました227＝はいも普通に使う。
+    //   人の実送信 46通を出口が入れ替えていた・scripts/audit-exits-vs-human.ts）。旧の期待値は かしこまりました への入れ替え
+    expect(enforceOpening(`はい😊！！\n${move}`, d).cleaned).toBe(`はい😊！！\n${move}`);
+    expect(enforceOpening(`かしこまりました😊！！\n${move}`, d).cleaned).toBe(`かしこまりました😊！！\n${move}`);
     // お客様のご希望を飲む（「13時は可能ですか？」の型。実送信29件がこれだった）
     const accept = "かしこまりました😊！！\n8月9日13:00でご案内可能です😊！！";
     expect(enforceOpening(accept, d).cleaned).toBe(accept);
@@ -244,6 +247,26 @@ describe("2026-09-18 竹内（ゆうこ事例）: かしこまりました と �
       recentMessages: [STAFF, ASK], lastCustomerMessage: ASK.text, customerName: "ゆうこ", greetingDecision: toGreetingLite(d),
     }).map((i) => i.code);
     expect(codes2).toContain("OPENER_MISMATCH");
+  });
+  it("H1 2026-10-02 人の実送信「今からでも大丈夫ですか？」→「はい！！お手隙の際にお電話おかけください！！」はそのまま", () => {
+    const d = decide([STAFF, { sender: "customer", text: "今からでも大丈夫ですか？", createdAt: "2026-09-18T05:00:00Z" }], NOW, 15, { greetedToday: true });
+    const t = "はい！！\nお手隙の際にお電話おかけください！！";
+    expect(enforceOpening(t, d).cleaned).toBe(t);
+  });
+  it("H2 人の実送信「抑えるだけ抑えててもいいんですか？」→「はい！！もちろんです😊！！」はそのまま", () => {
+    const d = decide([STAFF, { sender: "customer", text: "抑えるだけ抑えててもいいんですか？", createdAt: "2026-09-18T05:00:00Z" }], NOW, 15, { greetedToday: true });
+    const t = "はい！！\nもちろんです😊！！";
+    expect(enforceOpening(t, d).cleaned).toBe(t);
+  });
+  it("H3 人の実送信「お願いします🙇‍♀️」→「かしこまりました！！お部屋お申込みさせていただきます！！」はそのまま（動く中身）", () => {
+    const d = decide([STAFF, { sender: "customer", text: "お願いします🙇‍♀️🙇‍♀️", createdAt: "2026-09-18T05:00:00Z" }], NOW, 15, { greetedToday: true });
+    const t = "かしこまりました！！\nお部屋お申込みさせていただきます！！";
+    expect(enforceOpening(t, d).cleaned).toBe(t);
+  });
+  it("H4 竹内さんが名指しした場面（はじめまして）は openerStrict＝従来どおり開口語を外す", () => {
+    const d = decide([{ sender: "customer", text: "初めまして！お部屋探しています", createdAt: "2026-09-18T05:00:00Z" }], NOW, 15, { isFirst: true });
+    expect(d.openerStrict).toBe(true);
+    expect(enforceOpening("かしこまりました！！\nお部屋探させて頂きます！！", d).cleaned).not.toContain("かしこまりました");
   });
   it("Y7 依頼ではない場面（了承のみ）には掛けない＝既存の T14 の線が生きる", () => {
     const ack: M[] = [STAFF, { sender: "customer", text: "ありがとうございます！仕事終わりに見させて頂きます", createdAt: "2026-09-18T05:00:00Z" }];

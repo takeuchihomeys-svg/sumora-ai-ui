@@ -4,7 +4,8 @@
 //   ・「すぐに」（約束の副詞）は使わない → 除去する（禁止は維持）
 //   生成（few-shot 注入前）・後処理（validateAndClean の末尾）・修正版（final-check の修正ループ）・検査（HASTY_PROMISE）が
 //   このファイルの正規表現と関数だけを見る（同じ事実を複数の段が別々に判定しない）。
-//   依存ゼロ（他の app/lib/* を import しない）。
+//   依存は emoji-allowlist.ts だけ（それも依存ゼロの純関数。2026-10-02 絵文字の決まりを同じ入口に載せるため）。他の app/lib/* を import しない。
+import { enforceEmojiAllowlist } from "./emoji-allowlist";
 //
 // 実データ（2026-09-11 測定）:
 //   ・承知は正解の送信 11件中 8件が AI 下書き由来・7件は文中の形（「〜とのこと、承知いたしました」）。
@@ -239,12 +240,15 @@ export function normalizeKurai(text: string): { text: string; count: number } {
 }
 
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number; kurai: number } {
+export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number; kurai: number; emoji: number } {
   const n = opts.keepNightGreeting ? keepOneNightGreeting(text) : stripNightGreeting(text);
   const g = dedupeGreetings(n.text);
   const u = normalizeBareUketamawari(g.text);
   const a = normalizeShochi(u.text);
   const b = stripHastyAdverb(a.text);
   const k = normalizeKurai(b.text);
-  return { text: k.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count };
+  // 2026-10-02 竹内「絵文字は入れて良い絵文字だけにする。女性の絵文字いれない」: 入れてよい絵文字（😊 😌 🌟 ✨ 🙇）だけにする（emoji-allowlist.ts）。
+  //   ここは手本の文（入口）と返信・AIX の仕上げ（出口）の共通の入口なので、手本に 🙇‍♀️ が載らず、出口でも 🙇 に直る
+  const e = enforceEmojiAllowlist(k.text);
+  return { text: e.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count, emoji: e.changes.length };
 }

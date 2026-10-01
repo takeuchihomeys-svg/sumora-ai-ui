@@ -149,6 +149,12 @@ WHERE created_at >= '<開始>' AND env LIKE 'local:%' AND conversation_id IS NOT
 - YUMA の行は**自分が入れた行の id を控えて**その id だけ消す（`.in("id", ids)`）。時刻や送り手で範囲を消さない（他の実行の行を消す）。
 - 一時の scripts は `scripts/_tmp-<自分の作業>-*.ts` のように名前で分け、終わったら名前を並べて消す。
 
+## 9.5 LINE に実際に送る確かめ・人の文で出口を測る（2026-10-02）
+
+- **LINE の実送信**は `scripts/yuma-real-line-send-test.ts`（写しの開発サーバ＋本番の `/api/send-line-message`）。試行錯誤（deepseek-all）は送らない。`--send` は `LLM_TEST_FINAL_CLAUDE=1` の時だけ通る。
+  送る直前に毎回 DB から宛先を読み直す（id・名前「YUMA」・line_user_id が1会話だけ）。送った後に本番が YUMA に書く記録（sent_facts・calendar_events・line_tasks・sent_image_properties）は**自分の送信の line id・時刻の物だけ** id を並べて消す。
+- 出口（返信の本文を書き換える決定論）を足す・直す時は、**人の実送信で何通変わるか**を `scripts/audit-exits-vs-human.ts` で数える（LLM を呼ばない・入口不要）。前の出口を通った後の形で測る（出口の玉突きはこれでしか見えない）。設計知見「弱い部分の見つけ方と強化のしかた」。
+
 ## 10. 知られている落とし穴（2026-10-01 に起きた事）
 
 | 起きた事 | 原因 | 今の歯止め |

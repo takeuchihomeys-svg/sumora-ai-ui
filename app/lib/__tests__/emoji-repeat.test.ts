@@ -61,5 +61,15 @@ for (const s of KEEP) {
   t("絵文字以外の文字は同じ", strip(r.text) === strip(YUMA_0931));
 }
 
+// ── 2026-10-02 人の実送信の監査（audit-exits-vs-human.ts）で 77通が書き換わっていた形: 既に違う絵文字を混ぜている文は触らない ──
+//   旧: 2つ目の 😊 → 😌、その結果もともとの締めの 😌 が「2回目」になって外れる（玉突き）
+{
+  const HUMAN_FIRST = "きえさん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\nご条件お送り頂きありがとうございます😊！！\n大国町駅まで40分以内のエリア全域からきえさんご希望の1LDK・2LDKのお部屋探し全力でサポートさせて頂きます！！\n何卒よろしくお願い致します😌！！";
+  const r = dedupeRepeatedEmoji(HUMAN_FIRST);
+  t("人の初回返信（😊・😊・😌）は触らない", r.text === HUMAN_FIRST && r.changes.length === 0, r.text);
+  const HUMAN_2 = "お気軽にご相談ください😊！！\nまたお部屋ご内覧頂く際、弊社担当がEmiさんにお引越しに関するお悩み等に関しまして親身にサポートさせて頂きます！！\nこの度ご連絡頂きありがとうございます😊！！\n何卒よろしくお願い致します😌！！";
+  t("😊・😊・😌 の締めの 😌 を外さない", dedupeRepeatedEmoji(HUMAN_2).text === HUMAN_2);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
