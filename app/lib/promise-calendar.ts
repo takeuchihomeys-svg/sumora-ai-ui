@@ -187,6 +187,41 @@ export function promiseOverdueDays(
   return Math.max(0, Math.floor((nowMs - oldest) / 86_400_000));
 }
 
+// ── お客様の今の依頼が約束より新しい時の並び（2026-10-01 竹内・和樹事例）──
+// 「ここは物件確認したから送る形なので、そのようにする」: 9/30 の約束「引き続き新着でオススメできるお部屋ピックアップしお送り」の
+//   【必ず】物件ピックアップ送付 が、10/1 12:45 にお客様が送った SUUMO の物件（「ここはどうでしょうか？」）より上に赤帯で出ていた。
+//   実送信（scripts/audit-customer-property-inquiry.ts・7/17〜）: ピックアップの約束が未履行のままお客様がポータルの URL を送ってきた回で、
+//   次に押された AIX は 物件確認した 24・見積書送る 6・物件ピックアップ 1（31回中30回がお客様の物件が先）。
+//   → ブレインが今のお客様の発言に 物件確認した／見積書送る（お客様の物件の確認・見積）を判断した時は、それより前の物件ピックアップの約束を
+//     「後で」に回す（消さない・完了にしない。確認を送った後もピックアップを送るまで残る）。AIX の種類はブレインの判断のまま（画面は並べ替えるだけ）
+
+/** お客様の物件の確認・見積の AIX（この判断が今の発言に出ている間は、ピックアップの約束より先にやる） */
+const INQUIRY_FIRST_ACTIONS: ReadonlySet<string> = new Set(["property_check_result", "estimate_sheet", "acknowledge_check"]);
+
+/**
+ * 未履行の約束を「今やる」と「後で（お客様の物件の確認の後）」に分ける。
+ *   brainAction: 最新のお客様の発言を見たブレインの AIX（aix-button-view の brainAixAction。古い判断は渡さない）
+ *   latestCustomerAt: 最新のお客様の発言の時刻
+ * 後で になるのは 物件ピックアップの約束（event_type=property_send）で、約束の時刻が最新のお客様の発言より前の物だけ。
+ * 確認・見積の約束は今のお客様の依頼と同じ物件のことがあるので並べ替えない。
+ */
+export function splitPromisesForFreshInquiry<T extends { event_type: string | null; start_at: string; notes?: string | null }>(
+  promises: ReadonlyArray<T>,
+  ctx: { brainAction: string | null | undefined; latestCustomerAt: string | null | undefined },
+): { now: T[]; later: T[] } {
+  const now: T[] = [], later: T[] = [];
+  const custMs = Date.parse(ctx.latestCustomerAt ?? "");
+  const inquiry = !!ctx.brainAction && INQUIRY_FIRST_ACTIONS.has(ctx.brainAction) && Number.isFinite(custMs);
+  for (const p of promises) {
+    const promisedMs = Date.parse(p.start_at);
+    // 「明日」の約束は start_at が翌日の午前（promiseStartAt）。後ろにずれた約束も、約束した時（notes の「（M/D HH:MM の送信から）」）より
+    // お客様の発言が新しければ同じ扱いにしたいが、start_at が発言より後なら今日やる予定として今のまま出す（取り違えるより安全）
+    if (inquiry && p.event_type === PROMISE_SPEC.pickup_declared.eventType && Number.isFinite(promisedMs) && promisedMs < custMs) later.push(p);
+    else now.push(p);
+  }
+  return { now, later };
+}
+
 // 並び順そのものは conversation-order.ts（compareConversationOrder）。
 // 【必ず】は一覧全体の先頭ではなく「メッセージが来ている組／来ていない組のそれぞれの中」で上に来る
 // （2026-09-18 竹内の指摘。ここに並びの規則を2つ置かないよう、この節は約束の材料だけにする）

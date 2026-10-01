@@ -160,7 +160,9 @@ const CHECK_PATTERN_DETECTORS: Array<{ pattern: string; topic: string; re: RegEx
   { pattern: "vacate_date",       topic: "退去予定日",             re: /退去(予定)?日|いつ[^\n]{0,4}退去/ },
   { pattern: "mgmt_move_in",      topic: "入居可能日",             re: /入居可能日|入居日|いつから[^\n]{0,4}(入居|住め)/ },
   { pattern: "mgmt_parking",      topic: "駐車場",                 re: /駐車場|バイク置|駐輪/ },
-  { pattern: "mgmt_equipment",    topic: "設備",                   re: /エアコン|コンロ|ウォシュレット|洗濯機置|インターネット無料|ネット無料|設備/ },
+  // 2026-10-01（YUMA の場面テスト・ae3ffecb 実物「リビングにクーラー取り付けられるか分かりますでしょうか？」）: クーラー＝エアコンの言い換えが漏れて
+  //   check_pattern が決まらなかった（365日でお客様の「クーラー」は1通だけ・エアコンと同じ設備の確認）
+  { pattern: "mgmt_equipment",    topic: "設備",                   re: /エアコン|クーラー|コンロ|ウォシュレット|洗濯機置|インターネット無料|ネット無料|設備/ },
 ];
 
 export function detectPropertyCheckPattern(recentText: string): PropertyCheckKind | null {

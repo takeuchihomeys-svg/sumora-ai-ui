@@ -8065,3 +8065,24 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 入口: `procedure-question.ts` ProcedureQuestion.ids（idDocsIn）＋ idDocFactFor（カードあり→そのカードだけ・パスポートに触れない／パスポートだけ→住民票との2点）。一般の事実（idDoc・company-facts apply_docs）も住民票に
 - 出口: `company-fact-guard.ts` screening_flow／apply_docs に「同じ文でカードとパスポートを並べてどちらでも」（block）。実送信365日のパスポートの文7通は全部当たらない
 - テスト `id-doc-passport.test.ts` 18件（procedure-question.test.ts の旧文言2件を更新）
+
+## 2026-10-01 お客様の画像に「物件か・物件以外か・何か」の見出し（竹内「送られてきた画像が物件なのか、物件以外なのか分かるためにも、画像分析したのを今ある本人確認書類のように文字に出しといたら、文やAIXでの判断の質が上がる」）
+- 形: `[画像] 【見出し】\n<書き起こし>`（先頭の「[画像]」は不変・書き起こしが空なら `[画像]` のまま・本人確認書類／収入証明書／申込書は従来の形）。見出しは `app/lib/image-label.ts`（純関数）の IMAGE_KIND_LABEL: 物件の資料／物件の画面（ポータル）／物件の画面（SNS・広告）／物件の写真／見積書・初期費用の明細／物件以外：振込・支払いの控え・契約・入居の手続きの画面・不具合の報告・やり取りのスクショ・検索条件の画面・経路・乗換の画面・ペットの写真・人物の写真・ペットの書類（書き起こしなし）／種類不明
+- 決め方: Vision の floor_plan・property_photo・estimate は採る（中の種類だけ指紋）／other・分類なしは強い指紋の時だけ。迷えば【種類不明】（物件／物件以外の取り違えは無い方がまし）
+- 個人情報: Vision が「TYPE:」なしで「id_document」とだけ返すと旧の解析が other にして書き起こしを保存していた（14件）→ `parseVisionTypeOutput`。免許証・保険証の裏（臓器提供の欄）・資格確認書・韓国の住民登録・保証会社の申込書・入居申込のウェブフォーム・狂犬病の注射済証の指紋を足した（過去の取りこぼし12件・物件の画像で誤爆0）
+- ブレイン: correction:image_only と信号3.5（画像だけ→見積書送る）を見積書・種類不明の時だけに（全期間27回が1回もスタッフに使われず・直前は本人確認書類7・犬3 等）。画像種別の札は見出しがある時は付けない。物件の数（customer-property-count）は物件以外・書類を数えない。own-property-match・condition-source-gate は見出しの行を飛ばす
+- 監査 `npx tsx --env-file=.env.local scripts/audit-image-label.ts [--kind=種類不明] [--full]`（948件・6/06〜）: 物件の画面（ポータル）238・物件の資料42・SNS32・種類不明23・手続き21・見積書16・本人確認書類9・やり取り7・支払い5・人物4・物件の写真4・ペット4・申込書2・不具合2・経路1・ペットの書類1・空434。テスト `image-label.test.ts` 67件
+- **未実施（竹内さんの判断待ち）**: 過去の行の埋め戻し（個人情報12行・見出し付け約413行・image_type の直し17行）。他担当の S1（持ち込み）判定 aix-scene-evidence / property-check-task は画像を全部持ち込みとして数える → 物件以外の見出しで外すのは担当と相談
+
+## 2026-10-01 お客様が持ち込んだ物件（SUUMO の URL・物件の画像）は AIX【物件確認した】— 竹内「ここは物件確認したから送る形なので、そのようにする。このような判断基準のズレを改善していく」（穴:G3・和樹事例）
+- 実物: 和樹 fecda03f 10/1 12:45「ＭＡＩＳＯＮ ＬＵＮＡ 1階 https://suumo.jp/… by SUUMO」＋「ここはどうでしょうか？」→ ブレイン 確認します（acknowledge_check）・赤帯は 9/30 の約束「引き続き新着で…ピックアップしお送り」の【必ず】物件ピックアップ送付（今日中）。スタッフは 16:48 に 物件確認した（募集終了）
+- 出所: ①プロンプトの aix 基準「顧客が物件URL…→ acknowledge_check」（実送信と逆）②`brain-aix-feedback.normalizeAixForMatch` が確認しますと物件確認したを同一視＝一致率にズレが出なかった（直していない・下の残り）③赤帯（page.tsx・calendar_events【必ず】）はブレインの判断を見ずに並べるだけ
+- 線（`scripts/audit-customer-property-inquiry.ts`・読み取りのみ）: URL を送ってきた後の最初の AIX 131回 → 物件確認した 109・見積書送る 21・確認します 0／確認しますの押下は150日で6回／ピックアップの約束が未履行のままの URL 31回中30回はお客様の物件が先
+- 直し: `customer-property-inquiry.ts` correctCustomerPropertyInquiryAix（S1・根拠 URL／物件を指す言葉つきの画像・LLM が確認します → 物件確認した、お客様の言葉に初期費用・見積 → 見積書送る。temu 等の URL は除く）を brain-core の check_already_declared の直後に（decision_source `correction:customer_property_inquiry` / `correction:customer_property_cost`）。プロンプトの基準も実送信に合わせた
+- 赤帯: `promise-calendar.splitPromisesForFreshInquiry` — ブレインの今の判断が 物件確認した／見積書送る／確認します の間は、最新のお客様の発言より前のピックアップの約束を「後で: 物件ピックアップ送付（確認を送った後も約束は残ります）」の1行に（消さない・完了にしない）。先頭に「先に: お客様が送った物件の確認（AIX 物件確認した）」
+- 画像の見出し（image-label・並行タスク）との接続: 全部が【物件以外：…】・本人確認書類・収入証明書の画像は S1 の持ち込みにしない（`unrepliedCustomerTurn.nonPropertyImagesOnly`・`aix-scene-evidence.isPropertyCandidateImage`・`customerRequestedPropertyCheck`・`property-check-task` の2関数）。監査 D: S1（画像）101件のうち21件が書類だけ・AIX 押下0
+- ついで: `aix-taxonomy` mgmt_equipment に「クーラー」（YUMA テストで check_pattern が決まらなかった・365日で1通）
+- 監査: 判断1,978件で変わる37件・スタッフが確認しますを押した回0／後で に回る80件 → 次はお客様の物件の AIX 54・ピックアップ4
+- テスト `customer-property-inquiry.test.ts` 20件（和樹の実文）。YUMA: `scripts/yuma-aix-scene-brain-test.ts`（場面を入れて analyzeConversation を直接呼ぶ・判断の保存/通知なし・場面は毎回消す）DeepSeek 3回×10場面 → Claude 1回。kazuki DeepSeek 3/3・2/3（YUMA の履歴の電話・内覧が混ざった揺れ）・Claude 1/1
+- ⚠ 道具の罠: tsx では instrumentation が動かない → スクリプトで `installAltProvider()` を brain-core の import より前に、さらに会話の呼び出しは `runInDeepseekScope`＋`setDeepseekScope({ mark: { kind: "all" } })`（YUMA だけ）を入れないと LLM_ALT_ACTIONS を付けても Claude のまま。ログの `"route":"brain_fresh","provider":"deepseek"` で確かめる
+- 残り（竹内さんの判断待ち）: normalizeAixForMatch の同一視（外すと過去の一致率が下がる）／「家賃込の価格でしょうか？」は信号で見積書送る（スタッフ実物は 初期費用について・実例1件で線が引けない）／「引き続き新着で…ピックアップしお送り」（次第なし）も【必ず】【今日中】になる（外の出来事待ちにするか）／AIX 内覧調整の文の 😊 の重複（実送信でも約半分が重複のまま＝出口に入れない）

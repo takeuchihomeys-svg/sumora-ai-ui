@@ -16,7 +16,7 @@
 //   ここで内覧の希望だけの連投を外す（customerRequestedPropertyCheck 自体は /api/line-tasks・画面の判定と共有なので変えない）。
 //   作る側に残す物: 連投に物件そのもの（画像・URL・号室）＝持ち込み物件／空き・募集・費用・見積・入居日・審査・確認の依頼の語。
 //   線は scripts/audit-property-check-task.ts（120日）で前後を読んで引いた（dept_line_reply.md 2026-09-27）。
-import { AVAILABILITY_URL_RE, customerRequestedPropertyCheck, propertySpecifiedBy } from "@/app/lib/aix-scene-evidence";
+import { AVAILABILITY_URL_RE, customerRequestedPropertyCheck, isPropertyCandidateImage, propertySpecifiedBy } from "@/app/lib/aix-scene-evidence";
 import { FOCUSED_ESTIMATE_ASK_RE, VACANCY_ASK_RE } from "@/app/lib/focused-estimate-request";
 import { CUST_WILL_SEND_SELF_PRED } from "@/app/lib/reply-context";
 import { VIEWING_INTENT_RE, allVacancyWordsAreSlots } from "@/app/lib/scene-patterns";
@@ -69,7 +69,8 @@ export function isViewingWishOnlyTurn(recentMessages: ReadonlyArray<{ sender: st
   let hasCustomerImage = false;
   for (let i = msgs.length - 1; i >= 0 && msgs[i].sender === "customer"; i--) {
     const t = (msgs[i].text ?? "").trim();
-    if (/^\[画像\]/.test(t)) hasCustomerImage = true;
+    // 2026-10-01: 物件以外の見出しの画像は持ち込みに数えない（aix-scene-evidence isPropertyCandidateImage）
+    if (/^\[画像\]/.test(t)) { if (isPropertyCandidateImage(t)) hasCustomerImage = true; }
     else if (t) turn.unshift(t);
   }
   const text = turn.join("\n");
@@ -108,7 +109,7 @@ export function isEstimateAskForOurRoomTurn(recentMessages: ReadonlyArray<{ send
   let i = msgs.length - 1;
   for (; i >= 0 && msgs[i].sender === "customer"; i--) {
     const t = (msgs[i].text ?? "").trim();
-    if (/^\[画像\]/.test(t)) hasCustomerImage = true;
+    if (/^\[画像\]/.test(t)) { if (isPropertyCandidateImage(t)) hasCustomerImage = true; }
     else if (t) turn.unshift(t);
   }
   const text = turn.join("\n");
@@ -122,7 +123,7 @@ export function isEstimateAskForOurRoomTurn(recentMessages: ReadonlyArray<{ send
     const t = (m.text ?? "").trim();
     if (!t) continue;
     if (m.sender === "customer") {
-      if (/^\[画像\]/.test(t) || AVAILABILITY_URL_RE.test(t)) return false; // お客様の持ち込み
+      if ((/^\[画像\]/.test(t) && isPropertyCandidateImage(t)) || AVAILABILITY_URL_RE.test(t)) return false; // お客様の持ち込み（物件以外の見出しの画像は除く）
       continue;
     }
     if (!STAFF_ROOM_SENT_RE.test(t)) continue;

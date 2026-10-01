@@ -34,7 +34,7 @@ import { buildScreeningTaskPayload, isValidSyncKey } from "./lib/screening-calen
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
-import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseOverdueDays } from "./lib/promise-calendar";
+import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
 // 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
 import { compareConversationOrder, sortMsOf } from "./lib/conversation-order";
 import { jstYmd } from "./lib/jst-date";
@@ -7614,9 +7614,18 @@ export default function Home() {
           })()}
 
           {/* お客様への約束（【必ず】・未履行）: この会話を開いた瞬間に見える。タップでその AIX を開く（2026-09-16 竹内・𝒮❦ 事例） */}
-          {!inputFocused && (openPromises[selectedConversation.id] ?? []).length > 0 && (
+          {/* 2026-10-01 竹内（和樹事例）: ブレインが今のお客様の発言に 物件確認した／見積書送る を判断している間は、
+              それより前の物件ピックアップの約束を「後で」の1行に回す（消さない・完了にしない）。分け方は promise-calendar splitPromisesForFreshInquiry */}
+          {!inputFocused && (openPromises[selectedConversation.id] ?? []).length > 0 && (() => {
+            const split = splitPromisesForFreshInquiry(openPromises[selectedConversation.id] ?? [], {
+              brainAction: brainAixAction, latestCustomerAt: latestCustomerTs(selectedConversation.messages || []),
+            });
+            return (
             <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}>
-              {(openPromises[selectedConversation.id] ?? []).map((p) => {
+              {split.later.length > 0 && (
+                <p className="text-[11px] font-bold text-[#6a1b9a]">先に: お客様が送った物件の確認（{brainAixAction === "estimate_sheet" ? "AIX 見積書送る" : "AIX 物件確認した"}）</p>
+              )}
+              {split.now.map((p) => {
                 const lines = (p.notes ?? "").split("\n");
                 const head = (lines[0] ?? "").replace(PROMISE_MUST_MARK, "").replace(TODAY_MARK, "");
                 const promiseLine = lines.find((l) => l.startsWith("約束: "))?.replace(/^約束: /, "") ?? "";
@@ -7635,8 +7644,15 @@ export default function Home() {
                   </button>
                 );
               })}
+              {split.later.map((p) => {
+                const head = ((p.notes ?? "").split("\n")[0] ?? "").replace(PROMISE_MUST_MARK, "").replace(TODAY_MARK, "");
+                return (
+                  <p key={p.id} className="truncate text-[10px] text-[#c62828] opacity-70">後で: {head}（確認を送った後も約束は残ります）</p>
+                );
+              })}
             </div>
-          )}
+            );
+          })()}
           {!inputFocused && (() => {
             const tasks = activeTasks[selectedConversation.id] ?? [];
             const bannerAixMeta = selectedConversation.suggestedAixMeta;

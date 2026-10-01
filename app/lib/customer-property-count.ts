@@ -11,6 +11,10 @@ type Msg = { sender?: string | null; text?: string | null };
 const NON_PROPERTY_URL_RE = /\/apps?\/?(?:$|[?#])|(?:^|\/\/)(?:line\.me|lin\.ee|apps\.apple\.com|play\.google\.com)\b/i;
 const URL_RE = /https?:\/\/[^\s）)」』]+/g;
 const IMAGE_RE = /^\s*\[画像\]/;
+// 2026-10-01 竹内「送られてきた画像が物件なのか、物件以外なのか分かるためにも…文字に出しといたら」:
+//   見出しで物件以外と分かった画像（【物件以外：ペットの写真】等・image-label.ts）と、種類だけ残した書類（本人確認書類・収入証明書・申込書…）は物件に数えない。
+//   画面から使うので image-label を import せず、保存の形（先頭の見出し）だけを見る
+const NON_PROPERTY_IMAGE_RE = /^\s*\[画像\]\s*(?:【物件以外：|本人確認書類\s*$|収入証明書(?:（[^）\n]+）)?\s*$|(?:申込書|住民票|印鑑登録証明書)\s*$)/;
 
 function latestCustomerTurn(messagesOldestFirst: ReadonlyArray<Msg>): Msg[] {
   const msgs = messagesOldestFirst.filter((m) => !!(m.text ?? "").trim());
@@ -28,7 +32,7 @@ export function countCustomerSentProperties(messagesOldestFirst: ReadonlyArray<M
   let images = 0;
   for (const m of latestCustomerTurn(messagesOldestFirst)) {
     const t = m.text ?? "";
-    if (IMAGE_RE.test(t)) { images++; continue; }
+    if (IMAGE_RE.test(t)) { if (!NON_PROPERTY_IMAGE_RE.test(t)) images++; continue; }
     const found = [...new Set((t.match(URL_RE) ?? []).filter((u) => !NON_PROPERTY_URL_RE.test(u)))];
     urls += found.length;
   }

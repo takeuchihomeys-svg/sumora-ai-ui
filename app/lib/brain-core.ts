@@ -33,6 +33,8 @@ import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
+import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
+import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
@@ -396,8 +398,9 @@ const AIX_CAPABILITY_MAP = `
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
 - estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし）／初期費用・総額を質問してきた時点で迷わず選ぶ
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
-- acknowledge_check: 顧客が物件URL・物件名を送ってきて空室/募集状況が未確認の時。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
-- 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（acknowledge_check / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
+- 【お客様が自分で見つけた物件】顧客がポータルの物件URL（SUUMO 等）・物件の画像を送って「ここはどうでしょうか」「気になってます」「空いてますか」と聞いた時は property_check_result（スタッフが管理会社に募集状況・条件を確認し、その結果を AIX【物件確認した】で送る。最大限割引の御見積書を同封することが多い）。初期費用・見積を聞かれていれば estimate_sheet。acknowledge_check は管理会社宛ての確認依頼の文を作るボタンで、この場面では押されていない（実送信: URL を送ってきた後の最初の AIX 131回のうち 物件確認した 109・見積書送る 21・確認します 0。2026-10-01 竹内・和樹事例）。以前の「新着をピックアップしてお送りする」約束が未履行でも、お客様の物件の確認が先（同じ場面の31回中30回）
+- acknowledge_check: 管理会社への確認依頼の文を作る（お客様宛てではない）。お客様の持ち込み物件の次の一手には選ばない（上の【お客様が自分で見つけた物件】）。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
+- 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（property_check_result / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・この事例）
 - estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・この事例）
 - estimate_sheet（【主のお部屋への見積もりの依頼】）: 【お客様の今の状況】の主のお部屋が**こちらが送ったお部屋**で、お客様が見積もり・初期費用の金額を頼んだ（「〇〇いいですね」→「見積もりお願いできますか」「こちらの初期費用いくらですか」）→ estimate_sheet。物件確認した（募集状況の確認）を先に挟まない（実送信52件中 見積書送る47・物件確認した＋御見積書同封2・物件確認のみ1）。お客様が持ち込んだお部屋（URL・画像）は従来どおり募集状況の確認＋御見積書／物件が決まっていない費用の質問は AIX なし／同じ連投で空き状況・内覧も聞かれた時はその判断に任せる（物件確認した＋御見積書同封は両方に1通で答えられる）（2026-09-27 竹内・YUMA 事例）
@@ -864,9 +867,13 @@ async function detectSignalBasedAixFallback(
     // 物件系画像（物件写真/間取り図）→ 空室確認が正解。null/estimate/other は従来通り estimate_sheet。
     if (/^\[画像\]/.test(custText)) {
       const it = lastCustomer?.image_type;
-      if (it === "property_photo" || it === "floor_plan") {
+      // 2026-10-01 竹内「画像が物件なのか物件以外なのか文字に出しておく」: 本文の見出し（image-label.ts）も見る。
+      //   物件以外（ペット・人物の写真・手続きの画面・本人確認書類…）は見積書にしない（信号なし）
+      const g = customerImageGroup(custText, it);
+      if (it === "property_photo" || it === "floor_plan" || g === "property") {
         return "acknowledge_check";
       }
+      if (g === "non_property" || g === "personal_document") return null;
       return "estimate_sheet";
     }
 
@@ -1559,7 +1566,8 @@ export async function analyzeConversation(
         senderLabel = aixType ? `AIX:${aixType}` : (m.is_aix_generated ? "AIX" : "スタッフ");
       }
       const dateLabel = jstMD(m.created_at);
-      const imageTag = m.image_type && IMAGE_TYPE_LABEL[m.image_type] && /^\[画像\]/.test(m.text ?? "")
+      // 2026-10-01: 本文に見出し（【物件の画面（ポータル）】等・image-label.ts）がある画像は、分類の札（other＝その他画像）を重ねない（食い違うため）
+      const imageTag = m.image_type && IMAGE_TYPE_LABEL[m.image_type] && /^\[画像\]/.test(m.text ?? "") && !savedImageKind(m.text)
         ? `（画像種別: ${IMAGE_TYPE_LABEL[m.image_type]}）` : "";
       const quoted = m.quoted_message_id ? msgByLmid.get(m.quoted_message_id) : undefined;
       const quotedLabel = m.quoted_message_id ? quotedPropertyLabel.get(m.quoted_message_id) : undefined;
@@ -2694,6 +2702,11 @@ ${history}`;
       daysSinceLastCustomerMsg <= 3 &&
       lastCustomerMsg.image_type !== "property_photo" &&
       lastCustomerMsg.image_type !== "floor_plan" &&
+      // 2026-10-01 竹内「画像が物件なのか物件以外なのか文字に出しておく」: 見積書か種類が分からない画像の時だけ矯正する。
+      //   本番の correction:image_only 27回（全期間）は1回もスタッフに使われなかった（matched=false・actual_aix_type なし）。
+      //   直前の画像は 本人確認書類7・犬の写真3・人物の写真1・狂犬病の注射済証1・不具合の報告1・古い書類2・SNS/ポータルの物件の画面 等
+      //   ＝見積書を送る場面ではなかった。物件以外・本人確認書類・物件（見出しで分かった物）は矯正しない
+      (() => { const g = customerImageGroup(lastCustomerMsg.text, lastCustomerMsg.image_type); return g === "estimate" || g === "unknown"; })() &&
       !turnAsksPropertyCheck
     ) {
       finalAix = "estimate_sheet";
@@ -2842,6 +2855,17 @@ ${history}`;
     if (!promiseAix && finalAix === "acknowledge_check" && brainLedger.facts.confirmationPromisedUnfulfilled) {
       finalAix = "property_check_result";
       decisionSource = "correction:check_already_declared";
+    }
+    // 2026-10-01 竹内（和樹事例）「ここは物件確認したから送る形なので、そのようにする」: お客様が自分で見つけた物件（ポータルの URL・物件の画像）を
+    //   送って聞いた時に LLM が 確認します（管理会社宛ての確認依頼）を選んだ → 物件確認した（初期費用・見積を聞いていれば 見積書送る）に直す。
+    //   実送信（7/17〜・URL を送ってきた後の最初の AIX 131回）: 物件確認した 109・見積書送る 21・確認します 0。
+    //   判定は customer-property-inquiry.ts（純関数・テストあり）。LLM が他の AIX を選んだ時は変えない
+    if (!promiseAix) {
+      const inq = correctCustomerPropertyInquiryAix({ finalAix, scene: sceneEvidence, customerTurn: unrepliedTurn.text });
+      if (inq) {
+        finalAix = inq.action;
+        decisionSource = inq.decisionSource;
+      }
     }
     // 未返信の顧客の連投が持込予告（物件はまだ届いていない）→ AIX なし。旧: プロンプトのルールだけで、あや事例は見積書送るになった
     if (!promiseAix && finalAix && messagesOldestFirst[messagesOldestFirst.length - 1]?.sender === "customer" && customerWillSendFirst) {

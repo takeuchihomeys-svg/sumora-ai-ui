@@ -4,6 +4,7 @@ import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { shouldSetApplyingImageFlag } from "@/app/lib/applying-promotion";
 import { runBrainAndNotify } from "@/app/lib/brain-core";
 import { imageTextForSave, imageTypeForSave } from "@/app/lib/id-document-guard";
+import { parseVisionTypeOutput } from "@/app/lib/image-label";
 import { fileMessageText } from "@/app/lib/received-document";
 // 2026-09-21 竹内「LINEのグループでも送れるように。個人とLINEのグループ分けて認識」: 宛先と発言者を分ける
 import { resolveEventTarget, groupConversationName, displayMemberCount, parseStaffUserIds, type LineTargetKind } from "@/app/lib/line-target";
@@ -520,10 +521,9 @@ async function extractImageContent(
       content?: Array<{ type: string; text?: string }>;
     };
     const raw = visionData.content?.find((b) => b.type === "text")?.text?.trim() ?? "";
-    const typeMatch = raw.match(/^TYPE:\s*(estimate|floor_plan|property_photo|id_document|income_document|other)/i);
-    const imageType = typeMatch ? typeMatch[1].toLowerCase() : (raw ? "other" : "");
-    const content = raw.replace(/^TYPE:[^\n]*\n?/, "").trim();
-    return { imageType, content };
+    // 2026-10-01: 1行目が「TYPE:」なしの「id_document」だけの時に種類を other にして、その行ごと書き起こし（身分証・保証会社の申込書）を
+    //   保存していた（実データ 14件）。「TYPE:」の有無・** 囲み・全角コロンを問わず読む（image-label.ts・テストあり）
+    return parseVisionTypeOutput(raw);
   } catch (e) {
     console.warn("[line-webhook] Vision抽出エラー:", e);
     return { imageType: "", content: "" };
@@ -588,6 +588,8 @@ async function fetchAndUploadLineImage(
     //     捨てても image_type が残るので「書類が届いた」事実は received-document / ブレインに伝わる。
     // 2026-09-26 竹内「収入証明書なども収入証明書とするだけで、文字おこししないようにする」
     //   → 収入・勤め先・身元の証明書類も同じ関数で "[画像] 収入証明書（給与明細）" のように種類だけにする（image_type=income_document）
+    // 2026-10-01 竹内「送られてきた画像が物件なのか、物件以外なのか分かるためにも…文字に出しといたら、文やAIXでの判断の質が上がる」
+    //   → それ以外の画像も同じ関数で "[画像] 【物件の資料】\n<書き起こし>" "[画像] 【物件以外：ペットの写真】\n…" "[画像] 【種類不明】\n…" にする（image-label.ts）
     const newText = imageTextForSave(extractedType, extracted);
     const savedType = imageTypeForSave(extractedType, extracted);
 

@@ -20,6 +20,21 @@ import {
   allVacancyWordsAreSlots, SLOT_AVAILABILITY_Q_RE, MOVEIN_Q_RE, SCREENING_Q_RE, GUARANTOR_Q_RE, MGMT_COMPANY_Q_RE, PROXY_CHECK_REQUEST_RE, PROXY_SEARCH_RE, VIEWING_INTENT_RE, TIME_SPEC_RE, TIME_REQUEST_RE, VIEWING_DATE_ALT_RE, VIEWING_DAY_COMMIT_RE,
   VIEWING_DATE_PROPOSAL_RE, VIEWING_DATE_NON_VIEWING_RE, OTHER_ROOM_LAYOUT_Q_RE, OTHER_ROOM_SEARCH_RE,
 } from "./scene-patterns";
+import { customerImageGroup } from "./image-label";
+import { savedPersonalDocumentLabel } from "./personal-document-guard";
+
+/**
+ * お客様の画像の1通が「物件の持ち込みになりうる画像」か（2026-10-01・画像の見出し image-label）。
+ * 見出しが【物件以外：…】・本人確認書類等の書類の時だけ false（物件でない画像を募集状況の確認の依頼に数えない）。
+ * 見出しの無い昔の行・【種類不明】・物件・見積の見出しは今まで通り true（取り違えるより今まで通りに倒す）。
+ * 実例 ae3ffecb: 勤務先とのやり取りのスクショで S1（画像）→ ブレインが 確認します を出していた
+ */
+export function isPropertyCandidateImage(text: string | null | undefined, imageType?: string | null): boolean {
+  // 種類の名前だけで保存した書類（"[画像] 本人確認書類" ／ "[画像] 収入証明書（給与明細）"）も物件ではない（image_type が無い経路でも読む）
+  if (/^\s*\[画像\]\s*本人確認書類\s*$/.test(text ?? "") || savedPersonalDocumentLabel(text)) return false;
+  const g = customerImageGroup(text, imageType ?? null);
+  return !(g === "non_property" || g === "personal_document");
+}
 
 export type PropertyStatusLite = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
 // S11: こちらが送った物件の別の部屋・広い部屋・間取りの質問（2026-09-17 竹内・a🤫 事例）
@@ -369,7 +384,8 @@ export function customerRequestedPropertyCheck(o: {
   let hasCustomerImage = false;
   for (let i = msgs.length - 1; i >= 0 && msgs[i].sender === "customer"; i--) {
     const t = (msgs[i].text ?? "").trim();
-    if (/^\[画像\]/.test(t)) hasCustomerImage = true;
+    // 2026-10-01: 物件以外の見出しの画像（ペット・手続きの画面・本人確認書類 等）は持ち込みに数えない
+    if (/^\[画像\]/.test(t)) { if (isPropertyCandidateImage(t)) hasCustomerImage = true; }
     else if (t) turn.unshift(t);
   }
   if (!turn.length && !hasCustomerImage) return false;

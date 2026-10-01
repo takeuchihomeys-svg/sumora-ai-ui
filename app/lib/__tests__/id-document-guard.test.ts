@@ -55,8 +55,9 @@ console.log("── ★ 保存する文字列");
     imageTextForSave("id_document", "氏名：〇〇 生年月日：平成N年") === ID_DOCUMENT_TEXT);
   t("★ 中身の指紋で拾った時も同じ",
     imageTextForSave(null, "氏名：〇〇\n生年月日：平成N年N月N日生") === "[画像] 本人確認書類");
-  t("身分証でなければ今までどおり書き起こしを付ける",
-    imageTextForSave("floor_plan", "セジュール〇〇 2LDK") === "[画像] セジュール〇〇 2LDK");
+  // 2026-10-01: 書き起こしの前に画像の見出し（image-label.ts）が付く
+  t("身分証でなければ今までどおり書き起こしを付ける（先頭に見出し）",
+    imageTextForSave("floor_plan", "セジュール〇〇 2LDK") === "[画像] 【物件の資料】\nセジュール〇〇 2LDK");
   t("書き起こしが空なら「[画像]」だけ", imageTextForSave("other", "") === "[画像]");
   t("書き起こしが空白だけでも「[画像]」だけ", imageTextForSave("other", "   \n ") === "[画像]");
 }

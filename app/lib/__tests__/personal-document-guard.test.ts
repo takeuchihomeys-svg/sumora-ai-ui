@@ -74,7 +74,7 @@ console.log("── ★ 保存する本文（種類だけ・中身は残さな�
     imageTextForSave("income_document", "何かの書類") === "[画像] 収入証明書");
   t("★ 分類 income_document で書き起こしが空でも捨てる", imageTextForSave("income_document", "") === "[画像] 収入証明書");
   t("本人確認書類が先（氏名：＋生年月日）", imageTextForSave(null, "氏名：〇〇\n生年月日：平成1年1月1日生\n携帯 090-0000-0000 申込") === ID_DOCUMENT_TEXT);
-  t("物件資料はそのまま", imageTextForSave("floor_plan", "セジュール〇〇 2LDK 家賃 70,000円") === "[画像] セジュール〇〇 2LDK 家賃 70,000円");
+  t("物件資料は書き起こしを残す（2026-10-01 から先頭に見出し）", imageTextForSave("floor_plan", "セジュール〇〇 2LDK 家賃 70,000円") === "[画像] 【物件の資料】\nセジュール〇〇 2LDK 家賃 70,000円");
   t("★ image_type: 給与明細は estimate → income_document", imageTypeForSave("estimate", PAYSLIP_A) === INCOME_DOCUMENT_TYPE);
   t("image_type: 物件資料は元のまま", imageTypeForSave("floor_plan", "間取り") === "floor_plan");
   t("image_type: 身分証は id_document のまま", imageTypeForSave("id_document", PAYSLIP_A) === "id_document");
@@ -107,7 +107,8 @@ console.log("── ★ 保存した本文から種類を読み戻す（後ろ�
 console.log("── ★ 入口（line-webhook）が通しているか");
 {
   const webhook = readFileSync("app/api/line-webhook/route.ts", "utf8");
-  t("★ Vision の分類に income_document がある", /TYPE:\\s\*\(estimate\|floor_plan\|property_photo\|id_document\|income_document\|other\)/.test(webhook) || webhook.includes("id_document|income_document|other)/i"));
+  // 2026-10-01: 解析は image-label.parseVisionTypeOutput に移した（「TYPE:」なしの「id_document」だけの行も読む）
+  t("★ Vision の分類に income_document がある", webhook.includes("TYPE: estimate|floor_plan|property_photo|id_document|income_document|other") && /parseVisionTypeOutput\(/.test(webhook));
   t("★ 保存は imageTextForSave / imageTypeForSave を通る", /imageTextForSave\(/.test(webhook) && /imageTypeForSave\(/.test(webhook));
 }
 

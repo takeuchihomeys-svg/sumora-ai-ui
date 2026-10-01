@@ -16,6 +16,7 @@
 //   同じ名前・同じ号室（または片方に号室が無い）→ same_room ／ 同じ名前・違う号室 → same_building ／ それ以外 → none
 //   ⚠ 読み取りは誤読するので**名前が近くない物は「分からない」**（違うとは言わない）。
 import { matchKnownProperty, MATCH_MIN_SCORE } from "./property-name-match";
+import { savedImageKind, imageKindGroup, stripImageLabel } from "./image-label";
 
 export type ScreenshotProperty = { name: string; room: string | null };
 
@@ -78,7 +79,12 @@ function cleanNameValue(raw: string): ScreenshotProperty | null {
  * 物件の資料らしくない画像（見積書・身分証・チャットのスクショ）は取り出さない（null）。
  */
 export function extractScreenshotProperty(text: string | null | undefined): ScreenshotProperty | null {
-  const t = (text ?? "").normalize("NFKC");
+  // 2026-10-01 画像の見出し（image-label.ts）: 物件以外と分かった画像（ペット・手続きの画面…）からは取り出さない。
+  //   見出しの行は飛ばす（見出しは NFKC の前に外す＝全角の括弧・コロンのまま読む）。見積書・種類不明は今までどおり読む
+  const kind = savedImageKind(text);
+  if (kind && imageKindGroup(kind) === "non_property") return null;
+  const raw = String(text ?? "");
+  const t = (IMAGE_HEAD_RE.test(raw) ? "[画像] " + stripImageLabel(raw.replace(IMAGE_HEAD_RE, "")) : raw).normalize("NFKC");
   if (!IMAGE_HEAD_RE.test(t)) return null;
   const lines = t.replace(IMAGE_HEAD_RE, "").split(/\n|\s\/\s/).map((l) => stripBullet(l.replace(/\*+/g, ""))).filter(Boolean);
   // B: 見出しの形（「物件名：」「【物件名】」「物件名 」「名称：」「- 物件名: 」）

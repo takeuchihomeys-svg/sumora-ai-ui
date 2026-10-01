@@ -5,7 +5,7 @@
 //   ここは純関数だけ（supabase を読み込まない）。DB の読み書きは cron/brain-aix-eval と brain-core が持つ。
 //   ・trigger_action_rules は使わない（category トリガーで keyword_rule に混ざるため）。書き先は brain_aix_feedback。
 //   ・場面（S1〜S7）は「証拠」。ここでも AIX を決めない（ブレインへの実績欄とLLMが null の時の信号だけに使う）。
-import { AVAILABILITY_EXPLICIT_RE, AVAILABILITY_URL_RE, detectAixSceneEvidence, type AixSceneEvidence } from "./aix-scene-evidence";
+import { AVAILABILITY_EXPLICIT_RE, AVAILABILITY_URL_RE, detectAixSceneEvidence, isPropertyCandidateImage, type AixSceneEvidence } from "./aix-scene-evidence";
 import { availabilityFirstKind, availabilityKind, detectPropertyCheckPattern, propertyCheckKindFor, type PropertyCheckKind } from "./aix-taxonomy";
 import { allVacancyWordsAreSlots } from "./scene-patterns";
 
@@ -204,23 +204,32 @@ export function aggregateBrainAixFeedback(
 
 // ─── ブレインの入力（今回の顧客発言の場面の証拠） ───────────────────────────
 
-type MsgLite = { sender: string; text: string | null; created_at?: string };
+type MsgLite = { sender: string; text: string | null; created_at?: string; image_type?: string | null };
 
 /**
  * 最後のスタッフ発言より後の顧客発言（未返信の連投全体）を古い順に返す。
  * @param newestFirst 新しい順のメッセージ
  */
-export function unrepliedCustomerTurn(newestFirst: ReadonlyArray<MsgLite>): { text: string; hasImage: boolean } {
+export function unrepliedCustomerTurn(newestFirst: ReadonlyArray<MsgLite>): {
+  text: string; hasImage: boolean;
+  /** 2026-10-01: 画像が1枚以上あり、全部が「物件以外」（見出し【物件以外：…】・本人確認書類等）と読めた。物件の持ち込みの判定（S1）では画像なしとして扱う */
+  nonPropertyImagesOnly: boolean;
+} {
   const block: string[] = [];
   let hasImage = false;
+  let images = 0, nonProperty = 0;
   for (const m of newestFirst) {
     if (m.sender !== "customer") break;
     const t = (m.text ?? "").trim();
-    if (/^\[画像\]/.test(t)) { hasImage = true; continue; }
+    if (/^\[画像\]/.test(t)) {
+      hasImage = true; images++;
+      if (!isPropertyCandidateImage(t, m.image_type ?? null)) nonProperty++;
+      continue;
+    }
     if (/^\[動画\]/.test(t) || !t) continue;
     block.push(t);
   }
-  return { text: block.reverse().join("\n"), hasImage };
+  return { text: block.reverse().join("\n"), hasImage, nonPropertyImagesOnly: images > 0 && nonProperty === images };
 }
 
 /**
@@ -359,10 +368,13 @@ export function buildSceneEvidencePromptText(
 }
 
 /** 押す直前の顧客発言から場面の証拠を出す（cron で scene_staff を作る時と brain-core で同じ関数） */
-export function sceneEvidenceForTurn(turn: { text: string; hasImage: boolean }, o: { sentPropertyCount: number; aixHistory?: ReadonlyArray<{ aix_type?: string | null; check_pattern?: string | null }>; recentMessages?: ReadonlyArray<{ sender: string; text?: string | null }>; moveOutScheduled?: boolean; viewingReleased?: boolean; ownPropertyReturnedAll?: boolean }): AixSceneEvidence | null {
+// 2026-10-01（和樹事例の続き・画像の見出し）: 全部が「物件以外」と読めた画像（ペット・人物・不具合・手続きの画面・本人確認書類）は
+//   物件の持ち込み（S1・URL/画像）にしない＝場面の判定では画像なしとして扱う。言葉で物件を指していれば従来どおり言葉で場面が決まる。
+//   実例 ae3ffecb: 勤務先とのやり取りのスクショで S1（画像）→ ブレインが 確認します を出していた
+export function sceneEvidenceForTurn(turn: { text: string; hasImage: boolean; nonPropertyImagesOnly?: boolean }, o:{ sentPropertyCount: number; aixHistory?: ReadonlyArray<{ aix_type?: string | null; check_pattern?: string | null }>; recentMessages?: ReadonlyArray<{ sender: string; text?: string | null }>; moveOutScheduled?: boolean; viewingReleased?: boolean; ownPropertyReturnedAll?: boolean }): AixSceneEvidence | null {
   return detectAixSceneEvidence({
     latestCustomerTurn: turn.text,
-    hasCustomerImage: turn.hasImage,
+    hasCustomerImage: turn.hasImage && !turn.nonPropertyImagesOnly,
     sentPropertyCount: o.sentPropertyCount,
     aixHistory: o.aixHistory,
     recentMessages: o.recentMessages,

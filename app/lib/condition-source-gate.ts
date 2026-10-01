@@ -205,9 +205,12 @@ const IMAGE_LISTING_LINE_RE = /駅\s*」?\s*徒?歩\s*[0-9]+\s*分(?!以内|以�
 /** 検索条件の画面そのものの印（結果の一覧のボタンでは出ない） */
 const IMAGE_CONDITION_SCREEN_RE = /検索条件の(?:変更|設定|保存|編集)|この条件で(?:検索|探す)|指定なし|下限なし|上限なし|エリアを選択|沿線を選択|駅を選択|路線を選択|条件メモ|希望条件/;
 
+/** 画像の見出しの行（image-label.ts の IMAGE_KIND_LABEL と同じ。書き起こしの【物件概要】【物件no.94】は当てない） */
+const IMAGE_KIND_LABEL_LINE_RE = /^\s*【(?:物件の(?:資料|画面（ポータル）|画面（SNS・広告）|写真)|見積書・初期費用の明細|物件以外：[^】\n]{1,24}|種類不明)】[ \t]*\n?/;
+
 /** 画像の書き起こしの種類 */
 export function classifyImageTranscript(body: string | null | undefined): "image_property" | "image_condition" | "image_other" {
-  const t = nf(body).trim();
+  const t = nf(String(body ?? "").replace(IMAGE_KIND_LABEL_LINE_RE, "")).trim();
   if (!t) return "image_other";
   const listingLines = t.split(/\n+/).filter((l) => IMAGE_LISTING_LINE_RE.test(l)).length;
   if (IMAGE_CONDITION_MARKERS_RE.test(t)) {
@@ -244,7 +247,9 @@ export function classifyConditionTurn(text: string | null | undefined): Conditio
     const block = block0.trim();
     // ① 画像の書き起こし
     if (/^\[画像\]/.test(block)) {
-      const body = block.replace(/^\[画像\]\s*/, "");
+      // 2026-10-01 竹内「画像が物件なのか物件以外なのか文字に出しておく」: 先頭の見出し（【物件の資料】【物件以外：検索条件の画面】…・image-label.ts）は
+      //   書き起こしではないので外す（条件の行として LLM に渡さない）。image-label.ts がこのファイルを読むので import せず同じ見出しを並べる
+      const body = block.replace(/^\[画像\]\s*/, "").replace(IMAGE_KIND_LABEL_LINE_RE, "");
       const k = classifyImageTranscript(body);
       kinds.add(k);
       if (k === "image_condition") {
