@@ -74,6 +74,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
 import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
+import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
 import { fixAdjectiveNakaguro } from "@/app/lib/first-message-style";
 import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
@@ -1983,6 +1984,12 @@ export async function POST(req: NextRequest) {
     if (isRecSecond && !noEmoji) {
       const em = ensureOneEmoji(text);
       if (em.added) { console.log(JSON.stringify({ tag: "aix-template-generate:second-emoji-added" })); text = em.text; }
+    }
+    // 2026-10-01 竹内「同じ絵文字を2重で使っているが実際していない。もう一つの絵文字を使うか省いている」:
+    //   文末の同じ絵文字の2回目以降は、誘導の締めなら外し・他は 😌／😊 の未使用の方に替える（実送信で同じ絵文字だけは 4.0%・emoji-repeat.ts）
+    if (!noEmoji) {
+      const dr = dedupeRepeatedEmoji(text);
+      if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix-template-generate:emoji-repeat-fixed", changes: dr.changes })); text = dr.text; }
     }
     // 2026-09-22 竹内: 今日すでにこちらが送っていれば、冒頭の「お世話になっております」を落とす（AIX 本体の finalize と同じ関数）
     if (staffSentToday) {

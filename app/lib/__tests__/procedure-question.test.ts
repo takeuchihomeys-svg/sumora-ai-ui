@@ -146,7 +146,8 @@ describe("答え方（返信／2択）", () => {
     const p = resolveProcedurePlan({ question: q, target, materialLines: [] });
     eq(p.mode, "two_choice");
     const n = buildProcedureAnswerNote(p);
-    ok(n.includes("3日〜10日程")); ok(n.includes("マイナンバーカードがあればそれでお申込みして審査をかけられる"));
+    // 2026-10-01 竹内「マイナンバー持っているので、マイナンバーカードの部分で伝えたら大丈夫。パスポートに関して触れなくて大丈夫」
+    ok(n.includes("3日〜10日程")); ok(n.includes("マイナンバーカード（裏表の写真）でお申込みして審査をかけられる")); ok(n.includes("パスポートには触れない"));
     ok(n.includes("断言しない")); ok(n.includes("AIX【確認した→入居可能日】"));
     ok(!n.includes("最短で2週間程がご入居の目安"), "資料で分からない時は『最短2週間』を材料に入れない");
     ok(procedureTwoChoiceNote(p).includes("管理会社からの回答が届いた場面ではありません"));
@@ -183,7 +184,7 @@ describe("答え方（返信／2択）", () => {
 describe("会社の事実・説明の帯", () => {
   it("みこと: screening_flow が当たる（3日〜10日・マイナンバーカード）", () => {
     const f = matchCompanyFacts(MIKOTO).find((x) => x.id === "screening_flow");
-    ok(f); ok(f!.fact.includes("3日〜10日程")); ok(f!.fact.includes("マイナンバーカードがあれば"));
+    ok(f); ok(f!.fact.includes("3日〜10日程")); ok(f!.fact.includes("どちらか1点")); ok(f!.fact.includes("現住所記載の住民票"));
   });
   it("必要書類だけは apply_docs（screening_flow は渡さない）", () => {
     eq(matchCompanyFacts("申込に必要な書類は何ですか？").map((x) => x.id), ["apply_docs"]);

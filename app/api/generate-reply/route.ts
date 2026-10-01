@@ -142,6 +142,7 @@ import {
   type VacatingDate,
 } from "@/app/lib/template-preprocess";
 import { staffTalkedToday, applyDailyGreeting } from "@/app/lib/daily-greeting";
+import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
 import { staffTalkedTodayFromDb } from "@/app/lib/daily-greeting-server";
 // Step1完全廃止（2026-08）: brain(suggested_aix_meta) が唯一の分析ソース。
 // SuggestedAixMeta 型と条件問い合わせ検出 regex は brain-core と共有する（二重定義禁止）
@@ -5945,6 +5946,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   }
                 }
                 outText = outText.trim();
+              }
+              // 2026-10-01 竹内「同じ絵文字を2重で使っているが実際していない。もう一つの絵文字を使うか省いている」:
+              //   文末の同じ絵文字の2回目以降は、誘導の締めなら外し・他は 😌／😊 の未使用の方に替える（言葉は消さない）。
+              //   実送信: 同じ絵文字だけは 4.0%（AI の下書き 8.1%・下書きの同じ絵文字はスタッフが 65% 直した）。emoji-repeat.ts・scripts/audit-emoji-repeat.ts
+              if (!noEmoji) {
+                const dr = dedupeRepeatedEmoji(outText);
+                if (dr.changes.length) {
+                  console.log(JSON.stringify({ tag: "generate-reply:emoji-repeat-fixed", conversationId, changes: dr.changes }));
+                  outText = dr.text;
+                }
               }
               // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
               return { body: outText, stopReason };

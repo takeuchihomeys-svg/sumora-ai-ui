@@ -43,7 +43,26 @@ export type ProcedureQuestion = {
   guarantorIdentity: boolean;
   /** 申込後の審査の進み具合（結果・まだか）→ 申込以降の場面（今の対象外） */
   progress: boolean;
+  /** お客様の文に出てくる本人確認書類（持っている・使えるか聞いている物）。答える事実を変える（idDocFactFor） */
+  ids: IdDocKind[];
 };
+
+// 2026-10-01 竹内（みこと「本人確認書類がマイナンバー、パスポート両方あるのですが…」→ 下書き「マイナンバーカード・パスポートどちらでもお申込みを進めることができます」）:
+//   「マイナンバーカードがあれば大丈夫。パスポートの場合はパスポートと現在の住所記載の住民票がいる。
+//     今回はマイナンバー持っているので、マイナンバーカードの部分でお客さんに伝えたら大丈夫。パスポートに関して触れなくて大丈夫」
+//   実送信（365日）でパスポートで進めたのは、どれもパスポートしか無いお客様（06-01・07-29・08-11）。
+//   カードがある人にパスポートも同じく使えると答えた実送信は0通。
+export type IdDocKind = "my_number" | "license" | "passport";
+const ID_DOC_KIND_RE: Record<IdDocKind, RegExp> = {
+  my_number: /マイナンバー|マイナ(?:カード|保険証)?(?![ァ-ヶ])/,
+  license: /免許証|運転免許/,
+  passport: /パスポート|旅券/,
+};
+/** お客様の文に出てくる本人確認書類（出てくる順ではなく決まった順） */
+export function idDocsIn(text: string | null | undefined): IdDocKind[] {
+  const t = String(text ?? "").normalize("NFKC");
+  return (Object.keys(ID_DOC_KIND_RE) as IdDocKind[]).filter((k) => ID_DOC_KIND_RE[k].test(t));
+}
 
 const HOW_LONG = "(?:どの(?:くらい|ぐらい|位)|どれ(?:くらい|ぐらい|位)|何日|何週間?|何ヶ月|何か月|期間|日数|いつ(?:頃|ごろ)?まで)";
 /** 審査にかかる期間 */
@@ -97,6 +116,7 @@ export function detectProcedureQuestion(text: string | null | undefined): Proced
     passability: PASSABILITY_RE.test(t),
     guarantorIdentity: GUARANTOR_IDENTITY_RE.test(t),
     progress: PROGRESS_RE.test(t),
+    ids: idDocsIn(t),
   };
 }
 
@@ -243,9 +263,27 @@ export const PROCEDURE_FACTS = {
   flow: "申込から入居までの流れ: ①お申込み（お申込フォーマットのご入力＋ご本人確認書類）→ ②保証会社による審査（3日〜10日程）→ ③審査通過後、ご契約のお手続き（ご契約書類の記入・初期費用のご入金で1週間程）→ ④完了次第ご入居。",
   lead: "空室で即入居できるお部屋なら、お申込から最短で2週間程がご入居の目安。",
   call: "審査の過程で保証会社からご本人確認のお電話が入る場合がある。",
-  idDoc: "ご本人確認書類は運転免許証またはマイナンバーカード（裏表の写真）。**マイナンバーカードがあればそれでお申込みして審査をかけられる**。パスポートしか手元に無い時は一度パスポートでお申込みを進められる（運転免許証かマイナンバーカードは用意でき次第お送り頂く）。※この説明文をそのまま写さない。",
+  // 2026-10-01 竹内「パスポートの場合はパスポートと現在の住所記載の住民票がいる」（旧「パスポートしか無い時は一度パスポートで進められる」を置き換え）
+  idDoc: "ご本人確認書類は運転免許証またはマイナンバーカード（裏表の写真）の**どちらか1点**でお申込みして審査をかけられる。パスポートの場合は**パスポートと現住所記載の住民票の2点**が必要。お客様が運転免許証かマイナンバーカードを持っている時は、そのカードで進められるとだけ答え、**パスポートには触れない**。※この説明文をそのまま写さない。",
   docs: "申込に必要なのは2つ: ①お申込フォーマットへのご入力 ②ご本人確認書類（運転免許証またはマイナンバーカードの裏表の写真）。",
 } as const;
+
+/**
+ * 本人確認書類の事実を、お客様が持っている物に合わせて1つにする（送る文ではない）。
+ *   カード（マイナンバー・免許証）がある → そのカードで進められる・パスポートには触れない
+ *   パスポートだけ → パスポートと現住所記載の住民票の2点
+ *   どれも出てこない → 一般の事実（PROCEDURE_FACTS.idDoc）
+ */
+export function idDocFactFor(ids: ReadonlyArray<IdDocKind>): string {
+  const card = ids.includes("my_number") ? "マイナンバーカード" : ids.includes("license") ? "運転免許証" : null;
+  if (card) {
+    return `お客様は${card}をお持ち → **${card}（裏表の写真）でお申込みして審査をかけられる**と答える。${ids.includes("passport") ? "お客様はパスポートにも触れているが、" : ""}**パスポートには触れない**（パスポートは住民票も要るので、カードがある方には話に出さない・「どちらでも」と並べない）。※この説明文をそのまま写さない。`;
+  }
+  if (ids.includes("passport")) {
+    return "お客様の手元はパスポート → パスポートの場合は**パスポートと現住所記載の住民票の2点**が必要と答える（運転免許証かマイナンバーカードがあればその1点で良い）。※この説明文をそのまま写さない。";
+  }
+  return PROCEDURE_FACTS.idDoc;
+}
 
 const targetLabel = (t: ProcedureTarget) => (t ? `${t.name}${t.roomNo ? ` ${t.roomNo}号室` : ""}` : "");
 
@@ -259,7 +297,7 @@ export function buildProcedureAnswerNote(plan: ProcedurePlan): string {
     out.push(`- ${PROCEDURE_FACTS.call}`);
   }
   if (q.kinds.includes("docs")) out.push(`- ${PROCEDURE_FACTS.docs}`);
-  if (q.kinds.includes("id_doc") || q.kinds.includes("docs")) out.push(`- ${PROCEDURE_FACTS.idDoc}`);
+  if (q.kinds.includes("id_doc") || q.kinds.includes("docs")) out.push(`- ${idDocFactFor(q.ids ?? [])}`);
   if (procedureNeedsMoveIn(q)) {
     if (!plan.target) {
       out.push(`- ${PROCEDURE_FACTS.lead}（退去予定のお部屋は退去・クリーニングの後になるので、お部屋が決まってから入居可能日をお伝えする）`);
@@ -281,7 +319,13 @@ export function buildProcedureAnswerNote(plan: ProcedurePlan): string {
 export function procedureReplyDirection(plan: ProcedurePlan): string {
   const parts: string[] = [];
   if (procedureNeedsMoveIn(plan.question)) parts.push("申込→保証会社の審査（3日〜10日程）→契約のお手続き→ご入居の期間と流れを本文で説明する");
-  if (plan.question.kinds.includes("id_doc")) parts.push("お持ちの本人確認書類（マイナンバーカード等）でお申込み・審査に進めると答える");
+  if (plan.question.kinds.includes("id_doc")) {
+    const ids = plan.question.ids ?? [];
+    const card = ids.includes("my_number") ? "マイナンバーカード" : ids.includes("license") ? "運転免許証" : null;
+    parts.push(card ? `${card}でお申込み・審査に進めると答える（パスポートには触れない）`
+      : ids.includes("passport") ? "パスポートの場合はパスポートと現住所記載の住民票の2点が必要と答える"
+      : "運転免許証かマイナンバーカードでお申込み・審査に進めると答える");
+  }
   if (plan.question.kinds.includes("docs")) parts.push("申込に必要な物（フォーマットのご入力・ご本人確認書類）を答える");
   const tail = plan.moveIn?.route === "material" ? "入居時期は資料の記載のとおりに書く"
     : plan.moveIn ? "このお部屋の入居可能日は断言しない" : "";
