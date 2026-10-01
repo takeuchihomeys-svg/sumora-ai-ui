@@ -239,6 +239,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       pdf_data?: string[];
       pdf_urls?: string[];
+      /**
+       * 2026-10-01 元のリアプロの資料の場所（pdf_urls と同じ並び）。拡張がリアプロのタブの中で資料を取り一時置き場に上げた時に付く。
+       *   サーバーはここへ取りに行かない（送付済みの照合・売上サポの資料リンクに使うだけ）
+       */
+      source_pdf_urls?: string[];
+      /** ⚠ 2026-10-01 から拡張は空で送る（ログイン情報をサーバーに渡さない）。古い拡張（v2.5.51 以前）のためだけに残す */
       cookie_str?: string;
       file_name?: string;
       send_to_line?: boolean;
@@ -271,6 +277,10 @@ export async function POST(req: NextRequest) {
 
     const { pdf_data, cookie_str, file_name, send_to_line, customer_name, customer_conditions, site, property_customer_id, conversation_id, staff_mode, brain_mode } = body;
     let { pdf_urls, property_summaries } = body;
+    // 元の資料の場所（並びが pdf_urls と同じ時だけ使う）。urlOf(i) は「元の場所 → 無ければ pdf_urls」
+    let source_urls: string[] | null = Array.isArray(body.source_pdf_urls) && pdf_urls && body.source_pdf_urls.length === pdf_urls.length ? body.source_pdf_urls : null;
+    const urlOf = (i: number): string | null => source_urls?.[i] ?? pdf_urls?.[i] ?? null;
+    if (cookie_str) console.warn(JSON.stringify({ tag: "merge-pdfs:cookie-from-old-extension", note: "古い拡張がリアプロのログイン情報を送ってきた（拡張の再読み込みが要る）" }));
 
     // PDF データを収集（pdf_urls[i]・pdf_data[i] は property_summaries[i] と同じ組）
     let pdfBase64List: string[] = [];
@@ -304,6 +314,7 @@ export async function POST(req: NextRequest) {
           console.warn(JSON.stringify({ tag: "merge-pdfs:pdf-timeout-dropped", total: settled.length, dropped: failed.length, names }));
           timeoutNotice = `⚠ 資料を取れなかった物件（時間切れ・${failed.length}件）: ${names.join("・")}`;
           pdf_urls = pdf_urls.filter((_, i) => !failedSet.has(i));
+          if (source_urls) source_urls = source_urls.filter((_, i) => !failedSet.has(i));
           if (property_summaries && property_summaries.length > 0) {
             // 説明文と資料の並びが合わない時は外せない（組がずれる）＝今まで通り止める
             if (property_summaries.length !== settled.length) throw new Error("The operation was aborted due to timeout（資料の取得が時間切れ）");
@@ -375,7 +386,7 @@ export async function POST(req: NextRequest) {
         const outgoing: OutgoingProperty[] = property_summaries.map((s, i) => {
           const head = parseSummaryHead(s);
           return {
-            url: pdf_urls?.[i] ?? null,
+            url: urlOf(i),
             propertyName: head?.propertyName ?? "",
             roomNo: head?.roomNo ?? "",
           };
@@ -400,6 +411,7 @@ export async function POST(req: NextRequest) {
           excludedNotice = buildExcludedNotice(result.dropped);
           const keep = new Set(result.keep);
           if (pdf_urls) pdf_urls = pdf_urls.filter((_, i) => keep.has(i));
+          if (source_urls) source_urls = source_urls.filter((_, i) => keep.has(i));
           // 先に取った PDF も同じ組で落とす（pdf_data の経路は pdf_urls が無い）
           if (pdfsLoaded) pdfBase64List = pdfBase64List.filter((_, i) => keep.has(i));
           else keptIndexes = result.keep;
@@ -535,7 +547,7 @@ export async function POST(req: NextRequest) {
           const summariesForPickup = rankedSummaries && rankedSummaries.length > 0 ? rankedSummaries : (property_summaries ?? []);
           if (notice.deferred && !(summariesForPickup.length > 0 && (resolvedCustomerId || conversation_id))) await fallbackPush("no_summaries");
           if (summariesForPickup.length > 0 && (resolvedCustomerId || conversation_id)) {
-            const pdfUrlsForPickup = summariesForPickup.map((_, i) => (pdf_urls?.[i] && /realnetpro\.com/.test(pdf_urls[i]) ? pdf_urls[i] : null));
+            const pdfUrlsForPickup = summariesForPickup.map((_, i) => { const u = urlOf(i); return u && /realnetpro\.com/.test(u) ? u : null; });
             const base64ForPickup = summariesForPickup.map((_, i) => pdfBase64List[i] ?? null);
             // 2026-09-27 案A: メモの上書きで検索した回は、判定もその上書きで（結べない時は登録の条件＝今まで通り）
             const job = import("@/app/lib/search-override-link")
@@ -594,7 +606,7 @@ export async function POST(req: NextRequest) {
             const facts = parsePropertyFacts(summary);
             const rent = parseRentFromSummary(summary);
             const adYen = facts.adYen ?? (facts.adMonths != null && rent != null ? Math.round(facts.adMonths * rent) : null);
-            return [{ ...head, url: normalizePropertyUrl(pdf_urls?.[i] ?? null), rent, adMonths: facts.adMonths, adYen }];
+            return [{ ...head, url: normalizePropertyUrl(urlOf(i)), rent, adMonths: facts.adMonths, adYen }];
           });
           // ⚠ URL が物件を1件ずつ指していない形（path が同じでクエリで分ける等）だったら**記録しない**。
           //   そのまま入れると、次の送信で全部「送付済み」と判定されて消える。外す時と同じ確認（四者同名）。

@@ -2916,3 +2916,12 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 広げるかの「通す」の数と 👑 から資料の現況が商談中・審査中を除く／NG 欄・「木造NG」の木造は外す候補（STRUCTURE_WOOD_NG）／「初期費用は安いと嬉しい」等のできればは保留にしない（INITIAL_COST_NOT_ZERO_SOFT）
 - トークの物件カード: 初回／新着／追加の見出し・リアプロ／ITANDI × 🎯ピンポイント／🔎広げて の印・初回の目安10件に足りない数。LINE の見張り（/watch）にも「初回なのに通す物件が足りない→まだの検索」（同じ buildNewArrivalCards）
 - 残り: 10件に足りない時に軽い保留から埋める段（pickQualityTop）・条件フォームの別の間取り（1LDKか2LDK→2LDKだけ）・条件の言い直し後の手の検索を初回扱いに
+
+## 2026-10-01 v2.5.52 リアプロの資料はタブの中で取る・ログイン情報をサーバーに渡さない（**拡張の再読み込み必須**）
+竹内「なんで今両方からログインされている形になっているのか」「それで改善行う」。
+- **旧（6/3〜）**: 「売上番長に送る」「全ページ送る」「PDF 結合」で、background が `chrome.cookies` でリアプロのログイン情報を読み、merge-pdfs に `cookie_str` で渡し、**サーバー（Vercel）がデータセンターからリアプロに資料を取りに行っていた**（最大10件並列・ブラウザの名乗り）＝同じログインがオフィスの PC とサーバーの2か所から使われる・ログイン情報が PC の外に出る
+- **今**: `background.js realproPdfsToBlobUrls` → `fetchRealproPdfsInTab`（送るボタンを押したリアプロのタブの中で `chrome.scripting.executeScript`・1件ずつ順に・期限30秒・HTML が返ったら「再ログイン」で全体を止める）→ 一時置き場（`uploadWithRetry`・ITANDI と同じ）→ merge-pdfs には置き場の URL（`pdf_urls`）と元の資料の場所（新 `source_pdf_urls`・取りに行かない・送付済みの照合と売上サポの資料リンクだけ）。`cookie_str` は空。取れなかった資料は外し、説明文も同じ番号で外す（keepAt）
+- `getRealproCookies` を消し、manifest の `cookies` 権限も外した。版 2.5.52（テストの版の固定を 2.5.52 に・human-wait の一覧に「資料1件の取得の期限 30秒」）
+- サーバー（merge-pdfs）: `source_pdf_urls`・`urlOf(i)`（元の場所→無ければ pdf_urls）。古い拡張が `cookie_str` を送ってきたら warn `merge-pdfs:cookie-from-old-extension`（**再読み込みを確かめたら cookie の経路をサーバーから消す**）
+- 送付済みの照合の前に資料を取るようになった（旧はサーバーが照合で外した物件の資料を取らなかった）。拡張は v2.5.41 から一覧で送付済みの部屋を選ばないので増えは小さい
+- **本番の PC での確かめはまだ**: 再読み込み → スタッフモードで1件「売上番長に送る」→ ★物件出し★に届く・merge-pdfs のログに cookie の warn が出ない事

@@ -365,22 +365,72 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (url) configureSidePanelForTab(tabId, url);
 });
 
-// ── ヘルパー: リアプロのセッションクッキーを取得 ──────────────────────────
-function getRealproCookies() {
-  return new Promise((resolve, reject) => {
-    chrome.cookies.getAll({ url: "https://www.realnetpro.com/" }, (cookies) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
+// ── ヘルパー: リアプロの資料（印刷用PDF）を、そのリアプロのタブの中で取る ─────────────
+// 2026-10-01 竹内「なんで今両方からログインされている形になっているのか」「それで改善行う」:
+//   旧はリアプロのログイン情報（Cookie）を読んでサーバー（Vercel）に渡し、サーバーがデータセンターからリアプロに資料を取りに行っていた
+//   （同じログインがオフィスの PC とサーバーの2か所から使われる・ログイン情報が PC の外に出る）。
+//   今はスタッフが開いているリアプロのタブの中で取る（印刷用PDF を開くのと同じ場所・同じログイン）→ 一時置き場（Vercel Blob）に上げ、
+//   サーバーには置き場の URL と元の資料の場所だけを渡す（ITANDI の axlx-send-pdf-data-to-line と同じ道）。ログイン情報はどこにも送らない。
+//   並べて一度に取らず1件ずつ順に取る（サイトへのアクセスを一度に重ねない）。
+async function _realproTabFor(sender) {
+  if (sender && sender.tab && sender.tab.id != null && /realnetpro\.com/.test(sender.tab.url || "")) return sender.tab.id;
+  const tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://realnetpro.com/*"] });
+  if (!tabs.length) throw new Error("リアプロのタブが開いていません。リアプロにログインしたタブを開いてから送ってください。");
+  return tabs[0].id;
+}
+
+/** urls の資料をタブの中で1件ずつ取る。戻り値は urls と同じ並び（取れなかった物は error） */
+async function fetchRealproPdfsInTab(tabId, urls) {
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [urls],
+    func: async (list) => {
+      const toB64 = (buf) => {
+        const bytes = new Uint8Array(buf);
+        let s = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        return btoa(s);
+      };
+      const out = [];
+      for (const u of list) {
+        try {
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 30000);
+          const r = await fetch(u, { credentials: "include", signal: ctl.signal });
+          clearTimeout(timer);
+          const ct = r.headers.get("content-type") || "";
+          if (!r.ok) { out.push({ error: "HTTP " + r.status }); continue; }
+          if (ct.includes("text/html")) { out.push({ error: "session", html: true }); continue; }
+          out.push({ b64: toB64(await r.arrayBuffer()) });
+        } catch (e) {
+          out.push({ error: (e && e.name === "AbortError") ? "timeout" : String((e && e.message) || e) });
+        }
       }
-      const cookie_str = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
-      if (!cookie_str) {
-        reject(new Error("リアプロのセッションが見つかりません。リアプロにログインしてください。"));
-        return;
-      }
-      resolve(cookie_str);
-    });
+      return out;
+    },
   });
+  return (res && res.result) || [];
+}
+
+/**
+ * リアプロの資料を取り → 一時置き場に上げる。取れなかった物件は外し、外した番号を返す（説明文などを同じ組で落とすため）。
+ * ログインが切れていた（HTML が返る）時は全体を止める（再ログインの案内）。全件取れない時も止める
+ */
+async function realproPdfsToBlobUrls(sender, urls, baseName, customerId) {
+  const tabId = await _realproTabFor(sender);
+  const got = await fetchRealproPdfsInTab(tabId, urls);
+  if (got.some((g) => g && g.html)) throw new Error("リアプロのセッションが切れています（資料の代わりにログイン画面が返りました）。リアプロに再ログインしてください。");
+  const blobUrls = [], keptIdx = [], dropped = [];
+  for (let i = 0; i < urls.length; i++) {
+    const g = got[i];
+    if (!g || !g.b64) { dropped.push({ i, error: g ? g.error : "no_result" }); continue; }
+    blobUrls.push(await uploadWithRetry(g.b64, `${baseName}_${i + 1}.pdf`));
+    keptIdx.push(i);
+    try { _notifyBatchProgress(customerId || null); } catch (_) {}
+  }
+  if (!blobUrls.length) throw new Error("リアプロの資料を1件も取れませんでした（" + dropped.map((d) => d.error).join("・") + "）");
+  if (dropped.length) console.warn("[realpro-pdf] 取れなかった資料を外して送る:", dropped);
+  return { blobUrls, keptIdx, dropped };
 }
 
 // ── ヘルパー: PDF 1件をVercel Blobにアップロードして公開URLを返す ──────────
@@ -1003,9 +1053,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-send-to-line") {
     (async () => {
       try {
-        const cookie_str = await getRealproCookies();
         const { urls, customer_name, property_summaries, customer_conditions, site, property_pool, customer_id } = msg;
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+        // 2026-10-01 資料はリアプロのタブの中で取って一時置き場へ（ログイン情報をサーバーに渡さない・realproPdfsToBlobUrls）
+        const up = await realproPdfsToBlobUrls(sender, urls, `物件まとめ_${today}`, customer_id);
+        const keepAt = (arr) => (Array.isArray(arr) && arr.length === urls.length ? up.keptIdx.map((i) => arr[i]) : arr);
 
         // fire-and-forget: 物件候補プールを学習ループ用APIに記録
         if (property_pool && property_pool.length > 0) {
@@ -1022,12 +1074,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         const data = await callMergeApi({
-          pdf_urls: urls,
-          cookie_str,
+          pdf_urls: up.blobUrls,
+          // 元のリアプロの資料の場所（送付済みの照合・売上サポの資料リンク用。サーバーは取りに行かない）
+          source_pdf_urls: keepAt(urls),
+          cookie_str: "",
           file_name: `物件まとめ_${today}.pdf`,
           send_to_line: true,
           customer_name: customer_name || null,
-          property_summaries: property_summaries || null,
+          property_summaries: keepAt(property_summaries) || null,
           customer_conditions: customer_conditions || null,
           site: site || null,
           // 2026-09-20 竹内「物件ピックアップから送る物件もテーブルかクエリで保管したら、
@@ -1130,10 +1184,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-merge-pdf") {
     (async () => {
       try {
-        const cookie_str = await getRealproCookies();
+        // 2026-10-01 資料はリアプロのタブの中で取って一時置き場へ（ログイン情報をサーバーに渡さない）
+        const up = await realproPdfsToBlobUrls(sender, msg.urls, String(msg.file_name || "物件まとめ").replace(/\.pdf$/, ""), null);
         const data = await callMergeApi({
-          pdf_urls: msg.urls,
-          cookie_str,
+          pdf_urls: up.blobUrls,
+          cookie_str: "",
           file_name: msg.file_name,
           send_to_line: false,
           customer_name: msg.customer_name || null,
