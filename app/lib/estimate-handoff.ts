@@ -233,7 +233,8 @@ const IMG_ALT_NAME_RES: RegExp[] = [
   /^\s*\[画像\]\s*([^\s　【】\[\]*：:。、！？]{3,30})\s*\n[\s\S]{0,40}?(?:駅|線|徒歩)/u,
 ];
 /** 名前らしくない語（画面の見出し・説明） */
-const NOT_BUILDING_RE = /^(?:物件情報|所在階|階建|間取り|お気に入り|最近みた|SUUMO|スーモ|アプリ|App|画像|写真|地上|地下|建物|マンション|アパート|賃貸)/;
+// 語の全体が見出し・説明の時だけ（「アプリーレ南堀江」の頭の「アプリ」で落とさない）
+const NOT_BUILDING_RE = /^(?:物件情報|所在階|階建|間取り|アプリ|App|画像|写真|地上|地下|建物|マンション|アパート|賃貸)$|^(?:お気に入り|最近みた|SUUMO|スーモ)/;
 /** お客様の画像の読み取りの文字から物件名（「物件名：CITY SPIRE桜川Ⅲ 号室名：307」・ポータルのアプリの「物件情報 〇〇 3階」） */
 export function customerImageProp(text: string | null | undefined): HandoffPropRef | null {
   const t = String(text ?? "");
@@ -266,16 +267,21 @@ export function looksLikeListingImageText(text: string | null | undefined): bool
  * お客様の文の「〇〇の物件／の初期費用／の詳細」の〇〇（こちらの送付に無い建物名＝未確認の名前）。
  * 「こちらの」「前の」等の指す言葉は名前にしない。
  */
-const FREE_NAME_RE = /([ァ-ヶーA-Za-z一-龯0-9・\-ⅡⅢⅣ]{3,24}?)(?:の(?:物件|お部屋|部屋|初期費用|見積|御見積|詳細|内装|空き)|って(?:物件|お部屋))/u;
+// 2026-10-01 監査（92会話）: 「センチュリー鶴見が希望に近い」「ドゥーエ南堀江でお願いします」の形も足した
+const FREE_NAME_RE = /([ァ-ヶーA-Za-z一-龯0-9・\-ⅡⅢⅣ]{3,24}?)(?:の(?:物件|お部屋|部屋|初期費用|見積|御見積|詳細|内装|空き)|って(?:物件|お部屋)|が(?:希望|気に|いい|良い)|でお願い)/u;
+/** 建物名ではない語（「70m2以上の物件」「マンション上層階の物件」「【お申込者様記入欄】」） */
+const NOT_FREE_NAME_RE = /以上|以下|上層階|低層階|高層階|記入欄|エリア|周辺|沿線|駅|マンション$|アパート$|戸建$|^マンション|^アパート|間取り|[0-9]+(?:m2|㎡|帖|畳|万|円|分)/u;
 const POINTER_RE = /^(?:こちら|そちら|あちら|この|その|あの|ここ|そこ|前|以前|最初|先程|さっき|今回|上|下|他|別|同じ|新しく来た|新着|全て|全部|両方|[0-9]+件|物件|お部屋|部屋)/u;
 export function freeTextPropertyName(text: string | null | undefined): string | null {
   const t = String(text ?? "").normalize("NFKC");
   if (/^\s*\[画像\]/.test(t)) return null;
+  // 条件フォーム・申込のフォーマット（【】⇒）からは名前を取らない
+  if (/【[^】]*】|⇒/.test(t)) return null;
   const m = t.match(FREE_NAME_RE);
   if (!m) return null;
   // 「以前送ったハイム北野の詳細」→ 送った・頂いた 等の後ろだけを名前にする
   const name = m[1].replace(/^.*(?:送った|送っていた|頂いた|いただいた|もらった|見た|聞いた)/u, "").trim();
-  if (name.length < 3 || POINTER_RE.test(name) || /^[0-9]+$/.test(name)) return null;
+  if (name.length < 3 || POINTER_RE.test(name) || /^[0-9]+$/.test(name) || NOT_FREE_NAME_RE.test(name)) return null;
   if (!/[ァ-ヶA-Za-z]/.test(name) && !/[一-龯]{2,}(?:[0-9]|丁目|番館|号館|号棟)/.test(name)) return null;
   return name;
 }
@@ -318,20 +324,35 @@ export function buildHandoffEvents(o: {
           const props = staffPropsFromText(q.text);
           const viaImage = q.imageUrl ? sentByImage.get(q.imageUrl) : undefined;
           if (viaImage) props.push({ name: viaImage.name, room: viaImage.room });
+          // 2026-10-01 監査（92会話）: 送付の記録に無い画像でも、3分以内に続くこちらの 🌟 の1件（物件オススメは画像→🌟本文の順）ならその名前
+          if (!props.length && q.imageUrl) {
+            const qt = new Date(q.at).getTime();
+            const near = o.messages.filter((x) => x.sender !== "customer" && (x.text ?? "").includes("🌟") && Math.abs(new Date(x.at).getTime() - qt) <= 3 * 60_000)
+              .flatMap((x) => staffPropsFromText((x.text ?? "").split("\n").filter((l) => l.includes("🌟")).join("\n")));
+            if (near.length === 1) props.push(near[0]);
+          }
           // 2026-10-01 監査（110b3053）: 内覧の日時の返事の引用（「日曜日の17時でお願いします」）を見積書の対象にしていた → 問い・依頼の形の引用だけ
           if (props.length && QUOTE_ASK_RE.test(m.text ?? "")) { events.push({ at: m.at, kind: "customer_quoted", props, images: [] }); continue; }
+          // 2026-10-01 監査（583171e6・1db7b08d・d3245ba7）: 引用先がこちらの画像で送付の記録に無い → 名前は無いが、その画像（資料）を出す
+          if (!props.length && q.imageUrl && QUOTE_ASK_RE.test(m.text ?? "")) {
+            events.push({ at: m.at, kind: "customer_quoted", props: [], images: [{ url: q.imageUrl, kind: "sent_image", label: "お客様が引用したこちらの画像" }] });
+            continue;
+          }
         }
       }
       // 持ち込み（物件の画像・URL）
       // 2026-10-01 監査: 画像の URL が残っていない（古い）・種類が other／無し（SUUMO の画面の写し）でも、種類か読み取りの文字で物件の画像とみなす。資料に使うのは URL がある時だけ
-      const isPropImage = PROPERTY_IMAGE_TYPES.has(m.imageType ?? "") || ((m.imageType == null || m.imageType === "other") && looksLikeListingImageText(m.text));
+      const isPropImage = PROPERTY_IMAGE_TYPES.has(m.imageType ?? "") || ((m.imageType == null || m.imageType === "other") && looksLikeListingImageText(m.text))
+        // 2026-10-01 監査（4bd00c61・1db7b08d）: 読み取りの文字が無い画像（「[画像]」だけ）＋3分以内の「こちらの物件は見積書…」「これも気になります」
+        || (!!m.imageUrl && /^\s*(?:\[画像\])?\s*$/.test(m.text ?? "") && o.messages.some((x) => x.sender === "customer" && x !== m && x.at >= m.at
+          && new Date(x.at).getTime() - new Date(m.at).getTime() <= 3 * 60_000 && /物件|お部屋|部屋|こちら|これ|ここ|見積|初期費用|気にな/.test(x.text ?? "") && !/^\s*\[画像\]/.test(x.text ?? "")));
       const hasUrl = PORTAL_URL_RE.test(m.text ?? "");
       if (isPropImage || hasUrl) {
         const props: HandoffPropRef[] = [];
         const ip = isPropImage ? customerImageProp(m.text) : null;
         if (ip) props.push(ip);
         // 共有文の「URL の前の行」はお客様の文のこともある（「こちらの物件の初期費用をお伺いしたいです🙏🏻」）→ 文の形は名前にしない
-        else for (const n of o.sharedNamesOf(m)) if (!/です|ます|ください|下さい|たい|[？?]/.test(n)) props.push({ name: n, room: null });
+        else for (const n of o.sharedNamesOf(m)) if (!/です|ます|ください|下さい|たい|[？?]|アプリ|見る|●|詳細を/.test(n)) props.push({ name: n, room: null });
         const images: HandoffMaterial[] = isPropImage && m.imageUrl ? [{ url: m.imageUrl, kind: "customer_image", label: m.imageType === "estimate" ? "お客様が送った見積書の画像" : "お客様が送った物件の画像" }] : [];
         const links = hasUrl ? [(m.text ?? "").match(PORTAL_URL_RE)![0]] : [];
         // 続けて送った画像・URL（2分以内）は1つの出来事にまとめる
@@ -476,10 +497,10 @@ export function selectEstimateTarget(input: {
     if (picked.kind === "our_send" && picked.props.length > 1) {
       candidates = picked.props.slice(0, 10).map((p) => enrich({ name: p.name, room: p.room, source: "candidate", at: picked!.at }, pickups, adRows, sent));
       warnings.push(`直近の回で${picked.props.length}件お送りしています。どのお部屋の見積書か選んでください`);
-    } else if (picked.kind === "customer_brought" && picked.props.length === 0) {
+    } else if ((picked.kind === "customer_brought" || picked.kind === "customer_quoted") && picked.props.length === 0) {
       target = enrich({ name: "", room: null, source: src, at: picked.at, materials: picked.images.slice(0, 3) }, pickups, adRows, sent);
       target.link = picked.links?.[0] ?? null;
-      warnings.push("お客様が送ったお部屋の名前は画像から読みます（AI 読み取りの後に物件名を確かめてください）");
+      warnings.push(picked.kind === "customer_quoted" ? "お客様が引用した画像のお部屋です。名前は画像から読みます（AI 読み取りの後に物件名を確かめてください）" : "お客様が送ったお部屋の名前は画像から読みます（AI 読み取りの後に物件名を確かめてください）");
     } else {
       const all = picked.props.map((p, i) => enrich({
         name: p.name, room: p.room, source: i === 0 ? src : "candidate", at: picked!.at,

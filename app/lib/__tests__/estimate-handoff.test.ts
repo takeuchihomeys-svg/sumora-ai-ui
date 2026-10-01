@@ -6,7 +6,7 @@
 // 材料は本番の実物（会話の本文はそのまま・お客様名は伏せた）。会話は scripts/try-estimate-handoff.ts --audit で読んだ物。
 import {
   wantsLowInitialCostText, resolveEstimateEntry, buildEstimateHref, parseEstimateHandoff, buildEstimateReturnHref, parseEstimateReturn,
-  staffPropsFromText, customerImageProp, buildHandoffEvents, selectEstimateTarget, suggestEstimateDiscount, profitLine, rentFromSummary,
+  staffPropsFromText, customerImageProp, buildHandoffEvents, selectEstimateTarget, suggestEstimateDiscount, profitLine, rentFromSummary, freeTextPropertyName, customerAskTimes,
   type HandoffMessage, type HandoffSentProperty, type HandoffPickup,
 } from "../estimate-handoff";
 
@@ -114,6 +114,66 @@ it("共有文の前の行がお客様の文（「こちらの物件の初期費�
   });
   const c = selectEstimateTarget({ events: ev, focus: null, sent: [], pickups: [], adRows: [], now: Date.parse("2026-09-05T05:10:00Z") });
   eq([c.target?.name, c.target?.source, c.target?.link], ["", "customer_brought", "https://suumo.jp/chintai/bc_1/"]);
+});
+
+console.log("\n── 2026-10-01 当て直しの外れ（16件）から足した手がかり ──");
+it("ポータルのアプリの画面「物件情報 ドルチェヴィータ新北野 3階」（実物 bd1a125d）", () => eq(customerImageProp("[画像] 物件情報 ドルチェヴィータ新北野 3階 [建物外観写真 1/15] 入力不要で完了！")?.name, "ドルチェヴィータ新北野"));
+it("「アプリーレ南堀江 7階 7.6万円」（実物 9280fa49）", () => eq(customerImageProp("[画像] アプリーレ南堀江 7階 7.6万円/管理費 11000円 間取り：1K")?.name, "アプリーレ南堀江"));
+it("「賃貸マンション 特典あり ハイム北野 3.8万円」（実物 719c1854）", () => eq(customerImageProp("[画像] 7:04 賃貸マンション 特典あり ハイム北野 3.8万円／管理費等:10,000円")?.name, "ハイム北野"));
+it("「名称：湯里４丁目戸建」（実物 110b3053）", () => eq(customerImageProp("[画像] 不動産説明書 名称：湯里４丁目戸建 住所：大阪市東住吉区")?.name, "湯里４丁目戸建"));
+it("1行目が建物名・次の行に駅（実物 2ae0d94e）", () => eq(customerImageProp("[画像] フェリスシエロ堺\n\n南海電気鉄道 南海線「堺」駅徒歩17分")?.name, "フェリスシエロ堺"));
+it("「物件名：ハイムグレース 402号室」は名前と号室に分ける（実物 e00e01ee）", () => eq(customerImageProp("[画像] **物件情報**\n物件名：ハイムグレース 402号室\n賃料：3.6万円"), { name: "ハイムグレース", room: "402" }));
+it("種類が無い SUUMO の画面の写し（実物 e4eae9dd）は物件の画像とみなす", () => {
+  const ev = buildHandoffEvents({ messages: [
+    { sender: "customer", text: "[画像] 15:27 BeReal. 間取り パノラマ 画像一覧 1/30 賃貸アパート 特典あり Clashist加美東 13.8万円／管理費等8,500円 敷 無 礼", at: "2026-08-20T06:28:14Z", imageUrl: null, imageType: null },
+    { sender: "customer", text: "こちらをお願い致します。", at: "2026-08-20T06:28:19Z" },
+  ], sent: [], sharedNamesOf: noShared });
+  eq([ev[0]?.kind, ev[0]?.props[0]?.name], ["customer_brought", "Clashist加美東"]);
+});
+it("お客様の自撮り等（物件の手がかりが1つ以下）は持ち込みにしない", () => eq(buildHandoffEvents({ messages: [{ sender: "customer", text: "[画像] 笑顔の女性が写っています", at: "2026-08-20T06:28:14Z", imageType: "other" }], sent: [], sharedNamesOf: noShared }).length, 0));
+it("「富士林プラザ」と書いても送った「富士林プラザ15番館」に寄せる（実物 2c434b28）", () => {
+  const ev = buildHandoffEvents({ messages: [
+    { sender: "staff", text: "【富士林プラザ15番館】\n\n初期費用さらに\n🌟62,000円割引させて頂き", at: "2026-09-10T02:00:00Z" },
+    { sender: "customer", text: "前に見積もりだしていただいた富士林プラザなんですけど、できればもう1回見積もりだしてほしいんですけど可能ですか？", at: "2026-09-24T02:20:00Z" },
+  ], sent: [], sharedNamesOf: noShared });
+  const c = selectEstimateTarget({ events: ev, focus: null, sent: [], pickups: [], adRows: [], now: Date.parse("2026-09-24T02:30:00Z") });
+  eq([c.target?.name, c.target?.source], ["富士林プラザ15番館", "customer_named"]);
+});
+it("記録に無い名前「プレジオ十三の物件の情報ありますか？」は未確認の名前として出す（実物 288d474a）", () => {
+  const ev = buildHandoffEvents({ messages: [{ sender: "customer", text: "プレジオ十三の物件の情報ありますか？", at: "2026-09-01T09:31:00Z" }], sent: [], sharedNamesOf: noShared });
+  const c = selectEstimateTarget({ events: ev, focus: null, sent: [], pickups: [], adRows: [], now: Date.parse("2026-09-01T09:35:00Z") });
+  eq([c.target?.name, c.warnings.some((w) => /記録に無い名前/.test(w))], ["プレジオ十三", true]);
+});
+it("指す言葉（「こちらの物件」「以前送った〇〇」）は前を名前にしない", () => {
+  eq(freeTextPropertyName("こちらの物件の初期費用知りたいです"), null);
+  eq(freeTextPropertyName("以前送ったハイム北野の詳細もお願いします"), "ハイム北野");
+});
+it("内覧の日時の返事の引用（「日曜日の17時でお願いします」）は見積書の対象にしない・後の持ち込みが勝つ（実物 110b3053）", () => {
+  const ev = buildHandoffEvents({ messages: [
+    { sender: "staff", text: "Zio VIII 清水丘801号室現在募集中となりご内覧可能です😊！！\n🌟Zio VIII 清水丘 801号室", at: "2026-09-04T02:05:00Z", lineMessageId: "Q1" },
+    { sender: "customer", text: "日曜日の17時でお願いします", at: "2026-09-05T04:01:00Z", quotedId: "Q1" },
+    { sender: "customer", text: "[画像] 不動産説明書 名称：湯里４丁目戸建 住所：大阪市東住吉区湯里４丁目 交通：近鉄南大阪線「矢田」駅 徒歩8分 賃料：¥180,000", at: "2026-09-06T07:17:00Z", imageUrl: "https://x/y.jpg", imageType: "floor_plan" },
+    { sender: "customer", text: "この物件の初期費用いくらなりますか？", at: "2026-09-06T07:23:00Z" },
+  ], sent: [], sharedNamesOf: noShared });
+  const c = selectEstimateTarget({ events: ev, focus: null, sent: [], pickups: [], adRows: [], now: Date.parse("2026-09-06T08:10:00Z") });
+  eq([c.target?.name, c.target?.source], ["湯里４丁目戸建", "customer_brought"]);
+});
+it("お客様の依頼が無いままの 🌟（スタッフの先回り）は決めず候補に下げる（実物 328c42ab）", () => {
+  const msgs: HandoffMessage[] = [
+    { sender: "staff", text: "🌟スプランディッド堀江 702 （オススメポイント）", at: "2026-09-07T10:00:00Z" },
+  ];
+  const ev = buildHandoffEvents({ messages: msgs, sent: [], sharedNamesOf: noShared });
+  const c = selectEstimateTarget({ events: ev, focus: null, sent: [], pickups: [], adRows: [], now: Date.parse("2026-09-09T02:50:00Z"), askTimes: customerAskTimes(msgs) });
+  eq([c.target, c.candidates[0]?.name, c.autoExtract], [null, "スプランディッド堀江", false]);
+});
+it("🌟 の後に依頼があれば下げない（実物 b380d0e3）", () => {
+  const msgs: HandoffMessage[] = [
+    { sender: "staff", text: "🌟ポーラーベアー 302号室 新着で", at: "2026-09-18T06:33:00Z" },
+    { sender: "customer", text: "初期費用どんな感じですか？", at: "2026-09-18T12:00:00Z" },
+  ];
+  const ev = buildHandoffEvents({ messages: msgs, sent: [], sharedNamesOf: noShared });
+  const c = selectEstimateTarget({ events: ev, focus: null, sent: [], pickups: [], adRows: [], now: Date.parse("2026-09-18T12:10:00Z"), askTimes: customerAskTimes(msgs) });
+  eq(c.target?.name, "ポーラーベアー");
 });
 
 console.log("\n── 売上サポの行（資料・AD・審査中）──");

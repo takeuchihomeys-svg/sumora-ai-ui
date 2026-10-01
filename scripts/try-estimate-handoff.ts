@@ -35,7 +35,7 @@ async function show(id: string, expect?: string[], asOf?: string) {
     const tHit = !!t && t.name.length >= 2 && expect.some((e) => matchKnownProperty(e, [t.name], 0.7));
     const cHit = expect.some((e) => matchKnownProperty(e, h.choice.candidates.map((c) => c.name).filter((x) => x.length >= 2), 0.7));
     // 名前の無い持ち込み（画像だけ）は画像を渡せていれば「画像あり」（AI 読み取りで名前が出る＝外れではない）
-    const unnamedBrought = !!t && !t.name && t.source === "customer_brought" && (t.materials.length > 0 || !!t.link);
+    const unnamedBrought = !!t && !t.name && (t.source === "customer_brought" || t.source === "customer_quoted") && (t.materials.length > 0 || !!t.link);
     const oHit = expect.some((e) => matchKnownProperty(e, h.choice.others.map((c) => c.name), 0.7));
     // 名前も画像も残っていない持ち込み（出所は正しい・古い画像は URL が消えている）＝brought_unnamed
     const unnamedNoMaterial = !!t && !t.name && t.source === "customer_brought" && t.materials.length === 0 && !t.link;

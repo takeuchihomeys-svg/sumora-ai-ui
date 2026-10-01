@@ -483,6 +483,8 @@ function EstimatePageContent() {
       if (!blob) throw new Error("画像を作れませんでした");
       const name = `estimates/${handoff.conversationId}/${Date.now()}.png`;
       const up = await fetch(`/api/blob-upload?name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
+      // 2026-10-01 E2E: 置き場の設定が無い（ローカル）等で 500 の空の応答の時に「Unexpected end of JSON」と出ていた → 状態を出す
+      if (!up.ok) throw new Error(`画像を置けませんでした（${up.status}）。見積書の画像を保存して AIX に手で貼ってください`);
       const uj = await up.json() as { ok: boolean; url?: string; error?: string };
       if (!uj.ok || !uj.url) throw new Error(uj.error || "画像を置けませんでした");
       const aix = handoffConv?.mode === "with_property" ? "property_recommendation" : "estimate_sheet";

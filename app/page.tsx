@@ -8832,6 +8832,12 @@ export default function Home() {
                     <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, aixKey]))}
                       className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
                   </div>
+                  {/* 2026-10-01 E2E で判明: ブレインが見積書送るの時はカードより先にこの帯が出る（aix-button-view の earlyBanner）＝カードの入口は出ない。
+                      見積書がまだ無い時の入口をここにも置く（見積書ツール・物件セット済み） */}
+                  <a href={buildEstimateHref(selectedConversation.id)}
+                    className="mt-1.5 block w-full rounded-xl border border-orange-300 bg-white px-4 py-1.5 text-[12px] font-bold text-orange-700 text-center active:opacity-80">
+                    🧾 見積書を作る（見積書ツールへ・物件セット済み）
+                  </a>
                   {selectedConversation.suggestedAixMeta?.note && <p className="text-[10px] text-orange-600 mt-1 pl-1 leading-relaxed">{selectedConversation.suggestedAixMeta.note}</p>}
                 </div>
               );

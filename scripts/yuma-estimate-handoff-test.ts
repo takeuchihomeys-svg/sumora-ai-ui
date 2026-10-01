@@ -55,7 +55,8 @@ const SCENES: Scene[] = [
 ];
 
 async function insertScene(sc: Scene) {
-  const now = Date.now();
+  // 2026-10-01: 同じ時間に別の作業（⑦）も YUMA を使う → 30分先の時刻で入れて重ならないようにする（終わったら消す）
+  const now = Date.now() + 30 * 60_000;
   const rows = sc.turns.map((t, i) => ({
     conversation_id: YUMA, sender: t.s, text: t.t, is_aix_generated: !!t.aix,
     line_message_id: t.lineId ?? null, quoted_message_id: t.quote ?? null,
@@ -64,6 +65,24 @@ async function insertScene(sc: Scene) {
   const ins = await sb.from("messages").insert(rows).select("id");
   if (ins.error) throw new Error(`場面を作れず: ${ins.error.message}`);
   cleanup.push(...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id));
+}
+/**
+ * 2026-10-01: 同じ時間に別の作業（⑦）が YUMA に場面を入れると、ブレインがその発言を読んで別の判断になる（ヴィレ堺湊・メゾン本庄東の判断が混じった）。
+ * 自分の行以外で「今より30分前より新しい」行の数（他の作業の場面）。0 でない回は数えない（汚れた回）
+ */
+async function foreignRows(): Promise<number> {
+  const { data } = await sb.from("messages").select("id").eq("conversation_id", YUMA).gt("created_at", new Date(Date.now() - 30 * 60_000).toISOString());
+  return ((data ?? []) as Array<{ id: string }>).filter((r) => !cleanup.includes(r.id)).length;
+}
+/** 他の作業の場面が無くなるまで待つ（最大 maxMs） */
+async function waitYumaIdle(maxMs: number): Promise<boolean> {
+  const t0 = Date.now();
+  let idle = 0;
+  while (Date.now() - t0 < maxMs) {
+    if ((await foreignRows()) === 0) { if (++idle >= 2) return true; } else idle = 0;
+    await new Promise((r) => setTimeout(r, 15_000));
+  }
+  return false;
 }
 async function removeScene() {
   if (!cleanup.length) return;
@@ -77,6 +96,7 @@ async function main() {
   const { resolveEstimateEntry } = await import("../app/lib/estimate-handoff");
   const args = process.argv.slice(2);
   const extract = args.includes("--extract");
+  const reps = Math.max(1, Number((args.find((a) => a.startsWith("--reps=")) ?? "").split("=")[1] || 1));
   const only = (args.find((a) => !a.startsWith("--")) ?? "").split(",").filter(Boolean);
   const started = new Date().toISOString();
   const { data: c } = await sb.from("conversations").select("status, brain_strategy, conversation_direction").eq("id", YUMA).maybeSingle();
@@ -85,8 +105,12 @@ async function main() {
   const prevDir = (cc.conversation_direction ?? null) as Record<string, unknown> | null;
   console.log(`=== YUMA 見積書の引き継ぎ test-mode=${process.env.LLM_TEST_MODE ?? "（なし＝本番と同じ）"} alt=${process.env.LLM_ALT_ACTIONS ?? "-"} ===`);
   const summary: string[] = [];
-  for (const sc of SCENES.filter((s) => !only.length || only.includes(s.id))) {
+  for (const sc of SCENES.filter((s) => !only.length || only.includes(s.id))) for (let k = 0; k < reps; k++) {
+    if (!(await waitYumaIdle(Number(process.env.IDLE_WAIT_MIN ?? 10) * 60_000))) console.log("  （YUMA が空かなかった）");
     await insertScene(sc);
+    const foreignBefore = await foreignRows();
+    // 入れた直後に他の作業の場面があれば、ブレイン（費用のかかる呼び出し）を回さずに飛ばす
+    if (foreignBefore > 0) { console.log(`  ⚠ 他の作業の場面が YUMA にあるので飛ばした（${sc.id}）`); await removeScene(); summary.push(`（飛ばし）${sc.id}`); continue; }
     try {
       const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
       const meta = await runInDeepseekScope(async () => {
@@ -99,6 +123,8 @@ async function main() {
         });
       });
       const m = (meta ?? {}) as Record<string, unknown>;
+      const dirty = foreignBefore + (await foreignRows()) > 0;
+      if (dirty) console.log(`  ⚠ この回は他の作業の場面が YUMA に入っていた（数えない）`);
       const action = (m.action as string) || "(なし)";
       const h = await loadEstimateHandoff(YUMA);
       // 画面と同じ: 入口はブレインの判断（保存しないので今回の meta）＋初期費用を抑えたい
@@ -127,7 +153,7 @@ async function main() {
         const e = j.extracted ?? {};
         console.log(`  読み取り（画像${images.length}枚）: ${j.ok ? "ok" : `NG ${j.error}`} 物件名=${e.propertyName} 号室=${e.roomNumber} 家賃=${e.rent} 管理費=${e.managementFee} 敷=${e.shikikin} 礼=${e.reikin} 保証料率=${e.guaranteeRate} 火災=${e.insurance} 鍵=${e.keyExchange}`);
       }
-      summary.push(`${sc.id}: ブレイン ${action} ${okAix ? "✓" : "✗"}／入口 ${entry.show ? entry.mode : "なし"} ${okEntry ? "✓" : "✗"}／お部屋 ${t?.name ?? "なし"} ${okTarget ? "✓" : "✗"}  ※${sc.note}`);
+      summary.push(`${dirty ? "（汚れ）" : ""}${sc.id}: ブレイン ${action} ${okAix ? "✓" : "✗"}／入口 ${entry.show ? entry.mode : "なし"} ${okEntry ? "✓" : "✗"}／お部屋 ${t?.name ?? "なし"} ${okTarget ? "✓" : "✗"}  ※${sc.note}`);
     } finally {
       await removeScene();
     }
