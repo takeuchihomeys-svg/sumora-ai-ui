@@ -73,7 +73,7 @@ console.log("\n■ 配線（background.js の callMergeApi）");
   ok("名前ずれは回のお客様の名前で送り、段 owner_name_drift に残す", /"owner_name_drift"/.test(fn) && /customer_name: _own\.ownerName/.test(fn));
   ok("サーバーに回のお客様（batch_owner）を渡す", /batch_owner: batchOwner/.test(fn));
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.56");
+  eq("manifest の版", mf.version, "2.5.57");
   ok("background が batch-guard.js を読み込んでいる", /batch-guard\.js/.test(bg));
 }
 

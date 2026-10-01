@@ -93,10 +93,29 @@
     return document.querySelector(q);
   }
   /** 欄が見えない時に開くボタン（条件の欄が閉じている・小窓が開いていない） */
-  function opener(kind) {
+  /** 閉じた欄の見出し（「絞り込み条件 ＋」「所在地絞り込み ＋」など末尾が＋の物）か */
+  var PLUS_HEAD_RE = /[＋+]$/;
+  /**
+   * 見えない欄 el を開くボタン。2026-10-01 実画面: 「ペット相談」は左の「絞り込み条件 ＋」の中にあり、旧は「検索条件を表示」しか探さず何も光らなかった。
+   *   ① el から上の箱へたどり、その箱のすぐ前（前の兄弟）か箱の中の、見えている「…＋」の見出しを光らせる（どの欄でも効く）
+   *   ② 見つからなければ名前で探す
+   */
+  function openerFor(el) {
+    for (var n = el, depth = 0; n && n !== document.body && depth < 8; n = n.parentElement, depth++) {
+      for (var sib = n.previousElementSibling, k = 0; sib && k < 3; sib = sib.previousElementSibling, k++) {
+        if (visible(sib) && PLUS_HEAD_RE.test(norm(sib.textContent)) && norm(sib.textContent).length <= 20) return sib;
+        var inner = sib.querySelector ? Array.prototype.filter.call(sib.querySelectorAll("a,button,div,span,p,dt,h3,h4"), function (x) { return visible(x) && PLUS_HEAD_RE.test(norm(x.textContent)) && norm(x.textContent).length <= 20; }) : [];
+        if (inner.length) return inner[inner.length - 1];
+      }
+    }
+    return null;
+  }
+  function opener(kind, el) {
+    var near = el ? openerFor(el) : null;
+    if (near) return near;
     if (kind === "pick_station" || kind === "pick_route") return byText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
     if (kind === "pick_city") return byText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"]);
-    return byText(["検索条件を表示"]);
+    return byText(["絞り込み条件＋", "絞り込み条件+", "絞り込み条件", "検索条件を表示"]);
   }
 
   /** 手順の状態: { done, target（光らせる要素・複数可）, note（吹き出しの補足） } */
@@ -111,7 +130,7 @@
       var el = document.querySelector((s.kind === "select" ? "select" : "input") + '[name="' + s.name + '"]');
       if (!el) return { done: false, target: [opener(s.kind)], note: "欄が見つかりません。条件の欄を開いてください" };
       if (String(el.value) === String(s.value)) return { done: true };
-      return visible(el) ? { done: false, target: [el] } : { done: false, target: [opener(s.kind)], note: "先に条件の欄を開いてください" };
+      return visible(el) ? { done: false, target: [el] } : { done: false, target: [opener(s.kind, el)], note: "先に光っている所を押して欄を開いてください" };
     }
     if (s.kind === "check") {
       var cb = checkInput(s.name, s.value);
@@ -119,7 +138,7 @@
       if (!cb) return { done: true, missing: true };
       if (!!cb.checked === !!s.want) return { done: true };
       var lb = labelOf(cb);
-      return visible(cb) || visible(lb) ? { done: false, target: [lb || cb] } : { done: false, target: [opener(s.kind)], note: "先に条件の欄を開いてください" };
+      return visible(cb) || visible(lb) ? { done: false, target: [lb || cb] } : { done: false, target: [opener(s.kind, lb || cb)], note: "先に光っている所を押して欄を開いてください" };
     }
     if (s.kind === "check_text") {
       var labels = document.querySelectorAll("label"), hit = null;
