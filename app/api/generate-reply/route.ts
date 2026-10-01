@@ -6283,6 +6283,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   console.info("[full-support] 修正ループ後に今日2回目の全力サポートを削除", JSON.stringify({ conversationId, removed: fsFinal.removed }));
                   draftBody = fsFinal.text;
                 }
+                // 2026-10-02 ⑫（YUMA の実送信テスト・再生 first_contact_02／flow4 t01）: 挨拶行（初回の はじめまして・催促の謝罪）も修正ループの後に掛け直す。
+                //   書き直しが「かしこまりました！！ / 西淀川区内…」のように挨拶行ごと落とした下書きが出た（本番の記録では 177 中 1・DeepSeek の書き直しで多い）。
+                //   挨拶行が既に先頭にある時は触らない（同じ関数を2回掛けて本文の文を剥がさない）
+                if (!isTemplateOptimize && greetingDecision.enforce && greetingDecision.openingLine && !draftBody.trimStart().startsWith(greetingDecision.openingLine)) {
+                  const reopen = enforceOpening(draftBody, greetingDecision);
+                  if (reopen.cleaned !== draftBody) {
+                    console.info("[greeting] 修正ループ後に挨拶行を掛け直し", JSON.stringify({ conversationId, kind: greetingDecision.kind }));
+                    draftBody = reopen.cleaned;
+                  }
+                }
               } catch (checkErr) {
                 // A-2: final-check の例外時も決定論チェック（純関数・LLM不要）だけは必ず実行する（fail-open with deterministic）
                 console.error("[generate-reply] final-check失敗（fail-open・決定論チェックのみで続行）:", checkErr);

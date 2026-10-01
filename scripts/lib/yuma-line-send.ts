@@ -123,6 +123,8 @@ export function lineRenderRisks(t: string, allowed: ReadonlyArray<string>): stri
   if (/\n{3,}/.test(t)) r.push("空行が2つ以上続く");
   if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(t)) r.push("壊れた絵文字");
   if (/<<<|>>>|\[返信不要\]|【[^】]*(?:判定|分析|作業)[^】]*】|\{\{|〇〇|○○/.test(t)) r.push("仕組みの印・作業メモ・未置換");
+  // 2026-10-02 ⑫ 2巡目: AIX【内覧調整】の文に JSON の名残（…😊！！","closing":"…"}）が入って届いた
+  if (/"[A-Za-z_]+"\s*:\s*"|"\s*,\s*"[A-Za-z_]+"|"\s*\}/.test(t)) r.push("JSON の名残");
   if (/♀|♂|\u{1F469}/u.test(t)) r.push("性別の絵文字");
   const al = new Set<string>(allowed);
   const oa = [...t.matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]).filter((e) => !al.has(e) && /\p{Emoji_Presentation}/u.test(e));

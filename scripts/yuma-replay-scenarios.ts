@@ -79,7 +79,7 @@ type Scenario = {
 };
 
 let cleanup: string[] = [];
-const sendState: { enabled: boolean; sent: number; ids: string[]; windows: string[]; quota: unknown } = { enabled: false, sent: 0, ids: [], windows: [], quota: null };
+const sendState: { enabled: boolean; sent: number; ids: string[]; windows: string[]; quota: unknown; countFile: string; prevSends: number } = { enabled: false, sent: 0, ids: [], windows: [], quota: null, countFile: "", prevSends: 0 };
 // 2026-10-01 申込の書類（氏名・生年月日・住所・勤務先・年収）が場面に入っていたら LLM に渡さない（DeepSeek に個人情報を出さない・申込以降は対象外）。
 //   最初の版の場面の作り方（申込へ押下より前だけ）では申込フォームの記入済みの通が混ざり、2場面が DeepSeek に渡った＝場面の作り方も直した
 export const APPLICATION_PII_RE = /申込者様記入欄|同居人記入欄|緊急連絡先欄|生年月日|年収|勤務先電話|フリガナs*[ァ-ヶ]/;
@@ -132,7 +132,8 @@ function hasBlock(check: unknown): boolean {
 
 async function generateDraft(sc: Scenario, msgs: Array<{ sender: string; text: string; created_at: string; is_aix_generated: boolean }>, meta: Record<string, unknown>, status: string) {
   const units = sc.customer.map((t) => t.trim()).filter(Boolean);
-  const staffEngaged = sc.context.some((m) => m.s === "staff" && m.t.trim() && m.t.trim() !== "[画像]");
+  // 2026-10-02 ⑫: 初回でない場面（期間より前からある会話で文脈にスタッフの通が無い）を初回の挨拶で作っていた → 初回の場面だけ文脈で見る
+  const staffEngaged = sc.stage !== "first_contact" || sc.context.some((m) => m.s === "staff" && m.t.trim() && m.t.trim() !== "[画像]");
   const body = {
     // 本番の bg-async と同じ: 連投は MSG_SEP でつなぐ・こちらが何も送っていなければ first_reply（初回の挨拶を付ける判定がこれを見る）
     message: units.join(MSG_SEP), customerMessages: units, state: firstReplyStateOrNull(status, staffEngaged) ?? status, conversationId: YUMA, customerName: "YUMA",
@@ -187,7 +188,11 @@ async function main() {
   let pendingBefore: Array<{ id: string }> = [];
   if (SEND) {
     const ysend = await import("./lib/yuma-line-send");
-    const q = await ysend.quotaGate(SEND_CAP);
+    // 自分の実送信は messages に行を作らない（本番の画面が作る行が無い）＝見積もりの「今月の送信」に入らない → この道具の今月の送信数を足して見る
+    const countFile = `${OUT_DIR}/yuma-sends-${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 7)}.json`;
+    const prevSends = existsSync(countFile) ? Number(JSON.parse(readFileSync(countFile, "utf8")).sent ?? 0) : 0;
+    sendState.countFile = countFile; sendState.prevSends = prevSends;
+    const q = await ysend.quotaGate(SEND_CAP + prevSends);
     console.log(`=== LINE の月の上限 ${JSON.stringify(q)} ===`);
     sendState.quota = q;
     sendState.enabled = q.ok;
@@ -271,7 +276,10 @@ async function main() {
         const { detectPlaceholders } = await import("../app/lib/validate-reply");
         const { ALLOWED_EMOJIS } = await import("../app/lib/emoji-allowlist");
         const ysend = await import("./lib/yuma-line-send");
-        const isAixText = !draft && typeof rec.aix_text === "string" && !String(rec.aix_text).startsWith("[");
+        // AIX の文は「スタッフの確認が要る」物（staff_confirm＝確認の結果をスタッフが入れる前提の仮の文「…現在募集中となります」）は送らない
+        //   （1巡目で確かめずに書いた「募集中」の文を2通送った・本番では aixAutoSendGate が止める形）
+        const fillLevel = (rec.aix_fill as { level?: string } | undefined)?.level ?? "";
+        const isAixText = !draft && typeof rec.aix_text === "string" && !String(rec.aix_text).startsWith("[") && fillLevel !== "staff_confirm";
         const raw = draft || (isAixText ? String(rec.aix_text) : "");
         const sendable = raw ? (draftToSendableText(raw)?.trim() ?? "") : "";
         const ph = sendable ? detectPlaceholders(sendable) : [];
@@ -336,6 +344,7 @@ async function main() {
     if (revert.length) await sb.from("aix_action_items").update({ status: "pending", done_at: null, done_by: null, resolution_note: null }).in("id", revert);
     const others = Object.entries(side).filter(([t]) => t !== "sent_facts").map(([t, rs]) => `${t} ${rs.length}行`).join("・");
     console.log(`\n=== 実送信 ${sendState.sent}通（LINE id ${sendState.ids.length}）・後片付け: sent_facts ${facts.length}行を消した・要対応 ${revert.length}件を戻した・同じ時間の他の記録（他の担当の物を含みうる・消していない）: ${others} ===`);
+    if (sendState.countFile) writeFileSync(sendState.countFile, JSON.stringify({ sent: sendState.prevSends + sendState.sent }));
     appendFileSync(outFile, JSON.stringify({ _send: true, sent: sendState.sent, ids: sendState.ids, quota: sendState.quota, cleaned_facts: facts.map((r) => r.id), reverted_items: revert, side_counts: Object.fromEntries(Object.entries(side).map(([t, rs]) => [t, rs.length])) }) + "\n");
   }
   const { data: logs } = await sb.from("llm_usage_logs").select("action, model, env").gte("created_at", t0).eq("conversation_id", YUMA);

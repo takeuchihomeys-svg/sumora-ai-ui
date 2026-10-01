@@ -276,5 +276,29 @@ describe("2026-09-18 竹内（ゆうこ事例）: かしこまりました と �
   });
 });
 
+// 2026-10-02 ⑫: この LINE で最初の返事でも、お客様が以前のやり取りを示す時は「お世話になっております」（実物 22bbce86 9/26・再生 first_contact_05）
+describe("以前のお客様の最初の返事（⑫）", () => {
+  const first = (t: string) => decide([{ sender: "customer", text: t, createdAt: "2026-09-09T07:10:00Z" }], NOW_1616, 16, { isFirst: true });
+  it("お世話になっております → standard・お世話になっております・自己紹介を剥がす", () => {
+    const d = first("お世話になっております。\nまだ家探ししてるのですが、相談よろしいでしょうか？");
+    expect(d.kind).toBe("standard");
+    expect(d.openingLine).toContain("お世話になっております！！");
+    const out = enforceOpening("YUMAさん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\nもちろんです！！", d).cleaned;
+    expect(out).not.toContain("はじめまして");
+    expect(out).not.toContain("鈴木と申します");
+    expect(out).toContain("お世話になっております！！");
+  });
+  it("紹介で来た人（お世話になっております＋紹介）は初回のまま", () => {
+    expect(first("お世話になっております。〇〇様から紹介いただきました、田中と申します。").kind).toBe("first");
+  });
+  it("挨拶の語が無い初回は初回のまま", () => {
+    expect(first("はじめまして！難波周辺で1Kを探しています").kind).toBe("first");
+    expect(first("難波周辺で1Kを探しています").kind).toBe("first");
+  });
+  it("以前お世話になった → standard", () => {
+    expect(first("以前お世話になったものです。こちらの物件は仲介手数料無料や礼金の交渉はむずかしい物件なのか").kind).toBe("standard");
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failures.length) { console.log(failures.join("\n")); process.exit(1); }

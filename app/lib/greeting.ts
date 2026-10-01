@@ -84,7 +84,25 @@ export type GreetingDecision = {
    * false（実データの割合で決めた場面）は、書いてある開口語を入れ替えない（人の実送信 46通を書き換えていたため・enforceOpener の注記）
    */
   openerStrict?: boolean;
+  /**
+   * 2026-10-02 ⑫: この LINE で最初の返事だが、お客様が以前のやり取りを示している（「お世話になっております」「以前お世話になった」）→
+   * 挨拶は「〇〇さんお世話になっております！！」で、LLM が書いた初回の自己紹介（はじめまして…鈴木と申します）も剥がす（enforceOpening）
+   */
+  stripFirstIntro?: boolean;
 };
+
+/**
+ * 2026-10-02 ⑫（YUMA の繰り返しの実送信テスト・再生 first_contact_05「お世話になっております。まだ家探ししてるのですが、相談よろしいでしょうか？」に
+ *   初回の「はじめまして😊！！…担当させて頂きます鈴木と申します」を付けた）: この LINE での最初のお客様の発言が以前のやり取りを示すか。
+ * 線（240日・scripts/audit-first-greeting-returning.ts）: 会話の最初のお客様の発言にこの語がある 25会話で、スタッフの最初の返事の冒頭は
+ *   お世話になっております 17・はじめまして 2（どちらも「〜様から紹介いただきました」＝初めての人・もう1件は語が「お世話になっております」だけ）・その他 6（はじめましてではない）。
+ * 紹介・はじめましての語があれば初めてのお客様として扱う（当てない）
+ */
+export function isReturningCustomerOpening(text: string | null | undefined): boolean {
+  const t = String(text ?? "");
+  if (!t.trim() || /紹介|はじめまして|初めまして/.test(t)) return false;
+  return /お世話になって(?:おります|ます|います)|お世話になりました|以前(?:に)?(?:こちら|お世話|お願い|契約|ご対応|やり取り|連絡|相談)|前回(?:は|も)?(?:お世話|ご対応|対応|契約)/.test(t);
+}
 
 /** DB（tpo_debug.greeting → reply_context_snapshot）・check-reply 転送用の軽量形 */
 export type GreetingDecisionLite = Pick<GreetingDecision, "kind" | "openingLine" | "nightPrefix" | "enforce" | "opener" | "openerAllowed" | "openerReason" | "reason" | "audit" | "openerBodyRule" | "openerStrict">;
@@ -342,6 +360,11 @@ export function resolveGreeting(opts: {
     return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks };
   };
 
+  // 2026-10-02 ⑫: この LINE で最初の返事でも、お客様が以前のやり取りを示す（お世話になっております・以前お世話になった）時は
+  //   初回の自己紹介でなく「〇〇さんお世話になっております！！」（スタッフの実送信 17/19・isReturningCustomerOpening の注記）
+  if (opts.isFirstEverReply && isReturningCustomerOpening(unrepliedCustomerText)) {
+    return { ...mk("standard", `${nightPrefix}${call}お世話になっております！！`, true, "この LINE で最初の返事・お客様は以前のやり取りあり（お世話になっております）"), stripFirstIntro: true };
+  }
   if (opts.isFirstEverReply) return mk("first", nightPrefix + buildFirstGreeting(name), true, "真の初回");
   if (opts.isProgressPush) return mk("late_apology", `${nightPrefix}${call}${call ? "、" : ""}ご連絡遅くなり申し訳御座いません！！`, true, "顧客が結果を催促（進捗催促TPO）");
   if (opts.alreadyGreetedToday) return mk("none", nightPrefix, !!nightPrefix, "当日挨拶済み（同日連続会話は開口語または本題から）");
@@ -354,6 +377,10 @@ export const GREETING_STRIP_RE =
 /** 初回専用（旧 route.ts greetingSentencePattern を移設） */
 export const FIRST_GREETING_SENTENCE_RE =
   /^(?:「?[^\n！!。]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く|夜遅く|お部屋探し[^！!。\n]{0,30}申します|[^！!。\n]{0,20}と申します)[^！!。\n]{0,40}?(?:[！!。]+|\n)\s*/;
+
+/** 2026-10-02 ⑫: 初回の自己紹介の文（はじめまして・この度ご連絡頂き・お部屋探しを担当…申します）だけ。以前のお客様の最初の返事で剥がす */
+export const RETURNING_FIRST_INTRO_RE =
+  /^(?:「?[^\n！!。]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|この度ご連絡|お部屋探し[^！!。\n]{0,30}申します)[^！!。\n]{0,40}?(?:[！!。]+|\n)\s*/;
 
 /** 禁止語（G32）。final-check BANNED_WORDS_DETERMINISTIC と同名の語 */
 export const WAITED_RE = /お待たせ(?:致|いた)?しました/;
@@ -476,8 +503,12 @@ export function enforceOpening(text: string, d: GreetingDecision): { cleaned: st
   let rest = text.trimStart();
   const stripRe = d.kind === "first" ? FIRST_GREETING_SENTENCE_RE : GREETING_STRIP_RE;
   let stripped = false;
-  for (let i = 0; i < 4 && stripRe.test(rest); i++) {
+  // 2026-10-02 ⑫: 以前のお客様の最初の返事は、挨拶行（GREETING_STRIP_RE）に加えて初回の自己紹介の文だけを剥がす
+  //   （FIRST_GREETING_SENTENCE_RE は「ご連絡頂きありがとうございます」「本日ご案内させていただきました鈴木と申します」まで剥がす＝人の文 35会話で当てて目で読んだ）
+  const firstIntroRe = d.stripFirstIntro ? RETURNING_FIRST_INTRO_RE : null;
+  for (let i = 0; i < 4 && (stripRe.test(rest) || (firstIntroRe?.test(rest) ?? false)); i++) {
     rest = rest.replace(stripRe, "");
+    if (firstIntroRe) rest = rest.replace(firstIntroRe, "");
     stripped = true;
     fixes.push("LLM生成の冒頭挨拶を除去");
   }

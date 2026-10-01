@@ -33,7 +33,7 @@ async function readAll<T>(q: (from: number, to: number) => PromiseLike<{ data: u
 
 type Msg = WindowMsg & { conversation_id: string; image_url: string | null };
 type Press = WindowPress & { conversation_id: string };
-type Conv = { id: string; customer_name: string | null; line_source_type: string | null; status: string | null };
+type Conv = { id: string; customer_name: string | null; line_source_type: string | null; status: string | null; created_at: string | null };
 
 /** 場面の候補（お客様の文の語）。上から順に最初に当たった物 */
 export const CANDIDATE_SCENES: Array<[string, RegExp]> = [
@@ -64,7 +64,8 @@ export function sceneOfCustomerText(t: string, isFirst: boolean, hasImage: boole
 
 /** 申込の書類（記入済み）の印。これより後の番は場面にしない */
 const APP_PII_RE = /申込者様記入欄|同居人記入欄|緊急連絡先欄|生年月日|年収|勤務先電話/;
-const PHONE_RE = /0\d{1,4}[-ー－]?\d{1,4}[-ー－]?\d{3,4}/g;
+// 2026-10-02 ⑫: URL の中の数字（suumo の bc_1000…・homes の bid=…）まで電話番号として伏せていた → URL はそのまま残し、URL の外だけ伏せる（maskText）
+const URL_OR_PHONE_RE = /https?:\/\/[^\s　]+|0\d{1,4}[-ー－]?\d{1,4}[-ー－]?\d{3,4}/g;
 const MAIL_RE = /[\w.+-]+@[\w-]+\.[\w.]+/g;
 /** スタッフが呼びかけに使った名前（「〇〇さん⏎」「〇〇さんに/の/が/お/ご/達」）。会話ごとに集める */
 const NOT_NAME = /^(?:お客|皆|旦那|奥|管理会社|担当|YUMA|同居人|オーナー|業者|大家|貸主|保証会社|ご主人|主人|彼女|彼氏|お子|弟|妹|兄|姉|母|父|ご両親|親御|内覧担当|鈴木|管理人|みな$)/;
@@ -94,13 +95,13 @@ export function maskText(t: string, customerName: string | null, extraNames: Rea
   // スタッフの文の頭の呼びかけ「〇〇さん」
   s = s.replace(/^([^\n]{1,14}?)(さん|様)(\n)/, "YUMA$2$3");
   // 2026-10-02 ⑫: 伏せ字を携帯の番号の形（090-0000-0000）にすると手順書の個人情報の網（test-pii-guard の携帯の番号）に当たり場面が流れない（45場面中 9・流れ 13/17）→ 番号の形にしない
-  return s.replace(PHONE_RE, "（電話番号）").replace(MAIL_RE, "yuma@example.com");
+  return s.replace(URL_OR_PHONE_RE, (m) => (/^https?:/.test(m) ? m : "（電話番号）")).replace(MAIL_RE, "yuma@example.com");
 }
 
 async function main() {
   const nowMs = Date.now();
   const since = new Date(nowMs - DAYS * 86_400_000).toISOString();
-  const convs = await readAll<Conv>((f, t) => sb.from("conversations").select("id, customer_name, line_source_type, status").range(f, t));
+  const convs = await readAll<Conv>((f, t) => sb.from("conversations").select("id, customer_name, line_source_type, status, created_at").range(f, t));
   const convBy = new Map(convs.map((c) => [c.id, c]));
   const msgs = await readAll<Msg>((f, t) => sb.from("messages").select("conversation_id, sender, created_at, text, is_aix_generated, image_url").gte("created_at", since).order("created_at").order("id").range(f, t));
   const presses = await readAll<Press>((f, t) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, created_at").gte("created_at", since).not("aix_type", "is", null).order("created_at").range(f, t));
@@ -124,7 +125,9 @@ async function main() {
       const m = ms[i];
       if (m.sender !== "customer") continue;
       if (i > 0 && ms[i - 1].sender === "customer") continue; // 連投の頭だけ
-      const isFirst = !firstCustomerSeen && !ms.slice(0, i).some((x) => x.sender === "customer");
+      // 2026-10-02 ⑫: 期間の最初のお客様の発言でも、会話が期間より前からあれば初回ではない（旧は初回として場面にし、スタッフの「お世話になっております」と比べて外れにしていた）
+      const convStartedInWindow = !conv.created_at || Date.parse(conv.created_at) >= Date.parse(since) - 86_400_000;
+      const isFirst = convStartedInWindow && !firstCustomerSeen && !ms.slice(0, i).some((x) => x.sender === "customer");
       firstCustomerSeen = true;
       if (applyAt && Date.parse(m.created_at) >= Date.parse(applyAt)) break; // 申込以降は対象外
       // 申込の書類（記入済みのフォーム）が出た後も対象外（申込へを押さずにフォームが届く会話がある・2026-10-01 個人情報が場面に混ざった）

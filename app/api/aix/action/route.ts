@@ -101,6 +101,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { meetingAddressProblem } from "@/app/lib/meeting-address";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown, type HearingKnown } from "@/app/lib/hearing-form";
+import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
 
 export const maxDuration = 300;
 
@@ -3738,24 +3739,12 @@ ${aixPropertySendRules}
       const rawSendText = await callClaude(sendSystemSpec, sendUserFinal, currentAction);
       // normal / widen モードはJSON構成パーツで返す（コンポーネント学習ループ用）
       if (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing") {
-        let propertySendComponents: Record<string, string> | null = null;
-        try {
-          const m = rawSendText.match(/\{[\s\S]*\}/);
-          if (m) {
-            propertySendComponents = JSON.parse(m[0]) as Record<string, string>;
-            const c = propertySendComponents;
-            message_text = ["intro", "pickup", "expanded", "vacating", "invite", "calendar", "closing"]
-              .filter(k => !(skipViewingInvite && (k === "invite" || k === "calendar")))
-              .map(k => c[k] ?? "")
-              .filter(Boolean)
-              .join("\n\n");
-          } else {
-            message_text = rawSendText;
-          }
-        } catch {
-          message_text = rawSendText;
-          propertySendComponents = null;
-        }
+        // 2026-10-02 ⑫: JSON として読めない時に生の出力を文にしない（読める部品だけ拾う・app/lib/aix-json-parts.ts）
+        const sj = joinAixJsonParts(rawSendText, ["intro", "pickup", "expanded", "vacating", "invite", "calendar", "closing"]
+          .filter(k => !(skipViewingInvite && (k === "invite" || k === "calendar"))));
+        if (sj.salvaged) console.warn(JSON.stringify({ tag: "aix:json-salvaged", action: currentAction, failed: sj.failed }));
+        message_text = sj.text;
+        const propertySendComponents: Record<string, string> | null = sj.salvaged ? null : sj.parts;
         // 2026-09-24: 果たす予定の無い確認の約束（駐車場・ペット・保証会社）を落とす（会話を合わせると同じ・監査で誤削除0）
         message_text = stripUnkeptConfirmPromiseLines(message_text).text;
         // ⑦修正: 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
@@ -4180,22 +4169,11 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
       const rawViewingText = await callClaude(viewingSystemSpec, viewingUserFinal, currentAction);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
-        let vComps: Record<string, string> | null = null;
-        try {
-          const m = rawViewingText.match(/\{[\s\S]*\}/);
-          if (m) {
-            vComps = JSON.parse(m[0]) as Record<string, string>;
-            const c = vComps;
-            message_text = ["greeting", "situation", "invite", "dates", "closing"]
-              .map(k => c[k] ?? "")
-              .filter(Boolean)
-              .join("\n\n");
-          } else {
-            message_text = rawViewingText;
-          }
-        } catch {
-          message_text = rawViewingText;
-        }
+        // 2026-10-02 ⑫: JSON として読めない時に生の出力（「…😊！！","closing":"…"}」）を文にしていた → 読める部品だけ拾う（app/lib/aix-json-parts.ts）
+        const vj = joinAixJsonParts(rawViewingText, ["greeting", "situation", "invite", "dates", "closing"]);
+        if (vj.salvaged) console.warn(JSON.stringify({ tag: "aix:json-salvaged", action: currentAction, failed: vj.failed }));
+        message_text = vj.text;
+        const vComps: Record<string, string> | null = vj.salvaged ? null : vj.parts;
         if (vComps) aiComponents = vComps;
       }
       // 2026-09-16 竹内（𝒮 さん事例）: こちらから日にちを出す時は1日1つ（お客様が1日だけ指定した時はその日の時間をそのまま）
@@ -4431,19 +4409,13 @@ ${SMORA_COMMON_RULES}`;
         // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
         //   STATE_LEARNABLEが一致せず component_diff 学習がゼロになるのを防ぐ）。
         //   代わりに message_text = aiDraft として保存されるため全文 analyzeDiff が機能する。
-        try {
-          const m = rawDocsText.match(/\{[\s\S]*\}/);
-          if (m) {
-            const c = JSON.parse(m[0]) as Record<string, string>;
-            const componentOrder = ["thanks", "missing_items", "closing"];
-            message_text = componentOrder.map(k => c[k] ?? "").filter(Boolean).join("\n");
-            // aiComponents は意図的にセットしない → フロントが ai_components を保存しない
-            // → analyze-diffs が全文 analyzeDiff パスで処理 → 正常に学習される
-          } else {
-            message_text = rawDocsText;
-          }
-        } catch {
-          message_text = rawDocsText;
+        // aiComponents は意図的にセットしない → フロントが ai_components を保存しない
+        // → analyze-diffs が全文 analyzeDiff パスで処理 → 正常に学習される
+        // 2026-10-02 ⑫: JSON として読めない時に生の出力を文にしない（読める部品だけ拾う・app/lib/aix-json-parts.ts）
+        {
+          const dj = joinAixJsonParts(rawDocsText, ["thanks", "missing_items", "closing"], "\n");
+          if (dj.salvaged) console.warn(JSON.stringify({ tag: "aix:json-salvaged", action: "docs_request", failed: dj.failed }));
+          message_text = dj.text;
         }
 
       } else {
@@ -4677,22 +4649,13 @@ ${appealFocus}`;
       const rawAppText = await callClaude(appSystemSpec, appUserFinal, currentAction);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
-        let appComps: Record<string, string> | null = null;
-        try {
-          const m = rawAppText.match(/\{[\s\S]*\}/);
-          if (m) {
-            appComps = JSON.parse(m[0]) as Record<string, string>;
-            const c = appComps;
-            const componentOrder = isSimple
-              ? ["appeal", "cta", "reassurance", "closing"]
-              : ["movein_date", "invite", "appeal", "cta", "reassurance"];
-            message_text = componentOrder.map(k => c[k] ?? "").filter(Boolean).join("\n");
-          } else {
-            message_text = rawAppText;
-          }
-        } catch {
-          message_text = rawAppText;
-        }
+        // 2026-10-02 ⑫: JSON として読めない時に生の出力を文にしない（読める部品だけ拾う・app/lib/aix-json-parts.ts）
+        const aj = joinAixJsonParts(rawAppText, isSimple
+          ? ["appeal", "cta", "reassurance", "closing"]
+          : ["movein_date", "invite", "appeal", "cta", "reassurance"], "\n");
+        if (aj.salvaged) console.warn(JSON.stringify({ tag: "aix:json-salvaged", action: currentAction, failed: aj.failed }));
+        message_text = aj.text;
+        const appComps: Record<string, string> | null = aj.salvaged ? null : aj.parts;
         if (appComps) aiComponents = appComps;
       } else {
         message_text = rawAppText;
