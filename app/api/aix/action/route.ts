@@ -10,6 +10,9 @@ import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date
 import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "@/app/lib/meta-narration";
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は4経路で同じ純関数から作る（1か所だけ崩れていた）
 import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
+// 2026-10-01: 物件確認した（御見積書同封）の締め（scripts/audit-check-result-lines.ts）
+import { appendCheckResultReceipt } from "@/app/lib/check-result-closing";
+import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
 // 同: 2通目（カバーレター）に別の物件の金額ブロックが写るのを落とす
 import { stripEstimateAmountBlock, sanitizeCoverLetter } from "@/app/lib/estimate-cover";
 // 2026-09-20 竹内「物件オススメ置き換える」: 画像つきの呼び出しを種類ごとに DeepSeek へ回す
@@ -1996,6 +1999,13 @@ async function handleAction(request: NextRequest): Promise<Response> {
       // 2026-09-22 竹内「今日初めてのLINEだったらお世話になっておりますをつける／今日初めてじゃないときは使わない」:
       //   AIX の全経路（LLM が書く通・固定文・物件なかったの固定文）がここを通るので、その日の挨拶は1か所で決める（daily-greeting）。
       //   消す方は全アクション。付ける方はお客様に物件・確認結果を届ける通だけ（代理契約の返答は実送信で挨拶なし・管理会社宛ては付けない）
+      // 2026-10-01 竹内「同じ絵文字を2重で使っているが実際していない。もう一つの絵文字を使うか省いている」（テンプレート・返信生成には出口があり、AIX 本体だけ無かった）:
+      //   スタッフが自分で書いた AIX の1通目・2通目では同じ絵文字の2回目は 0通（scripts/audit-aix-emoji-repeat-human.ts・365日）。
+      //   AI の下書きに重複があった時スタッフは 内覧調整 12/25・物件ピックアップ 27/29 を直していた。替えるか外すだけで言葉は1文字も消さない（emoji-repeat.ts）
+      {
+        const dr = dedupeRepeatedEmoji(sendCleaned);
+        if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix:emoji-repeat-fixed", action: currentAction, conversationId, changes: dr.changes })); sendCleaned = dr.text; }
+      }
       const addGreetingHere = (currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
         && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company";
       const daily =applyDailyGreeting(sendCleaned, { staffSentToday: staffMessagedToday, greetingPhrase: addGreetingHere ? greetingPhrase : "", name: familyName ? name : "" });
@@ -3896,6 +3906,9 @@ ${SMORA_COMMON_RULES}
           : "";
 
         // キャッシュ最適化: 静的（固定指示）と動的（カレンダー・ブレイン・顧客ガイダンス）を分離
+        // 2026-10-01 竹内「同じ絵文字を2重でつかっているが実際していない」: 書式の手本が「…ご案内可能です😊！！／…御座いますでしょうか😊！！」と
+        //   同じ絵文字を2回見せていた（入口が重複を教えていた）。日付の行に 😊 がある時の締めは実送信で 絵文字なし18・😌10・😊18（😊はほぼ AI のまま）、
+        //   スタッフが自分で書いた AIX では重複0（scripts/audit-aix-emoji-repeat-human.ts）→ 手本の締めを 😌 にした（出口の dedupeRepeatedEmoji と同じ向き）
         const convMatchVISystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
@@ -3913,7 +3926,7 @@ ${SMORA_COMMON_RULES}
   M/D(曜) HH:MM〜HH:MM
   M/D(曜) HH:MM〜HH:MMにてご案内可能です😊！！
 
-  〇〇さんご都合よろしいお日にち御座いますでしょうか😊！！
+  〇〇さんご都合よろしいお日にち御座いますでしょうか😌！！
 ・最後の日付行にだけ「にてご案内可能です😊！！」を付ける（途中の行には付けない）
 ・こちらから日にちを出す時は1日につき時間は1つだけ（「M/D(曜) 12:00〜14:00 16:00〜18:00」のように1日に2つ並べない）
 ・お客様が日にちを指定した（「18日はどうでしょうか？」）場合は、その日の空き時間だけを次の形で答える（他の日を足さない・「直近ですと」は使わない）:
@@ -4031,6 +4044,7 @@ ${SMORA_COMMON_RULES}
         compViewingClosing ? `\n\n【📌 締め文(closing)の過去改善ルール — closingパーツに適用すること】${compViewingClosing}` : "",
       ].join("");
 
+      // 2026-10-01: 手本の締めを 😌 に（同じ絵文字を2回見せない・上の会話を合わせるの system と同じ理由）
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 会話の前後の流れを深く読み取り、内覧日調整を核心としたLINEメッセージを1つだけ作成してください。
 
@@ -4074,7 +4088,7 @@ M/D（曜日）HH:MM〜HH:MM
 M/D（曜日）HH:MM〜HH:MM
 M/D（曜日）HH:MM〜HH:MMにてご案内可能です😊！！
 
-[お客様名]ご都合よろしいお日にち御座いますでしょうか😊！！
+[お客様名]ご都合よろしいお日にち御座いますでしょうか😌！！
 
 ・最後の日付行にだけ「にてご案内可能です😊！！」を付ける（途中の行には付けない）
 ・1日につき時間は1つだけ（「M/D（曜日）12:00〜14:00 16:00〜18:00」のように1日に2つ並べない）
@@ -4089,7 +4103,7 @@ M/D（曜日）HH:MM〜HH:MMにてご案内可能です😊！！
 6/30（火）14:00〜17:00
 7/1（水）14:00〜17:00にてご案内可能です😊！！
 
-ニアさんご都合よろしいお日にち御座いますでしょうか😊！！
+ニアさんご都合よろしいお日にち御座いますでしょうか😌！！
 
 例2（退去後に内覧可能になった）:
 KTIレジデンス西中島Ⅱ
@@ -4114,7 +4128,7 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 6/30（火）12:00〜16:00
 7/1（水）12:00〜16:00にてご案内可能です😊！！
 
-〇〇さんご都合よろしいお日にち御座いますでしょうか😊！！
+〇〇さんご都合よろしいお日にち御座いますでしょうか😌！！
 
 【絶対禁止】
 ・「いかがでしょうか？」など「？」で終わる → 必ず末尾は「！！」
@@ -4127,7 +4141,7 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 
 【出力形式（必須）】
 以下のJSON形式のみで出力してください（説明不要）：
-{"greeting":"短い承認行（かしこまりました！！等・なければ空文字）","situation":"状況説明行（退去済み・空室・退去予定情報等・なければ空文字）","invite":"内覧誘導文（核心・必須）","dates":"日程候補全体（直近ですと〜最終日時にてご案内可能です😊！！まで・なければ空文字）","closing":"締め質問行（〇〇さんご都合よろしいお日にち御座いますでしょうか😊！！等・なければ空文字）"}`;
+{"greeting":"短い承認行（かしこまりました！！等・なければ空文字）","situation":"状況説明行（退去済み・空室・退去予定情報等・なければ空文字）","invite":"内覧誘導文（核心・必須）","dates":"日程候補全体（直近ですと〜最終日時にてご案内可能です😊！！まで・なければ空文字）","closing":"締め質問行（〇〇さんご都合よろしいお日にち御座いますでしょうか😌！！等・なければ空文字）"}`;
 
       const calendarPart = calendarNote
         ? `\n\n【直近の内覧可能日時（案内可能な日のみ・1行1日形式・3日分以上ある場合は最低3日分を候補として提示すること）】\n${calendarNote}`
@@ -5284,7 +5298,7 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           const cmUnavailPropName = typeof property_name === "string" ? property_name.trim() : "";
           // 確定ベーステンプレ（通常生成と同一構造）: 冒頭表現以外は固定
           const cmBuild = (opening: string) =>
-            `${name}お世話になっております！！\n${opening}募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！\n\n引き続き${name}のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！`;
+            `${name}お世話になっております！！\n${opening}募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！`; // 2026-10-01: 「引き続き〜ピックアップしてお送りさせて頂きます」の約束を外した（スタッフが68%消す・自分で書いた通0/19・scripts/audit-check-result-lines.ts）
           let cmBase: string;
           if (cmSentCount !== null) {
             cmBase = cmBuild(`お送り頂きました物件${cmSentCount}件につきまして`);
@@ -5691,9 +5705,7 @@ ${SMORA_COMMON_RULES}
 ご都合いかがでしょうか😊！！」`,
         unavailable: `[パターン例: 満室・空きなし]
 スモラ:「〇〇さんお世話になっております！！
-お送り頂きました物件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！
-
-引き続き〇〇さんのご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」`,
+お送り頂きました物件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！」`,
       };
 
       const calendarNote = (pattern === "available" && calendar_info) ? String(calendar_info) : null;
@@ -5717,9 +5729,7 @@ M/D（曜日）HH:MM〜HH:MM
           : `物件を確認した結果「${endedRoomStr}は募集終了でしたが別の間取りのお部屋が募集中」でした。「残念ながら」等で正直に伝えつつ（「申し訳ございません」等の謝罪表現は使用禁止）、代替案への期待感を持たせて内覧誘導で締めてください。募集終了だったお部屋は${endedRoomStr}です。`,
         unavailable: `物件を確認した結果「満室・空きなし」でした。以下の確定テンプレの構成・文体を一字一句守って作成してください（〇〇はお客様名。冒頭の「お送り頂きました物件につきまして」の部分のみ状況に応じて置き換え可：お客様がURL等で物件を送ってきた場合はそのまま、物件名が分かる場合は「[物件名]につきまして」）：
 「〇〇さんお世話になっております！！
-お送り頂きました物件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！
-
-引き続き〇〇さんのご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」`,
+お送り頂きました物件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！」`,
         exclusive: "専任物件のため紹介不可を伝える",
       };
 
@@ -5811,7 +5821,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
       const endedPropCount = sentPropCount !== null && sentPropCount > propCount ? sentPropCount - propCount : 0;
       // ケース2（一部のみ募集あり）: 末尾に「他N件は募集終了」の案内を追加
       const endedSection = endedPropCount > 0
-        ? `\n\n${name}お送りいただきました他${endedPropCount}件は\n募集終了しているお部屋となります。\n引き続き条件に合うお部屋を探させていただきます！！`
+        ? `\n\n${name}お送りいただきました他${endedPropCount}件は\n募集終了しているお部屋となります。`
         : "";
 
       // ※ 差分学習ルール注入について: 以下の per-property固定テンプレ・テキスト置換エンジン（availableFixedSystem /
@@ -5874,7 +5884,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             const vacLine = (p.vacDate ? vacatingViewableSentence(p.vacDate) : null)
               ?? (p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！");
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${facSection}${guarantorSection1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
+            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${facSection}${guarantorSection1}`; // 2026-10-01: 退去予定1件の申込の誘いを外した（下書き12 → スタッフが残した2・ご査収で終わる6）。御見積書同封の時は下の appendCheckResultReceipt がご査収で締める
           // ─── 2026-09-21 竹内「申込ありボタンは物件毎につける。そうすれば、どの物件が申込ありなのか判断できるから」───
           //   ⚠ ここには **p.status === "unavailable"（物件ごとの「申込あり」）の分岐が無かった**。
           //     1件の時に物件ごとの「申込あり」を押しても下の else に落ちて
@@ -5949,7 +5959,8 @@ ${patternExample}${knowledgeText}${examplesText}`;
           let vacancySection = "";
           if (toureableList.length === 0) {
             // 全て退去予定 or 申込あり → 申込訴求
-            vacancySection = "\n\nお気に召されましたらお申込みしお部屋抑えさせていただきます！！\nお手隙の際にご査収ください！！";
+            // 2026-10-01: 申込の誘いを外した（物件確認した の申込の誘い 下書き19 → スタッフが消した16）。御見積書の行にご査収が入っていれば足さない
+            vacancySection = hasAnyEstimate ? "" : "\n\nお手隙の際にご査収ください！！";
           } else if (showAppInviteMulti) {
             // 申込誘導ON
             vacancySection = `\n\n${name}お気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
@@ -5984,6 +5995,12 @@ ${patternExample}${knowledgeText}${examplesText}`;
               ? `\nこちら${availableCount}件現在募集中となります！！`
               : "";
           message_text = `${greeting ? `${greeting}\n` : ""}${header}${bulletLines}${availableLine}${applicationSection}${recommendNote}${estimateSection}${vacancySection}${endedSection}`; // G32: 当日送信済みは挨拶行なし
+        }
+        // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 御見積書を同封したのに締めが無い時はご査収で締める
+        //   （下書きが「…御見積書同封させて頂きました！！」で終わる58組 → スタッフがご査収／ご確認で締めた36・check-result-closing.ts）
+        {
+          const rc = appendCheckResultReceipt(message_text, { hasEstimate: hasAnyEstimate });
+          if (rc.added) { console.log(JSON.stringify({ tag: "aix:check-result-receipt-added", conversationId })); message_text = rc.text; }
         }
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
@@ -6030,7 +6047,7 @@ ${availableTemplate}`;
         const unavailPropName = typeof property_name === "string" ? property_name.trim() : "";
         // 確定ベーステンプレ: 冒頭表現（〇〇につきまして）以外は一字一句固定・AIに構造を崩させない
         const buildUnavailableMessage = (opening: string) =>
-          `${name}お世話になっております！！\n${opening}募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！\n\n引き続き${name}のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！`;
+          `${name}お世話になっております！！\n${opening}募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！`; // 2026-10-01: 「引き続き〜ピックアップしてお送りさせて頂きます」の約束を外した（スタッフが68%消す・自分で書いた通0/19・scripts/audit-check-result-lines.ts）
         const UNAVAILABLE_DEFAULT_OPENING = "お送り頂きました物件につきまして";
         if (sentPropCount !== null) {
           // 送られた物件数が指定されている → 件数入りの冒頭表現

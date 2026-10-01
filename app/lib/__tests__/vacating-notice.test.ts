@@ -125,6 +125,14 @@ it("締めが無ければ末尾に足す・空文は触らない", () => {
   expect(ensureVacatingNotice("", ["9月27日"], { nowMs: NOW }).text).toBe("");
 });
 
+it("2026-10-01 箇条書きの「※ 〇〇退去予定」の行は物件名ごと置き換えない（YUMA 物件確認した・2件とも退去予定）", () => {
+  const src = "YUMAさんお送り頂きました物件の中で\n・エステムコート大阪WEST 805号室　※ 9月27日退去予定\n・プレサンス梅田北ザ・ライブ 305号室　※ 9月30日退去予定\nこちら2件現在募集中となります！！";
+  const { text } = ensureVacatingNotice(src, ["9月27日", "9月30日"], { nowMs: NOW });
+  expect(text).toContain("・エステムコート大阪WEST 805号室　※ 9月27日退去予定");
+  expect(text).toContain("・プレサンス梅田北ザ・ライブ 305号室　※ 9月30日退去予定");
+  expect(text).notToContain("以降にご内覧可能です");
+});
+
 console.log("\n[生成に渡す材料・指示]");
 it("退去日が読める物件だけ並び、禁止の根拠が実データで書かれている", () => {
   const note = buildVacatingPromptNote(

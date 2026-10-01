@@ -775,7 +775,8 @@ export default function AixModal({
   const sendHoldRef = useRef<{ reason: string; text: string; acknowledged: boolean } | null>(null);
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   // ① LL-07: 見積書カバーレター（AI生成・送信+学習ループ対象）
-  const [estimateCoverLetter, setEstimateCoverLetter] = useState<string>("");
+  // 2026-10-01: カバーレターは画面に出さず学習にも保存しない（下の送信の所のコメント）。受け取りだけ残す
+  const [, setEstimateCoverLetter] = useState<string>("");
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [previewBackup, setPreviewBackup] = useState<string>("");
   // 全画面編集オーバーレイ: iOSキーボード対応（visualViewportに高さ・位置を追従させる）
@@ -3090,17 +3091,12 @@ export default function AixModal({
       body: JSON.stringify(buildSaveReplyPayload(sentText, inputText.trim() || `（AIX: ${config?.title ?? actionType}）`)),
     }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
 
-    // ① LL-07: 見積書カバーレターを学習ループに別途保存（sentText=estimate表・coverLetter=AI挨拶文で別個学習）
-    if (actionType === "estimate_sheet" && estimateCoverLetter.trim()) {
-      fetch("/api/save-reply-example", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...buildSaveReplyPayload(estimateCoverLetter, "（見積書カバーレター）"),
-          aiDraft: estimateCoverLetter,
-        }),
-      }).then(ensureOk).catch((e) => { console.warn("[AixModal] カバーレター学習保存失敗:", e); });
-    }
+    // ① LL-07: 見積書カバーレターの学習の保存は 2026-10-01 にやめた。
+    //   カバーレター（aix/action が Haiku で作る coverLetter）は画面に出ず**お客様に送られていない**のに、
+    //   ここで「送った文（sent_reply）＝AI の下書き（ai_draft）」として ai_reply_examples に入れていた（365日で約50行）。
+    //   送っていない AI の文が「実送信」として手本・差分学習に戻る（設計知見「『実送信にある』は AI の下書きのまま送った通で数えない」）。
+    //   10/01 の時点でも「Rさん\nお待たせ致しました！！…」のようにお待たせ（AIX でも使わない決まり）入りの文が保存されていた。
+    //   見積書の後の2通目はスタッフが手で書くかテンプレート（aix-template-generate・estimate-second-message）で作る。
 
     // スタッフ編集検知: aiDraft（AI生成原文）と sentText（実際に送った文）が違う場合は source="aix_edit" で記録
     // emoji正規化: 絵文字オフで送信しただけの場合（本文は同じ）は「編集なし」と判定する
@@ -3225,17 +3221,7 @@ export default function AixModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildSaveReplyPayload(textToSend, `（AIX予約: ${config?.title ?? actionType}）`)),
       }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
-      // T05: LL-07 見積書カバーレターを予約送信パスでも学習（通常送信パスと対称化）
-      if (actionType === "estimate_sheet" && estimateCoverLetter.trim()) {
-        fetch("/api/save-reply-example", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...buildSaveReplyPayload(estimateCoverLetter, "（見積書カバーレター）"),
-            aiDraft: estimateCoverLetter,
-          }),
-        }).then(ensureOk).catch((e) => { console.warn("[AixModal] カバーレター学習保存失敗（予約送信）:", e); });
-      }
+      // T05: LL-07 見積書カバーレターの学習の保存は 2026-10-01 にやめた（通常送信パスの同じ所のコメント参照）
 
       // フレーズ学習ログ（予約送信パスでも通常送信パスと同様に記録）
       if (textToSend.trim()) {

@@ -204,6 +204,10 @@ export function ensureVacatingNotice(
     const lines = out.split("\n");
     // 退去日に触れている行があれば、その行の退去予定の文だけ置き換える
     const hitIdx = lines.findIndex((l) => l.includes(label) && l.includes("退去"));
+    // 2026-10-01 YUMA（物件確認した・2件とも退去予定）: 箇条書きの行「・エステムコート大阪WEST 805号室　※ 11月下旬退去予定」は
+    //   行全体が1文に読めるので、行ごと「11月下旬退去予定のため、12月1日以降にご内覧可能です！！」に置き換わり**物件名が消えていた**。
+    //   箇条書きの「※ 〇〇退去予定」は実送信の形（複数物件）なので触らない（行を足しもしない）
+    if (hitIdx >= 0 && /^\s*[・･🌟]/u.test(lines[hitIdx])) continue;
     if (hitIdx >= 0) {
       const sentences = splitSentences(lines[hitIdx]);
       const si = sentences.findIndex((s) => s.includes(label) && s.includes("退去"));
