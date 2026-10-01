@@ -7,6 +7,7 @@ import {
   findCompanyFactContradiction,
   findCompanyFactContradictionsUngated,
   buildCompanyFactsForCheck,
+  findMissingCardFee,
 } from "../company-fact-guard";
 import { runDeterministicChecks } from "../final-check";
 
@@ -123,6 +124,27 @@ describe("分割の断定（竹内: 分割はクレジットカード支払い�
   it("分割できる事実だけの文は落とさない", () => eq(ids("初期費用はクレジットカード払いのみ分割可能でございます😊！！").length, 0));
 });
 
+// ── 2026-10-02 竹内さんの決定「カード払いなら分割可（手数料3.24%）にそろえる」: 「一括（お振込）のみ」の断定 ──
+describe("一括のみの断定（実送信 10/01 c024b7b9・9/14 f193d13d・7/07 3644eaa9 は規則と食い違う送信）", () => {
+  it("10-01 実送信: 初期費用のお支払い方法はお振込での一括のみでの対応となります → credit_card", () =>
+    eq(ids("初期費用のお支払い方法はお振込での一括のみでの対応となります！！\n\nお手隙の際にご確認ください！！")[0], "credit_card"));
+  it("09-14 実送信: 初期費用のお支払いは一括でのお振込のみとなりますが → credit_card", () =>
+    eq(ids("初期費用のお支払いは一括でのお振込のみとなりますが、最大限割引させて頂いた御見積書を作成しお送りさせて頂きます！！")[0], "credit_card"));
+  it("ゲート: 「初期費用は分割できますか？」で当たる", () =>
+    eq(findCompanyFactContradiction("初期費用のお支払い方法はお振込での一括のみでの対応となります！！", ["初期費用って分割できますか？"])?.factId, "credit_card"));
+  // 守る物（実送信の正しい形）
+  it("07-17 実送信: カード決済の場合一度一括でお支払い頂き、決済後…分割設定 → 当てない", () =>
+    eq(ids("カード決済の場合一度一括でお支払い頂き、決済後大倉さんの方で分割設定をしていただく形となります😊！！").length, 0));
+  it("09-05 実送信: クレジットカードがない場合一括となります → 当てない", () =>
+    eq(ids("クレジットカードがない場合一括となります！").length, 0));
+  it("家賃の支払い方法の話（口座振替のみ）は当てない", () => eq(ids("家賃のお支払いは口座振替のみとなります！！").length, 0));
+  // 分割の回数の目安（竹内さん 9/30「6回が妥当は個別の助言・AI は書かない」）
+  it("08-25 実送信: 分割支払いを行う際手数料も発生しますので、6回程でのお支払いが妥当 → credit_card", () =>
+    eq(ids("分割支払いを行う際手数料も発生しますので、6回程でのお支払いが妥当となります😊！！")[0], "credit_card"));
+  it("回数の設定はお客様のカード側（事実だけ）は当てない", () =>
+    eq(ids("分割の回数はお客様のカードの方でご設定頂けます！！").length, 0));
+});
+
 describe("検査に渡す会社の事実（anomaly_scan の [COMPANY_FACTS]）", () => {
   it("聞かれていなければ空文字", () => eq(buildCompanyFactsForCheck(["ありがとうございます"]), ""));
   it("写真を聞かれたら写真の事実（強調記号は外す）— 2026-09-23 竹内: 写真は AIX【物件確認した→室内写真を確認した】から送る流れ", () => {
@@ -134,6 +156,25 @@ describe("検査に渡す会社の事実（anomaly_scan の [COMPANY_FACTS]）",
     truthy(h?.suggestion.includes("室内のお写真お送りさせて頂きます"));
     truthy(h?.suggestion.includes("AIX【物件確認した→室内写真を確認した】"));
     falsy(/断定の文を削除し「室内の写真・動画を撮影して/.test(h?.suggestion ?? ""));
+  });
+});
+
+// ── 2026-10-02 竹内さんの決定「カード払いなら分割可（手数料3.24%）」: 出来ると答えたのに手数料が無い（final-check V16b） ──
+describe("カード払い・分割が出来ると答えたのに手数料が無い", () => {
+  const ASK = ["初期費用って分割できますか？"];
+  it("YUMA の最終の確かめの下書き「クレジットカード払いですと分割可能です」→ 当たる", () =>
+    truthy(findMissingCardFee("はい😊！！\n初期費用はクレジットカード払いですと分割可能です！！\nお支払い方法の詳細につきましては、御見積書とあわせてご相談させて頂きます😌！！", ASK)));
+  it("手数料 3.24% が同じ返信にある → 当たらない", () =>
+    falsy(findMissingCardFee("初期費用はクレジットカード払いでのみ分割が可能です！！\nカード払いの場合、合計金額に3.24%の手数料が別途かかります！！", ASK)));
+  it("お客様が支払い方法を聞いていない → 当たらない", () =>
+    falsy(findMissingCardFee("初期費用はクレジットカード払いですと分割可能です！！", ["ありがとうございます！"])));
+  it("「クレジットカードがない場合一括」だけ → 当たらない", () =>
+    falsy(findMissingCardFee("クレジットカードがない場合一括となります！", ASK)));
+  it("final-check V16b → block", () => {
+    const iss = runDeterministicChecks("はい😊！！\n初期費用はクレジットカード払いですと分割可能です！！", {
+      lastCustomerMessage: "初期費用って分割できますか？", recentMessages: [{ sender: "customer", text: "初期費用って分割できますか？", createdAt: "2026-10-02T01:10:00Z" }], customerName: "YUMA",
+    });
+    eq(iss.find((i) => i.code === "COMPANY_FACT_CONTRADICTION")?.severity, "block");
   });
 });
 

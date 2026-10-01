@@ -5,9 +5,10 @@
 //   （☆付き2行・うち1件は 9/11 に顧客へ LINE 配信済み・失敗文由来の ai_reply_knowledge 11行）。
 //   行は削除しない。読む側（few-shot・学習・評価）と書く側（保存・送信）がこのファイルの関数だけで除外する。
 //   2026-09-12 竹内方針D: few-shot 注入直前の曜日補正（fixExampleWeekdays）もここ。曜日の判定は jst-date の1関数（後処理の TYPO_WEEKDAY_MISMATCH と同じ）。
-//   依存は jst-date（依存ゼロ）だけ。
+//   依存は jst-date（依存ゼロ）と company-fact-guard（純関数・2026-10-02）。
 
 import { fixDateWeekdays } from "./jst-date";
+import { findCompanyFactContradictionsUngated } from "./company-fact-guard";
 
 /** generate-reply/route.ts が例外時にストリームへ流す文言（route 側もこの定数を import する＝文言の出所は1か所） */
 export const GENERATION_FAILURE_TEXT = "（AI返信の生成に失敗しました。再生成をお試しください）";
@@ -29,6 +30,11 @@ export function isUsableExampleText(s: string | null | undefined): boolean {
   if (!t) return false;
   if (GENERATION_FAILURE_RE.test(t)) return false;
   if (JUNK_SENT_RE.test(t)) return false;
+  // 2026-10-02 竹内さんの決定「カード払いなら分割可（手数料3.24%）にそろえる・食い違うスタッフの送信を手本にしない」:
+  //   会社の事実に反する断定（company-fact-guard・実送信0通の形だけで作った線）を含む文は正解例にしない。
+  //   手本 7,449行で当たるのは4行だけ（scripts/audit-example-fact-contradiction.ts）＝「一括でのお振込のみ」⭐2行（7/07・9/14）・10/01「お振込での一括のみ」・8/25「6回程が妥当」。
+  //   ⭐付きの2行は初回の挨拶の手本として上位に来ていた。行は消さない（読む側で外す＝この関数を通る few-shot・学習・評価の全部）
+  if (findCompanyFactContradictionsUngated(t).length > 0) return false;
   return true;
 }
 

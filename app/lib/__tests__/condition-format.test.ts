@@ -56,5 +56,23 @@ console.log("── 拾ってはいけない物（安全側）");
     !isFilledSumoraForm("ご入居の時期は10月で、ご希望の家賃は8万円です"));
 }
 
+console.log("── 2026-10-02 空白で値を書いた形（区切りの記号なし）も埋まったフォーム（365日で14通が旧は空欄扱い）");
+{
+  // 実物 8a77820b 9/26（名前は伏せた）
+  const mikoto = "（〇〇さんご希望のお部屋探しご条件）\n①ご入居時期 2ヶ月後\n②ご希望家賃（管理費込み） 6～7\n③ご希望間取り 1K\n④ご希望築年数 30年\n⑤ご希望エリア・最寄り駅 淡路駅\n⑥駅からの徒歩分数 10分\n⑦初期費用ご予算 10万\n⑧その他こだわり条件（ペット・保証人・駐車場等） 保証人なし";
+  const v = analyzeSumoraForm(mikoto);
+  t("8項目すべて値あり", v.filled.length === 8 && v.isFilledForm, v.filled.join(","));
+  // 実物 206da1fa 9/25: 括弧の直後に空白なしで値
+  const urara = "①ご入居時期 すぐにでも\n②ご希望家賃（管理費込み）5万前後\n③ご希望間取り 2LDK以上";
+  t("括弧の直後の値（5万前後）も読む", analyzeSumoraForm(urara).filled.includes("rent"));
+  // 実物 22bbce86 9/26: 値のない項目（⑥）と次の行に値（⑧）
+  const v3 = analyzeSumoraForm("①ご入居時期　即•一か月以内\n②ご希望家賃（管理費込み）7〜8万\n③ご希望間取り　1K•1DK\n⑥駅からの徒歩分数\n⑧その他こだわり条件（ペット・保証人・駐車場等）");
+  t("値のない⑥・⑧は空欄", !v3.filled.includes("walk") && !v3.filled.includes("other"), v3.filled.join(","));
+  // 実物 83391dda 5/31: 「⑤希望の広さ（㎡）・間取り」の「・間取り」を値と読まない
+  t("項目名の続き（・間取り）は値ではない", !analyzeSumoraForm("①ご入居の時期\n7〜8月\n②希望の家賃\n8〜9万\n⑤希望の広さ（㎡）・間取り\n1LDK").filled.includes("floor_plan"));
+  // 申込フォーム（・入居希望日 9月中）は項目が1つだけ → フォームにしない（実物の形・個人情報は入れない）
+  t("申込フォームの入居希望日だけではフォームにしない", !isFilledSumoraForm("【お申込者様記入欄】\n・入居希望日 9月中\n・氏名、フリガナ ＊＊\n・住居形態 実家"));
+}
+
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

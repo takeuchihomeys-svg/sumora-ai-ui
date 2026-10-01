@@ -99,6 +99,7 @@ import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLine
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-10-01 竹内: 待ち合わせ場所の住所は番地まで（番地の無い住所は文を作らない）
 import { meetingAddressProblem } from "@/app/lib/meeting-address";
+import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown, type HearingKnown } from "@/app/lib/hearing-form";
 
 export const maxDuration = 300;
 
@@ -4147,7 +4148,7 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 ・「ぜひ」「是非」「より一層」などの過剰な勧誘ワード
 
 【絵文字ルール】
-使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ・1〜2個まで
+使ってよい絵文字：😊 😌 🙇 🌟 ✨ のみ・1〜2個まで
 
 【出力形式（必須）】
 以下のJSON形式のみで出力してください（説明不要）：
@@ -5709,7 +5710,7 @@ ${SMORA_COMMON_RULES}
 ご案内可能です！！
 〇〇さんご都合いかがでしょうか😌！！」`,
         alternative: `[パターン例: 満室・代替案あり]
-スモラ:「${greetingPhrase ? `${greetingPhrase}\n` : ""}確認させていただきました物件のお部屋残念ながら全て募集が終了しておりました🙇‍♀️！！
+スモラ:「${greetingPhrase ? `${greetingPhrase}\n` : ""}確認させていただきました物件のお部屋残念ながら全て募集が終了しておりました🙇！！
 ただAPRILE南森町は一回り広い33.62㎡のお部屋が募集中です！！
 こちらのお部屋〇〇さんお気に召されましたらご案内させていただきます！！
 ご都合いかがでしょうか😊！！」`,
@@ -5811,7 +5812,7 @@ ${SMORA_COMMON_RULES}
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
 【絵文字ルール — 最重要・必ず守ること】
-▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
+▼ 使ってよい絵文字：😊 😌 🙇 🌟 ✨ のみ（他は全禁止）
 ▼ 絵文字は1〜2個まで`;
       // 2026-09-17 竹内（AIX キャッシュ点検）: お手本（greetingPhrase 入り＝呼び出しごとに変わる）と DB 由来の実例・ノウハウは
       //   経路固有ブロック（5m の鍵）から出して動的ブロックへ。"\n\n" で結合すれば従来の checkSystem と同じ文字列
@@ -6237,33 +6238,23 @@ ${templateText}`;
     // ── 📋 条件ヒアリング（フォームをテンプレ生成 + AI導入メッセージ） ───
     } else if (action === "condition_hearing") {
       // フォーム本体はテンプレで直接生成（conversation_match の早期returnでも返せるよう先に組み立てる）
-      // 既知の条件を解析して、まだ聞けていない項目だけを番号詰めで表示する
-      const condText = (customer_conditions as string | undefined) ?? "";
-      const CIRCLE_NUMS = ["①","②","③","④","⑤","⑥","⑦","⑧"];
-      const ALL_ITEMS = [
-        { label: "ご入居時期",                                key: "入居:" },
-        { label: "ご希望家賃（管理費込み）",                    key: "家賃:" },
-        { label: "ご希望間取り",                               key: "間取り:" },
-        { label: "ご希望築年数",                               key: "築年数:" },
-        { label: "ご希望エリア・最寄り駅",                      key: "エリア:" },
-        { label: "駅からの徒歩分数",                           key: "駅徒歩:" },
-        { label: "初期費用ご予算",                             key: "初期費用" },
-        { label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
-      ];
-      // 条件テキストに key が含まれていれば「既知」→ 除外
-      const missing = condText
-        ? ALL_ITEMS.filter(item => !condText.includes(item.key))
-        : ALL_ITEMS;
-      // 全部埋まっていた場合は全項目を聞く（フォールバック）
-      const showItems = missing.length > 0 ? missing : ALL_ITEMS;
-      // 番号を①②③…と詰めて振り直す
-      const formItems = showItems
-        .map((item, i) => `${CIRCLE_NUMS[i]}${item.label}`)
-        .join("\n");
-
+      // 2026-10-02 竹内さん「ヒアリングのフォーマットはそのまま・お客さんからもらっている条件は項目のところにいれるとお客さん入力しやすい」:
+      //   旧は「既知の項目を消して番号を詰める」形（YUMA 8/24 の4項目だけ等）で、分かっていた条件がフォームから落ちていた。
+      //   8項目を必ず全部出し、分かっている値は項目名の後ろに全角の空白で書き入れる（人の実物 c167c5f1「③ご希望間取り　1LDK」の形）。
+      //   値は顧客の行（property_customers）を優先し、紐付いていない時だけ画面から来た条件の文字を読む（app/lib/hearing-form.ts・画面の初期表示と同じ関数）
+      let hearingKnown: HearingKnown | null = null;
+      if (resolvedPCID) {
+        const { data: pcHear } = await supabase.from("property_customers")
+          .select("move_in_time, rent_min, rent_max, floor_plan, building_age, desired_area, commute_station, commute_minutes, walk_minutes, initial_cost_limit, preferences, other_requests, ng_points, pet")
+          .eq("id", resolvedPCID).maybeSingle();
+        hearingKnown = (pcHear as HearingKnown | null) ?? null;
+      }
+      if (!hearingKnown) hearingKnown = parseConditionText((customer_conditions as string | undefined) ?? "");
+      // 行に無い項目は、お客様が会話で既に言った事（「難波周辺でワンルーム」）をお客様の言葉のまま入れる（行が先・空欄だけ）
+      const hearingCustTexts = (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender?: string; text?: string }>) : []).filter((m) => m.sender === "customer").map((m) => m.text ?? "");
+      hearingKnown = mergeHearingKnown(hearingKnown, hearingKnownFromCustomerTexts(hearingCustTexts));
       // name は「あさみさん」形式（さん付き）なのでそのまま使う
-      hearing_form_content = `（${name}ご希望のお部屋探しご条件）
-${formItems}`;
+      hearing_form_content = buildHearingForm(name, hearingKnown);
       // conversation_match 早期return用: finalizeResponse は hearing_form_content を自動では含めないため extra で渡す
       const hearingFormExtra = { hearing_form: hearing_form_content };
 

@@ -81,7 +81,7 @@ import { isRentNegotiationPromise, isMgmtDiscountNegotiationPromise, customerAsk
 // 2026-09-23 竹内「会社の事実に反する断定を出口で止める規則…ファイナルチェックが問題なく機能しているか確認する」:
 //   調べたら最終チェックは会社の事実（company-facts）を**一度も受け取っていなかった**（生成プロンプトとブレインにしか渡っていない）。
 //   決定論の段（V16 COMPANY_FACT_CONTRADICTION・実送信365日 7,997通で当たり0＝block）と anomaly_scan の [COMPANY_FACTS] の2か所に繋ぐ
-import { findCompanyFactContradiction, buildCompanyFactsForCheck } from "./company-fact-guard";
+import { findCompanyFactContradiction, buildCompanyFactsForCheck, findMissingCardFee } from "./company-fact-guard";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -2657,6 +2657,14 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
         message: `${hit.label}（会社の事実: ${hit.factId}・実送信365日で0通）`,
         evidence: hit.sentence.slice(0, 60),
         suggestion: hit.suggestion });
+    }
+    // V16b 2026-10-02 竹内さんの決定「カード払いなら分割可（手数料3.24%）」: 出来ると答えたのに手数料が無い → 修正ループで1文足させる（本文は決定論で触らない）
+    const fee = hit ? null : findMissingCardFee(text, [cust, ...custRecent]);
+    if (fee) {
+      issues.push({ pass: "anomaly_scan", severity: "block", code: "COMPANY_FACT_CONTRADICTION",
+        message: `${fee.label}（会社の事実: credit_card）`,
+        evidence: fee.sentence.slice(0, 60),
+        suggestion: fee.suggestion });
     }
   }
   return issues;

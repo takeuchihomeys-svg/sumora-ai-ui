@@ -1,6 +1,6 @@
 // 2026-09-15 竹内（H 事例）: AIX【電話する】（電話をかける／電話終了後）の判定・文・数字の照合
 // 実行: npx tsx app/lib/__tests__/phone-call.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { customerRequestsPhoneCall, buildCallRequestText, isValidLineCallUrl, buildCallRequestFlex, maskNumbersNotInNotes, CALL_BUTTON_MESSAGE_TEXT } from "../phone-call";
+import { customerRequestsPhoneCall, buildCallRequestText, isValidLineCallUrl, buildCallRequestFlex, maskNumbersNotInNotes, CALL_BUTTON_MESSAGE_TEXT, buildCallText, customerProposedCallTime, customerAsksStaffCallTime, customerCallTopic } from "../phone-call";
 import { detectAixSceneEvidence } from "../aix-scene-evidence";
 import { normalizeAixActionKey, AIX_STAFF_NOTES } from "../aix-taxonomy";
 import { aixLedgerKind } from "../action-ledger";
@@ -89,6 +89,37 @@ it("AIX の登録（ブレインの語彙・台帳の種類）", () => {
   expect(aixLedgerKind("phone_followup")?.kind).toBe("call_followup_sent");
 });
 it("会話に残す記録の文字", () => expect(CALL_BUTTON_MESSAGE_TEXT).toBe("[通話リクエスト] 電話をかけるボタン"));
+
+// ─── 2026-10-02 竹内さん「電話の AIX の文は会話に合わせる」（buildCallText・お客様の発言は実物） ───
+const KEY_LINE = /こちらの電話をかけるボタンよりお電話お願い致します/;
+it("お客様が出した時間（YUMA の再生 10/01「14:30-15:00くらいに掛けても大丈夫でしょうか？」）→ その時間で受ける", () =>
+  expect(buildCallText({ customerTurn: "14:30-15:00くらいに掛けても大丈夫でしょうか？", customerName: "YUMA" })).toBe("かしこまりました！！\n14:30〜15:00頃お電話大丈夫です😊！！\nお時間になりましたらこちらの電話をかけるボタンよりお電話お願い致します！！"));
+it("「明日の17時頃…お電話よろしいでしょうか」→ 明日17:00頃・ご相談の件", () => {
+  const s = buildCallText({ customerTurn: "明日の17時頃ご相談したいことがありましてお電話よろしいでしょうか", customerName: "R" });
+  expect(/明日17:00頃お電話大丈夫です/.test(s) && /ご相談の件、お電話にてお伺いさせて頂きます/.test(s) && KEY_LINE.test(s)).toBe(true);
+});
+it("「電話いける時間ありますか？」（時間を聞いただけ）・スタッフの入力なし → 時間を作らない・お手隙の際に", () => {
+  const s = buildCallText({ customerTurn: "物件の件で話しがしたい事がありますので電話いける時間ありますか？", customerName: "Y" });
+  expect(!/[0-9]{1,2}[:：時]/.test(s) && /お手隙の際に/.test(s) && /物件の件/.test(s)).toBe(true);
+});
+it("同じ問い＋スタッフの入力「15:00以降」→ 「15:00以降でしたらお電話可能です」（人の文の形）", () =>
+  expect(/^15:00以降でしたらお電話可能です😊！！/.test(buildCallText({ customerTurn: "電話いける時間ありますか？", customerName: "Y", staffAvailability: "15:00以降" }))).toBe(true));
+it("「今お電話できますか？」→ ただいまお電話大丈夫です", () => expect(/ただいまお電話大丈夫です/.test(buildCallText({ customerTurn: "今お電話できますか？", customerName: "u" }))).toBe(true));
+it("依頼だけ（H 9/15「ご相談があるのですがお電話では無理でしょうか？」）→ 旧の定型＋ご相談の件", () =>
+  expect(buildCallText({ customerTurn: "ご相談があるのですがお電話では無理でしょうか？", customerName: "H" })).toBe("お電話大丈夫です😊！！\nご相談の件、お電話にてお伺いさせて頂きます！！\nこちらの電話をかけるボタンよりお電話お願い致します！！"));
+it("依頼だけ・用件なし → 旧の定型と同じ", () => expect(buildCallText({ customerTurn: "すいません。お電話は可能でしょうか？？", customerName: "M" })).toBe("お電話大丈夫です😊！！\nこちらの電話をかけるボタンよりお電話お願い致します！！"));
+it("その日はじめて → 名前＋お世話になっております から", () => expect(/^Mさん\nお世話になっております！！/.test(buildCallText({ customerTurn: "お電話は可能でしょうか？", customerName: "M", firstTalkToday: true }))).toBe(true));
+it("こちらから・用件つき → 旧と同じ形", () => expect(buildCallText({ customerName: "いぬい", purpose: "審査のお打ち合わせ" })).toBe("いぬいさん\n審査のお打ち合わせにつきましてお電話にてご説明させて頂きます！！\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します😊！！"));
+it("どの形でも要の文（ボタンからお電話）は残る", () => {
+  for (const t of ["", "今電話いけますか？", "電話いける時間ありますか？", "13時以降で電話いける時間ありますか？", "1度電話可能ですか？"]) if (!KEY_LINE.test(buildCallText({ customerTurn: t, customerName: "x" }))) throw new Error(t);
+});
+it("時間の読み取り: 「13時以降」→ 13:00以降・「19時頃」→ 19:00頃・時間なし → null", () => {
+  expect(customerProposedCallTime("13時以降で電話いける時間ありますか？")).toBe("13:00以降");
+  expect(customerProposedCallTime("19時頃くらいになるかと思います")).toBe("19:00頃");
+  expect(customerProposedCallTime("電話いける時間ありますか？")).toBe(null);
+});
+it("こちらの時間を聞いているか", () => { expect(customerAsksStaffCallTime("本日電話いける時間ありますか？")).toBe(true); expect(customerAsksStaffCallTime("お電話可能でしょうか？")).toBe(false); });
+it("用件: 物件の事で → 物件の件・ご相談 → ご相談の件", () => { expect(customerCallTopic("物件の事で聞きたい事がありますのでお手隙の際電話いけますか？")).toBe("物件の件"); expect(customerCallTopic("ご相談があるのですが")).toBe("ご相談の件"); });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

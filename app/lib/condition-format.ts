@@ -66,6 +66,23 @@ function labelPartOf(line: string): string {
   return m ? m[1] : line;
 }
 
+/**
+ * 区切りの記号（⇒ → = ： :）も 】 も無い行で、項目名の後ろに空白を挟んで書かれた値（「③ご希望間取り　1LDK」）。
+ * 項目名の直後に名前の続き（「・最寄り駅」「条件」）と括弧（「（管理費込み）」）が付いてもよい。空白が無ければ値なし
+ * （「③希望の地域・最寄駅等」のような項目名だけの行を値と読まない）。
+ */
+function spaceSeparatedValue(line: string, key: string): string {
+  if (line.includes("】") || /[⇒→=＝:：]/.test(line)) return "";
+  const spec = SUMORA_FORM_LABELS.find((l) => l.key === key);
+  const m = spec ? line.match(spec.re) : null;
+  if (!m || m.index === undefined) return "";
+  const after = line.slice(m.index + m[0].length);
+  // 括弧の直後は空白なしでもよい（実物「②ご希望家賃（管理費込み）5万前後」）
+  const mm = after.match(/^[^\s　（(]{0,6}(?:(?:（[^）]*）|\([^)]*\))[\s　]*|[\s　]+)(\S.*)$/);
+  // 「⑤希望の広さ（㎡）・間取り」の「・間取り」は項目名の続き（値ではない）
+  return mm && !/^[・･]/.test(mm[1]) ? mm[1].trim() : "";
+}
+
 /** その行がテンプレートの項目行か */
 function labelOfLine(line: string): string | null {
   const head = labelPartOf(line);
@@ -100,6 +117,10 @@ export function analyzeSumoraForm(text: string | null | undefined): SumoraFormVe
     if (!key) continue;
     seen.add(key);
     let v = valueAfterLabel(lines[i]);
+    // 2026-10-02 条件ヒアリングのフォームに既知の条件を書き入れる形（app/lib/hearing-form.ts「③ご希望間取り　1LDK」）にした。
+    //   区切りの記号が無く空白で値を書く形（お客様の実物「②ご希望家賃（管理費込み）　8-10万」「①ご入居時期 9月ごろ」も同じ）は
+    //   旧はどれも「空欄」と数え、埋まったフォームなのに LLM の分類に回っていた → 見出しの後ろの空白の後を値として読む
+    if (!v) v = spaceSeparatedValue(lines[i], key);
     // 値が次の行に来る形（LINE の折り返し）にも対応
     if (!v) {
       const next = (lines[i + 1] ?? "").trim();

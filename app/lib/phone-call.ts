@@ -93,6 +93,110 @@ export function buildCallRequestText(o: { customerAsked: boolean; customerName: 
   return `${name}\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します😊！！`.replace(/^\n/, "");
 }
 
+// ─── 電話をかける: 会話に合わせた案内文（2026-10-02 竹内さんの決定「電話の AIX の文は会話に合わせる」）───
+// 旧は定型の2行（「お電話大丈夫です😊！！\nこちらの電話をかけるボタンよりお電話お願い致します！！」）を毎回そのまま出していた。
+//   YUMA の再生（10/01）: 「14:30-15:00くらいに掛けても大丈夫でしょうか？」にも同じ定型＝聞かれた時間に答えていない。
+// 人の文（scripts/audit-phone-staff-messages.ts・365日・お客様の電話の依頼 34番・人の文 33／定型そのまま 1）で引いた形:
+//   ・時間を聞かれた／時間を出された → その時間に答える: 「15：00以降でしたらお電話可能です！！」「13：30以降でしたら、お電話可能です！！
+//     お手隙の際にお掛けください！！」「本日10:30～11:00／17:30～18:30お電話できます！！〇〇さんご都合いかがでしょうか！！」
+//   ・お客様が出した時間 → 受ける: 「明日17時にお電話…」（お客様の言った時間をそのまま使う）
+//   ・今いけるか → 「ただいまお電話可能ですのでおかけください！！」「はい！！大丈夫です！！こちらからおかけください😊！！」
+//   ・時間の話が無い → 「お手隙の際にお電話おかけください！！」
+//   ・名前の呼びかけ＋「お世話になっております！！」から始める文が多い（その日はじめての時）
+// 事実の線（竹内さんの決定④と同じ）: スタッフが電話できる時間はスタッフしか知らない → お客様が時間を聞いただけ（「電話いける時間ありますか？」）の時は
+//   スタッフの入力（staffAvailability）が無ければ時間を作らない（「お手隙の際に」で答える）。お客様が自分で出した時間はそのまま受けてよい
+//   （AIX はスタッフが押して送る＝受けるかはスタッフが見て決める）。電話の要の文（ボタンからお電話）は必ず残す。
+
+/** お客様の発言の電話の時間（お客様が出した時間）。「14:30-15:00」「明日の17時頃」「13時以降」「19時頃」 */
+export function customerProposedCallTime(turn: string): string | null {
+  const t = (turn ?? "").normalize("NFKC");
+  const day = t.match(/(今日|本日|明日|明後日|あさって|[0-9]{1,2}\/[0-9]{1,2}|[0-9]{1,2}日)(?:の)?/);
+  const range = t.match(/([0-9]{1,2})[:：時]([0-9]{2})?(?:分)?\s*(?:-|~|〜|～|から)\s*([0-9]{1,2})[:：時]?([0-9]{2})?/);
+  const fmt = (h: string, m?: string) => `${Number(h)}:${m ?? "00"}`;
+  let time: string | null = null;
+  if (range) time = `${fmt(range[1], range[2])}〜${fmt(range[3], range[4])}頃`;
+  else {
+    const one = t.match(/([0-9]{1,2})(?:[:：]([0-9]{2})|時(半)?)\s*(?:頃|ごろ|くらい|ぐらい|すぎ|過ぎ)?\s*(以降|から|以後)?/);
+    if (one) time = `${fmt(one[1], one[2] ?? (one[3] ? "30" : undefined))}${one[4] ? "以降" : "頃"}`;
+  }
+  if (!time) return null;
+  const d = day?.[1] === "本日" ? "本日" : day?.[1] === "あさって" ? "明後日" : day?.[1] ?? "";
+  return `${d}${d && /^[0-9]/.test(d) ? " " : ""}${time}`.replace(/頃頃/, "頃");
+}
+
+/** お客様が「こちらが電話できる時間」を聞いているか（時間は出していない） */
+export function customerAsksStaffCallTime(turn: string): boolean {
+  const t = (turn ?? "").normalize("NFKC");
+  return /(?:電話|通話)[^。\n？?]{0,10}(?:いける|行ける|できる|出来る|可能な|大丈夫な|空いて(?:いる|る))?\s*(?:時間|時間帯|タイミング)(?:を|は|って)?[^。\n]{0,10}(?:あり|教え|連絡|ござい|でしょう|ですか|ますか)|(?:何時|いつ)(?:頃|ごろ)?(?:なら|が|でしたら|だと)?[^。\n]{0,8}(?:電話|お電話)/.test(t);
+}
+
+/** お客様が「今」電話できるか聞いているか */
+export function customerAsksCallNow(turn: string): boolean {
+  return /(?:今|いま|ただいま|只今)(?:から)?[^。\n]{0,4}(?:お?電話|通話)/.test((turn ?? "").normalize("NFKC"));
+}
+
+/** お客様が話したい用件（「物件の件で」「審査の事で」「ご相談が」）。無ければ null */
+export function customerCallTopic(turn: string): string | null {
+  const t = (turn ?? "").normalize("NFKC");
+  const m = t.match(/([一-龠ぁ-んァ-ヶー]{1,10}?)(?:の件|の事|のこと|について)(?:で|に|が)/);
+  if (m && !/^(?:電話|お電話|今日|明日|本日|この|その|あの|ご|お)$/.test(m[1])) return `${m[1]}の件`;
+  if (/ご?相談/.test(t)) return "ご相談の件";
+  if (/(?:聞きたい|質問|お伺いしたい)/.test(t)) return "ご質問の件";
+  return null;
+}
+
+export type CallTextInput = {
+  /** お客様の今回の連投（無ければ空） */
+  customerTurn?: string;
+  /** お客様の呼び名（さん無し） */
+  customerName: string;
+  /** スタッフが入れた用件（任意） */
+  purpose?: string;
+  /** スタッフが入れた電話できる時間（任意・例「15:00以降」「本日10:30〜11:00／17:30〜18:30」） */
+  staffAvailability?: string;
+  /** その日はじめてのこちらの会話文なら true（「〇〇さん\nお世話になっております！！」から始める） */
+  firstTalkToday?: boolean;
+};
+
+/**
+ * 電話をかける の案内文（ボタンのカードの後に送る1通）。会話に合わせる（時間に答える・用件に触れる）が、
+ * 「こちらの電話をかけるボタンよりお電話お願い致します！！」（要の文）は必ず入れる。LLM なし。
+ */
+export function buildCallText(i: CallTextInput): string {
+  const turn = i.customerTurn ?? "";
+  const asked = customerRequestsPhoneCall(turn);
+  const purpose = (i.purpose ?? "").trim().replace(/[。！!]+$/, "");
+  const avail = (i.staffAvailability ?? "").trim().replace(/[。！!]+$/, "");
+  const name = i.customerName ? `${i.customerName}さん` : "";
+  const lines: string[] = [];
+  if (i.firstTalkToday && name) lines.push(name, "お世話になっております！！", "");
+  const proposed = customerProposedCallTime(turn);
+  const askNow = customerAsksCallNow(turn);
+  const askTime = customerAsksStaffCallTime(turn);
+  const topic = purpose || customerCallTopic(turn);
+  let when = "";
+  if (avail) {
+    lines.push(`${avail}${/(?:以降|から|以後)$/.test(avail) ? "でしたら" : ""}お電話可能です😊！！`);
+    when = "お手隙の際に";
+  } else if (proposed) {
+    lines.push("かしこまりました！！", `${proposed}${/以降$/.test(proposed) ? "でしたら" : ""}お電話大丈夫です😊！！`);
+    when = "お時間になりましたら";
+  } else if (askNow) {
+    lines.push("はい！！", "ただいまお電話大丈夫です😊！！");
+  } else if (askTime) {
+    // スタッフの電話できる時間はスタッフしか知らない → 時間を作らない
+    lines.push("お電話大丈夫です😊！！");
+    when = "お手隙の際に";
+  } else if (asked) {
+    lines.push("お電話大丈夫です😊！！");
+  }
+  if (topic) lines.push(`${topic}${/の件$/.test(topic) ? "、" : "につきまして"}お電話にてお伺いさせて頂きます！！`.replace("につきましてお電話にてお伺い", "につきましてお電話にてご説明"));
+  lines.push(`${when || (asked || avail || proposed || askNow ? "" : "お手隙の際に")}こちらの電話をかけるボタンよりお電話お願い致します${lines.some((l) => /😊/.test(l)) ? "" : "😊"}！！`);
+  // 名前を最初に付けていない・お客様からの依頼でない（こちらから）時は名前の呼びかけを先頭に
+  if (!i.firstTalkToday && name && !asked && !avail && !proposed) lines.unshift(name);
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 // ─── 電話終了後: スタッフの実送信（手本・中身は写さない） ───
 export const PHONE_FOLLOWUP_STAFF_EXAMPLES: readonly string[] = [
   "お電話有難うございました😊！！\n審査通過する為に保証会社を取り扱う事が出来る独立系の保証会社を中心に家賃8万円以内、リビング12帖洋室6帖のお部屋ピックアップしお送りさせて頂きます！！\n\n出来る限り早くご入居頂くためにも気にいったお部屋審査かけて頂き、保証会社の審査を通過したお部屋ご内覧いただくのを推奨いたします😌！！\n※保証会社通過まではキャンセル料不要となります。\n\n引き続き何卒よろしくお願い致します！！",

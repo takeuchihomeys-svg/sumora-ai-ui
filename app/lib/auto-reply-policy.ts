@@ -11,6 +11,7 @@
 // 【安全の考え方】この仕組みは**本物のお客様に自動で送る**ので、迷ったら送らない（fail-closed）。
 //   送ってよい条件を全部満たした時だけ true を返し、1つでも欠けたら理由付きで false。
 import { jstParts } from "./jst-date";
+import { findStaffOnlyFact } from "./staff-confirm-facts";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -159,6 +160,10 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   if (visibleLength(draft) < 10) return { ok: false, reason: "draft_too_short" };
   // ⑥ 最終チェックで止められている文は送らない
   if (i.draftHasBlock) return { ok: false, reason: "final_check_block" };
+  // ⑥-2 2026-10-02 竹内さんの決定「スタッフの確認が要る物は AIX で止める」: 空き状況・初期費用の金額・待ち合わせの住所・内覧の確定日時を
+  //   言い切っている下書きは自動で送らない（スタッフが確かめてから送る）。本文は変えない＝人に残すだけ（staff-confirm-facts.ts）
+  const staffFact = findStaffOnlyFact(draft);
+  if (staffFact) return { ok: false, reason: `staff_only_fact:${staffFact.kind}` };
   // ⑦ 二重送信を防ぐ
   if (i.hasPendingScheduled) return { ok: false, reason: "already_scheduled" };
   return { ok: true, reason: "ok" };

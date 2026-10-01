@@ -1,6 +1,39 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-10-01
+最終更新: 2026-10-02
+
+---
+
+## 🔍 弱い部分の洗い出し（ルール同士のぶつかり・制約の掛けすぎ）と YUMA の LINE 実送信（竹内・2026-10-02・未コミット）
+
+- 竹内「YUMAで実際にLINEを送ってテストも行う。弱い部分見つけて強化する…初期のころ制約かけまくっていたので、理想の文がぶつかって…そこもみつける。実際のLINEや直近の成約データを参考に改善する」
+- **やり方（設計知見 aeec2a16「弱い部分の見つけ方と強化のしかた」・タグ 汎用/ブレイン診断/点検表/静かに壊れる）**: 出口の棚卸し → 人の実送信を本番の順で全部の出口に通す `scripts/audit-exits-vs-human.ts --days=60 --cache=<外> --json=<外>`（出口×規則で人の文を何通書き換えたか・成約の会話を別に数える・申込以降は除く）→ 目で読む → 実送信の割合で線を引き直す → 直す／狭める。最終チェックの決定論は `scripts/audit-final-check-vs-staff.ts`。**規則を足した週・月初に回して前回と比べる**。
+- **結果**: 人の送信 60日 2,516通（成約の会話 631）のうち出口で変わる通 39.4% → 35.7%（残りの多くは「〇〇さん お世話に」→「〇〇さんお世話に」の空白の整え）。直した5つ（どれも人の文の書き換えを減らす向きだけ）:
+  1. 謝罪の受け止め（apology-ack）: 「すみません＋遅れ・キャンセル・希望」を とんでもございません に書き換え 27→0（残りの字数4字以下だけ謝罪のみ・はい は置き換えない）
+  2. 開口語（greeting.enforceOpener）: はい⇔かしこまりました の入れ替え 60→22（openerStrict＝竹内さん名指しの場面だけ入れ替え）
+  3. 作業メモの除去（meta-narration）: 前の出口が先頭を外した後の人の事実の文を消す玉突き 5→1（残りは本物の作業メモ）。語尾を AI の作業の動詞に絞った（人の実送信365日で 62行→1行）
+  4. 絵文字の重なり（emoji-repeat）: 混ぜている文の玉突き 78→38（残りは全部同じ😊の文＝10/01 の決定どおり）
+  5. 名前の呼びかけ（validate-reply.enforceCustomerName）: 「Sさんの方で→方で」「1件新着でcさん→1件新着ごと削除」「同様の様→植田涼太さん」「文の切れ端ごと削除」を直した
+- **絵文字の決まり（竹内「絵文字は入れて良い絵文字だけにする。女性の絵文字いれない」）**: 入れてよい 😊 😌 🌟 ✨ 🙇。🙇‍♀️→🙇・他の性別つきは性別を外す（外した形が許可外なら外す）・👩 は外す・☺️等→😊・🙏→🙇・他は外す。表示名（後ろにさん・様）と文字の記号（❤︎⚪︎）は触らない。関数は `app/lib/emoji-allowlist.ts` 1つ（normalizeBannedPhrasing と dedupeRepeatedEmoji から呼ぶ＝手本・仕上げ・AIX・AIX テンプレート全部）。AIX の指示・雛形の「🙇‍♀️」を 🙇 に直した（aix/action・aix-template-generate・enhance-reply・templates/adapt・AixModal の雛形）。設計知見 a2def0bc。
+- **YUMA の LINE 実送信**（`scripts/yuma-real-line-send-test.ts`・手順書どおり・試行錯誤は DeepSeek で送らず、最後だけ `LLM_TEST_FINAL_CLAUDE=1 --send --probe --images`）: 8回の送信（文5・書式1・画像2枚＋本文1）＝10通が全部届いた。送信の API は本文を trim するだけ（下書き＝届いた文）。LINE で崩れる形 0。送信の後に本番が書く YUMA の記録（sent_facts 4・calendar_events 2・line_tasks 1）は自分の送信の物だけ消した。設計知見 bed6e9e9。
+- **残る弱い所（次の候補）**: ①「仮押さえできますか？」に AI は「管理会社に確認」（スタッフは「はい！！お申込しお部屋を抑える事可能です」）②前の約束を言い直すと最終チェック DUPLICATE_OF_SENT が block ③DeepSeek は「〇〇さんありがとうございます！！」だけの書き出しを書く（指示で禁止）④見積・空室の断言ゲート（enforceAixGates）が家賃相場・仲介手数料の一般の説明まで見積書の宣言に置き換える（人の文で約20通・文脈の旗を再現できないので監査は多めに出る・⑩の費用の作業と重なるので触っていない）⑤最終チェックの CONFIRM_NO_OBJECT（目的語が前の文にある）・VOCAB_MIRROR_MISMATCH（ごゆっくりご覧ください）・DONE_PRESUPPOSED（「本日はご内覧いただき」）が人の文を止める
+- **竹内さんの判断待ち**: 表示名で呼ぶ（Sさん・Eさん・💞さん・a🤫さん・327さん＝人の送信 60日で約60通・出口は全部消している）／全部同じ😊の文（人も60日で30通）／スタッフの定型文（templates 表 15欄）に 🏠✅🙏🔖（手で使う定型文は出口を通らない）
+
+---
+
+## 🧪 テストのやり方を1枚と1つの入口に（竹内・2026-10-01「テスト行う際必ずこのやりかた（ブレインのぶぶん）読むようにしたらいける。1～4すべて改善する。設計知見と協力して改善する」・未コミット）— 黄金ルール
+
+- **テストの前に必ず `memory/test_protocol_brain.md` を読む**（CLAUDE.md の作業開始前チェックと LINE/ブレインの節から指した）。
+- **10/01 の実測（llm_usage_logs・env=local*）**: DeepSeek 1,337・Claude 172。deepseek-all のつもりの Claude 46回（brain_fresh 33＝スクリプトが時刻の線の印を置かず黙って Claude 30回＋開発サーバ3／extract_estimate 7＝画像つき／brain_fresh_claude 3＝返信の方向が空の時の Claude の取り直し／brain_strategy・brain_checkpoint・brain_full 各1＝ブレインは切り替えの対象外だった）。
+  記録の無い Claude（コンソールとの差 約$1.8）＝開発サーバの HMR（resetFetch）で包みが外れた aix-template-generate 約27回＋包みを入れていない／brain-core を静的 import したスクリプトのブレイン 19回（07:50〜07:59・和樹さんの会話の3回を含む。Jev の行だけ残っていた）。
+- **直し**:
+  1. 厳密な DeepSeek（`app/lib/llm-test-mode.ts`・`llm-alt-provider.ts`・`llm-usage-recorder.ts`）: deepseek-all はブレインも全部 DeepSeek。Claude に戻す分岐は全部 `toClaude(理由)` → テストの間は日本語の理由つきで例外・`error_type=test_blocked` の行。名札ごとの通し口 `LLM_TEST_ALLOW_CLAUDE`。YUMA の印なしはテストの間だけ「全部」。出口の最後の網（記録の包み）でも同じ判定。最後の Claude は `LLM_TEST_FINAL_CLAUDE=1`（env 列 `local:final-claude`・Sonnet 5.5 に自動でそろう）。
+  2. 全部記録: 共通の入口 `scripts/lib/llm-test-harness.ts`（`setupLlmTest`）に 10本を載せ替え（yuma-aix-scene-brain-test・yuma-brain-1001-test・yuma-estimate-handoff-test・yuma-first-reply-echo-test・yuma-replay-scenarios・replay-brain-readonly・yuma-brain-decision・yuma-procedure-question-test・yuma-strategy-refresh・yuma-jev-materials-test）。route=`script:<名前>`・書き込みを待つ・deepseek-all は偽の Claude 鍵。開発サーバは instrumentation の見張りが素の fetch に戻された瞬間に包み直す（本番は入れない）。確かめは `scripts/test-llm-usage.ts`。
+  3. YUMA だけ: 出口で YUMA 以外を断る（DeepSeek・Claude・Jev）。`replay-brain-readonly.ts` は YUMA か `--copy-to-yuma=<id>`（申込以降は写さない・書類の手前で切る・伏せ字・未来の時刻・終わったら消す）だけ。
+  4. 個人情報（⑦の事故 ae321772 の一般化）: `app/lib/test-pii-guard.ts`（材料は1通ずつ書類の指紋で切る・出口は値だけ）。
+  5. 本番のキャッシュ: `scripts/audit-cache-ttl-reuse.ts` で 4.4日を測り **変えない**（aix_template 今 $0.685/日 ＜ 1h $0.800 ＜ 無し $1.089・brain_strategy／checkpoint は前置き 1.4k で差は $0.03/日以下）。1週間後に同じスクリプトで測り直す。
+- **確かめ（10/01 23:17〜23:20 JST）**: deepseek-all で YUMA の場面1回＝DeepSeek 1回 $0.0053・Claude 0・行あり／和樹さんの会話は入口と出口の両方で断った（LLM 0回）／`LLM_TEST_FINAL_CLAUDE=1` で1回＝Claude 1回（Sonnet 5 $0.041 → 5.5 にそろえた後 $0.198＝5.5 の前置きの書き込み）。YUMA に残った行 0。
+- テスト: `app/lib/__tests__/llm-test-strict.test.ts`（63）・`llm-test-mode.test.ts`（80・ブレインを対象にした分を更新）・`llm-alt-provider.test.ts`（175・申込以降の出口の照合を toClaude の形に）。
 
 ---
 
@@ -8221,3 +8254,36 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 「トイレバス別で〇〇さんに…」→「トイレバスお部屋」 → 出口ではない（validateAndClean・applySurfaceFixes・最終チェックの書き直し 0・gateEdits なし・DeepSeek の伏せ字の往復も無事を確認）。最終チェックに渡る前の文で既に欠けている＝LLM（DeepSeek）が書いた形。atari の場面だけ・約3/80
   - 初回の締めの何卒: 下書きに無い28組でスタッフが足したのは9（残り19は足さず）・下書きにある59組で消したのが8 → 決定論にしない／初期費用の一文: 無い25組で足した4 → しない／呼び名の短縮（五嶋由紀→五嶋 等）6件は呼び名の決め方（resolveAddressName）の話で今回の外
 - YUMA（`scripts/yuma-first-reply-echo-test.ts`・AIX=1 で AIX【物件ピックアップした】も作る）: DeepSeek 巡（全域 ON）距離 34.4・原文のまま 5/24・AIX のピックアップ行 12/12 が全域の形／atari 4回で欠けの出所を追跡／最終（本番と同じ組み合わせ: ブレイン Claude・返信 DeepSeek・AIX property_send Claude）4場面 距離 26.0・原文のまま 0/4・AIX 4/4。片付け: 場面の通 0・自分の AIX 生成記録 17件削除
+
+## 2026-10-02 竹内さんの6つの決定（条件ヒアリング・分割はカード払いなら可・費用の質問の合図・スタッフの確認は AIX で止める・電話の文・申込の同居人）— 未コミット
+設計知見 7件（タグ 条件ヒアリング／見積書／分割／電話／申込／自動返信）。YUMA は `scripts/yuma-brain-1002-test.ts`（入口 llm-test-harness・REPLAY_FLOOR_FILE・場面は "replay-d1002-"・GEN=1 で返信と条件ヒアリングの AIX も作る）。
+### ① 物件ピックアップは条件がそろってから・条件ヒアリングのフォームはそのまま（8項目・既知は書き入れ）
+- 線（`scripts/audit-pickup-conditions-complete.ts`・180日）: 最初のピックアップ 212会話の時点の顧客の行 エリア97%・家賃98%・間取り86%・入居86%（4つ全部 75%）→ **必須はエリア＋家賃**。`app/lib/hearing-form.ts` pickupConditionsReady（行が無い・欠けた項目は発言でも探す）＝212 のうち そろった 200（94%）。ヒアリングを送った時点 92会話は足りない 48（52%）
+- 入口 brain-core `rule:conditions_incomplete_hearing(area+rent)`: まだ物件が会話に無い（台帳の送付0＋見積書・物件確認・🌟資料・持ち込みも無い）のに 物件ピックアップ → 条件ヒアリング。約束の宣言（promise）・申込以降・物件オススメは触らない。本番のブレインの property_send 199番（120日）で変わるのは 3番（初期だけに効く）
+- ⚠ YUMA 最終（Claude）で、見積書だけ送った会話の「もう少し安くなりませんか」（安い物件のピックアップ）までヒアリングにしていた → 「物件が会話にある」の条件を足して直した
+- フォーム `buildHearingForm`（aix/action と AixModal の1か所）: 実送信70通の41通の8項目そのまま＋人の実物（c167c5f1「③ご希望間取り　1LDK」）の全角の空白で書き入れ。値は 顧客の行 → 条件の文字（parseConditionText）→ 空欄だけお客様の発言（hearingKnownFromCustomerTexts・言葉のまま・特定のマンションの空き／入居の可否の質問の文は読まない・`scripts/audit-hearing-prefill.ts` で58会話中8件を目で読んだ）
+- condition-format: 「①ご入居時期 9月ごろ」のように空白で値を書いた形も記入ありと読む（365日で14通が旧は空欄扱い→ LLM の分類に回っていた・誤りの当たり0・`scripts/audit-form-space-value.ts`）
+- ブレインの能力マップ・aix-taxonomy の condition_hearing の説明を新しい形に（旧「既知条件をスキップ」）
+### ② 分割はカード払いなら可（手数料3.24%）にそろえる
+- 食い違う実送信: 7/07 3644eaa9・9/14 f193d13d（「一括でのお振込のみ」）・9/30 8a77820b（「分割払いは難しい」）・10/01 c024b7b9（「お振込での一括のみ」）・8/25 db3722a5（「6回程が妥当」）
+- 出口 company-fact-guard: 「一括（お振込）のみ」「分割の回数の目安」を credit_card の断定に（17通で当たり4＝食い違う送信だけ・カードの語がある正しい文は当てない・`scripts/audit-installment-lump-sum.ts`）。**V16b**「出来ると答えたのに 3.24% が無い」→ block で修正ループ（YUMA の Claude の確かめで手数料なしの下書きが出たため）
+- 手本: example-hygiene.isUsableExampleText で会社の事実に反する断定を含む文を正解例にしない（手本 7,449行で4行・⭐2行＝初回の挨拶の手本の上位だった・`scripts/audit-example-fact-contradiction.ts`）
+- ナレッジ: 6行を rejected（a41ee3a7・7e28f194・33829071 一括のみ／ba6991ec・9a4ca172・275371d5 6回が妥当・`scripts/reject-installment-contradicting-knowledge.ts` APPLY=1・行は消していない）
+- YUMA 最終（Claude）: 「初期費用って分割できますか？」「分割は難しいですよね🥲」とも カード払いなら分割可＋3.24%
+### ③ 費用の質問の合図（見積書送る）
+- `scripts/audit-cost-question-estimate.ts`（AIX の記録が揃う 7/15〜・277番）: すぐ押した 53（19%）。1つの特徴では分かれない（見積の語 13%・物件を指す 17%）。押さなかった手打ち 119 を全部読んだ型＝値下げ・交渉／安い物件の依頼／費用の1項目／見積書へのお礼／他社の見積書／相場・金額の確かめ／持ち込み
+- `app/lib/cost-question-estimate.ts` resolveCostQuestionEstimate → 信号0.96・信号1 と LLM の見積書送るの補正（はっきり違う型と持ち込みだけ）。持ち込み → 物件確認した（`correction:cost_question_brought_property`）
+- 当たり: すぐ押した 19%→41%（再現 83%）・見積書の動き全体 42%→69%（180日 432番では 14%→26%・42%→64%）。信号の見積書送る 4番は押された 0
+### ④ スタッフの確認が要る物は AIX で止める
+- `app/lib/staff-confirm-facts.ts`: aixAutoSendGate（物件確認した・確認します・見積書・待ち合わせ・内覧調整・申込へ・費用の説明・保証会社・物件送付は送らない）→ aix-autofill-readiness に `autoSend`（作れる≠送ってよい）。findStaffOnlyFact（空き・金額・住所・確定日時の言い切り）→ canAutoReply ⑥-2（下書き1,134件で当たり8・`scripts/audit-staff-confirm-facts.ts`）
+### ⑤ 電話の文を会話に合わせる
+- `scripts/audit-phone-staff-messages.ts`（365日・依頼34番・人の文33）→ phone-call.buildCallText（お客様の時間は受ける・こちらの時間はスタッフの入力が無ければ作らない・用件に触れる・要の文は残す・LLM なし）。AixModal に「電話できる時間」の欄と促し
+### ⑥ 申込の同居人
+- `scripts/audit-co-resident.ts`（79会話）: 決められる 13（12 正しい）・分からない 66 → `app/lib/co-resident.ts` detectCoResident（[画像]・URL の通は見ない）。AixModal の申込フォーマットは分かった時だけ先に選び手がかりを表示・分からない時は「お客様に確認して選んでください」。申込へは autoSend=false
+### YUMA（DeepSeek 3巡＋最後だけ Claude）
+- DeepSeek: 12場面×2＋GEN 4場面＋3場面×3 — ブレイン DeepSeek 38回 $0.19・Claude 0（漏れ0・止めた0）。条件がそろった対照で DeepSeek が 条件ヒアリング を選ぶ揺れ（2/3）→ Claude では property_send
+- 最終（Claude・本文 DeepSeek）: 12場面＋直した3場面 — ブレイン Claude 15回 $0.50・開発サーバの Claude 25回 約$0.17（最終チェック・条件ヒアリングの導入）。混ざり0。片付け: 場面の通は毎回 id で削除（残り0）・aix_generate_log の自分の3行を id で削除
+### 残り（竹内さんの判断待ち）
+- 条件がそろっていてもスタッフが条件ヒアリングを送る形（ヒアリングの時点で発言にエリア・家賃・間取り・入居がそろっていたのは 92会話中 28）＝そろった時にヒアリングを外す向きの決まりは入れていない
+- 分割の手数料の一文: スタッフの実送信は書かない文もある（8/28・9/05）が V16b で必ず足させる形にした（竹内さん 9/30 の決まり）。書かない形も許すなら V16b を外す
+- 申込の同居人: 会話から分からない会話が 84%（66/79）。条件フォームに「入居人数」を足すかどうか

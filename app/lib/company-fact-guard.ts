@@ -121,6 +121,28 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
   },
   {
     factId: "credit_card",
+    // 2026-10-02 竹内さんの決定「カード払いなら分割可（手数料3.24%）にそろえる」: 「お支払い方法は一括でのお振込のみ」「お振込での一括のみでの対応」は
+    //   カード払い（＝分割）が出来る事実と逆。実送信（5/17〜・scripts/audit-installment-lump-sum.ts・一括/分割/振込のみ を含むスタッフの送信 17通）で
+    //   この形は 3通（7/07 3644eaa9・9/14 f193d13d・10/01 c024b7b9＝竹内さんが規則と食い違うと判断した送信そのもの）。
+    //   守る物（当てない）: 「クレジットカードがない場合一括となります」「カード決済の場合一度一括でお支払い頂き、決済後…分割設定」（カードの語がある文）
+    re: new RegExp(
+      `一括${SEG}{0,12}?(?:のみ|だけ|しか)|(?:お)?振込${SEG}{0,6}?(?:のみ|だけ|しか)` +
+      `|一括(?:払い|でのお?支払い?)?(?:に)?(?:限|なっ|となっ)?${SEG}{0,4}?(?:のお?支払い?)?(?:のみ|だけ)`,
+    ),
+    exclude: /クレジット|クレカ|カード|滞納|審査|保証会社|家賃(?:の|は)/,
+    label: "初期費用はクレジットカード払い（カード払いなら分割可・カード手数料として合計金額に3.24%が別途）に対応しているのに「一括（お振込）のみ」と断定しています",
+    suggestion: "断定の文を削除し「初期費用はお振込かクレジットカードでのお支払いとなり、クレジットカードでのお支払いですと分割が可能となります（カード手数料としまして合計金額に3.24%別途必要となります）」の形にする",
+  },
+  {
+    factId: "credit_card",
+    // 2026-09-30 竹内さん「『分割は6回が妥当』は個別の助言（AI は書かない）・分割の回数はお客様の方でカードの分割設定をする」:
+    //   実送信は 8/25 db3722a5 の1通（スタッフの個別の助言）だけ。AI の下書きにこの形が出たら止める（2026-10-02 手本からも外す）
+    re: new RegExp(`分割${SEG}{0,30}?[0-9０-９]+\\s*回${SEG}{0,12}?(?:妥当|オススメ|おすすめ|お勧め|目安|が良い|がよい)|[0-9０-９]+\\s*回程?(?:で)?(?:の)?お支払い(?:が|を)?${SEG}{0,4}?(?:妥当|オススメ|おすすめ|お勧め)`),
+    label: "分割の回数はお客様がご自身のカード会社で設定する物（会社の事実）なのに、回数の目安（「6回程が妥当」等）を勧めています",
+    suggestion: "回数を勧める文を削除する（書くのは「クレジットカードでのお支払いですと分割が可能・分割の回数はお客様のカードの方でご設定頂けます・カード手数料として合計金額に3.24%別途」まで）",
+  },
+  {
+    factId: "credit_card",
     // 2026-09-30 YUMA の実送信テスト（「初期費用分割は難しいですよね」への下書き）:
     //   「…ご負担を分けてお支払い頂けますので、ご希望に合わせて私の方で手配させて頂きます！！」
     //   カードの分割はお客様がご自身のカードで設定する物（竹内さん 9/30「カードはお客さん側で分割設定」）＝こちらが分割を手配する約束は作り話。
@@ -232,4 +254,28 @@ export const COMPANY_FACT_IDS_WITH_GUARD = COMPANY_FACT_CONTRADICTIONS.map((c) =
 const knownIds = new Set(COMPANY_FACTS.map((f) => f.id));
 for (const id of COMPANY_FACT_IDS_WITH_GUARD) {
   if (!knownIds.has(id)) throw new Error(`company-fact-guard: company-facts.ts に無い id「${id}」`);
+}
+
+// ─── 2026-10-02 竹内さんの決定「カード払いなら分割可（手数料3.24%）にそろえる」: 出来ると答えたのに手数料が無い ───
+// 9/30 竹内さん「出来ると答える時は手数料も同じ返信で伝える」。YUMA の最終の確かめ（10/02・本文 DeepSeek／最終チェック Claude）で
+//   「初期費用はクレジットカード払いですと分割可能です！！」だけ（手数料なし）が出た（DeepSeek の試行でも 3回中2回）。
+//   実送信では手数料を書かない文もある（8/28「クレジットカード払いですと分割でのお支払いも可能」・9/05）が、竹内さんの決まりを採る。
+//   本文は決定論で足さない（言い回しはスタッフの形に任せる）→ 最終チェックで block にして修正ループで1文足させる（final-check V16b）。
+const CARD_INSTALLMENT_OK_RE = new RegExp(`(?:クレジット|クレカ|カード)${SEG}{0,24}?(?:分割|でのお?支払い|払い|決済)${SEG}{0,16}?(?:可能|でき|出来|対応|大丈夫|頂け|いただけ)`);
+
+export type MissingCardFeeHit = { sentence: string; label: string; suggestion: string };
+
+/** お客様が支払い方法（分割・カード）を聞き、本文がカード払い・分割が出来ると答えているのに 3.24% が無い */
+export function findMissingCardFee(body: string | null | undefined, customerTexts: ReadonlyArray<string | null | undefined>): MissingCardFeeHit | null {
+  const text = String(body ?? "");
+  if (/3[.．]24/.test(text)) return null;
+  const asked = new Set(matchCompanyFacts(customerTexts.map((t) => t ?? "")).map((f) => f.id));
+  if (!asked.has("credit_card")) return null;
+  const s = splitSentencesForFactGuard(text).find((x) => CARD_INSTALLMENT_OK_RE.test(x) && !/以外|ない場合|無い場合/.test(x));
+  if (!s) return null;
+  return {
+    sentence: s,
+    label: "カード払い・分割が出来ると答えているのに、カード手数料（合計金額に3.24%が別途）が書かれていません（竹内さんの決まり: 出来ると答える時は手数料も同じ返信で）",
+    suggestion: "カード払いの文の後に「※クレジットカードでのお支払いの場合、カード手数料としまして合計金額に3.24%が別途必要となります！！」を1文足す（他の文は変えない）",
+  };
 }

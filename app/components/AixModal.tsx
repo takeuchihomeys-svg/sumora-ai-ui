@@ -16,7 +16,8 @@ import { pickDaySlots, limitSlotsPerDay } from "../lib/viewing-slots";
 import { placeKeyOf } from "../lib/viewing-slot-plan";
 // 2026-09-19 竹内（あい事例）: 2通目は既定で付けない。ボタンを押した時だけセットする
 import { canOfferSecondMessage, buildSecondMessage } from "../lib/aix-second-message";
-import { customerRequestsPhoneCall, buildCallRequestText } from "../lib/phone-call";
+import { customerRequestsPhoneCall, buildCallText, customerAsksStaffCallTime, customerProposedCallTime } from "../lib/phone-call";
+import { staffTalkedToday } from "../lib/daily-greeting";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
 import { customerSharedPropertyNames } from "../lib/customer-property-names";
@@ -32,6 +33,8 @@ const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import { firstSentPickupId } from "../lib/sent-image-order";
+import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown } from "../lib/hearing-form";
+import { detectCoResident } from "../lib/co-resident";
 import { propertyNamePrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
@@ -284,7 +287,7 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
   },
   property_recommendation: {
     rules: ["物件資料画像をVisionで読み取り", "お客様希望条件と照合", "退去予定あれば自動案内文を追加"],
-    template: "🌟【物件名】\n築年数・間取り・面積・駅徒歩\nオススメ①②③④\n初期費用・退去予定（あれば）\n🙇‍♀️[お客様名]さんお気に召されましたらご案内させて頂きます！！",
+    template: "🌟【物件名】\n築年数・間取り・面積・駅徒歩\nオススメ①②③④\n初期費用・退去予定（あれば）\n🙇[お客様名]さんお気に召されましたらご案内させて頂きます！！",
   },
   property_send: {
     rules: ["物件画像（複数）を添付", "カレンダーから内覧可能日時を自動取得", "退去予定物件は画像から自動読み取り", "内覧誘導 or 申込み誘導モードで切替"],
@@ -583,27 +586,11 @@ const APP_FORMAT_SECTIONS = {
 const HEARING_FORM_DELAY_SEC = 30;
 
 // condition_hearing: 条件フォーム本体をクライアント側で組み立てる
-// /api/aix/action の condition_hearing フォーム組み立てロジック（route.ts）と完全に同一に保つこと。
-// AIX生成前でも「フォームのみ送る」を即押せるようにするための初期値で、生成後はAPIの hearing_form が上書きする（API が真実のソース）
-function buildHearingFormText(customerName: string | undefined, condText: string | undefined): string {
-  const CIRCLE_NUMS = ["①","②","③","④","⑤","⑥","⑦","⑧"];
-  const ALL_ITEMS = [
-    { label: "ご入居時期",                                key: "入居:" },
-    { label: "ご希望家賃（管理費込み）",                    key: "家賃:" },
-    { label: "ご希望間取り",                               key: "間取り:" },
-    { label: "ご希望築年数",                               key: "築年数:" },
-    { label: "ご希望エリア・最寄り駅",                      key: "エリア:" },
-    { label: "駅からの徒歩分数",                           key: "駅徒歩:" },
-    { label: "初期費用ご予算",                             key: "初期費用" },
-    { label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
-  ];
-  // 条件テキストに key が含まれていれば「既知」→ 除外（全部埋まっていた場合は全項目を聞くフォールバック）
-  const missing = condText ? ALL_ITEMS.filter(item => !condText.includes(item.key)) : ALL_ITEMS;
-  const showItems = missing.length > 0 ? missing : ALL_ITEMS;
-  // 番号を①②③…と詰めて振り直す
-  const formItems = showItems.map((item, i) => `${CIRCLE_NUMS[i]}${item.label}`).join("\n");
-  const namePart = customerName ? (/(さん|様)$/.test(customerName) ? customerName : `${customerName}さん`) : "";
-  return `（${namePart}ご希望のお部屋探しご条件）\n${formItems}`;
+// /api/aix/action の condition_hearing と同じ関数（app/lib/hearing-form.ts buildHearingForm）。
+// AIX生成前でも「フォームのみ送る」を即押せるようにするための初期値で、生成後はAPIの hearing_form が上書きする（API が真実のソース・顧客の行から書き入れる）
+// 2026-10-02 竹内さん「フォーマットはそのまま・もらっている条件は項目にいれる」: 旧は既知の項目を消して番号を詰めていた → 8項目を全部・既知は書き入れ
+function buildHearingFormText(customerName: string | undefined, condText: string | undefined, customerTexts: string[] = []): string {
+  return buildHearingForm(customerName, mergeHearingKnown(parseConditionText(condText ?? ""), hearingKnownFromCustomerTexts(customerTexts)));
 }
 
 export default function AixModal({
@@ -1006,6 +993,20 @@ export default function AixModal({
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
   const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | "format" | "docs_request" | null>(initialAppSubMode ?? null);
   const [appFormatLivingType, setAppFormatLivingType] = useState<"single" | "shared" | null>(null);
+  // 2026-10-02 竹内さん「申込へのフォーマットは同居人の有無で形が違う。会話・条件から判断し、分からなければ選ばずにスタッフに選ばせる」:
+  //   お客様の発言（物件の画像の読み取り・URL は除く）と条件の欄から決める（co-resident.detectCoResident）。分かった時だけ先に選び、手がかりを見せる。
+  //   申込へは自動で送らない（スタッフが見て送る・staff-confirm-facts）
+  const coResidentDetected = useMemo(
+    () => (actionType === "application_push"
+      ? detectCoResident((recentMessages ?? []).filter((m) => m.sender === "customer").map((m) => m.text ?? ""), [customerConditions ?? ""])
+      : { value: "unknown" as const, evidence: null }),
+    [actionType, recentMessages, customerConditions],
+  );
+  const coResidentPreset = (): "single" | "shared" | null => (coResidentDetected.value === "unknown" ? null : coResidentDetected.value);
+  useEffect(() => {
+    if (actionType === "application_push" && appSubMode === "format" && appFormatLivingType === null) setAppFormatLivingType(coResidentPreset());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, appSubMode]);
   const [appFormatGuarantorType, setAppFormatGuarantorType] = useState<"emergency" | "guarantor" | null>(null);
   const [appConfirmImagePreview, setAppConfirmImagePreview] = useState("");
   const [appConfirmExtractLoading, setAppConfirmExtractLoading] = useState(false);
@@ -1094,6 +1095,8 @@ export default function AixModal({
 
   // 電話をかける／電話終了後（2026-09-15 竹内・H 事例）
   const [phonePurpose, setPhonePurpose] = useState("");   // 電話をかける: 用件（任意）
+  // 2026-10-02 竹内さん「電話の AIX の文は会話に合わせる」: お客様に電話できる時間を聞かれた時にスタッフが入れる（スタッフしか知らない事実＝空欄なら時間を作らない）
+  const [phoneAvailability, setPhoneAvailability] = useState("");
   const [phoneNotes, setPhoneNotes] = useState("");       // 電話終了後: 電話でお話しした内容
   const [callUrlInfo, setCallUrlInfo] = useState<{ loading: boolean; url: string | null; accountLabel: string; error?: string }>({ loading: false, url: null, accountLabel: "" });
   const [callUrlInput, setCallUrlInput] = useState("");
@@ -1557,7 +1560,7 @@ export default function AixModal({
   // （AIX生成を待たずに「フォームのみ送る」を押せるようにする。生成後はAPIの hearing_form が上書き＝APIが真実のソース）
   useEffect(() => {
     if (actionType === "condition_hearing" && !hearingFormText) {
-      setHearingFormText(buildHearingFormText(customerName, customerConditions));
+      setHearingFormText(buildHearingFormText(customerName, customerConditions, (recentMessages ?? []).filter((m) => m.sender === "customer").map((m) => m.text ?? "")));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType]);
@@ -2352,7 +2355,14 @@ export default function AixModal({
 
       // 電話をかける: 案内文はテンプレ（AI不使用）。お客様から電話の依頼があれば「お電話大丈夫です😊！！」から答える（スタッフの実送信）
       if (actionType === "phone_call") {
-        const msg = buildCallRequestText({ customerAsked: phoneRequestedByCustomer, customerName, purpose: phonePurpose });
+        // 2026-10-02 竹内さん「電話の AIX の文は会話に合わせる」: 聞かれた時間に答える・用件に触れる・要の文（ボタンからお電話）は残す（phone-call.buildCallText・LLM なし）
+        const msg = buildCallText({
+          customerTurn: latestCustomerTurnText(recentMessages ?? []),
+          customerName: customerName ?? "",
+          purpose: phonePurpose,
+          staffAvailability: phoneAvailability,
+          firstTalkToday: !staffTalkedToday((recentMessages ?? []) as Parameters<typeof staffTalkedToday>[0]),
+        });
         setAiDraft(msg);
         setPreview(useEmoji ? msg : stripEmoji(msg));
         setLoading(false);
@@ -4305,7 +4315,7 @@ export default function AixModal({
                   <div className="mt-0.5 text-[8px] text-[#8696a0]">確定のご連絡</div>
                 </button>
                 <button
-                  onClick={() => { setAppSubMode("format"); setAppFormatLivingType(null); setAppFormatGuarantorType(null); setPreview(""); }}
+                  onClick={() => { setAppSubMode("format"); setAppFormatLivingType(coResidentPreset()); setAppFormatGuarantorType(null); setPreview(""); }}
                   className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
                     appSubMode === "format" ? "border-purple-500 bg-purple-50" : "border-[#e9edef] bg-[#f8f9fa]"
                   }`}
@@ -4400,6 +4410,11 @@ export default function AixModal({
                   {/* 単独 / 同居 */}
                   <div>
                     <p className="mb-2 text-xs font-bold text-[#54656f]">入居形態を選択 <span className="text-red-400">*</span></p>
+                    {coResidentDetected.value === "unknown" ? (
+                      <p className="mb-2 rounded-lg bg-orange-50 px-2 py-1.5 text-[11px] font-semibold text-orange-700">同居人の有無が会話・条件から分かりません → お客様に確認して選んでください（申込のフォーマットの形が変わります）</p>
+                    ) : (
+                      <p className="mb-2 text-[11px] text-[#2E7D32]">会話・条件の「{coResidentDetected.evidence}」から {coResidentDetected.value === "shared" ? "同居あり" : "単独"} を選んであります（違う時は選び直してください）</p>
+                    )}
                     <div className="flex gap-2">
                       {([
                         { key: "single", label: "単独", sub: "同居人なし" },
@@ -7168,6 +7183,17 @@ export default function AixModal({
                   用件 <span className="font-normal text-[#90a4ae]">（任意・こちらから電話でご説明する時。例：審査のお打ち合わせ）</span>
                 </label>
                 <input value={phonePurpose} onChange={(e) => { setPhonePurpose(e.target.value); setPreview(""); }} placeholder="空欄ならボタンのご案内だけ" className={inputCls} />
+                <label className="mb-1 mt-3 block text-xs font-semibold text-[#54656f]">
+                  電話できる時間 <span className="font-normal text-[#90a4ae]">（任意・例：15:00以降／本日10:30〜11:00）</span>
+                </label>
+                <input value={phoneAvailability} onChange={(e) => { setPhoneAvailability(e.target.value); setPreview(""); }} placeholder="空欄なら時間は書きません（お客様が出した時間はそのまま受けます）" className={inputCls} />
+                {(() => {
+                  const turn = latestCustomerTurnText(recentMessages ?? []);
+                  const proposed = customerProposedCallTime(turn);
+                  if (proposed && !phoneAvailability.trim()) return <p className="mt-1 text-[11px] text-[#2E7D32]">お客様が出した時間「{proposed}」で受ける文にします（違う時は上に電話できる時間を入れてください）</p>;
+                  if (customerAsksStaffCallTime(turn) && !phoneAvailability.trim()) return <p className="mt-1 text-[11px] font-semibold text-orange-600">お客様が電話できる時間を聞いています → 電話できる時間を入れてください（空欄なら「お手隙の際に」で答えます）</p>;
+                  return null;
+                })()}
                 <p className="mt-1 text-[11px] text-[#8696a0]">
                   {phoneRequestedByCustomer ? "お客様から電話のご依頼 →「お電話大丈夫です😊！！」から答えます" : "こちらから電話をご案内する文を作ります"}
                 </p>

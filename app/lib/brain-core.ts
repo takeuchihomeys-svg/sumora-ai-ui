@@ -38,6 +38,8 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
+import { pickupConditionsReady } from "@/app/lib/hearing-form";
+import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent } from "@/app/lib/phone-button-sent";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
@@ -390,7 +392,7 @@ const AIX_CAPABILITY_MAP = `
 - guarantor_info: 物件ごとの保証会社名と種類（独立系＝審査基準が緩い／信販系／信用系）を一覧で案内し、かぶっていない保証会社の並行審査を勧める（会社名・種類はスタッフ入力のみ）。お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時に選ぶ。本文は「保証会社確認させて頂きます」の受付だけで、会社名・通りやすさを本文に書かない
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
-- condition_hearing: 既知条件をスキップした条件ヒアリングを生成
+- condition_hearing: 条件ヒアリングのフォーム（8項目そのまま・お客様からもらっている条件は項目に書き入れる）を送る。まだ物件を送っていないのに条件（エリア＋家賃）がそろっていない時は property_send ではなくこれ。エリアと家賃の両方が分かっていれば選ばない（property_send）（2026-10-02 竹内）
 - acknowledge_check: 管理会社への空室確認+見積書依頼を生成（お客様宛てではない。物件の問い合わせでは選ばない＝property_check_result）
 - followup_revive: 追客・再接触メッセージを生成
 - property_check_result: 空室確認結果の報告文を生成（「物件確認した」）→ 2番手での申込が可能と判明した場合は+1分30秒で「（2番手・申込）」を顧客名の置換のみで自発送信する。【室内写真】お客様が室内の写真・動画・室内イメージURL を頼んだ（「室内の写真ありますか」「これ室内写真欲しいです」「お部屋の画像ありますでしょうか」「内見の動画欲しいです」「URLとかありますでしょうか」）→ check_pattern=interior_photo（AIX【物件確認した】→「室内写真を確認した」ピッカー。スタッフが手元の写真・室内イメージURL を物件名とあわせて送る。AI は使わない・本文は受付の一文だけ）。【重要】フリーレント可否・礼金/初期費用の交渉結果・ペット可否・駐車場有無・設備有無など管理会社に確認した結果はすべてこのボタンの「管理会社に確認した」サブパターンで報告する。acknowledge_check で確認を依頼した後に管理会社から回答が届いたら必ず property_check_result を選ぶこと。confirm前に結果を捏造してはいけない。【誤選択防止】顧客が「駐車場付きのお部屋がないか」「駐車場付きで探してほしい」等と言っている場合は property_check_result ではなく property_send を選ぶ（これは現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 = equip_add）
@@ -670,7 +672,7 @@ async function detectSignalBasedAixFallback(
     const [msgsRes, aixRes, scheduledRes, tasksRes, pcRes, rulesRes] = await Promise.all([
       supabase
         .from("messages")
-        .select("sender, text, created_at, is_aix_generated, image_type")
+        .select("sender, text, created_at, is_aix_generated, image_type, quoted_message_id")
         .eq("conversation_id", conversationId)
         .order("created_at", { ascending: false })
         .limit(10),
@@ -718,7 +720,7 @@ async function detectSignalBasedAixFallback(
         .limit(200),
     ]);
 
-    type MsgRow = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; image_type: string | null };
+    type MsgRow = { sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; image_type: string | null; quoted_message_id: string | null };
     const msgs = (msgsRes.data ?? []) as MsgRow[];
     const lastCustomer = msgs.find((m) => m.sender === "customer") ?? null;
     const lastStaff = msgs.find((m) => m.sender !== "customer") ?? null;
@@ -812,8 +814,13 @@ async function detectSignalBasedAixFallback(
       const otherPropertyReq =
         /(安|抑え)[^。！!？?\n]{0,10}(物件|お?部屋)|(物件|お?部屋)[^。！!？?\n]{0,8}(ない(です|でしょう)?か|あります|ありません)/;
       // 2026-10-01 YUMA の再生: 支払いの時期・方法／家賃の線の質問は見積書にしない（180日の実送信で見積書送る 0/11・cost-question-kind.ts）
-      if (CUSTOMER_ESTIMATE_INTENT_RE.test(custBody) && !viewingReq.test(custText) && !otherPropertyReq.test(custText) && !costQuestionNotEstimate(custText)) {
-        return "estimate_sheet";
+      // 2026-10-02 竹内さんの決定「費用の質問の合図を実際の LINE から引き直す」: 費用の語だけで見積書送るにしない。
+      //   cost-question-estimate.resolveCostQuestionEstimate（7/15〜の費用の質問 277番を全部読んで引いた線）が「物件の初期費用の質問／見積の依頼／再見積」の時だけ見積書送る、
+      //   持ち込みの物件（ポータルの URL・画像）は 物件確認した（募集状況の確認＋御見積書同封）、値下げ・交渉／安い物件の依頼／費用の1項目／見積書へのお礼／他社の見積書 等は合図にしない。
+      //   見積書送る（すぐ）の当たり 19%→41%・見積書の動き全体 42%→69%（scripts/audit-cost-question-estimate.ts）。信号で立てた見積書送る 4番は押された 0番だった
+      if (CUSTOMER_ESTIMATE_INTENT_RE.test(custBody) && !viewingReq.test(custText) && !otherPropertyReq.test(custText)) {
+        const cq = resolveCostQuestionEstimate(costQuestionInputFrom(msgs, (aixRes.data ?? []) as Array<{ aix_type: string | null; created_at: string; sent_at: string | null }>));
+        if (cq.action) return cq.action;
       }
     }
 
@@ -851,7 +858,9 @@ async function detectSignalBasedAixFallback(
     // （コスト懸念＝信号0.9・見積送付済み＝信号3 は上で先に除外済み）
     // 2026-09-08 Fable5: 語出現（/見積|初期費用/）ではなく、項目ラベル除去後の依頼・質問形（CUSTOMER_ESTIMATE_INTENT_RE）でのみ estimate_sheet
     //   （条件フォームの「⑦初期費用」ラベル・「初期費用を貯めてる途中」等の語出現では発火しない・四者同名）
-    if (propertyInPlay && !isConditionFormMessage(custText) && !costQuestionNotEstimate(custText) && CUSTOMER_ESTIMATE_INTENT_RE.test(custText.replace(FORM_LABEL_RE, " "))) return "estimate_sheet";
+    // 2026-10-02: 信号0.96 と同じ線（resolveCostQuestionEstimate が見積書送るの時だけ）
+    if (propertyInPlay && !isConditionFormMessage(custText) && !costQuestionNotEstimate(custText) && CUSTOMER_ESTIMATE_INTENT_RE.test(custText.replace(FORM_LABEL_RE, " "))
+      && resolveCostQuestionEstimate(costQuestionInputFrom(msgs, (aixRes.data ?? []) as Array<{ aix_type: string | null; created_at: string; sent_at: string | null }>)).action === "estimate_sheet") return "estimate_sheet";
 
     // 信号TikTok（弊社SNS動画流入 → property_search）:
     // 弊社TikTok/Instagramの動画で物件に興味を持って問い合わせてきた顧客。
@@ -2763,6 +2772,24 @@ ${history}`;
         }
       }
     }
+    // 2026-10-02 竹内さんの決定「費用の質問で 見積書送る が本当に合う時だけ」: LLM が 見積書送る を選んだ費用の質問も同じ線（cost-question-estimate）で見る。
+    //   外すのは「見積書ではない」とはっきり言える型だけ（値下げ・交渉／もっと安い物件の依頼／費用の1項目／見積書へのお礼／他社の見積書／相場／金額の確かめ）と、
+    //   お客様が今回物件を持ち込んだ時（→ 物件確認した＝募集状況の確認＋御見積書同封）。
+    //   実測（9/12〜のブレインの記録）: LLM の 見積書送る 20番で押された 14・押されなかった 6 のうち 持ち込み 2（物件確認した 1・確認の宣言 1）・値下げ 2・支払い時期 1・家賃の線 1
+    if (finalAix === "estimate_sheet" && decisionSource === "llm") {
+      const cqIn = costQuestionInputFrom(typedMessages, aixLogs);
+      if (CUSTOMER_ESTIMATE_INTENT_RE.test(cqIn.turnText.replace(FORM_LABEL_RE, " "))) {
+        const cq = resolveCostQuestionEstimate(cqIn);
+        if (cq.action === "property_check_result") {
+          finalAix = "property_check_result";
+          sceneSignalCheckPattern = null;
+          decisionSource = "correction:cost_question_brought_property";
+        } else if (!cq.estimate && CLEAR_NOT_ESTIMATE_REASONS.has(cq.reason)) {
+          finalAix = null;
+          decisionSource = `correction:cost_question_not_estimate(${cq.reason})`;
+        }
+      }
+    }
     // 内覧誤提案ガード（決定論的矯正・プロンプト任せにしない）:
     // viewing_invite は「顧客の反応」が前提のアクション。①最終メッセージがスタッフ送信
     // （＝物件送付・返信直後で顧客の反応待ち）、または②最終物件送付以降に顧客メッセージが
@@ -3130,6 +3157,24 @@ ${history}`;
       finalAix = "property_send";
       decisionSource = "signal:pending_pickup";
       promiseAltAction = promiseAltAction ?? "property_recommendation";
+    }
+    // 2026-10-02 竹内さんの決定「物件ピックアップは条件がそろってから。そろっていなければ AIX【条件ヒアリング】（フォーマットはそのまま・
+    //   もらっている条件は項目に入れる）」: まだ物件を1件も送っていないのに条件（エリア＋家賃）がそろわないまま 物件ピックアップ を選んだ時は
+    //   条件ヒアリング にする。線は app/lib/hearing-form.ts pickupConditionsReady（最初のピックアップ 212 の 94% がそろった側・
+    //   スタッフがヒアリングを送った時点は 52% が足りない側・scripts/audit-pickup-conditions-complete.ts）。
+    //   スタッフ自身の宣言（promise:pickup）・申込以降・物件オススメ（特定のお部屋）は触らない
+    //   10/02 YUMA の最終の確かめ（Claude）: 見積書を送った後の「もう少し安くなりませんか？」で LLM の 物件ピックアップ（安い物件の追加）をヒアリングにしていた
+    //   （台帳の物件送付 0・顧客の行なし）→ 物件がもう会話にある（見積書・物件確認・物件の AIX・こちらの資料・お客様の持ち込み）時は当てない
+    const propertyAlreadyInPlay = brainLedger.facts.estimateSent
+      || aixLogs.some((l) => l.aix_type === "property_send" || l.aix_type === "property_recommendation" || l.aix_type === "property_check_result" || l.aix_type === "estimate_sheet")
+      || messagesOldestFirst.some((m) => (m.sender !== "customer" && /🌟|[0-9０-９]{2,4}号室|ご査収|御見積書/.test(m.text ?? "")) || (m.sender === "customer" && /https?:\/\/|^\[画像\]/.test(m.text ?? "")));
+    if (!promiseAix && finalAix === "property_send" && brainLedger.facts.propertiesSentCount === 0 && (pc?.property_send_count ?? 0) === 0 && !propertyAlreadyInPlay && !isPostApplyStatus(convStatus)) {
+      const readiness = pickupConditionsReady(pc, messagesOldestFirst.filter((m) => m.sender === "customer").map((m) => m.text ?? ""));
+      if (!readiness.ready) {
+        finalAix = "condition_hearing";
+        sceneSignalCheckPattern = null;
+        decisionSource = `rule:conditions_incomplete_hearing(${readiness.missing.join("+")})`;
+      }
     }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);

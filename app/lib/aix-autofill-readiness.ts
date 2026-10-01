@@ -20,6 +20,7 @@
 //   cost_explain・cost_breakdown・guarantor_info … 入力値（金額・還元額・保証会社）
 import { extractDateMentions, fixedViewingSlots } from "./customer-sim-material";
 import { extractRequestedViewingDates } from "./viewing-date-request";
+import { aixAutoSendGate, type AutoSendGate } from "./staff-confirm-facts";
 
 export type AutofillLevel = "auto" | "auto_calendar" | "staff_confirm" | "needs_material" | "unknown";
 export type AixAutofill = {
@@ -28,6 +29,11 @@ export type AixAutofill = {
   prefilled: Record<string, string>;
   /** 生成の引数（/api/aix/action の body に足す）。作れない時は null */
   request: Record<string, unknown> | null;
+  /**
+   * 自動で送ってよいか（2026-10-02 竹内さん「スタッフの確認が要る物は AIX で止める」）。level が auto でも、
+   * 空き状況・見積書・住所・申込の形式などスタッフしか確かめられない事実に頼る AIX は送らない（staff-confirm-facts.aixAutoSendGate）
+   */
+  autoSend: AutoSendGate;
 };
 
 /** 会話だけで作れる AIX（customer-sim の SIM_TEXT_ONLY_AIX と同じ＋電話・確認の宣言） */
@@ -50,6 +56,10 @@ export type AutofillInput = {
 };
 
 export function classifyAixAutofill(i: AutofillInput): AixAutofill {
+  return { ...classifyAixAutofillCore(i), autoSend: aixAutoSendGate(i.action) };
+}
+
+function classifyAixAutofillCore(i: AutofillInput): Omit<AixAutofill, "autoSend"> {
   const action = (i.action ?? "").trim();
   const nowMs = i.nowMs ?? Date.now();
   const prefilled: Record<string, string> = {};
