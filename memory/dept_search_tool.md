@@ -2910,3 +2910,9 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 ## 2026-09-30 点検（v2.5.41 のまま）: 更新日の計画を検索する時刻で数え直す
 - 計画（update_days_plan）はサーバーが積んだ時刻（cron 10:00／16:00・web_brain は押した時）で「前回の検索から空いた時間」を数えていた。実際の検索は not_before（10:15〜11:15＋お客様の間）の後なので、積んだ時 23時間でも検索する時 25時間になり 1日以内では前回との間が漏れる（点検の gap_uncovered は検索を始めた時刻で数える＝食い違う）。
 - 直し: `auto-run.js payloadForCustomer(payload, id, nowMs)` が by_customer[id].last_search_at から**今の時刻で**要る日数を数え直し、広げるだけ（狭めない・余裕 0.5時間・1/3/7/14・超えたら指定なし＝search-update-days.ts と同じ線）。テスト `tests/chrome-extension/sent-skip.test.js`（今の時刻に依らない形に直し＋6件）。
+
+## 2026-10-01 初回は10件の目安・AIX の検索は両サイト（チンシャン「通す1・保留10」・ITANDI 未検索）— 拡張のコードは変えていない
+- AIX から積む検索（aix-action-items AIX_AUTO_SEARCH_SITES）が 9/12 からリアプロだけだった → ["realnetpro","itandi"]（拡張は1つの指示に2サイトあればお客様ごとに両方を終えてから次へ・v2.5.42）。広げての続きはサイトごとに search-widen-chain が決める
+- 広げるかの「通す」の数と 👑 から資料の現況が商談中・審査中を除く／NG 欄・「木造NG」の木造は外す候補（STRUCTURE_WOOD_NG）／「初期費用は安いと嬉しい」等のできればは保留にしない（INITIAL_COST_NOT_ZERO_SOFT）
+- トークの物件カード: 初回／新着／追加の見出し・リアプロ／ITANDI × 🎯ピンポイント／🔎広げて の印・初回の目安10件に足りない数。LINE の見張り（/watch）にも「初回なのに通す物件が足りない→まだの検索」（同じ buildNewArrivalCards）
+- 残り: 10件に足りない時に軽い保留から埋める段（pickQualityTop）・条件フォームの別の間取り（1LDKか2LDK→2LDKだけ）・条件の言い直し後の手の検索を初回扱いに
