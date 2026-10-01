@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
+import { orderByRequestedIds } from "@/app/lib/sent-image-order";
 import { waitUntil } from "@vercel/functions";
 import { pickCustomerBest, bestBasisFor, bestRuleTag, customerImageNeed } from "@/app/lib/pickup-best";
 import { COMPLETE_BEST_WINDOW_HOURS } from "@/app/lib/pickup-complete";
@@ -62,9 +63,10 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     // 2026-09-25 保存期間（届いてから 72時間）が切れた物件は画像を渡さない（image_url: null・AIX には載らない）
     const nowMs = Date.now();
-    const items = ((data ?? []) as Array<{ id: number; created_at: string; expired_at: string | null; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>)
-      // 同じ順位（まとめた回で別の回の【1】どうし）は id の順＝送った印の記録（pickup-sent-plan）と同じ並び
-      .sort((a, z) => (a.rank - z.rank) || (a.id - z.id))
+    // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 頼まれた ids の順（売上サポの画面の並び＝👑 が先頭・次に点の順）で返す。
+    //   旧は rank（拡張の検索順）で並べ直していて、1枚目が 👑 でない回があった（sent-image-order.ts の説明）。
+    //   送った印の記録（pickup-sent-plan）は rank 順で URL と結ぶので、画面が URL を rank 順に並べ直して渡す（imageUrlsInRankOrder）
+    const items = orderByRequestedIds((data ?? []) as Array<{ id: number; created_at: string; expired_at: string | null; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null }>, ids)
       .map((r) => toPickupHandoffItem(withPickupRetention(r, nowMs)));
     return NextResponse.json({ ok: true, items });
   }

@@ -61,7 +61,7 @@ import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentR
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
-import { resolveRecommendCta, readCustomerReaction, removeRecommendClosing, buildFirstMessageNoClosingNote, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
+import { resolveRecommendCta, readCustomerReaction, removeRecommendClosing, buildFirstMessageNoClosingNote, buildFirstMessageCtaNote, setRecommendClosing, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、2通目（aix-template-generate）と同じ関数・同じ材料（売上サポの行の資料の現況）で決める
 import { resolveRecommendViewable, buildVacatingLineNote, ensureVacatingLine, tidyVacatingAndClosing, type RecommendViewable, type ViewableMaterialRow } from "@/app/lib/recommend-viewable";
 import { pickupDealStatus } from "@/app/lib/listing-deal-status";
@@ -72,7 +72,7 @@ import { resolvePropertySendState, describePropertySendState } from "@/app/lib/p
 //   訴求シナリオの判定・ガイド・検査（aix-template-generate と同じ物を見る）
 import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation, isExampleFrameCompatible } from "@/app/lib/recommendation-frame";
 // 2026-10-01 竹内「1通目の言い回しも2通目と同じやり方で直す」: 1通目の形（スタッフが書いた実物）・出口の語・文末の揃え・手本の選別
-import { findFirstAiPhrases, isCleanFirstExample, isFirstRecommendation, unifyBangEnding } from "@/app/lib/first-message-style";
+import { findFirstAiPhrases, isCleanFirstExample, isFirstRecommendation, unifyBangEnding, fixAdjectiveNakaguro } from "@/app/lib/first-message-style";
 import { buildFirstSceneNote, leakedFirstExampleFacts, newArrivalOpening } from "@/app/lib/first-message-scene";
 // 2026-09-21 竹内「申込ありボタンは物件毎につける。そうすれば、どの物件が申込ありなのか判断できるから」
 import { buildApplicationNote, applicationBulletNote } from "@/app/lib/application-status-note";
@@ -92,6 +92,8 @@ import { isMgmtAfterHours, ensureAfterHoursApplyLine, stripLeadingBareAck, APPLY
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 2026-10-01 竹内: 待ち合わせ場所の住所は番地まで（番地の無い住所は文を作らない）
+import { meetingAddressProblem } from "@/app/lib/meeting-address";
 
 export const maxDuration = 300;
 
@@ -2298,6 +2300,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // ── 🏠 物件オススメ ───────────────────────────────────────────
     let recCtaDecision: RecommendCtaDecision | null = null;
     let recViewable: RecommendViewable | null = null;
+    // 2026-10-01 竹内「(iii)『2通目を送らない』と決めた時だけ、1通目に締めを付ける」: 画面（AixModal の物件オススメ）の切り替え。既定は OFF（1通目は締めなし・締めは2通目）
+    const recClosingInFirst = action === "property_recommendation" && body.closing_in_first === true;
     if (action === "property_recommendation") {
       if (!image_url) throw new Error("物件資料画像が必要です");
 
@@ -2516,19 +2520,27 @@ ${SMORA_COMMON_RULES}`;
         reaction: readCustomerReaction(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []),
         notViewable: recView.notViewable,
       });
-      console.log(JSON.stringify({ tag: "aix:recommend-cta", conversationId, kind: recCtaDecision.kind, appeal: recCtaDecision.appeal, notViewable: recCtaDecision.notViewable, reason: recCtaDecision.reason }));
+      console.log(JSON.stringify({ tag: "aix:recommend-cta", conversationId, kind: recCtaDecision.kind, appeal: recCtaDecision.appeal, notViewable: recCtaDecision.notViewable, reason: recCtaDecision.reason, closingInFirst: recClosingInFirst }));
+      conditionsSnapshot.closing_in_first = recClosingInFirst;
+      const recVacatingNote = buildVacatingLineNote(recView, { closingInFirst: recClosingInFirst });
       const recApplyLineNote = "\n\n" + buildRecommendApplyLineNote({ ...recApplyLineInput, ctaDecided: true })
         // 2026-10-01 竹内「締めは2通目だけでも大丈夫・構成として」: 1通目は締めを書かず事実で終える（締めは2通目に1回だけ・recommend-cta.removeRecommendClosing の説明）
-        + "\n\n" + buildFirstMessageNoClosingNote()
+        //   同日「(iii)『2通目を送らない』と決めた時だけ、1通目に締めを付ける」: 画面の切り替えが ON の時だけ、刺さり具合の締め
+        //   （2通目と同じ resolveRecommendCta の種類・実送信の形）を1通目に置く
+        + "\n\n" + (recClosingInFirst ? buildFirstMessageCtaNote(recCtaDecision, { viewableFrom: recView.viewableFrom }) : buildFirstMessageNoClosingNote())
         // 資料から退去予定と分かった時: 退去予定を伝える一文（実送信の形）をそのまま書かせる（動的ブロック＝静的 system のキャッシュは変えない）
-        + (buildVacatingLineNote(recView) ? "\n\n" + buildVacatingLineNote(recView) : "");
+        + (recVacatingNote ? "\n\n" + recVacatingNote : "");
       // 2026-09-17 竹内（現状伝えて・1件訴求）: この型だけ「出力の最初の文字は必ず🌟」を外す。
       //   キャッシュされる静的ブロック（全顧客共通）は触らず、動的ブロックで上書きする（鍵を割らない）
       const situationSystemOverride = isSituationKind(body.situation_kind)
         ? `\n\n【🔴 この通だけの上書き — 上の「出力の最初の文字は必ず🌟」より優先】\nこの通は「探した現状」を1文書いてから🌟の物件カードを出す。順序は 現状の1文 → 空行 → 🌟物件名 … 。\n現状の1文以外は🌟より前に書かない（システム注記・前置き・挨拶は従来どおり禁止）。`
         : "";
       // 2026-09-27 竹内「重い順から治す」: 売上サポから来た1件は資料の入居時期を渡す（YUMA #702「空室 / 相談」「※入居可能日未定」→「即入居可能」と書いた）
-      const recMoveInFactNote = recMoveInFact ? `\n\n${buildMoveInFactNote(recMoveInFact)}` : "";
+      // 2026-10-01 竹内「退去日分からない場合はスタッフ確認していれてるので、入居可能日はいれない」: 資料から退去予定（退去日なし）と決まった時は
+      //   資料の入居時期（「入居可能時期 2026年11月中旬」＋「入居時期に触れるなら資料の文字のまま」）を渡さない（渡すと時期を書く）。
+      //   即入居の禁止は退去予定の指示（buildVacatingLineNote）が言う
+      const recSkipMoveInFact = recView.source === "material" && recView.notViewable && !recView.viewableFrom;
+      const recMoveInFactNote = recMoveInFact && !recSkipMoveInFact ? `\n\n${buildMoveInFactNote(recMoveInFact)}` : "";
       const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + recMoveInFactNote + recApplyLineNote + situationSystemOverride;
 
       const summaryNoteForRec = recCustomerSummary
@@ -2634,6 +2646,7 @@ ${SMORA_COMMON_RULES}`;
         vacating: recView.notViewable,
         name: familyName || "",
         compare: recScenario === "compare",
+        closingInFirst: recClosingInFirst,
       });
       const recUserTextFinal = userText + recWinningNote + knowledgeSection + examplesSection + (recStarNote
         ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + recStarNote
@@ -2728,7 +2741,13 @@ ${SMORA_COMMON_RULES}`;
         // 2026-10-01 竹内「物件オススメ締めの部分 状況的に2通目だけでも大丈夫・構成として」: 1通目は締めの文を落とす（締めは2通目に1回だけ）。
         //   実送信: AIX の1通目の後に2通目を続けて送った 84%・その1通目の 89% は締め無し（recommend-cta.ts の説明）。事実の文は消さない。
         //   締めの種類（刺さり具合）は2通目（aix-template-generate）が同じ関数 resolveRecommendCta で決めて置く
-        if (recCtaDecision && !body.simple_mode) {
+        if (recCtaDecision && !body.simple_mode && recClosingInFirst) {
+          // 2026-10-01 竹内「2通目を送らないと決めた時だけ、1通目に締めを付ける」: 締めを刺さり具合の種類に揃える（無ければ足す・別の種類の定型だけの段落は差し替え）。
+          //   9/30 に1通目で使っていた setRecommendClosing（全件監査 scripts/audit-recommend-cta.ts で誤削除0）をこの時だけ使う。removeRecommendClosing は掛けない
+          const sc = setRecommendClosing(message_text, recCtaDecision.kind);
+          if (sc.applied.length > 0) { console.log(JSON.stringify({ tag: "aix:recommend-closing-in-first", conversationId, kind: recCtaDecision.kind, applied: sc.applied })); message_text = sc.text; }
+        }
+        if (recCtaDecision && !body.simple_mode && !recClosingInFirst) {
           const rc = removeRecommendClosing(message_text);
           if (rc.removed.length > 0) {
             console.log(JSON.stringify({ tag: "aix:recommend-closing-removed", conversationId, kind: recCtaDecision.kind, removed: rc.removed }));
@@ -2742,6 +2761,11 @@ ${SMORA_COMMON_RULES}`;
         }
         // 2026-10-01 竹内「文末の『。』と『！！』の混在」: 混ざっている時だけ文末の「。」を「！！」に揃える（語は消さない。
         //   スタッフが書いた1通目 33通で掛かる通 0・「。」で終わる文 0。全部「。」の通・URL・箇条書きの行は触らない）
+        // 2026-10-01 竹内「上の『浅く・』を直す」: 形容詞の連用形（浅く・広く…）の後の「・」を「、」に（語は消さない・スタッフの文で替わるのは1通だけ＝多数の形「浅く、」へ）
+        {
+          const fa = fixAdjectiveNakaguro(message_text);
+          if (fa.changed > 0) { console.log(JSON.stringify({ tag: "aix:first-adj-nakaguro", conversationId, changed: fa.changed })); message_text = fa.text; }
+        }
         {
           const ub = unifyBangEnding(message_text);
           if (ub.changed > 0) { console.log(JSON.stringify({ tag: "aix:first-bang-unified", conversationId, changed: ub.changed })); message_text = ub.text; }
@@ -6528,6 +6552,12 @@ ${SMORA_COMMON_RULES}`;
       }
 
     } else if (action === "meeting_place") {
+      // 2026-10-01 竹内（YUMA「住所: 大阪府大阪市北区天満3丁目」）: 住所は番地まで。番地の無い住所では文を作らず理由を返す
+      //   （画面の関所の2枚目。空＝住所なしは今のまま。物差しは app/lib/meeting-address.ts の1関数）
+      const mpAddrProblem = meetingAddressProblem(body.meeting_property_address ? String(body.meeting_property_address) : "");
+      if (mpAddrProblem) {
+        return NextResponse.json({ ok: false, error: `住所の${mpAddrProblem}` }, { status: 200 });
+      }
       // conversation_match: テンプレ固定なし・会話から日時・物件を読んで自然な待ち合わせ文を生成
       if (body.conversation_match) {
         // base_messageがある場合もadaptMessageToConversationは使わず再生成（テンプレ冒頭が残るため）

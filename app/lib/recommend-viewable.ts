@@ -15,6 +15,14 @@
 //   → 退去日が無く入居可能の時期だけある時: 「退去予定のお部屋となり、11月中旬ごろご入居可能となります！！」
 //   「最短での入居可能時期となります」… 1通だけ（前の版が2通目に渡していた言い方）→ やめる。「居住中」0通・「入居中」5通 → お客様への言い方は「退去予定」。
 //   年（2026年）は書かない（実送信の退去予定の文に年は無い）。
+//
+// ■ 2026-10-01 竹内さん「これ退去日分からない場合はスタッフ確認していれてるので、入居可能日はいれない」
+//   資料に退去日が無く「居住中・入居可能時期11月中旬」だけの時、前の版は「退去予定のお部屋となり、11月中旬ごろご入居可能となります！！」を入れていた。
+//   退去日が分からない時の入居可能日（時期）はスタッフが管理会社に確認して入れる物 → 文には入れない。退去予定であることを伝える一文だけ:
+//   「退去予定のお部屋となります！！」（スタッフの文 13,152通で「退去予定のお部屋となります！」30通・うち is_aix_generated でない 20通。
+//    実物は「6月末退去予定のお部屋となります！！」のように退去の時期が前に付く形が多いが、退去の時期も資料に無いので付けない＝作らない）
+//   退去日が資料にある時の「10月17日退去予定のため、10月18日以降ご内覧可能となります！！」は今まで通り。
+//   moveInWhen は読むだけ（文に入れない。出口 tidyVacatingAndClosing が前の版の一文を今の一文に戻す時の目印）
 
 import { readPropertyStateFromText } from "./property-send-state";
 
@@ -33,7 +41,7 @@ export type MaterialViewable = {
   vacancyDate: string | null;
   /** ご内覧可能日（「10月18日」）。退去予定日がある時だけ */
   viewableFrom: string | null;
-  /** 入居可能の時期（「11月中旬」「11月11日」）。資料に無ければ null */
+  /** 入居可能の時期（「11月中旬」「11月11日」）。資料に無ければ null。⚠ 文には入れない（2026-10-01 竹内: 退去日が分からない時の入居可能日はスタッフが確認して入れる） */
   moveInWhen: string | null;
   /** 退去予定を伝える一文（実送信の形）。空室・分からない時は null */
   line: string | null;
@@ -78,11 +86,12 @@ export function readMaterialViewable(row: ViewableMaterialRow | null | undefined
   }
   if (mi?.kind === "immediate") return NONE; // 居住中なのに即入居可＝資料が食い違う
   const when = mi ? moveInWhenOf(mi) : null;
-  return {
-    notViewable: true, vacancyDate: null, viewableFrom: null, moveInWhen: when,
-    line: when ? `退去予定のお部屋となり、${when}ごろご入居可能となります！！` : "退去予定のお部屋となります！！",
-  };
+  // 2026-10-01: 退去日が分からない時は入居可能日（時期）を文に入れない（スタッフが確認して入れる）→ 時期の有無に関わらず同じ一文
+  return { notViewable: true, vacancyDate: null, viewableFrom: null, moveInWhen: when, line: VACATING_NO_DATE_LINE };
 }
+
+/** 退去日が資料に無い時の、退去予定を伝える一文（入居可能日・時期は入れない） */
+export const VACATING_NO_DATE_LINE = "退去予定のお部屋となります！！";
 
 export type RecommendViewable = {
   notViewable: boolean;
@@ -90,6 +99,8 @@ export type RecommendViewable = {
   /** 退去予定を伝える一文（資料から作れた時だけ。本文・ブレインが出どころの時は null＝本文に既にある／日付はブレインの viewableFrom） */
   line: string | null;
   source: "text" | "material" | "brain";
+  /** 資料の入居可能の時期（文には入れない・出口の目印だけ）。資料から決めた時だけ */
+  moveInWhen?: string | null;
 };
 
 /**
@@ -108,7 +119,7 @@ export function resolveRecommendViewable(i: {
   const t = readPropertyStateFromText(i.text ?? "", now);
   if (t.vacancyDate) return { notViewable: t.notViewable, viewableFrom: t.viewableFrom, line: null, source: "text" };
   const m = readMaterialViewable(i.material, now);
-  if (m.notViewable !== null) return { notViewable: m.notViewable, viewableFrom: m.viewableFrom, line: m.notViewable ? m.line : null, source: "material" };
+  if (m.notViewable !== null) return { notViewable: m.notViewable, viewableFrom: m.viewableFrom, line: m.notViewable ? m.line : null, source: "material", moveInWhen: m.notViewable ? m.moveInWhen : null };
   return { notViewable: i.brain.notViewable, viewableFrom: i.brain.viewableFrom ?? null, line: null, source: "brain" };
 }
 
@@ -121,12 +132,17 @@ export function mentionsVacating(text: string | null | undefined): boolean {
 }
 
 /** 生成に渡す一文（資料から退去予定と分かった時だけ。無ければ空） */
-export function buildVacatingLineNote(v: RecommendViewable): string {
+export function buildVacatingLineNote(v: RecommendViewable, o: { closingInFirst?: boolean } = {}): string {
   if (!v.notViewable || !v.line) return "";
   return [
     "【このお部屋は退去予定（資料の現況から・まだご内覧頂けない）】",
     `・退去予定を伝える一文はこのまま書く: 「${v.line}」（言い回し・日付を変えない。年や「居住中」「入居中」は書かない）`,
-    "・この一文は最後の段落に1回だけ（2026-10-01: 1通目は締めを書かず、この一文で終える）。内覧の誘導（ご都合よろしいお日にちにご案内）は書かない。「即入居可能」も書かない",
+    // 2026-10-01 竹内「退去日分からない場合はスタッフ確認していれてるので、入居可能日はいれない」
+    ...(v.viewableFrom ? [] : ["・入居可能日・入居可能の時期（「11月中旬ごろご入居可能」等）は書かない（退去日が分からないお部屋は、スタッフが管理会社に確認して入れる）"]),
+    o.closingInFirst
+      // 2026-10-01 竹内「2通目を送らないと決めた時だけ、1通目に締めを付ける」
+      ? "・この一文は本文の最後の段落に1回だけ置き、その次の段落に締めの1文（下の【この通の締め】の形）を置く。内覧の誘導（ご都合よろしいお日にちにご案内）は書かない。「即入居可能」も書かない"
+      : "・この一文は最後の段落に1回だけ（2026-10-01: 1通目は締めを書かず、この一文で終える）。内覧の誘導（ご都合よろしいお日にちにご案内）は書かない。「即入居可能」も書かない",
   ].join("\n");
 }
 
@@ -167,6 +183,15 @@ export function tidyVacatingAndClosing(text: string, v: RecommendViewable | null
   if (!src.trim()) return { text: src, applied: [] };
   const applied: string[] = [];
   const target = v?.notViewable && v.line ? looseKey(v.line) : null;
+  // 2026-10-01 竹内「退去日分からない場合は入居可能日はいれない」: 前の版が渡していた一文（資料の時期入り）を書いた時は、今の一文に戻す。
+  //   当てるのは「退去予定のお部屋となり（で）、{資料の時期}ごろご入居可能となります！！」の形だけ（年・ごろ・に・句読点の違いは無視）＝別の内容の文は触らない
+  const oldKeys = new Set<string>();
+  if (v?.notViewable && v.line && !v.viewableFrom && v.moveInWhen) {
+    for (const head of ["退去予定のお部屋となり、", "退去予定のお部屋で"]) {
+      for (const tail of ["ごろご入居可能となります！！", "ご入居可能となります！！", "が最短での入居可能時期となります！！"]) oldKeys.add(looseKey(`${head}${v.moveInWhen}${tail}`));
+    }
+  }
+  const oldKeyOf = (t: string) => looseKey(t.replace(/\d{4}年(?=\d{1,2}月)/g, ""));
   const paras = src.split(/\n\s*\n/);
   const outParas: string[] = [];
   for (const para of paras) {
@@ -187,6 +212,7 @@ export function tidyVacatingAndClosing(text: string, v: RecommendViewable | null
       body = body.replace(SENTENCE_RE, (s) => {
         const t = s.trim();
         if (t !== line && looseKey(t) === target) { applied.push("vacating_line_exact"); return s.replace(t, line); }
+        if (oldKeys.size && oldKeys.has(oldKeyOf(t))) { applied.push("vacating_line_no_move_in"); return s.replace(t, line); }
         return s;
       });
     }

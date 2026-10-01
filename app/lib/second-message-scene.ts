@@ -221,12 +221,18 @@ export type PickupPushRow = SecondMaterialRow & ReviewOrderRow & {
  *   AD・家賃の最大／最安で決めている形は読めなかった（AD が2件以上読める組 0）→ 並びの先頭を推す。締めは recommend-cta（その行の採点）で決める。
  * 行が2件未満（1件だけ送った・売上サポを通らずに送った）の時は null（今まで通り）。送った回は一番新しい送った時刻から10分以内の行。
  */
-export function pickPickupSecondTarget<T extends PickupPushRow>(rows: ReadonlyArray<T>): T | null {
+export function pickPickupSecondTarget<T extends PickupPushRow>(rows: ReadonlyArray<T>, o: { firstSentId?: number | null } = {}): T | null {
   const sent = rows.filter((r) => r.sent_at && !Number.isNaN(Date.parse(r.sent_at)));
   if (sent.length < 2) return null;
   const last = Math.max(...sent.map((r) => Date.parse(r.sent_at!)));
   const batch = sent.filter((r) => last - Date.parse(r.sent_at!) <= 10 * 60_000);
   if (batch.length < 2) return null;
+  // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送った画像の1枚目（AixModal が AIX の記録 picker_choices.first_pickup_id に残す）が
+  //   この回にあればそれ（売上サポは 👑 が先頭の並びで送る・sent-image-order.ts）。記録が無い（古い送信・画像を差し替えた）時は画面の並びの先頭（今まで通り）
+  if (o.firstSentId != null) {
+    const hit = batch.find((r) => r.id === o.firstSentId);
+    if (hit) return hit;
+  }
   return sortForReview(batch)[0] ?? null;
 }
 
@@ -286,6 +292,8 @@ export function buildSecondSceneNote(i: SecondSceneInput): string {
   }
   // ⚠ ここに言い回しの例（「費用を抑える事ができ」等）を書かない: YUMA のテストで、礼金のある物件にその語がそのまま出た（指示の語は本文に出る）
   L.push("・理由は、上の【資料の事実】と1通目にある事実を1〜2つ。「・」か「で、」でつないで同じ1文の中に入れる（下の実物の入れ方）。");
+  // 2026-10-01 竹内「上の『浅く・』を直す」（YUMA の2通目「築年数浅く・バス・トイレ別・独立洗面台付きで」）: スタッフは「浅く、」（152通）・「浅く・」は AI の下書きだけ
+  L.push("　「浅く」「広く」のような「〜く」の後は「、」でつなぐ（「〜築で築年数浅く、」の形）。「築年数浅く・」とは書かない。");
   L.push("　理由を別の文に切り出さない。事実をつないで「かなりオススメ出来るお部屋となります！！」で結び、その後に設備や感想の文を足さない。");
   L.push("　敷金礼金・初期費用の事は、【資料の事実】に「敷金・礼金: どちらもなし」とある時だけ書く。");
   L.push(`・物件は建物名から書く（${label}）。号室だけで呼ばない（実送信477組で0通）。2回目からは「こちらのお部屋」。`);

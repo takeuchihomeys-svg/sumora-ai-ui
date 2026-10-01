@@ -1071,7 +1071,11 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     const noImage = targets.filter((it) => !it.trim_image_url);
     if (noImage.length > 0 && !(await trim(b, noImage))) return;
     // 2026-09-25: 1件＝AIX【物件オススメ】（資料をセット）・2件以上＝AIX【物件ピックアップした】（画像を並べてセット）
-    const href = buildPickupAixHref({ conversationId: convId, pickupIds: targets.map((it) => it.id), batchId: b.batch_id });
+    // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送る並び＝この回の画面の並び（👑 が先頭・次に点の順）。
+    //   旧は ids を DB の並びで渡し、トーク側の GET が rank（拡張の検索順）に並べ直していた＝1枚目が 👑 でない回があった（sent-image-order.ts）
+    const atOf = new Map((b.parts ?? [b]).map((x) => [x.batch_id, x.created_at] as const));
+    const rb = roundBestId(b.items.map((x) => ({ ...x, batch_id: x.batch_id ?? b.batch_id, created_at: atOf.get(x.batch_id ?? "") ?? b.created_at })), bestBasisFor(c.image_need), c.best?.id ?? null);
+    const href = buildPickupAixHref({ conversationId: convId, pickupIds: sortForReview(targets, rb).map((it) => it.id), batchId: b.batch_id });
     if (!href) { setMsg("AIX に渡せませんでした（チェックと会話の紐付けを確かめてください）"); return; }
     leaveTo(href);
   };

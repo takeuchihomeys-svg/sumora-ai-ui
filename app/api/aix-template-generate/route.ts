@@ -74,6 +74,8 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
 import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
+import { fixAdjectiveNakaguro } from "@/app/lib/first-message-style";
+import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
 import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
 
@@ -376,6 +378,13 @@ type GenerateRequestBody = {
    *   1通目「ピックアップしました」33.3% → 2通目で未来形 0.2% ／ ご査収の重ね 3.1% ／ 挨拶の重ね 2.0%
    */
   sentMessage?: string | null;
+  /** 2026-10-01: sentMessage の出どころ（post_aix＝送った直後の画面／history＝会話の履歴の最後の AIX）。ログ用 */
+  sentMessageSource?: string | null;
+  /**
+   * 2026-10-01: テンプレート一覧の「訴求方法を選択する！！」（🏃内覧に誘う＝viewing／🚀申込へ押し込む＝apply）。
+   * 押している時は物件オススメの2通目の締めをこれにする（刺さり具合の判定 resolveRecommendCta よりスタッフの選択が先）
+   */
+  ctaPreference?: "viewing" | "apply" | null;
 };
 
 const STATE_LABEL: Record<string, string> = {
@@ -563,9 +572,15 @@ export async function POST(req: NextRequest) {
     pickupType,
     lastAixCheckPattern,
     customerSummary,
-    // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前に送った1通目
-    sentMessage,
+    sentMessageSource,
+    ctaPreference,
   } = body;
+  // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前に送った1通目
+  // 2026-10-01 竹内「✨この会話に合った文を生成のところをこの改善したようにする」: 画面が渡さない時（古い画面・後から開いた時）は、
+  //   今の会話の履歴の最後の AIX（選んだ種類と同じ形の時だけ）を1通目として使う（画面と同じ関数 aix-template-source.ts）
+  const sentFallback = resolveTemplateSentMessage({ actionType, postAixSent: body.sentMessage ?? null, recent: recentMessages ?? [] });
+  const sentMessage = sentFallback.text;
+  console.log(JSON.stringify({ tag: "aix-template-generate:sent-message", actionType: actionType ?? null, source: body.sentMessage ? (sentMessageSource ?? "post_aix") : sentFallback.source, len: (sentMessage ?? "").length, ctaPreference: ctaPreference ?? null }));
 
   // 2026-09-22 竹内「今日初めてじゃないときはお世話になっておりますはつかわない」: 画面の判定（AIX テンプレートは false 固定だった）に頼らず DB でも見る
   const staffSentToday = !!staffMessagedToday || await staffSentTodayFromDb(conversationId as string | undefined);
@@ -1356,8 +1371,16 @@ export async function POST(req: NextRequest) {
       const { data } = await supabase.from("property_pickups")
         .select("id, rank, recommended, score, verdict, reason_codes, created_at, image_analysis, property_name, room_no, terms, location, equipment, sent_at")
         .eq("conversation_id", conversationId).gte("sent_at", sinceIso).order("sent_at", { ascending: false }).limit(20);
-      pickupPush = pickPickupSecondTarget((data ?? []) as PickupPushRow[]);
-      console.log(JSON.stringify({ tag: "aix-template-generate:pickup-push", rows: (data ?? []).length, target: pickupPush ? `${pickupPush.property_name} ${pickupPush.room_no}` : null }));
+      // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送った画像の1枚目＝AIX【物件ピックアップした】の記録（picker_choices.first_pickup_id）
+      let firstSentId: number | null = null;
+      try {
+        const { data: lg } = await supabase.from("aix_usage_logs").select("picker_choices, created_at")
+          .eq("conversation_id", conversationId).eq("aix_type", "property_send").gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(1);
+        const v = (lg?.[0]?.picker_choices as { first_pickup_id?: unknown } | null | undefined)?.first_pickup_id;
+        if (typeof v === "number" && Number.isInteger(v)) firstSentId = v;
+      } catch { /* 記録が読めなければ画面の並びの先頭 */ }
+      pickupPush = pickPickupSecondTarget((data ?? []) as PickupPushRow[], { firstSentId });
+      console.log(JSON.stringify({ tag: "aix-template-generate:pickup-push", rows: (data ?? []).length, firstSentId, target: pickupPush ? `${pickupPush.property_name} ${pickupPush.room_no}` : null, byFirstSent: !!pickupPush && pickupPush.id === firstSentId }));
     } catch (e) {
       console.warn("[aix-template-generate] pickup-push failed:", e instanceof Error ? e.message : e);
     }
@@ -1397,6 +1420,12 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.warn("[aix-template-generate] recommend-cta failed:", e instanceof Error ? e.message : e);
     }
+  }
+  // 2026-10-01: テンプレート一覧の「訴求方法を選択する！！」を押している時は、その締め（内覧に誘う／申込へ押し込む）にする。
+  //   刺さり具合の判定（resolveRecommendCta）はスタッフが選んでいない時の決め方＝スタッフの選択が先
+  if (recCta && (ctaPreference === "viewing" || ctaPreference === "apply") && recCta.kind !== ctaPreference) {
+    console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta-staff", from: recCta.kind, to: ctaPreference }));
+    recCta = { ...recCta, kind: ctaPreference, appeal: "strong", reason: `スタッフが画面で「${ctaPreference === "viewing" ? "内覧に誘う" : "申込へ押し込む"}」を選んだ` };
   }
 
   // ── 2026-09-30 竹内「2通目の言い回しが AI くさい」: 物件オススメの直後の2通目の形（場面ごとの実送信の実物）と資料の事実 ──
@@ -1947,6 +1976,9 @@ export async function POST(req: NextRequest) {
       // 「YUMAさんかなりオススメ出来る」→「YUMAさんにかなりオススメ出来る」（実送信 814 対 3）
       const ni = fixMissingNi(text);
       if (ni.fixed > 0) { console.log(JSON.stringify({ tag: "aix-template-generate:second-ni-fixed", fixed: ni.fixed })); text = ni.text; }
+      // 2026-10-01 竹内「上の『浅く・』を直す」（YUMA の2通目「築年数浅く・バス・トイレ別」）: 「〜く・」→「〜く、」（1通目と同じ関数・語は消さない）
+      const fa = fixAdjectiveNakaguro(text);
+      if (fa.changed > 0) { console.log(JSON.stringify({ tag: "aix-template-generate:second-adj-nakaguro", changed: fa.changed })); text = fa.text; }
     }
     if (isRecSecond && !noEmoji) {
       const em = ensureOneEmoji(text);

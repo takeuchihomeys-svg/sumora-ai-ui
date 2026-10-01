@@ -42,6 +42,7 @@ import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 import { effectiveRpUpdateDays } from "./lib/rp-update-days";
 import { parsePickupAixHandoff, planPickupMarkSent, type PickupAixType } from "./lib/pickup-aix-handoff";
+import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -6064,7 +6065,7 @@ export default function Home() {
   //   aix=property_recommendation（1件）も受ける。物件オススメは資料1枚を「② 物件資料」にセットして開く（pickup-aix-handoff.ts）
   // handoffIds: handoffFiles と同じ並びの行 ID（画像を取れた行だけ）。sentFiles: 送る直前の File の並び（AixModal の onPropertySendFiles）
   //   → 送った印は planPickupMarkSent（pickup-aix-handoff.ts）が「セットした画像が送る直前に残っていた行」だけに付ける（2026-09-25 E2E の反証）
-  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; handoffNames?: string[]; sentFiles?: File[] | null } | null>(null);
+  const pickupHandoffRef = useRef<{ conv: string; ids: string; batch: string; aix: PickupAixType; done: boolean; sentImageUrls?: string[]; handoffFiles?: File[]; handoffIds?: number[]; handoffNames?: string[]; handoffRanks?: number[]; sentFiles?: File[] | null } | null>(null);
   useEffect(() => {
     try {
       const h = parsePickupAixHandoff(window.location.search);
@@ -6084,6 +6085,8 @@ export default function Home() {
         const files: File[] = [];
         const fileIds: number[] = [];
         const fileNames: string[] = [];
+        // 2026-10-01: 行の rank（送った印の記録が URL を rank 順で結ぶ・並び替えて渡すため）。GET は画面の並び（👑 が先頭）で返す
+        const fileRanks: number[] = [];
         for (const it of json.items ?? []) {
           if (!it.image_url) continue;
           try {
@@ -6092,12 +6095,14 @@ export default function Home() {
             fileIds.push(it.id);
             // 2026-09-27: 送った物件の名前（資料の文字のまま・号室付き）を台帳の物件送付の記録に渡す
             fileNames.push(`${it.property_name}${it.room_no ? ` ${it.room_no}` : ""}`);
+            fileRanks.push(it.rank);
           } catch { /* その1枚は飛ばす */ }
         }
         // 物件オススメは1枚だけセットする（送った印もその1件）
         h.handoffFiles = h.aix === "property_recommendation" ? files.slice(0, 1) : files;
         h.handoffIds = h.aix === "property_recommendation" ? fileIds.slice(0, 1) : fileIds;
         h.handoffNames = h.aix === "property_recommendation" ? fileNames.slice(0, 1) : fileNames;
+        h.handoffRanks = h.aix === "property_recommendation" ? fileRanks.slice(0, 1) : fileRanks;
         if (h.aix === "property_recommendation" && files[0]) {
           // 物件オススメ: 1件の資料をセットして開く（ピッカーの「新規／継続…」は通さない＝売上サポで選んだ一番オススメの1件）
           setAixInitialPickupType(null);
@@ -10786,7 +10791,7 @@ export default function Home() {
           }}
           onSendCallButton={sendCallButton}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number; noSecondMessage?: boolean }) => {
             // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
             let _sentPickupNames: string[] | null = null;
             {
@@ -10804,7 +10809,8 @@ export default function Home() {
                 if (plan) void fetch("/api/property-pickups/send", {
                   method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
                   // image_urls: 届いた画像（送った順）。数がピックアップと合う時だけ sent_properties の行と結ぶ（合わなければサーバーが書かない）
-                  body: JSON.stringify({ batch_id: h.batch, item_ids: plan.itemIds, action: "mark_sent", sent_by: "aix", image_urls: plan.imageUrls, conversation_id: h.conv }),
+                  // 2026-10-01: 画像は画面の並び（👑 が先頭）で送る。記録（pickup-sent-plan）は rank 順の行と位置で結ぶので、URL を rank 順に並べ直して渡す（並べ直せなければ渡さない＝結ばない）
+                  body: JSON.stringify({ batch_id: h.batch, item_ids: plan.itemIds, action: "mark_sent", sent_by: "aix", image_urls: plan.imageUrls.length ? imageUrlsInRankOrder((h.handoffIds ?? []).map((id, i) => ({ id, rank: h.handoffRanks?.[i] })), plan.imageUrls) : [], conversation_id: h.conv }),
                 }).catch(() => {});
               }
             }
@@ -11028,7 +11034,12 @@ export default function Home() {
               const _b5Meta = AIX_ACTION_META[aixModalType];
               // API主導のカテゴリ（/api/aix/action の suggest_template_category）を優先し、無ければ AIX_ACTION_META にフォールバック
               const _b5BaseCategory = meta?.suggestTemplateCategory ?? _b5Meta?.templateCategory;
-              if (_b5BaseCategory) {
+              // 2026-10-01 竹内「(iii)『2通目を送らない』と決めた時だけ、1通目に締めを付ける」: 物件オススメをその切り替えで送った時は
+              //   「物件オススメ【AIX】の続きを送る」のバナーを出さない（前の AIX のバナーが残っていれば消す）。テンプレートの画面は元々自動では開かない
+              if (meta?.noSecondMessage) {
+                const _nsConvId = selectedConversation.id;
+                setPostAixTemplateMap((prev) => { if (!prev[_nsConvId]) return prev; const n = { ...prev }; delete n[_nsConvId]; return n; });
+              } else if (_b5BaseCategory) {
                 const _b5ConvId = selectedConversation.id;
                 let _b5Category = _b5BaseCategory;
                 if (aixModalType === "property_check_result") {

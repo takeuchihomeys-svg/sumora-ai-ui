@@ -1,7 +1,8 @@
 // 実行: npx tsx app/lib/__tests__/first-message-style.test.ts
 // 2026-10-01 竹内「1通目（AIX 物件オススメ）の言い回しも2通目と同じやり方で直す」
 //   YUMA の LINE に実際に届いた1通目（AI・9/30）と、スタッフが実際に書いた1通目（実送信）の本文をそのまま使う。
-import { findFirstAiPhrases, isCleanFirstExample, isFirstRecommendation, unifyBangEnding, FIRST_PHRASE_RULES } from "../first-message-style";
+import { findFirstAiPhrases, isCleanFirstExample, isFirstRecommendation, unifyBangEnding, fixAdjectiveNakaguro, FIRST_PHRASE_RULES } from "../first-message-style";
+import { orderByRequestedIds, imageUrlsInRankOrder, firstSentPickupId } from "../sent-image-order";
 import { buildFirstSceneNote, newArrivalOpening, leakedFirstExampleFacts, renderFirstExample, FIRST_MESSAGE_EXAMPLES } from "../first-message-scene";
 import { pickPickupSecondTarget, type PickupPushRow } from "../second-message-scene";
 import { removeRecommendClosing } from "../recommend-cta";
@@ -93,6 +94,49 @@ console.log("■ ピックアップの後に推す物件（pickPickupSecondTarge
   t("一番新しい送った回（10分以内）の中で、売上サポの並びの先頭（点の高い B館）", r?.property_name === "B館", r?.property_name ?? "null");
   t("送った行が1件だけなら null（今まで通り）", pickPickupSecondTarget([rows[0]]) === null);
   t("送った印が無い行は数えない", pickPickupSecondTarget(rows.map((x) => ({ ...x, sent_at: null }))) === null);
+  // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送った画像の1枚目の記録があればそれ
+  t("★ 送った画像の1枚目（記録 first_pickup_id）がこの回にあればそれを推す（点の順より先）", pickPickupSecondTarget(rows, { firstSentId: 1 })?.property_name === "A館");
+  t("記録の行がこの回に無い（前の回）→ 画面の並びの先頭（今まで通り）", pickPickupSecondTarget(rows, { firstSentId: 3 })?.property_name === "B館");
+  t("記録が無い → 画面の並びの先頭", pickPickupSecondTarget(rows, { firstSentId: null })?.property_name === "B館");
+}
+
+console.log("■ 送る画像の並び（sent-image-order）");
+{
+  const rows = [{ id: 10, rank: 1 }, { id: 11, rank: 2 }, { id: 12, rank: 3 }];
+  t("★ GET は頼まれた ids の順（👑=12 が先頭）で返す", orderByRequestedIds(rows, [12, 10, 11]).map((r) => r.id).join(",") === "12,10,11");
+  t("頼まれていない行は後ろに rank の順", orderByRequestedIds([...rows, { id: 13, rank: 0 }], [11]).map((r) => r.id).join(",") === "11,13,10,12");
+  // 画面の並び（👑 12 → 10 → 11）で送った URL を、記録（rank 順）の並びに直す
+  t("★ 届いた URL を rank 順に並べ直す（記録は rank 順の行と位置で結ぶ）", imageUrlsInRankOrder([{ id: 12, rank: 3 }, { id: 10, rank: 1 }, { id: 11, rank: 2 }], ["u12", "u10", "u11"]).join(",") === "u10,u11,u12");
+  t("数が合わない・rank が無い時は渡さない（結ばない）", imageUrlsInRankOrder([{ id: 1, rank: 1 }], ["a", "b"]).length === 0 && imageUrlsInRankOrder([{ id: 1, rank: undefined }], ["a"]).length === 0);
+  const f1 = { n: 1 }, f2 = { n: 2 }, f3 = { n: 3 };
+  t("★ 送った1枚目の行（セットしたまま）", firstSentPickupId({ handoffIds: [12, 10], handoffFiles: [f1, f2], sentFiles: [f1, f2] }) === 12);
+  t("スタッフが並べ替えた → 送った1枚目の画像の行", firstSentPickupId({ handoffIds: [12, 10], handoffFiles: [f1, f2], sentFiles: [f2, f1] }) === 10);
+  t("1枚目を差し替えた・分からない → null", firstSentPickupId({ handoffIds: [12, 10], handoffFiles: [f1, f2], sentFiles: [f3, f1] }) === null && firstSentPickupId({ handoffIds: undefined, handoffFiles: undefined, sentFiles: [f1] }) === null);
+}
+
+console.log("■ 「浅く・」→「浅く、」（fixAdjectiveNakaguro）");
+{
+  // 2026-10-01 YUMA に届いた2通目そのまま
+  const YUMA2 = "お送りさせて頂きましたお部屋の中でも特にレオンコンフォート梅田北 703号室が2020年1月築で築年数浅く・バス・トイレ別・独立洗面台付きで、YUMAさんにかなりオススメ出来るお部屋となります😊！！";
+  const r = fixAdjectiveNakaguro(YUMA2);
+  t("★ 実物: 「築年数浅く・バス・トイレ別」→「築年数浅く、バス・トイレ別」（バス・トイレの「・」は触らない）", r.changed === 1 && r.text === YUMA2.replace("浅く・", "浅く、"), r.text);
+  // 実送信（AIX の下書きのまま送った1通目）
+  const AIX1 = "🌟BRAVE新町 802号室\n\n2022年築で築年数浅く・ペット可・長堀鶴見線「西長堀」徒歩2分、mさんにかなりオススメ出来るお部屋となります！！";
+  t("実送信の1通目（AIX のまま）も直る", fixAdjectiveNakaguro(AIX1).text.includes("築年数浅く、ペット可"));
+  // スタッフの文（名詞の「近く」）は触らない
+  const HUMAN = "家賃7.5万円・築7年以内・駅徒歩7分以内・スーパー近く・ペット可のご条件で和音さんにオススメできるお部屋ピックアップさせて頂きます！！";
+  t("★ スタッフの文「スーパー近く・ペット可」（近く＝名詞）は触らない", fixAdjectiveNakaguro(HUMAN).changed === 0 && fixAdjectiveNakaguro(HUMAN).text === HUMAN);
+  t("「浅く、」「バス・トイレ別」は触らない", fixAdjectiveNakaguro("築年数浅く、バス・トイレ別").changed === 0);
+  t("語は消さない（長さは同じ）", r.text.length === YUMA2.length);
+}
+
+console.log("■ 2通目を送らない時だけ1通目に締め（buildFirstSceneNote closingInFirst）");
+{
+  const off = buildFirstSceneNote({ isNew: false, vacating: false, name: "YUMA" });
+  const on = buildFirstSceneNote({ isNew: false, vacating: false, name: "YUMA", closingInFirst: true });
+  t("既定（OFF）: 締めを書かない", off.includes("締めの誘導（ご案内・お申込でお部屋を抑える・ご査収ください）は書かない"));
+  t("★ ON: 最後の段落に締めの1文を置く・「書かない」の指示は無い", on.includes("最後の段落に締めの1文") && !on.includes("締めの誘導（ご案内・お申込でお部屋を抑える・ご査収ください）は書かない"));
+  t("「浅く・」と書かない指示が1通目に入る", off.includes("「築年数浅く・」とは書かない"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

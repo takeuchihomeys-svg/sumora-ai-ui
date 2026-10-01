@@ -6,6 +6,7 @@ import { IMAGE_BATCH_MAX } from "../lib/line-image-batch";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
 // 2026-09-19 竹内（a🤫 事例）: 退去予定物件の「内覧可能日時」は退去日の翌日から（純関数・テストあり）
 import { viewableFromYmd, vacancyExtraYmds, resolveVacancySlotEnabled, isBeforeViewable } from "../lib/viewing-window";
+import { meetingAddressProblem, meetingTextAddressProblem } from "../lib/meeting-address";
 import { viewableFromVacancyDate, vacancyDateLabel } from "../lib/vacating-notice";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した — 内覧の流れの判定（サーバと同じ純関数で「流れを続ける」の初期値を出す）
 import { resolveViewingThread } from "../lib/viewing-thread";
@@ -30,6 +31,7 @@ import { buildCampaignLine, CAMPAIGN_PLACEHOLDER } from "../lib/estimate-campaig
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
+import { firstSentPickupId } from "../lib/sent-image-order";
 import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
@@ -113,7 +115,7 @@ interface AixModalProps {
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number; noSecondMessage?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -742,6 +744,9 @@ export default function AixModal({
   // 物件オススメ専用: 特に強調するポイント（複数選択可）。テンプレートモーダルから引き継ぐ場合は initialFocusPoints で渡す
   const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>(initialFocusPoints ?? []);
   const [recSimpleMode, setRecSimpleMode] = useState(false);
+  // 2026-10-01 竹内「(iii)『2通目を送らない』と決めた時だけ、1通目に締めを付ける」: 物件オススメの切り替え（既定 OFF＝1通目は締めなし・締めは2通目）。
+  //   ON → /api/aix/action に closing_in_first=true（1通目に刺さり具合の締め）・送信後は「続きを送る」テンプレのバナーを出さない（2通目を送らないと決めたので）
+  const [recClosingInFirst, setRecClosingInFirst] = useState(false);
   const [ackCheckPreset, setAckCheckPreset] = useState<"daihyo_initial_cost" | "kanri_boshu" | null>(null);
   const [loading, setLoading] = useState(false);
   type GenPhase = "idle" | "uploading" | "prepare" | "generating" | "finalizing";
@@ -1005,6 +1010,8 @@ export default function AixModal({
   const [meetingPropertyPreview, setMeetingPropertyPreview] = useState<string>("");
   const [meetingPropertyName, setMeetingPropertyName] = useState<string>("");
   const [meetingPropertyAddress, setMeetingPropertyAddress] = useState<string>("");
+  // 2026-10-01: 読み取りが丁目までで、売上サポの資料の所在地（番地まで）で補った時の元の読み取り（画面に出す）
+  const [meetingAddressOcr, setMeetingAddressOcr] = useState<string>("");
   const [meetingDate, setMeetingDate] = useState<string>("");
   const [meetingTime, setMeetingTime] = useState<string>("");
   const [meetingOcrLoading, setMeetingOcrLoading] = useState(false);
@@ -1280,9 +1287,11 @@ export default function AixModal({
           recommend_index: checkRecommendProp, has_estimate_image: !!checkEstimateFile || checkPropEstimates.some(Boolean),
         };
       case "property_send":
-        return { new_arrival_apply: newArrivalApply, include_viewing: includeCalendar, image_count: sendImageFiles.length, vacating_count: vacatingProperties.length };
+        // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送った画像の1枚目が売上サポのどの行か（2通目が推す物件＝aix-template-generate が読む）
+        return { new_arrival_apply: newArrivalApply, include_viewing: includeCalendar, image_count: sendImageFiles.length, vacating_count: vacatingProperties.length,
+          first_pickup_id: firstSentPickupId({ handoffIds: initialPickupIds, handoffFiles: initialSendImages, sentFiles: sendImageFiles }) ?? undefined };
       case "property_recommendation":
-        return { pickup_type: initialPickupType, situation_kind: situationKind, is_new_arrival: isNewArrival, focus_points: recommendFocusPoints, simple: recSimpleMode, has_estimate_image: !!recommendEstimateFile };
+        return { pickup_type: initialPickupType, situation_kind: situationKind, is_new_arrival: isNewArrival, focus_points: recommendFocusPoints, simple: recSimpleMode, has_estimate_image: !!recommendEstimateFile, closing_in_first: recClosingInFirst };
       case "estimate_sheet":
         return { estimate_count: estimateMultiMode ? "multi" : "single", with_appeal: estimateWithAppeal, campaign: estimateCampaign, has_property_image: !!estimatePropertyFile };
       case "viewing_invite":
@@ -1366,6 +1375,7 @@ export default function AixModal({
   // 会話が変わったらシンプルモードをリセット
   useEffect(() => {
     setRecSimpleMode(false);
+    setRecClosingInFirst(false);
     setPreview("");
     setPreview2("");
     setAixNotice("");
@@ -1436,13 +1446,15 @@ export default function AixModal({
             const res = await fetch("/api/extract-meeting-place", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ image_base64: base64, media_type: mime }),
+              // 2026-10-01: 会話も渡す（住所が丁目までの時、売上サポの同じ物件の資料の所在地で番地まで補う）
+              body: JSON.stringify({ image_base64: base64, media_type: mime, conversation_id: conversationId }),
             });
             await ensureOk(res);
-            const data = await res.json() as { ok: boolean; name?: string; address?: string };
+            const data = await res.json() as { ok: boolean; name?: string; address?: string; address_source?: string; address_ocr?: string };
             if (data.ok) {
               if (data.name) setMeetingPropertyName(data.name);
               if (data.address) setMeetingPropertyAddress(data.address);
+              setMeetingAddressOcr(data.address_source === "material" ? (data.address_ocr ?? "") : "");
             }
           } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); setError("OCRの読み取りに失敗しました。手動で入力してください。"); } finally { setMeetingOcrLoading(false); }
         };
@@ -2640,6 +2652,9 @@ export default function AixModal({
       if (actionType === "meeting_place") {
         if (!meetingDate.trim()) throw new Error("日程を入力してください");
         if (!meetingPropertyName.trim()) throw new Error("物件名を入力してください（画像読み込みまたは手動入力）");
+        // 2026-10-01 竹内（YUMA「天満3丁目」）: 住所は番地まで。番地が無い住所では文を作らない（空＝住所なしは今のまま）
+        const meetingAddrProblem = meetingAddressProblem(meetingPropertyAddress);
+        if (meetingAddrProblem) throw new Error(`住所の${meetingAddrProblem}`);
         const hasTime = !!meetingTime.trim();
         if (hasTime) {
           // 時間あり: 即座にローカル生成（曜日は月/日から再計算して誤りを補正）
@@ -2706,6 +2721,7 @@ export default function AixModal({
       const combinedExtra = `${focusPrefix}${inputText.trim()}`.trim();
       if (combinedExtra) body.extra_input = combinedExtra;
       if (recSimpleMode) body.simple_mode = true;
+      if (actionType === "property_recommendation" && recClosingInFirst) body.closing_in_first = true;
       // condition_hearing: 既知条件をAPIへ渡す（フォームの既知項目除外に使用）
       if (actionType === "condition_hearing" && customerConditions) body.customer_conditions = customerConditions;
       if (extraFlags) Object.assign(body, extraFlags);
@@ -3023,6 +3039,11 @@ export default function AixModal({
       setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
       return;
     }
+    // 2026-10-01: 待ち合わせ場所の本文の「住所:」に番地が無い時は予約しない（本文の住所を直せば送れる）
+    if (actionType === "meeting_place") {
+      const addrProblem = meetingTextAddressProblem(preview);
+      if (addrProblem) { setError(`⛔ 住所の${addrProblem}（本文の「住所:」を番地まで直してください）`); return; }
+    }
     setAixScheduleSaving(true);
     try {
       const imageUrls: string[] = [];
@@ -3144,6 +3165,8 @@ export default function AixModal({
         // 2026-09-16 竹内（カイナ事例）: 内覧日調整で実際に送った文（この中の候補日時をカレンダーの「時間確保」にする。スタッフが直した時もその時間で確保）
         viewingCandidateText: actionType === "viewing_invite" ? textToSend : undefined,
         suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
+        // 2026-10-01: 物件オススメで「2通目を送らない（1通目に締め）」を ON にして送った → 続きのテンプレのバナーを出さない
+        noSecondMessage: actionType === "property_recommendation" && recClosingInFirst ? true : undefined,
         conversationMatch: lastGenConvMatchRef.current,
         // M1: 物件別空き状況（brain の確定事実ソース）
         propertyNames: lastCheckPropNamesRef.current.length > 0 ? lastCheckPropNamesRef.current : undefined,
@@ -3197,6 +3220,11 @@ export default function AixModal({
     if (leftover.length > 0) {
       setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
       return;
+    }
+    // 2026-10-01 竹内（YUMA「天満3丁目」）: 待ち合わせ場所の本文の「住所:」に番地が無い時は送らない（本文の住所を直せば送れる）
+    if (actionType === "meeting_place") {
+      const addrProblem = meetingTextAddressProblem(preview);
+      if (addrProblem) { setError(`⛔ 住所の${addrProblem}（本文の「住所:」を番地まで直してください）`); return; }
     }
     // 2026-09-27: 状態と逆の文（send_hold）は、生成したままの文なら1回目は止める（直した・2回目は送る）
     const hold = sendHoldRef.current;
@@ -3317,6 +3345,7 @@ export default function AixModal({
                 sendMode: capturedSendMode ?? undefined,
                 wasEdited: capturedWasEdited,
                 suggestTemplateCategory: capturedSuggestTemplateCategory ?? undefined,
+                noSecondMessage: capturedPickerChoices.closing_in_first === true ? true : undefined,
                 conversationMatch: capturedConvMatch,
                 propertyNames: capturedPropNames.length > 0 ? capturedPropNames : undefined,
                 propStatuses: capturedPropStatuses.length > 0 ? capturedPropStatuses : undefined,
@@ -3491,6 +3520,8 @@ export default function AixModal({
         // 2026-09-27: 送った物件の数（物件ピックアップ＝送った資料の枚数・物件オススメ＝1）。台帳の物件送付が1通＝1件になっていた（10件送っても +1）
         sentPropertyCount: actionType === "property_send" ? (sendImageFiles.length || undefined) : actionType === "property_recommendation" ? 1 : undefined,
         suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
+        // 2026-10-01: 物件オススメで「2通目を送らない（1通目に締め）」を ON にして送った → 続きのテンプレのバナーを出さない
+        noSecondMessage: actionType === "property_recommendation" && recClosingInFirst ? true : undefined,
         conversationMatch: lastGenConvMatchRef.current,
         // M1: 物件別空き状況（brain の確定事実ソース）
         propertyNames: lastCheckPropNamesRef.current.length > 0 ? lastCheckPropNamesRef.current : undefined,
@@ -6848,7 +6879,7 @@ export default function AixModal({
                   <div className="relative mb-2 overflow-hidden rounded-xl border border-sky-200">
                     <img src={meetingPropertyPreview} alt="物件資料" className="max-h-28 w-full object-contain" />
                     <button
-                      onClick={() => { setMeetingPropertyFile(null); setMeetingPropertyPreview(""); setMeetingPropertyName(""); setMeetingPropertyAddress(""); }}
+                      onClick={() => { setMeetingPropertyFile(null); setMeetingPropertyPreview(""); setMeetingPropertyName(""); setMeetingPropertyAddress(""); setMeetingAddressOcr(""); }}
                       className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white"
                     >変更</button>
                     {meetingOcrLoading && (
@@ -6882,13 +6913,15 @@ export default function AixModal({
                         const res = await fetch("/api/extract-meeting-place", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ image_base64: base64, media_type: mime }),
+                          // 2026-10-01: 会話も渡す（住所が丁目までの時、売上サポの同じ物件の資料の所在地で番地まで補う）
+                          body: JSON.stringify({ image_base64: base64, media_type: mime, conversation_id: conversationId }),
                         });
                         await ensureOk(res);
-                        const data = await res.json() as { ok: boolean; name?: string; address?: string };
+                        const data = await res.json() as { ok: boolean; name?: string; address?: string; address_source?: string; address_ocr?: string };
                         if (data.ok) {
                           if (data.name) setMeetingPropertyName(data.name);
                           if (data.address) setMeetingPropertyAddress(data.address);
+                          setMeetingAddressOcr(data.address_source === "material" ? (data.address_ocr ?? "") : "");
                         }
                       } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); setError("OCRの読み取りに失敗しました。手動で入力してください。"); } finally { setMeetingOcrLoading(false); }
                     };
@@ -6910,10 +6943,17 @@ export default function AixModal({
                 <label className="mb-1 block text-xs font-semibold text-[#54656f]">住所<span className="ml-1 font-normal text-[#90a4ae]">（任意）</span></label>
                 <input
                   value={meetingPropertyAddress}
-                  onChange={(e) => setMeetingPropertyAddress(e.target.value)}
+                  onChange={(e) => { setMeetingPropertyAddress(e.target.value); setMeetingAddressOcr(""); }}
                   placeholder="例：大阪府大阪市天王寺区下寺町2丁目3-11"
-                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
+                  className={`w-full rounded-xl border px-3 py-2 text-sm outline-none focus:border-[#2196F3] ${meetingAddressProblem(meetingPropertyAddress) ? "border-red-400 bg-red-50" : "border-[#d1d7db]"}`}
                 />
+                {/* 2026-10-01 竹内（YUMA「天満3丁目」）: 番地が無い住所はそのままでは作成・送信できない（スタッフが資料で確かめて入れる） */}
+                {meetingAddressProblem(meetingPropertyAddress) && (
+                  <p className="mt-1 text-[11px] font-bold text-red-500">⚠️ {meetingAddressProblem(meetingPropertyAddress)}（例: 天満3丁目 → 天満3丁目1-27）</p>
+                )}
+                {meetingAddressOcr && !meetingAddressProblem(meetingPropertyAddress) && (
+                  <p className="mt-1 text-[11px] text-[#54656f]">📄 資料の読み取りは「{meetingAddressOcr}」まで → 売上サポの物件資料の所在地で番地まで補いました</p>
+                )}
               </div>
               {/* 日程 + 時間 */}
               <div className="mb-1">
@@ -7360,6 +7400,19 @@ export default function AixModal({
                       }`}
                     >
                       {recSimpleMode ? "✓ " : ""}シンプル
+                    </button>
+                    {/* 2026-10-01 竹内「(iii)『2通目を送らない』と決めた時だけ、1通目に締めを付ける」（既定 OFF） */}
+                    <button
+                      type="button"
+                      onClick={() => { setRecClosingInFirst(v => !v); setPreview(""); }}
+                      title="ON: 続けて2通目（テンプレート）を送らない時。1通目の最後に締め（内覧のご案内／お申込で抑える／ご査収ください）を付けます。OFF（既定）: 締めは2通目に置きます"
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
+                        recClosingInFirst
+                          ? "border-purple-500 bg-purple-500 text-white"
+                          : "border-[#d1d7db] bg-white text-[#667781]"
+                      }`}
+                    >
+                      {recClosingInFirst ? "✓ " : ""}2通目を送らない（1通目に締め）
                     </button>
                   </>
                 )}

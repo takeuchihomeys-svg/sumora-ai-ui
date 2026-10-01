@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ
 import { pickDaySlots } from "../lib/viewing-slots";
+import { resolveTemplateSentMessage, ctaPreferenceOf } from "../lib/aix-template-source";
 
 // iOS風スクロールホイールピッカー
 function WheelPicker({ items, selectedIdx, onSelect }: {
@@ -917,6 +918,8 @@ export default function TemplateModal({
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
   const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込" | null>(null);
+  // 2026-10-01 竹内「下にある例のテンプレートは紛らわしいので折りたたんでおく」: 【AIX】カテゴリのテンプレートのカード一覧は最初は閉じる（画面の中だけ・保存しない）
+  const [aixExamplesOpen, setAixExamplesOpen] = useState(false);
   const [availCheckFilter, setAvailCheckFilter] = useState<string | null>(null);
   const [propertySendSubFilter, setPropertySendSubFilter] = useState<string | null>(null);
   const [viewingSubFilter, setViewingSubFilter] = useState<string | null>(null);
@@ -2361,6 +2364,7 @@ export default function TemplateModal({
   useEffect(() => {
     setAixGenText(null);
     setAixGenError(null);
+    setAixExamplesOpen(false);
     if (category) lastUserSelectedCategory = category;
   }, [category]);
 
@@ -2370,11 +2374,15 @@ export default function TemplateModal({
     setAixGenLoading(true);
     setAixGenError(null);
     try {
+      // 2026-10-01 竹内「✨この会話に合った文を生成のところをこの改善したようにする」: AIX を送った直後でなく後から開いた時も、
+      //   今の会話の履歴の最後の AIX（選んだカテゴリと同じ種類の形の時だけ）を1通目として渡す（handleAdapt と同じ補い方・aix-template-source.ts）
+      const genAction = AIX_CATEGORY_TO_ACTION[category] ?? null;
+      const src = resolveTemplateSentMessage({ actionType: genAction, postAixSent: postAixContext?.sentMessage ?? null, recent: recentMessages ?? [] });
       const res = await fetch("/api/aix-template-generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          actionType: AIX_CATEGORY_TO_ACTION[category] ?? null,
+          actionType: genAction,
           actionCategory: category,
           conversationId,
           customerName,
@@ -2393,7 +2401,10 @@ export default function TemplateModal({
           //   生成 API には渡していなかった**ので、AI は会話履歴だけを頼りに書いて1通目と噛み合わない
           //   文を作れてしまっていた（見積書の2通目に物件名を渡していなかったのと同じ構造）。
           //   実測（90日・1,419組）ではスタッフは1通目を見て書いており重複はほぼ0。
-          sentMessage: postAixContext?.sentMessage ?? null,
+          sentMessage: src.text,
+          sentMessageSource: src.source,
+          // 2026-10-01: 画面の「訴求方法を選択する！！」（🏃内覧に誘う／🚀申込へ押し込む）を押している時は、その締めを生成に渡す（刺さり具合の判定よりスタッフの選択が先）
+          ctaPreference: category === "物件オススメ【AIX】" ? ctaPreferenceOf(aixPurposeFilter) : null,
         }),
       });
       const data = await res.json() as { ok: boolean; text?: string; error?: string };
@@ -4926,8 +4937,22 @@ export default function TemplateModal({
                     </>
                   )}
                 </div>
+              ) : isAixCategoryActive && !isSearching && !aixExamplesOpen && aixKeywordFilter.trim() === "" ? (
+                // 2026-10-01 竹内「下にある例のテンプレートは紛らわしいので折りたたんでおく」: 【AIX】カテゴリのカード一覧は最初は閉じる（✨の生成が主）
+                <button
+                  type="button"
+                  onClick={() => setAixExamplesOpen(true)}
+                  className="w-full rounded-2xl border border-dashed border-[#c5cae9] bg-white py-2.5 text-[12px] font-bold text-[#667781] hover:bg-[#f5f6f7]"
+                >📂 例のテンプレートを見る（{displayFiltered.length}件）</button>
               ) : (
                 <div className="flex flex-col gap-3">
+                  {isAixCategoryActive && !isSearching && aixExamplesOpen && (
+                    <button
+                      type="button"
+                      onClick={() => setAixExamplesOpen(false)}
+                      className="self-end rounded-full border border-[#d1d7db] bg-white px-3 py-1 text-[11px] font-bold text-[#667781]"
+                    >▲ 例のテンプレートを閉じる</button>
+                  )}
                   {recommendLoading && (
                     <div className="py-2 text-center text-[12px] text-[#6b7280]">✨ AIがおすすめを選定中...</div>
                   )}

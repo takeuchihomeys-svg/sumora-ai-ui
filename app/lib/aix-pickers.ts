@@ -150,6 +150,8 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
       { key: "include_viewing", label: "内覧提案あり", kind: "bool" },
       { key: "image_count", label: "送った画像の数", kind: "number" },
       { key: "vacating_count", label: "退去予定の物件の数", kind: "number" },
+      // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送った画像の1枚目の売上サポの行（2通目が推す物件）
+      { key: "first_pickup_id", label: "送った画像の1枚目（売上サポの行）", kind: "number" },
     ],
   },
   property_recommendation: {
@@ -175,6 +177,8 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
       ] },
       { key: "simple", label: "シンプル", kind: "bool" },
       { key: "has_estimate_image", label: "見積書を付けた", kind: "bool" },
+      // 2026-10-01 竹内「(iii)『2通目を送らない』と決めた時だけ、1通目に締めを付ける」（画面の切り替え・既定 OFF）
+      { key: "closing_in_first", label: "2通目を送らない（1通目に締め）", kind: "bool" },
     ],
   },
   estimate_sheet: {

@@ -4,6 +4,18 @@
 
 ---
 
+## AIX【物件オススメ】締め v2 ＋ ✨テンプレート生成の質（竹内・2026-10-01「浅く・を直す／2通目を送らないと決めた時だけ1通目に締め／退去日分からない場合は入居可能日はいれない／1枚目の👑」「✨この会話に合った文を生成のところをこの改善したようにする・例のテンプレートは折りたたむ」・未コミット）— 黄金ルール
+
+- **浅く・**: 実送信（スタッフの文 全期間 13,152通）の「〜く・」24通 = 「築年数浅く・」23（AIX の下書きのまま 22・人 1）＋「スーパー近く・」1（名詞）。人の形は「浅く、」152通。→ 入口（1通目・2通目の書き方に「〜くの後は『、』」）＋出口 `fixAdjectiveNakaguro`（first-message-style・浅/広/良/安/新し/明る/大き/高/低/長＋く・ → く、。近く・遠く・多くは当てない）。両ルートの出口で掛ける。スタッフの文で替わるのは1通（→多数の形）。
+- **2通目を送らない時だけ1通目に締め**: AixModal の物件オススメに「2通目を送らない（1通目に締め）」の切り替え（既定 OFF・シンプルの隣・紫）。ON → body.closing_in_first → 1通目に `buildFirstMessageCtaNote`（刺さり具合の種類・実送信の形）＋出口 `setRecommendClosing`（removeRecommendClosing は掛けない）。記録: picker_choices.closing_in_first・aix_generate_log の conditions_snapshot.closing_in_first。送信後は「物件オススメ【AIX】の続きを送る」バナーを出さない（onAfterSend の noSecondMessage・前の AIX のバナーも消す）。テンプレートの画面は元々自動では開かない（バナーだけ）。
+- **退去日が資料に無い時**: 一文は「退去予定のお部屋となります！！」だけ（スタッフの文 30通・人 20）。入居可能の時期は書かない（指示に明記・aix/action は資料の入居時期の材料 recMoveInFactNote を渡さない）。前の版の一文（「…となり、11月中旬ごろご入居可能となります」「2026年11月中旬が最短での入居可能時期」）は `tidyVacatingAndClosing` が資料の時期を目印に今の一文へ戻す（実送信で当たる文 0・scripts/tmp-audit-vacating-tidy.ts）。退去日がある時の「10月17日退去予定のため、10月18日以降ご内覧可能となります！！」は今まで通り。
+- **ピックアップの1枚目＝👑**: 旧は送る画像が GET ?ids の rank（拡張の検索順）並び → 画面の並び（👑→点）と一致 8/20 回・👑 が分かる3回で1枚目が👑 1回。2通目は画面の並びの先頭を推していた（並びが3つ）。→ PickupReview が `sortForReview(targets, roundBestId)` の順で ids を渡し、GET は頼まれた順で返す（`sent-image-order.orderByRequestedIds`）。送った1枚目は AixModal が picker_choices.first_pickup_id に残し、`pickPickupSecondTarget(rows, { firstSentId })` が推す（記録が無ければ今まで通り）。⚠ 送った印の記録（pickup-sent-plan）は URL を rank 順の行と位置で結ぶ → page.tsx が `imageUrlsInRankOrder` で並べ直して mark_sent に渡す。
+- **✨ この会話に合った文を生成（テンプレート一覧の【AIX】）**: 旧は postAixContext（送った直後に同じ画面で開いた時だけ）の本文しか渡さず、後から開くと sentMessage が null で2通目の直しが全部外れていた。→ `aix-template-source.resolveTemplateSentMessage`（履歴の最後のスタッフの AIX・カテゴリと同じ形の時だけ＝物件オススメ🌟／ピックアップ／見積書・24時間以内）を画面とサーバーの両方が呼ぶ。「訴求方法を選択する！！」（内覧／申込）は ctaPreference として締めの種類を上書き。【AIX】カテゴリの例のテンプレートのカードは最初は折りたたみ（「📂 例のテンプレートを見る（N件）」・カテゴリを変えると閉じる・保存しない）。
+- **未対応（調べた所まで）**: カードの「✨ AIで最適化」は /api/generate-reply のテンプレート最適化モード（templateText＋aixSourceMessage・fixTemplateClosing 等）で、2通目の場面の手本・資料の事実・出口の検査は通っていない。直すなら物件オススメ【AIX】のテンプレートの最適化だけ、出口で共通の関数（fixAdjectiveNakaguro・findAiPhrases・setRecommendClosing・tidyVacatingAndClosing）を掛ける形。
+- 道具: `scripts/tmp-closing-v2-gen.ts [--cif] [--later] [--cta=viewing|apply]`・`scripts/tmp-template-later-gen.ts`・`scripts/tmp-audit-ku-dot2.ts`・`scripts/tmp-audit-pickup-first-image.ts`・`scripts/tmp-audit-vacating-tidy.ts`（未追跡）。テスト: first-message-style 49・recommend-viewable 42・aix-template-source 10。
+
+---
+
 ## AIX【物件オススメ】の1通目の言い回し — スタッフが書いた1通目の形で書かせる／締めは2通目に1回だけ（竹内・2026-10-01「次に進める！！設計知見と協力して行う」「物件オススメ締めの部分 状況的に2通目だけでも大丈夫」・未コミット）— 黄金ルール
 
 **実物（9/30 深夜 YUMA に届いた1通目・DeepSeek flash）**:「…家具付き・角部屋・宅配BOX完備と使いやすい設備が揃っております！！…暮らしやすい作りとなっております！！」「…かなり条件の良いお部屋で…梅田へもすぐの立地です！！…備わっております。空室のため…」「…収納面もしっかり確保されております！！…梅田へも出やすい立地です！！」「…室内も綺麗な22.56㎡のお部屋です。」
@@ -8013,3 +8025,29 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **10/1 の本番の読み（読むだけ）**: 待ち20人（60分超13・3日より前から11人・申込以降33人は数えない）／約束の未対応23／AIX要対応21／カレンダー10（C1 1件＝S さん 9/28 待ち合わせの後に決まった内覧の予定なし・C2 1・C5 1・C4 7）／検索: 動いていない1・送れる物件0が1・送れる資料（一番新しいまとめで1件も送っていない）多数。
 - **見つけた落とし穴**: ①送れる資料をまとめの pending で数えると、1件送った後の残りまで数えて1人74件に膨らむ → まとめ（complete_group_id）単位で「1件も送っていない一番新しいまとめ」だけ ②待ち合わせの C1 は予定を読む期間（14日）より前の送信に当てると全部「予定なし」になる → 同じ期間にそろえる。
 - **YUMA での確かめ（本番に流した後）**: 報告の手順どおり（お客様役の往復で1行・作り直しで draft_versions=2・送った後は画面の「案と実際」・トリガーを止めても本体が止まらない）。
+
+## 2026-10-01 AIX【待ち合わせ場所】の住所は番地まで — 番地の無い住所は作成・送信で止める（竹内「3丁目だけでおわる住所気をつける。ちゃんと番地と最後までいれる。…もし記載ない場合はスタッフが確認する形とする」・YUMA 9/30 20:54「住所: 大阪府大阪市北区天満3丁目」・未コミット）
+- **原因（実物を追った）**: 送信は時間ありの画面のローカル組み立て（AixModal の meeting_place・サーバーを通らない・aix_usage_logs に行なし）。住所は /api/extract-meeting-place の読み取りのまま。資料 property_pickups 2670（ITANDI・レオパレス天満 107）の pdf_text が「所在地 ⼤阪府⼤阪市北区天満３丁⽬」＝**資料そのものに番地が無かった**（読み取りは資料どおり）。番地の無い住所を止める所がどこにも無かった
+- **資料の所在地が番地なし**: itandi 9/536・realpro 26/1839（約1.5%）。ほぼレオパレス（丁目まで・realpro は「◯丁目丁目」）と「住居表示未定」の新築
+- **実送信（365日・YUMA 除く・「住所:」あり）**: 120通（待ち合わせ 112通）すべて番地あり・「丁目」「町」で終わる 0。書き方: ◯丁目◯-◯ 57／◯-◯-◯ 35／◯番◯号 12／◯-◯ 10／◯番（◯）3／◯号 1（「1丁目203号」）。※「現地エントランスお待ち合わせ」の送信 92通中 90通に「住所:」
+- **物差し（`app/lib/meeting-address.ts`・純関数・1か所）**: hasBanchi — 番地あり＝数字-数字（1-27・A-2・7-(1)・１−３２）／丁目（丁）のすぐ後の数字（3丁目 25・２丁439・1丁目 -34）／◯番・◯番地／◯号（号室は除く）／丁の無い地域の末尾の地番（野々井121・桑原町284）。郵便番号・号室・階は番地に数えない。meetingAddressProblem（空は今のまま通す）・meetingTextAddressProblem（本文の「住所:」の行）
+- **読み取り**: 指示に「丁目で止めない・番地と号まで資料の字のまま・書いていない番地を推測で作らない・郵便番号/建物名/号室は入れない」
+- **補い**: 画面が conversation_id も渡し、読み取りに番地が無い時はその会話の property_pickups（物件名が合う行）の pdf_text の所在地（同じ行／空なら次の行・部首の字だけ直し空白を詰める）で補う。頭（丁目まで）がそろう番地ありの候補が1つの時だけ。画面に「資料の読み取りは『…』まで → 売上サポの資料で補いました」
+- **関所**: 画面＝住所欄が赤＋「⚠️ 番地が入っていません。資料で確かめて入れてください」・作成（ローカル組み立て／API とも）で止める・送信と予約送信で本文の「住所:」を見て止める（本文か住所欄を直せば送れる）。サーバー＝aix/action の meeting_place の頭で同じ関数・番地なしなら文を作らず ok:false の理由
+- **監査**（`scripts/audit-meeting-address.ts`）: 実送信の待ち合わせ 112通で誤って止めるのは 0（止まる1通は待ち合わせでない「住所:が」の文）。資料の番地なし 35行は全部止まる側。実 DB で補い: YUMA 天満（資料も丁目まで）→補えず止まる／リアプロ3件を丁目で切った読み取り→資料の番地で補えた
+- **テスト**: `app/lib/__tests__/meeting-address.test.ts` 63件（実送信17・資料13の実物・番地なし12・補い・本文の関所）
+- **残り**: 送信 API（page.tsx の onSend）は種類を知らないので壁は画面の送信と aix/action の2か所。ITANDI のレオパレスは資料に番地が無いので毎回スタッフが確かめる事になる
+
+## 2026-10-01 LINE の見張り 2段目（突き合わせ・一致率・毎日のまとめ・LLM なし）— 竹内「見張りの2段目おこなう」（設計 line-watch-design.md §3.2・§6・未コミット・本番の SQL は親が流す）
+- 判定 `app/lib/line-watch-judge.ts`（純関数・JUDGE_VERSION=v2-2026-10-01）: same／same_meaning／partial／different／na。物差しは既存の部品（edit-diff の core と事実の語・customer-sim-shadow の staffActsOf・normalizeAixForMatch）。
+  - 比べる「実際」は**返事のまとまり**（最初のスタッフの行動から10分以内に続いた文・30分まで）。窓（次のお客様の発言・最大24時間）の残りは後の連絡で比べない（監査 v1 で窓全部を比べると「一部違う」が水増しされた）
+  - AI が AIX: まとまりの中で押した AIX で決める／押さずに下書きを送った番は文の判定（後で押した AIX は detail.aix_verdict）／下書きなし＋確認の AIX を手打ちの確認の宣言で＝same_meaning
+  - 事実違い（解禁の線で0）は金額・日時・物件だけ。呼びかけの名前の違い（表示名と呼び方）は数えない（監査 v2 で事実違いの半分が名前だった）
+  - 言い回しがとても遠い partial は uncertain。監査で 292番中36＝12%（設計の線2割未満）→ LLM は足さない
+- 監査 `scripts/audit-line-watch-verdict.ts --brain-only --out=<file>`（過去60日を messages から番に作り直す・読むだけ）: 9/05〜 番932・比べた731・一致47%・事実違い6・文の比べ292（一致61%）・条件提示30番で90%。当たりの実物: 「明日9月17日…本日12時」の日時の矛盾・物件名の取り違え（フレシナイ大阪淀川↔フレンシアノイエ難波南）・初回に見積書の宣言（スタッフはピックアップの宣言）。外れの残り: AI が AIX でスタッフが手打ちで答えた番は一律 different（AIX の道の一致の数字・3段目の自動送信の対象外）
+- 毎日のまとめ `app/lib/line-watch-daily.ts`（sceneStats 解禁/停止の線・finalCheckStats・lateStats・screeningCalendarDiff C7a/b/c・reviewStats・buildLineWatchDaily）
+- DB `app/lib/line-watch-eval-server.ts`。cron `line-watch-eval`（UTC 11:40＝JST 20:40）・`line-watch-daily`（UTC 11:50＝JST 20:50）・`?dry=1`。書くのは line_watch_turns の2段目の列だけ（updated_at は触らない）。消えた会話の行を消す。SQL を流す前でも回る（版の列・👍✋の列なしで読む）
+- 画面 /watch: 今日のまとめ（知らせる事）・判定と👍✋（✋で本当の判定を選ぶ）・24時間/3日/7日・場面ごとの一致率（まとめ or 今の数で計算）・最終チェックの段ごと・C7。POST /api/line-watch（requireInternalAuth）
+- SQL `scripts/line-watch-stage2-migration.sql`（列6・索引2）＝migrate-schema の節と同じ文（line-watch-daily.test.ts が照らす）
+- テスト: line-watch-judge.test.ts 30・line-watch-daily.test.ts 19
+- 気づき: 控えに `__SHOWN__` が下書きとして入る（トリガーの印の形は [..] だけ）→ 判定側の cleanDraft で印にした。グループの会話（【グループ】緊急用）も控えに入っている

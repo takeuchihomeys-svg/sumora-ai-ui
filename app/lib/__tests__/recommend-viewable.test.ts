@@ -22,14 +22,16 @@ const ROW_RP_PAST: ViewableMaterialRow = { terms: { moveIn: { kind: "consult", c
 const ROW_ODD: ViewableMaterialRow = { terms: { moveIn: { kind: "immediate", current: "occupied", availableFrom: "2026-09-30" }, evidence: { moveIn: "現況居住中 入居可能時期即入居可" } } };
 const ROW_BUILD: ViewableMaterialRow = { terms: { moveIn: { kind: "date", current: null, availableFrom: "2026-10-01" }, evidence: { moveIn: "建築中/2026年10月01日" } } };
 
-const LINE_NOV = "退去予定のお部屋となり、11月中旬ごろご入居可能となります！！";
+// 2026-10-01 竹内「退去日分からない場合はスタッフ確認していれてるので、入居可能日はいれない」→ 時期は入れない
+const LINE_NOV = "退去予定のお部屋となります！！";
+const OLD_LINE_NOV = "退去予定のお部屋となり、11月中旬ごろご入居可能となります！！";
 
 console.log("\n■ readMaterialViewable（資料の現況 → 今ご内覧頂けるか・退去予定の一文）");
 {
   const a = readMaterialViewable(ROW_2678, NOW);
-  t("★ 2678 レオンコンフォート梅田北 703（居住中・11月中旬）→ 内覧できない・一文は実送信の形", a.notViewable === true && a.line === LINE_NOV && a.moveInWhen === "11月中旬", JSON.stringify(a));
+  t("★ 2678 レオンコンフォート梅田北 703（居住中・11月中旬）→ 内覧できない・一文は「退去予定のお部屋となります！！」（時期は目印として読むだけ）", a.notViewable === true && a.line === LINE_NOV && a.moveInWhen === "11月中旬", JSON.stringify(a));
   t("★ 2670 レオパレス天満 107 も同じ", readMaterialViewable(ROW_2670, NOW).line === LINE_NOV);
-  t("一文に年・「居住中」・「最短での入居可能時期」を書かない", !/2026|居住中|最短/.test(a.line ?? ""));
+  t("一文に年・「居住中」・「最短での入居可能時期」・入居可能の時期を書かない", !/2026|居住中|最短|中旬|入居可能/.test(a.line ?? ""));
   t("★ 2675 プレサンス梅田北（空き・即入居可）→ 内覧できる・一文なし", readMaterialViewable(ROW_2675, NOW).notViewable === false && readMaterialViewable(ROW_2675, NOW).line === null);
   t("空きで入居可能が10月下旬 → 内覧できる（空室）", readMaterialViewable(ROW_2674, NOW).notViewable === false);
   t("居住中・入居可能時期 相談／ー → 内覧できない・一文は「退去予定のお部屋となります！！」だけ（時期を作らない）", readMaterialViewable(ROW_2671, NOW).line === "退去予定のお部屋となります！！" && readMaterialViewable(ROW_2668, NOW).line === "退去予定のお部屋となります！！" && readMaterialViewable(ROW_2671, NOW).notViewable === true);
@@ -67,6 +69,10 @@ console.log("\n■ 締めの種類（resolveRecommendCta）と1通目の指示")
   t("刺さる＋空室 → 内覧の誘導（今まで通り）", resolveRecommendCta({ pickup: FIT, reaction: null, notViewable: v0.notViewable }).kind === "viewing");
   const note = buildVacatingLineNote(v);
   t("退去予定の一文の指示: 一文をそのまま・内覧の誘導を書かない・即入居可能を書かない", note.includes(`「${LINE_NOV}」`) && note.includes("内覧の誘導") && note.includes("即入居可能"));
+  t("★ 退去日が分からない時は「入居可能日・時期は書かない」を渡す（スタッフが確認して入れる）", note.includes("入居可能日・入居可能の時期") && note.includes("書かない"));
+  const rpNote = buildVacatingLineNote(resolveRecommendViewable({ text: null, material: ROW_RP_DATE, brain: { notViewable: false, viewableFrom: null }, nowMs: NOW }));
+  t("退去日が資料にある時は今まで通り（入居可能日の注意は付けない・退去日の一文）", rpNote.includes("10月17日退去予定のため、10月18日以降ご内覧可能となります！！") && !rpNote.includes("入居可能日・入居可能の時期"));
+  t("締めを1通目に付ける時（2通目を送らない）は「次の段落に締め」", buildVacatingLineNote(v, { closingInFirst: true }).includes("その次の段落に締め") && !buildVacatingLineNote(v, { closingInFirst: true }).includes("1通目は締めを書かず"));
   t("空室・ブレインが出どころの時は指示なし", buildVacatingLineNote(v0) === "" && buildVacatingLineNote({ notViewable: true, viewableFrom: "10月16日", line: null, source: "brain" }) === "");
   t("1通目の締めの指示（申込）と並べて食い違わない", buildFirstMessageCtaNote(d, { viewableFrom: v.viewableFrom }).includes(APPLY_CLOSING_LINE));
 }
@@ -99,19 +105,28 @@ console.log("\n■ tidyVacatingAndClosing（退去予定の一文の字を戻す
   const HEAD = "🌟レオンコンフォート梅田北 703\n\n家賃管理費込75,000円・2020年1月築（築6年）で独立洗面台や室内洗濯機置場も備わったお部屋で、YUMAさんにかなりオススメ出来るお部屋となります！！\n\n";
   const GEN = HEAD + "退去予定のお部屋となり、11月中旬ご入居可能となります！！お気に召されましたらお申込しお部屋抑えさせて頂きます😊！！";
   const r = tidyVacatingAndClosing(GEN, v);
-  t("★「ごろ」抜けを決まった一文に戻し、同じ行の締めを次の段落に分ける", r.text === HEAD + LINE_NOV + "\n\n" + APPLY_CLOSING_LINE && r.applied.includes("closing_split") && r.applied.includes("vacating_line_exact"), r.text);
+  t("★ 前の版の一文（時期入り・「ごろ」抜け）を今の一文に戻し、同じ行の締めを次の段落に分ける", r.text === HEAD + LINE_NOV + "\n\n" + APPLY_CLOSING_LINE && r.applied.includes("closing_split") && r.applied.includes("vacating_line_no_move_in"), r.text);
+  const r1 = tidyVacatingAndClosing(HEAD + OLD_LINE_NOV, v);
+  t("★ 前の版の一文そのまま（11月中旬ごろご入居可能）→ 「退去予定のお部屋となります！！」", r1.text === HEAD + LINE_NOV && r1.applied.includes("vacating_line_no_move_in"), r1.text);
+  const rd = tidyVacatingAndClosing(HEAD + "退去予定のお部屋となり、12月中旬ごろご入居可能となります！！", v);
+  t("資料と違う時期の文は触らない（別の内容＝当てない）", rd.applied.length === 0, rd.text);
+  const rr = tidyVacatingAndClosing(HEAD + "10月30日退去予定、11月末ごろご入居可能なお部屋となります！！", v);
+  t("スタッフの形（退去日つき）の文は触らない", rr.applied.length === 0);
+  const rg = tidyVacatingAndClosing(HEAD + OLD_LINE_NOV, { ...v, moveInWhen: null });
+  t("資料の時期が無い（目印なし）時は当てない", rg.applied.length === 0);
   t("そのあと締めを揃えても1回のまま", setRecommendClosing(r.text, "apply").text === r.text);
-  // 9/30 夜に YUMA に届いた2通目の最後の段落（古い言い方「最短での入居可能時期」は別の内容なので字は触らない・締めだけ分ける）
+  // 9/30 夜に YUMA に届いた2通目の最後の段落（前の版の「2026年11月中旬が最短での入居可能時期」＝資料の時期入り → 今の一文に戻す・締めは次の段落へ）
   const OLD = "…かなりオススメ出来るお部屋となります！！\n\n退去予定のお部屋となり、2026年11月中旬が最短での入居可能時期となります！！お気に召されましたらお申込しお部屋抑えさせて頂きます😊！！";
   const ro = tidyVacatingAndClosing(OLD, v);
-  t("別の言い方の退去予定の文は書き換えない（締めだけ次の段落へ）", ro.text === "…かなりオススメ出来るお部屋となります！！\n\n退去予定のお部屋となり、2026年11月中旬が最短での入居可能時期となります！！\n\n" + APPLY_CLOSING_LINE, ro.text);
+  t("★ 前の版の2通目の一文も今の一文に戻す（締めは次の段落へ）", ro.text === "…かなりオススメ出来るお部屋となります！！\n\n" + LINE_NOV + "\n\n" + APPLY_CLOSING_LINE, ro.text);
   const ok = HEAD + LINE_NOV + "\n\n" + APPLY_CLOSING_LINE;
   t("整っている文は何もしない", tidyVacatingAndClosing(ok, v).applied.length === 0 && tidyVacatingAndClosing(ok, v).text === ok);
   const real = "お世話になっております！！\n今月末退去予定でかなりオススメ出来る条件のお部屋募集に出ました😊！！\nお気に召されましたらお申込しお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！";
   t("実送信（締めが行ごとに分かれている）は何もしない", tidyVacatingAndClosing(real, null).text === real);
   const real2 = "新着でオススメ出来るお部屋が募集に出ました😊！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！お手隙の際にご査収ください！";
   t("実送信（締めの文が2つ同じ行）は分けない", tidyVacatingAndClosing(real2, null).text === real2);
-  t("文の数・字は減らない（分けるだけ）", r.text.replace(/\s/g, "").length >= GEN.replace(/\s/g, "").length);
+  const rs = tidyVacatingAndClosing(HEAD + LINE_NOV + "お気に召されましたらお申込しお部屋抑えさせて頂きます😊！！", v);
+  t("今の一文と同じ行の締めは分けるだけ（文は減らない）", rs.text === HEAD + LINE_NOV + "\n\n" + APPLY_CLOSING_LINE, rs.text);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
