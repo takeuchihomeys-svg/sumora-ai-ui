@@ -50,6 +50,14 @@ console.log("■ 新規: 10件未満なら広げる");
   t("15件届いても通すが 9件なら広げる（保留・外す候補は数えない）", h.action === "widen" && h.chain.pass_count === 9, h);
 }
 
+console.log("■ 2026-10-01 商談中・審査中の通すは数えない（チンシャン: 通す1件が商談中）");
+{
+  const a = [audit({ min: 20 })];
+  const rs = rows(12, 10, { min: 15 }).map((r, i) => (i < 3 ? { ...r, deal: true } : r));
+  const d = D({ audits: a, rows: rs });
+  t("通す10件のうち3件が商談中 → 送れる通す7件 → 広げる", d.action === "widen" && d.chain.pass_count === 7, d);
+}
+
 console.log("■ 新着・追加: 0件なら広げる");
 {
   const a = [audit({ min: 20, customer_snapshot: OLD_SNAP, intended: { rp_update_days: 7 } })];

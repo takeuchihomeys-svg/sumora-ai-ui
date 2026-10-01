@@ -165,6 +165,8 @@ export type CustomerProfile = {
   wantsLowInitialCost: boolean;
   /** wantsLowInitialCost の出所（form / history / none） */
   lowInitialCostSource: "form" | "history" | "none";
+  /** 2026-10-01 初期費用の希望が「できれば」だけ（嬉しい・できれば…）。敷礼ありを保留にせず減点だけ（INITIAL_COST_NOT_ZERO_SOFT） */
+  lowInitialCostSoft?: boolean;
   pet: boolean;
   imageWants: ImageWantKey[];
   /** 画像の × を必須の × として上限20にする希望（バス・トイレ別は「できれば」と書いた時以外） */
@@ -463,6 +465,7 @@ export const REASON_JA: Record<string, string> = {
   ZERO_ZERO_MATCH: "敷礼0（初期費用を抑えたい希望に一致）",
   ZERO_ZERO: "敷礼0",
   INITIAL_COST_NOT_ZERO: "敷金か礼金あり（初期費用を抑えたい希望）",
+  INITIAL_COST_NOT_ZERO_SOFT: "敷金か礼金あり（初期費用は「できれば」安く・見積書で割引）",
   INITIAL_COST_OVER_LIMIT: "敷礼が初期費用の上限を超える",
   INITIAL_COST_UNKNOWN: "敷礼が読めない",
   FLOOR_PLAN_MATCH: "間取り一致",
@@ -540,6 +543,8 @@ export const REASON_JA: Record<string, string> = {
   // 2026-09-27 竹内「7畳以上は、帖数が資料に書かれていなかったら間取り図から読み取る」（room-jo.ts）
   ROOM_JO_OK: "洋室の帖数が希望以上",
   ROOM_JO_NG: "洋室の帖数が希望より狭い",
+  // 2026-10-01 竹内（チンシャン・NG 欄の木造）「NG 条件（今回でいうなら木造）の物件は送らない」
+  STRUCTURE_WOOD_NG: "木造（お客様の NG 条件）",
   ROOM_JO_SOFT_NG: "洋室の帖数が希望（目安）より狭い",
   ROOM_JO_IMG_NG: "間取り図の読みでは洋室が希望より狭い（資料に帖数なし・要確認）",
   ROOM_JO_UNKNOWN: "要確認: 洋室の帖数（資料・間取り図で読めない）",
@@ -760,7 +765,7 @@ export const AD_TIER_POINTS = {
 } as const;
 export const REASON_POINTS: Record<string, number> = {
   RENT_OK: 15, RENT_SLIGHTLY_OVER: 0, RENT_OVER_110: -20, RENT_OVER_130: -35, RENT_ABOVE_USUAL: -5, RENT_UNKNOWN: 0, RENT_MAX_UNRELIABLE: 0,
-  ZERO_ZERO_MATCH: 20, ZERO_ZERO: 8, INITIAL_COST_NOT_ZERO: -15, INITIAL_COST_OVER_LIMIT: -10, INITIAL_COST_UNKNOWN: 0,
+  ZERO_ZERO_MATCH: 20, ZERO_ZERO: 8, INITIAL_COST_NOT_ZERO: -15, INITIAL_COST_NOT_ZERO_SOFT: -5, INITIAL_COST_OVER_LIMIT: -10, INITIAL_COST_UNKNOWN: 0,
   FLOOR_PLAN_MATCH: 15, FLOOR_PLAN_NEAR: 5, FLOOR_PLAN_MISMATCH: -15, FLOOR_PLAN_TOO_SMALL: -35,
   WALK_OK: 10, WALK_SLIGHTLY_OVER: -5, WALK_OVER: -15,
   BUILDING_AGE_OK: 5, BUILDING_AGE_SLIGHTLY_OVER: -3, BUILDING_AGE_OVER: -10,
@@ -791,6 +796,8 @@ export const REASON_POINTS: Record<string, number> = {
   // 2026-09-27 洋室の帖数（希望以上 +3＝広さの ○ と同じ・狭い −15 外す候補・目安より狭い −10 保留・読めない 0点の要確認）
   //   間取り図の読みだけで狭い −10 保留（ROOM_JO_IMG_NG・図の帖数の読み違いが実物で 4件あったので外す候補にしない）
   ROOM_JO_OK: 3, ROOM_JO_NG: -15, ROOM_JO_SOFT_NG: -10, ROOM_JO_IMG_NG: -10, ROOM_JO_UNKNOWN: 0,
+  // 2026-10-01 STRUCTURE_WOOD_NG: 点は構造の × の札（EQUIP_STRUCTURE_NG）で数える＝この札は外す候補にする印だけ（0点）
+  STRUCTURE_WOOD_NG: 0,
   // 2026-09-29 リビングの帖数（希望以上 +3・狭い −10 保留＝洋室と違い外す候補にしない（LDK の帖数の書き方は資料で揺れる）・読めない 0点の要確認）
   LDK_JO_OK: 3, LDK_JO_NG: -10, LDK_JO_UNKNOWN: 0,
   // 2026-09-25 案B: 築浅の自由文の○×は 0点の札（全部合うの数に入る）。点は段の札（AGE_W*）で数える（旧 ○ +3）
@@ -1257,6 +1264,37 @@ const LOW_INITIAL_COST_RE = /敷金礼金|敷礼|敷金.{0,3}礼金|ゼロゼロ
 /** これがある欄は「抑えたい」ではない（実データ: 「敷金礼金の負担がさらに増えてもよい」「初期費用はまだ考えていない」） */
 const LOW_INITIAL_COST_NEG_RE = /増えてもよい|増えても良い|こだわらない|気にしない|まだ考えていない|特になし|かかっても/;
 
+/**
+ * 2026-10-01 竹内（チンシャン「初期費用は安いと嬉しい」で広げての12件中8件が保留＝通す1件）:
+ *   「できれば」の言い方（嬉しい・できれば・理想…）は減点だけで保留にしない。初期費用は見積書で最大限割引する仕組みなので、敷礼ありでも送れる。
+ *   実データ（9/24〜10/01 売上サポ）: 保留 944行のうち INITIAL_COST_NOT_ZERO だけが理由の保留 422行・そこから送られたのは1行。
+ *   言い切り（「敷金礼金なし」「初期費用抑えたい」）と上限の数字（initial_cost_limit）は今まで通り保留
+ */
+// 全 315人の監査（scripts/audit-initial-cost-soft.ts）で外した語: 「安ければ」（「安ければ安いほど希望」＝強い希望）・「安いところ」の「安いと」
+const LOW_INITIAL_COST_SOFT_RE = /嬉し|うれし|できれば|出来れば|理想|望まし|安いと(?!ころ)|あれば|ありがたい|有難い|助かる|助かり/;
+/** 初期費用の希望が「できれば」だけか（言い切りの節が1つでもあれば false）。希望が無ければ false */
+export function detectLowInitialCostSoft(c: CustomerLike): boolean {
+  let soft = false;
+  for (const f of [c.preferences, c.other_requests, c.ng_points, c.additional_conditions]) {
+    const s = String(f ?? "");
+    if (!s) continue;
+    for (const cl of s.normalize("NFKC").split(/[\n。、,，/／]/)) {
+      const m = cl.match(LOW_INITIAL_COST_RE);
+      if (!m || LOW_INITIAL_COST_NEG_RE.test(cl)) continue;
+      // 当たった語の前6字〜後10字だけを見る。「・」の向こうは別の希望（「駅徒歩は近いと嬉しい・初期費用抑えたい」の嬉しいを拾わない）
+      const at = m.index ?? 0;
+      const pre = cl.slice(Math.max(0, at - 6), at);
+      const post = cl.slice(at + m[0].length, at + m[0].length + 10);
+      const win = pre.slice(pre.lastIndexOf("・") + 1) + m[0] + post.split("・")[0];
+      if (LOW_INITIAL_COST_SOFT_RE.test(win)) soft = true;
+      else return false;
+    }
+  }
+  const lim = num(c.initial_cost_limit);
+  if (lim != null && lim >= 1 && lim <= 150_000) return false;
+  return soft;
+}
+
 /** フォームの文字から「初期費用を抑えたい」を読む */
 export function detectWantsLowInitialCost(c: CustomerLike): boolean {
   const fields = [c.preferences, c.other_requests, c.ng_points, c.additional_conditions];
@@ -1491,7 +1529,7 @@ export function writtenWeightCodes(codes: readonly string[], f: WeightFacts, w: 
 export type FitVerdict = "ok" | "wide" | "soft_ng" | "ng" | "unread";
 const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   RENT_OK: ["家賃", "ok"], RENT_UNDER_MIN: ["家賃", "ng"], RENT_WIDE: ["家賃", "wide"], RENT_SLIGHTLY_OVER: ["家賃", "soft_ng"], RENT_OVER_110: ["家賃", "ng"], RENT_OVER_130: ["家賃", "ng"], RENT_UNKNOWN: ["家賃", "unread"],
-  ZERO_ZERO_MATCH: ["初期費用（敷礼0）", "ok"], INITIAL_COST_NOT_ZERO: ["初期費用（敷礼0）", "ng"], INITIAL_COST_OVER_LIMIT: ["初期費用の上限", "ng"],
+  ZERO_ZERO_MATCH: ["初期費用（敷礼0）", "ok"], INITIAL_COST_NOT_ZERO: ["初期費用（敷礼0）", "ng"], INITIAL_COST_NOT_ZERO_SOFT: ["初期費用（敷礼0）", "ng"], INITIAL_COST_OVER_LIMIT: ["初期費用の上限", "ng"],
   FLOOR_PLAN_MATCH: ["間取り", "ok"], FLOOR_PLAN_ALT_MATCH: ["間取り", "ok"], FLOOR_PLAN_WIDE: ["間取り", "wide"], FLOOR_PLAN_NEAR: ["間取り", "wide"],
   FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"], FLOOR_PLAN_TOO_SMALL: ["間取り", "ng"],
   SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNKNOWN: ["広さ", "unread"],
@@ -1677,6 +1715,7 @@ export function buildCustomerProfile(
     buildingAgeMax: ageMaxUse,
     initialCostLimit: lim != null && lim > 0 ? lim : null,
     wantsLowInitialCost, lowInitialCostSource,
+    lowInitialCostSoft: lowInitialCostSource === "form" && detectLowInitialCostSoft(customer),
     pet: customer.pet === true,
     imageWants: detectImageWants(customer),
     imageMust: detectImageMust(customer),
@@ -1928,6 +1967,9 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     // 2026-09-25 案B: 書いた人 +20／送った物件から推した人 +14（ZERO_ZERO_INFERRED・全部合うの数に入れない）／書いていない人 +8
     const zz = !profile.wantsLowInitialCost ? "ZERO_ZERO" : profile.lowInitialCostSource === "history" ? "ZERO_ZERO_INFERRED" : "ZERO_ZERO_MATCH";
     add(zz, reasonPoints(zz));
+  } else if (profile.wantsLowInitialCost && profile.lowInitialCostSoft) {
+    // 2026-10-01 「初期費用は安いと嬉しい」（できれば）は減点だけ・保留にしない（detectLowInitialCostSoft）
+    add("INITIAL_COST_NOT_ZERO_SOFT", reasonPoints("INITIAL_COST_NOT_ZERO_SOFT"));
   } else if (profile.wantsLowInitialCost) {
     add("INITIAL_COST_NOT_ZERO", -15, "hold");
   }
@@ -2061,6 +2103,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     if (twoDecidedByTerms && code === "EQUIP_TWO_PERSON_UNLISTED") continue;
     add(code, reasonPoints(code), /_NG$/.test(code) ? "hold" : undefined);
   }
+  // 2026-10-01 竹内「NG 条件（今回でいうなら木造）の物件は送らない」: お客様が NG と書いた木造に当たった行は外す候補（構造の × の点はそのまま）
+  if (eq?.rows.some((r) => r.want.key === "structure" && r.result === "ng" && r.woodNgHit)) add("STRUCTURE_WOOD_NG", reasonPoints("STRUCTURE_WOOD_NG"), "drop");
 
   // エリア・通勤（area-want.ts の locationReasonCodes。呼ぶ側が計算して渡す＝この部品は大きな駅の表を持たない）
   for (const code of opts.locationCodes ?? []) {
@@ -2189,7 +2233,8 @@ function isNewInfo(c: string): boolean {
 // 2026-09-27 ROOM_JO_NG: 洋室の帖数が希望より狭い（竹内「7帖未満は外す」）
 // 2026-09-30 FLOOR_PLAN_TOO_SMALL: 間取りが希望より小さい（c さん・2LDK 希望に 1K）
 // 2026-09-30 AD_UNDER_1M_NEVER・AD_NONE: AD1未満で 1K か売上5万円未満（AD なし＝売上0）＝送らない（竹内「AD1未満は基本的に送らない・1K の AD1未満はきほんおくらない」）
-export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG", "FLOOR_PLAN_TOO_SMALL", "AD_UNDER_1M_NEVER", "AD_NONE"]);
+// 2026-10-01 STRUCTURE_WOOD_NG: お客様が NG と書いた木造（竹内「NG 条件の物件は送らない」）。「RC 希望」の木造（希望の強さ）は今まで通り保留（EQUIP_STRUCTURE_NG）
+export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG", "FLOOR_PLAN_TOO_SMALL", "AD_UNDER_1M_NEVER", "AD_NONE", "STRUCTURE_WOOD_NG"]);
 export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件

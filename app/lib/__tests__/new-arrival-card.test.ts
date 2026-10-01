@@ -59,7 +59,7 @@ it("チンシャン: 印は リアプロ 🎯済 🔎済 ｜ ITANDI 🎯未 🔎
   ];
   const rows: NacPickupRow[] = [
     row(1, { created_at: "2026-10-01T00:03:09Z", batch_id: "p1", verdict: "hold", search_mode: "pinpoint", complete_group_id: "cgC" }),
-    row(2, { created_at: "2026-10-01T00:09:30Z", batch_id: "w1", verdict: "pass", search_mode: "widen", complete_group_id: "cgC" }),
+    row(2, { created_at: "2026-10-01T00:09:30Z", batch_id: "w1", verdict: "pass", search_mode: "widen", complete_group_id: "cgC", terms: { evidence: { moveIn: "商談中" } } }),
     ...Array.from({ length: 9 }, (_, i) => row(3 + i, { created_at: "2026-10-01T00:09:30Z", batch_id: "w1", verdict: "hold", search_mode: "widen", complete_group_id: "cgC" })),
     row(20, { created_at: "2026-10-01T00:09:31Z", batch_id: "w2", verdict: "drop", search_mode: "widen", complete_group_id: "cgC" }),
     row(21, { created_at: "2026-10-01T00:09:31Z", batch_id: "w2", verdict: "drop", search_mode: "widen", complete_group_id: "cgC" }),
@@ -70,7 +70,8 @@ it("チンシャン: 印は リアプロ 🎯済 🔎済 ｜ ITANDI 🎯未 🔎
   eq([c.pass, c.hold, c.drop], [1, 10, 2]);
   eq(c.kind, "新規");
   eq(stampLine(c.stamps ?? []), "リアプロ 🎯✅ 🔎✅ ｜ ITANDI 🎯➖ 🔎➖");
-  eq([c.target?.need, c.target?.short], [10, 9]);
+  // 通す1件（都島岡本マンション）は資料の現況が商談中＝送れる通すは0件 → あと10件
+  eq([c.target?.need, c.target?.pass, c.target?.short, c.target?.deal], [10, 0, 10, 1]);
   eq(cardHeadline(c).startsWith("🏠 初回の物件 通す 1"), true);
 });
 it("新着は1件で足りる（目安1件・不足0）", () => {

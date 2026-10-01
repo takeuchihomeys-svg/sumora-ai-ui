@@ -23,6 +23,7 @@
 import { imageAnalysisNeed, extractImageWants, dedupeWantsByTopic, type ImageWant, type ImageAnalysisNeed } from "./image-wants";
 import { overrideRulerKey } from "./search-override";
 import { imageBonusOf, signedPoints, type ImageAnalysisForBonus } from "./pickup-image-bonus";
+import { listingDealStatus } from "./listing-deal-status";
 
 export type BestCandidateRow = {
   id: number;
@@ -40,6 +41,8 @@ export type BestCandidateRow = {
   image_analysis?: { match?: unknown; match_raw?: unknown; [k: string]: unknown } | null;
   /** 2026-09-27 判定の札（画像の加点で判定と同じ希望を二重に数えないため・pickup-image-bonus） */
   reason_codes?: string[] | null;
+  /** 2026-10-01 資料の表（現況＝審査中・商談中を 👑 にしないため。無い行は見ない） */
+  terms?: { evidence?: { moveIn?: string | null } | null } | null;
   /** 2026-09-27 案A: その回をメモの上書きで判定した印（property_pickups.search_override）。無い行＝登録の条件で判定 */
   search_override?: unknown;
 };
@@ -240,7 +243,10 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   const m = (r: BestCandidateRow) => numOrNull(r.image_analysis?.match);
   const sc = (r: BestCandidateRow) => numOrNull(r.score);
   // 2026-09-27 案A: 物差し（メモの上書き／登録の条件）が混ざる時は、一番新しい回の物差しの物件だけ（sameRulerCandidates）
-  const inWindow = sameRulerCandidates(rows.filter((r) => r.status === "pending" && latest - Date.parse(r.created_at) <= windowMs),
+  // 2026-10-01 竹内（チンシャン: 👑 の都島岡本マンションが資料の現況で商談中）「申込中・商談中の物件は送らない」:
+  //   資料の現況が審査中・商談中の行は 👑 にしない（143回中20回の 👑 が申込・商談・審査中だった）。資料の表（terms）が無い行は今まで通り
+  const inWindow = sameRulerCandidates(rows.filter((r) => r.status === "pending" && latest - Date.parse(r.created_at) <= windowMs
+      && listingDealStatus({ evidenceMoveIn: r.terms?.evidence?.moveIn ?? null }) == null),
     (r) => m(r) != null || (sc(r) != null && r.verdict !== "drop"));
   const raw = (r: BestCandidateRow) => numOrNull(r.image_analysis?.match_raw) ?? m(r) ?? 0;
   const imageScored = inWindow.filter((r) => m(r) != null);

@@ -527,6 +527,8 @@ export type EquipmentWant = {
   structureMin?: number;
   /** key=structure: 木造NG だけから来た希望（ラベルを「木造NG」にする） */
   woodNgOnly?: boolean;
+  /** key=structure: お客様が木造を NG と書いた（NG 欄の木造・「木造NG」「木造以外」）。木造の部屋は外す候補（2026-10-01） */
+  woodNg?: boolean;
   /** key=structure: 下限の一つ下は「避けたい」と書かれた段（軽量鉄骨NG 等）＝一段下 △ にせず × */
   structureNoNear?: boolean;
   /** key=bldg_type: マンションの希望（アパートは ×）／アパートの希望（マンションでも減点しない） */
@@ -832,7 +834,7 @@ export function parseEquipmentWants(customer: CustomerConditionsLike | null | un
     const src = structAcc.src;
     res.wants.push({
       key: "structure", mode: "must", strong: src.some((x) => x.strong), soft: src.length > 0 && src.every((x) => x.soft),
-      structureMin, ...(posMin == null && structAcc.ngMin == null ? { woodNgOnly: true } : {}), ...(structureNoNear ? { structureNoNear: true } : {}),
+      structureMin, ...(posMin == null && structAcc.ngMin == null ? { woodNgOnly: true } : {}), ...(structAcc.woodNg ? { woodNg: true } : {}), ...(structureNoNear ? { structureNoNear: true } : {}),
       text: [...new Set(src.map((x) => x.text))].join(" ／ "), field: src[0]?.field ?? "preferences",
     });
   }
@@ -854,6 +856,8 @@ export type EquipmentMatchRow = {
   mark: string;
   why: string;
   fromBuilding?: boolean;
+  /** 構造: お客様が NG と書いた木造に当たった（want.woodNg かつ資料が木造） */
+  woodNgHit?: boolean;
 };
 export type EquipmentMatch = { rows: EquipmentMatchRow[]; ok: number; ng: number; unlisted: number; strongNg: boolean };
 
@@ -914,7 +918,9 @@ export function matchEquipment(wants: EquipmentWants | EquipmentWant[], facts: L
     }
     const petAsk = w.key === "pet" && w.mode === "must" && result === "ok" && facts.items.pet.detail === "相談";
     const mark = result === "ok" ? (fromBuilding ? "○〔建〕" : petAsk ? "△" : "○") : result === "ng" ? "×" : "－";
-    rows.push({ want: w, label, result, mark, why: petAsk ? `${why}（相談）` : why, ...(fromBuilding ? { fromBuilding } : {}) });
+    // 2026-10-01 お客様が NG と書いた木造に当たった（構造の段 0＝木造）→ 判定で外す候補（property-brain STRUCTURE_WOOD_NG）
+    const woodNgHit = w.key === "structure" && result === "ng" && !!w.woodNg && facts.structureTier === 0;
+    rows.push({ want: w, label, result, mark, why: petAsk ? `${why}（相談）` : why, ...(fromBuilding ? { fromBuilding } : {}), ...(woodNgHit ? { woodNgHit } : {}) });
   }
   return {
     rows,

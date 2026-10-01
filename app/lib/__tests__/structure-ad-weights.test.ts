@@ -182,6 +182,15 @@ console.log("■ 構造の照合（○ △ × －）と札");
   const jR = judgeProperty(parsePropertyFacts(S), p, 0, { equipment: matchEquipment(rc, parseListingEquipment(RP_RC)) });
   const jN = judgeProperty(parsePropertyFacts(S), p, 0, { equipment: matchEquipment(rc, parseListingEquipment(IT_NOSTRUCT)) });
   t("木造 → EQUIP_STRUCTURE_NG・保留（外す候補ではない）", jW.reasonCodes.includes("EQUIP_STRUCTURE_NG") && jW.verdict === "hold", jW.reasonCodes);
+  // 2026-10-01 竹内（チンシャン・NG 欄の木造）「NG 条件（今回でいうなら木造）の物件は送らない」:
+  //   「RC 希望」の木造は上のとおり保留のまま。お客様が木造を NG と書いた時（NG 欄・「木造NG」）だけ外す候補
+  const pNg = buildCustomerProfile({ rent_max: 90_000, floor_plan: "1LDK", ng_points: "木造" });
+  const jNgW = judgeProperty(parsePropertyFacts(S), pNg, 0, { equipment: matchEquipment(parseEquipmentWants({ ng_points: "木造" }), parseListingEquipment(RP_WOOD_APT)) });
+  const jNgR = judgeProperty(parsePropertyFacts(S), pNg, 0, { equipment: matchEquipment(parseEquipmentWants({ ng_points: "木造" }), parseListingEquipment(RP_RC)) });
+  t("NG 欄の木造 × 木造 → STRUCTURE_WOOD_NG・外す候補", jNgW.reasonCodes.includes("STRUCTURE_WOOD_NG") && jNgW.verdict === "drop", [jNgW.verdict, jNgW.reasonCodes]);
+  t("NG 欄の木造 × RC → 外さない", !jNgR.reasonCodes.includes("STRUCTURE_WOOD_NG") && jNgR.verdict !== "drop", [jNgR.verdict, jNgR.reasonCodes]);
+  const jNgW2 = judgeProperty(parsePropertyFacts(S), p, 0, { equipment: matchEquipment(woodNg, parseListingEquipment(RP_WOOD_APT)) });
+  t("希望欄の「木造NG」× 木造 → 外す候補", jNgW2.verdict === "drop", [jNgW2.verdict, jNgW2.reasonCodes]);
   t("RC ＞ 鉄骨 ＞ 木造 の順の点", jR.score > jS.score && jS.score > jW.score, [jR.score, jS.score, jW.score]);
   // 2026-09-25 案B: 鉄骨（一段下＝幅の内側）は書いた条件の数に入り（3つで全部合う +15）、書いていない（要確認）は数えない（2つで半分 +8）→ 差は 7点
   t("書いていない → EQUIP_STRUCTURE_UNLISTED 0点・通す（全部合うの数に入らない分だけ鉄骨より 7点下）", jN.reasonCodes.includes("EQUIP_STRUCTURE_UNLISTED") && jN.verdict === "pass" && jN.score === jS.score - (REASON_POINTS.FIT_ALL - REASON_POINTS.FIT_ALL_HALF), [jN.score, jS.score, jN.reasonCodes]);

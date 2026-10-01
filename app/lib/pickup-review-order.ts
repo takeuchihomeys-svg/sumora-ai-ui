@@ -260,6 +260,7 @@ const CHIP_JA: Record<string, string> = {
   RENT_SLIGHTLY_OVER: "家賃が上限を少し超過",
   RENT_ABOVE_USUAL: "いつもの家賃帯より高め",
   INITIAL_COST_NOT_ZERO: "敷金か礼金あり",
+  INITIAL_COST_NOT_ZERO_SOFT: "敷金か礼金あり（できれば安く・見積書で割引）",
   INITIAL_COST_OVER_LIMIT: "敷礼が初期費用の上限超",
   FLOOR_PLAN_MISMATCH: "間取りが希望と違う",
   FLOOR_PLAN_TOO_SMALL: "間取りが希望より小さい",

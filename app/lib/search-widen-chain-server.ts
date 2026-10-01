@@ -8,6 +8,7 @@
 // 止める: 環境変数 SEARCH_WIDEN_CHAIN=off（決めるだけで積まない＝ログに残る）
 // 2026-09-27 竹内「まずピンポイント検索して、なければ広げて検索する形（おススメの物件や新着物件がなければ）」
 import { supabase } from "@/app/lib/supabase";
+import { listingDealStatus } from "@/app/lib/listing-deal-status";
 import {
   decideWiden, commandSiteOf, pickupSiteOf, pinpointSession, LOOKBACK_MS, ROWS_WAIT_MS, CUMULATIVE_LOOKBACK_DAYS,
   type AuditLite, type PickupLite, type ChainCommandLite, type WidenDecision,
@@ -58,7 +59,7 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
     const histSince = cumulative ? new Date(nowMs - CUMULATIVE_LOOKBACK_DAYS * 86400_000).toISOString() : since;
     const [au, pk, cmds, firstProposalAt] = await Promise.all([
       supabase.from("search_audits").select(AUDIT_COLS).eq("property_customer_id", input.propertyCustomerId).gte("created_at", histSince).order("created_at", { ascending: false }).limit(cumulative ? 200 : 40),
-      supabase.from("property_pickups").select("id, created_at, site, verdict, search_mode, complete_group_id").eq("property_customer_id", input.propertyCustomerId).gte("created_at", histSince).order("created_at", { ascending: false }).limit(cumulative ? 2000 : 500),
+      supabase.from("property_pickups").select("id, created_at, site, verdict, search_mode, complete_group_id, terms").eq("property_customer_id", input.propertyCustomerId).gte("created_at", histSince).order("created_at", { ascending: false }).limit(cumulative ? 2000 : 500),
       loadCommands(input.propertyCustomerId, nowMs, cumulative),
       // 新規か送った後かは実際にお客様へ届けた送付で（読めない時は undefined＝今までの写し）
       firstProposalAtFor(supabase, input.propertyCustomerId),
@@ -79,7 +80,10 @@ export async function maybeChainWiden(input: { propertyCustomerId: string; site:
     // 2026-09-30 v2.5.44 ピンポイントの回を積んだ命令（自動便か・その人の計画の状態）
     const origin = await originOf(audits, site, input.propertyCustomerId, nowMs);
     const decision = decideWiden({
-      site, audits, rows: (pk.data ?? []) as PickupLite[], commands: cmds, nowMs,
+      // 2026-10-01 資料の現況が商談中・審査中の行に印（送れないので「通す」の数に入れない・チンシャンの通す1件は商談中だった）
+      site, audits, rows: ((pk.data ?? []) as Array<PickupLite & { terms?: { evidence?: { moveIn?: string | null } | null } | null }>)
+        .map(({ terms, ...r }) => ({ ...r, deal: listingDealStatus({ evidenceMoveIn: terms?.evidence?.moveIn ?? null }) != null })),
+      commands: cmds, nowMs,
       sentBeforeSession: sentBefore, fromAuditFinish: input.trigger === "audit", watchBlocked,
       firstProposalAt, originState: origin.state, originWidenChain: origin.widenChain, cumulative,
     });

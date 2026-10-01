@@ -16,6 +16,7 @@ import { hasViewingCancelRequestLine } from "./viewing-cancel-calendar";
 import { staffWindowOf, judgeTurn, verdictLine, type Verdict, type VerdictDetail, type WindowPress } from "./line-watch-judge";
 import { sceneStats, finalCheckStats, type StatTurn, type SceneStat, type FcStats } from "./line-watch-daily";
 import { STAFF_ACT_JA } from "./customer-sim-shadow";
+import { buildNewArrivalCards, stampLine, type NacPickupRow, type NacAudit } from "./new-arrival-card";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -282,7 +283,7 @@ export async function loadLineWatch(sb: SupabaseClient, opt: LineWatchOptions = 
   }
 
   // ── 6. 物件検索 ──
-  type SearchRow = { kind: "idle" | "empty" | "ready"; conversationId: string | null; name: string | null; at: string; detail: string };
+  type SearchRow = { kind: "idle" | "empty" | "ready" | "short"; conversationId: string | null; name: string | null; at: string; detail: string };
   const search: SearchRow[] = [];
   {
     const needs: SearchNeed[] = [];
@@ -317,6 +318,42 @@ export async function loadLineWatch(sb: SupabaseClient, opt: LineWatchOptions = 
       search.push({ kind: "empty", conversationId: c?.id ?? null, name: c?.customer_name ?? null, at: e.at, detail: `最新の検索（${e.site ?? "?"}）で送れる物件0` });
     }
     for (const x of sw.ready) search.push({ kind: "ready", conversationId: x.conversation_id, name: names.get(x.conversation_id)?.customer_name ?? null, at: x.latestAt, detail: `送れる資料 ${x.count}件` });
+
+    // 2026-10-01 竹内（チンシャン・初回で送れる通す0件・ITANDI 未検索）「LINE の監視はこのような場合、物件検索のブレイン側に初回なので、
+    //   もっと通す物件が必要と伝えなくてはいけない」: 初回の回（新規）で送れる「通す」（商談中・審査中を除く）が目安10件に足りない会話を出し、
+    //   まだしていない検索（サイト × ピンポイント／広げて）を書く。判定はトークの物件カードと同じ buildNewArrivalCards（四者同名）
+    try {
+      const rk = await sb.from("property_pickups")
+        .select("id, created_at, batch_id, site, verdict, status, seen_at, sent_at, search_mode, search_override, complete_group_id, property_customer_id, conversation_id, property_name, room_no, trim_image_url, terms")
+        .gte("created_at", iso(nowMs - 2 * DAY)).not("conversation_id", "is", null).order("created_at", { ascending: false }).limit(3000);
+      if (rk.error) errors.search_first_round = rk.error.message;
+      const byConv = new Map<string, Array<NacPickupRow & { property_customer_id: string | null; conversation_id: string | null }>>();
+      for (const r of (rk.data ?? []) as Array<NacPickupRow & { property_customer_id: string | null; conversation_id: string | null }>) {
+        if (!r.conversation_id || !keep(r.conversation_id)) continue;
+        byConv.set(r.conversation_id, [...(byConv.get(r.conversation_id) ?? []), r]);
+      }
+      const pcs = [...new Set([...byConv.values()].map((rs) => rs[0]?.property_customer_id).filter((x): x is string => !!x))];
+      const audBy = new Map<string, NacAudit[]>();
+      for (let i = 0; i < pcs.length; i += 200) {
+        const a = await sb.from("search_audits").select("property_customer_id, created_at, site, is_wide, intended, customer_snapshot")
+          .in("property_customer_id", pcs.slice(i, i + 200)).gte("created_at", iso(nowMs - 2 * DAY - 3 * 3600_000)).limit(3000);
+        for (const x of (a.data ?? []) as Array<NacAudit & { property_customer_id: string }>) audBy.set(x.property_customer_id, [...(audBy.get(x.property_customer_id) ?? []), x]);
+      }
+      const shortConvs = [...byConv.keys()];
+      const nm = await convsByIds(sb, shortConvs);
+      for (const [convId, rs] of byConv) {
+        const cards = buildNewArrivalCards(rs, audBy.get(rs[0]?.property_customer_id ?? "") ?? []);
+        const last = cards[cards.length - 1];
+        if (!last || last.kind !== "新規" || !last.target || last.target.short <= 0 || last.confirm.state === "sent") continue;
+        const todo = (last.stamps ?? []).flatMap((s) => [!s.pinpoint ? `${s.label}の🎯ピンポイント` : "", !s.widen ? `${s.label}の🔎広げて` : ""]).filter(Boolean);
+        search.push({
+          kind: "short", conversationId: convId, name: nm.get(convId)?.customer_name ?? null, at: last.last_at,
+          detail: `初回なのに送れる通す ${last.target.pass}件（目安10件・あと${last.target.short}件${last.target.deal ? `・商談中/審査中 ${last.target.deal}件は数えない` : ""}）｜${stampLine(last.stamps ?? [])}${todo.length ? ` → 物件検索のブレインへ: ${todo.join("・")} がまだ` : " → 両サイトとも広げ済み: 保留の中から送れる物件を確かめる"}`,
+        });
+      }
+    } catch (e) {
+      errors.search_first_round = e instanceof Error ? e.message : String(e);
+    }
   }
 
   // ── 7. 今日のまとめ（毎晩の cron line-watch-daily の最新の結果）・場面ごとの一致率・最終チェックの段ごと ──

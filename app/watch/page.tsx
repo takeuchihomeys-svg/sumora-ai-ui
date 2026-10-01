@@ -47,7 +47,7 @@ const COMPARE_JA: Record<string, { label: string; cls: string }> = {
   aix_only: { label: "AIX を送った", cls: "bg-sky-100 text-sky-700" },
   no_staff: { label: "まだ返していない", cls: "bg-red-100 text-red-700" },
 };
-const SEARCH_JA: Record<string, string> = { idle: "検索が要るのに動いていない", empty: "検索したが送れる物件0", ready: "送れる資料あり" };
+const SEARCH_JA: Record<string, string> = { idle: "検索が要るのに動いていない", empty: "検索したが送れる物件0", ready: "送れる資料あり", short: "初回なのに通す物件が足りない" };
 
 function Card({ title, count, alert, open, onToggle, children }: { title: string; count: number; alert?: boolean; open: boolean; onToggle: () => void; children: ReactNode }) {
   return (

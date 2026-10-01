@@ -16,6 +16,7 @@ import { groupPickupRounds, siteLabel } from "./pickup-card-view";
 import { aixTypeForPickupCount } from "./pickup-aix-handoff";
 import { pickSendImageUrl } from "./pickup-send-image";
 import { WARD_CODE_NAMES } from "./search-condition-drift";
+import { listingDealStatus } from "./listing-deal-status";
 
 export type NacPickupRow = {
   id: number;
@@ -32,6 +33,8 @@ export type NacPickupRow = {
   property_name?: string | null;
   room_no?: string | null;
   trim_image_url?: string | null;
+  /** 2026-10-01 資料の表（現況＝商談中・審査中は送れない「通す」として目安の数に入れない） */
+  terms?: { evidence?: { moveIn?: string | null } | null } | null;
 };
 
 export type NacAudit = {
@@ -81,7 +84,7 @@ export type NewArrivalCard = {
 //    新着物件等は1件で大丈夫（1件の方がオススメしてる新着物件と分かりやすくて刺さりやすい）」
 export type RoundKind = "新規" | "新着" | "追加";
 export type SiteStamp = { site: "realpro" | "itandi"; label: string; pinpoint: boolean; widen: boolean };
-export type RoundTarget = { need: number; pass: number; short: number; label: string };
+export type RoundTarget = { need: number; pass: number; short: number; label: string; deal?: number };
 const STAMP_SITES: ReadonlyArray<{ site: "realpro" | "itandi"; label: string }> = [{ site: "realpro", label: "リアプロ" }, { site: "itandi", label: "ITANDI" }];
 
 /**
@@ -101,6 +104,9 @@ export function stampLine(stamps: ReadonlyArray<SiteStamp>): string {
   return stamps.map((s) => `${s.label} 🎯${s.pinpoint ? "✅" : "➖"} 🔎${s.widen ? "✅" : "➖"}`).join(" ｜ ");
 }
 
+function withDeal(t: RoundTarget | null, deal: number): RoundTarget | null {
+  return t && deal > 0 ? { ...t, deal } : t;
+}
 /** 初回の目安（search-widen-chain の NEW_CUSTOMER_MIN_PASS と同じ 10件）・新着は1件 */
 export const FIRST_ROUND_TARGET = 10;
 export const NEW_ARRIVAL_TARGET = 1;
@@ -239,13 +245,15 @@ export function buildNewArrivalCards(rows: ReadonlyArray<NacPickupRow>, audits: 
     const kinds = [...new Set(audits1.length ? audits1.flatMap((a) => roundKinds(items, a)) : roundKinds(items, null))];
     const n = { pass: 0, hold: 0, drop: 0 };
     for (const it of items) if (it.verdict === "pass" || it.verdict === "hold" || it.verdict === "drop") n[it.verdict]++;
+    // 2026-10-01 資料の現況が商談中・審査中の「通す」は送れない（チンシャン: 通す1件が商談中）→ 目安の数から除く
+    const dealPass = items.filter((it) => it.verdict === "pass" && listingDealStatus({ evidenceMoveIn: it.terms?.evidence?.moveIn ?? null }) != null).length;
     // 種類は回の最初の検索（一番古い点検）で決める（広げての回は「新規の続き」なので最初の種類に従う）
     const firstAudit = [...audits1].sort((a, b) => ms(a.created_at) - ms(b.created_at))[0] ?? null;
     const kind = (firstAudit ? roundKinds(items, firstAudit)[0] : null) as RoundKind | null;
     return {
       kind: kind === "新規" || kind === "新着" || kind === "追加" ? kind : null,
       stamps: siteStamps(audits, round.created_at, round.last_at),
-      target: roundTarget(kind === "新規" || kind === "新着" ? kind : null, n.pass),
+      target: withDeal(roundTarget(kind === "新規" || kind === "新着" ? kind : null, n.pass - dealPass), dealPass),
       key: round.key,
       at: round.created_at,
       last_at: round.last_at,

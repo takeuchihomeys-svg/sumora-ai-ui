@@ -170,7 +170,7 @@ function OneCard({ card, talk }: { card: NewArrivalCard; talk: NewArrivalTalk })
           </div>
         )}
         {card.target && card.target.short > 0 && (
-          <div className="mt-1 text-[10px] font-bold text-[#c62828]">⚠ {card.target.label}に 通す {card.target.pass}件・あと {card.target.short}件</div>
+          <div className="mt-1 text-[10px] font-bold text-[#c62828]">⚠ {card.target.label}に 送れる通す {card.target.pass}件・あと {card.target.short}件{card.target.deal ? `（商談中・審査中の通す ${card.target.deal}件は送れないので数えない）` : ""}</div>
         )}
         <div className="mt-0.5 text-[9px] text-[#90a4ae]">🔒 スタッフだけの表示（お客様には届きません）</div>
         {open && (

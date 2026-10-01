@@ -122,6 +122,8 @@ export type PickupLite = {
   verdict: string | null;
   search_mode?: string | null;
   complete_group_id?: string | null;
+  /** 2026-10-01 資料の現況が商談中・審査中（送れない）。「通す」の数に入れない */
+  deal?: boolean;
 };
 export type ChainCommandLite = {
   id: string;
@@ -321,7 +323,8 @@ export function decideWiden(input: DecideInput): WidenDecision {
   const kind = classifyKind(runs[runs.length - 1].customer_snapshot ?? latest.customer_snapshot ?? null, input.sentBeforeSession ?? null,
     { firstProposalAt: input.firstProposalAt, sessionStartMs: startMs, originState: input.originState ?? null });
   const threshold = passThreshold(kind);
-  const passCount = rows.filter((r) => r.verdict === "pass").length;
+  // 2026-10-01 竹内（チンシャン）「申込中・商談中の物件は送らない」: 送れる「通す」だけ数える（通す1件が商談中で、送れる物件は0件だった）
+  const passCount = rows.filter((r) => r.verdict === "pass" && !r.deal).length;
   if (passCount >= threshold) return { action: "enough", reason: "enough", kind, passCount, threshold };
   // 送った後は累計の線（1回の0件では広げない）
   let cumulative: { runs: number; zero_hours: number } | null = null;

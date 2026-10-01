@@ -24,6 +24,14 @@ const row = (id: number, batch: string, at: string, rank: number, match: number 
   t("★ 実例: 点あり 2・未判定 9・未分析 1・3回分", b?.scored === 2 && b?.unscored === 9 && b?.not_analyzed === 1 && b?.batches === 3, b);
 }
 {
+  // 2026-10-01 竹内（チンシャン: 👑 が商談中）「申込中・商談中の物件は送らない」→ 資料の現況が商談中・審査中の行は 👑 にしない
+  const rows = [
+    row(1, "B1", "2026-10-01T00:09:30Z", 1, null, { verdict: "pass", score: 105, terms: { evidence: { moveIn: "商談中" } } }),
+    row(2, "B1", "2026-10-01T00:09:30Z", 2, null, { verdict: "hold", score: 73 }),
+  ];
+  t("★ 点が一番でも商談中は 👑 にしない", pickCustomerBest(rows, { basis: "score" })?.id === 2, pickCustomerBest(rows, { basis: "score" }));
+}
+{
   const rows = [
     row(1, "B1", "2026-09-24T09:00:00Z", 1, 60),
     row(2, "B2", "2026-09-24T09:05:00Z", 3, 90),

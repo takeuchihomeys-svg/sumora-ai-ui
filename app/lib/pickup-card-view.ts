@@ -349,7 +349,7 @@ function wantWordOf(key: string, codes: string[], strongEquip?: ReadonlySet<stri
     if (has(/^RENT_BAND_(?:LOWER|MID)$/)) return "予算・やや安め";
     return has(/^RENT_CHEAP_/) ? "家賃を低く" : "予算";
   }
-  if (key === "deposit") return has(/^INITIAL_COST_OVER_LIMIT$/) && !has(/^(?:ZERO_ZERO_MATCH|INITIAL_COST_NOT_ZERO)$/) ? "初期費用の上限" : "初期費用を抑えたい";
+  if (key === "deposit") return has(/^INITIAL_COST_OVER_LIMIT$/) && !has(/^(?:ZERO_ZERO_MATCH|INITIAL_COST_NOT_ZERO(?:_SOFT)?)$/) ? "初期費用の上限" : "初期費用を抑えたい";
   if (key === "madori") return has(/^SQM_/) && !has(/^FLOOR_PLAN_/) ? "広さ" : "間取り";
   if (key === "walk") return has(/^(?:WALK_TEXT_|WALK_NEAR_W)/) ? "駅近" : "徒歩";
   if (key === "built") return has(/^(?:BUILDING_AGE_TEXT_|AGE_W)/) ? "築浅" : "築年";

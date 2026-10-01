@@ -164,7 +164,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       out.analyzed = a.analyzed; out.analyzeLevel = a.level; out.analyzeTargets = a.targets;
     }
     const { data, error } = await supabase.from("property_pickups")
-      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis, search_override, reason_codes, reasons_ja, summary_text")
+      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis, search_override, reason_codes, reasons_ja, summary_text, terms")
       .eq("complete_group_id", input.groupId).limit(500);
     if (error) { out.error = error.message; return out; }
     // 2026-09-27 付け直し（backfill-drop-discount-codes --apply）の前の行も、割引と AD の比べの札を外した点・判定で並べる（画面の詳細 API と同じ）
