@@ -3855,6 +3855,11 @@ ALTER TABLE apply_period_summaries DISABLE ROW LEVEL SECURITY;
 --   鍵と選択肢は app/lib/aix-pickers.ts の AIX_PICKERS（書くのは /api/log-aix-usage の sanitizePickerChoices）
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS picker_choices JSONB DEFAULT NULL;
 
+-- 2026-10-01 竹内「AIX 開いたら、確認した要件以外は全てセットされていて、スタッフは確認したことだけ入れたら良い」:
+--   AIX を開いた時に自動で入れた欄（物件名・エリア・保証会社名・物件ピックアップの種類）と出所・そのまま使ったか（kept）。
+--   形は app/lib/aix-prefill.ts の summarizePrefillUse（書くのは /api/log-aix-usage の sanitizePrefill）。当たりの低い欄から直す
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prefill JSONB DEFAULT NULL;
+
 -- ── 拡張の心拍と「今の画面」（2026-09-29 v2.5.40 竹内「なぜ固まっているのか」「画面開いているのも目で見ることができるのが理想」）──
 -- 9/29: 検索は 10:57 に終わっていて帯が残っていただけ・16:32 の午後の便の見送りは v2.5.38 より前の拡張（再読み込みしていない PC）。
 --   「その PC が今どの版で何をしているか」が分からず後から推すしかなかった → 心拍・拾った版・画面の写真を残す。

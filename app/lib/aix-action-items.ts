@@ -158,8 +158,13 @@ export async function syncAixActionItem(input: {
 
 /** AIX モード（拡張の AIX ボタン ON の PC）で自動の物件検索→売上番長グループ送信を行う AIX 指示 */
 const AIX_AUTO_SEARCH_ACTIONS = new Set(["property_send", "property_recommendation", "property_search"]);
-/** AIX 連動の自動検索で使う検索サイト（Web画面の「リアプロで検索」と同じキー） */
-const AIX_AUTO_SEARCH_SITES = ["realnetpro"];
+/**
+ * AIX 連動の自動検索で使う検索サイト（Web画面の「リアプロで検索」と同じキー）。
+ * 2026-10-01 竹内（チンシャン・初回）「なんで ITANDI で検索できていないのか」: 9/12 からリアプロだけだった（9:02 の AIX の検索・9:08 の自動の広げても
+ *   リアプロだけ → 通す1件で止まった）。決まり（memory feedback_search_per_customer_both_sites）どおりお客様1人ずつリアプロ → ITANDI の両方。
+ *   拡張は1つの指示に2サイトあればお客様ごとに両方を終えてから次へ（background.js v2.5.42・広げての続きはサイトごとに search-widen-chain が決める）
+ */
+const AIX_AUTO_SEARCH_SITES = ["realnetpro", "itandi"];
 
 /**
  * AIX で物件ピックアップ・物件オススメの指示が出たお客さんの自動検索コマンドを積む（2026-09-12 竹内方針「AIXモード」）。

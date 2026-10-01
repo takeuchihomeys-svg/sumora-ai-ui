@@ -9,6 +9,7 @@ import type { SummaryJson } from "@/app/api/customer-summary/route";
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」: 画面で選んだピッカー・入力値の記録（picker_choices）
 import { sanitizePickerChoices } from "@/app/lib/aix-pickers";
+import { sanitizePrefill } from "@/app/lib/aix-prefill";
 import { brainPredictionAt, PREDICTION_LOOKBACK_MS } from "@/app/lib/brain-outcome";
 
 // POST /api/log-aix-usage
@@ -230,9 +231,11 @@ export async function POST(req: NextRequest) {
       /** 2026-09-27: 物件ピックアップ・物件オススメで送った物件の数（送った資料の枚数）と名前（売上サポの行）。台帳の物件送付の件数 */
       properties_sent_count?: number | null;
       properties_sent_names?: string[] | null;
+      /** 2026-10-01: AIX を開いた時に自動で入れた欄と、そのまま使ったか（app/lib/aix-prefill.ts summarizePrefillUse） */
+      prefill?: unknown;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled, picker_choices, properties_sent_count, properties_sent_names } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled, picker_choices, properties_sent_count, properties_sent_names, prefill } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -311,13 +314,15 @@ export async function POST(req: NextRequest) {
       // 改善3-c: スタッフが入力したフリーワードキーワード（aix-template-generate の続き文ragQuery に注入する）
       send_keyword: typeof send_keyword === "string" && send_keyword.trim() ? send_keyword.trim().slice(0, 200) : null,
       picker_choices: pickerChoices,
+      // 2026-10-01 竹内「AIX 開いたら確認した要件以外は全てセット」: 欄ごとの当たり（kept）を見張りで数え、当たりの低い欄から直す
+      prefill: sanitizePrefill(prefill),
     };
     let { data: insertedLog, error } = await supabase.from("aix_usage_logs").insert(logRowInsert).select("id, created_at").maybeSingle();
     // 列を足す前の DB（migrate-schema 未適用）でも AIX の記録そのものは落とさない（picker_choices だけ外して入れ直す）
-    if (error && /picker_choices/.test(error.message)) {
-      console.warn("[log-aix-usage] picker_choices 列が無いので外して記録:", error.message);
-      const { picker_choices: _omit, ...withoutPicker } = logRowInsert;
-      void _omit;
+    if (error && /picker_choices|prefill/.test(error.message)) {
+      console.warn("[log-aix-usage] picker_choices／prefill 列が無いので外して記録:", error.message);
+      const { picker_choices: _omit, prefill: _omit2, ...withoutPicker } = logRowInsert;
+      void _omit; void _omit2;
       ({ data: insertedLog, error } = await supabase.from("aix_usage_logs").insert(withoutPicker).select("id, created_at").maybeSingle());
     }
 

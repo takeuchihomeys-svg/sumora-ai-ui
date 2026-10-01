@@ -10739,6 +10739,8 @@ export default function Home() {
           initialFollowupSubMode={aixInitFollowupSubMode ?? undefined}
           initialInputText={aixInitInputText || undefined}
           initialCheckPattern={aixInitCheckPattern ?? undefined}
+          // 2026-10-01 竹内「AIX 開いたら…物件名等はセットされていて」: 売上サポで選んで渡した物件（同じ会話の時だけ）
+          prefillPropertyNames={pickupHandoffRef.current?.conv === selectedConversation.id ? pickupHandoffRef.current?.handoffNames : undefined}
           templateId={pendingTemplateSource?.id ?? undefined}
           onClose={() => {
             setAixModalType(null);
@@ -10791,7 +10793,7 @@ export default function Home() {
           }}
           onSendCallButton={sendCallButton}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number; noSecondMessage?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; pickerChoices?: Record<string, unknown>; prefill?: Record<string, unknown> | null; sentPropertyCount?: number; noSecondMessage?: boolean }) => {
             // 2026-09-24: 売上サポから来た AIX【物件ピックアップした】を送り終えたら、ピックアップの行に「送った」印を付ける（LINE には何も送らない）
             let _sentPickupNames: string[] | null = null;
             {
@@ -10946,6 +10948,8 @@ export default function Home() {
                   //   （check_pattern / app_sub_mode / send_mode 以外）。整えるのはサーバー（app/lib/aix-pickers.ts sanitizePickerChoices）。
                   //   誰に確認したか（管理会社／代表／オーナー／近隣月極）はこの画面の ref にしか無いのでここで足す
                   picker_choices: { ...(meta?.pickerChoices ?? {}), check_who: propertyCheckSubTypeRef.current },
+                  // 2026-10-01 竹内「AIX 開いたら確認した要件以外は全てセット」: 自動で入れた欄と、そのまま使ったか（app/lib/aix-prefill.ts・整えるのはサーバー）
+                  prefill: meta?.prefill ?? null,
                   // 2026-09-27: 物件ピックアップ・物件オススメで送った物件の数と名前（台帳の物件送付。旧は1通＝1件で10件送っても +1）
                   properties_sent_count: meta?.scheduled ? null : (meta?.sentPropertyCount ?? null),
                   properties_sent_names: _sentPickupNames && _sentPickupNames.length ? _sentPickupNames : null,

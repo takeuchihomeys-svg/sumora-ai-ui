@@ -32,7 +32,7 @@ const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import { firstSentPickupId } from "../lib/sent-image-order";
-import {
+import { propertyNamePrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
 
@@ -115,11 +115,16 @@ interface AixModalProps {
   onSendCallButton?: () => Promise<void>;
   // M1: propertyNames / propStatuses = 「物件確認した」で確認した物件名と各物件の状態（同一index対応）
   // M2: estimateSent / propCostNotes = 御見積書の同封有無とOCRで読み取った物件別費用情報
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string; pickerChoices?: Record<string, unknown>; sentPropertyCount?: number; noSecondMessage?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string; conversationMatch?: boolean; propertyNames?: string[]; propStatuses?: string[]; estimateSent?: boolean; propCostNotes?: string[]; sendKeyword?: string; meetingPropertyName?: string; meetingPropertyAddress?: string; meetingDate?: string; meetingTime?: string; guarantorProperties?: Array<{ name: string; company: string; type: string }>; parallelScreening?: boolean; viewingCandidateText?: string; pickerChoices?: Record<string, unknown>; prefill?: Record<string, unknown> | null; sentPropertyCount?: number; noSecondMessage?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
   onOpenTemplateFiltered?: (search: string) => void;
+  /**
+   * 2026-10-01 竹内「AIX 開いたら、確認した要件以外は全てセットされていて…物件名等はセットされていて」:
+   * 売上サポで選んで渡した物件（「物件名 号室」・選んだ並び）。物件名の欄の先入れ（aix-prefill.ts propertyNamePrefill）の一番の出所
+   */
+  prefillPropertyNames?: string[];
 }
 
 /** お客様が送った物件を畳まずに出す件数（これを超えた分だけ「他N件を見る」で畳む） */
@@ -641,6 +646,7 @@ export default function AixModal({
   onScheduled,
   onVacatingDetected,
   onOpenTemplateFiltered,
+  prefillPropertyNames,
 }: AixModalProps) {
   const config = CONFIG[actionType];
   // AIX経由の全送信に isAix=true フラグを付与（挨拶判定から除外するため）
@@ -1270,6 +1276,119 @@ export default function AixModal({
   // 全力サポート専用
   const [zenryokuArea, setZenryokuArea] = useState<string>("");
   const [zenryokuMemo, setZenryokuMemo] = useState<string>("");
+
+  // ── 2026-10-01 AIX を開いたら「確認が要る所以外」を先に入れる（app/lib/aix-prefill.ts）──
+  //   竹内「AIX 開いたら、確認した要件以外は全てセットされていて、スタッフは確認したことだけ入れたら良い」。
+  //   入れるのは物件名・エリア・保証会社名（会話にある時）・物件ピックアップの種類（前に送ったか）だけ。可否・入居可能日・番地など
+  //   資料や会話に無い事実は入れない（スタッフが確認して入れる）。空の欄にだけ入れ（1欄1回・スタッフや読み取りが先に入れた値は触らない）、
+  //   欄の上に「◯◯から自動・違えば直す」を出す。送る時に「そのまま使ったか」を記録（aix_usage_logs.prefill）して当たりを数える
+  const [prefilled, setPrefilled] = useState<Record<string, Prefilled<string>>>({});
+  const prefillTriedRef = useRef<Set<string>>(new Set());
+  const namePrefill = useMemo(() => {
+    const msgs = recentMessages ?? [];
+    const turn = customerTurnOf(msgs);
+    const turnStartMs = turn[0]?.rawCreatedAt ? Date.parse(turn[0].rawCreatedAt) : NaN;
+    // お客様が今回の連投で送ってきた物件（共有文の時刻が今回の連投の最初より後）
+    const sharedThisTurn = customerPropertyOptions
+      .filter((c) => Number.isFinite(turnStartMs) && c.at && Date.parse(c.at) >= turnStartMs)
+      .map((c) => c.name);
+    // こちらが送った物件（🌟〇〇 305号室・【〇〇 305号室】）新しい順
+    const staffSent: string[] = [];
+    for (const m of [...msgs].reverse()) {
+      if (m.sender === "customer") continue;
+      for (const n of extractPropertyLabels(m.text)) if (!staffSent.includes(n)) staffSent.push(n);
+    }
+    return propertyNamePrefill({ pickupNames: prefillPropertyNames, customerSharedThisTurn: sharedThisTurn, staffSent, customerTurnText: turn.map((m) => m.text).join("\n") });
+  }, [recentMessages, customerPropertyOptions, prefillPropertyNames]);
+  const areaPrefill = useMemo(() => areaFromConditions(linkedCustomer?.conditions ?? customerConditions), [linkedCustomer?.conditions, customerConditions]);
+  /** 欄に先に入れる（1欄1回・空の時だけ） */
+  const applyPrefill = (field: string, p: Prefilled<string> | null, current: string, set: (v: string) => void) => {
+    if (!p || prefillTriedRef.current.has(field)) return;
+    prefillTriedRef.current.add(field);
+    if (current.trim()) return;
+    set(p.value);
+    setPrefilled((prev) => ({ ...prev, [field]: p }));
+  };
+  useEffect(() => {
+    const n = namePrefill;
+    if (actionType === "property_check_result") {
+      if (checkPattern === "interior_photo") applyPrefill("interiorPropertyName", n, interiorPropertyName, setInteriorPropertyName);
+      else if (checkPattern === "unavailable") applyPrefill("checkUnavailablePropName", n, checkUnavailablePropName, setCheckUnavailablePropName);
+      else if (checkPattern === "exclusive") applyPrefill("exclusivePropName", n, exclusivePropName, setExclusivePropName);
+      else if (checkPattern === "other_room_check") applyPrefill("otherRoomPropertyName", n, otherRoomPropertyName, setOtherRoomPropertyName);
+      else if (checkPattern === "mgmt_move_in") applyPrefill("moveInPropName", n, moveInPropName, setMoveInPropName);
+      else if (checkPattern === "mgmt_proxy" || checkPattern === "mgmt_guarantor") {
+        applyPrefill("mgmtGuarantorPropertyName", n, mgmtGuarantorPropertyName, setMgmtGuarantorPropertyName);
+        // 保証会社名は会話に出ている時だけ（スタッフが管理会社に確かめた名前と違えば直す）
+        if (checkPattern === "mgmt_guarantor" && guarantorHint) {
+          applyPrefill("mgmtGuarantorCompanyName", { value: guarantorHint.name, source: "conversation", reason: "会話に出ている保証会社" }, mgmtGuarantorCompanyName, (v) => {
+            setMgmtGuarantorCompanyName(v);
+            if (!mgmtGuarantorType) setMgmtGuarantorType(guarantorTypeJa(guarantorHint.type));
+          });
+        }
+      } else if (checkPattern === "available" && sentPropertyAuto.count <= 1) {
+        // 物件あった: お客様が送った物件が1件以下の時だけ1件目に（2件以上は並びが決まらない）
+        applyPrefill("checkPropNames0", n, checkPropNames[0] ?? "", (v) => setCheckPropNames((prev) => [v, ...prev.slice(1)]));
+      }
+    } else if (actionType === "viewing_invite") {
+      applyPrefill("viewingPropertyName", n, viewingPropertyName, setViewingPropertyName);
+    } else if (actionType === "meeting_place") {
+      applyPrefill("meetingPropertyName", n, meetingPropertyName, setMeetingPropertyName);
+    } else if (actionType === "application_push" && (appSubMode === "push" || appSubMode === "confirm")) {
+      applyPrefill("appPropertyName", n, appPropertyName, setAppPropertyName);
+    } else if (actionType === "guarantor_info") {
+      applyPrefill("giCards0", n, giCards[0]?.name ?? "", (v) => setGiCards((prev) => prev.map((c, i) => (i === 0 ? { ...c, name: v } : c))));
+    } else if (actionType === "zenryoku_support") {
+      applyPrefill("zenryokuArea", areaPrefill, zenryokuArea, setZenryokuArea);
+    }
+  // 欄の値は「空か」を見るだけ（入れた後に動かさない）なので deps に入れない
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, checkPattern, appSubMode, namePrefill, areaPrefill, guarantorHint, sentPropertyAuto.count]);
+  // 物件ピックアップした: 種類が決まらずに開いた時（売上サポから来た時など）は、1時間より前に物件を送った記録で 初回／新着 を入れる
+  //   実測 363件で 77% 当たり（外れは主に「条件広げ」＝会話からは決められない）。aix_usage_logs は AIX の送付の記録（送付の表より抜けが少ない）
+  useEffect(() => {
+    if (actionType !== "property_send" || sendMode !== null || !conversationId || prefillTriedRef.current.has("sendMode")) return;
+    prefillTriedRef.current.add("sendMode");
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { data } = await supabase.from("aix_usage_logs").select("aix_type, created_at")
+          .eq("conversation_id", conversationId).in("aix_type", ["property_send", "property_recommendation"])
+          .order("created_at", { ascending: false }).limit(50);
+        if (cancelled) return;
+        const p = sendModePrefill((data ?? []) as Array<{ aix_type: string | null; created_at: string | null }>, Date.now());
+        setSendMode((cur) => cur ?? p.value);
+        setPrefilled((prev) => ({ ...prev, sendMode: p }));
+      } catch (e) {
+        console.warn("[AixModal] 送付の記録の取得失敗（種類は選んでください）:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, conversationId]);
+  /** 欄の上に出す「◯◯から自動・違えば直す」（自動で入れた値のままの時だけ） */
+  const prefillTag = (field: string, current: string | null | undefined) => {
+    const p = prefilled[field];
+    if (!p || (current ?? "").replace(/\s+/g, "") !== p.value.replace(/\s+/g, "")) return null;
+    return <p className="mb-0.5 text-[11px] text-[#2e7d32]" title={p.reason}>{prefillNote(p)}</p>;
+  };
+  /** 送る時の記録（自動で入れた欄ごとに、そのまま使ったか） */
+  const collectPrefillUse = () => summarizePrefillUse([
+    { field: "interiorPropertyName", prefilled: prefilled.interiorPropertyName, final: interiorPropertyName },
+    { field: "checkUnavailablePropName", prefilled: prefilled.checkUnavailablePropName, final: checkUnavailablePropName },
+    { field: "exclusivePropName", prefilled: prefilled.exclusivePropName, final: exclusivePropName },
+    { field: "otherRoomPropertyName", prefilled: prefilled.otherRoomPropertyName, final: otherRoomPropertyName },
+    { field: "moveInPropName", prefilled: prefilled.moveInPropName, final: moveInPropName },
+    { field: "mgmtGuarantorPropertyName", prefilled: prefilled.mgmtGuarantorPropertyName, final: mgmtGuarantorPropertyName },
+    { field: "mgmtGuarantorCompanyName", prefilled: prefilled.mgmtGuarantorCompanyName, final: mgmtGuarantorCompanyName },
+    { field: "checkPropNames0", prefilled: prefilled.checkPropNames0, final: checkPropNames[0] },
+    { field: "viewingPropertyName", prefilled: prefilled.viewingPropertyName, final: viewingPropertyName },
+    { field: "meetingPropertyName", prefilled: prefilled.meetingPropertyName, final: meetingPropertyName },
+    { field: "appPropertyName", prefilled: prefilled.appPropertyName, final: appPropertyName },
+    { field: "giCards0", prefilled: prefilled.giCards0, final: giCards[0]?.name },
+    { field: "zenryokuArea", prefilled: prefilled.zenryokuArea, final: zenryokuArea },
+    { field: "sendMode", prefilled: prefilled.sendMode, final: sendMode },
+  ]);
 
   // 2026-09-27 竹内「ピッカー選択した部分の記録はない状態なのか／無ければそこも作っておく」:
   //   check_pattern / send_mode / app_sub_mode 以外のピッカーの選択・入力値を送信時に集めて onAfterSend → log-aix-usage の picker_choices へ。
@@ -3185,7 +3304,7 @@ export default function AixModal({
         // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
         guarantorProperties: actionType === "guarantor_info" && lastGuarantorPropsRef.current.length > 0 ? lastGuarantorPropsRef.current : undefined,
         parallelScreening: actionType === "guarantor_info" ? lastGuarantorParallelRef.current : undefined,
-        pickerChoices: collectPickerChoices(),
+        pickerChoices: collectPickerChoices(), prefill: collectPrefillUse(),
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -3326,6 +3445,7 @@ export default function AixModal({
             // 改善3-c: キーワードも遅延送信パスでキャプチャ
             const capturedSendKeyword = sendKeyword.trim();
             const capturedPickerChoices = collectPickerChoices();
+            const capturedPrefill = collectPrefillUse();
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               // UX改善①: 学習は実際に送信が完了した後にのみ実行する
@@ -3352,7 +3472,7 @@ export default function AixModal({
                 estimateSent: capturedEstimateSent || undefined,
                 propCostNotes: capturedPropCostNotes.length > 0 ? capturedPropCostNotes : undefined,
                 sendKeyword: capturedSendKeyword || undefined,
-                pickerChoices: capturedPickerChoices,
+                pickerChoices: capturedPickerChoices, prefill: capturedPrefill,
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
@@ -3540,7 +3660,7 @@ export default function AixModal({
         // 2026-09-15 竹内（YUYA 事例）: 保証会社について の物件×保証会社×種類・並行審査ON（sent_facts の台帳でブレインが読む）
         guarantorProperties: actionType === "guarantor_info" && lastGuarantorPropsRef.current.length > 0 ? lastGuarantorPropsRef.current : undefined,
         parallelScreening: actionType === "guarantor_info" ? lastGuarantorParallelRef.current : undefined,
-        pickerChoices: collectPickerChoices(),
+        pickerChoices: collectPickerChoices(), prefill: collectPrefillUse(),
       });
       onClose();
     } catch (err) {
@@ -3863,6 +3983,7 @@ export default function AixModal({
               {/* モード選択 */}
               <div>
                 <p className="mb-1.5 text-xs font-bold text-[#54656f]">送るモードを選択</p>
+                {prefillTag("sendMode", sendMode)}
                 <div className="flex flex-col gap-2 mb-2">
                   {(sendMode === null || sendMode === "normal") && (
                     <button
@@ -4213,6 +4334,7 @@ export default function AixModal({
                     <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                       物件名 <span className="font-normal text-[#90a4ae]">（自動検出・修正可）</span>
                     </label>
+                    {prefillTag("appPropertyName", appPropertyName)}
                     <input
                       type="text"
                       value={appPropertyName}
@@ -4351,6 +4473,7 @@ export default function AixModal({
                     <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                       物件名 <span className="font-normal text-[#90a4ae]">（任意）</span>
                     </label>
+                    {prefillTag("appPropertyName", appPropertyName)}
                     <input
                       type="text"
                       value={appPropertyName}
@@ -4562,6 +4685,7 @@ export default function AixModal({
                   {/* 物件名 */}
                   <div>
                     <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="text-red-400">*</span></p>
+                    {prefillTag("moveInPropName", moveInPropName)}
                     <input
                       type="text"
                       value={moveInPropName}
@@ -4920,6 +5044,7 @@ export default function AixModal({
                 <div className="flex flex-col gap-3">
                   <div>
                     <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="font-normal text-[#90a4ae]">（複数は「・」で区切る）</span></p>
+                    {prefillTag("mgmtGuarantorPropertyName", mgmtGuarantorPropertyName)}
                     <input
                       type="text"
                       value={mgmtGuarantorPropertyName}
@@ -5008,6 +5133,7 @@ export default function AixModal({
                 <div className="flex flex-col gap-3 mt-1">
                   {/* テキスト入力欄 */}
                   <div className="flex flex-col gap-2">
+                    {prefillTag("mgmtGuarantorPropertyName", mgmtGuarantorPropertyName)}
                     <input
                       type="text"
                       placeholder="物件名（例: レジュールアッシュ梅田AXIA）"
@@ -5015,6 +5141,7 @@ export default function AixModal({
                       onChange={e => { setMgmtGuarantorPropertyName(e.target.value); setPreview(""); }}
                       className="w-full rounded-xl border border-[#E5E7EB] bg-white px-3 py-2.5 text-sm placeholder-[#9CA3AF] outline-none focus:border-[#546E7A]"
                     />
+                    {prefillTag("mgmtGuarantorCompanyName", mgmtGuarantorCompanyName)}
                     <input
                       type="text"
                       placeholder="保証会社名（例: 株式会社日本トラストコーポレーション）"
@@ -5239,6 +5366,7 @@ export default function AixModal({
                     <p className="mb-1 text-xs font-bold text-[#54656f]">
                       物件名 <span className="font-normal text-[#90a4ae]">（任意・画像貼り付けで自動入力）</span>
                     </p>
+                    {prefillTag("otherRoomPropertyName", otherRoomPropertyName)}
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -5376,6 +5504,7 @@ export default function AixModal({
                   {/* 物件名（必須） */}
                   <div>
                     <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="text-red-500">*</span></p>
+                    {prefillTag("exclusivePropName", exclusivePropName)}
                     <input
                       type="text"
                       value={exclusivePropName}
@@ -5496,6 +5625,7 @@ export default function AixModal({
                   </div>
                   <div>
                     <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                    {prefillTag("checkUnavailablePropName", checkUnavailablePropName)}
                     <input
                       type="text"
                       value={checkUnavailablePropName}
@@ -5524,6 +5654,7 @@ export default function AixModal({
                         ))}
                       </div>
                     )}
+                    {prefillTag("interiorPropertyName", interiorPropertyName)}
                     <input
                       type="text"
                       value={interiorPropertyName}
@@ -5771,6 +5902,7 @@ export default function AixModal({
                         )}
                       </div>
                       {/* 物件名 */}
+                      {pi === 0 && prefillTag("checkPropNames0", checkPropNames[0])}
                       <input
                         type="text"
                         placeholder={checkPropOcrLoading[pi] ? "読取中..." : "マンション名・号室（例: KTIレジデンス西中島II 202号室）"}
@@ -6447,6 +6579,7 @@ export default function AixModal({
                 <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                   探しているエリア <span className="ml-1 font-normal text-[#E53935]">（必須）</span>
                 </label>
+                {prefillTag("zenryokuArea", zenryokuArea)}
                 <input
                   value={zenryokuArea}
                   onChange={(e) => { setZenryokuArea(e.target.value); setPreview(""); }}
@@ -6530,6 +6663,7 @@ export default function AixModal({
                   <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                     物件名 <span className="font-normal text-[#90a4ae]">（任意・画像貼り付けで自動入力）</span>
                   </label>
+                  {prefillTag("viewingPropertyName", viewingPropertyName)}
                   <div className="flex items-center gap-2">
                     <input
                       value={viewingPropertyName}
@@ -6932,6 +7066,7 @@ export default function AixModal({
               {/* 物件名 + 住所 */}
               <div className="mb-3">
                 <label className="mb-1 block text-xs font-semibold text-[#54656f]">物件名 <span className="text-red-400">*</span></label>
+                {prefillTag("meetingPropertyName", meetingPropertyName)}
                 <input
                   value={meetingPropertyName}
                   onChange={(e) => setMeetingPropertyName(e.target.value)}
@@ -7085,6 +7220,7 @@ export default function AixModal({
                         )}
                       </div>
                       {/* 物件名 */}
+                      {i === 0 && prefillTag("giCards0", c.name)}
                       <input
                         type="text"
                         list="gi-property-names"

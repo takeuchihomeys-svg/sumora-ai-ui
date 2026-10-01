@@ -1,6 +1,6 @@
 // 2026-09-27 LINE のトーク画面の「新着物件カード」（スタッフだけ）の中身
 // 実行: npx tsx app/lib/__tests__/new-arrival-card.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { buildNewArrivalCards, conditionLine, roundConfirm, roundRecommend, roundKinds, cardsBetween, pickupReviewHref, cardHeadline, auditForRound, type NacPickupRow, type NacAudit } from "../new-arrival-card";
+import { buildNewArrivalCards, conditionLine, roundConfirm, roundRecommend, roundKinds, cardsBetween, pickupReviewHref, cardHeadline, auditForRound, stampLine, roundTarget, type NacPickupRow, type NacAudit } from "../new-arrival-card";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -45,7 +45,37 @@ it("まとめの回（同じ complete_group_id）は1枚・件数", () => {
   eq(cards.length, 1);
   eq([cards[0].total, cards[0].pass, cards[0].hold], [3, 1, 2]);
   eq(cards[0].at, "2026-09-27T05:41:00Z");
-  eq(cardHeadline(cards[0]), "🏠 新着物件 通す 1・保留 2（リアプロ 3）");
+  // 2026-10-01: 写しに送った日が無い回＝新規 → 見出しは「初回の物件」（旧は種類を見ず全部「新着物件」）
+  eq(cardHeadline(cards[0]), "🏠 初回の物件 通す 1・保留 2（リアプロ 3）");
+  eq(cardHeadline({ ...cards[0], kind: "新着" }), "🏠 新着物件 通す 1・保留 2（リアプロ 3）");
+});
+
+// 2026-10-01 竹内（チンシャン・初回）: リアプロのピンポイント 9:02（1件）→ 自動の広げて 9:08（12件）。ITANDI は検索していない。通す1・保留10・外す候補2
+it("チンシャン: 印は リアプロ 🎯済 🔎済 ｜ ITANDI 🎯未 🔎未・見出しは初回・目安10件に あと9件", () => {
+  const snap = { status: "hearing", rent_max: 100000 };
+  const auds: NacAudit[] = [
+    { created_at: "2026-10-01T00:02:36Z", site: "realpro", is_wide: false, intended: { rent_max: 100000, rent_min: 70000, floor_plan: "2LDK", rp_update_days: null }, customer_snapshot: snap },
+    { created_at: "2026-10-01T00:08:35Z", site: "realpro", is_wide: true, intended: { rent_max: 105000, rent_min: 70000, floor_plan: "2LDK", rp_update_days: null }, customer_snapshot: snap },
+  ];
+  const rows: NacPickupRow[] = [
+    row(1, { created_at: "2026-10-01T00:03:09Z", batch_id: "p1", verdict: "hold", search_mode: "pinpoint", complete_group_id: "cgC" }),
+    row(2, { created_at: "2026-10-01T00:09:30Z", batch_id: "w1", verdict: "pass", search_mode: "widen", complete_group_id: "cgC" }),
+    ...Array.from({ length: 9 }, (_, i) => row(3 + i, { created_at: "2026-10-01T00:09:30Z", batch_id: "w1", verdict: "hold", search_mode: "widen", complete_group_id: "cgC" })),
+    row(20, { created_at: "2026-10-01T00:09:31Z", batch_id: "w2", verdict: "drop", search_mode: "widen", complete_group_id: "cgC" }),
+    row(21, { created_at: "2026-10-01T00:09:31Z", batch_id: "w2", verdict: "drop", search_mode: "widen", complete_group_id: "cgC" }),
+  ];
+  const cards = buildNewArrivalCards(rows, auds);
+  eq(cards.length, 1);
+  const c = cards[0];
+  eq([c.pass, c.hold, c.drop], [1, 10, 2]);
+  eq(c.kind, "新規");
+  eq(stampLine(c.stamps ?? []), "リアプロ 🎯✅ 🔎✅ ｜ ITANDI 🎯➖ 🔎➖");
+  eq([c.target?.need, c.target?.short], [10, 9]);
+  eq(cardHeadline(c).startsWith("🏠 初回の物件 通す 1"), true);
+});
+it("新着は1件で足りる（目安1件・不足0）", () => {
+  eq(roundTarget("新着", 1)?.short, 0);
+  eq(roundTarget("追加", 0), null);
 });
 it("時系列の置き場所（前の吹き出しより後・この吹き出し以前／最後の後ろ）", () => {
   const cards = [{ at: "2026-09-27T05:41:00Z" }, { at: "2026-09-27T09:00:00Z" }];

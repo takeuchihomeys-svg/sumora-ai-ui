@@ -157,6 +157,21 @@ function OneCard({ card, talk }: { card: NewArrivalCard; talk: NewArrivalTalk })
             <img src={card.recommend.image} alt={`${card.recommend.name} の資料`} className="max-h-full max-w-full rounded bg-white object-contain" />
           </div>
         )}
+        {/* 2026-10-01 竹内「検索結果はリアプロ・ITANDI をやったのか、ピンポイント検索と広げて検索をそれぞれ行ったのか、スタンプ式で」 */}
+        {card.stamps && card.stamps.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            {card.stamps.map((s) => (
+              <span key={s.site} className="inline-flex items-center gap-0.5 rounded-full bg-white px-1.5 py-[1px] text-[10px] ring-1 ring-[#cfd8dc]" title={`${s.label}: ピンポイント ${s.pinpoint ? "済" : "未"}・広げて ${s.widen ? "済" : "未"}`}>
+                <span className="font-bold text-[#455a64]">{s.label}</span>
+                <span className={s.pinpoint ? "text-[#2e7d32]" : "text-[#b0bec5]"}>🎯{s.pinpoint ? "済" : "未"}</span>
+                <span className={s.widen ? "text-[#2e7d32]" : "text-[#b0bec5]"}>🔎{s.widen ? "済" : "未"}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {card.target && card.target.short > 0 && (
+          <div className="mt-1 text-[10px] font-bold text-[#c62828]">⚠ {card.target.label}に 通す {card.target.pass}件・あと {card.target.short}件</div>
+        )}
         <div className="mt-0.5 text-[9px] text-[#90a4ae]">🔒 スタッフだけの表示（お客様には届きません）</div>
         {open && (
           <div className="mt-1.5 space-y-1">

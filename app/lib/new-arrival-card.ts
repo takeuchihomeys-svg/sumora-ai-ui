@@ -67,7 +67,48 @@ export type NewArrivalCard = {
   confirm: NacConfirm;
   /** 物件オススメの回（1件を推す形）の時だけ、その物件（資料の画像つき）。物件ピックアップ（複数件）の回は null＝件数だけ */
   recommend: NacRecommend | null;
+  /** 2026-10-01 回の種類（新規＝初回／新着／追加）。見出しと目安件数に使う。分からなければ null */
+  kind?: RoundKind | null;
+  /** 2026-10-01 サイトごとに ピンポイント／広げて を行ったか（閉じたままでも見える印） */
+  stamps?: SiteStamp[];
+  /** 2026-10-01 目安件数（初回＝10件・新着＝1件）と通すの数・足りない数 */
+  target?: RoundTarget | null;
 };
+
+// ── 2026-10-01 竹内（チンシャン・初回で通す1件・ITANDI 未検索）──────────────────────────
+//   「LINE に表示されるここの部分で、検索結果はリアプロ・ITANDI をやったのか出すのと、ピンポイント検索と広げて検索をそれぞれ行ったのか、
+//    見やすいようにスタンプ式で」「初回の物件ピックアップは10件送るのが目安（1件かなりオススメ＋残り9件）。10件ないなら広げて検索。
+//    新着物件等は1件で大丈夫（1件の方がオススメしてる新着物件と分かりやすくて刺さりやすい）」
+export type RoundKind = "新規" | "新着" | "追加";
+export type SiteStamp = { site: "realpro" | "itandi"; label: string; pinpoint: boolean; widen: boolean };
+export type RoundTarget = { need: number; pass: number; short: number; label: string };
+const STAMP_SITES: ReadonlyArray<{ site: "realpro" | "itandi"; label: string }> = [{ site: "realpro", label: "リアプロ" }, { site: "itandi", label: "ITANDI" }];
+
+/**
+ * サイトごとにピンポイント／広げての検索をしたか（点検の記録 search_audits から）。
+ * 見る幅: 回の最初の行の NAC_AUDIT_LOOKBACK_MS 前 〜 回の最後の行の1分後（広げての検索は回の途中で走る）
+ */
+export function siteStamps(audits: ReadonlyArray<NacAudit>, roundAt: string, lastAt: string): SiteStamp[] {
+  const from = ms(roundAt) - NAC_AUDIT_LOOKBACK_MS, to = ms(lastAt) + 60_000;
+  return STAMP_SITES.map(({ site, label }) => {
+    const mine = audits.filter((a) => siteKey(a.site) === site && ms(a.created_at) >= from && ms(a.created_at) <= to);
+    return { site, label, pinpoint: mine.some((a) => a.is_wide === false), widen: mine.some((a) => a.is_wide === true) };
+  });
+}
+
+/** 印の1行「リアプロ 🎯✅ 🔎✅ ｜ ITANDI 🎯➖ 🔎➖」（画面は札で出す・ログやテスト用） */
+export function stampLine(stamps: ReadonlyArray<SiteStamp>): string {
+  return stamps.map((s) => `${s.label} 🎯${s.pinpoint ? "✅" : "➖"} 🔎${s.widen ? "✅" : "➖"}`).join(" ｜ ");
+}
+
+/** 初回の目安（search-widen-chain の NEW_CUSTOMER_MIN_PASS と同じ 10件）・新着は1件 */
+export const FIRST_ROUND_TARGET = 10;
+export const NEW_ARRIVAL_TARGET = 1;
+export function roundTarget(kind: RoundKind | null, pass: number): RoundTarget | null {
+  if (kind === "新規") return { need: FIRST_ROUND_TARGET, pass, short: Math.max(0, FIRST_ROUND_TARGET - pass), label: "初回の目安10件（かなりオススメ1件＋9件）" };
+  if (kind === "新着") return { need: NEW_ARRIVAL_TARGET, pass, short: Math.max(0, NEW_ARRIVAL_TARGET - pass), label: "新着は1件で良い（1件の方がオススメと伝わる）" };
+  return null;
+}
 
 export type NacRecommend = { id: number; name: string; room_no: string | null; image: string | null };
 
@@ -198,7 +239,13 @@ export function buildNewArrivalCards(rows: ReadonlyArray<NacPickupRow>, audits: 
     const kinds = [...new Set(audits1.length ? audits1.flatMap((a) => roundKinds(items, a)) : roundKinds(items, null))];
     const n = { pass: 0, hold: 0, drop: 0 };
     for (const it of items) if (it.verdict === "pass" || it.verdict === "hold" || it.verdict === "drop") n[it.verdict]++;
+    // 種類は回の最初の検索（一番古い点検）で決める（広げての回は「新規の続き」なので最初の種類に従う）
+    const firstAudit = [...audits1].sort((a, b) => ms(a.created_at) - ms(b.created_at))[0] ?? null;
+    const kind = (firstAudit ? roundKinds(items, firstAudit)[0] : null) as RoundKind | null;
     return {
+      kind: kind === "新規" || kind === "新着" || kind === "追加" ? kind : null,
+      stamps: siteStamps(audits, round.created_at, round.last_at),
+      target: roundTarget(kind === "新規" || kind === "新着" ? kind : null, n.pass),
       key: round.key,
       at: round.created_at,
       last_at: round.last_at,
@@ -226,10 +273,14 @@ export function pickupReviewHref(focus: string, roundKey: string): string {
   return `/conditions?pickup=${encodeURIComponent(focus)}&batch=${encodeURIComponent(first)}`;
 }
 
-/** カードの見出し（折りたたんだ時の1行）「🏠 新着物件 通す3・保留6（リアプロ 10）」 */
-export function cardHeadline(c: Pick<NewArrivalCard, "pass" | "hold" | "drop" | "sites">): string {
+/**
+ * カードの見出し（折りたたんだ時の1行）「🏠 新着物件 通す3・保留6（リアプロ 10）」。
+ * 2026-10-01 竹内（チンシャン）: 初回の回まで「新着物件」と出ていた → 種類で出し分ける（新規＝初回の物件・追加＝追加の物件・分からない時は今まで通り）
+ */
+export function cardHeadline(c: Pick<NewArrivalCard, "pass" | "hold" | "drop" | "sites"> & { kind?: RoundKind | null }): string {
   const v = [`通す ${c.pass}`, c.hold ? `保留 ${c.hold}` : "", c.drop ? `外す候補 ${c.drop}` : ""].filter(Boolean).join("・");
-  return `🏠 新着物件 ${v}${c.sites ? `（${c.sites}）` : ""}`;
+  const title = c.kind === "新規" ? "初回の物件" : c.kind === "追加" ? "追加の物件" : "新着物件";
+  return `🏠 ${title} ${v}${c.sites ? `（${c.sites}）` : ""}`;
 }
 
 /** 確認の札 */
