@@ -2925,3 +2925,13 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - サーバー（merge-pdfs）: `source_pdf_urls`・`urlOf(i)`（元の場所→無ければ pdf_urls）。古い拡張が `cookie_str` を送ってきたら warn `merge-pdfs:cookie-from-old-extension`（**再読み込みを確かめたら cookie の経路をサーバーから消す**）
 - 送付済みの照合の前に資料を取るようになった（旧はサーバーが照合で外した物件の資料を取らなかった）。拡張は v2.5.41 から一覧で送付済みの部屋を選ばないので増えは小さい
 - **本番の PC での確かめはまだ**: 再読み込み → スタッフモードで1件「売上番長に送る」→ ★物件出し★に届く・merge-pdfs のログに cookie の warn が出ない事
+
+## 2026-10-01 v2.5.53 リアプロの「案内モード」（光らせてスタッフが押す・**既定オン**・**拡張の再読み込み必須**）
+竹内「光らせるようにする。今選択しているところを光らせるようにする」「一度送ったことある物件などは出ないようにする。監視画面が判断する形で。そうすれば機械的な動きがなく人間が押す形となる」（規約上、自動の操作は問題の方が多そう＝project_search_automation_paused）。
+- **新 `realpro-guide-plan.js`**（純関数）: 条件 → 手順表（リセット → 賃料下限・上限 → 管理費込み → 面積 → 徒歩 → 築年数 → 間取り（1つずつ）→ 構造 → ペット → 敷礼なし → 更新日 → 駅（路線を先に光らせる）／路線／区 → 検索）。値の決め方は page-script.js fillRealpro と同じ（表 7つは test で page-script.js から読み出して突き合わせ）
+- **新 `realpro-guide.js`**（content script）: まだ終わっていない最初の手順の欄に光る枠＋吹き出し（ページの要素には触らず上に重ねる）・欄が見えない時は開くボタン（検索条件を表示／沿線・駅絞り込み／所在地絞り込み）を光らせる・右下の枠に手順の一覧（✓▶・）と「この手順は済み」「案内をやめる」「ON/OFF」。スタッフがリセット・検索を押したのを読んで進む。検索の後は storage.session（axlx_guide_session）に段を置き、一覧の画面で**このお客様に送付済みの部屋の行を隠す**（sent-skip.js の見分け・新 background `axlx-guide-sent-rooms`＝スタッフモードでも読む・bulk-dl.js の新しい口 `AxlxRealproRows.list()`）＋「送付済みも表示」。案内モードの間は拡張の「全ページ送る」を押せなくする
+- **このファイルは押さない・入れない・スクロールしない・ページをめくらない**（tests/chrome-extension/realpro-guide.test.js が中身で確かめる）
+- **切り替え**: page-script.js の自動入力の受け口（aixlinx-fill・4つの出どころがここ1か所に集まる）で、`<html data-axlx-guide>` が "0"（OFF）の時だけ今まで通り入力。それ以外（印が付く前も）は案内に渡し、`aixlinx-fill-started`＋`fill-done（error: guide-mode）` を返す＝一括の待ち・タブの読み直し・検索の後の自動の読み取りを走らせない
+- 確かめ: 拡張のテスト 31本（新 realpro-guide 29件・human-wait の一覧に案内の待ち3つ）。作り物の画面（jsdom・scratchpad）で 入力の案内 11件・一覧の隠し 7件
+- **本番のリアプロでの確かめはまだ**: 特に駅の小窓（路線→駅の光らせ方・決定ボタンの名前）・「検索条件を表示」の開き方・行の隠し方。ITANDI の案内はまだ（今は ITANDI は今まで通り自動入力）
+- 残: 見積の検索（page-script の _fwBtn.click 経路）は案内の対象外のまま

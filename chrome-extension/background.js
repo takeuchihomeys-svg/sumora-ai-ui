@@ -1181,6 +1181,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // ── PDF結合ダウンロード ───────────────────────────────────────────────────
+  // 2026-10-01 案内モード（realpro-guide.js）: 一覧で隠すため、そのお客様に送付済みの部屋を読む（サーバーの記録を読むだけ・サイトには触らない）。
+  //   一括の _loadSentRooms と違い、スタッフモードでも読む（竹内「一度送ったことある物件などは出ないようにする。監視画面が判断する形で」）
+  if (msg.type === "axlx-guide-sent-rooms") {
+    (async () => {
+      try {
+        const headers = await _getAutomationKeyHeader();
+        const res = await fetch(SUMORA_BATCH_API + "/api/automation/sent-rooms?customer_id=" + encodeURIComponent(String(msg.customerId || "")), { headers, signal: AbortSignal.timeout(8000) });
+        const j = res.ok ? await res.json() : null;
+        sendResponse({ ok: !!(j && Array.isArray(j.rooms)), rooms: j && Array.isArray(j.rooms) ? j.rooms.slice(0, 3000) : [] });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "axlx-merge-pdf") {
     (async () => {
       try {

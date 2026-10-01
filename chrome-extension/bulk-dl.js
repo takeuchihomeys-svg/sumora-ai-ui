@@ -1980,4 +1980,22 @@
     start();
   }
   window.addEventListener("load", function () { setTimeout(inject, 2000); });
+
+  // 2026-10-01 案内モード（realpro-guide.js）が一覧の行（建物名・号室・行の要素）を読むための口。読むだけ・行には触らない。
+  //   見出しの読み方は _applySentSkip と同じ（先頭のセルが「部屋名／号室」の時だけ号室を読む）
+  try {
+    (typeof self !== "undefined" ? self : window).AxlxRealproRows = {
+      list: function () {
+        var SK = _SK();
+        return tracked.map(function (t) {
+          var card;
+          try { card = extractCard(t.btn); } catch (_) { return null; }
+          var labels = card && card.headerIdx && card.headerIdx.labels;
+          var roomCol = !(labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")));
+          var c0 = card && card.cells ? card.cells[0] : null;
+          return { name: card ? card.name : null, room: roomCol && SK ? SK.roomFromRealproCell(c0) : null, row: t.btn && t.btn.closest ? t.btn.closest("tr") : null, cb: t.cb };
+        }).filter(Boolean);
+      },
+    };
+  } catch (_) {}
 })();

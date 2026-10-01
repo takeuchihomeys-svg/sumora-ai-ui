@@ -2067,6 +2067,17 @@
     //   中継側の「今の顧客」ではなく**この入力を始めた時の顧客**を返すので、遅れて届いた
     //   シグナルが次の顧客の待ちを解決することがなくなる
     _fillCustomerId = e.data.customerId || null;
+    // 2026-10-01 竹内「光らせるようにする」: 案内モード（realpro-guide.js が <html data-axlx-guide="1"> を付ける・既定オン）の時は
+    //   入力しない・押さない。案内（光らせてスタッフが押す）に条件を渡し、待っている側には「案内に回した」と完了を返す
+    //   （一括の流れが入力の完了を待って固まったり、タブを読み直したり、検索の後に自動で結果を読み取りに行かないように）
+    // 既定は案内（印が付く前に依頼が届いても自動で入れない＝安全側）。OFF の印（"0"）が付いている時だけ今まで通り入力する
+    if (document.documentElement.getAttribute("data-axlx-guide") !== "0") {
+      window.postMessage({ from: "aixlinx-fill-started", customerId: _fillCustomerId }, "*");
+      window.postMessage({ from: "axlx-guide-start", conditions: e.data.conditions || {}, customerId: _fillCustomerId }, "*");
+      _doneNotified = false;
+      notifyDone("guide-mode: 案内モードのため拡張は入力していません（スタッフが入力して検索）");
+      return;
+    }
     try {
       fillRealpro(e.data.conditions);
     } catch (err) {
