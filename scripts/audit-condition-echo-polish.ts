@@ -7,18 +7,20 @@
 // B. 人が書いた実送信（messages・AI の下書きのまま送った通と AIX を除く）に当てて、変わってしまう通を全部出す
 //    （人の文が正解なので、ここで変わる通は誤変換の候補。目で読む）
 //
-// 実行: npx tsx --env-file=.env.local scripts/audit-condition-echo-polish.ts [DAYS=400] [SHOW=1] [ZENIKI=1]
+// 実行: npx tsx --env-file=.env.local scripts/audit-condition-echo-polish.ts [DAYS=400] [SHOW=1] [ZENIKI=0]
 import { createClient } from "@supabase/supabase-js";
 import { polishConditionEcho, areaTailOf, ZENIKI_KINDS } from "../app/lib/condition-echo-polish";
-// ZENIKI=1 で ①「全域」（監査で止めた・既定では当てない）も当てて測る
-const OPTS = process.env.ZENIKI === "1" ? { zenikiKinds: ZENIKI_KINDS } : {};
+// 2026-10-01 竹内さんの決定で①「全域」は既定 ON。ZENIKI=0 で外して測る。AIX の組は報告の文にも当てる（aix/action と同じ）
+const OPTS = process.env.ZENIKI === "0" ? { zenikiKinds: new Set<never>() } : {};
+void ZENIKI_KINDS;
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const DAYS = Number(process.env.DAYS ?? 400);
 const SHOW = process.env.SHOW === "1";
 const strip = (s: string) => (s ?? "").replace(/<<<FINAL_CHECK:[\s\S]*?>>>/g, "").trim();
 const norm = (s: string) => (s ?? "").replace(/\s+/g, "");
-const mask = (s: string) => s.replace(/[^\s、。！!？?・]{1,12}(?:さん|様)/g, "〇〇さん").replace(/\n/g, " ／ ");
+// 名前の伏せ字はしない（前の版の伏せ字は前の文字まで食べて文が読めなかった）。コンソールに出すだけ
+const mask = (s: string) => s.replace(/\n/g, " ／ ");
 
 function lev(a: string, b: string): number {
   const m = a.length, n = b.length;
@@ -59,7 +61,7 @@ async function main() {
     const group = `${r.entry_source === "line_reply" ? "返信生成" : "AIX"}${/はじめまして/.test(r.sent_reply) ? "・初回" : ""}${touched ? "・直した" : "・そのまま"}`;
     const b = buckets.get(group) ?? { n: 0, changed: 0, closer: 0, same: 0, farther: 0 };
     b.n++;
-    const p = polishConditionEcho(r.ai_draft, OPTS);
+    const p = polishConditionEcho(r.ai_draft, { ...OPTS, includeReports: r.entry_source !== "line_reply" });
     if (p.applied.length) {
       b.changed++;
       // 近さはピックアップの文どうしで測る（他の段落の書き直しに埋もれない）

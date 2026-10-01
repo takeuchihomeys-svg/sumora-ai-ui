@@ -56,6 +56,8 @@ import { buildCostExplainFactsNote, checkCostFacts, fixBrokerFeeWording, ensureC
 import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensureSituationOpening } from "@/app/lib/recommendation-situation";
 // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない
 import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
+// 2026-10-01 竹内「全域にする・AIX にもあてる」: ピックアップ行の条件の復唱の手直し（全域・か→または）と入口の一文
+import { polishConditionEcho, CONDITION_ECHO_STYLE_NOTE } from "@/app/lib/condition-echo-polish";
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定と除去を返信生成・テンプレートと同じ関数で
 // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない（許す一覧は空・出口は replaceWaitedOpening・手本は neutralizeWaitedInExample）
@@ -1973,6 +1975,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
           console.log(JSON.stringify({ tag: "aix:pickup-line-property-name", action: currentAction, conversationId, removed: picked.removed }));
           sendCleaned = picked.text;
         }
+        const echoPolished = polishConditionEcho(sendCleaned, { includeReports: true });
+        if (echoPolished.applied.length) { sendCleaned = echoPolished.text; console.log(JSON.stringify({ tag: "aix:pickup-echo-polish", conversationId, applied: echoPolished.applied })); }
         // 2026-09-27 竹内さん「文字抜かなくてそのまま使う」: 希望条件の欄の語の中黒（バストイレ別・オートロック）を落としていたら戻す（足すのは「・」だけ）
         const dots = restoreConditionDots(sendCleaned, customer_conditions ? String(customer_conditions) : null);
         if (dots.restored.length > 0) {
@@ -2062,7 +2066,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
         if (stripped !== out) console.log(JSON.stringify({ tag: "aix:apply-leading-ack-stripped", conversationId }));
         out = stripped;
       }
-      const afterHours = isMgmtAfterHours(new Date().toISOString());
+      // 2026-10-01 YUMA の再生: お客様が「608で申し込みしたいです」と言っただけ（申込の情報はまだ）でも一文を足し、まだ申込していないのに
+      //   「明日無事1番手でお申込完了しているか確認」と書いていた。実送信（180日・scripts/audit-apply-after-hours-line.ts）: 営業時間外に申込へを押した番で
+      //   申込の情報を受け取る前 10件は一文 0件（フォームを送るだけ）・受け取った後 3件中 1件。→ 申込の情報を受け取った後だけ足す
+      const afterHours = isMgmtAfterHours(new Date().toISOString()) && APPLY_INFO_SENT_RE.test(custText);
       const withLine = ensureAfterHoursApplyLine(out, afterHours);
       if (withLine !== out) console.log(JSON.stringify({ tag: "aix:apply-after-hours-line", conversationId }));
       return withLine;
@@ -3425,6 +3432,8 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           psmText = psmPicked.text;
           console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, pickupPropertyNameRemoved: psmPicked.removed }));
         }
+        const psmEcho = polishConditionEcho(psmText, { includeReports: true });
+        if (psmEcho.applied.length) psmText = psmEcho.text;
         // 数字の照合: 条件・会話・退去予定・キーワードに無い金額・帖・年・件数は〇〇（送信前チェックで止まる）
         const psmNotes = [conditionsInfo ?? "", pickupFactsNote, recentHistory, vacatingInfo ?? "", sendKeyword ?? "", calendarData ?? "", expandedCondGuidanceLines.join("\n"), newArrivalCountStr].join("\n");
         const masked = maskNumbersNotInNotes(psmText, psmNotes);
@@ -3660,6 +3669,7 @@ ${aixPropertySendRules}
       // 2026-09-17 竹内（✩ さん事例）: ピックアップ行に物件名を入れない。
       //   条件の材料が空の時ほど LLM が会話の物件名で埋めるので、条件の前に置く
       userParts.push(`\n\n${PICKUP_LINE_NOTE}`);
+      userParts.push(`\n【条件の書き方】${CONDITION_ECHO_STYLE_NOTE}`); // 2026-10-01 竹内「AIX にもあてる」
       if (keywordRule) userParts.push(keywordRule); // 最優先ブロック（conditionsInfoより前）
       if (conditionsInfo) userParts.push(`\n\n【お客様の希望条件（冒頭に自然に組み込むこと）】\n${conditionsInfo}`);
       else userParts.push("\n\n【お客様の希望条件】材料が無い（会話から読み取れるエリアだけを書き、条件・物件名は作らない）");

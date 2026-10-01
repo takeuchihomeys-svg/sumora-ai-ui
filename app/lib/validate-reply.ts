@@ -587,8 +587,8 @@ export function applySurfaceFixes(
     if (b.kurai) applied.push(`KURAI_TO_HODO×${b.kurai}`);            // 2026-09-22 竹内「くらいって等使わない」
   }
   // 2026-10-01 竹内「初回返信の条件を読み直すところ…全域つけたり…スタッフが改善している」:
-  //   条件の復唱（ピックアップの文）にスタッフが同じように入れている手直しだけ（今は 間取りの か→または）。
-  //   「全域」を足すのは監査で止めた（下書きの「周辺から」をスタッフが直さず送る組の方が多い）→ 入口で扱う。
+  //   条件の復唱（ピックアップの文）の手直し: 間取りの か→または ／ エリアの後ろの「全域」
+  //   （「全域」は午後の監査で一度止めたが、2026-10-01 竹内さんの決定「全域にする」で既定 ON。当てる終わり方は ZENIKI_KINDS）
   //   線の引き方と監査は condition-echo-polish.ts の冒頭・scripts/audit-condition-echo-polish.ts
   const ce = polishConditionEcho(out);
   if (ce.applied.length) { out = ce.text; applied.push(...ce.applied); }

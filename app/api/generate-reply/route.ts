@@ -243,6 +243,8 @@ import { loadViewingReports } from "@/app/lib/viewing-report-store";
 import { GENERATION_FAILURE_TEXT, isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays, maskExampleAmounts } from "@/app/lib/example-hygiene";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+// 2026-10-01 竹内: 条件の復唱をスタッフの手直しの形に（入口の一文。出口は validate-reply の polishConditionEcho）
+import { CONDITION_ECHO_STYLE_NOTE } from "@/app/lib/condition-echo-polish";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（曜日表をプロンプトに渡し LLM に曜日を計算させない）
 import { jstParts, jstDateLabel, weekdayTable } from "@/app/lib/jst-date";
 // 2026-09-19 竹内（タマキ事例）: 「〜でも大丈夫」は条件の**追加**（変更ではない）。限定して復唱させない
@@ -262,6 +264,7 @@ import { SHADOW_NO_WRITE_FIELD } from "@/app/lib/customer-sim-shadow";
 // 2026-09-29 竹内（林田さん「ガスコンロはついてないのですか？」）: 送った物件の設備の質問は資料から読んだ事実を材料に（equipment-question.ts）
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 import { loadProcedureAnswerWithin } from "@/app/lib/procedure-answer-server";
+import { detectSensitiveCase } from "@/app/lib/sensitive-case";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -531,19 +534,8 @@ function buildEmpathyPhraseNote(customerMessage: string): string {
 // クレーム・審査否決・キャンセル/リスケ等はAI不使用（人間判断）の場面。
 // 通常AIが生成したドラフトをそのまま送信させないよう、検知時はドラフト冒頭に
 // 警告メタを付与してスタッフの手動確認を必須にする（生成自体は参考用に行う）。
-const SENSITIVE_CLAIM_RE = /クレーム|苦情|納得(いか|でき)|話が違う|不誠実|誠意を|騙され|詐欺|訴え(る|ます|させ)|弁護士|消費者センター/;
-const SENSITIVE_REJECT_RE = /審査[^。！!？?\n]{0,8}(否決|落ち(た(?!ら)|まし|てしまい)|通りませんでした|通らなかった|不承認|NG(でし|になり|だっ)|ダメ(でし|だっ))|否決/;
-// ※「キャンセル料」「キャンセルできますか」等の不安系質問は通常AI回答の範囲（brainGuidanceNoteの保留パターン対応等で対応済み）のため除外し、
-//   キャンセル・解約の「意向」とリスケ（日程変更）依頼のみ検知する
-const SENSITIVE_CANCEL_RE = /(?:キャンセル|解約|取消|取り消し?|白紙|辞退)(?!料|金|でき|出来|可能)(?:を|は|に|で)?(?:したい|します|させて|お願い|希望|することに|する事に)|なかったことに|見送(?:り(?:たい|ます)|らせて)|やめ(?:たい|ます|ておき|とき)|リスケ(?:[をはにで])?(?:したい|させて|お願い|希望|お願いし)|(?:日程|日にち|日時|予定)[^。！!？?\n]{0,6}(?:変更|ずら|延期)(?:[をにで])?(?:したい|させて|お願い|希望)/;
-
-function detectSensitiveCase(text: string): string | null {
-  if (!text) return null;
-  if (SENSITIVE_CLAIM_RE.test(text)) return "クレーム";
-  if (SENSITIVE_REJECT_RE.test(text)) return "審査否決";
-  if (SENSITIVE_CANCEL_RE.test(text)) return "キャンセル・リスケ";
-  return null;
-}
+// 2026-10-01 検知は app/lib/sensitive-case.ts へ（お客様が受けた苦情・詐欺かの問い・画像の読み取りの文はクレームにしない＝
+//   365日の実物でクレームの語の4通は全部こちらへのクレームではなく、自動送信の関所で正しい返信を止めていた・YUMA の再生テスト）
 
 // 検知の目印（空でなければセンシティブ案件）。2026-09-12 以降は本文に付けず、最終チェックの SENSITIVE_CASE（要修正）に入れる
 function buildSensitiveGateNote(customerMessage: string): string {
@@ -4508,7 +4500,7 @@ async function handleGenerateReply(req: NextRequest) {
       const line4 = closerLines[1] ? `4行目「${closerLines[1]}」。` : "";
       return `条件提示（エリア=${areaTxt} / 家賃=${rentTxt}）。3〜4行構成で100〜180字。` +
         `1行目「かしこまりました！！」（単独行）。${answerFirst}` +
-        `2行目：「${areaTxt}周辺全域から${rentTxt}」＋顧客が書いた付帯条件（間取り・徒歩分・築年・設備・管理費込 等）を原文の語のまま列挙して「〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！」。` +
+        `2行目：「${areaTxt}周辺全域から${rentTxt}」＋顧客が書いた付帯条件（間取り・徒歩分・築年・設備・管理費込 等）を原文の語で列挙して（${CONDITION_ECHO_STYLE_NOTE}）「〇〇さんにオススメできるお部屋ピックアップしてお送りさせて頂きます！！」。` + // 2026-10-01 竹内: 「原文の語のまま」をやめ、スタッフの手直しの形に（condition-echo-polish.ts）
         line3 + line4 +
         `禁止：2行目の具体宣言の代わりに「ご条件に合ったお部屋」「全力でサポート」「お探しします」等の抽象語だけで済ませること（3行目の締めとしての伴走宣言は必須）／「新着あれば」「日々更新」等の受け身文／「本日中」「なるべく早く」等の時間約束／足りない条件の聞き返し（まず送る）／「〜をご希望ですね」の単体確認文／条件の実現可能性への言及（難しい・厳しい・少ない・可能性・かもしれません）／条件緩和・代替案の先回り提案（条件を1つ変えた場合・優先順位・妥協・〇〇未満まで広げる）／顧客の自己ヘッジ「難しいと思う」「あれば教えて」の復唱。エリア名と家賃表記は必ず原文どおり本文に埋め込むこと`;
     })();

@@ -39,6 +39,9 @@ const ONLY = arg("only").split(",").filter(Boolean);
 const REPS = Math.max(1, Number(arg("reps", "1")));
 const LABEL = arg("label", `e-${new Date().toISOString().slice(5, 16).replace(/[:T-]/g, "")}`);
 const OUT_DIR = "scripts/.replay-out";
+// 2026-10-01 夕: AIX=1 で、初回の返信の後に AIX【物件ピックアップした】（/api/aix/action・文を返すだけ・送らない）も作り、ピックアップ行を見る
+const WITH_AIX = process.env.AIX === "1";
+const NL = String.fromCharCode(10);
 
 const FORM_HEAD = "▶︎【お部屋お探し中！】\n\n（ご希望のお部屋探しご条件）\n";
 const FORM_TAIL = "\n________________________\n※ 審査に不安な事がある方お気軽にお伝えください😊\n審査面柔軟にサポートさせて頂きます！";
@@ -179,7 +182,25 @@ async function main() {
         sumD += d; sumBase += sc.staff.length; n++; if (hits.length) watchHits++;
         const applied = ((fc?.tpo_debug as Record<string, unknown> | undefined)?.postprocess as Record<string, unknown> | undefined)?.validateIssues ?? null;
         console.log(`\n【${sc.id}】[${k + 1}] ${sc.src}\n  ブレイン: ${String(m.action ?? "-")}/${String(m.decision_source ?? "-")}  距離=${d}${hits.length ? `  ⚠原文のまま: ${hits.join(" ")}` : ""}\n  下書き復唱: ${echo || "（ピックアップの文なし）"}\n  実送信復唱: ${sc.staff}\n  下書き全文: ${text.replace(/\n/g, " / ")}`);
-        rowsOut.push(JSON.stringify({ id: sc.id, k, d, hits, echo, staff: sc.staff, text, brain: m.action ?? null, applied }));
+        // 語が欠ける（「トイレバス別で〇〇さんに…」→「トイレバスお部屋」）の出所を追うため、最終チェックの書き直しの有無を残す
+        const tdbg = (fc?.tpo_debug ?? {}) as Record<string, unknown>;
+        const fcInfo = { revision_count: fc?.revision_count ?? null, revisionOutcome: tdbg.revisionOutcome ?? null, pre: fc?.pre_revision_issues ?? null, draftHead: tdbg.draftHead ?? null, gateEdits: (tdbg.postprocess as Record<string, unknown> | undefined)?.gateEdits ?? null };
+        let aixText: string | null = null;
+        if (WITH_AIX && k === 0) {
+          // 初回の返信を送った体で、こちらの通を足してから AIX を作る（本番の流れ: 初回の返信 → 物件ピックアップした）
+          const staffRow = { conversation_id: YUMA, sender: "staff", text, is_aix_generated: false, line_message_id: `echo-${randomUUID()}`, created_at: new Date(Date.parse(msgs[msgs.length - 1].created_at) + 60_000).toISOString() };
+          const ins2 = await sb.from("messages").insert(staffRow).select("id");
+          cleanup.push(...((ins2.data ?? []) as Array<{ id: string }>).map((r) => r.id));
+          const rm = [...msgs, staffRow].map((r) => ({ sender: r.sender, text: r.text, rawCreatedAt: r.created_at, createdAt: r.created_at, isAix: false }));
+          const ar = await fetch(`${BASE}/api/aix/action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+            action: "property_send", account: "sumora", conversation_id: YUMA, customer_name: "YUMA", conversation_status: "proposing",
+            recent_messages: rm, customer_conditions: sc.customer.join(NL), send_mode: "normal", property_count: 5,
+          }), signal: AbortSignal.timeout(240_000) });
+          const aj = await ar.json().catch(() => ({})) as Record<string, unknown>;
+          aixText = String(aj.message_text ?? aj.error ?? "").trim();
+          console.log(`  AIX ピックアップ行: ${pickSent(aixText) || aixText.slice(0, 160).split(NL).join(" / ")}`);
+        }
+        rowsOut.push(JSON.stringify({ id: sc.id, k, d, hits, echo, staff: sc.staff, text, brain: m.action ?? null, applied, fc: fcInfo, aix: aixText }));
         appendFileSync(outFile, rowsOut[rowsOut.length - 1] + "\n");
       } catch (e) {
         console.log(`【${sc.id}】[${k + 1}] ERROR ${String(e).slice(0, 200)}`);

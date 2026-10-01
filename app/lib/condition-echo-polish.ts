@@ -15,7 +15,11 @@
 //   ② 間取りの「か」→「または」（人の文で 間取り＋か＋間取り 0通。直した組 近づく1・遠ざかる0）
 //   （＋ validate-reply の「くらい」→「程」の取りこぼしを直した。normalizeKurai は 09-22 からあったが本文に戻していなかった）
 //
-// ★ 監査で止めた物（2026-10-01・止めた判断を残す）: ①「全域」を付ける（addZeniki）
+// ★ ①「全域」を付ける（addZeniki）— 2026-10-01 夕 竹内さんの決定「全域にする」で出口の既定に入れた
+//   （午後は下の監査で一度止めた。止めた理由の数字は残す。竹内さんは「スタッフが直さず送った」を良しとせず、人が一から書く形に揃える判断）
+//   当てる終わり方（人が一から書いた宣言の文で 全域あり が過半数の物）: 周辺 98/103・市内 9/10・エリア 25/47（53%）・付近 2/3・近辺 1/1・府内 1/1（→「府全域」）
+//   当てない: 素の区の並び 3/9（33%）・沿線 0/1・時間や距離のエリア（「梅田まで30分圏内」）・既に全域
+// （以下は午後の監査の記録）
 //   ・人が一から書いた宣言の文: 周辺全域98 ／ 周辺だけ5（95%）・市内全域9 ／ 1・エリア全域25 ／ エリアだけ22（53%）
 //   ・ところが AI の下書きの「〜周辺から」は、スタッフが直さず送った組が 8、同じ文を直した組でも
 //     全域を足した 2（北区…西区周辺→周辺全域 08-30・枚方周辺→周辺全域 09-01）／ 足さずに他所だけ直した 2（09-22・09-07）／ エリアごと書き換え 1
@@ -77,11 +81,11 @@ export function areaTailOf(sentence: string): { kind: AreaTailKind; hasZeniki: b
   return { kind: classifyTail(head, hasZeniki), hasZeniki };
 }
 
-/** 「全域」を付けるなら候補になる終わり方（人の文で 9割以上が全域を付けている物）。★出口の既定では使わない（ファイル冒頭「監査で止めた物」） */
-export const ZENIKI_KINDS: ReadonlySet<AreaTailKind> = new Set<AreaTailKind>(["周辺", "市内"]);
+/** 「全域」を付ける終わり方（2026-10-01 竹内さんの決定・人の文で全域ありが過半数の物。ファイル冒頭） */
+export const ZENIKI_KINDS: ReadonlySet<AreaTailKind> = new Set<AreaTailKind>(["周辺", "付近", "近辺", "エリア", "市内", "府内"]);
 
 /**
- * ① エリアの後ろに「全域」を付ける（これからの宣言の文だけ）。★監査で止めた・既定では当てない（ファイル冒頭）。
+ * ① エリアの後ろに「全域」を付ける（2026-10-01 竹内さんの決定で既定 ON）。「大阪府内」は「大阪府全域」（実送信の形）。
  *   直した実物: 「北区（中崎西、大淀）・西区周辺から」→「…西区周辺全域から」（08-30）／「枚方周辺から」→「枚方周辺全域から」（09-01）
  */
 export function addZeniki(sentence: string, kinds: ReadonlySet<AreaTailKind> = ZENIKI_KINDS): { text: string; tail: AreaTailKind | null } {
@@ -89,9 +93,12 @@ export function addZeniki(sentence: string, kinds: ReadonlySet<AreaTailKind> = Z
   if (i < 0) return { text: sentence, tail: null };
   const head = sentence.slice(0, i);
   if (TAIL_ALREADY_RE.test(head)) return { text: sentence, tail: null };
+  // 「平野区全体のエリア」に全域を重ねない（AIX 09-03 の実物）
+  if (/全体|一帯|全部/.test(head.slice(-12))) return { text: sentence, tail: null };
   const kind = classifyTail(head);
   if (!kinds.has(kind)) return { text: sentence, tail: null };
-  return { text: `${head}全域${sentence.slice(i)}`, tail: kind };
+  const newHead = kind === "府内" ? `${head.slice(0, -1)}全域` : `${head}全域`;
+  return { text: `${newHead}${sentence.slice(i)}`, tail: kind };
 }
 
 /**
@@ -104,25 +111,33 @@ export function layoutOrToMataha(s: string): { text: string; count: number } {
   return { text, count };
 }
 
+// ③（検討して入れなかった・2026-10-01）お客様がぼかしていない金額に「程」を足さない（「7万」→ 下書き「7万円程」）
+//   YUMA で4巡4回出たので出口を作ったが、実送信に当てると「程」のある 50通のうち 11通が変わる＝誤変換。
+//   スタッフ自身がお客様の「5万円〜7万円」「〜9万」に「7万円程」「9万円程」と書く（AIX の報告に多い・初回の手打ちにも1通）→ 癖ではなく言い方の一つ。入口の手本の注記だけにした
+
 /** 文を区切る（改行・！！・。の後ろ）。区切りの文字は残す */
 function splitSentences(text: string): string[] {
   return text.split(/(\n|(?<=[！!。])(?=[^！!。\n]))/).filter((x) => x !== "");
 }
 
 /**
- * 本文のピックアップの文（条件の復唱）にだけ②を当てる（①は opts.zenikiKinds を渡した時だけ・既定は当てない）。
+ * 本文のピックアップの文（条件の復唱）にだけ①②を当てる。
+ *   ・①は既定でこれからの宣言の文だけ。AIX【物件ピックアップした】の報告の文（「ピックアップさせて頂きました」）は includeReports で当てる
+ *     （AIX の人の文: 周辺全域131 ／ 周辺16＝89%・scripts/audit-condition-echo-polish.ts）
+ *   ・zenikiKinds に空の Set を渡せば①を当てない
  *   ・ピックアップの文以外（挨拶・初期費用・締め）は触らない
  *   ・②はピックアップの語より前（条件の並び）だけ
  */
-export function polishConditionEcho(text: string, opts: { zenikiKinds?: ReadonlySet<AreaTailKind> } = {}): PolishResult {
+export function polishConditionEcho(text: string, opts: { zenikiKinds?: ReadonlySet<AreaTailKind>; includeReports?: boolean } = {}): PolishResult {
+  const kinds = opts.zenikiKinds ?? ZENIKI_KINDS;
   const src = text ?? "";
   if (!/ピックアップ/.test(src)) return { text: src, applied: [] };
   const applied: string[] = [];
   const parts = splitSentences(src).map((s) => {
     if (!/ピックアップ/.test(s)) return s;
     let out = s;
-    if (opts.zenikiKinds?.size && !REPORT_RE.test(s)) {
-      const z = addZeniki(out, opts.zenikiKinds);
+    if (kinds.size && (opts.includeReports || !REPORT_RE.test(s))) {
+      const z = addZeniki(out, kinds);
       if (z.tail) { out = z.text; applied.push(`ZENIKI_ADDED:${z.tail}`); }
     }
     const verbAt = out.search(/ピックアップ/);
@@ -136,9 +151,10 @@ export function polishConditionEcho(text: string, opts: { zenikiKinds?: Readonly
 
 /**
  * 入口（route の conditionDirection・first_reply の型）に渡す一文。条件を「原文の語のまま」並べると、
- * お客様の書き方（「1LDKか2LDK」「7万くらい」「ペット可（犬）」）がそのまま残り、スタッフが毎回直していた。
+ * お客様の書き方（「1LDKか2LDK」「7万くらい」）がそのまま残り、スタッフが直していた。
+ * 2026-10-01 夕: 「ペット可（犬）→ペット飼育可能」は手本から外した（人が一から書いた文でも「ペット可（犬）」「ペット可(猫)」と残す通が2つ＝直す癖ではない）
  * 例は全部、下書き→実送信でスタッフが直した実物（創作の言い回しは入れない）。
  */
 export const CONDITION_ECHO_STYLE_NOTE =
-  "条件はお客様の語を使い、条件の形に整えて並べる（実送信のスタッフの手直し: 「1LDKか2LDK・RC造」→「1LDKまたは2LDKのRC造」／「7万円くらい」→「7万円程」（くらい・ぐらいの時だけ。「7万」は「7万円」のまま・程を足さない）／「11万まで」→「家賃11万以内」／「8万から11万」「8-9万円」→「8万〜11万」「8〜9万円」／「ペット可（犬）」→「ペット飼育可能」／「同棲可能、子供1人います」→「同棲可・お子様もご入居可能」／" +
+  "条件はお客様の語を使い、条件の形に整えて並べる（実送信のスタッフの手直し: 「1LDKか2LDK・RC造」→「1LDKまたは2LDKのRC造」／「7万円くらい」→「7万円程」／「11万まで」→「家賃11万以内」／「8万から11万」「8-9万円」→「8万〜11万」「8〜9万円」／「同棲可能、子供1人います」→「同棲可・お子様もご入居可能」／" +
   "エリア: 「堀江本町」→「堀江、本町周辺全域」・「難波心斎橋辺り」→「難波・心斎橋エリア周辺全域」・「梅田まで30分」→「梅田まで30分圏内全域」（時間・距離のエリアに「周辺」は付けない）・「大阪市内」→「大阪市内全域」）。条件の追加・お客様が書いていない条件の創作はしない";

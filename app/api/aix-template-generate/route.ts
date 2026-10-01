@@ -61,6 +61,8 @@ import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildSe
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
 import { stripPropertyNameFromPickupLine } from "@/app/lib/pickup-line";
+// 2026-10-01 竹内「全域にする・AIX にもあてる」
+import { polishConditionEcho } from "@/app/lib/condition-echo-polish";
 import { stripRepeatedThanksLines } from "@/app/lib/property-send-match";
 import { stripUnfoundedSelectionClaim, SELECTION_CLAIM_NOTE } from "@/app/lib/selection-claim";
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
@@ -1945,6 +1947,8 @@ ${text}
           console.log(JSON.stringify({ tag: "aix-template-generate:pickup-line", removed: picked.removed }));
           text = picked.text;
         }
+        const echoPolished = polishConditionEcho(text, { includeReports: true });
+        if (echoPolished.applied.length) text = echoPolished.text;
       }
       // こちらが確かめていない選び方の主張（「重複しないよう選定しております」＝実送信0件・
       //   スタッフが書くのは逆の「重複しますが」9件だけ）
