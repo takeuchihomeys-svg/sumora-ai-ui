@@ -151,7 +151,7 @@ function rest() {
       "setTimeout 6000": [2, "取得の期限（abort）・送付済みの部屋の取得の期限（v2.5.41 _loadSentRooms・サイトを触らない）"], "setInterval 500": [2, "止める合図の見張り（ページを触らない）"],
       "setTimeout 10000": [1, "バッジを消す"], "setTimeout 1500": [2, "タブの応答の確かめの期限（v2.5.32 _probeRealproTab・v2.5.45 _probeItandiTab）"],
       "setTimeout 3000": [1, "画面の文字の応答の期限（v2.5.40 _snapDom・ページを触らない）"],
-      "setTimeout 30000": [1, "リアプロの資料1件の取得の期限（v2.5.53 fetchRealproPdfsInTab・タブの中で取る・ログイン情報をサーバーに渡さない）"],
+      "setTimeout 30000": [1, "リアプロの資料1件の取得の期限（v2.5.54 fetchRealproPdfsInTab・タブの中で取る・ログイン情報をサーバーに渡さない）"],
     },
     "bulk-dl.js": {
       "setTimeout 200": [1, "checkbox の差し込みのやり直し（内部）"], "setTimeout 35000": [1, "判定の応答の期限（fail-open）"],
@@ -183,7 +183,7 @@ function rest() {
       "setTimeout 60000": [1, "PDF の期限"], "setTimeout 15000": [1, "期限"], "setInterval 200": [1, "行が出たかの見る間隔"],
       "setTimeout 30000": [1, "期限"], "setInterval 300": [1, "見る間隔"], "setTimeout 50": [1, "表示の更新"], "setInterval 2000": [1, "見張り"],
     },
-    "realpro-guide.js": { "setInterval 400": [1, "案内の光を見直す間隔（v2.5.53・画面を読むだけ・サイトを触らない）"], "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"], "setTimeout 1500": [1, "一覧の行が描かれるのを待つ"] },
+    "realpro-guide.js": { "setInterval 400": [1, "案内の光を見直す間隔（v2.5.54・画面を読むだけ・サイトを触らない）"], "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"], "setTimeout 1500": [1, "一覧の行が描かれるのを待つ"] },
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },

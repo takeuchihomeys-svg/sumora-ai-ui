@@ -124,11 +124,14 @@
    *         ／"pick_station"（駅の名前 names に印）／"pick_city"（区の code に印）／"search"（検索を押す）
    * 入れる値が無い欄は手順にしない（リセットで空に戻る＝page-script の _doReset と同じ前提）
    */
-  function buildPlan(cond) {
+  function buildPlan(cond, opts) {
     var c = cond || {};
+    var o = opts || {};
     var steps = [];
     var push = function (s) { s.id = s.id || (s.kind + ":" + (s.name || s.text || "") + ":" + (s.value != null ? s.value : "")); steps.push(s); };
-    push({ kind: "reset", label: "前の条件を消すため「リセット」を押してください" });
+    // 2026-10-01 竹内「リセット今回はしなくて大丈夫だったので、リセットは次のお客さんから」:
+    //   前に案内したお客様がいて今回と違う時（前の条件が欄に残っている時）だけ（opts.withReset）
+    if (o.withReset) push({ kind: "reset", label: "前のお客様の条件を消すため「リセット」を押してください" });
     if (c.rent_min) push({ kind: "select", name: "rental_cost1", value: nearestDown(RENT_OPTS, c.rent_min), label: "賃料の下限を「" + man(nearestDown(RENT_OPTS, c.rent_min)) + "」に" });
     if (c.rent_max) push({ kind: "select", name: "rental_cost2", value: nearestUp(RENT_OPTS, c.rent_max), label: "賃料の上限を「" + man(nearestUp(RENT_OPTS, c.rent_max)) + "」に" });
     push({ kind: "check", name: "include_common_fee", value: null, want: true, label: "「管理費・共益費込み」にチェック" });

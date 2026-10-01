@@ -31,7 +31,10 @@
   }
 
   // ── 状態 ──
-  var session = null; // { customerId, customerName, conditions, stage: "form"|"results", done: {id:true}, at }
+  var session = null;
+  /** 最後に案内したお客様（リセットの手順を出すか＝前のお客様と違う時だけ） */
+  var lastCid = null;
+  try { chrome.storage.session.get(["axlx_guide_last_cid"], function (r) { if (r && r.axlx_guide_last_cid) lastCid = String(r.axlx_guide_last_cid); }); } catch (_) {} // { customerId, customerName, conditions, stage: "form"|"results", done: {id:true}, at }
   var plan = null;
   function saveSession() {
     try { var o = {}; o[SESSION_KEY] = session; chrome.storage.session.set(o); } catch (_) {}
@@ -49,18 +52,30 @@
     var r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
   }
-  function byText(texts, sel) {
+  function inViewport(el) {
+    var r = el.getBoundingClientRect();
+    return r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
+  }
+  /**
+   * 文字が texts のどれかと同じ要素。2026-10-01 実画面（YUMA の確かめ）: 「リセット」が2か所あり、画面の外の物を光らせて
+   *   「↓ 下にあります」になり、左のリセットを押しても済みにならなかった → 見えている物・画面の中の物・一番内側の物を選ぶ
+   */
+  function textMatches(texts, sel) {
+    var want = texts.map(norm);
     var list = document.querySelectorAll(sel || "a,button,div,span,td,p,label,input[type=button],input[type=submit]");
-    var best = null;
+    var hits = [];
     for (var i = 0; i < list.length; i++) {
       var el = list[i];
-      if (el.closest && el.closest("#axlx-guide-panel")) continue;
-      var t = norm(el.value || el.textContent);
-      for (var j = 0; j < texts.length; j++) {
-        if (t === norm(texts[j]) && visible(el)) { if (!best || el.contains(best) === false) best = el; }
-      }
+      if (el.closest && el.closest("#axlx-guide-panel,#axlx-guide-layer")) continue;
+      if (want.indexOf(norm(el.value || el.textContent)) >= 0 && visible(el)) hits.push(el);
     }
-    return best;
+    // 一番内側だけ（中に同じ文字の要素を持つ外側の箱は外す）
+    return hits.filter(function (el) { return !hits.some(function (o) { return o !== el && el.contains(o); }); });
+  }
+  function byText(texts, sel) {
+    var hits = textMatches(texts, sel);
+    var inv = hits.filter(inViewport);
+    return (inv.length ? inv : hits)[0] || null;
   }
   function labelOf(input) {
     if (!input) return null;
@@ -88,6 +103,8 @@
   function evalStep(s) {
     if (session && session.done && session.done[s.id]) return { done: true };
     if (s.kind === "reset") {
+      // 後の手順がもう入っている（スタッフが先に進めた）時はリセットは済み扱い（リセットで止まらない）
+      if (plan && plan.steps.some(function (o) { return o.kind !== "reset" && o.kind !== "search" && (function (ev) { return ev.done && !ev.missing; })(evalStep(o)); })) return { done: true };
       return { done: false, target: [byText(["リセット"])] };
     }
     if (s.kind === "select" || s.kind === "text") {
@@ -98,7 +115,8 @@
     }
     if (s.kind === "check") {
       var cb = checkInput(s.name, s.value);
-      if (!cb) return { done: false, target: [], note: "この欄は今の画面にありません（済みにして進めてください）" };
+      // 今の画面に無い欄（このページに無い・リアプロの画面が変わった）は止まらずに飛ばす
+      if (!cb) return { done: true, missing: true };
       if (!!cb.checked === !!s.want) return { done: true };
       var lb = labelOf(cb);
       return visible(cb) || visible(lb) ? { done: false, target: [lb || cb] } : { done: false, target: [opener(s.kind)], note: "先に条件の欄を開いてください" };
@@ -107,7 +125,7 @@
       var labels = document.querySelectorAll("label"), hit = null;
       for (var i = 0; i < labels.length; i++) if (norm(labels[i].textContent) === norm(s.text)) { hit = labels[i]; break; }
       var inp = hit && hit.querySelector('input[type="checkbox"]');
-      if (!inp) return { done: false, target: [], note: "この欄は今の画面にありません（済みにして進めてください）" };
+      if (!inp) return { done: true, missing: true };
       return !!inp.checked === !!s.want ? { done: true } : { done: false, target: [hit] };
     }
     if (s.kind === "pick_station") {
@@ -264,7 +282,10 @@
     var cur = currentStep();
     if (!cur) return;
     var tgt = (cur.ev.target || [])[0];
-    if (cur.step.kind === "reset" && tgt && (tgt === t || tgt.contains(t))) {
+    // リセットは光らせた物でなくても、文字が「リセット」の物を押せば済み（同じ文字のボタンが複数ある）
+    var isResetClick = false;
+    for (var n = t, k = 0; n && k < 4; n = n.parentElement, k++) if (norm(n.value || n.textContent) === "リセット") { isResetClick = true; break; }
+    if (cur.step.kind === "reset" && (isResetClick || (tgt && (tgt === t || tgt.contains(t))))) {
       session.done = session.done || {}; session.done[cur.step.id] = true; saveSession();
     }
     if (cur.step.kind === "search" && tgt && (tgt === t || tgt.contains(t))) {
@@ -276,8 +297,14 @@
   window.addEventListener("message", function (e) {
     if (e.source !== window || !e.data || e.data.from !== "axlx-guide-start" || !Plan) return;
     var c = e.data.conditions || {};
+    var prevCid = session && session.customerId ? String(session.customerId) : lastCid;
+    var newCid = e.data.customerId || c.customer_id || null;
+    var withReset = !!(prevCid && newCid && String(newCid) !== prevCid);
+    lastCid = newCid ? String(newCid) : lastCid;
+    try { chrome.storage.session.set({ axlx_guide_last_cid: lastCid }); } catch (_) {}
     session = { customerId: e.data.customerId || c.customer_id || null, customerName: c.customer_name || c.name || "", conditions: c, stage: "form", done: {}, at: Date.now() };
-    plan = Plan.buildPlan(c);
+    session.withReset = withReset;
+    plan = Plan.buildPlan(c, { withReset: withReset });
     saveSession();
     tick();
   });
@@ -341,7 +368,7 @@
       var s = r && r[SESSION_KEY];
       if (!s || !s.at || Date.now() - s.at > SESSION_TTL_MS) return;
       session = s;
-      if (session.stage === "form" && Plan) plan = Plan.buildPlan(session.conditions || {});
+      if (session.stage === "form" && Plan) plan = Plan.buildPlan(session.conditions || {}, { withReset: !!session.withReset });
       if (session.stage === "results") setTimeout(loadSentRooms, 1500);
       tick();
     });

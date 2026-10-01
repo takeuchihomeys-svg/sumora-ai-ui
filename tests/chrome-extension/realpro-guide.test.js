@@ -40,7 +40,8 @@ ok("場所: 駅 > 路線 > 区（auto）・area_mode の指定が先", P.locatio
 {
   const plan = P.buildPlan({ rent_min: 70000, rent_max: 100000, floor_plan: "2LDK", route_ids: ["6702", "6603"], station_names: ["都島", "京橋"], area_mode: "station", is_wide: false });
   const kinds = plan.steps.map((s) => s.kind);
-  ok("手順: リセット → … → 駅 → 検索", kinds[0] === "reset" && kinds[kinds.length - 1] === "search" && kinds.includes("pick_station"), kinds);
+  ok("手順: … → 駅 → 検索（最初のお客様はリセットなし）", kinds[0] !== "reset" && kinds[kinds.length - 1] === "search" && kinds.includes("pick_station"), kinds);
+  ok("前のお客様と違う時だけリセットが先頭（竹内「リセットは次のお客さんから」）", P.buildPlan({ rent_max: 100000 }, { withReset: true }).steps[0].kind === "reset");
   const st = plan.steps.find((s) => s.kind === "pick_station");
   ok("駅の手順に路線の名前（先に押す路線）", eq(st.lines, ["大阪市高速軌道谷町線", "大阪環状線"]), st);
   ok("賃料の手順の文", plan.steps.some((s) => s.name === "rental_cost2" && s.value === "100000" && /10万/.test(s.label)));
