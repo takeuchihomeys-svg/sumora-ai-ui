@@ -568,7 +568,10 @@
 
   // 検索ボタンをクリック
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
+  // 2026-10-01 竹内「押したら勝手に自動検索始まって…防ぐ」: 案内モード（<html data-axlx-guide> が "0" 以外）の間は拡張が検索を押さない（どの道から来ても）
+  function _guideOn() { return document.documentElement.getAttribute("data-axlx-guide") !== "0"; }
   function clickSearch() {
+    if (_guideOn()) { console.warn("[AX] 案内モードのため検索を押さない（スタッフが押す）"); notifyDone("guide-mode: 検索はスタッフが押す"); return; }
     // クリックキュー消化中は検索しない（条件クリックが全て反映される前の検索送信を防止）
     if (isClickQueueBusy()) {
       if (_audit && !_audit._searchWaitMarked) { _audit._searchWaitMarked = true; _auditStepP('search_wait', 'queue=' + _clickQueue.length); }
@@ -2047,6 +2050,7 @@
     // → background.js がこのフラグを確認して結果スキャンのポーリングを開始する
     // → ページ遷移で page-script.js が消えても background.js が独立してスキャンを継続できる
     window.__axlxEstimateSearchResult = { ok: true, triggered: true };
+    if (_guideOn()) { window.__axlxEstimateSearchResult = { ok: false, error: "guide-mode: 案内モードのため検索を押さない" }; return; }
     _fwBtn.click();
 
     // 詳細ボタンのクリックは background.js の Step 5 が chrome.tabs.onUpdated で

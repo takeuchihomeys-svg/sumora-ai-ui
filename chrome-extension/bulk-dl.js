@@ -234,6 +234,23 @@
     } catch (_) { return null; }
   }
 
+  // ── 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」──
+  //   案内モード（storage.local guideMode・既定オン＝realpro-guide.js）の間は、自動の送信・ダウンロード・ページ送りを一切始めない。
+  //   ・読み込みが間に合わない時も「案内モード」として止める（明示の OFF＝false の時だけ動く＝安全側）
+  //   ・止めた時は再開の印（axlx_pending_auto_send・ページ送りの続き）も消す
+  var _guideOff = false;
+  try {
+    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !!(r && r.guideMode === false); });
+    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = ch.guideMode.newValue === false; });
+  } catch (_) {}
+  function _guideBlocksAuto(where) {
+    if (_guideOff) return false;
+    console.warn("[AXLX bulk-dl] 案内モードのため自動の送信・ダウンロード・ページ送りをしない（" + where + "）");
+    try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
+    try { clearAutoSendState(); } catch (_) {}
+    return true;
+  }
+
   function getAutoSendState() {
     try {
       var raw = sessionStorage.getItem(AUTO_SEND_KEY);
@@ -1536,6 +1553,7 @@
   // ── 全ページ自動送信: 共通の次ページ遷移 or 完了処理 ─────────────────────
   // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
   function tryNext(state) {
+    if (_guideBlocksAuto("tryNext")) return; // 案内モードの間はページをめくらない（ページはスタッフがめくる）
     // ヒット多すぎ上限: 既定3ページまで送ったら4ページ目には進まず完了扱い（一括検索では次顧客へ）
     // 2026-09-19 竹内「17:00の便は項目は１ページだけで本来のように３ページ迄いかなくて大丈夫」:
     //   自動便は conditions.max_pages（サーバーの payload → background → conditions）で上限を変える
@@ -1594,6 +1612,7 @@
   // mergePdfs を再利用せず chrome.runtime.sendMessage を直接呼ぶ
   // （コールバック内で onDone を呼ぶため）。
   function autoSendOnePage(state, onDone) {
+    if (_guideBlocksAuto("autoSendOnePage")) return; // 終わりの知らせ（onDone）は返さない＝受け手が次のページへ進まない
     var BATCH_SIZE = 10; // 20→10: merge-pdfs の処理時間削減（PDF10件×並列取得+結合+Blob+AI+LINE+DB）
     var countEl = document.getElementById("axlx-count");
     _tmark("page", "P" + state.currentPage, state.customerId || null);
@@ -1735,6 +1754,7 @@
   //   popup.js が axlx_pending_auto_send に載せた顧客をそのまま使う。
   //   これが無い時だけ、従来どおり popup / storage の「今の顧客」に頼る。
   function autoSendAllPages(_manual, _flagSnap) {
+    if (_guideBlocksAuto("autoSendAllPages")) return;
     if (getAutoSendState()) return; // 既に動作中
     // 自動呼び出し時のみスタッフモードをチェック
     if (!_manual && _staffModeOn) {

@@ -67,5 +67,16 @@ ok("manifest: 案内は一覧の部品（sent-skip・bulk-dl）の後の欄・�
 ok("background: 送付済みの部屋の口（axlx-guide-sent-rooms）", /msg\.type === "axlx-guide-sent-rooms"/.test(read("background.js")));
 ok("bulk-dl: 行の口（AxlxRealproRows）", /AxlxRealproRows\s*=/.test(read("bulk-dl.js")));
 
+// ── ④ 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」──
+const bd = read("bulk-dl.js");
+ok("bulk-dl: 案内モードの間は自動の送信・ページ送りを始めない（3か所）",
+  /function autoSendAllPages\([^)]*\) \{\s*if \(_guideBlocksAuto\("autoSendAllPages"\)\) return;/.test(bd)
+  && /function autoSendOnePage\([^)]*\) \{\s*if \(_guideBlocksAuto\("autoSendOnePage"\)\) return;/.test(bd)
+  && /function tryNext\([^)]*\) \{\s*if \(_guideBlocksAuto\("tryNext"\)\) return;/.test(bd));
+ok("bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く）", /_guideOff = !!\(r && r\.guideMode === false\)/.test(bd) && /if \(_guideOff\) return false;/.test(bd));
+const pp = read("popup.js");
+ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を置かない", /_gm\.guideMode !== false\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
+ok("page-script: 検索を押す所（clickSearch・見積用）も案内モードの間は押さない", /function clickSearch\(\) \{\s*if \(_guideOn\(\)\)/.test(ps) && /if \(_guideOn\(\)\) \{ window\.__axlxEstimateSearchResult/.test(ps));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

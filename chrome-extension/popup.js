@@ -5030,13 +5030,19 @@ function openInstructions(siteKey) {
       //   chrome.storage.local の current_customer_*（＝その時点で選ばれている顧客）を読み直すため、
       //   background が次の顧客へ進んだ後にこのページが送ると、前の顧客の検索結果に
       //   次の顧客の名前が付く。誰の検索かはフラグ自体に持たせる。
+      // 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」:
+      //   案内モード（guideMode・既定オン）の間は再開の印を置かない＝検索の後の一覧で自動の送信・ダウンロード・ページ送りが始まらない。
+      //   明示の OFF（false）の時だけ今まで通り置く
       try {
-        chrome.storage.session.set({ axlx_pending_auto_send: {
-          customerId:   c.id || null,
-          customerName: c.customer_name || null,
-          conditions:   buildCustomerConditionsString(c),
-          ts:           Date.now(),
-        } });
+        chrome.storage.local.get(["guideMode"], function (_gm) {
+          if (!_gm || _gm.guideMode !== false) { try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {} return; }
+          chrome.storage.session.set({ axlx_pending_auto_send: {
+            customerId:   c.id || null,
+            customerName: c.customer_name || null,
+            conditions:   buildCustomerConditionsString(c),
+            ts:           Date.now(),
+          } });
+        });
       } catch (_) {}
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
