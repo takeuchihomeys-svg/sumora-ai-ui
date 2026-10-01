@@ -34,7 +34,8 @@ import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import { firstSentPickupId } from "../lib/sent-image-order";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown } from "../lib/hearing-form";
-import { detectCoResident } from "../lib/co-resident";
+import { detectCoResidentWithOccupants } from "../lib/co-resident";
+import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import { propertyNamePrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
@@ -287,7 +288,7 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
   },
   property_recommendation: {
     rules: ["物件資料画像をVisionで読み取り", "お客様希望条件と照合", "退去予定あれば自動案内文を追加"],
-    template: "🌟【物件名】\n築年数・間取り・面積・駅徒歩\nオススメ①②③④\n初期費用・退去予定（あれば）\n🙇[お客様名]さんお気に召されましたらご案内させて頂きます！！",
+    template: "🌟【物件名】\n築年数・間取り・面積・駅徒歩\nオススメ①②③④\n初期費用・退去予定（あれば）\n[お客様名]さんお気に召されましたらご案内させて頂きます！！",
   },
   property_send: {
     rules: ["物件画像（複数）を添付", "カレンダーから内覧可能日時を自動取得", "退去予定物件は画像から自動読み取り", "内覧誘導 or 申込み誘導モードで切替"],
@@ -515,68 +516,7 @@ const GI_INITIAL_CARDS = 5;
 const initialGuarantorCards = (): GuarantorCard[] => Array.from({ length: GI_INITIAL_CARDS }, (_, i) => newGuarantorCard(i + 1));
 type GuarantorCompanyOption = { name: string; type: GuarantorType; source: "master" | "custom" };
 
-const APP_FORMAT_SECTIONS = {
-  applicant: `【お申込者様記入欄】
-・入居希望日
-・氏名、フリガナ
-・生年月日
-・現住所 〒（住民票記載）
-・住居年数
-・住居形態
-・携帯番号
-・メールアドレス
-・配偶者
-・勤務先名
-・勤務先所在地 〒
-・勤続年数
-・年収
-・雇用形態
-・勤務先電話番号
-・業種
-・職種
-・保険種類
-・駐輪場利用の有無（台数）
-・駐車場利用の有無（台数）
-・ペット飼育有無`,
-  roommate: `【同居人記入欄】
-・氏名、フリガナ
-・生年月日
-・現住所 （住民票記載〒）
-・住居年数
-・住居形態
-・携帯番号
-・メールアドレス
-・勤務先名
-・勤務先所在地
-・勤続年数
-・年収
-・雇用形態
-・勤務先電話番号
-・保険種類`,
-  emergency: `【緊急連絡先欄】
-・氏名、フリガナ
-・生年月日
-・現住所
-・住居年数
-・携帯番号
-・続柄
-・勤務先名
-・勤務先所在地`,
-  guarantor: `【連帯保証人欄】
-・氏名、フリガナ
-・生年月日
-・現住所 〒（住民票記載）
-・住居年数
-・住居形態
-・携帯番号
-・続柄
-・勤務先名
-・勤務先所在地
-・勤続年数
-・年収
-・雇用形態
-・勤務先電話番号`,
-};
+// 申込フォーマットの本文は app/lib/application-format.ts（2026-10-02 移した・YUMA の実送信テストと同じ文）
 
 // 2026-09-17 竹内（YUYA 事例）: 会話から保証会社名を拾う一覧は app/lib/guarantor-companies.ts に一本化した
 //   （旧: ここに11社だけの別の一覧があり、名寄せ・種類・語境界の判定が画面とサーバで食い違っていた）
@@ -998,8 +938,9 @@ export default function AixModal({
   //   申込へは自動で送らない（スタッフが見て送る・staff-confirm-facts）
   const coResidentDetected = useMemo(
     () => (actionType === "application_push"
-      ? detectCoResident((recentMessages ?? []).filter((m) => m.sender === "customer").map((m) => m.text ?? ""), [customerConditions ?? ""])
-      : { value: "unknown" as const, evidence: null }),
+      // 2026-10-02 竹内さん「入居人数を足す」: 条件の ⑨ご入居人数（顧客の行の occupants →「入居人数: N名」）が先。1＝単独・2以上＝同居あり。言葉の手がかりと食い違えば分からない
+      ? detectCoResidentWithOccupants((recentMessages ?? []).filter((m) => m.sender === "customer").map((m) => m.text ?? ""), [customerConditions ?? ""], parseConditionText(customerConditions ?? "").occupants ?? null)
+      : { value: "unknown" as const, evidence: null, occupants: null }),
     [actionType, recentMessages, customerConditions],
   );
   const coResidentPreset = (): "single" | "shared" | null => (coResidentDetected.value === "unknown" ? null : coResidentDetected.value);

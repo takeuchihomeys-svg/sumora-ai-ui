@@ -3,7 +3,7 @@
 const fs = require("fs");
 const labels = (process.argv[2] || "").split(",").filter(Boolean);
 const detail = process.argv.includes("--detail");
-const rows = labels.flatMap((l) => fs.readFileSync(`scripts/.replay-out/${l}.jsonl`, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)).filter((r) => !r._summary);
+const rows = labels.flatMap((l) => fs.readFileSync(`scripts/.replay-out/${l}.jsonl`, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)).filter((r) => !r._summary && !r._send);
 const sums = labels.flatMap((l) => fs.readFileSync(`scripts/.replay-out/${l}.jsonl`, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)).filter((r) => r._summary);
 const cl = (s, n) => String(s ?? "").replace(/\n+/g, " / ").slice(0, n);
 const agree = (v) => v === "same" || v === "same_meaning";
@@ -27,5 +27,6 @@ if (detail) for (const r of rows) {
   console.log("  実:", cl(r.staff_text, 220));
   if (r.audit?.length) console.log("  検査:", r.audit.join(" / "));
   if (r.aix_fill) console.log("  AIX:", r.aix_fill.level, JSON.stringify(r.aix_fill.blockers), r.aix_text ? cl(r.aix_text, 220) : (r.aix_skipped || ""), r.aix_text_verdict ? `[${r.aix_text_verdict}]` : "");
+  if (r.send) console.log("  送信:", r.send, (r.line_risks || []).join("・"));
   if (r.error) console.log("  ERR", r.error);
 }

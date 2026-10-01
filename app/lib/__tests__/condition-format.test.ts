@@ -74,5 +74,18 @@ console.log("── 2026-10-02 空白で値を書いた形（区切りの記号�
   t("申込フォームの入居希望日だけではフォームにしない", !isFilledSumoraForm("【お申込者様記入欄】\n・入居希望日 9月中\n・氏名、フリガナ ＊＊\n・住居形態 実家"));
 }
 
+console.log("── 2026-10-02 ⑫ 家賃を見出しの括弧に書き入れる形（実物 a260169b 9/30・365日で22通）");
+{
+  const form = "▶︎【お部屋お探し中！】\n\n（ご希望のお部屋探しご条件）\n①【ご入居の時期】⇒まだ未定\n②【ご希望の家賃（7万円〜10万円）】⇒\n③【希望の広さ・間取り】⇒1LDKか2LDK\n④【希望築年数】特になし\n⑤【ご希望のエリア・駅名】⇒都島駅、桜ノ宮駅";
+  t("括弧の 7万円〜10万円 を家賃の記入ありと読む", analyzeSumoraForm(form).filled.includes("rent"));
+  t("括弧が ◯万円〜◯万円 のままで後ろが空なら空欄", !analyzeSumoraForm(form.replace("7万円〜10万円", "◯万円〜◯万円")).filled.includes("rent"));
+  // 実物 c795e4d7 9/19: 見出しの行を矢印で終え、値を次の行に（365日で46行・全部値）
+  const nl = analyzeSumoraForm("【お部屋お探し中！】\n\n（ご希望のお部屋探しご条件）\n①【ご入居の時期】⇒10月\n②【ご希望の家賃（◯万円〜◯万円）】⇒\n〜11万\n③【希望の広さ・間取り】⇒1LDK\n④【希望築年数】築浅綺麗め\n⑤【ご希望のエリア・駅名】⇒\n大国町、日本橋、谷九、なんば、長堀橋\n⑦【初期費用の限度額】⇒\n⑧【その他ご要望あれば】⇒\n________________________\n※ 審査に不安な事がある方お気軽にお伝えください😊");
+  t("矢印で終わる行の次の行の値（〜11万・大国町…）を読む", nl.filled.includes("rent") && nl.filled.includes("area"), nl.filled.join(","));
+  t("次の行が見出し・区切り線なら空欄（⑦・⑧）", !nl.filled.includes("initial_cost") && !nl.filled.includes("other"), nl.filled.join(","));
+  t("矢印の無い空欄の次の行は読まない", !analyzeSumoraForm("①【ご入居の時期】⇒\n④【希望築年数】\n築浅\n⑤【ご希望のエリア・駅名】⇒難波").filled.includes("building_age"));
+  t("括弧の数字は家賃の行だけ（他の行の括弧は読まない）", !analyzeSumoraForm("①【ご入居の時期】⇒\n②【ご希望の家賃（◯万円〜◯万円）】⇒\n⑥【ご希望の駅徒歩分数（10分）】⇒").filled.includes("walk"));
+}
+
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

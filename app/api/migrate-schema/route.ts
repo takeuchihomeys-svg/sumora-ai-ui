@@ -3293,6 +3293,11 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS search_history JSONB DEF
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS last_pinpoint_search_at TIMESTAMPTZ;
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS last_wide_search_at TIMESTAMPTZ;
 
+-- ── 入居人数（2026-10-02 竹内さん「条件ヒアリングに入居人数を足す」）──
+-- 条件ヒアリングのフォームの ⑨ご入居人数・お客様の発言（「二人入居」「大人2 子ども1」）から決定論で読む（app/lib/co-resident.ts occupantsFromText）。
+-- 申込へのフォーマットの単独／同居あり（1＝単独・2以上＝同居あり・NULL＝分からない＝スタッフが選ぶ）に使う
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS occupants INTEGER;
+
 -- ── viewing_history 待ち合わせ場所カラム（2026-09-02追加）──
 -- meeting_place AIX送信後に log-aix-usage が upsert する。brain-core が viewingsText に注入する。
 ALTER TABLE viewing_history ADD COLUMN IF NOT EXISTS property_name TEXT;

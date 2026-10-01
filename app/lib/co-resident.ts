@@ -67,3 +67,69 @@ export function detectCoResident(customerTexts: ReadonlyArray<string | null | un
   if (single) return { value: "single", evidence: single };
   return { value: "unknown", evidence: null };
 }
+
+// ── 入居人数（2026-10-02 竹内さん「条件ヒアリングに入居人数を足す」）──
+// 条件ヒアリングのフォームの ⑨ご入居人数（hearing-form.ts）・お客様の発言から人数を決定論で読む。
+//   申込へのフォーマット: 1＝単独・2以上＝同居あり・読めない＝分からない（スタッフが選ぶ）。
+//   実物（365日のお客様の発言）: 「⑥入居予定人数」「住む人数が大人2 子ども1 小型犬1 猫1になる予定です」「人数:私と赤ちゃんとペット2匹」
+//   ペットは人数に入れない。「私と赤ちゃん」のように数が無い形は読まない（数を作らない）。物件の画像の読み取り・URL の「2人入居可」は読まない。
+const KANJI_NUM: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, ひとり: 1, ふたり: 2 };
+const numOf = (s: string): number | null => {
+  const t = s.normalize("NFKC");
+  if (/^[0-9]+$/.test(t)) return Number(t);
+  return KANJI_NUM[t] ?? null;
+};
+const N = "([0-9０-９]{1,2}|一|二|三|四|五|六)";
+
+export type OccupantsHit = { count: number; evidence: string };
+
+/** 1通の文から入居人数を読む（読めなければ null） */
+export function occupantsFromText(text: string | null | undefined): OccupantsHit | null {
+  const raw = String(text ?? "");
+  if (!raw.trim() || /^\s*\[画像\]/.test(raw) || /https?:\/\//.test(raw)) return null;
+  const t = raw.normalize("NFKC");
+  // 大人N（人）＋子どもN（人）
+  const adult = t.match(new RegExp(String.raw`大人\s*${N}\s*(?:人|名)?`));
+  const child = t.match(new RegExp(String.raw`(?:子ども|子供|こども|子|お子様|お子さん|小人|未就学児|乳児|幼児|赤ちゃん)\s*${N}\s*(?:人|名)?`));
+  if (adult) {
+    const a = numOf(adult[1]) ?? 0, c = child ? numOf(child[1]) ?? 0 : 0;
+    if (a > 0) return { count: a + c, evidence: [adult[0], child?.[0]].filter(Boolean).map((x) => String(x).trim()).join(" ") };
+  }
+  // 見出しつき（「⑨ご入居人数　2名」「入居予定人数 3人」「人数:2」）
+  const lab = t.match(new RegExp(String.raw`(?:ご?入居(?:予定)?(?:人数|者数)|入居者(?:の)?人数|人数)\s*(?:】)?\s*[⇒→=:：\s]*${N}\s*(?:人|名)?`));
+  if (lab) { const n = numOf(lab[1]); if (n && n <= 9) return { count: n, evidence: lab[0].trim() }; }
+  // 「N人で住む／入居」「家族N人」「N人暮らし」
+  const nWith = t.match(new RegExp(String.raw`${N}\s*(?:人|名)\s*(?:で|での)?\s*(?:入居|住|暮らし|ぐらし|すみ|すむ)|家族\s*${N}\s*(?:人|名)|${N}\s*人家族`));
+  // 本人の今の人数ではない「一人暮らし」（「前の一人暮らしの時は」「一人暮らし延期」「〇〇が一人暮らしを」・監査で3通）は読まない
+  if (nWith && /^(?:一|1)人(?:暮らし|ぐらし)/.test(nWith[0]) && /前の(?:一|1)人暮らし|(?:一|1)人暮らし(?:の時|延期|を?して(?:い|た))|[ぁ-んァ-ヶ一-龠]{1,6}が(?:一|1)人暮らし/.test(t)) return null;
+  if (nWith) { const n = numOf(nWith[1] ?? nWith[2] ?? nWith[3]); if (n && n <= 9 && !/^(?:可|OK|ok|相談)/i.test(t.slice((nWith.index ?? 0) + nWith[0].length, (nWith.index ?? 0) + nWith[0].length + 3).replace(/^で/, ""))) return { count: n, evidence: nWith[0] }; }
+  // 「二人暮らし」「2人入居」（数が書いてある語）。語だけ（同棲・夫婦・一人暮らし）は人数にしない＝人数が分からない
+  //   （監査 scripts/audit-occupants.ts: 「夫婦と子ども1人の3人家族」「同棲可能、子供1人います」は2名と読むと誤る・
+  //    「前の一人暮らしの時は」「一人暮らし延期」「あやせが一人暮らしを」は本人の今の人数ではない）。同居人の有無は detectCoResident の語が受け持つ
+  const two = t.match(/(?:二人|2人|ふたり)(?:で)?(?:入居|暮らし|ぐらし)/);
+  if (two && !/(?:二人|2人)入居(?:可|OK|ok|相談)/i.test(t)) return { count: 2, evidence: two[0] };
+  return null;
+}
+
+/** お客様の発言（古→新）から入居人数（新しい発言を優先） */
+export function occupantsFromTexts(texts: ReadonlyArray<string | null | undefined>): OccupantsHit | null {
+  for (const t of [...texts].reverse()) { const h = occupantsFromText(t); if (h) return h; }
+  return null;
+}
+
+/**
+ * 入居人数（顧客の行の occupants・無ければ発言）も見て、同居人の有無を決める。
+ *   人数と言葉の手がかりが食い違えば分からない（スタッフが選ぶ）。
+ */
+export function detectCoResidentWithOccupants(
+  customerTexts: ReadonlyArray<string | null | undefined>,
+  conditionTexts: ReadonlyArray<string | null | undefined> = [],
+  occupants?: number | null,
+): CoResidentVerdict & { occupants: number | null } {
+  const words = detectCoResident(customerTexts, conditionTexts);
+  const occHit = occupants && occupants > 0 ? { count: occupants, evidence: `入居人数${occupants}名` } : occupantsFromTexts(customerTexts);
+  if (!occHit) return { ...words, occupants: null };
+  const byCount: CoResident = occHit.count >= 2 ? "shared" : "single";
+  if (words.value !== "unknown" && words.value !== byCount) return { value: "unknown", evidence: `${occHit.evidence}／${words.evidence}`, occupants: occHit.count };
+  return { value: byCount, evidence: occHit.evidence, occupants: occHit.count };
+}

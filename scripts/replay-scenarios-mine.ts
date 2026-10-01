@@ -93,7 +93,8 @@ export function maskText(t: string, customerName: string | null, extraNames: Rea
   s = s.replace(/[^\s、。！!]{2,8}(様|さん)から(ご)?紹介/g, "ご紹介者様から$2紹介");
   // スタッフの文の頭の呼びかけ「〇〇さん」
   s = s.replace(/^([^\n]{1,14}?)(さん|様)(\n)/, "YUMA$2$3");
-  return s.replace(PHONE_RE, "090-0000-0000").replace(MAIL_RE, "yuma@example.com");
+  // 2026-10-02 ⑫: 伏せ字を携帯の番号の形（090-0000-0000）にすると手順書の個人情報の網（test-pii-guard の携帯の番号）に当たり場面が流れない（45場面中 9・流れ 13/17）→ 番号の形にしない
+  return s.replace(PHONE_RE, "（電話番号）").replace(MAIL_RE, "yuma@example.com");
 }
 
 async function main() {
@@ -164,6 +165,56 @@ async function main() {
     for (const c of [...list].reverse()) { if (seen.has(c.conv)) continue; seen.add(c.conv); picked.push(c); if (seen.size >= PER) break; }
   }
   if (OUT) { writeFileSync(OUT, JSON.stringify(picked, null, 1)); console.log(`\n書き出し ${picked.length} 件 → ${OUT}`); }
+  // 2026-10-02 竹内「DEEPSEEKで一連の流れを実際にYUMAにLINEで送りまくって、弱い部分あるか見つける…自動で繰り返し続ける」（⑫）:
+  //   --flows=N: 初回から内覧・申込の手前までの「一連の流れ」を会話ごとに丸ごと場面にする（お客様の番ごとに1場面・前の通は文脈）。
+  //   選ぶ会話: 初回の番がある・番が5つ以上・内覧／日時／申込の意思の番がある・--exclude-keys の会話は除く。新しい順に --flows-skip 件飛ばして N 件
+  //   （巡ごとに skip を変えて別の会話にする）。申込以降・記入済みの申込フォームの後は上の掘り方で既に切ってある
+  // --declare-stats: 場面ごとに、スタッフが「その場で物件を送った（AIX 物件ピックアップ/オススメ）」「探す宣言の手打ち」「他の手打ち」「他の AIX」のどれだったか
+  //   （⑫ 1巡目: 条件の言い直し・他の物件・設備で ブレインが 物件ピックアップ を選び、スタッフは探す宣言の手打ち＝穴:G2 の線を引く）
+  if (process.argv.includes("--declare-stats")) {
+    const { classifyStaffTextFacts } = await import("../app/lib/action-ledger");
+    const st = new Map<string, Record<string, number>>();
+    for (const c of out) {
+      const k = c.scene;
+      if (!st.has(k)) st.set(k, { n: 0, send_now: 0, declare: 0, other_text: 0, other_aix: 0 });
+      const r = st.get(k)!;
+      r.n++;
+      const aix = c.staff_aix.map((a) => a.aix);
+      if (aix.some((a) => a === "property_send" || a === "property_recommendation")) r.send_now++;
+      else if (aix.length) r.other_aix++;
+      else if (c.staff_texts.some((t) => classifyStaffTextFacts(t, null).some((e) => e.kind === "pickup_declared" && e.status === "promised"))) r.declare++;
+      else r.other_text++;
+    }
+    for (const [k, r] of [...st].sort((a, b) => b[1].n - a[1].n)) console.log(`${k.padEnd(14)} n=${r.n} その場で送る ${r.send_now}・探す宣言の手打ち ${r.declare}・他の手打ち ${r.other_text}・他の AIX ${r.other_aix}`);
+  }
+  const FLOWS = Number(arg("flows", "0"));
+  if (FLOWS > 0) {
+    const skip = Number(arg("flows-skip", "0"));
+    const maxTurns = Number(arg("flows-max-turns", "12"));
+    const exclude = new Set<string>();
+    const ek = arg("exclude-keys", "");
+    for (const f of ek.split(",").filter(Boolean)) for (const k of JSON.parse(readFileSync(f, "utf8")) as Array<[number, string, string, string]>) exclude.add(k[2]);
+    const byConv = new Map<string, Cand[]>();
+    for (const c of out) { if (!byConv.has(c.conv)) byConv.set(c.conv, []); byConv.get(c.conv)!.push(c); }
+    const flows = [...byConv].filter(([cid, cs]) => !exclude.has(cid) && cs[0].scene === "first_contact" && cs.length >= 5 && cs.some((c) => ["viewing", "meeting_date", "apply"].includes(c.scene)))
+      .sort((a, b) => Date.parse(b[1][0].at) - Date.parse(a[1][0].at)).slice(skip, skip + FLOWS);
+    const exp = JSON.parse(readFileSync("scripts/replay-scenarios.expect.json", "utf8")) as { stage_ja: Record<string, string> };
+    const scen = flows.flatMap(([cid, cs], fi) => cs.slice(0, maxTurns).map((c, ti) => {
+      const aix = [...new Set(c.staff_aix.map((a) => a.aix))];
+      let accept = aix.length ? aix : ["reply"];
+      if (accept.some((a) => a === "property_send" || a === "property_recommendation")) accept = [...new Set([...accept, "property_send", "property_recommendation"])];
+      return {
+        id: `flow${skip + fi + 1}_${cid.slice(0, 6)}_t${String(ti + 1).padStart(2, "0")}_${c.scene}`, stage: c.scene, stage_ja: exp.stage_ja[c.scene] ?? c.scene, src: `${cid.slice(0, 8)} ${c.at.slice(0, 16)}`,
+        context: c.context, customer: c.customer,
+        staff: { aix: c.staff_aix, texts: c.staff_texts, aix_texts: c.staff_aix_texts },
+        expect: { accept, why: aix.length ? `スタッフは AIX【${aix.join("+")}】` : "スタッフは返信（手打ち）" },
+      };
+    }));
+    const dest = arg("flows-out", "scripts/.replay-out/flows.json");
+    writeFileSync(dest, JSON.stringify({ version: new Date().toISOString().slice(0, 10), note: "一連の流れ（本番の会話・申込前・名前/電話/メールを伏せた）。git に入れない", scenarios: scen }, null, 1));
+    console.log(`一連の流れ ${flows.length}会話・${scen.length}番 → ${dest}`);
+    for (const [cid, cs] of flows) console.log(`  ${cid.slice(0, 8)} ${cs[0].at.slice(0, 10)} 番${cs.length}: ${cs.slice(0, maxTurns).map((c) => c.scene).join(" → ")}`);
+  }
   // --pick=<keys.json>（[[_, 場面, 会話ID, 時刻], …]）: 目で選んだ番を場面の形で書き出す（既定 scripts/replay-scenarios.json）。
   //   正解の道（expect）は scripts/replay-scenarios.expect.json（src＝会話IDの頭8桁＋時刻で引く・個人情報なし）から入れる。
   //   場面の文（本番の会話・名前/電話/メールは伏せた）は git に入れない（.gitignore）＝必要な時にこのコマンドで作り直す

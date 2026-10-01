@@ -99,6 +99,7 @@ import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLine
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-10-01 竹内: 待ち合わせ場所の住所は番地まで（番地の無い住所は文を作らない）
 import { meetingAddressProblem } from "@/app/lib/meeting-address";
+import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown, type HearingKnown } from "@/app/lib/hearing-form";
 
 export const maxDuration = 300;
@@ -2135,7 +2136,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
 
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
     const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
-      const { message, notice } = finalize(text);
+      const { message: finalizedMessage, notice } = finalize(text);
+      // 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: AIX の文は最終チェック（V16b）を通らない → 手数料の一文を足す（足すだけ・company-fact-guard）
+      const feeFix = ensureCardFeeLine(finalizedMessage, [latestCustomerMsg]);
+      const message = feeFix.text;
+      if (feeFix.added) console.log(JSON.stringify({ tag: "aix:card-fee-added", action: currentAction, conversationId }));
       if (conversationId) {
         after(async () => {
           try {
@@ -4148,7 +4153,7 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
 ・「ぜひ」「是非」「より一層」などの過剰な勧誘ワード
 
 【絵文字ルール】
-使ってよい絵文字：😊 😌 🙇 🌟 ✨ のみ・1〜2個まで
+使ってよい絵文字：😊 😌 🌟 ✨ のみ・1〜2個まで
 
 【出力形式（必須）】
 以下のJSON形式のみで出力してください（説明不要）：
@@ -5710,7 +5715,7 @@ ${SMORA_COMMON_RULES}
 ご案内可能です！！
 〇〇さんご都合いかがでしょうか😌！！」`,
         alternative: `[パターン例: 満室・代替案あり]
-スモラ:「${greetingPhrase ? `${greetingPhrase}\n` : ""}確認させていただきました物件のお部屋残念ながら全て募集が終了しておりました🙇！！
+スモラ:「${greetingPhrase ? `${greetingPhrase}\n` : ""}確認させていただきました物件のお部屋残念ながら全て募集が終了しておりました！！
 ただAPRILE南森町は一回り広い33.62㎡のお部屋が募集中です！！
 こちらのお部屋〇〇さんお気に召されましたらご案内させていただきます！！
 ご都合いかがでしょうか😊！！」`,
@@ -5812,7 +5817,7 @@ ${SMORA_COMMON_RULES}
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
 【絵文字ルール — 最重要・必ず守ること】
-▼ 使ってよい絵文字：😊 😌 🙇 🌟 ✨ のみ（他は全禁止）
+▼ 使ってよい絵文字：😊 😌 🌟 ✨ のみ（他は全禁止）
 ▼ 絵文字は1〜2個まで`;
       // 2026-09-17 竹内（AIX キャッシュ点検）: お手本（greetingPhrase 入り＝呼び出しごとに変わる）と DB 由来の実例・ノウハウは
       //   経路固有ブロック（5m の鍵）から出して動的ブロックへ。"\n\n" で結合すれば従来の checkSystem と同じ文字列
@@ -6245,7 +6250,7 @@ ${templateText}`;
       let hearingKnown: HearingKnown | null = null;
       if (resolvedPCID) {
         const { data: pcHear } = await supabase.from("property_customers")
-          .select("move_in_time, rent_min, rent_max, floor_plan, building_age, desired_area, commute_station, commute_minutes, walk_minutes, initial_cost_limit, preferences, other_requests, ng_points, pet")
+          .select("move_in_time, rent_min, rent_max, floor_plan, building_age, desired_area, commute_station, commute_minutes, walk_minutes, initial_cost_limit, preferences, other_requests, ng_points, pet, occupants")
           .eq("id", resolvedPCID).maybeSingle();
         hearingKnown = (pcHear as HearingKnown | null) ?? null;
       }

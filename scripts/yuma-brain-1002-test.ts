@@ -13,7 +13,7 @@ import { writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
 import { buildCallText } from "../app/lib/phone-call";
-import { detectCoResident } from "../app/lib/co-resident";
+import { detectCoResidentWithOccupants } from "../app/lib/co-resident";
 import { aixAutoSendGate, findStaffOnlyFact } from "../app/lib/staff-confirm-facts";
 import { findCompanyFactContradictionsUngated } from "../app/lib/company-fact-guard";
 
@@ -85,6 +85,17 @@ const SCENES: Scene[] = [
   { id: "apply_shared", decision: "6", note: "「彼女と一緒に住みたいのでここで申し込みしたいです！」", want: ["application_push"], gen: "apply", turns: [
     { s: "staff", t: PROP_SEND, aix: true },
     { s: "customer", t: "ここすごくいいです！彼女と一緒に住みたいのでここで申し込みしたいです！" },
+  ] },
+  // 10/02（2回目）: 入居人数（⑨ご入居人数）
+  { id: "hear_occ", decision: "1+", note: "「難波周辺で1LDK、2人で住む予定です」（家賃なし）→ 条件ヒアリング・⑨ 2名", want: ["condition_hearing", "(なし)"], status: "hearing", gen: "hearing", turns: [
+    { s: "customer", t: "はじめまして、お部屋探しています" },
+    { s: "staff", t: GREET },
+    { s: "customer", t: "難波周辺で1LDK、2人で住む予定です" },
+  ] },
+  { id: "apply_occ", decision: "6+", note: "前に「大人2 子ども1」→「ここで申し込みしたいです」→ 同居あり（3名）", want: ["application_push"], gen: "apply", turns: [
+    { s: "customer", t: "住む人数は大人2 子ども1になる予定です" },
+    { s: "staff", t: PROP_SEND, aix: true },
+    { s: "customer", t: "ここで申し込みしたいです！" },
   ] },
   { id: "apply_unknown", decision: "6", note: "「608で申し込みしたいです」（同居人の手がかりなし）", want: ["application_push"], gen: "apply", turns: [
     { s: "staff", t: PROP_SEND, aix: true },
@@ -167,7 +178,7 @@ async function main() {
         console.log(`【${sc.id}】[${k + 1}] ${hit ? "✓" : "✗"} ${a}${cp ? `/${cp}` : ""} src=${String(m.decision_source ?? "-")} mode=${String(m.reply_mode ?? "-")} 自動送信=${a === "(なし)" ? "（返信）" : JSON.stringify(aixAutoSendGate(a))}`);
         const custTexts = sc.turns.filter((t) => t.s === "customer").map((t) => t.t);
         if (sc.gen === "phone" && k === 0) console.log(`   【電話の文】${buildCallText({ customerTurn: custTexts.slice(-1)[0], customerName: "YUMA" }).replace(/\n/g, " / ")}`);
-        if (sc.gen === "apply" && k === 0) console.log(`   【同居人】${JSON.stringify(detectCoResident(custTexts))}`);
+        if (sc.gen === "apply" && k === 0) console.log(`   【同居人】${JSON.stringify(detectCoResidentWithOccupants(custTexts, [], null))}`);
         if (GEN && k === 0 && sc.gen === "hearing") console.log(`   ${await genHearing(sc)}`);
         if (GEN && k === 0 && sc.gen === "reply" && a === "(なし)") {
           const draft = await genReply(sc, m);

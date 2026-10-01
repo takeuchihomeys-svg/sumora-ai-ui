@@ -50,6 +50,20 @@ export function stripNonNameChars(raw: string): string {
   return normalized.replace(/[^ぁ-んゝゞァ-ヴヽヾー々〆一-鿿A-Za-z\s・]/g, "").trim();
 }
 
+/**
+ * 2026-10-02 表示名の飾り文字を、スタッフが実際に書く形に直す（「𝒮」→「S」・「𝟑ᩚ𝟐ᩚ𝟕ᩚ.」→「327」・「𝚂𝚊𝚗𝚊.」→「Sana」）。
+ * NFKC で数学用の英数字を普通の文字に畳み、結合の記号（ᩚ 等）と末尾の「.・·」を外す。絵文字・記号の名前（💞・a🤫・⟡）はそのまま
+ */
+export function plainDisplayName(raw: string | null | undefined): string {
+  const n = (raw ?? "").trim();
+  if (!n) return "";
+  // 異体字セレクタ（❤︎ ⭐︎ の FE0E/FE0F）と囲みの記号は残す。飾り（数学用の英数字・結合の記号）が無い名前は1文字も変えない
+  const f1 = (typeof n.normalize === "function" ? n.normalize("NFKC") : n).replace(/(?![︎️⃣])\p{M}/gu, "");
+  if (f1 === n) return n;
+  const f = f1.replace(/[.・·]+$/u, "").trim();
+  return f || n;
+}
+
 // 実名として使える形か（true のときのみ「〇〇さん」の呼びかけに使ってよい）
 export function isPlausiblePersonName(raw?: string | null): boolean {
   const n = (raw ?? "").trim();
@@ -105,22 +119,24 @@ export function enforceCustomerName(
   let cleaned = text;
 
   // ① LINE表示名がそのまま本文に出ている（「H!tom!.Mさん、お世話に…」等）
+  const plainDisp = plainDisplayName(display);
   if (display && display !== canonical && !isPlausiblePersonName(display)) {
     const esc = escapeRegExp(display);
     const addressReSrc = `${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)${TRAILING_PARTICLE_RE_SRC}`;
     if (new RegExp(addressReSrc, "g").test(cleaned)) {
       cleaned = cleaned.replace(
         new RegExp(addressReSrc, "g"),
-        (_m, tail: string, particle: string | undefined) => {
+        (m0: string, tail: string, particle: string | undefined) => {
           const p = particle ?? "";
           if (canonical) return `${canonical}さん${tail}${p}`;
-          // 名前不明 → 呼びかけごと削除。直結した助詞も落として「のお引越し」等の残骸を防ぐ
-          return shouldDropParticle(tail) ? "" : p;
+          // 2026-10-02 竹内「そのように呼ぶけど」（Sさん・💞さん・a🤫さん）: 名前が分からない時に表示名の呼びかけを消さない。
+          //   飾り文字（𝒮・𝟑ᩚ𝟐ᩚ𝟕ᩚ.）だけ、スタッフが実際に書く形（Sさん・327さん）に直す（plainDisplayName）
+          return plainDisp && plainDisp !== display ? `${plainDisp}さん${tail}${p}` : m0;
         },
       );
-      fixes.push(`LINE表示名の呼びかけ「${display}さん」→「${canonical ? `${canonical}さん` : "(削除)"}」`);
+      if (canonical || (plainDisp && plainDisp !== display)) fixes.push(`LINE表示名の呼びかけ「${display}さん」→「${canonical ? `${canonical}さん` : `${plainDisp}さん`}」`);
     }
-    if (cleaned.includes(display)) {
+    if (canonical && cleaned.includes(display)) {
       cleaned = cleaned.split(display).join(canonical);
       fixes.push(`本文中のLINE表示名「${display}」を除去`);
     }
@@ -145,7 +161,16 @@ export function enforceCustomerName(
     // 名前の前に文の切れ端が付いている（「敷地内駐車場付のお部屋で1件しょうじ」）＝どこからが名前か決められない → 触らない（誤削除0を優先）。
     //   表示名の呼びかけ（S・c・💞・a🤫・Hayato.I・327）には「漢字・カナ＋助詞」の切れ端が入らない
     if (canonical && base.endsWith(canonical)) return m;
-    if (base.length > 3 && /[一-龯々ァ-ヶ][でにをがはとものへ]|件/.test(base)) return m;
+    if (base.length > 3 && /[一-龯々ァ-ヶ][でにをがはとものへ]|件|から|まで|より|[0-9０-９][:：][0-9０-９]/.test(base)) return m;
+    // 2026-10-02 竹内「そのように呼ぶけど」: スタッフは表示名（S・r・E・c・💞・a🤫・🐥・Hayato.I・名無しの権兵衛）でも呼ぶ。
+    //   人の手打ち 60日で約90通をここで消していた。名前が分からない（canonical なし）時は呼びかけを消さない。
+    //   飾り文字だけ、スタッフが書く形に直す（「𝒮さん」→「Sさん」・「𝟑ᩚ𝟐ᩚ𝟕ᩚ.さん」→「327さん」）
+    if (!canonical) {
+      const plain = plainDisplayName(base);
+      if (!plain || plain === base) return m;
+      fixes.push(`飾り文字の呼びかけ「${base}さん」→「${plain}さん」`);
+      return `${br}${lead}${plain}さん${tail}${particle ?? ""}`;
+    }
     // 実名の形をしているものは第三者名の可能性もあるため一切触らない（誤置換の防止）
     if (isPlausiblePersonName(base)) return m;
     // テンプレの未置換プレースホルダー（「〇〇さん」「アカウント名さん」「[名前]さん」等）は
@@ -789,6 +814,24 @@ export function isCustomerConditionEcho(s: string, o?: GateOpts): boolean {
   return all.every((n) => src.includes(n));
 }
 
+/**
+ * 2026-10-02 特定のお部屋の金額ではなく、一般の説明・条件の話の文か（見積金額内訳ゲートの対象外）。
+ *   人の手打ち 60日で見積金額内訳ゲートが書き換えた文（scripts/audit-exits-vs-human.ts）を全部読んで引いた線:
+ *   ・相場・目安・一般的・通常・ほとんど・お部屋によって（異なる）＝どのお部屋にも言える話
+ *     「難波周辺の中央区浪速区の1LDK家賃相場は10万円から12万円となり」「ほとんどのお部屋を仲介手数料0円でご紹介可能ですが」
+ *   ・条件を広げて／探した報告（上限の金額＋まで・以内）「家賃管理費込みで75,000円まで条件広げてお部屋探させていただきましたが」
+ *   特定のお部屋の金額（「敷金としまして660,000円必要」「家賃管理費込50,000円のワンルーム」）は従来どおり止める
+ */
+const GENERAL_COST_MARK_RE = /相場|目安|一般的|一般の|通常(?:は|、)|ほとんどの|多くの(?:お部屋|物件)|(?:お部屋|物件)によって(?:異な|違|変わ)|場合が多|ケースが多/;
+//   条件を広げて探した**報告**（過去形）だけ。これからの物件探しの宣言の金額は isCustomerConditionEcho（お客様の条件に実在するか）に任せる
+//   （「初期費用15万円以内のお部屋ピックアップさせて頂きます」でお客様が15万と言っていない＝AI が条件を作った形は従来どおり止める・estimate-no-property.test）
+const SEARCH_CAP_RE = /[0-9０-９][0-9０-９,，]*\s*(?:万\s*)?円\s*(?:まで|以内|以下|前後)[^。！!\n]{0,12}広げ[^。！!\n]{0,30}(?:ましたが|ましたところ|ましたので)/;
+export function isGeneralCostExplanation(s: string): boolean {
+  // 「一般的な不動産業者より96,800円節約出来ます」はそのお部屋の金額（AIX の生成文で307文・監査で取りこぼしを見つけた）→ 対象外にしない
+  if (/御?見積書|お見積書|同封|添付|節約|お得|割引|還元/.test(s)) return false;
+  return GENERAL_COST_MARK_RE.test(s) || SEARCH_CAP_RE.test(s);
+}
+
 /** 見積書の約束・案内を入れる置換文（見積の文脈が不許可の時は入れない） */
 const ESTIMATE_REPLACEMENT_RE = /見積/;
 
@@ -813,7 +856,9 @@ const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean
     // 見積金額内訳（「敷金50,000円」「家賃72,000円」「敷金1ヶ月分」等）→ AIX「見積書送る」ボタン専用
     // AIは物件資料・見積書の画像を読めないため、物件固有の金額・数値（家賃・管理費・割引額等）の生成は絶対禁止
     name: "見積金額内訳",
-    test: (s, o) => !isCustomerConditionEcho(s, o) && (
+    // 2026-10-02 竹内「見積・空室の断言ゲートの当てすぎを直す」: 一般の説明（家賃の相場・仲介手数料の決まり・条件を広げて探した報告）まで
+    //   見積書の宣言に置き換えていた（人の手打ちで約20通・scripts/audit-exits-vs-human.ts）。特定のお部屋の金額の断言だけを止める（isGeneralCostExplanation）
+    test: (s, o) => !isCustomerConditionEcho(s, o) && !isGeneralCostExplanation(s) && (
       (/[0-9０-９][0-9０-９,，．.]*\s*(?:万\s*)?円/.test(s) &&
         /(?:初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前?家賃|管理費|共益費|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約)/.test(s)) ||
       // 「敷金1ヶ月分」等の月数表記（円なし）も物件固有数値としてブロック

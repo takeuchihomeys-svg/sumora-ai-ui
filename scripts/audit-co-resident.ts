@@ -4,7 +4,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-co-resident.ts [--days=365] [--show]
 import { createClient } from "@supabase/supabase-js";
 import { isTestConversation } from "../app/lib/test-conversations";
-import { detectCoResident } from "../app/lib/co-resident";
+import { detectCoResidentWithOccupants } from "../app/lib/co-resident";
 const DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.slice(7) ?? "365");
 const SHOW = process.argv.includes("--show");
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
@@ -23,8 +23,8 @@ async function main() {
     const cust = ((await sb.from("messages").select("text, created_at").eq("conversation_id", s.conversation_id).eq("sender", "customer").lt("created_at", s.created_at).order("created_at").limit(400)).data ?? []).map((m) => m.text ?? "");
     if (!convPc.has(s.conversation_id)) convPc.set(s.conversation_id, ((await sb.from("conversations").select("property_customer_id").eq("id", s.conversation_id).maybeSingle()).data?.property_customer_id as string | null) ?? null);
     const pcid = convPc.get(s.conversation_id);
-    const pc = pcid ? (await sb.from("property_customers").select("preferences, other_requests, ng_points").eq("id", pcid).maybeSingle()).data : null;
-    const v = detectCoResident(cust, pc ? [pc.preferences, pc.other_requests] : []);
+    const pc = pcid ? (await sb.from("property_customers").select("preferences, other_requests, ng_points, occupants").eq("id", pcid).maybeSingle()).data : null;
+    const v = detectCoResidentWithOccupants(cust, pc ? [pc.preferences, pc.other_requests] : [], (pc as { occupants?: number | null } | null)?.occupants ?? null);
     const k = `実際=${actual === "shared" ? "同居あり" : "単独"}・判定=${v.value === "shared" ? "同居あり" : v.value === "single" ? "単独" : "分からない"}`;
     cell.set(k, (cell.get(k) ?? 0) + 1);
     if (SHOW && (v.value !== actual)) console.log(`  ${s.conversation_id.slice(0, 8)} ${s.created_at.slice(0, 10)} ${k}｜手がかり: ${v.evidence ?? "なし"}`);

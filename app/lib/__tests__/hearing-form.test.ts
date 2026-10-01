@@ -11,14 +11,14 @@ function t(name: string, cond: boolean, extra = "") {
   else { fail++; console.log(`  NG  ${name}${extra ? ` -- ${extra}` : ""}`); }
 }
 
-console.log("── 8項目は必ず全部・順番も実送信のまま");
+console.log("── 8項目は必ず全部・順番も実送信のまま＋⑨ご入居人数（10/02）");
 {
   const empty = buildHearingForm("うらら", null);
   const lines = empty.split("\n");
-  t("見出し＋8行", lines.length === 9, String(lines.length));
+  t("見出し＋9行（①〜⑧＋⑨ご入居人数）", lines.length === 10, String(lines.length));
   t("見出しは「（〇〇さんご希望のお部屋探しご条件）」", lines[0] === "（うららさんご希望のお部屋探しご条件）", lines[0]);
-  t("空の時は実送信の41通と一字一句同じ",
-    empty === "（うららさんご希望のお部屋探しご条件）\n①ご入居時期\n②ご希望家賃（管理費込み）\n③ご希望間取り\n④ご希望築年数\n⑤ご希望エリア・最寄り駅\n⑥駅からの徒歩分数\n⑦初期費用ご予算\n⑧その他こだわり条件（ペット・保証人・駐車場等）", empty);
+  t("空の時は実送信の41通（①〜⑧）と一字一句同じ＋⑨ご入居人数",
+    empty === "（うららさんご希望のお部屋探しご条件）\n①ご入居時期\n②ご希望家賃（管理費込み）\n③ご希望間取り\n④ご希望築年数\n⑤ご希望エリア・最寄り駅\n⑥駅からの徒歩分数\n⑦初期費用ご予算\n⑧その他こだわり条件（ペット・保証人・駐車場等）\n⑨ご入居人数", empty);
   t("さん付きの名前に重ねない", buildHearingForm("あさみさん", null).startsWith("（あさみさんご希望"));
 }
 
@@ -28,7 +28,7 @@ console.log("── 人の実物（c167c5f1 7/23）: 間取りとエリアだけ
   t("③に全角の空白で 1LDK", f.includes("\n③ご希望間取り　1LDK\n"), f);
   t("⑤に全角の空白で 難波付近", f.includes("\n⑤ご希望エリア・最寄り駅　難波付近\n"), f);
   t("分からない①②④⑥⑦⑧は空欄のまま（消さない）", f.includes("\n①ご入居時期\n") && f.includes("\n②ご希望家賃（管理費込み）\n") && f.includes("\n⑧その他こだわり条件（ペット・保証人・駐車場等）"), f);
-  t("8項目そろっている", f.split("\n").length === 9);
+  t("9項目そろっている", f.split("\n").length === 10);
 }
 
 console.log("── 旧ロジックで項目が落ちていた形（YUMA 8/24 の4項目）も8項目");
@@ -36,7 +36,7 @@ console.log("── 旧ロジックで項目が落ちていた形（YUMA 8/24 �
   // 旧: 条件の文字に「家賃:」「間取り:」「エリア:」「駅徒歩:」があると項目を消して番号を詰めていた
   const condText = "エリア: 難波\n間取り: ワンルーム\n家賃: 〜7万円以内\n駅徒歩: 10分以内";
   const f = buildHearingForm("YUMA", parseConditionText(condText));
-  t("8項目そろっている", f.split("\n").length === 9, f);
+  t("9項目そろっている", f.split("\n").length === 10, f);
   t("家賃が〜7万円で入る", f.includes("②ご希望家賃（管理費込み）　〜7万円"), f);
   t("駅徒歩が10分以内で入る", f.includes("⑥駅からの徒歩分数　10分以内"), f);
   t("書き入れた数は4", prefilledCount(parseConditionText(condText)) === 4);
@@ -79,7 +79,7 @@ console.log("── 書き入れたフォームが返ってきたら埋まった
 {
   const sent = buildHearingForm("恵人", { floor_plan: "1LDK", desired_area: "難波付近" });
   const v = analyzeSumoraForm(sent);
-  t("8項目を項目として数える", v.labelCount === 8, JSON.stringify(v));
+  t("9項目を項目として数える", v.labelCount === 9, JSON.stringify(v));
   t("書き入れた2項目は値ありと読む", v.filled.sort().join(",") === "area,floor_plan", v.filled.join(","));
   // お客様が空欄に書き足して返す（実物 b6e6f492 の書き方: 項目名の後ろに空白で値）
   const back = sent.replace("①ご入居時期", "①ご入居時期 10月頃").replace("②ご希望家賃（管理費込み）", "②ご希望家賃（管理費込み）　20万以下");
@@ -128,7 +128,7 @@ console.log("── 顧客の行が無い時はお客様の発言から（お客
 }
 
 console.log("── 項目の定義は8つ");
-t("HEARING_FORM_ITEMS は8", HEARING_FORM_ITEMS.length === 8);
+t("HEARING_FORM_ITEMS は9（⑨ご入居人数）", HEARING_FORM_ITEMS.length === 9 && HEARING_FORM_ITEMS[8].label === "ご入居人数");
 
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

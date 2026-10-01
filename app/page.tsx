@@ -322,6 +322,8 @@ type PropertyCustomerRow = {
   ng_points?: string | null;
   other_requests?: string | null;
   building_age?: number | null;
+  /** 入居人数（2026-10-02・条件ヒアリングの ⑨ご入居人数） */
+  occupants?: number | null;
   initial_cost_limit?: number | null;
   additional_conditions?: string | null;
   ai_summary?: string | null;
@@ -528,6 +530,7 @@ function formatConditions(customer: PropertyCustomerRow): string {
   if (customer.walk_minutes) lines.push(`\u99c5\u5f92\u6b69: ${customer.walk_minutes}\u5206\u4ee5\u5185`);
   if (customer.move_in_time) lines.push(`\u5165\u5c45: ${customer.move_in_time}`);
   if (customer.building_age) lines.push(`\u7bc9\u5e74\u6570: ${customer.building_age}\u5e74\u4ee5\u5185`);
+  if (customer.occupants) lines.push(`入居人数: ${customer.occupants}名`); // 2026-10-02 条件ヒアリング ⑨・申込の同居人の判定（co-resident）
   if (customer.preferences) lines.push(`\u5e0c\u671b: ${customer.preferences}`);
   if (customer.ng_points) lines.push(`NG: ${customer.ng_points}`);
   if (customer.other_requests) lines.push(`\u305d\u306e\u4ed6: ${customer.other_requests}`);

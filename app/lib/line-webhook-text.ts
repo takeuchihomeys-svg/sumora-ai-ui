@@ -29,6 +29,7 @@ import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 import { walkMinutesInText } from "@/app/lib/walk-minutes-text";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
+import { occupantsFromText } from "@/app/lib/co-resident";
 // 2026-09-29 お客様の要望を 設備／NG／その他 の欄に節ごとに振り分ける（純関数）
 import { routeConditionText, formOtherWants, initialCostLimitFromText } from "@/app/lib/customer-wants";
 const strOrNull = (v: unknown): string | null => (typeof v === "string" ? v : Array.isArray(v) ? v.map(String).join("・") : v == null ? null : String(v));
@@ -1087,6 +1088,12 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
   if (parsed.floor_area_min == null) {
     const fa = floorAreaMinFromJo(text, typeof parsed.floor_plan === "string" ? parsed.floor_plan : null);
     if (fa) parsed.floor_area_min = fa.sqm;
+  }
+  // 2026-10-02 竹内さん「条件ヒアリングに入居人数を足す」: 入居人数は数が書いてある時だけ決定論で読む（⑨ご入居人数・「二人入居」「大人2 子ども1」・
+  //   co-resident.occupantsFromText・scripts/audit-occupants.ts）。LLM の抽出には入れない（数を作らせない）。申込へのフォーマットの単独／同居ありに使う
+  {
+    const occ = occupantsFromText(parseText);
+    if (occ) baseFields.occupants = occ.count;
   }
   const parsedFields: Record<string, unknown> = { ...baseFields };
   for (const f of ["move_in_time", "rent_min", "rent_max", "desired_area", "walk_minutes", "commute_station", "commute_minutes", "floor_plan", "initial_cost_limit", "building_age", "floor_area_min", "preferences", "ng_points", "other_requests"]) {

@@ -1,5 +1,6 @@
 // app/lib/hearing-form.ts
 import { analyzeSumoraForm } from "./condition-format";
+import { occupantsFromTexts } from "./co-resident";
 // AIX【条件ヒアリング】のフォーム本体を決定論で組み立てる（純関数・DB 依存なし）。
 //
 // 2026-10-02 竹内さんの決定「お客さんからもらっている条件は項目のところにいれるとお客さん入力しやすい」
@@ -30,6 +31,10 @@ export const HEARING_FORM_ITEMS = [
   { key: "walk",         label: "駅からの徒歩分数" },
   { key: "initial_cost", label: "初期費用ご予算" },
   { key: "other",        label: "その他こだわり条件（ペット・保証人・駐車場等）" },
+  // 2026-10-02 竹内さん「入居人数を足す」: 申込へのフォーマットの単独／同居あり（同居人記入欄）を決めるため。
+  //   ①〜⑧の番号と文言は変えずに最後に ⑨ として足す（返ってきたフォームの読み取り・条件の文の「①〜⑧」の言及・手本と食い違わない）。
+  //   文言はスタッフの項目の形（「ご入居時期」と同じ「ご入居〜」）。お客様の実物にも「⑥入居予定人数 ⇒1人」がある
+  { key: "occupants",    label: "ご入居人数" },
 ] as const;
 
 export type HearingItemKey = typeof HEARING_FORM_ITEMS[number]["key"];
@@ -50,9 +55,11 @@ export type HearingKnown = {
   other_requests?: string | null;
   ng_points?: string | null;
   pet?: boolean | null;
+  /** 入居人数（property_customers.occupants・2026-10-02） */
+  occupants?: number | null;
 };
 
-const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
+const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"];
 const SEP = "　"; // 全角の空白（人の実物の形）
 
 const s = (v: unknown): string => (v === null || v === undefined ? "" : String(v).replace(/\s+/g, " ").trim());
@@ -65,7 +72,7 @@ function man(yen: number | null | undefined): string {
 
 /** 項目ごとの書き入れる値（無い項目は ""） */
 export function hearingValues(k: HearingKnown | null | undefined): Record<HearingItemKey, string> {
-  const out: Record<HearingItemKey, string> = { move_in: "", rent: "", floor_plan: "", building_age: "", area: "", walk: "", initial_cost: "", other: "" };
+  const out: Record<HearingItemKey, string> = { move_in: "", rent: "", floor_plan: "", building_age: "", area: "", walk: "", initial_cost: "", other: "", occupants: "" };
   if (!k) return out;
   out.move_in = s(k.move_in_time);
   const lo = man(k.rent_min), hi = man(k.rent_max);
@@ -90,6 +97,7 @@ export function hearingValues(k: HearingKnown | null | undefined): Record<Hearin
   if (ng) push(/NG|不可|なし|無し/.test(ng) ? ng : `${ng}NG`);
   if (k.pet === true && !parts.some((p) => /ペット/.test(p))) parts.push("ペット可");
   out.other = parts.join("・");
+  out.occupants = k.occupants && k.occupants > 0 ? `${k.occupants}名` : "";
   return out;
 }
 
@@ -170,6 +178,7 @@ export function parseConditionText(text: string | null | undefined): HearingKnow
         break;
       }
       case "ペット": out.pet = /可/.test(val) && !/不可/.test(val); break;
+      case "入居人数": { const n = Number((val.normalize("NFKC").match(/[0-9]+/) ?? [""])[0]); out.occupants = n > 0 && n <= 9 ? n : null; break; }
       default: break;
     }
   }
@@ -240,6 +249,9 @@ const AREA_RE = /([一-龠ァ-ヶーA-Za-z・]{2,12})(?:駅)?(?:周辺|付近|�
 
 export function hearingKnownFromCustomerTexts(texts: ReadonlyArray<string | null | undefined>): HearingKnown {
   const out: HearingKnown = {};
+  // 入居人数は数が書いてある時だけ（「二人入居」「大人2 子ども1」「⑨ご入居人数 2名」・co-resident.occupantsFromText）
+  const occ = occupantsFromTexts(texts);
+  if (occ) out.occupants = occ.count;
   // 新しい発言を優先（言い直し）
   for (const raw of [...texts].reverse()) {
     const t = String(raw ?? "").normalize("NFKC");

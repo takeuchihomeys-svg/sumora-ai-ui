@@ -271,11 +271,31 @@ export function findMissingCardFee(body: string | null | undefined, customerText
   if (/3[.．]24/.test(text)) return null;
   const asked = new Set(matchCompanyFacts(customerTexts.map((t) => t ?? "")).map((f) => f.id));
   if (!asked.has("credit_card")) return null;
-  const s = splitSentencesForFactGuard(text).find((x) => CARD_INSTALLMENT_OK_RE.test(x) && !/以外|ない場合|無い場合/.test(x));
+  // 否定の文（「クレジットカード払いは対応しておらず」＝別の断定の規則が止める）は「出来る」と読まない（監査で1件）
+  const s = splitSentencesForFactGuard(text).find((x) => CARD_INSTALLMENT_OK_RE.test(x) && !/以外|ない場合|無い場合|ておらず|ておりません|ていません|できません|出来ません|不可|難し/.test(x));
   if (!s) return null;
   return {
     sentence: s,
     label: "カード払い・分割が出来ると答えているのに、カード手数料（合計金額に3.24%が別途）が書かれていません（竹内さんの決まり: 出来ると答える時は手数料も同じ返信で）",
     suggestion: "カード払いの文の後に「※クレジットカードでのお支払いの場合、カード手数料としまして合計金額に3.24%が別途必要となります！！」を1文足す（他の文は変えない）",
   };
+}
+
+/** 手数料の一文（竹内さん 9/30 の言葉の形） */
+export const CARD_FEE_LINE = "※クレジットカードでのお支払いの場合、カード手数料としまして合計金額に3.24%が別途必要となります！！";
+
+/**
+ * 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: AIX の文（初期費用について・見積書の2通目・会話を合わせる 等）は
+ *   最終チェック（V16b）を通らない → 出口で手数料の一文を**足す**（消さない・言い換えない）。
+ *   お客様が支払い方法を聞いていて、本文がカード払い・分割が出来ると答え、3.24% が無い時だけ。カード払いの文の直後の行に入れる。
+ *   返信生成は V16b（block→修正）が受け持つ。足す向きなので誤って消す心配は無い。
+ */
+export function ensureCardFeeLine(body: string, customerTexts: ReadonlyArray<string | null | undefined>): { text: string; added: boolean } {
+  const hit = findMissingCardFee(body, customerTexts);
+  if (!hit) return { text: body, added: false };
+  const lines = body.split("\n");
+  const idx = lines.findIndex((l) => l.includes(hit.sentence.slice(0, Math.min(12, hit.sentence.length))));
+  if (idx < 0) return { text: `${body.trimEnd()}\n${CARD_FEE_LINE}`, added: true };
+  lines.splice(idx + 1, 0, CARD_FEE_LINE);
+  return { text: lines.join("\n"), added: true };
 }

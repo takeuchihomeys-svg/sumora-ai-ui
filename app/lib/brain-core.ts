@@ -1336,7 +1336,7 @@ export async function analyzeConversation(
     propertyCustomerId
       ? supabase
           .from("property_customers")
-          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary, ai_summary_json, personality_profile, pet, floor_area_min, floor_area_max, commute_station, commute_minutes, area_mode, initial_cost_limit, building_age, other_requests")
+          .select("desired_area, floor_plan, rent_min, rent_max, move_in_time, preferences, ng_points, walk_minutes, last_property_sent_at, property_send_count, ai_summary, ai_summary_json, personality_profile, pet, floor_area_min, floor_area_max, commute_station, commute_minutes, area_mode, initial_cost_limit, building_age, other_requests, occupants")
           .eq("id", propertyCustomerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -1820,7 +1820,7 @@ export async function analyzeConversation(
   });
 
   // Build customer conditions context
-  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary?: string | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null; pet?: boolean | null; floor_area_min?: number | null; floor_area_max?: number | null; commute_station?: string | null; commute_minutes?: number | null; area_mode?: string | null; initial_cost_limit?: number | null; building_age?: number | null; other_requests?: string | null } | null;
+  type PC = { desired_area?: string | null; floor_plan?: string | null; rent_min?: number | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; last_property_sent_at?: string | null; property_send_count?: number | null; ai_summary?: string | null; ai_summary_json?: Record<string, unknown> | null; personality_profile?: string | null; pet?: boolean | null; floor_area_min?: number | null; floor_area_max?: number | null; commute_station?: string | null; commute_minutes?: number | null; area_mode?: string | null; initial_cost_limit?: number | null; building_age?: number | null; other_requests?: string | null; occupants?: number | null } | null;
   const pc = (pcResult.data ?? null) as PC;
   const condParts: string[] = [];
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
@@ -1839,6 +1839,7 @@ export async function analyzeConversation(
   if (pc?.pet != null) condParts.push(`ペット: ${pc.pet ? "可" : "不可"}`);
   if (pc?.initial_cost_limit) condParts.push(`初期費用上限: ${Math.floor((pc.initial_cost_limit as number) / 10000)}万`);
   if (pc?.building_age) condParts.push(`築年数: ${pc.building_age}年以内`);
+  if (pc?.occupants) condParts.push(`入居人数: ${pc.occupants}名`); // 2026-10-02 条件ヒアリング ⑨ご入居人数
   if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
   if (pc?.ng_points) condParts.push(`NG条件: ${pc.ng_points}`);
   if (pc?.other_requests) condParts.push(`その他要望: ${pc.other_requests}`);

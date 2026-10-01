@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { supabase } from "@/app/lib/supabase";
 // 2026-09-29 API 費用の調査: 名札を付ける（llm-alt-provider は system の先頭の語で既に "aix_template" と見なしている＝同じ名前なので回し方は変わらない）
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
@@ -156,7 +157,7 @@ AIXボタンで送付した（または送付予定の）構造化メッセー�
 【スモラ品質ルール】
 ━━━━━━━━━━━━━━━━━━━━
 ・感嘆符は「！！」（全角2つ）のみ使用。「!」「！」1つは絶対禁止
-・使える絵文字: 😊 😌 🙇 🌟 ✨（1〜2個まで。絵文字禁止指示がある場合は一切使わない）
+・使える絵文字: 😊 😌 🌟 ✨（1〜2個まで。絵文字禁止指示がある場合は一切使わない）
 ・お客様の呼び方は「（実名）さん」。LINEでは「様」は絶対に使わない
 　🚨 このプロンプト内の「〇〇」「○○」は説明用の伏せ字であり、名前・数値そのものではない。本文にはこれらの記号を絶対に書かない。呼びかけには【お客様情報】の「お客様名」に書かれた実名だけを使う。実名が「不明」と書かれている場合は呼びかけごと省略し、名前を出さずに書き出す
 ・冒頭挨拶: 通常は「（実名）さんお世話になっております！！」。本日すでにスタッフが送信済みの場合は挨拶行なし（名前行のみ「（実名）さん」または本題から）。「お待たせ致しました」は禁止語
@@ -2105,6 +2106,11 @@ ${text}
       }
     }
 
+    // 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: 2通目の文も手数料の一文を足す（足すだけ・company-fact-guard.ensureCardFeeLine）
+    {
+      const feeFix = ensureCardFeeLine(text, (recentMessages ?? []).filter((m) => m.sender === "customer").slice(-3).map((m) => m.text ?? ""));
+      if (feeFix.added) { text = feeFix.text; console.log(JSON.stringify({ tag: "aix-template-generate:card-fee-added", actionType })); }
+    }
     return NextResponse.json({ ok: true, text });
   } catch (err) {
     const message = err instanceof Error ? err.message : "AI生成エラー";

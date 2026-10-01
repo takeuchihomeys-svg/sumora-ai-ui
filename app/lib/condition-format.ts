@@ -36,6 +36,8 @@ export const SUMORA_FORM_LABELS: ReadonlyArray<{ key: string; re: RegExp }> = [
   { key: "walk",         re: /徒歩分数/ },
   { key: "initial_cost", re: /初期費用(?:の)?(?:限度額|ご?予算)/ },
   { key: "other",        re: /その他(?:ご要望|こだわり)/ },
+  // 2026-10-02 条件ヒアリングのフォームに ⑨ご入居人数 を足した（hearing-form.ts）。お客様の実物の「入居予定人数」も同じ項目
+  { key: "occupants",    re: /ご?入居(?:予定)?人数|入居者数/ },
 ];
 
 /** テンプレートの見出し（これがあれば1発で確定） */
@@ -125,6 +127,19 @@ export function analyzeSumoraForm(text: string | null | undefined): SumoraFormVe
     if (!v) {
       const next = (lines[i + 1] ?? "").trim();
       if (/^[⇒→=＝:：]/.test(next) && !labelOfLine(next)) v = next.replace(/^[\s⇒→=＝:：]+/, "").trim();
+      // 2026-10-02 ⑫（再生 pet_parking_36・c795e4d7「②【ご希望の家賃（◯万円〜◯万円）】⇒」の次の行に「〜11万」）: 見出しの行を矢印で終えて
+      //   値を次の行に書く形も読む。365日のお客様のフォーム 164通で 46行・全部その項目の値（目で読んだ・scripts/audit-form-next-line-value.ts）。
+      //   当てるのは【】の後ろが矢印だけの行のみ（矢印の無い空欄「④【希望築年数】」の次の行は読まない）・次の行が見出し・区切り線・※ なら読まない
+      else if (lines[i].includes("】") && /^[\s]*[⇒→=＝:：][\s]*$/.test(lines[i].slice(lines[i].indexOf("】") + 1)) && next && !labelOfLine(next) && !/^[_＿ー-]{4,}|^※/.test(next)) v = next;
+    }
+    // 2026-10-02 ⑫（YUMA の繰り返しの実送信テストの1巡目・再生 thanks_06）: お客様が家賃を見出しの括弧の ◯ に書き入れて答える形
+    //   「②【ご希望の家賃（7万円〜10万円）】⇒」（矢印の後ろは空）を空欄と読み、条件がそろっているのに 物件ピックアップ を
+    //   条件ヒアリング に倒していた（rule:conditions_incomplete_hearing(rent)）。365日のお客様のフォーム 192通で括弧に数字 25・
+    //   うち矢印の後ろが空 22（11%）。スタッフが送る見出しの括弧は「◯万円〜◯万円」だけ（数字のある物 0）＝括弧の数字はお客様の値
+    //   （25通を目で読んで全部が家賃の値・scripts/audit-form-label-rent.ts）→ 家賃の行だけ、括弧に数字があれば記入ありと読む
+    if (!v && key === "rent") {
+      const paren = labelPartOf(lines[i]).match(/[（(]([^）)]*)[）)]/)?.[1] ?? "";
+      if (/[0-9０-９]/.test(paren)) v = paren.trim();
     }
     // 「特になし」「なし」も「答えた」ので値として扱う（条件が無いことも条件）
     if (v) filled.add(key);
@@ -160,6 +175,7 @@ export const CONDITION_FORMAT_TEMPLATE = `
 ⑥【ご希望の駅徒歩分数】⇒（例: 15、10分以内）
 ⑦【初期費用の限度額】⇒（例: 30、10万まで、少ないほどいい）
 ⑧【その他ご要望あれば】⇒（例: ペット可、バストイレ別、二人入居可）
+（AIX の条件ヒアリングのフォーム「（〇〇さんご希望のお部屋探しご条件）①ご入居時期…⑧その他こだわり条件」には ⑨ご入居人数 が付く。値の例: 1名、2名、大人2 子ども1）
 
 注意:
 - 先頭に「▶︎【お部屋お探し中！】」、末尾に「________________________」や

@@ -45,17 +45,15 @@ export function dedupeRepeatedEmoji(text: string | null | undefined): EmojiRepea
   const changes: EmojiRepeatFix["changes"] = allow.changes.map((c) => ({ from: c.from, to: c.to, sentence: "（入れてよい絵文字だけ）" }));
   // 2026-10-02 竹内「初期のころ制約かけまくっていたので、理想の文がぶつかってしまって…そこもみつける」:
   //   人の実送信（60日・AIX を除く手打ち 2,516通・scripts/audit-exits-vs-human.ts）をこの出口に通すと 77通が書き換わっていた。
-  //   中身は全部「😊…😊…😌」のように**既に違う絵文字を混ぜている文**（スタッフの初回返信の型「はじめまして😊／…😊／何卒…😌」）で、
+  //   中身は「😊…😊…😌」のように**既に違う絵文字を混ぜている文**（スタッフの初回返信の型「はじめまして😊／…😊／何卒…😌」）で、
   //   2つ目の 😊 を 😌 に替えた結果、もともとあった締めの 😌 が「2回目」になって外れる（玉突き）。
-  //   上の線（96% は違う絵文字を混ぜる）は「全部同じ絵文字の文」を直す根拠で、混ぜている文を直す根拠ではない。
-  //   → 文末の飾りに違う絵文字が2種類以上ある文は触らない（直すのは全部同じ絵文字の文だけ＝YUMA 9:31 の形）。
-  {
-    const kinds = new Set<string>();
-    for (const line of src.split("\n")) {
-      if (/^\s*🌟/.test(line)) continue;
-      for (const m of line.matchAll(TAIL_EMOJI_RE)) for (const e of m[1].match(ONE_EMOJI_RE) ?? []) kinds.add(bare(e));
-    }
-    if (kinds.size >= 2) return { text: src, changes };
+  //   一度は「混ぜている文は触らない」にしたが、同日 竹内さん「1通の中で同じ絵文字を重ねない（全部😊の文も直す）」の決定で、
+  //   重ねは直す・玉突きだけ止める形に変えた: 替える先は**この通のどこにもまだ無い**絵文字（後ろに 😌 があれば 😌 には替えず外す）。
+  //   → 「😊…😊…😌」は 2つ目の 😊 を外すだけ（締めの 😌 は残る）。全部 😊 の文は 2つ目を 😌、3つ目以降は外す（YUMA 9:31 の形）。
+  const kinds = new Set<string>();
+  for (const line of src.split("\n")) {
+    if (/^\s*🌟/.test(line)) continue;
+    for (const m of line.matchAll(TAIL_EMOJI_RE)) for (const e of m[1].match(ONE_EMOJI_RE) ?? []) kinds.add(bare(e));
   }
   const used = new Set<string>();
   // 行ごとに見る（物件の見出しの行「🌟…」は飾りではないので数えない）
@@ -74,7 +72,7 @@ export function dedupeRepeatedEmoji(text: string | null | undefined): EmojiRepea
       const start = Math.max(before.lastIndexOf("！"), before.lastIndexOf("!"), before.lastIndexOf("。"), before.lastIndexOf("？")) + 1;
       const sentence = line.slice(start, offset).trim();
       let to = "";
-      if (!INVITE_CLOSING_RE.test(sentence)) to = ALTERNATES.find((a) => !used.has(a)) ?? "";
+      if (!INVITE_CLOSING_RE.test(sentence)) to = ALTERNATES.find((a) => !used.has(a) && !kinds.has(a)) ?? "";
       if (to) used.add(to);
       changes.push({ from: whole, to, sentence: sentence.slice(0, 60) });
       return to;

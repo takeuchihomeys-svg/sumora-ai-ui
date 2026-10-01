@@ -54,11 +54,21 @@ const NO_GEN = args.includes("--no-gen");
 const NO_AIX = args.includes("--no-aix");
 const REPS = Math.max(1, Number(arg("reps", "1")));
 const OUT_DIR = process.env.REPLAY_OUT ?? "scripts/.replay-out";
+// 2026-10-02 ⑫（竹内「DEEPSEEKで一連の流れを実際にYUMAにLINEで送りまくって…自動で繰り返し続ける」）:
+//   --file=<場面の json>（一連の流れ scripts/.replay-out/flows-*.json も読める）／--prefix=<line_message_id の頭>（同時に走る他の担当の "replay-d1002-" 等と分ける）
+//   --send: 出来た文（返信の下書き＝送信前の関門を通した形／作れた AIX の文）を本番の送信 API で YUMA の LINE に実際に送る（scripts/lib/yuma-line-send.ts）。
+//     竹内さんの指示で試行錯誤（deepseek-all）の文も送る（送るのは竹内さん本人のテスト用の LINE だけ・宛先は毎回読み直す）。
+//     LINE の月の上限の確かめ（送った後の残りが上限の30%・本番の見込みを下回るなら送らない）・1巡の上限 --send-cap（既定 40）・
+//     スタッフの宣言の文（本番がブレインを分析し直してグループに通知する）は送らない。送った後に本番が書く記録は自分の line id の物だけ消す
+const SCEN_FILE = arg("file", "scripts/replay-scenarios.json");
+const PREFIX = arg("prefix", "replay-");
+const SEND = args.includes("--send");
+const SEND_CAP = Number(arg("send-cap", "40"));
 // 場面より前の YUMA の記録を読まない線（app/lib/test-replay-floor.ts）。開発サーバも同じファイルを読む（起動コマンドに REPLAY_FLOOR_FILE を付ける）
 const FLOOR_FILE = process.env.REPLAY_FLOOR_FILE ?? "";
 function writeFloor(floor: string | null, status?: string) {
   if (!FLOOR_FILE) return;
-  writeFileSync(FLOOR_FILE, JSON.stringify(floor ? { conversationId: YUMA, floor, status, messageIdPrefix: "replay-" } : {}));
+  writeFileSync(FLOOR_FILE, JSON.stringify(floor ? { conversationId: YUMA, floor, status, messageIdPrefix: PREFIX } : {}));
 }
 
 type Ctx = { s: string; t: string; aix?: boolean; img?: boolean };
@@ -69,6 +79,7 @@ type Scenario = {
 };
 
 let cleanup: string[] = [];
+const sendState: { enabled: boolean; sent: number; ids: string[]; windows: string[]; quota: unknown } = { enabled: false, sent: 0, ids: [], windows: [], quota: null };
 // 2026-10-01 申込の書類（氏名・生年月日・住所・勤務先・年収）が場面に入っていたら LLM に渡さない（DeepSeek に個人情報を出さない・申込以降は対象外）。
 //   最初の版の場面の作り方（申込へ押下より前だけ）では申込フォームの記入済みの通が混ざり、2場面が DeepSeek に渡った＝場面の作り方も直した
 export const APPLICATION_PII_RE = /申込者様記入欄|同居人記入欄|緊急連絡先欄|生年月日|年収|勤務先電話|フリガナs*[ァ-ヶ]/;
@@ -81,7 +92,7 @@ async function insertScene(sc: Scenario): Promise<{ msgs: Array<{ sender: string
   const end = Date.now() + 120 * 60_000;
   const rows = all.map((m, i) => ({
     conversation_id: YUMA, sender: m.s === "customer" ? "customer" : "staff", text: m.t || (m.img ? "[画像]" : ""),
-    is_aix_generated: !!m.aix, line_message_id: `replay-${randomUUID()}`,
+    is_aix_generated: !!m.aix, line_message_id: `${PREFIX}${randomUUID()}`,
     created_at: new Date(end - (all.length - 1 - i) * 90_000).toISOString(),
   }));
   const ins = await sb.from("messages").insert(rows).select("id");
@@ -162,7 +173,7 @@ function judgeText(draft: string, staffTexts: string[]): { verdict: Verdict | nu
 }
 
 async function main() {
-  const file = JSON.parse(readFileSync("scripts/replay-scenarios.json", "utf8")) as { scenarios: Scenario[] };
+  const file = JSON.parse(readFileSync(SCEN_FILE, "utf8")) as { scenarios: Scenario[] };
   const list = file.scenarios.filter((s) => (!ONLY.length || ONLY.includes(s.id)) && (!STAGES.length || STAGES.includes(s.stage)));
   const testMode = process.env.LLM_TEST_MODE ?? "";
   const analyzeConversation = await loadBrain();
@@ -172,12 +183,30 @@ async function main() {
   writeFileSync(outFile, "");
   const t0 = new Date().toISOString();
   if (!FLOOR_FILE) console.warn("⚠ REPLAY_FLOOR_FILE なし＝YUMA の過去の記録（送った物件・見積書・内覧の予定）が場面に混ざる");
+  // 実送信の前の確かめ（LINE の月の上限・本番の見込み）と、送る前の YUMA の要対応（送信の本文で「済み」にされた物を戻すため）
+  let pendingBefore: Array<{ id: string }> = [];
+  if (SEND) {
+    const ysend = await import("./lib/yuma-line-send");
+    const q = await ysend.quotaGate(SEND_CAP);
+    console.log(`=== LINE の月の上限 ${JSON.stringify(q)} ===`);
+    sendState.quota = q;
+    sendState.enabled = q.ok;
+    if (!q.ok) console.warn(`⛔ 実送信を止める: ${q.reason}（DeepSeek の確かめだけ続ける）`);
+    const { data } = await sb.from("aix_action_items").select("id").eq("conversation_id", YUMA).eq("status", "pending");
+    pendingBefore = (data ?? []) as Array<{ id: string }>;
+  }
   console.log(`=== YUMA 再生 ${list.length}場面×${REPS} label=${LABEL} floor=${FLOOR_FILE ? "あり" : "なし"} test-mode=${testMode || "（なし＝本番と同じ）"} alt=${process.env.LLM_ALT_ACTIONS ?? "-"} base=${BASE} ===`);
   const rows: Array<Record<string, unknown>> = [];
   for (const sc of list) for (let rep = 0; rep < REPS; rep++) {
     const status = sc.stage === "first_contact" ? "hearing" : "proposing";
     const rec: Record<string, unknown> = { id: sc.id, stage: sc.stage, stage_ja: sc.stage_ja, rep, accept: sc.expect.accept, staff_aix: sc.staff.aix.map((a) => a.aix), staff_text: sc.staff.texts.join("\n").slice(0, 600) };
     if (hasApplicationPii(sc)) { console.warn(`⛔ ${sc.id}: 申込の書類（個人情報）が入っているので流さない`); continue; }
+    // 2026-10-02 ⑫: 手順書の個人情報の網（1通ずつ・本人確認書類・収入の書類・個人の値）も当てる（一連の流れは掘る側の線だけに頼らない）
+    {
+      const { applicationMaterialReason } = await import("../app/lib/test-pii-guard");
+      const bad = [...sc.context.map((m) => m.t), ...sc.customer].map((t) => applicationMaterialReason(t ?? "")).find(Boolean);
+      if (bad) { console.warn(`⛔ ${sc.id}: ${bad} が入っているので流さない`); continue; }
+    }
     try {
       const { msgs } = await insertScene(sc);
       const tb = Date.now();
@@ -236,6 +265,30 @@ async function main() {
       }
       // 自動で正しく送れたか: 道が正しく・関所を通り・文が一致（同じ/同じ事）・検査の指摘なし
       rec.auto_correct = !!rec.path_ok && gate.ok && isAgree(rec.text_verdict as Verdict) && !((rec.audit as string[] | undefined)?.length);
+      // ── 実送信（--send・YUMA の LINE だけ）──
+      if (sendState.enabled) {
+        const { draftToSendableText } = await import("../app/lib/draft-text");
+        const { detectPlaceholders } = await import("../app/lib/validate-reply");
+        const { ALLOWED_EMOJIS } = await import("../app/lib/emoji-allowlist");
+        const ysend = await import("./lib/yuma-line-send");
+        const isAixText = !draft && typeof rec.aix_text === "string" && !String(rec.aix_text).startsWith("[");
+        const raw = draft || (isAixText ? String(rec.aix_text) : "");
+        const sendable = raw ? (draftToSendableText(raw)?.trim() ?? "") : "";
+        const ph = sendable ? detectPlaceholders(sendable) : [];
+        rec.line_risks = sendable ? ysend.lineRenderRisks(sendable, ALLOWED_EMOJIS) : [];
+        if (!raw) rec.send = "送らず: 文なし";
+        else if (!sendable) rec.send = "送らず: 送信前の関門で送れない形";
+        else if (ph.length) rec.send = `送らず: 未置換 ${ph.join(" ")}`;
+        else if (sendState.sent >= SEND_CAP) rec.send = `送らず: 1巡の上限 ${SEND_CAP}`;
+        else if (await ysend.promiseTriggersBrain(sendable)) rec.send = "送らず: スタッフの宣言（本番がブレインを分析し直してグループに通知するため）";
+        else {
+          const r = await ysend.sendToYuma(sendable);
+          sendState.sent += r.ok ? 1 : 0;
+          if (r.ok) { sendState.ids.push(...r.ids); sendState.windows.push(r.sentAt); }
+          rec.send = r.ok ? `送った（${isAixText ? "AIX" : "返信"}・LINE id ${r.ids.join(",")}）` : `失敗 ${r.status} ${r.error ?? ""}`;
+          rec.sent_text = sendable;
+        }
+      }
     } catch (e) {
       rec.error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -250,6 +303,7 @@ async function main() {
     if (sc.staff.texts.length) console.log(`   実際　: ${sc.staff.texts.join(" || ").replace(/\n/g, " / ").slice(0, 260)}`);
     if ((rec.audit as string[] | undefined)?.length) console.log(`   検査　: ${(rec.audit as string[]).join(" ／ ")}`);
     if (rec.final_check) console.log(`   最終C : ${JSON.stringify(rec.final_check)}`);
+    if (rec.send) console.log(`   実送信: ${String(rec.send)}${(rec.line_risks as string[] | undefined)?.length ? ` ／ LINE の崩れ: ${(rec.line_risks as string[]).join("・")}` : ""}`);
     if (rec.aix_fill) console.log(`   AIX反映: ${JSON.stringify(rec.aix_fill)}${rec.aix_text ? `\n   AIX文 : ${String(rec.aix_text).replace(/\n/g, " / ").slice(0, 220)}${rec.aix_text_verdict ? ` [${String(rec.aix_text_verdict)}]` : ""}` : rec.aix_skipped ? ` 作らず: ${String(rec.aix_skipped)}` : ""}`);
   }
   // ── まとめ（場面ごと）──
@@ -268,6 +322,22 @@ async function main() {
     console.log(`${k.padEnd(12)} n=${rs.length} 道 ${pct(p, rs.length)}・文の一致 ${t}/${withText.length}・関所を通る ${g}・自動で正しく ${a}  関所: ${[...new Set(rs.map((r) => String(r.gate)))].join(",")}`);
   }
   console.log(`合計 n=${N} 道 ${pct(P, N)}・文の一致 ${T}・関所を通る ${G}・自動で正しく ${A}`);
+  // ── 実送信の後片付け（本番が送信の後に書いた YUMA の記録のうち、自分の送信に結び付く物だけ）──
+  if (SEND && sendState.sent > 0) {
+    await new Promise((r) => setTimeout(r, 40_000));
+    const ysend = await import("./lib/yuma-line-send");
+    const side = await ysend.sideRowsSince(sendState.windows[0]);
+    const myIds = new Set(sendState.ids);
+    const facts = (side.sent_facts ?? []).filter((r) => myIds.has(String(r.line_message_id ?? "")));
+    if (facts.length) await sb.from("sent_facts").delete().in("id", facts.map((r) => String(r.id)));
+    // 送信の本文で「済み」にされた YUMA の要対応（done_by=staff_text・自分の送信の時刻以降）を元に戻す
+    const { data: doneRows } = await sb.from("aix_action_items").select("id, done_at, done_by").in("id", pendingBefore.map((p) => p.id).length ? pendingBefore.map((p) => p.id) : ["00000000-0000-0000-0000-000000000000"]).eq("status", "done").eq("done_by", "staff_text").gte("done_at", sendState.windows[0]);
+    const revert = ((doneRows ?? []) as Array<{ id: string }>).map((r) => r.id);
+    if (revert.length) await sb.from("aix_action_items").update({ status: "pending", done_at: null, done_by: null, resolution_note: null }).in("id", revert);
+    const others = Object.entries(side).filter(([t]) => t !== "sent_facts").map(([t, rs]) => `${t} ${rs.length}行`).join("・");
+    console.log(`\n=== 実送信 ${sendState.sent}通（LINE id ${sendState.ids.length}）・後片付け: sent_facts ${facts.length}行を消した・要対応 ${revert.length}件を戻した・同じ時間の他の記録（他の担当の物を含みうる・消していない）: ${others} ===`);
+    appendFileSync(outFile, JSON.stringify({ _send: true, sent: sendState.sent, ids: sendState.ids, quota: sendState.quota, cleaned_facts: facts.map((r) => r.id), reverted_items: revert, side_counts: Object.fromEntries(Object.entries(side).map(([t, rs]) => [t, rs.length])) }) + "\n");
+  }
   const { data: logs } = await sb.from("llm_usage_logs").select("action, model, env").gte("created_at", t0).eq("conversation_id", YUMA);
   const tally = new Map<string, number>();
   let ds = 0, all = 0;
