@@ -48,6 +48,12 @@ export async function GET(req: NextRequest) {
   const now = Date.now();
   const jstDate = new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 10);
 
+  // 2026-10-01 竹内「いっかい今はとめておく」: 一時停止中（automation_settings.paused）は積まない（拡張の受け取り口 /api/automation/pending でも止まる）
+  if (!dryRun) {
+    const { data: st } = await supabase.from("automation_settings").select("paused").eq("id", 1).maybeSingle();
+    if ((st as { paused?: boolean } | null)?.paused) return NextResponse.json({ skipped: "paused", mode, jstDate });
+  }
+
   const { data, error } = await supabase
     .from("property_customers")
     // 2026-09-19 竹内「物件出ししたお客さんっていうのは送信じゃなくて確認したお客さんも含む」→ property_viewed_at も取る

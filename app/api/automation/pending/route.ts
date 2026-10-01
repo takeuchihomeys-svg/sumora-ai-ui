@@ -26,6 +26,14 @@ export async function GET(req: NextRequest) {
   }
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  // 2026-10-01 竹内「いっかい今はとめておく」: 拡張の自動の物件検索を一時停止（automation_settings.paused）。
+  //   自動便・AIX・自動の広げて・Web の一括、どこから積まれた指示も拡張はここからしか受け取らない＝ここ1か所で全部止まる。
+  //   再開は DB の1行（UPDATE automation_settings SET paused=false）。読めない時（表が無い）は止めない＝今まで通り
+  {
+    const { data: st } = await supabase.from("automation_settings").select("paused").eq("id", 1).maybeSingle();
+    if ((st as { paused?: boolean } | null)?.paused) return NextResponse.json({ command: null, paused: true });
+  }
+
   // 修正2: サーバー側ウォッチドッグ — running のまま30分以上放置されたコマンドを pending に戻す
   // （拡張SWクラッシュ等でコマンドが永久に running のまま止まるのを防ぐ）
   // 2026-09-30 picked_up_at は拡張の心拍（/api/automation/update の heartbeat・お客様ごとの進み）で新しくなる＝動いている長い命令は戻さない

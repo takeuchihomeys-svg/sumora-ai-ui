@@ -3860,6 +3860,12 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS picker_choices JSONB DEFAULT
 --   形は app/lib/aix-prefill.ts の summarizePrefillUse（書くのは /api/log-aix-usage の sanitizePrefill）。当たりの低い欄から直す
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS prefill JSONB DEFAULT NULL;
 
+-- 2026-10-01 竹内「いっかい今はとめておく」: 拡張の自動の物件検索の一時停止（1行だけ）。paused=true の間は
+--   /api/automation/pending が指示を渡さず・/api/cron/auto-property-search が積まない。再開は UPDATE automation_settings SET paused=false
+CREATE TABLE IF NOT EXISTS automation_settings (id INT PRIMARY KEY DEFAULT 1, paused BOOLEAN NOT NULL DEFAULT false, note TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), CONSTRAINT automation_settings_one_row CHECK (id = 1));
+ALTER TABLE automation_settings DISABLE ROW LEVEL SECURITY;
+INSERT INTO automation_settings (id, paused) VALUES (1, false) ON CONFLICT (id) DO NOTHING;
+
 -- ── 拡張の心拍と「今の画面」（2026-09-29 v2.5.40 竹内「なぜ固まっているのか」「画面開いているのも目で見ることができるのが理想」）──
 -- 9/29: 検索は 10:57 に終わっていて帯が残っていただけ・16:32 の午後の便の見送りは v2.5.38 より前の拡張（再読み込みしていない PC）。
 --   「その PC が今どの版で何をしているか」が分からず後から推すしかなかった → 心拍・拾った版・画面の写真を残す。
