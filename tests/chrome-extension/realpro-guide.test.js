@@ -94,5 +94,16 @@ ok("page-script: 検索を押す所（clickSearch・見積用）も案内モー�
   ok("ITANDI: 案内モードの間は自動入力しない（準備中）", /_gmIt !== false\) \{ _pickupCompleteToast\("ITANDI の案内モードは準備中/.test(pp) && /if \(site === "itandi"\) \{\s*_pickupCompleteToast/.test(pp));
 }
 
+// ── ⑥ 2026-10-01 v2.5.59 キャッシュ確認（竹内「それで一度試す」）: 手元に無い資料はリアプロに取りに行かない ──
+{
+  const bg = read("background.js");
+  const m = bg.match(/if \(msg\.type === "axlx-cache-probe"\) \{[\s\S]*?\n  \}\n/);
+  const h = m ? m[0] : "";
+  const fetches = h.match(/fetch\(/g) || [];
+  ok("キャッシュ確認: 口がある・読み込みは1か所だけ", !!h && fetches.length === 1, fetches.length);
+  ok("キャッシュ確認: 手元に残った物だけ（only-if-cached・same-origin）", /fetch\(u, \{ cache: "only-if-cached", mode: "same-origin"/.test(h));
+  ok("キャッシュ確認: バーのボタン", /id="axlx-cache-btn"/.test(read("bulk-dl.js")) && /addEventListener\("click", probeCache\)/.test(read("bulk-dl.js")));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

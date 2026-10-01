@@ -492,6 +492,10 @@
       '  <button id="axlx-print-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">🖨 印刷プレビュー</button>',
       '  <button id="axlx-img-btn" style="flex:1;padding:6px 4px;background:#7b1fa2;border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">📸 画像保存</button>',
       "</div>",
+      '<div style="display:flex;gap:6px;">',
+      '  <button id="axlx-cache-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:1px dashed rgba(255,255,255,0.5);border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;" title="押して開いた資料が、リアプロに行かずに受け取れるかを確かめる（リアプロには何も届かない）">🧪 キャッシュ確認</button>',
+      "</div>",
+      '<div id="axlx-cache-out" style="display:none;font-size:10px;font-weight:400;line-height:1.5;max-width:260px;max-height:220px;overflow:auto;background:rgba(0,0,0,0.25);border-radius:8px;padding:6px 8px;white-space:pre-wrap;"></div>',
     ].join("");
     document.body.appendChild(bar);
     // ── ドラッグ移動（ハンドル or パネル余白をつかんで移動。ボタン/入力上は除外）──
@@ -528,6 +532,38 @@
     document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
+    document.getElementById("axlx-cache-btn").addEventListener("click", probeCache);
+  }
+
+  /**
+   * v2.5.59 キャッシュ確認: この画面の「印刷用PDF」の資料が、ブラウザの手元に残っているかを確かめる。
+   *   手元に無い資料はリアプロに取りに行かない（cache: "only-if-cached"）＝リアプロには何も届かない。
+   *   使い方: 物件の「印刷用PDF」を人が1〜2件押して開く → 一覧に戻ってこのボタン → 開いた物が ✅・開いていない物が ✗ なら、この方向で作れる
+   */
+  function probeCache() {
+    var out = document.getElementById("axlx-cache-out");
+    var urls = [];
+    findPrintBtns().forEach(function (b) { if (b.href && urls.indexOf(b.href) === -1) urls.push(b.href); });
+    out.style.display = "block";
+    if (!urls.length) { out.textContent = "この画面に「印刷用PDF」が見つかりません"; return; }
+    out.textContent = "確かめ中…（" + urls.length + "件・リアプロには取りに行きません）";
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-cache-probe", urls: urls }, function (resp) {
+        if (chrome.runtime.lastError || !resp) { out.textContent = "確かめられませんでした: " + ((chrome.runtime.lastError && chrome.runtime.lastError.message) || "応答なし"); return; }
+        if (!resp.ok) { out.textContent = "確かめられませんでした: " + resp.error; return; }
+        var rs = resp.results || [];
+        var hit = rs.filter(function (r) { return r.ok; });
+        var lines = ["手元に残っていた資料: " + hit.length + " / " + rs.length + "件"];
+        rs.forEach(function (r) {
+          var id = (String(r.url).match(/id=(\d+)/) || [])[1] || r.url;
+          if (r.ok) lines.push("✅ " + id + "  " + Math.round(r.bytes / 1024) + "KB  " + (r.type || "") + (r.cacheControl ? "  Cache-Control: " + r.cacheControl : "  (Cache-Control なし)"));
+          else if (hit.length || rs.length <= 10) lines.push("✗ " + id + "  " + (r.error === "origin" ? r.note : r.status ? "HTTP " + r.status + " " + (r.type || "") : "手元に無い"));
+        });
+        if (!hit.length) lines.push("\n開いた資料が ✗ の時は、リアプロが「取っておかない」指定で返している可能性が高い → 「開かずに保存させる」方法に切り替え");
+        out.textContent = lines.join("\n");
+        console.log("[AXLX cache-probe]", rs);
+      });
+    } catch (e) { out.textContent = "確かめられませんでした: " + e.message; }
   }
 
   function updateBar() {

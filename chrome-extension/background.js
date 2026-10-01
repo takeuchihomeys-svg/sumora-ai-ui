@@ -1180,6 +1180,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── キャッシュ確認（v2.5.59）────────────────────────────────────────────────
+  // 2026-10-01 竹内「人が『印刷用PDF』を押して画面で開いた時の動きにすれば問題ない可能性高い」「それで一度試す」:
+  //   人が押して開いた資料は、その1回でブラウザが手元（HTTP キャッシュ）に取っておくことがある。
+  //   cache: "only-if-cached" は手元に無ければリアプロに行かずに失敗する指定（＝この確認でリアプロには何も届かない）。
+  //   手元に残るか（リアプロの Cache-Control 次第）を実物で確かめるための口。送信の道（realproPdfsToBlobUrls）はまだ変えない
+  if (msg.type === "axlx-cache-probe") {
+    (async () => {
+      try {
+        const tabId = await _realproTabFor(sender);
+        const [res] = await chrome.scripting.executeScript({
+          target: { tabId },
+          args: [Array.isArray(msg.urls) ? msg.urls.slice(0, 200) : []],
+          func: async (list) => {
+            const out = [];
+            for (const u of list) {
+              let sameOrigin = false;
+              try { sameOrigin = new URL(u, location.href).origin === location.origin; } catch (_) {}
+              if (!sameOrigin) { out.push({ url: u, ok: false, error: "origin", note: "画面と資料のアドレスの場所が違う（" + location.origin + "）" }); continue; }
+              try {
+                const r = await fetch(u, { cache: "only-if-cached", mode: "same-origin", credentials: "include" });
+                const ct = r.headers.get("content-type") || "";
+                const buf = await r.arrayBuffer();
+                out.push({ url: u, ok: r.ok && !ct.includes("text/html"), status: r.status, type: ct, bytes: buf.byteLength,
+                  cacheControl: r.headers.get("cache-control") || "", expires: r.headers.get("expires") || "", pragma: r.headers.get("pragma") || "" });
+              } catch (e) {
+                out.push({ url: u, ok: false, error: "not_cached", note: String((e && e.message) || e) });
+              }
+            }
+            return out;
+          },
+        });
+        sendResponse({ ok: true, results: (res && res.result) || [] });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   // ── PDF結合ダウンロード ───────────────────────────────────────────────────
   // 2026-10-01 案内モード（realpro-guide.js）: 一覧で隠すため、そのお客様に送付済みの部屋を読む（サーバーの記録を読むだけ・サイトには触らない）。
   //   一括の _loadSentRooms と違い、スタッフモードでも読む（竹内「一度送ったことある物件などは出ないようにする。監視画面が判断する形で」）
