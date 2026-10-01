@@ -113,7 +113,7 @@ console.log("\n■ 配線（拡張の再読み込み後に効く所）");
   const mf = JSON.parse(read("manifest.json"));
   const cs = mf.content_scripts.map((c) => c.js.join(","));
   ok("manifest: リアプロ・ITANDI の一括の前に sent-skip.js", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js") && cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
-  eq("manifest の版", mf.version, "2.5.57");
+  eq("manifest の版", mf.version, "2.5.58");
   const sa = read("search-audit.js");
   ok("search-audit: 日時の欄は伏せない（v2.5.40 までは「＊＊＊T…」になっていた）", /DATE_FIELDS\[k\] && ISO_RE\.test\(v\.trim\(\)\)/.test(sa));
   const A = require("../../chrome-extension/search-audit.js");

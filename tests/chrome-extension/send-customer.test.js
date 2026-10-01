@@ -103,7 +103,7 @@ eq("空・壊れた入力 → null", [G.realproReady([]), G.realproReady(null), 
 console.log("\n配線（読み込み・呼び出し）");
 {
   const mf = JSON.parse(read("manifest.json"));
-  eq("manifest の版", mf.version, "2.5.57");
+  eq("manifest の版", mf.version, "2.5.58");
   const itCs = mf.content_scripts.find((c) => (c.js || []).includes("itandi-bulk-dl.js"));
   ok("itandi-guard.js は itandi-bulk-dl.js より前", itCs.js.indexOf("itandi-guard.js") >= 0 && itCs.js.indexOf("itandi-guard.js") < itCs.js.indexOf("itandi-bulk-dl.js"));
   const html = read("popup.html");

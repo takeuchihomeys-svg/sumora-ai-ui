@@ -131,7 +131,7 @@ ok("絞り込みの窓の中の欄は外さない", /_itInDialog\(inp\)/.test(re
 const bg = read("background.js");
 ok("background: 1回目の読み戻しにも reset（ITANDI の入れ直しの材料）", /reset: f\.reset \? \{ cleared:/.test(bg));
 const mf = JSON.parse(read("manifest.json"));
-eq("manifest の版", mf.version, "2.5.57");
+eq("manifest の版", mf.version, "2.5.58");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -5072,6 +5072,10 @@ function openInstructions(siteKey) {
           sort_order: _autoSort,
           max_pages: _autoMaxPages,
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
+          // 2026-10-01 竹内「何でお客さん名が分かっていないのか」: 中継役（underbar.js）は条件だけを page-script に渡すので、
+          //   案内モード（realpro-guide.js）が誰の検索か分からず送付済みの部屋を隠せなかった → 条件にお客様を載せる（page-script の入力は使わない欄）
+          customer_id:   c.id || null,
+          customer_name: c.customer_name || null,
         }),
       }, "*");
       // ページリロード後も自動送信が再開できるようフラグを立てる（手動・自動バッチ共通）

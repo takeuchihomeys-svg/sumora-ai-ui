@@ -326,12 +326,38 @@
     plan = Plan.buildPlan(c, { withReset: withReset });
     saveSession();
     tick();
+    // お客様の ID・名前が条件に無い時（古い popup・別の道）は、拡張が選んでいる今のお客様で補う
+    if (!session.customerId || !session.customerName) {
+      var s0 = session;
+      try {
+        chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
+          if (session !== s0 || !r) return;
+          if (!session.customerId && r.current_customer_id) session.customerId = String(r.current_customer_id);
+          if (!session.customerName && r.current_customer_name) session.customerName = String(r.current_customer_name);
+          saveSession(); renderPanel();
+        });
+      } catch (_) {}
+    }
   });
 
   // ── ④ 一覧の画面: 送付済みの部屋の行を隠す ──
   var sentIndex = null, sentNote = "", showSent = false;
-  function loadSentRooms() {
-    if (!session || !session.customerId) { sentNote = "お客様が分からないので送付済みは隠していません"; renderPanel(); return; }
+  function loadSentRooms(_retried) {
+    if (session && !session.customerId && !_retried) {
+      // 誰の検索か分からない時は、拡張が選んでいる今のお客様で補ってから読む（1回だけ）
+      try {
+        chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
+          if (session && r && r.current_customer_id) {
+            session.customerId = String(r.current_customer_id);
+            if (!session.customerName && r.current_customer_name) session.customerName = String(r.current_customer_name);
+            saveSession();
+          }
+          loadSentRooms(true);
+        });
+        return;
+      } catch (_) {}
+    }
+    if (!session || !session.customerId) { sentNote = "お客様が分からないので送付済みは隠していません（拡張でお客様を選んでから検索してください）"; renderPanel(); return; }
     try {
       chrome.runtime.sendMessage({ type: "axlx-guide-sent-rooms", customerId: session.customerId }, function (resp) {
         void chrome.runtime.lastError;
