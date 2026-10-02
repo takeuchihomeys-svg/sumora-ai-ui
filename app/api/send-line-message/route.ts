@@ -97,6 +97,17 @@ export async function POST(req: NextRequest) {
   if (message && isGenerationFailureText(message)) {
     return NextResponse.json({ ok: false, error: "generation_failure_text", message: "AI返信の生成に失敗した文は送信できません。再生成するか本文を入力してください" }, { status: 400 });
   }
+  // 2026-10-02 竹内「監視が防げる部分」「テスト送信入っている。紛れないように」: 送る直前の最後の網。
+  //   JSON・コードの名残（「…😊！！","closing":"…"}」）とテストの印（【テスト送信…】）は送らない（app/lib/outgoing-residue.ts・
+  //   本番のスタッフの送信 365日 8,441通で当たり 0＝scripts/audit-outgoing-residue.ts）。本文は直さずスタッフに返す
+  if (message) {
+    const { detectOutgoingResidue, describeOutgoingResidue } = await import("@/app/lib/outgoing-residue");
+    const residue = detectOutgoingResidue(message);
+    if (residue.length) {
+      console.warn(JSON.stringify({ tag: "send-line-message:residue-blocked", conversationId: conversation_id ?? null, origin: origin ?? null, aixType: aix_type ?? null, hits: residue }));
+      return NextResponse.json({ ok: false, errorCode: "outgoing_residue", error: describeOutgoingResidue(residue), residue }, { status: 422 });
+    }
+  }
 
   // ── 2026-09-21 竹内「LINEのグループにおくるはずが個人のLINEにおくらないように。グループに送るときはグループに送る」──
   //   送る直前に「会話の宛先」と「送ろうとしている宛先」を突き合わせる（判定は line-target.ts の1か所）。

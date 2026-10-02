@@ -3,6 +3,7 @@ import { jstParts, jstYmd } from "./jst-date";
 import { isViewingHoldNotes } from "./viewing-hold";
 
 import { planDaySlots, isOutingViewingNotes, VIEWING_DAY_START, VIEWING_DAY_END, type SlotBusy } from "./viewing-slot-plan";
+import { VIEWING_LOOKAHEAD_DAYS, baseDaysToKeep } from "./viewing-candidates";
 
 const WEEKDAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
 const DAY_MS = 86_400_000;
@@ -42,14 +43,17 @@ export async function fetchCalendarSlots(
 ): Promise<{
   days: CalendarDayResult[];
   infoString: string; // AIに渡す文字列
+  baseCount: number; // 基準の日（本日から順・直近の空いている3日まで）の数。days のこれより後ろはお客様の希望日などの追加の日
 }> {
   const now = jstParts();
   const todayUtc = Date.UTC(now.y, now.m - 1, now.d);
-  const baseYmds = [0, 1, 2].map((i) => jstYmd(todayUtc + i * DAY_MS - 9 * 3600 * 1000));
+  // 2026-10-02 竹内「直近は基本3候補いれる。2候補でも大丈夫やけど、候補多く出すため直近3候補が基本」:
+  //   旧は本日・明日・明後日の3日に固定 → 本日の枠が過ぎた・埋まった日は候補が2つ以下だった。1週間見て、空いている日を前から3日（viewing-candidates.ts）
+  const baseYmds = Array.from({ length: VIEWING_LOOKAHEAD_DAYS }, (_, i) => jstYmd(todayUtc + i * DAY_MS - 9 * 3600 * 1000));
   // 2026-09-19 竹内（a🤫 事例・退去予定）: 追加日は**呼び出し側が並べた順**で先着を採る（お客様の希望日を先に渡す）。
   //   以前は日付順に並べてから先頭5日を採っていたので、退去予定日以降の日を足すと希望日が押し出されていた。
   //   採ってから日付順に並べ直す（画面の並びと「本日・明日・明後日」のラベルは index で決まるため）
-  const extras = [...new Set(extraYmds.filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && s > baseYmds[2]))]
+  const extras = [...new Set(extraYmds.filter((s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && s > baseYmds[baseYmds.length - 1]))]
     .slice(0, MAX_EXTRA_DAYS)
     .sort();
   const allYmds = [...baseYmds, ...extras];
@@ -81,7 +85,7 @@ export async function fetchCalendarSlots(
   }>;
 
   const resultDays: CalendarDayResult[] = [];
-  const infoLines: string[] = [];
+  const infoLines: Array<[number, string]> = [];
 
   // 現在時刻（分・日本時間）- 今日のスロットフィルタリングに使用
   const nowMin = now.hour * 60 + now.minute;
@@ -152,16 +156,27 @@ export async function fetchCalendarSlots(
       // 今日・予定なし・全スロット時間切れ → 案内不可扱い
       resultDays.push({ label, ymd: dateKey, slots: [], fullyBooked: true, noEvents: true });
     } else if (noEvents) {
-      infoLines.push(`${shortLabel} ${defaultSlots.join(" / ")}`);
+      infoLines.push([i, `${shortLabel} ${defaultSlots.join(" / ")}`]);
       resultDays.push({ label, ymd: dateKey, slots: defaultSlots, fullyBooked: false, noEvents: true });
     } else if (fullyBooked) {
       // 案内不可の日はinfoLinesに含めない（AIに渡さない）
       resultDays.push({ label, ymd: dateKey, slots: [], fullyBooked: true, noEvents: false });
     } else {
-      infoLines.push(`${shortLabel} ${slots.join(" / ")}`);
+      infoLines.push([i, `${shortLabel} ${slots.join(" / ")}`]);
       resultDays.push({ label, ymd: dateKey, slots, fullyBooked: false, noEvents: false });
     }
   }
 
-  return { days: resultDays, infoString: infoLines.join("\n") };
+  // 基準の日は「3つ目の空いている日」まで（少なくとも本日・明日・明後日）。お客様の希望日（extraYmds）は基準の日の中にあっても残す（後ろへ回す）
+  const baseCount = baseYmds.length;
+  const keepBase = baseDaysToKeep(resultDays, baseCount);
+  const requested = new Set(extraYmds);
+  const keptIdx = resultDays.map((_, i) => i).filter((i) => i < keepBase || i >= baseCount || requested.has(resultDays[i].ymd));
+  const order = [...keptIdx.filter((i) => i < keepBase), ...keptIdx.filter((i) => i >= keepBase)];
+  const lineOf = new Map(infoLines);
+  return {
+    days: order.map((i) => resultDays[i]),
+    infoString: order.map((i) => lineOf.get(i)).filter((x): x is string => !!x).join("\n"),
+    baseCount: keepBase,
+  };
 }

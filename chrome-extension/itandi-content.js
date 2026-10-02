@@ -211,7 +211,7 @@
     function _buildConditions(c) {
       return {
         rent_max:       c.rent_max || c.max_rent || null,
-        rent_min:       c.rent_min || null,
+        rent_min:       c.rent_min_search || c.rent_min || null, // 2026-10-02 ⑫ おおよその下限（サーバーの rent_min_search）
         walk_minutes:   c.walk_minutes || null,
         building_age:   c.building_age || null,
         floor_plan:     c.floor_plan || c.layout || null,

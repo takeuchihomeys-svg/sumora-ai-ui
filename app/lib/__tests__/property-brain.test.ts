@@ -212,7 +212,7 @@ console.log("── 判定（決定論・drop は実送信でほぼ0の形だけ
   // 利益: AD 1ヶ月 × 家賃 40,000 = 40,000 < 割引 42,000。
   // 2026-09-27 竹内「割引が AD より大きいとあるが、AD はこっち側で自由に変えられるものやから、そこは影響しない」:
   //   利益の目安は記録だけ（profitYen）・判定・点・保留の理由には入れない
-  const cheap = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1K\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }));
+  const cheap = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1K\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), buildCustomerProfile({ rent_max: 50_000, floor_plan: "1K" })); // 2026-10-02 ⑫: 上限 7万だと 4万は おおよその下限（7万×0.7）の保留に当たるので上限 5万で利益だけを見る
   t("AD より割引が大きくても保留にしない（PROFIT_NEGATIVE を付けない・利益の目安は記録）", cheap.verdict === "pass" && cheap.profitYen === -2_000 && !cheap.reasonCodes.includes("PROFIT_NEGATIVE") && !cheap.flagCodes.includes("PROFIT_NEGATIVE"), JSON.stringify([cheap.verdict, cheap.reasonCodes]));
   const bigDisc = judgeProperty(parsePropertyFacts(SUMMARY_A), buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }, [], [], 150_000));
   const smallDisc = judgeProperty(parsePropertyFacts(SUMMARY_A), buildCustomerProfile({ rent_max: 70_000, floor_plan: "1K" }, [], [], 20_000));

@@ -106,6 +106,9 @@ export function buildCallRequestText(o: { customerAsked: boolean; customerName: 
 // 事実の線（竹内さんの決定④と同じ）: スタッフが電話できる時間はスタッフしか知らない → お客様が時間を聞いただけ（「電話いける時間ありますか？」）の時は
 //   スタッフの入力（staffAvailability）が無ければ時間を作らない（「お手隙の際に」で答える）。お客様が自分で出した時間はそのまま受けてよい
 //   （AIX はスタッフが押して送る＝受けるかはスタッフが見て決める）。電話の要の文（ボタンからお電話）は必ず残す。
+//   2026-10-02 竹内さんの決定「19時まで電話対応可能時間となる」で更新: 会社として決まった終わりの時刻（19時）は作ってよい事実の出所に入った
+//   （company-facts の phone_hours）。時間を聞いただけの時は「19時までですと何時でもお電話可能です😊！！」（スタッフの実送信 6/30 の言い方）。
+//   始まりの時刻は実データに無いので書かない。お客様が19時より後を言った時は受けず、19時までと伝える。
 
 /** お客様の発言の電話の時間（お客様が出した時間）。「14:30-15:00」「明日の17時頃」「13時以降」「19時頃」 */
 export function customerProposedCallTime(turn: string): string | null {
@@ -162,6 +165,10 @@ export type CallTextInput = {
  * 電話をかける の案内文（ボタンのカードの後に送る1通）。会話に合わせる（時間に答える・用件に触れる）が、
  * 「こちらの電話をかけるボタンよりお電話お願い致します！！」（要の文）は必ず入れる。LLM なし。
  */
+/** 2026-10-02 竹内さんの決定「19時まで電話対応可能時間となる」（company-facts の phone_hours と同じ事実）。言い方はスタッフの実送信 6/30 のまま */
+export const PHONE_LAST_HOUR = 19;
+export const PHONE_HOURS_LINE = "19時までですと何時でもお電話可能です😊！！";
+
 export function buildCallText(i: CallTextInput): string {
   const turn = i.customerTurn ?? "";
   const asked = customerRequestsPhoneCall(turn);
@@ -175,8 +182,15 @@ export function buildCallText(i: CallTextInput): string {
   const askTime = customerAsksStaffCallTime(turn);
   const topic = purpose || customerCallTopic(turn);
   let when = "";
+  // 2026-10-02 竹内さんの決定「19時まで電話対応可能時間となる」: お客様が19時以降（19:00 ちょうどより後の始まり）を言った時は受けない
+  const proposedStartHour = proposed ? Number((proposed.match(/([0-9]{1,2}):([0-9]{2})/) ?? [])[1] ?? NaN) : NaN;
+  const proposedAfterHours = Number.isFinite(proposedStartHour) && proposedStartHour >= PHONE_LAST_HOUR;
   if (avail) {
     lines.push(`${avail}${/(?:以降|から|以後)$/.test(avail) ? "でしたら" : ""}お電話可能です😊！！`);
+    when = "お手隙の際に";
+  } else if (proposedAfterHours) {
+    // 実送信の言い方（6/30「19時までですと何時でもお電話可能です😊！！」）
+    lines.push(PHONE_HOURS_LINE);
     when = "お手隙の際に";
   } else if (proposed) {
     lines.push("かしこまりました！！", `${proposed}${/以降$/.test(proposed) ? "でしたら" : ""}お電話大丈夫です😊！！`);
@@ -184,8 +198,9 @@ export function buildCallText(i: CallTextInput): string {
   } else if (askNow) {
     lines.push("はい！！", "ただいまお電話大丈夫です😊！！");
   } else if (askTime) {
-    // スタッフの電話できる時間はスタッフしか知らない → 時間を作らない
-    lines.push("お電話大丈夫です😊！！");
+    // 2026-10-02 竹内さんの決定「19時まで電話対応可能時間となる」: 旧はスタッフの電話できる時間を作らなかった（スタッフしか知らない）。
+    //   会社として決まった時間（company-facts の phone_hours）を実送信の言い方で答える。始まりの時刻は実データに無い＝書かない
+    lines.push(PHONE_HOURS_LINE);
     when = "お手隙の際に";
   } else if (asked) {
     lines.push("お電話大丈夫です😊！！");

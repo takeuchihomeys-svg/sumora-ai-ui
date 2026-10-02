@@ -64,6 +64,10 @@ const SCEN_FILE = arg("file", "scripts/replay-scenarios.json");
 const PREFIX = arg("prefix", "replay-");
 const SEND = args.includes("--send");
 const SEND_CAP = Number(arg("send-cap", "40"));
+// 2026-10-02 竹内さんの決定（2段の場面）: 約束の返信を送った後に本番が AIX を立てるか（promise:*）を確かめる時だけ、約束の文も N 通まで送る（既定 0）。
+//   送ると本番が YUMA のブレインを Claude で分析し直し、AIX要対応を売上番長グループへ通知する（通知は取り消せない）＝最小限に
+const SEND_PROMISE_CAP = Number(arg("send-promise-cap", "0"));
+let promiseSent = 0;
 // 場面より前の YUMA の記録を読まない線（app/lib/test-replay-floor.ts）。開発サーバも同じファイルを読む（起動コマンドに REPLAY_FLOOR_FILE を付ける）
 const FLOOR_FILE = process.env.REPLAY_FLOOR_FILE ?? "";
 function writeFloor(floor: string | null, status?: string) {
@@ -240,7 +244,7 @@ async function main() {
       const replyMode = typeof meta?.reply_mode === "string" ? meta.reply_mode : null;
       const scene = sceneKeyOf({ brainAction: action, brainReplyMode: replyMode, convStatus: status });
       const decided = scene.path === "AIX" ? (action ?? "aix") : "reply";
-      rec.brain = { action, check_pattern: meta?.check_pattern ?? null, reply_mode: replyMode, source: meta?.decision_source ?? null, direction: String(meta?.reply_direction ?? "").slice(0, 200), stage: meta?.checkpoint_stage ?? null, two_choice: meta?.two_choice_mode === true };
+      rec.brain = { action, check_pattern: meta?.check_pattern ?? null, reply_mode: replyMode, source: meta?.decision_source ?? null, direction: String(meta?.reply_direction ?? "").slice(0, 200), stage: meta?.checkpoint_stage ?? null, two_choice: meta?.two_choice_mode === true, two_stage: meta?.two_stage ?? null };
       rec.decided = decided;
       rec.path_ok = sc.expect.accept.includes(decided);
       // ── 下書き（reply_mode=aix 以外。2択＝AIX の提案＋下書きも本番どおり作る）──
@@ -254,7 +258,7 @@ async function main() {
         rec.final_check = fc ? { ok: fc.ok ?? null, issues: issues.map((i) => `${String(i.code)}:${String(i.severity)}`).slice(0, 12), revision: (fc.tpo_debug as Record<string, unknown> | undefined)?.revisionOutcome ?? null, tpo: (fc.tpo_debug as Record<string, unknown> | undefined)?.tpo_label ?? null } : null;
       }
       // ── 自動送信の関所（自動に切り替えた会話と見なす）──
-      const gate = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode, suggestedAixAction: action, draft, draftHasBlock: hasBlock(fc), status, hasPendingScheduled: false, groundText: [...sc.context.map((m) => m.t), ...sc.customer].slice(-30).join("\n") });
+      const gate = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode, suggestedAixAction: action, draft, draftHasBlock: hasBlock(fc), status, hasPendingScheduled: false, twoStageKind: typeof meta?.two_stage === "string" ? meta.two_stage : null, groundText: [...sc.context.map((m) => m.t), ...sc.customer].slice(-30).join("\n") });
       rec.gate = gate.reason;
       // ── 文の比べ（返信の道）──
       if (draft) {
@@ -302,10 +306,11 @@ async function main() {
         else if (!sendable) rec.send = "送らず: 送信前の関門で送れない形";
         else if (ph.length) rec.send = `送らず: 未置換 ${ph.join(" ")}`;
         else if (sendState.sent >= SEND_CAP) rec.send = `送らず: 1巡の上限 ${SEND_CAP}`;
-        else if (await ysend.promiseTriggersBrain(sendable)) rec.send = "送らず: スタッフの宣言（本番がブレインを分析し直してグループに通知するため）";
+        else if (await ysend.promiseTriggersBrain(sendable) && promiseSent >= SEND_PROMISE_CAP) rec.send = "送らず: スタッフの宣言（本番がブレインを分析し直してグループに通知するため）";
         else {
           const r = await ysend.sendToYuma(sendable);
           sendState.sent += r.ok ? 1 : 0;
+          if (r.ok && await ysend.promiseTriggersBrain(sendable)) { promiseSent++; rec.promise_sent = true; }
           if (r.ok) { sendState.ids.push(...r.ids); sendState.windows.push(r.sentAt); }
           rec.send = r.ok ? `送った（${isAixText ? "AIX" : "返信"}・LINE id ${r.ids.join(",")}）` : `失敗 ${r.status} ${r.error ?? ""}`;
           rec.sent_text = sendable;

@@ -195,6 +195,8 @@ export type CustomerProfile = {
   mentions?: { renewal: boolean; contract: boolean; freeRent: boolean };
   /** 2026-09-25 家賃の下限（使える時だけ・上限より小さい） */
   rentMin?: number | null;
+  /** 2026-10-02 ⑫ 書いた下限が無い時のおおよその下限（implicitRentMin・顧客の行には書かない） */
+  rentMinImplicit?: number | null;
   /** 2026-09-29 お客様が上限より下に言った家賃の目安の額（readRentTarget・無ければ null） */
   rentTarget?: number | null;
   /** 目安の額が管理費・共益費込みの言い方か（「共益費込で7万円くらい」）。false は家賃だけと比べる（「家賃10万くらい（管理費込みで12万上限）」） */
@@ -367,6 +369,30 @@ export const RENT_BAND_POINTS: Record<string, number> = {
 export function rentMinHoldRatio(rentMin: number): number {
   const tiers = RENT_BAND_RULE.minHoldTiers;
   return (tiers.find((t) => rentMin >= t.minFrom) ?? tiers[tiers.length - 1]).holdRatio;
+}
+/**
+ * 2026-10-02 竹内さんの決定（⑫）「上限しか無い時も、おおよその下限を出して、ずっと安い物件を送らない（10万の上限で5万の部屋は質が下がる）」。
+ *   顧客の行に下限（rent_min）を書かずに、使う時にこの1か所で出す（採点・拡張の検索・ブレインの材料が同じ値）。
+ *   線（scripts/audit-implicit-rent-min.ts・180日・下限の無いお客様にスタッフが🌟で推した物 上限内 292件）:
+ *     家賃（管理費込み）÷ 上限 の 5% 0.66・10% 0.73・中央 0.91／70%未満 6.8%・65%未満 4.5%・60%未満 2.7%
+ *   → おおよその下限＝上限 × 0.70（千円で丸める）。採点はこれを下限として今の決まり（rentPositionCodes）に通す＝
+ *     下限 × 保留の線（家賃帯ごと 0.85〜）未満が保留（上限の約 60% 未満＝スタッフの推しの 2.7%）、そこから下限までは軽い減点か知らせ。
+ *   お客様が安さを望んだ（rentCheap）・目安の額を言った（readRentTarget）時は出さない（その人には安い部屋が合う）
+ */
+export const IMPLICIT_RENT_MIN_RATIO = 0.70;
+export function implicitRentMin(rentMax: number | null | undefined, o: { cheap?: boolean; target?: number | null } = {}): number | null {
+  if (rentMax == null || !Number.isFinite(rentMax) || rentMax < RENT_MAX_SANE_MIN) return null;
+  if (o.cheap || (o.target != null && o.target > 0)) return null;
+  // 戻す時は環境変数 IMPLICIT_RENT_MIN=off（採点・検索の下限とも書いた下限だけに戻る）
+  if (typeof process !== "undefined" && process.env?.IMPLICIT_RENT_MIN === "off") return null;
+  return Math.round((rentMax * IMPLICIT_RENT_MIN_RATIO) / 1000) * 1000;
+}
+/** 検索に入れる下限（円）: 書いた下限があればそれ・無ければおおよその下限 × 保留の線（採点で保留になる所より下は探さない＝採点と同じ線） */
+export function searchRentMinOf(c: CustomerLike): { yen: number; implicit: boolean } | null {
+  const p = buildCustomerProfile(c as Parameters<typeof buildCustomerProfile>[0]);
+  if (p.rentMin != null) return { yen: p.rentMin, implicit: false };
+  if (p.rentMinImplicit == null) return null;
+  return { yen: Math.floor((p.rentMinImplicit * rentMinHoldRatio(p.rentMinImplicit)) / 1000) * 1000, implicit: true };
 }
 let rentBandEnabledOverride: boolean | null = null;
 /** 当て直し（scripts/backtest-rent-band.ts）で旧と新を並べるための切り替え。null で表と環境変数に従う */
@@ -1703,6 +1729,10 @@ export function buildCustomerProfile(
     written: readWrittenWants(customer, { rentMax, walkMax: walkMaxUse, buildingAgeMax: ageMaxUse, ageTextMax }),
     // 下限は上限より小さい時だけ。上限が入力誤り（上限＜下限・3万未満）の人は下限も信じない
     rentMin: rentMinUse,
+    // 2026-10-02 ⑫ 竹内さんの決定: 書いた下限が無い時のおおよその下限（上限 × 0.70・安さの希望／目安の額がある人は出さない）
+    rentMinImplicit: rentMinUse == null && !notes.includes("RENT_MAX_UNRELIABLE")
+      ? implicitRentMin(rentMax, { cheap: !!readWrittenWants(customer, { rentMax, walkMax: walkMaxUse, buildingAgeMax: ageMaxUse, ageTextMax }).rentCheap, target: rentTarget?.yen ?? null })
+      : null,
     rentTarget: rentTarget?.yen ?? null,
     rentTargetWithAdmin: rentTarget?.withAdmin ?? false,
     floorPlanAlt: parseFloorPlanAlt(customer, floorPlanWant),
@@ -1940,7 +1970,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     const overYen = total - profile.rentMax;
     if (ratio <= 1.0) {
       // 2026-09-29 上限内は位置・下限・目安の額で札を分ける（RENT_BAND_RULE・rentPositionCodes）。切ってあれば旧の一律 +15
-      if (rentBandEnabled()) for (const r of rentPositionCodes(total, profile, facts.rentYen)) add(r.code, r.code === "RENT_OK" ? 15 : reasonPoints(r.code), r.hold ? "hold" : undefined);
+      // 2026-10-02 ⑫: 書いた下限が無い人はおおよその下限（rentMinImplicit）で同じ決まりに通す
+      if (rentBandEnabled()) for (const r of rentPositionCodes(total, { ...profile, rentMin: profile.rentMin ?? profile.rentMinImplicit ?? null }, facts.rentYen)) add(r.code, r.code === "RENT_OK" ? 15 : reasonPoints(r.code), r.hold ? "hold" : undefined);
       else add("RENT_OK", 15);
     }
     else if (inWide) add("RENT_WIDE", reasonPoints("RENT_WIDE"));

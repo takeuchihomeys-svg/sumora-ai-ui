@@ -157,6 +157,7 @@ WHERE created_at >= '<開始>' AND env LIKE 'local:%' AND conversation_id IS NOT
   部品 `scripts/lib/yuma-line-send.ts`: 宛先を毎回読み直す・LINE の月の上限（quota を読むだけ。手元の .env.prod は LINE の鍵が空＝聞けない時は上限 5,000 と今月の送信で控えめに見積もる・送った後の残りが上限の30%・本番の見込みを下回るなら送らない・この道具の今月の送信 `scripts/.replay-out/yuma-sends-YYYY-MM.json` も足す）・1巡の上限 `--send-cap`（40 まで）。
   **送らない物**: スタッフの宣言（確認・見積書・ピックアップの約束＝本番の送信 API が YUMA でブレインを分析し直し AIX要対応を売上番長グループへ通知する）・スタッフの確認が要る AIX の仮の文（staff_confirm）・未置換。後片付けは自分の line id の sent_facts と、送信の本文で「済み」にされた YUMA の要対応（id で戻す）。
   ⚠ 再生の日付のずれ: 3週間前の場面は今日から見て内覧日が過去になる → 10/02 から `yuma-replay-scenarios.ts` が場面の文の日付を今日にずらす（`scripts/lib/scenario-date-shift.ts`・7日の倍数＝曜日はそのまま・`--no-date-shift` で止める）。「明日」等の言葉はずらさない。朝9時前に流すと「本日、管理会社の営業開始後に…」の指示が入る
+- **送る文にテストの印・ラベルを入れない**（2026-10-02 竹内「テスト送信入っている。紛れないように」: 【テスト送信…】の通が YUMA の LINE に届いた）。送信 API（/api/send-line-message）と手元の送信の道具（yuma-line-send.ts・yuma-real-line-send-test.ts）は app/lib/outgoing-residue.ts でテストの印・JSON の名残を止める
 - 出口（返信の本文を書き換える決定論）を足す・直す時は、**人の実送信で何通変わるか**を `scripts/audit-exits-vs-human.ts` で数える（LLM を呼ばない・入口不要）。前の出口を通った後の形で測る（出口の玉突きはこれでしか見えない）。設計知見「弱い部分の見つけ方と強化のしかた」。
 
 ## 10. 知られている落とし穴（2026-10-01 に起きた事）

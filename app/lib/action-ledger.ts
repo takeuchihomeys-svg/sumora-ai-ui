@@ -1208,6 +1208,8 @@ export const CUSTOMER_ASKS_MORE_RE = /(?:他|別|違う|もっと|追加)(?:の|
 export const ATTACHED_DELIVERABLE_RE = /🌟|[0-9０-９]{2,4}号室|御見積書|お見積書|見積書同封|https?:\/\//;
 /** 完了形の送付報告（約束未履行時に禁止） */
 export const COMPLETED_SEND_RE = /お送り(?:させて(?:頂|いただ)き|いたし|致し|し)ました|ピックアップ(?:させて(?:頂|いただ)き|いたし|致し|し)ました|ご査収ください/;
+/** 2026-10-02: お客様の発言が「その日の内覧・時間へのお礼」や「到着」に触れている（＝内覧が実際にあった）。viewing_thanks の免除だけに使う */
+export const CUSTOMER_VIEWING_HAPPENED_RE = /(?:本日|今日|先ほど|先程|さっき)[^\n。]{0,24}(?:内覧|内見|ご案内|案内|お時間|見学)[^\n。]{0,24}(?:ありがとう|有難う|助かり)|(?:内覧|内見|ご案内|お時間)[^\n。]{0,16}(?:ありがとうございました|有難うございました)|(?:着きました|到着しました|向かっています|向かってます)/;
 export const DONE_PRESUPPOSING_VOCAB: DonePresupVocab[] = [
   { key: 'redo_pickup', re: new RegExp(`(?:再度|改めて|もう一度)${NX}{0,16}?(?:ピックアップ|お探し|お調べ|お部屋(?:を)?探)${NOT_CUST}`),
     requires: ['propertiesSent'], requiresLabel: '物件送付 ≥1', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
@@ -1247,6 +1249,10 @@ export const DONE_PRESUPPOSING_VOCAB: DonePresupVocab[] = [
   //   ＝「その会話で内覧の話が一度でも出ているか」が正しい線。慶次さんの会話は内覧の話が一度も無い。
   { key: 'viewing_thanks', re: /(?:本日|先日|昨日)[^\n。！!]{0,8}(?:ご内覧|内覧|ご見学|お時間)[^\n。！!]{0,10}(?:頂き|いただき|くださり|下さり)[^\n。！!]{0,8}(?:ありがとう|有難う)/,
     requires: (f) => f.meetingPlaceSent || f.viewingInvited,
+    // 2026-10-02 竹内「改善する方向で」（実送信 988通の監査 scripts/audit-final-check-vs-staff.ts で人の文に当たった2通）:
+    //   お客様自身が「本日はお時間を作っていただき、ありがとうございました」「本日も内覧をさせていただき、ありがとうございました」と書いている＝内覧は実際にあった。
+    //   電話・紹介で決めた内覧は台帳（待ち合わせ・打診）に残らない事がある。お客様がその日の内覧・時間・到着に触れている時は免除する
+    exemptWhen: (o) => CUSTOMER_VIEWING_HAPPENED_RE.test(o.customerMessage ?? '') ? 'customer_viewing_happened' : null,
     requiresLabel: '待ち合わせ案内 または 内覧打診 ≥1（その会話で内覧の話が一度でも出ている）', code: 'DONE_PRESUPPOSED_WITHOUT_EVIDENCE', severity: 'block',
     label: '「本日はご内覧頂きありがとうございました」（内覧が完了している前提）', fix: () => '' },
   // 2026-09-30 竹内さん（みことさん事例）「内覧確定していないのに内覧のこと自動返信で入れてしまっている。

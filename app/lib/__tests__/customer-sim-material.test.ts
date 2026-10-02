@@ -128,7 +128,8 @@ async function main() {
     const d6 = mat.extractDateMentions("家賃7万くらいで探してます", NOW);
     t("日時の無い文は空", d6.length === 0);
     const fx = mat.fixedViewingSlots(NOW);
-    t("固定の候補は明日・明後日", fx.length === 2 && fx[0].label === "9/28(月)" && fx[1].label === "9/29(火)", JSON.stringify(fx));
+    // 2026-10-02 竹内「直近は基本3候補いれる」→ 固定の候補も3つ
+    t("固定の候補は明日・明後日・3日後", fx.length === 3 && fx[0].label === "9/28(月)" && fx[1].label === "9/29(火)" && fx[2].label === "9/30(水)", JSON.stringify(fx));
   }
 
   console.log("── 内覧へ！・待ち合わせ");

@@ -12,6 +12,9 @@ import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "
 import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
 // 2026-10-01: 物件確認した（御見積書同封）の締め（scripts/audit-check-result-lines.ts）
 import { appendCheckResultReceipt } from "@/app/lib/check-result-closing";
+import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
+import { fixBulkCheckWording } from "@/app/lib/bulk-check-wording";
+import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
 import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
 // 同: 2通目（カバーレター）に別の物件の金額ブロックが写るのを落とす
 import { stripEstimateAmountBlock, sanitizeCoverLetter } from "@/app/lib/estimate-cover";
@@ -2011,6 +2014,14 @@ async function handleAction(request: NextRequest): Promise<Response> {
       // 2026-10-01 竹内「同じ絵文字を2重で使っているが実際していない。もう一つの絵文字を使うか省いている」（テンプレート・返信生成には出口があり、AIX 本体だけ無かった）:
       //   スタッフが自分で書いた AIX の1通目・2通目では同じ絵文字の2回目は 0通（scripts/audit-aix-emoji-repeat-human.ts・365日）。
       //   AI の下書きに重複があった時スタッフは 内覧調整 12/25・物件ピックアップ 27/29 を直していた。替えるか外すだけで言葉は1文字も消さない（emoji-repeat.ts）
+      // 2026-10-02 竹内さんが YUMA の LINE で見つけた文（⑥お客様・②入金で押さえる・⑤一括確認）の出口。人の実送信で変わる 0通の形だけ（返信生成と同じ関数）
+      {
+        const w: string[] = [];
+        const ok1 = fixSecondPersonOkyaku(sendCleaned, familyName ? name : null); if (ok1.changes.length) { w.push(...ok1.changes); sendCleaned = ok1.text; }
+        const pay = fixPaymentTimingWording(sendCleaned); if (pay.changes.length) { w.push(...pay.changes); sendCleaned = pay.text; }
+        const blk = fixBulkCheckWording(sendCleaned); if (blk.changes.length) { w.push(...blk.changes); sendCleaned = blk.text; }
+        if (w.length) console.log(JSON.stringify({ tag: "aix:wording-1002", action: currentAction, conversationId, changes: w }));
+      }
       {
         const dr = dedupeRepeatedEmoji(sendCleaned);
         if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix:emoji-repeat-fixed", action: currentAction, conversationId, changes: dr.changes })); sendCleaned = dr.text; }
@@ -4285,8 +4296,9 @@ ${SMORA_COMMON_RULES}`
 
 【メッセージ構成 — この2行のみ・厳守】
 ①「かしこまりました！！」（この文言で固定・変更禁止）
-②「[物件名 号室]、お申込みさせて頂きます😊！！」
-・②は日本語として自然につながるよう読点・助詞を軽く調整してよい（例:「マルシェ九条 402号室、お申込みさせて頂きます😊！！」「ASK-6でお申込みさせて頂きます😊！！」）
+②「[物件名 号室]お申込みさせていただきます😊！！」
+・②は実送信の形のまま（2026-10-02 竹内「実際の言い回しを確認する」・scripts/audit-apply-intent-wording.ts: 「S-RESIDENCE福島Luxe1308号室のお申込みさせていただきます😊！！」「ライオンズマンション日本橋215号室お申込みさせていただきます！！」「お部屋お申込みさせていただきます😊！！」）。読点「、」は付けない。物件名が分からなければ「お部屋お申込みさせていただきます😊！！」
+・お礼（「お申込みのご連絡ありがとうございます」）・感想（「お気に召していただけて嬉しく」）・書類の案内（「必要な書類をご案内」）・入金や支払いの時期は書かない（実送信 0通）
 ・②の絵文字は😊または😌を1個のみ。語尾は必ず「！！」
 ・お客様の決断を一緒に喜ぶ温かいトーンで。ただし行を増やさない
 
@@ -4617,6 +4629,9 @@ ${SMORA_COMMON_RULES}
 
 【絶対禁止】
 ・「？」のみで終わる文 → 必ず「！！」
+・お客様が書いた入金・お支払いの時期（「今月振り込みます」等）を繰り返さない。「ご入金でお部屋を押さえる」とは書かない（お部屋はお申込みで押さえる・入金の時期は審査通過後の請求書の時）
+  （2026-10-02 竹内「入金のタイミング入れる部分じゃない、なぜこんなのが入ってるのか」・実送信で入金と押さえを結んだ文 0通）
+・会話に出ている別の物件の名前を書かない（物件名は下の【物件名の特定】の1件だけ）
 
 【絵文字ルール】
 ▼ 使ってよい絵文字：😊 😌 のみ・1〜2個まで

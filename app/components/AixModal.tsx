@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { IMAGE_BATCH_MAX } from "../lib/line-image-batch";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
+import { nearestBookableDays } from "../lib/viewing-candidates";
 // 2026-09-19 竹内（a🤫 事例）: 退去予定物件の「内覧可能日時」は退去日の翌日から（純関数・テストあり）
 import { viewableFromYmd, vacancyExtraYmds, resolveVacancySlotEnabled, isBeforeViewable } from "../lib/viewing-window";
 import { meetingAddressProblem, meetingTextAddressProblem } from "../lib/meeting-address";
@@ -1646,7 +1647,7 @@ export default function AixModal({
         // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は退去日の翌日から連続6日も取りに行く（直近3日は全部内覧できない日なので）
         //   お客様の希望日を先に渡す（fetchCalendarSlots は渡された順に先着で採る）
         const extraYmds = [...viewingRequested.map((r) => r.ymd), ...(viewingVacancyFromYmd ? vacancyExtraYmds(viewingVacancyMoveOut) : [])];
-        const { days } = await fetchCalendarSlots(extraYmds, { ignoreHoldsForConversationId: conversationId ?? null, viewingCount: viewingInviteCount, viewingPlace: viewingInvitePlace });
+        const { days, baseCount } = await fetchCalendarSlots(extraYmds, { ignoreHoldsForConversationId: conversationId ?? null, viewingCount: viewingInviteCount, viewingPlace: viewingInvitePlace });
         setViewingCalendarDays(days);
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {
@@ -1658,7 +1659,8 @@ export default function AixModal({
         setViewingSlotOverride(days.map(() => false));
 
         // デフォルトの有効スロット（お客様指定日のプリセットは下の別effectで行う）
-        const extraStart = 3; // 本日・明日・明後日の後ろが希望日の追加分
+        // 2026-10-02 竹内「直近は基本3候補いれる」: 基準の日は本日から「3つ目の空いている日」まで（calendarSlots の baseCount）。その後ろが希望日の追加分
+        const extraStart = baseCount;
         // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は「退去日の翌日から順に空いている日」を3日ぶん
         const vacancyEnabled = resolveVacancySlotEnabled(days, viewingVacancyFromYmd, 3);
         if (vacancyEnabled) {
@@ -1668,7 +1670,9 @@ export default function AixModal({
           setViewingSlotEnabled(days.map((d, i) => i > 0 && !d.fullyBooked));
         } else {
           // 通常モード: 直近3日のうち空きのある日をチェック（希望日の追加分は内覧日指定ありで使う）
-          setViewingSlotEnabled(days.map((d, i) => i < extraStart && !d.fullyBooked));
+          // 通常モード: 直近の空いている日を3つ ON（2026-10-02 竹内「直近は基本3候補・2候補でも大丈夫」＝3つ無ければある分）
+          const near = new Set(nearestBookableDays(days, 3, extraStart));
+          setViewingSlotEnabled(days.map((_, i) => near.has(i)));
         }
       } catch {
         setViewingCalendarDays([]);
@@ -6690,10 +6694,10 @@ export default function AixModal({
                           setViewingSlotEnabled(viewingCalendarDays.map((d, i) => i > 0 && !d.fullyBooked));
                         }
                       } else {
-                        // OFF: 通常モードに戻す（直近3日のうち空きのある日）
+                        // OFF: 通常モードに戻す（直近の空いている日を3つ・2026-10-02 竹内「直近は基本3候補」）
                         setViewingSpecificDate("");
                         viewingAutoDateRef.current = "";
-                        setViewingSlotEnabled(viewingCalendarDays.map((d, i) => i < 3 && !d.fullyBooked));
+                        { const near = new Set(nearestBookableDays(viewingCalendarDays, 3)); setViewingSlotEnabled(viewingCalendarDays.map((_, i) => near.has(i))); }
                       }
                       return next;
                     });

@@ -270,6 +270,11 @@ export type DailyInput = {
   reviews: ReviewStats;
   capture: { enabled: boolean | null; turns24h: number; tableReady: boolean };
   aixLabels?: Record<string, string>;
+  /**
+   * 2026-10-02 竹内「監視が防げる部分」: 直近24時間に送った文・予約中の文・今の下書きの機械の名残（JSON・コード・テストの印）。
+   *   判定は app/lib/outgoing-residue.ts（送信 API の最後の網と同じ関数）。無い（読めない）時は undefined
+   */
+  residue?: Array<{ where: "sent" | "scheduled" | "draft"; name: string | null; conversation_id: string | null; labels: string[] }>;
 };
 export type LineWatchDaily = {
   date: string;
@@ -322,11 +327,17 @@ export function buildLineWatchDaily(i: DailyInput): LineWatchDaily {
     if (!s.unlock && p?.unlock) alerts.push(`${L(s.scene)} が解禁の線を外れた（一致 ${pct(s.cur.rate)}）`);
     if (s.stop && !p?.stop) alerts.push(`${L(s.scene)} が停止の線に当たった（直近7日 ${s.last7.n}番・一致 ${pct(s.last7.rate)}）`);
   }
+  if (i.residue?.length) {
+    const by = (w: string) => i.residue!.filter((r) => r.where === w);
+    const part = ([["sent", "送った文"], ["scheduled", "予約中"], ["draft", "下書き"]] as const).filter(([w]) => by(w).length).map(([w, ja]) => `${ja} ${by(w).length}件（${by(w).slice(0, 3).map((r) => r.name ?? (r.conversation_id ?? "?").slice(0, 8)).join("・")}）`);
+    alerts.push(`機械の名残（JSON・コード・テストの印）: ${part.join("・")}`);
+  }
   if (i.reviews.disagree > 0) alerts.push(`判定に✋が ${i.reviews.disagree}件（物差しを直す候補: ${i.reviews.byReason.filter((r) => r.disagree).slice(0, 3).map((r) => r.reason || "?").join("・")}）`);
   const counts: Record<string, number | null> = {
     late: i.late.late + i.late.unrepliedLate, day_turns: i.late.turns, promises_overdue: overdue.length, fact_diff: facts.length,
     calendar: i.calendar.length, c7: i.c7.measured ? i.c7.findings.length : null, search_idle: idle, search_empty: empty, aix_pending: i.aixPending,
     scenes_unlock: i.scenes.filter((s) => s.unlock).length, scenes_stop: i.scenes.filter((s) => s.stop).length, reviews: i.reviews.reviewed,
+    residue: i.residue ? i.residue.length : null,
   };
   return { date: i.date, alerts, counts, scenes: i.scenes, fc: i.fc, late: i.late, c7: i.c7, reviews: i.reviews };
 }

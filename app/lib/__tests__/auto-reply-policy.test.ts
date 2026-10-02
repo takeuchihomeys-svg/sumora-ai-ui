@@ -101,5 +101,19 @@ console.log("── 送る時刻（窓の外にははみ出さない）");
     resolveAutoSendAt({ customerMsgAt: jst("2026-09-19T14:00:00+09:00"), draft: "同じ文です！！よろしくお願いします！！", nowIso: jst("2026-09-19T14:00:30+09:00"), seedKey: "c9" }).sendAt);
 }
 
+// 2026-10-02 ⑫ 17巡: 2段の場面で約束の無い下書きは送らない（flow1_t03 の実物）
+{
+  const noPromise = "かしこまりました！！\n\nYUMAさんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！";
+  t("2段・約束なし → two_stage_no_promise", canAutoReply({ ...OK, draft: noPromise, twoStageKind: "check" }).reason === "two_stage_no_promise");
+  t("2段でなければ同じ文は判定しない", canAutoReply({ ...OK, draft: noPromise }).reason !== "two_stage_no_promise");
+  for (const d of [
+    "かしこまりました😊！！\nお送り頂きましたお部屋、募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！",
+    "かしこまりました！！\n5階以上・エレベーター必須のご条件で、YUMAさんにオススメできるお部屋をピックアップしお送りさせて頂きます😊！！",
+    "かしこまりました！！\nメゾンドF02 102号室の最大限割引させて頂いた初期費用の御見積書を作成しお送りさせて頂きます😊！！",
+    "かしこまりました！！\n御堂筋線沿線に絞らせて頂き、環状線を使わず通えるお部屋を新たにピックアップしてお送りさせて頂きます😌！！",
+    "夜職の方でのご入居の可否確認させて頂きます！！確認出来次第ご連絡させて頂きます！！",
+  ]) t(`2段・約束あり → 止めない: ${d.slice(0, 24)}`, canAutoReply({ ...OK, draft: d, twoStageKind: "pickup" }).reason !== "two_stage_no_promise");
+}
+
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

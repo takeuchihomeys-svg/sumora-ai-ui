@@ -21,6 +21,7 @@
 import { extractDateMentions, fixedViewingSlots } from "./customer-sim-material";
 import { extractRequestedViewingDates } from "./viewing-date-request";
 import { aixAutoSendGate, type AutoSendGate } from "./staff-confirm-facts";
+import { decideApplySubMode } from "./apply-sub-mode";
 
 export type AutofillLevel = "auto" | "auto_calendar" | "staff_confirm" | "needs_material" | "unknown";
 export type AixAutofill = {
@@ -66,6 +67,16 @@ function classifyAixAutofillCore(i: AutofillInput): Omit<AixAutofill, "autoSend"
   if (i.propertyName) prefilled["物件名"] = `${i.propertyName}（会話）`;
   // 電話をかける は文を作らない（LINE コールのボタンと定型の案内＝画面の固定の物）
   if (action === "phone_call") return { level: "auto", blockers: [], prefilled, request: null };
+  // 2026-10-02 竹内「こんなかんじじゃない。実際の言い回しを確認する」: 申込へ！は形（申込確定／申込誘導／書類依頼）を会話から決めて渡す。
+  //   旧は形なし（＝申込誘導）で作り、申込を決めたお客様に後押しの文（別の物件名・入金で押さえる）を作っていた（app/lib/apply-sub-mode.ts）
+  if (action === "application_push") {
+    const d = decideApplySubMode({ customerText: i.customerText, recentStaffTexts: i.staffTexts ?? [] });
+    prefilled["申込の形"] = `${d.mode}（${d.reason}）`;
+    // 2026-10-02 竹内「それでいく。ただここはAIXでいまはスタッフが送る形にするので、AIXで止めておく」: 申込確定の2行の後の申込フォーマットは
+    //   画面の固定文（同居人・保証の形をスタッフが選ぶ）＝自動では作らず送らない。AIX【申込へ！】（フォーマット）をスタッフが押して送る
+    if (d.mode === "format") return { level: "staff_confirm", blockers: ["申込フォーマット（同居人・緊急連絡先／連帯保証人の形をスタッフが選んで AIX【申込へ！】から送る）"], prefilled, request: null };
+    return { level: "auto", blockers: [], prefilled, request: { app_sub_mode: d.mode, ...(d.mode === "confirm" ? { conversation_match: true } : {}), ...(i.propertyName ? { property_name: i.propertyName } : {}) } };
+  }
   if (TEXT_ONLY_AIX.has(action)) return { level: "auto", blockers: [], prefilled, request: {} };
 
   switch (action) {

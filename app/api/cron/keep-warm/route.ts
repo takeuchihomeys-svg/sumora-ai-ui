@@ -97,6 +97,8 @@ export async function GET(req: NextRequest) {
       .not("hash", "like", "brain:%")
       // 2026-09-29: 最終チェック・お客様の要約・次の一手の温め（prefix-warm-server）の claim 行（'warm:'+名札+鍵）も型で混ぜない
       .not("hash", "like", "warm:%")
+      // 2026-10-02: お客様ごとの温め（cache-warm-switch-server）の行（'convwarm:'+会話id・ブレインの前置き）も混ぜない
+      .not("hash", "like", "convwarm:%")
       .gte("last_used_at", recentCutoff)
       .gte("use_count", KEEP_WARM_DEFAULTS.minUseCount)
       .order("last_used_at", { ascending: false })

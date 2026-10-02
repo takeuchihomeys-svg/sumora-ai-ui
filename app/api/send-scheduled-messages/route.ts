@@ -109,6 +109,12 @@ export async function GET(req: NextRequest) {
 
       const imageUrls: string[] = Array.isArray(msg.image_urls) ? (msg.image_urls as string[]) : [];
       const text: string = (msg.text as string) || "";
+      // 2026-10-02 竹内「監視が防げる部分」: 予約・自動返信も即時送信と同じ最後の網（JSON・コードの名残・テストの印は送らずに失敗にする）
+      {
+        const { detectOutgoingResidue, describeOutgoingResidue } = await import("@/app/lib/outgoing-residue");
+        const residue = detectOutgoingResidue(text);
+        if (residue.length) throw new Error(`送信を止めました: ${describeOutgoingResidue(residue)}`);
+      }
       const sentAt = new Date();
 
       // 画像送信（1枚ずつ）

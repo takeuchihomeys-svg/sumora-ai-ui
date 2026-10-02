@@ -112,6 +112,7 @@ import { resolveAddressNameForConversation } from "@/app/lib/address-name-server
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
+import { duplicateOfSentApplies } from "@/app/lib/final-check-overfire"; // 2026-10-02 DUPLICATE_OF_SENT はお客様が了承・お礼だけの番だけ
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に送った文を繰り返さない
 import { stripPointlessGuidance, fixAbsenceWording, recentUsedSentences, findRepeatedClosing, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
@@ -269,6 +270,10 @@ import { SHADOW_NO_WRITE_FIELD } from "@/app/lib/customer-sim-shadow";
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 import { loadProcedureAnswerWithin } from "@/app/lib/procedure-answer-server";
 import { detectSensitiveCase } from "@/app/lib/sensitive-case";
+import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
+import { fixBulkCheckWording } from "@/app/lib/bulk-check-wording";
+import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
+import { applySituationalEmoji } from "@/app/lib/emoji-situational";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -6466,6 +6471,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 }
               }
             }
+            // 2026-10-02 竹内さんが YUMA の LINE で見つけた文の出口（人の実送信で変わる 0通の形だけ・scripts/audit-okyaku-address.ts・audit-wording-exits-1002.ts）:
+            //   ⑥「お客様って言葉使わない」→ 相手を指す「お客様」を〇〇さん／呼ばない形に（okyaku-address.ts）
+            //   ⑥「それより前に〜の部分、ここでは断定的な表現使わない」・②入金で押さえる → 落とす（payment-timing-wording.ts）
+            //   ⑤「全て確認させて頂きます」「募集されているお部屋の…」→ 一括確認・空きがございましたら を直す（bulk-check-wording.ts）
+            //   ⑧「状況に応じて絵文字なしで大丈夫」「スタッフのを基に構成する」→ 場面ごとにスタッフの割合で外す（emoji-situational・初回の挨拶は外さない）
+            if (!isTemplateOptimize && draftBody) {
+              const w: string[] = [];
+              const ok1 = fixSecondPersonOkyaku(draftBody, addressName?.name || customerName || null); if (ok1.changes.length) { w.push(...ok1.changes); draftBody = ok1.text; }
+              const pay = fixPaymentTimingWording(draftBody); if (pay.changes.length) { w.push(...pay.changes); draftBody = pay.text; }
+              const blk = fixBulkCheckWording(draftBody); if (blk.changes.length) { w.push(...blk.changes); draftBody = blk.text; }
+              if (!noEmoji) {
+                // 2026-10-02 竹内「スタッフのを基に構成する」: 場面ごとのスタッフの割合（2通目＝直前10分以内にこちらが送った後の通も場面に）
+                const em = applySituationalEmoji(draftBody, { seed: conversationId ?? null, firstContact: isFirstEverReplyFromMsgs === true, afterStaffSend: (() => { const last = recentMessages[recentMessages.length - 1]; return !!last && last.sender === "staff" && !!last.createdAt && Date.now() - Date.parse(last.createdAt) < 10 * 60_000; })() });
+                if (em.removed) { w.push(`絵文字を外す（${em.reason}）`); draftBody = em.text; }
+              }
+              if (w.length) console.log(JSON.stringify({ tag: "generate-reply:wording-1002", conversationId, changes: w }));
+            }
             // A-3（H-3/H-4）: 後処理（enforceCustomerName・絵文字重複除去・「」除去・マーカー除去）で本文が変わった後に
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
             if (!isTemplateOptimize && finalCheck && draftBody) {
@@ -6544,7 +6566,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 .filter((m) => m.sender === "staff" && !!m.text && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text))
                 .slice(-3).map((m) => m.text);
               const dupOfSent = findNearDuplicateSent(finalDraftText, recentStaffTexts);
-              if (dupOfSent.dup) {
+              // 2026-10-02 実送信の線: お客様が新しい事を言った番（質問・URL・到着の連絡等）に前と同じ答えを返すのは正しい（人の文 15通中 9通）。
+              //   止める（block・自動の下書きを出さない）のはお客様が了承・お礼だけの番（朱莉の形）だけ。新しい事を言った番は warning でスタッフに見せるだけ
+              //   （AI が前の文をなぞって新しい問いに答えていない形もあるので、黙って通さない）。app/lib/final-check-overfire.ts duplicateOfSentApplies・scripts/audit-overfire-three.ts
+              if (dupOfSent.dup && !duplicateOfSentApplies(message ?? "")) {
+                console.log(JSON.stringify({ tag: "draft:duplicate-of-sent-warn", conversationId, score: dupOfSent.score }));
+                finalCheck.issues.push({
+                  pass: "meta", severity: "warning", code: "DUPLICATE_OF_SENT",
+                  message: "直前にこちらが送った文とほぼ同じ内容です。お客様の今回の発言に合っているか確認してください（同じ問いへの同じ答えなら問題ありません）",
+                  evidence: (dupOfSent.matched ?? "").slice(0, 60),
+                  suggestion: "お客様が新しく聞いた事・伝えた事に答えているかを確認する",
+                });
+              }
+              if (dupOfSent.dup && duplicateOfSentApplies(message ?? "")) {
                 console.log(JSON.stringify({ tag: "draft:duplicate-of-sent", conversationId, score: dupOfSent.score, caller: generationCaller, auto: enforceReplyModeGate, matched: (dupOfSent.matched ?? "").slice(0, 60) }));
                 finalCheck.issues.unshift({
                   pass: "meta", severity: "block", code: "DUPLICATE_OF_SENT",

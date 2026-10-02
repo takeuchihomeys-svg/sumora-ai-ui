@@ -216,7 +216,8 @@ console.log("■ AD の段（ほかの項目の約1.3倍・2ヶ月以上はは�
   // 2026-09-30 AD1 が 0点になった分、AD なしは −35（不明より 43点下＝−35 と全部合うの半分 8）
   t("AD なしは −35・保留（不明より 43点下・割引との比べは付けない・全部合うは付かない）", d(adn) === -43 && none.reasonCodes.includes("FIT_ALL_HALF") && !adn.reasonCodes.includes("FIT_ALL_HALF") && adn.reasonCodes.includes("AD_NONE") && !adn.reasonCodes.includes("PROFIT_NEGATIVE") && adn.verdict === "drop" /* 2026-09-30 AD なしは売上0＝送らない（外す候補・旧は保留）。点の差は同じ */, [d(adn), adn.reasonCodes]);
   t("割引をまかなえる（AD_COVERS_DISCOUNT）も付けない（割引との比べは判定に入れない）", !m2.reasonCodes.includes("AD_COVERS_DISCOUNT"), m2.reasonCodes);
-  const low = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1LDK\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), p);
+  // 2026-10-02 ⑫: 上限 9万で 4万は おおよその下限（9万×0.7）の保留に当たる → 利益だけを見るため上限 5万の人で
+  const low = judgeProperty(parsePropertyFacts("【1】安い\n40,000円\n1LDK\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), buildCustomerProfile({ rent_max: 50_000, floor_plan: "1LDK" }));
   t("AD 40,000 < 割引 42,000 でも保留にしない（利益の目安 −2,000 は記録だけ）", !low.reasonCodes.includes("PROFIT_NEGATIVE") && low.verdict === "pass" && low.profitYen === -2_000, [low.verdict, low.reasonCodes]);
   t("円だけの AD 159,999円（家賃 80,000）も2ヶ月の段（割り算の端数で落とさない）", sc("AD 159,999円").reasonCodes.includes("AD_HIGH"));
 }

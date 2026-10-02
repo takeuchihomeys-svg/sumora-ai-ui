@@ -102,6 +102,8 @@ export async function promiseTriggersBrain(text: string): Promise<boolean> {
 
 /** 本番の送信 API で YUMA に送る（宛先は直前に読み直す） */
 export async function sendToYuma(message: string): Promise<{ ok: boolean; status: number; ids: string[]; error?: string; sentAt: string }> {
+  // 2026-10-02 竹内「テスト送信入っている。紛れないように」「監視が防げる部分」: 本番の送信 API に出す前に手元でも同じ網（テストの印・JSON の名残は送らない）
+  { const { detectOutgoingResidue } = await import("../../app/lib/outgoing-residue"); const hits = detectOutgoingResidue(message); if (hits.length) return { ok: false, status: 0, ids: [], error: `outgoing_residue_local: ${hits.map((h) => h.label).join("・")}`, sentAt: new Date().toISOString() }; }
   const dest = await verifyYumaDestination();
   const sentAt = new Date().toISOString();
   const res = await fetch(`${PROD}/api/send-line-message`, {

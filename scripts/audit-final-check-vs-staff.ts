@@ -65,6 +65,13 @@ const CODE_CAPS: Record<string, number> = {
 const norm = (s: string) => (s ?? "").replace(/\s+/g, "");
 const head60 = (s: string) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
 const SHOCHI_TEST_RE = new RegExp(SHOCHI_RE.source);
+/** 2026-10-02 竹内「改善する方向で」: 人の文に当たっても「スタッフの書き方・規則は意図どおり」として回帰（block）から外す物。
+ *  COMPANY_FACT_CONTRADICTION（分割の答えに手数料 3.24% の一文が無い）: 竹内さんの決まり（10/02）は「分割の答えには必ず 3.24% を入れる」で、
+ *  AI の下書きにはこの規則が正しい（緩めない）。スタッフの過去の実送信（決まりの前）には手数料の一文の無い分割の答えがあるので、人の文では数えない */
+const INTENDED_STAFF_STYLE: Record<string, (i: CheckIssue, text: string) => string | null> = {
+  COMPANY_FACT_CONTRADICTION: (_i, text) => /分割|クレジットカード/.test(text) && !/3[.．]24/.test(text) ? "スタッフの書き方（分割・カードの答えに手数料の一文なし）・規則は意図どおり（AI の下書きでは止める）" : null,
+};
+const intendedStaff: Array<{ id: string; code: string; why: string; sent: string }> = [];
 
 function sbClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -228,7 +235,11 @@ type RowResult = {
     let issues: CheckIssue[];
     try { issues = runDeterministicChecks(text, ctx); }
     catch (err) { console.warn("[audit] 検査エラー:", e.id, err instanceof Error ? err.message : err); continue; }
-    const blocks = issues.filter((i) => i.severity === "block");
+    // 2026-10-02 竹内「改善する方向で」: スタッフの書き方として意図どおり（規則は AI の下書きのための物で、人の文に当たっても誤発火ではない）の物は
+    //   block から外して別に数える（最後の「意図どおり」の行）。DRAFT（AI の下書きを測る時）は外さない
+    const intendedOf = (i: CheckIssue): string | null => (!DRAFT && INTENDED_STAFF_STYLE[i.code]?.(i, text)) || null;
+    for (const i of issues) if (i.severity === "block" && intendedOf(i)) intendedStaff.push({ id: e.id, code: i.code, why: intendedOf(i)!, sent: head60(src) });
+    const blocks = issues.filter((i) => i.severity === "block" && !intendedOf(i));
     const evidence: Record<string, string> = {};
     for (const b of blocks) if (!evidence[b.code]) evidence[b.code] = String(b.evidence ?? "").slice(0, 60);
     rows.push({
@@ -274,6 +285,10 @@ type RowResult = {
 
   let fail = false;
   if (rate > THRESHOLD) { console.log(`\n✗ 総 block 率 ${pct(rate)} が閾値 ${pct(THRESHOLD)} を超えた`); fail = true; }
+  if (intendedStaff.length) {
+    console.log(`■ 意図どおり（スタッフの書き方・規則は AI の下書きのための物＝block の数・回帰に入れない）: ${intendedStaff.length} 行`);
+    for (const r of intendedStaff.slice(0, 10)) console.log(`    ${r.id.slice(0, 8)} ${r.code} ${r.why} 送信「${r.sent}」`);
+  }
   for (const [c, cap] of Object.entries(CODE_CAPS)) {
     const k = (byCode.get(c) ?? []).length;
     if (k / Math.max(n, 1) > cap) { console.log(`✗ ${c} の block ${k} 件（${pct(k / n)}）が上限 ${pct(cap)} を超えた`); fail = true; }

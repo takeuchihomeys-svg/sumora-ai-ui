@@ -4,6 +4,8 @@ import { canAutoReply, resolveAutoSendAt, type AutoReplyInput } from "@/app/lib/
 // 2026-09-18 竹内「文の生成とかは返信の下書き通りになるよね」:
 //   画面の入力欄に出ているのと**まったく同じ文**を送るため、画面と同じ整形関数を通す
 import { draftToSendableText } from "@/app/lib/draft-text";
+import { hasOutgoingResidue } from "@/app/lib/outgoing-residue";
+import { APPLICATION_FORMAT_RE } from "@/app/lib/apply-sub-mode";
 
 export const maxDuration = 60;
 
@@ -45,12 +47,14 @@ function hasBlock(check: unknown): boolean {
   });
 }
 
-function metaOf(meta: unknown): { replyMode: string | null; action: string | null } {
-  if (!meta || typeof meta !== "object") return { replyMode: null, action: null };
+function metaOf(meta: unknown): { replyMode: string | null; action: string | null; twoStage: string | null } {
+  if (!meta || typeof meta !== "object") return { replyMode: null, action: null, twoStage: null };
   const m = meta as Record<string, unknown>;
   const action = typeof m.action === "string" && m.action.trim() ? m.action.trim() : null;
   const replyMode = typeof m.reply_mode === "string" ? m.reply_mode : null;
-  return { replyMode, action };
+  // 2026-10-02 ⑫ 17巡: 2段の場面（約束の返信）の種類（canAutoReply ⑥-4 が約束の無い下書きを止める）
+  const twoStage = typeof m.two_stage === "string" ? m.two_stage : null;
+  return { replyMode, action, twoStage };
 }
 
 export async function GET(req: NextRequest) {
@@ -87,7 +91,7 @@ export async function GET(req: NextRequest) {
   const skipped: Record<string, number> = {};
 
   for (const c of convs) {
-    const { replyMode, action } = metaOf(c.suggested_aix_meta);
+    const { replyMode, action, twoStage } = metaOf(c.suggested_aix_meta);
     // 画面の入力欄に出るのと同じ文にする（内部タグ・作業メモを外した後の文）
     const sendable = draftToSendableText(c.ai_draft);
     // 2026-10-02 ⑫ 11巡目: 下書きに金額がある時だけ、金額の根拠（直近30通＋登録の家賃）を読む（会話に無い金額は送らない・canAutoReply ⑥-3）
@@ -110,9 +114,14 @@ export async function GET(req: NextRequest) {
       status: c.status,
       hasPendingScheduled: pendingIds.has(c.id),
       groundText,
+      twoStageKind: twoStage,
     };
     const verdict = canAutoReply(input);
     if (!verdict.ok) { skipped[verdict.reason] = (skipped[verdict.reason] ?? 0) + 1; continue; }
+    // 2026-10-02 竹内「監視が防げる部分」: JSON・コードの名残・テストの印がある下書きは予約に積まない（送信側でも止める・app/lib/outgoing-residue.ts）
+    if (hasOutgoingResidue(sendable)) { skipped["outgoing_residue"] = (skipped["outgoing_residue"] ?? 0) + 1; continue; }
+    // 2026-10-02 竹内「ここはAIXでいまはスタッフが送る形にするので、AIXで止めておく」: 申込フォーマット（記入欄）は自動返信で送らない（AIX【申込へ！】でスタッフが送る）
+    if (APPLICATION_FORMAT_RE.test(sendable ?? "")) { skipped["application_format_in_draft"] = (skipped["application_format_in_draft"] ?? 0) + 1; continue; }
     if (!c.line_user_id) { skipped["no_line_user"] = (skipped["no_line_user"] ?? 0) + 1; continue; }
 
     // お客様の最後の発言時刻（ここから待ち時間を数える）

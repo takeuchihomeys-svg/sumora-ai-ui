@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { itemizeWants, type WantsCustomerLike } from "@/app/lib/customer-wants";
+import { searchRentMinOf, type CustomerLike } from "@/app/lib/property-brain";
 
 // 条件変更履歴の追跡対象フィールド（condition-history.ts の TRACKED と同一）
 const CONDITION_TRACKED_FIELDS = [
@@ -82,6 +83,9 @@ export async function GET(req: NextRequest) {
     ...c,
     // 2026-09-29 要望の項目（設備／NG／その他・純関数 customer-wants.itemizeWants）。拡張の popup の条件の表示が読む（検索には入れない）
     want_items: itemizeWants(c as WantsCustomerLike),
+    // 2026-10-02 ⑫ 竹内さんの決定: 検索に入れる家賃の下限（書いた下限・無ければ おおよその下限 × 保留の線＝採点で保留になる所より下は探さない）。
+    //   顧客の行には書かない（使う時に property-brain.searchRentMinOf の1か所で出す）。拡張は rent_min_search を rent_min より先に読む
+    rent_min_search: searchRentMinOf(c as CustomerLike)?.yen ?? null,
     is_linked: convMap.has(c.id),
     linked_conversation: convMap.get(c.id) ?? null,
   }));

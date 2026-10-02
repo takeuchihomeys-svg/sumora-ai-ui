@@ -4,6 +4,17 @@
 
 ---
 
+## 🔥 お客様ごと・1日ごとの温めのスイッチ（竹内・2026-10-02「今日の1日に○通以上やり取りしているお客さんは…切り替わるスイッチ…1日でおわらせて次の日もまた振り出し」・未コミット）
+
+- **1つの関数** `app/lib/cache-warm-switch.ts` の `decideCacheWarm`: 今日（JST）のやり取り（お客様＋スタッフ）**N=10 通以上で ON**・夜（22〜9）と**お客様の最後の通から120分**で OFF・日が変わると 0 から（振り出し）。環境変数 `BRAIN_CACHE_WARM_MIN_EXCHANGES` / `BRAIN_CACHE_WARM_QUIET_MIN`
+- **ブレインが判断**（analyzeAndSaveBrainMeta・今回の発言の層の時だけ）→ `brain_decision_logs.digest.cw`（on・理由・通数・閾値・mode・会話専用ブロックの指紋 h）
+- **mode** `BRAIN_CACHE_WARM`: 既定 **shadow**＝記録だけ（TTL も温めも変えない・費用0）／`on`＝ON の会話だけ会話専用ブロックを 1h にし、本物が送ったバイト列を `llm_warm_prefixes`（`convwarm:<会話id>`）に残して brain-sweep（対象0件の分岐）が 50〜58分の窓で読み直す（名札 `brain-conv-warm`・CACHE_GROUPS のブレインの組）／`off`
+- **on にしない理由（9.1日の実物・`scripts/audit-cache-warm-switch.ts`）**: 会話専用ブロックが次の本物まで変わらない率 q=0.42（間に戦略・全体分析・セーブデータが走ると 0/33）。温め1回は共有の前置き 40k も読む（$0.008）＝ブロック 3k の書き直し1回の節約より高い → 今の並びでは N をいくつにしても損（N=10 −$0.057/日）。q=0.9 なら N=10 が最善（+$0.021/日・ブロックを 8k に広げれば +$0.107/日）
+- **on にする条件**: 監査の「影の記録 q」（ON の続く組で指紋が同じ率）が 0.7 超え。上げるには会話専用ブロックの並べ替え（変わりにくい物を先に・戦略 JSON とセーブデータを後ろに。出力の文面の位置が変わる＝竹内さんの判断）
+- お客様の要約の会話ごとの温めは**しない**（作り直す時は必ず新しい通で履歴が変わっている）。戦略・セーブデータの前置きも幅は広がらない（会話をまたいで同じ物は全部 system にある・天井 $0.14/日）
+- YUMA（Sonnet 5.5）: 本物の書き 3,078（1h）→ 4分後の本物が 44,721 読み → 残した行の温め 44,721 読み・書き0（1文字も違わない）。テスト費用 Claude 4回 $0.104・DeepSeek 1回 $0.02
+- 触ったファイル: cache-warm-switch(.ts/-server.ts)・brain-core（import・opts.cacheWarm・会話専用ブロックの cache_control・指紋の控え・digest.cw）・brain-sweep・keep-warm（convwarm: を候補から外す）・claude-model-map（組に brain-conv-warm）・テスト `app/lib/__tests__/cache-warm-switch.test.ts`（26件）
+
 ## 🔍 弱い部分の洗い出し（ルール同士のぶつかり・制約の掛けすぎ）と YUMA の LINE 実送信（竹内・2026-10-02・未コミット）
 
 - 竹内「YUMAで実際にLINEを送ってテストも行う。弱い部分見つけて強化する…初期のころ制約かけまくっていたので、理想の文がぶつかって…そこもみつける。実際のLINEや直近の成約データを参考に改善する」
@@ -8418,3 +8429,56 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 費用: 11〜15巡 DeepSeek 507回 $2.53（JST 10時以降は単価が倍の時間帯にかかった）／Claude 0（漏れ0・止めた0）。最後の確かめ Claude 7回 $0.14＋DeepSeek 3回 $0.02。実送信 11〜15巡で 41通（今月のこの道具の合計 126通）・LINE の崩れ 0（13巡の作業メモの通は崩れの点検に区切り線・指示の文を足す前に送った）
 - 片付け: 場面の行のうち3行（pet_parking_36・15巡）が消えずに残っていた → id で消した（残り0）
 - 新しい場面は使い切りに近い（200日でも未使用の単発の場面は各巡5つ）。流れは8月の会話から（日付ずらしで今日以降に）
+
+## 2026-10-02（続き）文体だけの指摘では書き直さない／最終チェックはボトルネックか（竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫。また最終チェックがボトルネックになってる部分あるのか、生成のところとくらべて邪魔になっている部分も調査」・未コミット）
+- **入れた物**: `final-check-scope.ts` に「文に間違いの無い文体」の一覧（isStyleNoErrorCode／isStyleOnlyNoError・style の部分集合）。各 code の定義文を読み、二重敬語・自敬・遅れの謝罪・未履行を完了形・言っていない語・主語の逆転・確認の目的語・頼まれていない中身・気持ちの代弁は**入れない**（今までどおり書き直す）。
+  `final-check.ts` runFinalCheckWithRevision の warning の修正の入口: 直す指摘が全部この一覧なら書き直さない（`revision_skipped: "style_only"`）／事実の warning と混ざっていれば文体の分は書き直しに渡さない。block の修正ループ（EMPTY_CLOSER 等の「文を足す」）は変えていない
+- **影の記録を足した**（final-check-gated.ts）: gate.ms（最終チェックにかかった時間）・gate.draftIn（書き直しで本文が変わった時だけ書き直し前の600字）・gate.revisionSkipped → tpo_debug.finalCheckGate（送った例の記録にも残る）。生成→書き直し後→実送信の直接比較は `scripts/audit-final-check-bottleneck.ts` ④ で溜まり次第出る
+- **数字**: 文に間違いの無い文体だけで書き直していた回 43/272（15.8%）＝1日 約 $0.09〜0.11・その回の待ち 約3.5秒。過去に同じ指摘で書き直しの関数を当てる（`scripts/yuma-style-revision-probe.ts`・DeepSeek・伏せ字）と 37件中 32件が実送信から遠ざかり（スタッフがそのまま送った何卒・名前・条件の列挙を消す）、近づいた2・事実の語が変わった1（条件の列挙を消した）。1件だけ話題のずれた下書き（指摘されていない誤り）を偶然直したが、本番の Sonnet は同じ下書きを直していなかった
+- **ボトルネック**（`scripts/audit-final-check-bottleneck.ts`・本番 9/29〜・56通）: 生成 p50 4.1秒／p90 6.3秒、最終チェック p50 7.0秒／p90 14.2秒（3パス p50 3.7秒・照合／書き直し／再検査／作り直し p50 2.8秒・p90 8.2秒）。最終チェックの方が長い 77%・下書きの時間の 61%。15秒超の5通は全部 書き直し→差分再検査（8〜11秒の回あり・キャッシュ 0%）→作り直し→3パスの連鎖。費用は ブレイン 74%・最終チェック 12.7%・生成 10.5%・温め 2.6%
+- **邪魔をしている所**: block を残したのにスタッフがほぼそのまま送った 5/17（送るのをやめたお客様への別れの文に FAREWELL_ON_MOVEOUT_INFO・電話の時間の答えに DUPLICATE_OF_SENT・条件フォームに SENSITIVE_CASE 等）＝決定論の規則の誤発火の候補（件数が少なく今回は直していない）
+- **テスト**: `final-check-style-revision.test.ts` 17・`final-check-gate.test.ts` 30・final-check-scope 13・final-check-rules 7・brain-scope 24。YUMA（deepseek-all）`yuma-final-check-gate-test.ts` 4/4（①で書き直しの呼び出しが 4→3・revisionSkipped=style_only）
+- **費用**: DeepSeek 42回 $0.041（書き直しの当て）＋11回 $0.007 ／ Claude 0（漏れ0・止めた0・YUMA 以外0）
+- **残り（竹内さんの判断）**: ①差分再検査（runDiffRecheck）の前置きを固定→下書きの順にしてキャッシュを効かせる（待ちの尾）②温めの revision（1日 $0.13）を止めるか（書き直しが減ったので元が取れにくい）③誤発火の候補3つ（FAREWELL_ON_MOVEOUT_INFO・DUPLICATE_OF_SENT・条件フォームの SENSITIVE_CASE）を実送信で線を引いて直す ④事実の warning での書き直しが実送信に近づけているかは draftIn が溜まってから
+
+## 2026-10-02 ⑭ 竹内さんが YUMA の LINE で見つけた8つ（申込の文・入金の文・JSON の名残・テストの印・一括確認・お客様／言い切り・内覧の候補3つ・絵文字の場面）— 未コミット
+設計知見 7件（タグ ブレイン診断・穴:G2/G3/G5・汎用・静かに壊れる・絵文字・内覧）。テストは `scripts/yuma-real-line-send-test.ts`（場面 apply_decide・apply_pay・bulk7・pay_timing・installment2・viewing3・ack_short を足した・produce に apply_confirm／viewing）。
+1. **申込の文が AI っぽい**: 原因＝提案のバナーから開くと申込へ！は必ず申込誘導（page.tsx openAixWithParams）・テストの自動反映も形なし＝誘導。申込を決めた番の実送信は「かしこまりました！！／〇〇号室お申込みさせていただきます😊！！」（34番中 確定の2行 22・フォーマット 1・誘導 1／`scripts/audit-apply-intent-wording.ts`）→ `app/lib/apply-sub-mode.ts` decideApplySubMode を画面と aix-autofill-readiness に。確定の指示文の例を実送信の形に
+2. **入金で押さえる文**: 会社の事実（hold_room・payment_timing）は当たっていなかった（matchCompanyFacts＝空）。出所は1と同じ誘導の形の AIX がお客様の「今月お金振り込みます」を拾った＋物件名を会話から推し量った（プレジオ十三）。誘導の指示に「入金を繰り返さない・入金で押さえると書かない・別の物件名を書かない」・出口 payment-timing-wording（入金と押さえを結んだ文は実送信 0通）
+3. **JSON の名残**: YUMA 6:58 の文は手元の開発サーバ（⑫の写し）の文・修正 1e4c7500 の Vercel デプロイは 07:50 JST（READY）＝修正の前。最後の網 `app/lib/outgoing-residue.ts` を送信 API（422）・予約送信・自動返信の予約・見張りの毎日のまとめ・手本の衛生・テストの送信の道具に。本番の送信 8,441通で当たり 0（`scripts/audit-outgoing-residue.ts`）。⭐付きの JSON の手本 08593448 の⭐を外した
+4. **テストの印**: ⑪の `--dedupe-probe`（と --probe・--images）の本文の【テスト送信…】を外した。YUMA は学習の全経路で isTestConversation で外れている（save-reply-example 等）。印は送信 API・手元の送信の道具の両方で止める
+5. **一括確認／空きがございましたら**: 出所＝ナレッジ5行の「一括確認の約束」→「全て確認」に言い換え（元の値 `scripts/backup-knowledge-ikkatsu-20261002.json`）・パターンC に「N件全ての」「募集されているお部屋の…」・出口 bulk-check-wording（人の文・過去の下書きで変わる 0）
+6. **お客様／それより前に**: 出所＝会社の事実 credit_card「お客様がご自身のカード会社で」・payment_timing「それより前にお振込頂くことは無い」→ 事実の文を直した（company-facts.ts の2つの文だけ・⑫と共有）。STYLE_RULE に「相手を『お客様』と呼ばない」。出口 okyaku-address（人の手打ちで変わるのは相手を指す5通だけ・他の人のお客様は 0・`scripts/audit-okyaku-address.ts`）・payment-timing-wording
+7. **内覧の候補3つ**: 本日固定の3日→1週間見て空いている日を前から3日（`app/lib/viewing-candidates.ts`・calendarSlots・AixModal の既定・テストの固定の候補）
+8. **絵文字の場面**: 人の手打ち 30.1% が絵文字なし・AI 11.9%。謝罪80%・募集終了69%・短い一言58% は外す・初回の挨拶は外さない・他は会話ごとに20%（`app/lib/emoji-situational.ts`）。出口後の下書き 9.7%→21.7%（`scripts/audit-wording-exits-1002.ts`）
+### YUMA
+- DeepSeek（7場面・送らない）: 全部の期待を満たした。Claude 0
+- 最後（LLM_TEST_FINAL_CLAUDE=1・本番と同じ組み合わせ）: 6場面を LINE に実送信（申込確定2・支払いの時期・分割・内覧調整の候補3つ・短い了承）＋一括確認の場面は宣言なので送らず（本番の送信 API がブレインを分析し直すため）。Claude 約27回 約$0.73。片付け: 本番が書いた sent_facts 1行・自分の aix_generate_log 6行を id で削除・場面の通は残り0
+### 判断待ち
+- 「時折あえて絵文字なし」の割合（今 20%）。断り（人の50%）を必ず外す側に入れるか
+- 自動反映で申込確定を選んだ後の申込フォーマット（実送信は確定の2行の後に AIX のフォーマット）を続けて自動で出すか
+
+## 2026-10-02（続き2）差分の再検査のキャッシュ・温め・誤発火の3つ（竹内さんの指示・未コミット）
+- **差分の再検査のキャッシュ（効かない・並びは戻した）**: 本番34回（9/29〜）入力 p50 2,043・p90 2,539 トークン・cache_read 0/34・所要 p50 2.9秒・p90 7.2秒・最大 11.3秒・1回 $0.0034（1日 約 $0.035）。遅い回は出力 700〜900 トークン（出力 8 の回は 1秒未満）＝遅さは出力。並べ替え（固定 約1,300 トークンを system＋cache_control）を作って確かめた: Haiku 4.5 は最小 4,096 トークン未満で書き込み・読み込みとも 0（LLM_TEST_FINAL_CLAUDE=1 の2回）。DeepSeek は3回目から 1,152〜1,408 読むが、直った書き直しを「未解決」と返す回が新しい並びで 7回中3回（旧 0回）・Haiku も1回中1回 → **元の並びに戻した**（final-check.ts の buildDiffRecheckPrompt の上に理由のコメント）。final_check_verify も同じ理由で 0/18
+  - ⚠ この時 `git checkout -- app/lib/final-check.ts` で自分の並べ替えを戻した（その時の差分は自分の並べ替えだけだった事を確認済み）。共有の木では今後使わない
+- **温め**: 再検査は Haiku の最小に届かずキャッシュが作られないので温めは足さない（温めても書き込まれず費用だけ）。書き直しの温めは残す（本番 3.4日: 温め13回 $0.46・本物の書き直し 39回のうち命中 33・読み 831k・書き 178k。文体だけの書き直しを止めたので本物は約16%減る）
+- **誤発火の3つ**（`scripts/audit-overfire-three.ts`・365日・お客様の番に続くスタッフの手打ち 3,628通・YUMA を除く／`app/lib/final-check-overfire.ts`・テスト `final-check-overfire.test.ts` 16）:
+  - ① FAREWELL_ON_MOVEOUT_INFO 人の文 1→0（「転勤の件無くなりましたので今回は見送りでお願いします」への締め）。お客様が探すのをやめた（断りの語・見送りで・〜が無くなり）時は当てない。今の家の退去の話（探し続ける）への締めは今までどおり block
+  - ② DUPLICATE_OF_SENT 人の文 15→ block 6。新しい事を言った番（電話の時間の質問・URL・到着の連絡・数字・画像）は **warning**（スタッフに見せるだけ・下書きは出す）。block と自動の下書きの抑止は了承・お礼だけの番（朱莉の形）だけ。残る6通は人が了承だけの番に同じ文を送った物（9/15 の決まりで止める形）
+  - ③ SENSITIVE_CASE 25→19。条件フォームの誤発火は ⑦（10/01）の直しで 0。否決の仮定（〜場合・〜時）と物件1件をやめる文（gm 粉浜やめます・ここはやめときます・谷川ハイツはやめておきます）を外した（sensitive-case.ts）。残り19はキャンセル・否決の本物（＋判断待ちの候補: 今の家の「明日物件解約します」・前の発言の「取り消します」・画像の読み取りの「否決」）
+- **気付いた事（他の担当の範囲）**: `audit-final-check-vs-staff.ts --baseline` で人の文に新しく block 5行: COMPANY_FACT_CONTRADICTION 3（「クレジットカード支払いですと分割払いご対応しております」等＝分割の手数料の一文が無い人の文を止めている）・DONE_PRESUPPOSED_WITHOUT_EVIDENCE 2（内覧の後のお礼）・CONFIRM_NO_OBJECT 0.5% 超え。今回の変更ではない
+- **費用**: DeepSeek 56回 約 $0.03 ／ Claude（Haiku）2回 $0.005 ／ 漏れ0・止めた0
+
+## 2026-10-02 ⑫ 竹内さんの決定①〜④の実装と確かめ（16〜18巡 DeepSeek＋最後の Claude）— 未コミット
+1. **2段の場面**（「それで大丈夫。言い回しも実際のLINEにある」）: `app/lib/two-stage.ts` resolveTwoStage を brain-core に。送れる物が無い時（売上サポに未送付のピックアップ無し・確認の結果無し・見積書無し）は約束の返信（auto_reply）・AIX は送った後に promise:* で立つ。約束を果たす判断（promise:*・signal:pending_pickup・rule:closed_ack_wait・correction:check_already_declared）・申込以降は AIX のまま。本番30日の当て直し 一致 36.4%→47.5%（scripts/audit-two-stage-matrix.ts）
+   - 出口: meta.two_stage を残し、auto-reply-policy ⑥-4 で約束の無い下書きは自動で送らない（two_stage_no_promise・本文は変えない）。16〜17巡の2段の下書き 41: 約束なし 5（止めて困る物なし）
+   - 元が確認しますの時は「聞かれた事を確認する約束」（募集状況・誰に確認するかは書かない）
+   - 夜職のアリバイ会社の質問は確認の約束にしない＝「お仕事面こちらでサポートさせて頂きます」（WORK_SUPPORT_ASK_RE・実送信で「アリバイ」2通・「管理会社に確認」0・在籍確認は外した）
+2. **AIX【確認します】をブレインの候補から外す**: finalAix=acknowledge_check → property_check_result（+ack_to_check）→ 2段へ。画面のボタンは残す
+3. **おおよその下限**（上限×0.70）: property-brain.implicitRentMin／searchRentMinOf（採点・検索・物件検索のブレインで同じ値・顧客の行には書かない）・/api/property-customers の rent_min_search・拡張 v2.5.65（再読み込み必須・サーバーのデプロイが先・dept_search_tool.md）。1191b1eb は rent_min を外した（50,000→null）
+4. **電話は19時まで**: company-facts phone_hours・phone-call.buildCallText「19時までですと何時でもお電話可能です😊！！」・19時より後は受けない・始まりの時刻は書かない
+### YUMA
+- DeepSeek: 16巡 31/42（74%）・関所 27・物件ピックアップ→返信の外れ 0（前 6〜9）／17巡（流れ 29%・単発 69%＝流れは本番でスタッフがすぐ結果を出した番が多い）／18巡 28/42（67%）・2段の下書き 19 全部に約束（1つは関所が止めた）
+- 最後（LLM_TEST_FINAL_CLAUDE=1・変えた場面 23＋流れ 4＋再確認 2）: 2段の場面は約束の言い回しが実送信の形（「〜ピックアップしてお送りさせて頂きます」「募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます」）。外れはスタッフがその場で結果・見積書を出した番（2段の決定どおりの差）。電話の2場面は AIX【電話をかける】。実送信 2通（YUMA）
+- 費用: 16〜18巡 DeepSeek 約 $4.6（再生スクリプト $1.09＋開発サーバ）・Claude 0（漏れ0）／最後の Claude 約 $3.1（ブレイン 41回 $1.60 他・YUMA 以外 0）
+- 気付き（未対応）: 下書きの文の途中の改行（「ピックアップして / お送りさせて頂きます」）・「確認しご連絡」と「確認出来次第ご連絡」の重ね・条件を「」で囲む書き方。DB の statement timeout で場面が2つ落ちた（負荷の時）

@@ -47,6 +47,7 @@ import { parsePickupAixHandoff, planPickupMarkSent, type PickupAixType } from ".
 // 2026-10-01 竹内「見積書きかれたら LINE のところに見積書のがでて押したら見積書のツールのところに連携」
 import { buildEstimateHref, parseEstimateReturn, wantsLowInitialCostText } from "./lib/estimate-handoff";
 import { imageUrlsInRankOrder } from "./lib/sent-image-order";
+import { decideApplySubMode } from "./lib/apply-sub-mode";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -6045,9 +6046,17 @@ export default function Home() {
     if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen" || params?.send_mode === "alternative") {
       setAixInitSendMode(params.send_mode);
     }
-    // 申込へ！: 提案バナー経由は「申込誘導」モードで直接開く（モード選択の1タップを省く）
+    // 申込へ！: 提案バナー経由はモード選択の1タップを省いて直接開く。
+    // 2026-10-02 竹内「こんなかんじじゃない。実際の言い回しを確認する。AIっぽい文となっている」:
+    //   旧は必ず「申込誘導」で開いていた → お客様が申込を決めた番でも後押しの文（お気に召していただけて大変嬉しく…／入金で押さえ…）を作っていた。
+    //   お客様が申込を決めた番は「申込確定」（実送信の『かしこまりました！！／〇〇号室お申込みさせていただきます』の2行）で開く（app/lib/apply-sub-mode.ts）
     if (type === "application_push") {
-      setAixInitAppSubMode("push");
+      const msgs = selectedConversation?.messages ?? [];
+      let k = msgs.length;
+      while (k > 0 && msgs[k - 1]?.sender === "customer") k--;
+      const customerTurn = msgs.slice(k).map((m) => m.text ?? "").join("\n");
+      const staffTexts = msgs.slice(Math.max(0, k - 12), k).filter((m) => m.sender === "staff").map((m) => m.text ?? "");
+      setAixInitAppSubMode(decideApplySubMode({ customerText: customerTurn, recentStaffTexts: staffTexts }).mode);
     }
     if (params?.imageUrl) {
       // AixModalはmount時にinitialSendImagesを読むため、画像取得完了後に開く（失敗時はそのまま開く）

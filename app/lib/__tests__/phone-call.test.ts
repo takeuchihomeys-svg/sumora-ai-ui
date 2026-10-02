@@ -98,10 +98,15 @@ it("「明日の17時頃…お電話よろしいでしょうか」→ 明日17:0
   const s = buildCallText({ customerTurn: "明日の17時頃ご相談したいことがありましてお電話よろしいでしょうか", customerName: "R" });
   expect(/明日17:00頃お電話大丈夫です/.test(s) && /ご相談の件、お電話にてお伺いさせて頂きます/.test(s) && KEY_LINE.test(s)).toBe(true);
 });
-it("「電話いける時間ありますか？」（時間を聞いただけ）・スタッフの入力なし → 時間を作らない・お手隙の際に", () => {
+it("「電話いける時間ありますか？」（時間を聞いただけ）・スタッフの入力なし → 2026-10-02 竹内さんの決定で「19時までですと何時でもお電話可能です」（始まりの時刻は作らない）・お手隙の際に", () => {
   const s = buildCallText({ customerTurn: "物件の件で話しがしたい事がありますので電話いける時間ありますか？", customerName: "Y" });
-  expect(!/[0-9]{1,2}[:：時]/.test(s) && /お手隙の際に/.test(s) && /物件の件/.test(s)).toBe(true);
+  expect(/^19時までですと何時でもお電話可能です😊！！/.test(s) && !/[0-9]{1,2}時から|[0-9]{1,2}:[0-9]{2}〜/.test(s) && /お手隙の際に/.test(s) && /物件の件/.test(s)).toBe(true);
 });
+it("お客様が19時以降を言った（「20時頃お電話いいですか？」）→ 受けずに19時までと伝える", () => {
+  const s = buildCallText({ customerTurn: "20時頃お電話いいですか？", customerName: "Y" });
+  expect(/19時までですと何時でもお電話可能です/.test(s) && !/20:00頃お電話大丈夫/.test(s)).toBe(true);
+});
+it("18時台はそのまま受ける", () => expect(/18:00頃お電話大丈夫です/.test(buildCallText({ customerTurn: "18時頃お電話いいですか？", customerName: "Y" }))).toBe(true));
 it("同じ問い＋スタッフの入力「15:00以降」→ 「15:00以降でしたらお電話可能です」（人の文の形）", () =>
   expect(/^15:00以降でしたらお電話可能です😊！！/.test(buildCallText({ customerTurn: "電話いける時間ありますか？", customerName: "Y", staffAvailability: "15:00以降" }))).toBe(true));
 it("「今お電話できますか？」→ ただいまお電話大丈夫です", () => expect(/ただいまお電話大丈夫です/.test(buildCallText({ customerTurn: "今お電話できますか？", customerName: "u" }))).toBe(true));

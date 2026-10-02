@@ -18,6 +18,8 @@
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
 import { isStyleOnlyNoError, isStyleNoErrorCode } from "./final-check-scope";
+// 2026-10-02 誤発火の線（FAREWELL_ON_MOVEOUT_INFO）
+import { farewellOnMoveOutHit } from "./final-check-overfire";
 import { stripMetaNarration, isMetaNarrationLine } from "./meta-narration";
 // 2026-09-29 API 費用の調査: 最終チェックの Claude 呼び出し（7日で Sonnet 281回・Haiku 343回）が llm_usage_logs で名前なしだった → 名札だけ付ける（動きは変えない）
 import { sumoraLlmMarks } from "./llm-usage-recorder";
@@ -2320,8 +2322,9 @@ function runDeterministicExtras(text: string, ctx: FinalCheckContext): CheckIssu
       !moveOutSwitchedToOtherProperty(moveOutViewingVerdict(recentMsgsForMoveOut(ctx, cust), "oldest_first")))
     push("context_check", "block", "VIEWING_BEFORE_VACANCY", "退去予定・入居中物件に対して現時点での内覧誘導をしています", firstSentenceAround(text, /ご案内|内覧/), "「[退去予定日]以降にご案内可能」または「お申込みで先に押さえてからご内覧」に変更");
   // E6' G10 現住居の退去・引越し報告（探索継続）に対する会話終了返信（離脱と誤読）
-  if (ctx.moveOutSubject === "current_home" &&
-      /またお部屋探しの際は|この度はありがとうございました|ご縁があり|またのご縁|またの機会|お気をつけて|お元気で/.test(text))
+  //    2026-10-02 実送信 3,636通で人の文に当たった1通（「転勤の件無くなりましたので今回は見送りでお願いします」への締め）を外す:
+  //    お客様が探すのをやめた（断り・見送り・転勤が無くなった）時は当てない（app/lib/final-check-overfire.ts・scripts/audit-overfire-three.ts）
+  if (farewellOnMoveOutHit(cust, text, ctx.moveOutSubject ?? "none"))
     push("context_check", "block", "FAREWELL_ON_MOVEOUT_INFO",
       "お客様の現住居の退去・引越し報告（入居時期情報）を離脱と誤読し、会話終了の返信をしています",
       firstSentenceAround(text, /またお部屋探し|この度は|ご縁|またの機会|お気をつけて|お元気で/),
@@ -2437,22 +2440,32 @@ function getConfirmVerdict(ctx: FinalCheckContext): ConfirmationContextVerdict {
 /** 2026-09-11 §5.2（E5-m・V5/V6）: 確認宣言の対象語が会話に実在するか。宣言文（「〇〇確認させて頂きます」）と「確認出来次第」の2文を1組で読み、
  *  対象語のトークンが顧客の未返信発言・直近の会話・台帳の送付済み物件名のどれかにあれば、その対象語を返す（無ければ null） */
 const CONFIRM_GENERIC_TOKEN_RE = /^(?:募集状況|空室状況|空室|状況|確認|初期費用|費用|お部屋|物件|ご内覧|内覧|管理会社|オーナー|貸主|ご連絡|お見積書|御見積書|見積書|見積|可否|条件|詳細|お送り|のご案内|ご案内)$/;
-function replyAnchoredConfirmObject(text: string, ctx: FinalCheckContext): string | null {
+// 2026-10-02 竹内「改善する方向で」: スタッフは確認の対象を**前の文**に書き、確認の文は「確認出来次第ご連絡させて頂きます」だけにする事が多い
+//   （実送信 988通で CONFIRM_NO_OBJECT の block 5通＝0.5%・上限超え。全部が対象を前の文や同じ文の「〜につきまして、管理会社に確認しご連絡」に書いていた:
+//    「花園の駐車場の件、管理会社に確認させていただきます！！ 空き状況確認出来次第ご連絡」「改めて管理会社に11月中旬でのご入居が可能か交渉頂きます！！ 確認出来次第ご連絡」
+//    「サンメゾンの和室から洋室への変更点と内装クリーニングの度合いにつきまして、管理会社に確認しご連絡」「コーポ平野上町の初期費用確認でき次第お見積書」
+//    「保証会社の情報確認させて頂いた上で審査の通りやすさご連絡」）。
+//   → 確認の文と**その前の1文**（pair）の中身の語（物件名・号室・日付・設備などの名詞）が会話（お客様の発言・直近の発言・送った物件）にあれば、対象があるとみなす。
+//     「確認」「ご連絡」「可能」等の中身の無い語は数えない（AI の「確認出来次第ご連絡させて頂きます」だけの創作約束は今までどおり block）
+const CONFIRM_PAIR_STOP_RE = /^(?:可能|交渉|対応|情報|改め|改めて|上で|本日|お時間|大丈夫|状況|連絡|確認|担当|担当者|お客様|弊社|頂き|致し|次第|度合|度合い|件|点|内容|ご確認|お手数|お手隙|最大限|割引|お願い|宜しく|何卒|かしこまりました|ありがとう|ございます|御座います)$/;
+function replyAnchoredConfirmObject(text: string, ctx: FinalCheckContext, pair?: string): string | null {
   const phrases: string[] = [];
   for (const m of text.matchAll(new RegExp(CONFIRM_DECL_WITH_OBJECT_RE.source, "g"))) phrases.push(m[1]);
   for (const m of text.matchAll(/([^\n。！!]{2,30}?)(?:を|の)?(?:管理会社(?:様)?に)?確認(?:でき|出来|し)次第/g)) phrases.push(m[1]);
-  if (phrases.length === 0) return null;
+  if (phrases.length === 0 && !pair) return null;
   const hay = [
     ctx.lastCustomerMessage ?? "",
     ...(ctx.recentMessages ?? []).map((m) => m.text),
     ...resolveLedger(ctx).facts.propertiesSentNames,
   ].join("\n").normalize("NFKC");
-  for (const p of phrases) {
-    const tokens = (p.normalize("NFKC").match(/[0-9]{1,2}月[0-9]{1,2}日|[0-9]{1,2}\/[0-9]{1,2}|[0-9]{2,4}|[一-龯々ァ-ヶーA-Za-z]{2,}/g) ?? [])
-      .filter((t) => !CONFIRM_GENERIC_TOKEN_RE.test(t));
-    const hit = tokens.find((t) => hay.includes(t) || (/^[0-9]{1,2}月[0-9]{1,2}日$/.test(t) && hay.includes(t.replace(/月/, "/").replace(/日$/, ""))));
-    if (hit) return p.trim();
-  }
+  const anchoredToken = (p: string, strict: boolean): string | null => {
+    const tokens = (p.normalize("NFKC").match(/[0-9]{1,2}月[0-9]{1,2}日|[0-9]{1,2}月(?:上旬|中旬|下旬|末)?|[0-9]{1,2}\/[0-9]{1,2}|[0-9]{2,4}|[一-龯々ァ-ヶーA-Za-z]{2,}/g) ?? [])
+      .filter((t) => !CONFIRM_GENERIC_TOKEN_RE.test(t) && !(strict && (CONFIRM_PAIR_STOP_RE.test(t) || /^[0-9]{2,4}$/.test(t))));
+    return tokens.find((t) => hay.includes(t) || (/^[0-9]{1,2}月[0-9]{1,2}日$/.test(t) && hay.includes(t.replace(/月/, "/").replace(/日$/, "")))) ?? null;
+  };
+  for (const p of phrases) if (anchoredToken(p, false)) return p.trim();
+  // 確認の文＋前の1文（中身の語だけ・厳しめ）
+  if (pair && anchoredToken(pair, true)) return pair.replace(/\s+/g, " ").trim().slice(0, 60);
   return null;
 }
 function firstSentenceAround(text: string, re: RegExp): string {
@@ -2538,7 +2551,7 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     } else if (!verdict.allowed) {
       // 2026-09-11 §5.2（E5-m）: 返信に書いた確認対象が会話に実在する（敷金礼金なしのお部屋・86、87…番・8月7日のご内覧・クレール元町203号室 等）なら
       //   創作約束ではない → block せず info（reply_anchored_object）。対象が会話に無い確認約束は従来どおり block
-      const anchored = replyAnchoredConfirmObject(textForConfirm, ctx);
+      const anchored = replyAnchoredConfirmObject(textForConfirm, ctx, confirmPair);
       if (anchored) {
         issues.push({ pass: "context_check", severity: "info", code: "CONFIRM_NO_OBJECT",
           message: `確認対象「${anchored.slice(0, 24)}」が会話に実在するため許容（reply_anchored_object・${verdict.reason}）`,
@@ -3260,6 +3273,13 @@ DONE_PRESUPPOSED_WITHOUT_EVIDENCE / PROMISE_ECHO_MISMATCH /
 UNANCHORED_VOCAB / VOCAB_MIRROR_MISMATCH /
 VIEWING_DATE_ASK_WITHOUT_AIX / VIEWING_OFFER_NAME_ECHO`;
 
+// 2026-10-02 竹内「差分の再検査のキャッシュが効くように（固定の指示を先・ドラフトと差分を後ろ）」→ 試して**元の並びに戻した**（並びはこのまま）:
+//   ①再検査のモデル Haiku 4.5 はキャッシュできる最小の長さが 4,096 トークン。この再検査の入力は全部で 1,700〜3,000 トークン（固定の部分 約1,300）＝
+//     並べ替えて system に cache_control を置いても書き込み・読み込みとも 0（LLM_TEST_FINAL_CLAUDE=1 の2回で確認: cache_creation 0・cache_read 0）。
+//   ②並べ替えると判定が変わった: 直った書き直し（日時の案内を消した文）に、元の指摘（AIX_BOUNDARY_VIEWING）を「未解決」と返す回が出た
+//     （DeepSeek 7回中3回・旧の並びは0回／Haiku も1回中1回）。「evidence は修正後ドラフトから引用」等の返却ルールがドラフトの後ろにある事が効いている。
+//   ③遅い回（8〜11秒）の原因は入力ではなく出力（本番34回: 出力 700〜900 トークンの回が 8〜11秒・8 トークンの回は 1秒未満）。
+//   → 縮めるなら出力（未解決の指摘を message・suggestion なしで返させ、文は check1 から引き継ぐ）。判断待ち。
 function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx: FinalCheckContext): string {
   const issuesJson = JSON.stringify(
     check1Issues.map((i) => ({ code: i.code, message: i.message, evidence: i.evidence, suggestion: i.suggestion })),

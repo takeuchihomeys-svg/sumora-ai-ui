@@ -44,10 +44,13 @@ const ROOM_NO_RE = /([0-9０-９A-Za-zＡ-Ｚａ-ｚ\-]{1,6})\s*号室/g;
  */
 export function stripUngroundedRoomNo(text: string, grounded: string): { text: string; removed: string[] } {
   const g = toHalfNo(grounded ?? "");
+  // 2026-10-02 ⑭ YUMA 最終（Claude）: 「S-RESIDENCE福島Luxe1308号室」（空白なし＝実送信の書き方）の号室を、根拠の「Luxe 1308号室」（空白あり）と
+  //   照らせず「xe1308号室」として落とし「福島Luお申込み」に壊した。根拠は空白を詰めた形とも照らす（落とす数が減るだけ）
+  const gTight = g.replace(/[\s　]+/g, "");
   const removed: string[] = [];
   const out = (text ?? "").replace(new RegExp(`[ \\t　]*${ROOM_NO_RE.source}`, "g"), (m, no: string) => {
     const half = toHalfNo(String(no));
-    if (g.includes(half)) return m;
+    if (g.includes(half) || gTight.includes(half)) return m;
     removed.push(`${half}号室`);
     return "";
   });

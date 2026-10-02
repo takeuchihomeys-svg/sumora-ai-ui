@@ -12,6 +12,7 @@
 //   送ってよい条件を全部満たした時だけ true を返し、1つでも欠けたら理由付きで false。
 import { jstParts } from "./jst-date";
 import { findStaffOnlyFact, findUngroundedAmount } from "./staff-confirm-facts";
+import { STAFF_PICKUP_DECL_RE, STAFF_CONFIRM_DECL_RE, STAFF_ESTIMATE_DECL_RE } from "./reply-context";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -136,7 +137,14 @@ export type AutoReplyInput = {
   hasPendingScheduled: boolean;
   /** 2026-10-02 ⑫: この会話の直近の通・登録の家賃（金額の根拠）。下書きに会話に無い金額があれば送らない（無ければ判定しない） */
   groundText?: string | null;
+  /** 2026-10-02 ⑫ 17巡: ブレインが「2段の場面（約束の返信）」にした時の種類（suggested_aix_meta.two_stage）。無ければ判定しない */
+  twoStageKind?: string | null;
 };
+
+/** 2段の場面の下書きに約束（ピックアップ・確認・御見積書の宣言）が入っているか。行動台帳が promised と読むのと同じ式（reply-context） */
+export function hasTwoStagePromise(draft: string): boolean {
+  return STAFF_PICKUP_DECL_RE.test(draft) || STAFF_CONFIRM_DECL_RE.test(draft) || STAFF_ESTIMATE_DECL_RE.test(draft);
+}
 
 export type AutoReplyVerdict = { ok: boolean; reason: string };
 
@@ -170,6 +178,10 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   //   AI の下書き 120日 920件で当たり 26・うちスタッフが金額を変えた/消した 23（scripts/audit-ungrounded-amount.ts）
   const ungrounded = findUngroundedAmount(draft, i.groundText);
   if (ungrounded) return { ok: false, reason: "staff_only_fact:ungrounded_amount" };
+  // ⑥-4 2026-10-02 ⑫ 17巡: 2段の場面（今は送れる物が無い→約束の返信）なのに約束が無い下書きは自動で送らない（本文は変えない）。
+  //   17巡 flow1_t03: お客様の3つの話（フリーレント・別エリア・URL）に「かしこまりました！！全力でサポート」だけで約束も答えも無いまま送られた。
+  //   約束が無いと行動台帳に promised が立たず、後の AIX も立たない（仕事が消える）＝人に残す
+  if (i.twoStageKind && !hasTwoStagePromise(draft)) return { ok: false, reason: "two_stage_no_promise" };
   // ⑦ 二重送信を防ぐ
   if (i.hasPendingScheduled) return { ok: false, reason: "already_scheduled" };
   return { ok: true, reason: "ok" };

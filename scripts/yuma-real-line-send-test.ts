@@ -42,7 +42,8 @@ const OUT_DIR = "scripts/.replay-out";
 
 type Turn = { sender: "staff" | "customer"; text: string };
 // 2026-10-02 ⑩: produce＝返信生成ではなく AIX の文を作って送る場面（hearing＝/api/aix/action の条件ヒアリング（導入＋フォーム）・apply＝申込フォーマット（同居人は入居人数から））
-type Scene = { id: string; why: string; state: string; first?: boolean; turns: Turn[]; expect: Array<{ label: string; ok: (draft: string) => boolean }>; produce?: "hearing" | "apply"; /** 2026-10-02: 表示名で呼ぶ場面（Sさん）。無ければ YUMA */ customerName?: string };
+// 2026-10-02 ⑭: apply_confirm＝AIX【申込へ！】を自動反映（aix-autofill-readiness＝申込の形を会話から決める）で作る・viewing＝AIX【内覧調整】（候補は自動反映の3つ）
+type Scene = { id: string; why: string; state: string; first?: boolean; turns: Turn[]; expect: Array<{ label: string; ok: (draft: string) => boolean }>; produce?: "hearing" | "apply" | "apply_confirm" | "viewing"; /** 2026-10-02: 表示名で呼ぶ場面（Sさん）。無ければ YUMA */ customerName?: string };
 const FORM = "▶︎【お部屋お探し中！】\n\n（ご希望のお部屋探しご条件）\n①【ご入居の時期】⇒11月頃\n②【ご希望の家賃（◯万円〜◯万円）】⇒7万円くらい\n③【希望の広さ・間取り】⇒1Kか1DK\n④【希望築年数】特になし\n⑤【ご希望のエリア・駅名】⇒天満、扇町\n⑥【ご希望の駅徒歩分数】⇒10分\n⑦【初期費用の限度額】⇒20万\n⑧【その他ご要望あれば】⇒バストイレ別\n________________________\n※ 審査に不安な事がある方お気軽にお伝えください😊\n審査面柔軟にサポートさせて頂きます！";
 const female = (t: string) => /♀|\u{1F469}/u.test(t);
 const outsideAllow = (t: string) => {
@@ -144,6 +145,87 @@ const SCENES: Scene[] = [
       { label: "見積書の宣言に置き換わっていない", ok: (d) => !/御見積書を作成しお送り/.test(d) },
       { label: "相場に答えている", ok: (d) => /相場|万円/.test(d) },
     ] },
+  // ── 2026-10-02 ⑭ 竹内さんが YUMA の LINE で見つけた8つ（お客様の文は本番の実物・名前は YUMA）──
+  { id: "apply_decide", why: "①申込を決めた（c000080f 8/26）→ AIX 申込へ は申込確定の2行（実送信「かしこまりました！！／S-RESIDENCE福島Luxe1308号室のお申込みさせていただきます😊！！」）", state: "viewing", produce: "apply_confirm",
+    turns: [
+      { sender: "staff", text: "YUMAさん本日お時間頂きありがとうございました！！\n1件目のS-RESIDENCE福島Luxe 1308号室、2件目のプレジオ十三 502号室ご内覧頂きました😊！！" },
+      { sender: "customer", text: "昨日はありがとうございました。\n\n一つ目の福島駅の物件の申し込みをお願いしたいです。" },
+    ],
+    expect: [
+      { label: "かしこまりました始まり", ok: (d) => /^かしこまりました/.test(d.trim()) },
+      { label: "お申込みさせていただきます", ok: (d) => /お申し?込み?させて(?:頂|いただ)きます/.test(d) },
+      { label: "嬉しく・書類の案内・お礼を書かない", ok: (d) => !/嬉しく|書類をご案内|ご連絡ありがとう/.test(d) },
+      { label: "別の物件（プレジオ十三）を書かない", ok: (d) => !/プレジオ/.test(d) },
+    ] },
+  { id: "apply_pay", why: "②申込＋今月振り込み（288d474a 9/01）→ 入金で押さえるを書かない", state: "viewing", produce: "apply_confirm",
+    turns: [
+      { sender: "staff", text: "YUMAさん本日お時間頂きありがとうございました！！\nS-RESIDENCE江坂Eminence 601号室とプレジオ十三 502号室ご内覧頂きました😊！！" },
+      { sender: "customer", text: "江坂の方よろしくお願いします\n審査一旦通してもらって行けそうでしたら今月お金振り込みます" },
+    ],
+    expect: [
+      { label: "入金・振込を書かない", ok: (d) => !/入金|振込|振り込/.test(d) },
+      { label: "プレジオ十三を書かない", ok: (d) => !/プレジオ/.test(d) },
+      { label: "かしこまりました始まり", ok: (d) => /^かしこまりました/.test(d.trim()) },
+    ] },
+  { id: "bulk7", why: "⑤7件まとめて送られた → 全て確認・一括／空きがございましたら を書かない", state: "proposing",
+    turns: [
+      { sender: "staff", text: "かしこまりました！！\n難波周辺全域からYUMAさんにオススメできる1LDKのお部屋ピックアップ出来次第お送りさせて頂きます！！" },
+      { sender: "customer", text: "自分でも探してみました！この7件空いてるか見てもらえますか？\nラ・シゴーニュ ウエスト 3階\nエスリード長居 503\nクリエオーレ喜連 303\nプレジオ十三 502\nエグゼ難波西Ⅱ 802\nジーメゾン石津町東アビテ 0201\nS-RESIDENCE江坂Eminence 601" },
+    ],
+    expect: [
+      { label: "一括を書かない", ok: (d) => !/一括/.test(d) },
+      { label: "空きがございましたら を書かない", ok: (d) => !/空き(?:が|の)?(?:ございましたら|ありましたら|あれば)/.test(d) },
+    ] },
+  { id: "pay_timing", why: "⑥支払いの時期（ab7ea742 9/25）→ それより前に〜の言い切り・お客様 を書かない", state: "proposing",
+    turns: [
+      { sender: "staff", text: "YUMAさん\nジーメゾン石津町東アビテ 0201号室最大限割引しました初期費用の御見積書となります！！\nお手隙の際にご査収ください😌！！" },
+      { sender: "customer", text: "初期費用の支払いはいつですか？" },
+    ],
+    expect: [
+      { label: "時期に答えている", ok: (d) => /入居日|請求書/.test(d) },
+      { label: "それより前に〜を書かない", ok: (d) => !/それより前|それ以前/.test(d) },
+      { label: "お客様を書かない", ok: (d) => !/お客様/.test(d) },
+      { label: "入金で押さえるを書かない", ok: (d) => !/(?:入金|振込)[^。\n]{0,10}(?:押さえ|抑え)/.test(d) },
+    ] },
+  { id: "installment2", why: "⑥分割（みこと 9/30）→ カード払い＋3.24%・お客様 を書かない", state: "proposing",
+    turns: [
+      { sender: "staff", text: "YUMAさん\nエスリード長居 503号室最大限割引しました初期費用の御見積書となります！！\nお手隙の際にご査収ください😌！！" },
+      { sender: "customer", text: "ありがとうございます。\n初期費用分割は難しいですよね🥲" },
+    ],
+    expect: [
+      { label: "3.24%", ok: (d) => /3[.．]24/.test(d) },
+      { label: "お客様を書かない", ok: (d) => !/お客様/.test(d) },
+    ] },
+  { id: "viewing3", why: "⑦内覧したい → AIX 内覧調整の候補は直近3つ", state: "proposing", produce: "viewing",
+    turns: [
+      { sender: "staff", text: "🌟エスリード長居 503\n家賃管理費込68,000円・御堂筋線「長居」駅徒歩3分、YUMAさんにかなりオススメ出来るお部屋となります😊！！\nお手隙の際にご査収ください😌！！" },
+      { sender: "customer", text: "ここ内覧してみたいです！" },
+    ],
+    expect: [
+      { label: "候補3つ", ok: (d) => (d.match(/\d{1,2}\/\d{1,2}/g) ?? []).length >= 3 },
+      { label: "JSON の名残なし", ok: (d) => !/"\s*[,}]|\{"/.test(d) },
+    ] },
+  { id: "apply_after_confirm", why: "申込確定の2行の後 → 申込フォーマットは AIX で止める（自動で作らない・送らない）", state: "viewing", produce: "apply_confirm",
+    turns: [
+      { sender: "customer", text: "一つ目の福島駅の物件の申し込みをお願いしたいです。" },
+      { sender: "staff", text: "かしこまりました！！\nS-RESIDENCE福島Luxe 1308号室お申込みさせていただきます😊！！" },
+      { sender: "customer", text: "よろしくお願いします！" },
+    ],
+    expect: [{ label: "自動で作らない（staff_confirm）", ok: (d) => d === "__STOPPED__staff_confirm" }] },
+  { id: "late_apology", why: "⑧謝る返事（スタッフの 80% が絵文字なし）", state: "proposing",
+    turns: [
+      { sender: "staff", text: "かしこまりました！！\nエスリード長居 503号室の募集状況、本日確認させて頂きます！！確認出来次第ご連絡させて頂きます！！" },
+      { sender: "customer", text: "昨日確認するって言ってたと思うんですけど、まだですかね？" },
+    ],
+    expect: [{ label: "謝罪の場面", ok: (d) => /申し訳|失礼/.test(d) }] },
+  { id: "ack_short", why: "⑧短い了承 → 短い返事は絵文字なしでよい（人の 58%）", state: "proposing",
+    turns: [
+      { sender: "staff", text: "かしこまりました！！\n明日管理会社の営業開始後に確認させて頂き、確認出来次第ご連絡させて頂きます！！" },
+      { sender: "customer", text: "了解です！" },
+    ],
+    expect: [
+      { label: "短い返事は顔の絵文字なし", ok: (d) => d.replace(/\s/g, "").length >= 25 || !/[😊😌✨]/u.test(d) },
+    ] },
 ];
 
 /** LINE で崩れる・お客様に見せたくない形（送る文そのものを見る） */
@@ -184,6 +266,8 @@ async function verifyDestination(): Promise<{ lineUserId: string; account: strin
 }
 
 async function realSend(payload: Record<string, unknown>): Promise<{ ok: boolean; status: number; ids: string[]; error?: string }> {
+  // 2026-10-02 竹内「テスト送信入っている。紛れないように」: 手元でも送信 API と同じ網（テストの印・JSON の名残は送らない）
+  { const { detectOutgoingResidue } = await import("../app/lib/outgoing-residue"); const hits = detectOutgoingResidue(String(payload.message ?? "")); if (hits.length) return { ok: false, status: 0, ids: [], error: `outgoing_residue_local: ${hits.map((h) => h.label).join("・")}` }; }
   const dest = await verifyDestination();
   const body = { ...payload, line_user_id: dest.lineUserId, account: dest.account, conversation_id: YUMA };
   const res = await fetch(`${PROD}/api/send-line-message`, {
@@ -264,6 +348,22 @@ async function main() {
           }), signal: AbortSignal.timeout(240_000) });
           const j = await r.json().catch(() => ({})) as Record<string, unknown>;
           texts = [String(j.message_text ?? ""), String(j.hearing_form ?? "")].filter((x) => x.trim());
+        } else if (sc.produce === "apply_confirm" || sc.produce === "viewing") {
+          const { classifyAixAutofill } = await import("../app/lib/aix-autofill-readiness");
+          const action = sc.produce === "viewing" ? "viewing_invite" : "application_push";
+          const pname = sc.id === "apply_decide" ? "S-RESIDENCE福島Luxe 1308号室" : sc.id === "apply_pay" ? "S-RESIDENCE江坂Eminence 601号室" : sc.id === "viewing3" ? "エスリード長居 503号室" : null;
+          const fill = classifyAixAutofill({ action, customerText: custAll[custAll.length - 1] ?? "", staffTexts: sc.turns.filter((t) => t.sender === "staff").map((t) => t.text), propertyName: pname });
+          console.log(`  自動反映: ${JSON.stringify(fill.request)}（${fill.level}・autoSend=${fill.autoSend.ok}）${fill.blockers.length ? ` 止める理由: ${fill.blockers.join("・")}` : ""}`);
+          // 2026-10-02 竹内「AIXで止めておく」: 自動反映が作らない（申込フォーマット等）物は作らず送らない
+          if (!fill.request) { const checks = sc.expect.map((e) => `${e.ok(`__STOPPED__${fill.level}`) ? "✓" : "✗"}${e.label}`); console.log(`\n【${sc.id}】${sc.why}\n  ブレイン: ${String(m.action ?? "-")}\n  AIX: 作らない（${fill.level}）\n  期待: ${checks.join(" ")}`); appendFileSync(outFile, JSON.stringify({ id: sc.id, brain: m.action ?? null, stopped: fill.level, checks }) + "\n"); continue; }
+          const r = await fetch(`${BASE}/api/aix/action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+            action, account: "sumora", conversation_id: YUMA, customer_name: "YUMA", conversation_status: sc.state,
+            recent_messages: rows.map((r) => ({ sender: r.sender, text: r.text, createdAt: r.created_at, rawCreatedAt: r.created_at, isAix: false })),
+            ...(fill.request ?? {}),
+          }), signal: AbortSignal.timeout(240_000) });
+          const j = await r.json().catch(() => ({})) as Record<string, unknown>;
+          if (j.error) console.log(`  AIX ERROR ${String(j.error).slice(0, 200)}`);
+          texts = [String(j.message_text ?? "")].filter((x) => x.trim());
         } else {
           const { detectCoResidentWithOccupants } = await import("../app/lib/co-resident");
           const { buildApplicationFormat } = await import("../app/lib/application-format");
@@ -332,7 +432,8 @@ async function main() {
   }
   // 書式の点検の1通（スタッフの実送信の形: 空行・見出しの🌟・絵文字・長い URL・全角の記号）
   if (SEND && PROBE) {
-    const probe = "【テスト送信】YUMAさん（書式の点検・お客様には送っていません）\n\n🌟エスリード長居 503\n家賃管理費込68,000円・御堂筋線「長居」駅徒歩3分\n\nお手隙の際にご査収ください😌！！\nhttps://suumo.jp/chintai/jnc_000000000000/?bc=100000000000\n①②③ ㎡ ～ ￥11,000（税込）";
+    // 2026-10-02 竹内「テスト送信入っている。紛れないように」: テストの印・ラベルを本文に入れない（実物と同じ形の文だけ送る。送信 API の最後の網 outgoing-residue.ts も印を止める）
+    const probe = "YUMAさんお世話になっております！！\n\n🌟エスリード長居 503\n家賃管理費込68,000円・御堂筋線「長居」駅徒歩3分\n\nお手隙の際にご査収ください😌！！\nhttps://suumo.jp/chintai/jnc_000000000000/?bc=100000000000\n①②③ ㎡ ～ ￥11,000（税込）";
     const r = await realSend({ message: probe, origin: "manual" });
     console.log(`\n【probe】書式の点検: ${r.ok ? `届いた（${r.ids.join(",")}）` : `失敗 ${r.status} ${r.error}`}\n  LINE の崩れ（送った文の点検）: ${lineRenderRisks(probe).join(" / ") || "なし"}`);
     if (r.ok) { sentTexts.push(probe); sentLineIds.push(...r.ids); }
@@ -340,7 +441,7 @@ async function main() {
   // 2026-10-02 竹内「1通の中で同じ絵文字を重ねない（全部😊の文も）」: 出口（dedupeRepeatedEmoji＝返信・AIX の最後と同じ関数）を通した文を送る
   if (SEND && DEDUPE_PROBE) {
     const { dedupeRepeatedEmoji } = await import("../app/lib/emoji-repeat");
-    const raw = "【テスト送信・絵文字の重なりの点検】\nYUMAさん、お部屋お送り頂きありがとうございます😊！！\nこちらのお部屋の募集状況確認させて頂きます😊！！\n確認出来次第ご連絡させて頂きますので、お手隙の際にご確認ください😊！！\n何卒よろしくお願い致します🙇‍♀️";
+    const raw = "YUMAさん、お部屋お送り頂きありがとうございます😊！！\nこちらのお部屋の募集状況確認させて頂きます😊！！\n確認出来次第ご連絡させて頂きますので、お手隙の際にご確認ください😊！！\n何卒よろしくお願い致します🙇‍♀️";
     const fixed = dedupeRepeatedEmoji(raw);
     const r = await realSend({ message: fixed.text, origin: "manual" });
     console.log(`\n【dedupe】出口の前: ${raw.replace(/\n/g, " ⏎ ")}\n  出口の後: ${fixed.text.replace(/\n/g, " ⏎ ")}\n  送信: ${r.ok ? `届いた（${r.ids.join(",")}）` : `失敗 ${r.status} ${r.error}`}・LINE の崩れ: ${lineRenderRisks(fixed.text).join(" / ") || "なし"}`);
@@ -351,7 +452,7 @@ async function main() {
     const { data: imgs } = await sb.from("messages").select("image_url").eq("conversation_id", YUMA).eq("sender", "staff").not("image_url", "is", null).order("created_at", { ascending: false }).limit(2);
     const urls = ((imgs ?? []) as Array<{ image_url: string }>).map((x) => x.image_url).filter(Boolean);
     if (urls.length) {
-      const text = "【テスト送信】画像のまとめ送りの点検です（AIX の物件ピックアップと同じ形）\nお手隙の際にご査収ください😌！！";
+      const text = "お手隙の際にご査収ください😌！！";
       const r = await realSend({ image_urls: urls, message: text, origin: "aix", aix_type: "property_send" });
       console.log(`\n【images】画像${urls.length}枚＋本文: ${r.ok ? `届いた（${r.ids.length}通: ${r.ids.join(",")}）` : `失敗 ${r.status} ${r.error}`}`);
       if (r.ok) { sentTexts.push(text); sentLineIds.push(...r.ids); }

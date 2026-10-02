@@ -21,6 +21,9 @@ import {
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, shortHash, ensureLlmFetchChainInDev } from "@/app/lib/llm-usage-recorder";
+// 2026-10-02 竹内「1日に何度も連絡きたらキャッシュあたためて効かせれるように…切り替わるスイッチ…判断するようにブレインが」（cache-warm-switch.ts）
+import { cacheWarmMode, convBlockCacheControl, compactCacheWarm, type CacheWarmDecision } from "@/app/lib/cache-warm-switch";
+import { loadCacheWarmDecision, saveConvWarmPrefix } from "@/app/lib/cache-warm-switch-server";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数）と起点の名札
 import { decideNightDeferNow, type BrainOrigin } from "@/app/lib/brain-night-defer";
 export type { BrainOrigin };
@@ -39,6 +42,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
+import { resolveTwoStage, type TwoStageVerdict } from "@/app/lib/two-stage";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent } from "@/app/lib/phone-button-sent";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
@@ -276,6 +280,8 @@ export type SuggestedAixMeta = {
   //   aix-action-items.syncAixActionItem が読み、AIX要対応（物件ピックアップした）と AIX モードの自動検索を起こす
   // 2026-09-23 課題③: 物件の画像／URL の指名（S1 property_nomination）は property_check_result（募集状況の確認）。app/lib/first-contact-pickup.ts
   first_contact_pickup?: FirstContactPickup;
+  /** 2026-10-02 ⑫: 2段の場面（約束の返信）にした時の種類（pickup/check/estimate）。auto-reply-policy ⑥-4 が約束の無い下書きを止める */
+  two_stage?: string;
   // 2026-09-23 竹内（あっぴ事例）: 未履行の物件ピックアップ宣言が残っている（今回の発言に AIX が要らなくても仕事は残っている）。
   //   aix-action-items.syncAixActionItem がこれを見て brain_no_aix の取り下げを止める（pending を維持する）
   pending_pickup?: boolean;
@@ -1276,6 +1282,8 @@ export async function sendBrainWarm(b: BrainSystemBlocks): Promise<BrainWarmUsag
  * 品質ゲートは自分自身の経路の採択率（SOURCE_ACCEPT_RATE:{action}:{source}）を読む。
  * （旧実装は analysis_step1 という他コンポーネントのキーを読んでいたバグがあった）
  */
+/** 2026-10-02 温めのスイッチ: 分析 → 保存の流れへの受け渡し（会話専用ブロックの指紋・メモリだけ。digest.cw.h に残す） */
+const convPrefixHashOf = new Map<string, string | null>();
 /** 今回の連投で決まった内覧の取りやめを読んだ会話の台帳の入力（分析 → 保存の流れへの受け渡し・メモリだけ） */
 const pendingViewingCancel = new Map<string, LedgerInput>();
 /** 保存まで行う本番の流れだけが呼ぶ: 控えがあれば、応答を待たせずにカレンダーの決まった内覧の予定を消す（viewing-cancel-calendar-server.ts） */
@@ -1302,7 +1310,9 @@ export async function analyzeConversation(
   // totalMsgCount=呼び出し元で取得済みの総メッセージ数（30件強制リフレッシュ判定用）
   opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean; prevPhase?: string | null; prevAix?: string | null; customerName?: string; mode?: "full" | "incremental"; prevMeta?: SuggestedAixMeta; totalMsgCount?: number;
     /** 2026-09-13 2層ブレイン: "fresh"＝今回の発言の層（strategy を前提に今回の発言だけ・軽く）/ "combined"＝全項目（従来） */
-    layer?: "combined" | "fresh"; strategy?: BrainStrategy | null },
+    layer?: "combined" | "fresh"; strategy?: BrainStrategy | null;
+    /** 2026-10-02: お客様ごと・1日ごとの温めのスイッチ（analyzeAndSaveBrainMeta が decideCacheWarm で決めた値。null＝OFF） */
+    cacheWarm?: CacheWarmDecision | null },
 ): Promise<SuggestedAixMeta> {
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await ensureLlmFetchChainInDev().catch(() => {});
@@ -2512,11 +2522,19 @@ ${history}`;
       ? [{
           type: "text" as const, text: maskedStableText,
           // 今回の発言の層の土台は会話ごとに違うので5分（書き込み1.25倍・1時間は2倍）。連投・再生成の数分以内の再利用を狙う
-          cache_control: isFreshLayer ? { type: "ephemeral" as const } : { type: "ephemeral" as const, ttl: "1h" as const },
+          // 2026-10-02: 温めのスイッチが ON かつ BRAIN_CACHE_WARM=on の時だけ 1h（convBlockCacheControl）。既定（shadow）は今まで通り 5分・文面は同じ
+          cache_control: isFreshLayer ? convBlockCacheControl(opts?.cacheWarm, cacheWarmMode()) : { type: "ephemeral" as const, ttl: "1h" as const },
         }]
       : []),
     { type: "text" as const, text: maskPII(customerSpecificText, maskNames) },
   ];
+  // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
+  //   mode=on で ON の時は、本物が送るバイト列（model・thinking・system・会話専用ブロック）を温め用に残す（送った後・応答は待たせない）
+  const convPrefixHash = isFreshLayer && maskedStableText.trim() ? shortHash(maskedStableText) : null;
+  if (conversationId) convPrefixHashOf.set(conversationId, convPrefixHash);
+  const saveConvWarmAfterCall = isFreshLayer && conversationId && opts?.cacheWarm?.on && cacheWarmMode() === "on" && userContent.length === 2
+    ? () => { const base = brainRequestBase(sys); void saveConvWarmPrefix(conversationId, { model: base.model, thinking: base.thinking, system: base.system, convBlock: userContent[0] }).catch(() => {}); }
+    : null;
 
   // 2026-09-23 竹内「ブレインのフル分析はクロードやけど、毎回の限定的な分析の部分は DeepSeek が行う形は出来るのか？」:
   //   経路の名札を層で分ける（brain_fresh＝毎回の分析 ／ brain_full＝会話全体の分析）。
@@ -2551,6 +2569,8 @@ ${history}`;
       console.log(`[brain-core] cache MISS conv=${conversationId} created=${cacheCreation} input=${inputTokens}`);
     }
     logLlmUsage("brain", response.usage, { conversationId, mode: isFreshLayer ? "fresh" : (opts?.mode ?? "full") });
+    // 2026-10-02 温めのスイッチ（mode=on・ON の時だけ）。別クラウドに回った回（DeepSeek）は Claude の蓄えが無いので残さない
+    if (saveConvWarmAfterCall && String((response as { model?: string }).model ?? "").startsWith("claude")) saveConvWarmAfterCall();
 
     // claude-sonnet-5 はextended thinkingを使うためcontent[0]がthinking型になることがある
     // content.find()でtextブロックを確実に取得する
@@ -3177,6 +3197,37 @@ ${history}`;
         decisionSource = `rule:conditions_incomplete_hearing(${readiness.missing.join("+")})`;
       }
     }
+    // 2026-10-02 竹内さんの決定（2段の場面）「それで大丈夫。言い回しも実際のLINEにある」: 送れる物がまだ無い時（売上サポに未送付のピックアップが無い・
+    //   確認の結果が無い・御見積書が無い）は今の一手を約束の返信にする（AIX は約束を送った後に promise:* で立つ）。
+    //   AIX【確認します】もブレインの候補から外す（同じ確認の約束の返信→後で AIX【物件確認した】・画面のボタンは残す）。判定は app/lib/two-stage.ts
+    // AIX【確認します】はブレインの候補から外す（竹内さんの決定②）: 確認の約束を果たす場面（promise:check 等）は AIX【物件確認した】に、
+    //   それ以外は下の2段の判定で約束の返信に
+    if (finalAix === "acknowledge_check") {
+      finalAix = "property_check_result";
+      decisionSource = decisionSource ? `${decisionSource}+ack_to_check` : "correction:ack_to_check";
+    }
+    let twoStage: TwoStageVerdict | null = null;
+    if (finalAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet)$/.test(finalAix)) {
+      let pickupReady = false;
+      if (finalAix === "property_send" || finalAix === "property_recommendation" || finalAix === "property_search") {
+        try {
+          const { count } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending");
+          pickupReady = (count ?? 0) > 0;
+        } catch { pickupReady = true; } // 読めない時は AIX のまま（今まで通り）
+      }
+      twoStage = resolveTwoStage({
+        finalAix, decisionSource, pickupReady, postApply: isPostApplyStatus(convStatus),
+        asksCost: /初期費用|見積|いくら|費用/.test(unrepliedTurn.text ?? ""),
+        estimateTarget: focusedEstimateOverride,
+        customerText: unrepliedTurn.text ?? "",
+      });
+      if (twoStage) {
+        console.log(JSON.stringify({ tag: "brain:two-stage", conversationId, from: finalAix, src: decisionSource, kind: twoStage.kind }));
+        finalAix = null;
+        sceneSignalCheckPattern = null;
+        decisionSource = twoStage.source;
+      }
+    }
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
@@ -3188,6 +3239,8 @@ ${history}`;
     // 旧実装は線引きルール0件時に Haiku が auto_reply へ倒れる「安全側でない」デフォルトだった
     let replyMode: "aix" | "auto_reply" | undefined =
       (parsed.reply_mode === "aix" || parsed.reply_mode === "auto_reply") ? parsed.reply_mode : undefined;
+    // 2026-10-02 2段の場面: 約束の返信にした時は返信の番（下書きを作る・関所が通せば自動送信の候補）
+    if (twoStage) replyMode = "auto_reply";
     if (finalAix) replyMode = "aix";                       // AIX提案がある時点でスタッフ操作前提
     if (!boundaryText) replyMode = "aix";                  // 線引きルール取得失敗/0件時はフェイルクローズ
     if (opts?.autoSendEnabled === false) replyMode = "aix"; // auto_send無効の会話に auto_reply を提案しない
@@ -3319,7 +3372,7 @@ ${history}`;
       // 2026-10-01 竹内（ひまり「家賃込の価格でしょうか？」）: 家賃込みかの質問だけ → 返信で答える方向（LLM の「初期費用について AIX で…」を残さない）
       : rentIncludedReply ? "初期費用（御見積書の金額）は翌月分の前家賃込みであることを本文で答える（ご入居日によって別途日割家賃・金額は書かない）"
       : null;
-    const replyDirection = procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
+    const replyDirection = twoStage ? twoStage.direction : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
       ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
       : rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
 
@@ -3332,7 +3385,10 @@ ${history}`;
     const keyTopicsGuard = stripRentNegotiationFromList(keyTopicsRaw, { customerAsked: custRentAsk });
     // 2026-09-27: 主のお部屋への見積もりの依頼で 見積書送る に上書きした時は、LLM が物件確認した のつもりで入れた「募集状況確認」を必須内容から外す
     //   （残すと返信が「募集状況確認させて頂きます」を約束し、物件確認のやることが立つ）
-    const keyTopics = procedureDirection !== null
+    const keyTopics = twoStage
+      // 2026-10-02 2段の場面: 約束の返信の必須の話題は約束1つ（LLM が AIX のつもりで入れた「物件の紹介」「結果の報告」を外す）
+      ? [twoStage.keyTopic, ...keyTopicsGuard.items.filter((t) => !/物件|お部屋|募集中|空室|見積|金額|ピックアップ|確認/.test(t))].slice(0, 3)
+      : procedureDirection !== null
       // 2026-09-30: 返信で答えると決めた時は、LLM が確認のつもりで入れた「管理会社に確認」を必須内容から外す
       ? keyTopicsGuard.items.filter((t) => !/管理会社|確認(?:し|する|のうえ|して)|問い?合わせ/.test(t))
       : focusedEstimateOverride !== null
@@ -3725,6 +3781,8 @@ ${history}`;
       // 2026-09-12 段2: 判断の出どころと今回の顧客発言の場面の証拠（JSONB・スキーマ変更不要）。brain_decision_logs にも同じ値を残す
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
       first_contact_pickup: firstContactPickup,
+      // 2026-10-02 ⑫ 17巡: 2段の場面（約束の返信）にした時の種類。自動送信の関所が「約束の無い下書き」を止めるのに使う（auto-reply-policy ⑥-4）
+      two_stage: twoStage ? twoStage.kind : undefined,
       // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている（＝「今回AIX不要」でも仕事は残っている）。
       //   aix-action-items がこれを見て brain_no_aix の取り下げを止める
       pending_pickup: pendingPickup.pending || undefined,
@@ -4555,6 +4613,13 @@ async function analyzeAndSaveBrainMetaInner(
   // 同一ソース・同一フォーマットの完全重複クエリだったため削除（2026-09-02）
 
   const useFreshLayer = BRAIN_LAYER_MODE === "on" && !!brainStrategy;
+  // 2026-10-02 竹内「切り替わるスイッチが必要、そこも判断するようにブレインが…1日でおわらせて、次の日もまた振り出しに戻す」:
+  //   今回の発言の層の時だけ、今日のやり取りの数でスイッチを決める（decideCacheWarm・1つの関数）。判断は digest.cw に残す。
+  //   BRAIN_CACHE_WARM=off なら数えない。読めない時は OFF（分析は止めない）
+  const cacheWarmModeNow = cacheWarmMode();
+  const cacheWarm = useFreshLayer && cacheWarmModeNow !== "off"
+    ? await loadCacheWarmDecision(conversationId).catch(() => null)
+    : null;
   const meta = await analyzeConversation(
     conversationId,
     isUrgent,
@@ -4574,6 +4639,7 @@ async function analyzeAndSaveBrainMetaInner(
       layer: useFreshLayer ? "fresh" : "combined",
       strategy: useFreshLayer ? brainStrategy : null,
       totalMsgCount: totalMsgCount ?? 0,
+      cacheWarm,
     },
   );
   // 2026-09-30 竹内: 今回の連投で決まった内覧が取りやめになっていたら、カレンダーの予定を消す（LLM の結果に依らない決定論・応答は待たせない）
@@ -4679,8 +4745,13 @@ async function analyzeAndSaveBrainMetaInner(
         analyzed_msg_ts: typeof metaObj.analyzed_msg_ts === "string" ? metaObj.analyzed_msg_ts : null,
         scene_evidence: metaObj.scene_evidence ? JSON.stringify(metaObj.scene_evidence) : null,
         // 2026-09-13 2層ブレイン: 毎回の分析の要点（戦略の分析が「前回の戦略以降に何があったか」を整理する材料）
-        digest: toFreshDigest(metaObj, strategyShift),
+        digest: {
+          ...toFreshDigest(metaObj, strategyShift),
+          // 2026-10-02 温めのスイッチの判断（on/理由/今日のやり取り/閾値/mode/会話専用ブロックの指紋）。戦略の整理は名前の決まった項目だけ読むので材料には入らない
+          ...(cacheWarm ? { cw: compactCacheWarm(cacheWarm, cacheWarmModeNow, convPrefixHashOf.get(conversationId) ?? null) } : {}),
+        },
       });
+      convPrefixHashOf.delete(conversationId);
       if (insErr) {
         // 列がまだ無い環境（migrate-schema 未実行）でも判断ログを失わない
         console.warn("[brain-core] brain_decision_logs insert (extended) failed, retry base columns:", conversationId, insErr.message);

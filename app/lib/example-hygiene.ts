@@ -8,6 +8,7 @@
 //   依存は jst-date（依存ゼロ）と company-fact-guard（純関数・2026-10-02）。
 
 import { fixDateWeekdays } from "./jst-date";
+import { hasOutgoingResidue } from "./outgoing-residue";
 import { findCompanyFactContradictionsUngated } from "./company-fact-guard";
 
 /** generate-reply/route.ts が例外時にストリームへ流す文言（route 側もこの定数を import する＝文言の出所は1か所） */
@@ -35,6 +36,10 @@ export function isUsableExampleText(s: string | null | undefined): boolean {
   //   手本 7,449行で当たるのは4行だけ（scripts/audit-example-fact-contradiction.ts）＝「一括でのお振込のみ」⭐2行（7/07・9/14）・10/01「お振込での一括のみ」・8/25「6回程が妥当」。
   //   ⭐付きの2行は初回の挨拶の手本として上位に来ていた。行は消さない（読む側で外す＝この関数を通る few-shot・学習・評価の全部）
   if (findCompanyFactContradictionsUngated(t).length > 0) return false;
+  // 2026-10-02 竹内「監視が防げる部分」「テスト送信入っている。紛れないように」: JSON・コードの名残・テストの印を含む文は手本にしない
+  //   （送信 API の最後の網と同じ outgoing-residue.ts）。手本 7,462行で送った文の当たりは1行＝⭐付きの AIX【内覧へ】08593448（8/28）が
+  //   {"greeting":…,"dates":…} の JSON のまま手本に入っていた。AI の下書きの当たり 12行（末尾の "} 等・スタッフが直して送った）は差分学習の材料なので isUsableAiDraft は変えない
+  if (hasOutgoingResidue(t)) return false;
   return true;
 }
 

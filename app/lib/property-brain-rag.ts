@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { supabase } from "@/app/lib/supabase";
+import { buildCustomerProfile } from "@/app/lib/property-brain";
 
 // ── 型定義 ──────────────────────────────────────────────────────────────────
 
@@ -9,6 +10,8 @@ export interface CustomerConditions {
   desiredArea: string | null;
   areaMode: "station" | "ward" | "both" | "auto" | null;
   rentMin: number | null;
+  /** 2026-10-02 ⑫ 書いた下限が無い時のおおよその下限（property-brain.implicitRentMin・顧客の行には無い） */
+  rentMinImplicit?: number | null;
   rentMax: number | null;
   floorPlan: string | null;
   floorAreaMin: number | null;
@@ -190,6 +193,7 @@ export async function buildPropertyBrainContext(
     desiredArea: (pc.desired_area as string | null) ?? null,
     areaMode: (pc.area_mode as CustomerConditions["areaMode"]) ?? null,
     rentMin: (pc.rent_min as number | null) ?? null,
+    rentMinImplicit: buildCustomerProfile(pc as Parameters<typeof buildCustomerProfile>[0]).rentMinImplicit ?? null,
     rentMax: (pc.rent_max as number | null) ?? null,
     floorPlan: (pc.floor_plan as string | null) ?? null,
     floorAreaMin: (pc.floor_area_min as number | null) ?? null,
@@ -239,7 +243,7 @@ export function formatContextForPrompt(ctx: PropertyBrainContext): string {
   // 顧客条件
   lines.push("【顧客条件】");
   if (c.desiredArea) lines.push(`エリア: ${c.desiredArea}（モード: ${c.areaMode ?? "auto"}）`);
-  if (c.rentMin || c.rentMax) lines.push(`家賃: ${c.rentMin ?? "下限なし"}〜${c.rentMax ?? "上限なし"}円`);
+  if (c.rentMin || c.rentMax) lines.push(`家賃: ${c.rentMin ?? (c.rentMinImplicit ? `下限の記入なし（おおよその下限 ${c.rentMinImplicit}円＝上限の7割・これよりずっと安い部屋は質が下がるので選ばない）` : "下限なし")}〜${c.rentMax ?? "上限なし"}円`);
   if (c.floorPlan)    lines.push(`間取り: ${c.floorPlan}`);
   if (c.floorAreaMin || c.floorAreaMax) lines.push(`広さ: ${c.floorAreaMin ?? ""}〜${c.floorAreaMax ?? ""}㎡`);
   if (c.walkMinutes)  lines.push(`駅徒歩: ${c.walkMinutes}分以内`);

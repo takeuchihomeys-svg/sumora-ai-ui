@@ -16,6 +16,8 @@ import {
 import { isTestConversation } from "./test-conversations";
 import { loadLineWatch } from "./line-watch-server";
 import { BRAIN_AIX_LABELS } from "./aix-button-view";
+import { detectOutgoingResidue } from "./outgoing-residue";
+import { draftToSendableText } from "./draft-text";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -187,6 +189,33 @@ export async function checkScreeningCalendar(sb: SupabaseClient, nowMs: number):
   return { measured: true, findings, tasks: (tk.data ?? []).length, ours: ours.length };
 }
 
+/**
+ * 2026-10-02 竹内「監視が防げる部分」: 直近24時間に送った文・予約中の文・今の下書き（24時間以内に更新）の機械の名残を探す。
+ *   送信 API・予約送信の最後の網（outgoing-residue.ts）をすり抜けた物・網の前で止まった下書きを毎日のまとめに出す。テスト用の会話は数えない
+ */
+async function findOutgoingResidue(sb: SupabaseClient, nowMs: number): Promise<NonNullable<Parameters<typeof buildLineWatchDaily>[0]["residue"]>> {
+  const out: NonNullable<Parameters<typeof buildLineWatchDaily>[0]["residue"]> = [];
+  const since = iso(nowMs - DAY);
+  const sent = await readAll<{ conversation_id: string; text: string | null }>((f, t) => sb.from("messages").select("conversation_id, text").eq("sender", "staff").gte("created_at", since).order("created_at").range(f, t), 10_000);
+  const sch = await readAll<{ conversation_id: string | null; text: string | null }>((f, t) => sb.from("scheduled_messages").select("conversation_id, text").in("status", ["pending", "sending"]).range(f, t), 2_000);
+  const drafts = await readAll<{ id: string; ai_draft: string | null }>((f, t) => sb.from("conversations").select("id, ai_draft").not("ai_draft", "is", null).gte("updated_at", since).range(f, t), 5_000);
+  const push = (where: "sent" | "scheduled" | "draft", cid: string | null, text: string | null) => {
+    if (cid && isTestConversation(cid)) return;
+    const hits = detectOutgoingResidue(text);
+    if (hits.length) out.push({ where, name: null, conversation_id: cid, labels: hits.map((h) => h.label) });
+  };
+  for (const m of sent) push("sent", m.conversation_id, m.text);
+  for (const m of sch) push("scheduled", m.conversation_id, m.text);
+  for (const c of drafts) push("draft", c.id, draftToSendableText(c.ai_draft));
+  const ids = [...new Set(out.map((r) => r.conversation_id).filter((x): x is string => !!x))];
+  if (ids.length) {
+    const r = await sb.from("conversations").select("id, customer_name").in("id", ids.slice(0, 200));
+    const nm = new Map(((r.data ?? []) as Array<{ id: string; customer_name: string | null }>).map((c) => [c.id, c.customer_name]));
+    for (const o of out) o.name = o.conversation_id ? nm.get(o.conversation_id) ?? null : null;
+  }
+  return out;
+}
+
 export async function buildLineWatchDailyReport(sb: SupabaseClient, opt: { nowMs?: number } = {}) {
   const nowMs = opt.nowMs ?? Date.now();
   const errors: Record<string, string> = {};
@@ -229,8 +258,10 @@ export async function buildLineWatchDailyReport(sb: SupabaseClient, opt: { nowMs
   }
   // 事実違い・AIX 違いを知らせる番＝24〜48時間前に来た番（窓は最長24時間なので全部閉じている・毎晩同じ時刻に回るので前回と重ならない）
   const dayTurns = turns.filter((t) => P(t.customer_turn_at) >= nowMs - 2 * DAY && P(t.customer_turn_at) < nowMs - DAY).map((t) => ({ ...t, name: names.get(t.conversation_id) ?? null }));
+  let residue: Awaited<ReturnType<typeof findOutgoingResidue>> | undefined;
+  try { residue = await findOutgoingResidue(sb, nowMs); } catch (e) { errors.residue = e instanceof Error ? e.message : String(e); }
   const daily = buildLineWatchDaily({
-    date, scenes, prevScenes, fc, late, dayTurns, reviews,
+    date, scenes, prevScenes, fc, late, dayTurns, reviews, residue,
     promises: watch.promises.map((p) => ({ name: p.name, kindJa: p.kindJa, hours: p.hours, customerActive: p.customerActive })),
     calendar: watch.calendar.map((c) => ({ code: c.code })),
     c7, search: watch.search, aixPending: watch.aixItems.length,

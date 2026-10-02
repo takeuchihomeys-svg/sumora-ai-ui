@@ -77,6 +77,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
 import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
+import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
 import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
 import { fixAdjectiveNakaguro } from "@/app/lib/first-message-style";
 import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
@@ -2082,6 +2083,11 @@ ${text}
     }
     // 2026-10-01 竹内「同じ絵文字を2重で使っているが実際していない。もう一つの絵文字を使うか省いている」:
     //   文末の同じ絵文字の2回目以降は、誘導の締めなら外し・他は 😌／😊 の未使用の方に替える（実送信で同じ絵文字だけは 4.0%・emoji-repeat.ts）
+    // 2026-10-02 竹内「お客様って言葉使わない」: 相手を指す「お客様」を〇〇さん／呼ばない形に（okyaku-address.ts・人の実送信で変わるのは相手を指す5通だけ）
+    {
+      const ok1 = fixSecondPersonOkyaku(text, null);
+      if (ok1.changes.length) { console.log(JSON.stringify({ tag: "aix-template-generate:okyaku", changes: ok1.changes })); text = ok1.text; }
+    }
     if (!noEmoji) {
       const dr = dedupeRepeatedEmoji(text);
       if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix-template-generate:emoji-repeat-fixed", changes: dr.changes })); text = dr.text; }

@@ -269,6 +269,8 @@ export function fixedViewingSlots(nowMs: number): SimViewingSlot[] {
   return [
     { ms: todayStart + DAY, start: "11:00", end: "13:00" },
     { ms: todayStart + 2 * DAY, start: "14:00", end: "16:00" },
+    // 2026-10-02 竹内「直近は基本3候補いれる」（viewing-candidates.ts）
+    { ms: todayStart + 3 * DAY, start: "13:00", end: "15:00" },
   ].map((s) => ({ ymd: ymdOf(s.ms).ymd, label: dayLabel(s.ms), start: s.start, end: s.end }));
 }
 

@@ -14,6 +14,7 @@ import { MSG_SEP } from "@/app/lib/reply-context";
 import { pendingApplySummaryConversations, ensureApplyPeriodSummary } from "@/app/lib/apply-period-summary-server";
 // 2026-09-29 竹内「クロードの部分、キャッシュを営業時間中温める」: 最終チェック4段・お客様の要約・次の一手の前置きもここ（対象0件の分岐）で温める
 import { tryPrefixWarms, compactPrefixWarmResults, PREFIX_WARM_QUIET_REASONS, type PrefixWarmResult } from "@/app/lib/prefix-warm-server";
+import { tryConvWarms } from "@/app/lib/cache-warm-switch-server";
 
 // ── brain-sweep: 脳分析バックストップ（5分毎）─────────────────────────────
 // FIX(Fable5 #2): 分析の主経路は line-webhook のイベント駆動（顧客メッセージ受信 =
@@ -291,8 +292,15 @@ export async function GET(req: NextRequest) {
         }
       }
       const prefixWarmCompact = compactPrefixWarmResults(prefixWarm);
-      await finishCronLog(runLogId, true, { processed: 0, warm, prefixWarm: prefixWarmCompact });
-      return NextResponse.json({ ok: true, processed: 0, warm, prefixWarm: prefixWarmCompact });
+      // 2026-10-02 竹内「1日に何度も連絡きたらキャッシュあたためて…1日でおわらせて、次の日もまた振り出しに戻す」:
+      //   お客様ごとの温め（cache-warm-switch-server.tryConvWarms）。既定 shadow＝今日 ON の会話を数えるだけ（温めない・費用0）。BRAIN_CACHE_WARM=on で温める
+      const convWarm = await tryConvWarms(Date.now()).catch((e) => ({ mode: "error", on: 0, results: [{ conversationId: "*", warmed: false, reason: "error:" + (e instanceof Error ? e.message : String(e)).slice(0, 200) }] }));
+      if (convWarm.on > 0 || convWarm.results.some((r) => r.warmed || r.reason.startsWith("error") || r.reason.startsWith("send_failed"))) {
+        console.log(JSON.stringify({ tag: "conv-warm:" + convWarm.mode, on: convWarm.on, results: convWarm.results.slice(0, 10) }));
+      }
+      const convWarmCompact = { mode: convWarm.mode, on: convWarm.on, warmed: convWarm.results.filter((r) => r.warmed).length };
+      await finishCronLog(runLogId, true, { processed: 0, warm, prefixWarm: prefixWarmCompact, convWarm: convWarmCompact });
+      return NextResponse.json({ ok: true, processed: 0, warm, prefixWarm: prefixWarmCompact, convWarm: convWarmCompact });
     }
 
     let processed = 0;

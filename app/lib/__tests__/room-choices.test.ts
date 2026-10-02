@@ -59,5 +59,14 @@ it("候補の号室を聞く形（3部屋）は全部根拠があるので落と
   expect(stripUngroundedRoomNo(t, "1303号室・906号室・506号室").text).toBe(t);
 });
 
+// 2026-10-02 ⑭ YUMA 最終（Claude）: 空白なしの「Luxe1308号室」を根拠の「Luxe 1308号室」と照らせず「福島Luお申込み」に壊した
+it("★ 空白なしで書いた号室（Luxe1308号室）は根拠の空白ありと同じ（落とさない）", () => {
+  const t = "かしこまりました！！\nS-RESIDENCE福島Luxe1308号室お申込みさせていただきます😊！！";
+  expect(stripUngroundedRoomNo(t, "S-RESIDENCE福島Luxe 1308号室").text).toBe(t);
+});
+it("★ 根拠に無い号室は今まで通り落とす", () => {
+  expect(stripUngroundedRoomNo("マルシェ九条 1303号室お申込みさせて頂きます！！", "マルシェ九条 402号室").removed.join()).toBe("1303号室");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

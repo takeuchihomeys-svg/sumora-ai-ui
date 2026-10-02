@@ -41,7 +41,8 @@ export type ClaudeModelEnv = { CLAUDE_SONNET_MODEL?: string; CLAUDE_SONNET55_ACT
  */
 const CACHE_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   // ブレイン: 毎回の層・全体の層・DeepSeek の取り直し・温め（brain-sweep）は同じ system 2ブロック（brainRequestBase）
-  ["brain_fresh", "brain_full", "brain_fresh_claude", "brain-warm"],
+  //   2026-10-02: お客様ごとの温め（brain-conv-warm・cache-warm-switch-server）も同じ前置き＋会話専用ブロック＝同じ組
+  ["brain_fresh", "brain_full", "brain_fresh_claude", "brain-warm", "brain-conv-warm"],
   // 返信生成（名札なし・system 先頭で判定）と keep-warm（同じ ChatAnthropic の設定で読み直す）
   ["reply_generate", "keep-warm"],
   ["customer_summary", "customer_summary_warm"],

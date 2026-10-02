@@ -172,3 +172,22 @@ console.log("■ 画面の家賃の欄（pickup-card-view）");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
+
+// 2026-10-02 ⑫ 竹内さんの決定「上限しか無い時もおおよその下限（10万の上限で5万の部屋は質が下がる）」
+import { implicitRentMin, searchRentMinOf, buildCustomerProfile as bcp, judgeProperty as jp, parsePropertyFacts as ppf } from "../property-brain";
+{
+  const ok = (name: string, c: boolean, x = "") => { if (c) console.log(`  OK  ${name}`); else { console.log(`  NG  ${name} ${x}`); process.exitCode = 1; } };
+  ok("上限10万 → おおよその下限 7万", implicitRentMin(100_000) === 70_000);
+  ok("安さの希望がある人は出さない", implicitRentMin(100_000, { cheap: true }) === null);
+  ok("目安の額がある人は出さない", implicitRentMin(100_000, { target: 60_000 }) === null);
+  const prof = bcp({ rent_max: 100_000, floor_plan: "1K" });
+  ok("顧客の行に下限なし → 型の rentMinImplicit=70000・rentMin は null のまま", prof.rentMin == null && prof.rentMinImplicit === 70_000, JSON.stringify([prof.rentMin, prof.rentMinImplicit]));
+  const cheapRoom = jp(ppf("【1】安い\n50,000円\n1K\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), prof);
+  ok("上限10万で5万の部屋 → 保留（RENT_UNDER_MIN）", cheapRoom.verdict === "hold" && cheapRoom.reasonCodes.includes("RENT_UNDER_MIN"), JSON.stringify([cheapRoom.verdict, cheapRoom.reasonCodes]));
+  const nearTop = jp(ppf("【1】上限寄り\n92,000円\n1K\n敷なし 礼なし\n徒歩5分\nAD 1ヶ月"), prof);
+  ok("上限10万で9.2万の部屋は保留にしない", nearTop.verdict !== "hold" || !nearTop.reasonCodes.includes("RENT_UNDER_MIN"));
+  const s = searchRentMinOf({ rent_max: 100_000 });
+  ok("検索の下限: おおよその下限 7万 × 保留の線 0.85 → 5.9万（採点で保留になる所より下は探さない）", !!s && s.implicit && s.yen === 59_000, JSON.stringify(s));
+  const s2 = searchRentMinOf({ rent_max: 100_000, rent_min: 80_000 });
+  ok("書いた下限があればそれ", !!s2 && !s2.implicit && s2.yen === 80_000, JSON.stringify(s2));
+}
