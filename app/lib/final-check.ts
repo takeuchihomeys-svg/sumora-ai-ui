@@ -86,6 +86,8 @@ import { isRentNegotiationPromise, isMgmtDiscountNegotiationPromise, customerAsk
 //   調べたら最終チェックは会社の事実（company-facts）を**一度も受け取っていなかった**（生成プロンプトとブレインにしか渡っていない）。
 //   決定論の段（V16 COMPANY_FACT_CONTRADICTION・実送信365日 7,997通で当たり0＝block）と anomaly_scan の [COMPANY_FACTS] の2か所に繋ぐ
 import { findCompanyFactContradiction, buildCompanyFactsForCheck, findMissingCardFee } from "./company-fact-guard";
+// 2026-10-02 お客様自身の言葉の復唱を捏造と読まない（fabricated-customer-words.ts・scripts/audit-fabricated-customer-words.ts）
+import { isCustomerEchoFabrication } from "./fabricated-customer-words";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -651,6 +653,8 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBl
 3位 [HISTORY] — 直近の会話履歴（直近10件のみ）
 4位 返信文自身の主張（根拠にならない）
 返信文が [CHECKPOINTS] または [CUSTOMER_CONDITIONS] と矛盾する場合は必ず捏造として指摘すること。
+ただしお客様自身の言葉（[LATEST_CUSTOMER]・[HISTORY] のお客様の発言）にある金額・駅名・物件名・条件・空き状況を返信が復唱しているのは根拠あり（捏造でない）。
+お客様が新しく言い直した条件（例: 登録は5〜8万でも今回「家賃6万まで」）は [CHECKPOINTS]・[CUSTOMER_CONDITIONS] より新しい事実として正とする（2026-10-02）。
 逆に、返信文の事実が [CHECKPOINTS] に記載されていれば、[HISTORY] に無くても根拠ありとして扱うこと
 （[HISTORY] より古い会話の根拠は [CHECKPOINTS] に集約されている）。
 [CUSTOMER_CONDITIONS] の数値は単位表記なしの生値の場合がある（例: 170000 = 17万円）。
@@ -754,6 +758,9 @@ ${(ctx.customerConditionsDb || "なし").slice(0, 1500)}
 ${companyFactsNote}[HISTORY]
 ${formatHistory(ctx.recentMessages, 10)}
 [/HISTORY]
+[LATEST_CUSTOMER]
+${(ctx.lastCustomerMessage || "なし").slice(0, 1500)}
+[/LATEST_CUSTOMER]
 [SOURCE]
 ${(ctx.staffSourceText || "なし").slice(0, 5000)}
 [/SOURCE]
@@ -764,6 +771,11 @@ ${draft}
     { type: "text" as const, text: stable, cache_control: { type: "ephemeral", ttl: "1h" } },
     { type: "text" as const, text: dynamic },
   ];
+}
+
+/** 捏造の判定に使うお客様の発言（その回の発言＋直近の会話のお客様の通） */
+function customerTextsForFabrication(ctx: FinalCheckContext): string[] {
+  return [ctx.lastCustomerMessage ?? "", ...(ctx.recentMessages ?? []).filter((m) => m.sender === "customer").slice(-12).map((m) => m.text ?? "")];
 }
 
 /** 会社の事実のブロック（anomaly_scan・verify の動的部）。お客様が聞いていなければ空文字（関係ない会話には出さない） */
@@ -2774,6 +2786,12 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
       const evidence = (raw.evidence ?? "").trim();
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード）
       const code = (raw.code ?? "UNKNOWN").trim() || "UNKNOWN";
+      // 2026-10-02 お客様自身の言葉（「家賃＋管理費で月7万円程度・西九条駅から徒歩3分以内」）の復唱に付いた FABRICATED_AMOUNT／PROPERTY は外す
+      //   （引用の金額・駅・号室・物件名が全部お客様の発言にある時だけ・1つでも無ければ残す）
+      if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx))) {
+        console.log(JSON.stringify({ tag: "final-check:customer-echo-dropped", pass, code, evidence: evidence.slice(0, 80) }));
+        continue;
+      }
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が本文に実在する場合のみ（実在しない引用での誤ブロックを防ぐ）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
@@ -3369,6 +3387,7 @@ async function runDiffRecheck(
       if (!evidence) continue; // 引用のない指摘は破棄（メタ認知ガード・runFinalCheckと同一）
       const code = (r.code ?? "UNKNOWN").trim() || "UNKNOWN";
       const pass = inferDiffIssuePass(code, targets);
+      if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx))) continue; // 2026-10-02 お客様の言葉の復唱は捏造でない（1回目と同じ）
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が修正後本文に実在する場合のみ（誤ブロック防止・runFinalCheckと同一）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";

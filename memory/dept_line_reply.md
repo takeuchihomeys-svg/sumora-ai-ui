@@ -8493,3 +8493,11 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - **古いテスト3本**: staff-send-pattern（申込フォーマットの固定文は app/lib/application-format.ts に移った→テストと本番の読み手 customer-sim-staff-run.ts appFormatText の既定の場所も直した＝黙って null を返していた）・auto-search-schedule（9/30 に PC の絞り込みが入って文字列の完全一致が外れた＝コードは正しい・形で見る）・jst-date R2（送った物件の行は c62a54a0 で sent-props-text.ts に移り既に jstMD＝テストの読む場所を直した）
 - **テスト**: final-check-overblock-1002 8・final-check-overfire 24・sensitive-case 6・staff-send-pattern 48・auto-search-schedule 90・jst-date 24・tsc OK。YUMA `scripts/yuma-overfire-route-test.ts`（今の家の解約／内覧後のお礼／内覧のキャンセル）DeepSeek 3/3 → 本番の組み合わせ（LLM_TEST_FINAL_CLAUDE=1）3/3
 - **費用**: DeepSeek 16回 $0.055 ／ 最後の確かめ Claude 20回 $0.104＋DeepSeek 4回 $0.045 ／ 漏れ0・止めた0・場面の通は id で削除
+
+### 2026-10-02（追記）竹内さんの答え2つ＋⑫⑬で見つかった穴（⑭）— 未コミット
+- **絵文字は場面ごとのスタッフの割合で外す**（「スタッフのを基に構成する」）: 14の場面・外す確率＝(スタッフ−AI が元から)／(1−AI が元から)・会話ごとのハッシュ。表（スタッフ／AI 出口の後）: 初回の挨拶 1/1%・謝罪 80/50%（AI 4通）・募集終了 66/67%・断り 48/40%・短い一言 51/53%・質問 32/31%・確認の宣言 33/37%・締め 16/11%・金額 21/12%（🌟✅だけの下書き16%は外せない）・審査/契約 36/38%・電話 40/50%・中 37/39%・長い 24/25%・全体 30/25%（出口の前 10%）。`scripts/audit-emoji-scene-rates.ts`
+- **申込フォーマットは AIX で止める**（「AIXで止めておく」）: apply-sub-mode に format（確定の2行の後）→ 画面はフォーマットの形で開く（スタッフが押す）・自動反映は staff_confirm で作らない・autoSend=false・auto-reply-dispatch は記入欄の見出しのある下書きを積まない
+- **捏造の検査がお客様の言葉を捏造と読む**: anomaly_scan に [LATEST_CUSTOMER]＋「お客様の言葉の復唱は根拠・新しい言い直しが登録より優先」・出口 fabricated-customer-words（今の下書きの指摘4件で外れるのはお客様のフォームの値の1件だけ・`scripts/audit-fabricated-customer-words.ts`）
+- **二重の約束**（確認しご連絡＋確認出来次第ご連絡）: double-confirm-contact（人 1/13,260＝同じ重なり）。**条件の「」**: quoted-conditions（人で変わる 0）。**直さない判断**: ピックアップの2回の約束は人の送信に13通・文中の改行は人の手打ちの6%＝人の形
+- **YUMA 最終で見つけた壊れ**: 確定の文を空白なしの「Luxe1308号室」にしたら号室の照合が「xe1308号室」を落として「福島Luお申込み」になった → room-choices.stripUngroundedRoomNo を空白を詰めた形とも照らす（テスト追加・再送で直ったことを確かめた）
+- YUMA: DeepSeek 2巡（Claude 0）→ 最後（本番の組み合わせ）で LINE に実送信 7通（申込確定2・支払いの時期・分割・短い了承・内覧調整の候補3つ・申込確定の再送）。確認・ピックアップの約束の場面（一括・言い直し・謝罪）は本番の送信 API がブレインを回し直すため送らず下書きだけ確かめた。片付け: sent_facts 1行・aix_generate_log 3行を id で削除

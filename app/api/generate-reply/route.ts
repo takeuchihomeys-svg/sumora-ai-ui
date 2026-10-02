@@ -272,6 +272,8 @@ import { loadProcedureAnswerWithin } from "@/app/lib/procedure-answer-server";
 import { detectSensitiveCase } from "@/app/lib/sensitive-case";
 import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
 import { fixBulkCheckWording } from "@/app/lib/bulk-check-wording";
+import { dropDoubleConfirmContact } from "@/app/lib/double-confirm-contact";
+import { unquoteConditions } from "@/app/lib/quoted-conditions";
 import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
 import { applySituationalEmoji } from "@/app/lib/emoji-situational";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
@@ -6481,6 +6483,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               const ok1 = fixSecondPersonOkyaku(draftBody, addressName?.name || customerName || null); if (ok1.changes.length) { w.push(...ok1.changes); draftBody = ok1.text; }
               const pay = fixPaymentTimingWording(draftBody); if (pay.changes.length) { w.push(...pay.changes); draftBody = pay.text; }
               const blk = fixBulkCheckWording(draftBody); if (blk.changes.length) { w.push(...blk.changes); draftBody = blk.text; }
+              // 2026-10-02 ⑫の再生: 「確認しご連絡…！！確認出来次第ご連絡…！！」の2回目（人 1/13,260＝同じ重なり）・条件を「」で囲む（人 0）を直す
+              const dc = dropDoubleConfirmContact(draftBody); if (dc.removed.length) { w.push(...dc.removed.map((x) => `二重の約束を外す: ${x}`)); draftBody = dc.text; }
+              const uq = unquoteConditions(draftBody); if (uq.removed.length) { w.push(...uq.removed.map((x) => `条件の「」を外す: ${x}`)); draftBody = uq.text; }
               if (!noEmoji) {
                 // 2026-10-02 竹内「スタッフのを基に構成する」: 場面ごとのスタッフの割合（2通目＝直前10分以内にこちらが送った後の通も場面に）
                 const em = applySituationalEmoji(draftBody, { seed: conversationId ?? null, firstContact: isFirstEverReplyFromMsgs === true, afterStaffSend: (() => { const last = recentMessages[recentMessages.length - 1]; return !!last && last.sender === "staff" && !!last.createdAt && Date.now() - Date.parse(last.createdAt) < 10 * 60_000; })() });

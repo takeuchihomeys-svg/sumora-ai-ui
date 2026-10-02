@@ -205,6 +205,17 @@ const SCENES: Scene[] = [
       { label: "候補3つ", ok: (d) => (d.match(/\d{1,2}\/\d{1,2}/g) ?? []).length >= 3 },
       { label: "JSON の名残なし", ok: (d) => !/"\s*[,}]|\{"/.test(d) },
     ] },
+  { id: "rent_restate", why: "お客様の言い直し「家賃6万まで」の復唱を最終チェックが捏造と読まない（FABRICATED_AMOUNT の1回目）・条件を「」で囲まない", state: "proposing",
+    turns: [
+      { sender: "customer", text: "▶︎【お部屋お探し中！】\n①【ご入居の時期】⇒11月頃\n②【ご希望の家賃（◯万円〜◯万円）】⇒5万〜8万\n③【希望の広さ・間取り】⇒1K\n⑤【ご希望のエリア・駅名】⇒大国町、難波" },
+      { sender: "staff", text: "かしこまりました！！\n大国町・難波周辺全域から家賃5〜8万・1KでYUMAさんにオススメできるお部屋ピックアップ出来次第お送りさせて頂きます！！" },
+      { sender: "customer", text: "すみません、やっぱり家賃6万までにしたいです。大国町駅から徒歩10分以内で探してもらえますか？" },
+    ],
+    expect: [
+      { label: "6万を書く", ok: (d) => /6万/.test(d) },
+      { label: "条件を「」で囲まない", ok: (d) => !/「[^」]*(?:万|駅)[^」]*」/.test(d) },
+      { label: "二重の約束なし", ok: (d) => !(/確認し(?:て)?ご連絡させて/.test(d) && /確認出来次第ご連絡/.test(d)) },
+    ] },
   { id: "apply_after_confirm", why: "申込確定の2行の後 → 申込フォーマットは AIX で止める（自動で作らない・送らない）", state: "viewing", produce: "apply_confirm",
     turns: [
       { sender: "customer", text: "一つ目の福島駅の物件の申し込みをお願いしたいです。" },
