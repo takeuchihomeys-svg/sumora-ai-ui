@@ -122,5 +122,40 @@ ok("page-script: 検索を押す所（clickSearch・見積用）も案内モー�
   ok("ピンポイントの後に「広げて検索」を光らせる（axlx_pinpoint_memo・押さない）", /function refreshWideGlow\(\)/.test(pp) && /axlx-wide-glow/.test(pp) && /memoSearchRun\(session, "realpro"\)/.test(rg));
 }
 
+// ── 2026-10-02 v2.5.71 竹内「この後賃料とか光るはずがひかっていない 原因みつける 駅選択したつぎが光らない」「印刷用pdfも光らせる」──
+{
+  const A = P.stationStepAction;
+  // 実画面（ASA・沿線の設定 >> 駅の設定）: 塚本・御幣島に印・小窓に「確定してリストへ」「駅リセット」「設定へ戻る」
+  ok("駅を全部選んだ・小窓が開いている → 「確定してリストへ」を光らせる（旧: 決定/OK/閉じる で何も光らなかった）", A({ visibleUnchecked: 0, visibleTargets: 2, anyChecked: true, modalOpen: true, lineBtns: 0 }) === "confirm");
+  ok("小窓を閉じた・光る駅に印が残る → 済み（手で「済み」を押さない）", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: true, modalOpen: false, lineBtns: 0 }) === "done");
+  ok("スタッフが一部の駅だけ選んで閉じた → 済み", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: true, modalOpen: false, lineBtns: 2 }) === "done");
+  ok("まだの駅が見えている → 駅を光らせる", A({ visibleUnchecked: 1, visibleTargets: 2, anyChecked: true, modalOpen: true, lineBtns: 0 }) === "stations");
+  ok("路線の画面（駅が見えない・印なし）→ 路線を光らせる", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: false, modalOpen: true, lineBtns: 2 }) === "lines");
+  ok("小窓が閉じていて印なし → 開く", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: false, modalOpen: false, lineBtns: 0 }) === "open");
+  ok("小窓の閉じるボタンの文字に「確定してリストへ」「×とじる」", P.STATION_MODAL_DONE_TEXTS.includes("確定してリストへ") && P.STATION_MODAL_DONE_TEXTS.includes("×とじる") && P.STATION_MODAL_OPEN_TEXTS.includes("駅リセット"));
+  const rg2 = read("realpro-guide.js");
+  ok("駅の手順は済みを覚える（小窓を閉じて印が読めなくなっても戻らない）", /if \(act === "done"\) \{ markStepDone\(s\.id\); return \{ done: true \}; \}/.test(rg2));
+  ok("「確定してリストへ」等を押したら駅の手順を済みに（光る駅に1つでも印）", /closeHit && \(cur\.step\.kind === "pick_route" \|\| stationAnyChecked\(cur\.step\)\)/.test(rg2));
+  ok("旧の「この手順を「済み」にしてください」を出さない", !/この手順を「済み」にしてください/.test(rg2));
+  ok("画面が変わったらすぐ光を次の手順へ（MutationObserver → tick）", /_tickSoon = setTimeout\(function \(\) \{ _tickSoon = null; tick\(\); \}, 120\)/.test(rg2));
+  // 駅の後の手順（賃料・面積・築年数・間取り・検索）が手順表に並ぶ（ASA の条件）
+  const asa = P.buildPlan({ rent_min: 70000, rent_max: 150000, floor_plan: "2LDK〜3LDK", area_min: 40, building_age: 35, station_names: ["塚本", "御幣島"], route_ids: [], area_mode: "station" });
+  const ks = asa.steps.map((x) => x.kind), iSt = ks.indexOf("pick_station");
+  ok("ASA: 駅の後に賃料・面積・築年数・間取り・検索が続く", iSt >= 0 && asa.steps.slice(iSt + 1).some((x) => x.name === "rental_cost2") && asa.steps.slice(iSt + 1).some((x) => x.name === "structured_date") && ks[ks.length - 1] === "search", ks);
+
+  // 印刷用PDF: 一覧で案内のお客様が無い（「拡張でお客様を選ぶと…」）→ 拡張の今のお客様で
+  const R = P.resultsCustomerAction;
+  ok("一覧・案内なし・拡張のお客様あり → 今のお客様で一覧の案内を作る（実画面の形）", R({ rows: 1, hasSession: false, stage: null, sessionCid: null, currentCid: "cus-1" }) === "adopt");
+  ok("一覧・案内なし・お客様も無い → none（通すの光だけ）", R({ rows: 1, hasSession: false, stage: null, sessionCid: null, currentCid: "" }) === "none");
+  ok("一覧ではない → none", R({ rows: 0, hasSession: false, stage: null, sessionCid: null, currentCid: "cus-1" }) === "none");
+  ok("一覧で拡張のお客様を替えた → 合わせ直す", R({ rows: 3, hasSession: true, stage: "results", sessionCid: "cus-1", currentCid: "cus-2" }) === "switch");
+  ok("同じお客様 → keep", R({ rows: 3, hasSession: true, stage: "results", sessionCid: "cus-1", currentCid: "cus-1" }) === "keep");
+  ok("画面の変化のたびに一覧の印を付け直す（送付済みを読めていなくても）", /_hideTimer = null; syncResults\(\);/.test(rg2) && !/if \(!sentIndex \|\| _hideTimer\) return;/.test(rg2));
+  ok("お客様が分からなくても「通す」の印刷用PDF は光らせる", /if \(act === "none"\) \{ markPdfButtons\(R\.list\(\)\); return; \}/.test(rg2));
+  ok("案内の記録が消えていても一覧なら印を付ける", /SESSION_TTL_MS\) \{ setTimeout\(syncResults, 2500\); return; \}/.test(rg2));
+  ok("光の CSS を markPdfButtons の中でも入れる", /if \(document\.body\) ensureLayer\(\);/.test(rg2));
+  ok("下見の「通す」は印刷用PDF のボタンに付く（bulk-dl の data-axlx-verdict）", /x\.btn\.setAttribute\("data-axlx-verdict"/.test(read("bulk-dl.js")));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

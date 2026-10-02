@@ -174,7 +174,45 @@
     return { steps: steps, location: lm };
   }
 
+  /**
+   * 駅の手順の次の動き（2026-10-02 v2.5.71 竹内「駅選択したつぎが光らない」）。
+   *   旧: 光る駅を全部選ぶと「決定・OK・閉じる」を光らせて手で「済み」を待った → 実画面のボタンは「確定してリストへ」「×とじる」で
+   *   どれにも当たらず何も光らず、小窓を閉じても手順が「済み」にならず、賃料から先がずっと光らなかった。
+   *   x: { visibleUnchecked（見えている・まだの光る駅の数）, visibleTargets（見えている光る駅の数）, anyChecked（光る駅のどれかに印・隠れていても）,
+   *        modalOpen（駅の小窓が開いている＝「確定してリストへ」「駅リセット」「設定へ戻る」が見える）, lineBtns（見えている路線のボタンの数） }
+   *   返す: "stations"（光っている駅を押す）／"confirm"（「確定してリストへ」を押す）／"lines"（路線を押す）／"done"（済み）／"open"（小窓を開く）
+   *   スタッフが光る駅の一部だけ選んだ時も、1駅でも印があって小窓を閉じれば済み（選ぶのはスタッフ）。
+   */
+  function stationStepAction(x) {
+    if (x.visibleUnchecked > 0) return "stations";
+    if (x.modalOpen) return x.anyChecked ? "confirm" : (x.lineBtns > 0 ? "lines" : "confirm");
+    if (x.anyChecked) return "done";
+    return x.lineBtns > 0 ? "lines" : "open";
+  }
+  /** 駅・路線の小窓を閉じるボタンの文字（押したら駅の手順は済み・1駅でも印がある時） */
+  var STATION_MODAL_DONE_TEXTS = ["確定してリストへ", "×とじる", "とじる", "閉じる", "決定", "この条件で絞り込む", "検索"];
+  var STATION_MODAL_OPEN_TEXTS = ["確定してリストへ", "駅リセット", "設定へ戻る"];
+
+  /**
+   * 一覧の画面で「誰の検索結果か」（2026-10-02 v2.5.71 竹内「印刷用pdfも光らせる」）。
+   *   実画面: 検索の後の一覧で案内の枠が「拡張でお客様を選ぶと…」＝案内のお客様が無く、印刷用PDF の光（v2.5.69）が出なかった
+   *   （案内の記録は storage.session＝拡張の読み直し・ブラウザの再起動で消える／駅の手順が止まり小窓の「検索」で一覧へ進んだ時も results にならない）。
+   *   → お客様の元は1つ: 拡張が選んでいる今のお客様（storage.local の current_customer_id＝上のバー・一括DL・下見・popup と同じ）。
+   *   x: { rows（一覧の行の数）, hasSession, stage（"form"|"results"|null）, sessionCid, currentCid }
+   *   返す: "none"（一覧ではない・お客様が分からない）／"adopt"（今のお客様で一覧の案内を作る）／"switch"（今のお客様に合わせ直す）／"keep"
+   */
+  function resultsCustomerAction(x) {
+    if (!x.rows) return "none";
+    var cur = x.currentCid ? String(x.currentCid) : "";
+    if (!x.hasSession) return cur ? "adopt" : "none";
+    if (cur && String(x.sessionCid || "") !== cur && x.stage === "results") return "switch";
+    if (cur && !x.sessionCid) return "switch";
+    return "keep";
+  }
+
   return {
+    resultsCustomerAction: resultsCustomerAction,
+    stationStepAction: stationStepAction, STATION_MODAL_DONE_TEXTS: STATION_MODAL_DONE_TEXTS, STATION_MODAL_OPEN_TEXTS: STATION_MODAL_OPEN_TEXTS,
     buildPlan: buildPlan, floorPlanValues: floorPlanValues, locationMode: locationMode, nearestUp: nearestUp, nearestDown: nearestDown,
     ROUTE_LINE_MAP: ROUTE_LINE_MAP, RENT_OPTS: RENT_OPTS, AGE_OPTS: AGE_OPTS, AREA_OPTS: AREA_OPTS, FLOOR_MAP: FLOOR_MAP, STRUCTURE_MAP: STRUCTURE_MAP,
     SLDK_SUBSTITUTE: SLDK_SUBSTITUTE, FLOOR_LABEL: FLOOR_LABEL,

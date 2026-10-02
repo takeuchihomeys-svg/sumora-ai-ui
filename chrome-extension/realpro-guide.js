@@ -134,6 +134,12 @@
     return byText(["絞り込み条件＋", "絞り込み条件+", "絞り込み条件", "検索条件を表示"]);
   }
 
+  /** 手順を済みにして覚える（小窓を閉じて印が読めなくなっても戻らない） */
+  function markStepDone(id) {
+    if (!session) return;
+    session.done = session.done || {};
+    if (!session.done[id]) { session.done[id] = true; saveSession(); }
+  }
   /** 手順の状態: { done, target（光らせる要素・複数可）, note（吹き出しの補足） } */
   function evalStep(s) {
     if (session && session.done && session.done[s.id]) return { done: true };
@@ -164,22 +170,29 @@
       return !!inp.checked === !!s.want ? { done: true } : { done: false, target: [hit] };
     }
     if (s.kind === "pick_station") {
+      // 2026-10-02 v2.5.71 竹内「駅選択したつぎが光らない」: 次の動きは realpro-guide-plan.js stationStepAction（1つの関数）
       var want = {}; (s.names || []).forEach(function (n) { want[norm(n).replace(/駅$/, "")] = true; });
-      var found = [], unchecked = [];
+      var vis = [], unchecked = [], anyChecked = false;
       document.querySelectorAll('input[type="checkbox"]').forEach(function (c) {
-        if (!visible(c) && !visible(labelOf(c))) return;
         if (!want[textOfInput(c)]) return;
-        found.push(c); if (!c.checked) unchecked.push(labelOf(c) || c);
+        if (c.checked) anyChecked = true; // 小窓を閉じて隠れた印も数える
+        if (!visible(c) && !visible(labelOf(c))) return;
+        vis.push(c); if (!c.checked) unchecked.push(labelOf(c) || c);
       });
-      if (found.length && !unchecked.length) return { done: false, target: [byText(["決定", "OK", "閉じる", "この条件で絞り込む"])], note: "駅を選び終えたら小窓を閉じて、この手順を「済み」にしてください" };
-      if (unchecked.length) return { done: false, target: unchecked, note: "光っている駅にチェック（" + unchecked.length + "駅）" };
       var lineBtns = (s.lines || []).map(function (l) { return byText([l]); }).filter(Boolean);
-      if (lineBtns.length) return { done: false, target: lineBtns, note: "先に路線を押してください: " + (s.lines || []).join("・") };
+      var modalOpen = !!byText(Plan.STATION_MODAL_OPEN_TEXTS);
+      var act = Plan.stationStepAction({ visibleUnchecked: unchecked.length, visibleTargets: vis.length, anyChecked: anyChecked, modalOpen: modalOpen, lineBtns: lineBtns.length });
+      if (act === "done") { markStepDone(s.id); return { done: true }; }
+      if (act === "stations") return { done: false, target: unchecked, note: "光っている駅にチェック（" + unchecked.length + "駅）" };
+      if (act === "confirm") return { done: false, target: [byText(["確定してリストへ"]) || byText(["決定", "この条件で絞り込む"]) || byText(["×とじる", "とじる", "閉じる"])], note: "駅を選び終えたら「確定してリストへ」（他の路線の駅は「設定へ戻る」から）" };
+      if (act === "lines") return { done: false, target: lineBtns, note: "先に路線を押してください: " + (s.lines || []).join("・") };
       return { done: false, target: [opener(s.kind)], note: "「沿線・駅絞り込み」を開いてください" };
     }
     if (s.kind === "pick_route") {
       var lb2 = (s.lines || []).map(function (l) { return byText([l]); }).filter(Boolean);
-      return lb2.length ? { done: false, target: lb2, note: "路線: " + (s.lines || []).join("・") + "（選び終えたら「済み」）" } : { done: false, target: [opener(s.kind)] };
+      var conf2 = byText(["確定してリストへ"]);
+      if (conf2 && !lb2.length) return { done: false, target: [conf2], note: "路線を選び終えたら「確定してリストへ」" };
+      return lb2.length ? { done: false, target: lb2, note: "路線: " + (s.lines || []).join("・") + "（選び終えたら「確定してリストへ」）" } : { done: false, target: [opener(s.kind)] };
     }
     if (s.kind === "pick_city") {
       var un = [], any = false;
@@ -321,6 +334,10 @@
     if (a === "showsent") { showSent = !showSent; applySentHiding(); }
   }
 
+  function stationAnyChecked(s) {
+    var want = {}; (s.names || []).forEach(function (n) { want[norm(n).replace(/駅$/, "")] = true; });
+    return Array.prototype.some.call(document.querySelectorAll('input[type="checkbox"]'), function (c) { return c.checked && want[textOfInput(c)]; });
+  }
   function currentStep() {
     if (!plan) return null;
     for (var i = 0; i < plan.steps.length; i++) {
@@ -354,6 +371,12 @@
     for (var n = t, k = 0; n && k < 4; n = n.parentElement, k++) if (norm(n.value || n.textContent) === "リセット") { isResetClick = true; break; }
     if (cur.step.kind === "reset" && (isResetClick || (tgt && (tgt === t || tgt.contains(t))))) {
       session.done = session.done || {}; session.done[cur.step.id] = true; saveSession();
+    }
+    // 駅・路線の小窓を「確定してリストへ」「×とじる」等で閉じた: 駅は光る駅に1つでも印があれば済み・路線は済み（v2.5.71）
+    if (cur.step.kind === "pick_station" || cur.step.kind === "pick_route") {
+      var closeHit = false;
+      for (var n2 = t, k2 = 0; n2 && k2 < 4; n2 = n2.parentElement, k2++) if (Plan.STATION_MODAL_DONE_TEXTS.map(norm).indexOf(norm(n2.value || n2.textContent)) >= 0) { closeHit = true; break; }
+      if (closeHit && (cur.step.kind === "pick_route" || stationAnyChecked(cur.step))) markStepDone(cur.step.id);
     }
     if (cur.step.kind === "search" && tgt && (tgt === t || tgt.contains(t))) {
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); memoSearchRun(session, "realpro");
@@ -389,7 +412,33 @@
   });
 
   // ── ④ 一覧の画面: 送付済みの部屋の行を隠す ──
-  var sentIndex = null, sentNote = "", showSent = false;
+  var sentIndex = null, sentNote = "", showSent = false, _sentFor = null;
+  /**
+   * 一覧の行に印（送付済みを隠す・印刷用PDF を光らせる）を付ける入口（v2.5.71）。案内のお客様が無い・消えた時は拡張の今のお客様で補う。
+   *   一覧が後から描かれる（bulk-dl が行を読むのはページを読んで2秒後）ので、画面の変化のたびに呼ぶ（重い所は1回だけ）。
+   */
+  function syncResults() {
+    var R = (typeof self !== "undefined" ? self : window).AxlxRealproRows;
+    if (!guideOn || !R || !Plan || !Plan.resultsCustomerAction) return;
+    var rows = R.list();
+    if (!rows.length) return;
+    try {
+      chrome.storage.local.get(["current_customer_id", "current_customer_name"], function (r) {
+        var cur = r && r.current_customer_id ? String(r.current_customer_id) : "";
+        var act = Plan.resultsCustomerAction({ rows: rows.length, hasSession: !!session, stage: session ? session.stage : null, sessionCid: session ? session.customerId : null, currentCid: cur });
+        if (act === "none") { markPdfButtons(R.list()); return; } // お客様が分からなくても「通す」は光らせる（送付済みは付けない）
+        if (act === "adopt") {
+          session = { customerId: cur, customerName: (r && r.current_customer_name) || "", conditions: {}, stage: "results", done: {}, at: Date.now(), adopted: true };
+          saveSession(); renderPanel();
+        } else if (act === "switch") {
+          session.customerId = cur; session.customerName = (r && r.current_customer_name) || session.customerName || "";
+          saveSession();
+        }
+        if (_sentFor !== String(session.customerId)) { _sentFor = String(session.customerId); sentIndex = null; customerIndex = null; _sentCheckSig = ""; loadSentRooms(); }
+        else applySentHiding();
+      });
+    } catch (_) { markPdfButtons(rows); }
+  }
   function loadSentRooms(_retried) {
     if (session && !session.customerId && !_retried) {
       // 誰の検索か分からない時は、拡張が選んでいる今のお客様で補ってから読む（1回だけ）
@@ -483,6 +532,7 @@
   function markPdfButtons(rows) {
     var SK = (typeof self !== "undefined" ? self : window).AxlxSentSkip;
     if (!guideOn || !SK) return;
+    if (document.body) ensureLayer(); // 光の CSS（axlx-pdf-go）を先に入れる（お客様が分からない時もこの道を通る）
     (rows || []).forEach(function (r) {
       var btn = r.btn;
       if (!btn || !btn.classList) return;
@@ -516,28 +566,38 @@
     b.style.opacity = guideOn ? "0.4" : "";
   }
   var _hideTimer = null;
+  var _tickSoon = null;
   new MutationObserver(function (muts) {
     lockAutoPaging();
-    // 一覧の行が後から描かれた時も隠し直す（自分の枠・光の変化は見ない）
-    if (!sentIndex || _hideTimer) return;
+    // 小窓が閉じた・欄が描き直された時に光をすぐ次の手順へ（400ms の見直しを待たない・自分の枠の変化は見ない）
+    if (!_tickSoon && !muts.every(function (m) { return m.target && m.target.closest && m.target.closest("#axlx-guide-panel,#axlx-guide-layer"); })) _tickSoon = setTimeout(function () { _tickSoon = null; tick(); }, 120);
+    // 一覧の行が後から描かれた時も隠し直す・印刷用PDF を光らせ直す（自分の枠・光の変化は見ない）
+    // v2.5.71: 旧は送付済みを読めた後（sentIndex あり）だけ＝案内のお客様が無いと一度も光らなかった
+    if (_hideTimer) return;
     if (muts.every(function (m) { return m.target && m.target.closest && m.target.closest("#axlx-guide-panel,#axlx-guide-layer"); })) return;
-    _hideTimer = setTimeout(function () { _hideTimer = null; applySentHiding(); }, 300);
+    _hideTimer = setTimeout(function () { _hideTimer = null; syncResults(); }, 300);
   }).observe(document.documentElement, { childList: true, subtree: true });
 
   // 案内モードの設定を読む（変数をすべて用意した後＝ファイルの最後で読む。先に読むと案内の枠が2つできる）
   try {
     chrome.storage.local.get([MODE_KEY], function (r) { applyMode(r ? r[MODE_KEY] : undefined); });
-    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch[MODE_KEY]) applyMode(ch[MODE_KEY].newValue); });
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area === "local" && ch[MODE_KEY]) applyMode(ch[MODE_KEY].newValue);
+      // 拡張で別のお客様を選んだ: 一覧の画面ならそのお客様の送付済み・光に合わせ直す（v2.5.71・お客様の元は1つ）
+      if (area === "local" && ch.current_customer_id && session && session.stage === "results") syncResults();
+    });
   } catch (_) { applyMode(true); }
 
   // ページを開いた時: 前の案内の続き
   try {
     chrome.storage.session.get([SESSION_KEY], function (r) {
       var s = r && r[SESSION_KEY];
-      if (!s || !s.at || Date.now() - s.at > SESSION_TTL_MS) return;
+      // 案内の記録が無い・古い時も、一覧なら拡張の今のお客様で印を付ける（v2.5.71）
+      if (!s || !s.at || Date.now() - s.at > SESSION_TTL_MS) { setTimeout(syncResults, 2500); return; }
       session = s;
       if (session.stage === "form" && Plan) plan = Plan.buildPlan(session.conditions || {}, { withReset: !!session.withReset });
-      if (session.stage === "results") setTimeout(loadSentRooms, 1500);
+      // 一覧なら印を付ける（bulk-dl が行を読むのは読み込み＋2秒）。駅の手順で止まり小窓の「検索」で一覧に来た時（stage=form）も同じ
+      setTimeout(syncResults, 2500);
       tick();
     });
   } catch (_) {}
