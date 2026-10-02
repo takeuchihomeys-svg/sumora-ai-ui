@@ -22,6 +22,13 @@ export type FinalCheckGateLog = {
   version: string;
   /** 決まり文句に当たらなかった文（先頭3つ・40字） */
   unsafe: string[];
+  /** 2026-10-02 竹内「最終チェックがボトルネックになってる部分…生成のところとくらべて邪魔になっている部分も調査」:
+   *  最終チェック（書き直し・再検査込み）にかかった時間 ms */
+  ms?: number;
+  /** 書き直しで本文が変わった時だけ、チェック前の本文（600字）。生成→書き直し後→スタッフの実送信を比べる材料（scripts/audit-final-check-gate.ts ⑪） */
+  draftIn?: string;
+  /** 書き直しを省いた理由（"style_only"） */
+  revisionSkipped?: string;
 };
 
 export type GatedOptions = {
@@ -81,6 +88,9 @@ export async function runFinalCheckGated(draft: string, ctx: FinalCheckContext, 
   } else {
     loop = await runFinalCheckWithRevision(draft, ctx, o.budgetMs ?? 90000);
   }
+  gate.ms = Date.now() - started;
+  if (loop.finalDraft !== draft) gate.draftIn = draft.slice(0, 600);
+  if (loop.finalCheck.revision_skipped) gate.revisionSkipped = loop.finalCheck.revision_skipped;
   (loop.finalCheck as CheckResult & { gate?: FinalCheckGateLog }).gate = gate;
   return { ...loop, gate };
 }

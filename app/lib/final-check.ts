@@ -16,6 +16,8 @@
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
+// 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
+import { isStyleOnlyNoError, isStyleNoErrorCode } from "./final-check-scope";
 import { stripMetaNarration, isMetaNarrationLine } from "./meta-narration";
 // 2026-09-29 API 費用の調査: 最終チェックの Claude 呼び出し（7日で Sonnet 281回・Haiku 343回）が llm_usage_logs で名前なしだった → 名札だけ付ける（動きは変えない）
 import { sumoraLlmMarks } from "./llm-usage-recorder";
@@ -127,6 +129,8 @@ export interface CheckResult {
   context_hash?: string;
   /** check-reply が生成時の結果を再利用した */
   reused_from_generation?: boolean;
+  /** 2026-10-02: 書き直しを省いた理由（"style_only"＝直す指摘が文に間違いの無い文体だけ）。JSONB のキー追加のみ */
+  revision_skipped?: "style_only";
 }
 
 export interface FinalCheckContext {
@@ -3450,9 +3454,20 @@ export async function runFinalCheckWithRevision(
         (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
     );
     if (passableWarnIssues.length === 0) return { finalDraft: draft, finalCheck: check1 };
+    // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」:
+    //   直す指摘が全部「文に間違いの無い文体」（開口語・締め・言い回しの数・骨格・共感の言い方。final-check-scope の isStyleOnlyNoError）なら書き直さない。
+    //   文体は 9/21 から画面に出さない決まりで、書き直し（Sonnet＋再検査）を払っても見せない指摘を直すだけだった（送った例 267回の 2割強）。
+    //   文法の誤り（二重敬語）・主語や事実のずれ・頼まれていない中身が1つでも混ざれば今までどおり書き直す。監査 scripts/audit-final-check-gate.ts ⑧
+    if (isStyleOnlyNoError(passableWarnIssues)) {
+      check1.revision_skipped = "style_only";
+      return { finalDraft: draft, finalCheck: check1 };
+    }
     // 2026-09-09 行動台帳: 台帳系 warning の修正指示に根拠と制約を添える
     const ledgerW = resolveLedger(ctx);
-    const revisedRaw = await runGroundedRevision(draft, passableWarnIssues.map((i) => decorateFixInstruction(i, ledgerW)), ctx, REVISION_MS);
+    // 2026-10-02 同じ決まりの続き: 事実の warning と一緒に出た「文に間違いの無い文体」の指摘は書き直しに渡さない
+    //   （DeepSeek で文体だけの書き直しを過去の下書き 37件に当てたら 32件が実送信から遠ざかった＝何卒・名前・条件の列挙を消す。scripts/yuma-style-revision-probe.ts）
+    const fixIssuesW = passableWarnIssues.filter((i) => !isStyleNoErrorCode(i.code));
+    const revisedRaw = await runGroundedRevision(draft, fixIssuesW.map((i) => decorateFixInstruction(i, ledgerW)), ctx, REVISION_MS);
     if (!revisedRaw) return { finalDraft: draft, finalCheck: check1 };
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用
     // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（別名の統一・承知→かしこまりました・すぐに除去・誤字・名前スロット）。

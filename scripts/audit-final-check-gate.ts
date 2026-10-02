@@ -17,10 +17,11 @@
 // 実行: npx tsx --env-file=.env.local scripts/audit-final-check-gate.ts [--since=2026-09-10] [--detail] [--cost-days=3]
 //   --detail  skip になる下書きを全部表示する（見逃しが無いか目で読む用）
 import { createClient } from "@supabase/supabase-js";
-import { classifyIssueScope } from "../app/lib/final-check-scope";
+import { classifyIssueScope, isStyleOnlyNoError } from "../app/lib/final-check-scope";
 import { needsFinalCheck, type FinalCheckGateDecision } from "../app/lib/final-check-gate";
 import { detectSensitiveCase } from "../app/lib/sensitive-case";
 import { claudeUsageUsd } from "../app/lib/llm-price";
+import { isRevisable, type CheckIssue } from "../app/lib/final-check";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=").slice(1).join("=");
@@ -177,16 +178,18 @@ async function main() {
     const exRuns = runs.filter((r) => r.src === "example");
     let blk = 0, factWarn = 0, styleOnly = 0, none = 0;
     for (const r of exRuns) {
-      const rev = r.pre.filter((x) => !/:info$/.test(x) && !/^TYPO_/.test(x));
+      // 書き直しに渡る指摘だけ（info・誤字・観測専用・表示のみを除く＝final-check.ts isRevisable と同じ）
+      const rev = r.pre.filter((x) => { const [c, sev] = x.split(":"); return sev !== "info" && !c.startsWith("TYPO_") && isRevisable({ code: c, severity: sev } as CheckIssue); });
       if (rev.some((x) => x.endsWith(":block") && classifyIssueScope(x.split(":")[0]) !== "style")) blk++;
       else if (rev.some((x) => classifyIssueScope(x.split(":")[0]) !== "style")) factWarn++;
-      else if (rev.length) styleOnly++;
+      else if (rev.length && isStyleOnlyNoError(rev.map((x) => ({ code: x.split(":")[0], severity: x.split(":")[1] })))) styleOnly++;
+      else if (rev.length) factWarn++; // 間違いを含む文体（二重敬語・主語のずれ等）は今までどおり書き直す
       else none++;
     }
     console.log(`\n=== ⑧ 書き直しの引き金（送った例 ${exRuns.length}回・修正前の指摘で）===`);
-    console.log(`   事実・安全の block ${blk}（${pct(blk, exRuns.length)}）／ 事実・安全の warning だけ ${factWarn}（${pct(factWarn, exRuns.length)}）／ 文体の指摘だけ ${styleOnly}（${pct(styleOnly, exRuns.length)}）／ 指摘なし ${none}`);
+    console.log(`   事実・安全の block ${blk}（${pct(blk, exRuns.length)}）／ 事実・安全の warning だけ ${factWarn}（${pct(factWarn, exRuns.length)}）／ 文に間違いの無い文体だけ ${styleOnly}（${pct(styleOnly, exRuns.length)}）／ 指摘なし ${none}`);
     console.log(`   書き直し1回 $${revUsd.toFixed(4)}（revision＋recheck）・本番の書き直し ${g("final_check_revision").n}回／${days.toFixed(1)}日 ＝ $${((g("final_check_revision").usd + g("final_check_recheck").usd) / days).toFixed(2)}／日`);
-    console.log(`   → 文体だけの回の書き直しを止めると 最大 1日 約 $${(perDay * (styleOnly / Math.max(1, exRuns.length)) * revUsd).toFixed(2)}（文体は画面に出さない決まり＝9/21。final-check.ts の warning の修正の入口で style を外す。竹内さんの判断待ち）`);
+    console.log(`   → 2026-10-02 から書き直さない（竹内さん了承）＝ 最大 1日 約 $${(perDay * (styleOnly / Math.max(1, exRuns.length)) * revUsd).toFixed(2)}（final-check.ts の warning の修正の入口・revision_skipped="style_only"）`);
   }
 
   // ── ⑦ 影の運用の記録（実装後）──

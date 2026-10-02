@@ -106,3 +106,47 @@ export function splitFinalCheckIssues<T extends ScopedIssue>(issues: readonly T[
 export function hasBlockingIssue(issues: readonly ScopedIssue[]): boolean {
   return (issues ?? []).some((i) => i.severity === "block" && classifyIssueScope(i.code as string | null) !== "style");
 }
+
+// ── 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」 ──
+//   warning だけの回の書き直し（Sonnet の revision＋Haiku の recheck）は、指摘が「文に間違いの無い文体」だけなら走らせない。
+//   style（上の STYLE_CODES）を全部ではなく、**間違いを含まない物だけ**に絞った一覧（各 code の定義文と実データの例を読んで決めた）:
+//     入れる  … 開口語・締め・言い回しの数・骨格・共感の言い方・復唱の有無（どれも「どう書くか」の好み。事実・文法・主語・頼まれていない中身の誤りではない）
+//     入れない … 文法の誤り（DOUBLE_KEIGO 二重敬語・SELF_HONORIFIC 自敬）
+//               事実・主語のずれ（OPENING_GREETING_UNEXPECTED 遅れていないのに遅れの謝罪・INTRO_REPEAT 既にやり取りのある人に自己紹介・
+//                 AWAIT_CONTACT_MISPLACED 次に動くのはこちらなのに連絡待ち・PROMISE_ECHO_MISMATCH 未履行を完了形・VOCAB_MIRROR_MISMATCH お客様の言っていない語・
+//                 GOCHOUGO_* 日程の聞き直し／主語の逆転・UKETAMAWARI_OBJECT_UNANCHORED／CONFIRM_* 確認の目的語・主語）
+//               頼まれていない中身（CLOSING_FORWARD_PUSH・CONSIDER_PUSH・URGENCY_NO_INTENT・APPLY_PUSH_NO_INTENT・UNPROMPTED_PROPOSAL・
+//                 PREEMPTIVE_HEDGE・HEDGE_WITHOUT_SEARCH_DECL・SELF_HEDGE_ECHO・RESULT_EXCUSE・WIDEN_EXCUSE_REDUNDANT・CONDITION_RELAX_UNASKED）・
+//               決まりの禁止（NEGATIVE_APOLOGY）・お客様の気持ちの代弁（SYMPATHY_ECHO＝気持ちを決めつける）
+//   ⚠ 新しい style の code はここに入れない限り書き直しが走る（＝今までどおり）。知らない物は省かない
+const STYLE_NO_ERROR_CODES: ReadonlySet<string> = new Set([
+  // 開口語・挨拶の選び方
+  "OPENER_MISMATCH", "OPENER_UNUSUAL", "OPENING_GREETING_MISMATCH", "THANK_OPENING", "NAME_BEFORE_OPENING",
+  "FILLER_GREETING", "GRATITUDE_OPENING", "CONDITION_OPENING",
+  // 締めの選び方
+  "CLOSER_MISSING", "EMPTY_CLOSER", "PASSIVE_CLOSER", "NANISOTSU_MISPLACED", "HUMBLE_WAIT", "COMMIT_AFTER_DELIVERABLE",
+  // 言い回しの数・並べ方
+  "EXCLAMATION_OVERUSE", "SASETE_OVERUSE", "NAME_OVERUSE", "LIST_STRUCTURE", "SPLIT_ACK_REPLY", "REPEATED_SENTENCE",
+  // 骨格・必須要素（観測専用）
+  "REPLY_SKELETON_MISSING", "PAIR_ELEMENT_MISSING", "CELL_AVOID_CONFLICT", "WE_DO_MISSING", "WE_DO_MISSING_DET", "PASSIVE_ONLY", "GENERIC_ONLY_REPLY",
+  // 共感・復唱の言い方
+  "FEELING_TEMPLATE", "CONDITION_ECHO_MISSING", "ECHO_CONFIRM", "PROMISE_ECHO_MISSING",
+]);
+
+/** 文に間違いの無い文体の指摘か（書き直しを走らせなくてよい物）。STYLE_CODES の部分集合 */
+export function isStyleNoErrorCode(code: string | null | undefined): boolean {
+  const c = (code ?? "").trim();
+  return STYLE_NO_ERROR_CODES.has(c) && STYLE_CODES.has(c);
+}
+
+/** 書き直しに渡す指摘が全部「文に間違いの無い文体」か（空なら false＝判断しない） */
+export function isStyleOnlyNoError(issues: readonly ScopedIssue[]): boolean {
+  const list = issues ?? [];
+  return list.length > 0 && list.every((i) => isStyleNoErrorCode(i.code as string | null));
+}
+
+/** テスト用: 一覧（STYLE_CODES の部分集合であることを確かめる） */
+export function styleNoErrorCodesForTest(): { list: string[]; notInStyle: string[] } {
+  const list = [...STYLE_NO_ERROR_CODES];
+  return { list, notInStyle: list.filter((c) => !STYLE_CODES.has(c)) };
+}

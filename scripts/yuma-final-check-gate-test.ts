@@ -43,7 +43,7 @@ async function main() {
     console.log(`\n${ok ? "✅" : "❌"} ${c.label}: run=${r.gate.run} applied=${r.gate.applied} mode=${r.gate.mode} reasons=${r.gate.reasons.join(",")} passes=${passes} LLM行+${after - before} ${Date.now() - t}ms`);
     console.log(`   指摘: ${r.finalCheck.issues.map((i) => `${i.code}:${i.severity}`).join(",") || "なし"} ／ 修正前: ${(r.finalCheck.pre_revision_issues ?? []).join(",") || "なし"}`);
     console.log(`   案→: ${r.finalDraft.replace(/\n/g, " ／ ")}${r.finalDraft === c.draft ? "（そのまま）" : "（書き直し）"}`);
-    console.log(`   記録: ai_draft_check.gate=${JSON.stringify((r.finalCheck as { gate?: unknown }).gate)}`);
+    console.log(`   記録: ai_draft_check.gate=${JSON.stringify((r.finalCheck as { gate?: unknown }).gate)} ／ 書き直しを省いた=${r.finalCheck.revision_skipped ?? "なし"}`);
   }
   console.log(`\n結果: ${cases.length - ng}/${cases.length}`);
   if (ng) process.exitCode = 1;
