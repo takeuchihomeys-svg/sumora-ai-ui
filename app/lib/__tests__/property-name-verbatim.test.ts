@@ -26,3 +26,13 @@ t("🌟の見出しから名前を拾う", known.includes("エグゼ難波西Ⅱ
   t("名前の無い文は変えない", r.fixes.length === 0);
 }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
+// 2026-10-02 ⑫ 11巡目（YUMA 再生 flow8 t08）
+import { availableNameGrounded } from "../property-name-verbatim";
+{
+  const recent = ["・ライオンズマンション日本橋 215号室\n・PLAZA船越 301号室", "どちらも気に入りました！！"];
+  const bad = availableNameGrounded("サンキャドマスミナミ堀江 1202号室現在募集中となります！！", recent);
+  console.log(bad.grounded === false ? "  OK  直近に無い物件名は根拠なし" : "  NG  直近に無い物件名", JSON.stringify(bad));
+  const ok = availableNameGrounded("ライオンズマンション日本橋 215号室現在募集中となります！！", recent);
+  console.log(ok.grounded ? "  OK  直近にある物件名は根拠あり" : "  NG  直近にある物件名");
+  if (bad.grounded || !ok.grounded) process.exit(1);
+}

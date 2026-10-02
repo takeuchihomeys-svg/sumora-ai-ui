@@ -26,6 +26,7 @@ export const STAFF_CONFIRM_AIX: Readonly<Record<string, string>> = {
   guarantor_info: "保証会社の名前と種類（物件ごと）",
   property_send: "送る物件（売上サポのピックアップ・募集状況）",
   property_recommendation: "オススメする物件（募集状況・資料）",
+  property_search: "探す物件（Chrome拡張の検索・2026-10-02 ⑫）",
 };
 
 export type AutoSendGate = { ok: boolean; reason: string };
@@ -71,6 +72,38 @@ export function findStaffOnlyFact(draft: string | null | undefined): StaffOnlyFa
     if (ESTIMATE_AMOUNT_RE.test(s) && !ESTIMATE_AMOUNT_EXCLUDE_RE.test(s)) return { kind: "estimate_amount", text: s };
     if (MEETING_ADDRESS_RE.test(s)) return { kind: "meeting_address", text: s };
     if (VIEWING_FIXED_RE.test(s)) return { kind: "viewing_fixed", text: s };
+  }
+  return null;
+}
+
+// ── 2026-10-02 ⑫ 11巡目: 会話に無い金額（相場・家賃帯）の言い切りは自動で送らない ──
+//   YUMA の再生（10巡目 cost_12・DeepSeek）の下書き「堺筋本町駅周辺は10万円〜11万円台からお部屋が出てきます」が関所を通った
+//   （見積金額内訳ゲートは費用の語が無いと見ない・⑪は一般の相場の説明をゲートから外した＝本文は書き換えない）。
+//   相場の数字はスタッフが知っている事（人の実送信には普通にある）なので本文は変えず、**自動で送るかどうか**だけを止める（人に残す）。
+//   線: 文の金額（N万円・N万・N,NNN円）が、この会話の通・登録の条件・会社の決まった金額（0円・2,980円）のどこにも無い時
+const AMOUNT_RE = /([0-9０-９]+(?:[.．][0-9０-９]+)?)\s*万(?:円)?|([0-9０-９][0-9０-９,，]{3,})\s*円/g;
+const FIXED_COMPANY_AMOUNTS = new Set(["0", "2980"]);
+function toYen(m: RegExpMatchArray): string | null {
+  const n = (s: string) => s.normalize("NFKC").replace(/[,，]/g, "");
+  if (m[1]) { const v = Math.round(Number(n(m[1])) * 10000); return Number.isFinite(v) ? String(v) : null; }
+  if (m[2]) return n(m[2]);
+  return null;
+}
+function amountsIn(t: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of String(t ?? "").matchAll(AMOUNT_RE)) { const y = toYen(m); if (y) out.add(y); }
+  return out;
+}
+export type UngroundedAmountHit = { text: string; amounts: string[] };
+/** 下書きの金額で、会話（groundText）に無い物があれば最初の文を返す。groundText が無い時は判定しない（null） */
+export function findUngroundedAmount(draft: string | null | undefined, groundText: string | null | undefined): UngroundedAmountHit | null {
+  if (!groundText) return null;
+  const ground = amountsIn(groundText);
+  // 会話の側は「円」が無い数（お客様のフォームの「65,000まで」「45000~50000」）も金額として読む（11巡目 first_contact_02 で止めすぎた）
+  for (const m of String(groundText).normalize("NFKC").matchAll(/(?<![0-9])([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,7})(?![0-9])/g)) ground.add(m[1].replace(/,/g, ""));
+  for (const s of sentences(String(draft ?? ""))) {
+    const miss = [...amountsIn(s)].filter((a) => !ground.has(a) && !FIXED_COMPANY_AMOUNTS.has(a));
+    if (miss.length) return { text: s, amounts: miss };
   }
   return null;
 }

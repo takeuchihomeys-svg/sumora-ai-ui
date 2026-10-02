@@ -125,6 +125,9 @@ export function lineRenderRisks(t: string, allowed: ReadonlyArray<string>): stri
   if (/<<<|>>>|\[返信不要\]|【[^】]*(?:判定|分析|作業)[^】]*】|\{\{|〇〇|○○/.test(t)) r.push("仕組みの印・作業メモ・未置換");
   // 2026-10-02 ⑫ 2巡目: AIX【内覧調整】の文に JSON の名残（…😊！！","closing":"…"}）が入って届いた
   if (/"[A-Za-z_]+"\s*:\s*"|"\s*,\s*"[A-Za-z_]+"|"\s*\}/.test(t)) r.push("JSON の名残");
+  // 2026-10-02 ⑫ 13巡目: 指示の文＋区切り線（「…は書かない。\n\n---\nはい😊！！」）が届いた
+  if (/^\s*(?:-{3,}|ー{3,}|―{3,}|—{3,}|={3,})\s*$/m.test(t)) r.push("区切り線（---）");
+  if (/(?:は|を)書かない[。.]|と書かない|返信を作成します/.test(t)) r.push("指示・作業の文");
   if (/♀|♂|\u{1F469}/u.test(t)) r.push("性別の絵文字");
   const al = new Set<string>(allowed);
   const oa = [...t.matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]).filter((e) => !al.has(e) && /\p{Emoji_Presentation}/u.test(e));

@@ -312,13 +312,39 @@ function stripMetaBlocks(text: string): { text: string; removed: string[] } {
   return removed.length ? { text: kept.join("\n"), removed } : { text, removed };
 }
 
+/**
+ * 2026-10-02 ⑫ 13巡目（YUMA の再生 flow14 t07・DeepSeek の下書きが関所を通り YUMA に届いた）:
+ *   「「お申込み頂いた後に」という前提の文は書かない。\n\n---\nはい😊！！…」＝指示の文と区切り線（---）の後に本文が続く形。
+ *   本番の人の送信にも同じ形の取りこぼしが1通（「TikTokのリンク送信が続いているため、…返信を作成します。\n\n---\n\nいつもご連絡…」）。
+ *   先頭の数行の後に区切り線（- ー ― — = が3つ以上だけの行）があり、その上がお客様向けでない（！が無い）指示・作業の文なら、区切り線までを落とす。
+ *   線: 人の手打ち 365日 13,610通で区切り線のある通 7（条件フォームの ＿＿＿ は区切り線に数えない）→ この形に当たるのは上の取りこぼし1通だけ
+ */
+export const SEPARATOR_LINE_RE = /^\s*(?:-{3,}|ー{3,}|―{3,}|—{3,}|={3,})\s*$/;
+const PREAMBLE_INSTRUCTION_RE = /書かない|書く|書いて|作成します|作成する|返信を|返信する|前提|指示|ルール|意図|確認しながら|対応する|方針/;
+export function stripSeparatorPreamble(text: string): { text: string; removed: string[] } {
+  const lines = String(text ?? "").split("\n");
+  const sep = lines.findIndex((l, i) => i <= 6 && SEPARATOR_LINE_RE.test(l));
+  if (sep <= 0) return { text, removed: [] };
+  const pre = lines.slice(0, sep).map((l) => l.trim()).filter(Boolean);
+  if (!pre.length || pre.length > 4) return { text, removed: [] };
+  const preText = pre.join(" ");
+  if (/[！!]/.test(preText) || !PREAMBLE_INSTRUCTION_RE.test(preText)) return { text, removed: [] };
+  const rest = lines.slice(sep + 1).join("\n").replace(/^\s*\n+/, "");
+  if (!rest.trim()) return { text, removed: [] };
+  return { text: rest, removed: [preText, "---"] };
+}
+
 /** 作業メモの行を除き、見出しだけの前置きを外す。変わらなければ同じ文字列を返す */
 export function stripMetaNarration(text: string): { text: string; removed: string[] } {
   if (!text) return { text, removed: [] };
+  // 2026-10-02 ⑫: 指示の文＋区切り線（---）の前置きを先に落とす
+  const sepPre = stripSeparatorPreamble(text);
+  const sepRemoved = sepPre.removed;
+  text = sepPre.text;
   const blocks = stripMetaBlocks(text);
   text = blocks.text;
   const lead = stripLeadingNarration(text);
-  const removed: string[] = [...blocks.removed, ...lead.removed];
+  const removed: string[] = [...sepRemoved, ...blocks.removed, ...lead.removed];
   text = lead.text;
   const lines = text.split("\n");
   const kept: string[] = [];

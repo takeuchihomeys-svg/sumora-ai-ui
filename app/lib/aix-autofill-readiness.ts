@@ -114,6 +114,10 @@ function classifyAixAutofillCore(i: AutofillInput): Omit<AixAutofill, "autoSend"
     case "property_send":
     case "property_recommendation":
       return { level: "needs_material", blockers: ["送る物件（売上サポのピックアップ）"], prefilled, request: null };
+    // 2026-10-02 ⑫ 11巡目: ブレインの property_search（Chrome拡張で物件を探す場面・aix-taxonomy）が「未知の AIX」になっていた。
+    //   探した物件が売上サポに入るまで文は作れない（次の一手は AIX【物件ピックアップした】）
+    case "property_search":
+      return { level: "needs_material", blockers: ["物件の検索（Chrome拡張）→ 売上サポのピックアップ"], prefilled, request: null };
     case "cost_explain":
     case "cost_breakdown":
     case "guarantor_info":

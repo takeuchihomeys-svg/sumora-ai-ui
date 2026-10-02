@@ -237,5 +237,19 @@ it("AI の作業メモ（自分の作業の動詞で終わる地の文）は従�
     expect(stripMetaNarration(`${head}\nかしこまりました！！\n確認させて頂きます！！`).text).toBe("かしこまりました！！\n確認させて頂きます！！");
   }
 });
+{
+  it("YUMA 再生 flow14 t07（DeepSeek・関所を通って届いた）の前置きを落とす", () => {
+    const d = "「お申込み頂いた後に」という前提の文は書かない。\n\n---\nはい😊！！\n\n分割回数の目安は弊社では決められず、お客様ご自身のカード会社でご設定いただく形となります！！";
+    expect(stripMetaNarration(d).text).toBe("はい😊！！\n\n分割回数の目安は弊社では決められず、お客様ご自身のカード会社でご設定いただく形となります！！");
+  });
+  it("本番の取りこぼし（TikTok の例）の前置きを落とす", () => {
+    const d = "TikTokのリンク送信が続いているため、お客様の意図を確認しながら、親切に対応する返信を作成します。\n\n---\n\nいつもご連絡ありがとうございます！！";
+    expect(stripMetaNarration(d).text).toBe("いつもご連絡ありがとうございます！！");
+  });
+  it("お客様向けの文（！あり）の後の区切り線は触らない", () => {
+    const d = "🌟コンフォートマンション 305号室\n家賃37,000円となります！！\n---\nお手隙の際にご査収ください😌！！";
+    expect(stripMetaNarration(d).text).toBe(d);
+  });
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

@@ -90,6 +90,16 @@ export async function GET(req: NextRequest) {
     const { replyMode, action } = metaOf(c.suggested_aix_meta);
     // 画面の入力欄に出るのと同じ文にする（内部タグ・作業メモを外した後の文）
     const sendable = draftToSendableText(c.ai_draft);
+    // 2026-10-02 ⑫ 11巡目: 下書きに金額がある時だけ、金額の根拠（直近30通＋登録の家賃）を読む（会話に無い金額は送らない・canAutoReply ⑥-3）
+    let groundText: string | null = null;
+    if (sendable && /[0-9０-９]\s*万|[0-9０-９][0-9０-９,，]{3,}\s*円/.test(sendable)) {
+      const { data: recent } = await supabase.from("messages").select("text").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(30);
+      const { data: convRow } = await supabase.from("conversations").select("property_customer_id").eq("id", c.id).maybeSingle();
+      const pcId = (convRow?.property_customer_id as string | null | undefined) ?? null;
+      const { data: pc } = pcId ? await supabase.from("property_customers").select("rent_min, rent_max, initial_cost_limit").eq("id", pcId).maybeSingle() : { data: null };
+      const rents = pc ? [pc.rent_min, pc.rent_max, pc.initial_cost_limit].filter(Boolean).map((v) => `${v}円`).join(" ") : "";
+      groundText = `${((recent ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n")}\n${rents}`;
+    }
     const input: AutoReplyInput = {
       autoSendEnabled: c.auto_send_enabled,
       lastSender: c.last_sender,
@@ -99,6 +109,7 @@ export async function GET(req: NextRequest) {
       draftHasBlock: hasBlock(c.ai_draft_check),
       status: c.status,
       hasPendingScheduled: pendingIds.has(c.id),
+      groundText,
     };
     const verdict = canAutoReply(input);
     if (!verdict.ok) { skipped[verdict.reason] = (skipped[verdict.reason] ?? 0) + 1; continue; }

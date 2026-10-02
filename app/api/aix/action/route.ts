@@ -102,7 +102,7 @@ import { meetingAddressProblem } from "@/app/lib/meeting-address";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown, type HearingKnown } from "@/app/lib/hearing-form";
 import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
-import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom } from "@/app/lib/property-name-verbatim";
+import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 
 export const maxDuration = 300;
@@ -6018,7 +6018,11 @@ ${name}ご都合よろしいお日にちにご案内させて頂きます😊！
         const availableFixedDynamic = `テンプレート:
 ${availableTemplate}`;
 
-        if (image_url) {
+        // 2026-10-02 ⑫ 11巡目: 物件名が決まっている（入力の property_name）時は LLM に探させずにそのまま入れる（作らせない）
+        const chosenAvail = typeof property_name === "string" ? property_name.trim() : "";
+        if (chosenAvail) {
+          message_text = availableTemplate.split("[物件名と号室]").join(chosenAvail);
+        } else if (image_url) {
           const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
             { type: "text", text: `以下の会話と画像から物件名と号室を特定して[物件名と号室]を置き換えてください。${recentHistory}` },
             { type: "image", source: { type: "url", url: image_url } },
@@ -6031,6 +6035,13 @@ ${availableTemplate}`;
             currentAction,
             availableFixedDynamic
           );
+          // 2026-10-02 ⑫ 11巡目（YUMA 再生 flow8 t08）: 会話の直近に出ていない物件名で埋めた（「ライオンズマンション日本橋」の話なのに
+          //   前の「サンキャドマスミナミ堀江 1202号室」）。直近10通に無い名前を [物件名と号室] に戻す案は、本番で送った AIX 163通の 137通
+          //   （お客様が画像で送った物件＝文字には名前が無い）を戻してしまう＝誤りが多い（scripts/audit-check-result-name.ts）→ 書き換えず印（ログ）だけ。
+          //   名前を確かに決める道は「物件名が決まっている時はコードで入れる」（上の chosenAvail）
+          const recentTexts = (Array.isArray(body.recent_messages) ? body.recent_messages as Array<{ text?: string | null }> : []).slice(-10).map((m) => m?.text ?? "");
+          const g = availableNameGrounded(message_text, recentTexts);
+          if (!g.grounded && g.name) console.warn(JSON.stringify({ tag: "aix:check-result-name-ungrounded", conversationId, name: g.name }));
         }
         // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
 

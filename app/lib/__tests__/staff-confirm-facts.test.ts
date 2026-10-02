@@ -2,7 +2,7 @@
 // 2026-10-02 竹内さんの決定「スタッフの確認が要る物は AIX で止める（自動で送らない）」の回帰テスト。
 //   下書きの文は返信生成の実物（scripts/audit-staff-confirm-facts.ts で出た物・名前なし）。
 // 実行: npx tsx app/lib/__tests__/staff-confirm-facts.test.ts
-import { aixAutoSendGate, findStaffOnlyFact, STAFF_CONFIRM_AIX } from "../staff-confirm-facts";
+import { aixAutoSendGate, findStaffOnlyFact, STAFF_CONFIRM_AIX, findUngroundedAmount } from "../staff-confirm-facts";
 import { canAutoReply, type AutoReplyInput } from "../auto-reply-policy";
 import { classifyAixAutofill } from "../aix-autofill-readiness";
 
@@ -61,6 +61,20 @@ const base: AutoReplyInput = { autoSendEnabled: true, lastSender: "customer", re
   t("確認の宣言だけ → 送ってよい", ok.ok, JSON.stringify(ok));
   const aix = canAutoReply({ ...base, draft: "確認させて頂きます！！", suggestedAixAction: "property_check_result" });
   t("AIX（物件確認した）が付いていれば送らない", !aix.ok && aix.reason === "aix_suggested");
+}
+
+console.log("── 2026-10-02 ⑫ 会話に無い金額の言い切り（YUMA 再生 cost_12 の実物）");
+{
+  const draft = "YUMAさんお世話になっております！！\n堺筋本町駅周辺は10万円〜11万円台からお部屋が出てきます！！";
+  const ground = "家賃をいくらまでにしたら、堺筋本町あたりに物件が出てきますか？\n②【ご希望の家賃（◯万円〜◯万円）】⇒9万まで";
+  t("会話に無い 10万・11万 → 当たる", !!findUngroundedAmount(draft, ground));
+  t("会話にある金額だけ → 当たらない", !findUngroundedAmount("家賃9万円までのお部屋をピックアップさせて頂きます！！", ground));
+  t("90,000円 と 9万 を同じ金額として読む", !findUngroundedAmount("家賃90,000円のお部屋です", ground));
+  t("会社の決まった金額（2,980円）は当てない", !findUngroundedAmount("初期費用2,980円＋前家賃で", ground));
+  t("根拠が渡されない時は判定しない", !findUngroundedAmount(draft, null));
+  t("お客様の「65,000まで」（円なし）を根拠に読む（11巡目 first_contact_02）", !findUngroundedAmount("西淀川区内から家賃65,000円まで・二人入居可のお部屋をピックアップ", "2、65,000まで"));
+  const v = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode: "auto_reply", suggestedAixAction: null, draft, draftHasBlock: false, status: "proposing", hasPendingScheduled: false, groundText: ground });
+  t("canAutoReply: 自動で送らない（本文は変えない）", !v.ok && v.reason === "staff_only_fact:ungrounded_amount", JSON.stringify(v));
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);

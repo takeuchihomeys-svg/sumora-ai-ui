@@ -8385,3 +8385,36 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 費用: 6〜10巡 DeepSeek 629回 $2.16／Claude 0（漏れ0・止めた0）。最後の確かめ Claude 16回 $0.55＋DeepSeek 3回 $0.03。実送信 6〜10巡で 38通（今月のこの道具の合計 85通）・LINE の崩れ 0
 - 2段の場面（判断待ち）の本番の表は変わらず（30日: ピックアップ 234 → 手打ち 132・AIX 47／物件確認した 150 → 手打ち 56・AIX 27）
 - LINE の月の上限: 手元に本番の鍵が無く本物の値は読めない（`LINE_SUMORA_CHANNEL_ACCESS_TOKEN` が .env.prod で空）＝控えめな見積もり（上限 5,000 と仮定）のまま
+
+## 2026-10-02 最終チェックの要否の監査（竹内「いま全部ファイナルチェックしているので、ファイナルチェックが必要かどうかの監査をつけたらAPIも節約できるし、無駄がなくなる」・未コミット）
+- **測った物**（`scripts/audit-final-check-gate.ts`・読み取りのみ・LLM なし）: 送った例の記録 267回（reply_context_snapshot.preRevisionCodes＝修正前の指摘・9/10〜）＋LINE の見張り 28回。下書きを「決まり文句だけ（はい／何卒よろしく／お気軽にご連絡ください 等）×お客様が了承・お礼だけ」とそれ以外に分け、LLM の段（rule_check・anomaly_scan・context_check）が見つけた事実・安全の指摘を数えて、skip の群は全部目で読んだ
+- **結果**: skip にできるのは **4/295（1.4%）**。中身のある下書きは 48% で LLM が事実・安全の指摘を出していて、短い文でも「本日16時お部屋ご案内させて頂きます」（AIX_BOUNDARY_VIEWING:block）・「内覧の詳細についてはご連絡させて頂きます」（DOUBLE_DECLARATION）・「お送り頂いた内容でお申込み進めさせて頂きます」（MISSED_QUESTION）を正しく止めていた。skip の4件で LLM の指摘は1件（書き直し後の文しか残っておらず、元の文は宣言を含んでいた＝元の文なら full）＝見逃しの本当の指摘 0
+- **案の比べ**: A skip（3パス＋書き直しを省く）1日 約 $0.01・待ち 約2.6秒短く（対象 1.4%）／B Sonnet の context_check だけ省く（お客様が了承だけの 24回）→ 10回（41.7%）で指摘を見逃す＝**不採用**
+- **費用の本当の塊**（本番 9/30〜・1日 21回・$0.90）: 書き直し revision＋recheck **$0.34／日**・context_check $0.26・rule_check $0.18・温め（warm_revision $0.14 ほか）・anomaly $0.09。**文体（画面に出さない style）の warning だけで書き直しが走る回が 26%**（runFinalCheckWithRevision の warning の修正は style を外していない）＝最大 1日 約 $0.18 → 竹内さんの判断待ち（final-check.ts の passableWarnIssues で style を外す・⑫の作業が落ち着いてから）
+- **入れた物（影の運用・本番の動きは変わらない）**: `app/lib/final-check-gate.ts`（純関数 needsFinalCheck・許す文の一覧＝知らない文は全部チェック）＋`app/lib/final-check-gated.ts`（runFinalCheckGated＝判定→センシティブは runFinalCheck・skip かつ on なら決定論だけ・それ以外は runFinalCheckWithRevision）。必ず全部: 自動に切り替えた会話（関所 canAutoReply が ai_draft_check の block を見る）・センシティブ・enforcement_level=required・初回・決定論の block・申込以降・会話の記録が読めない時
+- **route.ts の変更（小さく4か所）**: import／`let finalCheckGateLog`／`const loop = sensitiveGateNote ? … : …` を runFinalCheckGated の1呼び出しに／tpo_debug に `finalCheckGate`
+- **記録**: ai_draft_check.gate（作り直しが無い時）・ai_draft_check.tpo_debug.finalCheckGate（いつも）・送った例 reply_context_snapshot.finalCheckGate・ログ tag `final-check:gate`。新しい列なし（JSONB）＝migrate-schema の変更なし。LINE の見張りのトリガー（line_watch_turns.final_check）には gate を入れていない（要るなら trigger の SQL と scripts/line-watch-migration.sql を両方）
+- **有効にする**: Vercel の env `FINAL_CHECK_GATE=on`（既定は未設定＝影）。**見張り**: `npx tsx --env-file=.env.local scripts/audit-final-check-gate.ts` の ⑦（本番の skip 率・skip と判定した回で LLM が見つけた事実・安全の指摘＝見逃し候補を全部表示）。⑦で見逃し候補 0 が続き、skip 率が意味のある大きさになってから on にする
+- **テスト**: `app/lib/__tests__/final-check-gate.test.ts` 30件（実物の下書き）。YUMA（deepseek-all・Claude 0）: `scripts/yuma-final-check-gate-test.ts` 4/4（影では3パスが走り下書きは今まで通り・on の skip は LLM 0回で下書きそのまま・日時の宣言とセンシティブは on でも全部）・`scripts/yuma-final-check-gate-route-test.ts` 2/2（route の本物の経路でトレーラーに gate が載る・passes 3）。開発サーバは .next の鍵を :3200（印なし）が持っていて立てられなかったので route の POST を直接呼んだ
+- **費用**: DeepSeek 12回 $0.0095＋8回 $0.0326 ／ Claude 0（漏れ0・止めた0）・YUMA の場面 4通は id で削除
+
+### 11〜15巡（DeepSeek・最後に Claude）— 6〜10巡は 1f35ada7・810fc271 でコミット済み・11巡以降は未コミット
+#### 11巡目の前に直した物（親の指示の残り3つ）
+1. **会話に無い金額（相場・家賃帯）の言い切り（穴:G4）**: 本文は変えず**自動では送らない**（staff-confirm-facts.findUngroundedAmount → canAutoReply ⑥-3・auto-reply-dispatch は下書きに金額がある時だけ直近30通と登録の家賃を読む）。AI の下書き 120日 920件で当たり 26・うちスタッフが金額を変えた/消した 23。人の手打ちは 6,322通中 384通に会話に無い金額（相場・資料を知っている）＝人の文と本文の書き換えには使わない（⑪の外した範囲を崩さない）。11巡目で お客様の「65,000まで」（円なし）を根拠に読めず初回を止めすぎた → 会話の側は円の無い数も読む（`scripts/audit-ungrounded-amount.ts`）
+2. **AIX【物件確認した（募集中）】の物件名**: 入力の property_name がある時は LLM を呼ばずにその字を入れる。LLM が会話から埋めた名前が直近10通に無ければ戻す案は、本番の AIX 163通の 137通（お客様が画像で物件を送る）を戻す＝誤り多 → 印（ログ）だけ（`scripts/audit-check-result-name.ts`）
+3. **property_search が「未知の AIX」**: aix-autofill-readiness に needs_material（Chrome拡張で探す → 売上サポ）・自動送信の関所でもスタッフ確認に
+#### 途中で直した物
+- 13巡目: **作業メモの新しい形「指示の文＋区切り線（---）＋本文」が関所を通り YUMA に届いた**（「「お申込み頂いた後に」という前提の文は書かない。\n\n---\nはい😊！！…」）→ meta-narration.stripSeparatorPreamble（stripMetaNarration の最初・4か所の出口が同じ関数）。本番の送信 13,633通で変わるのは1通＝人が見落として送った同じ形の作業メモ（「…返信を作成します。\n\n---\n\nいつもご連絡…」）・AI の下書き 1,000件で 0（`scripts/audit-separator-preamble.ts`）
+#### 巡ごとの数字
+| 巡 | 場面 | 道の一致 | 関所 | 自動で正しく | ピックアップ→返信 | 実送信 |
+|---|---|---|---|---|---|---|
+| 11 | 元の45（日付ずらし） | 29/42（69%） | 9 | 3 | 8 | 13 |
+| 12 | 新しい5＋流れ2会話18 | 15/23（65%） | 4 | 0 | 4 | 1 |
+| 13 | 新しい5＋流れ2会話20 | 11/24（46%） | 9 | 1 | 3 | 8 |
+| 14 | 新しい5＋流れ2会話17 | 10/21（48%） | 6 | 1 | 5 | 6 |
+| 15 | 元の45（日付ずらし） | 28/42（67%） | 10 | 2 | 9 | 13 |
+- 元の45場面: 1巡 67% → 4巡 68% → 6巡 71% → 10巡 77% → 11巡 69% → 15巡 67%（DeepSeek のブレインの揺れの幅・外れの多数は判断待ちの2段の場面）
+- 最後の確かめ（Claude・3場面）: first_contact_02 は「65,000円まで」で関所を通る（止めすぎを直した）。cost_12・flow14 t07 は Claude のブレインが物件ピックアップ（2段の場面）を選び下書きが出ない＝直しは監査とテストで確かめた
+- 費用: 11〜15巡 DeepSeek 507回 $2.53（JST 10時以降は単価が倍の時間帯にかかった）／Claude 0（漏れ0・止めた0）。最後の確かめ Claude 7回 $0.14＋DeepSeek 3回 $0.02。実送信 11〜15巡で 41通（今月のこの道具の合計 126通）・LINE の崩れ 0（13巡の作業メモの通は崩れの点検に区切り線・指示の文を足す前に送った）
+- 片付け: 場面の行のうち3行（pet_parking_36・15巡）が消えずに残っていた → id で消した（残り0）
+- 新しい場面は使い切りに近い（200日でも未使用の単発の場面は各巡5つ）。流れは8月の会話から（日付ずらしで今日以降に）

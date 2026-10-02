@@ -98,3 +98,18 @@ export function enforceChosenPropertyName(text: string, chosen: string | null | 
 export function propertyNameNearMisses(text: string, known: ReadonlyArray<string>): VerbatimFix[] {
   return enforceVerbatimPropertyNames(text, known).fixes;
 }
+
+/**
+ * 2026-10-02 ⑫ 11巡目: AIX【物件確認した（募集中）】の定型「[物件名と号室]現在募集中となります」を LLM が埋めた物件名が、
+ *   会話の直近（recentTexts）に出ているか。出ていなければ別の（前の）物件を選んだ疑い（YUMA 再生 flow8 t08）。
+ *   名前は定型の「募集中となります」より前の文字。号室の数字と空白を除いた名前（3字以上）で探す
+ */
+export function availableNameGrounded(text: string, recentTexts: ReadonlyArray<string>): { name: string | null; grounded: boolean } {
+  const m = String(text ?? "").match(/^([^\n]*?)(?:現在)?募集中となります/m);
+  const name = m?.[1]?.trim() ?? "";
+  if (!name || name.includes("[物件名と号室]")) return { name: null, grounded: true };
+  const base = name.replace(/\s*[0-9０-９]{2,4}\s*号室?\s*$/, "").replace(/[\s　・]/g, "");
+  if (base.length < 3) return { name, grounded: true };
+  const hay = recentTexts.join("\n").replace(/[\s　・]/g, "");
+  return { name, grounded: hay.includes(base) };
+}

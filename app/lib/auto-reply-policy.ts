@@ -11,7 +11,7 @@
 // 【安全の考え方】この仕組みは**本物のお客様に自動で送る**ので、迷ったら送らない（fail-closed）。
 //   送ってよい条件を全部満たした時だけ true を返し、1つでも欠けたら理由付きで false。
 import { jstParts } from "./jst-date";
-import { findStaffOnlyFact } from "./staff-confirm-facts";
+import { findStaffOnlyFact, findUngroundedAmount } from "./staff-confirm-facts";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -134,6 +134,8 @@ export type AutoReplyInput = {
   status: string | null | undefined;
   /** 同じ会話に未送信の予約が既にあるか */
   hasPendingScheduled: boolean;
+  /** 2026-10-02 ⑫: この会話の直近の通・登録の家賃（金額の根拠）。下書きに会話に無い金額があれば送らない（無ければ判定しない） */
+  groundText?: string | null;
 };
 
 export type AutoReplyVerdict = { ok: boolean; reason: string };
@@ -164,6 +166,10 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   //   言い切っている下書きは自動で送らない（スタッフが確かめてから送る）。本文は変えない＝人に残すだけ（staff-confirm-facts.ts）
   const staffFact = findStaffOnlyFact(draft);
   if (staffFact) return { ok: false, reason: `staff_only_fact:${staffFact.kind}` };
+  // ⑥-3 2026-10-02 ⑫ 11巡目: 会話に無い金額（相場・家賃帯・物件の金額）の言い切りは自動で送らない（本文は変えない）。
+  //   AI の下書き 120日 920件で当たり 26・うちスタッフが金額を変えた/消した 23（scripts/audit-ungrounded-amount.ts）
+  const ungrounded = findUngroundedAmount(draft, i.groundText);
+  if (ungrounded) return { ok: false, reason: "staff_only_fact:ungrounded_amount" };
   // ⑦ 二重送信を防ぐ
   if (i.hasPendingScheduled) return { ok: false, reason: "already_scheduled" };
   return { ok: true, reason: "ok" };
