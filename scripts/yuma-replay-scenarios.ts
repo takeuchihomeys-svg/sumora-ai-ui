@@ -222,7 +222,7 @@ async function main() {
   const rows: Array<Record<string, unknown>> = [];
   for (const sc of list) for (let rep = 0; rep < REPS; rep++) {
     const status = sc.stage === "first_contact" ? "hearing" : "proposing";
-    const rec: Record<string, unknown> = { id: sc.id, stage: sc.stage, stage_ja: sc.stage_ja, rep, accept: sc.expect.accept, staff_aix: sc.staff.aix.map((a) => a.aix), staff_text: sc.staff.texts.join("\n").slice(0, 600) };
+    const rec: Record<string, unknown> = { id: sc.id, stage: sc.stage, stage_ja: sc.stage_ja, rep, accept: sc.expect.accept, staff_aix: sc.staff.aix.map((a) => a.aix), staff_cp: sc.staff.aix.map((a) => a.cp ?? null), staff_text: sc.staff.texts.join("\n").slice(0, 600) };
     if (hasApplicationPii(sc)) { console.warn(`⛔ ${sc.id}: 申込の書類（個人情報）が入っているので流さない`); continue; }
     // 2026-10-02 ⑫: 手順書の個人情報の網（1通ずつ・本人確認書類・収入の書類・個人の値）も当てる（一連の流れは掘る側の線だけに頼らない）
     {
@@ -233,11 +233,14 @@ async function main() {
     try {
       const { msgs } = await insertScene(sc);
       const tb = Date.now();
-      const meta = await runInDeepseekScope(async () => {
+      // 2026-10-02 ⑫ 19巡: DeepSeek のブレインが読めない JSON を2回返して場面が落ちる（19巡 45場面中4・Claude の最後の確かめ 77回では0）→ 再生の道具だけもう1回呼ぶ（本番の brain-core は変えない）
+      const callBrainOnce = () => runInDeepseekScope(async () => {
         // YUMA は竹内さん本人のテスト用の会話＝線は全部（kind=all）。本番のブレインはこの印を置かない（Claude のまま）
         setDeepseekScope({ conversationId: YUMA, mark: { kind: "all" } });
         return analyzeConversation(YUMA, true, status, null, "brain", { autoSendEnabled: true, customerName: "YUMA", prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null });
-      }) as unknown as Record<string, unknown>;
+      }) as unknown as Promise<Record<string, unknown>>;
+      let meta = await callBrainOnce();
+      if (!meta) { rec.brain_retry = true; meta = await callBrainOnce(); }
       rec.brain_ms = Date.now() - tb;
       if (!meta) throw new Error("ブレインが判断を返さなかった（null）");
       const action = typeof meta?.action === "string" && meta.action.trim() ? meta.action.trim() : null;
@@ -302,7 +305,9 @@ async function main() {
         const sendable = raw ? (draftToSendableText(raw)?.trim() ?? "") : "";
         const ph = sendable ? detectPlaceholders(sendable) : [];
         rec.line_risks = sendable ? ysend.lineRenderRisks(sendable, ALLOWED_EMOJIS) : [];
-        if (!raw) rec.send = "送らず: 文なし";
+        // 2026-10-02 ⑫: 返信の下書きは関所（canAutoReply）を通る物だけ送る（止まる下書き＝人に残す物を YUMA に送ると、直した後も同じ文が届いたように見える・11:42 の申込の書類の文）
+        if (draft && rec.gate !== "ok") rec.send = `送らず: 関所で止まる（${String(rec.gate)}）`;
+        else if (!raw) rec.send = "送らず: 文なし";
         else if (!sendable) rec.send = "送らず: 送信前の関門で送れない形";
         else if (ph.length) rec.send = `送らず: 未置換 ${ph.join(" ")}`;
         else if (sendState.sent >= SEND_CAP) rec.send = `送らず: 1巡の上限 ${SEND_CAP}`;

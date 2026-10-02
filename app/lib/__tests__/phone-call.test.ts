@@ -126,5 +126,8 @@ it("時間の読み取り: 「13時以降」→ 13:00以降・「19時頃」→ 
 it("こちらの時間を聞いているか", () => { expect(customerAsksStaffCallTime("本日電話いける時間ありますか？")).toBe(true); expect(customerAsksStaffCallTime("お電話可能でしょうか？")).toBe(false); });
 it("用件: 物件の事で → 物件の件・ご相談 → ご相談の件", () => { expect(customerCallTopic("物件の事で聞きたい事がありますのでお手隙の際電話いけますか？")).toBe("物件の件"); expect(customerCallTopic("ご相談があるのですが")).toBe("ご相談の件"); });
 
+// 2026-10-02 ⑫ 19巡（phone_17）: 伏せた番号＋「電話して貰えますか？」は電話の依頼（伏せ字の「電話番号」で外さない）
+it("伏せた番号＋電話して貰えますか → 依頼", () => { expect(customerRequestsPhoneCall("次の駅で天王寺つきます\n（電話番号）電話して貰えますか？")).toBe(true); expect(customerRequestsPhoneCall("電話番号を教えてください")).toBe(false); });
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

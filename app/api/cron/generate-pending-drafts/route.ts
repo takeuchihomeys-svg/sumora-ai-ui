@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { manYen } from "@/app/lib/man-yen";
 import { createClient } from "@supabase/supabase-js";
 import { detectPlaceholders } from "@/app/lib/validate-reply";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
@@ -299,7 +300,7 @@ async function run() {
       const customerConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
         pcData?.floor_plan && `間取り: ${pcData.floor_plan}`,
-        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${[pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万円〜" : "", pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万円以内" : ""].join("")}`,
+        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${[pcData?.rent_min ? manYen(pcData.rent_min) + "万円〜" : "", pcData?.rent_max ? manYen(pcData.rent_max) + "万円以内" : ""].join("")}`,
         pcData?.walk_minutes && `駅徒歩: ${pcData.walk_minutes}分以内`,
         pcData?.move_in_time && `入居: ${pcData.move_in_time}`,
         pcData?.building_age && `築年数: ${pcData.building_age}年以内`,

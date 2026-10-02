@@ -41,7 +41,7 @@ export function aixAutoSendGate(action: string | null | undefined): AutoSendGate
   return { ok: false, reason: `unknown_aix:${a}` };
 }
 
-export type StaffOnlyFactHit = { kind: "vacancy" | "estimate_amount" | "meeting_address" | "viewing_fixed"; text: string };
+export type StaffOnlyFactHit = { kind: "vacancy" | "estimate_amount" | "meeting_address" | "viewing_fixed" | "phone_call_promise"; text: string };
 
 /** 文に分ける（。！!？? と改行） */
 function sentences(s: string): string[] {
@@ -60,6 +60,10 @@ const ESTIMATE_AMOUNT_EXCLUDE_RE = /(?:れ|け)ば|場合は|以内|以下|程�
 // meeting_address: 待ち合わせ・集合の場所としての住所（〒・番地・丁目＋数字）
 const MEETING_ADDRESS_RE = /(?:待ち合わせ|集合|現地)[^。\n]{0,30}(?:〒|[0-9０-９]+丁目|[0-9０-９]+番地?|[0-9０-９]+-[0-9０-９]+)|〒\s*[0-9０-９]{3}-?[0-9０-９]{4}/;
 // viewing_fixed: 内覧の日時を確定・予約した言い切り（日付・時刻つき）
+// phone_call_promise（2026-10-02 ⑫ 19巡）: こちらから電話をかける約束（「今お電話いたします」「折り返しお電話させて頂きます」）。
+//   電話はスタッフしかかけられない（約束を果たす仕組みが無い）＝自動では送らない。お客様に「お電話可能です」「お電話お待ちしております」と言うのは当てない。
+//   線は scripts/audit-phone-promise-draft.ts（AI の下書き 120日）
+export const PHONE_CALL_PROMISE_RE = /お?電話(?:を)?(?:いたし|致し|させて(?:頂|いただ)き|おかけ(?:いたし|致し|し)|かけさせて(?:頂|いただ)き|差し上げ)ます|(?:お?電話|ご連絡)(?:を)?(?:お)?(?:かけ|掛け)(?:いたし|致し|し)ます/;
 const VIEWING_FIXED_RE = /(?:[0-9０-９]{1,2}\s*[\/月]\s*[0-9０-９]{1,2}|[0-9０-９]{1,2}日)[^。\n]{0,20}(?:[0-9０-９]{1,2}[:：時])[^。\n]{0,20}(?:で(?:確定|承り|お取り|ご予約)|確定(?:致し|いたし|し)|ご予約(?:致し|いたし|させて頂き|させていただき)ました|お待ちして)/;
 
 /**
@@ -72,6 +76,7 @@ export function findStaffOnlyFact(draft: string | null | undefined): StaffOnlyFa
     if (ESTIMATE_AMOUNT_RE.test(s) && !ESTIMATE_AMOUNT_EXCLUDE_RE.test(s)) return { kind: "estimate_amount", text: s };
     if (MEETING_ADDRESS_RE.test(s)) return { kind: "meeting_address", text: s };
     if (VIEWING_FIXED_RE.test(s)) return { kind: "viewing_fixed", text: s };
+    if (PHONE_CALL_PROMISE_RE.test(s)) return { kind: "phone_call_promise", text: s };
   }
   return null;
 }
@@ -104,6 +109,24 @@ export function findUngroundedAmount(draft: string | null | undefined, groundTex
   for (const s of sentences(String(draft ?? ""))) {
     const miss = [...amountsIn(s)].filter((a) => !ground.has(a) && !FIXED_COMPANY_AMOUNTS.has(a));
     if (miss.length) return { text: s, amounts: miss };
+  }
+  return null;
+}
+
+// ── 2026-10-02 ⑫ 21巡（flow23_db3722_t05）: 会話に無い築年数の幅の言い切りは自動で送らない ──
+//   お客様「初期費用を10万以下と家賃5万円代の物件ってやはり築が古くなりますか？」に、下書きが「築年数は古め（15〜25年程）の物件が多くなります」と書いた
+//   （資料・会話に無い数＝作り話。スタッフは実際の物件を1件見せて答えた）。金額と同じく、会話に無い年数の幅は人に残す（本文は変えない）。
+//   線は scripts/audit-ungrounded-age.ts（AI の下書き・人の送信で当たる数）
+const AGE_RANGE_RE = /築(?:年数)?[^。\n]{0,14}?([0-9０-９]{1,2})\s*(?:〜|~|～|-|－|から)\s*([0-9０-９]{1,2})\s*年|([0-9０-９]{1,2})\s*(?:〜|~|～|-|－)\s*([0-9０-９]{1,2})\s*年(?:程|ほど|くらい|前後)?(?:の|が)?[^。\n]{0,6}(?:築|物件|お部屋)/;
+export type UngroundedAgeHit = { text: string; range: string };
+export function findUngroundedAgeRange(draft: string | null | undefined, groundText: string | null | undefined): UngroundedAgeHit | null {
+  const g = String(groundText ?? "").normalize("NFKC");
+  for (const s of sentences(String(draft ?? ""))) {
+    const m = s.normalize("NFKC").match(AGE_RANGE_RE);
+    if (!m) continue;
+    const a = m[1] ?? m[3], b = m[2] ?? m[4];
+    if (g.includes(`${a}`) && g.includes(`${b}`) && new RegExp(`${a}[^0-9]{0,4}${b}`).test(g)) continue;
+    return { text: s, range: `${a}〜${b}年` };
   }
   return null;
 }

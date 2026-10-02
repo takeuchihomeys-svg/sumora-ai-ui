@@ -72,7 +72,9 @@ const PHONE_NOT_REQUEST_RE =
 
 /** お客様がこちらと電話で話したい（電話の可否・時間を聞いた・電話を頼んだ）か */
 export function customerRequestsPhoneCall(customerTurn: string): boolean {
-  const t = (customerTurn ?? "").normalize("NFKC").trim();
+  // 2026-10-02 ⑫ 19巡（phone_17）: 伏せた電話番号「（電話番号）」は番号そのもの（お客様が番号を送って「電話して貰えますか？」）。
+  //   「電話番号」の語として読むと電話の話でない側（PHONE_NOT_REQUEST_RE の 電話番号）に落ちる → 伏せ字は外して読む
+  const t = (customerTurn ?? "").normalize("NFKC").replace(/\(電話番号\)/g, "").trim();
   if (!t || /^\s*\[画像\]/.test(t)) return false;
   if (!/電話|通話/.test(t)) return false;
   return t.split(/\n+/).some((line) => PHONE_REQUEST_RE.test(line) && !PHONE_NOT_REQUEST_RE.test(line));

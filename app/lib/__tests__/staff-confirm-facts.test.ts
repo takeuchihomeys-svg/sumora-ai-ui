@@ -2,7 +2,7 @@
 // 2026-10-02 竹内さんの決定「スタッフの確認が要る物は AIX で止める（自動で送らない）」の回帰テスト。
 //   下書きの文は返信生成の実物（scripts/audit-staff-confirm-facts.ts で出た物・名前なし）。
 // 実行: npx tsx app/lib/__tests__/staff-confirm-facts.test.ts
-import { aixAutoSendGate, findStaffOnlyFact, STAFF_CONFIRM_AIX, findUngroundedAmount } from "../staff-confirm-facts";
+import { aixAutoSendGate, findStaffOnlyFact, STAFF_CONFIRM_AIX, findUngroundedAmount, findUngroundedAgeRange } from "../staff-confirm-facts";
 import { canAutoReply, type AutoReplyInput } from "../auto-reply-policy";
 import { classifyAixAutofill } from "../aix-autofill-readiness";
 
@@ -75,6 +75,20 @@ console.log("── 2026-10-02 ⑫ 会話に無い金額の言い切り（YUMA �
   t("お客様の「65,000まで」（円なし）を根拠に読む（11巡目 first_contact_02）", !findUngroundedAmount("西淀川区内から家賃65,000円まで・二人入居可のお部屋をピックアップ", "2、65,000まで"));
   const v = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode: "auto_reply", suggestedAixAction: null, draft, draftHasBlock: false, status: "proposing", hasPendingScheduled: false, groundText: ground });
   t("canAutoReply: 自動で送らない（本文は変えない）", !v.ok && v.reason === "staff_only_fact:ungrounded_amount", JSON.stringify(v));
+}
+
+// 2026-10-02 ⑫ 21巡（flow23_db3722_t05 の実物）: 会話に無い築年数の幅は自動で送らない
+{
+  const d = "かしこまりました！！\n\n初期費用10万以下・家賃5万円台ですと、傾向として築年数は古め（15〜25年程）の物件が多くなりますが、エリアによっては比較的新しいお部屋もございます😊";
+  const v = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode: "auto_reply", suggestedAixAction: null, draft: d, draftHasBlock: false, status: "proposing", hasPendingScheduled: false, groundText: "初期費用を10万以下と家賃5万円代の物件ってやはり築が古くなりますか？" });
+  t("築年数の幅（15〜25年）→ ungrounded_age", !v.ok && v.reason === "staff_only_fact:ungrounded_age", JSON.stringify(v));
+  t("お客様の条件の築年数（築20年以内）は当てない", findUngroundedAgeRange("築20年以内のお部屋をピックアップさせて頂きます", "築20年以内") === null);
+}
+// 2026-10-02 ⑫ 19巡（phone_17 の実物）: こちらから電話をかける約束は自動で送らない
+t("今お電話いたします → phone_call_promise", findStaffOnlyFact("かしこまりました！！\n電話番号確認しました！！\n今お電話いたします！！")?.kind === "phone_call_promise");
+t("折り返しお電話させて頂きます → phone_call_promise", findStaffOnlyFact("折り返しお電話させて頂きます！！")?.kind === "phone_call_promise");
+for (const d of ["19時までですと何時でもお電話可能です😊！！", "お電話お待ちしております！！", "こちらの電話をかけるボタンよりお電話お願い致します！！", "お電話ありがとうございました😊！！"]) {
+  t(`電話の案内・お礼は当てない: ${d}`, findStaffOnlyFact(d) === null);
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);

@@ -46,7 +46,14 @@ export const TWO_STAGE_WORDING: Record<TwoStageKind, string> = {
 };
 
 /** 今の一手を約束の返信にするか（する時は返信の方向と必須の話題）。しない時は null（AIX のまま） */
+// 2026-10-02 ⑫ 19巡（flow18_t10）: 「こちらも一緒にお願いします。10/7水曜の午前中であれば助かります」に、約束の方向（募集状況の確認）だけを書いて
+//   内覧の日時のご希望に触れなかった。同じ発言の他のご希望・質問にも一言ずつ応える（約束の中身は変えない・答えの事実は作らない）
+export const TWO_STAGE_ALSO_ANSWER = "同じ発言の他のご希望・ご質問（内覧の日時のご希望など）にも一言ずつ応える（例: ご希望の日時でご案内出来るよう合わせて確認する）。";
 export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
+  const v = resolveTwoStageCore(i);
+  return v ? { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` } : null;
+}
+function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   const a = (i.finalAix ?? "").trim();
   if (!a || i.postApply) return null;
   if (KEEP_SOURCE_RE.test(i.decisionSource ?? "")) return null;
@@ -59,7 +66,8 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
       source: "rule:two_stage_promise(pickup)",
     };
   }
-  if (a === "property_check_result" || a === "acknowledge_check") {
+  // 2026-10-02 ⑫ 20巡（other_45）: 同じアリバイの質問にブレインが AIX【保証会社について】を選んだ（本番の押下は 200日で 0・スタッフはお仕事面のサポートの手打ち）
+  if (a === "property_check_result" || a === "acknowledge_check" || (a === "guarantor_info" && WORK_SUPPORT_ASK_RE.test(i.customerText ?? ""))) {
     if (WORK_SUPPORT_ASK_RE.test(i.customerText ?? "")) {
       return {
         kind: "check",

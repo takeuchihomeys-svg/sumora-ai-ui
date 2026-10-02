@@ -1,4 +1,5 @@
 ﻿import { supabase } from "@/app/lib/supabase";
+import { manYen } from "./man-yen";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
@@ -190,7 +191,7 @@ export async function analyzeClosedConversation(
         preferences?: string | null; ng_points?: string | null; other_requests?: string | null;
       };
       const rentStr = (c.rent_min || c.rent_max)
-        ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
+        ? `${c.rent_min ? manYen(c.rent_min) + "万〜" : "〜"}${c.rent_max ? manYen(c.rent_max) + "万" : ""}`
         : null;
       customerInfo = [
         c.desired_area && `希望エリア: ${c.desired_area}`,

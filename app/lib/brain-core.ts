@@ -1,3 +1,4 @@
+import { manYen } from "./man-yen";
 import Anthropic from "@anthropic-ai/sdk";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -44,7 +45,8 @@ import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { resolveTwoStage, type TwoStageVerdict } from "@/app/lib/two-stage";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
-import { phoneButtonJustSent } from "@/app/lib/phone-button-sent";
+import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
+import { meetingPromisePending } from "@/app/lib/meeting-promise";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
@@ -1836,8 +1838,8 @@ export async function analyzeConversation(
   if (pc?.desired_area) condParts.push(`エリア: ${pc.desired_area}`);
   if (pc?.area_mode && pc.area_mode !== "auto") condParts.push(`エリアモード: ${pc.area_mode === "ward" ? "市区町村優先" : pc.area_mode === "station" ? "駅・路線優先" : pc.area_mode === "both" ? "市区町村+駅両方" : pc.area_mode}`);
   if (pc?.floor_plan) condParts.push(`間取り: ${pc.floor_plan}`);
-  if (pc?.rent_min) condParts.push(`家賃下限: ${Math.floor((pc.rent_min as number) / 10000)}万`);
-  if (pc?.rent_max) condParts.push(`家賃上限: ${Math.floor((pc.rent_max as number) / 10000)}万`);
+  if (pc?.rent_min) condParts.push(`家賃下限: ${manYen(pc.rent_min as number)}万`);
+  if (pc?.rent_max) condParts.push(`家賃上限: ${manYen(pc.rent_max as number)}万`);
   if (pc?.floor_area_min || pc?.floor_area_max) {
     const areaMin = pc.floor_area_min ? `${pc.floor_area_min}㎡以上` : "";
     const areaMax = pc.floor_area_max ? `${pc.floor_area_max}㎡以下` : "";
@@ -1847,7 +1849,7 @@ export async function analyzeConversation(
   if (pc?.commute_station) condParts.push(`通勤先: ${pc.commute_station}${pc.commute_minutes ? `（${pc.commute_minutes}分以内）` : ""}`);
   if (pc?.move_in_time) condParts.push(`入居: ${pc.move_in_time}`);
   if (pc?.pet != null) condParts.push(`ペット: ${pc.pet ? "可" : "不可"}`);
-  if (pc?.initial_cost_limit) condParts.push(`初期費用上限: ${Math.floor((pc.initial_cost_limit as number) / 10000)}万`);
+  if (pc?.initial_cost_limit) condParts.push(`初期費用上限: ${manYen(pc.initial_cost_limit as number)}万`);
   if (pc?.building_age) condParts.push(`築年数: ${pc.building_age}年以内`);
   if (pc?.occupants) condParts.push(`入居人数: ${pc.occupants}名`); // 2026-10-02 条件ヒアリング ⑨ご入居人数
   if (pc?.preferences) condParts.push(`希望: ${pc.preferences}`);
@@ -2004,13 +2006,13 @@ export async function analyzeConversation(
 検索条件:
   エリア: ${pc.desired_area ?? "未設定"}${pc.area_mode && pc.area_mode !== "auto" ? `（モード: ${pc.area_mode}）` : ""}
   間取り: ${pc.floor_plan ?? "未設定"}
-  家賃上限: ${pc.rent_max ? `${Math.floor((pc.rent_max as number) / 10000)}万円` : "未設定"}${pc.rent_min ? `（下限: ${Math.floor((pc.rent_min as number) / 10000)}万円）` : ""}
+  家賃上限: ${pc.rent_max ? `${manYen(pc.rent_max as number)}万円` : "未設定"}${pc.rent_min ? `（下限: ${manYen(pc.rent_min as number)}万円）` : ""}
   広さ: ${pc.floor_area_min || pc.floor_area_max ? `${pc.floor_area_min ? `${pc.floor_area_min}㎡以上` : ""}${pc.floor_area_max ? `〜${pc.floor_area_max}㎡` : ""}` : "未設定"}
   駅徒歩: ${pc.walk_minutes ? `${pc.walk_minutes}分以内` : "未設定"}
   通勤先: ${pc.commute_station ? `${pc.commute_station}${pc.commute_minutes ? `（${pc.commute_minutes}分以内）` : ""}` : "未設定"}
   入居時期: ${pc.move_in_time ?? "未設定"}
   ペット: ${pc.pet != null ? (pc.pet ? "可" : "不可") : "未設定"}
-  初期費用上限: ${pc.initial_cost_limit ? `${Math.floor((pc.initial_cost_limit as number) / 10000)}万円` : "未設定"}
+  初期費用上限: ${pc.initial_cost_limit ? `${manYen(pc.initial_cost_limit as number)}万円` : "未設定"}
   築年数: ${pc.building_age ? `${pc.building_age}年以内` : "未設定"}
   希望条件: ${pc.preferences ?? "未設定"}
   その他要望: ${pc.other_requests ?? "未設定"}
@@ -3002,6 +3004,19 @@ ${history}`;
       finalAix = null;
       decisionSource = "rule:phone_button_already_sent";
     }
+    // 2026-10-02 ⑫ 20巡（thanks_08）: 電話が終わった後（直近2日に電話のお礼）の返事で、今回お客様が電話に触れていないのに 電話をかける を選んだ。
+    //   本番（電話のお礼のある会話 25・その後の番 62）でスタッフが 電話をかける を押したのは 0（手打ち 60）＝返信に戻す（scripts/audit-call-finished.ts）
+    if (!promiseAix && finalAix === "phone_call" && callJustFinished([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })))) {
+      finalAix = null;
+      decisionSource = "rule:call_just_finished";
+    }
+    // 2026-10-02 ⑫ 21巡（待ち合わせまで行く流れ）: 「待ち合わせ場所追ってご連絡させていただきます」の約束が残っている時のお客様の返事
+    //   （「ギリギリですが大丈夫です」「わかりました」）→ AIX【待ち合わせ】（約束を果たす AIX）。本番: 約束 3 の後 2 は次のお客様の番の後に押した
+    //   （scripts/audit-meeting-promise.ts）。ブレインが AIX なしの時だけ（他の AIX を選んだ時はそのまま）。住所はスタッフが資料で確かめる
+    if (!promiseAix && finalAix === null && meetingPromisePending([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text })))) {
+      finalAix = "meeting_place";
+      decisionSource = "promise:meeting";
+    }
     // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた（場面の証拠 S3・guarantor_question）→ AIX【保証会社について】。
     //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけ。「保証会社は緩そうなところでしょうか？」への実送信は保証会社の一覧。
     //   AIX なし／確認します／物件確認した を 保証会社について にする（他の AIX を選んだ時はそのまま）
@@ -3207,7 +3222,7 @@ ${history}`;
       decisionSource = decisionSource ? `${decisionSource}+ack_to_check` : "correction:ack_to_check";
     }
     let twoStage: TwoStageVerdict | null = null;
-    if (finalAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet)$/.test(finalAix)) {
+    if (finalAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet|guarantor_info)$/.test(finalAix)) {
       let pickupReady = false;
       if (finalAix === "property_send" || finalAix === "property_recommendation" || finalAix === "property_search") {
         try {

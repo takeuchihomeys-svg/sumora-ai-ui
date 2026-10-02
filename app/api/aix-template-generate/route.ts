@@ -1,3 +1,4 @@
+import { manYen } from "@/app/lib/man-yen";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { supabase } from "@/app/lib/supabase";
@@ -645,7 +646,7 @@ export async function POST(req: NextRequest) {
           resolvedCustomerConditions = [
             pc.desired_area ? "エリア: " + pc.desired_area : "",
             pc.floor_plan ? "間取り: " + pc.floor_plan : "",
-            pc.rent_max ? "家賃上限: " + Math.floor(pc.rent_max / 10000) + "万円" : "",
+            pc.rent_max ? "家賃上限: " + manYen(pc.rent_max) + "万円" : "",
             pc.walk_minutes ? "駅徒歩: " + pc.walk_minutes + "分以内" : "",
             pc.move_in_time ? "入居希望: " + pc.move_in_time : "",
             pc.preferences ? "希望: " + pc.preferences : "",
@@ -1579,7 +1580,7 @@ export async function POST(req: NextRequest) {
             brainMeta.property_search_params.floor_plan ? `間取り希望: ${brainMeta.property_search_params.floor_plan}` : "",
             brainMeta.property_search_params.walk_minutes ? `駅徒歩${brainMeta.property_search_params.walk_minutes}分以内` : "",
             // brain-core は rent_max を円単位の生値で格納 → 万円に変換（「90000万円」等の異常値防止）
-            brainMeta.property_search_params.rent_max ? `家賃上限${Math.floor((brainMeta.property_search_params.rent_max ?? 0) / 10000)}万円` : "",
+            brainMeta.property_search_params.rent_max ? `家賃上限${manYen(brainMeta.property_search_params.rent_max ?? 0)}万円` : "",
             brainMeta.property_search_params.move_in_time ? `入居希望${brainMeta.property_search_params.move_in_time}` : "",
             ...prefList,
           ].filter(Boolean).join(" / ")

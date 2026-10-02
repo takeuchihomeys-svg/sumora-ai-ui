@@ -1,5 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
+import { manYen } from "@/app/lib/man-yen";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
@@ -114,8 +115,9 @@ function firstRel(rel: ConversationRow["property_customers"]): PropertyCustomerR
 function rentLabel(pc: PropertyCustomerRel): string | null {
   const raw = pc.rent_max ?? pc.max_rent;
   if (!raw || raw <= 0) return null;
-  const wan = raw > 1000 ? Math.floor(raw / 10000) : Math.floor(raw);
-  if (wan <= 0) return null;
+  // 2026-10-02 ⑫: 8.5万を「8万」と切り捨てない（man-yen.ts）
+  const wan = raw > 1000 ? manYen(raw) : String(raw);
+  if (Number(wan) <= 0) return null;
   return `〜${wan}万`;
 }
 

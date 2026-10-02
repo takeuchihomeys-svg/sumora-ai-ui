@@ -115,5 +115,13 @@ console.log("── 送る時刻（窓の外にははみ出さない）");
   ]) t(`2段・約束あり → 止めない: ${d.slice(0, 24)}`, canAutoReply({ ...OK, draft: d, twoStageKind: "pickup" }).reason !== "two_stage_no_promise");
 }
 
+// 2026-10-02 ⑫ 21巡（flow2_fbffca_t12 の実物）: 内覧の日時が決まった後に日にちを聞き直す下書きは送らない
+{
+  const ground = "大丈夫です！ 13:00〜お願いします！\nかしこまりました！！ 9/24日13:00からはよろしくお願いいたします😊！！ 芝犬の飼育可能か含め待ち合わせ場所追ってご連絡させていただきます！！";
+  const reask = "はい！！\nお気に召されましたらご都合よろしいお日にち御座いますでしょうか！！ご案内させて頂きます！！";
+  t("決まった後の聞き直し → viewing_date_reask", canAutoReply({ ...OK, draft: reask, groundText: ground }).reason === "viewing_date_reask");
+  t("日時が決まっていない会話の内覧の打診は止めない", canAutoReply({ ...OK, draft: reask, groundText: "3件とも内覧行きたいです" }).reason !== "viewing_date_reask");
+}
+
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

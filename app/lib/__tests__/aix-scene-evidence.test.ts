@@ -154,6 +154,7 @@ describe("内覧の別日程（2026-09-12 竹内・愛乃事例: 内覧日調整
   it("「来週でご都合いい日ってありますか？？」→ 内覧日調整", () => expect(ev({ latestCustomerTurn: "すいません今週実家に帰るので、、 来週でご都合いい日ってありますか？？", ...afterInvite })?.reasonCode).toBe("viewing_date_alternative"));
   it("「土日でも大丈夫ですか」は条件変更（S7）ではなく内覧日調整", () => expect(ev({ latestCustomerTurn: "土日でも大丈夫ですか？", ...afterInvite })?.scene).toBe("S4_viewing"));
   it("具体的な日時＋依頼「14日の16:00でお願いしたいです」→ 待ち合わせ（S5）のまま", () => expect(ev({ latestCustomerTurn: "では14日の16:00でお願いしたいです！", ...afterInvite })?.scene).toBe("S5_time_spec"));
+  it("2026-10-02 ⑫ 電話の時刻「14:30-15:00くらいに掛けても大丈夫でしょうか？」は待ち合わせ（S5）にしない", () => expect(ev({ latestCustomerTurn: "14:30-15:00くらいに掛けても大丈夫でしょうか？", ...afterInvite })?.scene === "S5_time_spec").toBe(false));
   it("エリアの「〜以外」は内覧の別日程にしない（内覧日調整を送った後でも）", () => {
     expect(ev({ latestCustomerTurn: "平野区加美駅付近以外で大阪市内の物件を教えてほしいです", ...afterInvite })?.reasonCode === "viewing_date_alternative").toBe(false);
   });

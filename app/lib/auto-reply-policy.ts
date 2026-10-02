@@ -11,8 +11,10 @@
 // 【安全の考え方】この仕組みは**本物のお客様に自動で送る**ので、迷ったら送らない（fail-closed）。
 //   送ってよい条件を全部満たした時だけ true を返し、1つでも欠けたら理由付きで false。
 import { jstParts } from "./jst-date";
-import { findStaffOnlyFact, findUngroundedAmount } from "./staff-confirm-facts";
+import { findStaffOnlyFact, findUngroundedAmount, findUngroundedAgeRange } from "./staff-confirm-facts";
 import { STAFF_PICKUP_DECL_RE, STAFF_CONFIRM_DECL_RE, STAFF_ESTIMATE_DECL_RE } from "./reply-context";
+import { findExtraApplyDocs } from "./apply-docs-guard";
+import { findViewingDateReask } from "./viewing-reask";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -178,10 +180,16 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   //   AI の下書き 120日 920件で当たり 26・うちスタッフが金額を変えた/消した 23（scripts/audit-ungrounded-amount.ts）
   const ungrounded = findUngroundedAmount(draft, i.groundText);
   if (ungrounded) return { ok: false, reason: "staff_only_fact:ungrounded_amount" };
+  // ⑥-3b 2026-10-02 ⑫ 21巡: 会話に無い築年数の幅（「築年数は古め（15〜25年程）」）も自動で送らない
+  if (findUngroundedAgeRange(draft, i.groundText ?? "")) return { ok: false, reason: "staff_only_fact:ungrounded_age" };
   // ⑥-4 2026-10-02 ⑫ 17巡: 2段の場面（今は送れる物が無い→約束の返信）なのに約束が無い下書きは自動で送らない（本文は変えない）。
   //   17巡 flow1_t03: お客様の3つの話（フリーレント・別エリア・URL）に「かしこまりました！！全力でサポート」だけで約束も答えも無いまま送られた。
   //   約束が無いと行動台帳に promised が立たず、後の AIX も立たない（仕事が消える）＝人に残す
   if (i.twoStageKind && !hasTwoStagePromise(draft)) return { ok: false, reason: "two_stage_no_promise" };
+  // ⑥-5 2026-10-02 竹内さん「申込み時に必要なのはフォーマットと本人確認書類の裏表写真」: 申込の2つ以外の書類を求める下書きは自動で送らない（本文は変えない・apply-docs-guard.ts）
+  if (findExtraApplyDocs(draft)) return { ok: false, reason: "staff_only_fact:extra_apply_docs" };
+  // ⑥-6 2026-10-02 ⑫ 21巡: 内覧の日時が決まった後（直近の通に「◯/◯ ◯:◯◯からはよろしく」）に日にちを聞き直す下書きは自動で送らない（viewing-reask.ts・本文は変えない）
+  if (i.groundText && findViewingDateReask(draft, [i.groundText])) return { ok: false, reason: "viewing_date_reask" };
   // ⑦ 二重送信を防ぐ
   if (i.hasPendingScheduled) return { ok: false, reason: "already_scheduled" };
   return { ok: true, reason: "ok" };

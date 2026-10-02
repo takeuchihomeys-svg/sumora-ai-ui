@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { manYen } from "@/app/lib/man-yen";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 // 2026-09-29 API 費用の調査: 要約の Sonnet（7日で198回・$4.8）が llm_usage_logs で名前なしだった → 名札と会話 ID だけ付ける（動きは変えない）
@@ -348,7 +349,7 @@ export async function POST(req: NextRequest) {
     }
 
     const rentStr = (c.rent_min || c.rent_max)
-      ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
+      ? `${c.rent_min ? manYen(c.rent_min) + "万〜" : "〜"}${c.rent_max ? manYen(c.rent_max) + "万" : ""}`
       : null;
 
     // 高5: personality_profile を取得（人間性ベース成約パターン検索の主クエリ）
@@ -434,7 +435,7 @@ export async function POST(req: NextRequest) {
       c.walk_minutes         && `駅徒歩: ${c.walk_minutes}分以内`,
       c.move_in_time         && `入居時期: ${c.move_in_time}`,
       c.building_age         && `築年数: ${c.building_age}年以内`,
-      c.initial_cost_limit   && `初期費用: ${Math.floor(c.initial_cost_limit / 10000)}万以内`,
+      c.initial_cost_limit   && `初期費用: ${manYen(c.initial_cost_limit)}万以内`,
       c.preferences          && `こだわり: ${c.preferences}`,
       c.ng_points            && `NG条件: ${c.ng_points}`,
       c.other_requests       && `その他希望: ${c.other_requests}`,

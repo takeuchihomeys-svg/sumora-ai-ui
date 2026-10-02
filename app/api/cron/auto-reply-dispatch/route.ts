@@ -6,6 +6,7 @@ import { canAutoReply, resolveAutoSendAt, type AutoReplyInput } from "@/app/lib/
 import { draftToSendableText } from "@/app/lib/draft-text";
 import { hasOutgoingResidue } from "@/app/lib/outgoing-residue";
 import { APPLICATION_FORMAT_RE } from "@/app/lib/apply-sub-mode";
+import { VIEWING_DATE_ASK_RE } from "@/app/lib/viewing-reask";
 
 export const maxDuration = 60;
 
@@ -96,7 +97,8 @@ export async function GET(req: NextRequest) {
     const sendable = draftToSendableText(c.ai_draft);
     // 2026-10-02 ⑫ 11巡目: 下書きに金額がある時だけ、金額の根拠（直近30通＋登録の家賃）を読む（会話に無い金額は送らない・canAutoReply ⑥-3）
     let groundText: string | null = null;
-    if (sendable && /[0-9０-９]\s*万|[0-9０-９][0-9０-９,，]{3,}\s*円/.test(sendable)) {
+    //   2026-10-02 ⑫ 21巡: 内覧の日にちを聞く下書きの時も読む（決まった日を聞き直していないか・canAutoReply ⑥-6）
+    if (sendable && (/[0-9０-９]\s*万|[0-9０-９][0-9０-９,，]{3,}\s*円/.test(sendable) || VIEWING_DATE_ASK_RE.test(sendable))) {
       const { data: recent } = await supabase.from("messages").select("text").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(30);
       const { data: convRow } = await supabase.from("conversations").select("property_customer_id").eq("id", c.id).maybeSingle();
       const pcId = (convRow?.property_customer_id as string | null | undefined) ?? null;

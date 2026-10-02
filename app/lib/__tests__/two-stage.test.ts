@@ -24,6 +24,8 @@ for (const src of ["promise:pickup", "promise:check", "promise:estimate", "signa
   const v = resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: "llm+ack_to_check", customerText: "夜職なのですがアリバイ会社使えますか？" });
   t("アリバイの質問 → お仕事面のサポート（管理会社に確認と書かせない）", v?.source === "rule:two_stage_promise(work_support)" && /お仕事面こちらでサポート/.test(v.direction), v?.direction);
   t("勤務先を空欄で → お仕事面のサポート", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "勤務先は空欄でよろしいですか？" })?.source === "rule:two_stage_promise(work_support)");
+  t("アリバイの質問に保証会社について → お仕事面のサポート", resolveTwoStage({ ...base, finalAix: "guarantor_info", customerText: "夜職なのですがアリバイ会社使えますか？" })?.source === "rule:two_stage_promise(work_support)");
+  t("保証会社の質問の保証会社について → AIX のまま", resolveTwoStage({ ...base, finalAix: "guarantor_info", customerText: "保証会社はどこになりますか？" }) === null);
   t("ペットの可否の確認 → 今まで通り確認の約束", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "ペット2匹飼えますか？" })?.source === "rule:two_stage_promise(check)");
 }
 t("申込以降は触らない", resolveTwoStage({ ...base, finalAix: "estimate_sheet", postApply: true }) === null);

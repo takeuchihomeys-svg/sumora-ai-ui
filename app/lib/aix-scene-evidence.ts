@@ -348,7 +348,9 @@ export function detectAixSceneEvidence(o: SceneEvidenceInput): AixSceneEvidence 
   }
 
   // S5 日時の指定（viewing_invite を送った後の「9/9の15時からお願いします」）
-  if (TIME_SPEC_RE.test(msg) && TIME_REQUEST_RE.test(msg) && hasViewingInviteBefore(o)) {
+  //   2026-10-02 ⑫ 20巡（meeting_date_34）: 電話のボタンの後の「14:30-15:00くらいに掛けても大丈夫でしょうか？」は電話の時刻で内覧の時刻ではない
+  //   （スタッフの実送信は「大丈夫です😊！！お手隙のタイミングでお電話おかけください！！」の手打ち）→ 電話・通話・掛ける の語がある時は待ち合わせにしない
+  if (TIME_SPEC_RE.test(msg) && TIME_REQUEST_RE.test(msg) && hasViewingInviteBefore(o) && !/電話|通話|掛け(?:て|ても|ます|れ)|かけ(?:ても|て(?:も)?(?:大丈夫|よろし|いい))/.test(msg)) {
     return ev({ scene: "S5_time_spec", candidateAction: "meeting_place", checkPattern: null, timing: "now", chained: null, reasonCode: "time_spec_after_viewing_invite" });
   }
 

@@ -1,0 +1,20 @@
+[
+ {
+  "id": "848dbd7c-5f80-4a28-a24e-8ef4cbb9a9a7",
+  "content": "お客様の名前を呼びかけた後、審査に必要な書類を明確に指定し、提出方法（マイナポータルなど具体的なツール）を案内する形で、丁寧な敬語で締めくくる",
+  "hypothesis_status": "rejected",
+  "rejection_reason": "auto_never_applied_45d"
+ },
+ {
+  "id": "acaf40ec-c0bc-45e8-b006-7b6b1e15edb0",
+  "content": "マイナポータルの資格証明書のスクショでしたら一度交渉させていただきます！！",
+  "hypothesis_status": "rejected",
+  "rejection_reason": "auto_never_applied_45d"
+ },
+ {
+  "id": "fa8ab604-b346-4e37-93da-1664ea31e9d3",
+  "content": "審査に伴い〇〇さんの保険証のお写真も必要となりますので、マイナポータルより資格情報のスクショお送りの程よろしくお願いいたします。",
+  "hypothesis_status": "confirmed",
+  "rejection_reason": null
+ }
+]

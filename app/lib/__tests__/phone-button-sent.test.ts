@@ -1,6 +1,6 @@
 // 電話のボタンを送った直後か（app/lib/phone-button-sent.ts）
 // 実行: npx tsx app/lib/__tests__/phone-button-sent.test.ts（材料は本番の実物・名前は伏せた）
-import { phoneButtonJustSent } from "../phone-button-sent";
+import { phoneButtonJustSent, callJustFinished } from "../phone-button-sent";
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) { try { fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n      ${e instanceof Error ? e.message : String(e)}`); } }
 function eq<T>(a: T, b: T) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
@@ -28,5 +28,26 @@ it("ボタンが前の日の束（6時間より前）なら false", () => {
 });
 it("最後がこちらの発言なら false", () => {
   eq(phoneButtonJustSent([{ sender: "staff", text: "電話をかけるボタン", createdAt: t(0) }]), false);
+});
+// 2026-10-02 ⑫ 20巡（thanks_08 の実物）: 電話が終わった後の返事
+it("電話のお礼の後・電話に触れない返事 → 電話が終わった", () => {
+  eq(callJustFinished([
+    { sender: "customer", text: "お忙しい中 お電話ありがとうございました！ 引き続きよろしくお願いします", createdAt: t(0) },
+    { sender: "staff", text: "こちらこそお電話ありがとうございました😊！！", createdAt: t(5) },
+    { sender: "staff", text: "YUMAさん お世話になっております！！ 改めて探させていただきました", createdAt: t(600) },
+    { sender: "customer", text: "こんばんわ！ おせわになってます！ 探していただき ありがとうございます😭", createdAt: t(700) },
+  ]), true);
+});
+it("電話のお礼の後でも、今回また電話を頼んだ → 対象外", () => {
+  eq(callJustFinished([
+    { sender: "staff", text: "お電話ありがとうございました😊！！", createdAt: t(0) },
+    { sender: "customer", text: "もう一度お電話いけますか？", createdAt: t(60) },
+  ]), false);
+});
+it("電話のお礼が3日前 → 対象外", () => {
+  eq(callJustFinished([
+    { sender: "staff", text: "お電話ありがとうございました😊！！", createdAt: t(0) },
+    { sender: "customer", text: "ありがとうございます", createdAt: t(60 * 72) },
+  ]), false);
 });
 console.log(`\n${passed} passed, ${failed} failed`); if (failed) process.exit(1);

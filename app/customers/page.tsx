@@ -1,5 +1,6 @@
 "use client";
 
+import { manYen } from "@/app/lib/man-yen";
 import { useEffect, useState, useMemo, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import BottomNav from "@/app/components/BottomNav";
@@ -149,8 +150,8 @@ function generateSearchFormat(c: Customer): string {
   const year = new Date().getFullYear();
   const lines: string[] = [];
   lines.push(`1 ${c.move_in_time || "（未入力）"}`);
-  const rentMin = c.rent_min ? Math.floor(c.rent_min / 10000) : null;
-  const rentMax = c.rent_max ? Math.floor(c.rent_max / 10000) : null;
+  const rentMin = c.rent_min ? manYen(c.rent_min) : null;
+  const rentMax = c.rent_max ? manYen(c.rent_max) : null;
   if (rentMin && rentMax) lines.push(`2 できれば${rentMin}から${rentMax}万円`);
   else if (rentMax) lines.push(`2 できれば${rentMax}万円以内`);
   else lines.push("2 （未入力）");
@@ -161,7 +162,7 @@ function generateSearchFormat(c: Customer): string {
   lines.push(`5 ${c.desired_area || "（未入力）"}`);
   if (c.walk_minutes) lines.push(`6 ${c.walk_minutes}分以内`);
   else lines.push("6 （未入力）");
-  if (c.initial_cost_limit) lines.push(`7 ${Math.floor(c.initial_cost_limit / 10000)}万💴以内`);
+  if (c.initial_cost_limit) lines.push(`7 ${manYen(c.initial_cost_limit)}万💴以内`);
   else lines.push("7 （未入力）");
   const petStr = c.pet === true ? "ペット可" : c.pet === false ? "ペット不可" : "";
   const pref = [petStr, c.preferences].filter(Boolean).join("、");
@@ -328,12 +329,12 @@ function toEditFields(c: Customer): EditFields {
     area_mode_ward:     am === "ward" || am === "both",
     area_mode_station:  am === "station" || am === "both",
     floor_plan:         c.floor_plan         ?? "",
-    rent_min:           c.rent_min           ? String(Math.floor(c.rent_min / 10000)) : "",
-    rent_max:           c.rent_max           ? String(Math.floor(c.rent_max / 10000)) : "",
+    rent_min:           c.rent_min           ? String(manYen(c.rent_min)) : "",
+    rent_max:           c.rent_max           ? String(manYen(c.rent_max)) : "",
     walk_minutes:       c.walk_minutes       ? String(c.walk_minutes) : "",
     move_in_time:       c.move_in_time       ?? "",
     building_age:       c.building_age       ? String(c.building_age) : "",
-    initial_cost_limit: c.initial_cost_limit ? String(Math.floor(c.initial_cost_limit / 10000)) : "",
+    initial_cost_limit: c.initial_cost_limit ? String(manYen(c.initial_cost_limit)) : "",
     floor_area_min:     c.floor_area_min     ? String(c.floor_area_min) : "",
     floor_area_max:     c.floor_area_max     ? String(c.floor_area_max) : "",
     pet:                c.pet === true ? "true" : c.pet === false ? "false" : "",
@@ -358,8 +359,8 @@ function customerToTempAdj(c: Customer): TempAdj {
   return {
     area_input,
     station_input,
-    rent_min:       c.rent_min       ? String(Math.floor(c.rent_min  / 10000)) : "",
-    rent_max:       c.rent_max       ? String(Math.floor(c.rent_max  / 10000)) : "",
+    rent_min:       c.rent_min       ? String(manYen(c.rent_min)) : "",
+    rent_max:       c.rent_max       ? String(manYen(c.rent_max)) : "",
     floor_area_min: c.floor_area_min ? String(c.floor_area_min) : "",
     floor_area_max: c.floor_area_max ? String(c.floor_area_max) : "",
     walk_minutes:   c.walk_minutes   ? String(c.walk_minutes)   : "",
@@ -1119,15 +1120,15 @@ function CustomersPageInner() {
         area_mode_ward:     f.area_mode_ward,
         area_mode_station:  f.area_mode_station,
         floor_plan:         p.floor_plan         != null ? String(p.floor_plan)         : f.floor_plan,
-        rent_min:           p.rent_min           != null ? String(Math.floor((p.rent_min as number)/10000)) : f.rent_min,
-        rent_max:           p.rent_max           != null ? String(Math.floor((p.rent_max as number)/10000)) : f.rent_max,
+        rent_min:           p.rent_min           != null ? String(manYen(p.rent_min as number)) : f.rent_min,
+        rent_max:           p.rent_max           != null ? String(manYen(p.rent_max as number)) : f.rent_max,
         walk_minutes:       p.walk_minutes       != null ? String(p.walk_minutes)       : f.walk_minutes,
         move_in_time:       p.move_in_time       != null ? String(p.move_in_time)       : f.move_in_time,
         building_age:       p.building_age       != null ? String(p.building_age)       : f.building_age,
         floor_area_min:     p.floor_area_min     != null ? String(p.floor_area_min)     : f.floor_area_min,
         floor_area_max:     f.floor_area_max,
         pet:                f.pet,
-        initial_cost_limit: p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number)/10000)) : f.initial_cost_limit,
+        initial_cost_limit: p.initial_cost_limit != null ? String(manYen(p.initial_cost_limit as number)) : f.initial_cost_limit,
         preferences:        p.preferences        != null ? String(p.preferences)        : f.preferences,
         ng_points:          p.ng_points          != null ? String(p.ng_points)          : f.ng_points,
         other_requests:     p.other_requests     != null ? String(p.other_requests)     : f.other_requests,
@@ -2186,11 +2187,11 @@ function CustomersPageInner() {
                               <div className="flex flex-wrap gap-1.5 mb-1.5">
                                 <AreaTags c={c} />
                                 {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
-                                {(c.rent_min || c.rent_max) && <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />}
+                                {(c.rent_min || c.rent_max) && <Tag label="家賃" value={`${c.rent_min ? manYen(c.rent_min)+"万〜" : "〜"}${c.rent_max ? manYen(c.rent_max)+"万" : ""}`} />}
                                 {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
                                 {c.commute_station && c.commute_minutes && <Tag label="通勤" value={`${c.commute_station}まで${c.commute_minutes}分`} />}
                                 {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
-                                {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
+                                {c.initial_cost_limit && <Tag label="初期" value={`${manYen(c.initial_cost_limit)}万以内`} />}
                                 {c.pet === true && <Tag label="ペット" value="飼育あり" />}
                                 {detectShikireiFlag(c) && <Tag label="敷礼0" value="敷礼なし" />}
                               </div>
@@ -2536,14 +2537,14 @@ function CustomersPageInner() {
                             {c.pet === true && <Tag label="ペット" value="飼育あり" />}
                             {c.pet === false && <Tag label="ペット" value="なし" />}
                             {(c.rent_min || c.rent_max) && (
-                              <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
+                              <Tag label="家賃" value={`${c.rent_min ? manYen(c.rent_min)+"万〜" : "〜"}${c.rent_max ? manYen(c.rent_max)+"万" : ""}`} />
                             )}
                             {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
                             {c.commute_station && c.commute_minutes && <Tag label="通勤" value={`${c.commute_station}まで${c.commute_minutes}分`} />}
                             {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
                             {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
                             {c.structure_types && <Tag label="構造" value={c.structure_types} />}
-                            {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
+                            {c.initial_cost_limit && <Tag label="初期" value={`${manYen(c.initial_cost_limit)}万以内`} />}
                             {detectShikireiFlag(c) && <Tag label="敷礼0" value="敷礼なし" />}
                           </div>
                           {(c.preferences || c.ng_points) && (

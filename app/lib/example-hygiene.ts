@@ -10,6 +10,7 @@
 import { fixDateWeekdays } from "./jst-date";
 import { hasOutgoingResidue } from "./outgoing-residue";
 import { findCompanyFactContradictionsUngated } from "./company-fact-guard";
+import { findExtraApplyDocs } from "./apply-docs-guard";
 
 /** generate-reply/route.ts が例外時にストリームへ流す文言（route 側もこの定数を import する＝文言の出所は1か所） */
 export const GENERATION_FAILURE_TEXT = "（AI返信の生成に失敗しました。再生成をお試しください）";
@@ -40,6 +41,11 @@ export function isUsableExampleText(s: string | null | undefined): boolean {
   //   （送信 API の最後の網と同じ outgoing-residue.ts）。手本 7,462行で送った文の当たりは1行＝⭐付きの AIX【内覧へ】08593448（8/28）が
   //   {"greeting":…,"dates":…} の JSON のまま手本に入っていた。AI の下書きの当たり 12行（末尾の "} 等・スタッフが直して送った）は差分学習の材料なので isUsableAiDraft は変えない
   if (hasOutgoingResidue(t)) return false;
+  // 2026-10-02 竹内さん「申込み時に必要なのはフォーマットと本人確認書類の裏表写真」: 管理会社の個別の指示として書かれていない
+  //   申込の2つ以外の書類（保険証・マイナポータル・戸籍・顔写真・収入証明 等）を求める文は手本にしない（apply-docs-guard.ts）。
+  //   スタッフの送信 365日 13,686通で当たる 20通（別のお客様の個別の事情: お仕事面のサポートの内定通知・管理会社の追加の指示を伝えた文 等）。
+  //   YUMA の再生で他のお客様の「資格確認書・戸籍謄本・集合写真」を申込の書類として並べた出所の1つ
+  if (findExtraApplyDocs(t)) return false;
   return true;
 }
 

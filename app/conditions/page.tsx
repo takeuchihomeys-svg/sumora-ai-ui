@@ -1,5 +1,6 @@
 "use client";
 
+import { manYen } from "@/app/lib/man-yen";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import BottomNav from "@/app/components/BottomNav";
@@ -592,9 +593,9 @@ export default function ConditionsPage() {
     const min = c.rent_min;
     const max = c.rent_max || c.max_rent;
     if (!min && !max) return null;
-    if (min && max) return `${Math.floor(min / 10000)}万〜${Math.floor(max / 10000)}万円`;
-    if (max) return `〜${Math.floor(max / 10000)}万円`;
-    return `${Math.floor(min! / 10000)}万円〜`;
+    if (min && max) return `${manYen(min)}万〜${manYen(max)}万円`;
+    if (max) return `〜${manYen(max)}万円`;
+    return `${manYen(min!)}万円〜`;
   }
 
   const q = searchQuery.trim().toLowerCase();
@@ -1258,7 +1259,7 @@ export default function ConditionsPage() {
               if (qt.walk_minutes) gridItems.push({ label: "徒歩", value: `${qt.walk_minutes}分以内` });
               if (qt.floor_plan || qt.layout) gridItems.push({ label: "間取り", value: (qt.floor_plan || qt.layout)! });
               if (qt.building_age) gridItems.push({ label: "築年数", value: `${qt.building_age}年以内` });
-              if (qt.initial_cost_limit) gridItems.push({ label: "初期費用", value: `${Math.floor(qt.initial_cost_limit / 10000)}万以内` });
+              if (qt.initial_cost_limit) gridItems.push({ label: "初期費用", value: `${manYen(qt.initial_cost_limit)}万以内` });
               return (
                 <div className="bg-slate-50 rounded-xl p-3 space-y-2">
                   {gridItems.length > 0 && (

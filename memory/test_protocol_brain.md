@@ -160,6 +160,15 @@ WHERE created_at >= '<開始>' AND env LIKE 'local:%' AND conversation_id IS NOT
 - **送る文にテストの印・ラベルを入れない**（2026-10-02 竹内「テスト送信入っている。紛れないように」: 【テスト送信…】の通が YUMA の LINE に届いた）。送信 API（/api/send-line-message）と手元の送信の道具（yuma-line-send.ts・yuma-real-line-send-test.ts）は app/lib/outgoing-residue.ts でテストの印・JSON の名残を止める
 - 出口（返信の本文を書き換える決定論）を足す・直す時は、**人の実送信で何通変わるか**を `scripts/audit-exits-vs-human.ts` で数える（LLM を呼ばない・入口不要）。前の出口を通った後の形で測る（出口の玉突きはこれでしか見えない）。設計知見「弱い部分の見つけ方と強化のしかた」。
 
+## 9.6 場面の網羅（2026-10-02 竹内「テストの会話でaixの待ち合わせ場所で待ち合わせ決めるパターンがはいっていない。ほかにも抜けている会話あるからちゃんと色んなパターンでおこなう」）
+
+- **巡を回す前に網羅の表を見る**: `npx tsx --env-file=.env.local scripts/yuma-coverage-matrix.ts`（AIX のボタン×ピッカー／場面を aix-pickers.ts から作り、場面のファイルが覆っているかを ○× で出す）。
+  覆っていないマスがあれば `--keys-out=<file>` で本番の押下から場面の鍵を作り、`scripts/replay-scenarios-mine.ts --days=200 --per=1 --pick=<file> --pick-out=scripts/.replay-out/scen-covN.json` で場面にして流す。
+- 待ち合わせまで行く一連の流れ: `replay-scenarios-mine.ts --flows=2 --flows-need=meeting_place --flows-max-turns=16`（他の AIX でも --flows-need=<aix>）。
+- **本番で押された事が無いマス**（電話終了後・専任物件だった・日程変更 等）は場面を作れない＝作り話の場面は入れない（表に「本番で押下なし」と出る）。
+- 掘った場面に申込以降・申込の書類・第三者の名前（紹介者 等）が残っていないかを読んでから流す（伏せ字は「〇〇」）。
+- 報告に網羅の数（前→後）を書く。
+
 ## 10. 知られている落とし穴（2026-10-01 に起きた事）
 
 | 起きた事 | 原因 | 今の歯止め |

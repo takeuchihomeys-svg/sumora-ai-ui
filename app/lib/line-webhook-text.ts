@@ -809,7 +809,7 @@ export function buildConditionNote(parsed: Record<string, unknown>): string {
   }
   if (parsed.move_in_time)       parts.push(`入居: ${parsed.move_in_time}`);
   if (parsed.building_age)       parts.push(`築年: ${parsed.building_age}年以内`);
-  if (parsed.initial_cost_limit) parts.push(`初期: ${Math.floor((parsed.initial_cost_limit as number) / 10000)}万以内`);
+  if (parsed.initial_cost_limit) parts.push(`初期: ${manYen(parsed.initial_cost_limit as number)}万以内`);
   if (parsed.preferences)        parts.push(`希望: ${parsed.preferences}`);
   if (parsed.ng_points)          parts.push(`NG: ${parsed.ng_points}`);
   if (parsed.other_requests)     parts.push(`その他: ${parsed.other_requests}`);
@@ -1650,8 +1650,8 @@ async function notifyFormatReceived(
   const lines: string[] = [];
   if (conditions.desired_area)    lines.push(`📍 エリア: ${conditions.desired_area}`);
   if (conditions.rent_max) {
-    const man = Math.floor((conditions.rent_max as number) / 10000);
-    const min = conditions.rent_min ? `${Math.floor((conditions.rent_min as number) / 10000)}万〜` : "〜";
+    const man = manYen(conditions.rent_max as number);
+    const min = conditions.rent_min ? `${manYen(conditions.rent_min as number)}万〜` : "〜";
     lines.push(`💰 家賃: ${min}${man}万円`);
   }
   if (conditions.floor_plan)      lines.push(`🏠 間取り: ${conditions.floor_plan}`);
@@ -1659,7 +1659,7 @@ async function notifyFormatReceived(
   if (conditions.walk_minutes)    lines.push(`🚶 徒歩: ${conditions.walk_minutes}分以内`);
   if (conditions.building_age)    lines.push(`🏗️ 築年数: ${conditions.building_age}年以内`);
   if (conditions.initial_cost_limit) {
-    lines.push(`💴 初期費用: ${Math.floor((conditions.initial_cost_limit as number) / 10000)}万以内`);
+    lines.push(`💴 初期費用: ${manYen(conditions.initial_cost_limit as number)}万以内`);
   }
   if (conditions.other_requests)  lines.push(`📝 その他: ${conditions.other_requests}`);
 

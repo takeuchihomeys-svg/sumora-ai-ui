@@ -104,7 +104,7 @@ async function main() {
   const convs = await readAll<Conv>((f, t) => sb.from("conversations").select("id, customer_name, line_source_type, status, created_at").range(f, t));
   const convBy = new Map(convs.map((c) => [c.id, c]));
   const msgs = await readAll<Msg>((f, t) => sb.from("messages").select("conversation_id, sender, created_at, text, is_aix_generated, image_url").gte("created_at", since).order("created_at").order("id").range(f, t));
-  const presses = await readAll<Press>((f, t) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, created_at").gte("created_at", since).not("aix_type", "is", null).order("created_at").range(f, t));
+  const presses = await readAll<Press>((f, t) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, app_sub_mode, send_mode, picker_choices, created_at").gte("created_at", since).not("aix_type", "is", null).order("created_at").range(f, t));
   console.log(`messages ${msgs.length}・AIX ${presses.length}`);
   const group = <T extends { conversation_id: string }>(rows: T[]) => { const m = new Map<string, T[]>(); for (const r of rows) { if (!m.has(r.conversation_id)) m.set(r.conversation_id, []); m.get(r.conversation_id)!.push(r); } return m; };
   const mBy = group(msgs), pBy = group(presses);
@@ -135,7 +135,9 @@ async function main() {
       const w = staffWindowOf({ customerTurnAt: m.created_at, msgs: ms, presses: ps, nowMs });
       if (!w.closed || !w.staffFirstAt) continue;
       const burstTexts = w.texts.filter((t) => t.burst).map((t) => t.text);
-      const burstAix = w.presses.filter((p) => p.burst).map((p) => ({ aix: p.aix_type, cp: p.check_pattern }));
+      // 2026-10-02 ⑫ 網羅の表（scripts/yuma-coverage-matrix.ts）: ピッカーの場面（申込の場面・まとめの種類・内覧の種類 等）も残す
+      //   staffWindowOf は押下を作り直す（列が落ちる）ので、元の行（ps）を時刻と種類で引く
+      const burstAix = w.presses.filter((p) => p.burst).map((p) => { const q = (ps as Array<Press & { app_sub_mode?: string | null; send_mode?: string | null; picker_choices?: Record<string, unknown> | null }>).find((x) => x.created_at === p.at && x.aix_type === p.aix_type); return { aix: p.aix_type, cp: p.check_pattern, sm: q?.app_sub_mode ?? q?.send_mode ?? null, pc: q?.picker_choices ?? null }; });
       if (!burstTexts.length && !burstAix.length) continue;
       const turn: Msg[] = [];
       for (let j = i; j < ms.length && ms[j].sender === "customer"; j++) turn.push(ms[j]);
@@ -199,7 +201,9 @@ async function main() {
     for (const f of ek.split(",").filter(Boolean)) for (const k of JSON.parse(readFileSync(f, "utf8")) as Array<[number, string, string, string]>) exclude.add(k[2]);
     const byConv = new Map<string, Cand[]>();
     for (const c of out) { if (!byConv.has(c.conv)) byConv.set(c.conv, []); byConv.get(c.conv)!.push(c); }
-    const flows = [...byConv].filter(([cid, cs]) => !exclude.has(cid) && cs[0].scene === "first_contact" && cs.length >= 5 && cs.some((c) => ["viewing", "meeting_date", "apply"].includes(c.scene)))
+    const flows = [...byConv].filter(([cid, cs]) => !exclude.has(cid) && cs[0].scene === "first_contact" && cs.length >= 5 && cs.some((c) => ["viewing", "meeting_date", "apply"].includes(c.scene))
+      // 2026-10-02 ⑫ 竹内さん「待ち合わせ場所で待ち合わせ決めるパターンがはいっていない」: --flows-need=meeting_place でその AIX を押した会話だけ
+      && (!arg("flows-need", "") || cs.some((c) => c.staff_aix.some((x) => x.aix === arg("flows-need", "")))))
       .sort((a, b) => Date.parse(b[1][0].at) - Date.parse(a[1][0].at)).slice(skip, skip + FLOWS);
     const exp = JSON.parse(readFileSync("scripts/replay-scenarios.expect.json", "utf8")) as { stage_ja: Record<string, string> };
     const scen = flows.flatMap(([cid, cs], fi) => cs.slice(0, maxTurns).map((c, ti) => {
