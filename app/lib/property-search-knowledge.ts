@@ -11,7 +11,7 @@
 // ■ 決め事
 //   ・読む時は人数 KNOWLEDGE_RULE.minCustomers 以上だけ（1人の癖を知識にしない）。希望の駅そのもの（同じまとまり）は「届けた別の駅」から外す
 //   ・お客様の名前・発言・電話は持たない（数と駅・区だけ）
-import { normStation, wardOfStation } from "./osaka-geo";
+import { normStation, wardOfStation, wardsAdjacent } from "./osaka-geo";
 
 export const KNOWLEDGE_RULE = {
   /** 読む（ブレイン・resolve-area に出す）最小の人数 */
@@ -104,8 +104,11 @@ export function buildRestatementKnowledge(pairs: Array<{ id: string; from: strin
 
 /** ブレイン・スタッフ向けの1行（事実だけ・人数つき） */
 export function deliveredLine(key: string, p: DeliveredPayload): string {
-  const st = p.stations.filter((x) => x.customers >= KNOWLEDGE_RULE.minCustomers).slice(0, 8).map((x) => `${x.name}${x.customers}人`).join("・");
-  const wd = p.wards.slice(0, 5).map((x) => `${keyLabel(`ward:${x.name}`)}${x.customers}人`).join("・");
+  // 2026-10-02 竹内「覚えるだけで 中央区と浪速区は隣接しているからおこなっている」: 届け先が希望の区の隣の区なら「隣接区」と添える（なぜその区かをブレインが分かるように）
+  const base = key.startsWith("ward:") ? key.slice(5) : wardOfStation(key.replace(/^station:/, ""));
+  const adj = (w: string | null) => (!!base && !!w && w !== base && wardsAdjacent(base, w) ? "（隣接区）" : "");
+  const st = p.stations.filter((x) => x.customers >= KNOWLEDGE_RULE.minCustomers).slice(0, 8).map((x) => `${x.name}${x.customers}人${adj(wardOfStation(x.name))}`).join("・");
+  const wd = p.wards.slice(0, 5).map((x) => `${keyLabel(`ward:${x.name}`)}${x.customers}人${x.name === base ? "（同じ区）" : adj(x.name)}`).join("・");
   const ap = p.applied_stations.slice(0, 5).map((x) => `${x.name}${x.customers}人`).join("・");
   return `${keyLabel(key)}が希望のお客様${p.customers}人に、スタッフが届けた部屋の別の駅: ${st || "（2人以上の駅なし）"}／区: ${wd}${p.applied_customers ? `／申込に進んだ${p.applied_customers}人の駅: ${ap || "-"}` : ""}`;
 }

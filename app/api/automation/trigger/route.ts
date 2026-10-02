@@ -109,6 +109,15 @@ export async function POST(req: NextRequest) {
   }
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  // 2026-10-02 v2.5.69: 一時停止中（automation_settings.paused）は積まない（再開した瞬間に溜まった分がまとめて走らないように）。
+  //   他の積む口（AIX・見張り・広げて・cron）の分は /api/automation/pending が一時停止中に取り消す
+  {
+    const { data: st } = await supabase.from("automation_settings").select("paused").eq("id", 1).maybeSingle();
+    if ((st as { paused?: boolean } | null)?.paused) {
+      return NextResponse.json({ ok: false, paused: true, error: "自動の物件検索は一時停止中です（拡張の画面から手で検索してください）" }, { status: 409 });
+    }
+  }
+
   const body = await req.json() as {
     customer_ids?: string[];
     sites?: string[];

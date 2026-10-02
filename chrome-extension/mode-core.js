@@ -115,7 +115,16 @@
   }
 
   // ヘッダー直下の帯（組み合わせで文言を変える）。null = 帯を出さない（通常・ブレインOFF）
-  function banner(mode, brain) {
+  // 2026-10-02 v2.5.69 竹内「ブレインで一般モードしてたらもう自動検索されないでね？」: サーバーが一時停止（/api/automation/pending の paused:true）の間は、
+  //   「一括検索も受け取ります」「自動便も実行します」と書かない（何も自動で走らない）。paused は background が見回りの応答から覚えた値
+  var PAUSED_TEXT = "⏸ 自動の物件検索は一時停止中（手で押した検索だけ動きます）";
+  function banner(mode, brain, paused) {
+    var base = bannerBase(mode, brain);
+    if (!paused || mode === "staff") return base;
+    var b = !!brain;
+    return { cls: base ? base.cls : "aix", text: PAUSED_TEXT + (b ? "。手で押した検索で送る物件はブレインが判定してから売上番長グループへ送り、AIXツールに記録します" : "") };
+  }
+  function bannerBase(mode, brain) {
     var b = !!brain;
     if (mode === "staff") {
       return b

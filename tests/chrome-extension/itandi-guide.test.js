@@ -136,7 +136,10 @@ ok("popup: 広げての築年数＋5年・家賃の上乗せはそのまま（�
 const g = read("itandi-guide.js").replace(/\/\/.*$/gm, "");
 ok("押す処理が無い（.click( / dispatchEvent / submit(）", !/\.click\s*\(|dispatchEvent|\.submit\s*\(/.test(g));
 ok("値・チェックを入れない（.value = / .checked = / selectedIndex = / setAttribute value）", !/\.value\s*=[^=]|\.checked\s*=[^=]|selectedIndex\s*=[^=]|setAttribute\(\s*["'](value|checked)/.test(g));
-ok("スクロールしない（scrollIntoView / scrollTo / scrollBy / scrollTop =）", !/scrollIntoView|scrollTo\s*\(|scrollBy\s*\(|scrollTop\s*=[^=]/.test(g));
+// 2026-10-02 v2.5.69 竹内さんの許可: 所在地の小窓の市区町村の一覧だけは、選ぶ区が見える所へ1行で動かしてよい（ALLOWED_SCROLL の印の1か所だけ）
+const gRaw = read("itandi-guide.js");
+const gNoAllowed = gRaw.split("\n").filter((l) => !/ALLOWED_SCROLL/.test(l)).join("\n").replace(/\/\/.*$/gm, "");
+ok("スクロールしない（scrollIntoView / scrollTo / scrollBy / scrollTop =）・許すのは小窓の一覧の1行だけ", !/scrollIntoView|scrollTo\s*\(|scrollBy\s*\(|scrollTop\s*=[^=]/.test(gNoAllowed) && (gRaw.match(/\/\/ ALLOWED_SCROLL\s*$/gm) || []).length === 1);
 ok("ページをめくらない・読み直さない（location / history）", !/location\.(href|assign|replace|reload)|history\.(back|go|push)/.test(g));
 ok("フォームを送らない・キーを送らない（requestSubmit / KeyboardEvent / focus(）", !/requestSubmit|KeyboardEvent|\.focus\s*\(|\.blur\s*\(/.test(g));
 ok("「全ページ送る」を案内モードの間は止める", /axlx-itandi-all-pages-btn/.test(g) && /disabled\s*=\s*!!guideOn/.test(g));
@@ -170,7 +173,7 @@ const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
   && eq(gjs, ["itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.68", mf.version === "2.5.68");
+ok("manifest の版 2.5.69", mf.version === "2.5.69");
 
 // ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
 {

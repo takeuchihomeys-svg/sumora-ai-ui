@@ -129,5 +129,11 @@ console.log("\n■ 検索の種類の配線（静かに外れないように）"
   eq("個別の検索（popup の _auditTag）で残す", /core\.rememberSearchMode\(r && r\[_mk\], _cid, site, _wide/.test(pp), true);
 }
 
+// 2026-10-02 v2.5.69 竹内「ブレインで一般モードしてたらもう自動検索されないでね？」: 一時停止中は帯に出し、一括・自動便を受け取ると書かない
+eq("帯: 一時停止中（AIX×ブレイン）は ⏸ と手の検索だけ", /^⏸ 自動の物件検索は一時停止中（手で押した検索だけ動きます）/.test(M.banner("aix", true, true).text) && !/一括検索も受け取ります|自動便も実行します/.test(M.banner("aix", true, true).text), true);
+eq("帯: 一時停止中（通常×ブレインなし）も出す", !!M.banner("normal", false, true) && /一時停止中/.test(M.banner("normal", false, true).text), true);
+eq("帯: スタッフモードは一時停止でも今まで通り", M.banner("staff", true, true).cls, "brain-staff");
+eq("帯: 一時停止でない時は今まで通り", M.banner("aix", true, false).text, M.banner("aix", true).text);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

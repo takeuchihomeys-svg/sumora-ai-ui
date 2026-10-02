@@ -1345,7 +1345,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const headers = await _getAutomationKeyHeader();
         const res = await fetch(SUMORA_BATCH_API + "/api/automation/sent-rooms?customer_id=" + encodeURIComponent(String(msg.customerId || "")), { headers, signal: AbortSignal.timeout(8000) });
         const j = res.ok ? await res.json() : null;
-        sendResponse({ ok: !!(j && Array.isArray(j.rooms)), rooms: j && Array.isArray(j.rooms) ? j.rooms.slice(0, 3000) : [] });
+        sendResponse({ ok: !!(j && Array.isArray(j.rooms)), rooms: j && Array.isArray(j.rooms) ? j.rooms.slice(0, 3000) : [], customerRooms: j && Array.isArray(j.customer_rooms) ? j.customer_rooms.slice(0, 3000) : null });
       } catch (e) {
         sendResponse({ ok: false, error: e && e.message });
       }
@@ -3698,6 +3698,8 @@ async function _pollAndRunBatch() {
     }
     try { await chrome.storage.local.set({ lastPollError: null }); } catch (e2) { /* ignore */ }
     var json = await res.json();
+    // 2026-10-02 v2.5.69: サーバーの一時停止（automation_settings.paused）を覚える＝popup の帯に「⏸ 自動の物件検索は一時停止中」を出す（新しい口は作らない）
+    try { await chrome.storage.local.set({ autoSearchPaused: !!(json && json.paused), autoSearchPausedAt: Date.now() }); } catch (e3) { /* ignore */ }
     if (!json.command) return;
     var cmd = json.command;
     // 2026-09-24 竹内「ブレインモードにしているのに 11:00 の自動モードが連動していた。ブレインモードならブレインモードのままで、

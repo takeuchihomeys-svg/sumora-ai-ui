@@ -106,5 +106,21 @@ ok("page-script: 検索を押す所（clickSearch・見積用）も案内モー�
   ok("キャッシュ確認: バーのボタン", /id="axlx-cache-btn"/.test(read("bulk-dl.js")) && /addEventListener\("click", probeCache\)/.test(read("bulk-dl.js")));
 }
 
+// ── 2026-10-02 v2.5.69 竹内「まだ送っていなくて通す物件は印刷用PDF光らせておく。送った物件も印刷用PDFが押せない（送付済み）に（お客さんに実際に送信した物件は）」──
+{
+  const rg = read("realpro-guide.js");
+  ok("送付済みはお客様に届けた部屋だけ（customerRooms・★物件出し★への共有は使わない）", /customerIndex = Array\.isArray\(resp\.customerRooms\)/.test(rg) && /SK\.isSentRoom\(customerIndex, r\.name, r\.room\)/.test(rg));
+  ok("送付済みの印刷用PDF は押すと確かめる（固く止めない）", /送付済みです。それでもダウンロードしますか？/.test(rg) && /document\.addEventListener\("click", function \(e\) \{\s*\r?\n\s*var t = e\.target && e\.target\.closest \? e\.target\.closest\("\.axlx-pdf-sent"\)/.test(rg));
+  ok("光らせるのは「通す」（ブレインの下見）か、下見が無い時は ◎/○", /data-axlx-verdict/.test(rg) && /\^\[◎○\]/.test(rg));
+  ok("案内を消すと印も消す", /if \(!guideOn\) clearPdfMarks\(\)/.test(rg) && /clearHighlight\(\); clearPdfMarks\(\); renderPanel\(\);/.test(rg));
+  ok("押さない（.click( が無い）", !/\.click\s*\(/.test(rg.replace(/\/\/.*$/gm, "")));
+  const bd = read("bulk-dl.js");
+  ok("bulk-dl は下見の判定を印刷用PDF に印として残す・行の口に btn", /setAttribute\("data-axlx-verdict"/.test(bd) && /btn: t\.btn \|\| null/.test(bd));
+  const bg = read("background.js");
+  ok("background はお客様に届けた部屋（customer_rooms）を渡す", /customerRooms: j && Array\.isArray\(j\.customer_rooms\)/.test(bg));
+  const pp = read("popup.js");
+  ok("ピンポイントの後に「広げて検索」を光らせる（axlx_pinpoint_memo・押さない）", /function refreshWideGlow\(\)/.test(pp) && /axlx-wide-glow/.test(pp) && /memoSearchRun\(session, "realpro"\)/.test(rg));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

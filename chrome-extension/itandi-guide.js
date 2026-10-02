@@ -38,6 +38,21 @@
   // ── 状態 ──
   var session = null; // { customerId, customerName, conditions, stage: "form"|"results", done: {id:true}, at }
   var plan = null;
+  // 2026-10-02 v2.5.69: スタッフが「検索」を押した時に、ピンポイントか広げてかを覚える（popup が「🔎 広げて検索」を光らせる・押さない）
+  function memoSearchRun(sess, site) {
+    try {
+      if (!sess || !sess.customerId) return;
+      var wide = !!(sess.conditions && sess.conditions.is_wide);
+      chrome.storage.local.get(["axlx_pinpoint_memo"], function (r) {
+        var m = (r && r.axlx_pinpoint_memo) || {};
+        var k = String(sess.customerId) + "|" + site, now = Date.now();
+        m[k] = wide ? Object.assign({}, m[k] || {}, { wideAt: now }) : { pinpointAt: now };
+        Object.keys(m).forEach(function (x) { var v = m[x]; if (!v || now - Math.max(v.pinpointAt || 0, v.wideAt || 0) > 24 * 3600 * 1000) delete m[x]; });
+        chrome.storage.local.set({ axlx_pinpoint_memo: m });
+      });
+    } catch (_) {}
+  }
+
   function saveSession() {
     try { var o = {}; o[SESSION_KEY] = session; chrome.storage.session.set(o); } catch (_) {}
   }
@@ -135,6 +150,16 @@
       return !inDialog(b) && !mine(b) && names.indexOf(sq(b.textContent)) >= 0 && visible(b);
     });
     var inner = innermost(pool)[0] || null;
+    // 2026-10-02 v2.5.69 竹内「itandi所在地ボタン光らせる」: 文字が完全一致しない形（アイコンの文字・件数が同じ要素に入る）でも、
+    //   名前を含む短い文字（名前＋6字まで）の一番内側を探す
+    if (!inner) {
+      var loose = [].slice.call(document.querySelectorAll("button, [role='button'], a, div, span, p, label")).filter(function (b) {
+        if (inDialog(b) || mine(b) || !visible(b)) return false;
+        var t = sq(b.textContent);
+        return names.some(function (nm) { return t.indexOf(nm) >= 0 && t.length <= nm.length + 6; });
+      });
+      inner = innermost(loose)[0] || null;
+    }
     if (!inner) return null;
     var up = inner.closest ? inner.closest("button, a, [role='button']") : null;
     return up && !mine(up) && names.indexOf(sq(up.textContent)) >= 0 ? up : inner;
@@ -390,6 +415,28 @@
     } catch (_) { return []; }
     return Plan.selectedWardsFromTexts(texts, wards);
   }
+  // 2026-10-02 v2.5.69 竹内さん（所在地の小窓）: 選ぶ区のラジオが市区町村の一覧の外にある時、その一覧の中だけを1回動かして見える所へ（押さない・選ばない）。
+  //   ALLOWED_SCROLL: 案内で動かしてよいのは小窓の中の市区町村の一覧だけ（ページ全体・他の一覧は動かさない）。同じ区は小窓を開くたびに1回だけ（スタッフの手と取り合わない）
+  var _revealedKey = "";
+  function revealWardOnce(el, ward) {
+    try {
+      var dlg = el.closest ? el.closest([role=dialog]) : null;
+      if (!dlg) return;
+      var key = ward + "#" + (dlg.__axlxOpenId || (dlg.__axlxOpenId = String(Date.now())));
+      if (_revealedKey === key) return;
+      var box = el.parentElement;
+      while (box && box !== dlg) {
+        var cs = window.getComputedStyle(box);
+        if (/(auto|scroll)/.test(cs.overflowY) && box.scrollHeight > box.clientHeight + 4) break;
+        box = box.parentElement;
+      }
+      if (!box || box === dlg) return;
+      var r = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+      _revealedKey = key;
+      if (r.top >= b.top && r.bottom <= b.bottom) return;
+      box.scrollTop = box.scrollTop + (r.top - b.top) - box.clientHeight / 2; // ALLOWED_SCROLL
+    } catch (_) {}
+  }
   function evalArea(s) {
     var r = readRow("wards");
     var chips = r.chips.map(function (c) { return c.name; });
@@ -423,7 +470,7 @@
     var short = Plan.wardShortName(w0);
     var wl = radioLabel(dlg, w0) || (short ? radioLabel(dlg, short) : null);
     if (!wl) return { done: false, target: [osaka || kinki], note: "「" + w0 + "」が見つかりません（大阪府を選ぶと出ます）" };
-    if (!isChecked(wl)) return { done: false, target: [wl], note: "「" + w0 + "」を選ぶ" };
+    if (!isChecked(wl)) { revealWardOnce(wl, w0); return { done: false, target: [wl], note: "「" + w0 + "」を選ぶ" }; }
     var towns = townsFor(s, w0);
     if (towns) {
       var zen = [].slice.call(dlg.querySelectorAll("label")).filter(function (l) { return (l.textContent || "").trim() === "全域" && visible(l) && inputOf(l); })[0];
@@ -640,7 +687,7 @@
     if (!cur || cur.step.kind !== "search") return;
     var tgt = (cur.ev.target || [])[0];
     if (tgt && (tgt === e.target || tgt.contains(e.target))) {
-      session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); renderPanel();
+      session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); renderPanel(); memoSearchRun(session, "itandi");
     }
   }, true);
 

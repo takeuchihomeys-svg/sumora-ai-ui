@@ -676,6 +676,8 @@
             b.textContent = "🧠 " + j.score + " " + v[0];
             b.title = "物件検索ブレインの下見（送る時と同じ判定・記録しない）\n" + (Array.isArray(j.reasons_ja) ? j.reasons_ja.join("\n") : "");
             x.btn.parentNode.insertBefore(b, x.btn.nextSibling);
+            // 2026-10-02 v2.5.69: 案内モード（realpro-guide.js）が「通す」の印刷用PDF を光らせるための印（読むだけ）
+            try { x.btn.setAttribute("data-axlx-verdict", String(j.verdict || "")); } catch (_) {}
           });
           if (!document.getElementById("axlx-brain-hide-simple")) {
             var st = document.createElement("style");
@@ -2151,7 +2153,7 @@
           var labels = card && card.headerIdx && card.headerIdx.labels;
           var roomCol = !(labels && labels.length && !/部屋|号室/.test(String(labels[0] || "")));
           var c0 = card && card.cells ? card.cells[0] : null;
-          return { name: card ? card.name : null, room: roomCol && SK ? SK.roomFromRealproCell(c0) : null, row: t.btn && t.btn.closest ? t.btn.closest("tr") : null, cb: t.cb, url: (t.btn && t.btn.href) || null };
+          return { name: card ? card.name : null, room: roomCol && SK ? SK.roomFromRealproCell(c0) : null, row: t.btn && t.btn.closest ? t.btn.closest("tr") : null, cb: t.cb, url: (t.btn && t.btn.href) || null, btn: t.btn || null };
         }).filter(Boolean);
       },
       /**

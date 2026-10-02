@@ -18,7 +18,11 @@ export async function GET(req: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return NextResponse.json({ ok: false, error: "server misconfigured" }, { status: 500 });
-  const r = await sentRoomsFor(createClient(url, key), customerId);
+  const sb = createClient(url, key);
+  const r = await sentRoomsFor(sb, customerId);
   if (r.error) return NextResponse.json({ ok: false, error: r.error, rooms: [] }, { status: 500 });
-  return NextResponse.json({ ok: true, rooms: r.rooms, rows: r.rows, without_room: r.without_room });
+  // 2026-10-02 v2.5.69 竹内「送った物件も印刷用PDFが押せない（送付済み）にしたら大丈夫（お客さんに実際に送信した物件は）」:
+  //   お客様の LINE に実際に届けた部屋だけ（★物件出し★への共有 delivery=shared を除く）も返す＝案内モードが印刷用PDF を「送付済み」にする
+  const c = await sentRoomsFor(sb, customerId, { customerOnly: true });
+  return NextResponse.json({ ok: true, rooms: r.rooms, rows: r.rows, without_room: r.without_room, customer_rooms: c.error ? null : c.rooms });
 }

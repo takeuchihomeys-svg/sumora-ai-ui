@@ -2938,7 +2938,35 @@ function syncModeButtons() {
     if (b.dataset.mode === searchMode) b.classList.add("active", searchMode);
   });
   document.getElementById("mode-desc").textContent = modeDescs[searchMode];
+  refreshWideGlow();
 }
+
+// 2026-10-02 v2.5.69 竹内「ピンポイント検索完了したあとはひろげて検索押せるように光らせる。ピンポイントしたら広げて検索をしてみつける 本来の形に」:
+//   案内モード（realpro-guide.js／itandi-guide.js）がスタッフが「検索」を押した時に {お客様|サイト → pinpointAt／wideAt} を axlx_pinpoint_memo に残す。
+//   このお客様×サイトでピンポイントが済み、まだ広げて検索をしていない時だけ「🔎 広げて検索」を光らせる（押さない・見た目だけ）
+function refreshWideGlow() {
+  try {
+    var wb = document.querySelector('.mode-btn[data-mode="wide"]');
+    if (!wb) return;
+    if (!document.getElementById("axlx-wide-glow-style")) {
+      var st = document.createElement("style");
+      st.id = "axlx-wide-glow-style";
+      st.textContent = "@keyframes axlxWideGlow{0%,100%{box-shadow:0 0 0 2px rgba(255,179,0,.95),0 0 10px 4px rgba(255,179,0,.5)}50%{box-shadow:0 0 0 2px rgba(255,179,0,.95),0 0 18px 8px rgba(255,179,0,.2)}}.mode-btn.axlx-wide-glow{animation:axlxWideGlow 1.2s ease-in-out infinite}";
+      document.head.appendChild(st);
+    }
+    var cid = selectedCustomer && selectedCustomer.id ? String(selectedCustomer.id) : null;
+    var site = selectedSite === "realnetpro" ? "realpro" : selectedSite;
+    if (!cid || !site) { wb.classList.remove("axlx-wide-glow"); wb.title = ""; return; }
+    chrome.storage.local.get(["axlx_pinpoint_memo"], function (r) {
+      var m = (r && r.axlx_pinpoint_memo) || {};
+      var v = m[cid + "|" + site];
+      var on = !!(v && v.pinpointAt && !(v.wideAt && v.wideAt >= v.pinpointAt) && Date.now() - v.pinpointAt < 24 * 3600 * 1000);
+      wb.classList.toggle("axlx-wide-glow", on && searchMode !== "wide");
+      wb.title = on ? "ピンポイント検索が済みました。次は「広げて検索」" : "";
+    });
+  } catch (_) {}
+}
+try { chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.axlx_pinpoint_memo) refreshWideGlow(); }); } catch (_) {}
 
 function renderInstrSteps(siteKey, cOverride) {
   const cfg = SITE_CONFIG[siteKey];
@@ -4070,6 +4098,7 @@ function openInstructions(siteKey) {
   if (siteKey === "realnetpro") siteKey = "realpro";
   selectedSite = siteKey;
   _freshPreloadPromise = null; // 前に開いた時の読み直しを待たない（下の3サイトの所で置き直す）
+  try { refreshWideGlow(); } catch (_) {}
   const cfg = SITE_CONFIG[siteKey];
 
   document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
@@ -5611,7 +5640,7 @@ function _renderModeUI() {
   }
   var banner = document.getElementById("mode-banner");
   if (banner) {
-    var bn = core ? core.banner(s.mode, s.brain) : null;
+    var bn = core ? core.banner(s.mode, s.brain, !!(_modeRaw && _modeRaw.autoSearchPaused)) : null;
     if (bn) {
       banner.className = "mode-banner " + bn.cls;
       banner.textContent = bn.text;
@@ -5650,7 +5679,8 @@ function _applyBrain(on) {
 }
 
 function _initModeSelect() {
-  var keys = (self.AxlxModeCore && self.AxlxModeCore.STORAGE_KEYS) || ["staffMode", "staffModeAt", "aixMode", "brainMode"];
+  // 2026-10-02 v2.5.69: autoSearchPaused（background が /api/automation/pending の paused から覚える）も読んで帯に出す
+  var keys = ((self.AxlxModeCore && self.AxlxModeCore.STORAGE_KEYS) || ["staffMode", "staffModeAt", "aixMode", "brainMode"]).concat(["autoSearchPaused"]);
   try {
     chrome.storage.local.get(keys, function(res) {
       _modeRaw = Object.assign({}, res || {});

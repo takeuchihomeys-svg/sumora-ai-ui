@@ -72,5 +72,13 @@ console.log("■ 区のまとめ（area_profile）");
   t("鍵は ward:<区>・種類は area_profile", prof[0].key === "ward:大阪市浪速区" && prof[0].kind === "area_profile");
 }
 
+console.log("■ 隣接区の印（竹内さん: 中央区と浪速区は隣接しているからおこなっている）");
+{
+  const p: DeliveredPayload = { customers: 10, units: 20, stations: [{ name: "なんば", customers: 4 }, { name: "大国町", customers: 3 }], wards: [{ name: "大阪市浪速区", customers: 6 }, { name: "大阪市中央区", customers: 5 }], applied_customers: 0, applied_stations: [] };
+  const line = deliveredLine("ward:大阪市中央区", p);
+  t("届け先の区が隣の区なら「隣接区」・同じ区は「同じ区」", /浪速区6人（隣接区）/.test(line) && /中央区5人（同じ区）/.test(line), line);
+  t("駅も、その駅の区が隣の区なら「隣接区」（大国町＝浪速区）", /大国町3人（隣接区）/.test(line), line);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

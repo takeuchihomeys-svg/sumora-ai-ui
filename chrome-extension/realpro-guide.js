@@ -27,6 +27,7 @@
     guideOn = v !== false;
     try { document.documentElement.setAttribute("data-axlx-guide", guideOn ? "1" : "0"); } catch (_) {}
     lockAutoPaging();
+    if (!guideOn) clearPdfMarks();
     renderPanel();
   }
 
@@ -36,13 +37,28 @@
   var lastCid = null;
   try { chrome.storage.session.get(["axlx_guide_last_cid"], function (r) { if (r && r.axlx_guide_last_cid) lastCid = String(r.axlx_guide_last_cid); }); } catch (_) {} // { customerId, customerName, conditions, stage: "form"|"results", done: {id:true}, at }
   var plan = null;
+  // 2026-10-02 v2.5.69: スタッフが「検索」を押した時に、ピンポイントか広げてかを覚える（popup が「🔎 広げて検索」を光らせる・押さない）
+  function memoSearchRun(sess, site) {
+    try {
+      if (!sess || !sess.customerId) return;
+      var wide = !!(sess.conditions && sess.conditions.is_wide);
+      chrome.storage.local.get(["axlx_pinpoint_memo"], function (r) {
+        var m = (r && r.axlx_pinpoint_memo) || {};
+        var k = String(sess.customerId) + "|" + site, now = Date.now();
+        m[k] = wide ? Object.assign({}, m[k] || {}, { wideAt: now }) : { pinpointAt: now };
+        Object.keys(m).forEach(function (x) { var v = m[x]; if (!v || now - Math.max(v.pinpointAt || 0, v.wideAt || 0) > 24 * 3600 * 1000) delete m[x]; });
+        chrome.storage.local.set({ axlx_pinpoint_memo: m });
+      });
+    } catch (_) {}
+  }
+
   function saveSession() {
     try { var o = {}; o[SESSION_KEY] = session; chrome.storage.session.set(o); } catch (_) {}
   }
   function endGuide() {
     session = null; plan = null;
     try { chrome.storage.session.remove(SESSION_KEY); } catch (_) {}
-    clearHighlight(); renderPanel();
+    clearHighlight(); clearPdfMarks(); renderPanel();
   }
 
   // ── 読むための部品 ──
@@ -194,7 +210,11 @@
       st.textContent = "@keyframes axlxGlow{0%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 14px 6px rgba(255,179,0,.55)}50%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 26px 12px rgba(255,179,0,.25)}100%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 14px 6px rgba(255,179,0,.55)}}"
         + ".axlx-glow{position:fixed;pointer-events:none;border-radius:6px;z-index:2147483600;animation:axlxGlow 1.2s ease-in-out infinite}"
         + ".axlx-tip{position:fixed;pointer-events:none;z-index:2147483601;background:#ff8f00;color:#fff;font:bold 12px/1.4 sans-serif;padding:4px 8px;border-radius:6px;max-width:320px;box-shadow:0 2px 6px rgba(0,0,0,.3)}"
-        + ".axlx-sent-hidden{display:none !important}";
+        + ".axlx-sent-hidden{display:none !important}"
+        // 2026-10-02 v2.5.69: 印刷用PDF の光（通す・まだ送っていない）と送付済み（お客様に届けた部屋）
+        + ".axlx-pdf-go{animation:axlxGlow 1.2s ease-in-out infinite;border-radius:4px}"
+        + ".axlx-pdf-sent{opacity:.45;cursor:not-allowed}"
+        + ".axlx-pdf-sent-label{margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;background:#eceff1;color:#455a64;vertical-align:middle}";
       (document.head || document.documentElement).appendChild(st);
     }
     layer = document.createElement("div");
@@ -336,7 +356,7 @@
       session.done = session.done || {}; session.done[cur.step.id] = true; saveSession();
     }
     if (cur.step.kind === "search" && tgt && (tgt === t || tgt.contains(t))) {
-      session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight();
+      session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); memoSearchRun(session, "realpro");
     }
   }, true);
 
@@ -392,6 +412,8 @@
         var SK = (typeof self !== "undefined" ? self : window).AxlxSentSkip;
         if (!SK || !resp || !resp.ok) { sentNote = "送付済みの部屋を読めませんでした（全部表示しています）"; renderPanel(); return; }
         sentIndex = SK.indexFor({ customerId: String(session.customerId), rooms: resp.rooms || [], at: Date.now() }, session.customerId, Date.now());
+        // お客様の LINE に実際に届けた部屋だけ（★物件出し★への共有は除く）。古い background で無い時は null＝送付済みにしない
+        customerIndex = Array.isArray(resp.customerRooms) ? SK.indexFor({ customerId: String(session.customerId), rooms: resp.customerRooms, at: Date.now() }, session.customerId, Date.now()) : null;
         applySentHiding();
       });
     } catch (_) {}
@@ -409,6 +431,7 @@
     });
     checkSentBuildings(rows);
     ensureLayer();
+    markPdfButtons(rows);
     sentNote = sentIndex ? (hidden ? "このお客様に送付済みの部屋 " + hidden + "件を" + (showSent ? "表示しています（チェックはできません）" : "隠しています") : "このページに送付済みの部屋はありません") : "送付済みの部屋はまだありません";
     if (sentBldCount) sentNote += "／送付済みの建物 " + sentBldCount + "件に印（送ってもサーバーが外します）";
     renderPanel();
@@ -435,6 +458,52 @@
         sentBldCount = (resp.dropped || []).filter(function (d) { var r = rows[d.index]; return !(r && r.row && r.row.classList.contains("axlx-sent-hidden")); }).length;
         applySentHiding();
       });
+    } catch (_) {}
+  }
+
+  // ── ⑤ 2026-10-02 v2.5.69 竹内「まだ送っていなくて通す物件は印刷用PDF光らせておく。送った物件も印刷用PDFが押せない（送付済み）にしたら大丈夫
+  //   （お客さんに実際に送信した物件は）」: 一覧の行の印刷用PDF に印を付ける（押さない・見た目と確かめの小窓だけ）。
+  //   ・お客様に届けた部屋（customerIndex＝sent_properties の delivery=customer）→ 薄く・「送付済み」・押すと「送付済みです。それでもダウンロードしますか？」
+  //     （固く止めない: 物件確認の資料の取り直し等でスタッフが本当に要る時がある）
+  //   ・まだ送っていない・ブレインの下見が「通す」（data-axlx-verdict=pass）か、下見が無い時は簡易の点が ◎/○ → 光らせる
+  var customerIndex = null;
+  function rowPasses(r) {
+    var v = r.btn && r.btn.getAttribute ? r.btn.getAttribute("data-axlx-verdict") : null;
+    if (v) return v === "pass";
+    var row = r.row || (r.btn && r.btn.closest ? r.btn.closest("tr") : null);
+    var b = row && row.querySelector ? row.querySelector(".axlx-score-badge") : null;
+    return !!(b && /^[◎○]/.test(String(b.textContent || "").trim()));
+  }
+  // ページの一番上（document の capture）で先に受ける＝bulk-dl の「押した＝送る物」の印より前に確かめる
+  document.addEventListener("click", function (e) {
+    var t = e.target && e.target.closest ? e.target.closest(".axlx-pdf-sent") : null;
+    if (!guideOn || !t) return;
+    if (!window.confirm("送付済みです。それでもダウンロードしますか？")) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  function markPdfButtons(rows) {
+    var SK = (typeof self !== "undefined" ? self : window).AxlxSentSkip;
+    if (!guideOn || !SK) return;
+    (rows || []).forEach(function (r) {
+      var btn = r.btn;
+      if (!btn || !btn.classList) return;
+      var sentToCustomer = !!(customerIndex && r.room && SK.isSentRoom(customerIndex, r.name, r.room));
+      btn.classList.toggle("axlx-pdf-sent", sentToCustomer);
+      var lab = btn.nextSibling && btn.nextSibling.classList && btn.nextSibling.classList.contains("axlx-pdf-sent-label") ? btn.nextSibling : null;
+      if (sentToCustomer && !lab && btn.parentNode) {
+        lab = document.createElement("span");
+        lab.className = "axlx-pdf-sent-label";
+        lab.textContent = "送付済み";
+        lab.title = "このお客様の LINE に送った部屋です（押すと確かめてからダウンロードします）";
+        btn.parentNode.insertBefore(lab, btn.nextSibling);
+      }
+      if (!sentToCustomer && lab) lab.remove();
+      btn.classList.toggle("axlx-pdf-go", !sentToCustomer && rowPasses(r));
+    });
+  }
+  function clearPdfMarks() {
+    try {
+      document.querySelectorAll(".axlx-pdf-go,.axlx-pdf-sent").forEach(function (el) { el.classList.remove("axlx-pdf-go", "axlx-pdf-sent"); });
+      document.querySelectorAll(".axlx-pdf-sent-label").forEach(function (el) { el.remove(); });
     } catch (_) {}
   }
 

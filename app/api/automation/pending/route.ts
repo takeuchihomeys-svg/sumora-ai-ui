@@ -31,7 +31,16 @@ export async function GET(req: NextRequest) {
   //   再開は DB の1行（UPDATE automation_settings SET paused=false）。読めない時（表が無い）は止めない＝今まで通り
   {
     const { data: st } = await supabase.from("automation_settings").select("paused").eq("id", 1).maybeSingle();
-    if ((st as { paused?: boolean } | null)?.paused) return NextResponse.json({ command: null, paused: true });
+    if ((st as { paused?: boolean } | null)?.paused) {
+      // 2026-10-02 v2.5.69: 一時停止の間に積まれた指示（AIX の一括・Web の一括・広げて・見張り 等）は取り消す。
+      //   残しておくと再開した瞬間に溜まった分がまとめて走る（10/02 夕方に一時停止中なのに3件たまっていた）。
+      //   積む側（trigger・aix-action-items・screen-watch・widen-chain・cron）は何か所もあるので、受け取る口のここ1か所で片付ける
+      const { data: dropped } = await supabase.from("automation_commands")
+        .update({ status: "cancelled" })
+        .eq("status", "pending")
+        .select("id");
+      return NextResponse.json({ command: null, paused: true, cancelled_while_paused: (dropped ?? []).length });
+    }
   }
 
   // 修正2: サーバー側ウォッチドッグ — running のまま30分以上放置されたコマンドを pending に戻す
