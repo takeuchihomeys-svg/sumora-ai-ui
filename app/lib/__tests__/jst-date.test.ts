@@ -105,9 +105,10 @@ describe("置き換え先（同じ事実を1関数で）", () => {
     expect(src("api/generate-reply/route.ts").includes("weekdayTable(Date.now(), 14)")).toBe(true);
   });
   it("R2 brain-core の送付日ラベルは timeZone 抜けの toLocaleDateString を使わない（jstMD）", () => {
-    const s = src("lib/brain-core.ts");
-    expect(s.includes(`toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })`)).toBe(false);
-    expect(s.includes("${jstMD(p.sent_at)}送付")).toBe(true);
+    // 2026-10-02: 送った物件の行の組み立ては brain-core から app/lib/sent-props-text.ts に移った（c62a54a0・既に jstMD）。両方を見る
+    const s = src("lib/brain-core.ts"), sp = src("lib/sent-props-text.ts");
+    expect(/toLocaleDateString\("ja-JP", \{ month: "numeric", day: "numeric" \}\)/.test(s + sp)).toBe(false);
+    expect(sp.includes("${jstMD(p.sent_at)}送付")).toBe(true);
   });
   it("R3 +9h した Date にローカル getter を使う書き方が残っていない（bg-async・daily-brief）", () => {
     expect(/jst\.getMonth\(\)|jst\.getDate\(\)|jst\.getHours\(\)/.test(src("api/generate-draft-bg-async/route.ts"))).toBe(false);

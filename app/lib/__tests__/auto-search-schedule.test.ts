@@ -222,7 +222,7 @@ console.log("── 配線（cron・pending・vercel.json）");
   t("★ 午前の便は1人ずつ notBeforeSchedule", /notBeforeSchedule\(mode, jstDate, toQueue\.map/.test(cron));
   t("同じ日・同じ便の二重積みの防止は今までどおり", /\.eq\("payload->>jst_date", jstDate\)/.test(cron));
   const pend = fs.readFileSync(path.join(root, "app/api/automation/pending/route.ts"), "utf8");
-  t("★ pending は pickClaimable で選ぶ（isClaimableNow・自動便でない物が先）", pend.includes("const cmd = pickClaimable(commands ?? [], nowMs);"));
+  t("★ pending は pickClaimable で選ぶ（isClaimableNow・自動便でない物が先）", /const cmd = pickClaimable\(\(commands \?\? \[\]\)[^;]*, nowMs\);/.test(pend)); // 2026-10-02: 9/30 以降は渡す前に PC の準備・拾う PC の絞り込み（deferForRealproNotReady・notForThisInstall）が入った＝文字列の完全一致ではなく形で見る
   {
     const iso2 = (j: string) => new Date(`${j}+09:00`).toISOString();
     const q = [

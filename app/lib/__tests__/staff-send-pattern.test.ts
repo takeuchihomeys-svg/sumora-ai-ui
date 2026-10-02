@@ -187,8 +187,9 @@ it("AIX の生成に渡す欄: ピックアップ=send_mode・申込誘導=app_p
 });
 
 console.log("\n■ 申込フォーマット（画面の AixModal の固定文をそのまま読む）");
-it("AixModal.tsx から4つの欄を読める・緊急連絡先の単独は 申込者→緊急連絡先", () => {
-  const src = readFileSync(join(__dirname, "..", "..", "components", "AixModal.tsx"), "utf8");
+it("application-format.ts から4つの欄を読める・緊急連絡先の単独は 申込者→緊急連絡先", () => {
+  // 2026-10-02 固定文は AixModal.tsx から app/lib/application-format.ts に移った（中身は同じ）
+  const src = readFileSync(join(__dirname, "..", "application-format.ts"), "utf8");
   const sec = parseAppFormatSections(src);
   ok(sec, "読めない");
   const text = buildAppFormatText(sec!, { living: "single", guarantor: "emergency" });

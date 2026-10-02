@@ -8482,3 +8482,14 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 最後（LLM_TEST_FINAL_CLAUDE=1・変えた場面 23＋流れ 4＋再確認 2）: 2段の場面は約束の言い回しが実送信の形（「〜ピックアップしてお送りさせて頂きます」「募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます」）。外れはスタッフがその場で結果・見積書を出した番（2段の決定どおりの差）。電話の2場面は AIX【電話をかける】。実送信 2通（YUMA）
 - 費用: 16〜18巡 DeepSeek 約 $4.6（再生スクリプト $1.09＋開発サーバ）・Claude 0（漏れ0）／最後の Claude 約 $3.1（ブレイン 41回 $1.60 他・YUMA 以外 0）
 - 気付き（未対応）: 下書きの文の途中の改行（「ピックアップして / お送りさせて頂きます」）・「確認しご連絡」と「確認出来次第ご連絡」の重ね・条件を「」で囲む書き方。DB の statement timeout で場面が2つ落ちた（負荷の時）
+
+## 2026-10-02（続き3）SENSITIVE の残り3つ・人の文の止めすぎ・古いテスト3本（竹内「それでおねがい」「改善する方向で」・未コミット）
+- **SENSITIVE_CASE**（sensitive-case.ts）: 今の家の解約（同じ発言に探している・入居予定の語があり、解約の文に申込・審査・こちらの契約の語が無い／「今の家」付き）・自分の前の発言の取り消し（目的語の無い「取り消します」で始まり続けて進める語）・画像の読み取りの「否決」（審査結果の通知らしい読み取りだけ見る）を外した。`audit-overfire-three` 25→17。⚠ 前回「画像の否決」と書いた1件は読み違いで、同じ番の後の「審査ダメでしたか？」（本当の問い・今も当てる）だった＝画像の否決の当たりは 365日で 0（先回り）
+- **人の文の回帰**（`audit-final-check-vs-staff.ts --baseline`・988通）: block **34（3.4%）→ 25（2.5%）**・回帰 **5行→0**・終了コード 1→0
+  - CONFIRM_NO_OBJECT 5→1（上限 0.5% 内）: 確認の文と前の1文の中身の語が会話にあれば対象あり（final-check.ts replyAnchoredConfirmObject の pair・中身の無い語は数えない）。残る1通は「着きました！」→「コーポ平野上町の初期費用確認でき次第お見積書」（物件名が直近の発言に無い）
+  - DONE_PRESUPPOSED（viewing_thanks）2→0: お客様がその日の内覧・時間へのお礼・到着に触れていれば免除（action-ledger.ts CUSTOMER_VIEWING_HAPPENED_RE）。残る1通（「こちらのお部屋」・別の語）は前からの物
+  - COMPANY_FACT_CONTRADICTION 3: **規則は緩めない**（分割の答えには必ず 3.24%）。監査の側で「意図どおり（スタッフの書き方）」と札を付けて block の数・回帰から外し別に表示（INTENDED_STAFF_STYLE・AI の下書きを測る --draft では外さない）
+  - AI の下書き（--draft・701件）: block 57（8.1%）・CONFIRM_NO_OBJECT 5（対象の無い確認約束は今も止める）
+- **古いテスト3本**: staff-send-pattern（申込フォーマットの固定文は app/lib/application-format.ts に移った→テストと本番の読み手 customer-sim-staff-run.ts appFormatText の既定の場所も直した＝黙って null を返していた）・auto-search-schedule（9/30 に PC の絞り込みが入って文字列の完全一致が外れた＝コードは正しい・形で見る）・jst-date R2（送った物件の行は c62a54a0 で sent-props-text.ts に移り既に jstMD＝テストの読む場所を直した）
+- **テスト**: final-check-overblock-1002 8・final-check-overfire 24・sensitive-case 6・staff-send-pattern 48・auto-search-schedule 90・jst-date 24・tsc OK。YUMA `scripts/yuma-overfire-route-test.ts`（今の家の解約／内覧後のお礼／内覧のキャンセル）DeepSeek 3/3 → 本番の組み合わせ（LLM_TEST_FINAL_CLAUDE=1）3/3
+- **費用**: DeepSeek 16回 $0.055 ／ 最後の確かめ Claude 20回 $0.104＋DeepSeek 4回 $0.045 ／ 漏れ0・止めた0・場面の通は id で削除

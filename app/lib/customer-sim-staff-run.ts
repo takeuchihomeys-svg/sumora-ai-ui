@@ -121,10 +121,10 @@ export async function makeFollowup(
   return { text: null, templateId: template.id, label: template.label, how: null, skipped: `AI最適化に失敗（${adaptErr}）・穴埋めもできない（${"reason" in filled ? filled.reason : "-"}）` };
 }
 
-/** 申込フォーマットの本文（画面の AixModal.tsx の固定文をそのまま・単独・緊急連絡先＝申込へ！【AIX】のテンプレで一番多い型） */
-export function appFormatText(path = "app/components/AixModal.tsx"): { text: string | null; reason?: string } {
+/** 申込フォーマットの本文（画面の固定文をそのまま。2026-10-02 固定文は AixModal.tsx から app/lib/application-format.ts に移った・単独・緊急連絡先＝申込へ！【AIX】のテンプレで一番多い型） */
+export function appFormatText(path = "app/lib/application-format.ts"): { text: string | null; reason?: string } {
   if (!existsSync(path)) return { text: null, reason: `${path} が無い` };
   const sec = parseAppFormatSections(readFileSync(path, "utf8"));
-  if (!sec) return { text: null, reason: "AixModal.tsx の APP_FORMAT_SECTIONS が読めない" };
+  if (!sec) return { text: null, reason: `${path} の APP_FORMAT_SECTIONS が読めない` };
   return { text: buildAppFormatText(sec, { living: "single", guarantor: "emergency" }) };
 }
