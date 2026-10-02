@@ -261,7 +261,7 @@ async function main() {
         rec.final_check = fc ? { ok: fc.ok ?? null, issues: issues.map((i) => `${String(i.code)}:${String(i.severity)}`).slice(0, 12), revision: (fc.tpo_debug as Record<string, unknown> | undefined)?.revisionOutcome ?? null, tpo: (fc.tpo_debug as Record<string, unknown> | undefined)?.tpo_label ?? null } : null;
       }
       // ── 自動送信の関所（自動に切り替えた会話と見なす）──
-      const gate = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode, suggestedAixAction: action, draft, draftHasBlock: hasBlock(fc), status, hasPendingScheduled: false, twoStageKind: typeof meta?.two_stage === "string" ? meta.two_stage : null, groundText: [...sc.context.map((m) => m.t), ...sc.customer, ...((((meta as Record<string, unknown> | null)?.rent_market as { sentences?: string[] } | undefined)?.sentences) ?? [])].slice(-33).join("\n") });
+      const gate = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode, suggestedAixAction: action, draft, draftHasBlock: hasBlock(fc), status, hasPendingScheduled: false, twoStageKind: typeof meta?.two_stage === "string" ? meta.two_stage : null, rentBudgetSentence: ((meta as Record<string, unknown> | null)?.rent_market as { budgetSentence?: string | null } | undefined)?.budgetSentence ?? null, groundText: [...sc.context.map((m) => m.t), ...sc.customer, ...((((meta as Record<string, unknown> | null)?.rent_market as { sentences?: string[] } | undefined)?.sentences) ?? [])].slice(-33).join("\n") });
       rec.gate = gate.reason;
       // ── 文の比べ（返信の道）──
       if (draft) {

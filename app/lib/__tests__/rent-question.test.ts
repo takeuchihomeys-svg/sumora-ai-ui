@@ -14,4 +14,12 @@ const old = buildRentMarketNote({ area: "なんば・梅田", facts: [], sentenc
 t("築年数古め → 必ず入れる文", old.includes("必ずこの文をそのまま入れる") && old.includes("築年数は古め"));
 t("築年数古め → スタッフの実際の次の一手", old.includes("家賃帯やご希望のエリア広げていただけましたら"));
 t("古めでない → 次の一手は付けない", !buildRentMarketNote({ area: null, facts: [], sentences: [budget], budgetSentence: budget, ageTendency: null }).includes("次の一手"));
-console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
+// 出口: 要の語（古め・築◯年程・◯〜◯㎡程）が残っていれば言い換えてよい（最後の確かめの Claude の下書きの実物）
+import("../rent-question").then(({ budgetSentenceKept }) => {
+  const b2 = "8.5万円以内の1DKですと築年数は古めのお部屋が中心となり、築30年程・25〜35㎡程が目安となります！！";
+  const claudeDraft = "かしこまりました！！\n\n全然大丈夫です！！\n\nペット可・家賃8.5万円以内の1DKですと、築年数は古めのお部屋が中心となり、築30年程・25〜35㎡程が目安となりますが、なんば・梅田に出やすいエリア全域からYUMAさんにオススメできるお部屋をピックアップさせて頂きます！！";
+  t("言い換えても要の語が残る → 通す", budgetSentenceKept(claudeDraft, b2));
+  t("古めが抜けた → 止める", !budgetSentenceKept("8.5万円以内の1DKのお部屋をピックアップさせて頂きます！！", b2));
+  t("目安の文が無い → 判定しない", budgetSentenceKept("何でも", null));
+  console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
+});

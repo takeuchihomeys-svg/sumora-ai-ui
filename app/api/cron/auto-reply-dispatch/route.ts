@@ -120,6 +120,7 @@ export async function GET(req: NextRequest) {
       hasPendingScheduled: pendingIds.has(c.id),
       groundText,
       twoStageKind: twoStage,
+      rentBudgetSentence: ((c.suggested_aix_meta as { rent_market?: { budgetSentence?: string | null } } | null)?.rent_market?.budgetSentence) ?? null,
     };
     const verdict = canAutoReply(input);
     if (!verdict.ok) { skipped[verdict.reason] = (skipped[verdict.reason] ?? 0) + 1; continue; }

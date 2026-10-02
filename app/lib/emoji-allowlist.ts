@@ -63,7 +63,8 @@ export function enforceEmojiAllowlist(text: string | null | undefined): EmojiAll
     if (vs === VS15) return whole0;                                           // 文字として書いた記号（❤︎ ⚪︎）
     if (!vs && !zwj && !PRESENTATION_RE.test(base)) return whole0;            // 既定が文字の記号（© ™ ‼ ↔ ☺ 等・FE0F なし）
     if (NAME_AHEAD_RE.test(src.slice(offset + whole.length))) return whole0;  // お客様の表示名
-    if (base === CHECK_MARK && !zwj && checkMarkOk) return whole0;            // 見積書の ✅
+    // 2026-10-02 夜 竹内さん「✅はつける」: ✅ は見積書の文に限らず残す（スタッフのテンプレートの ✅・空室確認の定型も）。checkMarkOk は記録のため残す
+    if (base === CHECK_MARK && !zwj) { void checkMarkOk; return whole0; }
     const parts = (zwj ?? "").split(ZWJ).filter(Boolean).map((p) => p.replace(SKIN_OR_VS_RE, ""));
     let to = "";
     if (base === WOMAN || base === FEMALE || base === MALE || parts.length > 0) to = "";   // 性別つき・ZWJ の続き → 外す

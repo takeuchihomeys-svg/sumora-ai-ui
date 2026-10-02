@@ -13,6 +13,14 @@ import { isTestConversation } from "../app/lib/test-conversations";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "90"));
+// 2026-10-02 ⑫ 網羅の表: --pick の鍵の5つ目（{aix, cp, sm, pc}）＝本番でそのお客様の番の後に押された AIX（スタッフの返事の束の外でもよい）。
+//   この鍵の番は返事の束が空でも場面にし、正解にその AIX を足す（条件広げまとめ・新着1件・申込誘導・書類依頼 等は返事の後で押されることが多い）
+type PickTarget = { aix: string; cp?: string | null; sm?: string | null; pc?: Record<string, unknown> | null };
+const PICK_TARGETS = new Map<string, PickTarget>();
+{
+  const pf = process.argv.find((a) => a.startsWith("--pick="))?.slice(7);
+  if (pf) for (const k of JSON.parse(readFileSync(pf, "utf8")) as Array<[number, string, string, string, PickTarget?]>) if (k[4]) PICK_TARGETS.set(`${k[2]}|${Date.parse(k[3])}`, k[4]);
+}
 const PER = Number(arg("per", "6"));
 const OUT = arg("out", "");
 /** 場面に入れる前の発言の数（ブレインは最新30通を読む＝30通そろえると YUMA の古い発言が混ざらない） */
@@ -137,8 +145,10 @@ async function main() {
       const burstTexts = w.texts.filter((t) => t.burst).map((t) => t.text);
       // 2026-10-02 ⑫ 網羅の表（scripts/yuma-coverage-matrix.ts）: ピッカーの場面（申込の場面・まとめの種類・内覧の種類 等）も残す
       //   staffWindowOf は押下を作り直す（列が落ちる）ので、元の行（ps）を時刻と種類で引く
+      const pickTarget = PICK_TARGETS.get(`${cid}|${Date.parse(m.created_at)}`);
       const burstAix = w.presses.filter((p) => p.burst).map((p) => { const q = (ps as Array<Press & { app_sub_mode?: string | null; send_mode?: string | null; picker_choices?: Record<string, unknown> | null }>).find((x) => x.created_at === p.at && x.aix_type === p.aix_type); return { aix: p.aix_type, cp: p.check_pattern, sm: q?.app_sub_mode ?? q?.send_mode ?? null, pc: q?.picker_choices ?? null }; });
-      if (!burstTexts.length && !burstAix.length) continue;
+      if (pickTarget && !burstAix.some((a) => a.aix === pickTarget.aix)) burstAix.push({ aix: pickTarget.aix, cp: pickTarget.cp ?? null, sm: pickTarget.sm ?? null, pc: pickTarget.pc ?? null, late: true } as (typeof burstAix)[number]);
+      if (!burstTexts.length && !burstAix.length && !pickTarget) continue;
       const turn: Msg[] = [];
       for (let j = i; j < ms.length && ms[j].sender === "customer"; j++) turn.push(ms[j]);
       const text = turn.map((x) => x.text ?? "").join("\n");
@@ -235,6 +245,8 @@ async function main() {
       const e = exp.scenarios[src];
       const aix = [...new Set(c.staff_aix.map((a) => a.aix))];
       let accept = aix.length ? aix : ["reply"];
+      // 返事の束の外で押した AIX（late）を足した番で、スタッフが先に手打ちもしている時は返信も正解（2段の場面と同じ）
+      if (c.staff_aix.some((a) => (a as { late?: boolean }).late) && c.staff_texts.length) accept = [...new Set([...accept, "reply"])];
       if (accept.some((a) => a === "property_send" || a === "property_recommendation")) accept = [...new Set([...accept, "property_send", "property_recommendation"])];
       return {
         id: e?.id ?? `${c.scene}_${String(k + 1).padStart(2, "0")}`, stage: c.scene, stage_ja: exp.stage_ja[c.scene] ?? c.scene, src,

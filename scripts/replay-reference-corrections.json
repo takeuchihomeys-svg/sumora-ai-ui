@@ -1,0 +1,10 @@
+{
+  "note": "2026-10-02 ⑫ 22巡の全件の分類から。再生の正解の側（スタッフの実際）が竹内さんの決定より古い・再生の環境に材料が無い・本番で稀な動き の場面の印。scripts/lib/replay-truth.ts が読む。id は場面のファイルの id（同じ id が別のファイルにある時は src で引く）",
+  "corrections": {
+    "thanks_06": { "label": "environment", "why": "本番は売上サポに送れる物件があり物件オススメを押した。YUMA には無い＝2段の約束が設計どおり" },
+    "more_props_22": { "label": "environment", "why": "同上（本番は送れる物件があった）" },
+    "conditions_24": { "label": "environment", "why": "同上（本番は送れる物件があり1件オススメを手で送った）" },
+    "first_contact_05": { "label": "outlier", "why": "戻ってきたお客様に返信＋条件ヒアリングのフォーム。本番の止まった後の番 71 でフォームは 1（scripts/audit-returning-customer-form.ts）＝ブレインの返信が普通" },
+    "meeting_date_32": { "label": "environment", "why": "22巡は全角「9／15」の日付がずれず過去日になった（道具の不具合・直した）。他の巡は当たり" }
+  }
+}

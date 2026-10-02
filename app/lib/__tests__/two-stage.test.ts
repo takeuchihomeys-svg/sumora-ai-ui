@@ -12,8 +12,11 @@ t("確認します → 約束の返信（check）＝AIX【確認します】を�
 t("費用も聞いている確認 → 募集状況と御見積書の約束", /御見積書/.test(resolveTwoStage({ ...base, finalAix: "property_check_result", asksCost: true })?.direction ?? ""));
 t("見積書送る（見積書なし）→ 約束の返信（estimate）・物件名つき", /エスリード難波の最大限割引/.test(resolveTwoStage({ ...base, finalAix: "estimate_sheet", estimateTarget: "エスリード難波" })?.direction ?? ""));
 for (const src of ["promise:pickup", "promise:check", "promise:estimate", "signal:pending_pickup", "rule:closed_ack_wait", "correction:check_already_declared"]) {
-  t(`約束を果たす・待ちの判断（${src}）は AIX のまま`, resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: src }) === null && resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: src }) === null);
+  t(`約束を果たす・待ちの判断（${src}）は AIX のまま`, resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: src, pickupReady: true }) === null && resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: src }) === null);
 }
+// 2026-10-02 ⑫（本番 60日: 送れる物件が無いピックアップの約束の番でスタッフが物件の AIX を押したのは 18%）
+for (const src of ["promise:pickup", "signal:pending_pickup"]) t(`送れる物件が無い時のピックアップの約束（${src}）→ 約束の返信`, resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: src })?.kind === "pickup");
+t("見積書の約束（promise:estimate）は今まで通り AIX", resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate" }) === null);
 { // 16巡 other_45: 元が確認します（夜職の審査など）→ 募集状況に寄せず聞かれた事の確認の約束
   const v = resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: "llm+ack_to_check" });
   t("元が確認します → 聞かれた事を確認する約束（募集状況・管理会社と書かせない）", v?.kind === "check" && /聞かれた事/.test(v.direction) && !/「お部屋の募集状況/.test(v.direction), v?.direction);

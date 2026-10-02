@@ -90,7 +90,7 @@ const NEED_SM = new Set(["property_send", "property_recommendation", "estimate_s
   const keysOut = arg("keys-out");
   if (keysOut && !NO_DB) {
     const since = new Date(Date.now() - Number(arg("days") ?? "200") * 86_400_000).toISOString();
-    const keys: Array<[number, string, string, string]> = [];
+    const keys: Array<[number, string, string, string, { aix: string; cp: string | null; sm: string | null; pc: Record<string, unknown> | null }]> = [];
     for (const c of cells.filter((x) => !covered.get(x.key)!.length)) {
       const aix = c.key.split(":")[0];
       const { data } = await sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, app_sub_mode, send_mode, picker_choices, created_at").eq("aix_type", aix).gte("created_at", since).order("created_at", { ascending: false }).limit(1000);
@@ -103,7 +103,7 @@ const NEED_SM = new Set(["property_send", "property_recommendation", "estimate_s
         const lastCust = list.findIndex((m) => m.sender === "customer");
         if (lastCust < 0) continue;
         let head = lastCust; while (head + 1 < list.length && list[head + 1].sender === "customer") head++;
-        keys.push([0, "other", h.conversation_id, list[head].created_at]); convs.add(h.conversation_id); got++;
+        keys.push([0, "other", h.conversation_id, list[head].created_at, { aix, cp: h.check_pattern ?? null, sm: h.app_sub_mode ?? h.send_mode ?? null, pc: h.picker_choices ?? null }]); convs.add(h.conversation_id); got++;
       }
       console.log(`  ${c.group}/${c.label}: 本番の押下 ${hits.length}${hits.length ? `・場面の鍵 ${got}` : "（本番で押下なし＝場面を作れない）"}`);
     }

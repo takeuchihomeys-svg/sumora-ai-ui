@@ -52,3 +52,16 @@ export function buildRentMarketNote(rm: RentMarketForReply | null | undefined): 
   lines.push("  ・上の文に無い相場・家賃の幅・築年数・広さの数字は書かない（作らない）。相場の文が無い時は数字を出さず、ご条件を広げたピックアップの提案など方向だけを書く");
   return lines.join("\n");
 }
+
+/**
+ * 2026-10-02 竹内さん「要約したら築年数古めとなるってことをちゃんとお客さんに伝える」の出口の確かめ。
+ *   予算の中の目安の文は一字一句でなくてよい（Claude の下書きは「ペット可・家賃8.5万円以内の1DKですと、築年数は古めの…が目安となりますが、」と前後とつないだ＝中身は同じ）。
+ *   要の語（古め／浅め・「築◯年程」・「◯〜◯㎡程」）が下書きに残っているかだけを見る。欠けていれば自動では送らない（本文は変えない）
+ */
+export function budgetSentenceKept(draft: string | null | undefined, budgetSentence: string | null | undefined): boolean {
+  const b = String(budgetSentence ?? "");
+  if (!b) return true;
+  const d = String(draft ?? "").normalize("NFKC");
+  const keys = [b.match(/築年数は(古め|浅め)/)?.[1], b.match(/築[0-9]+年(?:程|以内)/)?.[0], b.match(/[0-9]+(?:〜[0-9]+)?㎡程/)?.[0]].filter((x): x is string => !!x).map((x) => x.normalize("NFKC"));
+  return keys.every((k) => d.includes(k));
+}

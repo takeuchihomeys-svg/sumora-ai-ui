@@ -16,6 +16,7 @@ import { STAFF_PICKUP_DECL_RE, STAFF_CONFIRM_DECL_RE, STAFF_ESTIMATE_DECL_RE } f
 import { findExtraApplyDocs } from "./apply-docs-guard";
 import { findViewingDateReask } from "./viewing-reask";
 import { MEETING_PROMISE_RE } from "./meeting-promise";
+import { budgetSentenceKept } from "./rent-question";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -142,6 +143,8 @@ export type AutoReplyInput = {
   groundText?: string | null;
   /** 2026-10-02 ⑫ 17巡: ブレインが「2段の場面（約束の返信）」にした時の種類（suggested_aix_meta.two_stage）。無ければ判定しない */
   twoStageKind?: string | null;
+  /** 2026-10-02 ⑫: ブレインが受けた予算の中の目安の文（meta.rent_market.budgetSentence）。あれば要の語が下書きに残っているかを見る */
+  rentBudgetSentence?: string | null;
 };
 
 /** 2段の場面の下書きに約束（ピックアップ・確認・御見積書の宣言）が入っているか。行動台帳が promised と読むのと同じ式（reply-context） */
@@ -193,6 +196,8 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   if (i.groundText && findViewingDateReask(draft, [i.groundText])) return { ok: false, reason: "viewing_date_reask" };
   // ⑥-7 2026-10-02 竹内さん「おって連絡とかじゃあなくて内覧日決まったら 1件目の内覧場所を集合場所とする」: 待ち合わせ場所を後で送る約束の下書きは自動で送らない（AIX【待ち合わせ】で送る）
   if (MEETING_PROMISE_RE.test(draft)) return { ok: false, reason: "meeting_place_promise" };
+  // ⑥-8 2026-10-02 竹内さん「築年数古めとなるってことをちゃんとお客さんに伝える」: 予算の中の目安の要の語（古め・築◯年程・◯〜◯㎡程）が抜けた下書きは自動で送らない
+  if (i.rentBudgetSentence && !budgetSentenceKept(draft, i.rentBudgetSentence)) return { ok: false, reason: "rent_budget_missing" };
   // ⑦ 二重送信を防ぐ
   if (i.hasPendingScheduled) return { ok: false, reason: "already_scheduled" };
   return { ok: true, reason: "ok" };

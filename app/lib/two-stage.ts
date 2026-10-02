@@ -56,7 +56,14 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
 function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   const a = (i.finalAix ?? "").trim();
   if (!a || i.postApply) return null;
-  if (KEEP_SOURCE_RE.test(i.decisionSource ?? "")) return null;
+  // 2026-10-02 ⑫ 22巡の分類（B: flow2_t02）＋本番 60日（scripts/audit-pickup-promise-vs-shared.ts）:
+  //   前のピックアップの約束（promise:pickup・signal:pending_pickup）で物件の AIX を出した番で、売上サポに送れる物件が無い時（120番）は、
+  //   スタッフが物件の AIX を押したのは 22（18%）・手打ち 92（「〜ピックアップしてお送りさせて頂きます」の約束の言い直しが中心）。
+  //   送れる物件がある時（25番）も押したのは 5＝こちらは今まで通り AIX に残す（件数が少なく線を引けない）。お客様が物件を送ってきたかでは差が無かった（18%／18%）。
+  //   → 送れる物件が無い時のピックアップの約束も2段（約束の返信）にする。約束は台帳に残り、AIX要対応の取り下げも pending_pickup で止まる（brain-core）
+  const pickupPromiseNotReady = /^(?:promise:pickup|signal:pending_pickup)/.test(i.decisionSource ?? "") && !i.pickupReady
+    && (a === "property_send" || a === "property_recommendation" || a === "property_search");
+  if (KEEP_SOURCE_RE.test(i.decisionSource ?? "") && !pickupPromiseNotReady) return null;
   if (a === "property_send" || a === "property_recommendation" || a === "property_search") {
     if (i.pickupReady) return null;
     return {
