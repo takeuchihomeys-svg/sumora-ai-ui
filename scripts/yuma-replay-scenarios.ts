@@ -72,7 +72,7 @@ let promiseSent = 0;
 const FLOOR_FILE = process.env.REPLAY_FLOOR_FILE ?? "";
 function writeFloor(floor: string | null, status?: string) {
   if (!FLOOR_FILE) return;
-  writeFileSync(FLOOR_FILE, JSON.stringify(floor ? { conversationId: YUMA, floor, status, messageIdPrefix: PREFIX } : {}));
+  writeFileSync(FLOOR_FILE, JSON.stringify(floor ? { conversationId: YUMA, floor, status, messageIdPrefix: PREFIX, ...(process.env.REPLAY_KEEP_PC === "1" ? { keepPropertyCustomer: true } : {}) } : {}));
 }
 
 type Ctx = { s: string; t: string; aix?: boolean; img?: boolean };
@@ -247,7 +247,7 @@ async function main() {
       const replyMode = typeof meta?.reply_mode === "string" ? meta.reply_mode : null;
       const scene = sceneKeyOf({ brainAction: action, brainReplyMode: replyMode, convStatus: status });
       const decided = scene.path === "AIX" ? (action ?? "aix") : "reply";
-      rec.brain = { action, check_pattern: meta?.check_pattern ?? null, reply_mode: replyMode, source: meta?.decision_source ?? null, direction: String(meta?.reply_direction ?? "").slice(0, 200), stage: meta?.checkpoint_stage ?? null, two_choice: meta?.two_choice_mode === true, two_stage: meta?.two_stage ?? null };
+      rec.brain = { action, check_pattern: meta?.check_pattern ?? null, reply_mode: replyMode, source: meta?.decision_source ?? null, direction: String(meta?.reply_direction ?? "").slice(0, 200), stage: meta?.checkpoint_stage ?? null, two_choice: meta?.two_choice_mode === true, two_stage: meta?.two_stage ?? null, rent_market: meta?.rent_market ?? null };
       rec.decided = decided;
       rec.path_ok = sc.expect.accept.includes(decided);
       // ── 下書き（reply_mode=aix 以外。2択＝AIX の提案＋下書きも本番どおり作る）──
@@ -261,7 +261,7 @@ async function main() {
         rec.final_check = fc ? { ok: fc.ok ?? null, issues: issues.map((i) => `${String(i.code)}:${String(i.severity)}`).slice(0, 12), revision: (fc.tpo_debug as Record<string, unknown> | undefined)?.revisionOutcome ?? null, tpo: (fc.tpo_debug as Record<string, unknown> | undefined)?.tpo_label ?? null } : null;
       }
       // ── 自動送信の関所（自動に切り替えた会話と見なす）──
-      const gate = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode, suggestedAixAction: action, draft, draftHasBlock: hasBlock(fc), status, hasPendingScheduled: false, twoStageKind: typeof meta?.two_stage === "string" ? meta.two_stage : null, groundText: [...sc.context.map((m) => m.t), ...sc.customer].slice(-30).join("\n") });
+      const gate = canAutoReply({ autoSendEnabled: true, lastSender: "customer", replyMode, suggestedAixAction: action, draft, draftHasBlock: hasBlock(fc), status, hasPendingScheduled: false, twoStageKind: typeof meta?.two_stage === "string" ? meta.two_stage : null, groundText: [...sc.context.map((m) => m.t), ...sc.customer, ...((((meta as Record<string, unknown> | null)?.rent_market as { sentences?: string[] } | undefined)?.sentences) ?? [])].slice(-33).join("\n") });
       rec.gate = gate.reason;
       // ── 文の比べ（返信の道）──
       if (draft) {

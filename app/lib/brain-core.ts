@@ -47,6 +47,8 @@ import { resolveTwoStage, type TwoStageVerdict } from "@/app/lib/two-stage";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
 import { meetingPromisePending } from "@/app/lib/meeting-promise";
+import { customerAsksRentLevel } from "@/app/lib/rent-question";
+import { customerAreaAndRent } from "@/app/lib/area-rent-server";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
@@ -284,6 +286,8 @@ export type SuggestedAixMeta = {
   first_contact_pickup?: FirstContactPickup;
   /** 2026-10-02 ⑫: 2段の場面（約束の返信）にした時の種類（pickup/check/estimate）。auto-reply-policy ⑥-4 が約束の無い下書きを止める */
   two_stage?: string;
+  /** 2026-10-02 ⑫: 家賃の相場の材料（area-rent-server.customerAreaAndRent・お客様が相場を聞いた番だけ）。sentences＝お客様に送れる文（スタッフの実際の型）・facts＝事実 */
+  rent_market?: { area: string | null; facts: string[]; sentences: string[] };
   // 2026-09-23 竹内（あっぴ事例）: 未履行の物件ピックアップ宣言が残っている（今回の発言に AIX が要らなくても仕事は残っている）。
   //   aix-action-items.syncAixActionItem がこれを見て brain_no_aix の取り下げを止める（pending を維持する）
   pending_pickup?: boolean;
@@ -3256,6 +3260,34 @@ ${history}`;
       (parsed.reply_mode === "aix" || parsed.reply_mode === "auto_reply") ? parsed.reply_mode : undefined;
     // 2026-10-02 2段の場面: 約束の返信にした時は返信の番（下書きを作る・関所が通せば自動送信の候補）
     if (twoStage) replyMode = "auto_reply";
+    // 2026-10-02 ⑫ 竹内さん「相場の知識は物件検索ブレインからもらう形になっているかな？返信の部分が」:
+    //   お客様が家賃の相場・予算で出るかを聞いた番（rent-question.ts）だけ、物件検索のブレインの1つの元（⑯ area-rent-server.customerAreaAndRent・
+    //   area-rent-explain・rent-condition-market＝読むだけ）から相場の材料を受け、返信（generate-reply）と自動送信の関所（数字の根拠）に渡す。
+    //   区は物件検索のブレインの area_plan と同じ。返信で使う数字はこの材料の物だけ（作らない）
+    let rentMarketForReply: { area: string | null; facts: string[]; sentences: string[] } | null = null;
+    if (customerAsksRentLevel(unrepliedTurn.text ?? "")) {
+      try {
+        // 呼び出し元が propertyCustomerId を渡さない時（再生の道具・一部の経路）は会話の紐付けから読む（相場の質問の番だけ＝1回の読み込み）
+        let pcRent = pc;
+        if (!pcRent) {
+          const { data: convRow, error: convErr } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+          if (convErr || !convRow?.property_customer_id) console.warn("[brain-core] 相場: 会話の紐付けを読めない", convErr?.message ?? "", conversationId, JSON.stringify(convRow));
+          const pcid = (convRow?.property_customer_id as string | null | undefined) ?? null;
+          if (pcid) pcRent = ((await supabase.from("property_customers").select("desired_area, preferences, other_requests, floor_plan, rent_max, pet, building_age").eq("id", pcid).maybeSingle()).data ?? null) as PC;
+        }
+        if (!pcRent) throw new Error("お客様の条件の行が無い");
+        const { areaPlan, rentMarket } = await customerAreaAndRent({
+          desired_area: pcRent.desired_area ?? null, preferences: pcRent.preferences ?? null, other_requests: pcRent.other_requests ?? null,
+          floor_plan: pcRent.floor_plan ?? null, rent_max: pcRent.rent_max ?? null, pet: pcRent.pet ?? null, building_age: pcRent.building_age ?? null,
+        });
+        if (rentMarket && (rentMarket.facts.length || rentMarket.sentences.length)) {
+          rentMarketForReply = { area: areaPlan ? areaPlan.anchors.map((a) => a.station).join("・") : null, facts: rentMarket.facts.slice(0, 8), sentences: rentMarket.sentences.slice(0, 3) };
+          console.log(JSON.stringify({ tag: "brain:rent-market", conversationId, facts: rentMarketForReply.facts.length, sentences: rentMarketForReply.sentences.length }));
+        }
+      } catch (e) {
+        console.warn("[brain-core] 相場の材料の読み込みに失敗（返信は相場の数字なしで作る）:", e instanceof Error ? e.message : String(e));
+      }
+    }
     if (finalAix) replyMode = "aix";                       // AIX提案がある時点でスタッフ操作前提
     if (!boundaryText) replyMode = "aix";                  // 線引きルール取得失敗/0件時はフェイルクローズ
     if (opts?.autoSendEnabled === false) replyMode = "aix"; // auto_send無効の会話に auto_reply を提案しない
@@ -3798,6 +3830,8 @@ ${history}`;
       first_contact_pickup: firstContactPickup,
       // 2026-10-02 ⑫ 17巡: 2段の場面（約束の返信）にした時の種類。自動送信の関所が「約束の無い下書き」を止めるのに使う（auto-reply-policy ⑥-4）
       two_stage: twoStage ? twoStage.kind : undefined,
+      // 2026-10-02 ⑫: 家賃の相場の材料（物件検索のブレインの1つの元から・相場の質問の番だけ）。generate-reply が「この数字だけ」で使い、関所が数字の根拠にする
+      rent_market: rentMarketForReply ?? undefined,
       // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている（＝「今回AIX不要」でも仕事は残っている）。
       //   aix-action-items がこれを見て brain_no_aix の取り下げを止める
       pending_pickup: pendingPickup.pending || undefined,

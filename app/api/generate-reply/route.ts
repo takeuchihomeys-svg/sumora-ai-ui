@@ -246,6 +246,7 @@ import { loadViewingReports } from "@/app/lib/viewing-report-store";
 // 2026-09-11 竹内方針1〜5（統合設計 §7）: 生成失敗文の文言と「正解例として使えるか」の唯一の判定
 // 2026-09-20 竹内: isCustomerFacingExample — 管理会社・オーナー宛ての文を手本にしない（STATE_SEARCH_ALIASES.applying が acknowledge_check を含むため混ざっていた）
 import { GENERATION_FAILURE_TEXT, isUsableExampleText, isCustomerFacingExample, fixExampleWeekdays, maskExampleAmounts } from "@/app/lib/example-hygiene";
+import { buildRentMarketNote, type RentMarketForReply } from "@/app/lib/rent-question";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
 // 2026-10-01 竹内: 条件の復唱をスタッフの手直しの形に（入口の一文。出口は validate-reply の polishConditionEcho）
@@ -5075,6 +5076,12 @@ async function handleGenerateReply(req: NextRequest) {
       //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
       const companyFacts = buildCompanyFactsNote(message);
       if (companyFacts) lines.push(companyFacts.trim());
+      // 2026-10-02 ⑫ 竹内さん「相場の知識は物件検索ブレインからもらう形」: ブレインがこの発言で受けた相場の材料（meta.rent_market・
+      //   物件検索のブレインの1つの元 area-rent-server から）。このメッセージについての材料なので fresh の時だけ使う。数字は材料の文の物だけ
+      if (brainLocalFresh) {
+        const rentNote = buildRentMarketNote((brainMeta as Record<string, unknown> | null)?.rent_market as RentMarketForReply | undefined);
+        if (rentNote) lines.push(rentNote);
+      }
       // 2026-09-23 S1 の実測: フォームの貼り返し（審査面柔軟にサポート）をお客様の言葉と取り違え、審査の話を足す下書き 2/31（実送信 0/31）
       const templateEcho = buildTemplateEchoNote(message);
       if (templateEcho) lines.push(templateEcho);

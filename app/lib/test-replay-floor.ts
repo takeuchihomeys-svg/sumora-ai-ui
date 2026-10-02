@@ -58,6 +58,7 @@ export const CONVERSATION_BLANK_COLUMNS: readonly string[] = [
 
 export type ReplayFloor = {
   conversationId: string; floor: string;
+  /** お客様の条件の行の紐付けを残す（REPLAY_KEEP_PC=1・家賃の相場の材料を試す時だけ） */ keepPropertyCustomer?: boolean;
   /** 場面の状態（conversations.status の代わりに返す・無ければ proposing） */ status?: string;
   /** messages は line_message_id がこの頭の行だけ読む（同じ YUMA に他の担当が同時に入れた場面の通を混ぜない・2026-10-01 3回目の再生で混ざった） */ messageIdPrefix?: string;
 };
@@ -94,11 +95,12 @@ export function isConversationRowRead(url: string, method: string, f: ReplayFloo
 }
 
 /** conversations の行（配列か1行）の列を空にする（純関数） */
-export function blankConversationRow(body: unknown, status = "proposing"): unknown {
+// 2026-10-02 ⑫: keepPropertyCustomer＝お客様の条件の行（property_customer_id）だけは残す（家賃の相場の材料を試す再生・REPLAY_KEEP_PC=1）
+export function blankConversationRow(body: unknown, status = "proposing", keepPropertyCustomer = false): unknown {
   const blank = (r: unknown) => {
     if (!r || typeof r !== "object" || Array.isArray(r)) return r;
     const o = { ...(r as Record<string, unknown>) };
-    for (const k of CONVERSATION_BLANK_COLUMNS) if (k in o) o[k] = k === "brain_full_msg_count" || k === "brain_deep_msg_count" ? 0 : k === "has_viewed" || k === "is_post_apply" || k.startsWith("applying_") ? false : null;
+    for (const k of CONVERSATION_BLANK_COLUMNS) if (k in o && !(keepPropertyCustomer && k === "property_customer_id")) o[k] = k === "brain_full_msg_count" || k === "brain_deep_msg_count" ? 0 : k === "has_viewed" || k === "is_post_apply" || k.startsWith("applying_") ? false : null;
     if ("status" in o) o.status = status;
     return o;
   };
@@ -118,7 +120,7 @@ export function currentReplayFloor(env: Record<string, string | undefined> = pro
     if (!fsm) throw new Error("no fs");
     const j = JSON.parse(fsm.readFileSync(file, "utf8")) as Partial<ReplayFloor>;
     if (j && typeof j.conversationId === "string" && isTestConversation(j.conversationId) && typeof j.floor === "string" && Number.isFinite(Date.parse(j.floor))) {
-      v = { conversationId: j.conversationId, floor: new Date(Date.parse(j.floor)).toISOString(), ...(typeof j.status === "string" && /^[a-z_]{2,30}$/.test(j.status) ? { status: j.status } : {}), ...(typeof j.messageIdPrefix === "string" && /^[a-z0-9-]{3,30}$/.test(j.messageIdPrefix) ? { messageIdPrefix: j.messageIdPrefix } : {}) };
+      v = { conversationId: j.conversationId, floor: new Date(Date.parse(j.floor)).toISOString(), ...(j.keepPropertyCustomer === true ? { keepPropertyCustomer: true } : {}), ...(typeof j.status === "string" && /^[a-z_]{2,30}$/.test(j.status) ? { status: j.status } : {}), ...(typeof j.messageIdPrefix === "string" && /^[a-z0-9-]{3,30}$/.test(j.messageIdPrefix) ? { messageIdPrefix: j.messageIdPrefix } : {}) };
     }
   } catch { v = null; }
   cache = { at: now, v };
@@ -136,7 +138,7 @@ export const replayFloorFetch: typeof fetch = async (input, init) => {
   if (!isConversationRowRead(url, method, f) || !res.ok) return res;
   try {
     const text = await res.text();
-    const body = blankConversationRow(JSON.parse(text), f.status);
+    const body = blankConversationRow(JSON.parse(text), f.status, f.keepPropertyCustomer === true);
     const headers = new Headers(res.headers);
     headers.delete("content-length"); headers.delete("content-encoding");
     return new Response(JSON.stringify(body), { status: res.status, statusText: res.statusText, headers });

@@ -5,13 +5,13 @@
 
 ## ⑫ 引き継ぎ（10/02）
 **ここだけ読めば続けられるように書く（毎ステップ更新）。手順は memory/test_protocol_brain.md（§9.5 実送信・§9.6 網羅の表）。tsc は共有の鍵で1つずつ（mkdir C:/Users/竹内悠~1/AppData/Local/Temp/claude/tsc.lock → NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit → rmdir）。**
-- **終わった（コミット済み）**: d1e4b1fe（2段・確認しますを外す・家賃の下限・電話19時）／a27f0efd（申込の書類2つ・電話の約束・電話が終わった後・S5・2段の直し・待ち合わせの約束→AIX・日にちの聞き直し・築年数の幅・家賃の万の切り捨て・網羅の表・readiness）
-- **終わった（未コミット・テスト済み・tsc 通過）**: 竹内さんの訂正「内覧日決まったら1件目の内覧場所を集合場所」＝ meeting-promise（形を広げた・訂正の注記）・example-hygiene（約束の形を手本から外す）・auto-reply-policy ⑥-7・aix-prefill meetingPropertyPrefill（1件目）・AixModal（待ち合わせの物件の先入れ）・viewing-flow（date_agreed の規則）・ナレッジ3行 rejected（元: scripts/backup-knowledge-meeting-promise-20261002.json）・scripts/audit-meeting-prefill.ts・テスト meeting-promise・meeting-property-prefill／readiness に AIX【電話をかける】の自動送信の候補の行／場面の日付のずらし（全角）／申込時フォーマットの※マスキングは提案 562287ff（aix_feature_suggestions）
+- **終わった（コミット済み）**: d1e4b1fe（2段・確認しますを外す・家賃の下限・電話19時）／62f89db2（待ち合わせの訂正・22巡）／a27f0efd（申込の書類2つ・電話の約束・電話が終わった後・S5・2段の直し・待ち合わせの約束→AIX・日にちの聞き直し・築年数の幅・家賃の万の切り捨て・網羅の表・readiness）
+- **終わった（未コミット・テスト済み・tsc 通過）**: 家賃の相場を返信に（rent-question.ts 新・brain-core meta.rent_market・generate-reply の📍に buildRentMarketNote・dispatch の数字の根拠・再生の REPLAY_KEEP_PC=1／test-replay-floor keepPropertyCustomer・scripts/audit-rent-question.ts・テスト rent-question）
 - **途中**: なし（22巡まで終わり）
-- **次**: ①家賃の相場を返信に（物件検索のブレインの1つの元 area-rent-server.customerAreaAndRent／area-rent-explain を読むだけ・数字は rent_market の文だけ・area_plan を同じに）＝brain-core で相場の質問を見分けて meta.rent_market（facts・sentences）→ generate-reply の【📍場面と返信方針】の companyFacts の後に「この文だけ」→ dispatch の groundText に足す ②最後の Claude（LLM_TEST_FINAL_CLAUDE=1・使用量の上限が近いので直した場面だけ）: phone_17（scen-r19）・thanks_08・meeting_date_34・other_45（base）・flows-meet1 flow2_t10〜t12・flow23_t05（flows-r21? → l12-r21f の flow23_db3722_t05）・procedure_11（scen-r7）
+- **次**: 最後の Claude（LLM_TEST_FINAL_CLAUDE=1・直した場面だけ）: phone_17（scen-r19）・thanks_08・meeting_date_34・other_45（base）・flows-meet1 flow2_t10〜t12・l12-r21f の flow23_db3722_t05・procedure_11（scen-r7）・scen-rent1 pet_parking_01（REPLAY_KEEP_PC=1）。開発サーバの写し scratchpad/app12 は git ls-files だけでなく find app の全部を写す（⑯ の新しいファイルが抜けて 500 になった）
 - **網羅の表**（scripts/yuma-coverage-matrix.ts）: マス 74・覆い 42（57%）。残り 32 のうち本番で押下0が約20（作れない）
 - **元の45場面の道**: 19巡 67% → 20巡 71% → 22巡 76%
-- **竹内さんに聞くこと**: なし（10/02 の4つは答えをもらった）
+- **竹内さんに聞くこと**: 予算と築年・面積の関係（「8.5万以内の1DKは築38年・28㎡程が中心」）をお客様に言うか（スタッフの実際の文の型が無い＝今は言わない・事実は方向の材料だけ）
 
 
 ---

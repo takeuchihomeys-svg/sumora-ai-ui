@@ -104,7 +104,10 @@ export async function GET(req: NextRequest) {
       const pcId = (convRow?.property_customer_id as string | null | undefined) ?? null;
       const { data: pc } = pcId ? await supabase.from("property_customers").select("rent_min, rent_max, initial_cost_limit").eq("id", pcId).maybeSingle() : { data: null };
       const rents = pc ? [pc.rent_min, pc.rent_max, pc.initial_cost_limit].filter(Boolean).map((v) => `${v}円`).join(" ") : "";
-      groundText = `${((recent ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n")}\n${rents}`;
+      // 2026-10-02 ⑫: ブレインが受けた家賃の相場の文（物件検索のブレインの材料・meta.rent_market.sentences）も数字の根拠（事実の数字はお客様に書かない約束なので入れない）
+      const rm = (c.suggested_aix_meta as { rent_market?: { sentences?: string[] } } | null)?.rent_market;
+      const rentSentences = Array.isArray(rm?.sentences) ? rm!.sentences.join("\n") : "";
+      groundText = `${((recent ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n")}\n${rents}\n${rentSentences}`;
     }
     const input: AutoReplyInput = {
       autoSendEnabled: c.auto_send_enabled,
