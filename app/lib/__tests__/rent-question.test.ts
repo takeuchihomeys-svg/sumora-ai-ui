@@ -8,4 +8,10 @@ const note = buildRentMarketNote({ area: "なんば", facts: ["なんばの1DK�
 t("材料の文はそのまま渡す", note.includes("「なんば周辺の1DKの家賃相場は8万円から10万円程となります！！」"));
 t("事実の数字はお客様に書かない", /ここの数字はお客様に書かない/.test(note));
 t("材料が無ければ空", buildRentMarketNote(null) === "");
+// 2026-10-02 竹内さん「要約したら築年数古めとなるってことをちゃんとお客さんに伝える」
+const budget = "8.5万円以内の1DKですと築年数は古めのお部屋が中心となり、築30年程・25〜30㎡程が目安となります！！";
+const old = buildRentMarketNote({ area: "なんば・梅田", facts: [], sentences: [budget], budgetSentence: budget, ageTendency: "old" });
+t("築年数古め → 必ず入れる文", old.includes("必ずこの文をそのまま入れる") && old.includes("築年数は古め"));
+t("築年数古め → スタッフの実際の次の一手", old.includes("家賃帯やご希望のエリア広げていただけましたら"));
+t("古めでない → 次の一手は付けない", !buildRentMarketNote({ area: null, facts: [], sentences: [budget], budgetSentence: budget, ageTendency: null }).includes("次の一手"));
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

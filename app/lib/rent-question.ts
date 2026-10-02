@@ -23,7 +23,14 @@ export function customerAsksRentLevel(turn: string | null | undefined): boolean 
   return true;
 }
 
-export type RentMarketForReply = { area: string | null; facts: string[]; sentences: string[] };
+export type RentMarketForReply = { area: string | null; facts: string[]; sentences: string[]; budgetSentence?: string | null; ageTendency?: "old" | "new" | null };
+
+// 2026-10-02 竹内さん「この場合要約したら築年数古めとなるってことをちゃんとお客さんに伝えるようにする」:
+//   予算の中で築年数古めの時に添える次の一手は、スタッフの実際の送信の文だけ（手打ちの送信から・言い回しを作らない）
+export const RENT_OLD_NEXT_STEP_STAFF_LINES = [
+  "家賃帯やご希望のエリア広げていただけましたらご紹介可能なお部屋増える形となります！！",
+  "希望エリアを広げること可能でしたら再度オススメ出来るお部屋ピックアップ可能です！！",
+] as const;
 
 /**
  * 返信の生成に渡す相場の材料（generate-reply の【📍 場面と返信方針】の中）。
@@ -32,9 +39,15 @@ export type RentMarketForReply = { area: string | null; facts: string[]; sentenc
  *   （予算と築年・面積の関係を言うスタッフの実際の文の型が無い＝作らない。2026-10-02 実送信 697通で 0）。
  */
 export function buildRentMarketNote(rm: RentMarketForReply | null | undefined): string {
-  if (!rm || (!rm.sentences.length && !rm.facts.length)) return "";
+  if (!rm || (!rm.sentences.length && !rm.facts.length && !rm.budgetSentence)) return "";
   const lines = ["- 💴 家賃の相場（物件検索のブレインの材料・弊社の検索で見つかったお部屋から。お客様が相場・予算で出るかを聞いている）:"];
-  if (rm.sentences.length) lines.push(`  ・お客様に送ってよい相場の文（数字も言い回しもそのまま・1文まで）: ${rm.sentences.map((s) => `「${s}」`).join(" ／ ")}`);
+  if (rm.budgetSentence) {
+    // 予算の中の目安（築年は10年刻み・広さは5㎡刻み・古め／浅めの要約）は必ず伝える（竹内さん 10/02）
+    lines.push(`  ・必ずこの文をそのまま入れる（予算の中の目安・数字も言い回しも変えない）: 「${rm.budgetSentence}」`);
+    if (rm.ageTendency === "old") lines.push(`  ・築年数古めの時は、続けて次の一手をスタッフの実際の文から1つだけそのまま: ${RENT_OLD_NEXT_STEP_STAFF_LINES.map((x) => `「${x}」`).join(" ／ ")}`);
+  }
+  const others = rm.sentences.filter((x) => x !== rm.budgetSentence);
+  if (others.length) lines.push(`  ・お客様に送ってよい相場の文（数字も言い回しもそのまま・1文まで）: ${others.map((x) => `「${x}」`).join(" ／ ")}`);
   if (rm.facts.length) lines.push(`  ・事実（返信の方向を決める材料。ここの数字はお客様に書かない）: ${rm.facts.join(" ／ ")}`);
   lines.push("  ・上の文に無い相場・家賃の幅・築年数・広さの数字は書かない（作らない）。相場の文が無い時は数字を出さず、ご条件を広げたピックアップの提案など方向だけを書く");
   return lines.join("\n");

@@ -287,7 +287,7 @@ export type SuggestedAixMeta = {
   /** 2026-10-02 ⑫: 2段の場面（約束の返信）にした時の種類（pickup/check/estimate）。auto-reply-policy ⑥-4 が約束の無い下書きを止める */
   two_stage?: string;
   /** 2026-10-02 ⑫: 家賃の相場の材料（area-rent-server.customerAreaAndRent・お客様が相場を聞いた番だけ）。sentences＝お客様に送れる文（スタッフの実際の型）・facts＝事実 */
-  rent_market?: { area: string | null; facts: string[]; sentences: string[] };
+  rent_market?: { area: string | null; facts: string[]; sentences: string[]; budgetSentence?: string | null; ageTendency?: "old" | "new" | null };
   // 2026-09-23 竹内（あっぴ事例）: 未履行の物件ピックアップ宣言が残っている（今回の発言に AIX が要らなくても仕事は残っている）。
   //   aix-action-items.syncAixActionItem がこれを見て brain_no_aix の取り下げを止める（pending を維持する）
   pending_pickup?: boolean;
@@ -3264,7 +3264,7 @@ ${history}`;
     //   お客様が家賃の相場・予算で出るかを聞いた番（rent-question.ts）だけ、物件検索のブレインの1つの元（⑯ area-rent-server.customerAreaAndRent・
     //   area-rent-explain・rent-condition-market＝読むだけ）から相場の材料を受け、返信（generate-reply）と自動送信の関所（数字の根拠）に渡す。
     //   区は物件検索のブレインの area_plan と同じ。返信で使う数字はこの材料の物だけ（作らない）
-    let rentMarketForReply: { area: string | null; facts: string[]; sentences: string[] } | null = null;
+    let rentMarketForReply: { area: string | null; facts: string[]; sentences: string[]; budgetSentence?: string | null; ageTendency?: "old" | "new" | null } | null = null;
     if (customerAsksRentLevel(unrepliedTurn.text ?? "")) {
       try {
         // 呼び出し元が propertyCustomerId を渡さない時（再生の道具・一部の経路）は会話の紐付けから読む（相場の質問の番だけ＝1回の読み込み）
@@ -3281,7 +3281,9 @@ ${history}`;
           floor_plan: pcRent.floor_plan ?? null, rent_max: pcRent.rent_max ?? null, pet: pcRent.pet ?? null, building_age: pcRent.building_age ?? null,
         });
         if (rentMarket && (rentMarket.facts.length || rentMarket.sentences.length)) {
-          rentMarketForReply = { area: areaPlan ? areaPlan.anchors.map((a) => a.station).join("・") : null, facts: rentMarket.facts.slice(0, 8), sentences: rentMarket.sentences.slice(0, 3) };
+          // 予算の中の目安の文（⑯ budgetTypical・築年は10年刻み・広さは5㎡刻み・古め／浅めの要約）は必ず伝える文として別に持つ（竹内さん 10/02）
+          const bt = (rentMarket as { budgetTypical?: { sentence?: string; ageTendency?: "old" | "new" | null } | null }).budgetTypical ?? null;
+          rentMarketForReply = { area: areaPlan ? areaPlan.anchors.map((a) => a.station).join("・") : null, facts: rentMarket.facts.slice(0, 8), sentences: rentMarket.sentences.slice(0, 4), budgetSentence: bt?.sentence ?? null, ageTendency: bt?.ageTendency ?? null };
           console.log(JSON.stringify({ tag: "brain:rent-market", conversationId, facts: rentMarketForReply.facts.length, sentences: rentMarketForReply.sentences.length }));
         }
       } catch (e) {

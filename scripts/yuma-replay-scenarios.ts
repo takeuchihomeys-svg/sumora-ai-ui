@@ -380,6 +380,28 @@ async function main() {
   appendFileSync(outFile, JSON.stringify({ _summary: true, models: Object.fromEntries(tally), deepseek: ds, total: all, t0 }) + "\n");
   console.log(`\n→ ${outFile}`);
 }
-main()
+// 2026-10-02 ⑫: --pc-override='{"desired_area":"難波","floor_plan":"1DK","rent_max":85000,"pet":true}'＝場面のお客様の条件を YUMA の条件の行（竹内さんのテスト用）に
+//   一時的に入れて流し、終わったら元に戻す（家賃の相場の場面を場面の条件で試す・REPLAY_KEEP_PC=1 と一緒に使う）。YUMA の行以外は触らない
+const PC_OVERRIDE = arg("pc-override", "");
+const PC_FIELDS = ["desired_area", "floor_plan", "rent_max", "pet", "preferences", "other_requests", "building_age"] as const;
+let pcRestore: { id: string; row: Record<string, unknown> } | null = null;
+async function applyPcOverride() {
+  if (!PC_OVERRIDE) return;
+  const over = JSON.parse(PC_OVERRIDE) as Record<string, unknown>;
+  const { data: conv } = await sb.from("conversations").select("property_customer_id").eq("id", YUMA).maybeSingle();
+  const id = (conv?.property_customer_id as string | null) ?? null;
+  if (!id) throw new Error("YUMA の条件の行が無い（--pc-override を使えない）");
+  const { data: cur } = await sb.from("property_customers").select(PC_FIELDS.join(", ")).eq("id", id).maybeSingle();
+  pcRestore = { id, row: (cur ?? {}) as unknown as Record<string, unknown> };
+  const patch = Object.fromEntries(PC_FIELDS.map((k) => [k, k in over ? over[k] : null]));
+  await sb.from("property_customers").update(patch).eq("id", id);
+  console.log(`=== YUMA の条件を一時的に置き換えた: ${JSON.stringify(patch)}（終わったら戻す）===`);
+}
+async function restorePc() {
+  if (!pcRestore) return;
+  await sb.from("property_customers").update(pcRestore.row).eq("id", pcRestore.id);
+  console.log("=== YUMA の条件を元に戻した ===");
+}
+applyPcOverride().then(() => main())
   .catch((e) => { console.error(e); process.exitCode = 1; })
-  .finally(async () => { await removeScene(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
+  .finally(async () => { await restorePc().catch((e) => console.warn("restorePc:", String(e))); await removeScene(); if (h) await h.finish().catch((e) => console.warn("finish:", String(e))); setTimeout(() => process.exit(process.exitCode ?? 0), 500); });
