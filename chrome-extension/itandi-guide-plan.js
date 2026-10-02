@@ -228,10 +228,12 @@
         return w + (towns ? "（" + towns.join("・") + "）" : "");
       }).join("・");
       push({ kind: "pick_area", wards: loc.wards, townMap: loc.townMap, batchCity: loc.batchCity, townArea: loc.townArea || null,
-        label: "「所在地で絞り込み」で 近畿 → 大阪府 → " + wl + " を選んで「確定」（区ごとに1回）" });
+        // 2026-10-02 v2.5.70 竹内「おしたらこのように近畿と大阪はセットされている状態。ここから押す形」: 近畿・大阪府は小窓を開いた時に選ばれている＝手順の文に書かない
+        //   （選ばれていない時だけ、その場の光と吹き出しで「近畿」「大阪府」を出す＝itandi-guide.js evalArea）
+        label: "「所在地で絞り込み」で " + wl + " を選んで「確定」（区ごとに1回）" });
     } else if (loc.mode === "station") {
       push({ kind: "pick_lines", lines: loc.lines, stations: loc.stations, selectAll: loc.selectAll,
-        label: "「路線・駅で絞り込み」で 近畿 → 大阪府 → 路線 " + loc.lines.join("・") + (loc.selectAll ? " の駅を全部" : loc.stations.length ? " → 駅 " + loc.stations.slice(0, 12).join("・") + (loc.stations.length > 12 ? " ほか" + (loc.stations.length - 12) + "駅" : "") : "") + " を選んで「確定」" });
+        label: "「路線・駅で絞り込み」で 路線 " + loc.lines.join("・") + (loc.selectAll ? " の駅を全部" : loc.stations.length ? " → 駅 " + loc.stations.slice(0, 12).join("・") + (loc.stations.length > 12 ? " ほか" + (loc.stations.length - 12) + "駅" : "") : "") + " を選んで「確定」" });
     }
 
     if (c.walk_minutes) { want.texts["station_walk_minutes:lteq"] = String(c.walk_minutes); push({ kind: "text", name: "station_walk_minutes:lteq", value: String(c.walk_minutes), label: "駅徒歩に「" + c.walk_minutes + "」分以内と入力" }); }

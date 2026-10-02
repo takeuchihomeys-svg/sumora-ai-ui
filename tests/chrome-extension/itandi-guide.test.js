@@ -173,7 +173,7 @@ const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
   && eq(gjs, ["itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.69", mf.version === "2.5.69");
+ok("manifest の版 2.5.70", mf.version === "2.5.70");
 
 // ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
 {
@@ -186,6 +186,20 @@ ok("manifest の版 2.5.69", mf.version === "2.5.69");
   ok("要約に2区（、区切り）", eq(P.selectedWardsFromTexts(["大阪府：大阪市北区、大阪市西淀川区"], ["大阪市西淀川区", "大阪市北区"]), ["大阪市西淀川区", "大阪市北区"]));
   const g = read("itandi-guide.js");
   ok("案内は小窓の中・自分の枠と光の文字を読まない（スタッフの手順の文に区の名前がある）", /mine\(pe\) \|\| inDialog\(pe\)/.test(g) && /selectedWardsOnPage\(s\.wards\)/.test(g));
+}
+
+// ── 2026-10-02 v2.5.70 竹内「地域の場合は所在地で。おしたらこのように近畿と大阪はセットされている状態。ここから押す形」──
+{
+  const area = P.buildPlan({ area_mode: "ward", ward_names: ["大阪市西淀川区"], rent_max: 70000, floor_plan: "1K" });
+  const st = P.buildPlan({ area_mode: "station", itandi_lines: ["高速電気軌道第2号線(大阪メトロ谷町線)", "大阪環状線"], station_names: ["都島", "桜ノ宮"], rent_max: 100000, floor_plan: "2LDK" });
+  const pa = area.steps.find((x) => x.kind === "pick_area"), pl = st.steps.find((x) => x.kind === "pick_lines");
+  ok("地域のお客様は「所在地で絞り込み」・駅のお客様は「路線・駅で絞り込み」", !!pa && !area.steps.some((x) => x.kind === "pick_lines") && !!pl && !st.steps.some((x) => x.kind === "pick_area"), { area: area.steps.map((x) => x.kind), st: st.steps.map((x) => x.kind) });
+  ok("手順の文に「近畿 → 大阪府」を書かない（小窓を開いた時に選ばれている）", pa && !/近畿/.test(pa.label) && /大阪市西淀川区 を選んで「確定」/.test(pa.label) && pl && !/近畿/.test(pl.label), [pa && pa.label, pl && pl.label]);
+  const g2 = read("itandi-guide.js");
+  ok("近畿・大阪府は選ばれていない時だけ光らせる", /if \(kinki && !isChecked\(kinki\)\)/.test(g2) && /if \(osaka && !isChecked\(osaka\)\)/.test(g2));
+  ok("駅のお客様で所在地の小窓を開いた時の文", /この方は駅で探します。所在地の小窓を閉じて「路線・駅で絞り込み」を押してください/.test(g2));
+  ok("地域のお客様で別の小窓を開いた時の文", /この方は地域（所在地）で探します。この小窓を閉じて「所在地で絞り込み」を押してください/.test(g2));
+  ok("小窓の一覧を動かすのは区を選ぶ手順の中だけ", /if \(!isChecked\(wl\)\) \{ revealWardOnce\(wl, w0\);/.test(g2) && (g2.match(/revealWardOnce\(/g) || []).length === 2);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -451,7 +451,7 @@
       var fb = r.f ? r.f.btn : (r.def ? filterBtn(r.def) : null);
       return { done: false, target: [fb], note: "「所在地で絞り込み」を押して小窓を開く" + (missing.length < (s.batchCity ? 1 : s.wards.length) ? "（次は " + missing[0] + "）" : "") };
     }
-    if (!dlg.querySelector('input[name="regionName"]')) return { done: false, target: [closeBtnOf(dlg)], note: "別の小窓が開いています。閉じてください" };
+    if (!dlg.querySelector('input[name="regionName"]')) return { done: false, target: [closeBtnOf(dlg)], note: "この方は地域（所在地）で探します。この小窓を閉じて「所在地で絞り込み」を押してください" };
     var okBtn = btnByText(dlg, "確定");
     if (!missing.length) return { done: false, target: [okBtn], note: "選び終えたら「確定」" };
     var kinki = radioLabel(dlg, "近畿");
@@ -509,7 +509,7 @@
       var fb = r.f ? r.f.btn : (r.def ? filterBtn(r.def) : null);
       return { done: false, target: [fb], note: "「路線・駅で絞り込み」を押して小窓を開く" };
     }
-    if (dlg.querySelector('input[name="regionName"]')) return { done: false, target: [closeBtnOf(dlg)], note: "所在地の小窓が開いています。閉じてください" };
+    if (dlg.querySelector('input[name="regionName"]')) return { done: false, target: [closeBtnOf(dlg)], note: "この方は駅で探します。所在地の小窓を閉じて「路線・駅で絞り込み」を押してください" };
     var cb = [].slice.call(dlg.querySelectorAll("label")).filter(function (l) { var i = inputOf(l); return i && i.type === "checkbox" && visible(l); });
     if (!cb.length) {
       var nav = [navByText(dlg, "近畿"), navByText(dlg, "大阪府")].filter(Boolean);
