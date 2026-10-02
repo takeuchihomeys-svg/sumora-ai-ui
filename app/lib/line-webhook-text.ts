@@ -236,12 +236,15 @@ async function resolvePropertyReference(
   if (!quoted || quoted.sender === "customer") return;
 
   // 2. 引用先メッセージ → sent_properties マッチ（この会話の直近20件）
-  const { data: props } = await db
+  // 2026-10-02 ⑯ の監査: sent_properties に created_at は無い（日時は sent_at）。旧は .order("created_at") で毎回エラー→props が空で、
+  //   お客様が引用した返信 277通（60日）が1件も物件に結び付かず、customer_reaction（興味あり）が全行空だった
+  const { data: props, error: propsErr } = await db
     .from("sent_properties")
     .select("id, property_name, room_no, image_url, property_url")
     .eq("conversation_id", convId)
-    .order("created_at", { ascending: false })
+    .order("sent_at", { ascending: false })
     .limit(20);
+  if (propsErr) console.warn("[resolvePropertyReference] sent_properties:", propsErr.message);
   const qText = (quoted.text as string | null) ?? "";
   const hit = (props ?? []).find((p) =>
     (p.image_url && p.image_url === quoted.image_url) ||                                        // 物件カード画像一致

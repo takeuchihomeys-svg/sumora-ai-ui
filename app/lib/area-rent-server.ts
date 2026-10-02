@@ -5,7 +5,8 @@ import { supabase } from "@/app/lib/supabase";
 import { parseAreaWant, customerAreaPlan } from "@/app/lib/area-want";
 import type { AreaPlan } from "@/app/lib/osaka-area-profile";
 import { wardOfStation } from "@/app/lib/osaka-geo";
-import { buildRentMarket, RENT_EXPLAIN_RULE, type RentMarket, type RentObs } from "@/app/lib/area-rent-explain";
+import { buildRentMarket, wantedPlanGroups, RENT_EXPLAIN_RULE, type RentMarket, type RentObs } from "@/app/lib/area-rent-explain";
+import { conditionMarket, conditionMarketFacts, realisticWithinBudget, type CondObs } from "@/app/lib/rent-condition-market";
 
 /** フランチャイズの店（今は大阪の1店だけ） */
 export const DEFAULT_BRANCH = "osaka";
@@ -17,6 +18,8 @@ export type CustomerAreaInput = {
   floor_plan?: string | null;
   rent_max?: number | null;
   pet?: boolean | null;
+  /** 築年数の上限（年） */
+  building_age?: number | null;
 };
 
 /**
@@ -39,7 +42,7 @@ export async function loadRentObservations(wards: string[], branch = DEFAULT_BRA
   for (let from = 0; from < 20000; from += 1000) {
     const { data, error } = await supabase
       .from("rent_observations")
-      .select("ward, plan_group, rent_total, pet")
+      .select("ward, plan_group, rent_total, pet, building_age, walk_minutes, floor, structure, area_sqm, equipment")
       .eq("branch_id", branch)
       .in("ward", wards)
       .not("rent_total", "is", null)
@@ -60,7 +63,18 @@ export async function customerAreaAndRent(c: CustomerAreaInput): Promise<{ areaP
     if (!wards.length) return { areaPlan: plan, rentMarket: null };
     const obs = await loadRentObservations(wards);
     const label = plan ? plan.anchors.map((a) => a.station).join("・") : null;
-    return { areaPlan: plan, rentMarket: buildRentMarket(obs, { wards, floorPlan: c.floor_plan ?? null, rentMax: c.rent_max ?? null, pet: c.pet ?? null, label }) };
+    const rm = buildRentMarket(obs, { wards, floorPlan: c.floor_plan ?? null, rentMax: c.rent_max ?? null, pet: c.pet ?? null, label, maxAge: c.building_age ?? null });
+    // 2026-10-02 ⑯ 手順3: 条件ごとの家賃（築年・駅徒歩・階・構造・広さ・設備の帯の中央値と差）と、予算の中の現実的な築年・面積（ブレイン・スタッフ向けの事実）
+    const plan0 = wantedPlanGroups(c.floor_plan)[0];
+    if (rm && plan0) {
+      const area = label || wards.slice(0, 3).map((w) => w.replace(/^大阪市/, "")).join("・");
+      rm.facts.push(...conditionMarketFacts(conditionMarket(obs as CondObs[], wards, plan0), area));
+      if (c.rent_max) {
+        const r = realisticWithinBudget(obs as CondObs[], wards, plan0, c.rent_max);
+        if (r.sayable && (r.ageMedian != null || r.sqmMedian != null)) rm.facts.push(`${area}の${plan0}で${(c.rent_max / 10000).toFixed(1).replace(/\.0$/, "")}万以内（${r.n}件）の築年の中央値は${r.ageMedian ?? "-"}年・面積の中央値は${r.sqmMedian ?? "-"}㎡（検索の築年・広さの目安）`);
+      }
+    }
+    return { areaPlan: plan, rentMarket: rm };
   } catch (e) {
     console.warn("[area-rent] 相場の読み込みに失敗:", e instanceof Error ? e.message : String(e));
     return { areaPlan: plan, rentMarket: null };

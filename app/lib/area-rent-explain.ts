@@ -52,7 +52,7 @@ export function wantedPlanGroups(floorPlan: string | null | undefined): PlanGrou
   return out;
 }
 
-export type RentObs = { ward: string | null; plan_group: string | null; rent_total: number | null; pet?: boolean | null };
+export type RentObs = { ward: string | null; plan_group: string | null; rent_total: number | null; pet?: boolean | null; building_age?: number | null; walk_minutes?: number | null; floor?: number | null; structure?: string | null; area_sqm?: number | string | null; equipment?: Record<string, boolean> | null };
 
 /** 分位（線形補間・percentile_cont と同じ） */
 export function percentile(sorted: number[], q: number): number {
@@ -99,7 +99,7 @@ const shortWard = (w: string) => w.replace(/^大阪市/, "");
  * 希望の区（area_plan の区・希望の区）と希望の間取りの相場。
  * label: 文の「◯◯周辺の」の◯◯（「なんば・梅田」）。無ければ区の名前を「・」で並べる
  */
-export function buildRentMarket(obs: RentObs[], input: { wards: string[]; floorPlan: string | null; rentMax: number | null; pet?: boolean | null; label?: string | null }): RentMarket | null {
+export function buildRentMarket(obs: RentObs[], input: { wards: string[]; floorPlan: string | null; rentMax: number | null; pet?: boolean | null; label?: string | null; maxAge?: number | null }): RentMarket | null {
   const plans = wantedPlanGroups(input.floorPlan);
   if (!input.wards.length || !plans.length) return null;
   const facts: string[] = [];
@@ -135,6 +135,16 @@ export function buildRentMarket(obs: RentObs[], input: { wards: string[]; floorP
         sentences.push(`${manStr(input.rentMax / 10000)}万円ですと${sb.plan}の家賃相場程ですので、間取りやご希望のエリア広げれましたら追加でオススメできるお部屋ピックアップ可能です😊！！`);
       }
       break;
+    }
+  }
+  // 2026-10-02 ⑯ 手順3: 築年の希望（築浅・築N年以内）がある人は、その築年の中の相場も（S1 の型の「周辺の」と「間取り」の間に築年を入れるだけ）
+  if (input.maxAge != null && input.maxAge > 0) {
+    const young = obs.filter((o) => o.building_age != null && (o.building_age as number) <= (input.maxAge as number));
+    const yb = rentBand(young, input.wards, main, input.rentMax);
+    if (yb) {
+      bands.push(yb);
+      facts.push(`${area}の築${input.maxAge}年以内の${main}（${yb.n}件）: 中央値${manStr(Math.round(yb.p50 / 1000) / 10)}万・25〜75%は${manStr(Math.round(yb.p25 / 1000) / 10)}〜${manStr(Math.round(yb.p75 / 1000) / 10)}万${yb.nWithinBudget != null && input.rentMax ? `・${manStr(input.rentMax / 10000)}万以内は${yb.nWithinBudget}件` : ""}${yb.sayable ? "" : `（${RENT_EXPLAIN_RULE.minCount}件未満のためお客様には言わない）`}`);
+      if (yb.sayable) sentences.push(`${area}周辺の築${input.maxAge}年以内の${main}の家賃相場は${manStr(yb.lo)}万円から${manStr(yb.hi)}万円程となります！！`);
     }
   }
   return { facts, sentences, bands };

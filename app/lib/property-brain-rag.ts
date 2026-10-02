@@ -241,7 +241,7 @@ export async function buildPropertyBrainContext(
 
   const { areaPlan, rentMarket } = await customerAreaAndRent({
     desired_area: pc.desired_area, preferences: pc.preferences, other_requests: pc.other_requests,
-    floor_plan: pc.floor_plan, rent_max: pc.rent_max, pet: pc.pet,
+    floor_plan: pc.floor_plan, rent_max: pc.rent_max, pet: pc.pet, building_age: pc.building_age,
   });
 
   return { customer, sentHistory, areaKnowledge, learnedPatterns, areaPlan, rentMarket };

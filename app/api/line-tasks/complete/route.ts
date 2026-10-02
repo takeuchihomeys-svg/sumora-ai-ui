@@ -127,13 +127,15 @@ export async function POST(req: NextRequest) {
           second_position: "open",
           move_out_planned: "move_out_planned",
         };
-        const { data: sp } = await supabase
+        // 2026-10-02: sent_properties に created_at は無い（日時は sent_at）。旧は毎回エラーで募集状況が書かれていなかった
+        const { data: sp, error: spErr } = await supabase
           .from("sent_properties")
           .select("id")
           .eq("conversation_id", task.conversation_id as string)
-          .order("created_at", { ascending: false })
+          .order("sent_at", { ascending: false })
           .limit(1)
           .maybeSingle();
+        if (spErr) console.warn("[line-tasks/complete] sent_properties:", spErr.message);
         if (!sp) return;
         const upd: Record<string, unknown> = {
           recruitment_status: STATUS_MAP[patch.result as string],
