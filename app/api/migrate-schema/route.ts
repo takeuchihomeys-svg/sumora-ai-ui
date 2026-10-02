@@ -4183,6 +4183,11 @@ ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS verdict_reviewed_at TIMEST
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_unevaluated ON line_watch_turns(customer_turn_at) WHERE evaluated_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_scene ON line_watch_turns(scene_key, customer_turn_at DESC);
 
+-- conversations.call_tapped_at: お客様が「電話をかける」ボタン（AIX【電話する】→電話をかける）を最後に押した時刻（2026-10-02 竹内
+--   「こっちが電話でれなくて不在だった場合 不在の通知がはいるようにする」）。LINEコールは着信が webhook に来ないので /api/call-tap で拾う。
+--   トーク画面の「📞 電話ボタンが押されました」の印は、この時刻の後にスタッフの送信が無い間だけ出す（app/lib/call-tap-view.ts）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS call_tapped_at TIMESTAMPTZ;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

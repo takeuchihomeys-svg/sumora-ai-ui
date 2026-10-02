@@ -29,6 +29,7 @@ import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
 import { limitSlotsPerDay } from "./lib/viewing-slots";
 import { CALL_BUTTON_MESSAGE_TEXT } from "./lib/phone-call";
+import { shouldShowCallTapBadge } from "./lib/call-tap-view";
 import { meetingToJst, pendingViewingNotes, isReplaceableViewingNotes, VIEWING_METHOD_PENDING } from "./lib/meeting-calendar";
 import { buildScreeningTaskPayload, isValidSyncKey } from "./lib/screening-calendar-sync";
 // 2026-09-16 竹内（カイナ事例）: 内覧の候補日時をカレンダーに「時間確保」で置き、決まったら残りを消す
@@ -94,6 +95,8 @@ type Conversation = {
   suggestedNextAix?: string | null;
   // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信を止めている理由（グループから誤って個人として作られた会話）
   sendBlockedReason?: string | null;
+  // 2026-10-02 竹内「不在の通知がはいるようにする」: お客様が「電話をかける」ボタンを最後に押した時刻（/api/call-tap が書く）
+  callTappedAt?: string | null;
   messages: Message[];
 };
 
@@ -116,6 +119,7 @@ type SupabaseConversationRow = {
   suggested_aix_meta?: { action: string; note: string; closing_strategy?: string; template_hint?: string; next_steps?: string[]; enforcement_level?: "required" | "recommended" | "optional"; reply_mode?: "aix" | "auto_reply" } | null;
   suggested_next_aix?: string | null;
   send_blocked_reason?: string | null;
+  call_tapped_at?: string | null;
 };
 
 /**
@@ -125,7 +129,7 @@ type SupabaseConversationRow = {
  *   （ブレインの内部の記録・画面では使わない）。
  * ⚠ 一覧で新しい列を使う時は**ここに足す**（足さないと undefined になる）。
  */
-const CONVERSATION_LIST_COLUMNS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason";
+const CONVERSATION_LIST_COLUMNS = "id,customer_name,status,line_user_id,last_message,last_sender,profile_image_url,updated_at,created_at,account,property_customer_id,is_post_apply,is_hot,is_flagged,ai_draft,draft_pending_at,has_viewed,auto_send_enabled,auto_sent_at,auto_sent_draft,success_pattern_at,loss_analyzed_at,draft_attempted_at,line_status,suggested_next_aix,draft_fail_count,draft_last_error,reply_mode_decision,suggested_aix_meta,brain_analyzed_at,learned_at,brain_full_analyzed_at,brain_full_msg_count,brain_deep_analyzed_at,brain_deep_msg_count,acquisition_source,applying_text_received,applying_image_received,screening_last_status,status_manual_back_at,auto_send_enabled_at,line_source_type,send_blocked_reason,call_tapped_at";
 
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
 // 2026-09-18: 実体は app/lib/draft-text.ts に移した（自動返信も同じ関数を使う＝画面に出ている文と送る文を必ず一致させる）
@@ -654,6 +658,7 @@ function conversationRowToItem(conversation: SupabaseConversationRow, relatedMes
     status: conversation.status || "hearing",
     lineUserId: conversation.line_user_id,
     sendBlockedReason: conversation.send_blocked_reason ?? null,
+    callTappedAt: conversation.call_tapped_at ?? null,
     profileImageUrl: conversation.profile_image_url || undefined,
     updatedAt: effectiveUpdatedAt,
     account: conversation.account || undefined,
@@ -1838,6 +1843,13 @@ export default function Home() {
         { event: "UPDATE", schema: "public", table: "conversations" },
         (payload) => {
           const upd = payload.new as SupabaseConversationRow | null;
+          // 2026-10-02 竹内「不在の通知がはいるようにする」: お客様が「電話をかける」ボタンを押した（/api/call-tap が call_tapped_at を今にした）
+          if (upd?.id && upd.call_tapped_at && Date.now() - Date.parse(upd.call_tapped_at) < 2 * 60_000) {
+            const before = conversationsRef.current.find((c) => c.id === String(upd.id));
+            if (before && before.callTappedAt !== upd.call_tapped_at) {
+              showNotif("📞 電話ボタンが押されました", `${upd.customer_name || before.customerName || ""}さん — 出られなかった時は折り返しを`, "/");
+            }
+          }
           // ai_draft が payload に含まれていればローカルStateを即時更新（バナー遅延ゼロに）
           if (upd?.id && upd.ai_draft !== undefined) {
             setConversations((prev) =>
@@ -2715,6 +2727,7 @@ export default function Home() {
           status: autoStatus,
           lineUserId: c.line_user_id || "",
           sendBlockedReason: c.send_blocked_reason ?? null,
+          callTappedAt: c.call_tapped_at ?? null,
           updatedAt: c.updated_at || "",
           messages: [],
           account: c.account ?? "sumora",
@@ -9307,6 +9320,13 @@ export default function Home() {
             {selectedConversation.sendBlockedReason && (
               <div className="mx-1 mb-1 rounded-2xl border border-red-300 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
                 ⛔ {sendBlockedMessage(selectedConversation.sendBlockedReason)}
+              </div>
+            )}
+            {/* 2026-10-02 竹内「AIXの電話をかけるが、こっちが電話でれなくて不在だった場合 不在の通知がはいるようにする」:
+                LINEコールは不在着信が届かないので、お客様がボタンを押した時刻（/api/call-tap）を出す。スタッフが送れば消える */}
+            {shouldShowCallTapBadge(selectedConversation.callTappedAt, selectedConversation.messages ?? []) && (
+              <div className="mx-1 mb-1 rounded-2xl border border-green-300 bg-green-50 px-3 py-2 text-[12px] font-semibold text-green-800">
+                📞 {formatTime(selectedConversation.callTappedAt as string)} に電話ボタンが押されました。出られなかった時は折り返しを（出られた時は AIX【電話する】→電話終了後）
               </div>
             )}
             {/* AI文案生成失敗時の再生成バナー（2026-09-24: 22〜9時の見送りは「失敗」ではないので文言を分ける） */}

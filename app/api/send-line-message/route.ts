@@ -146,7 +146,11 @@ export async function POST(req: NextRequest) {
     if (!isValidLineCallUrl(callUrl)) {
       return NextResponse.json({ ok: false, errorCode: "call_url_not_set", error: `${accountKey} の LINEコールの通話URLが未登録です。AIX【電話をかける】の画面で通話URLを登録してください` }, { status: 400 });
     }
-    messages.push(buildCallRequestFlex(callUrl));
+    // 2026-10-02 竹内「不在の通知がはいるようにする」: LINEコールは着信・不在着信が webhook に来ないので、
+    //   ボタンの行き先を /api/call-tap（押された記録→グループとトーク画面に知らせる→通話URL へ転送）にする。手元・鍵なしは通話URL のまま
+    const { buildCallTapUrl, callTapSecret } = await import("@/app/lib/call-tap");
+    const buttonUrl = buildCallTapUrl({ origin: process.env.NEXT_PUBLIC_BASE_URL || req.nextUrl.origin, conversationId: conversation_id, accountKey, callUrl, secret: callTapSecret(process.env) });
+    messages.push(buildCallRequestFlex(buttonUrl));
   }
   // 送る塊（push 1回分ずつ）。従来は1回。まとめて送る画像がある時は 5通ずつに区切った複数回
   let pushes: unknown[][];
