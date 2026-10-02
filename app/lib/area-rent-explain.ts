@@ -93,6 +93,8 @@ export type RentMarket = {
   bands: RentBand[];
   /** 2026-10-02 予算の中の目安（築年・広さ・築年の傾向）。無ければ null */
   budgetTypical?: BudgetTypical | null;
+  /** 2026-10-02 区の比べ（隣の区・同じ間取り・言ってよい線を越えた物） */
+  wardComparisons?: Array<{ ward: string; base: string; cheaper: boolean; gapYen: number; sentence: string }>;
 };
 
 const shortWard = (w: string) => w.replace(/^大阪市/, "");
@@ -189,4 +191,60 @@ export function budgetTypical(obs: RentObs[], wards: string[], plan: PlanGroup, 
     ? `${b}万円以内の${plan}ですと築年数は${ageTendency === "old" ? "古め" : "浅め"}のお部屋が中心となり、${ageText}・${sqmText}が目安となります！！`
     : `${b}万円以内の${plan}ですと、${ageText}・${sqmText}のお部屋が中心となります！！`;
   return { n: rows.length, ageMedian, overallAgeMedian, sqmP25, sqmP75, ageText, sqmText, ageTendency, sentence };
+}
+
+// ───────────────────────── 区・駅のまわりの比べ（スタッフの言い回し・数字は今の材料から） ─────────────────────────
+// 2026-10-02 竹内さん「このような言い回しで」（スタッフの過去の文: 「西成区は…中央区・浪速区と比べて2万円〜3万円程お安くなります」
+//   「福島駅周辺は野田駅周辺よりも家賃相場高いエリアとなります」「大阪梅田駅まで乗り換え無し20分〜25分程でアクセス可能です」）。
+//   言い回しだけを使い、数字と向きは今の rent_observations（同じ間取り）から出す。古い文の数字は使わない。
+// ■ 言ってよい線（COMPARE_RULE）: 両方とも件数 10 以上・中央値の差 0.5万以上・かつ片方の中央値がもう片方の 25〜75% の外（重なりの中なら言わない）
+export const COMPARE_RULE = { minCount: RENT_EXPLAIN_RULE.minCount, minGapYen: 5000 } as const;
+
+type Stat = { n: number; p25: number; p50: number; p75: number };
+function statOf(xs: number[]): Stat | null {
+  if (xs.length < COMPARE_RULE.minCount) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return { n: s.length, p25: percentile(s, 0.25), p50: percentile(s, 0.5), p75: percentile(s, 0.75) };
+}
+const shortW = (w: string) => w.replace(/^大阪市/, "");
+
+export type Comparison = { cheaper: boolean; gapYen: number; lo: number; hi: number; a: Stat; b: Stat };
+/** a（比べる側）と b（比べられる側）の差。言ってよい線を越えない時は null */
+export function compareRents(aRents: number[], bRents: number[]): Comparison | null {
+  const a = statOf(aRents), b = statOf(bRents);
+  if (!a || !b) return null;
+  const gap = b.p50 - a.p50; // 正＝a の方が安い
+  if (Math.abs(gap) < COMPARE_RULE.minGapYen) return null;
+  const outside = gap > 0 ? a.p50 < b.p25 || b.p50 > a.p75 : a.p50 > b.p75 || b.p50 < a.p25;
+  if (!outside) return null;
+  const diffs = [Math.abs(b.p25 - a.p25), Math.abs(gap), Math.abs(b.p75 - a.p75)].sort((x, y) => x - y);
+  let lo = roundManDown(diffs[0]), hi = roundManUp(diffs[2]);
+  if (lo < 0.5) lo = 0.5;
+  if (hi < lo) hi = lo;
+  return { cheaper: gap > 0, gapYen: Math.round(gap), lo, hi, a, b };
+}
+
+/** 「{A区}は{B区}・{C区}と比べて{x}万円〜{y}万円程お安く（高く）なります！！」 */
+export function wardComparisonSentence(obs: RentObs[], plan: PlanGroup, ward: string, others: string[]): { sentence: string; fact: string; cmp: Comparison } | null {
+  const rentsOf = (ws: string[]) => obs.filter((o) => o.plan_group === plan && o.rent_total != null && o.ward != null && ws.includes(o.ward)).map((o) => o.rent_total as number);
+  const cmp = compareRents(rentsOf([ward]), rentsOf(others));
+  if (!cmp) return null;
+  const range = cmp.hi > cmp.lo ? `${manStr(cmp.lo)}万円〜${manStr(cmp.hi)}万円` : `${manStr(cmp.lo)}万円`;
+  const sentence = `${shortW(ward)}は${others.map(shortW).join("・")}と比べて${range}程${cmp.cheaper ? "お安く" : "高く"}なります！！`;
+  const fact = `${plan}: ${shortW(ward)} 中央値${manStr(Math.round(cmp.a.p50 / 1000) / 10)}万（${cmp.a.n}件）／${others.map(shortW).join("・")} 中央値${manStr(Math.round(cmp.b.p50 / 1000) / 10)}万（${cmp.b.n}件）`;
+  return { sentence, fact, cmp };
+}
+
+/** 「{X}駅周辺は{Y}駅周辺よりも家賃相場高い（お安い）エリアとなります！！」（station＝rent_observations.station のまとまり） */
+export function stationComparisonSentence(obs: Array<RentObs & { station?: string | null }>, plan: PlanGroup, x: string, y: string, groupOf: (s: string) => string): { sentence: string; cmp: Comparison } | null {
+  const rentsAt = (st: string) => obs.filter((o) => o.plan_group === plan && o.rent_total != null && o.station && groupOf(o.station) === st).map((o) => o.rent_total as number);
+  const cmp = compareRents(rentsAt(x), rentsAt(y));
+  if (!cmp) return null;
+  return { sentence: `${x}駅周辺は${y}駅周辺よりも家賃相場${cmp.cheaper ? "お安い" : "高い"}エリアとなります！！`, cmp };
+}
+
+/** 「{X}駅まで乗り換え無し{a}分〜{b}分程でアクセス可能です！！」（分は5分刻みの幅・乗り換えありは「乗り換え{n}回で」） */
+export function accessSentence(target: string, minutes: number, transfers: number): string {
+  const a = Math.max(5, Math.floor(minutes / 5) * 5), b = a + 5;
+  return `${target}駅まで${transfers === 0 ? "乗り換え無し" : `乗り換え${transfers}回で`}${a}分〜${b}分程でアクセス可能です！！`;
 }

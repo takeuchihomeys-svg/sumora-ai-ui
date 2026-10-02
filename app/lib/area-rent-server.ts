@@ -4,8 +4,8 @@
 import { supabase } from "@/app/lib/supabase";
 import { parseAreaWant, customerAreaPlan } from "@/app/lib/area-want";
 import type { AreaPlan } from "@/app/lib/osaka-area-profile";
-import { wardOfStation } from "@/app/lib/osaka-geo";
-import { buildRentMarket, wantedPlanGroups, RENT_EXPLAIN_RULE, type RentMarket, type RentObs } from "@/app/lib/area-rent-explain";
+import { wardOfStation, wardsAdjacent, WARD_COORDS } from "@/app/lib/osaka-geo";
+import { buildRentMarket, wantedPlanGroups, wardComparisonSentence, RENT_EXPLAIN_RULE, type RentMarket, type RentObs } from "@/app/lib/area-rent-explain";
 import { conditionMarket, conditionMarketFacts, realisticWithinBudget, type CondObs } from "@/app/lib/rent-condition-market";
 
 /** フランチャイズの店（今は大阪の1店だけ） */
@@ -72,6 +72,25 @@ export async function customerAreaAndRent(c: CustomerAreaInput): Promise<{ areaP
       if (c.rent_max) {
         const r = realisticWithinBudget(obs as CondObs[], wards, plan0, c.rent_max);
         if (r.sayable && (r.ageMedian != null || r.sqmMedian != null)) rm.facts.push(`${area}の${plan0}で${(c.rent_max / 10000).toFixed(1).replace(/\.0$/, "")}万以内（${r.n}件）の築年の中央値は${r.ageMedian ?? "-"}年・面積の中央値は${r.sqmMedian ?? "-"}㎡（検索の築年・広さの目安）`);
+      }
+    }
+    // 2026-10-02 竹内さん「このような言い回しで」: 区の比べ（スタッフの言い回し・数字は今の材料）。主の区（範囲の駅の多い区／希望の1番目の区）と隣の区を同じ間取りで比べ、
+    //   言ってよい線（両方10件以上・中央値の差0.5万以上・重なりの外）を越えた物だけ。事実には全部、お客様への文には「広げるとお安い」隣の区を1つだけ
+    if (rm && plan0) {
+      const main = wards[0];
+      // 比べる区: 「出やすい・1本」の範囲がある人は範囲の中で「周辺」（3km）の外の区（＝希望を満たしたまま広げられる区・お客様に合う事が先）。無い人は隣の区
+      const neighbors = plan
+        ? plan.wards.map((w) => w.ward).filter((w) => !wards.includes(w)).slice(0, 8)
+        : [...WARD_COORDS.keys()].filter((w) => w !== main && !wards.includes(w) && wardsAdjacent(main, w));
+      if (neighbors.length) {
+        const nobs = await loadRentObservations(neighbors);
+        const all = [...obs, ...nobs];
+        const cmps = neighbors.map((n) => ({ n, r: wardComparisonSentence(all, plan0, n, [main]) })).filter((x) => x.r) as Array<{ n: string; r: NonNullable<ReturnType<typeof wardComparisonSentence>> }>;
+        cmps.sort((a, b) => b.r.cmp.gapYen - a.r.cmp.gapYen);
+        for (const x of cmps) rm.facts.push(`区の比べ（${x.r.cmp.cheaper ? "安い" : "高い"}）: ${x.r.fact}｜文の候補「${x.r.sentence}」`);
+        const widen = cmps.find((x) => x.r.cmp.cheaper);
+        if (cmps.length) rm.wardComparisons = cmps.map((x) => ({ ward: x.n, base: main, cheaper: x.r.cmp.cheaper, gapYen: x.r.cmp.gapYen, sentence: x.r.sentence }));
+        if (widen) rm.sentences.push(widen.r.sentence);
       }
     }
     return { areaPlan: plan, rentMarket: rm };

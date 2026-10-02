@@ -1,7 +1,7 @@
 // 2026-10-02 ⑯ 手順3「家賃と部屋の条件」の相場（rent-condition-market.ts）と、築年の相場の文（area-rent-explain）のテスト（LLM なし）
 // 実行: npx tsx app/lib/__tests__/rent-condition-market.test.ts
 import { conditionMarket, explainGap, tradeoffHits, realisticWithinBudget, conditionMarketFacts, structureBand, bandsOf, MARKET_BAND_RULE, type CondObs } from "../rent-condition-market";
-import { buildRentMarket, budgetTypical } from "../area-rent-explain";
+import { buildRentMarket, budgetTypical, wardComparisonSentence, stationComparisonSentence, accessSentence, COMPARE_RULE } from "../area-rent-explain";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, info ?? ""); } };
@@ -72,6 +72,21 @@ console.log("■ 予算の中の目安（竹内さん: 築30年程・25〜30㎡�
   t("10件未満は出さない", budgetTypical(cheapOld.slice(0, 8), [W2], "1DK", 85000) === null);
   const rmB = buildRentMarket([...cheapOld, ...pricyNew] as never, { wards: [W2], floorPlan: "1DK", rentMax: 85000, label: "梅田" })!;
   t("buildRentMarket の文と事実に出る（ageTendency）", rmB.sentences.some((s) => /築年数は古め/.test(s)) && rmB.budgetTypical?.ageTendency === "old");
+}
+
+console.log("■ 区・駅のまわりの比べ（スタッフの言い回し・数字は今の材料）");
+{
+  const mkw = (ward: string, base: number, n: number, station?: string) => Array.from({ length: n }, (_, i) => ({ ward, plan_group: "1K", rent_total: base + (i % 5) * 2000, station }));
+  const data = [...mkw("大阪市西成区", 55000, 12, "花園町"), ...mkw("大阪市中央区", 80000, 12, "心斎橋"), ...mkw("大阪市浪速区", 78000, 12, "大国町"), ...mkw("大阪市西区", 79000, 12)];
+  const w1 = wardComparisonSentence(data, "1K", "大阪市西成区", ["大阪市中央区", "大阪市浪速区"])!;
+  t("「西成区は中央区・浪速区と比べて◯万円〜◯万円程お安くなります！！」", /^西成区は中央区・浪速区と比べて[0-9.]+万円(?:〜[0-9.]+万円)?程お安くなります！！$/.test(w1.sentence), w1);
+  t("向きは今の材料から（中央区は西成区より高く）", /^中央区は西成区と比べて.*高くなります！！$/.test(wardComparisonSentence(data, "1K", "大阪市中央区", ["大阪市西成区"])!.sentence));
+  t("差が0.5万未満・重なりの中は言わない（浪速区と西区）", wardComparisonSentence(data, "1K", "大阪市浪速区", ["大阪市西区"]) === null);
+  t("10件未満は言わない", wardComparisonSentence([...mkw("大阪市西成区", 55000, 6), ...mkw("大阪市中央区", 80000, 12)], "1K", "大阪市西成区", ["大阪市中央区"]) === null);
+  const st = stationComparisonSentence(data, "1K", "心斎橋", "花園町", (s) => s)!;
+  t("「心斎橋駅周辺は花園町駅周辺よりも家賃相場高いエリアとなります！！」", st.sentence === "心斎橋駅周辺は花園町駅周辺よりも家賃相場高いエリアとなります！！", st);
+  t("「◯駅まで乗り換え無し20分〜25分程でアクセス可能です！！」", accessSentence("大阪梅田", 22, 0) === "大阪梅田駅まで乗り換え無し20分〜25分程でアクセス可能です！！" && /乗り換え1回で/.test(accessSentence("本町", 12, 1)));
+  t("決めた線（10件・0.5万）", COMPARE_RULE.minCount === 10 && COMPARE_RULE.minGapYen === 5000);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

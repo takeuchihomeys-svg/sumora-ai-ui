@@ -114,7 +114,7 @@ export function buildLineKnowledge(msgs: MsgLite[], groupKey: (s: string) => str
       title: `${anchor}を起点にしたお客様の言い方`, content: `${anchor}を起点にした言い方（会話${convs.size}）: ${Object.entries(byType).map(([k, v]) => `${label[k as keyof typeof label]}${v}`).join("・")}` });
   }
   for (const [kind, b] of byPhrase) {
-    rows.push({ kind: "staff_phrase", key: `phrase:${kind}`, payload: { conversations: b.convs.size, examples: b.examples }, evidence_count: b.convs.size,
+    rows.push({ kind: "staff_phrase", key: `phrase:${kind}`, payload: { conversations: b.convs.size, examples: b.examples, style_only: true /* 言い回しの見本だけ・古い数字はブレインに出さない（10/02 竹内さん「このような言い回しで」） */ }, evidence_count: b.convs.size,
       title: `スタッフの${kind}の文`, content: `スタッフの${kind}の文（会話${b.convs.size}）: ${b.examples.slice(0, 3).join(" ／ ")}` });
   }
   rows.sort((a, b) => b.evidence_count - a.evidence_count);
