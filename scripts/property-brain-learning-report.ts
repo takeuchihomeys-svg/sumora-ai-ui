@@ -100,6 +100,20 @@ const PATHS: Array<{ table: string; what: string; col?: string }> = [
     console.log(`  部屋 ${nObs}（今週の新しい部屋 +${nWeek}・届けた ${nSent}・ペット可否が分かる ${nPet}）・セル ${cells.length}・言える（${RENT_EXPLAIN_RULE.minCount}件以上）${sayable.length}`);
     const top = sayable.sort((a, b) => b.n - a.n).slice(0, 8).map((c) => `${c.ward.replace(/^大阪市/, "")}${c.plan_group}:${c.n}`);
     if (top.length) console.log(`  多いセル: ${top.join("・")}`);
+    // 2026-10-02 手順2: 部屋の条件の列（資料＝売上サポから）と使われ方の段
+    const cols: Array<[string, (q: any) => any]> = [
+      ["築年", (q) => q.not("built_year", "is", null)], ["面積", (q) => q.not("area_sqm", "is", null)], ["階", (q) => q.not("floor", "is", null)],
+      ["構造", (q) => q.not("structure", "is", null)], ["敷金", (q) => q.not("deposit_months", "is", null)], ["設備", (q) => q.not("equipment", "is", null)],
+      ["徒歩", (q) => q.not("walk_minutes", "is", null)], ["AD（社内）", (q) => q.not("ad_yen", "is", null)],
+    ];
+    const parts: string[] = [];
+    for (const [k, f] of cols) parts.push(`${k} ${pct((await count("rent_observations", f)) ?? 0, nObs ?? 0)}`);
+    console.log(`  部屋の条件の列: ${parts.join("・")}`);
+    const stages: string[] = [];
+    for (const [r, name] of [[0, "候補だけ"], [1, "判定"], [2, "ブレインの🌟"], [3, "スタッフが届けた"], [4, "お客様が興味あり"]] as Array<[number, string]>) {
+      stages.push(`${name} ${(await count("rent_observations", (q) => q.eq("usage_rank", r))) ?? "?"}`);
+    }
+    console.log(`  使われ方: ${stages.join("・")}`);
   }
 
   console.log("\n■ ④ スタッフの選択とブレインの並べ方（売上サポの1回＝batch・選んだ物＝status sent）");

@@ -4348,6 +4348,156 @@ LANGUAGE sql STABLE AS $$
   GROUP BY o.ward, o.plan_group
 $$;
 
+-- ════════════════════════════════════════════════════════════════════
+-- 2026-10-02 ⑯ 手順2: rent_observations に部屋の条件の列（売上サポの資料＝property_pickups から埋める）
+--   竹内「物件ピックアップで送る物件や物件オススメで送る物件から学べれるから、その家賃や築年数などお部屋の条件に対しての相場や、知識がそこを強化していく」
+--   ・将来のポータル（別プロジェクト）でも使えるよう、列は COMMENT で説明する。LINE の会話・お客様の情報は持たない
+--   ・使われ方の段（usage_rank は上げるだけ）: 0 candidate＝検索で見つかっただけ／1 judged＝売上サポで判定／2 brain_star＝ブレインの🌟／
+--     3 staff_sent＝スタッフがお客様へ届けた（ピックアップ・物件オススメ・画像）／4 customer_interested＝お客様が興味あり
+--   ・元付業者は資料から構造化して読めていない（0%）ので列を作らない
+-- ════════════════════════════════════════════════════════════════════
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS built_year integer;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS floor integer;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS total_floors integer;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS structure text;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS deposit_months numeric;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS key_money_months numeric;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS equipment jsonb;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS ad_yen integer;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS usage_rank smallint NOT NULL DEFAULT 0;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS usage_stage text NOT NULL DEFAULT 'candidate';
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS sent_channel text;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS pickup_id bigint;
+ALTER TABLE rent_observations ADD COLUMN IF NOT EXISTS attrs_at timestamptz;
+
+COMMENT ON TABLE rent_observations IS '部屋ごとの家賃と条件の観測（1戸1行・branch_id＋unit_key）。相場・条件と家賃の関係の材料。LINE の会話・お客様の情報は持たない';
+COMMENT ON COLUMN rent_observations.branch_id IS 'フランチャイズの店（今は osaka）';
+COMMENT ON COLUMN rent_observations.unit_key IS '建物名＋号室の鍵（rent_unit_key: NFKC・空白・中黒・かっこを落とした小文字＋#＋号室の英数字）';
+COMMENT ON COLUMN rent_observations.ward IS '区・市（大阪市◯◯区・◯◯市）';
+COMMENT ON COLUMN rent_observations.station IS '最寄り駅（資料の1行目の駅）';
+COMMENT ON COLUMN rent_observations.walk_minutes IS '最寄り駅から徒歩（分）';
+COMMENT ON COLUMN rent_observations.plan_group IS '間取りのまとまり（1K＝1R/1K・1DK・1LDK・2DK＝2K/2DK・2LDK・3+）';
+COMMENT ON COLUMN rent_observations.area_sqm IS '専有面積（㎡）';
+COMMENT ON COLUMN rent_observations.building_age IS '築年数（年・観測した時点）';
+COMMENT ON COLUMN rent_observations.built_year IS '築年（西暦）';
+COMMENT ON COLUMN rent_observations.floor IS '所在階';
+COMMENT ON COLUMN rent_observations.total_floors IS '建物の階数';
+COMMENT ON COLUMN rent_observations.structure IS '構造（RC・SRC・鉄骨・軽量鉄骨・木造 等・資料の書き方）';
+COMMENT ON COLUMN rent_observations.rent IS '賃料（円）';
+COMMENT ON COLUMN rent_observations.admin_fee IS '管理費・共益費（円）';
+COMMENT ON COLUMN rent_observations.rent_total IS '賃料＋管理費（円）＝相場はこれで数える';
+COMMENT ON COLUMN rent_observations.deposit_months IS '敷金（月数）';
+COMMENT ON COLUMN rent_observations.key_money_months IS '礼金（月数）';
+COMMENT ON COLUMN rent_observations.equipment IS '設備（キー: true＝あり／false＝なし・資料で分からない物は持たない）: autolock bath_toilet washbasin delivery_box pet laundry_in elevator aircon net_free bath_dryer washlet city_gas system_kitchen two_person corner balcony monitor_intercom reheating walk_in_closet counter_kitchen parking';
+COMMENT ON COLUMN rent_observations.pet IS 'ペット可（相談含む）＝true・不可＝false・不明＝null';
+COMMENT ON COLUMN rent_observations.ad_yen IS '広告料（円・社内のみ・お客様や外部に出さない）';
+COMMENT ON COLUMN rent_observations.usage_rank IS '使われ方の段（上げるだけ）: 0 candidate 1 judged 2 brain_star 3 staff_sent 4 customer_interested';
+COMMENT ON COLUMN rent_observations.usage_stage IS 'usage_rank の名前';
+COMMENT ON COLUMN rent_observations.sent_channel IS 'お客様へ届けた経路（pickup・recommendation・staff_image 等・sent_properties.channel）';
+COMMENT ON COLUMN rent_observations.sent_to_customer IS 'お客様へ届けた（グループ共有・物件確認・見積書は数えない）';
+COMMENT ON COLUMN rent_observations.first_seen_at IS '最初に見た日時（相場は期間で切らないが日付は残す）';
+COMMENT ON COLUMN rent_observations.last_seen_at IS '最後に見た日時';
+COMMENT ON COLUMN rent_observations.attrs_at IS '部屋の条件の列を資料から埋めた日時';
+
+-- 使われ方の段の名前
+CREATE OR REPLACE FUNCTION rent_usage_stage(p_rank integer) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE p_rank WHEN 4 THEN 'customer_interested' WHEN 3 THEN 'staff_sent' WHEN 2 THEN 'brain_star' WHEN 1 THEN 'judged' ELSE 'candidate' END
+$$;
+
+-- 資料の設備（equipment.facts の s=ok/ng）→ {キー: true/false}
+CREATE OR REPLACE FUNCTION rent_equipment_of(p_facts jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT nullif(coalesce(jsonb_object_agg(k, (p_facts->k->>'s') = 'ok') FILTER (WHERE (p_facts->k->>'s') IN ('ok', 'ng')), '{}'::jsonb), '{}'::jsonb)
+  FROM unnest(ARRAY['autolock','bath_toilet','washbasin','delivery_box','pet','laundry_in','elevator','aircon','net_free','bath_dryer','washlet','city_gas','system_kitchen','two_person','corner','balcony','monitor_intercom','reheating','walk_in_closet','counter_kitchen','parking']) AS k
+  WHERE p_facts IS NOT NULL AND jsonb_typeof(p_facts) = 'object'
+$$;
+
+-- 売上サポの行（資料を読んだ物）→ 部屋の条件の列を埋める・無い部屋は足す・使われ方の段を上げる
+CREATE OR REPLACE FUNCTION rent_observe_pickup_apply(p property_pickups) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  k text; l2 text; l3 text; v_rent int; v_admin int; v_plan text; v_sqm numeric; v_rank int; v_ward text; v_station text; v_walk int; s text;
+BEGIN
+  k := rent_unit_key(p.property_name, p.room_no);
+  IF coalesce(p.property_name, '') = '' THEN RETURN; END IF;
+  l2 := split_part(coalesce(p.summary_text, ''), E'\\n', 2);
+  l3 := split_part(coalesce(p.summary_text, ''), E'\\n', 3);
+  v_rent := nullif(regexp_replace(coalesce((regexp_match(l2, '([0-9][0-9,]{3,})\\s*円'))[1], ''), ',', '', 'g'), '')::int;
+  v_admin := nullif(regexp_replace(coalesce((regexp_match(l2, '円\\s+([0-9][0-9,]{2,})\\s*円'))[1], ''), ',', '', 'g'), '')::int;
+  v_plan := (regexp_match(upper(normalize(l3, NFKC)), '([1-9]S?(?:LDK|DK|K|R))'))[1];
+  v_sqm := nullif((regexp_match(normalize(l3, NFKC), '([0-9]+(?:\\.[0-9]+)?)\\s*(?:㎡|m2|m²)'))[1], '')::numeric;
+  v_rank := CASE WHEN p.status = 'sent' OR p.sent_at IS NOT NULL THEN 3 WHEN coalesce(p.recommended, 0) > 0 THEN 2 ELSE 1 END;
+  v_ward := rent_norm_ward(p.location->>'ward');
+  v_station := p.location->'stations'->0->>'station';
+  v_walk := CASE WHEN (p.location->'stations'->0->>'walk') ~ '^\\d+$' THEN (p.location->'stations'->0->>'walk')::int END;
+  s := p.equipment->'facts'->'pet'->>'s';
+  INSERT INTO rent_observations AS o (branch_id, unit_key, property_name, room_no, site, ward, station, walk_minutes, floor_plan, plan_group, area_sqm,
+      building_age, built_year, floor, total_floors, structure, rent, admin_fee, rent_total, deposit_months, key_money_months, equipment, pet, ad_yen,
+      usage_rank, usage_stage, pickup_id, attrs_at, first_seen_at, last_seen_at)
+  VALUES ('osaka', k, p.property_name, p.room_no, p.site, v_ward, v_station, v_walk, v_plan, rent_plan_group(v_plan), v_sqm,
+      CASE WHEN (p.terms->>'buildingAge') ~ '^\\d+$' THEN (p.terms->>'buildingAge')::int END,
+      CASE WHEN (p.terms->>'builtYear') ~ '^\\d{4}$' THEN (p.terms->>'builtYear')::int END,
+      CASE WHEN (p.equipment->>'floor') ~ '^-?\\d+$' THEN (p.equipment->>'floor')::int END,
+      CASE WHEN (p.equipment->>'totalFloors') ~ '^\\d+$' THEN (p.equipment->>'totalFloors')::int END,
+      p.equipment->'facts'->'structure'->>'d',
+      v_rent, v_admin, CASE WHEN v_rent IS NOT NULL THEN v_rent + coalesce(v_admin, 0) END,
+      CASE WHEN (p.terms->>'deposit') ~ '^\\d+(\\.\\d+)?$' THEN (p.terms->>'deposit')::numeric END,
+      CASE WHEN (p.terms->>'keyMoney') ~ '^\\d+(\\.\\d+)?$' THEN (p.terms->>'keyMoney')::numeric END,
+      rent_equipment_of(p.equipment->'facts'), CASE WHEN s IN ('ok', 'ng') THEN s = 'ok' END, p.ad_yen,
+      v_rank, rent_usage_stage(v_rank), p.id, now(), coalesce(p.created_at, now()), coalesce(p.created_at, now()))
+  ON CONFLICT (branch_id, unit_key) DO UPDATE SET
+    ward = coalesce(o.ward, EXCLUDED.ward), station = coalesce(o.station, EXCLUDED.station), walk_minutes = coalesce(o.walk_minutes, EXCLUDED.walk_minutes),
+    floor_plan = coalesce(o.floor_plan, EXCLUDED.floor_plan), plan_group = coalesce(o.plan_group, EXCLUDED.plan_group), area_sqm = coalesce(o.area_sqm, EXCLUDED.area_sqm),
+    rent = coalesce(o.rent, EXCLUDED.rent), admin_fee = coalesce(o.admin_fee, EXCLUDED.admin_fee), rent_total = coalesce(o.rent_total, EXCLUDED.rent_total),
+    building_age = coalesce(EXCLUDED.building_age, o.building_age), built_year = coalesce(EXCLUDED.built_year, o.built_year),
+    floor = coalesce(EXCLUDED.floor, o.floor), total_floors = coalesce(EXCLUDED.total_floors, o.total_floors), structure = coalesce(EXCLUDED.structure, o.structure),
+    deposit_months = coalesce(EXCLUDED.deposit_months, o.deposit_months), key_money_months = coalesce(EXCLUDED.key_money_months, o.key_money_months),
+    equipment = coalesce(o.equipment, '{}'::jsonb) || coalesce(EXCLUDED.equipment, '{}'::jsonb), pet = coalesce(EXCLUDED.pet, o.pet), ad_yen = coalesce(EXCLUDED.ad_yen, o.ad_yen),
+    usage_rank = greatest(o.usage_rank, EXCLUDED.usage_rank), usage_stage = rent_usage_stage(greatest(o.usage_rank, EXCLUDED.usage_rank)),
+    sent_to_customer = o.sent_to_customer OR EXCLUDED.usage_rank >= 3,
+    pickup_id = coalesce(EXCLUDED.pickup_id, o.pickup_id), attrs_at = now(), last_seen_at = greatest(o.last_seen_at, EXCLUDED.last_seen_at);
+END;
+$$;
+
+-- 1行ずつの関数（埋め戻し: SELECT rent_observe_pickup_apply(p) FROM property_pickups p ORDER BY created_at）
+CREATE OR REPLACE FUNCTION rent_observe_pickup() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM rent_observe_pickup_apply(NEW);
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'rent_observe_pickup: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS rent_observe_pickup_pet_trg ON property_pickups;
+DROP TRIGGER IF EXISTS rent_observe_pickup_trg ON property_pickups;
+CREATE TRIGGER rent_observe_pickup_trg AFTER INSERT OR UPDATE OF equipment, terms, status, sent_at, recommended, location ON property_pickups
+  FOR EACH ROW EXECUTE FUNCTION rent_observe_pickup();
+
+-- お客様へ届けた（手順1の rent_observe_sent に段と経路を足す）・興味ありは段4
+CREATE OR REPLACE FUNCTION rent_observe_sent() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE r int;
+BEGIN
+  IF NEW.delivery = 'customer' AND coalesce(NEW.channel, '') NOT IN ('check', 'estimate')
+     AND coalesce(NEW.source, '') NOT IN ('aix:property_check_result', 'aix:estimate_sheet') THEN
+    r := CASE WHEN NEW.customer_reaction = 'interested' THEN 4 ELSE 3 END;
+    UPDATE rent_observations SET sent_to_customer = true, sent_channel = coalesce(sent_channel, NEW.channel, NEW.source),
+      usage_rank = greatest(usage_rank, r), usage_stage = rent_usage_stage(greatest(usage_rank, r))
+      WHERE branch_id = 'osaka' AND unit_key = rent_unit_key(NEW.property_name, NEW.room_no);
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'rent_observe_sent: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS rent_observe_sent_trg ON sent_properties;
+CREATE TRIGGER rent_observe_sent_trg AFTER INSERT OR UPDATE OF customer_reaction ON sent_properties
+  FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
