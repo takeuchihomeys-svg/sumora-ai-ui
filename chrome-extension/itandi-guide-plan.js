@@ -284,9 +284,35 @@
     return { steps: steps, location: loc.mode, want: want };
   }
 
+  /**
+   * 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」（早急）:
+   *   確定の後、左の「所在地」に「大阪市西淀川区 ⊗」のチップ（× は別の丸いボタン）・下の要約に「大阪府：大阪市西淀川区」が出ているのに、
+   *   チップの行（filterRow）が今の画面の形で読めず、所在地の手順が済みにならなかった。
+   *   → 画面の文字（小窓の中・案内の枠と光は除く）から、選ばれた区を読む予備の見分け（純関数）:
+   *     ①文字がそのまま区（「大阪市西淀川区」「西淀川区」・全角半角・空白をそろえる）＝チップ
+   *     ②「大阪府：大阪市西淀川区」「大阪府:西淀川区、大阪市北区」の形＝下の要約（「：」の後ろを「、・,／」で区切る）
+   *   返すのは wards のうち選ばれている物（入れた順）。番地つきの所在地（「大阪市西淀川区歌島1丁目」）は数えない
+   */
+  function selectedWardsFromTexts(texts, wards) {
+    function sq(t) { return String(t == null ? "" : t).normalize("NFKC").replace(/[\s　]+/g, "").replace(/[⊗×✕✖]/g, ""); }
+    function short(w) { var s = sq(w).replace(/内$/, ""); var m = s.match(/^.+?[市郡]([^市郡]+[区町村])$/); return m ? m[1] : s; }
+    var seen = {};
+    (texts || []).forEach(function (t) {
+      var s = sq(t);
+      if (!s) return;
+      var m = s.match(/^(?:大阪府|京都府|兵庫県|奈良県)[：:](.+)$/);
+      var parts = m ? m[1].split(/[、,，・\/／]/) : [s];
+      parts.forEach(function (p) { if (p) seen[p] = true; });
+    });
+    return (wards || []).filter(function (w) {
+      var full = sq(w).replace(/内$/, ""), sh = short(w);
+      return !!(seen[full] || seen[sh]);
+    });
+  }
+
   return {
     buildPlan: buildPlan, layoutIds: layoutIds, locationOf: locationOf, rentValue: rentValue, getStationAliases: getStationAliases,
-    wardShortName: wardShortName, layoutLabel: layoutLabel,
+    wardShortName: wardShortName, layoutLabel: layoutLabel, selectedWardsFromTexts: selectedWardsFromTexts,
     STRUCTURE_MAP: STRUCTURE_MAP, STRUCTURE_LABEL_MAP: STRUCTURE_LABEL_MAP, VALID_LAYOUTS: VALID_LAYOUTS, FLOOR_RANK_IT: FLOOR_RANK_IT,
     FLOOR_TEXT_IT: FLOOR_TEXT_IT, SLDK_SUBSTITUTE_IT: SLDK_SUBSTITUTE_IT, SLDK_UPPER_IT: SLDK_UPPER_IT, ITANDI_STATION_ALIAS_MAP: ITANDI_STATION_ALIAS_MAP,
     PET_ID: PET_ID, BATH_ID: BATH_ID, BATH_RE: BATH_RE, SHIKIREI_TEXTS: SHIKIREI_TEXTS,

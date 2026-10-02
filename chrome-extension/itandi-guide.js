@@ -373,9 +373,30 @@
     var op = s.section ? sectionOpener(s.section) : null;
     return op ? { done: false, target: [op], note: "先に「" + s.section + "」を開いてください" } : { done: false, target: [lb || inp], note: "欄が隠れています。開いてください" };
   }
+  // 2026-10-02 v2.5.68: チップの行が読めない画面の形でも、画面の文字（小窓・案内の枠と光の外）から選ばれた区を読む（itandi-guide-plan.js selectedWardsFromTexts）
+  function selectedWardsOnPage(wards) {
+    if (!Plan || !Plan.selectedWardsFromTexts || !wards || !wards.length) return [];
+    var texts = [];
+    try {
+      var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var n;
+      while ((n = w.nextNode())) {
+        var t = (n.nodeValue || "").trim();
+        if (!t || t.length > 80) continue;
+        var pe = n.parentElement;
+        if (!pe || mine(pe) || inDialog(pe) || !visible(pe)) continue;
+        texts.push(t);
+      }
+    } catch (_) { return []; }
+    return Plan.selectedWardsFromTexts(texts, wards);
+  }
   function evalArea(s) {
     var r = readRow("wards");
     var chips = r.chips.map(function (c) { return c.name; });
+    // チップで読めない区がある時だけ画面の文字を読む（毎回の読み直しを軽く）
+    if (!s.batchCity && s.wards.some(function (w) { return !chips.some(function (c) { return wardChipHit(c, w, townsFor(s, w)); }); })) {
+      selectedWardsOnPage(s.wards).forEach(function (w) { if (chips.indexOf(w) < 0) chips.push(w); });
+    }
     var missing = s.batchCity ? (chips.length ? [] : [s.batchCity]) : s.wards.filter(function (w) { return !chips.some(function (c) { return wardChipHit(c, w, townsFor(s, w)); }); });
     var dlg = openDialog();
     if (!missing.length && !dlg) return { done: true };

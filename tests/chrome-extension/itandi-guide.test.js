@@ -170,7 +170,20 @@ const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
   && eq(gjs, ["itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.64", mf.version === "2.5.64");
+ok("manifest の版 2.5.68", mf.version === "2.5.68");
+
+// ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
+{
+  const W = ["大阪市西淀川区"];
+  ok("左のチップ「大阪市西淀川区 ⊗」で済み", eq(P.selectedWardsFromTexts(["所在地", "大阪市西淀川区 ⊗", "路線・駅で絞り込み"], W), W));
+  ok("下の要約「大阪府：大阪市西淀川区」で済み", eq(P.selectedWardsFromTexts(["大阪府：大阪市西淀川区", "該当件数", "467件"], W), W));
+  ok("全角・空白・短い名前（西淀川区）でも済み", eq(P.selectedWardsFromTexts(["西淀川区"], W), W) && eq(P.selectedWardsFromTexts(["大阪市　西淀川区"], W), W));
+  ok("番地つきの所在地（物件の行）は数えない", eq(P.selectedWardsFromTexts(["大阪市西淀川区歌島1丁目", "大阪府大阪市西淀川区"], W), []));
+  ok("複数の区は区ごと（北区だけ選んだ時は北区だけ）", eq(P.selectedWardsFromTexts(["大阪府：大阪市北区"], ["大阪市西淀川区", "大阪市北区"]), ["大阪市北区"]));
+  ok("要約に2区（、区切り）", eq(P.selectedWardsFromTexts(["大阪府：大阪市北区、大阪市西淀川区"], ["大阪市西淀川区", "大阪市北区"]), ["大阪市西淀川区", "大阪市北区"]));
+  const g = read("itandi-guide.js");
+  ok("案内は小窓の中・自分の枠と光の文字を読まない（スタッフの手順の文に区の名前がある）", /mine\(pe\) \|\| inDialog\(pe\)/.test(g) && /selectedWardsOnPage\(s\.wards\)/.test(g));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
