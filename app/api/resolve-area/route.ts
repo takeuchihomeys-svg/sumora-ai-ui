@@ -4,6 +4,9 @@ import Anthropic from "@anthropic-ai/sdk";
 // 2026-09-29 API 費用の調査: 地域の解釈の Haiku（7日で751回・$2.3・キャッシュ最低長未満で命中0）が名前なしだった → 名札だけ付ける
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import OpenAI from "openai";
+// 2026-10-02 ⑯ 「なんば・梅田に出やすい」は LLM の前に静的な路線図で決める（電車15分・乗換なし／タクシーの目安 直線5km＝竹内さんの決定）
+import { readRelativeArea, type AreaPlan } from "@/app/lib/osaka-area-profile";
+import { customerAreaPlan } from "@/app/lib/area-want";
 
 const _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -724,6 +727,28 @@ export async function POST(req: NextRequest) {
       new_regions:  [],
     };
 
+    // ── 2026-10-02 ⑯ 決定論の area_plan（「A・Bに出やすい」）────────────────────────
+    //   松浦さん「なんば・梅田に出やすいエリア」: 旧は語の分解で「すい所」「梅田に出」が駅・未知語になり、Haiku/DeepSeek の展開は毎回違った。
+    //   地点が読めた時は station_map で各サイトの名前に直す。言い方がそれだけ（残りが「エリア」等）なら LLM を呼ばずに返す
+    const freeText: string = typeof body.free_text === "string" ? body.free_text : "";
+    const relWant = readRelativeArea(desired_area, freeText);
+    // 住む駅・区・路線が書いてある人（「弁天町駅、森ノ宮駅…（本町駅と京都に行きやすいところ）」）は作らない＝検索を広げない
+    const areaPlan: AreaPlan | null = customerAreaPlan(desired_area, freeText);
+    if (areaPlan) {
+      const nf = desired_area.normalize("NFKC");
+      let rest = "";
+      let at = 0;
+      for (const [a, b] of [...relWant.spans].sort((x, y) => x[0] - y[0])) { rest += nf.slice(at, a); at = Math.max(at, b); }
+      rest += nf.slice(at);
+      const leftover = rest.replace(/(?:い|く|くて|ければ)?(?:エリア|ところ|所|地域|場所|範囲|物件|周辺|全域|希望|が良い|がいい|だと良い|だと嬉しい|な|で|、|・|。|,|\s)/g, "");
+      const realpro_before = result.realpro.station_names.length;
+      // station_map の表記揺れ（四天王寺前夕陽ケ丘／ヶ丘）は両方で引く（引けない名前は入らない）
+      const planNames = areaPlan.stations.flatMap((s) => (s.station.includes("ケ") ? [s.station, s.station.replace(/ケ/g, "ヶ")] : [s.station]));
+      await resolveStationsFromList(planNames, result, db, maps);
+      console.log(`[resolve-area] area_plan: ${areaPlan.summary}（駅 ${result.realpro.station_names.length - realpro_before} を各サイトの名前に）`);
+      if (!leftover) return NextResponse.json({ ...result, area_plan: areaPlan, normalized_area: null });
+    }
+
     for (const tok of tokens) {
       if (tok.length < 2) continue;
 
@@ -1123,7 +1148,7 @@ commute_constraints: 通勤・通学・乗り換え制約
     }
 
     const normalized_area = await _normalizePromise.catch(() => null);
-    return NextResponse.json({ ...result, normalized_area });
+    return NextResponse.json({ ...result, normalized_area, ...(areaPlan ? { area_plan: areaPlan } : {}) });
   } catch (e) {
     console.error("[resolve-area] error:", e);
     return NextResponse.json({ error: "internal error" }, { status: 500 });

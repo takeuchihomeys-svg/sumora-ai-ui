@@ -784,15 +784,21 @@ function getJSTDate(): string {
   return `${y}/${m}/${d}`;
 }
 
+/** 円 → 「万」の数（85000→"8.5"・80000→"8"・72500→"7.25"）。切り捨てない */
+export function manYen(yen: number): string {
+  return String(Math.round(yen / 100) / 100);
+}
+
 // 解析結果から人読みメモを生成（新着要望ログ用）
-function buildConditionNote(parsed: Record<string, unknown>): string {
+export function buildConditionNote(parsed: Record<string, unknown>): string {
   const parts: string[] = [];
   if (parsed.desired_area)   parts.push(`エリア: ${parsed.desired_area}`);
   if (parsed.floor_plan)     parts.push(`間取り: ${parsed.floor_plan}`);
   if (parsed.floor_area_min) parts.push(`広さ: ${parsed.floor_area_min}㎡以上`);
   if (parsed.rent_min || parsed.rent_max) {
-    const mn = parsed.rent_min ? `${Math.floor((parsed.rent_min as number) / 10000)}万〜` : "〜";
-    const mx = parsed.rent_max ? `${Math.floor((parsed.rent_max as number) / 10000)}万` : "";
+    // 2026-10-02 ⑯ 松浦さん「8.5までの家賃」→ 登録は 85,000 なのに追加条件に「〜8万」（切り捨て）と書いていた。条件欄は LLM も読むので値どおりに
+    const mn = parsed.rent_min ? `${manYen(parsed.rent_min as number)}万〜` : "〜";
+    const mx = parsed.rent_max ? `${manYen(parsed.rent_max as number)}万` : "";
     parts.push(`家賃: ${mn}${mx}`);
   }
   if (parsed.walk_minutes)       parts.push(`徒歩: ${parsed.walk_minutes}分以内`);

@@ -37,7 +37,8 @@ export async function GET(req: NextRequest) {
       const res = await fetch(`${baseUrl}/api/resolve-area`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ desired_area: c.desiredArea, area_mode: c.areaMode ?? "auto" }),
+        // 2026-10-02 ⑯ 条件欄（「タクシーで帰宅してもそこまでかからない」）も渡す＝resolve-area が決定論の area_plan を作る
+        body: JSON.stringify({ desired_area: c.desiredArea, area_mode: c.areaMode ?? "auto", free_text: [c.preferences, c.otherRequests].filter(Boolean).join("\n") }),
         signal: AbortSignal.timeout(12_000),
       });
       if (res.ok) resolvedArea = await res.json();
@@ -129,5 +130,9 @@ export async function GET(req: NextRequest) {
     new_regions:     resolvedArea?.new_regions     ?? [],
     normalized_area: resolvedArea?.normalized_area ?? null,
     suggested_walk_minutes: resolvedArea?.suggested_walk_minutes ?? null,
+
+    // 2026-10-02 ⑯ 「◯◯に出やすい」の決定論の範囲（拡張はこれがある時、手元の語の分解より先にこの駅で検索する）と家賃の相場の材料
+    area_plan: resolvedArea?.area_plan ?? null,
+    rent_market: ctx.rentMarket ?? null,
   });
 }

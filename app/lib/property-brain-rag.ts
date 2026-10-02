@@ -1,6 +1,10 @@
 // @ts-nocheck
 import { supabase } from "@/app/lib/supabase";
 import { buildCustomerProfile } from "@/app/lib/property-brain";
+// 2026-10-02 ⑯ 「なんば・梅田に出やすい」の決定論の範囲（area_plan）と家賃の相場（rent_observations）
+import { customerAreaAndRent } from "@/app/lib/area-rent-server";
+import { wardAccessFacts, type AreaPlan } from "@/app/lib/osaka-area-profile";
+import type { RentMarket } from "@/app/lib/area-rent-explain";
 
 // ── 型定義 ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +70,10 @@ export interface PropertyBrainContext {
   areaKnowledge: AreaKnowledge;
   // brain_meta_insights から物件検索関連の学習パターン
   learnedPatterns: LearnedPattern[];
+  /** 2026-10-02 ⑯ 「◯◯に出やすい」の決定論の範囲（無ければ null） */
+  areaPlan?: AreaPlan | null;
+  /** 2026-10-02 ⑯ 希望の区×間取りの家賃の相場（当社の検索で見つかった物件・管理費込み） */
+  rentMarket?: RentMarket | null;
 }
 
 // ── エリアトークン分解 ───────────────────────────────────────────────────────
@@ -231,7 +239,12 @@ export async function buildPropertyBrainContext(
     pattern: (r.pattern as string | null) ?? null,
   }));
 
-  return { customer, sentHistory, areaKnowledge, learnedPatterns };
+  const { areaPlan, rentMarket } = await customerAreaAndRent({
+    desired_area: pc.desired_area, preferences: pc.preferences, other_requests: pc.other_requests,
+    floor_plan: pc.floor_plan, rent_max: pc.rent_max, pet: pc.pet,
+  });
+
+  return { customer, sentHistory, areaKnowledge, learnedPatterns, areaPlan, rentMarket };
 }
 
 // ── テキスト形式でブレインプロンプトに注入できる文字列に変換 ─────────────────
@@ -264,6 +277,17 @@ export function formatContextForPrompt(ctx: PropertyBrainContext): string {
       lines.push(`解決済み区: ${areaKnowledge.resolvedWards.join("・")}`);
     if (areaKnowledge.nearbyStations.length > 0)
       lines.push(`周辺駅: ${areaKnowledge.nearbyStations.join("・")}`);
+  }
+
+  // 2026-10-02 ⑯ 「◯◯に出やすい」の範囲（静的な路線図から決定論）と家賃の相場（数字は材料のまま・お客様に言う文は rentMarket.sentences だけ）
+  if (ctx.areaPlan) {
+    lines.push("\n【エリアの判断（決定論）】");
+    lines.push(ctx.areaPlan.summary);
+    for (const f of wardAccessFacts(ctx.areaPlan, 8)) lines.push(`・${f}`);
+  }
+  if (ctx.rentMarket?.facts?.length) {
+    lines.push("\n【家賃の相場（当社の検索で見つかった物件・管理費込み）】");
+    for (const f of ctx.rentMarket.facts) lines.push(`・${f}`);
   }
 
   // 送付履歴

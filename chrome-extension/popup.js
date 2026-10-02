@@ -447,7 +447,7 @@ async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
   // 乗り換えなし・直通は parseAreaTokens が路線展開するが制約情報は失われるためAPI必須
   const hasTransferNone = /乗り換えなし|直通/.test(rawArea);
   // 通いやすい・アクセスしやすい系は自然言語解析（Haiku）でないと意図が取れない
-  const hasCommuteExpression = /通いやすい|アクセスしやすい|通勤しやすい|便利/.test(rawArea);
+  const hasCommuteExpression = /通いやすい|アクセスしやすい|通勤しやすい|便利|出やす|行きやす|アクセス(?:が|の)?(?:良|いい|よい|重視|良好)/.test(rawArea); // 2026-10-02 v2.5.66 「なんば・梅田に出やすい」も（サーバーが決定論の area_plan を返す）
   // LEARNED_STATION_MAP にあるが realpro_lines が空（壊れたレコード）→ 再解決が必要
   const hasIncompleteLearnedStation = toks.some(t => {
     const entry = LEARNED_STATION_MAP[t];
@@ -4427,6 +4427,24 @@ function openInstructions(siteKey) {
         }
       }
 
+      // 2026-10-02 v2.5.66 ⑯ 「なんば・梅田に出やすい」: サーバーの決定論の area_plan（静的な路線図・電車15分・乗換なし／タクシーの目安 直線5km）が
+      //   ある時は、手元の語の分解（「梅田に出」「すい」）より先に area_plan の駅と路線で検索する。手で駅を入れた回・地域を手で選んだ回はスタッフの指定を優先
+      if (apiData?.area_plan?.stations?.length > 0 && !_adjStation_it && _lockedMode_itandi !== "ward" && !(_areaModeSource === "user" && isWardArea_itandi)) {
+        const _planSt_it = (apiData.itandi?.station_names || []).filter(s => isKnownStation(s));
+        const _planLines_it = apiData.itandi?.line_names || [];
+        if (_planSt_it.length > 0 && _planLines_it.length > 0) {
+          itandiLines.length = 0;
+          _planLines_it.forEach(n => { if (!itandiLines.includes(n)) itandiLines.push(n); });
+          stationNames = [...new Set(_planSt_it)];
+          if (isWardArea_itandi) {
+            isWardArea_itandi = false;
+            currentAreaMode = "station";
+            updateAreaModeUI();
+          }
+          console.log("[AX] itandi area_plan（決定論）: " + apiData.area_plan.summary + " → 路線 " + itandiLines.length + "・駅 " + stationNames.length);
+        }
+      }
+
       // 「梅田まで電車1本」: リアプロと同じ判定で乗り換えなしの沿線を選び、itandi でも各路線の駅をすべて選択する
       let _selectAllLineStations_it = false;
       const _direct_it = resolveDirectCommute(rawArea);
@@ -4945,6 +4963,24 @@ function openInstructions(siteKey) {
           currentAreaMode = 'station';
           updateAreaModeUI && updateAreaModeUI();
           console.log('[AX] リアプロ API補完: 駅発見 → station モードに昇格');
+        }
+      }
+
+      // 2026-10-02 v2.5.66 ⑯ 「なんば・梅田に出やすい」: サーバーの決定論の area_plan（静的な路線図・電車15分・乗換なし／タクシーの目安 直線5km）が
+      //   ある時は、手元の語の分解（松浦さんの回で「すい所」が駅に入った）を捨てて area_plan の駅で検索する。手で駅を入れた回・地域を手で選んだ回はスタッフの指定を優先
+      if (apiData?.area_plan?.stations?.length > 0 && !_adjStation_rp && _lockedMode !== "ward" && !(_areaModeSource === "user" && currentAreaMode === "ward")) {
+        const _planSt = (apiData.realpro?.station_names || []).filter(s => isKnownStation(s));
+        if (_planSt.length > 0) {
+          realpro_station_names.length = 0;
+          _planSt.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+          route_ids.length = 0;
+          (apiData.realpro.route_ids || []).forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
+          city_codes.length = 0;
+          if (currentAreaMode !== "station") {
+            currentAreaMode = "station";
+            updateAreaModeUI && updateAreaModeUI();
+          }
+          console.log("[AX] area_plan（決定論）: " + apiData.area_plan.summary + " → 駅 " + realpro_station_names.length);
         }
       }
 

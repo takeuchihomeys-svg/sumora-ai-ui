@@ -4188,6 +4188,166 @@ CREATE INDEX IF NOT EXISTS idx_line_watch_turns_scene ON line_watch_turns(scene_
 --   トーク画面の「📞 電話ボタンが押されました」の印は、この時刻の後にスタッフの送信が無い間だけ出す（app/lib/call-tap-view.ts）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS call_tapped_at TIMESTAMPTZ;
 
+-- ════════════════════════════════════════════════════════════════════
+-- 2026-10-02 ⑯ 相場の材料（rent_observations）と区×間取りの相場（area_rent_stats）
+--   竹内「物件送ってる条件から、相場感等もたまっていくので、そこも貯めていく（フランチャイズ化したらすごい事になる）」
+--   ・1戸1行（branch_id＋unit_key）。検索で見つかった候補（property_candidate_pools）を入口でためる（トリガー）
+--   ・お客様へ実際に届けた（sent_properties.delivery=customer）は sent_to_customer、ペット可否は property_pickups の資料から
+--   ・期間で切らない（竹内「家賃はそんなに変わらない」）。お客様に数字を言うのは件数10以上（app/lib/area-rent-explain.ts）
+--   ・branch_id はフランチャイズの店ごと（今は 'osaka' だけ）
+-- ════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS rent_observations (
+  id bigserial PRIMARY KEY,
+  branch_id text NOT NULL DEFAULT 'osaka',
+  unit_key text NOT NULL,
+  property_name text,
+  room_no text,
+  site text,
+  ward text,
+  station text,
+  walk_minutes integer,
+  floor_plan text,
+  plan_group text,
+  area_sqm numeric,
+  building_age integer,
+  rent integer,
+  admin_fee integer,
+  rent_total integer,
+  pet boolean,
+  sent_to_customer boolean NOT NULL DEFAULT false,
+  seen_count integer NOT NULL DEFAULT 1,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (branch_id, unit_key)
+);
+CREATE INDEX IF NOT EXISTS rent_observations_ward_plan_idx ON rent_observations (branch_id, ward, plan_group);
+
+-- 建物名＋号室の鍵（全角半角・空白・中黒・かっこを落とす）
+CREATE OR REPLACE FUNCTION rent_unit_key(p_name text, p_room text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT lower(regexp_replace(normalize(coalesce(p_name, ''), NFKC), '[\\s・･()（）「」\\[\\]【】]', '', 'g'))
+    || '#' || coalesce(regexp_replace(normalize(coalesce(p_room, ''), NFKC), '[^0-9A-Za-z]', '', 'g'), '')
+$$;
+
+-- 間取りのまとまり（1R/1K→1K・1DK・1LDK・2K/2DK→2DK・2LDK・3以上→3+）
+CREATE OR REPLACE FUNCTION rent_plan_group(p_plan text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN p IS NULL OR p = '' THEN NULL
+    WHEN p ~ '^(1R|1K|1SK|ワンルーム)$' THEN '1K'
+    WHEN p ~ '^1S?DK$' THEN '1DK'
+    WHEN p ~ '^1S?LDK$' THEN '1LDK'
+    WHEN p ~ '^2S?(K|DK)$' THEN '2DK'
+    WHEN p ~ '^2S?LDK$' THEN '2LDK'
+    WHEN p ~ '^[3-9]' THEN '3+'
+    ELSE NULL END
+  FROM (SELECT upper(regexp_replace(normalize(coalesce(p_plan, ''), NFKC), '\\s', '', 'g')) AS p) x
+$$;
+
+-- 区の書き方をそろえる（「北区」→「大阪市北区」・「大阪市北区」「門真市」「堺市北区」はそのまま）
+CREATE OR REPLACE FUNCTION rent_norm_ward(p_ward text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN w IS NULL OR w = '' THEN NULL
+    WHEN w ~ '^大阪市' THEN w
+    WHEN w ~ '^(北|都島|福島|此花|中央|西|港|大正|天王寺|浪速|西淀川|淀川|東淀川|東成|生野|旭|城東|鶴見|阿倍野|住之江|住吉|東住吉|西成|平野)区$' THEN '大阪市' || w
+    ELSE w END
+  FROM (SELECT trim(normalize(coalesce(p_ward, ''), NFKC)) AS w) x
+$$;
+
+-- 候補の束（property_candidate_pools.candidates）を1戸ずつためる
+CREATE OR REPLACE FUNCTION rent_observe_pool() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.candidates IS NULL OR jsonb_typeof(NEW.candidates) <> 'array' THEN RETURN NEW; END IF;
+  INSERT INTO rent_observations AS o (branch_id, unit_key, property_name, room_no, site, ward, station, walk_minutes, floor_plan, plan_group, area_sqm, building_age, rent, admin_fee, rent_total, first_seen_at, last_seen_at)
+  SELECT DISTINCT ON (rent_unit_key(x->>'name', x->>'room_no'))
+    'osaka', rent_unit_key(x->>'name', x->>'room_no'), x->>'name', x->>'room_no', NEW.site,
+    rent_norm_ward(x->>'ward'), x->>'station',
+    CASE WHEN (x->>'walk_minutes') ~ '^\\d+$' THEN (x->>'walk_minutes')::int END,
+    x->>'floor_plan', rent_plan_group(x->>'floor_plan'),
+    CASE WHEN (x->>'area_sqm') ~ '^\\d+(\\.\\d+)?$' THEN (x->>'area_sqm')::numeric END,
+    CASE WHEN (x->>'building_age') ~ '^\\d+$' THEN (x->>'building_age')::int END,
+    (x->>'rent')::int,
+    CASE WHEN (x->>'admin_fee_yen') ~ '^\\d+$' THEN (x->>'admin_fee_yen')::int END,
+    (x->>'rent')::int + coalesce(CASE WHEN (x->>'admin_fee_yen') ~ '^\\d+$' THEN (x->>'admin_fee_yen')::int END, 0),
+    coalesce(NEW.sent_at, now()), coalesce(NEW.sent_at, now())
+  FROM jsonb_array_elements(NEW.candidates) x
+  WHERE coalesce(x->>'name', '') <> '' AND (x->>'rent') ~ '^\\d+$' AND (x->>'rent')::int BETWEEN 10000 AND 2000000
+  ON CONFLICT (branch_id, unit_key) DO UPDATE SET
+    rent = EXCLUDED.rent, admin_fee = EXCLUDED.admin_fee, rent_total = EXCLUDED.rent_total,
+    ward = coalesce(EXCLUDED.ward, o.ward), station = coalesce(EXCLUDED.station, o.station),
+    walk_minutes = coalesce(EXCLUDED.walk_minutes, o.walk_minutes), floor_plan = coalesce(EXCLUDED.floor_plan, o.floor_plan),
+    plan_group = coalesce(EXCLUDED.plan_group, o.plan_group), area_sqm = coalesce(EXCLUDED.area_sqm, o.area_sqm),
+    building_age = coalesce(EXCLUDED.building_age, o.building_age),
+    seen_count = o.seen_count + 1, last_seen_at = greatest(o.last_seen_at, EXCLUDED.last_seen_at),
+    first_seen_at = least(o.first_seen_at, EXCLUDED.first_seen_at);
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- 相場の材料は付け足し。候補の記録そのものは止めない
+  RAISE WARNING 'rent_observe_pool: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS rent_observe_pool_trg ON property_candidate_pools;
+CREATE TRIGGER rent_observe_pool_trg AFTER INSERT OR UPDATE OF candidates ON property_candidate_pools
+  FOR EACH ROW EXECUTE FUNCTION rent_observe_pool();
+
+-- お客様へ実際に届けた物件（グループ共有・物件確認・見積書は数えない＝pickup-ad-priority.isProposalSend と同じ）
+CREATE OR REPLACE FUNCTION rent_observe_sent() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.delivery = 'customer' AND coalesce(NEW.channel, '') NOT IN ('check', 'estimate')
+     AND coalesce(NEW.source, '') NOT IN ('aix:property_check_result', 'aix:estimate_sheet') THEN
+    UPDATE rent_observations SET sent_to_customer = true
+      WHERE branch_id = 'osaka' AND unit_key = rent_unit_key(NEW.property_name, NEW.room_no) AND NOT sent_to_customer;
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'rent_observe_sent: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS rent_observe_sent_trg ON sent_properties;
+CREATE TRIGGER rent_observe_sent_trg AFTER INSERT ON sent_properties
+  FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
+
+-- 資料のペット可否（property_pickups.equipment.facts.pet: s=ok＝可・相談／ng＝不可）
+CREATE OR REPLACE FUNCTION rent_observe_pickup_pet() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE s text;
+BEGIN
+  s := NEW.equipment->'facts'->'pet'->>'s';
+  IF s IN ('ok', 'ng') THEN
+    UPDATE rent_observations SET pet = (s = 'ok')
+      WHERE branch_id = 'osaka' AND unit_key = rent_unit_key(NEW.property_name, NEW.room_no);
+  END IF;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'rent_observe_pickup_pet: %', SQLERRM;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS rent_observe_pickup_pet_trg ON property_pickups;
+CREATE TRIGGER rent_observe_pickup_pet_trg AFTER INSERT OR UPDATE OF equipment ON property_pickups
+  FOR EACH ROW EXECUTE FUNCTION rent_observe_pickup_pet();
+
+-- 区×間取りの相場（管理費込み・期間で切らない）。p_pet=true はペット可（相談含む）が分かる戸だけ
+CREATE OR REPLACE FUNCTION area_rent_stats(p_branch text DEFAULT 'osaka', p_ward text DEFAULT NULL, p_plan text DEFAULT NULL, p_pet boolean DEFAULT NULL)
+RETURNS TABLE (ward text, plan_group text, n bigint, p25 integer, p50 integer, p75 integer, n_sent bigint, first_seen timestamptz, last_seen timestamptz)
+LANGUAGE sql STABLE AS $$
+  SELECT o.ward, o.plan_group, count(*)::bigint,
+    (percentile_cont(0.25) WITHIN GROUP (ORDER BY o.rent_total))::int,
+    (percentile_cont(0.5) WITHIN GROUP (ORDER BY o.rent_total))::int,
+    (percentile_cont(0.75) WITHIN GROUP (ORDER BY o.rent_total))::int,
+    count(*) FILTER (WHERE o.sent_to_customer)::bigint,
+    min(o.first_seen_at), max(o.last_seen_at)
+  FROM rent_observations o
+  WHERE o.branch_id = p_branch AND o.rent_total IS NOT NULL AND o.ward IS NOT NULL AND o.plan_group IS NOT NULL
+    AND (p_ward IS NULL OR o.ward = p_ward) AND (p_plan IS NULL OR o.plan_group = p_plan) AND (p_pet IS NULL OR o.pet = p_pet)
+  GROUP BY o.ward, o.plan_group
+$$;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

@@ -28,6 +28,8 @@ import {
   stationsInText, wardsInText, linesInText, placesInText, townsInText, wardOfStation, wardOfAddress, STATION_LINES, LINES, STATION_GROUPS, isKnownStation, type LatLon,
 } from "./osaka-geo";
 import { shortestRoute, shortLineName } from "./transit-route";
+// 2026-10-02 ⑯「なんば・梅田に出やすい」「タクシーでそこまでかからない」（竹内さんの決定: 電車15分・乗り換えなし／直線5km）
+import { readRelativeArea, reachMap, kmToAnchor, buildAreaPlan, RELATIVE_AREA_RULE, type RelativeAnchor, type AreaPlan } from "./osaka-area-profile";
 import { normalizeListingText, parseListingText, parseAccessLine } from "./listing-text";
 
 // ───────────────────────── 型 ─────────────────────────
@@ -50,6 +52,10 @@ export type AreaWant = {
   directions: Array<{ anchor: string; point: LatLon; dir: "north" | "south" | "east" | "west"; label?: string }>;
   /** 読めなかった語（照らせない条件に出す） */
   unread: string[];
+  /** 2026-10-02 「A・Bに出やすい」の基準の駅（住む駅ではない・osaka-area-profile.readRelativeArea） */
+  anchors: RelativeAnchor[];
+  /** 「タクシーでそこまでかからない」の直線距離（km・RELATIVE_AREA_RULE.taxiKm）。無ければ null */
+  taxiKm: number | null;
   /** 何か読めたか */
   any: boolean;
   raw: string;
@@ -70,8 +76,8 @@ export type PropertyLocation = {
 
 export type AreaMatch = {
   code: string;
-  /** station_wide＝希望の駅から同じ路線で1〜2駅（広げた検索の駅）・ward_wide＝難波・心斎橋の3区 */
-  result: "excluded" | "station" | "station_wide" | "ward" | "ward_wide" | "line" | "near" | "region" | "close" | "far" | "unknown";
+  /** station_wide＝希望の駅から同じ路線で1〜2駅（広げた検索の駅）・ward_wide＝難波・心斎橋の3区・anchor*＝「A・Bに出やすい」の照合 */
+  result: "excluded" | "station" | "station_wide" | "ward" | "ward_wide" | "line" | "near" | "region" | "close" | "far" | "unknown" | "anchor" | "anchor_some" | "anchor_taxi";
   /** 比べた相手（「大国町」「浪速区」「御堂筋線」） */
   anchor: string | null;
   km: number | null;
@@ -148,6 +154,13 @@ export function parseCommuteWants(c: { commute_station?: string | null; commute_
         if (target) push({ target, minutes: null, word: m[0].trim(), source: src });
       }
     }
+    // 2026-10-02 ⑯ 「なんば・梅田に出やすい」の「なんば・」（中黒・読点の並び）も目的地。旧は「・」で切れて梅田だけだった（松浦さん）
+    if (src === "area") {
+      for (const a of readRelativeArea(t).anchors) {
+        const target = commuteTarget(a.word) ?? a.station;
+        if (target) push({ target, minutes: null, word: a.word, source: src });
+      }
+    }
   }
   return out;
 }
@@ -189,11 +202,16 @@ function radiusAfter(after: string): number | null {
 /** 希望のエリアを読む（desired_area＋条件欄の「以外・より北」） */
 export function parseAreaWant(desiredArea: string | null | undefined, freeText?: string | null): AreaWant {
   const raw = toHalf(String(desiredArea ?? "")).trim();
-  const out: AreaWant = { stations: [], wards: [], lines: [], places: [], regions: [], exclude: { stations: [], wards: [] }, directions: [], unread: [], any: false, raw };
+  const out: AreaWant = { stations: [], wards: [], lines: [], places: [], regions: [], exclude: { stations: [], wards: [] }, directions: [], unread: [], anchors: [], taxiKm: null, any: false, raw };
   // 通勤の言い方（「梅田まで電車30分」）はエリアの駅にしない
   const commuteSpans: Array<[number, number]> = [];
   for (const m of raw.matchAll(COMMUTE_RE)) if (!VEHICLE_RE.test(m[0])) commuteSpans.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
   for (const m of raw.matchAll(COMMUTE_SOFT_RE)) commuteSpans.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
+  // 2026-10-02 ⑯ 「なんば・梅田に出やすい」の並び全体（なんば・も）は住む駅ではなく基準の駅
+  const rel = readRelativeArea(raw, freeText);
+  for (const sp of rel.spans) commuteSpans.push(sp);
+  out.anchors = rel.anchors;
+  out.taxiKm = rel.taxiKm;
   const inCommute = (i: number) => commuteSpans.some(([a, b]) => i >= a && i < b);
   const covered: Array<[number, number]> = [...commuteSpans];
 
@@ -309,7 +327,12 @@ export function parseAreaWant(desiredArea: string | null | undefined, freeText?:
       if (EXCLUDE_AFTER_RE.test(after) && !out.exclude.wards.includes(w.ward)) out.exclude.wards.push(w.ward);
     }
   }
-  out.any = !!(out.stations.length || out.wards.length || out.lines.length || out.places.length || out.regions.length || out.exclude.stations.length || out.exclude.wards.length || out.directions.length);
+  // 2026-10-02 ⑯ desired_area に地点が無い時だけ、条件欄の「◯◯に出やすい」も基準の駅に（具体的な駅・区がある人は広げない）
+  if (!out.anchors.length && ft.trim() && !(out.stations.length || out.wards.length || out.lines.length || out.places.length)) {
+    const fr = readRelativeArea(ft);
+    out.anchors = fr.anchors;
+  }
+  out.any = !!(out.stations.length || out.wards.length || out.lines.length || out.places.length || out.regions.length || out.exclude.stations.length || out.exclude.wards.length || out.directions.length || out.anchors.length);
   return out;
 }
 
@@ -433,6 +456,12 @@ export function matchArea(want: AreaWant, loc: PropertyLocation): AreaMatch | nu
     }
   }
   const withDir = (m: AreaMatch): AreaMatch => (dirNg ? { ...m, directionNg: dirNg } : m);
+  // 2026-10-02 ⑯ 「A・Bに出やすい」: 住む駅の希望が無い時は、基準の駅に電車15分・乗り換えなしで出られるかで照らす（梅田側の物件が AREA_FAR にならない）
+  if (want.anchors.length && !(want.stations.length || want.wards.length || want.lines.length || want.places.length)) {
+    const am = matchAnchors(want, loc);
+    if (am && (am.code !== "AREA_ANCHOR_FAR" || !want.regions.length)) return withDir(am);
+    if (!am && !hasPositive) return { code: "AREA_UNKNOWN", result: "unknown", anchor: null, km: null, why: "物件の場所が資料から読めない" };
+  }
   if (!hasPositive) {
     if (dirNg) return { code: "AREA_DIRECTION_NG", result: "far", anchor: null, km: null, why: dirNg };
     return null;
@@ -510,6 +539,55 @@ export function matchArea(want: AreaWant, loc: PropertyLocation): AreaMatch | nu
     return withDir({ code: "AREA_FAR", result: "far", anchor: (want.regions[0]?.name ?? want.lines[0]?.word) ?? null, km: null, why: `希望の${want.regions[0]?.name ?? want.lines[0]?.word}の外` });
   }
   return { code: "AREA_UNKNOWN", result: "unknown", anchor: null, km: null, why: "物件の場所が資料から読めない" };
+}
+
+/**
+ * 「A・Bに出やすい」（基準の駅）の照合。物件の駅（徒歩15分以内）から基準の駅へ電車 RELATIVE_AREA_RULE.softMinutes 分以内・乗り換えなし。
+ *   全部の基準に出られる → AREA_ANCHOR_REACH（+10＝希望の駅と同じ）／どれかに出られる → AREA_ANCHOR_REACH_SOME（+8）
+ *   電車では出られないがタクシーの希望の距離の内 → AREA_ANCHOR_TAXI（+5）
+ *   電車で出られるがタクシーの希望の距離を超える → AREA_ANCHOR_TAXI_OVER（0・情報）／どちらも外 → AREA_ANCHOR_FAR（−3・情報・保留にしない）
+ *   物件の場所が読めない → null（呼ぶ側が AREA_UNKNOWN）
+ */
+export function matchAnchors(want: AreaWant, loc: PropertyLocation): AreaMatch | null {
+  if (!want.anchors.length) return null;
+  const walkable = loc.stations.filter((x) => x.walk == null || x.walk <= STATION_MATCH_WALK_MAX).map((x) => x.station);
+  const reached: Array<{ anchor: string; from: string; minutes: number }> = [];
+  for (const a of want.anchors) {
+    const m = reachMap(a.station);
+    let best: { from: string; minutes: number } | null = null;
+    for (const s of walkable) { const v = m.get(s); if (v != null && (!best || v < best.minutes)) best = { from: s, minutes: v }; }
+    if (best) reached.push({ anchor: a.station, ...best });
+  }
+  if (!loc.point && !reached.length) return null;
+  const kms = loc.point ? want.anchors.map((a) => ({ anchor: a.station, km: kmToAnchor(loc.point as LatLon, a.station) })).filter((x): x is { anchor: string; km: number } => x.km != null) : [];
+  const near = kms.sort((x, y) => x.km - y.km)[0] ?? null;
+  const names = want.anchors.map((a) => a.station).join("・");
+  const reachTxt = reached.map((r) => `${r.from === r.anchor ? r.anchor : `${r.from}→${r.anchor}`} 約${r.minutes}分`).join("・");
+  const taxiTxt = want.taxiKm != null && near ? `・${near.anchor}から直線${km1(near.km)}km` : "";
+  const rule = `電車${RELATIVE_AREA_RULE.softMinutes}分・乗換なし`;
+  if (reached.length) {
+    if (want.taxiKm != null && near && near.km > want.taxiKm) {
+      return { code: "AREA_ANCHOR_TAXI_OVER", result: "anchor_some", anchor: near.anchor, km: km1(near.km), why: `${names}へ電車で出やすい（${reachTxt}）がタクシーの目安${want.taxiKm}kmを超える（${near.anchor}から直線${km1(near.km)}km）` };
+    }
+    const all = reached.length === want.anchors.length;
+    return { code: all ? "AREA_ANCHOR_REACH" : "AREA_ANCHOR_REACH_SOME", result: all ? "anchor" : "anchor_some", anchor: reached[0].anchor, km: near ? km1(near.km) : null, why: `${all ? names : reached.map((r) => r.anchor).join("・")}に出やすい（${reachTxt}・${rule}${taxiTxt}）` };
+  }
+  if (want.taxiKm != null && near && near.km <= want.taxiKm) {
+    return { code: "AREA_ANCHOR_TAXI", result: "anchor_taxi", anchor: near.anchor, km: km1(near.km), why: `${near.anchor}から直線${km1(near.km)}km（タクシーの目安${want.taxiKm}km以内・電車${RELATIVE_AREA_RULE.softMinutes}分乗換なしでは出られない）` };
+  }
+  return { code: "AREA_ANCHOR_FAR", result: "far", anchor: near?.anchor ?? want.anchors[0].station, km: near ? km1(near.km) : null, why: `${names}へ${rule}では出られない${near ? `（${near.anchor}から直線${km1(near.km)}km）` : ""}` };
+}
+
+/**
+ * お客様の「◯◯に出やすい」の検索の範囲（area_plan）。住む駅・区・路線・地名が書いてある人は作らない
+ * （「弁天町駅、森ノ宮駅、大国町駅（本町駅と京都に行きやすいところ）」の本町・京都は通勤の目安で、検索を京都まで広げない）。
+ * desired_area に地点が無い時は条件欄の「◯◯に出やすい」も読む（parseAreaWant と同じ）
+ */
+export function customerAreaPlan(desiredArea: string | null | undefined, freeText?: string | null): AreaPlan | null {
+  const want = parseAreaWant(desiredArea, freeText);
+  if (!want.anchors.length) return null;
+  if (want.stations.length || want.wards.length || want.lines.length || want.places.length) return null;
+  return buildAreaPlan({ anchors: want.anchors, taxiKm: want.taxiKm, spans: [], words: [] });
 }
 
 export const COMMUTE_SLIGHT_RATIO = 1.2;

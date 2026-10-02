@@ -594,6 +594,12 @@ export const REASON_JA: Record<string, string> = {
   AREA_EXCLUDED: "希望外のエリア（◯◯以外）",
   AREA_UNKNOWN: "要確認: 物件の場所",
   AREA_DIRECTION_NG: "希望の方角（◯◯より北 等）と違う",
+  // 2026-10-02 ⑯「なんば・梅田に出やすい」（osaka-area-profile.ts・電車15分・乗換なし／タクシーの目安 直線5km＝竹内さんの決定）
+  AREA_ANCHOR_REACH: "希望の場所（◯◯に出やすい）に電車で出られる",
+  AREA_ANCHOR_REACH_SOME: "希望の場所の一部に電車で出られる",
+  AREA_ANCHOR_TAXI: "希望の場所からタクシーの目安の距離（直線5km）以内",
+  AREA_ANCHOR_TAXI_OVER: "電車で出られるがタクシーの目安の距離を超える",
+  AREA_ANCHOR_FAR: "希望の場所（◯◯に出やすい）に電車15分・乗換なしで出られない",
   COMMUTE_OK: "通勤が希望の時間内",
   COMMUTE_SLIGHTLY_OVER: "通勤が希望を少し超える",
   COMMUTE_OVER: "通勤が希望の時間を超える",
@@ -831,6 +837,8 @@ export const REASON_POINTS: Record<string, number> = {
   // 2026-09-25 エリア・通勤（外す候補にしない。以外に当たる時だけ保留）
   AREA_STATION_MATCH: 10, AREA_WARD_MATCH: 8, AREA_LINE_MATCH: 6, AREA_NEAR: 5, AREA_REGION_MATCH: 3, AREA_CLOSE: 2, AREA_FAR: -3,
   AREA_EXCLUDED: -10, AREA_UNKNOWN: 0, AREA_DIRECTION_NG: -3,
+  // 2026-10-02 ⑯ 「◯◯に出やすい」: 全部に出られる＝希望の駅と同じ +10・一部 +8・タクシーの目安の内 +5・タクシーの目安を超える 0・外 −3（AREA_FAR と同じ情報の札）
+  AREA_ANCHOR_REACH: 10, AREA_ANCHOR_REACH_SOME: 8, AREA_ANCHOR_TAXI: 5, AREA_ANCHOR_TAXI_OVER: 0, AREA_ANCHOR_FAR: -3,
   COMMUTE_OK: 8, COMMUTE_SLIGHTLY_OVER: 0, COMMUTE_OVER: -5, COMMUTE_INFO: 0, COMMUTE_UNKNOWN: 0,
   // 2026-09-25 拡張の「広げて検索」の幅の内側（希望どおりより少しだけ低い・保留にしない）。
   //   駅: 希望 +10 ／隣（拡張が広げる前後1駅）+8 ／同じ路線で2駅 +6（今までは距離で +5〜+2 だった）
@@ -1567,6 +1575,7 @@ const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   BUILDING_AGE_TEXT_OK: ["築年", "ok"], BUILDING_AGE_TEXT_OVER: ["築年", "soft_ng"],
   AREA_STATION_MATCH: ["エリア", "ok"], AREA_WARD_MATCH: ["エリア", "ok"], AREA_LINE_MATCH: ["エリア", "ok"], AREA_REGION_MATCH: ["エリア", "ok"],
   AREA_STATION_WIDE: ["エリア", "wide"], AREA_WARD_WIDE: ["エリア", "wide"], AREA_STATION_2STOPS: ["エリア", "wide"], AREA_NEAR: ["エリア", "wide"], AREA_CLOSE: ["エリア", "wide"],
+  AREA_ANCHOR_REACH: ["エリア", "ok"], AREA_ANCHOR_REACH_SOME: ["エリア", "ok"], AREA_ANCHOR_TAXI: ["エリア", "wide"], AREA_ANCHOR_TAXI_OVER: ["エリア", "soft_ng"], AREA_ANCHOR_FAR: ["エリア", "soft_ng"],
   AREA_FAR: ["エリア", "soft_ng"], AREA_DIRECTION_NG: ["エリア", "soft_ng"], AREA_EXCLUDED: ["エリア", "ng"], AREA_UNKNOWN: ["エリア", "unread"],
   COMMUTE_OK: ["通勤", "ok"], COMMUTE_SLIGHTLY_OVER: ["通勤", "wide"], COMMUTE_OVER: ["通勤", "soft_ng"], COMMUTE_UNKNOWN: ["通勤", "unread"],
   MOVE_IN_OK: ["入居時期", "ok"], MOVE_IN_LATE: ["入居時期", "ng"], MOVE_IN_UNKNOWN: ["入居時期", "unread"],
@@ -2245,7 +2254,7 @@ const POSITIVE_BASE_CODES = ["ZERO_ZERO_MATCH", "AD_VERY_HIGH", "AD_2_5M", "AD_H
 
 /** 2026-09-25 に足した加点の札（理由の日本語に出す） */
 function isNewPositive(c: string): boolean {
-  return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|ROOM_JO_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|COMMUTE_OK)$/.test(c)
+  return /^(?:FLOOR_PLAN_ALT_MATCH|FLOOR_PLAN_SAME_CLASS|FLOOR_PLAN_LARGER|SQM_OK|ROOM_JO_OK|BUILDING_AGE_TEXT_OK|AREA_STATION_MATCH|AREA_WARD_MATCH|AREA_LINE_MATCH|AREA_NEAR|AREA_REGION_MATCH|AREA_CLOSE|AREA_ANCHOR_REACH|AREA_ANCHOR_REACH_SOME|AREA_ANCHOR_TAXI|COMMUTE_OK)$/.test(c)
     // 2026-09-27 ピンポイントの回で見つかった
     || c === PINPOINT_CODE
     // 広げた検索の幅の内側（希望より少しだけ低い加点）
@@ -2257,7 +2266,7 @@ function isNewPositive(c: string): boolean {
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
