@@ -180,7 +180,8 @@ export function planCuration(existing: ExistingKnowledge[], produced: KnowledgeR
 
 // ───────────────────────── 区のまとめ（area_profile・決定論） ─────────────────────────
 export type WardRentCell = { ward: string; plan_group: string; n: number; p25: number; p50: number; p75: number };
-export type WardAccess = { ward: string; toNamba: number | null; toUmeda: number | null; stations: number };
+/** 区の駅から主な起点（なんば・梅田・本町・天王寺・京橋・新大阪 等）への電車の最短（分・乗換1回まで・無ければ null） */
+export type WardAccess = { ward: string; hubs: Record<string, number | null>; stations: number };
 
 /** 区ごとの短いまとめ（相場の言える間取り・なんば/梅田までの最短・届け先の知識）。ブレインが安く読む用 */
 export function buildAreaProfiles(cells: WardRentCell[], access: WardAccess[], delivered: KnowledgeRow[], minCount: number): KnowledgeRow[] {
@@ -194,7 +195,8 @@ export function buildAreaProfiles(cells: WardRentCell[], access: WardAccess[], d
     if (!cs.length && !ac) continue;
     const parts: string[] = [];
     if (cs.length) parts.push(`相場（管理費込み・中央値・件数）: ${cs.map((c) => `${c.plan_group} ${man(c.p50)}万（${man(c.p25)}〜${man(c.p75)}万・${c.n}件）`).join("／")}`);
-    if (ac && (ac.toNamba != null || ac.toUmeda != null)) parts.push(`電車の最短（乗換1回まで）: なんば ${ac.toNamba ?? "-"}分・梅田 ${ac.toUmeda ?? "-"}分`);
+    const hubs = ac ? Object.entries(ac.hubs).filter((e): e is [string, number] => e[1] != null).sort((x, y) => x[1] - y[1]).slice(0, 4) : [];
+    if (hubs.length) parts.push(`電車の最短（乗換1回まで）: ${hubs.map(([h, m]) => `${h} ${m}分`).join("・")}`);
     if (dk) parts.push(`この区が希望の人に届けた別の駅: ${(dk.payload as DeliveredPayload).stations.filter((s) => s.customers >= KNOWLEDGE_RULE.minCustomers).slice(0, 5).map((s) => `${s.name}${s.customers}人`).join("・") || "-"}`);
     const n = cs.reduce((a, c) => a + c.n, 0);
     out.push({ kind: "area_profile" as KnowledgeKind, key: `ward:${w}`, payload: { cells: cs, access: ac ?? null } as any, evidence_count: n, title: `${keyLabel(`ward:${w}`)}のまとめ`, content: `${keyLabel(`ward:${w}`)}｜${parts.join("｜")}` });

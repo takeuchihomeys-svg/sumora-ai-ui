@@ -91,6 +91,8 @@ export type RentMarket = {
   /** お客様に送れる文（スタッフの実際の型だけ・件数が足りる時だけ） */
   sentences: string[];
   bands: RentBand[];
+  /** 2026-10-02 予算の中の目安（築年・広さ・築年の傾向）。無ければ null */
+  budgetTypical?: BudgetTypical | null;
 };
 
 const shortWard = (w: string) => w.replace(/^大阪市/, "");
@@ -137,6 +139,12 @@ export function buildRentMarket(obs: RentObs[], input: { wards: string[]; floorP
       break;
     }
   }
+  // 2026-10-02 竹内さん: 予算の中の目安（築年は10年刻みの「築30年程」・広さは5㎡刻みの「25〜30㎡程」・古め／築浅めの要約）
+  const bt = input.rentMax ? budgetTypical(obs, input.wards, main, input.rentMax) : null;
+  if (bt) {
+    facts.push(`${manStr((input.rentMax as number) / 10000)}万円以内の${main}（${bt.n}件）: 築年の中央値${bt.ageMedian}年（この区×間取り全体は${bt.overallAgeMedian}年）・面積の25〜75%は${bt.sqmP25}〜${bt.sqmP75}㎡・築年の傾向 ${bt.ageTendency ?? "なし"}`);
+    sentences.push(bt.sentence);
+  }
   // 2026-10-02 ⑯ 手順3: 築年の希望（築浅・築N年以内）がある人は、その築年の中の相場も（S1 の型の「周辺の」と「間取り」の間に築年を入れるだけ）
   if (input.maxAge != null && input.maxAge > 0) {
     const young = obs.filter((o) => o.building_age != null && (o.building_age as number) <= (input.maxAge as number));
@@ -147,5 +155,38 @@ export function buildRentMarket(obs: RentObs[], input: { wards: string[]; floorP
       if (yb.sayable) sentences.push(`${area}周辺の築${input.maxAge}年以内の${main}の家賃相場は${manStr(yb.lo)}万円から${manStr(yb.hi)}万円程となります！！`);
     }
   }
-  return { facts, sentences, bands };
+  return { facts, sentences, bands, budgetTypical: bt };
+}
+
+// ───────────────────────── 予算の中の目安（築年・広さ・傾向） ─────────────────────────
+// 2026-10-02 竹内さん「38年と限定しすぎずに 築30年程や 25～30㎡といれるとわかりやすい 特定しすぎたら逆に相場ではない」
+//   「この場合要約したら築年数古めとなるってことをちゃんとお客さんに伝えるようにする」
+//   築年: 中央値を10年刻みで切り下げ「築30年程」（10年未満は「築10年以内」）／広さ: 25〜75% を5㎡刻みで外へ丸め「25〜30㎡程」（幅が15㎡を超えたら出さない）
+//   傾向: 予算の中の築年の中央値が BUDGET_TYPICAL_RULE.oldAge 年以上か、区×間取り全体の中央値より oldGap 年以上古い→「古め」／
+//         全体より newGap 年以上新しく newAgeMax 年以下→「築浅め」／それ以外は言わない。件数は RENT_EXPLAIN_RULE.minCount 以上
+export const BUDGET_TYPICAL_RULE = { oldAge: 25, oldGap: 10, newGap: 10, newAgeMax: 10, maxSqmWidth: 15 } as const;
+export type BudgetTypical = { n: number; ageMedian: number; overallAgeMedian: number; sqmP25: number; sqmP75: number; ageText: string; sqmText: string; ageTendency: "old" | "new" | null; sentence: string };
+
+export function budgetTypical(obs: RentObs[], wards: string[], plan: PlanGroup, budgetYen: number): BudgetTypical | null {
+  const inArea = obs.filter((o) => o.plan_group === plan && (!wards.length || (o.ward != null && wards.includes(o.ward))));
+  const rows = inArea.filter((o) => o.rent_total != null && (o.rent_total as number) <= budgetYen);
+  const ages = rows.map((o) => o.building_age).filter((v): v is number => typeof v === "number").sort((a, b) => a - b);
+  const sqms = rows.map((o) => Number(o.area_sqm)).filter((v) => Number.isFinite(v) && v > 5).sort((a, b) => a - b);
+  const allAges = inArea.map((o) => o.building_age).filter((v): v is number => typeof v === "number").sort((a, b) => a - b);
+  if (ages.length < RENT_EXPLAIN_RULE.minCount || sqms.length < RENT_EXPLAIN_RULE.minCount || !allAges.length) return null;
+  const ageMedian = Math.round(percentile(ages, 0.5));
+  const overallAgeMedian = Math.round(percentile(allAges, 0.5));
+  const sqmP25 = Math.floor(percentile(sqms, 0.25) / 5) * 5;
+  const sqmP75 = Math.ceil(percentile(sqms, 0.75) / 5) * 5;
+  if (sqmP75 - sqmP25 > BUDGET_TYPICAL_RULE.maxSqmWidth) return null;
+  const ageText = ageMedian < 10 ? "築10年以内" : `築${Math.floor(ageMedian / 10) * 10}年程`;
+  const sqmText = sqmP75 > sqmP25 ? `${sqmP25}〜${sqmP75}㎡程` : `${sqmP25}㎡程`;
+  const ageTendency: BudgetTypical["ageTendency"] =
+    ageMedian >= BUDGET_TYPICAL_RULE.oldAge || ageMedian - overallAgeMedian >= BUDGET_TYPICAL_RULE.oldGap ? "old"
+    : overallAgeMedian - ageMedian >= BUDGET_TYPICAL_RULE.newGap && ageMedian <= BUDGET_TYPICAL_RULE.newAgeMax ? "new" : null;
+  const b = manStr(budgetYen / 10000);
+  const sentence = ageTendency
+    ? `${b}万円以内の${plan}ですと築年数は${ageTendency === "old" ? "古め" : "浅め"}のお部屋が中心となり、${ageText}・${sqmText}が目安となります！！`
+    : `${b}万円以内の${plan}ですと、${ageText}・${sqmText}のお部屋が中心となります！！`;
+  return { n: rows.length, ageMedian, overallAgeMedian, sqmP25, sqmP75, ageText, sqmText, ageTendency, sentence };
 }

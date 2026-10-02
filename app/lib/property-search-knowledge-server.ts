@@ -102,7 +102,7 @@ export type LoadedKnowledge = { id: string; kind: string; key: string; evidence_
 export async function loadSearchKnowledge(db: SupabaseClient, keys: string[], opts: { markUsed?: boolean } = {}): Promise<LoadedKnowledge[]> {
   if (!keys.length) return [];
   const { data, error } = await db.from("property_search_knowledge").select("id, kind, key, evidence_count, payload, content")
-    .eq("branch_id", BRANCH).eq("is_current", true).in("key", keys).gte("evidence_count", KNOWLEDGE_RULE.minCustomers);
+    .eq("branch_id", BRANCH).eq("is_current", true).neq("hypothesis_status", "hypothesis").in("key", keys).gte("evidence_count", KNOWLEDGE_RULE.minCustomers);
   if (error || !data?.length) return [];
   if (opts.markUsed !== false) { try { await db.rpc("psk_mark_used", { p_ids: data.map((d) => d.id) }); } catch { /* 記録だけ */ } }
   return data as LoadedKnowledge[];
@@ -119,6 +119,9 @@ export { keyLabel };
  * 作り直し（希望→届けた先・言い直し）＋区のまとめ（相場・電車の最短・届け先）→ 整理（統合・退役・食い違い・読まれない）。
  * 決定論・LLM なし。dry＝数えるだけ。cron は /api/cron/property-search-knowledge（週1回・JST 深夜）
  */
+/** 区のまとめに出す起点（お客様の LINE で多い順・静的） */
+export const AREA_HUBS = ["なんば", "梅田", "本町", "天王寺", "京橋", "新大阪", "堺筋本町", "江坂", "三ノ宮"];
+
 export async function runKnowledgeCycle(db: SupabaseClient, opts: { dry?: boolean } = {}): Promise<Record<string, unknown>> {
   const { RENT_EXPLAIN_RULE } = await import("./area-rent-explain");
   const { STATION_LINES, wardOfStation } = await import("./osaka-geo");
@@ -128,34 +131,39 @@ export async function runKnowledgeCycle(db: SupabaseClient, opts: { dry?: boolea
   const { data: cellsRaw } = await db.rpc("area_rent_stats", { p_branch: BRANCH });
   const cells = ((cellsRaw ?? []) as any[]).map((c) => ({ ward: c.ward, plan_group: c.plan_group, n: Number(c.n), p25: c.p25, p50: c.p50, p75: c.p75 }));
   // 区ごとの電車の最短（乗換1回まで・45分まで）。駅は静的な路線図の区
-  const namba = reachMap("なんば", 45, 1), umeda = reachMap("梅田", 45, 1);
-  const byWard = new Map<string, { toNamba: number | null; toUmeda: number | null; stations: number }>();
+  // 手順6: 起点はなんば・梅田だけでなく、お客様の LINE で多い起点（本町・天王寺・京橋・新大阪・堺筋本町・江坂・三ノ宮）にも（電車の最短・乗換1回まで・45分まで）
+  const reach = Object.fromEntries(AREA_HUBS.map((h) => [h, reachMap(h, 45, 1)]));
+  const byWard = new Map<string, { hubs: Record<string, number | null>; stations: number }>();
   for (const st of STATION_LINES.keys()) {
     const w = wardOfStation(st);
     if (!w) continue;
-    const a = byWard.get(w) ?? { toNamba: null, toUmeda: null, stations: 0 };
+    const a = byWard.get(w) ?? { hubs: Object.fromEntries(AREA_HUBS.map((h) => [h, null])) as Record<string, number | null>, stations: 0 };
     a.stations++;
-    const n = namba.get(st), u = umeda.get(st);
-    if (n != null && (a.toNamba == null || n < a.toNamba)) a.toNamba = n;
-    if (u != null && (a.toUmeda == null || u < a.toUmeda)) a.toUmeda = u;
+    for (const h of AREA_HUBS) { const v = reach[h].get(st); if (v != null && (a.hubs[h] == null || v < (a.hubs[h] as number))) a.hubs[h] = v; }
     byWard.set(w, a);
   }
   const access = [...byWard].map(([ward, a]) => ({ ward, ...a }));
   const profiles = buildAreaProfiles(cells, access, built.delivered, RENT_EXPLAIN_RULE.minCount);
-  const produced = [...built.delivered, ...built.restatement, ...profiles];
+  // 手順6: 過去の LINE（お客様の起点の言い方・スタッフの説明の1文）。スタッフの文は見本の候補（hypothesis）＝読む所には出さない（確かめてから）
+  const { buildLineKnowledge } = await import("./line-search-knowledge");
+  const msgs = await all<any>(db, "messages", "conversation_id, sender, text", (q) => q.in("sender", ["customer", "staff"]).neq("conversation_id", YUMA_CONVERSATION_ID).not("text", "is", null).order("id"));
+  const tg = transit();
+  const line = buildLineKnowledge(msgs, (st) => tg.groupOf(st)?.key ?? null);
+  const produced = [...built.delivered, ...built.restatement, ...profiles, ...(line.rows as unknown as KnowledgeRow[])];
   const existing = await all<any>(db, "property_search_knowledge", "id, kind, key, evidence_count, payload, created_at, last_used_at, use_count", (q) => q.eq("branch_id", BRANCH).eq("is_current", true));
   const t = transit();
   const normKey = (k: string) => (k.startsWith("station:") ? `station:${t.groupOf(k.slice(8))?.key ?? k.slice(8)}` : k);
-  const plan = planCuration(existing, produced, { nowMs: Date.now(), normKey, kinds: ["desired_to_delivered", "area_restatement", "area_profile"] });
+  const plan = planCuration(existing, produced, { nowMs: Date.now(), normKey, kinds: ["desired_to_delivered", "area_restatement", "area_profile", "anchor_usage", "staff_phrase"] });
   const summary: Record<string, unknown> = {
-    dry: !!opts.dry, counts: built.counts, profiles: profiles.length,
+    dry: !!opts.dry, counts: { ...built.counts, ...line.counts, line_rows: line.rows.length }, profiles: profiles.length,
     insert: plan.insert.length, update: plan.update.length, retire: plan.retire.length, conflicts: plan.conflicts, unread: plan.unread.length, kept: plan.kept,
   };
   if (opts.dry) return summary;
   const now = new Date().toISOString();
   const rowOf = (r: KnowledgeRow, prevTop: string | null) => ({
     branch_id: BRANCH, kind: r.kind, key: r.key, payload: prevTop ? { ...(r.payload as object), prev_top: prevTop } : r.payload, evidence_count: r.evidence_count,
-    title: r.title, content: r.content, category: "search_pattern", source: "deterministic", hypothesis_status: "confirmed", updated_at: now,
+    title: r.title, content: r.content, category: "search_pattern", source: (r.kind as string) === "staff_phrase" || (r.kind as string) === "anchor_usage" ? "line_history" : "deterministic",
+    hypothesis_status: (r.kind as string) === "staff_phrase" ? "hypothesis" : "confirmed", updated_at: now,
   });
   let errors = 0;
   for (const x of plan.retire) { const { error } = await db.from("property_search_knowledge").update({ is_current: false, retired_reason: x.reason, updated_at: now }).eq("id", x.id); if (error) errors++; }

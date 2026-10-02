@@ -65,7 +65,7 @@ console.log("■ 区のまとめ（area_profile）");
 {
   const prof = buildAreaProfiles(
     [{ ward: "大阪市浪速区", plan_group: "1K", n: 400, p25: 70000, p50: 75000, p75: 80000 }, { ward: "大阪市浪速区", plan_group: "1DK", n: 5, p25: 90000, p50: 100000, p75: 110000 }],
-    [{ ward: "大阪市浪速区", toNamba: 2, toUmeda: 10, stations: 6 }],
+    [{ ward: "大阪市浪速区", hubs: { なんば: 2, 梅田: 10, 京橋: null }, stations: 6 }],
     [], 10,
   );
   t("相場は件数が足りる間取りだけ・電車の最短", prof.length === 1 && /1K 7.5万（7〜8万・400件）/.test(prof[0].content) && !/1DK/.test(prof[0].content) && /なんば 2分・梅田 10分/.test(prof[0].content), prof[0]?.content);

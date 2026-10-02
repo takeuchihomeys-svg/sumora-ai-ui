@@ -1,7 +1,7 @@
 // 2026-10-02 ⑯ 手順3「家賃と部屋の条件」の相場（rent-condition-market.ts）と、築年の相場の文（area-rent-explain）のテスト（LLM なし）
 // 実行: npx tsx app/lib/__tests__/rent-condition-market.test.ts
 import { conditionMarket, explainGap, tradeoffHits, realisticWithinBudget, conditionMarketFacts, structureBand, bandsOf, MARKET_BAND_RULE, type CondObs } from "../rent-condition-market";
-import { buildRentMarket } from "../area-rent-explain";
+import { buildRentMarket, budgetTypical } from "../area-rent-explain";
 
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, info ?? ""); } };
@@ -49,8 +49,30 @@ t("予算以内が10件未満なら言わない", !realisticWithinBudget(obs, [W
 console.log("■ 築年の相場の文（スタッフの型「◯◯周辺の…の家賃相場は◯万円から◯万円程となります！！」）");
 const rm = buildRentMarket(obs.map((o) => ({ ...o })), { wards: [W], floorPlan: "1K", rentMax: 80000, label: "なんば", maxAge: 5 })!;
 t("築5年以内の文", rm.sentences.some((s) => /^なんば周辺の築5年以内の1Kの家賃相場は[0-9.]+万円から[0-9.]+万円程となります！！$/.test(s)), rm.sentences);
-t("築年の希望が無い人には築年の文を出さない", !buildRentMarket(obs, { wards: [W], floorPlan: "1K", rentMax: 80000, label: "なんば" })!.sentences.some((s) => /築/.test(s)));
+t("築年の希望が無い人には築N年以内の相場の文を出さない", !buildRentMarket(obs, { wards: [W], floorPlan: "1K", rentMax: 80000, label: "なんば" })!.sentences.some((s) => /周辺の築[0-9]+年以内の/.test(s)));
 t("文に「安い物件がお得」の類を作らない", rm.sentences.every((s) => !/お得|割安|格安/.test(s)));
+
+console.log("■ 予算の中の目安（竹内さん: 築30年程・25〜30㎡程・古めを伝える）");
+{
+  const W2 = "大阪市北区";
+  const row = (rent: number, age: number, sqm: number): CondObs => ({ ward: W2, plan_group: "1DK", rent_total: rent, building_age: age, area_sqm: sqm });
+  // 松浦さんの形: 8.5万以内は築38年前後・26〜33㎡、全体（築浅の高い部屋を含む）の築年の中央値はずっと新しい
+  const cheapOld = Array.from({ length: 12 }, (_, i) => row(75000 + i * 500, 34 + (i % 8), 26 + (i % 8)));
+  const pricyNew = Array.from({ length: 20 }, (_, i) => row(100000 + i * 1000, 3 + (i % 6), 30));
+  const bt = budgetTypical([...cheapOld, ...pricyNew], [W2], "1DK", 85000)!;
+  t("築38年前後 → 「築30年程」（10年刻みで切り下げ・特定しすぎない）", bt.ageText === "築30年程", bt);
+  t("広さは25〜75%を5㎡刻みで外へ（25〜35㎡程）", bt.sqmText === "25〜35㎡程", bt);
+  t("築年数は古め（25年以上 or 全体より10年以上古い）", bt.ageTendency === "old");
+  t("文: 「8.5万円以内の1DKですと築年数は古めのお部屋が中心となり、築30年程・25〜35㎡程が目安となります！！」", bt.sentence === "8.5万円以内の1DKですと築年数は古めのお部屋が中心となり、築30年程・25〜35㎡程が目安となります！！", bt.sentence);
+  const young = Array.from({ length: 12 }, (_, i) => row(80000, 4 + (i % 4), 25 + (i % 3)));
+  const btY = budgetTypical(young, [W2], "1DK", 85000)!;
+  t("10年未満は「築10年以内」・傾向なし（全体と同じ）", btY.ageText === "築10年以内" && btY.ageTendency === null && /ですと、築10年以内・25〜30㎡程のお部屋が中心となります！！$/.test(btY.sentence), btY);
+  const wide = Array.from({ length: 12 }, (_, i) => row(80000, 30, i < 6 ? 18 : 45));
+  t("広さの幅が15㎡を超えたら出さない（相場でなくなる）", budgetTypical(wide, [W2], "1DK", 85000) === null);
+  t("10件未満は出さない", budgetTypical(cheapOld.slice(0, 8), [W2], "1DK", 85000) === null);
+  const rmB = buildRentMarket([...cheapOld, ...pricyNew] as never, { wards: [W2], floorPlan: "1DK", rentMax: 85000, label: "梅田" })!;
+  t("buildRentMarket の文と事実に出る（ageTendency）", rmB.sentences.some((s) => /築年数は古め/.test(s)) && rmB.budgetTypical?.ageTendency === "old");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
