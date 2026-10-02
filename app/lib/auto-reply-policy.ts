@@ -15,6 +15,7 @@ import { findStaffOnlyFact, findUngroundedAmount, findUngroundedAgeRange } from 
 import { STAFF_PICKUP_DECL_RE, STAFF_CONFIRM_DECL_RE, STAFF_ESTIMATE_DECL_RE } from "./reply-context";
 import { findExtraApplyDocs } from "./apply-docs-guard";
 import { findViewingDateReask } from "./viewing-reask";
+import { MEETING_PROMISE_RE } from "./meeting-promise";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -190,6 +191,8 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   if (findExtraApplyDocs(draft)) return { ok: false, reason: "staff_only_fact:extra_apply_docs" };
   // ⑥-6 2026-10-02 ⑫ 21巡: 内覧の日時が決まった後（直近の通に「◯/◯ ◯:◯◯からはよろしく」）に日にちを聞き直す下書きは自動で送らない（viewing-reask.ts・本文は変えない）
   if (i.groundText && findViewingDateReask(draft, [i.groundText])) return { ok: false, reason: "viewing_date_reask" };
+  // ⑥-7 2026-10-02 竹内さん「おって連絡とかじゃあなくて内覧日決まったら 1件目の内覧場所を集合場所とする」: 待ち合わせ場所を後で送る約束の下書きは自動で送らない（AIX【待ち合わせ】で送る）
+  if (MEETING_PROMISE_RE.test(draft)) return { ok: false, reason: "meeting_place_promise" };
   // ⑦ 二重送信を防ぐ
   if (i.hasPendingScheduled) return { ok: false, reason: "already_scheduled" };
   return { ok: true, reason: "ok" };

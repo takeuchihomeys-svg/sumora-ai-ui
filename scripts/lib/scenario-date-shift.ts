@@ -26,6 +26,8 @@ export function shiftDatesInText(text: string, days: number, year: number): stri
   if (!days || !text) return text;
   return String(text).split(/(https?:\/\/\S+)/).map((part, i) => {
     if (i % 2 === 1) return part; // URL
+    // 2026-10-02 ⑫ 22巡（meeting_date_32「9／15の14時からでお願いします」）: 全角の／・数字はずらせず過去の日付のまま残った → 半角にしてからずらす
+    part = part.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/(\d)／(\d)/g, "$1/$2");
     let s = part.replace(/(?<![0-9/])(\d{1,2})月(\d{1,2})日((?:\s*[（(][月火水木金土日](?:曜日?)?[）)])?)/g, (all, mo, d, wdp: string) => {
       const r = shiftMD(year, Number(mo), Number(d), days);
       if (!r) return all;

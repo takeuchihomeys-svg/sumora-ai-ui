@@ -179,3 +179,53 @@ export function sanitizePrefill(raw: unknown): Record<string, PrefillUse> | null
   }
   return Object.keys(out).length ? out : null;
 }
+
+// ─── 待ち合わせ（AIX【待ち合わせ】）の物件 ─────────────────────────────────
+// 2026-10-02 竹内「おって連絡とかじゃあなくて内覧日決まったら 1件目の内覧場所を集合場所とする そこから物件内覧する」:
+//   待ち合わせ＝その日に内覧する1件目の物件の現地（住所は番地まで資料から・feedback_meeting_address_full）。
+//   1件目の決め方（実送信の形）: ①「〇〇から先にご案内」と書いた物件 ②時刻つきで並べた時は一番早い時刻の物件 ③並べた順の1件目。
+//   材料はこちらの直近の内覧のご案内の文（新しい順に見て、物件名＋号室がある最初の1通）。決まらない時は null（今まで通りの候補）
+// 内覧のご案内の文: 「ご案内させて頂きます／ご案内可能」＋日付か時刻。物件のオススメの文（🌟・「お送りさせて頂きましたお部屋の中でも」）は外す
+//   （本番の AIX【待ち合わせ】68件に当てて、オススメの文の物件を拾った外れ 3件から・scripts/audit-meeting-prefill.ts）
+const VIEWING_TEXT_RE = /(?:ご案内|ご内覧)(?:させて|可能|出来|でき|致し|いたし)/;
+const VIEWING_WHEN_RE = /[0-9０-９]{1,2}\s*[\/月:：時]|本日|明日/;
+const NOT_VIEWING_RE = /🌟|お送りさせて(?:頂|いただ)きましたお部屋の中でも|オススメ|おすすめ|ご査収/;
+const FIRST_ORDER_RE = /([^\s／/、。！!「」・]{2,30}?)\s*(?:[0-9０-９]{2,4}\s*号室)?\s*(?:から|より)(?:先に|まず)?\s*(?:ご案内|ご内覧|内覧)/;
+const TIME_IN_LINE_RE = /([0-9０-９]{1,2})\s*[:：時]\s*([0-9０-９]{0,2})/;
+const toHalfNum = (s: string) => Number(s.replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0)) || "0");
+/** 内覧のご案内の文の「物件名 ＋ 号室」（並んだ順）。🌟・【】が無い文の形（「安立荘(アンリュウソウ) 203号室、お部屋ご案内」「13:00〜アーバネックス堺筋本町 502号室」） */
+export function viewingPropertyLabels(text: string): string[] {
+  const out: string[] = [];
+  for (const m of String(text ?? "").matchAll(/([^\s／/、。！!「」・〜~～:：\n]{2,30}?)\s*([0-9０-９]{2,4})\s*号室/g)) {
+    const name = m[1].replace(/^(?:[0-9０-９]{1,2}[:：][0-9０-９]{2}|🌟|【)+/, "").replace(/^(?:[0-9０-９]{1,2}に)/, "").replace(/^(?:と|や|および|及び)/, "").trim();
+    const v = `${name} ${m[2]}号室`;
+    if (name.length >= 2 && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+export function meetingPropertyPrefill(staffTextsNewestFirst: ReadonlyArray<string | null | undefined>, labelsOf: (t: string) => string[] = viewingPropertyLabels): Prefilled<string> | null {
+  for (const raw of staffTextsNewestFirst) {
+    const t = String(raw ?? "");
+    if (!VIEWING_TEXT_RE.test(t) || !VIEWING_WHEN_RE.test(t) || NOT_VIEWING_RE.test(t)) continue;
+    const labels = labelsOf(t);
+    if (!labels.length) continue;
+    const first = t.match(FIRST_ORDER_RE)?.[1];
+    if (first) {
+      const hit = labels.find((l) => propertyBaseName(l).includes(propertyBaseName(first)) || propertyBaseName(first).includes(propertyBaseName(l)));
+      if (hit) return { value: hit, source: "conversation", reason: "内覧のご案内で「先にご案内」と書いた物件（待ち合わせ＝1件目の現地）" };
+    }
+    if (labels.length > 1) {
+      const timed = labels.map((l) => {
+        const line = t.split("\n").find((x) => x.includes(l.split(" ")[0])) ?? "";
+        const m = line.match(TIME_IN_LINE_RE);
+        return { l, min: m ? toHalfNum(m[1]) * 60 + toHalfNum(m[2]) : NaN };
+      });
+      if (timed.every((x) => Number.isFinite(x.min))) {
+        const best = [...timed].sort((a, b) => a.min - b.min)[0];
+        return { value: best.l, source: "conversation", reason: "内覧のご案内で一番早い時刻の物件（待ち合わせ＝1件目の現地）" };
+      }
+    }
+    return { value: labels[0], source: "conversation", reason: labels.length > 1 ? `内覧のご案内の${labels.length}件の1件目（待ち合わせ＝1件目の現地）` : "内覧のご案内の物件（待ち合わせ＝現地）" };
+  }
+  return null;
+}

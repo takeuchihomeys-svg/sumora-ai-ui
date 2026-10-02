@@ -11,6 +11,7 @@ import { fixDateWeekdays } from "./jst-date";
 import { hasOutgoingResidue } from "./outgoing-residue";
 import { findCompanyFactContradictionsUngated } from "./company-fact-guard";
 import { findExtraApplyDocs } from "./apply-docs-guard";
+import { MEETING_PROMISE_RE } from "./meeting-promise";
 
 /** generate-reply/route.ts が例外時にストリームへ流す文言（route 側もこの定数を import する＝文言の出所は1か所） */
 export const GENERATION_FAILURE_TEXT = "（AI返信の生成に失敗しました。再生成をお試しください）";
@@ -46,6 +47,9 @@ export function isUsableExampleText(s: string | null | undefined): boolean {
   //   スタッフの送信 365日 13,686通で当たる 20通（別のお客様の個別の事情: お仕事面のサポートの内定通知・管理会社の追加の指示を伝えた文 等）。
   //   YUMA の再生で他のお客様の「資格確認書・戸籍謄本・集合写真」を申込の書類として並べた出所の1つ
   if (findExtraApplyDocs(t)) return false;
+  // 2026-10-02 竹内さん「おって連絡とかじゃあなくて内覧日決まったら 1件目の内覧場所を集合場所とする」:
+  //   「待ち合わせ場所追ってご連絡／改めてお送り／あわせてご連絡」の約束は手本にしない（meeting-promise.ts・手本 5行・人の送信 4通）
+  if (MEETING_PROMISE_RE.test(t)) return false;
   return true;
 }
 

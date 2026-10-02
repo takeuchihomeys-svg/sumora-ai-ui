@@ -511,6 +511,8 @@ export function buildViewingFlowBrainText(f: ViewingFlow): string {
     }
   } else if (f.stage === "date_agreed") {
     rule.push(`日にちは決まったが、待ち合わせ場所は未送信＝まだ確定ではない。次の一手は meeting_place（AIX【待ち合わせ場所】${f.timeFixed ? "" : "・開始時刻はピッカーで入れる"}）`);
+    // 2026-10-02 竹内さん「おって連絡とかじゃあなくて内覧日決まったら 1件目の内覧場所を集合場所とする そこから物件内覧する」
+    rule.push("待ち合わせ場所＝その日に内覧する1件目の物件の現地（住所は番地まで資料から）。「待ち合わせ場所は追ってご連絡」の返信にしない（AIX【待ち合わせ場所】で1件目の物件を送る）");
     if (f.currentReply === "none" || f.currentReply == null) rule.push("今回の発言が別の質問なら、その質問に答える（内覧の時に話す・当日よろしく は書かせない）。待ち合わせ場所の送信がまだ残っている事は next_steps に残す");
     if (f.placePromised) rule.push("こちらは「待ち合わせ場所は追ってご連絡」と伝えてある（未履行のやる事）");
   } else if (f.stage === "confirmed") {

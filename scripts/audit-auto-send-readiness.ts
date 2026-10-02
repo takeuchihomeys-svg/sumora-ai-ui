@@ -68,3 +68,17 @@ console.log("|---|---|---|---|---|---|---|---|");
 for (const [k, c] of [...by].sort((a, b) => b[1].n - a[1].n)) {
   console.log(`| ${k} | ${c.n} | ${pct(c.path + c.promiseDiff, c.n)}%（道 ${pct(c.path, c.n)}%） | ${c.auto} | ${c.wrongSend} | ${c.promiseDiff} | ${verdict(c)} | ${wall(c)} |`);
 }
+
+// 2026-10-02 竹内さん: AIX【電話をかける】（固定のボタン＋定型の案内・押されたら不在の通知 call-tap）は自動送信の候補。
+//   ブレインの判断がスタッフと合う割合が線（ready の線と同じ 85%・n≥6）を越えたら自動送信の対象にしてよい
+export const AUTO_SEND_ELIGIBLE_AIX = ["phone_call"] as const;
+{
+  for (const a of AUTO_SEND_ELIGIBLE_AIX) {
+    const decided = rows.filter((r) => r.decided === a);
+    const staff = rows.filter((r) => (r.accept ?? []).includes(a));
+    const agree = decided.filter((r) => r.path_ok).length;
+    const recall = staff.filter((r) => r.decided === a).length;
+    const ok = decided.length >= 6 && agree / decided.length >= 0.85;
+    console.log(`\nAIX の自動送信の候補 ${a}: ブレインが選んだ ${decided.length}（合う ${agree}）・スタッフが押した ${staff.length}（ブレインも選んだ ${recall}）→ ${ok ? "線を越えた（自動送信の対象にしてよい）" : "まだ（n≥6・85%）"}`);
+  }
+}

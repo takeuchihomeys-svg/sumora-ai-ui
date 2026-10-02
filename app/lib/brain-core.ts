@@ -3010,7 +3010,7 @@ ${history}`;
       finalAix = null;
       decisionSource = "rule:call_just_finished";
     }
-    // 2026-10-02 ⑫ 21巡（待ち合わせまで行く流れ）: 「待ち合わせ場所追ってご連絡させていただきます」の約束が残っている時のお客様の返事
+    // 2026-10-02 ⑫ 21巡（待ち合わせまで行く流れ）: 「待ち合わせ場所追ってご連絡させていただきます」の約束が残っている時のお客様の返事（⚠ 竹内さんの訂正: この約束はそもそも書かない＝日にちが決まった時点で AIX【待ち合わせ】・1件目の物件の現地。ここは過去にこの形で送った会話を戻すためだけ）
     //   （「ギリギリですが大丈夫です」「わかりました」）→ AIX【待ち合わせ】（約束を果たす AIX）。本番: 約束 3 の後 2 は次のお客様の番の後に押した
     //   （scripts/audit-meeting-promise.ts）。ブレインが AIX なしの時だけ（他の AIX を選んだ時はそのまま）。住所はスタッフが資料で確かめる
     if (!promiseAix && finalAix === null && meetingPromisePending([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text })))) {

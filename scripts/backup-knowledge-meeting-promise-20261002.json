@@ -1,0 +1,20 @@
+[
+ {
+  "id": "3d0aa5bb-6a59-4b2c-bd9b-3cb90ce41de0",
+  "content": "お送りいただいたお部屋の募集状況と内覧可否確認させていただき、待ち合わせ場所お送りさせていただきます！！",
+  "hypothesis_status": "hypothesis",
+  "rejection_reason": null
+ },
+ {
+  "id": "710eb940-7350-4163-92ee-3ff245bcf8e1",
+  "content": "「かしこまりました！！」で承諾を伝え、次行で日付と時間を含めて「〇月〇日〇時からはよろしくお願いいたします😊！！」と確定内容を再確認。続けて未確定事項（ペット可否・待ち合わせ場所等）を「〜含め追ってご連絡させていただきます！！」の形で伝える",
+  "hypothesis_status": "hypothesis",
+  "rejection_reason": null
+ },
+ {
+  "id": "1e020a79-9552-455a-a14e-5bf7ca415e6d",
+  "content": "芝犬の飼育可能か含め待ち合わせ場所追ってご連絡させていただきます！！",
+  "hypothesis_status": "hypothesis",
+  "rejection_reason": null
+ }
+]

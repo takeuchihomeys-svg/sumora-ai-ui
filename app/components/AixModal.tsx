@@ -37,7 +37,7 @@ import { firstSentPickupId } from "../lib/sent-image-order";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown } from "../lib/hearing-form";
 import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
-import { propertyNamePrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
+import { propertyNamePrefill, meetingPropertyPrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
 
@@ -1290,7 +1290,11 @@ export default function AixModal({
     } else if (actionType === "viewing_invite") {
       applyPrefill("viewingPropertyName", n, viewingPropertyName, setViewingPropertyName);
     } else if (actionType === "meeting_place") {
-      applyPrefill("meetingPropertyName", n, meetingPropertyName, setMeetingPropertyName);
+      // 2026-10-02 竹内「内覧日決まったら 1件目の内覧場所を集合場所とする」: 待ち合わせ＝1件目の物件の現地（先にご案内・一番早い時刻・並べた順の1件目）。
+      //   決まらない時だけ今まで通りの物件名の先入れ
+      const staffNewest = [...(recentMessages ?? [])].reverse().filter((m) => m.sender !== "customer").map((m) => m.text ?? "");
+      const firstViewing = meetingPropertyPrefill(staffNewest);
+      applyPrefill("meetingPropertyName", firstViewing ?? n, meetingPropertyName, setMeetingPropertyName);
     } else if (actionType === "application_push" && (appSubMode === "push" || appSubMode === "confirm")) {
       applyPrefill("appPropertyName", n, appPropertyName, setAppPropertyName);
     } else if (actionType === "guarantor_info") {

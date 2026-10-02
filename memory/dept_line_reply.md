@@ -5,19 +5,13 @@
 
 ## ⑫ 引き継ぎ（10/02）
 **ここだけ読めば続けられるように書く（毎ステップ更新）。手順は memory/test_protocol_brain.md（§9.5 実送信・§9.6 網羅の表）。tsc は共有の鍵で1つずつ（mkdir C:/Users/竹内悠~1/AppData/Local/Temp/claude/tsc.lock → NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit → rmdir）。**
-- **終わった（コミット済み）**: d1e4b1fe（2段の場面・確認しますを候補から外す・おおよその家賃の下限・電話19時）まで
-- **終わった（未コミット・テスト済み・tsc 通過・10/02 夕方の区切り）**:
-  - 申込の書類は2つ（竹内さん）: app/lib/apply-docs-guard.ts（新）・example-hygiene・auto-reply-policy ⑥-5・company-facts apply_docs（※マイナンバーのマスキング・他の書類は挙げない・聞かれ方を広げた）・procedure-question docs・ナレッジ fa8ab604 を rejected（元: scripts/backup-knowledge-apply-docs-20261002.json）・scripts/audit-apply-docs-guard.ts・テスト apply-docs-guard.test.ts
-  - 電話: phone-call（伏せ字の番号）・staff-confirm-facts phone_call_promise・phone-button-sent callJustFinished（電話が終わった後に電話をかけるを出さない）・aix-scene-evidence S5（電話の時刻を待ち合わせにしない）・scripts/audit-phone-promise-draft.ts・audit-call-finished.ts
-  - 2段: two-stage（元が確認しますの時は聞かれた事の確認・アリバイ＝お仕事面のサポート・他のご希望にも一言・保証会社についても）・auto-reply-policy ⑥-4（約束の無い2段の下書きは送らない）・brain-core meta.two_stage・dispatch
-  - 待ち合わせ: app/lib/meeting-promise.ts（新・promise:meeting で AIX【待ち合わせ】）・app/lib/viewing-reask.ts（新・決まった日の聞き直しを送らない ⑥-6）・scripts/audit-meeting-promise.ts・audit-viewing-reask.ts
-  - 築年数の幅の作り話を送らない（staff-confirm-facts findUngroundedAgeRange・scripts/audit-ungrounded-age.ts）
-  - 家賃の万の切り捨て（⑯ の G6）: app/lib/man-yen.ts（新）に brain-core・aix-template-generate・generate-pending-drafts・generate-draft-bg(-async)・customer-summary・analyze-closed-conversation・line-webhook-text・conditions/customers の画面・flagged-reminder
-  - 道具: scripts/yuma-coverage-matrix.ts（網羅の表・--keys-out）・scripts/audit-auto-send-readiness.ts（場面ごとの自動送信の判定）・replay-scenarios-mine（sm/pc・--flows-need）・yuma-replay-scenarios（staff_cp・ブレインの JSON の読み直し・関所で止まる下書きは YUMA に送らない）
-- **途中**: 22巡（DeepSeek）が走っている（scripts/.replay-out/l12-r22m・l12-r22s・l12-r22 の .log/.jsonl・開発サーバ 3561 は scratchpad の app12 の写し）。終わったら readiness を出して記録
-- **次**: ①22巡の結果を読む ②家賃の相場を返信に（竹内さん: 物件検索のブレインの1つの元 area-rent-server.customerAreaAndRent／area-rent-explain から受ける・数字は rent_market の文だけ・area_plan を同じに。⑯ のファイルは読むだけ）＝brain-core で相場の質問を見分けて meta.rent_market（facts・sentences）→ generate-reply の【📍場面と返信方針】に「この文だけ」→ dispatch の groundText に足す ③最後の Claude（LLM_TEST_FINAL_CLAUDE=1）は直した場面だけ: phone_17・thanks_08・meeting_date_34・other_45・flows-meet1 flow2_t10〜t12・flow23_t05・procedure_11（申込の書類）
-- **網羅の表**: マス 74・覆い 36（49%）→ 42（57%）。残り 32 のうち本番で押下0が約20（電話終了後・専任物件だった・日程変更・追客・初期費用を説明 等＝作れない）。押下はあるが場面にならなかった（スタッフの返事の束の外で押した）: 条件広げまとめ 53・新着1件 14・申込誘導 7・書類依頼 3 等
-- **竹内さんに聞くこと**: ①AIX【申込へ】②申込時フォーマット（続き）のテンプレートに「※マイナンバーカードの場合は番号部分をマスキング」の1行を足すか（AIX のテンプレートは提案の経路）②AIX【電話する→電話をかける】を自動送信の対象にするか（ボタン＋定型の案内）③「契約させて頂きたい」は申込確定か（本番 14通で申込へは 2）④待ち合わせの約束の後の AIX【待ち合わせ】（本番 3件中2）で良いか
+- **終わった（コミット済み）**: d1e4b1fe（2段・確認しますを外す・家賃の下限・電話19時）／a27f0efd（申込の書類2つ・電話の約束・電話が終わった後・S5・2段の直し・待ち合わせの約束→AIX・日にちの聞き直し・築年数の幅・家賃の万の切り捨て・網羅の表・readiness）
+- **終わった（未コミット・テスト済み・tsc 通過）**: 竹内さんの訂正「内覧日決まったら1件目の内覧場所を集合場所」＝ meeting-promise（形を広げた・訂正の注記）・example-hygiene（約束の形を手本から外す）・auto-reply-policy ⑥-7・aix-prefill meetingPropertyPrefill（1件目）・AixModal（待ち合わせの物件の先入れ）・viewing-flow（date_agreed の規則）・ナレッジ3行 rejected（元: scripts/backup-knowledge-meeting-promise-20261002.json）・scripts/audit-meeting-prefill.ts・テスト meeting-promise・meeting-property-prefill／readiness に AIX【電話をかける】の自動送信の候補の行／場面の日付のずらし（全角）／申込時フォーマットの※マスキングは提案 562287ff（aix_feature_suggestions）
+- **途中**: なし（22巡まで終わり）
+- **次**: ①家賃の相場を返信に（物件検索のブレインの1つの元 area-rent-server.customerAreaAndRent／area-rent-explain を読むだけ・数字は rent_market の文だけ・area_plan を同じに）＝brain-core で相場の質問を見分けて meta.rent_market（facts・sentences）→ generate-reply の【📍場面と返信方針】の companyFacts の後に「この文だけ」→ dispatch の groundText に足す ②最後の Claude（LLM_TEST_FINAL_CLAUDE=1・使用量の上限が近いので直した場面だけ）: phone_17（scen-r19）・thanks_08・meeting_date_34・other_45（base）・flows-meet1 flow2_t10〜t12・flow23_t05（flows-r21? → l12-r21f の flow23_db3722_t05）・procedure_11（scen-r7）
+- **網羅の表**（scripts/yuma-coverage-matrix.ts）: マス 74・覆い 42（57%）。残り 32 のうち本番で押下0が約20（作れない）
+- **元の45場面の道**: 19巡 67% → 20巡 71% → 22巡 76%
+- **竹内さんに聞くこと**: なし（10/02 の4つは答えをもらった）
 
 
 ---
@@ -8538,3 +8532,12 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 申込の書類の場面（YUMA 11:42 の場面）: 下書きは関所で止まる（extra_apply_docs）＝自動で送らない。再生の道具も関所で止まる下書きは YUMA に送らないように直した
 - 新しい穴 4: ①待ち合わせ場所の約束が残っているのに返信＝ボタン違い（G3）→ promise:meeting で AIX【待ち合わせ】②決まった内覧の日にちを聞き直す下書き＝文（G4）→ 出口で止める ③会話に無い築年数の幅＝文 → 出口で止める ④「契約させて頂きたい」に申込へ＝ボタン違い → 本番 14通で申込は 2＝見送り
 - 家賃の万の切り捨て（⑯ の G6）: man-yen.ts に置き換え（AI の材料・画面・グループの通知）
+### 22巡（DeepSeek・元の45＋単発21＋待ち合わせの流れ25）
+- 道: 元の45 32/42（76%・19巡 67%→20巡 71%→22巡 76%）・単発 18/21（86%）・待ち合わせの流れ 18/25（flow2_t10「13:00〜お願いします」で AIX【待ち合わせ】＝竹内さんの訂正どおり）
+- 外れの多くは2段の約束の差（竹内さんの決定どおり）。誤送信の恐れは first_contact_05（条件ヒアリングのフォーム）1件だけ
+- 新しい穴 1: 場面の日付のずらしが全角の「9／15」をずらせず過去の日付のまま（再生の道具）→ 全角を半角にしてからずらす
+### 竹内さんの答え（10/02）
+- ①申込時フォーマット（続き）に※マイナンバーの番号のマスキング＝YES → 提案の経路で登録（aix_feature_suggestions 562287ff・improvement・テンプレート 4b712d16／696d0402）
+- ②AIX【電話をかける】は自動送信の候補（一致が線を越えたら）→ readiness に表示（今は ブレイン 3回中 2回一致・まだ）
+- ③「契約させて頂きたい」は申込確定にしない（今のまま）
+- ④待ち合わせは「追って連絡」ではなく、日にちが決まったら1件目の内覧の物件 → 手本・ナレッジから外す・出口で止める・AIX の先入れを1件目に・viewing-flow の規則（設計知見に記録）
