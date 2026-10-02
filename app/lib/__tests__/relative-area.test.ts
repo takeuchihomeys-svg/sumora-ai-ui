@@ -2,7 +2,7 @@
 //   家賃の相場の文（area-rent-explain.ts）・条件の記録の家賃（line-webhook-text.buildConditionNote）のテスト（LLM なし）
 // 実行: npx tsx --env-file=.env.local app/lib/__tests__/relative-area.test.ts
 // 文は property_customers の desired_area・条件欄の実物の言い回し（名前は無い）
-import { readRelativeArea, buildAreaPlan, RELATIVE_AREA_RULE, WARD_NOTES, wardAccessFacts } from "../osaka-area-profile";
+import { readRelativeArea, readRideAsks, extLines, buildAreaPlan, RELATIVE_AREA_RULE, WARD_NOTES, wardAccessFacts } from "../osaka-area-profile";
 import { parseAreaWant, customerAreaPlan, parseCommuteWants, buildPropertyLocation, matchArea, matchCommute, locationReasonCodes } from "../area-want";
 import { REASON_POINTS, reasonJa } from "../property-brain";
 import { buildRentMarket, rentBand, planGroupOf, wantedPlanGroups, roundManDown, roundManUp, RENT_EXPLAIN_RULE, type RentObs } from "../area-rent-explain";
@@ -83,6 +83,45 @@ t("「大国町」だけの人は今まで通り", matchArea(parseAreaWant("大�
 t("「北区、中央区、西区」の人は区の照合のまま", matchArea(parseAreaWant("北区、中央区、西区"), umeda)?.code === "AREA_WARD_MATCH");
 t("「大阪市内（大阪駅へのアクセス重視）」: 梅田に出られる物件は +10", matchArea(parseAreaWant("大阪市内（大阪駅へのアクセス重視）"), umeda)?.code === "AREA_ANCHOR_REACH");
 t("「大阪市内（大阪駅へのアクセス重視）」: 出られない市内の物件は大阪市内の範囲（−3 にしない）", matchArea(parseAreaWant("大阪市内（大阪駅へのアクセス重視）"), locOf("【1】A\n60,000円\n1K\n谷町線「喜連瓜破」徒歩5分"))?.code === "AREA_REGION_MATCH");
+
+console.log("■ 1本・乗り換えなし・直通・乗り継ぎ（2026-10-02 竹内さん・実物の言い回し）");
+{
+  const R = (x: string) => readRideAsks(x).anchors.map((a) => `${a.station}|${a.minutes ?? "-"}|${a.maxTransfers}`).join(",");
+  t("「梅田、中津まで電車1本で行けるところ…できれば15分から２０分以内くらい」→ 梅田・中津・20分・乗換なし", R("梅田、中津まで電車1本で行けるところがいいです。できれば15分から２０分以内くらいの場所がいいです。") === "梅田|20|0,中津|20|0");
+  t("「難波か梅田まで電車一本」→ 沿線ぜんぶ", R("難波か梅田まで電車一本") === "なんば|-|0,梅田|-|0");
+  t("「梅田まで1本で行ける線」→ 沿線ぜんぶ", R("梅田まで1本で行ける線") === "梅田|-|0");
+  t("フォームの「⑤梅田まで1本で行ける線 ⑥10分以内」の⑥（駅徒歩）を分にしない", R("⑤梅田まで1本で行ける線 ⑥10分以内 ⑦20万位内") === "梅田|-|0");
+  t("「難波まで1本10-15分以内」→ 15分", R("難波まで1本10-15分以内") === "なんば|15|0");
+  t("「梅田まで30分以内で乗り継ぎ一回」→ 30分・1回", R("梅田まで30分以内で乗り継ぎ一回とかでいける場所") === "梅田|30|1");
+  t("「乗り継ぎ2回以内で梅田まで30分以内」→ 30分・2回", R("乗り継ぎ2回以内で梅田まで30分以内でも大丈夫です") === "梅田|30|2");
+  t("「野田阪神駅・住之江駅へ乗り換え1回で行けるところ」（分なし）は作らない", R("野田阪神駅・住之江駅へ乗り換え1回で行けるところ") === "");
+  t("「梅田まで乗り換えなし」「梅田まで乗り継ぎなし」「本町まで直通」", R("梅田まで乗り換えなし") === "梅田|-|0" && R("梅田まで乗り継ぎなし") === "梅田|-|0" && R("本町まで直通") === "本町|-|0");
+  t("「なんばに乗換なしで行ける所」", R("なんばに乗換なしで行ける所") === "なんば|-|0");
+  t("「梅田まで乗換なしで20分以内」→ 20分", R("梅田まで乗換なしで20分以内") === "梅田|20|0");
+  t("電話の「関西直通の固定番号」は電車ではない", R("③勤務先TEL （関西直通の固定番号）") === "");
+  t("駅徒歩の分は拾わない（「梅田まで1本・駅徒歩10分以内」）", R("梅田まで1本、駅徒歩10分以内") === "梅田|-|0");
+  const whole = buildAreaPlan(readRideAsks("梅田まで乗り換えなし"))!;
+  const wl = new Set(whole.lines);
+  t("沿線ぜんぶ＝路線ごとに全駅（mode=lines）", whole.mode === "lines");
+  t("各社の沿線: 御堂筋・谷町・四つ橋・阪急3線・阪神・環状・JR京都/神戸/東西/おおさか東", ["大阪市高速軌道御堂筋線", "大阪市高速軌道谷町線", "大阪市高速軌道四つ橋線", "阪急電鉄神戸線", "阪急電鉄宝塚線", "阪急電鉄京都線", "阪神電鉄本線", "大阪環状線", "東海道本線", "JR東西線", "おおさか東線", "JR神戸線"].every((l) => wl.has(l)), whole.lines);
+  t("直通の運転も（北急・学研都市線）", wl.has("北大阪急行南北線") && wl.has("片町線"));
+  t("梅田に乗り換えなしで着かない路線は入らない（堺筋線・千日前線・南海）", !wl.has("大阪市高速軌道堺筋線") && !wl.has("大阪市高速軌道千日前線") && !wl.has("南海電鉄南海本線"));
+  t("拡張の路線名に直す（JR神戸線→東海道本線・JR宝塚線→福知山線）", extLines(["JR神戸線", "JR宝塚線", "大阪環状線"]).join(",") === "東海道本線,福知山線,大阪環状線");
+  const m20 = buildAreaPlan(readRideAsks("梅田まで乗換なしで20分以内"))!;
+  const m20s = new Set(m20.stations.map((s) => s.station));
+  t("分あり＝駅を1つずつ（mode=stations）・20分以内だけ", m20.mode === "stations" && m20.stations.every((s) => (s.reach[0]?.minutes ?? 99) <= 20));
+  t("20分・乗換なし: 十三・中津・天王寺（御堂筋）・谷町九丁目（谷町線で東梅田）は入り、恵美須町（堺筋線＝乗換が要る）は入らない", m20s.has("十三") && m20s.has("中津") && m20s.has("天王寺") && m20s.has("谷町九丁目") && !m20s.has("恵美須町"));
+  const mido = buildAreaPlan(readRideAsks("御堂筋線で梅田まで1本"))!;
+  t("「御堂筋線で梅田まで1本」→ 御堂筋線（と北急の直通）だけ", mido.lines.every((l) => /御堂筋|北大阪急行/.test(l)) && mido.stations.some((s) => s.station === "なかもず"));
+  const lineOnly = readRideAsks("御堂筋線で1本の場所とかありますか？");
+  t("「御堂筋線で1本の場所」（目的の駅なし）→ 御堂筋線の駅ぜんぶ", (lineOnly.rideLines ?? []).includes("大阪市高速軌道御堂筋線") && buildAreaPlan(lineOnly)?.mode === "lines");
+  t("「乗り継ぎ2回・30分」は 240駅まで（分の短い順）", (buildAreaPlan(readRideAsks("乗り継ぎ2回以内で梅田まで30分以内"))?.stations.length ?? 0) <= 240);
+  t("я さん（「難波周辺」＋条件欄「難波まで1本10-15分以内」）→ なんば 15分・乗換なし", customerAreaPlan("難波周辺", "難波まで1本10-15分以内")?.anchors[0]?.minutes === 15);
+  t("みくさん（「梅田まで電車1本・大阪市都島区・…」区が書いてある）は今まで通り（範囲を作らない）", customerAreaPlan("梅田まで電車1本・大阪市都島区・大阪市福島区", null) === null);
+  const rw = parseAreaWant("梅田まで乗り換えなし");
+  t("照合: 阪急宝塚線の豊中（梅田に乗換なし）→ 出られる", matchArea(rw, locOf("【1】A\n70,000円\n1K\n阪急宝塚線「豊中」徒歩5分"))?.code === "AREA_ANCHOR_REACH");
+  t("照合: 堺筋線の恵美須町（梅田に乗換が要る）→ 出られない", matchArea(rw, locOf("【1】A\n70,000円\n1K\n堺筋線「恵美須町」徒歩3分"))?.code === "AREA_ANCHOR_FAR");
+}
 
 console.log("■ 家賃の相場（area-rent-explain・期間で切らない・10件以上・0.5万で丸める）");
 t("決めた線", RENT_EXPLAIN_RULE.minCount === 10 && RENT_EXPLAIN_RULE.roundMan === 0.5);

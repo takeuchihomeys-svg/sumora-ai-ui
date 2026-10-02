@@ -445,7 +445,7 @@ async function resolveAreaWithAPI(rawArea, areaMode, customerId) {
   // 「梅田まで徒歩20分」（徒歩モード）はtransitReで対象駅のみ追加するので API不要
   const hasCommutePattern = /(?:まで|から|へ)(?:電車|バス)?\d+分/.test(rawArea);
   // 乗り換えなし・直通は parseAreaTokens が路線展開するが制約情報は失われるためAPI必須
-  const hasTransferNone = /乗り換えなし|直通/.test(rawArea);
+  const hasTransferNone = /乗り?換え?(?:なし|無し|不要)|乗換(?:なし|無し)|乗り継ぎ|直通|[1１一]本/.test(rawArea); // 2026-10-02 v2.5.67 「1本」「乗り継ぎ」も（サーバーが決定論の area_plan）
   // 通いやすい・アクセスしやすい系は自然言語解析（Haiku）でないと意図が取れない
   const hasCommuteExpression = /通いやすい|アクセスしやすい|通勤しやすい|便利|出やす|行きやす|アクセス(?:が|の)?(?:良|いい|よい|重視|良好)/.test(rawArea); // 2026-10-02 v2.5.66 「なんば・梅田に出やすい」も（サーバーが決定論の area_plan を返す）
   // LEARNED_STATION_MAP にあるが realpro_lines が空（壊れたレコード）→ 再解決が必要
@@ -4427,24 +4427,6 @@ function openInstructions(siteKey) {
         }
       }
 
-      // 2026-10-02 v2.5.66 ⑯ 「なんば・梅田に出やすい」: サーバーの決定論の area_plan（静的な路線図・電車15分・乗換なし／タクシーの目安 直線5km）が
-      //   ある時は、手元の語の分解（「梅田に出」「すい」）より先に area_plan の駅と路線で検索する。手で駅を入れた回・地域を手で選んだ回はスタッフの指定を優先
-      if (apiData?.area_plan?.stations?.length > 0 && !_adjStation_it && _lockedMode_itandi !== "ward" && !(_areaModeSource === "user" && isWardArea_itandi)) {
-        const _planSt_it = (apiData.itandi?.station_names || []).filter(s => isKnownStation(s));
-        const _planLines_it = apiData.itandi?.line_names || [];
-        if (_planSt_it.length > 0 && _planLines_it.length > 0) {
-          itandiLines.length = 0;
-          _planLines_it.forEach(n => { if (!itandiLines.includes(n)) itandiLines.push(n); });
-          stationNames = [...new Set(_planSt_it)];
-          if (isWardArea_itandi) {
-            isWardArea_itandi = false;
-            currentAreaMode = "station";
-            updateAreaModeUI();
-          }
-          console.log("[AX] itandi area_plan（決定論）: " + apiData.area_plan.summary + " → 路線 " + itandiLines.length + "・駅 " + stationNames.length);
-        }
-      }
-
       // 「梅田まで電車1本」: リアプロと同じ判定で乗り換えなしの沿線を選び、itandi でも各路線の駅をすべて選択する
       let _selectAllLineStations_it = false;
       const _direct_it = resolveDirectCommute(rawArea);
@@ -4461,6 +4443,28 @@ function openInstructions(siteKey) {
         }
         _selectAllLineStations_it = true;
         console.log("[AX] itandi 電車1本: " + _direct_it.targets.join("・") + " に乗り換えなしの沿線 → 駅をすべて選択", itandiLines);
+      }
+
+      // 2026-10-02 v2.5.66〜67 ⑯ サーバーの決定論の area_plan（「なんば・梅田に出やすい」＝電車15分・乗換なし／「梅田まで乗り換えなし」＝沿線ぜんぶ／
+      //   「梅田まで乗換なしで20分以内」＝その分の駅）がある時は、手元の語の分解（「梅田に出」「すい」）と上の「電車1本」より優先する。
+      //   路線・駅の名前はサーバーが ITANDI の表（line_maps）で直した物（area_plan.sites）。手で駅を入れた回・地域を手で選んだ回はスタッフの指定を優先
+      if (apiData?.area_plan && !_adjStation_it && _lockedMode_itandi !== "ward" && !(_areaModeSource === "user" && isWardArea_itandi)) {
+        const _ps_it = apiData.area_plan.sites?.itandi || apiData.itandi || {};
+        const _planSt_it = (_ps_it.station_names || []).filter(s => isKnownStation(s));
+        const _planLines_it = _ps_it.line_names || [];
+        const _linesMode_it = apiData.area_plan.mode === "lines";
+        if (_planLines_it.length > 0 && (_planSt_it.length > 0 || _linesMode_it)) {
+          itandiLines.length = 0;
+          _planLines_it.forEach(n => { if (!itandiLines.includes(n)) itandiLines.push(n); });
+          stationNames = [...new Set(_planSt_it)];
+          _selectAllLineStations_it = _linesMode_it;
+          if (isWardArea_itandi) {
+            isWardArea_itandi = false;
+            currentAreaMode = "station";
+            updateAreaModeUI();
+          }
+          console.log("[AX] itandi area_plan（決定論）: " + apiData.area_plan.summary + " → 路線 " + itandiLines.length + "・駅 " + stationNames.length + (_linesMode_it ? "・路線ごとに全駅" : ""));
+        }
       }
 
       // 広げて検索：賃料上限を自動拡張
@@ -4966,24 +4970,6 @@ function openInstructions(siteKey) {
         }
       }
 
-      // 2026-10-02 v2.5.66 ⑯ 「なんば・梅田に出やすい」: サーバーの決定論の area_plan（静的な路線図・電車15分・乗換なし／タクシーの目安 直線5km）が
-      //   ある時は、手元の語の分解（松浦さんの回で「すい所」が駅に入った）を捨てて area_plan の駅で検索する。手で駅を入れた回・地域を手で選んだ回はスタッフの指定を優先
-      if (apiData?.area_plan?.stations?.length > 0 && !_adjStation_rp && _lockedMode !== "ward" && !(_areaModeSource === "user" && currentAreaMode === "ward")) {
-        const _planSt = (apiData.realpro?.station_names || []).filter(s => isKnownStation(s));
-        if (_planSt.length > 0) {
-          realpro_station_names.length = 0;
-          _planSt.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
-          route_ids.length = 0;
-          (apiData.realpro.route_ids || []).forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
-          city_codes.length = 0;
-          if (currentAreaMode !== "station") {
-            currentAreaMode = "station";
-            updateAreaModeUI && updateAreaModeUI();
-          }
-          console.log("[AX] area_plan（決定論）: " + apiData.area_plan.summary + " → 駅 " + realpro_station_names.length);
-        }
-      }
-
       // 「梅田まで電車1本」: 梅田・大阪梅田等に乗り換えなしで着く全沿線を選び、その沿線の駅をすべて選択する
       // （旧: 「梅田」1駅だけが駅指定され、沿線の他の駅が検索対象から漏れていた）
       // 手動で駅を入力した場合・地域モードを手動で選んだ場合はスタッフの指定を優先する
@@ -4998,6 +4984,29 @@ function openInstructions(siteKey) {
           updateAreaModeUI && updateAreaModeUI();
         }
         console.log("[AX] 電車1本: " + _direct.targets.join("・") + " に乗り換えなしの沿線 → 駅をすべて選択", _direct.lines);
+      }
+
+      // 2026-10-02 v2.5.66〜67 ⑯ サーバーの決定論の area_plan（「なんば・梅田に出やすい」＝電車15分・乗換なし／「梅田まで乗り換えなし」＝沿線ぜんぶ／
+      //   「梅田まで乗換なしで20分以内」＝その分の駅）がある時は、手元の語の分解（松浦さんの回で「すい所」が駅に入った）と上の「電車1本」より優先する。
+      //   駅・路線はサーバーがリアプロの表（station_map・line_maps）で直した物（area_plan.sites）。手で駅を入れた回・地域を手で選んだ回はスタッフの指定を優先
+      if (apiData?.area_plan && !_adjStation_rp && _lockedMode !== "ward" && !(_areaModeSource === "user" && currentAreaMode === "ward")) {
+        const _ps = apiData.area_plan.sites?.realpro || apiData.realpro || {};
+        const _planSt = (_ps.station_names || []).filter(s => isKnownStation(s));
+        const _planRoutes = _ps.route_ids || [];
+        const _linesMode = apiData.area_plan.mode === "lines";
+        if (_planSt.length > 0 || (_linesMode && _planRoutes.length > 0)) {
+          realpro_station_names.length = 0;
+          _planSt.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+          route_ids.length = 0;
+          _planRoutes.forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
+          city_codes.length = 0;
+          _selectAllLineStations = _linesMode;
+          if (currentAreaMode !== "station") {
+            currentAreaMode = "station";
+            updateAreaModeUI && updateAreaModeUI();
+          }
+          console.log("[AX] area_plan（決定論）: " + apiData.area_plan.summary + " → 駅 " + realpro_station_names.length + "・路線 " + route_ids.length + (_linesMode ? "・路線ごとに全駅" : ""));
+        }
       }
 
       // 地名マップから町字レベルのトークンを検索（駅モード時はスキップ：所在地フィールドに入らないようにする）

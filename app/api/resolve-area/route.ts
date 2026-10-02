@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import OpenAI from "openai";
 // 2026-10-02 ⑯ 「なんば・梅田に出やすい」は LLM の前に静的な路線図で決める（電車15分・乗換なし／タクシーの目安 直線5km＝竹内さんの決定）
-import { readRelativeArea, type AreaPlan } from "@/app/lib/osaka-area-profile";
+import { readRelativeArea, readRideAsks, extLines, type AreaPlan } from "@/app/lib/osaka-area-profile";
 import { customerAreaPlan } from "@/app/lib/area-want";
 
 const _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -731,22 +731,46 @@ export async function POST(req: NextRequest) {
     //   松浦さん「なんば・梅田に出やすいエリア」: 旧は語の分解で「すい所」「梅田に出」が駅・未知語になり、Haiku/DeepSeek の展開は毎回違った。
     //   地点が読めた時は station_map で各サイトの名前に直す。言い方がそれだけ（残りが「エリア」等）なら LLM を呼ばずに返す
     const freeText: string = typeof body.free_text === "string" ? body.free_text : "";
-    const relWant = readRelativeArea(desired_area, freeText);
+    const relSpans = [...readRelativeArea(desired_area, freeText).spans, ...readRideAsks(desired_area).spans];
     // 住む駅・区・路線が書いてある人（「弁天町駅、森ノ宮駅…（本町駅と京都に行きやすいところ）」）は作らない＝検索を広げない
     const areaPlan: AreaPlan | null = customerAreaPlan(desired_area, freeText);
+    let planSites: { realpro: { station_names: string[]; route_ids: string[] }; itandi: { line_names: string[]; station_names: string[] } } | null = null;
     if (areaPlan) {
       const nf = desired_area.normalize("NFKC");
       let rest = "";
       let at = 0;
-      for (const [a, b] of [...relWant.spans].sort((x, y) => x[0] - y[0])) { rest += nf.slice(at, a); at = Math.max(at, b); }
+      for (const [a, b] of [...relSpans].sort((x, y) => x[0] - y[0])) { if (a > at) rest += nf.slice(at, a); at = Math.max(at, b); }
       rest += nf.slice(at);
-      const leftover = rest.replace(/(?:い|く|くて|ければ)?(?:エリア|ところ|所|地域|場所|範囲|物件|周辺|全域|希望|が良い|がいい|だと良い|だと嬉しい|な|で|、|・|。|,|\s)/g, "");
+      // 「梅田まで乗換なしで20分以内」の分・「で行ける線」も area_plan が読んだ物（残りに数えない）
+      const leftover = rest
+        .replace(/(?:約|およそ)?[0-9]{1,3}\s*(?:分\s*)?(?:(?:[-〜~～]|から)\s*[0-9]{1,3}\s*)?分\s*(?:以内|圏内|くらい|ぐらい|程度|ほど|位|まで)?/g, "")
+        .replace(/(?:で|に)?\s*(?:行ける|いける|通える|行けて)\s*(?:線|駅|沿線)?/g, "")
+        .replace(/(?:い|く|くて|ければ)?(?:エリア|ところ|所|地域|場所|範囲|物件|周辺|全域|希望|が良い|がいい|だと良い|だと嬉しい|電車|以内|な|で|の|、|・|。|,|\s)/g, "");
       const realpro_before = result.realpro.station_names.length;
       // station_map の表記揺れ（四天王寺前夕陽ケ丘／ヶ丘）は両方で引く（引けない名前は入らない）
-      const planNames = areaPlan.stations.flatMap((s) => (s.station.includes("ケ") ? [s.station, s.station.replace(/ケ/g, "ヶ")] : [s.station]));
-      await resolveStationsFromList(planNames, result, db, maps);
+      const variants = (st: string) => (st.includes("ケ") ? [st, st.replace(/ケ/g, "ヶ")] : [st]);
+      if (areaPlan.mode === "lines") {
+        // 2026-10-02 ⑯ 竹内「乗り換えなしとかもその沿線全部で調べる」: 路線ごとに全駅（拡張は route_ids＋全駅選択・ITANDI は路線名＋全駅）。
+        //   駅は目的の駅のまとまりだけ（拡張の電車1本と同じ形）。路線の名前は各サイトの表（line_maps）で直す＝3サイトの表記を混ぜない
+        const hubs = areaPlan.anchors.length ? areaPlan.stations.filter((s) => s.reach.some((r) => r.minutes === 0)).map((s) => s.station) : [];
+        await resolveStationsFromList(hubs.flatMap(variants), result, db, maps);
+        for (const line of extLines(areaPlan.lines)) {
+          const rid = maps.routeMap[line];
+          if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
+          for (const n of toItandiNames(line, maps)) if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n);
+          const rName = maps.reinsMap[line];
+          if (rName && !result.reins.station_pairs.some((p) => p.line === rName)) result.reins.station_pairs.push({ line: rName, station: null });
+        }
+      } else {
+        await resolveStationsFromList(areaPlan.stations.flatMap((s) => variants(s.station)), result, db, maps);
+      }
+      // area_plan の分だけの各サイトの名前（この後 LLM が駅を足しても、拡張はこれを使う＝分・乗り換えの線を崩さない）
+      planSites = {
+        realpro: { station_names: [...result.realpro.station_names], route_ids: [...result.realpro.route_ids] },
+        itandi: { line_names: [...result.itandi.line_names], station_names: [...result.itandi.station_names] },
+      };
       console.log(`[resolve-area] area_plan: ${areaPlan.summary}（駅 ${result.realpro.station_names.length - realpro_before} を各サイトの名前に）`);
-      if (!leftover) return NextResponse.json({ ...result, area_plan: areaPlan, normalized_area: null });
+      if (!leftover) return NextResponse.json({ ...result, area_plan: { ...areaPlan, sites: planSites }, normalized_area: null });
     }
 
     for (const tok of tokens) {
@@ -1148,7 +1172,7 @@ commute_constraints: 通勤・通学・乗り換え制約
     }
 
     const normalized_area = await _normalizePromise.catch(() => null);
-    return NextResponse.json({ ...result, normalized_area, ...(areaPlan ? { area_plan: areaPlan } : {}) });
+    return NextResponse.json({ ...result, normalized_area, ...(areaPlan ? { area_plan: { ...areaPlan, sites: planSites } } : {}) });
   } catch (e) {
     console.error("[resolve-area] error:", e);
     return NextResponse.json({ error: "internal error" }, { status: 500 });

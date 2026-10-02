@@ -4,16 +4,29 @@
 
 ---
 
+## 2026-10-02 v2.5.67 「1本・乗り換えなし・直通・乗り継ぎ N 回」を area_plan に（**拡張の再読み込み必須**・DB の変更なし・サーバーはデプロイが要る・未コミット＝commit は親）
+竹内「よくある乗り換えなしとかもその沿線全部で調べる形で分数もしていあればその駅を選択できるようにする」。同日「3km の線（なんば・梅田周辺の相場の区）は承認」＝coreKm は決定。
+- **決まり**（`osaka-area-profile.ts readRideAsks／anchorReach／buildAreaPlan`）: 乗り換えなし（分なし）→ 目的の駅に乗り換えなしで着く沿線（osaka-geo の直通の運転も）の**駅ぜんぶ**＝`mode:"lines"`（拡張は路線ごとに全駅選択）／乗り換えなし＋分 → その沿線の N 分以内の駅＝`mode:"stations"`／乗り継ぎ N 回＋分 → N 回までで N 分以内（240駅まで・分の短い順）／分の無い「乗り換え1回で行ける」は作らない（線が無い）／「御堂筋線で1本」（目的の駅なし）→ その路線の駅ぜんぶ／「御堂筋線で梅田まで1本」→ 御堂筋線（＋北急の直通）だけ。
+- **言い方**（実物）: 1本・一本・乗り換えなし／無し／不要・乗換なし・乗り継ぎなし・直通・乗り継ぎ一回／2回以内、分は「20分以内」「20分くらい」「10-15分以内」「15分から２０分以内」（範囲は上）。駅徒歩・車・自転車・「駅まで15分」の分、フォームの⑥（駅徒歩の欄）・電話の「関西直通の固定番号」は拾わない。
+- **数**: 顧客の行（316人）に「1本」2・「乗り換え1回以内」等 数件・分つき 34。お客様の LINE（全期間）に「1本」4・「乗り継ぎ」2・「直通（電話）」2 など＝少ないが、来た時に「梅田」1駅だけの検索になっていた。
+- **各サイトの名前**: `/api/resolve-area` が mode=lines の時は目的の駅のまとまり（station_map）＋路線を line_meta（リアプロ route_id・ITANDI の名前・レインズ）で直す（osaka-geo の JR神戸線→東海道本線・JR宝塚線→福知山線＝`extLines`）。梅田・なんばの沿線 21本は line_meta で全部引ける。area_plan の分だけの名前を `area_plan.sites` に分けて返す（残りの語で LLM が駅を足しても、拡張は sites を使う＝分・乗り換えの線を崩さない）。
+- **拡張 v2.5.67**（popup.js）: area_plan の上書きを「電車1本（resolveDirectCommute）」の**後**に移し、area_plan がある時はそちらを優先（mode=lines は route_ids＋`_selectAllLineStations`・ITANDI は路線＋全駅）。API を呼ぶ条件に「1本・乗り継ぎ・乗換なし」。
+- **当て直し**（`scripts/audit-area-plan-regression.ts --before=…`・変える前の area-want と今を同じ条件で比べる）: 2,380行（90人）で変わったのは 91行（2人＝松浦さん・я さん）・点が上がった 74・**下がった 0**（初回は я さんの「難波周辺」の6行が AREA_NEAR/CLOSE → ANCHOR_FAR に下がった → 出られない時はほかの希望（難波周辺）の照合に任せる形に直して 0）。
+- **テスト**: `relative-area.test.ts` 86（実物の言い回し 13・各社の沿線・直通・分の絞り・照合）・関連 10本・tsc 通過。
+- **残し**: 分の無い「乗り換え1回で行ける」（Sa さん・ゆなさん）は作らない（通勤の列の到達時間に任せる）／区が書いてある人（みくさん「梅田まで電車1本・大阪市都島区…」）は今まで通り拡張の電車1本。
+
+---
+
 ## 2026-10-02 v2.5.66 「なんば・梅田に出やすい」の決定論の範囲（area_plan）・相場の材料（rent_observations）（**拡張の再読み込み必須**・**DB の表・関数・トリガーを追加済み**・サーバーはデプロイが要る・未コミット＝commit は親）
 竹内「難波や梅田近辺の浪速区や、大正、西区、北区、福島区、中央区等で通いやすい地域を物件検索ブレインは選定する事が出来ているか…相場…貯めていく（フランチャイズ化）」。実例 松浦さん（893ee6e9・「なんば・梅田に出やすいエリア」・条件欄「タクシーで帰宅してもそこまでかからない」・1DK 7.5〜8.5万・ペット可）。
 - **起きていた事**: ①area-want が「・」で切れず なんば＝住む駅・梅田＝分の無い通勤（0点）→ 梅田側（中津・中崎町・天六）が「希望のなんばから4.9km」AREA_FAR −3＋FIT_ONE_MISS ②拡張の語の分解で station_names に「すい所」、ITANDI に未知語「梅田に出」「すい」・3路線だけ。西区・福島区・大正区は検索に入らず ③タクシーは読まれていない ④追加条件の「家賃: 〜8万」は buildConditionNote の Math.floor（登録は 85,000 のまま）。
 - **竹内さんの決定**（`osaka-area-profile.ts RELATIVE_AREA_RULE` の1か所）: 分の無い「出やすい」＝電車15分以内・乗換なし／「タクシーでそこまでかからない」＝基準の駅から直線5km・円は言わない／淀川区（十三・西中島南方）は梅田に出やすいに入る／相場は期間で切らない・10件以上・0.5万丸め／区の特徴の文は未定（`WARD_NOTES` は空の欄）。
 - **サーバー**: `app/lib/osaka-area-profile.ts`（新・readRelativeArea／buildAreaPlan／wardAccessFacts）・`area-want.ts`（AreaWant.anchors・taxiKm・matchAnchors・customerAreaPlan＝住む駅・区・路線が書いてある人は作らない・parseCommuteWants が「なんば・」も目的地に）・`property-brain.ts`（AREA_ANCHOR_REACH +10／_SOME +8／_TAXI +5／_TAXI_OVER 0／_FAR −3）・`/api/resolve-area`（LLM の前に area_plan を作り station_map で各サイトの名前に・言い方がそれだけなら LLM を呼ばない・応答に area_plan）・`/api/property-brain/search-params`（free_text を渡す・area_plan と rent_market を返す）・`property-brain-rag.ts`（ブレインのプロンプトに【エリアの判断（決定論）】【家賃の相場】）。
 - **拡張 v2.5.66**（popup.js）: apiData.area_plan がある時、リアプロは手元の語の分解の駅・路線・区を捨てて area_plan の駅（station_map で引けた物）と路線で検索・駅モード。ITANDI も area_plan の路線と駅。手で駅を入れた回・地域を手で選んだ回はスタッフの指定を優先。resolveAreaWithAPI の呼ぶ条件に「出やす・行きやす・アクセス良」を足した。
-- **相場（DB）**: 表 `rent_observations`（branch_id='osaka'＋unit_key＝建物名＋号室・管理費込み rent_total・plan_group・pet・sent_to_customer）・関数 `area_rent_stats(branch, ward, plan, pet)`・トリガー3本（候補の束→1戸ずつ／お客様への届け→sent_to_customer／資料のペット可否→pet）。埋め戻し 3,398戸（区＋間取り 2,929・届けた 95・ペット可 240）。文は `area-rent-explain.ts`（スタッフの実際の型だけ）・読むのは `area-rent-server.ts`（「周辺」の区は基準の駅から直線3km以内＝仮の線）。
+- **相場（DB）**: 表 `rent_observations`（branch_id='osaka'＋unit_key＝建物名＋号室・管理費込み rent_total・plan_group・pet・sent_to_customer）・関数 `area_rent_stats(branch, ward, plan, pet)`・トリガー3本（候補の束→1戸ずつ／お客様への届け→sent_to_customer／資料のペット可否→pet）。埋め戻し 3,398戸（区＋間取り 2,929・届けた 95・ペット可 240）。文は `area-rent-explain.ts`（スタッフの実際の型だけ）・読むのは `area-rent-server.ts`（「周辺」の区は基準の駅から直線3km以内＝10/02 竹内さん決定）。
 - **松浦さんの前後**: 検索 = 旧 リアプロ 難波・なんば・今宮戎・梅田・中津・淀屋橋・すい所／ITANDI 3路線 → 新 93駅（中央12・北12・淀川9・西成8・西6・福島6・浪速6・天王寺4・都島4・西淀川4・此花3・東淀川3＋大正 等・全部 station_map で引ける）。採点 = ピックアップ50行で AREA_FAR 12行→AREA_ANCHOR_REACH（AREA_STATION_MATCH/WIDE 38行も REACH 36・SOME 2）。相場 = 「なんば・梅田周辺の1DKの家賃相場は7万円から11.5万円程となります！！」・事実「1DKで8.5万以内が見つかった区: 淀川区25・北区13・中央区9・天王寺区6・浪速区5…」。
 - **テスト**: 新 `app/lib/__tests__/relative-area.test.ts`（59・実物の言い回し・`--env-file=.env.local`）。関連 24本・拡張のテストは既存の失敗（版の数字 2.5.64 の期待・background のキャッシュ確認の正規表現）以外は通過・tsc 通過。当て直し `scripts/audit-relative-area.ts [--customer=]`。
-- **残し**: ①brain-core.ts 1839/1840/2007・aix-template-generate 1582・line-webhook-text 1653 も家賃を Math.floor（8.5万→8万）＝担当外で未修正 ②generate-reply への相場の文の接続は未（担当外）。今はブレインのプロンプトと search-params の rent_market まで ③売上サポの色（PickupReview.tsx は AREA_FAR だけ橙）・pickup-review-order の札の短い名前は未（reasonJa に落ちる） ④desired_area が空で条件欄だけに「出やすい」がある人は resolve-area が早く返るので area_plan が検索に届かない ⑤coreKm=3 は仮の線 ⑥ペット可の相場は件数が少ないので言わない。
+- **残し**: ①brain-core.ts 1839/1840/2007・aix-template-generate 1582・line-webhook-text 1653 も家賃を Math.floor（8.5万→8万）＝担当外で未修正 ②generate-reply への相場の文の接続は未（担当外）。今はブレインのプロンプトと search-params の rent_market まで ③売上サポの色（PickupReview.tsx は AREA_FAR だけ橙）・pickup-review-order の札の短い名前は未（reasonJa に落ちる） ④desired_area が空で条件欄だけに「出やすい」がある人は resolve-area が早く返るので area_plan が検索に届かない ⑤coreKm=3 は 10/02 竹内さんが決定（仮でなくなった） ⑥ペット可の相場は件数が少ないので言わない。
 
 ---
 
