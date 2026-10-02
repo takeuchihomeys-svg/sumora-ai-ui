@@ -83,7 +83,7 @@ async function main() {
   console.log(`② 会話専用ブロック: 中央値 ${Pmed} トークン／0.5〜5分の組で当たった率 q=${qMeasured.toFixed(2)}（${hits}/${pairs}）・間に戦略/全体分析/セーブデータが無い組だけ ${pairsClean ? (hitsClean / pairsClean).toFixed(2) : "-"}（${hitsClean}/${pairsClean}）`);
 
   // ② 影の記録（digest.cw）
-  const logs = await pageAll<{ conversation_id: string; created_at: string; digest: { cw?: { on: boolean; h: string | null; n: number | null } } | null }>((a, b) =>
+  const logs = await pageAll<{ conversation_id: string; created_at: string; digest: { cw?: { on: boolean; h: string | null; n: number | null; bn?: string } } | null }>((a, b) =>
     sb.from("brain_decision_logs").select("conversation_id, created_at, digest").gte("created_at", since).not("digest->cw", "is", null).order("created_at", { ascending: true }).range(a, b));
   if (logs.length) {
     let onPairs = 0, same = 0; const onDays = new Set<string>();
@@ -131,6 +131,32 @@ async function main() {
   for (const [Pv, q, label] of [[Pmed, qMeasured, "今の実測"], [Pmed, 0.9, "q=0.9"], [8000, 0.9, "ブロック 8k・q=0.9（並べ替えた場合の仮定）"]] as Array<[number, number, string]>) {
     const line = [6, 10, 15, 20, 30].map((N) => { const r = sim(N, Pv, q); return `N=${N}: ${r.net >= 0 ? "+" : ""}$${r.net.toFixed(3)}（ON ${r.on.toFixed(1)}人・温め ${r.warms.toFixed(1)}回）`; }).join("／");
     console.log(`  [${label}・P=${Pv}・q=${q.toFixed(2)}] ${line}`);
+  }
+
+  // ④ 2026-10-02 竹内「記録だけとる」: 影の N=3/6/10（digest.cw.bn＝"3:1,6:1,10:0"）を並べて比べる
+  //   ・ON の会話×日・ON の回（1日あたり）・q（その N で ON の続く組＝同じ日・1時間以内で、指紋 h が同じ率）・1日の損得（③の sim をその q で）
+  //   ・10/02 夜から h は会話専用ブロック A（顧客プロファイル＋会話ストーリー）の指紋＝温めが読み直す範囲（それより前の行は旧の1ブロックの指紋）
+  const withBn = logs.filter((l) => typeof l.digest?.cw?.bn === "string");
+  if (!withBn.length) {
+    console.log("④ 影の N=3/6/10（digest.cw.bn）: まだありません（このコードのデプロイ後に溜まる）");
+    return;
+  }
+  const bnSpan = Math.max(1, (Date.parse(withBn[withBn.length - 1].created_at) - Date.parse(withBn[0].created_at)) / 86400e3);
+  console.log(`④ 影の N=3/6/10（digest.cw.bn・${withBn.length}回・${bnSpan.toFixed(1)}日）`);
+  for (const N of [3, 6, 10]) {
+    let turns = 0, pairs = 0, same = 0; const days = new Set<string>();
+    const last = new Map<string, { t: number; h: string | null; on: boolean }>();
+    for (const l of withBn) {
+      const cw = { h: l.digest!.cw!.h, bn: l.digest!.cw!.bn ?? "" }; const t = Date.parse(l.created_at);
+      const on = new RegExp(`(^|,)${N}:1(,|$)`).test(cw.bn);
+      if (on) { turns++; days.add(l.conversation_id + jstDay(t)); }
+      const p = last.get(l.conversation_id);
+      if (p && p.on && on && jstDay(p.t) === jstDay(t) && t - p.t <= 60 * 60e3) { pairs++; if (p.h && p.h === cw.h) same++; }
+      last.set(l.conversation_id, { t, h: cw.h, on });
+    }
+    const qN = pairs ? same / pairs : qMeasured;
+    const r = sim(N, Pmed, qN);
+    console.log(`  N=${N}: ON の会話×日 ${days.size}（1日 ${(days.size / bnSpan).toFixed(1)}）・ON の回 ${turns}（1日 ${(turns / bnSpan).toFixed(1)}）・q=${pairs ? qN.toFixed(2) : "-"}（${same}/${pairs}）・1日の損得 ${r.net >= 0 ? "+" : ""}$${r.net.toFixed(3)}（P=${Pmed}・q=${qN.toFixed(2)}${pairs ? "" : "＝組が無いので①の実測"}）`);
   }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

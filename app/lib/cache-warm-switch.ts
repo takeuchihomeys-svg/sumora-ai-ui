@@ -70,10 +70,22 @@ export type CacheWarmDecision = {
   threshold: number;
   /** お客様の最後の通からの分（無ければ null） */
   quietFor: number | null;
+  /** 影の記録だけ（2026-10-02 竹内「記録だけとる」）: 閾値 N=3/6/10 それぞれなら ON だったか。挙動には使わない */
+  byN?: Record<number, boolean>;
 };
+
+/** 影で並べて記録する閾値（監査 audit-cache-warm-switch で N ごとに比べる） */
+export const CACHE_WARM_SHADOW_NS = [3, 6, 10] as const;
 
 /** スイッチの判断（1つの関数・1つの値）。ブレインの呼び出しと温めの cron の両方がこれを呼ぶ */
 export function decideCacheWarm(i: CacheWarmInput): CacheWarmDecision {
+  const d = decideCacheWarmAt(i);
+  const byN: Record<number, boolean> = {};
+  for (const n of CACHE_WARM_SHADOW_NS) byN[n] = decideCacheWarmAt({ ...i, minExchangesToday: n }).on;
+  return { ...d, byN };
+}
+
+function decideCacheWarmAt(i: CacheWarmInput): CacheWarmDecision {
   const threshold = i.minExchangesToday ?? CACHE_WARM_DEFAULTS.minExchangesToday;
   const quietMax = i.quietMinutes ?? CACHE_WARM_DEFAULTS.quietMinutes;
   const day = jstYmd(i.nowMs);
@@ -90,8 +102,10 @@ export function decideCacheWarm(i: CacheWarmInput): CacheWarmDecision {
 }
 
 /** brain_decision_logs.digest に残す短い形（cw）。h は会話専用ブロックの指紋（同じ指紋が続く率＝q を監査で測る） */
-export function compactCacheWarm(d: CacheWarmDecision, mode: CacheWarmMode, prefixHash: string | null): { on: boolean; r: string; n: number | null; th: number; m: CacheWarmMode; h: string | null } {
-  return { on: d.on, r: d.reason, n: d.exchangesToday, th: d.threshold, m: mode, h: prefixHash };
+export function compactCacheWarm(d: CacheWarmDecision, mode: CacheWarmMode, prefixHash: string | null): { on: boolean; r: string; n: number | null; th: number; m: CacheWarmMode; h: string | null; bn?: string } {
+  // bn: 影の N ごとの ON（例 "3:1,6:1,10:0"）。記録だけ
+  const bn = d.byN ? CACHE_WARM_SHADOW_NS.map((n) => `${n}:${d.byN?.[n] ? 1 : 0}`).join(",") : undefined;
+  return { on: d.on, r: d.reason, n: d.exchangesToday, th: d.threshold, m: mode, h: prefixHash, ...(bn ? { bn } : {}) };
 }
 
 /** 会話専用ブロックの cache_control。ON かつ mode=on の時だけ 1h、それ以外は今まで通り 5分（文面は1文字も変えない） */
@@ -115,4 +129,22 @@ export function estimateHotDayNetUsd(i: { calls: number; q: number; P: number; S
   const now = (i.P * PR.w5 + pairs * (i.p5 * (i.q * i.P * PR.read + (1 - i.q) * i.P * PR.w5) + (1 - i.p5) * i.P * PR.w5)) / 1e6;
   const on = (i.P * PR.w1h + pairs * (i.p60 * (i.q * i.P * PR.read + (1 - i.q) * i.P * PR.w1h) + (1 - i.p60) * i.P * PR.w1h) + i.warms * (i.S + i.P) * PR.read) / 1e6;
   return now - on;
+}
+
+export type ConvBlock = { type: "text"; text: string; cache_control: { type: "ephemeral"; ttl?: "1h" } };
+/**
+ * 会話専用ブロックの組み立て（2026-10-02 キャッシュ①・竹内「4はオススメでする」）。
+ *   今回の発言の層: A（変わりにくい物＝顧客プロファイル＋会話ストーリー）→ B（戦略 JSON＋セーブデータ＋出力の指定）の2ブロック・どちらも印あり。
+ *     A は温めのスイッチの印（warmCc＝既定5分・ON かつ mode=on で 1h）、B は 5分（1h の後に 5分＝TTL の並びの決まりどおり）。
+ *     A が空の時は B だけで、B が温めのスイッチの印（旧の1ブロックと同じ扱い）。空のブロックは API エラーになるので出さない。
+ *   全体分析の層: 今まで通り1ブロック（1h・今は空＝省略）。
+ *   印は system の2つと合わせて最大4つ（API の上限）。
+ */
+export function buildConvBlocks(p: { isFreshLayer: boolean; a: string; b: string; combined: string; warmCc: { type: "ephemeral"; ttl?: "1h" } }): ConvBlock[] {
+  if (!p.isFreshLayer) return p.combined.trim() ? [{ type: "text", text: p.combined, cache_control: { type: "ephemeral", ttl: "1h" } }] : [];
+  const out: ConvBlock[] = [];
+  const hasA = !!p.a.trim();
+  if (hasA) out.push({ type: "text", text: p.a, cache_control: p.warmCc });
+  if (p.b.trim()) out.push({ type: "text", text: p.b, cache_control: hasA ? { type: "ephemeral" } : p.warmCc });
+  return out;
 }

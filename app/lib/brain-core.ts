@@ -23,7 +23,7 @@ import {
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, shortHash, ensureLlmFetchChainInDev } from "@/app/lib/llm-usage-recorder";
 // 2026-10-02 竹内「1日に何度も連絡きたらキャッシュあたためて効かせれるように…切り替わるスイッチ…判断するようにブレインが」（cache-warm-switch.ts）
-import { cacheWarmMode, convBlockCacheControl, compactCacheWarm, type CacheWarmDecision } from "@/app/lib/cache-warm-switch";
+import { cacheWarmMode, convBlockCacheControl, compactCacheWarm, buildConvBlocks, type CacheWarmDecision } from "@/app/lib/cache-warm-switch";
 import { loadCacheWarmDecision, saveConvWarmPrefix } from "@/app/lib/cache-warm-switch-server";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数）と起点の名札
 import { decideNightDeferNow, type BrainOrigin } from "@/app/lib/brain-night-defer";
@@ -2482,9 +2482,19 @@ export async function analyzeConversation(
   //   user[1] customerSpecific（cache無し）= 上記DB動的データ + 顧客固有データ + 会話履歴
   // 2026-09-13 2層ブレイン: 今回の発言の層は「この会話の土台」（前回の全体分析 JSON・セーブポイント・お客様のプロフィール・出力の指定）を
   //   別ブロックにして、この会話専用のキャッシュ（5分）に乗せる。戦略の分析をやり直すまで変わらないので、連投・再生成の時に割引で読める
-  const freshStableText = isFreshLayer && opts?.strategy
-    ? `${buildFreshStrategyBlock(opts.strategy)}${checkpointText}${profileText}${aiSummaryNote}\n\n${FRESH_LAYER_OUTPUT_RULES}`
+  // 2026-10-02 竹内「4はオススメでする」（キャッシュ①）: 会話専用ブロックを2つに分ける（中身は同じ・並びだけ変える）。
+  //   旧は1ブロック（戦略 JSON → セーブデータ → プロファイル → 会話ストーリー → 出力の指定）で、どれか1つが変わると全部を書き直した。
+  //   本番9日の実測（scripts/audit-conv-block-split.ts）: 5分以内の組の q（次の本物まで変わらない率）は 0.58。崩す主因は
+  //   間に走る戦略の整理・全体分析・セーブデータ（89組中32）で、お客様の要約（プロファイル・会話ストーリーの元）が間に走ったのは 5。
+  //   → A＝変わりにくい物（顧客プロファイル＋会話ストーリー＝customer_summary の時だけ変わる）を先に・印あり、
+  //     B＝変わりやすい物（前回の全体分析 JSON＋セーブデータ）＋出力の指定 を後に・印あり。B が変わっても A は読める。
+  //   出力の指定は「上の【前回の全体分析】は…」と戦略より下にある前提の文なので B の最後のまま（文面を1文字も変えないため）。
+  //   印は system 2つ＋A＋B の4つ（上限4）。文字の集まりは旧と同じ（A＋B は旧の freshStableText を並べ替えた物）
+  const freshStableA = isFreshLayer && opts?.strategy ? `${profileText}${aiSummaryNote}` : "";
+  const freshStableB = isFreshLayer && opts?.strategy
+    ? `${buildFreshStrategyBlock(opts.strategy)}${checkpointText}\n\n${FRESH_LAYER_OUTPUT_RULES}`
     : "";
+  const freshStableText = `${freshStableA}${freshStableB}`;
   const stableKnowledgeText = freshStableText;
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
@@ -2522,24 +2532,25 @@ ${history}`;
     .filter((s) => s.length >= 3 && /[一-龯ぁ-んァ-ヶA-Za-z]/.test(s));
   const maskNames = [opts?.customerName, ...knownNamesForMask];
   const maskedStableText = maskPII(stableKnowledgeText, maskNames);
+  // 今回の発言の層は A・B の2ブロック（上の並べ替え）。全体分析の層は今まで通り1ブロック（今は空＝省略）
+  const convBlocks = buildConvBlocks({
+    isFreshLayer,
+    a: isFreshLayer ? maskPII(freshStableA, maskNames) : "",
+    b: isFreshLayer ? maskPII(freshStableB, maskNames) : "",
+    combined: isFreshLayer ? "" : maskedStableText,
+    warmCc: convBlockCacheControl(opts?.cacheWarm, cacheWarmMode()),
+  });
   const userContent = [
-    // 空のtextブロックはAPIエラーになるため、安定知識が空の場合はブロックごと省略
-    ...(maskedStableText.trim()
-      ? [{
-          type: "text" as const, text: maskedStableText,
-          // 今回の発言の層の土台は会話ごとに違うので5分（書き込み1.25倍・1時間は2倍）。連投・再生成の数分以内の再利用を狙う
-          // 2026-10-02: 温めのスイッチが ON かつ BRAIN_CACHE_WARM=on の時だけ 1h（convBlockCacheControl）。既定（shadow）は今まで通り 5分・文面は同じ
-          cache_control: isFreshLayer ? convBlockCacheControl(opts?.cacheWarm, cacheWarmMode()) : { type: "ephemeral" as const, ttl: "1h" as const },
-        }]
-      : []),
+    ...convBlocks,
     { type: "text" as const, text: maskPII(customerSpecificText, maskNames) },
   ];
   // 2026-10-02 温めのスイッチ: 会話専用ブロックの指紋を控える（brain_decision_logs.digest.cw.h＝次の本物まで変わらない率 q を監査で測る）。
-  //   mode=on で ON の時は、本物が送るバイト列（model・thinking・system・会話専用ブロック）を温め用に残す（送った後・応答は待たせない）
-  const convPrefixHash = isFreshLayer && maskedStableText.trim() ? shortHash(maskedStableText) : null;
+  //   分けた後は最初の印のブロック（A・無ければ B）の指紋＝温めが読み直す範囲。
+  //   mode=on で ON の時は、本物が送るバイト列（model・thinking・system・最初の会話専用ブロック）を温め用に残す（送った後・応答は待たせない）
+  const convPrefixHash = isFreshLayer && convBlocks.length ? shortHash(convBlocks[0].text) : null;
   if (conversationId) convPrefixHashOf.set(conversationId, convPrefixHash);
-  const saveConvWarmAfterCall = isFreshLayer && conversationId && opts?.cacheWarm?.on && cacheWarmMode() === "on" && userContent.length === 2
-    ? () => { const base = brainRequestBase(sys); void saveConvWarmPrefix(conversationId, { model: base.model, thinking: base.thinking, system: base.system, convBlock: userContent[0] }).catch(() => {}); }
+  const saveConvWarmAfterCall = isFreshLayer && conversationId && opts?.cacheWarm?.on && cacheWarmMode() === "on" && convBlocks.length > 0
+    ? () => { const base = brainRequestBase(sys); void saveConvWarmPrefix(conversationId, { model: base.model, thinking: base.thinking, system: base.system, convBlock: convBlocks[0] }).catch(() => {}); }
     : null;
 
   // 2026-09-23 竹内「ブレインのフル分析はクロードやけど、毎回の限定的な分析の部分は DeepSeek が行う形は出来るのか？」:

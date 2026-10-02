@@ -2,7 +2,7 @@
 //   スイッチ（decideCacheWarm）の閾値・夜・静かになったら止める・日が変わったら戻る と、TTL の切り替え・mode・損得の見積もりを固定する
 // 実行: npx tsx app/lib/__tests__/cache-warm-switch.test.ts（自己完結・env 不要。全 OK で exit 0）
 import {
-  decideCacheWarm, cacheWarmMode, cacheWarmParams, convBlockCacheControl, compactCacheWarm, estimateHotDayNetUsd,
+  decideCacheWarm, cacheWarmMode, cacheWarmParams, convBlockCacheControl, compactCacheWarm, estimateHotDayNetUsd, buildConvBlocks,
   CACHE_WARM_DEFAULTS, convWarmHash,
 } from "../cache-warm-switch";
 import { cacheGroupOf } from "../claude-model-map";
@@ -47,7 +47,10 @@ t("ON×shadow → 今まで通り 5分", JSON.stringify(convBlockCacheControl(d(
 t("OFF×on → 5分", JSON.stringify(convBlockCacheControl(d({ exchangesToday: 3 }), "on")) === JSON.stringify({ type: "ephemeral" }));
 t("null → 5分", JSON.stringify(convBlockCacheControl(null, "on")) === JSON.stringify({ type: "ephemeral" }));
 t("params の上書きと壊れた値", cacheWarmParams({ BRAIN_CACHE_WARM_MIN_EXCHANGES: "15", BRAIN_CACHE_WARM_QUIET_MIN: "x" }).minExchangesToday === 15 && cacheWarmParams({ BRAIN_CACHE_WARM_QUIET_MIN: "x" }).quietMinutes === 120);
-t("digest の短い形", JSON.stringify(compactCacheWarm(d({}), "shadow", "abcd1234")) === JSON.stringify({ on: true, r: "on", n: 12, th: 10, m: "shadow", h: "abcd1234" }));
+t("digest の短い形", JSON.stringify(compactCacheWarm(d({}), "shadow", "abcd1234")) === JSON.stringify({ on: true, r: "on", n: 12, th: 10, m: "shadow", h: "abcd1234", bn: "3:1,6:1,10:1" }));
+// 2026-10-02 竹内「記録だけとる」: N=3/6/10 それぞれなら ON だったかを影で記録（挙動は th のまま）
+t("影の N=3/6/10（7通・閾値10）→ 本物は OFF・3 と 6 は ON", (() => { const x = d({ exchangesToday: 7 }); return !x.on && x.reason === "below_threshold" && x.byN?.[3] === true && x.byN?.[6] === true && x.byN?.[10] === false && compactCacheWarm(x, "shadow", null).bn === "3:1,6:1,10:0"; })());
+t("影の N も夜は全部 OFF", (() => { const x = d({ nowMs: Date.parse("2026-10-02T14:00:00Z") }); return x.reason === "night" && !x.byN?.[3] && !x.byN?.[6] && !x.byN?.[10]; })());
 t("温めの行の hash", convWarmHash("c1") === "convwarm:c1");
 t("温めの名札はブレインの組（本物と同じモデルに写る）", cacheGroupOf("brain-conv-warm").includes("brain_fresh") && cacheGroupOf("brain_fresh").includes("brain-conv-warm"));
 
@@ -55,6 +58,21 @@ console.log("── 損得の見積もり（q が低い今は損・q が高け�
 const hot = { calls: 9, P: 3000, S: 40000, p5: 0.38, p60: 0.87, warms: 2 };
 t("今の q=0.43・P=3k → 損", estimateHotDayNetUsd({ ...hot, q: 0.43 }) < 0, estimateHotDayNetUsd({ ...hot, q: 0.43 }));
 t("q=0.9・P=8k → 得", estimateHotDayNetUsd({ ...hot, q: 0.9, P: 8000 }) > 0, estimateHotDayNetUsd({ ...hot, q: 0.9, P: 8000 }));
+
+// 2026-10-02 キャッシュ①（竹内「4はオススメでする」）: 会話専用ブロックを A（変わりにくい）・B（変わりやすい）に分ける
+console.log("── 会話専用ブロックの組み立て（buildConvBlocks）");
+{
+  const five = { type: "ephemeral" as const };
+  const hour = { type: "ephemeral" as const, ttl: "1h" as const };
+  const two = buildConvBlocks({ isFreshLayer: true, a: "A", b: "B", combined: "", warmCc: hour });
+  t("A・B の2ブロック・A が先・A は温めの印・B は5分", two.length === 2 && two[0].text === "A" && two[1].text === "B" && JSON.stringify(two[0].cache_control) === JSON.stringify(hour) && JSON.stringify(two[1].cache_control) === JSON.stringify(five));
+  const onlyB = buildConvBlocks({ isFreshLayer: true, a: "  ", b: "B", combined: "", warmCc: hour });
+  t("A が空なら B だけ・B が温めの印（旧の1ブロックと同じ）", onlyB.length === 1 && onlyB[0].text === "B" && JSON.stringify(onlyB[0].cache_control) === JSON.stringify(hour));
+  t("両方空なら出さない（空のブロックは API エラー）", buildConvBlocks({ isFreshLayer: true, a: "", b: "", combined: "", warmCc: five }).length === 0);
+  const full = buildConvBlocks({ isFreshLayer: false, a: "", b: "", combined: "X", warmCc: five });
+  t("全体分析の層は今まで通り1ブロック・1h", full.length === 1 && full[0].text === "X" && JSON.stringify(full[0].cache_control) === JSON.stringify(hour));
+  t("全体分析の層で空なら出さない", buildConvBlocks({ isFreshLayer: false, a: "", b: "", combined: "", warmCc: five }).length === 0);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
