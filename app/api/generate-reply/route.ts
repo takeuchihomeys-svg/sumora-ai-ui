@@ -110,6 +110,8 @@ import {
 // 2026-09-12 竹内方針C: 呼び名のサーバー側決定（DB名・履歴・is_aix_generated）。check-reply と同じ関数
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
+// 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
+import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
 import { findNearDuplicateSent } from "@/app/lib/closed-ack";
 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きます」を落とす／この会話で既に送った文を繰り返さない
 import { stripPointlessGuidance, fixAbsenceWording, recentUsedSentences, findRepeatedClosing, buildAvoidRepeatNote } from "@/app/lib/reply-phrasing";
@@ -5980,6 +5982,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // スタッフ確認モーダルに委ねる（強制置換なし）。チェック失敗は従来どおり fail-open。
             // トレーラーの finalCheck に revision_count が必ず載る（監査用）。
             let finalCheck: CheckResult | null = null;
+            let finalCheckGateLog: FinalCheckGateLog | null = null; // 2026-10-02 要否の判定（作り直しで finalCheck が置き換わっても tpo_debug に残す）
             if (isTemplateOptimize && draftBody.trim()) {
               console.log(JSON.stringify({tag:"degradation:fail-open",path:"template-bypass",conversationId}));
             }
@@ -6099,9 +6102,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // チェックのみ実行し、接地修正・フィードバック再生成でドラフトを機械的に触らない
                 // （謝罪ニュアンス等を revision が壊すリスク回避＋最大90秒超の無駄コスト削減。指摘の可視化だけで十分）
                 const finalCheckStart = Date.now(); // regen込み総予算の基準時刻（5-12）
-                const loop = sensitiveGateNote
-                  ? { finalDraft: draftBody, finalCheck: await runFinalCheck(draftBody, finalCheckCtx) }
-                  : await runFinalCheckWithRevision(draftBody, finalCheckCtx, 90000);
+                // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: センシティブは今までどおり runFinalCheck・それ以外は runFinalCheckWithRevision。
+                //   要否の判定（決まり文句だけ×了承だけ）は記録だけ（影の運用）。FINAL_CHECK_GATE=on の時だけ skip で LLM の段を省く（app/lib/final-check-gated.ts）
+                const loop = await runFinalCheckGated(draftBody, finalCheckCtx, {
+                  sensitive: !!sensitiveGateNote, autoSendConversation, postApply: postApplyConversation,
+                  stateUnknown: !!conversationId && postApplyResolved === null, budgetMs: 90000, conversationId,
+                });
+                finalCheckGateLog = loop.gate;
                 finalCheck = loop.finalCheck;
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
                 if (finalCheck.revision_count === undefined) finalCheck.revision_count = 0;
@@ -6613,6 +6620,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               materials: pairContext.materials,
               namedProperty: pairContext.namedProperty,
               preRevisionCodes: finalCheck.pre_revision_issues ?? [],
+              finalCheckGate: finalCheckGateLog, // 2026-10-02 最終チェックの要否（影の運用の記録・scripts/audit-final-check-gate.ts ⑦）
               unanchoredConditionEchoes: finalDraftText
                 ? findUnanchoredConditionEchoes(
                     finalDraftText,
