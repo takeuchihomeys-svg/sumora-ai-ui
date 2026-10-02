@@ -9,6 +9,7 @@
 //   ・「お待たせ致しました／お待たせいたしました／お待たせしました」は禁止語: 後処理 stripWaited で文節ごと除去、final-check BANNED_WORD で block。
 //   ・生成（buildGreetingNote）・後処理（enforceOpening）・検査（final-check ⑦）・保存（toGreetingLite）が同じ GreetingDecision を参照する（四者同名）。
 import { canonOf } from "./validate-reply";
+import { isYesNoConfirmQuestion } from "./opener-question";
 import { jstDayStartMs } from "./jst-date"; // 2026-09-12 竹内方針D: JST の日付計算は jst-date に一本化
 import type { CustomerResponseKind, SubstanceKind } from "./reply-context"; // type-only（実行時の循環 import なし）
 import { isConditionFormMessage, isApplyGuideThinking } from "./reply-context"; // reply-context は greeting を import しない（循環なし）
@@ -89,6 +90,12 @@ export type GreetingDecision = {
    * 挨拶は「〇〇さんお世話になっております！！」で、LLM が書いた初回の自己紹介（はじめまして…鈴木と申します）も剥がす（enforceOpening）
    */
   stripFirstIntro?: boolean;
+  /**
+   * 2026-10-02 夜 竹内さん「かしこまりましたとか違う」（ゆいと「内見はできない感じってことですかね？」）: お客様の発言がこちらの言った事・状況の確かめの質問。
+   * この時は、本文がこれから動く引き受け（ピックアップ・お送り・確認させて 等）でない限り「かしこまりました」を置かない（enforceOpener が外す）。
+   * 人の手打ち 180日の確かめの質問 41通: 本題から 28・はい 8・かしこまりました 5（5通とも本文はピックアップ・見積書を送る引き受け）
+   */
+  openerConfirmQuestion?: boolean;
 };
 
 /**
@@ -105,7 +112,7 @@ export function isReturningCustomerOpening(text: string | null | undefined): boo
 }
 
 /** DB（tpo_debug.greeting → reply_context_snapshot）・check-reply 転送用の軽量形 */
-export type GreetingDecisionLite = Pick<GreetingDecision, "kind" | "openingLine" | "nightPrefix" | "enforce" | "opener" | "openerAllowed" | "openerReason" | "reason" | "audit" | "openerBodyRule" | "openerStrict">;
+export type GreetingDecisionLite = Pick<GreetingDecision, "kind" | "openingLine" | "nightPrefix" | "enforce" | "opener" | "openerAllowed" | "openerReason" | "reason" | "audit" | "openerBodyRule" | "openerStrict" | "openerConfirmQuestion">;
 export function toGreetingLite(d: GreetingDecision): GreetingDecisionLite {
   return {
     kind: d.kind, openingLine: d.openingLine, nightPrefix: d.nightPrefix, enforce: d.enforce,
@@ -113,6 +120,7 @@ export function toGreetingLite(d: GreetingDecision): GreetingDecisionLite {
     // 2026-09-18 竹内（ゆうこ事例）: 検査（final-check ⑦-e）も後処理と同じ線を見る（四者同名）
     openerBodyRule: d.openerBodyRule,
     openerStrict: d.openerStrict,
+    openerConfirmQuestion: d.openerConfirmQuestion,
   };
 }
 
@@ -357,7 +365,7 @@ export function resolveGreeting(opts: {
       substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply, customerSentConditionForm, applyGuideThinking, ackPush,
     });
     const conditionFormThanks = customerSentConditionForm && kind !== "first" && kind !== "late_apology" && !opts.isDeliverableReply;
-    return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks };
+    return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks, openerConfirmQuestion: isYesNoConfirmQuestion(unrepliedCustomerText) || undefined };
   };
 
   // 2026-10-02 ⑫: この LINE で最初の返事でも、お客様が以前のやり取りを示す（お世話になっております・以前お世話になった）時は
@@ -436,6 +444,9 @@ export function classifyReplyBody(body: string): ReplyBodyKind {
   return BODY_ANSWER_RE.test(t) ? "answer" : "unknown";
 }
 
+/** 確かめの質問への返事で かしこまりました を残してよい本文（これから動く引き受け） */
+const CONFIRM_Q_UNDERTAKE_RE = /ピックアップ|お送り(?:致し|いたし|し|させて(?:頂|いただ)き)ます|確認させて|お調べ|探させて|交渉させて|手配/;
+
 function openerLiteral(k: OpenerKind, emoji: string): string {
   if (k === "none") return "";
   return k === "hai" ? `はい${emoji}！！` : `かしこまりました${emoji}！！`;
@@ -445,11 +456,18 @@ function openerLiteral(k: OpenerKind, emoji: string): string {
  * 開口語層のみ（挨拶行を剥がした rest に対して呼ぶ）。LLM の開口語を尊重し、openerAllowed に無い時だけ置換／除去。
  * 無い時に足すことはしない（成約データに無い組合せを作らない）。承知／了解 → かしこまりました に正規化（正解 承知 4 vs かしこまりました 311）。
  */
-export function enforceOpener(rest: string, d: Pick<GreetingDecision, "opener" | "openerAllowed" | "openerBodyRule" | "openerStrict">): { rest: string; fixes: string[] } {
+export function enforceOpener(rest: string, d: Pick<GreetingDecision, "opener" | "openerAllowed" | "openerBodyRule" | "openerStrict"> & { openerConfirmQuestion?: boolean }): { rest: string; fixes: string[] } {
   const fixes: string[] = [];
   const op = detectOpener(rest);
   if (!op) return { rest, fixes };
   const body = rest.trimStart().slice(op.match.length).trimStart();
+  // 2026-10-02 夜 竹内さん「かしこまりましたとか違う。ここの最初の言い回しで文がかなり違うようになるから」:
+  //   確かめの質問（「〜ってことですかね？」）への返事で、本文が引き受け（ピックアップ・お送り・確認させて 等）でない時の かしこまりました は外して本題から
+  //   （人の手打ち: 本題から 28・はい 8・かしこまりました 5＝5通とも引き受け＝この線で人の文は1通も変わらない・scripts/audit-opener-yesno-question.ts）
+  if (d.openerConfirmQuestion && op.opener === "kashikomari" && body && !CONFIRM_Q_UNDERTAKE_RE.test(body)) {
+    fixes.push(`開口語「${op.match.trim()}」を除去（確かめの質問への答え＝本題から。竹内さん 10/02 ゆいと）`);
+    return { rest: body, fixes };
+  }
   // 2026-09-18 竹内（ゆうこ事例）: 質問に答える場面だけ、開口語を**返信の中身**で決め直す。
   //   allowed の判定より先に置く（question の allowed は かしこまりました も はい も含むので、通り抜けてしまう）
   //   直すのは「その場で答える返信」の側だけ（実データ はい28／かしこまりました1）。
@@ -550,7 +568,9 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
   const bodyRuleLine = d.openerBodyRule
     ? "開口語を置くなら**返信の中身**で決める: その場で答える文（「〜となります」「〜はございません」）なら「はい😊！！」。「かしこまりました」はこれから動く時（確認・手配）とお客様のご希望を飲む時（「13時で可能です」）の語なので、質問に即答するのに使わない。"
     : "";
-  const forbidLine = bodyRuleLine + (forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "")
+  // 2026-10-02 夜 竹内さん「かしこまりましたとか違う」: 確かめの質問（「〜ってことですかね？」）への答えは「かしこまりました」で始めない（本題から・答えなら「はい」）
+  const confirmQLine = d.openerConfirmQuestion ? "お客様は確かめの質問（「〜ってことですかね？」等）をしている。「かしこまりました」で始めない（答えから書く・はい／いいえが答えなら「はい😊！！」も可）。" : "";
+  const forbidLine = confirmQLine + bodyRuleLine + (forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "")
     + (d.conditionFormThanks ? `お客様が条件フォームを送ってくれたので、${where}は必ず「${CONDITION_FORM_THANKS}」（フォームへの感謝）→ 続けてお客様の条件（エリア・家賃・間取り等をお客様の語のまま）で物件をピックアップしてお送りする宣言。` : "");
   const common = `「お待たせ致しました」「お待たせしました」は禁止語（返信を待たせた体裁を作らない。結果報告でも使わない）。「ありがとうございます」「ご連絡ありがとうございます」だけの書き出しは禁止（目的語付き「〇〇お送り頂きありがとうございます」は可）。「夜遅くに失礼します」「夜分遅くに失礼致します」は返信に書かない（時間帯を問わず）。`;
   switch (d.kind) {
