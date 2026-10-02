@@ -27,8 +27,9 @@ export async function GET(req: NextRequest) {
   // 直近7日に成約したケース
   const { data: recentWon } = await supabase
     .from("conversations")
-    .select("customer_name, conversation_state, updated_at")
-    .eq("conversation_state", "closed_won")
+    // 2026-10-02: conversations に conversation_state は無い（成約は status='closed_won'）。旧は毎回エラーで成約の例が空だった
+    .select("status, updated_at")
+    .eq("status", "closed_won")
     .gte("updated_at", since)
     .limit(10);
 
@@ -49,7 +50,8 @@ export async function GET(req: NextRequest) {
     .map(k => `[${k.category}] ${k.title}: ${(k.content ?? "").slice(0, 200)}`)
     .join("\n");
   const wonSummary = (recentWon ?? [])
-    .map(w => `${w.customer_name} → closed_won (${w.updated_at?.slice(0, 10)})`)
+    // お客様の名前は LLM に渡さない（成約の日付だけ）
+    .map(w => `成約 → closed_won (${w.updated_at?.slice(0, 10)})`)
     .join("\n");
 
   const prompt = `あなたはシステム設計思想を抽出するエージェントです。
