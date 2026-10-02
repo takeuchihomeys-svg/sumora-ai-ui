@@ -134,5 +134,7 @@ export async function GET(req: NextRequest) {
     // 2026-10-02 ⑯ 「◯◯に出やすい」の決定論の範囲（拡張はこれがある時、手元の語の分解より先にこの駅で検索する）と家賃の相場の材料
     area_plan: resolvedArea?.area_plan ?? null,
     rent_market: ctx.rentMarket ?? null,
+    // 2026-10-02 ⑯ 手順4b: 整理済みの物件検索の知識（希望→スタッフが届けた駅・区／言い直し・人数2人以上）
+    learned_areas: resolvedArea?.learned_areas ?? [],
   });
 }

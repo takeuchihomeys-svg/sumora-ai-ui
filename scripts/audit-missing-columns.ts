@@ -13,7 +13,9 @@ import { createClient } from "@supabase/supabase-js";
 
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 
-const FROM_RE = /\.from\(\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]\s*\)/g;
+// 受け手の名前も取る（「sbScreening.from(…)」「scr.from(…)」＝申込ツール（screening-admin）の別の DB は見ない・2026-10-02 親の指摘で daily_tasks が誤検出だった）
+const FROM_RE = /([A-Za-z_$][\w$]*)?\s*\.from\(\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]\s*\)/g;
+const OTHER_DB_RE = /screen|^scr$/i;
 const FILTER_RE = /\.(order|eq|neq|gt|gte|lt|lte|in|is|not|like|ilike|contains|overlaps|match)\(\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]/g;
 const STOP_RE = /\.from\(|\n\s*\n|;\s*\n/;
 
@@ -26,6 +28,7 @@ const STOP_RE = /\.from\(|\n\s*\n|;\s*\n/;
     let src: string;
     try { src = fs.readFileSync(f, "utf8"); } catch { continue; }
     for (const m of src.matchAll(FROM_RE)) {
+      if (m[1] && OTHER_DB_RE.test(m[1])) continue;
       const start = (m.index ?? 0) + m[0].length;
       let chunk = src.slice(start, start + 1500);
       const next = chunk.search(STOP_RE);
@@ -33,7 +36,7 @@ const STOP_RE = /\.from\(|\n\s*\n|;\s*\n/;
       for (const fm of chunk.matchAll(FILTER_RE)) {
         const around = chunk.slice(Math.max(0, (fm.index ?? 0) - 60), (fm.index ?? 0) + 80);
         if (/referencedTable|foreignTable/.test(around)) continue;
-        uses.push({ f, line: src.slice(0, start + (fm.index ?? 0)).split("\n").length, table: m[1], op: fm[1], col: fm[2] });
+        uses.push({ f, line: src.slice(0, start + (fm.index ?? 0)).split("\n").length, table: m[2], op: fm[1], col: fm[2] });
       }
     }
   }
@@ -50,5 +53,5 @@ const STOP_RE = /\.from\(|\n\s*\n|;\s*\n/;
   const hits = uses.filter((u) => missing.has(`${u.table}.${u.col}`));
   console.log(`■ 表に無い列での並べ・絞り: ${hits.length}か所（調べた組 ${pairs.length}・表が無い ${noTable.size}）`);
   for (const h of hits) console.log(`  ${h.f}:${h.line}  ${h.table}.${h.op}("${h.col}")`);
-  if (noTable.size) console.log(`  （コードにあるが DB に無い表: ${[...noTable].join("・")}）`);
+  if (noTable.size) console.log(`  （この DB に無い表＝別のクライアントの表か消えた表・要確認: ${[...noTable].join("・")}）`);
 })();

@@ -7,6 +7,7 @@ import OpenAI from "openai";
 // 2026-10-02 ⑯ 「なんば・梅田に出やすい」は LLM の前に静的な路線図で決める（電車15分・乗換なし／タクシーの目安 直線5km＝竹内さんの決定）
 import { readRelativeArea, readRideAsks, extLines, type AreaPlan } from "@/app/lib/osaka-area-profile";
 import { customerAreaPlan } from "@/app/lib/area-want";
+import { desiredKeys, loadSearchKnowledge } from "@/app/lib/property-search-knowledge-server";
 
 const _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -734,7 +735,14 @@ export async function POST(req: NextRequest) {
     const relSpans = [...readRelativeArea(desired_area, freeText).spans, ...readRideAsks(desired_area).spans];
     // 住む駅・区・路線が書いてある人（「弁天町駅、森ノ宮駅…（本町駅と京都に行きやすいところ）」）は作らない＝検索を広げない
     const areaPlan: AreaPlan | null = customerAreaPlan(desired_area, freeText);
-    let planSites: { realpro: { station_names: string[]; route_ids: string[] }; itandi: { line_names: string[]; station_names: string[] } } | null = null;
+    // ── 2026-10-02 ⑯ 手順4b: 整理済みの物件検索の知識を LLM より先に読む（希望の駅・区 → スタッフが実際に届けた駅・区／エリアの言い直し・人数2人以上）。
+    //   今は応答に載せるだけ（learned_areas）＝検索の駅は増やさない（1人の癖で広げない・効くかは手順5 以降で測る）。読んだ記録は last_used_at・use_count
+    let learnedAreas: Array<{ kind: string; key: string; customers: number; line: string }> = [];
+    try {
+      const kn = await loadSearchKnowledge(db, desiredKeys(desired_area, freeText).keys);
+      learnedAreas = kn.map((k) => ({ kind: k.kind, key: k.key, customers: k.evidence_count, line: k.content }));
+    } catch { /* 知識は付け足し */ }
+    let planSites:{ realpro: { station_names: string[]; route_ids: string[] }; itandi: { line_names: string[]; station_names: string[] } } | null = null;
     if (areaPlan) {
       const nf = desired_area.normalize("NFKC");
       let rest = "";
@@ -770,7 +778,7 @@ export async function POST(req: NextRequest) {
         itandi: { line_names: [...result.itandi.line_names], station_names: [...result.itandi.station_names] },
       };
       console.log(`[resolve-area] area_plan: ${areaPlan.summary}（駅 ${result.realpro.station_names.length - realpro_before} を各サイトの名前に）`);
-      if (!leftover) return NextResponse.json({ ...result, area_plan: { ...areaPlan, sites: planSites }, normalized_area: null });
+      if (!leftover) return NextResponse.json({ ...result, area_plan: { ...areaPlan, sites: planSites }, normalized_area: null, learned_areas: learnedAreas });
     }
 
     for (const tok of tokens) {
@@ -1172,7 +1180,7 @@ commute_constraints: 通勤・通学・乗り換え制約
     }
 
     const normalized_area = await _normalizePromise.catch(() => null);
-    return NextResponse.json({ ...result, normalized_area, ...(areaPlan ? { area_plan: { ...areaPlan, sites: planSites } } : {}) });
+    return NextResponse.json({ ...result, normalized_area, ...(areaPlan ? { area_plan: { ...areaPlan, sites: planSites } } : {}), learned_areas: learnedAreas });
   } catch (e) {
     console.error("[resolve-area] error:", e);
     return NextResponse.json({ error: "internal error" }, { status: 500 });

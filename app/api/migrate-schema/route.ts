@@ -4498,6 +4498,35 @@ DROP TRIGGER IF EXISTS rent_observe_sent_trg ON sent_properties;
 CREATE TRIGGER rent_observe_sent_trg AFTER INSERT OR UPDATE OF customer_reaction ON sent_properties
   FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
 
+-- ════════════════════════════════════════════════════════════════════
+-- 2026-10-02 ⑯ 手順4b: property_search_knowledge を「整理済みの物件検索の知識」の置き場に（8/22 に作られ0行・どこからも使われていなかった）
+--   書くのは決定論の組み立てだけ（app/lib/property-search-knowledge-server.ts・LLM なし）。読むのは物件検索のブレイン（property-brain-rag）と resolve-area。
+--   kind: desired_to_delivered＝お客様の希望の駅・区 → スタッフが実際にお客様へ届けた部屋の駅・区（人数つき・申込に進んだ人の分も）
+--         area_restatement＝お客様のエリアの言い直し（前 → 後・人数・申込に進んだか）
+--   is_current=false＋retired_reason で退役（消さない）。last_used_at・use_count＝読まれた記録（手順5 の整理で使う）
+-- ════════════════════════════════════════════════════════════════════
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS branch_id text NOT NULL DEFAULT 'osaka';
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS kind text;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS key text;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS payload jsonb;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS evidence_count integer NOT NULL DEFAULT 0;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS is_current boolean NOT NULL DEFAULT true;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS retired_reason text;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS source text;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS last_used_at timestamptz;
+ALTER TABLE property_search_knowledge ADD COLUMN IF NOT EXISTS use_count integer NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS property_search_knowledge_kind_key_current ON property_search_knowledge (branch_id, kind, key) WHERE is_current;
+COMMENT ON COLUMN property_search_knowledge.kind IS 'desired_to_delivered（希望の駅・区→スタッフが届けた駅・区）／area_restatement（エリアの言い直し）';
+COMMENT ON COLUMN property_search_knowledge.key IS 'station:<駅のまとまりの代表> または ward:<区・市>';
+COMMENT ON COLUMN property_search_knowledge.payload IS '集計（人数・部屋数・届けた駅/区の人数・申込に進んだ人の駅/区）。お客様の名前・発言は持たない';
+COMMENT ON COLUMN property_search_knowledge.evidence_count IS '根拠の人数（お客様の数）';
+
+-- 読まれた記録（1回の読みでまとめて数える）
+CREATE OR REPLACE FUNCTION psk_mark_used(p_ids uuid[]) RETURNS void
+LANGUAGE sql AS $$
+  UPDATE property_search_knowledge SET last_used_at = now(), use_count = use_count + 1 WHERE id = ANY(p_ids)
+$$;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

@@ -165,6 +165,11 @@ const PATHS: Array<{ table: string; what: string; col?: string }> = [
   console.log("\n■ ⑥ 整理（統合・退役・食い違い）");
   {
     const all = await count("property_search_knowledge");
-    console.log(`  property_search_knowledge: ${all ?? "?"}行（整理の流れは手順5で作る。今は数だけ）`);
+    const cur = await count("property_search_knowledge", (q) => q.eq("is_current", true));
+    const readableN = await count("property_search_knowledge", (q) => q.eq("is_current", true).gte("evidence_count", 2));
+    const used = await count("property_search_knowledge", (q) => q.eq("is_current", true).not("last_used_at", "is", null));
+    const usedWeek = await count("property_search_knowledge", (q) => q.gte("last_used_at", since));
+    const retired = await count("property_search_knowledge", (q) => q.eq("is_current", false));
+    console.log(`  property_search_knowledge: 全 ${all ?? "?"}・今の ${cur ?? "?"}（読める＝2人以上 ${readableN ?? "?"}）・一度でも読まれた ${used ?? "?"}・今週読まれた ${usedWeek ?? "?"}・退役 ${retired ?? "?"}（作り直し: scripts/build-property-search-knowledge.ts --apply・整理は手順5）`);
   }
 })();

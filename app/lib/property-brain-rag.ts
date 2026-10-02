@@ -5,6 +5,8 @@ import { buildCustomerProfile } from "@/app/lib/property-brain";
 import { customerAreaAndRent } from "@/app/lib/area-rent-server";
 import { wardAccessFacts, type AreaPlan } from "@/app/lib/osaka-area-profile";
 import type { RentMarket } from "@/app/lib/area-rent-explain";
+// 2026-10-02 ⑯ 手順4b: 整理済みの物件検索の知識（希望の駅・区→スタッフが届けた駅・区／エリアの言い直し）
+import { desiredKeys, loadSearchKnowledge, knowledgeLines } from "@/app/lib/property-search-knowledge-server";
 
 // ── 型定義 ──────────────────────────────────────────────────────────────────
 
@@ -74,6 +76,8 @@ export interface PropertyBrainContext {
   areaPlan?: AreaPlan | null;
   /** 2026-10-02 ⑯ 希望の区×間取りの家賃の相場（当社の検索で見つかった物件・管理費込み） */
   rentMarket?: RentMarket | null;
+  /** 2026-10-02 ⑯ 整理済みの物件検索の知識の行（人数2人以上だけ） */
+  searchKnowledge?: string[];
 }
 
 // ── エリアトークン分解 ───────────────────────────────────────────────────────
@@ -244,7 +248,13 @@ export async function buildPropertyBrainContext(
     floor_plan: pc.floor_plan, rent_max: pc.rent_max, pet: pc.pet, building_age: pc.building_age,
   });
 
-  return { customer, sentHistory, areaKnowledge, learnedPatterns, areaPlan, rentMarket };
+  let searchKnowledge: string[] = [];
+  try {
+    const { keys } = desiredKeys(pc.desired_area, [pc.preferences, pc.other_requests].filter(Boolean).join("\n"));
+    searchKnowledge = knowledgeLines(await loadSearchKnowledge(supabase, keys));
+  } catch { /* 知識は付け足し・無くても判定は止めない */ }
+
+  return { customer, sentHistory, areaKnowledge, learnedPatterns, areaPlan, rentMarket, searchKnowledge };
 }
 
 // ── テキスト形式でブレインプロンプトに注入できる文字列に変換 ─────────────────
@@ -284,6 +294,10 @@ export function formatContextForPrompt(ctx: PropertyBrainContext): string {
     lines.push("\n【エリアの判断（決定論）】");
     lines.push(ctx.areaPlan.summary);
     for (const f of wardAccessFacts(ctx.areaPlan, 8)) lines.push(`・${f}`);
+  }
+  if (ctx.searchKnowledge?.length) {
+    lines.push("\n【過去の届け先・エリアの言い直し（スタッフの実際の選択・人数）】");
+    for (const l of ctx.searchKnowledge) lines.push(l);
   }
   if (ctx.rentMarket?.facts?.length) {
     lines.push("\n【家賃の相場（当社の検索で見つかった物件・管理費込み）】");
