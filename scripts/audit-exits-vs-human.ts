@@ -16,7 +16,7 @@
 //   DB は読むだけ・LLM は呼ばない（入口 llm-test-harness は不要）。本文は個人情報を含むので --json/--cache はリポジトリの外に置く。
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
-import { validateAndClean, detectPlaceholders, resolveAddressName } from "@/app/lib/validate-reply";
+import { validateAndClean, detectPlaceholders, resolveAddressName, GROUND_SEP } from "@/app/lib/validate-reply";
 import { draftToSendableText } from "@/app/lib/draft-text";
 import { stripVagueDeferral } from "@/app/lib/viewing-access";
 import { stripPointlessGuidance, fixAbsenceWording } from "@/app/lib/reply-phrasing";
@@ -170,6 +170,8 @@ function diffSpan(a: string, b: string): { before: string; after: string } {
         const vr = validateAndClean(cur, {
           aixGates: true, customerName: addr.name, nameAliases: addr.aliases, customerMessage: cust, lastStaffMsg: lastStaff?.text ?? "",
           now: sendAt, customerMessageAt: lastCust?.created_at ?? null, lastStaffMessageAt: lastStaff?.created_at ?? null,
+          // 2026-10-02 ⑫: generate-reply と同じく、直近25通の文を金額の根拠に（見積金額内訳ゲートの引用の免除）
+          groundText: before.slice(-25).map((x) => x.text ?? "").join(GROUND_SEP),
         });
         step("validateAndClean", vr.cleaned, vr.issues.map((s) => s.replace(/^表層修正: /, "").replace(/×\d+$/, "").replace(/^AIXゲート違反\(置換済\): /, "GATE:").slice(0, 60)));
         step("stripVagueDeferral", stripVagueDeferral(cur));

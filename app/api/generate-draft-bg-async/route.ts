@@ -14,7 +14,7 @@ import { MSG_SEP } from "@/app/lib/reply-context";
 // 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
 import { shouldSkipDraftAfterClosing } from "@/app/lib/previous-send-note";
 import { DRAFT_SENTINEL_NO_REPLY } from "@/app/lib/draft-text";
-import { applyConditionGuards } from "@/app/lib/rent-raise";
+import { applyConditionGuards, withRentOrder } from "@/app/lib/rent-raise";
 // 2026-09-30 入口の見分け（お客様の条件か・物件の問い合わせか）と、条件の履歴の根拠の発言
 import { classifyConditionTurn, gateExtractedConditions, mergeAreaForBrainBridge } from "@/app/lib/condition-source-gate";
 import { classifyByKeywords } from "@/app/lib/condition-intent";
@@ -219,6 +219,8 @@ async function applyBrainConditionChange(
     if (existing !== v) changedFields[f] = v;
   }
   if (Object.keys(updates).length === 0) return;
+  // 2026-10-02 ⑫: 家賃の下限＞上限の行を作らない（rent-raise.withRentOrder）
+  { const ro = withRentOrder(pc as { rent_max?: number | null; rent_min?: number | null } | null, updates); if (ro.note) { Object.assign(updates, ro.updates); console.log(JSON.stringify({ tag: "bg-async:rent-order", convId, note: ro.note })); } }
 
   const conditionActuallyChanged = Object.keys(changedFields).length > 0;
   await db.from("property_customers")

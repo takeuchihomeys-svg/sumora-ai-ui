@@ -382,10 +382,11 @@ export const FIRST_GREETING_SENTENCE_RE =
 export const RETURNING_FIRST_INTRO_RE =
   /^(?:「?[^\n！!。]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|この度ご連絡|お部屋探し[^！!。\n]{0,30}申します)[^！!。\n]{0,40}?(?:[！!。]+|\n)\s*/;
 
-/** 禁止語（G32）。final-check BANNED_WORDS_DETERMINISTIC と同名の語 */
-export const WAITED_RE = /お待たせ(?:致|いた)?しました/;
+/** 禁止語（G32）。final-check BANNED_WORDS_DETERMINISTIC と同名の語
+ *  2026-10-02 ⑫ 8巡目: 「お待たせしております」（DeepSeek の下書き）が言い換えで禁止をすり抜けた → して(おります|います) も同じ禁止にする（人の手打ち 365日で1通。「お待たせしてしまい申し訳…」の謝りは文ごと消すと意味が変わるので当てない） */
+export const WAITED_RE = /お待たせ(?:(?:致|いた)?しました|して(?:おります|います))/;
 /** 文中どこにあっても「〇〇さんお待たせ致しました！！」の文節ごと除去（同一文内の名前呼びかけも含めて） */
-export const WAITED_SENTENCE_RE = /[^\n！!。]*お待たせ(?:致|いた)?しました[^\n！!。]{0,10}(?:[！!。]+)?[ \t]*/g;
+export const WAITED_SENTENCE_RE = /[^\n！!。]*お待たせ(?:(?:致|いた)?しました|して(?:おります|います))[^\n！!。]{0,10}(?:[！!。]+)?[ \t]*/g;
 export function stripWaited(text: string): { text: string; removed: number } {
   let removed = 0;
   const out = text

@@ -24,7 +24,7 @@ import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-
 //   条件の欄に書く全経路（正式フォーマットのカジュアル更新・P4・経路C）で、発言のうち条件として読んでよい部分だけを使う
 import { classifyConditionTurn, gateExtractedConditions, decideAreaMode, isApplyPaperText, PORTAL_URL_RE, type ConditionTurn } from "@/app/lib/condition-source-gate";
 // 2026-09-27 竹内（野口さん「もう少し家賃あげて」・未桜さん「7畳以上の部屋」）: 抽出した家賃・広さを決定論で直す（家賃を上げて＝上限を上げる・下限は言った時だけ・帖→㎡）
-import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo } from "@/app/lib/rent-raise";
+import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo, withRentOrder } from "@/app/lib/rent-raise";
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 import { walkMinutesInText } from "@/app/lib/walk-minutes-text";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
@@ -1188,6 +1188,15 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, con
       intentResult.intent,
       intentResult.excludeTargets,
     );
+    // 2026-10-02 ⑫: 家賃の下限＞上限の行を作らない（今回言った側を残し、前の反対側を外す・rent-raise.withRentOrder）
+    {
+      const said: Record<string, unknown> = {};
+      const p = parsed as Record<string, unknown>;
+      if (p.rent_max != null) said.rent_max = p.rent_max;
+      if (p.rent_min != null) said.rent_min = p.rent_min;
+      const ro = withRentOrder(existingConds as { rent_max?: number | null; rent_min?: number | null }, said);
+      if (ro.note) { Object.assign(mergedConds as Record<string, unknown>, ro.updates); console.log(JSON.stringify({ tag: "autoParseFormat:rent-order", convId, note: ro.note })); }
+    }
     return { mergedConds, intent: intentResult.intent };
   };
 
@@ -1572,6 +1581,11 @@ ${customerText.slice(0, 600)}
   }
 
   if (Object.keys(updates).length === 0) return; // 抽出条件なし → スキップ
+  // 2026-10-02 ⑫: 家賃の下限＞上限の行を作らない（rent-raise.withRentOrder・1191b1eb の 50,000＞20,000）
+  {
+    const ro = withRentOrder(existingPcRec as { rent_max?: number | null; rent_min?: number | null } | null, updates);
+    if (ro.note) { Object.assign(updates, ro.updates); console.log(JSON.stringify({ tag: "P4:rent-order", convId, note: ro.note })); }
+  }
 
   const { error: updateErr } = await db
     .from("property_customers")

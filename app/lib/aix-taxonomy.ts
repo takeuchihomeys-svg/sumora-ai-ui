@@ -117,7 +117,7 @@ export const AIX_ACTION_REPLY_DIRECTION: Record<string, AixActionReplyDirection>
   //     （GOCHOUGO_NO_CONDITION）と line-reply-prompts 5か所の禁止に当たり、修正ループで往復する。実送信の裏付けも 2/123（1.6%）。
   //     → viewingOfferLiteral と同じ条件節付き（「よろしければ〜」）にする。疑問形の禁止（forbid）はそのまま
   viewing_invite:          { direction: "内覧希望の受付のみ（候補日時と「ご都合よろしいお日にち御座いますでしょうか」の確認はAIX内覧日調整で送る）", weDo: "かしこまりました！！よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます！！", forbid: "具体的な候補日時・2択日程／「ご都合よろしいお日にち御座いますでしょうか」の疑問形（実送信では日時とセットの時だけ）／申込誘導／募集未確認物件への内覧確約" },
-  meeting_place:           { direction: "内覧確定の受付（住所・集合場所・時間はAIX待ち合わせで送る）", weDo: "内覧の詳細についてはご連絡させて頂きます！！", forbid: "住所・集合場所・集合時間の記載" },
+  meeting_place:           { direction: "内覧確定の受付（住所・集合場所・時間はAIX待ち合わせで送る）", weDo: "〇日何卒よろしくお願い致します！！", forbid: "住所・集合場所・集合時間の記載・「内覧の詳細については（改めて）ご連絡」（人の実送信0通・2026-10-02 ⑫）" },
   greeting_viewing:        { direction: "内覧当日・前後の短い挨拶（40〜80字）", weDo: "本日何卒よろしくお願い致します！！", forbid: "感想ヒアリング／別物件提案／長文" },
   condition_hearing:       { direction: "未取得条件の確認（フォーム本体はAIXで送る）", weDo: "ご希望条件お聞かせ頂けますと幸いです！！", forbid: "①〜⑧フォーム全文の生成／確認済み条件の聞き返し" },
   application_push:        { direction: "お客様が前向きな場面での申込誘導（希少性煽り禁止・事実ベースの期限のみ）", weDo: "お気に召されましたらお申込みでお部屋押さえさせて頂きます！！", forbid: "「埋まってしまいます」「残り1部屋」等の煽り／書類リストの生成" },

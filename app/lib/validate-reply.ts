@@ -769,7 +769,34 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
 ];
 
 /** ゲートの判定に使う文脈（顧客条件の復唱免除に使う） */
-type GateOpts = { customerMessage?: string; lastStaffMsg?: string; customerConditions?: string; costBreakdownAix?: boolean };
+type GateOpts = { customerMessage?: string; lastStaffMsg?: string; customerConditions?: string; costBreakdownAix?: boolean; groundText?: string };
+
+/**
+ * 2026-10-02 ⑫（竹内さんの指示「見積金額内訳のゲートがスタッフの推し文（家賃管理費込59,000円…）を見積書の宣言に書き換える→測り直して狭める」）:
+ *   文の中の金額（円・万円・ヶ月）が全部、この会話に既に出ている文字（こちらが送った物件の紹介・御見積書の文・お客様の発言）にそのまま有る時は、
+ *   AI が作った金額ではない（資料から写した金額の引用）＝見積金額内訳ゲートの対象外。会話に無い金額が1つでもあれば従来どおり止める。
+ *   見積書の送付を装う文（見積書となります・同封・添付）は別のゲート（見積書カバー文）が見る
+ */
+export function isGroundedAmountSentence(s: string, groundText: string | undefined): boolean {
+  if (!groundText) return false;
+  const norm = (t: string) => t.normalize("NFKC").replace(/[,，]/g, "");
+  // 2026-10-02 ⑫: 金額は全部「同じ1通」に有ること（別々の通の数字を寄せ集めて別の物件の金額にしない）。通の区切りは GROUND_SEP
+  const chunks = groundText.split(GROUND_SEP).map(norm);
+  const h = norm(s);
+  const amounts = [
+    ...[...h.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*(万)?\s*円/g)].map((m) => ({ n: m[1], unit: m[2] ? "万" : "円" })),
+    ...[...h.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*[ヶケか]月/g)].map((m) => ({ n: m[1], unit: "ヶ月" })),
+  ];
+  if (amounts.length === 0) return false;
+  const esc = (n: string) => n.replace(".", "\\.");
+  const found = (g: string, a: { n: string; unit: string }) =>
+    a.unit === "ヶ月" ? new RegExp(`(?<![0-9.])${esc(a.n)}\\s*[ヶケか]月`).test(g)
+      : a.unit === "万" ? new RegExp(`(?<![0-9.])${esc(a.n)}\\s*万`).test(g)
+        : new RegExp(`(?<![0-9.])${esc(a.n)}\\s*円`).test(g);
+  return chunks.some((g) => amounts.every((a) => found(g, a)));
+}
+/** groundText の通の区切り（generate-reply・監査が通をこれでつなぐ） */
+export const GROUND_SEP = "\n\u0001\n";
 
 // 2026-09-15 竹内（ゆうこ事例）「AIX から送る費用についての項目となるから適当なこと言わないため」:
 //   ブレインが AIX【初期費用について】を選んだ時、本文の「初期費用は家賃・管理費に加え敷金礼金等含む総額となり、家賃・管理費のみでのご入居は出来かねます」
@@ -858,7 +885,7 @@ const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean
     name: "見積金額内訳",
     // 2026-10-02 竹内「見積・空室の断言ゲートの当てすぎを直す」: 一般の説明（家賃の相場・仲介手数料の決まり・条件を広げて探した報告）まで
     //   見積書の宣言に置き換えていた（人の手打ちで約20通・scripts/audit-exits-vs-human.ts）。特定のお部屋の金額の断言だけを止める（isGeneralCostExplanation）
-    test: (s, o) => !isCustomerConditionEcho(s, o) && !isGeneralCostExplanation(s) && (
+    test: (s, o) => !isCustomerConditionEcho(s, o) && !isGeneralCostExplanation(s) && !isGroundedAmountSentence(s, o?.groundText) && (
       (/[0-9０-９][0-9０-９,，．.]*\s*(?:万\s*)?円/.test(s) &&
         /(?:初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前?家賃|管理費|共益費|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約)/.test(s)) ||
       // 「敷金1ヶ月分」等の月数表記（円なし）も物件固有数値としてブロック
@@ -903,7 +930,9 @@ const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean
     test: (s) =>
       /(?:エントランス|集合場所|現地集合|待ち合わせ場所)/.test(s) &&
       /(?:丁目|番地|〒|[0-9０-９]{1,2}\s*[:：]\s*[0-9０-９]{2}|[0-9０-９]{1,2}\s*時)/.test(s),
-    replacement: "内覧の詳細についてはご連絡させて頂きます！！",
+    // 2026-10-02 ⑫: 旧の置換文「内覧の詳細についてはご連絡させて頂きます！！」はスタッフの実送信 365日で0通＝中身の無い約束を作っていた
+    //   （YUMA の最後の確かめ・Claude の下書きにそのまま出て関所を通った）→ 文を落とすだけ（削除系と同じく受付文を本文の頭に1回）
+    replacement: "",
   },
   // G6 (2026-09-08 Fable5): 旧「確認結果断言」（狭い文末形のみ）を共有定数 ASSERTION_BAN_RULES から生成する形に置換。
   // 「空室です」「9月1日からご入居いただけます」「告知事項なし」「審査は問題ございません」が文単位で確認宣言に置換される。
@@ -969,6 +998,8 @@ export function enforceAixGates(
     costBreakdownAix?: boolean;
     /** 2026-09-26（穴3）: 決まっている内覧の「時」（done-state.viewingHoursOf）。この時刻を言い直す文は「待ち合わせ確定」の置換にしない */
     scheduledViewingHours?: number[];
+    /** 2026-10-02 ⑫: この会話に既に出ている文字（物件の紹介・見積書の文・お客様の発言）。文の金額が全部ここに有れば見積金額内訳ゲートの対象外（isGroundedAmountSentence） */
+    groundText?: string;
   },
 ): { cleaned: string; violations: string[]; edits: GateEdit[] } {
   const violations: string[] = [];
@@ -977,7 +1008,7 @@ export function enforceAixGates(
   // 削除系ゲートの置換文「かしこまりました😊！！」は削除位置に入れず、ループ後に本文先頭（挨拶行の直後）へ1回だけ入れる
   //   （旧実装は削除位置＝末尾に入れて EMPTY_CLOSER の block をゲート自身が作っていた: it_0 事例）
   let needAck = false;
-  const gateOpts: GateOpts = { customerMessage: opts?.customerMessage, lastStaffMsg: opts?.lastStaffMsg, customerConditions: opts?.customerConditions, costBreakdownAix: opts?.costBreakdownAix };
+  const gateOpts: GateOpts = { customerMessage: opts?.customerMessage, lastStaffMsg: opts?.lastStaffMsg, customerConditions: opts?.customerConditions, costBreakdownAix: opts?.costBreakdownAix, groundText: opts?.groundText };
   // 履歴内金額の引用免除用: 直前スタッフメッセージに実在する金額（スタッフが提示済み＝AIが引用してよい金額）
   const staffPrices = opts?.lastStaffMsg ? extractYenAmounts(opts.lastStaffMsg) : [];
   // 分割払い提案ゲート: お客様が支払い方法を質問していない／「払えない」と言っていないのに
@@ -1078,6 +1109,8 @@ export function enforceAixGates(
             : opts?.estimatePromised && rule.promisedReplacement
               ? rule.promisedReplacement
               : rule.replacement;
+        // 2026-10-02 ⑫: 置換文が空のゲート（待ち合わせ確定）は文を落とすだけ（削除系と同じく受付文を本文の頭に1回）
+        if (!rep) { needAck = true; edits.push({ rule: rule.name, before: s, after: null, reversible: false }); continue; }
         outSentences.push(rep);
         edits.push({ rule: rule.name, before: s, after: rep, reversible: false });
       } else {
@@ -1152,6 +1185,8 @@ export function validateAndClean(
     costBreakdownAix?: boolean;
     /** 決まっている内覧の「時」（enforceAixGates へ渡す） */
     scheduledViewingHours?: number[];
+    /** 2026-10-02 ⑫: この会話に既に出ている文字（物件の紹介・見積書の文・お客様の発言）。文の金額が全部ここに有れば見積金額内訳ゲートの対象外（isGroundedAmountSentence） */
+    groundText?: string;
     /** 2026-09-11 竹内方針3: resolveAddressName の aliases（呼びかけ位置の別名を確定名に統一する） */
     nameAliases?: string[];
     /** 曜日の自動修正の基準時刻（既定 Date.now()） */
@@ -1210,6 +1245,7 @@ export function validateAndClean(
       estimateAllowed: opts.estimateAllowed,
       costBreakdownAix: opts.costBreakdownAix,
       scheduledViewingHours: opts.scheduledViewingHours,
+      groundText: opts.groundText,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));

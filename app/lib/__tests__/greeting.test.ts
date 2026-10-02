@@ -300,5 +300,17 @@ describe("以前のお客様の最初の返事（⑫）", () => {
   });
 });
 
+// 2026-10-02 ⑫ 8巡目: 「お待たせしております」の言い換え（DeepSeek の下書き flow8 t08）も禁止
+describe("お待たせの言い換え（⑫）", () => {
+  it("お待たせしております の文を落とす", () => {
+    const r = stripWaited("YUMAさんお待たせしております😊！！\n本日撮影して参りますので、撮影出来次第お送りさせて頂きます😌！！");
+    expect(r.removed).toBe(1);
+    expect(r.text).toBe("本日撮影して参りますので、撮影出来次第お送りさせて頂きます😌！！");
+  });
+  it("お待たせしてしまい申し訳… の謝りは触らない", () => {
+    expect(stripWaited("お待たせしてしまい申し訳御座いません！！").removed).toBe(0);
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failures.length) { console.log(failures.join("\n")); process.exit(1); }

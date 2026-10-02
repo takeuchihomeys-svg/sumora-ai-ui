@@ -105,3 +105,43 @@ export function draftToSendableText(text: string | null | undefined): string | n
   if (isNotACustomerReply(out)) return null;
   return out;
 }
+
+/**
+ * 2026-10-02 ⑫（YUMA の実送信テストの送る前の点検で見つけた・竹内さんの指示「行末の空白を落とす・人の文で確かめてから」）:
+ *   AI の下書きの行末の空白（半角・全角・タブ）を落とす。空白だけの行は空行になる（LINE の見た目は同じ）。
+ *   人の手打ち 365日 7,078通で行末の空白は58通（申込フォームの欄名の後ろ・日時の後ろ）＝見えない・意味を持たせていない
+ *   （scripts/audit-trailing-space.ts）。スタッフが直した文には当てない（generate-reply の下書きだけ）
+ */
+export function stripTrailingLineSpaces(text: string): string {
+  return String(text ?? "").replace(/[ \t　]+(?=\n|$)/g, "");
+}
+
+/**
+ * 2026-10-02 ⑫ 6巡目（YUMA の再生 first_contact_02・DeepSeek）: 下書きに「【 日付:10/2(金)】」の行が出て、その後に初回の自己紹介が2回目として並んだ。
+ *   日付だけの【】の行（日付の見出し）を落とす。人の手打ち 365日 13,630通で この形の行は 0（【物件名 号室】・【お待ち合わせ場所】は日付だけではないので当たらない）
+ */
+const DATE_TAG_LINE_RE = /^\s*【\s*(?:日付\s*[:：]?\s*)?(?:\d{4}[\/-])?\d{1,2}\s*[\/月]\s*\d{1,2}日?\s*(?:[（(][月火水木金土日][）)])?\s*】\s*$/;
+export function stripSystemDateTagLines(text: string): string {
+  const src = String(text ?? "");
+  if (!src.split("\n").some((l) => DATE_TAG_LINE_RE.test(l))) return src;
+  return src.split("\n").filter((l) => !DATE_TAG_LINE_RE.test(l)).join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/**
+ * 2026-10-02 ⑫: 初回の自己紹介の文（「この度ご連絡頂きありがとうございます」「…担当させて頂きます…と申します」）の2回目以降を落とす。
+ *   人の手打ち 365日 13,630通で同じ自己紹介の文を2回書いた通は 0
+ */
+const INTRO_SENTENCE_RE = /[^\n！!。]*(?:この度ご連絡頂きありがとうございます|担当させて頂きます[^\n！!。]{0,10}と申します)[！!。]*/g;
+export function dedupeFirstIntroSentences(text: string): string {
+  const src = String(text ?? "");
+  const seen = new Set<string>();
+  let changed = false;
+  const out = src.replace(INTRO_SENTENCE_RE, (s) => {
+    const key = s.replace(/^.*?(この度ご連絡|担当させて頂きます)/, "$1").replace(/[！!。\s]/g, "");
+    if (seen.has(key)) { changed = true; return ""; }
+    seen.add(key);
+    return s;
+  });
+  if (!changed) return src;
+  return out.split("\n").filter((l, i, arr) => l.trim() !== "" || (i > 0 && arr[i - 1].trim() !== "")).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}

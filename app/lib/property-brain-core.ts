@@ -441,7 +441,11 @@ export async function runConditionBrain(
   if (!hasUpdates) return null;
 
   // ── DBに反映（更新フィールドのみ）────────────────────────────────────────
-  const dbUpdate: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+  // 2026-10-02 ⑫: 家賃の下限＞上限の行を作らない（rent-raise.withRentOrder）
+  const { withRentOrder } = await import("@/app/lib/rent-raise");
+  const ro = withRentOrder({ rent_max: cur.rentMax ?? null, rent_min: cur.rentMin ?? null }, updates as Record<string, unknown>);
+  if (ro.note) console.log(JSON.stringify({ tag: "property-brain:rent-order", customerId, note: ro.note }));
+  const dbUpdate: Record<string, unknown> = { ...ro.updates, updated_at: new Date().toISOString() };
 
   // 2026-09-27: 条件ブレインの更新も履歴に残す（旧は残していなかった＝どの経路で条件が変わったか後から追えない）
   const { data: oldRow } = await supabase

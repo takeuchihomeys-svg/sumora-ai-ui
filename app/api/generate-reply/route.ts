@@ -1,3 +1,4 @@
+import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
@@ -104,6 +105,7 @@ import {
   // 2026-09-11 竹内方針3: 呼び名の唯一の決定（生成・後処理・検査・check-reply が同じ verdict）
   resolveAddressName,
   type AddressNameVerdict,
+  GROUND_SEP,
 } from "@/app/lib/validate-reply";
 // 2026-09-12 竹内方針C: 呼び名のサーバー側決定（DB名・履歴・is_aix_generated）。check-reply と同じ関数
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
@@ -1557,7 +1559,7 @@ ${aixDone.answeredByAix
     "✅ ただし【決まっている内覧】ブロックがある時は、そこに書かれた住所・日時は既にお客様へ案内済みの事実なので、",
     "　 場所・行き方・住所を聞かれたらそのまま答えてよい（新しく決めているのではなく、決まっている事を答えるだけ）。",
     "　 この場合「内覧の詳細については改めてご連絡させて頂きます」のような先送りで済ませない。",
-    "　 ブロックが無い時だけ「内覧の詳細についてはご連絡させて頂きます」等の宣言にとどめる（【🗓 内覧は決まっている】がある時はこの先送りも書かず、決まっている日時をそのまま言う）。",
+    "　 ブロックが無い時は日時・場所に触れず「かしこまりました！！」等の受けにとどめる（「内覧の詳細についてはご連絡」は書かない＝人の実送信0通・2026-10-02 ⑫）。",
   ].join("\n");
 
   const aixOperationNote = [
@@ -5684,6 +5686,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
                 // 2026-09-26（穴3）: 決まった内覧の日時の復唱は「待ち合わせ確定」の置換（詳細はご連絡）にしない
                 scheduledViewingHours,
+                // 2026-10-02 ⑫: 会話に既に出ている金額（こちらが送った物件の紹介・見積書の文）の引用は見積金額内訳ゲートで止めない（isGroundedAmountSentence）
+                groundText: recentMessages.map((m) => m.text ?? "").join(GROUND_SEP),
               };
               let vr = validateAndClean(openingFixed, vOpts);
               if (aixGates && vr.gateEdits.some((e) => e.reversible)) {
@@ -5750,7 +5754,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 2026-09-18 竹内（ゆうこ事例）: 今日2回目の「全力でサポート」は落とし、締めが無くなったら引き続き何卒〜を足す
               const fsFixed = stripRepeatedFullSupport(quantFixed.text, fullSupportSentToday);
               if (fsFixed.removed.length > 0) console.info("[full-support] 今日2回目の全力サポートを削除", JSON.stringify({ conversationId, removed: fsFixed.removed }));
-              return { cleaned: fsFixed.text, issues: vr.issues };
+              // 2026-10-02 ⑫: 行末の空白（半角・全角・タブ）を落とす（見えない・人の手打ちでも 7,078通中58通だけ＝飾りに使っていない・scripts/audit-trailing-space.ts）
+              // 2026-10-02 ⑫ 6巡目: 日付だけの【】の行・初回の自己紹介の2回目も落とす（人の手打ち 13,630通で 0）
+              return { cleaned: dedupeFirstIntroSentences(stripSystemDateTagLines(stripTrailingLineSpaces(fsFixed.text))), issues: vr.issues };
             };
             /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
             const applyLedgerFixToDraft = (body: string): string => {
@@ -6283,6 +6289,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   console.info("[full-support] 修正ループ後に今日2回目の全力サポートを削除", JSON.stringify({ conversationId, removed: fsFinal.removed }));
                   draftBody = fsFinal.text;
                 }
+                // 2026-10-02 ⑫: 行末の空白も修正ループの後に落とし直す（書き直しが戻すことがある）
+                draftBody = dedupeFirstIntroSentences(stripSystemDateTagLines(stripTrailingLineSpaces(draftBody)));
                 // 2026-10-02 ⑫（YUMA の実送信テスト・再生 first_contact_02／flow4 t01）: 挨拶行（初回の はじめまして・催促の謝罪）も修正ループの後に掛け直す。
                 //   書き直しが「かしこまりました！！ / 西淀川区内…」のように挨拶行ごと落とした下書きが出た（本番の記録では 177 中 1・DeepSeek の書き直しで多い）。
                 //   挨拶行が既に先頭にある時は触らない（同じ関数を2回掛けて本文の文を剥がさない）

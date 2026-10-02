@@ -64,8 +64,10 @@ export function buildViewingAccessNote(o: {
 
 // ── 出口: 中身のない先送りを落とす ───────────────────────────────
 /** 「明日また詳細ご案内させて頂きます」型（いつ＋詳細＋案内）。何を送るのかが決まっていない先送り */
+// 2026-10-02 ⑫: 「内覧の詳細については（改めて）ご連絡させて頂きます」も同じ中身の無い先送り。人の実送信 365日で0通・AI の下書き 180日で5通出て
+//   スタッフは5通とも消して送った（scripts/audit-viewing-detail-promise.ts）。YUMA の最後の確かめ（Claude）の下書きにも出て関所を通った
 const VAGUE_DEFERRAL_RE =
-  /(?:明日|翌日|後ほど|のちほど|改めて|追って|後日|当日|別途|随時)[^\n]{0,24}(?:詳細|詳しく|詳しい)[^\n]{0,24}(?:ご案内|ご連絡|お伝え|お送り|案内)/;
+  /(?:明日|翌日|後ほど|のちほど|改めて|追って|後日|当日|別途|随時)[^\n]{0,24}(?:詳細|詳しく|詳しい)[^\n]{0,24}(?:ご案内|ご連絡|お伝え|お送り|案内)|内覧の詳細(?:について|に関して)?(?:は)?[^\n。！!]{0,8}(?:ご連絡|ご案内|お伝え)/;
 /** 何を届けるかが決まっている約束は残す（実データの本物: 「明日午前中に初期費用詳細確認させて頂き御見積しお送りさせて頂きます」） */
 const CONCRETE_OBJECT_RE =
   /御?見積|初期費用|資料|図面|間取|物件|お部屋|番手|審査|保証会社|住所|地図|マップ|写真|動画|条件|募集状況/;
@@ -81,10 +83,15 @@ export function stripVagueDeferral(text: string): string {
   if (!VAGUE_DEFERRAL_RE.test(src)) return src;
   const out = src
     .split("\n")
-    .map((line) => (line.match(SENTENCE_RE) ?? [])
-      .filter((s) => s !== "")
-      .filter((s) => !(VAGUE_DEFERRAL_RE.test(s) && !CONCRETE_OBJECT_RE.test(s)))
-      .join(""))
+    .map((line) => {
+      const kept = (line.match(SENTENCE_RE) ?? [])
+        .filter((s) => s !== "")
+        .filter((s) => !(VAGUE_DEFERRAL_RE.test(s) && !CONCRETE_OBJECT_RE.test(s)))
+        .join("");
+      // 2026-10-02 ⑫: 文を落として空になった行は行ごと消す（元からの空行＝段落の区切りは残す）
+      return line.trim() !== "" && kept.trim() === "" ? null : kept;
+    })
+    .filter((line): line is string => line !== null)
     .filter((line, i, arr) => line.trim() !== "" || (i > 0 && i < arr.length - 1 && arr[i - 1].trim() !== ""))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")

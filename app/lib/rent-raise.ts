@@ -277,3 +277,38 @@ export function applyConditionGuards(
   }
   return r;
 }
+
+/**
+ * 2026-10-02 ⑫: 顧客の行に書く直前の更新に、家賃の下限＞上限を作らない直しを足す（書く所で必ず通す）。
+ *   1191b1eb: フォームの「5万円〜8万円」の下限 50,000 が残ったまま、「家賃2万以下とかないでしょうか？物置として使いたい」で
+ *   上限だけ 20,000 に変わり、下限 50,000 ＞ 上限 20,000 になった（検索・採点が成り立たない行）。
+ *   書く側は null を「変えない」として飛ばすので、外す時は null をはっきり入れた更新を返す
+ */
+export function withRentOrder<T extends Record<string, unknown>>(
+  current: { rent_max?: number | null; rent_min?: number | null } | null | undefined,
+  updates: T,
+): { updates: T; note: string | null } {
+  const fix = rentOrderFix(current, updates);
+  if (!fix) return { updates, note: null };
+  return { updates: { ...updates, ...fix.updates }, note: fix.note };
+}
+
+/**
+ * 2026-10-02 ⑫: 書いた後の家賃の下限＞上限を直す更新（無ければ null）。
+ *   上限だけを今回言った → 前の下限は捨てる（null）／下限だけを今回言った → 前の上限は捨てる（null）／両方を今回言って逆 → 入れ替える
+ */
+export function rentOrderFix(
+  current: { rent_max?: number | null; rent_min?: number | null } | null | undefined,
+  updates: Record<string, unknown>,
+): { updates: { rent_min?: number | null; rent_max?: number | null }; note: string } | null {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
+  const setMax = "rent_max" in updates ? num(updates.rent_max) : undefined;
+  const setMin = "rent_min" in updates ? num(updates.rent_min) : undefined;
+  const max = setMax !== undefined ? setMax : num(current?.rent_max);
+  const min = setMin !== undefined ? setMin : num(current?.rent_min);
+  if (max === null || min === null || min <= max) return null;
+  if (setMax != null && setMin != null) return { updates: { rent_min: setMax, rent_max: setMin }, note: `rent_min/rent_max が逆（${setMin}＞${setMax}）→ 入れ替え` };
+  if (setMax != null) return { updates: { rent_min: null }, note: `上限 ${setMax} が前の下限 ${min} より低い → 下限を外す` };
+  if (setMin != null) return { updates: { rent_max: null }, note: `下限 ${setMin} が前の上限 ${max} より高い → 上限を外す` };
+  return { updates: { rent_min: null }, note: `登録の下限 ${min} ＞ 上限 ${max} → 下限を外す` };
+}

@@ -175,6 +175,20 @@ function judgeText(draft: string, staffTexts: string[]): { verdict: Verdict | nu
 
 async function main() {
   const file = JSON.parse(readFileSync(SCEN_FILE, "utf8")) as { scenarios: Scenario[] };
+  // 2026-10-02 ⑫: 場面の日付を今日に合わせてずらす（7日の倍数＝曜日はそのまま・内覧日などが未来になる）。--no-date-shift で止める
+  if (!args.includes("--no-date-shift")) {
+    const { shiftDaysFor, shiftDatesInText } = await import("./lib/scenario-date-shift");
+    for (const sc of file.scenarios) {
+      const days = shiftDaysFor(sc.src);
+      const year = Number((sc.src.match(/(\d{4})-/) ?? [])[1] ?? new Date().getFullYear());
+      if (!days) continue;
+      const f = (t: string) => shiftDatesInText(t, days, year);
+      sc.context = sc.context.map((m) => ({ ...m, t: f(m.t) }));
+      sc.customer = sc.customer.map(f);
+      sc.staff = { ...sc.staff, texts: sc.staff.texts.map(f), aix_texts: sc.staff.aix_texts.map(f) };
+      (sc as Scenario & { shiftDays?: number }).shiftDays = days;
+    }
+  }
   const list = file.scenarios.filter((s) => (!ONLY.length || ONLY.includes(s.id)) && (!STAGES.length || STAGES.includes(s.stage)));
   const testMode = process.env.LLM_TEST_MODE ?? "";
   const analyzeConversation = await loadBrain();

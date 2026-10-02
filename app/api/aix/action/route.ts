@@ -102,6 +102,8 @@ import { meetingAddressProblem } from "@/app/lib/meeting-address";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown, type HearingKnown } from "@/app/lib/hearing-form";
 import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
+import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom } from "@/app/lib/property-name-verbatim";
+import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 
 export const maxDuration = 300;
 
@@ -2140,7 +2142,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
       const { message: finalizedMessage, notice } = finalize(text);
       // 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: AIX の文は最終チェック（V16b）を通らない → 手数料の一文を足す（足すだけ・company-fact-guard）
       const feeFix = ensureCardFeeLine(finalizedMessage, [latestCustomerMsg]);
-      const message = feeFix.text;
+      // 2026-10-02 ⑫（竹内さんの指示「物件名はデータからそのまま写す」）: この AIX で使うと決まった物件名（入力の property_name）にほぼ同じだが違う並び
+      //   （DeepSeek の AIX【内覧調整】で「エグゼ難波西Ⅱ」→「エヴゼ峰渡西Ⅱ」）は入力の字に直す。会話から拾った名前での広い書き換えは監査で誤りが多く、印だけ
+      const chosenName = typeof property_name === "string" ? property_name : null;
+      const nameFix = enforceChosenPropertyName(feeFix.text, chosenName);
+      if (nameFix.fixes.length) console.warn(JSON.stringify({ tag: "aix:property-name-verbatim", action: currentAction, conversationId, fixes: nameFix.fixes }));
+      const nearMiss = propertyNameNearMisses(nameFix.text, knownPropertyNamesFrom(
+        (Array.isArray(recent_messages) ? recent_messages as Array<{ text?: string | null }> : []).map((m) => m?.text ?? null), [chosenName]));
+      if (nearMiss.length) console.warn(JSON.stringify({ tag: "aix:property-name-near-miss", action: currentAction, conversationId, nearMiss }));
+      const message = nameFix.text;
       if (feeFix.added) console.log(JSON.stringify({ tag: "aix:card-fee-added", action: currentAction, conversationId }));
       if (conversationId) {
         after(async () => {
@@ -4187,6 +4197,9 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
         // 2026-09-19 竹内（まりあ事例）: 日付の前の「明後日」は落とす（実送信188通中18通＝9.6%しか使っていない）
         const r = stripDayAfterTomorrowLabel(message_text);
         if (r.removed) { message_text = r.text; console.log("aix:dayafter-label-stripped", r.removed); }
+        // 2026-10-02 ⑫: 同じ日時・同じ言い回しの行の2回目を落とす（DeepSeek の AIX【内覧調整】で2回並んだ・人の送信 13,605通で変わる通 0）
+        const dd = dedupeScheduleLines(message_text);
+        if (dd.removed.length) { message_text = dd.text; console.log("aix:schedule-line-deduped", dd.removed.length); }
       }
       // 差分学習ループ用にAIX生成ドラフトを記録（フロントが実際に送った文と比較して学習する）
       viewingInviteDraft = message_text;
