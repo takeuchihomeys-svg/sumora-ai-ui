@@ -311,6 +311,10 @@
     {
       "path": "/api/analyze-aix-adapt",
       "schedule": "30 22 * * 0"
+    },
+    {
+      "path": "/api/cron/property-search-knowledge",
+      "schedule": "20 19 * * 0"
     }
   ]
 }

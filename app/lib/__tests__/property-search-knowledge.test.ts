@@ -1,6 +1,6 @@
 // 2026-10-02 ⑯ 手順4b 物件検索の整理済みの知識（property-search-knowledge.ts）のテスト（LLM なし・DB なし）
 // 実行: npx tsx app/lib/__tests__/property-search-knowledge.test.ts
-import { buildDeliveredKnowledge, buildRestatementKnowledge, readable, deliveredLine, keyLabel, KNOWLEDGE_RULE, type DeliveredPayload } from "../property-search-knowledge";
+import { buildDeliveredKnowledge, buildRestatementKnowledge, readable, deliveredLine, keyLabel, planCuration, buildAreaProfiles, KNOWLEDGE_RULE, type DeliveredPayload, type ExistingKnowledge } from "../property-search-knowledge";
 import { desiredKeys, unitKey } from "../property-search-knowledge-server";
 
 let pass = 0, fail = 0;
@@ -40,6 +40,37 @@ const rs = buildRestatementKnowledge([
 const r0 = rs.find((x) => x.key === "station:梅田")!;
 t("足した先だけ数える（同じ物の言い直しは数えない）・人数2・申込1", r0.evidence_count === 2 && /十三1人/.test(r0.content) && /中津1人/.test(r0.content) && /申込に進んだ 1人/.test(r0.content), r0.content);
 t("鍵の表示（ward:大阪市北区 → 北区）", keyLabel("ward:大阪市北区") === "北区" && keyLabel("station:梅田") === "梅田");
+
+console.log("■ 整理（統合・退役・食い違い・読まれない）");
+{
+  const now = Date.parse("2026-11-10T00:00:00Z");
+  const ex = (id: string, key: string, ev: number, top: string, created = "2026-10-01T00:00:00Z", used: string | null = null): ExistingKnowledge =>
+    ({ id, kind: "desired_to_delivered", key, evidence_count: ev, payload: { stations: [{ name: top, customers: 3 }] }, created_at: created, last_used_at: used, use_count: used ? 1 : 0 });
+  const prodRow = (key: string, top: string, ev = 3) => ({ kind: "desired_to_delivered" as const, key, payload: { customers: ev, units: 5, stations: [{ name: top, customers: 3 }], wards: [], applied_customers: 0, applied_stations: [] }, evidence_count: ev, title: "t", content: "c" });
+  const norm = (k: string) => (k === "station:難波" ? "station:なんば" : k);
+  const plan = planCuration(
+    [ex("1", "station:なんば", 5, "大国町"), ex("2", "station:難波", 2, "桜川"), ex("3", "station:天王寺", 3, "寺田町"), ex("4", "station:梅田", 3, "中津", "2026-09-01T00:00:00Z")],
+    [prodRow("station:なんば", "今宮戎"), prodRow("station:梅田", "中津"), prodRow("station:十三", "神崎川")],
+    { nowMs: now, normKey: norm, kinds: ["desired_to_delivered"] },
+  );
+  t("同じ鍵（難波＝なんば）は人数の多い方に統合・他は退役（merged）", plan.retire.some((r) => r.id === "2" && /merged/.test(r.reason)));
+  t("作り直しで出てこない鍵（天王寺）は退役（not_produced・消さない）", plan.retire.some((r) => r.id === "3" && /not_produced/.test(r.reason)));
+  t("届け先の1番が入れ替わった（大国町→今宮戎）は食い違いとして記録", plan.conflicts.some((c) => c.key === "station:なんば" && c.before === "大国町" && c.after === "今宮戎"));
+  t("新しい鍵（十三）は足す", plan.insert.some((r) => r.key === "station:十三"));
+  t("作って30日以上一度も読まれない（梅田）は報告だけ", plan.unread.includes("station:梅田") && !plan.retire.some((r) => r.id === "4"));
+  t("この作り直しで作らない種類には触らない", planCuration([{ ...ex("9", "ward:x", 3, "a"), kind: "other" }], [], { nowMs: now, kinds: ["desired_to_delivered"] }).retire.length === 0);
+}
+
+console.log("■ 区のまとめ（area_profile）");
+{
+  const prof = buildAreaProfiles(
+    [{ ward: "大阪市浪速区", plan_group: "1K", n: 400, p25: 70000, p50: 75000, p75: 80000 }, { ward: "大阪市浪速区", plan_group: "1DK", n: 5, p25: 90000, p50: 100000, p75: 110000 }],
+    [{ ward: "大阪市浪速区", toNamba: 2, toUmeda: 10, stations: 6 }],
+    [], 10,
+  );
+  t("相場は件数が足りる間取りだけ・電車の最短", prof.length === 1 && /1K 7.5万（7〜8万・400件）/.test(prof[0].content) && !/1DK/.test(prof[0].content) && /なんば 2分・梅田 10分/.test(prof[0].content), prof[0]?.content);
+  t("鍵は ward:<区>・種類は area_profile", prof[0].key === "ward:大阪市浪速区" && prof[0].kind === "area_profile");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

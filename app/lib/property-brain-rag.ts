@@ -251,7 +251,9 @@ export async function buildPropertyBrainContext(
   let searchKnowledge: string[] = [];
   try {
     const { keys } = desiredKeys(pc.desired_area, [pc.preferences, pc.other_requests].filter(Boolean).join("\n"));
-    searchKnowledge = knowledgeLines(await loadSearchKnowledge(supabase, keys));
+    // 手順5: 「出やすい・1本」の範囲の区（駅の多い順に6区）のまとめ（area_profile）も
+    const planWardKeys = (areaPlan?.wards ?? []).slice(0, 6).map((w) => `ward:${w.ward}`);
+    searchKnowledge = knowledgeLines(await loadSearchKnowledge(supabase, [...new Set([...keys, ...planWardKeys])]));
   } catch { /* 知識は付け足し・無くても判定は止めない */ }
 
   return { customer, sentHistory, areaKnowledge, learnedPatterns, areaPlan, rentMarket, searchKnowledge };

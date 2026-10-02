@@ -20,7 +20,7 @@ export const KNOWLEDGE_RULE = {
   maxItems: 12,
 } as const;
 
-export type KnowledgeKind = "desired_to_delivered" | "area_restatement";
+export type KnowledgeKind = "desired_to_delivered" | "area_restatement" | "area_profile";
 export type CountItem = { name: string; customers: number; units?: number };
 export type DeliveredPayload = {
   customers: number; units: number;
@@ -121,3 +121,83 @@ export function stationName(raw: string | null | undefined): string | null {
   return s || null;
 }
 export { wardOfStation };
+
+// ───────────────────────── 整理（手順5・決定論） ─────────────────────────
+// 2026-10-02 竹内「知識溜まってもちゃんと整理するような環境もつくる」。週1回の作り直しの後に、決定論で:
+//   ・統合: 同じ種類で、鍵をそろえる（駅のまとまりの代表）と同じになる今の行が2つ以上 → 根拠の人数の多い方を残し、他を退役（merged）
+//   ・退役: 作り直しで出てこなくなった鍵（根拠が無くなった）→ is_current=false・retired_reason（消さない）
+//   ・食い違い: 届け先の1番の駅が前回と入れ替わった（どちらも2人以上）→ 記録（payload.prev_top・報告）。自動で消さない
+//   ・読まれない: 読める（2人以上）のに作って30日以上一度も読まれない → 報告だけ（読まれない理由は入口の側にある事が多い）
+// DeepSeek は使わない: 鍵は文ではなく駅・区に直してあるので「似た言い方の統合」が要らない（言い方の揺れは parseAreaWant が吸収済み）
+
+export type ExistingKnowledge = { id: string; kind: string; key: string; evidence_count: number; payload: any; created_at: string; last_used_at: string | null; use_count: number };
+export type CurationPlan = {
+  update: Array<{ id: string; row: KnowledgeRow; prevTop: string | null }>;
+  insert: KnowledgeRow[];
+  retire: Array<{ id: string; reason: string }>;
+  conflicts: Array<{ key: string; before: string; after: string }>;
+  unread: string[];
+  kept: number;
+};
+
+const topStation = (p: any): { name: string; customers: number } | null => (Array.isArray(p?.stations) && p.stations[0] ? p.stations[0] : null);
+
+/** 今の行と作り直しの結果から、整理の手順を決める（DB に触れない） */
+export function planCuration(existing: ExistingKnowledge[], produced: KnowledgeRow[], opts: { nowMs: number; normKey?: (k: string) => string; kinds: string[] }): CurationPlan {
+  const norm = opts.normKey ?? ((k: string) => k);
+  const plan: CurationPlan = { update: [], insert: [], retire: [], conflicts: [], unread: [], kept: 0 };
+  // 統合（同じ種類×そろえた鍵が2つ以上の今の行）
+  const groups = new Map<string, ExistingKnowledge[]>();
+  for (const e of existing) { const g = `${e.kind}|${norm(e.key)}`; groups.set(g, [...(groups.get(g) ?? []), e]); }
+  const survivors = new Map<string, ExistingKnowledge>();
+  for (const [g, es] of groups) {
+    const sorted = [...es].sort((a, b) => b.evidence_count - a.evidence_count || a.created_at.localeCompare(b.created_at));
+    survivors.set(g, sorted[0]);
+    for (const e of sorted.slice(1)) plan.retire.push({ id: e.id, reason: `merged: ${sorted[0].key} に統合` });
+  }
+  const producedKeys = new Set(produced.map((r) => `${r.kind}|${norm(r.key)}`));
+  for (const r of produced) {
+    const s = survivors.get(`${r.kind}|${norm(r.key)}`);
+    if (!s) { plan.insert.push(r); continue; }
+    let prevTop: string | null = null;
+    if (r.kind === "desired_to_delivered") {
+      const b = topStation(s.payload), a = topStation(r.payload);
+      if (b && a && b.name !== a.name && b.customers >= KNOWLEDGE_RULE.minCustomers && a.customers >= KNOWLEDGE_RULE.minCustomers) {
+        plan.conflicts.push({ key: r.key, before: b.name, after: a.name });
+        prevTop = b.name;
+      }
+    }
+    plan.update.push({ id: s.id, row: r, prevTop });
+    plan.kept++;
+  }
+  for (const [g, s] of survivors) {
+    if (!opts.kinds.includes(s.kind)) continue; // この作り直しで作らない種類は触らない
+    if (!producedKeys.has(g)) plan.retire.push({ id: s.id, reason: "not_produced: 作り直しで根拠が無くなった" });
+    else if (s.evidence_count >= KNOWLEDGE_RULE.minCustomers && !s.last_used_at && opts.nowMs - Date.parse(s.created_at) > 30 * 86400_000) plan.unread.push(s.key);
+  }
+  return plan;
+}
+
+// ───────────────────────── 区のまとめ（area_profile・決定論） ─────────────────────────
+export type WardRentCell = { ward: string; plan_group: string; n: number; p25: number; p50: number; p75: number };
+export type WardAccess = { ward: string; toNamba: number | null; toUmeda: number | null; stations: number };
+
+/** 区ごとの短いまとめ（相場の言える間取り・なんば/梅田までの最短・届け先の知識）。ブレインが安く読む用 */
+export function buildAreaProfiles(cells: WardRentCell[], access: WardAccess[], delivered: KnowledgeRow[], minCount: number): KnowledgeRow[] {
+  const wards = new Set([...cells.filter((c) => c.n >= minCount).map((c) => c.ward), ...access.filter((a) => a.stations > 0).map((a) => a.ward)]);
+  const out: KnowledgeRow[] = [];
+  const man = (v: number) => (Math.round(v / 1000) / 10).toFixed(1).replace(/\.0$/, "");
+  for (const w of wards) {
+    const cs = cells.filter((c) => c.ward === w && c.n >= minCount).sort((a, b) => ["1K", "1DK", "1LDK", "2DK", "2LDK", "3+"].indexOf(a.plan_group) - ["1K", "1DK", "1LDK", "2DK", "2LDK", "3+"].indexOf(b.plan_group));
+    const ac = access.find((a) => a.ward === w);
+    const dk = delivered.find((d) => d.key === `ward:${w}` && d.evidence_count >= KNOWLEDGE_RULE.minCustomers);
+    if (!cs.length && !ac) continue;
+    const parts: string[] = [];
+    if (cs.length) parts.push(`相場（管理費込み・中央値・件数）: ${cs.map((c) => `${c.plan_group} ${man(c.p50)}万（${man(c.p25)}〜${man(c.p75)}万・${c.n}件）`).join("／")}`);
+    if (ac && (ac.toNamba != null || ac.toUmeda != null)) parts.push(`電車の最短（乗換1回まで）: なんば ${ac.toNamba ?? "-"}分・梅田 ${ac.toUmeda ?? "-"}分`);
+    if (dk) parts.push(`この区が希望の人に届けた別の駅: ${(dk.payload as DeliveredPayload).stations.filter((s) => s.customers >= KNOWLEDGE_RULE.minCustomers).slice(0, 5).map((s) => `${s.name}${s.customers}人`).join("・") || "-"}`);
+    const n = cs.reduce((a, c) => a + c.n, 0);
+    out.push({ kind: "area_profile" as KnowledgeKind, key: `ward:${w}`, payload: { cells: cs, access: ac ?? null } as any, evidence_count: n, title: `${keyLabel(`ward:${w}`)}のまとめ`, content: `${keyLabel(`ward:${w}`)}｜${parts.join("｜")}` });
+  }
+  return out;
+}

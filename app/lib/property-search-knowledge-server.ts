@@ -113,3 +113,54 @@ export function knowledgeLines(rows: LoadedKnowledge[]): string[] {
   return rows.map((r) => (r.kind === "desired_to_delivered" ? deliveredLine(r.key, r.payload as DeliveredPayload) : `${r.content}`)).map((l) => l.replace(/^/, "・"));
 }
 export { keyLabel };
+
+// ───────────────────────── 週1回: 作り直し＋整理（手順5） ─────────────────────────
+/**
+ * 作り直し（希望→届けた先・言い直し）＋区のまとめ（相場・電車の最短・届け先）→ 整理（統合・退役・食い違い・読まれない）。
+ * 決定論・LLM なし。dry＝数えるだけ。cron は /api/cron/property-search-knowledge（週1回・JST 深夜）
+ */
+export async function runKnowledgeCycle(db: SupabaseClient, opts: { dry?: boolean } = {}): Promise<Record<string, unknown>> {
+  const { RENT_EXPLAIN_RULE } = await import("./area-rent-explain");
+  const { STATION_LINES, wardOfStation } = await import("./osaka-geo");
+  const { reachMap } = await import("./osaka-area-profile");
+  const { buildAreaProfiles, planCuration } = await import("./property-search-knowledge");
+  const built = await rebuildSearchKnowledge(db, { dry: true });
+  const { data: cellsRaw } = await db.rpc("area_rent_stats", { p_branch: BRANCH });
+  const cells = ((cellsRaw ?? []) as any[]).map((c) => ({ ward: c.ward, plan_group: c.plan_group, n: Number(c.n), p25: c.p25, p50: c.p50, p75: c.p75 }));
+  // 区ごとの電車の最短（乗換1回まで・45分まで）。駅は静的な路線図の区
+  const namba = reachMap("なんば", 45, 1), umeda = reachMap("梅田", 45, 1);
+  const byWard = new Map<string, { toNamba: number | null; toUmeda: number | null; stations: number }>();
+  for (const st of STATION_LINES.keys()) {
+    const w = wardOfStation(st);
+    if (!w) continue;
+    const a = byWard.get(w) ?? { toNamba: null, toUmeda: null, stations: 0 };
+    a.stations++;
+    const n = namba.get(st), u = umeda.get(st);
+    if (n != null && (a.toNamba == null || n < a.toNamba)) a.toNamba = n;
+    if (u != null && (a.toUmeda == null || u < a.toUmeda)) a.toUmeda = u;
+    byWard.set(w, a);
+  }
+  const access = [...byWard].map(([ward, a]) => ({ ward, ...a }));
+  const profiles = buildAreaProfiles(cells, access, built.delivered, RENT_EXPLAIN_RULE.minCount);
+  const produced = [...built.delivered, ...built.restatement, ...profiles];
+  const existing = await all<any>(db, "property_search_knowledge", "id, kind, key, evidence_count, payload, created_at, last_used_at, use_count", (q) => q.eq("branch_id", BRANCH).eq("is_current", true));
+  const t = transit();
+  const normKey = (k: string) => (k.startsWith("station:") ? `station:${t.groupOf(k.slice(8))?.key ?? k.slice(8)}` : k);
+  const plan = planCuration(existing, produced, { nowMs: Date.now(), normKey, kinds: ["desired_to_delivered", "area_restatement", "area_profile"] });
+  const summary: Record<string, unknown> = {
+    dry: !!opts.dry, counts: built.counts, profiles: profiles.length,
+    insert: plan.insert.length, update: plan.update.length, retire: plan.retire.length, conflicts: plan.conflicts, unread: plan.unread.length, kept: plan.kept,
+  };
+  if (opts.dry) return summary;
+  const now = new Date().toISOString();
+  const rowOf = (r: KnowledgeRow, prevTop: string | null) => ({
+    branch_id: BRANCH, kind: r.kind, key: r.key, payload: prevTop ? { ...(r.payload as object), prev_top: prevTop } : r.payload, evidence_count: r.evidence_count,
+    title: r.title, content: r.content, category: "search_pattern", source: "deterministic", hypothesis_status: "confirmed", updated_at: now,
+  });
+  let errors = 0;
+  for (const x of plan.retire) { const { error } = await db.from("property_search_knowledge").update({ is_current: false, retired_reason: x.reason, updated_at: now }).eq("id", x.id); if (error) errors++; }
+  for (const u of plan.update) { const { error } = await db.from("property_search_knowledge").update(rowOf(u.row, u.prevTop)).eq("id", u.id); if (error) errors++; }
+  for (const r of plan.insert) { const { error } = await db.from("property_search_knowledge").insert(rowOf(r, null)); if (error) errors++; }
+  summary.errors = errors;
+  return summary;
+}
