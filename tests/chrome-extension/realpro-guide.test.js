@@ -135,7 +135,7 @@ ok("page-script: 検索を押す所（clickSearch・見積用）も案内モー�
   ok("小窓が閉じていて印なし → 開く", A({ visibleUnchecked: 0, visibleTargets: 0, anyChecked: false, modalOpen: false, lineBtns: 0 }) === "open");
   ok("小窓の閉じるボタンの文字に「確定してリストへ」「×とじる」", P.STATION_MODAL_DONE_TEXTS.includes("確定してリストへ") && P.STATION_MODAL_DONE_TEXTS.includes("×とじる") && P.STATION_MODAL_OPEN_TEXTS.includes("駅リセット"));
   const rg2 = read("realpro-guide.js");
-  ok("駅の手順は済みを覚える（小窓を閉じて印が読めなくなっても戻らない）", /if \(act === "done"\) \{ markStepDone\(s\.id\); return \{ done: true \}; \}/.test(rg2));
+  ok("駅の手順は済みを覚える（小窓を閉じて印が読めなくなっても戻らない）", /if \(act === "done"\) \{ markStepDone\(s\.id\); (?:reportStationMiss\(s\); )?return \{ done: true \}; \}/.test(rg2)); // v2.5.84 済みの時に見つからない駅の記録も
   ok("「確定してリストへ」等を押したら駅の手順を済みに（光る駅に1つでも印）", /closeHit && \(cur\.step\.kind === "pick_route" \|\| stationAnyChecked\(cur\.step\)\)/.test(rg2));
   ok("旧の「この手順を「済み」にしてください」を出さない", !/この手順を「済み」にしてください/.test(rg2));
   ok("画面が変わったらすぐ光を次の手順へ（MutationObserver → tick）", /_tickSoon = setTimeout\(function \(\) \{ _tickSoon = null; if \(!document\.hidden\) tick\(\); \}, 120\)/.test(rg2));

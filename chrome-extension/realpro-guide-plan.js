@@ -153,7 +153,10 @@
     var lm = locationMode(c);
     var lines = (c.route_ids || []).map(function (r) { return ROUTE_LINE_MAP[String(r)]; }).filter(Boolean);
     if (lm === "area" && c.city_codes && c.city_codes.length) push({ kind: "pick_city", codes: c.city_codes.map(String).slice(0, 40), label: "「所在地絞り込み」から区を選んでください（光っている区にチェック）" });
-    else if (lm === "station") push({ kind: "pick_station", names: c.station_names.slice(0, 40), lines: lines, label: "「沿線・駅絞り込み」から駅を選んでください（光っている駅にチェック）" });
+    // 2026-10-06 v2.5.84 竹内「沿線はちゃんと選択されているのに何で駅直通全て表示されていないのか」（みくさん・梅田まで電車1本＝12路線・122駅）:
+    //   旧は駅の名前を先頭の 40 で切っていた → 御堂筋・阪急京都・阪急宝塚の駅だけが光り、阪急神戸・阪神・JR・環状・おおさか東・四つ橋・谷町の 82駅が黙って落ちた。
+    //   → 切らない（MAX_GUIDE_STATIONS は安全のための上限・自動入力の 240駅より上）
+    else if (lm === "station") push({ kind: "pick_station", names: c.station_names.slice(0, MAX_GUIDE_STATIONS), lines: lines, label: "「沿線・駅絞り込み」から駅を選んでください（光っている駅にチェック）" });
     else if (lm === "route") push({ kind: "pick_route", lines: lines, label: "「沿線・駅絞り込み」から路線を選んでください" });
     if (c.walk_minutes) {
       push({ kind: "select", name: "transportation_id", value: "1", hint: "徒歩", label: "駅からの移動手段を「徒歩」に" });
@@ -177,6 +180,76 @@
     if (c.pet_ok) push({ kind: "check", name: "eq_rm[]", value: "113", want: true, label: "「ペット相談」にチェック" });
     push({ kind: "search", label: "最後に「検索」を押してください" });
     return { steps: steps, location: lm };
+  }
+
+  // ── 駅の名前の照らし合わせ（2026-10-06 v2.5.84）──
+  //   拡張の駅の名前（popup-maps.js LINE_STATION_ORDER・osaka-geo 由来）とリアプロの駅の小窓の文字は別の表（feedback_site_naming_separation）。
+  //   実物で違った物: 「JR河内永和」「JR俊徳道」「JR長瀬」（おおさか東線・リアプロの文字は「河内永和」「俊徳道」「長瀬」）・全角の「ＪＲ総持寺」・
+  //   「ヶ／ケ」（四天王寺前夕陽ヶ丘・関ケ原）。同じ文字が無い時だけ下の読み替えを試し、それでも無い駅は「見つからない駅」として出して記録する（黙って落とさない）。
+  //   旧は名前の完全一致だけで、当たらない駅は何も言わずに光らなかった。
+  var MAX_GUIDE_STATIONS = 300;
+  /** 読み替え（同じ文字の駅が画面に無い時だけ使う・両向き）。足す時は scripts/audit-guide-station-miss.ts の候補（画面の文字）を見てから */
+  var STATION_NAME_ALIASES = {
+    "我孫子": ["あびこ"], "あびこ": ["我孫子"],
+    "石橋阪大前": ["石橋"], "石橋": ["石橋阪大前"],
+    "なんば": ["難波"], "難波": ["なんば"],
+    "大阪阿部野橋": ["阿部野橋"], "阿部野橋": ["大阪阿部野橋"],
+    "三ノ宮": ["三宮"], "三宮": ["三ノ宮"],
+    "恵比須町": ["恵美須町"], "恵美須町": ["恵比須町"],
+  };
+  function stationKey(n) {
+    return String(n == null ? "" : n)
+      .replace(/[\s　]+/g, "")
+      .replace(/[Ａ-Ｚａ-ｚ０-９]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
+      .replace(/[（(][^）)]*[）)]$/, "")
+      .replace(/駅$/, "")
+      .replace(/[ヶヵ]/g, "ケ")
+      // 「谷町9丁目」「天神橋筋6丁目」（当て直しで実物 3〜5回）→ リアプロの「谷町九丁目」の形
+      .replace(/(\d)(?=丁目)/g, function (d) { return "〇一二三四五六七八九".charAt(Number(d)); });
+  }
+  /** 「JR」を前に付けた名前は付けない形も（リアプロのおおさか東線は付かない） */
+  function stripJr(k) { return /^JR./.test(k) ? k.slice(2) : k; }
+  function altKeys(name) {
+    var k = stationKey(name), out = [];
+    var add = function (x) { if (x && x !== k && out.indexOf(x) < 0) out.push(x); };
+    add(stripJr(k));
+    (STATION_NAME_ALIASES[k] || STATION_NAME_ALIASES[stripJr(k)] || []).forEach(function (a) { add(stationKey(a)); });
+    return out;
+  }
+  /**
+   * 光らせる駅の名前 names と、画面の駅のチェックの文字 labels（1つのチェックに1つ・同じ駅名が路線ごとに並ぶ）を照らす。
+   *   返す: { want: {画面の文字の key: true}（光らせる）, missing: [見つからない名前], via: {名前: 読み替えで当たった画面の文字} }
+   *   画面に駅のチェックが1つも無い（駅の小窓がまだ）時は missing を作らない
+   */
+  function matchStations(names, labels) {
+    var labelKeys = {}, byStripped = {};
+    (labels || []).forEach(function (l) {
+      var k = stationKey(l);
+      if (!k) return;
+      labelKeys[k] = true;
+      var sk = stripJr(k);
+      if (sk !== k) (byStripped[sk] = byStripped[sk] || []).push(k);
+    });
+    var hasLabels = Object.keys(labelKeys).length > 0;
+    var want = {}, missing = [], via = {};
+    (names || []).forEach(function (n) {
+      var k = stationKey(n);
+      if (!k) return;
+      want[k] = true; // 同じ文字の駅（画面にまだ出ていなくても・出たら光る）
+      if (!hasLabels || labelKeys[k]) return;
+      var alts = altKeys(n), hit = null;
+      for (var i = 0; i < alts.length && !hit; i++) if (labelKeys[alts[i]]) hit = alts[i];
+      // 画面の側だけ「JR」が付く
+      if (!hit && byStripped[k]) hit = byStripped[k][0];
+      if (hit) { want[hit] = true; via[String(n)] = hit; return; }
+      if (missing.indexOf(String(n)) < 0) missing.push(String(n));
+    });
+    return { want: want, missing: missing, via: via };
+  }
+  /** 案内の枠の小さな1行（見つからない駅は最大6つ＋他の数） */
+  function missNote(missing) {
+    if (!missing || !missing.length) return "";
+    return "見つからない駅: " + missing.slice(0, 6).join("・") + (missing.length > 6 ? " 他" + (missing.length - 6) : "");
   }
 
   /**
@@ -217,7 +290,7 @@
 
   return {
     resultsCustomerAction: resultsCustomerAction,
-    stationStepAction: stationStepAction, STATION_MODAL_DONE_TEXTS: STATION_MODAL_DONE_TEXTS, STATION_MODAL_OPEN_TEXTS: STATION_MODAL_OPEN_TEXTS,
+    stationStepAction: stationStepAction, matchStations: matchStations, stationKey: stationKey, missNote: missNote, STATION_NAME_ALIASES: STATION_NAME_ALIASES, MAX_GUIDE_STATIONS: MAX_GUIDE_STATIONS, STATION_MODAL_DONE_TEXTS: STATION_MODAL_DONE_TEXTS, STATION_MODAL_OPEN_TEXTS: STATION_MODAL_OPEN_TEXTS,
     buildPlan: buildPlan, floorPlanValues: floorPlanValues, locationMode: locationMode, nearestUp: nearestUp, nearestDown: nearestDown,
     ROUTE_LINE_MAP: ROUTE_LINE_MAP, RENT_OPTS: RENT_OPTS, AGE_OPTS: AGE_OPTS, AREA_OPTS: AREA_OPTS, FLOOR_MAP: FLOOR_MAP, STRUCTURE_MAP: STRUCTURE_MAP,
     SLDK_SUBSTITUTE: SLDK_SUBSTITUTE, FLOOR_LABEL: FLOOR_LABEL,

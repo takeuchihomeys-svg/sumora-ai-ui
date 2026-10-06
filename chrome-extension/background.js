@@ -1370,6 +1370,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // 2026-10-06 v2.5.84 案内（光って選択）の駅の手順で「見つからない駅」（realpro-guide.js reportStationMiss）。
+  //   ①拡張の中に最新 50回（axlx_guide_station_miss_log・ブレインでない時もここだけは残る）
+  //   ②ブレインの回（popup が run_id を作った回）は search_audits の filled.guide_stations に（案内モードは拡張が入力しない＝filled は他に使われない）
+  //   集計は scripts/audit-guide-station-miss.ts
+  if (msg.type === "axlx-guide-station-miss") {
+    (async () => {
+      try {
+        const rec = Object.assign({}, msg.record || {}, { customer_id: msg.customerId || null, run_id: msg.runId || null });
+        await new Promise((res) => chrome.storage.local.get(["axlx_guide_station_miss_log"], (r) => {
+          const log = Array.isArray(r && r.axlx_guide_station_miss_log) ? r.axlx_guide_station_miss_log : [];
+          log.push(Object.assign({}, rec, { page_labels: undefined }));
+          chrome.storage.local.set({ axlx_guide_station_miss_log: log.slice(-50) }, res);
+        }));
+        let posted = null;
+        if (msg.runId && self.AxlxSearchAudit) {
+          posted = await self.AxlxSearchAudit.post({ phase: "started", brain: true, run_id: String(msg.runId), site: "realpro", filled: { v: 1, site: "realpro", guide_stations: msg.record || null } });
+        }
+        if (msg.record && msg.record.missing && msg.record.missing.length) console.warn("[guide] 見つからない駅 " + msg.record.missing.length + ": " + msg.record.missing.slice(0, 10).join("・"));
+        sendResponse({ ok: true, posted: posted });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "axlx-guide-sent-rooms") {
     (async () => {
       try {

@@ -200,20 +200,22 @@
     }
     if (s.kind === "pick_station") {
       // 2026-10-02 v2.5.71 竹内「駅選択したつぎが光らない」: 次の動きは realpro-guide-plan.js stationStepAction（1つの関数）
-      var want = {}; (s.names || []).forEach(function (n) { want[norm(n).replace(/駅$/, "")] = true; });
+      // v2.5.84: 名前の照らし合わせは realpro-guide-plan.js matchStations（読み替え・見つからない駅）
+      var sm = stationMatch(s);
       var vis = [], unchecked = [], anyChecked = false;
-      document.querySelectorAll('input[type="checkbox"]').forEach(function (c) {
-        if (!want[textOfInput(c)]) return;
+      sm.inputs.forEach(function (c, i) {
+        if (!sm.want[Plan.stationKey(sm.texts[i])]) return;
         if (c.checked) anyChecked = true; // 小窓を閉じて隠れた印も数える
         if (!visible(c) && !visible(labelOf(c))) return;
         vis.push(c); if (!c.checked) unchecked.push(labelOf(c) || c);
       });
+      var miss = sm.missNote ? " ／ " + sm.missNote : "";
       var lineBtns = (s.lines || []).map(function (l) { return byText([l]); }).filter(Boolean);
       var modalOpen = !!byText(Plan.STATION_MODAL_OPEN_TEXTS);
       var act = Plan.stationStepAction({ visibleUnchecked: unchecked.length, visibleTargets: vis.length, anyChecked: anyChecked, modalOpen: modalOpen, lineBtns: lineBtns.length });
-      if (act === "done") { markStepDone(s.id); return { done: true }; }
-      if (act === "stations") return { done: false, target: unchecked, note: "光っている駅にチェック（" + unchecked.length + "駅）" };
-      if (act === "confirm") return { done: false, target: [byText(["確定してリストへ"]) || byText(["決定", "この条件で絞り込む"]) || byText(["×とじる", "とじる", "閉じる"])], note: "駅を選び終えたら「確定してリストへ」（他の路線の駅は「設定へ戻る」から）" };
+      if (act === "done") { markStepDone(s.id); reportStationMiss(s); return { done: true }; }
+      if (act === "stations") return { done: false, target: unchecked, note: "光っている駅にチェック（" + unchecked.length + "駅）" + miss };
+      if (act === "confirm") return { done: false, target: [byText(["確定してリストへ"]) || byText(["決定", "この条件で絞り込む"]) || byText(["×とじる", "とじる", "閉じる"])], note: "駅を選び終えたら「確定してリストへ」（他の路線の駅は「設定へ戻る」から）" + miss };
       if (act === "lines") return { done: false, target: lineBtns, note: "先に路線を押してください: " + (s.lines || []).join("・") };
       return { done: false, target: [opener(s.kind)], note: "「沿線・駅絞り込み」を開いてください" };
     }
@@ -274,13 +276,19 @@
     var L = ensureLayer();
     _lastTargets = targets;
     if (hint !== undefined) _lastHint = hint || "";
-    var rects = [], first = null;
-    (targets || []).filter(Boolean).slice(0, 40).forEach(function (el) {
+    // 2026-10-06 v2.5.84（みくさんの 122駅）: 旧は並びの先頭 40 だけに枠を描いた＝41番目からの駅（画面の下の路線）は印の対象なのに光らなかった。
+    //   → 画面に見えている物だけ描く（数の上限は描く枠の数だけ・150）。見えている物が無い時だけ先頭の物へ矢印
+    var rects = [], first = null, inView = null;
+    var vh = window.innerHeight, vw = window.innerWidth;
+    (targets || []).filter(Boolean).forEach(function (el) {
+      if (rects.length >= 150) return;
       var r = el.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) return;
-      rects.push(r); if (!first) first = r;
+      if (!first) first = r;
+      if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) return;
+      rects.push(r); if (!inView) inView = r;
     });
-    var vh = window.innerHeight;
+    if (inView) first = inView;
     var arrow = first ? (first.bottom < 0 ? "↑" : first.top > vh ? "↓" : "") : "";
     var sig = rects.map(function (r) { return Math.round(r.left) + "," + Math.round(r.top) + "," + Math.round(r.width) + "," + Math.round(r.height); }).join("|") + "#" + arrow + "#" + _lastHint;
     if (sig === _lastHiSig && L.childNodes.length) return;
@@ -428,8 +436,8 @@
       var stations = [];
       if (plan) plan.steps.forEach(function (s) {
         if (s.kind !== "pick_station") return;
-        var want = {}; (s.names || []).forEach(function (n) { want[norm(n).replace(/駅$/, "")] = true; });
-        document.querySelectorAll('input[type="checkbox"]').forEach(function (c) { var t = textOfInput(c); if (c.checked && want[t] && stations.indexOf(t) < 0) stations.push(t); });
+        var sm = stationMatch(s);
+        sm.inputs.forEach(function (c, i) { var t = sm.texts[i]; if (c.checked && sm.want[Plan.stationKey(t)] && stations.indexOf(t) < 0) stations.push(t); });
       });
       return {
         rent_min: sel("rental_cost1"), rent_max: sel("rental_cost2"), area_min: sel("square_meter_l"), area_max: sel("square_meter_h"),
@@ -440,8 +448,45 @@
     } catch (_) { return null; }
   }
   function stationAnyChecked(s) {
-    var want = {}; (s.names || []).forEach(function (n) { want[norm(n).replace(/駅$/, "")] = true; });
-    return Array.prototype.some.call(document.querySelectorAll('input[type="checkbox"]'), function (c) { return c.checked && want[textOfInput(c)]; });
+    var sm = stationMatch(s);
+    return sm.inputs.some(function (c, i) { return c.checked && sm.want[Plan.stationKey(sm.texts[i])]; });
+  }
+  // ── 駅の照らし合わせと「見つからない駅」の記録（2026-10-06 v2.5.84 竹内「駅の部分について把握できていないのか…改善していく仕組み作る」）──
+  //   駅の小窓（station_id[] のチェック）に出た駅の文字を、この案内の間ずっと覚える（路線を「設定へ戻る」で分けて選んだ時も合わせて見る）。
+  //   光らせる予定の駅のうち、覚えた文字のどれにも（読み替えでも）当たらない駅＝「見つからない駅」。案内の枠に小さく出し、
+  //   駅の手順が済んだ時・検索を押した時に1回だけ記録する（background → search_audits.filled.guide_stations・ブレインでない時は拡張の中の記録だけ）。
+  //   集計: npx tsx --env-file=.env.local scripts/audit-guide-station-miss.ts（見つからない駅ごとの回数と、画面の文字の近い候補）
+  var _seenStationLabels = {}; // 文字 → true（この案内の間）
+  function stationMatch(s) {
+    var stInputs = document.querySelectorAll('input[name="station_id[]"]');
+    var onStationPage = stInputs.length > 0;
+    var inputs = Array.prototype.slice.call(onStationPage ? stInputs : document.querySelectorAll('input[type="checkbox"]'));
+    var texts = inputs.map(textOfInput);
+    if (onStationPage) texts.forEach(function (t) { if (t) _seenStationLabels[t] = true; });
+    var seen = Object.keys(_seenStationLabels);
+    var m = Plan.matchStations(s.names || [], seen);
+    return { inputs: inputs, texts: texts, want: m.want, missing: m.missing, via: m.via, seen: seen, onStationPage: onStationPage, missNote: Plan.missNote(m.missing) };
+  }
+  function reportStationMiss(s) {
+    try {
+      if (!session || session.stationMissReported || !s) return;
+      var sm = stationMatch(s);
+      if (!sm.seen.length) return; // 駅の小窓を一度も見ていない（駅の文字が分からない）時は記録しない
+      session.stationMissReported = true; saveSession();
+      var lit = 0; sm.seen.forEach(function (t) { if (sm.want[Plan.stationKey(t)]) lit++; });
+      var c = session.conditions || {};
+      chrome.runtime.sendMessage({
+        type: "axlx-guide-station-miss",
+        runId: c._audit_run_id || null,
+        customerId: session.customerId || null,
+        record: {
+          v: 1, at: new Date().toISOString(), site: "realpro",
+          planned: (s.names || []).length, lines: s.lines || [], select_all_line_stations: !!c.select_all_line_stations,
+          missing: sm.missing.slice(0, 120), via: sm.via, lit_labels: lit,
+          page_labels: sm.seen.slice(0, 500),
+        },
+      }, function () { void chrome.runtime.lastError; });
+    } catch (_) {}
   }
   function currentStep() {
     if (!plan) return null;
@@ -523,7 +568,7 @@
     if (cur.step.kind === "pick_station" || cur.step.kind === "pick_route") {
       var closeHit = false;
       for (var n2 = t, k2 = 0; n2 && k2 < 4; n2 = n2.parentElement, k2++) if (Plan.STATION_MODAL_DONE_TEXTS.map(norm).indexOf(norm(n2.value || n2.textContent)) >= 0) { closeHit = true; break; }
-      if (closeHit && (cur.step.kind === "pick_route" || stationAnyChecked(cur.step))) markStepDone(cur.step.id);
+      if (closeHit && (cur.step.kind === "pick_route" || stationAnyChecked(cur.step))) { markStepDone(cur.step.id); if (cur.step.kind === "pick_station") reportStationMiss(cur.step); }
     }
     if (cur.step.kind === "search" && tgt && (tgt === t || tgt.contains(t))) {
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); memoSearchRun(session, "realpro");
@@ -531,6 +576,8 @@
     // v2.5.80: 検索を押した時に、この一覧を検索したお客様をタブに印（送る前の確かめ search-stamp.js）。手順が終わる前に押した時は complete=false
     var isSearchClick = false;
     for (var n3 = t, k3 = 0; n3 && k3 < 4; n3 = n3.parentElement, k3++) { if ((n3.classList && n3.classList.contains("go_search")) || norm(n3.value || n3.textContent) === "検索") { isSearchClick = true; break; } }
+    // v2.5.84: 駅の手順を飛ばして検索した時も「見つからない駅」を記録（1回だけ）
+    if (isSearchClick && session && plan) plan.steps.forEach(function (st) { if (st.kind === "pick_station") reportStationMiss(st); });
     if (isSearchClick && session && session.customerId) {
       var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
       if (SS) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "realpro", complete: cur.step.kind === "search", intended: SS.compactIntended(session.conditions), filled: readFilledForm() });
@@ -547,6 +594,7 @@
     lastCid = newCid ? String(newCid) : lastCid;
     try { chrome.storage.session.set({ axlx_guide_last_cid: lastCid }); } catch (_) {}
     session = { customerId: e.data.customerId || c.customer_id || null, customerName: c.customer_name || c.name || "", conditions: c, stage: "form", done: {}, at: Date.now() };
+    _seenStationLabels = {}; // v2.5.84 駅の小窓の文字はお客様ごとに覚え直す
     session.withReset = withReset;
     plan = Plan.buildPlan(c, { withReset: withReset });
     saveSession();
