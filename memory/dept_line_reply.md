@@ -2,6 +2,17 @@
 
 最終更新: 2026-10-07
 
+## 🏠 物件ピックアップの文に「束と要望の合う／合わない」・内装の色（10/07・会話「し」角田さん 白基調・竹内「希望の条件に合っていない部分をちゃんといれたうえで、具体的に内覧訴求」・未コミット）— 黄金ルール
+- 穴: AI の下書きが合っていない「内装白」を合う物として書いた（材料は間取り・家賃・区だけで、どの要望が束に合うかを知らなかった）
+- `app/lib/pickup-wants-fit.ts`（純関数）: 売上サポの行（terms・equipment.match・parsePickupFact・内装の色）×希望条件の文 → 束全体で 合う／合わない／一部／分からない。注記は②に「合う」だけ・「合わない」は③に実送信の型「こちらのN部屋白基調のお部屋では御座いませんが、敷金礼金0円の為初期費用面を抑える事が出来ます！！」・件数「こちらN部屋となります」
+  - 家賃・築年・間取りの外れは広げた時の書き方に任せる／初期費用（礼金あり）の外れは注記に載せない（割引で下げられる）／1部屋でも分からなければ「合わない」と言い切らない
+  - 出口 `findUnmetWantClaims`＝注意だけ（本文は変えない）
+- `app/lib/pickup-wants-fit-server.ts`＋`aix/action`（bundleFit → pickupFactsNote・会話を合わせるの③の追加・pickupSendExitNotice）。戻す: `PICKUP_WANTS_FIT=off`
+- 内装の色 `app/lib/interior-tone.ts`／`interior-tone-read.ts`: 希望に白基調がある時だけ DeepSeek flash で床の明るさ1〜5を読む（リアプロは PDF の室内写真のマスを切る）。床3以上＝白基調ではない（目で見た23枚で言い切り11/11正）・白基調は言い切らない。1枚約$0.0001・1〜3秒。止める: `PICKUP_INTERIOR_TONE=off`。監査 `scripts/audit-interior-tone.ts`
+- 効かない所: 手で入れた画像の束（pickup_ids なし＝「し」の 10/05 の送付そのもの）／内覧誘導は今まで通り画面の「内覧提案」が ON の時だけ
+- 試し `scripts/yuma-pickup-wants-fit-test.ts`（YUMA の行 2676・2425）・型の数え `scripts/audit-pickup-mismatch-phrases.ts`・テスト `app/lib/__tests__/pickup-wants-fit.test.ts`（44）
+
+
 ## 🌟 06f: 築古は👑で下げる・🌟の記録に束の見分け・重みの版を配線（10/07・竹内「１築年数古すぎる物件はそもそもお客さんにささりにくい…２なおす　３それで　４最善で」・未コミット）— 黄金ルール
 - **築古**: 初期費用重視の型（築年の列なし・「古くても良い」と言っていない）だけ、築31年以上（リノベ済み・築年不明を除く）にオススメの点 −15（old-building-age.ts・recommend-score・状況 oldAgeAvoid・OLD_AGE_MODE=off）。刺さった新着: 初期費用の型で築31以上 0/20・築30以下 19%／初期費用を言っていない型は築31以上 3/10 刺さる＝効かせない。👑の当て直し 🌟231回 新だけ1／旧だけ0（直した束 2／0）・売上サポ 1／0。判定の点には入れない（旧だけ2〜3）。版 star-fit@2026-10-06f
 - **束の見分け**: 🌟の記録の列 star_kind・bundle（star-bundle.ts・migrate-schema 追記・本番 ALTER 承認待ち）。過去の「新着1件」538 のうち束 294（55%）。isNewArrivalSnapshot は star_kind がある行だけそれを使う

@@ -122,6 +122,7 @@ import { readSendNow, effectiveSendFrame, buildSendNowBlock } from "@/app/lib/pr
 import { loadRecommendBundleFacts } from "@/app/lib/recommend-bundle-server";
 // 2026-10-06 ⑰: 物件ピックアップの文に、拡張が実際に検索した条件を渡す（AIXツールと連携）
 import { searchedConditionsFrom, searchedConditionsFromBatch, buildSearchedConditionsNote, type SearchAuditRow } from "@/app/lib/pickup-search-facts";
+import { findUnmetWantClaims } from "@/app/lib/pickup-wants-fit";
 import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 // 2026-10-06 竹内（R 事例）: 確認した（条件・交渉）の物件を会話から決定論で決める
@@ -2335,6 +2336,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
         return note;
       } catch { return ""; }
     })();
+    // 2026-10-07 竹内（会話「し」・白基調）「希望の条件に合っていない部分をちゃんといれたうえで、具体的に内覧訴求」:
+    //   送る束とお客様の要望の合う／合わない（資料から決定論・白基調の希望がある時だけ内装の色を DeepSeek で読む）を②③の材料と出口の注意に。
+    //   app/lib/pickup-wants-fit.ts・戻すのは PICKUP_WANTS_FIT=off（色だけ PICKUP_INTERIOR_TONE=off）
+    const bundleFit = action === "property_send" && pickupRowsForFacts.length > 0
+      ? await import("@/app/lib/pickup-wants-fit-server")
+          .then((m) => m.loadBundleWantsFit(supabase, pickupRowsForFacts.map((r) => r.id), customer_conditions ? String(customer_conditions) : null, { conversationId: conversationId ? String(conversationId) : null }))
+          .catch(() => null)
+      : null;
+    if (bundleFit) console.log(JSON.stringify({ tag: "aix:pickup-wants-fit", conversationId, toneRead: bundleFit.toneRead, wants: bundleFit.fit.wants.map((w) => `${w.label}:${w.verdict}(${w.ok}/${w.ng}/${w.unknown})`) }));
     // 2026-09-30: 物件オススメの見出し「🌟建物 号室」を資料の字に揃えられなかった時の注意（揃えた時は null のまま）
     let recHeadMismatch: string | null = null;
     if (pickupFacts.length) console.log(JSON.stringify({ tag: "aix:pickup-facts", conversationId, facts: pickupFacts, wards: pickupWards }));
@@ -2350,6 +2360,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       const notes = findPickupSendConflicts(text, pickupFacts, pastPickupSendTexts, [DEADLINE_SUPPORT_LINE, ...INSERTED_PROMISE_LINES], customer_conditions ? String(customer_conditions) : null);
       const area = findPickupAreaConflict(text, pickupWards);
       if (area) notes.push(area);
+      const unmet = bundleFit ? findUnmetWantClaims(text, bundleFit.fit) : null;
+      if (unmet) notes.push(unmet);
       if (notes.length) console.log(JSON.stringify({ tag: "aix:pickup-send-conflict", conversationId, notes }));
       return notes.map((n) => `⚠ ${n}`).join("\n");
     };
@@ -3301,7 +3313,7 @@ ${SMORA_COMMON_RULES}
       const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
       // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
       // 2026-09-27: 送る物件の所在地（区）も渡す（YUMA「大阪市北区・福島区から」で西区・大正区の20件を送った）
-      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote, searchedConditionsNote].filter(Boolean).join("\n");
+      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote, searchedConditionsNote, bundleFit?.note ?? ""].filter(Boolean).join("\n");
       const conditionsRule = conditionsInfo
         ? `・【最重要】「ご希望のご条件に合ったお部屋」「ご希望の条件に合うお部屋」などの抽象的な表現は絶対に使わない。お客様の具体的な希望条件を文中に自然に織り込むこと
   条件の入れ方（厳守）：
@@ -3488,6 +3500,10 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           keywordRule.trim(),
           sendNowBlock,
           threadsBlock,
+          // 2026-10-07（会話「し」）: 束が要望に「合わない」所は③に正直に1文（スタッフの実送信の型・材料は【今回お送りする…とお客様のご要望】）
+          bundleFit?.note && /・合わない(?:（\d+部屋とも）)?:/.test(bundleFit.note)
+            ? "【③の追加】【今回お送りする…お客様のご要望】に「合わない」要望がある時は、糸口の候補に無くても③にその1文を入れる（型はそのブロックのとおり・合う所を理由に添える）。②には「合う」要望だけを書く"
+            : "",
           inviteRule,
           sendBrainAddendum ? "【ブレイン改善ルール】\n" + sendBrainAddendum : "",
           (brainGuidanceNote ?? "").trim(),
