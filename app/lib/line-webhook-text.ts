@@ -26,6 +26,7 @@ import { classifyConditionTurn, gateExtractedConditions, decideAreaMode, isApply
 // 2026-09-27 竹内（野口さん「もう少し家賃あげて」・未桜さん「7畳以上の部屋」）: 抽出した家賃・広さを決定論で直す（家賃を上げて＝上限を上げる・下限は言った時だけ・帖→㎡）
 import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo, withRentOrder } from "@/app/lib/rent-raise";
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
+import { areaMergeMode, areasBeforeNegation, describeAreaChange, detectConditionRevert } from "@/app/lib/condition-restore";
 import { walkMinutesInText } from "@/app/lib/walk-minutes-text";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
@@ -568,7 +569,18 @@ export async function handleTextMessage(
   // after() C: エリア指定検知 → resolve-area抽出 → desired_area更新 + LINE通知
   // 2026-09-30: 申込の書類（applyFormDetected）の時は動かさない（黒明様: 転職先の書式の「勤務先所在地 西中島南方駅最寄り」を地域の指定と読んだ）。
   //   判定の中でも入口の見分け（condition-source-gate）で書類・物件の問い合わせを外し、条件の部分だけを resolve-area に渡す
-  if (!applyFormDetected && isAreaSpecificationMessage(text)) {
+  // after() R: 2026-10-06 ⑫ 竹内（R）「やっぱり元々の条件で等きたばあいは、もともとの条件に戻す」: 戻す依頼は履歴から戻し（condition-restore）、
+  //   同じ発言で経路C・P4 は動かさない（「元々の条件で」から地名や値を読み直して上書きしない）
+  const revertCue = !applyFormDetected && !isFormatMessage(text) ? detectConditionRevert(text) : null;
+  if (revertCue) {
+    after(async () => {
+      const { restoreConditionsFromLine } = await import("@/app/lib/condition-restore-server");
+      await restoreConditionsFromLine(db, convId, revertCue, insertedMsgId, (a) => inferAreaMode(db, a))
+        .catch((e) => console.warn("[restoreConditionsFromLine]", e));
+    });
+  }
+
+  if (!revertCue && !applyFormDetected && isAreaSpecificationMessage(text)) {
     after(async () => {
       await detectAndAnnounceAreaChange(db, convId, text, insertedMsgId)
         .catch((e) => console.warn("[detectAndAnnounceAreaChange]", e));
@@ -577,7 +589,7 @@ export async function handleTextMessage(
 
   // after() E: P4 — カジュアル返信から条件を自動抽出（Haiku: 明示条件を高速・安価に取得）
   // 物件検索フェーズ（hearing / property_search / hot / proposing）のみ実行し無駄なAPI消費を防止
-  if (!applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
+  if (!revertCue && !applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
     after(async () => {
       try {
         const { data: cs } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();
@@ -946,7 +958,7 @@ JSONのみ返してください。説明文・コードブロック・マーク�
 
 // エリアテキストから area_mode を推定（駅が1つでも含まれれば 'station'）
 // classify-area-modes cron と同じ分類ロジック。条件更新時に即時反映するために使用。
-async function inferAreaMode(db: ReturnType<typeof getDb>, rawArea: string): Promise<'station' | 'ward' | 'auto'> {
+export async function inferAreaMode(db: ReturnType<typeof getDb>, rawArea: string): Promise<'station' | 'ward' | 'auto'> {
   const PFX_RE = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
   const tokens = rawArea
     .split(/[,、・\/\s　]+|又は|もしくは|など/)
@@ -1853,13 +1865,29 @@ async function detectAndAnnounceAreaChange(
     if (!pc) return;
 
     // ADDマージ: 既存エリアと重複を排除して結合（condition-merge.ts の ADD ロジックと同等）
+    // 2026-10-06 ⑫ 竹内（R）「LINEにしたがって物件検索の条件も変動するように」: 「〜に変えて」「〜じゃなくて」「エリアは変わり」は入れ替え
+    //   （旧はいつも足すだけで、言い換えても前のエリアが残り続けた）。「〇〇でも」「同じような条件で〇〇方面は」は今まで通り足す（condition-restore.areaMergeMode）
     const oldArea = (pc.desired_area as string | null) ?? (pc.area as string | null) ?? "";
     const existing = oldArea.split(/[・、,]+/).filter(Boolean);
-    const merged = [...new Set([...existing, ...extractedAreas])].join("・");
+    const mergeMode = areaMergeMode(msgText);
+    const negated = new Set(mergeMode === "replace" ? areasBeforeNegation(msgText, extractedAreas) : []);
+    const replaced = extractedAreas.filter((a) => !negated.has(a));
+    const merged = mergeMode === "replace" && replaced.length
+      ? [...new Set(replaced)].join("・")
+      : [...new Set([...existing, ...extractedAreas])].join("・");
     if (merged === existing.join("・")) return; // 変化なし → 通知不要
 
+    // 画面の帯（ブレイン自動更新）に何が変わったかを出す: 「[10/3 13:31|auto] エリア変更: +旭区・都島区・…」（元に戻すは帯のボタン）
+    const changeLine = describeAreaChange(oldArea, merged);
+    const { data: addRow } = await db.from("property_customers").select("additional_conditions").eq("id", pc.id as string).maybeSingle();
+    const prevAdd = (addRow?.additional_conditions as string | null) ?? "";
+    const addEntry = changeLine ? `[${getJSTTimestamp()}|auto] ${changeLine}` : null;
     await db.from("property_customers")
-      .update({ desired_area: merged, updated_at: new Date().toISOString() })
+      .update({
+        desired_area: merged,
+        ...(addEntry ? { additional_conditions: prevAdd ? `${prevAdd}\n${addEntry}` : addEntry } : {}),
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", pc.id as string);
     // 2026-09-30: 経路C も条件の履歴に残す（旧は残していなかった＝見張り（search_audits.last_change・screen-watch）から見えず、黒明様の西中島南方を誰が書いたか追えなかった）
     void recordConditionHistory(db, pc.id as string, { desired_area: oldArea }, { desired_area: merged }, conditionSourceTag("path_c", sourceMsgId))

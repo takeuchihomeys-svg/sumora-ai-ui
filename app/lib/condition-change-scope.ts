@@ -37,8 +37,10 @@
 
 /** none＝検索条件の話ではない（お客様が送った物件・特定の物件の質問・見積依頼）。ブレインの cond の札の付け過ぎ（2026-09-27 監査: cond ありの番の約3/4）を止める */
 export type ConditionChangeScope = "permanent" | "temporary" | "none";
-export type ScopeDecidedBy = "text_temporary" | "text_temporary_weak" | "text_permanent_future" | "text_permanent" | "brain" | "default";
+export type ScopeDecidedBy = "text_temporary" | "text_temporary_weak" | "text_permanent_future" | "text_permanent" | "text_permanent_area_ask" | "brain" | "default";
 export type ScopeDecision = { scope: ConditionChangeScope; by: ScopeDecidedBy; evidence: string | null };
+
+import { areaAskCue } from "@/app/lib/condition-restore";
 
 const norm = (s: string | null | undefined) => String(s ?? "").normalize("NFKC").replace(/\s+/g, " ");
 
@@ -156,6 +158,11 @@ export function resolveConditionChangeScope(input: { text: string | null | undef
   if (weak && (input.registered === undefined || hasRegisteredConditions(input.registered))) return { scope: "temporary", by: "text_temporary_weak", evidence: weak };
   const perm = firstHit(norm(input.text), PERMANENT_RES);
   if (perm) return { scope: "permanent", by: "text_permanent", evidence: perm };
+  // 2026-10-06 ⑫ 竹内（R「ちなみに旭区、都島区…今里方面で同じような条件でお部屋はありますか？」）「このように連絡きた場合物件検索の条件に反映させる」:
+  //   エリアの追加の依頼（〇〇方面でも・〇〇ではありますか）はブレインより先に切り替え側。ブレインは「ちなみに〜ありますか」を参考（temporary）と読み、
+  //   登録の希望エリアを戻していた（9/30 以降のブレインの temporary・文の語なし 6件はスタッフの動きと照らして当たり0）。本番180日で当たる 53通は全部エリアの依頼
+  const areaAsk = areaAskCue(input.text);
+  if (areaAsk) return { scope: "permanent", by: "text_permanent_area_ask", evidence: areaAsk };
   const b = normalizeBrainScope(input.brainScope);
   if (b) return { scope: b, by: "brain", evidence: null };
   return { scope: "permanent", by: "default", evidence: null };
@@ -256,6 +263,16 @@ export function stripRevertedAutoNotes(additional: string | null | undefined, wr
       const rest = (before + after.replace(/^、/, "")).replace(/、$/, "").trim();
       if (rest) lines[i] = m[1] + rest; else lines.splice(i, 1);
       removed.push(seg);
+      break;
+    }
+  }
+  // 2026-10-06 経路C が足す「[…|auto] エリア変更: +旭区・都島区」（画面の帯に出す差分）も、希望エリアを戻した時は外す（一番後ろの1行だけ）
+  if (written.desired_area != null && String(written.desired_area) !== "") {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(/^\[[^\]]*\|auto\]\s?(エリア変更: .*)$/);
+      if (!m) continue;
+      removed.push(m[1]);
+      lines.splice(i, 1);
       break;
     }
   }

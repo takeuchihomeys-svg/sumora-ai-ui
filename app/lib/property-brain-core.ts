@@ -333,6 +333,11 @@ export async function runConditionBrain(
     return null;
   }
   const messageText = turn.conditionText;
+  // 2026-10-06 ⑫（R）: 「やっぱり元々の条件で」は webhook が履歴から戻す（condition-restore-server）。条件ブレインは読み直して上書きしない
+  {
+    const { detectConditionRevert } = await import("@/app/lib/condition-restore");
+    if (detectConditionRevert(messageText)) { console.log(JSON.stringify({ tag: "conditionBrain:skip-revert", convId })); return null; }
+  }
 
   // ── 顧客ID取得 ────────────────────────────────────────────────────────────
   const { data: conv } = await supabase

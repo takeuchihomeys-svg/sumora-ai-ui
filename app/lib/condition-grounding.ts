@@ -52,7 +52,8 @@ export function groundAreaTokens(input: {
     let found: AreaTokenGrounding | null = null;
     for (const h of addRows) {
       const src = parseConditionSource(h.source_message_id);
-      if (src.writer === "screen_edit") { found = { ...base, grounded: true, via: "screen_edit" }; break; }
+      // 2026-10-06 画面の「元に戻す」（undo）・LINE の「元々の条件で」（restore）は前にあった値へ戻しただけ＝人の手直しと同じ扱い
+      if (src.writer === "screen_edit" || src.writer === "undo" || src.writer === "restore") { found = { ...base, grounded: true, via: "screen_edit" }; break; }
       const m = src.messageId ? byId.get(src.messageId) : undefined;
       if (m && areaTokenGroundedIn(token, m.turn.conditionText)) { found = { ...base, grounded: true, via: "history_source", messageId: m.id, kind: m.turn.kind, excerpt: cut(m.turn.conditionText) }; break; }
     }

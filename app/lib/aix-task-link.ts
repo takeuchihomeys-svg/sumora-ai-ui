@@ -1,3 +1,4 @@
+import { checkPatternForConfirmTopic } from "./action-ledger";
 // app/lib/aix-task-link.ts
 // AIX の送信と「やること（line_tasks）」・物件出しの完了（✅）の対応表（2026-09-12 竹内方針）。
 //   「AIX 物件オススメ・物件ピックアップで送ったときに物件出し完了となる。ここちゃんとリンクさせる」
@@ -58,9 +59,9 @@ const APPLY_PROGRESS_CHECK_RE = /番手|お?部屋止め|お?申込(?:み)?(?:�
 
 export function resolveStaffPromiseAix(
   facts: {
-    lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean } } | null;
+    lastStaffEntry: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean; objectFrom?: "staff" | "customer" } } | null;
     /** 直前スタッフ発言が AIX の時、その本文に書き足した未履行の約束（2026-09-15 ゆうこ事例: 初期費用について＋「ピックアップさせて頂きます」） */
-    lastStaffAixTextPromise?: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean } } | null;
+    lastStaffAixTextPromise?: { kind: string; status: string; evidence?: string | null; detail?: { object?: string | null; watch?: boolean; objectFrom?: "staff" | "customer" } } | null;
     estimatePromisedUnfulfilled: boolean;
     pickupPromisedUnfulfilled: boolean;
     confirmationPromisedUnfulfilled?: boolean;
@@ -78,7 +79,7 @@ export function resolveStaffPromiseAix(
     /** 見積る物件があるか（こちらの送付・お客様の URL/画像/「ここの」/見積の語）。false の時は見積書の宣言でも 見積書送る をセットしない（ゆうこ事例）。未指定は従来どおり */
     propertyInPlay?: boolean;
   } = {},
-): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check"; alt?: "property_recommendation" } | null {
+): { action: "estimate_sheet" | "property_send" | "property_check_result"; kind: "estimate" | "pickup" | "check"; alt?: "property_recommendation"; checkPattern?: string } | null {
   const nonMedia = messages.filter((m) => {
     const t = (m.text ?? "").trim();
     return t && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(t);
@@ -111,6 +112,16 @@ export function resolveStaffPromiseAix(
     return { action: "property_send", kind: "pickup", alt: "property_recommendation" };
   }
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && !/次第/.test(e.evidence ?? "")) return { action: "property_send", kind: "pickup" };
+  // 2026-10-06 ⑫ 竹内（チンシャン事例）「これ確認したら連絡なので、AIXの確認したがセットされた状態にする…AIXの物件確認したではなくて、
+  //   確認したの管理会社に確認したの部分からスタッフが確認して送る」: お客様が条件・設備（畳を新品に・ペット・駐車場・入居時期…）を聞き、
+  //   こちらが「確認出来次第ご連絡させて頂きます」と約束した → 確認した（条件・交渉）→ 管理会社に確認した→〈要件〉。
+  //   要件はスタッフの約束の文か、無ければお客様の直前の質問（action-ledger.fillConfirmObjectFromCustomer）。
+  //   旧は「物件確認の依頼（募集状況）」の時だけ約束の AIX を立てていて、お客様のお礼の番は2段の約束の返信（「気になる点等…」）になっていた
+  if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled) {
+    const cp = checkPatternForConfirmTopic(e.detail?.object);
+    if (cp && (e.detail?.objectFrom === "customer" || opts.customerRequestedCheck)
+      && !APPLY_PROGRESS_CHECK_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check", checkPattern: cp };
+  }
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
     && !/割引|交渉/.test(e.detail?.object ?? "")
     // 申込の進捗（番手・お部屋止め・お申込完了・審査）の確認は 物件確認した ではない（カイナ事例の誤アナウンス）

@@ -23,6 +23,7 @@ import { classifyByKeywords } from "@/app/lib/condition-intent";
 import { FREE_TEXT_CONDITION_FIELDS, mergeFreeTextClauses } from "@/app/lib/condition-merge";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { resolveScopeForBundle } from "@/app/lib/condition-change-scope";
+import { detectConditionRevert } from "@/app/lib/condition-restore";
 import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
@@ -137,6 +138,8 @@ async function applyBrainConditionChange(
     return;
   }
   targetMessage = turn.conditionText;
+  // 2026-10-06 ⑫（R）: 「やっぱり元々の条件で」は webhook が履歴から戻す（condition-restore-server）。ここで読み直して上書きしない
+  if (detectConditionRevert(targetMessage)) { console.log(JSON.stringify({ tag: "bg-async:bridge-skip-revert", convId })); return; }
 
   const { data: pc } = await db.from("property_customers")
     .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")

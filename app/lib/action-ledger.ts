@@ -71,6 +71,14 @@ export interface LedgerEntry {
      * 「今ピックアップします」の宣言と違い「次第」が入るが、押す AIX は決まっているので対象にする
      */
     watch?: boolean;
+    /**
+     * confirmation_promised: 要件をお客様の直前の質問から読んだ（約束の文が「確認出来次第ご連絡させて頂きます」だけで要件が無い時）。
+     * 2026-10-06 ⑫ 竹内（チンシャン事例）: 要件が無いと【必ず】は「確認事項」・AIX は 物件確認した（募集状況）になり、
+     * お客様のお礼の番はブレインが約束の AIX を立てず返信（「気になる点等…」）にしていた
+     */
+    objectFrom?: "staff" | "customer";
+    /** confirmation_promised: お客様の質問の文（AIX の画面で何を確認したかの手がかり） */
+    question?: string | null;
     taskStatus?: string | null;
     /** meeting_place_sent: 案内した内覧の待ち合わせ（日付 M/D・時刻・場所）。AIX 待ち合わせ場所の本文・スタッフ本文から */
     appointment?: ViewingAppointment | null;
@@ -242,6 +250,79 @@ export function confirmTopicForCheckPattern(checkPattern: string | null | undefi
 const BARE_CONFIRM_DECL_RE = /(?:確認|お調べ|問い合わせ)(?:させて(?:頂|いただ)き|いたし|致し)ます/;
 /** お客様の行動が先に要る条件付き（「お送り頂き次第…確認させて頂きます」「ございましたら」）は約束ではない */
 const CONDITIONAL_PROMISE_RE = /(?:頂け|いただけ)(?:ましたら|たら|れば|次第)|(?:頂|いただ)き次第|お送り(?:頂|いただ)(?:き|け)|ございましたら|御座いましたら|でしたら|あれば|(?:頂|いただ)けると/;
+/**
+ * お客様の質問の言い方の設備の語（スタッフの約束の文には要件が無い時だけ使う）。
+ * 2026-10-06 ⑫ チンシャン「これは畳を新品に出来るかをお聞きしました！」→ スタッフ「確認出来次第ご連絡させて頂きます！！」
+ */
+const CUSTOMER_EQUIP_RE = /畳|表替|クロス|壁紙|フローリング|網戸|照明|鍵(?:の)?交換|リフォーム|和室|浴室乾燥|追い?焚|オートロック|モニター付|独立洗面|温水洗浄|ウォシュレット|室内洗濯|ガスコンロ|IH|エアコン|インターネット|Wi-?Fi|宅配ボックス|床暖|食洗|インターホン|給湯/i;
+const CUSTOMER_QUESTION_RE = /[？?]|(?:です|ます|でしょう|ません|ない|出来る|できる|頂ける|いただける|もらえる)か|お聞き|教えて|知りたい|確認(?:して|お願い)/;
+/**
+ * お客様の連投（約束の直前）から確認の要件と質問の文を読む。要件の語が無い・質問の形が無ければ null。
+ *   語彙は CONFIRM_TOPIC_RULES（スタッフの約束の文と同じ）→ 設備の言い方（CUSTOMER_EQUIP_RE）の順
+ */
+export function confirmObjectFromCustomerTurn(text: string | null | undefined): { object: string; question: string } | null {
+  const t = String(text ?? '').normalize('NFKC');
+  if (!t.trim() || !CUSTOMER_QUESTION_RE.test(t)) return null;
+  const sentences = t.split(/\n|(?<=[。！!？?])(?![。！!？?])/).map((x) => x.trim()).filter(Boolean);
+  // お客様の文は「駐車場って空きありますか」のように空き・募集の語が要件の語と一緒に出る → 要件（駐車場・ペット・設備…）を先に、募集状況・空室・番手は最後
+  const VACANCY_LABELS = new Set(['募集状況', '空室', '番手']);
+  const topicOf = (x: string): string | null => {
+    for (const r of CONFIRM_TOPIC_RULES) if (!VACANCY_LABELS.has(r.label) && r.re.test(x)) return r.label;
+    if (/猫|犬|小動物|飼え|飼う|飼って/.test(x)) return 'ペット';
+    if (CUSTOMER_EQUIP_RE.test(x)) return '設備';
+    for (const r of CONFIRM_TOPIC_RULES) if (VACANCY_LABELS.has(r.label) && r.re.test(x)) return r.label;
+    return null;
+  };
+  // 質問の形の文を先に、無ければ要件の語のある文
+  const ordered = [...sentences.filter((x) => CUSTOMER_QUESTION_RE.test(x)).reverse(), ...sentences.slice().reverse()];
+  for (const x of ordered) {
+    const o = topicOf(x);
+    if (o) return { object: o, question: x.slice(0, 80) };
+  }
+  return null;
+}
+/** 確認の要件名 → AIX【確認した（条件・交渉）】のピッカー（check_pattern）。募集状況・空室・番手は 物件確認した 側＝null */
+export function checkPatternForConfirmTopic(topic: string | null | undefined): string | null {
+  switch ((topic ?? '').trim()) {
+    case '入居時期': return 'mgmt_move_in';
+    case '初期費用': return 'mgmt_initial_cost';
+    case '保証会社': return 'mgmt_guarantor';
+    case 'ペット': return 'mgmt_pet';
+    case '退去': return 'vacate_date';
+    case '駐車場': return 'mgmt_parking';
+    case '設備': return 'mgmt_equipment';
+    case '代理契約': return 'mgmt_proxy';
+    default: return null;
+  }
+}
+/**
+ * 約束の文が要件の語を持たない「確認（出来次第ご連絡）させて頂きます」だけか（頭の こちら・明日・管理会社に 等は飛ばす）。
+ *   「Castle EastL'sの清掃完了日確認させていただきます」のように要件の言葉がある文は、お客様の質問で埋めない（監査 180日: 埋めると誤る型）
+ */
+export function isBareConfirmSentence(sentence: string | null | undefined): boolean {
+  let x = String(sentence ?? '').normalize('NFKC').trim();
+  const LEAD = /^(?:かしこまりました|承知しました|こちら|明日|本日|今日|改めて|再度|すぐに|至急|朝イチで|後ほど|[月火水木金土日]曜日?|[0-9]{1,2}\/[0-9]{1,2}日?|管理会社(?:様)?(?:に|へ)?|オーナー(?:様)?(?:に|へ)?|[!！😊😌✨🌟、,\s])+/u;
+  x = x.replace(LEAD, '');
+  return /^(?:確認|お調べ|問い合わせ)/.test(x);
+}
+/**
+ * 約束の要件が無い（「確認出来次第ご連絡させて頂きます」だけ）時、直前のお客様の連投から要件を埋める（台帳・送信時の記録の両方で使う）。
+ *   msgs は古い順。staffIdx はその約束の発言の位置。こちらの発言の束（画像・続きの文）を飛ばして、その前のお客様の連投を読む
+ */
+export function fillConfirmObjectFromCustomer(e: LedgerEntry, msgs: ReadonlyArray<{ sender: string; text?: string | null }>, staffIdx: number): void {
+  if (e.kind !== 'confirmation_promised' || !isConfirmPartyObject(e.detail.object)) return;
+  if (!isBareConfirmSentence(e.detail.sentence ?? e.evidence)) return;
+  let k = staffIdx - 1;
+  while (k >= 0 && msgs[k].sender !== 'customer') k--;
+  const turn: string[] = [];
+  for (; k >= 0 && msgs[k].sender === 'customer'; k--) turn.unshift(String(msgs[k].text ?? ''));
+  const hit = confirmObjectFromCustomerTurn(turn.join('\n'));
+  if (!hit) return;
+  e.detail.object = hit.object;
+  e.detail.objectFrom = 'customer';
+  e.detail.question = hit.question;
+}
+
 /** 本文の確認の要件（何を: 入居時期・保証会社・募集状況…を先に、無ければ誰に: 管理会社）。AIX の本文からも同じ語彙で取る */
 export function confirmObjectOf(text: string | null | undefined): string | null {
   const t = text ?? '';
@@ -778,12 +859,13 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
       const recEntries = rec.map((x) => { x.used = true; return entryFromRecorded(x.f); }).filter((e): e is LedgerEntry => !!e);
       if (recEntries.length > 0) {
         // 時刻は実際の発言の時刻に揃える（直前スタッフ発言の対応づけ ±3分）
-        for (const re of recEntries) { if (m.createdAt) re.at = m.createdAt; entries.push(re); }
+        for (const re of recEntries) { if (m.createdAt) re.at = m.createdAt; fillConfirmObjectFromCustomer(re, msgs, i); entries.push(re); }
         staffEntryByMsgIdx.set(i, recEntries[0]);
         return;
       }
     }
     const facts = classifyStaffTextFacts(m.text ?? '', m.createdAt ?? null);
+    for (const f of facts) fillConfirmObjectFromCustomer(f, msgs, i);
     const e = facts[0];
     if (!e) return;
     if (!Number.isFinite(t) && aixRows.length > 0 && (e.kind === 'properties_sent' || e.kind === 'estimate_sent')) return;

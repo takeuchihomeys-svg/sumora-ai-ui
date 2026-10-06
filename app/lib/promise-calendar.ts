@@ -10,7 +10,7 @@
 //   → 一次証拠（送信時の記録）から決定論で作る。印は手入力の型（【時間確保】と同じ notes 先頭）に合わせる。
 //   【必ず】の行は日付が過ぎても自動で完了にせず、それを履行する送信（物件送付・御見積書送付・確認結果の報告）で完了にする。
 import { jstParts } from "./jst-date";
-import { isConfirmPartyObject, confirmTopicForCheckPattern, type LedgerEntry, type LedgerKind } from "./action-ledger";
+import { isConfirmPartyObject, confirmTopicForCheckPattern, checkPatternForConfirmTopic, type LedgerEntry, type LedgerKind } from "./action-ledger";
 // 2026-10-01 竹内（和樹事例）「『引き続き新着で…お送り』は『新着が出たら送る』約束として扱う」: ピックアップの約束がいつやる約束か（promise-timing.ts）
 import { classifyPickupPromiseTiming, isWaitPromiseNotes, PICKUP_TIMING_LABEL, WAIT_TIMINGS, type PickupPromiseTiming } from "./promise-timing";
 
@@ -45,6 +45,14 @@ const PROMISE_SPEC: Record<PromiseKind, { eventType: string; label: (o: PromiseD
   confirmation_promised: { eventType: "follow_up", label: (o) => `${o.object ?? "確認事項"}の確認→ご連絡`, aix: (o) => confirmAixLabel(o.object), fulfilledBy: "confirmation_reported" },
 };
 export const PROMISE_KINDS = Object.keys(PROMISE_SPEC) as PromiseKind[];
+/**
+ * 会話画面の【必ず】から開く AIX のピッカー（check_pattern）。行の「AIX: 【確認した（条件・交渉）→設備】」の要件から決める。
+ * 2026-10-06 ⑫ 竹内（チンシャン事例）「確認したの管理会社に確認したの部分からスタッフが確認して送る」＝開いたら 管理会社に確認した→〈要件〉が選ばれた状態
+ */
+export function promiseCheckPatternOf(notes: string | null | undefined): string | null {
+  const m = String(notes ?? "").match(/AIX: 【確認した（条件・交渉）→([^】]+)】/);
+  return m ? checkPatternForConfirmTopic(m[1].trim()) : null;
+}
 /** 会話画面の【必ず】からそのまま開く AIX（event_type → AIX の action キー） */
 export function promiseAixActionOf(eventType: string | null | undefined): "property_check_result" | "property_send" | "estimate_sheet" | null {
   switch (eventType) {

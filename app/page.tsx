@@ -36,7 +36,7 @@ import { buildScreeningTaskPayload, isValidSyncKey } from "./lib/screening-calen
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
-import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
+import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseCheckPatternOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
 import { isWaitPromiseNotes, waitPromiseBadge } from "./lib/promise-timing";
 // 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
 import { compareConversationOrder, sortMsOf } from "./lib/conversation-order";
@@ -759,6 +759,7 @@ export default function Home() {
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [undoCondLoading, setUndoCondLoading] = useState(false); // 2026-10-06 ⑫ 条件の「元に戻す」
   const [hasMoreConversations, setHasMoreConversations] = useState(false);
   const [loadingMoreConv, setLoadingMoreConv] = useState(false);
   // 2026-09-21 竹内「公式LINEのように下までスクロールしたときに読み取られる形に」:
@@ -1034,6 +1035,28 @@ export default function Home() {
   // propertyAvailableByConvRef は boolean 化していて「募集なし」の理由が消えるため生値を別途保持する
   const lastPickupTypeByConvRef = useRef<Map<string, string>>(new Map());
   const lastCheckPatternByConvRef = useRef<Map<string, string>>(new Map());
+  // 2026-10-06 ⑫ 竹内（R）: LINE の言葉で自動で変えた検索の条件を1押しで戻す（一番新しい変更の束・履歴に undo で残る）
+  const undoConditionChangeInChat = async (convId: string) => {
+    const lc = linkedCustomerMap[convId];
+    if (!lc || undoCondLoading) return;
+    if (!window.confirm("自動で変えた検索の条件を、変更の前に戻しますか？")) return;
+    setUndoCondLoading(true);
+    try {
+      const res = await fetch("/api/property-customers/undo-condition-change", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: lc.id }),
+      });
+      const j = await res.json() as { changed?: Record<string, unknown>; skipped?: string[]; customer?: Record<string, unknown> | null; error?: string };
+      if (!res.ok) throw new Error(j.error ?? String(res.status));
+      if (j.customer) setLinkedCustomerMap(prev => ({ ...prev, [convId]: { ...prev[convId], ...(j.customer as object) } }));
+      if (!j.changed || !Object.keys(j.changed).length) setError(`戻す変更がありませんでした${j.skipped?.length ? `（${j.skipped.join("・")}）` : ""}`);
+    } catch (err) {
+      console.error("[undoConditionChangeInChat]", err);
+      setError("⚠️ 条件を元に戻せませんでした");
+    } finally {
+      setUndoCondLoading(false);
+    }
+  };
+
   // CHAIN-2: テンプレ連続送信チェーンのセッション管理（会話ID → セッション）。
   // AIXボタン押下で新規セッションIDを発行し、そこから続く全テンプレ選択に同じIDを付与する。
   // sentCount = このセッションで実送信済みのテンプレ数（次の選択の sequence_no = sentCount + 1）
@@ -6055,8 +6078,10 @@ export default function Home() {
 
   // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
   const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
-    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost" || params?.check_pattern === "mgmt_guarantor" || params?.check_pattern === "mgmt_parking" || params?.check_pattern === "mgmt_pet" || params?.check_pattern === "nearby_parking") {
-      setAixInitCheckPattern(params.check_pattern);
+    // 2026-10-06 ⑫: 設備・管理会社について・代理契約・募集状況（管理会社）も選んだ状態で開く（旧は8種類だけで、設備の確認の約束が素の画面で開いた）
+    const CP_OK = ["available", "interior_photo", "vacate_date", "mgmt_move_in", "mgmt_initial_cost", "mgmt_proxy", "mgmt_guarantor", "mgmt_company", "mgmt_parking", "mgmt_pet", "mgmt_equipment", "mgmt_availability", "nearby_parking", "owner_other"] as const;
+    if (params?.check_pattern && (CP_OK as readonly string[]).includes(params.check_pattern)) {
+      setAixInitCheckPattern(params.check_pattern as (typeof CP_OK)[number]);
     }
     if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen" || params?.send_mode === "alternative") {
       setAixInitSendMode(params.send_mode);
@@ -7610,7 +7635,18 @@ export default function Home() {
                 {/* 条件テキスト */}
                 <p className={`text-[12px] leading-relaxed mb-1.5 ${isAutoReflected ? "text-indigo-800" : "text-amber-800"}`}>{stripMarkdown(latest.content)}</p>
                 {isAutoReflected && (
-                  <p className="text-[10px] text-indigo-400 mb-1">条件はブレインが自動でDBに反映済みです</p>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-[10px] text-indigo-400">条件はブレインが自動でDBに反映済みです</p>
+                    {latest.pattern === "auto" && (
+                      <button
+                        onClick={() => void undoConditionChangeInChat(selectedConversation.id)}
+                        disabled={undoCondLoading}
+                        className="shrink-0 rounded-md border border-indigo-300 bg-white px-2 py-0.5 text-[10px] font-bold text-indigo-600 active:opacity-60 disabled:opacity-50"
+                      >
+                        {undoCondLoading ? "戻しています…" : "元に戻す"}
+                      </button>
+                    )}
+                  </div>
                 )}
                 {pendingLines.length > 1 && (
                   <p className={`text-[10px] mb-2 ${isAutoReflected ? "text-indigo-400" : "text-amber-500"}`}>
@@ -7670,7 +7706,13 @@ export default function Home() {
                 const action = promiseAixActionOf(p.event_type);
                 return (
                   <button key={p.id} type="button" className="flex w-full items-start gap-2 text-left active:opacity-70"
-                    onClick={() => { if (action) { setActiveAixFlow(action as AixActionType); openAixDirect(action as AixActionType); } }}>
+                    onClick={() => {
+                      if (!action) return;
+                      // 2026-10-06 ⑫ チンシャン: 条件・設備の確認の約束は 管理会社に確認した→〈要件〉を選んだ状態で開く
+                      const cp = action === "property_check_result" ? promiseCheckPatternOf(p.notes) : null;
+                      if (cp) setAixInitCheckPattern(cp as NonNullable<typeof aixInitCheckPattern>);
+                      setActiveAixFlow(action as AixActionType); openAixDirect(action as AixActionType);
+                    }}>
                     {waitBadge
                       ? <span className="shrink-0 rounded-full bg-[#5c6bc0] px-1.5 py-0.5 text-[9px] font-bold text-white">{waitBadge}</span>
                       : <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">必ず{days > 0 ? ` ${days}日` : ""}</span>}

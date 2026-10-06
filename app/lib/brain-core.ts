@@ -2922,6 +2922,8 @@ ${history}`;
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;
       promiseAltAction = promiseAix.alt ?? null;
+      // 2026-10-06 ⑫ チンシャン: 条件・設備の確認の約束は 確認した（条件・交渉）→ 管理会社に確認した→〈要件〉のピッカーで開く（物件確認した ではない）
+      if (promiseAix.checkPattern) sceneSignalCheckPattern = promiseAix.checkPattern;
     }
     // 2026-09-12 竹内（Sさん事例）: スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて、まだ結果を報告していない
     //   （台帳の確認の約束が未履行）のに、LLM が 確認します（acknowledge_check）を選んだ → 物件確認した（結果の報告）に直す。

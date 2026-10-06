@@ -7,7 +7,7 @@
 //     既存の最新の未完了行に物件名を上書きし「9/10 15:00 メゾン加美北 予定」のような誤った記録を作っていた
 //   → 送った時（一番よく知っている所）に構造化して1回書く。行動台帳（action-ledger）は記録を一次証拠にし、本文の読み直しは記録前の古いメッセージだけ
 import { supabase } from "@/app/lib/supabase";
-import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, confirmObjectOf, confirmTopicForCheckPattern, type RecordedFact, type ViewingAppointment, type LedgerEntry } from "@/app/lib/action-ledger";
+import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingAppointment, appointmentFromMeetingInput, appointmentYmd, confirmObjectOf, confirmTopicForCheckPattern, fillConfirmObjectFromCustomer, isConfirmPartyObject, type RecordedFact, type ViewingAppointment, type LedgerEntry } from "@/app/lib/action-ledger";
 // 2026-09-16 竹内「今日約束した事はカレンダーに【必ず】と入れて、お客さん名と要件を入れる（AIX と合わせて）」
 import { promiseEventRows, planPromiseInsert, planPromiseCompletion, PROMISE_MUST_MARK } from "@/app/lib/promise-calendar";
 // 2026-09-26 お客様の状況（customer-state）: 見積の物件名を本文の【】から・申込の案内の物件をこちらの本文の「〇〇号室お申込み」から（純関数は customer-state に1つ）
@@ -89,6 +89,19 @@ async function upsertFacts(rows: FactRow[]): Promise<void> {
 /** 手打ちの送信を1回分類して記録する（send-line-message・送信成功後）。待ち合わせの案内なら内覧の記録も書く */
 export async function recordStaffTextFacts(o: { conversationId: string; text: string; sentAt: string; lineMessageId?: string | null; viewingOnlyFrom?: string }): Promise<number> {
   const entries = classifyStaffTextFacts(o.text, o.sentAt).filter((e) => e.kind !== "media_sent");
+  // 2026-10-06 ⑫ 竹内（チンシャン事例）: 「確認出来次第ご連絡させて頂きます」だけの約束は要件が無い（【必ず】が「確認事項」・AIX が 物件確認した）。
+  //   直前のお客様の連投（「畳を新品に出来るか」）から要件を埋める（台帳の読み直しと同じ関数 fillConfirmObjectFromCustomer）
+  if (entries.some((e) => e.kind === "confirmation_promised" && isConfirmPartyObject(e.detail.object))) {
+    try {
+      const { data: prev } = await supabase.from("messages").select("sender, text, created_at").eq("conversation_id", o.conversationId)
+        .lt("created_at", o.sentAt).order("created_at", { ascending: false }).limit(12);
+      const msgs = [...(prev ?? []) as Array<{ sender: string; text: string | null }>].reverse();
+      msgs.push({ sender: "staff", text: o.text });
+      for (const e of entries) fillConfirmObjectFromCustomer(e, msgs, msgs.length - 1);
+    } catch (e) {
+      console.warn("[sent-facts] confirm object from customer:", e);
+    }
+  }
   // 1通に複数の行為がある時は主な行為を先頭に保つ（読む時は送信時刻の昇順＝主な行為が「直前スタッフ発言」になる）ため 1ms ずつずらす
   const base = Date.parse(o.sentAt);
   await upsertFacts(entries.map((e, i) => ({
