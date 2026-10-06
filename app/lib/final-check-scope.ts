@@ -68,6 +68,8 @@ const SAFETY_CODES: ReadonlySet<string> = new Set([
   "UNCHECKED_AUTO_SEND", "PARTIALLY_UNCHECKED", "REVISION_EXHAUSTED_AUTO_SEND",
   "SENSITIVE_CASE", "DUPLICATE_OF_SENT", "BANNED_WORD", "NG_PROPERTY_MENTION",
   "GATE_PAIR_CONFLICT",
+  // 2026-10-06 し 事例: 名前が語の途中に入った壊れ（「か角田こまりま角田た」）＝送ると取り返しがつかない文字の壊れ
+  "NAME_INSIDE_WORD",
   // ※ REPEATED_SENTENCE は 2026-09-21 に style へ移した（「言い方を変えて」＝文体の話）。
   //   DUPLICATE_OF_SENT（同じ本文をもう一度送ろうとしている）は safety のまま＝二重送信の歯止め。
 ]);

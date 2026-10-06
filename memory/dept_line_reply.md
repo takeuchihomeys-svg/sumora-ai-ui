@@ -1,6 +1,31 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-10-06
+最終更新: 2026-10-07
+
+## 🏠 比較の形（お送りさせて頂きましたお部屋の中でも）の出口・近さの言葉（先ほど）の時系列（10/07・R／見木 響夢さんの事例・未コミット）
+- **R（10/04 18:44 の下書き）**: AIX【物件オススメ】の2通目「お送りさせて頂きましたお部屋の中でも特にF asecia fonte 302号室が…」。実物: 直前の束は 10/02 08:52 の3部屋（I maison teo・Torebian Nagai・グランディオ鶴橋）＝**48.9時間前・F asecia fonte は束に無い・単独の1件の送付**。生成ログの scenario=compare（ピッカーなし・送付ログ7日以内＝⑰の前の判定）。今の⑰の判定なら followup_single（1件の形）。スタッフは「Rさんこちらのお部屋如何でしょうか！！」に直して送った
+- **竹内さんの決まり**: 「複数の物件送った中で1件オススメする時は お送りさせて頂きましたお部屋の中でも使う。1件だけの場合は使わない」
+- **出口を足した**（入口は⑰のまま）: `recommend-closing.fixRecommendClosing` に `compareAllowed`。`recommendation-frame.compareFrameExitAllowed(シナリオ, 束からの時間, 束の後の手の画像)` が false の時だけ外す＝**比較の場面でない・AIX の束の記録がある・束から1時間超・束の後（束の10分後〜今の15分前）に手で画像2枚以上が無い**。束の記録が無い・束の直後・「束に無い部屋」（名前の照合）は出口では決めない（実送信: 束の直後0.1時間の「束に無い」7回中6回はスタッフが比較の形＝画像の読み取りで名前が欠ける／束なしでも手で束を送って「全てご案内」）。手の画像は `recommend-bundle-server` が messages から数える（読めない時は「あり」）
+  - 語の言い換えも拾う（お送りさせていただいた・送らせて頂いた・ピックアップさせて頂きました・これまで〜）・お客様の送付「お送り頂きました物件の中で」は拾わない・「みやびさんに＋比較の形」は「みやびさん＋改行」
+  - 配線: aix-template-generate（締めの出口）・aix/action（1通目の締めの出口）
+  - 監査 `scripts/audit-compare-frame-scope.ts --days=180`: 実送信237回＝束の直後2部屋以上205・束1部屋5・時間外/束なし20・束に無い7 → 出口が外すのは1回（8/23 モモカ・25時間前の束に無い新着1件＝誤り）＝**誤削除0**。生成5回は誤り4のうち3を外す（R・五嶋・林田。スワンズシティは束の後に手の画像あり→残す）
+  - テスト `app/lib/__tests__/compare-frame-exit.test.ts`（25/25）
+- **見木 響夢さん（10/04 22:14・テンプレート一覧の生成）**: 「先ほどのお部屋とは別にお送りさせて頂きました！！」＝前の物件のやり取りは**2日半前**（10/02 の返信・物件確認は 9/28）。会話の札（2日前）はあったが、近さの言葉の線も出口も無かった
+  - `app/lib/recency-reference.ts`: lastRoomExchange（今の通＝末尾15分以内のスタッフ送信は除く）・buildRecencyNote（【現在の状況】に「前の物件のやり取り: 3日前（10/2）→先ほど・先程・さっきで指さない・触れる時は以前お送りさせて頂きました」）・fixRecentReference（**3時間超**なら比べるだけの行を外し、語は「以前」に。先ほどはお電話・先ほどお送りした項目・記入欄・先程募集に出たばかり は触らない）
+  - 配線: aix-template-generate（入口の1行＋締めの直後の出口）・aix/action（全種類・呼び名の固定の直後）
+  - 実送信365日: 物件を指す「先ほど」は5通（4通は直前・1通23時間前）。古い送付は「以前お送りさせていただきました」30通＝この言い方に替える
+  - 監査 `scripts/audit-recent-reference.ts`: 生成4回のうち3時間超3回を直す（前後を読んで壊れ無し）・実送信で直すのは23時間前の1回（語の置き換えだけ）
+  - テスト `app/lib/__tests__/recency-reference.test.ts`（16/16）
+- **竹内さんに確認**: ①近さの言葉の線 3時間（実例が少ない・23時間前に「先程」と書いたスタッフの1通がある）②束の直後で🌟が束の部屋の名前に無い時（⑰は比較しない）— 実送信では7回中6回スタッフが比較の形だった。名前が欠けているだけか
+
+## 🔤 名前が語の途中に入る壊れ（し 事例・10/06 17:46・竹内「誤字が発生する原因　また発生してるって監視や最終チェックわかってるのになぜ編集されていないのか」・未コミット）— 黄金ルール
+- **実物**: 表示名「し」・呼び名「角田」の会話の AI 下書き「か角田こまりま角田た！！…ピックアップ角田て…お部屋探角田全力で」。10/04〜10/06 に5通（ai_reply_examples 4件＋10/06 の画面の1通）。**送られた物は0**（スタッフが全部直して送った・自動送信0）
+- **原因**: `validate-reply.enforceCustomerName` ①の後半 `cleaned.split(display).join(canonical)`（08/15 から）。表示名が名前の形でなく正の名前がある時に、本文中の表示名を**語の境目を見ずに全部**置き換えていた。表示名が1文字のひらがなで、呼び名が 角田 に決まった 10/04 から発火（今日の call_name の固定が原因ではない）
+- **最終チェックが直さなかった理由**: LLM の anomaly_scan が FABRICATED_NAME を **warning** で出しただけ。作り直しは block の時だけ・接地修正は名前を直せない（CHECKPOINT に無い事実で置換不可）・gate は影の運用（applied=false）。後の enforceCustomerName の掛け直しも同じ壊れ方のまま
+- **直し**: ① `replaceDisplayStandalone`（表示名の端の字と外側の字が同じ種類＝日本語どうし・英数字どうしなら触らない。絵文字・記号の表示名は従来どおり）② `app/lib/name-inside-word.ts` detectNameInsideWord → `final-check.ts` ⑯ **NAME_INSIDE_WORD（block・safety）**＝作り直し・自動送信の関所に乗る。本文は書き換えない（元の字が分からない）
+- **監査** `scripts/audit-name-inside-word.ts`（400日・下書き/返信 7,895件・送信 14,382通）: 検出は壊れた下書き4通だけ・誤検出0・送信0。旧の置き換えが変える91文のうち63文（全部 し の会話）が語の途中＝新では触らない。新でも置き換える28文は絵文字の表示名（🐈‍⬛→カイナ・🌙→ふう）で旧と同じ
+- テスト `app/lib/__tests__/name-inside-word.test.ts`（15/15）
+- 別件（見つけたが未対応）: 7月の サ（🈂️）・R の下書きに「割引させて頂きサさん」「お部屋で新しくRさん」＝呼び名に文の切れ端が付いた古い壊れ（resolveAddressName 側・今は出ていない）
 
 ## 🌟 06e: 保留（初期費用だけ）・AD2以上も🌟の候補／AD を同じ建物の別の部屋でみなす（10/06e・竹内さん 2軸の質問への答え「1 あっている／2 だいじょうぶ／3 それで」・未コミット）— 黄金ルール
 - **1 保留でも🌟の候補**: 初期費用を抑えたい方の束で、保留の理由が**初期費用だけ**（`INITIAL_COST_NOT_ZERO`＝初期費用の希望なのに敷礼あり・ngHitCodes がこの1つ・初期費用の減点を戻すと 40点の線を越える）かつ **AD2以上**の行は、通すがあっても👑の候補に残す（AD で割引して初期費用を下げて推す形）。他の保留（定期借家・家賃超え・設備の × 等）・NG・外す候補・審査中/商談中は今まで通り除く。`app/lib/star-rank-pickup.ts` initialCostOnlyHold／starOpenRow／`SOFT_HOLD_AD_LINE = 2`・`pickup-best.pickCustomerBest`（`softHoldAdLine`・null＝06d）・理由「敷礼ありだが AD が高い（見積書の割引で初期費用を下げて推す）」。決まり `star-fit@2026-10-06e`
@@ -32,6 +57,7 @@
 5. `npx tsx --env-file=.env.local scripts/audit-star-soft-hold.ts --days=60` — **保留（初期費用だけ）の線 2 の見直し**（誤って入る＝保留の行が 👑 だが🌟でない回が増えていないか・線1.5 との差）
 6. `npx tsx --env-file=.env.local scripts/audit-building-ad-assume.ts --days=60` — **同じ建物の AD のみなし**の一致・高く見せた率（9% より上がっていないか）・補えた行の数（ログ `property-pickups:building-ad`）
 6b. `npx tsx --env-file=.env.local scripts/audit-recommend-score-pickups.ts --days=60`・`scripts/audit-recommend-score.ts` — オススメの点の1位が今の👑と同じか（違う回 0）・案 A（判定の点そのまま）が上回っていないか／`scripts/audit-hooked-arrival-learning.ts` — 刺さった新着（v2）で学べる物が出たか（出たら judge に HOOK_LEAN_* が付き始める・HOOK_LEAN_MODE=off で止める）
+6c. `npx tsx --env-file=.env.local scripts/audit-customer-pattern.ts --weekly --part=1,3,5` — **お客様の型ごとの👑の一致**（10/06: 全体43%・家族63%・二人以上56%・一人×初期費用37%・急ぎ21%と予算6万未満13%はランダム以下）と型ごとの足し点の当て直し（3つの分け方の全部で新だけ当たり＞旧だけ当たりの時だけ customer-pattern-weights.ACTIVE_PATTERN_BONUS_TABLE に書く・今は空）。詳細は dept_search_tool.md「お客様の型（パターン）の調査」
 7. 決める物: 下がっていれば `STAR_RANK_MODE=off`（全体を戻す）／`SOFT_HOLD_AD_LINE`（2→2.5 か null）／`BUILDING_AD_RULE`（minRooms 2 等）。直したら版を上げる（star-fit@…）
 
 ## 🌟 2軸「刺さり（お客様ごと）×ある程度 AD が高い」の調査（10/06・竹内「一番オススメの基準はお客さんが刺さりそうな物件を…そして ある程度ADが高い物件…原因を徹底的に調査」・**並べ方は変えていない＝star-fit@2026-10-06d のまま**・未コミット）
@@ -8701,3 +8727,27 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 監査 scripts/audit-household-change.ts（365日 10,349通）: 当たり7通・全部正しい・これまで条件に届いた 0/7
 - あかりは竹内さん承認で適用済み（scripts/apply-household-akari.ts --apply・preferences「二人入居可・トイレと風呂別・独立洗面台」→「トイレと風呂別・独立洗面台」・戻すは条件の画面）
 - 候補（未適用・承認待ち）: 9e04d916（6/4「別れたので別でお家探したい」・その他に二人入居可が残る）
+
+## 10/06 最終チェックの点検（竹内さん「最終チェックちゃんとできているのか・要否の判定甘くなっていないか・抜け・足りないクエリ」）— 未コミット
+
+監査: `npx tsx --env-file=.env.local scripts/audit-final-check-coverage.ts --since=2026-09-10 [--detail]`（読み取りのみ・LLM なし）
+
+### 今の最終チェックの一覧
+- **返信の下書き（generate-reply）だけ**が runFinalCheckGated → 決定論＋LLM 3パス（rule_check Haiku・anomaly_scan Haiku・context_check Sonnet）＋捏造の照合（Haiku）＋書き直し（Sonnet）＋差分の再検査（Haiku）＋直らなければ作り直し1回。後処理の後に決定論だけもう一度（postDet）。
+- AIX（aix/action・テンプレ・adapt）は LLM の最終チェック無し。出口の決定論（作業メモ・お待たせ・呼び名・絵文字・お客様呼び・状態と逆の文の send_hold・即入居・ピックアップの食い違い・送信前の〇〇止め）。
+- スタッフが直した文は再チェックしない（check-reply は呼び出し元が無い）。センシティブは書き直し無し。要否の判定（FINAL_CHECK_GATE）は影の運用で本番 skip 0回。
+
+### 数字（9/10〜・YUMA を除く）
+- 掛かった割合: 返信 81.7%（291/356）・AIX 0%（881件）
+- 道ごと（そのまま送った率）: 指摘なし 39.3%（56）／文体だけで書き直さない 36.9%（65）／書き直した 18.6%（59）／**事実の warning が残り書き直されない 29.7%（91＝31%）**／block 残り 28.6%（7）
+- AIX に返信用の決定論を当てると 22.9% が block だがほぼ誤発火（スモラなら…節約・募集中となります）＝AIX には返信の規則を当てない
+
+### 見つけた穴と直した事
+- **書き直しを採らなかった理由が記録されていなかった** → CheckResult.revision_dropped／finalCheckGate.revisionDropped（budget・no_passable・revision_failed・banned_word・await_block・confirm_promise・recheck_unverified/block・warn_worse・new_warn_type・evidence_kept・no_improve）。本文・判定は不変。10/06 以降の下書きで ② に出る
+- **FABRICATED_NAME が担当者の名乗り「鈴木と申します」に付く**（17件中6件）: 出力例6が「鈴木様」を誤った名前の例にしていた → 例を佐藤様に・担当者の名前を anomaly_scan に渡す・名乗りだけの引用は外す（final-check-staff-name.ts・本番の引用17件で外す6／残す11）
+- し→角田の壊れは LLM が5回見つけて5回とも warning で直らなかった → 名前の担当が NAME_INSIDE_WORD（決定論 block）にした
+
+### 入れなかった物（竹内さんに相談）
+- **MISSED_QUESTION は一度も書き直しに渡らない**（引用＝お客様の質問・書き直しは「引用が本文にある指摘」だけ）。290件中 19件・直して送った 68%。直すと書き直しの LLM（Sonnet＋Haiku）が増える（推定 1日 $0.04 程度）＝ DeepSeek で試してから
+- RULE_VIOLATION の「Brain判定…言及がない」等、本文に無い引用の指摘を画面から外す案 — FABRICATED_PROPERTY の本物（1LDKS→1LDK の写し違い）も本文に無い引用で出るので一律には外さない
+- AIX の数字の照合（資料・入力に無い家賃・退去日）: AIX の文を使った 845件中 125件（14.8%）でスタッフが数字・日付・号室を変えて送った（物件確認した募集中で退去日 11/30→10/30 等）。多くは文体の削り。次は種類ごとに目で読んで線を引く

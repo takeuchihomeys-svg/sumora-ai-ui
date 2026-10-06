@@ -29,6 +29,8 @@ export type FinalCheckGateLog = {
   draftIn?: string;
   /** 書き直しを省いた理由（"style_only"） */
   revisionSkipped?: string;
+  /** 2026-10-06 点検: 直す指摘があったのに書き直しを採らなかった理由（CheckResult.revision_dropped と同じ値・scripts/audit-final-check-coverage.ts ②） */
+  revisionDropped?: string;
 };
 
 export type GatedOptions = {
@@ -91,6 +93,7 @@ export async function runFinalCheckGated(draft: string, ctx: FinalCheckContext, 
   gate.ms = Date.now() - started;
   if (loop.finalDraft !== draft) gate.draftIn = draft.slice(0, 600);
   if (loop.finalCheck.revision_skipped) gate.revisionSkipped = loop.finalCheck.revision_skipped;
+  if (loop.finalCheck.revision_dropped) gate.revisionDropped = loop.finalCheck.revision_dropped;
   (loop.finalCheck as CheckResult & { gate?: FinalCheckGateLog }).gate = gate;
   return { ...loop, gate };
 }

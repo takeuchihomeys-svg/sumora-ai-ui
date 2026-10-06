@@ -36,6 +36,7 @@ import { moveOutEvidenceText, isMoveOutReleased, moveOutRoomMismatch, moveOutVie
 import { resolveConfirmationContext, stripUnbackedConfirmPromise, CONFIRM_PROMISE_SENTENCE_RE, CONFIRM_NEXT_RE as SHARED_CONFIRM_NEXT_RE, SEARCH_CONFIRM_RE, type ConfirmationContextVerdict } from "./confirmation-context";
 // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の道順の質問（住所の再掲は AIX の越権ではない）
 import { isViewingAccessQuestion } from "./viewing-access";
+import { detectNameInsideWord } from "./name-inside-word";
 // 2026-09-17 竹内（YUYA 事例）: ポータルの決まった説明（スタッフの実送信そのまま）は指摘の対象から外す
 import { resolvePortalQuestion, isPortalNoticeSentence } from "./portal-notice";
 import { NIGHT_PREFIX, detectOpener, OPENER_JA, normalizeGreetingLite, classifyReplyBody, isConditionFormThanksOpening, type GreetingKind, type GreetingDecisionLite } from "./greeting";
@@ -88,6 +89,7 @@ import { isRentNegotiationPromise, isMgmtDiscountNegotiationPromise, customerAsk
 import { findCompanyFactContradiction, buildCompanyFactsForCheck, findMissingCardFee } from "./company-fact-guard";
 // 2026-10-02 お客様自身の言葉の復唱を捏造と読まない（fabricated-customer-words.ts・scripts/audit-fabricated-customer-words.ts）
 import { isCustomerEchoFabrication } from "./fabricated-customer-words";
+import { isStaffSelfIntroNameFlag, STAFF_SELF_NAME } from "./final-check-staff-name";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -135,6 +137,12 @@ export interface CheckResult {
   reused_from_generation?: boolean;
   /** 2026-10-02: 書き直しを省いた理由（"style_only"＝直す指摘が文に間違いの無い文体だけ）。JSONB のキー追加のみ */
   revision_skipped?: "style_only";
+  /** 2026-10-06 点検: 直す指摘があったのに書き直しを採らなかった理由（JSONB のキー追加のみ・本文と判定は変えない）。
+   *  事実の warning が残ったまま書き直されない下書きが 31%（91/290）あり、どこで捨てたかの記録が無かった（scripts/audit-final-check-coverage.ts ②）。
+   *  budget＝時間が足りない / no_passable＝直せる指摘が無い（引用が本文に無い・表示のみ等）/ revision_failed＝書き直しの LLM が失敗・ガード違反 /
+   *  banned_word・await_block・confirm_promise＝書き直しが禁止の形を入れた / recheck_unverified＝再検査が完走しない /
+   *  recheck_block・warn_worse・new_warn_type＝再検査で悪化 / evidence_kept＝block の引用が書き直しで1つも消えない / no_improve＝block が減らない */
+  revision_dropped?: string;
 }
 
 export interface FinalCheckContext {
@@ -636,7 +644,8 @@ function buildAnomalyScanPrompt(draft: string, ctx: FinalCheckContext): PromptBl
    確認した事実が情報源に無ければ捏造
 3. 物件名・号室・駅名・路線名 — 情報源と一字一句照合。顧客の条件数字の写し間違い
    （「13〜17万」→「3〜17万」等）も捏造扱い
-4. 日付・曜日・時刻 / 顧客の名前（情報源上の名前と一致するか。「名称未設定」は名前ではない）
+4. 日付・曜日・時刻 / 顧客の名前（情報源上の名前と一致するか。「名称未設定」は名前ではない）。
+   こちらの担当者の名前は「${STAFF_SELF_NAME}」（「お部屋探しを担当させて頂きます${STAFF_SELF_NAME}と申します」は正しい名乗り・名前の誤りではない）
 5. 会社の制度の説明（仲介手数料はブランドで固定: スモラ=2,980円・イエヤス=0円・ギガ賃貸=0円。
    固定なので「仲介手数料を割引」という表現のみ誤り。「初期費用を最大限割引」は正しい制度
    （オーナーから頂く広告料ADを初期費用に還元）なので捏造として指摘しないこと。
@@ -686,8 +695,8 @@ ${ctx.finalCheckRules ? `\n[FINAL_CHECK_RULES]\n${ctx.finalCheckRules.slice(0, 2
 → issues: [{"code":"FABRICATED_DATE","summary":"日付と曜日が一致していない","evidence":"8月7日（金）","pass":"anomaly_scan"}]
 
 【出力例6 - FABRICATED_NAME 違反（顧客名の誤り）】
-（情報源・履歴に顧客名「田中様」と記録されているが、返信に「鈴木様」と書かれている場合）
-→ issues: [{"code":"FABRICATED_NAME","summary":"顧客の名前が情報源と異なっている","evidence":"鈴木様","pass":"anomaly_scan"}]
+（情報源・履歴に顧客名「田中様」と記録されているが、返信に「佐藤様」と書かれている場合）
+→ issues: [{"code":"FABRICATED_NAME","summary":"顧客の名前が情報源と異なっている","evidence":"佐藤様","pass":"anomaly_scan"}]
 
 【出力例7 - FABRICATED_POLICY 違反（会社制度の誤説明）】
 イエヤスの仲介手数料は通常の半額の0.5ヶ月分になります。
@@ -1874,6 +1883,19 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   // ⑮ 2026-09-11 竹内方針1（統合設計 §4）: 誤字（TYPO_*）。後処理 applySurfaceFixes の自動修正の後に残ったものだけが出る（warning・block しない・修正ループ対象外）
   issues.push(...runTypoChecks(text, ctx));
 
+  // ⑯ 2026-10-06 竹内（し 事例「か角田こまりま角田た」）: 名前が語の途中に入った壊れ（出口の名前の置き換えの事故）。
+  //   LLM の FABRICATED_NAME（warning）は作り直しの対象外・接地修正は名前を直せず、指摘だけ出て下書きはそのまま出ていた。
+  //   決定論の block にして作り直し・自動送信の関所に乗せる（本文は書き換えない＝元の字が分からないため）。
+  //   監査（scripts/audit-name-inside-word.ts・400日の下書き/返信 7,895件・送信 14,382通）で当たるのは壊れた下書き4通だけ・誤検出0
+  for (const h of detectNameInsideWord(text, [ctx.customerName])) {
+    issues.push({
+      pass: "rule_check", severity: "block", code: "NAME_INSIDE_WORD",
+      message: `お客様の名前「${h.name}」が語の途中に入っています（文字の置き換えの壊れ）`,
+      evidence: h.evidence,
+      suggestion: `「${h.name}」を語の途中から外し、元の語（かしこまりました・して 等）に戻して書き直す。呼びかけは「${h.name}さん」の形だけ`,
+    });
+  }
+
   return issues;
 }
 /** 誤字の検出（warning）。evidence は一致した文字列、suggestion は置換後の文字列 */
@@ -2792,6 +2814,11 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
         console.log(JSON.stringify({ tag: "final-check:customer-echo-dropped", pass, code, evidence: evidence.slice(0, 80) }));
         continue;
       }
+      // 2026-10-06 点検: こちらの担当者の名乗り（鈴木と申します）に付いた FABRICATED_NAME は外す（呼びかけ「〇〇さん／様」を含む引用は残す・final-check-staff-name.ts）
+      if (isStaffSelfIntroNameFlag(code, evidence)) {
+        console.log(JSON.stringify({ tag: "final-check:staff-self-name-dropped", pass, code, evidence: evidence.slice(0, 80) }));
+        continue;
+      }
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が本文に実在する場合のみ（実在しない引用での誤ブロックを防ぐ）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
@@ -3388,6 +3415,7 @@ async function runDiffRecheck(
       const code = (r.code ?? "UNKNOWN").trim() || "UNKNOWN";
       const pass = inferDiffIssuePass(code, targets);
       if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx))) continue; // 2026-10-02 お客様の言葉の復唱は捏造でない（1回目と同じ）
+      if (isStaffSelfIntroNameFlag(code, evidence)) continue; // 2026-10-06 担当者の名乗りは名前の誤りでない（1回目と同じ）
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が修正後本文に実在する場合のみ（誤ブロック防止・runFinalCheckと同一）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
@@ -3477,10 +3505,12 @@ export async function runFinalCheckWithRevision(
   // ── warningのみ: 接地修正1回 + フル再チェック（未検証テキストは絶対に finalDraft にしない）──
   // blockが無いので送信は元々止まらない。よって迷ったら常に「検証済みベースラインの元ドラフト」側に倒す。
   if (blocks1.length === 0) {
+    // 2026-10-06 点検: 書き直しを採らなかった理由を残す（本文・判定は変えない）
+    const dropW = (why: string): RevisionLoopResult => { check1.revision_dropped = why; return { finalDraft: draft, finalCheck: check1 }; };
     // (1) 予算ガード: 残り時間が 修正+再チェック に満たなければ修正自体をスキップ
     //     （warningは送信を止めないので、未検証の修正版を出すより修正しない方が安全）
     if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) {
-      return { finalDraft: draft, finalCheck: check1 };
+      return dropW("budget");
     }
 
     // (2) 接地修正（失敗/ガード違反は null = fail-open）
@@ -3492,7 +3522,7 @@ export async function runFinalCheckWithRevision(
         isRevisable(i) &&
         (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
     );
-    if (passableWarnIssues.length === 0) return { finalDraft: draft, finalCheck: check1 };
+    if (passableWarnIssues.length === 0) return dropW("no_passable");
     // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」:
     //   直す指摘が全部「文に間違いの無い文体」（開口語・締め・言い回しの数・骨格・共感の言い方。final-check-scope の isStyleOnlyNoError）なら書き直さない。
     //   文体は 9/21 から画面に出さない決まりで、書き直し（Sonnet＋再検査）を払っても見せない指摘を直すだけだった（送った例 267回の 2割強）。
@@ -3507,7 +3537,7 @@ export async function runFinalCheckWithRevision(
     //   （DeepSeek で文体だけの書き直しを過去の下書き 37件に当てたら 32件が実送信から遠ざかった＝何卒・名前・条件の列挙を消す。scripts/yuma-style-revision-probe.ts）
     const fixIssuesW = passableWarnIssues.filter((i) => !isStyleNoErrorCode(i.code));
     const revisedRaw = await runGroundedRevision(draft, fixIssuesW.map((i) => decorateFixInstruction(i, ledgerW)), ctx, REVISION_MS);
-    if (!revisedRaw) return { finalDraft: draft, finalCheck: check1 };
+    if (!revisedRaw) return dropW("revision_failed");
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用
     // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（別名の統一・承知→かしこまりました・すぐに除去・誤字・名前スロット）。
     //   下の禁止語プリスキャンで「承知」を含む修正版を丸ごと捨てていた（E4）のを、置換で救う
@@ -3516,14 +3546,14 @@ export async function runFinalCheckWithRevision(
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
     //     「確認して…ご連絡」系の句（AIX_BOUNDARY_PROMISE と正面衝突）を検出したら即破棄
     if (BANNED_WORDS_DETERMINISTIC.some((w) => revised.includes(w))) {
-      return { finalDraft: draft, finalCheck: check1 };
+      return dropW("banned_word");
     }
     // 2026-09-12 竹内方針B: 禁止語から外した2語は、初回検査と同じ場面判定で block になる修正版だけを捨てる
     if (runAwaitUketamawariChecks(revised, ctx).some((i) => i.severity === "block")) {
-      return { finalDraft: draft, finalCheck: check1 };
+      return dropW("await_block");
     }
     if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(draft)) {
-      return { finalDraft: draft, finalCheck: check1 };
+      return dropW("confirm_promise");
     }
 
     // (4) 差分再チェック（check1 + recheck = 計2チェックで MAX_CHECK_ITERATIONS=2 と整合）
@@ -3553,7 +3583,7 @@ export async function runFinalCheckWithRevision(
 
     // 棄却: 元ドラフト + check1（revision_count=0）にフォールバック。
     // recheckでblockが出ても元ドラフトは block 0件で送信可能なため revision_exhausted は立てない
-    return { finalDraft: draft, finalCheck: check1 };
+    return dropW(!fullyVerified ? "recheck_unverified" : recheckHasBlock ? "recheck_block" : hasNewWarnType ? "new_warn_type" : "warn_worse");
   }
 
   // ── blockあり: 修正 → 再チェック（ループカウンタで上限強制）──
@@ -3562,13 +3592,14 @@ export async function runFinalCheckWithRevision(
   let currentDraft = draft;
   let currentCheck: CheckResult = check1;
   let revisionCount = 0;
+  let droppedB: string | null = null; // 2026-10-06 点検: 書き直しを採らなかった理由（本文・判定は変えない）
 
   while (checkIterations < MAX_CHECK_ITERATIONS) {
     const blocks = currentCheck.issues.filter((i) => i.severity === "block");
     if (blocks.length === 0) break; // 成功: blockが消えた
 
     // 時間予算: 残りが 修正+再チェック に満たなければ修正せず即スタッフ確認へ
-    if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) break;
+    if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) { droppedB = "budget"; break; }
 
     const draftNormB = normalizeForMatch(currentDraft);
     const passableBlockIssues = currentCheck.issues.filter(
@@ -3577,7 +3608,7 @@ export async function runFinalCheckWithRevision(
         isRevisable(i) &&
         (!i.evidence || draftNormB.includes(normalizeForMatch(i.evidence)))
     );
-    if (passableBlockIssues.length === 0) break;
+    if (passableBlockIssues.length === 0) { droppedB = "no_passable"; break; }
     // 2026-09-09 行動台帳: block が台帳系（再度／お送りした／完了形）だけなら決定論置換（applyLedgerAutoFix）で直す（Sonnet 15s 節約・意味の変質ゼロ）。
     //   他の block が混在する時は Sonnet 修正に台帳の根拠・制約を添える
     const ledgerB = resolveLedger(ctx);
@@ -3592,18 +3623,18 @@ export async function runFinalCheckWithRevision(
     } else {
       revised = await runGroundedRevision(currentDraft, passableBlockIssues.map((i) => decorateFixInstruction(i, ledgerB)), ctx, REVISION_MS);
     }
-    if (!revised) break; // 修正失敗/ガード違反 → give up gracefully
+    if (!revised) { droppedB = "revision_failed"; break; } // 修正失敗/ガード違反 → give up gracefully
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用（修正 LLM が「〇〇さん」を書いても BANNED_WORD にしない）
     // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（fillNameSlot を含む）
     revised = applySurfaceFixes(revised, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage, customerMessageAt: lastCustomerMessageAtOf(ctx), ownPropertyReturnedAll: ctx.ownPropertyReturnedAll }).text;
     // CONFIRM_PROMISE_RE ガード（blockパス・warningパスと対称）。確認約束が verdict で許可されている／直前スタッフが確認約束の時は外す（M14）
-    if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) break;
+    if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) { droppedB = "confirm_promise"; break; }
 
     // 決定的プリフィルタ: block evidence が1つも消えていない修正は無効（再チェック2.5sを節約）
     // 2026-09-09 Fable5: 骨格系 block（evidence=本文冒頭）は追加型修正で evidence が残るのが正常 → プリフィルタ対象から除外
     const revisedNorm = normalizeForMatch(revised);
     const deletableBlocks = blocks.filter((b) => b.evidence && !SKELETON_CODES.has(b.code));
-    if (deletableBlocks.length > 0 && deletableBlocks.every((b) => revisedNorm.includes(normalizeForMatch(b.evidence)))) break;
+    if (deletableBlocks.length > 0 && deletableBlocks.every((b) => revisedNorm.includes(normalizeForMatch(b.evidence)))) { droppedB = "evidence_kept"; break; }
 
     // ── チェック2回目: 差分再チェック（Check1のissueを引き継ぎ修正版を検証。未検証の文章は絶対に出さない）──
     const recheck = await runDiffRecheck(revised, currentCheck.issues, ctxForRecheck, RECHECK_MS, currentCheck.passes_completed);
@@ -3612,7 +3643,7 @@ export async function runFinalCheckWithRevision(
 
     // FN-003: 採用条件は差分検証の完走確認（2026-09-11: diff_verified。passes_completed は check1 の実値を引き継ぐ）
     const verified = recheck.diff_verified === true;
-    if (!verified) break; // 差分再チェック失敗 → 修正版は未検証なので不採用（fail-open）
+    if (!verified) { droppedB = "recheck_unverified"; break; } // 差分再チェック失敗 → 修正版は未検証なので不採用（fail-open）
     revisionCount++;
 
     // 2026-09-11 統合設計（経路G・M18）: UNCHECKED_AUTO_SEND は「改善したか」の比較から除外する（テキスト修正で解消しないため。
@@ -3622,7 +3653,8 @@ export async function runFinalCheckWithRevision(
       // 改善（0件=クリーン / 減少=部分改善）→ 修正版がベスト草稿
       bestDraft = revised;
       bestCheck = recheck;
-    }
+      droppedB = null;
+    } else droppedB = "no_improve";
     // 改善なし（同数以上）→ best は据え置き（元ドラフトをスタッフに見せる）
     currentDraft = revised;
     currentCheck = recheck;
@@ -3630,6 +3662,7 @@ export async function runFinalCheckWithRevision(
 
   bestCheck.revision_count = revisionCount;
   bestCheck.pre_revision_issues = preRevisionIssues;
+  if (droppedB && bestDraft === draft) bestCheck.revision_dropped = droppedB;
   if (bestCheck.issues.some((i) => i.severity === "block")) {
     bestCheck.revision_exhausted = true; // blockが残った → スタッフ手動確認必須
   }
