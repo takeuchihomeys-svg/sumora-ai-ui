@@ -25,6 +25,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: r.ok, dry: r.dry, error: r.error, runId: r.runId ?? null, proposedVersion: r.proposedVersion ?? null, activeVersion: r.activeVersion,
       counts: r.counts, all: r.metrics.all, holdout: r.evaluation, changes: r.proposal.changes, autoApply: r.autoApply,
+      // 2026-10-06 刺さった新着1件の学び（提案だけ・判定の点は変えない）
+      hook: r.hook && "materials" in r.hook
+        ? { snapshots: r.hook.materials.snapshots, hooked: r.hook.materials.hooked, leans: r.hook.learned.leans.map((l) => `${l.type}×${l.feature}`), kept: r.hook.kept, proposeUse: r.hook.proposeUse, reason: r.hook.evaluation.reason }
+        : r.hook ?? null,
     }, { status: r.ok ? 200 : 500 });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });

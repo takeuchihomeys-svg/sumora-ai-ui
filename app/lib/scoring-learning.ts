@@ -42,6 +42,8 @@ export type Episode = {
   /** 条件の種類（low_initial・walk_want 等） */
   segments: string[];
   cands: EpisodeCandidate[];
+  /** 2026-10-06 お客様の型（一人／二人以上・初期費用の希望）。刺さった新着の加点（hooked-arrival-learning）を当てる時に使う。無ければ当てない */
+  ctype?: { household: boolean; initial: boolean } | null;
 };
 
 /** 札 → 点（上書き分だけ持つ。無い札は base の点） */

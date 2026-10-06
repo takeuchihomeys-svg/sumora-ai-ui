@@ -4625,6 +4625,12 @@ COMMENT ON COLUMN property_customers.requirement_strength IS '要望の強さ {m
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS call_name TEXT;
 COMMENT ON COLUMN conversations.call_name IS '固定の呼び名（「あ」「R」等・さんは付けない）。生成と出口の名前の正';
 
+-- 2026-10-06 竹内「新着1件でお客さんささっているのは、ちゃんと決めにいっている物件」→ 物件の点の週の学習に強い材料として入れる:
+--   刺さった新着1件（new-arrival-hook）の型ごとの特徴・学んだ表・スタッフの選択に当てた前後（hooked-arrival-learning-server.runHookLearning）を週の記録に残す。
+--   判定の点はまだ変えない（提案だけ）。列が無い間は記録の更新だけ失敗して学習は今まで通り
+ALTER TABLE scoring_learning_runs ADD COLUMN IF NOT EXISTS hook_learning JSONB;
+COMMENT ON COLUMN scoring_learning_runs.hook_learning IS '刺さった新着1件の学び {materials:{snapshots,hooked,withType,fill}, learned:{cells,leans,skipped}, table, kept, dropped, evaluation:{base,withBonus,bySource,use,reason}, proposeUse}。刺さらない新着は負例にしない';
+
 -- 会話・メッセージの変更を Realtime で届ける（画面は変わった行だけを直す。30秒ごとの丸ごとの読み直しをやめるため）
 DO $$
 BEGIN

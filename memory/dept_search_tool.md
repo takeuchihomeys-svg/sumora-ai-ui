@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-10-06 刺さった新着1件を物件の点の週の学習に「強い材料」として入れる（サーバーのみ・拡張の変更なし・未コミット＝commit は親）
+竹内さん（10/06）「新着1件でお客さんささっているのは、ちゃんと決めにいっている物件」→ 採点の学習に強い材料として入れる。刺さらない新着は減点しない（印なし）。
+- **学習の場所**: 週1回の点の学習 `/api/cron/scoring-learning`（月曜 JST 5:10・scoring-learning-server.runScoringLearning）に別の口 `runHookLearning`（app/lib/hooked-arrival-learning-server.ts）を足した。同じ回（loadEpisodes の 🌟の回・拡張の回・売上サポの回）で確かめる。**提案だけ**（判定の点は変えない）。記録は `scoring_learning_runs.hook_learning`（列は migrate-schema に追記・**本番への ALTER は未実行＝承認待ち**・列が無い間は記録の更新だけ失敗して学習は今まで通り）。回に お客様の型 `ctype` を付けた（loadEpisodes）
+- **材料を埋める**（LLM なし・`fillArrivalFacts`）: 🌟の本文の値（star_text_facts）→候補の行→送った画像の読み取り（10/06 の facts・号室が違う物は使わない）→売上サポ→相場の部屋→送付の記録。400日 538回（刺さった 121）: 家賃 94%・管理費 89%・間取り 89%・駅/徒歩 82%・敷金 74%・礼金 68%・築年 71%・広さ 64%・AD 10%・構造 6%・設備 90%。**前回「家賃が数件」だったのは候補の行だけを見ていたため**（本文の値が 488）
+- **学ぶ形**（`app/lib/hooked-arrival-learning.ts`・純）: 比べる相手は「送った新着ぜんぶ」（刺さった物も含む）。lift＝刺さった物の中の割合÷送った物の中の割合。型＝全体／一人／二人以上（householdLayoutOf）×初期費用（customerWants）。線: 送った30・刺さった8・lift1.25・古い半分で学び新しい半分でも lift1.05＆刺さった3。出口は加点だけ（+5・上限+10）。採点に入れる関門 `evaluateHookBonus`: 1位・3位以内・相対順位がどれも下がらない（全体と材料ごと）＋相対順位が0.005以上良くなる。`pruneHookTable` で1つずつ確かめて外す
+- **10/06 の結果**: 学べる物 0（どの型でも刺さった物と送った物の特徴の差が小さい: 敷礼0 lift1.05・家賃が上限の9割〜1.1倍 1.12・駅近 1.03・広い 0.83）。一番近いのは 二人以上×初期費用 × 築15年以内（全期間 lift1.30・刺さった 26/28＝93%・古い半分 1.21）＝**今の🌟の「1LDK以上は一番新しい +15」と同じ向き**。線を1.1まで下げた感度: 6つ学ぶが、家賃の上限寄りは拡張の回で上がり🌟の回で下がる（1位 0.301→0.291）→外す・築15年以内は相対順位 +0.0006 だけ（1位は変わらない）→小さいので入れない＝表は空
+- **監査** `npx tsx --env-file=.env.local scripts/audit-hooked-arrival-learning.ts [--days=400] [--evalDays=180] [--minLift=]`（読むだけ・41秒）。テスト `app/lib/__tests__/hooked-arrival-learning.test.ts`（41）
+- 触ったファイル: app/lib/hooked-arrival-learning.ts（新）・hooked-arrival-learning-server.ts（新）・scoring-learning.ts（Episode.ctype）・scoring-learning-server.ts（ctype・hook の口・記録）・app/api/cron/scoring-learning/route.ts（返す要約に hook）・app/api/migrate-schema/route.ts（hook_learning 列）・scripts/audit-hooked-arrival-learning.ts（新）・テスト（新）
+
 ## 2026-10-06 v2.5.85 ITANDI の案内にも v2.5.84 と同じ直し（**拡張の再読み込み必須**・DB/サーバーの変更なし・未コミット＝commit は親）
 竹内「リアプロ同様に ITANDI も」（v2.5.84 の報告の4番）。
 - **光の枠**: `itandi-guide.js highlight` も `targets.slice(0, 40)` だった（路線を押すと出る駅を全部光らせる時、駅の多い路線＝JR 東海道 等で 41番目から光らない）→ 画面に見えている物だけ描く（150 まで）・見えている物が無い時だけ矢印。

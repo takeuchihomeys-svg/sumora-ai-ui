@@ -15,6 +15,8 @@ import {
   evaluateProposal, decideAutoApply, isAdCode, sanitizeWeights, switchVersion, previousVersion,
   type Episode, type WeightMap, type WeightVersion, type RankMetrics,
 } from "./scoring-learning";
+import { hookCustomerTypeOf } from "./hooked-arrival-learning";
+import { runHookLearning, type HookLearningReport } from "./hooked-arrival-learning-server";
 import { adTwoMonthCodes, buildContext, customerAt, episodeFromSnapshot, episodeFromPool, episodeFromPickups, segmentsOf, isCustomerSend, POOL_SENT_WINDOW_MS, type ConditionHistoryRow } from "./scoring-learning-episodes";
 
 type Row = Record<string, any>;
@@ -111,7 +113,7 @@ export async function loadEpisodes(sb: SupabaseClient, opts: { until: string; da
     const firstSent = Math.min(...(cands ?? []).map((c) => Date.parse(String(c.sent_at ?? ""))).filter(Number.isFinite), Date.parse(s.sent_at));
     const ctx = ctxAt(pc, s.sent_at, firstSent - 60_000);
     if (!ctx) continue;
-    try { const e = episodeFromSnapshot(s, ctx); if (e) episodes.push(e); } catch { counts.snapshot_errors = (counts.snapshot_errors ?? 0) + 1; }
+    try { const e = episodeFromSnapshot(s, ctx); if (e) episodes.push({ ...e, ctype: hookCustomerTypeOf(ctx.customer) }); } catch { counts.snapshot_errors = (counts.snapshot_errors ?? 0) + 1; }
   }
   for (const p of pools) {
     const pc = String(p.property_customer_id ?? "");
@@ -119,13 +121,13 @@ export async function loadEpisodes(sb: SupabaseClient, opts: { until: string; da
     const t = Date.parse(p.sent_at);
     const ctx = ctxAt(pc, p.sent_at, t - 10 * 60_000);
     if (!ctx) continue;
-    try { const e = episodeFromPool(p, sentOf.get(pc) ?? [], ctx); if (e) episodes.push(e); } catch { counts.pool_errors = (counts.pool_errors ?? 0) + 1; }
+    try { const e = episodeFromPool(p, sentOf.get(pc) ?? [], ctx); if (e) episodes.push({ ...e, ctype: hookCustomerTypeOf(ctx.customer) }); } catch { counts.pool_errors = (counts.pool_errors ?? 0) + 1; }
   }
   for (const [, rows] of groupBy(pickups.filter((r) => r.conversation_id !== YUMA_CONVERSATION_ID && !yumaCust.has(String(r.property_customer_id ?? ""))), "batch_id")) {
     const pc = String(rows[0].property_customer_id ?? "");
     const ctx = pc ? ctxAt(pc, String(rows[0].created_at), Date.parse(String(rows[0].created_at))) : null;
     const e = episodeFromPickups(rows, ctx ? segmentsOf(ctx.profile, ctx.customer) : []);
-    if (e) episodes.push(e);
+    if (e) episodes.push({ ...e, ctype: ctx ? hookCustomerTypeOf(ctx.customer) : null });
   }
   for (const src of ["snapshot", "pool", "pickup"]) counts[`episodes_${src}`] = episodes.filter((e) => e.source === src).length;
   return { episodes, counts };
@@ -222,6 +224,8 @@ export type LearningReport = {
   runId?: number | null;
   proposedVersion?: number | null;
   error?: string;
+  /** 2026-10-06 刺さった新着1件の学び（提案だけ・判定の点は変えない）。hooked-arrival-learning-server.runHookLearning */
+  hook?: HookLearningReport | { ok: false; error: string };
 };
 
 export async function runScoringLearning(sb: SupabaseClient, opts: { until?: string; days?: number; dry?: boolean; autoApplyEnabled?: boolean } = {}): Promise<LearningReport> {
@@ -260,6 +264,12 @@ export async function runScoringLearning(sb: SupabaseClient, opts: { until?: str
     metrics: { all: rankMetrics(usable, baseReasonPoints, current), bySource, train: rankMetrics(train, baseReasonPoints, current), holdout: evaluation.base, adNeutralAll: rankMetrics(usable, baseReasonPoints, adNeutral), adNeutralHoldout: rankMetrics(holdout, baseReasonPoints, adNeutral) },
     features: featureStats(usable), segments: segmentFeatureStats(usable), codes: codeStats(usable), proposal, evaluation, autoApply,
   };
+  // 2026-10-06 刺さった新着1件（強い材料・提案だけ）: 同じ回で確かめる。失敗しても重みの学習は止めない
+  try {
+    report.hook = await runHookLearning(sb, usable, { until });
+  } catch (e) {
+    report.hook = { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
   if (dry) return report;
 
   // 版（当たりが良くなった提案だけ版にする）
@@ -285,6 +295,11 @@ export async function runScoringLearning(sb: SupabaseClient, opts: { until?: str
   if (autoApply.apply && proposedVersion != null) {
     const r = await activateWeightVersion(sb, proposedVersion, `auto run ${runId}`);
     await sb.from("scoring_learning_runs").update({ auto_applied: r.ok, auto_reason: r.ok ? autoApply.reason : `切り替え失敗: ${r.error}` }).eq("id", runId);
+  }
+  // 刺さった新着の学びは別の更新で残す（列 hook_learning が無い間はここだけ失敗し、学習の記録は今まで通り）
+  if (report.hook) {
+    const { error: hookErr } = await sb.from("scoring_learning_runs").update({ hook_learning: report.hook }).eq("id", runId);
+    if (hookErr) console.warn("[scoring-learning] hook_learning:", hookErr.message);
   }
   return { ...report, runId, proposedVersion };
 }
