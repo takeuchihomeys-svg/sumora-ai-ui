@@ -73,9 +73,9 @@ ok("bulk-dl: 案内モードの間は自動の送信・ページ送りを始め�
   /function autoSendAllPages\([^)]*\) \{\s*if \(_guideBlocksAuto\("autoSendAllPages"\)\) return;/.test(bd)
   && /function autoSendOnePage\([^)]*\) \{\s*if \(_guideBlocksAuto\("autoSendOnePage"\)\) return;/.test(bd)
   && /function tryNext\([^)]*\) \{\s*if \(_guideBlocksAuto\("tryNext"\)\) return;/.test(bd));
-ok("bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く）", /_guideOff = !!\(r && r\.guideMode === false\)/.test(bd) && /if \(_guideOff\) return false;/.test(bd));
+ok("bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く）", /_guideOff = !_GUIDE_ONLY && !!\(r && r\.guideMode === false\)/.test(bd) && /if \(_guideOff\) return false;/.test(bd));
 const pp = read("popup.js");
-ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を置かない", /_gm\.guideMode !== false\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
+ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を置かない", /_gm\.guideMode !== false \|\| \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\)\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
 ok("page-script: 検索を押す所（clickSearch・見積用）も案内モードの間は押さない", /function clickSearch\(\) \{\s*if \(_guideOn\(\)\)/.test(ps) && /if \(_guideOn\(\)\) \{ window\.__axlxEstimateSearchResult/.test(ps));
 
 // ── ⑤ 2026-10-01 竹内「ここの一覧にリアプロ・ITANDI のボタン作って押したら反映されるように／監視画面がリアプロと判断できたらリアプロ」──

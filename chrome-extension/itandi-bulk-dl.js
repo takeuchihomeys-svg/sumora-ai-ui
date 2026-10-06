@@ -43,8 +43,10 @@
   //   読み込みが間に合わない時も「案内モード」として止める（明示の OFF＝false の時だけ動く＝安全側）
   var _guideOff = false;
   try {
-    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !!(r && r.guideMode === false); });
-    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = ch.guideMode.newValue === false; });
+    // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値でも自動を始めない・mode-core.js GUIDE_ONLY）
+    var _GUIDE_ONLY = true;
+    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !_GUIDE_ONLY && !!(r && r.guideMode === false); });
+    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = !_GUIDE_ONLY && ch.guideMode.newValue === false; });
   } catch (_) {}
   function _guideBlocksAuto(where) {
     if (_guideOff) return false;
@@ -294,6 +296,8 @@
     document.getElementById("axlx-itandi-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-itandi-line-btn").addEventListener("click", onSendToLine);
     document.getElementById("axlx-itandi-all-pages-btn").addEventListener("click", function() { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
+    // v2.5.77: 全ページ送る（拡張がページをめくって送る）は光って選択するモードの間は出さない
+    try { document.getElementById("axlx-itandi-all-pages-btn").style.display = "none"; } catch (_) {}
   }
 
   // ── 2026-10-06 v2.5.74 竹内「itandiの本来あるまとめて図面取得が押せない 拡張ツールが原因してるのかな？」──

@@ -119,6 +119,8 @@ body {
 @media (max-width: 400px) {
   .header-sep, .header-sub { display: none; }
 }
+/* v2.5.77 光って選択するモード: 自動の物（一括検索の帯）は出さない */
+.axlx-guide-only-hidden { display: none !important; }
 /* v2.5.75: ヘッダーの小さな灰色の印（モードの説明はマウスを乗せた時だけ・帯は出さない） */
 .mode-dot { font-size: 12px; color: #94a3b8; cursor: help; padding: 0 2px; user-select: none; }
 .mode-banner {

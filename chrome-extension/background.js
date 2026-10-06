@@ -349,6 +349,24 @@ chrome.runtime.onInstalled.addListener(setupSidePanel);
 chrome.runtime.onStartup.addListener(setupSidePanel);
 setupSidePanel();
 
+// 2026-10-06 v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 更新・起動のたびに、古い版の値
+//   （AIX連動 aixMode=true・案内モード OFF guideMode=false）を「光って選択するモード」に書き直す（mode-core.js guideOnlyMigration）
+function _migrateGuideOnly() {
+  try {
+    var core = self.AxlxModeCore;
+    var upd = core && core.guideOnlyMigration ? core.guideOnlyMigration() : null;
+    if (upd) chrome.storage.local.set(upd);
+  } catch (_) {}
+}
+chrome.runtime.onInstalled.addListener(_migrateGuideOnly);
+chrome.runtime.onStartup.addListener(_migrateGuideOnly);
+_migrateGuideOnly();
+/** 自動の物を始めてよいか（GUIDE_ONLY の間は常に false） */
+function _guideOnly() {
+  var core = self.AxlxModeCore;
+  return !!(core && core.GUIDE_ONLY);
+}
+
 // content script から chrome.storage.session へのアクセスを許可
 if (chrome.storage && chrome.storage.session && chrome.storage.session.setAccessLevel) {
   chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }).catch(function() {});
@@ -1611,6 +1629,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ── 手動一括検索: popup.jsのチェックボックスで選択した顧客を連続処理 ──────
   // popup.jsはリアプロページリロードで消えるため、ループをbackground.jsに委ねる
   if (msg.type === "axlx-manual-bulk-search") {
+    // v2.5.77: 一括検索（拡張がお客様を順に開いて検索・送る）は「光って選択するモード」の間は始めない
+    if (_guideOnly()) { console.warn("[manual-bulk-search] 光って選択するモードのため一括検索は始めない"); sendResponse({ ok: false, error: "guide_only" }); return true; }
     var _bulkSite = msg.site;
     var _bulkIds  = Array.isArray(msg.customerIds) ? msg.customerIds : [];
     // 2026-09-18 竹内「一括検索も条件広げて検索でできるようにする」:
@@ -2288,6 +2308,8 @@ async function _sbHandleCommand(payload) {
   var commandId    = payload.commandId  || null;
   if (!customerId) return;
 
+  // v2.5.77: 光って選択するモードの間は Realtime の検索コマンドも動かさない
+  if (_guideOnly()) { console.log("[SB-RT] 光って選択するモードのため scrape_command を無視 (customerId=" + customerId + ")"); return; }
   // スタッフモード中は Realtime コマンドを無視（claimしないので別PC or DBポーリングが処理する）
   if (await _isStaffModeActive()) {
     console.log("[SB-RT] スタッフモード中 → scrape_command を無視 (customerId=" + customerId + ")");
@@ -3081,7 +3103,7 @@ async function _snapModeKey() {
   try {
     var core = self.AxlxModeCore;
     var raw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"]);
-    var st = core ? core.readState(raw, Date.now()) : { mode: raw.aixMode ? "aix" : "normal", brain: !!raw.brainMode };
+    var st = core ? (core.effectiveState || core.readState)(raw, Date.now()) : { mode: "normal", brain: !!raw.brainMode };
     return self.AxlxSnapshotCore ? self.AxlxSnapshotCore.modeKey(st) : st.mode;
   } catch (_) { return null; }
 }
@@ -3603,7 +3625,7 @@ function _updateStaffModeBadge(on) {
   try {
     chrome.storage.local.get(["aixMode", "brainMode"]).then(function(st) {
       var core = self.AxlxModeCore;
-      var mode = on ? "staff" : (st && st.aixMode ? "aix" : "normal");
+      var mode = on ? "staff" : (st && st.aixMode && !(core && core.GUIDE_ONLY) ? "aix" : "normal"); // v2.5.77 AIX連動は出さない
       var b = core ? core.badge(mode, !!(st && st.brainMode)) : { text: on ? "手動" : "", color: "#16a34a" };
       chrome.action.setBadgeText({ text: b.text });
       if (b.text) chrome.action.setBadgeBackgroundColor({ color: b.color });
@@ -3660,8 +3682,9 @@ async function _pollAndRunBatch() {
     //   ブレインが ON の PC（スタッフ以外）だけがウェブの AIXツールの一括検索（source=web_brain）を受け取る（?brain=1）
     var _modeRaw = await chrome.storage.local.get(["staffMode", "staffModeAt", "aixMode", "brainMode"]);
     var _core = self.AxlxModeCore;
-    var _modeSt = _core ? _core.readState(_modeRaw, Date.now()) : { mode: _modeRaw.aixMode ? "aix" : "normal", brain: !!_modeRaw.brainMode };
-    var _bh = _core ? _core.behavior(_modeSt.mode, _modeSt.brain) : { claimCommands: true, claimAix: !!_modeRaw.aixMode, claimBrainCommands: false };
+    // v2.5.77: 光って選択するモード（GUIDE_ONLY）の間は effectiveBehavior が受け取りを全部 false にする＝サーバーに取りに行かない
+    var _modeSt = _core ? (_core.effectiveState || _core.readState)(_modeRaw, Date.now()) : { mode: "normal", brain: !!_modeRaw.brainMode };
+    var _bh = _core ? (_core.effectiveBehavior || _core.behavior)(_modeSt.mode, _modeSt.brain) : { claimCommands: false, claimAix: false, claimBrainCommands: false };
     if (!_bh.claimCommands) return;
     var _qs = [];
     if (_bh.claimAix) _qs.push("aix=1");
@@ -3791,6 +3814,12 @@ async function _pollAndRunBatch() {
 }
 
 async function _runBatchSearch(command) {
+  // v2.5.77: 光って選択するモードの間は一括検索のコマンドを動かさない（受け取りも止めている・二重の歯止め）。止めるコマンドだけ通す
+  if (_guideOnly() && command && command.command_type !== "stop_all") {
+    console.warn("[batch] 光って選択するモードのため一括検索のコマンドを動かさない id=" + command.id);
+    try { await _updateBatchCommand(command.id, { status: "cancelled", error_message: "guide_only（拡張は光って選択するモード）", completed_at: new Date().toISOString() }); } catch (_) {}
+    return;
+  }
   // ── stop_all: スマホのストップボタンから DB 経由で届いたストップコマンド ──
   if (command.command_type === "stop_all") {
     console.log("[batch] stop_all コマンド受信 → バッチを中断");

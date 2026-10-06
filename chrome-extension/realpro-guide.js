@@ -24,7 +24,8 @@
   // ── 案内モードのオン・オフ（既定オン）。page-script.js（ページの側）が読めるよう <html> に印を付ける ──
   var guideOn = true;
   function applyMode(v) {
-    guideOn = v !== false;
+    // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（OFF＝拡張が入力する道は今は使わない）
+    guideOn = true;
     try { document.documentElement.setAttribute("data-axlx-guide", guideOn ? "1" : "0"); } catch (_) {}
     lockAutoPaging();
     if (!guideOn) clearPdfMarks();
@@ -295,7 +296,7 @@
       tip.className = "axlx-tip";
       tip.style.left = Math.max(8, first.left) + "px";
       tip.style.top = (arrow === "↑" ? 8 : vh - 28) + "px";
-      tip.textContent = arrow === "↑" ? "↑ 上" : "↓ 下";
+      tip.textContent = arrow; // v2.5.77 文字は出さない（矢印だけ）
       L.appendChild(tip);
     }
   }
@@ -323,7 +324,7 @@
       document.body.appendChild(panel);
     }
     var head = '<div data-drag="1" title="案内モード（押すのはスタッフ）・つかんで動かせます" style="display:flex;align-items:center;gap:6px;margin-bottom:2px;cursor:move;user-select:none"><b data-drag="1" style="flex:1;color:#1565c0">⠿ 🔦 案内</b>'
-      + '<button data-a="mode" style="font-size:11px;padding:1px 6px;border-radius:9px;border:1px solid #ccc;background:' + (guideOn ? "#fff3e0" : "#eceff1") + '">' + (guideOn ? "ON" : "OFF") + "</button></div>";
+      + '<button data-a="fold" title="小さくする" style="font-size:11px;padding:0 6px;border-radius:9px;border:1px solid #ccc;background:#fff">－</button></div>';
     var ONE = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
     var BTN = "flex:1;font-size:11px;padding:1px 4px";
     var html;
@@ -349,10 +350,28 @@
         + (showAllSteps ? '<div style="max-height:180px;overflow:auto;border-top:1px solid #eee;margin-top:3px;padding-top:3px;font-size:11px">' + rows + "</div>" : "")
         + '<div style="margin-top:4px;display:flex;gap:4px"><button data-a="steps" style="' + BTN + '">' + (showAllSteps ? "▾ 閉じる" : "▸ 全手順") + '</button><button data-a="skip" style="' + BTN + '">この手順は済み</button><button data-a="end" style="' + BTN + '">案内をやめる</button></div>';
     }
+    var _open = _panelOpen();
+    if (!_open) html = PANEL_PILL;
+    _applyPanelFold(_open);
     // 同じ中身なら書き直さない（v2.5.72・旧は 400ms ごとに枠を作り直していた）
     if (html !== _lastPanelHtml) { _lastPanelHtml = html; panel.innerHTML = html; }
   }
   var _lastPanelHtml = "", showAllSteps = false;
+  // 2026-10-06 v2.5.77 竹内「拡張ツール 光らせてるだけで良い 上の文字いらない」: 画面の上の案内は光だけ。
+  //   案内の枠は既定で小さな 🔦 の丸だけ（文字なし）にし、押した時だけ開く（開いたかはこの PC に覚える）
+  var PANEL_OPEN_KEY = "axlx_guide_panel_open";
+  function _panelOpen() { try { return localStorage.getItem(PANEL_OPEN_KEY) === "1"; } catch (_) { return false; } }
+  function _setPanelOpen(v) { try { localStorage.setItem(PANEL_OPEN_KEY, v ? "1" : "0"); } catch (_) {} }
+  var PANEL_PILL = '<button data-a="unfold" title="案内（押すと開く）" style="border:1px solid #b0bec5;background:#fff;border-radius:14px;width:28px;height:28px;cursor:pointer;font-size:14px;line-height:1;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.15)">🔦</button>';
+  function _applyPanelFold(open) {
+    if (!panel) return;
+    panel.style.width = open ? "" : "auto";
+    panel.style.padding = open ? "" : "0";
+    panel.style.border = open ? "" : "none";
+    panel.style.boxShadow = open ? "" : "none";
+    panel.style.background = open ? "" : "transparent";
+  }
+
   // 案内の枠を見出しでつかんで動かす（枠の位置を変えるだけ・サイトには触らない）
   function onPanelDragStart(e) {
     if (!e.target || !e.target.getAttribute || e.target.getAttribute("data-drag") !== "1" || !panel) return;
@@ -375,7 +394,7 @@
   function onPanelClick(e) {
     var a = e.target && e.target.getAttribute && e.target.getAttribute("data-a");
     if (!a) return;
-    if (a === "mode") { try { var o = {}; o[MODE_KEY] = !guideOn; chrome.storage.local.set(o); } catch (_) { applyMode(!guideOn); } return; }
+    if (a === "fold" || a === "unfold") { _setPanelOpen(a === "unfold"); renderPanel(); markDirty(); tick(); return; }
     if (a === "end") { endGuide(); return; }
     if (a === "steps") { showAllSteps = !showAllSteps; markDirty(); tick(); return; }
     if (a === "skip" && session && plan) {

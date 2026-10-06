@@ -207,7 +207,41 @@
     return best ? best.mode : null;
   }
 
+  // ── 2026-10-06 v2.5.77 竹内「今自動モードでてしまうこともあるから 常に自動モードではなくて、光って選択するモードとする」──
+  //   今は「光って選択するモード」（案内モード）だけ。スタッフが押して選び、拡張は光らせるだけ。
+  //   GUIDE_ONLY の間は、どのモード・ブレインの組み合わせでも自動の物を一切始めない:
+  //     claimCommands（一括検索・Realtime・AIXツールの一括・自動便の受け取り）／claimAix／autoSend（検索結果の自動送信）
+  //     ／runAutoSchedule（11:00/17:00 の自動便）／claimBrainCommands（web_brain）＝ false
+  //   ブレインの判定・記録・まとめ（brainJudge・recordPickup・completeGroup・searchAudit）は、スタッフが押して送った物に今まで通り効く。
+  //   behavior()／readState() は仕様の表のまま残し（テストで固定）、呼び出す側は effectiveBehavior／effectiveState を使う。
+  //   サーバーの一時停止（automation_settings.paused・/api/automation/trigger の 409）は2つ目の歯止めとして残す
+  var GUIDE_ONLY = true;
+  /** 自動の物（AIX連動）は今のモードにしない: AIX連動の値が残っていても「通常」で読む */
+  function effectiveState(raw, now) {
+    var s = readState(raw, now);
+    if (GUIDE_ONLY && s.mode === "aix") s = { mode: "normal", brain: s.brain, staffExpired: s.staffExpired };
+    return s;
+  }
+  /** 今の動き（GUIDE_ONLY の間は自動の物が全部 false） */
+  function effectiveBehavior(mode, brain) {
+    var b = behavior(mode, brain);
+    if (!GUIDE_ONLY) return b;
+    var o = {};
+    for (var k in b) o[k] = b[k];
+    o.claimCommands = false; o.claimAix = false; o.autoSend = false; o.runAutoSchedule = false; o.claimBrainCommands = false;
+    o.guideOnly = true;
+    return o;
+  }
+  /** 拡張の更新・起動の時に書き直す値（古い版の「AIX連動」「案内モード OFF」を残さない） */
+  function guideOnlyMigration() {
+    return GUIDE_ONLY ? { aixMode: false, guideMode: true } : null;
+  }
+
   return {
+    GUIDE_ONLY: GUIDE_ONLY,
+    effectiveState: effectiveState,
+    effectiveBehavior: effectiveBehavior,
+    guideOnlyMigration: guideOnlyMigration,
     SEARCH_MODE_MEMO_KEY: SEARCH_MODE_MEMO_KEY,
     SEARCH_MODE_TTL_MS: SEARCH_MODE_TTL_MS,
     searchSiteKey: searchSiteKey,

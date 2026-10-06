@@ -22,6 +22,17 @@
 
 ---
 
+## 2026-10-06 v2.5.77 光って選択するモードだけにする・画面の上の文字をなくす（**拡張の再読み込み必須・版を確かめる**）
+竹内「拡張ツール 光らせてるだけで良い 上の文字いらない。今自動モードでてしまうこともあるから 常に自動モードではなくて、光って選択するモードとする」（あかりさん・市区郡の小窓に「「所在地絞り込み」から区を選んでください…（1区）」の吹き出し＝v2.5.71 以前の見た目。その PC は古い版の可能性）。
+- **自動の道を全部止める**（mode-core.js `GUIDE_ONLY = true`）: `effectiveBehavior` はどのモード・ブレインでも claimCommands／claimAix／autoSend／runAutoSchedule／claimBrainCommands＝false（ブレインの判定・記録・まとめは押して送った物に今まで通り）。`effectiveState` は古い AIX連動の値を「通常」で読む。behavior／readState は仕様の表のまま（mode-core のテストはそのまま）。
+  - background: 一括検索の受け取り（pending の見回り）は effectiveBehavior＝取りに行かない／popup の一括検索（axlx-manual-bulk-search）は始めない／届いた一括検索のコマンドは cancelled（stop_all だけ通す）／Realtime の検索コマンドも無視／更新・起動のたびに aixMode=false・guideMode=true に書き直す（guideOnlyMigration）。サーバーの一時停止（automation_settings.paused・trigger 409）は2つ目の歯止めとしてそのまま。
+  - popup: モードの選択から AIX連動を外した・一括検索の帯（#bulk-toolbar）を出さない・案内モードは常に ON（古い OFF の値は使わない・再開の印を置かない）。
+  - bulk-dl／itandi-bulk-dl: 古い OFF の値でも自動の送信・ページ送りを始めない（_GUIDE_ONLY）・「全ページ送る」のボタンを出さない。
+  - 案内（リアプロ・ITANDI）: 案内モードは常に ON・OFF に切り替えるボタンを外した。
+- **画面の上の文字をなくす**: 光の横の吹き出しは矢印（↑・↓）だけ（v2.5.72 で文はやめていた・矢印の「上」「下」の字も外した）。案内の枠は既定で 🔦 の丸だけ（押すと開く・「－」で戻す・この PC に覚える）。光の要素は枠だけで文字を持たない。
+- テスト: tests/chrome-extension/guide-only-v2577.test.js（28）・realpro-guide／itandi-guide の案内モードの決まりの文を今の形に。
+- ⚠ 竹内さんの PC で chrome://extensions を開き、版が 2.5.77 になっているかを確かめてもらう。
+
 ## 2026-10-06 v2.5.76 地域のお客様が駅で検索される・ITANDI の更新日がリアプロに入る（**拡張の再読み込み必須**）
 - **竹内「地域なのに駅としてなぜか扱っている」**（けんじじさん: 希望エリア 大阪市東淀川区・大阪市旭区・吹田市・守口市・〜6.5万・1LDK〜2LDK）: 案内が「沿線・駅絞り込み」で 守口市（京阪本線）・吹田（阪急千里線）を光らせた。
   - 原因: popup の検索の直前の「ローカル補正」（_hasKnownStation・リアプロと ITANDI の2か所）が、希望エリアの語が駅の辞書（STATION_LINE_MAP）にあれば地域モードを駅モードに切り替えていた。「守口市」は京阪の駅名でもある。駅モードの駅の拾い出しも「吹田市」を路線の前置きの読みで「吹田」駅にしていた。分類（classifyAreaTokens）は市・区で終わる語を地域としていたのに、補正と拾い出しがその決まりを通っていなかった。

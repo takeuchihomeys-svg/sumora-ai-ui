@@ -158,11 +158,11 @@ ok("itandi-page-script: 同じ依頼の2回目の止めは案内より前（今�
 const ib = read("itandi-bulk-dl.js");
 ok("itandi-bulk-dl: 案内モードの間は全ページ自動送信・1ページの自動送信を始めない",
   /function autoSendAllPages\(_manual\) \{\s*if \(_guideBlocksAuto\("autoSendAllPages"\)\) return;/.test(ib) && /function _autoSendOnePage\([^)]*\) \{\s*if \(_guideBlocksAuto\("_autoSendOnePage"\)\) return;/.test(ib));
-ok("itandi-bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く）", /_guideOff = !!\(r && r\.guideMode === false\)/.test(ib) && /if \(_guideOff\) return false;/.test(ib));
+ok("itandi-bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く）", /_guideOff = !_GUIDE_ONLY && !!\(r && r\.guideMode === false\)/.test(ib) && /if \(_guideOff\) return false;/.test(ib));
 ok("itandi-bulk-dl: 「売上番長に送る」（スタッフが押す）は今まで通り", /addEventListener\("click", onSendToLine\)/.test(ib) && !/function onSendToLine\(\) \{\s*if \(_guideBlocksAuto/.test(ib));
 ok("itandi-bulk-dl: skip の完了では自動送信を armed にしない（今まで通り）", /if \(e\.data\.skip\) \{ _autofillInitiated = false;/.test(ib));
 const pp = read("popup.js");
-ok("popup: 準備中の止めを外した・案内モードでも条件を組み立てて送る", !/ITANDI の案内モードは準備中/.test(pp) && /const _guideIt = _gmIt !== false;/.test(pp));
+ok("popup: 準備中の止めを外した・案内モードでも条件を組み立てて送る", !/ITANDI の案内モードは準備中/.test(pp) && /const _guideIt = \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\) \? true : _gmIt !== false;/.test(pp));
 ok("popup: ITANDI の条件にお客様（案内の枠に出す）", /unknown_tokens: unknownTokens\.length > 0 \? unknownTokens : null,\s*\/\/[^\n]*\n\s*customer_id:\s+c\.id \|\| null,\s*customer_name: c\.customer_name \|\| null,/.test(pp));
 ok("popup: 一覧の P・広 から ITANDI の案内も始める", /if \(site !== "realpro" && site !== "itandi"\)/.test(pp));
 const mf = JSON.parse(read("manifest.json"));
@@ -173,7 +173,7 @@ const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
   && eq(gjs, ["itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.76", mf.version === "2.5.76");
+ok("manifest の版 2.5.77", mf.version === "2.5.77");
 
 // ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
 {

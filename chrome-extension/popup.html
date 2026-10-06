@@ -29,7 +29,7 @@
         <select id="mode-select" class="mode-select" title="モード：通常／スタッフ（自動化を無視・2時間で自動OFF）／AIX連動（AIXの指示で自動検索）">
           <option value="normal">通常</option>
           <option value="staff">スタッフ</option>
-          <option value="aix">AIX連動</option>
+          <!-- v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: AIX連動（自動検索）は今は選べない（mode-core.js GUIDE_ONLY） -->
         </select>
       </div>
       <!-- サイドパネル: お客さん一覧に戻る／下のバー: 折りたたむ（モードの切り替えではない） -->
@@ -78,7 +78,8 @@
       <!-- v2.5.75: 今日対応の絞り込み（押す物なので残す）。色の帯をやめ、小さな灰色の1行 -->
       <div id="today-banner" style="display:none;border-bottom:1px solid #e2e8f0;padding:3px 12px;font-size:11px;color:#475569;cursor:pointer;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
       <div id="customer-list"></div>
-      <div id="bulk-toolbar" style="display:none">
+      <!-- v2.5.77: 一括検索（拡張がお客様を順に開いて検索・送る）は光って選択するモードの間は出さない（background も止める） -->
+      <div id="bulk-toolbar" class="axlx-guide-only-hidden" style="display:none">
         <span class="bulk-toolbar-count" id="bulk-count-label">0人選択中</span>
         <!-- 2026-09-18 竹内: 一括検索も「広げて検索」でできるようにする（個別検索と同じ2択） -->
         <div class="bulk-mode-toggle" id="bulk-mode-toggle">

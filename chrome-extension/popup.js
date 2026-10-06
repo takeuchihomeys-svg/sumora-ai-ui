@@ -4178,7 +4178,8 @@ function openInstructions(siteKey) {
       //   案内モード（guideMode・既定オン）の間も条件は今まで通りここで組み立てて送る（広げての家賃・築年数＋5年・隣の駅も同じ）。
       //   受け取った itandi-page-script.js が案内モードなら入力せずに案内（itandi-guide.js）へ渡す＝入力と検索はスタッフ
       const _gmIt = await new Promise((res) => { try { chrome.storage.local.get(["guideMode"], (r) => res(r && r.guideMode)); } catch (_) { res(undefined); } });
-      const _guideIt = _gmIt !== false;
+      // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値は使わない）
+      const _guideIt = (self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY) ? true : _gmIt !== false;
       const isAutomated_itandi = !!autofillBtn.dataset.automated;
       const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
       const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
@@ -5192,7 +5193,8 @@ function openInstructions(siteKey) {
       //   明示の OFF（false）の時だけ今まで通り置く
       try {
         chrome.storage.local.get(["guideMode"], function (_gm) {
-          if (!_gm || _gm.guideMode !== false) { try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {} return; }
+          // v2.5.77: 光って選択するモードの間は再開の印を置かない（自動の送信・ダウンロード・ページ送りを始めない）
+          if (!_gm || _gm.guideMode !== false || (self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY)) { try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {} return; }
           chrome.storage.session.set({ axlx_pending_auto_send: {
             customerId:   c.id || null,
             customerName: c.customer_name || null,
@@ -5621,7 +5623,8 @@ var _brainToggleLastAt = 0; // ブレインの切り替えの二重押し（ダ�
 
 function _modeState() {
   var core = self.AxlxModeCore;
-  return core ? core.readState(_modeRaw, Date.now()) : { mode: "normal", brain: false, staffExpired: false };
+  // v2.5.77: 光って選択するモードの間は AIX連動の値が残っていても「通常」で読む（effectiveState）
+  return core ? (core.effectiveState || core.readState)(_modeRaw, Date.now()) : { mode: "normal", brain: false, staffExpired: false };
 }
 
 function _modeBadge() {
@@ -5679,6 +5682,7 @@ function _renderModeUI() {
 function _applyMode(mode) {
   var core = self.AxlxModeCore;
   if (!core || core.MODES.indexOf(mode) < 0) mode = "normal";
+  if (core && core.GUIDE_ONLY && mode === "aix") mode = "normal"; // v2.5.77 AIX連動（自動検索）は選べない
   var upd = core ? core.storageUpdateForMode(mode, Date.now())
                  : { staffMode: false, staffModeAt: null, aixMode: false };
   Object.assign(_modeRaw, upd);

@@ -240,8 +240,10 @@
   //   ・止めた時は再開の印（axlx_pending_auto_send・ページ送りの続き）も消す
   var _guideOff = false;
   try {
-    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !!(r && r.guideMode === false); });
-    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = ch.guideMode.newValue === false; });
+    // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値でも自動を始めない・mode-core.js GUIDE_ONLY）
+    var _GUIDE_ONLY = true;
+    chrome.storage.local.get(["guideMode"], function (r) { _guideOff = !_GUIDE_ONLY && !!(r && r.guideMode === false); });
+    chrome.storage.onChanged.addListener(function (ch, area) { if (area === "local" && ch.guideMode) _guideOff = !_GUIDE_ONLY && ch.guideMode.newValue === false; });
   } catch (_) {}
   function _guideBlocksAuto(where) {
     if (_guideOff) return false;
@@ -532,6 +534,8 @@
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
     document.getElementById("axlx-line-btn").addEventListener("click", function () { if (_forwardTimer) { clearTimeout(_forwardTimer); _forwardTimer = null; } getCustomerFromPopup(function (customerName, customerConditions, customerId) { mergePdfs(true, customerName, customerConditions, customerId); }); });
     document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
+    // v2.5.77: 全ページ送る（拡張がページをめくって送る）は光って選択するモードの間は出さない
+    try { document.getElementById("axlx-auto-btn").parentNode.style.display = "none"; } catch (_) {}
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
     document.getElementById("axlx-cache-btn").addEventListener("click", probeCache);
