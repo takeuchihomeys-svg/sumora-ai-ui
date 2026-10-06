@@ -8,6 +8,7 @@
 //   お客様（property_customer_id）で引き、無い行は会話（conversations.property_customer_id）で引く。
 //   号室の無い行は返さない（号室が無いと同じ建物の別の部屋と見分けられない＝飛ばさない）。
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { familyIdsFor } from "@/app/lib/customer-family";
 
 export type SentRoom = { name: string; room: string };
 
@@ -29,12 +30,14 @@ export async function sentRoomsFor(sb: SupabaseClient, customerId: string, opts:
       if (!out.has(k)) out.set(k, { name: name.slice(0, 80), room: room.slice(0, 12) });
     }
   };
-  let qa = sb.from("sent_properties").select("property_name, room_no, delivery").eq("property_customer_id", customerId);
+  // 2026-10-06 v2.5.78: 2つ目の探し物（子の行）は親の会話で届けた物も同じ人の送付済み（customer-family.ts）
+  const ids = await familyIdsFor(sb, customerId);
+  let qa = sb.from("sent_properties").select("property_name, room_no, delivery").in("property_customer_id", ids.length ? ids : [customerId]);
   if (opts.beforeIso) qa = qa.lt("sent_at", opts.beforeIso);
   const a = await qa.limit(5000);
   if (a.error) return { rooms: [], rows: 0, without_room: 0, error: a.error.message };
   take((a.data ?? []) as Array<{ property_name: string | null; room_no: string | null }>);
-  const conv = await sb.from("conversations").select("id").eq("property_customer_id", customerId).limit(10);
+  const conv = await sb.from("conversations").select("id").in("property_customer_id", ids.length ? ids : [customerId]).limit(10);
   const convIds = ((conv.data ?? []) as Array<{ id: string }>).map((c) => c.id);
   if (convIds.length) {
     let qb = sb.from("sent_properties").select("property_name, room_no, delivery").in("conversation_id", convIds).is("property_customer_id", null);

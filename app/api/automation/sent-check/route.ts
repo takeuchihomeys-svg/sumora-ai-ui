@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { familyIdsFor } from "@/app/lib/customer-family";
 import { filterOutAlreadySent, type OutgoingProperty, type SentProperty } from "@/app/lib/sent-property-filter";
 
 /**
@@ -23,7 +24,9 @@ export async function POST(req: NextRequest) {
   if (!url || !key) return NextResponse.json({ ok: false, error: "server misconfigured" }, { status: 500 });
   const sb = createClient(url, key);
   // merge-pdfs と同じ引き方（お客様で引く・2000件まで）
-  const { data, error } = await sb.from("sent_properties").select("property_name, room_no, property_url").eq("property_customer_id", customerId).limit(2000);
+  // 2026-10-06 v2.5.78: 子の行（2つ目の探し物）は親の会話で届けた物も同じ人の送付済み（merge-pdfs と同じ customer-family.ts）
+  const ids = await familyIdsFor(sb, customerId);
+  const { data, error } = await sb.from("sent_properties").select("property_name, room_no, property_url").in("property_customer_id", ids.length ? ids : [customerId]).limit(2000);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   const sent = (data ?? []) as SentProperty[];
   const outgoing: OutgoingProperty[] = rows.map((r) => ({ url: r?.url ?? null, propertyName: String(r?.name ?? ""), roomNo: String(r?.room ?? "") }));

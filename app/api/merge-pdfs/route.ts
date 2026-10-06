@@ -355,6 +355,11 @@ export async function POST(req: NextRequest) {
     }
     // 拡張が古くて property_customer_id を渡してこない時は名前から引き直す（同名が複数なら引かない）
     if (!resolvedCustomerId && !conversation_id) resolvedCustomerId = await lookupCustomerByName(customer_name);
+    // 2026-10-06 v2.5.78（⑯）2つ目の探し物（子の行・ゆいと（物置））: 子は会話を持たない → 売上サポ・送付の記録は親の会話に結ぶ（拡張が渡さない時もここで補う）。
+    //   送付済みは子＋親で見る（同じ人の LINE に届いた物を送り直さない・sent-check と同じ customer-family.ts）
+    const { familyIdsFor, parentConversationFor } = await import("@/app/lib/customer-family");
+    const convIdEff: string | null = conversation_id ?? (resolvedCustomerId ? await parentConversationFor(supabase, resolvedCustomerId).catch(() => null) : null);
+    const sentScopeIds: string[] = resolvedCustomerId ? await familyIdsFor(supabase, resolvedCustomerId).catch(() => [resolvedCustomerId as string]) : [];
 
     // 2026-09-30 v2.5.49 物件の付け先の関所（2枚目の壁・1枚目は拡張の callMergeApi）: 一括の回の送信で、相手が検索している回のお客様と違えば
     //   受け取らない（売上サポの記録も ★物件出し★ への共有もしない）。9/30 に ITANDI の 161件が前のお客様に付いた（拡張 v2.5.47 まで）。
@@ -394,7 +399,7 @@ export async function POST(req: NextRequest) {
           };
         });
         let q = supabase.from("sent_properties").select("property_name, room_no, property_url");
-        q = resolvedCustomerId ? q.eq("property_customer_id", resolvedCustomerId) : q.eq("conversation_id", conversation_id as string);
+        q = resolvedCustomerId ? q.in("property_customer_id", sentScopeIds.length ? sentScopeIds : [resolvedCustomerId]) : q.eq("conversation_id", conversation_id as string);
         const { data: sentRows } = await q.limit(2000);
         const sent = ((sentRows ?? []) as SentProperty[]);
         // 2026-09-21 竹内「一度グループに送った物件（マンションごと）は送られんように」＝ 既定は建物ごと。
@@ -557,7 +562,7 @@ export async function POST(req: NextRequest) {
               .then(({ loadPickupSearchOverride }) => loadPickupSearchOverride(body.search_command_id, resolvedCustomerId))
               .catch(() => null)
               .then((searchOverride) => import("@/app/lib/property-pickups-server").then(({ recordPickupBatch }) => recordPickupBatch({
-              batchId: name, propertyCustomerId: resolvedCustomerId, conversationId: conversation_id ?? null,
+              batchId: name, propertyCustomerId: resolvedCustomerId, conversationId: convIdEff,
               customerName: customer_name ?? null, site: site ?? null,
               summaries: summariesForPickup, pdfUrls: pdfUrlsForPickup, pdfBase64List: base64ForPickup,
               searchOverride,
@@ -644,7 +649,7 @@ export async function POST(req: NextRequest) {
               .select("property_name, room_no, property_url")
               .in("property_name", propertyNames);
             if (propertyCustomerId) {
-              dupQuery = dupQuery.eq("property_customer_id", propertyCustomerId);
+              dupQuery = dupQuery.in("property_customer_id", sentScopeIds.length ? sentScopeIds : [propertyCustomerId]);
             } else if (conversation_id) {
               dupQuery = dupQuery.eq("conversation_id", conversation_id);
             } else {
@@ -666,7 +671,7 @@ export async function POST(req: NextRequest) {
               .filter((p) => !(p.url ? existingUrls.has(p.url) : existingSet.has(`${p.propertyName}__${p.roomNo}`)))
               .map((p) => ({
                 property_customer_id: propertyCustomerId,
-                conversation_id: conversation_id ?? null,
+                conversation_id: convIdEff,
                 property_name: p.propertyName,
                 room_no: p.roomNo,
                 // 号室が 0.1% しか取れないので、次に外す時の鍵になるよう URL を残す

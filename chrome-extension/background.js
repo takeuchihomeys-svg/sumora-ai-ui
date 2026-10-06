@@ -687,6 +687,14 @@ async function callMergeApi(payload) {
     payload = { ...payload, customer_name: _own.ownerName };
   }
   const batchOwner = _own && _own.batch ? { customer_id: _own.ownerId, customer_name: _own.ownerName, run_id: _own.runId, command_id: _own.commandId } : null;
+  // 2026-10-06 v2.5.78（⑯）2つ目の探し物（子の行・ゆいと（物置））: 子は会話を持たない → 送る相手が今の子なら親の会話（linked_conversation）を付ける。
+  //   property_customer_id は子のまま（売上サポ・送付の記録は子の探し物として残る）。サーバーも親の会話で補う（customer-family.ts）
+  try {
+    if (payload && payload.property_customer_id && !payload.conversation_id) {
+      const _cc = await chrome.storage.local.get(["current_customer_id", "current_conversation_id"]);
+      if (_cc && _cc.current_conversation_id && String(_cc.current_customer_id) === String(payload.property_customer_id)) payload = { ...payload, conversation_id: String(_cc.current_conversation_id) };
+    }
+  } catch (_) {}
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

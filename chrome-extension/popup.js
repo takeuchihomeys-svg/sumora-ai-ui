@@ -2777,6 +2777,9 @@ function openSiteView(customer) {
     chrome.storage.local.set({
       current_customer_name: customer.customer_name,
       current_customer_id: customer.id || null,
+      // 2026-10-06 v2.5.78（⑯）2つ目の探し物（子の行: parent_customer_id あり）は自分の会話を持たない → 送る時は親の会話（linked_conversation）に結ぶ。
+      //   current_customer_id は子のまま（売上サポ・送付の記録・送付済みの見分けは子の id・サーバーが親の分も合わせて見る）
+      current_conversation_id: (customer.parent_customer_id && customer.linked_conversation && customer.linked_conversation.id) ? String(customer.linked_conversation.id) : null,
       current_customer_conditions: buildCustomerConditionsString(customer)
     });
   }

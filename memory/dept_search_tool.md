@@ -22,6 +22,14 @@
 
 ---
 
+## 2026-10-06 v2.5.78 1人のお客様の2つ目の探し物（子の行）に拡張を合わせる（**拡張の再読み込み必須**）
+⑫ の作り: property_customers に profile_label・parent_customer_id。子（例「ゆいと（物置）」887420dc・親 23f2f823・茨木・豊中・〜2万）は自分の条件を持ち、会話と line_user_id は持たない。GET /api/property-customers は子に親の会話（linked_conversation）と is_linked を返す。
+- 一覧: 子は別のお客様として出る（名前に（物置）が付いている・紐付け済みの絞り込みでも出る）・子の条件で検索する（今まで通りの道）。
+- 今のお客様（current_customer_id）は子の id のまま＝売上サポの回・送付の記録・送付済みの見分けは子に付く。子の時だけ current_conversation_id＝親の会話を置き、送る時（background callMergeApi）に送る相手が今の子なら conversation_id に付ける。
+- サーバー（app/lib/customer-family.ts・新）: 子の送付済みは**子＋親**で見る（同じ人の LINE に届いた物を送り直さない）＝sent-rooms（案内・一括）・sent-check（建物の印）・merge-pdfs の除外の3か所が同じ決まり。merge-pdfs は拡張が会話を渡さない時も子なら親の会話で売上サポ・送付の記録を結ぶ（お客様の id は子のまま）。
+- line_user_id で引く所（line-webhook-text・aix-action-items）は等しい値で引く＝子（空）は当たらない。拡張は line_user_id を使わない。
+- テスト: tests/chrome-extension/child-profile-v2578.test.js（6）・app/lib/__tests__/customer-family.test.ts（8）。
+
 ## 2026-10-06 v2.5.77 光って選択するモードだけにする・画面の上の文字をなくす（**拡張の再読み込み必須・版を確かめる**）
 竹内「拡張ツール 光らせてるだけで良い 上の文字いらない。今自動モードでてしまうこともあるから 常に自動モードではなくて、光って選択するモードとする」（あかりさん・市区郡の小窓に「「所在地絞り込み」から区を選んでください…（1区）」の吹き出し＝v2.5.71 以前の見た目。その PC は古い版の可能性）。
 - **自動の道を全部止める**（mode-core.js `GUIDE_ONLY = true`）: `effectiveBehavior` はどのモード・ブレインでも claimCommands／claimAix／autoSend／runAutoSchedule／claimBrainCommands＝false（ブレインの判定・記録・まとめは押して送った物に今まで通り）。`effectiveState` は古い AIX連動の値を「通常」で読む。behavior／readState は仕様の表のまま（mode-core のテストはそのまま）。
