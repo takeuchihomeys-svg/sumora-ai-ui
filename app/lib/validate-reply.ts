@@ -100,6 +100,42 @@ function shouldDropParticle(tail: string): boolean {
   return tail === "";
 }
 
+// ─── 表示名の「語の外」だけを置き換える（し 事例 2026-10-06）────────────────
+/** 字の種類。日本語（ひらがな・カタカナ・漢字）は1つの種類（「探し全力」の「し」を漢字に挟まれたから語の外と読まない） */
+function charClass(ch: string | undefined): "ja" | "alnum" | "letter" | null {
+  if (!ch) return null;
+  if (/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}々〆ヵヶー]/u.test(ch)) return "ja";
+  if (/[A-Za-z0-9Ａ-Ｚａ-ｚ０-９]/.test(ch)) return "alnum";
+  if (/[\p{L}\p{N}]/u.test(ch)) return "letter";
+  return null; // 絵文字・記号・空白・句読点
+}
+/**
+ * 本文中の表示名を正の名前に置き換える。ただし表示名が**語の一部**の所は触らない:
+ *   表示名の端の字と、その外側に隣接する字が同じ種類（日本語どうし・英数字どうし）なら語の途中とみなす。
+ *   例: 表示名「し」→「かしこまりました」「探し」「して」は全部語の途中＝置き換えない。
+ *       表示名「H!tom!.M」→「H!tom!.Mご希望の」は英字と日本語の境目＝置き換える。絵文字の表示名（🐥）は端に字が無いので置き換える
+ */
+export function replaceDisplayStandalone(text: string, display: string, replacement: string): { text: string; count: number } {
+  if (!display || !text.includes(display)) return { text, count: 0 };
+  const chars = Array.from(display);
+  const headCls = charClass(chars[0]);
+  const tailCls = charClass(chars[chars.length - 1]);
+  let out = "";
+  let i = 0;
+  let count = 0;
+  for (;;) {
+    const at = text.indexOf(display, i);
+    if (at < 0) { out += text.slice(i); break; }
+    const before = Array.from(text.slice(Math.max(0, at - 2), at)).pop();
+    const after = Array.from(text.slice(at + display.length, at + display.length + 2))[0];
+    const glued = (headCls !== null && charClass(before) === headCls) || (tailCls !== null && charClass(after) === tailCls);
+    out += text.slice(i, at) + (glued ? display : replacement);
+    if (!glued) count++;
+    i = at + display.length;
+  }
+  return { text: count ? out : text, count };
+}
+
 // ─── 顧客名の誤り（LINE表示名の混入）を決定論的に修正 ────────────────────────
 // final-check（Haiku）は FABRICATED_NAME を検出できるが、接地修正は
 // [CHECKPOINT]/[CONDITIONS]/[RULES] に無い事実で置換できない仕様のため名前を直せない
@@ -136,9 +172,15 @@ export function enforceCustomerName(
       );
       if (canonical || (plainDisp && plainDisp !== display)) fixes.push(`LINE表示名の呼びかけ「${display}さん」→「${canonical ? `${canonical}さん` : `${plainDisp}さん`}」`);
     }
+    // 2026-10-06 竹内（し 事例・「か角田こまりま角田た」）: 旧実装は本文中の表示名を **語の境目を見ずに全部** 正の名前へ置き換えていた
+    //   （split(display).join(canonical)）。表示名「し」・呼び名「角田」で「かしこまりました」の「し」が全部「角田」になり、
+    //   10/04〜10/06 の下書き5通が壊れた（送信は0・スタッフが直した）。表示名が語の一部になっている所（同じ字の種類が隣に続く）は触らない
     if (canonical && cleaned.includes(display)) {
-      cleaned = cleaned.split(display).join(canonical);
-      fixes.push(`本文中のLINE表示名「${display}」を除去`);
+      const r = replaceDisplayStandalone(cleaned, display, canonical);
+      if (r.count > 0) {
+        cleaned = r.text;
+        fixes.push(`本文中のLINE表示名「${display}」を除去`);
+      }
     }
   }
 
