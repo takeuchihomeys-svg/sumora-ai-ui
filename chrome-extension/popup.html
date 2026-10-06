@@ -23,6 +23,9 @@
            右の「∨」（#collapse-btn）はモードとは別物: サイドパネルでは「お客さん一覧に戻る」、下のバーでは「折りたたむ」 -->
       <div class="mode-group">
         <button type="button" id="brain-toggle" class="brain-toggle" aria-pressed="false" title="ブレイン：送る物件をお客様の条件・過去の物件出し・利益（AD−割引）で判定し、AIXツールに記録する。AIXツールの一括検索も受け取る（スタッフの時は受け取らない）（通常／スタッフ／AIX連動のどれとも組み合わせられる）">🧠 ブレイン</button>
+        <!-- 2026-10-06 v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」:
+             モードの帯（青い帯）をやめ、今の動きの説明はここの小さな灰色の印にマウスを乗せた時だけ出す（一時停止中は ⏸） -->
+        <span id="mode-dot" class="mode-dot" style="display:none"></span>
         <select id="mode-select" class="mode-select" title="モード：通常／スタッフ（自動化を無視・2時間で自動OFF）／AIX連動（AIXの指示で自動検索）">
           <option value="normal">通常</option>
           <option value="staff">スタッフ</option>
@@ -43,14 +46,14 @@
       </button>
     </div>
 
-    <!-- モードの帯（組み合わせで文言と色が変わる・mode-core.js banner）。通常×ブレインOFF の時は出さない。
-         スタッフモードは消し忘れ防止のため常に目立たせる -->
-    <div id="mode-banner" class="mode-banner" style="display:none"></div>
-    <!-- 2026-09-29 v2.5.40 拡張の版と「画面の写真」の許可（snapshot-popup.js）。版が古いまま動いていないかを小窓で見分ける -->
-    <div id="snap-perm" style="display:none;align-items:center;gap:6px;padding:3px 10px;font-size:11px;color:#475569;background:#f1f5f9;border-bottom:1px solid #e2e8f0">
+    <!-- 2026-10-06 v2.5.75: モードの帯（mode-banner）は出さない（説明はヘッダーの小さな印 #mode-dot にマウスを乗せた時だけ）。
+         スタッフモードの消し忘れは、モードの選択（スタッフ）の色とバッジで分かる -->
+    <!-- 2026-09-29 v2.5.40 拡張の版と「画面の写真」の許可（snapshot-popup.js）。版が古いまま動いていないかを小窓で見分ける
+         v2.5.75: 小さな灰色の文字だけ（帯の色なし）。許可済みの時は版だけ、未許可の時だけ許可のボタン -->
+    <div id="snap-perm" style="display:none;align-items:center;gap:6px;padding:1px 10px;font-size:10px;color:#94a3b8;justify-content:flex-end">
       <span id="snap-ver"></span>
       <span id="snap-perm-state"></span>
-      <button type="button" id="snap-perm-btn" style="display:none;margin-left:auto;padding:2px 8px;font-size:11px;font-weight:700;border:none;border-radius:6px;background:#0ea5e9;color:#fff;cursor:pointer">📷 画面の共有を許可</button>
+      <button type="button" id="snap-perm-btn" style="display:none;padding:0 6px;font-size:10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;cursor:pointer">画面の共有を許可</button>
     </div>
 
     <!-- ▼ VIEW 1: お客さん一覧 -->
@@ -72,7 +75,8 @@
         <button id="linked-filter-btn" class="acct-btn linked-btn">🔗 紐付け済み</button>
         <button id="estimate-quick-btn" class="acct-btn est-btn" title="見積書を自動作成">📋 見積書自動</button>
       </div>
-      <div id="today-banner" style="display:none;background:#fff3e0;border-bottom:1px solid #ffcc02;padding:6px 12px;font-size:12px;font-weight:bold;color:#e65100;cursor:pointer;text-align:center"></div>
+      <!-- v2.5.75: 今日対応の絞り込み（押す物なので残す）。色の帯をやめ、小さな灰色の1行 -->
+      <div id="today-banner" style="display:none;border-bottom:1px solid #e2e8f0;padding:3px 12px;font-size:11px;color:#475569;cursor:pointer;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
       <div id="customer-list"></div>
       <div id="bulk-toolbar" style="display:none">
         <span class="bulk-toolbar-count" id="bulk-count-label">0人選択中</span>

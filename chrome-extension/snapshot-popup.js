@@ -15,8 +15,11 @@
     if (!box) return;
     var ver = "";
     try { ver = chrome.runtime.getManifest().version; } catch (_) {}
-    el("snap-ver").textContent = "拡張 v" + (ver || "?");
-    el("snap-perm-state").textContent = granted ? "📷 画面の写真: 許可済み" : "📷 画面の写真: 未許可（文字だけ送ります）";
+    // v2.5.75 竹内「アナウンス不要…情報量多くて紛らわしい」: 版は小さく「v2.5.75」だけ（問い合わせの時に見る）。
+    //   画面の写真は許可済みなら何も出さない（マウスを乗せると出る）・未許可の時だけ短い文と許可のボタン
+    el("snap-ver").textContent = "v" + (ver || "?");
+    el("snap-ver").title = "拡張 v" + (ver || "?") + (granted ? "／画面の写真: 許可済み" : "");
+    el("snap-perm-state").textContent = granted ? "" : "画面の写真: 未許可";
     el("snap-perm-btn").style.display = granted ? "none" : "inline-block";
     box.style.display = "flex";
   }

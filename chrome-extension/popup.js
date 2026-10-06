@@ -2314,15 +2314,13 @@ function updateTodayBanner() {
   const count = allCustomers.filter(needsActionToday).length;
   const banner = document.getElementById("today-banner");
   if (!banner) return;
+  // v2.5.75: 押す物（今日対応の絞り込み）だけ・小さな灰色の1行。完了の時は押す物が無いので出さない
   if (count > 0) {
     banner.style.display = "block";
-    banner.textContent = `🔥 今日対応 ${count}名 ← タップで絞り込み`;
+    banner.textContent = `今日対応 ${count}名（押すと絞り込み）`;
+    banner.title = "今日対応が必要なお客様だけに絞り込みます（もう一度押すと戻ります）";
   } else {
-    banner.style.display = "block";
-    banner.textContent = "✅ 今日の対応は完了！";
-    banner.style.background = "#e8f5e9";
-    banner.style.color = "#2e7d32";
-    banner.style.cursor = "default";
+    banner.style.display = "none";
   }
 }
 
@@ -2974,7 +2972,7 @@ function renderInstrSteps(siteKey, cOverride) {
   const steps = cfg.steps(c, searchMode, currentAreaMode);
 
   const modeLabel = searchMode === "wide"
-    ? `<div class="wide-banner">🔎 広げて検索モード（家賃・エリア・広さを少し緩めて検索）</div>`
+    ? `<div class="wide-banner" title="家賃・エリア・広さを少し緩めて検索します">広げて検索（家賃・エリア・広さを少し緩める）</div>`
     : "";
 
   document.getElementById("instr-customer-card").innerHTML = `
@@ -5638,19 +5636,21 @@ function _renderModeUI() {
     bt.classList.toggle("on", s.brain);
     bt.setAttribute("aria-pressed", s.brain ? "true" : "false");
   }
-  var banner = document.getElementById("mode-banner");
-  if (banner) {
-    var bn = core ? core.banner(s.mode, s.brain, !!(_modeRaw && _modeRaw.autoSearchPaused)) : null;
+  // 2026-10-06 v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」:
+  //   モードの帯（青・緑・紫の帯）は出さない。今の動きの説明はヘッダーの小さな灰色の印（#mode-dot）にマウスを乗せた時だけ。
+  //   一時停止中は「⏸」、それ以外で説明がある組み合わせは「ⓘ」。説明の文は mode-core.js banner のまま（1か所）
+  var dot = document.getElementById("mode-dot");
+  if (dot) {
+    var paused = !!(_modeRaw && _modeRaw.autoSearchPaused);
+    var bn = core ? core.banner(s.mode, s.brain, paused) : null;
     if (bn) {
-      // v2.5.72: 1行で出して、押すと全文（.open）。全文はマウスを乗せても出る
-      var wasOpen = banner.classList.contains("open") && banner.textContent === bn.text;
-      banner.className = "mode-banner " + bn.cls + (wasOpen ? " open" : "");
-      banner.textContent = bn.text;
-      banner.title = bn.text;
-      if (!banner._axlxToggle) { banner._axlxToggle = true; banner.addEventListener("click", function () { banner.classList.toggle("open"); }); }
-      banner.style.display = "block";
+      dot.textContent = paused ? "⏸" : "ⓘ";
+      dot.title = bn.text;
+      dot.setAttribute("aria-label", bn.text);
+      dot.style.display = "inline-block";
     } else {
-      banner.style.display = "none";
+      dot.style.display = "none";
+      dot.title = "";
     }
   }
 }
@@ -5824,8 +5824,10 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("today-banner").addEventListener("click", () => {
     todayOnly = !todayOnly;
     const banner = document.getElementById("today-banner");
-    banner.style.background = todayOnly ? "#ff6f00" : "#fff3e0";
-    banner.style.color = todayOnly ? "white" : "#e65100";
+    // v2.5.75: 絞り込み中は薄い灰色の地と太字だけ（明るい色の地にしない）
+    banner.style.background = todayOnly ? "#f1f5f9" : "";
+    banner.style.color = todayOnly ? "#1e293b" : "#475569";
+    banner.style.fontWeight = todayOnly ? "700" : "";
     filterCustomers(document.getElementById("search-input").value);
   });
 

@@ -119,6 +119,8 @@ body {
 @media (max-width: 400px) {
   .header-sep, .header-sub { display: none; }
 }
+/* v2.5.75: ヘッダーの小さな灰色の印（モードの説明はマウスを乗せた時だけ・帯は出さない） */
+.mode-dot { font-size: 12px; color: #94a3b8; cursor: help; padding: 0 2px; user-select: none; }
 .mode-banner {
   color: #fff;
   font-size: 12px; font-weight: bold;
@@ -404,10 +406,11 @@ body {
 
 /* ── 広げて検索バナー（View3） ── */
 .wide-banner {
-  margin: 8px 12px 0;
-  padding: 6px 12px;
-  background: #fff3e0; border-radius: 8px; border-left: 4px solid #e65100;
-  font-size: 11px; color: #e65100; font-weight: 700;
+  /* v2.5.75: 色の帯をやめ、小さな灰色の1行（左に細い線だけ） */
+  margin: 6px 12px 0;
+  padding: 2px 8px;
+  background: none; border-left: 2px solid #cbd5e1;
+  font-size: 11px; color: #475569; font-weight: 400;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; /* v2.5.72: 1行 */
 }
 

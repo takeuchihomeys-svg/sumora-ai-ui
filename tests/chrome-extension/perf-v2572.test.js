@@ -75,7 +75,14 @@ const ig = read("itandi-guide.js");
 ok("ITANDI: 黄色の点滅をやめた・吹き出しの文なし", !/@keyframes axlxItGlow/.test(ig) && /function highlight\(targets\)/.test(ig));
 ok("ITANDI: 見えていないタブでは見直さない", /if \(document\.hidden\) return;\r?\n    if \(!_dirty && Date\.now\(\) - _lastTickAt < 1500\) return;/.test(ig));
 const css = read("styles.css");
-ok("popup: モードの帯は1行（押すと全文）", /\.mode-banner \{[\s\S]*?white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;/.test(css) && /\.mode-banner\.open \{ white-space: normal; \}/.test(css) && /banner\.classList\.toggle\("open"\)/.test(read("popup.js")));
+// v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」: 帯そのものをやめた
+{
+  const html = read("popup.html"), pj = read("popup.js"), sp = read("snapshot-popup.js");
+  ok("popup: モードの帯（mode-banner）を出さない・説明はヘッダーの小さな灰色の印にマウスを乗せた時だけ", !/id="mode-banner"/.test(html) && /id="mode-dot" class="mode-dot"/.test(html) && /dot\.title = bn\.text;/.test(pj) && /dot\.textContent = paused \? "⏸" : "ⓘ";/.test(pj) && /\.mode-dot \{ font-size: 12px; color: #94a3b8;/.test(css));
+  ok("popup: 版と画面の写真は小さな灰色の文字（許可済みなら版だけ・未許可の時だけボタン）", /id="snap-perm" style="display:none;align-items:center;gap:6px;padding:1px 10px;font-size:10px;color:#94a3b8;/.test(html) && /el\("snap-ver"\)\.textContent = "v" \+ \(ver \|\| "\?"\);/.test(sp) && /el\("snap-perm-state"\)\.textContent = granted \? "" : "画面の写真: 未許可";/.test(sp));
+  ok("popup: 今日対応は押す物だけ・灰色の1行・完了の時は出さない", /今日対応 \$\{count\}名（押すと絞り込み）/.test(pj) && !/今日の対応は完了/.test(pj) && !/#fff3e0;border-bottom:1px solid #ffcc02/.test(html) && !/banner\.style\.background = todayOnly \? "#ff6f00"/.test(pj));
+  ok("popup: 広げて検索の帯は灰色の1行（色の地なし）", /\.wide-banner \{[\s\S]*?background: none; border-left: 2px solid #cbd5e1;[\s\S]*?white-space: nowrap;/.test(css) && !/🔎 広げて検索モード/.test(pj));
+}
 
 console.log("── ④ v2.5.73 ITANDI も同じ形（竹内「これitandiでもなおしたかな？」）");
 {
