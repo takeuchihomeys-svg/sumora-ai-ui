@@ -24,7 +24,8 @@ import { imageAnalysisNeed, extractImageWants, dedupeWantsByTopic, type ImageWan
 import { overrideRulerKey } from "./search-override";
 import { imageBonusOf, signedPoints, type ImageAnalysisForBonus } from "./pickup-image-bonus";
 import { listingDealStatus } from "./listing-deal-status";
-import { rankStarCandidates, STAR_FIT_RULE_TAG, type StarRankMode, type StarSituation } from "./recommend-star-rank";
+import { STAR_FIT_RULE_TAG, type StarRankMode, type StarSituation } from "./recommend-star-rank";
+import { rankByRecommendScore, type RecommendScorePart } from "./recommend-score";
 import { starCandidateOfPickup, starOpenRow, SOFT_HOLD_AD_LINE, SOFT_HOLD_STAR_REASON, type StarPickupRow } from "./star-rank-pickup";
 
 export type BestCandidateRow = {
@@ -107,6 +108,12 @@ export type CustomerBest = {
   legacy_id?: number | null;
   /** 合い方の決め方の理由（「束の中で一番広い」等） */
   star_reasons?: string[];
+  /**
+   * 2026-10-06 竹内「スコアリング一番高いのが一番オススメ」: オススメの点（recommend-score＝判定の点の AD を線 +15 に置き換え＋束の中の比べ＋状況）。
+   *   束の中でこの点の一番が 👑（fit の時だけ・legacy は null）。内訳は star_score_parts
+   */
+  star_score?: number | null;
+  star_score_parts?: RecommendScorePart[];
 };
 
 export const CUSTOMER_BEST_WINDOW_HOURS = 6;
@@ -217,8 +224,10 @@ export function roundBestId(rows: ReadonlyArray<BestCandidateRow>, basis: BestBa
  * 👑 の点の出し方（画面の文言）。画像＝「85点」／判定だけ（分析待ち・要確認）＝「判定 163点」／
  * 2026-09-27 画像を足した時＝「合計 169点（判定 163・画像 +6）」（並びに使った合計を先に・内訳を後ろに）
  */
-export function bestPointLabel(b: Pick<CustomerBest, "basis" | "match" | "score"> & { bonus?: number | null }): string {
+export function bestPointLabel(b: Pick<CustomerBest, "basis" | "match" | "score"> & { bonus?: number | null; star_mode?: StarRankMode; star_score?: number | null }): string {
   if (b.basis === "image" && b.match != null) return `${b.match}点`;
+  // 2026-10-06 👑 をオススメの点で決めた時はその点を先に（束の中で一番高い点＝👑）・判定の点は括弧に
+  if (b.star_mode === "fit" && b.star_score != null) return `オススメの点 ${Math.round(b.star_score)}（判定 ${b.score ?? "-"}${b.bonus != null ? `・画像 ${signedPoints(b.bonus)}` : ""}）`;
   if (b.score != null) return b.bonus != null ? `合計 ${b.score + b.bonus}点（判定 ${b.score}・画像 ${signedPoints(b.bonus)}）` : `判定 ${b.score}点`;
   return b.match != null ? `${b.match}点` : "点なし";
 }
@@ -291,7 +300,7 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   //   同じ合い方の点は AD → 初期費用面（敷礼0・フリーレント・敷礼の月数）で分け（2026-10-06d starTieBreak）、それでも同じなら今までの並び（compareOverall）の順
   const starMode: StarRankMode = opts?.starMode ?? "fit";
   const legacyFirst = sorted[0];
-  let fitOrder: Array<{ id: number; fit: number; reasons: string[] }> | null = null;
+  let fitOrder: Array<{ id: number; fit: number; reasons: string[]; parts: RecommendScorePart[] }> | null = null;
   // 2026-10-06e 保留（理由が初期費用だけ）を候補に入れる AD の線（理由の一言も線で入った行だけに付ける）
   const softLine = opts?.softHoldAdLine === undefined ? SOFT_HOLD_AD_LINE : opts.softHoldAdLine;
   if (basis === "score" && starMode === "fit") {
@@ -299,7 +308,9 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
     const open = sorted.filter((r) => starOpenRow(r, softLine));
     const pool = open.length ? open : sorted;
     // 2026-10-06b お客様の状況（敷礼0・2階以上を言っている時の足し点・star-rank-pickup.starSituationFromConditions）。無ければ足さない
-    fitOrder = rankStarCandidates(pool.map((r) => starCandidateOfPickup(r, overallPoints(r) ?? 0)), undefined, opts?.situation ?? null).map((x) => ({ id: Number(x.key), fit: x.fit, reasons: x.reasons }));
+    // 2026-10-06 オススメの点（recommend-score.rankByRecommendScore）の一番＝👑。rankStarCandidates の先頭と同じ物になる（AD の線の点＝線を越える差 15・
+    //   scripts/audit-recommend-score.ts 231回／audit-recommend-score-pickups.ts 売上サポの行で違う回 0）。fit は「オススメの点」
+    fitOrder = rankByRecommendScore(pool.map((r) => starCandidateOfPickup(r, overallPoints(r) ?? 0)), opts?.situation ?? null).map((x) => ({ id: Number(x.key), fit: x.score, reasons: x.reasons, parts: x.parts }));
   }
   const fitOf = (id: number) => fitOrder?.find((x) => x.id === id) ?? null;
   const fitFirst = fitOrder?.length ? sorted.find((r) => r.id === fitOrder![0].id) ?? null : null;
@@ -321,5 +332,7 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
     rule: bestRuleTag(basis, fitOrder ? "fit" : "legacy"),
     legacy_id: legacyFirst?.id ?? null,
     star_reasons: [...(fitOf(best.id)?.reasons ?? []), ...(fitOrder && best.verdict === "hold" && softLine != null && starOpenRow(best, softLine) ? [SOFT_HOLD_STAR_REASON] : [])],
+    star_score: fitOf(best.id)?.fit ?? null,
+    star_score_parts: fitOf(best.id)?.parts ?? [],
   };
 }

@@ -23,24 +23,10 @@ import { customerWants, type CustomerWantInput } from "./recommendation-gaps";
 import { nameKey, sameBuildingName, toHalf } from "./candidate-facts";
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { parseAreaSqm } from "./pickup-dedupe";
+// 2026-10-06 判定（property-brain）も使う部品は hook-lean-core に移した（import の輪を作らない）。ここからも今まで通り出す
+import { hookTypeKeys, hookFeatureBits, hookLeanBonus, HOOK_FEATURE_JA, HOOK_FEATURE_KEYS, HOOK_BONUS, type HookFeats, type HookFeatureKey, type HookCustomerType, type HookLeanTable } from "./hook-lean-core";
+export { hookTypeKeys, hookFeatureBits, hookLeanBonus, HOOK_FEATURE_JA, HOOK_BONUS, type HookFeats, type HookFeatureKey, type HookCustomerType, type HookLeanTable };
 
-export type HookFeats = {
-  rent_ratio?: number | null;
-  area_sqm?: number | null;
-  building_age?: number | null;
-  walk?: number | null;
-  zero_zero?: number | null;
-};
-
-/** 特徴の帯（2値）。null＝分からない（数えない） */
-export type HookFeatureKey = "rent_upper" | "rent_low" | "zero_zero" | "walk_near" | "age_new" | "age_old" | "area_wide";
-export const HOOK_FEATURE_JA: Record<HookFeatureKey, string> = {
-  rent_upper: "家賃が上限の9割〜1.1倍", rent_low: "家賃が上限の8割未満", zero_zero: "敷金礼金0", walk_near: "駅徒歩7分以内",
-  age_new: "築15年以内", age_old: "築30年以上", area_wide: "広い（一人25㎡以上／二人以上40㎡以上）",
-};
-
-/** お客様の型（household＝1LDK以上の希望・star-rank-pickup.householdLayoutOf と同じ／initial＝初期費用・敷礼0の希望） */
-export type HookCustomerType = { household: boolean; initial: boolean };
 /**
  * 条件欄（その時点に戻した物）→ 型。👑 の状況（star-rank-pickup.starSituationFromConditions）と同じ読み方:
  *   二人以上＝間取りの希望が 1LDK以上（householdLayoutOf）／初期費用＝customerWants の low_initial・zero_deposit
@@ -48,27 +34,6 @@ export type HookCustomerType = { household: boolean; initial: boolean };
 export function hookCustomerTypeOf(cond: CustomerWantInput["conditions"] | null | undefined): HookCustomerType {
   const topics = new Set(customerWants({ conditions: cond ?? {} }).map((w) => w.key as string));
   return { household: householdLayoutOf(cond?.floor_plan ?? null), initial: topics.has("low_initial") || topics.has("zero_deposit") };
-}
-
-/** 型の名前（全体＋一人/二人以上＋初期費用＋組み合わせ）。学ぶ表の鍵 */
-export function hookTypeKeys(t: HookCustomerType): string[] {
-  const hh = t.household ? "二人以上" : "一人";
-  return ["全体", hh, ...(t.initial ? ["初期費用", `${hh}×初期費用`] : [])];
-}
-
-export function hookFeatureBits(f: HookFeats, t: HookCustomerType): Record<HookFeatureKey, 0 | 1 | null> {
-  const b = (v: boolean | null): 0 | 1 | null => (v == null ? null : v ? 1 : 0);
-  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-  const r = n(f.rent_ratio), a = n(f.area_sqm), age = n(f.building_age), w = n(f.walk), z = n(f.zero_zero);
-  return {
-    rent_upper: b(r == null ? null : r >= 0.9 && r <= 1.1),
-    rent_low: b(r == null ? null : r < 0.8),
-    zero_zero: b(z == null ? null : z === 1),
-    walk_near: b(w == null ? null : w <= 7),
-    age_new: b(age == null ? null : age <= 15),
-    age_old: b(age == null ? null : age >= 30),
-    area_wide: b(a == null ? null : a >= (t.household ? 40 : 25)),
-  };
 }
 
 export const HOOK_LEARN_CONFIG = {
@@ -84,8 +49,8 @@ export const HOOK_LEARN_CONFIG = {
   /** 古い何割で学ぶか（残りで確かめる） */
   trainFrac: 0.5,
   /** 1つ当たりの加点と上限（AD の線 15点・状況の足し点 15 より小さく＝主軸を崩さない） */
-  bonusEach: 5,
-  bonusMax: 10,
+  bonusEach: HOOK_BONUS.bonusEach,
+  bonusMax: HOOK_BONUS.bonusMax,
   /**
    * 採点に入れる線: スタッフが選んだ回の相対順位がこれ以上良くなる時だけ（customer-pref-weights の minGain 0.01 の半分）。
    *   これより小さい改善は「変わらない」と同じ扱い（入れても誰の👑も変わらない）
@@ -109,7 +74,7 @@ export type HookLearnResult = {
   skipped: Array<{ type: string; feature: HookFeatureKey; reason: string }>;
 };
 
-const FEATURES = Object.keys(HOOK_FEATURE_JA) as HookFeatureKey[];
+const FEATURES = HOOK_FEATURE_KEYS;
 const r2 = (x: number) => Math.round(x * 100) / 100;
 
 /** 型 × 特徴の数（records の中で） */
@@ -161,26 +126,10 @@ export function learnHookLeans(records: ReadonlyArray<HookRecord>, cfg: HookLear
   return { records: records.length, hooked: records.filter((r) => r.hooked).length, train: train.length, confirm: confirm.length, leans, cells: hookCells(records), skipped };
 }
 
-/** 学んだ表（型 → 特徴の一覧）。保存・受け渡し用の小さな形 */
-export type HookLeanTable = Record<string, HookFeatureKey[]>;
 export function hookLeanTable(leans: ReadonlyArray<Pick<HookLean, "type" | "feature">>): HookLeanTable {
   const t: HookLeanTable = {};
   for (const l of leans) (t[l.type] ??= []).includes(l.feature) || t[l.type].push(l.feature);
   return t;
-}
-
-/**
- * 候補の加点（0 以上だけ）。お客様の型に当たる表の特徴を候補が持っていれば bonusEach ずつ・bonusMax まで。
- *   同じ特徴が「全体」と型の両方にあっても1回だけ数える。分からない特徴は数えない（0）。
- */
-export function hookLeanBonus(table: HookLeanTable | null | undefined, type: HookCustomerType, feats: HookFeats, cfg: Pick<HookLearnConfig, "bonusEach" | "bonusMax"> = HOOK_LEARN_CONFIG): { bonus: number; hits: HookFeatureKey[] } {
-  if (!table) return { bonus: 0, hits: [] };
-  const want = new Set<HookFeatureKey>();
-  for (const k of hookTypeKeys(type)) for (const f of table[k] ?? []) want.add(f);
-  if (!want.size) return { bonus: 0, hits: [] };
-  const bits = hookFeatureBits(feats, type);
-  const hits = [...want].filter((f) => bits[f] === 1);
-  return { bonus: Math.min(cfg.bonusMax, hits.length * cfg.bonusEach), hits };
 }
 
 // ─── 採点への効き方を確かめる（スタッフが選んだ回に当てる） ─────────────────────────

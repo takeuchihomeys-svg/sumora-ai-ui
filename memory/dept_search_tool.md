@@ -3195,3 +3195,7 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 見込み（10/01 15時以降の38回で再計算）: 中央値 25分 → 約4分・90% 32分 → 約13分（届かない ITANDI の回がある時）
 - ⚠ 残り（拡張側・未対応）: 案内モードの1回の検索の点検は今も閉じない（abandoned が見回りの集計に毎回残る・見立ては reused で費用はほぼ無し）。直すなら案内モードの「売上番長に送る」で `_auditOnBatchDone` が回を見つけられるよう、popup の started の run を tracker に登録する
 - ついでに: 👑 エスフィールド 202 の「⚠この部屋は送付済み」は正しい表示（スタッフが 18:54:15 に AIX【物件オススメ】でみくさんに送った＝まとめの前）。待ちが長いので解析より先に送られていた。グランパシフィック大国町 602（資料 19:08）は property_pickups・sent_properties に無く、この回とは別
+
+### 2026-10-06 採点（judgeProperty）に「刺さった新着から学んだ特徴」の口（拡張のコードは変えていない・未コミット）
+- 札 `HOOK_LEAN_<特徴>`（+5・2つまで・保留／外す候補には付けない）。週の学び（scoring_learning_runs.hook_learning の kept・proposeUse）を `app/lib/hook-lean-server.ts` hookLeanForJudge が読み、`/api/property-brain/judge` と売上サポ（property-pickups-server）の judgeProperty に `opts.hookLean` で渡す。止める: 環境変数 `HOOK_LEAN_MODE=off`
+- 今は学べる物 0 ＝何も付かない（刺さった新着 v2 の 94回・線 lift 1.25）。基準の作り直しと👑の「オススメの点」は `memory/dept_line_reply.md` の同日の節

@@ -124,7 +124,10 @@ export async function POST(req: NextRequest) {
     // 2026-09-29 お客様ごとのこだわりの倍率（scoring_pref_weights の active・表が空なら null＝今まで通り）。付け直す関数にも同じ物を渡す
     const { prefWeightForCustomer } = await import("@/app/lib/customer-pref-learning-server");
     const prefW = await prefWeightForCustomer(supabase, customerId);
-    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW }));
+    // 2026-10-06 刺さった新着1件から学んだ特徴の加点（週の学びで関門を通った表だけ・HOOK_LEAN_MODE=off で止める・hook-lean-server）
+    const { hookLeanForJudge } = await import("@/app/lib/hook-lean-server");
+    const hookLean = await hookLeanForJudge(supabase, customer as never);
+    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
     let imageRead = 0, imageOk = 0, imageFailed = 0;

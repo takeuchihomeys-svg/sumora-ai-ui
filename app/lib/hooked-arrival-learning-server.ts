@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildContext, customerAt, type ConditionHistoryRow } from "./scoring-learning-episodes";
 import { YUMA_CONVERSATION_ID } from "./test-conversations";
-import { newArrivalHookOf } from "./new-arrival-hook";
+import { newArrivalHookOf, newArrivalHookV2Of, isPlausibleStarName, type HookLevel } from "./new-arrival-hook";
 import { baseReasonPoints } from "./property-brain";
 import type { Episode } from "./scoring-learning";
 import {
@@ -36,15 +36,22 @@ const groupBy = (xs: Row[], k: string) => { const m = new Map<string, Row[]>(); 
 export type HookMaterial = {
   snapshotId: number; conversationId: string; sentAt: string; name: string; room: string | null;
   hooked: boolean; signals: string[]; declined: boolean;
+  /** 2026-10-06 v2: strong（頼んだ・AIX/記録）／weak（前向きな言葉だけ）／none。hooked は strong だけ（criteria=v2） */
+  level: HookLevel; bundle: boolean;
   facts: ArrivalFacts; type: HookCustomerType | null; rentMax: number | null; feats: HookFeats;
 };
 
 /** 期間の新着1件の🌟と、刺さったか・物件の事実（埋めた物）・お客様の型（その時点の条件） */
-export async function loadHookMaterials(sb: SupabaseClient, opts: { until: string; days: number }): Promise<HookMaterial[]> {
+/**
+ * criteria: v2（既定・2026-10-06 の監査で作り直した基準 newArrivalHookV2Of・strong だけ刺さった）／v1（前の基準 newArrivalHookOf）
+ *   v2 は🌟の物件名が物件でない記録（本文の読み違い）を外す
+ */
+export async function loadHookMaterials(sb: SupabaseClient, opts: { until: string; days: number; criteria?: "v1" | "v2" }): Promise<HookMaterial[]> {
+  const criteria = opts.criteria ?? "v2";
   const until = Date.parse(opts.until);
   const sinceIso = new Date(until - opts.days * D).toISOString();
   const snaps = (await all((a, b) => sb.from("recommendation_snapshots").select("id, conversation_id, property_customer_id, sent_at, star_name, star_room, star_text, star_text_facts, candidate_count, candidates")
-    .gte("sent_at", sinceIso).lt("sent_at", new Date(until).toISOString()).order("id").range(a, b) as never, 300)).filter((s) => s.conversation_id !== YUMA_CONVERSATION_ID && isNewArrivalSnapshot(s));
+    .gte("sent_at", sinceIso).lt("sent_at", new Date(until).toISOString()).order("id").range(a, b) as never, 300)).filter((s) => s.conversation_id !== YUMA_CONVERSATION_ID && isNewArrivalSnapshot(s) && (criteria === "v1" || isPlausibleStarName(s.star_name)));
   const pcs = [...new Set(snaps.map((s) => String(s.property_customer_id ?? "")).filter(Boolean))];
   const convs = [...new Set(snaps.map((s) => String(s.conversation_id)))];
   const custs = new Map<string, Row>(); const hist: Row[] = [], sents: Row[] = [], picks: Row[] = [];
@@ -58,22 +65,47 @@ export async function loadHookMaterials(sb: SupabaseClient, opts: { until: strin
   }
   // お客様の返事は送った後 48時間・AIX は 14日だけ使う（newArrivalHookOf）→ 期間の最初の送付より前は読まない
   const msgSince = new Date(until - (opts.days + 1) * D).toISOString();
-  const msgs: Row[] = [], aix: Row[] = [], imgs: Row[] = [];
+  const msgs: Row[] = [], aix: Row[] = [], imgs: Row[] = [], imgNames: Row[] = [], ests: Row[] = [], views: Row[] = [], convSends: Row[] = [];
   for (const c of chunks(convs, 50)) {
-    msgs.push(...await all((a, b) => sb.from("messages").select("conversation_id, sender, text, created_at, referenced_property_id").in("conversation_id", c).eq("sender", "customer").gte("created_at", msgSince).order("id").range(a, b) as never));
+    // v2 は話の流れ（スタッフの文・画像・引用）も読む。v1 はお客様の文だけ
+    msgs.push(...await all((a, b) => {
+      const q = sb.from("messages").select("conversation_id, sender, text, image_url, created_at, referenced_property_id, line_message_id, quoted_message_id").in("conversation_id", c).gte("created_at", msgSince);
+      return (criteria === "v1" ? q.eq("sender", "customer") : q).order("id").range(a, b) as never;
+    }));
     aix.push(...await all((a, b) => sb.from("aix_usage_logs").select("conversation_id, aix_type, generated_text, created_at").in("conversation_id", c).in("aix_type", ["viewing_invite", "meeting_place", "application_push", "estimate_sheet"]).gte("created_at", msgSince).order("id").range(a, b) as never));
     imgs.push(...await all((a, b) => sb.from("sent_image_properties").select("image_url, conversation_id, property_name, room_no, facts").in("conversation_id", c).not("facts", "is", null).order("image_url").range(a, b) as never));
+    if (criteria === "v2") {
+      imgNames.push(...await all((a, b) => sb.from("sent_image_properties").select("image_url, conversation_id, property_name").in("conversation_id", c).not("property_name", "is", null).order("image_url").range(a, b) as never));
+      ests.push(...await all((a, b) => sb.from("estimate_records").select("conversation_id, property_name, room_no, created_at").in("conversation_id", c).gte("created_at", msgSince).order("id").range(a, b) as never));
+      views.push(...await all((a, b) => sb.from("viewing_history").select("conversation_id, property_name, created_at").in("conversation_id", c).gte("created_at", msgSince).order("id").range(a, b) as never));
+      convSends.push(...await all((a, b) => sb.from("sent_properties").select("conversation_id, property_name, sent_at").in("conversation_id", c).gte("sent_at", msgSince).order("id").range(a, b) as never));
+    }
   }
   const ros = await all((a, b) => sb.from("rent_observations").select("property_name, room_no, rent, admin_fee, area_sqm, building_age, walk_minutes, structure, deposit_months, key_money_months, ad_yen, floor_plan, station").order("id").range(a, b) as never);
   const hOf = groupBy(hist, "property_customer_id"), sOf = groupBy(sents, "property_customer_id"), pkOf = groupBy(picks, "property_customer_id");
   const mOf = groupBy(msgs, "conversation_id"), aOf = groupBy(aix, "conversation_id"), iOf = groupBy(imgs, "conversation_id");
   const imgByUrl = new Map(imgs.map((r) => [String(r.image_url), r]));
+  const nameByUrl = new Map(imgNames.map((r) => [String(r.image_url), String(r.property_name)]));
+  const eOf = groupBy(ests, "conversation_id"), vOf = groupBy(views, "conversation_id"), inOf = groupBy(imgNames, "conversation_id"), csOf = groupBy(convSends, "conversation_id");
   const roByKey = new Map<string, Row>(); for (const r of ros) roByKey.set(rentObservationKey(r.property_name, r.room_no), r);
 
   const out: HookMaterial[] = [];
   for (const s of snaps) {
     const cv = String(s.conversation_id), name = String(s.star_name);
-    const h = newArrivalHookOf({ starName: name, sentAt: s.sent_at, messages: (mOf.get(cv) ?? []) as never, aix: (aOf.get(cv) ?? []) as never });
+    const ms = (mOf.get(cv) ?? []) as never[];
+    let h: { hooked: boolean; signals: string[]; declined: boolean; level: HookLevel; bundle: boolean };
+    if (criteria === "v1") {
+      const h1 = newArrivalHookOf({ starName: name, sentAt: s.sent_at, messages: ms as never, aix: (aOf.get(cv) ?? []) as never });
+      h = { ...h1, level: h1.hooked ? "strong" : "none", bundle: false };
+    } else {
+      const t = Date.parse(s.sent_at);
+      const otherNames = [...(inOf.get(cv) ?? []).map((r) => String(r.property_name)), ...(csOf.get(cv) ?? []).filter((r) => Math.abs(Date.parse(String(r.sent_at)) - t) < 14 * D).map((r) => String(r.property_name ?? ""))].filter(Boolean);
+      const h2 = newArrivalHookV2Of({
+        starName: name, starRoom: s.star_room ?? null, sentAt: s.sent_at, messages: ms as never, aix: (aOf.get(cv) ?? []) as never,
+        estimates: (eOf.get(cv) ?? []) as never, viewings: (vOf.get(cv) ?? []) as never, imageNameOf: (u) => nameByUrl.get(u) ?? null, otherNames,
+      });
+      h = { hooked: h2.level === "strong", signals: h2.signals, declined: h2.declined, level: h2.level, bundle: h2.bundle };
+    }
     const raw = ((typeof s.candidates === "string" ? JSON.parse(s.candidates) : s.candidates) ?? []) as Row[];
     const cand = raw.find((x) => x.is_star) ?? raw[0] ?? null;
     const room = (s.star_room ?? cand?.room_no ?? null) as string | null;
@@ -90,7 +122,7 @@ export async function loadHookMaterials(sb: SupabaseClient, opts: { until: strin
       type = hookCustomerTypeOf(c);
       rentMax = buildContext(c, [], [], s.sent_at).profile.rentMax;
     }
-    out.push({ snapshotId: Number(s.id), conversationId: cv, sentAt: new Date(s.sent_at).toISOString(), name, room, hooked: h.hooked, signals: h.signals, declined: h.declined, facts, type, rentMax, feats: hookFeatsOfFacts(facts, rentMax) });
+    out.push({ snapshotId: Number(s.id), conversationId: cv, sentAt: new Date(s.sent_at).toISOString(), name, room, hooked: h.hooked, signals: h.signals, declined: h.declined, level: h.level, bundle: h.bundle, facts, type, rentMax, feats: hookFeatsOfFacts(facts, rentMax) });
   }
   return out;
 }

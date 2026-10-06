@@ -1668,7 +1668,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
               <div className={LEFT_BUBBLE}>
                 {/* 2026-09-25 竹内「画像で分析必要なお客さんなら画像で分析の点、不要なお客さんは判定した点」: 何で決めたか（basis）と、まとめた回か直近の回かを出す */}
                 {/* 2026-09-27 竹内「まとめたうえで結果をだす」: 判定の点 → 同じ点なら画像で分析の点（1本の並び）で決めた一番。物件名は号室つき・AD の札も */}
-                <div className="text-xs font-bold mb-1">👑 一番オススメ（全体・{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析の点" : "合計＝判定の点＋画像の点"}）</div>
+                <div className="text-xs font-bold mb-1">👑 一番オススメ（全体・{bst.from === "complete" ? "まとめた" : "直近 "}{bst.batches}回分・{bst.basis === "image" ? "画像で分析の点" : bst.star_mode === "fit" && bst.star_score != null ? "オススメの点＝合い方＋AD1.5の線＋状況・一番高い物" : "合計＝判定の点＋画像の点"}）</div>
                 <div className="text-[13px] font-bold px-2 py-1.5 rounded-lg" style={{ background: "#fff8e1", color: "#e65100" }}>
                   【{bst.rank}】{nameWithRoom(bst.property_name, cardRoom(bst.room_no, bst.room_text))}（{bestPointLabel(bst)}）
                   {bst.ad_text && <div className="mt-0.5"><AdStamp text={bst.ad_text} /></div>}

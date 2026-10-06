@@ -38,6 +38,7 @@ import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, type RequirementStrengths } from "./requirement-strength";
+import { hookLeanCodesOf, HOOK_LEAN_CODES, HOOK_FEATURE_JA, HOOK_FEATURE_KEYS, HOOK_BONUS, hookLeanCode, type HookLeanJudgeInput } from "./hook-lean-core";
 
 /** お客様の行の要望の強さ（保存の値＝LINE から webhook が書いた物を正に、条件の欄の文から読めた物で埋める） */
 export function requirementStrengthsOfCustomer(c: { requirement_strength?: unknown; move_in_time?: string | null; other_requests?: string | null; preferences?: string | null }): RequirementStrengths {
@@ -648,6 +649,8 @@ export const REASON_JA: Record<string, string> = {
   FIT_ALL: "書いた条件に全部合う", FIT_ALL_HALF: "書いた条件（2つ）に全部合う", FIT_ONE_MISS: "書いた条件のうち1つだけ外れ", FIT_ONE_MISS_HALF: "書いた条件（2つ）のうち1つだけ外れ",
   // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」
   SEARCH_PINPOINT: "🎯 ピンポイント検索（条件ぴったりの検索）で見つかった",
+  // 2026-10-06 竹内「学んだ物は採点につける」: 刺さった新着1件（お客様が内覧・見積・申込を頼んだ新着）に多かった特徴（週の学び・関門を通った物だけ・hook-lean-core）
+  ...Object.fromEntries(HOOK_FEATURE_KEYS.map((f) => [hookLeanCode(f), `刺さった新着に多い特徴（${HOOK_FEATURE_JA[f]}・この型のお客様）`])),
 };
 
 /**
@@ -915,6 +918,8 @@ export const REASON_POINTS: Record<string, number> = {
   FIT_ALL: 15, FIT_ALL_HALF: 8, FIT_ONE_MISS: 5, FIT_ONE_MISS_HALF: 3,
   // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」（PINPOINT_CODE の説明・例題は fit-balance.test.ts）
   SEARCH_PINPOINT: 10,
+  // 2026-10-06 刺さった新着から学んだ特徴の加点（1つ +5・付けるのは2つまで＝+10 まで・hook-lean-core.HOOK_BONUS）。保留・外す候補には付けない
+  ...Object.fromEntries(HOOK_LEAN_CODES.map((c) => [c, HOOK_BONUS.bonusEach])),
 };
 
 /** 設備 ○ の点（案B: 必須 +5／普通 +3／できれば +2・合計 +15 まで）。札は EQUIP_<KEY>_MUST_OK／EQUIP_<KEY>_OK／EQUIP_<KEY>_SOFT_OK */
@@ -1964,6 +1969,12 @@ export type JudgeOptions = {
    *   2026-09-29 の当て直しでは良くなる帯が無く、既定では渡さない（PREF_WEIGHTS_DEFAULT_ON=false）
    */
   prefWeight?: ((code: string) => number) | null;
+  /**
+   * 2026-10-06 竹内「学んだ物は採点につける」: 刺さった新着1件から週の学び（scoring_learning_runs.hook_learning）で関門を通った特徴の表とお客様の型
+   *   （hook-lean-server.hookLeanForJudge）。渡すと当たる特徴に HOOK_LEAN_*（+5・2つまで）を足す。保留・外す候補には付けない。
+   *   渡さなければ今まで通り（表が空・関門を通らない・HOOK_LEAN_MODE=off の時は呼ぶ側が null を渡す）
+   */
+  hookLean?: HookLeanJudgeInput | null;
 };
 
 /** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
@@ -2200,6 +2211,10 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   // 条件の外れ（保留・外す候補の札）がある物件は AD の段を点に入れない（settleHeldAd・札は _HELD で残す）
   // 2026-09-27 ピンポイントの回で見つかった物件（保留・外す候補なら下の settleHeldAd で 0点の _HELD に）
   if (opts.searchMode === "pinpoint") codes.push(PINPOINT_CODE);
+  // 2026-10-06 刺さった新着から学んだ特徴の加点（加点だけ・保留・外す候補には付けない＝全部合うと同じ扱い）
+  if (opts.hookLean && !holds.length && !drops.length) {
+    for (const c of hookLeanCodesOf(facts, profile.rentMax, opts.hookLean)) if (!codes.includes(c)) codes.push(c);
+  }
   if (holds.length || drops.length) {
     const settled = settleHeldAd(codes, true);
     for (let k = 0; k < codes.length; k++) codes[k] = settled[k];
@@ -2291,6 +2306,8 @@ function isNewPositive(c: string): boolean {
     // 広げた検索の幅の内側（希望より少しだけ低い加点）
     // 2026-09-29 家賃が予算の上限寄り・目安の額に近い（RENT_BAND_RULE）
     || c === "RENT_BAND_UPPER" || c === "RENT_TARGET_NEAR"
+    // 2026-10-06 刺さった新着から学んだ特徴
+    || c.startsWith("HOOK_LEAN_")
     || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c)
     // 案B（書いた条件の重み・全部合う）
     || /^(?:ZERO_ZERO_INFERRED|AGE_W5|AGE_W10|AGE_W15|AGE_COL_W5|AGE_COL_W10|WALK_NEAR_W5|WALK_NEAR_W7|WALK_TEXT_OK|RENT_CHEAP_W80|RENT_CHEAP_W90|RENT_CHEAP_W95)(?:_MUST|_SOFT)?$|^FIT_(?:ALL|ALL_HALF|ONE_MISS|ONE_MISS_HALF)$/.test(c);

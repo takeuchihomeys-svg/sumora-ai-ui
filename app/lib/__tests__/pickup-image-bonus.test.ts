@@ -93,7 +93,8 @@ console.log("■ 並び・👑（合計で決める）");
   const same = { ...r706, id: 3, verdict: "pass", score: 167, image_analysis: null };
   t("合計が同じ（167）なら判定の点が高い方（分析待ちの 167 が 163＋4 より上）", compareOverall(same, r740) < 0);
   const best = pickCustomerBest([r740, r716, r747], { basis: "score" })!;
-  t("👑 は合計の一番 #740・点の出し方「合計 167点（判定 163・画像 +4）」", best.id === 740 && best.total === 167 && best.bonus === 4 && bestPointLabel(best) === "合計 167点（判定 163・画像 +4）", best);
+  t("👑 は合計の一番 #740・点の出し方（2026-10-06 オススメの点を先に「オススメの点 160（判定 163・画像 +4）」）", best.id === 740 && best.total === 167 && best.bonus === 4 && bestPointLabel(best) === "オススメの点 160（判定 163・画像 +4）", best);
+  t("legacy（STAR_RANK_MODE=off）は今まで通り「合計 167点（判定 163・画像 +4）」", bestPointLabel(pickCustomerBest([r740, r716, r747], { basis: "score", starMode: "legacy" })!) === "合計 167点（判定 163・画像 +4）");
   t("画面の👑の行も同じ文（pointsLabel）", pointsLabel(163, r740.image_analysis, r740.reason_codes) === "合計 167点（判定 163・画像 +4）");
   t("カードの札「🔍 画像 +4点（◎3・×1）」", imageChipOf(r740.image_analysis, false, r740.reason_codes)?.text === "🔍 画像 +4点（◎3・×1）", imageChipOf(r740.image_analysis, false, r740.reason_codes));
   t("決まりの版が変わった（前の版のまとめの best_id は使わない）", BEST_RULE_TAG === "score+imagebonus@2026-09-27b" && bestRuleTag("score", "legacy") === BEST_RULE_TAG && bestRuleTag("score") !== BEST_RULE_TAG); // 10/06 から既定は🌟の合い方（STAR_FIT_RULE_TAG）・legacy で前の版

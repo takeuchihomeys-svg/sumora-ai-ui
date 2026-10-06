@@ -12,6 +12,18 @@
   - **AD 不明 158行のうち本番の判定の時に補えるのは 2行**（S-RESIDENCE日本橋Qualier 1506→AD1〈1403:2・1101:1 の低い方〉・エスリードレジデンス大阪谷町ザ・マークス 1507→AD2）。段: 同じ建物の別の部屋がある 33 → AD が分かる 8 → その時点までに届いていた 6 → 元付が同じ 2（元付が違う4: エスリード難波ザ・アーク・エスリード大阪梅田リュクス・エステムコート難波サウスプレイスⅣ＝管理会社が別）。前に言った「158行中19行」は後から届いた行・元付の違い・同じ号室も数えていた
 - テスト `app/lib/__tests__/star-soft-hold-building-ad.test.ts`（43）。star-rank-fit-d.test の版の確かめを「06d 以降」に
 
+## 🌟 刺さった基準 v2・学んだ物を採点へ・オススメの点＝👑（10/06・竹内「刺さった基準ちゃんと調査　スコアリングにつける　スコアリング一番高いのが一番オススメだから　状況によってのスコアリング変動」・未コミット）
+- **A 刺さった基準 v2**（`app/lib/new-arrival-hook.ts` newArrivalHookV2Of・v1 newArrivalHookOf は残す）: 監査 `scripts/audit-new-arrival-hook-criteria.ts --v=2 --out=<scratchpad>/x.txt`（送った後の LINE 72時間・AIX 14日・見積書の記録・内覧の記録を1回ずつ並べて全件を目で読む・**書き出しは個人情報を含むので手元だけ**）
+  - **538回を読んだ結果**: v1 の刺さった121回のうち **約31回が誤り**（別の部屋の話 ~19: 束の後の「〇〇気になります」・同じ時に送った別の部屋への「申し込みお願いします」・引用先が別の部屋の画像／断り 8: 「数日前に内覧しました」「初期費用が高くて」「他で決定しそう」「別の不動産で内覧予定」／見積書の部屋違い 5: 同じシリーズの別の建物「スプランディッド堀江↔本町グラン」・同じ建物の別の号室）。漏れ ~10（最初はお礼で2通目に「これだと初期費用いくら」・引用を見ていない・LOCHAS↔LOHAS・断りの語で内見の依頼まで消した）
+  - **「新着1件」の記録の 57%（297/523）は実はピックアップの束の中の🌟**（候補が記録されていないだけ・候補1件以下）。束の🌟への名前の無い返事は「スタッフの次の返事が🌟の名前を言った時だけ」🌟の話にする
+  - 線: **strong**＝その部屋の内覧・見積・申込を頼んだ／スタッフが🌟の名前で「かしこまりました…御見積書・ご案内・お申込み」／AIX（内覧調整・待ち合わせ・見積書・申込）・見積書の記録・内覧の記録がその部屋（号室違いは除く・送った後にお客様の文がある物だけ＝同封の見積書は除く）。**weak**＝前向きな言葉だけ（3回・学習には使わない）。結果 **strong 94（18%）・weak 3**（v1 121）。テスト `app/lib/__tests__/new-arrival-hook-v2.test.ts`（31・実物の文）
+  - 学習の材料（`hooked-arrival-learning-server.loadHookMaterials`）は既定 v2（`criteria: "v1"` で前の基準）。物件名でない🌟（「お申込み後の流れとなります。」等）15回は外す
+- **B 学んだ物は採点へ**: 週の学び（scoring_learning_runs.hook_learning）で **proposeUse かつ kept が空でない** 表だけを `hook-lean-server.hookLeanForJudge` が読み、judgeProperty の `opts.hookLean` → 札 `HOOK_LEAN_<特徴>`（+5・2つまで・保留／外す候補には付けない）。配線: `/api/property-brain/judge`・`property-pickups-server.recordPickupBatch`（2か所）。スイッチ **HOOK_LEAN_MODE=off**。判定にも要る部品は `app/lib/hook-lean-core.ts`（import の輪を作らない）
+  - **今は効かない**: v2 の材料でも学べる物 0（線 lift 1.25）。一番近いのは 二人以上×初期費用 × 築15年以内（刺さった 95%・送った 71%・lift 1.33・古い半分では 1.2）＝既に🌟の「1LDK以上は一番新しい +15」と同じ向き。**築30年以上は刺さった 0/43（初期費用の型）**＝減点は決まりで入れない（竹内さんに確認）
+- **C オススメの点＝👑**（`app/lib/recommend-score.ts` recommendScores／rankByRecommendScore）: オススメの点＝判定の点 − AD の家族の点 ＋ AD1.5以上 +15 ＋ 束の中の比べ（広さ・新しさ・RC・設備）＋ 状況（敷礼0・2階以上・1LDK以上の一番新しい）− AD1未満 1000。**今の👑（rankStarCandidates の先頭）と同じ物が1位**（線の点＝線を越える差15）
+  - 当て直し: `scripts/audit-recommend-score.ts`（🌟の記録 231回）・`scripts/audit-recommend-score-pickups.ts --days=120`（売上サポの行・06e 込み 17回）で **F と違う回 0**。案 A（判定の点そのまま＋比べ＋状況＝AD の点も全部）は 🌟記録で 85 vs 84（新だけ2／旧だけ1）・売上サポで 5 vs 6（旧だけ1）＝上がらないので入れない。AD の線 10／22・刺さった新着の築浅 +5 も下がる／変わらない
+  - 配線: `pickup-best.pickCustomerBest` が rankByRecommendScore で 👑 を決め、`star_score`・`star_score_parts` を返す。画面の 👑 の点は「オススメの点 160（判定 163・画像 +4）」（`bestPointLabel`・STAR_RANK_MODE=off の legacy は今まで通り「合計」）。判定の点（束に入れる段）は変えない
+
 ## 🗓 10/20〜10/27 の確かめ（🌟／👑 の並べ方・まとめ）
 1. `npx tsx --env-file=.env.local scripts/audit-star-rank-switch.ts --since=2026-10-06` — 切り替えの後: 同じ回に今まで/新しいを当て直した一致・画面に出した 👑 とスタッフの🌟（まとめの決め方 star_rule ごと＝06b〜06e）・変わる回の例
 2. `npx tsx --env-file=.env.local scripts/audit-star-rank-situation.ts --wants=live` — 状況の足し点（敷礼0・2階以上・1LDK以上の一番新しい）が live の回で下がっていないか
@@ -19,6 +31,7 @@
 4. `npx tsx --env-file=.env.local scripts/audit-star-two-axis-pickups.ts --days=60` — 売上サポの回が増えた所で **待ちの行での AD の重み**（線1/2・合い方→AD・合い方＋w×AD）を当て直す
 5. `npx tsx --env-file=.env.local scripts/audit-star-soft-hold.ts --days=60` — **保留（初期費用だけ）の線 2 の見直し**（誤って入る＝保留の行が 👑 だが🌟でない回が増えていないか・線1.5 との差）
 6. `npx tsx --env-file=.env.local scripts/audit-building-ad-assume.ts --days=60` — **同じ建物の AD のみなし**の一致・高く見せた率（9% より上がっていないか）・補えた行の数（ログ `property-pickups:building-ad`）
+6b. `npx tsx --env-file=.env.local scripts/audit-recommend-score-pickups.ts --days=60`・`scripts/audit-recommend-score.ts` — オススメの点の1位が今の👑と同じか（違う回 0）・案 A（判定の点そのまま）が上回っていないか／`scripts/audit-hooked-arrival-learning.ts` — 刺さった新着（v2）で学べる物が出たか（出たら judge に HOOK_LEAN_* が付き始める・HOOK_LEAN_MODE=off で止める）
 7. 決める物: 下がっていれば `STAR_RANK_MODE=off`（全体を戻す）／`SOFT_HOLD_AD_LINE`（2→2.5 か null）／`BUILDING_AD_RULE`（minRooms 2 等）。直したら版を上げる（star-fit@…）
 
 ## 🌟 2軸「刺さり（お客様ごと）×ある程度 AD が高い」の調査（10/06・竹内「一番オススメの基準はお客さんが刺さりそうな物件を…そして ある程度ADが高い物件…原因を徹底的に調査」・**並べ方は変えていない＝star-fit@2026-10-06d のまま**・未コミット）
