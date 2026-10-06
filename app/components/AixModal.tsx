@@ -37,6 +37,7 @@ import { firstSentPickupId } from "../lib/sent-image-order";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown } from "../lib/hearing-form";
 import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
+import ZumenZipImport from "./ZumenZipImport";
 import { propertyNamePrefill, meetingPropertyPrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
@@ -2082,10 +2083,14 @@ export default function AixModal({
   // 物件ピックアップした専用: 複数画像追加
   const onSelectSendImages = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
+    if (sendFileInputRef.current) sendFileInputRef.current.value = "";
+    addSendImageFiles(files);
+  };
+  // 2026-10-06: ITANDI の図面 ZIP を帯替えした画像（ZumenZipImport）も同じ道で足す
+  const addSendImageFiles = (files: File[]) => {
     if (files.length === 0) return;
     setSendImageFiles(prev => [...prev, ...files]);
     setPreview("");
-    if (sendFileInputRef.current) sendFileInputRef.current.value = "";
 
     // base64に変換してプレビュー表示 + 物件情報自動解析
     const readPromises = files.map(file => new Promise<string>((resolve) => {
@@ -3944,6 +3949,7 @@ export default function AixModal({
                   {sendImagePreviews.length > 0 ? `追加する（現在${sendImagePreviews.length}枚）` : "物件画像を追加する（スキップ可）"}
                 </button>
                 <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
+                <ZumenZipImport onAdd={addSendImageFiles} />
               </div>
               {/* モード選択 */}
               <div>
