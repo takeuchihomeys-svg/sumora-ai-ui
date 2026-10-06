@@ -4,6 +4,7 @@
 // manifest の background.type が "module" のため importScripts() は使えない。
 // 静的 import で読み込み、resolution-core.js が公開する globalThis.SUMORA_RESOLUTION
 // 経由で resolveConditionsLocal 等を参照する（_resolveLocalFirst 参照）。
+import "./area-token.js"; // v2.5.76 市・区の語は駅にしない（resolution-core の駅モードが読む）
 import "./resolution-core.js";
 // 2026-09-18 竹内: 検索日の記録（サイト×モード）を popup.js と同じ1つの関数で行う（self.AxlxSearchHistory）
 import "./search-history.js";

@@ -2539,6 +2539,13 @@ function renderList(customers) {
   });
 }
 
+/** 2026-10-06 v2.5.76: 希望エリアの語を駅として扱ってよいか（area-token.js・市・区で終わる語は地域） */
+function _axStationOk(t, rawText) {
+  const A = (typeof self !== "undefined" ? self : window).AxlxAreaToken;
+  if (!A) return true;
+  return A.stationEligible(t, rawText, typeof LEARNED_OVERRIDE_MAP !== "undefined" ? LEARNED_OVERRIDE_MAP : null);
+}
+
 function computeAreaModeBadgeHtml(areaText) {
   if (!areaText) return '';
   const toks = parseAreaTokens(areaText);
@@ -3236,19 +3243,23 @@ function preloadAdjForm(c) {
   }
 
   // 更新日：アプリで上書き済みなら優先、なければ日付から自動計算
+  // 2026-10-06 v2.5.76 竹内「itandi・リアプロそれぞれの更新日にする」: 手の指定はサイトごと（リアプロ＝rp_update_days／ITANDI＝itandi_update_days・site-update-days.js）
   const updateDaysEl = document.getElementById("adj-update-days");
   if (updateDaysEl) {
-    if (c.rp_update_days) {
-      updateDaysEl.value = String(c.rp_update_days);
+    const _SUD = (typeof self !== "undefined" ? self : window).AxlxSiteUpdateDays;
+    const _udSite = selectedSite === "itandi" ? "itandi" : "realpro";
+    const _udManual = _SUD ? _SUD.manualFor(c, _udSite) : (c.rp_update_days || null);
+    if (_udManual) {
+      updateDaysEl.value = String(_udManual);
     } else {
       updateDaysEl.value = calcUpdateDays(lastPropertyTouchDateJst(c), c.status);
     }
-    console.log("[popup] 更新日:", updateDaysEl.value ? updateDaysEl.value + "日以内" : "指定なし",
-      "(前回=" + (lastPropertyTouchDateJst(c) || "なし") + (c.rp_update_days ? "・アプリ指定" : "") + ")");
+    console.log("[popup] 更新日(" + _udSite + "):", updateDaysEl.value ? updateDaysEl.value + "日以内" : "指定なし",
+      "(前回=" + (lastPropertyTouchDateJst(c) || "なし") + (_udManual ? "・アプリ指定" : "") + ")");
     // 2026-09-25 竹内「更新日も拡張ツールと連動」: 手で選び直したらお客様の rp_update_days に書く（ウェブの更新日の切替・AIXツールの一括検索と同じ値になる）。
     //   「指定なし」は null＝自動（前回物件を出した日から計算）に戻す（ウェブの切替の「auto」と同じ意味）。
     //   onchange は代入（開くたびに置き換え＝前のお客様の分が残らない）。値を入れるだけの所（上・前回の日付の欄）は change を起こさない
-    updateDaysEl.onchange = () => { void saveRpUpdateDays(c, updateDaysEl.value); };
+    updateDaysEl.onchange = () => { void saveRpUpdateDays(c, updateDaysEl.value, _udSite); };
   }
 
   // レインズ登録日：初めての物件出しは絞り込まない
@@ -3377,21 +3388,25 @@ function lastPropertyTouchDateJst(c) {
 }
 
 // 更新日の select を手で変えた時に DB（property_customers.rp_update_days）へ書く。失敗しても検索は止めない（その回は欄の値で検索する）
-async function saveRpUpdateDays(c, value) {
+// v2.5.76: site（"realpro"|"itandi"）の列だけに書く（ITANDI で選んだ値がリアプロに入らない・site-update-days.js）
+async function saveRpUpdateDays(c, value, site) {
   if (!c || !c.id) return;
+  var SUD = (typeof self !== "undefined" ? self : window).AxlxSiteUpdateDays;
+  var p = SUD ? SUD.patchFor(c, site || "realpro", value) : null;
+  var key = p ? p.key : "rp_update_days";
   var n = Number(value);
-  var next = value && isFinite(n) && n > 0 ? n : null;
-  if ((c.rp_update_days || null) === next) return;
+  var next = p ? p.next : (value && isFinite(n) && n > 0 ? n : null);
+  if (p ? !p.changed : (c.rp_update_days || null) === next) return;
   try {
     var res = await fetch(API_BASE + "/api/property-customers", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: c.id, rp_update_days: next }),
+      body: JSON.stringify(p ? p.body : { id: c.id, rp_update_days: next }),
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
-    c.rp_update_days = next;
+    c[key] = next;
     var idx = (allCustomers || []).findIndex(function (x) { return x.id === c.id; });
-    if (idx >= 0) allCustomers[idx].rp_update_days = next;
+    if (idx >= 0) allCustomers[idx][key] = next;
     try { sessionStorage.removeItem(CUSTOMER_CACHE_KEY); } catch (_) { /* ignore */ }
     console.log("[popup] 更新日を保存:", next ? next + "日以内" : "自動（指定なし）");
   } catch (e) {
@@ -4212,8 +4227,9 @@ function openInstructions(siteKey) {
       }
       // ローカル補正: STATION_LINE_MAPに一致する既知駅があれば駅モードへ自動切替
       // （既知駅はAPIを呼ばないためAPIによるモード補正が動かない問題を解消する）
+      // v2.5.76: 市・区で終わる語（守口市・吹田市…）は駅名と同じでも地域（area-token.js）＝この補正に使わない
       if (_areaModeSource === "auto" && currentAreaMode !== "station") {
-        const _localToks = parseAreaTokens(rawArea);
+        const _localToks = parseAreaTokens(rawArea).filter(t => _axStationOk(t, rawArea));
         const _hasKnownStation = _localToks.some(t => {
           const s = t.replace(/[町村]$/, "");
           return !!(STATION_LINE_MAP[t] || STATION_LINE_MAP[s] ||
@@ -4235,6 +4251,7 @@ function openInstructions(siteKey) {
       // ボタン押下が絶対ルール: 駅モードなら全トークンを駅マッチ / 地域モードならスキップ
       if (currentAreaMode === "station") {
         tokens.forEach(token => {
+          if (!_axStationOk(token, rawArea)) return; // v2.5.76: 市・区の語は駅にしない（「〇〇駅」・路線名つき・手直しは駅）
           let lines = STATION_LINE_MAP[token];
           let key = token;
           if (!lines) {
@@ -4799,7 +4816,8 @@ function openInstructions(siteKey) {
       //   LEARNED_STATION_MAPにrealpro_linesがある駅は駅モードへ自動切替
       //   ※ 同ロジックがitandiハンドラ(2546)にも存在。リアプロ側は2926以前に置くこと
       if (_areaModeSource === "auto" && currentAreaMode !== "station") {
-        const _localToks = parseAreaTokens(adjAreaClean);
+        // v2.5.76 竹内「地域なのに駅としてなぜか扱っている」（けんじじさん: 東淀川区・旭区・吹田市・守口市）: 市・区の語は駅の辞書にあっても地域
+        const _localToks = parseAreaTokens(adjAreaClean).filter(t => _axStationOk(t, adjAreaClean));
         const _hasKnownStation = _localToks.some(t => {
           const s = t.replace(/[町村]$/, "");
           return !!(STATION_LINE_MAP[t] || STATION_LINE_MAP[s] ||
@@ -4861,6 +4879,8 @@ function openInstructions(siteKey) {
         // 駅名ページのDOM表記エイリアス（難波=漢字→南海、なんば=ひらがな→大阪メトロ）
         const _STATION_DOM_ALIASES = { "難波": "なんば", "なんば": "難波" };
         for (const part of areaParts) {
+          // v2.5.76: 市・区で終わる語（守口市・吹田市・茨木市…）は地域＝駅名にしない（「〇〇駅」・路線名つき・手直しは駅）
+          if (!_axStationOk(part, adjAreaClean)) continue;
           // 都市名・府県名トークンは駅名として station_names に追加しない
           const _SNAME_SKIP = new Set(["大阪", "大阪府", "東京", "京都", "神戸", "兵庫", "奈良", "大阪市"]);
           if (_SNAME_SKIP.has(part)) continue;

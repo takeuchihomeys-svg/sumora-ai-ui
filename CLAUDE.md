@@ -90,8 +90,12 @@ VALUES (
 ### 更新ルール
 - 古い知見が上書きされたら → `UPDATE system_design_thinking SET is_current = false WHERE id = '...'`
 - `is_current = false` の行は参照しない（履歴として残すだけ）
+- **前の決まりを変える決定を記録したら、同じ手順で古い行を退役する**（理由＋新しい行の id を残す・消さない。2026-10-06 竹内さん承認）
+  `npx tsx --env-file=.env.local scripts/kb-retire.ts --id=<古い id> --by=<新しい id> --reason=<理由>`
+- 毎週の整理（`/api/cron/design-knowledge`・手元は `scripts/kb-curate.ts`）が重複と決定で古くなった行を退役し、迷う物は `memory/rules_digest_review.md` に出す
 
 ### 参照方法（次セッション冒頭・設計作業前）
+- **その分野の「今の決まり」を先に読む**: `memory/rules_digest_<reply|aix|brain|search|extension|estimate|viewing|cost>.md`（最新にするのは `npx tsx --env-file=.env.local scripts/kb-digest.ts --write`）
 ```sql
 SELECT title, insight, rationale FROM system_design_thinking
 WHERE is_current = true

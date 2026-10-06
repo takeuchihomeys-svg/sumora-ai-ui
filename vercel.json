@@ -315,6 +315,10 @@
     {
       "path": "/api/cron/property-search-knowledge",
       "schedule": "20 19 * * 0"
+    },
+    {
+      "path": "/api/cron/design-knowledge",
+      "schedule": "40 19 * * 0"
     }
   ]
 }

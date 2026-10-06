@@ -1893,6 +1893,10 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS adjacent_ok BOOLEAN DEFA
 
 -- rp_update_days: アプリから設定する更新日フィルター上書き（1/3/7/14日・NULLは自動計算）（2026-08-08）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS rp_update_days INTEGER;
+-- itandi_update_days: ITANDI の「募集条件更新 N日以内」の手の指定（2026-10-06 v2.5.76 竹内「itandi・リアプロそれぞれの更新日にする」）。
+--   NULL は自動（前回物件を出した日から計算）。リアプロの rp_update_days とは別（旧は1つの欄を両方で使い、ITANDI で選んだ値がリアプロにも入った）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS itandi_update_days INTEGER;
+COMMENT ON COLUMN property_customers.itandi_update_days IS 'ITANDI の募集条件更新 N日以内の手の指定（NULL＝自動）。リアプロは rp_update_days';
 
 -- area_mode: 物件検索モード（auto/ward/station/both）をDBに永続化（2026-08-08追加）
 -- 'auto'=自動判定 / 'ward'=地域のみ / 'station'=駅のみ / 'both'=両方同時検索。DEFAULT 'auto'
@@ -4526,6 +4530,58 @@ CREATE OR REPLACE FUNCTION psk_mark_used(p_ids uuid[]) RETURNS void
 LANGUAGE sql AS $$
   UPDATE property_search_knowledge SET last_used_at = now(), use_count = use_count + 1 WHERE id = ANY(p_ids)
 $$;
+
+-- ── 設計知見の整理（2026-10-06 竹内「設計知見の更新や成長はツールを完成させるにあたってかなり重要」・⑯）──
+--   退役は消さない: is_current=false に、なぜ・どの行に上書きされたか・いつ・誰が を残す（app/lib/design-knowledge-curation.ts）
+ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS retired_reason TEXT;
+ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS superseded_by UUID;
+ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
+ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS retired_by TEXT;
+COMMENT ON COLUMN system_design_thinking.retired_reason IS '非現行にした理由（重複・竹内さんの決定で古くなった 等）';
+COMMENT ON COLUMN system_design_thinking.superseded_by IS 'この行を上書きした新しい行の id（重複なら残した行）';
+COMMENT ON COLUMN system_design_thinking.retired_at IS '非現行にした時刻';
+COMMENT ON COLUMN system_design_thinking.retired_by IS '非現行にした仕組み（kb-curate:duplicate／kb-curate:decision／kb-retire 等）';
+-- 分野ごとの「今の決まり」のまとめ（返信・AIX・ブレイン・物件検索・拡張・見積書・内覧・費用・要確認）。毎週作り直す
+CREATE TABLE IF NOT EXISTS design_rules_digest (
+  area TEXT PRIMARY KEY,
+  markdown TEXT NOT NULL,
+  row_ids UUID[] NOT NULL DEFAULT '{}',
+  review JSONB,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE design_rules_digest DISABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE design_rules_digest IS '設計知見の分野ごとの今の決まり（現行の行だけ・元の行の id 付き）。/api/cron/design-knowledge と scripts/kb-curate.ts が作る';
+COMMENT ON COLUMN design_rules_digest.review IS '要確認の一覧（area=要確認 の行だけ）: [{kind, ids, relation, note}]';
+
+-- 2026-10-06 ⑫ 竹内「AIXツールひらくとき重すぎる…今全部見ている気がする」: 画面は一覧のために直近90日のメッセージ（max_rows で実は1000行・4日分）を
+--   30秒ごとに丸ごと読み直していた。一覧が要るのは「会話ごとのお客様の最後の発言の時刻」と「本文の検索」だけ → 集計・検索を DB 側で
+CREATE OR REPLACE FUNCTION conversation_last_customer_at()
+RETURNS TABLE(conversation_id TEXT, last_customer_at TIMESTAMPTZ)
+LANGUAGE sql STABLE AS $$
+  SELECT DISTINCT ON (m.conversation_id) m.conversation_id, m.created_at
+  FROM messages m
+  WHERE m.sender = 'customer'
+  ORDER BY m.conversation_id, m.created_at DESC;
+$$;
+CREATE OR REPLACE FUNCTION search_conversation_ids_by_message(q TEXT, max_n INT DEFAULT 300)
+RETURNS TABLE(conversation_id TEXT)
+LANGUAGE sql STABLE AS $$
+  SELECT DISTINCT m.conversation_id
+  FROM messages m
+  WHERE length(trim(q)) >= 1
+    AND strpos(lower(m.text), lower(trim(q))) > 0
+  LIMIT greatest(1, least(max_n, 1000));
+$$;
+-- 会話・メッセージの変更を Realtime で届ける（画面は変わった行だけを直す。30秒ごとの丸ごとの読み直しをやめるため）
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'conversations') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.conversations;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'messages') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+  END IF;
+END $$;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

@@ -1348,6 +1348,9 @@ function buildAreaRouteCodes(c, mode, collect) {
           continue;
         }
       }
+      // 2026-10-06 v2.5.76: 市・区で終わる語（守口市・吹田市…）は駅名と同じでも地域＝駅にしない（area-token.js・popup と同じ決まり）
+      const _AT = (typeof self !== "undefined" ? self : globalThis).AxlxAreaToken;
+      if (_AT && _AT.isAreaToken(part, null, typeof LEARNED_OVERRIDE_MAP !== "undefined" ? LEARNED_OVERRIDE_MAP : null)) continue;
       // 駅モード: 路線IDのみ追加（city_codesは追加しない → 所在地フィールドに入らないようにする）
       const station = resolveStation(part);
       const stationKey = station || part;
