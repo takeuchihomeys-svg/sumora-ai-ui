@@ -72,51 +72,111 @@ async function checkAllDone(): Promise<void> {
 //   お客様を開いた時は今まで通り ?id= で全部を受ける（拡張の fetchFreshCustomer）。既定（view なし）の形は変えない（⑫ の /conditions・アプリが使う）
 const LIST_DROP = ["ai_summary", "ai_summary_json", "personality_profile", "raw_format_text", "condition_summary", "condition_summary_hash"] as const;
 
+// 2026-10-07 v2.5.87 竹内「拡張ツールのお客さん一覧が表示されるときかなり重い」:
+//   ① ?view=list は DB から重い列を読まない（旧は select("*") で 781KB を読んでから外していた＝DB 0.4〜1.0秒 → 列を選ぶと 459KB・0.24〜0.41秒）。
+//      列の名前は書き並べない（新しい列を足した時に一覧から漏れる）＝1行だけ select("*") で今の列を知り、LIST_DROP を外した列で読む（関数の中で覚える・失敗は "*"）。
+//   ② ?view=list&limit=N は「最新 N 人（updated_at 順）＋会話から物件検索の印の人」だけ（拡張の前回の一覧が無い時に先に出す・全員はその後に届く）。
+//      会話もその人たちの分だけ読む
+let _listColumns: string | null = null;
+async function listColumns(): Promise<string> {
+  if (_listColumns) return _listColumns;
+  try {
+    const { data, error } = await supabase.from("property_customers").select("*").limit(1);
+    if (error || !data || !data[0]) return "*";
+    const drop = new Set<string>(LIST_DROP);
+    _listColumns = Object.keys(data[0]).filter((k) => !drop.has(k)).join(",");
+    return _listColumns;
+  } catch { return "*"; }
+}
+const LIST_HEAD_MAX = 200;
+
+type PcRow = Record<string, unknown> & { id: string; parent_customer_id?: string | null };
+type ConvRow = { id: string; property_customer_id: string; last_sender: string | null; updated_at: string | null; account: string | null; status: string | null; is_hot: boolean | null; is_flagged: boolean | null; [k: string]: unknown };
+type FocusRow = { property_customer_id: string; requested_at: string; requested_by: string | null; device: string | null };
+// 一覧（?view=list）が会話から使う列だけ（会話の最後の発言・画像・名前は一覧で使わない＝142KB → 62KB）
+const LIST_CONV_COLS = "id, property_customer_id, last_sender, updated_at, account, status, is_hot, is_flagged";
+
+// 2026-10-06 会話画面の「🔍 物件検索」の印（property_search_focus・24時間以内）を各行の search_focus に載せる。
+//   拡張（search-focus.js）が「押した後に検索・送付していない」物を一覧の一番上に出す。表が無い（本番未作成）・失敗は印なしで続ける
+async function loadFocusRows(ids: string[] | null): Promise<FocusRow[]> {
+  try {
+    let q = supabase.from("property_search_focus").select("property_customer_id, requested_at, requested_by, device")
+      .gte("requested_at", new Date(Date.now() - FOCUS_TTL_MS).toISOString());
+    if (ids) q = q.in("property_customer_id", ids);
+    const { data: f, error: fe } = await q;
+    return fe ? [] : ((f ?? []) as FocusRow[]);
+  } catch { return []; }
+}
+function toFocusMap(rows: FocusRow[]) {
+  return new Map(rows.map((f) => [f.property_customer_id, { at: f.requested_at, by: f.requested_by ?? null, device: f.device ?? null }]));
+}
+function toListRow(c: PcRow, convMap: Map<string, ConvRow>, focusMap: ReturnType<typeof toFocusMap>): Record<string, unknown> {
+  const o: Record<string, unknown> = { ...c };
+  for (const k of LIST_DROP) delete o[k];
+  const conv = convMap.get(c.id) ?? (c.parent_customer_id ? convMap.get(c.parent_customer_id) ?? null : null);
+  o.rent_min_search = searchRentMinOf(c as unknown as CustomerLike)?.yen ?? null;
+  o.is_linked = convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id));
+  o.linked_conversation = conv ? { id: conv.id, property_customer_id: conv.property_customer_id, last_sender: conv.last_sender, updated_at: conv.updated_at, account: conv.account, status: conv.status, is_hot: conv.is_hot, is_flagged: conv.is_flagged } : null;
+  o.search_focus = focusMap.get(c.id) ?? null;
+  o.list_view = true; // 一覧の軽い形の印（拡張はお客様を開く時に ?id= で全部を取り直す）
+  return o;
+}
+// ?view=list&limit=N: 最新 N 人（updated_at 順）＋会話から物件検索の印の人（N 人の外でも）。各行に list_head=true（拡張は全員が届くまでの仮の表示に使う）
+async function listHead(n: number) {
+  const cols = await listColumns();
+  const focusRows = await loadFocusRows(null);
+  const [{ data: top, error }, { data: pinned }] = await Promise.all([
+    supabase.from("property_customers").select(cols).order("updated_at", { ascending: false }).limit(n),
+    focusRows.length
+      ? supabase.from("property_customers").select(cols).in("id", focusRows.map((f) => f.property_customer_id))
+      : Promise.resolve({ data: [] as unknown[] }),
+  ]);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const rows: PcRow[] = [];
+  const seen = new Set<string>();
+  for (const r of [...((top ?? []) as unknown as PcRow[]), ...((pinned ?? []) as unknown as PcRow[])]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    rows.push(r);
+  }
+  const convIds = [...new Set(rows.flatMap((r) => [r.id, r.parent_customer_id].filter((x): x is string => !!x)))];
+  const { data: convData } = convIds.length
+    ? await supabase.from("conversations").select(LIST_CONV_COLS).in("property_customer_id", convIds)
+    : { data: [] as unknown[] };
+  const convMap = new Map(((convData ?? []) as unknown as ConvRow[]).map((c) => [c.property_customer_id, c]));
+  const focusMap = toFocusMap(focusRows);
+  const out = rows.map((c) => ({ ...toListRow(c, convMap, focusMap), list_head: true }));
+  return NextResponse.json(out, { headers: { "Cache-Control": "no-store, must-revalidate" } });
+}
+
 export async function GET(req: NextRequest) {
-  const singleId = new URL(req.url).searchParams.get("id");
-  const listView = !singleId && new URL(req.url).searchParams.get("view") === "list";
+  const sp = new URL(req.url).searchParams;
+  const singleId = sp.get("id");
+  const listView = !singleId && sp.get("view") === "list";
+  const headN = listView ? Math.min(LIST_HEAD_MAX, Math.max(0, Math.floor(Number(sp.get("limit")) || 0))) : 0;
+  if (listView && headN > 0) return listHead(headN);
   const pcQuery = singleId
     ? supabase.from("property_customers").select("*").eq("id", singleId)
-    : supabase.from("property_customers").select("*").order("updated_at", { ascending: false });
-  // 2026-10-06 会話画面の「🔍 物件検索」の印（property_search_focus・24時間以内）を各行の search_focus に載せる。
-  //   拡張（search-focus.js）が「押した後に検索・送付していない」物を一覧の一番上に出す。表が無い（本番未作成）・失敗は印なしで続ける
-  const focusQuery = (async () => {
-    try {
-      let q = supabase.from("property_search_focus").select("property_customer_id, requested_at, requested_by, device")
-        .gte("requested_at", new Date(Date.now() - FOCUS_TTL_MS).toISOString());
-      if (singleId) q = q.eq("property_customer_id", singleId);
-      const { data: f, error: fe } = await q;
-      return fe ? [] : (f ?? []);
-    } catch { return []; }
-  })();
-  const [{ data, error }, { data: convData }, focusRows] = await Promise.all([
+    : supabase.from("property_customers").select(listView ? await listColumns() : "*").order("updated_at", { ascending: false });
+  const [{ data: rawData, error }, { data: convData }, focusRows] = await Promise.all([
     pcQuery,
     supabase
       .from("conversations")
-      .select("id, property_customer_id, last_message, last_sender, updated_at, account, status, profile_image_url, customer_name, is_hot, is_flagged")
+      .select(listView ? LIST_CONV_COLS : "id, property_customer_id, last_message, last_sender, updated_at, account, status, profile_image_url, customer_name, is_hot, is_flagged")
       .not("property_customer_id", "is", null),
-    focusQuery,
+    loadFocusRows(singleId ? [singleId] : null),
   ]);
-  const focusMap = new Map(focusRows.map((f) => [f.property_customer_id as string, { at: f.requested_at as string, by: (f.requested_by as string | null) ?? null, device: (f.device as string | null) ?? null }]));
+  const focusMap = toFocusMap(focusRows);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const convMap = new Map((convData || []).map((c) => [c.property_customer_id, c]));
+  const data = (rawData ?? []) as unknown as PcRow[];
+  const convMap = new Map(((convData ?? []) as unknown as ConvRow[]).map((c) => [c.property_customer_id, c]));
   if (listView) {
-    const rows = (data || []).map((c) => {
-      const o: Record<string, unknown> = { ...c };
-      for (const k of LIST_DROP) delete o[k];
-      const conv = convMap.get(c.id) ?? (c.parent_customer_id ? convMap.get(c.parent_customer_id) ?? null : null);
-      o.rent_min_search = searchRentMinOf(c as CustomerLike)?.yen ?? null;
-      o.is_linked = convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id));
-      o.linked_conversation = conv ? { id: conv.id, property_customer_id: conv.property_customer_id, last_sender: conv.last_sender, updated_at: conv.updated_at, account: conv.account, status: conv.status, is_hot: conv.is_hot, is_flagged: conv.is_flagged } : null;
-      o.search_focus = focusMap.get(c.id) ?? null;
-      o.list_view = true; // 一覧の軽い形の印（拡張はお客様を開く時に ?id= で全部を取り直す）
-      return o;
-    });
+    const rows = data.map((c) => toListRow(c, convMap, focusMap));
     return NextResponse.json(rows, { headers: { "Cache-Control": "no-store, must-revalidate" } });
   }
-  const result = (data || []).map((c) => ({
+  const result = data.map((c) => ({
     ...c,
     // 2026-09-29 要望の項目（設備／NG／その他・純関数 customer-wants.itemizeWants）。拡張の popup の条件の表示が読む（検索には入れない）
     want_items: itemizeWants(c as WantsCustomerLike),

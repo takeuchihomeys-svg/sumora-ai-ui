@@ -194,7 +194,7 @@ const AT = "2026-10-06T12:40:00Z";              // JST 21:40 に押した
   const html = read("popup.html");
   ok("popup.html が search-focus.js を popup.js より先に読む", html.indexOf("search-focus.js") > 0 && html.indexOf("search-focus.js") < html.indexOf('src="popup.js"'));
   const mf = JSON.parse(read("manifest.json"));
-  eq("版は 2.5.86", mf.version, "2.5.86");
+  ok("版は 2.5.86 以上", (function (v) { const p = v.split(".").map(Number); return p[0] > 2 || (p[0] === 2 && (p[1] > 5 || (p[1] === 5 && p[2] >= 86))); })(mf.version));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

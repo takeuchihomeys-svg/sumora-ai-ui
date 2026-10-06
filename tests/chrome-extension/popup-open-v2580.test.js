@@ -18,7 +18,7 @@ ok("取り直して変わった時だけ描き直す（検索の文字・見て�
 ok("開いているお客様は取り直した全部の値を残す", /data\[i\] = Object\.assign\(\{\}, data\[i\], selectedCustomer\);/.test(pp));
 ok("お客様を開いた時は今まで通り ?id= で全部を取り直す", /property-customers\?id=\$\{encodeURIComponent\(id\)\}/.test(pp));
 ok("地名・駅の表は同じ物を2回取らない（差分の同期は1日1回・取った表を渡す）", /loadLearnedMapsCached\(\);/.test(pp) && !/seedMapsIfEmpty\(\)\.then\(\(\) => fetchLearnedMaps\(\)\)/.test(pp) && /void seedMapsIfEmpty\(\{ regions: ok\.data\.regions \}, \{ stations: ok\.data\.stations \}\);/.test(pp));
-ok("学習済みの表は前回の物を先に使い、30分より古い時だけ取り直す", /const LEARNED_MAPS_FRESH_MS = 30 \* 60 \* 1000;/.test(pp) && /if \(cached && cached\.data\) _applyLearnedMaps\(cached\.data\);/.test(pp));
+ok("学習済みの表は前回の物を先に使い、30分より古い時だけ取り直す", /const LEARNED_MAPS_FRESH_MS = 30 \* 60 \* 1000;/.test(pp) && /if \(cached && cached\.data\) \{? ?_applyLearnedMaps\(cached\.data\);/.test(pp));
 ok("background: 1人を探すのに全員を取らない（?id=）", (read("background.js").match(/property-customers\?id=" \+ encodeURIComponent\(String\(_cid\)\)/g) || []).length === 2);
 const api = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "property-customers", "route.ts"), "utf8");
 ok("API: ?view=list は重い列を外し、要望の項目の計算をしない・会話は印の分だけ", /const LIST_DROP = \["ai_summary", "ai_summary_json", "personality_profile", "raw_format_text", "condition_summary", "condition_summary_hash"\]/.test(api) && /if \(listView\) \{/.test(api) && /o\.linked_conversation = conv \? \{ id: conv\.id, property_customer_id: conv\.property_customer_id, last_sender/.test(api));

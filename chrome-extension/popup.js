@@ -156,16 +156,25 @@ function _applyLearnedMaps(d) {
     if ((r.priority || 0) >= 100) LEARNED_OVERRIDE_MAP[r.token] = "station";
   }
   Object.assign(LEARNED_LINE_ORDER, d.lines || {});
+  // v2.5.87 表が変わった → 一覧の「駅／地域」の札の覚えを捨てる（computeAreaModeBadgeHtml）
+  if (typeof _areaBadgeMemo !== "undefined") _areaBadgeMemo.clear();
 }
+// v2.5.87 一覧の「駅／地域」の札の覚え（_areaBadgeMemoSig）が、どの表で作った物かを見分ける時刻。前回の表を当てた時に決まる（_learnedCachedReady）
+var _learnedMapsTs = 0;
+var _learnedCachedReadyResolve = null;
+var _learnedCachedReady = new Promise((r) => { _learnedCachedReadyResolve = r; });
 async function loadLearnedMapsCached() {
   let stored = null;
   try { stored = await new Promise((res) => chrome.storage.local.get([LEARNED_MAPS_STORE_KEY, "axlx_seed_maps_at"], (r) => res(r || {}))); } catch (_) { stored = {}; }
   const cached = stored && stored[LEARNED_MAPS_STORE_KEY];
-  if (cached && cached.data) _applyLearnedMaps(cached.data);
+  if (cached && cached.data) { _applyLearnedMaps(cached.data); _learnedMapsTs = Number(cached.ts) || 0; }
+  if (_learnedCachedReadyResolve) _learnedCachedReadyResolve();
   if (cached && cached.ts && Date.now() - cached.ts < LEARNED_MAPS_FRESH_MS) return;
   const ok = await fetchLearnedMaps();
   if (ok && ok.data) {
-    try { chrome.storage.local.set({ [LEARNED_MAPS_STORE_KEY]: { ts: Date.now(), data: ok.data } }); } catch (_) {}
+    const _ts = Date.now();
+    _learnedMapsTs = _ts;
+    try { chrome.storage.local.set({ [LEARNED_MAPS_STORE_KEY]: { ts: _ts, data: ok.data } }); } catch (_) {}
     // ハードコードマップとの差分の同期は1日1回だけ（取った表を渡す＝取り直さない）
     const lastSeed = Number(stored && stored.axlx_seed_maps_at) || 0;
     if (Date.now() - lastSeed > SEED_MAPS_EVERY_MS) {
@@ -2339,9 +2348,11 @@ function isViewedToday(c) {
 }
 
 function updateTodayBanner() {
-  const count = allCustomers.filter(needsActionToday).length;
   const banner = document.getElementById("today-banner");
   if (!banner) return;
+  // v2.5.87 最新の人たちだけを仮に出している間は人数を出さない（全員が届いてから）
+  if (typeof _customerListPartial !== "undefined" && _customerListPartial) { banner.style.display = "none"; return; }
+  const count = allCustomers.filter(needsActionToday).length;
   // v2.5.75: 押す物（今日対応の絞り込み）だけ・小さな灰色の1行。完了の時は押す物が無いので出さない
   if (count > 0) {
     banner.style.display = "block";
@@ -2426,7 +2437,13 @@ function setCachedCustomers(data) {
 const CUSTOMER_LIST_STORE_KEY = "axlx_customer_list_v1";
 function _readStoredCustomerList() {
   return new Promise((resolve) => {
-    try { chrome.storage.local.get([CUSTOMER_LIST_STORE_KEY], (r) => resolve((r && r[CUSTOMER_LIST_STORE_KEY]) || null)); } catch (_) { resolve(null); }
+    try {
+      chrome.storage.local.get([CUSTOMER_LIST_STORE_KEY, AREA_BADGE_MEMO_KEY], (r) => {
+        // v2.5.87 一覧の「駅／地域」の札の覚えも一緒に戻す（前回の表と同じ時だけ）
+        _restoreAreaBadgeMemo(r && r[AREA_BADGE_MEMO_KEY]);
+        resolve((r && r[CUSTOMER_LIST_STORE_KEY]) || null);
+      });
+    } catch (_) { resolve(null); }
   });
 }
 function _storeCustomerList(data) {
@@ -2439,15 +2456,24 @@ function _renderCustomersKeepScroll() {
   filterCustomers(document.getElementById("search-input")?.value || "");
   if (list) list.scrollTop = top;
 }
-async function _fetchCustomerList() {
-  const res = await fetch(`${API_BASE}/api/property-customers?view=list`, { cache: "no-store" });
+async function _fetchCustomerList(headN) {
+  const res = await fetch(`${API_BASE}/api/property-customers?view=list` + (headN ? "&limit=" + headN : ""), { cache: "no-store" });
   if (!res.ok) throw new Error("HTTP " + res.status);
   return await res.json();
 }
+// 2026-10-07 v2.5.87 竹内「うえから最新○件読むなど」: 前回の一覧が無い時（入れ直した直後・↻）は、全員（約60万字・約3秒）と一緒に
+//   最新 LIST_HEAD_FETCH 人＋📌 の人だけ（?view=list&limit=）も頼み、先に届けば仮に出す（全員が届いたら置き換える）。
+//   仮の間は _customerListPartial＝true（今日対応の人数は出さない・会話から押された人を探す所は全員を待つ）
+const LIST_HEAD_FETCH = 50;
+const LIST_MAPS_WAIT_MS = 300;
+var _customerListPartial = false;
 let _customerListSig = "";
 async function loadCustomers(forceRefresh = false) {
   const list = document.getElementById("customer-list");
   let shown = false;
+
+  // v2.5.87 前回の地名・駅の表を当ててから描く（札の覚えがどの表の物か決まる・待つのは手元の読み出しだけ・最大 0.3秒）
+  try { await Promise.race([_learnedCachedReady, new Promise((r) => setTimeout(r, LIST_MAPS_WAIT_MS))]); } catch (_) {}
 
   // 前回の一覧をすぐ出す（強制更新でない時）
   if (!forceRefresh) {
@@ -2461,9 +2487,24 @@ async function loadCustomers(forceRefresh = false) {
   }
   if (!shown) list.innerHTML = `<div class="state-msg">読み込み中...</div>`;
 
+  let fullArrived = false, headShown = false;
+  // 手元に一覧がある時の取り直し（↻・印の取り直し）は仮の表示をしない（全員→50人→全員と揺れる）
+  if (!shown && !(allCustomers && allCustomers.length)) {
+    // 全員より先に届いた時だけ、最新の人たちを仮に出す（失敗は黙って全員を待つ）
+    _fetchCustomerList(LIST_HEAD_FETCH).then((head) => {
+      if (fullArrived || !Array.isArray(head) || !head.length) return;
+      _customerListPartial = true;
+      headShown = true;
+      allCustomers = head;
+      _renderCustomersKeepScroll();
+    }).catch(() => {});
+  }
+
   const refresh = (async () => {
     try {
       const data = await _fetchCustomerList();
+      fullArrived = true;
+      if (_customerListPartial) { _customerListPartial = false; _customerListSig = ""; }
       _storeCustomerList(data);
       const sig = JSON.stringify(data);
       if (sig !== _customerListSig) {
@@ -2483,7 +2524,9 @@ async function loadCustomers(forceRefresh = false) {
         _renderCustomersKeepScroll();
       }
     } catch (e) {
-      if (!shown) list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
+      fullArrived = true;
+      _customerListPartial = false;
+      if (!shown && !headShown) list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
       else console.warn("[popup] お客様の一覧の取り直しに失敗（前回の一覧のまま）:", e && e.message);
     }
   })();
@@ -2491,19 +2534,139 @@ async function loadCustomers(forceRefresh = false) {
   if (!shown) await refresh;
 }
 
+// v2.5.87 折りたたみ（申込中・検討中）の中の行は開いた時に描く（閉じたままの 49人分を毎回描かない）
+var _collapsedRows = {};
 function renderCollapsibleSection(sectionId, title, customers) {
-  let html = `<div class="collapsible-section">
+  _collapsedRows[sectionId] = customers;
+  return `<div class="collapsible-section">
     <div class="collapsible-header" data-target="${sectionId}">
       <span class="collapsible-arrow">▶</span>${title}<span class="collapsible-count">${customers.length}人</span>
     </div>
-    <div class="collapsible-body" id="${sectionId}" style="display:none">`;
-  customers.forEach((c) => { html += renderCustomerRow(c, false); });
-  html += `</div></div>`;
-  return html;
+    <div class="collapsible-body" id="${sectionId}" style="display:none" data-lazy="1"></div></div>`;
+}
+
+// 2026-10-07 v2.5.87 竹内「拡張ツールのお客さん一覧が表示されるときかなり重い　…うえから最新○件読むなど」:
+//   一覧は全員（紐付け済み 235人・約50万字の HTML）を1回で描いていた＝描き終わるまで画面が固まる。
+//   → 上から LIST_FIRST_ROWS 人（📌 会話から物件検索の人は数に入れず必ず全員）を先に描き、残りは LIST_CHUNK_ROWS 人ずつ間を空けて後ろに足す
+//     （並び・区切り・人数の表示は今まで通り・止まらずに下まで全部出る）。見ていた場所を戻す描き直し（取り直し・印）は全部を1回で描く。
+//   描き直しが始まったら前の続きは捨てる（_listRenderGen）
+const LIST_FIRST_ROWS = 40;
+const LIST_CHUNK_ROWS = 40;
+const LIST_CHUNK_GAP_MS = 0;
+var _listRenderGen = 0;
+function _bindCustomerRows(root) {
+  root.querySelectorAll(".collapsible-header").forEach((header) => {
+    header.addEventListener("click", () => {
+      const body = document.getElementById(header.dataset.target);
+      if (!body) return;
+      const open = body.style.display !== "none";
+      if (!open && body.dataset.lazy === "1") {
+        body.dataset.lazy = "";
+        body.innerHTML = (_collapsedRows[header.dataset.target] || []).map((c) => renderCustomerRow(c, false)).join("");
+        _bindCustomerRows(body);
+      }
+      body.style.display = open ? "none" : "block";
+      header.classList.toggle("open", !open);
+    });
+  });
+
+  root.querySelectorAll(".customer-item").forEach((el) => {
+    el.addEventListener("click", () => {
+      const c = allCustomers.find((x) => String(x.id) === el.dataset.id);
+      if (c) openSiteView(c);
+    });
+  });
+
+  // 一括検索チェックボックス — stopPropagation で行クリックと分離
+  root.querySelectorAll(".bulk-check-wrap").forEach((wrap) => {
+    wrap.addEventListener("click", (e) => e.stopPropagation());
+  });
+  root.querySelectorAll(".bulk-check").forEach((cb) => {
+    const id = cb.dataset.id;
+    if (selectedCustomerIds.has(id)) cb.checked = true; // フィルタ再描画後も選択状態を復元
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedCustomerIds.add(id);
+      else selectedCustomerIds.delete(id);
+      updateBulkToolbar();
+    });
+  });
+
+  // 2026-10-01 一覧から案内を始める（▶案内＝次の検索を規則で選ぶ／P・広＝そのサイト・その検索）
+  root.querySelectorAll(".guide-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const c = allCustomers.find((x) => String(x.id) === btn.dataset.id);
+      if (!c) return;
+      const g = decideGuideNext(c.search_history);
+      startGuideFor(c, g.site, g.mode);
+    });
+  });
+  root.querySelectorAll(".ssh-guide").forEach((sp) => {
+    sp.style.cursor = "pointer";
+    sp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = sp.closest(".customer-item");
+      const c = row ? allCustomers.find((x) => String(x.id) === row.dataset.id) : null;
+      startGuideFor(c, sp.dataset.guideSite, sp.dataset.guideMode);
+    });
+  });
+
+  root.querySelectorAll(".viewed-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      // ☑（今日もう確認済み）をもう一度押した時は、確認の記録は書き直さず、売上サポのまとめだけ行う
+      //   （☑ の後に送った回もまとめられるように。ブレイン OFF なら何もしない・サーバーは冪等）
+      if (btn.classList.contains("viewed-done")) { completePickupsForCustomer(btn.dataset.id, "viewed"); return; }
+      await markPropertyViewed(btn.dataset.id);
+    });
+  });
+}
+
+/** 描く物の並び（区切り・行・折りたたみ）を、上から先に描く分と後ろに足す分に分ける（純・行の数だけで分ける） */
+function _splitListParts(parts, firstRows) {
+  let rows = 0, i = 0;
+  for (; i < parts.length; i++) {
+    if (parts[i].row && !parts[i].pin) { if (rows >= firstRows) break; rows++; }
+  }
+  return { head: parts.slice(0, i), tail: parts.slice(i) };
+}
+
+function _appendListTail(list, tail, gen) {
+  const total = tail.filter((p) => p.row).length;
+  if (!tail.length) return;
+  const more = document.createElement("div");
+  more.className = "state-msg axlx-list-more";
+  more.style.cssText = "padding:8px;font-size:11px;color:#94a3b8";
+  more.textContent = `残り ${total}人を表示中…`;
+  list.appendChild(more);
+  let pos = 0;
+  const step = () => {
+    if (gen !== _listRenderGen || !more.isConnected) return;
+    const chunk = _splitListParts(tail.slice(pos), LIST_CHUNK_ROWS).head;
+    // 区切りだけが残った時も進める
+    const take = chunk.length || 1;
+    const box = document.createElement("div");
+    box.className = "axlx-rows-chunk";
+    box.innerHTML = tail.slice(pos, pos + take).map(_listPartHtml).join("");
+    pos += take;
+    list.insertBefore(box, more);
+    _bindCustomerRows(box);
+    if (pos < tail.length) {
+      more.textContent = `残り ${tail.slice(pos).filter((p) => p.row).length}人を表示中…`;
+      setTimeout(step, LIST_CHUNK_GAP_MS);
+    } else {
+      more.remove();
+      _saveAreaBadgeMemoSoon();
+    }
+  };
+  setTimeout(step, LIST_CHUNK_GAP_MS);
 }
 
 function renderList(customers) {
   const list = document.getElementById("customer-list");
+  const gen = ++_listRenderGen;
+  // 見ていた場所を戻す描き直し（スクロールしている時）は全部を1回で描く（途中までしか無いと場所が戻らない）
+  const renderAll = !!(list && list.scrollTop > 0);
 
   // v2.5.86 会話画面の「🔍 物件検索」で押されたお客様（search-focus.js・サーバーの印）は、絞り込み（紐付け・アカウント・今日対応・駅/地域）に
   //   関係なく一番上に出す（新しく押された順）。名前で探している時（検索欄に文字）は普通の結果だけ。下の一覧には重ねて出さない
@@ -2533,101 +2696,48 @@ function renderList(customers) {
   const noCond   = unlinked.filter((c) => !hasConditions(c));
   const showSections = linked.length > 0 && (withCond.length > 0 || noCond.length > 0);
 
-  let html = "";
+  // 描く物の並び（row=お客様の行・pin=📌 の行＝先に描く数に入れない）。行の HTML は描く時に作る（後ろの分の札の計算を先にしない）
+  const parts = [];
+  const D = (html) => parts.push({ html });
+  const R = (c, dimmed, pin) => parts.push({ row: true, pin: !!pin, c, dimmed: !!dimmed });
 
   if (pinned.length) {
-    html += `<div class="section-divider" style="background:#fff7ed;color:#c2410c;font-weight:700">📌 会話から物件検索 (${pinned.length}人)</div>`;
+    D(`<div class="section-divider" style="background:#fff7ed;color:#c2410c;font-weight:700">📌 会話から物件検索 (${pinned.length}人)</div>`);
     pinned.forEach((c) => {
-      html += `<div style="padding:2px 12px 0;font-size:10px;color:#c2410c">${esc(_SF.label(c.search_focus))} に押されました</div>`;
-      html += renderCustomerRow(c, false);
+      D(`<div style="padding:2px 12px 0;font-size:10px;color:#c2410c">${esc(_SF.label(c.search_focus))} に押されました</div>`);
+      R(c, false, true);
     });
   }
 
   if (linked.length) {
-    html += `<div class="section-divider linked-divider">🔗 紐付け済み (${linked.length}人)</div>`;
-    linked.forEach((c) => { html += renderCustomerRow(c, false); });
+    D(`<div class="section-divider linked-divider">🔗 紐付け済み (${linked.length}人)</div>`);
+    linked.forEach((c) => R(c, false));
   }
 
   if (withCond.length) {
     if (showSections || noCond.length) {
-      html += `<div class="section-divider">条件登録済み (${withCond.length}人)</div>`;
+      D(`<div class="section-divider">条件登録済み (${withCond.length}人)</div>`);
     }
-    withCond.forEach((c) => { html += renderCustomerRow(c, false); });
+    withCond.forEach((c) => R(c, false));
   }
 
   if (noCond.length) {
-    html += `<div class="section-divider">条件未登録 (${noCond.length}人)</div>`;
-    noCond.forEach((c) => { html += renderCustomerRow(c, true); });
+    D(`<div class="section-divider">条件未登録 (${noCond.length}人)</div>`);
+    noCond.forEach((c) => R(c, true));
   }
 
-  // 折りたたみセクション（申込中・検討中）
-  if (applyingList.length) html += renderCollapsibleSection("coll-applying", "申込中", applyingList);
-  if (pendingList.length)  html += renderCollapsibleSection("coll-pending",  "検討中", pendingList);
+  // 折りたたみセクション（申込中・検討中）— 中の行は開いた時に描く
+  _collapsedRows = {};
+  if (applyingList.length) D(renderCollapsibleSection("coll-applying", "申込中", applyingList));
+  if (pendingList.length)  D(renderCollapsibleSection("coll-pending",  "検討中", pendingList));
 
-  list.innerHTML = html;
-
-  // 折りたたみトグル
-  list.querySelectorAll(".collapsible-header").forEach((header) => {
-    header.addEventListener("click", () => {
-      const body = document.getElementById(header.dataset.target);
-      if (!body) return;
-      const open = body.style.display !== "none";
-      body.style.display = open ? "none" : "block";
-      header.classList.toggle("open", !open);
-    });
-  });
-
-  list.querySelectorAll(".customer-item").forEach((el) => {
-    el.addEventListener("click", () => {
-      const c = allCustomers.find((x) => String(x.id) === el.dataset.id);
-      if (c) openSiteView(c);
-    });
-  });
-
-  // 一括検索チェックボックス — stopPropagation で行クリックと分離
-  list.querySelectorAll(".bulk-check-wrap").forEach((wrap) => {
-    wrap.addEventListener("click", (e) => e.stopPropagation());
-  });
-  list.querySelectorAll(".bulk-check").forEach((cb) => {
-    const id = cb.dataset.id;
-    if (selectedCustomerIds.has(id)) cb.checked = true; // フィルタ再描画後も選択状態を復元
-    cb.addEventListener("change", () => {
-      if (cb.checked) selectedCustomerIds.add(id);
-      else selectedCustomerIds.delete(id);
-      updateBulkToolbar();
-    });
-  });
-
-  // 2026-10-01 一覧から案内を始める（▶案内＝次の検索を規則で選ぶ／P・広＝そのサイト・その検索）
-  list.querySelectorAll(".guide-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const c = allCustomers.find((x) => String(x.id) === btn.dataset.id);
-      if (!c) return;
-      const g = decideGuideNext(c.search_history);
-      startGuideFor(c, g.site, g.mode);
-    });
-  });
-  list.querySelectorAll(".ssh-guide").forEach((sp) => {
-    sp.style.cursor = "pointer";
-    sp.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const row = sp.closest(".customer-item");
-      const c = row ? allCustomers.find((x) => String(x.id) === row.dataset.id) : null;
-      startGuideFor(c, sp.dataset.guideSite, sp.dataset.guideMode);
-    });
-  });
-
-  list.querySelectorAll(".viewed-btn").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      // ☑（今日もう確認済み）をもう一度押した時は、確認の記録は書き直さず、売上サポのまとめだけ行う
-      //   （☑ の後に送った回もまとめられるように。ブレイン OFF なら何もしない・サーバーは冪等）
-      if (btn.classList.contains("viewed-done")) { completePickupsForCustomer(btn.dataset.id, "viewed"); return; }
-      await markPropertyViewed(btn.dataset.id);
-    });
-  });
+  const split = renderAll ? { head: parts, tail: [] } : _splitListParts(parts, LIST_FIRST_ROWS);
+  list.innerHTML = split.head.map(_listPartHtml).join("");
+  _bindCustomerRows(list);
+  if (split.tail.length) _appendListTail(list, split.tail, gen);
+  else _saveAreaBadgeMemoSoon();
 }
+function _listPartHtml(p) { return p.row ? renderCustomerRow(p.c, p.dimmed) : p.html; }
 
 /** 2026-10-06 v2.5.76: 希望エリアの語を駅として扱ってよいか（area-token.js・市・区で終わる語は地域） */
 function _axStationOk(t, rawText) {
@@ -2636,8 +2746,41 @@ function _axStationOk(t, rawText) {
   return A.stationEligible(t, rawText, typeof LEARNED_OVERRIDE_MAP !== "undefined" ? LEARNED_OVERRIDE_MAP : null);
 }
 
+// 2026-10-07 v2.5.87 竹内「拡張ツールのお客さん一覧が表示されるときかなり重い」: 一覧の1行ごとの「駅／地域」の札が
+//   parseAreaTokens（地名・駅の表を何度も並べ直す）を毎回回していた＝326人で 約0.8〜0.9秒（一覧を描くたび・検索欄の1文字ごと・取り直しのたび）。
+//   同じ希望エリアの文字なら答えは同じ → 文字ごとに覚える（地名・駅の学習済みの表が変わった時＝_applyLearnedMaps で捨てる）
+var _areaBadgeMemo = new Map();
 function computeAreaModeBadgeHtml(areaText) {
   if (!areaText) return '';
+  const hit = _areaBadgeMemo.get(areaText);
+  if (hit !== undefined) return hit;
+  const html = _computeAreaModeBadgeHtmlRaw(areaText);
+  if (_areaBadgeMemo.size > 3000) _areaBadgeMemo.clear();
+  _areaBadgeMemo.set(areaText, html);
+  return html;
+}
+// 覚えは開き直しても使う（chrome.storage.local）。拡張の版と学習済みの表の取った時刻が同じ時だけ読む（どちらかが変われば捨てる）
+const AREA_BADGE_MEMO_KEY = "axlx_area_badge_memo_v1";
+var _areaBadgeMemoSavedSize = -1;
+function _areaBadgeMemoSig() {
+  let ver = "";
+  try { ver = chrome.runtime.getManifest().version; } catch (_) {}
+  return ver + "|" + (typeof _learnedMapsTs !== "undefined" ? _learnedMapsTs : 0);
+}
+function _restoreAreaBadgeMemo(stored) {
+  try {
+    if (!stored || stored.sig !== _areaBadgeMemoSig() || !Array.isArray(stored.entries)) return 0;
+    for (const e of stored.entries) if (Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "string" && !_areaBadgeMemo.has(e[0])) _areaBadgeMemo.set(e[0], e[1]);
+    _areaBadgeMemoSavedSize = _areaBadgeMemo.size;
+    return stored.entries.length;
+  } catch (_) { return 0; }
+}
+function _saveAreaBadgeMemoSoon() {
+  if (_areaBadgeMemo.size === _areaBadgeMemoSavedSize || !_areaBadgeMemo.size) return;
+  _areaBadgeMemoSavedSize = _areaBadgeMemo.size;
+  try { const o = {}; o[AREA_BADGE_MEMO_KEY] = { sig: _areaBadgeMemoSig(), entries: Array.from(_areaBadgeMemo.entries()) }; chrome.storage.local.set(o); } catch (_) {}
+}
+function _computeAreaModeBadgeHtmlRaw(areaText) {
   const toks = parseAreaTokens(areaText);
   // 駅判定: setupAreaModeSelector の hasStationToken と同一基準
   // ・WARD_CODE_MAP収録トークン（守口市・摂津市など市名と衝突する駅名）は駅扱いしない
@@ -3786,7 +3929,7 @@ async function _focusCustomerFromApp(d) {
   var key = String(d.customerId) + "@" + String(d.at || "");
   if (key === _focusLastKey) return { ok: true, dup: true };
   var t0 = Date.now();
-  while ((!allCustomers || !allCustomers.length) && Date.now() - t0 < 5000) {
+  while ((!allCustomers || !allCustomers.length || (typeof _customerListPartial !== "undefined" && _customerListPartial)) && Date.now() - t0 < 5000) {
     await new Promise(function (r) { setTimeout(r, 100); });
   }
   var c = _focusFind(d.customerId);
@@ -3812,6 +3955,7 @@ async function _focusCustomerFromApp(d) {
 async function _pollSearchFocus() {
   var SF = (typeof self !== "undefined" ? self : window).AxlxSearchFocus;
   if (!SF || !allCustomers || !allCustomers.length) return;
+  if (typeof _customerListPartial !== "undefined" && _customerListPartial) return; // v2.5.87 仮の表示の間は全員を待つ
   try {
     var res = await fetch(API_BASE + "/api/property-search-focus", { cache: "no-store" });
     if (!res.ok) return;
@@ -5953,7 +6097,7 @@ document.addEventListener("DOMContentLoaded", () => {
   (async function () {
     // 一覧が出るのを待ってから（loadCustomers は上で始まっている）
     var t0 = Date.now();
-    while ((!allCustomers || !allCustomers.length) && Date.now() - t0 < 8000) await new Promise(function (r) { setTimeout(r, 150); });
+    while ((!allCustomers || !allCustomers.length || _customerListPartial) && Date.now() - t0 < 8000) await new Promise(function (r) { setTimeout(r, 150); });
     try {
       var st = await chrome.storage.local.get("axlx_search_focus_open");
       var it = st && st.axlx_search_focus_open;
