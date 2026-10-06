@@ -552,9 +552,9 @@
     if (!document.getElementById("axlx-itandi-guide-style")) {
       var st = document.createElement("style");
       st.id = "axlx-itandi-guide-style";
-      st.textContent = "@keyframes axlxItGlow{0%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 14px 6px rgba(255,179,0,.55)}50%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 26px 12px rgba(255,179,0,.25)}100%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 14px 6px rgba(255,179,0,.55)}}"
-        + ".axlx-it-glow{position:fixed;pointer-events:none;border-radius:6px;z-index:2147483600;animation:axlxItGlow 1.2s ease-in-out infinite}"
-        + ".axlx-it-tip{position:fixed;pointer-events:none;z-index:2147483601;background:#ff8f00;color:#fff;font:bold 12px/1.4 sans-serif;padding:4px 8px;border-radius:6px;max-width:320px;box-shadow:0 2px 6px rgba(0,0,0,.3)}";
+      // 2026-10-06 v2.5.72 竹内「黄色のひかりまぶしすぎる」: リアプロと同じ控えめな光（細い青の枠＋ごく薄い色・動かさない）
+      st.textContent = ".axlx-it-glow{position:fixed;pointer-events:none;border-radius:5px;z-index:2147483600;border:2px solid rgba(30,136,229,.55);background:rgba(30,136,229,.06)}"
+        + ".axlx-it-tip{position:fixed;pointer-events:none;z-index:2147483601;background:rgba(30,136,229,.85);color:#fff;font:bold 11px/1 sans-serif;padding:3px 6px;border-radius:9px}";
       (document.head || document.documentElement).appendChild(st);
     }
     layer = document.createElement("div");
@@ -562,29 +562,37 @@
     document.body.appendChild(layer);
     return layer;
   }
-  function clearHighlight() { if (layer) layer.innerHTML = ""; }
-  function highlight(targets, label) {
+  // v2.5.72: 吹き出しの文はやめて（文は右上の枠だけ）、画面の外の時だけ小さな矢印。同じ位置なら描き直さない
+  var _lastTargets = null, _lastHiSig = "";
+  function clearHighlight() { _lastTargets = null; _lastHiSig = ""; if (layer && layer.childNodes.length) layer.innerHTML = ""; }
+  function highlight(targets) {
     var L = ensureLayer();
-    L.innerHTML = "";
-    var first = null;
+    _lastTargets = targets;
+    var rects = [], first = null;
     (targets || []).filter(Boolean).slice(0, 40).forEach(function (el) {
       var r = el.getBoundingClientRect();
       if (r.width <= 0 && r.height <= 0) return;
+      rects.push(r); if (!first) first = r;
+    });
+    var vh = window.innerHeight;
+    var arrow = first ? (first.bottom < 0 ? "↑" : first.top > vh ? "↓" : "") : "";
+    var sig = rects.map(function (r) { return Math.round(r.left) + "," + Math.round(r.top) + "," + Math.round(r.width) + "," + Math.round(r.height); }).join("|") + "#" + arrow;
+    if (sig === _lastHiSig && L.childNodes.length) return;
+    _lastHiSig = sig;
+    L.innerHTML = "";
+    rects.forEach(function (r) {
       var g = document.createElement("div");
       g.className = "axlx-it-glow";
-      g.style.left = (r.left - 4) + "px"; g.style.top = (r.top - 4) + "px";
-      g.style.width = (r.width + 8) + "px"; g.style.height = (r.height + 8) + "px";
+      g.style.left = (r.left - 3) + "px"; g.style.top = (r.top - 3) + "px";
+      g.style.width = (r.width + 6) + "px"; g.style.height = (r.height + 6) + "px";
       L.appendChild(g);
-      if (!first) first = r;
     });
-    if (label) {
+    if (arrow) {
       var tip = document.createElement("div");
       tip.className = "axlx-it-tip";
-      var vh = window.innerHeight;
-      if (!first) { tip.style.left = "16px"; tip.style.top = "16px"; tip.textContent = label; }
-      else if (first.bottom < 0) { tip.style.left = Math.max(8, first.left) + "px"; tip.style.top = "8px"; tip.textContent = "↑ 上にあります: " + label; }
-      else if (first.top > vh) { tip.style.left = Math.max(8, first.left) + "px"; tip.style.top = (vh - 40) + "px"; tip.textContent = "↓ 下にあります: " + label; }
-      else { tip.style.left = Math.max(8, first.left) + "px"; tip.style.top = Math.max(8, first.top - 30) + "px"; tip.textContent = label; }
+      tip.style.left = Math.max(8, first.left) + "px";
+      tip.style.top = (arrow === "↑" ? 8 : vh - 28) + "px";
+      tip.textContent = arrow === "↑" ? "↑ 上" : "↓ 下";
       L.appendChild(tip);
     }
   }
@@ -598,7 +606,7 @@
     if (!panel || !document.body.contains(panel)) {
       panel = document.createElement("div");
       panel.id = PANEL_ID;
-      panel.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483602;width:300px;background:#fff;border:2px solid #ff8f00;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.25);font:12px/1.5 sans-serif;color:#263238;padding:8px 10px;";
+      panel.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483602;width:260px;background:#fff;border:1px solid #b0bec5;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);font:12px/1.45 sans-serif;color:#263238;padding:6px 8px;";
       try {
         var pos = JSON.parse(localStorage.getItem("axlx_itandi_guide_pos") || "null");
         if (pos && pos.left >= 0 && pos.top >= 0 && pos.left < window.innerWidth - 40 && pos.top < window.innerHeight - 40) {
@@ -609,7 +617,7 @@
       panel.addEventListener("mousedown", onPanelDragStart);
       document.body.appendChild(panel);
     }
-    var head = '<div data-drag="1" title="つかんで動かせます" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:move;user-select:none"><b data-drag="1" style="flex:1;color:#e65100">⠿ 🔦 ITANDI 案内モード（入力・検索はスタッフ）</b>'
+    var head = '<div data-drag="1" title="つかんで動かせます" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:move;user-select:none"><b data-drag="1" style="flex:1;color:#1565c0" title="ITANDI 案内モード（入力・検索はスタッフ）">⠿ 🔦 ITANDI 案内</b>'
       + '<button data-a="mode" style="font-size:11px;padding:1px 6px;border-radius:9px;border:1px solid #ccc;background:' + (guideOn ? "#fff3e0" : "#eceff1") + '">' + (guideOn ? "ON" : "OFF") + "</button></div>";
     if (!guideOn) { panel.innerHTML = head + '<div style="color:#78909c">OFF の間は今まで通り拡張が入力します</div>'; return; }
     if (!session) { panel.innerHTML = head + '<div style="color:#78909c">拡張でお客様を選んで ITANDI の検索を押すと、ここに手順が出ます</div>'; return; }
@@ -622,12 +630,12 @@
     var rows = (plan ? plan.steps : []).map(function (s) {
       var ev = evalStep(s);
       var isCur = cur && cur.id === s.id;
-      return '<div style="' + (isCur ? "font-weight:bold;color:#e65100" : ev.done ? "color:#9e9e9e" : "") + '">' + (ev.done ? (ev.missing ? "－" : "✓") : isCur ? "▶" : "・") + " " + esc(s.label) + (ev.done && ev.missing ? "（この画面に無い欄）" : "") + "</div>";
+      return '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (isCur ? "font-weight:bold;color:#1565c0" : ev.done ? "color:#9e9e9e" : "") + '" title="' + esc(s.label) + '">' + (ev.done ? (ev.missing ? "－" : "✓") : isCur ? "▶" : "・") + " " + esc(s.label) + (ev.done && ev.missing ? "（この画面に無い欄）" : "") + "</div>";
     }).join("");
     var locNote = plan && plan.location === "none" ? '<div style="color:#c62828">所在地・路線/駅の条件がありません（自動入力でも検索しない形です）</div>' : "";
     panel.innerHTML = head + '<div style="margin-bottom:4px"><b>' + esc(session.customerName || "") + "</b></div>" + locNote
       + '<div style="max-height:220px;overflow:auto;border-top:1px solid #eee;padding-top:4px">' + rows + "</div>"
-      + (curEval && curEval.note ? '<div style="margin-top:4px;color:#c62828">' + esc(curEval.note) + "</div>" : "")
+      + (curEval && curEval.note ? '<div style="margin-top:3px;color:#c62828;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(curEval.note) + '">' + esc(curEval.note) + "</div>" : "")
       + '<div style="margin-top:6px;display:flex;gap:6px"><button data-a="skip" style="flex:1">この手順は済み</button><button data-a="end" style="flex:1">案内をやめる</button></div>';
   }
   function onPanelDragStart(e) {
@@ -673,11 +681,17 @@
     if (!guideOn || !session || session.stage !== "form" || !plan) { clearHighlight(); renderPanel(); return; }
     var cur = currentStep();
     if (!cur) { clearHighlight(); renderPanel(); return; }
-    highlight(cur.ev.target, cur.step.label + (cur.ev.note ? "（" + cur.ev.note + "）" : ""));
+    highlight(cur.ev.target);
     renderPanel(cur.step, cur.ev);
   }
-  setInterval(tick, 400);
-  window.addEventListener("scroll", tick, true);
+  // v2.5.72（重さ）: 見えていないタブでは見直さない・スクロールは光の位置だけ直す（1コマに1回）
+  setInterval(function () { if (!document.hidden) tick(); }, 400);
+  var _rafPending = false;
+  window.addEventListener("scroll", function () {
+    if (_rafPending || !_lastTargets) return;
+    _rafPending = true;
+    requestAnimationFrame(function () { _rafPending = false; if (_lastTargets) highlight(_lastTargets); });
+  }, true);
   window.addEventListener("resize", tick);
 
   // スタッフが押した物を見る（押した要素を読むだけ）: 検索

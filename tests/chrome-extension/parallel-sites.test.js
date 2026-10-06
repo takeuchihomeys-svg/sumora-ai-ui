@@ -137,7 +137,7 @@ console.log("\n■ 2本目のずらし・合流の上限");
   {
     const mf = JSON.parse(read("manifest.json"));
     eq("版 2.5.64", mf.version, "2.5.64");
-    ok("3サイトの先頭の段に parallel-sites.js（snapshot-core.js より前）", mf.content_scripts[0].js.join(",") === "human-wait.js,search-audit.js,parallel-sites.js,snapshot-core.js");
+    ok("3サイトの先頭の段に parallel-sites.js（snapshot-core.js より前）", mf.content_scripts[0].js.join(",") === "human-wait.js,own-mutation.js,search-audit.js,parallel-sites.js,snapshot-core.js");
     const sc = read("snapshot-core.js");
     ok("snapshot-core に axlx-lane-probe の受け口（サイトには触らない・非同期で答える）", /msg\.type !== "axlx-lane-probe"/.test(sc) && /return true;\s*\}\);\s*\}\s*\} catch/.test(sc));
     ok("parallel-sites.js は _ で始まらない", !fs.existsSync(path.join(EXT, "_parallel-sites.js")));

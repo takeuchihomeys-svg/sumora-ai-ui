@@ -284,10 +284,13 @@
 
   // ── バッジを物件カードに注入 ─────────────────────────────────
   function injectBadge(el, score) {
-    // 既存バッジを削除（重複防止）
-    el.querySelectorAll("." + BADGE_CLASS).forEach(function (b) { b.remove(); });
-
     var st = scoreStyle(score);
+    // 2026-10-06 v2.5.72: 同じ札が1つだけ付いていれば何もしない（旧は毎回外して付け直し＝自分の見張りが反応して 900ms ごとに回り続けた）
+    var olds = el.querySelectorAll("." + BADGE_CLASS);
+    if (olds.length === 1 && olds[0].textContent === st.label + " " + score + "点") return;
+    // 既存バッジを削除（重複防止）
+    olds.forEach(function (b) { b.remove(); });
+
     var badge = document.createElement("span");
     badge.className = BADGE_CLASS;
     badge.style.cssText = [
@@ -322,11 +325,13 @@
     shared:    { bg: "#757575", text: "⚪共有のみ ",         how: "グループに共有のみ・お客様には未送付" },
   };
   function injectDupBadge(el, sentAt, kind) {
-    el.querySelectorAll("." + DUP_BADGE_CLASS).forEach(function (b) { b.remove(); });
-
     var d   = new Date(sentAt);
     var lbl = (d.getMonth() + 1) + "月" + d.getDate() + "日";
     var st  = DUP_BADGE_STYLE[kind] || DUP_BADGE_STYLE.sent;
+    // v2.5.72: 同じ札があれば付け直さない（見張りの回り続けを止める）
+    var olds = el.querySelectorAll("." + DUP_BADGE_CLASS);
+    if (olds.length === 1 && olds[0].textContent === st.text + lbl) return;
+    olds.forEach(function (b) { b.remove(); });
 
     var badge = document.createElement("span");
     badge.className = DUP_BADGE_CLASS;
@@ -505,6 +510,9 @@
 
   function injectEvalBadge(card, result) {
     var existingBadge = card.querySelector("." + EVAL_BADGE_CLASS);
+    // v2.5.72: 同じ点の札があれば付け直さない（card.style.position の書き直しも content.js の見張りを起こしていた）
+    var wantText = "★" + result.score + (result.is_duplicate ? " 送済" : "");
+    if (existingBadge && existingBadge.textContent === wantText) return;
     if (existingBadge) existingBadge.remove();
 
     var badge = document.createElement("div");
@@ -524,13 +532,18 @@
     }
     if (hints.length > 0) titleParts.push("刺さるポイント: " + hints.join(" · "));
     if (titleParts.length > 0) badge.title = titleParts.join("\n");
-    card.style.position = "relative";
+    if (card.style.position !== "relative") card.style.position = "relative";
     card.appendChild(badge);
   }
 
   // ── 全カードにAI評価スコアを適用（evaluate-property API） ────────
   function runAiEvaluation() {
     if (!storedConditions || !storedConditions.property_customer_id) return;
+    // 2026-10-06 v2.5.72 竹内「スタッフが押して検索しているのに、自動検索のときと同じくらい重い…最近の仕様にあわせる」:
+    //   案内モード（既定 ON・自動の検索は一時停止中）では行ごとの AI 評価（/api/evaluate-property＝1行ごとに DeepSeek）を呼ばない。
+    //   今の判定は bulk-dl のブレインの下見（🧠 点・通す/保留/外す・送る時と同じ判定）で、印刷用PDF の光もそれを見る。
+    //   案内モードを OFF（今まで通り拡張が入力）にした時だけ今まで通り呼ぶ
+    if (guideModeOn()) return;
     var pcid = storedConditions.property_customer_id;
     var cards = findPropertyContainers();
 
@@ -827,13 +840,30 @@
   }
 
   // ── MutationObserver: 検索結果が更新されたら自動でスコア再表示 ─
+  /** 案内モード（realpro-guide.js が <html data-axlx-guide> に印・"0" の時だけ OFF） */
+  function guideModeOn() {
+    try { return document.documentElement.getAttribute("data-axlx-guide") !== "0"; } catch (_) { return true; }
+  }
+  var _scorePendingHidden = false;
+  function scheduleScoring() {
+    if (scoreTimer) clearTimeout(scoreTimer);
+    scoreTimer = setTimeout(function () {
+      scoreTimer = null;
+      // 見えていないタブでは回さない（見えたら1回）
+      if (document.hidden) { _scorePendingHidden = true; return; }
+      runScoring();
+    }, 900);
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && _scorePendingHidden) { _scorePendingHidden = false; runScoring(); } });
   function startObserver() {
     if (observing || !document.body) return;
     observing = true;
-    var obs = new MutationObserver(function () {
+    var OM = (typeof self !== "undefined" ? self : window).AxlxOwnMut;
+    var obs = new MutationObserver(function (muts) {
       if (!storedConditions) return;
-      if (scoreTimer) clearTimeout(scoreTimer);
-      scoreTimer = setTimeout(runScoring, 900);
+      // 2026-10-06 v2.5.72: 拡張が書いた札・光・枠だけの変化には反応しない（旧は自分の札の付け直しに反応して回り続けた）
+      if (OM && OM.onlyOwn(muts)) return;
+      scheduleScoring();
     });
     obs.observe(document.body, { childList: true, subtree: true });
   }

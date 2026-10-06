@@ -2083,8 +2083,11 @@
   });
 
   // ── MutationObserver ────────────────────────────
-  var obs = new MutationObserver(function () {
+  var _OM = (typeof self !== "undefined" ? self : window).AxlxOwnMut;
+  var obs = new MutationObserver(function (muts) {
     if (injectTimer) return;
+    // 2026-10-06 v2.5.72: 拡張が書いた札・光・枠だけの変化では印刷用PDF を数え直さない（own-mutation.js・見張りどうしの反応し合いを止める）
+    if (_OM && _OM.onlyOwn(muts)) return;
     var btns = findPrintBtns();
     var uninjected = btns.filter(function (b) {
       return !b.previousSibling || !b.previousSibling.classList || !b.previousSibling.classList.contains("axlx-cb");

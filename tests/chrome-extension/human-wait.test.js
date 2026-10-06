@@ -108,7 +108,7 @@ function rest() {
   const cs = manifest.content_scripts;
   const first = cs[0];
   // v2.5.40: 画面の文字の受け口（snapshot-core.js）を後ろに足した（先頭の2つの順は変えない）
-  eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
+  eq("先頭の段（document_start・3サイト）が human-wait.js → search-audit.js（→ snapshot-core.js）の順", first.js, ["human-wait.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"]);
   eq("先頭の段は document_start（後の段の content script より先に読む）", first.run_at, "document_start");
   for (const site of ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]) {
     ok(`先頭の段が ${site} を含む`, first.matches.includes(site));
@@ -184,7 +184,7 @@ function rest() {
       "setTimeout 60000": [1, "PDF の期限"], "setTimeout 15000": [1, "期限"], "setInterval 200": [1, "行が出たかの見る間隔"],
       "setTimeout 30000": [1, "期限"], "setInterval 300": [1, "見る間隔"], "setTimeout 50": [1, "表示の更新"], "setInterval 2000": [1, "見張り"],
     },
-    "realpro-guide.js": { "setInterval 400": [1, "案内の光を見直す間隔（v2.5.58・画面を読むだけ・サイトを触らない）"], "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"], "setTimeout 2500": [2, "一覧の行が描かれるのを待つ（bulk-dl が読み込み＋2秒で行を読む・v2.5.71）"], "setTimeout 120": [1, "小窓が閉じた等の画面の変化の後に光を見直す間引き（v2.5.71・読むだけ）"] },
+    "realpro-guide.js": { "setInterval 400": [1, "案内の光を見直す間隔（v2.5.58・画面を読むだけ・サイトを触らない）"], "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"], "setTimeout 2500": [2, "一覧の行が描かれるのを待つ（bulk-dl が読み込み＋2秒で行を読む・v2.5.71）"], "setTimeout 120": [1, "小窓が閉じた等の画面の変化の後に光を見直す間引き（v2.5.71・読むだけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・コンソールに出す・v2.5.72）"] },
     "itandi-guide.js": { "setInterval 400": [1, "ITANDI の案内の光を見直す間隔（v2.5.63・画面を読むだけ・サイトを触らない）"] },
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },

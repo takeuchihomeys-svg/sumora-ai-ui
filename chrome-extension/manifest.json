@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.5.71",
+  "version": "2.5.72",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -52,7 +52,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"],
-      "js": ["human-wait.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"],
+      "js": ["human-wait.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"],
       "run_at": "document_start"
     },
     {

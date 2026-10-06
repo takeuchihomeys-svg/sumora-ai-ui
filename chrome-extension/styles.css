@@ -124,7 +124,10 @@ body {
   font-size: 12px; font-weight: bold;
   text-align: center; padding: 6px 10px;
   flex-shrink: 0;
+  /* 2026-10-06 v2.5.72 竹内「アナウンスの文が長すぎて画面がつぶれる」: 1行で切り、押すと全文（もう一度押すと1行に戻る） */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
 }
+.mode-banner.open { white-space: normal; }
 .mode-banner.staff { background: #16a34a; }
 .mode-banner.aix   { background: #7c3aed; }
 .mode-banner.brain { background: #0ea5e9; }
@@ -405,6 +408,7 @@ body {
   padding: 6px 12px;
   background: #fff3e0; border-radius: 8px; border-left: 4px solid #e65100;
   font-size: 11px; color: #e65100; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; /* v2.5.72: 1行 */
 }
 
 /* ── Step lines note（沿線情報） ── */

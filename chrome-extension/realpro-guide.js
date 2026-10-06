@@ -76,17 +76,45 @@
    * 文字が texts のどれかと同じ要素。2026-10-01 実画面（YUMA の確かめ）: 「リセット」が2か所あり、画面の外の物を光らせて
    *   「↓ 下にあります」になり、左のリセットを押しても済みにならなかった → 見えている物・画面の中の物・一番内側の物を選ぶ
    */
+  // 2026-10-06 v2.5.72（重さ）: 旧は画面の全部の div・span・td… の textContent を毎回つなげて比べていた（大きな箱ほど長い文字列＝
+  //   一覧が大きいページでは1回の検索で画面の文字を何百回も作り直す）。光らせる手順ごと・400ms ごとに呼ばれていた。
+  //   新: 文字のノードから上へたどる。欲しい文字の一部になっている文字のノードだけ見て、その上の要素（6段まで）の文字が欲しい文字と同じかを比べ、
+  //   欲しい文字より長くなったら止める。要素の文字が欲しい文字と同じなら、中の文字のノードは必ず欲しい文字の一部なので取りこぼさない。
+  //   1回の見直しの中では同じ文字の検索を1回だけ（_textMemo）。
+  var TEXT_SEL = "a,button,div,span,td,p,label,input[type=button],input[type=submit]";
+  var _textMemo = null;
   function textMatches(texts, sel) {
-    var want = texts.map(norm);
-    var list = document.querySelectorAll(sel || "a,button,div,span,td,p,label,input[type=button],input[type=submit]");
-    var hits = [];
-    for (var i = 0; i < list.length; i++) {
-      var el = list[i];
-      if (el.closest && el.closest("#axlx-guide-panel,#axlx-guide-layer")) continue;
-      if (want.indexOf(norm(el.value || el.textContent)) >= 0 && visible(el)) hits.push(el);
+    var want = texts.map(norm).filter(Boolean);
+    var key = want.join("\u0001") + "\u0002" + (sel || "");
+    if (_textMemo && Object.prototype.hasOwnProperty.call(_textMemo, key)) return _textMemo[key];
+    var maxLen = 0; want.forEach(function (w) { if (w.length > maxLen) maxLen = w.length; });
+    var cand = [];
+    var add = function (el) { if (cand.indexOf(el) < 0) cand.push(el); };
+    if (!sel || /input/.test(sel)) {
+      document.querySelectorAll("input[type=button],input[type=submit]").forEach(function (el) { if (want.indexOf(norm(el.value)) >= 0) add(el); });
     }
+    if (document.body && maxLen) {
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+      var n;
+      while ((n = walker.nextNode())) {
+        var raw = n.nodeValue;
+        if (!raw || raw.length > maxLen * 4 + 40) continue;
+        var nt = norm(raw);
+        if (!nt || !want.some(function (w) { return w.indexOf(nt) >= 0; })) continue;
+        for (var el = n.parentElement, k = 0; el && el !== document.body && k < 6; el = el.parentElement, k++) {
+          if (!el.matches || !el.matches(sel || TEXT_SEL)) continue;
+          var et = norm(el.textContent);
+          if (et.length > maxLen) break;
+          if (want.indexOf(et) >= 0) add(el);
+        }
+      }
+    }
+    var hits = cand.filter(function (el) { return !(el.closest && el.closest("#axlx-guide-panel,#axlx-guide-layer")) && visible(el); });
+    hits.sort(function (a, b) { return a === b ? 0 : (a.compareDocumentPosition(b) & 4 ? -1 : 1); });
     // 一番内側だけ（中に同じ文字の要素を持つ外側の箱は外す）
-    return hits.filter(function (el) { return !hits.some(function (o) { return o !== el && el.contains(o); }); });
+    var out = hits.filter(function (el) { return !hits.some(function (o) { return o !== el && el.contains(o); }); });
+    if (_textMemo) _textMemo[key] = out;
+    return out;
   }
   function byText(texts, sel) {
     var hits = textMatches(texts, sel);
@@ -220,12 +248,13 @@
     if (!document.getElementById("axlx-guide-style")) {
       var st = document.createElement("style");
       st.id = "axlx-guide-style";
-      st.textContent = "@keyframes axlxGlow{0%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 14px 6px rgba(255,179,0,.55)}50%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 26px 12px rgba(255,179,0,.25)}100%{box-shadow:0 0 0 3px rgba(255,179,0,.95),0 0 14px 6px rgba(255,179,0,.55)}}"
-        + ".axlx-glow{position:fixed;pointer-events:none;border-radius:6px;z-index:2147483600;animation:axlxGlow 1.2s ease-in-out infinite}"
-        + ".axlx-tip{position:fixed;pointer-events:none;z-index:2147483601;background:#ff8f00;color:#fff;font:bold 12px/1.4 sans-serif;padding:4px 8px;border-radius:6px;max-width:320px;box-shadow:0 2px 6px rgba(0,0,0,.3)}"
+      // 2026-10-06 v2.5.72 竹内「黄色のひかりまぶしすぎるので光のいろを抑える」: 黄色の太い光の点滅（box-shadow のアニメ＝ずっと描き直し）をやめ、
+      //   細い青の枠＋ごく薄い色・動かさない。画面の外の時だけ小さな矢印（文は枠に1つだけ）
+      st.textContent = ".axlx-glow{position:fixed;pointer-events:none;border-radius:5px;z-index:2147483600;border:2px solid rgba(30,136,229,.55);background:rgba(30,136,229,.06)}"
+        + ".axlx-tip{position:fixed;pointer-events:none;z-index:2147483601;background:rgba(30,136,229,.85);color:#fff;font:bold 11px/1 sans-serif;padding:3px 6px;border-radius:9px}"
         + ".axlx-sent-hidden{display:none !important}"
         // 2026-10-02 v2.5.69: 印刷用PDF の光（通す・まだ送っていない）と送付済み（お客様に届けた部屋）
-        + ".axlx-pdf-go{animation:axlxGlow 1.2s ease-in-out infinite;border-radius:4px}"
+        + ".axlx-pdf-go{outline:2px solid rgba(46,125,50,.5);outline-offset:1px;border-radius:3px;background-color:rgba(76,175,80,.08)}"
         + ".axlx-pdf-sent{opacity:.45;cursor:not-allowed}"
         + ".axlx-pdf-sent-label{margin-left:4px;font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;background:#eceff1;color:#455a64;vertical-align:middle}";
       (document.head || document.documentElement).appendChild(st);
@@ -235,29 +264,38 @@
     document.body.appendChild(layer);
     return layer;
   }
-  function clearHighlight() { if (layer) layer.innerHTML = ""; }
-  function highlight(targets, label) {
+  function clearHighlight() { _lastTargets = null; _lastHiSig = ""; if (layer && layer.childNodes.length) layer.innerHTML = ""; }
+  // 2026-10-06 v2.5.72 竹内「余計なアナウンスもでるから…省く（文が長すぎて画面がつぶれる）」: 光の横の吹き出し（手順の文＋補足）をやめ、
+  //   文は右上の案内の枠の1行だけ。光らせる物が画面の外の時だけ小さな矢印（↑・↓）。同じ位置なら描き直さない（毎回の書き直しをやめる）
+  var _lastTargets = null, _lastHiSig = "";
+  function highlight(targets) {
     var L = ensureLayer();
-    L.innerHTML = "";
-    var first = null;
+    _lastTargets = targets;
+    var rects = [], first = null;
     (targets || []).filter(Boolean).slice(0, 40).forEach(function (el) {
       var r = el.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) return;
+      rects.push(r); if (!first) first = r;
+    });
+    var vh = window.innerHeight;
+    var arrow = first ? (first.bottom < 0 ? "↑" : first.top > vh ? "↓" : "") : "";
+    var sig = rects.map(function (r) { return Math.round(r.left) + "," + Math.round(r.top) + "," + Math.round(r.width) + "," + Math.round(r.height); }).join("|") + "#" + arrow;
+    if (sig === _lastHiSig && L.childNodes.length) return;
+    _lastHiSig = sig;
+    L.innerHTML = "";
+    rects.forEach(function (r) {
       var g = document.createElement("div");
       g.className = "axlx-glow";
-      g.style.left = (r.left - 4) + "px"; g.style.top = (r.top - 4) + "px";
-      g.style.width = (r.width + 8) + "px"; g.style.height = (r.height + 8) + "px";
+      g.style.left = (r.left - 3) + "px"; g.style.top = (r.top - 3) + "px";
+      g.style.width = (r.width + 6) + "px"; g.style.height = (r.height + 6) + "px";
       L.appendChild(g);
-      if (!first) first = r;
     });
-    if (label) {
+    if (arrow) {
       var tip = document.createElement("div");
       tip.className = "axlx-tip";
-      var vh = window.innerHeight;
-      if (!first) { tip.style.left = "16px"; tip.style.top = "16px"; tip.textContent = label; }
-      else if (first.bottom < 0) { tip.style.left = Math.max(8, first.left) + "px"; tip.style.top = "8px"; tip.textContent = "↑ 上にあります: " + label; }
-      else if (first.top > vh) { tip.style.left = Math.max(8, first.left) + "px"; tip.style.top = (vh - 40) + "px"; tip.textContent = "↓ 下にあります: " + label; }
-      else { tip.style.left = Math.max(8, first.left) + "px"; tip.style.top = Math.max(8, first.top - 30) + "px"; tip.textContent = label; }
+      tip.style.left = Math.max(8, first.left) + "px";
+      tip.style.top = (arrow === "↑" ? 8 : vh - 28) + "px";
+      tip.textContent = arrow === "↑" ? "↑ 上" : "↓ 下";
       L.appendChild(tip);
     }
   }
@@ -272,7 +310,8 @@
       panel.id = "axlx-guide-panel";
       // 2026-10-01 竹内「右下の案内移動できないので、押せないため右上に移動する」: 右下は一括のバー・ページ送りと重なって押せなかった
       //   → 既定は右上・見出しをつかんで動かせる（置いた場所はこの PC に覚える）
-      panel.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483602;width:290px;background:#fff;border:2px solid #ff8f00;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.25);font:12px/1.5 sans-serif;color:#263238;padding:8px 10px;";
+      // v2.5.72: 小さく・控えめな色（文は1行ずつ・詳しくは「全手順」とマウスを乗せた時）
+      panel.style.cssText = "position:fixed;right:12px;top:12px;z-index:2147483602;width:240px;background:#fff;border:1px solid #b0bec5;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);font:12px/1.45 sans-serif;color:#263238;padding:6px 8px;";
       try {
         var pos = JSON.parse(localStorage.getItem("axlx_guide_pos") || "null");
         if (pos && pos.left >= 0 && pos.top >= 0 && pos.left < window.innerWidth - 40 && pos.top < window.innerHeight - 40) {
@@ -283,25 +322,37 @@
       panel.addEventListener("mousedown", onPanelDragStart);
       document.body.appendChild(panel);
     }
-    var head = '<div data-drag="1" title="つかんで動かせます" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:move;user-select:none"><b data-drag="1" style="flex:1;color:#e65100">⠿ 🔦 案内モード（押すのはスタッフ）</b>'
+    var head = '<div data-drag="1" title="案内モード（押すのはスタッフ）・つかんで動かせます" style="display:flex;align-items:center;gap:6px;margin-bottom:2px;cursor:move;user-select:none"><b data-drag="1" style="flex:1;color:#1565c0">⠿ 🔦 案内</b>'
       + '<button data-a="mode" style="font-size:11px;padding:1px 6px;border-radius:9px;border:1px solid #ccc;background:' + (guideOn ? "#fff3e0" : "#eceff1") + '">' + (guideOn ? "ON" : "OFF") + "</button></div>";
-    if (!guideOn) { panel.innerHTML = head + '<div style="color:#78909c">OFF の間は今まで通り拡張が入力します</div>'; return; }
-    if (!session) { panel.innerHTML = head + '<div style="color:#78909c">拡張でお客様を選ぶと、ここに手順が出ます</div>'; return; }
-    if (session.stage === "results") {
-      panel.innerHTML = head + '<div><b>' + esc(session.customerName || "") + '</b> の検索結果</div><div id="axlx-guide-sent" style="color:#455a64">' + esc(sentNote || "送付済みの部屋を確かめています…") + "</div>"
-        + '<div style="margin-top:6px;display:flex;gap:6px"><button data-a="showsent" style="flex:1">送付済みも表示</button><button data-a="end" style="flex:1">案内を終える</button></div>';
-      return;
+    var ONE = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+    var BTN = "flex:1;font-size:11px;padding:1px 4px";
+    var html;
+    if (!guideOn) html = head + '<div style="color:#78909c;' + ONE + '" title="OFF の間は今まで通り拡張が入力します">OFF の間は今まで通り拡張が入力します</div>';
+    else if (!session) html = head + '<div style="color:#78909c;' + ONE + '" title="拡張でお客様を選ぶと、ここに手順が出ます">拡張でお客様を選ぶと、ここに手順が出ます</div>';
+    else if (session.stage === "results") {
+      var sn = sentNote || "送付済みの部屋を確かめています…";
+      html = head + '<div style="' + ONE + '"><b>' + esc(session.customerName || "") + '</b> の検索結果</div><div id="axlx-guide-sent" style="color:#455a64;' + ONE + '" title="' + esc(sn) + '">' + esc(sn) + "</div>"
+        + '<div style="margin-top:4px;display:flex;gap:4px"><button data-a="showsent" style="' + BTN + '">送付済みも表示</button><button data-a="end" style="' + BTN + '">案内を終える</button></div>';
+    } else {
+      var steps = plan ? plan.steps : [];
+      var doneN = 0;
+      var rows = steps.map(function (s) {
+        var d = evalStepM(s).done;
+        if (d) doneN++;
+        var isCur = cur && cur.id === s.id;
+        return '<div style="' + ONE + (isCur ? "font-weight:bold;color:#1565c0" : d ? "color:#9e9e9e" : "") + '" title="' + esc(s.label) + '">' + (d ? "✓" : isCur ? "▶" : "・") + " " + esc(s.label) + "</div>";
+      }).join("");
+      var full = cur ? cur.label + (curEval && curEval.note ? "（" + curEval.note + "）" : "") : "";
+      html = head + '<div style="' + ONE + '"><b>' + esc(session.customerName || "") + '</b> <span style="color:#78909c">' + doneN + "/" + steps.length + "</span></div>"
+        + (cur ? '<div style="' + ONE + 'font-weight:bold;color:#1565c0" title="' + esc(full) + '">▶ ' + esc(cur.label) + "</div>" : "")
+        + (curEval && curEval.note ? '<div style="' + ONE + 'color:#c62828;font-size:11px" title="' + esc(curEval.note) + '">' + esc(curEval.note) + "</div>" : "")
+        + (showAllSteps ? '<div style="max-height:180px;overflow:auto;border-top:1px solid #eee;margin-top:3px;padding-top:3px;font-size:11px">' + rows + "</div>" : "")
+        + '<div style="margin-top:4px;display:flex;gap:4px"><button data-a="steps" style="' + BTN + '">' + (showAllSteps ? "▾ 閉じる" : "▸ 全手順") + '</button><button data-a="skip" style="' + BTN + '">この手順は済み</button><button data-a="end" style="' + BTN + '">案内をやめる</button></div>';
     }
-    var rows = (plan ? plan.steps : []).map(function (s, i) {
-      var d = evalStep(s).done;
-      var isCur = cur && cur.id === s.id;
-      return '<div style="' + (isCur ? "font-weight:bold;color:#e65100" : d ? "color:#9e9e9e" : "") + '">' + (d ? "✓" : isCur ? "▶" : "・") + " " + esc(s.label) + "</div>";
-    }).join("");
-    panel.innerHTML = head + '<div style="margin-bottom:4px"><b>' + esc(session.customerName || "") + "</b></div>"
-      + '<div style="max-height:220px;overflow:auto;border-top:1px solid #eee;padding-top:4px">' + rows + "</div>"
-      + (curEval && curEval.note ? '<div style="margin-top:4px;color:#c62828">' + esc(curEval.note) + "</div>" : "")
-      + '<div style="margin-top:6px;display:flex;gap:6px"><button data-a="skip" style="flex:1">この手順は済み</button><button data-a="end" style="flex:1">案内をやめる</button></div>';
+    // 同じ中身なら書き直さない（v2.5.72・旧は 400ms ごとに枠を作り直していた）
+    if (html !== _lastPanelHtml) { _lastPanelHtml = html; panel.innerHTML = html; }
   }
+  var _lastPanelHtml = "", showAllSteps = false;
   // 案内の枠を見出しでつかんで動かす（枠の位置を変えるだけ・サイトには触らない）
   function onPanelDragStart(e) {
     if (!e.target || !e.target.getAttribute || e.target.getAttribute("data-drag") !== "1" || !panel) return;
@@ -326,9 +377,10 @@
     if (!a) return;
     if (a === "mode") { try { var o = {}; o[MODE_KEY] = !guideOn; chrome.storage.local.set(o); } catch (_) { applyMode(!guideOn); } return; }
     if (a === "end") { endGuide(); return; }
+    if (a === "steps") { showAllSteps = !showAllSteps; markDirty(); tick(); return; }
     if (a === "skip" && session && plan) {
       var cur = currentStep();
-      if (cur) { session.done = session.done || {}; session.done[cur.step.id] = true; saveSession(); tick(); }
+      if (cur) { session.done = session.done || {}; session.done[cur.step.id] = true; saveSession(); markDirty(); tick(); }
       return;
     }
     if (a === "showsent") { showSent = !showSent; applySentHiding(); }
@@ -341,26 +393,68 @@
   function currentStep() {
     if (!plan) return null;
     for (var i = 0; i < plan.steps.length; i++) {
-      var ev = evalStep(plan.steps[i]);
+      var ev = evalStepM(plan.steps[i]);
       if (!ev.done) return { step: plan.steps[i], ev: ev };
     }
     return null;
   }
 
   // ── 毎回の見直し（スタッフの操作・画面の変化に合わせて光を移す）──
-  function tick() {
-    if (!guideOn || !session || session.stage !== "form" || !plan) { if (session && session.stage === "results") clearHighlight(); renderPanel(); return; }
-    var cur = currentStep();
-    if (!cur) { clearHighlight(); renderPanel(); return; }
-    highlight(cur.ev.target, cur.step.label + (cur.ev.note ? "（" + cur.ev.note + "）" : ""));
-    renderPanel(cur.step, cur.ev);
+  // ── 重さの見直し（2026-10-06 v2.5.72 竹内「光ってるモードがなぜかかなり重い」）──
+  //   旧: 400ms ごとに必ず全手順を読み直し（evalStep は1回の見直しで手順の数×2回・文字で探す物は画面の全要素の位置と見た目を読む）、
+  //       光と枠を毎回作り直し、スクロールのたびにも全部やり直していた。
+  //   新: 画面が変わった・押した・入れた時（dirty）だけ読み直す。何も無ければ 1.5秒に1回。1回の見直しの中では手順ごとに1回だけ読む（evalStepM）。
+  //       スクロールは光の位置だけ直す（requestAnimationFrame で1コマに1回）。見えていないタブでは止める。
+  //   数え: localStorage に axlx_perf=1 を入れると 10秒ごとに見直しの回数・時間・見張りの回数をコンソールに出す
+  var _evalMemo = null;
+  function evalStepM(s) {
+    if (!_evalMemo) return evalStep(s);
+    if (!Object.prototype.hasOwnProperty.call(_evalMemo, s.id)) _evalMemo[s.id] = evalStep(s);
+    return _evalMemo[s.id];
   }
-  setInterval(tick, 400);
-  window.addEventListener("scroll", tick, true);
-  window.addEventListener("resize", tick);
+  var _dirty = true, _lastTickAt = 0;
+  var perf = { ticks: 0, tickMs: 0, maxMs: 0, obs: 0, obsOwn: 0, sync: 0 };
+  function markDirty() { _dirty = true; }
+  function tick() {
+    var t0 = Date.now();
+    _dirty = false; _lastTickAt = t0; perf.ticks++;
+    try {
+      if (!guideOn || !session || session.stage !== "form" || !plan) { if (session && session.stage === "results") clearHighlight(); renderPanel(); return; }
+      _evalMemo = {}; _textMemo = {};
+      var cur = currentStep();
+      if (!cur) { clearHighlight(); renderPanel(); return; }
+      highlight(cur.ev.target);
+      renderPanel(cur.step, cur.ev);
+    } finally {
+      _evalMemo = null; _textMemo = null;
+      var ms = Date.now() - t0; perf.tickMs += ms; if (ms > perf.maxMs) perf.maxMs = ms;
+    }
+  }
+  setInterval(function () {
+    if (document.hidden) return;
+    if (!_dirty && Date.now() - _lastTickAt < 1500) return;
+    tick();
+  }, 400);
+  var _rafPending = false;
+  function repositionSoon() {
+    if (_rafPending || !_lastTargets) return;
+    _rafPending = true;
+    requestAnimationFrame(function () { _rafPending = false; if (_lastTargets) highlight(_lastTargets); });
+  }
+  window.addEventListener("scroll", repositionSoon, true);
+  window.addEventListener("resize", function () { markDirty(); repositionSoon(); });
+  ["input", "change", "keyup"].forEach(function (ev) { document.addEventListener(ev, markDirty, true); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) markDirty(); });
+  try {
+    if (localStorage.getItem("axlx_perf") === "1") setInterval(function () {
+      console.log("[AXLX guide perf 10s] 見直し " + perf.ticks + "回・計 " + perf.tickMs + "ms・最大 " + perf.maxMs + "ms／見張り " + perf.obs + "回（拡張の書き込みだけで飛ばした " + perf.obsOwn + "）／一覧の印 " + perf.sync + "回");
+      perf = { ticks: 0, tickMs: 0, maxMs: 0, obs: 0, obsOwn: 0, sync: 0 };
+    }, 10000);
+  } catch (_) {}
 
   // スタッフが押した物を見る（押した要素を読むだけ）: リセット・検索
   document.addEventListener("click", function (e) {
+    markDirty();
     if (!session || session.stage !== "form" || !plan) return;
     var t = e.target;
     var cur = currentStep();
@@ -567,15 +661,22 @@
   }
   var _hideTimer = null;
   var _tickSoon = null;
+  var _OM = (typeof self !== "undefined" ? self : window).AxlxOwnMut;
+  // 拡張の物でも反応する物: 一括の印（行を読んだ合図）とブレインの下見の札（「通す」の光を付け直す合図）
+  var KEEP_OWN = /^axlx-(cb|brain-badge)$/;
   new MutationObserver(function (muts) {
     lockAutoPaging();
-    // 小窓が閉じた・欄が描き直された時に光をすぐ次の手順へ（400ms の見直しを待たない・自分の枠の変化は見ない）
-    if (!_tickSoon && !muts.every(function (m) { return m.target && m.target.closest && m.target.closest("#axlx-guide-panel,#axlx-guide-layer"); })) _tickSoon = setTimeout(function () { _tickSoon = null; tick(); }, 120);
-    // 一覧の行が後から描かれた時も隠し直す・印刷用PDF を光らせ直す（自分の枠・光の変化は見ない）
+    perf.obs++;
+    // v2.5.72: 拡張が書いた物（案内の光・枠・点の札・送付済みの印…）だけの変化には反応しない（own-mutation.js）
+    //   旧は自分の枠と光だけを除いていたので、点の札の付け直し（score-overlay）のたびに一覧を読み直していた
+    if (_OM ? _OM.onlyOwn(muts, KEEP_OWN) : muts.every(function (m) { return m.target && m.target.closest && m.target.closest("#axlx-guide-panel,#axlx-guide-layer"); })) { perf.obsOwn++; return; }
+    markDirty();
+    // 小窓が閉じた・欄が描き直された時に光をすぐ次の手順へ（400ms の見直しを待たない）
+    if (!_tickSoon) _tickSoon = setTimeout(function () { _tickSoon = null; if (!document.hidden) tick(); }, 120);
+    // 一覧の行が後から描かれた時も隠し直す・印刷用PDF を光らせ直す
     // v2.5.71: 旧は送付済みを読めた後（sentIndex あり）だけ＝案内のお客様が無いと一度も光らなかった
     if (_hideTimer) return;
-    if (muts.every(function (m) { return m.target && m.target.closest && m.target.closest("#axlx-guide-panel,#axlx-guide-layer"); })) return;
-    _hideTimer = setTimeout(function () { _hideTimer = null; syncResults(); }, 300);
+    _hideTimer = setTimeout(function () { _hideTimer = null; if (!document.hidden) { perf.sync++; syncResults(); } }, 300);
   }).observe(document.documentElement, { childList: true, subtree: true });
 
   // 案内モードの設定を読む（変数をすべて用意した後＝ファイルの最後で読む。先に読むと案内の枠が2つできる）

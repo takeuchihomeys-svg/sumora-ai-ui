@@ -124,8 +124,13 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
 
   // MutationObserver（ループ防止ロック付き）
   let lock = false;
-  const obs = new MutationObserver(function () {
+  // 2026-10-06 v2.5.72: 拡張が書いた物（札・光・枠・class の axlx-）だけの変化では左の欄を確かめ直さない
+  //   （旧は class/style の変化まで見るので、光や札の書き直しのたびに画面の全文字をたどっていた）
+  const _OM = (typeof self !== "undefined" ? self : window).AxlxOwnMut;
+  const obs = new MutationObserver(function (muts) {
     if (lock) return;
+    if (_OM && _OM.onlyOwn(muts)) return;
+    if (document.hidden) return;
     lock = true;
     setTimeout(function () { fix(); lock = false; }, 400);
   });
@@ -135,9 +140,10 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
     overrideHidingMQRules();
     obs.observe(document.documentElement, {
       childList: true, subtree: true,
-      attributes: true, attributeFilter: ["style", "class"],
+      attributes: true, attributeFilter: ["style", "class"], attributeOldValue: true,
     });
-    setInterval(fix, 3000);
+    // 見えていないタブでは確かめない（v2.5.72）
+    setInterval(function () { if (!document.hidden) fix(); }, 3000);
   }
 
   if (document.readyState === "loading") {

@@ -5642,8 +5642,12 @@ function _renderModeUI() {
   if (banner) {
     var bn = core ? core.banner(s.mode, s.brain, !!(_modeRaw && _modeRaw.autoSearchPaused)) : null;
     if (bn) {
-      banner.className = "mode-banner " + bn.cls;
+      // v2.5.72: 1行で出して、押すと全文（.open）。全文はマウスを乗せても出る
+      var wasOpen = banner.classList.contains("open") && banner.textContent === bn.text;
+      banner.className = "mode-banner " + bn.cls + (wasOpen ? " open" : "");
       banner.textContent = bn.text;
+      banner.title = bn.text;
+      if (!banner._axlxToggle) { banner._axlxToggle = true; banner.addEventListener("click", function () { banner.classList.toggle("open"); }); }
       banner.style.display = "block";
     } else {
       banner.style.display = "none";

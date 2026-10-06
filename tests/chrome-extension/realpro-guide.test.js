@@ -137,7 +137,7 @@ ok("page-script: 検索を押す所（clickSearch・見積用）も案内モー�
   ok("駅の手順は済みを覚える（小窓を閉じて印が読めなくなっても戻らない）", /if \(act === "done"\) \{ markStepDone\(s\.id\); return \{ done: true \}; \}/.test(rg2));
   ok("「確定してリストへ」等を押したら駅の手順を済みに（光る駅に1つでも印）", /closeHit && \(cur\.step\.kind === "pick_route" \|\| stationAnyChecked\(cur\.step\)\)/.test(rg2));
   ok("旧の「この手順を「済み」にしてください」を出さない", !/この手順を「済み」にしてください/.test(rg2));
-  ok("画面が変わったらすぐ光を次の手順へ（MutationObserver → tick）", /_tickSoon = setTimeout\(function \(\) \{ _tickSoon = null; tick\(\); \}, 120\)/.test(rg2));
+  ok("画面が変わったらすぐ光を次の手順へ（MutationObserver → tick）", /_tickSoon = setTimeout\(function \(\) \{ _tickSoon = null; if \(!document\.hidden\) tick\(\); \}, 120\)/.test(rg2));
   // 駅の後の手順（賃料・面積・築年数・間取り・検索）が手順表に並ぶ（ASA の条件）
   const asa = P.buildPlan({ rent_min: 70000, rent_max: 150000, floor_plan: "2LDK〜3LDK", area_min: 40, building_age: 35, station_names: ["塚本", "御幣島"], route_ids: [], area_mode: "station" });
   const ks = asa.steps.map((x) => x.kind), iSt = ks.indexOf("pick_station");
@@ -150,7 +150,7 @@ ok("page-script: 検索を押す所（clickSearch・見積用）も案内モー�
   ok("一覧ではない → none", R({ rows: 0, hasSession: false, stage: null, sessionCid: null, currentCid: "cus-1" }) === "none");
   ok("一覧で拡張のお客様を替えた → 合わせ直す", R({ rows: 3, hasSession: true, stage: "results", sessionCid: "cus-1", currentCid: "cus-2" }) === "switch");
   ok("同じお客様 → keep", R({ rows: 3, hasSession: true, stage: "results", sessionCid: "cus-1", currentCid: "cus-1" }) === "keep");
-  ok("画面の変化のたびに一覧の印を付け直す（送付済みを読めていなくても）", /_hideTimer = null; syncResults\(\);/.test(rg2) && !/if \(!sentIndex \|\| _hideTimer\) return;/.test(rg2));
+  ok("画面の変化のたびに一覧の印を付け直す（送付済みを読めていなくても）", /_hideTimer = null; if \(!document\.hidden\) \{ perf\.sync\+\+; syncResults\(\); \}/.test(rg2) && !/if \(!sentIndex \|\| _hideTimer\) return;/.test(rg2));
   ok("お客様が分からなくても「通す」の印刷用PDF は光らせる", /if \(act === "none"\) \{ markPdfButtons\(R\.list\(\)\); return; \}/.test(rg2));
   ok("案内の記録が消えていても一覧なら印を付ける", /SESSION_TTL_MS\) \{ setTimeout\(syncResults, 2500\); return; \}/.test(rg2));
   ok("光の CSS を markPdfButtons の中でも入れる", /if \(document\.body\) ensureLayer\(\);/.test(rg2));
