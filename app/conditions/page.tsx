@@ -204,6 +204,10 @@ export default function ConditionsPage() {
   const [tab, setTab] = useState<"announce" | "new" | "pickup">("pickup");
   // 🔍 検索の点検（全画面で開く）
   const [auditOpen, setAuditOpen] = useState(false);
+  // 見出しのボタンは外した（10/06）。調べる時だけ ?audit=1 で開く
+  useEffect(() => {
+    try { if (new URLSearchParams(window.location.search).get("audit") === "1") setAuditOpen(true); } catch { /* 無ければ開かない */ }
+  }, []);
   const [announceView, setAnnounceView] = useState<"today" | "all">("today");
   const [listFilter, setListFilter] = useState<Status | "all">("all");
   const [showModal, setShowModal] = useState(false);
@@ -673,16 +677,9 @@ export default function ConditionsPage() {
           {/* 2026-09-25 竹内「売上サポの名前は AIXツールに変更」 */}
           <h1 className="whitespace-nowrap text-lg font-bold text-slate-800">AIXツール</h1>
           <span className="hidden whitespace-nowrap text-xs text-slate-400 sm:inline">全{customers.length}件</span>
-          <SendTaskListButton />
-          <button
-            onClick={() => setAuditOpen(true)}
-            className="shrink-0 whitespace-nowrap rounded-lg bg-[#f0f2f5] px-2 py-1 text-[11px] font-bold text-[#54656f]"
-            title="ブレインモードの検索がちゃんとできていたか（原因ごと・DeepSeek の見立て）"
-            aria-label="検索の点検"
-          >
-            <span className="sm:hidden">🔍 点検</span>
-            <span className="hidden sm:inline">🔍 検索の点検</span>
-          </button>
+          {/* 2026-10-06 竹内「不要なのとる。点検のボタンも不要かもしれない。追加だけのこして」:
+              「📲 LINE送信」（一覧の一斉送信）と「🔍 点検」（自動の検索の点検・自動検索は停止中）は見出しから外した。
+              点検の画面は URL に ?audit=1 を付けると開ける（調べる時だけ） */}
         </div>
         {auditOpen && <SearchAuditPanel onClose={() => setAuditOpen(false)} />}
         <button

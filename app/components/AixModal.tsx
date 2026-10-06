@@ -661,6 +661,8 @@ export default function AixModal({
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
+  // 2026-10-06 竹内「ここおしたら画像拡大されるようにする 確認用に」: 物件資料の画像をタップで全画面に拡大
+  const [zoomImage, setZoomImage] = useState<string>("");
   // 全力サポート専用: 複数画像
   const [zenryokuImages, setZenryokuImages] = useState<File[]>([]);
   const [zenryokuImagePreviews, setZenryokuImagePreviews] = useState<string[]>([]);
@@ -3823,13 +3825,20 @@ export default function AixModal({
                 </div>
                 {imagePreview ? (
                   <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
-                    <img src={imagePreview} alt="物件" className="max-h-36 w-full object-contain" />
+                    <img src={imagePreview} alt="物件" className="max-h-36 w-full cursor-zoom-in object-contain" onClick={() => setZoomImage(imagePreview)} />
                     <button
                       onClick={() => { setImageFile(null); setImagePreview(""); setPreview(""); if (fileInputRef.current) fileInputRef.current.value = ""; }}
                       className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
                     >変更</button>
                   </div>
-                ) : (
+                ) : null}
+                {zoomImage ? (
+                  <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/85 p-2" onClick={() => setZoomImage("")}>
+                    <img src={zoomImage} alt="物件資料（拡大）" className="max-h-full max-w-full object-contain" style={{ touchAction: "pinch-zoom" }} />
+                    <button onClick={() => setZoomImage("")} className="absolute right-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold text-[#111]">✕ 閉じる</button>
+                  </div>
+                ) : null}
+                {imagePreview ? null : (
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-200 py-5 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
