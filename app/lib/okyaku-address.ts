@@ -33,6 +33,11 @@ const RULES: Rule[] = [
   { re: /お客様ご自身(?=で|の)/, withName: (n) => `${n}ご自身`, noName: "ご自身" },
 ];
 
+/** 行が「お客様」だけ（前後の空白のみ）＝名前の欄（2026-10-06 ⑰） */
+const NAME_SLOT_LINE_RE = /(^|\n)[ \t　]*お客様[ \t　]*(\n|$)/g;
+/** 行頭の「お客様」の直後に挨拶・本題が続く＝名前の欄（「お客様お世話になっております」「お客様確認させていただきました」） */
+const NAME_SLOT_HEAD_RE = /(^|\n)([ \t　]*)お客様(?=お世話|確認させ|お送り|お待たせ|夜分|ご連絡|こんにちは|おはよう|こんばんは|ご査収|いつも)/g;
+
 /** 「〇〇さん」の形にする（既に さん／様 が付いていれば付けない・「お客様」は名前でない） */
 function honorific(name: string | null | undefined): string {
   const n = String(name ?? "").trim();
@@ -50,6 +55,19 @@ export function fixSecondPersonOkyaku(text: string | null | undefined, name?: st
   if (!s.includes("お客様")) return { text: s, changes: [] };
   const n = honorific(name);
   const changes: string[] = [];
+  // 2026-10-06 ⑰: 行頭の名前の欄の「お客様」（AIX の下書きで名前が取れなかった時の受け皿・60日で30回）。
+  //   行が「お客様」だけ → 名前があれば「〇〇さん」・無ければ行ごと書かない。行頭の「お客様」＋挨拶/本題 → 名前があれば名前・無ければ呼ばない。
+  //   線: スタッフの送信 365日 13,908通で当たるのは1通（AI の下書きのまま送った「お客様お世話になっております」）＝誤削除0
+  s = s.replace(NAME_SLOT_LINE_RE, (_m: string, head: string, tail: string) => {
+    changes.push(`行頭のお客様→${n || "（呼ばない）"}`);
+    return n ? `${head}${n}${tail}` : head;
+  });
+  s = s.replace(NAME_SLOT_HEAD_RE, (_m: string, head: string, sp: string) => {
+    changes.push(`行頭のお客様→${n || "（呼ばない）"}`);
+    return `${head}${sp}${n}`;
+  });
+  if (changes.length) s = s.replace(/^\n+/, "");
+  if (!s.includes("お客様")) return { text: s, changes };
   for (const r of RULES) {
     const g = new RegExp(r.re.source, "g");
     s = s.replace(g, (m: string, ...rest: unknown[]) => {

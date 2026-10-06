@@ -105,6 +105,10 @@ import { meetingAddressProblem } from "@/app/lib/meeting-address";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown, type HearingKnown } from "@/app/lib/hearing-form";
 import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
+// 2026-10-06 ⑰: {"message"} の JSON が読めない時に生の出力を文にしない（物件ピックアップの下書きに "} が残り名前の行が消えた・十数か所の同じ読み取りを1つに）
+import { readAixMessageJson } from "@/app/lib/aix-message-json";
+// 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
+import { staffCalledName } from "@/app/lib/aix-staff-called-name";
 import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 
@@ -271,6 +275,13 @@ function buildGreeting(
   return "お世話になっております！！";
 }
 
+/** LLM の {"message"} の出力 → 文（読める部品だけ・読めなければ空・JSON の形が無い文はそのまま）。拾った時は記録に残す */
+function messageFromAixJson(raw: string, action: string): string {
+  const r = readAixMessageJson(raw);
+  if (r.salvaged) console.warn(JSON.stringify({ tag: "aix:json-salvaged", action, failed: r.failed }));
+  return r.text;
+}
+
 function extractPreferredName(
   messages: Array<{ sender: string; text?: string | null }>,
   lineDisplayName: string
@@ -297,6 +308,10 @@ function extractPreferredName(
     if (name.length >= 3 && FRAGMENT_CHAR_RE.test(name.slice(1, -1))) continue;
     return name;
   }
+  // 2026-10-06 ⑰: 形の検査で落ちた呼び名（「Rさん」「あさん」「❤︎さん」）でも、スタッフが冒頭で2回以上呼んだ名前は使う
+  //   （名前の欄が「お客様」に倒れていた 60日 30回で、スタッフが名前で呼んだ 12回のうち 7回が同じ名前になる・scripts/audit-okyaku-name-slot.ts・aix-staff-called-name.ts）
+  const calledByStaff = staffCalledName(messages);
+  if (calledByStaff) return calledByStaff;
   // フォールバック: クライアント渡し名にも「よろしければサ」等の汚染が乗り得るためサニタイズ
   const fallbackName = lineDisplayName
     .replace(/^(もし)?(よろしければ|宜しければ|よければ|できれば|出来れば|ぜひ|是非)/, "")
@@ -1355,16 +1370,8 @@ ${SMORA_COMMON_RULES}
     actionLabel,
     adaptDynamic || undefined
   );
-  try {
-    const m = raw.match(/\{[\s\S]*\}/);
-    if (m) {
-      const d = JSON.parse(m[0]) as { message?: string };
-      return (d.message || raw).replace(/\\n/g, "\n");
-    }
-    return raw;
-  } catch {
-    return raw;
-  }
+  // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（読めなければ馴染ませる前のベースメッセージのまま）
+  return messageFromAixJson(raw, actionLabel) || baseMessage;
 }
 
 // ─── M2: 見積書OCR → 費用の確定事実ブロック生成 ──────────────────────────
@@ -3419,11 +3426,8 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           + (sendStarNote ? "\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n" + sendStarNote : "");
         console.log(JSON.stringify({ tag: "aix:property-send-match", conversationId, threads: { customer: threads.customer.length, staff: threads.staff.length, requirements: threads.requirements.length, deadline: (threads.deadline ?? []).length }, sendMode, skipViewingInvite, greeting: nightGreeting ? "night" : greetingPhrase ? "standard" : "none" }));
         const psmRaw = await callClaude(psmSystemSpec, psmUser, currentAction, psmDynamic);
-        let psmText = psmRaw;
-        try {
-          const m = psmRaw.match(/\{[\s\S]*\}/);
-          if (m) psmText = ((JSON.parse(m[0]) as { message?: string }).message || psmRaw).replace(/\\n/g, "\n");
-        } catch { /* JSON で無ければ本文そのもの */ }
+        // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（下書きの末尾に "} が残り名前の行が消えた 6通・aix-message-json.ts）
+        let psmText = messageFromAixJson(psmRaw, currentAction);
         const notices: string[] = [];
         // 入力に無い保証会社・審査の話・手本から写した事情の一文を落とす（慶次事例: 「独立系保証会社でご案内可能なお部屋を中心に」・事情が無いのに代理契約の交渉）
         const psmGrounding = [sendKeyword ?? "", conditionsInfo ?? "", threads.requirements.join("\n"), threads.customer.join("\n"), expandedCondGuidanceLines.join("\n")].join("\n");
@@ -3834,10 +3838,8 @@ ${SMORA_COMMON_RULES}
         + (ceDiffNote ? `\n\n${ceDiffNote}` : "")
         + (ceStarNote ? `\n\n【参考にすべき成功返信例】\n${ceStarNote}` : "");
       const ceRaw = await callClaude(ceStatic, ceUser, currentAction, ceDynamic || undefined);
-      try {
-        const mCe = ceRaw.match(/\{[\s\S]*\}/);
-        message_text = mCe ? String((JSON.parse(mCe[0]) as { message?: string }).message ?? ceRaw).replace(/\\n/g, "\n") : ceRaw;
-      } catch { message_text = ceRaw; }
+      // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+      message_text = messageFromAixJson(ceRaw, currentAction);
 
       // 出口の決定論: ①スモラで「仲介手数料0円」と書いたら直す ②入力した金額が抜けていたら足す
       //   ③入力に無い金額は〇〇円（送信前チェックで止まる）
@@ -3999,17 +4001,8 @@ ${SMORA_COMMON_RULES}
           convMatchVIDynamicSuffix || undefined
         );
 
-        try {
-          const mVI = rawVI.match(/\{[\s\S]*\}/);
-          if (mVI) {
-            const dVI = JSON.parse(mVI[0]) as { message?: string };
-            message_text = (dVI.message || rawVI).replace(/\\n/g, "\n");
-          } else {
-            message_text = rawVI;
-          }
-        } catch {
-          message_text = rawVI;
-        }
+        // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+        message_text = messageFromAixJson(rawVI, currentAction);
 
         // 2026-09-16 竹内（𝒮 さん事例）: 1日に時間を2つ出すのはお客様が日にちを指定した時だけ（指示だけでは落ちるので出口でも落とす）
         {
@@ -4534,17 +4527,8 @@ ${SMORA_COMMON_RULES}
           currentAction
         );
 
-        try {
-          const m = raw.match(/\{[\s\S]*\}/);
-          if (m) {
-            const d = JSON.parse(m[0]) as { message?: string };
-            message_text = (d.message || raw).replace(/\\n/g, "\n");
-          } else {
-            message_text = raw;
-          }
-        } catch {
-          message_text = raw;
-        }
+        // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+        message_text = messageFromAixJson(raw, currentAction);
 
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(applyReplyFinish(message_text));
@@ -5587,13 +5571,8 @@ ${SMORA_COMMON_RULES}
         };
 
         const pcrConvUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。` + (pcrDiffNote ? `\n\n${pcrDiffNote}` : "") + (pcrStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + pcrStarNote : "");
-        const parsePCR = (raw: string): string => {
-          try {
-            const mPCR = raw.match(/\{[\s\S]*\}/);
-            if (mPCR) return ((JSON.parse(mPCR[0]) as { message?: string }).message || raw).replace(/\\n/g, "\n");
-          } catch { /* JSON で無ければ本文そのもの */ }
-          return raw;
-        };
+        // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+        const parsePCR = (raw: string): string => messageFromAixJson(raw, currentAction);
         const rawPCR = await callClaude(
           pcrSystemSpec,
           pcrConvUserFinal,
@@ -6313,13 +6292,8 @@ ${SMORA_COMMON_RULES}
           currentAction,
           hearingCMDynamicSuffix || undefined
         );
-        try {
-          const mHCM = rawHCM.match(/\{[\s\S]*\}/);
-          if (mHCM) {
-            const dHCM = JSON.parse(mHCM[0]) as { message?: string };
-            message_text = (dHCM.message || rawHCM).replace(/\\n/g, "\n");
-          } else { message_text = rawHCM; }
-        } catch { message_text = rawHCM; }
+        // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+        message_text = messageFromAixJson(rawHCM, currentAction);
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text, hearingFormExtra);
       }
@@ -6641,13 +6615,8 @@ ${SMORA_COMMON_RULES}
           mpCMUserFinal,
           currentAction
         );
-        try {
-          const mMP = rawMP.match(/\{[\s\S]*\}/);
-          if (mMP) {
-            const dMP = JSON.parse(mMP[0]) as { message?: string };
-            message_text = (dMP.message || rawMP).replace(/\\n/g, "\n");
-          } else { message_text = rawMP; }
-        } catch { message_text = rawMP; }
+        // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+        message_text = messageFromAixJson(rawMP, currentAction);
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text);
       }
@@ -6988,13 +6957,8 @@ ${SMORA_COMMON_RULES}
           followupCMUserFinal,
           currentAction
         );
-        try {
-          const mFCM = rawFCM.match(/\{[\s\S]*\}/);
-          if (mFCM) {
-            const dFCM = JSON.parse(mFCM[0]) as { message?: string };
-            message_text = (dFCM.message || rawFCM).replace(/\\n/g, "\n");
-          } else { message_text = rawFCM; }
-        } catch { message_text = rawFCM; }
+        // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+        message_text = messageFromAixJson(rawFCM, currentAction);
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text);
       } else {
@@ -7192,11 +7156,8 @@ ${COST_BREAKDOWN_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         + (cbKnowledge ? `\n\n${cbKnowledge}` : "")
         + (cbStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${cbStarNote}` : "");
       const cbRaw = await callClaude(cbSystemSpec, cbUser, currentAction);
-      let cbMessage = cbRaw;
-      try {
-        const m = cbRaw.match(/\{[\s\S]*\}/);
-        if (m) cbMessage = ((JSON.parse(m[0]) as { message?: string }).message || cbRaw).replace(/\\n/g, "\n");
-      } catch { /* JSON で無ければ本文そのもの */ }
+      // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+      let cbMessage = messageFromAixJson(cbRaw, currentAction);
       const cbChecked = checkAmountsAgainstBreakdown(cbMessage, cbFacts.allowedAmounts);
       if (cbChecked.unmatched.length > 0) {
         console.warn("[aix/action] cost_breakdown: 御見積書に無い金額を伏せ字:", cbChecked.unmatched);
@@ -7268,11 +7229,8 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         + (pfKnowledge ? `\n\n${pfKnowledge}` : "")
         + (pfStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${pfStarNote}` : "");
       const pfRaw = await callClaude(pfSystemSpec, pfUser, currentAction);
-      let pfMessage = pfRaw;
-      try {
-        const m = pfRaw.match(/\{[\s\S]*\}/);
-        if (m) pfMessage = ((JSON.parse(m[0]) as { message?: string }).message || pfRaw).replace(/\\n/g, "\n");
-      } catch { /* JSON で無ければ本文そのもの */ }
+      // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+      let pfMessage = messageFromAixJson(pfRaw, currentAction);
       // 数字の照合: メモ（＋会話に出ていた物件・号室）に無い金額・日付・時刻・号室は〇〇（送信前チェックで止まる）
       const pfChecked = maskNumbersNotInNotes(pfMessage, `${pfNotes}\n${recentHistory}`);
       if (pfChecked.unmatched.length > 0) console.warn("[aix/action] phone_followup: メモに無い数字を伏せ字:", pfChecked.unmatched);
@@ -7370,10 +7328,8 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         + `${recentHistory}\n\n上記の会話を読み取り、${name}に物件ごとの保証会社の一覧と審査の通りやすさを案内する返信を生成してください。お客様の直近の質問・不安があれば最初の1文で答えてください。`
         + (giKnowledge ? `\n\n${giKnowledge}` : "")
         + (giStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${giStarNote}` : "");
-      const giParse = (raw: string): string => {
-        try { const m = raw.match(/\{[\s\S]*\}/); if (m) return ((JSON.parse(m[0]) as { message?: string }).message || raw).replace(/\\n/g, "\n"); } catch { /* JSON で無ければ本文そのもの */ }
-        return raw;
-      };
+      // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
+      const giParse = (raw: string): string => messageFromAixJson(raw, currentAction);
       let giMessage = giParse(await callClaude(giSystemSpec(giDynamicSuffix), giUser, currentAction));
       let giCheck = checkGuarantorFacts(giMessage, giProps, giCustoms);
       if (!giCheck.ok) {
