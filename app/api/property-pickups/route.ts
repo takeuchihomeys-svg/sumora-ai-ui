@@ -2,6 +2,7 @@
 // 「売上サポ」のピックアップ: お客様ごとに、ブレインの判断（batch）とスタッフの発言（送った・見送り・メモ）を時系列で返す。
 // 画面は LINE の一覧と同じ形（お客様の行 → タップで会話風。左＝ブレイン、右＝スタッフ）。
 // 2026-09-24 竹内「紐づいているお客さんで LINE のチャット一覧のような UI。判断したのが会話風に送られる形。DeepSeek 側は左・スタッフは右」
+import { chooseDetailRowIds, type LightPickupRow } from "@/app/lib/pickup-detail-window";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { toPickupHandoffItem } from "@/app/lib/property-pickups";
@@ -81,8 +82,11 @@ export async function GET(req: NextRequest) {
     const pcid = req.nextUrl.searchParams.get("pcid");
     const conv = req.nextUrl.searchParams.get("conv");
     const nBatches = Math.min(30, Math.max(1, Number(req.nextUrl.searchParams.get("batches") ?? "3")));
+    // 2026-10-06 ⑫ 竹内「詳細で開くときは24時間以内に限定して最初読み取る」: hours があれば直近 hours 時間の回だけ重い列を読む（pickup-detail-window）
+    const hoursRaw = Number(req.nextUrl.searchParams.get("hours") ?? "");
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(24 * 30, hoursRaw) : null;
     if (!pcid && !conv) return NextResponse.json({ ok: false, error: "pcid か conv が要ります" }, { status: 400 });
-    return NextResponse.json(await buildDetail(pcid, conv, nBatches));
+    return NextResponse.json(await buildDetail(pcid, conv, nBatches, hours));
   }
 
   const [{ data, error }, notesRes] = await Promise.all([
@@ -149,14 +153,28 @@ export async function GET(req: NextRequest) {
 //   ピックアップのあるお客様に加えて、直近にお客様へ物件を送った（sent_properties・delivery=customer）お客様も並べる。
 //   並びは LINE の一覧と同じ＝会話の updated_at 降順
 type SentLite = { conversation_id: string | null; property_customer_id: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string | null; property_name?: string | null };
+/** 2026-10-06 ⑫ PostgREST の1回の上限（max_rows 1000）を越えて読む（最大 max 行）。最初の失敗はそのまま返す */
+async function readAllPages<T>(mk: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>, max = 6000): Promise<{ data: T[]; error: { message: string } | null }> {
+  const out: T[] = [];
+  for (let from = 0; from < max; from += 1000) {
+    const { data, error } = await mk(from, Math.min(from + 999, max - 1));
+    if (error) return { data: out, error };
+    if (!data?.length) break;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return { data: out, error: null };
+}
+
 async function buildList(since: string) {
   const nowMs = Date.now();
   const [pk, sp, roundOf, na] = await Promise.all([
     // 2026-09-27 一覧の 👑 も詳細と同じ1本の並び（判定の点 → 画像の点）: 画像で分析の点だけ JSON から引く（分析の全文は返さない）・号室も
-    supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, room_no, recommended, status, sent_at, score, verdict, reason_codes, search_override, ia_match:image_analysis->match, ia_raw:image_analysis->match_raw, ia_ok:image_analysis->ok_count, ia_review:image_analysis->review->>status, ia_wants:image_analysis->wants, ia_checks:image_analysis->checks")
-      .gte("created_at", since).order("created_at", { ascending: false }).limit(3000),
-    supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at, property_name")
-      .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).limit(3000),
+    // 2026-10-06 ⑫: 旧は limit(3000) でも DB の max_rows で 1000行（30日 2,528行のうち新しい側だけ）しか来ていなかった → 1000行ずつ読む（readAllPages）
+    readAllPages((a, b) => supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, room_no, recommended, status, sent_at, score, verdict, reason_codes, search_override, ia_match:image_analysis->match, ia_raw:image_analysis->match_raw, ia_ok:image_analysis->ok_count, ia_review:image_analysis->review->>status, ia_wants:image_analysis->wants, ia_checks:image_analysis->checks")
+      .gte("created_at", since).order("created_at", { ascending: false }).order("id", { ascending: false }).range(a, b)),
+    readAllPages((a, b) => supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at, property_name")
+      .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).order("id", { ascending: false }).range(a, b)),
     readRoundIds({ since }),
     readNewArrivalCandidates(nowMs),
   ]);
@@ -337,7 +355,7 @@ async function readNewArrivalCandidates(nowMs: number): Promise<{ rows: NewArriv
 const CUSTOMER_CONDITION_COLUMNS = "preferences, ng_points, other_requests, additional_conditions, desired_area, area, floor_plan, layout, rent_min, rent_max, max_rent, walk_minutes, building_age, move_in_time, initial_cost_limit, floor_area_min, floor_area_max, pet, commute_station, commute_minutes, exclusion_areas, structure_types, created_at";
 
 // ── 詳細（開いたお客様1人分・直近 N 回分＋送った履歴） ─────────────────────────────
-async function buildDetail(pcid: string | null, conv: string | null, nBatches: number) {
+async function buildDetail(pcid: string | null, conv: string | null, nBatches: number, hours: number | null = null) {
   // 2026-09-25 竹内「10分たてば自動的に送られた物件まとめて」: 開いた時に、最後に届いた行から10分を過ぎたまとめ前の回があればその場でまとめる
   //   （Cron・拡張の alarm と同じ判定・同じまとめ ID＝冪等）。まとめ ID を付けるだけ先に待ち（数百ms）、読み取り・順位・👑 は後ろ
   if (pcid) {
@@ -349,9 +367,15 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   let q = supabase.from("property_pickups")
     .select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, site, rank, property_name, room_no, summary_text, pdf_url, pdf_blob_url, pdf_has_text, verdict, score, reasons_ja, reason_codes, ad_yen, profit_yen, recommended, status, sent_at, page_image_url, agent_image_url, trim_image_url, image_lines, image_facts, image_analysis, equipment, terms, location, search_override, search_mode, expired_at")
     .order("created_at", { ascending: false }).limit(300);
-  q = pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
-  let sq = supabase.from("sent_properties").select("id, property_name, room_no, channel, delivery, source, sent_at, image_url, pickup_id").order("sent_at", { ascending: false }).limit(40);
-  sq = conv ? sq.eq("conversation_id", conv) : sq.eq("property_customer_id", pcid as string);
+  // 2026-10-06 ⑫ 直近 hours 時間の回だけ重い列を読む: 先に軽い列で出す回を決める（未確認の数・もっと前の回があるかは全部の行で）
+  let windowPick: { ids: number[]; hasMore: boolean; pending: number } | null = null;
+  if (hours) {
+    let lq = supabase.from("property_pickups").select("id, created_at, batch_id, status, site").order("created_at", { ascending: false }).limit(300);
+    lq = pcid ? lq.eq("property_customer_id", pcid) : lq.eq("conversation_id", conv as string);
+    const [{ data: light }, roundOfLight] = await Promise.all([lq, readRoundIds(pcid ? { pcid } : { conv: conv as string })]);
+    windowPick = chooseDetailRowIds((light ?? []) as LightPickupRow[], roundOfLight, { hours, maxRounds: nBatches });
+  }
+  q = windowPick ? q.in("id", windowPick.ids.length ? windowPick.ids : [-1]) : pcid ? q.eq("property_customer_id", pcid) : q.eq("conversation_id", conv as string);
   // 2026-09-24 竹内「画像で分析が推奨される条件のお客さん（WIC 等）は画像読み取りを推奨」: 条件欄だけの軽い判定（会話・訴求は引かない・DeepSeek も呼ばない）
   const pcRes = pcid
     ? supabase.from("property_customers").select(CUSTOMER_CONDITION_COLUMNS).eq("id", pcid).maybeSingle()
@@ -367,10 +391,9 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
         .gte("created_at", new Date(Date.now() - 24 * 3600_000).toISOString()).order("created_at", { ascending: false }).limit(10))
         .then((r) => (r.error ? [] : (r.data ?? []) as ChainCommandLite[]), () => [])
     : Promise.resolve([]);
-  const [pk, notesRes, sentRes, condRes, sum, roundOf, chainCmds] = await Promise.all([
+  const [pk, notesRes, condRes, sum, roundOf, chainCmds] = await Promise.all([
     q,
     pcid ? supabase.from("property_pickup_notes").select("id, created_at, property_customer_id, batch_id, text, author").eq("property_customer_id", pcid).order("created_at", { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
-    sq,
     pcRes,
     sumRes,
     roundRes,
@@ -435,7 +458,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   //   照合用に建物名と号室だけを会話 or お客様で広く読む（拡張の /api/automation/sent-rooms と同じ広さ・表示用の sent_history は40行のまま）
   const roomHistQ: Promise<SentHistLite[] | null> = (() => {
     if (!convId && !custId) return Promise.resolve(null);
-    let q = supabase.from("sent_properties").select("property_name, room_no, delivery, source, channel, sent_at");
+    // 2026-10-06 ⑫: 表示用の送った履歴（直近40件）もこの1回で読む（id・画像・ピックアップの id も・旧は40件を別に読んでいた）
+    let q = supabase.from("sent_properties").select("id, property_name, room_no, delivery, source, channel, sent_at, image_url, pickup_id");
     q = convId && custId ? q.or(`conversation_id.eq.${convId},property_customer_id.eq.${custId}`) : convId ? q.eq("conversation_id", convId) : q.eq("property_customer_id", custId as string);
     return Promise.resolve(q.order("sent_at", { ascending: false }).limit(1000))
       .then((r) => (r.error ? null : ((r.data ?? []) as SentHistLite[])), () => null);
@@ -446,7 +470,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     roomHistQ,
   ]);
   // 👑 に送付済みの部屋（別の回で届けた同じ部屋・完全一致）を選ばない（既定のチェックと同じ線・sent-room-match）
-  const sentBeforeSet = sentBeforeIds(rows.map((r) => ({ id: r.id, status: r.status, property_name: r.property_name, room_no: r.room_no, room_text: listingOf.get(r.id)?.room_text ?? null })), roomHist ?? (sentRes.data as SentHistLite[] | null) ?? []);
+  const sentBeforeSet = sentBeforeIds(rows.map((r) => ({ id: r.id, status: r.status, property_name: r.property_name, room_no: r.room_no, room_text: listingOf.get(r.id)?.room_text ?? null })), roomHist ?? []);
   const notSentBefore = <T extends { id: number }>(xs: T[]): T[] => (sentBeforeSet.size ? xs.filter((x) => !sentBeforeSet.has(x.id)) : xs);
   const c = cv as { customer_name: string | null; profile_image_url: string | null; updated_at: string | null; account: string | null; status: string | null; last_sender: string | null } | null;
   // 画像で確かめる希望: 分析済みの回に保存した希望（会話・訴求込み）があればそれ、無ければ条件欄だけで軽く判定（pickup-best.customerImageNeed）
@@ -491,13 +515,14 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       customer_name: first?.customer_name ?? c?.customer_name ?? null,
       batches,
       notes: (notesRes.data ?? []) as Note[],
-      pending: rows.filter((r) => r.status === "pending").length,
+      pending: windowPick ? windowPick.pending : rows.filter((r) => r.status === "pending").length,
       last_at: rows[0]?.created_at ?? "",
       line: c ? { profile_image_url: c.profile_image_url, updated_at: c.updated_at, account: c.account, status: c.status, last_sender: c.last_sender } : null,
-      sent_history: (sentRes.data ?? []) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
+      // 表示用の送った履歴（直近40件）＝照合用の読み（会話 or お客様）の頭40行
+      sent_history: ((roomHist ?? []) as unknown[]).slice(0, 40) as Array<{ id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null }>,
       // 2026-09-30 送付済みの部屋の照合用（建物名・号室・届け先だけ・最大1000行）。画面の確かめ・既定のチェックは sent_history（40行）より先にこちらを使う
       ...(roomHist ? { sent_room_history: roomHist } : {}),
-      has_more_batches: rounds.length > nBatches,
+      has_more_batches: windowPick ? windowPick.hasMore : rounds.length > nBatches,
       // 2026-09-28 一番最初に物件をお送りした時刻（null＝まだ・読めない時は項目なし＝画面は今まで通りの選び方）
       ...(firstSent !== undefined ? { first_proposal_sent_at: firstSent } : {}),
       // 2026-09-30 お客様へ届けた一番最近のご提案の送付（AD1未満の穴埋め「しばらく新着を送れていない」の材料・読めない時は項目なし＝「他に無い時だけ」）

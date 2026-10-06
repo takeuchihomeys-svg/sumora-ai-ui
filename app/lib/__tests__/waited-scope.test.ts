@@ -8,7 +8,7 @@
 //   「お待たせ」以外の文字の削除 0・残り 0 を確かめた（旧 stripWaited は名前の呼びかけまで消していた＝920/1424）。
 //
 // 実行: npx tsx app/lib/__tests__/waited-scope.test.ts（全 PASS で exit 0）
-import { isWaitedAllowed, WAITED_ALLOWED_ACTIONS, replaceWaitedOpening, neutralizeWaitedInExample, buildWaitedOpeningChoice, buildWaitedNote, waitedSentRate } from "../waited-scope";
+import { isWaitedAllowed, WAITED_ALLOWED_ACTIONS, replaceWaitedOpening, neutralizeWaitedInExample, buildWaitedOpeningChoice, buildWaitedNote, waitedSentRate, waitedGapAllowed, isWaitedAllowedForAix, lastExchangeAt, WAITED_GAP_MS } from "../waited-scope";
 import { WAITED_RE } from "../greeting";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
@@ -117,5 +117,12 @@ describe("入口 neutralizeWaitedInExample（手本に見せない）", () => {
   });
 });
 
+// 2026-10-06 竹内さん決定「お待たせ致しました は前の文から3時間以上経過したとき。AIXからの文にでるだけで通常の返信にはださない」
+it("前の発言から3時間ちょうど以上 → AIX で残す", () => { expect(waitedGapAllowed("2026-10-06T00:00:00Z", "2026-10-06T03:00:00Z")).toBe(true); expect(WAITED_GAP_MS).toBe(3 * 3600_000); });
+it("2時間59分 → 消す", () => expect(waitedGapAllowed("2026-10-06T00:00:00Z", "2026-10-06T02:59:00Z")).toBe(false));
+it("前の発言の時刻が読めない → 消す（今まで通り）", () => { expect(waitedGapAllowed(null, "2026-10-06T03:00:00Z")).toBe(false); expect(isWaitedAllowedForAix("property_send", null, "2026-10-06T03:00:00Z")).toBe(false); });
+it("AIX: 場面は問わず3時間以上で残す・未満は消す", () => { expect(isWaitedAllowedForAix("property_send", "2026-10-06T00:00:00Z", "2026-10-06T04:00:00Z")).toBe(true); expect(isWaitedAllowedForAix("property_check_result", "2026-10-06T02:00:00Z", "2026-10-06T04:00:00Z")).toBe(false); });
+it("一番新しい発言の時刻（rawCreatedAt・createdAt・created_at）", () => expect(lastExchangeAt([{ rawCreatedAt: "2026-10-06T01:00:00Z" }, { createdAt: "2026-10-06T02:00:00Z" }, { created_at: "2026-10-05T00:00:00Z" }])).toBe("2026-10-06T02:00:00Z"));
+it("通常の返信の許す一覧は空のまま（返信では今まで通り禁止）", () => expect(WAITED_ALLOWED_ACTIONS.size).toBe(0));
 console.log(`\n${passed} passed, ${failed} failed`);
-if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }
+if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

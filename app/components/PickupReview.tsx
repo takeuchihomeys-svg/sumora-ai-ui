@@ -3,6 +3,7 @@
 //   左＝ブレイン（拡張が送った1回分の物件と判断・🌟オススメ）／右＝スタッフ（送った・見送り・メモ）
 // 2026-09-24 竹内「紐づいているお客さんで LINE のチャット一覧のような UI。判断したのが LINE の会話風に送られる形。
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
+import { DETAIL_FIRST_HOURS } from "@/app/lib/pickup-detail-window";
 import { loadPickupList, cachedPickupList, PICKUP_LIST_DAYS, PICKUP_LIST_FIRST_DAYS } from "@/app/lib/pickup-list-load";
 import { cacheGet } from "@/app/lib/page-cache";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -434,6 +435,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   const [shareReady, setShareReady] = useState<File[] | null>(null);
   const openRef = useRef<{ key: string; pcid: string | null; conv: string | null } | null>(null);
   const nBatchesRef = useRef(3);
+  /** 2026-10-06 ⑫ 詳細を直近何時間の回から読むか（開いた時 24・もっと前を見たら null） */
+  const detailHoursRef = useRef<number | null>(DETAIL_FIRST_HOURS);
   const historyPushedRef = useRef(false);
 
   const loadList = useCallback(async (quiet = false) => {
@@ -463,7 +466,10 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     setDetailLoading(true);
     try {
       const qs = target.pcid ? `pcid=${encodeURIComponent(target.pcid)}` : `conv=${encodeURIComponent(target.conv ?? "")}`;
-      const res = await fetch(`/api/property-pickups?view=detail&${qs}&batches=${n}`, { cache: "no-store" });
+      // 2026-10-06 ⑫ 竹内「詳細で開くときは24時間以内に限定して最初読み取る」: 開いた時は直近24時間の回だけ（無ければ一番新しい1回）。
+      //   「▲ もっと前のピックアップを見る」を押したら今まで通り回の数で読む（detailHoursRef を外す）
+      const hoursQ = detailHoursRef.current ? `&hours=${detailHoursRef.current}` : "";
+      const res = await fetch(`/api/property-pickups?view=detail&${qs}&batches=${n}${hoursQ}`, { cache: "no-store" });
       const json = await res.json() as { ok: boolean; customer?: Customer; error?: string };
       if (!json.ok || !json.customer) throw new Error(json.error || "取得に失敗");
       if (openRef.current?.key !== target.key) return null;   // 読み込み中に別のお客様を開いた
@@ -555,6 +561,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     openRef.current = target;
     stickBottomRef.current = true;   // 開いたら一番下（最新）から（LINE のトーク画面と同じ）
     nBatchesRef.current = 3;
+    detailHoursRef.current = DETAIL_FIRST_HOURS;
     setNBatches(3);
     setOpenKey(c.key);
     setDetail(null);
@@ -713,6 +720,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   const loadMoreBatches = () => {
     if (!openRef.current) return;
     const n = nBatchesRef.current + 5;
+    detailHoursRef.current = null;
     nBatchesRef.current = n;
     setNBatches(n);
     void loadDetail(openRef.current, n, false);

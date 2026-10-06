@@ -330,3 +330,38 @@ export function wasWaitedAllowedUntil0926(action: string | null | undefined): bo
   for (const k of WAITED_ALLOWED_UNTIL_0926) if (a.startsWith(`${k}_`)) return true;
   return false;
 }
+
+// ─────────────────────────────────────────────────────────────
+// ■ 2026-10-06 竹内さんの決定（9/27 の「AIX でも使わない」を上書き）:
+//   「お待たせ致しました は前の文から3時間以上経過したとき。AIXからの文にでるだけで通常の返信にはださない」
+//   → AIX の文だけ、会話の前の発言（この送信の直前のやり取り）から3時間以上たっていれば残す（消さない）。3時間未満は今まで通り差し替える。
+//     通常の返信（generate-reply・greeting.enforceOpening・final-check の禁止語）は今まで通り禁止。
+//   判定は発言の時刻だけで決める（決定論）。前の発言の時刻が分からない時は消す側（今まで通り）
+// ─────────────────────────────────────────────────────────────
+export const WAITED_GAP_MS = 3 * 3600_000;
+
+/** 前の発言の時刻から送る時刻まで3時間以上か（どちらかが読めなければ false＝消す側） */
+export function waitedGapAllowed(prevAt: string | number | null | undefined, sendAt: string | number | Date = Date.now()): boolean {
+  const p = typeof prevAt === "number" ? prevAt : Date.parse(String(prevAt ?? ""));
+  const s = sendAt instanceof Date ? sendAt.getTime() : typeof sendAt === "number" ? sendAt : Date.parse(sendAt);
+  if (!Number.isFinite(p) || !Number.isFinite(s)) return false;
+  return s - p >= WAITED_GAP_MS;
+}
+
+/**
+ * 会話の一番新しい発言（お客様でもこちらでも・画像だけの行も時刻として数える）の時刻。AIX の画面から来る recent_messages（古い順）に使う
+ *   createdAt / created_at / rawCreatedAt のどれかを読む
+ */
+export function lastExchangeAt(messages: ReadonlyArray<{ createdAt?: string | null; created_at?: string | null; rawCreatedAt?: string | null }> | null | undefined): string | null {
+  let best: string | null = null;
+  for (const m of messages ?? []) {
+    const t = m.createdAt ?? m.created_at ?? m.rawCreatedAt ?? null;
+    if (t && Number.isFinite(Date.parse(t)) && (!best || Date.parse(t) > Date.parse(best))) best = t;
+  }
+  return best;
+}
+
+/** AIX の出口で「お待たせ致しました」を残してよいか（場面の許す一覧 OR 前の発言から3時間以上） */
+export function isWaitedAllowedForAix(action: string | null | undefined, prevAt: string | null | undefined, sendAt: string | number | Date = Date.now()): boolean {
+  return isWaitedAllowed(action) || waitedGapAllowed(prevAt, sendAt);
+}
