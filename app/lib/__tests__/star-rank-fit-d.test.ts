@@ -100,7 +100,8 @@ t("家賃なし・割引0 → null", adHintFromDiscount(40000, null) === null &&
   t("候補に renovated・initialMonths", c.renovated === true && c.initialMonths === 0 && c.buildingAge === 29, c);
 }
 
-t("決まりの版は 06d", STAR_FIT_RULE_TAG === "star-fit@2026-10-06d");
+// 2026-10-06e 保留（初期費用だけ・AD2以上）を候補に入れて版を上げた（star-soft-hold-building-ad.test.ts）
+t("決まりの版は 06d 以降", STAR_FIT_RULE_TAG >= "star-fit@2026-10-06d");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -13,6 +13,13 @@
 
 export type AssumedAdAgent = { name: string; adMonths: number };
 
+/**
+ * 2026-10-06 竹内さん「だいじょうぶ」: 元付の決まりの次に「同じ建物の別の部屋の AD」でみなす（building-ad-assume.ts）。
+ *   みなしの名前（facts.adAssumedBy・説明文の行「AD 1.5ヶ月（同じ建物の別の部屋・記載なしのため150%とみなす）」）。
+ *   property-brain はこの名前なら札 AD_ASSUMED_BUILDING（アズ・スタットは AD_ASSUMED_AGENT）。import の輪を作らないようにここに置く
+ */
+export const BUILDING_AD_NAME = "同じ建物の別の部屋";
+
 /** 株式会社アズ・スタット（中黒・空白・半角カナの揺れ・資料の URL） */
 export const AZ_STAT_RE = /ア[ \t　]*ズ[ \t　]*[・･]?[ \t　]*ス[ \t　]*タ[ \t　]*ッ[ \t　]*ト|ｱ[ \t　]*ｽﾞ[ \t　]*[・･]?[ \t　]*ｽ[ \t　]*ﾀ[ \t　]*ｯ[ \t　]*ﾄ|az-stat\.com/i;
 

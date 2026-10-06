@@ -10,7 +10,10 @@ import { extractPdfText } from "@/app/lib/pdf-text";
 import { renderPdfPageToPng } from "@/app/lib/pdf-render";
 import { buildPickupRows, parseAdFromPages, agentPagesText, CUSTOMER_PAGE, AGENT_PAGE, type PickupItemInput } from "@/app/lib/property-pickups";
 // 2026-09-27 竹内「株式会社アズ・スタットは AD 記載なくても基本的に 200% あるから 200% とみなす」（純関数）
-import { assumedAdAgentOf } from "@/app/lib/agent-ad-assume";
+import { assumedAdAgentOf, BUILDING_AD_NAME } from "@/app/lib/agent-ad-assume";
+// 2026-10-06 竹内「だいじょうぶ」: 元付の決まりの次に、同じ建物の別の部屋の AD でみなす（純関数）
+import { sameBuildingAdOf, buildingAdKey, agentLicenseOf, adMonthsOfFacts, buildingAdSourceOfPickupRow, BUILDING_AD_RULE, type BuildingAdSource } from "@/app/lib/building-ad-assume";
+import { parseSummaryHead } from "@/app/lib/sent-property-filter";
 import { judgeProperty, parsePropertyFacts, applyImageFacts, applyRoomJoToJudgment, fillFactsFromTerms, isSentRoom, ldkJoFromText, type CustomerLike, type CustomerProfile, type PropertyFacts, type SentRowLike, type PatternRowLike, type Judgment } from "@/app/lib/property-brain";
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
@@ -137,6 +140,55 @@ async function recentDupIndexes(propertyCustomerId: string | null | undefined, s
     if (error) return new Set();
     return recentDuplicateIndexes(summaries, pdfUrls, (data ?? []) as RecentPickupRow[], Date.now());
   } catch { return new Set(); }
+}
+
+/**
+ * 2026-10-06 竹内さん「だいじょうぶ」: 資料に AD が無い部屋を、同じ建物の別の部屋の AD でみなす（facts を書き換える・判定の前に呼ぶ）。
+ *   元: この回の残した部屋・省略した部屋（同じ建物の間引きで落とした部屋＝文字層だけ取ってある）・30日以内の売上サポの行（同じ建物名）。
+ *   決まりは building-ad-assume.sameBuildingAdOf（同じ元付・一番低い値・AD1未満は補わない・みなしの数珠つなぎをしない）。読めない時は何もしない
+ */
+async function fillBuildingAd(
+  items: ReadonlyArray<{ summary: string; pdfText: string | null }>,
+  keepIdx: ReadonlyArray<number>,
+  factsOf: Map<number, PropertyFacts>,
+  dropped: ReadonlyArray<{ index: number; summary: string; text: string | null; pages: string[] | null }>,
+  batchId: string,
+): Promise<void> {
+  const need = keepIdx.map((i, k) => ({ i, k })).filter(({ i }) => { const f = factsOf.get(i); return !!f && f.adMonths == null && f.adYen == null && !f.adAssumedBy; });
+  if (!need.length) return;
+  const nowIso = new Date().toISOString();
+  const nameOf = (summary: string, f?: PropertyFacts | null) => parseSummaryHead(summary)?.propertyName || f?.name || null;
+  const roomOf = (summary: string, f?: PropertyFacts | null) => parseSummaryHead(summary)?.roomNo || f?.roomNo || null;
+  const sources: BuildingAdSource[] = [];
+  // この回の残した部屋（資料の値・アズ・スタットのみなしは元にしない）
+  keepIdx.forEach((i, k) => {
+    const f = factsOf.get(i);
+    if (!f || f.adAssumedBy) return;
+    sources.push({ name: nameOf(items[k].summary, f), room: roomOf(items[k].summary, f), adMonths: adMonthsOfFacts(f), agent: agentLicenseOf(items[k].pdfText), at: nowIso });
+  });
+  // 省略した部屋（同じ建物の間引きで落とした部屋）
+  for (const d of dropped) {
+    const f = parsePropertyFacts(d.summary);
+    if (f.adMonths == null && f.adYen == null && d.text) { const ad = parseAdFromPages(d.pages, d.text); f.adMonths = ad.adMonths; f.adYen = ad.adYen; }
+    sources.push({ name: nameOf(d.summary, f), room: roomOf(d.summary, f), adMonths: adMonthsOfFacts(f), agent: agentLicenseOf(d.text), at: nowIso });
+  }
+  // 30日以内の売上サポの行（同じ建物名＝記録の名前の作り方が同じなので名前で引く）
+  const names = [...new Set(need.map(({ i, k }) => nameOf(items[k].summary, factsOf.get(i))).filter((n): n is string => !!n && !!buildingAdKey(n)))];
+  if (names.length) {
+    const { data, error } = await supabase.from("property_pickups").select("property_name, room_no, reason_codes, ad_yen, summary_text, pdf_text, created_at")
+      .in("property_name", names).gte("created_at", new Date(Date.now() - BUILDING_AD_RULE.maxDays * 86400_000).toISOString()).order("created_at", { ascending: false }).limit(300);
+    if (!error) for (const r of (data ?? []) as Array<Parameters<typeof buildingAdSourceOfPickupRow>[0]>) sources.push(buildingAdSourceOfPickupRow(r));
+  }
+  const filled: Array<{ rank: number; name: string | null; ad: number; from: string }> = [];
+  for (const { i, k } of need) {
+    const f = factsOf.get(i)!;
+    const a = sameBuildingAdOf({ name: nameOf(items[k].summary, f), room: roomOf(items[k].summary, f), agent: agentLicenseOf(items[k].pdfText), at: nowIso }, sources);
+    if (!a) continue;
+    f.adMonths = a.adMonths;
+    f.adAssumedBy = BUILDING_AD_NAME;
+    filled.push({ rank: i + 1, name: f.name ?? null, ad: a.adMonths, from: a.from.map((x) => `${x.room ?? "?"}:${x.adMonths}`).join("・") });
+  }
+  if (filled.length) console.log(JSON.stringify({ tag: "property-pickups:building-ad", batch: batchId.slice(0, 40), need: need.length, filled }));
 }
 
 export async function recordPickupBatch(input: RecordPickupInput): Promise<{ rows: number; withText: number; withBlob: number; withImage: number; imageRead: number; detailFromText: number; detailReused: number; deduped: number; noTextDraw: number; autoAnalyzed: number; autoLevel: string | null; summaryCalled: boolean; groupNotice: "deferred" | null; error: string | null }> {
@@ -267,6 +319,12 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       droppedPages.set(d.index, t.pageTexts ?? null);
     }));
 
+    // 2026-10-06 竹内さん「だいじょうぶ」: 資料に AD が無い部屋（元付の決まりでもみなせない）は、同じ建物の別の部屋の AD でみなす
+    //   （building-ad-assume.ts・この回の部屋／省略した部屋／30日以内の売上サポの行・同じ元付・一番低い値・AD1未満は補わない）。
+    //   判定の札 AD_ASSUMED_BUILDING（0点の印）で分かる。送付記録（sent_properties.ad_months）には資料の値でないので書かない（下）
+    try { await fillBuildingAd(items, keepIdx, factsOf, dd.dropped.map((d) => ({ index: d.index, summary: input.summaries[d.index], text: droppedText.get(d.index) ?? null, pages: droppedPages.get(d.index) ?? null })), input.batchId); }
+    catch (e) { console.warn("[property-pickups] 同じ建物の AD の補いをスキップ:", e instanceof Error ? e.message : String(e)); }
+
     // 2026-09-24 竹内「宅配BOX付きなども条件なのに入れていない」「設備欄を見る」「202号室なら2階」:
     //   資料の文字層の設備欄を決定論で読み（DeepSeek 0円）、同じ建物の別の部屋（落とした部屋も）で建物単位の設備を補い、
     //   お客様の条件欄の希望と照らす。結果は property_pickups.equipment と判定（EQUIP_*）に入れる
@@ -327,6 +385,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     await Promise.allSettled([...items, ...droppedAd].map(async (it) => {
       const j = it.judgment;
       if (!it.pdfUrl || !j || (j.facts.adMonths == null && j.facts.adYen == null)) return;
+      // 2026-10-06 同じ建物の別の部屋でみなした AD は資料の値ではないので送付記録に書かない（見積書の割引と結ぶ材料は資料の値だけ）
+      if (j.facts.adAssumedBy === BUILDING_AD_NAME) return;
       await supabase.from("sent_properties")
         .update({ ad_months: j.facts.adMonths ?? null, ad_yen: j.adYen ?? j.facts.adYen ?? null })
         .eq("property_url", it.pdfUrl).is("ad_months", null);

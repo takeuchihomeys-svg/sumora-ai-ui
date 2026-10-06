@@ -41,7 +41,7 @@ export type StarCandidate = {
   renovated?: boolean | null;
   /** 2026-10-06d 敷金＋礼金（ヶ月・資料の表）。同点の分け方（初期費用面）にだけ使う */
   initialMonths?: number | null;
-  /** 保留・送らない物（審査中・NG 等）は呼ぶ側で外す。ここでは見ない */
+  /** 保留・送らない物（審査中・NG 等）は呼ぶ側で外す。ここでは見ない（2026-10-06e 保留の理由が初期費用だけで AD が高い行は呼ぶ側が候補に残す・star-rank-pickup.starOpenRow） */
 };
 
 export type StarRankRule = {
@@ -253,4 +253,5 @@ export function starRankMode(raw: unknown): StarRankMode {
 // 2026-10-06b 状況の足し点（STAR_SITUATION_RULE・敷礼0／2階以上）を入れた
 // 2026-10-06c 1LDK以上の希望なら束の中で一番新しい物に +15（newBuildHousehold）
 // 2026-10-06d 同点を AD → 初期費用面で分ける（tieBreak）・1LDK以上の「一番新しい」でリノベ済みを築0とみなす（renoAge）
-export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06d";
+// 2026-10-06e 保留でも理由が初期費用だけ（INITIAL_COST_NOT_ZERO）で AD が線（star-rank-pickup.SOFT_HOLD_AD_LINE）以上の行を候補に（pickup-best.pickCustomerBest）
+export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06e";

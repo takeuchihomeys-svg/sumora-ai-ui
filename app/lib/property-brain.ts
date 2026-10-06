@@ -44,7 +44,7 @@ export function requirementStrengthsOfCustomer(c: { requirement_strength?: unkno
   const fromFields = readRequirementStrengths([c.move_in_time, c.preferences, c.other_requests].filter(Boolean).map((text) => ({ text })));
   return { ...fromFields, ...normalizeRequirementStrengths(c.requirement_strength) };
 }
-import { assumedAdAgentInLine, assumedAdAgentOf } from "./agent-ad-assume";
+import { assumedAdAgentInLine, assumedAdAgentOf, BUILDING_AD_NAME } from "./agent-ad-assume";
 import { adUnder1Policy, adUnder1CodeFor, isAdUnder1Code, AD_UNDER1_LEGACY_CODE, type AdUnder1Input } from "./ad-under1-policy";
 import { roomJoWantOf, roomJoFromText, judgeRoomJo, readRoomJoItems, maxJoOfKinds, type RoomJoWant } from "./room-jo";
 
@@ -644,6 +644,7 @@ export const REASON_JA: Record<string, string> = {
   AD_UNDER_1M_NEVER: "AD 1ヶ月未満で売上5万円未満か 1K（送らない・外す候補）",
   AD_UNDER_1M_FALLBACK: "AD 1ヶ月未満だが売上5万円以上（他に無い時・しばらく送れていない時だけ・保留）",
   AD_ASSUMED_AGENT: "AD 200%とみなした（元付がアズ・スタット・資料に記載なし）",
+  AD_ASSUMED_BUILDING: "AD を同じ建物の別の部屋の値でみなした（資料に記載なし・部屋ごとに違う時は低い方）",
   FIT_ALL: "書いた条件に全部合う", FIT_ALL_HALF: "書いた条件（2つ）に全部合う", FIT_ONE_MISS: "書いた条件のうち1つだけ外れ", FIT_ONE_MISS_HALF: "書いた条件（2つ）のうち1つだけ外れ",
   // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」
   SEARCH_PINPOINT: "🎯 ピンポイント検索（条件ぴったりの検索）で見つかった",
@@ -908,6 +909,8 @@ export const REASON_POINTS: Record<string, number> = {
   AD_UNDER_1M: AD_TIER_POINTS.AD_UNDER_1M,
   // 2026-09-27 元付業者の決まりで AD をみなした印（0点の知らせ・点は AD の段 AD_HIGH で付く）
   AD_ASSUMED_AGENT: 0,
+  // 2026-10-06 同じ建物の別の部屋の AD でみなした印（0点の知らせ・点は AD の段で付く・building-ad-assume.ts）
+  AD_ASSUMED_BUILDING: 0,
   // 全部合う +15・1つだけ外れ +5（書いた条件のうち読めた物で数える・条件2つなら半分・保留の物件には付けない）
   FIT_ALL: 15, FIT_ALL_HALF: 8, FIT_ONE_MISS: 5, FIT_ONE_MISS_HALF: 3,
   // 2026-09-27 竹内「ピンポイント検索で検索した物件はピンポイントなので加点する」（PINPOINT_CODE の説明・例題は fit-balance.test.ts）
@@ -2136,7 +2139,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     // 2026-09-30 竹内「AD1未満は基本的に送らない」: 売上0なので外す候補（旧は保留）
     if (adMonthsEff != null && adMonthsEff <= 0) add("AD_NONE", reasonPoints("AD_NONE"), "drop");
     // 2026-09-27 資料に AD が無く、元付業者の決まりでみなした（アズ・スタット＝200%）印（0点・段の札は下で付く）
-    if (facts.adAssumedBy) add("AD_ASSUMED_AGENT", 0);
+    // 2026-10-06 竹内「だいじょうぶ」: 同じ建物の別の部屋の AD でみなした時は別の印（agent-ad-assume.BUILDING_AD_NAME＝「同じ建物の別の部屋」）
+    if (facts.adAssumedBy) add(facts.adAssumedBy === BUILDING_AD_NAME ? "AD_ASSUMED_BUILDING" : "AD_ASSUMED_AGENT", 0);
     // 段（重ねて足す・点は AD_TIER_POINTS）: 2026-09-30 1ヶ月 0 ／1.5ヶ月 10 ／2ヶ月 22 ／2.5ヶ月 25 ／3ヶ月以上 28。
     //   0.01 の余裕は「AD 250%」→2.5 の丸め・円÷家賃の割り算の端数（159,999円/80,000円）で段を落とさないため
     const am = adMonthsEff != null ? adMonthsEff + 0.01 : null;
@@ -2293,7 +2297,7 @@ function isNewPositive(c: string): boolean {
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AD_ASSUMED_BUILDING|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */

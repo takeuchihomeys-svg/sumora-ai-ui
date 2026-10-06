@@ -25,7 +25,7 @@ import { overrideRulerKey } from "./search-override";
 import { imageBonusOf, signedPoints, type ImageAnalysisForBonus } from "./pickup-image-bonus";
 import { listingDealStatus } from "./listing-deal-status";
 import { rankStarCandidates, STAR_FIT_RULE_TAG, type StarRankMode, type StarSituation } from "./recommend-star-rank";
-import { starCandidateOfPickup, type StarPickupRow } from "./star-rank-pickup";
+import { starCandidateOfPickup, starOpenRow, SOFT_HOLD_AD_LINE, SOFT_HOLD_STAR_REASON, type StarPickupRow } from "./star-rank-pickup";
 
 export type BestCandidateRow = {
   id: number;
@@ -249,7 +249,7 @@ const isNeedsCheck = (r: BestCandidateRow) => (r.image_analysis?.review as { sta
  *   basis: お客様の決まり（bestBasisFor）。省略は image（前の動き）
  *   preferId: 「完了」のまとめで決めた 👑（best_id）。今も候補に残っていれば（未送信・同じ基準で点がある）それを一番にする
  */
-export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: { windowHours?: number; basis?: BestBasis; preferId?: number | null; starMode?: StarRankMode; situation?: StarSituation | null }): CustomerBest | null {
+export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: { windowHours?: number; basis?: BestBasis; preferId?: number | null; starMode?: StarRankMode; situation?: StarSituation | null; /** 2026-10-06e 保留（理由が初期費用だけ）を候補に入れる AD の線。null＝入れない（06d・監査の比べ用）。省略は SOFT_HOLD_AD_LINE */ softHoldAdLine?: number | null }): CustomerBest | null {
   if (!rows.length) return null;
   const windowMs = (opts?.windowHours ?? CUSTOMER_BEST_WINDOW_HOURS) * 3600_000;
   const latest = Math.max(...rows.map((r) => Date.parse(r.created_at)).filter((n) => Number.isFinite(n)));
@@ -287,12 +287,16 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   // 2026-10-06 竹内さん（A: 今切り替える）: 判定の点で決める時は🌟の並べ方（recommend-star-rank＝合い方が主軸・AD は 1.5ヶ月の線・
   //   刺さる物が無ければ低い AD でも合う物＝内覧を組むのが優先）で 👑 を決める。戻す時は STAR_RANK_MODE=off（starMode: "legacy"）。
   //   候補: 外す候補は前から除いてある。保留は「通す（判定なし含む）」が1件でもあれば候補にしない（recommend-star-rank は保留を呼ぶ側で外す前提）。
+  //   2026-10-06e ただし保留の理由が初期費用だけ（INITIAL_COST_NOT_ZERO）で AD が線（SOFT_HOLD_AD_LINE）以上の行は候補に残す
   //   同じ合い方の点は AD → 初期費用面（敷礼0・フリーレント・敷礼の月数）で分け（2026-10-06d starTieBreak）、それでも同じなら今までの並び（compareOverall）の順
   const starMode: StarRankMode = opts?.starMode ?? "fit";
   const legacyFirst = sorted[0];
   let fitOrder: Array<{ id: number; fit: number; reasons: string[] }> | null = null;
+  // 2026-10-06e 保留（理由が初期費用だけ）を候補に入れる AD の線（理由の一言も線で入った行だけに付ける）
+  const softLine = opts?.softHoldAdLine === undefined ? SOFT_HOLD_AD_LINE : opts.softHoldAdLine;
   if (basis === "score" && starMode === "fit") {
-    const open = sorted.filter((r) => r.verdict !== "hold");
+    // 2026-10-06e 竹内さん「あっている」: 保留でも理由が初期費用だけ（敷礼あり）で AD が線以上の行は候補（割引で初期費用を下げて推す・star-rank-pickup.starOpenRow）
+    const open = sorted.filter((r) => starOpenRow(r, softLine));
     const pool = open.length ? open : sorted;
     // 2026-10-06b お客様の状況（敷礼0・2階以上を言っている時の足し点・star-rank-pickup.starSituationFromConditions）。無ければ足さない
     fitOrder = rankStarCandidates(pool.map((r) => starCandidateOfPickup(r, overallPoints(r) ?? 0)), undefined, opts?.situation ?? null).map((x) => ({ id: Number(x.key), fit: x.fit, reasons: x.reasons }));
@@ -316,6 +320,6 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
     star_mode: fitOrder ? "fit" : "legacy",
     rule: bestRuleTag(basis, fitOrder ? "fit" : "legacy"),
     legacy_id: legacyFirst?.id ?? null,
-    star_reasons: fitOf(best.id)?.reasons ?? [],
+    star_reasons: [...(fitOf(best.id)?.reasons ?? []), ...(fitOrder && best.verdict === "hold" && softLine != null && starOpenRow(best, softLine) ? [SOFT_HOLD_STAR_REASON] : [])],
   };
 }

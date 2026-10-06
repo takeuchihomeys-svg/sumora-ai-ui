@@ -10,7 +10,7 @@
 //     構造   … 資料の設備欄（equipment.facts.structure.d ＝ 木造／軽量鉄骨／鉄骨／RC／SRC）
 //     設備   … 資料の設備欄で ○ の数（構造・種別・階などの印は数えない）・希望の設備に合う数（equipment.match の ok）
 //     AD     … 判定の AD の札（アズ・スタットの 200%とみなすも含む＝判定と同じ）→ 無ければ ad_yen ÷ 家賃
-import { reasonPoints } from "./property-brain";
+import { reasonPoints, ngHitCodes, passLineScore } from "./property-brain";
 import { parseAreaSqm } from "./pickup-dedupe";
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { customerWants, type CustomerWantInput } from "./recommendation-gaps";
@@ -19,6 +19,10 @@ import { renovationOfText } from "./listing-renovation";
 
 export type StarPickupRow = {
   id: number;
+  /** 2026-10-06e 判定（保留の行を🌟の候補に入れるかの見分け・starOpenRow）。無ければ通す扱い */
+  verdict?: string | null;
+  /** 判定の点（保留の理由が初期費用だけかの見分けに 40点の線を見る） */
+  score?: number | null;
   property_name?: string | null;
   room_no?: string | null;
   reason_codes?: ReadonlyArray<string> | null;
@@ -147,3 +151,36 @@ export function householdLayoutOf(floorPlan: string | null | undefined): boolean
   if (!fp.trim()) return false;
   return /DK/.test(fp) && !/1K|1R|ワンルーム/.test(fp);
 }
+
+// ─── 保留でも🌟の候補にする行（2026-10-06e 竹内さん「あっている」）────────────────────────
+/**
+ * 2026-10-06e 竹内さん（2軸の監査の質問1への答え「あっている」）: 初期費用を抑えたいお客様への🌟（👑）で、保留の行でも
+ *   **保留の理由が初期費用だけ（INITIAL_COST_NOT_ZERO＝初期費用の希望なのに敷礼がある）で AD が高い**物件は候補に入れる
+ *   （AD が高いので見積書の割引で初期費用を下げて推す形）。売上サポの束で🌟が保留の行だった回 4/17・全部この形・うち3回 AD2。
+ *   他の保留（家賃超え・間取り・設備の × 等）・NG・外す候補・審査中／商談中は今まで通り候補にしない（審査中・商談中・外す候補は呼ぶ側 pickCustomerBest で先に除く）。
+ *   線は SOFT_HOLD_AD_LINE（データで選んだ・scripts/audit-star-soft-hold.ts）
+ */
+export const SOFT_HOLD_AD_LINE = 2;
+const INITIAL_COST_HOLD = "INITIAL_COST_NOT_ZERO";
+/** 保留の理由が初期費用だけか（NG に当たった札が INITIAL_COST_NOT_ZERO の1つだけ・初期費用の減点を戻すと 40点の線を越える） */
+export function initialCostOnlyHold(r: Pick<StarPickupRow, "verdict" | "reason_codes" | "score">): boolean {
+  if (r.verdict !== "hold") return false;
+  const codes = r.reason_codes ?? [];
+  const ng = ngHitCodes(codes);
+  if (ng.length !== 1 || ng[0] !== INITIAL_COST_HOLD) return false;
+  // 点の線（40点・ピンポイントの上乗せを除く）で保留になる程の低さなら、初期費用の他にも理由がある＝保留のまま
+  if (typeof r.score === "number" && Number.isFinite(r.score) && passLineScore(codes, r.score) - reasonPoints(INITIAL_COST_HOLD) < 40) return false;
+  return true;
+}
+/**
+ * 🌟（👑）の候補に入れる行か。保留でない行は入れる。保留は「理由が初期費用だけ」かつ AD（adMonthsOfPickup）が線以上の時だけ。
+ *   adLine が null なら保留は入れない（今までの決め方 06d・監査の比べ用）
+ */
+export function starOpenRow(r: Pick<StarPickupRow, "verdict" | "reason_codes" | "score" | "ad_yen" | "summary_text">, adLine: number | null = SOFT_HOLD_AD_LINE): boolean {
+  if (r.verdict !== "hold") return true;
+  if (adLine == null || !initialCostOnlyHold(r)) return false;
+  const ad = adMonthsOfPickup(r);
+  return ad != null && ad >= adLine;
+}
+/** 🌟の理由に添える一言（保留の初期費用だけ・AD が高い行が 👑 になった時） */
+export const SOFT_HOLD_STAR_REASON = "敷礼ありだが AD が高い（見積書の割引で初期費用を下げて推す）";
