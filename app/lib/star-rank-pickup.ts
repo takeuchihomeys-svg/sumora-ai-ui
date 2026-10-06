@@ -109,10 +109,22 @@ export function zeroZeroOfPickup(r: Pick<StarPickupRow, "terms">): boolean | nul
  * 👑 の状況を決める条件欄の列（詳細 API・一覧 API・3分のまとめが同じ列を読む＝同じお客様で 👑 が食い違わない）。
  * お客様の発言は読まない（一覧で全員分を引くと重く、条件欄だけでも当て直しの効果は同じ向き: scripts/audit-star-rank-situation.ts --wants=live）
  */
-export const STAR_SITUATION_COLUMNS = "initial_cost_limit, pet, walk_minutes, building_age, floor_area_min, move_in_time, preferences, ng_points, other_requests, additional_conditions";
+// 2026-10-06c floor_plan（間取りの希望 → 1LDK以上の型 householdLayoutOf）を足した
+export const STAR_SITUATION_COLUMNS = "initial_cost_limit, pet, walk_minutes, building_age, floor_area_min, move_in_time, preferences, ng_points, other_requests, additional_conditions, floor_plan";
 /** 条件欄 → 🌟の状況（希望の話題は recommendation-gaps.customerWants の条件欄と自由文だけ）。条件が無ければ null */
 export function starSituationFromConditions(cond: CustomerWantInput["conditions"] | null | undefined): StarSituation | null {
   if (!cond) return null;
   const topics = customerWants({ conditions: cond }).map((w) => w.key);
-  return starSituationOf({ wantTopics: topics });
+  return starSituationOf({ wantTopics: topics, household: householdLayoutOf(cond.floor_plan) });
+}
+
+/**
+ * 2026-10-06c 間取りの希望が 1LDK以上（DK・LDK を言い、1K・1R・ワンルームを含まない）か＝二人以上・広い間取りの型。
+ *   この型のお客様のスタッフの🌟は束の中で一番新しい物が 60%（ランダム 35%）・1K 等の一人暮らしは 33%（ランダム 33%）
+ *   （scripts/audit-star-mismatch-why.ts の section 7・10）。「1K、1LDK」のように 1K を含む希望は一人暮らしの型に残す。
+ */
+export function householdLayoutOf(floorPlan: string | null | undefined): boolean {
+  const fp = String(floorPlan ?? "").normalize("NFKC").toUpperCase();
+  if (!fp.trim()) return false;
+  return /DK/.test(fp) && !/1K|1R|ワンルーム/.test(fp);
 }

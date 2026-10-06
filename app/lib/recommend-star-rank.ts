@@ -79,14 +79,14 @@ export type StarRanked = { key: string; fit: number; tier: "line" | "below" | "n
  *   wantTopics … recommendation-gaps の話題の鍵（low_initial・zero_deposit・spacious・new_build・station_near・bath_toilet …）
  *   moveInUrgent … 入居を急ぐ（今月・来月・即・急ぎ・絶対の期限）
  */
-export type StarSituation = { zero: boolean; spacious: boolean; newBuild: boolean; stationNear: boolean; floorHigh: boolean; moveInUrgent: boolean; equipKeys: string[] };
+export type StarSituation = { zero: boolean; spacious: boolean; newBuild: boolean; stationNear: boolean; floorHigh: boolean; moveInUrgent: boolean; equipKeys: string[]; /** 2026-10-06c 1LDK以上（1K・1R を含まない）の間取りを希望＝二人以上・広い間取りの型 */ household?: boolean };
 /** 話題の鍵 → 設備の鍵（listing-equipment） */
 const TOPIC_EQUIP: Record<string, string[]> = {
   bath_toilet: ["bath_toilet"], washbasin: ["washbasin"], laundry_in: ["laundry_in"], autolock: ["autolock"], security: ["autolock", "monitor_intercom"],
   delivery_box: ["delivery_box"], bath_dryer: ["bath_dryer"], reheating: ["reheating"], internet: ["net_free"], corner: ["corner"], sunny: ["south"],
   parking: ["parking"], storage: ["walk_in_closet"],
 };
-export function starSituationOf(input: { wantTopics?: readonly string[] | null; moveInUrgent?: boolean | null }): StarSituation {
+export function starSituationOf(input: { wantTopics?: readonly string[] | null; moveInUrgent?: boolean | null; household?: boolean | null }): StarSituation {
   const w = new Set((input.wantTopics ?? []).map(String));
   return {
     zero: w.has("low_initial") || w.has("zero_deposit"),
@@ -96,9 +96,10 @@ export function starSituationOf(input: { wantTopics?: readonly string[] | null; 
     floorHigh: w.has("floor2"),
     moveInUrgent: !!input.moveInUrgent || false,
     equipKeys: [...new Set([...w].flatMap((k) => TOPIC_EQUIP[k] ?? []))],
+    household: !!input.household,
   };
 }
-export type StarSituationRule = { zero: number; spacious: number; newBuild: number; stationNear: number; floorHigh: number; vacantNow: number; equipEach: number };
+export type StarSituationRule = { zero: number; spacious: number; newBuild: number; stationNear: number; floorHigh: number; vacantNow: number; equipEach: number; newBuildHousehold?: number };
 /**
  * 状況の足し点（0＝その状況では何も変えない）。決め方は scripts/audit-star-rank-situation.ts の当て直し（244回・180日・スタッフの🌟との1位一致）:
  *   入れた物（対の比べで「状況ありだけ当たり」＞「なしだけ当たり」・全体と後3割の両方で上がる物だけ）
@@ -109,8 +110,13 @@ export type StarSituationRule = { zero: number; spacious: number; newBuild: numb
  *     vacantNow … 入居を急ぐお客様の🌟は空室の物が少ない（43%・ランダム 56%）＝退去予定の部屋を申込誘導で推している（recommend-cta の「刺さるが退去予定」）。足すと 32→30%
  *     spacious … 広さを言っている人ほど「一番広い」は選ばれない（27%・ランダム 24%・足すと 32→30%）。広さは状況によらず areaBest で見ている
  *     stationNear・newBuild・equipEach … 揺れの内（±2回）
+ *   2026-10-06c 型で分けた当て直し（scripts/audit-star-mismatch-why.ts・物差しを直した束 232回）:
+ *     newBuildHousehold 15 … 1LDK以上（1K・1R を含まない）の間取りを希望するお客様は、束の中で一番新しい物（🌟が一番新しい 60%・ランダム 35%・60回）。
+ *       一人暮らし（1K 等）は 33%・ランダム 33% で築年を見ていない＝全員に築年を足すと下がる（築年 15/20/25 は新だけ当たり≒旧だけ当たり）。
+ *       前7割 37→39%・後3割 46→49%・live 47→53%・新だけ当たり 8／旧だけ 2
+ *     見送り: 「お客様の条件を見出しで言う」型（敷礼0・駅近・家賃）は回ごとにどれを選ぶかが揺れ、型で決めると上がらない（前7割で上がっても後3割で下がる）
  */
-export const STAR_SITUATION_RULE: Readonly<StarSituationRule> = { zero: 15, spacious: 0, newBuild: 0, stationNear: 0, floorHigh: 15, vacantNow: 0, equipEach: 0 };
+export const STAR_SITUATION_RULE: Readonly<StarSituationRule> = { zero: 15, spacious: 0, newBuild: 0, stationNear: 0, floorHigh: 15, vacantNow: 0, equipEach: 0, newBuildHousehold: 15 };
 
 /** 合い方の点（AD の家族の点を外した札の点＋束の中の相対の足し点） */
 export function starFitScores(cands: readonly StarCandidate[], rule = STAR_RANK_RULE, sit?: StarSituation | null, sitRule: Readonly<StarSituationRule> = STAR_SITUATION_RULE): Array<{ fit: number; reasons: string[] }> {
@@ -126,6 +132,7 @@ export function starFitScores(cands: readonly StarCandidate[], rule = STAR_RANK_
       if (sit.zero && sitRule.zero && zeroSplit && c.zeroZero === true) { fit += sitRule.zero; reasons.push("敷礼0（初期費用の希望）"); }
       if (sit.spacious && sitRule.spacious && rankIn(areas, c.areaSqm, "high") === 0) { fit += sitRule.spacious; reasons.push("一番広い（広さの希望）"); }
       if (sit.newBuild && sitRule.newBuild && rankIn(ages, c.buildingAge, "low") === 0) { fit += sitRule.newBuild; reasons.push("一番新しい（築浅の希望）"); }
+      if (sit.household && sitRule.newBuildHousehold && rankIn(ages, c.buildingAge, "low") === 0) { fit += sitRule.newBuildHousehold; reasons.push("一番新しい（1LDK以上の希望）"); }
       if (sit.stationNear && sitRule.stationNear && rankIn(walks, c.walkMinutes, "low") === 0) { fit += sitRule.stationNear; reasons.push("駅から一番近い（駅近の希望）"); }
       if (sit.floorHigh && sitRule.floorHigh && rankIn(floors, c.floor, "high") === 0) { fit += sitRule.floorHigh; reasons.push("一番高い階（2階以上の希望）"); }
       if (sit.moveInUrgent && sitRule.vacantNow && vacSplit && c.vacancy === "open") { fit += sitRule.vacantNow; reasons.push("空室ですぐ入れる（入居を急ぐ）"); }
@@ -190,4 +197,5 @@ export function starRankMode(raw: unknown): StarRankMode {
 }
 /** まとめ（property_pickup_completions.result.basis_rule）に残す決まりの名前（fit の時）。重みを変えたら版を上げる */
 // 2026-10-06b 状況の足し点（STAR_SITUATION_RULE・敷礼0／2階以上）を入れた
-export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06b";
+// 2026-10-06c 1LDK以上の希望なら束の中で一番新しい物に +15（newBuildHousehold）
+export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06c";
