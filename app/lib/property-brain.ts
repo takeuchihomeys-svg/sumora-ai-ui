@@ -37,6 +37,13 @@ import { isGenericBuildingName } from "./generic-building-name";
 import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT_RE, BATH_TOILET_NOT_REQUIRED_RE, type EquipmentMatch, type EquipKey } from "./listing-equipment";
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
+import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, type RequirementStrengths } from "./requirement-strength";
+
+/** お客様の行の要望の強さ（保存の値＝LINE から webhook が書いた物を正に、条件の欄の文から読めた物で埋める） */
+export function requirementStrengthsOfCustomer(c: { requirement_strength?: unknown; move_in_time?: string | null; other_requests?: string | null; preferences?: string | null }): RequirementStrengths {
+  const fromFields = readRequirementStrengths([c.move_in_time, c.preferences, c.other_requests].filter(Boolean).map((text) => ({ text })));
+  return { ...fromFields, ...normalizeRequirementStrengths(c.requirement_strength) };
+}
 import { assumedAdAgentInLine, assumedAdAgentOf } from "./agent-ad-assume";
 import { adUnder1Policy, adUnder1CodeFor, isAdUnder1Code, AD_UNDER1_LEGACY_CODE, type AdUnder1Input } from "./ad-under1-policy";
 import { roomJoWantOf, roomJoFromText, judgeRoomJo, readRoomJoItems, maxJoOfKinds, type RoomJoWant } from "./room-jo";
@@ -130,6 +137,8 @@ export type CustomerLike = {
   pet?: boolean | null;
   /** 入居時期の自由文（「11月上旬」「即入居」「未定」）。move-in-want.ts で 'YYYY-MM-DD' に直す */
   move_in_time?: string | null;
+  /** 2026-10-06 要望の強さ（requirement-strength・webhook が LINE から書く） */
+  requirement_strength?: unknown;
   /** 登録日（年の無い「7月」を何年と読むかの基準） */
   created_at?: string | null;
   /** 2026-09-25: 広さの下限（㎡）・条件フォームの原文（「1DKも可」が列に入っていない人がいる） */
@@ -154,6 +163,8 @@ export function isCustomerDelivery(r: SentRowLike): boolean {
 export type PatternRowLike = { selling_points?: string[] | null; selection_label?: string | null };
 
 export type CustomerProfile = {
+  /** 2026-10-06 要望の強さ（絶対／強い希望／できれば）。judgeProperty が strengthCodes の札を足す */
+  requirementStrengths?: RequirementStrengths;
   /** 使ってよい上限（異常値なら null） */
   rentMax: number | null;
   /** rentMax を捨てた理由（RENT_MAX_UNRELIABLE など） */
@@ -537,6 +548,13 @@ export const REASON_JA: Record<string, string> = {
   MOVE_IN_OK: "入居時期が希望に間に合う（資料）",
   MOVE_IN_LATE: "入居できるのが希望より2週間超遅い（資料）",
   MOVE_IN_UNKNOWN: "要確認: 入居時期（相談・居住中・記載なし）",
+  // 2026-10-06 ⑫ 竹内（ゆいと 10月後半入居）: 要望が「絶対」の時の札（requirement-strength.strengthCodes）
+  MOVE_IN_LATE_MUST: "入居が絶対の希望の時期に間に合わない（送らない）",
+  MOVE_IN_UNKNOWN_MUST: "要確認: 絶対の入居時期に間に合うか（入居可能日を確かめてから）",
+  MOVE_IN_OK_MUST: "絶対の入居時期に間に合う（決めにいく物件）",
+  PET_NG_MUST: "今飼っているペットが不可（送らない）",
+  RENT_OVER_MUST: "家賃が絶対の上限を超える（送らない）",
+  AREA_MUST_NG: "絶対のエリアの外（保留）",
   CONTRACT_FIXED: "定期借家（資料）",
   CONTRACT_NORMAL: "普通借家（資料）",
   CONTRACT_UNKNOWN: "要確認: 契約の種類",
@@ -815,6 +833,8 @@ export const REASON_POINTS: Record<string, number> = {
   PET_NG: -15,
   // 2026-09-25 資料の表の募集の条件（listing-terms.ts）
   MOVE_IN_OK: 5, MOVE_IN_LATE: -10, MOVE_IN_UNKNOWN: 0,
+  // 2026-10-06 要望の強さ（requirement-strength.ts）: 絶対に合う物件を先頭に（決めきる並び）・合わない物件は送らない
+  MOVE_IN_OK_MUST: 15, MOVE_IN_LATE_MUST: -30, MOVE_IN_UNKNOWN_MUST: 0, PET_NG_MUST: -20, RENT_OVER_MUST: -20, AREA_MUST_NG: -10,
   CONTRACT_FIXED: -5, CONTRACT_NORMAL: 0, CONTRACT_UNKNOWN: 0,
   RENEWAL_FEE_NONE: 0, RENEWAL_FEE_SET: 0, RENEWAL_FEE_UNKNOWN: 0,
   FREE_RENT_MATCH: 3, FREE_RENT: 0, FREE_RENT_UNLISTED: 0,
@@ -1762,6 +1782,7 @@ export function buildCustomerProfile(
     discountYen: discountYen != null && discountYen > 0 ? discountYen : DEFAULT_DISCOUNT_YEN,
     confidence,
     moveInWant: parseMoveInWant(customer.move_in_time, { registeredAt: customer.created_at ?? null, today: opts.today }),
+    requirementStrengths: requirementStrengthsOfCustomer(customer),
     conditionWants: detectConditionWants(customer),
     mentions: detectTermMentions(customer),
   };
@@ -1903,7 +1924,7 @@ export function applyRoomJoToRow(
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|MOVE_IN_OK_MUST|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { score, verdict, reason_codes: codes, reasons_ja: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa), result: next[0] === "ROOM_JO_OK" ? "ok" : "ng" };
 }
 
@@ -2164,6 +2185,12 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     add(code, reasonPoints(code), DROP_REASON_CODES.has(code) ? "drop" : isHoldCode(code) ? "hold" : undefined);
   }
 
+  // 2026-10-06 ⑫ 要望の強さ（requirement-strength.strengthCodes）: 絶対に合わない＝外す候補・分からない＝保留・合う＝加点
+  for (const code of strengthCodes(codes, profile.requirementStrengths)) {
+    if (codes.includes(code)) continue;
+    add(code, reasonPoints(code), DROP_REASON_CODES.has(code) ? "drop" : isHoldCode(code) ? "hold" : undefined);
+  }
+
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
   // 条件の外れ（保留・外す候補の札）がある物件は AD の段を点に入れない（settleHeldAd・札は _HELD で残す）
@@ -2182,7 +2209,7 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   // 理由の日本語は「外す・保留の理由」を先に、良い点は後に（LINE の1行は先頭2つを見せる）
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|MOVE_IN_OK_MUST|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
   // 設備欄で ○/× が決まった希望は画像で確かめ直さない（同じ希望を二重に数えない）
   const decided = new Set<string>((eq?.rows ?? []).filter((r) => r.result !== "unlisted").map((r) => r.want.key));
@@ -2244,7 +2271,7 @@ export function applyImageFacts(j: Judgment, img: ImageFacts | null | undefined,
   //   必須の × の上限20も素点から掛け直す（反証レビュー 2026-09-24・scoreFromCodes）
   score = scoreFromCodes(codes, prefWeight);
   const verdict: Verdict = j.verdict === "drop" ? "drop" : (hold || passLineScore(codes, score) < 40 ? "hold" : "pass");
-  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^IMAGE_.*_OK$/.test(c) || /^EQUIP_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|MOVE_IN_OK_MUST|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   const reasonsJa = [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa);
   return { ...j, score, verdict, reasonCodes: codes, flagCodes, reasonsJa };
 }
@@ -2274,7 +2301,8 @@ function isNewInfo(c: string): boolean {
 // 2026-09-30 FLOOR_PLAN_TOO_SMALL: 間取りが希望より小さい（c さん・2LDK 希望に 1K）
 // 2026-09-30 AD_UNDER_1M_NEVER・AD_NONE: AD1未満で 1K か売上5万円未満（AD なし＝売上0）＝送らない（竹内「AD1未満は基本的に送らない・1K の AD1未満はきほんおくらない」）
 // 2026-10-01 STRUCTURE_WOOD_NG: お客様が NG と書いた木造（竹内「NG 条件の物件は送らない」）。「RC 希望」の木造（希望の強さ）は今まで通り保留（EQUIP_STRUCTURE_NG）
-export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG", "FLOOR_PLAN_TOO_SMALL", "AD_UNDER_1M_NEVER", "AD_NONE", "STRUCTURE_WOOD_NG"]);
+// 2026-10-06 MOVE_IN_LATE_MUST・PET_NG_MUST・RENT_OVER_MUST: 絶対の要望に合わない（竹内「10月後半入居希望なのだから物件NGかどうかちゃんと見る」）
+export const DROP_REASON_CODES = new Set(["ALREADY_SENT", "RENT_OVER_130", "ROOM_JO_NG", "FLOOR_PLAN_TOO_SMALL", "AD_UNDER_1M_NEVER", "AD_NONE", "STRUCTURE_WOOD_NG", "MOVE_IN_LATE_MUST", "PET_NG_MUST", "RENT_OVER_MUST"]);
 export const HOLD_REASON_CODES = new Set([
   "RENT_OVER_110", "INITIAL_COST_NOT_ZERO", "INITIAL_COST_OVER_LIMIT", "FLOOR_PLAN_MISMATCH", "WALK_OVER", "BUILDING_AGE_OVER", "PROFIT_NEGATIVE", "PET_NG",
   "MOVE_IN_LATE", "CONTRACT_FIXED", // 2026-09-25 資料の表の募集の条件
@@ -2288,6 +2316,8 @@ export const HOLD_REASON_CODES = new Set([
   "AD_UNDER_1M", "AD_UNDER_1M_FALLBACK",
   // 2026-09-29 家賃が下限未満（管理費込み。2026-09-30 から保留の線は下限の家賃帯ごと＝〜7万台 85%・8〜9万台 80%・10万以上 75%・RENT_BAND_RULE.minHoldTiers）
   "RENT_UNDER_MIN",
+  // 2026-10-06 絶対の入居時期に間に合うか分からない（スタッフが入居可能日を確かめる）・絶対のエリアの外
+  "MOVE_IN_UNKNOWN_MUST", "AREA_MUST_NG",
 ]);
 const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 
@@ -2341,7 +2371,7 @@ export function applyEquipmentMatch(
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|MOVE_IN_OK_MUST|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa) };
 }
 
@@ -2385,7 +2415,7 @@ export function rejudgeWithoutDiscount(
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|MOVE_IN_OK_MUST|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { changed: had, score, verdict, reasonCodes: codes, flagCodes, reasonsJa: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa) };
 }
 
@@ -2452,7 +2482,7 @@ export function applyAdRulesToRow(row: {
   const holds = codes.filter(isHoldCode);
   const verdict: Verdict = drops.length > 0 ? "drop" : (holds.length > 0 || passLineScore(codes, score) < 40 ? "hold" : "pass");
   const flagCodes = [...drops, ...holds];
-  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
+  const positives = codes.filter((c) => isNewPositive(c) || POSITIVE_BASE_CODES.includes(c) || /^(?:IMAGE|EQUIP)_.*_OK$/.test(c) || /^(?:MOVE_IN_OK|MOVE_IN_OK_MUST|FREE_RENT_MATCH)$|^CONDITION_.*_OK$/.test(c));
   return { score, verdict, reason_codes: codes, reasons_ja: [...flagCodes, ...codes.filter(isNewInfo), ...positives].map(reasonJa), change };
 }
 

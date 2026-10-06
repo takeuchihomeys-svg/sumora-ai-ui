@@ -28,6 +28,7 @@ import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAre
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 import { areaMergeMode, areasBeforeNegation, describeAreaChange, detectConditionRevert } from "@/app/lib/condition-restore";
 import { moveInStatementOf, secondaryNeedOf } from "@/app/lib/condition-reading";
+import { hasStrengthSignal } from "@/app/lib/requirement-strength";
 import { walkMinutesInText } from "@/app/lib/walk-minutes-text";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
@@ -511,6 +512,15 @@ export async function handleTextMessage(
     after(async () => {
       const { routeSecondaryNeed } = await import("@/app/lib/secondary-profile-server");
       await routeSecondaryNeed(db, convId, text, secondaryNeed, insertedMsgId).catch((e) => console.warn("[routeSecondaryNeed]", e));
+    });
+  }
+
+  // 2026-10-06 ⑫ 竹内（ゆいと 10月後半入居）「10月入居っていう希望が今回の場合は絶対となるので、そこも読みとれるように」:
+  //   要望の強さ（絶対／強い希望／できれば）を直近のお客様の発言から読み直して保存（物件検索ブレインの判定・送付文が読む）
+  if (!applyFormDetected && hasStrengthSignal(text)) {
+    after(async () => {
+      const { refreshRequirementStrength } = await import("@/app/lib/requirement-strength-server");
+      await refreshRequirementStrength(db, convId).catch((e) => console.warn("[refreshRequirementStrength]", e));
     });
   }
 

@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
     const [custRes, sentRes, patRes, convsRes] = await Promise.all([
       supabase.from("property_customers")
         // structure_types: 条件の構造の欄（売上サポ recordPickupBatch と同じ読み・2026-09-25 反証レビュー）
-        .select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, structure_types")
+        .select("rent_max, max_rent, rent_min, floor_plan, layout, walk_minutes, building_age, initial_cost_limit, preferences, ng_points, other_requests, additional_conditions, pet, structure_types, move_in_time, created_at, requirement_strength")
         .eq("id", customerId).maybeSingle(),
       // room_no: 送付済みの照合を号室で見る（同じ建物の別の部屋は外す候補にしない・2026-09-25）
       supabase.from("sent_properties").select("property_name, rent, delivery, source, room_no").eq("property_customer_id", customerId).gte("sent_at", since).limit(500),

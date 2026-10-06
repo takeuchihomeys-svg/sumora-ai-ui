@@ -4581,6 +4581,11 @@ CREATE INDEX IF NOT EXISTS idx_property_customers_parent ON property_customers(p
 COMMENT ON COLUMN property_customers.profile_label IS '2つ目の探し物の種類（物置・店舗・事務所・セカンドハウス・家族用・仕事用）。住まい（主）は NULL';
 COMMENT ON COLUMN property_customers.parent_customer_id IS '2つ目の探し物の行の親（同じお客様の住まいの行）。会話・LINE の紐付けは親を使う';
 
+-- 2026-10-06 ⑫ 竹内（ゆいと 10月後半入居）「10月入居っていう希望が今回の場合は絶対となるので、そこも読みとれるように」:
+--   要望ごとの強さ（絶対 must／強い希望 strong／できれば nice）。webhook が LINE の発言から書き、物件検索ブレインの判定・送付文・拡張が同じ値を読む（requirement-strength.ts）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS requirement_strength JSONB;
+COMMENT ON COLUMN property_customers.requirement_strength IS '要望の強さ {move_in|pet|rent_max|area: {strength: must|strong|nice, evidence, at}}。絶対に合わない物件は判定で外す候補（送らない）';
+
 -- 会話・メッセージの変更を Realtime で届ける（画面は変わった行だけを直す。30秒ごとの丸ごとの読み直しをやめるため）
 DO $$
 BEGIN

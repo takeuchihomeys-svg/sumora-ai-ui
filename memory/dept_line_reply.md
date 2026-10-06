@@ -12,12 +12,14 @@
   3. **JSON の名残**: 物件ピックアップ（aix/action 3422-3426 の psmRaw）が JSON を読めないと生の出力を文に＝末尾 `"}`・名前の行が消える（60日 6通・スタッフが全部消した）。joinAixJsonParts を通す。同じ形の message の読み取りが 1361・3839・4005・4540・5593・6319・6647・6994・7198・7274・7374 にも
   4. **入力に無い事実**: 新着の1行目の条件（スタッフが実際に検索した条件へ書き直す）・電話の用件（12通中6通でスタッフが「申込/審査に関して5分程」を足す）・物件オススメの室内写真の URL（スタッフが足す 9/111）
 - **竹内さんの判断待ち**: 「お待たせ致しました」は AIX で禁止（9/27）だが、9/28 以降もスタッフが新着 5/31・ピックアップ 3/21 で手で足している
+- **直した（10/06・未コミット・親の指示）**: ③ JSON の名残＝aix/action の {"message"} の読み取り 12か所を `messageFromAixJson`（app/lib/aix-message-json.ts readAixMessageJson＝⑫ の joinAixJsonParts の message 1部品）に寄せた。馴染ませは読めなければベースのまま。監査 scripts/audit-aix-message-json.ts で名残の無い文の変化 0／テスト aix-message-json.test.ts 10/10。② 名前の欄＝app/lib/aix-staff-called-name.ts（スタッフが冒頭で2回以上呼んだ名前は形を問わず・extractPreferredName の後に）＋okyaku-address.ts の行頭の名前の欄（名前があれば名前・無ければ行ごと）。監査 scripts/audit-okyaku-name-slot.ts: 人の送信で変わる 1通（AI の下書きのまま）・下書き 30組で行頭の「お客様」30→0・同じ名前 0→7/12。テスト aix-name-slot.test.ts 14/14。① 比較の形の時間は竹内さんの判断待ち（親が確認中）
 
 ## ⑫ 引き継ぎ（10/02）
 **ここだけ読めば続けられるように書く（毎ステップ更新）。手順は memory/test_protocol_brain.md（§9.5 実送信・§9.6 網羅の表）。tsc は共有の鍵で1つずつ（mkdir C:/Users/竹内悠~1/AppData/Local/Temp/claude/tsc.lock → NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit → rmdir）。**
 - **終わった（コミット済み）**: d1e4b1fe（2段・確認しますを外す・家賃の下限・電話19時）／62f89db2（待ち合わせの訂正・22巡）／9aa3ab74（家賃の相場を返信へ）／a27f0efd（申込の書類2つ・電話の約束・電話が終わった後・S5・2段の直し・待ち合わせの約束→AIX・日にちの聞き直し・築年数の幅・家賃の万の切り捨て・網羅の表・readiness）
 - **終わった（コミット済み ee13e748＝区切り5）**: 外れの分け方（scripts/lib/replay-truth.ts・replay-reference-corrections.json・replay-true-agreement.ts）／送れる物件が無いピックアップの約束も2段（two-stage・本番の一致 46.8→53.7%）／内覧調整の出しすぎ・戻ったお客様へのフォームは本番で線を引けず入れない（監査は残す）／場面を作る道具が返事の束の外の押下も拾う（網羅 42→47・64%）／予算の目安の要の語が抜けた下書きは送らない（rent_budget_missing）／✅ はどの文でも残す・templates の ✅ を戻した（7行）／申込時フォーマット（続き）に※マイナンバーのマスキング（提案 562287ff implemented）／AIっぽすぎる文の点検 scripts/audit-ai-ish-phrasing.ts
-- **10/06 夜（未コミット・tsc 通過）**:
+- **10/06 深夜（未コミット・tsc 通過）要望の強さ**: app/lib/requirement-strength.ts（23/23）・requirement-strength-server.ts・列 requirement_strength（適用済み）・property-brain の strengthCodes（絶対×遅い＝外す候補・絶対×不明＝保留・絶対×間に合う＝+15）・webhook が LINE で更新。**既存のお客様の値は scripts/backfill-requirement-strength.ts --apply（竹内さんの手で）**。AIX の送付文は buildMustSendNote を route.ts の property_send（pickupFactsNote の隣・3223行付近）に配線＝⑰ の作業の後にリードが順番を決める。🌟の順位（recommend-star-rank・⑰）は MOVE_IN_OK_MUST を先頭に
+- **10/06 夜（fc99b764 でコミット済み）**:
   - AIXツール（/conditions）の重さ: app/lib/page-cache.ts（画面をまたぐ控え・10/10）・app/lib/pickup-list-load.ts（一覧の読み手を1つ・今日の分を先に）。/conditions・PickupReview・LINE（app/page.tsx）が戻った時に控えをすぐ出す
   - ゆいとの2つ目の探し物: 列 profile_label・parent_customer_id（適用済み）、condition-reading.secondaryNeedOf、app/lib/secondary-profile.ts（17/17）・secondary-profile-server.ts。**ゆいとのデータ直しは scripts/fix-owner-approved-1006.ts --apply（自動の許可で止まるので竹内さんの手で）**。R は既に直っていた。拡張の要る事は報告に
 - **10/06 夕方（8e2f6ba9 でコミット済み）**:
