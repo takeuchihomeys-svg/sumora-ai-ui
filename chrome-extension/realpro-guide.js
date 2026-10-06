@@ -405,6 +405,27 @@
     if (a === "showsent") { showSent = !showSent; applySentHiding(); }
   }
 
+  /** v2.5.81 検索を押した時に実際に入っていた値（画面の欄を読むだけ）。売上サポの回に「実際に検索した条件」として残す */
+  function readFilledForm() {
+    try {
+      var sel = function (n) { var el = document.querySelector('select[name="' + n + '"]'); return el && el.value ? String(el.value) : null; };
+      var checkedLabels = function (name) {
+        return Array.prototype.filter.call(document.querySelectorAll('input[name="' + name + '"]'), function (c) { return c.checked; }).map(function (c) { var l = labelOf(c); return norm(l ? l.textContent : c.value); }).filter(Boolean).slice(0, 40);
+      };
+      var stations = [];
+      if (plan) plan.steps.forEach(function (s) {
+        if (s.kind !== "pick_station") return;
+        var want = {}; (s.names || []).forEach(function (n) { want[norm(n).replace(/駅$/, "")] = true; });
+        document.querySelectorAll('input[type="checkbox"]').forEach(function (c) { var t = textOfInput(c); if (c.checked && want[t] && stations.indexOf(t) < 0) stations.push(t); });
+      });
+      return {
+        rent_min: sel("rental_cost1"), rent_max: sel("rental_cost2"), area_min: sel("square_meter_l"), area_max: sel("square_meter_h"),
+        building_age: sel("structured_date"), update_days: sel("update_date"),
+        layouts: checkedLabels("room_layout_id[]"), city_codes: Array.prototype.filter.call(document.querySelectorAll('input[name="city_code[]"]'), function (c) { return c.checked; }).map(function (c) { return c.value; }).slice(0, 40),
+        stations: stations,
+      };
+    } catch (_) { return null; }
+  }
   function stationAnyChecked(s) {
     var want = {}; (s.names || []).forEach(function (n) { want[norm(n).replace(/駅$/, "")] = true; });
     return Array.prototype.some.call(document.querySelectorAll('input[type="checkbox"]'), function (c) { return c.checked && want[textOfInput(c)]; });
@@ -499,7 +520,7 @@
     for (var n3 = t, k3 = 0; n3 && k3 < 4; n3 = n3.parentElement, k3++) { if ((n3.classList && n3.classList.contains("go_search")) || norm(n3.value || n3.textContent) === "検索") { isSearchClick = true; break; } }
     if (isSearchClick && session && session.customerId) {
       var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
-      if (SS) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "realpro", complete: cur.step.kind === "search" });
+      if (SS) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "realpro", complete: cur.step.kind === "search", intended: SS.compactIntended(session.conditions), filled: readFilledForm() });
     }
   }, true);
 

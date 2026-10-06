@@ -1198,6 +1198,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         const data = await callMergeApi({
+          // v2.5.81 この一覧を検索した時の条件（search-stamp.js・タブの印）→ 売上サポの回（property_pickups.search_conditions）に残す
+          search_stamp: msg.search_stamp || null,
           pdf_urls: up.blobUrls,
           // 元のリアプロの資料の場所（送付済みの照合・売上サポの資料リンク用。サーバーは取りに行かない）
           source_pdf_urls: keepAt(urls),
@@ -1285,6 +1287,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // Step2: URLでまとめてmerge → LINE送信（リアプロと同じ仕組み）
         const data = await callMergeApi({
+          search_stamp:        msg.search_stamp || null, // v2.5.81 この一覧を検索した時の条件（ITANDI）
           pdf_urls:            blobUrls,
           cookie_str:          "",   // 公開Blob URLはcookie不要
           file_name:           `${baseName}.pdf`,

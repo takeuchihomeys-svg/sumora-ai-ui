@@ -22,6 +22,6 @@ ok("popup: リアプロ・ITANDI・指示の表示の3か所で「必ず」な�
 ok("popup: 築年数の広げ方は今まで通り（+5年）", /searchMode === "wide" \? adjC\.building_age \+ 5 : adjC\.building_age/.test(pp));
 ok("resolution-core（一括・background）も同じ決まり・background は印を条件に載せる", /isWide && !_rentMust \? rentNum \+/.test(read("resolution-core.js")) && /requirement_strength: c\.requirement_strength \|\| null,/.test(read("background.js")) && /import "\.\/wide-rent\.js";/.test(read("background.js")));
 ok("popup.html: wide-rent.js は popup.js より前", (() => { const h = read("popup.html"); return h.indexOf('src="wide-rent.js"') > 0 && h.indexOf('src="wide-rent.js"') < h.indexOf('src="popup.js"'); })());
-ok("manifest の版 2.5.79", JSON.parse(read("manifest.json")).version === "2.5.80");
+ok("manifest の版 2.5.79", JSON.parse(read("manifest.json")).version === "2.5.81");
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

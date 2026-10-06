@@ -55,5 +55,23 @@
       message: ok ? "" : "送る前に確かめてください（違うお客様の物件が混ざっていないか）\n\n" + lines.join("\n") + "\n\nこのまま「" + curName + "」の物件として送りますか？",
     };
   }
-  return { KEY: KEY, STALE_MS: STALE_MS, read: read, write: write, check: check };
+  /**
+   * v2.5.81: 送る時に売上サポの回へ渡す形（印が今のお客様の物で新しい時だけ。違う時は null＝別の検索の条件を付けない）。
+   *   サーバーは property_pickups.search_conditions に残し、AIX の物件ピックアップの文が時刻の窓なしで読む
+   */
+  function forSend(stamp, curCid, now) {
+    if (!stamp || !stamp.cid || !curCid || String(stamp.cid) !== String(curCid)) return null;
+    var t = typeof now === "number" ? now : Date.now();
+    if (t - Number(stamp.at || 0) > STALE_MS) return null;
+    return { v: 1, site: stamp.site || null, at: new Date(Number(stamp.at)).toISOString(), complete: stamp.complete !== false, intended: stamp.intended || null, filled: stamp.filled || null };
+  }
+  /** 案内の条件（popup が組み立てた検索の条件）を小さく */
+  function compactIntended(c) {
+    if (!c) return null;
+    var pick = ["area_mode", "station_names", "city_codes", "ward_names", "itandi_lines", "route_ids", "rent_min", "rent_max", "floor_plan", "building_age", "walk_minutes", "area_min", "area_max", "is_wide", "rp_update_days", "pet_ok", "structure_types"];
+    var o = {};
+    pick.forEach(function (k) { var v = c[k]; if (v == null || v === "" || (Array.isArray(v) && !v.length)) return; o[k] = Array.isArray(v) ? v.slice(0, 40) : v; });
+    return o;
+  }
+  return { KEY: KEY, STALE_MS: STALE_MS, read: read, write: write, check: check, forSend: forSend, compactIntended: compactIntended };
 });

@@ -75,6 +75,12 @@ export type RecordPickupInput = {
    */
   searchMode?: "pinpoint" | "widen" | null;
   /**
+   * 2026-10-06 v2.5.81（⑯・⑰ の測り直し: 送った60回のうち検索の記録が12時間以内にあったのは15回だけ）:
+   *   この回の一覧を検索した時の条件（拡張の案内が「検索」を押した時にタブに印＝search-stamp.js・意図した条件 intended と画面に入っていた値 filled）。
+   *   行（property_pickups.search_conditions）に残し、AIX の物件ピックアップの文が時刻の窓なしで回から読む
+   */
+  searchConditions?: Record<string, unknown> | null;
+  /**
    * 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする」:
    *   merge-pdfs がこの回の本文を★物件出し★グループに送らなかった（ブレイン）時は "deferred"。行（property_pickups.group_notice）に残し、
    *   解析の完了（finishCompleteGroup）が1回だけアナウンスする（pickup-group-announce.ts）
@@ -398,6 +404,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     }, items).map((r) => (searchOverride && loaded ? { ...r, search_override: searchOverride } : r))
       // 2026-09-27 ピンポイントか広げてか（分からない回は列を出さない＝列を足す前の DB にも書ける）
       .map((r) => (searchMode ? { ...r, search_mode: searchMode } : r))
+      // 2026-10-06 v2.5.81 この回の一覧を検索した時の条件（分からない回は列を出さない）
+      .map((r) => (input.searchConditions ? { ...r, search_conditions: input.searchConditions } : r))
       // 2026-09-29 ブレインの回（★物件出し★グループへは解析の完了で1回知らせる）
       .map((r) => (input.groupNotice === "deferred" ? { ...r, group_notice: "deferred" } : r));
     // 入れる直前にもう一度（同じ部屋の別の回が先に入った時）
@@ -414,6 +422,11 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       console.warn("[property-pickups] group_notice 列が無いので外して記録:", ins.error.message);
       noticeStored = false;
       ins = await supabase.from("property_pickups").insert(rows.map((r) => { const { group_notice: _g, ...rest } = r as typeof r & { group_notice?: unknown }; void _g; return rest; })).select("id");
+    }
+    // 2026-10-06: search_conditions 列を本番に足す前に動いても記録は残す
+    if (ins.error && /search_conditions/.test(ins.error.message)) {
+      console.warn("[property-pickups] search_conditions 列が無いので外して記録:", ins.error.message);
+      ins = await supabase.from("property_pickups").insert(rows.map((r) => { const { search_conditions: _c, ...rest } = r as typeof r & { search_conditions?: unknown }; void _c; return rest; })).select("id");
     }
     // 2026-09-27: search_mode 列を本番に足す前に動いても記録は残す（加点は判定で済んでいる・印だけ落ちる）
     if (ins.error && /search_mode/.test(ins.error.message)) {

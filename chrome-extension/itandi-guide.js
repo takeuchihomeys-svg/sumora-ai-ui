@@ -767,7 +767,7 @@
     var tgt = (cur.ev.target || [])[0];
     if (tgt && (tgt === e.target || tgt.contains(e.target))) {
       // v2.5.80: この一覧を検索したお客様をタブに印（送る前の確かめ search-stamp.js）
-      try { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; if (SS && session.customerId) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "itandi", complete: true }); } catch (_) {}
+      try { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; if (SS && session.customerId) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "itandi", complete: true, intended: SS.compactIntended(session.conditions), filled: (function () { try { return { stations: readRow("stations").chips.map(function (c) { return c.name; }).slice(0, 40), wards: readRow("wards").chips.map(function (c) { return c.name; }).slice(0, 40) }; } catch (_) { return null; } })() }); } catch (_) {}
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); renderPanel(); memoSearchRun(session, "itandi");
     }
   }, true);

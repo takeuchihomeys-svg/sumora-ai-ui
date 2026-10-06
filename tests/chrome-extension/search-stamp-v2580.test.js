@@ -27,7 +27,7 @@ ok("リアプロ: 送る時（手で押す・20秒後のまとめて送る）に
 ok("リアプロ: 20秒後のまとめて送るは、確かめが要る時は送らずボタンに出す", /_autoForwarding = true;/.test(bd) && /確かめが要ります（押して確かめてから送る）/.test(bd));
 ok("リアプロ: ブレインの下見の場所（AREA_FAR）を印に", /setAttribute\("data-axlx-area", _codes\.indexOf\("AREA_FAR"\) >= 0 \? "far"/.test(bd));
 ok("ITANDI: 送る時に確かめる", /SS\.check\(\{ stamp: SS\.read\(\), cur: \{ cid: customerId, name: customerName \}/.test(read("itandi-bulk-dl.js")));
-ok("案内（リアプロ）: 検索を押した時にこの一覧を検索したお客様を印（手順が終わっていたかも）", /SS\.write\(\{ cid: String\(session\.customerId\), name: session\.customerName \|\| "", at: Date\.now\(\), site: "realpro", complete: cur\.step\.kind === "search" \}\)/.test(read("realpro-guide.js")));
+ok("案内（リアプロ）: 検索を押した時にこの一覧を検索したお客様を印（手順が終わっていたかも）", /SS\.write\(\{ cid: String\(session\.customerId\), name: session\.customerName \|\| "", at: Date\.now\(\), site: "realpro", complete: cur\.step\.kind === "search"/.test(read("realpro-guide.js")));
 ok("案内（ITANDI）: 検索を押した時に印", /site: "itandi", complete: true/.test(read("itandi-guide.js")));
 const mf = JSON.parse(read("manifest.json"));
 ok("manifest: search-stamp.js はリアプロ・ITANDI の案内の段の先頭", mf.content_scripts.filter((c) => c.js[0] === "search-stamp.js").length === 2);

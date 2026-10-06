@@ -1382,6 +1382,8 @@
         customer_id: customerId || null,
         customer_conditions: customerConditions || null,
         site: "realpro",
+        // v2.5.81 この一覧を検索した時の条件（今のお客様の印の時だけ）→ 売上サポの回（property_pickups.search_conditions）
+        search_stamp: (function () { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; return SS ? SS.forSend(SS.read(), customerId, Date.now()) : null; })(),
       }, function (resp) {
         lineBtn.disabled = false;
         if (chrome.runtime.lastError) {

@@ -4569,6 +4569,10 @@ LANGUAGE sql STABLE AS $$
   ORDER BY dt.embedding <=> query_embedding
   LIMIT match_count
 $$;
+-- 売上サポの回を検索した時の条件（2026-10-06 v2.5.81・⑯）: 拡張の案内が「検索」を押した時の意図した条件（intended）と画面に入っていた値（filled）。
+--   AIX の物件ピックアップの文が、時刻の窓で検索の記録を探さずに回から読む（⑰ の測り直し: 12時間以内に記録がある回は60回中15回）
+ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_conditions JSONB;
+COMMENT ON COLUMN property_pickups.search_conditions IS 'この回の一覧を検索した時の条件 {v:1, site, at, complete, intended:{area_mode, station_names, city_codes, rent_min, rent_max, floor_plan, is_wide…}, filled:{rent_min, rent_max, layouts, stations, city_codes…}}（拡張 search-stamp.js）';
 -- 似ている組（週の整理）: 新しい行ごとに近い現行の行（全件比較）
 DROP FUNCTION IF EXISTS design_thinking_neighbors(uuid, integer, double precision);
 CREATE FUNCTION design_thinking_neighbors(p_id UUID, match_count INT DEFAULT 5, min_similarity FLOAT DEFAULT 0.8)

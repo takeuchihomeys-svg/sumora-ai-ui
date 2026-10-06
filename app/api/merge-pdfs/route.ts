@@ -269,6 +269,8 @@ export async function POST(req: NextRequest) {
        *   property_pickups.search_mode に残し、ピンポイントの物件に加点（SEARCH_PINPOINT）。無い・知らない値は「分からない」（加点しない）
        */
       search_mode?: string | null;
+      /** v2.5.81 この一覧を検索した時の条件（拡張 search-stamp.js forSend・{v:1, site, at, complete, intended, filled}） */
+      search_stamp?: Record<string, unknown> | null;
       /** 2026-09-29 v2.5.41 拡張がこのページで送付済みの部屋として選ばなかった数（資料をダウンロードしていない）。ページの最初の束だけに付く */
       ext_sent_skipped?: number | null;
       /** 2026-09-30 v2.5.49 一括の回の送信だけ: 拡張が「今そのサイトで検索している回のお客様」を渡してくる（pickup-owner.ts・相手と違えば受け取らない） */
@@ -567,6 +569,8 @@ export async function POST(req: NextRequest) {
               summaries: summariesForPickup, pdfUrls: pdfUrlsForPickup, pdfBase64List: base64ForPickup,
               searchOverride,
               searchMode: body.search_mode === "pinpoint" || body.search_mode === "widen" ? body.search_mode : null,
+              // v2.5.81 この回の一覧を検索した時の条件（形が合う時だけ・8KB まで）
+              searchConditions: body.search_stamp && typeof body.search_stamp === "object" && (body.search_stamp as { v?: unknown }).v === 1 && JSON.stringify(body.search_stamp).length <= 8000 ? body.search_stamp : null,
               groupNotice: notice.deferred ? "deferred" : null,
             }))).then(async (rec) => {
               // 印を付けて記録できなかった（失敗・0行・列が無い）＝解析のアナウンスが来ない → 今まで通りグループに送る
