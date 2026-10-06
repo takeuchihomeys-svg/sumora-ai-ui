@@ -4552,6 +4552,35 @@ CREATE TABLE IF NOT EXISTS design_rules_digest (
 ALTER TABLE design_rules_digest DISABLE ROW LEVEL SECURITY;
 COMMENT ON TABLE design_rules_digest IS '設計知見の分野ごとの今の決まり（現行の行だけ・元の行の id 付き）。/api/cron/design-knowledge と scripts/kb-curate.ts が作る';
 COMMENT ON COLUMN design_rules_digest.review IS '要確認の一覧（area=要確認 の行だけ）: [{kind, ids, relation, note}]';
+-- 設計知見の RAG（2026-10-06 竹内「設計知見ひっぱるときRAG検索いれたらどうか」・⑯）:
+--   embedding は 題＋本文＋根拠＋札 の text-embedding-3-small（app/lib/design-knowledge-rag.ts kbEmbeddingInput）。embedding_hash＝その文の指紋（文が変わったら埋め直す）
+--   ivfflat の索引は空の表で作られていて区画（lists=100）が意味を持たない＋現行で絞ると近い行を取りこぼす（設計知見「pgvector の落とし穴」①②）。
+--   1,400行なら全件比較で数 ms → 索引を外し、全件比較（厳密）の関数で引く
+ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS embedding_hash TEXT;
+COMMENT ON COLUMN system_design_thinking.embedding_hash IS 'embedding を作った文（題＋本文＋根拠＋札）の指紋。違えば埋め直す（scripts/kb-embed.ts）';
+DROP INDEX IF EXISTS idx_system_design_thinking_embedding;
+DROP FUNCTION IF EXISTS match_design_thinking_exact(vector, integer);
+CREATE FUNCTION match_design_thinking_exact(query_embedding vector(1536), match_count INT DEFAULT 40)
+RETURNS TABLE(id UUID, similarity FLOAT)
+LANGUAGE sql STABLE AS $$
+  SELECT dt.id, 1 - (dt.embedding <=> query_embedding) AS similarity
+  FROM system_design_thinking dt
+  WHERE dt.is_current = true AND dt.embedding IS NOT NULL
+  ORDER BY dt.embedding <=> query_embedding
+  LIMIT match_count
+$$;
+-- 似ている組（週の整理）: 新しい行ごとに近い現行の行（全件比較）
+DROP FUNCTION IF EXISTS design_thinking_neighbors(uuid, integer, double precision);
+CREATE FUNCTION design_thinking_neighbors(p_id UUID, match_count INT DEFAULT 5, min_similarity FLOAT DEFAULT 0.8)
+RETURNS TABLE(id UUID, similarity FLOAT)
+LANGUAGE sql STABLE AS $$
+  SELECT o.id, 1 - (o.embedding <=> s.embedding) AS similarity
+  FROM system_design_thinking s JOIN system_design_thinking o ON o.id <> s.id
+  WHERE s.id = p_id AND s.embedding IS NOT NULL AND o.is_current = true AND o.embedding IS NOT NULL
+    AND 1 - (o.embedding <=> s.embedding) >= min_similarity
+  ORDER BY o.embedding <=> s.embedding
+  LIMIT match_count
+$$;
 
 -- 2026-10-06 ⑫ 竹内「AIXツールひらくとき重すぎる…今全部見ている気がする」: 画面は一覧のために直近90日のメッセージ（max_rows で実は1000行・4日分）を
 --   30秒ごとに丸ごと読み直していた。一覧が要るのは「会話ごとのお客様の最後の発言の時刻」と「本文の検索」だけ → 集計・検索を DB 側で

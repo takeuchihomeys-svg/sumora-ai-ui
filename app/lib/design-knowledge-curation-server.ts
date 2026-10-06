@@ -8,6 +8,8 @@ import {
   type KbRow, type RetirePlan, type ReviewItem,
 } from "@/app/lib/design-knowledge-curation";
 import { callDeepSeek } from "@/app/lib/vision-alt-provider";
+import { embedKbRows, neighborsOf } from "@/app/lib/design-knowledge-rag-server";
+import { NEAR_DUP_MIN } from "@/app/lib/design-knowledge-rag";
 
 export async function loadKbRows(sb: SupabaseClient): Promise<KbRow[]> {
   const all: KbRow[] = [];
@@ -43,7 +45,7 @@ export async function judgeSimilarPairs(pairs: ReturnType<typeof similarPairs>, 
     calls++;
     const res = await callDeepSeek(SIMILAR_SYSTEM, similarPrompt(p.a, p.b), { thinking: false, temperature: 0, maxTokens: 120, timeoutMs: 30_000 });
     const j = res ? parseSimilar(res.text) : null;
-    if (!j) { failed++; review.push({ kind: "similar", ids: [p.a.id, p.b.id], relation: "unknown", note: `似ている（本文 ${p.body.toFixed(2)}・題 ${p.title.toFixed(2)}）・判定なし` }); continue; }
+    if (!j) { failed++; review.push({ kind: "similar", ids: [p.a.id, p.b.id], relation: "unknown", note: `似ている（近さ/本文 ${p.body.toFixed(2)}・題 ${p.title.toFixed(2)}）・判定なし` }); continue; }
     if (j.relation === "different" || j.relation === "related") continue;
     review.push({ kind: "similar", ids: [p.a.id, p.b.id], relation: j.relation, note: `${j.relation}: ${j.reason}（本文 ${p.body.toFixed(2)}・題 ${p.title.toFixed(2)}）` });
   }
@@ -57,7 +59,46 @@ export type KbCycleResult = {
   review: ReviewItem[]; missingDecisionRows: string[];
   llm: { calls: number; failed: number };
   digests: Array<{ area: string; rows: number }>;
+  embed: { embedded: number; tokens: number; usd: number };
+  candidates: { embedding: number; lexical: number };
 };
+
+/**
+ * 2026-10-06（⑯・RAG）似ている組の候補は埋め込みの近さ（NEAR_DUP_MIN 以上・行ごとに近い3つ）を先に、文字の重なりの強い組（本文 0.25 以上）を足す。
+ *   DeepSeek に聞くのはこの候補だけ（旧は文字の重なりの弱い組まで全部＝週の呼び出しが減る）。埋め込みが無い時は旧の文字の重なりだけ
+ */
+export async function candidatePairs(sb: SupabaseClient, rows: KbRow[], sinceIso?: string): Promise<{ pairs: ReturnType<typeof similarPairs>; embedding: number; lexical: number }> {
+  const cur = rows.filter((r) => r.is_current);
+  const byId = new Map(cur.map((r) => [r.id, r]));
+  const focus = sinceIso ? cur.filter((r) => r.created_at >= sinceIso) : cur;
+  const seen = new Set<string>();
+  const out: ReturnType<typeof similarPairs> = [];
+  let embedding = 0;
+  for (const r of focus) {
+    let nb: Array<{ id: string; similarity: number }> = [];
+    try { nb = await neighborsOf(sb, r.id, 3, NEAR_DUP_MIN); } catch { nb = []; }
+    for (const n of nb) {
+      const o = byId.get(n.id);
+      if (!o) continue;
+      const key = [r.id, o.id].sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const [a, b] = r.created_at <= o.created_at ? [r, o] : [o, r];
+      out.push({ a, b, body: n.similarity, title: 0 });
+      embedding++;
+    }
+  }
+  let lexical = 0;
+  for (const p of similarPairs(rows, { sinceIso })) {
+    if (p.body < 0.25) continue;
+    const key = [p.a.id, p.b.id].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+    lexical++;
+  }
+  return { pairs: out.slice(0, 120), embedding, lexical };
+}
 
 /**
  * 1回の整理（週1の cron・scripts/kb-curate.ts が同じ関数）:
@@ -76,7 +117,10 @@ export async function runDesignKnowledgeCycle(sb: SupabaseClient, opts: { dry: b
     if (rd || rdec) rows = await loadKbRows(sb);
   }
   const sinceIso = opts.sinceDays ? new Date(Date.now() - opts.sinceDays * 86400e3).toISOString() : undefined;
-  const sim = opts.llm ? await judgeSimilarPairs(similarPairs(rows, { sinceIso })) : { review: [] as ReviewItem[], calls: 0, failed: 0 };
+  // 新しい行・文が変わった行の埋め込みを先に作る（似ている組の候補と自然文の引き方の両方に使う）
+  const emb = opts.dry ? { embedded: 0, tokens: 0, usd: 0 } : await embedKbRows(sb, { dry: false }).catch((e) => { console.warn("[kb] 埋め込みに失敗:", e instanceof Error ? e.message : e); return { embedded: 0, tokens: 0, usd: 0 }; });
+  const cand = opts.llm ? await candidatePairs(sb, rows, sinceIso) : { pairs: [], embedding: 0, lexical: 0 };
+  const sim = opts.llm ? await judgeSimilarPairs(cand.pairs) : { review: [] as ReviewItem[], calls: 0, failed: 0 };
   const review = [...dec.review, ...sim.review];
   const now = new Date().toISOString();
   const digests: Array<{ area: string; rows: number }> = [];
@@ -96,6 +140,7 @@ export async function runDesignKnowledgeCycle(sb: SupabaseClient, opts: { dry: b
     rows: rows.length, current: rows.filter((r) => r.is_current).length,
     retiredDuplicates: rd, retiredDecisions: rdec, plannedDuplicates: dups, plannedDecisions: dec.retire,
     review, missingDecisionRows: dec.missing, llm: { calls: sim.calls, failed: sim.failed }, digests,
+    embed: { embedded: emb.embedded, tokens: emb.tokens, usd: emb.usd }, candidates: { embedding: cand.embedding, lexical: cand.lexical },
   };
 }
 

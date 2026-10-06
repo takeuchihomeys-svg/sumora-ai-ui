@@ -2159,10 +2159,14 @@ function buildCondData(c, mode = "pinpoint") {
   // 広げて検索：家賃上限を自動拡張
   let effectiveRentMax = rentMaxRaw;
   let rentWideNote = null;
-  if (mode === "wide" && rentMaxRaw) {
+  // v2.5.79: 家賃の上限が「必ず」のお客様は広げても上げない（wide-rent.js）
+  const _rentMust = self.AxlxWideRent ? self.AxlxWideRent.rentMust(c) : false;
+  if (mode === "wide" && rentMaxRaw && !_rentMust) {
     const buffer = rentMaxRaw <= 100000 ? 5000 : 10000;
     effectiveRentMax = rentMaxRaw + buffer;
     rentWideNote = `元の上限 ${formatYen(rentMaxRaw)} ＋${buffer.toLocaleString()}円まで許容`;
+  } else if (mode === "wide" && rentMaxRaw && _rentMust) {
+    rentWideNote = "家賃の上限は必ず（広げても上げない）";
   }
 
   return {
@@ -4523,7 +4527,8 @@ function openInstructions(siteKey) {
       const itandiEffectiveRentMax = (() => {
         if (itandiRentManualChanged) return Number(adjRentMax);
         if (!rawRentMax) return null;
-        if (searchMode === "wide") {
+        // v2.5.79: 家賃の上限が「必ず」のお客様は広げても上げない（wide-rent.js）
+        if (searchMode === "wide" && !(self.AxlxWideRent && self.AxlxWideRent.rentMust(c))) {
           const buffer = rawRentMax <= 100000 ? 5000 : 10000;
           return rawRentMax + buffer;
         }
@@ -5093,7 +5098,8 @@ function openInstructions(siteKey) {
       const rpEffectiveRentMax = (() => {
         if (!adjC.rent_max) return null;
         if (rpRentManualChanged) return Number(adjRentMax);
-        if (searchMode === "wide") {
+        // v2.5.79: 家賃の上限が「必ず」のお客様は広げても上げない（wide-rent.js）
+        if (searchMode === "wide" && !(self.AxlxWideRent && self.AxlxWideRent.rentMust(c))) {
           const buffer = adjC.rent_max <= 100000 ? 5000 : 10000;
           return adjC.rent_max + buffer;
         }

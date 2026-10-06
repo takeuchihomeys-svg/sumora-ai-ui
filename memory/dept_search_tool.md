@@ -22,6 +22,11 @@
 
 ---
 
+## 2026-10-06 v2.5.79 家賃の上限が「必ず」のお客様は広げて検索でも上げない（**拡張の再読み込み必須**）
+⑫ の決定（KAORI「管理費込みで12万上限」）: property_customers.requirement_strength.rent_max.strength === "must" の時、広げて検索でも家賃の上限に +5,000円／+10,000円を足さない。エリア・駅・築年数（+5年）などの広げ方は今まで通り。
+- `wide-rent.js`（新）rentMust・searchRentMax。popup の3か所（リアプロ・ITANDI の検索の条件・指示の表示）と resolution-core（一括・background・条件に requirement_strength を載せる）で使う。
+- テスト: tests/chrome-extension/wide-rent-v2579.test.js（11）。
+
 ## 2026-10-06 v2.5.78 1人のお客様の2つ目の探し物（子の行）に拡張を合わせる（**拡張の再読み込み必須**）
 ⑫ の作り: property_customers に profile_label・parent_customer_id。子（例「ゆいと（物置）」887420dc・親 23f2f823・茨木・豊中・〜2万）は自分の条件を持ち、会話と line_user_id は持たない。GET /api/property-customers は子に親の会話（linked_conversation）と is_linked を返す。
 - 一覧: 子は別のお客様として出る（名前に（物置）が付いている・紐付け済みの絞り込みでも出る）・子の条件で検索する（今まで通りの道）。

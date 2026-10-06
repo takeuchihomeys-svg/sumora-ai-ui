@@ -4,6 +4,7 @@
 //   category: architecture | prompt_engineering | data_model | ux | performance | ai_design
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
+import { embedKbRows } from "../app/lib/design-knowledge-rag-server";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const file = process.argv[2];
@@ -18,8 +19,14 @@ async function main() {
       if (!row[k]) { console.error(`必須の項目がありません: ${k}（${String(row.title ?? "無題")}）`); process.exit(1); }
     }
   }
-  const { error } = await sb.from("system_design_thinking").insert(rows);
+  const { data, error } = await sb.from("system_design_thinking").insert(rows).select("id");
   if (error) { console.error("INSERT 失敗:", error.message); process.exit(1); }
   for (const row of rows) console.log(`設計知見を INSERT しました: ${row.title}`);
+  // 2026-10-06（⑯・RAG）入れたその場で埋め込みを作る（scripts/kb.ts --q の自然文の引き方に載る）。失敗しても INSERT は残る（週の整理が埋める）
+  const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  try {
+    const e = await embedKbRows(sb, { dry: false, ids });
+    console.log(`  埋め込み: ${e.embedded}行（$${e.usd.toFixed(5)}）`);
+  } catch (err) { console.warn("  埋め込みに失敗（週の整理で埋める）:", err instanceof Error ? err.message : err); }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

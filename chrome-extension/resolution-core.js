@@ -1567,8 +1567,11 @@ function resolveConditionsLocal(baseConditions, opts) {
     ? NaN : Number(c.rent_max);
   const ageNum = (c.building_age === null || c.building_age === undefined || c.building_age === "")
     ? NaN : Number(c.building_age);
+  // v2.5.79: 家賃の上限が「必ず」（requirement_strength.rent_max.strength=must）なら広げても上げない（wide-rent.js）
+  const _WR = (typeof self !== "undefined" ? self : globalThis).AxlxWideRent;
+  const _rentMust = _WR ? _WR.rentMust(c) : false;
   const rent_max_resolved = isFinite(rentNum)
-    ? (isWide ? rentNum + (rentNum <= 100000 ? 5000 : 10000) : rentNum)
+    ? (isWide && !_rentMust ? rentNum + (rentNum <= 100000 ? 5000 : 10000) : rentNum)
     : null;
   const building_age_resolved = isFinite(ageNum)
     ? (isWide ? ageNum + 5 : ageNum)

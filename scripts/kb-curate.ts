@@ -24,6 +24,7 @@ const sinceArg = (process.argv.find((a) => a.startsWith("--since-days=")) ?? "")
   if (r.missingDecisionRows.length) console.log(`   決定の行が見つからない決定: ${r.missingDecisionRows.join("・")}`);
   console.log(`③ 要確認: ${r.review.length}（DeepSeek ${r.llm.calls}回・答えなし ${r.llm.failed}）`);
   for (const v of r.review) console.log(`   - [${v.kind}${v.relation ? ":" + v.relation : ""}] ${v.ids.map((x) => x.slice(0, 8)).join(" / ")}  ${v.note}`);
+  console.log(`   埋め込み: ${r.embed.embedded}行（$${r.embed.usd.toFixed(4)}）・似ている組の候補: 埋め込み ${r.candidates.embedding}・文字の重なり ${r.candidates.lexical}`);
   console.log(`④ まとめ: ${r.digests.map((d) => `${d.area} ${d.rows}`).join("・")}`);
   if (apply) for (const f of await writeDigestFiles(join(process.cwd(), "memory"))) console.log("   書きました:", f);
 })().catch((e) => { console.error(e); process.exit(1); });

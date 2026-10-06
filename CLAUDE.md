@@ -95,6 +95,7 @@ VALUES (
 - 毎週の整理（`/api/cron/design-knowledge`・手元は `scripts/kb-curate.ts`）が重複と決定で古くなった行を退役し、迷う物は `memory/rules_digest_review.md` に出す
 
 ### 参照方法（次セッション冒頭・設計作業前）
+- **まず `npx tsx --env-file=.env.local scripts/kb.ts --q="自然文の問い"` で引く（RAG・近さ＋語＋札＋新しさ・退役した行は出ない）、次に分野の rules_digest**（2026-10-06 竹内さん）
 - **その分野の「今の決まり」を先に読む**: `memory/rules_digest_<reply|aix|brain|search|extension|estimate|viewing|cost>.md`（最新にするのは `npx tsx --env-file=.env.local scripts/kb-digest.ts --write`）
 ```sql
 SELECT title, insight, rationale FROM system_design_thinking
@@ -157,7 +158,7 @@ npx tsx --env-file=.env.local scripts/kb-insert.ts <JSONファイル>       # �
 SELECT title, insight FROM system_design_thinking
 WHERE is_current = true AND '汎用' = ANY(tags);
 ```
-※ 設計知見の embedding は付いておらず（match_design_thinking はアプリから未使用）、引き方はこの SQL とタグ
+※ 設計知見の embedding は 2026-10-06 から全現行行に付いている（題＋本文＋根拠＋札・kb-insert と週の整理が埋める）。自然文は `scripts/kb.ts --q=`、型・機能はこの SQL とタグ
 
 ### 直す機能で引く（型のタグが無い過去の知見に届く道）
 600件のうち軸タグ（汎用・ブレイン診断・穴:Gn）が付いているのは1/5で、残りは**機能タグ**でしか引けない。

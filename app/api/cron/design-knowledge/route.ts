@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     const r = await runDesignKnowledgeCycle(supabase, { dry, llm: !dry, sinceDays: 8, by: "cron:design-knowledge" });
     const summary = {
       rows: r.rows, current: r.current, retiredDuplicates: r.retiredDuplicates, retiredDecisions: r.retiredDecisions,
-      review: r.review.length, missingDecisionRows: r.missingDecisionRows, llm: r.llm, digests: r.digests,
+      review: r.review.length, missingDecisionRows: r.missingDecisionRows, llm: r.llm, digests: r.digests, embed: r.embed, candidates: r.candidates,
     };
     await finishCronLog(logId, true, summary);
     return NextResponse.json({ ok: true, ...summary, plannedDuplicates: r.plannedDuplicates, plannedDecisions: r.plannedDecisions });

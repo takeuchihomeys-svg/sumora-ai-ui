@@ -5,6 +5,7 @@
 // 静的 import で読み込み、resolution-core.js が公開する globalThis.SUMORA_RESOLUTION
 // 経由で resolveConditionsLocal 等を参照する（_resolveLocalFirst 参照）。
 import "./area-token.js"; // v2.5.76 市・区の語は駅にしない（resolution-core の駅モードが読む）
+import "./wide-rent.js"; // v2.5.79 家賃の上限が「必ず」なら広げても上げない（resolution-core が読む）
 import "./resolution-core.js";
 // 2026-09-18 竹内: 検索日の記録（サイト×モード）を popup.js と同じ1つの関数で行う（self.AxlxSearchHistory）
 import "./search-history.js";
@@ -4624,6 +4625,7 @@ function _buildBatchConditions(c, isWide, opts) {
     desired_area: c.desired_area || null,
     area_mode: (c.area_mode === 'both') ? null : (c.area_mode || null), // 'both'はnull(自動判定)にフォールバック
     rent_max: c.rent_max || null,
+    requirement_strength: c.requirement_strength || null, // v2.5.79 広げて検索でも家賃の上限を上げない「必ず」の印（resolution-core）
     rent_min: c.rent_min_search || c.rent_min || null, // 2026-10-02 ⑫ 書いた下限・無ければ上限から出したおおよその下限（サーバーの rent_min_search）
     walk_minutes: c.walk_minutes || null,
     building_age: c.building_age || null,
