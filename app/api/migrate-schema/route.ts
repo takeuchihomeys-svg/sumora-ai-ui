@@ -4572,6 +4572,15 @@ LANGUAGE sql STABLE AS $$
     AND strpos(lower(m.text), lower(trim(q))) > 0
   LIMIT greatest(1, least(max_n, 1000));
 $$;
+-- 2026-10-06 ⑫ 竹内（ゆいと）「物置は別での物件…ゆいとさん物件 ゆいとさん物置 と2つに分ければ拡張ツールで検索するさいも検索しやすい」:
+--   1人のお客様の2つ目の探し物（物置・店舗・事務所・家族用…）は別の行（子）。会話の紐付け（conversations.property_customer_id）と line_user_id は親だけ
+--   （line_user_id で引く所が多いので子には入れない）。子の名前は「ゆいと（物置）」で、拡張・一覧はそのまま別のお客様として出る
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS profile_label TEXT;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS parent_customer_id UUID;
+CREATE INDEX IF NOT EXISTS idx_property_customers_parent ON property_customers(parent_customer_id) WHERE parent_customer_id IS NOT NULL;
+COMMENT ON COLUMN property_customers.profile_label IS '2つ目の探し物の種類（物置・店舗・事務所・セカンドハウス・家族用・仕事用）。住まい（主）は NULL';
+COMMENT ON COLUMN property_customers.parent_customer_id IS '2つ目の探し物の行の親（同じお客様の住まいの行）。会話・LINE の紐付けは親を使う';
+
 -- 会話・メッセージの変更を Realtime で届ける（画面は変わった行だけを直す。30秒ごとの丸ごとの読み直しをやめるため）
 DO $$
 BEGIN

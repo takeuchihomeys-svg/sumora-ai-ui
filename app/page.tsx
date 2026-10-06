@@ -36,6 +36,7 @@ import { buildScreeningTaskPayload, isValidSyncKey } from "./lib/screening-calen
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
+import { cacheGet, cacheSet } from "./lib/page-cache";
 import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows } from "./lib/conversation-list-sync";
 import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseCheckPatternOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
 import { isWaitPromiseNotes, waitPromiseBadge } from "./lib/promise-timing";
@@ -637,6 +638,15 @@ function renderTextWithLinks(text: string) {
 
 /** 最初に一覧を出す件数・スクロールで足す件数（2026-09-21 竹内「公式LINEのように下までいかな読み取らん形に」） */
 const FIRST_PAGE_CONVERSATIONS = 40;
+// 2026-10-06 ⑫ 竹内「LINEツールからaixツールに…切り替える際にストレスかからないように」: 下のタブで戻ってきた時は
+//   前に読んだ一覧（page-cache・画面をまたいで残る）をすぐ出し、裏で差分だけ読む（旧は戻るたびに 40件→全件・物件顧客を読み直していた）
+const LINE_LIST_CACHE_KEY = "line:list";
+const LINE_LIST_CACHE_MAX_AGE_MS = 30 * 60_000;
+type LineListCache = {
+  conversations: Conversation[]; selectedId: string; linkedCustomerMap: Record<string, unknown>; lastCustomerAt: Record<string, string>;
+  postApply: string[]; hot: string[]; flagged: string[]; linkedLineUserIds: string[]; hasMore: boolean; lastFullAt: number | null; lastPollAt: number | null;
+};
+const lineListCache = (): LineListCache | null => cacheGet<LineListCache>(LINE_LIST_CACHE_KEY, LINE_LIST_CACHE_MAX_AGE_MS)?.value ?? null;
 const LIST_RENDER_STEP = 40;
 
 /**
@@ -700,8 +710,8 @@ function formatListTime(dateString?: string) {
 }
 
 export default function Home() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
+  const [conversations, setConversations] = useState<Conversation[]>(() => lineListCache()?.conversations ?? []);
+  const [selectedId, setSelectedId] = useState<string>(() => lineListCache()?.selectedId ?? "");
   const [replyDraft, setReplyDraft] = useState("");
   // A-6: テキストエリア表示テキストのソース排他管理（AI下書き / ✨最適化 / 手動=null）
   const [displaySource, setDisplaySource] = useState<"ai_draft" | "optimized" | null>(null);
@@ -758,10 +768,10 @@ export default function Home() {
   const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
-  const [pageLoading, setPageLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(() => !lineListCache());
   const [generating, setGenerating] = useState(false);
   const [undoCondLoading, setUndoCondLoading] = useState(false); // 2026-10-06 ⑫ 条件の「元に戻す」
-  const [hasMoreConversations, setHasMoreConversations] = useState(false);
+  const [hasMoreConversations, setHasMoreConversations] = useState(() => lineListCache()?.hasMore ?? false);
   const [loadingMoreConv, setLoadingMoreConv] = useState(false);
   // 2026-09-21 竹内「公式LINEのように下までスクロールしたときに読み取られる形に」:
   //   一覧は336行を一度に全部描いていた（1行ごとにバッジ・画像があるのでスマホで重い）。
@@ -1086,8 +1096,8 @@ export default function Home() {
   const [partialCopyMessageId, setPartialCopyMessageId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
-  const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
-  const [hotConvIds, setHotConvIds] = useState<Set<string>>(new Set());
+  const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(() => new Set(lineListCache()?.flagged ?? []));
+  const [hotConvIds, setHotConvIds] = useState<Set<string>>(() => new Set(lineListCache()?.hot ?? []));
   const [manuallyReadAt, setManuallyReadAt] = useState<Record<string, string>>({});
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [memos, setMemos] = useState<Record<string, string>>({});
@@ -1170,8 +1180,8 @@ export default function Home() {
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [replyExamplesCount, setReplyExamplesCount] = useState<number | null>(null);
-  const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
-  const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(new Set<string>());
+  const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(() => new Set(lineListCache()?.linkedLineUserIds ?? []));
+  const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(() => new Set<string>(lineListCache()?.postApply ?? []));
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState("");
@@ -1555,7 +1565,7 @@ export default function Home() {
   };
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
-  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }>>({});
+  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }>>(() => (lineListCache()?.linkedCustomerMap ?? {}) as Record<string, { id: string; name: string; conditions: string }>);
   // チャット内 条件編集モーダル
   const [chatCondEditOpen, setChatCondEditOpen] = useState(false);
   const [chatCondEditId, setChatCondEditId] = useState<string | null>(null);
@@ -1606,7 +1616,7 @@ export default function Home() {
   // 送信済みメッセージID → save-reply-example の ID（☆PATCH に使用）
   const savedExampleIdByMsgId = useRef<Map<string, string>>(new Map());
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const conversationsRef = useRef<Conversation[]>([]);
+  const conversationsRef = useRef<Conversation[]>(lineListCache()?.conversations ?? []);
   // 選択中会話にお客様メッセージが届いたとき強制スクロールするフラグ
   const forceScrollForCustomerMsgRef = useRef(false);
   // リアルタイムハンドラ内でのstale closure防止（selectedIdを常に最新に保つ）
@@ -1804,7 +1814,9 @@ export default function Home() {
         setLinkedLineUserIds(ids);
       }, () => {});
 
-    fetchConversationsAndMessages();
+    // 2026-10-06 ⑫: 控えがある時（下のタブで戻ってきた）は読み込み中を出さず差分だけ（5分たっていれば丸ごと）
+    if (conversationsRef.current.length > 0 || lineListCache()) void fetchConversationsAndMessages(true);
+    else fetchConversationsAndMessages();
 
     // アクティブなタスク一覧を取得（Realtime フォールバック兼用）
     const refreshActiveTasks = () =>
@@ -2546,14 +2558,23 @@ export default function Home() {
   }, [conversations]);
 
   // ── 2026-10-06 ⑫ 一覧の読み込みを変わった所だけに（app/lib/conversation-list-sync.ts）──
-  const lastFullRefreshAtRef = useRef<number | null>(null);
-  const lastPollAtRef = useRef<number | null>(null);
+  const lastFullRefreshAtRef = useRef<number | null>(lineListCache()?.lastFullAt ?? null);
+  const lastPollAtRef = useRef<number | null>(lineListCache()?.lastPollAt ?? null);
   /** 読み直しの回数（測る用・window.__aixListRefresh で見られる） */
   const refreshStatsRef = useRef<{ full: number; delta: number; rowPatch: number; startedAt: number }>({ full: 0, delta: 0, rowPatch: 0, startedAt: Date.now() });
   useEffect(() => { (window as unknown as { __aixListRefresh?: unknown }).__aixListRefresh = refreshStatsRef.current; }, []);
   /** 会話ごとのお客様の最後の発言の時刻（DB の集計）。一覧の未読・AIX の鮮度・下書きの先回りに使う */
-  const lastCustomerAtRef = useRef<Record<string, string>>({});
-  const [lastCustomerAtMap, setLastCustomerAtMap] = useState<Record<string, string>>({});
+  const lastCustomerAtRef = useRef<Record<string, string>>(lineListCache()?.lastCustomerAt ?? {});
+  const [lastCustomerAtMap, setLastCustomerAtMap] = useState<Record<string, string>>(() => lineListCache()?.lastCustomerAt ?? {});
+  // 一覧の控えを画面をまたいで残す（下のタブで戻った時にすぐ出す）。読み込み中（空）の時は書かない
+  useEffect(() => {
+    if (!conversations.length) return;
+    cacheSet<LineListCache>(LINE_LIST_CACHE_KEY, {
+      conversations, selectedId, linkedCustomerMap, lastCustomerAt: lastCustomerAtMap,
+      postApply: [...postApplyConvIds], hot: [...hotConvIds], flagged: [...flaggedConvIds], linkedLineUserIds: [...linkedLineUserIds],
+      hasMore: hasMoreConversations, lastFullAt: lastFullRefreshAtRef.current, lastPollAt: lastPollAtRef.current,
+    });
+  }, [conversations, selectedId, linkedCustomerMap, lastCustomerAtMap, postApplyConvIds, hotConvIds, flaggedConvIds, linkedLineUserIds, hasMoreConversations]);
   const refreshLastCustomerAt = async () => {
     const { data, error } = await supabase.rpc("conversation_last_customer_at");
     if (error || !data) return;

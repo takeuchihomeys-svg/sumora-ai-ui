@@ -107,3 +107,52 @@ export function readConditionStatements(text: string | null | undefined): Condit
   }
   return out;
 }
+
+// ── 2つ目の探し物（別の種類の物件）────────────────────────────────
+// 2026-10-06 ⑫ 竹内さん（ゆいと）「物置は別での物件の事となる。その為、別物件は分けておこなう ゆいとさん物件 ゆいとさん物置 と2つに分ければ
+//   拡張ツールで検索するさいも検索しやすい。このように1人のお客さんで2種類や2パターンの場合もある」
+//   ゆいと 9/23「あともう一つ仕事用で家賃安ければ安いほどいい、物件茨木、豊中で探してる」→ 9/24「家賃2万以下とかないでしょうか？物置として使いたいくらいです」
+//   が住まいの条件（豊中・1LDK・9万）に混ざり、家賃の上限が 2万に上書きされた（スタッフが 10/4 に手で 9万へ戻した）。
+//   本番180日のお客様の発言 10,322件で別の種類の探し物は ゆいと（仕事用・物置）と 倉庫兼ガレージ（事業用）の2人。
+//   近隣の月極駐車場（住まいの物件の近く）は AIX【確認した→近隣の月極駐車場】の話＝2つ目の探し物にしない
+export type SecondaryNeed = { label: string; evidence: string };
+const SECONDARY_KIND_RES: ReadonlyArray<{ re: RegExp; label: string }> = [
+  { re: /物置|倉庫|トランクルーム|レンタル収納|ガレージ|荷物置き/, label: "物置" },
+  { re: /店舗|テナント/, label: "店舗" },
+  { re: /事務所|オフィス|アトリエ|スタジオ/, label: "事務所" },
+  { re: /セカンドハウス|別荘|週末だけ/, label: "セカンドハウス" },
+  { re: /(?:両親|親|母|父|祖母|祖父)(?:の|用の|が住む|が住める)(?:お?部屋|家|物件)/, label: "家族用" },
+  { re: /仕事用|作業用|事業用/, label: "仕事用" },
+];
+/** 使い道・探す言い方（「〜として使いたい」「〜用で」「もう一つ〜探して」）。無い文（「事務所から内見」「事務所の住所に送って」）は読まない */
+const SECONDARY_INTENT_RE = /として(?:使|利用|借)|(?:用|用途)(?:で|に|の)|名目|もう一(?:つ|件)|別(?:で|に)(?:もう)?[^。\n]{0,10}(?:探|借)|(?:で|を)探して|探して(?:ます|いる|おり)|探す(?:こと|の)|借りたい|ありますか|ないですか|ないでしょうか|欲しい/;
+const SECONDARY_NOT_RE = /事務所(?:から|に(?:伺|行|来)|の住所|として利用させて)|事務所使用ではない|近隣(?:の)?(?:月極)?駐車場|店舗(?:情報|の情報)|取り扱い店舗|不動産|審査|保証/;
+
+/** お客様の文が「住まいとは別の種類の物件」を探す話か（物置・店舗・事務所・セカンドハウス・家族用・仕事用）。無ければ null */
+export function secondaryNeedOf(text: string | null | undefined): SecondaryNeed | null {
+  // 画像の書き起こし（書類・保険・物件ページ）は読まない（本番: 保険の入金のスクショの「店舗」に当たった）
+  if (/^\s*\[(?:画像|動画|ファイル)\]/.test(String(text ?? ""))) return null;
+  const turn = classifyConditionTurn(String(text ?? ""));
+  if (!turn.conditionText) return null;
+  for (const s of sentencesOf(nf(turn.conditionText))) {
+    if (SECONDARY_NOT_RE.test(s)) continue;
+    for (const k of SECONDARY_KIND_RES) {
+      if (!k.re.test(s)) continue;
+      if (!SECONDARY_INTENT_RE.test(s) && !SECONDARY_INTENT_RE.test(turn.conditionText)) continue;
+      return { label: k.label, evidence: s.slice(0, 80) };
+    }
+  }
+  return null;
+}
+
+/** 2つ目の探し物の文から、その探し物の条件（家賃の上限・エリア・間取り）を読む（住まいの条件には書かない） */
+export function secondaryConditionsOf(text: string | null | undefined): { rent_max: number | null; desired_area: string | null; floor_plan: string | null; note: string } {
+  const t = nf(text);
+  let rent: number | null = null;
+  for (const m of t.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*万/g)) { const v = Math.round(Number(m[1]) * 10000); if (Number.isFinite(v) && v > 0 && v < 1_000_000) rent = rent == null ? v : Math.max(rent, v); }
+  const areas = placeTokens(t.replace(/([0-9]+)\s*万/g, " "));
+  // 市・区の付かない地名（「茨木、豊中で」）は大阪近郊の主な地名だけ拾う（拾えなければ空＝スタッフが画面で入れる）
+  const plain = [...t.matchAll(/茨木|豊中|吹田|高槻|枚方|堺|尼崎|西宮|梅田|難波|天王寺|京橋|守口|門真|摂津|箕面|池田|東大阪|八尾|都島/g)].map((m) => m[0]);
+  const layout = layoutStatementOf(t);
+  return { rent_max: rent, desired_area: [...new Set([...areas, ...plain])].join("・") || null, floor_plan: layout, note: t.replace(/\s+/g, " ").slice(0, 120) };
+}

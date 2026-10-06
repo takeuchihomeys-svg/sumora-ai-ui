@@ -7,7 +7,10 @@
 **ここだけ読めば続けられるように書く（毎ステップ更新）。手順は memory/test_protocol_brain.md（§9.5 実送信・§9.6 網羅の表）。tsc は共有の鍵で1つずつ（mkdir C:/Users/竹内悠~1/AppData/Local/Temp/claude/tsc.lock → NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit → rmdir）。**
 - **終わった（コミット済み）**: d1e4b1fe（2段・確認しますを外す・家賃の下限・電話19時）／62f89db2（待ち合わせの訂正・22巡）／9aa3ab74（家賃の相場を返信へ）／a27f0efd（申込の書類2つ・電話の約束・電話が終わった後・S5・2段の直し・待ち合わせの約束→AIX・日にちの聞き直し・築年数の幅・家賃の万の切り捨て・網羅の表・readiness）
 - **終わった（コミット済み ee13e748＝区切り5）**: 外れの分け方（scripts/lib/replay-truth.ts・replay-reference-corrections.json・replay-true-agreement.ts）／送れる物件が無いピックアップの約束も2段（two-stage・本番の一致 46.8→53.7%）／内覧調整の出しすぎ・戻ったお客様へのフォームは本番で線を引けず入れない（監査は残す）／場面を作る道具が返事の束の外の押下も拾う（網羅 42→47・64%）／予算の目安の要の語が抜けた下書きは送らない（rent_budget_missing）／✅ はどの文でも残す・templates の ✅ を戻した（7行）／申込時フォーマット（続き）に※マイナンバーのマスキング（提案 562287ff implemented）／AIっぽすぎる文の点検 scripts/audit-ai-ish-phrasing.ts
-- **10/06 夕方（未コミット・tsc 通過）**:
+- **10/06 夜（未コミット・tsc 通過）**:
+  - AIXツール（/conditions）の重さ: app/lib/page-cache.ts（画面をまたぐ控え・10/10）・app/lib/pickup-list-load.ts（一覧の読み手を1つ・今日の分を先に）。/conditions・PickupReview・LINE（app/page.tsx）が戻った時に控えをすぐ出す
+  - ゆいとの2つ目の探し物: 列 profile_label・parent_customer_id（適用済み）、condition-reading.secondaryNeedOf、app/lib/secondary-profile.ts（17/17）・secondary-profile-server.ts。**ゆいとのデータ直しは scripts/fix-owner-approved-1006.ts --apply（自動の許可で止まるので竹内さんの手で）**。R は既に直っていた。拡張の要る事は報告に
+- **10/06 夕方（8e2f6ba9 でコミット済み）**:
   - 画面が重い（AIX LINX）: app/lib/conversation-list-sync.ts（新・17/17）＋ page.tsx（丸ごとの読み直し→差分・5分ごとに丸ごと／メッセージは開いた会話だけ／Realtime は行を直すだけ／物件顧客は Realtime／line_user_id は列1つ）。DB 関数 conversation_last_customer_at・search_conversation_ids_by_message は適用済み。**Realtime の publication（会話・メッセージ）は新版のデプロイ後に migrate-schema の POST で入れる**（旧版のままだと更新ごとに丸ごと読み直す）。測定 scripts/measure-list-load.ts
   - 竹内さんの答え: 3＝スタッフの文に要件がある約束もお礼の番に 確認した（aix-task-link・45→69件）／4＝入居時期を P4 で列に（condition-reading.moveInStatementOf）／5＝読み手を1つに app/lib/condition-reading.ts（21/21・監査 scripts/audit-condition-reach.ts）。1（R の希望エリアを直す）は DB の書き込みが自動の許可で止められた＝竹内さんの手で（値は報告に）
 - **10/06 午後の2件（0e5318b0 でコミット済み）**:

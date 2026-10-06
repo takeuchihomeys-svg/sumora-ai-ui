@@ -24,6 +24,7 @@ import { FREE_TEXT_CONDITION_FIELDS, mergeFreeTextClauses } from "@/app/lib/cond
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { resolveScopeForBundle } from "@/app/lib/condition-change-scope";
 import { detectConditionRevert } from "@/app/lib/condition-restore";
+import { secondaryNeedOf } from "@/app/lib/condition-reading";
 import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
@@ -140,6 +141,8 @@ async function applyBrainConditionChange(
   targetMessage = turn.conditionText;
   // 2026-10-06 ⑫（R）: 「やっぱり元々の条件で」は webhook が履歴から戻す（condition-restore-server）。ここで読み直して上書きしない
   if (detectConditionRevert(targetMessage)) { console.log(JSON.stringify({ tag: "bg-async:bridge-skip-revert", convId })); return; }
+  // 2026-10-06 ⑫（ゆいと）: 別の種類の探し物（物置・店舗…）は webhook が子の行に書く。住まいの条件に書かない
+  if (secondaryNeedOf(targetMessage)) { console.log(JSON.stringify({ tag: "bg-async:bridge-skip-secondary", convId })); return; }
 
   const { data: pc } = await db.from("property_customers")
     .select("additional_conditions, desired_area, floor_plan, rent_max, rent_min, walk_minutes, commute_station, commute_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests")

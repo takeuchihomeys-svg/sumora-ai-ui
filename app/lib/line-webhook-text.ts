@@ -27,7 +27,7 @@ import { classifyConditionTurn, gateExtractedConditions, decideAreaMode, isApply
 import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo, withRentOrder } from "@/app/lib/rent-raise";
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 import { areaMergeMode, areasBeforeNegation, describeAreaChange, detectConditionRevert } from "@/app/lib/condition-restore";
-import { moveInStatementOf } from "@/app/lib/condition-reading";
+import { moveInStatementOf, secondaryNeedOf } from "@/app/lib/condition-reading";
 import { walkMinutesInText } from "@/app/lib/walk-minutes-text";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
@@ -504,9 +504,19 @@ export async function handleTextMessage(
     void autoMarkPropertyViewed(db, userId).catch((e) => console.warn("[line-webhook] autoMarkPropertyViewed:", e));
   }
 
+  // 2026-10-06 ⑫ 竹内（ゆいと）「物置は別での物件…ゆいとさん物件 ゆいとさん物置 と2つに分ける」: 住まいとは別の種類の探し物（物置・店舗・事務所…）は
+  //   子の行（secondary-profile-server）に書き、住まいの条件（フォーマットの読み取り・経路C・P4）には書かない＝住まいの家賃・地名を上書きしない
+  const secondaryNeed = !applyFormDetected ? secondaryNeedOf(text) : null;
+  if (secondaryNeed) {
+    after(async () => {
+      const { routeSecondaryNeed } = await import("@/app/lib/secondary-profile-server");
+      await routeSecondaryNeed(db, convId, text, secondaryNeed, insertedMsgId).catch((e) => console.warn("[routeSecondaryNeed]", e));
+    });
+  }
+
   // after() A: フォーマット解析（独立実行 — draft_pending_at更新と並列・30s Anthropicコールを含む）
   // ※申込フォームは希望条件AI解析の対象外
-  if (!applyFormDetected && isFormatMessage(text)) {
+  if (!secondaryNeed && !applyFormDetected && isFormatMessage(text)) {
     after(async () => {
       try {
         await autoParseFormat(db, userId, convId, text, account, insertedMsgId);
@@ -581,7 +591,7 @@ export async function handleTextMessage(
     });
   }
 
-  if (!revertCue && !applyFormDetected && isAreaSpecificationMessage(text)) {
+  if (!secondaryNeed && !revertCue && !applyFormDetected && isAreaSpecificationMessage(text)) {
     after(async () => {
       await detectAndAnnounceAreaChange(db, convId, text, insertedMsgId)
         .catch((e) => console.warn("[detectAndAnnounceAreaChange]", e));
@@ -590,7 +600,7 @@ export async function handleTextMessage(
 
   // after() E: P4 — カジュアル返信から条件を自動抽出（Haiku: 明示条件を高速・安価に取得）
   // 物件検索フェーズ（hearing / property_search / hot / proposing）のみ実行し無駄なAPI消費を防止
-  if (!revertCue && !applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
+  if (!secondaryNeed && !revertCue && !applyFormDetected && !isFormatMessage(text) && text.length >= 5) {
     after(async () => {
       try {
         const { data: cs } = await db.from("conversations").select("status").eq("id", convId).maybeSingle();

@@ -1,8 +1,10 @@
 "use client";
 
 import { manYen } from "@/app/lib/man-yen";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
+import { cacheGet, cacheSet, cacheDrop, cacheUpdate } from "@/app/lib/page-cache";
+import { loadPickupList, cachedPickupList, pendingByCustomer, PICKUP_LIST_DAYS } from "@/app/lib/pickup-list-load";
 import BottomNav from "@/app/components/BottomNav";
 // 2026-09-24 竹内「ピックアップしたのを一度アプリの売上サポの部分に飛ばして…スタッフは確認してお客さんに送るだけ」
 import PickupReview from "@/app/components/PickupReview";
@@ -242,7 +244,8 @@ export default function ConditionsPage() {
 
   // 2026-09-24 竹内「ブレインモードで送ったけど売上サポに反映されていない。紐付け済みのお客さんの UI が LINE チャットに変わっていない」:
   //   ピックアップは別タブに入っていて、一覧の行からは見えなかった。お客様の行に「🧠 物件 N件」を出し、押すとそのお客様の会話風画面を開く
-  const [pickupPending, setPickupPending] = useState<Map<string, number>>(new Map());
+  // 2026-10-06 ⑫: 戻った時は控え（page-cache）をすぐ出す
+  const [pickupPending, setPickupPending] = useState<Map<string, number>>(() => pendingByCustomer(cachedPickupList()));
   const [pickupFocus, setPickupFocus] = useState<string | null>(null);
   // 2026-09-27 LINE のトーク画面の「新着物件カード」から来た時（/conditions?pickup=<お客様の鍵>&batch=<回>）: そのお客様のその回を開く
   const [pickupFocusBatch, setPickupFocusBatch] = useState<string | null>(null);
@@ -254,23 +257,22 @@ export default function ConditionsPage() {
     } catch { /* 無ければ普段どおり */ }
   }, []);
   /** 新着物件の合計（タブのバッジ・スタッフ全員で共有の既読を引いた数） */
-  const [newTotal, setNewTotal] = useState(0);
-  const loadPickupPending = useCallback(async () => {
+  const [newTotal, setNewTotal] = useState(() => Number(cachedPickupList()?.new_total ?? 0) || 0);
+  // 2026-10-06 ⑫: 子（PickupReview の一覧）と同じ一覧を1回だけ読む（pickup-list-load・同時に読めば同じ約束を待つ・20秒以内に読んだ物はそのまま）。
+  //   force＝送った・見送り・既読の後（onChange）と60秒ごと
+  const loadPickupPending = useCallback(async (force = true) => {
     try {
       // 件数だけ要るので軽い一覧（画像・本文を読まない）
-      const res = await fetch("/api/property-pickups?view=list&days=30", { cache: "no-store" });
-      const json = await res.json() as { ok: boolean; new_total?: number; customers?: Array<{ property_customer_id: string | null; pending: number }> };
+      const json = await loadPickupList(PICKUP_LIST_DAYS, { freshMs: 20_000, force });
       if (!json.ok) return;
-      const m = new Map<string, number>();
-      for (const c of json.customers ?? []) if (c.property_customer_id && c.pending > 0) m.set(c.property_customer_id, c.pending);
-      setPickupPending(m);
+      setPickupPending(pendingByCustomer(json));
       setNewTotal(Number(json.new_total ?? 0) || 0);
     } catch { /* 表示だけなので失敗は無視 */ }
   }, []);
-  useEffect(() => { void loadPickupPending(); }, [loadPickupPending]);
+  useEffect(() => { void loadPickupPending(false); }, [loadPickupPending]);
   // 新着物件のタブの数は、一括検索の結果が届くたびに増える → 60秒ごと（画面が見えている時だけ）に取り直す
   useEffect(() => {
-    const id = window.setInterval(() => { if (document.visibilityState === "visible") void loadPickupPending(); }, 60_000);
+    const id = window.setInterval(() => { if (document.visibilityState === "visible") void loadPickupPending(false); }, 60_000);
     return () => window.clearInterval(id);
   }, [loadPickupPending]);
   const openPickupFor = (e: React.MouseEvent, customerId: string) => {
@@ -379,8 +381,11 @@ export default function ConditionsPage() {
     setPropFilterPending(false);
   };
 
-  async function load() {
-    setLoading(true);
+  // 2026-10-06 ⑫ 竹内「切り替える際にストレスかからないように」: 物件顧客の一覧（全員の全列・約1.66MB・3秒）は画面をまたいで控える。
+  //   戻った時は控えをすぐ出して裏で読み直す。最初の画面（ピックアップのタブ）には要らないので、控えが無い時は少し後に読む
+  const CUSTOMERS_CACHE_KEY = "conditions:customers";
+  async function load(opts: { quiet?: boolean } = {}) {
+    if (!opts.quiet) setLoading(true);
     try {
       const [res, { data: convData }] = await Promise.all([
         fetch("/api/property-customers"),
@@ -397,9 +402,11 @@ export default function ConditionsPage() {
       }
       const data: Customer[] = await res.json();
       setCustomers(data);
-      if (convData) {
-        setLinkedIds(new Set(convData.map((r: { property_customer_id: string }) => r.property_customer_id)));
-      }
+      // 2026-10-06 ⑫（ゆいと）: 2つ目の探し物の行（子）は親の会話に紐付いている＝紐付け済みとして出す
+      const linkedBase = convData ? convData.map((r: { property_customer_id: string }) => r.property_customer_id) : null;
+      const linked = linkedBase ? (() => { const set = new Set(linkedBase); for (const c of data as Array<Customer & { parent_customer_id?: string | null }>) if (c.parent_customer_id && set.has(c.parent_customer_id)) set.add(c.id); return [...set]; })() : null;
+      if (linked) setLinkedIds(new Set(linked));
+      cacheSet(CUSTOMERS_CACHE_KEY, { customers: data, linked: linked ?? [...linkedIdsRef.current] });
     } catch (e) {
       console.error("[load] error:", e);
     } finally {
@@ -407,7 +414,30 @@ export default function ConditionsPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  const linkedIdsRef = useRef(linkedIds);
+  useEffect(() => { linkedIdsRef.current = linkedIds; }, [linkedIds]);
+  // 画面で直した行（送信済みの印・編集）も控えに映す（戻った時に古い行を出さない）
+  useEffect(() => { if (customers.length) cacheUpdate(CUSTOMERS_CACHE_KEY, { customers, linked: [...linkedIds] }); }, [customers, linkedIds]);
+  useEffect(() => {
+    const hit = cacheGet<{ customers: Customer[]; linked: string[] }>(CUSTOMERS_CACHE_KEY, 30 * 60_000);
+    if (hit) {
+      setCustomers(hit.value.customers);
+      setLinkedIds(new Set(hit.value.linked));
+      setLoading(false);
+      // 30秒より古ければ裏で読み直す（画面はそのまま）
+      if (hit.ageMs > 30_000) void load({ quiet: true });
+      return;
+    }
+    // 控えが無い: ピックアップ（最初の画面）を先に出し、一覧は少し後に読む（全員のタブ・アナウンスを開いたら すぐ）
+    if (tab !== "pickup") { void load(); return; }
+    const t = window.setTimeout(() => { void load(); }, 1200);
+    return () => window.clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (tab !== "pickup" && customers.length === 0 && !cacheGet(CUSTOMERS_CACHE_KEY, 30 * 60_000)) void load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   function openAdd() {
     setEditTarget(null);
@@ -517,6 +547,7 @@ export default function ConditionsPage() {
       }
       setShowModal(false);
       setCondSavedVersion((v) => v + 1);
+      cacheDrop(CUSTOMERS_CACHE_KEY);
       load();
     } catch (e) {
       console.error("[save] error:", e);
@@ -530,6 +561,7 @@ export default function ConditionsPage() {
     if (!confirm("このお客様を削除しますか？")) return;
     await fetch(`/api/property-customers?id=${id}`, { method: "DELETE" });
     setShowModal(false);
+    cacheDrop(CUSTOMERS_CACHE_KEY);
     load();
   }
 
@@ -550,6 +582,7 @@ export default function ConditionsPage() {
     } finally {
       setMarkingId(null);
       setQuickTarget(null);
+      cacheDrop(CUSTOMERS_CACHE_KEY);
       load();
     }
   }

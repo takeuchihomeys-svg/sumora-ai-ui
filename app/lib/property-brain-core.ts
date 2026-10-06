@@ -337,6 +337,9 @@ export async function runConditionBrain(
   {
     const { detectConditionRevert } = await import("@/app/lib/condition-restore");
     if (detectConditionRevert(messageText)) { console.log(JSON.stringify({ tag: "conditionBrain:skip-revert", convId })); return null; }
+    // 2026-10-06 ⑫（ゆいと）: 別の種類の探し物は子の行（webhook）。住まいの条件に書かない
+    const { secondaryNeedOf } = await import("@/app/lib/condition-reading");
+    if (secondaryNeedOf(messageText)) { console.log(JSON.stringify({ tag: "conditionBrain:skip-secondary", convId })); return null; }
   }
 
   // ── 顧客ID取得 ────────────────────────────────────────────────────────────

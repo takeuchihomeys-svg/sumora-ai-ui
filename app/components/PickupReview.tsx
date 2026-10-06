@@ -3,6 +3,8 @@
 //   左＝ブレイン（拡張が送った1回分の物件と判断・🌟オススメ）／右＝スタッフ（送った・見送り・メモ）
 // 2026-09-24 竹内「紐づいているお客さんで LINE のチャット一覧のような UI。判断したのが LINE の会話風に送られる形。
 //   DeepSeek 側は左・スタッフの会話は右。スタッフは確認してお客さんに送るだけ」
+import { loadPickupList, cachedPickupList, PICKUP_LIST_DAYS, PICKUP_LIST_FIRST_DAYS } from "@/app/lib/pickup-list-load";
+import { cacheGet } from "@/app/lib/page-cache";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { bestPointLabel, roundBestId, bestBasisFor, type CustomerBest } from "@/app/lib/pickup-best";
@@ -410,7 +412,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   //   全て読み込むと重いから限定して読み込む。並びは LINE の一覧と連動して変わる。UI の幅も LINE の一覧と同じ」:
   //   一覧は要約だけ（view=list・30秒ごと＋画面に戻った時に取り直す＝LINE の並びに追従）。
   //   開いたお客様だけ詳細（view=detail・直近3回分＋送った履歴）。画像は loading=lazy・小さく出し、押すと原寸
-  const [list, setList] = useState<ListCustomer[]>([]);
+  // 2026-10-06 ⑫: 戻った時は控え（pickup-list-load）をすぐ出す
+  const [list, setList] = useState<ListCustomer[]>(() => ((cachedPickupList()?.customers ?? []) as unknown as ListCustomer[]));
   const [detail, setDetail] = useState<Customer | null>(null);
   // 検索の点検（ブレインモードの検索の1回ずつ・/api/search-audits?view=runs）。回の見出しの札に使う
   const [auditRuns, setAuditRuns] = useState<Array<{ run_id: string; site: string | null; created_at: string; severity: string | null; headline: string | null; status: string }>>([]);
@@ -434,10 +437,18 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
   const historyPushedRef = useRef(false);
 
   const loadList = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
+    // 2026-10-06 ⑫ 竹内「限定（今日の分）したら読み込み早くなって」: 控えがあれば読み込み中にしない（控えを出したまま裏で新しくする）。
+    //   控えが無い最初の1回は、今日の分（days=1・約1.5秒）を先に出してから30日分（約3.7秒）に差し替える。親のタブの数と同じ読み込みを共有する
+    const cached = cachedPickupList();
+    if (!quiet && !cached) setLoading(true);
     try {
-      const res = await fetch(`/api/property-pickups?view=list&days=30`, { cache: "no-store" });
-      const json = await res.json() as { ok: boolean; customers?: ListCustomer[]; error?: string };
+      if (!cached) {
+        void loadPickupList(PICKUP_LIST_FIRST_DAYS, { freshMs: 20_000 }).then((first) => {
+          if (first.ok && !cachedPickupList30()) setList((first.customers ?? []) as unknown as ListCustomer[]);
+          setLoading(false);
+        }).catch(() => { /* 30日分を待つ */ });
+      }
+      const json = await loadPickupList(PICKUP_LIST_DAYS, { freshMs: quiet ? 0 : 20_000, force: quiet }) as { ok: boolean; customers?: ListCustomer[]; error?: string };
       if (!json.ok) throw new Error(json.error || "取得に失敗");
       setList(json.customers ?? []);
     } catch (e) {
@@ -446,6 +457,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
       if (!quiet) setLoading(false);
     }
   }, []);
+  const cachedPickupList30 = () => cacheGet(`pickups:list:${PICKUP_LIST_DAYS}`, 10 * 60_000);
 
   const loadDetail = useCallback(async (target: { key: string; pcid: string | null; conv: string | null }, n: number, resetChecks: boolean): Promise<Customer | null> => {
     setDetailLoading(true);

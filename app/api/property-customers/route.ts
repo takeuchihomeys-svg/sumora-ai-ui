@@ -86,8 +86,9 @@ export async function GET(req: NextRequest) {
     // 2026-10-02 ⑫ 竹内さんの決定: 検索に入れる家賃の下限（書いた下限・無ければ おおよその下限 × 保留の線＝採点で保留になる所より下は探さない）。
     //   顧客の行には書かない（使う時に property-brain.searchRentMinOf の1か所で出す）。拡張は rent_min_search を rent_min より先に読む
     rent_min_search: searchRentMinOf(c as CustomerLike)?.yen ?? null,
-    is_linked: convMap.has(c.id),
-    linked_conversation: convMap.get(c.id) ?? null,
+    // 2026-10-06 ⑫（ゆいと）: 2つ目の探し物の行（子・「ゆいと（物置）」）は会話の紐付けが親にある → 親の会話を出す（拡張・一覧で送る先・LINE が分かる）
+    is_linked: convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id)),
+    linked_conversation: convMap.get(c.id) ?? (c.parent_customer_id ? convMap.get(c.parent_customer_id) ?? null : null),
   }));
   return NextResponse.json(result, {
     headers: { "Cache-Control": "no-store, must-revalidate" },
