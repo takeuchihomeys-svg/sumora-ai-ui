@@ -2696,7 +2696,10 @@ export default function Home() {
         // 失敗した時は丸ごとに落とす
       }
     }
-    lastFullRefreshAtRef.current = Date.now();
+    // 2026-10-07 竹内「たまにサーバーがかたまる」: 丸ごとの時刻は読めた後に入れる（下の成功の所）。
+    //   旧はここで先に入れていたので、最初の丸ごとが失敗（Supabase の 522・打ち切り）→ 3秒後の静かな再試行が「差分」になり、
+    //   差分は成功しても読み込み中を消さずに return → 5分後の丸ごとまで「読み込み中」のまま（一覧も直近2分の行だけ）だった
+    const fullStartedAt = Date.now();
     lastPollAtRef.current = Date.now();
     refreshStatsRef.current.full++;
     const [{ data: conversationRows, error: conversationError }] = await Promise.all([
@@ -2719,6 +2722,9 @@ export default function Home() {
       return;
     }
 
+    lastFullRefreshAtRef.current = fullStartedAt;
+    // 失敗の文（この関数が出した物だけ）は読めたら消す（静かな再試行・定期の読み直しで直った時に残さない）
+    setError((prev) => (prev === "会話一覧の取得に失敗しました。" ? "" : prev));
     const conversationsData = (conversationRows || []) as unknown as SupabaseConversationRow[];
 
     // メッセージは持っている物だけ使う（開いた会話・Realtime で届いた分）。一覧の行は DB の last_message で出す
