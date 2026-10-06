@@ -964,6 +964,8 @@ export default function Home() {
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  // 2026-10-06 竹内「アナウンスの枠でかすぎて画面がつぶれてしまっている」: AIX の説明（brainMeta.note）は2行で畳み、タップで全文
+  const [expandedBrainNote, setExpandedBrainNote] = useState(false);
   const [dismissedBrainHintIds, setDismissedBrainHintIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedBrainHintIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -9067,11 +9069,13 @@ export default function Home() {
                         className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
                     </div>
                     {brainMeta.note && (
-                    <div className="mt-1.5 border-t border-violet-200 pt-1.5">
-                      <p className="text-xs text-violet-700 leading-relaxed">
+                    <div className="mt-1.5 border-t border-violet-200 pt-1.5" onClick={() => setExpandedBrainNote((v) => !v)}>
+                      <p className="text-xs text-violet-700 leading-relaxed"
+                        style={expandedBrainNote ? undefined : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                         <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                         {brainMeta.note}
                       </p>
+                      <p className="text-[10px] text-violet-400 text-right">{expandedBrainNote ? "▲ たたむ" : "▼ 全文"}</p>
                     </div>
                     )}
                   </div>
