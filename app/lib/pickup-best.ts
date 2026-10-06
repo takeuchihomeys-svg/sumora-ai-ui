@@ -24,7 +24,7 @@ import { imageAnalysisNeed, extractImageWants, dedupeWantsByTopic, type ImageWan
 import { overrideRulerKey } from "./search-override";
 import { imageBonusOf, signedPoints, type ImageAnalysisForBonus } from "./pickup-image-bonus";
 import { listingDealStatus } from "./listing-deal-status";
-import { rankStarCandidates, STAR_FIT_RULE_TAG, type StarRankMode } from "./recommend-star-rank";
+import { rankStarCandidates, STAR_FIT_RULE_TAG, type StarRankMode, type StarSituation } from "./recommend-star-rank";
 import { starCandidateOfPickup, type StarPickupRow } from "./star-rank-pickup";
 
 export type BestCandidateRow = {
@@ -44,7 +44,7 @@ export type BestCandidateRow = {
   /** 2026-09-27 判定の札（画像の加点で判定と同じ希望を二重に数えないため・pickup-image-bonus） */
   reason_codes?: string[] | null;
   /** 2026-10-01 資料の表（現況＝審査中・商談中を 👑 にしないため。無い行は見ない） */
-  terms?: { buildingAge?: number | null; evidence?: { moveIn?: string | null; area?: string | null } | null } | null;
+  terms?: { buildingAge?: number | null; deposit?: number | null; keyMoney?: number | null; evidence?: { moveIn?: string | null; area?: string | null } | null } | null;
   /** 2026-10-06 🌟の並べ方（recommend-star-rank・合い方）の材料。無い行はその項目を比べないだけ */
   summary_text?: string | null;
   ad_yen?: number | null;
@@ -208,9 +208,9 @@ export function customerImageNeed(
  *   DeepSeek の🌟★／🌟 は点が並んだ時の順番（pickCustomerBest の tail）にだけ使う。
  *   全体の 👑（詳細 API の best）がこの回の物件ならそれ（完了のまとめの best_id を含む）、無ければ同じ決まりでこの回の中の一番
  */
-export function roundBestId(rows: ReadonlyArray<BestCandidateRow>, basis: BestBasis, globalBestId?: number | null, starMode?: StarRankMode): number | null {
+export function roundBestId(rows: ReadonlyArray<BestCandidateRow>, basis: BestBasis, globalBestId?: number | null, starMode?: StarRankMode, situation?: StarSituation | null): number | null {
   if (globalBestId != null && rows.some((r) => r.id === globalBestId && r.status === "pending")) return globalBestId;
-  return pickCustomerBest(rows, { basis, windowHours: 24 * 365, starMode })?.id ?? null;
+  return pickCustomerBest(rows, { basis, windowHours: 24 * 365, starMode, situation })?.id ?? null;
 }
 
 /**
@@ -249,7 +249,7 @@ const isNeedsCheck = (r: BestCandidateRow) => (r.image_analysis?.review as { sta
  *   basis: お客様の決まり（bestBasisFor）。省略は image（前の動き）
  *   preferId: 「完了」のまとめで決めた 👑（best_id）。今も候補に残っていれば（未送信・同じ基準で点がある）それを一番にする
  */
-export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: { windowHours?: number; basis?: BestBasis; preferId?: number | null; starMode?: StarRankMode }): CustomerBest | null {
+export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: { windowHours?: number; basis?: BestBasis; preferId?: number | null; starMode?: StarRankMode; situation?: StarSituation | null }): CustomerBest | null {
   if (!rows.length) return null;
   const windowMs = (opts?.windowHours ?? CUSTOMER_BEST_WINDOW_HOURS) * 3600_000;
   const latest = Math.max(...rows.map((r) => Date.parse(r.created_at)).filter((n) => Number.isFinite(n)));
@@ -294,7 +294,8 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   if (basis === "score" && starMode === "fit") {
     const open = sorted.filter((r) => r.verdict !== "hold");
     const pool = open.length ? open : sorted;
-    fitOrder = rankStarCandidates(pool.map((r) => starCandidateOfPickup(r, overallPoints(r) ?? 0))).map((x) => ({ id: Number(x.key), fit: x.fit, reasons: x.reasons }));
+    // 2026-10-06b お客様の状況（敷礼0・2階以上を言っている時の足し点・star-rank-pickup.starSituationFromConditions）。無ければ足さない
+    fitOrder = rankStarCandidates(pool.map((r) => starCandidateOfPickup(r, overallPoints(r) ?? 0)), undefined, opts?.situation ?? null).map((x) => ({ id: Number(x.key), fit: x.fit, reasons: x.reasons }));
   }
   const fitOf = (id: number) => fitOrder?.find((x) => x.id === id) ?? null;
   const fitFirst = fitOrder?.length ? sorted.find((r) => r.id === fitOrder![0].id) ?? null : null;

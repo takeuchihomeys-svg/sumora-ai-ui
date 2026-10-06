@@ -18,7 +18,8 @@
 import { supabase } from "@/app/lib/supabase";
 import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, searchHold, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, SEARCH_HOLD_MAX_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow, type HoldAudit, type HoldCommand, type HoldArrival } from "@/app/lib/pickup-complete";
 import { bestBasisFor, bestRuleTag, customerImageNeed, type BestBasis } from "@/app/lib/pickup-best";
-import { starRankMode } from "@/app/lib/recommend-star-rank";
+import { starRankMode, type StarSituation } from "@/app/lib/recommend-star-rank";
+import { starSituationFromConditions, STAR_SITUATION_COLUMNS } from "@/app/lib/star-rank-pickup";
 import { dropDiscountFromRow } from "@/app/lib/property-brain";
 
 export type ClaimResult = {
@@ -186,7 +187,9 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
     const basis = await loadBestBasis(input.propertyCustomerId, rows);
     // 2026-10-06 竹内さん（A）: 👑 は🌟の並べ方（合い方が主軸）。STAR_RANK_MODE=off で今までの決め方（合計の1位）に戻る
     const starMode = starRankMode(process.env.STAR_RANK_MODE);
-    const ranking = rankCompleteGroup(rows, { basis, starMode });
+    // 2026-10-06b お客様の状況（条件欄の敷礼0・2階以上）で🌟の並べ方に足し点（詳細 API・一覧と同じ列・同じ関数）
+    const situation = await loadStarSituation(input.propertyCustomerId);
+    const ranking = rankCompleteGroup(rows, { basis, starMode, situation });
     out.ranking = ranking;
     // 順位を行に（まとめ ID が同じ行だけ）
     await Promise.allSettled(ranking.order.map((o) => supabase.from("property_pickups").update({ complete_rank: o.complete_rank }).eq("id", o.id).eq("complete_group_id", input.groupId)));
@@ -240,6 +243,18 @@ async function announceSafe(a: { groupId: string; propertyCustomerId: string; or
 // 反証（2026-09-25）: 保存した希望（wants）は、画面の詳細 API と同じ行の集まり（そのお客様の新しい順 300行の中で一番新しい分析）から取る。
 //   まとめの行だけから取ると、まとめの中に分析済みの行が無い（または古い分析しか無い）時に画面は「分析の希望」・まとめは「条件欄だけ」で
 //   決まりが割れ、best_id と画面の 👑 が別の物件になる。読めない時だけ渡された rows に戻す
+/** 👑 の状況（条件欄 → star-rank-pickup.starSituationFromConditions）。読めない時は null（状況の足し点なし） */
+export async function loadStarSituation(propertyCustomerId: string | null): Promise<StarSituation | null> {
+  if (!propertyCustomerId) return null;
+  try {
+    const { data, error } = await supabase.from("property_customers").select(STAR_SITUATION_COLUMNS).eq("id", propertyCustomerId).maybeSingle();
+    if (error) return null;
+    return starSituationFromConditions((data ?? null) as Parameters<typeof starSituationFromConditions>[0]);
+  } catch {
+    return null;
+  }
+}
+
 export async function loadBestBasis(propertyCustomerId: string, rows: ReadonlyArray<{ image_analysis?: { wants?: unknown; [k: string]: unknown } | null }>): Promise<BestBasis> {
   try {
     const [{ data }, recent] = await Promise.all([

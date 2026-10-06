@@ -9,7 +9,8 @@ import { toPickupHandoffItem } from "@/app/lib/property-pickups";
 import { orderByRequestedIds } from "@/app/lib/sent-image-order";
 import { waitUntil } from "@vercel/functions";
 import { pickCustomerBest, bestBasisFor, bestRuleTag, customerImageNeed, type BestCandidateRow } from "@/app/lib/pickup-best";
-import { starRankMode } from "@/app/lib/recommend-star-rank";
+import { starRankMode, type StarSituation } from "@/app/lib/recommend-star-rank";
+import { starSituationFromConditions, STAR_SITUATION_COLUMNS } from "@/app/lib/star-rank-pickup";
 import { COMPLETE_BEST_WINDOW_HOURS } from "@/app/lib/pickup-complete";
 import { claimIdleComplete } from "@/app/lib/pickup-complete-server";
 import { sortForReview, sentBeforeIds, type SentHistLite } from "@/app/lib/pickup-review-order";
@@ -172,7 +173,7 @@ async function buildList(since: string) {
   const [pk, sp, roundOf, na] = await Promise.all([
     // 2026-09-27 一覧の 👑 も詳細と同じ1本の並び（判定の点 → 画像の点）: 画像で分析の点だけ JSON から引く（分析の全文は返さない）・号室も
     // 2026-10-06 ⑫: 旧は limit(3000) でも DB の max_rows で 1000行（30日 2,528行のうち新しい側だけ）しか来ていなかった → 1000行ずつ読む（readAllPages）
-    readAllPages((a, b) => supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, room_no, recommended, status, sent_at, score, verdict, reason_codes, search_override, ad_yen, eq_facts:equipment->facts, eq_match:equipment->match, tm_age:terms->buildingAge, tm_area:terms->evidence->>area, ia_match:image_analysis->match, ia_raw:image_analysis->match_raw, ia_ok:image_analysis->ok_count, ia_review:image_analysis->review->>status, ia_wants:image_analysis->wants, ia_checks:image_analysis->checks")
+    readAllPages((a, b) => supabase.from("property_pickups").select("id, created_at, batch_id, property_customer_id, conversation_id, customer_name, rank, property_name, room_no, recommended, status, sent_at, score, verdict, reason_codes, search_override, ad_yen, eq_facts:equipment->facts, eq_match:equipment->match, eq_floor:equipment->floor, tm_age:terms->buildingAge, tm_dep:terms->deposit, tm_key:terms->keyMoney, tm_area:terms->evidence->>area, ia_match:image_analysis->match, ia_raw:image_analysis->match_raw, ia_ok:image_analysis->ok_count, ia_review:image_analysis->review->>status, ia_wants:image_analysis->wants, ia_checks:image_analysis->checks")
       .gte("created_at", since).order("created_at", { ascending: false }).order("id", { ascending: false }).range(a, b)),
     readAllPages((a, b) => supabase.from("sent_properties").select("conversation_id, property_customer_id, channel, delivery, source, sent_at, property_name")
       .gte("sent_at", since).not("conversation_id", "is", null).or("delivery.eq.customer,and(delivery.is.null,source.neq.line_group)").order("sent_at", { ascending: false }).order("id", { ascending: false }).range(a, b)),
@@ -194,7 +195,7 @@ async function buildList(since: string) {
     reason_codes?: string[] | null;
     ad_yen?: number | null; equipment?: BestCandidateRow["equipment"]; terms?: BestCandidateRow["terms"];
     image_analysis?: { match?: unknown; match_raw?: unknown; ok_count?: unknown; review?: { status?: unknown }; wants?: unknown; checks?: unknown } | null };
-  type BestLiteDb = BestLite & { eq_facts?: unknown; eq_match?: unknown; tm_age?: unknown; tm_area?: unknown; ia_match?: unknown; ia_raw?: unknown; ia_ok?: unknown; ia_review?: unknown; ia_wants?: unknown; ia_checks?: unknown };
+  type BestLiteDb = BestLite & { eq_facts?: unknown; eq_match?: unknown; eq_floor?: unknown; tm_age?: unknown; tm_dep?: unknown; tm_key?: unknown; tm_area?: unknown; ia_match?: unknown; ia_raw?: unknown; ia_ok?: unknown; ia_review?: unknown; ia_wants?: unknown; ia_checks?: unknown };
   type BatchSum = { batch_id: string; created_at: string; site: string | null; round_id: string | null; count: number; rows: BestLite[] };
   const batchesSeen = new Map<string, Map<string, BatchSum>>();
   // 2026-09-27 付け直し（backfill-drop-discount-codes --apply）の前の行も、割引と AD の比べの札を外した点・判定で 👑 を決める（詳細と同じ）。
@@ -216,11 +217,11 @@ async function buildList(since: string) {
     const d = (rx.reason_codes ?? []).some(isDiscountCompareCode) ? dropDiscountFromRow({ ...rx, summary_text: summaryOf.get(rx.id) ?? "" }, rx.property_customer_id ? prefWOf.get(rx.property_customer_id) ?? null : null) : null;
     // 2026-09-27 版 b: 👑 は合計（判定の点＋画像の加点）。加点は判定の札と画像の希望・答えから（pickup-image-bonus・詳細と同じ）
     const r0 = d ? { ...rx, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes } : rx;
-    const { ia_match, ia_raw, ia_ok, ia_review, ia_wants, ia_checks, eq_facts, eq_match, tm_age, tm_area, ...rest } = r0;
+    const { ia_match, ia_raw, ia_ok, ia_review, ia_wants, ia_checks, eq_facts, eq_match, eq_floor, tm_age, tm_dep, tm_key, tm_area, ...rest } = r0;
     // 2026-10-06 🌟の並べ方（合い方）の材料: 設備欄（構造・設備の数・希望の設備）・築年・広さ（資料の表の根拠）。説明文は読める行だけ（summaryOf）
     const star = {
-      equipment: eq_facts || eq_match ? { facts: (eq_facts ?? null) as NonNullable<BestCandidateRow["equipment"]>["facts"], match: (Array.isArray(eq_match) ? eq_match : null) as NonNullable<BestCandidateRow["equipment"]>["match"] } : null,
-      terms: { buildingAge: typeof tm_age === "number" ? tm_age : null, evidence: { area: typeof tm_area === "string" ? tm_area : null } },
+      equipment: eq_facts || eq_match ? { facts: (eq_facts ?? null) as NonNullable<BestCandidateRow["equipment"]>["facts"], match: (Array.isArray(eq_match) ? eq_match : null) as NonNullable<BestCandidateRow["equipment"]>["match"], floor: typeof eq_floor === "number" ? eq_floor : null } : null,
+      terms: { buildingAge: typeof tm_age === "number" ? tm_age : null, deposit: typeof tm_dep === "number" ? tm_dep : null, keyMoney: typeof tm_key === "number" ? tm_key : null, evidence: { area: typeof tm_area === "string" ? tm_area : null } },
       summary_text: summaryOf.get(rx.id) ?? null,
     };
     const r = { ...rest, ...star, image_analysis: ia_match === undefined && ia_review === undefined ? null : { match: ia_match, match_raw: ia_raw, ok_count: ia_ok, review: ia_review ? { status: ia_review } : undefined, wants: ia_wants, checks: ia_checks } };
@@ -260,11 +261,20 @@ async function buildList(since: string) {
     const { data } = await supabase.from("property_pickup_completions").select("group_id, best_id, rule:result->>basis_rule").in("group_id", gids.slice(i, i + 200));
     for (const r of (data ?? []) as Array<{ group_id: string; best_id: number | null; rule?: string | null }>) if (r.best_id != null && r.rule === bestRuleTag("score", listStarMode)) bestOf.set(r.group_id, Number(r.best_id));
   }
+  // 2026-10-06b まとめの best_id が無い回は並べ直す。お客様の状況（条件欄・詳細とまとめと同じ列と関数）を、並べ直すお客様だけ1回で引く
+  const needSit = [...new Set(lastRounds.filter((x) => !(x.round_id && bestOf.has(x.round_id))).map((x) => x.c.property_customer_id).filter((v): v is string => !!v))];
+  const sitOf = new Map<string, StarSituation | null>();
+  for (let i = 0; i < needSit.length; i += 200) {
+    const { data, error } = await supabase.from("property_customers").select(`id, ${STAR_SITUATION_COLUMNS}`).in("id", needSit.slice(i, i + 200));
+    if (error) break;
+    for (const r of (data ?? []) as unknown as Array<{ id: string } & NonNullable<Parameters<typeof starSituationFromConditions>[0]>>) sitOf.set(r.id, starSituationFromConditions(r));
+  }
   const crowns: Array<{ c: L; b: BestLite }> = [];
   for (const x of lastRounds) {
     const pre = x.round_id ? bestOf.get(x.round_id) : undefined;
     const hit = pre != null ? x.rows.find((r) => r.id === pre && r.status === "pending") : undefined;
-    const b = hit ?? (() => { const p = pickCustomerBest(x.rows, { basis: "score", windowHours: 24 * 365, starMode: listStarMode }); return p ? x.rows.find((r) => r.id === p.id) : undefined; })();
+    const situation = x.c.property_customer_id ? sitOf.get(x.c.property_customer_id) ?? null : null;
+    const b = hit ?? (() => { const p = pickCustomerBest(x.rows, { basis: "score", windowHours: 24 * 365, starMode: listStarMode, situation }); return p ? x.rows.find((r) => r.id === p.id) : undefined; })();
     if (x.c.last_batch) x.c.last_batch.rec_name = b ? nameWithRoom(b.property_name, b.room_no ?? null) : null;
     if (b && x.c.last_batch) crowns.push({ c: x.c, b });
   }
@@ -494,6 +504,8 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
   // 2026-10-06 竹内さん（A: 今切り替える）: 👑 は🌟の並べ方（recommend-star-rank・合い方が主軸・AD は線）。STAR_RANK_MODE=off で今までの決め方（合計の1位）。
   //   画面も同じ値で回ごとの一番を出す（customer.star_rank_mode・画面は環境変数を読まない）
   const starMode = starRankMode(process.env.STAR_RANK_MODE);
+  // 2026-10-06b お客様の状況（条件欄の敷礼0・2階以上）で🌟の並べ方に足し点。まとめ（pickup-complete-server）・一覧と同じ関数・同じ列。画面へも値で渡す
+  const situation = starSituationFromConditions((condRes.data ?? null) as Parameters<typeof starSituationFromConditions>[0]);
   const latestGid = rows[0] ? roundOf.get(rows[0].batch_id) ?? null : null;
   let bestFrom: "complete" | "window" = "window";
   let bestRaw = null as ReturnType<typeof pickCustomerBest>;
@@ -510,10 +522,10 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
     });
     // 2026-09-27 決まりの名前に版を付けた（bestRuleTag・判定の点 → 画像の点の1本の並び）。前の版のまとめは best_id を使わず並べ直す
     const preferId = cp?.status === "done" && cp.best_id != null && !reanalyzed && cp.result?.basis_rule === bestRuleTag(basis, starMode) ? Number(cp.best_id) : null;
-    bestRaw = pickCustomerBest(notSentBefore(groupRows), { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId, starMode });
+    bestRaw = pickCustomerBest(notSentBefore(groupRows), { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis, preferId, starMode, situation });
     bestFrom = "complete";
   } else {
-    bestRaw = pickCustomerBest(notSentBefore(rows), { basis, starMode });
+    bestRaw = pickCustomerBest(notSentBefore(rows), { basis, starMode, situation });
   }
   // 2026-09-24 竹内「全体で一番条件に合うのところも画像表示する」: 一番の物件の画像（お客様に送る1ページ目だけ・元付は返さない）
   const bestRow = bestRaw ? rows.find((r) => r.id === bestRaw.id) ?? null : null;
@@ -543,6 +555,7 @@ async function buildDetail(pcid: string | null, conv: string | null, nBatches: n
       best,
       // 2026-10-06 👑 の決め方（fit＝🌟の並べ方・legacy＝今までの合計の1位）。画面の回ごとの一番（roundBestId）も同じ値で
       star_rank_mode: starMode,
+      star_situation: situation,
       image_need: imageNeed,
       condition_summary: sum ? { line: sum.line, uncheckable: sum.uncheckable, ai: sum.ai.length > 0 } : null,
       // 2026-09-30 竹内「一番上にお客さんの物件探している条件を入れておく」: 会話の一番上の「🔎 お客様の条件」の材料

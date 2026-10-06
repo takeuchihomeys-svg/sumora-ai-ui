@@ -12,8 +12,9 @@
 //     AD     … 判定の AD の札（アズ・スタットの 200%とみなすも含む＝判定と同じ）→ 無ければ ad_yen ÷ 家賃
 import { reasonPoints } from "./property-brain";
 import { parseAreaSqm } from "./pickup-dedupe";
-import { parseRentFromSummary } from "./property-summary-parse";
-import type { StarCandidate } from "./recommend-star-rank";
+import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
+import { customerWants, type CustomerWantInput } from "./recommendation-gaps";
+import { starSituationOf, type StarCandidate, type StarSituation } from "./recommend-star-rank";
 
 export type StarPickupRow = {
   id: number;
@@ -22,8 +23,9 @@ export type StarPickupRow = {
   reason_codes?: ReadonlyArray<string> | null;
   summary_text?: string | null;
   ad_yen?: number | null;
-  equipment?: { facts?: Record<string, { s?: string | null; d?: string | null } | null> | null; match?: ReadonlyArray<{ result?: string | null; mode?: string | null }> | null } | null;
-  terms?: { buildingAge?: number | null; evidence?: { area?: string | null } | null } | null;
+  equipment?: { facts?: Record<string, { s?: string | null; d?: string | null } | null> | null; match?: ReadonlyArray<{ result?: string | null; mode?: string | null }> | null; floor?: number | null } | null;
+  /** 2026-10-06 状況の材料: 敷金・礼金（ヶ月・資料の表） */
+  terms?: { buildingAge?: number | null; deposit?: number | null; keyMoney?: number | null; evidence?: { area?: string | null } | null } | null;
 };
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -50,6 +52,12 @@ export function equipmentCountOf(eq: StarPickupRow["equipment"]): number | null 
   const f = eq?.facts;
   if (!f || typeof f !== "object") return null;
   return Object.entries(f).filter(([k, v]) => !EQUIP_META.has(k) && v?.s === "ok").length;
+}
+/** 資料の設備欄で ○ の設備の鍵（構造等の印は除く）。設備欄が無ければ null */
+export function equipmentKeysOf(eq: StarPickupRow["equipment"]): string[] | null {
+  const f = eq?.facts;
+  if (!f || typeof f !== "object") return null;
+  return Object.entries(f).filter(([k, v]) => !EQUIP_META.has(k) && v?.s === "ok").map(([k]) => k);
 }
 export function structureOf(eq: StarPickupRow["equipment"]): string | null {
   const d = eq?.facts?.structure?.d;
@@ -82,5 +90,29 @@ export function starCandidateOfPickup(r: StarPickupRow, score: number): StarCand
     equipmentCount: equipmentCountOf(r.equipment),
     equipWantHits: equipWantHitsOf(r.equipment),
     adMonths: adMonthsOfPickup(r),
+    // 2026-10-06 状況で重みを変える材料（recommend-star-rank.STAR_SITUATION_RULE）
+    zeroZero: zeroZeroOfPickup(r),
+    floor: num(r.equipment?.floor),
+    walkMinutes: parseWalkMinutesFromSummary(r.summary_text ?? null),
+    equipmentKeys: equipmentKeysOf(r.equipment),
   };
+}
+
+/** 敷金・礼金とも0（資料の表）。どちらかが読めなければ null */
+export function zeroZeroOfPickup(r: Pick<StarPickupRow, "terms">): boolean | null {
+  const d = num(r.terms?.deposit), k = num(r.terms?.keyMoney);
+  return d == null || k == null ? null : d === 0 && k === 0;
+}
+
+// ─── お客様の状況（2026-10-06 竹内「お客さんの状況に連動して、評価基準も変動」）────────────────────────
+/**
+ * 👑 の状況を決める条件欄の列（詳細 API・一覧 API・3分のまとめが同じ列を読む＝同じお客様で 👑 が食い違わない）。
+ * お客様の発言は読まない（一覧で全員分を引くと重く、条件欄だけでも当て直しの効果は同じ向き: scripts/audit-star-rank-situation.ts --wants=live）
+ */
+export const STAR_SITUATION_COLUMNS = "initial_cost_limit, pet, walk_minutes, building_age, floor_area_min, move_in_time, preferences, ng_points, other_requests, additional_conditions";
+/** 条件欄 → 🌟の状況（希望の話題は recommendation-gaps.customerWants の条件欄と自由文だけ）。条件が無ければ null */
+export function starSituationFromConditions(cond: CustomerWantInput["conditions"] | null | undefined): StarSituation | null {
+  if (!cond) return null;
+  const topics = customerWants({ conditions: cond }).map((w) => w.key);
+  return starSituationOf({ wantTopics: topics });
 }

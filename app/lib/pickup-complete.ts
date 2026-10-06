@@ -24,7 +24,7 @@
 //     1回ずつ届いた回を寄せても順位と 👑 が「まとめた全件」になるだけで、送った物・判定は変えない（悪くならない）
 //   - 境目: ちょうど10分（now − 最後 ＝ 600000ms）でまとめる（>=）。未来の時刻（時計のずれ）はまとめない
 import { pickCustomerBest, compareOverall, overallPoints, imageBonusPoints, type BestCandidateRow, type BestBasis } from "./pickup-best";
-import type { StarRankMode } from "./recommend-star-rank";
+import type { StarRankMode, StarSituation } from "./recommend-star-rank";
 import { dropGhostSingles } from "@/app/lib/search-audit-ghost";
 import { overrideRulerKey } from "./search-override";
 
@@ -140,10 +140,10 @@ export const COMPLETE_BEST_WINDOW_HOURS = COMPLETE_WINDOW_HOURS * 2 + 1;
  * まとめた全件で順位と 👑 を付け直す（純関数）。
  * basis: お客様の決まり（bestBasisFor(customerImageNeed(...))）。省略は image（前の動き）
  */
-export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: { basis?: BestBasis; starMode?: StarRankMode }): CompleteRanking {
+export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: { basis?: BestBasis; starMode?: StarRankMode; situation?: StarSituation | null }): CompleteRanking {
   const sorted = rows.slice().sort(compareCompleteGroup);
   // 👑（画面と同じ pickCustomerBest・同じ basis。窓はまとめ全体で切らない。未送信の行だけ）
-  const pick = rows.length ? pickCustomerBest(rows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis: opts?.basis ?? "image", starMode: opts?.starMode }) : null;
+  const pick = rows.length ? pickCustomerBest(rows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis: opts?.basis ?? "image", starMode: opts?.starMode, situation: opts?.situation }) : null;
   const bestId: number | null = pick?.id ?? null;
   const bestBasis: CompleteRanking["bestBasis"] = pick?.basis ?? null;
   // 👑 はまとめの順位でも1番（順位の1番と 👑 が別の物件だと、どちらが一番か読めない）。残りは compareCompleteGroup の並び

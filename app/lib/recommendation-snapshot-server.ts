@@ -25,6 +25,7 @@ import { isGenericBuildingName } from "./generic-building-name";
 import { isCustomerRow } from "./sent-delivery";
 import { parseListingTerms } from "./listing-terms";
 import { parseListingEquipment } from "./listing-equipment";
+import { adMonthsOfPickup, structureOf, type StarPickupRow } from "./star-rank-pickup";
 
 type Row = Record<string, unknown>;
 const H = 3600_000, D = 24 * H;
@@ -42,6 +43,23 @@ const EQUIP_KEY_LABEL: Record<string, string> = {
   bath_dryer: "浴室乾燥機", washlet: "温水洗浄便座", walk_in_closet: "ウォークインクローゼット", burner2: "2口コンロ",
   flooring: "フローリング", bike_parking: "駐輪場", garbage24: "24時間ゴミ出し", monitor_intercom: "モニター付インターホン", top_floor: "最上階",
 };
+
+/** 売上サポの行に保存済みの判定の材料 → 候補の値（AD の月数・構造・階・敷礼・築年。読めない項目は入れない） */
+export function savedFactsFromPickup(p0: Row): Partial<CandidateFacts> {
+  const p = p0 as StarPickupRow;
+  const out: Partial<CandidateFacts> = {};
+  const ad = adMonthsOfPickup(p);
+  if (ad != null) out.ad_months = ad;
+  const st = structureOf(p.equipment);
+  if (st) out.structure = st;
+  const fl = p.equipment?.floor;
+  if (typeof fl === "number" && Number.isFinite(fl)) out.floor = fl;
+  const t: NonNullable<StarPickupRow["terms"]> = p.terms ?? {};
+  if (typeof t.deposit === "number") out.deposit_months = t.deposit;
+  if (typeof t.keyMoney === "number") out.key_money_months = t.keyMoney;
+  if (typeof t.buildingAge === "number") out.building_age = t.buildingAge;
+  return out;
+}
 
 /** 売上サポの行（説明文・資料の文字層・🌟の順位）→ 候補の値 */
 export function factsFromPickup(p: Row, now: Date | string = new Date()): ParsedFacts & { star?: "🌟" | "🌟★" | null; pdf_url?: string | null } {
@@ -157,7 +175,7 @@ export async function buildRecommendationSnapshot(sb: SupabaseClient, input: {
     ? (((await sb.from("property_candidate_pools").select("id, site, sent_at, candidates").eq("property_customer_id", pc).gte("sent_at", since).lte("sent_at", until).order("sent_at", { ascending: false }).limit(60)).data ?? []) as Row[])
     : [];
   const pickups: Row[] = pc
-    ? (((await sb.from("property_pickups").select("id, batch_id, created_at, rank, property_name, room_no, summary_text, pdf_text, pdf_url, pdf_blob_url, recommended").eq("property_customer_id", pc).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(200)).data ?? []) as Row[])
+    ? (((await sb.from("property_pickups").select("id, batch_id, created_at, rank, property_name, room_no, summary_text, pdf_text, pdf_url, pdf_blob_url, recommended, reason_codes, ad_yen, equipment, terms").eq("property_customer_id", pc).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(200)).data ?? []) as Row[])
     : [];
 
   // ③ 送った画像1枚ごとの値（sent_image_properties.facts・2026-09-25〜 readPropertyImage が残す）
@@ -188,6 +206,9 @@ export async function buildRecommendationSnapshot(sb: SupabaseClient, input: {
     const pk = pick(name, room, pickups, "property_name", "room_no");
     if (pk) {
       fillMissing(c, factsFromPickup(pk, input.sentAt), "pickup");
+      // 2026-10-06b 足りないクエリ: 売上サポの行に保存済みの判定の材料（AD の札・設備欄の構造と階・資料の表の敷礼と築年）も候補に。
+      //   今までは説明文と資料の文字だけで、🌟の当て直しで AD 19%・構造 9% しか無かった（scripts/audit-star-rank-situation.ts）
+      fillMissing(c, savedFactsFromPickup(pk), "pickup_saved");
       c.pickup_id = Number(pk.id);
       usedBatches.add(String(pk.batch_id));
     }

@@ -2,6 +2,14 @@
 
 最終更新: 2026-10-06
 
+## 🌟 👑 の並べ方にお客様の状況の足し点（10/06b・竹内「画像から分析・状況に連動して評価基準も変動・足りないクエリを追加」・未コミット）— 黄金ルール
+- **点検の結論**: 本番の 👑（売上サポの行）は材料がほぼ揃っている（広さ99%・築年98%・構造97%・設備99%・AD94%＝資料の文字から）。画像の読み取り（property_sheet_facts）が付くのは行の24%で、👑には画像の加点（希望の設備だけ）として入るだけ＝**🌟の並べ方の項目は画像からは来ていない**（来る必要がほぼ無い）。材料が欠けているのは**当て直しの側**（recommendation_snapshots）で、送った画像の読み取り（今日の埋め戻し）で 家賃17→60%・広さ12→54%・築年12→53%・敷礼12→56%・募集状況0→52% まで来たが、AD 19%・構造 9%・設備 9% は画像に無い（お客様向けの資料は AD を消してある・読み取りの項目に設備/構造が無い）
+- **状況の足し点**（`recommend-star-rank.ts` STAR_SITUATION_RULE・条件欄だけで決める `star-rank-pickup.ts` starSituationFromConditions／STAR_SITUATION_COLUMNS）: 初期費用・敷礼0を言っている→束の中の敷礼0に +15／2階以上（1階NG）を言っている→束の中で一番高い階に +15。当て直し（`scripts/audit-star-rank-situation.ts --wants=live`・244回）: 全体 32→35%・後3割 42→46%・live 48→48%・状況ありだけ当たり 6・なしだけ当たり 0
+- **止めた状況**（測って下がった）: 入居を急ぐ→空室は**逆**（急ぐ人の🌟は空室が少ない 43%・ランダム 56%＝退去予定の部屋を申込誘導で推している）・広さを言う→一番広いも下がる・駅近/築浅/希望設備は揺れの内
+- **配線**: 詳細 API・一覧 API（まとめの best_id が無い回だけ並べ直す時に条件欄を1回で引く）・3分のまとめ（pickup-complete-server.loadStarSituation）が同じ列・同じ関数。画面へは `customer.star_situation`（roundBestId の5番目）。決まりの名前を `star-fit@2026-10-06b` に上げた（前のまとめの best_id は使わず並べ直す）。STAR_RANK_MODE=off なら状況も効かない
+- **足りないクエリを足した**: 🌟の記録（recommendation-snapshot-server）が売上サポの行から説明文と資料の文字しか取っていなかった → savedFactsFromPickup（AD の札の月数・構造・階・敷礼・築年）も候補に（これからの記録だけ・過去は当て直しの script が結ぶ）
+- テスト `app/lib/__tests__/star-rank-situation.test.ts`（25）
+
 ## 🌟 👑（一番オススメ）を合い方の並べ方に切り替え（10/06・竹内さん「A: 今切り替える」・未コミット）— 黄金ルール
 - **決め方**: 売上サポの 👑（AIX【物件オススメ】で送る1件の候補）は `pickCustomerBest`（app/lib/pickup-best.ts）の1か所で決める。判定の点で決める時は `rankStarCandidates`（app/lib/recommend-star-rank.ts＝合い方が主軸・AD は 1.5ヶ月の線・線の下でも合い方が15点以上上なら🌟＝内覧を組むのが優先・AD1未満は他に無い時だけ）。保留は通すがあれば候補にしない。行→候補は app/lib/star-rank-pickup.ts（説明文の㎡・terms.buildingAge・equipment の構造/設備の○/希望の設備・AD の札）
 - **スイッチ**: 環境変数 `STAR_RANK_MODE`（既定＝新しい決め方・`off` で今までの合計の1位）。Vercel に入れて再デプロイで切り替わる。画面へは詳細 API の `customer.star_rank_mode` で渡す（画面は env を読まない）。決まりの名前 `star-fit@2026-10-06`（決め方の違うまとめの best_id は使わない）
