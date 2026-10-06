@@ -38,6 +38,8 @@ import { EQUIP_LABELS, conditionalFloorOf, parseEquipmentWants, BATH_TOILET_WANT
 import { compareMoveIn, CONDITION_KEYS, CONDITION_LABELS, type ConditionKey, type ListingTerms } from "./listing-terms";
 import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, type RequirementStrengths } from "./requirement-strength";
+// 2026-10-07 決め手の条件（気に入った部屋＋あと一つの不満から作る次の物件の像・closing-target.ts）
+import { closingTargetCodes, CLOSING_POINTS, CLOSING_JA, type ClosingTargetJudgeInput } from "./closing-target";
 import { hookLeanCodesOf, HOOK_LEAN_CODES, HOOK_FEATURE_JA, HOOK_FEATURE_KEYS, HOOK_BONUS, hookLeanCode, type HookLeanJudgeInput } from "./hook-lean-core";
 
 /** お客様の行の要望の強さ（保存の値＝LINE から webhook が書いた物を正に、条件の欄の文から読めた物で埋める） */
@@ -651,6 +653,8 @@ export const REASON_JA: Record<string, string> = {
   SEARCH_PINPOINT: "🎯 ピンポイント検索（条件ぴったりの検索）で見つかった",
   // 2026-10-06 竹内「学んだ物は採点につける」: 刺さった新着1件（お客様が内覧・見積・申込を頼んだ新着）に多かった特徴（週の学び・関門を通った物だけ・hook-lean-core）
   ...Object.fromEntries(HOOK_FEATURE_KEYS.map((f) => [hookLeanCode(f), `刺さった新着に多い特徴（${HOOK_FEATURE_JA[f]}・この型のお客様）`])),
+  // 2026-10-07 決め手の条件（closing-target.ts）
+  ...CLOSING_JA,
 };
 
 /**
@@ -920,6 +924,8 @@ export const REASON_POINTS: Record<string, number> = {
   SEARCH_PINPOINT: 10,
   // 2026-10-06 刺さった新着から学んだ特徴の加点（1つ +5・付けるのは2つまで＝+10 まで・hook-lean-core.HOOK_BONUS）。保留・外す候補には付けない
   ...Object.fromEntries(HOOK_LEAN_CODES.map((c) => [c, HOOK_BONUS.bonusEach])),
+  // 2026-10-07 決め手の条件に合う +12・一番の点だけ合う +6（加点だけ・推測の像なので外れの減点はしない・closing-target.CLOSING_POINTS）
+  ...CLOSING_POINTS,
 };
 
 /** 設備 ○ の点（案B: 必須 +5／普通 +3／できれば +2・合計 +15 まで）。札は EQUIP_<KEY>_MUST_OK／EQUIP_<KEY>_OK／EQUIP_<KEY>_SOFT_OK */
@@ -1975,6 +1981,12 @@ export type JudgeOptions = {
    *   渡さなければ今まで通り（表が空・関門を通らない・HOOK_LEAN_MODE=off の時は呼ぶ側が null を渡す）
    */
   hookLean?: HookLeanJudgeInput | null;
+  /**
+   * 2026-10-07 竹内（H0N0KA.「家賃が更に5,000円程低いお部屋が見つかれば決まる」・ゆいと「次カウンターキッチンで条件にあった物件があれば決まる」）:
+   *   会話から作った決め手の条件（closing-target-server.loadClosingTargetState）。渡すと像に合う物件に CLOSING_FIT（+12）・一番の点だけ合う物に CLOSING_MAIN_OK（+6）。
+   *   保留・外す候補には付けない（hookLean と同じ）。equipmentText は資料の文字層（設備を読む）。渡さなければ今まで通り（CLOSING_TARGET_MODE=off は呼ぶ側が null）
+   */
+  closingTarget?: ClosingTargetJudgeInput | null;
 };
 
 /** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
@@ -2215,6 +2227,10 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   if (opts.hookLean && !holds.length && !drops.length) {
     for (const c of hookLeanCodesOf(facts, profile.rentMax, opts.hookLean)) if (!codes.includes(c)) codes.push(c);
   }
+  // 2026-10-07 決め手の条件（closing-target.closingTargetCodes）: 加点だけ・保留・外す候補には付けない
+  if (opts.closingTarget && !holds.length && !drops.length) {
+    for (const c of closingTargetCodes(facts, opts.closingTarget)) if (!codes.includes(c)) codes.push(c);
+  }
   if (holds.length || drops.length) {
     const settled = settleHeldAd(codes, true);
     for (let k = 0; k < codes.length; k++) codes[k] = settled[k];
@@ -2308,13 +2324,15 @@ function isNewPositive(c: string): boolean {
     || c === "RENT_BAND_UPPER" || c === "RENT_TARGET_NEAR"
     // 2026-10-06 刺さった新着から学んだ特徴
     || c.startsWith("HOOK_LEAN_")
+    // 2026-10-07 決め手の条件に合う
+    || c === "CLOSING_FIT" || c === "CLOSING_MAIN_OK" || c === "CLOSING_NEAR_FAVORITE"
     || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c)
     // 案B（書いた条件の重み・全部合う）
     || /^(?:ZERO_ZERO_INFERRED|AGE_W5|AGE_W10|AGE_W15|AGE_COL_W5|AGE_COL_W10|WALK_NEAR_W5|WALK_NEAR_W7|WALK_TEXT_OK|RENT_CHEAP_W80|RENT_CHEAP_W90|RENT_CHEAP_W95)(?:_MUST|_SOFT)?$|^FIT_(?:ALL|ALL_HALF|ONE_MISS|ONE_MISS_HALF)$/.test(c);
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AD_ASSUMED_BUILDING|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AD_ASSUMED_BUILDING|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR|CLOSING_MAIN_MISS)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */

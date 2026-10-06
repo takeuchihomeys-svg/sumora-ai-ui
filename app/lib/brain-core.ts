@@ -2022,6 +2022,16 @@ export async function analyzeConversation(
   希望条件: ${pc.preferences ?? "未設定"}
   その他要望: ${pc.other_requests ?? "未設定"}
 物件検索推奨度: ${searchPriority}`;
+    // 2026-10-07 竹内（H0N0KA.「家賃が更に5,000円程低いお部屋が見つかれば決まるって考えにする」・ゆいと「次カウンターキッチンで条件にあった物件があれば決まる」）:
+    //   気に入った部屋（直前の🌟）＋お客様の「あと一つ」から作った決め手の条件（closing-target・決定論）を物件検索統括の下に足す。
+    //   材料だけ（言い回しの指示は書かない）。物件検索ブレインの判定（CLOSING_FIT）と同じ値。CLOSING_TARGET_MODE=off で止める
+    try {
+      const { loadClosingTargetState } = await import("@/app/lib/closing-target-server");
+      const { buildClosingTargetBrainNote } = await import("@/app/lib/closing-target");
+      propertySearchText += buildClosingTargetBrainNote(await loadClosingTargetState(supabase, { propertyCustomerId, conversationId }));
+    } catch (e) {
+      console.warn("[brain-core] 決め手の条件を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e));
+    }
   }
 
   // 2026-09-24: system 2ブロック（静的＋DB由来）は buildBrainSystemBlocks（純関数・module-level）で作る。

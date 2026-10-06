@@ -51,6 +51,25 @@ async function queueWebBrain(
     for (const cid of r.customer_ids ?? []) for (const s of r.sites ?? []) { queued.add(queuedKey(String(cid), s)); openIdOf.set(queuedKey(String(cid), s), r.id); }
   }
   const { rows, skipped } = buildWebBrainCommands(customers, sites, !!body.is_wide, { queued, searchOverride });
+  // 2026-10-07 竹内（H0N0KA.「家賃が更に5,000円程低いお部屋が見つかれば決まる…もっと明確に物件検索をする事が出来る」）:
+  //   メモ欄の指示（searchOverride）が無い時だけ、会話から作った決め手の条件（closing-target）をその回だけの上書きにする（登録の条件は変えない）。
+  //   まだ見つかっていない（active・partial）像だけ・サイトで絞れる欄（家賃・間取り・広さ・徒歩・築年・階）だけ。CLOSING_TARGET_MODE=off で止める
+  if (!searchOverride && rows.length > 0) {
+    try {
+      const { loadClosingTargetState } = await import("@/app/lib/closing-target-server");
+      const { closingSearchOverride } = await import("@/app/lib/closing-target");
+      for (const r of rows) {
+        const cid = r.customer_ids[0];
+        const st = await loadClosingTargetState(supabase, { propertyCustomerId: cid });
+        if (!st || st.status === "found") continue;
+        const { data: cur } = await supabase.from("property_customers").select("rent_max, floor_plan, floor_area_min, walk_minutes, building_age, desired_area, preferences, area_mode").eq("id", cid).maybeSingle();
+        const ov = cur ? sanitizeSearchOverride(closingSearchOverride(st.target, cur as never)) : null;
+        if (!ov) continue;
+        (r.payload as Record<string, unknown>).search_override = ov;
+        (r.payload as Record<string, unknown>).closing_target = { v: st.target.v, kind: st.target.kind, status: st.status, rationale: st.target.rationale };
+      }
+    } catch (e) { console.warn("[automation/trigger] 決め手の条件を載せられない（登録の条件のまま）:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-09-29 v2.5.41 更新日: 今までの決まり（rp-update-days）を、前回の検索（このサイトで最後に終わった回）から空いた時間を覆う所まで広げる。
   //   拡張は payload.update_days_plan の値を popup の経路でも使う（旧は popup が payload を見ず、その場の決まりで入れていた）。レインズは更新日なし
   if (rows.length > 0 && site !== "reins") {

@@ -130,7 +130,10 @@ export async function POST(req: NextRequest) {
     // 2026-10-06 重みの版（scoring_weights の active・週の学習 scoring-learning が作る）を判定に入れる。版が無い間は定数のまま（今と同じ）・SCORING_WEIGHTS_MODE=off で止める
     const { applyScoringWeightsForJudge } = await import("@/app/lib/scoring-learning-server");
     await applyScoringWeightsForJudge(supabase);
-    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean }));
+    // 2026-10-07 決め手の条件（会話の「あと一つ」から作る次の物件の像・closing-target）。像に合う物件を上げる（加点だけ・CLOSING_TARGET_MODE=off で止める）
+    const { loadClosingTargetState } = await import("@/app/lib/closing-target-server");
+    const closing = await loadClosingTargetState(supabase, { propertyCustomerId: customerId, conversationId: body.conversation_id ?? null });
+    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target } : null }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
     let imageRead = 0, imageOk = 0, imageFailed = 0;
@@ -172,6 +175,8 @@ export async function POST(req: NextRequest) {
       // 見積書の記録（このお客様）: 件数・AD と結び付いた件数・利益の中央値・利益が出ていない件数
       estimate_records: profit.n > 0 ? { n: profit.n, linked: profit.linked, ad_yen_median: profit.adYenMedian, profit_median_yen: profit.profitMedianYen, negative: profit.negative } : null,
       confidence: profile.confidence,
+      // 2026-10-07 決め手の条件（あれば・画面と記録の材料）
+      closing_target: closing ? { kind: closing.target.kind, status: closing.status, rationale: closing.target.rationale, v: closing.target.v } : null,
     };
 
     // ── 記録（影の運用の材料。失敗しても返す） ──

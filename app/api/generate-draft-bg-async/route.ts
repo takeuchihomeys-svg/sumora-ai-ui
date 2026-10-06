@@ -25,6 +25,7 @@ import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-
 import { resolveScopeForBundle } from "@/app/lib/condition-change-scope";
 import { detectConditionRevert } from "@/app/lib/condition-restore";
 import { secondaryNeedOf } from "@/app/lib/condition-reading";
+import { readClosingGaps } from "@/app/lib/closing-target";
 import { jstParts } from "@/app/lib/jst-date";
 
 export const maxDuration = 300;
@@ -172,6 +173,17 @@ async function applyBrainConditionChange(
   if (!m) return;
   let extracted: Record<string, unknown>;
   try { extracted = JSON.parse(m[0]) as Record<string, unknown>; } catch { return; }
+  // 2026-10-07 ⑫（ゆいと 10/5「カウンターキッチンのとこは少ないですかね？」）: ブレインは equip_add・permanent と決めたが、
+  //   Haiku が質問の形を条件ではないと読んで {} を返し（llm_usage_logs condition_category_parse 出力4トークン）、こだわりの欄に何も入らなかった。
+  //   設備の型は決め手の条件（closing-target.readClosingGaps・誤り0に寄せた決定論の線）でも読み、Haiku が空の時だけ足す（登録してよい型＝設備）
+  if (conditionChangeType === "equip_add" && !(typeof extracted.preferences === "string" && extracted.preferences.trim())) {
+    const eq = readClosingGaps(targetMessage).find((g) => g.kind === "equipment");
+    const labels = (eq?.equipment ?? []).map((e) => (e.key === "counter_kitchen" ? "カウンターキッチン" : e.label));
+    if (labels.length) {
+      extracted.preferences = labels.join("、");
+      console.log(JSON.stringify({ tag: "bg-async:bridge-equip-fallback", convId, labels }));
+    }
+  }
 
   // 家賃バリデーション（万円単位誤り自動修正）
   for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
