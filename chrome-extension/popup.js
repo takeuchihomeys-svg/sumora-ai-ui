@@ -94,13 +94,17 @@ async function fetchStationRouteCache() {
 }
 
 // ハードコードマップとSupabase DBを差分sync（DBにないtokenだけupsert）
-async function seedMapsIfEmpty() {
+// 2026-10-06 v2.5.80: 旧は開くたびに region-map・station-map をここで1回、fetchLearnedMaps でもう1回取っていた（同じ表を2回・計 約360KB）。
+//   → 取った表（rd・sd）を受け取り、差分の同期は1日1回だけ（loadLearnedMapsCached が呼ぶ）
+async function seedMapsIfEmpty(rd, sd) {
   try {
-    const [rRes, sRes] = await Promise.all([
-      fetch(`${API_BASE}/api/region-map`),
-      fetch(`${API_BASE}/api/station-map`),
-    ]);
-    const [rd, sd] = await Promise.all([rRes.json(), sRes.json()]);
+    if (!rd || !sd) {
+      const [rRes, sRes] = await Promise.all([
+        fetch(`${API_BASE}/api/region-map`),
+        fetch(`${API_BASE}/api/station-map`),
+      ]);
+      [rd, sd] = await Promise.all([rRes.json(), sRes.json()]);
+    }
 
     const dbRegionTokens  = new Set((rd.regions  || []).map(r => r.token));
     const dbStationTokens = new Set((sd.stations || []).map(s => s.token));
@@ -137,6 +141,40 @@ async function seedMapsIfEmpty() {
   }
 }
 
+// 2026-10-06 v2.5.80: 学習済みマップは前回の物（chrome.storage.local）を先に使い、30分より古ければ裏で取り直す（開くたびに 約190KB を待たない）
+const LEARNED_MAPS_STORE_KEY = "axlx_learned_maps_v1";
+const LEARNED_MAPS_FRESH_MS = 30 * 60 * 1000;
+const SEED_MAPS_EVERY_MS = 24 * 60 * 60 * 1000;
+function _applyLearnedMaps(d) {
+  if (!d) return;
+  for (const r of (d.regions || [])) {
+    LEARNED_WARD_MAP[r.token] = r.ward;
+    if ((r.priority || 0) >= 100) LEARNED_OVERRIDE_MAP[r.token] = "area";
+  }
+  for (const r of (d.stations || [])) {
+    LEARNED_STATION_MAP[r.token] = { ward: r.ward, realpro_lines: r.realpro_lines || [], itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null };
+    if ((r.priority || 0) >= 100) LEARNED_OVERRIDE_MAP[r.token] = "station";
+  }
+  Object.assign(LEARNED_LINE_ORDER, d.lines || {});
+}
+async function loadLearnedMapsCached() {
+  let stored = null;
+  try { stored = await new Promise((res) => chrome.storage.local.get([LEARNED_MAPS_STORE_KEY, "axlx_seed_maps_at"], (r) => res(r || {}))); } catch (_) { stored = {}; }
+  const cached = stored && stored[LEARNED_MAPS_STORE_KEY];
+  if (cached && cached.data) _applyLearnedMaps(cached.data);
+  if (cached && cached.ts && Date.now() - cached.ts < LEARNED_MAPS_FRESH_MS) return;
+  const ok = await fetchLearnedMaps();
+  if (ok && ok.data) {
+    try { chrome.storage.local.set({ [LEARNED_MAPS_STORE_KEY]: { ts: Date.now(), data: ok.data } }); } catch (_) {}
+    // ハードコードマップとの差分の同期は1日1回だけ（取った表を渡す＝取り直さない）
+    const lastSeed = Number(stored && stored.axlx_seed_maps_at) || 0;
+    if (Date.now() - lastSeed > SEED_MAPS_EVERY_MS) {
+      try { chrome.storage.local.set({ axlx_seed_maps_at: Date.now() }); } catch (_) {}
+      void seedMapsIfEmpty({ regions: ok.data.regions }, { stations: ok.data.stations });
+    }
+  }
+}
+
 // 起動時: 地名・駅マップを一括ロード（タイムアウト付き・失敗時サイレントリトライ）
 async function fetchLearnedMaps() {
   const tryFetch = async () => {
@@ -149,32 +187,17 @@ async function fetchLearnedMaps() {
         fetch(`${API_BASE}/api/line-stations`, { cache: "no-store", signal: ctrl.signal }),
       ]);
       clearTimeout(timer);
-      if (regionRes.ok) {
-        const d = await regionRes.json();
-        for (const r of (d.regions || [])) {
-          LEARNED_WARD_MAP[r.token] = r.ward;
-          // 2026-09-24 従業員の手直し（priority 100）は仕分けでハードコードの駅名より先に「地域」として効く
-          if ((r.priority || 0) >= 100) LEARNED_OVERRIDE_MAP[r.token] = "area";
-        }
-      }
-      if (stationRes.ok) {
-        const d = await stationRes.json();
-        for (const r of (d.stations || [])) {
-          LEARNED_STATION_MAP[r.token] = {
-            ward: r.ward, realpro_lines: r.realpro_lines || [],
-            itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null,
-          };
-          if ((r.priority || 0) >= 100) LEARNED_OVERRIDE_MAP[r.token] = "station";
-        }
-      }
-      if (lineRes.ok) {
-        const d = await lineRes.json();
-        Object.assign(LEARNED_LINE_ORDER, d.lines || {});
-      }
+      // 2026-09-24 従業員の手直し（priority 100）は仕分けでハードコードの駅名より先に効く（_applyLearnedMaps）
+      const data = {
+        regions: regionRes.ok ? ((await regionRes.json()).regions || []) : [],
+        stations: stationRes.ok ? ((await stationRes.json()).stations || []) : [],
+        lines: lineRes.ok ? ((await lineRes.json()).lines || {}) : {},
+      };
+      _applyLearnedMaps(data);
       console.log("[AX] 学習済みロード: 地名", Object.keys(LEARNED_WARD_MAP).length,
         "件 / 駅", Object.keys(LEARNED_STATION_MAP).length,
         "件 / 路線", Object.keys(LEARNED_LINE_ORDER).length, "本");
-      return true;
+      return regionRes.ok && stationRes.ok ? { data } : true;
     } catch {
       clearTimeout(timer);
       return false;
@@ -182,9 +205,10 @@ async function fetchLearnedMaps() {
   };
 
   // 1回目試行、失敗したら3秒後に1回リトライ（エラーはサイレント）
-  if (await tryFetch()) return;
+  const r1 = await tryFetch();
+  if (r1) return r1;
   await new Promise(r => setTimeout(r, 3000));
-  await tryFetch();
+  return await tryFetch();
 }
 
 // 間違えて学習したエントリをDBから削除してローカルマップからも除去
@@ -2393,34 +2417,72 @@ function setCachedCustomers(data) {
   } catch {}
 }
 
+// 2026-10-06 v2.5.80 竹内「物件検索する際の拡張ツールを開く際も重すぎる」:
+//   旧: 開くたびに /api/property-customers（本番 325人で 1.69MB・br 324KB・約3秒）を待ってから一覧を出していた
+//       （キャッシュは sessionStorage の90秒＝popup を開き直すと毎回消える）。
+//   新: ①前回の一覧（chrome.storage.local・開き直しても残る）をすぐ出す ②裏で軽い形（?view=list・要約・人物像・申込の原文・
+//       要望の項目の計算・会話の最後の発言を外した 537KB・br 約95KB）を取り直し、変わっていれば描き直す（検索の文字と見ていた場所はそのまま）。
+//   お客様を開いた時は今まで通り ?id= で全部を取り直す（fetchFreshCustomer）。強制更新（↻）は待って描く
+const CUSTOMER_LIST_STORE_KEY = "axlx_customer_list_v1";
+function _readStoredCustomerList() {
+  return new Promise((resolve) => {
+    try { chrome.storage.local.get([CUSTOMER_LIST_STORE_KEY], (r) => resolve((r && r[CUSTOMER_LIST_STORE_KEY]) || null)); } catch (_) { resolve(null); }
+  });
+}
+function _storeCustomerList(data) {
+  try { const o = {}; o[CUSTOMER_LIST_STORE_KEY] = { ts: Date.now(), data }; chrome.storage.local.set(o); } catch (_) {}
+}
+function _renderCustomersKeepScroll() {
+  const list = document.getElementById("customer-list");
+  const top = list ? list.scrollTop : 0;
+  updateTodayBanner();
+  filterCustomers(document.getElementById("search-input")?.value || "");
+  if (list) list.scrollTop = top;
+}
+async function _fetchCustomerList() {
+  const res = await fetch(`${API_BASE}/api/property-customers?view=list`, { cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return await res.json();
+}
+let _customerListSig = "";
 async function loadCustomers(forceRefresh = false) {
   const list = document.getElementById("customer-list");
+  let shown = false;
 
-  // キャッシュ利用（強制更新でない場合）
+  // 前回の一覧をすぐ出す（強制更新でない時）
   if (!forceRefresh) {
-    const cached = getCachedCustomers();
-    if (cached) {
-      allCustomers = cached;
-      updateTodayBanner();
-      filterCustomers(document.getElementById("search-input")?.value || "");
-      return;
+    const stored = await _readStoredCustomerList();
+    if (stored && Array.isArray(stored.data) && stored.data.length) {
+      allCustomers = stored.data;
+      _customerListSig = JSON.stringify(stored.data);
+      _renderCustomersKeepScroll();
+      shown = true;
     }
   }
+  if (!shown) list.innerHTML = `<div class="state-msg">読み込み中...</div>`;
 
-  list.innerHTML = `<div class="state-msg">読み込み中...</div>`;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/property-customers`, {
-      cache: "no-store",
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    allCustomers = await res.json();
-    setCachedCustomers(allCustomers);
-    updateTodayBanner();
-    filterCustomers(document.getElementById("search-input")?.value || "");
-  } catch (e) {
-    list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
-  }
+  const refresh = (async () => {
+    try {
+      const data = await _fetchCustomerList();
+      _storeCustomerList(data);
+      const sig = JSON.stringify(data);
+      if (sig !== _customerListSig) {
+        _customerListSig = sig;
+        // 開いているお客様は取り直した全部の値（fetchFreshCustomer）の物を残す（一覧の軽い形で上書きしない）
+        if (selectedCustomer && selectedCustomer.id) {
+          const i = data.findIndex((x) => String(x.id) === String(selectedCustomer.id));
+          if (i >= 0) data[i] = Object.assign({}, data[i], selectedCustomer);
+        }
+        allCustomers = data;
+        _renderCustomersKeepScroll();
+      }
+    } catch (e) {
+      if (!shown) list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
+      else console.warn("[popup] お客様の一覧の取り直しに失敗（前回の一覧のまま）:", e && e.message);
+    }
+  })();
+  // 前回の一覧を出した時は待たない（裏で取り直す）・無い時と強制更新は取り直しを待つ
+  if (!shown) await refresh;
 }
 
 function renderCollapsibleSection(sectionId, title, customers) {
@@ -2594,7 +2656,7 @@ async function markPropertyViewed(id) {
     const idx = allCustomers.findIndex((c) => String(c.id) === String(id));
     if (idx >= 0) {
       allCustomers[idx] = { ...allCustomers[idx], property_viewed_at: now, property_send_count: 0 };
-      setCachedCustomers(allCustomers);
+      setCachedCustomers(allCustomers); _storeCustomerList(allCustomers); // v2.5.80 次に開いた時の一覧にも
       filterCustomers(document.getElementById("search-input")?.value || "");
     }
     // このお客様の作業を終えた＝売上サポの回（リアプロ・itandi…）を1つにまとめる（ブレイン ON の時だけ・待たない）
@@ -5758,7 +5820,8 @@ function _initModeSelect() {
 document.addEventListener("DOMContentLoaded", () => {
   _initModeSelect();
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
-  seedMapsIfEmpty().then(() => fetchLearnedMaps());
+  // v2.5.80: 前回の学習済みマップを先に使い、古ければ裏で取り直す（差分の同期は1日1回・同じ表を2回取らない）
+  loadLearnedMapsCached();
   // DBの駅→路線キャッシュをロード（24hローカルキャッシュ・失敗時はhardcodedマップで動作継続）
   fetchStationRouteCache();
   // loadCustomers 完了後に pendingPopupCmd を確認して顧客を自動選択

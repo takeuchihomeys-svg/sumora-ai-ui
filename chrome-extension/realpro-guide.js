@@ -494,6 +494,13 @@
     if (cur.step.kind === "search" && tgt && (tgt === t || tgt.contains(t))) {
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); memoSearchRun(session, "realpro");
     }
+    // v2.5.80: 検索を押した時に、この一覧を検索したお客様をタブに印（送る前の確かめ search-stamp.js）。手順が終わる前に押した時は complete=false
+    var isSearchClick = false;
+    for (var n3 = t, k3 = 0; n3 && k3 < 4; n3 = n3.parentElement, k3++) { if ((n3.classList && n3.classList.contains("go_search")) || norm(n3.value || n3.textContent) === "検索") { isSearchClick = true; break; } }
+    if (isSearchClick && session && session.customerId) {
+      var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
+      if (SS) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "realpro", complete: cur.step.kind === "search" });
+    }
   }, true);
 
   // ── ① page-script.js から: 案内を始める ──

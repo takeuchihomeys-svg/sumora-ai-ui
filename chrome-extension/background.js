@@ -1555,7 +1555,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!_directOk) {
             // フォールバック: popup.js未応答 → _batchAutofill直接呼び出し
             console.warn("[webapp-search] itandi popup未応答 → _batchAutofill fallback");
-            var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+            var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers?id=" + encodeURIComponent(String(_cid)), { cache: "no-store" }); // v2.5.80 1人だけ取る（旧は全員 1.7MB を取って探していた）
             var _custList = await _fetchRes.json();
             var _customer = Array.isArray(_custList)
               ? _custList.find(function(x) { return String(x.id) === String(_cid); })
@@ -1595,7 +1595,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
-        var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+        var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers?id=" + encodeURIComponent(String(_cid)), { cache: "no-store" }); // v2.5.80 1人だけ取る（旧は全員 1.7MB を取って探していた）
         var _custList = await _fetchRes.json();
         var _customer = Array.isArray(_custList)
           ? _custList.find(function(x) { return String(x.id) === String(_cid); })

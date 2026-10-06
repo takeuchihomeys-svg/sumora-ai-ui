@@ -14,6 +14,6 @@ ok("送る時（callMergeApi）: 送る相手が今の子なら親の会話を�
 ok("拡張は line_user_id でお客様を引かない（子は line_user_id が空＝取り違えない）", !/line_user_id/.test(pp + bg + read("bulk-dl.js") + read("itandi-bulk-dl.js") + read("realpro-guide.js")));
 ok("案内の送付済み・建物の印は今のお客様（子）の id で聞く＝サーバーが子＋親で答える", /type: "axlx-guide-sent-rooms", customerId: session\.customerId/.test(read("realpro-guide.js")) && /type: "axlx-guide-sent-check", customerId: session\.customerId/.test(read("realpro-guide.js")));
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.79", mf.version === "2.5.79");
+ok("manifest の版 2.5.80", mf.version === "2.5.80");
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

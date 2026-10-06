@@ -568,6 +568,22 @@
    *   （「📤 売上番長に送る」を押したのと同じ道＝送付済みの除外・ブレイン・AIX ツールへの記録も同じ）。押せばすぐ送る・待ちは押すたびに延びる
    */
   var _forwardTimer = null;
+  var _autoForwarding = false;
+  /** v2.5.80 送る前の確かめ（search-stamp.js）。ok なら true。手で押した時は確かめの小窓、20秒後のまとめて送るは送らずボタンに出す */
+  function _sendGuardOk(customerName, customerId) {
+    var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
+    if (!SS) return true;
+    var sel = tracked.filter(function (t) { return t.cb && t.cb.checked; }).map(function (t) { return { area: (t.btn && t.btn.getAttribute && t.btn.getAttribute("data-axlx-area")) || "" }; });
+    var r = SS.check({ stamp: SS.read(), cur: { cid: customerId, name: customerName }, now: Date.now(), selected: sel });
+    if (r.ok) return true;
+    console.warn("[AXLX bulk-dl] 送る前の確かめ: " + r.reasons.join(","));
+    if (_autoForwarding) {
+      var lb = document.getElementById("axlx-line-btn");
+      if (lb) lb.textContent = "⚠ 確かめが要ります（押して確かめてから送る）";
+      return false;
+    }
+    return window.confirm(r.message);
+  }
   function scheduleForward() {
     var lineBtn = document.getElementById("axlx-line-btn");
     if (!lineBtn || lineBtn.disabled) return;
@@ -577,7 +593,8 @@
     _forwardTimer = setTimeout(function () {
       _forwardTimer = null;
       if (lineBtn.disabled) return;
-      lineBtn.click();
+      _autoForwarding = true; // v2.5.80: 20秒後のまとめて送るは、確かめが要る時は送らない（手で押してもらう）
+      try { lineBtn.click(); } finally { _autoForwarding = false; }
     }, 20000);
   }
 
@@ -703,6 +720,8 @@
             x.btn.parentNode.insertBefore(b, x.btn.nextSibling);
             // 2026-10-02 v2.5.69: 案内モード（realpro-guide.js）が「通す」の印刷用PDF を光らせるための印（読むだけ）
             try { x.btn.setAttribute("data-axlx-verdict", String(j.verdict || "")); } catch (_) {}
+            // v2.5.80: 場所の判定（AREA_FAR＝希望の場所から遠い）も印に（送る前の確かめ search-stamp.js が数える）
+            try { var _codes = Array.isArray(j.reason_codes) ? j.reason_codes : []; x.btn.setAttribute("data-axlx-area", _codes.indexOf("AREA_FAR") >= 0 ? "far" : _codes.some(function (c) { return /^AREA_(CLOSE|IN|REACH|NEAR|ANCHOR_REACH)/.test(c); }) ? "close" : ""); } catch (_) {}
           });
           if (!document.getElementById("axlx-brain-hide-simple")) {
             var st = document.createElement("style");
@@ -1331,6 +1350,8 @@
       alert("物件を選択してください（印刷用PDFリンクが検出できる物件をチェックしてください）");
       return;
     }
+    // v2.5.80 竹内「違うお客さんの物件がまぎれている」: この一覧を検索したお客様と今のお客様・場所を照らす（search-stamp.js）
+    if (sendToLine && !_sendGuardOk(customerName, customerId)) return;
 
     var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
 

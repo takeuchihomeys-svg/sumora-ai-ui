@@ -73,7 +73,7 @@ ok("ITANDI のボタン・チェックの disabled を触らない（触るの�
 const rp = read("bulk-dl.js");
 ok("リアプロの枠も重なる時だけ逃がす（スタッフが動かした位置は変えない）", /D\.applyTopAvoid\(bar, 10\)/.test(rp) && /bar\.removeAttribute\("data-axlx-docked"\); \/\/ v2\.5\.74/.test(rp));
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest: bar-dock.js は両方の一括の段の先頭・版 2.5.74 以降", mf.content_scripts.some((c) => c.js[0] === "bar-dock.js" && c.js[c.js.length - 1] === "bulk-dl.js") && mf.content_scripts.some((c) => c.js[0] === "bar-dock.js" && c.js[c.js.length - 1] === "itandi-bulk-dl.js") && /^2.5.(7[4-9]|[89]d)$/.test(mf.version));
+ok("manifest: bar-dock.js は両方の一括の段の先頭・版 2.5.74 以降", mf.content_scripts.some((c) => c.js[0] === "bar-dock.js" && c.js[c.js.length - 1] === "bulk-dl.js") && mf.content_scripts.some((c) => c.js[0] === "bar-dock.js" && c.js[c.js.length - 1] === "itandi-bulk-dl.js") && /^2\.5\.(7[4-9]|[89]\d)$/.test(mf.version));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

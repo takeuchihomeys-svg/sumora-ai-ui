@@ -63,8 +63,16 @@ async function checkAllDone(): Promise<void> {
   } catch { /* 失敗は無視 */ }
 }
 
+// 2026-10-06 v2.5.80（⑯）竹内「物件検索する際の拡張ツールを開く際も重すぎる」: 拡張の一覧は ?view=list で軽い形を受ける。
+//   実測（本番 325人）: 既定の形は 1.69MB（br 圧縮で 324KB）・3.0秒。重い所は 要望の項目（want_items 250KB・行ごとに計算）・
+//   会話の最後の発言（linked_conversation 132KB）・ai_summary_json 106KB・ai_summary 93KB・raw_format_text 38KB。
+//   一覧に要らない物（会話の要約・人物像・申込フォームの原文・条件の要約・要望の項目の計算・会話の最後の発言と画像）を外す。
+//   お客様を開いた時は今まで通り ?id= で全部を受ける（拡張の fetchFreshCustomer）。既定（view なし）の形は変えない（⑫ の /conditions・アプリが使う）
+const LIST_DROP = ["ai_summary", "ai_summary_json", "personality_profile", "raw_format_text", "condition_summary", "condition_summary_hash"] as const;
+
 export async function GET(req: NextRequest) {
   const singleId = new URL(req.url).searchParams.get("id");
+  const listView = !singleId && new URL(req.url).searchParams.get("view") === "list";
   const pcQuery = singleId
     ? supabase.from("property_customers").select("*").eq("id", singleId)
     : supabase.from("property_customers").select("*").order("updated_at", { ascending: false });
@@ -79,6 +87,19 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const convMap = new Map((convData || []).map((c) => [c.property_customer_id, c]));
+  if (listView) {
+    const rows = (data || []).map((c) => {
+      const o: Record<string, unknown> = { ...c };
+      for (const k of LIST_DROP) delete o[k];
+      const conv = convMap.get(c.id) ?? (c.parent_customer_id ? convMap.get(c.parent_customer_id) ?? null : null);
+      o.rent_min_search = searchRentMinOf(c as CustomerLike)?.yen ?? null;
+      o.is_linked = convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id));
+      o.linked_conversation = conv ? { id: conv.id, property_customer_id: conv.property_customer_id, last_sender: conv.last_sender, updated_at: conv.updated_at, account: conv.account, status: conv.status, is_hot: conv.is_hot, is_flagged: conv.is_flagged } : null;
+      o.list_view = true; // 一覧の軽い形の印（拡張はお客様を開く時に ?id= で全部を取り直す）
+      return o;
+    });
+    return NextResponse.json(rows, { headers: { "Cache-Control": "no-store, must-revalidate" } });
+  }
   const result = (data || []).map((c) => ({
     ...c,
     // 2026-09-29 要望の項目（設備／NG／その他・純関数 customer-wants.itemizeWants）。拡張の popup の条件の表示が読む（検索には入れない）

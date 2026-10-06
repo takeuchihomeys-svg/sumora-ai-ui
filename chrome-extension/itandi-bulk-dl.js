@@ -723,6 +723,12 @@
     lineBtn.textContent = "準備中...";
 
     getCustomerFromPopup(function (customerName, customerId, customerConditions) {
+      // v2.5.80 竹内「違うお客さんの物件がまぎれている」: この一覧を検索したお客様と今のお客様を照らす（search-stamp.js）
+      var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp;
+      if (SS) {
+        var r = SS.check({ stamp: SS.read(), cur: { cid: customerId, name: customerName }, now: Date.now(), selected: [] });
+        if (!r.ok && !window.confirm(r.message)) { lineBtn.disabled = false; lineBtn.textContent = lineOrig; return; }
+      }
       startSend(targets, customerName, customerId, lineBtn, lineOrig, null, customerConditions);
     });
   }

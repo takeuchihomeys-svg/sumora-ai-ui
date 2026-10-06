@@ -171,9 +171,9 @@ const bi = cs.findIndex((c) => (c.js || []).includes("itandi-bulk-dl.js"));
 const gi = cs.findIndex((c) => (c.js || []).includes("itandi-guide.js"));
 const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
-  && eq(gjs, ["itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
+  && eq(gjs, ["search-stamp.js", "itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.79", mf.version === "2.5.79");
+ok("manifest の版 2.5.80", mf.version === "2.5.80");
 
 // ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
 {
@@ -199,7 +199,7 @@ ok("manifest の版 2.5.79", mf.version === "2.5.79");
   ok("近畿・大阪府は選ばれていない時だけ光らせる", /if \(kinki && !isChecked\(kinki\)\)/.test(g2) && /if \(osaka && !isChecked\(osaka\)\)/.test(g2));
   ok("駅のお客様で所在地の小窓を開いた時の文", /この方は駅で探します。所在地の小窓を閉じて「路線・駅で絞り込み」を押してください/.test(g2));
   ok("地域のお客様で別の小窓を開いた時の文", /この方は地域（所在地）で探します。この小窓を閉じて「所在地で絞り込み」を押してください/.test(g2));
-  ok("小窓の一覧を動かすのは区を選ぶ手順の中だけ", /if \(!isChecked\(wl\)\) \{ revealWardOnce\(wl, w0\);/.test(g2) && (g2.match(/revealWardOnce\(/g) || []).length === 2);
+  ok("小窓の一覧を動かすのは区を選ぶ手順と路線を選ぶ手順の中だけ（v2.5.80 路線も）", /if \(!isChecked\(wl\)\) \{ revealWardOnce\(wl, w0\);/.test(g2) && /if \(ln\.length\) \{ revealWardOnce\(ln\[0\], "line:"/.test(g2) && (g2.match(/revealWardOnce\(/g) || []).length === 3);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

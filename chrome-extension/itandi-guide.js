@@ -419,9 +419,16 @@
   // 2026-10-02 v2.5.69 竹内さん（所在地の小窓）: 選ぶ区のラジオが市区町村の一覧の外にある時、その一覧の中だけを1回動かして見える所へ（押さない・選ばない）。
   //   ALLOWED_SCROLL: 案内で動かしてよいのは小窓の中の市区町村の一覧だけ（ページ全体・他の一覧は動かさない）。同じ区は小窓を開くたびに1回だけ（スタッフの手と取り合わない）
   var _revealedKey = "";
+  /** 小窓の種類（路線・駅／所在地）。見出し・文の語で見分ける（itandi-guide-plan.js modalKindFromText） */
+  function dialogKind(dlg) {
+    if (!dlg) return null;
+    var k = Plan.modalKindFromText ? Plan.modalKindFromText(String(dlg.textContent || "").slice(0, 400)) : null;
+    if (k) return k;
+    return dlg.querySelector('input[name="regionName"]') ? "area" : null; // 語で決まらない時だけ旧の見分け
+  }
   function revealWardOnce(el, ward) {
     try {
-      var dlg = el.closest ? el.closest([role=dialog]) : null;
+      var dlg = el.closest ? el.closest('[role="dialog"]') : null; // v2.5.80: 旧は引用符が抜けて毎回例外＝一覧が一度も動いていなかった
       if (!dlg) return;
       var key = ward + "#" + (dlg.__axlxOpenId || (dlg.__axlxOpenId = String(Date.now())));
       if (_revealedKey === key) return;
@@ -452,7 +459,7 @@
       var fb = r.f ? r.f.btn : (r.def ? filterBtn(r.def) : null);
       return { done: false, target: [fb], note: "「所在地で絞り込み」を押して小窓を開く" + (missing.length < (s.batchCity ? 1 : s.wards.length) ? "（次は " + missing[0] + "）" : "") };
     }
-    if (!dlg.querySelector('input[name="regionName"]')) return { done: false, target: [closeBtnOf(dlg)], note: "この方は地域（所在地）で探します。この小窓を閉じて「所在地で絞り込み」を押してください" };
+    if (dialogKind(dlg) === "lines") return { done: false, target: [closeBtnOf(dlg)], note: "この方は地域（所在地）で探します。この小窓を閉じて「所在地で絞り込み」を押してください" };
     var okBtn = btnByText(dlg, "確定");
     if (!missing.length) return { done: false, target: [okBtn], note: "選び終えたら「確定」" };
     var kinki = radioLabel(dlg, "近畿");
@@ -510,7 +517,7 @@
       var fb = r.f ? r.f.btn : (r.def ? filterBtn(r.def) : null);
       return { done: false, target: [fb], note: "「路線・駅で絞り込み」を押して小窓を開く" };
     }
-    if (dlg.querySelector('input[name="regionName"]')) return { done: false, target: [closeBtnOf(dlg)], note: "この方は駅で探します。所在地の小窓を閉じて「路線・駅で絞り込み」を押してください" };
+    if (dialogKind(dlg) === "area") return { done: false, target: [closeBtnOf(dlg)], note: "この方は駅で探します。所在地の小窓を閉じて「路線・駅で絞り込み」を押してください" };
     var cb = [].slice.call(dlg.querySelectorAll("label")).filter(function (l) { var i = inputOf(l); return i && i.type === "checkbox" && visible(l); });
     if (!cb.length) {
       var nav = [navByText(dlg, "近畿"), navByText(dlg, "大阪府")].filter(Boolean);
@@ -523,7 +530,8 @@
     });
     if (st.length) return { done: false, target: st, note: "光っている駅にチェック（" + st.length + "駅）" };
     var ln = cb.filter(function (l) { return isLine(l) && !isChecked(l); });
-    if (ln.length) return { done: false, target: ln, note: "光っている路線を押すと、その路線の駅が出ます（" + ln.length + "路線）" };
+    // v2.5.80: 路線の一覧は長く、選ぶ路線が一覧の下の方で見えない → 一覧の中だけを1回動かして最初の路線を見える所へ（区の一覧と同じ・押さない）
+    if (ln.length) { revealWardOnce(ln[0], "line:" + norm(ln[0].textContent)); return { done: false, target: ln, note: "光っている路線を押すと、その路線の駅が出ます（" + ln.length + "路線）" }; }
     return { done: false, target: [btnByText(dlg, "確定")], note: "選び終えたら「確定」" };
   }
   // 検索のボタン（itandi-page-script.js _itSearchBtn と同じ・案内の枠と小窓の中は除く）
@@ -758,6 +766,8 @@
     if (!cur || cur.step.kind !== "search") return;
     var tgt = (cur.ev.target || [])[0];
     if (tgt && (tgt === e.target || tgt.contains(e.target))) {
+      // v2.5.80: この一覧を検索したお客様をタブに印（送る前の確かめ search-stamp.js）
+      try { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; if (SS && session.customerId) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "itandi", complete: true }); } catch (_) {}
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); renderPanel(); memoSearchRun(session, "itandi");
     }
   }, true);

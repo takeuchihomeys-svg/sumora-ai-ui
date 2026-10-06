@@ -312,7 +312,21 @@
     });
   }
 
+  /**
+   * 小窓の種類（2026-10-06 v2.5.80 竹内「拡張ツール itandi 駅の部分ひかっていない ちゃんとリアプロ同様に光るようにする」）。
+   *   旧: 所在地の小窓かを input[name="regionName"]（都道府県の選び）で見分けていた → 路線・駅の小窓にも同じ都道府県の選び（近畿・大阪府）が
+   *   あるので、路線・駅の小窓を「所在地の小窓」と取り違え「所在地の小窓を閉じて…」と出し、路線も駅も光らなかった。
+   *   → 小窓の見出し・文の語で見分ける: 「路線・駅選択」「路線を選ばなくても検索可能」→ lines ／「所在地選択」「市区町村」→ area
+   */
+  function modalKindFromText(text) {
+    var t = String(text || "").replace(/[\s　]+/g, "");
+    if (/路線・?駅(選択|で絞り込み)|路線を選ばなくても|駅を選択/.test(t)) return "lines";
+    if (/所在地(選択|で絞り込み)|市区町村/.test(t)) return "area";
+    return null;
+  }
+
   return {
+    modalKindFromText: modalKindFromText,
     buildPlan: buildPlan, layoutIds: layoutIds, locationOf: locationOf, rentValue: rentValue, getStationAliases: getStationAliases,
     wardShortName: wardShortName, layoutLabel: layoutLabel, selectedWardsFromTexts: selectedWardsFromTexts,
     STRUCTURE_MAP: STRUCTURE_MAP, STRUCTURE_LABEL_MAP: STRUCTURE_LABEL_MAP, VALID_LAYOUTS: VALID_LAYOUTS, FLOOR_RANK_IT: FLOOR_RANK_IT,
