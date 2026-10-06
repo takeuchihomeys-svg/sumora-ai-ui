@@ -105,8 +105,8 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   const mf = JSON.parse(read("manifest.json"));
   eq("manifest の版", mf.version, "2.5.64");
   const cs = mf.content_scripts.map((c) => c.js.join(","));
-  ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
-  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
+  ok("リアプロの bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,update-order-stop.js,bulk-dl.js"));
+  ok("ITANDI の itandi-bulk-dl より前に auto-run.js（v2.5.41 sent-skip.js・v2.5.42 itandi-guard.js も）", cs.includes("bar-dock.js,send-pairing.js,auto-run.js,sent-skip.js,itandi-row-parse.js,itandi-guard.js,update-order-stop.js,itandi-bulk-dl.js"));
   ok("auto-run.js は _ で始まらない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 

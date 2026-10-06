@@ -512,6 +512,7 @@
         offX = e.clientX - r.left; offY = e.clientY - r.top;
         // translateX(-50%) を解除して left/top 直指定に切替
         bar.style.transform = "none";
+        bar.removeAttribute("data-axlx-docked"); // v2.5.74: スタッフが動かした位置は自動で動かさない
         bar.style.left = r.left + "px"; bar.style.top = r.top + "px";
         bar.style.right = "auto"; bar.style.bottom = "auto";
         e.preventDefault();
@@ -607,11 +608,31 @@
     } catch (e) { out.textContent = "確かめられませんでした: " + e.message; }
   }
 
+  // 2026-10-06 v2.5.74（ITANDI で枠がサイトの「まとめて図面取得」に重なっていた件の確かめ）: リアプロの枠は右の縦の真ん中で、
+  //   リアプロの一括のボタンとは重ならない作りだが、画面の大きさ次第で重なる時は、重なったサイトの固定のボタンの上へ逃がす（bar-dock.js）。
+  //   スタッフが動かした位置は変えない（動かす前の既定の位置か、逃がした位置の時だけ見直す）
+  var _rpDockTimer = null;
+  function dockRpBar() {
+    var D = (typeof self !== "undefined" ? self : window).AxlxBarDock;
+    var bar = document.getElementById("axlx-bar");
+    if (!D || !bar || bar.style.display === "none") return;
+    var docked = bar.getAttribute("data-axlx-docked") === "1";
+    if (!docked && bar.style.top && bar.style.top !== "50%") return; // スタッフが動かした
+    bar.style.top = "50%"; bar.style.transform = "translateY(-50%)";
+    if (D.applyTopAvoid(bar, 10)) bar.setAttribute("data-axlx-docked", "1"); else bar.removeAttribute("data-axlx-docked");
+  }
+  function dockRpBarSoon() {
+    if (_rpDockTimer) return;
+    _rpDockTimer = setTimeout(function () { _rpDockTimer = null; if (!document.hidden) dockRpBar(); }, 250);
+  }
+  window.addEventListener("resize", dockRpBarSoon);
+
   function updateBar() {
     ensureBar();
     var bar = document.getElementById("axlx-bar");
     var checked = tracked.filter(function (t) { return t.cb.checked; });
     bar.style.display = tracked.length > 0 ? "flex" : "none";
+    dockRpBarSoon();
     document.getElementById("axlx-count").textContent = checked.length + "件";
     var allBtn = document.getElementById("axlx-all-btn");
     if (allBtn) allBtn.textContent = checked.length === tracked.length && tracked.length > 0 ? "全解除" : "全選択";

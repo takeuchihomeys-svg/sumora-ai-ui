@@ -274,24 +274,62 @@
     bar.innerHTML = [
       '<div style="display:flex;align-items:center;gap:6px;">',
       '  <span id="axlx-itandi-count">0件</span>を選択中',
+      // 2026-10-06 v2.5.74: 1行に畳める（ITANDI の画面を広く使う・畳んだかはこの PC に覚える）
+      '  <button id="axlx-itandi-fold-btn" title="畳む・開く" style="margin-left:auto;padding:0 6px;background:rgba(255,255,255,0.18);border:none;border-radius:6px;color:white;font-size:11px;cursor:pointer;">▾</button>',
       "</div>",
-      '<div style="display:flex;gap:6px;">',
+      '<div id="axlx-itandi-bar-body" style="display:flex;gap:6px;">',
       '  <button id="axlx-itandi-all-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">全選択</button>',
       '  <button id="axlx-itandi-line-btn" style="flex:2;padding:6px 8px;background:#06c755;border:none;border-radius:8px;color:white;font-size:12px;font-weight:700;cursor:pointer;">📤 売上番長に送る</button>',
       '  <button id="axlx-itandi-all-pages-btn" style="flex:2;padding:6px 8px;background:#1565C0;border:none;border-radius:8px;color:white;font-size:12px;font-weight:700;cursor:pointer;">🔄 全ページ送る</button>',
       "</div>",
     ].join("");
     document.body.appendChild(bar);
+    document.getElementById("axlx-itandi-fold-btn").addEventListener("click", function () {
+      var folded = !_itBarFolded();
+      try { localStorage.setItem("axlx_itandi_bar_folded", folded ? "1" : "0"); } catch (_) {}
+      applyFold();
+      dockItBar();
+    });
+    applyFold();
     document.getElementById("axlx-itandi-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-itandi-line-btn").addEventListener("click", onSendToLine);
     document.getElementById("axlx-itandi-all-pages-btn").addEventListener("click", function() { autoSendAllPages(true); }); // 手動=スタッフモードでも許可
   }
+
+  // ── 2026-10-06 v2.5.74 竹内「itandiの本来あるまとめて図面取得が押せない 拡張ツールが原因してるのかな？」──
+  //   原因: この枠は右下に固定（z-index 最大）で、ITANDI が行にチェックした時に下に出す帯（すべて選択・まとめて図面取得）の
+  //   右側のボタンの上に重なっていた。→ 枠の下に ITANDI の固定のボタンがあれば、枠をその上へ上げる（bar-dock.js）。
+  //   ITANDI のチェックが変わる・帯が出る（画面の変化）・画面の大きさが変わる時に見直す。1行に畳むこともできる
+  var IT_BAR_BOTTOM = 24;
+  function _itBarFolded() { try { return localStorage.getItem("axlx_itandi_bar_folded") === "1"; } catch (_) { return false; } }
+  function applyFold() {
+    var body = document.getElementById("axlx-itandi-bar-body"), fb = document.getElementById("axlx-itandi-fold-btn");
+    if (!body) return;
+    var folded = _itBarFolded();
+    body.style.display = folded ? "none" : "flex";
+    if (fb) fb.textContent = folded ? "▸" : "▾";
+  }
+  var _itDockTimer = null;
+  function dockItBar() {
+    var D = (typeof self !== "undefined" ? self : window).AxlxBarDock;
+    var bar = document.getElementById("axlx-itandi-bar");
+    if (!D || !bar || bar.style.display === "none") return;
+    D.applyBottom(bar, IT_BAR_BOTTOM, 10);
+  }
+  function dockItBarSoon() {
+    if (_itDockTimer) return;
+    _itDockTimer = setTimeout(function () { _itDockTimer = null; if (!document.hidden) dockItBar(); }, 250);
+  }
+  window.addEventListener("resize", dockItBarSoon);
+  // ITANDI の行のチェックを押した後に帯が出る → 押した後に見直す（押した要素を読むだけ）
+  document.addEventListener("click", function () { dockItBarSoon(); }, true);
 
   function updateBar() {
     ensureBar();
     var bar     = document.getElementById("axlx-itandi-bar");
     var checked = tracked.filter(function (t) { return t.cb.checked; });
     bar.style.display = tracked.length > 0 ? "flex" : "none";
+    dockItBarSoon();
     var countEl = document.getElementById("axlx-itandi-count");
     if (countEl) countEl.textContent = checked.length + "件";
     var allBtn = document.getElementById("axlx-itandi-all-btn");
@@ -1238,8 +1276,10 @@
   });
   var mutObs = new MutationObserver(function (muts) {
     _itPerf.obs++;
+    var _own = !!(_itOM && _itOM.onlyOwn(muts));
+    if (!_own) dockItBarSoon(); // v2.5.74: ITANDI の帯が出た・消えた → 枠の位置を見直す
     if (injectTimer) return;
-    if (_itOM && _itOM.onlyOwn(muts)) { _itPerf.obsOwn++; return; }
+    if (_own) { _itPerf.obsOwn++; return; }
     if (document.hidden) { _itScanPendingHidden = true; return; }
     _itPerf.scan++;
     // 物件資料ボタンにチェックボックスが付いていないものがあれば再注入

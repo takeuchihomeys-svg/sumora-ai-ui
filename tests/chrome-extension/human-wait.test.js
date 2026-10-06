@@ -154,7 +154,7 @@ function rest() {
       "setTimeout 30000": [1, "リアプロの資料1件の取得の期限（v2.5.58 fetchRealproPdfsInTab・タブの中で取る・ログイン情報をサーバーに渡さない）"],
     },
     "bulk-dl.js": {
-      "setTimeout 200": [1, "checkbox の差し込みのやり直し（内部）"], "setTimeout 35000": [1, "判定の応答の期限（fail-open）"],
+      "setTimeout 200": [1, "checkbox の差し込みのやり直し（内部）"], "setTimeout 250": [1, "枠をサイトの固定のボタンに重ねない見直しの間引き（v2.5.74・位置だけ）"], "setTimeout 35000": [1, "判定の応答の期限（fail-open）"],
       "setTimeout 2500": [2, "表示を戻す・Case C の予備の起動（Case A/B の後ろの安全網）"], "setTimeout 800": [1, "popup の応答の期限"],
       "setTimeout 5000": [1, "表示を戻す"], "setTimeout 100": [2, "ダウンロードのリンクを消す"], "setTimeout 4000": [1, "表示を戻す"],
       "setInterval 200": [1, "描画待ちの見る間隔（4秒で打ち切り）"], "setTimeout 50": [1, "fill-done 後の差し込みのやり直し（内部）"],
@@ -166,7 +166,7 @@ function rest() {
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
       "setTimeout 800": [1, "popup の応答の期限"], "setTimeout 5000": [1, "表示を戻す"], "setInterval 1000": [1, "0件の確定の見る間隔"],
-      "setTimeout 300": [1, "見えないタブから戻った時にボタンを1回探す（v2.5.73・読むだけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・v2.5.73）"],
+      "setTimeout 300": [1, "見えないタブから戻った時にボタンを1回探す（v2.5.73・読むだけ）"], "setTimeout 250": [1, "枠をサイトの固定のボタンに重ねない見直しの間引き（v2.5.74・位置だけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・v2.5.73）"],
     },
     "itandi-content.js": { "setTimeout 300": [1, "起動時"] },
     "itandi-page-script.js": {

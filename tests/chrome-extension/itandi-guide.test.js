@@ -173,7 +173,7 @@ const gjs = gi >= 0 ? cs[gi].js : [];
 ok("manifest: ITANDI の案内は一覧の部品（itandi-bulk-dl）の後の段・form-guard → update-days → 手順表 → 案内 の順", bi >= 0 && gi > bi
   && eq(gjs, ["itandi-form-guard.js", "itandi-update-days.js", "itandi-guide-plan.js", "itandi-guide.js"]), { bi, gi, gjs });
 ok("manifest: 案内は ITANDI だけ・ページの中（MAIN）ではない（chrome.storage を使う）", gi >= 0 && eq(cs[gi].matches, ["https://itandibb.com/*"]) && !cs[gi].world);
-ok("manifest の版 2.5.73", mf.version === "2.5.73");
+ok("manifest の版 2.5.74", mf.version === "2.5.74");
 
 // ── 2026-10-02 v2.5.68 竹内「西淀川区選択しているのに選択されたことになっていない」: 確定の後の画面の文字から選ばれた区を読む ──
 {

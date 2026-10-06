@@ -80,7 +80,7 @@ ok("popup: モードの帯は1行（押すと全文）", /\.mode-banner \{[\s\S]
 console.log("── ④ v2.5.73 ITANDI も同じ形（竹内「これitandiでもなおしたかな？」）");
 {
   const ib = read("itandi-bulk-dl.js");
-  ok("ITANDI 一括: 拡張の物だけの変化ではボタンを探し直さない", /if \(_itOM && _itOM\.onlyOwn\(muts\)\) \{ _itPerf\.obsOwn\+\+; return; \}/.test(ib));
+  ok("ITANDI 一括: 拡張の物だけの変化ではボタンを探し直さない", /var _own = !!\(_itOM && _itOM\.onlyOwn\(muts\)\);/.test(ib) && /if \(_own\) \{ _itPerf\.obsOwn\+\+; return; \}/.test(ib));
   ok("ITANDI 一括: 見えていないタブでは探さない（見えた時に1回）", /if \(document\.hidden\) \{ _itScanPendingHidden = true; return; \}/.test(ib) && /_itScanPendingHidden = false; if \(!injectTimer\)/.test(ib));
   ok("ITANDI 一括: ボタンが前と同じでチェックボックスも残っていれば付け直さない", /tracked\[i\]\.btn === b && tracked\[i\]\.cb && tracked\[i\]\.cb\.isConnected/.test(ib) && /_itPerf\.injectSkip\+\+;\r?\n\s*afterInject\(\);\r?\n\s*return;/.test(ib));
   ok("ITANDI 一括: 自動送信の確かめは付け直しを飛ばした時も通る（afterInject）", /function afterInject\(\)/.test(ib) && (ib.match(/afterInject\(\);/g) || []).length === 2);
