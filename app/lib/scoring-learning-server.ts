@@ -113,7 +113,7 @@ export async function loadEpisodes(sb: SupabaseClient, opts: { until: string; da
     const firstSent = Math.min(...(cands ?? []).map((c) => Date.parse(String(c.sent_at ?? ""))).filter(Number.isFinite), Date.parse(s.sent_at));
     const ctx = ctxAt(pc, s.sent_at, firstSent - 60_000);
     if (!ctx) continue;
-    try { const e = episodeFromSnapshot(s, ctx); if (e) episodes.push({ ...e, ctype: hookCustomerTypeOf(ctx.customer) }); } catch { counts.snapshot_errors = (counts.snapshot_errors ?? 0) + 1; }
+    try { const e = episodeFromSnapshot(s, ctx); if (e) episodes.push({ ...e, ctype: hookCustomerTypeOf(ctx.customer), customerId: pc }); } catch { counts.snapshot_errors = (counts.snapshot_errors ?? 0) + 1; }
   }
   for (const p of pools) {
     const pc = String(p.property_customer_id ?? "");
@@ -121,13 +121,13 @@ export async function loadEpisodes(sb: SupabaseClient, opts: { until: string; da
     const t = Date.parse(p.sent_at);
     const ctx = ctxAt(pc, p.sent_at, t - 10 * 60_000);
     if (!ctx) continue;
-    try { const e = episodeFromPool(p, sentOf.get(pc) ?? [], ctx); if (e) episodes.push({ ...e, ctype: hookCustomerTypeOf(ctx.customer) }); } catch { counts.pool_errors = (counts.pool_errors ?? 0) + 1; }
+    try { const e = episodeFromPool(p, sentOf.get(pc) ?? [], ctx); if (e) episodes.push({ ...e, ctype: hookCustomerTypeOf(ctx.customer), customerId: pc }); } catch { counts.pool_errors = (counts.pool_errors ?? 0) + 1; }
   }
   for (const [, rows] of groupBy(pickups.filter((r) => r.conversation_id !== YUMA_CONVERSATION_ID && !yumaCust.has(String(r.property_customer_id ?? ""))), "batch_id")) {
     const pc = String(rows[0].property_customer_id ?? "");
     const ctx = pc ? ctxAt(pc, String(rows[0].created_at), Date.parse(String(rows[0].created_at))) : null;
     const e = episodeFromPickups(rows, ctx ? segmentsOf(ctx.profile, ctx.customer) : []);
-    if (e) episodes.push({ ...e, ctype: ctx ? hookCustomerTypeOf(ctx.customer) : null });
+    if (e) episodes.push({ ...e, ctype: ctx ? hookCustomerTypeOf(ctx.customer) : null, customerId: pc || null });
   }
   for (const src of ["snapshot", "pool", "pickup"]) counts[`episodes_${src}`] = episodes.filter((e) => e.source === src).length;
   return { episodes, counts };
@@ -203,6 +203,17 @@ export async function applyActiveScoringWeights(sb: SupabaseClient): Promise<{ v
   cache = { at: Date.now(), weights, version };
   setReasonPointOverrides(weights);
   return { version, weights };
+}
+
+/**
+ * 2026-10-06 判定の呼び出し元（/api/property-brain/judge・property-pickups-server.recordPickupBatch）が judgeProperty の前に呼ぶ入口。
+ *   9/25 に applyActiveScoringWeights を作った時「呼び出し元で1行呼ぶ」と書いたが、本番のどこからも呼ばれていなかった（配線漏れ・scripts の backfill だけ）。
+ *   今まで scoring_weights に版が1つも無い（3回の学習がどれも「良くならない」で提案を版にしていない）ので、効いていなかった害は無い。
+ *   版が無い間は null＝定数のまま（今と同じ点）。止める時は SCORING_WEIGHTS_MODE=off（定数のまま・版を読まない）
+ */
+export async function applyScoringWeightsForJudge(sb: SupabaseClient): Promise<{ version: number; mode: "on" | "off" }> {
+  if (String(process.env.SCORING_WEIGHTS_MODE ?? "").trim().toLowerCase() === "off") { setReasonPointOverrides(null); return { version: 0, mode: "off" }; }
+  try { const r = await applyActiveScoringWeights(sb); return { version: r.version, mode: "on" }; } catch { setReasonPointOverrides(null); return { version: 0, mode: "on" }; }
 }
 
 // ─── 週1回 ───────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@
 // 実行: npx tsx --env-file=.env.local scripts/backfill-candidate-facts.ts [--days=60] [--apply] [--snapshots]
 import { createClient } from "@supabase/supabase-js";
 import { FACTS_VERSION, clipRawForStorage, type CandidateFacts } from "../app/lib/candidate-facts";
-import { fillPoolFromPickups, buildRecommendationSnapshot } from "../app/lib/recommendation-snapshot-server";
+import { fillPoolFromPickups, buildRecommendationSnapshot, insertRecommendationSnapshot } from "../app/lib/recommendation-snapshot-server";
 import { isGenericBuildingName } from "../app/lib/generic-building-name";
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => { const m = a.match(/^--([^=]+)=(.*)$/); return m ? [m[1], m[2]] : [a.replace(/^--/, ""), "1"]; }));
@@ -84,7 +84,8 @@ async function main() {
       if (!row) { skip++; return; }
       built++;
       if (APPLY) {
-        const { error } = await sb.from("recommendation_snapshots").insert(row);
+        // 2026-10-06 列 star_kind・bundle が無い間はその2列を外して書く（insertRecommendationSnapshot）
+        const { error } = await insertRecommendationSnapshot(sb as never, row);
         if (error) { err++; if (err <= 3) console.warn("NG", m.id, error.message); } else ins++;
       }
     });

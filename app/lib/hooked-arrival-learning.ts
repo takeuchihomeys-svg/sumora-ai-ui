@@ -31,8 +31,22 @@ export { hookTypeKeys, hookFeatureBits, hookLeanBonus, HOOK_FEATURE_JA, HOOK_BON
  * 条件欄（その時点に戻した物）→ 型。👑 の状況（star-rank-pickup.starSituationFromConditions）と同じ読み方:
  *   二人以上＝間取りの希望が 1LDK以上（householdLayoutOf）／初期費用＝customerWants の low_initial・zero_deposit
  */
+/**
+ * 条件フォームの原文から、初期費用の見出しだけを落とす（答えがある行は「初期費用 〇〇」にして残す・答えが空／特に無しは見出しごと消す）。
+ *   例: 「⑦【初期費用の限度額】⇒」→「⑦」／「⑦【初期費用の限度額】⇒特に無し」→「⑦」／「⑦【初期費用の限度額】⇒できれば0」→「⑦初期費用 できれば0」
+ */
+export function rawFormatForWants(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  return String(raw).replace(/^(.*?)(?:【\s*初期費用の?限度額\s*】|初期費用の?ご?予算)[ \t　]*[⇒:：→]?[ \t　]*(.*)$/gm, (_m, pre: string, ans: string) => {
+    const a = ans.trim();
+    return a && !/^(?:特に)?(?:無し|なし|ない|無い|ありません|無|ナシ|-|ー|－)$/.test(a) ? `${pre}初期費用 ${a}` : pre;
+  });
+}
+
 export function hookCustomerTypeOf(cond: CustomerWantInput["conditions"] | null | undefined): HookCustomerType {
-  const topics = new Set(customerWants({ conditions: cond ?? {} }).map((w) => w.key as string));
+  // 2026-10-06 条件フォームの原文（raw_format_text）の見出し「⑦【初期費用の限度額】⇒」「初期費用ご予算」は読まない: 答えが空・特に無しの人まで
+  //   「初期費用」の型に入っていた（326人中15人）。答えが書いてある時（「できれば0」「特になし、安ければ嬉しい」）だけ「初期費用 〇〇」として残す（rawFormatForWants）
+  const topics = new Set(customerWants({ conditions: { ...(cond ?? {}), raw_format_text: rawFormatForWants(cond?.raw_format_text) } }).map((w) => w.key as string));
   return { household: householdLayoutOf(cond?.floor_plan ?? null), initial: topics.has("low_initial") || topics.has("zero_deposit") };
 }
 
@@ -332,7 +346,10 @@ export function hookFeatsOfFacts(f: ArrivalFacts, rentMax: number | null | undef
 /** 相場の部屋の鍵（rent_observations を引く） */
 export const rentObservationKey = (name: unknown, room: unknown) => `${nameKey(String(name ?? ""))}#${normArrivalRoom(room)}`;
 /** 新着1件の🌟か（候補1件以下・または本文の2行目以降の先頭に「新着」）。scripts/audit-star-fit-d.ts と同じ線 */
-export function isNewArrivalSnapshot(s: { candidate_count?: number | null; star_text?: string | null; star_name?: string | null }): boolean {
+export function isNewArrivalSnapshot(s: { candidate_count?: number | null; star_text?: string | null; star_name?: string | null; star_kind?: string | null }): boolean {
   if (!s.star_name) return false;
+  // 2026-10-06 🌟の記録に束の見分け（star_kind・star-bundle.ts）がある行はそれを使う（束の中の🌟は新着1件でない）。無い過去の行は今まで通り
+  if (s.star_kind === "bundle") return false;
+  if (s.star_kind === "single") return true;
   return (s.candidate_count ?? 0) < 2 || /新着/.test(String(s.star_text ?? "").split("\n").slice(1).join("\n").slice(0, 120));
 }

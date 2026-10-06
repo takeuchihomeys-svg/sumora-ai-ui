@@ -50,8 +50,12 @@ export async function loadHookMaterials(sb: SupabaseClient, opts: { until: strin
   const criteria = opts.criteria ?? "v2";
   const until = Date.parse(opts.until);
   const sinceIso = new Date(until - opts.days * D).toISOString();
-  const snaps = (await all((a, b) => sb.from("recommendation_snapshots").select("id, conversation_id, property_customer_id, sent_at, star_name, star_room, star_text, star_text_facts, candidate_count, candidates")
-    .gte("sent_at", sinceIso).lt("sent_at", new Date(until).toISOString()).order("id").range(a, b) as never, 300)).filter((s) => s.conversation_id !== YUMA_CONVERSATION_ID && isNewArrivalSnapshot(s) && (criteria === "v1" || isPlausibleStarName(s.star_name)));
+  // 2026-10-06 束の見分け（star_kind・star-bundle.ts）も読む。列が本番にまだ無い間は外して読む（isNewArrivalSnapshot は無ければ今まで通り）
+  const SNAP_COLS = "id, conversation_id, property_customer_id, sent_at, star_name, star_room, star_text, star_text_facts, candidate_count, candidates";
+  const readSnaps = (cols: string) => all((a, b) => sb.from("recommendation_snapshots").select(cols)
+    .gte("sent_at", sinceIso).lt("sent_at", new Date(until).toISOString()).order("id").range(a, b) as never, 300);
+  const snapsRaw = await readSnaps(`${SNAP_COLS}, star_kind`).catch((e: unknown) => (/star_kind/.test(String((e as Error)?.message ?? e)) ? readSnaps(SNAP_COLS) : Promise.reject(e)));
+  const snaps = snapsRaw.filter((s) => s.conversation_id !== YUMA_CONVERSATION_ID && isNewArrivalSnapshot(s) && (criteria === "v1" || isPlausibleStarName(s.star_name)));
   const pcs = [...new Set(snaps.map((s) => String(s.property_customer_id ?? "")).filter(Boolean))];
   const convs = [...new Set(snaps.map((s) => String(s.conversation_id)))];
   const custs = new Map<string, Row>(); const hist: Row[] = [], sents: Row[] = [], picks: Row[] = [];

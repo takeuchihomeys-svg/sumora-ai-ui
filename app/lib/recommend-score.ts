@@ -15,7 +15,13 @@
 //   ⚠ 判定の点（ピックアップの点・束に入れる段）は変えない。AD は束に入れる段（pickup-ad-priority の AD の段・判定の AD の点）で効いていて、
 //      束の中の一番は合い方で決まる（scripts/audit-star-two-axis*.ts・送った束の83%が AD1.5以上）。判定の点の AD を線に変えると束が変わる
 //   確かめ: scripts/audit-recommend-score.ts（同じ回で rankStarCandidates の先頭と一致するか・スタッフの🌟との一致）
+//
+// 2026-10-06f 竹内さん「築年数古すぎる物件はそもそもお客さんにささりにくい　結局は築年数の浅い物件でお客さん刺さることが多い」:
+//   状況 oldAgeAvoid（初期費用重視の型・築年の列なし・「古くても良い」と言っていない＝star-rank-pickup.starSituationFromConditions）の時、
+//   築31年以上（リノベ済み・築年不明は除く）に −15（old-building-age.OLD_AGE_RULE）。判定の点（束に入れる段）には入れない（当て直しで下がる）。
+//   当て直し: scripts/audit-old-building-age.ts（🌟の記録 231回: 新だけ当たり1／旧だけ0・直した束 2／0）・audit-old-building-age-more.ts（売上サポの行 1／0・刺さった新着 初期費用の型で築31以上 0/22・築30以下 18%）
 import { starFitScores, starTieBreak, STAR_RANK_RULE, STAR_SITUATION_RULE, type StarCandidate, type StarRankRule, type StarSituation, type StarSituationRule } from "./recommend-star-rank";
+import { oldAgePenalty, OLD_AGE_RULE, type OldAgeRule } from "./old-building-age";
 
 export type RecommendScorePart = { label: string; points: number };
 export type RecommendScored = {
@@ -36,12 +42,15 @@ export type RecommendScoreRule = {
   /** AD1ヶ月未満（分かる時だけ）を後ろにする点 */
   adNeverBelow: number;
   adNeverPenalty: number;
+  /** 2026-10-06f 築古の減点（状況 oldAgeAvoid の時だけ）。null で止める */
+  oldAge: Readonly<OldAgeRule> | null;
 };
 export const RECOMMEND_SCORE_RULE: Readonly<RecommendScoreRule> = {
   adLine: STAR_RANK_RULE.adLine,
   adLinePoints: STAR_RANK_RULE.overrideMargin,
   adNeverBelow: STAR_RANK_RULE.adNeverBelow,
   adNeverPenalty: 1000,
+  oldAge: OLD_AGE_RULE,
 };
 
 const isAdCode = (k: string) => /^(AD_|PROFIT_)/.test(k);
@@ -67,6 +76,10 @@ export function recommendScores(
     if (c.adMonths != null && c.adMonths >= rule.adLine) { score += rule.adLinePoints; parts.push({ label: `AD${rule.adLine}ヶ月以上`, points: rule.adLinePoints }); }
     if (rel) parts.push({ label: "束の中の比べ・状況", points: rel });
     if (c.adMonths != null && c.adMonths < rule.adNeverBelow) { score -= rule.adNeverPenalty; parts.push({ label: `AD${rule.adNeverBelow}ヶ月未満（他に無い時だけ）`, points: -rule.adNeverPenalty }); }
+    if (sit?.oldAgeAvoid && rule.oldAge) {
+      const op = oldAgePenalty({ buildingAge: c.buildingAge, renovated: c.renovated }, rule.oldAge);
+      if (op) { score += op.points; parts.push(op); }
+    }
     const ex = opts.extra?.(c, i);
     if (ex && ex.points) { score += ex.points; parts.push({ label: ex.label, points: ex.points }); }
     return { key: c.key, score, judgeScore: c.score, parts, reasons: fits[i].reasons };

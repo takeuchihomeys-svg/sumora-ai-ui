@@ -26,6 +26,7 @@ import { isCustomerRow } from "./sent-delivery";
 import { parseListingTerms } from "./listing-terms";
 import { parseListingEquipment } from "./listing-equipment";
 import { adMonthsOfPickup, structureOf, type StarPickupRow } from "./star-rank-pickup";
+import { starBundleOf, type StarBundle, type StarKind } from "./star-bundle";
 
 type Row = Record<string, unknown>;
 const H = 3600_000, D = 24 * H;
@@ -143,6 +144,9 @@ export type SnapshotRow = {
   pickup_batch_ids: string[];
   source: "live" | "backfill";
   facts_v: number;
+  /** 2026-10-06 新着1件（single）か束の中の🌟（bundle）か・その時の束の候補（売上サポの行の id・グループに届いた行）。star-bundle.ts */
+  star_kind: StarKind;
+  bundle: StarBundle;
 };
 
 /** 物件顧客の条件（希望の話題の材料） */
@@ -175,7 +179,7 @@ export async function buildRecommendationSnapshot(sb: SupabaseClient, input: {
     ? (((await sb.from("property_candidate_pools").select("id, site, sent_at, candidates").eq("property_customer_id", pc).gte("sent_at", since).lte("sent_at", until).order("sent_at", { ascending: false }).limit(60)).data ?? []) as Row[])
     : [];
   const pickups: Row[] = pc
-    ? (((await sb.from("property_pickups").select("id, batch_id, created_at, rank, property_name, room_no, summary_text, pdf_text, pdf_url, pdf_blob_url, recommended, reason_codes, ad_yen, equipment, terms").eq("property_customer_id", pc).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(200)).data ?? []) as Row[])
+    ? (((await sb.from("property_pickups").select("id, batch_id, created_at, rank, property_name, room_no, complete_group_id, summary_text, pdf_text, pdf_url, pdf_blob_url, recommended, reason_codes, ad_yen, equipment, terms").eq("property_customer_id", pc).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(200)).data ?? []) as Row[])
     : [];
 
   // ③ 送った画像1枚ごとの値（sent_image_properties.facts・2026-09-25〜 readPropertyImage が残す）
@@ -245,6 +249,18 @@ export async function buildRecommendationSnapshot(sb: SupabaseClient, input: {
     .gte("created_at", since).lt("created_at", input.sentAt).order("created_at", { ascending: false }).limit(40);
   const wants = customerWants({ conditions: cond as never, messages: ((msgs ?? []) as Row[]).map((m) => String(m.text ?? "")).filter(Boolean) });
 
+  // 2026-10-06 竹内さん「なおす」: 新着1件か束の中の🌟かと、その時の束の候補（売上サポの行の id・グループに届いた行）を残す（star-bundle.ts）。
+  //   束はグループに届いた画像を LINE の画面から転送するので送付の記録（候補）に残らない＝候補1件の🌟の 57% が実は束だった
+  const { data: nearMsgs, error: nearErr } = await sb.from("messages").select("sender, image_url, text, created_at").eq("conversation_id", input.conversationId)
+    .gte("created_at", new Date(t - 30 * 60_000).toISOString()).lte("created_at", new Date(t + 5 * 60_000).toISOString()).order("created_at", { ascending: true }).limit(200);
+  const shared = ((sentRaw ?? []) as Row[]).filter((r) => !isCustomerRow(r as { delivery?: string | null; source?: string | null }) && r.property_name && !isGenericBuildingName(String(r.property_name)));
+  const bundle = starBundleOf({
+    sentAt: input.sentAt, starName: head.name, starRoom: head.room, starText: input.starText,
+    msgs: nearErr ? null : ((nearMsgs ?? []) as never), customerSentAt: cands.filter((c) => c.source !== "star_text").map((c) => c.sent_at ?? null),
+    pickups: pickups.map((p) => ({ id: Number(p.id), batch_id: String(p.batch_id), created_at: String(p.created_at), property_name: (p.property_name as string) ?? null, room_no: (p.room_no as string) ?? null, complete_group_id: (p.complete_group_id as string) ?? null })),
+    shared: shared.map((r) => ({ property_name: String(r.property_name), room_no: (r.room_no as string) ?? null, sent_at: String(r.sent_at), pickup_id: r.pickup_id != null ? Number(r.pickup_id) : null })),
+  });
+
   return {
     aix_usage_log_id: input.aixUsageLogId ?? null,
     message_id: input.messageId ?? null,
@@ -264,6 +280,8 @@ export async function buildRecommendationSnapshot(sb: SupabaseClient, input: {
     pickup_batch_ids: [...usedBatches],
     source: input.source ?? "live",
     facts_v: FACTS_VERSION,
+    star_kind: bundle.kind,
+    bundle,
   };
 }
 
@@ -275,6 +293,18 @@ function starTextFacts(text: string, now: string): ParsedFacts {
   return f as ParsedFacts;
 }
 
+/**
+ * 1行を書く。2026-10-06 列 star_kind・bundle（migrate-schema に追記）が本番にまだ無い間は、その2列を外して残す（記録そのものを落とさない）
+ */
+export async function insertRecommendationSnapshot(sb: SupabaseClient, row: SnapshotRow): Promise<{ error: { message: string } | null; withoutBundle: boolean }> {
+  const { error } = await sb.from("recommendation_snapshots").insert(row);
+  if (!error || !/star_kind|bundle/.test(error.message)) return { error, withoutBundle: false };
+  const { star_kind: _k, bundle: _b, ...rest } = row;
+  void _k; void _b;
+  const r2 = await sb.from("recommendation_snapshots").insert(rest);
+  return { error: r2.error, withoutBundle: true };
+}
+
 /** AIX 物件オススメを送った時に1行残す（失敗は投げずに理由を返す＝送信を止めない） */
 export async function recordRecommendationSnapshot(sb: SupabaseClient, input: {
   conversationId: string; sentAt: string; starText: string; aixUsageLogId: string;
@@ -282,7 +312,7 @@ export async function recordRecommendationSnapshot(sb: SupabaseClient, input: {
   try {
     const row = await buildRecommendationSnapshot(sb, { ...input, source: "live" });
     if (!row) return { ok: false, error: "not_star_text" };
-    const { error } = await sb.from("recommendation_snapshots").insert(row);
+    const { error } = await insertRecommendationSnapshot(sb, row);
     if (error) return { ok: false, error: error.message };
     return { ok: true, candidates: row.candidate_count };
   } catch (e) {

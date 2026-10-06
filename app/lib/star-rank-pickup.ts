@@ -16,6 +16,7 @@ import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-su
 import { customerWants, type CustomerWantInput } from "./recommendation-gaps";
 import { starSituationOf, type StarCandidate, type StarSituation } from "./recommend-star-rank";
 import { renovationOfText } from "./listing-renovation";
+import { oldAgeApplies, oldAgeModeOf, type OldAgeMode } from "./old-building-age";
 
 export type StarPickupRow = {
   id: number;
@@ -135,10 +136,16 @@ export function zeroZeroOfPickup(r: Pick<StarPickupRow, "terms">): boolean | nul
 // 2026-10-06c floor_plan（間取りの希望 → 1LDK以上の型 householdLayoutOf）を足した
 export const STAR_SITUATION_COLUMNS = "initial_cost_limit, pet, walk_minutes, building_age, floor_area_min, move_in_time, preferences, ng_points, other_requests, additional_conditions, floor_plan";
 /** 条件欄 → 🌟の状況（希望の話題は recommendation-gaps.customerWants の条件欄と自由文だけ）。条件が無ければ null */
-export function starSituationFromConditions(cond: CustomerWantInput["conditions"] | null | undefined): StarSituation | null {
+/**
+ * 2026-10-06f 築古の減点（old-building-age）を効かせるか: 初期費用重視の型（敷礼0・初期費用の希望）・築年の列なし・「古くても良い」と言っていない。
+ *   スイッチ OLD_AGE_MODE=off（サーバーで読む・画面では process が無いので既定 on。状況はサーバーが作って値で画面へ渡す）
+ */
+export function starSituationFromConditions(cond: CustomerWantInput["conditions"] | null | undefined, opts: { oldAgeMode?: OldAgeMode } = {}): StarSituation | null {
   if (!cond) return null;
   const topics = customerWants({ conditions: cond }).map((w) => w.key);
-  return starSituationOf({ wantTopics: topics, household: householdLayoutOf(cond.floor_plan) });
+  const zero = topics.includes("low_initial") || topics.includes("zero_deposit");
+  const mode = opts.oldAgeMode ?? oldAgeModeOf(typeof process !== "undefined" ? process.env?.OLD_AGE_MODE : undefined);
+  return starSituationOf({ wantTopics: topics, household: householdLayoutOf(cond.floor_plan), oldAgeAvoid: mode === "on" && zero && oldAgeApplies(cond) });
 }
 
 /**

@@ -58,7 +58,7 @@ console.log("■ 1. 👑（pickCustomerBest）");
   t("06e: 理由に「敷礼ありだが AD が高い」", (e?.star_reasons ?? []).includes(SOFT_HOLD_STAR_REASON), e?.star_reasons);
   t("06e: 他の保留（定期借家）は AD3 で広くても候補にしない", e?.id !== 3);
   t("06d（線 null）: 通すがあるので保留は候補にしない → 通すの 1", d?.id === 1, d);
-  t("決まりの版は 06e", STAR_FIT_RULE_TAG === "star-fit@2026-10-06e" && e?.rule === STAR_FIT_RULE_TAG && bestRuleTag("score") === STAR_FIT_RULE_TAG);
+  t("決まりの版は 06e 以降", STAR_FIT_RULE_TAG >= "star-fit@2026-10-06e" && e?.rule === STAR_FIT_RULE_TAG && bestRuleTag("score") === STAR_FIT_RULE_TAG);
   // 線の下（AD1.5）の初期費用だけの保留は入れない
   const soft15 = { ...soft2, reason_codes: ["RENT_OK", "INITIAL_COST_NOT_ZERO", "FLOOR_PLAN_MATCH", "AD_1_5M_HELD"] };
   t("AD1.5 の初期費用だけの保留は 👑 にしない（線 2）", pickCustomerBest([pass1, soft15, other3], { basis: "score", situation: sit })?.id === 1);

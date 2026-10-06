@@ -5,7 +5,7 @@
 // 確かめること: 特徴の帯／お客様の型／型 × 特徴の数と lift／古い半分で学び新しい半分で確かめる／加点は足すだけ（刺さらない物を減点しない）／
 //   スタッフの選択に当てた前後（下がる・変わらない・小さい改善は入れない）／1つずつ外す／事実の埋め方（実物の🌟の本文の値・結び違いの画像を使わない）
 import {
-  hookFeatureBits, hookCustomerTypeOf, hookTypeKeys, hookCells, learnHookLeans, hookLeanTable, hookLeanBonus, evaluateHookBonus, pruneHookTable,
+  hookFeatureBits, hookCustomerTypeOf, rawFormatForWants, hookTypeKeys, hookCells, learnHookLeans, hookLeanTable, hookLeanBonus, evaluateHookBonus, pruneHookTable,
   fillArrivalFacts, hookFeatsOfFacts, isNewArrivalSnapshot, splitHookRecords, HOOK_LEARN_CONFIG,
   type HookRecord, type HookEvalEpisode, type HookCustomerType,
 } from "../hooked-arrival-learning";
@@ -36,6 +36,15 @@ console.log("■ お客様の型");
   t("「1K、1LDK」は一人の型に残す（householdLayoutOf と同じ）", hookCustomerTypeOf({ floor_plan: "1K、1LDK" }).household === false);
   t("初期費用の上限があれば初期費用の型", hookCustomerTypeOf({ initial_cost_limit: 200000 }).initial === true);
   t("条件が無ければ 一人・初期費用なし", JSON.stringify(hookCustomerTypeOf(null)) === JSON.stringify({ household: false, initial: false }));
+  // 2026-10-06 条件フォームの原文の見出し「⑦【初期費用の限度額】⇒」で初期費用の型に入っていた（326人中13人・本番の原文の形）
+  const FORM = (ans: string) => `①【ご希望のエリア】⇒難波\n⑦【初期費用の限度額】⇒${ans}\n⑧【その他ご要望あれば】⇒ペット可能、トイレ風呂別`;
+  t("原文の見出しだけ（答えが空）は初期費用の型にしない", hookCustomerTypeOf({ raw_format_text: FORM("") }).initial === false);
+  t("原文の見出し（答えが「特に無し」）も型にしない", hookCustomerTypeOf({ raw_format_text: FORM("特に無し") }).initial === false);
+  t("「⑦初期費用ご予算」の見出しの後に次の行が続いても型にしない", hookCustomerTypeOf({ raw_format_text: "⑦初期費用ご予算  \n⑧その他こだわり条件（ペット・保証人・駐車場等）" }).initial === false);
+  t("答えが書いてあれば初期費用の型（できれば0）", hookCustomerTypeOf({ raw_format_text: FORM("できれば0") }).initial === true);
+  t("答えが書いてあれば初期費用の型（特になし、安ければ嬉しい）", hookCustomerTypeOf({ raw_format_text: FORM("特になし、安ければ嬉しい") }).initial === true);
+  t("自由文の初期費用は今まで通り", hookCustomerTypeOf({ preferences: "初期費用を抑えたい", raw_format_text: FORM("") }).initial === true);
+  t("見出しを落とす形", rawFormatForWants("⑦【初期費用の限度額】⇒\n⑧x") === "⑦\n⑧x" && rawFormatForWants("⑦【初期費用の限度額】⇒できれば0") === "⑦初期費用 できれば0" && rawFormatForWants(null) === null);
   t("型の鍵: 全体＋一人＋初期費用＋組み合わせ", JSON.stringify(hookTypeKeys(ONE_INIT)) === JSON.stringify(["全体", "一人", "初期費用", "一人×初期費用"]));
   t("型の鍵: 初期費用なしは2つ", JSON.stringify(hookTypeKeys(HH)) === JSON.stringify(["全体", "二人以上"]));
 }

@@ -213,6 +213,9 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     // 2026-10-06 刺さった新着1件から学んだ特徴の加点（週の学びで関門を通った表だけ・HOOK_LEAN_MODE=off で止める・hook-lean-server）
     const { hookLeanForJudge } = await import("@/app/lib/hook-lean-server");
     const hookLean = await hookLeanForJudge(supabase, (loaded?.customer ?? null) as never);
+    // 2026-10-06 重みの版（scoring_weights の active）を判定に入れる（版が無い間は定数のまま・SCORING_WEIGHTS_MODE=off で止める・scoring-learning-server）
+    const { applyScoringWeightsForJudge } = await import("@/app/lib/scoring-learning-server");
+    await applyScoringWeightsForJudge(supabase);
     const sentIdx = new Set<number>();
     if (profile && profile.history.sentCount > 0) input.summaries.forEach((s, i) => { try { if (isSentRoom(parsePropertyFacts(s), profile)) sentIdx.add(i); } catch { /* 読めない物は送付済みにしない */ } });
     const dd = dedupeSameBuilding(input.summaries, { isSent: (i) => sentIdx.has(i) });

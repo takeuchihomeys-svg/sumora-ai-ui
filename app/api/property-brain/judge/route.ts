@@ -127,6 +127,9 @@ export async function POST(req: NextRequest) {
     // 2026-10-06 刺さった新着1件から学んだ特徴の加点（週の学びで関門を通った表だけ・HOOK_LEAN_MODE=off で止める・hook-lean-server）
     const { hookLeanForJudge } = await import("@/app/lib/hook-lean-server");
     const hookLean = await hookLeanForJudge(supabase, customer as never);
+    // 2026-10-06 重みの版（scoring_weights の active・週の学習 scoring-learning が作る）を判定に入れる。版が無い間は定数のまま（今と同じ）・SCORING_WEIGHTS_MODE=off で止める
+    const { applyScoringWeightsForJudge } = await import("@/app/lib/scoring-learning-server");
+    await applyScoringWeightsForJudge(supabase);
     let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──

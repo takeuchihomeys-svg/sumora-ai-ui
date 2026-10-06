@@ -105,14 +105,16 @@ export type StarRanked = { key: string; fit: number; tier: "line" | "below" | "n
  *   wantTopics … recommendation-gaps の話題の鍵（low_initial・zero_deposit・spacious・new_build・station_near・bath_toilet …）
  *   moveInUrgent … 入居を急ぐ（今月・来月・即・急ぎ・絶対の期限）
  */
-export type StarSituation = { zero: boolean; spacious: boolean; newBuild: boolean; stationNear: boolean; floorHigh: boolean; moveInUrgent: boolean; equipKeys: string[]; /** 2026-10-06c 1LDK以上（1K・1R を含まない）の間取りを希望＝二人以上・広い間取りの型 */ household?: boolean };
+export type StarSituation = { zero: boolean; spacious: boolean; newBuild: boolean; stationNear: boolean; floorHigh: boolean; moveInUrgent: boolean; equipKeys: string[]; /** 2026-10-06c 1LDK以上（1K・1R を含まない）の間取りを希望＝二人以上・広い間取りの型 */ household?: boolean;
+  /** 2026-10-06f 築古（old-building-age の線以上・リノベ済みを除く）をオススメの点で下げる（初期費用重視の型・築年の列なし・「古くても良い」と言っていない）。recommend-score が見る */
+  oldAgeAvoid?: boolean };
 /** 話題の鍵 → 設備の鍵（listing-equipment） */
 const TOPIC_EQUIP: Record<string, string[]> = {
   bath_toilet: ["bath_toilet"], washbasin: ["washbasin"], laundry_in: ["laundry_in"], autolock: ["autolock"], security: ["autolock", "monitor_intercom"],
   delivery_box: ["delivery_box"], bath_dryer: ["bath_dryer"], reheating: ["reheating"], internet: ["net_free"], corner: ["corner"], sunny: ["south"],
   parking: ["parking"], storage: ["walk_in_closet"],
 };
-export function starSituationOf(input: { wantTopics?: readonly string[] | null; moveInUrgent?: boolean | null; household?: boolean | null }): StarSituation {
+export function starSituationOf(input: { wantTopics?: readonly string[] | null; moveInUrgent?: boolean | null; household?: boolean | null; oldAgeAvoid?: boolean | null }): StarSituation {
   const w = new Set((input.wantTopics ?? []).map(String));
   return {
     zero: w.has("low_initial") || w.has("zero_deposit"),
@@ -123,6 +125,7 @@ export function starSituationOf(input: { wantTopics?: readonly string[] | null; 
     moveInUrgent: !!input.moveInUrgent || false,
     equipKeys: [...new Set([...w].flatMap((k) => TOPIC_EQUIP[k] ?? []))],
     household: !!input.household,
+    oldAgeAvoid: !!input.oldAgeAvoid,
   };
 }
 export type StarSituationRule = { zero: number; spacious: number; newBuild: number; stationNear: number; floorHigh: number; vacantNow: number; equipEach: number; newBuildHousehold?: number };
@@ -254,4 +257,5 @@ export function starRankMode(raw: unknown): StarRankMode {
 // 2026-10-06c 1LDK以上の希望なら束の中で一番新しい物に +15（newBuildHousehold）
 // 2026-10-06d 同点を AD → 初期費用面で分ける（tieBreak）・1LDK以上の「一番新しい」でリノベ済みを築0とみなす（renoAge）
 // 2026-10-06e 保留でも理由が初期費用だけ（INITIAL_COST_NOT_ZERO）で AD が線（star-rank-pickup.SOFT_HOLD_AD_LINE）以上の行を候補に（pickup-best.pickCustomerBest）
-export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06e";
+// 2026-10-06f 初期費用重視の方に築31年以上（リノベ済みを除く）−15（old-building-age.OLD_AGE_RULE・recommend-score・OLD_AGE_MODE=off で止める）
+export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06f";
