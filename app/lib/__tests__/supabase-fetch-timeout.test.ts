@@ -78,5 +78,6 @@ async function main() {
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) { console.log(failures.join("\n")); process.exit(1); }
+  process.exit(0); // supabase-js の時計・止めたままの fetch が残るので明示して終える
 }
 void main();
