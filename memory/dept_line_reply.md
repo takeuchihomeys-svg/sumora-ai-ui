@@ -8590,3 +8590,25 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - B の直し（本番で線を引いてから）: 内覧調整の出しすぎ＝線を引けず入れない／古いピックアップの約束は送れる物件が無い時に2段（本番の一致 46.8→53.7%）／戻ったお客様へのフォーム＝本番 1/71 で入れない
 - 竹内さんの決定: ✅ はつける（templates の ✅ 7行を戻した・元は scripts/backup-templates-checkmark-restore-20261002.json）・🌟 は残す（もともと残す）／申込時フォーマット（続き）に※マイナンバーのマスキング（元は scripts/backup-templates-mynumber-mask-20261002.json・提案 implemented）
 - AIっぽすぎる文（22巡）: 「お客様にオススメ」（人 0）・「通信費も節約出来」「朝の身支度もしやすく」・1通の文 AI 5.07／人 3.27・「させて頂き」1.23／0.91
+
+## 10/06 ⑫ 呼び名の固定・複雑な返信（費用の事情）・世帯の変わり目（引き継ぎ）
+
+### 呼び名の固定（あ・「森本様」）— コミット 16f23b5b
+- 原因: resolveAddressName が1文字の「あ」を採らず「呼び名なし」→ DeepSeek が「森本」を作った（DB のどこにも無い）。最終チェックは影のモードで止めなかった
+- 直し: conversations.call_name（固定）→ スタッフ（人）が冒頭で2回以上呼んだ名前 → 今までの結果 の順（call-name-guard.lockedCallName・address-name-server が staff_called の時に自動で固定）
+- 出口: enforceCallName（会話に出てこない「X様／Xさん」の呼びかけを呼び名に直す・無ければ外す）を generate-reply・aix-template-generate に配線。**aix/action/route.ts は ⑰ の持ち物で未配線**（finalize の お待たせの直しの後に enforceCallName(banned.text, familyName, recent texts, [rawName]) を1ブロック）
+- 監査 scripts/audit-call-name-guard.ts: AI の文 2,863通中 8通を直す／人の送信に当てると 56/7,337 変わる（取り込み日・初回の呼びかけ）→ 出口は AI の文だけ
+- 未: call_name をスタッフが画面で直す UI
+
+### 複雑な返信（見積書の費用の事情）— コミット 16f23b5b
+- estimate-explain（報酬なし→スモ割なし・仲介手数料の額・最安値・クリーニングは契約時）をスタッフの実送信の言い方で決定論の文に・AIX 2通目に配線（aix-template-generate）・company-facts cheapest_estimate
+- 監査 scripts/audit-property-explanation-gap.ts: スタッフの説明が AI の下書きにも入っていた割合 設備93%・入居可能日83%・ペット86%・保証会社65%・審査57%・クリーニング44%・仲介手数料55%・報酬→割引33%・最安値0%
+- 未: aix/action の見積書1通目に cardLine を足す（⑰ の持ち物）・抽出に cleaning_fee・LLM の再生テストは未実施
+
+### 世帯の変わり目で検索の条件を連動（あかり「私一人になるかもです」）— 未コミット
+- condition-reading.householdChangeOf / smallerOkOf → household-change.planHouseholdConditions → household-change-server.applyHouseholdChange（webhook の after()・履歴 p4・帯 auto）
+- 一人→二人入居・同棲・カップル・ルームシェアの節を外す／二人→二人入居可を足す／ペットを手放す→ペットの節を外す／家族が増える・小さくて大丈夫で間取りがある→帯で知らせるだけ／小さくて大丈夫→floor_area_min と「広め」を外す
+- 帯に「二人入居」「同棲」「ペット」「単身」の語を書かない（property-brain.detectConditionWants が additional_conditions を読む）
+- 監査 scripts/audit-household-change.ts（365日 10,349通）: 当たり7通・全部正しい・これまで条件に届いた 0/7
+- あかりは竹内さん承認で適用済み（scripts/apply-household-akari.ts --apply・preferences「二人入居可・トイレと風呂別・独立洗面台」→「トイレと風呂別・独立洗面台」・戻すは条件の画面）
+- 候補（未適用・承認待ち）: 9e04d916（6/4「別れたので別でお家探したい」・その他に二人入居可が残る）

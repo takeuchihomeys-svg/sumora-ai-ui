@@ -515,6 +515,18 @@ export async function handleTextMessage(
     });
   }
 
+  // 2026-10-06 ⑫ 竹内「一人になった場合など連動して物件検索の条件も変更されるようにする」（あかり「別れることになって」「私一人になるかもです」）:
+  //   世帯の変わり目・「小さくて大丈夫」は P4（LLM の抽出・自由文は足すだけ）では条件から外せないので、決定論で外す（household-change.ts）
+  if (!secondaryNeed && !applyFormDetected && !isFormatMessage(text)) {
+    const { hasHouseholdSignal } = await import("@/app/lib/household-change-server");
+    if (hasHouseholdSignal(text)) {
+      after(async () => {
+        const { applyHouseholdChange } = await import("@/app/lib/household-change-server");
+        await applyHouseholdChange(db, convId, text, insertedMsgId).catch((e) => console.warn("[applyHouseholdChange]", e));
+      });
+    }
+  }
+
   // 2026-10-06 ⑫ 竹内（ゆいと 10月後半入居）「10月入居っていう希望が今回の場合は絶対となるので、そこも読みとれるように」:
   //   要望の強さ（絶対／強い希望／できれば）を直近のお客様の発言から読み直して保存（物件検索ブレインの判定・送付文が読む）
   if (!applyFormDetected && hasStrengthSignal(text)) {

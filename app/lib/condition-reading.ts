@@ -156,3 +156,30 @@ export function secondaryConditionsOf(text: string | null | undefined): { rent_m
   const layout = layoutStatementOf(t);
   return { rent_max: rent, desired_area: [...new Set([...areas, ...plain])].join("・") || null, floor_plan: layout, note: t.replace(/\s+/g, " ").slice(0, 120) };
 }
+
+// ── 世帯の変わり目（一人になる・二人になる・家族が増える・ペットを手放す）───────────────
+// 2026-10-06 ⑫ 竹内さん（あかり 10/02「別れることになって」「私一人になるかもです」「ここの部屋に似た感じでちっさくて大丈夫です！」）
+//   「一人になった場合など連動して物件検索の条件も変更されるようにする」: 登録の条件に「二人入居可」が残り、送っていない部屋が全部 保留（二人入居 NG）だった
+export type HouseholdChange = { kind: "to_single" | "to_two" | "family_grows" | "pet_gone"; evidence: string };
+const TO_SINGLE_RE = /(?:私|自分|わたし)?(?:一人|1人|ひとり)(?:に|だけに)(?:なる|なり|なった|なっ)|(?:一人|1人|ひとり)(?:暮らし|で住む|で住み|での(?:ご)?入居|入居)(?:に(?:なる|なり|変更)|で探|を探|にし|希望)|別れ(?:る|た|ること|まし)|同棲(?:を)?(?:解消|しなく|やめ|なし)|ルームシェア(?:を)?(?:解消|やめ|なし)|同居(?:人)?(?:が)?(?:いなく|なし|無し|解消)/;
+const TO_TWO_RE = /(?:二人|2人|ふたり)(?:で住む|で住み|暮らし|入居)(?:に(?:なる|なり|変更)|になりそう|することに)|同棲(?:する|することに|始め)|(?:彼氏|彼女|パートナー|婚約者)と(?:一緒に)?住む(?:ことに|予定)/;
+const FAMILY_GROWS_RE = /(?:子供|子ども|赤ちゃん)(?:が)?(?:生まれ|産まれ|できた|出来た)|妊娠|家族が増え/;
+const PET_GONE_RE = /(?:ペット|犬|猫)[^。\n？?]{0,8}(?:手放|譲(?:る|り|っ)|里親に出|亡くな|いなくな)/;
+/** お客様の文の世帯の変わり目（無ければ null）。物件1件の話・申込の書類は読まない */
+export function householdChangeOf(text: string | null | undefined): HouseholdChange | null {
+  const turn = classifyConditionTurn(String(text ?? ""));
+  if (!turn.conditionText) return null;
+  for (const s of sentencesOf(nf(turn.conditionText))) {
+    if (/内覧|内見|ご案内|鍵|来店|お越し/.test(s)) continue; // 「一人で内覧に行きます」は世帯の話ではない
+    if (/入居者|契約|名義|申込|審査|保証/.test(s)) continue; // 「代理契約で、入居者は私一人になります」は申込の書類の話（世帯の変わり目ではない）
+    if (TO_SINGLE_RE.test(s)) return { kind: "to_single", evidence: s.slice(0, 60) };
+    if (TO_TWO_RE.test(s)) return { kind: "to_two", evidence: s.slice(0, 60) };
+    if (FAMILY_GROWS_RE.test(s)) return { kind: "family_grows", evidence: s.slice(0, 60) };
+    if (PET_GONE_RE.test(s)) return { kind: "pet_gone", evidence: s.slice(0, 60) };
+  }
+  return null;
+}
+/** 「ちっさくて大丈夫」「狭くてもいい」＝広さ・間取りの下限を緩めてよい */
+export function smallerOkOf(text: string | null | undefined): boolean {
+  return /(?:小さく|ちいさく|ちっさく|ちっちゃく|狭く|せまく|コンパクト)[^。\n]{0,4}(?:て|で|ても|でも)?(?:大丈夫|いい|良い|OK|ok|構わ|問題な)/.test(nf(text));
+}
