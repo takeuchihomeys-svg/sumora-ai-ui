@@ -1153,6 +1153,14 @@ export default function AixModal({
   // 入力済み = 物件名と会社名の両方があるカードだけ送る（片方だけの欄は送らない＝checkFilledCount と同じ考え）
   const giFilled = giCards.filter((c) => c.name.trim() && c.company.trim());
   const giCustomCompanies = giCompanies.filter((x) => x.source === "custom");
+  // 2026-10-06 竹内（松浦 麻夜 事例）「会話の流れからして送っている物件のことだと認識できるはず…資料に保証会社記載されているので読みとる」:
+  //   開いた時に /api/aix/guarantor-prefill（会話から決めた物件＋その物件の資料の保証会社）を入れる。決まらない時は空のまま理由を出す
+  const [giPrefillInfo, setGiPrefillInfo] = useState<{
+    reason: string; question: string | null;
+    notes: Record<number, { note: string; candidates: Array<{ name: string; type: GuarantorType }> }>;
+  } | null>(null);
+  const giCardsRef = useRef(giCards);
+  giCardsRef.current = giCards;
   // 物件確認した（募集中）: 会話に出ている保証会社名の候補（見積書の下の欄の「会話から」ボタン）。
   //   2026-09-17 竹内（YUYA 事例）: スタッフに打たせる前に、会話に既にある事実を候補で出す（設計知見・物件名表示ボタンと同じ型）
   const guarantorHint = useMemo(() => {
@@ -1243,6 +1251,8 @@ export default function AixModal({
   //   資料や会話に無い事実は入れない（スタッフが確認して入れる）。空の欄にだけ入れ（1欄1回・スタッフや読み取りが先に入れた値は触らない）、
   //   欄の上に「◯◯から自動・違えば直す」を出す。送る時に「そのまま使ったか」を記録（aix_usage_logs.prefill）して当たりを数える
   const [prefilled, setPrefilled] = useState<Record<string, Prefilled<string>>>({});
+  const prefilledRef = useRef(prefilled);
+  prefilledRef.current = prefilled;
   const prefillTriedRef = useRef<Set<string>>(new Set());
   const namePrefill = useMemo(() => {
     const msgs = recentMessages ?? [];
@@ -1330,6 +1340,54 @@ export default function AixModal({
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, conversationId]);
+  // 保証会社について: 会話から決めた物件（1件／送った束）＋資料の保証会社・種類（app/lib/guarantor-prefill-server.ts・LLM なし）。
+  //   スタッフがまだ何も入れていない時だけ入れる（物件①の名前の先入れ＝namePrefill だけは上書きしてよい）
+  useEffect(() => {
+    if (actionType !== "guarantor_info" || !conversationId || prefillTriedRef.current.has("giServer")) return;
+    prefillTriedRef.current.add("giServer");
+    let cancelled = false;
+    void (async () => {
+      try {
+        const qs = new URLSearchParams({ conversation_id: conversationId });
+        for (const n of prefillPropertyNames ?? []) qs.append("name", n);
+        const res = await fetch(`/api/aix/guarantor-prefill?${qs.toString()}`, { headers: INTERNAL_AUTH_HEADER });
+        const d = await res.json() as {
+          ok?: boolean;
+          targets?: { names: string[]; reason: string; question: string | null; source: string | null };
+          cards?: Array<{ name: string; company: string; type: GuarantorType | ""; candidates: Array<{ name: string; type: GuarantorType }>; materialSource: "sent_image" | "pickup" | null; note: string }>;
+        };
+        if (cancelled || !res.ok || !d.ok || !d.targets) return;
+        const cards = d.cards ?? [];
+        const notes: Record<number, { note: string; candidates: Array<{ name: string; type: GuarantorType }> }> = {};
+        // スタッフが入れた欄があれば触らない（先入れの物件①の名前だけなら上書きしてよい）
+        const pre0 = prefilledRef.current.giCards0?.value;
+        const touched = giCardsRef.current.some((c, i) => c.company.trim() || c.other || (c.name.trim() && !(i === 0 && pre0 && c.name === pre0)));
+        const applied = !touched && cards.length > 0;
+        if (applied) {
+          const next: GuarantorCard[] = cards.map((c, i) => {
+            notes[i + 1] = { note: c.note, candidates: c.candidates };
+            return { id: i + 1, name: c.name, company: c.company, type: c.company ? (c.type || "unknown") : "", other: false };
+          });
+          while (next.length < GI_INITIAL_CARDS) next.push(newGuarantorCard(next.length + 1));
+          giNextIdRef.current = next.length + 1;
+          setGiCards(next);
+          setPreview("");
+        }
+        setGiPrefillInfo({ reason: touched ? "入力済みの欄があるので自動では入れていません" : d.targets.reason, question: d.targets.question, notes });
+        if (applied && cards[0]) {
+          setPrefilled((p) => ({
+            ...p,
+            giCards0: { value: cards[0].name, source: d.targets?.source ? "conversation" : "pickup", reason: d.targets?.reason ?? "" },
+            ...(cards[0].company ? { giCompany0: { value: cards[0].company, source: "material" as const, reason: cards[0].note } } : {}),
+          }));
+        }
+      } catch (e) {
+        console.warn("[AixModal] 保証会社の先入れの取得失敗（手で入れてください）:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, conversationId]);
   /** 欄の上に出す「◯◯から自動・違えば直す」（自動で入れた値のままの時だけ） */
   const prefillTag = (field: string, current: string | null | undefined) => {
     const p = prefilled[field];
@@ -1350,6 +1408,7 @@ export default function AixModal({
     { field: "meetingPropertyName", prefilled: prefilled.meetingPropertyName, final: meetingPropertyName },
     { field: "appPropertyName", prefilled: prefilled.appPropertyName, final: appPropertyName },
     { field: "giCards0", prefilled: prefilled.giCards0, final: giCards[0]?.name },
+    { field: "giCompany0", prefilled: prefilled.giCompany0, final: giCards[0]?.company },
     { field: "zenryokuArea", prefilled: prefilled.zenryokuArea, final: zenryokuArea },
     { field: "sendMode", prefilled: prefilled.sendMode, final: sendMode },
   ]);
@@ -7204,6 +7263,11 @@ export default function AixModal({
                     ＋ 物件を追加
                   </button>
                 </div>
+                {giPrefillInfo && (
+                  <p className="mb-2 text-[11px] text-[#2e7d32]">
+                    {giPrefillInfo.question ? `お客様「${giPrefillInfo.question.slice(0, 30)}」→ ` : ""}{giPrefillInfo.reason}
+                  </p>
+                )}
                 <div className="flex flex-col gap-3">
                   {giCards.map((c, i) => (
                     <div key={c.id} className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
@@ -7223,6 +7287,22 @@ export default function AixModal({
                         onChange={(e) => updateCard(c.id, { name: e.target.value })}
                         className={`mb-2 ${inputCls}`}
                       />
+                      {/* 資料から（入れた理由・入れなかった理由・2社以上の候補） */}
+                      {giPrefillInfo?.notes[c.id] && (
+                        <div className="mb-1">
+                          <p className="text-[11px] text-[#2e7d32]">{giPrefillInfo.notes[c.id].note}</p>
+                          {giPrefillInfo.notes[c.id].candidates.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {giPrefillInfo.notes[c.id].candidates.map((g) => (
+                                <button key={g.name} onClick={() => updateCard(c.id, { other: false, company: g.name, type: g.type })}
+                                  className={`rounded-full border px-2 py-0.5 text-[11px] ${c.company === g.name ? "border-[#3949AB] bg-[#3949AB] text-white" : "border-[#3949AB] text-[#3949AB]"}`}>
+                                  {g.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {/* 保証会社（select: マスタ＋登録済み＋その他） */}
                       <select
                         value={c.other ? "__other__" : c.company}
@@ -7235,6 +7315,8 @@ export default function AixModal({
                         className={`mb-2 ${inputCls}`}
                       >
                         <option value="">保証会社を選択</option>
+                        {/* 資料から入れた、マスタ・登録に無い会社（「アズ生活倶楽部」等）も選べるように */}
+                        {c.company && !c.other && !giCompanies.some((g) => g.name === c.company) && <option value={c.company}>{c.company}（資料）</option>}
                         {giCompanies.map((g) => <option key={g.name} value={g.name}>{g.name}{g.source === "custom" ? "（登録）" : ""}</option>)}
                         <option value="__other__">その他（テキストで登録）</option>
                       </select>

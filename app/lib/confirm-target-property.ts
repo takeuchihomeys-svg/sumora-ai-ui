@@ -24,6 +24,8 @@ export type ConfirmTarget = { name: string; source: ConfirmTargetSource; questio
 
 /** 会話の履歴でスタッフの画像を置き換えた印（app/api/aix/action/route.ts の historyRowsForAix）「[画像: 〇〇 101号室の資料・御見積書]」 */
 const IMAGE_LABEL_RE = /\[画像:\s*([^\]]+?)の資料・御見積書\]/g;
+/** 物件オススメ・新着1件の見出し「🌟H-maison大正VII 106」（号室の字なし・行全体） */
+const STAR_LINE_ROOM_RE = /^[ \t]*🌟[ \t]*([^\n🌟【】]{2,40}?)[ \t　]+([0-9０-９]{3,4})[A-Za-zＡ-Ｚ]?[ \t]*$/gm;
 /** こちらの手打ちの「エストボワール堂江 702号室」「モラーダ 301号室」（ひらがなで切る＝「お送り頂きました〇〇」の前置きは入らない） */
 const PLAIN_ROOM_RE = /([ァ-ヶーｦ-ﾟA-Za-zＡ-Ｚａ-ｚ一-龠々]["'’.&\-A-Za-zＡ-Ｚａ-ｚァ-ヶーｦ-ﾟ一-龠々・･0-9０-９ 　]{1,40}?)\s*([0-9０-９]{2,4})\s*号室/g;
 /** お客様が「〇〇は候補から外れました・確認不要です」と外した物件（名前の後ろ20字以内） */
@@ -53,6 +55,10 @@ export function staffLabelsOf(text: string | null | undefined): string[] {
   const out = [...extractPropertyLabels(t)];
   const push = (n: string) => { const x = n.trim(); if (x && !out.some((o) => propertyKeyOf(o).key === propertyKeyOf(x).key)) out.push(x); };
   for (const m of t.matchAll(IMAGE_LABEL_RE)) push(m[1]);
+  // 2026-10-06 竹内（松浦 麻夜 事例）: 新着1件・物件オススメの見出し「🌟H-maison大正VII 106」（号室の字なし）を物件に数えていなかった
+  //   → 「ここは保証会社どこでしょうか？」の「ここ」が、その前の送付を飛ばして2日前の「🌟JPmaison此花 201号室」に決まり得た。
+  //   見出しの行（🌟＋建物＋空白＋3〜4桁で終わる1行）だけを拾う（aix-material-facts STAR_HEAD_ROOM_RE と同じ形）
+  for (const m of t.matchAll(STAR_LINE_ROOM_RE)) push(`${m[1].trim()} ${m[2]}号室`);
   for (const m of t.matchAll(PLAIN_ROOM_RE)) {
     const b = m[1].replace(/^[\s　]+|[\s　]+$/g, "");
     if (b.length < 2 || NOT_NAME_RE.test(b)) continue;
@@ -98,7 +104,9 @@ export function resolveConfirmTargetProperty(msgs: ReadonlyArray<TargetMsg>, opt
   if (list.slice(te + 1).some(brought)) return null;
   const turn = list.slice(ts, te + 1);
   const turnText = turn.map((m) => String(m.text ?? "")).join("\n");
-  const turnFlat = nfkc(turnText).replace(/[\s　]+/g, "").toLowerCase();
+  // 2026-10-06（松浦 麻夜 事例の監査で見つけた）: 建物名の鍵（propertyKeyOf の base）は長音・記号を外すので、お客様の文も同じ形に揃えて比べる
+  //   （旧は文の側だけ「ー」を残していて「カーザSun I の保証会社」が「カザsuni」に当たらなかった）
+  const turnFlat = nfkc(turnText).replace(/[・･、。,（）()「」『』\[\]【】\-−ー_/／\s　]/g, "").toLowerCase();
   const turnBrought = turn.some(brought);
 
   // こちらが送った物件（質問より前・新しい順）

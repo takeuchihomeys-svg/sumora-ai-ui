@@ -13,7 +13,7 @@
 // 記録: 画面は送る時に「自動で入れた値・出所・そのまま使ったか」を aix_usage_logs.prefill に残す（summarizePrefillUse）。
 //   見張りで欄ごとの当たり率を数え、当たりの低い欄から直す。
 
-export type PrefillSource = "pickup" | "customer_shared" | "staff_sent" | "conversation" | "conditions" | "aix_history";
+export type PrefillSource = "pickup" | "customer_shared" | "staff_sent" | "conversation" | "conditions" | "aix_history" | "material";
 
 export const PREFILL_SOURCE_LABEL: Record<PrefillSource, string> = {
   pickup: "売上サポ",
@@ -22,6 +22,7 @@ export const PREFILL_SOURCE_LABEL: Record<PrefillSource, string> = {
   conversation: "会話",
   conditions: "登録の条件",
   aix_history: "これまでの送付",
+  material: "物件の資料",   // 2026-10-06 保証会社について: 資料の「保証会社」の見出しから（guarantor-material.ts）
 };
 
 export type Prefilled<T> = { value: T; source: PrefillSource; reason: string };
