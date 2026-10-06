@@ -166,7 +166,7 @@ function companiesInClause(s: string, customs: ReadonlyArray<{ name: string; typ
   // ④ マスタの会社のすぐ後ろに並べたマスタに無い会社（「エポスカード、フォーディーネット」）→ 足す（2社以上＝決めない側）
   for (const h of hits) {
     const rest = s.slice(h.at + h.word.length);
-    const mm = rest.match(/^s*[、,・/／]s*([ァ-ヶーA-Za-z][ァ-ヶーA-Za-z0-9]{3,19})/);
+    const mm = rest.match(/^\s*[、,・/／]\s*([ァ-ヶーA-Za-z][ァ-ヶーA-Za-z0-9]{3,19})/);
     if (!mm) continue;
     const x = mm[1];
     const xl = x.toLowerCase();

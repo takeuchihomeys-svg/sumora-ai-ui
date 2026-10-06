@@ -457,7 +457,7 @@ function enrich(base: { name: string; room: string | null; source: EstimateTarge
 export const ESTIMATE_ASK_HINT_RE = /見積|初期費用|費用.{0,6}(?:いくら|どのくらい|どれくらい|知りたい|しりたい|教えて)|総額|概算|いくら|詳細/;
 /** お客様の見積・初期費用の依頼の時刻（画像の読み取りの文字は除く） */
 export function customerAskTimes(messages: ReadonlyArray<HandoffMessage>): string[] {
-  return messages.filter((m) => m.sender === "customer" && !/^s*[画像]/.test(m.text ?? "") && ESTIMATE_ASK_HINT_RE.test(m.text ?? "")).map((m) => m.at);
+  return messages.filter((m) => m.sender === "customer" && !/^\s*\[画像\]/.test(m.text ?? "") && ESTIMATE_ASK_HINT_RE.test(m.text ?? "")).map((m) => m.at);
 }
 
 /**

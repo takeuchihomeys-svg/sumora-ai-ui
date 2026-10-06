@@ -144,7 +144,7 @@ export function pickJudgeDraft(row: {
 }): { draft: string | null; src: JudgeDraftSrc } {
   if (cleanDraft(row.draft_last).text) return { draft: row.draft_last ?? null, src: "last" };
   if (cleanDraft(row.draft_first).text) {
-    const shownMark = /^s*__[A-Z_]{2,30}__s*$/.test(String(row.draft_last ?? "")) ? 1 : 0;
+    const shownMark = /^\s*__[A-Z_]{2,30}__\s*$/.test(String(row.draft_last ?? "")) ? 1 : 0;
     const textVersions = (row.draft_versions ?? 1) - shownMark;
     const fa = row.draft_first_at ? Date.parse(row.draft_first_at) : NaN;
     const la = row.customer_last_at ? Date.parse(row.customer_last_at) : NaN;

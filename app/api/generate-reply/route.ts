@@ -280,6 +280,8 @@ import { unquoteConditions } from "@/app/lib/quoted-conditions";
 import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
 import { applySituationalEmoji } from "@/app/lib/emoji-situational";
 import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-scope";
+import { bigramSim, editCore } from "@/app/lib/edit-diff";
+import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, type ReplyScene } from "@/app/lib/reply-scene";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -934,7 +936,10 @@ function buildGenerationMessages(
   doneState: { lastStaffBlockOverride?: string; viewingScheduled: ViewingScheduled; viewingAppointment: ActionLedger["facts"]["viewingAppointment"];
     /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX（物件確認した）で答えた（checkAnsweredFollowUp） */
     checkAnsweredFollowUp?: boolean } | null = null,
+  // 2026-10-07 場面の整理（reply-scene.ts）: この番の場面と、場面ごとの材料の取捨を効かせるか。null／on=false は今まで通り全部
+  sceneSel: { scene: ReplyScene | null; on: boolean } | null = null,
 ): [SystemMessage, HumanMessage] {
+  const sceneKeep = (k: Parameters<typeof keepMaterial>[1]) => keepMaterial(sceneSel?.scene ?? null, k, !!sceneSel?.on);
   const jstHour = getJSTHour();
   // 生成側の「現在フェーズ」は phaseGuideKey（正規化＋brain補正済み）を唯一の基準にする（生 state との二重基準を廃止）
   const effectivePhase: string = phaseGuideKey ?? state;
@@ -1043,7 +1048,10 @@ function buildGenerationMessages(
 
   // フェーズ別の行動指針を取得（phase_guide はコード側 line-reply-prompts.ts を正とする・DBオーバーライドなし）
   // S-2: phaseGuideKey（resolveState 済み）を優先。viewing / closed_lost ガイドがここで初めて到達可能になる
-  const phaseGuide = PHASE_GUIDE[effectivePhase] ?? PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
+  const phaseGuideFull = PHASE_GUIDE[effectivePhase] ?? PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
+  // 2026-10-07 場面の整理: proposing の「パターン判定ラダー」（約30パターン・約1.9万字）を、コードで決めた場面のパターンだけに絞る（other は全部）
+  const phaseGuideSel = phaseGuideForScene(PHASE_GUIDE[effectivePhase] ? effectivePhase : PHASE_GUIDE[state] ? state : "first_reply", phaseGuideFull, sceneSel?.scene ?? null, !!sceneSel?.on);
+  const phaseGuide = phaseGuideSel.text;
 
 
   // ── Step1廃止（2026-08）: 旧「分析結果から各フィールドを抽出」ブロックの置換 ──────────
@@ -1746,8 +1754,11 @@ ${aixDone.answeredByAix
     : "";
 
   // knowledge注入フォーマット統一: 空でなければ「## 参照すべき重要ルール」ヘッダーで括る（ただのテキスト連結を防止）
-  const knowledgeNote = knowledge
-    ? `\n\n## 参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）${knowledge}`
+  // 2026-10-07 場面の整理: 申込・内見に至った会話の展開（JSON の事例・1件 約3,000字×3）は「次の一手」を決める材料＝ブレインの仕事
+  //   （ブレインは contractExamples で同じ事例を読む＝二重管理）。返信の本文には場面が other の時だけ渡す
+  const knowledgeForScene = sceneKeep("caseStudies") ? knowledge : stripKnowledgeSections(knowledge, ["【💡 類似ケース", "【🏠 内見成功パターン"]);
+  const knowledgeNote = knowledgeForScene
+    ? `\n\n## 参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）${knowledgeForScene}`
     : "";
 
   // 戦略注入のAIX-META一元化（2026-08）:
@@ -1849,17 +1860,17 @@ ${aixDone.answeredByAix
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${closingNote}${closingFallback}${brainGuidanceNote}${directionNote}${nameNote}${conditionsNote}${inlineConditionsFallback}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${moveInTimingNote}${managementNote}${repetitionNote}${questionsNote}${conditionChangeNote}${newConditionRequestNote}${conditionExpansionNote}${searchAgainNote}${promiseEchoNote}${waitFormAckNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? moveInTimingNote : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + newConditionRequestNote + conditionExpansionNote + searchAgainNote : ""}${promiseEchoNote}${waitFormAckNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
-${knowledgeNote}
-${phrases}
+${sceneKeep("knowledge") ? knowledgeNote : ""}
+${sceneKeep("phrases") ? phrases : ""}
 
 ${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
-${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${sharedPropertyNote}${propertyChoiceNote}${confirmationGateNote}${availabilityCheckNote}${budgetInventoryNote}${estimateGateNote}${aixTimingNote}
+${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${sharedPropertyNote}${propertyChoiceNote}${confirmationGateNote}${availabilityCheckNote}${sceneKeep("budgetInventory") ? budgetInventoryNote : ""}${estimateGateNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
@@ -1903,6 +1914,7 @@ ${examples}${examplesInstruction}
   // 2026-09-13: 返信生成の入力のどの部分に費用がかかっているかの見張り（キャッシュなしの dynamicBlock の中身を文字数で残す）
   console.log(JSON.stringify({
     tag: "gen:blocks",
+    scene: sceneSel?.scene ?? null, sceneOn: !!sceneSel?.on, phasePatterns: phaseGuideSel.kept,
     cached: { system: (priorityOrderNote + baseSystem).length, dbRules: dbRules.length, topPrinciples: topPrinciplesNote.length, staticBlock: staticBlock.length, phaseGuide: phaseGuideBlock.length },
     dynamicTotal: dynamicBlock.length,
     dyn: {
@@ -2549,7 +2561,11 @@ const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C:
 const EXAMPLES_HEADER_NOTE = "— 文体・テンポ・感嘆符・絵文字・長さのみをこの例から再現すること。例の金額は伏せ字（〇〇）にしてある＝金額はこの会話の履歴・御見積書にある数字だけを書き、例から写さない。業務内容（撮影／確認／ご査収／ご案内日時／見積送付 等の約束）は例の丸写し禁止。各例の業務語彙はその会話固有の前提（直前のスタッフ約束・送付済み物件・確定日程）に依存しており、現在の会話履歴に同じ前提が無ければ真似しない（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n";
 // 前提ラベルも example-premise.ts（同じルールの一覧）から作る＝四者同名（落とす語と注記が必ず揃う）
 
-async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null, brainFresh = true, premiseFacts?: PremiseFacts | null): Promise<string> {
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string, spec?: BrainFetchSpec, brainMeta?: AixGateMeta | null, staffHistoryForPremise?: string | null, brainFresh = true, premiseFacts?: PremiseFacts | null, scene: ReplyScene | null = null, testExcludeReply: string | null = null): Promise<string> {
+  // テストの再生だけ: その番のスタッフの実送信（と言い回しがほぼ同じ物）を手本から外す
+  const isTestExcluded = (s: string | null | undefined) => !!testExcludeReply && bigramSim(editCore(s ?? ""), editCore(testExcludeReply)) >= 0.8;
+  // 2026-10-07 場面の整理: 手本のお客様の発言が今の番と同じ場面なら加点（reply-scene.ts の同じ判定）。scene=null は今まで通り
+  const sceneBoost = (cm: string | null | undefined) => (scene && resolveReplyScene({ customerText: cm ?? "" }).scene === scene ? SCENE_EXAMPLE_BOOST : 0);
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
   // 前提フィルタ用のスタッフ履歴（follow-up でなくても直前スタッフ発言を使う）
   const premiseStaffHist = [staffHistoryForPremise ?? "", lastStaffMessage ?? "", brainMeta?.last_aix_history ?? ""].filter(Boolean).join("\n");
@@ -2587,7 +2603,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         // 類似度0.5未満は低品質として除外。生成失敗文・テスト送信は正解例にしない（isUsableExampleText）
         // 2026-09-20 竹内: 管理会社・オーナー宛ての文（AIX【確認します】の出力）も手本にしない。
         //   applying の alias に acknowledge_check が入っているので、申込中の会話にそのまま混ざっていた
-        const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5 && isUsableExampleText(ex.sent_reply) && isCustomerFacingExample(ex.sent_reply));
+        const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5 && isUsableExampleText(ex.sent_reply) && isCustomerFacingExample(ex.sent_reply) && !isTestExcluded(ex.sent_reply));
         if (aboveThreshold.length > 0) {
         // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
         // T1: spec.examples.boostStates（brainが重視するフェーズ）に一致する実例はさらに+0.1
@@ -2599,8 +2615,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         //   本番の問い38件で 0.05 が最良（上位8件の平均 cos 0.5536 → 0.5575）→ fresh 0.05 / stale 0.02
         const intentBoost = brainFresh ? 0.05 : 0.02;
         const ranked = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(a.customer_message);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(b.customer_message);
           return scoreB - scoreA;
         });
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
@@ -2938,6 +2954,10 @@ async function handleGenerateReply(req: NextRequest) {
   //   draft_pending_at・reply_mode_shadow_logs・closing_strategy_logs・body_block_code・古い判断の再分析 after・申込期間のまとめ）。
   //   body.shadowNoWrite=true かつ isTestConversation の時だけ（本物の会話では無視）。llm_usage_logs（費用）は残る
   let shadowNoWrite = false;
+  // 2026-10-07 場面の整理（reply-scene.ts）: テストの会話だけ、場面ごとの材料の取捨を "off"/"on" で上書きして前後を比べる（本番の会話・本番の環境では無視）
+  let testSceneMaterials: string | null = null;
+  // 同じテストで: 本番の過去の番を再生する時、その番のスタッフの実送信（手本の表に入っている）を手本から外す（答えの写しで一致を水増ししない）
+  let testExcludeReplyText: string | null = null;
   // reply_modeゲート: 自動生成経路（bg-async/cron/generate-draft-bg）のみtrueが渡される。
   // brain(suggested_aix_meta.reply_mode)が"aix"なら自動ドラフト生成を中止する
   let enforceReplyModeGate = false;
@@ -3037,6 +3057,12 @@ async function handleGenerateReply(req: NextRequest) {
     conversationId = body.conversationId || "";
     includeStopReason = body.includeStopReason === true;
     shadowNoWrite = (body as Record<string, unknown>)[SHADOW_NO_WRITE_FIELD] === true && isTestConversation(conversationId);
+    {
+      const v = (body as Record<string, unknown>).testSceneMaterials;
+      testSceneMaterials = (v === "off" || v === "on") && isTestConversation(conversationId) && !process.env.VERCEL_ENV ? v : null;
+      const ex = (body as Record<string, unknown>).testExcludeReplyText;
+      testExcludeReplyText = typeof ex === "string" && ex.trim() && isTestConversation(conversationId) && !process.env.VERCEL_ENV ? ex : null;
+    }
     enforceReplyModeGate = body.enforceReplyModeGate === true;
     lineDisplayName = (body.customerName || "").trim();
     recentMessages = body.recentMessages || [];
@@ -5159,6 +5185,12 @@ async function handleGenerateReply(req: NextRequest) {
           templateId, templateLabel, templateCategory, pickerMode: aixPickerMode, conversationId: conversationId ?? templateReplayExcludeConv, before: templateReplayBefore,
         })
       : Promise.resolve(null);
+    // ─── 2026-10-07 場面の整理（reply-scene.ts・唯一の場面の判定）: 材料の取捨・PHASE_GUIDE の絞り・手本の並べ替えに使う ───
+    //   テンプレ最適化（AIX の続き）は返信の場面ではないので使わない。戻す: REPLY_SCENE_MATERIALS=off
+    const replySceneResolved = isTemplateOptimize ? null : resolveReplyScene({ customerText: message });
+    const replyScene: ReplyScene | null = replySceneResolved?.scene ?? null;
+    const sceneMaterialsOn = !!replyScene && sceneMaterialsEnabled(process.env, testSceneMaterials);
+    console.log(JSON.stringify({ tag: "gen:scene", conversationId, scene: replyScene, evidence: replySceneResolved?.evidence ?? null, materials: sceneMaterialsOn ? "on" : "off", override: testSceneMaterials }));
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
       fetchKnowledge(searchState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText,
         // 2026-09-13: 新しい判断（fresh かつ分析の省略でない）の時だけ、推奨 AIX・質問・話題・返信の方向で並べ替える
@@ -5183,7 +5215,8 @@ async function handleGenerateReply(req: NextRequest) {
           estimateSent: ledger.facts.estimateSent,
           daysSinceViewingMove: daysSinceViewingMove(recentMessages.map((m) => ({ text: m.text, createdAt: m.createdAt })), Date.now()),
           ownPropertyReturnedAll,
-        })
+        },
+        sceneMaterialsOn ? replyScene : null, testExcludeReplyText)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       getCachedPhrases(fetchSpec.phrases.categories)
         .catch((err) => { console.error("[generate-reply] getCachedPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
@@ -5538,6 +5571,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
+      { scene: replyScene, on: sceneMaterialsOn }, // 2026-10-07 場面の整理
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───
@@ -6655,6 +6689,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   TPO誤発動率・往復ペア・final-check 結果の定量化用。JSONB のため migrate-schema 更新不要
             const tpoDebug: Record<string, unknown> | null = finalCheck && !isTemplateOptimize ? {
               tpo_label: tpoNoteForLLM ?? null,
+              // 2026-10-07 場面の整理（reply-scene.ts）: 場面と材料の取捨（下書きとスタッフの実送信の誤差を場面ごとに測るため）
+              replyScene, replySceneEvidence: replySceneResolved?.evidence ?? null, sceneMaterials: sceneMaterialsOn ? "on" : "off",
               tier: tierResult.tier,
               // 2026-09-13 監査: 経路別にティア率を測るため（どの経路・なぜそのティアか・表示後の復元か）
               tierReason: tierResult.reason, caller: generationCaller, viaDirect: !!externalBrainGate,

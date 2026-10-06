@@ -2,6 +2,20 @@
 
 最終更新: 2026-10-07
 
+## 🧭 返信の質の巡 2巡目＝場面の整理（10/07・竹内「根本なおす　場面によって重要な部分だけ活用して不要な部分を入れない等　まず場面を整理する力が必要」・未コミット）— 黄金ルール
+- **場面の判定は1つ**: `app/lib/reply-scene.ts` の `resolveReplyScene`（お客様の今の番の文だけ・決定論）。ack／considering／question／conditions／property_share／cost／viewing／apply／other。新しい場面の分け方を足す時はここだけ直し、`app/lib/__tests__/reply-scene.test.ts`（本番の実文 64件）に文を足す
+- **場面ごとの材料**: `SCENE_MATERIALS`＝入れない物だけを書く（安全の関門・履歴・台帳・挨拶・名前・日付は全場面で残す）。ナレッジ本体は残す（v1 で落としたら検討中・内覧で人の訴求の1文が消えた）。落とすのは「申込・内見に至った事例」（JSON・ブレインの contractExamples と二重）・条件変更/在庫/管理会社/質問の抜き出し 等の場面に関係ない指示
+- **PHASE_GUIDE proposing はその場面のパターンだけ**（`phaseGuideForScene`・18,764字→1,865〜6,425字・other は全部・フェーズの禁止ルールは残す）。⑦'（特定物件の質問は確認の宣言で締める）は物件を送ってきた番だけ（質問の番は答えを書く＝確認に逃げる 25番の出所）
+- **手本**: 同じ場面のお客様の発言の手本に +0.12（`SCENE_EXAMPLE_BOOST`）
+- 戻す: `REPLY_SCENE_MATERIALS=off`。tpo_debug（reply_context_snapshot）に `replyScene`・`replySceneEvidence`・`sceneMaterials`、ログ `gen:scene`・`gen:blocks` に場面とパターン
+- **測った事**: 返信生成の入力 平均 107,181 トークン（14日 430回）。判定は route.ts 内に約30系統（短い了承9・場面ラベル5）＋ PHASE_GUIDE のラダーで LLM がもう一度選ぶ二重管理。下書き×実送信の誤差（9/07〜 418番）: そのまま 33%・書き直し 17%（短いお礼 25%・質問 22%・内覧 31%）・確認に逃げる 6%（質問 12%・費用 16%）。要素の率（何卒・お気軽に・訴求 等）は場面ごとに AI と人でほぼ同じ＝誤差は「型の頻度」でなく番ごとの中身。見張り v4（30日・dry）: 一致 40%（71/178）・道の違い（AI 返信↔人 AIX 29・AI AIX↔人 返信 26・別 AIX 10）37%＝最大の型はブレインの AIX の要否
+- **再生の前後**（`scripts/yuma-scene-materials-ab.ts`・本番の過去の番 34番・同じブレインの判断で off/on を同時に・`scripts/audit-scene-ab-score.ts`）: v1 1回 一致 26%→26%／v2 2回 一致 19%→24%・似ている度 0.41→0.41・行為の不足 0.18→0.15・訴求の足しすぎ 9%→6%。入力の文字数 ack −16%・considering −18%・question −15%・property_share −14%・apply −17%・viewing −16%・cost −9%・conditions −6%（キャッシュなし部分 約3割減）。最後の Claude 3場面: 短いお礼は人の文と同じ・質問は余計な「営業開始後に確認」が消えた・検討中は扉の1文が落ちた（残りの穴）
+- **残りの穴（次の巡）**: ①検討中の決まりが4か所（PHASE_GUIDE F・場面一覧 1454行・PS_THINKING・TPO「申込誘導絶対禁止」）で食い違い、PS_THINKING の DOOR_OPEN_ANY_RE は「お気軽に」だけで満たされる ②ai_prompt_rules の generate_reply 291行（40,941字・条件なし）は全場面に毎回 ③短いお礼の判定がまだ9系統（reply-scene に寄せる）④道の違い（AIX↔返信）37% はブレイン側
+- **静かに壊れていた正規表現（直した）**: `\s`→`s` の5か所（line-watch-judge の __SHOWN__ の印・customer-sim-shadow の APPLY_FORM_RE・estimate-handoff の [画像] 除外・guarantor-material・yuma-replay-scenarios の個人情報の網）。正規表現はシェル（node -e）で書かない
+- **再生の落とし穴**: その番の実送信が手本に戻る（`testExcludeReplyText`・テストの会話だけ）／夜中に流すと営業時間外の指示が入る／本番の ai_draft（62%）と再生（20〜26%）は比べない
+- 費用: DeepSeek 約 $3.94（返信生成 221回・ブレイン 38回・最終チェック一式）／Claude $0.70（ブレイン 3・最終チェック 21）・YUMA 以外 0・漏れ 0・場面の行は消した（r2scene- 0件）
+- 設計知見: 「場面の整理の実装」「正規表現の \s が s に化ける」「再生の3つの落とし穴」（10/07）
+
 ## 🔁 返信の質の巡 1巡目（10/07・竹内「設計知見の最新の改善で今の LINE の返信の質を上げられる所を徹底的に調査…YUMA でテストしながら繰り返す」・未コミット）
 - **今日の直しの届き方**: ack-topic-scope・appeal-timing（generate-reply の入口と自動送信の関所・見張り）／recency-reference・比較の形・new-build・pickup-wants-fit（AIX の2経路）／name-inside-word（最終チェック block）／closing-target（ブレイン）は import と配線まで確認・本番の配備は b350f936 まで READY。下書きの経路は bg-async・pending-drafts・画面の再生成とも全部 /api/generate-reply を通る（入口の分岐なし）
 - **① 静かに壊れていた（最優先・直した）**: 見張りの控えで画面の印 `__SHOWN__` が draft_last を上書き → 返信の番 118 のうち 46（39%）が「印だけ」の na＝スタッフが下書きを読んだ番ほど一致率の分母から消えていた。`line-watch-judge.pickJudgeDraft`（draft_first を使うのは「文の版1つ」かつ「連投の最後の発言より後に作った」時だけ・それ以外は stale で比べない）・JUDGE_VERSION v4-2026-10-07・`verdict_detail.draft_src`。トリガー（capture_line_watch_turn）で `__xx__` を控えない直しは migrate-schema に書いた＝**本番の関数の入れ替えは竹内さんの承認待ち**。読み直しで na 95→56（241番）

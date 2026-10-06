@@ -86,7 +86,7 @@ let cleanup: string[] = [];
 const sendState: { enabled: boolean; sent: number; ids: string[]; windows: string[]; quota: unknown; countFile: string; prevSends: number } = { enabled: false, sent: 0, ids: [], windows: [], quota: null, countFile: "", prevSends: 0 };
 // 2026-10-01 申込の書類（氏名・生年月日・住所・勤務先・年収）が場面に入っていたら LLM に渡さない（DeepSeek に個人情報を出さない・申込以降は対象外）。
 //   最初の版の場面の作り方（申込へ押下より前だけ）では申込フォームの記入済みの通が混ざり、2場面が DeepSeek に渡った＝場面の作り方も直した
-export const APPLICATION_PII_RE = /申込者様記入欄|同居人記入欄|緊急連絡先欄|生年月日|年収|勤務先電話|フリガナs*[ァ-ヶ]/;
+export const APPLICATION_PII_RE = /申込者様記入欄|同居人記入欄|緊急連絡先欄|生年月日|年収|勤務先電話|フリガナ\s*[ァ-ヶ]/;
 function hasApplicationPii(sc: Scenario): boolean {
   return [...sc.context.map((m) => m.t), ...sc.customer].some((t) => APPLICATION_PII_RE.test(t ?? ""));
 }
