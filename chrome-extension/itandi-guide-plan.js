@@ -329,7 +329,72 @@
     return null;
   }
 
+  // ── 駅の名前の照らし合わせ（2026-10-06 v2.5.85・リアプロ v2.5.84 と同じ直し方）──
+  //   ITANDI の駅の文字はリアプロと別の表（feedback_site_naming_separation）＝読み替えは ITANDI_STATION_ALIAS_MAP だけを使う（リアプロの
+  //   realpro-guide-plan.js STATION_NAME_ALIASES は混ぜない）。表に足す時は scripts/audit-guide-station-miss.ts --site=itandi の候補（ITANDI の画面の文字）を見てから。
+  //   旧（itandi-guide.js stationLabelHit）: 読み替えの表＋「含む・1字差」だけで、全角/半角・ヶ/ケ・「N丁目」・JR の有無が違うと黙って光らなかった。
+  function stationKeyIt(n) {
+    var t = String(n == null ? "" : n);
+    if (t.normalize) t = t.normalize("NFKC");
+    return t.replace(/[\s　]+/g, "")
+      .replace(/[（(][^）)]*[）)]/g, "")
+      .replace(/駅$/, "")
+      .replace(/[ヶヵ]/g, "ケ")
+      .replace(/(\d)(?=丁目)/g, function (d) { return "〇一二三四五六七八九".charAt(Number(d)); });
+  }
+  function stripJrIt(k) { return /^JR./.test(k) ? k.slice(2) : k; }
+  /** 画面の駅の文字 lk（key）が名前の key nk に当たるか（同じ・または短い文字の中に名前があって差が1字＝旧の stationLabelHit と同じ緩さ） */
+  function keyHit(lk, nk) {
+    if (!lk || !nk) return false;
+    if (lk === nk) return true;
+    return lk.length <= 8 && lk.indexOf(nk) >= 0 && (lk.length - nk.length) <= 1;
+  }
+  /** 名前 → 照らす key の並び（先頭が本来の名前・後ろが読み替え） */
+  function nameKeysIt(name) {
+    var base = String(name == null ? "" : name).replace(/駅$/, "");
+    var out = [];
+    var add = function (x) { var k = stationKeyIt(x); if (k && out.indexOf(k) < 0) out.push(k); };
+    getStationAliases(base).forEach(add);
+    add(base);
+    out.slice().forEach(function (k) { add(stripJrIt(k)); });
+    return out;
+  }
+  /** 画面の駅の文字1つが、光らせる駅の名前のどれかに当たるか（光らせる時に使う） */
+  function stationLabelWantedIt(label, names) {
+    var lk = stationKeyIt(label), lj = stripJrIt(lk);
+    return (names || []).some(function (n) { return nameKeysIt(n).some(function (k) { return keyHit(lk, k) || (lj !== lk && keyHit(lj, k)); }); });
+  }
+  /**
+   * 光らせる駅の名前 names と、この案内の間に小窓で見た駅の文字 labels を照らす。
+   *   返す: { missing: [どの文字にも当たらない名前], via: {名前: 本来の名前と違う形で当たった画面の文字} }。labels が空なら missing も空
+   */
+  function matchStationsIt(names, labels) {
+    var ls = (labels || []).map(function (l) { var k = stationKeyIt(l); return { l: String(l), k: k, j: stripJrIt(k) }; }).filter(function (x) { return x.k; });
+    var missing = [], via = {};
+    if (!ls.length) return { missing: missing, via: via };
+    (names || []).forEach(function (n) {
+      var keys = nameKeysIt(n), hit = null, exact = false;
+      for (var i = 0; i < ls.length && !exact; i++) {
+        for (var j = 0; j < keys.length; j++) {
+          if (keyHit(ls[i].k, keys[j]) || (ls[i].j !== ls[i].k && keyHit(ls[i].j, keys[j]))) {
+            if (j === 0 && ls[i].k === keys[0]) { exact = true; hit = null; break; }
+            if (!hit) hit = ls[i].l;
+          }
+        }
+      }
+      if (exact) return;
+      if (hit) { via[String(n)] = hit; return; }
+      if (missing.indexOf(String(n)) < 0) missing.push(String(n));
+    });
+    return { missing: missing, via: via };
+  }
+  function missNoteIt(missing) {
+    if (!missing || !missing.length) return "";
+    return "見つからない駅: " + missing.slice(0, 6).join("・") + (missing.length > 6 ? " 他" + (missing.length - 6) : "");
+  }
+
   return {
+    stationKeyIt: stationKeyIt, stationLabelWantedIt: stationLabelWantedIt, matchStationsIt: matchStationsIt, missNoteIt: missNoteIt,
     modalKindFromText: modalKindFromText,
     buildPlan: buildPlan, layoutIds: layoutIds, locationOf: locationOf, rentValue: rentValue, getStationAliases: getStationAliases,
     wardShortName: wardShortName, layoutLabel: layoutLabel, selectedWardsFromTexts: selectedWardsFromTexts,

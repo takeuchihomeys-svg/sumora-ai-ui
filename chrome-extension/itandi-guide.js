@@ -496,15 +496,40 @@
     }
     return { done: false, target: [okBtn], note: "「確定」を押す（区ごとに1回）" };
   }
-  function stationLabelHit(l, stations) {
-    var nt = norm((l.textContent || "").trim());
-    return stations.some(function (sn) {
-      return Plan.getStationAliases(sn).some(function (a) {
-        var nn = norm(a);
-        if (nt === nn) return true;
-        return nt.length <= 8 && nt.indexOf(nn) >= 0 && (nt.length - nn.length) <= 1;
-      });
-    });
+  // v2.5.85: 照らし合わせは itandi-guide-plan.js stationLabelWantedIt（ITANDI の読み替えの表だけ・全角/半角・ヶ/ケ・N丁目・JR の有無）
+  function stationLabelHit(l, stations) { return Plan.stationLabelWantedIt((l.textContent || "").trim(), stations); }
+  // ── 「見つからない駅」の記録（2026-10-06 v2.5.85・リアプロ v2.5.84 と同じ仕組み）──
+  //   ITANDI の路線・駅の小窓は路線を押すとその路線の駅だけが出る＝この案内の間に見た駅の文字を全部覚え、
+  //   光らせる駅のうちどれにも当たらない駅を、駅を選び終えた所（「確定」を光らせる時）で枠に小さく出す（途中は出さない＝まだ開いていない路線の駅を数えない）。
+  //   駅の手順が済んだ時・検索を押した時に1回だけ background（axlx-guide-station-miss・site=itandi）→ search_audits.filled.guide_stations と拡張の中の記録。
+  //   集計: npx tsx --env-file=.env.local scripts/audit-guide-station-miss.ts --site=itandi
+  var _seenStationLabels = {};
+  var LINE_LABEL_RE = /線|電鉄|鉄道|モノレール/;
+  function noteSeenStations(labels, isLine) {
+    labels.forEach(function (l) { if (isLine(l)) return; var t = sq(l.textContent); if (t && !LINE_LABEL_RE.test(t)) _seenStationLabels[t] = true; });
+  }
+  function stationMissOf(s) {
+    var seen = Object.keys(_seenStationLabels);
+    if (!s || s.selectAll || !(s.stations || []).length) return { missing: [], via: {}, seen: seen };
+    var m = Plan.matchStationsIt(s.stations, seen);
+    return { missing: m.missing, via: m.via, seen: seen };
+  }
+  function reportStationMiss(s) {
+    try {
+      if (!session || session.stationMissReported || !s) return;
+      var sm = stationMissOf(s);
+      if (!sm.seen.length) return;
+      session.stationMissReported = true; saveSession();
+      var c = session.conditions || {};
+      chrome.runtime.sendMessage({
+        type: "axlx-guide-station-miss", runId: c._audit_run_id || null, customerId: session.customerId || null,
+        record: {
+          v: 1, at: new Date().toISOString(), site: "itandi",
+          planned: (s.stations || []).length, lines: s.lines || [], select_all_line_stations: !!s.selectAll,
+          missing: sm.missing.slice(0, 120), via: sm.via, page_labels: sm.seen.slice(0, 500),
+        },
+      }, function () { void chrome.runtime.lastError; });
+    } catch (_) {}
   }
   function evalLines(s) {
     var r = readRow("stations");
@@ -512,7 +537,7 @@
     var matched = r.chips.filter(function (c) { return keys[stationKey(c.name)]; });
     var enough = s.stations.length && !s.selectAll ? matched.length > 0 : r.chips.length > 0;
     var dlg = openDialog();
-    if (!dlg && enough) return { done: true };
+    if (!dlg && enough) { reportStationMiss(s); return { done: true }; }
     if (!dlg) {
       var fb = r.f ? r.f.btn : (r.def ? filterBtn(r.def) : null);
       return { done: false, target: [fb], note: "「路線・駅で絞り込み」を押して小窓を開く" };
@@ -524,6 +549,7 @@
       return { done: false, target: nav, note: "「近畿」→「大阪府」の順に押すと路線が出ます" };
     }
     var isLine = function (l) { return s.lines.some(function (n) { return textMatch(l.textContent, n); }); };
+    noteSeenStations(cb, isLine);
     var st = cb.filter(function (l) {
       if (isLine(l) || isChecked(l)) return false;
       return s.selectAll ? !/線|電鉄|鉄道|モノレール/.test(sq(l.textContent)) : stationLabelHit(l, s.stations);
@@ -532,7 +558,8 @@
     var ln = cb.filter(function (l) { return isLine(l) && !isChecked(l); });
     // v2.5.80: 路線の一覧は長く、選ぶ路線が一覧の下の方で見えない → 一覧の中だけを1回動かして最初の路線を見える所へ（区の一覧と同じ・押さない）
     if (ln.length) { revealWardOnce(ln[0], "line:" + norm(ln[0].textContent)); return { done: false, target: ln, note: "光っている路線を押すと、その路線の駅が出ます（" + ln.length + "路線）" }; }
-    return { done: false, target: [btnByText(dlg, "確定")], note: "選び終えたら「確定」" };
+    var mn = Plan.missNoteIt(stationMissOf(s).missing);
+    return { done: false, target: [btnByText(dlg, "確定")], note: "選び終えたら「確定」" + (mn ? " ／ " + mn : "") };
   }
   // 検索のボタン（itandi-page-script.js _itSearchBtn と同じ・案内の枠と小窓の中は除く）
   function searchBtn() {
@@ -580,12 +607,18 @@
     _lastTargets = targets;
     if (hint !== undefined) _lastHint = hint || "";
     var rects = [], first = null;
-    (targets || []).filter(Boolean).slice(0, 40).forEach(function (el) {
+    // v2.5.85（リアプロ v2.5.84 と同じ）: 旧は並びの先頭 40 だけに枠を描いた＝駅の多い路線（JR 東海道 等）で 41番目からの駅が光らなかった。
+    //   → 画面に見えている物だけ描く（150 まで）。見えている物が無い時だけ先頭の物へ矢印
+    var vh = window.innerHeight, vw = window.innerWidth, inView = null;
+    (targets || []).filter(Boolean).forEach(function (el) {
+      if (rects.length >= 150) return;
       var r = el.getBoundingClientRect();
       if (r.width <= 0 && r.height <= 0) return;
-      rects.push(r); if (!first) first = r;
+      if (!first) first = r;
+      if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) return;
+      rects.push(r); if (!inView) inView = r;
     });
-    var vh = window.innerHeight;
+    if (inView) first = inView;
     var arrow = first ? (first.bottom < 0 ? "↑" : first.top > vh ? "↓" : "") : "";
     var sig = rects.map(function (r) { return Math.round(r.left) + "," + Math.round(r.top) + "," + Math.round(r.width) + "," + Math.round(r.height); }).join("|") + "#" + arrow + "#" + _lastHint;
     if (sig === _lastHiSig && L.childNodes.length) return;
@@ -779,6 +812,7 @@
     if (!cur || cur.step.kind !== "search") return;
     var tgt = (cur.ev.target || [])[0];
     if (tgt && (tgt === e.target || tgt.contains(e.target))) {
+      plan.steps.forEach(function (st) { if (st.kind === "pick_lines") reportStationMiss(st); }); // v2.5.85
       // v2.5.80: この一覧を検索したお客様をタブに印（送る前の確かめ search-stamp.js）
       try { var SS = (typeof self !== "undefined" ? self : window).AxlxSearchStamp; if (SS && session.customerId) SS.write({ cid: String(session.customerId), name: session.customerName || "", at: Date.now(), site: "itandi", complete: true, intended: SS.compactIntended(session.conditions), filled: (function () { try { return { stations: readRow("stations").chips.map(function (c) { return c.name; }).slice(0, 40), wards: readRow("wards").chips.map(function (c) { return c.name; }).slice(0, 40) }; } catch (_) { return null; } })() }); } catch (_) {}
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); renderPanel(); memoSearchRun(session, "itandi");
@@ -790,6 +824,7 @@
     if (e.source !== window || !e.data || e.data.from !== "axlx-itandi-guide-start" || !Plan) return;
     var c = e.data.conditions || {};
     session = { customerId: e.data.customerId || c.customer_id || null, customerName: c.customer_name || c.name || "", conditions: c, stage: "form", done: {}, at: Date.now() };
+    _seenStationLabels = {}; // v2.5.85 駅の小窓の文字はお客様ごとに覚え直す
     plan = Plan.buildPlan(c);
     saveSession();
     tick();

@@ -1370,7 +1370,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // 2026-10-06 v2.5.84 案内（光って選択）の駅の手順で「見つからない駅」（realpro-guide.js reportStationMiss）。
+  // 2026-10-06 v2.5.84 案内（光って選択）の駅の手順で「見つからない駅」（realpro-guide.js／v2.5.85 itandi-guide.js の reportStationMiss）。
   //   ①拡張の中に最新 50回（axlx_guide_station_miss_log・ブレインでない時もここだけは残る）
   //   ②ブレインの回（popup が run_id を作った回）は search_audits の filled.guide_stations に（案内モードは拡張が入力しない＝filled は他に使われない）
   //   集計は scripts/audit-guide-station-miss.ts
@@ -1385,7 +1385,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }));
         let posted = null;
         if (msg.runId && self.AxlxSearchAudit) {
-          posted = await self.AxlxSearchAudit.post({ phase: "started", brain: true, run_id: String(msg.runId), site: "realpro", filled: { v: 1, site: "realpro", guide_stations: msg.record || null } });
+          // v2.5.85 ITANDI も同じ形（record.site）
+          const _site = (msg.record && msg.record.site === "itandi") ? "itandi" : "realpro";
+          posted = await self.AxlxSearchAudit.post({ phase: "started", brain: true, run_id: String(msg.runId), site: _site, filled: { v: 1, site: _site, guide_stations: msg.record || null } });
         }
         if (msg.record && msg.record.missing && msg.record.missing.length) console.warn("[guide] 見つからない駅 " + msg.record.missing.length + ": " + msg.record.missing.slice(0, 10).join("・"));
         sendResponse({ ok: true, posted: posted });

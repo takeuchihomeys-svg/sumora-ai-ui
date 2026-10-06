@@ -59,7 +59,7 @@ ok("記録は background → search_audits.filled.guide_stations ＋ 拡張の�
 ok("駅の小窓の文字はお客様ごとに覚え直す", /_seenStationLabels = \{\}; \/\/ v2\.5\.84/.test(g));
 ok("光の枠は先頭 40 で切らない（画面に見えている物を描く・150 まで）", !/(targets || []).filter(Boolean).slice(0, 40)/.test(g) && /rects.length >= 150/.test(g));
 ok("集計のスクリプトがある", fs.existsSync(path.join(__dirname, "..", "..", "scripts", "audit-guide-station-miss.ts")));
-ok("manifest の版 2.5.84", JSON.parse(read("manifest.json")).version === "2.5.84");
+ok("manifest の版 2.5.84 以上", (function (v) { var p = v.split(".").map(Number); return p[0] > 2 || (p[0] === 2 && (p[1] > 5 || (p[1] === 5 && p[2] >= 84))); })(JSON.parse(read("manifest.json")).version));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

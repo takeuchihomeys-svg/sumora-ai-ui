@@ -4,11 +4,21 @@
 
 ---
 
+## 2026-10-06 v2.5.85 ITANDI の案内にも v2.5.84 と同じ直し（**拡張の再読み込み必須**・DB/サーバーの変更なし・未コミット＝commit は親）
+竹内「リアプロ同様に ITANDI も」（v2.5.84 の報告の4番）。
+- **光の枠**: `itandi-guide.js highlight` も `targets.slice(0, 40)` だった（路線を押すと出る駅を全部光らせる時、駅の多い路線＝JR 東海道 等で 41番目から光らない）→ 画面に見えている物だけ描く（150 まで）・見えている物が無い時だけ矢印。
+- **照らし合わせ**: `itandi-guide-plan.js stationLabelWantedIt／matchStationsIt／stationKeyIt`（純）。キー＝NFKC・空白・（）・末尾の駅・ヶ/ヵ→ケ・「N丁目」の数字→漢数字。読み替えは **ITANDI の表 `ITANDI_STATION_ALIAS_MAP` だけ**（リアプロの STATION_NAME_ALIASES は混ぜない＝feedback_site_naming_separation）＋JR の有無（両側）。旧の緩さ（短い文字の中に名前・1字差）はそのまま。旧は NFKC が無く全角の「ＪＲ総持寺」・「谷町9丁目」が当たらなかった。
+- **見つからない駅**: ITANDI の小窓は路線を押すとその路線の駅だけが出る＝案内の間に見た駅の文字（路線の文字は除く）を全部覚え、**「確定」を光らせる所でだけ**枠に「見つからない駅: 〇〇」（途中で出すと、まだ開いていない路線の駅を数えてしまう）。路線の全駅（selectAll）の時は全部光らせるので見つからない駅は作らない（文字の記録だけ）。
+- **記録**: 駅の手順が済んだ（小窓を閉じてチップが入った）時・検索を押した時に1回だけ `axlx-guide-station-miss`（record.site="itandi"）→ background が `record.site` で search_audits の site を決めて `filled.guide_stations` に（拡張の中の記録も同じ）。
+- **集計**: `npx tsx --env-file=.env.local scripts/audit-guide-station-miss.ts --site=itandi`（ITANDI の照らし合わせ・辞書は自動入力の `filled.reset.after.stations`＋記録の page_labels・今 229語）。今の当て直しで辞書に無い上位: 西梅田 13回・大阪梅田 12回（候補「梅田」＝ITANDI は阪急も「梅田」かもしれない・未確認なので表に足していない）・大阪ビジネスパーク 12・蒲生四丁目 12・南方 10・加島 10。
+- テスト: `tests/chrome-extension/itandi-guide-station-v2585.test.js`（20）・guide-station-miss-v2584 の版の期待を「2.5.84 以上」に。
+- 触ったファイル: chrome-extension/itandi-guide-plan.js・itandi-guide.js・background.js（site）・manifest.json（2.5.85）・scripts/audit-guide-station-miss.ts（--site）・テスト2本。
+
 ## 2026-10-06 v2.5.84 案内の駅が足りない（直通の駅が光らない）＋「見つからない駅」の記録（**拡張の再読み込み必須**・DB の変更なし・サーバーの変更なし・未コミット＝commit は親）
 竹内「沿線はちゃんと選択されているのに何で駅直通全て表示されていないのか　駅の部分について把握できていないのか　原因見つけて改善するのと改善していく仕組み作る」（みくさん: 梅田まで電車1本・〜9万・徒歩10分・1LDK・築10年・35㎡〜。画面は 東海道本線の新大阪・環状線の天王寺くらいしか光らない・枠は「光っている駅にチェック（53駅）」）
 - **原因**（search_audits id=522 の intended）: 路線 12本・駅 122 が渡っていたのに、`realpro-guide-plan.js buildPlan` が駅の名前を **先頭 40 で切っていた**（`station_names.slice(0, 40)`）。並びは 御堂筋20→阪急京都→阪急宝塚（〜池田）で 40 に達するので、阪急神戸・阪神・おおさか東・環状・東海道・四つ橋・谷町の **82駅が黙って落ちた**。光ったのは 40駅のうち別の路線にも同じ名前がある駅（新大阪・天王寺・梅田・なんば等）だけ。「53駅」は 40の名前が路線ごとに並んだチェックの数（小窓の外にスクロールした分も含む）。
   - 自動入力（page-script）は `select_all_line_stations` で路線の全駅を押すので切れていない＝**案内だけの穴**。当て直しで 30日に 40駅を超えた回 22（案内の回は 42886056 104駅・2847f577 90駅×2・みく 122駅）。
-  - 3つ目の穴（同じ形）: 光の枠を描く `highlight` も並びの先頭 40 の要素だけ描いていた（120駅を渡しても 41番目から光らない）→ 画面に見えている物だけ描く（150まで）・見えている物が無い時だけ矢印。**ITANDI の itandi-guide.js highlight にも同じ slice(0, 40) が残っている（未修正）**。
+  - 3つ目の穴（同じ形）: 光の枠を描く `highlight` も並びの先頭 40 の要素だけ描いていた（120駅を渡しても 41番目から光らない）→ 画面に見えている物だけ描く（150まで）・見えている物が無い時だけ矢印。ITANDI の itandi-guide.js highlight の同じ切りは v2.5.85 で直した。
   - 2つ目の穴: 名前の照らし合わせが完全一致だけ。拡張の名前（LINE_STATION_ORDER）の「JR河内永和」「JR俊徳道」「JR長瀬」はリアプロでは「河内永和」「俊徳道」「長瀬」、「谷町9丁目」「天神橋筋6丁目」（他の表の書き方）は「谷町九丁目」。当たらない駅は何も言わずに光らなかった。
 - **直し**: ①切らない（`MAX_GUIDE_STATIONS`=300・安全のため）②`matchStations(names, labels)`（純・plan に）: キー＝空白・全角英数・末尾の「駅」・末尾の（）・ヶ/ヵ→ケ・「N丁目」の数字→漢数字。同じ文字が無い時だけ 読み替え（JR を外す・画面の側だけ JR・`STATION_NAME_ALIASES`＝我孫子⇔あびこ・石橋阪大前⇔石橋・なんば⇔難波・大阪阿部野橋⇔阿部野橋・三ノ宮⇔三宮・恵比須町⇔恵美須町）③小窓（`station_id[]`）に出た文字をその案内の間ずっと覚え、どれにも当たらない駅を **案内の枠に「見つからない駅: 〇〇・〇〇 他N」** と小さく出す。
 - **仕組み（記録と集計）**: 駅の手順が済んだ・「確定してリストへ」等で閉じた・検索を押した時に1回だけ `axlx-guide-station-miss` → background が ①拡張の中 `axlx_guide_station_miss_log`（最新50回）②ブレインの回（`_audit_run_id` がある）は `search_audits.filled.guide_stations`＝{planned, missing, via, lit_labels, page_labels（その時の小窓の文字・500まで）, lines, select_all_line_stations}（案内モードは拡張が入力しない＝filled は他に使われない）。集計 `npx tsx --env-file=.env.local scripts/audit-guide-station-miss.ts [--days=30]`: ①記録の見つからない駅の回数・人数と候補 ②全部の回の intended.station_names を本番で見たリアプロの文字の辞書（自動入力の filled.form.stations＋記録の page_labels・今 338語）に当て直す（辞書に無い＝表記違いか辞書が見ていないだけ）。候補を見て `STATION_NAME_ALIASES` か駅の名前の表を直す。**記録が溜まるほど辞書が育つ**。

@@ -10,7 +10,9 @@
 //      → 辞書のどこにも無い名前＝表記違いか未収録の疑い。旧の 40駅で切れていた回の数も出す
 //   見つからない駅ごとに、辞書の中の近い文字（JR の有無・ヶ/ケ・含む・1字違い）を候補に出す。直すのは
 //   realpro-guide-plan.js STATION_NAME_ALIASES（読み替え）か、駅の名前を出している表（popup-maps.js LINE_STATION_ORDER 等・サイトごとに独立）。
-// 実行: npx tsx --env-file=.env.local scripts/audit-guide-station-miss.ts [--days=30] [--show=40]
+// 2026-10-06 v2.5.85 ITANDI も同じ（--site=itandi）。照らし合わせは itandi-guide-plan.js matchStationsIt（ITANDI の読み替えの表だけ・リアプロと混ぜない）、
+//   辞書は ITANDI の自動入力の読み戻し（filled.reset.after.stations＝その時のチップの駅）＋案内の記録の page_labels。
+// 実行: npx tsx --env-file=.env.local scripts/audit-guide-station-miss.ts [--site=realpro|itandi] [--days=30] [--show=40]
 import { createClient } from "@supabase/supabase-js";
 import { createRequire } from "module";
 const require_ = createRequire(import.meta.url);
@@ -20,16 +22,24 @@ const P = require_("../chrome-extension/realpro-guide-plan.js") as {
   stationKey(n: string): string;
   MAX_GUIDE_STATIONS: number;
 };
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const IT = require_("../chrome-extension/itandi-guide-plan.js") as {
+  matchStationsIt(names: string[], labels: string[]): { missing: string[]; via: Record<string, string> };
+  stationKeyIt(n: string): string;
+};
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "");
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=").slice(1).join("=");
 const days = Number(arg("days", "30"));
 const show = Number(arg("show", "40"));
+const site = arg("site", "realpro") === "itandi" ? "itandi" : "realpro";
+const match = (names: string[], labels: string[]) => (site === "itandi" ? IT.matchStationsIt(names, labels) : P.matchStations(names, labels));
+const keyOf = (n: string) => (site === "itandi" ? IT.stationKeyIt(n) : P.stationKey(n));
 const OLD_CAP = 40; // v2.5.83 までの案内の切り
 
 type Row = {
   run_id: string; created_at: string; property_customer_id: string | null; mode: string | null; ext_version: string | null;
   intended: { station_names?: string[]; area_mode?: string; select_all_line_stations?: boolean } | null;
-  filled: { form?: { stations?: string[] }; guide_stations?: { planned?: number; missing?: string[]; via?: Record<string, string>; page_labels?: string[]; lit_labels?: number } } | null;
+  filled: { form?: { stations?: string[] }; reset?: { after?: { stations?: string[] } }; guide_stations?: { planned?: number; missing?: string[]; via?: Record<string, string>; page_labels?: string[]; lit_labels?: number } } | null;
 };
 
 function lev1(a: string, b: string): boolean {
@@ -43,9 +53,9 @@ function lev1(a: string, b: string): boolean {
   return diff + (a.length - i) + (b.length - j) <= 1;
 }
 function candidates(name: string, dict: string[]): string[] {
-  const k = P.stationKey(name), kj = k.replace(/^JR/, "");
+  const k = keyOf(name), kj = k.replace(/^JR/, "");
   const out = dict.filter((l) => {
-    const lk = P.stationKey(l), lj = lk.replace(/^JR/, "");
+    const lk = keyOf(l), lj = lk.replace(/^JR/, "");
     if (lk === k) return false;
     return lj === kj || (kj.length >= 2 && (lj.includes(kj) || kj.includes(lj)) && lj.length >= 2) || lev1(lj, kj);
   });
@@ -58,7 +68,7 @@ function candidates(name: string, dict: string[]): string[] {
   for (let o = 0; o < 20000; o += 1000) {
     const { data, error } = await sb.from("search_audits")
       .select("run_id, created_at, property_customer_id, mode, ext_version, intended, filled")
-      .eq("site", "realpro").gte("created_at", since).order("created_at").range(o, o + 999);
+      .eq("site", site).gte("created_at", since).order("created_at").range(o, o + 999);
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as Row[]));
     if (!data || data.length < 1000) break;
@@ -66,16 +76,17 @@ function candidates(name: string, dict: string[]): string[] {
   // 本番で見たリアプロの駅の文字の辞書（期間を問わず・自動入力の読み戻し＋案内の記録）
   const dictSet = new Set<string>();
   for (let o = 0; o < 50000; o += 1000) {
-    const { data, error } = await sb.from("search_audits").select("filled").eq("site", "realpro").not("filled", "is", null).order("id").range(o, o + 999);
+    const { data, error } = await sb.from("search_audits").select("filled").eq("site", site).not("filled", "is", null).order("id").range(o, o + 999);
     if (error) throw new Error(error.message);
     for (const r of (data ?? []) as Array<Pick<Row, "filled">>) {
       (r.filled?.form?.stations ?? []).forEach((s) => s && dictSet.add(String(s)));
+      (r.filled?.reset?.after?.stations ?? []).forEach((s) => s && dictSet.add(String(s)));
       (r.filled?.guide_stations?.page_labels ?? []).forEach((s) => s && dictSet.add(String(s)));
     }
     if (!data || data.length < 1000) break;
   }
   const dict = [...dictSet];
-  console.log(`期間 ${days}日・リアプロの回 ${rows.length}・リアプロの駅の文字の辞書 ${dict.length}（本番で見た分だけ＝辞書に無い≠リアプロに無い）`);
+  console.log(`[${site}] 期間 ${days}日・このサイトの回 ${rows.length}・駅の文字の辞書 ${dict.length}（本番で見た分だけ＝辞書に無い≠サイトに無い）`);
 
   // ① 案内の記録
   const rec = rows.filter((r) => r.filled?.guide_stations);
@@ -97,15 +108,15 @@ function candidates(name: string, dict: string[]): string[] {
   const cut = withNames.filter((r) => (r.intended!.station_names!.length) > OLD_CAP);
   const replayMiss = new Map<string, { n: number; customers: Set<string> }>();
   for (const r of withNames) {
-    const m = P.matchStations(r.intended!.station_names!, dict);
+    const m = match(r.intended!.station_names!, dict);
     for (const name of m.missing) {
       const e = replayMiss.get(name) ?? { n: 0, customers: new Set<string>() };
       e.n++; if (r.property_customer_id) e.customers.add(r.property_customer_id);
       replayMiss.set(name, e);
     }
   }
-  console.log(`\n── ② 当て直し: 駅を指定した回 ${withNames.length}・旧の案内で ${OLD_CAP}駅を超えて切れていた回 ${cut.length}（落ちた駅 計 ${cut.reduce((s, r) => s + r.intended!.station_names!.length - OLD_CAP, 0)}）`);
-  cut.slice(-10).forEach((r) => console.log(`  ${r.created_at.slice(0, 16)} ${r.property_customer_id?.slice(0, 8)} ${r.intended!.station_names!.length}駅（${r.mode ?? "-"}・v${r.ext_version ?? "?"}${r.intended!.select_all_line_stations ? "・路線の全駅" : ""}）`));
+  console.log(`\n── ② 当て直し: 駅を指定した回 ${withNames.length}${site === "realpro" ? `・旧の案内で ${OLD_CAP}駅を超えて切れていた回（v2.5.83 まで） ${cut.length}（落ちた駅 計 ${cut.reduce((s, r) => s + r.intended!.station_names!.length - OLD_CAP, 0)}）` : ""}`);
+  if (site === "realpro") cut.slice(-10).forEach((r) => console.log(`  ${r.created_at.slice(0, 16)} ${r.property_customer_id?.slice(0, 8)} ${r.intended!.station_names!.length}駅（${r.mode ?? "-"}・v${r.ext_version ?? "?"}${r.intended!.select_all_line_stations ? "・路線の全駅" : ""}）`));
   console.log(`  辞書のどこにも無い名前 ${replayMiss.size}種（表記違い・未収録の疑い・辞書が見ていないだけの事もある）:`);
   [...replayMiss.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, show).forEach(([name, e]) =>
     console.log(`  ${name}  ${e.n}回・${e.customers.size}人  候補: ${candidates(name, dict).join("・") || "（なし）"}`));
