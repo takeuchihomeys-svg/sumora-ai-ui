@@ -111,6 +111,21 @@ export function newArrivalElems(talk: NewArrivalTalk, prevAt: string | null | un
   return { elems, lastDate: last };
 }
 
+/** AIXツール（売上サポ＝PickupReview）のこのお客様・この回を開く。スマホの指でも押せる高さ（32px）・札の青に合わせる */
+function OpenAixButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      disabled={disabled}
+      title={disabled ? "このお客様の売上サポが見つかりません" : "AIXツール（売上サポ）でこのお客様・この回を開く"}
+      className="mt-1 inline-flex min-h-[32px] items-center gap-1 rounded-full border border-[#90caf9] bg-white px-3 text-[11px] font-bold text-[#1565C0] active:bg-[#e3f2fd] disabled:opacity-40"
+    >
+      AIXツールで開く ↗
+    </button>
+  );
+}
+
 function OneCard({ card, talk }: { card: NewArrivalCard; talk: NewArrivalTalk }) {
   const [open, setOpen] = useState(false);
   const [zoom, setZoom] = useState(false);
@@ -151,6 +166,8 @@ function OneCard({ card, talk }: { card: NewArrivalCard; talk: NewArrivalTalk })
             <div className="min-w-0 flex-1">
               <div className="text-[9px] font-bold text-[#e65100]">🏠 物件オススメ</div>
               <div className="break-words text-[12px] font-bold text-[#263238]">{card.recommend.name}{card.recommend.room_no ? ` ${card.recommend.room_no}` : ""}</div>
+              {/* 2026-10-07 竹内（Ryoichi kiritsuke）: 物件名の下の空いている所に「AIXツールで開く」（▼を開かなくても押せる） */}
+              <OpenAixButton onClick={go} disabled={!talk.focus} />
             </div>
           </div>
         )}
@@ -175,6 +192,8 @@ function OneCard({ card, talk }: { card: NewArrivalCard; talk: NewArrivalTalk })
         {card.target && card.target.short > 0 && (
           <div className="mt-1 text-[10px] font-bold text-[#c62828]">⚠ {card.target.label}に 送れる通す {card.target.pass}件・あと {card.target.short}件{card.target.deal ? `（商談中・審査中の通す ${card.target.deal}件は送れないので数えない）` : ""}</div>
         )}
+        {/* 物件オススメの無い回（物件ピックアップ）は物件名が無いので、札の下に同じボタン */}
+        {!card.recommend && <OpenAixButton onClick={go} disabled={!talk.focus} />}
         <div className="mt-0.5 text-[9px] text-[#90a4ae]">🔒 スタッフだけの表示（お客様には届きません）</div>
         {open && (
           <div className="mt-1.5 space-y-1">
@@ -185,9 +204,6 @@ function OneCard({ card, talk }: { card: NewArrivalCard; talk: NewArrivalTalk })
             )}
             <div><span className="text-[#78909c]">検索した条件: </span>{card.condition ?? "（点検の記録なし）"}</div>
             <div><span className="text-[#78909c]">件数: </span>全{card.total}件（通す {card.pass}・保留 {card.hold}{card.drop ? `・外す候補 ${card.drop}` : ""}）</div>
-            <button type="button" onClick={go} disabled={!talk.focus} className="mt-1 rounded-full bg-[#1565C0] px-3 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-40">
-              AIXツールでこの回を開く ↗
-            </button>
           </div>
         )}
         </div>

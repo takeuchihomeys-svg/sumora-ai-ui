@@ -22,12 +22,8 @@ import { isAfterCutoff, type DeepseekCutoff } from "@/app/lib/post-apply";
 export type { QuotedContext } from "@/app/lib/quoted-note";
 export { formatQuotedDetailBlock, describeQuotedTarget, buildQuotedReplyNote, formatQuotedContextBlock } from "@/app/lib/quoted-note";
 
-function propertyLabelOf(name: string | null | undefined, roomNo: string | null | undefined): string | null {
-  const n = (name ?? "").trim();
-  if (!n) return null;
-  const r = (roomNo ?? "").trim().replace(/^0+(?=\d)/, "");
-  return r ? `${n} ${r}号室` : n;
-}
+// 物件名の形は画面の引用の枠（quote-preview.ts）と同じ関数（ブレイン・生成・画面で同じ名前に揃える）
+import { propertyLabelOf } from "@/app/lib/quote-preview";
 
 /** 画像の URL → 送った物件（送った時の Vision 読み取り。sent_image_properties、無ければ sent_properties） */
 export async function propertyLabelsForImages(conversationId: string, imageUrls: string[]): Promise<Map<string, string>> {
@@ -55,6 +51,8 @@ type QuotedPair = {
   /** 引用したお客様の発言の時刻 */
   customerAt: string | null;
   quoted: { sender: string; text: string | null; image_url: string | null; created_at?: string | null };
+  /** 同じ流れ（続けてのお客様の発言）のほかの引用（古い順）。2026-10-07 Ryoichi kiritsuke「ここと」「ここを見に行きたいです」 */
+  others: Array<{ customerText: string; customerAt: string | null; quoted: QuotedPair["quoted"] }>;
 };
 
 /** お客様の最新の発言（最後のスタッフ発言より後）のうち、引用返信の最後の1通と、その引用先 */
@@ -66,18 +64,34 @@ async function findLatestQuotedPair(conversationId: string): Promise<QuotedPair 
     .limit(8);
   const recent = (rows ?? []) as Array<{ sender: string; text: string | null; quoted_message_id: string | null; created_at?: string | null }>;
   let target: (typeof recent)[number] | null = null;
-  for (const m of recent) {
+  let targetIdx = -1;
+  for (let i = 0; i < recent.length; i++) {
+    const m = recent[i];
     if (m.sender !== "customer") { if (target) break; continue; }
-    if (m.quoted_message_id) { target = m; break; }
+    if (m.quoted_message_id) { target = m; targetIdx = i; break; }
   }
   if (!target?.quoted_message_id) return null;
-  const { data: q } = await supabase.from("messages")
-    .select("sender, text, image_url, created_at")
+  // 同じ流れ＝target より前の、続けてのお客様の発言（スタッフの発言で切る）のうち引用している物
+  const olderQuoted: typeof recent = [];
+  for (let i = targetIdx + 1; i < recent.length; i++) {
+    const m = recent[i];
+    if (m.sender !== "customer") break;
+    if (m.quoted_message_id) olderQuoted.push(m);
+  }
+  const ids = [...new Set([target.quoted_message_id, ...olderQuoted.map((m) => m.quoted_message_id as string)])];
+  const { data: qs } = await supabase.from("messages")
+    .select("line_message_id, sender, text, image_url, created_at")
     .eq("conversation_id", conversationId)
-    .eq("line_message_id", target.quoted_message_id)
-    .maybeSingle();
+    .in("line_message_id", ids);
+  const byId = new Map(((qs ?? []) as Array<QuotedPair["quoted"] & { line_message_id: string }>).map((r) => [r.line_message_id, r] as const));
+  const q = byId.get(target.quoted_message_id);
   if (!q) return null;
-  return { customerText: target.text ?? "", customerAt: target.created_at ?? null, quoted: q as QuotedPair["quoted"] };
+  const others: QuotedPair["others"] = [];
+  for (const m of olderQuoted.reverse()) {
+    const oq = byId.get(m.quoted_message_id as string);
+    if (oq) others.push({ customerText: m.text ?? "", customerAt: m.created_at ?? null, quoted: oq });
+  }
+  return { customerText: target.text ?? "", customerAt: target.created_at ?? null, quoted: q, others };
 }
 
 /** 「[画像]」「[動画]」だけ＝中身がまだ分かっていない画像 */
@@ -124,6 +138,20 @@ export async function resolveLatestQuotedContext(
     let propertyLabel: string | null = null;
     let detailLines: string[] = [];
     let detailKind: ImageKind | null = null;
+    // 同じ流れのほかの引用（DeepSeek に送る時は線より前の物を渡さない）
+    const others = pair.others.filter((o) => !("cutoff" in opts) || (isAfterCutoff(o.customerAt, opts.cutoff) && isAfterCutoff(o.quoted.created_at ?? null, opts.cutoff)));
+    const otherImageUrls = others.filter((o) => o.quoted.sender === "staff" && !!o.quoted.image_url && isImagePlaceholder(o.quoted.text)).map((o) => o.quoted.image_url as string);
+    const otherLabels = otherImageUrls.length > 0 ? await propertyLabelsForImages(conversationId, otherImageUrls) : new Map<string, string>();
+    const otherQuotes = others.map((o) => {
+      const img = isImagePlaceholder(o.quoted.text);
+      return {
+        customerText: o.customerText,
+        propertyLabel: img && o.quoted.sender === "staff" && o.quoted.image_url ? otherLabels.get(o.quoted.image_url) ?? null : null,
+        isImage: img,
+        // お客様の送った画像の書き起こし（"[画像] …"）は発言ではないので渡さない
+        quotedText: img || /^\s*\[(?:画像|動画)\]/.test(o.quoted.text ?? "") ? null : (o.quoted.text ?? "").slice(0, 200),
+      };
+    });
     if (isImage && quoted.image_url && quoted.sender === "staff") {
       const [labels, details] = await Promise.all([
         propertyLabelsForImages(conversationId, [quoted.image_url]),
@@ -145,6 +173,7 @@ export async function resolveLatestQuotedContext(
       propertyLabel,
       detailLines,
       detailKind,
+      otherQuotes,
     };
   } catch (e) {
     console.warn("[quoted-context] resolve failed:", e instanceof Error ? e.message : e);

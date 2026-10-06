@@ -19,7 +19,33 @@ export type QuotedContext = {
   detailLines: string[];
   /** 読み取った画像の種類（property / estimate / document / other）。読んでいなければ null */
   detailKind: ImageKind | null;
+  /**
+   * 同じ流れ（お客様の続けての発言）で、ほかにも引用していた物（古い順）。
+   * 2026-10-07 竹内（Ryoichi kiritsuke）: 「ここと」[引用: リヴィエール桜之町東 102]→「ここを見に行きたいです」[引用: アトリエール堺寺地町 103]。
+   *   今までは最後の1通（アトリエール）だけが生成・AIX に渡り、「ここと」の物件が落ちていた（スタッフは実際にリヴィエールで内覧を組んだ）
+   */
+  otherQuotes?: Array<{ customerText: string; propertyLabel: string | null; isImage: boolean; quotedText: string | null }>;
 };
+
+/**
+ * 同じ流れのほかの引用（2件以上を指した時）。無ければ空。
+ * 物件名は送った時の記録で分かった物だけ（分からない画像は「画像」とだけ書く＝推測しない）
+ */
+export function formatOtherQuotesLine(q: Pick<QuotedContext, "otherQuotes" | "propertyLabel">): string {
+  const others = (q.otherQuotes ?? []).filter((o) => o.customerText.trim() || o.propertyLabel || o.quotedText);
+  if (others.length === 0) return "";
+  const items = others.map((o) => {
+    const target = o.propertyLabel ? `物件資料（${o.propertyLabel}）` : o.isImage ? "画像" : `「${(o.quotedText ?? "").replace(/\n/g, " ").slice(0, 40)}」`;
+    return `・「${o.customerText.replace(/\n/g, " ").slice(0, 60)}」→ ${target}`;
+  });
+  const labels = [...new Set([...others.map((o) => o.propertyLabel), q.propertyLabel].filter((x): x is string => !!x))];
+  const tail = labels.length >= 2
+    ? `→ お客様の話は ${labels.join("・")} の${labels.length}件すべてについて。1件だけの話として返さない。`
+    : "→ 最新の引用だけでなく、これらも合わせた話として返す。";
+  return `【💬 同じ流れのほかの引用（お客様は続けて複数を指している）】
+${items.join("\n")}
+${tail}`;
+}
 
 /**
  * 資料の読み取りを材料として渡す文。
@@ -91,13 +117,14 @@ export function buildQuotedReplyNote(
 引用した画像の物件名は読み取りのため誤っている事がある。返信文に物件名・マンション名は書かないこと（${opts.estimateAllowed ? "「最大限割引した初期費用の御見積書をご用意します！！」" : "「お送り頂きましたお部屋の募集状況確認させて頂きます！！」"}のように物件名なしで返す${opts.estimateAllowed ? "" : "。お客様が費用を質問していないため見積書の宣言は書かない"}）。`
     : "";
   const detail = formatQuotedDetailBlock(q.detailLines, q.propertyLabel);
+  const others = formatOtherQuotesLine(q);
   return `
 【💬 引用リプライ検出（確定事実・最優先文脈）】
 お客様の最新メッセージは、${senderLabel}が送ったメッセージ ${contentDesc} への引用（リプライ）です。
 お客様は引用先の内容について話している。引用先が物件画像・物件名・物件URLの場合、
 その物件への興味として扱い、「気になる物件のURLをお送りください」等の聞き返しは絶対にせず、その物件を前提に返信を生成すること。
 ただし内覧日程調整・空室確認の方向で返信するのは、当該物件が退去予定・入居中でない場合に限る。
-退去予定・入居中の物件の場合は、現地内覧日程は提案せず「退去日以降のご案内」または「お申込みでお部屋を先に押さえてからのご内覧」を案内すること。${linkRequestNote}${imageNameSuppressNote}${detail ? `\n\n${detail}` : ""}`;
+退去予定・入居中の物件の場合は、現地内覧日程は提案せず「退去日以降のご案内」または「お申込みでお部屋を先に押さえてからのご内覧」を案内すること。${linkRequestNote}${imageNameSuppressNote}${others ? `\n\n${others}` : ""}${detail ? `\n\n${detail}` : ""}`;
 }
 
 /** AIX に入れる引用の説明（どの物件の話か・短い形） */
@@ -106,7 +133,8 @@ export function formatQuotedContextBlock(q: QuotedContext | null): string {
   const who = q.quotedSender === "staff" ? "スタッフ（こちら）" : "お客様自身";
   const what = q.isImage && q.propertyLabel ? `物件資料・見積書の画像（${q.propertyLabel}）` : describeQuotedTarget(q);
   const detail = formatQuotedDetailBlock(q.detailLines, q.propertyLabel);
+  const others = formatOtherQuotesLine(q);
   return `【💬 引用返信（確定事実・どの物件の話かの最優先の手がかり）】
 お客様の発言「${q.customerText.replace(/\n/g, " ").slice(0, 120)}」は、${who}が送った${what}への引用返信です。
-${q.propertyLabel ? `「こちら」「この物件」「〇階」は ${q.propertyLabel}（と同じ建物）を指す。会話の他の物件（以前に紹介した物件・号室）と取り違えないこと。` : "「こちら」「この物件」は引用先の内容を指す。会話の他の物件と取り違えないこと。"}${detail ? `\n\n${detail}` : ""}`;
+${q.propertyLabel ? `「こちら」「この物件」「〇階」は ${q.propertyLabel}（と同じ建物）を指す。会話の他の物件（以前に紹介した物件・号室）と取り違えないこと。` : "「こちら」「この物件」は引用先の内容を指す。会話の他の物件と取り違えないこと。"}${others ? `\n\n${others}` : ""}${detail ? `\n\n${detail}` : ""}`;
 }
