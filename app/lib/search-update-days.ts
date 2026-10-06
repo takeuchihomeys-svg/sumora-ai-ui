@@ -185,3 +185,11 @@ export function agesOutside(days: number | null, ages: UpdateAges | null | undef
   if (!(total > 0)) return null;
   return { outside, total, bad: outside >= 2 && outside / Math.max(1, total) >= 0.2 };
 }
+
+/**
+ * 物件を送った（前回が動いた）時に、手で選んだ更新日（リアプロ rp_update_days・ITANDI itandi_update_days）を自動に戻す列。
+ * 2026-10-06 竹内「これ7日以内とこていされてしまっていないか」（未桜: 10/05 に送ったのに「更新7日内」のまま）:
+ *   原因: 拡張の更新日の欄を手で選ぶと列に書かれ、その後ずっと「前回以降」の自動の値より優先されていた（8/24 の「1日」が残るお客様も）。
+ *   → 手の指定は「次に送るまで」。送った・確認した印を付ける所でこの列を null（＝前回物件を出した日から自動）に戻す。
+ */
+export const CLEAR_MANUAL_UPDATE_DAYS = { rp_update_days: null, itandi_update_days: null } as const;

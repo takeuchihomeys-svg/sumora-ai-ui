@@ -3135,3 +3135,8 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 原因: `_applyPanelFold(open)` が開いた時に `panel.style.background = ""` 等で cssText の白地・枠・余白・幅まで消していた（畳む→開くの後は透明・枠なし）。
 - 直し: 開いた時は白地 #fff・枠・影・余白・幅を明示（realpro-guide.js / itandi-guide.js）。
 - 既知: search-override.test.js の 1 FAIL は v2.5.82 の HEAD でも同じ（今回の変更とは無関係・未調査）。
+
+### 2026-10-06 更新日が「7日以内」に固定される（未桜）
+- 原因: 拡張の更新日の欄を手で選ぶと rp_update_days / itandi_update_days に書かれ、その後ずっと自動（前回物件を出した日から）より優先されていた。未桜は 10/05 に送ったのに 7 のまま。8/24 の「1日」が残るくぼ等も同じ。
+- 直し（サーバー）: 送った・確認した印を付ける所（property-customers PATCH・property-pickups/send・line-tasks/complete・hanbancyo-webhook）で両方の列を null に戻す（`CLEAR_MANUAL_UPDATE_DAYS`・app/lib/search-update-days.ts）。手の指定は「次に送るまで」。
+- 未桜の 7 は null に戻した（自動）。他の古い手の指定（くぼ 1・SHIGI 14・みずき 7）はオーナー確認待ち。

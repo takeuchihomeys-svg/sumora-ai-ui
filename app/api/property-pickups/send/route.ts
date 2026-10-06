@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { classifyPickupSendAction, PICKUP_DIRECT_SEND_GONE_MESSAGE } from "@/app/lib/property-pickups";
+import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
 
 export async function POST(req: NextRequest) {
   const authError = requireInternalAuth(req);
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
   // 2026-09-24 竹内「AIX で送るにして」: 送信は AIX【物件ピックアップした】が行う。送り終えたら印だけ付ける（LINE には何も送らない）
   const now = new Date().toISOString();
   await supabase.from("property_pickups").update({ status: "sent", sent_at: now, sent_by: body.sent_by ?? "aix" }).in("id", rowsAll.map((r) => r.id)).eq("status", "pending");
-  if (rowsAll[0].property_customer_id) await supabase.from("property_customers").update({ last_property_sent_at: now }).eq("id", rowsAll[0].property_customer_id);
+  if (rowsAll[0].property_customer_id) await supabase.from("property_customers").update({ last_property_sent_at: now, ...CLEAR_MANUAL_UPDATE_DAYS }).eq("id", rowsAll[0].property_customer_id);
   // image_urls: 画面（売上サポの handoff）が AIX で実際に届けた画像の URL（送った順）。古い画面は渡さない → null（画像の対応は付けない）
   const delivered = Array.isArray(body.image_urls) ? body.image_urls.filter((u): u is string => typeof u === "string" && !!u) : null;
   // 2026-09-24 反証: 画面が送った先の会話（conversation_id）とピックアップの会話が違えば記録しない

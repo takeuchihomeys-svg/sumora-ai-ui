@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
 import { itemizeWants, type WantsCustomerLike } from "@/app/lib/customer-wants";
 import { searchRentMinOf, type CustomerLike } from "@/app/lib/property-brain";
+import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
 
 // 条件変更履歴の追跡対象フィールド（condition-history.ts の TRACKED と同一）
 const CONDITION_TRACKED_FIELDS = [
@@ -136,6 +137,11 @@ export async function PATCH(req: NextRequest) {
 
   if (!id) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+
+  // 2026-10-06 送った・確認した印（前回が動く）→ 手で選んだ更新日は自動に戻す（同じ PATCH で明示した時は除く・search-update-days.ts）
+  if ((fields.last_property_sent_at || fields.property_viewed_at) && !("rp_update_days" in fields) && !("itandi_update_days" in fields)) {
+    Object.assign(fields, CLEAR_MANUAL_UPDATE_DAYS);
   }
 
   // 物件送信（last_property_sent_at 更新）時の自動ステータス処理

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import crypto from "crypto";
+import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
 
 export const maxDuration = 30;
 
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest) {
       if (data?.id) {
         await supabase
           .from("property_customers")
-          .update({ last_property_sent_at: new Date().toISOString() })
+          .update({ last_property_sent_at: new Date().toISOString(), ...CLEAR_MANUAL_UPDATE_DAYS })
           .eq("id", data.id);
 
         const remaining = await getRemainingCount();

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
+import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
 
 const TASK_LABEL: Record<string, string> = {
   property_check: "物件確認",
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest) {
           .update({
             property_send_count: current + 1,
             last_property_sent_at: now,
+            ...CLEAR_MANUAL_UPDATE_DAYS,
             updated_at: now,
           })
           .eq("id", conv.property_customer_id as string);
