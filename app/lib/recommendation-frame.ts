@@ -72,6 +72,53 @@ export function bundleCompareOk(f: PropertySendFacts): boolean | null {
   return f.hoursSinceLastBundle <= BUNDLE_COMPARE_WINDOW_HOURS;
 }
 
+/**
+ * 出口（本文から「お送りさせて頂きましたお部屋の中でも」を外す）を掛けてよいか — 確かな時だけ false。
+ * 2026-10-06 竹内（R・F asecia fonte 302）「複数の物件送った中で1件オススメする時は お送りさせて頂きましたお部屋の中でも使う。1件だけの場合は使わない」
+ *   R の下書き: 2日前の束（3部屋）の後に、束に無い1件を AIX【物件オススメ】で送った。旧の判定（送付ログ7日）で compare になり比較の形が出た。
+ *   入口（シナリオ）は束の中か・束の時間で決めるが、出口は**誤って消さない線**で決める（scripts/audit-compare-frame-scope.ts・180日）:
+ *     ・束の時間（aix_usage_logs の物件ピックアップ）は確か → 束が無い・束から BUNDLE_COMPARE_WINDOW_HOURS 超 なら外す
+ *     ・「束に無い部屋」は束の部屋の名前（送った画像の読み取り）が欠ける・読み違うので出口には使わない
+ *       （束の直後0.1時間で「束に無い」と出た7回中6回はスタッフが比較の形で送っていた＝読み取りの抜け）
+ *   シナリオが compare（継続ピックアップ等）なら外さない。束の時間が分からない（undefined）時は決めない（null）
+ */
+export function compareFrameExitAllowed(
+  scenario: RecommendationScenario | null | undefined,
+  hoursSinceLastBundle: number | null | undefined,
+  /** 束の後（束の10分後〜今の15分前）にスタッフが手で画像を2枚以上送ったか（手で送った束＝AIX の記録に無い束がある） */
+  manualImagesAfterBundle = false,
+): boolean | null {
+  if (!scenario) return null;
+  if (scenario === "compare") return true;
+  // 束が無い（AIX の記録に無い）時は手で束を送っていることがある（9/13「全てご案内させて頂きます」）→ 出口では決めない（件数の線だけ）
+  if (hoursSinceLastBundle === undefined || hoursSinceLastBundle === null) return null;
+  if (manualImagesAfterBundle) return null;
+  if (hoursSinceLastBundle > BUNDLE_COMPARE_WINDOW_HOURS) return false;
+  return null;
+}
+
+/** 束の後に手で送った画像（スタッフの [画像]）が2枚以上あるか。messages は古い順・created_at 付き */
+export function hasManualImagesAfterBundle(
+  messages: ReadonlyArray<{ sender?: string | null; text?: string | null; created_at?: string | null; rawCreatedAt?: string | null; createdAt?: string | null }>,
+  hoursSinceLastBundle: number | null | undefined,
+  nowMs: number,
+): boolean {
+  if (hoursSinceLastBundle == null) return false;
+  const from = nowMs - hoursSinceLastBundle * 3_600_000 + 10 * 60_000;
+  const to = nowMs - 15 * 60_000;
+  // 画面から来る会話は直近20件ほど。束の時刻まで届いていなければ「分からない」＝手で送った束があるかもしれない側に倒す（出口を掛けない）
+  const times = messages.map((m) => Date.parse(String(m.created_at ?? m.rawCreatedAt ?? m.createdAt ?? ""))).filter((t) => Number.isFinite(t));
+  if (!times.length || Math.min(...times) > from) return true;
+  let n = 0;
+  for (const m of messages) {
+    if (m.sender === "customer") continue;
+    if (!/^\[画像\]/.test(String(m.text ?? "").trim())) continue;
+    const t = Date.parse(String(m.created_at ?? m.rawCreatedAt ?? m.createdAt ?? ""));
+    if (Number.isFinite(t) && t > from && t < to) n++;
+  }
+  return n >= 2;
+}
+
 // 「お送りした中でも」は“複数の中から選んだ”という事実の宣言。1週間以上前の送付を
 // 「中でも」で引き合いに出すのは文脈が切れており、お客様側の記憶とも合わない。
 export const COMPARE_FRAME_STALE_HOURS = 24 * 7;

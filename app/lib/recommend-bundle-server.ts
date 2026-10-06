@@ -7,8 +7,13 @@
 //   判定（時間の線・束の外なら使わない）は recommendation-frame.bundleCompareOk（純関数）。ここは DB から材料を読むだけ。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sameBuildingName, nameSimilarity } from "./candidate-facts";
+import { hasManualImagesAfterBundle } from "./recommendation-frame";
 
-export type RecommendBundleFacts = { hoursSinceLastBundle: number | null; starInLastBundle: boolean | null; bundleSize: number; members?: string[] };
+export type RecommendBundleFacts = {
+  hoursSinceLastBundle: number | null; starInLastBundle: boolean | null; bundleSize: number; members?: string[];
+  /** 2026-10-06: 束の後に手で画像を2枚以上送ったか（AIX の記録に無い束がある＝出口で比較の形を外さない・recommendation-frame.compareFrameExitAllowed） */
+  manualImagesAfterBundle?: boolean;
+};
 
 /**
  * 束の部屋の名前の中にオススメする部屋の建物があるか（true＝束の中・false＝はっきり束の外・null＝分からない）。
@@ -44,7 +49,14 @@ export async function loadRecommendBundleFacts(
       .gte("sent_at", new Date(t - 3 * 60_000).toISOString()).lte("sent_at", new Date(t + 5 * 60_000).toISOString()).limit(60);
     const members = [...new Set(((rows ?? []) as Array<{ property_name: string | null; delivery: string | null }>)
       .filter((r) => r.delivery !== "shared" && r.property_name).map((r) => String(r.property_name)))];
-    return { hoursSinceLastBundle: Math.max(0, (nowMs - t) / 3_600_000), starInLastBundle: starInBundle(starName, members), bundleSize: members.length, members };
+    const hoursSinceLastBundle = Math.max(0, (nowMs - t) / 3_600_000);
+    let manualImagesAfterBundle = true; // 読めない時は「手で送った束があるかもしれない」側（出口を掛けない）
+    try {
+      const { data: msgs, error: mErr } = await sb.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
+        .gte("created_at", new Date(t - 30 * 60_000).toISOString()).lte("created_at", new Date(nowMs).toISOString()).order("created_at").limit(300);
+      if (!mErr && (msgs ?? []).length < 300) manualImagesAfterBundle = hasManualImagesAfterBundle((msgs ?? []) as Array<{ sender: string | null; text: string | null; created_at: string | null }>, hoursSinceLastBundle, nowMs);
+    } catch { /* 上の既定のまま */ }
+    return { hoursSinceLastBundle, starInLastBundle: starInBundle(starName, members), bundleSize: members.length, members, manualImagesAfterBundle };
   } catch {
     return {};
   }

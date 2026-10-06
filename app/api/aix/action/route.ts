@@ -79,7 +79,9 @@ import { buildRecommendApplyLineNote, detectRecommendApplyLine, detectImmediateM
 import { resolvePropertySendState, describePropertySendState } from "@/app/lib/property-send-state";
 // 2026-09-21 竹内「複数物件送った中では『お送りさせて頂きましたお部屋の中でも〜』／新着物件なら新着物件の言い回し」
 //   訴求シナリオの判定・ガイド・検査（aix-template-generate と同じ物を見る）
-import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation, isExampleFrameCompatible } from "@/app/lib/recommendation-frame";
+import { resolveRecommendationScenario, buildScenarioNote, detectFrameViolation, isExampleFrameCompatible, compareFrameExitAllowed } from "@/app/lib/recommendation-frame";
+// 2026-10-06 竹内（見木さん）: 近さの言葉（先ほど・先程）は前の物件のやり取りから3時間以内だけ
+import { fixRecentReference, lastRoomExchange, type ExchangeMsg } from "@/app/lib/recency-reference";
 // 2026-10-01 竹内「1通目の言い回しも2通目と同じやり方で直す」: 1通目の形（スタッフが書いた実物）・出口の語・文末の揃え・手本の選別
 import { findFirstAiPhrases, isCleanFirstExample, isFirstRecommendation, unifyBangEnding, fixAdjectiveNakaguro } from "@/app/lib/first-message-style";
 import { buildFirstSceneNote, leakedFirstExampleFacts, newArrivalOpening } from "@/app/lib/first-message-scene";
@@ -1980,6 +1982,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       // 2026-10-06 ⑫（あ・「森本様」の事例）: 呼び名を固定する（call-name-guard.enforceCallName・会話に出た名前と呼び名以外の「〇〇さん/様」を呼び名に）
       { const g = enforceCallName(banned.text, familyName, (Array.isArray(body.recent_messages) ? body.recent_messages : []).map((m: { text?: string | null }) => m.text ?? ""), [rawName]); if (g.replaced.length) { console.log(JSON.stringify({ tag: "aix:call-name-fixed", action: currentAction, conversationId, replaced: g.replaced })); banned.text = g.text; } }
+      // 2026-10-06 竹内（見木さん）「先程ってかなり前にやり取りしていた物件」: 前の物件のやり取りから3時間超なら「先ほど／先程」で前の物件を指さない（recency-reference・語を「以前」に）
+      { const rr = fixRecentReference(banned.text, lastRoomExchange(Array.isArray(body.recent_messages) ? body.recent_messages as ExchangeMsg[] : [], Date.now())); if (rr.applied.length) { console.log(JSON.stringify({ tag: "aix:recent-reference", action: currentAction, conversationId, applied: rr.applied })); banned.text = rr.text; } }
       // 2026-09-17 竹内（まりあ事例）「かしこまりました！って生成された文に入っているけど、文の構成としておかしいし、
       //   全力でサポートさせて頂きます。もこれ返信の部分で使う部分なので、AIXの物件ピックアップや、物件オススメに入らない文となる」:
       //   物件を送る通は「送りました」の報告なので、依頼の受諾（かしこまりました）と見つかるまでの宣言（全力サポート）を落とす。
@@ -2842,6 +2846,8 @@ ${SMORA_COMMON_RULES}`;
           sentPropertyCount: sendState.sentPropertyCount,
           // 資料の現況・スタッフの入力で決まっていればそれが正（ブレインの判断は会話全体の物）
           notViewable: recViewable && recViewable.source !== "brain" ? recViewable.notViewable : sendState.notViewable,
+          // 2026-10-06 竹内（R）: 束が無い・束から1時間超で比較の場面でない時は比較の形を外す（確かな時だけ・recommendation-frame.compareFrameExitAllowed）
+          compareAllowed: compareFrameExitAllowed(recScenario, recBundle.hoursSinceLastBundle, recBundle.manualImagesAfterBundle ?? true),
         });
         if (closing.applied.length > 0) {
           console.log(JSON.stringify({ tag: "aix:recommend-closing", action: currentAction, conversationId, applied: closing.applied, state: describePropertySendState(sendState) }));

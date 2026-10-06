@@ -23,8 +23,19 @@
 
 import { readPropertyStateFromText } from "./property-send-state";
 
-/** 比較フレーム（送った中から1件を推す語）。2件以上送っている時だけ使える */
-const COMPARISON_FRAME_RE = /(?:お送り(?:させて(?:頂|いただ)き|)ました?|ご紹介(?:させて(?:頂|いただ)き|)ました?)(?:お部屋|物件)の中でも(?:特に)?|(?:お送り|ご紹介)(?:した|しました)(?:中|なか)でも(?:特に)?/;
+/**
+ * 比較フレーム（こちらが送った中から1件を推す語）。2件以上送っている時だけ使える。
+ * 2026-10-06 竹内（R・F asecia fonte 302）「複数の物件送った中で1件オススメする時は お送りさせて頂きましたお部屋の中でも使う。1件だけの場合は使わない」:
+ *   言い換え（お送りさせていただいた・送らせて頂いた・ピックアップさせて頂きました・これまで〜）も同じ語として拾う。
+ *   ⚠ 「お送り頂きました物件の中で」（お客様が送った物件）は拾わない（させて の無い お送り頂き は相手の送付）
+ */
+const COMPARISON_FRAME_RE = /(?:(?:これまで|今まで)に?)?(?:(?:(?:お送り|ご紹介|ピックアップ)させて|送らせて)(?:頂|いただ)(?:きました|いた)|(?:お送り|ご紹介|ピックアップ)(?:しました|した))(?:お部屋|物件)?の?(?:中|なか)でも(?:特に)?[、,]?/;
+/** 比較の形の直前の呼びかけ（「みやびさんに」）。外す時に「に」を残さない */
+const NAME_BEFORE_FRAME_RE = new RegExp(String.raw`(さん(?:達)?)に[ 　]*(?=${COMPARISON_FRAME_RE.source})`);
+/** 本文に比較の形（お送りさせて頂きましたお部屋の中でも 等）があるか */
+export function hasComparisonFrame(text: string | null | undefined): boolean {
+  return COMPARISON_FRAME_RE.test(String(text ?? ""));
+}
 /** 内覧の誘導（退去予定でまだ見られない時は申込誘導に差し替える） */
 const VIEWING_INVITE_RE = /お気に召され(?:まし)?たら[^\n]{0,20}(?:ご都合|お日にち|日程)[^\n]{0,20}ご案内させて(?:頂|いただ)き(?:ます|ましたら)[^\n]{0,4}[！!。]*|お気に召され(?:まし)?たら[^\n]{0,10}ご案内させて(?:頂|いただ)きます[^\n]{0,4}[！!。]*/;
 /** 実データ最多（6件）の申込誘導 */
@@ -55,6 +66,12 @@ export function fixRecommendClosing(
     /** ブレインの判断（渡されればこちらが正。渡されなければ本文から読む） */
     notViewable?: boolean | null;
     nowMs?: number;
+    /**
+     * 2026-10-06 竹内（R）: 比較の形が使える場面か（訴求シナリオ＝recommendation-frame の判定。直近に複数の物件を送った束の中から推す時だけ true）。
+     * false なら会話全体で何件送っていても外す（R: 会話では9件送っていたが、推したのは2日前の束に無い1件）。
+     * 渡されない（null/undefined）時は今まで通り件数だけで決める
+     */
+    compareAllowed?: boolean | null;
   },
 ): RecommendClosingResult {
   const src = text ?? "";
@@ -62,9 +79,13 @@ export function fixRecommendClosing(
   const applied: string[] = [];
   let out = src;
 
-  // ① 比較フレーム（2件以上送っている時だけ使える）
-  if (o.sentPropertyCount <= 1 && COMPARISON_FRAME_RE.test(out)) {
-    out = out.replace(COMPARISON_FRAME_RE, "").replace(/^[\s、,]+/gm, "");
+  // ① 比較フレーム（2件以上送っている時・比較の場面の時だけ使える）
+  if ((o.sentPropertyCount <= 1 || o.compareAllowed === false) && COMPARISON_FRAME_RE.test(out)) {
+    // 「みやびさんにお送りさせて頂きましたお部屋の中でもリアライズ南巽は…」→ 「みやびさんにリアライズ南巽は」と壊れないよう、
+    //   呼びかけの「に」は落として呼びかけを1行にする（実送信の「林田さん／〜」の形・全件監査で1件）
+    out = out.replace(NAME_BEFORE_FRAME_RE, "$1\n");
+    for (let i = 0; i < 3 && COMPARISON_FRAME_RE.test(out); i++) out = out.replace(COMPARISON_FRAME_RE, "");
+    out = out.replace(/^[\s、,]+/gm, "");
     applied.push("comparison_frame");
   }
 

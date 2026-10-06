@@ -32,12 +32,14 @@ import { normalizeStatus } from "@/app/lib/status-normalize";
 import { stripNonNameChars, isPlausiblePersonName } from "@/app/lib/validate-reply";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing, buildRecommendClosingNote } from "@/app/lib/recommend-closing";
+// 2026-10-06 竹内（見木さん）: 近さの言葉（先ほど・先程）は前の物件のやり取りから3時間以内だけ・時系列の1行を生成に渡す
+import { lastRoomExchange, buildRecencyNote, fixRecentReference, type ExchangeMsg } from "@/app/lib/recency-reference";
 // 2026-09-21 竹内「複数物件送った中では『お送りさせて頂きましたお部屋の中でも〜』／新着物件なら新着物件の言い回し」
 //   判定・ガイド・禁止表現・検査は app/lib/recommendation-frame.ts に集約（AIX ボタン本体と同じ物を見る）
 import {
   canUseCompareFrame, resolveRecommendationScenario, detectFrameViolation, isExampleFrameCompatible,
   RECOMMENDATION_SCENARIO_LABELS, RECOMMENDATION_SCENARIO_GUIDES, RECOMMENDATION_FORBIDDEN_OPENINGS,
-  COMPARE_FRAME_RE, NEW_LISTING_FRAME_RE,
+  COMPARE_FRAME_RE, NEW_LISTING_FRAME_RE, compareFrameExitAllowed,
   type RecommendationScenario, type PropertySendFacts,
 } from "@/app/lib/recommendation-frame";
 // 2026-09-18 物件の状況（送った件数・退去予定・内覧可否）はブレインの判断を1つの関数から読む（aix/action と同じ物）
@@ -1275,6 +1277,9 @@ export async function POST(req: NextRequest) {
 
   // ── コンテキスト整形 ─────────────────────────────────────────────────────
   const nowMs = Date.now();
+  // 2026-10-06 竹内（見木さん）: 前の物件のやり取り（今の通＝直前15分のスタッフの送信は除く）からの時間。入口（時系列の1行）と出口（先ほど→以前）が同じ物を見る
+  const recencyLast = lastRoomExchange(Array.isArray(recentMessages) ? recentMessages as ExchangeMsg[] : [], nowMs);
+  const recencyNote = buildRecencyNote(recencyLast, nowMs);
   const history = (recentMessages ?? [])
     .slice(-15)
     .map((m) => {
@@ -1580,6 +1585,8 @@ export async function POST(req: NextRequest) {
     `━━━━━━━━━━━━━━━━━━━━\n【現在の状況】\n━━━━━━━━━━━━━━━━━━━━`,
     jstContextNote,
     elapsedLabel ? `お客様の最終返信から: ${elapsedLabel}` : "",
+    // 2026-10-06 竹内（見木さん）「時系列を理解していない。先程ってかなり前にやり取りしていた物件」: 前の物件のやり取りがいつか・近さの言葉を使ってよいか
+    recencyNote,
     "",
     `━━━━━━━━━━━━━━━━━━━━\n【お客様情報】\n━━━━━━━━━━━━━━━━━━━━`,
     // 🚨 伏せ字（〇〇）をプロンプトに入れない。入れるとそのまま本文へ転記される（2026-09-01 事故）
@@ -2014,10 +2021,17 @@ ${text}
       const closing = isEstimateSecond ? { text, applied: [] as string[] } : fixRecommendClosing(text, {
         sentPropertyCount: exitState.sentPropertyCount,
         notViewable: exitState.notViewable,
+        // 2026-10-06 竹内（R）: 束が無い・束から1時間超で、比較の場面でない時は「お送りさせて頂きましたお部屋の中でも」を外す（確かな時だけ）
+        compareAllowed: actionType === "property_recommendation" ? compareFrameExitAllowed(recommendationScenario, propertySendFacts.hoursSinceLastBundle, bundleFacts.manualImagesAfterBundle ?? true) : null,
       });
       if (closing.applied.length > 0) {
         console.log(JSON.stringify({ tag: "aix-template-generate:recommend-closing", applied: closing.applied, state: describePropertySendState(exitState) }));
         text = closing.text;
+      }
+      // 2026-10-06 竹内（見木さん）: 前の物件のやり取りから3時間超なら「先ほど／先程」で前の物件を指さない（比べるだけの行は外す・語は「以前」に）
+      {
+        const rr = fixRecentReference(text, recencyLast);
+        if (rr.applied.length > 0) { console.log(JSON.stringify({ tag: "aix-template-generate:recent-reference", applied: rr.applied, hours: recencyLast ? Math.round(recencyLast.hours) : null })); text = rr.text; }
       }
       // 2026-09-30: 締めを刺さり具合の3つに揃える（1通目が既に同じ締めなら重ねない＝何もしない）。
       //   消すのは「定型だけの最後の段落」だけ・無ければ足す（recommend-cta.ts）
