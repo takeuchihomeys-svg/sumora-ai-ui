@@ -11,9 +11,8 @@
 // 読み取りのみ。出力は会話の文を含むので共有しない。
 import { createClient } from "@supabase/supabase-js";
 import { classifyConditionTurn } from "../app/lib/condition-source-gate";
-import { areaAskCue, placeTokens } from "../app/lib/condition-restore";
-import { detectRentRaiseRequest } from "../app/lib/rent-raise";
-import { parseEquipmentWants } from "../app/lib/listing-equipment";
+import { placeTokens } from "../app/lib/condition-restore";
+import { readConditionStatements, type ConditionStatementKind } from "../app/lib/condition-reading";
 import { isFilledSumoraForm } from "../app/lib/condition-format";
 import { parseConditionSource } from "../app/lib/condition-history";
 
@@ -35,22 +34,14 @@ async function pageAll<T>(q: (from: number, to: number) => PromiseLike<{ data: T
   return out;
 }
 
-type Kind = "エリア" | "家賃" | "間取り" | "入居時期" | "NG" | "設備";
+// 2026-10-06: 種類の読み手は app/lib/condition-reading.ts（書き手・ブレインと同じ物）に1つにした
+type Kind = ConditionStatementKind;
 const FIELDS: Record<Kind, string[]> = {
   エリア: ["desired_area"], 家賃: ["rent_max", "rent_min"], 間取り: ["floor_plan"], 入居時期: ["move_in_time"], NG: ["ng_points"], 設備: ["preferences", "other_requests", "ng_points"],
+  通勤: ["commute_station", "commute_minutes"], ペット: ["pet", "preferences", "other_requests"], 徒歩: ["walk_minutes"],
 };
 const LAYOUT_RE = /(?:^|[^0-9０-９])[1-4１-４]\s?(?:SLDK|LDK|DK|K|R)(?![A-Za-z])|ワンルーム/;
-const WANT_RE = /希望|探|がいい|が良|がよ|でも|以上|以内|まで|にして|に変|お願い|ありますか|ないですか|無いですか|ないでしょうか/;
-function kindsOf(cond: string): Kind[] {
-  const out: Kind[] = [];
-  if (areaAskCue(cond) || (placeTokens(cond).length && /広げ|候補|も見|も探|追加|変更|変え|で探|でお願い|希望|方面|エリア/.test(cond))) out.push("エリア");
-  if (detectRentRaiseRequest(cond) || (/家賃|予算|管理費込|共益費込/.test(cond) && /[0-9０-９]+(?:\.[0-9]+)?万|[0-9]{4,6}円/.test(cond))) out.push("家賃");
-  if (LAYOUT_RE.test(cond) && WANT_RE.test(cond)) out.push("間取り");
-  if (/入居|引っ越し|引越|住み始め/.test(cond) && /[0-9０-９]+月|月末|上旬|中旬|下旬|年内|までに|以降|頃/.test(cond)) out.push("入居時期");
-  if (/NG|嫌|いや(?:です|だ)|避けたい|無理|ダメ|だめ|以外で|は(?:なし|無し)で/.test(cond) && /1階|一階|木造|ロフト|和室|ユニットバス|3点ユニット|線路|墓|北向き|半地下|鉄骨|プロパン|エリア|区|駅|階/.test(cond)) out.push("NG");
-  if (parseEquipmentWants({ preferences: cond }).wants.length) out.push("設備");
-  return out;
-}
+function kindsOf(text: string): Kind[] { return readConditionStatements(text).map((x) => x.kind); }
 
 async function main() {
   type M = { id: string; conversation_id: string; text: string | null; created_at: string };
@@ -72,7 +63,7 @@ async function main() {
     if (!pc || !m.text || isFilledSumoraForm(m.text) || (m.text.match(/[①②③④⑤⑥⑦⑧]/g) ?? []).length >= 2) continue;
     const turn = classifyConditionTurn(m.text);
     if (!turn.conditionText) { if (turn.kind === "property_inquiry" || turn.kind === "image_property") inquiryDropped++; continue; }
-    const ks = kindsOf(turn.conditionText);
+    const ks = kindsOf(m.text);
     if (!ks.length) continue;
     const t = Date.parse(m.created_at);
     const near = (histByPc.get(pc) ?? []).filter((h) => { const x = Date.parse(h.created_at); return x >= t - 60_000 && x <= t + 30 * 60_000; });
@@ -98,6 +89,15 @@ async function main() {
     for (const x of s.missed.slice(-show)) console.log(`    ${x.at.slice(0, 16)} ${x.text}`);
   }
   console.log(`（物件の問い合わせとして入口で外した発言 ${inquiryDropped}通）`);
+  // 誤って捉えない: 物件の URL・号室・この物件 を含む発言から条件を読んだ数（0 であるべき）
+  let inqWithRead = 0; const inqEx: string[] = [];
+  for (const m of msgs) {
+    if (!m.text || !/https?:\/\/|号室|この物件|このお部屋/.test(m.text)) continue;
+    const rs = readConditionStatements(m.text);
+    if (rs.length) { inqWithRead++; inqEx.push(`${rs.map((x) => x.kind).join("・")} | ${m.text.replace(/\n/g, " / ").slice(0, 90)}`); }
+  }
+  console.log(`（物件の URL・号室・この物件 を含む発言で条件を読んだ: ${inqWithRead}通）`);
+  for (const x of inqEx.slice(-show)) console.log("    " + x);
 
   // 誤って捉えた: 自動の書き手が書いた履歴の根拠の発言が物件の問い合わせ
   const msgById = new Map(msgs.map((m) => [m.id, m]));

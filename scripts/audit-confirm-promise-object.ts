@@ -65,7 +65,9 @@ async function main() {
       const requested = customerRequestedPropertyCheck({ recentMessages: prior });
       const cp = checkPatternForConfirmTopic(fact.detail.object);
       const oldFires = requested && !/割引|交渉/.test(fact.detail.object ?? "");
-      const newFires = (!!cp && (from === "customer" || requested)) || oldFires;
+      // 新（2026-10-06・質問3「セットする」）: 要件が条件側なら お客様が聞いた／依頼／お礼・了承の番 のどれかで立てる（初期費用＋御見積書の約束は見積書の流れ）
+      const estimateFlow = cp === "mgmt_initial_cost" && /見積/.test(m.text);
+      const newFires = (!!cp && !estimateFlow && (from === "customer" || requested || ackAfter)) || oldFires;
       const t0 = Date.parse(m.created_at);
       const next = (aixByConv.get(conv) ?? []).find((r) => { const t = Date.parse(r.sent_at ?? r.created_at); return t > t0 && t - t0 <= 7 * 86400_000; });
       let k = i - 1; while (k >= 0 && list[k].sender !== "customer") k--;
@@ -97,6 +99,7 @@ async function main() {
   console.log(`
 --- スタッフの文に条件側の要件がある約束: ${staffMgmt.length}件（お礼・了承だけの番 ${staffMgmt.filter((r) => r.ackAfter).length}件・旧で約束の AIX ${staffMgmt.filter((r) => r.oldFires).length}件）`);
   console.log("その後:", dist(staffMgmt));
+  console.log(`約束の AIX が立つ: 旧 ${staffMgmt.filter((r) => r.oldFires).length}件 → 新 ${staffMgmt.filter((r) => r.newFires).length}件（うち 確認した（条件・交渉）のピッカー付き ${staffMgmt.filter((r) => r.newFires && r.newCp).length}件）`);
   console.log("お礼・了承だけの番のその後:", dist(staffMgmt.filter((r) => r.ackAfter)));
   console.log("ピッカーまで一致（押した確認系のうち）:", staffMgmt.filter((r) => r.pressed === "property_check_result" && r.pressedCp === checkPatternForConfirmTopic(r.object)).length, "/", staffMgmt.filter((r) => r.pressed === "property_check_result").length);
 

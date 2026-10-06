@@ -119,8 +119,12 @@ export function resolveStaffPromiseAix(
   //   旧は「物件確認の依頼（募集状況）」の時だけ約束の AIX を立てていて、お客様のお礼の番は2段の約束の返信（「気になる点等…」）になっていた
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled) {
     const cp = checkPatternForConfirmTopic(e.detail?.object);
-    if (cp && (e.detail?.objectFrom === "customer" || opts.customerRequestedCheck)
-      && !APPLY_PROGRESS_CHECK_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check", checkPattern: cp };
+    // 2026-10-06 竹内さん（質問3「セットする」）: スタッフが自分の文に要件を書いた約束（「ペット可否確認させて頂きます」180日で150件）も同じ。
+    //   初期費用の確認でも、同じ文が御見積書を約束していれば（見積書送るの流れ）ここでは立てない（見積書の約束は上の estimate の規則）
+    const estimateFlow = cp === "mgmt_initial_cost" && /見積/.test(last.text ?? "");
+    //   スタッフが自分から言っただけ（お客様の依頼もお礼・了承も無い）の番では立てない（物件確認はお客様の依頼があった時だけ・9/12 の決まり）
+    const asked = e.detail?.objectFrom === "customer" || !!opts.customerRequestedCheck || !!opts.customerAckAfter;
+    if (cp && asked && !estimateFlow && !APPLY_PROGRESS_CHECK_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check", checkPattern: cp };
   }
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
     && !/割引|交渉/.test(e.detail?.object ?? "")

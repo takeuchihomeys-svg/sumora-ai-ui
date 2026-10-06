@@ -36,6 +36,7 @@ import { buildScreeningTaskPayload, isValidSyncKey } from "./lib/screening-calen
 import { parseCandidateSlots, parseViewingHoldFromReply, holdEventRow, isViewingHoldNotes, planHoldCleanup, type HoldSlot } from "./lib/viewing-hold";
 // 2026-09-16 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面・一覧に出す
 // 2026-09-18 竹内（𝒮❦ 事例）: お客様への約束（【必ず】）を会話画面の赤帯と一覧のバッジに出す
+import { lastCustomerTs, badgeMessages, pollPlan, deltaSinceIso, upsertConversationRows } from "./lib/conversation-list-sync";
 import { PROMISE_MUST_MARK, TODAY_MARK, promiseAixActionOf, promiseCheckPatternOf, promiseOverdueDays, splitPromisesForFreshInquiry } from "./lib/promise-calendar";
 import { isWaitPromiseNotes, waitPromiseBadge } from "./lib/promise-timing";
 // 一覧の並び: 直近やり取り順（新しい方が上）だけ。2026-09-18 竹内「本来のLINEのように時間最新順に戻す」
@@ -803,6 +804,20 @@ export default function Home() {
   });
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  // 2026-10-06 ⑫ 本文の検索は DB 側（search_conversation_ids_by_message）。打ち終わって 300ms 後に1回
+  const [messageSearchHit, setMessageSearchHit] = useState<{ q: string; ids: Set<string> } | null>(null);
+  useEffect(() => {
+    const q = deferredSearchQuery.trim().toLowerCase();
+    if (!q) { setMessageSearchHit(null); return; }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void supabase.rpc("search_conversation_ids_by_message", { q, max_n: 500 }).then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        setMessageSearchHit({ q, ids: new Set((data as Array<{ conversation_id: string }>).map((r) => String(r.conversation_id))) });
+      });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [deferredSearchQuery]);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<{ id: string; name: string; icon: string; profileImage?: string }>(() => {
     if (typeof window === "undefined") return { id: "sumora", name: "スモラ", icon: "🦄" };
@@ -1781,13 +1796,13 @@ export default function Home() {
       .then(({ count }) => { if (count !== null) setReplyExamplesCount(count); });
 
     // 紐付け済フィルター用：property_customersのline_user_idを取得
-    fetch("/api/property-customers")
-      .then((r) => r.ok ? r.json() : [])
-      .then((data: { line_user_id?: string }[]) => {
-        const ids = new Set(data.map((c) => c.line_user_id).filter(Boolean) as string[]);
+    // 2026-10-06 ⑫ 竹内「AIXツールひらくとき重すぎる」: 旧は GET /api/property-customers（全員の全列＋要望の項目＋会話の結合・約1.1MB）を
+    //   line_user_id のためだけに読んでいた → 列1つだけ（約14KB）
+    void supabase.from("property_customers").select("line_user_id").not("line_user_id", "is", null)
+      .then(({ data }) => {
+        const ids = new Set(((data ?? []) as Array<{ line_user_id: string | null }>).map((c) => c.line_user_id).filter(Boolean) as string[]);
         setLinkedLineUserIds(ids);
-      })
-      .catch(() => {});
+      }, () => {});
 
     fetchConversationsAndMessages();
 
@@ -1858,9 +1873,11 @@ export default function Home() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "conversations" },
-        () => {
-          // 新規会話が届いたらサイレントで全件再取得
-          scheduleFullRefresh();
+        (payload) => {
+          // 2026-10-06 ⑫: 新しい会話はその行だけ足す（旧: 全件の読み直し）
+          const row = payload.new as SupabaseConversationRow | null;
+          if (row?.id) { refreshStatsRef.current.rowPatch++; applyConversationRows([row]); }
+          else scheduleFullRefresh();
         }
       )
       .on(
@@ -1868,6 +1885,9 @@ export default function Home() {
         { event: "UPDATE", schema: "public", table: "conversations" },
         (payload) => {
           const upd = payload.new as SupabaseConversationRow | null;
+          // 2026-10-06 ⑫: 変わった行だけ直す（旧: 1件の更新ごとに2.5秒後の全件の読み直し＝会話・メッセージ・物件顧客で約2MB）。
+          //   下の下書き・AIX の即時の扱いはこの後に当てる（旧も全件の読み直しの後は DB の行の値になっていた）
+          if (upd?.id) { refreshStatsRef.current.rowPatch++; applyConversationRows([upd]); }
           // 2026-10-02 竹内「不在の通知がはいるようにする」: お客様が「電話をかける」ボタンを押した（/api/call-tap が call_tapped_at を今にした）
           if (upd?.id && upd.call_tapped_at && Date.now() - Date.parse(upd.call_tapped_at) < 2 * 60_000) {
             const before = conversationsRef.current.find((c) => c.id === String(upd.id));
@@ -1917,7 +1937,7 @@ export default function Home() {
               }
             }
           }
-          scheduleFullRefresh();
+          if (!upd?.id) scheduleFullRefresh();
         }
       )
       .on(
@@ -1940,11 +1960,20 @@ export default function Home() {
             return;
           }
 
+          if (newMsg.sender === "customer") {
+            const cidStr = String(newMsg.conversation_id);
+            const prevAt = lastCustomerAtRef.current[cidStr];
+            if (!prevAt || newMsg.created_at > prevAt) {
+              lastCustomerAtRef.current = { ...lastCustomerAtRef.current, [cidStr]: newMsg.created_at };
+              setLastCustomerAtMap(lastCustomerAtRef.current);
+            }
+          }
           // refで会話が存在するか確認（setState内でfetchを呼ぶのを避けるため）
           const found = conversationsRef.current.some((c) => c.id === String(newMsg.conversation_id));
           if (!found) {
-            // 新規会話のメッセージ → サイレントで全件再取得
-            scheduleFullRefresh();
+            // 2026-10-06 ⑫: 一覧に無い会話のメッセージ → その会話の行だけ取る（旧: 全件の読み直し）
+            void supabase.from("conversations").select(CONVERSATION_LIST_COLUMNS).eq("id", String(newMsg.conversation_id)).maybeSingle()
+              .then(({ data }) => { if (data) { refreshStatsRef.current.rowPatch++; applyConversationRows([data as unknown as SupabaseConversationRow]); } else scheduleFullRefresh(); });
             return;
           }
 
@@ -2056,6 +2085,24 @@ export default function Home() {
       }
     }, 60 * 1000);
 
+    // 2026-10-06 ⑫: 物件顧客（条件・追加条件の帯）は Realtime で変わった行だけ直す（publication に入っている）。
+    //   一覧の静かな読み直しでは物件顧客を全部（233行・428KB）読み直さない
+    const pcChannel = supabase
+      .channel("realtime-property-customers")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "property_customers" }, (payload) => {
+        const pc = payload.new as PropertyCustomerRow | null;
+        if (!pc?.id) return;
+        const convIds = conversationsRef.current.filter((c) => c.propertyCustomerId === pc.id).map((c) => c.id);
+        if (!convIds.length) return;
+        const entry = linkedEntryOf(pc);
+        setLinkedCustomerMap((prev) => {
+          const next = { ...prev };
+          for (const id of convIds) next[id] = { ...(prev[id] ?? {}), ...entry };
+          return next;
+        });
+      })
+      .subscribe();
+
     // line_tasks リアルタイム購読（自動検知タスクをUIに即時反映）
     const taskChannel = supabase
       .channel("realtime-line-tasks")
@@ -2094,6 +2141,7 @@ export default function Home() {
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(taskChannel);
+      supabase.removeChannel(pcChannel);
       clearInterval(calendarAlarm);
       clearInterval(pollInterval);
       if (refreshTimer) clearTimeout(refreshTimer);
@@ -2136,8 +2184,11 @@ export default function Home() {
   }, [selectedId, quotedIdsKey]);
 
   // 会話を開いたとき：その会話の全メッセージを再取得（90日制限を超える古い履歴も表示）
+  //   2026-10-06 ⑫: 一覧はメッセージを持たなくなったので、開いた会話のメッセージはここで1回だけ読む（下の「0件の会話」の取得と二重にしない）
+  const messagesFetchedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedId) return;
+    messagesFetchedForRef.current = selectedId; // 読んでいる最中（下の「0件の会話」の取得はしない）
     supabase
       .from("messages")
       .select("*")
@@ -2200,6 +2251,8 @@ export default function Home() {
           lineMessageId: m.line_message_id || undefined,
         }));
         scrollAfterFetchRef.current = selectedId;
+        // 一覧に会話が無い時に届いた（?conv= 直遷移で一覧より先）→ 印を外し、下の「0件の会話」の取得が一覧の読み込み後に補う
+        if (!conversationsRef.current.some((c) => c.id === selectedId) && messagesFetchedForRef.current === selectedId) messagesFetchedForRef.current = null;
         setConversations((prev) =>
           prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
         );
@@ -2232,6 +2285,8 @@ export default function Home() {
     if (!selectedId) return;
     const conv = conversations.find(c => c.id === selectedId);
     if (!conv || (conv.messages && conv.messages.length > 0)) return;
+    // 開いた時の取得（上）が既にこの会話を読んでいる → 二重に読まない（?conv= 直遷移で一覧より先に開いた時だけここで補う）
+    if (messagesFetchedForRef.current === selectedId) return;
     void (async () => {
       const { data } = await supabase
         .from("messages")
@@ -2490,6 +2545,74 @@ export default function Home() {
     }
   }, [conversations]);
 
+  // ── 2026-10-06 ⑫ 一覧の読み込みを変わった所だけに（app/lib/conversation-list-sync.ts）──
+  const lastFullRefreshAtRef = useRef<number | null>(null);
+  const lastPollAtRef = useRef<number | null>(null);
+  /** 読み直しの回数（測る用・window.__aixListRefresh で見られる） */
+  const refreshStatsRef = useRef<{ full: number; delta: number; rowPatch: number; startedAt: number }>({ full: 0, delta: 0, rowPatch: 0, startedAt: Date.now() });
+  useEffect(() => { (window as unknown as { __aixListRefresh?: unknown }).__aixListRefresh = refreshStatsRef.current; }, []);
+  /** 会話ごとのお客様の最後の発言の時刻（DB の集計）。一覧の未読・AIX の鮮度・下書きの先回りに使う */
+  const lastCustomerAtRef = useRef<Record<string, string>>({});
+  const [lastCustomerAtMap, setLastCustomerAtMap] = useState<Record<string, string>>({});
+  const refreshLastCustomerAt = async () => {
+    const { data, error } = await supabase.rpc("conversation_last_customer_at");
+    if (error || !data) return;
+    const map: Record<string, string> = {};
+    for (const r of data as Array<{ conversation_id: string; last_customer_at: string }>) map[String(r.conversation_id)] = r.last_customer_at;
+    lastCustomerAtRef.current = map;
+    setLastCustomerAtMap(map);
+  };
+  const linkedCustomerMapRef = useRef(linkedCustomerMap);
+  useEffect(() => { linkedCustomerMapRef.current = linkedCustomerMap; }, [linkedCustomerMap]);
+  /** DB の会話の行（Realtime・差分の読み直し）を一覧に当てる。読み込み済みのメッセージは残す */
+  const applyConversationRows = (rows: SupabaseConversationRow[]) => {
+    if (!rows.length) return;
+    setConversations((prev) => {
+      const next = upsertConversationRows(prev, rows, (r) => String(r.id), (r, existing) => {
+        const item = conversationRowToItem(r, existing?.messages ?? []);
+        return existing ? { ...existing, ...item, messages: existing.messages } : item;
+      });
+      conversationsRef.current = next;
+      return next;
+    });
+    const patchSet = (prev: Set<string>, pick: (r: SupabaseConversationRow) => boolean) => {
+      let changed = false;
+      const n = new Set(prev);
+      for (const r of rows) {
+        const id = String(r.id);
+        const want = pick(r);
+        if (want && !n.has(id)) { n.add(id); changed = true; }
+        if (!want && n.has(id)) { n.delete(id); changed = true; }
+      }
+      return changed ? n : prev;
+    };
+    setPostApplyConvIds((prev) => patchSet(prev, (r) => !!r.is_post_apply));
+    setHotConvIds((prev) => patchSet(prev, (r) => !!r.is_hot));
+    setFlaggedConvIds((prev) => patchSet(prev, (r) => !!r.is_flagged));
+  };
+
+  /** 物件顧客の行 → 会話画面の紐付けの情報（一覧の読み込み・Realtime の両方で使う） */
+  const linkedEntryOf = (pc: PropertyCustomerRow) => ({
+    id: pc.id,
+    name: pc.customer_name,
+    conditions: formatConditions(pc),
+    propertyStatus: pc.status || undefined,
+    lastPropertySentAt: pc.last_property_sent_at || null,
+    ai_summary: pc.ai_summary || null,
+    additional_conditions: pc.additional_conditions ?? null,
+    structured: {
+      move_in_time: pc.move_in_time ?? null,
+      rent_max: pc.rent_max ?? null,
+      desired_area: pc.desired_area ?? null,
+      walk_minutes: pc.walk_minutes ?? null,
+      floor_plan: pc.floor_plan ?? null,
+      initial_cost_limit: pc.initial_cost_limit ?? null,
+      building_age: pc.building_age ?? null,
+      other_requests: pc.other_requests ?? pc.preferences ?? null,
+    } as CustomerStructuredForGen,
+    rawData: pc,
+  });
+
   const fetchConversationsAndMessages = async (silent = false, retries = 0) => {
     if (!silent) setPageLoading(true);
     if (!silent) setError("");
@@ -2521,12 +2644,48 @@ export default function Home() {
       }
     }
 
+    // 2026-10-06 ⑫ 竹内「AIXツールひらくとき重すぎる…今全部見ている気がする」（app/lib/conversation-list-sync.ts）:
+    //   旧は30秒ごとに 会話 全件（967KB）＋直近90日のメッセージ（max_rows で 1000行＝4日分・644KB）＋物件顧客（428KB）を丸ごと読み直していた。
+    //   メッセージは開いた会話の分だけ（会話を開いた時の取得）。一覧に要る「お客様の最後の発言の時刻」は DB の集計（43KB）で取る。
+    //   静かな読み直しは「更新時刻が新しい行だけ」（delta）、丸ごとは5分ごと（full）。変わった行は Realtime でも直す
+    const plan: "full" | "delta" = silent ? pollPlan(Date.now(), lastFullRefreshAtRef.current) : "full";
     const CONV_LIMIT = 1000;
-    const { data: conversationRows, error: conversationError } = await supabase
-      .from("conversations")
-      .select(CONVERSATION_LIST_COLUMNS)
-      .order("updated_at", { ascending: false })
-      .limit(CONV_LIMIT);
+    if (plan === "delta") {
+      // 起点は前回の読み直しの2分前（同じ行を毎回読み直さない）。前回が無ければ一番新しい更新時刻の90秒前
+      const since = lastPollAtRef.current ? new Date(lastPollAtRef.current - 120_000).toISOString() : deltaSinceIso(conversationsRef.current);
+      lastPollAtRef.current = Date.now();
+      if (since) {
+        const { data: deltaRows, error: deltaErr } = await supabase
+          .from("conversations")
+          .select(CONVERSATION_LIST_COLUMNS)
+          // ブレイン・下書きの書き込みは updated_at を動かさない事があるので、その時刻の列でも拾う（Realtime が届かない時の保険）
+          .or(`updated_at.gte.${since},brain_analyzed_at.gte.${since},draft_attempted_at.gte.${since},auto_sent_at.gte.${since},draft_pending_at.gte.${since}`)
+          .order("updated_at", { ascending: false })
+          .limit(200);
+        refreshStatsRef.current.delta++;
+        if (!deltaErr) {
+          const rows = (deltaRows ?? []) as unknown as SupabaseConversationRow[];
+          if (rows.length) {
+            applyConversationRows(rows);
+            // お客様の新しい発言は会話の更新時刻も動くので、行が変わった時だけ集計を取り直す（43KB）
+            void refreshLastCustomerAt();
+          }
+          return;
+        }
+        // 失敗した時は丸ごとに落とす
+      }
+    }
+    lastFullRefreshAtRef.current = Date.now();
+    lastPollAtRef.current = Date.now();
+    refreshStatsRef.current.full++;
+    const [{ data: conversationRows, error: conversationError }] = await Promise.all([
+      supabase
+        .from("conversations")
+        .select(CONVERSATION_LIST_COLUMNS)
+        .order("updated_at", { ascending: false })
+        .limit(CONV_LIMIT),
+      refreshLastCustomerAt(),
+    ]);
 
     if (conversationError) {
       console.error(conversationError);
@@ -2539,59 +2698,10 @@ export default function Home() {
       return;
     }
 
-    // 直近90日のメッセージのみ取得（新しい順で5000件 → 古いメッセージで枠が埋まるのを防ぐ）
-    const since90Days = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: messageRows, error: messageError } = await supabase
-      .from("messages")
-      .select("*")
-      .gte("created_at", since90Days)
-      .order("created_at", { ascending: false })
-      .limit(5000);
+    const conversationsData = (conversationRows || []) as unknown as SupabaseConversationRow[];
 
-    if (messageError) {
-      console.error(messageError);
-      if (retries < 2) {
-        setTimeout(() => { void fetchConversationsAndMessages(true, retries + 1); }, 3000);
-        return;
-      }
-      setError("メッセージの取得に失敗しました。");
-      setPageLoading(false);
-      return;
-    }
-
-    const conversationsData = (conversationRows || []) as SupabaseConversationRow[];
-    const messagesData = (messageRows || []) as SupabaseMessageRow[];
-
-    // 2026-09-21: 会話ごとに全メッセージを走査していた（336件×1000件）→ 先に会話ごとに分けてから使う
-    const messagesByConv = new Map<string, SupabaseMessageRow[]>();
-    for (const m of messagesData) {
-      const k = String(m.conversation_id);
-      const arr = messagesByConv.get(k);
-      if (arr) arr.push(m); else messagesByConv.set(k, [m]);
-    }
-
-    const formatted: Conversation[] = conversationsData.map((conversation) => {
-      const relatedMessages = (messagesByConv.get(String(conversation.id)) ?? [])
-        .map((message) => ({
-          id: String(message.id),
-          sender: message.sender,
-          text: message.text,
-          imageUrl: message.image_url || undefined,
-          imageExpiresAt: message.image_expires_at || undefined,
-          fileUrl: message.file_url || undefined,
-          fileName: message.file_name || undefined,
-          time: formatTime(message.created_at),
-          rawCreatedAt: message.created_at,
-          isAix: message.is_aix_generated || false,
-          quotedMessageId: message.quoted_message_id || undefined,
-          speakerName: (message as { speaker_name?: string | null }).speaker_name || undefined,
-          lineMessageId: message.line_message_id || undefined,
-        }))
-        .sort((a, b) => (a.rawCreatedAt || "").localeCompare(b.rawCreatedAt || ""));
-
-      // lastMessage / lastSender / updatedAt の決め方は conversationRowToItem（最初の40件と同じ関数）
-      return conversationRowToItem(conversation, relatedMessages);
-    });
+    // メッセージは持っている物だけ使う（開いた会話・Realtime で届いた分）。一覧の行は DB の last_message で出す
+    const formatted: Conversation[] = conversationsData.map((conversation) => conversationRowToItem(conversation, []));
 
     // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
     // メッセージを保持する場合もメタデータ（lastMessage等）は新しい値を使う
@@ -2637,9 +2747,11 @@ export default function Home() {
     setFlaggedConvIds(new Set(formatted.filter((c) => c.isFlagged).map((c) => c.id)));
 
     // 紐付け済み物件顧客を取得してlinkedCustomerMapを構築
+    // 物件顧客は開いた時に全部・その後は Realtime（property_customers は publication にある）で直す。静かな丸ごとの読み直しでは新しく紐付いた分だけ
+    const knownPc = new Set(Object.values(linkedCustomerMapRef.current).map((v) => v?.id).filter(Boolean) as string[]);
     const propCustomerIds = [...new Set(
       formatted.map((c) => c.propertyCustomerId).filter(Boolean) as string[]
-    )];
+    )].filter((id) => !silent || !knownPc.has(id));
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
@@ -2650,28 +2762,7 @@ export default function Home() {
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
-          if (pc) {
-            map[conv.id] = {
-              id: pc.id,
-              name: pc.customer_name,
-              conditions: formatConditions(pc),
-              propertyStatus: pc.status || undefined,
-              lastPropertySentAt: pc.last_property_sent_at || null,
-              ai_summary: pc.ai_summary || null,
-              additional_conditions: pc.additional_conditions ?? null,
-              structured: {
-                move_in_time: pc.move_in_time ?? null,
-                rent_max: pc.rent_max ?? null,
-                desired_area: pc.desired_area ?? null,
-                walk_minutes: pc.walk_minutes ?? null,
-                floor_plan: pc.floor_plan ?? null,
-                initial_cost_limit: pc.initial_cost_limit ?? null,
-                building_age: pc.building_age ?? null,
-                other_requests: pc.other_requests ?? pc.preferences ?? null,
-              },
-              rawData: pc,
-            };
-          }
+          if (pc) map[conv.id] = linkedEntryOf(pc);
         }
         setLinkedCustomerMap((prev) => ({ ...prev, ...map }));
       }
@@ -2701,8 +2792,8 @@ export default function Home() {
           // 既読マーク済みチェック
           const rAt = readAtMap[c.id];
           if (!rAt) return true;
-          const latestCust = c.messages.filter((m) => m.sender === "customer").at(-1);
-          return !!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt;
+          const latestCustAt = lastCustomerTs(c.messages, lastCustomerAtRef.current[c.id]);
+          return !!latestCustAt && latestCustAt > rAt;
         })
         .slice(0, 3);
 
@@ -2781,8 +2872,9 @@ export default function Home() {
   //   条件は aix-action-items.syncAixActionItem と同じ: 実在の AIX ボタン・reply_mode=aix・cached（今回の発言を見ていない判断）でない
   //   （6〜8月の旧形式 meta の action="follow_up"/"null" 等でバッジが出ていたのも止まる）
   //   2026-09-27（D）: 読み込み済みのメッセージがあれば鮮度も見る（分析中に届いた発言の前の判断でバッジを出さない。判定は aix-button-view.isAixListBadge）
+  //   2026-10-06 ⑫: 鮮度はメッセージを読み込んでいない会話でも DB のお客様の最後の発言の時刻で見る（conversation-list-sync.badgeMessages）
   const isAixBadge = (c: Conversation) =>
-    isAixListBadge({ meta: c.suggestedAixMeta as Parameters<typeof isAixListBadge>[0]["meta"], lastSender: c.lastSender ?? null, messages: c.messages });
+    isAixListBadge({ meta: c.suggestedAixMeta as Parameters<typeof isAixListBadge>[0]["meta"], lastSender: c.lastSender ?? null, messages: badgeMessages(c.messages, lastCustomerAtMap[c.id]) as Conversation["messages"] });
   // 一覧の「要対応」バッジ条件（手動フラグ or 顧客最終発言から12時間以上・未読）。バッジ・AIX絞り込みで共有する
   const isNeedsActionBadge = (c: Conversation) => {
     if (flaggedConvIds.has(c.id)) return true;
@@ -2823,7 +2915,9 @@ export default function Home() {
         (c) =>
           c.customerName.toLowerCase().includes(q) ||
           c.lastMessage.toLowerCase().includes(q) ||
-          c.messages.some((m) => m.text?.toLowerCase().includes(q))
+          c.messages.some((m) => m.text?.toLowerCase().includes(q)) ||
+          // 2026-10-06 ⑫: 本文の検索は DB 側（全期間・旧は読み込んだ4日分だけ）
+          (messageSearchHit?.q === q && messageSearchHit.ids.has(c.id))
       );
     }
     // 2026-09-18 竹内「LINE時間系列バラバラになっているので、読みにくい。本来のLINEのように時間最新順に戻す」:
@@ -2834,7 +2928,7 @@ export default function Home() {
     return [...result].sort((a, b) =>
       compareConversationOrder({ updatedAtMs: sortMsOf(a.updatedAt) }, { updatedAtMs: sortMsOf(b.updatedAt) })
     );
-  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt, messageSearchHit, lastCustomerAtMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 絞り込み・検索を変えたら一覧の描画は先頭40行からやり直す（LINE と同じく上から）
   useEffect(() => { setListRenderCount(LIST_RENDER_STEP); }, [statusFilter, deferredSearchQuery, aiSearchIds, accountFilter]);
@@ -2842,24 +2936,21 @@ export default function Home() {
   // AIX送信対象（AIXバッジ かつ 要対応バッジ）の件数。AIXボタンの紫ドットに使う
   const aixTargetCount = useMemo(() => {
     return conversations.filter((c) => isAixBadge(c) && isNeedsActionBadge(c)).length;
-  }, [conversations, flaggedConvIds, manuallyReadAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversations, flaggedConvIds, manuallyReadAt, lastCustomerAtMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
       if (postApplyConvIds.has(c.id)) return false;
       const readAt = manuallyReadAt[c.id];
       if (readAt) {
-        const msgs = c.messages;
-        let lastCustTime: string | null = null;
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].sender === "customer") { lastCustTime = msgs[i].rawCreatedAt ?? null; break; }
-        }
+        // 2026-10-06 ⑫: メッセージを読み込んでいない会話も DB のお客様の最後の発言の時刻で見る
+        const lastCustTime = lastCustomerTs(c.messages, lastCustomerAtMap[c.id]);
         if (!lastCustTime || lastCustTime <= readAt) return false;
       }
       const sender = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
       return sender === "customer" && c.status !== "closed_won";
     }).length;
-  }, [conversations, postApplyConvIds, manuallyReadAt]);
+  }, [conversations, postApplyConvIds, manuallyReadAt, lastCustomerAtMap]);
 
   useEffect(() => {
     if (filteredConversations.length === 0) return;

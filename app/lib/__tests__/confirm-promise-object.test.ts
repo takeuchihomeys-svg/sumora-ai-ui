@@ -68,4 +68,22 @@ const MSGS = [
   t("要件が読めない・依頼もない → 約束の AIX を立てない（今まで通り）", resolveStaffPromiseAix(ledger.facts, msgs, { customerRequestedCheck: false, customerAckAfter: true }) === null);
 }
 
+{ // 2026-10-06 竹内さん（質問3「セットする」）: スタッフの文に要件がある約束も、お礼の番に 確認した→管理会社に確認した→〈要件〉
+  const msgs = [
+    { sender: "customer", text: "猫を1匹飼っているのですが大丈夫でしょうか？", createdAt: "2026-10-06T01:00:00Z" },
+    { sender: "staff", text: "かしこまりました！！\nペット飼育可能か管理会社に確認させて頂きます！！\n確認出来次第ご連絡させて頂きます😊！！", createdAt: "2026-10-06T01:05:00Z" },
+    { sender: "customer", text: "ありがとうございます！", createdAt: "2026-10-06T01:06:00Z" },
+  ];
+  const ledger = buildActionLedger({ messages: msgs, now: Date.parse("2026-10-06T01:07:00Z") });
+  const p = resolveStaffPromiseAix(ledger.facts, msgs, { customerRequestedCheck: false, customerAckAfter: true });
+  t("スタッフの文に要件（ペット）→ お礼の番に 確認した（mgmt_pet）", p?.action === "property_check_result" && p.checkPattern === "mgmt_pet", JSON.stringify({ p, e: ledger.facts.lastStaffEntry }));
+  const msgs2 = [
+    { sender: "customer", text: "初期費用どれくらいですか？", createdAt: "2026-10-06T01:00:00Z" },
+    { sender: "staff", text: "初期費用確認させて頂き、御見積書お送りさせて頂きます！！", createdAt: "2026-10-06T01:05:00Z" },
+    { sender: "customer", text: "お願いします", createdAt: "2026-10-06T01:06:00Z" },
+  ];
+  const l2 = buildActionLedger({ messages: msgs2, now: Date.parse("2026-10-06T01:07:00Z") });
+  const p2 = resolveStaffPromiseAix(l2.facts, msgs2, { customerRequestedCheck: false, customerAckAfter: true, propertyInPlay: true });
+  t("初期費用＋御見積書の約束 → 確認した ではない（見積書の流れ）", p2?.checkPattern !== "mgmt_initial_cost", JSON.stringify(p2));
+}
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

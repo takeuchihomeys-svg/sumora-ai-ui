@@ -27,6 +27,7 @@ import { classifyConditionTurn, gateExtractedConditions, decideAreaMode, isApply
 import { applyConditionGuards, detectRentRaiseRequest, roomJoMinInText, floorAreaMinFromJo, withRentOrder } from "@/app/lib/rent-raise";
 import { preBrainMayWriteRegistered } from "@/app/lib/condition-change-scope";
 import { areaMergeMode, areasBeforeNegation, describeAreaChange, detectConditionRevert } from "@/app/lib/condition-restore";
+import { moveInStatementOf } from "@/app/lib/condition-reading";
 import { walkMinutesInText } from "@/app/lib/walk-minutes-text";
 // 2026-09-18 竹内（💋chibi💋 事例）: うちのテンプレートが埋まって返ってきたかは決定論で確定させる（LLM に聞かない）
 import { isFilledSumoraForm, CONDITION_FORMAT_TEMPLATE } from "@/app/lib/condition-format";
@@ -1385,7 +1386,9 @@ async function extractConditionsFromCasualReply(
   // 2026-09-30 YUMA「これからは駅10分以内でお願いします」: 語の一覧（駅…徒歩）に当たらず、スタッフの直前の文も聞き取りでなかったので P4 が始まらず、
   //   ブレインが「条件そのものを変える」と決めても登録の徒歩が変わらなかった → 「駅 N 分以内／徒歩 N 分以内」も決定論で拾う（walk-minutes-text.ts）
   const walkDet = walkMinutesInText(customerText || "");
-  const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null || initialCostLimitFromText(customerText) !== null || walkDet !== null;
+  // 2026-10-06 ⑫ 竹内さん（質問4「入居時期いれる」）: 入居時期の言い直し（「入居時期が12月中旬になりそうです」）も決定論で拾う（condition-reading.moveInStatementOf・物件1件の入居可能日の質問は読まない）
+  const moveInDet = moveInStatementOf(customerText || "");
+  const deterministicCondHit = !!detectRentRaiseRequest(customerText || "") || roomJoMinInText(customerText || "") !== null || initialCostLimitFromText(customerText) !== null || walkDet !== null || moveInDet !== null;
   const customerMentionsCondition = CUSTOMER_CONDITION_VOCAB_RE.test(customerText || "") || deterministicCondHit;
   if (!isConditionContext && !customerMentionsCondition) return;
   // 2026-09-27 竹内「一時調整か、そもそもの条件の切り替えか」（condition-change-scope.ts）: お客様が「今回だけ・ついでに・参考に・〜にした場合の物件も」と
@@ -1526,6 +1529,8 @@ ${customerText.slice(0, 600)}
 
   // 2026-09-30 徒歩: LLM が返さなかった時だけ、発言の「駅 N 分以内／徒歩 N 分以内」で埋める（決定論・通勤の「〇〇駅まで N 分」は読まない）
   if (typeof extracted.walk_minutes !== "number" && walkDet !== null) extracted.walk_minutes = walkDet;
+  // 入居時期はお客様の言った言い方のまま（LLM の言い換え・物件の入居可能日より、本人の希望の文を正にする）
+  if (moveInDet) extracted.move_in_time = moveInDet;
 
   // 2026-09-29 竹内「設備系は設備のところにまとめる・NG は NG・その他はその他に1つ1つ」: 読み取った自由文を節ごとに振り分ける（決定論・customer-wants）
   {
