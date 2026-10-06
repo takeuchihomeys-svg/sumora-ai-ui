@@ -671,11 +671,12 @@
   var PANEL_PILL = '<button data-a="unfold" title="案内（押すと開く）" style="border:1px solid #b0bec5;background:#fff;border-radius:14px;width:28px;height:28px;cursor:pointer;font-size:14px;line-height:1;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.15)">🔦</button>';
   function _applyPanelFold(open) {
     if (!panel) return;
-    panel.style.width = open ? "" : "auto";
-    panel.style.padding = open ? "" : "0";
-    panel.style.border = open ? "" : "none";
-    panel.style.boxShadow = open ? "" : "none";
-    panel.style.background = open ? "" : "transparent";
+    // 開いた時は "" で消さず白地・枠を明示する（"" だと cssText の背景まで消えて透明になり読めなかった・10/06）
+    panel.style.width = open ? "260px" : "auto";
+    panel.style.padding = open ? "6px 8px" : "0";
+    panel.style.border = open ? "1px solid #b0bec5" : "none";
+    panel.style.boxShadow = open ? "0 2px 8px rgba(0,0,0,.15)" : "none";
+    panel.style.background = open ? "#fff" : "transparent";
   }
 
   function setPanelHtml(html) {

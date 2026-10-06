@@ -3130,3 +3130,8 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 採点: 下限の無い人も rentPositionCodes におおよその下限を通す＝上限の約60%未満が保留（RENT_UNDER_MIN）。当て直し（backtest-rent-band）で 相対順位 0.3981→0.3975・学び用 0.272→0.2709（悪くならない）
 - 検索: サーバーの `/api/property-customers` が `rent_min_search`（書いた下限・無ければ おおよその下限 × 保留の線＝採点で保留になる所より下は探さない）を返す → 拡張の検索の条件（background.js の条件づくり・content.js・itandi-content.js）は `c.rent_min_search || c.rent_min`。popup の一時調整の欄は DB の下限のまま
 - 物件検索のブレイン（property-brain-rag の材料）にも「下限の記入なし（おおよその下限 N円＝上限の7割）」
+
+### v2.5.83（2026-10-06）案内の枠が透明で読めない
+- 原因: `_applyPanelFold(open)` が開いた時に `panel.style.background = ""` 等で cssText の白地・枠・余白・幅まで消していた（畳む→開くの後は透明・枠なし）。
+- 直し: 開いた時は白地 #fff・枠・影・余白・幅を明示（realpro-guide.js / itandi-guide.js）。
+- 既知: search-override.test.js の 1 FAIL は v2.5.82 の HEAD でも同じ（今回の変更とは無関係・未調査）。
