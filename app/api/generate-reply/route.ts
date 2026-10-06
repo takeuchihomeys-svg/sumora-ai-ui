@@ -259,6 +259,7 @@ import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/conditio
 // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタ（場面＝行動台帳の事実で判定）
 import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, CUSTOMER_FOUND_PROPERTY_VOCAB, type PremiseFacts } from "@/app/lib/example-premise";
 import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-readiness";
+import { appealTimingEnabled, buildAppealInput, resolveAppealTiming, buildAppealReplyNote } from "@/app/lib/appeal-timing";
 // 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている他のお客様の条件を伏せる
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
@@ -278,6 +279,7 @@ import { dropDoubleConfirmContact } from "@/app/lib/double-confirm-contact";
 import { unquoteConditions } from "@/app/lib/quoted-conditions";
 import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
 import { applySituationalEmoji } from "@/app/lib/emoji-situational";
+import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-scope";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -4751,7 +4753,12 @@ async function handleGenerateReply(req: NextRequest) {
       //   （YUMA: 戦略の「詳細資料と割引済み初期費用見積を即送付」「募集状況も併せて回答」がそのまま本文に入った。行動宣言は 🔎 の引き続きのご紹介）
       const seeMoreTurn = customerAsksMoreListings(message);
       if (seeMoreTurn && (brainMeta.note || brainMeta.winning_pattern || brainMeta.closing_strategy)) lines.push("- 🏆 今回はお客様が他のお部屋も見たいと言っているので、戦略の WE DO 宣言は入れない（行動宣言は引き続きの新着物件のご紹介1文）");
-      if (!seeMoreTurn && brainMeta.note && brainMeta.reply_mode !== 'aix' && brainLocalFresh && !noteIsStaffReference) {
+      // 2026-10-07 竹内（uran.「どこを読み取る必要があるのか」）: お礼・了承だけの番で、こちらの直前の返事で話題が閉じていて物件の話でもない時は、
+      //   ブレインの note・勝ちパターン・成約戦略の WE DO（会話全体の方針＝43日前の物件探し）を入れない。範囲は ack-topic-scope.ts（実送信: 範囲の中だけ 78%）
+      //   AIX のテンプレート最適化・AIX の後の一言（isTemplateOptimize・aixSourceMessage）はスタッフが選んだ AIX の文なので当てない（物件オススメはお礼の後でも送る）
+      const ackTopicNote = isTemplateOptimize || aixSourceMessage ? "" : buildAckTopicNote(ackTopicScopeFromRecent(recentMessages));
+      if (ackTopicNote) lines.push(ackTopicNote);
+      if (!seeMoreTurn && !ackTopicNote && brainMeta.note && brainMeta.reply_mode !== 'aix' && brainLocalFresh && !noteIsStaffReference) {
         lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋押さえさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
       // winning_pattern + closing_strategy の両方がある場合は1文のWE DO宣言に統合（二重宣言防止）
@@ -4765,7 +4772,7 @@ async function handleGenerateReply(req: NextRequest) {
       //   同じブレインの note は「候補日時の手打ち・AI生成は禁止」と正しく言っているので、**同じ事実に逆の指示**を
       //   別の場所から渡していた。禁止を別ブロックに足すと三つ目の指示になるため、**戦略を渡すこの行に添える**。
       const territoryGuard = buildAixTerritoryGuard([wp, cs]);
-      if (seeMoreTurn) {
+      if (seeMoreTurn || ackTopicNote) {
         // 上で「戦略の WE DO は入れない」と書いた
       } else if (wp && cs) {
         lines.push(`- 🏆 勝ちパターン×成約戦略: 【勝ちパターン】${wp} ／ 【成約戦略】${cs} → 両者を統合した1アクションをWE DO宣言（「〜させて頂きます！！」形）で今回の返信末尾に1文のみ含めること（WE DO宣言は返信全体で1文・重複禁止）${relaxGuard}`);
@@ -4866,7 +4873,7 @@ async function handleGenerateReply(req: NextRequest) {
         }
       }
       // closing_strategy は winning_pattern との両方がある場合は統合済み（上記）・単独の場合のみ出力
-      if (cs && !wp) {
+      if (cs && !wp && !ackTopicNote) {
         lines.push(`- 成約戦略: ${cs} → この戦略の核となる1アクションを今回の返信末尾でWE DO宣言（「〜させて頂きます！！」形）として明示すること${relaxGuard}`);
         if (territoryGuard) lines.push(territoryGuard);
       }
@@ -5463,7 +5470,27 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       recentMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })),
       Date.now(),
     );
-    const applyReadinessNote = buildApplyReadinessNote(applyReadiness);
+    // 2026-10-07 竹内（R・チンシャン）訴求のタイミング: 場面×お客様の反応×部屋の状況から 申込（お部屋を抑える）／内覧／入れない を材料で渡す
+    //   （app/lib/appeal-timing.ts・同じ申込の材料の欄に並べる・APPEAL_TIMING=off で止まる）
+    const appealReplyNote = (() => {
+      if (isTemplateOptimize || !appealTimingEnabled()) return "";
+      try {
+        const base = Date.now() - recentMessages.length * 60_000;
+        const v = resolveAppealTiming(buildAppealInput({
+          msgs: recentMessages.map((m, idx) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt ?? new Date(base + idx * 60_000).toISOString() })),
+          aixLogs: recentAixRows.filter((r) => r.sent_at ?? r.created_at).map((r) => ({ aixType: r.aix_type, at: (r.sent_at ?? r.created_at) as string })),
+          customerKind: customerResponse.kind,
+          viewingStage: ledger.facts.viewingFlow?.stage ?? null,
+          notViewable: (brainMeta as { property_state?: { notViewable?: boolean } | null } | null)?.property_state?.notViewable ?? null,
+        }));
+        if (v.note) console.info("[appeal-timing]", JSON.stringify({ conversationId, kind: v.kind, level: v.level, reason: v.reason }));
+        return buildAppealReplyNote(v);
+      } catch (e) {
+        console.warn("[appeal-timing] skipped:", e instanceof Error ? e.message : e);
+        return "";
+      }
+    })();
+    const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote].filter(Boolean).join("\n");
     if (applyReadiness.level !== "low") {
       console.log(`[generate-reply] 申込が近い合図: ${applyReadiness.level} ${applyReadiness.score}点 (${applyReadiness.reason}) 窓${applyReadiness.windowCount}通`);
     }

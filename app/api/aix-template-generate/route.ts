@@ -65,6 +65,7 @@ import { isNotACustomerReply, stripMetaNarration } from "@/app/lib/meta-narratio
 import { isGroupConversationName } from "@/app/lib/line-target";
 // 2026-09-21 竹内「付けるかはブレインが判断する／お客さんの反応見て刺さっているなら誘導する」
 import { resolveCtaGuidance } from "@/app/lib/cta-guidance";
+import { adjustCtaForRoom, appealTimingEnabled } from "@/app/lib/appeal-timing";
 import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage, hasClosingKind, type RecommendCtaDecision, type PickupLookupRow } from "@/app/lib/recommend-cta";
 // お客様の反応の分類は返信生成・往復文脈と同じ関数（四者同名）
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
@@ -1377,7 +1378,9 @@ export async function POST(req: NextRequest) {
       const staffTurn = classifyLastStaffTurn(prevStaff?.text ?? "", { lastStaffAt: prevStaff?.rawCreatedAt ?? null });
       const sub = analyzeSubstance(lastCust.text ?? "", undefined, { staffAskedQuestion: staffTurn.kind === "question_to_customer" });
       const cr = classifyCustomerResponse(sub, staffTurn);
-      const g = resolveCtaGuidance({ customerKind: cr.kind, positiveKind: cr.positive?.kind ?? null, action: actionType });
+      // 2026-10-07 訴求のタイミング: まだ内覧できない部屋（退去予定）なら内覧の誘いを申込（抑えた状態でご内覧）に（app/lib/appeal-timing.ts）
+      const g = appealTimingEnabled() ? adjustCtaForRoom(resolveCtaGuidance({ customerKind: cr.kind, positiveKind: cr.positive?.kind ?? null, action: actionType }), recommendState.notViewable)
+        : resolveCtaGuidance({ customerKind: cr.kind, positiveKind: cr.positive?.kind ?? null, action: actionType });
       console.log(JSON.stringify({ tag: "aix-template-generate:cta", actionType, customerKind: cr.kind, positive: cr.positive?.kind ?? null, mode: g.mode, ctaKind: g.kind, reason: g.reason }));
       return g;
     } catch (e) {
@@ -1961,11 +1964,12 @@ ${text}
       }
       {
         const banned = normalizeBannedPhrasing(text, { keepNightGreeting: false });
-        if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup) {
+        // 2026-10-07（ゆなまる「2025年5月築の新築」）: 当たりの条件に newBuild を足す。kurai・emoji も条件に無く本文へ戻していなかった（validate-reply の 10/01 と同じ漏れ）
+        if (banned.night || banned.shochi || banned.hasty || banned.uketamawari || banned.greetDup || banned.kurai || banned.emoji || banned.newBuild) {
           console.log(JSON.stringify({
             tag: "aix-template-generate:banned-phrasing-fixed", actionType,
             night: banned.night, shochi: banned.shochi, hasty: banned.hasty,
-            uketamawari: banned.uketamawari, greetDup: banned.greetDup,
+            uketamawari: banned.uketamawari, greetDup: banned.greetDup, kurai: banned.kurai, emoji: banned.emoji, newBuild: banned.newBuild,
           }));
           text = banned.text;
         }

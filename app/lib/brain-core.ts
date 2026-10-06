@@ -44,6 +44,7 @@ import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict } from "@/app/lib/two-stage";
+import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
 import { meetingPromisePending } from "@/app/lib/meeting-promise";
@@ -267,6 +268,8 @@ export type SuggestedAixMeta = {
   //   お送りした物件の退去予定・内覧可否をブレインの判断として持つ（JSONB のため migrate-schema 不要）。
   //   AIX（物件オススメ）・テンプレート生成が property-send-state 経由でこれを読み、締めを内覧誘導／申込誘導に決める
   property_state?: { notViewable: boolean; vacancyDate: string | null; viewableFrom: string | null } | null;
+  // 2026-10-07 竹内（R・チンシャン）訴求のタイミング（app/lib/appeal-timing.ts）。JSONB のため migrate-schema 不要
+  appeal_timing?: { kind: "apply" | "viewing" | "none"; level: "must" | "suggest" | "avoid"; reason: string } | null;
   // ── analyzeConversation → analyzeAndSaveBrainMeta 内部伝搬フィールド ──
   // SOURCE_ACCEPT_RATE 品質ゲートで finalAix が null 化された事実のフラグ。
   // conversation_direction 更新側で detectSignalBasedAixFallback の再実行をスキップし、
@@ -2265,6 +2268,23 @@ export async function analyzeConversation(
     messages: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text })),
     viewingReleased: moveOutViewingReleased(typedMessages, "newest_first"),
   });
+  // 2026-10-07 竹内（R・チンシャン）「どのタイミングでお部屋抑える／内覧誘導しているか…足りていない部分はブレインにあるのか」:
+  //   場面（直前にこちらがしたこと）×お客様の反応×部屋の状況（退去予定か）から 申込／内覧／入れない を決定論で読み、毎回変わる側（user 側）に材料として渡す。
+  //   必須（前向き×今ご内覧頂ける部屋）の時だけ決定論の方向（2段の約束の返信など）に内覧の訴求を1文足す。APPEAL_TIMING=off で止まる
+  const appealTiming = appealTimingEnabled() ? (() => {
+    try {
+      return resolveAppealFromConversation({
+        msgs: [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at })),
+        aixLogs: aixLogs.map((l) => ({ aixType: l.aix_type, at: l.sent_at ?? l.created_at })),
+        viewingStage: brainLedger.facts.viewingFlow?.stage ?? null,
+        notViewable: brainPropertyState?.notViewable ?? null,
+      });
+    } catch (e) {
+      console.warn("[brain-core] appeal-timing skipped:", e instanceof Error ? e.message : e);
+      return null;
+    }
+  })() : null;
+  const appealTimingText = appealTiming ? buildAppealBrainText(appealTiming.input, appealTiming.verdict) : "";
   let brainAixFeedback: FeedbackRow[] = [];
   try {
     const { data: fbRows } = await supabase
@@ -2510,11 +2530,11 @@ export async function analyzeConversation(
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${sceneEvidenceText}${ragKnowledgeText}
+    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -3845,7 +3865,7 @@ ${history}`;
           return "★";
         })(),
       } : null,
-      reply_direction: replyDirection,
+      reply_direction: withAppealDirection(replyDirection, appealTiming?.verdict ?? null),
       key_topics: keyTopics,
       avoid_topics: avoidTopics,
       urgency_appropriate: urgencyAppropriate,
@@ -3909,6 +3929,7 @@ ${history}`;
       },
       // 2026-09-18 お送りした物件が今ご内覧頂けるか（退去予定・解禁日）。AIX 物件オススメ／テンプレートの締めがこれを読む
       property_state: brainPropertyState,
+      appeal_timing: appealTiming ? { kind: appealTiming.verdict.kind, level: appealTiming.verdict.level, reason: appealTiming.verdict.reason } : null,
     };
   } catch (e) {
     console.warn(`[brain-core] Haiku analysis failed: conv=${conversationId}`, e instanceof Error ? e.message : e);
