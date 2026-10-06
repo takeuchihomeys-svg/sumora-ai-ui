@@ -10,6 +10,7 @@
 //
 // これを通した文は、**スタッフが入力欄で見ている文とまったく同じ**になる。
 import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "./meta-narration";
+import { collapseRepeatedOpener } from "./opener-repeat";
 // 2026-09-20 竹内（S さん事例）: 受け取っていない申込を「受け取りました」と書く捏造を落とす
 import { stripApplyReceivedClaim } from "./apply-claim";
 
@@ -99,7 +100,8 @@ export function draftToSendableText(text: string | null | undefined): string | n
   //   文全体が「返信そのもの／この会話そのもの」について述べている＝お客様への返信ではない。
   //   一部を削るのではなく**丸ごと使わない**（削ると残りが意味を成さず、かえって危ない）
   if (isNotACustomerReply(raw)) return null;
-  const out = stripInternalTags(raw);
+  // 2026-10-06 ⑫（ゆいと「かしこまりました が並んでいる」）: 画面・送信の直前の最後の網でも続く同じ開口語の行を1つに（どの出口の後に重なっても残さない）
+  const out = collapseRepeatedOpener(stripInternalTags(raw)).text;
   if (!out) return null;
   // 整形した後に社内向けの文だけが残った場合も使わない（先頭だけ削れて後ろが残る形を塞ぐ）
   if (isNotACustomerReply(out)) return null;

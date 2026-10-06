@@ -15,6 +15,7 @@ import { MSG_SEP } from "@/app/lib/reply-context";
 // 2026-09-21 竹内「文締めることなくて完全にしまってたら返信しなくて大丈夫」
 import { shouldSkipDraftAfterClosing } from "@/app/lib/previous-send-note";
 import { DRAFT_SENTINEL_NO_REPLY } from "@/app/lib/draft-text";
+import { waitingOnCustomerInfo } from "@/app/lib/waiting-customer-info";
 import { applyConditionGuards, withRentOrder } from "@/app/lib/rent-raise";
 // 2026-09-30 入口の見分け（お客様の条件か・物件の問い合わせか）と、条件の履歴の根拠の発言
 import { classifyConditionTurn, gateExtractedConditions, mergeAreaForBrainBridge } from "@/app/lib/condition-source-gate";
@@ -831,7 +832,10 @@ export async function POST(req: NextRequest) {
           }
           return parts.join("\n");
         })();
-        const verdict = shouldSkipDraftAfterClosing({ prevStaffText, customerText: targetMessage });
+        // 2026-10-06 ⑫（末桜「移動の連絡まち」）: こちらが「分かりましたら（決まりましたら）お知らせください」とお客様の連絡待ちにした後のお礼・お詫びだけも作らない
+        //   （本番 365日でスタッフが返したのは 0/1・waiting-customer-info.ts。「すみません」は isShortAckOnly のお礼の語に無いので別に見る）
+        const waitingInfo = waitingOnCustomerInfo(recentMsgs.map((m) => ({ sender: m.sender, text: m.text })));
+        const verdict = waitingInfo.waiting ? { skip: true, reason: `お客様の連絡待ち（${(waitingInfo.evidence ?? "").slice(0, 30)}）` } : shouldSkipDraftAfterClosing({ prevStaffText, customerText: targetMessage });
         if (verdict.skip) {
           console.log(JSON.stringify({ tag: "bg-async:no-reply-needed", conversationId: convId, reason: verdict.reason }));
           await db.from("conversations")

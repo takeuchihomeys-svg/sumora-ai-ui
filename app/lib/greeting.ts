@@ -222,6 +222,25 @@ export function msSinceLastStaff(messages: Msg[], now = Date.now()): number | nu
   return null;
 }
 
+/**
+ * お客様の未返信の連投の頭が、その前のこちらの発言と同じ JST の日か（会話の続き）。
+ * 2026-10-06 ⑫ 朱莉: 竹内さん「挨拶入れるのは1日最初のLINE 続けての会話のところに急に挨拶等入れない」。
+ * 下書きを翌日に作ると「今日まだ挨拶していない」で「お世話になっております」が付いていた。
+ * 線: scripts/audit-greeting-continuation.ts（続きの会話を翌日に返した 453 番でスタッフの挨拶 41%＝付けない方が多数）
+ */
+export function continuedSameDay(messages: Msg[]): boolean {
+  let i = messages.length - 1;
+  if (i < 0 || messages[i].sender !== "customer") return false;
+  while (i > 0 && messages[i - 1].sender === "customer") i--;
+  const head = messages[i];
+  let k = i - 1;
+  while (k >= 0 && messages[k].sender !== "customer" && (!messages[k].text || /^\[(?:画像|動画|スタンプ|ファイル)\]$/.test((messages[k].text ?? "").trim()))) k--;
+  const prev = messages[k];
+  if (!prev || prev.sender === "customer" || !prev.createdAt || !head.createdAt) return false;
+  const day = (iso: string) => jstDayStartMs(Date.parse(iso));
+  return day(prev.createdAt) === day(head.createdAt);
+}
+
 /** JST 当日 0:00〜23:59 にテキストのスタッフ送信（AIX 含む・画像/動画のみは除く）があれば true。createdAt が 1 件も無ければ undefined */
 export function computeAlreadyGreetedToday(messages: Msg[], now = Date.now()): boolean | undefined {
   if (!messages.some((m) => !!m.createdAt)) return undefined;
@@ -376,6 +395,11 @@ export function resolveGreeting(opts: {
   if (opts.isFirstEverReply) return mk("first", nightPrefix + buildFirstGreeting(name), true, "真の初回");
   if (opts.isProgressPush) return mk("late_apology", `${nightPrefix}${call}${call ? "、" : ""}ご連絡遅くなり申し訳御座いません！！`, true, "顧客が結果を催促（進捗催促TPO）");
   if (opts.alreadyGreetedToday) return mk("none", nightPrefix, !!nightPrefix, "当日挨拶済み（同日連続会話は開口語または本題から）");
+  // 2026-10-06 ⑫ 竹内さん（朱莉 10/03）「挨拶入れるのは1日最初のLINE 続けての会話のところに急に挨拶等入れない」:
+  //   お客様の発言がこちらの前の発言と同じ日（JST）に続けて来た番は、返事が翌日になっても会話の続き＝挨拶を入れない。
+  //   人の手打ち（180日・scripts/audit-greeting-continuation.ts）: この番 453 で「お世話になっております」を入れたのは 41%（入れない 59%）。
+  //   お客様の発言が別の日の番は 43〜62% で入れる＝今まで通り
+  if (continuedSameDay(opts.recentMessages)) return mk("none", nightPrefix, !!nightPrefix, "会話の続き（お客様の発言がこちらの前の発言と同じ日）＝挨拶なし");
   return mk("standard", `${nightPrefix}${call}お世話になっております！！`, !!nightPrefix, "継続会話・当日未挨拶");
 }
 

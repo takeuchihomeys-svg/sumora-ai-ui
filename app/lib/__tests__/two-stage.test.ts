@@ -1,5 +1,5 @@
 // app/lib/__tests__/two-stage.test.ts — 2026-10-02 竹内さんの決定「2段の場面: 先に約束の返信・後で AIX」（実行: npx tsx app/lib/__tests__/two-stage.test.ts）
-import { resolveTwoStage, TWO_STAGE_WORDING } from "../two-stage";
+import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions } from "../two-stage";
 import { classifyStaffTextFacts } from "../action-ledger";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} ${extra}`); } };
@@ -30,6 +30,10 @@ t("見積書の約束（promise:estimate）は今まで通り AIX", resolveTwoSt
   t("アリバイの質問に保証会社について → お仕事面のサポート", resolveTwoStage({ ...base, finalAix: "guarantor_info", customerText: "夜職なのですがアリバイ会社使えますか？" })?.source === "rule:two_stage_promise(work_support)");
   t("保証会社の質問の保証会社について → AIX のまま", resolveTwoStage({ ...base, finalAix: "guarantor_info", customerText: "保証会社はどこになりますか？" }) === null);
   t("ペットの可否の確認 → 今まで通り確認の約束", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "ペット2匹飼えますか？" })?.source === "rule:two_stage_promise(check)");
+}
+{ // 2026-10-06 ⑫ ゆいと（10/03 の実物）: ピックアップの約束と別の質問も必須に
+  const q = twoStageOtherQuestions("見てきました。\nここは最短11月中旬でしょうか？\n10月後半くらいに入れるところとかありますか？", "pickup");
+  t("別の質問（最短11月中旬でしょうか？）を必須の話題に・約束が答えになる問いは外す", q.length === 1 && q[0].includes("最短11月中旬でしょうか"), JSON.stringify(q));
 }
 t("申込以降は触らない", resolveTwoStage({ ...base, finalAix: "estimate_sheet", postApply: true }) === null);
 t("他の AIX（内覧調整・申込へ）は触らない", resolveTwoStage({ ...base, finalAix: "viewing_invite" }) === null && resolveTwoStage({ ...base, finalAix: "application_push" }) === null);

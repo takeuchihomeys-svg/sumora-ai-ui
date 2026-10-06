@@ -108,3 +108,16 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   }
   return null;
 }
+
+/**
+ * 2026-10-06 ⑫ 竹内さん（ゆいと 10/03「ここは最短11月中旬でしょうか？」「10月後半くらいに入れるところとかありますか？」）:
+ *   「11月中旬か聞かれていて、資料には11月中旬が入居時期とかかれているので、11月中旬が入居と伝える事と、10月後半入居できる物件探す旨を伝える形」。
+ *   2段（ピックアップの約束）にした番で、約束の材料と別のお客様の質問（「〜でしょうか？」）を必須の話題に足す（答えは会話にある事実で）。
+ *   実送信（10/03 06:40）は「…最短で11月中旬でのご入居となります！！／かしこまりました！！10月後半ご入居可能なお部屋も…ピックアップ」＝質問に先に答えていた
+ */
+export function twoStageOtherQuestions(customerTurn: string | null | undefined, kind: TwoStageKind): string[] {
+  const sents = String(customerTurn ?? "").split(/\n+|(?<=[？?])/).map((x) => x.trim()).filter((x) => /[？?]$/.test(x));
+  // 約束が答えになる問い（ピックアップ＝「〜ところありますか」・確認＝「空いてますか」）は除く
+  const promiseQ = kind === "pickup" ? /(?:ところ|お部屋|部屋|物件)[^？?]{0,10}(?:あり|ない)|ありますか|ないですか/ : kind === "check" ? /空い|空き|募集/ : /見積|初期費用|いくら/;
+  return sents.filter((x) => !promiseQ.test(x)).slice(0, 2).map((q) => `お客様の質問「${q.slice(0, 30)}」への答え（会話・資料にある事実で。無ければ確認の約束）`);
+}

@@ -227,5 +227,12 @@ describe("初期費用を払う時期", () => {
   });
 });
 
+// 2026-10-06 ⑫ 朱莉（スモラ）: 審査だけ先に試す＝そのお部屋にお申込み（可能・確認の約束にしない）
+describe("審査を先に出す（screening_first）", () => {
+  it("審査通るかだけ試してもらう → screening_first", () => truthy(ids("審査通るかだけ試してもらうことって可能でしょうか？").includes("screening_first")));
+  it("住吉区の物件 審査通るかどうか試して → screening_first", () => truthy(ids("ちなみに住吉区の物件 審査通るかどうか試してもらうことできるんですか？").includes("screening_first")));
+  it("審査は何日かかりますか → screening_first は出さない", () => falsy(ids("審査は何日かかりますか？").includes("screening_first")));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => `- ${f}`).join("\n")); process.exit(1); }

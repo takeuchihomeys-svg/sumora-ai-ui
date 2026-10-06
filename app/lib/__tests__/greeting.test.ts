@@ -1,7 +1,7 @@
 // G32（2026-09-09 Fable5 じゅにあ事例）: 冒頭二層（挨拶行＋開口語）の回帰テスト。「お待たせ致しました」は如何なる場合も出ない。
 // 実行: npx tsx app/lib/__tests__/greeting.test.ts（全 PASS で exit 0）
 import {
-  resolveGreeting, enforceOpening, buildGreetingNote, stripWaited, isProgressPushMessage, normalizeGreetingLite, toGreetingLite, buildFirstGreeting,
+  resolveGreeting, enforceOpening, buildGreetingNote, stripWaited, isProgressPushMessage, normalizeGreetingLite, toGreetingLite, buildFirstGreeting, continuedSameDay,
 } from "../greeting";
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "../reply-context";
 import { runDeterministicChecks } from "../final-check";
@@ -310,6 +310,15 @@ describe("お待たせの言い換え（⑫）", () => {
   it("お待たせしてしまい申し訳… の謝りは触らない", () => {
     expect(stripWaited("お待たせしてしまい申し訳御座いません！！").removed).toBe(0);
   });
+});
+
+// 2026-10-06 ⑫ 朱莉: 続けての会話（お客様の発言がこちらの前の発言と同じ日）に、翌日下書きを作っても挨拶を入れない
+describe("会話の続きは挨拶なし（continuedSameDay）", () => {
+  const staff = { sender: "staff", text: "かしこまりました！！ご確認させて頂きます😊！！", createdAt: "2026-10-04T09:10:00Z" };
+  it("同じ日にお客様が続けた → 続き", () => expect(continuedSameDay([staff as never, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" } as never])).toBe(true));
+  it("こちらの後の画像だけの発言は飛ばす", () => expect(continuedSameDay([staff as never, { sender: "staff", text: "[画像]", createdAt: "2026-10-04T09:11:00Z" } as never, { sender: "customer", text: "はい", createdAt: "2026-10-04T10:00:00Z" } as never])).toBe(true));
+  it("お客様の発言が翌日（JST）→ 続きではない", () => expect(continuedSameDay([staff as never, { sender: "customer", text: "おはようございます", createdAt: "2026-10-05T01:00:00Z" } as never])).toBe(false));
+  it("resolveGreeting も挨拶なし（下書きは翌日）", () => expect(resolveGreeting({ recentMessages: [staff, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse("2026-10-05T02:00:00Z"), customerName: "朱莉", isFirstEverReply: false, alreadyGreetedToday: false, jstHour: 11, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never).kind).toBe("none"));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

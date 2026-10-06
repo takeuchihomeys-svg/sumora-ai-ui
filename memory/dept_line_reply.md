@@ -7,7 +7,12 @@
 **ここだけ読めば続けられるように書く（毎ステップ更新）。手順は memory/test_protocol_brain.md（§9.5 実送信・§9.6 網羅の表）。tsc は共有の鍵で1つずつ（mkdir C:/Users/竹内悠~1/AppData/Local/Temp/claude/tsc.lock → NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit → rmdir）。**
 - **終わった（コミット済み）**: d1e4b1fe（2段・確認しますを外す・家賃の下限・電話19時）／62f89db2（待ち合わせの訂正・22巡）／9aa3ab74（家賃の相場を返信へ）／a27f0efd（申込の書類2つ・電話の約束・電話が終わった後・S5・2段の直し・待ち合わせの約束→AIX・日にちの聞き直し・築年数の幅・家賃の万の切り捨て・網羅の表・readiness）
 - **終わった（コミット済み ee13e748＝区切り5）**: 外れの分け方（scripts/lib/replay-truth.ts・replay-reference-corrections.json・replay-true-agreement.ts）／送れる物件が無いピックアップの約束も2段（two-stage・本番の一致 46.8→53.7%）／内覧調整の出しすぎ・戻ったお客様へのフォームは本番で線を引けず入れない（監査は残す）／場面を作る道具が返事の束の外の押下も拾う（網羅 42→47・64%）／予算の目安の要の語が抜けた下書きは送らない（rent_budget_missing）／✅ はどの文でも残す・templates の ✅ を戻した（7行）／申込時フォーマット（続き）に※マイナンバーのマスキング（提案 562287ff implemented）／AIっぽすぎる文の点検 scripts/audit-ai-ish-phrasing.ts
-- **途中**: ⏸ 一時停止中（竹内さん「LINEのところ一時停止して 拡張ツール優先で」）。その間に1件だけ直した（未コミット）: 確かめの質問（「〜ってことですかね？」）への返事を かしこまりました で始めない＝app/lib/opener-question.ts（新）・greeting.ts（openerConfirmQuestion・enforceOpener・buildGreetingNote）・app/lib/__tests__/opener-question.test.ts（新）・scripts/audit-opener-yesno-question.ts（新）。人の文で変わる 0・tsc 通過。YUMA での再生（ゆいとの場面）はまだ（使用量の上限のため）。23巡は scen-cov2 6/6・元の45 5/45 で止めたまま
+- **10/06 狭い直し3件（未コミット・tsc 通過・YUMA の再生はまだ＝DeepSeek/Claude とも0回）**:
+  - 未桜「移動の連絡まち」: app/lib/waiting-customer-info.ts（新・テスト6/6）→ brain-core（rule:waiting_customer_info・物件/確認系 AIX を外す・約束と pending_pickup は消さず待ち）・generate-draft-bg-async（下書きを作らない）。監査 scripts/audit-waiting-customer-info.ts＝180日で1件（未桜）・スタッフは返信なし
+  - ゆいと: A 開口語の2連 → app/lib/opener-repeat.ts（新・6/6）を normalizeBannedPhrasing と draftToSendableText に（人の文 7,315通で変わる0・AI 下書き 3,631通で1通＝ゆいと）。原因＝最終チェックの書き直しが頭に「かしこまりました！！」を足した。C 別の質問（最短11月中旬？）→ two-stage.twoStageOtherQuestions を keyTopics の先頭に（29/29）
+  - 朱莉: A 続きの会話に挨拶 → greeting.continuedSameDay（同じ日の続きは挨拶なし・45/45・監査 scripts/audit-greeting-continuation.ts）。B company-facts screening_first（審査だけ先に＝そのお部屋のお申込み・可能・87/87）。C は B の事実の文に対象（今のお部屋）を書いて対処。D（ケイアイズ/ケイメゾンの名前）はスタッフしか知らない入力ミス→確認の約束で可（直しなし）
+  - 設計知見5件 INSERT 済み（10/06）
+- **途中**: ⏸ 一時停止中（竹内さん「LINEのところ一時停止して 拡張ツール優先で」）。その間に1件だけ直した（81e7ed82 でコミット済み）: 確かめの質問（「〜ってことですかね？」）への返事を かしこまりました で始めない＝app/lib/opener-question.ts（新）・greeting.ts（openerConfirmQuestion・enforceOpener・buildGreetingNote）・app/lib/__tests__/opener-question.test.ts（新）・scripts/audit-opener-yesno-question.ts（新）。人の文で変わる 0・tsc 通過。YUMA での再生（ゆいとの場面）はまだ（使用量の上限のため）。23巡は scen-cov2 6/6・元の45 5/45 で止めたまま
 - **次**（再開の連絡が来たら）: 23巡を元の45から回し直す（開発サーバ app12 を find app で写してから・DeepSeek）→ 巡で止めて報告（外れの原因の表 A〜G＝scripts/replay-true-agreement.ts・竹内さんに聞くこと・AIっぽすぎる文の上位＝scripts/audit-ai-ish-phrasing.ts）
 - **網羅の表**（scripts/yuma-coverage-matrix.ts）: マス 74・覆い 47（64%）。残り 32 のうち本番で押下0が約20（作れない）
 - **元の45場面の道**: 19巡 67% → 20巡 71% → 22巡 76%

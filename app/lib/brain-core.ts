@@ -43,10 +43,11 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, type TwoStageVerdict } from "@/app/lib/two-stage";
+import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict } from "@/app/lib/two-stage";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
 import { meetingPromisePending } from "@/app/lib/meeting-promise";
+import { waitingOnCustomerInfo } from "@/app/lib/waiting-customer-info";
 import { customerAsksRentLevel } from "@/app/lib/rent-question";
 import { customerAreaAndRent } from "@/app/lib/area-rent-server";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
@@ -3170,6 +3171,19 @@ ${history}`;
       decisionSource = "rule:closed_ack_wait";
       closedAckWait = true;
     }
+    // 2026-10-06 ⑫ 竹内さん「状況理解できていない。ここは移動の連絡まちの状況」（末桜 10/02）:
+    //   こちらの最後の発言が「お客様の情報が分かったら（決まったら）知らせて」で、お客様はお礼・お詫び・了承だけ → お客様の連絡待ち。
+    //   前のピックアップの約束（promise:pickup）があっても、今はピックアップ・約束の返信・AIX を出さない（約束と AIX要対応は pending_pickup で残る）。
+    //   本番（365日）でこの状態のお客様のお礼にスタッフが返したのは 0/1（返事なし・scripts/audit-waiting-customer-info.ts）→ 下書きも作らない（generate-draft-bg-async）
+    const waitingInfo = waitingOnCustomerInfo(messagesOldestFirst.map((m) => ({ sender: m.sender, text: m.text })));
+    let waitingCustomerInfo = false;
+    if (waitingInfo.waiting && (finalAix === null || /^(?:property_send|property_recommendation|property_search|acknowledge_check|property_check_result|estimate_sheet)$/.test(finalAix))) {
+      finalAix = null;
+      sceneSignalCheckPattern = null;
+      decisionSource = "rule:waiting_customer_info";
+      waitingCustomerInfo = true;
+      closedAckWait = false;
+    }
     // 2026-09-16 竹内（YUYA 事例）「内覧が10:40〜なので、AIX の挨拶ボタン内覧後のピッカーでセットしている形とする」:
     //   内覧当日にこちらが送り出した（お気をつけてお越しください）後のお客様のお礼だけ → 返信しないで内覧を待つ。
     //   次の一手は内覧が終わってからの挨拶 → AIX【挨拶（内覧後）】をセットし reply_mode=aix で自動の下書きを作らない。
@@ -3432,7 +3446,7 @@ ${history}`;
       // 2026-10-01 竹内（ひまり「家賃込の価格でしょうか？」）: 家賃込みかの質問だけ → 返信で答える方向（LLM の「初期費用について AIX で…」を残さない）
       : rentIncludedReply ? "初期費用（御見積書の金額）は翌月分の前家賃込みであることを本文で答える（ご入居日によって別途日割家賃・金額は書かない）"
       : null;
-    const replyDirection = twoStage ? twoStage.direction : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
+    const replyDirection = waitingCustomerInfo ? `お客様の連絡待ち（こちらから「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み）。ピックアップ・新しい提案・約束はしない。返信するなら短い受け止めだけ` : twoStage ? twoStage.direction : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
       ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
       : rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
 
@@ -3447,7 +3461,8 @@ ${history}`;
     //   （残すと返信が「募集状況確認させて頂きます」を約束し、物件確認のやることが立つ）
     const keyTopics = twoStage
       // 2026-10-02 2段の場面: 約束の返信の必須の話題は約束1つ（LLM が AIX のつもりで入れた「物件の紹介」「結果の報告」を外す）
-      ? [twoStage.keyTopic, ...keyTopicsGuard.items.filter((t) => !/物件|お部屋|募集中|空室|見積|金額|ピックアップ|確認/.test(t))].slice(0, 3)
+      // 2026-10-06 ⑫（ゆいと）: 約束と別のお客様の質問（「最短11月中旬でしょうか？」）も必須に（twoStageOtherQuestions）
+      ? [twoStage.keyTopic, ...twoStageOtherQuestions(unrepliedTurn.text ?? "", twoStage.kind), ...keyTopicsGuard.items.filter((t) => !/物件|お部屋|募集中|空室|見積|金額|ピックアップ|確認/.test(t))].slice(0, 3)
       : procedureDirection !== null
       // 2026-09-30: 返信で答えると決めた時は、LLM が確認のつもりで入れた「管理会社に確認」を必須内容から外す
       ? keyTopicsGuard.items.filter((t) => !/管理会社|確認(?:し|する|のうえ|して)|問い?合わせ/.test(t))
@@ -3697,7 +3712,9 @@ ${history}`;
     // 「ボタン特定不能なフリーテキスト」表示になっていた。既知ボタンへ写像できる場合は
     // 参考ボタン名を明示した具体的指示に整形する（actionは""のまま＝強制はしない）。
     const freeTextAixKey = !finalAix ? normalizeAixActionKey(parsed.action) : null;
-    const staffNote = closedAckWait
+    const staffNote = waitingCustomerInfo
+      ? `返信不要（お客様の連絡待ち：「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み・お客様はお礼／お詫びだけ）。お客様から連絡が来たら新しい条件で動く`
+      : closedAckWait
       ? "返信不要（こちらの締めの後のお礼・お客様からの連絡待ち）。次の物件が見つかったら AIX【物件ピックアップした】か【物件オススメ】で送る"
       : viewingDayWait
       ? "返信不要（本日の内覧の送り出し済み・お客様のお礼だけ）。内覧が終わったら AIX【挨拶】→内覧後 で挨拶を送る（ピッカーで内覧の終了後に）"

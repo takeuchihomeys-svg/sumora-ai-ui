@@ -6,6 +6,7 @@
 //   このファイルの正規表現と関数だけを見る（同じ事実を複数の段が別々に判定しない）。
 //   依存は emoji-allowlist.ts だけ（それも依存ゼロの純関数。2026-10-02 絵文字の決まりを同じ入口に載せるため）。他の app/lib/* を import しない。
 import { enforceEmojiAllowlist } from "./emoji-allowlist";
+import { collapseRepeatedOpener } from "./opener-repeat";
 //
 // 実データ（2026-09-11 測定）:
 //   ・承知は正解の送信 11件中 8件が AI 下書き由来・7件は文中の形（「〜とのこと、承知いたしました」）。
@@ -249,6 +250,7 @@ export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?
   const k = normalizeKurai(b.text);
   // 2026-10-02 竹内「絵文字は入れて良い絵文字だけにする。女性の絵文字いれない」: 入れてよい絵文字（😊 😌 🌟 ✨ 🙇）だけにする（emoji-allowlist.ts）。
   //   ここは手本の文（入口）と返信・AIX の仕上げ（出口）の共通の入口なので、手本に 🙇‍♀️ が載らず、出口でも 🙇 に直る
-  const e = enforceEmojiAllowlist(k.text);
+  // 2026-10-06 ⑫（ゆいと「かしこまりました が並んでいる」）: 続く同じ開口語の行を1つに（人の手打ち 365日で変わる 0・opener-repeat.ts）
+  const e = enforceEmojiAllowlist(collapseRepeatedOpener(k.text).text);
   return { text: e.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count, emoji: e.changes.length };
 }
