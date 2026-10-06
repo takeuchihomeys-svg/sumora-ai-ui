@@ -109,3 +109,18 @@ export function rankStarCandidates(cands: readonly StarCandidate[], rule = STAR_
   const ordered = line.length ? [...head, ...line, ...below, ...never] : [...below, ...never];
   return ordered.map(({ i: _i, ...r }) => r);
 }
+
+// ─── 切り替え（2026-10-06 竹内さん「A: 今切り替える」・いつでも戻せる）────────────────────────────
+/**
+ * 🌟（売上サポの 👑＝一番オススメ）の決め方。
+ *   fit    … この並べ方（合い方が主軸・AD は線）。既定
+ *   legacy … 今までの決め方（合計＝判定の点＋画像の加点の1位・pickup-best.compareOverall）
+ * サーバーは環境変数 STAR_RANK_MODE（`off` で legacy）を読んで画面へ値で渡す（画面は環境変数を読まない・サーバー専用の部品を import しない）。
+ */
+export type StarRankMode = "fit" | "legacy";
+export function starRankMode(raw: unknown): StarRankMode {
+  const s = String(raw ?? "").trim().toLowerCase();
+  return s === "off" || s === "legacy" || s === "old" || s === "0" || s === "false" ? "legacy" : "fit";
+}
+/** まとめ（property_pickup_completions.result.basis_rule）に残す決まりの名前（fit の時）。重みを変えたら版を上げる */
+export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06";

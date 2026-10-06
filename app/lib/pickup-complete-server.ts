@@ -16,8 +16,9 @@
 //   止まった時: まとめ ID を付けた後に読み取り・順位が途中で切れた（関数の打ち切り等）まとめは status=running のまま残る
 //     → Cron が 15分を過ぎた running を1回だけ retry に変えて（条件付き UPDATE で取る）finishCompleteGroup をやり直す（保存済みの分析は読まない）
 import { supabase } from "@/app/lib/supabase";
-import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, searchHold, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, SEARCH_HOLD_MAX_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow, type HoldAudit, type HoldCommand } from "@/app/lib/pickup-complete";
+import { selectCompleteTargets, completeGroupId, joinableGroupId, rankCompleteGroup, autoCompleteDue, isQuietFor, lastOpenAt, searchHold, COMPLETE_WINDOW_HOURS, AUTO_COMPLETE_QUIET_MS, SEARCH_HOLD_MAX_MS, type CompleteSourceRow, type CompleteRankRow, type CompleteRanking, type AutoCompleteRow, type HoldAudit, type HoldCommand, type HoldArrival } from "@/app/lib/pickup-complete";
 import { bestBasisFor, bestRuleTag, customerImageNeed, type BestBasis } from "@/app/lib/pickup-best";
+import { starRankMode } from "@/app/lib/recommend-star-rank";
 import { dropDiscountFromRow } from "@/app/lib/property-brain";
 
 export type ClaimResult = {
@@ -64,7 +65,8 @@ export async function claimCompleteGroup(propertyCustomerId: string, meta: Compl
       // 2026-09-30 v2.5.42 竹内「お客さん毎にリアプロと itandi 完了して、次のお客さんに移る…分析もお客さん毎に」:
       //   静かでも、そのお客様の検索（ITANDI の回・次のサイト）が続いている間はまとめない＝両サイトがそろってから1回だけ解析・★物件出し★に1回
       if (last != null) {
-        const h = await searchHoldFor(propertyCustomerId, now);
+        // 2026-10-06 届いた物件（サイト・時刻）も渡す: 命令の無い1回の検索は、そのサイトの物件が届いていれば終わった回（singleRunDelivered）
+        const h = await searchHoldFor(propertyCustomerId, now, rows.map((r) => ({ site: r.site ?? null, created_at: r.created_at })));
         if (h.hold && h.until != null) {
           out.ok = true; out.notDue = true; out.holdReason = h.reason;
           out.dueAt = new Date(Math.max(h.until, now + 60_000)).toISOString();
@@ -114,7 +116,7 @@ export async function claimCompleteGroup(propertyCustomerId: string, meta: Compl
 /**
  * 2026-09-30 v2.5.42 そのお客様の検索が続いているか（search_audits の直近の回＋その命令）。読めない時は待たない（今まで通りまとめる）
  */
-export async function searchHoldFor(propertyCustomerId: string, now = Date.now()): Promise<{ hold: boolean; until: number | null; reason: string | null }> {
+export async function searchHoldFor(propertyCustomerId: string, now = Date.now(), arrivals?: ReadonlyArray<HoldArrival> | null): Promise<{ hold: boolean; until: number | null; reason: string | null }> {
   try {
     const since = new Date(now - SEARCH_HOLD_MAX_MS - 10 * 60_000).toISOString();
     const a = await supabase.from("search_audits").select("created_at, finished_at, status, site, command_id, trigger")
@@ -128,7 +130,7 @@ export async function searchHoldFor(propertyCustomerId: string, now = Date.now()
       const c = await supabase.from("automation_commands").select("id, status, sites").in("id", ids);
       if (!c.error) commands = (c.data ?? []) as HoldCommand[];
     }
-    return searchHold(audits, commands, now);
+    return searchHold(audits, commands, now, arrivals);
   } catch {
     return { hold: false, until: null, reason: null };
   }
@@ -164,7 +166,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       out.analyzed = a.analyzed; out.analyzeLevel = a.level; out.analyzeTargets = a.targets;
     }
     const { data, error } = await supabase.from("property_pickups")
-      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis, search_override, reason_codes, reasons_ja, summary_text, terms")
+      .select("id, created_at, batch_id, site, rank, status, recommended, property_name, room_no, verdict, score, image_analysis, search_override, reason_codes, reasons_ja, summary_text, terms, ad_yen, equipment")
       .eq("complete_group_id", input.groupId).limit(500);
     if (error) { out.error = error.message; return out; }
     // 2026-09-27 付け直し（backfill-drop-discount-codes --apply）の前の行も、割引と AD の比べの札を外した点・判定で並べる（画面の詳細 API と同じ）
@@ -173,15 +175,18 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
     const prefW = await prefWeightForCustomer(supabase, input.propertyCustomerId);
     const rows = ((data ?? []) as Array<CompleteRankRow & { reason_codes?: string[] | null; reasons_ja?: string[] | null; summary_text?: string | null }>).map((r) => {
       const d = dropDiscountFromRow(r, prefW);
-      const { reason_codes: _c, reasons_ja: _j, summary_text: _s, ...rest } = r;
-      void _c; void _j; void _s;
+      // 2026-10-06 説明文（summary_text）は🌟の並べ方の材料（広さ・家賃）に残す
+      const { reason_codes: _c, reasons_ja: _j, ...rest } = r;
+      void _c; void _j;
       // 2026-09-27 版 b: 画像の加点（判定と同じ希望を二重に数えない）に判定の札が要るので reason_codes は残す（割引の比べを外した後の物）
       return (d ? { ...rest, score: d.score, verdict: d.verdict, reason_codes: d.reason_codes } : { ...rest, reason_codes: r.reason_codes ?? null }) as CompleteRankRow;
     });
     rowsForAnnounce = rows;
     // 👑 の決め方はお客様ごと（画像で分析が必要＝画像の点・不要＝判定の点）。画面の詳細 API と同じ customerImageNeed → bestBasisFor
     const basis = await loadBestBasis(input.propertyCustomerId, rows);
-    const ranking = rankCompleteGroup(rows, { basis });
+    // 2026-10-06 竹内さん（A）: 👑 は🌟の並べ方（合い方が主軸）。STAR_RANK_MODE=off で今までの決め方（合計の1位）に戻る
+    const starMode = starRankMode(process.env.STAR_RANK_MODE);
+    const ranking = rankCompleteGroup(rows, { basis, starMode });
     out.ranking = ranking;
     // 順位を行に（まとめ ID が同じ行だけ）
     await Promise.allSettled(ranking.order.map((o) => supabase.from("property_pickups").update({ complete_rank: o.complete_rank }).eq("id", o.id).eq("complete_group_id", input.groupId)));
@@ -193,7 +198,7 @@ export async function finishCompleteGroup(input: { groupId: string; claimedIds: 
       batch_ids: [...new Set(rows.map((r) => r.batch_id))],
       sites,
       best_id: ranking.bestId, best_basis: ranking.bestBasis,
-      result: { basis_rule: bestRuleTag(basis), items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, best_total: ranking.bestTotal, best_bonus: ranking.bestBonus, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
+      result: { basis_rule: bestRuleTag(basis, starMode), star_rank_mode: ranking.starMode, star_rule: ranking.rule, best_legacy_id: ranking.legacyBestId, star_reasons: ranking.starReasons, items: ranking.items, batches: ranking.batches, image_scored: ranking.imageScored, not_analyzed: ranking.notAnalyzed, best_match: ranking.bestMatch, best_score: ranking.bestScore, best_total: ranking.bestTotal, best_bonus: ranking.bestBonus, analyzed_now: out.analyzed, analyze_level: out.analyzeLevel, analyze_targets: out.analyzeTargets },
     }).eq("group_id", input.groupId);
     if (cErr) console.warn("[pickup-complete] まとめの結果を書けない:", cErr.message);
     // 2026-09-29 竹内「売上番長のグループにアナウンスされるのは、AIX ツールで物件の解析が終わった時にする…PDF もここに添付しなくて大丈夫（ブレインの際）」:

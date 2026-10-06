@@ -6,7 +6,7 @@
 //   時刻は 2026-09-29 の ITANDI の実測（1回の中央値 6.5分・最長 25分・サイトの間 最長 95秒）に合わせた
 // 実行: npx tsx app/lib/__tests__/customer-complete-flow.test.ts
 import { normalizeWebBrainSites, buildWebBrainCommands, planWebBrainFold, webBrainBlockReason, queuedKey } from "../web-brain-search";
-import { searchHold, SEARCH_HOLD_MAX_MS, NEXT_SITE_WAIT_MS, AUTO_COMPLETE_QUIET_MS, isQuietFor } from "../pickup-complete";
+import { searchHold, singleRunDelivered, SINGLE_RUN_HOLD_MAX_MS, SEARCH_HOLD_MAX_MS, NEXT_SITE_WAIT_MS, AUTO_COMPLETE_QUIET_MS, isQuietFor } from "../pickup-complete";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -71,6 +71,30 @@ console.log("\n■ ② 検索が続いている間はまとめない（3分の�
     !searchHold([{ ...rpP, status: "finished", finished_at: iso(NOW + 9 * MIN) }, { ...itP, status: "finished", finished_at: iso(NOW + 5 * MIN) }], cmd, NOW + 13 * MIN).hold
     && !searchHold([{ ...rpP, status: "finished", finished_at: iso(NOW + 5 * MIN) }, { ...itP, status: "finished", finished_at: iso(NOW + 9 * MIN) }], cmd, NOW + 13 * MIN).hold);
   t("同時: ITANDI の回がまだ始まっていない一瞬（ずらしの間）にリアプロが終わっても → 待つ（next_site）", /next_site:itandi/.test(searchHold([{ ...rpP, status: "finished", finished_at: iso(NOW + 5_000) }], cmd, NOW + 6_000).reason ?? ""));
+
+  // 2026-10-06 竹内「AIXツールの解析完了するのおそくないか？」: 命令の無い1回の検索（案内モード・スタッフが自分で検索して送る）は
+  //   拡張が点検を閉じない（10/01〜）。物件が届いた事で終わったと読む。実例 みく: リアプロの回 18:40:32 開始・物件 18:46:31・まとめ 19:11:04（24.6分）
+  {
+    const T0 = Date.parse("2026-10-06T09:40:32Z");
+    const single = { created_at: iso(T0), finished_at: null as string | null, status: "started", site: "realpro", command_id: null as string | null, trigger: "single" };
+    const got = [{ site: "realpro", created_at: iso(T0 + 6 * MIN) }];
+    t("みく: 物件が届く前の1回の検索 → 待つ（今まで通り）", searchHold([single], [], T0 + 4 * MIN, []).hold);
+    t("みく: リアプロの物件が届いた後 → 待たない（3分の静けさでまとまる＝最後の物件から 3〜5分）", !searchHold([single], [], T0 + 9 * MIN, got).hold);
+    t("届いた物件を渡さない呼び方は今まで通り待つ（30分）", searchHold([single], [], T0 + 9 * MIN).hold);
+    t("回の始まりより前に届いた物件では終わったと読まない", searchHold([single], [], T0 + 9 * MIN, [{ site: "realpro", created_at: iso(T0 - 1 * MIN) }]).hold);
+    t("別のサイト（ITANDI）の物件ではリアプロの回は終わらない", searchHold([single], [], T0 + 9 * MIN, [{ site: "itandi", created_at: iso(T0 + 6 * MIN) }]).hold);
+    const itSingle = { ...single, created_at: iso(T0 + 7 * MIN), site: "itandi" };
+    t("リアプロの物件の後に ITANDI の1回の検索を始めた → ITANDI の物件が届くまで待つ（両サイトがそろってから1回）", searchHold([single, itSingle], [], T0 + 11 * MIN, got).hold);
+    t("ITANDI の物件も届いた → 待たない", !searchHold([single, itSingle], [], T0 + 20 * MIN, [...got, { site: "itandi", created_at: iso(T0 + 15 * MIN) }]).hold);
+    t("命令のある回（一括・自動便）は物件が届いても終わったと読まない（何回かに分かれて届く・拡張が閉じる）", !singleRunDelivered({ ...single, command_id: "cmd1", trigger: "bulk_queue" }, got) && searchHold([{ ...single, command_id: "cmd1", trigger: "bulk_queue" }], cmd, T0 + 9 * MIN, got).hold);
+    t("サイトの書き方の違い（realnetpro）も同じサイト", singleRunDelivered({ ...single, site: "realnetpro" }, got));
+    // 物件が届かない1回の検索（ITANDI を開いて送らなかった等）は 12分まで（今までは 30分）。実例 ℳ: リアプロ 19:02・ITANDI 19:06/19:06 開始・物件はリアプロ 19:06 だけ
+    const itOnly = { ...single, created_at: iso(T0 + 7 * MIN), site: "itandi" };
+    const h1 = searchHold([single, itOnly], [], T0 + 15 * MIN, got);
+    t("届かない ITANDI の1回の検索は始まりから12分まで待つ（until＝始まり＋12分）", h1.hold && h1.until === T0 + 7 * MIN + SINGLE_RUN_HOLD_MAX_MS && SINGLE_RUN_HOLD_MAX_MS === 12 * MIN);
+    t("12分を過ぎたら待たない", !searchHold([single, itOnly], [], T0 + 7 * MIN + SINGLE_RUN_HOLD_MAX_MS + 1000, got).hold);
+    t("命令のある回は今まで通り30分", searchHold([{ ...itOnly, command_id: "cmd1", trigger: "bulk_queue" }], cmd, T0 + 7 * MIN + 20 * MIN, got).hold);
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -3172,3 +3172,12 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 - 原因: 拡張の更新日の欄を手で選ぶと rp_update_days / itandi_update_days に書かれ、その後ずっと自動（前回物件を出した日から）より優先されていた。未桜は 10/05 に送ったのに 7 のまま。8/24 の「1日」が残るくぼ等も同じ。
 - 直し（サーバー）: 送った・確認した印を付ける所（property-customers PATCH・property-pickups/send・line-tasks/complete・hanbancyo-webhook）で両方の列を null に戻す（`CLEAR_MANUAL_UPDATE_DAYS`・app/lib/search-update-days.ts）。手の指定は「次に送るまで」。
 - 未桜の 7 は null に戻した（自動）。他の古い手の指定（くぼ 1・SHIGI 14・みずき 7）はオーナー確認待ち。
+
+### 2026-10-06 「AIXツールの解析が終わりました」が遅い（みく・中央値25分）
+- 竹内「AIXツールの解析完了するのおそくないか？…アナウンスが遅いだけなのかも」。各段の実測（みく エスフィールド 202）: 物件の行 18:46:31 → まとめ 19:11:04（拡張の alarm）→ 解析の終わり 19:11:07（3秒・読み取り0件）→ ★物件出し★ 19:11:10。**解析もアナウンスも速い・遅いのは「まとめ始め」の待ちだけ**
+- 30日の分布（最後の物件 → まとめ）: 9/28〜10/01 午前 中央値 3.2〜4.7分 → **10/02〜10/06 中央値 22〜29分・90% 26〜35分**。まとめ → 解析の終わり 中央値 2〜13秒・解析 → 通知 2〜3秒
+- 原因: 10/01 15時から**命令の無い1回の検索（trigger=single・案内モード）の search_audits が1本も finished にならない**（拡張が入力しない＝fill-done が来ない → background の点検の tracker が回を知らない → axlx-batch-customer-done でも 6分の閉じ忘れの時計でも閉じない）。searchHold が started を「検索中」と読み、見回り（15分ごと・20分線）が abandoned にするまで（20〜35分）まとめを止めていた。10/01〜06 の single は abandoned 116本・finished 2本
+- 直し（サーバーだけ・拡張の再読み込み不要）: `pickup-complete.ts` `singleRunDelivered`／`isManualSingle`／`SINGLE_RUN_HOLD_MAX_MS=12分`。命令の無い1回の検索は、そのサイトの物件が回の始まり以降に届いていれば終わった回・届かない回（ITANDI を開いて送らない等）は12分まで（実測: 届いた回の始まり→最初の物件 中央値2.1〜2.3分・最長11.2分）。命令のある回（一括・自動便）は今まで通り30分＋次のサイト4分。`claimCompleteGroup` が届いた行を `searchHoldFor` に渡す。テスト customer-complete-flow（39件）
+- 見込み（10/01 15時以降の38回で再計算）: 中央値 25分 → 約4分・90% 32分 → 約13分（届かない ITANDI の回がある時）
+- ⚠ 残り（拡張側・未対応）: 案内モードの1回の検索の点検は今も閉じない（abandoned が見回りの集計に毎回残る・見立ては reused で費用はほぼ無し）。直すなら案内モードの「売上番長に送る」で `_auditOnBatchDone` が回を見つけられるよう、popup の started の run を tracker に登録する
+- ついでに: 👑 エスフィールド 202 の「⚠この部屋は送付済み」は正しい表示（スタッフが 18:54:15 に AIX【物件オススメ】でみくさんに送った＝まとめの前）。待ちが長いので解析より先に送られていた。グランパシフィック大国町 602（資料 19:08）は property_pickups・sent_properties に無く、この回とは別

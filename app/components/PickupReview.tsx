@@ -95,7 +95,9 @@ type LineLite = { profile_image_url: string | null; updated_at: string | null; a
 type SentHist = { id: string; property_name: string; room_no: string | null; channel: string | null; delivery: string | null; source: string | null; sent_at: string; image_url: string | null; pickup_id: number | null };
 type Customer = { key: string; property_customer_id: string | null; conversation_id: string | null; customer_name: string | null; batches: Batch[]; notes: Note[]; pending: number; last_at: string; line?: LineLite | null; last_pickup_at?: string; order_at?: string; sent_history?: SentHist[]; sent_room_history?: SentHistLite[] | null; has_more_batches?: boolean;
   /** 2026-09-24 回をまたいだ一番（画像で分析の点）と、画像で確かめる希望の有無（詳細だけ） */
-  best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null; room_text?: string | null; ad_text?: string | null }) | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
+  best?: (CustomerBest & { from?: "complete" | "window"; image_url?: string | null; status?: string | null; room_text?: string | null; ad_text?: string | null }) | null;
+  /** 2026-10-06 👑 の決め方（サーバーの STAR_RANK_MODE・fit＝🌟の並べ方／legacy＝合計の1位）。無い時（古い API）は fit */
+  star_rank_mode?: "fit" | "legacy" | null; image_need?: { level: "recommended" | "optional" | "none"; labels: string[]; topics: string[]; from?: string } | null;
   /** 2026-09-25 条件の要約（決定論＋DeepSeek で読めない節だけ）と照らせない条件。スタッフ向け（お客様には出さない） */
   condition_summary?: { line: string; uncheckable: string[]; ai: boolean } | null;
   /** 2026-09-30 お客様の物件探しの条件（property_customers の列そのまま・会話の一番上の「🔎 お客様の条件」の材料） */
@@ -1096,7 +1098,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
     // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送る並び＝この回の画面の並び（👑 が先頭・次に点の順）。
     //   旧は ids を DB の並びで渡し、トーク側の GET が rank（拡張の検索順）に並べ直していた＝1枚目が 👑 でない回があった（sent-image-order.ts）
     const atOf = new Map((b.parts ?? [b]).map((x) => [x.batch_id, x.created_at] as const));
-    const rb = roundBestId(b.items.map((x) => ({ ...x, batch_id: x.batch_id ?? b.batch_id, created_at: atOf.get(x.batch_id ?? "") ?? b.created_at })), bestBasisFor(c.image_need), c.best?.id ?? null);
+    const rb = roundBestId(b.items.map((x) => ({ ...x, batch_id: x.batch_id ?? b.batch_id, created_at: atOf.get(x.batch_id ?? "") ?? b.created_at })), bestBasisFor(c.image_need), c.best?.id ?? null, c.star_rank_mode ?? undefined);
     const href = buildPickupAixHref({ conversationId: convId, pickupIds: sortForReview(targets, rb).map((it) => it.id), batchId: b.batch_id });
     if (!href) { setMsg("AIX に渡せませんでした（チェックと会話の紐付けを確かめてください）"); return; }
     leaveTo(href);
@@ -1529,7 +1531,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                   // 2026-09-25 竹内「お客さんにベストな物件が一番オススメ」（野口さんの回: 162点に🌟★・164点に🌟）:
                   //   一番オススメ（👑）は点の1位（画像で分析が要るお客様は画像の点）＝全体の 👑 と同じ決まり。並びは 👑 → 点の高い順（同点は🌟）
                   const at = new Map((bb.batch.parts ?? [bb.batch]).map((x) => [x.batch_id, x.created_at] as const));
-                  const rb = roundBestId(bb.batch.items.map((x) => ({ ...x, batch_id: x.batch_id ?? bb.batch.batch_id, created_at: at.get(x.batch_id ?? "") ?? bb.batch.created_at })), bestBasisFor(open.image_need), open.best?.id ?? null);
+                  const rb = roundBestId(bb.batch.items.map((x) => ({ ...x, batch_id: x.batch_id ?? bb.batch.batch_id, created_at: at.get(x.batch_id ?? "") ?? bb.batch.created_at })), bestBasisFor(open.image_need), open.best?.id ?? null, open.star_rank_mode ?? undefined);
                   const bi = rb != null ? bb.batch.items.find((x) => x.id === rb) ?? null : null;
                   const basisImage = bestBasisFor(open.image_need) === "image" && typeof (bi?.image_analysis as { match?: unknown } | null)?.match === "number";
                   // 全体の 👑（open.best）がこの回に無い時は、この回の一番は「この回で一番」（👑 は全体で1つ）

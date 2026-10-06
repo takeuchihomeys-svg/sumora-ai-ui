@@ -24,6 +24,7 @@
 //     1回ずつ届いた回を寄せても順位と 👑 が「まとめた全件」になるだけで、送った物・判定は変えない（悪くならない）
 //   - 境目: ちょうど10分（now − 最後 ＝ 600000ms）でまとめる（>=）。未来の時刻（時計のずれ）はまとめない
 import { pickCustomerBest, compareOverall, overallPoints, imageBonusPoints, type BestCandidateRow, type BestBasis } from "./pickup-best";
+import type { StarRankMode } from "./recommend-star-rank";
 import { dropGhostSingles } from "@/app/lib/search-audit-ghost";
 import { overrideRulerKey } from "./search-override";
 
@@ -125,6 +126,11 @@ export type CompleteRanking = {
   /** 点（画像）が付いた件数・まだ分析していない件数 */
   imageScored: number;
   notAnalyzed: number;
+  /** 2026-10-06 👑 を決めた決め方（fit＝🌟の並べ方・legacy＝合計の1位）・決まりの名前・今までの決め方なら 👑 だった行・合い方の理由（後で2つを比べる記録） */
+  starMode: StarRankMode | null;
+  rule: string | null;
+  legacyBestId: number | null;
+  starReasons: string[];
 };
 
 /** 👑 の窓（まとめ全体を切らない長さ）。画面がまとめた回の 👑 を出し直す時も同じ値で呼ぶ */
@@ -134,10 +140,10 @@ export const COMPLETE_BEST_WINDOW_HOURS = COMPLETE_WINDOW_HOURS * 2 + 1;
  * まとめた全件で順位と 👑 を付け直す（純関数）。
  * basis: お客様の決まり（bestBasisFor(customerImageNeed(...))）。省略は image（前の動き）
  */
-export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: { basis?: BestBasis }): CompleteRanking {
+export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: { basis?: BestBasis; starMode?: StarRankMode }): CompleteRanking {
   const sorted = rows.slice().sort(compareCompleteGroup);
   // 👑（画面と同じ pickCustomerBest・同じ basis。窓はまとめ全体で切らない。未送信の行だけ）
-  const pick = rows.length ? pickCustomerBest(rows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis: opts?.basis ?? "image" }) : null;
+  const pick = rows.length ? pickCustomerBest(rows, { windowHours: COMPLETE_BEST_WINDOW_HOURS, basis: opts?.basis ?? "image", starMode: opts?.starMode }) : null;
   const bestId: number | null = pick?.id ?? null;
   const bestBasis: CompleteRanking["bestBasis"] = pick?.basis ?? null;
   // 👑 はまとめの順位でも1番（順位の1番と 👑 が別の物件だと、どちらが一番か読めない）。残りは compareCompleteGroup の並び
@@ -160,6 +166,10 @@ export function rankCompleteGroup(rows: ReadonlyArray<CompleteRankRow>, opts?: {
     items: rows.length,
     imageScored: rows.filter((r) => matchOf(r) != null).length,
     notAnalyzed: rows.filter((r) => !r.image_analysis).length,
+    starMode: pick?.star_mode ?? null,
+    rule: pick?.rule ?? null,
+    legacyBestId: pick?.legacy_id ?? null,
+    starReasons: pick?.star_reasons ?? [],
   };
 }
 
@@ -297,16 +307,56 @@ const holdSite = (s: string | null | undefined): string => {
   return v;
 };
 
-/** そのお客様の検索がまだ続いているか（純関数）。hold なら until（ms）まで待つ */
-export function searchHold(auditsAll: ReadonlyArray<HoldAudit>, commands: ReadonlyArray<HoldCommand>, now: number): { hold: boolean; until: number | null; reason: string | null } {
+/**
+ * 命令の無い1回の検索で、物件が届かないまま（送らなかった・0件・ITANDI を開いただけ）の回を待つ長さ。
+ *   実測（10/01〜10/06 の命令の無い1回の検索 121回）: 物件が届いた回の「回の始まり → 最初の物件」は 中央値 2.1〜2.3分・90% 4.0〜4.4分・最長 11.2分。
+ *   届かない回は ITANDI 49回中 40回・リアプロ 72回中 22回あり、今までは 30分（SEARCH_HOLD_MAX_MS）待っていた → 最長の 11.2分の上の 12分
+ */
+export const SINGLE_RUN_HOLD_MAX_MS = 12 * 60_000;
+
+/** 命令の無い1回の検索（スタッフが自分で検索して送る回・案内モード）か */
+export function isManualSingle(a: Pick<HoldAudit, "command_id" | "trigger">): boolean {
+  if (a.command_id) return false;
+  return a.trigger == null || a.trigger === "single";
+}
+
+/** 売上サポに届いた物件の行（サイト・届いた時刻）。searchHold が「命令の無い1回の検索」の終わりを読むのに使う */
+export type HoldArrival = { site: string | null; created_at: string };
+
+/**
+ * 命令の無い1回の検索（trigger=single・スタッフが自分で検索して「売上番長に送る」）が、物件が届いた事で終わったと読めるか（純関数）。
+ * 2026-10-06 竹内「AIXツールの解析完了するのおそくないか？」:
+ *   10/01 15時から、命令の無い1回の検索の点検（search_audits）が1本も finished にならず（案内モードは拡張が入力しない＝fill-done が来ない＝
+ *   拡張の点検が回を知らず、結果の届け（axlx-batch-customer-done）でも 6分の閉じ忘れの時計でも閉じない）、見回りが 20〜35分後に abandoned にするまで
+ *   searchHold が「検索中」と読んでまとめを止めていた。実測（10/02〜10/06 の 34回）: 最後の物件 → まとめ 中央値 25分・90% 31分（9/30 以前は 4分前後）。
+ *   解析そのもの（まとめ → 読み取り・順位・👑）は 2〜13秒、まとめ → ★物件出し★のアナウンスは 2〜3秒＝遅いのは待ちだけ。
+ *   → そのサイトの物件が回の始まり以降に届いていれば、その回は終わった（結果を送った）と読む。命令のある回（一括・自動便）は
+ *     拡張が確かに閉じるので今まで通り（何回かに分かれて届くので、届いた事を終わりとは読まない）。
+ *   同じお客様の別のサイト（ITANDI）の回がまだ物件を届けていなければ、その回は今まで通り待つ（両サイトがそろってから1回だけ）
+ */
+export function singleRunDelivered(a: Pick<HoldAudit, "created_at" | "site" | "command_id" | "trigger">, arrivals: ReadonlyArray<HoldArrival> | null | undefined): boolean {
+  if (!isManualSingle(a)) return false;
+  const start = Date.parse(String(a.created_at ?? ""));
+  if (!Number.isFinite(start) || !arrivals?.length) return false;
+  const site = holdSite(a.site);
+  if (!site) return false;
+  return arrivals.some((p) => holdSite(p.site) === site && Date.parse(String(p.created_at ?? "")) >= start);
+}
+
+/** そのお客様の検索がまだ続いているか（純関数）。hold なら until（ms）まで待つ。arrivals＝そのお客様の売上サポの行（省略は今まで通り） */
+export function searchHold(auditsAll: ReadonlyArray<HoldAudit>, commands: ReadonlyArray<HoldCommand>, now: number, arrivals?: ReadonlyArray<HoldArrival> | null): { hold: boolean; until: number | null; reason: string | null } {
   // 2026-09-30 v2.5.48 幽霊の行（一括の行の直後に同じサイトで出た trigger=single＝同じ自動入力の2本目）では待たない・数えない。
   //   旧: 幽霊の行が started のまま残ると 30分「検索中」と読んでまとめを待ち、最後に終わった行が幽霊（命令なし）だと次のサイトの待ちも外れた
   const audits = dropGhostSingles(auditsAll.map((a) => ({ ...a, property_customer_id: "_" })));
   const at = (s: string | null | undefined) => Date.parse(String(s ?? ""));
-  const open = audits.filter((a) => a.status === "started" && Number.isFinite(at(a.created_at)) && now - at(a.created_at) < SEARCH_HOLD_MAX_MS && at(a.created_at) <= now + 60_000);
+  // 2026-10-06 命令の無い1回の検索: そのサイトの物件が届いていれば終わった回（singleRunDelivered）・届かない回は SINGLE_RUN_HOLD_MAX_MS まで
+  //   （届いた物件を渡さない呼び方＝arrivals 無しは今まで通り 30分）
+  const maxOf = (a: HoldAudit) => (arrivals != null && isManualSingle(a) ? SINGLE_RUN_HOLD_MAX_MS : SEARCH_HOLD_MAX_MS);
+  const open = audits.filter((a) => a.status === "started" && Number.isFinite(at(a.created_at)) && now - at(a.created_at) < maxOf(a) && at(a.created_at) <= now + 60_000
+    && !singleRunDelivered(a, arrivals));
   if (open.length) {
-    const latest = Math.max(...open.map((a) => at(a.created_at)));
-    return { hold: true, until: latest + SEARCH_HOLD_MAX_MS, reason: `searching:${[...new Set(open.map((a) => holdSite(a.site)))].join(",")}` };
+    const until = Math.max(...open.map((a) => at(a.created_at) + maxOf(a)));
+    return { hold: true, until, reason: `searching:${[...new Set(open.map((a) => holdSite(a.site)))].join(",")}` };
   }
   const fin = audits.filter((a) => a.status !== "started" && Number.isFinite(at(a.finished_at))).sort((x, y) => at(y.finished_at) - at(x.finished_at));
   const last = fin[0];
