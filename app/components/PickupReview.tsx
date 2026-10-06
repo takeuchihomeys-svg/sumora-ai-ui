@@ -36,6 +36,8 @@ import { normalizeSearchMode, roundSearchModeLine, type ChainNote } from "@/app/
 // 2026-09-30 竹内「ここにも分かりやすいようにお客さんの条件を入れておく」: 会話の一番上に常に出す「🔎 お客様の条件」（純関数と画面の部品だけ）
 import PickupConditionsBar from "@/app/components/PickupConditionsBar";
 import { latestOverrideLabel } from "@/app/lib/customer-condition-view";
+// 2026-10-06 ⑰: 物件オススメ＝送った束の中から1件（AIX の判定と同じ時間の線・recommendation-frame は純関数で画面から読める）
+import { BUNDLE_COMPARE_WINDOW_HOURS } from "@/app/lib/recommendation-frame";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -1588,8 +1590,10 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                       const q = pickQualityTop(bb.batch.items, bid, PICKUP_AIX_MAX, { firstProposal: isFirstProposalRound(bb.batch.created_at, open.first_proposal_sent_at), sentBefore: sentBeforeIds(bb.batch.items, open.sent_room_history ?? open.sent_history ?? null), staleSinceLastSend: isStaleForAdUnder1(bb.batch.created_at, open.last_proposal_sent_at) });
                       const sel = bb.batch.items.filter((it) => checked[it.id] && isPickupCheckable(it.status)).length;
                       return (
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[#607d8b] leading-snug">{sel}件を選択中{q.ngExcluded ? `・NG 条件・保留の物件 ${q.ngExcluded}件は選びません` : ""}{q.dealExcluded ? `・審査中/商談中 ${q.dealExcluded}件は選びません` : ""}{q.firstProposal ? `・新規のお客様: AD2以上を優先${q.adExcluded ? `（AD1 など ${q.adExcluded}件を外す）` : ""}` : ""}{q.adUnder1Excluded ? `・AD1ヶ月未満 ${q.adUnder1Excluded}件は選びません` : ""}{q.adUnder1Filled ? `・AD1ヶ月未満（売上5万円以上）${q.adUnder1Filled}件を入れました（${q.adUnder1FillWhy === "stale" ? "しばらく新着を送れていないため" : "ほかに選べる物件が無いため"}）` : ""}</span>
+                        // 2026-10-06 ⑰ 竹内さんのスクショ（あかりさん）: 文の列が1文字ずつ縦に潰れていた＝flex の子の最小幅が1文字（日本語は1字ごとに折れる）。
+                        //   文に最小幅を持たせ、狭い時はボタンを次の行へ回す（flex-wrap）
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[10px] text-[#607d8b] leading-snug flex-1 min-w-[10rem]">{sel}件を選択中{q.ngExcluded ? `・NG 条件・保留の物件 ${q.ngExcluded}件は選びません` : ""}{q.dealExcluded ? `・審査中/商談中 ${q.dealExcluded}件は選びません` : ""}{q.firstProposal ? `・新規のお客様: AD2以上を優先${q.adExcluded ? `（AD1 など ${q.adExcluded}件を外す）` : ""}` : ""}{q.adUnder1Excluded ? `・AD1ヶ月未満 ${q.adUnder1Excluded}件は選びません` : ""}{q.adUnder1Filled ? `・AD1ヶ月未満（売上5万円以上）${q.adUnder1Filled}件を入れました（${q.adUnder1FillWhy === "stale" ? "しばらく新着を送れていないため" : "ほかに選べる物件が無いため"}）` : ""}</span>
                           <button type="button" disabled={!!busy || q.ids.length === 0 || batchExpired(bb.batch)}
                             title="未送信で NG 条件（保留・外す候補の理由）に当たらない物件を、合計（判定の点＋画像の点）の高い順に10件まで選ぶ。10件に足りなくても NG の物件では埋めない。資料の現況が審査中・商談中の部屋は選ばない。新規のお客様（まだ物件をお送りしていない）は AD2以上 → AD1.5 → （AD2以上が8件未満の時だけ）AD1 の順"
                             onClick={() => { const pick = new Set(q.ids); setChecked((p) => { const n = { ...p }; for (const it of bb.batch.items) n[it.id] = pick.has(it.id); return n; }); setMsg(qualityPickMessage(q.ids.length, q.ngExcluded, PICKUP_AIX_MAX, { dealExcluded: q.dealExcluded, adExcluded: q.adExcluded, sentExcluded: q.sentExcluded, adUnder1Excluded: q.adUnder1Excluded, adUnder1Filled: q.adUnder1Filled, adUnder1FillWhy: q.adUnder1FillWhy })); }}
@@ -1691,6 +1695,15 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                     className="mt-2 w-full py-2 rounded-lg text-xs font-bold text-white" style={{ background: "#7C3AED", opacity: busy ? 0.6 : 1 }}>
                     🏠 この物件を AIX物件オススメで送る
                   </button>
+                )}
+                {/* 2026-10-06 ⑰ 竹内「物件オススメは ピックアップで送った物件の中で オススメと言う知識もいれておく ここのAIXツールに」:
+                    AIX 側の判定（recommendation-frame.bundleCompareOk・同じ時間の線 BUNDLE_COMPARE_WINDOW_HOURS）と同じ考え方を画面にも出す */}
+                {bBatch && bItem && (bItem.status === "pending" || bItem.status === "sent") && (
+                  <div className="mt-1 text-[10px] leading-snug text-[#7e57c2]">
+                    {bItem.status === "sent"
+                      ? `物件オススメ＝ピックアップで送った物件の中から特に推す1件。送ってから${BUNDLE_COMPARE_WINDOW_HOURS}時間以内なら「お送りさせて頂きましたお部屋の中でも〜特にオススメ」の形で作ります`
+                      : "物件オススメ＝ピックアップで送った物件の中から特に推す1件。まだ送っていない部屋は、送った束の中ではない1件（新着・単独）として作ります"}
+                  </div>
                 )}
               </div>
               <span className={TIME}>{hm(bb.at)}</span>

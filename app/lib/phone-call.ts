@@ -171,6 +171,20 @@ export type CallTextInput = {
 export const PHONE_LAST_HOUR = 19;
 export const PHONE_HOURS_LINE = "19時までですと何時でもお電話可能です😊！！";
 
+/**
+ * スタッフが入れた用件 → 案内文の1行（スタッフの実送信の言い方）。
+ * 2026-10-06 ⑰ 竹内さん承認「電話をかけるに用件（申込・審査・自由文）」。電話をかける の下書きと送った文 18組で、
+ * スタッフは 12通中 6通で用件を足していた:「申込みに関して…お電話可能でしょうか」「審査に関して5分程でお打ち合わせさせて頂ければ幸いです」
+ * 「お手隙の際に5分程お申し込みに関してご説明させていただきますので」「審査面無事通過するにあたりまして…お打ち合わせさせて頂ければと思います（5分程で完了）」
+ */
+export const PHONE_PURPOSE_PRESETS = ["申込", "審査"] as const;
+export function staffPurposeLine(purpose: string): string {
+  const p = String(purpose ?? "").trim().replace(/[。！!]+$/, "");
+  if (/^(?:お?申込み?|お?申し込み|申込)(?:について|の件)?$/.test(p)) return "お申込みに関しまして5分程お電話でご説明させて頂ければと思います！！";
+  if (/^審査(?:について|の件|の打ち合わせ|のお打ち合わせ)?$/.test(p)) return "審査に関しまして5分程お電話でお打ち合わせさせて頂ければと思います！！";
+  return `${p.replace(/(?:について|の件)$/, "")}に関しまして5分程お電話でご説明させて頂ければと思います！！`;
+}
+
 export function buildCallText(i: CallTextInput): string {
   const turn = i.customerTurn ?? "";
   const asked = customerRequestsPhoneCall(turn);
@@ -207,7 +221,9 @@ export function buildCallText(i: CallTextInput): string {
   } else if (asked) {
     lines.push("お電話大丈夫です😊！！");
   }
-  if (topic) lines.push(`${topic}${/の件$/.test(topic) ? "、" : "につきまして"}お電話にてお伺いさせて頂きます！！`.replace("につきましてお電話にてお伺い", "につきましてお電話にてご説明"));
+  // 2026-10-06 ⑰（竹内さん承認）: スタッフが用件を入れた時はスタッフの実送信の言い方（staffPurposeLine）。用件が空でお客様の発言から拾った話題の時は今まで通り
+  if (purpose) lines.push(staffPurposeLine(purpose));
+  else if (topic) lines.push(`${topic}${/の件$/.test(topic) ? "、" : "につきまして"}お電話にてお伺いさせて頂きます！！`.replace("につきましてお電話にてお伺い", "につきましてお電話にてご説明"));
   lines.push(`${when || (asked || avail || proposed || askNow ? "" : "お手隙の際に")}こちらの電話をかけるボタンよりお電話お願い致します${lines.some((l) => /😊/.test(l)) ? "" : "😊"}！！`);
   // 名前を最初に付けていない・お客様からの依頼でない（こちらから）時は名前の呼びかけを先頭に
   if (!i.firstTalkToday && name && !asked && !avail && !proposed) lines.unshift(name);

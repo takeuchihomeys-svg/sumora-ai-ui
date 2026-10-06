@@ -17,7 +17,7 @@ import { pickDaySlots, limitSlotsPerDay } from "../lib/viewing-slots";
 import { placeKeyOf } from "../lib/viewing-slot-plan";
 // 2026-09-19 竹内（あい事例）: 2通目は既定で付けない。ボタンを押した時だけセットする
 import { canOfferSecondMessage, buildSecondMessage } from "../lib/aix-second-message";
-import { customerRequestsPhoneCall, buildCallText, customerAsksStaffCallTime, customerProposedCallTime } from "../lib/phone-call";
+import { customerRequestsPhoneCall, buildCallText, customerAsksStaffCallTime, customerProposedCallTime, PHONE_PURPOSE_PRESETS } from "../lib/phone-call";
 import { staffTalkedToday } from "../lib/daily-greeting";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
@@ -7140,7 +7140,14 @@ export default function AixModal({
                 <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                   用件 <span className="font-normal text-[#90a4ae]">（任意・こちらから電話でご説明する時。例：審査のお打ち合わせ）</span>
                 </label>
-                <input value={phonePurpose} onChange={(e) => { setPhonePurpose(e.target.value); setPreview(""); }} placeholder="空欄ならボタンのご案内だけ" className={inputCls} />
+                {/* 2026-10-06 ⑰（竹内さん承認）: よく使う用件は1タップ（申込・審査）。入れた用件はスタッフの実送信の言い方で文に入る（phone-call.staffPurposeLine） */}
+                <div className="mb-1.5 flex gap-1.5">
+                  {PHONE_PURPOSE_PRESETS.map((p) => (
+                    <button key={p} type="button" onClick={() => { setPhonePurpose(phonePurpose === p ? "" : p); setPreview(""); }}
+                      className={`rounded-full border px-3 py-1 text-[11px] font-bold ${phonePurpose === p ? "border-[#06C755] bg-[#e8f8ef] text-[#05a548]" : "border-[#d1d7db] text-[#54656f]"}`}>{p}</button>
+                  ))}
+                </div>
+                <input value={phonePurpose} onChange={(e) => { setPhonePurpose(e.target.value); setPreview(""); }} placeholder="空欄ならボタンのご案内だけ（自由に書いても可）" className={inputCls} />
                 <label className="mb-1 mt-3 block text-xs font-semibold text-[#54656f]">
                   電話できる時間 <span className="font-normal text-[#90a4ae]">（任意・例：15:00以降／本日10:30〜11:00）</span>
                 </label>

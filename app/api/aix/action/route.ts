@@ -65,7 +65,7 @@ import { polishConditionEcho, CONDITION_ECHO_STYLE_NOTE } from "@/app/lib/condit
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定と除去を返信生成・テンプレートと同じ関数で
 // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない（許す一覧は空・出口は replaceWaitedOpening・手本は neutralizeWaitedInExample）
-import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime, replaceWaitedOpening, neutralizeWaitedInExample } from "@/app/lib/waited-scope";
+import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime, replaceWaitedOpening, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
 // 2026-09-21 竹内「実際のスタッフが送るような文が生成されていない可能性があるってこと？」: 漢字/ひらがなの混ぜ方
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
@@ -110,6 +110,12 @@ import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
 import { readAixMessageJson } from "@/app/lib/aix-message-json";
 // 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
+// 2026-10-06 ⑰（あかりさん）: 会話を合わせるの物件ピックアップで、前回の送付より後のやり取りを時系列で読む
+import { readSendNow, effectiveSendFrame, buildSendNowBlock } from "@/app/lib/property-send-now";
+// 2026-10-06 ⑰: 「お送りした中でも」は直近の束の中から推す時だけ（束の時間と束の部屋）
+import { loadRecommendBundleFacts } from "@/app/lib/recommend-bundle-server";
+// 2026-10-06 ⑰: 物件ピックアップの文に、拡張が実際に検索した条件を渡す（AIXツールと連携）
+import { searchedConditionsFrom, buildSearchedConditionsNote, type SearchAuditRow } from "@/app/lib/pickup-search-facts";
 import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 
@@ -1957,7 +1963,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       //      「〇〇さんお待たせ致しました！！」の文節ごと消して名前の呼びかけまで消していた＝AIX の実送信712通の監査で920/1424）。
       //      実送信712通×（挨拶あり・本日挨拶済み）で「お待たせ」以外の文字の削除0・残り0（scripts/audit-waited-exit.ts）。
       //   ② 行頭でない残り（文中の「お待たせ致しました」）だけ従来の stripWaited。
-      if (!isWaitedAllowed(currentAction)) {
+      // 2026-10-06 竹内さん決定（⑫）「お待たせ致しました は前の文から3時間以上経過したとき。AIXからの文にでるだけ」→ 3時間以上なら残す（waited-scope.isWaitedAllowedForAix）
+      if (!isWaitedAllowedForAix(currentAction, lastExchangeAt(Array.isArray(body.recent_messages) ? body.recent_messages : []), Date.now())) {
         const head = replaceWaitedOpening(banned.text, greetingPhrase);
         const waited = stripWaited(head.text);
         if (head.replaced > 0 || waited.removed > 0) {
@@ -2277,6 +2284,22 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const recMoveInFact = action === "property_recommendation" && pickupRowsForFacts.length === 1 ? moveInFactOfPickup(pickupRowsForFacts[0]) : null;
     // 2026-10-06 ⑫ 竹内（ゆいと 10月後半入居）「10月中の入居間に合う物件を送って決める…AIXツールのところにもちゃんと連携されるように」:
     //   お客様の要望の強さ（requirement-strength・webhook が LINE から書く）で入居時期が「絶対」なら、送付文に決めきる言い方（スタッフの実送信のまま）を注記で渡す
+    // 2026-10-06 ⑰ 竹内「物件ピックアップの文のところもAIXツールと連携したら、最善の文が出来る」:
+    //   今回の送付の前に拡張が実際に検索した条件（search_audits.filled.form・12時間以内・サイトごとの最新）を②の材料に渡す（app/lib/pickup-search-facts.ts）。
+    //   戻すのは PICKUP_SEARCH_FACTS=off
+    const searchedConditionsNote = await (async (): Promise<string> => {
+      if (action !== "property_send" || !resolvedPCID || (process.env.PICKUP_SEARCH_FACTS ?? "on").trim() === "off") return "";
+      try {
+        const { data: audits } = await supabase.from("search_audits").select("site, is_wide, created_at, status, filled")
+          .eq("property_customer_id", String(resolvedPCID)).eq("status", "finished")
+          .gte("created_at", new Date(Date.now() - 12 * 3_600_000).toISOString()).order("created_at", { ascending: false }).limit(12);
+        const searched = searchedConditionsFrom((audits ?? []) as SearchAuditRow[], Date.now());
+        const imgCount = Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0;
+        const note = buildSearchedConditionsNote(searched, imgCount || null);
+        if (note) console.log(JSON.stringify({ tag: "aix:pickup-searched-conditions", conversationId, sites: searched?.sites ?? [], widened: searched?.widened ?? false }));
+        return note;
+      } catch { return ""; }
+    })();
     const mustSendNote = await (async (): Promise<string> => {
       if ((action !== "property_send" && action !== "property_recommendation") || !resolvedPCID) return "";
       try {
@@ -2667,7 +2690,12 @@ ${SMORA_COMMON_RULES}`;
       //   ⚠ 件数が分からない時（sentSource="none"）は**決めない**。0 に倒すと「1件も送っていない＝初回」になり、
       //     複数送っている会話でも比較の言い方が使えなくなる（設計知見「0 に倒さない」）。
       //   recSendState は上（申込の一文の材料）で同じ関数から取ってある
-      const recScenario = recSendState.sentSource === "none" ? null : resolveRecommendationScenario({
+      // 2026-10-06 ⑰ 竹内「お送りした中でもは物件ピックアップの中の物件オススメの物件についてオススメしている形」:
+      //   直近の束（物件ピックアップ）の時間と、今回の部屋（売上サポから来た時はその行の物件名）が束の中か
+      const recBundle = conversationId && (process.env.RECOMMEND_BUNDLE_FRAME ?? "on").trim() !== "off"
+        ? await loadRecommendBundleFacts(supabase, conversationId, pickupRowsForFacts.length === 1 ? pickupRowsForFacts[0].property_name : null)
+        : {};
+      const recScenario = recSendState.sentSource === "none" && recBundle.hoursSinceLastBundle == null ? null : resolveRecommendationScenario({
         actionType: "property_recommendation",
         // AIX 本体にはピッカーが無いので、画面の「新着物件」チェックを新着1件として扱う
         pickupType: body.is_new_arrival ? "新着1件" : null,
@@ -2680,6 +2708,7 @@ ${SMORA_COMMON_RULES}`;
           // 直近の送付からの経過時間も取れないので鮮度は見ない（null＝古さで落とさない）
           hoursSinceLastSend: null,
           brainSentPropertyCount: recSendState.sentPropertyCount,
+          ...(recBundle.hoursSinceLastBundle !== undefined ? { hoursSinceLastBundle: recBundle.hoursSinceLastBundle, starInLastBundle: recBundle.starInLastBundle ?? null } : {}),
         },
       });
       console.log(JSON.stringify({
@@ -3233,7 +3262,7 @@ ${SMORA_COMMON_RULES}
       const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
       // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
       // 2026-09-27: 送る物件の所在地（区）も渡す（YUMA「大阪市北区・福島区から」で西区・大正区の20件を送った）
-      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote].filter(Boolean).join("\n");
+      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote, searchedConditionsNote].filter(Boolean).join("\n");
       const conditionsRule = conditionsInfo
         ? `・【最重要】「ご希望のご条件に合ったお部屋」「ご希望の条件に合うお部屋」などの抽象的な表現は絶対に使わない。お客様の具体的な希望条件を文中に自然に織り込むこと
   条件の入れ方（厳守）：
@@ -3352,6 +3381,15 @@ ${SMORA_COMMON_RULES}
         const psmThreadMsgs = (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : []).map((m) => ({ sender: m.sender, text: m.text ?? "" }));
         const threads = extractPropertySendThreads(psmThreadMsgs, { requirementSources: psmReqSources });
         const threadsBlock = buildPropertySendThreadsBlock(threads);
+        // 2026-10-06 ⑰ 竹内（あかりさん）「会話を合わせるボタンしたらちゃんと会話に合わせた物件を出す…時系列や最新のやり取りもふまえて」:
+        //   前回の物件の送付より後のやり取り（お客様の発言は全部・条件の変化・こちらのピックアップの約束）を時系列で読み、
+        //   ①生成に「今の場面」として渡す ②送り方の既定「新着」（前に送った記録があるだけで決まる）を、依頼・条件の変化に応えた送付なら
+        //   「新着で…募集に出ました」の決まった言い方に固定しない（app/lib/property-send-now.ts・戻すのは PROPERTY_SEND_NOW=off）
+        const sendNowOn = (process.env.PROPERTY_SEND_NOW ?? "on").trim() !== "off";
+        const sendNow = readSendNow(psmThreadMsgs);
+        const sendFrame = sendNowOn ? effectiveSendFrame(sendMode, sendNow) : "as_is";
+        const sendNowBlock = sendNowOn ? buildSendNowBlock(sendNow) : "";
+        console.log(JSON.stringify({ tag: "aix:property-send-now", conversationId, on: sendNowOn, sendMode, frame: sendFrame, requested: sendNow.requested, conditionChange: sendNow.conditionChange.length, customerLatest: sendNow.customerLatest.length }));
         const psmStaticSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
@@ -3391,7 +3429,9 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           ? "【内覧誘導】今回は内覧の誘い（「お気に召されましたらご案内」「ご都合よろしいお日にち」）・内覧日時を一切書かない（内覧は AIX【内覧日調整】で送る）"
           : `【内覧誘導】④の後に「${name}お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」を1文${calendarData ? `、続けて「直近ですと\n${calendarData}\nご案内可能です！！」` : ""}`;
         // 送り方（モード）ごとの②の言い方。新着は「新着で…」か会話に合わせて「現在募集が出ているお部屋で…」（慶次の実送信）
-        const psmModeNote = sendMode === "new_arrival"
+        const psmModeNote = sendFrame === "requested"
+          ? "【今回の送り方】お客様のご依頼・条件の変化に応えてピックアップしたお部屋（前回の送付の後のやり取りは【今の場面】）。②は「新着で…募集に出ました」に固定せず、【今の場面】の条件の変化・ご依頼の言い方で「〇〇（エリア）から〜お部屋ピックアップさせて頂きました！！」と書く（例: お一人暮らしの条件に変わった → 「お一人暮らしされる際にオススメ出来るご条件のお部屋〇〇から」）。登録の希望条件のうち【今の場面】と食い違う物（人数・広さ 等）は書かない"
+          : sendMode === "new_arrival"
           ? `【今回の送り方】新着（最近募集に出たお部屋${newArrivalImgCount > 0 ? `・${newArrivalCountStr}` : ""}）。②は「新着で${name}にオススメできるお部屋募集に出ましたのでピックアップさせて頂きました！！」か、会話に合わせて「現在募集が出ているお部屋で${name}のご条件に近いお部屋全てピックアップさせて頂きました！！」の言い方`
           : sendMode === "widen"
             ? "【今回の送り方】条件を広げてお探しした（広げた条件は下の説明の事柄だけ）"
@@ -3407,6 +3447,7 @@ ${PROPERTY_SEND_MATCH_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\
           nameNote.trim(),
           conditionsInfo ? `【お客様の希望条件（②で使うのは最大2つ・会話で使った言い方を優先）】\n${conditionsInfo}` : "",
           keywordRule.trim(),
+          sendNowBlock,
           threadsBlock,
           inviteRule,
           sendBrainAddendum ? "【ブレイン改善ルール】\n" + sendBrainAddendum : "",
@@ -3743,7 +3784,7 @@ ${aixPropertySendRules}
           ? `【挨拶文（出力例中の「[お客様への挨拶]」はこの選び方で書くこと）】\n${waitedChoice}`
           : greetingLine ? `【挨拶文（出力例中の「[お客様への挨拶]」は必ずこの形式に置き換えること）】\n${greetingLine}` : "",
         openingLine ? `【①挨拶行の実値（構成①「[挨拶行]」に使うこと）】\n${openingLine}` : "",
-        conditionsRule ? `【条件ルール（構成②「[条件ルール]」に使うこと）】\n${conditionsRule.replace(/^・/, "")}` : "",
+        conditionsRule ? `【条件ルール（構成②「[条件ルール]」に使うこと）】\n${conditionsRule.replace(/^・/, "")}${searchedConditionsNote ? "\n※【今回実際に検索した条件】がある時は、②のエリア・家賃・間取りはそちらに合わせる（検索した条件は今回の事実＝でっち上げではない）" : ""}` : "",
         newArrivalCountStr ? `【新着件数（「[新着件数]」に使うこと）】${newArrivalCountStr}` : "",
       ].filter(Boolean).join("\n\n");
       const sendDynamic = [

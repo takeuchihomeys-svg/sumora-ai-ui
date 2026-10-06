@@ -1,6 +1,6 @@
 // 2026-09-15 竹内（H 事例）: AIX【電話する】（電話をかける／電話終了後）の判定・文・数字の照合
 // 実行: npx tsx app/lib/__tests__/phone-call.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { customerRequestsPhoneCall, buildCallRequestText, isValidLineCallUrl, buildCallRequestFlex, maskNumbersNotInNotes, CALL_BUTTON_MESSAGE_TEXT, buildCallText, customerProposedCallTime, customerAsksStaffCallTime, customerCallTopic } from "../phone-call";
+import { customerRequestsPhoneCall, buildCallRequestText, isValidLineCallUrl, buildCallRequestFlex, maskNumbersNotInNotes, CALL_BUTTON_MESSAGE_TEXT, buildCallText, customerProposedCallTime, customerAsksStaffCallTime, customerCallTopic, staffPurposeLine } from "../phone-call";
 import { detectAixSceneEvidence } from "../aix-scene-evidence";
 import { normalizeAixActionKey, AIX_STAFF_NOTES } from "../aix-taxonomy";
 import { aixLedgerKind } from "../action-ledger";
@@ -114,7 +114,11 @@ it("依頼だけ（H 9/15「ご相談があるのですがお電話では無理�
   expect(buildCallText({ customerTurn: "ご相談があるのですがお電話では無理でしょうか？", customerName: "H" })).toBe("お電話大丈夫です😊！！\nご相談の件、お電話にてお伺いさせて頂きます！！\nこちらの電話をかけるボタンよりお電話お願い致します！！"));
 it("依頼だけ・用件なし → 旧の定型と同じ", () => expect(buildCallText({ customerTurn: "すいません。お電話は可能でしょうか？？", customerName: "M" })).toBe("お電話大丈夫です😊！！\nこちらの電話をかけるボタンよりお電話お願い致します！！"));
 it("その日はじめて → 名前＋お世話になっております から", () => expect(/^Mさん\nお世話になっております！！/.test(buildCallText({ customerTurn: "お電話は可能でしょうか？", customerName: "M", firstTalkToday: true }))).toBe(true));
-it("こちらから・用件つき → 旧と同じ形", () => expect(buildCallText({ customerName: "いぬい", purpose: "審査のお打ち合わせ" })).toBe("いぬいさん\n審査のお打ち合わせにつきましてお電話にてご説明させて頂きます！！\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します😊！！"));
+// 2026-10-06 ⑰（竹内さん承認）: スタッフが用件を入れた時はスタッフの実送信の言い方（「審査に関して5分程でお打ち合わせ」「申込みに関して」）
+it("こちらから・用件つき（審査）→ スタッフの言い方", () => expect(buildCallText({ customerName: "いぬい", purpose: "審査のお打ち合わせ" })).toBe("いぬいさん\n審査に関しまして5分程お電話でお打ち合わせさせて頂ければと思います！！\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します😊！！"));
+it("用件（申込）→ お申込みに関しまして5分程お電話でご説明", () => expect(staffPurposeLine("申込")).toBe("お申込みに関しまして5分程お電話でご説明させて頂ければと思います！！"));
+it("用件（自由文）→ 〇〇に関しまして5分程お電話でご説明", () => expect(staffPurposeLine("初期費用の件")).toBe("初期費用に関しまして5分程お電話でご説明させて頂ければと思います！！"));
+it("用件が空なら今まで通り（ボタンのご案内だけ）", () => expect(buildCallText({ customerName: "いぬい" })).toBe("いぬいさん\nお手隙の際にこちらの電話をかけるボタンよりお電話お願い致します😊！！"));
 it("どの形でも要の文（ボタンからお電話）は残る", () => {
   for (const t of ["", "今電話いけますか？", "電話いける時間ありますか？", "13時以降で電話いける時間ありますか？", "1度電話可能ですか？"]) if (!KEY_LINE.test(buildCallText({ customerTurn: t, customerName: "x" }))) throw new Error(t);
 });

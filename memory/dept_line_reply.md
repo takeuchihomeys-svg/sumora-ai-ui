@@ -12,6 +12,14 @@
   3. **JSON の名残**: 物件ピックアップ（aix/action 3422-3426 の psmRaw）が JSON を読めないと生の出力を文に＝末尾 `"}`・名前の行が消える（60日 6通・スタッフが全部消した）。joinAixJsonParts を通す。同じ形の message の読み取りが 1361・3839・4005・4540・5593・6319・6647・6994・7198・7274・7374 にも
   4. **入力に無い事実**: 新着の1行目の条件（スタッフが実際に検索した条件へ書き直す）・電話の用件（12通中6通でスタッフが「申込/審査に関して5分程」を足す）・物件オススメの室内写真の URL（スタッフが足す 9/111）
 - **竹内さんの判断待ち**: 「お待たせ致しました」は AIX で禁止（9/27）だが、9/28 以降もスタッフが新着 5/31・ピックアップ 3/21 で手で足している
+- **10/06 午後（⑰・未コミット）**:
+  - **会話を合わせる（物件ピックアップ）**＝あかりさん事例: app/lib/property-send-now.ts（前回の送付の後のやり取りを時系列で全部・条件の変化・ピックアップの約束→【今の場面】・依頼/変化がある時は新着の決まった言い方に固定しない・PROPERTY_SEND_NOW=off）。scripts/audit-pickup-adapt-now.ts: 最新のやり取りが届かない回 6/39→0・スタッフが足した言葉が入力にあった 24/35→29/35。テスト property-send-now.test.ts 13/13。DeepSeek の試し scripts/yuma-pickup-adapt-now-test.ts（開発サーバが他の担当の印なしで動いていて未実施）
+  - **① 比較の形（お送りした中でも）**＝竹内さん「物件ピックアップの中の物件オススメ」: recommendation-frame.bundleCompareOk＋recommend-bundle-server（直近の束の時間・🌟が束の中か・名前は画像の読み取りの字違いに強く）を aix/action・aix-template-generate に。一致 55%→80%（598通・直近30日 52%→82%・scripts/audit-recommend-bundle-frame.ts）。テスト recommendation-bundle-frame.test.ts 14/14。PickupReview に同じ考え方の1行。RECOMMEND_BUNDLE_FRAME=off
+  - **物件ピックアップの文×AIXツール**: app/lib/pickup-search-facts.ts（search_audits.filled.form の実際に検索した条件・12時間）を材料に。効果は小さい（直近10日 60組で記録あり 15・新しく知り得る語 1）。PICKUP_SEARCH_FACTS=off
+  - 電話をかける の用件: phone-call.staffPurposeLine（申込・審査・自由文をスタッフの言い方「〜に関しまして5分程お電話で…」）＋AixModal に「申込」「審査」の1タップ。空なら今まで通り
+  - 室内イメージURL: 既に「（室内イメージ）\nURL」を🌟の前に別の通で送っている（60日 530通中 357通の実送信と同じ位置）＝変更なし
+  - お待たせ（⑫の決定の1行）: aix/action finalize を isWaitedAllowedForAix（前の発言から3時間以上なら残す）に
+  - PickupReview の文の縦潰れ（flex の最小幅）を直した。あかりさんの「✨ 質の高い物件なし（NG 条件）」は登録の条件の「二人入居可」（10/02 に一人になると言ったまま）で EQUIP_TWO_PERSON_NG／バストイレ別の NG で保留になっているため＝判定は条件どおり・条件が古い
 - **直した（10/06・未コミット・親の指示）**: ③ JSON の名残＝aix/action の {"message"} の読み取り 12か所を `messageFromAixJson`（app/lib/aix-message-json.ts readAixMessageJson＝⑫ の joinAixJsonParts の message 1部品）に寄せた。馴染ませは読めなければベースのまま。監査 scripts/audit-aix-message-json.ts で名残の無い文の変化 0／テスト aix-message-json.test.ts 10/10。② 名前の欄＝app/lib/aix-staff-called-name.ts（スタッフが冒頭で2回以上呼んだ名前は形を問わず・extractPreferredName の後に）＋okyaku-address.ts の行頭の名前の欄（名前があれば名前・無ければ行ごと）。監査 scripts/audit-okyaku-name-slot.ts: 人の送信で変わる 1通（AI の下書きのまま）・下書き 30組で行頭の「お客様」30→0・同じ名前 0→7/12。テスト aix-name-slot.test.ts 14/14。① 比較の形の時間は竹内さんの判断待ち（親が確認中）
 
 ## ⑫ 引き継ぎ（10/02）

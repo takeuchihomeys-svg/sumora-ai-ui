@@ -43,7 +43,34 @@ export type PropertySendFacts = {
    *   （設計知見「同じ事実に数え方が2つあると、後から足した方だけが新しくなる」）。
    */
   brainSentPropertyCount?: number | null;
+  /**
+   * 2026-10-06 ⑰ 竹内「お送りした中でもは物件ピックアップの中の物件オススメの物件についてオススメしている形」:
+   * 直近の物件ピックアップ（束・property_send）を送ってからの時間。束が無ければ null。**省略（undefined）＝分からない**（今までの判定のまま）
+   */
+  hoursSinceLastBundle?: number | null;
+  /** オススメする部屋が直近の束の中にあるか（true＝束の中・false＝束の外の別の物件・null＝分からない） */
+  starInLastBundle?: boolean | null;
 };
+
+/**
+ * 束（物件ピックアップ）を送ってから「お送りした中でも」が使える時間。
+ * 実測（2026-10-06・180日・物件オススメ 598通の2通目）: 束の直後（60分以内）はスタッフが比較の形を使う 67%（197/296）、
+ * 1〜24時間後 0/25・1〜7日後 1/80・7日超 0/116 ＝同じ場面（連投）の時だけ
+ */
+export const BUNDLE_COMPARE_WINDOW_HOURS = 1;
+
+/**
+ * 「お送りした中でも」＝**直近の物件ピックアップで送った束の中から、物件オススメで1件を推す**時の言い方（竹内さんの考え方）。
+ *   ・オススメする部屋が束の外（新着の1件・別に見つけた1件）→ 使わない
+ *   ・束の中、または分からない時は、束を送ってから BUNDLE_COMPARE_WINDOW_HOURS 以内だけ
+ * 束の時間が渡されていない（undefined）時は null＝今までの判定に任せる
+ */
+export function bundleCompareOk(f: PropertySendFacts): boolean | null {
+  if (f.hoursSinceLastBundle === undefined) return null;
+  if (f.starInLastBundle === false) return false;
+  if (f.hoursSinceLastBundle === null) return false;
+  return f.hoursSinceLastBundle <= BUNDLE_COMPARE_WINDOW_HOURS;
+}
 
 // 「お送りした中でも」は“複数の中から選んだ”という事実の宣言。1週間以上前の送付を
 // 「中でも」で引き合いに出すのは文脈が切れており、お客様側の記憶とも合わない。
@@ -78,12 +105,16 @@ export function resolveRecommendationScenario(args: {
     : f.priorSentPropertyCount > 0;
   // 比較フレームが使えないときの受け皿（送付実績があるなら「初回」も嘘になるため追加提案型へ）
   const nonCompareFallback: RecommendationScenario = hasPrior ? "followup_single" : "first";
+  // 2026-10-06 ⑰: 直近の束の中から推すか（束の時間が渡された時だけ決まる・null＝今までの判定）
+  const bundle = bundleCompareOk(f);
   // ① フロントのピッカー選択が最優先（スタッフが明示的に選んだシナリオ）
   if (args.pickupType === "代替ピックアップ") return "alternative";
   // 新着は「新たに募集に出た1件」の宣言。過去の送付実績の有無に関係なく新着フレームが正
   if (args.pickupType === "新着1件" || args.pickupType === "新着まとめ") return "new_listing";
-  if (args.pickupType === "新規ピックアップ" || args.pickupType === "初回まとめ") return nonCompareFallback;
-  if (args.pickupType === "条件広げピックアップ" || args.pickupType === "条件広げまとめ") return nonCompareFallback;
+  // 「新規ピックアップ（初回・1件訴求＝ピックアップから1件だけオススメ）」は、束を送った直後なら束の中から推す＝比較の形
+  //   （旧: 比較なしに固定＝束の直後の 2通目 10回中 7回スタッフが「お送りさせて頂きましたお部屋の中でも」に書き直した）
+  if (args.pickupType === "新規ピックアップ" || args.pickupType === "初回まとめ") return bundle === true ? "compare" : nonCompareFallback;
+  if (args.pickupType === "条件広げピックアップ" || args.pickupType === "条件広げまとめ") return bundle === true ? "compare" : nonCompareFallback;
   // 「探したが空室なし → 1件あった」＝比較型でも新着型でもない
   if (args.pickupType === "現状伝えて1件") return nonCompareFallback;
   // 「継続ピックアップ」＝送付済みの中から1件を推す意図。比較できる実体がなければ降格する
@@ -92,7 +123,10 @@ export function resolveRecommendationScenario(args: {
   }
   // ② ピッカー情報なし: 直前の空室確認結果から推定（募集なし/別の部屋なら代替提案の文脈）
   if (args.checkPattern === "unavailable" || args.checkPattern === "alternative") return "alternative";
-  // ③ 物件送付実績から推定（比較表現は「複数送った」事実がある場合のみ許可）
+  // ③ 束の時間が分かる時は束で決める（直近の束の中から・束の直後だけ比較）。旧の7日まで比較を許すと 1時間〜7日の 105通中 104通で外れた
+  if (bundle === true) return "compare";
+  if (bundle === false) return hasPrior ? "followup_single" : "first";
+  // ④ 束の時間が分からない時は今まで通り（物件送付実績から推定・比較表現は「複数送った」事実がある場合のみ許可）
   if (!hasPrior) return "first";
   return canUseCompareFrame(f) ? "compare" : "followup_single";
 }
