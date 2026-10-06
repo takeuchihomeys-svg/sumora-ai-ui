@@ -28,7 +28,9 @@ import { normalizeAixForMatch } from "./brain-aix-feedback";
 import { sceneKeyOf } from "./line-watch-turn";
 
 /** 判定の規則の版（規則を変えたら上げる。再判定の対象を見分ける） */
-export const JUDGE_VERSION = "v2-2026-10-01";
+//   v3-2026-10-07: スタッフが返さなかった番で、AI の下書きがお礼・了承の番の読むべき範囲の外の行為（お部屋を探す宣言 等）を書いた → different（no_staff_out_of_topic）
+//     （uran. 10/05: 「よろしくお願いいたします」に43日前の物件探しの宣言・スタッフは返さず＝旧は na で数えず見えていなかった。範囲は ack-topic-scope.ts）
+export const JUDGE_VERSION = "v3-2026-10-07";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -158,6 +160,8 @@ export type JudgeInput = {
   /** その番でブレインの判断を控えたか（false で下書きも無ければ na） */
   hasBrain?: boolean;
   window: Pick<StaffWindow, "closed" | "texts" | "presses" | "aixMessages" | "aixMessagesBurst">;
+  /** 下書きの行為のうち、お礼・了承の番の読むべき範囲の外の物（ack-topic-scope.outOfTopicActs・呼び出し側が会話から決める） */
+  outOfTopicActs?: StaffAct[];
 };
 export type VerdictDetail = {
   v: string;
@@ -180,6 +184,8 @@ export type VerdictDetail = {
   kept?: number;
   uncertain?: boolean;
   later_texts?: number;
+  /** お礼・了承の番で、下書きが読むべき範囲の外に足した行為（ack-topic-scope.ts） */
+  out_of_topic_acts?: StaffAct[];
 };
 export type Judgement = { verdict: Verdict | null; detail: VerdictDetail };
 
@@ -187,6 +193,7 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   pending: "窓が閉じていない（まだ判定しない）",
   out_of_scope: "申込以降（数えない）",
   no_staff: "スタッフが送っていない",
+  no_staff_out_of_topic: "スタッフは返さず・AI は話題の外の行為を書いた",
   no_brain: "ブレインの判断も下書きも無い",
   no_reply_needed_same: "返信不要で一致（スタッフも送らなかった）",
   no_reply_needed_but_sent: "AI は返信不要・スタッフは送った",
@@ -237,6 +244,7 @@ export function judgeTurn(i: JudgeInput): Judgement {
   if (!sentAnything) {
     if (!final) return { verdict: null, detail: { ...base, reason: "pending" } };
     if (sentinel === "[返信不要]") return { verdict: "same", detail: { ...base, reason: "no_reply_needed_same" } };
+    if (i.outOfTopicActs?.length) return { verdict: "different", detail: { ...base, reason: "no_staff_out_of_topic", brain_aix: brainAix, out_of_topic_acts: i.outOfTopicActs } };
     return { verdict: "na", detail: { ...base, reason: "no_staff", brain_aix: brainAix } };
   }
   // 文の判定（下書きと返事のまとまりの両方がある時だけ）
@@ -330,6 +338,7 @@ export function verdictLine(v: Verdict | null | undefined, d: VerdictDetail | nu
   const r = d?.reason ? VERDICT_REASON_JA[d.reason] ?? d.reason : "";
   const acts = [...(d?.missing_acts ?? []).map((a) => `＋${actJa?.[a] ?? a}`), ...(d?.extra_acts ?? []).map((a) => `－${actJa?.[a] ?? a}`)];
   const facts = d?.facts?.conflict?.length ? `事実違い: ${d.facts.conflict.map((k) => FACT_JA[k]).join("・")}` : "";
-  return [VERDICT_JA[v], r, acts.join(" "), facts].filter(Boolean).join(" ・ ");
+  const topic = d?.out_of_topic_acts?.length ? `話題の外: ${d.out_of_topic_acts.map((a) => actJa?.[a] ?? a).join("・")}` : "";
+  return [VERDICT_JA[v], r, acts.join(" "), facts, topic].filter(Boolean).join(" ・ ");
 }
 export const FACT_JA: Record<FactKind, string> = { money: "金額", datetime: "日時", property: "物件", name: "名前" };

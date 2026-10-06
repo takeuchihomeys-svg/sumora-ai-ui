@@ -7,6 +7,8 @@ import { draftToSendableText } from "@/app/lib/draft-text";
 import { hasOutgoingResidue } from "@/app/lib/outgoing-residue";
 import { APPLICATION_FORMAT_RE } from "@/app/lib/apply-sub-mode";
 import { VIEWING_DATE_ASK_RE } from "@/app/lib/viewing-reask";
+import { resolveAckTopicScope, outOfTopicActs, type ScopeMsg } from "@/app/lib/ack-topic-scope";
+import { staffActsOf } from "@/app/lib/customer-sim-shadow";
 
 export const maxDuration = 60;
 
@@ -128,6 +130,14 @@ export async function GET(req: NextRequest) {
     if (hasOutgoingResidue(sendable)) { skipped["outgoing_residue"] = (skipped["outgoing_residue"] ?? 0) + 1; continue; }
     // 2026-10-02 竹内「ここはAIXでいまはスタッフが送る形にするので、AIXで止めておく」: 申込フォーマット（記入欄）は自動返信で送らない（AIX【申込へ！】でスタッフが送る）
     if (APPLICATION_FORMAT_RE.test(sendable ?? "")) { skipped["application_format_in_draft"] = (skipped["application_format_in_draft"] ?? 0) + 1; continue; }
+    // 2026-10-07 竹内（uran.「どこを読み取る必要があるのか」）: お客様のお礼・了承だけの番で、読むべき範囲（こちらの直前の返事とそれが答えた発言）が
+    //   閉じていて物件の話でもないのに、範囲に無い行為（お部屋を探す宣言 等）を足した下書きは自動で送らない（本文は変えない・ack-topic-scope.ts）。
+    //   スタッフも同じ場面で 22%（8/37）は行為を足すので本文から消す出口にはしない＝人に残すだけ（scripts/audit-ack-topic-scope.ts）
+    if (sendable && staffActsOf(sendable).size > 0 && process.env.ACK_TOPIC_SCOPE !== "off") {
+      const { data: rm } = await supabase.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(20);
+      const out = outOfTopicActs(sendable, resolveAckTopicScope(((rm ?? []) as ScopeMsg[]).slice().reverse()));
+      if (out.length) { skipped["ack_topic_out_of_scope"] = (skipped["ack_topic_out_of_scope"] ?? 0) + 1; continue; }
+    }
     if (!c.line_user_id) { skipped["no_line_user"] = (skipped["no_line_user"] ?? 0) + 1; continue; }
 
     // お客様の最後の発言時刻（ここから待ち時間を数える）

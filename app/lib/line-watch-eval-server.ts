@@ -7,7 +7,8 @@
 // LLM なし。送信・AIX・会話の表には一切書かない。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
-import { staffWindowOf, judgeTurn, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
+import { staffWindowOf, judgeTurn, cleanDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
+import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
 import { sceneKeyOf } from "./line-watch-turn";
 import {
   sceneStats, finalCheckStats, lateStats, screeningCalendarDiff, reviewStats, buildLineWatchDaily, dailyLines, jstDayStartMs, jstYmd,
@@ -43,7 +44,7 @@ async function withConcurrency<T>(items: T[], limit: number, fn: (item: T) => Pr
 
 type TurnRow = {
   id: number; conversation_id: string; customer_turn_at: string; conv_status: string | null;
-  draft_last: string | null; draft_last_at: string | null; draft_first_at: string | null; draft_sentinel: string | null;
+  draft_last: string | null; draft_last_at: string | null; draft_first: string | null; draft_first_at: string | null; draft_sentinel: string | null;
   brain_action: string | null; brain_reply_mode: string | null; brain_versions: number | null; tpo_label: string | null;
   verdict: Verdict | null; verdict_detail: VerdictDetail | null; judge_version: string | null; evaluated_at: string | null;
 };
@@ -70,7 +71,7 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const res: EvalResult = { ok: true, dry, judgeVersion: JUDGE_VERSION, read: 0, judged: 0, pending: 0, skippedFinal: 0, updated: 0, failed: 0, orphans: 0, verdicts: {}, reasons: {}, scenes: {}, samples: [], errors: [] };
   // 2段目の SQL（judge_version の列）を流す前でも回る（版の列なしで読み・書く。毎晩やり直すだけで中身は同じ）
   let hasVersionCol = true;
-  const colsOf = (v: boolean) => `id, conversation_id, customer_turn_at, conv_status, draft_last, draft_last_at, draft_first_at, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, evaluated_at${v ? ", judge_version" : ""}`;
+  const colsOf = (v: boolean) => `id, conversation_id, customer_turn_at, conv_status, draft_last, draft_last_at, draft_first, draft_first_at, draft_sentinel, brain_action, brain_reply_mode, brain_versions, tpo_label, verdict, verdict_detail, evaluated_at${v ? ", judge_version" : ""}`;
   const read = (v: boolean) => Promise.all([
     readAll<TurnRow>((f, t) => sb.from("line_watch_turns").select(colsOf(v)).gte("customer_turn_at", iso(nowMs - (opt.days ?? 4) * DAY)).order("customer_turn_at").order("id").range(f, t), opt.limit ?? 5000),
     readAll<TurnRow>((f, t) => sb.from("line_watch_turns").select(colsOf(v)).is("evaluated_at", null).gte("customer_turn_at", iso(nowMs - (opt.backlogDays ?? 30) * DAY)).order("customer_turn_at").order("id").range(f, t), opt.limit ?? 5000),
@@ -99,7 +100,8 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const existing = new Set<string>();
   for (let i = 0; i < convIds.length; i += 50) {
     const chunk = convIds.slice(i, i + 50);
-    msgs.push(...await readAll<Msg>((f, t) => sb.from("messages").select("conversation_id, sender, created_at, text, is_aix_generated").in("conversation_id", chunk).gte("created_at", since).order("created_at").order("id").range(f, t)));
+    // 2026-10-07: お礼・了承の番の読むべき範囲（こちらの直前の返事・72時間以内）を決めるため、番の4日前から読む（窓の判定は番より後だけを見るので変わらない）
+    msgs.push(...await readAll<Msg>((f, t) => sb.from("messages").select("conversation_id, sender, created_at, text, is_aix_generated").in("conversation_id", chunk).gte("created_at", iso(P(since) - 4 * DAY)).order("created_at").order("id").range(f, t)));
     presses.push(...await readAll<Press>((f, t) => sb.from("aix_usage_logs").select("conversation_id, aix_type, check_pattern, created_at").in("conversation_id", chunk).gte("created_at", since).not("aix_type", "is", null).order("created_at").order("id").range(f, t)));
     decisions.push(...await readAll<Decision>((f, t) => sb.from("brain_decision_logs").select("id, conversation_id, created_at, analyzed_msg_ts, intent:digest->>intent").in("conversation_id", chunk).gte("created_at", since).order("created_at").order("id").range(f, t)));
     const cv = await sb.from("conversations").select("id").in("id", chunk);
@@ -115,10 +117,14 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   for (const t of turns) {
     if (!existing.has(t.conversation_id)) { orphanIds.push(t.id); continue; }
     const w = staffWindowOf({ customerTurnAt: t.customer_turn_at, msgs: mBy.get(t.conversation_id) ?? [], presses: pBy.get(t.conversation_id) ?? [], nowMs });
+    // 2026-10-07 uran.: お礼・了承の番で下書きが読むべき範囲の外の行為を書いたか（下書きの欄が __SHOWN__ の時は最初の下書き）
+    const upto = (mBy.get(t.conversation_id) ?? []).filter((m) => P(m.created_at) <= P(w.customerLastAt));
+    const topicOut = outOfTopicActs(cleanDraft(t.draft_last).text ?? cleanDraft(t.draft_first).text, resolveAckTopicScope(upto));
     const j = judgeTurn({
       draft: t.draft_last, sentinel: t.draft_sentinel, brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode,
-      convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w,
+      convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w, outOfTopicActs: topicOut,
     });
+    if (topicOut.length && !j.detail.out_of_topic_acts) j.detail.out_of_topic_acts = topicOut;
     const until = P(w.staffFirstAt ?? w.endAt);
     const dec = (dBy.get(t.conversation_id) ?? []).filter((d) => {
       const inTurn = d.analyzed_msg_ts ? P(d.analyzed_msg_ts) >= P(t.customer_turn_at) - 1000 && P(d.analyzed_msg_ts) <= P(w.customerLastAt) + 1000 : P(d.created_at) >= P(t.customer_turn_at);
