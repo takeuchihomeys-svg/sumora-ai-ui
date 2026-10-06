@@ -4068,7 +4068,10 @@ BEGIN
     IF v_turn IS NULL THEN RETURN NULL; END IF;
 
     -- 下書き（消した・空にした時は控えない。[AIX誘導中] 等の印は本文と分ける）
-    IF NEW.ai_draft IS DISTINCT FROM OLD.ai_draft AND btrim(COALESCE(NEW.ai_draft, '')) <> '' THEN
+    --   2026-10-07: 画面の「表示済み」の印 __SHOWN__ は下書きでも印でもない（控えない）。
+    --   以前は __SHOWN__ が draft_last を上書きし、見張りが「印だけ」(na) と数えていた（14日の返信の番の39%・本当の下書きは draft_first に残っていた）
+    IF NEW.ai_draft IS DISTINCT FROM OLD.ai_draft AND btrim(COALESCE(NEW.ai_draft, '')) <> ''
+       AND NEW.ai_draft !~ '^[[:space:]]*__[A-Z_]{2,30}__[[:space:]]*$' THEN
       IF NEW.ai_draft ~ '^[[:space:]]*[[][^]]{1,30}[]][[:space:]]*$' THEN
         v_sentinel := left(btrim(NEW.ai_draft), 40);
       ELSE

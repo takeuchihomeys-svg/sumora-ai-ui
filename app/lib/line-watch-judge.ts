@@ -30,7 +30,8 @@ import { sceneKeyOf } from "./line-watch-turn";
 /** 判定の規則の版（規則を変えたら上げる。再判定の対象を見分ける） */
 //   v3-2026-10-07: スタッフが返さなかった番で、AI の下書きがお礼・了承の番の読むべき範囲の外の行為（お部屋を探す宣言 等）を書いた → different（no_staff_out_of_topic）
 //     （uran. 10/05: 「よろしくお願いいたします」に43日前の物件探しの宣言・スタッフは返さず＝旧は na で数えず見えていなかった。範囲は ack-topic-scope.ts）
-export const JUDGE_VERSION = "v3-2026-10-07";
+//   v4-2026-10-07: 下書きの欄が __SHOWN__（画面が表示した印）の番は draft_first で比べる（pickJudgeDraft・draft_src）。旧は返信の番の 39% を na にしていた
+export const JUDGE_VERSION = "v4-2026-10-07";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -127,6 +128,33 @@ export function cleanDraft(raw: string | null | undefined): { text: string | nul
   return { text: t, sentinel: null };
 }
 
+/**
+ * 判定に使う下書きの欄を選ぶ（2026-10-07）。
+ *   画面が下書きを表示すると ai_draft が __SHOWN__ になり、トリガーがそれを draft_last に書いていた（印の形 [..] だけを分けていたため）。
+ *   その番は本当の下書きが draft_first にしか残らず、judgeTurn が「印だけ」(sentinel_only・na) と数えていた
+ *   （本番 9/23〜10/07 の返信の番 118 のうち 46＝39%・AIX の番も含めて 90 行）。
+ *   draft_first を使ってよいのは「表示された文が draft_first だと言える」時だけ:
+ *     ①作り直しが無い（文の版が1つ）②draft_first が連投の最後のお客様の発言より後に作られた（途中の発言だけに答えた下書きでない）
+ *   それ以外（stale）は比べない＝今まで通り na。読み直した14日で stale の下書きは「ありがとう」だけに答えて後の質問を落とした形が多く、比べると AI の外れを水増しした
+ */
+export type JudgeDraftSrc = "last" | "first" | "stale" | "none";
+export function pickJudgeDraft(row: {
+  draft_last: string | null | undefined; draft_first: string | null | undefined; draft_versions?: number | null;
+  draft_first_at?: string | null; customer_last_at?: string | null;
+}): { draft: string | null; src: JudgeDraftSrc } {
+  if (cleanDraft(row.draft_last).text) return { draft: row.draft_last ?? null, src: "last" };
+  if (cleanDraft(row.draft_first).text) {
+    const shownMark = /^s*__[A-Z_]{2,30}__s*$/.test(String(row.draft_last ?? "")) ? 1 : 0;
+    const textVersions = (row.draft_versions ?? 1) - shownMark;
+    const fa = row.draft_first_at ? Date.parse(row.draft_first_at) : NaN;
+    const la = row.customer_last_at ? Date.parse(row.customer_last_at) : NaN;
+    const afterLast = Number.isFinite(fa) && Number.isFinite(la) ? fa >= la : false;
+    if (textVersions <= 1 && afterLast) return { draft: row.draft_first ?? null, src: "first" };
+    return { draft: row.draft_last ?? null, src: "stale" };
+  }
+  return { draft: row.draft_last ?? row.draft_first ?? null, src: "none" };
+}
+
 // ─── 文の小さな物差し ───
 
 /** 聞き返し（お客様に何かを尋ねている）か */
@@ -186,6 +214,8 @@ export type VerdictDetail = {
   later_texts?: number;
   /** お礼・了承の番で、下書きが読むべき範囲の外に足した行為（ack-topic-scope.ts） */
   out_of_topic_acts?: StaffAct[];
+  /** 比べた下書きの欄（pickJudgeDraft）。stale＝表示された文が分からない（比べない） */
+  draft_src?: JudgeDraftSrc;
 };
 export type Judgement = { verdict: Verdict | null; detail: VerdictDetail };
 

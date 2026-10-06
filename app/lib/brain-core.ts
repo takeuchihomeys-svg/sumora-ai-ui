@@ -49,7 +49,7 @@ import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
 import { meetingPromisePending } from "@/app/lib/meeting-promise";
 import { waitingOnCustomerInfo } from "@/app/lib/waiting-customer-info";
-import { customerAsksRentLevel } from "@/app/lib/rent-question";
+import { customerAsksRentLevel, askedFloorPlan, rentAnswerFirst } from "@/app/lib/rent-question";
 import { customerAreaAndRent } from "@/app/lib/area-rent-server";
 import { isFreshAixTurn } from "@/app/lib/aix-action-text";
 import { parseCheckpointOutput, escapeControlCharsInStrings } from "@/app/lib/checkpoint-format";
@@ -3335,7 +3335,8 @@ ${history}`;
         if (!pcRent) throw new Error("お客様の条件の行が無い");
         const { areaPlan, rentMarket } = await customerAreaAndRent({
           desired_area: pcRent.desired_area ?? null, preferences: pcRent.preferences ?? null, other_requests: pcRent.other_requests ?? null,
-          floor_plan: pcRent.floor_plan ?? null, rent_max: pcRent.rent_max ?? null, pet: pcRent.pet ?? null, building_age: pcRent.building_age ?? null,
+          // 2026-10-07 返信の質の1巡目: 問いが別の間取りを名指ししている時（「2LDKだともう少し上がりますか？」）はその間取りの相場（登録の先頭の間取りでは問いに答えられない）
+          floor_plan: askedFloorPlan(unrepliedTurn.text ?? "") ?? pcRent.floor_plan ?? null, rent_max: pcRent.rent_max ?? null, pet: pcRent.pet ?? null, building_age: pcRent.building_age ?? null,
         });
         if (rentMarket && (rentMarket.facts.length || rentMarket.sentences.length)) {
           // 予算の中の目安の文（⑯ budgetTypical・築年は10年刻み・広さは5㎡刻み・古め／浅めの要約）は必ず伝える文として別に持つ（竹内さん 10/02）
@@ -3506,6 +3507,12 @@ ${history}`;
           ? keyTopicsGuard.items.filter((t) => !isViewingFixTopic(t) && !/(?:内覧|内見)[^\n]{0,10}(?:回答|返答|返事|催促|希望日)/.test(t))
           : keyTopicsGuard.items)(brainLedger.facts.viewingFlow);
 
+    // 2026-10-07 返信の質の1巡目（穴:G5）: 家賃の相場の問いで材料の文がある時は、2段（ピックアップの約束）の方針より先に問いに答える
+    //   （「2LDKだともう少し上がりますか？」が約束だけの下書きになった・スタッフはまず相場の事実で答える）。連絡待ちの番・確認／見積の2段は触らない
+    const rentFirst = !waitingCustomerInfo && (!twoStage || twoStage.kind === "pickup")
+      ? rentAnswerFirst(replyDirection, keyTopics, unrepliedTurn.text ?? "", rentMarketForReply)
+      : { direction: replyDirection, keyTopics, applied: false };
+    if (rentFirst.applied) console.log(JSON.stringify({ tag: "brain:rent-answer-first", conversationId, twoStage: twoStage?.kind ?? null }));
     // avoid_topics: ルール⑤（来阪・常時）+ ルール②（費用質問なし）をコード側で決定論的に強制
     const avoidSet = new Set(
       (Array.isArray(parsed.avoid_topics) ? parsed.avoid_topics : [])
@@ -3865,8 +3872,8 @@ ${history}`;
           return "★";
         })(),
       } : null,
-      reply_direction: withAppealDirection(replyDirection, appealTiming?.verdict ?? null),
-      key_topics: keyTopics,
+      reply_direction: withAppealDirection(rentFirst.applied ? rentFirst.direction : replyDirection, appealTiming?.verdict ?? null),
+      key_topics: rentFirst.applied ? rentFirst.keyTopics : keyTopics,
       avoid_topics: avoidTopics,
       urgency_appropriate: urgencyAppropriate,
       recommended_tone: recommendedTone,

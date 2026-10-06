@@ -2,6 +2,15 @@
 
 最終更新: 2026-10-07
 
+## 🔁 返信の質の巡 1巡目（10/07・竹内「設計知見の最新の改善で今の LINE の返信の質を上げられる所を徹底的に調査…YUMA でテストしながら繰り返す」・未コミット）
+- **今日の直しの届き方**: ack-topic-scope・appeal-timing（generate-reply の入口と自動送信の関所・見張り）／recency-reference・比較の形・new-build・pickup-wants-fit（AIX の2経路）／name-inside-word（最終チェック block）／closing-target（ブレイン）は import と配線まで確認・本番の配備は b350f936 まで READY。下書きの経路は bg-async・pending-drafts・画面の再生成とも全部 /api/generate-reply を通る（入口の分岐なし）
+- **① 静かに壊れていた（最優先・直した）**: 見張りの控えで画面の印 `__SHOWN__` が draft_last を上書き → 返信の番 118 のうち 46（39%）が「印だけ」の na＝スタッフが下書きを読んだ番ほど一致率の分母から消えていた。`line-watch-judge.pickJudgeDraft`（draft_first を使うのは「文の版1つ」かつ「連投の最後の発言より後に作った」時だけ・それ以外は stale で比べない）・JUDGE_VERSION v4-2026-10-07・`verdict_detail.draft_src`。トリガー（capture_line_watch_turn）で `__xx__` を控えない直しは migrate-schema に書いた＝**本番の関数の入れ替えは竹内さんの承認待ち**。読み直しで na 95→56（241番）
+- **場面ごとのずれ（14日・YUMA 除く・直した判定で読み直し）**: 返信:質問 42番 一致25%／条件提示 25番 55%／短い了承・お礼 18番 24%／検討中 14番 22%／その他 20番 20%／AIX:property_send 37番 47%／property_check_result 50%／viewing_invite 75%／meeting_place 80%。返信の場面のずれ 65 のうち 29 は「AI は返信・スタッフは同じまとまりで AIX」（物件確認の結果 12・見積書 8・物件の送付 7）＝2段の決まりどおり（約束→後で AIX）で文の質の外れではない
+- **② 相場の質問（穴:G1＋G5・直した）**: `rent-question.customerAsksRentLevel` が「厳しいですか」「上がりますか」「いくらまでにしたら」「平均的に家賃いくら」等を落とし、材料が返信に届かなかった（365日の候補259通で足した形だけで当たる12通・スタッフは 8/11 で相場の事実で答える）。`askedFloorPlan`（問いが名指しした間取りの相場）・`rentAnswerFirst`（2段のピックアップの約束より先に相場の文で答える・2段の「家賃は書かない」とぶつけない）。監査 `scripts/audit-rent-question-1007.ts`・テスト rent-question（47）
+- **YUMA**（`yuma-replay-scenarios --file=<場面>` ＋ `--pc-override`・場面は本番の五嶋／チンシャンの会話・名前は YUMA）: 前＝「確認しご連絡…隣接駅まで広げて」／「2LDKのご条件でピックアップ」（問いを飛ばす・関所 ok）→ 後（Claude のブレイン）「都島区周辺の2LDKの家賃相場は10万円から11万円程となります！！／2LDKのご条件で…ピックアップしてお送りさせて頂きます！！」。五嶋は 1/2 が答える（本文は DeepSeek・答えない回と数字が崩れた回は関所 rent_budget_missing で自動送信しない）
+- **見つけたが直していない（竹内さんに確認）**: 予算の目安の文が「築年数は古め…築10年程」（中央値18年を10年刻みで切り下げ）＝読み手には食い違って見える／シャーメゾン（イエヤス割が適用できない・専任が多い）を会社の事実にするか（AI は「大東建託のブランド」と誤った一般知識を書いた）／入居が2年先（2028年3月）の時の決まり（実送信1通「2ヶ月前からサポート」）／分割の答え（9/30 の決まりは「カードなら分割可・3.24%」だが 10/01 のスタッフは「振込の一括のみ」）／内覧に車で来る時「近くのパーキング」（実送信3/3 同じ）を会社の事実にするか
+- 費用（llm_usage_logs 17:20Z〜・env=local・他の担当の行を含みうる）: DeepSeek 65回 $0.34／Claude 25回 $0.36（ブレイン3・最終チェック一式）・漏れ0・YUMA 以外0・場面の行は消した
+
 ## 📍 お礼・了承だけの番の「読むべき範囲」（10/07・uran. 10/05「よろしくお願いいたします」に43日前の物件探しの宣言・竹内「どこを読み取る必要があるのか…監視部門と協力」・未コミット）— 黄金ルール
 - **範囲**: お客様のお礼・了承は「こちらの直前の返事」への返事。読むのは【こちらの直前の返事の束】＋【それが答えたお客様の番】だけ（`app/lib/ack-topic-scope.ts` resolveAckTopicScope・72時間以内・ZWJ の絵文字 🙇🏼‍♀️ もお礼と読む isAckOnlyTurn）。範囲の行為（staffActsOf）・約束が残るか（topicOpen）・物件の話か・お部屋探しの話か・範囲の前の空き日数を出す
 - **当てる場面は closedNonPropertyTopic だけ**（約束なし・物件の話でもない）: ①generate-reply の brainGuidanceNote で note・勝ちパターン・成約戦略の WE DO（会話全体の方針）を入れず【📍 今の番の読むべき範囲】を入れる（AIX のテンプレート最適化・AIX の後の一言は当てない）②auto-reply-dispatch が範囲の外の行為を書いた下書きを自動で送らない（`ack_topic_out_of_scope`・本文は変えない）③見張り v3-2026-10-07: スタッフが返さなかった番で下書きが範囲の外の行為 → different `no_staff_out_of_topic`（`verdict_detail.out_of_topic_acts`）。戻す: `ACK_TOPIC_SCOPE=off`（①②）

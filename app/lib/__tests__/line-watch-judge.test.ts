@@ -1,7 +1,7 @@
 // LINE の見張り 2段目の判定（app/lib/line-watch-judge.ts）
 // 実行: npx tsx app/lib/__tests__/line-watch-judge.test.ts（自己完結ハーネス。全 PASS で exit 0）
 // 材料は本番の実送信の対そのまま（scripts/audit-line-watch-verdict.ts で目で読んだ物・2026-10-01。お客様の名前は伏せた）
-import { staffWindowOf, judgeTurn, cleanDraft, asksCustomer, factDiffOf, isAgree, verdictLine, type WindowMsg, type StaffWindow } from "../line-watch-judge";
+import { staffWindowOf, judgeTurn, cleanDraft, pickJudgeDraft, asksCustomer, factDiffOf, isAgree, verdictLine, type WindowMsg, type StaffWindow } from "../line-watch-judge";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -161,6 +161,21 @@ it("cleanDraft: <<<FINAL_CHECK の尾・「」の囲みを外す", () => {
 it("verdictLine: 画面の1行", () => {
   const j = reply("はい😊！！\n9/19 12:00に現地にてお待ちしております！！", "はい😊！！\n何卒よろしくお願い致します😌！！");
   eq(verdictLine(j.verdict, j.detail, { viewing_datetime: "内覧の候補日時" }), "一部違う ・ AI だけがした行為がある ・ －内覧の候補日時");
+});
+it("pickJudgeDraft: draft_last が __SHOWN__ の番は draft_first で比べる（10/07・返信の番の39%が na だった）", () => {
+  const ok = "はい😊！！\n結果分かり次第ご連絡させて頂きます😌！！";
+  // 版1つ・最後のお客様の発言より後に作った → first
+  eq(pickJudgeDraft({ draft_last: "__SHOWN__", draft_first: ok, draft_versions: 2, draft_first_at: at(3), customer_last_at: at(2) }).src, "first");
+  // 作り直しがある → stale（比べない）
+  eq(pickJudgeDraft({ draft_last: "__SHOWN__", draft_first: ok, draft_versions: 4, draft_first_at: at(3), customer_last_at: at(2) }).src, "stale");
+  // 連投の途中（「ありがとうございます！」だけ）に作った下書き → stale（後の「初期費用いくら？」を落とした形と比べない）
+  eq(pickJudgeDraft({ draft_last: "__SHOWN__", draft_first: ok, draft_versions: 2, draft_first_at: at(1), customer_last_at: at(2) }).src, "stale");
+  eq(pickJudgeDraft({ draft_last: "かしこまりました！！", draft_first: "はい", draft_versions: 2 }).src, "last");
+  eq(pickJudgeDraft({ draft_last: "__SHOWN__", draft_first: null, draft_versions: 1 }).src, "none");
+  const p = pickJudgeDraft({ draft_last: "__SHOWN__", draft_first: ok, draft_versions: 2, draft_first_at: at(3), customer_last_at: at(2) });
+  eq(reply(p.draft ?? "", "はい😊！！\n結果分かり次第ご連絡させて頂きます！！").verdict, "same");
+  const st = pickJudgeDraft({ draft_last: "__SHOWN__", draft_first: ok, draft_versions: 4, draft_first_at: at(3), customer_last_at: at(2) });
+  eq(reply(st.draft ?? "", "はい").detail.reason, "sentinel_only");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
