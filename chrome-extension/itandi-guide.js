@@ -619,25 +619,30 @@
     }
     var head = '<div data-drag="1" title="つかんで動かせます" style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:move;user-select:none"><b data-drag="1" style="flex:1;color:#1565c0" title="ITANDI 案内モード（入力・検索はスタッフ）">⠿ 🔦 ITANDI 案内</b>'
       + '<button data-a="mode" style="font-size:11px;padding:1px 6px;border-radius:9px;border:1px solid #ccc;background:' + (guideOn ? "#fff3e0" : "#eceff1") + '">' + (guideOn ? "ON" : "OFF") + "</button></div>";
-    if (!guideOn) { panel.innerHTML = head + '<div style="color:#78909c">OFF の間は今まで通り拡張が入力します</div>'; return; }
-    if (!session) { panel.innerHTML = head + '<div style="color:#78909c">拡張でお客様を選んで ITANDI の検索を押すと、ここに手順が出ます</div>'; return; }
+    var ONE = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+    if (!guideOn) { setPanelHtml(head + '<div style="color:#78909c;' + ONE + '" title="OFF の間は今まで通り拡張が入力します">OFF の間は今まで通り拡張が入力します</div>'); return; }
+    if (!session) { setPanelHtml(head + '<div style="color:#78909c;' + ONE + '" title="拡張でお客様を選んで ITANDI の検索を押すと、ここに手順が出ます">拡張でお客様を選んで ITANDI の検索を押すと、ここに手順が出ます</div>'); return; }
     if (session.stage === "results") {
-      panel.innerHTML = head + '<div><b>' + esc(session.customerName || "") + '</b> の検索結果</div>'
-        + '<div style="color:#455a64">物件にチェックして「📤 売上番長に送る」を押してください（自動では送りません・「全ページ送る」は案内モードの間は止めています）</div>'
-        + '<div style="margin-top:6px;display:flex;gap:6px"><button data-a="end" style="flex:1">案内を終える</button></div>';
+      var rn = "物件にチェックして「📤 売上番長に送る」を押してください（自動では送りません・「全ページ送る」は案内モードの間は止めています）";
+      setPanelHtml(head + '<div style="' + ONE + '"><b>' + esc(session.customerName || "") + '</b> の検索結果</div>'
+        + '<div style="color:#455a64;' + ONE + '" title="' + esc(rn) + '">' + esc(rn) + "</div>"
+        + '<div style="margin-top:4px;display:flex;gap:4px"><button data-a="end" style="flex:1;font-size:11px">案内を終える</button></div>');
       return;
     }
     var rows = (plan ? plan.steps : []).map(function (s) {
-      var ev = evalStep(s);
+      var ev = evalStepM(s);
       var isCur = cur && cur.id === s.id;
       return '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (isCur ? "font-weight:bold;color:#1565c0" : ev.done ? "color:#9e9e9e" : "") + '" title="' + esc(s.label) + '">' + (ev.done ? (ev.missing ? "－" : "✓") : isCur ? "▶" : "・") + " " + esc(s.label) + (ev.done && ev.missing ? "（この画面に無い欄）" : "") + "</div>";
     }).join("");
-    var locNote = plan && plan.location === "none" ? '<div style="color:#c62828">所在地・路線/駅の条件がありません（自動入力でも検索しない形です）</div>' : "";
-    panel.innerHTML = head + '<div style="margin-bottom:4px"><b>' + esc(session.customerName || "") + "</b></div>" + locNote
-      + '<div style="max-height:220px;overflow:auto;border-top:1px solid #eee;padding-top:4px">' + rows + "</div>"
+    var locNote = plan && plan.location === "none" ? '<div style="color:#c62828;' + ONE + '" title="所在地・路線/駅の条件がありません（自動入力でも検索しない形です）">所在地・路線/駅の条件がありません（自動入力でも検索しない形です）</div>' : "";
+    setPanelHtml(head + '<div style="margin-bottom:2px"><b>' + esc(session.customerName || "") + "</b></div>" + locNote
+      + '<div style="max-height:180px;overflow:auto;border-top:1px solid #eee;padding-top:3px;font-size:11px">' + rows + "</div>"
       + (curEval && curEval.note ? '<div style="margin-top:3px;color:#c62828;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(curEval.note) + '">' + esc(curEval.note) + "</div>" : "")
-      + '<div style="margin-top:6px;display:flex;gap:6px"><button data-a="skip" style="flex:1">この手順は済み</button><button data-a="end" style="flex:1">案内をやめる</button></div>';
+      + '<div style="margin-top:4px;display:flex;gap:4px"><button data-a="skip" style="flex:1;font-size:11px">この手順は済み</button><button data-a="end" style="flex:1;font-size:11px">案内をやめる</button></div>');
   }
+  // v2.5.73: 同じ中身なら枠を書き直さない（旧は 400ms ごとに作り直していた）
+  var _lastPanelHtml = "";
+  function setPanelHtml(html) { if (html !== _lastPanelHtml || !panel.childNodes.length) { _lastPanelHtml = html; panel.innerHTML = html; } }
   function onPanelDragStart(e) {
     if (!e.target || !e.target.getAttribute || e.target.getAttribute("data-drag") !== "1" || !panel) return;
     var r = panel.getBoundingClientRect();
@@ -663,36 +668,67 @@
     if (a === "end") { endGuide(); return; }
     if (a === "skip" && session && plan) {
       var cur = currentStep();
-      if (cur) { session.done = session.done || {}; session.done[cur.step.id] = true; saveSession(); tick(); }
+      if (cur) { session.done = session.done || {}; session.done[cur.step.id] = true; saveSession(); markDirty(); tick(); }
     }
   }
 
   function currentStep() {
     if (!plan) return null;
     for (var i = 0; i < plan.steps.length; i++) {
-      var ev = evalStep(plan.steps[i]);
+      var ev = evalStepM(plan.steps[i]);
       if (!ev.done) return { step: plan.steps[i], ev: ev };
     }
     return null;
   }
 
   // ── 毎回の見直し（スタッフの操作・画面の変化に合わせて光を移す）──
-  function tick() {
-    if (!guideOn || !session || session.stage !== "form" || !plan) { clearHighlight(); renderPanel(); return; }
-    var cur = currentStep();
-    if (!cur) { clearHighlight(); renderPanel(); return; }
-    highlight(cur.ev.target);
-    renderPanel(cur.step, cur.ev);
+  // ── 重さの見直し（2026-10-06 v2.5.73 竹内「これitandiでもなおしたかな？」・リアプロの v2.5.72 と同じ形）──
+  //   画面が変わった（拡張の書き込みは除く）・押した・入れた時だけ見直す。何も無ければ 1.5秒に1回。見えていないタブでは止める。
+  //   1回の見直しの中では手順ごとに1回だけ読む（evalStepM・旧は今の手順の探しと枠で2回）。数え: localStorage axlx_perf=1
+  var _evalMemo = null;
+  function evalStepM(s) {
+    if (!_evalMemo) return evalStep(s);
+    if (!Object.prototype.hasOwnProperty.call(_evalMemo, s.id)) _evalMemo[s.id] = evalStep(s);
+    return _evalMemo[s.id];
   }
-  // v2.5.72（重さ）: 見えていないタブでは見直さない・スクロールは光の位置だけ直す（1コマに1回）
-  setInterval(function () { if (!document.hidden) tick(); }, 400);
+  var _dirty = true, _lastTickAt = 0, _tickSoon = null;
+  var perf = { ticks: 0, tickMs: 0, maxMs: 0, obs: 0, obsOwn: 0 };
+  function markDirty() { _dirty = true; }
+  function tick() {
+    var t0 = Date.now();
+    _dirty = false; _lastTickAt = t0; perf.ticks++;
+    try {
+      if (!guideOn || !session || session.stage !== "form" || !plan) { clearHighlight(); renderPanel(); return; }
+      _evalMemo = {};
+      var cur = currentStep();
+      if (!cur) { clearHighlight(); renderPanel(); return; }
+      highlight(cur.ev.target);
+      renderPanel(cur.step, cur.ev);
+    } finally {
+      _evalMemo = null;
+      var ms = Date.now() - t0; perf.tickMs += ms; if (ms > perf.maxMs) perf.maxMs = ms;
+    }
+  }
+  setInterval(function () {
+    if (document.hidden) return;
+    if (!_dirty && Date.now() - _lastTickAt < 1500) return;
+    tick();
+  }, 400);
+  ["input", "change", "keyup", "click"].forEach(function (ev) { document.addEventListener(ev, markDirty, true); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) markDirty(); });
+  try {
+    if (localStorage.getItem("axlx_perf") === "1") setInterval(function () {
+      console.log("[AXLX itandi-guide perf 10s] 見直し " + perf.ticks + "回・計 " + perf.tickMs + "ms・最大 " + perf.maxMs + "ms／見張り " + perf.obs + "回（拡張の書き込みだけで飛ばした " + perf.obsOwn + "）");
+      perf = { ticks: 0, tickMs: 0, maxMs: 0, obs: 0, obsOwn: 0 };
+    }, 10000);
+  } catch (_) {}
   var _rafPending = false;
   window.addEventListener("scroll", function () {
     if (_rafPending || !_lastTargets) return;
     _rafPending = true;
     requestAnimationFrame(function () { _rafPending = false; if (_lastTargets) highlight(_lastTargets); });
   }, true);
-  window.addEventListener("resize", tick);
+  window.addEventListener("resize", function () { markDirty(); });
 
   // スタッフが押した物を見る（押した要素を読むだけ）: 検索
   document.addEventListener("click", function (e) {
@@ -735,7 +771,15 @@
     b.title = guideOn ? "案内モードの間は使えません（ページはスタッフがめくる）" : "";
     b.style.opacity = guideOn ? "0.4" : "";
   }
-  new MutationObserver(function () { lockAutoPaging(); }).observe(document.documentElement, { childList: true, subtree: true });
+  // v2.5.73: 画面の変化で光を見直す（拡張が書いた物だけの変化は飛ばす・own-mutation.js）。全ページ送るの止めは今まで通り毎回
+  var _OM = (typeof self !== "undefined" ? self : window).AxlxOwnMut;
+  new MutationObserver(function (muts) {
+    lockAutoPaging();
+    perf.obs++;
+    if (_OM && _OM.onlyOwn(muts)) { perf.obsOwn++; return; }
+    markDirty();
+    if (!_tickSoon) _tickSoon = setTimeout(function () { _tickSoon = null; if (!document.hidden) tick(); }, 120);
+  }).observe(document.documentElement, { childList: true, subtree: true });
 
   // 案内モードの設定を読む（変数をすべて用意した後＝ファイルの最後で読む）
   try {

@@ -15,6 +15,7 @@
   var _preAutofillBtns = new Set();
   var _pendingAutoSendDispatched = false;
   var _autoSendInProgress = false;
+  var _itPerf = { obs: 0, obsOwn: 0, scan: 0, inject: 0, injectSkip: 0 }; // v2.5.73 重さの数え（axlx_perf=1 の時だけ出す）
   var _zeroDetectTimer = null; // 0件確定ポーリング（15秒）タイマー
 
   // ── スタッフモードキャッシュ（bulk-dl.js と同じ TTL=2時間ロジック）──
@@ -185,18 +186,28 @@
 
   // ── チェックボックス注入（re-inject時にchecked状態を保持） ───────────
   function inject() {
+    _itPerf.inject++;
     // Step1: 現在の checked 状態を rowKey で保存
     tracked.forEach(function (t) {
       if (t.cb.checked) checkedKeys.add(t.rowKey);
       else              checkedKeys.delete(t.rowKey);
     });
 
+    // 2026-10-06 v2.5.73（竹内「これitandiでもなおしたかな？」）: 物件資料のボタンが前と同じで、チェックボックスも付いたままなら
+    //   外して付け直さない（旧は呼ばれるたびに全部外して付け直し＝見張りどうしが反応し合う元・チェックの押し損じの元）
+    var btnsNow = findMaterialBtns();
+    if (tracked.length && btnsNow.length === tracked.length && btnsNow.every(function (b, i) { return tracked[i].btn === b && tracked[i].cb && tracked[i].cb.isConnected; })) {
+      _itPerf.injectSkip++;
+      afterInject();
+      return;
+    }
+
     // Step2: 既存チェックボックス・SUUMOボタンを削除
     document.querySelectorAll(".axlx-itandi-cb").forEach(function (el) { el.remove(); });
     tracked = [];
 
     // Step3: 再注入 + checked状態を復元
-    findMaterialBtns().forEach(function (btn) {
+    btnsNow.forEach(function (btn) {
       var container = btn;
       for (var i = 0; i < 5 && container.parentElement && container.parentElement !== document.body; i++) {
         if (container.parentElement.classList &&
@@ -225,7 +236,11 @@
     });
     updateBar();
     injectSuumoButtons();
+    afterInject();
+  }
 
+  // inject の後の確かめ（付け直しを飛ばした時も通る）
+  function afterInject() {
     // 全ページ自動送信: autofill後に新しいボタンが出現したら自動発火
     if (_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && !_autoSendInProgress) {
       var _hasNewBtn = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
@@ -1208,8 +1223,25 @@
   });
 
   // ── MutationObserver（チェックボックスの再注入） ──────────────────────
-  var mutObs = new MutationObserver(function () {
+  // 2026-10-06 v2.5.73: 拡張が書いた物（チェックボックス・札・光・枠）だけの変化では物件資料のボタンを探し直さない（own-mutation.js）。
+  //   見えていないタブでは探さない（見えた時に1回）。数え: localStorage axlx_perf=1 で 10秒ごとにコンソールへ
+  var _itOM = (typeof self !== "undefined" ? self : window).AxlxOwnMut;
+  var _itScanPendingHidden = false;
+  try {
+    if (localStorage.getItem("axlx_perf") === "1") setInterval(function () {
+      console.log("[AXLX itandi-bulk perf 10s] 見張り " + _itPerf.obs + "回（拡張の書き込みだけで飛ばした " + _itPerf.obsOwn + "）・ボタン探し " + _itPerf.scan + "回・付け直し " + _itPerf.inject + "回（同じで飛ばした " + _itPerf.injectSkip + "）");
+      _itPerf = { obs: 0, obsOwn: 0, scan: 0, inject: 0, injectSkip: 0 };
+    }, 10000);
+  } catch (_) {}
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && _itScanPendingHidden) { _itScanPendingHidden = false; if (!injectTimer) injectTimer = setTimeout(function () { inject(); injectTimer = null; }, 300); }
+  });
+  var mutObs = new MutationObserver(function (muts) {
+    _itPerf.obs++;
     if (injectTimer) return;
+    if (_itOM && _itOM.onlyOwn(muts)) { _itPerf.obsOwn++; return; }
+    if (document.hidden) { _itScanPendingHidden = true; return; }
+    _itPerf.scan++;
     // 物件資料ボタンにチェックボックスが付いていないものがあれば再注入
     var btns   = findMaterialBtns();
     var uninj  = btns.filter(function (b) {

@@ -166,6 +166,7 @@ function rest() {
     "itandi-bulk-dl.js": {
       "setTimeout 60000": [1, "PDF の期限"], "setInterval 500": [1, "モーダルが出たかの見る間隔"], "setTimeout 15000": [1, "モーダルの期限"],
       "setTimeout 800": [1, "popup の応答の期限"], "setTimeout 5000": [1, "表示を戻す"], "setInterval 1000": [1, "0件の確定の見る間隔"],
+      "setTimeout 300": [1, "見えないタブから戻った時にボタンを1回探す（v2.5.73・読むだけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・v2.5.73）"],
     },
     "itandi-content.js": { "setTimeout 300": [1, "起動時"] },
     "itandi-page-script.js": {
@@ -185,7 +186,7 @@ function rest() {
       "setTimeout 30000": [1, "期限"], "setInterval 300": [1, "見る間隔"], "setTimeout 50": [1, "表示の更新"], "setInterval 2000": [1, "見張り"],
     },
     "realpro-guide.js": { "setInterval 400": [1, "案内の光を見直す間隔（v2.5.58・画面を読むだけ・サイトを触らない）"], "setTimeout 300": [1, "送付済みの行の隠し直しの間引き"], "setTimeout 2500": [2, "一覧の行が描かれるのを待つ（bulk-dl が読み込み＋2秒で行を読む・v2.5.71）"], "setTimeout 120": [1, "小窓が閉じた等の画面の変化の後に光を見直す間引き（v2.5.71・読むだけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・コンソールに出す・v2.5.72）"] },
-    "itandi-guide.js": { "setInterval 400": [1, "ITANDI の案内の光を見直す間隔（v2.5.63・画面を読むだけ・サイトを触らない）"] },
+    "itandi-guide.js": { "setInterval 400": [1, "ITANDI の案内の光を見直す間隔（v2.5.63・画面を読むだけ・サイトを触らない・v2.5.73 から変化が無ければ 1.5秒に1回）"], "setTimeout 120": [1, "画面の変化の後に光を見直す間引き（v2.5.73・読むだけ）"], "setInterval 10000": [1, "重さの数え（localStorage axlx_perf=1 の時だけ・v2.5.73）"] },
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },

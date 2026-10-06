@@ -64,7 +64,7 @@ ok("案内: スクロールは光の位置だけ（1コマに1回）", /window\.
 ok("案内: 同じ中身なら枠と光を書き直さない", /if \(html !== _lastPanelHtml\)/.test(rg) && /if \(sig === _lastHiSig && L\.childNodes\.length\) return;/.test(rg));
 ok("案内: 重さの数え（axlx_perf=1 の時だけ）", /localStorage\.getItem\("axlx_perf"\) === "1"/.test(rg));
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest: own-mutation.js は最初の段（全部の見張りより先）・版 2.5.72", mf.content_scripts[0].js.indexOf("own-mutation.js") === 1 && mf.version === "2.5.72");
+ok("manifest: own-mutation.js は最初の段（全部の見張りより先）・版 2.5.72", mf.content_scripts[0].js.indexOf("own-mutation.js") === 1 && /^2\.5\.(7[2-9]|[89]\d)$/.test(mf.version));
 
 console.log("── ③ 光は控えめ・文は短く");
 ok("リアプロ: 黄色の点滅（axlxGlow のアニメ）をやめた", !/@keyframes axlxGlow/.test(rg) && !/animation:axlxGlow/.test(rg) && /border:2px solid rgba\(30,136,229,\.55\)/.test(rg));
@@ -73,9 +73,28 @@ ok("リアプロ: 光の横の吹き出しに手順の文を出さない（画�
 ok("リアプロ: 枠の文は1行（省略・全文はマウスを乗せた時）・全手順は畳む", /white-space:nowrap;overflow:hidden;text-overflow:ellipsis;/.test(rg) && /▸ 全手順/.test(rg));
 const ig = read("itandi-guide.js");
 ok("ITANDI: 黄色の点滅をやめた・吹き出しの文なし", !/@keyframes axlxItGlow/.test(ig) && /function highlight\(targets\)/.test(ig));
-ok("ITANDI: 見えていないタブでは見直さない", /setInterval\(function \(\) \{ if \(!document\.hidden\) tick\(\); \}, 400\)/.test(ig));
+ok("ITANDI: 見えていないタブでは見直さない", /if \(document\.hidden\) return;\r?\n    if \(!_dirty && Date\.now\(\) - _lastTickAt < 1500\) return;/.test(ig));
 const css = read("styles.css");
 ok("popup: モードの帯は1行（押すと全文）", /\.mode-banner \{[\s\S]*?white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;/.test(css) && /\.mode-banner\.open \{ white-space: normal; \}/.test(css) && /banner\.classList\.toggle\("open"\)/.test(read("popup.js")));
+
+console.log("── ④ v2.5.73 ITANDI も同じ形（竹内「これitandiでもなおしたかな？」）");
+{
+  const ib = read("itandi-bulk-dl.js");
+  ok("ITANDI 一括: 拡張の物だけの変化ではボタンを探し直さない", /if \(_itOM && _itOM\.onlyOwn\(muts\)\) \{ _itPerf\.obsOwn\+\+; return; \}/.test(ib));
+  ok("ITANDI 一括: 見えていないタブでは探さない（見えた時に1回）", /if \(document\.hidden\) \{ _itScanPendingHidden = true; return; \}/.test(ib) && /_itScanPendingHidden = false; if \(!injectTimer\)/.test(ib));
+  ok("ITANDI 一括: ボタンが前と同じでチェックボックスも残っていれば付け直さない", /tracked\[i\]\.btn === b && tracked\[i\]\.cb && tracked\[i\]\.cb\.isConnected/.test(ib) && /_itPerf\.injectSkip\+\+;\r?\n\s*afterInject\(\);\r?\n\s*return;/.test(ib));
+  ok("ITANDI 一括: 自動送信の確かめは付け直しを飛ばした時も通る（afterInject）", /function afterInject\(\)/.test(ib) && (ib.match(/afterInject\(\);/g) || []).length === 2);
+  ok("ITANDI 一括: 重さの数え（axlx_perf=1）", /\[AXLX itandi-bulk perf 10s\]/.test(ib));
+  const ig2 = read("itandi-guide.js");
+  ok("ITANDI 案内: 変化が無ければ 1.5秒に1回・押す・入れる・画面の変化で見直す", /if \(!_dirty && Date\.now\(\) - _lastTickAt < 1500\) return;/.test(ig2) && /\["input", "change", "keyup", "click"\]\.forEach/.test(ig2));
+  ok("ITANDI 案内: 見張りは拡張の物だけの変化を飛ばす（全ページ送るの止めは毎回）", /lockAutoPaging\(\);\r?\n\s*perf\.obs\+\+;\r?\n\s*if \(_OM && _OM\.onlyOwn\(muts\)\)/.test(ig2));
+  ok("ITANDI 案内: 1回の見直しで手順ごとに1回だけ読む", /function evalStepM\(s\)/.test(ig2) && !/var ev = evalStep\(s\);/.test(ig2) && !/var ev = evalStep\(plan\.steps\[i\]\);/.test(ig2));
+  ok("ITANDI 案内: 同じ中身なら枠を書き直さない", /function setPanelHtml\(html\)/.test(ig2) && (ig2.match(/panel\.innerHTML = /g) || []).length === 1);
+  ok("ITANDI 案内: 重さの数え（axlx_perf=1）", /\[AXLX itandi-guide perf 10s\]/.test(ig2));
+  ok("ITANDI: itandi-content.js に見張り・繰り返しの時計は無い（直す物なし）", !/MutationObserver|setInterval/.test(read("itandi-content.js")));
+  const mf2 = JSON.parse(read("manifest.json"));
+  ok("ITANDI のページでも own-mutation.js が先に読まれる（最初の段に itandibb）", mf2.content_scripts[0].matches.some((m) => /itandibb/.test(m)) && mf2.content_scripts[0].js.includes("own-mutation.js"));
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
