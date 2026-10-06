@@ -1,4 +1,6 @@
 import { manYen } from "@/app/lib/man-yen";
+import { enforceCallName } from "@/app/lib/call-name-guard";
+import { secondLinesFromCard } from "@/app/lib/estimate-explain";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { supabase } from "@/app/lib/supabase";
@@ -46,7 +48,10 @@ import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/bra
 import { stripWaited } from "@/app/lib/greeting";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定を一本化（四者同名）
 // 2026-09-27 竹内さん決定で上書き: AIX でも使わない（許す一覧は空＝全部落とす・手本も置き換えて見せる）
-import { isWaitedAllowed, neutralizeWaitedInExample } from "@/app/lib/waited-scope";
+import { isWaitedAllowed, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
+// 2026-10-06 ⑰: 「お送りした中でも」は直近の束の中から推す時だけ（束の時間と束の部屋）
+import { loadRecommendBundleFacts } from "@/app/lib/recommend-bundle-server";
+import { starHeadOf } from "@/app/lib/recommendation-gaps";
 // 2026-09-20 竹内「AIX テンプレート、AIX の内容との関係性での生成が重要」: 直前の1通目を読んで2通目の材料にする
 import { buildAixChainNote, foreignRoomsInSecond } from "@/app/lib/aix-chain-note";
 // 2026-09-20 竹内「生成される文が長すぎる」: 長さの目安を実測から渡す＋生成後に記録する
@@ -846,6 +851,11 @@ export async function POST(req: NextRequest) {
     recentMessages: Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null }> : [],
     fallbackSentCount: priorSentPropertyCount,
   });
+  // 2026-10-06 ⑰ 竹内「お送りした中でもは物件ピックアップの中の物件オススメの物件についてオススメしている形」:
+  //   直近の束（物件ピックアップ）の時間と、1通目の🌟の部屋が束の中か（recommend-bundle-server・判定は recommendation-frame.bundleCompareOk）
+  const bundleFacts = actionType === "property_recommendation" && conversationId && (process.env.RECOMMEND_BUNDLE_FRAME ?? "on").trim() !== "off"
+    ? await loadRecommendBundleFacts(supabase, conversationId, starHeadOf(sentMessage)?.name ?? null)
+    : {};
   const propertySendFacts: PropertySendFacts = {
     priorSentPropertyCount,
     priorBulkSendCount,
@@ -853,6 +863,7 @@ export async function POST(req: NextRequest) {
     hoursSinceLastSend,
     // 訴求シナリオ（比較フレームが使えるか・送付実績があるか）もブレインの件数で決める
     brainSentPropertyCount: recommendState.sentSource === "brain" ? recommendState.sentPropertyCount : null,
+    ...(bundleFacts.hoursSinceLastBundle !== undefined ? { hoursSinceLastBundle: bundleFacts.hoursSinceLastBundle, starInLastBundle: bundleFacts.starInLastBundle ?? null } : {}),
   };
   // 直近の property_check_result の結果。ただし確認より後に物件送付AIXが2件以上ある場合は
   // 既に別の文脈へ進んでいるため無効化（古い「募集なし」で代替シナリオに誤爆しない）。
@@ -1497,6 +1508,12 @@ export async function POST(req: NextRequest) {
     const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null });
     estimateClosing = dec.closing;
     estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimatePropertiesOf(sentMessage), closing: dec.closing, staffSentToday });
+    // 2026-10-06 ⑫ 竹内（R の見積書の2通目）「実際にスタッフが送っているような正確で具体的なちゃんとした返信を」:
+    //   1通目の札に「報酬が出ない…仲介手数料〇円」等の行があれば、2通目に事情の文（スタッフの実送信の言い方・数字は札の字だけ）を入れる（estimate-explain）
+    {
+      const lines = secondLinesFromCard(sentMessage, null);
+      if (lines.length) estimateSecondNote += `\n【このお部屋の費用の事情（1通目の御見積書の行から・数字を変えない・他の金額を足さない）】次の文をそのまま本文に入れる:\n${lines.map((l) => `「${l}」`).join("\n")}`;
+    }
     console.log(JSON.stringify({ tag: "aix-template-generate:estimate-second", closing: dec.closing, reason: dec.reason, viewed, reaction: reaction?.kind ?? null, props: estimatePropertiesOf(sentMessage).length }));
   }
   // 形を最後に1か所から渡す2通目（物件オススメ・見積書）。この時は1通目用・全種類の平均の指示を渡さない
@@ -1546,8 +1563,11 @@ export async function POST(req: NextRequest) {
           hoursSinceLastSend !== null ? `直近の物件送付から${Math.round(hoursSinceLastSend)}時間経過` : "",
           priorSentPropertyCount === 0
             ? "→ 今回が初めての物件送付。既送付を前提にした比較・絞り込み表現は事実と異なるため絶対禁止"
-            : canUseCompareFrame(propertySendFacts)
-            ? "→ 複数物件を送付済みのため「お送りした中でも」の比較表現が事実として成立する"
+            // 2026-10-06 ⑰: 説明もシナリオの判定（直近の束の中から推すか）と同じ物を見る
+            : recommendationScenario === "compare"
+            ? (propertySendFacts.hoursSinceLastBundle !== undefined
+              ? "→ 直前の物件ピックアップで送った束の中から推す1件のため「お送りした中でも」の比較表現が事実として成立する"
+              : "→ 複数物件を送付済みのため「お送りした中でも」の比較表現が事実として成立する")
             : "→ 送った物件が実質1件のみ（または送付から日数が空いている）ため「お送りした中でも」等の比較表現は事実と異なる。新たな1件として紹介すること",
         ].filter(Boolean).join(" / ")}`
       : "",
@@ -1881,11 +1901,21 @@ ${text}
       //   ＝「待たせた作業の結果を届ける」場面では正しい文で、無条件に消すと**スタッフが手で足し直す**。
       //   判定は waited-scope.isWaitedAllowed に一本化（AIX 本体・テスト・監査が同じ物を見る）。
       // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない → 許す一覧は空で、ここは常に落とす。
-      if (!isWaitedAllowed(actionType)) {
+      // 2026-10-06 竹内さん決定で上書き: 「お待たせ致しました は前の文から3時間以上経過したとき。AIXからの文にでるだけ」
+      //   → 会話の前の発言から3時間以上たっていれば残す（waited-scope.isWaitedAllowedForAix）。3時間未満は今まで通り落とす
+      if (!isWaitedAllowedForAix(actionType, lastExchangeAt(recentMessages ?? []), Date.now())) {
         const waited = stripWaited(text);
         if (waited.removed > 0) {
           console.log(JSON.stringify({ tag: "aix-template-generate:strip-waited", actionType, removed: waited.removed }));
           text = waited.text;
+        }
+      }
+      // 2026-10-06 ⑫ 竹内「名前間違えているの絶対にいれない」: 呼びかけの名前が呼び名・会話・表示名に無い時は呼び名に直す（call-name-guard・返信と同じ出口）
+      {
+        const g = enforceCallName(text, resolvedCustomerName, (recentMessages ?? []).map((m) => m.text ?? ""), [customerName]);
+        if (g.replaced.length) {
+          console.log(JSON.stringify({ tag: "aix-template-generate:call-name-fixed", actionType, replaced: g.replaced }));
+          text = g.text;
         }
       }
       // 2026-09-20 竹内「実際の成約データや直近の文のようになっているか確認」:
@@ -2019,7 +2049,7 @@ ${text}
       ` checkPat=${effectiveCheckPattern ?? "-"}${checkIsStale ? "(stale)" : ""}` +
       ` sentProps=${sentPropertyLogCount} priorProps=${priorSentPropertyCount}(bulk=${priorBulkSendCount},single=${priorSingleSendCount})${currentSendAlreadyLogged ? "(self-excluded)" : ""}` +
       ` state=${describePropertySendState(recommendState)}` +
-      ` lastSendH=${hoursSinceLastSend === null ? "-" : Math.round(hoursSinceLastSend)} compareOk=${recommendationScenario ? canUseCompareFrame(propertySendFacts) : "-"} frameRetry=${frameRetried ? "on" : "off"}` +
+      ` lastSendH=${hoursSinceLastSend === null ? "-" : Math.round(hoursSinceLastSend)} compareOk=${recommendationScenario ? recommendationScenario === "compare" : "-"} bundleH=${propertySendFacts.hoursSinceLastBundle == null ? "-" : propertySendFacts.hoursSinceLastBundle.toFixed(1)} inBundle=${propertySendFacts.starInLastBundle ?? "-"} frameRetry=${frameRetried ? "on" : "off"}` +
       ` signal=${brainMeta?.purchase_signal_level ?? "-"} stance=${brainMeta?.engagement_stance ?? "-"} ctaOverride=${signalCtaOverride ? "on" : "off"}` +
       ` name=${resolvedCustomerName ? "ok" : "none"} namePassed=${customerName ? "yes" : "no"} namePlaceholderFix=${nameFix.fixed ? "on" : "off"}`,
     );

@@ -234,5 +234,13 @@ describe("審査を先に出す（screening_first）", () => {
   it("審査は何日かかりますか → screening_first は出さない", () => falsy(ids("審査は何日かかりますか？").includes("screening_first")));
 });
 
+// 2026-10-06 ⑫ 見積書の後の「これ以上安くなるのは厳しいですか？」→ 最安値の事実（ゆいと 9/24・R 10/04 の実物）
+describe("最安値（cheapest_estimate）", () => {
+  it("これ以上安くなるのは厳しいですか → cheapest_estimate", () => truthy(ids("こちらはこれ以上安くなるのは厳しいですか？").includes("cheapest_estimate")));
+  it("もっと安くなる可能性はありますか → cheapest_estimate", () => truthy(ids("他のところで見積もりをだしてもらって、28万くらいやったんですけどもっと安くなる可能性はありますか？").includes("cheapest_estimate")));
+  it("もっと初期費用安くなる物件ないですか（物件探し）→ 出さない", () => falsy(ids("もっと初期費用安くなる物件ないですか？").includes("cheapest_estimate")));
+  it("広告の画像の「初期費用最安値に」→ 出さない", () => falsy(ids("[画像] 関西SUMORAで見つける / 初期費用最安値に / 初期費用2,980円").includes("cheapest_estimate")));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => `- ${f}`).join("\n")); process.exit(1); }

@@ -1,4 +1,5 @@
 import { stripTrailingLineSpaces, stripSystemDateTagLines, dedupeFirstIntroSentences } from "@/app/lib/draft-text";
+import { enforceCallName } from "@/app/lib/call-name-guard";
 import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
@@ -6695,6 +6696,15 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               draftHead: (finalDraftText ?? "").trim().slice(0, 200),
             } : null;
             if (finalCheck && tpoDebug) finalCheck.tpo_debug = tpoDebug;
+            // 2026-10-06 ⑫ 竹内「名前間違えているの絶対にいれない」（あ・「森本様」）: 最後の網。呼びかけの名前が固定の呼び名でも
+            //   会話・表示名・登録名に出てくる名前でもない時は固定の呼び名に直す（無ければ呼びかけごと外す）。最終チェックの block が影の運用でも必ず効く
+            if (finalDraftText && !isTemplateOptimize) {
+              const g = enforceCallName(finalDraftText, customerName, recentMessages.map((m) => m.text ?? ""), [lineDisplayName, ...addressName.aliases]);
+              if (g.replaced.length) {
+                console.log(JSON.stringify({ tag: "draft:call-name-fixed", conversationId, replaced: g.replaced, callName: customerName || null }));
+                finalDraftText = g.text;
+              }
+            }
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
             // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
             // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）

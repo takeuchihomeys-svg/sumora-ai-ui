@@ -6,31 +6,33 @@ import { supabase } from "@/app/lib/supabase";
 import { resolveAddressName, type AddrMsg, type AddressNameVerdict } from "@/app/lib/validate-reply";
 import { mergeHistoryForAddress, type AddressWindowMsg, type AddressDbMsg } from "@/app/lib/address-history";
 import { isGroupConversationName } from "@/app/lib/line-target";
+import { staffCalledName } from "@/app/lib/aix-staff-called-name";
+import { lockedCallName } from "@/app/lib/call-name-guard";
 
 const HISTORY_LIMIT = 150;
 
 // ─── 顧客名をDBから解決（generate-reply から移設）────
 // conversations.customer_name は line-webhook が LINEプロフィールの displayName で上書きするため表示名そのもの。
 // property_customers.customer_name はスタッフが顧客管理画面で実名に修正できるので、そちらを先に見る。
-export async function fetchDbCustomerNames(conversationId: string): Promise<{ pcName: string; convName: string }> {
+export async function fetchDbCustomerNames(conversationId: string): Promise<{ pcName: string; convName: string; callName?: string }> {
   try {
-    const { data: conv } = await supabase
-      .from("conversations")
-      .select("customer_name, property_customer_id")
-      .eq("id", conversationId)
-      .maybeSingle();
-    const convRow = conv as { customer_name?: string | null; property_customer_id?: string | null } | null;
+    // 2026-10-06 ⑫ 竹内「お客さん毎に名前決まったら固定」: 固定の呼び名（conversations.call_name）も読む（列がまだ無い時は読まない）
+    let convRes = await supabase.from("conversations").select("customer_name, property_customer_id, call_name").eq("id", conversationId).maybeSingle();
+    if (convRes.error) convRes = await supabase.from("conversations").select("customer_name, property_customer_id").eq("id", conversationId).maybeSingle();
+    const conv = convRes.data;
+    const convRow = conv as { customer_name?: string | null; property_customer_id?: string | null; call_name?: string | null } | null;
     if (!convRow) return { pcName: "", convName: "" };
     const convName = (convRow.customer_name ?? "").trim();
+    const callName = (convRow.call_name ?? "").trim();
     const pcId = convRow.property_customer_id;
-    if (!pcId) return { pcName: "", convName };
+    if (!pcId) return { pcName: "", convName, callName };
     const { data: pc } = await supabase
       .from("property_customers")
       .select("customer_name")
       .eq("id", pcId)
       .maybeSingle();
     const pcName = ((pc as { customer_name?: string | null } | null)?.customer_name ?? "").trim();
-    return { pcName, convName };
+    return { pcName, convName, callName };
   } catch (err) {
     console.warn("[address-name] 顧客名のDB取得失敗 — 名前なしで続行:", err);
     return { pcName: "", convName: "" };
@@ -66,5 +68,19 @@ export async function resolveAddressNameForConversation(
   const rows = (hist as { data: DbMsg[] | null }).data;
   if (rows && rows.length) messages = mergeHistoryForAddress(recentMessages, rows);
   else if ((hist as { error?: unknown }).error) console.warn("[address-name] 呼び名の履歴取得に失敗（窓内の結果で続行）");
-  return { ...resolveAddressName({ messages, displayName: disp, pcName: names.pcName }), pcName: names.pcName, convName: names.convName };
+  const verdict = resolveAddressName({ messages, displayName: disp, pcName: names.pcName });
+  // 2026-10-06 ⑫ 竹内「名前間違えているの絶対にいれない…お客さん毎に名前決まったら固定していたらこんなミス起きない」（あ・「森本様」）:
+  //   resolveAddressName は名前の形（ひらがな2字以上 等）で本物かを決め、1文字の「あ」を採らず「呼び名なし」→ LLM が名前を作った。
+  //   固定の呼び名（call_name）→ スタッフ（人）が冒頭で2回以上呼んだ名前（形を問わない）→ 今までの結果 の順に決める（call-name-guard.lockedCallName）。
+  //   スタッフが2回以上呼んだ名前が決まって、まだ固定が無ければ固定する（以後は形・揺れに関わらずこの名前）
+  const staffCalled = staffCalledName(messages.filter((m) => m.sender === "staff" && !(m.isAix ?? m.is_aix_generated)).map((m) => ({ sender: "staff", text: m.text ?? "" })));
+  const locked = lockedCallName({ stored: names.callName, staffCalled, resolved: verdict.name });
+  if (locked.source === "staff_called" && !names.callName) {
+    void supabase.from("conversations").update({ call_name: locked.name }).eq("id", conversationId).is("call_name", null)
+      .then(({ error }) => { if (error && !/call_name/.test(error.message)) console.warn("[address-name] 呼び名の固定に失敗:", error.message); });
+  }
+  const finalVerdict: AddressNameVerdict = locked.name && locked.name !== verdict.name
+    ? { ...verdict, name: locked.name, source: verdict.source, evidence: `${locked.source}:${locked.name}`, aliases: [...new Set([...verdict.aliases, locked.name])] }
+    : verdict;
+  return { ...finalVerdict, pcName: names.pcName, convName: names.convName };
 }

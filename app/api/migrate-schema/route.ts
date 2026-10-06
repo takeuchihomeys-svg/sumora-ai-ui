@@ -4615,6 +4615,12 @@ COMMENT ON COLUMN property_customers.parent_customer_id IS '2つ目の探し物�
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS requirement_strength JSONB;
 COMMENT ON COLUMN property_customers.requirement_strength IS '要望の強さ {move_in|pet|rent_max|area: {strength: must|strong|nice, evidence, at}}。絶対に合わない物件は判定で外す候補（送らない）';
 
+-- 2026-10-06 ⑫ 竹内「名前間違えているの絶対にいれない…お客さん毎に名前決まったら固定していたらこんなミス起きない」（あ・「森本様」）:
+--   会話の固定の呼び名。スタッフ（人）が冒頭で2回以上呼んだ名前で自動で入る（address-name-server）・スタッフが画面で直せる。
+--   生成（返信・AIX）はこの名前だけを呼び名に使い、出口（call-name-guard）で別の名前の呼びかけを直す
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS call_name TEXT;
+COMMENT ON COLUMN conversations.call_name IS '固定の呼び名（「あ」「R」等・さんは付けない）。生成と出口の名前の正';
+
 -- 会話・メッセージの変更を Realtime で届ける（画面は変わった行だけを直す。30秒ごとの丸ごとの読み直しをやめるため）
 DO $$
 BEGIN
