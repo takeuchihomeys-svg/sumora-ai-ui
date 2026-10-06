@@ -316,5 +316,15 @@ console.log("── ★ 返信文の生成にも配線されているか（竹�
   t("★ こちらが送った空欄のフォーマットと、その後のこちらの発言は残る", outHist.includes("スモラ: こちらお申込に必要なご情報となります") && outHist.includes("スモラ: お送り頂きありがとうございます"), outHist);
   t("★ 置き換えの文は「こちらが受け取りました」と述べない（LLM が写して『お申込み情報のご連絡ありがとうございます』と書いた）", !/受け取りました|ありがとう/.test(APPLICATION_FORM_PLACEHOLDER));
 }
+// 2026-10-06 あ 事例: LLM が仮名を姓だけ・名だけで書いても当事者の実名に戻り、例外にならない
+{
+  const m = createMasker({ conversationId: "abc", customerName: "あ", knownNames: ["田中次郎"], partyAliases: [] });
+  m.maskBlock("あさん 内覧の件です");
+  const fake = m.table().find((e) => e.reversible)?.fake ?? "";
+  for (const out of [`${fake}さん、ご内覧よろしく`, `${fake.slice(0, 2)}さん、ご内覧よろしく`, `${fake.slice(2)}さん、明日13時`]) {
+    const back = m.unmask(out);
+    t(`★ 姓・名だけの仮名も戻る（${out.slice(0, 6)}…）`, back.startsWith("あさん") && m.leftovers(back).length === 0, back);
+  }
+}
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

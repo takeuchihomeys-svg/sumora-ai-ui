@@ -333,6 +333,15 @@ export function createMasker(opts: MaskerOptions): Masker {
     for (const e of [...entries].filter((e) => e.reversible).sort((a, b) => b.fake.length - a.fake.length)) {
       t = t.split(e.fake).join(e.real);
     }
+    // 2026-10-06 竹内（あ 事例・AIX 内覧へ「生成文の伏せ字を元に戻せませんでした」）: LLM は仮名「山田太郎さん」を
+    //   「山田さん」「太郎さん」と姓・名だけで書くことがある。leftovers はそれを拾って例外にするが、ここでは戻していなかった。
+    //   当事者の仮名（4文字の姓名）の姓・名＋敬称は、当事者の実名（呼び名そのまま）に戻す
+    for (const e of entries) {
+      if (!e.reversible || e.kind !== "name" || e.fake.length < 4) continue;
+      for (const part of [e.fake.slice(0, 2), e.fake.slice(2)]) {
+        t = t.replace(new RegExp(`${escapeRe(part)}(?=\\s*${HONORIFIC})`, "g"), e.real);
+      }
+    }
     return t;
   }
 
