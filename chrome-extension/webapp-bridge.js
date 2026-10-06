@@ -50,6 +50,33 @@ window.addEventListener("message", (e) => {
     return;
   }
 
+  // ── search-focus: 会話画面の「🔍 物件検索」（v2.5.86・2026-10-06 竹内「拡張ツール繰り上げられるようにする」）──
+  // 動かす: 検索は押さない（拡張の一覧の一番上に出して・リアプロ／ITANDI のタブを前に出してそのお客様を開くだけ＝案内モードのまま人が押す）。
+  //   印そのものはウェブアプリがサーバーに書く（スマホで押しても PC の拡張に出る）。ここは同じ PC の近道だけ。
+  //   ① すぐ ACK（aixlinx-webapp-search-focus-ack）＝ウェブアプリが「この端末に拡張がある」と分かる
+  //   ② background の axlx-search-focus（タブを前に出す）→ 結果（aixlinx-webapp-search-focus-result）
+  //   ③ リアプロ／ITANDI のタブが無い時だけ、押したタブの横に拡張のパネルを開く（axlx-search-focus-panel）。
+  //      Chrome は人の操作の直後（数秒）しか開かせないので、①②の間に寄り道しない
+  if (e.data && e.data.from === "aixlinx-webapp-search-focus") {
+    var sfReq = e.data.reqId || null;
+    var sfCid = e.data.customerId ? String(e.data.customerId) : "";
+    if (!sfCid) return;
+    try { window.postMessage({ from: "aixlinx-webapp-search-focus-ack", reqId: sfReq }, "*"); } catch (_) {}
+    var sfPost = function (r) { try { window.postMessage(Object.assign({ from: "aixlinx-webapp-search-focus-result", reqId: sfReq }, r), "*"); } catch (_) {} };
+    chrome.runtime.sendMessage(
+      { type: "axlx-search-focus", customerId: sfCid, customerName: e.data.customerName || "", at: e.data.at || null },
+      function (resp) {
+        if (chrome.runtime.lastError || !resp) { sfPost({ ok: false, reason: "no-background" }); return; }
+        if (resp.via !== "none" || resp.reason === "batch-running") { sfPost(resp); return; }
+        chrome.runtime.sendMessage({ type: "axlx-search-focus-panel", customerId: sfCid }, function (r2) {
+          void chrome.runtime.lastError;
+          sfPost(r2 && r2.ok ? { ok: true, via: "panel" } : { ok: true, via: "none", reason: (r2 && r2.reason) || "panel-refused", error: (r2 && r2.error) || null });
+        });
+      }
+    );
+    return;
+  }
+
   // ── scrape-and-compare: リアプロ自動スクレイプ+比較の直接トリガー ──
   // Supabase automation_commands 経由より高速・条件は拡張側で resolve（popupと同等）
   if (e.data && e.data.from === "aixlinx-webapp-scrape") {

@@ -4,6 +4,7 @@ import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-
 import { itemizeWants, type WantsCustomerLike } from "@/app/lib/customer-wants";
 import { searchRentMinOf, type CustomerLike } from "@/app/lib/property-brain";
 import { CLEAR_MANUAL_UPDATE_DAYS } from "@/app/lib/search-update-days";
+import { FOCUS_TTL_MS } from "@/app/lib/search-focus";
 
 // 条件変更履歴の追跡対象フィールド（condition-history.ts の TRACKED と同一）
 const CONDITION_TRACKED_FIELDS = [
@@ -77,13 +78,26 @@ export async function GET(req: NextRequest) {
   const pcQuery = singleId
     ? supabase.from("property_customers").select("*").eq("id", singleId)
     : supabase.from("property_customers").select("*").order("updated_at", { ascending: false });
-  const [{ data, error }, { data: convData }] = await Promise.all([
+  // 2026-10-06 会話画面の「🔍 物件検索」の印（property_search_focus・24時間以内）を各行の search_focus に載せる。
+  //   拡張（search-focus.js）が「押した後に検索・送付していない」物を一覧の一番上に出す。表が無い（本番未作成）・失敗は印なしで続ける
+  const focusQuery = (async () => {
+    try {
+      let q = supabase.from("property_search_focus").select("property_customer_id, requested_at, requested_by, device")
+        .gte("requested_at", new Date(Date.now() - FOCUS_TTL_MS).toISOString());
+      if (singleId) q = q.eq("property_customer_id", singleId);
+      const { data: f, error: fe } = await q;
+      return fe ? [] : (f ?? []);
+    } catch { return []; }
+  })();
+  const [{ data, error }, { data: convData }, focusRows] = await Promise.all([
     pcQuery,
     supabase
       .from("conversations")
       .select("id, property_customer_id, last_message, last_sender, updated_at, account, status, profile_image_url, customer_name, is_hot, is_flagged")
       .not("property_customer_id", "is", null),
+    focusQuery,
   ]);
+  const focusMap = new Map(focusRows.map((f) => [f.property_customer_id as string, { at: f.requested_at as string, by: (f.requested_by as string | null) ?? null, device: (f.device as string | null) ?? null }]));
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -96,6 +110,7 @@ export async function GET(req: NextRequest) {
       o.rent_min_search = searchRentMinOf(c as CustomerLike)?.yen ?? null;
       o.is_linked = convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id));
       o.linked_conversation = conv ? { id: conv.id, property_customer_id: conv.property_customer_id, last_sender: conv.last_sender, updated_at: conv.updated_at, account: conv.account, status: conv.status, is_hot: conv.is_hot, is_flagged: conv.is_flagged } : null;
+      o.search_focus = focusMap.get(c.id) ?? null;
       o.list_view = true; // 一覧の軽い形の印（拡張はお客様を開く時に ?id= で全部を取り直す）
       return o;
     });
@@ -111,6 +126,7 @@ export async function GET(req: NextRequest) {
     // 2026-10-06 ⑫（ゆいと）: 2つ目の探し物の行（子・「ゆいと（物置）」）は会話の紐付けが親にある → 親の会話を出す（拡張・一覧で送る先・LINE が分かる）
     is_linked: convMap.has(c.id) || (!!c.parent_customer_id && convMap.has(c.parent_customer_id)),
     linked_conversation: convMap.get(c.id) ?? (c.parent_customer_id ? convMap.get(c.parent_customer_id) ?? null : null),
+    search_focus: focusMap.get(c.id) ?? null,
   }));
   return NextResponse.json(result, {
     headers: { "Cache-Control": "no-store, must-revalidate" },

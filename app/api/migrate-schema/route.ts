@@ -2927,6 +2927,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_rec_snap_message ON recommendation_snapshot
 CREATE INDEX IF NOT EXISTS idx_rec_snap_conv ON recommendation_snapshots(conversation_id, sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_rec_snap_customer ON recommendation_snapshots(property_customer_id, sent_at DESC);
 ALTER TABLE recommendation_snapshots DISABLE ROW LEVEL SECURITY;
+-- 2026-10-06 竹内さん「なおす」: 🌟が新着1件（single）か束の中の🌟（bundle）か・その時の束の候補（売上サポの行の id・★物件出し★グループに届いた行）。
+--   束はグループに届いた画像を LINE の画面から転送するので送付の記録（candidates）に残らず、候補1件の🌟の多くが実は束だった（app/lib/star-bundle.ts）。
+--   candidates の作り方は変えない（学習・監査の物差しを変えない）。列が無い間は書き手（insertRecommendationSnapshot）がこの2列を外して書く
+ALTER TABLE recommendation_snapshots ADD COLUMN IF NOT EXISTS star_kind TEXT;
+ALTER TABLE recommendation_snapshots ADD COLUMN IF NOT EXISTS bundle JSONB;
 
 -- ── scoring_weights / scoring_learning_runs: 物件の点の重みの版と、週1回の学習の結果（2026-09-25追加）──
 -- 竹内「自動的に学習されていく仕組みを作る。判定基準をより精度高くしていくために」。正解は「スタッフが選んで送った事実」。
@@ -4641,6 +4646,19 @@ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
   END IF;
 END $$;
+
+-- 2026-10-06 会話画面の「🔍 物件検索」→ 拡張のお客様の一覧の一番上へ（竹内「スマホで押しても連携して拡張ツールのお客さんの一番上に繰り上がるようにする」）
+--   お客様ごとに1行（押し直すと時刻を上書き）。消す書き込みはしない: 拡張（chrome-extension/search-focus.js）が
+--   「押した後に検索した・送った・24時間たった」で効いていない印として扱う。API は app/api/property-search-focus/route.ts
+CREATE TABLE IF NOT EXISTS property_search_focus (
+  property_customer_id UUID PRIMARY KEY REFERENCES property_customers(id) ON DELETE CASCADE,
+  conversation_id UUID,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  requested_by TEXT,
+  device TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_psf_requested_at ON property_search_focus(requested_at DESC);
+ALTER TABLE property_search_focus DISABLE ROW LEVEL SECURITY;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

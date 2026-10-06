@@ -2471,7 +2471,13 @@ async function loadCustomers(forceRefresh = false) {
         // 開いているお客様は取り直した全部の値（fetchFreshCustomer）の物を残す（一覧の軽い形で上書きしない）
         if (selectedCustomer && selectedCustomer.id) {
           const i = data.findIndex((x) => String(x.id) === String(selectedCustomer.id));
+          // v2.5.86「一番上へ」の印（search_focus）は、取り直した物と手元の物の新しい方（開いているお客様の古い印で消さない）
+          const _sfNew = i >= 0 ? (data[i].search_focus || null) : null;
           if (i >= 0) data[i] = Object.assign({}, data[i], selectedCustomer);
+          if (i >= 0) {
+            const _sfOld = selectedCustomer.search_focus || null;
+            data[i].search_focus = (_sfOld && (!_sfNew || Date.parse(_sfOld.at) > Date.parse(_sfNew.at))) ? _sfOld : _sfNew;
+          }
         }
         allCustomers = data;
         _renderCustomersKeepScroll();
@@ -2499,7 +2505,17 @@ function renderCollapsibleSection(sectionId, title, customers) {
 function renderList(customers) {
   const list = document.getElementById("customer-list");
 
-  if (!customers.length) {
+  // v2.5.86 会話画面の「🔍 物件検索」で押されたお客様（search-focus.js・サーバーの印）は、絞り込み（紐付け・アカウント・今日対応・駅/地域）に
+  //   関係なく一番上に出す（新しく押された順）。名前で探している時（検索欄に文字）は普通の結果だけ。下の一覧には重ねて出さない
+  const _SF = (typeof self !== "undefined" ? self : window).AxlxSearchFocus;
+  const _q = (document.getElementById("search-input")?.value || "").trim();
+  const pinned = (_SF && !_q) ? _SF.pinnedCustomers(allCustomers) : [];
+  if (pinned.length) {
+    const _pinIds = new Set(pinned.map((c) => String(c.id)));
+    customers = customers.filter((c) => !_pinIds.has(String(c.id)));
+  }
+
+  if (!customers.length && !pinned.length) {
     list.innerHTML = `<div class="state-msg">${linkedOnly ? "🔗 紐付け済みのお客さんがいません" : "お客さんがいません"}</div>`;
     return;
   }
@@ -2518,6 +2534,14 @@ function renderList(customers) {
   const showSections = linked.length > 0 && (withCond.length > 0 || noCond.length > 0);
 
   let html = "";
+
+  if (pinned.length) {
+    html += `<div class="section-divider" style="background:#fff7ed;color:#c2410c;font-weight:700">📌 会話から物件検索 (${pinned.length}人)</div>`;
+    pinned.forEach((c) => {
+      html += `<div style="padding:2px 12px 0;font-size:10px;color:#c2410c">${esc(_SF.label(c.search_focus))} に押されました</div>`;
+      html += renderCustomerRow(c, false);
+    });
+  }
 
   if (linked.length) {
     html += `<div class="section-divider linked-divider">🔗 紐付け済み (${linked.length}人)</div>`;
@@ -3730,6 +3754,83 @@ function _runSwitchCustomer(d) {
   return _openAndClickAutofill(d, { via: "switch-customer", waitCustomersMs: 5000, areaSource: "db", autoRun: true, dedupe: true, deadlineMs: SWITCH_CLICK_DEADLINE_MS });
 }
 // ==AXLX-SWITCH-CORE-END==
+
+// ==AXLX-FOCUS-CORE-BEGIN==
+// v2.5.86 2026-10-06 竹内「（会話の上の状態の帯を）広げたところに物件検索ボタンを出す。そうすると拡張ツール繰り上げられるようにする」
+//   「スマホで押しても連携して拡張ツールのお客さんの一番上に繰り上がるようにする」
+//   ・印（property_search_focus）は一覧の search_focus に乗って来る → renderList が一番上の「📌 会話から物件検索」に出す（search-focus.js）
+//   ・スマホで押された印は、開いている popup が軽い取り直し（/api/property-search-focus・45秒ごと・見えている時だけ）で拾う
+//   ・同じ PC で押した時: background が手元の印（axlx_search_focus_open）を置き、リアプロ／ITANDI のバーには focus-customer を送る
+//     → ここでそのお客様を開く（検索は押さない＝案内モードのまま。▶案内 は人が押す）。言い直しの条件は LINE の受信で登録の条件に
+//       入っている（P4・ブレイン）ので、開く前に1件を取り直して最新の条件で開く
+var _focusLastKey = "";
+var _focusMarksSig = "";
+var FOCUS_SELECT_FRESH_MS = 15000; // 横のパネルが手元の印でお客様を開くのは、押してからこの時間の内だけ（古い印で勝手に開かない）
+function _focusFind(id) {
+  return (allCustomers || []).find(function (x) { return String(x.id) === String(id); }) || null;
+}
+/** 手元の印（サーバーの書き込みを待たずに一番上へ）。前より新しい時だけ置く。置いたら true */
+function _applyLocalFocusMark(customerId, at) {
+  if (!customerId || !at) return false;
+  var c = _focusFind(customerId);
+  if (!c) return false;
+  var cur = c.search_focus ? Date.parse(c.search_focus.at) : NaN;
+  if (Number.isFinite(cur) && cur >= Date.parse(at)) return false;
+  c.search_focus = { at: at, by: (c.search_focus && c.search_focus.by) || null, device: "pc" };
+  return true;
+}
+/** 会話画面から押されたお客様を開く（返り値 { ok, reason?, dup? }・検索は押さない） */
+async function _focusCustomerFromApp(d) {
+  d = d || {};
+  if (!d.customerId) return { ok: false, reason: "no-customer" };
+  var key = String(d.customerId) + "@" + String(d.at || "");
+  if (key === _focusLastKey) return { ok: true, dup: true };
+  var t0 = Date.now();
+  while ((!allCustomers || !allCustomers.length) && Date.now() - t0 < 5000) {
+    await new Promise(function (r) { setTimeout(r, 100); });
+  }
+  var c = _focusFind(d.customerId);
+  if (!c) {
+    try { await loadCustomers(true); } catch (_) {}
+    c = _focusFind(d.customerId);
+  }
+  if (!c) return { ok: false, reason: "customer-not-found" };
+  _focusLastKey = key;
+  _applyLocalFocusMark(c.id, d.at);
+  var keep = c.search_focus || null;
+  var fresh = await fetchFreshCustomer(c.id);
+  if (fresh) {
+    syncFreshToCache(fresh);
+    var got = c.search_focus ? Date.parse(c.search_focus.at) : NaN;
+    if (keep && !(Number.isFinite(got) && got >= Date.parse(keep.at))) c.search_focus = keep;
+  }
+  openSiteView(c);
+  try { filterCustomers(document.getElementById("search-input")?.value || ""); } catch (_) {}
+  return { ok: true };
+}
+/** スマホ・別の PC で押された印を拾う（軽い取り直し・変わった時だけ描き直す） */
+async function _pollSearchFocus() {
+  var SF = (typeof self !== "undefined" ? self : window).AxlxSearchFocus;
+  if (!SF || !allCustomers || !allCustomers.length) return;
+  try {
+    var res = await fetch(API_BASE + "/api/property-search-focus", { cache: "no-store" });
+    if (!res.ok) return;
+    var j = await res.json();
+    if (!j || !j.ok || !Array.isArray(j.marks)) return;
+    var sig = SF.marksSig(j.marks);
+    if (sig === _focusMarksSig) return;
+    _focusMarksSig = sig;
+    var m = SF.mergeMarks(allCustomers, j.marks);
+    allCustomers = m.customers;
+    if (selectedCustomer) {
+      var s = _focusFind(selectedCustomer.id);
+      if (s && s !== selectedCustomer) selectedCustomer.search_focus = s.search_focus || null;
+    }
+    if (m.missing.length) { await loadCustomers(true); return; }
+    _renderCustomersKeepScroll();
+  } catch (_) { /* 取れない時は次の回 */ }
+}
+// ==AXLX-FOCUS-CORE-END==
 
 // 一時調整の上書きモードを判定: "ward" | "station" | null（null=顧客デフォルトで検索）
 function computeTempAdjOverride() {
@@ -5846,6 +5947,39 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.storage.session.remove("pendingPopupCmd");
     _setModeBadge();
     _runPendingPopupCmd(cmd, "changed");
+  });
+
+  // v2.5.86 会話画面の「🔍 物件検索」（AXLX-FOCUS-CORE）: 一番上へ・同じ PC で押した時は開く
+  (async function () {
+    // 一覧が出るのを待ってから（loadCustomers は上で始まっている）
+    var t0 = Date.now();
+    while ((!allCustomers || !allCustomers.length) && Date.now() - t0 < 8000) await new Promise(function (r) { setTimeout(r, 150); });
+    try {
+      var st = await chrome.storage.local.get("axlx_search_focus_open");
+      var it = st && st.axlx_search_focus_open;
+      if (it && it.customerId) {
+        if (_applyLocalFocusMark(it.customerId, it.at)) _renderCustomersKeepScroll();
+        // 横のパネルが「押した直後に開かれた」時だけ、そのお客様を開く（バーの中は focus-customer の知らせで開く）
+        if (!isUnderbar && Date.now() - (it.ts || 0) < FOCUS_SELECT_FRESH_MS) _focusCustomerFromApp(it);
+      }
+    } catch (_) {}
+    _pollSearchFocus();
+  })();
+  setInterval(function () { if (document.visibilityState === "visible") _pollSearchFocus(); }, 45000);
+  try {
+    chrome.storage.onChanged.addListener(function (ch, area) {
+      if (area !== "local" || !ch.axlx_search_focus_open || !ch.axlx_search_focus_open.newValue) return;
+      var it = ch.axlx_search_focus_open.newValue;
+      if (_applyLocalFocusMark(it.customerId, it.at)) _renderCustomersKeepScroll();
+      if (!isUnderbar && Date.now() - (it.ts || 0) < FOCUS_SELECT_FRESH_MS) _focusCustomerFromApp(it);
+    });
+  } catch (_) {}
+  window.addEventListener("message", function (e) {
+    if (!isUnderbar || e.source !== window.parent) return;
+    if (!e.data || e.data.from !== "underbar-parent" || e.data.action !== "focus-customer") return;
+    _focusCustomerFromApp(e.data).then(function (r) {
+      try { window.parent.postMessage({ from: "axlx-focus-result", reqId: e.data.reqId || null, ok: !!(r && r.ok), reason: (r && r.reason) || null }, "*"); } catch (_) {}
+    });
   });
 
   // 初期状態で「紐付け済み」ボタンをONに見せる

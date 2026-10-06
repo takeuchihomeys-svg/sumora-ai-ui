@@ -485,6 +485,37 @@
     chrome.runtime.sendMessage({ type: "axlx-force-stop-batch" });
   });
 
+  // ※ switch-customer の受け口より先に登録する（tests/chrome-extension/switch-once.test.js が最後の受け口を switch として読む）
+  // ── v2.5.86 会話画面の「🔍 物件検索」（同じ PC の Chrome で押した時）→ バーを広げてそのお客様を開く ─────────
+  //   background の axlx-search-focus がこのタブを前に出してから送ってくる。検索は押さない（popup の _focusCustomerFromApp が開くだけ）
+  chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+    if (!msg || msg.type !== "axlx-search-focus-open") return false;
+    var forwardFocus = function() {
+      if (!iframe || !iframe.contentWindow) { sendResponse({ ok: false, reason: "iframe-lost" }); return; }
+      doExpand();
+      var reqId = "sf_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      var done = false;
+      var onResult = function (ev) {
+        var r = ev && ev.data;
+        if (!r || r.from !== "axlx-focus-result" || r.reqId !== reqId) return;
+        if (!iframe || ev.source !== iframe.contentWindow || done) return;
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener("message", onResult);
+        sendResponse({ ok: !!r.ok, reason: r.reason || null });
+      };
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        window.removeEventListener("message", onResult);
+        sendResponse({ ok: false, reason: "popup-no-answer" });
+      }, 12000);
+      window.addEventListener("message", onResult);
+      iframe.contentWindow.postMessage({ from: "underbar-parent", action: "focus-customer", reqId: reqId, customerId: msg.customerId, customerName: msg.customerName || "", at: msg.at || null }, "*");
+    };
+    return startForward(forwardFocus, sendResponse);
+  });
+
   // ── background.js からの顧客切替指示を popup.js iframe に中継 ────────────────
   // chrome.runtime.sendMessage でiframe直接に届けると frame登録ラグで失敗するため
   // chrome.tabs.sendMessage(content script経路) → postMessage(iframe) の2段中継を使う
@@ -546,6 +577,11 @@
       }, "*");
     };
 
+    return startForward(doForward, sendResponse);
+  });
+
+  // iframe が無ければ作って load を待ってから渡す（switch-customer と search-focus の共通・v2.5.86 で関数に）
+  function startForward(fn, sendResponse) {
     if (!iframe) {
       // iframeが未作成（遅延初期化）→ 今すぐ作成してload後に転送
       console.log("[underbar] iframe未作成 → ensureIframe()で作成");
@@ -560,12 +596,11 @@
       iframe.addEventListener("load", function _onLoad() {
         iframe.removeEventListener("load", _onLoad);
         console.log("[underbar] iframe load完了 → 1秒後に転送");
-        setTimeout(doForward, _sd(1000)); // 2026-09-27 毎回ばらつかせる（元より短くしない＝popup の初期化待ちを削らない）
+        setTimeout(fn, _sd(1000)); // 2026-09-27 毎回ばらつかせる（元より短くしない＝popup の初期化待ちを削らない）
       });
     } else {
-      doForward();
+      fn();
     }
-
     return true;
-  });
+  }
 })();

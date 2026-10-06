@@ -179,6 +179,9 @@ function rest() {
       "setTimeout 15000": [1, "取得の期限"], "setTimeout 4000": [1, "表示を消す"], "setTimeout 1800": [1, "表示を戻す"], "setTimeout 2000": [1, "表示を戻す"],
       "setTimeout 800": [1, "一時調整の保存の間引き"], "setTimeout 8000": [1, "表示を戻す"], "setTimeout 20000": [1, "固まり防止の見張り"],
       "setTimeout 25000": [1, "固まり防止の見張り"], "setTimeout 1200": [1, "表示を閉じる"],
+      "setTimeout 100": [1, "会話から押されたお客様を開く前に一覧が出るのを待つ見る間隔（v2.5.86・5秒で打ち切り・サイトを触らない）"],
+      "setTimeout 150": [1, "開いた時に一覧が出るのを待つ見る間隔（v2.5.86・8秒で打ち切り・サイトを触らない）"],
+      "setInterval 45000": [1, "スマホ等で押された「一番上へ」の印の軽い取り直し（v2.5.86・見えている時だけ・サーバーを読むだけ）"],
     },
     "reins-bulk-dl.js": {
       "setTimeout 100": [1, "表示の更新"], "setTimeout 800": [2, "popup の応答の期限・MutationObserver の間引き"], "setTimeout 5000": [1, "表示を戻す"],
@@ -190,7 +193,7 @@ function rest() {
     "reins-content.js": { "setTimeout 300": [1, "起動時"] },
     "reins-page-script.js": { "setTimeout 90000": [1, "見張り（fill-done の保証）"] },
     "score-overlay.js": { "setTimeout 900": [1, "点数の表示の間引き"], "setTimeout 500": [1, "点数の表示"], "setTimeout 300": [1, "点数の表示"] },
-    "underbar.js": { "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し"], "setTimeout 50": [1, "パネルの動き"] },
+    "underbar.js": { "setTimeout 12000": [1, "会話から押されたお客様を開いた popup の答えの期限（v2.5.86・サイトを触らない）"], "setTimeout 80": [1, "パネルの表示"], "setTimeout 1500": [1, "拡張の再読み込み直後のやり直し"], "setTimeout 50": [1, "パネルの動き"] },
   };
   const found = scanFixed();
   const files = new Set([...Object.keys(found), ...Object.keys(KEEP)]);

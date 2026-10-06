@@ -10,6 +10,7 @@
 //     サーバー専用（customer-state-server.ts・supabase 等）は絶対に import しない（本番ビルドだけ落ちる）
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CustomerStateView, RoomEventKind, SearchingMark } from "../lib/customer-state";
+import PropertySearchFocusButton from "./PropertySearchFocusButton";
 
 const EVENT_LABEL: Record<RoomEventKind, string> = {
   sent: "送付",
@@ -180,6 +181,9 @@ export default function CustomerStateBar({ conversationId, refreshKey, authHeade
               </ul>
             </div>
           )}
+
+          {/* 2026-10-06 竹内「ここ広げたところに物件検索ボタンを出す。そうすると拡張ツール繰り上げられるようにする」（スマホからも・PropertySearchFocusButton） */}
+          <PropertySearchFocusButton conversationId={conversationId} authHeader={authHeader} />
 
           <div className="space-y-0.5">
             {(state.since || stageDetail) && (

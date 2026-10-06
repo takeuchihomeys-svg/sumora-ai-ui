@@ -5401,3 +5401,63 @@ async function _runLanesParallel(customer, runLane, laneNote) {
 }
 
 // ===== END: 自動化バッチ検索 =====
+
+// ===== 会話画面の「🔍 物件検索」→ このお客様を拡張の一番上へ（v2.5.86・2026-10-06 竹内）=====
+// 竹内「ここ（会話の上の状態の帯）広げたところに物件検索ボタンを出す。そうすると拡張ツール繰り上げられるようにする」
+//   「スマホで押しても連携して拡張ツールのお客さんの一番上に繰り上がるようにする」
+// 印そのものはサーバー（property_search_focus）に残る＝スマホで押しても、どの PC の拡張でも一番上に出る（search-focus.js・popup の一覧）。
+// ここは「同じ PC の Chrome で押した時」の近道だけ:
+//   axlx-search-focus       … 手元の印（axlx_search_focus_open）を置く＝開いている popup／横のパネルが一番上に出す。
+//                              リアプロ／ITANDI のタブがあれば一番最近見ていたタブを前に出し、下のバー（underbar）を広げてそのお客様を開く。
+//                              検索は押さない（案内モード＝人が ▶案内 を押す・自動の検索は止めている）。一括の回（batchRunning）の最中はタブを動かさない
+//   axlx-search-focus-panel … リアプロ／ITANDI のタブが無い時、押したタブの横に拡張のパネル（side panel）を開く。
+//                              Chrome は「人の操作の直後」でないと開かせない → ここでは await より前に sidePanel.open を呼ぶ（断られたら理由を返す）
+var SEARCH_FOCUS_TAB_URLS = ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*"];
+chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+  if (!msg || (msg.type !== "axlx-search-focus" && msg.type !== "axlx-search-focus-panel")) return false;
+  if (!msg.customerId) { sendResponse({ ok: false, reason: "no-customer" }); return false; }
+
+  if (msg.type === "axlx-search-focus-panel") {
+    var tabId = sender && sender.tab && sender.tab.id;
+    if (!chrome.sidePanel || !chrome.sidePanel.open || tabId == null) { sendResponse({ ok: false, reason: "no-side-panel" }); return false; }
+    try {
+      chrome.sidePanel.open({ tabId: tabId }).then(
+        function () { sendResponse({ ok: true, via: "panel" }); },
+        function (e) { sendResponse({ ok: false, reason: "panel-refused", error: String((e && e.message) || e).slice(0, 160) }); }
+      );
+    } catch (e) {
+      sendResponse({ ok: false, reason: "panel-refused", error: String((e && e.message) || e).slice(0, 160) });
+      return false;
+    }
+    return true;
+  }
+
+  (async function () {
+    var nowIso = new Date().toISOString();
+    var item = { customerId: String(msg.customerId), customerName: msg.customerName || "", at: msg.at || nowIso, ts: Date.now() };
+    try { await chrome.storage.local.set({ axlx_search_focus_open: item }); } catch (_) {}
+    try {
+      var st = await chrome.storage.local.get("batchRunning");
+      var lock = st && st.batchRunning;
+      var lockAt = (lock && typeof lock === "object") ? lock.startedAt : 0;
+      if (lock && lockAt && Date.now() - lockAt < BATCH_LOCK_TTL_MS) {
+        sendResponse({ ok: true, via: "none", reason: "batch-running" });
+        return;
+      }
+      var tabs = await chrome.tabs.query({ url: SEARCH_FOCUS_TAB_URLS });
+      if (!tabs || !tabs.length) { sendResponse({ ok: true, via: "none", reason: "no-site-tab" }); return; }
+      tabs.sort(function (a, b) { return (b.lastAccessed || 0) - (a.lastAccessed || 0); });
+      var t = tabs[0];
+      var site = /itandibb\.com/.test(t.url || "") ? "itandi" : "realpro";
+      await chrome.tabs.update(t.id, { active: true });
+      try { await chrome.windows.update(t.windowId, { focused: true }); } catch (_) {}
+      chrome.tabs.sendMessage(t.id, { type: "axlx-search-focus-open", customerId: item.customerId, customerName: item.customerName, at: item.at }, function (r) {
+        void chrome.runtime.lastError;
+        sendResponse({ ok: true, via: "tab", site: site, opened: !!(r && r.ok), reason: (r && r.reason) || null });
+      });
+    } catch (e) {
+      sendResponse({ ok: false, reason: "error", error: String((e && e.message) || e).slice(0, 160) });
+    }
+  })();
+  return true;
+});
