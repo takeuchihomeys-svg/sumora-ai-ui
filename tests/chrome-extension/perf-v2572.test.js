@@ -69,10 +69,10 @@ ok("manifest: own-mutation.js は最初の段（全部の見張りより先）�
 console.log("── ③ 光は控えめ・文は短く");
 ok("リアプロ: 黄色の点滅（axlxGlow のアニメ）をやめた", !/@keyframes axlxGlow/.test(rg) && !/animation:axlxGlow/.test(rg) && /border:2px solid rgba\(30,136,229,\.55\)/.test(rg));
 ok("リアプロ: 印刷用PDF の光は細い緑の枠・動かない", /\.axlx-pdf-go\{outline:2px solid rgba\(46,125,50,\.5\)/.test(rg));
-ok("リアプロ: 光の横の吹き出しに手順の文を出さない（画面の外の時だけ矢印）", /function highlight\(targets\)/.test(rg) && !/上にあります: " \+ label/.test(rg));
+ok("リアプロ: 光の横の吹き出しに手順の文を出さない（画面の外の時だけ矢印）", /function highlight\(targets(, hint)?\)/.test(rg) && !/上にあります: " \+ label/.test(rg));
 ok("リアプロ: 枠の文は1行（省略・全文はマウスを乗せた時）・全手順は畳む", /white-space:nowrap;overflow:hidden;text-overflow:ellipsis;/.test(rg) && /▸ 全手順/.test(rg));
 const ig = read("itandi-guide.js");
-ok("ITANDI: 黄色の点滅をやめた・吹き出しの文なし", !/@keyframes axlxItGlow/.test(ig) && /function highlight\(targets\)/.test(ig));
+ok("ITANDI: 黄色の点滅をやめた・吹き出しの文なし", !/@keyframes axlxItGlow/.test(ig) && /function highlight\(targets(, hint)?\)/.test(ig));
 ok("ITANDI: 見えていないタブでは見直さない", /if \(document\.hidden\) return;\r?\n    if \(!_dirty && Date\.now\(\) - _lastTickAt < 1500\) return;/.test(ig));
 const css = read("styles.css");
 // v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」: 帯そのものをやめた

@@ -48,7 +48,7 @@ ok("popup.html: site-update-days.js は popup.js より前", (() => { const h = 
 const ms = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "migrate-schema", "route.ts"), "utf8");
 ok("migrate-schema に itandi_update_days", /ADD COLUMN IF NOT EXISTS itandi_update_days INTEGER/.test(ms));
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.81", mf.version === "2.5.81");
+ok("manifest の版 2.5.82", mf.version === "2.5.82");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

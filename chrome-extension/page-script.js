@@ -1195,8 +1195,11 @@
         // 「3LDK以上」→ 3LDK〜メゾネットを全選択
         var baseFloor = ijouMatch[1].trim();
         var baseIdx = FLOOR_RANK.indexOf(baseFloor);
+        // v2.5.82 竹内「1LDK以上…1LDKから2LDKで調べる」: 一つ上の大きさまで（floor-ijou.js・content.js が先に入れる）
+        var _FI = (typeof AxlxFloorIjou !== "undefined" ? AxlxFloorIjou : null);
+        var _rg = _FI ? _FI.ijouRange(FLOOR_RANK, baseFloor) : null;
         if (baseIdx >= 0) {
-          for (var ri = baseIdx; ri < FLOOR_RANK.length; ri++) {
+          for (var ri = baseIdx; ri < (_rg ? _rg[1] + 1 : FLOOR_RANK.length); ri++) {
             var fv = FLOOR_MAP[FLOOR_RANK[ri]];
             if (fv && vals.indexOf(fv) < 0) vals.push(fv);
           }

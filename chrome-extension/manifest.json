@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.5.81",
+  "version": "2.5.82",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -37,7 +37,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup.html", "human-wait.js", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "commute-reach.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "temp-adj-base.js", "popup.js", "snapshot-popup.js", "styles.css", "page-script.js", "score-overlay.js"],
+      "resources": ["popup.html", "human-wait.js", "popup-maps.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "commute-reach.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "temp-adj-base.js", "popup.js", "snapshot-popup.js", "styles.css", "page-script.js", "score-overlay.js", "floor-ijou.js"],
       "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
     },
     {
@@ -93,7 +93,7 @@
     },
     {
       "matches": ["https://itandibb.com/*"],
-      "js": ["human-wait.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"],
+      "js": ["human-wait.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"],
       "world": "MAIN",
       "run_at": "document_idle"
     },

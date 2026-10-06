@@ -125,7 +125,11 @@
       if (ijouMatch) {
         var baseKey = FLOOR_TEXT_IT[ijouMatch[1].trim()] || ijouMatch[1].trim();
         var baseIdx = FLOOR_RANK_IT.indexOf(baseKey);
-        if (baseIdx >= 0) for (var a = baseIdx; a < FLOOR_RANK_IT.length; a++) add(FLOOR_RANK_IT[a]);
+        // v2.5.82 竹内「1LDK以上…1LDKから2LDKで調べる」: 一つ上の大きさまで（floor-ijou.js・4か所で同じ決まり）
+        var FI = (typeof module !== "undefined" && module.exports && typeof require === "function") ? require("./floor-ijou.js") : ((typeof self !== "undefined" ? self : window).AxlxFloorIjou || null);
+        var rg = FI ? FI.ijouRange(FLOOR_RANK_IT, ijouMatch[1].trim(), function (k) { return FLOOR_TEXT_IT[k] || null; }) : null;
+        if (rg) for (var a = rg[0]; a <= rg[1]; a++) add(FLOOR_RANK_IT[a]);
+        else if (baseIdx >= 0) for (var a2 = baseIdx; a2 < FLOOR_RANK_IT.length; a2++) add(FLOOR_RANK_IT[a2]);
       } else if (rangeMatch) {
         var fromRaw = rangeMatch[1].trim(), toRaw = rangeMatch[2].trim();
         if (SLDK_SUBSTITUTE_IT[fromRaw]) {
@@ -236,12 +240,12 @@
         label: "「路線・駅で絞り込み」で 路線 " + loc.lines.join("・") + (loc.selectAll ? " の駅を全部" : loc.stations.length ? " → 駅 " + loc.stations.slice(0, 12).join("・") + (loc.stations.length > 12 ? " ほか" + (loc.stations.length - 12) + "駅" : "") : "") + " を選んで「確定」" });
     }
 
-    if (c.walk_minutes) { want.texts["station_walk_minutes:lteq"] = String(c.walk_minutes); push({ kind: "text", name: "station_walk_minutes:lteq", value: String(c.walk_minutes), label: "駅徒歩に「" + c.walk_minutes + "」分以内と入力" }); }
+    if (c.walk_minutes) { want.texts["station_walk_minutes:lteq"] = String(c.walk_minutes); push({ kind: "text", name: "station_walk_minutes:lteq", value: String(c.walk_minutes), hint: c.walk_minutes + "分", label: "駅徒歩に「" + c.walk_minutes + "」分以内と入力" }); }
 
     var rMin = rentValue(c.rent_min, "min");
-    if (rMin) { want.texts["rent:gteq"] = rMin; push({ kind: "text", name: "rent:gteq", value: rMin, label: "賃料の下限に「" + rMin + "」と入力（万円）" }); }
+    if (rMin) { want.texts["rent:gteq"] = rMin; push({ kind: "text", name: "rent:gteq", value: rMin, hint: rMin + "万〜", label: "賃料の下限に「" + rMin + "」と入力（万円）" }); }
     var rMax = rentValue(c.rent_max, "max");
-    if (rMax) { want.texts["rent:lteq"] = rMax; push({ kind: "text", name: "rent:lteq", value: rMax, label: "賃料の上限に「" + rMax + "」と入力（万円）" }); }
+    if (rMax) { want.texts["rent:lteq"] = rMax; push({ kind: "text", name: "rent:lteq", value: rMax, hint: "〜" + rMax + "万", label: "賃料の上限に「" + rMax + "」と入力（万円）" }); }
     wantCheck("totalRentCheck", null, null);
     push({ kind: "check", name: "totalRentCheck", fid: null, labelText: null, label: "「管理費・共益費込み」にチェック" });
     if (c.shikirei_free) {
@@ -255,9 +259,9 @@
       wantCheck("room_layout:in", id, layoutLabel(id));
       push({ kind: "check", name: "room_layout:in", fid: id, labelText: layoutLabel(id), exact: true, label: "間取り「" + layoutLabel(id) + "」にチェック" });
     });
-    if (c.area_min) { want.texts["floor_area_amount:gteq"] = String(c.area_min); push({ kind: "text", name: "floor_area_amount:gteq", value: String(c.area_min), label: "専有面積の下限に「" + c.area_min + "」と入力（㎡）" }); }
-    if (c.area_max) { want.texts["floor_area_amount:lteq"] = String(c.area_max); push({ kind: "text", name: "floor_area_amount:lteq", value: String(c.area_max), label: "専有面積の上限に「" + c.area_max + "」と入力（㎡）" }); }
-    if (c.building_age) { want.texts["building_age:lteq"] = String(c.building_age); push({ kind: "text", name: "building_age:lteq", value: String(c.building_age), label: "築年数に「" + c.building_age + "」年以内と入力" }); }
+    if (c.area_min) { want.texts["floor_area_amount:gteq"] = String(c.area_min); push({ kind: "text", name: "floor_area_amount:gteq", value: String(c.area_min), hint: c.area_min + "㎡〜", label: "専有面積の下限に「" + c.area_min + "」と入力（㎡）" }); }
+    if (c.area_max) { want.texts["floor_area_amount:lteq"] = String(c.area_max); push({ kind: "text", name: "floor_area_amount:lteq", value: String(c.area_max), hint: "〜" + c.area_max + "㎡", label: "専有面積の上限に「" + c.area_max + "」と入力（㎡）" }); }
+    if (c.building_age) { want.texts["building_age:lteq"] = String(c.building_age); push({ kind: "text", name: "building_age:lteq", value: String(c.building_age), hint: c.building_age + "年以内", label: "築年数に「" + c.building_age + "」年以内と入力" }); }
     var seenSt = {};
     gridOrder((c.structure_types || []).slice(), function (s) { return STRUCTURE_LABEL_MAP[s] || s; }, STRUCTURE_GRID_IT).forEach(function (s) {
       var v = STRUCTURE_MAP[s] || null;
@@ -272,7 +276,7 @@
     var U = UD();
     var days = U ? U.normDays(c.rp_update_days) : null;
     want.updateDays = days;
-    if (days !== null) push({ kind: "update_days", value: days, label: "「募集条件更新」に「" + days + "」日以内を入れる" + (days > 9 ? "（一覧に無い日数なら空のまま「この手順は済み」）" : "") });
+    if (days !== null) push({ kind: "update_days", value: days, hint: days + "日以内", label: "「募集条件更新」に「" + days + "」日以内を入れる" + (days > 9 ? "（一覧に無い日数なら空のまま「この手順は済み」）" : "") });
 
     if (c.preferences && BATH_RE.test(c.preferences)) {
       wantCheck("option_id:all_in", BATH_ID, "バス・トイレ別");

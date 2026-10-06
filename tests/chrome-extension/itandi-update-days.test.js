@@ -173,7 +173,7 @@ function runSync(kind, initial, days) {
 console.log("\n■ ④ 配線");
 const manifest = JSON.parse(read("manifest.json"));
 const main = manifest.content_scripts.find((c) => c.world === "MAIN" && c.js.includes("itandi-page-script.js"));
-eq("manifest: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", main && main.js, ["human-wait.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
+eq("manifest: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", main && main.js, ["human-wait.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 ok("manifest の版 2.5.34 以上", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005034, manifest.version);
 const ps = read("itandi-page-script.js");
 const iUd = ps.indexOf("_itFillUpdateDays(cond, function (udOk, udErr)"), iRem = ps.indexOf("fillRemainingFields(cond);", iUd), iSearch = ps.indexOf('clickBtn("検索")', iUd);

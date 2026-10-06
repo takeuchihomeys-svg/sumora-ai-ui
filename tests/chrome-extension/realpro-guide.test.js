@@ -29,7 +29,8 @@ ok("賃料の丸め（下限は下・上限は上）", P.nearestDown(P.RENT_OPTS
 ok("間取り: 2LDK", eq(P.floorPlanValues("2LDK", false), ["9"]));
 ok("間取り: 広げて 2LDK → 2DK も", eq(P.floorPlanValues("2LDK", true), ["9", "8"]));
 ok("間取り: 全角まじり「２K　2DK 2LDK」（v2.5.50 の実物）", eq(P.floorPlanValues("２K　2DK 2LDK", false), ["7", "8", "9"]));
-ok("間取り: 1LDK以上", P.floorPlanValues("1LDK以上", false)[0] === "6" && P.floorPlanValues("1LDK以上", false).includes("21"));
+// v2.5.82 竹内「1LDK以上…1LDKから2LDKで調べる」: 一つ上の大きさまで（floor-ijou.js）
+ok("間取り: 1LDK以上 → 1LDK・2K・2DK・2LDK（5LDK・メゾネットまで選ばない）", JSON.stringify(P.floorPlanValues("1LDK以上", false).map((v) => P.FLOOR_LABEL[v] || v)) === JSON.stringify(["1LDK", "2K", "2DK", "2LDK"]), P.floorPlanValues("1LDK以上", false));
 ok("間取り: 1SLDK〜2LDK", eq(P.floorPlanValues("1SLDK〜2LDK", false), ["6", "8", "9"]));
 ok("間取り: 「2LDKもしくは、ちょっと広めの1LDK」", eq(P.floorPlanValues("2LDKもしくは、ちょっと広めの1LDK", false), ["9", "6"]));
 ok("場所: 駅 > 路線 > 区（auto）・area_mode の指定が先", P.locationMode({ station_names: ["中津"], city_codes: ["27127"] }) === "station"

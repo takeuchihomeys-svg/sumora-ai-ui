@@ -25,6 +25,14 @@ function _axContentSd(ms) { var H = (typeof self !== "undefined" ? self : window
       hw.onload = function() { this.remove(); };
       (document.head || document.documentElement).appendChild(hw);
     } catch (_) { /* 予備で動く */ }
+    // 2026-10-06 v2.5.82 間取りの「〇〇以上」の広げ方（floor-ijou.js）も page-script.js より先にページへ
+    try {
+      const fi = document.createElement("script");
+      fi.src = chrome.runtime.getURL("floor-ijou.js");
+      fi.async = false;
+      fi.onload = function() { this.remove(); };
+      (document.head || document.documentElement).appendChild(fi);
+    } catch (_) { /* 旧の広げ方で動く */ }
     const s = document.createElement("script");
     s.async = false;
     s.src = chrome.runtime.getURL("page-script.js");

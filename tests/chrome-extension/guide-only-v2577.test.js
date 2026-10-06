@@ -53,7 +53,7 @@ for (const f of ["realpro-guide.js", "itandi-guide.js"]) {
 ok("リアプロ: 光の要素は枠だけ（textContent を入れない）", (() => { const s = read("realpro-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 ok("ITANDI: 光の要素は枠だけ", (() => { const s = read("itandi-guide.js"); const m = s.match(/rects\.forEach\(function \(r\) \{[\s\S]*?\}\);/); return !!m && !/textContent|innerHTML/.test(m[0]); })());
 const mf = JSON.parse(read("manifest.json"));
-ok("manifest の版 2.5.81", mf.version === "2.5.81");
+ok("manifest の版 2.5.82", mf.version === "2.5.82");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

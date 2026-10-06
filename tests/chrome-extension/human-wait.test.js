@@ -121,7 +121,7 @@ function rest() {
   }
   const mainWorld = cs.find((c) => c.world === "MAIN" && c.js.includes("itandi-page-script.js"));
   // v2.5.34: 間に itandi-update-days.js（募集条件更新 N日以内・itandi-update-days.test.js）。human-wait.js が先頭なのは変えない
-  eq("itandi のページの中の段: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", mainWorld && mainWorld.js, ["human-wait.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
+  eq("itandi のページの中の段: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", mainWorld && mainWorld.js, ["human-wait.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
   const war = manifest.web_accessible_resources[0];
   ok("web_accessible_resources に human-wait.js（リアプロ・レインズのページへ <script> で入れる）", war.resources.includes("human-wait.js"));
   ok("web_accessible_resources の対象にリアプロとレインズ", war.matches.some((m) => /realnetpro/.test(m)) && war.matches.some((m) => /reins/.test(m)));

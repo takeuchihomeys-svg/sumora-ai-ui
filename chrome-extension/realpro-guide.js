@@ -253,6 +253,7 @@
       //   細い青の枠＋ごく薄い色・動かさない。画面の外の時だけ小さな矢印（文は枠に1つだけ）
       st.textContent = ".axlx-glow{position:fixed;pointer-events:none;border-radius:5px;z-index:2147483600;border:2px solid rgba(30,136,229,.55);background:rgba(30,136,229,.06)}"
         + ".axlx-tip{position:fixed;pointer-events:none;z-index:2147483601;background:rgba(30,136,229,.85);color:#fff;font:bold 11px/1 sans-serif;padding:3px 6px;border-radius:9px}"
+        + ".axlx-hint{position:fixed;pointer-events:none;z-index:2147483601;background:#eceff1;color:#263238;font:600 11px/1.3 sans-serif;padding:1px 6px;border-radius:6px;border:1px solid #b0bec5;white-space:nowrap}"
         + ".axlx-sent-hidden{display:none !important}"
         // 2026-10-02 v2.5.69: 印刷用PDF の光（通す・まだ送っていない）と送付済み（お客様に届けた部屋）
         + ".axlx-pdf-go{outline:2px solid rgba(46,125,50,.5);outline-offset:1px;border-radius:3px;background-color:rgba(76,175,80,.08)}"
@@ -268,10 +269,11 @@
   function clearHighlight() { _lastTargets = null; _lastHiSig = ""; if (layer && layer.childNodes.length) layer.innerHTML = ""; }
   // 2026-10-06 v2.5.72 竹内「余計なアナウンスもでるから…省く（文が長すぎて画面がつぶれる）」: 光の横の吹き出し（手順の文＋補足）をやめ、
   //   文は右上の案内の枠の1行だけ。光らせる物が画面の外の時だけ小さな矢印（↑・↓）。同じ位置なら描き直さない（毎回の書き直しをやめる）
-  var _lastTargets = null, _lastHiSig = "";
-  function highlight(targets) {
+  var _lastTargets = null, _lastHiSig = "", _lastHint = "";
+  function highlight(targets, hint) {
     var L = ensureLayer();
     _lastTargets = targets;
+    if (hint !== undefined) _lastHint = hint || "";
     var rects = [], first = null;
     (targets || []).filter(Boolean).slice(0, 40).forEach(function (el) {
       var r = el.getBoundingClientRect();
@@ -280,7 +282,7 @@
     });
     var vh = window.innerHeight;
     var arrow = first ? (first.bottom < 0 ? "↑" : first.top > vh ? "↓" : "") : "";
-    var sig = rects.map(function (r) { return Math.round(r.left) + "," + Math.round(r.top) + "," + Math.round(r.width) + "," + Math.round(r.height); }).join("|") + "#" + arrow;
+    var sig = rects.map(function (r) { return Math.round(r.left) + "," + Math.round(r.top) + "," + Math.round(r.width) + "," + Math.round(r.height); }).join("|") + "#" + arrow + "#" + _lastHint;
     if (sig === _lastHiSig && L.childNodes.length) return;
     _lastHiSig = sig;
     L.innerHTML = "";
@@ -291,6 +293,16 @@
       g.style.width = (r.width + 6) + "px"; g.style.height = (r.height + 6) + "px";
       L.appendChild(g);
     });
+    // v2.5.82 竹内「光っているだけじゃわからない部分はアナウンスを入れる形」: 入れる値・選ぶ値だけを光の右に小さく1行（今の手順だけ・文は出さない）
+    if (_lastHint && first && !arrow) {
+      var hn = document.createElement("div");
+      hn.className = "axlx-hint";
+      hn.textContent = _lastHint;
+      var hx = first.right + 8, hy = first.top + Math.max(0, (first.height - 18) / 2);
+      if (hx > window.innerWidth - 120) { hx = Math.max(8, first.left); hy = first.bottom + 4; }
+      hn.style.left = hx + "px"; hn.style.top = hy + "px";
+      L.appendChild(hn);
+    }
     if (arrow) {
       var tip = document.createElement("div");
       tip.className = "axlx-tip";
@@ -463,7 +475,7 @@
       _evalMemo = {}; _textMemo = {};
       var cur = currentStep();
       if (!cur) { clearHighlight(); renderPanel(); return; }
-      highlight(cur.ev.target);
+      highlight(cur.ev.target, cur.step.hint || "");
       renderPanel(cur.step, cur.ev);
     } finally {
       _evalMemo = null; _textMemo = null;

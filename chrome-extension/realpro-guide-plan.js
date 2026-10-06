@@ -76,8 +76,12 @@
     var ijou = fpStr.match(/^(.+?)以上$/);
     var range = fpStr.match(/^(.+?)[～〜](.+?)$/);
     if (ijou) {
+      // v2.5.82 竹内「1LDK以上…1LDKから2LDKで調べる」: 一つ上の大きさまで（floor-ijou.js・4か所で同じ決まり）
+      var FI = (typeof module !== "undefined" && module.exports && typeof require === "function") ? require("./floor-ijou.js") : ((typeof self !== "undefined" ? self : window).AxlxFloorIjou || null);
+      var rg = FI ? FI.ijouRange(FLOOR_RANK, ijou[1].trim()) : null;
       var bi = FLOOR_RANK.indexOf(ijou[1].trim());
-      if (bi >= 0) for (var a = bi; a < FLOOR_RANK.length; a++) add(FLOOR_MAP[FLOOR_RANK[a]]);
+      if (rg) for (var a = rg[0]; a <= rg[1]; a++) add(FLOOR_MAP[FLOOR_RANK[a]]);
+      else if (bi >= 0) for (var a2 = bi; a2 < FLOOR_RANK.length; a2++) add(FLOOR_MAP[FLOOR_RANK[a2]]);
     } else if (range) {
       var from = range[1].trim(), to = range[2].trim();
       if (SLDK_SUBSTITUTE[from]) {
@@ -152,17 +156,18 @@
     else if (lm === "station") push({ kind: "pick_station", names: c.station_names.slice(0, 40), lines: lines, label: "「沿線・駅絞り込み」から駅を選んでください（光っている駅にチェック）" });
     else if (lm === "route") push({ kind: "pick_route", lines: lines, label: "「沿線・駅絞り込み」から路線を選んでください" });
     if (c.walk_minutes) {
-      push({ kind: "select", name: "transportation_id", value: "1", label: "駅からの移動手段を「徒歩」に" });
-      push({ kind: "text", name: "required_time", value: String(c.walk_minutes), label: "徒歩の分数に「" + c.walk_minutes + "」と入力" });
+      push({ kind: "select", name: "transportation_id", value: "1", hint: "徒歩", label: "駅からの移動手段を「徒歩」に" });
+      push({ kind: "text", name: "required_time", value: String(c.walk_minutes), hint: c.walk_minutes + "分", label: "徒歩の分数に「" + c.walk_minutes + "」と入力" });
     }
-    if (c.rp_update_days) push({ kind: "select", name: "update_date", value: String(c.rp_update_days), label: "更新日を「" + c.rp_update_days + "日以内」に" });
-    if (c.rent_min) push({ kind: "select", name: "rental_cost1", value: nearestDown(RENT_OPTS, c.rent_min), label: "賃料の下限を「" + man(nearestDown(RENT_OPTS, c.rent_min)) + "」に" });
-    if (c.rent_max) push({ kind: "select", name: "rental_cost2", value: nearestUp(RENT_OPTS, c.rent_max), label: "賃料の上限を「" + man(nearestUp(RENT_OPTS, c.rent_max)) + "」に" });
+    // v2.5.82 hint＝光の右に出す値（竹内「光っているだけじゃわからない部分はアナウンスを入れる」）。更新日はお客様・サイトごとの値（popup の欄＝前回からの日数・手の指定）
+    if (c.rp_update_days) push({ kind: "select", name: "update_date", value: String(c.rp_update_days), hint: c.rp_update_days + "日以内", label: "更新日を「" + c.rp_update_days + "日以内」に" });
+    if (c.rent_min) push({ kind: "select", name: "rental_cost1", value: nearestDown(RENT_OPTS, c.rent_min), hint: man(nearestDown(RENT_OPTS, c.rent_min)) + "〜", label: "賃料の下限を「" + man(nearestDown(RENT_OPTS, c.rent_min)) + "」に" });
+    if (c.rent_max) push({ kind: "select", name: "rental_cost2", value: nearestUp(RENT_OPTS, c.rent_max), hint: "〜" + man(nearestUp(RENT_OPTS, c.rent_max)), label: "賃料の上限を「" + man(nearestUp(RENT_OPTS, c.rent_max)) + "」に" });
     push({ kind: "check", name: "include_common_fee", value: null, want: true, label: "「管理費・共益費込み」にチェック" });
     if (c.shikirei_free) push({ kind: "check_text", text: "敷金・礼金なし", want: true, label: "「敷金・礼金なし」にチェック" });
-    if (c.area_min) push({ kind: "select", name: "square_meter_l", value: nearestDown(AREA_OPTS, c.area_min), label: "面積の下限を「" + nearestDown(AREA_OPTS, c.area_min) + "㎡」に" });
-    if (c.area_max) push({ kind: "select", name: "square_meter_h", value: nearestUp(AREA_OPTS, c.area_max), label: "面積の上限を「" + nearestUp(AREA_OPTS, c.area_max) + "㎡」に" });
-    if (c.building_age) push({ kind: "select", name: "structured_date", value: nearestUp(AGE_OPTS, c.building_age), label: "築年数を「" + nearestUp(AGE_OPTS, c.building_age) + "年以内」に" });
+    if (c.area_min) push({ kind: "select", name: "square_meter_l", value: nearestDown(AREA_OPTS, c.area_min), hint: nearestDown(AREA_OPTS, c.area_min) + "㎡〜", label: "面積の下限を「" + nearestDown(AREA_OPTS, c.area_min) + "㎡」に" });
+    if (c.area_max) push({ kind: "select", name: "square_meter_h", value: nearestUp(AREA_OPTS, c.area_max), hint: "〜" + nearestUp(AREA_OPTS, c.area_max) + "㎡", label: "面積の上限を「" + nearestUp(AREA_OPTS, c.area_max) + "㎡」に" });
+    if (c.building_age) push({ kind: "select", name: "structured_date", value: nearestUp(AGE_OPTS, c.building_age), hint: nearestUp(AGE_OPTS, c.building_age) + "年以内", label: "築年数を「" + nearestUp(AGE_OPTS, c.building_age) + "年以内」に" });
     gridOrder(floorPlanValues(c.floor_plan, !!c.is_wide), function (v) { return FLOOR_LABEL[v] || v; }, LAYOUT_GRID).forEach(function (v) {
       push({ kind: "check", name: "room_layout_id[]", value: v, want: true, label: "間取り「" + (FLOOR_LABEL[v] || v) + "」にチェック" });
     });

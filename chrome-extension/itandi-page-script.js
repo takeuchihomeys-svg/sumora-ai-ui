@@ -877,8 +877,11 @@
       if (ijouMatch) {
         var baseKey = FLOOR_TEXT_IT[ijouMatch[1].trim()] || ijouMatch[1].trim();
         var baseIdx = FLOOR_RANK_IT.indexOf(baseKey);
+        // v2.5.82 竹内「1LDK以上…1LDKから2LDKで調べる」: 一つ上の大きさまで（floor-ijou.js・manifest の MAIN の段で先に読む）
+        var _FI = (typeof AxlxFloorIjou !== "undefined" ? AxlxFloorIjou : null);
+        var _rg = _FI ? _FI.ijouRange(FLOOR_RANK_IT, ijouMatch[1].trim(), function (k) { return FLOOR_TEXT_IT[k] || null; }) : null;
         if (baseIdx >= 0) {
-          for (var ri = baseIdx; ri < FLOOR_RANK_IT.length; ri++) {
+          for (var ri = baseIdx; ri < (_rg ? _rg[1] + 1 : FLOOR_RANK_IT.length); ri++) {
             tickFloor(FLOOR_RANK_IT[ri]);
           }
         }
