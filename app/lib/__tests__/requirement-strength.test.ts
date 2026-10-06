@@ -1,6 +1,6 @@
 // app/lib/__tests__/requirement-strength.test.ts — 要望の強さ（絶対／強い希望／できれば）と判定の札（実行: npx tsx app/lib/__tests__/requirement-strength.test.ts）
 // 2026-10-06 ⑫ 竹内さん（ゆいと 10月後半入居）「10月入居っていう希望が今回の場合は絶対となる…状況によって決めきるようにする」
-import { buildMustSendNote, readRequirementStrengths, moveInStrengthOf, petStrengthOf, rentStrengthOf, areaStrengthOf, strengthCodes, mustSendLine, hasStrengthSignal } from "../requirement-strength";
+import { mustTimePhrase, mustMoveInLabel, buildMustSendNote, readRequirementStrengths, moveInStrengthOf, petStrengthOf, rentStrengthOf, areaStrengthOf, strengthCodes, mustSendLine, hasStrengthSignal } from "../requirement-strength";
 import { requirementStrengthsOfCustomer, DROP_REASON_CODES, HOLD_REASON_CODES, reasonPoints } from "../property-brain";
 
 let pass = 0, fail = 0;
@@ -49,4 +49,10 @@ t("お客様の行: 保存の値（LINE から）が勝ち、条件の欄から�
   return s.move_in?.strength === "must" && s.pet?.strength === "nice";
 })());
 t("AIX の注記: 絶対の入居時期がある時だけ・スタッフの言い方", buildMustSendNote(readRequirementStrengths(Y), "10月後半").includes("10月後半ご入居可能なお部屋を優先して") && buildMustSendNote({}, "10月後半") === "");
+t("フォームの「その他こだわり条件（ペット・保証人・駐車場等）」の行はエリアにしない（urara）", areaStrengthOf("8その他こだわり条件(ペット・保証人・駐車場等) ペット可、") === null);
+t("「できれば駐車場があると」はエリアにしない", areaStrengthOf("できれば駐車場があると助かります") === null);
+t("送付文の時期: お客様の言葉の「10月後半」を先に・無ければ条件の欄", mustMoveInLabel(readRequirementStrengths(Y), "10月") === "10月後半" && mustMoveInLabel({ move_in: { strength: "must", evidence: "急ぎで決めたいです" } }, "11月中旬") === "11月中旬" && mustMoveInLabel({ move_in: { strength: "strong", evidence: "" } }, "10月") === null);
+t("時期の助詞: 月だけは「10月中に／10月中での」", mustTimePhrase("10月").at === "10月中に" && mustTimePhrase("10月").of === "10月中での");
+t("時期の助詞: 後半つきは「10月後半に／10月後半の」（「後半中に」を作らない）", mustTimePhrase("10月後半").at === "10月後半に" && mustTimePhrase("10月後半").of === "10月後半の");
+t("注記に「後半中」が出ない", !buildMustSendNote(readRequirementStrengths(Y), "10月後半").includes("後半中") && buildMustSendNote(readRequirementStrengths(Y), "10月後半").includes("10月後半にご入居出来るお部屋ですと") && buildMustSendNote(readRequirementStrengths(Y), "10月").includes("10月中でのご入居間に合います"));
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

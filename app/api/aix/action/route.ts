@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { buildMustSendNote, mustMoveInLabel, normalizeRequirementStrengths } from "@/app/lib/requirement-strength";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（AIX キャッシュ点検）: system を「共通 prefix（1h）→ 準静的（1h）→ 経路固有（5m）→ 動的（なし）」のブロックに分ける
@@ -2274,6 +2275,18 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const pickupFacts: PickupFact[] = action === "property_send" ? pickupRowsForFacts.map((r) => parsePickupFact(r)) : [];
     const pickupWards = action === "property_send" ? pickupRowsForFacts.map((r) => wardOfPickupRow(r)) : [];
     const recMoveInFact = action === "property_recommendation" && pickupRowsForFacts.length === 1 ? moveInFactOfPickup(pickupRowsForFacts[0]) : null;
+    // 2026-10-06 ⑫ 竹内（ゆいと 10月後半入居）「10月中の入居間に合う物件を送って決める…AIXツールのところにもちゃんと連携されるように」:
+    //   お客様の要望の強さ（requirement-strength・webhook が LINE から書く）で入居時期が「絶対」なら、送付文に決めきる言い方（スタッフの実送信のまま）を注記で渡す
+    const mustSendNote = await (async (): Promise<string> => {
+      if ((action !== "property_send" && action !== "property_recommendation") || !resolvedPCID) return "";
+      try {
+        const { data: pcMust } = await supabase.from("property_customers").select("requirement_strength, move_in_time").eq("id", resolvedPCID).maybeSingle();
+        const st = normalizeRequirementStrengths((pcMust as { requirement_strength?: unknown } | null)?.requirement_strength);
+        const note = buildMustSendNote(st, mustMoveInLabel(st, (pcMust as { move_in_time?: string | null } | null)?.move_in_time ?? null));
+        if (note) console.log(JSON.stringify({ tag: "aix:must-send-note", conversationId, action, evidence: st.move_in?.evidence ?? null }));
+        return note;
+      } catch { return ""; }
+    })();
     // 2026-09-30: 物件オススメの見出し「🌟建物 号室」を資料の字に揃えられなかった時の注意（揃えた時は null のまま）
     let recHeadMismatch: string | null = null;
     if (pickupFacts.length) console.log(JSON.stringify({ tag: "aix:pickup-facts", conversationId, facts: pickupFacts, wards: pickupWards }));
@@ -2593,7 +2606,7 @@ ${SMORA_COMMON_RULES}`;
       //   即入居の禁止は退去予定の指示（buildVacatingLineNote）が言う
       const recSkipMoveInFact = recView.source === "material" && recView.notViewable && !recView.viewableFrom;
       const recMoveInFactNote = recMoveInFact && !recSkipMoveInFact ? `\n\n${buildMoveInFactNote(recMoveInFact)}` : "";
-      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + recMoveInFactNote + recApplyLineNote + situationSystemOverride;
+      const recSystemDynamic = brainGuidanceNote + (recBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + recBrainAddendum : "") + moveInDeadlineNote + recMoveInFactNote + (mustSendNote ? `\n\n${mustSendNote}` : "") + recApplyLineNote + situationSystemOverride;
 
       const summaryNoteForRec = recCustomerSummary
         ? `\n\n【このお客さんのAI要約 — 人物像・今の状況・次の対応ヒントをオススメ訴求に反映すること】\n${recCustomerSummary}`
@@ -3220,7 +3233,7 @@ ${SMORA_COMMON_RULES}
       const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
       // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
       // 2026-09-27: 送る物件の所在地（区）も渡す（YUMA「大阪市北区・福島区から」で西区・大正区の20件を送った）
-      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length)].filter(Boolean).join("\n");
+      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote].filter(Boolean).join("\n");
       const conditionsRule = conditionsInfo
         ? `・【最重要】「ご希望のご条件に合ったお部屋」「ご希望の条件に合うお部屋」などの抽象的な表現は絶対に使わない。お客様の具体的な希望条件を文中に自然に織り込むこと
   条件の入れ方（厳守）：

@@ -70,7 +70,11 @@ const AREA_MUST_RE = /(?:エリア|区|市|駅|沿線)[^。\n]{0,8}(?:じゃな�
 export function areaStrengthOf(text: string): Strength | null {
   const t = nf(text);
   if (AREA_MUST_RE.test(t) || (MUST_WORD_RE.test(t) && /エリア|区|市|駅/.test(t))) return "must";
-  if (/(?:なるべく|できれば|出来れば)[^。\n]{0,8}(?:[一-鿿]{1,6}(?:で|が|区|市|駅))/.test(t)) return "nice";
+  // 「なるべく豊中で」＝できれば。条件のフォームの「その他こだわり条件（ペット・保証人・駐車場等）」の行や
+  //   「できれば駐車場が」（設備）はエリアにしない（2026-10-06 urara の行を エリアのできれば と読んでいた）
+  if (/こだわり条件|保証人|ペット/.test(t)) return null;
+  const m = t.match(/(?:なるべく|できれば|出来れば)[^。\n]{0,8}?([一-鿿]{1,6})(?:区|市|駅|町|方面|周辺|エリア|で|が)/);
+  if (m && !/(?:場|人|機|台|室|付|込|代|費|料|器|口|帖|畳)$/.test(m[1])) return "nice";
   return null;
 }
 
@@ -176,7 +180,28 @@ export function buildMustSendNote(s: RequirementStrengths | null | undefined, mo
   return [
     `【決めきる（お客様の絶対の要望）】入居時期は絶対（お客様の言葉「${(s?.move_in?.evidence ?? "").slice(0, 50)}」）。`,
     `・冒頭の条件の文に「${line}」を入れる（スタッフの実送信の言い方のまま）`,
-    `・1件だけ勧める時は「${moveInLabel}中にご入居出来るお部屋ですと、〇〇が一番オススメ出来るご条件のお部屋となります！！」「${moveInLabel}中でのご入居間に合います！！」の形（間に合う物件だけ）`,
+    `・1件だけ勧める時は「${mustTimePhrase(moveInLabel ?? "").at}ご入居出来るお部屋ですと、〇〇が一番オススメ出来るご条件のお部屋となります！！」「${mustTimePhrase(moveInLabel ?? "").of}ご入居間に合います！！」の形（間に合う物件だけ）`,
     `・入居時期が分からない物件に「間に合います」と書かない`,
   ].join("\n");
+}
+
+/**
+ * 送付文に書く入居時期の言い方。お客様の絶対の言葉の中の時期（「10月後半くらいに入れるところ」→「10月後半」）を先に、無ければ条件の欄（「10月」）
+ */
+export function mustMoveInLabel(s: RequirementStrengths | null | undefined, moveInTime: string | null | undefined): string | null {
+  if (!isMust(s, "move_in")) return null;
+  const pick = (x: string | null | undefined) => nf(x).match(/(?:[0-9]{1,2}月(?:[0-9]{1,2}日)?(?:上旬|中旬|下旬|前半|後半|末|頭|初旬)?)|年内|今月(?:中|末)?|来月(?:中|末|上旬|中旬|下旬)?/)?.[0] ?? null;
+  return pick(s?.move_in?.evidence) ?? pick(moveInTime);
+}
+
+/**
+ * 時期の後ろの助詞（スタッフの実送信 180日の形）: 月だけ（「10月」）＝「10月中に」「10月中でのご入居」／
+ *   上旬・中旬・下旬・前半・後半・末つき（「10月後半」）＝「10月後半に」「10月後半のご入居」（「10月後半中に」は作らない）。
+ *   実送信: 「10月中にご入居」「10月中のご入居」「7月下旬にご入居」「12月上旬にご入居」「10月下旬のご入居」「8月前半のご入居」
+ */
+export function mustTimePhrase(label: string): { at: string; of: string } {
+  const l = nf(label).trim();
+  if (/(?:上旬|中旬|下旬|前半|後半|末|頭|初旬|[0-9]日)$/.test(l)) return { at: `${l}に`, of: `${l}の` };
+  if (/^[0-9]{1,2}月$|^(?:今月|来月)$/.test(l)) return { at: `${l}中に`, of: `${l}中での` };
+  return { at: `${l}に`, of: `${l}の` };
 }
