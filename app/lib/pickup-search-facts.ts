@@ -49,6 +49,39 @@ export function searchedConditionsFrom(rows: readonly SearchAuditRow[], beforeMs
   return out;
 }
 
+/**
+ * 2026-10-06 ⑰（⑯ v2.5.81）: 送る束の行（property_pickups.search_conditions＝{v,site,at,complete,intended,filled}）から読む＝時刻の窓なし。
+ *   拡張の案内で同じお客様を3時間以内に検索した一覧から来た束にだけ付く（search-stamp.forSend）。
+ *   項目ごとに filled（画面に実際に入っていた値）を先に、無ければ intended（案内が組み立てた条件）。
+ *   filled（リアプロ）: rent_min/rent_max（select の値）・building_age・layouts（ラベル）・city_codes・stations ／（ITANDI）: stations・wards
+ *   intended: ward_names・station_names・itandi_lines・rent_min/rent_max・floor_plan・building_age・walk_minutes・is_wide
+ */
+export type BatchSearchConditions = { v?: number; site?: string | null; at?: string | null; complete?: boolean; intended?: Record<string, unknown> | null; filled?: Record<string, unknown> | null };
+export function searchedConditionsFromBatch(rows: ReadonlyArray<{ search_conditions?: unknown }>): SearchedConditions | null {
+  const scs = rows.map((r) => r.search_conditions).filter((x): x is BatchSearchConditions => !!x && typeof x === "object");
+  if (!scs.length) return null;
+  const out: SearchedConditions = { wards: [], lines: [], stations: [], layouts: [], rentMax: null, rentMin: null, walkMax: null, ageMax: null, widened: false, sites: [] };
+  const pickNum = (f: unknown, i: unknown) => num(f) ?? num(i);
+  for (const sc of scs) {
+    const f = (sc.filled ?? {}) as Record<string, unknown>, i = (sc.intended ?? {}) as Record<string, unknown>;
+    if (sc.site && !out.sites.includes(String(sc.site))) out.sites.push(String(sc.site));
+    const wards = strs(f.wards).length ? strs(f.wards) : strs(i.ward_names);
+    const stations = strs(f.stations).length ? strs(f.stations) : strs(i.station_names);
+    const layouts = strs(f.layouts).length ? strs(f.layouts) : (typeof i.floor_plan === "string" ? String(i.floor_plan).split(/[,、・\s]+/).filter(Boolean) : strs(i.floor_plan));
+    out.wards.push(...wards); out.stations.push(...stations); out.layouts.push(...layouts); out.lines.push(...strs(i.itandi_lines));
+    const rm = pickNum(f.rent_max, i.rent_max), rn = pickNum(f.rent_min, i.rent_min), w = num(i.walk_minutes), a = pickNum(f.building_age, i.building_age);
+    if (rm != null) out.rentMax = Math.max(out.rentMax ?? 0, rm);
+    if (rn != null) out.rentMin = out.rentMin == null ? rn : Math.min(out.rentMin, rn);
+    if (w != null) out.walkMax = Math.max(out.walkMax ?? 0, w);
+    if (a != null) out.ageMax = Math.max(out.ageMax ?? 0, a);
+    if (i.is_wide === true) out.widened = true;
+  }
+  const u = (a: string[]) => [...new Set(a)];
+  out.wards = u(out.wards); out.lines = u(out.lines); out.stations = u(out.stations); out.layouts = u(out.layouts);
+  const empty = !out.wards.length && !out.lines.length && !out.stations.length && !out.layouts.length && out.rentMax == null && out.walkMax == null && out.ageMax == null;
+  return empty ? null : out;
+}
+
 const man = (yen: number) => { const m = yen / 10000; return `${Number.isInteger(m) ? m : m.toFixed(1).replace(/\.0$/, "")}万円`; };
 
 /** 生成に渡すブロック（無ければ空） */

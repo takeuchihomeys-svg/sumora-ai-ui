@@ -37,6 +37,7 @@ function inSearched(tok: string, c: ReturnType<typeof searchedConditionsFrom>): 
   const { data: ex, error } = await sb.from("ai_reply_examples").select("conversation_id, ai_draft, sent_reply, created_at").eq("entry_source", "aix_action")
     .like("aix_action", "property_send%").gte("created_at", since).neq("conversation_id", YUMA_CONVERSATION_ID).not("ai_draft", "is", null).order("created_at").limit(2000);
   if (error) throw new Error(error.message);
+  let stale = 0;
   let pairs = 0, withSearch = 0, firstEdited = 0, addedTok = 0, foundSearched = 0, foundRegistered = 0, foundOnlySearched = 0;
   for (const p of (ex ?? []) as Row[]) {
     const first = (s: string) => String(s).split("\n").map((x) => x.trim()).filter((x) => x && !/^[^\s]{1,10}さん$|お世話|お待たせ|夜分/.test(x))[0] ?? "";
@@ -49,7 +50,18 @@ function inSearched(tok: string, c: ReturnType<typeof searchedConditionsFrom>): 
     const { data: audits } = await sb.from("search_audits").select("site, is_wide, created_at, status, filled").eq("property_customer_id", String(pc)).eq("status", "finished")
       .gte("created_at", new Date(t - HOURS * 3_600_000).toISOString()).lte("created_at", new Date(t).toISOString()).limit(12);
     const searched = searchedConditionsFrom((audits ?? []) as SearchAuditRow[], t, HOURS * 3_600_000);
-    if (searched) withSearch++;
+    if (searched) {
+      withSearch++;
+      // 古さ: 使う検索（サイトごとの最新）のうち一番古い時刻から送付までに、登録の条件が変わった（property_condition_history）か
+      const used = new Map<string, number>();
+      for (const a of (audits ?? []) as Row[]) { const s = String(a.site ?? "-"), at = Date.parse(a.created_at); if (!used.has(s) || at > used.get(s)!) used.set(s, at); }
+      const oldest = Math.min(...used.values());
+      const { data: ch } = await sb.from("property_condition_history").select("changed_field, created_at").eq("property_customer_id", pc)
+        .gt("created_at", new Date(oldest).toISOString()).lte("created_at", new Date(t).toISOString()).limit(20);
+      const changed = ((ch ?? []) as Row[]).filter((r) => /rent|area|layout|floor_plan|station|line|ward|walk|age|desired|commute/i.test(String(r.changed_field)));
+      if (changed.length) stale++;
+      // 別のお客様の記録: 検索の記録は property_customer_id で引いているので、記録の中の顧客の写し（customer_snapshot）の id も確かめる
+    }
     if (norm(d1) === norm(s1)) continue;
     firstEdited++;
     const dTok = new Set(condTokens(d1));
@@ -65,6 +77,7 @@ function inSearched(tok: string, c: ReturnType<typeof searchedConditionsFrom>): 
     }
   }
   console.log(`=== 物件ピックアップの1行目（${DAYS}日・組 ${pairs}・送付の前 ${HOURS}時間に検索の記録がある ${withSearch}）===`);
+  console.log(`検索の後・送付までに登録の条件（エリア・家賃・間取り等）が変わった＝古い記録 ${stale}/${withSearch}`);
   console.log(`1行目をスタッフが直した ${firstEdited}組・スタッフが足した条件の語 ${addedTok}個`);
   console.log(`  登録の希望条件にあった ${foundRegistered}・今回実際に検索した条件にあった ${foundSearched}（検索した条件にだけあった＝今回から AIX が知り得る ${foundOnlySearched}）`);
 })().catch((e) => { console.error(e); process.exit(1); });

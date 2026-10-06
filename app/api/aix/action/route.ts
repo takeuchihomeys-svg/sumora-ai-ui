@@ -110,12 +110,16 @@ import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
 import { readAixMessageJson } from "@/app/lib/aix-message-json";
 // 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
+// 2026-10-06 ⑫: 呼び名の固定（会話に出ない別の名前で呼ばない）
+import { enforceCallName } from "@/app/lib/call-name-guard";
+// 2026-10-06 ⑫: 御見積書の費用の事情の1行（報酬が出ない・スモ割なし・仲介手数料の額）
+import { estimateExplain } from "@/app/lib/estimate-explain";
 // 2026-10-06 ⑰（あかりさん）: 会話を合わせるの物件ピックアップで、前回の送付より後のやり取りを時系列で読む
 import { readSendNow, effectiveSendFrame, buildSendNowBlock } from "@/app/lib/property-send-now";
 // 2026-10-06 ⑰: 「お送りした中でも」は直近の束の中から推す時だけ（束の時間と束の部屋）
 import { loadRecommendBundleFacts } from "@/app/lib/recommend-bundle-server";
 // 2026-10-06 ⑰: 物件ピックアップの文に、拡張が実際に検索した条件を渡す（AIXツールと連携）
-import { searchedConditionsFrom, buildSearchedConditionsNote, type SearchAuditRow } from "@/app/lib/pickup-search-facts";
+import { searchedConditionsFrom, searchedConditionsFromBatch, buildSearchedConditionsNote, type SearchAuditRow } from "@/app/lib/pickup-search-facts";
 import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 
@@ -1972,6 +1976,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
           banned.text = waited.text;
         }
       }
+      // 2026-10-06 ⑫（あ・「森本様」の事例）: 呼び名を固定する（call-name-guard.enforceCallName・会話に出た名前と呼び名以外の「〇〇さん/様」を呼び名に）
+      { const g = enforceCallName(banned.text, familyName, (Array.isArray(body.recent_messages) ? body.recent_messages : []).map((m: { text?: string | null }) => m.text ?? ""), [rawName]); if (g.replaced.length) { console.log(JSON.stringify({ tag: "aix:call-name-fixed", action: currentAction, conversationId, replaced: g.replaced })); banned.text = g.text; } }
       // 2026-09-17 竹内（まりあ事例）「かしこまりました！って生成された文に入っているけど、文の構成としておかしいし、
       //   全力でサポートさせて頂きます。もこれ返信の部分で使う部分なので、AIXの物件ピックアップや、物件オススメに入らない文となる」:
       //   物件を送る通は「送りました」の報告なので、依頼の受諾（かしこまりました）と見つかるまでの宣言（全力サポート）を落とす。
@@ -2288,15 +2294,26 @@ async function handleAction(request: NextRequest): Promise<Response> {
     //   今回の送付の前に拡張が実際に検索した条件（search_audits.filled.form・12時間以内・サイトごとの最新）を②の材料に渡す（app/lib/pickup-search-facts.ts）。
     //   戻すのは PICKUP_SEARCH_FACTS=off
     const searchedConditionsNote = await (async (): Promise<string> => {
-      if (action !== "property_send" || !resolvedPCID || (process.env.PICKUP_SEARCH_FACTS ?? "on").trim() === "off") return "";
+      if (action !== "property_send" || (process.env.PICKUP_SEARCH_FACTS ?? "on").trim() === "off") return "";
       try {
-        const { data: audits } = await supabase.from("search_audits").select("site, is_wide, created_at, status, filled")
-          .eq("property_customer_id", String(resolvedPCID)).eq("status", "finished")
-          .gte("created_at", new Date(Date.now() - 12 * 3_600_000).toISOString()).order("created_at", { ascending: false }).limit(12);
-        const searched = searchedConditionsFrom((audits ?? []) as SearchAuditRow[], Date.now());
         const imgCount = Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0;
+        // 2026-10-06 ⑰（⑯ v2.5.81）: ①送る束の行の search_conditions（時刻の窓なし・同じお客様の案内の検索から来た束だけ）を先に。
+        //   列が無い・空の時だけ ②今まで通り search_audits（12時間）。列はまだ無い環境もあるので行の事実の select とは分けて読む
+        let searched: ReturnType<typeof searchedConditionsFrom> = null;
+        let from: "batch" | "audits" | null = null;
+        if (pickupRowsForFacts.length > 0) {
+          const { data: scRows, error: scErr } = await supabase.from("property_pickups").select("id, search_conditions").in("id", pickupRowsForFacts.map((r) => r.id));
+          if (!scErr) { searched = searchedConditionsFromBatch((scRows ?? []) as Array<{ search_conditions?: unknown }>); if (searched) from = "batch"; }
+        }
+        if (!searched && resolvedPCID) {
+          const { data: audits } = await supabase.from("search_audits").select("site, is_wide, created_at, status, filled")
+            .eq("property_customer_id", String(resolvedPCID)).eq("status", "finished")
+            .gte("created_at", new Date(Date.now() - 12 * 3_600_000).toISOString()).order("created_at", { ascending: false }).limit(12);
+          searched = searchedConditionsFrom((audits ?? []) as SearchAuditRow[], Date.now());
+          if (searched) from = "audits";
+        }
         const note = buildSearchedConditionsNote(searched, imgCount || null);
-        if (note) console.log(JSON.stringify({ tag: "aix:pickup-searched-conditions", conversationId, sites: searched?.sites ?? [], widened: searched?.widened ?? false }));
+        if (note) console.log(JSON.stringify({ tag: "aix:pickup-searched-conditions", conversationId, from, sites: searched?.sites ?? [], widened: searched?.widened ?? false }));
         return note;
       } catch { return ""; }
     })();
@@ -2955,7 +2972,7 @@ ${SMORA_COMMON_RULES}`;
         // 「見積書」に限定せず「以下の画像から」と汎用表現にすることでマイソク等でも対応可
         // 2026-09-17 竹内（AIX キャッシュ点検）: ≈600字（1,500字未満）なので cache_control は付かない（propImgUrl で1行変わるが cache 対象外）
         const ocrSystem = `以下の画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文・コードブロック・前置き・後置き一切不要）：
-{"property_name":"","room_number":"","rent":0,"management_fee":0,"total":0,"discount":0,"commission":0,"commission_tax":0}
+{"property_name":"","room_number":"","rent":0,"management_fee":0,"total":0,"discount":0,"commission":0,"commission_tax":0,"cleaning_fee":0}
 
 - property_name: マンション名のみ（号室は含めない）。読み取れなければ""
 - room_number: 号室番号のみ（例: 502）。読み取れなければ""
@@ -2964,7 +2981,8 @@ ${SMORA_COMMON_RULES}`;
 - total: 初期費用合計（割引後・整数）。なければ0
 - discount: 割引額（整数）。なければ0
 - commission: 仲介手数料税抜（整数）。なければ0
-- commission_tax: 仲介手数料消費税（整数）。なければ0`;
+- commission_tax: 仲介手数料消費税（整数）。なければ0
+- cleaning_fee: クリーニング費用（契約時に支払う物として見積書に載っている額・整数）。なければ0`;
 
         const _ocrKey = `${image_url}|${propImgUrl ?? ""}`;
         const _ocrCached = ocrCacheGet(_ocrKey);
@@ -3026,6 +3044,17 @@ ${SMORA_COMMON_RULES}`;
       message_text = buildEstimateMessage([{
         propertyName, roomNumber, total, discount, savings, accountName,
       }]);
+      // 2026-10-06 ⑫ 竹内さん（R の見積書 10/04）: このお部屋の費用の事情（報酬が出ない・スモ割なし・仲介手数料の額）の1行を札の最後に。
+      //   数字は見積書の読み取りの値だけ（読めない値＝JSON に数で無い時は文を出さない・app/lib/estimate-explain.ts）
+      {
+        const ex = estimateExplain({
+          account: String(account || "sumora"),
+          discountYen: typeof est.discount === "number" ? discount : null,
+          commissionYen: typeof est.commission === "number" ? commission + (typeof est.commission_tax === "number" ? commTax : 0) : null,
+          cleaningFeeYen: typeof est.cleaning_fee === "number" && est.cleaning_fee > 0 ? est.cleaning_fee : null,
+        });
+        if (ex.cardLine) { message_text = `${message_text}\n\n${ex.cardLine}`; console.log(JSON.stringify({ tag: "aix:estimate-explain", conversationId, cardLine: ex.cardLine.slice(0, 40) })); }
+      }
       parsed_estimate_result = estimate;
 
       } // end single-mode
