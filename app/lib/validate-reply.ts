@@ -657,7 +657,8 @@ export function applySurfaceFixes(
   if (u.fixes.length) { out = u.text; applied.push(...u.fixes); }
   const b = normalizeBannedPhrasing(out);
   // 2026-10-01: 「くらい」→「程」だけが当たった時に本文へ戻していなかった（条件に b.kurai が無く、b.text が捨てられていた）
-  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup || b.kurai || b.emoji) {
+  // 2026-10-07: 「YYYY年M月築の新築」→築浅（b.newBuild）も同じく戻す
+  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup || b.kurai || b.emoji || b.newBuild) {
     out = b.text;
     if (b.emoji) applied.push(`EMOJI_ALLOWLIST×${b.emoji}`);              // 2026-10-02 竹内「入れて良い絵文字だけ・女性の絵文字いれない」
     if (b.shochi) applied.push(`SHOCHI_TO_KASHIKOMARI×${b.shochi}`);

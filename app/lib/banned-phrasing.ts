@@ -7,6 +7,7 @@
 //   依存は emoji-allowlist.ts だけ（それも依存ゼロの純関数。2026-10-02 絵文字の決まりを同じ入口に載せるため）。他の app/lib/* を import しない。
 import { enforceEmojiAllowlist } from "./emoji-allowlist";
 import { collapseRepeatedOpener } from "./opener-repeat";
+import { fixStaleNewBuildClaim } from "./new-build-claim";
 //
 // 実データ（2026-09-11 測定）:
 //   ・承知は正解の送信 11件中 8件が AI 下書き由来・7件は文中の形（「〜とのこと、承知いたしました」）。
@@ -241,7 +242,7 @@ export function normalizeKurai(text: string): { text: string; count: number } {
 }
 
 /** 方針4・5の決定論置換（生成・後処理・修正版・few-shot 注入の共通入口） */
-export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number; kurai: number; emoji: number } {
+export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?: boolean; nowMs?: number } = {}): { text: string; shochi: number; hasty: number; uketamawari: number; night: number; greetDup: number; kurai: number; emoji: number; newBuild: number } {
   const n = opts.keepNightGreeting ? keepOneNightGreeting(text) : stripNightGreeting(text);
   const g = dedupeGreetings(n.text);
   const u = normalizeBareUketamawari(g.text);
@@ -252,5 +253,8 @@ export function normalizeBannedPhrasing(text: string, opts: { keepNightGreeting?
   //   ここは手本の文（入口）と返信・AIX の仕上げ（出口）の共通の入口なので、手本に 🙇‍♀️ が載らず、出口でも 🙇 に直る
   // 2026-10-06 ⑫（ゆいと「かしこまりました が並んでいる」）: 続く同じ開口語の行を1つに（人の手打ち 365日で変わる 0・opener-repeat.ts）
   const e = enforceEmojiAllowlist(collapseRepeatedOpener(k.text).text);
-  return { text: e.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count, emoji: e.changes.length };
+  // 2026-10-06 竹内（ゆなまる「2025年5月築の新築」）「新築とは新築で未入居の場合」: 築年が13か月以上前と本文で言い切れる「YYYY年M月築の新築」を「築浅」に（new-build-claim.ts）。
+  //   返信・AIX・テンプレートの仕上げと手本の入口の共通の入口なので、ここ1か所で全経路に配る
+  const nb = fixStaleNewBuildClaim(e.text, opts.nowMs ?? Date.now());
+  return { text: nb.text, shochi: a.count, hasty: b.count, uketamawari: u.count, night: n.count, greetDup: g.count, kurai: k.count, emoji: e.changes.length, newBuild: nb.fixed.length };
 }

@@ -68,6 +68,23 @@ export function viewingDateLabel(ymd: string): string {
 }
 
 /**
+ * 内覧の希望として読んでよい文（半角にした・断りの文／入居等の文を除いた・問いや依頼の形か短い返事）。
+ * 2026-10-07: 「土日」「来週」等の幅の指定（viewing-invite-prefill.ts）も同じ文の切り方・同じ除き方で読むため外に出した（中身は従来のまま）
+ */
+export function viewingAskClauses(text: string): string[] {
+  // 「16,17,18,19日」の並びは1日ずつに（読点で文を分ける前に「16日,17日,18日,19日」にする）
+  const src = toHalf(text ?? "").replace(/(\d{1,2})(?=\s*[,、・，]\s*(?:\d{1,2}\s*[,、・，]\s*)*\d{1,2}\s*日)/g, "$1日");
+  const out: string[] = [];
+  for (const raw of src.split(CLAUSE_SPLIT_RE)) {
+    const clause = raw.trim();
+    if (!clause || DECLINE_RE.test(clause) || NON_VIEWING_RE.test(clause)) continue;
+    if (!ASK_RE.test(clause) && clause.length > 8) continue;
+    out.push(clause);
+  }
+  return out;
+}
+
+/**
  * 文から内覧の希望日を読む（今日以降・60日以内・日付の順）。
  * 今日/本日・明日・明後日・M月D日・M/D・D日（月なし＝今日以降で最も近い月）・（今週/来週）〇曜。断りの文・入居等の文の日付は読まない
  */
@@ -86,13 +103,7 @@ export function extractRequestedViewingDates(text: string, nowMs: number = Date.
     return x.getUTCMonth() === m - 1 && x.getUTCDate() === d ? t : NaN; // 2/30 等は無効
   };
 
-  // 「16,17,18,19日」の並びは1日ずつに（読点で文を分ける前に「16日,17日,18日,19日」にする）
-  const src = toHalf(text ?? "").replace(/(\d{1,2})(?=\s*[,、・，]\s*(?:\d{1,2}\s*[,、・，]\s*)*\d{1,2}\s*日)/g, "$1日");
-  for (const raw of src.split(CLAUSE_SPLIT_RE)) {
-    const clause = raw.trim();
-    if (!clause || DECLINE_RE.test(clause) || NON_VIEWING_RE.test(clause)) continue;
-    if (!ASK_RE.test(clause) && clause.length > 8) continue;
-
+  for (const clause of viewingAskClauses(text)) {
     if (/明後日|あさって/.test(clause)) add(today + 2 * DAY_MS);
     if (/明日|あした/.test(clause.replace(/明後日/g, ""))) add(today + DAY_MS);
     if (/今日|本日/.test(clause)) add(today);

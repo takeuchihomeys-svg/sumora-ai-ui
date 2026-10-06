@@ -97,6 +97,8 @@ import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PIC
 import { buildConversationClockNote, fixStaleRecentReference, absolutizeRelativeDays, jstDayLabel } from "@/app/lib/relative-date";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ（お客様が日にちを指定した日だけ空き時間を全部）
 import { limitViewingSlotsInReply, stripDayAfterTomorrowLabel } from "@/app/lib/viewing-slots";
+// 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 日程の材料が無いのに出た日程の段を落とす（内覧へ！の出口）
+import { stripUnbackedScheduleLines } from "@/app/lib/viewing-invite-prefill";
 // 2026-09-16 竹内（💜 さん事例）: 申込の情報を受け取った時の開口語・管理会社の営業時間外の「明日確認してご連絡」
 import { isMgmtAfterHours, ensureAfterHoursApplyLine, stripLeadingBareAck, APPLY_INFO_SENT_RE } from "@/app/lib/after-hours";
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
@@ -109,7 +111,7 @@ import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown, type HearingKnown } from "@/app/lib/hearing-form";
 import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
 // 2026-10-06 ⑰: {"message"} の JSON が読めない時に生の出力を文にしない（物件ピックアップの下書きに "} が残り名前の行が消えた・十数か所の同じ読み取りを1つに）
-import { readAixMessageJson } from "@/app/lib/aix-message-json";
+import { readAixMessageJson, stripJsonEdgeResidue } from "@/app/lib/aix-message-json";
 // 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
 // 2026-10-06 ⑫: 呼び名の固定（会話に出ない別の名前で呼ばない）
@@ -123,6 +125,7 @@ import { loadRecommendBundleFacts } from "@/app/lib/recommend-bundle-server";
 // 2026-10-06 ⑰: 物件ピックアップの文に、拡張が実際に検索した条件を渡す（AIXツールと連携）
 import { searchedConditionsFrom, searchedConditionsFromBatch, buildSearchedConditionsNote, type SearchAuditRow } from "@/app/lib/pickup-search-facts";
 import { findUnmetWantClaims } from "@/app/lib/pickup-wants-fit";
+import { findUnsupportedNewBuild } from "@/app/lib/new-build-claim";
 import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 // 2026-10-06 竹内（R 事例）: 確認した（条件・交渉）の物件を会話から決定論で決める
@@ -1922,7 +1925,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
       // 2026-09-27 竹内さん「物件の資料の中の文字変えなくても…そのままで大丈夫・文字抜かなくてそのまま使う」:
       //   旧はここで号室の先頭ゼロを消していた（0806号室→806号室）。資料の表記のまま送る決まりに変えたので消さない。
       //   スタッフの実送信でも号室の先頭0はそのまま（下書きと送った文の号室が両方ある物件オススメ244通で直した0通・scripts/audit-room-verbatim.ts）
-      const zeroStripped = text;
+      // 2026-10-07（Ryoichi 10/05 の下書きの末尾の "}）: 端だけの JSON の名残を落とす（中に鍵が残る形は触らない・aix-message-json.stripJsonEdgeResidue）
+      const edge = stripJsonEdgeResidue(text);
+      if (edge.stripped) console.warn(JSON.stringify({ tag: "aix:json-edge-stripped", action: currentAction, conversationId }));
+      const zeroStripped = edge.text;
       // 2026-09-15 竹内（隼斗事例）「曜日は日本基準に、18日は金曜日」: 「9/18(木)」のような曜日の食い違いを日付を正として直す（日本時間の暦・jst-date）
       const { text: stripped, applied: weekdayFixed } = fixDateWeekdays(zeroStripped);
       if (weekdayFixed.length > 0) console.log(JSON.stringify({ tag: "aix:weekday-fixed", action: currentAction, conversationId, applied: weekdayFixed }));
@@ -2354,7 +2360,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (action === "property_recommendation") {
         const mi = findMoveInClaimConflict(text, recMoveInFact);
         if (mi) console.log(JSON.stringify({ tag: "aix:recommendation-move-in-conflict", conversationId, note: mi }));
-        return [mi ? `⚠ ${mi}` : "", recHeadMismatch ? `⚠ ${recHeadMismatch}` : ""].filter(Boolean).join("\n");
+        // 2026-10-06 竹内（ゆなまる）「新築とは新築で未入居の場合」: 資料の行が新築でない（terms.newBuild=false）のに「新築」と書いた（new-build-claim・注意だけ）
+        const recRow = pickupRowsForFacts.length === 1 ? pickupRowsForFacts[0] : null;
+        const recNb = (recRow?.terms as { newBuild?: unknown } | null | undefined)?.newBuild;
+        const nb = recRow ? findUnsupportedNewBuild(text, { newBuild: typeof recNb === "boolean" ? recNb : null }) : null;
+        return [mi ? `⚠ ${mi}` : "", recHeadMismatch ? `⚠ ${recHeadMismatch}` : "", nb ? `⚠ ${nb}` : ""].filter(Boolean).join("\n");
       }
       if (action !== "property_send") return "";
       const notes = findPickupSendConflicts(text, pickupFacts, pastPickupSendTexts, [DEADLINE_SUPPORT_LINE, ...INSERTED_PROMISE_LINES], customer_conditions ? String(customer_conditions) : null);
@@ -4113,6 +4123,13 @@ ${SMORA_COMMON_RULES}
         // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）
         message_text = messageFromAixJson(rawVI, currentAction);
 
+        // 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 画面で日を1つも選んでいない（材料なし）のに
+        //   手本の形（「直近ですと／M/D(曜) HH:MM〜」）に引かれて日程が出たら落とす。材料のある時は触らない
+        if (!calendarNoteForVI && !requestedDatesVI && !vacancyFromVI) {
+          const cut = stripUnbackedScheduleLines(message_text);
+          if (cut.removed.length) { console.log("aix:viewing-unbacked-schedule-removed (conversation_match)", JSON.stringify(cut.removed)); message_text = cut.text; }
+        }
+
         // 2026-09-16 竹内（𝒮 さん事例）: 1日に時間を2つ出すのはお客様が日にちを指定した時だけ（指示だけでは落ちるので出口でも落とす）
         {
           const limited = limitViewingSlotsInReply(message_text, {
@@ -4298,6 +4315,15 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
         message_text = vj.text;
         const vComps: Record<string, string> | null = vj.salvaged ? null : vj.parts;
         if (vComps) aiComponents = vComps;
+      }
+      // 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 日程の材料（カレンダーで選んだ日・スタッフの候補日時）が無いのに出た日程は落とす
+      if (!calendarNote && !/[0-9０-９]/.test(String(extra_input ?? ""))) {
+        const cut = stripUnbackedScheduleLines(message_text);
+        if (cut.removed.length) {
+          console.log("aix:viewing-unbacked-schedule-removed", JSON.stringify(cut.removed));
+          message_text = cut.text;
+          if (aiComponents && typeof aiComponents === "object") aiComponents = { ...aiComponents, dates: "" };
+        }
       }
       // 2026-09-16 竹内（𝒮 さん事例）: こちらから日にちを出す時は1日1つ（お客様が1日だけ指定した時はその日の時間をそのまま）
       {

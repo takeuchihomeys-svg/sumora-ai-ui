@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { IMAGE_BATCH_MAX } from "../lib/line-image-batch";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
-import { nearestBookableDays } from "../lib/viewing-candidates";
+// 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 開いた時に入れる日（純関数・テストあり）
+import { customerViewingDateSpec, resolveViewingInvitePrefill, specExtraYmds, noSpecBehaviorFromEnv } from "../lib/viewing-invite-prefill";
+// 2026-10-06 竹内（ゆいと・チンシャン事例）「送った物件選択してそこから おこなえるようにする（見積書作成の時のように）」: 内覧の AIX の送った物件の候補
+import SentPropertyPicker from "./SentPropertyPicker";
+import { preselectViewingCandidates, latestCustomerTurnStartAt, type ViewingPropertyCandidate } from "../lib/viewing-property-candidates";
 // 2026-09-19 竹内（a🤫 事例）: 退去予定物件の「内覧可能日時」は退去日の翌日から（純関数・テストあり）
 import { viewableFromYmd, vacancyExtraYmds, resolveVacancySlotEnabled, isBeforeViewable } from "../lib/viewing-window";
 import { meetingAddressProblem, meetingTextAddressProblem } from "../lib/meeting-address";
@@ -971,6 +975,9 @@ export default function AixModal({
   const [meetingDate, setMeetingDate] = useState<string>("");
   const [meetingTime, setMeetingTime] = useState<string>("");
   const [meetingOcrLoading, setMeetingOcrLoading] = useState(false);
+  // 2026-10-06 竹内（ゆいと事例）: 送った物件の候補から選んだ時の一言（先に選んだ理由・追加の内覧の注意）
+  const [meetingPickNote, setMeetingPickNote] = useState("");
+  const [viewingPickNote, setViewingPickNote] = useState("");
 
   // 初期費用を説明専用（2026-09-12 竹内・あや事例）: 貸主からの報酬・還元額は入力値だけで文を作る
   const [costFeeLabel, setCostFeeLabel] = useState<string>("家賃1ヶ月分");
@@ -1012,7 +1019,10 @@ export default function AixModal({
   const viewingInvitePlaceKey = placeKeyOf(viewingInvitePlace);
 
   // 内覧へ！内覧日指定あり専用
-  const [viewingSpecificMode, setViewingSpecificMode] = useState(!!initialViewingSpecificMode);
+  // 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 帯「内覧の希望あり → AIX 内覧へ！」は日付が届いていない時も
+  //   内覧日指定ありで開いていた（日程の欄が空のまま「日程を入力してください」が出た）→ お客様の最新の発言に日付の指定がある時だけ内覧日指定ありで開く
+  const [viewingSpecificMode, setViewingSpecificMode] = useState(() => !!initialViewingSpecificMode
+    && (actionType !== "viewing_invite" || customerViewingDateSpec(recentMessages ?? []).kind === "dates"));
   // 内覧へ！日程変更モード専用
   const [viewingRescheduleMode, setViewingRescheduleMode] = useState(!!initialViewingReschedule);
   const [viewingSpecificDate, setViewingSpecificDate] = useState("");
@@ -1030,6 +1040,13 @@ export default function AixModal({
     [actionType, recentMessages],
   );
   const viewingRequestedKey = viewingRequested.map((r) => r.ymd).join(",");
+  // 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 開いた時に入れる日はお客様の指定（日付／土日・来週等の幅）だけ（viewing-invite-prefill.ts）
+  const viewingDateSpec = useMemo(
+    () => (actionType === "viewing_invite" ? customerViewingDateSpec(recentMessages ?? []) : { kind: "none" as const }),
+    [actionType, recentMessages],
+  );
+  const viewingDateSpecKey = specExtraYmds(viewingDateSpec).join(",");
+  const [viewingPrefillReason, setViewingPrefillReason] = useState("");
   // 2026-09-19 竹内（a🤫 事例）「退去予定日入れると、その退去予定日以降で内覧する形となるので、
   //   内覧可能日時は退去予定日以降のところから、順に空いている日付いれる形とする」
   //   退去日を読むのは vacating-notice の1つの関数だけ（生成文の「◯月◯日以降ご内覧可能」と同じ日付になる）
@@ -1712,7 +1729,7 @@ export default function AixModal({
         // 2026-09-16 竹内（カイナ事例）: このお客様自身の「時間確保」（前に送った候補）は空き扱いにする（同じ時間をもう一度出せる）
         // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は退去日の翌日から連続6日も取りに行く（直近3日は全部内覧できない日なので）
         //   お客様の希望日を先に渡す（fetchCalendarSlots は渡された順に先着で採る）
-        const extraYmds = [...viewingRequested.map((r) => r.ymd), ...(viewingVacancyFromYmd ? vacancyExtraYmds(viewingVacancyMoveOut) : [])];
+        const extraYmds = [...viewingRequested.map((r) => r.ymd), ...specExtraYmds(viewingDateSpec), ...(viewingVacancyFromYmd ? vacancyExtraYmds(viewingVacancyMoveOut) : [])];
         const { days, baseCount } = await fetchCalendarSlots(extraYmds, { ignoreHoldsForConversationId: conversationId ?? null, viewingCount: viewingInviteCount, viewingPlace: viewingInvitePlace });
         setViewingCalendarDays(days);
         // "11:00〜14:00" → start: "11:00", end: "14:00"
@@ -1724,22 +1741,20 @@ export default function AixModal({
         setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
         setViewingSlotOverride(days.map(() => false));
 
-        // デフォルトの有効スロット（お客様指定日のプリセットは下の別effectで行う）
-        // 2026-10-02 竹内「直近は基本3候補いれる」: 基準の日は本日から「3つ目の空いている日」まで（calendarSlots の baseCount）。その後ろが希望日の追加分
-        const extraStart = baseCount;
-        // 2026-09-19 竹内（a🤫 事例）: 退去予定物件は「退去日の翌日から順に空いている日」を3日ぶん
-        const vacancyEnabled = resolveVacancySlotEnabled(days, viewingVacancyFromYmd, 3);
-        if (vacancyEnabled) {
-          setViewingSlotEnabled(vacancyEnabled);
-        } else if (viewingSpecificMode) {
-          // 内覧日指定ありモード → 本日(index 0)はチェックしない
-          setViewingSlotEnabled(days.map((d, i) => i > 0 && !d.fullyBooked));
-        } else {
-          // 通常モード: 直近3日のうち空きのある日をチェック（希望日の追加分は内覧日指定ありで使う）
-          // 通常モード: 直近の空いている日を3つ ON（2026-10-02 竹内「直近は基本3候補・2候補でも大丈夫」＝3つ無ければある分）
-          const near = new Set(nearestBookableDays(days, 3, extraStart));
-          setViewingSlotEnabled(days.map((_, i) => near.has(i)));
-        }
+        // デフォルトの有効スロット（お客様指定日の日程・時間の欄のプリセットは下の別effectで行う）
+        // 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」:
+        //   旧: 通常モード＝直近の空いている日を3つ ON（10/02）／内覧日指定あり＝本日以外の空いている日を全部 ON（10/7・10/8 が入った）。
+        //   新: お客様の指定の日（日付＝その日・土日/来週等＝幅の中の空いている日を最大3つ）だけ ON・指定が無ければどの日も入れない（スタッフが選ぶ）。
+        //   退去予定物件は 9/19 の決まり（退去日の翌日から順に空いている日を3日）のまま。戻す: NEXT_PUBLIC_VIEWING_INVITE_PREFILL=nearest3
+        const prefill = resolveViewingInvitePrefill({
+          days,
+          spec: viewingDateSpec,
+          vacancyEnabled: resolveVacancySlotEnabled(days, viewingVacancyFromYmd, 3),
+          baseCount,
+          noSpec: noSpecBehaviorFromEnv(process.env.NEXT_PUBLIC_VIEWING_INVITE_PREFILL),
+        });
+        setViewingSlotEnabled(prefill.enabled);
+        setViewingPrefillReason(prefill.reason);
       } catch {
         setViewingCalendarDays([]);
         setViewingSlotEnabled([]);
@@ -1752,7 +1767,7 @@ export default function AixModal({
     })();
   // 退去予定日は画像の読み取りで後から入る（非同期）ので deps に入れて取り直す
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actionType, viewingRequestedKey, viewingVacancyFromYmd, viewingInviteCount, viewingInvitePlaceKey]);
+  }, [actionType, viewingRequestedKey, viewingDateSpecKey, viewingVacancyFromYmd, viewingInviteCount, viewingInvitePlaceKey]);
 
   // ⑤ ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット（複数日対応）
   // recentMessages を deps に含める（マウント時にメッセージ未着でも、到着後に再実行される）
@@ -1786,6 +1801,45 @@ export default function AixModal({
     applyViewingSpecificDefaults();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingSpecificMode, viewingCalendarDays]);
+
+  // 2026-10-06 竹内（ゆいと事例）「待ち合わせした際 送った物件選択してそこから おこなえるようにする」:
+  //   候補を押す → 物件名（号室まで）・資料の所在地（字のまま・番地が無ければ下の赤字で止まる）・資料の画像を入れる。
+  //   資料の文字に所在地が無い時だけ、資料の画像を今までと同じ読み取り（/api/extract-meeting-place）に通して住所を取る（物件名は候補のまま）
+  const meetingCandidateSeqRef = useRef(0);
+  const applyMeetingCandidate = (c: ViewingPropertyCandidate | null) => {
+    const seq = ++meetingCandidateSeqRef.current;
+    setMeetingPropertyFile(null);
+    setMeetingAddressOcr("");
+    if (!c) { setMeetingPropertyName(""); setMeetingPropertyAddress(""); setMeetingPropertyPreview(""); return; }
+    setMeetingPropertyName(c.label);
+    setMeetingPropertyAddress(c.address);
+    setMeetingPropertyPreview(c.imageUrl ?? "");
+    if (c.address || !c.imageUrl) return;
+    setMeetingOcrLoading(true);
+    void (async () => {
+      try {
+        const blob = await (await fetch(c.imageUrl!)).blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => { const fr = new FileReader(); fr.onload = () => resolve(String(fr.result ?? "")); fr.onerror = reject; fr.readAsDataURL(blob); });
+        const mime = (dataUrl.split(";")[0].split(":")[1] || "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+        const res = await fetch("/api/extract-meeting-place", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_base64: dataUrl.split(",")[1], media_type: mime, conversation_id: conversationId }),
+        });
+        await ensureOk(res);
+        const data = await res.json() as { ok: boolean; address?: string; address_source?: string; address_ocr?: string };
+        if (seq !== meetingCandidateSeqRef.current) return; // 押し直した後の古い結果は捨てる
+        if (data.ok && data.address) {
+          setMeetingPropertyAddress(data.address);
+          setMeetingAddressOcr(data.address_source === "material" ? (data.address_ocr ?? "") : "");
+        }
+      } catch (e) {
+        console.warn("[AixModal] 候補の資料から住所を読めず:", e);
+      } finally {
+        if (seq === meetingCandidateSeqRef.current) setMeetingOcrLoading(false);
+      }
+    })();
+  };
 
   // 待ち合わせ: 会話から日程・時間をAIで抽出してプリセット
   // 6秒ポーリングで recentMessages が毎回新参照になるため、refで多重発火を防ぐ
@@ -2753,8 +2807,9 @@ export default function AixModal({
         const times = i === 0 ? viewingSpecificTimes.trim() : (day && !day.fullyBooked ? pickDaySlots(day.slots, false).join(" ") : "");
         return { md: `${x.m}/${x.d}`, label: `${x.m}/${x.d}(${weekdayForMonthDay(x.m, x.d) ?? ""})`.replace("()", ""), times };
       }) : [];
-      if (actionType === "viewing_invite" && viewingSpecificMode && !extraFlags?.conversation_match) {
-        if (specificDates.length === 0) throw new Error("日程を入力してください（例：9月18日）");
+      // 2026-10-05 竹内（ゆいと事例）: 日程の欄が空の時に「日程を入力してください」で止めていた（下の内覧可能日時にチェック済みの日があっても）
+      //   → 日程の欄が空なら通常の形（チェックした日＝「直近ですと」・無ければ日程なしで伺う文）に回す
+      if (actionType === "viewing_invite" && viewingSpecificMode && !extraFlags?.conversation_match && specificDates.length > 0) {
         const msg = buildViewingSpecificMessage({ dates: specificDates, customerName, propertyName: viewingPropertyName });
         setAiDraft(msg);
         setPreview(useEmoji ? msg : stripEmoji(msg));
@@ -6695,6 +6750,20 @@ export default function AixModal({
                     if (f) { e.preventDefault(); void extractViewingPropertyName(f); }
                   }}
                 >
+                  {/* 2026-10-06 竹内（チンシャン事例）「実際に送った物件のところ 読み取って選択できるようにする」: 内覧へ！も同じ候補（1つ選ぶ・物件名と資料の画像） */}
+                  <SentPropertyPicker
+                    conversationId={conversationId}
+                    selected={viewingPropertyName ? [{ name: viewingPropertyName }] : []}
+                    onToggle={(c, select) => { setViewingPropertyName(select ? c.label : ""); setViewingPropImagePreview(select ? (c.imageUrl ?? "") : ""); }}
+                    onLoaded={(cands) => {
+                      const p = preselectViewingCandidates(cands, { mode: "invite", customerText: latestCustomerTurnText(recentMessages ?? []), currentName: viewingPropertyName, turnStartAt: latestCustomerTurnStartAt(recentMessages ?? []) });
+                      setViewingPickNote(p.reason);
+                      const c = cands.find((x) => p.keys.includes(x.key));
+                      if (c && !viewingPropertyName) { setViewingPropertyName(c.label); setViewingPropImagePreview(c.imageUrl ?? ""); }
+                    }}
+                    note={viewingPickNote ? `💬 ${viewingPickNote}` : undefined}
+                    accent="emerald"
+                  />
                   <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                     物件名 <span className="font-normal text-[#90a4ae]">（任意・画像貼り付けで自動入力）</span>
                   </label>
@@ -6767,15 +6836,20 @@ export default function AixModal({
                           // 採用した日付に一致する日のみチェック（本日は指定がなければチェックしない）
                           setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date));
                         } else {
-                          // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
+                          // お客様の日付の指定なし → 日程・時間は空欄のまま（手動入力を促す）
+                          // 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: 旧は本日以外の空いている日を全部 ON にしていた → 今のチェックのまま（足さない）
                           setViewingSpecificDate("");
-                          setViewingSlotEnabled(viewingCalendarDays.map((d, i) => i > 0 && !d.fullyBooked));
                         }
                       } else {
-                        // OFF: 通常モードに戻す（直近の空いている日を3つ・2026-10-02 竹内「直近は基本3候補」）
+                        // OFF: 通常モードに戻す。2026-10-05 竹内（ゆいと事例）: 戻す時のチェックも開いた時と同じ関数（日付以外のお客様の指定だけ・無ければ入れない）
                         setViewingSpecificDate("");
                         viewingAutoDateRef.current = "";
-                        { const near = new Set(nearestBookableDays(viewingCalendarDays, 3)); setViewingSlotEnabled(viewingCalendarDays.map((_, i) => near.has(i))); }
+                        setViewingSlotEnabled(resolveViewingInvitePrefill({
+                          days: viewingCalendarDays,
+                          spec: viewingDateSpec.kind === "dates" ? { kind: "none" } : viewingDateSpec,
+                          vacancyEnabled: resolveVacancySlotEnabled(viewingCalendarDays, viewingVacancyFromYmd, 3),
+                          noSpec: noSpecBehaviorFromEnv(process.env.NEXT_PUBLIC_VIEWING_INVITE_PREFILL),
+                        }).enabled);
                       }
                       return next;
                     });
@@ -6915,6 +6989,10 @@ export default function AixModal({
           {actionType === "viewing_invite" && (
             <div className="mb-4">
               <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（カレンダーから自動取得）</p>
+              {/* 2026-10-05 竹内（ゆいと事例）「日程はお客さんから指定がなければいれない」: なぜこの日にチェックが入った／入っていないか */}
+              {viewingPrefillReason && !viewingCalendarLoading && (
+                <p className="mb-2 text-[11px] text-[#8696a0]">✓ {viewingPrefillReason}</p>
+              )}
               {/* 2026-09-30 竹内: 件数で枠の長さ（1件＝1〜2時間）・エリアで前後の予定との間（移動時間）を決める */}
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-[#54656f]">
                 <span className="font-bold">件数</span>
@@ -7039,6 +7117,21 @@ export default function AixModal({
           {/* 待ち合わせ専用UI */}
           {actionType === "meeting_place" && (
             <div className="mb-4">
+              {/* 2026-10-06 竹内（ゆいと事例）: 物件資料の上に、この会話で送った物件の候補（見積書作成と同じ材料）。待ち合わせ＝1件目の内覧の物件なので1つだけ選ぶ */}
+              <SentPropertyPicker
+                conversationId={conversationId}
+                selected={meetingPropertyName ? [{ name: meetingPropertyName }] : []}
+                onToggle={(c, select) => applyMeetingCandidate(select ? c : null)}
+                onLoaded={(cands) => {
+                  const p = preselectViewingCandidates(cands, { mode: "meeting", customerText: latestCustomerTurnText(recentMessages ?? []), currentName: meetingPropertyName, turnStartAt: latestCustomerTurnStartAt(recentMessages ?? []) });
+                  setMeetingPickNote(p.reason);
+                  const c = cands.find((x) => p.keys.includes(x.key));
+                  // 欄が空の時・欄の物件名と同じ候補の時だけ入れる（スタッフが入れた物・画像の読み取りは上書きしない）
+                  if (c && (!meetingPropertyName || !meetingPropertyAddress) && !meetingPropertyFile) applyMeetingCandidate(c);
+                }}
+                note={meetingPickNote ? `💬 ${meetingPickNote}` : "待ち合わせは1件目に内覧するお部屋です（複数のお部屋の時は1件目を選んでください）"}
+                accent="sky"
+              />
               {/* 物件資料画像 OCR */}
               <div className="mb-3">
                 <label className="mb-1 block text-xs font-semibold text-[#54656f]">

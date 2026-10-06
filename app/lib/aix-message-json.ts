@@ -17,3 +17,31 @@ export function readAixMessageJson(raw: string | null | undefined): AixMessageRe
   const j = joinAixJsonParts(String(raw ?? ""), ["message"]);
   return { text: j.text.replace(/\\n/g, "\n"), salvaged: j.salvaged, failed: j.failed };
 }
+
+// 2026-10-07 竹内（Ryoichi kiritsuke 10/05 13:46 の AIX【物件ピックアップした】の編集画面「ここのミスなくす」）:
+//   下書きの末尾に『"}』が残っていた（aix_generate_log 8b139bd2・10/05 04:45 UTC）。⑰（6f1832a8・10/06 15:44 JST）より前の生成で、
+//   ⑰ 以降の AIX の生成 37通には JSON の名残 0（60日の名残 8通は全部 ⑰ 前）。⑰ の読み取りで直っている。
+//   ただ AIX の出口（aix/action の finalize）には名残を落とす決定論が無く、読み取りを通らない新しい経路が出来ると同じ形が下書き欄に入る。
+//   送信 API（outgoing-residue）は止めるが、スタッフが手で消す手間が残る。
+// 決め: 端（先頭・末尾）だけの名残を落とす。本文の中に JSON の鍵が残る時は触らない（どこまでが本文か決められない＝送信 API が止める）。
+//   落とすのは ①末尾の『"}』『"]}』『"\n}』（ASCII の " の直後に } で終わる）②先頭の『{"message":"』（英字の鍵）とその時の末尾の『"』
+//   人の文・AIX の送信で ASCII の " ＋ } で終わる通は 0（scripts/audit-aix-json-edge.ts で確かめる）。
+const EDGE_TAIL_RE = /"\s*\]?\s*\}\s*$/;
+const EDGE_HEAD_RE = /^\s*\{\s*"[A-Za-z_]{1,40}"\s*:\s*"/;
+const INNER_KEY_RE = /"[A-Za-z_][A-Za-z0-9_]{0,40}"\s*:\s*(?:"|\[|\{)/;
+
+export function stripJsonEdgeResidue(text: string | null | undefined): { text: string; stripped: boolean } {
+  const s = String(text ?? "");
+  let t = s;
+  const head = EDGE_HEAD_RE.test(t);
+  if (head) t = t.replace(EDGE_HEAD_RE, "");
+  if (EDGE_TAIL_RE.test(t)) t = t.replace(EDGE_TAIL_RE, "");
+  else if (head) t = t.replace(/"\s*$/, "");
+  if (t === s) return { text: s, stripped: false };
+  // 中に鍵が残る（部品の途中で切れた形）は触らない
+  if (INNER_KEY_RE.test(t)) return { text: s, stripped: false };
+  if (head) t = t.replace(/\\n/g, "\n").replace(/\\"/g, "\"");
+  t = t.replace(/\s+$/, "");
+  if (!t.trim()) return { text: s, stripped: false };
+  return { text: t, stripped: true };
+}

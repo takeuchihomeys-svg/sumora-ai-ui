@@ -2,6 +2,37 @@
 
 最終更新: 2026-10-07
 
+## 📅 AIX【内覧へ！】の日はお客様の指定だけ先入れ・内覧の AIX に「この会話で送った物件」の候補（10/07・ゆいと 10/5「日程はお客さんから指定がなければいれない」／10/6 待ち合わせ「送った物件選択してそこから」／チンシャン 内覧誘導「実際に送った物件のところ読み取って選択」・未コミット）
+- **日の先入れ**: `app/lib/viewing-invite-prefill.ts` の1関数（customerViewingDateSpec → resolveViewingInvitePrefill）。お客様の最新の発言に日付＝その日だけ・内覧日指定あり／土日・週末・平日・今週・来週・再来週・「土日しか」＝幅の中の空いている日を最大3つ／**指定なし＝どの日も入れない**（スタッフが選ぶ）／退去予定は 9/19 の決まりのまま。戻す: `NEXT_PUBLIC_VIEWING_INVITE_PREFILL=nearest3`
+- 帯 P3.2.5「内覧の希望あり → AIX 内覧へ！」は日付が無くても内覧日指定ありで開いていた → AixModal の初期値で日付の指定がある時だけ ON。内覧日指定ありで日程の欄が空でも「日程を入力してください」で止めず、通常の形（チェックした日・無ければ日程なしで伺う）へ
+- 出口: aix/action 内覧へ！（通常・会話を合わせる）で材料（calendar_info・希望日・退去予定・候補日時）が無い時だけ `stripUnbackedScheduleLines`（「直近ですと／M/D(曜) HH:MM」の行）
+- 監査 `scripts/audit-viewing-invite-prefill.ts`（120日 101件）: 指定なし 78件でもスタッフが送った文の 97%（75/77）に日程あり＝**10/02「直近3候補」と食い違う。オーナー確認待ち**
+- **送った物件の候補**: `app/components/SentPropertyPicker.tsx`（材料は GET /api/estimate-handoff＝見積書作成と同じ）＋ `app/lib/viewing-property-candidates.ts`。待ち合わせ（物件資料の上・1つ）／内覧へ！（物件名の上・1つ）／内覧誘導（page.tsx・物件の枠の上・複数）。押すと物件名・号室・資料の画像・所在地（待ち合わせ。資料の文字に所在地が無い時は資料の画像を extract-meeting-place へ・番地なしは既存の赤字で止まる）
+- 先に選ぶのは欄の物件名（1件目の決まり）と同じ候補か、お客様の最新の発言の引用・名前・持ち込みで決まった物件だけ。待ち合わせでは「ここも行けますか？」（追加の内覧）の引用を選ばない（待ち合わせ＝1件目）
+- 監査 `scripts/audit-viewing-property-candidates.ts`（待ち合わせ 86通）: 書いた物件が候補に 51/86・先に選んだ＝書いた 2／違う 1／選ばない 83・資料の文字の所在地が番地まで 2/51（画像あり 33/51）。待ち合わせに複数件を書いた実送信は 1/110＝文の型は1件目のまま
+- テスト: `app/lib/__tests__/viewing-invite-prefill.test.ts`（23）・`viewing-property-candidates.test.ts`（16）
+
+## 🧱 束に無い特徴を書かない（リノベ・築浅）・JSON の名残の出口・「新築」は未入居だけ（10/07・Ryoichi kiritsuke「築浅またはリノベ」＋末尾の "}・ゆなまる「2025年5月築の新築」・未コミット）— 黄金ルール
+- **"} の原因**: Ryoichi の下書き（aix_generate_log 8b139bd2・10/05 04:45 UTC）は ⑰ readAixMessageJson（6f1832a8・10/06 15:44 JST）より前。⑰ 以降の AIX 37通に名残 0。念のため aix/action の finalize の先頭に `stripJsonEdgeResidue`（aix-message-json.ts・端だけ・中に鍵が残る形は触らず送信 API が止める）。監査 `scripts/audit-aix-json-edge.ts`: スタッフの送信 14,382通で変わる 0／下書き 3,087通で 7通を落とす
+- **リノベ**: pickup-wants-fit が「築浅かリノベ」を OR で照らす（築年が合う or 資料の文字でリノベ済み＝listing-renovation）。語は束が持つ側だけ（Ryoichi: リノベ済み 0/9・築浅 7/9＝「一部」→ ②に書かない・注記に「リノベと書かない」「『築浅かリノベ物件』を写さない」）。「2LDK以上」も照らす（9/9 合う）。出口 findUnmetWantClaims: リノベ0なのに「リノベ」・築浅が一部なのに「築浅」→注意。監査 `scripts/audit-pickup-wants-claims.ts`（売上サポの束13件で下書き1・スタッフの送信0）
+- **効かない所（竹内さんに相談中）**: 手で入れた画像の束（pickup_ids なし）は行の事実が無いので照らせない。30日で物件ピックアップの送信 171・売上サポから来た束 57（約1/3）＝多くは照らせていない
+- **新築**: `app/lib/new-build-claim.ts` fixStaleNewBuildClaim を normalizeBannedPhrasing の最後に（「YYYY年M月築の新築」で13か月以上前→「築浅物件」）。aix-template-generate は当たりの条件に newBuild（と漏れていた kurai・emoji）を足した。入口 SMORA_COMMON_RULES に「新築は未入居の時だけ」。物件オススメは資料の行が newBuild=false なのに「新築」→注意。監査 `scripts/audit-new-build-claim.ts`（AI の下書き 16通が直る・スタッフも 18通「1年以上前の新築」を書いていた）
+- 試し（小さな指示・DeepSeek 9回 $0.0019＋Claude 1回 $0.0036）`scripts/yuma-pickup-renovation-note-test.ts`: 注記なし 3/3 がリノベ・築浅を書く／注記あり 0/7
+- テスト: aix-message-json（21）・pickup-wants-fit（67）・new-build-claim（16）
+
+## ↩ 引用の枠に引用元の画像と物件名・同じ流れの複数の引用を材料に・新着カードに「AIXツールで開く」（10/07・Ryoichi kiritsuke「ここと」「ここを見に行きたいです」・未コミット）
+- **原因は画面だけ**: 引用先（line_message_id）・画像（Storage 200）・どの物件か（sent_image_properties: リヴィエール桜之町東 102／アトリエール堺寺地町 103）は全部揃っていたのに、page.tsx の描画が「画像なら "[画像]" の文字」を出すだけだった
+- 画面: `app/components/QuotedReplyBanner.tsx`（useQuotedMessages＋枠）・`app/lib/quote-preview.ts`（純関数）。LINE と同じ「スモラ／写真＋48px のサムネイル」＋分かる時だけ「🏠 物件名」（送った時の記録 sent_image_properties→sent_properties＝ブレイン・生成と同じ出所・推測しない）。押す→引用元の吹き出しへ移って光る／画面に無ければ画像を拡大。サムネイルを押すと拡大。保存期限切れ・読めない画像は「写真（保存切れ）」。お客様の画像の書き起こしは枠に出さない
+- ⚠ 静かに壊れる: `.in("image_url", URL 100本)` は GET が長すぎて fetch failed → 物件名 124枚中 7枚しか出なかった。20本ずつに分けて 111/124（90%）
+- 材料: 生成・AIX の引用（quoted-context.resolveLatestQuotedContext）は**最後の1通だけ**だった → 同じ流れ（続けてのお客様の発言）のほかの引用を `otherQuotes` で渡す（quoted-note.formatOtherQuotesLine・物件が2件以上なら「N件すべての話・1件だけの話として返さない」）。ブレインの履歴（brain-core）は前から1通ずつ物件名が付いていた。60日で 10分以内に別の物を続けて引用 57組
+- 新着カード（NewArrivalCard）: 物件オススメの物件名の下に「AIXツールで開く ↗」（高さ32px・▼を開かなくても押せる）。物件オススメの無い回は札の下に。中身は今までの ▼ の中のボタン（/conditions?pickup=…&batch=…・既読も入る）を表に出しただけ
+- テスト `app/lib/__tests__/quote-preview.test.ts`（15）・監査 `scripts/audit-quote-preview.ts --days=60`（読むだけ）
+
+## 🎯 決め手の条件をブレインの材料に（10/07・H0N0KA.「家賃が更に5,000円程低いお部屋が見つかれば決まる」・ゆいと「次カウンターキッチンで条件にあった物件があれば決まる」・未コミット）
+- brain-core の【物件検索統括】の下に【決め手の条件（closing-target・会話から決定論）】（きっかけの発言・像・状態 found/partial/active・登録か一時か）。材料だけで言い回しの指示は書かない
+- 穴（G1 材料の欠け）: 家賃の「下がったりしないですよね」は家賃の相場の質問（customerAsksRentLevel）にも当たり、次の探し方には何も効いていなかった／ゆいとの「カウンターキッチンのとこは少ないですかね？」は equip_add・permanent なのに条件の橋の Haiku が {} → こだわりの欄に入らなかった（橋に決定論の補いを足した）
+- 詳しくは memory/dept_search_tool.md の 2026-10-07「決め手の条件」。止める: `CLOSING_TARGET_MODE=off`
+
 ## 🏠 物件ピックアップの文に「束と要望の合う／合わない」・内装の色（10/07・会話「し」角田さん 白基調・竹内「希望の条件に合っていない部分をちゃんといれたうえで、具体的に内覧訴求」・未コミット）— 黄金ルール
 - 穴: AI の下書きが合っていない「内装白」を合う物として書いた（材料は間取り・家賃・区だけで、どの要望が束に合うかを知らなかった）
 - `app/lib/pickup-wants-fit.ts`（純関数）: 売上サポの行（terms・equipment.match・parsePickupFact・内装の色）×希望条件の文 → 束全体で 合う／合わない／一部／分からない。注記は②に「合う」だけ・「合わない」は③に実送信の型「こちらのN部屋白基調のお部屋では御座いませんが、敷金礼金0円の為初期費用面を抑える事が出来ます！！」・件数「こちらN部屋となります」

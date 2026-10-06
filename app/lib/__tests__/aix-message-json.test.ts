@@ -1,7 +1,7 @@
 // app/lib/__tests__/aix-message-json.test.ts
 // 2026-10-06 ⑰: AIX の {"message"} の JSON が読めない時に生の出力を文にしない（物件ピックアップの下書きの末尾に "} が残った実物の形）
 // 実行: npx tsx app/lib/__tests__/aix-message-json.test.ts
-import { readAixMessageJson } from "../aix-message-json";
+import { readAixMessageJson, stripJsonEdgeResidue } from "../aix-message-json";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") { if (cond) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}${extra ? ` -- ${extra}` : ""}`); } }
@@ -36,6 +36,25 @@ function t(name: string, cond: boolean, extra = "") { if (cond) { pass++; consol
 {
   const noMsg = readAixMessageJson('{"text":"かしこまりました！！"}');
   t("読めた JSON に message が無い時は生の JSON を文にしない（空）", noMsg.text === "", JSON.stringify(noMsg));
+}
+console.log("■ 出口の端の名残（stripJsonEdgeResidue・2026-10-07 Ryoichi）");
+{
+  // 実物（aix_generate_log 8b139bd2 の generated_text そのまま）
+  const ryoichi = "堺区周辺全域からRyoichiさんにオススメできる2LDK以上・築浅またはリノベのお部屋をピックアップさせて頂きました😊！！\n\nお手隙の際にご査収ください😌！！\"}";
+  const r = stripJsonEdgeResidue(ryoichi);
+  t("末尾の \"} を落とす（実物）", r.stripped && r.text.endsWith("お手隙の際にご査収ください😌！！") && !/["}]/.test(r.text), JSON.stringify(r));
+  const head = stripJsonEdgeResidue('{"message":"〇〇さん\\n\\nお部屋ピックアップさせて頂きました！！"}');
+  t("先頭の {\"message\":\" と末尾を落とし改行を戻す", head.stripped && head.text === "〇〇さん\n\nお部屋ピックアップさせて頂きました！！", JSON.stringify(head));
+  const headNoClose = stripJsonEdgeResidue('{"message":"〇〇さん\n\nお部屋ピックアップさせて頂きました！！"');
+  t("閉じの } が無い時も先頭と末尾の \" を落とす", headNoClose.text === "〇〇さん\n\nお部屋ピックアップさせて頂きました！！", JSON.stringify(headNoClose));
+  const tailSp = stripJsonEdgeResidue("お手隙の際にご査収ください😌！！\"\n}");
+  t("\"\\n} の形も落とす", tailSp.text === "お手隙の際にご査収ください😌！！", JSON.stringify(tailSp));
+  const mid = '10/3(土) 11:00〜13:00にてご案内可能です😊！！","closing":"YUMAさんご都合よろしいお日にち御座いますでしょうか😌！！"}';
+  t("中に鍵が残る形は触らない（送信 API が止める）", stripJsonEdgeResidue(mid).text === mid && !stripJsonEdgeResidue(mid).stripped);
+  for (const plain of ["〇〇さん\nお手隙の際にご査収ください😌！！", "顔文字です{笑}", "「ありがとうございます」とお伝え下さい", "(*´꒳`*)}", "ご案内可能です！！\n}"]) {
+    t(`普通の文はそのまま: ${JSON.stringify(plain).slice(0, 30)}`, stripJsonEdgeResidue(plain).text === plain && !stripJsonEdgeResidue(plain).stripped);
+  }
+  t("\"} だけの文は空にしない（そのまま）", stripJsonEdgeResidue('"}').text === '"}');
 }
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

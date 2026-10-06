@@ -3,6 +3,9 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
 import AixManualModal from "./components/AixManualModal";
+// 2026-10-06 竹内（チンシャン事例）「内覧誘導の部分実際に送った物件のところ 読み取って選択できるようにする」
+import SentPropertyPicker from "./components/SentPropertyPicker";
+import { preselectViewingCandidates, toggleCandidateInSlots, latestCustomerTurnStartAt } from "./lib/viewing-property-candidates";
 import BottomNav from "./components/BottomNav";
 import CustomerStateBar from "./components/CustomerStateBar";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
@@ -24,6 +27,7 @@ import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 // 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
 import { useNewArrivalCards, useNewArrivalCounts, newArrivalElems, NewArrivalListBadge } from "./components/NewArrivalCard";
+import { QuotedReplyBanner, useQuotedMessages } from "./components/QuotedReplyBanner";
 import { LIST_CHIP, LIST_CHIP_TONE, propertyCheckTone } from "./lib/list-row-chip";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す時間は1つ。お客様が日にちを指定した日だけその日の空き時間を全部
@@ -2161,7 +2165,6 @@ export default function Home() {
   }, []);
 
   // 引用（リプライ）元メッセージの解決：quoted_message_id → messages.line_message_id でJOIN
-  const [quotedMessageMap, setQuotedMessageMap] = useState<Map<string, { text: string; imageUrl?: string }>>(new Map());
   const quotedIdsKey = useMemo(() => {
     if (!selectedId) return "";
     const conv = conversations.find((c) => c.id === selectedId);
@@ -2172,28 +2175,8 @@ export default function Home() {
     )).sort();
     return ids.join(",");
   }, [conversations, selectedId]);
-  useEffect(() => {
-    // 会話切り替え・引用ID変化のたびにリセット＆再取得
-    setQuotedMessageMap(new Map());
-    if (!quotedIdsKey) return;
-    const quotedIds = quotedIdsKey.split(",");
-    let cancelled = false;
-    void (async () => {
-      const { data } = await supabase
-        .from("messages")
-        .select("line_message_id, text, image_url")
-        .in("line_message_id", quotedIds);
-      if (cancelled || !data) return;
-      const map = new Map<string, { text: string; imageUrl?: string }>();
-      for (const row of data as { line_message_id: string | null; text: string | null; image_url: string | null }[]) {
-        if (row.line_message_id) {
-          map.set(row.line_message_id, { text: row.text || "", imageUrl: row.image_url || undefined });
-        }
-      }
-      setQuotedMessageMap(map);
-    })();
-    return () => { cancelled = true; };
-  }, [selectedId, quotedIdsKey]);
+  // 2026-10-07 竹内（Ryoichi kiritsuke）: 引用先の画像のサムネイル・どの物件の資料かも読む（app/components/QuotedReplyBanner.tsx）
+  const quotedMessageMap = useQuotedMessages(selectedId, quotedIdsKey);
 
   // 会話を開いたとき：その会話の全メッセージを再取得（90日制限を超える古い履歴も表示）
   //   2026-10-06 ⑫: 一覧はメッセージを持たなくなったので、開いた会話のメッセージはここで1回だけ読む（下の「0件の会話」の取得と二重にしない）
@@ -8006,42 +7989,15 @@ export default function Home() {
                             <div className="mb-1 text-[11px] font-semibold text-slate-500">{message.speakerName}</div>
                           )}
                           {/* 引用（リプライ）元メッセージの表示 */}
-                          {isCustomer && message.quotedMessageId && (() => {
-                            const quoted = quotedMessageMap.get(message.quotedMessageId!);
-                            const targetMsgId = quoted ? lineMessageIdToMsgId.get(message.quotedMessageId!) : undefined;
-                            if (!quoted) {
-                              // 引用元が未解決でもバナーは表示（元メッセージへのジャンプは不可）
-                              return (
-                                <div className="mb-1 flex items-start gap-1 rounded border-l-2 border-gray-300 bg-gray-100 px-2 py-1 text-[11px] text-gray-400">
-                                  <span className="shrink-0">↩ [引用]</span>
-                                  <span className="truncate text-gray-400">（メッセージを参照）</span>
-                                </div>
-                              );
-                            }
-                            const label = quoted.imageUrl || quoted.text === "[画像]"
-                              ? "[画像]"
-                              : quoted.text.slice(0, 30) + (quoted.text.length > 30 ? "…" : "");
-                            const handleQuoteClick = () => {
-                              if (!targetMsgId) return;
-                              const el = document.getElementById(`msg-${targetMsgId}`);
-                              if (!el) return;
-                              el.scrollIntoView({ behavior: "smooth", block: "center" });
-                              // ハイライト: 0.8秒後に消えるフラッシュ
-                              el.style.transition = "background-color 0.1s";
-                              el.style.backgroundColor = "rgba(255, 220, 100, 0.5)";
-                              setTimeout(() => { el.style.backgroundColor = ""; }, 800);
-                            };
-                            return (
-                              <div
-                                className={`mb-1 flex items-start gap-1 rounded border-l-2 bg-gray-100 px-2 py-1 text-[11px] text-gray-500 ${targetMsgId ? "cursor-pointer border-blue-400 hover:bg-blue-50 active:bg-blue-100" : "border-gray-300"}`}
-                                onClick={targetMsgId ? handleQuoteClick : undefined}
-                                title={targetMsgId ? "タップして元のメッセージに移動" : undefined}
-                              >
-                                <span className="shrink-0">↩ [引用]</span>
-                                <span className="truncate">{label}</span>
-                              </div>
-                            );
-                          })()}
+                          {isCustomer && message.quotedMessageId && (
+                            <QuotedReplyBanner
+                              source={quotedMessageMap.get(message.quotedMessageId)}
+                              targetMsgId={lineMessageIdToMsgId.get(message.quotedMessageId)}
+                              account={selectedConversation.account}
+                              customerName={selectedConversation.customerName}
+                              onOpenImage={(url) => { setLightboxImages([url]); setLightboxIndex(0); }}
+                            />
+                          )}
                           <div
                             className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
                               isCustomer
@@ -12819,6 +12775,28 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* 2026-10-06 竹内（チンシャン事例）: この会話で送った物件の候補（見積書作成と同じ材料・複数選べる）。押すと空いている枠に物件名・号室・資料の画像 */}
+              <SentPropertyPicker
+                conversationId={conv?.id}
+                multiple
+                selected={viewingGuideProperties.filter((p) => p.name.trim()).map((p) => ({ name: p.name, room: p.roomNumber || null }))}
+                onToggle={(c, select) => {
+                  const next = toggleCandidateInSlots(viewingGuideProperties, viewingGuideImagePreviews, c, select);
+                  setViewingGuideProperties(next.slots);
+                  setViewingGuideImagePreviews(next.images);
+                  setViewingGuideOcrLoadings(next.slots.map(() => false));
+                  setViewingGuideResult(null);
+                }}
+                onLoaded={(cands) => {
+                  // お客様の発言（引用・名前・持ち込み）で決まった物件だけ先に入れる（枠が全部空の時だけ）
+                  if (viewingGuideProperties.some((p) => p.name.trim())) return;
+                  const p = preselectViewingCandidates(cands, { mode: "guide", customerText: latestCustomerTurnText((conv?.messages ?? []).map((m) => ({ sender: m.sender, text: m.text ?? "" }))), turnStartAt: latestCustomerTurnStartAt(conv?.messages ?? []) });
+                  let slots = viewingGuideProperties, images = viewingGuideImagePreviews;
+                  for (const c of cands.filter((x) => p.keys.includes(x.key))) ({ slots, images } = toggleCandidateInSlots(slots, images, c, true));
+                  if (slots !== viewingGuideProperties) { setViewingGuideProperties(slots); setViewingGuideImagePreviews(images); setViewingGuideOcrLoadings(slots.map(() => false)); }
+                }}
+                accent="purple"
+              />
               {/* 物件スロット（複数対応） */}
               <div className="mb-2">
                 {viewingGuideProperties.map((prop, idx) => (

@@ -4,6 +4,7 @@
 //
 // 2026-10-07 竹内（会話「し」）「お客さんの希望の条件に合っていない部分をちゃんといれたうえで、具体的に内覧訴求」
 //   戻すのは PICKUP_WANTS_FIT=off（注記も出口の注意も出ない）／色だけ止めるのは PICKUP_INTERIOR_TONE=off
+// 2026-10-07（Ryoichi・築浅かリノベ）: リノベ済みを資料の文字で読むため pdf_text も読む（terms.renovated が無い 10/06d より前の行）
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parsePickupFact } from "./pickup-send-facts";
 import { bundleWantsFit, buildBundleFitNote, customerWantsForFit, pickupFitInputFromRow, type BundleFit } from "./pickup-wants-fit";
@@ -16,7 +17,7 @@ export const BUNDLE_TONE_MAX = 10;
 
 type Row = {
   id: number; property_name: string | null; summary_text: string | null; image_lines: string[] | null; site: string | null;
-  pdf_blob_url: string | null; page_image_url: string | null;
+  pdf_blob_url: string | null; page_image_url: string | null; pdf_text: string | null;
   terms: Parameters<typeof pickupFitInputFromRow>[0]["terms"]; equipment: Parameters<typeof pickupFitInputFromRow>[0]["equipment"];
 };
 
@@ -28,7 +29,7 @@ export async function loadBundleWantsFit(
   // 照らす要望が条件の文に無くても、設備の照合（行の equipment.match）はある事がある → 行は読む
   const wants = customerWantsForFit(conditionsText);
   const { data, error } = await supabase.from("property_pickups")
-    .select("id, property_name, summary_text, image_lines, site, pdf_blob_url, page_image_url, terms, equipment")
+    .select("id, property_name, summary_text, image_lines, site, pdf_blob_url, page_image_url, pdf_text, terms, equipment")
     .in("id", [...pickupIds]);
   if (error || !data) return null;
   const byId = new Map((data as Row[]).map((r) => [r.id, r]));
