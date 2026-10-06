@@ -72,7 +72,8 @@ export function parseEstimateItems(text: string | null | undefined): EstimateIte
 }
 
 export type AdSource = {
-  kind: "candidate_pool" | "sent_property";
+  /** pickup＝売上サポの行（property_pickups.ad_yen）。2026-10-06 AIX ツールの札の「見積書作成」で、まだ送っていない部屋の見積書も AD と結ぶ（最後の手） */
+  kind: "candidate_pool" | "sent_property" | "pickup";
   name: string;
   roomNo?: string | null;
   adMonths?: number | null;
@@ -92,12 +93,12 @@ export type AdLink = {
 };
 
 /**
- * 見積書の1件を AD の出所と結び付ける。候補プール → 送付記録 の順。
+ * 見積書の1件を AD の出所と結び付ける。候補プール → 送付記録 → 売上サポの行 の順。
  * 号室が両方にあって違う時は同じ建物の別の部屋なので使わない。AD が無い出所は飛ばす。
  */
 export function linkAdForEstimate(item: EstimateItem, sources: ReadonlyArray<AdSource>): AdLink | null {
   if (!item.propertyName || item.propertyName.length < 2) return null;
-  const order: AdSource["kind"][] = ["candidate_pool", "sent_property"];
+  const order: AdSource["kind"][] = ["candidate_pool", "sent_property", "pickup"];
   for (const kind of order) {
     const pool = sources.filter((s) => s.kind === kind && s.name && (s.adMonths != null || s.adYen != null));
     if (pool.length === 0) continue;

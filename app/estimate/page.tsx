@@ -411,6 +411,11 @@ function EstimatePageContent() {
     }
     if (out.rent) src.rent = t?.rent && t.rent === out.rent ? "資料の読み取り（売上サポと一致）" : "資料の読み取り";
     else if (t?.rent) { out.rent = t.rent; out.nextRent = t.rent; src.rent = "売上サポの資料"; }
+    // 2026-10-06 管理費も家賃と同じ出所（売上サポの概要の文字）。読み取りが空（0）の時だけ・家賃と管理費が変わったら保証料を計算し直す
+    if (!out.managementFee && t?.managementFee) { out.managementFee = t.managementFee; out.nextManagementFee = t.managementFee; src.managementFee = "売上サポの資料"; }
+    if ((src.rent === "売上サポの資料" || src.managementFee) && out.guaranteeRate) {
+      out.guarantee = Math.round(calcGuaranteeBase(out.rent, out.managementFee, out.waterFee) * out.guaranteeRate / 100);
+    }
     // 割引はスタッフが決める（目安は画面に出し、押した時だけ入る）＝ここでは入れない
     setPrefillSrc(src);
     return out;
@@ -457,7 +462,8 @@ function EstimatePageContent() {
     handoffStartedRef.current = true;
     void (async () => {
       try {
-        const r = await fetch(`/api/estimate-handoff?conversation_id=${encodeURIComponent(handoffConv.conversationId)}`, { headers: internalAuth, cache: "no-store" });
+        // 2026-10-06 AIX ツールの物件の札（見積書作成）から来た時は pickup_id＝その行のお部屋で開く
+        const r = await fetch(`/api/estimate-handoff?conversation_id=${encodeURIComponent(handoffConv.conversationId)}${handoffConv.pickupId ? `&pickup_id=${handoffConv.pickupId}` : ""}`, { headers: internalAuth, cache: "no-store" });
         const j = await r.json() as { ok: boolean; handoff?: EstimateHandoff; error?: string };
         if (!j.ok || !j.handoff) { setHandoffError(j.error || "会話の材料を読めませんでした"); return; }
         handoffRef.current = j.handoff;
@@ -1153,7 +1159,8 @@ function EstimatePageContent() {
             {/* 手動入力ボタン */}
             <button
               onClick={() => {
-                setItems(makeBlankItems(account, step1MoveInDate));
+                // 2026-10-06 引き継ぎ（LINE・AIX ツールの札）から来た時は手入力でも物件名・号室・家賃・管理費・お客様名を入れる（無い時はそのまま）
+                setItems(applyHandoffToItems(makeBlankItems(account, step1MoveInDate)));
                 setStep("review");
                 setTimeout(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
               }}

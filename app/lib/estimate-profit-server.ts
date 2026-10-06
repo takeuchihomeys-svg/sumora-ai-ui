@@ -5,6 +5,7 @@
 //
 // 2026-09-24 竹内「AD − 見積書の割引金額が利益。物件オススメ・ピックアップで送った物件なら AD も分かっているはず。連動する」
 import { supabase } from "@/app/lib/supabase";
+import { rentFromSummary } from "@/app/lib/estimate-handoff";
 import { parseEstimateItems, linkAdForEstimate, computeProfitYen, summarizeEstimateProfit, type AdSource, type ProfitSummary } from "@/app/lib/estimate-profit";
 
 const POOL_DAYS = 60;
@@ -38,6 +39,17 @@ export async function loadAdSources(opts: { propertyCustomerId: string | null; c
   for (const r of (sent ?? []) as SentRow[]) {
     if (!r.property_name) continue;
     out.push({ kind: "sent_property", name: r.property_name, roomNo: r.room_no, rent: r.rent, adMonths: r.ad_months ?? null, adYen: r.ad_yen ?? null, at: r.sent_at });
+  }
+  // 2026-10-06 竹内「AIXツール 物件ごとに見積書作成のボタン」: まだお客様に送っていない札の部屋（候補プール・送付記録に無い）の見積書も
+  //   売上サポの行の AD と結ぶ（最後の手・号室が違えば使わない＝linkAdForEstimate）
+  const since = new Date(new Date(before).getTime() - POOL_DAYS * 86400_000).toISOString();
+  let pq = supabase.from("property_pickups").select("property_name, room_no, ad_yen, summary_text, created_at")
+    .not("ad_yen", "is", null).gte("created_at", since).lte("created_at", before).order("created_at", { ascending: false }).limit(300);
+  pq = propertyCustomerId ? pq.eq("property_customer_id", propertyCustomerId) : pq.eq("conversation_id", conversationId ?? "");
+  const { data: picks } = await pq;
+  for (const r of (picks ?? []) as Array<{ property_name: string | null; room_no: string | null; ad_yen: number | null; summary_text: string | null; created_at: string }>) {
+    if (!r.property_name) continue;
+    out.push({ kind: "pickup", name: r.property_name, roomNo: r.room_no, rent: rentFromSummary(r.summary_text).rent, adMonths: null, adYen: r.ad_yen, at: r.created_at });
   }
   return out;
 }

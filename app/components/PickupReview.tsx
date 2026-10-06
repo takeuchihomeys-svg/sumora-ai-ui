@@ -36,6 +36,7 @@ import { looksLikeSearchInstruction, overrideLine, overrideJudgeLine, overrideRu
 import { normalizeSearchMode, roundSearchModeLine, type ChainNote } from "@/app/lib/search-widen-chain";
 // 2026-09-30 竹内「ここにも分かりやすいようにお客さんの条件を入れておく」: 会話の一番上に常に出す「🔎 お客様の条件」（純関数と画面の部品だけ）
 import PickupConditionsBar from "@/app/components/PickupConditionsBar";
+import PickupEstimateButton from "@/app/components/PickupEstimateButton";
 import { latestOverrideLabel } from "@/app/lib/customer-condition-view";
 // 2026-10-06 ⑰: 物件オススメ＝送った束の中から1件（AIX の判定と同じ時間の線・recommendation-frame は純関数で画面から読める）
 import { BUNDLE_COMPARE_WINDOW_HOURS } from "@/app/lib/recommendation-frame";
@@ -1338,6 +1339,8 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
           <div className="flex-1 min-w-0 text-[10px] font-bold leading-snug break-words" style={{ color: hl ? HEADLINE_COLOR[hl.tone] : "#bcaaa4" }}>
             {hl ? hl.text : "理由の記録なし"}
           </div>
+          {/* 2026-10-06 竹内「AIXツール 物件ごとに見積書作成のボタン」: この行のお部屋で見積書作成を開く（PickupEstimateButton） */}
+          <PickupEstimateButton conversationId={open?.conversation_id ?? b.conversation_id} pickupId={it.id} onGo={leaveTo} />
           <button type="button" onClick={(e) => { stop(e); setOpenCard((p) => ({ ...p, [it.id]: !p[it.id] })); }} aria-expanded={opened}
             className="shrink-0 rounded-full px-2.5 py-1 font-bold leading-none" style={{ background: "#efebe9", color: "#5d4037", fontSize: 11 /* globals.css の button { font: inherit } が text-[11px] に勝つため */ }}>{opened ? "詳細 ▴" : "詳細 ▾"}</button>
         </div>

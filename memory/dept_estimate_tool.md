@@ -1,8 +1,23 @@
 # #42 見積書ツール部署 倉庫
 
-> 更新者: #42-W / 最終更新: 2026-10-01
+> 更新者: #42-W / 最終更新: 2026-10-06
 
 ---
+
+## 🔴 AIX ツールの物件の札 → 見積書作成（竹内・2026-10-06「AIXツール 物件ごとに見積書作成のボタンをつける それを押すと見積書と連携して作成できるようにする」・未コミット）
+
+**作り直さず、10/01 の LINE → 見積書の引き継ぎ（estimate-handoff）に `pickup=<property_pickups.id>` を1つ足しただけ。**
+- 札（`PickupReview` の renderCard・「詳細 ▾」の左）に「🧾 見積書作成」＝`app/components/PickupEstimateButton.tsx`。送信済み・未送信・見送りのどの札にも出す。会話に紐付いていないお客様は押せない
+- 押すと `/estimate?conv=<会話>&pickup=<行の id>`（URL は id だけ）→ `GET /api/estimate-handoff?conversation_id=&pickup_id=` →
+  `loadEstimateHandoff(conv, { pickupId })` がその行を **id で**読む（60日の外でも）。**このお客様（property_customer_id）か会話の行だけ**使う（id を書き換えても他人の資料は出ない）。読めない時は自動の選びに警告を足し、自動の読み取りは止める
+- `targetFromPickup`（純関数）: その行の資料（page_image_url）・PDF の文字・家賃/管理費（summary_text）・AD（行の ad_yen／資料の札。無い時だけ送付記録の AD を名前で寄せる）・募集の条件の1行（terms.line）。出所「AIX ツールの物件の札から選んだお部屋」
+- `applyPickedPickup`: 自動の選び（selectEstimateTarget）を札のお部屋に差し替え、自動の選びは「選び直す」に下げて残す。警告は札のお部屋について出し直す（主のお部屋と違う・募集終了・審査中/商談中・AD 不明・資料なし）。自動の AI 読み取りの止め方は今まで通り
+- 画面: 読み取りが空の欄に 物件名・号室・家賃・**管理費（新）**・お客様名（「自動: 売上サポの資料」の札）。家賃・管理費を入れたら保証料を計算し直す。**手動入力**でも同じ値を入れる（新）。監視の板に「売上サポ: 💴 敷0/礼0 築5年 …」を見比べ用に出す
+- **敷金・礼金・保証金は terms から金額に直さない**: terms のヶ月は円を家賃で割った0.1刻みの丸めのことがあり、円に戻すと推測になる → AI 読み取り（PDF の文字＋画像）に任せる
+- 結び付け: 作った見積書は今まで通り「📎 AIX【見積書送る】にセットして LINE へ」→ 送ると estimate_records（名前の【】で結ぶ）。
+  AD の出所に**売上サポの行（kind=pickup）を最後の手として足した**（estimate-profit・候補プール→送付記録→売上サポ）＝まだ送っていない札の部屋の見積書も AD・利益が残る。今までの結び方の順は変えていない
+- テスト: `npx tsx app/lib/__tests__/estimate-pickup-entry.test.ts`（19件）・既存 estimate-handoff 51件・estimate-profit 17件 PASS
+- 未決: 見積書の送付の記録（sent_properties aix:estimate_sheet）に pickup_id は入らない（画像の読み取りで名前を寄せるまま）。要るなら戻りの URL に est_pickup を通す
 
 ## 🔴 LINE → 見積書ツールの引き継ぎ（竹内・2026-10-01「見積書きかれたら…押したら見積書のツールに連携・送った物件がセットされた状態で・AD も分かるように・割引と最終確認だけスタッフ」・未コミット）
 

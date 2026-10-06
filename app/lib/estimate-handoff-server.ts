@@ -12,7 +12,7 @@ import { pickupDealStatus } from "@/app/lib/listing-deal-status";
 import { listingAdStamp, adMonthsOfStamp } from "@/app/lib/pickup-listing-text";
 import { isCustomerDelivery } from "@/app/lib/property-brain";
 import {
-  selectEstimateTarget, suggestEstimateDiscount, wantsLowInitialCostText, rentFromSummary, resolveEstimateEntry,
+  selectEstimateTarget, targetFromPickup, applyPickedPickup, suggestEstimateDiscount, wantsLowInitialCostText, rentFromSummary, resolveEstimateEntry,
   buildHandoffEvents, customerAskTimes, type HandoffSentProperty, type HandoffPickup, type HandoffAdRow, type HandoffMessage, type HandoffFocus,
   type EstimateHandoff, type EstimateHandoffAccount,
 } from "@/app/lib/estimate-handoff";
@@ -26,6 +26,21 @@ const AIX_LABEL: Record<string, string> = {
   property_send: "物件ピックアップ", property_recommendation: "物件オススメ", property_check_result: "物件確認した",
   estimate_sheet: "見積書送る", viewing_invite: "内覧へ", meeting_place: "待ち合わせ", application_push: "申込へ",
 };
+
+type PickRow = { id: number; property_name: string; room_no: string | null; sent_at: string | null; created_at: string; status: string | null; ad_yen: number | null; summary_text: string | null; page_image_url: string | null; pdf_text: string | null; terms: { evidence?: { moveIn?: string | null } | null; line?: string | null } | null; expired_at: string | null };
+
+/** 売上サポの1行 → 引き継ぎの形（家賃・管理費は概要の文字・AD は資料の札→行の AD 円） */
+function toHandoffPickup(p: PickRow): HandoffPickup {
+  const { rent, managementFee } = rentFromSummary(p.summary_text);
+  const stamp = listingAdStamp(p.pdf_text);
+  const adMonths = adMonthsOfStamp(stamp, rent) ?? (p.ad_yen && rent ? Math.round((p.ad_yen / rent) * 100) / 100 : null);
+  return {
+    id: p.id, name: p.property_name, room: p.room_no, sentAt: p.sent_at, createdAt: p.created_at, status: p.status,
+    adYen: p.ad_yen, rent, managementFee, adStamp: stamp, adMonths,
+    dealStatus: pickupDealStatus(p), pageImageUrl: p.page_image_url, pdfText: p.pdf_text, expired: !!p.expired_at,
+    termsLine: typeof p.terms?.line === "string" && p.terms.line.trim() ? p.terms.line.trim() : null,
+  };
+}
 
 /** 監査用: その時点（asOf）までの記録だけで決め直す（見積書を送った時に、今の選び方なら同じお部屋を選んだか） */
 async function customerStateAsOf(conversationId: string, asOf: string): Promise<CustomerState | null> {
@@ -46,8 +61,9 @@ async function customerStateAsOf(conversationId: string, asOf: string): Promise<
 
 /**
  * @param opts.asOf 監査用（その時刻より前の記録だけで決める）。画面からは渡さない
+ * @param opts.pickupId AIX ツールの物件の札から来た時（2026-10-06）。その行（このお客様・会話の物だけ）のお部屋で開く
  */
-export async function loadEstimateHandoff(conversationId: string, opts: { asOf?: string } = {}): Promise<EstimateHandoff | null> {
+export async function loadEstimateHandoff(conversationId: string, opts: { asOf?: string; pickupId?: number | null } = {}): Promise<EstimateHandoff | null> {
   const asOf = opts.asOf ?? null;
   const { data: conv } = await supabase.from("conversations")
     .select("id, customer_name, account, property_customer_id, suggested_aix_meta")
@@ -79,6 +95,16 @@ export async function loadEstimateHandoff(conversationId: string, opts: { asOf?:
       .order("created_at", { ascending: false }).limit(8),
     asOf ? customerStateAsOf(conversationId, asOf) : getCustomerState(conversationId),
   ]);
+  // 札で選んだ行は期間（60日）の外でも id で読む。別のお客様の行は使わない（URL の id を書き換えられても他人の資料を出さない）
+  const pickedRow = opts.pickupId ? await (async () => {
+    const { data } = await supabase.from("property_pickups")
+      .select("id, property_name, room_no, sent_at, created_at, status, ad_yen, summary_text, page_image_url, pdf_text, terms, expired_at, property_customer_id, conversation_id")
+      .eq("id", opts.pickupId!).maybeSingle();
+    const r = data as (PickRow & { property_customer_id: string | null; conversation_id: string | null }) | null;
+    if (!r) return null;
+    const mine = (pcId && r.property_customer_id === pcId) || r.conversation_id === conversationId;
+    return mine ? r : null;
+  })() : null;
 
   const msgs = ((msgsRes.data ?? []) as MsgRow[]).slice().reverse(); // 古い順
   const cust = (custRes as { data: Record<string, unknown> | null }).data as {
@@ -94,17 +120,7 @@ export async function loadEstimateHandoff(conversationId: string, opts: { asOf?:
   const adRows: HandoffAdRow[] = sentRows.filter((r) => r.property_name && (r.ad_months != null || r.ad_yen != null))
     .map((r) => ({ name: r.property_name!, room: r.room_no, adMonths: r.ad_months, adYen: r.ad_yen, rent: r.rent, at: r.sent_at }));
 
-  type PickRow = { id: number; property_name: string; room_no: string | null; sent_at: string | null; created_at: string; status: string | null; ad_yen: number | null; summary_text: string | null; page_image_url: string | null; pdf_text: string | null; terms: { evidence?: { moveIn?: string | null } | null } | null; expired_at: string | null };
-  const pickups: HandoffPickup[] = ((pickRes.data ?? []) as PickRow[]).map((p) => {
-    const { rent, managementFee } = rentFromSummary(p.summary_text);
-    const stamp = listingAdStamp(p.pdf_text);
-    const adMonths = adMonthsOfStamp(stamp, rent) ?? (p.ad_yen && rent ? Math.round((p.ad_yen / rent) * 100) / 100 : null);
-    return {
-      id: p.id, name: p.property_name, room: p.room_no, sentAt: p.sent_at, createdAt: p.created_at, status: p.status,
-      adYen: p.ad_yen, rent, managementFee, adStamp: stamp, adMonths,
-      dealStatus: pickupDealStatus(p), pageImageUrl: p.page_image_url, pdfText: p.pdf_text, expired: !!p.expired_at,
-    };
-  });
+  const pickups: HandoffPickup[] = ((pickRes.data ?? []) as PickRow[]).map(toHandoffPickup);
 
   const focusRoom = state?.focusKey ? state.properties.find((p) => p.key === state.focusKey) ?? null : null;
   const focus: HandoffFocus = focusRoom ? {
@@ -117,7 +133,13 @@ export async function loadEstimateHandoff(conversationId: string, opts: { asOf?:
     messages: hMsgs, sent,
     sharedNamesOf: (m) => customerSharedPropertyNames([{ sender: m.sender, text: m.text, createdAt: m.at }], { limit: 3 }).map((x) => x.name),
   });
-  const choice = selectEstimateTarget({ events, focus, sent, pickups, adRows, now: asOf ? new Date(asOf).getTime() : Date.now(), askTimes: customerAskTimes(hMsgs) });
+  const autoChoice = selectEstimateTarget({ events, focus, sent, pickups, adRows, now: asOf ? new Date(asOf).getTime() : Date.now(), askTimes: customerAskTimes(hMsgs) });
+  // 2026-10-06 AIX ツールの物件の札から来た時: 押した行のお部屋にする（自動の選びは「選び直す」に残す）。行が読めない時は自動の選びに警告を足す
+  const choice = pickedRow
+    ? applyPickedPickup(autoChoice, targetFromPickup(toHandoffPickup(pickedRow), adRows, sent), focus)
+    : opts.pickupId
+      ? { ...autoChoice, warnings: ["AIX ツールで選んだ物件が見つかりません（このお客様の物件でない・消えた）。下のお部屋を確かめてください", ...autoChoice.warnings], autoExtract: false }
+      : autoChoice;
   const pastDiscounts = ((estRes.data ?? []) as Array<{ discount_yen: number | null }>).map((r) => r.discount_yen ?? 0).filter((v) => v > 0);
   const t = choice.target;
   const discount = t ? suggestEstimateDiscount({ rent: t.rent, adYen: t.adYen, pastDiscounts }) : null;

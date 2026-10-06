@@ -60,16 +60,23 @@ export function resolveEstimateEntry(o: { brainAction: string | null | undefined
 }
 
 /** LINE → 見積書作成の URL（会話 ID と場面だけ。中身はツールがサーバーから読む＝URL に個人情報を載せない） */
-export function buildEstimateHref(conversationId: string, mode: EstimateEntryMode | null = "estimate"): string {
+// 2026-10-06 竹内「AIXツール 物件ごとに見積書作成のボタンをつける それを押すと見積書と連携して作成できるようにする」:
+//   AIX ツール（売上サポ＝PickupReview）の物件の札から来た時は pickup=<property_pickups.id> を付ける（その行のお部屋で開く）。
+//   中身（家賃・AD・資料）は今まで通りツールがサーバーから読む＝URL には id だけ
+export function buildEstimateHref(conversationId: string, mode: EstimateEntryMode | null = "estimate", opts: { pickupId?: number | null } = {}): string {
   const p = new URLSearchParams({ conv: conversationId });
   if (mode && mode !== "estimate") p.set("scene", mode);
+  if (opts.pickupId != null && Number.isSafeInteger(opts.pickupId) && opts.pickupId > 0) p.set("pickup", String(opts.pickupId));
   return `/estimate?${p.toString()}`;
 }
-export function parseEstimateHandoff(search: string): { conversationId: string; mode: EstimateEntryMode } | null {
+export function parseEstimateHandoff(search: string): { conversationId: string; mode: EstimateEntryMode; pickupId?: number } | null {
   const p = new URLSearchParams(search);
   const conv = (p.get("conv") ?? "").trim();
   if (!/^[0-9a-f-]{36}$/i.test(conv)) return null;
-  return { conversationId: conv, mode: p.get("scene") === "with_property" ? "with_property" : "estimate" };
+  const out: { conversationId: string; mode: EstimateEntryMode; pickupId?: number } = { conversationId: conv, mode: p.get("scene") === "with_property" ? "with_property" : "estimate" };
+  const pk = (p.get("pickup") ?? "").trim();
+  if (/^[1-9][0-9]{0,14}$/.test(pk)) out.pickupId = Number(pk);
+  return out;
 }
 
 /** 見積書作成 → LINE（作った見積書の画像を AIX にセットして開く）。画像は Blob に置いた URL */
@@ -121,6 +128,9 @@ export type HandoffPickup = {
   pageImageUrl: string | null;
   pdfText: string | null;
   expired: boolean;
+  /** 売上サポの募集の条件の1行（terms.line「💴 敷0/礼1ヶ月 築8年 …」）。見比べ用に画面に出すだけ
+   *  （金額には直さない＝ヶ月は円を家賃で割った0.1刻みの丸めのことがあり、円に戻すと推測になる） */
+  termsLine?: string | null;
 };
 /** sent_properties の AD（売上番長グループへの共有の行も含む＝拡張が送った時に説明文から読んだ AD） */
 export type HandoffAdRow = { name: string; room: string | null; adMonths: number | null; adYen: number | null; rent: number | null; at: string | null };
@@ -152,7 +162,7 @@ export type HandoffEvent = { at: string; kind: HandoffEventKind; props: HandoffP
 /** 引用が見積書・物件の問いか（費用・見積・物件・空き・詳細・「ここ」「こちら」・？） */
 const QUOTE_ASK_RE = /見積|初期費用|費用|いくら|物件|お部屋|部屋|空き|空いて|詳細|内装|ここ|こちら|これ|[？?]/;
 
-export type EstimateTargetSource = "customer_quoted" | "customer_named" | "customer_brought" | "our_rec" | "our_send" | "focus" | "candidate";
+export type EstimateTargetSource = "customer_quoted" | "customer_named" | "customer_brought" | "our_rec" | "our_send" | "focus" | "candidate" | "staff_pickup";
 export const TARGET_SOURCE_LABEL: Record<EstimateTargetSource, string> = {
   customer_quoted: "お客様が引用して聞いたお部屋",
   customer_named: "お客様が名前を書いたお部屋",
@@ -161,6 +171,7 @@ export const TARGET_SOURCE_LABEL: Record<EstimateTargetSource, string> = {
   our_send: "直近にこちらが送ったお部屋（1件）",
   focus: "会話の主のお部屋（customer-state）",
   candidate: "候補（スタッフが選ぶ）",
+  staff_pickup: "AIX ツールの物件の札から選んだお部屋",
 };
 
 export type EstimateTarget = {
@@ -183,6 +194,8 @@ export type EstimateTarget = {
   pickupId: number | null;
   dealStatus: string | null;
   ended: boolean;
+  /** 売上サポの募集の条件の1行（AIX ツールの札から来た時だけ・見比べ用） */
+  termsLine?: string | null;
 };
 
 export type EstimateTargetChoice = {
@@ -547,6 +560,40 @@ export function selectEstimateTarget(input: {
     }
   }
   return { target, candidates, others, warnings, autoExtract };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// AIX ツールの物件の札から来た時（スタッフが選んだ1行で開く）
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 売上サポの1行（property_pickups）＝そのお部屋の見積書の対象。名前で寄せ直さず、その行の資料・文字・家賃・AD をそのまま使う
+ * （同じ建物を何回もピックアップしている時も、押した札の回の資料になる）。AD が行に無い時だけ送付の記録の AD を名前で寄せる（enrich と同じ）。
+ */
+export function targetFromPickup(p: HandoffPickup, adRows: ReadonlyArray<HandoffAdRow> = [], sent: ReadonlyArray<HandoffSentProperty> = []): EstimateTarget {
+  const t = enrich({ name: p.name, room: p.room, source: "staff_pickup", at: p.sentAt ?? p.createdAt }, [p], adRows, sent);
+  return { ...t, room: p.room ?? t.room, pickupId: p.id, termsLine: p.termsLine ?? null };
+}
+
+/**
+ * 自動で選んだお部屋（selectEstimateTarget）を、札で選んだお部屋に差し替える。自動の選びは「選び直す」の候補に下げて残す
+ * （同じお部屋は重ねない）。警告は差し替えたお部屋について出し直す（自動の選びの「N件お送りしています」「先回り」は当てはまらない）。
+ * 自動の AI 読み取りの止め方は今まで通り（審査中・商談中・募集終了・資料なし は止める）。
+ */
+export function applyPickedPickup(choice: EstimateTargetChoice, picked: EstimateTarget, focus: HandoffFocus = null): EstimateTargetChoice {
+  const same = (x: EstimateTarget) => (x.pickupId != null && x.pickupId === picked.pickupId)
+    || (!!x.name && nameKey(x.name) === nameKey(picked.name) && roomEq(x.room, picked.room) && !!x.room === !!picked.room);
+  const demote = (x: EstimateTarget): EstimateTarget => ({ ...x, source: "candidate", sourceLabel: TARGET_SOURCE_LABEL.candidate });
+  const rest = [choice.target, ...choice.candidates].filter((x): x is EstimateTarget => !!x && !same(x)).map(demote);
+  const others = choice.others.filter((x) => !same(x) && !rest.some((r) => r.name === x.name && r.room === x.room));
+  const warnings: string[] = [];
+  if (focus && picked.name && !matchKnownProperty(picked.name, [focus.building, focus.name], MATCH_MIN_SCORE)) warnings.push(`主のお部屋（${focus.name}）とは別のお部屋です`);
+  if (picked.ended) warnings.push("このお部屋は募集終了の記録があります");
+  if (picked.dealStatus) warnings.push(`資料の現況が「${picked.dealStatus}」です`);
+  if (picked.adMonths == null && picked.adYen == null) warnings.push("AD が分かりません（資料・管理会社で確かめてください）");
+  if (picked.materials.length === 0 && !picked.materialText) warnings.push("資料の画像がありません（保存期間が切れた等。貼り付けてから AI で読み取ってください）");
+  const autoExtract = !picked.ended && !picked.dealStatus && (picked.materials.length > 0 || !!picked.materialText);
+  return { target: picked, candidates: rest, others, warnings, autoExtract };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

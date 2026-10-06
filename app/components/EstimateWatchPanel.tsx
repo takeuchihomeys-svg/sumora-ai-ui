@@ -54,6 +54,8 @@ export default function EstimateWatchPanel({ handoff, selected, onSelect, accent
                 {selected.adSource === "sent" ? <span className="font-normal text-[#8e24aa]">・送付の記録</span> : null}
               </span>
               <span>資料 {selected.materials.length}枚{selected.materialText ? "＋文字" : ""}</span>
+              {/* 2026-10-06 AIX ツールの札から来た時: 売上サポの募集の条件（敷礼・築年等）を読み取りと見比べる用に（金額には入れない） */}
+              {selected.termsLine && <span className="text-[#5d4037]">売上サポ: {selected.termsLine}</span>}
               {selected.link && <a href={selected.link} target="_blank" rel="noreferrer" className="text-[#1565c0] underline">お客様のリンク</a>}
             </div>
           )}
