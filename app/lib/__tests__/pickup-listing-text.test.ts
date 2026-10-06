@@ -182,7 +182,7 @@ console.log("■ 👑 と並びは1本（判定の点 → 判定 → 画像の�
   t("同じ点でも通す＞保留（画像の点より先）", compareOverall(mk(1, 1, 150, "hold", 100, 7), mk(2, 2, 150, "pass", 20, 1)) > 0);
   t("画像の分析待ち（点なし）は同じ判定の点の中で後ろ", compareOverall(mk(1, 1, 150, "pass", 50, 1), { ...mk(2, 2, 150, "pass", 0, 0), image_analysis: null }) < 0);
   t("要確認の画像は点として使わない", compareOverall({ ...mk(1, 1, 150, "pass", 99, 5), image_analysis: { match: 99, review: { status: "要確認" } } }, mk(2, 2, 150, "pass", 10, 1)) > 0);
-  t("まとめの決まりの名前に版（前の版のまとめの best_id は使わない）", bestRuleTag("score") === BEST_RULE_TAG && (BEST_RULE_TAG as string) !== "score" && bestRuleTag("image") === "image");
+  t("まとめの決まりの名前に版（前の版のまとめの best_id は使わない）", bestRuleTag("score", "legacy") === BEST_RULE_TAG && (BEST_RULE_TAG as string) !== "score" && bestRuleTag("score") !== "score" && bestRuleTag("image") === "image");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

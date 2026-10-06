@@ -37,10 +37,22 @@ export type StarCandidate = {
   /** 階（号室・資料から） */
   floor?: number | null;
   equipmentKeys?: readonly string[] | null;
+  /** 2026-10-06d リノベーション済み（資料の文字・listing-renovation.renovationOfText）。null＝分からない */
+  renovated?: boolean | null;
+  /** 2026-10-06d 敷金＋礼金（ヶ月・資料の表）。同点の分け方（初期費用面）にだけ使う */
+  initialMonths?: number | null;
   /** 保留・送らない物（審査中・NG 等）は呼ぶ側で外す。ここでは見ない */
 };
 
-export type StarRankRule = { adLine: number; overrideMargin: number; areaBest: number; ageBest: number; structureRc: number; structureWood: number; equipRankMax: number; equipWantEach: number; adNeverBelow: number };
+export type StarRankRule = {
+  adLine: number; overrideMargin: number; areaBest: number; ageBest: number; structureRc: number; structureWood: number; equipRankMax: number; equipWantEach: number; adNeverBelow: number;
+  /** 2026-10-06d 同点（同じ段・同じ合い方）を AD → 初期費用面で分ける（false＝元の並び） */
+  tieBreak?: boolean;
+  /** 2026-10-06d リノベ済みの部屋を「新しさ」の比べでこの築年とみなす（null＝リノベを見ない）。renoScope で効かせる所 */
+  renoAge?: number | "newest" | null;
+  /** household＝1LDK以上の希望の「一番新しい +15」だけ・all＝束の一番新しい（ageBest）にも */
+  renoScope?: "household" | "all";
+};
 export const STAR_RANK_RULE: Readonly<StarRankRule> = {
   /** AD の線（これ以上を優先の段に） */
   adLine: 1.5,
@@ -59,6 +71,20 @@ export const STAR_RANK_RULE: Readonly<StarRankRule> = {
   equipWantEach: 4,
   /** AD 1未満は🌟にしない（他に何も無い時だけ） */
   adNeverBelow: 1,
+  /**
+   * 2026-10-06d 竹内「同点ならadが高いや初期費用面をみてさらにわける」: 同じ段・同じ合い方の点は starTieBreak（AD → 敷礼0 → フリーレント → 敷礼の月数）。
+   *   当て直し（scripts/audit-star-fit-d.ts・新着1件を外した 231回）: 1位が同点 53回で 28→30%・全体 新だけ当たり1／旧だけ0（後3割 49→50%・直した束 50→52%）
+   */
+  tieBreak: true,
+  /**
+   * 2026-10-06d 竹内「ほかにものベーション物件を押している場合もあるから注意」: 1LDK以上の希望の「一番新しい +15」は、リノベ済みの部屋を築0（一番新しい側）とみなす。
+   *   スタッフの🌟の本文が「リノベ」の10回のうち7回が1LDK以上の希望で、🌟は築35〜42年（束の一番新しいは築2〜22年）＝築年だけだと +15 が逆に効く。
+   *   当て直し: 物件名の「（フルリノベーション）」と資料の文字で読めた分だけで 新だけ当たり1／旧だけ0（後3割・live は変わらない）。
+   *   🌟の本文のリノベを🌟だけに付けた上限でも 3／0。築10・築15 とみなすと 0／0（束の一番新しいは築2〜22年）。全員（ageBest）にも効かせても同じ数＝広げない（お客様による）
+   *   ⚠ 本番の 👑 は物件名と説明文だけで読む（資料の文字 pdf_text は売上サポの行の読み出しに無い）
+   */
+  renoAge: 0,
+  renoScope: "household",
 };
 
 const isAdCode = (k: string) => /^(AD_|PROFIT_)/.test(k);
@@ -120,19 +146,28 @@ export const STAR_SITUATION_RULE: Readonly<StarSituationRule> = { zero: 15, spac
 
 /** 合い方の点（AD の家族の点を外した札の点＋束の中の相対の足し点） */
 export function starFitScores(cands: readonly StarCandidate[], rule = STAR_RANK_RULE, sit?: StarSituation | null, sitRule: Readonly<StarSituationRule> = STAR_SITUATION_RULE): Array<{ fit: number; reasons: string[] }> {
-  const areas = cands.map((c) => c.areaSqm), ages = cands.map((c) => c.buildingAge), eqs = cands.map((c) => c.equipmentCount);
+  const areas = cands.map((c) => c.areaSqm), eqs = cands.map((c) => c.equipmentCount);
+  // 2026-10-06d 新しさの比べ: リノベ済みの部屋は築年が古くても renoAge とみなす（renoScope の所だけ）
+  //   "newest"＝束の一番新しい物と並ぶ（同点の +15 を分け合う・追い越さない）
+  const knownAges = cands.map((c) => c.buildingAge).filter((v): v is number => v != null);
+  const renoTo: number | null = rule.renoAge == null ? null : rule.renoAge === "newest" ? (knownAges.length ? Math.min(...knownAges) : null) : rule.renoAge;
+  const renoAgeOf = (c: StarCandidate) => (renoTo != null && c.renovated === true ? (c.buildingAge == null ? renoTo : Math.min(c.buildingAge, renoTo)) : c.buildingAge);
+  const rawAges = cands.map((c) => c.buildingAge), renoAges = cands.map(renoAgeOf);
+  const ages = rule.renoAge != null && rule.renoScope === "all" ? renoAges : rawAges;
+  const hhAges = rule.renoAge != null ? renoAges : rawAges;
+  const ageAt = (i: number) => ages[i], hhAgeAt = (i: number) => hhAges[i];
   const walks = cands.map((c) => c.walkMinutes), floors = cands.map((c) => c.floor);
   // 束の中で値が割れている時だけ足す（全部同じなら差にならない）
   const splits = (vals: Array<unknown>) => new Set(vals.filter((v) => v != null)).size >= 2;
   const zeroSplit = splits(cands.map((c) => c.zeroZero)), vacSplit = splits(cands.map((c) => c.vacancy));
-  return cands.map((c) => {
+  return cands.map((c, i) => {
     const reasons: string[] = [];
     let fit = 0;
     if (sit) {
       if (sit.zero && sitRule.zero && zeroSplit && c.zeroZero === true) { fit += sitRule.zero; reasons.push("敷礼0（初期費用の希望）"); }
       if (sit.spacious && sitRule.spacious && rankIn(areas, c.areaSqm, "high") === 0) { fit += sitRule.spacious; reasons.push("一番広い（広さの希望）"); }
-      if (sit.newBuild && sitRule.newBuild && rankIn(ages, c.buildingAge, "low") === 0) { fit += sitRule.newBuild; reasons.push("一番新しい（築浅の希望）"); }
-      if (sit.household && sitRule.newBuildHousehold && rankIn(ages, c.buildingAge, "low") === 0) { fit += sitRule.newBuildHousehold; reasons.push("一番新しい（1LDK以上の希望）"); }
+      if (sit.newBuild && sitRule.newBuild && rankIn(ages, ageAt(i), "low") === 0) { fit += sitRule.newBuild; reasons.push("一番新しい（築浅の希望）"); }
+      if (sit.household && sitRule.newBuildHousehold && rankIn(hhAges, hhAgeAt(i), "low") === 0) { fit += sitRule.newBuildHousehold; reasons.push(c.renovated === true && renoTo != null && (c.buildingAge == null || c.buildingAge > renoTo) ? "リノベ済みで一番新しい側（1LDK以上の希望）" : "一番新しい（1LDK以上の希望）"); }
       if (sit.stationNear && sitRule.stationNear && rankIn(walks, c.walkMinutes, "low") === 0) { fit += sitRule.stationNear; reasons.push("駅から一番近い（駅近の希望）"); }
       if (sit.floorHigh && sitRule.floorHigh && rankIn(floors, c.floor, "high") === 0) { fit += sitRule.floorHigh; reasons.push("一番高い階（2階以上の希望）"); }
       if (sit.moveInUrgent && sitRule.vacantNow && vacSplit && c.vacancy === "open") { fit += sitRule.vacantNow; reasons.push("空室ですぐ入れる（入居を急ぐ）"); }
@@ -141,12 +176,12 @@ export function starFitScores(cands: readonly StarCandidate[], rule = STAR_RANK_
         if (hit.length) { fit += sitRule.equipEach * hit.length; reasons.push(`希望の設備（${hit.join("・")}）`); }
       }
     }
-    return { fit, reasons, c };
-  }).map(({ fit: sitFit, reasons: sitReasons, c }) => {
+    return { fit, reasons, c, i };
+  }).map(({ fit: sitFit, reasons: sitReasons, c, i }) => {
     const reasons: string[] = [];
     let fit = c.score - c.codes.filter(isAdCode).reduce((a, k) => a + c.pointsOf(k), 0);
     if (rankIn(areas, c.areaSqm, "high") === 0) { fit += rule.areaBest; reasons.push("束の中で一番広い"); }
-    if (rankIn(ages, c.buildingAge, "low") === 0) { fit += rule.ageBest; reasons.push("束の中で一番新しい"); }
+    if (rankIn(ages, ageAt(i), "low") === 0) { fit += rule.ageBest; reasons.push("束の中で一番新しい"); }
     const st = String(c.structure ?? "");
     if (/^(RC|SRC)$/.test(st)) { fit += rule.structureRc; reasons.push("RC"); }
     else if (st === "木造") { fit += rule.structureWood; reasons.push("木造"); }
@@ -170,7 +205,9 @@ export function rankStarCandidates(cands: readonly StarCandidate[], rule = STAR_
     const tier: StarRanked["tier"] = c.adMonths != null && c.adMonths < rule.adNeverBelow ? "never" : c.adMonths != null && c.adMonths >= rule.adLine ? "line" : "below";
     return { key: c.key, fit: fits[i].fit, tier, reasons: fits[i].reasons, i };
   });
-  const byFit = (a: typeof rows[number], b: typeof rows[number]) => b.fit - a.fit || a.i - b.i;
+  // 2026-10-06d 竹内「同点ならadが高いや初期費用面をみてさらにわける」: 同じ合い方の点は AD（分からない物は後）→ 敷礼0 → フリーレント → 敷金＋礼金が少ない → 元の並び
+  const tb = (a: typeof rows[number], b: typeof rows[number]) => (rule.tieBreak ? starTieBreak(cands[a.i], cands[b.i]) : 0);
+  const byFit = (a: typeof rows[number], b: typeof rows[number]) => b.fit - a.fit || tb(a, b) || a.i - b.i;
   const line = rows.filter((r) => r.tier === "line").sort(byFit);
   const below = rows.filter((r) => r.tier === "below").sort(byFit);
   const never = rows.filter((r) => r.tier === "never").sort(byFit);
@@ -181,6 +218,23 @@ export function rankStarCandidates(cands: readonly StarCandidate[], rule = STAR_
   }
   const ordered = line.length ? [...head, ...line, ...below, ...never] : [...below, ...never];
   return ordered.map(({ i: _i, ...r }) => r);
+}
+
+/**
+ * 2026-10-06d 同点（同じ段・同じ合い方の点）の分け方。負＝a が先。
+ *   1) AD が高い（分からない物は分かる物の後）
+ *   2) 初期費用面: 敷礼0 → フリーレント（札 FREE_RENT*）→ 敷金＋礼金（ヶ月）が少ない
+ *   どれでも分からなければ 0（呼ぶ側の元の並び）
+ */
+export function starTieBreak(a: StarCandidate, b: StarCandidate): number {
+  const ad = (c: StarCandidate) => (c.adMonths == null ? -1 : c.adMonths);
+  if (ad(a) !== ad(b)) return ad(b) - ad(a);
+  const zz = (c: StarCandidate) => (c.zeroZero === true ? 1 : 0);
+  if (zz(a) !== zz(b)) return zz(b) - zz(a);
+  const fr = (c: StarCandidate) => (c.codes.some((k) => /^FREE_RENT(?:_MATCH)?$/.test(k)) ? 1 : 0);
+  if (fr(a) !== fr(b)) return fr(b) - fr(a);
+  if (a.initialMonths != null && b.initialMonths != null && a.initialMonths !== b.initialMonths) return a.initialMonths - b.initialMonths;
+  return 0;
 }
 
 // ─── 切り替え（2026-10-06 竹内さん「A: 今切り替える」・いつでも戻せる）────────────────────────────
@@ -198,4 +252,5 @@ export function starRankMode(raw: unknown): StarRankMode {
 /** まとめ（property_pickup_completions.result.basis_rule）に残す決まりの名前（fit の時）。重みを変えたら版を上げる */
 // 2026-10-06b 状況の足し点（STAR_SITUATION_RULE・敷礼0／2階以上）を入れた
 // 2026-10-06c 1LDK以上の希望なら束の中で一番新しい物に +15（newBuildHousehold）
-export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06c";
+// 2026-10-06d 同点を AD → 初期費用面で分ける（tieBreak）・1LDK以上の「一番新しい」でリノベ済みを築0とみなす（renoAge）
+export const STAR_FIT_RULE_TAG = "star-fit@2026-10-06d";

@@ -36,6 +36,8 @@ export type PickupTerms = {
   };
   /** 「💴 敷0/礼1ヶ月 築8年 入居:11月上旬 普通2年 更新1ヶ月」 */
   line: string;
+  /** 2026-10-06d 資料の文字でリノベ済み（listing-renovation.renovationOfText）。🌟の並べ方の「一番新しい」に使う。前の行には無い */
+  renovated?: boolean | null;
 };
 
 const months = (v: number | null) => (v == null ? "?" : v === 0 ? "0" : `${v}ヶ月`);

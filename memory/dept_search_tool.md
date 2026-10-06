@@ -42,6 +42,7 @@
 - **🌟の候補の値は送った時点で固まっている**（recommendation_snapshots.candidates）＝埋め戻しは `scripts/audit-recommend-star-rank.ts --fill`（画像の読みを image_url で引く＋rent_observations）を通して初めて効く。値の有り率 家賃 17→60%・広さ 12→54%・築年 12→53%・徒歩 12→54%・敷金 12→56%・AD 14→18%・設備 4→9%・構造 0→9%
 - **補った後の1位一致（全体／後3割／live）**: ランダム 22/24/26%・今の点 33/40/41%・**🌟の並べ方 `app/lib/recommend-star-rank.ts`（既定: 線 AD1.5・差15）33/44/51%**。対の比べ（片方だけ当たり）: 全体 12 対 11・後3割 9 対 7・live 7 対 3＝方向は良いが揺れの内（回が少ない）。広さの足し点を下げる・構造/設備を外すと live が下がる
 - **10/06c 一致率が低い理由**（scripts/audit-star-mismatch-why.ts）: 測れる🌟は839件中244件・束の作り直しで+5pt（ランダムも+5）・ずれの半分は材料の欠け／半分はスタッフが回ごとに違う理由（見出しの敷礼0・家賃・駅近・新着）。AD で🌟が上は4%。1LDK以上の希望だけ束の中で一番新しい物に +15（star-fit@2026-10-06c）。詳しくは dept_line_reply.md
+- **10/06d 🌟の並べ方**（scripts/audit-star-fit-d.ts）: 新着1件の🌟は物差しから外す・同点は AD→敷礼0→フリーレント→敷礼の月数・1LDK以上の「一番新しい」はリノベ済みを築0（判定の時に property_pickups.terms.renovated を残す＝property-pickups-server・listing-renovation.ts）・見積書の割引→AD の補いは関数だけ（届かないので配線なし）。star-fit@2026-10-06d。詳しくは dept_line_reply.md
 - **10/06b 状況の足し点**（初期費用→敷礼0 +15・2階以上→一番高い階 +15・条件欄だけ）: `scripts/audit-star-rank-situation.ts --wants=live` で 32→35%／42→46%／48→48%（状況ありだけ当たり 6 対 0）。入居を急ぐ→空室は逆向き（入れない）。詳細は dept_line_reply.md 冒頭
 - 補った後の🌟が束の一番（同じ値含む・ランダム）: 築年 44%（36%）・広さ 33%（29%）・設備 53%（34%・17回）・敷礼0 85%（77%）・間取り 93%（89%）・AD 59%（59%）・構造 76%（73%）・徒歩/家賃 ≒ランダム。※ 先の「構造 RC 76%（ランダム 32%）」は同じ値の扱いの違いで、同じ値を含めるとランダムと同じ
 - **未接続**: 並べ方は純関数だけ。接続の案は pickup-best.pickCustomerBest（score の枝の sorted の後で並べ方の先頭を best に・BEST_RULE_TAG を上げる）＋行に面積・築年・構造・設備・AD の段を渡す（API の select・PickupReview）。⑫ と親の調整待ち。状況ごとの重みは保留（数が少ない）

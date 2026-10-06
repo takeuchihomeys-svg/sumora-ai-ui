@@ -15,6 +15,7 @@ import { judgeProperty, parsePropertyFacts, applyImageFacts, applyRoomJoToJudgme
 import { buildBatchEquipment } from "@/app/lib/pickup-equipment";
 import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
 import { buildPickupTerms } from "@/app/lib/pickup-terms";
+import { renovationOfText } from "@/app/lib/listing-renovation";
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
 import { readPropertyImageDetail } from "@/app/lib/property-image-read";
 // 2026-09-29 資料の中身は文字層があれば文字層から（画像の推論の出力が費用の 96%）・同じ物件は 7日以内の行から写す
@@ -288,6 +289,8 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       }
       if (tm && tm.t.hasText) {
         try { it.terms = buildPickupTerms(tm.t, profile, { equipment: e?.match ?? null, filled: tm.filled }); } catch { it.terms = null; }
+        // 2026-10-06d 竹内「ほかにもリノベーション物件を押している場合もある」: 資料の文字でリノベ済みを読んで残す（🌟の並べ方・star-rank-pickup.renovatedOfPickup）
+        if (it.terms) { try { it.terms.renovated = renovationOfText(it.pdfText ?? null); } catch { /* 読めなければ残さない */ } }
       }
     });
     console.log(JSON.stringify({ tag: "property-pickups:terms", batch: input.batchId.slice(0, 40),

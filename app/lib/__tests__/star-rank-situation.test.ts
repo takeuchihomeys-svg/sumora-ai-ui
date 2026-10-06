@@ -36,7 +36,8 @@ const cand = (key: string, o: Partial<StarCandidate> = {}): StarCandidate => ({ 
   t("状況なし → 今まで通り（広い A）", rankStarCandidates(cs)[0].key === "A");
   t("初期費用を言っていない → 敷礼0でも足さない", rankStarCandidates(cs, STAR_RANK_RULE, starSituationOf({ wantTopics: ["spacious"] }))[0].key === "A");
   const r = rankStarCandidates(cs, STAR_RANK_RULE, starSituationOf({ wantTopics: ["low_initial"] }));
-  t("初期費用を言っている → 敷礼0の +15 は広さの一番 +15 と同じ重さ（同点は元の並び＝A）", r[0].key === "A" && r[0].fit === r[1].fit, r);
+  // 2026-10-06d 同点は AD → 初期費用面で分ける（starTieBreak）: 同じ AD なら敷礼0の B が先
+  t("初期費用を言っている → 敷礼0の +15 は広さの一番 +15 と同じ重さ（同点は 06d から初期費用面＝敷礼0の B）", r[0].key === "B" && r[0].fit === r[1].fit, r);
   const r2 = rankStarCandidates([cand("A", { areaSqm: 30, zeroZero: false, score: 99 }), cand("B", { areaSqm: 25, zeroZero: true })], STAR_RANK_RULE, starSituationOf({ wantTopics: ["low_initial"] }));
   t("初期費用を言っている＋点が僅差 → 敷礼0の B が一番・理由に出る", r2[0].key === "B" && r2[0].reasons.some((x) => /敷礼0/.test(x)), r2);
   const allZero = rankStarCandidates([cand("A", { areaSqm: 30, zeroZero: true }), cand("B", { areaSqm: 25, zeroZero: true })], STAR_RANK_RULE, starSituationOf({ wantTopics: ["low_initial"] }));

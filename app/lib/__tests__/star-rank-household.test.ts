@@ -42,7 +42,7 @@ const unknown = rankStarCandidates([cand("A", { buildingAge: null, score: 101 })
 t("築年が1件しか分からない時は比べない（足さない）", unknown[0].key === "A", unknown);
 const line = rankStarCandidates([cand("A", { adMonths: 2, buildingAge: 20 }), cand("B", { adMonths: 1, buildingAge: 1 })], STAR_RANK_RULE, starSituationOf({ household: true }));
 t("AD の線は変えない: 線の下の B は合い方 +23（新しい8＋型15）でも差 15 以上なので内覧優先で先頭", line[0].key === "B", line);
-t("足し点は 15・決まりの版は 06c", STAR_SITUATION_RULE.newBuildHousehold === 15 && STAR_FIT_RULE_TAG === "star-fit@2026-10-06c");
+t("足し点は 15・決まりの版は 06c 以降（06d で同点の分け方・リノベ）", STAR_SITUATION_RULE.newBuildHousehold === 15 && STAR_FIT_RULE_TAG >= "star-fit@2026-10-06c");
 t("状況なし（null）では足さない", rankStarCandidates(cs)[0].key === "A");
 
 console.log(`\n${passed} passed, ${failed} failed`);

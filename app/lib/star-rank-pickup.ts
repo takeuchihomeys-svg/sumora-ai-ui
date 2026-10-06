@@ -15,6 +15,7 @@ import { parseAreaSqm } from "./pickup-dedupe";
 import { parseRentFromSummary, parseWalkMinutesFromSummary } from "./property-summary-parse";
 import { customerWants, type CustomerWantInput } from "./recommendation-gaps";
 import { starSituationOf, type StarCandidate, type StarSituation } from "./recommend-star-rank";
+import { renovationOfText } from "./listing-renovation";
 
 export type StarPickupRow = {
   id: number;
@@ -25,7 +26,7 @@ export type StarPickupRow = {
   ad_yen?: number | null;
   equipment?: { facts?: Record<string, { s?: string | null; d?: string | null } | null> | null; match?: ReadonlyArray<{ result?: string | null; mode?: string | null }> | null; floor?: number | null } | null;
   /** 2026-10-06 状況の材料: 敷金・礼金（ヶ月・資料の表） */
-  terms?: { buildingAge?: number | null; deposit?: number | null; keyMoney?: number | null; evidence?: { area?: string | null } | null } | null;
+  terms?: { buildingAge?: number | null; deposit?: number | null; keyMoney?: number | null; evidence?: { area?: string | null } | null; renovated?: boolean | null } | null;
 };
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -95,7 +96,25 @@ export function starCandidateOfPickup(r: StarPickupRow, score: number): StarCand
     floor: num(r.equipment?.floor),
     walkMinutes: parseWalkMinutesFromSummary(r.summary_text ?? null),
     equipmentKeys: equipmentKeysOf(r.equipment),
+    // 2026-10-06d リノベ済み（物件名の「（フルリノベーション）」・説明文）と敷金＋礼金（同点の分け方）
+    renovated: renovatedOfPickup(r),
+    initialMonths: initialMonthsOfPickup(r),
   };
+}
+
+/**
+ * 2026-10-06d リノベ済みか（listing-renovation.renovationOfText）。資料の文字 pdf_text は詳細・一覧の読み出しに無いので、
+ * 判定の時に terms.renovated に残した印と、物件名・説明文で読む。読めた時だけ true・それ以外は null（分からない＝築年で比べる）
+ */
+export function renovatedOfPickup(r: Pick<StarPickupRow, "property_name" | "summary_text" | "terms">): boolean | null {
+  // 資料の文字で読んだ印（property-pickups-server が terms.renovated に残す・10/06d 以降の行）→ 物件名 → 説明文
+  if (r.terms?.renovated === true) return true;
+  return renovationOfText(r.property_name ?? null) === true || renovationOfText(r.summary_text ?? null) === true ? true : null;
+}
+/** 2026-10-06d 敷金＋礼金（ヶ月・資料の表）。どちらかが読めなければ null */
+export function initialMonthsOfPickup(r: Pick<StarPickupRow, "terms">): number | null {
+  const d = num(r.terms?.deposit), k = num(r.terms?.keyMoney);
+  return d == null || k == null ? null : d + k;
 }
 
 /** 敷金・礼金とも0（資料の表）。どちらかが読めなければ null */

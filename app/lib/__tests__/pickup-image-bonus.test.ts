@@ -96,7 +96,7 @@ console.log("■ 並び・👑（合計で決める）");
   t("👑 は合計の一番 #740・点の出し方「合計 167点（判定 163・画像 +4）」", best.id === 740 && best.total === 167 && best.bonus === 4 && bestPointLabel(best) === "合計 167点（判定 163・画像 +4）", best);
   t("画面の👑の行も同じ文（pointsLabel）", pointsLabel(163, r740.image_analysis, r740.reason_codes) === "合計 167点（判定 163・画像 +4）");
   t("カードの札「🔍 画像 +4点（◎3・×1）」", imageChipOf(r740.image_analysis, false, r740.reason_codes)?.text === "🔍 画像 +4点（◎3・×1）", imageChipOf(r740.image_analysis, false, r740.reason_codes));
-  t("決まりの版が変わった（前の版のまとめの best_id は使わない）", BEST_RULE_TAG === "score+imagebonus@2026-09-27b" && bestRuleTag("score") === BEST_RULE_TAG);
+  t("決まりの版が変わった（前の版のまとめの best_id は使わない）", BEST_RULE_TAG === "score+imagebonus@2026-09-27b" && bestRuleTag("score", "legacy") === BEST_RULE_TAG && bestRuleTag("score") !== BEST_RULE_TAG); // 10/06 から既定は🌟の合い方（STAR_FIT_RULE_TAG）・legacy で前の版
 }
 
 console.log("■ NG の見分け（今の判定の札をそのまま）");

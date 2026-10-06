@@ -287,7 +287,7 @@ export function pickCustomerBest(rows: ReadonlyArray<BestCandidateRow>, opts?: {
   // 2026-10-06 竹内さん（A: 今切り替える）: 判定の点で決める時は🌟の並べ方（recommend-star-rank＝合い方が主軸・AD は 1.5ヶ月の線・
   //   刺さる物が無ければ低い AD でも合う物＝内覧を組むのが優先）で 👑 を決める。戻す時は STAR_RANK_MODE=off（starMode: "legacy"）。
   //   候補: 外す候補は前から除いてある。保留は「通す（判定なし含む）」が1件でもあれば候補にしない（recommend-star-rank は保留を呼ぶ側で外す前提）。
-  //   同じ合い方の点は今までの並び（compareOverall）の順＝rankStarCandidates は同点で渡した順を保つ
+  //   同じ合い方の点は AD → 初期費用面（敷礼0・フリーレント・敷礼の月数）で分け（2026-10-06d starTieBreak）、それでも同じなら今までの並び（compareOverall）の順
   const starMode: StarRankMode = opts?.starMode ?? "fit";
   const legacyFirst = sorted[0];
   let fitOrder: Array<{ id: number; fit: number; reasons: string[] }> | null = null;
