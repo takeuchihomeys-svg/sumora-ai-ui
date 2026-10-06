@@ -290,6 +290,10 @@ export type RoomMatch = "same_room" | "same_building" | "different_room" | "mayb
  *   different      別物
  * 空白なしの「ジュネスニッコー1003」は、もう片方が「ジュネスニッコー 1003号室」なら同じ部屋として読む
  */
+/** 濁点・半濁点を外した形（ビ・ピ → ヒ。読み取りの取り違えを同じ名前として見る比較専用） */
+export function voicingFold(s: string): string {
+  return s.normalize("NFD").replace(/[゙゚]/g, "").normalize("NFC");
+}
 export function matchRoomRefs(a: RoomRef, b: RoomRef): RoomMatch {
   const tail = (x: RoomRef, y: RoomRef): boolean => !x.room && !!y.room && x.buildingKey === y.buildingKey + y.room.toLowerCase();
   if (tail(a, b) || tail(b, a)) return "same_room";
@@ -298,6 +302,14 @@ export function matchRoomRefs(a: RoomRef, b: RoomRef): RoomMatch {
     return "same_building";
   }
   const ka = a.buildingKey, kb = b.buildingKey;
+  // 2026-10-06 竹内（R 事例「別の物件がはいりこんでしまっている…物件特定できる能力高める」）: 御見積書の読み取りが「カーサピエント」を
+  //   「カーサビエント」と読み、同じ 203号室が別の部屋（送った候補）として並んでいた。濁点・半濁点だけが違い号室が同じなら同じ部屋。
+  //   建物の鍵が同じ時と同じ扱い（号室が違えば同じ建物の別の部屋）。監査 365日（scripts/audit-voicing-same-room.ts）: 濁点だけ違う組 31 を全部読んで
+  //   31組とも同じ建物（号室が同じ 18組＝読み取りの取り違え「ディサイア/ディザイア」「エイベックス/エイペックス」・違う 13組＝同じ建物の別の部屋）
+  if (ka !== kb && voicingFold(ka) === voicingFold(kb)) {
+    if (a.room && b.room) return a.room === b.room ? "same_room" : "different_room";
+    return "same_building";
+  }
   if (ka.length >= 3 && kb.length >= 3 && (ka.includes(kb) || kb.includes(ka))) return "maybe";
   if (similarity(ka, kb) >= MATCH_MIN_SCORE) return "maybe";
   return "different";

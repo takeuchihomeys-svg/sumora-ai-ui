@@ -62,7 +62,7 @@ import { isSituationKind, situationOpeningLine, buildSituationPromptNote, ensure
 import { stripPropertyNameFromPickupLine, PICKUP_LINE_NOTE } from "@/app/lib/pickup-line";
 // 2026-10-01 竹内「全域にする・AIX にもあてる」: ピックアップ行の条件の復唱の手直し（全域・か→または）と入口の一文
 import { polishConditionEcho, CONDITION_ECHO_STYLE_NOTE } from "@/app/lib/condition-echo-polish";
-import { extractPropertyLabels } from "@/app/lib/action-ledger";
+import { extractPropertyLabels, confirmTopicForCheckPattern } from "@/app/lib/action-ledger";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定と除去を返信生成・テンプレートと同じ関数で
 // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない（許す一覧は空・出口は replaceWaitedOpening・手本は neutralizeWaitedInExample）
 import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime, replaceWaitedOpening, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
@@ -122,6 +122,8 @@ import { loadRecommendBundleFacts } from "@/app/lib/recommend-bundle-server";
 import { searchedConditionsFrom, searchedConditionsFromBatch, buildSearchedConditionsNote, type SearchAuditRow } from "@/app/lib/pickup-search-facts";
 import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
+// 2026-10-06 竹内（R 事例）: 確認した（条件・交渉）の物件を会話から決定論で決める
+import { resolveConfirmTargetProperty, otherPropertyNamedInText } from "@/app/lib/confirm-target-property";
 
 export const maxDuration = 300;
 
@@ -2170,13 +2172,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
     };
 
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
+    // 2026-10-06 竹内（R 事例・物件の特定）: 確認した（条件・交渉）で会話から決めた物件（confirm-target-property）。入力の物件名が無い時の「使うと決まった物件名」
+    let confirmTargetName: string | null = null;
     const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
       const { message: finalizedMessage, notice } = finalize(text);
       // 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: AIX の文は最終チェック（V16b）を通らない → 手数料の一文を足す（足すだけ・company-fact-guard）
       const feeFix = ensureCardFeeLine(finalizedMessage, [latestCustomerMsg]);
       // 2026-10-02 ⑫（竹内さんの指示「物件名はデータからそのまま写す」）: この AIX で使うと決まった物件名（入力の property_name）にほぼ同じだが違う並び
       //   （DeepSeek の AIX【内覧調整】で「エグゼ難波西Ⅱ」→「エヴゼ峰渡西Ⅱ」）は入力の字に直す。会話から拾った名前での広い書き換えは監査で誤りが多く、印だけ
-      const chosenName = typeof property_name === "string" ? property_name : null;
+      const chosenName = typeof property_name === "string" && property_name.trim() ? property_name : confirmTargetName;
       const nameFix = enforceChosenPropertyName(feeFix.text, chosenName);
       if (nameFix.fixes.length) console.warn(JSON.stringify({ tag: "aix:property-name-verbatim", action: currentAction, conversationId, fixes: nameFix.fixes }));
       const nearMiss = propertyNameNearMisses(nameFix.text, knownPropertyNamesFrom(
@@ -5014,6 +5018,23 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
         mgmtInfo = lines.join("\n");
       }
       if (!mgmtInfo) throw new Error("確認結果のテキストが必要です");
+      // 2026-10-06 竹内（R 事例）「別の物件がはいりこんでしまっている…物件特定できる能力高める」: [物件名] を LLM の推測に任せず、
+      //   お客様の質問（要件の語）を起点に会話から決定論で決める（confirm-target-property.ts）。決まらない時は今まで通り（推測で名前を入れない）。
+      //   代理契約・入居可能日は物件名の入力欄があるので対象外
+      const mgmtTargetRows = recentMsgsForHistory.map((m) => {
+        const label = m.sender === "staff" && m.imageUrl ? staffImageLabels.get(m.imageUrl) : undefined;
+        return { sender: m.sender, text: label ? `[画像: ${label}の資料・御見積書]` : m.text };
+      });
+      const mgmtTarget = check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_move_in" && !(typeof property_name === "string" && property_name.trim())
+        ? resolveConfirmTargetProperty(mgmtTargetRows, { topic: confirmTopicForCheckPattern(String(check_pattern)) })
+        : null;
+      if (mgmtTarget) {
+        confirmTargetName = mgmtTarget.name;
+        console.log(JSON.stringify({ tag: "aix:mgmt-target-property", conversationId, check_pattern, source: mgmtTarget.source }));
+      }
+      const mgmtTargetNote = mgmtTarget
+        ? `\n\n【確認した物件（会話から決めた物件・[物件名]はこの名前をそのまま使う。会話に出てくる他の物件の名前は書かない）】${mgmtTarget.name}`
+        : "";
       const mgmtGreeting = "（時候の挨拶）"; // greetingPhraseはdynamicSystemSuffixへ移動（P1-1）
 
       // 共通誘導文（申込/内覧ボタン選択時のクロージング）
@@ -5254,7 +5275,7 @@ ${availabilityStatus === "available"
 ・会話履歴からお客様の希望条件が分かればそれに触れてよい`}
 
 【物件名の特定】
-会話履歴からお客様が確認依頼した物件を特定し②の文頭に「[物件名]につきまして」のように付ける（号室があれば「マンション名 806号室」形式・先頭0省略）。特定できない場合は物件名なしで②をそのまま使う
+${mgmtTarget ? `②の文頭に「${mgmtTarget.name}につきまして」と付ける（【確認した物件】の名前をそのまま・会話に出てくる他の物件の名前は書かない）` : `会話履歴からお客様が確認依頼した物件を特定し②の文頭に「[物件名]につきまして」のように付ける（号室があれば「マンション名 806号室」形式・先頭0省略）。特定できない場合は物件名なしで②をそのまま使う`}
 
 【厳守ルール】
 ・感嘆符は「！！」（スモラスタイル）
@@ -5266,7 +5287,8 @@ ${availabilityStatus === "available"
 ${mgmtDef.format}
 
 【置き換えルール】
-${check_pattern === "mgmt_proxy" ? "" : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室は資料や会話の表記のまま: 0806 は 0806）。特定できない場合は「ご確認頂きましたお部屋」とする
+${check_pattern === "mgmt_proxy" ? "" : mgmtTarget ? `・[物件名]は【確認した物件】の名前をそのまま使う（${mgmtTarget.name}）。会話に出てくる他の物件の名前は書かない
+` : `・[物件名]は会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・号室は資料や会話の表記のまま: 0806 は 0806）。特定できない場合は「ご確認頂きましたお部屋」とする
 `}${mgmtDef.rules}
 
 【厳守ルール】
@@ -5294,11 +5316,11 @@ ${check_pattern === "mgmt_proxy" ? "" : `・[物件名]は会話履歴からお�
           ? `${name}への初期費用交渉結果報告メッセージを作成してください。
 
 【スタッフが管理会社と交渉した内容・結果（この情報を必ず使うこと）】
-${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : "")
+${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : "")
           : `${name}への${mgmtDef.label}確認報告メッセージを作成してください。
 
 【スタッフが${check_pattern === "nearby_parking" ? "近隣の月極駐車場を調べた" : "管理会社に確認した"}内容（この情報を必ず使うこと）】
-${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
+${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
         currentAction,
         // 代理契約はお客様の依頼への返答＝挨拶を付けない（実送信の形。カイナ 9/16 11:48）
         // 管理会社名の返答も同じ（実送信 9/11・9/30 は挨拶なしの1〜2行）
@@ -5320,6 +5342,14 @@ ${mgmtInfo}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffNote}` : ""),
           console.log(JSON.stringify({ tag: "aix:mgmt-company-name-fallback", conversationId }));
           message_text = [`お部屋の管理会社は${companyName}という管理会社となります！！`, ...companyInput.slice(1)].join("\n");
         }
+      }
+      // 2026-10-06 R 事例: 会話から決めた物件名の写し間違い（ほぼ同じだが違う並び）は決めた字に直す（property-name-verbatim・入力の物件名と同じ扱い）。
+      //   決めた物件ではない、こちらが送った物件の名前が出たら印だけ（本文は書き換えない＝誤削除0の線を引くまで出口では消さない）
+      if (mgmtTarget) {
+        const tFix = enforceChosenPropertyName(message_text, mgmtTarget.name);
+        if (tFix.fixes.length) { message_text = tFix.text; console.warn(JSON.stringify({ tag: "aix:property-name-verbatim", action: currentAction, conversationId, fixes: tFix.fixes })); }
+        const others = otherPropertyNamedInText(message_text, mgmtTarget.name, mgmtTargetRows);
+        if (others.length) console.warn(JSON.stringify({ tag: "aix:mgmt-other-property-named", conversationId, check_pattern, others }));
       }
       // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
 

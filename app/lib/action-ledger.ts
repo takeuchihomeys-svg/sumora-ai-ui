@@ -281,6 +281,28 @@ export function confirmObjectFromCustomerTurn(text: string | null | undefined): 
   }
   return null;
 }
+/**
+ * お客様がその要件（設備・駐車場・ペット…）を頼んだか。約束の直前のお客様の連投（質問の形）か、約束の後のお客様の連投（「エアコンの件よろしくお願いします」＝
+ * 質問の形が無くても要件の語）で見る。msgs は古い順・staffIdx は約束の発言の位置。
+ * 2026-10-06 竹内（R 事例）: お客様「この物件はエアコン各部屋で2台付いているかも確認していただけると…」→ こちら「エアコンにつきまして…明日確認しご連絡」
+ *   → お客様「見積もりありがとうございます。エアコンの件よろしくお願いします！」で、約束の文に要件があり（objectFrom=staff）お礼だけでもない番は
+ *   「お客様の依頼が無い」扱いになり AIX【確認した→設備】が立たず、物件ピックアップ（未履行のピックアップの合図）になっていた
+ */
+export function customerAskedConfirmTopic(msgs: ReadonlyArray<{ sender: string; text?: string | null }>, staffIdx: number, object: string | null | undefined): boolean {
+  const want = (object ?? '').trim();
+  if (!want || isConfirmPartyObject(want)) return false;
+  const turnBefore: string[] = [];
+  let k = staffIdx - 1;
+  while (k >= 0 && msgs[k].sender !== 'customer') k--;
+  for (; k >= 0 && msgs[k].sender === 'customer'; k--) turnBefore.unshift(String(msgs[k].text ?? ''));
+  if (confirmObjectFromCustomerTurn(turnBefore.join('\n'))?.object === want) return true;
+  const after: string[] = [];
+  for (let i = staffIdx + 1; i < msgs.length; i++) if (msgs[i].sender === 'customer') after.push(String(msgs[i].text ?? ''));
+  const a = after.join('\n').normalize('NFKC');
+  if (!a.trim()) return false;
+  const rule = CONFIRM_TOPIC_RULES.find((r) => r.label === want);
+  return !!rule?.re.test(a) || (want === '設備' && CUSTOMER_EQUIP_RE.test(a));
+}
 /** 確認の要件名 → AIX【確認した（条件・交渉）】のピッカー（check_pattern）。募集状況・空室・番手は 物件確認した 側＝null */
 export function checkPatternForConfirmTopic(topic: string | null | undefined): string | null {
   switch ((topic ?? '').trim()) {
@@ -333,6 +355,12 @@ export function confirmObjectOf(text: string | null | undefined): string | null 
  * 確認結果の報告を約束に読まない（台帳専用・返信生成が共有する STAFF_CONFIRM_REPORT_RE は触らない）。
  *   実データ: 「確認させていただき、〜とのご連絡がございました」の報告文が confirmation_promised に誤分類（21件中3件）
  */
+//   2026-10-06 竹内（R 事例）「ここは確認した で管理会社にエアコンを確認した事を入れる形となる」:
+//   手打ち「管理会社にエアコンの件確認させていただき、リビング洋室共に備わっております。とのご返答でした！！」が報告として記録されず、
+//   【必ず】設備の確認→ご連絡が開いたまま・台帳は「確認約束未履行」だった（「とのご返答でした／です」の形が無かった）。
+//   監査（scripts/audit-confirm-report-reply-word.ts・365日）: この形 46通のうち記録なし 12通を全部読んで12通とも確認結果の報告（誤り0）。
+//   旧の語彙（LEGACY＝通全体の要件を読む）には入れない（入れると既に報告だった通の要件が通全体の語に変わり、相手だけの要件＝何でも閉じるが増えた）。
+//   新しい語彙として下の LEDGER_CONFIRM_REPORT_RE に足し、「。とのご返答でした」だけの文は前の文と合わせて要件を読む（findConfirmReportSentence）
 const LEDGER_CONFIRM_REPORT_LEGACY_RE = /との(?:ご)?(?:連絡|返答|返事|回答)(?:が|を)?(?:ございました|御座いました|(?:頂|いただ)きました|ありました)|より(?:ご)?(?:返答|回答|連絡)(?:が)?(?:あり|ございました)/;
 const LEDGER_CONFIRM_REPORT_RE = new RegExp([
   LEDGER_CONFIRM_REPORT_LEGACY_RE.source,
@@ -345,7 +373,7 @@ const LEDGER_CONFIRM_REPORT_RE = new RegExp([
   //   2026-09-26 反証レビュー: 「探させて頂きましたが〇〇が1番オススメ」は物件探しの報告で確認結果ではない（初期費用・募集状況の確認の【必ず】を閉じていた bfd172e6）→「探」は外す
   /(?:確認|お調べ|問い合わせ|交渉)(?:させて(?:頂|いただ)き|いたし|致し|し)ました(?:ところ|所|が)|お?調べさせて(?:頂|いただ)きました(?:ところ|所|が)|確認させて(?:頂|いただ)き、[^\n。！!]{0,40}(?:(?:ました|ございません)[！!。😊😌]*$|との(?:こと|事))/.source,
   //   ⚠ 約束・条件の形（「審査結果出次第ご連絡」「お申込みが入りますと」「募集中となり次第」）は当てない
-  /との事(?:です|でした|で)|募集に出ていない(?:お部屋|状況)|申込み?(?:が)?(?:入り(?:まし|、)|入って(?:おり|い)|はいって(?:おり|い))|専任の(?:お部屋|物件)|掲載(?:が)?終了し|募集(?:が)?終了して(?:おり|いるお部屋|いる物件|いました)|審査否決(?:とな|でし|との)|(?:号室|件|部屋|まだ|のみ|現在|現状|予定で|も)[^\n。！!]{0,12}?募集中(?:となり(?!次第)|でした|では(?:無|な)い)/.source,
+  /との事(?:です|でした|で)|との(?:ご)?(?:連絡|返答|返事|回答)(?:でした|です|となります)|募集に出ていない(?:お部屋|状況)|申込み?(?:が)?(?:入り(?:まし|、)|入って(?:おり|い)|はいって(?:おり|い))|専任の(?:お部屋|物件)|掲載(?:が)?終了し|募集(?:が)?終了して(?:おり|いるお部屋|いる物件|いました)|審査否決(?:とな|でし|との)|(?:号室|件|部屋|まだ|のみ|現在|現状|予定で|も)[^\n。！!]{0,12}?募集中(?:となり(?!次第)|でした|では(?:無|な)い)/.source,
 ].join('|'));
 /** 報告に見えるが条件付き・推量（「募集に出ていない可能性もございます…お送り頂けますと確認させて頂きます」）は報告にしない */
 const REPORT_HEDGE_RE = /可能性(?:も|が)(?:ございます|御座います|あります)|場合(?:が|も)?(?:ございます|御座います|あります)|ケース|かもしれ|と思われ|(?:頂け|いただけ)(?:ましたら|ますと|れば)|お送り(?:頂|いただ)け/;
@@ -353,10 +381,16 @@ const REPORT_HEDGE_RE = /可能性(?:も|が)(?:ございます|御座います|
 const REPORT_ECHO_RE = /とのことですね|ということですね|ご(?:希望|検討|要望)[^\n。！!]{0,8}とのこと/;
 /** 確認結果の報告の文（報告の語がある文で、条件付き・推量でない物）。1通の中の最初の1文 */
 export function findConfirmReportSentence(text: string | null | undefined): string | null {
+  let prev = '';
   for (const s of (text ?? '').split(/\n|(?<=[。！!？?])(?![。！!？?])/)) {
     const x = s.trim();
-    if (!x || REPORT_HEDGE_RE.test(x) || REPORT_ECHO_RE.test(x)) continue;
-    if (STAFF_CONFIRM_REPORT_RE.test(x) || LEDGER_CONFIRM_REPORT_RE.test(x)) return x;
+    if (!x) continue;
+    if (REPORT_HEDGE_RE.test(x) || REPORT_ECHO_RE.test(x)) { prev = x; continue; }
+    if (STAFF_CONFIRM_REPORT_RE.test(x) || LEDGER_CONFIRM_REPORT_RE.test(x)) {
+      // 2026-10-06 R 事例: 「…備わっております。とのご返答でした！！」の「とのご返答でした」だけの文は中身（要件）が前の文にある → 前の文と合わせて返す
+      return /^との/.test(x) && prev ? `${prev}${x}` : x;
+    }
+    prev = x;
   }
   return null;
 }

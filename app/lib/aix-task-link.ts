@@ -1,4 +1,4 @@
-import { checkPatternForConfirmTopic } from "./action-ledger";
+import { checkPatternForConfirmTopic, customerAskedConfirmTopic } from "./action-ledger";
 // app/lib/aix-task-link.ts
 // AIX の送信と「やること（line_tasks）」・物件出しの完了（✅）の対応表（2026-09-12 竹内方針）。
 //   「AIX 物件オススメ・物件ピックアップで送ったときに物件出し完了となる。ここちゃんとリンクさせる」
@@ -85,12 +85,19 @@ export function resolveStaffPromiseAix(
     return t && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(t);
   });
   const lastAny = nonMedia[nonMedia.length - 1];
-  if (!lastAny || (lastAny.sender !== "staff" && !opts.customerAckAfter)) return null;
+  if (!lastAny) return null;
   const last = [...nonMedia].reverse().find((m) => m.sender === "staff");
   if (!last) return null;
   // 直前が AIX（済み）で、その本文に約束を書き足していれば、その約束を直前の宣言として扱う
   const e = facts.lastStaffEntry?.status === "promised" ? facts.lastStaffEntry : (facts.lastStaffAixTextPromise ?? facts.lastStaffEntry);
   if (!e || e.status !== "promised") return null;
+  // 2026-10-06 竹内（R 事例）: 確認の約束の後にお客様が同じ要件をお願いしただけ（「見積もりありがとうございます。エアコンの件よろしくお願いします！」）は
+  //   お礼・了承と同じ扱い（新しい質問ではない）。旧はお礼だけの判定（isAckOnly）から外れて約束の AIX が立たず、物件ピックアップになっていた
+  const lastIdx = messages.lastIndexOf(last);
+  const afterText = messages.slice(lastIdx + 1).filter((m) => m.sender === "customer").map((m) => m.text ?? "").join("\n");
+  const reRequest = e.kind === "confirmation_promised" && !!afterText.trim() && !/[？?]/.test(afterText)
+    && /よろしく|宜しく|お願い|ありがと/.test(afterText) && customerAskedConfirmTopic(messages.slice(lastIdx), 0, e.detail?.object);
+  if (lastAny.sender !== "staff" && !opts.customerAckAfter && !reRequest) return null;
   // 物件が届く前の「お送り頂き次第…御見積書」は、届いてからの約束（見積るものがまだ無い）
   if (opts.customerWillSend && (e.kind === "estimate_declared" || e.kind === "confirmation_promised")) return null;
   // 2026-09-12 竹内（find-brain-gaps G4）: 「お送り頂きました物件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の
@@ -123,7 +130,9 @@ export function resolveStaffPromiseAix(
     //   初期費用の確認でも、同じ文が御見積書を約束していれば（見積書送るの流れ）ここでは立てない（見積書の約束は上の estimate の規則）
     const estimateFlow = cp === "mgmt_initial_cost" && /見積/.test(last.text ?? "");
     //   スタッフが自分から言っただけ（お客様の依頼もお礼・了承も無い）の番では立てない（物件確認はお客様の依頼があった時だけ・9/12 の決まり）
-    const asked = e.detail?.objectFrom === "customer" || !!opts.customerRequestedCheck || !!opts.customerAckAfter;
+    // 2026-10-06 竹内（R 事例）: お客様がその要件を頼んだ（約束の前の質問・約束の後の「エアコンの件よろしくお願いします」）も依頼に数える
+    const asked = e.detail?.objectFrom === "customer" || !!opts.customerRequestedCheck || !!opts.customerAckAfter
+      || customerAskedConfirmTopic(messages, messages.lastIndexOf(last), e.detail?.object);
     if (cp && asked && !estimateFlow && !APPLY_PROGRESS_CHECK_RE.test(last.text ?? "")) return { action: "property_check_result", kind: "check", checkPattern: cp };
   }
   if (e.kind === "confirmation_promised" && facts.confirmationPromisedUnfulfilled && opts.customerRequestedCheck
