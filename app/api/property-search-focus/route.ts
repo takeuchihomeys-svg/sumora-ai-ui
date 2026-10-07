@@ -5,6 +5,8 @@
 //
 //   POST { conversation_id }（内部認証・画面の帯のボタン）… 会話に紐付いたお客様に印（押した時刻・端末）を置く（お客様ごとに1行・上書き）
 //   GET ?conversation_id=…（内部認証）… 帯のボタンの表示用: 紐付いたお客様・今の印・条件の最後の更新（言い直しが登録の条件に入ったか）
+//   GET ?customer_id=…（認証なし・拡張が印のお客様を開いた時）… 2026-10-07 決め手の条件（closing-target）を「この回だけ」の上書きの形で返す。
+//       効いている印（24時間以内）のお客様だけ読む（それ以外は closing:null で DB の会話を読まない）。お客様の言葉（evidence）は返さない
 //   GET（conversation_id なし・認証なし）… 拡張の軽い取り直し: 24時間以内の印の一覧（お客様の id と時刻だけ。
 //       拡張は /api/property-customers も認証なしで読んでいる＝見える物は増えない）
 //   印を消す書き込みはしない（拡張の search-focus.js が「押した後に検索した・送った・24時間」で効いていない印にする）。
@@ -13,25 +15,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { FOCUS_TTL_MS, deviceOf, lastConditionChange, type ConditionHistoryRow } from "@/app/lib/search-focus";
+import { isMissingFocusTable as isMissingTable, resolveFocusCustomer, loadFocusClosing } from "@/app/lib/search-focus-server";
 
 export const maxDuration = 15;
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
-function isMissingTable(msg: string | undefined | null): boolean {
-  return /property_search_focus/.test(String(msg ?? "")) && /does not exist|schema cache|Could not find/i.test(String(msg ?? ""));
-}
-
 async function resolveCustomer(conversationId: string) {
-  const { data: conv } = await supabase.from("conversations").select("id, property_customer_id, customer_name").eq("id", conversationId).maybeSingle();
-  const pcId = (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
-  if (!pcId) return { conv, customer: null as null | { id: string; customer_name: string | null; status: string | null } };
-  const { data: pc } = await supabase.from("property_customers").select("id, customer_name, status").eq("id", pcId).maybeSingle();
-  return { conv, customer: (pc as { id: string; customer_name: string | null; status: string | null } | null) ?? null };
+  return resolveFocusCustomer(supabase, conversationId);
 }
 
 export async function GET(req: NextRequest) {
   const conversationId = (req.nextUrl.searchParams.get("conversation_id") ?? "").trim();
+  const customerId = (req.nextUrl.searchParams.get("customer_id") ?? "").trim();
+
+  // 2026-10-07 拡張が「📌 会話から物件検索」のお客様を開いた時: 決め手の条件（その回だけの一時調整）
+  if (!conversationId && customerId) {
+    if (!UUID_RE.test(customerId)) return NextResponse.json({ ok: false, error: "customer_id required" }, { status: 400 });
+    try {
+      const r = await loadFocusClosing(supabase, customerId);
+      return NextResponse.json({ ok: true, ...r }, { headers: { "Cache-Control": "no-store" } });
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 200, headers: { "Cache-Control": "no-store" } });
+    }
+  }
 
   // 拡張の軽い取り直し（認証なし・24時間以内の印だけ）
   if (!conversationId) {

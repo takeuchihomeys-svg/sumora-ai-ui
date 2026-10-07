@@ -4,12 +4,26 @@
 
 ---
 
+## 2026-10-07 v2.5.88 AIX【物件を探す】を送ったら 📌 会話から物件検索 に出す＋印のお客様を開いたら決め手の条件を一時調整の欄へ（**拡張の再読み込み必須**・サーバーはデプロイが要る・DB の変更なし＝表 property_search_focus は本番に作成済み・未コミット＝commit は親）
+竹内さん（10/07）「それにする　設計知見と協力しておこなう」: AIX【物件を探す】（property_search・c714b3d8 で aix/action に分岐を新設）を送った時、拡張の自動検索に積むのではなく（自動検索は 10/01 から停止中）、v2.5.86 の印（property_search_focus）を置いて拡張の一覧の一番上「📌 会話から物件検索」に出す。決め手の条件（closing-target）が拡張の案内の条件に載るか確かめる（載らないなら載せる）
+- **印を置く所**: `/api/log-aix-usage`（AIX を送った後に画面が1回だけ呼ぶ）で aix_type=property_search・予約送信でない時に waitUntil で `placeSearchFocus`（`app/lib/search-focus-server.ts`・device="aix"・by="AIX物件を探す"・時刻は送った時刻）。**2分以内に置かれた印があれば置かない**（🔍 を押した直後の送信・記録の2回目＝`shouldPlaceAutoFocus`）。失敗しても送信・記録は止めない（ログ tag `log-aix-usage:search-focus`）。aix/action・AixModal・send-line-message は触っていない。※予約送信は実際に送られた時に印が付かない（今は対象外）
+- **確かめた事（決め手の条件）**: 拡張に載っていたのは **自動検索の一括（/api/automation/trigger の payload.search_override）だけ**で、人が押す案内（📌 から開く・▶案内）は登録の条件のまま＝載っていなかった → 載せた:
+  - サーバー `GET /api/property-search-focus?customer_id=`（認証なし・**効いている印（24時間）のお客様だけ**会話を読む・お客様の言葉（evidence・rationale）は返さない）→ `{ marked, closing: { kinds_ja, status, favorite, search_override, equipment } }`（`focusClosingFrom`＝closingSearchOverride を sanitizeSearchOverride に通す・found は null）
+  - 拡張 popup の `AXLX-FOCUS-CLOSING`: 📌 の一覧に出た時に先に読む（`_prefetchFocusClosing`・5人まで・同じ印は10分読み直さない）→ `openInstructions` の最後で `_applyFocusClosing`（リアプロ・ITANDI だけ）＝ `_applySearchOverrideToForm` と同じ入れ方で一時調整の欄に「この回だけ」（保存しない・登録の条件は変えない）＋帯「🎯 決め手の条件［家賃］（この回だけ）: 家賃〜9万・21〜㎡（パウスフラッツ新大阪 1002 が基準）」。先に読めていれば同期で入る＝▶案内（開いてすぐ検索のボタンを押す）に間に合う。設備はサイトで絞れないので帯だけ（採点は property-brain の CLOSING_FIT が加点）。**メモの上書き・ウェブアプリの自動入力の回（_adjRestoreSuppressed）は入れない**。リアプロで検索して印が外れた後も、続けて同じお客様を ITANDI で開く間（3時間）は同じ像
+  - 札: `search-focus.js` label に device="aix"→「AIX物件を探す」。ウェブ画面の帯（PropertySearchFocusButton）も「AIX【物件を探す】を送った時に置きました」
+- 実物（読むだけ・1回）: H0N0KA.＝partial・上書き 家賃9万・広さ21㎡〜／ゆいと＝found（null＝入れない）
+- テスト: `node tests/chrome-extension/search-focus-closing-v2588.test.js`（28）・`npx tsx app/lib/__tests__/search-focus.test.ts`（24）・既存 search-focus-v2586（51）・list-speed-v2587（37）
+- **確かめる手順（1回ずつ・YUMA で）**: ①サーバーをデプロイ（Vercel READY）②拡張を再読み込み（右上 v2.5.88）③YUMA（紐付けのお客様がある時）で AIX【物件を探す】→ 文を作って送る ④ウェブの帯の ▾ に「拡張の一番上へ: … AIX【物件を探す】を送った時に置きました」⑤PC のリアプロのバーの一覧（45秒以内・↻ ですぐ）に「📌 会話から物件検索」「… AIX物件を探す に押されました」⑥そのお客様を開く → 決め手の条件がある人なら一時調整の欄に家賃等が入り、オレンジの帯「🎯 決め手の条件…」⑦▶案内 → 一番上から外れる ⑧片付け: YUMA のお客様の property_search_focus の1行だけ消す（他の行は触らない）
+- 触ったファイル: app/lib/search-focus.ts（FocusDevice に aix・FOCUS_DEDUPE_MS・shouldPlaceAutoFocus）・app/lib/search-focus-server.ts（新）・app/api/property-search-focus/route.ts（?customer_id=・共通の関数へ）・app/api/log-aix-usage/route.ts（印を置く）・app/components/PropertySearchFocusButton.tsx（文言）・chrome-extension/search-focus.js・popup.js・manifest.json（2.5.88）・tests 2本
+
+---
+
 ## 2026-10-07 決め手の条件（closing-target）— 気に入った部屋＋「あと一つ」から次の物件の像を作り、判定・検索の上書き・ブレインに同じ値（サーバーのみ・拡張の変更なし・未コミット）
 竹内さん（10/07）H0N0KA.「このお部屋の間取りや条件を取り入れて、ここから家賃が更に5.000円程低いお部屋が見つかれば決まるって考えにする。そうすればもっと明確に物件検索をする事が出来る」／ゆいと「次カウンターキッチンでお客さんの条件にあった物件があれば決まる」「他のパターンも改善する」
 - **純関数 `app/lib/closing-target.ts`**: readClosingGaps（型＝家賃・初期費用・設備・広さ・駅近・築年・階・日当たり・静かさ）→ 気に入った部屋＝発言の前7日の一番新しい🌟の本文（見積書・申込フォーマットの🌟は除く）→ buildClosingTarget（家賃＝管理費込みで −5,000 を千円で切り下げ・広さは9割・間取りは気に入った部屋＋登録・場所の目安＝その部屋の駅＋登録のエリア／設備＝今の条件＋設備）→ 発言の後の🌟で状態（found／partial＝一番の点は合うが場所の外（駅で探す人だけ）／active）。21日で切れる
 - **サーバー `app/lib/closing-target-server.ts` loadClosingTargetState**: 会話28日＋売上サポの行（広さ・駅・築年・敷礼で埋める）。子の行（物置）は null
 - **判定**: property-brain JudgeOptions.closingTarget → `CLOSING_FIT` +12／`CLOSING_MAIN_OK` +6／`CLOSING_MAIN_MISS`・`CLOSING_NEAR_FAVORITE` 0（加点だけ・保留/外す候補には付けない）。judge API（拡張の判定）と recordPickupBatch（資料の文字層で設備も）
-- **検索**: `/api/automation/trigger` の web_brain でメモ欄の指示が無い時だけ payload.search_override に像（家賃・間取り・広さ・徒歩・築年・階のみ・found は載せない）＋ payload.closing_target。拡張は既存の search-override.js がそのまま読む（v2.5.37〜）＝拡張の版は上げていない。**今は自動検索が一時停止中（409）なので、効くのは判定・ブレイン・再開後の一括検索**。手で押す案内モード（popup の一時調整）にはまだ入れていない＝要相談
+- **検索**: `/api/automation/trigger` の web_brain でメモ欄の指示が無い時だけ payload.search_override に像（家賃・間取り・広さ・徒歩・築年・階のみ・found は載せない）＋ payload.closing_target。拡張は既存の search-override.js がそのまま読む（v2.5.37〜）＝拡張の版は上げていない。**今は自動検索が一時停止中（409）なので、効くのは判定・ブレイン・再開後の一括検索**。手で押す案内モード（popup の一時調整）には v2.5.88 で 📌 の印のお客様だけ入れた（上の項）
 - **方針**: 家賃・初期費用・比べの広さ/駅近/築年・日当たり・静かさ＝一時の意図（登録を直さない）／設備・数字のある階＝登録してよい（条件の橋 equip_add で Haiku が {} の時に設備を足す・generate-draft-bg-async）
 - 実物: H0N0KA. 像 1LDK/1DK・21㎡以上・管理費込み9.0万以内・新大阪/南方/東三国＝partial（10/5 江坂 203 は家賃は合うが場所の外）。ゆいと 今の条件＋カウンターキッチン＝found（10/5 カーサ・クラシオンF 102→内覧 10/8）
 - 監査 `scripts/audit-closing-target.ts --show=all`（読むだけ・費用0）・テスト `app/lib/__tests__/closing-target.test.ts`（60）。止める: `CLOSING_TARGET_MODE=off`

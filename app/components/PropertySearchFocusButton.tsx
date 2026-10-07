@@ -147,7 +147,7 @@ export default function PropertySearchFocusButton({ conversationId, authHeader }
         <span className="min-w-0 flex-1 break-words text-[10.5px] text-[#54656f]">
           {!c
             ? "物件検索のお客様に紐付いていません"
-            : msg || (info.focus ? `拡張の一番上へ: ${jstMdHm(info.focus.at)} ${info.focus.device === "phone" ? "スマホ" : "PC"}で押されました` : "拡張のお客様の一番上に出します（スマホからでも）")}
+            : msg || (info.focus ? `拡張の一番上へ: ${jstMdHm(info.focus.at)} ${info.focus.device === "aix" ? "AIX【物件を探す】を送った時に置きました" : `${info.focus.device === "phone" ? "スマホ" : "PC"}で押されました`}` : "拡張のお客様の一番上に出します（スマホからでも）")}
         </span>
       </div>
       {c && lc && lc.fields.length > 0 && (

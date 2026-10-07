@@ -15,6 +15,12 @@
 //   ② 押した後にそのお客様へ物件を送った（last_property_sent_at が押した時刻より後）
 //   ③ 押してから TTL_MS（24時間）経った
 //   もう一度押せば時刻が新しくなり、また一番上に出る。
+//
+// v2.5.88 2026-10-07 竹内「それにする　設計知見と協力しておこなう」:
+//   ・AIX【物件を探す】を送った時も同じ印が付く（device="aix"・サーバーの log-aix-usage が置く）。札は「AIX物件を探す」
+//   ・印のお客様を開いた時、決め手の条件（closing-target・「気に入った部屋より家賃−5千」「カウンターキッチン」等）を
+//     /api/property-search-focus?customer_id= で読み、一時調整の欄に「この回だけ」入れる（登録の条件・保存した一時調整は変えない）。
+//     サイトで絞れない設備は欄に入れず帯に出すだけ（採点は property-brain が加点）。closingNote／closingKey はその純関数
 (function (root) {
   "use strict";
 
@@ -87,11 +93,37 @@
     if (!Number.isFinite(t)) return "";
     var d = new Date(t + 9 * 3600 * 1000);
     var hh = String(d.getUTCHours()).padStart(2, "0"), mm = String(d.getUTCMinutes()).padStart(2, "0");
-    var dev = f.device === "phone" ? "スマホ" : f.device === "pc" ? "PC" : "";
-    return (d.getUTCMonth() + 1) + "/" + d.getUTCDate() + " " + hh + ":" + mm + (dev ? " " + dev : "") + (f.by ? "・" + f.by : "");
+    var dev = f.device === "phone" ? "スマホ" : f.device === "pc" ? "PC" : f.device === "aix" ? "AIX物件を探す" : "";
+    // AIX の印は by にも同じ名前が入る（二重に出さない）
+    var by = f.by && !(f.device === "aix" && /AIX/.test(f.by)) ? "・" + f.by : "";
+    return (d.getUTCMonth() + 1) + "/" + d.getUTCDate() + " " + hh + ":" + mm + (dev ? " " + dev : "") + by;
   }
 
-  var api = { TTL_MS: TTL_MS, focusState: focusState, isActive: isActive, pinnedCustomers: pinnedCustomers, mergeMarks: mergeMarks, marksSig: marksSig, label: label };
+  /** 決め手の条件の覚えの鍵（お客様×印の時刻＝押し直したら読み直す）。効いていない印は null＝読まない */
+  function closingKey(c, nowMs) {
+    if (!isActive(c, nowMs)) return null;
+    return String(c.id) + "@" + String(c.search_focus.at);
+  }
+
+  /**
+   * 帯の1行（純）。cl＝サーバーの closing（{ kinds_ja, favorite, search_override, equipment }）。describe＝AxlxSearchOverride.describe
+   *   例「🎯 決め手の条件（この回だけ）: 家賃〜7.6万・1LDK／設備: カウンターキッチン（バウスフラッツ新大阪 1002 が基準）」。何も無ければ ""
+   */
+  function closingNote(cl, describe) {
+    if (!cl || typeof cl !== "object") return "";
+    var p = [];
+    if (cl.search_override && typeof describe === "function") {
+      var d = describe(cl.search_override);
+      if (d && d !== "上書きなし") p.push(d);
+    }
+    var eq = Array.isArray(cl.equipment) ? cl.equipment.filter(function (x) { return typeof x === "string" && x; }) : [];
+    if (eq.length) p.push("設備: " + eq.join("・") + "（サイトでは絞らず採点で上げる）");
+    if (!p.length) return "";
+    var kinds = Array.isArray(cl.kinds_ja) && cl.kinds_ja.length ? "［" + cl.kinds_ja.join("・") + "］" : "";
+    return "🎯 決め手の条件" + kinds + "（この回だけ）: " + p.join("／") + (cl.favorite ? "（" + cl.favorite + " が基準）" : "");
+  }
+
+  var api = { closingKey: closingKey, closingNote: closingNote, TTL_MS: TTL_MS, focusState: focusState, isActive: isActive, pinnedCustomers: pinnedCustomers, mergeMarks: mergeMarks, marksSig: marksSig, label: label };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.AxlxSearchFocus = api;
 })(typeof self !== "undefined" ? self : globalThis);

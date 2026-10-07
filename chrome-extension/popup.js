@@ -2676,6 +2676,8 @@ function renderList(customers) {
   if (pinned.length) {
     const _pinIds = new Set(pinned.map((c) => String(c.id)));
     customers = customers.filter((c) => !_pinIds.has(String(c.id)));
+    // v2.5.88 決め手の条件を先に読んでおく（▶案内 で開いた瞬間に欄へ入れられるように・_applyFocusClosing）
+    try { _prefetchFocusClosing(pinned); } catch (_) {}
   }
 
   if (!customers.length && !pinned.length) {
@@ -3975,6 +3977,81 @@ async function _pollSearchFocus() {
   } catch (_) { /* 取れない時は次の回 */ }
 }
 // ==AXLX-FOCUS-CORE-END==
+
+// ==AXLX-FOCUS-CLOSING-BEGIN==
+// v2.5.88 2026-10-07 竹内「それにする　設計知見と協力しておこなう」（AIX【物件を探す】→ 📌 会話から物件検索）:
+//   印のお客様を開いた時、決め手の条件（closing-target・気に入った部屋＋「あと一つ」から作る次の物件の像）を
+//   /api/property-search-focus?customer_id= で読み、一時調整の欄に「この回だけ」入れる（_applySearchOverrideToForm と同じ入れ方＝
+//   input の出来事を出さない・履歴 tempAdj_{id} に保存しない・登録の条件は変えない）。設備は欄に無いので帯に出すだけ。
+//   ・一覧に 📌 が出た時に先に読んでおく（▶案内 は openInstructions の直後に検索のボタンを押す＝その時に欄に入っている必要がある）
+//   ・リアプロで検索すると印は効かなくなる（searched）が、同じお客様を続けて ITANDI で探す間（FOCUS_CLOSING_KEEP_MS）は同じ像を入れる
+//   ・ウェブアプリの自動入力・AIXツールのメモの上書きの回（_adjRestoreSuppressed）は入れない（そちらの指示が優先・混ぜない）
+var _focusClosingMemo = {}; // cid → { key, t, closing } | { key, pending }
+var FOCUS_CLOSING_MEMO_MS = 10 * 60 * 1000;   // 同じ印の像を読み直さない間
+var FOCUS_CLOSING_KEEP_MS = 3 * 60 * 60 * 1000; // 印が外れた後も同じお客様に像を入れる間（両サイトを続けて探す）
+function _fetchFocusClosing(c) {
+  var SF = (typeof self !== "undefined" ? self : window).AxlxSearchFocus;
+  var key = SF && c ? SF.closingKey(c) : null;
+  if (!key) return Promise.resolve(null);
+  var cid = String(c.id);
+  var m = _focusClosingMemo[cid];
+  if (m && m.key === key && m.pending) return m.pending;
+  if (m && m.key === key && !m.pending && Date.now() - m.t < FOCUS_CLOSING_MEMO_MS) return Promise.resolve(m.closing);
+  var p = fetch(API_BASE + "/api/property-search-focus?customer_id=" + encodeURIComponent(cid), { cache: "no-store" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) {
+      var cl = (j && j.ok && j.closing) || null;
+      _focusClosingMemo[cid] = { key: key, t: Date.now(), closing: cl };
+      return cl;
+    })
+    .catch(function () { delete _focusClosingMemo[cid]; return null; });
+  _focusClosingMemo[cid] = { key: key, pending: p };
+  return p;
+}
+/** 一覧に 📌 が出た時に先に読む（多くても5人） */
+function _prefetchFocusClosing(list) {
+  (list || []).slice(0, 5).forEach(function (c) { try { _fetchFocusClosing(c); } catch (_) {} });
+}
+function _focusClosingNoteEl() {
+  var el = document.getElementById("focus-closing-note");
+  if (el) return el;
+  var anchor = document.getElementById("adj-mode-indicator");
+  if (!anchor || !anchor.parentNode) return null;
+  el = document.createElement("div");
+  el.id = "focus-closing-note";
+  el.style.cssText = "display:none;margin:4px 0;padding:4px 8px;border-radius:6px;background:#fff7ed;color:#c2410c;font-size:11px;font-weight:600;line-height:1.4";
+  anchor.parentNode.insertBefore(el, anchor.nextSibling);
+  return el;
+}
+/** openInstructions の最後に呼ぶ。印（か直前の印）のお客様なら決め手の条件を欄に入れて帯に出す */
+function _applyFocusClosing(siteKey) {
+  var SF = (typeof self !== "undefined" ? self : window).AxlxSearchFocus;
+  var SO = (typeof self !== "undefined" ? self : window).AxlxSearchOverride;
+  var noteEl = _focusClosingNoteEl();
+  if (noteEl) { noteEl.style.display = "none"; noteEl.textContent = ""; }
+  var c = selectedCustomer;
+  if (!SF || !SO || !c || _adjRestoreSuppressed) return;
+  if (siteKey !== "realpro" && siteKey !== "itandi") return;
+  var cid = String(c.id);
+  var apply = function (cl) {
+    if (!cl || !selectedCustomer || String(selectedCustomer.id) !== cid || selectedSite !== siteKey || _adjRestoreSuppressed) return;
+    var ov = cl.search_override ? SO.sanitize(cl.search_override) : null;
+    if (ov) _applySearchOverrideToForm(ov, null, selectedCustomer);
+    var note = SF.closingNote(cl, SO.describe);
+    var el = _focusClosingNoteEl();
+    if (el && note) { el.textContent = note; el.style.display = "block"; }
+    console.log("[AX] 📌 決め手の条件（この回だけ・保存しない）:", note || "-");
+  };
+  var m = _focusClosingMemo[cid];
+  if (SF.closingKey(c)) {
+    if (m && m.key === SF.closingKey(c) && !m.pending) { apply(m.closing); return; } // 先に読めていれば同期で入れる（▶案内 の押下に間に合う）
+    _fetchFocusClosing(c).then(apply);
+    return;
+  }
+  // 印は外れた（この後リアプロで検索した等）が、続けて別のサイトで探す間は同じ像
+  if (m && !m.pending && m.closing && Date.now() - m.t < FOCUS_CLOSING_KEEP_MS) apply(m.closing);
+}
+// ==AXLX-FOCUS-CLOSING-END==
 
 // 一時調整の上書きモードを判定: "ward" | "station" | null（null=顧客デフォルトで検索）
 function computeTempAdjOverride() {
@@ -5791,6 +5868,9 @@ function openInstructions(siteKey) {
     adjForm.style.display = "none";
     document.getElementById("area-mode-selector").style.display = "none";
   }
+
+  // v2.5.88 📌 会話から物件検索（AIX【物件を探す】・🔍）のお客様: 決め手の条件をこの回だけ欄に入れる（_applyFocusClosing）
+  try { _applyFocusClosing(siteKey); } catch (e) { console.warn("[AX] 決め手の条件を入れられない（登録の条件のまま）:", e); }
 
   showView("view-instructions");
 }

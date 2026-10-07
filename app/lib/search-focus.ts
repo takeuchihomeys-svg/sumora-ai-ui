@@ -8,7 +8,25 @@
 /** 印が効く長さ（拡張の chrome-extension/search-focus.js の TTL_MS と同じ値） */
 export const FOCUS_TTL_MS = 24 * 60 * 60 * 1000;
 
-export type FocusDevice = "phone" | "pc";
+/**
+ * 押した端末（phone／pc＝会話画面の「🔍 物件検索」・aix＝AIX【物件を探す】を送った時に自動で置いた印）。
+ * 2026-10-07 竹内「それにする」: AIX【物件を探す】を送ったら、拡張の自動検索に積む代わりに（自動検索は 10/01 から停止中）
+ *   そのお客様を拡張の一覧の一番上「📌 会話から物件検索」に出す（log-aix-usage が置く・search-focus-server.placeSearchFocus）
+ */
+export type FocusDevice = "phone" | "pc" | "aix";
+
+/** 自動の印を置き直さない間（🔍 を押した直後に AIX を送った・送信の記録が2回来た 等で二重に置かない） */
+export const FOCUS_DEDUPE_MS = 2 * 60 * 1000;
+
+/**
+ * 自動で置く印（AIX を送った時）を置いてよいか（純）。今の印が FOCUS_DEDUPE_MS より新しければ置かない（もう一番上に出ている）。
+ * 手で押す「🔍 物件検索」は毎回置き直す（押し直し＝一番上へ戻す意思）ので、これは使わない
+ */
+export function shouldPlaceAutoFocus(existing: { requested_at?: string | null } | null | undefined, nowMs: number, windowMs = FOCUS_DEDUPE_MS): boolean {
+  const at = Date.parse(String(existing?.requested_at ?? ""));
+  if (!Number.isFinite(at)) return true;
+  return nowMs - at >= windowMs;
+}
 
 /** 押した端末（User-Agent から・スマホ／PC だけ） */
 export function deviceOf(ua: string | null | undefined): FocusDevice {

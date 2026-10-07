@@ -358,6 +358,21 @@ export async function POST(req: NextRequest) {
       })());
     }
 
+    // 2026-10-07 竹内「それにする」: AIX【物件を探す】を送った → 拡張のお客様一覧の一番上「📌 会話から物件検索」に出す印を置く
+    //   （自動検索に積むのではない・自動検索は 10/01 から停止中。印は property_search_focus・v2.5.86 の仕組み・device="aix"）。
+    //   2分以内に置かれた印があれば置かない（🔍 を押した直後の送信・記録の2回目）。予約送信（まだ送っていない）は置かない。失敗しても記録は止めない
+    if (logRow?.id && aix_type === "property_search" && scheduled !== true) {
+      waitUntil((async () => {
+        try {
+          const { placeSearchFocus } = await import("@/app/lib/search-focus-server");
+          const r = await placeSearchFocus(supabase, { conversationId: conversation_id, device: "aix", by: "AIX物件を探す", now: sent_at && Number.isFinite(Date.parse(sent_at)) ? new Date(sent_at) : undefined });
+          console.log(JSON.stringify({ tag: "log-aix-usage:search-focus", conversation_id, ...r }));
+        } catch (e) {
+          console.warn("[log-aix-usage] search focus failed:", e instanceof Error ? e.message : e);
+        }
+      })());
+    }
+
     // 売上番長グループの「AIX要対応」: この会話の未完了を完了（一覧で✅）にする（2026-09-12 竹内方針）
     try {
       const { completeAixActionItem } = await import("@/app/lib/aix-action-items");
