@@ -2,6 +2,17 @@
 
 最終更新: 2026-10-07
 
+## 🧭 返信の質の巡 3巡目（10/07・竹内「設計知見と協力して徹底的に」「ブレインも動的な部分限定」「AIX-META も同じ観点」・途中で止めた）
+- **RAG**: `kb.ts --scene=<場面>`（札「場面:〇〇」244行・題の型 KB_SCENES・点 +0.5）。場面の問い45で recall@5 0.73→0.96（holdout 0.75→0.92）・問いに語を足すのは逆効果。評価 `scripts/kb-scene-rag-eval.ts`・札付け `scripts/kb-scene-tag.ts`（控えあり）
+- **ブレインを場面で絞る**（`app/lib/brain-scene.ts`・既定 off・`BRAIN_SCENE_MATERIALS=on`）: 83番×各6回 道の一致 72%±9→70%±9（差 −1pt±3＝揺れ）・材料 −12%（短いお礼 −33%）＝1回 約5%安い見込み。質の上がりは無し→竹内さんの判断待ち
+- **約束の直後のお礼は2段にしない**（two-stage ackRightAfterPromise・`TWO_STAGE_ACK_WAIT=off`）: 本番120日 ピックアップの約束後のお礼 199番の80%は打たずに後で果たす（`scripts/audit-ack-after-promise-silent.ts`）。再生 短いお礼の道 48%→69%
+- **AIX の判断のずれの直し**（竹内さん10/07の答え）: 見張り v5 two_stage_fulfilled／pickupReady は新しさ（freshPickupReady・`PICKUP_READY_FRESH=off`）／確認の約束は質問の中身で（check_question・`TWO_STAGE_CHECK_BY_QUESTION=off`）／内覧は段階を門・日時の指定は内覧調整を直接（`VIEWING_FLOW_GATE=off`）／約束が複数なら見積・確認が先（`PROMISE_ORDER_CHECK_FIRST=off`）／decision_source_no_aix（記録は no_aix:…）／469a614a を STAFF_INTERNAL に
+- **検討中の決まりを1か所に**（reply-scene CONSIDERING_*・`REPLY_CONSIDERING_DOOR=off`）: 23番×2回 一致 +4pt±9・訴求が抜ける 22→13%＝入れたまま。**会社のルールを場面で絞る**（testFlags.rules_scene）は +0pt±9・確認に逃げる 0→5% ＝入れない（テストの旗だけ）
+- reply-scene: 「よろしくお願い」を依頼の語にしない・お礼の語を除いた残りに中身がある発言は短いお礼にしない（1,000発言で41が other へ）・スタンプだけはお礼。テストの時計 `TEST_CLOCK_JST_HOUR`（試しの印がある時だけ）。DeepSeek への送信で孤立サロゲートを置換（wellFormedJson）。brain-core の ai_summary 保存の after() をリクエスト外でも動くように
+- 道具: `scripts/yuma-r3-replay.ts`（条件の行を写す・ブレイン off/on×回数・下書きの旗・同時1本・控えファイル）・`scripts/audit-r3-replay-score.ts`・`scripts/audit-path-gap-by-scene.ts`・`scripts/audit-estimate-promise-first.ts`・`scripts/audit-promise-ack-path.ts`
+- ⚠ 再生でブレイン6本同時→本番 DB が止まった（10/07）。以後は同時1本。YUMA の条件の行は taskkill で1回戻らず、10/01 の判断の控えから戻した（その後は控えファイルで戻す）
+- **未完了**: 最後の Claude の確かめ（検討中・約束の後のお礼・内覧の日時の指定）・物件検索ブレインの材料（決め手の条件・REPLY_PROPERTY_BRAIN）の前後の測定・短いお礼9系統の寄せ・見積の依頼で「約束の返信」か「直接 AIX」か（本番 打たずに AIX 43・先に約束 36）の竹内さんの判断
+
 ## 🔎 AIX の判断のずれ（返信か AIX か）の型と出所（10/07・竹内「AIXの判断の部分なぜずれあるのかも深く徹底的に調査する」・調査のみ・直しは3巡目の担当へ）
 - **道具**: `scripts/audit-aix-judgement-gap.ts [--days=45|--since=…] [--out=<jsonl>]`（brain_decision_logs の番×staffWindowOf の返事のまとまり・同じ連投は1番・スタッフが見た判断＝最初の行動より前の最後・YUMA／申込以降を除く・LLM なし）。型の札 R1〜R4（AI 返信×人 AIX）／A1〜A9（AI AIX×人返信）／O1〜O9（別の AIX）を `cause` に出す
 - **数字（45日 572番）**: 2段の前（〜10/02 13:41 JST）476番 一致 45%・AI AIX×人返信 44%・別 8%・AI 返信×人 AIX 2% → 2段の後 96番 一致 63%・AI 返信×人 AIX 20%・AI AIX×人返信 14%・別 4%。2段の後の AI 返信×人 AIX の 17/19 は「約束の返信の番にスタッフが同じ30分のまとまりでその約束の AIX を押した」（R1 13・種類違い R2 4）＝決まりどおりを見張りが外れと数える。R1 を一致にし会話 469a614a（スタッフ同士らしい文・テストの印なし）を外すと 76%（68/89）。鮮度（判断がスタッフより後）は 0〜2% で原因でない
