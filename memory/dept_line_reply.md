@@ -11,7 +11,8 @@
 - reply-scene: 「よろしくお願い」を依頼の語にしない・お礼の語を除いた残りに中身がある発言は短いお礼にしない（1,000発言で41が other へ）・スタンプだけはお礼。テストの時計 `TEST_CLOCK_JST_HOUR`（試しの印がある時だけ）。DeepSeek への送信で孤立サロゲートを置換（wellFormedJson）。brain-core の ai_summary 保存の after() をリクエスト外でも動くように
 - 道具: `scripts/yuma-r3-replay.ts`（条件の行を写す・ブレイン off/on×回数・下書きの旗・同時1本・控えファイル）・`scripts/audit-r3-replay-score.ts`・`scripts/audit-path-gap-by-scene.ts`・`scripts/audit-estimate-promise-first.ts`・`scripts/audit-promise-ack-path.ts`
 - ⚠ 再生でブレイン6本同時→本番 DB が止まった（10/07）。以後は同時1本。YUMA の条件の行は taskkill で1回戻らず、10/01 の判断の控えから戻した（その後は控えファイルで戻す）
-- **未完了**: 最後の Claude の確かめ（検討中・約束の後のお礼・内覧の日時の指定）・物件検索ブレインの材料（決め手の条件・REPLY_PROPERTY_BRAIN）の前後の測定・短いお礼9系統の寄せ・見積の依頼で「約束の返信」か「直接 AIX」か（本番 打たずに AIX 43・先に約束 36）の竹内さんの判断
+- **続き（10/07 午後）**: ①最後の Claude（6番 $0.23）: 検討中2番は扉の1文の種類（申込で抑える／内覧）がスタッフと同じ・約束の後のお礼2番は AIX【物件ピックアップ】（promise:pickup・下書きなし）＝スタッフの道と同じ・内覧の日時の指定2番は AIX【内覧調整】（スタッフは手打ち＝竹内さんの決め「直接 AIX」どおり）②短いお礼の判定 isShortAckMsg を reply-scene の ack に寄せた（`REPLY_ACK_UNIFIED=off`／testFlags.ack_unified）: 旧だけがお礼と読んだ 33（「福島区もお願い致します」「交渉お願いしたいです」等の依頼）を外し、新だけの 35（複数行のお礼）を拾う。食い違う番 11×2回で一致の差 ±0・近い 0→15%・似ている度 0.28→0.35 ＝下がらないので入れた。他の判定（isGratitudeReplyTPO・isShortAckOnly・isViewAck）は意味が違うので残した ③物件検索ブレインの材料（決め手の条件・`REPLY_PROPERTY_BRAIN` 既定 off）: 決め手の条件の会話 15番×2回で材料が届いたのは2番だけ・差 −8pt±16（揺れ）＝判断できない→既定 off のまま（再生で決め手の条件が立つ場面を作るのが次の課題）
+- **未完了・判断待ち**: 見積の依頼で「約束の返信」か「直接 AIX」か（本番 打たずに AIX 43・先に約束 36）・ブレインの場面の絞り込みを on にするか・YUMA の要約が空のまま
 
 ## 🔎 AIX の判断のずれ（返信か AIX か）の型と出所（10/07・竹内「AIXの判断の部分なぜずれあるのかも深く徹底的に調査する」・調査のみ・直しは3巡目の担当へ）
 - **道具**: `scripts/audit-aix-judgement-gap.ts [--days=45|--since=…] [--out=<jsonl>]`（brain_decision_logs の番×staffWindowOf の返事のまとまり・同じ連投は1番・スタッフが見た判断＝最初の行動より前の最後・YUMA／申込以降を除く・LLM なし）。型の札 R1〜R4（AI 返信×人 AIX）／A1〜A9（AI AIX×人返信）／O1〜O9（別の AIX）を `cause` に出す

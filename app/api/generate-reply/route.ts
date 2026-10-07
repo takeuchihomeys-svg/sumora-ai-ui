@@ -937,7 +937,7 @@ function buildGenerationMessages(
     /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX（物件確認した）で答えた（checkAnsweredFollowUp） */
     checkAnsweredFollowUp?: boolean } | null = null,
   // 2026-10-07 場面の整理（reply-scene.ts）: この番の場面と、場面ごとの材料の取捨を効かせるか。null／on=false は今まで通り全部
-  sceneSel: { scene: ReplyScene | null; on: boolean } | null = null,
+  sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean } | null = null,
 ): [SystemMessage, HumanMessage] {
   const sceneKeep = (k: Parameters<typeof keepMaterial>[1]) => keepMaterial(sceneSel?.scene ?? null, k, !!sceneSel?.on);
   const jstHour = getJSTHour();
@@ -1217,7 +1217,10 @@ function buildGenerationMessages(
     trimmedCustomerMsg.split("\n").map((s) => s.trim()).filter(Boolean).every((p) => TPO_NEUTRAL_ACK_RE.test(p));
   // A-1: スタンプ単独・絵文字のみは「短い了承」として扱う（条件全列挙のピックアップ二重宣言を防ぐ）
   const isDecorOnlyMsgLocal = trimmedCustomerMsg.length > 0 && DECOR_ONLY_RE.test(trimmedCustomerMsg);
-  const isShortAckMsg = isDecorOnlyMsgLocal || (
+  // 3巡目（10/07）: 短い了承の判定を場面の判定（reply-scene の ack）に寄せる（REPLY_ACK_UNIFIED=off／testFlags.ack_unified で戻す）。
+  //   本番の発言 922 で、旧の判定だけが了承と読んだ 40 は「福島区もお願い致します」「交渉お願いしたいです」「フジパレスは無しでお願いします」等の依頼・断り、
+  //   場面の判定だけが了承と読んだ 35 は「ありがとうございます／よろしくお願いします」等の複数行の了承だった
+  const isShortAckMsg = sceneSel?.ackUnified && sceneSel.scene ? sceneSel.scene === "ack" : isDecorOnlyMsgLocal || (
     (!hasMultipleMessages || allPartsNeutralAck) &&
     trimmedCustomerMsg.length > 0 &&
     coreLength(trimmedCustomerMsg) < 60 &&
@@ -5600,7 +5603,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
-      { scene: replyScene, on: sceneMaterialsOn }, // 2026-10-07 場面の整理
+      { scene: replyScene, on: sceneMaterialsOn, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───

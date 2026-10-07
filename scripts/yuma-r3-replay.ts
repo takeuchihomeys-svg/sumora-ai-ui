@@ -214,8 +214,8 @@ async function main() {
       if (!sc || !sc.customer.length) { rec.skip = "材料なし/書類"; appendFileSync(OUT, JSON.stringify(rec) + "\n"); continue; }
       h.assertSceneSafe([...sc.context.map((m) => m.t), ...sc.customer], t.key);
       rec.customer = sc.customer; rec.staff = sc.staff;
+      await h.waitUntilYumaQuiet(own); // 10/07: 他の担当が YUMA を使っている間に条件の行を写さない（先に待つ）
       rec.pc = await copyPc(t.conversation_id, yumaPc);
-      await h.waitUntilYumaQuiet(own);
       const all = [...sc.context, ...sc.customer.map((x) => ({ s: "customer", t: x, aix: false }))];
       const times = h.sceneTimes(all.length, { stepSec: 90 });
       const ins = await sb.from("messages").insert(all.map((m, i) => ({ conversation_id: YUMA, sender: m.s, text: m.t || "[画像]", is_aix_generated: !!m.aix, line_message_id: `${PREFIX}${randomUUID()}`, created_at: times[i] }))).select("id");
