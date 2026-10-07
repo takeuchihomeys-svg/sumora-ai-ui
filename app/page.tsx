@@ -1054,6 +1054,10 @@ export default function Home() {
   const lastLineSendRef = useRef<{ messageId: string | null; sentAt: string } | null>(null);
   // AIX生成文案ログ: onSendで取得し onAfterSendのlog-aix-usageに渡すワンショットref（既存lastAixSentTextRefとは別用途）
   const lastAixLogTextRef = useRef<string | null>(null);
+  // 2026-10-07 竹内「そうする」: AIX【内覧挨拶】はピッカーが文を入力欄に入れてスタッフが普通の送信で送る＝aix_usage_logs に残っていなかった。
+  //   生成した文・会話・ピッカーの選択を控え、executeSend でその下書き（aiDraftRef が同じ文のまま）を送った時だけ log-aix-usage に記録する。
+  //   直して送った時は was_edited=true（押した・直して送った）。別の下書きに替わった・✕で消した時は aiDraftRef が変わるので記録しない
+  const greetingViewingPendingRef = useRef<{ convId: string; generated: string; subMode: string } | null>(null);
   // 物件確認結果（空室か否か）を会話ごとに保持 → suggest-next-action のチェーンルール分岐に使用
   const propertyAvailableByConvRef = useRef<Map<string, boolean>>(new Map());
   // CHAIN-1: 会話ごとの直近AIXピッカーサブモード（check_pattern / app_sub_mode / send_mode）。
@@ -5118,6 +5122,26 @@ export default function Home() {
           }
         }).catch(() => {});
 
+        // 2026-10-07 竹内「そうする」: AIX【内覧挨拶】のピッカーで入れた下書きを送った → AIX の押下として記録（直して送ったら was_edited）
+        const greetPending = greetingViewingPendingRef.current;
+        if (greetPending && greetPending.convId === convId && capturedAiDraft === greetPending.generated) {
+          greetingViewingPendingRef.current = null;
+          fetch("/api/log-aix-usage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversation_id: convId,
+              aix_type: "greeting_viewing",
+              conversation_status: selectedConversation.status ?? null,
+              line_message_id: textLineMsgId,
+              sent_at: now.toISOString(),
+              app_sub_mode: greetPending.subMode,
+              generated_text: textToSend,
+              was_edited: textToSend !== greetPending.generated.trim(),
+            }),
+          }).catch(() => {});
+        }
+
         aiDraftRef.current = "";
         setDisplaySource(null);
         selectedPatternAngleRef.current = null;
@@ -6499,6 +6523,12 @@ export default function Home() {
         setReplyDraft(data.message_text);
         aiDraftRef.current = data.message_text;
         setDisplaySource("ai_draft");
+        // 送った時に AIX【内覧挨拶】として記録する（executeSend）。app_sub_mode に内覧前／内覧後の選択を残す
+        greetingViewingPendingRef.current = {
+          convId: selectedConversation.id,
+          generated: data.message_text,
+          subMode: greetingViewingMode === "before" ? "before" : `after${afterTypeForApi ? `:${afterTypeForApi}` : ""}`,
+        };
       }
       if (reportSave) {
         const saveErr = await reportSave;

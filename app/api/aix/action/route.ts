@@ -7424,7 +7424,7 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
       const giParallel = body.parallel === true;
       const giMatch = body.conversation_match === true;
       const giFacts = formatGuarantorFacts(giProps, { parallel: giParallel });
-      // 2026-10-07 竹内「文の質をあげてボタンとしてつかっていく」（提案20回・押下0）: 物件1件＝手打ちの2行の答え／1番手・2番手のある一覧／今までの一覧
+      // 2026-10-07 竹内「文の質をあげてボタンとしてつかっていく」（提案20回・押下0）: 物件1件＝手打ちの2行の答え／1社目・2社目のある一覧／今までの一覧（10/07 竹内「1社目 2社目にする」）
       //   （guarantorInfoShape・固定も会話を合わせるも同じ形。1件に「こちら保証会社一覧」「キャンセル料不要」の5段を出していたのが手打ちに負けた所）
       const giShape = guarantorInfoShape(giProps);
       // UI が「入力の確認」と onAfterSend（→ log-aix-usage → sent_facts）に使う
@@ -7435,8 +7435,8 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         const giFixed = buildGuarantorInfoText({ customerName: familyName || rawName || "", properties: giProps, parallel: giParallel });
         return finalizeResponse(giFixed, { ...giExtra, fixed: true });
       }
-      // 2026-10-07: 物件1件・1番手/2番手の一覧は「会話を合わせる」も LLM を呼ばない（土台＋審査の不安への支えの1文）。
-      //   YUMA の DeepSeek で土台を崩した（1番手が消える・種類不明の会社に「ブラックでも通る可能性十分」）＝事実の答えに LLM の足しは要らない
+      // 2026-10-07: 物件1件・1社目/2社目の一覧は「会話を合わせる」も LLM を呼ばない（土台＋審査の不安への支えの1文）。
+      //   YUMA の DeepSeek で土台を崩した（1社目が消える・種類不明の会社に「ブラックでも通る可能性十分」）＝事実の答えに LLM の足しは要らない
       const giMatched = buildGuarantorMatchedText(giProps, latestCustomerMsg);
       if (giMatched !== null) return finalizeResponse(giMatched, { ...giExtra, fixed: false });
 
