@@ -213,5 +213,39 @@ describe("final-check V16 COMPANY_FACT_CONTRADICTION", () => {
   });
 });
 
+// ── 2026-10-07 5巡目: 連帯保証人（d46290ff 10/01 の実物の下書き・スタッフの実送信）──
+describe("連帯保証人（joint_guarantor）", () => {
+  const ask = "連帯保証人には連絡行きますか？\nまた必要な書類等はありますか？";
+  const draft = "かしこまりました！！\n基本的に連帯保証人様へのご連絡はございません！！\nご用意いただく書類は、連帯保証人様の本人確認書類（運転免許証またはマイナンバーカードの表裏）のみでございます😊！！";
+  const ctxOf = (cust: string) => ({
+    lastCustomerMessage: cust,
+    recentMessages: [
+      { sender: "staff", text: "連帯保証人様の設定は可能でしょうか！！", createdAt: "2026-10-01T01:36:00Z" },
+      { sender: "customer", text: cust, createdAt: "2026-10-01T01:38:00Z" },
+    ],
+    customerName: "佐藤",
+  });
+  it("実物の下書き → 2文とも当たる", () => eq(findCompanyFactContradictionsUngated(draft).filter((h) => h.factId === "joint_guarantor").length, 2));
+  it("お客様が聞いている時はゲートが開く", () => eq(findCompanyFactContradiction(draft, [ask])?.factId, "joint_guarantor"));
+  it("スタッフの実送信（電話の可能性・実印・印鑑登録書原本）→ 当たらない", () =>
+    eq(findCompanyFactContradictionsUngated("審査時に本人確認としてお電話がある可能性がございます！！\n\n契約時には連帯保証人様直筆での契約書へのご署名と実印での押印、実印の印鑑登録書原本の提出が必要となります！！").length, 0));
+  it("申込時の書類の実送信（連帯保証人様の本人確認書類・のみ無し）→ 当たらない", () =>
+    eq(findCompanyFactContradictionsUngated("上記フォーマットご入力いただき、隼斗さんと連帯保証人様のご本人確認書類として運転免許証またはマイナンバーカードの裏表の写真をお送りください！！").length, 0));
+  it("緊急連絡先の文（ご連絡はございません）は当てない", () =>
+    eq(findCompanyFactContradictionsUngated("緊急連絡先様は連帯保証人と違いご連絡はございません").filter((h) => h.factId === "joint_guarantor").length, 0));
+  it("本人確認書類のみ＋実印の語あり → 当たらない", () =>
+    eq(findCompanyFactContradictionsUngated("申込の時は連帯保証人様の本人確認書類のみで、ご契約の際に実印と印鑑証明書が必要となります").length, 0));
+  it("入口: 保証人の書類・情報・誰でも・連絡の問い → 事実を渡す", () => {
+    for (const t of [ask, "保証人の書類は何が必要ですか？", "連帯保証人はなんの情報がいりますか？", "保証人は誰でもいいのですか？"]) truthy(buildCompanyFactsForCheck([t]).includes("実印"), t);
+  });
+  it("入口: 保証人なし・不要の条件／問いでない話 → 渡さない", () => {
+    for (const t of ["保証人不要のところ希望です", "あとできれば保証人なしですぐに通せるところでもみてほしいです", "まだお父さんと話し合えてなくて保証人になってくれるか分からないです💦"]) falsy(buildCompanyFactsForCheck([t]).includes("実印"), t);
+  });
+  it("final-check V16 → block", () => {
+    const iss = runDeterministicChecks(draft, ctxOf(ask));
+    eq(iss.find((i) => i.code === "COMPANY_FACT_CONTRADICTION")?.severity, "block");
+  });
+});
+
 console.log(`\n${failed === 0 ? "✅" : "❌"} ${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => ` - ${f}`).join("\n")); process.exit(1); }

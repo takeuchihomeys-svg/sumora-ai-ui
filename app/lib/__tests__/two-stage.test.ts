@@ -1,5 +1,5 @@
 // app/lib/__tests__/two-stage.test.ts — 2026-10-02 竹内さんの決定「2段の場面: 先に約束の返信・後で AIX」（実行: npx tsx app/lib/__tests__/two-stage.test.ts）
-import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady, broughtPropertyAsk, broughtPropertyCount } from "../two-stage";
+import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, conditionChangedThisTurn } from "../two-stage";
 import { resolveStaffPromiseAix } from "../aix-task-link";
 import { classifyStaffTextFacts } from "../action-ledger";
 let pass = 0, fail = 0;
@@ -99,4 +99,16 @@ t("見積書の約束の言い回し → estimate_declared", kinds(TWO_STAGE_WOR
   t("件数: URL（同じ物は1件）＋画像", broughtPropertyCount(["https://suumo.jp/a/?x=1", "https://suumo.jp/a/?x=2", "[画像] 物件情報", "ここ"]) === 2);
   t("2段の他の質問: 確認の約束でも費用の問いは約束が答え", twoStageOtherQuestions("ここの初期費用いくらですか？", "check").length === 0);
 }
+// 2026-10-07 5巡目: 室内写真の依頼（S11）は手元に室内イメージがあれば AIX を直接・無ければ撮影の約束
+{
+  const s11 = { ...base, finalAix: "property_check_result", decisionSource: "signal:scene_S11_room_photo", customerText: "この部屋の中って写真もらう事とかってできますか？" };
+  t("室内写真・手元にある → AIX のまま", resolveTwoStage({ ...s11, roomPhoto: { atHand: true } }) === null);
+  const v = resolveTwoStage({ ...s11, roomPhoto: { atHand: false } });
+  t("室内写真・手元にない → 撮影の約束", v?.source === "rule:two_stage_promise(room_photo_shoot)" && /撮影出来次第/.test(v?.direction ?? ""));
+  t("室内写真の印が無い時（旧）→ 質問の答えの約束", resolveTwoStage(s11)?.source === "rule:two_stage_promise(check_question)");
+}
+// 2026-10-07 5巡目: 条件が変わった番は売上サポの候補があっても約束の文を先に（brain-core の pickupReady を外す判定）
+t("条件の言い直し（area_change）→ 変わった", conditionChangedThisTurn("area_change", "question"));
+t("場面が conditions（「塚本駅、加島駅では同じ価格帯の物件ありますか？」）→ 変わった", conditionChangedThisTurn(null, "conditions"));
+t("ピックアップの依頼だけ（pickup_request）・場面が質問 → 変わっていない", !conditionChangedThisTurn("pickup_request", "question"));
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

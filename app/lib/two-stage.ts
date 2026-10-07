@@ -33,6 +33,10 @@ export type TwoStageInput = {
   ackRightAfterPromise?: boolean;
   /** 今回お客様が物件を送ってきた（持ち込み・URL／物件の画像）。ask＝お客様の言葉（broughtPropertyAsk）・count＝件数（broughtPropertyCount）。10/07 */
   brought?: { ask: BroughtAsk; count: number } | null;
+  /** 室内写真の依頼の番（ブレインの S11）。atHand＝頼まれた物件の室内イメージが手元にある（room-photo-material.photoMaterialAtHand）。5巡目 10/07 */
+  roomPhoto?: { atHand: boolean; why?: string } | null;
+  /** 内覧の希望（日時の指定なし・内覧できるかまだ確かめていない）に、まず内覧できるかの確認の約束を挟む（viewing-check-first.viewingCheckFirst）。5巡目 10/07 */
+  viewingCheckFirst?: boolean;
 };
 
 // 2026-10-02 ⑫ 最後の確かめ（Claude）: 夜職のアリバイ会社の質問で、確認の約束の方向から「アリバイ会社の利用可否を管理会社に確認させて頂きます」と書いた（2回）。
@@ -73,7 +77,34 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   //   10/03〜の道の違い（scripts/audit-path-gap-by-scene.ts）の短いお礼の外れ（AI=返信→人=AIX）の形。設計知見 a92ec31b「約束の後のお礼・了承だけの番は約束の AIX のまま」と同じ向き
   //   （⑫22巡の pickupPromiseNotReady は了承以外の発言も混ぜた 120番で引いた線＝了承だけの番はこちらが多数）。戻す: TWO_STAGE_ACK_WAIT=off
   if (pickupPromiseNotReady && i.ackRightAfterPromise && (typeof process === "undefined" || (process.env?.TWO_STAGE_ACK_WAIT ?? "").toLowerCase() !== "off")) return null;
+  // 2026-10-07 5巡目（竹内さん「AIX を直接出す」）: 室内写真の依頼（ブレインの S11＝property_check_result/interior_photo）で、
+  //   頼まれた物件の室内イメージが手元にある（こちらが送った物件＝資料がありサイトの室内イメージを送れる・既に送った室内イメージ）時は
+  //   AIX【物件確認した→室内写真を確認した】を直接（2段にしない）。無い時（お客様の持ち込み・建築中・物件が分からない）は
+  //   「室内のお写真撮影出来次第お送りさせて頂きます」の約束（撮影後に AIX）。線 scripts/audit-photo-material-at-hand.ts（365日 31通:
+  //   手元にある 19 → スタッフの最初の返し 直接 11・撮影 4・他 4／無い 12 → 直接 2・撮影 1・他 9）。戻す: ROOM_PHOTO_AT_HAND=off（いつも約束）
+  if (i.roomPhoto && a === "property_check_result" && (typeof process === "undefined" || (process.env?.ROOM_PHOTO_AT_HAND ?? "").toLowerCase() !== "off")) {
+    if (i.roomPhoto.atHand) return null;
+    return {
+      kind: "check",
+      direction: "室内の写真はスタッフが撮影してお送りする物なので、撮影の約束の返信にする（実際の送信の形「かしこまりました！！室内のお写真撮影出来次第お送りさせて頂きます😊！！」・撮影の日時は書かない・写真の有無は断定しない・建築中など物件固有の理由が会話にある時だけその理由を書く。送るのは撮影の後で AIX【物件確認した→室内写真を確認した】）",
+      keyTopic: "室内のお写真撮影出来次第お送りする約束",
+      source: "rule:two_stage_promise(room_photo_shoot)",
+    };
+  }
   if (KEEP_SOURCE_RE.test(i.decisionSource ?? "") && !pickupPromiseNotReady) return null;
+  // 2026-10-07 5巡目（竹内さん「内覧できるか確認」）: 内覧の依頼（日時の指定なし）には、まず内覧できるかの確認の約束（確認後に AIX【内覧調整】）。
+  //   日時の指定・変更は AIX【内覧調整】を直接（3巡目の決め・viewing-check-first が外す）。実例 9b9b81ba 10/02 19:02「こちら内覧希望です」→
+  //   スタッフ「高殿サンク内覧可能か確認させていただきます！！」→ 翌日「お申込が入り、現在内覧出来ない」（ブレインは内覧調整＝候補日を出していた）。
+  //   ⚠ 線（scripts/audit-viewing-wish-first-step.ts・180日 279番）: スタッフが最初に確認の約束をしたのは 8番・候補日の打診（内覧調整）は 101番＝今までの人の形とは違う（竹内さんの決め）。戻す: VIEWING_CHECK_FIRST=off
+  if (a === "viewing_invite") {
+    if (!i.viewingCheckFirst) return null;
+    return {
+      kind: "check",
+      direction: "お客様が内覧を希望している。候補日はまだ出さず、まずそのお部屋のご内覧が可能か（募集状況・退去前か・内覧開始日）を確認すると約束する返信にする（実際の送信の形「かしこまりました😊！！〇〇（物件名）内覧可能か確認させていただきます！！確認出来次第ご連絡させて頂きます！！」・物件名は会話から分かる時だけ・日時や候補日は書かない・確認の後で AIX【内覧調整】）",
+      keyTopic: "ご内覧可能か確認する約束",
+      source: "rule:two_stage_promise(viewing_check)",
+    };
+  }
   if (a === "property_send" || a === "property_recommendation" || a === "property_search") {
     if (i.pickupReady) return null;
     return {
@@ -209,4 +240,13 @@ export function broughtPropertyCount(turnMsgs: readonly string[]): number {
     if (/^\s*\[画像\]/.test(t)) images++;
   }
   return urls.size + images;
+}
+
+/**
+ * お客様が今回 条件を言い直した・足した番か（5巡目 10/07・竹内さん「条件が変わった時は約束の文を先に出す」）。
+ *   ブレインの condition_change_type（ピックアップの依頼 pickup_request は除く）か、場面の判定（reply-scene の conditions）。
+ *   true の時は売上サポの候補（前の条件で作った物）が新しくても「今送れる物」にしない（brain-core の pickupReady）
+ */
+export function conditionChangedThisTurn(conditionChangeType: string | null | undefined, replyScene: string | null | undefined): boolean {
+  return /^(?:area_change|rent_change|layout_change|equip_add|condition_relax|multi)$/.test(String(conditionChangeType ?? "")) || replyScene === "conditions";
 }

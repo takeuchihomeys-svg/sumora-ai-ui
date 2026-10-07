@@ -201,5 +201,20 @@ describe("会社の事実・説明の帯", () => {
   });
 });
 
+// 2026-10-07 5巡目（d46290ff 10/01）: 連帯保証人の書類・連絡の質問は申込の書類ではなく連帯保証人の事実で答える
+describe("連帯保証人の書類の質問（d46290ff）", () => {
+  const T = "連帯保証人には連絡行きますか？\nまた必要な書類等はありますか？";
+  const q = detectProcedureQuestion(T);
+  it("連帯保証人の印が付く", () => ok(q?.jointGuarantor));
+  it("方向は連帯保証人の事実（実印・電話）・申込の書類の指示は出さない", () => {
+    const plan = resolveProcedurePlan({ question: q!, target: null, materialLines: [] });
+    const d = procedureReplyDirection(plan);
+    ok(/実印/.test(d) && /電話/.test(d), d); ok(!/申込に必要な物/.test(d), d);
+    const note = buildProcedureAnswerNote(plan);
+    ok(/印鑑証明/.test(note) && !/お申込フォーマットへのご入力/.test(note), note);
+  });
+  it("保証人なしの条件は印を付けない", () => ok(!detectProcedureQuestion("保証人なしで申込に必要な書類は何ですか？")?.jointGuarantor));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

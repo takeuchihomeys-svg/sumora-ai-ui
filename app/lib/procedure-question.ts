@@ -45,6 +45,8 @@ export type ProcedureQuestion = {
   progress: boolean;
   /** お客様の文に出てくる本人確認書類（持っている・使えるか聞いている物）。答える事実を変える（idDocFactFor） */
   ids: IdDocKind[];
+  /** 連帯保証人について聞いている（「連帯保証人には連絡行きますか？また必要な書類等はありますか？」）。必要書類は申込の書類ではなく連帯保証人の書類（5巡目 10/07） */
+  jointGuarantor?: boolean;
 };
 
 // 2026-10-01 竹内（みこと「本人確認書類がマイナンバー、パスポート両方あるのですが…」→ 下書き「マイナンバーカード・パスポートどちらでもお申込みを進めることができます」）:
@@ -94,6 +96,8 @@ const ID_DOC_RE = new RegExp(
 /** 審査に通るか・厳しいか（通りやすさ） */
 const PASSABILITY_RE = /(?:審査|保証会社)[^。\n]{0,12}(?:通り(?:ます|そう|やす|にく)|通れ(?:ます|る|そう)|通る(?:か|でしょう|と思|の?(?:です|でしょう)か)|通過(?:でき|出来|します|しそう)|厳し|緩|ゆる|甘|きつ|キツ|難し|落ち|不安|心配)/;
 /** 保証会社そのもの */
+/** 連帯保証人（保証人）の話（「保証人なし／不要」の条件は除く） */
+const JOINT_GUARANTOR_RE = /(?:連帯)?保証人(?!(?:様)?(?:不要|なし|無し|ナシ))/;
 const GUARANTOR_IDENTITY_RE = /保証会社[^。\n]{0,6}(?:どこ|どちら|は何|って何|の名前|の種類|何系)|独立系|信販系|信用系|LICC/;
 /** 申込後の審査の進み具合 */
 const PROGRESS_RE = /審査中|審査(?:の)?(?:結果|状況|進捗)[^。\n]{0,8}(?:どう|まだ|出まし|来まし|いかが|わかり|分かり)|まだ[^。\n]{0,6}審査|審査[^。\n]{0,4}まだ/;
@@ -120,6 +124,7 @@ export function detectProcedureQuestion(text: string | null | undefined): Proced
     guarantorIdentity: GUARANTOR_IDENTITY_RE.test(t),
     progress: PROGRESS_RE.test(t),
     ids: idDocsIn(t),
+    jointGuarantor: JOINT_GUARANTOR_RE.test(t),
   };
 }
 
@@ -300,8 +305,14 @@ export function buildProcedureAnswerNote(plan: ProcedurePlan): string {
     out.push(`- ${PROCEDURE_FACTS.flow}`);
     out.push(`- ${PROCEDURE_FACTS.call}`);
   }
-  if (q.kinds.includes("docs")) out.push(`- ${PROCEDURE_FACTS.docs}`);
-  if (q.kinds.includes("id_doc") || q.kinds.includes("docs")) out.push(`- ${idDocFactFor(q.ids ?? [])}`);
+  // 2026-10-07 5巡目（d46290ff）: 連帯保証人の書類・連絡の質問に申込の書類（本人確認書類だけ）の事実を渡して「本人確認書類のみ」と誤答した
+  //   → 連帯保証人の時は申込の書類の事実を渡さず、連帯保証人の事実を渡す（company-facts joint_guarantor と同じ中身）
+  if (q.jointGuarantor && (q.kinds.includes("docs") || q.kinds.includes("id_doc"))) {
+    out.push("- 連帯保証人様: 審査の際に本人確認のお電話が入る可能性がある（「連絡は無い」と書かない）。申込の時は連帯保証人欄のフォーマットのご入力。ご契約の際に連帯保証人様直筆の署名・実印での押印・印鑑証明書（印鑑登録証明書）の原本の提出が必要（「本人確認書類のみ」と書かない）。");
+  } else {
+    if (q.kinds.includes("docs")) out.push(`- ${PROCEDURE_FACTS.docs}`);
+    if (q.kinds.includes("id_doc") || q.kinds.includes("docs")) out.push(`- ${idDocFactFor(q.ids ?? [])}`);
+  }
   if (procedureNeedsMoveIn(q)) {
     if (!plan.target) {
       out.push(`- ${PROCEDURE_FACTS.lead}（退去予定のお部屋は退去・クリーニングの後になるので、お部屋が決まってから入居可能日をお伝えする）`);
@@ -330,10 +341,13 @@ export function procedureReplyDirection(plan: ProcedurePlan): string {
       : ids.includes("passport") ? "パスポートの場合はパスポートと現住所記載の住民票の2点が必要と答える"
       : "運転免許証かマイナンバーカードでお申込み・審査に進めると答える");
   }
-  if (plan.question.kinds.includes("docs")) parts.push("申込に必要な物（フォーマットのご入力・ご本人確認書類）を答える");
+  // 2026-10-07 5巡目（d46290ff）: 連帯保証人の書類・連絡を聞いている時に「申込に必要な物（本人確認書類）」と指示して「本人確認書類のみ」の誤答になった
+  //   → 連帯保証人の事実（company-facts joint_guarantor）で答える方向にする
+  if (plan.question.jointGuarantor) parts.push("連帯保証人について聞かれた事に会社の事実で答える（審査の際に本人確認のお電話が入る可能性・ご契約の際に直筆の署名と実印での押印・印鑑証明書の原本が必要）");
+  else if (plan.question.kinds.includes("docs")) parts.push("申込に必要な物（フォーマットのご入力・ご本人確認書類）を答える");
   const tail = plan.moveIn?.route === "material" ? "入居時期は資料の記載のとおりに書く"
     : plan.moveIn ? "このお部屋の入居可能日は断言しない" : "";
-  return `${parts.join("・")}（管理会社への確認の宣言はしない${tail ? `・${tail}` : ""}）`.slice(0, 120);
+  return `${parts.join("・")}（管理会社への確認の宣言はしない${tail ? `・${tail}` : ""}）`.slice(0, plan.question.jointGuarantor ? 200 : 120);
 }
 
 /** 2択の時のスタッフ向けの帯 */

@@ -37,6 +37,7 @@ import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
+import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE } from "@/app/lib/viewing-check-first";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
@@ -46,7 +47,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount } from "@/app/lib/two-stage";
+import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
@@ -2976,6 +2977,11 @@ ${history}`;
     if (promiseAix) {
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;
+      // 5巡目（10/07）: 「〇〇内覧可能か確認させて頂きます」の約束を果たすのは AIX【内覧調整】（確認の結果は内覧の候補日と一緒に伝える）
+      if (promiseAix.kind === "check") {
+        const lastStaffText = [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""))?.text ?? "";
+        if (VIEWING_CHECK_PROMISE_RE.test(lastStaffText)) { finalAix = "viewing_invite"; decisionSource = "promise:viewing_check"; }
+      }
       promiseAltAction = promiseAix.alt ?? null;
       // 2026-10-06 ⑫ チンシャン: 条件・設備の確認の約束は 確認した（条件・交渉）→ 管理会社に確認した→〈要件〉のピッカーで開く（物件確認した ではない）
       if (promiseAix.checkPattern) sceneSignalCheckPattern = promiseAix.checkPattern;
@@ -3322,7 +3328,7 @@ ${history}`;
       decisionSource = decisionSource ? `${decisionSource}+ack_to_check` : "correction:ack_to_check";
     }
     let twoStage: TwoStageVerdict | null = null;
-    if (finalAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet|guarantor_info)$/.test(finalAix)) {
+    if (finalAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet|guarantor_info|viewing_invite)$/.test(finalAix)) {
       let pickupReady = false;
       if (finalAix === "property_send" || finalAix === "property_recommendation" || finalAix === "property_search") {
         try {
@@ -3330,10 +3336,48 @@ ${history}`;
           const { data: pend, error: pendErr } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
           if (pendErr) throw pendErr;
           pickupReady = freshPickupReady((pend ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
+          // 5巡目（10/07・竹内さん「条件が変わった時は約束の文を先に出す」）: お客様が今回 条件を言い直した・足した番は、売上サポの候補（前の条件で作った物）が
+          //   新しくても「今送れる物」にしない＝探す約束の返信（2段）→ 新しい条件で探した後で AIX【物件ピックアップ】。
+          //   見張りの外れ（10/02〜10/05 の 4番: d3a56a97・ac34b364・331b0338・a260169b）はブレインが llm の property_send を直接・スタッフは「〜ピックアップさせていただきます」。
+          //   判定はブレインの condition_change_type（ピックアップの依頼 pickup_request は除く）か場面の判定（reply-scene の conditions）。戻す: TWO_STAGE_CONDITION_CHANGE=off
+          if (pickupReady && (process.env.TWO_STAGE_CONDITION_CHANGE ?? "").toLowerCase() !== "off") {
+            const cct = typeof parsed.condition_change_type === "string" ? parsed.condition_change_type : "";
+            const changedNow = conditionChangedThisTurn(cct, resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene);
+            if (changedNow) {
+              pickupReady = false;
+              console.log(JSON.stringify({ tag: "brain:two-stage-condition-change", conversationId, cct: cct || null }));
+            }
+          }
         } catch { pickupReady = true; } // 読めない時は AIX のまま（今まで通り）
       }
+      // 5巡目（10/07）: 室内写真の依頼は、頼まれた物件の室内イメージが手元にあれば AIX を直接（two-stage roomPhoto・room-photo-material）
+      let roomPhoto: { atHand: boolean; why: string } | null = null;
+      if (decisionSource === "signal:scene_S11_room_photo" && finalAix === "property_check_result") {
+        try {
+          const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
+          const { photoMaterialAtHand, photoTargetsFromThread } = await import("@/app/lib/room-photo-material");
+          const reqAt = typedMessages.find((m) => m.sender === "customer")?.created_at ?? new Date().toISOString();
+          const pt = await Promise.race([loadPropertyThreads(conversationId, { asOf: reqAt }), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
+          const interiorAixNames = aixLogs.filter((l) => (l as { check_pattern?: string | null }).check_pattern === "interior_photo")
+            .flatMap((l) => ((l as { property_names?: string[] | null }).property_names ?? []));
+          const before = [...typedMessages].reverse().filter((m) => Date.parse(m.created_at) < Date.parse(reqAt))
+            .map((m) => ({ sender: m.sender, text: m.text ?? "", createdAt: m.created_at, isImage: !!m.image_url }));
+          const v = photoMaterialAtHand({ before, requestText: unrepliedTurn.text ?? "", targetRooms: photoTargetsFromThread(pt, reqAt), interiorAixNames });
+          roomPhoto = { atHand: v.atHand, why: v.why };
+          console.log(JSON.stringify({ tag: "brain:room-photo-material", conversationId, atHand: v.atHand, why: v.why }));
+        } catch (e) {
+          console.warn("[brain-core] 室内写真の手元の判定に失敗（約束の道）:", e instanceof Error ? e.message : String(e));
+          roomPhoto = { atHand: false, why: "判定に失敗" };
+        }
+      }
       twoStage = resolveTwoStage({
-        finalAix, decisionSource, pickupReady, postApply: isPostApplyStatus(convStatus),
+        finalAix, decisionSource, pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
+        // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
+        viewingCheckFirst: finalAix === "viewing_invite" && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
+          stage: brainLedger.facts.viewingFlow.stage, currentReply: brainLedger.facts.viewingFlow.currentReply, currentWish: brainLedger.facts.viewingFlow.currentWish,
+          turnAt: [...typedMessages].reverse().filter((m) => m.sender === "customer").slice(-1)[0]?.created_at ?? new Date().toISOString(),
+          staffBefore: messagesOldestFirst.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text ?? "", createdAt: m.created_at })),
+        }),
         asksCost: /初期費用|見積|いくら|費用/.test(unrepliedTurn.text ?? ""),
         estimateTarget: focusedEstimateOverride,
         customerText: unrepliedTurn.text ?? "",

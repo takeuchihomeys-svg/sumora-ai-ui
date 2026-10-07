@@ -1,0 +1,23 @@
+// app/lib/__tests__/viewing-check-first.test.ts — 2026-10-07 5巡目「内覧できるか確認」（実行: npx tsx app/lib/__tests__/viewing-check-first.test.ts）
+import { viewingCheckFirst, classifyViewingFirstStep, VIEWING_CHECK_PROMISE_RE } from "../viewing-check-first";
+import { resolveTwoStage } from "../two-stage";
+let pass = 0, fail = 0;
+const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
+const base = { stage: "wished", currentReply: "none", currentWish: true, turnAt: "2026-10-02T10:02:32Z", staffBefore: [{ text: "🌟高殿サンク 201号室\n新着でオススメ", createdAt: "2026-09-30T05:00:00Z" }] };
+t("9b9b81ba「こちら内覧希望です」（日時なし・内覧できるか未確認）→ 確認を挟む", viewingCheckFirst(base, {}));
+t("日時の指定（day_only）→ 挟まない（内覧調整を直接）", !viewingCheckFirst({ ...base, currentReply: "day_only" }, {}));
+t("日時＋時刻（date_time）→ 挟まない", !viewingCheckFirst({ ...base, currentReply: "date_time" }, {}));
+t("候補日を出した後（proposing）→ 挟まない", !viewingCheckFirst({ ...base, stage: "proposing" }, {}));
+t("24時間以内に『ご案内可能です』と伝えた → 挟まない", !viewingCheckFirst({ ...base, staffBefore: [{ text: "退去済みのため現在ご内覧可能です！！", createdAt: "2026-10-02T05:00:00Z" }] }, {}));
+t("『内覧可能か確認させて頂きます』は確認済みにしない", viewingCheckFirst({ ...base, staffBefore: [{ text: "高殿サンク内覧可能か確認させていただきます！！", createdAt: "2026-10-02T05:00:00Z" }] }, {}));
+t("今回の希望でない（こちらからの誘い）→ 挟まない", !viewingCheckFirst({ ...base, currentWish: false }, {}));
+t("VIEWING_CHECK_FIRST=off → 挟まない", !viewingCheckFirst(base, { VIEWING_CHECK_FIRST: "off" }));
+t("約束の形: 実送信「高殿サンク内覧可能か確認させていただきます」", VIEWING_CHECK_PROMISE_RE.test("かしこまりました😊！！\n高殿サンク内覧可能か確認させていただきます！！"));
+t("約束の形: 「内覧開始日確認させていただきます」", VIEWING_CHECK_PROMISE_RE.test("管理会社に内覧開始日確認させていただきます！！"));
+t("最初の一手の分類: AIX 内覧調整 → invite", classifyViewingFirstStep(["かしこまりました"], ["viewing_invite"]) === "invite");
+t("最初の一手の分類: 直近ですと → invite", classifyViewingFirstStep(["かしこまりました！！ お部屋ご案内させて頂きます！！ 直近ですと 明日"], []) === "invite");
+const v = resolveTwoStage({ finalAix: "viewing_invite", decisionSource: "llm", pickupReady: false, postApply: false, viewingCheckFirst: true });
+t("2段: 内覧調整＋確認を挟む → 内覧できるかの確認の約束", v?.source === "rule:two_stage_promise(viewing_check)" && /内覧可能か確認/.test(v.direction));
+t("2段: 内覧調整＋挟まない → AIX のまま", resolveTwoStage({ finalAix: "viewing_invite", decisionSource: "llm", pickupReady: false, postApply: false }) === null);
+t("2段: 約束を果たす内覧調整（promise:viewing_check）は AIX のまま", resolveTwoStage({ finalAix: "viewing_invite", decisionSource: "promise:viewing_check", pickupReady: false, postApply: false, viewingCheckFirst: true }) === null);
+console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

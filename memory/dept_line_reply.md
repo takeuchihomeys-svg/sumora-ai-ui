@@ -1,6 +1,18 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-07
+## 🔁 返信の質の巡 5巡目（10/07・4巡目の質問への竹内さんの答えの実装・未コミット）— 黄金ルール
+- **①学習ルール6本の無効化（竹内さん「大丈夫」）は SQL を竹内さんが流す**（f6e3cd53・ac177394・744f95e0・f4410208・886ac923・3f36ddb5 を is_active=false・b2d7bf7f から「『〇〇周辺全域から』といった自作のエリア表現も使わない。」を外す・updated_at は触らない＝上限200の並びが変わるため）。⚠ generate_reply では 744f95e0・f4410208 は上限で既に届いておらず、4本抜けると届いていなかった4本（「必ず文頭で顧客名を呼びかける」・他社の乗り換え・号室の具体・案内物件の変更）が入る。null の4本は AIX にも届いていた。前後の測り: `testFlags.rules_retire=on`（`app/lib/rules-retire-preview.ts`・exclude.keys で取り直す）で再生 24番（conditions/ack/other 各8・DeepSeek 1回）: 一致 19%→14%（1番）・近い 24%→38%・似ている度 0.42→0.44・conditions 0.59→0.65・割引の一文 A3/B5/人4 ＝下がらない
+- **②室内写真は手元にあれば AIX を直接**: `room-photo-material.ts`（頼まれた物件＝property-thread の今の番の物件・無ければ直前に動きのあった物件。こちらが送った物件で持ち込みでない・既に室内イメージを送った・建築中でない＝手元にある）→ `two-stage roomPhoto`。無い時は撮影の約束（`rule:two_stage_promise(room_photo_shoot)`）。線 `scripts/audit-photo-material-at-hand.ts`（365日31通: ある19→直接11・撮影4／無い12→直接2・撮影1・会話単位の手掛かりでは分からない）。戻す `ROOM_PHOTO_AT_HAND=off`
+- **③物件確認した の物件名は必須**: `property-name-required.ts`・AixModal（物件あった・室内写真）で仮の名前・空は送れない＋物件あったの上に SentPropertyPicker（お客様が今回指した物件を空いている欄に先入れ）。9/07〜 82通中 3通が「物件①」・室内写真 90日 6通は名前なし
+- **④a 連帯保証人の誤答（d46290ff）**: 出所は4つ＝静的の決まりに電話が無い／会社の事実の枠に連帯保証人が無い／申込の書類の決まりが強い／**手続きの質問（procedure-question）が「必要な書類」を申込の書類と読み方向と材料を渡していた**。直し: company-facts `joint_guarantor`・company-fact-guard 2本（block・実送信365日 0通）・`procedure-question jointGuarantor`・GUARANTOR_VS_EMERGENCY_RULE。YUMA: DeepSeek 前は書類「追ってご案内」→後「実印での押印・印鑑証明書の原本」・Claude 1回も同じ。監査 `scripts/audit-joint-guarantor.ts`
+- **④b 内覧の希望（日時なし）はまず内覧できるかの確認の約束**（`viewing-check-first.ts`・two-stage `viewing_check`・約束を果たすのは AIX【内覧調整】＝`promise:viewing_check`）。日時の指定は直接。⚠ 線 `scripts/audit-viewing-wish-first-step.ts`（180日279番）でスタッフが最初に確認の約束をしたのは 8番・候補日は 101番＝人の形と違う（竹内さんの決め）。戻す `VIEWING_CHECK_FIRST=off`。YUMA: 「こちら10/12の14時から内覧希望です」は viewing-flow が date_agreed（customer_date_time_no_proposal）で待ち合わせ場所になる（初めての日時の指定 180日8番＝線を引けない・今は触らない）
+- **④c 条件が変わった番は送れる候補があっても探す約束を先に**（`two-stage.conditionChangedThisTurn`・brain-core の pickupReady）。見張りの外れ 4番（ブレイン llm の property_send・スタッフは探す宣言）。戻す `TWO_STAGE_CONDITION_CHANGE=off`。YUMA では property_pickups に行を入れると相場の観測（rent_observe_pickup_trg）を汚すので通しの確かめはしていない
+- **④d 身内・業者の会話**: `test-conversations.ts INTERNAL_CONVERSATIONS`（種類・理由つき）に afbd1b8b（社内の業務連絡グループ）・56c4f0b0（業者の営業「賃太郎」）を足した。候補 `scripts/audit-internal-conversations.ts [--all]`
+- テスト: company-fact-guard 78・company-facts 91・two-stage 65・procedure-question 65・room-photo-material 10・viewing-check-first 15・property-name-required 15・final-check 系・tsc 通過。YUMA の場面 `scripts/yuma-r5-scenes.ts`
+- 費用（10/07 08:50Z〜・自分の分）: DeepSeek 約250回 約$1.12（再生 24番×2版＋ブレイン）／最後の Claude 19回 $0.26（ブレイン4・最終チェック15）＋DeepSeek 4回 $0.05・漏れ0・止めた0・YUMA 以外0・YUMA の行は消した（残り0）・YUMA の条件の行は戻した
+- 設計知見（10/07）: 連帯保証人／室内写真の手元／物件名は必須／内覧の確認・条件が変わった番／【汎用】ルールの無効化は空いた枠まで試す
+
 
 ## 🔁 返信の質の巡 4巡目（10/07・見張りの画面の実例から：室内写真・物件ごとの状況・最終チェック・把握できていない部分・未コミット）— 黄金ルール
 - **室内写真の約束は「撮影出来次第お送り」**（ゆなまる 10/7「この部屋の中って写真もらう事とかってできますか？」・竹内「室内の写真は撮影して送るもの」）: 9/23 の「撮影の約束を作らない」を改め、四者同名（generate-reply の写真の注記2か所・company-facts room_photo・aix-reply-set S11・brain-core ⑥・company-fact-guard の直し方）の例文を「室内のお写真撮影出来次第お送りさせて頂きます」に。出口 `room-photo-request.fixPhotoPromiseToShooting`（applySurfaceFixes の中・写真の依頼の番で撮影の語の無い未来形の受付だけ）。実送信の約束 8通中 7通が撮影付き・人の文で当たる物 365日 0通。YUMA: DeepSeek 2回・Claude 1回とも「室内のお写真撮影出来次第お送りさせて頂きます」。⚠ ブレインは写真の依頼に AIX【物件確認した→室内写真】をセットしなかった（action なし・3回中3回）＝2段の約束の道

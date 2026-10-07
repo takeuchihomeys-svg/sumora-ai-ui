@@ -15,7 +15,19 @@ export const YUMA_CONVERSATION_ID = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
  * 2026-10-07 竹内さん「４スタッフ同士の会話外して良い」（AIX の判断のずれの調査で 469a614a の文がスタッフ同士＝「また井尻さんか！笑」等）。
  * ※ YUMA だけに許す試し（LLM のテストの歯止め）は YUMA_CONVERSATION_ID で別に見ているので、ここに足しても試しには使われない
  */
-export const STAFF_INTERNAL_CONVERSATION_IDS: readonly string[] = ["469a614a-7518-45c7-88cc-814e674fa881"];
+/**
+ * お客様ではない会話の印（スタッフ同士・身内・業者・営業）。見張り・学習から外す（テスト用の会話と同じ扱い）。
+ * 2026-10-07 5巡目（竹内さん「外す」＝身内・業者の会話を見張りから外す）: 種類と理由を1行ずつ持つ（足す・戻すはこの表だけ）。
+ *   候補は scripts/audit-internal-conversations.ts [--all]（見張りの会話の文の印＝タメ口・社内の語・業者・営業・身内の呼び方を点にして並べる）で出し、
+ *   竹内さんの確認で足す。外した会話は「お客様ではない」と決まった物だけ（グループでもお客様の会話＝黒明様・野口様は外さない）
+ */
+export type InternalConversationKind = "staff" | "family" | "vendor";
+export const INTERNAL_CONVERSATIONS: ReadonlyArray<{ id: string; kind: InternalConversationKind; note: string }> = [
+  { id: "469a614a-7518-45c7-88cc-814e674fa881", kind: "staff", note: "【グループ】緊急用・スタッフ同士（「また井尻さんか！笑」）10/07 竹内さん「４スタッフ同士の会話外して良い」" },
+  { id: "afbd1b8b-6415-4edd-a324-700a3b0d9e78", kind: "staff", note: "【グループ】蓮産業株式会社【業務連絡用】・社内（「AD15000円やから、仲介手数料調整頼む！」）5巡目の候補" },
+  { id: "56c4f0b0-456c-4bbc-a27c-0fb885960afc", kind: "vendor", note: "業者の営業（AI賃貸営業マン「賃太郎」の広告が繰り返し届く・こちらの返しは無し）5巡目の候補" },
+];
+export const STAFF_INTERNAL_CONVERSATION_IDS: readonly string[] = INTERNAL_CONVERSATIONS.map((c) => c.id);
 
 /** テスト用の会話の id（学習・見張りから外す会話＝YUMA＋スタッフ同士の会話） */
 export const TEST_CONVERSATION_IDS: readonly string[] = [YUMA_CONVERSATION_ID, ...STAFF_INTERNAL_CONVERSATION_IDS];

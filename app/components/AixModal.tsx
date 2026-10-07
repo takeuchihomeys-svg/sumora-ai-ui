@@ -42,6 +42,7 @@ import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, me
 import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import ZumenZipImport from "./ZumenZipImport";
+import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyNameMessage } from "../lib/property-name-required";
 import { propertyNamePrefill, meetingPropertyPrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
@@ -2575,6 +2576,8 @@ export default function AixModal({
         if (customerSummary) body.customer_summary = customerSummary;
         if (extraInput.trim()) body.extra_input = extraInput.trim();
       } else if (actionType === "property_check_result" && checkPattern === "interior_photo") {
+        // 2026-10-07 5巡目（竹内さん「物件名にする」）: どの物件の室内写真かを必ず残す（物件ごとの台帳・ブレインの「手元の室内イメージ」の判定が読む）
+        if ((interiorPhotoUrl.trim() || interiorPhotoFile) && isPlaceholderPropertyName(interiorPropertyName)) throw new Error(missingPropertyNameMessage([0], 1));
         // 室内写真確認: AIなしでプレビュー直接生成
         if (interiorPhotoUrl.trim()) {
           // 2026-09-17 竹内（Hina 事例）「物件名をいれれるようにする。そうしたら物件名と（室内イメージ）が送られるようにする」:
@@ -2695,6 +2698,15 @@ export default function AixModal({
             guarantorType: f.guarantorType,
           }));
           const extractedProps = await extractPropInfoFromImages(cpc);
+          // 2026-10-07 5巡目（竹内さん「物件名にする」）: 読み取りに失敗した「物件①」・空のままでは送らない（property-name-required）
+          {
+            const miss = missingPropertyNameIndexes(extractedProps.map(p => p.name), cpc);
+            if (miss.length) {
+              // 読み取れた名前は欄に残す（スタッフは足りない欄だけ入れる）
+              setCheckPropNames((prev) => prev.map((v, i) => (i < cpc && !v.trim() && !isPlaceholderPropertyName(extractedProps[i]?.name) ? extractedProps[i].name : v)));
+              throw new Error(missingPropertyNameMessage(miss, cpc));
+            }
+          }
           body.property_names = extractedProps.map(p => p.name);
           body.property_vacancy_dates = extractedProps.map(p => p.vacancyDate);
           // M1: 物件名×状態を onAfterSend 経由で aix_usage_logs に永続化（brain の確定事実ソース）
@@ -5979,6 +5991,40 @@ export default function AixModal({
               {/* 物件あった: 全件数で物件カード（1件含む） */}
               {checkPattern === "available" ? (
                 <div className="flex flex-col gap-3">
+                  {/* 2026-10-07 5巡目（竹内さん「物件名にする」）: 物件名は必須。送った物件の候補から選ぶと空いている欄に順に入る */}
+                  <SentPropertyPicker
+                    conversationId={conversationId}
+                    multiple
+                    selected={checkPropNames.slice(0, checkPropertyCount).filter((n) => n.trim() && !isPlaceholderPropertyName(n)).map((name) => ({ name }))}
+                    onToggle={(c, select) => setCheckPropNames((prev) => {
+                      const arr = [...prev];
+                      if (select) {
+                        const i = arr.findIndex((v, k) => k < checkPropertyCount && isPlaceholderPropertyName(v));
+                        if (i >= 0) arr[i] = c.label;
+                      } else {
+                        const i = arr.findIndex((v) => v === c.label);
+                        if (i >= 0) arr[i] = "";
+                      }
+                      return arr;
+                    })}
+                    onLoaded={(cands) => {
+                      // お客様が今回の発言で指した物件（引用・名前・持ち込み）を空いている欄に先に入れる（2件以上でも順に・欄に入っている名前は触らない）
+                      const p = preselectViewingCandidates(cands, { mode: "guide", customerText: latestCustomerTurnText(recentMessages ?? []), turnStartAt: latestCustomerTurnStartAt(recentMessages ?? []) });
+                      const labels = p.keys.map((k) => cands.find((c) => c.key === k)?.label).filter((x): x is string => !!x);
+                      if (!labels.length) return;
+                      setCheckPropNames((prev) => {
+                        const arr = [...prev];
+                        for (const lb of labels) {
+                          if (arr.includes(lb)) continue;
+                          const i = arr.findIndex((v, k) => k < 3 && isPlaceholderPropertyName(v));
+                          if (i >= 0) arr[i] = lb;
+                        }
+                        return arr;
+                      });
+                    }}
+                    note="💬 送った物件から選ぶと物件名が入ります（物件名は必須・「物件①」のままでは送れません）"
+                    accent="sky"
+                  />
                   {Array.from({ length: checkPropertyCount }, (_, pi) => (
                     <div key={pi} className={`rounded-2xl border p-3 ${checkRecommendProp === pi ? "border-[#FFB300] bg-[#fffde7]" : "border-[#d1d7db] bg-[#f8f9fa]"}`}>
                       <div className="mb-2 flex items-center justify-between">

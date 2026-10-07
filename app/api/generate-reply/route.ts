@@ -282,6 +282,8 @@ import { applySituationalEmoji } from "@/app/lib/emoji-situational";
 import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-scope";
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, consideringAvoidTopics, consideringDoorEnabled, CONSIDERING_DOOR_LINES, CONSIDERING_DOOR_EXEMPT_NOTE, filterRulesTextForScene, type ReplyScene } from "@/app/lib/reply-scene";
+import { previewRetiredRules, RETIRE_RULE_KEYS } from "@/app/lib/rules-retire-preview";
+import { fetchPromptRules } from "@/app/lib/prompt-rules";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -5241,10 +5243,13 @@ async function handleGenerateReply(req: NextRequest) {
       !customerSummary && customerConditions
         ? synthesizeCustomerContext(customerConditions, customerName, history)
         : Promise.resolve(""),
-      getCachedPromptRules("generate_reply", {
+      // 5巡目（10/07）: testFlags.rules_retire=on（テストの会話だけ）は無効にする6本を外して取り直す（空いた枠に入る次のルールまで本番の無効化後と同じ）
+      (testFlags.rules_retire === "on"
+        ? fetchPromptRules("generate_reply", { conversation_state: currentState, is_first_reply: String(isFirstEverReplyFromMsgs ?? false) }, true, false, { keys: [...RETIRE_RULE_KEYS] })
+        : getCachedPromptRules("generate_reply", {
         conversation_state: currentState,
         is_first_reply: String(isFirstEverReplyFromMsgs ?? false),
-      })
+      }))
         .catch((err) => { console.error("[generate-reply] getCachedPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
       // 構造化サマリー: body未指定かつconversationIdありならDBから直接取得（regex往復の廃止）
       !bodySummaryJson && conversationId
@@ -5580,7 +5585,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の住所（viewing_history）を道順の質問の時だけ渡す
       isFirstEverReplyFromMsgs, viewingAccessNote || viewingNote, customerStructured,
       // 3巡目（10/07）: 会社のルールを場面で絞る試し（テストの会話の testFlags.rules_scene=on だけ・最終チェックは全部のまま）
-      testFlags.rules_scene === "on" && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules,
+      // 5巡目（10/07）: 学習ルール6本の無効化＋b2d7bf7f の一文の削除を、DB を変えずに試す（testFlags.rules_retire=on・テストの会話だけ）
+      ((r: string) => (testFlags.rules_retire === "on" ? previewRetiredRules(r).text : r))(
+        testFlags.rules_scene === "on" && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules),
       // 4巡目: 物件ごとの台帳は引用の材料の隣（会話履歴の直前）に置く（申込の材料の欄では YUMA 2回中1回で別の物件名を書いた）
       resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
