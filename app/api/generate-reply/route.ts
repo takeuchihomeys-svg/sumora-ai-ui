@@ -283,6 +283,7 @@ import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, consideringAvoidTopics, consideringDoorEnabled, CONSIDERING_DOOR_LINES, CONSIDERING_DOOR_EXEMPT_NOTE, filterRulesTextForScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { previewRetiredRules, RETIRE_RULE_KEYS } from "@/app/lib/rules-retire-preview";
+import { R6_RETIRE_KEYS, R6_TEXT_OVERRIDES } from "@/app/lib/rules-review-r6";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
@@ -5244,7 +5245,12 @@ async function handleGenerateReply(req: NextRequest) {
         ? synthesizeCustomerContext(customerConditions, customerName, history)
         : Promise.resolve(""),
       // 5巡目（10/07）: testFlags.rules_retire=on（テストの会話だけ）は無効にする6本を外して取り直す（空いた枠に入る次のルールまで本番の無効化後と同じ）
-      (testFlags.rules_retire === "on"
+      // 6巡目（10/07）: testFlags.rules_r6=on は見直しの後（v2 の並び＋無効にする行を外す＋直す行の文を差し替え）・off は今の本番（v1 の並び・そのまま）
+      (testFlags.rules_r6 === "on" || testFlags.rules_r6 === "off"
+        ? fetchPromptRules("generate_reply", { conversation_state: currentState, is_first_reply: String(isFirstEverReplyFromMsgs ?? false) }, true, false,
+            testFlags.rules_r6 === "on" ? { keys: [...R6_RETIRE_KEYS] } : {},
+            testFlags.rules_r6 === "on" ? { order: "v2", textOverrides: R6_TEXT_OVERRIDES } : { order: "v1" })
+        : testFlags.rules_retire === "on"
         ? fetchPromptRules("generate_reply", { conversation_state: currentState, is_first_reply: String(isFirstEverReplyFromMsgs ?? false) }, true, false, { keys: [...RETIRE_RULE_KEYS] })
         : getCachedPromptRules("generate_reply", {
         conversation_state: currentState,

@@ -91,5 +91,16 @@ for (const d of ["19時までですと何時でもお電話可能です😊！�
   t(`電話の案内・お礼は当てない: ${d}`, findStaffOnlyFact(d) === null);
 }
 
+// 6巡目（10/07 P0「AIX と返信の分け方」）: スタッフだけが知る結果の言い切りも自動では送らない
+t("管理会社の回答 → mgmt_answer", findStaffOnlyFact("管理会社に確認しましたところ、ペット可能とのことです！！")?.kind === "mgmt_answer");
+t("交渉の結果 → negotiation_result", findStaffOnlyFact("礼金交渉させて頂きましたが、礼金なしで可能となりました！！")?.kind === "negotiation_result");
+t("撮影した写真 → photo_done", findStaffOnlyFact("室内のお写真撮影しましたのでお送りさせて頂きます！！")?.kind === "photo_done");
+t("入居可能日 → movein_date", findStaffOnlyFact("11月1日からご入居可能となります！！")?.kind === "movein_date");
+t("確認の約束は当てない", findStaffOnlyFact("管理会社に確認させて頂きます！！確認出来次第ご連絡させて頂きます！！") === null);
+t("撮影の約束は当てない", findStaffOnlyFact("室内のお写真撮影出来次第お送りさせて頂きます😊！！") === null);
+t("交渉の約束は当てない", findStaffOnlyFact("礼金交渉させて頂きます！！") === null);
+t("お客様の希望日の復唱は当てない", findStaffOnlyFact("11月1日からご入居ご希望でしょうか！！") === null);
+t("STAFF_RESULT_GATE=off → 4つの型は当てない", (() => { process.env.STAFF_RESULT_GATE = "off"; const r = findStaffOnlyFact("11月1日からご入居可能となります！！"); delete process.env.STAFF_RESULT_GATE; return r === null; })());
+
 console.log(`\n合計: ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

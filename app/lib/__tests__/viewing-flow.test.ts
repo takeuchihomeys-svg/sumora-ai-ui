@@ -2,7 +2,7 @@
 //   app/lib/viewing-flow.ts（内覧の流れの段階を1か所で決める純関数）
 // 本文は実物（みことさん 8a77820b・6fdadc8b・fbffca3d・cdf07418 ほか）。お客様の名前は YUMA に置き換えた
 // 実行: npx tsx app/lib/__tests__/viewing-flow.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { resolveViewingFlow, classifyCustomerDateReply, viewingFlowNextAix, buildViewingFlowBrainText, buildViewingFlowLedgerLine, viewingFlowStageDetail, type FlowMsg } from "../viewing-flow";
+import { resolveViewingFlow, customerWishes, classifyCustomerDateReply, viewingFlowNextAix, buildViewingFlowBrainText, buildViewingFlowLedgerLine, viewingFlowStageDetail, type FlowMsg } from "../viewing-flow";
 import { buildActionLedger, checkDonePresupposition, type LedgerMessage, type LedgerAixRow } from "../action-ledger";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -173,9 +173,25 @@ it("打診から8日動いていない → none（古い打診で「候補日の
   const f = resolveViewingFlow({ messages: WON.slice(0, 2), inviteAts: [at("9/11", "10:30")], nowMs: Date.parse(at("9/19", "12:00")) });
   expect(f.stage).toBe("none"); expect(buildViewingFlowLedgerLine(f)).toBe("");
 });
-it("候補日を待たずにお客様が日時を指定（「23日に内覧…時間12時からお願いできますか？」）→ date_agreed", () => {
-  const f = resolveViewingFlow({ messages: [c("9/20", "10:00", "23日に内覧行けるこの2部屋お願いします！！\n時間12時からお願いできますか？")], nowMs: Date.parse(at("9/20", "10:01")) });
+it("（旧 VIEWING_FIRST_DATE_INVITE=off）候補日を待たずにお客様が日時を指定 → date_agreed・次は待ち合わせ", () => {
+  const f = resolveViewingFlow({ firstDateInvite: false, messages: [c("9/20", "10:00", "23日に内覧行けるこの2部屋お願いします！！\n時間12時からお願いできますか？")], nowMs: Date.parse(at("9/20", "10:01")) });
   expect(f.stage).toBe("date_agreed"); expect(f.label).toBe("9/23 12:00"); expect(viewingFlowNextAix(f)).toBe("meeting_place");
+});
+// 6巡目（10/07 竹内さん「３内覧調整する」）: 候補日を出す前の初めての指定も AIX【内覧調整】（待ち合わせ場所は日が決まった後だけ）
+it("6巡目: 候補日を待たずにお客様が日時を指定 → wished のまま・指定は requested・次は内覧調整", () => {
+  const f = resolveViewingFlow({ firstDateInvite: true, messages: [c("9/20", "10:00", "23日に内覧行けるこの2部屋お願いします！！\n時間12時からお願いできますか？")], nowMs: Date.parse(at("9/20", "10:01")) });
+  expect(f.stage).toBe("wished"); expect(f.requested).toBe("9/23 12:00"); expect(f.currentReply).toBe("date_time"); expect(viewingFlowNextAix(f)).toBe("viewing_invite");
+  expect(f.confirmed).toBe(false); expect(f.label).toBe(null);
+  expect(/9\/23 12:00 を指定/.test(buildViewingFlowBrainText(f)) && /viewing_invite/.test(buildViewingFlowBrainText(f))).toBe(true);
+  expect(/まだ決まっていない/.test(buildViewingFlowLedgerLine(f))).toBe(true);
+});
+it("6巡目: 「こちら10/12の14時から内覧希望です」（YUMA 5巡目の実物）→ wished・内覧調整", () => {
+  const f = resolveViewingFlow({ firstDateInvite: true, messages: [s("10/5", "12:00", "🌟高殿サンク 201号室\nお気に召されましたらご案内させて頂きます"), c("10/7", "10:00", "こちら10/12の14時から内覧希望です")], nowMs: Date.parse(at("10/7", "10:01")) });
+  expect(f.stage).toBe("wished"); expect(f.requested).toBe("10/12 14:00"); expect(viewingFlowNextAix(f)).toBe("viewing_invite");
+});
+it("6巡目: 指定の後に AIX【内覧調整】を送り、お客様が日時で返した → date_agreed・待ち合わせ（段階の門は変わらない）", () => {
+  const f = resolveViewingFlow({ firstDateInvite: true, inviteAts: [at("10/7", "10:30")], messages: [c("10/7", "10:00", "こちら10/12の14時から内覧希望です"), s("10/7", "10:30", "かしこまりました😊！！\n10/12(日) 14:00〜16:00\nにてご案内可能です！！"), c("10/7", "11:00", "10/12の14時でお願いします")], nowMs: Date.parse(at("10/7", "11:01")) });
+  expect(f.stage).toBe("date_agreed"); expect(viewingFlowNextAix(f)).toBe("meeting_place");
 });
 it("待ち合わせを「如何でしょうか」で送った → まだ打診（proposing）・お客様の了承で confirmed", () => {
   const ask = "はい！！\n10日(水)12:00に現地エントランスお待ち合わせ如何でしょうか！！\n住所: 大阪府大阪市";
@@ -271,5 +287,21 @@ console.log("\n⑨ 見直し: 決まっていないのに日にち決定にし�
   });
 }
 
-console.log(`\n${passed} passed, ${failed} failed`);
+// 6巡目（10/07）: 条件付き・仮定の内覧は今の希望にしない（YUMA の再生 r6-vnow の外れ4番中の3番の実物）
+const _cw = customerWishes;
+it("6巡目: 条件付きの内覧（もし…埋まらなければ／管理人さん次第で／したい場合は／空きましたら）は希望にしない", () => {
+  expect(_cw("そうなんですね！\nそしたら10月中旬まで待ってみます☺️\nもしその間に埋まらなければ\n内見させて頂きたいです🙇‍♀️")).toBe(false);
+  expect(_cw("今のところ第一候補はアーバネックスなので管理人さん次第でまた内覧いきたいです！")).toBe(false);
+  expect(_cw("もし内見したい場合はLINEでお伝えして大丈夫ですか？")).toBe(false);
+  expect(_cw("リデア南堀江の物件が空きましたら内覧お願い致します。")).toBe(false);
+  expect(_cw("内覧なくても大丈夫かな思ってました")).toBe(false);
+});
+it("6巡目: ふつうの希望はそのまま", () => {
+  expect(_cw("こちら内覧希望です")).toBe(true);
+  expect(_cw("こちらのお部屋内見させて頂きたいです🙇‍♂️")).toBe(true);
+  expect(_cw("内見行きたいです！")).toBe(true);
+});
+
+console.log(`
+${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

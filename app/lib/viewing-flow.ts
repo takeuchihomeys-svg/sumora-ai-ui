@@ -60,6 +60,8 @@ export interface ViewingFlowInput {
   /** 台帳の「内覧は済んだ」 */
   done?: { thankedAt: string } | null;
   nowMs?: number;
+  /** 6巡目: 候補日を出す前の初めての日時の指定を AIX【内覧調整】にそろえる（既定は env VIEWING_FIRST_DATE_INVITE が off でなければ true）。テスト用 */
+  firstDateInvite?: boolean;
 }
 export interface ViewingFlow {
   stage: ViewingFlowStage;
@@ -84,6 +86,8 @@ export interface ViewingFlow {
   meetingOffered: boolean;
   /** 今回のお客様の連投に内覧の希望がある（候補日は未提示） */
   currentWish: boolean;
+  /** 6巡目: 候補日を出す前にお客様が指定した日時（wished の時だけ・「10/12 14:00」） */
+  requested: string | null;
   reason: string;
 }
 
@@ -107,8 +111,17 @@ const WISH_FORM_RE = /(?:内覧|内見|見学)[^\n]{0,8}(?:したい|行きた�
 const WISH_NEGATE_RE = /まだ|考えてない|考えていません|後で|いったん|一旦|しません|大丈夫なので|先日|この前|(?:内覧|内見|見学)した(?!い)|(?:内覧|内見)(?:の時|時に|の際|後)|今日の(?:内覧|内見)/;
 /** お客様の内覧の希望（viewing-thread と同じ語＋ひらがなの形。過去の内覧の話・取りやめは除く） */
 export function customerWishes(text: string): boolean {
-  return nfkc(text).split(/\n|(?<=[。！!？?])/).some((x) => (CUSTOMER_VIEWING_WISH_RE.test(x) || WISH_FORM_RE.test(x)) && !WISH_NEGATE_RE.test(x) && !CANCEL_RE.test(x));
+  const hit = nfkc(text).split(/\n|(?<=[。！!？?])/).some((x) => (CUSTOMER_VIEWING_WISH_RE.test(x) || WISH_FORM_RE.test(x)) && !WISH_NEGATE_RE.test(x) && !CANCEL_RE.test(x));
+  if (!hit) return false;
+  // 6巡目（10/07）: 条件付き・仮定の内覧（「もしその間に埋まらなければ\n内見させて頂きたいです」「管理人さん次第でまた内覧いきたい」
+  //   「もし内見したい場合はLINEでお伝えして大丈夫ですか？」「空きましたら内覧お願い致します」）は今の希望ではない。
+  //   YUMA の再生（r6-vnow）でブレインが段階 wished を読んで AIX【内覧調整】を出し、スタッフは受けるだけ・質問に答えるだけだった（4番中4番）。
+  //   行をまたぐ（「…埋まらなければ」改行「内見させて…」）ので連投全体で見る。戻す: VIEWING_CONDITIONAL_WISH=off
+  if (typeof process !== "undefined" && (process.env?.VIEWING_CONDITIONAL_WISH ?? "").toLowerCase() === "off") return true;
+  return !CONDITIONAL_WISH_RE.test(nfkc(text).replace(/\s+/g, " "));
 }
+/** 条件付き・仮定の内覧の希望（6巡目・customerWishes） */
+export const CONDITIONAL_WISH_RE = /もし(?!可能|よろしけ|宜しけ|良ければ|よければ|差し支え|お手数|大丈夫)[^。！!？?]{0,24}(?:内覧|内見|見学)|(?:内覧|内見|見学)(?:したい|する|させて(?:頂|いただ)きたい)?場合|次第で[^。！!？?]{0,15}(?:内覧|内見|見学)|(?:埋まらなければ|埋まってなければ|空いていれば|空いてれば|空いてたら|空いていたら|空きが出たら|空きましたら|空いたら|募集が出たら)[^。！!？?]{0,20}(?:内覧|内見|見学)|(?:内覧|内見)[^。！!？?]{0,6}(?:なくても|しなくても|無しで)/;
 /** 申込の書式・物件情報の貼り付け（生年月日・入居希望日の日付を内覧の日にちと読まない） */
 const FORM_TEXT_RE = /記入欄|生年月日|フォーマット|【賃貸|築[0-9]+年|管理費/;
 /** 開始時刻（「16:00」「16時」「12.00〜」「10時30」）。「18時以降」「2時間」は時刻の指定ではない */
@@ -245,12 +258,14 @@ const slotStart = (l: string) => l.match(/\s([0-9]{1,2}:[0-9]{2})/)?.[1]?.replac
  */
 export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
   const now = input.nowMs ?? Date.now();
+  // 6巡目（10/07）: 候補日を出す前の初めての日時の指定も AIX【内覧調整】（wished のまま）。VIEWING_FIRST_DATE_INVITE=off で旧（date_agreed）
+  const firstDateInvite = input.firstDateInvite ?? (typeof process === "undefined" || (process.env?.VIEWING_FIRST_DATE_INVITE ?? "").toLowerCase() !== "off");
   const inviteT = (input.inviteAts ?? []).map((x) => ms(x)).filter(Number.isFinite);
   const meetings = (input.meetings ?? []).map((m) => ({ t: ms(m.at), dateMD: m.dateMD ?? null, time: m.time ?? null })).filter((m) => Number.isFinite(m.t));
   const nearAny = (t: number, xs: number[]) => xs.some((x) => Math.abs(x - t) <= 3 * 60_000);
 
-  type St = { stage: ViewingFlowStage; label: string | null; timeFixed: boolean; slots: string[]; proposedAt: number | null; lastReply: CustomerDateReply | null; askedDay: string | null; knownDay: string | null; placePromised: boolean; meetingOffered: boolean; lastEventAt: number | null; wishIdx: number; reason: string };
-  const st: St = { wishIdx: -1, stage: "none", label: null, timeFixed: false, slots: [], proposedAt: null, lastReply: null, askedDay: null, knownDay: null, placePromised: false, meetingOffered: false, lastEventAt: null, reason: "no_viewing_flow" };
+  type St = { requested: string | null; stage: ViewingFlowStage; label: string | null; timeFixed: boolean; slots: string[]; proposedAt: number | null; lastReply: CustomerDateReply | null; askedDay: string | null; knownDay: string | null; placePromised: boolean; meetingOffered: boolean; lastEventAt: number | null; wishIdx: number; reason: string };
+  const st: St = { requested: null, wishIdx: -1, stage: "none", label: null, timeFixed: false, slots: [], proposedAt: null, lastReply: null, askedDay: null, knownDay: null, placePromised: false, meetingOffered: false, lastEventAt: null, reason: "no_viewing_flow" };
   const set = (stage: ViewingFlowStage, reason: string, t: number) => { st.stage = stage; st.reason = reason; if (Number.isFinite(t)) st.lastEventAt = t; };
   const offered = () => [...new Set(st.slots.map(slotDay).filter((x): x is string => !!x))];
   const offeredStart = () => Object.fromEntries(st.slots.map((l) => [slotDay(l), slotStart(l)]).filter((x): x is [string, string] => !!x[0] && !!x[1]));
@@ -380,11 +395,18 @@ export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
     const reschedule = (st.stage === "done" || st.stage === "none") && /別日|別の日|日付(?:を)?(?:勘違い|間違)|寝坊|(?:内覧|内見)[^\n]{0,10}(?:変更|別)/.test(text);
     if (wishes || reschedule || st.stage === "wished") {
       const v = classifyCustomerDateReply(text, { atMs: t, offeredDays: [], knownDay: st.knownDay, inFlow: true });
-      if ((wishes || reschedule) && st.stage !== "wished") { st.slots = []; st.proposedAt = null; st.lastReply = null; st.label = null; st.askedDay = null; st.knownDay = null; set("wished", "customer_wish", t); }
+      if ((wishes || reschedule) && st.stage !== "wished") { st.requested = null; st.slots = []; st.proposedAt = null; st.lastReply = null; st.label = null; st.askedDay = null; st.knownDay = null; set("wished", "customer_wish", t); }
       if (wishes || reschedule) st.wishIdx = mi;
-      // 候補日を待たずにお客様が日時を指定した（「23日に内覧…時間12時からお願いできますか？」→ スタッフはそのまま待ち合わせ。9会話）
-      if (v.kind === "date_time") { st.lastReply = v.kind; st.label = v.day ? label(v.day, v.time) : v.time; st.timeFixed = true; st.knownDay = v.day ?? st.knownDay; set("date_agreed", "customer_date_time_no_proposal", t); }
-      else if (v.kind === "day_pick" || v.kind === "day_only") { st.lastReply = v.kind; st.askedDay = v.day; st.knownDay = v.day; if (Number.isFinite(t)) st.lastEventAt = t; }
+      // 候補日を待たずにお客様が日時を指定した（「23日に内覧…時間12時からお願いできますか？」）
+      //   旧: スタッフはそのまま待ち合わせ（9会話）→ date_agreed＝次は AIX【待ち合わせ場所】
+      //   6巡目（2026-10-07 竹内さん「３内覧調整する」）: 候補日を出す前の初めての指定も AIX【内覧調整】にそろえる（その日時が空いているかは予定表で確かめてから。
+      //   待ち合わせ場所は日が決まった後だけ）。段階は wished のまま・指定された日時は requested に持つ。戻す: VIEWING_FIRST_DATE_INVITE=off
+      if (v.kind === "date_time") {
+        st.lastReply = v.kind; st.knownDay = v.day ?? st.knownDay;
+        if (firstDateInvite) { st.askedDay = v.day ?? st.askedDay; st.requested = v.day ? label(v.day, v.time) : v.time; if (st.stage !== "wished") set("wished", "customer_date_time_no_proposal", t); else { st.reason = "customer_date_time_no_proposal"; if (Number.isFinite(t)) st.lastEventAt = t; } }
+        else { st.label = v.day ? label(v.day, v.time) : v.time; st.timeFixed = true; set("date_agreed", "customer_date_time_no_proposal", t); }
+      }
+      else if (v.kind === "day_pick" || v.kind === "day_only") { st.requested = null; st.lastReply = v.kind; st.askedDay = v.day; st.knownDay = v.day; if (Number.isFinite(t)) st.lastEventAt = t; }
       else if (v.kind === "cancel") { set("none", "customer_cancelled", t); }
     }
   }
@@ -444,7 +466,7 @@ export function resolveViewingFlow(input: ViewingFlowInput): ViewingFlow {
     lastReply: st.lastReply, currentReply,
     askedDay: st.stage === "proposing" || st.stage === "wished" || st.stage === "date_agreed" ? st.askedDay : null,
     placePromised: st.stage === "date_agreed" && st.placePromised, meetingOffered: st.stage === "proposing" && st.meetingOffered,
-    currentWish, reason: st.reason,
+    currentWish, reason: st.reason, requested: st.stage === "wished" ? st.requested : null,
   };
 }
 
@@ -457,7 +479,7 @@ function dayEndMs(md: string, hm: string, baseMs: number): number {
   return Date.UTC(y, m - 1, d, (h || 0) - 9, mi || 0);
 }
 
-export const EMPTY_VIEWING_FLOW: ViewingFlow = { stage: "none", confirmed: false, label: null, timeFixed: false, slots: [], proposedAt: null, lastReply: null, currentReply: null, askedDay: null, placePromised: false, meetingOffered: false, currentWish: false, reason: "no_viewing_flow" };
+export const EMPTY_VIEWING_FLOW: ViewingFlow = { stage: "none", confirmed: false, label: null, timeFixed: false, slots: [], proposedAt: null, lastReply: null, currentReply: null, askedDay: null, placePromised: false, meetingOffered: false, currentWish: false, reason: "no_viewing_flow", requested: null };
 
 export const VIEWING_FLOW_STAGE_JA: Record<ViewingFlowStage, string> = {
   none: "内覧の話なし", wished: "お客様が内覧を希望（候補日は未提示）", proposing: "候補日を提示中（まだ決まっていない）",
@@ -476,7 +498,7 @@ export function viewingFlowNextAix(f: ViewingFlow): "viewing_invite" | "meeting_
   if (f.currentReply === "cancel" || f.currentReply === "hold") return null;
   if (f.stage === "date_agreed") return f.currentReply && f.currentReply !== "none" ? "meeting_place" : null;
   if (f.stage === "proposing") return f.currentReply === "day_only" || f.currentReply === "ask_back" || (f.currentWish && f.currentReply === "none") ? "viewing_invite" : null;
-  if (f.stage === "wished") return f.currentWish || f.currentReply === "day_only" || f.currentReply === "day_pick" ? "viewing_invite" : null;
+  if (f.stage === "wished") return f.currentWish || f.currentReply === "day_only" || f.currentReply === "day_pick" || f.currentReply === "date_time" ? "viewing_invite" : null;
   return null;
 }
 
@@ -498,6 +520,8 @@ export function buildViewingFlowBrainText(f: ViewingFlow): string {
   const rule: string[] = [];
   if (f.stage === "wished") {
     rule.push("候補日はまだ出していない → viewing_invite（候補日は AIX で送る。本文で日時を作らない）");
+    // 6巡目（10/07 竹内さん「３内覧調整する」）: 候補日を出す前にお客様が日時を指定した → その日時が空いているかは予定表で確かめて AIX【内覧調整】で返す（待ち合わせ場所は日が決まった後）
+    if (f.requested) rule.push(`お客様は ${f.requested} を指定した（まだ決まっていない・こちらの予定は未確認）→ meeting_place ではなく viewing_invite（その日時を含めて AIX【内覧調整】で返す）。本文で「${f.requested}でご案内」と確定しない`);
   } else if (f.stage === "proposing" && f.meetingOffered) {
     rule.push("待ち合わせ場所は送ってあり、お客様の返事待ち。meeting_place をもう一度提案しない（日時・場所の変更を頼まれた時だけ）。今回の発言が別の質問なら、その質問にだけ答える");
   } else if (f.stage === "proposing") {
@@ -543,13 +567,13 @@ export function buildViewingFlowLedgerLine(f: ViewingFlow): string {
   if (f.stage === "date_agreed") {
     return `→ 内覧の日にちは決まった${f.label ? `（${f.label}${f.timeFixed ? "" : "・開始時刻は未定"}）` : ""}が、**待ち合わせ場所は未案内＝まだ確定ではない**${also}。待ち合わせの場所・集合は書かない（AIX【待ち合わせ場所】で送る）。今回の発言が日にちの返事の時だけ、その日時を受ける一言はよい。${NOT_YET}`;
   }
-  if (f.stage === "wished") return `→ お客様は内覧を希望しているが、候補日はまだ出していない${also}。本文で日時を作らない（候補日は AIX【内覧調整】で送る）。${NOT_YET}`;
+  if (f.stage === "wished") return `→ お客様は内覧を希望しているが、候補日はまだ出していない${also}。${f.requested ? `お客様が指定した ${f.requested} はまだ決まっていない（空いているかは AIX【内覧調整】で返す）。` : ""}本文で日時を作らない（候補日は AIX【内覧調整】で送る）。${NOT_YET}`;
   return "";
 }
 
 /** 画面の帯（customer-state の「内覧調整中」の一言） */
 export function viewingFlowStageDetail(f: ViewingFlow): string | null {
-  if (f.stage === "wished") return "内覧希望・候補日は未提示";
+  if (f.stage === "wished") return f.requested ? `内覧希望（${f.requested}を指定）・候補日は未提示` : "内覧希望・候補日は未提示";
   if (f.stage === "proposing") return f.meetingOffered ? "待ち合わせを打診中・お返事待ち" : f.lastReply === "hold" ? "候補日を提示・お客様は保留" : f.askedDay ? `お客様が${f.askedDay}を希望・時間帯は未回答` : f.lastReply ? "候補日を提示・調整中" : "候補日を提示・お返事待ち";
   if (f.stage === "date_agreed") return `日にち決定${f.label ? ` ${f.label}` : ""}・待ち合わせ場所は未送信`;
   return null;

@@ -2180,6 +2180,8 @@ function runAssertionBanChecks(text: string, ctx: FinalCheckContext): CheckIssue
     const exemptBy =
       r.exemptOnAixVacancyDone && ctx.aixVacancyDone ? "aixVacancyDone"
       : r.staffConfirmedRe.test(staffRecent) ? "staffConfirmed"
+      // 6巡目（10/07）: スタッフ（AIX の送付文）が先に書いた退去予定・入居中の引用
+      : r.staffQuotedRe && r.staffQuotedRe.match.test(m[0]) && r.staffQuotedRe.staff.test(staffRecent) ? "staffQuoted"
       : aixResultFlow && r.sourceRe.test(source) ? "staffSource"
       : null;
     if (exemptBy) {

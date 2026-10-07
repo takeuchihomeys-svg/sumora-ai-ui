@@ -1,5 +1,5 @@
 // app/lib/__tests__/viewing-check-first.test.ts — 2026-10-07 5巡目「内覧できるか確認」（実行: npx tsx app/lib/__tests__/viewing-check-first.test.ts）
-import { viewingCheckFirst, classifyViewingFirstStep, VIEWING_CHECK_PROMISE_RE } from "../viewing-check-first";
+import { viewingCheckFirst, classifyViewingFirstStep, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut } from "../viewing-check-first";
 import { resolveTwoStage } from "../two-stage";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -17,7 +17,30 @@ t("約束の形: 「内覧開始日確認させていただきます」", VIEWIN
 t("最初の一手の分類: AIX 内覧調整 → invite", classifyViewingFirstStep(["かしこまりました"], ["viewing_invite"]) === "invite");
 t("最初の一手の分類: 直近ですと → invite", classifyViewingFirstStep(["かしこまりました！！ お部屋ご案内させて頂きます！！ 直近ですと 明日"], []) === "invite");
 const v = resolveTwoStage({ finalAix: "viewing_invite", decisionSource: "llm", pickupReady: false, postApply: false, viewingCheckFirst: true });
-t("2段: 内覧調整＋確認を挟む → 内覧できるかの確認の約束", v?.source === "rule:two_stage_promise(viewing_check)" && /内覧可能か確認/.test(v.direction));
+t("2段: 内覧調整＋確認を挟む → 内覧開始日の確認の約束（退去予定）", v?.source === "rule:two_stage_promise(viewing_check)" && /内覧開始日確認/.test(v.direction) && /退去予定/.test(v.direction));
 t("2段: 内覧調整＋挟まない → AIX のまま", resolveTwoStage({ finalAix: "viewing_invite", decisionSource: "llm", pickupReady: false, postApply: false }) === null);
 t("2段: 約束を果たす内覧調整（promise:viewing_check）は AIX のまま", resolveTwoStage({ finalAix: "viewing_invite", decisionSource: "promise:viewing_check", pickupReady: false, postApply: false, viewingCheckFirst: true }) === null);
+// ── 6巡目（10/07 竹内さん「１退去予定ではない場合は内覧誘導する」）──
+t("6巡目: 今見られるお部屋（vacating=false）→ 確認を挟まない＝内覧調整を直接", !viewingCheckFirst({ ...base, vacating: false }, {}));
+t("6巡目: 退去予定のお部屋（vacating=true）→ 確認を挟む", viewingCheckFirst({ ...base, vacating: true }, {}));
+t("6巡目: 退去予定でも日時の指定は内覧調整を直接", !viewingCheckFirst({ ...base, vacating: true, currentReply: "date_time" }, {}));
+t("6巡目: VIEWING_CHECK_VACATING_ONLY=off → 5巡目どおり挟む", viewingCheckFirst({ ...base, vacating: false }, { VIEWING_CHECK_VACATING_ONLY: "off" }));
+t("判定: 台帳 退去予定 → true", viewingRoomVacating({ threadCheck: "vacating", moveOutReason: "viewing_offered" }).vacating);
+t("判定: 台帳 募集中 → false（資料の退去予定日より強い）", !viewingRoomVacating({ threadCheck: "available", notViewable: true }).vacating);
+t("判定: 資料の退去予定日がまだ先 → true", viewingRoomVacating({ notViewable: true, moveOutReason: "no_hold_advice" }).vacating);
+t("判定: 別のお部屋に話が移った → false（資料の日付より先・5045ccd6）", !viewingRoomVacating({ notViewable: true, moveOutReason: "switched_to_other_property" }).vacating);
+t("判定: 退去予定の話のお部屋・案内なし → true", viewingRoomVacating({ moveOutReason: "no_hold_advice" }).vacating);
+t("判定: 退去予定の後にこちらが内覧を案内済み → false", !viewingRoomVacating({ moveOutReason: "viewing_offered" }).vacating);
+t("判定: 退去予定の話なし → false", !viewingRoomVacating({ moveOutReason: "no_move_out" }).vacating && !viewingRoomVacating({}).vacating);
+t("台帳: 今の番のお部屋が1つ・最後の確認が退去予定 → vacating", threadRoomCheckForTurn({ rooms: [{ key: "a#1", events: [{ kind: "check_available" }, { kind: "check_vacating" }] }], turnTargets: [{ roomKey: "a#1" }] }) === "vacating");
+t("台帳: 今の番のお部屋が2つ → 決めない", threadRoomCheckForTurn({ rooms: [{ key: "a#1", events: [{ kind: "check_vacating" }] }, { key: "b#2", events: [] }], turnTargets: [{ roomKey: "a#1" }, { roomKey: "b#2" }] }) === null);
+t("台帳: 無い → null", threadRoomCheckForTurn(null) === null);
+// 5045ccd6 6/05 の形: 「エステイトE森ノ宮ですが、6月末退去予定」の後に画像だけで別のお部屋を送った → 退去予定にしない
+const moKey = "エステイトe森ノ宮ですが6月末退去予定で7月下旬のご入居となります".toLowerCase();
+const rooms = [{ ref: { buildingKey: "エステイトe森ノ宮" }, events: [{ kind: "sent", at: "2026-06-01T10:00:00Z" }] }, { ref: { buildingKey: "ラグゼ難波" }, events: [{ kind: "sent", at: "2026-06-04T10:00:00Z" }] }];
+t("台帳: 退去予定の話の後に別のお部屋を送った → true", otherRoomSentAfterMoveOut(rooms, "2026-06-02T02:45:00Z", moKey));
+t("台帳: 退去予定の話の後に送ったのが同じお部屋だけ → false", !otherRoomSentAfterMoveOut([rooms[0], { ref: { buildingKey: "エステイトe森ノ宮" }, events: [{ kind: "sent", at: "2026-06-04T10:00:00Z" }] }], "2026-06-02T02:45:00Z", moKey));
+t("判定: 別のお部屋を送った → 資料の退去予定日より先に false", !viewingRoomVacating({ notViewable: true, moveOutReason: "no_hold_advice", otherRoomSentAfter: true }).vacating);
+t("判定: 先押さえを勧めた後（hold_advised）は送付があっても退去予定のまま", viewingRoomVacating({ moveOutReason: "hold_advised", otherRoomSentAfter: true }).vacating);
+t("2段: 今見られる部屋に確認を挟む戻し（vacating=false）は5巡目の文", /内覧可能か確認/.test(resolveTwoStage({ finalAix: "viewing_invite", decisionSource: "llm", pickupReady: false, postApply: false, viewingCheckFirst: true, viewingCheckVacating: false })?.direction ?? ""));
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

@@ -71,3 +71,37 @@ export function promptRuleNotExcluded(r: PromptRuleRow, exclude: { keyPrefixes?:
   if ((exclude.keys ?? []).includes(r.rule_key)) return false;
   return true;
 }
+
+// ── 6巡目（2026-10-07 竹内さん「２最善のみなおしをする」）: 上限200で何が切られるかの並び ─────────────────────
+// 旧（v1）: priority 降順 → 更新の新しい順 → 上限 200。generate_reply＋global は p9 17本＋p8 192本＝209本で、毎日 analyze-diffs が
+//   足す自動の学習（DIFF-POLICY-*・WEEKLY-*・p8）が、竹内さんの指摘から作った古い FEEDBACK-*（同じ p8・7/19〜7/24）を上限の外へ押し出していた
+//   （「必ず文頭で顧客名を呼びかける」・他社からの乗り換え・GLOB-TIKTOK-001 等。無効化で枠が空くと順に戻ってくる＝何が届くかが日々変わる）。
+// 新（v2）: ①AIX の振り分けを書いた FEEDBACK-*-gr（p7・148本・ブレインが AIX を決めるので返信生成には渡さない・今も1本も届いていない）は入れない
+//   ②同じ priority の中は「人の決め（FEEDBACK・BOUNDARY・GLOB・PROP 等）」→「自動の学習（DIFF-POLICY・WEEKLY）」の順・それぞれ更新の新しい順
+//   ＝自動の学習が増えても人の決めは押し出されない（押し出されるのは一番古い自動の学習）
+//   ③priority 8 以上だけ（p7・p6 は AIX の振り分け・UI の実装メモ・古い週次の学習で、無効化で枠が空くたびに下から入り込んでいた＝届く物が決まらない）。
+//   見直しの後は p8 以上が上限より少なく、上限で切れる物は無い（scripts/audit-prompt-rules-review.ts で数える）。戻す: PROMPT_RULES_ORDER=v1
+export type PromptRuleOrigin = "human" | "auto" | "routing";
+/** ルールの出どころ（rule_key の形で決める） */
+export function ruleOrigin(ruleKey: string): PromptRuleOrigin {
+  const k = String(ruleKey ?? "");
+  if (/^(?:DIFF-POLICY-|WEEKLY-)/.test(k)) return "auto";
+  if (/^FEEDBACK-.*-gr$/.test(k)) return "routing";
+  return "human";
+}
+/** v2 で入れる非永久ルールの priority の下限 */
+export const PROMPT_RULE_V2_MIN_PRIORITY = 8;
+/** 注入する非永久ルールの並びと上限（v2）。下限・振り分けの除外・並び・上限はここで決める */
+export function orderRulesForInjection<T extends PromptRuleRow & { updated_at?: string | null }>(rows: ReadonlyArray<T>, opts: { limit: number; includeRouting?: boolean; minPriority?: number }): T[] {
+  const ts = (r: T) => { const t = Date.parse(r.updated_at ?? ""); return Number.isFinite(t) ? t : 0; };
+  const rank = (o: PromptRuleOrigin) => (o === "human" ? 0 : o === "auto" ? 1 : 2);
+  return rows
+    .filter((r) => (opts.includeRouting || ruleOrigin(r.rule_key) !== "routing") && (r.priority ?? 0) >= (opts.minPriority ?? PROMPT_RULE_V2_MIN_PRIORITY))
+    .slice()
+    .sort((a, b) => (b.priority - a.priority) || (rank(ruleOrigin(a.rule_key)) - rank(ruleOrigin(b.rule_key))) || (ts(b) - ts(a)) || a.rule_key.localeCompare(b.rule_key))
+    .slice(0, opts.limit);
+}
+/** v2 の並びを使うか（既定 v2・PROMPT_RULES_ORDER=v1 で旧に戻す） */
+export function promptRulesOrderV2(env: Record<string, string | undefined> = (typeof process !== "undefined" ? process.env : {})): boolean {
+  return (env.PROMPT_RULES_ORDER ?? "").toLowerCase() !== "v1";
+}

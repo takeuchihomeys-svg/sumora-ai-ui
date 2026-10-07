@@ -78,6 +78,13 @@ describe("時間枠の「空いて」（scene-patterns 共有）", () => {
   it("T3 findConfirmObject は内覧枠の質問を募集状況と読まない（82e2d5cf）", () => expect(findConfirmObject("明日ってまだ空いてますか？") === "募集状況").toBe(false));
   it("T4 findConfirmObject は空室の質問を募集状況と読む", () => expect(findConfirmObject("この物件まだ空いてますか？")).toBe("募集状況"));
   it("T5 isScheduleSlotVacancy 直前15字判定", () => expect(isScheduleSlotVacancy("9/9の15時空いてますか", 7)).toBe(true));
+  // 6巡目（10/07）: スタッフ（AIX の物件オススメ）が先に書いた退去予定の引用は免除（YUMA の最後の Claude で確認の約束が「最新の空き状況」に置き換わった）
+  const staffV = [{ sender: "staff", text: "🌟エスリード難波ザ・ブライト 1307号室\n10月31日退去予定のお部屋となります！！" }, { sender: "customer", text: "こちら内覧希望です" }];
+  const blocksCtx = (t: string, recentMessages: Array<{ sender: string; text: string }>) =>
+    runDeterministicChecks(t, { customerName: "佐藤", recentMessages } as unknown as Parameters<typeof runDeterministicChecks>[1]).filter((i) => i.severity === "block").map((i) => i.code);
+  it("V4 スタッフが書いた退去予定の引用は block しない", () => expect(blocksCtx("かしこまりました！！\nこちらのお部屋退去予定となりますので、管理会社に内覧開始日確認させて頂きます！！", staffV).includes("VACANCY_ASSERTION")).toBe(false));
+  it("V5 スタッフが退去予定を書いていない会話の退去予定の断言は block のまま", () => expect(blocksCtx("こちらのお部屋退去予定となりますので、管理会社に内覧開始日確認させて頂きます！！", [{ sender: "customer", text: "こちら内覧希望です" }]).includes("VACANCY_ASSERTION")).toBe(true));
+  it("V6 退去予定の引用があっても「空室です」の断言は block のまま", () => expect(blocksCtx("こちら空室です！！", staffV).includes("VACANCY_ASSERTION")).toBe(true));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

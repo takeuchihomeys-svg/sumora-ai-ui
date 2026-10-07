@@ -1,6 +1,6 @@
 import { supabase } from "@/app/lib/supabase";
 import {
-  formatPromptRuleSections, promptRuleMatchesConditions, dedupePromptRules, promptRuleNotExcluded,
+  formatPromptRuleSections, promptRuleMatchesConditions, dedupePromptRules, promptRuleNotExcluded, orderRulesForInjection, promptRulesOrderV2, PROMPT_RULE_V2_MIN_PRIORITY,
   type PromptRuleRow, type PromptRuleConditions,
 } from "@/app/lib/prompt-rules-format";
 
@@ -22,10 +22,11 @@ const RULES_SYSTEM_ERROR_TEXT = "\n\n【重要: ルールシステムエラー�
 // LEARN-* が数千件あり、単一クエリ LIMIT 100 だと priority=8 の LEARN-* が枠を埋め尽くして
 // HUMAN-*(priority=10) / FEEDBACK-*(priority=8) / IMPLEMENT-*(priority=7) が届かなくなる。
 // → 非LEARN上位70件 + LEARN上位60件を別枠で取得してから priority 降順で結合する。
+// 6巡目（10/07）: updated_at も取る（v2 の並びに使う・整形には使わない）
 function buildBaseQuery(actionType: string | null, includeGlobal: boolean, includeLearnAix: boolean, exclude: PromptRuleExclude) {
   let q = supabase
     .from("ai_prompt_rules")
-    .select("rule_key, rule_text, condition_key, condition_value, priority")
+    .select("rule_key, rule_text, condition_key, condition_value, priority, updated_at")
     .eq("is_active", true);
   if (actionType) {
     // includeGlobal=true（デフォルト）: 専用ルール + global共通ルール（action_type IS NULL）
@@ -63,7 +64,9 @@ function buildBaseQuery(actionType: string | null, includeGlobal: boolean, inclu
 //
 // 2026-09-17 竹内（AIX キャッシュ点検）: order の最終キーに rule_key を足す。priority・updated_at が同値の行の並びが
 //   呼び出しごとに揺れると、同じルール集合でも文字列が変わってプロンプトキャッシュの鍵が外れる
-async function queryRuleRows(actionType: string | null, includeGlobal: boolean, includeLearnAix: boolean, exclude: PromptRuleExclude): Promise<RuleRows | { error: unknown }> {
+async function queryRuleRows(actionType: string | null, includeGlobal: boolean, includeLearnAix: boolean, exclude: PromptRuleExclude, order?: "v1" | "v2"): Promise<RuleRows | { error: unknown }> {
+  // 6巡目（10/07）: 返信生成（generate_reply＋global）だけ v2 の並び（prompt-rules-format.orderRulesForInjection）。AIX の経路は今まで通り
+  const v2 = actionType === "generate_reply" && (order ? order === "v2" : promptRulesOrderV2());
   const [permanentRes, highPrioRes] = await Promise.all([
     buildBaseQuery(actionType, includeGlobal, includeLearnAix, exclude)
       .eq("is_permanent", true)
@@ -74,20 +77,23 @@ async function queryRuleRows(actionType: string | null, includeGlobal: boolean, 
       .abortSignal(AbortSignal.timeout(8_000)),
     buildBaseQuery(actionType, includeGlobal, includeLearnAix, exclude)
       .eq("is_permanent", false)
-      .gte("priority", PROMPT_RULE_MIN_PRIORITY)
+      .gte("priority", v2 ? PROMPT_RULE_V2_MIN_PRIORITY : PROMPT_RULE_MIN_PRIORITY)
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .order("rule_key", { ascending: true })
-      .limit(PROMPT_RULE_LIMIT_HIGH)
+      .limit(v2 ? 1000 : PROMPT_RULE_LIMIT_HIGH)
       .abortSignal(AbortSignal.timeout(8_000)),
   ]);
   if (highPrioRes.error || permanentRes.error) return { error: highPrioRes.error ?? permanentRes.error };
   const permanent = (permanentRes.data ?? []) as PromptRuleRow[];
-  const high = (highPrioRes.data ?? []) as PromptRuleRow[];
+  const high = v2
+    ? orderRulesForInjection((highPrioRes.data ?? []) as Array<PromptRuleRow & { updated_at?: string | null }>, { limit: PROMPT_RULE_LIMIT_HIGH })
+    : (highPrioRes.data ?? []) as PromptRuleRow[];
   // 2026-09-18 竹内「改善おねがい」: 上限に張り付いた時は「後ろが落ちている」ことを必ず出す。
   //   generate_reply は該当 429 件に対して上限 200 で **229 件が黙って落ちていた**（priority 7 の境目で、
   //   同じ priority の中は更新日の新しい順。古い方は永久に入らない）。件数が見えないと誰も気付けない。
-  if (high.length >= PROMPT_RULE_LIMIT_HIGH || permanent.length >= PROMPT_RULE_LIMIT_PERMANENT) {
+  const fetchedHigh = (highPrioRes.data ?? []).length;
+  if ((v2 ? fetchedHigh > high.length : high.length >= PROMPT_RULE_LIMIT_HIGH) || permanent.length >= PROMPT_RULE_LIMIT_PERMANENT) {
     console.warn(JSON.stringify({
       tag: "prompt-rules:limit-hit",
       actionType: actionType ?? "(global)",
@@ -122,9 +128,13 @@ export async function fetchPromptRules(
                            // action_type=AIXアクション別に蓄積する編集差分学習ルール）を除外対象から外す。
                            // 旧世代の generate_reply 向け LEARN-*（廃止済み・数千件）は引き続き除外。
   exclude: PromptRuleExclude = {},
+  // 6巡目（10/07）: テストの前後比較だけ（testFlags.rules_r6）。order＝並びを明示（省略は env の既定＝v2・PROMPT_RULES_ORDER=v1 で旧）・textOverrides＝rule_key ごとに文を差し替える
+  opts: { order?: "v1" | "v2"; textOverrides?: Readonly<Record<string, string>> } = {},
 ): Promise<string> {
   try {
-    const rows = await queryRuleRows(actionType, includeGlobal, includeLearnAix, exclude);
+    const raw = await queryRuleRows(actionType, includeGlobal, includeLearnAix, exclude, opts.order);
+    const ov = opts.textOverrides;
+    const rows = "error" in raw || !ov ? raw : { permanent: raw.permanent.map((r) => (ov[r.rule_key] ? { ...r, rule_text: ov[r.rule_key] } : r)), high: raw.high.map((r) => (ov[r.rule_key] ? { ...r, rule_text: ov[r.rule_key] } : r)) };
     if ("error" in rows) {
       console.error("[fetchPromptRules] CRITICAL: DBクエリ失敗 — ルールが注入されません", rows.error);
       return RULES_DB_ERROR_TEXT;

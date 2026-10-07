@@ -37,7 +37,8 @@ import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
-import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE } from "@/app/lib/viewing-check-first";
+import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
+import { propertyThreadEnabled } from "@/app/lib/property-thread";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
@@ -66,7 +67,7 @@ import {
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
 import { customerRequestedPropertyCheck, isPropertyCandidateImage } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
-import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOutViewingReleased } from "@/app/lib/move-out-context";
+import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOutViewingReleased, moveOutViewingVerdict } from "@/app/lib/move-out-context";
 // 2026-09-26 段3（竹内「ステータスや内覧予定をブレインに持たせたら…」「いつまで1つの物件にとらわれないように」）:
 //   お客様の今の段階・お部屋ごとの状況（customer-state）と、主の一手＋並行で探す（parallel-search）
 import { getCustomerState } from "@/app/lib/customer-state-server";
@@ -3370,6 +3371,29 @@ ${history}`;
           roomPhoto = { atHand: false, why: "判定に失敗" };
         }
       }
+      // 6巡目（10/07 竹内さん「１退去予定ではない場合は内覧誘導する」）: 内覧の希望（日時なし）の番だけ、希望されたお部屋が退去予定かを決定論で読む
+      //   （台帳の確認の結果 → 資料の退去予定日 → 会話の退去予定の話。viewing-check-first.viewingRoomVacating・線 scripts/audit-viewing-wish-vacating.ts）
+      let viewingVacating: { vacating: boolean; why: string } | undefined;
+      const vfNow = brainLedger.facts.viewingFlow;
+      if (finalAix === "viewing_invite" && vfNow && (vfNow.stage === "none" || vfNow.stage === "wished") && vfNow.currentWish) {
+        try {
+          const mo = moveOutViewingVerdict(typedMessages, "newest_first");
+          let threadCheck: ThreadRoomCheck = null;
+          let otherRoomSentAfter = false;
+          if (propertyThreadEnabled()) {
+            const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
+            const { buildingKeyOf } = await import("@/app/lib/customer-state");
+            const pt = await Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]);
+            threadCheck = threadRoomCheckForTurn(pt);
+            const moMsg = typedMessages.find((m) => m.sender !== "customer" && MOVE_OUT_PATTERN.test(m.text ?? ""));
+            otherRoomSentAfter = otherRoomSentAfterMoveOut(pt?.rooms ?? null, moMsg?.created_at ?? null, moMsg ? buildingKeyOf(moMsg.text ?? "") : null);
+          }
+          viewingVacating = viewingRoomVacating({ threadCheck, notViewable: brainPropertyState?.notViewable ?? null, moveOutReason: mo.reason, otherRoomSentAfter });
+          console.log(JSON.stringify({ tag: "brain:viewing-vacating", conversationId, vacating: viewingVacating.vacating, why: viewingVacating.why }));
+        } catch (e) {
+          console.warn("[brain-core] 退去予定の判定に失敗（今まで通り確認を挟む）:", e instanceof Error ? e.message : String(e));
+        }
+      }
       twoStage = resolveTwoStage({
         finalAix, decisionSource, pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
@@ -3377,7 +3401,10 @@ ${history}`;
           stage: brainLedger.facts.viewingFlow.stage, currentReply: brainLedger.facts.viewingFlow.currentReply, currentWish: brainLedger.facts.viewingFlow.currentWish,
           turnAt: [...typedMessages].reverse().filter((m) => m.sender === "customer").slice(-1)[0]?.created_at ?? new Date().toISOString(),
           staffBefore: messagesOldestFirst.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text ?? "", createdAt: m.created_at })),
+          // 6巡目（10/07 竹内さん「１退去予定ではない場合は内覧誘導する」）: 確認を挟むのは退去予定のお部屋だけ（viewingRoomVacating）
+          vacating: viewingVacating?.vacating,
         }),
+        viewingCheckVacating: viewingVacating?.vacating,
         asksCost: /初期費用|見積|いくら|費用/.test(unrepliedTurn.text ?? ""),
         estimateTarget: focusedEstimateOverride,
         customerText: unrepliedTurn.text ?? "",

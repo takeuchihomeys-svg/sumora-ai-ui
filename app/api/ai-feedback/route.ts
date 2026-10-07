@@ -824,7 +824,12 @@ export async function POST(req: NextRequest) {
   // ※ BOUNDARY-* は【意図的に】decay対象外: AIXアクションと通常返信の役割分担を定める構造的な境界ルールであり、
   //    時間経過で陳腐化する性質のものではない。decayさせると priority 閾値により注入から消え、
   //    ユーザーが明示的に修正した境界違反（誤ルーティング）が再発するため、priority=9 のまま維持する。
-  try {
+  // 2026-10-07 6巡目（竹内さん「２最善のみなおしをする」）: 既定で止める（FEEDBACK_RULE_DECAY=on で旧の動き）。
+  //   作った日（created_at）から90日で一律に p2 へ下げると、返信生成の FEEDBACK-*（7/13〜8/12 に作った 321本・竹内さんの指摘から作った決め）が
+  //   10/11 以降のフィードバックの度に順に注入から消える（静かに壊れる）。is_permanent の行も下げていた。
+  //   古さではなく中身で決める: 6巡目にルールを1本ずつ見直し（scripts/audit-prompt-rules-review.ts・app/lib/rules-review-r6.ts）、
+  //   無効にする物は is_active=false で外す。返信生成の並びは v2（人の決めは自動の学習に押し出されない）で上限の問題も無い。
+  if ((process.env.FEEDBACK_RULE_DECAY ?? "").toLowerCase() === "on") try {
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const { data: staleFeedbackRules } = await supabase
       .from("ai_prompt_rules")

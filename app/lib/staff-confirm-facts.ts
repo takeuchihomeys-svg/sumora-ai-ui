@@ -41,7 +41,21 @@ export function aixAutoSendGate(action: string | null | undefined): AutoSendGate
   return { ok: false, reason: `unknown_aix:${a}` };
 }
 
-export type StaffOnlyFactHit = { kind: "vacancy" | "estimate_amount" | "meeting_address" | "viewing_fixed" | "phone_call_promise"; text: string };
+export type StaffOnlyFactHit = { kind: "vacancy" | "estimate_amount" | "meeting_address" | "viewing_fixed" | "phone_call_promise" | StaffResultKind; text: string };
+
+// ── 2026-10-07 6巡目（P0「AIX と返信の分け方」・竹内さん「ここのLINE返信のさいは絶対にする」）──
+//   スタッフだけが知る結果（管理会社の回答・交渉の結果・撮影した写真・入居可能日/退去予定日）の言い切りも自動では送らない（人・AIX に残す・本文は変えない）。
+//   線 scripts/audit-p0-staff-only-facts.ts（AI の下書き 60日 850通）: この4つの型の言い切りは 1通（入居可能日・前の会話に出ていた引用）＝自動送信を止めすぎない。
+//   確認の約束（「確認させて頂きます」「確認出来次第」）・お客様の言葉の復唱（「〜であれば」「場合」）は当てない。
+export type StaffResultKind = "mgmt_answer" | "negotiation_result" | "photo_done" | "movein_date";
+export const STAFF_RESULT_RES: ReadonlyArray<{ kind: StaffResultKind; re: RegExp; exclude?: RegExp }> = [
+  { kind: "mgmt_answer", re: /(?:管理会社|元付|オーナー|大家)(?:様|さん)?[^。\n！!]{0,24}(?:確認(?:させて(?:頂|いただ)きました|しました|致しました|いたしました|しましたところ)|より|から(?:の)?(?:ご)?(?:回答|返答|連絡))[^。\n]{0,50}(?:とのこと|可能(?:です|となります)|不可|出来(?:ません|かねます)|でき(?:ません|かねます)|難しい|OK)/, exclude: /確認(?:させて|して)(?:頂|いただ)きます|確認出来次第|でき次第/ },
+  { kind: "negotiation_result", re: /交渉(?:させて(?:頂|いただ)きました|しました|致しました|いたしました|の結果)[^。\n]{0,50}(?:可能|頂け|いただけ|なりました|下がり|なし|0円|難しい|出来ません|できません)|(?:値下げ|減額|お値引き)[^。\n]{0,12}(?:して(?:頂|いただ)けました|頂けました|いただけました|となりました)/ },
+  { kind: "photo_done", re: /(?:写真|動画)[^。\n]{0,15}(?:撮影(?:しました|致しました|いたしました|させて(?:頂|いただ)きました)|お送り(?:しました|致しました|いたしました|させて(?:頂|いただ)きました))/ },
+  { kind: "movein_date", re: /(?:[0-9０-９]{1,2}\s*[\/月]\s*[0-9０-９]{1,2}日?|[0-9０-９]{1,2}月(?:末|上旬|中旬|下旬))[^。\n]{0,10}(?:から|より|以降)?[^。\n]{0,6}(?:ご?入居(?:可能|頂け|いただけ)|ご?内覧(?:可能|開始|頂け|いただけ))|(?:[0-9０-９]{1,2}月(?:末|上旬|中旬|下旬|[0-9０-９]{1,2}日))\s*(?:に)?退去予定/, exclude: /(?:れ|け)ば|場合|でしょうか|ですか|ますか|ご希望/ },
+];
+/** 戻す: STAFF_RESULT_GATE=off（4つの型を自動送信の関所に入れない） */
+function staffResultGateOn(): boolean { return typeof process === "undefined" || (process.env?.STAFF_RESULT_GATE ?? "").toLowerCase() !== "off"; }
 
 /** 文に分ける（。！!？? と改行） */
 function sentences(s: string): string[] {
@@ -77,6 +91,7 @@ export function findStaffOnlyFact(draft: string | null | undefined): StaffOnlyFa
     if (MEETING_ADDRESS_RE.test(s)) return { kind: "meeting_address", text: s };
     if (VIEWING_FIXED_RE.test(s)) return { kind: "viewing_fixed", text: s };
     if (PHONE_CALL_PROMISE_RE.test(s)) return { kind: "phone_call_promise", text: s };
+    if (staffResultGateOn()) for (const r of STAFF_RESULT_RES) if (r.re.test(s) && !(r.exclude && r.exclude.test(s))) return { kind: r.kind, text: s };
   }
   return null;
 }

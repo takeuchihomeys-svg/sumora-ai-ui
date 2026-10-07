@@ -737,6 +737,9 @@ export type AssertionBanRule = {
   replacement: string;
   msg: string;
   sug: string;
+  /** 2026-10-07 6巡目（P0「AIX と返信の分け方」の引用）: 一致した語（match）が、スタッフの直近の発言（AIX の送付文を含む）に既に出ている語（staff）なら
+   *  スタッフが伝えた事実の引用として免除（「退去予定のお部屋となりますので内覧開始日確認させて頂きます」＝AIX の物件オススメの「10月31日退去予定」の引用） */
+  staffQuotedRe?: { match: RegExp; staff: RegExp };
   /** 2026-09-12 竹内方針A-3: 一致しても断言ではない形（時間枠の「空いて」・キャンセルの「トラブル」等）。true なら次の一致を探す */
   exclude?: (text: string, m: RegExpMatchArray) => boolean;
 };
@@ -781,6 +784,10 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
     staffConfirmedRe: new RegExp(`(?:空室|空き|募集|満室|埋まっ|申込|入居中|退去)[^\\n]{0,30}${MGMT_CONFIRMED_TAIL}|${MGMT_CONFIRMED_TAIL}[^\\n]{0,30}(?:空室|空き|募集|満室|埋まっ|入居中|退去)`),
     sourceRe: /空室|空き|募集|満室|入居中|退去|埋まっ/,
     exemptOnAixVacancyDone: true,
+    // 6巡目（10/07）: 退去予定・入居中はスタッフ（AIX の送付文）が先に書いた時だけ引用してよい（YUMA の最後の Claude で
+    //   「こちらのお部屋退去予定となりますので、ご内覧可能日を管理会社に確認させて頂きます」が「最新の空き状況を確認しご連絡」に置き換わった）。
+    //   空室・募集中・申込が入っている（確認の結果）は今まで通り staffConfirmedRe（確認しました・とのこと）が要る
+    staffQuotedRe: { match: /^(?:退去予定|入居中)/, staff: /退去予定|入居中/ },
     replacement: ASSERTION_REPLACEMENT.VACANCY_ASSERTION,
     msg: "空室・募集状況の断言は管理会社確認（AIX【物件確認した】）前は禁止",
     sug: "「最新の空き状況を確認しご連絡させて頂きます」に変更（確認結果はAIX【物件確認した】から送る）",
@@ -1122,6 +1129,8 @@ export function enforceAixGates(
         }
         // G6: 直前スタッフ発言（AIX送付文含む）に確認結果報告があれば「確認済み事実の復唱」として通す
         if (r.assertion && opts?.lastStaffMsg && r.assertion.staffConfirmedRe.test(opts.lastStaffMsg)) return false;
+        // 6巡目（10/07）: スタッフが先に書いた退去予定・入居中の引用（staffQuotedRe）
+        if (r.assertion?.staffQuotedRe && opts?.lastStaffMsg) { const am = findAssertionMatch(r.assertion, s); if (am && r.assertion.staffQuotedRe.match.test(am[0]) && r.assertion.staffQuotedRe.staff.test(opts.lastStaffMsg)) return false; }
         return true;
       });
       if (!rule) {
