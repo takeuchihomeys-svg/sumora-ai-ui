@@ -4,6 +4,7 @@
 //   ① 重複・② 竹内さんの決定で古くなった行（決定論で言い切れる物だけ）を退役（消さない・理由と上書きした行を残す）
 //   ③ この1週間に入った行を含む似ている組を DeepSeek に聞いて要確認の一覧へ（自動では退役しない・個人情報は伏せる）
 //   ④ 分野ごとの「今の決まり」（design_rules_digest）を作り直す。手元の memory/rules_digest_*.md は scripts/kb-digest.ts --write で写す
+//   2026-10-07（段）同じ場面の P0/P1 の決まり同士の食い違い・確かな同じ（近さ 0.95 以上）の退役・札の正規化・段の見張り（design-knowledge-priority.ts）
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { runDesignKnowledgeCycle } from "@/app/lib/design-knowledge-curation-server";
@@ -24,6 +25,8 @@ export async function GET(req: NextRequest) {
     const summary = {
       rows: r.rows, current: r.current, retiredDuplicates: r.retiredDuplicates, retiredDecisions: r.retiredDecisions,
       review: r.review.length, missingDecisionRows: r.missingDecisionRows, llm: r.llm, digests: r.digests, embed: r.embed, candidates: r.candidates,
+      // 2026-10-07 段と札の整理（確かな同じの退役・札の正規化・段の見張り）
+      retiredSame: r.retiredSame, tags: r.tags ? { planned: r.tags.planned, applied: r.tags.applied } : undefined, priority: r.priority,
     };
     await finishCronLog(logId, true, summary);
     return NextResponse.json({ ok: true, ...summary, plannedDuplicates: r.plannedDuplicates, plannedDecisions: r.plannedDecisions });

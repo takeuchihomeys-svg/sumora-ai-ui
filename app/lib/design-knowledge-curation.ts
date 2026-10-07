@@ -9,6 +9,8 @@
 //      自動で退役するのは auto の決定だけ（文がはっきり古い決まりを言っている物）。他は要確認の一覧へ
 //   ③ 似ている組（文字の重なりが中くらい）→ DeepSeek に「同じ決まり／上書き／食い違い／関係あり／別」を聞いて要確認の一覧へ（自動では退役しない）
 //   ④ 分野ごとの「今の決まり」のまとめ（digest）: 現行の行だけ・1行ずつ・元の行の id 付き
+import { effectivePriority } from "@/app/lib/design-knowledge-priority";
+
 export type KbRow = {
   id: string;
   title: string;
@@ -20,10 +22,12 @@ export type KbRow = {
   tags?: string[] | null;
   is_current: boolean;
   created_at: string;
+  /** 段（0〜3・design-knowledge-priority.ts）。列が無い・null は推定 */
+  priority?: number | null;
 };
 
 export type RetirePlan = { id: string; supersededBy: string; reason: string; kind: "duplicate" | "decision" };
-export type ReviewItem = { kind: "decision" | "similar"; ids: string[]; note: string; relation?: string };
+export type ReviewItem = { kind: "decision" | "similar" | "conflict" | "priority" | "tags"; ids: string[]; note: string; relation?: string };
 
 // ── 文字の重なり（決定論）──
 export function normKb(s: string | null | undefined): string {
@@ -168,6 +172,35 @@ export const SIMILAR_SYSTEM = "あなたは社内の設計メモの整理係で�
 export function similarPrompt(a: KbRow, b: KbRow): string {
   return `A（${a.created_at.slice(0, 10)}）: ${maskForLlm(a.title)}\n${maskForLlm(a.insight)}\n\nB（${b.created_at.slice(0, 10)}）: ${maskForLlm(b.title)}\n${maskForLlm(b.insight)}`;
 }
+/**
+ * 2026-10-07（段・竹内「設計知見もちゃんと整理して優先順位あげれる環境」）DeepSeek の関係の判定から、退役の計画か要確認を作る。
+ *   勝手に退役するのは確かな物だけ: 「same」かつ埋め込みの近さ 0.95 以上（ほぼ同じ文）→ 中身の多い方を残す。
+ *   上書き（supersedes）・食い違い（conflict）は新しい決定（段が上・新しい方）を残す案を付けて要確認へ（竹内さんが決める）
+ */
+export const CONFLICT_RULE = { autoSameMin: 0.95, sceneNearMin: 0.72 } as const;
+export function planFromRelation(a: KbRow, b: KbRow, relation: string, reason: string, sim: number, src: "embedding" | "lexical" | "scene"): { retire: RetirePlan | null; review: ReviewItem | null } {
+  if (relation === "different" || relation === "related") return { retire: null, review: null };
+  const cmd = (oldR: KbRow, newR: KbRow) => `退役の案: scripts/kb-retire.ts --id=${oldR.id} --by=${newR.id}`;
+  const pr = (r: KbRow) => (typeof r.priority === "number" ? r.priority : 2);
+  const meta = `（近さ ${sim.toFixed(2)}・${src === "embedding" ? "埋め込み" : src === "scene" ? "同じ場面の決まり" : "文字の重なり"}）`;
+  if (relation === "same") {
+    if (src !== "lexical" && sim >= CONFLICT_RULE.autoSameMin) {
+      const keep = pickKeeper(a, b), drop = keep.id === a.id ? b : a;
+      return { retire: { id: drop.id, supersededBy: keep.id, kind: "duplicate", reason: `同じ決まりの言い直し（DeepSeek same・近さ ${sim.toFixed(2)}）→ 中身の多い方 ${keep.id} を残す` }, review: null };
+    }
+    const keep = pickKeeper(a, b), drop = keep.id === a.id ? b : a;
+    return { retire: null, review: { kind: "similar", ids: [a.id, b.id], relation, note: `same: ${reason}${meta}・${cmd(drop, keep)}` } };
+  }
+  if (relation === "supersedes_a" || relation === "supersedes_b") {
+    const [oldR, newR] = relation === "supersedes_a" ? [a, b] : [b, a];
+    const odd = newR.created_at < oldR.created_at ? "・⚠ 日付は逆（上書きした方が古い）" : "";
+    return { retire: null, review: { kind: "conflict", ids: [oldR.id, newR.id], relation, note: `上書き: ${reason}${meta}${odd}・${cmd(oldR, newR)}` } };
+  }
+  // conflict: 段が上（数が小さい）→ 新しい の順で残す方を案にする
+  const [keep, drop] = pr(a) !== pr(b) ? (pr(a) < pr(b) ? [a, b] : [b, a]) : (a.created_at >= b.created_at ? [a, b] : [b, a]);
+  return { retire: null, review: { kind: "conflict", ids: [drop.id, keep.id], relation, note: `食い違い: ${reason}${meta}・残す案は P${pr(keep)}・${keep.created_at.slice(0, 10)} の方・${cmd(drop, keep)}` } };
+}
+
 export function parseSimilar(text: string): { relation: string; reason: string } | null {
   const m = String(text ?? "").match(/\{[\s\S]*\}/);
   if (!m) return null;
@@ -201,14 +234,21 @@ export const DIGEST_RULE = { decisions: 30, recent: 25, titleMax: 140 } as const
 export function isOwnerDecision(r: KbRow): boolean {
   return /竹内(さん)?[「『（]|竹内さんの(決定|指示|訂正)|竹内(さん)?「/.test(r.insight + "\n" + (r.context ?? ""));
 }
+// 2026-10-07 段（優先順位）の順に並べる: ① P0 絶対・最優先（分野に関係なく全部の分野の先頭）② 整理が見張る決定 ③ P1 今の決まり
+//   ④ 竹内さんの言葉がある P2 ⑤ 最近の型・直し（P2）。P3（事例・経緯）はまとめに入れない（kb.ts で引く）
 export function buildDigest(rows: KbRow[], area: string, nowIso: string): { markdown: string; ids: string[] } {
   const cur = rows.filter((r) => r.is_current && areasOf(r).includes(area));
   cur.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   const short = (t: string) => (t.length > DIGEST_RULE.titleMax ? t.slice(0, DIGEST_RULE.titleMax) + "…" : t);
   const line = (r: KbRow) => `- ${short(r.title.replace(/\s+/g, " "))} ［${r.created_at.slice(0, 10)}・${r.id.slice(0, 8)}］`;
-  const dec = cur.filter(isOwnerDecision).slice(0, DIGEST_RULE.decisions);
+  const p0 = rows.filter((r) => r.is_current && effectivePriority(r) === 0).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const p0Ids = new Set(p0.map((r) => r.id));
+  const rest = cur.filter((r) => !p0Ids.has(r.id) && effectivePriority(r) !== 3);
+  const p1 = rest.filter((r) => effectivePriority(r) === 1).slice(0, DIGEST_RULE.decisions);
+  const p1Ids = new Set(p1.map((r) => r.id));
+  const dec = rest.filter((r) => !p1Ids.has(r.id) && isOwnerDecision(r)).slice(0, DIGEST_RULE.decisions);
   const decIds = new Set(dec.map((r) => r.id));
-  const recent = cur.filter((r) => !decIds.has(r.id)).slice(0, DIGEST_RULE.recent);
+  const recent = rest.filter((r) => !p1Ids.has(r.id) && !decIds.has(r.id)).slice(0, DIGEST_RULE.recent);
   const decRules = DECISIONS.filter((d) => d.area === area);
   const md = [
     `# 今の決まり — ${area}（設計知見から自動で作成・${nowIso.slice(0, 10)}）`,
@@ -216,13 +256,15 @@ export function buildDigest(rows: KbRow[], area: string, nowIso: string): { mark
     `> 現行の行だけ（is_current=true）。［日付・id の先頭8字］が元の行。全文は \`npx tsx --env-file=.env.local scripts/kb.ts --q=<語>\` か SQL で id を引く。`,
     `> この分野の現行 ${cur.length}行。手で直さない（毎週 /api/cron/design-knowledge と scripts/kb-curate.ts が作り直す）。`,
     "",
+    ...(p0.length ? ["## ★ 絶対・最優先（P0・全部の分野で先に守る）", ...p0.map(line), ""] : []),
     ...(decRules.length ? ["## 竹内さんの決定（整理の仕組みが見張っている物）", ...decRules.map((d) => `- ${d.label}`), ""] : []),
-    "## 竹内さんの言葉がある行（新しい順）",
+    ...(p1.length ? ["## 今の決まり（P1・新しい順）", ...p1.map(line), ""] : []),
+    "## 竹内さんの言葉がある行（P2・新しい順）",
     ...(dec.length ? dec.map(line) : ["- （なし）"]),
     "",
     "## 最近の型・直し（新しい順）",
     ...(recent.length ? recent.map(line) : ["- （なし）"]),
     "",
   ].join("\n");
-  return { markdown: md, ids: [...dec, ...recent].map((r) => r.id) };
+  return { markdown: md, ids: [...p0, ...p1, ...dec, ...recent].map((r) => r.id) };
 }

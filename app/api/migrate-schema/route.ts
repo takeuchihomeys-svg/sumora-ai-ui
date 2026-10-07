@@ -4577,6 +4577,12 @@ LANGUAGE sql STABLE AS $$
   ORDER BY dt.embedding <=> query_embedding
   LIMIT match_count
 $$;
+-- 設計知見の段（2026-10-07 竹内「設計知見もちゃんと整理して優先順位あげれる環境もつくる　そうすれば質が良くなるから」）:
+--   0＝絶対・最優先（札「絶対・最優先」・竹内さんが決める）／1＝今の決まり（竹内さんの決定・原則）／2＝実装の知見（既定）／3＝事例・経緯
+--   NULL は決定論の推定で並べる（app/lib/design-knowledge-priority.ts）。付与は scripts/kb-priority.ts・毎週の整理が空の行と札の食い違いを直す
+ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS priority SMALLINT;
+COMMENT ON COLUMN system_design_thinking.priority IS '段: 0=絶対・最優先 1=今の決まり 2=実装の知見 3=事例・経緯（RAG の並び・ダイジェストの順に効く）';
+CREATE INDEX IF NOT EXISTS idx_system_design_thinking_priority ON system_design_thinking(priority) WHERE is_current = true;
 -- 売上サポの回を検索した時の条件（2026-10-06 v2.5.81・⑯）: 拡張の案内が「検索」を押した時の意図した条件（intended）と画面に入っていた値（filled）。
 --   AIX の物件ピックアップの文が、時刻の窓で検索の記録を探さずに回から読む（⑰ の測り直し: 12時間以内に記録がある回は60回中15回）
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_conditions JSONB;

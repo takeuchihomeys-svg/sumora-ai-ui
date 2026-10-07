@@ -5,6 +5,7 @@
 //   → 埋め込み（text-embedding-3-small・題＋本文＋根拠＋札）の近さ＋語の重なり（題を重く）＋札＋新しさ を足した点で並べる（hybridRank）。
 //   退役した行（is_current=false）は出さない。点が並んだら竹内さんの言葉がある行（決定）を上に。
 import { grams, jaccard, normKb } from "@/app/lib/design-knowledge-curation";
+import { effectivePriority, isP0Relevant, P0_PIN, PRIORITY_BOOST, type KbPriority } from "@/app/lib/design-knowledge-priority";
 
 export type RagRow = {
   id: string;
@@ -15,6 +16,8 @@ export type RagRow = {
   tags?: string[] | null;
   is_current: boolean;
   created_at: string;
+  /** 段（0＝絶対・最優先〜3＝事例・経緯・design-knowledge-priority.ts）。列が無い・null の時は決定論の推定で並べる */
+  priority?: number | null;
 };
 
 /** 埋め込みに入れる文（題＋本文＋根拠＋札）。8k トークンの上限に余裕を持って 4,000字で切る */
@@ -78,11 +81,12 @@ export function isOwnerWords(r: RagRow): boolean {
 
 /** 重み（scripts/kb-rag-eval.ts で当て直して決めた値・変える時は評価を回し直す） */
 // 2026-10-06 当て直し（問い24・格子）: 近さだけ recall@5 0.79 → keyword 0.5・tag 0.3・recency 0.15 で 0.88（別の問い12で確かめた・scripts/kb-rag-eval.ts）
-export const HYBRID_WEIGHTS = { vector: 1.0, keyword: 0.5, tag: 0.3, recency: 0.15, ownerTie: 0.01 } as const;
+// 2026-10-07 竹内「設計知見もちゃんと整理して優先順位あげれる環境」: priority＝段の点（PRIORITY_BOOST）の掛け率。0 で段を効かせない（前と同じ並び）
+export const HYBRID_WEIGHTS = { vector: 1.0, keyword: 0.5, tag: 0.3, recency: 0.15, ownerTie: 0.01, priority: 1.0 } as const;
 /** 場面の行に足す点（scripts/kb-scene-rag-eval.ts の格子で決める） */
 // 10/07 当て直し（scripts/kb-scene-rag-eval.ts）: 問い33 recall@5 0.73→0.94・別の問い12 0.75→0.92（0.3 は 0.91/0.75・0.8 は holdout 同じ）
 export const SCENE_WEIGHT = 0.5;
-export type Scored = { row: RagRow; score: number; vector: number; keyword: number; tag: number; recency: number };
+export type Scored = { row: RagRow; score: number; vector: number; keyword: number; tag: number; recency: number; raw?: number; priority?: KbPriority; pinned?: boolean };
 /**
  * 並べる。vecSim＝id→埋め込みの近さ（0〜1・無い行は 0）。近さは候補の中の最小〜最大で 0〜1 にそろえる（問いごとに近さの幅が違うため）
  *   mode: "hybrid"（全部）／"vector"（近さだけ）／"keyword"（語と札だけ＝旧の札・部分一致に相当）
@@ -102,13 +106,26 @@ export function hybridRank(rows: RagRow[], vecSim: Map<string, number>, q: strin
     const recency = recencyScore(r.created_at, opts.nowIso);
     const owner = isOwnerWords(r) ? 1 : 0;
     const sceneHit = opts.scene && opts.scene !== "other" && rowInScene(r, opts.scene) ? 1 : 0;
+    const priority = effectivePriority(r);
     const score = (mode === "vector" ? vector
       : mode === "keyword" ? keyword + w.tag * tag
-      : w.vector * vector + w.keyword * keyword + w.tag * tag + w.recency * recency + w.ownerTie * owner) + (opts.sceneWeight ?? SCENE_WEIGHT) * sceneHit;
-    return { row: r, score, vector, keyword, tag, recency };
+      : w.vector * vector + w.keyword * keyword + w.tag * tag + w.recency * recency + w.ownerTie * owner + w.priority * PRIORITY_BOOST[priority]) + (opts.sceneWeight ?? SCENE_WEIGHT) * sceneHit;
+    return { row: r, score, vector, keyword, tag, recency, raw, priority };
   });
-  out.sort((a, b) => b.score - a.score || (isOwnerWords(b.row) ? 1 : 0) - (isOwnerWords(a.row) ? 1 : 0) || (a.row.created_at < b.row.created_at ? 1 : -1));
+  out.sort((a, b) => b.score - a.score || (a.priority ?? 2) - (b.priority ?? 2) || (isOwnerWords(b.row) ? 1 : 0) - (isOwnerWords(a.row) ? 1 : 0) || (a.row.created_at < b.row.created_at ? 1 : -1));
   return out;
+}
+
+/**
+ * 2026-10-07 段の別枠: P0（絶対・最優先）のうち問いに関係する物を先頭の別枠に出し、残りの上位 k はそのまま（P0 が席を奪わない＝recall が下がらない）。
+ *   場面（scene）の点が付いていても付いていなくても同じ（P0 は場面に関係なく効く決まり）
+ */
+export function splitPinned(ranked: Scored[], k: number, opts: { p0Sims?: Map<string, number>; scene?: boolean } = {}): { pinned: Scored[]; hits: Scored[] } {
+  const pinned = ranked
+    .filter((s) => s.priority === 0 && (opts.scene || isP0Relevant(opts.p0Sims?.get(s.row.id) ?? s.raw ?? 0, s.keyword)))
+    .slice(0, P0_PIN.max).map((s) => ({ ...s, raw: opts.p0Sims?.get(s.row.id) ?? s.raw, pinned: true }));
+  const ids = new Set(pinned.map((s) => s.row.id));
+  return { pinned, hits: ranked.filter((s) => !ids.has(s.row.id)).slice(0, k) };
 }
 
 // ─── 返信の場面で引く（3巡目・2026-10-07 竹内「的確なRAG検索できるように」「設計知見も場面場面でRAG検索をブレインと連動して」）──────
@@ -144,7 +161,8 @@ export function sceneQuery(q: string, scene: KbScene | null | undefined): string
 export function formatHit(s: Scored): string {
   const r = s.row;
   const lines = String(r.insight ?? "").replace(/\r/g, "").split(/\n|(?<=。)/).map((x) => x.trim()).filter(Boolean).slice(0, 2).join(" ");
-  return `■ ${r.title}\n  ［${r.created_at.slice(0, 10)}・${r.id.slice(0, 8)}］ 点 ${s.score.toFixed(2)}（近さ ${s.vector.toFixed(2)}・語 ${s.keyword.toFixed(2)}）\n  [札] ${(r.tags ?? []).join(" / ")}\n  ${lines.slice(0, 220)}`;
+  const pl = s.priority != null ? `P${s.priority}・` : "";
+  return `${s.pinned ? "★ 絶対・最優先 " : "■ "}${r.title}\n  ［${pl}${r.created_at.slice(0, 10)}・${r.id.slice(0, 8)}］ 点 ${s.score.toFixed(2)}（近さ ${s.vector.toFixed(2)}・語 ${s.keyword.toFixed(2)}）\n  [札] ${(r.tags ?? []).join(" / ")}\n  ${lines.slice(0, 220)}`;
 }
 
 /** 似ている組（週の整理）: 2つの埋め込みのコサイン近さ */

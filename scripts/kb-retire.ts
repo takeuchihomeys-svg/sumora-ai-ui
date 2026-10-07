@@ -24,6 +24,14 @@ async function main() {
     if (e1 || !nb) { console.error(`上書きした行が見つかりません: ${by}`); process.exit(1); }
     if (!(nb as { is_current: boolean }).is_current) console.warn(`⚠ 上書きした行 ${by} は非現行です`);
   }
+  // 2026-10-07 段: P0（札「絶対・最優先」）の行は竹内さんが決めた絶対の考え方。--force-p0 が無ければ退役しない
+  {
+    let s = sb.from("system_design_thinking").select("id, title, tags").eq("is_current", true);
+    s = id ? s.eq("id", id) : s.eq("title", title as string);
+    const { data: tg } = await s;
+    const p0 = ((tg ?? []) as Array<{ id: string; title: string; tags: string[] | null }>).filter((r) => (r.tags ?? []).includes("絶対・最優先"));
+    if (p0.length && !process.argv.includes("--force-p0")) { console.error(`P0（絶対・最優先）の行は退役しません（竹内さんの決定が要る・--force-p0）: ${p0.map((r) => r.title.slice(0, 40)).join(" / ")}`); process.exit(1); }
+  }
   let q = sb.from("system_design_thinking")
     .update({
       is_current: false,

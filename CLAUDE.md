@@ -87,7 +87,7 @@ knowledge がない場合はスキップしてよい。
 アーキテクチャの改善・設計判断・新しいパターンが生まれたセッション終了時に**必ず**以下をINSERTする：
 
 ```sql
-INSERT INTO system_design_thinking (title, category, insight, rationale, context, applied_to, tags)
+INSERT INTO system_design_thinking (title, category, insight, rationale, context, applied_to, tags, priority)
 VALUES (
   '短いタイトル',
   'architecture',  -- architecture | prompt_engineering | data_model | ux | performance | ai_design
@@ -95,9 +95,21 @@ VALUES (
   'なぜそうするか（根拠）',
   'どういう状況で生まれたか（日付含む）',
   '適用したファイル・機能',
-  ARRAY['タグ1', 'タグ2']
+  ARRAY['タグ1', 'タグ2'],
+  2                -- 段（下の表）。scripts/kb-insert.ts は無ければ目印から推定して付ける
 );
 ```
+
+### 段（優先順位・2026-10-07 竹内「設計知見もちゃんと整理して優先順位あげれる環境もつくる　そうすれば質が良くなるから」）
+| 段 | 中身 | 付け方 |
+|---|---|---|
+| **P0 絶対・最優先** | 竹内さんの絶対的な考え方（上の「絶対的な考え方」） | **竹内さんが決める**。札「絶対・最優先」と一緒の時だけ（kb-insert は札が無い P0 を断る・kb-retire は `--force-p0` が無いと退役しない・週の整理も自動で退役しない） |
+| **P1 今の決まり** | 今有効な竹内さんの決定・決まり・原則 | 「竹内さんの決定／承認／指示／訂正」・札「分析強化の原則」・整理が見張る決定の行は自動で P1 |
+| **P2 実装の知見** | 実装・プロンプト・DB の型、汎用の点検表、診断（既定） | 迷ったら P2。札「汎用」「点検表」の行は P3 に下げない |
+| **P3 事例・経緯** | 1件の事例・1回の調査・実測の記録 | 参考。ダイジェストには入れない（kb.ts では出る・点は下げない） |
+- 付ける: `scripts/kb-insert.ts` の JSON に `"priority": 0〜3`（無ければ推定して画面に出す）。全体の付け直しは `scripts/kb-priority.ts`（決定論→迷う行だけ DeepSeek・`--llm --out=` で計画と SQL・`--apply --plan=` で当てる・`--review` で迷う物を `memory/rules_digest_review.md` へ）
+- 効き方: kb.ts の並びに P0/P1 +0.05（P3 は下げない）。**P0 は返信の場面（`--scene`）では必ず、場面なしは関係する問い（近さ 0.40 以上）で、上位 k の外の別枠「★」で先頭に出す**。`--max-p=1` で今の決まりだけ。ダイジェストは P0 → 整理の決定 → P1 → P2 の順（P3 は入れない）
+- 毎週の整理が見張る: P0 が 5行・P1 が 3割を超えたら要確認／札「絶対・最優先」と段の食い違いを直す／段が空の行に確かな推定を書く
 
 ### 更新ルール
 - 古い知見が上書きされたら → `UPDATE system_design_thinking SET is_current = false WHERE id = '...'`
@@ -105,9 +117,12 @@ VALUES (
 - **前の決まりを変える決定を記録したら、同じ手順で古い行を退役する**（理由＋新しい行の id を残す・消さない。2026-10-06 竹内さん承認）
   `npx tsx --env-file=.env.local scripts/kb-retire.ts --id=<古い id> --by=<新しい id> --reason=<理由>`
 - 毎週の整理（`/api/cron/design-knowledge`・手元は `scripts/kb-curate.ts`）が重複と決定で古くなった行を退役し、迷う物は `memory/rules_digest_review.md` に出す
+  - 2026-10-07 から: ①同じ場面の P0/P1 の決まり同士（近さ 0.72 以上）も DeepSeek に「上書き・食い違い」を聞き、**新しい決定（段が上・新しい方）を残す案と kb-retire のコマンド付きで要確認へ**（自動では退役しない）②DeepSeek が same かつ近さ 0.95 以上の確かな重複だけ自動で退役 ③札の表記ゆれを直す（下の「タグの書き方」・aix→AIX・audit→監査 等）・札が 8個を超える行は要確認 ④段の見張り ⑤P0 の行は自動で退役しない
+  - DB に書かずに要確認だけ見る: `npx tsx --env-file=.env.local scripts/kb-curate.ts --llm --write-review`
 
 ### 参照方法（次セッション冒頭・設計作業前）
-- **まず `npx tsx --env-file=.env.local scripts/kb.ts --q="自然文の問い"` で引く（RAG・近さ＋語＋札＋新しさ・退役した行は出ない）、次に分野の rules_digest**（2026-10-06 竹内さん）
+- **まず `npx tsx --env-file=.env.local scripts/kb.ts --q="自然文の問い"` で引く（RAG・近さ＋語＋札＋新しさ＋段・退役した行は出ない）、次に分野の rules_digest**（2026-10-06 竹内さん）
+  - 「★ 絶対・最優先」の別枠が出たら、それが一番上の決まり（下の行と食い違ったら P0 → P1 の順で従う）。決まりだけ欲しい時は `--max-p=1`
 - **その分野の「今の決まり」を先に読む**: `memory/rules_digest_<reply|aix|brain|search|extension|estimate|viewing|cost>.md`（最新にするのは `npx tsx --env-file=.env.local scripts/kb-digest.ts --write`）
 ```sql
 SELECT title, insight, rationale FROM system_design_thinking

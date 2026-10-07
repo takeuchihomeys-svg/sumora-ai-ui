@@ -5,6 +5,8 @@
 //   OpenAI の埋め込みを問いの数だけ呼ぶ（1回 約0.0000004ドル）。DB は読むだけ
 import { createClient } from "@supabase/supabase-js";
 import { searchKb } from "../app/lib/design-knowledge-rag-server";
+import { readFileSync } from "node:fs";
+import { splitPinned } from "../app/lib/design-knowledge-rag";
 import type { RagRow } from "../app/lib/design-knowledge-rag";
 import type { ReplyScene } from "../app/lib/reply-scene";
 
@@ -83,6 +85,9 @@ const isGold = (r: RagRow, g: string) => r.id.startsWith(g);
     rows.push(...((data ?? []) as RagRow[]));
     if ((data ?? []).length < 1000) break;
   }
+  // 2026-10-07 段: --priority-plan=<scripts/kb-priority.ts の計画> で列の代わりに段を載せて測る（列を当てる前の前後比較）
+  const planArg = process.argv.find((a) => a.startsWith("--priority-plan="))?.slice(16);
+  if (planArg) { const pl = JSON.parse(readFileSync(planArg, "utf8")) as { decisions: Array<{ id: string; priority: number }> }; const m = new Map(pl.decisions.map((d) => [d.id, d.priority])); for (const r of rows) r.priority = m.get(r.id) ?? r.priority; }
   const missing = SETS.flatMap((e) => e.gold.filter((g) => !rows.some((r) => isGold(r, g))));
   if (missing.length) console.log("⚠ 正解の行が現行に無い:", missing.join(", "));
   const vecCache = new Map<string, Map<string, number>>();
@@ -92,14 +97,21 @@ const isGold = (r: RagRow, g: string) => r.id.startsWith(g);
     { name: "plain", scene: false, expand: false, w: 0 }, { name: "expand", scene: true, expand: true, w: 0 },
     ...W.map((w) => ({ name: `boost${w}`, scene: true, expand: false, w })), ...W.map((w) => ({ name: `both${w}`, scene: true, expand: true, w })),
   ];
+  // 段の掛け率（0＝段なし＝前の並び）。--prio-w=0,1 で plain と場面 0.5 をそれぞれ測る。pin＝P0 の別枠（kb.ts）＋上位 k
+  const PW = process.argv.find((a) => a.startsWith("--prio-w="))?.slice(9).split(",").map(Number);
+  if (PW) { variants.length = 0; for (const pw of PW) { variants.push({ name: `plain-p${pw}`, scene: false, expand: false, w: 0, pw } as never, { name: `scene-p${pw}`, scene: true, expand: false, w: 0.5, pw } as never, { name: `pin-scene-p${pw}`, scene: true, expand: false, w: 0.5, pw, pin: true } as never); } }
   const modes = variants.map((v) => v.name);
   const res: Record<string, { hit: number; hit8: number; mrr: number; gold: number; byScene: Record<string, number[]> }> = {};
   for (const m of modes) res[m] = { hit: 0, hit8: 0, mrr: 0, gold: 0, byScene: {} };
   const misses: string[] = [];
+  const pinCount = new Map<string, number>();
   for (const e of SETS) {
     for (const v of variants) {
       const m = v.name;
-      const list = (await searchKb(sb, e.q, { k: 8, rows, vecCache, scene: v.scene ? e.scene : undefined, expand: v.expand, sceneWeight: v.w })).map((s) => s.row);
+      const vv = v as typeof v & { pw?: number; pin?: boolean };
+      const ranked = await searchKb(sb, e.q, { k: vv.pin ? 10_000 : 8, rows, vecCache, scene: v.scene ? e.scene : undefined, expand: v.expand, sceneWeight: v.w, weights: vv.pw == null ? undefined : { priority: vv.pw } });
+      // pin: P0 の別枠は上位 k の外（席を使わない）＝上位 k の当たりだけ測り、別枠が出た問いの数を数える
+      const list = (vv.pin ? (() => { const sp = splitPinned(ranked, 8); if (sp.pinned.length) pinCount.set(m, (pinCount.get(m) ?? 0) + 1); return sp.hits; })() : ranked).map((s) => s.row);
       const idx = list.findIndex((r) => e.gold.some((g) => isGold(r, g)));
       const goldIn = list.slice(0, K).filter((r) => e.gold.some((g) => isGold(r, g))).length;
       const R = res[m];
@@ -117,5 +129,6 @@ const isGold = (r: RagRow, g: string) => r.id.startsWith(g);
     console.log(`  ${m.padEnd(9)} recall@${K} ${(R.hit / SETS.length).toFixed(2)}（${R.hit}/${SETS.length}）・recall@8 ${(R.hit8 / SETS.length).toFixed(2)}・MRR ${(R.mrr / SETS.length).toFixed(2)}・正解の取り込み率 ${(R.gold / SETS.length).toFixed(2)}`);
     console.log(`         場面別 ${Object.entries(R.byScene).map(([s, [h, n]]) => `${s} ${h}/${n}`).join("・")}`);
   }
+  if (pinCount.size) console.log(`  P0 の別枠が出た問い: ${[...pinCount].map(([m, n]) => `${m} ${n}/${SETS.length}`).join("・")}`);
   for (const x of misses) console.log("   - " + x);
 })().catch((e) => { console.error(e); process.exit(1); });

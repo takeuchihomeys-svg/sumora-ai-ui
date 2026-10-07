@@ -5,6 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { searchKb } from "../app/lib/design-knowledge-rag-server";
 import { hybridRank, type RagRow } from "../app/lib/design-knowledge-rag";
+import { readFileSync } from "node:fs";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const K = Number((process.argv.find((a) => a.startsWith("--k=")) ?? "--k=5").split("=")[1]);
@@ -65,6 +66,9 @@ const isGold = (r: RagRow, g: string) => g.startsWith("title:") ? r.title.starts
     rows.push(...((data ?? []) as RagRow[]));
     if ((data ?? []).length < 1000) break;
   }
+  // 2026-10-07 段: --priority-plan=<scripts/kb-priority.ts の計画> で列の代わりに段を載せて測る
+  const planArg = process.argv.find((a) => a.startsWith("--priority-plan="))?.slice(16);
+  if (planArg) { const pl = JSON.parse(readFileSync(planArg, "utf8")) as { decisions: Array<{ id: string; priority: number }> }; const m = new Map(pl.decisions.map((d) => [d.id, d.priority])); for (const r of rows) r.priority = m.get(r.id) ?? r.priority; }
   const missing = SETS.flatMap((e) => e.gold.filter((g) => !rows.some((r) => isGold(r, g))));
   if (missing.length) console.log("⚠ 正解の行が現行に無い:", missing.join(", "));
   const vecCache = new Map<string, Map<string, number>>();
