@@ -13,6 +13,7 @@ import { isOwnScreeningFailureTurn } from "../app/lib/screening-failed-switch";
 import { detectSensitiveCase } from "../app/lib/sensitive-case";
 import { customerPointsAtProperty } from "../app/lib/cost-question-scope";
 import { claudeUsageUsd } from "../app/lib/llm-price";
+import { decidePostApplyBrainGate } from "../app/lib/post-apply-brain-gate";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -55,7 +56,7 @@ const ci = (k: number, n: number) => { if (!n) return "-"; const p = k / n; retu
   const by = <T extends { conversation_id: string | null }>(rows: T[]) => { const mp = new Map<string, T[]>(); for (const r of rows) { const k = r.conversation_id ?? ""; if (!mp.has(k)) mp.set(k, []); mp.get(k)!.push(r); } return mp; };
   const mBy = by(msgs), pBy = by(presses), dBy = by(decs), lBy = by(llm);
   const costDays = (Date.now() - ms(COST_SINCE)) / 86_400_000;
-  type Row = { conv: string; at: string; text: string; flags: string[]; calls: number; callsMid: number; callsAfterStaff: number; usd: number; staff: string[]; own: boolean; brainPath: string | null; brainSrc: string | null; agreeAix: boolean; anyPress: boolean; switchTurn: boolean; status: string | null };
+  type Row = { conv: string; at: string; text: string; flags: string[]; calls: number; callsMid: number; callsAfterStaff: number; usd: number; staff: string[]; own: boolean; brainPath: string | null; brainSrc: string | null; agreeAix: boolean; anyPress: boolean; switchTurn: boolean; status: string | null; gateRun: boolean; gateReason: string };
   const rows: Row[] = [];
   const midGapSec: number[] = [], staffLagMin: number[] = [];
   const docSkip = { calls: 0, usd: 0, judged: 0, okBefore: 0, okAfter: 0, gained: 0, lost: [] as string[] };
@@ -117,6 +118,9 @@ const ci = (k: number, n: number) => { if (!n) return "-"; const p = k / n; retu
         const ok = (p: string | null) => !!p && (p === "reply" ? st[0] === "reply" : st.some((s) => sameAix(s, p)));
         if (st.length && lastAll) { docSkip.judged++; if (ok(pth(lastAll))) docSkip.okBefore++; if (ok(pth(lastKept))) docSkip.okAfter++; if (ok(pth(lastAll)) && !ok(pth(lastKept))) docSkip.lost.push(`${conv.slice(0, 8)} ${end.slice(5, 16)} 今=${pth(lastAll)} 後=${pth(lastKept) ?? "（判断なし）"} 人=${st.join(",")}`); if (!ok(pth(lastAll)) && ok(pth(lastKept))) docSkip.gained++; }
       }
+      // 10/07 竹内さんの決定（形 (a)）: 申込中・審査中は否決・取り消し・クレームの時だけ回す（app/lib/post-apply-brain-gate.ts）
+      const lastPush = [...ps].filter((p) => p.aix_type === "application_push" && ms(p.created_at) <= ms(end)).pop()?.created_at ?? null;
+      const gate = decidePostApplyBrainGate({ status: "applying", msgs: ms_.slice(Math.max(0, j - 39), j + 1), applicationPushAt: lastPush, env: {} });
       const last = preDecs[preDecs.length - 1] ?? null;
       const brainPath = last ? (last.suggested_reply_mode === "aix" && last.suggested_action ? last.suggested_action : "reply") : null;
       const agreeAix = !!brainPath && brainPath !== "reply" && bp.some((a) => sameAix(a, brainPath));
@@ -130,7 +134,7 @@ const ci = (k: number, n: number) => { if (!n) return "-"; const p = k / n; retu
       if (w.staffFirstAt) staffLagMin.push((ms(w.staffFirstAt) - ms(end)) / 60000);
       rows.push({ conv, at: end, text: text.slice(0, 140), flags, calls: turnCalls.length, callsMid: turnCalls.filter((c) => ms(c.ts!) < ms(end) - 1000).length,
         callsAfterStaff: turnCalls.filter((c) => w.staffFirstAt && ms(c.l.created_at) > ms(w.staffFirstAt)).length, usd: turnCalls.reduce((a, c) => a + claudeUsageUsd(c.l), 0),
-        staff, own: ownText.trim().length > 0, brainPath, brainSrc: last?.decision_source ?? null, agreeAix, anyPress: bp.length > 0, switchTurn, status });
+        staff, own: ownText.trim().length > 0, brainPath, brainSrc: last?.decision_source ?? null, agreeAix, anyPress: bp.length > 0, switchTurn, status, gateRun: gate.run, gateReason: gate.reason });
     }
   }
   const costRows = rows.filter((r) => ms(r.at) >= ms(COST_SINCE));
@@ -174,6 +178,7 @@ const ci = (k: number, n: number) => { if (!n) return "-"; const p = k / n; retu
     ["D: C＋手続きの語", (r) => r.flags.some((f) => f !== "ack")],
     ["G: 否決の文脈・取り消し・クレーム＋お客様が自分で書いた質問・特定のお部屋（書類の画像・申込フォームだけの番は回さない）", (r) => r.flags.some((f) => ["own_fail", "reject_word", "after_staff_fail", "cancel", "claim", "own_question", "own_property"].includes(f))],
     ["H: G＋お礼だけ以外の自分の文（書類・フォームだけの番だけ回さない）", (r) => r.flags.some((f) => ["own_fail", "reject_word", "after_staff_fail", "cancel", "claim", "own_question", "own_property"].includes(f)) || (!!r.own && !r.flags.includes("ack"))],
+    ["F: 決定（post-apply-brain-gate＝否決・取り消し・クレーム・迷い・別の物件の語＋否決の後は全部）", (r) => r.gateRun],
     ["E: お礼・スタンプだけの番は回さない（他は全部）", (r) => !(r.flags.length === 1 && r.flags[0] === "ack")],
   ];
   console.log("\n■ 形(a) 印のある番だけブレインを回す: 残る呼び出し・$（30日）｜取りこぼし: 切り替えの番／ブレインの AIX が当たった番／スタッフが AIX を押した番");
@@ -189,5 +194,5 @@ const ci = (k: number, n: number) => { if (!n) return "-"; const p = k / n; retu
   for (const x of docSkip.lost) console.log(`     ↓ ${x}`);
   // 形(d) 回数を減らす: 連投の途中（10秒以内）・お礼
   if (SHOW === "image") for (const r of rows.filter((x) => x.flags.includes("image"))) console.log(`  画像 ${r.conv.slice(0, 8)} ${r.at.slice(5, 16)} 呼び出し${r.calls}（途中${r.callsMid}） [${r.flags.join(",")}] 客「${r.text.replace(/\n/g, "⏎").slice(0, 70)}」 ブレイン=${r.brainPath}(${r.brainSrc}) 人=${r.staff.join(",")}${r.agreeAix ? " ★当たり" : ""}`);
-  if (SHOW === "switch" || SHOW === "all") for (const r of sw) console.log(`  切替 ${r.conv.slice(0, 8)} ${r.at.slice(0, 16)} [${r.flags.join(",")}] 客「${r.text.replace(/\n/g, "⏎").slice(0, 60)}」 ブレイン=${r.brainPath}(${r.brainSrc}) 人=${r.staff.join(",")}`);
+  if (SHOW === "switch" || SHOW === "all") for (const r of sw) console.log(`  切替 ${r.conv.slice(0, 8)} ${r.at.slice(0, 16)} 状態=${r.status} 関門=${r.gateReason} [${r.flags.join(",")}] 客「${r.text.replace(/\n/g, "⏎").slice(0, 60)}」 ブレイン=${r.brainPath}(${r.brainSrc}) 人=${r.staff.join(",")}`);
 })().catch((e) => { console.error(e); process.exit(1); });

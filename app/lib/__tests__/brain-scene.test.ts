@@ -10,6 +10,7 @@ t("場面の AIX が1行も無ければ元のまま（壊れない側）", scene
 t("短いお礼は成約パターン・ナレッジを入れない", !keepBrainMaterial("ack", "winning", true) && !keepBrainMaterial("ack", "ragKnowledge", true));
 t("検討中は全部入れる", keepBrainMaterial("considering", "winning", true) && keepBrainMaterial("considering", "contractExamples", true));
 t("off なら全部入れる", keepBrainMaterial("ack", "winning", false));
-t("既定は off（本番は今まで通り）", !brainSceneMaterialsEnabled({}) && brainSceneMaterialsEnabled({ BRAIN_SCENE_MATERIALS: "on" }) && brainSceneMaterialsEnabled({}, "on") && !brainSceneMaterialsEnabled({ BRAIN_SCENE_MATERIALS: "on" }, "off"));
+// 10/07 竹内さんの決定: 既定 on・BRAIN_SCENE_MATERIALS=off で戻す
+t("既定は on・off で戻せる・テストの指定が優先", brainSceneMaterialsEnabled({}) && !brainSceneMaterialsEnabled({ BRAIN_SCENE_MATERIALS: "off" }) && !brainSceneMaterialsEnabled({ BRAIN_SCENE_MATERIALS: "OFF" }) && brainSceneMaterialsEnabled({ BRAIN_SCENE_MATERIALS: "on" }) && brainSceneMaterialsEnabled({ BRAIN_SCENE_MATERIALS: "off" }, "on") && !brainSceneMaterialsEnabled({}, "off"));
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

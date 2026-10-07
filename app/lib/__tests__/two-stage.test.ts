@@ -1,5 +1,6 @@
 // app/lib/__tests__/two-stage.test.ts — 2026-10-02 竹内さんの決定「2段の場面: 先に約束の返信・後で AIX」（実行: npx tsx app/lib/__tests__/two-stage.test.ts）
-import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady } from "../two-stage";
+import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady, broughtPropertyAsk, broughtPropertyCount } from "../two-stage";
+import { resolveStaffPromiseAix } from "../aix-task-link";
 import { classifyStaffTextFacts } from "../action-ledger";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} ${extra}`); } };
@@ -61,4 +62,41 @@ const kinds = (s: string) => classifyStaffTextFacts(s.replace("〇〇", "YUMA"),
 t("ピックアップの約束の言い回し → pickup_declared", kinds(TWO_STAGE_WORDING.pickup).includes("pickup_declared"), JSON.stringify(kinds(TWO_STAGE_WORDING.pickup)));
 t("確認の約束の言い回し → confirmation_promised", kinds(TWO_STAGE_WORDING.check).includes("confirmation_promised"), JSON.stringify(kinds(TWO_STAGE_WORDING.check)));
 t("見積書の約束の言い回し → estimate_declared", kinds(TWO_STAGE_WORDING.estimate).includes("estimate_declared"), JSON.stringify(kinds(TWO_STAGE_WORDING.estimate)));
+// ── 10/07 竹内さんの決定①: 見積の依頼は約束の返信（文はスタッフの実送信の型）→ 後で AIX【見積書送る】 ──
+{
+  const v = resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "signal:focused_estimate_request", estimateTarget: "エスリード難波" });
+  t("見積の依頼（こちらが送ったお部屋）→ 約束の返信（estimate）・初期費用の御見積書・物件名つき", v?.kind === "estimate" && /エスリード難波の最大限割引させていただいた初期費用の御見積書を作成しお送り/.test(v?.direction ?? ""), v?.direction);
+  t("見積の依頼（LLM の見積書送る）→ 約束の返信", resolveTwoStage({ ...base, finalAix: "estimate_sheet", asksCost: true })?.kind === "estimate");
+  t("見積書の後の総額の確認（S6）も約束の返信", resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "signal:scene_S6_amount_confirm" })?.kind === "estimate");
+  t("約束を果たす番（promise:estimate）は AIX【見積書送る】のまま", resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate" }) === null);
+  const w = "かしこまりました！！\nエスリード難波の最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます😊！！";
+  t("見積の約束の文 → 台帳の estimate_declared（後で見積書送るが立つ）", kinds(w).includes("estimate_declared"), JSON.stringify(kinds(w)));
+  const link = resolveStaffPromiseAix({ lastStaffEntry: { kind: "estimate_declared", status: "promised" }, estimatePromisedUnfulfilled: true, pickupPromisedUnfulfilled: false, confirmationPromisedUnfulfilled: false } as never,
+    [{ sender: "customer", text: "ここの初期費用いくらですか？" }, { sender: "staff", text: w }] as never, { propertyInPlay: true } as never);
+  t("約束を送った後 → AIX【見積書送る】（aix-task-link）", link?.action === "estimate_sheet", JSON.stringify(link));
+}
+// ── 10/07 竹内さんの決定（けんじじ）: 持ち込みの約束は 募集状況＋最大限割引の初期費用の御見積書 の両方・件数を書く ──
+{
+  const two = resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "", brought: { ask: "none", count: 2 } });
+  t("持ち込み2件・物件確認した → 両方の約束・「2件の」", two?.source === "rule:two_stage_promise(brought_both)" && /2件の募集状況確認/.test(two?.direction ?? "") && /初期費用の御見積書/.test(two?.direction ?? ""), two?.direction);
+  const est = resolveTwoStage({ ...base, finalAix: "estimate_sheet", customerText: "この二つで初期費用出してもらえたら嬉しいです！", brought: { ask: "cost", count: 2 } });
+  t("持ち込み・費用だけ聞いた（見積書送る）→ それでも両方（実送信の過半数）・御見積書を先に書いてよい", est?.kind === "check" && /募集状況/.test(est?.direction ?? "") && /御見積書の事を先に/.test(est?.direction ?? ""), est?.direction);
+  const one = resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "この物件空いてるか調べてもらえますか？", brought: { ask: "vacancy", count: 1 } });
+  t("持ち込み1件・空きだけ聞いた → 両方（「物件の」）", /お送り頂きました物件の募集状況確認させて頂きます/.test(one?.direction ?? "") && /御見積書/.test(one?.direction ?? ""), one?.direction);
+  t("確認の約束を既にしている（correction:check_already_declared）は AIX のまま", resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: "correction:check_already_declared", brought: { ask: "none", count: 1 } }) === null);
+  t("申込以降は触らない", resolveTwoStage({ ...base, finalAix: "property_check_result", postApply: true, brought: { ask: "none", count: 1 } }) === null);
+  t("物件ピックアップ（条件の言い直し）は持ち込みがあってもピックアップの約束", resolveTwoStage({ ...base, finalAix: "property_send", brought: { ask: "none", count: 1 } })?.kind === "pickup");
+  const prev = process.env.TWO_STAGE_BROUGHT_BOTH; process.env.TWO_STAGE_BROUGHT_BOTH = "off";
+  t("TWO_STAGE_BROUGHT_BOTH=off で今まで（募集状況だけ）", !/御見積書/.test(resolveTwoStage({ ...base, finalAix: "property_check_result", brought: { ask: "none", count: 1 } })?.direction ?? ""));
+  if (prev === undefined) delete process.env.TWO_STAGE_BROUGHT_BOTH; else process.env.TWO_STAGE_BROUGHT_BOTH = prev;
+  const bw = "かしこまりました！！\nお送り頂きました2件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！";
+  t("両方の約束の文 → 台帳は見積の約束＋確認の約束", kinds(bw).includes("estimate_declared") && kinds(bw).includes("confirmation_promised"), JSON.stringify(kinds(bw)));
+  const link = resolveStaffPromiseAix({ lastStaffEntry: { kind: "estimate_declared", status: "promised" }, estimatePromisedUnfulfilled: true, pickupPromisedUnfulfilled: false, confirmationPromisedUnfulfilled: true } as never,
+    [{ sender: "customer", text: "https://suumo.jp/chintai/jnc_1/" }, { sender: "staff", text: bw }] as never, { propertyInPlay: true, customerRequestedCheck: true } as never);
+  t("両方の約束の後（お客様の物件確認の依頼）→ AIX【物件確認した】（御見積書同封）", link?.action === "property_check_result", JSON.stringify(link));
+  t("お客様の言葉: 費用だけ／空きだけ／両方／なし", broughtPropertyAsk("この二つで初期費用出してもらえたら嬉しいです！") === "cost" && broughtPropertyAsk("この物件空いてるか調べてもらえますか？") === "vacancy"
+    && broughtPropertyAsk("ここ空いてますか？初期費用もしりたいです") === "both" && broughtPropertyAsk("https://suumo.jp/chintai/jnc_1/\nby SUUMO") === "none");
+  t("件数: URL（同じ物は1件）＋画像", broughtPropertyCount(["https://suumo.jp/a/?x=1", "https://suumo.jp/a/?x=2", "[画像] 物件情報", "ここ"]) === 2);
+  t("2段の他の質問: 確認の約束でも費用の問いは約束が答え", twoStageOtherQuestions("ここの初期費用いくらですか？", "check").length === 0);
+}
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

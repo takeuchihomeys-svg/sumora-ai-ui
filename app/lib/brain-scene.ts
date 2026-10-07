@@ -10,7 +10,8 @@
 //   ①アクション別ルール: その場面で選ばれうる AIX のルールだけ（上位15行のまま中身が場面に合う）。other は全部
 //   ②成約・失注パターン（winning）・成約した会話の返信例（contractExamples）: 会話全体の戦略の材料。短いお礼・質問・初期費用・内覧・申込・物件を送ってきた番は入れない
 //   ③関連ナレッジ（RAG）: 短いお礼の番は入れない（話題を閉じる番・ack-topic-scope と同じ考え）
-// 戻す: BRAIN_SCENE_MATERIALS=off（既定 off＝本番は今まで通り。再生で前後を比べて上がる場面だけ竹内さんと決めて on にする）
+// 既定 on（2026-10-07 竹内さんの決定「本番で使う」・再生 83番×6回 道の一致の差 −1pt±3＝揺れの内・材料 −12%＝1回 約5%安い）。
+//   戻す: BRAIN_SCENE_MATERIALS=off（旧は既定 off＝on の時だけ絞っていた）
 //   テストは analyzeConversation の opts.sceneMaterials="on"|"off"（環境変数より優先）
 import type { ReplyScene } from "./reply-scene";
 
@@ -44,7 +45,7 @@ export const BRAIN_SCENE_DROP: Record<ReplyScene, readonly BrainMaterialKey[]> =
 export function brainSceneMaterialsEnabled(env: Record<string, string | undefined>, override?: "on" | "off" | null): boolean {
   if (override === "on") return true;
   if (override === "off") return false;
-  return (env.BRAIN_SCENE_MATERIALS ?? "").toLowerCase() === "on";
+  return (env.BRAIN_SCENE_MATERIALS ?? "").toLowerCase() !== "off";
 }
 
 /** アクション別ルール（優先度の高い順）を場面の AIX に絞って上位 limit 行。off・other・絞って0行の時は元の上位 limit 行（壊れない側） */

@@ -122,6 +122,19 @@ it("2段の約束（ピックアップ）・スタッフは物件ピックアッ
   const j = judgeTurn({ draft: "かしこまりました！！\nYUMAさんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "property_send", check_pattern: null, at: at(20), burst: true }]) });
   eq([j.verdict, j.detail.reason], ["same_meaning", "two_stage_fulfilled"]);
 });
+// 10/07 竹内さんの決定（見積の依頼は約束の返信に揃える）: 約束の返信の番にスタッフが同じまとまりで見積書送るを直接 → 一致
+it("2段の約束（見積書・初期費用の御見積書）・スタッフは見積書送るを直接 → 一致（two_stage_fulfilled）", () => {
+  const j = judgeTurn({ draft: "かしこまりました！！\nエスリード難波の最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます😊！！", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "estimate_sheet", check_pattern: null, at: at(15), burst: true }]) });
+  eq([j.verdict, j.detail.reason], ["same_meaning", "two_stage_fulfilled"]);
+});
+it("持ち込みの両方の約束・スタッフは物件確認したを直接 → 一致（two_stage_fulfilled）", () => {
+  const j = judgeTurn({ draft: "かしこまりました！！\nお送り頂きました2件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "property_check_result", check_pattern: null, at: at(25), burst: true }]) });
+  eq([j.verdict, j.detail.reason], ["same_meaning", "two_stage_fulfilled"]);
+});
+it("持ち込みの両方の約束・スタッフは見積書送るを直接 → 一致（two_stage_fulfilled）", () => {
+  const j = judgeTurn({ draft: "お送り頂きました物件の募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "estimate_sheet", check_pattern: null, at: at(25), burst: true }]) });
+  eq([j.verdict, j.detail.reason], ["same_meaning", "two_stage_fulfilled"]);
+});
 it("2段の約束（見積書）・スタッフは物件確認した → 今まで通り別の事", () => {
   const j = judgeTurn({ draft: "最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "property_check_result", check_pattern: null, at: at(20), burst: true }]) });
   eq([j.verdict, j.detail.reason], ["different", "text_but_aix"]);

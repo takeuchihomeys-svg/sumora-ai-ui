@@ -31,6 +31,8 @@ export type TwoStageInput = {
   customerText?: string | null;
   /** 今回のお客様の発言がお礼・了承だけで、こちらの最後の発言がまだ果たしていない約束（ピックアップ・確認・見積書）そのもの（3巡目 10/07） */
   ackRightAfterPromise?: boolean;
+  /** 今回お客様が物件を送ってきた（持ち込み・URL／物件の画像）。ask＝お客様の言葉（broughtPropertyAsk）・count＝件数（broughtPropertyCount）。10/07 */
+  brought?: { ask: BroughtAsk; count: number } | null;
 };
 
 // 2026-10-02 ⑫ 最後の確かめ（Claude）: 夜職のアリバイ会社の質問で、確認の約束の方向から「アリバイ会社の利用可否を管理会社に確認させて頂きます」と書いた（2回）。
@@ -44,7 +46,8 @@ const KEEP_SOURCE_RE = /^(?:promise:|signal:pending_pickup|rule:closed_ack_wait|
 export const TWO_STAGE_WORDING: Record<TwoStageKind, string> = {
   pickup: "〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！",
   check: "お部屋の募集状況確認させていただきます！！確認出来次第ご連絡させて頂きます！！",
-  estimate: "最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！",
+  // 10/07: 見積の約束の手打ち（scripts/audit-estimate-promise-first.ts --wording）は「初期費用の」を入れる形が多数
+  estimate: "最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！",
 };
 
 /** 今の一手を約束の返信にするか（する時は返信の方向と必須の話題）。しない時は null（AIX のまま） */
@@ -81,6 +84,27 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     };
   }
   // 2026-10-02 ⑫ 20巡（other_45）: 同じアリバイの質問にブレインが AIX【保証会社について】を選んだ（本番の押下は 200日で 0・スタッフはお仕事面のサポートの手打ち）
+  // 2026-10-07 竹内さん（けんじじ 10/7: AI「こちらのお部屋の募集状況確認させていただきます！！」→ スタッフ「2部屋の最大限割引させていただいたお見積書お送りさせていただきます😊！！」）
+  //   「物件確認のことはLINEから読み取る、募集状況確認の場合と割引の場合あるけど、基本的には募集状況と最大限割引した初期費用の御見積書を両方おくる形」。
+  //   線（scripts/audit-brought-property-promise.ts・120日・申込前の持ち込み 326番）: 後で果たした形（48時間以内）は お客様の言葉が
+  //   費用だけ 37/70・空きだけ 41/69・両方 37/58・言葉なし 56/129 で「両方」がどれも一番多い（費用だけでも見積だけは 14・空きだけでも確認だけは 10）
+  //   → 持ち込みの番の約束は いつも「募集状況の確認＋最大限割引した初期費用の御見積書」の両方（お客様が聞いた方を先に・件数が2件以上なら「2件の」）。
+  //   後で果たす AIX は 物件確認した（ピッカー「物件あった」は御見積書を同封・aix-pickers）＝ aix-task-link の確認＋見積の約束→物件確認した のまま。
+  //   旧: LLM が物件確認したを選ぶと「募集状況確認」だけ・見積書送るを選ぶと「御見積書」だけの約束になった。戻す: TWO_STAGE_BROUGHT_BOTH=off
+  const broughtBoth = !!i.brought && i.brought.count > 0 && (a === "property_check_result" || a === "acknowledge_check" || a === "estimate_sheet")
+    && !WORK_SUPPORT_ASK_RE.test(i.customerText ?? "")
+    && (typeof process === "undefined" || (process.env?.TWO_STAGE_BROUGHT_BOTH ?? "").toLowerCase() !== "off");
+  if (broughtBoth && i.brought) {
+    const n = i.brought.count;
+    const obj = n >= 2 ? `お送り頂きました${n}件の` : "お送り頂きました物件の";
+    const order = i.brought.ask === "cost" ? "（お客様が初期費用・見積を聞いているので御見積書の事を先に書いてもよい）" : "";
+    return {
+      kind: "check",
+      direction: `お客様が送ってきた物件の募集状況を確認し、最大限割引した初期費用の御見積書と両方お送りすると約束する返信にする（結果・金額は書かない・送るのは後で AIX【物件確認した】＝御見積書同封）${order}。${n >= 2 ? `件数は「${n}件」（それぞれ）と書く。` : ""}言い方は実際の送信の形「${obj}募集状況確認させて頂きます😊！！確認出来次第、最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！」`,
+      keyTopic: n >= 2 ? `${n}件の募集状況と御見積書をお送りする約束` : "募集状況と御見積書をお送りする約束",
+      source: "rule:two_stage_promise(brought_both)",
+    };
+  }
   if (a === "property_check_result" || a === "acknowledge_check" || (a === "guarantor_info" && WORK_SUPPORT_ASK_RE.test(i.customerText ?? ""))) {
     if (WORK_SUPPORT_ASK_RE.test(i.customerText ?? "")) {
       return {
@@ -122,7 +146,7 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     const target = (i.estimateTarget ?? "").trim();
     return {
       kind: "estimate",
-      direction: `${target ? `${target}の` : ""}最大限割引した初期費用の御見積書を作成しお送りすると約束する返信にする（金額は書かない・送るのは後で AIX【見積書送る】）。言い方は実際の送信の形「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」`,
+      direction: `${target ? `${target}の` : ""}最大限割引した初期費用の御見積書を作成しお送りすると約束する返信にする（金額は書かない・送るのは後で AIX【見積書送る】）。言い方は実際の送信の形「かしこまりました！！${target ? `${target}の` : ""}最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます😊！！」`,
       keyTopic: "御見積書を作成しお送りする約束",
       source: "rule:two_stage_promise(estimate)",
     };
@@ -139,7 +163,8 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
 export function twoStageOtherQuestions(customerTurn: string | null | undefined, kind: TwoStageKind): string[] {
   const sents = String(customerTurn ?? "").split(/\n+|(?<=[？?])/).map((x) => x.trim()).filter((x) => /[？?]$/.test(x));
   // 約束が答えになる問い（ピックアップ＝「〜ところありますか」・確認＝「空いてますか」）は除く
-  const promiseQ = kind === "pickup" ? /(?:ところ|お部屋|部屋|物件)[^？?]{0,10}(?:あり|ない)|ありますか|ないですか/ : kind === "check" ? /空い|空き|募集/ : /見積|初期費用|いくら/;
+  // 10/07: 確認の約束は持ち込み・費用の質問で御見積書もまとめて約束する（brought_both・asksCost）ので、確認の時も費用の問いは約束が答え
+  const promiseQ = kind === "pickup" ? /(?:ところ|お部屋|部屋|物件)[^？?]{0,10}(?:あり|ない)|ありますか|ないですか/ : kind === "check" ? /空い|空き|募集|見積|初期費用|いくら/ : /見積|初期費用|いくら/;
   return sents.filter((x) => !promiseQ.test(x)).slice(0, 2).map((q) => `お客様の質問「${q.slice(0, 30)}」への答え（会話・資料にある事実で。無ければ確認の約束）`);
 }
 
@@ -159,4 +184,29 @@ export function freshPickupReady(rows: ReadonlyArray<{ created_at: string; expir
     if (!Number.isFinite(c) || o.nowMs - c > PICKUP_FRESH_DAYS * 86_400_000) return false;
     return !Number.isFinite(sentMs) || c > sentMs;
   });
+}
+
+/**
+ * お客様が物件を送ってきた（持ち込み）番で、お客様の言葉が何を聞いているか（2026-10-07 竹内さん「物件確認のことはLINEから読み取る、
+ *   募集状況確認の場合と割引の場合あるけど、基本的には募集状況と最大限割引した初期費用の御見積書を両方おくる形」）。
+ *   cost＝初期費用・見積・割引だけ／vacancy＝空き・募集・取り扱いだけ／both＝両方／none＝どちらも言っていない（URL・画像だけ・「ここどうですか」）
+ */
+export type BroughtAsk = "cost" | "vacancy" | "both" | "none";
+const BROUGHT_COST_RE = /初期費用|見積|いくら|費用|割引|安く|総額/;
+const BROUGHT_VACANCY_RE = /空い|空き|空室|募集|まだ(?:あり|残|大丈夫)|埋ま|取り?扱|紹介(?:して|でき|可能)|住め|入れ(?:ます|る)|申し?込(?:め|み(?:たい|でき))|内[覧見]/;
+export function broughtPropertyAsk(turn: string | null | undefined): BroughtAsk {
+  // URL・画像の読み取りの文（物件の資料に「初期費用」「募集」の語がある）は除いてお客様の言葉だけを見る
+  const own = String(turn ?? "").split(/\n+/).filter((l) => !/https?:\/\/|^\s*\[(?:画像|ファイル)\]/.test(l) && !/^by SUUMO|^\s*[-・]|：|:/.test(l)).join("\n");
+  const c = BROUGHT_COST_RE.test(own), v = BROUGHT_VACANCY_RE.test(own);
+  return c && v ? "both" : c ? "cost" : v ? "vacancy" : "none";
+}
+/** 持ち込みの件数（URL・画像の通の数。同じ URL は1件） */
+export function broughtPropertyCount(turnMsgs: readonly string[]): number {
+  const urls = new Set<string>();
+  let images = 0;
+  for (const t of turnMsgs) {
+    for (const u of t.match(/https?:\/\/[^\s]+/g) ?? []) urls.add(u.replace(/[?#].*$/, ""));
+    if (/^\s*\[画像\]/.test(t)) images++;
+  }
+  return urls.size + images;
 }

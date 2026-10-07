@@ -46,7 +46,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady } from "@/app/lib/two-stage";
+import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
@@ -63,7 +63,7 @@ import {
   type BrainStrategy,
 } from "@/app/lib/brain-layers";
 // 2026-09-12 竹内（Sさん事例）: 確認の宣言 → 物件確認した は、お客様から物件確認の依頼があった時だけ（line-tasks と同じ判定）
-import { customerRequestedPropertyCheck } from "@/app/lib/aix-scene-evidence";
+import { customerRequestedPropertyCheck, isPropertyCandidateImage } from "@/app/lib/aix-scene-evidence";
 // G10（2026-09-08 Fable5）: 退去予定/入居中の検出は move-out-context.ts に集約（route.ts / final-check.ts と四者同名）
 import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOutViewingReleased } from "@/app/lib/move-out-context";
 // 2026-09-26 段3（竹内「ステータスや内覧予定をブレインに持たせたら…」「いつまで1つの物件にとらわれないように」）:
@@ -134,6 +134,7 @@ import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedKeywordRuleHit } from "@/app/lib/brain-keyword-rules";
 // 2026-09-27 ②: お客様の「審査落ちた」（別物件への切り替え）に 物件確認した を選ばせない（本番の線は 物件ピックアップ）
 import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch";
+import { decidePostApplyBrainGate, POST_APPLY_GATE_STATUSES, type GateMsg } from "@/app/lib/post-apply-brain-gate";
 // 2026-09-27 ③: 資料の現況が「審査中」のお送りしたお部屋をブレインに渡す（資料の文字のまま）
 import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 // 2026-09-29 送った物件の設備の質問＝資料の設備欄から読んだ事実（equipment-question.ts・林田さん事例）
@@ -498,7 +499,7 @@ const REPLY_STYLE_RULES = `
 　　お客様が「家賃が安いと嬉しい」「もう少し安くなりませんか」と言った時の会社の本当の答えは**初期費用を最大限割引する**（実送信818通）＋条件に合う新着のピックアップ。
 　　残す物（実在するので禁止しない）: 敷金・礼金の交渉（15通）／管理費の値下げ（顧客が依頼した後・3通）／支払方法・スライドの交渉（4通）／既に交渉した**結果の報告**（過去形・3通）。
 　　※前回の自分の reply_direction に家賃交渉があっても「継続する」と書かない（していない約束の既成事実化。9/23 あっぴ事例）
-⑥ 室内の写真・動画・室内イメージURL の依頼 → aix: property_check_result（check_pattern=interior_photo・AIX【物件確認した】→「室内写真を確認した」ピッカー）。本文は受付の一文だけ（「かしこまりました😊！！室内のお写真お送りさせて頂きます！！」）。写真の有無（「ご用意出来ていない」「ございません」）・撮影の約束（「私の方で撮影し」）・URL・物件名を本文で作らない（実送信365日: 有無の断定 0通・スタッフは手元の室内イメージURL／画像をピッカーから送る）。建築中・退去前など物件固有の理由が会話にある時だけ、その理由を書いてよい（2026-09-23 竹内）
+⑥ 室内の写真・動画・室内イメージURL の依頼 → aix: property_check_result（check_pattern=interior_photo・AIX【物件確認した】→「室内写真を確認した」ピッカー）。本文は受付の一文だけ（「かしこまりました😊！！室内のお写真撮影出来次第お送りさせて頂きます！！」＝室内の写真はスタッフが撮影して送る物・2026-10-07 竹内）。写真の有無（「ご用意出来ていない」「ございません」）・撮影の日時・URL・物件名を本文で作らない（実送信365日: 有無の断定 0通・スタッフは手元の室内イメージURL／画像をピッカーから送る）。建築中・退去前など物件固有の理由が会話にある時だけ、その理由を書いてよい（2026-09-23 竹内）
 
 ■ 物件個別条件・オペレーション情報の断定禁止
 - 短期違約金・契約条件（「数ヶ月でも違約金発生しない事ありますか？」）は物件の契約書次第。一般論で答えられそうに見えても断定禁止。回答する場合は「契約書次第ではありますが」の留保を必須とする
@@ -2054,7 +2055,7 @@ export async function analyzeConversation(
   // 会話依存（前回フェーズでフィルタ済み）のため必ず userPrompt 側に注入する
   // （system側に入れると prompt caching が会話ごとにミスして Sonnet コストが跳ね上がる）
   type ActionRule = { rule_key: string; action_type: string | null; rule_text: string; priority: number | null; condition_key: string | null; condition_value: string | null };
-  // 3巡目（10/07）: ブレインの材料を場面で絞る（app/lib/brain-scene.ts・BRAIN_SCENE_MATERIALS=on／テストは opts.sceneMaterials）
+  // 3巡目（10/07）: ブレインの材料を場面で絞る（app/lib/brain-scene.ts・既定 on・BRAIN_SCENE_MATERIALS=off で戻す／テストは opts.sceneMaterials）
   const brainSceneOn = brainSceneMaterialsEnabled(process.env, opts?.sceneMaterials ?? null);
   const brainScene: ReplyScene | null = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }).scene : null;
   const actionRulesRaw = (actionRulesResult.data ?? []) as ActionRule[];
@@ -3332,6 +3333,14 @@ ${history}`;
         customerText: unrepliedTurn.text ?? "",
         // 3巡目（10/07）: 約束の直後のお礼・了承だけ（ZWJ の絵文字 🙇🏻‍♀️ もお礼と読む isAckOnlyTurn）
         ackRightAfterPromise: (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""))) && brainLedger.facts.lastStaffEntry?.status === "promised",
+        // 10/07 竹内さん: 持ち込み（今回の連投の URL・物件の画像）の約束は募集状況＋最大限割引の御見積書の両方（two-stage brought_both）
+        brought: (() => {
+          const turnMsgs: string[] = [];
+          for (const m of typedMessages) { if (m.sender !== "customer") break; turnMsgs.unshift(m.text ?? ""); }
+          const props = turnMsgs.filter((t) => /https?:\/\//.test(t) || (/^\s*\[画像\]/.test(t) && isPropertyCandidateImage(t)));
+          const n = broughtPropertyCount(props);
+          return n > 0 ? { ask: broughtPropertyAsk(unrepliedTurn.text ?? ""), count: n } : null;
+        })(),
       });
       if (twoStage) {
         console.log(JSON.stringify({ tag: "brain:two-stage", conversationId, from: finalAix, src: decisionSource, kind: twoStage.kind }));
@@ -4550,6 +4559,28 @@ async function analyzeAndSaveBrainMetaInner(
 
   const status = (conv.status as string | null) ?? null;
   if (status && BRAIN_SKIP_STATUSES.includes(status)) return stampSkipped(conversationId, `status=${status}`);
+  // 2026-10-07 竹内さんの決定「申込以降は別のツールで対応しているので、申込中・審査中は否決・取り消し・クレームの時だけブレインを回す」（形 (a)・月 約$24→約$3）。
+  //   判定は app/lib/post-apply-brain-gate.ts（今のお客様の番の語＋申込へを押した後の否決の文脈）。審査落ち→別物件の切り替えは否決の後を全部回すので取りこぼし0
+  //   （scripts/audit-brain-post-apply.ts の F・scripts/audit-post-apply-brain-gate.ts）。申込前に戻した会話（status が申込前）はこの関門に入らない＝今まで通り。
+  //   読めない時は回す（今まで通り）。戻す: BRAIN_POST_APPLY_GATE=off
+  //   ⚠ 9/12 の「申込中も分析対象」（下のコメント）はこの決定で否決・取り消し・クレームの番だけに狭めた
+  if (status && POST_APPLY_GATE_STATUSES.has(status) && (process.env.BRAIN_POST_APPLY_GATE ?? "").toLowerCase() !== "off") {
+    try {
+      const { data: pushRow } = await supabase.from("aix_usage_logs").select("created_at")
+        .eq("conversation_id", conversationId).eq("aix_type", "application_push")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const pushAt = (pushRow?.created_at as string | undefined) ?? null;
+      let q = supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId);
+      if (pushAt) q = q.gte("created_at", pushAt);
+      const { data: gm, error: gmErr } = await q.order("created_at", { ascending: false }).limit(pushAt ? 300 : 60);
+      if (gmErr) throw gmErr;
+      const gate = decidePostApplyBrainGate({ status, msgs: ((gm ?? []) as GateMsg[]).slice().reverse(), applicationPushAt: pushAt });
+      console.log(JSON.stringify({ tag: "brain:post-apply-gate", conversationId, status, run: gate.run, reason: gate.reason, origin: runOpts?.origin ?? null }));
+      if (!gate.run) return stampSkipped(conversationId, `post_apply_gate:${gate.reason}`);
+    } catch (e) {
+      console.warn("[brain-core] post-apply gate read failed (run as before):", conversationId, e instanceof Error ? e.message : e);
+    }
+  }
   // 2026-09-12 竹内（名無しの権兵衛事例）: 旧「申込以降バッジあり（is_post_apply）→ 分析不要」は廃止。
   //   申込中でもお客様は並行して別の物件の内見・初期費用を聞く（「因みに、昭和グランドハイツ恵比寿の初期費用教えて下さい」→ AIX 見積書送る）。
   //   30日で is_post_apply の会話 13件にスタッフが AIX を 91回押していた（物件オススメ34・物件ピックアップ17・物件確認11・見積書10…）のに、
