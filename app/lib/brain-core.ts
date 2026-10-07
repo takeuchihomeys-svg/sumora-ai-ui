@@ -2445,6 +2445,12 @@ export async function analyzeConversation(
     customerStateBlockText += `\n\n${confirmTopic.note}`;
     console.log(JSON.stringify({ tag: "brain:confirm-topic", conversationId, target: confirmTopic.target.name, routes: confirmTopic.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: confirmTopic.source }));
   }
+  // 2026-10-07 4巡目（竹内さん S❤「物件ごとに状況を把握…」）: 今の番が物件の話（引用・名指し）の時だけ、物件ごとの状況の台帳（property-thread.ts）。PROPERTY_THREAD_NOTE=off で止まる
+  try {
+    const { propertyThreadNoteFor } = await import("@/app/lib/property-thread-server");
+    const ptNote = await Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]);
+    if (ptNote) customerStateBlockText += `\n\n${ptNote}`;
+  } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
   let viewingsText = customerStateText ? "" : viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {
         let s = `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`;

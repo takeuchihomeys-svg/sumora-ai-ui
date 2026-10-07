@@ -131,3 +131,31 @@ export function roomPhotoRequestSentence(customerText: string | string[] | null 
 export function stripPhotoWordsForViewing(text: string): string {
   return (text ?? "").replace(/(?:内見|内覧)(?:の)?(?:動画|写真|画像|イメージ)/g, "");
 }
+
+// ─────────────────────────────────────────────────────────────
+// 写真の依頼への約束は「撮影出来次第お送り」の形（2026-10-07 竹内）
+// ─────────────────────────────────────────────────────────────
+// 竹内（ゆなまる 10/7 10:49「この部屋の中って写真もらう事とかってできますか？」）:
+//   AI の案「かしこまりました😊！！ 室内のお写真お送りさせて頂きます！！」→ スタッフ「室内のお写真撮影出来次第お送りさせていただきます😊！！」
+//   「室内の写真は撮影して送るものとなる。なので、撮影しておくると言っている」
+// 実送信（scripts/audit-photo-promise-form.ts・200日）: スタッフが写真を「これから送る」と書いた手打ち 8通のうち 7通が「撮影」付き
+//   （残り1通は「室内写真と温水洗浄便座の有無確認しお送り」＝この形に当たらない）。
+//   この関数の形（写真・動画＋お送りさせて頂きます・撮影の語なし）に当たるスタッフの文は 365日で 0通（当たった1通は「撮影した室内写真と動画」で外れる）＝誤って書き換える人の文 0。
+// 当てる: お客様の今の番が写真の依頼（isRoomPhotoRequest）で、本文の文が「室内の(お)写真(と動画)お送りさせて頂きます」の未来形・撮影の語なし。
+// 当てない: 送った後（ました・同封・添付・ご査収）／URL・イメージ・間取り図（手元の物を送る形）／撮影の語が既にある／お客様の依頼でない番。
+const PHOTO_PROMISE_RE = /((?:室内|お部屋|部屋|中)の?(?:お)?(?:写真|動画)(?:と(?:室内)?(?:お)?(?:写真|動画))?)(?:を|も)?(お送りさせて(?:頂|いただ)きます)/;
+const PHOTO_PROMISE_SKIP_RE = /撮影|URL|ＵＲＬ|イメージ|間取|ました|同封|添付|査収|リンク/;
+
+/** 写真の依頼の番で、受付の文「室内のお写真お送りさせて頂きます」を「室内のお写真撮影出来次第お送りさせて頂きます」に直す（行ごと・最初の1つ） */
+export function fixPhotoPromiseToShooting(text: string, customerMessage: string | string[] | null | undefined): { text: string; count: number } {
+  if (!text || !isRoomPhotoRequest(customerMessage)) return { text, count: 0 };
+  if (/撮影/.test(text)) return { text, count: 0 };
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!PHOTO_PROMISE_RE.test(l) || PHOTO_PROMISE_SKIP_RE.test(l)) continue;
+    lines[i] = l.replace(PHOTO_PROMISE_RE, (_m, obj: string, verb: string) => `${obj}撮影出来次第${verb}`);
+    return { text: lines.join("\n"), count: 1 };
+  }
+  return { text, count: 0 };
+}

@@ -47,7 +47,7 @@ describe("①' 室内写真（S11・interior_photo）の行", () => {
     expect(x?.action).toBe("property_check_result"); expect(x?.check_pattern).toBe("interior_photo");
     expect(x?.timing).toBe("now"); expect(x?.scene).toBe("S11_other_room");
     expect(x?.label).toBe("物件確認した→室内写真を確認した");
-    expect(x?.bridge).toBe("かしこまりました😊！！室内のお写真お送りさせて頂きます！！");
+    expect(x?.bridge).toBe("かしこまりました😊！！室内のお写真撮影出来次第お送りさせて頂きます！！"); // 2026-10-07 竹内（ゆなまる）
     expect(/ご用意出来ていない/.test(x?.forbiddenText ?? "")).toBe(true);
     expect(/確認出来次第ご連絡/.test(x?.forbiddenText ?? "")).toBe(true);
     expect(/私の方で撮影し/.test(x?.forbiddenText ?? "")).toBe(true);

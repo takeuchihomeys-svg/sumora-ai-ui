@@ -8,6 +8,7 @@ import { applyTypoAutoFix } from "./typo-check";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件は「お送り頂きました物件」（共有文の駅名・徒歩分で呼ばない）
 import { normalizeSharedPropertyReference } from "./shared-property-ref";
 import { stripMetaNarration } from "./meta-narration";
+import { fixPhotoPromiseToShooting } from "./room-photo-request";
 import { fixThirdPartyContactWait } from "./contact-actor";
 import { fixStaleRelativeDays, fixStaleRecentReference, stripDateQualifierFromOpenDoor } from "./relative-date";
 // 2026-09-12 竹内方針A: 時間枠の「空いて」・断言置換文は AIX 場面判定（aix-reply-set）と同じ定数
@@ -629,6 +630,9 @@ export function applySurfaceFixes(
   if (meta.removed.length) { out = meta.text; applied.push(`META_NARRATION_REMOVED×${meta.removed.length}`); }
   const sp = normalizeSharedPropertyReference(out, opts?.customerMessage, { ownPropertyReturnedAll: opts?.ownPropertyReturnedAll });
   if (sp.count) { out = sp.text; applied.push(`SHARED_PROPERTY_REF×${sp.count}`); }
+  // 2026-10-07 竹内（ゆなまる事例）「室内の写真は撮影して送るものとなる」: 写真の依頼の番の受付は「撮影出来次第お送り」の形（room-photo-request.fixPhotoPromiseToShooting・人の文 0通に当たる）
+  const pp = fixPhotoPromiseToShooting(out, opts?.customerMessage);
+  if (pp.count) { out = pp.text; applied.push("PHOTO_PROMISE_SHOOTING"); }
   // 2026-09-15 竹内（yasuki 事例）: お客様が自分で折り返すと言っているのに「息子様からのご返答お待ちしております」→「ご返答お待ちしております」
   const ca = fixThirdPartyContactWait(out, opts?.customerMessage);
   if (ca.count) { out = ca.text; applied.push(`CONTACT_ACTOR_FIXED×${ca.count}`); }

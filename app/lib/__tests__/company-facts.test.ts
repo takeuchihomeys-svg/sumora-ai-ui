@@ -134,9 +134,9 @@ describe("当たり漏れを拾う", () => {
     falsy(ids("内定通知の画像をテンプしないといけないみたいなんですが、もらえますか？").includes("room_photo"));
     falsy(ids("この写真のような、物件があれば幸いです").includes("room_photo"));
   });
-  it("写真の事実は AIX【物件確認した→室内写真を確認した】から送る流れ・撮影の約束もしない", () => {
+  it("写真の事実は AIX【物件確認した→室内写真を確認した】から送る流れ・約束は「撮影出来次第お送り」の形（10/07）", () => {
     const s = buildCompanyFactsNote("お部屋の画像ありますでしょうか？");
-    truthy(s.includes("AIX【物件確認した→室内写真を確認した】")); truthy(s.includes("撮影して送るとも約束しない"));
+    truthy(s.includes("AIX【物件確認した→室内写真を確認した】")); truthy(s.includes("室内のお写真撮影出来次第お送りさせて頂きます"));
   });
   it("親と縁切れてる場合でも親の連絡先いりますか？ → 緊急連絡先", () =>
     truthy(ids("親と縁切れてる場合でも親の連絡先いりますか？").includes("emergency_contact")));

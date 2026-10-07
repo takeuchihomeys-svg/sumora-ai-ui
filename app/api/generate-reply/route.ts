@@ -699,7 +699,7 @@ function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null
     s.aix === "meeting_place" && viewingScheduledAck
       ? "決まっている日時で受ける一文で完結（住所・集合場所は AIX【待ち合わせ】で送る）。「内覧の詳細については（改めて）ご連絡」「ご都合よろしいお日にちに」「ピックアップ出来次第お送り」は書かない"
     : interiorPhoto
-      ? "受付の一文で完結（「室内のお写真お送りさせて頂きます😊！！」）。写真・URL は AIX【物件確認した→室内写真を確認した】でスタッフが送るので、写真の有無・撮影の約束・URL・物件名を本文に書かない。「確認出来次第ご連絡」「確認させて頂きます」「ピックアップ出来次第お送り」も書かない"
+      ? "受付の一文で完結（「室内のお写真撮影出来次第お送りさせて頂きます😊！！」＝室内の写真はスタッフが撮影して送る物・10/07 竹内）。写真・URL は AIX【物件確認した→室内写真を確認した】でスタッフが送るので、写真の有無・撮影の日時・URL・物件名を本文に書かない。「確認出来次第ご連絡」「確認させて頂きます」「ピックアップ出来次第お送り」も書かない"
     // 2026-09-26（穴1）: 確認・連絡の約束を待ちの形で言い終えた後の短い了承は、橋渡しで同じ約束を言い直さない（CP_ACK_WAIT と同じ場面）
     : (s.aix === "property_check_result" || s.aix === "acknowledge_check") && checkAnswered
       ? "確認結果は直前の AIX で送り済み。確認の約束（確認出来次第ご連絡）も結果の繰り返しも書かず、次の一手を1文で完結"
@@ -1605,8 +1605,8 @@ ${aixDone.answeredByAix
   const isPhotoRequestMsg = isRoomPhotoRequest(customerMessage ?? "");
   const linkRequestNote = isPhotoRequestMsg
     ? `\n\n【📷 室内の写真・動画・URL の依頼（最優先）】お客様は室内の写真・動画・室内イメージURL を求めています。写真・URL はスタッフが AIX【物件確認した】→「室内写真を確認した」ピッカーから手元の物を物件名とあわせて送ります（AI は使わない）。
-・返信文は受付の一文まで（例: 「かしこまりました😊！！室内のお写真お送りさせて頂きます！！」）。
-【絶対禁止】写真・動画の有無の断定（「ご用意出来ていない」「ございません」「撮影は行っていない」）／撮影の約束の創作（「私の方で撮影しお送りします」）／URL・物件名・号室の記載／「確認させて頂きます」「確認出来次第ご連絡」（確認する物は無い）。
+・返信文は受付の一文まで。室内の写真はスタッフが撮影して送る物なので、約束は「撮影出来次第お送り」の形（例: 「かしこまりました😊！！室内のお写真撮影出来次第お送りさせて頂きます！！」・2026-10-07 竹内／実送信の約束 8通中7通が「撮影」付き）。
+【絶対禁止】写真・動画の有無の断定（「ご用意出来ていない」「ございません」「撮影は行っていない」）／撮影の日時の創作（「明日撮影し」等・決めるのはスタッフ）／URL・物件名・号室の記載／「確認させて頂きます」「確認出来次第ご連絡」（確認する物は無い）。
 ・実送信（365日）: 写真の有無を根拠なく断定した通は 0通。建築中・退去前など物件固有の理由が会話履歴にある時だけ、その理由を書いてよい。`
     : isLinkRequestMsg
     ? `\n\n【🔗 URL要求検出（最優先）】お客様は物件の URL・リンクを求めていますが、URL の送付はスタッフが AIX【物件確認した】→「室内写真を確認した」ピッカーまたは手動で行います。
@@ -5553,6 +5553,17 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         return note;
       } catch (e) { console.warn("[generate-reply] 決め手の条件を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e)); return ""; }
     })();
+    // 4巡目（10/07 竹内さん S❤「物件ごとに状況を把握…物件の事にたいしての話になったときは、状況を理解出来るように」）:
+    //   物件ごとの状況の台帳（引用・名指しで今の番の物件を決め、その物件の出来事を時刻順に）。今の番が物件の話の時だけ入る。
+    //   PROPERTY_THREAD_NOTE=off／testFlags.property_thread=off で止まる。テンプレート最適化には入れない
+    const propertyThreadReplyNote = await (async () => {
+      const on = testFlags.property_thread ? testFlags.property_thread === "on" : (process.env.PROPERTY_THREAD_NOTE ?? "").toLowerCase() !== "off";
+      if (!on || isTemplateOptimize) return "";
+      try {
+        const { propertyThreadNoteFor } = await import("@/app/lib/property-thread-server");
+        return await propertyThreadNoteFor(conversationId);
+      } catch (e) { console.warn("[generate-reply] 物件ごとの台帳を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e)); return ""; }
+    })();
     const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote, propertyBrainReplyNote].filter(Boolean).join("\n");
     if (applyReadiness.level !== "low") {
       console.log(`[generate-reply] 申込が近い合図: ${applyReadiness.level} ${applyReadiness.score}点 (${applyReadiness.reason}) 窓${applyReadiness.windowCount}通`);
@@ -5570,7 +5581,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       isFirstEverReplyFromMsgs, viewingAccessNote || viewingNote, customerStructured,
       // 3巡目（10/07）: 会社のルールを場面で絞る試し（テストの会話の testFlags.rules_scene=on だけ・最終チェックは全部のまま）
       testFlags.rules_scene === "on" && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules,
-      resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
+      // 4巡目: 物件ごとの台帳は引用の材料の隣（会話履歴の直前）に置く（申込の材料の欄では YUMA 2回中1回で別の物件名を書いた）
+      resolvedSummaryJson, [quotedContextNote, propertyThreadReplyNote].filter(Boolean).join("\n\n"), propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       // 2026-09-17 YUYA 事例: ポータルの場面では LLM にポータルの説明を書かせない（決まった文を出口で足す）
       // 2026-09-17 あや事例: この会話で既に送った言い回しを渡して同じ文を繰り返させない（コピペに見える）

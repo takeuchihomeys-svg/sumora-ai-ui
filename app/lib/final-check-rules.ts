@@ -10,6 +10,8 @@
 //   新: ①永久ルールと【線引き】は必ず全部 ②「禁止」のルール ③それ以外 ④「足せ」型のルール の順に並べ、上限の中でルールの切れ目で止める。
 //   返信生成に渡す文字列（全部入り）は変えない。最終チェックに渡す分だけを並べ替える
 
+import { bansStaffStandardPhrase, staffStandardFilterEnabled } from "./final-check-staff-standard";
+
 export const FINAL_CHECK_RULES_BUDGET = 24000;
 
 export type CheckRuleTier = "core" | "prohibit" | "other" | "additive";
@@ -38,6 +40,8 @@ export type CheckRulesSelection = {
   dropped: Record<CheckRuleTier, number>;
   /** 永久ルール・【線引き】だけで上限を超えた（上限より優先して全部入れた） */
   coreOverBudget: boolean;
+  /** 2026-10-07: スタッフの定型の言い回しを禁じる学習ルールで、最終チェックに渡さなかった数（final-check-staff-standard.ts） */
+  excludedStaffStandard?: number;
 };
 
 const zero = (): Record<CheckRuleTier, number> => ({ core: 0, prohibit: 0, other: 0, additive: 0 });
@@ -55,6 +59,7 @@ export function selectRulesForCheck(dbRules: string | null | undefined, budget =
 
   type Rule = { text: string; tier: CheckRuleTier; permanent: boolean; order: number };
   const rules: Rule[] = [];
+  let excludedStaffStandard = 0;
   headers.forEach((h, i) => {
     const bodyStart = (h.index ?? 0) + h[0].length;
     const bodyEnd = i + 1 < headers.length ? (headers[i + 1].index ?? src.length) : src.length;
@@ -62,6 +67,10 @@ export function selectRulesForCheck(dbRules: string | null | undefined, budget =
     const permanent = h[1].startsWith("【永久ルール");
     // ルールは「・」始まりの行。本文に改行を含むルール（【線引き】の表など）があるので「改行＋・」で区切る
     ("\n" + body).split("\n・").slice(1).forEach((t) => {
+      // 2026-10-07 竹内「最終チェックはちゃんと機能しているか」: スタッフの初回返信の定型（初期費用も最大限割引・周辺全域・ご満足…全力でサポート）を
+      //   禁じる学習ルールは最終チェックに渡さない（条件提示の RULE_VIOLATION 8件がスタッフの送った通りの文に付いていた・文体であって事実の誤りでない）。
+      //   永久ルール・【線引き】は外さない。返信生成に渡すルールは変えない。戻す: FINAL_CHECK_STAFF_STANDARD=off
+      if (!permanent && !t.startsWith("【線引き】") && staffStandardFilterEnabled() && bansStaffStandardPhrase(t)) { excludedStaffStandard++; return; }
       rules.push({ text: t, tier: classifyCheckRule(t, permanent), permanent, order: rules.length });
     });
   });
@@ -88,7 +97,7 @@ export function selectRulesForCheck(dbRules: string | null | undefined, budget =
   const sections: string[] = [];
   if (perm.length) sections.push(`${PERMANENT_HEADER}\n${perm.map(line).join("\n")}`);
   if (learned.length) sections.push(`${LEARNED_HEADER}\n${learned.map(line).join("\n")}`);
-  return { text: sections.join("\n\n"), totalChars: src.length, kept, dropped, coreOverBudget };
+  return { text: sections.join("\n\n"), totalChars: src.length, kept, dropped, coreOverBudget, excludedStaffStandard };
 }
 
 /** 同じ文字列の選択を使い回す（1回の返信生成で最終チェックが何度も呼ばれるため） */

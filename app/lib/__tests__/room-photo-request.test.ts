@@ -3,7 +3,7 @@
 // 2026-09-23 竹内「室内の写真が欲しいといわれたら AIX の物件確認したの室内写真確認したのピッカーから送る形。ちゃんとここはブレインで判断できるように」
 // 文はすべて実物（scripts/audit-photo-request-aix.ts・365日・広い候補149通を全部読んだ）。会話は id の先頭8文字で呼ぶ。
 // 実行: npx tsx app/lib/__tests__/room-photo-request.test.ts
-import { isRoomPhotoRequest, roomPhotoRequestSentence, stripPhotoWordsForViewing } from "../room-photo-request";
+import { isRoomPhotoRequest, roomPhotoRequestSentence, stripPhotoWordsForViewing, fixPhotoPromiseToShooting } from "../room-photo-request";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }
@@ -98,6 +98,18 @@ describe("当てない: 書類の写真・お客様が送る側・写真を指�
 describe("内覧希望の判定に渡す前に「内見の動画」の語を外す", () => {
   it("「内見の動画欲しいです」→ 内見の語が消える（内覧希望と読まない）", () => eq(stripPhotoWordsForViewing("内見の動画欲しいです"), "欲しいです"));
   it("「一番広いお部屋を内覧したいです」→ そのまま（内覧希望）", () => eq(stripPhotoWordsForViewing("一番広いお部屋を内覧したいです"), "一番広いお部屋を内覧したいです"));
+});
+
+// 2026-10-07 竹内（ゆなまる 10/7 10:49）「室内の写真は撮影して送るものとなる。なので、撮影しておくると言っている」
+describe("写真の依頼への約束は「撮影出来次第お送り」の形", () => {
+  const ask = "この部屋の中って写真もらう事とかってできますか？";
+  it("ゆなまる: AI の案 → スタッフの形", () => eq(fixPhotoPromiseToShooting("かしこまりました😊！！\n室内のお写真お送りさせて頂きます！！", ask).text, "かしこまりました😊！！\n室内のお写真撮影出来次第お送りさせて頂きます！！"));
+  it("写真と動画も同じ", () => eq(fixPhotoPromiseToShooting("室内の写真と動画お送りさせていただきます😊！！", "室内の動画ありますか").text, "室内の写真と動画撮影出来次第お送りさせていただきます😊！！"));
+  it("撮影の語が既にある（スタッフの文）は触らない", () => eq(fixPhotoPromiseToShooting("室内のお写真撮影しお送りさせて頂きます！！", ask).count, 0));
+  it("送った後（ました）は触らない", () => eq(fixPhotoPromiseToShooting("室内のお写真お送りさせて頂きました！！", ask).count, 0));
+  it("室内イメージ URL を送る形は触らない", () => eq(fixPhotoPromiseToShooting("室内イメージのURLお送りさせて頂きます！！", ask).count, 0));
+  it("写真の依頼でない番は触らない", () => eq(fixPhotoPromiseToShooting("室内のお写真お送りさせて頂きます！！", "ありがとうございます").count, 0));
+  it("人の文（09-17 ad97cd40「撮影した室内写真と動画お送りさせて頂きます」）は触らない", () => eq(fixPhotoPromiseToShooting("お時間厳しい場合、撮影した室内写真と動画お送りさせて頂きます😌！！", ask).count, 0));
 });
 
 console.log(`\n${failed === 0 ? "✅" : "❌"} ${passed} passed, ${failed} failed`);

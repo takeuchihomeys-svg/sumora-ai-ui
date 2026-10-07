@@ -90,6 +90,7 @@ import { findCompanyFactContradiction, buildCompanyFactsForCheck, findMissingCar
 // 2026-10-02 お客様自身の言葉の復唱を捏造と読まない（fabricated-customer-words.ts・scripts/audit-fabricated-customer-words.ts）
 import { isCustomerEchoFabrication } from "./fabricated-customer-words";
 import { isStaffSelfIntroNameFlag, STAFF_SELF_NAME } from "./final-check-staff-name";
+import { isMissingElementRuleFlag, isPassiveMisfire, isAllowedDiscountMisfire, staffStandardFilterEnabled } from "./final-check-staff-standard";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -473,7 +474,7 @@ export function buildRuleCheckPrompt(draft: string, ctx: FinalCheckContext): Pro
 禁止語彙：少々お待ちください / 申し訳ございません（審査落ち・物件消滅時）/ スモラ /
 名称未設定 / markdown太字 / AIX操作用語（「AIXボタン」等）の顧客向け文への混入 /
 冒頭の書き出しとして「ご連絡ありがとうございます」「ご返信ありがとうございます」（お礼は挨拶ではない。冒頭の単独使用は禁止。本文中での自然なお礼はOK。※「〇〇さんご連絡頂きありがとうございます」「ご連絡いただきありがとうございます」等の「頂き/いただき」入りの形は初回返信の必須標準挨拶のため対象外・指摘しない）/
-「〇〇さんご希望のご条件に合った〜」等のお客様を主語にした受け身表現（「あなたの条件に合うもの」という受け身姿勢。検出時 code=RULE_VIOLATION で報告）。ただし「〇〇周辺からご条件に合ったお部屋をピックアップして」等、スタッフが能動的に探す行動宣言の一部として使用している場合は対象外
+「〇〇さんご希望のご条件に合った〜」等のお客様を主語にした受け身表現（「あなたの条件に合うもの」という受け身姿勢。検出時 code=RULE_VIOLATION で報告）。ただし「〇〇周辺からご条件に合ったお部屋をピックアップして」等、スタッフが能動的に探す行動宣言の一部として使用している場合は対象外。「〇〇さんにオススメできるお部屋」「〇〇さんがご満足頂くお部屋が見つかるまで全力でサポート」「〇〇周辺全域から」はスタッフの定型の文（受け身表現ではない・2026-10-07）
 
 code は次から選ぶこと:
 AIX_BOUNDARY_VIEWING（内覧日時の提示）/ AIX_BOUNDARY_ESTIMATE（見積送付文・金額内訳）/
@@ -2819,6 +2820,17 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
         console.log(JSON.stringify({ tag: "final-check:staff-self-name-dropped", pass, code, evidence: evidence.slice(0, 80) }));
         continue;
       }
+      // 2026-10-07 竹内「最終チェックはちゃんと機能しているか」: rule_check の RULE_VIOLATION で、引用が本文に無く「言及がない／欠落／Brain判定で必須」と
+      //   足りない要素を言う物は外す（28日 5件とも書き直しに渡らず画面に残り、スタッフも足さずに送った・final-check-staff-standard.ts ②）
+      if (staffStandardFilterEnabled() && isMissingElementRuleFlag(pass, code, evidence, draftNorm.includes(normalizeForMatch(evidence)))) {
+        console.log(JSON.stringify({ tag: "final-check:missing-element-rule-dropped", pass, code, evidence: evidence.slice(0, 80) }));
+        continue;
+      }
+      // 2026-10-07 最後の Claude の確かめで残った誤発火: 行動宣言への「受け身」・使ってよい時の初期費用の割引の一文（final-check-staff-standard.ts ③）
+      if (staffStandardFilterEnabled() && (isPassiveMisfire(pass, code, raw.message ?? "", evidence) || isAllowedDiscountMisfire(pass, code, evidence, customerTextsForFabrication(ctx).join("\n")))) {
+        console.log(JSON.stringify({ tag: "final-check:staff-standard-misfire-dropped", pass, code, message: (raw.message ?? "").slice(0, 60), evidence: evidence.slice(0, 80) }));
+        continue;
+      }
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が本文に実在する場合のみ（実在しない引用での誤ブロックを防ぐ）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
@@ -3416,6 +3428,9 @@ async function runDiffRecheck(
       const pass = inferDiffIssuePass(code, targets);
       if (isCustomerEchoFabrication(code, evidence, customerTextsForFabrication(ctx))) continue; // 2026-10-02 お客様の言葉の復唱は捏造でない（1回目と同じ）
       if (isStaffSelfIntroNameFlag(code, evidence)) continue; // 2026-10-06 担当者の名乗りは名前の誤りでない（1回目と同じ）
+      // 2026-10-07 「修正後ドラフト全文に〜の記述がない」も同じ（1回目と同じ・final-check-staff-standard.ts ②）
+      if (staffStandardFilterEnabled() && isMissingElementRuleFlag(pass, code, evidence, draftNorm.includes(normalizeForMatch(evidence)))) continue;
+      if (staffStandardFilterEnabled() && (isPassiveMisfire(pass, code, r.message ?? "", evidence) || isAllowedDiscountMisfire(pass, code, evidence, customerTextsForFabrication(ctx).join("\n")))) continue;
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が修正後本文に実在する場合のみ（誤ブロック防止・runFinalCheckと同一）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
