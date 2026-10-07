@@ -131,7 +131,19 @@ export function estimateHotDayNetUsd(i: { calls: number; q: number; P: number; S
   return now - on;
 }
 
-export type ConvBlock = { type: "text"; text: string; cache_control: { type: "ephemeral"; ttl?: "1h" } };
+export type ConvBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "1h" } };
+
+/**
+ * 2026-10-07 竹内「この3つもはかって！！質は絶対に落ちないように」③キャッシュ: 会話専用ブロック（A・B）に印を付けるか。
+ *   本番 9/23〜10/07（brain_fresh 1,106回）: 5分の印で 974回書いて（平均 3.1k・5分書きは入力の1.25倍）読めたのは 61回だけ
+ *   （同じ会話の次の brain_fresh まで p50 49分・5分以内 22%・しかも間に戦略の整理等が走ると中身が変わる）＝印の割増の方が大きい（月 約 +$2.4 の得・scripts/audit-brain-cost-levers.ts）。
+ *   → 温めのスイッチが ON（1h で温める会話・mode=on）の時だけ印を付け、それ以外は付けない（送る文字は1文字も変わらない＝判断は変わらない）。
+ *   BRAIN_CONV_BLOCK_MARK=always で今まで通り（いつも5分の印）。
+ */
+export function convBlockMarkEnabled(d: CacheWarmDecision | null | undefined, mode: CacheWarmMode, env: Record<string, string | undefined> = process.env): boolean {
+  if ((env.BRAIN_CONV_BLOCK_MARK ?? "").trim().toLowerCase() === "always") return true;
+  return !!d?.on && mode === "on";
+}
 /**
  * 会話専用ブロックの組み立て（2026-10-02 キャッシュ①・竹内「4はオススメでする」）。
  *   今回の発言の層: A（変わりにくい物＝顧客プロファイル＋会話ストーリー）→ B（戦略 JSON＋セーブデータ＋出力の指定）の2ブロック・どちらも印あり。
@@ -140,10 +152,16 @@ export type ConvBlock = { type: "text"; text: string; cache_control: { type: "ep
  *   全体分析の層: 今まで通り1ブロック（1h・今は空＝省略）。
  *   印は system の2つと合わせて最大4つ（API の上限）。
  */
-export function buildConvBlocks(p: { isFreshLayer: boolean; a: string; b: string; combined: string; warmCc: { type: "ephemeral"; ttl?: "1h" } }): ConvBlock[] {
+export function buildConvBlocks(p: { isFreshLayer: boolean; a: string; b: string; combined: string; warmCc: { type: "ephemeral"; ttl?: "1h" }; mark?: boolean }): ConvBlock[] {
   if (!p.isFreshLayer) return p.combined.trim() ? [{ type: "text", text: p.combined, cache_control: { type: "ephemeral", ttl: "1h" } }] : [];
   const out: ConvBlock[] = [];
   const hasA = !!p.a.trim();
+  // 印を付けない時（convBlockMarkEnabled が false）: 文字は同じ・ブロックの分け方も同じで cache_control だけ外す
+  if (p.mark === false) {
+    if (hasA) out.push({ type: "text", text: p.a });
+    if (p.b.trim()) out.push({ type: "text", text: p.b });
+    return out;
+  }
   if (hasA) out.push({ type: "text", text: p.a, cache_control: p.warmCc });
   if (p.b.trim()) out.push({ type: "text", text: p.b, cache_control: hasA ? { type: "ephemeral" } : p.warmCc });
   return out;

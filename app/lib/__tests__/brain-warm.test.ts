@@ -2,7 +2,7 @@
 //   温める／温めないの判断（decideBrainWarm）の窓・上限・retire と、効いたかの読み方（classifyBrainWarmUsage）の閾値を固定する。
 //   llm_usage_logs の印（x-sumora-llm-action: brain-warm）が action になり Anthropic には送られない事も既存の fetch ラッパーで1件確認する
 // 実行: npx tsx app/lib/__tests__/brain-warm.test.ts（自己完結ハーネス・env 不要。全 OK で exit 0）
-import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, type BrainWarmInput } from "../brain-warm";
+import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, sweepRunFirstAlone, type BrainWarmInput } from "../brain-warm";
 import { wrapFetchWithLlmUsageRecorder, LLM_ACTION_HEADER, type LlmUsageRow } from "../llm-usage-recorder";
 
 let passed = 0, failed = 0;
@@ -71,6 +71,17 @@ console.log("── classifyBrainWarmUsage（system[1] ≈12k・全体 ≈39k �
   t("{read 0, write1h 39000} → cold", classifyBrainWarmUsage({ cache_read: 0, cache_write_1h: 39000 }) === "cold");
   t("{read 0, write1h 0} → no_cache", classifyBrainWarmUsage({ cache_read: 0, cache_write_1h: 0 }) === "no_cache");
   t("{read 5000, write1h 34000}（static まで書き直し）→ cold（read<20k）", classifyBrainWarmUsage({ cache_read: 5000, cache_write_1h: 34000 }) === "cold");
+}
+
+console.log("── sweepRunFirstAlone（朝9時の重ね書き: 冷えている時は1本目だけ先に）");
+{
+  const now = Date.parse("2026-10-07T00:01:00Z");
+  t("前の本物から11時間（夜明け）・3本 → 1本目だけ先", sweepRunFirstAlone({ count: 3, nowMs: now, lastRealCallMs: now - 671 * 60_000 }) === true);
+  t("記録なし・2本 → 1本目だけ先", sweepRunFirstAlone({ count: 2, nowMs: now, lastRealCallMs: null }) === true);
+  t("前の本物から20分（温まっている）→ 並べてよい", sweepRunFirstAlone({ count: 3, nowMs: now, lastRealCallMs: now - 20 * 60_000 }) === false);
+  t("1本だけ → 分けない", sweepRunFirstAlone({ count: 1, nowMs: now, lastRealCallMs: null }) === false);
+  t("止める（enabled=false）→ 今まで通り", sweepRunFirstAlone({ count: 3, nowMs: now, lastRealCallMs: null, enabled: false }) === false);
+  t("55分ちょうど → 冷えている側", sweepRunFirstAlone({ count: 3, nowMs: now, lastRealCallMs: now - 55 * 60_000 }) === true);
 }
 
 console.log("── 記録の型: x-sumora-llm-action: brain-warm を付けた fetch は action='brain-warm' で残り、Anthropic には送られない");

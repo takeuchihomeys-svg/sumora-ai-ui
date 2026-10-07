@@ -102,3 +102,17 @@ export function classifyBrainWarmUsage(u: { cache_read: number; cache_write_1h: 
   if (write > 0) return "cold";
   return "no_cache";
 }
+
+/**
+ * 2026-10-07 竹内「この3つもはかって！！質は絶対に落ちないように」③キャッシュ:
+ *   朝9時（夜間見送りの明け）の brain-sweep は見送った会話を3本並べて流し、前置き（system 41.6k・1h）が冷えている所へ2〜3本が同時に書き込んでいた
+ *   （本番 9/23〜10/07: 前置きの書き直し40回のうち27回が9時台・同じ分の重ね書き15回＝$2.3・月 約$4.8）。キャッシュは最初の応答が始まるまで使えないので、
+ *   冷えている時は1本目だけ先に流し（そこで書く）、残りは読む側に回す。送る中身は1文字も変わらない（並べ方だけ）。
+ *   冷えているか＝最後の本物の呼び出し（リクエスト開始の時刻）から coldAfterMinutes 以上（1h TTL の手前・温めの窓 50〜58 分と同じ考え）。記録が無い時も冷えている側。
+ */
+export const SWEEP_FIRST_ALONE_COLD_MINUTES = 55;
+export function sweepRunFirstAlone(i: { count: number; nowMs: number; lastRealCallMs: number | null; coldAfterMinutes?: number; enabled?: boolean }): boolean {
+  if (i.enabled === false || i.count < 2) return false;
+  if (i.lastRealCallMs == null || !Number.isFinite(i.lastRealCallMs)) return true;
+  return i.nowMs - i.lastRealCallMs >= (i.coldAfterMinutes ?? SWEEP_FIRST_ALONE_COLD_MINUTES) * 60_000;
+}

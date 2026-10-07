@@ -2,7 +2,7 @@
 //   スイッチ（decideCacheWarm）の閾値・夜・静かになったら止める・日が変わったら戻る と、TTL の切り替え・mode・損得の見積もりを固定する
 // 実行: npx tsx app/lib/__tests__/cache-warm-switch.test.ts（自己完結・env 不要。全 OK で exit 0）
 import {
-  decideCacheWarm, cacheWarmMode, cacheWarmParams, convBlockCacheControl, compactCacheWarm, estimateHotDayNetUsd, buildConvBlocks,
+  decideCacheWarm, cacheWarmMode, cacheWarmParams, convBlockCacheControl, convBlockMarkEnabled, compactCacheWarm, estimateHotDayNetUsd, buildConvBlocks,
   CACHE_WARM_DEFAULTS, convWarmHash,
 } from "../cache-warm-switch";
 import { cacheGroupOf } from "../claude-model-map";
@@ -72,6 +72,23 @@ console.log("── 会話専用ブロックの組み立て（buildConvBlocks）
   const full = buildConvBlocks({ isFreshLayer: false, a: "", b: "", combined: "X", warmCc: five });
   t("全体分析の層は今まで通り1ブロック・1h", full.length === 1 && full[0].text === "X" && JSON.stringify(full[0].cache_control) === JSON.stringify(hour));
   t("全体分析の層で空なら出さない", buildConvBlocks({ isFreshLayer: false, a: "", b: "", combined: "", warmCc: five }).length === 0);
+}
+
+console.log("── 会話専用ブロックの印（convBlockMarkEnabled・2026-10-07 ③キャッシュ）");
+{
+  const five = { type: "ephemeral" as const };
+  const on = decideCacheWarm({ nowMs: Date.parse("2026-10-07T05:00:00Z"), exchangesToday: 12, lastCustomerMsgMs: Date.parse("2026-10-07T04:50:00Z") });
+  const off = decideCacheWarm({ nowMs: Date.parse("2026-10-07T05:00:00Z"), exchangesToday: 2, lastCustomerMsgMs: Date.parse("2026-10-07T04:50:00Z") });
+  t("温め ON×mode on → 印あり", convBlockMarkEnabled(on, "on", {}) === true);
+  t("温め ON×shadow（今の本番）→ 印なし", convBlockMarkEnabled(on, "shadow", {}) === false);
+  t("温め OFF×on → 印なし", convBlockMarkEnabled(off, "on", {}) === false);
+  t("null → 印なし", convBlockMarkEnabled(null, "shadow", {}) === false);
+  t("BRAIN_CONV_BLOCK_MARK=always → 今まで通り印あり", convBlockMarkEnabled(null, "shadow", { BRAIN_CONV_BLOCK_MARK: "always" }) === true);
+  const noMark = buildConvBlocks({ isFreshLayer: true, a: "A", b: "B", combined: "", warmCc: five, mark: false });
+  const withMark = buildConvBlocks({ isFreshLayer: true, a: "A", b: "B", combined: "", warmCc: five });
+  t("印なしでも文字・ブロックの分け方は同じ（cache_control だけ外れる）", noMark.length === 2 && noMark.map((b) => b.text).join("|") === withMark.map((b) => b.text).join("|") && noMark.every((b) => b.cache_control === undefined));
+  t("印なし・A が空 → B だけ・印なし", JSON.stringify(buildConvBlocks({ isFreshLayer: true, a: "", b: "B", combined: "", warmCc: five, mark: false })) === JSON.stringify([{ type: "text", text: "B" }]));
+  t("全体分析の層は mark に関係なく 1h の1ブロック", buildConvBlocks({ isFreshLayer: false, a: "", b: "", combined: "X", warmCc: five, mark: false })[0].cache_control?.ttl === "1h");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

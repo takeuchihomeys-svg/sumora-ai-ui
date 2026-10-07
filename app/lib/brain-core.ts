@@ -23,7 +23,7 @@ import {
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
 import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, shortHash, ensureLlmFetchChainInDev } from "@/app/lib/llm-usage-recorder";
 // 2026-10-02 竹内「1日に何度も連絡きたらキャッシュあたためて効かせれるように…切り替わるスイッチ…判断するようにブレインが」（cache-warm-switch.ts）
-import { cacheWarmMode, convBlockCacheControl, compactCacheWarm, buildConvBlocks, type CacheWarmDecision } from "@/app/lib/cache-warm-switch";
+import { cacheWarmMode, convBlockCacheControl, convBlockMarkEnabled, compactCacheWarm, buildConvBlocks, type CacheWarmDecision } from "@/app/lib/cache-warm-switch";
 import { loadCacheWarmDecision, saveConvWarmPrefix } from "@/app/lib/cache-warm-switch-server";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数）と起点の名札
 import { decideNightDeferNow, type BrainOrigin } from "@/app/lib/brain-night-defer";
@@ -2583,6 +2583,8 @@ ${history}`;
     b: isFreshLayer ? maskPII(freshStableB, maskNames) : "",
     combined: isFreshLayer ? "" : maskedStableText,
     warmCc: convBlockCacheControl(opts?.cacheWarm, cacheWarmMode()),
+    // 2026-10-07 ③キャッシュ: 温めのスイッチが ON の時だけ印（5分の印は 974回書いて 61回しか読めていなかった・BRAIN_CONV_BLOCK_MARK=always で戻す）
+    mark: convBlockMarkEnabled(opts?.cacheWarm, cacheWarmMode()),
   });
   const userContent = [
     ...convBlocks,

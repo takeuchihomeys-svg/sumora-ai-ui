@@ -6,7 +6,7 @@ import {
 } from "@/app/lib/brain-core";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { AIX_NOTICE_FRESH_MS } from "@/app/lib/aix-action-text";
-import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, type BrainWarmUsageKind } from "@/app/lib/brain-warm";
+import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, sweepRunFirstAlone, type BrainWarmUsageKind } from "@/app/lib/brain-warm";
 import { decideNightDeferNow, isOffSwitch } from "@/app/lib/brain-night-defer";
 import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { jstDayStartMs } from "@/app/lib/jst-date";
@@ -305,7 +305,16 @@ export async function GET(req: NextRequest) {
 
     let processed = 0;
     let failed = 0;
-    await withConcurrency(rows, 3, async (conv) => {
+    // 2026-10-07 ③キャッシュ: 前置きが冷えている時（朝9時の夜間見送りの明け等）は1本目だけ先に流し、残りを読む側に回す（中身は同じ・並べ方だけ）。
+    //   BRAIN_SWEEP_FIRST_ALONE=off で今まで通り3本同時
+    const lastRealRes = rows.length >= 2
+      ? await supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", BRAIN_REAL_ACTIONS).lt("status", 400).like("model", "claude%")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle()
+      : null;
+    const lastRealAt = lastRealRes?.data?.created_at ? Date.parse(String(lastRealRes.data.created_at)) - Math.max(0, Number(lastRealRes.data.duration_ms) || 0) : null;
+    const firstAlone = sweepRunFirstAlone({ count: rows.length, nowMs: Date.now(), lastRealCallMs: lastRealRes?.error ? Date.now() : lastRealAt, enabled: !isOffSwitch(process.env.BRAIN_SWEEP_FIRST_ALONE) });
+    if (firstAlone) console.log(JSON.stringify({ tag: "brain-sweep:first-alone", total: rows.length, lastRealAt: lastRealAt ? new Date(lastRealAt).toISOString() : null }));
+    const sweepOne = async (conv: (typeof rows)[number]) => {
       // 2026-09-24: origin: sweep（夜は上の先頭で止まるが、brain-core の保険にも名札を渡す）。
       //   msgText（未返信のお客様の通）も渡す＝条件ブレインが cron / bg-async と同じく動く（loadUnrepliedCustomerText のコメント）
       const msgText = await loadUnrepliedCustomerText(conv.id).catch(() => undefined);
@@ -318,7 +327,9 @@ export async function GET(req: NextRequest) {
       });
       if (saved) processed++;
       else failed++;
-    });
+    };
+    if (firstAlone) { await sweepOne(rows[0]); await withConcurrency(rows.slice(1), 3, sweepOne); }
+    else await withConcurrency(rows, 3, sweepOne);
 
     console.log(`[brain-sweep] 完了: 対象${rows.length}件 / 成功${processed}件 / 失敗${failed}件`);
 
