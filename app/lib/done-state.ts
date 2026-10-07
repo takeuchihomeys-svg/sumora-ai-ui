@@ -238,10 +238,13 @@ export function viewingHoursOf(text: string | null | undefined): number[] {
   return [...out];
 }
 
-/** 決まった内覧への短い了承の締め（「本日／明日／9/27 何卒よろしくお願い致します！！」）。日付が読めない時は日付を書かない */
+/** 決まった内覧への短い了承の締め（「本日／明日／9/27日は 何卒よろしくお願い致します！！」）。日付が読めない時は日付を書かない
+ *  2026-10-07 7巡目: 日付の時は「M/D日は」（人の手打ち 365日で日付つきの「何卒」5通: 10/6日は・10/10日は・10月8日・9月11日・9/6＝「日」付き 4/5・
+ *  直近の2通は「M/D日は」。見張りの外れ W4・W36・W46 の3番が「10/6何卒」「10/10何卒」「10/8何卒」でここが出所）。戻す: VIEWING_ACK_DATE_SUFFIX=off */
 export function viewingAckLine(appointment: LedgerFacts["viewingAppointment"]): string {
   const a = appointment;
-  const day = !a ? "" : a.day === "today" ? "本日" : a.day === "tomorrow" ? "明日" : a.day === "later" && a.dateMD ? a.dateMD : "";
+  const suffix = process.env.VIEWING_ACK_DATE_SUFFIX === "off" ? "" : "日は";
+  const day = !a ? "" : a.day === "today" ? "本日" : a.day === "tomorrow" ? "明日" : a.day === "later" && a.dateMD ? `${a.dateMD}${suffix}` : "";
   return `${day}何卒よろしくお願い致します！！`;
 }
 

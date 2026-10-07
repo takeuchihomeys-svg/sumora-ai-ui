@@ -103,3 +103,38 @@ t("テストの on は env off に勝つ", sceneMaterialsEnabled({ REPLY_SCENE_M
 }
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
+
+// 7巡目（10/07）: 場面の語の抜け（見張りの外れ W34・W45・W56・W35／365日の発言で変わる 11番を全部読んだ・scripts/audit-r7-scene-words.ts）
+console.log("7巡目: 場面の語の抜け");
+for (const [s, want] of [
+  ["お世話になっております！\nこちらこそ本日よろしくお願いいたします🙇‍♀️\n申し訳ございません💦\nギリギリに着くか少し遅れるかもです😭", "viewing"],
+  ["かしこまりました。\n付き添いで1人着いてきます", "viewing"],
+  ["もうすぐ着きます！すみません🙇‍♀️", "viewing"],
+  ["お願いします！\n数分遅れるかもですすみません💦", "viewing"],
+  ["ここと、\nここの頭金おしえてほしいです", "cost"],
+  ["今日中に決めて折り返します！", "considering"],
+  ["息子に確認の連絡を入れますので夕方くらいになると思いますが折り返しの連絡をさせて頂きます。", "considering"],
+  // 書類の話の「ギリギリ間に合いませんでした」は内覧ではない
+  ["出来る限り、頑張ります！\nギリギリ間に合いませんでした", "other"],
+] as Array<[string, string]>) t(`${s.slice(0, 24)} → ${want}`, sc(s) === want);
+process.env.REPLY_SCENE_R7 = "off";
+t("REPLY_SCENE_R7=off で前の判定（頭金 → other）", sc("ここと、\nここの頭金おしえてほしいです") === "other");
+delete process.env.REPLY_SCENE_R7;
+console.log(`\n7巡目の追加まで ${pass} passed, ${fail} failed`);
+if (fail) process.exitCode = 1;
+
+// 7巡目: 内覧当日の連絡（isViewingDayNotice・人 13/23 が2行の形・scripts/audit-r7-viewing-day-notice.ts）
+import("../reply-subscene").then(({ isViewingDayNotice, isPropertyShareNoAsk }) => {
+  t("遅れの連絡 → 当日の連絡", isViewingDayNotice("お願いします！\n数分遅れるかもですすみません💦"));
+  t("付き添い → 当日の連絡", isViewingDayNotice("かしこまりました。\n付き添いで1人着いてきます"));
+  t("「30分遅れそうですがいけますか」は問い → 当てない", !isViewingDayNotice("少し到着遅れそうで30分ぐらいになりそうなんですけどいけますか。"));
+  t("返信の遅れのお詫び → 当てない", !isViewingDayNotice("返信遅くなってしまい申し訳ありません🙇‍♀️他社にも相談していたのですがスモラさんで契約させていただこうと思います、遅れてすみません"));
+  t("URL だけ → 物件を送っただけ", isPropertyShareNoAsk("キャナルコート神田 5階\nhttps://suumo.jp/chintai/bc_100527822742/\nby SUUMO"));
+  t("URL＋初期費用の問い → 送っただけではない", !isPropertyShareNoAsk("ここの初期費用いくらですか？\nhttps://suumo.jp/chintai/bc_100527713926/"));
+  console.log(`\n7巡目の小場面まで ${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;
+});
+import("../reply-subscene").then(({ isPropertyShareNoAsk }) => {
+  t("懸念＋URL（カードブラック）→ 送っただけではない", !isPropertyShareNoAsk("カードブラックなので…厳しいかと💦\nhttps://www.homes.co.jp/chintai/room/ac5b2014e06f3d0a9a8055d957f39c140d33d703/"));
+  t("物件名＋URL＋by SUUMO → 送っただけ", isPropertyShareNoAsk("田辺５丁目貸家 1階\nhttps://suumo.jp/chintai/bc_100526949079/\nby SUUMO"));
+  console.log(`\n7巡目（懸念つき）まで ${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;
+});

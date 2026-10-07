@@ -15,6 +15,7 @@ import type { CustomerResponseKind, SubstanceKind } from "./reply-context"; // t
 import { isConditionFormMessage, isApplyGuideThinking } from "./reply-context"; // reply-context は greeting を import しない（循環なし）
 // 2026-09-17 竹内（Hina 事例）: 了承＋こちらが既に言ったことの後押しは「はい」（依存ゼロの純関数モジュール）
 import { resolveAckPush } from "./opener-ack-push";
+import { isPropertyShareNoAsk, isViewingDayNotice, VIEWING_DAY_NOTICE_REPLY } from "./reply-subscene"; // reply-subscene は greeting を import しない（循環なし）
 
 /** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
 export const CONDITION_FORM_THANKS = "ご条件お送り頂きありがとうございます😊！！";
@@ -96,6 +97,13 @@ export type GreetingDecision = {
    * 人の手打ち 180日の確かめの質問 41通: 本題から 28・はい 8・かしこまりました 5（5通とも本文はピックアップ・見積書を送る引き受け）
    */
   openerConfirmQuestion?: boolean;
+  /**
+   * 2026-10-07 7巡目: お客様は物件（URL・画像）を送ってきただけで問い・依頼の言葉が無い（reply-subscene.isPropertyShareNoAsk）。
+   * 人の手打ち 90日でこの番を「かしこまりました」で始めたのは 37番中2番（5%）＝注記で「かしこまりました」で始めないと渡す（出口では書き換えない）
+   */
+  propertyShareNoAsk?: boolean;
+  /** 2026-10-07 7巡目: 内覧当日の連絡（遅れる・向かっている・付き添い・問いなし）＝返事は「かしこまりました！！⏎お気をつけてお越しください😌！！」の2行（人 12/17） */
+  viewingDayNotice?: boolean;
 };
 
 /**
@@ -384,7 +392,9 @@ export function resolveGreeting(opts: {
       substanceKinds: opts.substanceKinds, isDeliverableReply: !!opts.isDeliverableReply, customerSentConditionForm, applyGuideThinking, ackPush,
     });
     const conditionFormThanks = customerSentConditionForm && kind !== "first" && kind !== "late_apology" && !opts.isDeliverableReply;
-    return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks, openerConfirmQuestion: isYesNoConfirmQuestion(unrepliedCustomerText) || undefined };
+    return { kind, openingLine, opening: openingLine, nightPrefix, enforce, ...op, reason, audit, conditionFormThanks, openerConfirmQuestion: isYesNoConfirmQuestion(unrepliedCustomerText) || undefined,
+      propertyShareNoAsk: (process.env.GREETING_OPENER_R7 !== "off" && kind !== "first" && isPropertyShareNoAsk(unrepliedCustomerText)) || undefined,
+      viewingDayNotice: (process.env.VIEWING_DAY_NOTICE_R7 !== "off" && kind !== "first" && isViewingDayNotice(unrepliedCustomerText)) || undefined };
   };
 
   // 2026-10-02 ⑫: この LINE で最初の返事でも、お客様が以前のやり取りを示す（お世話になっております・以前お世話になった）時は
@@ -585,16 +595,31 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
   const head = "\n【⏰ 挨拶ルール・最優先】";
   const forbidden = (["kashikomari", "hai"] as OpenerKind[]).filter((k) => !d.openerAllowed.includes(k)).map((k) => OPENER_JA[k]);
   const where = d.openingLine ? "挨拶行の次の行" : "先頭";
+  // 2026-10-07 7巡目: 「〜で始めても良い」が開口語を誘っていた。人の手打ち（120日・スタッフだけが知る報告と AI の下書きそのままを除く・scripts/audit-r7-opener-branch.ts）は
+  //   この決定（開口語なし）の番で 本題から 情報質問 63%（動く中身）/84%（答える中身）・分類不能 57%/85% なのに、AI の下書きは かしこまりました 50%・はい 48%（分類不能）だった。
+  //   開口語を置いてよい時を中身で絞る（引き受け＝かしこまりました／はい・いいえの答え＝はい）。戻す: GREETING_OPENER_R7=off
+  const r7Opener = process.env.GREETING_OPENER_R7 !== "off";
   const openerLine = d.opener === "none"
-    ? `開口語: なし。${where}は本題（回答・物件名・結果・「ご条件お送り頂きありがとうございます！！」のような目的語付きの受領お礼）から始める（${d.openerReason}）${d.openerAllowed.length > 1 ? `。${d.openerAllowed.filter((k) => k !== "none").map((k) => OPENER_JA[k]).join("／")}で始めても良い` : ""}`
-    : `開口語: ${where}は ${OPENER_JA[d.opener]}（${d.openerReason}）。絵文字は「かしこまりました😊！！」「はい😊！！」の位置のみ`;
+    ? `開口語: なし。${where}は本題（回答・物件名・結果・「ご条件お送り頂きありがとうございます！！」のような目的語付きの受領お礼）から始める（${d.openerReason}）${d.openerAllowed.length > 1
+      ? (r7Opener
+        ? `。スタッフはこの場面で本題から書き出すのが6〜8割。${d.openerAllowed.filter((k) => k !== "none").map((k) => OPENER_JA[k]).join("／")}を置くのは、お客様の依頼をこれから引き受ける時（かしこまりました）・はい／いいえで答えられる問いに「はい」と答える時だけ`
+        : `。${d.openerAllowed.filter((k) => k !== "none").map((k) => OPENER_JA[k]).join("／")}で始めても良い`)
+      : ""}`
+    : r7Opener
+      // 7巡目: 旧文「絵文字は「かしこまりました😊！！」「はい😊！！」の位置のみ」が開口語に絵文字を誘っていた。
+      //   人の手打ち 60日: かしこまりました 499通で絵文字つき 13%・はい 249通で 45%。AI の下書きは 22%／68%
+      // 開口語の後は改行1つ（人の手打ち: 開口語の後に空行 8%・AI の下書き 22%・scripts/audit-r7-style-trend.ts）
+      ? `開口語: ${where}は ${OPENER_JA[d.opener]}（${d.openerReason}）。開口語の形は「かしこまりました！！」（スタッフは9割が絵文字なし）／「はい！！」か「はい😊！！」（半々）。開口語の行の後は改行1つで本文（空行を入れない・スタッフは9割）`
+      : `開口語: ${where}は ${OPENER_JA[d.opener]}（${d.openerReason}）。絵文字は「かしこまりました😊！！」「はい😊！！」の位置のみ`;
   // 2026-09-18 竹内（ゆうこ事例）: 生成の段階でも「返信の中身で決める」線を渡す（後処理 enforceOpener と同名）
   const bodyRuleLine = d.openerBodyRule
     ? "開口語を置くなら**返信の中身**で決める: その場で答える文（「〜となります」「〜はございません」）なら「はい😊！！」。「かしこまりました」はこれから動く時（確認・手配）とお客様のご希望を飲む時（「13時で可能です」）の語なので、質問に即答するのに使わない。"
     : "";
   // 2026-10-02 夜 竹内さん「かしこまりましたとか違う」: 確かめの質問（「〜ってことですかね？」）への答えは「かしこまりました」で始めない（本題から・答えなら「はい」）
   const confirmQLine = d.openerConfirmQuestion ? "お客様は確かめの質問（「〜ってことですかね？」等）をしている。「かしこまりました」で始めない（答えから書く・はい／いいえが答えなら「はい😊！！」も可）。" : "";
-  const forbidLine = confirmQLine + bodyRuleLine + (forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "")
+  const psLine = d.propertyShareNoAsk ? "お客様は物件を送ってきただけ（問い・依頼の言葉なし）。「かしこまりました」で始めない（スタッフは 37番中2番だけ）。「お部屋お送り頂きありがとうございます😊！！」か、本題（「お送り頂きました〇〇の募集状況確認させて頂きます！！」）から始める。" : "";
+  const vdLine = d.viewingDayNotice ? `お客様の発言は内覧当日の連絡（遅れる・向かっている・付き添い）。返事は「${VIEWING_DAY_NOTICE_REPLY}」の2行だけ（挨拶・「全然大丈夫です」「遅れて問題ございません」「現地でお待ちしております」「〇時に〇〇でお待ちしております」は足さない・スタッフの実送信 12/17 がこの形）。` : "";
+  const forbidLine = vdLine + psLine + confirmQLine + bodyRuleLine + (forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "")
     + (d.conditionFormThanks ? `お客様が条件フォームを送ってくれたので、${where}は必ず「${CONDITION_FORM_THANKS}」（フォームへの感謝）→ 続けてお客様の条件（エリア・家賃・間取り等をお客様の語のまま）で物件をピックアップしてお送りする宣言。` : "");
   const common = `「お待たせ致しました」「お待たせしました」は禁止語（返信を待たせた体裁を作らない。結果報告でも使わない）。「ありがとうございます」「ご連絡ありがとうございます」だけの書き出しは禁止（目的語付き「〇〇お送り頂きありがとうございます」は可）。「夜遅くに失礼します」「夜分遅くに失礼致します」は返信に書かない（時間帯を問わず）。`;
   switch (d.kind) {

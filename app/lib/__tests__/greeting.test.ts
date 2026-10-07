@@ -321,5 +321,20 @@ describe("会話の続きは挨拶なし（continuedSameDay）", () => {
   it("resolveGreeting も挨拶なし（下書きは翌日）", () => expect(resolveGreeting({ recentMessages: [staff, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse("2026-10-05T02:00:00Z"), customerName: "朱莉", isFirstEverReply: false, alreadyGreetedToday: false, jstHour: 11, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never).kind).toBe("none"));
 });
 
+// 2026-10-07 7巡目: 開口語なしの決定で「〜で始めても良い」と誘わない（人は本題から 6〜8割）
+describe("開口語なしの決定の注記（7巡目）", () => {
+  const base = resolveGreeting({ recentMessages: [{ sender: "staff", text: "お送りさせて頂きました！！", createdAt: "2026-10-04T09:10:00Z" }, { sender: "customer", text: "駐車場は近くのパーキングでよろしいですか？", createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse("2026-10-04T09:31:00Z"), customerName: "YUMA", isFirstEverReply: false, alreadyGreetedToday: true, jstHour: 14, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: "question" } as never);
+  it("情報質問は開口語なし・本題から 6〜8割と書く", () => { expect(base.opener).toBe("none"); expect(buildGreetingNote(base, 14)).toContain("本題から書き出すのが6〜8割"); expect(buildGreetingNote(base, 14)).not.toContain("で始めても良い"); });
+  it("物件を送ってきただけ（URL のみ）→ かしこまりましたで始めないと書く", () => {
+    const d = resolveGreeting({ recentMessages: [{ sender: "staff", text: "お送りさせて頂きました！！", createdAt: "2026-10-04T09:10:00Z" }, { sender: "customer", text: "キャナルコート神田 5階\nhttps://suumo.jp/chintai/bc_100527822742/\nby SUUMO", createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse("2026-10-04T09:31:00Z"), customerName: "YUMA", isFirstEverReply: false, alreadyGreetedToday: true, jstHour: 14, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never);
+    expect(d.propertyShareNoAsk).toBe(true); expect(buildGreetingNote(d, 14)).toContain("物件を送ってきただけ");
+  });
+  it("物件＋「初期費用いくらですか？」は当てない", () => {
+    const d = resolveGreeting({ recentMessages: [{ sender: "customer", text: "ここの初期費用いくらですか？\nTC天美南 1階\nhttps://suumo.jp/chintai/bc_100527713926/", createdAt: "2026-10-04T09:30:00Z" }, { sender: "staff", text: "x", createdAt: "2026-10-04T09:00:00Z" }].reverse(), now: Date.parse("2026-10-04T09:31:00Z"), customerName: "YUMA", isFirstEverReply: false, alreadyGreetedToday: true, jstHour: 14, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never);
+    expect(!!d.propertyShareNoAsk).toBe(false);
+  });
+  it("GREETING_OPENER_R7=off で前の文", () => { process.env.GREETING_OPENER_R7 = "off"; try { expect(buildGreetingNote(base, 14)).toContain("で始めても良い"); } finally { delete process.env.GREETING_OPENER_R7; } });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failures.length) { console.log(failures.join("\n")); process.exit(1); }

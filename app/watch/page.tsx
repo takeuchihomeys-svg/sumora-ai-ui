@@ -21,6 +21,9 @@ const VERDICT_VIEW: Record<string, { label: string; cls: string }> = {
 };
 const VERDICT_KEYS = ["same", "same_meaning", "partial", "different", "na"] as const;
 const pct = (r: number | null | undefined) => (r == null ? "—" : `${Math.round(r * 100)}%`);
+/** 2026-10-07 7巡目: 窓の一致（完全一致）と番の数。毎晩のまとめが古い（prev7 が無い）時は — */
+const winCell = (w: { n: number; rate: number | null; same?: number } | null | undefined) =>
+  !w || !w.n ? "—" : `${pct(w.rate)}${w.same != null ? `（完${Math.round((w.same / w.n) * 100)}%）` : ""} ${w.n}番`;
 function sceneName(key: string): string {
   if (key.startsWith("AIX:")) return `AIX ${key.slice(4)}`;
   if (key.startsWith("返信:意図:")) return `返信（意図: ${key.slice(6)}）`;
@@ -270,13 +273,15 @@ export default function WatchPage() {
               {scenes.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-[11px]">
-                    <thead><tr className="text-left text-slate-400"><th className="py-1 pr-2 font-normal">場面</th><th className="pr-2 font-normal">番</th><th className="pr-2 font-normal">一致</th><th className="pr-2 font-normal">文の一致</th><th className="pr-2 font-normal">事実違い</th><th className="pr-2 font-normal">別(14日)</th><th className="font-normal">状態</th></tr></thead>
+                    <thead><tr className="text-left text-slate-400"><th className="py-1 pr-2 font-normal">場面</th><th className="pr-2 font-normal">番</th><th className="pr-2 font-normal">一致</th><th className="pr-2 font-normal">7日</th><th className="pr-2 font-normal">前の7日</th><th className="pr-2 font-normal">文の一致</th><th className="pr-2 font-normal">事実違い</th><th className="pr-2 font-normal">別(14日)</th><th className="font-normal">状態</th></tr></thead>
                     <tbody>
                       {scenes.map((s) => (
                         <tr key={s.scene} className="border-t border-[#f0f2f5] align-top">
                           <td className="py-1 pr-2 text-slate-700">{sceneName(s.scene)}</td>
                           <td className="pr-2">{s.cur.n}</td>
                           <td className={`pr-2 font-bold ${(s.cur.rate ?? 0) >= 0.9 ? "text-emerald-700" : "text-slate-700"}`}>{pct(s.cur.rate)}</td>
+                          <td className="pr-2">{winCell(s.last7)}</td>
+                          <td className="pr-2 text-slate-500">{winCell(s.prev7)}</td>
                           <td className="pr-2">{s.cur.textN ? `${s.cur.textAgree}/${s.cur.textN}` : "—"}</td>
                           <td className={`pr-2 ${s.cur.factDiff ? "font-bold text-red-700" : ""}`}>{s.cur.factDiff}</td>
                           <td className="pr-2">{s.last14Different}</td>
@@ -287,7 +292,7 @@ export default function WatchPage() {
                   </table>
                 </div>
               )}
-              <div className="pt-1 text-[10px] text-slate-400">一致＝そのまま＋同じ事。解禁の線＝28日で30番以上・一致90%以上・事実違い0・別の事(14日)0を1週前の28日も満たす。表示するだけ（自動送信を開けるのは3段目・竹内さんが決める）</div>
+              <div className="pt-1 text-[10px] text-slate-400">7日＝直近7日・前の7日＝7〜14日前（一致率（完＝文がそのまま）と番の数・前後を比べる）。一致＝そのまま＋同じ事。解禁の線＝28日で30番以上・一致90%以上・事実違い0・別の事(14日)0を1週前の28日も満たす。表示するだけ（自動送信を開けるのは3段目・竹内さんが決める）</div>
             </Card>
 
             <Card title="🧪 最終チェックの段ごとの指摘（28日）" count={fc?.withIssues ?? 0} open={open.fc} onToggle={() => toggle("fc")}>

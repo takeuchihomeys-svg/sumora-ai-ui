@@ -5,13 +5,21 @@
 //   category: architecture | prompt_engineering | data_model | ux | performance | ai_design
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
-import { embedKbRows } from "../app/lib/design-knowledge-rag-server";
+import { embedKbRows, neighborsOf } from "../app/lib/design-knowledge-rag-server";
 import { sceneTagsToAdd } from "./kb-scene-tag";
 import { inferPriority, normalizeTags, P0_TAG, PRIORITY_LABEL } from "../app/lib/design-knowledge-priority";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const file = process.argv[2];
-if (!file) { console.error("使い方: npx tsx --env-file=.env.local scripts/kb-insert.ts <JSONファイル>"); process.exit(1); }
+// 確かめ用: 既存の行の被りだけを出す（INSERT しない）: npx tsx --env-file=.env.local scripts/kb-insert.ts --overlaps-of=<id>
+const overlapsOf = process.argv.find((a) => a.startsWith("--overlaps-of="))?.slice(14);
+if (overlapsOf) {
+  (async () => {
+    const { data } = await sb.from("system_design_thinking").select("id, title, tags").eq("id", overlapsOf).maybeSingle();
+    if (!data) { console.error("行が無い"); process.exit(1); }
+    await showOverlaps([data.id as string], [data as Record<string, unknown>]);
+  })().catch((e) => { console.error(e); process.exit(1); });
+} else if (!file) { console.error("使い方: npx tsx --env-file=.env.local scripts/kb-insert.ts <JSONファイル>"); process.exit(1); }
 
 async function main() {
   // 2026-09-20: 1セッションで複数の知見が出る事が多いので配列も受ける（1件の時は今まで通りオブジェクト）
@@ -54,5 +62,37 @@ async function main() {
     const e = await embedKbRows(sb, { dry: false, ids });
     console.log(`  埋め込み: ${e.embedded}行（$${e.usd.toFixed(5)}）`);
   } catch (err) { console.warn("  埋め込みに失敗（週の整理で埋める）:", err instanceof Error ? err.message : err); }
+  // 2026-10-07 7巡目（竹内「被ったらその時におくってもらったら良い」）: 入れた行と同じ場面・同じ話題の既存の P0/P1/P2 の行で
+  //   埋め込みが近い物（0.8 以上）を「被っている可能性」として並べる。**自動では退役しない**（コーディネーターがその場で竹内さんに見せる）
+  try { await showOverlaps(ids, rows); } catch (err) { console.warn("  被りの確かめに失敗（INSERT は済み）:", err instanceof Error ? err.message : err); }
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+
+/** 被りの表示の線（近さ・題の並べ方）。迷ったら多めに出す側（見せるだけなので） */
+const OVERLAP_MIN = Number(process.env.KB_OVERLAP_MIN ?? "0.8");
+async function showOverlaps(ids: string[], rows: Array<Record<string, unknown>>) {
+  const lines: string[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i]; const row = rows[i] ?? {};
+    const myTags = new Set(((row.tags as string[] | undefined) ?? []));
+    const myScenes = [...myTags].filter((t) => t.startsWith("場面:"));
+    const nb = (await neighborsOf(sb, id, 10, OVERLAP_MIN)).filter((n) => n.id !== id);
+    if (!nb.length) continue;
+    const { data } = await sb.from("system_design_thinking").select("id, title, tags, priority, is_current").in("id", nb.map((n) => n.id));
+    const byId = new Map(((data ?? []) as Array<{ id: string; title: string; tags: string[] | null; priority: number | null; is_current: boolean | null }>).map((r) => [r.id, r]));
+    const hits: string[] = [];
+    for (const n of nb) {
+      const r = byId.get(n.id); if (!r || r.is_current === false) continue;
+      const p = r.priority ?? 2; if (p > 2) continue; // P3（事例）は被っても良い
+      const tags = r.tags ?? [];
+      const sameScene = myScenes.length > 0 && tags.some((t) => myScenes.includes(t));
+      const shared = tags.filter((t) => myTags.has(t) && !t.startsWith("場面:") && !["汎用", "点検表"].includes(t));
+      if (!sameScene && !shared.length && n.similarity < 0.85) continue; // 場面も話題（札）も違い、近さも 0.85 未満なら被りとは言わない
+      const why = [sameScene ? "同じ場面" : "", shared.length ? `札 ${shared.slice(0, 3).join("・")}` : "", `近さ ${n.similarity.toFixed(2)}`].filter(Boolean).join("・");
+      hits.push(`    - P${p} ${r.id.slice(0, 8)}（${why}）${r.title.slice(0, 80)}`);
+    }
+    if (hits.length) lines.push(`  ⚠ 被っている可能性: 新しい行 ${id.slice(0, 8)}「${String(row.title).slice(0, 60)}」\n${hits.join("\n")}\n    → 古い方を退役するなら（竹内さんの判断の後）: npx tsx --env-file=.env.local scripts/kb-retire.ts --id=<古い id> --by=${id} --reason=<理由>`);
+  }
+  if (lines.length) { console.log("\n===== 被っている可能性（自動では退役しない・竹内さんに見せる） ====="); for (const l of lines) console.log(l); }
+  else console.log("  被っている可能性: なし（同じ場面・話題の P0〜P2 で近さ " + OVERLAP_MIN + " 以上の行は無い）");
+}
+if (!overlapsOf) main().catch((e) => { console.error(e); process.exit(1); });

@@ -42,6 +42,12 @@ it("直近7日 8番中6番一致（75%）→ 停止の線", () => {
   const turns = [...Array.from({ length: 6 }, () => turn(2, "same")), turn(3, "partial"), turn(4, "different")];
   eq(sceneStats(turns, now)[0].stop, true);
 });
+it("7巡目: 直近7日と前の7日（7〜14日前）を分けて数え、完全一致（same）も数える", () => {
+  const turns = [turn(1, "same"), turn(2, "same_meaning"), turn(3, "different"), turn(8, "same"), turn(10, "partial"), turn(15, "same")];
+  const s = sceneStats(turns, now)[0];
+  eq([s.last7.n, s.last7.agree, s.last7.same], [3, 2, 1]);
+  eq([s.prev7.n, s.prev7.agree, s.prev7.same], [2, 1, 1]);
+});
 it("比べられない（na）・申込以降・場面なしは数えない", () => {
   const s = sceneStats([turn(1, "na"), turn(1, "same", "対象外:申込以降"), { ...turn(1, "same"), scene_key: null }], now);
   eq(s.length, 1);

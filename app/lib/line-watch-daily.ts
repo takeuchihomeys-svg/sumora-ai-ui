@@ -31,7 +31,7 @@ export type StatTurn = {
   verdict: Verdict | null;
   verdict_detail?: VerdictDetail | Record<string, unknown> | null;
 };
-export type SceneWindow = { n: number; agree: number; rate: number | null; factDiff: number; different: number; textN: number; textAgree: number; uncertain: number };
+export type SceneWindow = { n: number; agree: number; rate: number | null; same: number; factDiff: number; different: number; textN: number; textAgree: number; uncertain: number };
 export type SceneStat = {
   scene: string;
   path: string;
@@ -39,17 +39,20 @@ export type SceneStat = {
   prev: SceneWindow;       // 7日前までの28日（「2週続けて」の代わり）
   last14Different: number;
   last7: SceneWindow;
+  /** 2026-10-07 7巡目（竹内「一致率を表示」）: 7〜14日前の7日。直近7日（last7）と並べて前後を見る */
+  prev7: SceneWindow;
   unlock: boolean;         // 解禁の線を満たした（今と1週前の両方）
   stop: boolean;           // 停止の線に当たった
   remaining: string[];     // 解禁の線までの残り（人が読む）
 };
 
-const emptyWin = (): SceneWindow => ({ n: 0, agree: 0, rate: null, factDiff: 0, different: 0, textN: 0, textAgree: 0, uncertain: 0 });
+const emptyWin = (): SceneWindow => ({ n: 0, agree: 0, rate: null, same: 0, factDiff: 0, different: 0, textN: 0, textAgree: 0, uncertain: 0 });
 function addTo(w: SceneWindow, t: StatTurn) {
   const d = (t.verdict_detail ?? {}) as VerdictDetail;
   if (!t.verdict || t.verdict === "na") return;
   w.n++;
   if (isAgree(t.verdict)) w.agree++;
+  if (t.verdict === "same") w.same++;
   if (t.verdict === "different") w.different++;
   if (d.fact_diff) w.factDiff++;
   if (d.uncertain) w.uncertain++;
@@ -63,21 +66,22 @@ export function meetsUnlock(w: SceneWindow, different14: number): boolean {
 }
 
 export function sceneStats(turns: ReadonlyArray<StatTurn>, nowMs: number): SceneStat[] {
-  const by = new Map<string, { cur: SceneWindow; prev: SceneWindow; last7: SceneWindow; d14: number }>();
+  const by = new Map<string, { cur: SceneWindow; prev: SceneWindow; last7: SceneWindow; prev7: SceneWindow; d14: number }>();
   for (const t of turns) {
     const key = t.scene_key;
     if (!key || key.startsWith("対象外")) continue;
     const age = nowMs - Date.parse(t.customer_turn_at);
     if (!(age >= 0)) continue;
-    const s = by.get(key) ?? by.set(key, { cur: emptyWin(), prev: emptyWin(), last7: emptyWin(), d14: 0 }).get(key)!;
+    const s = by.get(key) ?? by.set(key, { cur: emptyWin(), prev: emptyWin(), last7: emptyWin(), prev7: emptyWin(), d14: 0 }).get(key)!;
     if (age < UNLOCK.days * DAY) addTo(s.cur, t);
     if (age >= 7 * DAY && age < (UNLOCK.days + 7) * DAY) addTo(s.prev, t);
     if (age < STOP.days * DAY) addTo(s.last7, t);
+    if (age >= STOP.days * DAY && age < 2 * STOP.days * DAY) addTo(s.prev7, t);
     if (age < UNLOCK.differentDays * DAY && t.verdict === "different") s.d14++;
   }
   const out: SceneStat[] = [];
   for (const [scene, s] of by) {
-    const cur = fin(s.cur), prev = fin(s.prev), last7 = fin(s.last7);
+    const cur = fin(s.cur), prev = fin(s.prev), last7 = fin(s.last7), prev7 = fin(s.prev7);
     const remaining: string[] = [];
     if (cur.n < UNLOCK.minN) remaining.push(`あと ${UNLOCK.minN - cur.n}番`);
     if ((cur.rate ?? 0) < UNLOCK.minRate) remaining.push(`一致率 ${pct(cur.rate)}→${pct(UNLOCK.minRate)}`);
@@ -87,7 +91,7 @@ export function sceneStats(turns: ReadonlyArray<StatTurn>, nowMs: number): Scene
     const prevOk = meetsUnlock(prev, 0);
     if (nowOk && !prevOk) remaining.push("1週前の28日も満たすのを待つ");
     out.push({
-      scene, path: scene.split(":")[0], cur, prev, last7, last14Different: s.d14,
+      scene, path: scene.split(":")[0], cur, prev, last7, prev7, last14Different: s.d14,
       unlock: nowOk && prevOk,
       stop: last7.n >= STOP.minN && (last7.rate ?? 1) < STOP.rate,
       remaining,

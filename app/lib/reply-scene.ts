@@ -56,6 +56,16 @@ const APPRAISAL_RE = /いいですね|良いですね|よいですね|良さそ�
 const ACK_STRIP_RE = /ありがとう(?:ございます|ございました)?|有難う(?:ございます)?|(?:引き続き|今後とも|本日は?|今日は?|明日は?|当日は?)?(?:何卒)?(?:よろしく|宜しく)(?:お願い(?:し|致し|いたし)ます|です|おねがいします)?|(?:お願い|おねがい)(?:し|致し|いたし)ます|了解(?:です|しました|致しました)?|わかりました|分かりました|承知(?:です|しました|致しました|いたしました)?|かしこまりました|はい|助かります|大丈夫(?:です)?|了承(?:しました)?|こちらこそ|いえいえ|とんでもない(?:です)?|すみません|お世話になっております|お疲れ様です|お手数(?:を)?(?:お掛け|おかけ)(?:して(?:しまい)?|します|しますが|致しますが)?|ご無理(?:を)?(?:言って|いって)(?:しまい)?|申し訳(?:ありません|ございません|ないです)|ご丁寧に|ご親切に|誠に|本当に|引き続き|お忙しい中|(?:早い|迅速な)?(?:ご)?対応(?:頂き|いただき)?|諸々|ご確認(?:頂き|いただき)|ご説明|ありがとござい(?:ます)?|おはようございます|こんにちは|こんばんは|お待ちして(?:ます|おります)|そうなんですね|わがままで|ご無理を言いまして|\((?:emoji|よろしく|すみません)\)|m\(\*_ _\)m|\(;_;\)|では|それでは|ok|OK|おけ|了|鈴木様|鈴木さん/g;
 const ACK_RE = /ありがと|よろしく|宜しく|了解|わかりました|分かりました|承知|かしこまり|はい|(?:お願い|おねがい)(?:し|致し|いたし)ます|助かり|大丈夫|了承|こちらこそ|いえいえ|とんでもない|すみません|ok|おけ|了$/i;
 
+// 2026-10-07 7巡目（見張りの外れを1番ずつ読んだ・竹内「一致しなかった番は1件ずつなぜ」）: 場面の語の抜け（その他に落ちていた）
+//   W34「ギリギリに着くか少し遅れるかもです」・W45「付き添いで1人着いてきます」＝内覧当日の連絡（人の手打ち 365日: 遅れ・向かう・付き添いの連絡の
+//   返事は「かしこまりました！！⏎お気をつけてお越しください😌！！」が 内覧の前の返事で 12/17）・W56「ここの頭金おしえてほしいです」＝初期費用
+//   （人は「2部屋の最大限割引させていただいたお見積書お送り」）・W35「今日中に決めて折り返します」＝検討中（また連絡）。
+//   線は scripts/audit-r7-scene-words.ts（365日の発言で場面が変わる番を全部読む）。戻す: REPLY_SCENE_R7=off
+const VIEWING_R7_RE = /遅れる|遅刻|ギリギリ(?:に|で)?(?:着|到着)|着きます|着く(?:と思|予定|かも|ので)|もうすぐ着|向かいます|付き添い|同伴/;
+const COST_R7_RE = /頭金/;
+const CONSIDER_R7_RE = /折り返(?:し|します)|決め(?:て|次第)[^。\n]{0,6}(?:連絡|返信|折り返)/;
+export function replySceneR7Enabled(env: Record<string, string | undefined> = process.env): boolean { return env.REPLY_SCENE_R7 !== "off"; }
+
 /** 番の文（連投は改行でつないだ物）から場面を1つ決める。evidence は当たった理由 */
 export function resolveReplyScene(i: { customerText: string }): { scene: ReplyScene; evidence: string } {
   const original = String(i.customerText ?? "");
@@ -75,12 +85,16 @@ export function resolveReplyScene(i: { customerText: string }): { scene: ReplySc
   if (customerAsksRentLevel(t)) return { scene: "question", evidence: "rent_level" };
   const condNoCost = COND_RE.test(t.replace(/初期費用/g, ""));
   if (COST_RE.test(t) && condNoCost && (COST_AS_CONDITION_RE.test(t) || /探し|ピックアップ|紹介して|条件/.test(t))) return { scene: "conditions", evidence: "cost_as_condition" };
+  const r7 = replySceneR7Enabled();
   if (COST_RE.test(t)) return { scene: "cost", evidence: "cost" };
+  if (r7 && COST_R7_RE.test(t)) return { scene: "cost", evidence: "cost_r7" };
   if (APPLY_RE.test(t)) return { scene: "apply", evidence: "apply" };
   if (VIEWING_RE.test(t)) return { scene: "viewing", evidence: "viewing" };
+  if (r7 && VIEWING_R7_RE.test(t)) return { scene: "viewing", evidence: "viewing_r7" };
   // 電話の依頼・時刻の連絡（「10時半頃に電話かけさせて頂きます」「電話して貰えますか」）は内覧の日程ではない（今まで通り全部の材料）
   if (/電話/.test(t)) return { scene: "other", evidence: "phone" };
   if (CONSIDER_RE.test(t) || /(?:ご)?返信いたします|返信します|連絡させて頂きます|連絡します/.test(t)) return { scene: "considering", evidence: "considering" };
+  if (r7 && CONSIDER_R7_RE.test(t)) return { scene: "considering", evidence: "considering_r7" };
   const isQuestion = QUESTION_RE.test(t);
   // 家賃・間取りの語がはっきりある条件の文（「2028/3月以降入居 4~7万 2LDK」）は日付の語より先に条件
   if (/家賃|[0-9.]+\s*万|[1-4]\s*(?:K|DK|LDK)\b|エリア|間取/i.test(t) && (!isQuestion || REQUEST_VERB_RE.test(t))) return { scene: "conditions", evidence: "conditions_strong" };
