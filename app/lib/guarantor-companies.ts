@@ -251,12 +251,78 @@ const PARALLEL_LINE = "審査無事通過する為、保証会社が異なるお
 const INVITE_LINE = "よろしければお気に召されたお部屋一度審査かけさせて頂きます！！";
 const CANCEL_LINE = "※保証会社審査通過後、オーナー審査移行するまでキャンセル料不要となります！！";
 
-// ─── 固定テンプレ（YUYA 9/15 17:31 の実送信の型）───
+// ─── 文の形（2026-10-07 竹内「文の質をあげてボタンとしてつかっていく」・提案20回・押下0の調査）───
+// お客様の「保証会社どこですか？」は**1件の物件**の問いが多く（200日の手打ち: 1件の答え 5通／一覧 4通）、スタッフは2〜4分で2行の答えを手で打っていた:
+//   9/30 8a77820b「保証会社はナップ賃貸保証となります！！\n独立系の保証会社となりますので比較的審査通過しやすいお部屋となります😌！！」
+//   8/22 f568a14b「エスポワールの保証会社 株式会社Casaという独立系の保証会社となり比較的審査通過しやすいお部屋となります😊！！」
+//   9/25 ab7ea742「1番手の保証会社はシノケンコミュニケーションズ（独立系）となり、否決の場合2番手ほっと保証（独立系）で審査される形となります！！」
+//   6/01 2cba9376「保証会社はエルズサポートと日本セーフティ・独立系の保証会社となり、審査基準が緩く審査通過する可能性は高いお部屋となります😊！！」
+//   10/04 b3bae304「保証会社興和アシストという…保証会社となります！！」
+// AIX は1件でも「こちら保証会社一覧となります！！／・物件名／…／よろしければ…審査かけさせて頂きます！！／※キャンセル料不要」の5段（YUYA の5物件の一覧の型）
+//   ＝1件の答えには長すぎ・「一覧」が合わず、同じ物件の2社（1番手/2番手）は同じ物件の段落が2つ並んだ。→ 物件の数と1物件の会社の数で形を分ける
+//   answer   : 物件が1件（会社1社＝2行の答え／2社以上＝1番手・2番手の答え）。手打ちの過半数の形（物件名なし 4/5・締めの誘い・キャンセル料の行なし）
+//   rank_list: 物件が2件以上で、どれかの物件に2社以上（6/29「【保証会社】◎物件 1番手:… 2番手:…」・9/22 YUYA「それぞれの保証会社確認させていただきました！！・物件 会社（種類）…となります！！」）
+//   list     : 物件が2件以上・1物件1社（今までの YUYA 9/15 17:31 の型のまま・並行審査はこの形だけ）
+export type GuarantorInfoShape = "answer" | "rank_list" | "list";
+const propKey = (s: string) => (s ?? "").normalize("NFKC").replace(/\s+/g, "").replace(/号室$/, "");
+/** 物件ごとの会社（入力順＝上から1番手）。同じ物件名のカードは同じ物件の2番手・3番手 */
+export function guarantorCompaniesByProperty(properties: readonly GuarantorProperty[]): Array<{ name: string; companies: Array<{ company: string; type: GuarantorType }> }> {
+  const out: Array<{ name: string; companies: Array<{ company: string; type: GuarantorType }> }> = [];
+  for (const p of properties) {
+    const company = normalizeGuarantorName(p.company);
+    if (!company) continue;
+    const type = normalizeGuarantorType(p.type) ?? "unknown";
+    const g = out.find((x) => propKey(x.name) === propKey(p.name));
+    if (!g) out.push({ name: p.name, companies: [{ company, type }] });
+    else if (!g.companies.some((c) => nameKey(c.company) === nameKey(company))) g.companies.push({ company, type });
+  }
+  return out;
+}
+export function guarantorInfoShape(properties: readonly GuarantorProperty[]): GuarantorInfoShape {
+  const byProp = guarantorCompaniesByProperty(properties);
+  if (byProp.length <= 1) return "answer";
+  return byProp.some((p) => p.companies.length >= 2) ? "rank_list" : "list";
+}
+/** 1件の答えの種類の文（ナップ 9/30 の実送信の2行目の型。信販系・信用系は一覧と同じ説明・不明は書かない） */
+export const GUARANTOR_ANSWER_TYPE_NOTE: Record<GuarantorType, string> = {
+  independent: "独立系の保証会社となりますので比較的審査通過しやすいお部屋となります😊！！",
+  credit: GUARANTOR_TYPE_SCREENING_NOTE.credit,
+  shinyou: GUARANTOR_TYPE_SCREENING_NOTE.shinyou,
+  unknown: "",
+};
+const typeTag = (t: GuarantorType) => (GUARANTOR_TYPE_SHORT[t] ? `（${GUARANTOR_TYPE_SHORT[t]}）` : "");
+/** 2社以上の「1番手の保証会社は A（独立系）となり、否決の場合2番手 B（独立系）で審査される形となります！！」（ab7ea742 9/25 の型） */
+function rankSentence(companies: ReadonlyArray<{ company: string; type: GuarantorType }>): string {
+  const [first, ...rest] = companies;
+  const tail = rest.map((c, i) => `${i + 2}番手${c.company}${typeTag(c.type)}`).join("、");
+  return `1番手の保証会社は${first.company}${typeTag(first.type)}となり、否決の場合${tail}で審査される形となります！！`;
+}
+/** 物件1件の答え（LLM なし）。1社＝「保証会社は〇〇となります！！」＋種類の文／2社以上＝1番手・2番手の文 */
+export function buildGuarantorAnswerText(properties: readonly GuarantorProperty[]): string {
+  const p = guarantorCompaniesByProperty(properties)[0];
+  if (!p) return "";
+  if (p.companies.length >= 2) return rankSentence(p.companies);
+  const c = p.companies[0];
+  return [`保証会社は${c.company}となります！！`, GUARANTOR_ANSWER_TYPE_NOTE[c.type]].filter(Boolean).join("\n");
+}
+/** 物件2件以上で、どれかに2社以上（9/22 YUYA・6/29 の一覧の型）。並行審査の文は付けない（同じ物件の2番手と並行審査は意味が重なる） */
+export function buildGuarantorRankListText(properties: readonly GuarantorProperty[]): string {
+  const lines = guarantorCompaniesByProperty(properties).map((p) => p.companies.length === 1
+    ? `・${p.name} ${p.companies[0].company}${typeTag(p.companies[0].type)}`
+    : `・${p.name} ${p.companies.map((c, i) => `${i + 1}番手:${c.company}${typeTag(c.type)}`).join(" ")}`);
+  return ["それぞれの保証会社確認させて頂きました！！", lines.join("\n"), "となります！！\nお手隙の際にご確認ください😊！！"].join("\n\n");
+}
+
+// ─── 固定テンプレ（物件2件以上・1物件1社は YUYA 9/15 17:31 の実送信の型）───
 /**
  * 「文面を作る（固定）」の本文。LLM を呼ばない。会社名は正規名（「日本セーフティ」と入れても「日本セーフティー」）。
  * 挨拶行（「お世話になっております！！」）は他の AIX と同じく付けない。
+ * 2026-10-07: 形は guarantorInfoShape で分ける（物件1件＝2行の答え・2社以上の物件がある一覧＝1番手/2番手の一覧・それ以外＝今までの一覧）
  */
 export function buildGuarantorInfoText(o: { customerName: string; properties: readonly GuarantorProperty[]; parallel: boolean }): string {
+  const shape = guarantorInfoShape(o.properties);
+  if (shape === "answer") return buildGuarantorAnswerText(o.properties);
+  if (shape === "rank_list") return [o.customerName ? `${o.customerName}さん` : "", buildGuarantorRankListText(o.properties)].filter(Boolean).join("\n");
   const plan = planParallelScreening(o.properties);
   const head = [o.customerName ? `${o.customerName}さん` : "", "こちら保証会社一覧となります！！"].filter(Boolean).join("\n");
   // 会社ごとの段落: 種類の順（独立系 → 信販系 → 信用系 → 不明）、同じ種類の中は入力順
@@ -328,8 +394,21 @@ export function buildGuarantorListText(properties: readonly GuarantorProperty[])
 export function formatGuarantorFacts(propertiesIn: readonly GuarantorProperty[], opts: { parallel: boolean }): { block: string; allowedNames: string[]; plan: ParallelScreeningPlan } {
   const properties: GuarantorProperty[] = propertiesIn.map((p) => ({ ...p, type: normalizeGuarantorType(p.type) ?? "unknown" }));   // 旧の "licc" は信用系
   const plan = planParallelScreening(properties);
-  const lines: string[] = ["【物件ごとの保証会社（スタッフ入力・確定事実。この会社名・種類だけを使う）】"];
-  for (const p of properties) lines.push(`- ${p.name}: ${normalizeGuarantorName(p.company)}（${GUARANTOR_TYPE_LABELS[p.type]}）`);
+  const allowedNames = [...new Set(properties.flatMap((p) => {
+    const canonical = normalizeGuarantorName(p.company);
+    return [p.company.trim(), canonical, ...guarantorAliasesOf(canonical)];
+  }).filter(Boolean))];
+  const shape = guarantorInfoShape(properties);
+  const factLines = ["【物件ごとの保証会社（スタッフ入力・確定事実。この会社名・種類だけを使う。同じ物件に2社以上ある時は上から1番手・2番手）】"];
+  for (const p of properties) factLines.push(`- ${p.name}: ${normalizeGuarantorName(p.company)}（${GUARANTOR_TYPE_LABELS[p.type]}）`);
+  // 2026-10-07: 物件1件・1番手/2番手の一覧は、固定の文を土台にして会話に合わせる（種類の言い回し・並行審査・キャンセル料の行の指示は一覧の形だけ）
+  if (shape !== "list") {
+    const base = shape === "answer" ? buildGuarantorAnswerText(properties) : buildGuarantorRankListText(properties);
+    factLines.push(`【土台の文（会社名・種類・言い回しはこの文のまま）】\n${base}`);
+    factLines.push("【禁止】上記に無い保証会社名・種類／「審査通ります」「通りそうです」等の通過の断言／保証人・緊急連絡先の話／「こちら保証会社一覧となります」「※保証会社審査通過後…キャンセル料不要」の行（一覧の形の文）");
+    return { block: factLines.join("\n"), allowedNames, plan };
+  }
+  const lines: string[] = [...factLines];
   lines.push("【種類ごとに使ってよい言い回し（この文だけ。種類から別の説明を作らない）】");
   const types = GUARANTOR_TYPES.filter((t) => properties.some((p) => p.type === t));
   for (const t of types) {
@@ -349,10 +428,6 @@ export function formatGuarantorFacts(propertiesIn: readonly GuarantorProperty[],
   }
   lines.push(`【必ず入れる】${CANCEL_LINE}`);
   lines.push("【禁止】上記に無い保証会社名・種類／「審査通ります」「通りそうです」等の通過の断言（許される言い回しは上の文の「審査通過する可能性十分に御座います」「審査無事通過する為」まで）／保証人・緊急連絡先の話");
-  const allowedNames = [...new Set(properties.flatMap((p) => {
-    const canonical = normalizeGuarantorName(p.company);
-    return [p.company.trim(), canonical, ...guarantorAliasesOf(canonical)];
-  }).filter(Boolean))];
   return { block: lines.join("\n"), allowedNames, plan };
 }
 
@@ -471,6 +546,31 @@ export function detectGuarantorFromMessages(messagesOldestFirst: ReadonlyArray<{
   return null;
 }
 
+// ─── 会話を合わせる（LLM）の構成（形ごと。route の静的な指示に入れる＝形ごとにキャッシュの鍵が分かれるだけ）───
+/** 審査の不安を書いたお客様への1文（スタッフの実送信: 2cba9376「審査無事通りますようサポートさせて頂きます！！」・732692f2「審査面無事通過できますようにサポートさせて頂きます！！」） */
+export const GUARANTOR_SUPPORT_LINE = "審査無事通過できますようにサポートさせて頂きます！！";
+export function guarantorInfoStructure(shape: GuarantorInfoShape): string {
+  if (shape === "answer") {
+    return `【構成（物件1件の保証会社のご質問への答え・スタッフの手打ちの過半数の形）】
+①【土台の文】をそのまま書く（会社名・種類・言い回しを変えない。物件名の一覧「・物件名」や「こちら保証会社一覧となります」の形にしない）
+②お客様の直近の発言に審査の不安（きつい・厳しい・通るか・ブラック・心配 等）がある時だけ、最後に「${GUARANTOR_SUPPORT_LINE}」を1文足す
+③それ以外は足さない（申込・内覧の誘い・並行審査・「※保証会社審査通過後…キャンセル料不要」の行・挨拶の言い直しを書かない）`;
+  }
+  if (shape === "rank_list") {
+    return `【構成（物件ごとの保証会社の一覧・同じ物件に1番手/2番手がある）】
+①【土台の文】をそのまま書く（物件ごとの行・1番手/2番手の順・会社名・種類を変えない）
+②お客様の直近の発言に審査の不安がある時だけ、最後に「${GUARANTOR_SUPPORT_LINE}」を1文足す
+③並行審査・「※保証会社審査通過後…キャンセル料不要」の行は書かない`;
+  }
+  return `【構成】
+①お客様の直近の発言に質問・不安（審査が心配・保証会社はどこか・保証人は要るか 等）があれば、最初の1文でそれに直接答える（無ければ「こちら保証会社一覧となります！！」から始める）
+②物件ごとの一覧: 「・物件名」を1行ずつ並べ、続けて「の保証会社は〇〇と独立系の保証会社となりますので、…」の形（同じ会社の物件は同じ段落にまとめる。会社が違えば段落を分ける）
+③種類ごとの説明は【種類ごとに使ってよい言い回し】の文だけを使う（種類が「不明・その他」の物件は審査の緩い・厳しいに触れない）
+④【並行審査】の指示どおり（指示が「書かない」なら並行審査に一切触れない。同じ会社の組があれば「どちらか1件の審査となります」）
+⑤「よろしければお気に召されたお部屋一度審査かけさせて頂きます！！」
+⑥最終行は「※保証会社審査通過後、オーナー審査移行するまでキャンセル料不要となります！！」`;
+}
+
 // ─── スタッフの実文（会話を合わせるの手本・中身は写さない）───
 // 2026-09-26: 全保連を「LICC系の保証」と書いた 8/23 の1通は外した（種類は3つ・LICC系は信用系に統合＝無くした種類名を手本で見せない）
 export const GUARANTOR_INFO_STAFF_EXAMPLES: readonly string[] = [
@@ -479,3 +579,25 @@ export const GUARANTOR_INFO_STAFF_EXAMPLES: readonly string[] = [
   "こちらのお部屋如何でしょうか😌！保証会社がアセス保証と他物件と被っておりませんので、お気に召されましたら審査かけさせて頂きます！",
   "H-Maison大正:保証会社JPMC\nソルテラスNAMBAサウスフィール:保証会社Casa\nとなり比較的審査通過しやすいお部屋となります😊！！お気に召されましたらお部屋お申込みいただくのをお勧めいたします！！",
 ];
+/** 物件1件の答えの手本（スタッフの手打ちの実送信そのまま・2026-10-07）。中身（会社名・種類）は写さない */
+export const GUARANTOR_ANSWER_STAFF_EXAMPLES: readonly string[] = [
+  "保証会社はナップ賃貸保証となります！！\n独立系の保証会社となりますので比較的審査通過しやすいお部屋となります😌！！",
+  "1番手の保証会社はシノケンコミュニケーションズ（独立系）となり、否決の場合2番手ほっと保証（独立系）で審査される形となります！！",
+  "ご質問ありがとうございます！！\n保証会社はエルズサポートと日本セーフティ・独立系の保証会社となり、審査基準が緩く審査通過する可能性は高いお部屋となります😊！！\n審査無事通りますようサポートさせて頂きます！！",
+];
+
+/** お客様の発言に審査の不安があるか（きつい・厳しい・通るか・ブラック・心配 等）。「会話を合わせる」の物件1件の形で支えの1文を足すかだけに使う */
+export function customerWorriesAboutScreening(text: string | null | undefined): boolean {
+  return /きつ|厳し|通(?:る|り|ら|過)|落ち|ブラック|心配|不安|大丈夫|滞納|審査.{0,6}(?:緩|ゆる|甘)/.test(String(text ?? ""));
+}
+/**
+ * 物件1件・1番手/2番手の一覧の「会話を合わせる」（LLM なし・2026-10-07）。
+ * DeepSeek で回すと土台を崩した（1番手が消える・種類が不明の会社に「ブラックでも通る可能性十分に御座います」）ので、
+ * 土台の文＋お客様が審査の不安を書いた時だけ支えの1文（スタッフの実送信 2cba9376・732692f2 の形）を決定論で足す
+ */
+export function buildGuarantorMatchedText(properties: readonly GuarantorProperty[], latestCustomerMessage: string | null | undefined): string | null {
+  const shape = guarantorInfoShape(properties);
+  if (shape === "list") return null;
+  const base = shape === "answer" ? buildGuarantorAnswerText(properties) : buildGuarantorRankListText(properties);
+  return customerWorriesAboutScreening(latestCustomerMessage) ? `${base}\n${GUARANTOR_SUPPORT_LINE}` : base;
+}

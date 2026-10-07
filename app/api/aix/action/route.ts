@@ -89,7 +89,9 @@ import { buildFirstSceneNote, leakedFirstExampleFacts, newArrivalOpening } from 
 import { buildApplicationNote, applicationBulletNote } from "@/app/lib/application-status-note";
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（スタッフの入力をそのまま・骨組みは実送信の形）
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
-import { buildGuarantorInfoText, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
+import { buildViewingBeforeGreeting, viewingAfterThankLine } from "@/app/lib/viewing-greeting-text";
+import { PROPERTY_SEARCH_SYSTEM, buildPropertySearchUser, propertySearchFallback, propertySearchTextIssues } from "@/app/lib/property-search-promise";
+import { buildGuarantorInfoText, buildGuarantorMatchedText, guarantorInfoShape, guarantorInfoStructure, GUARANTOR_ANSWER_STAFF_EXAMPLES, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
 import { wardOfPickupRow, moveInFactOfPickup, buildMoveInFactNote, findMoveInClaimConflict, findPickupAreaConflict, buildPickupWardNote, sanitizeSentPropertyCount, findCheckStatusContradiction, findCheckResultMoveInClaim, hasStaffMoveInClaim, PAST_MOVE_IN_CLAIM_NOTE, alignStarHeadToMaterial, type PickupMaterialRow } from "@/app/lib/aix-material-facts";
 import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, restoreConditionDots, type PickupFact } from "@/app/lib/pickup-send-facts";
@@ -835,6 +837,7 @@ const ACTION_MAX_TOKENS: Record<string, number> = {
   zenryoku_support: 600,         // 2〜5行の短文生成
   cost_breakdown: 1500,          // 初期費用について（見積書の内訳の読み取り JSON・説明文）
   phone_followup: 1200,          // 電話終了後（電話でお話しした内容のまとめ・3〜8行）
+  property_search: 500,          // 物件を探す（探す約束の2〜4行・2026-10-07 分岐を足した）
   guarantor_info: 4000,          // 保証会社について（物件ごとの一覧＋審査の緩さ＋並行審査の勧め）。1物件≈180トークン・最大20件でも JSON が尻切れしない余裕（上限なので未使用分は費用にならない）
 };
 
@@ -6585,48 +6588,20 @@ ${jstTodayStr}
       const viewing_date = body.viewing_date ? String(body.viewing_date) : "";
       const viewing_time = body.viewing_time ? String(body.viewing_time) : "";
 
+      // 2026-10-07 竹内「文の質をあげてボタンとしてつかっていく」: 名前が分からない時は呼ばない（「お客様本日お時間頂き…」12回・viewing-greeting-text.ts）
+      const gvName = familyName ? name : "";
       if (sub_mode === "before") {
-        const dateInfo = viewing_date
-          ? `・内覧日: ${viewing_date}${viewing_time ? ` ${viewing_time}` : ""}`
-          : "";
-
-        const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
-内覧当日に送る「内覧前挨拶」LINEメッセージを生成してください。
-
-【出力構成（この3行構成を厳守・一字一句このフォーマット）】
-①「[お客様名]（時候の挨拶・greetingTimeNoteの挨拶ルールに従う）」
-②「本日〇〇時お部屋ご案内させて頂きます！」（〇〇を時刻に置き換え。時刻がなければ「本日お部屋ご案内させて頂きます！」）
-③「本日は何卒よろしくお願い致します！！」
-
-【時刻フォーマット】
-・「14:00」→「14時」、「14:30」→「14時半」のように自然な日本語に変換する
-・「！！」は①③のみ。②は「！」1つ
-
-【禁止】
-・3行以外の追加は一切しない。解説・絵文字・補足は不要`;
-
-        // 学習済み差分ルール（スタッフ修正から学習したパターン）＋DBルールをプロンプト末尾に注入
-        // 2026-09-17 竹内（AIX キャッシュ点検）: Haiku の呼び出しは cache なし（ttl "none"）のまま。global ≈12k tokens を準静的ブロックに置くと
-        //   Haiku でも 1h の書き込みが起きる（数回/日の経路では純損）ので、ここは従来の fetchPromptRules（1本の文字列）を変えない
-        const [beforeDiffNote, greetingViewingDbRules, greetingBeforeBrainAddendum] = await Promise.all([
-          getKnowledgeForState(AIX_ACTION_TO_STATES.greeting_viewing, currentAction, conversationId, latestCustomerMsg, brainContext),
-          fetchPromptRules("greeting_viewing", { sub_mode: sub_mode ?? "" }).catch(() => ""),
-          loadBrainTemplate("greeting_viewing"),
-        ]);
-
-        const greetingBeforeSystemFinal = system + greetingViewingDbRules + (greetingBeforeBrainAddendum ? "\n\n【ブレイン改善ルール】\n" + greetingBeforeBrainAddendum : "");
-        message_text = await callClaudeHaiku(
-          greetingBeforeSystemFinal,
-          greetingTimeNote + `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}` + (beforeDiffNote ? `\n\n${beforeDiffNote}` : ""),
-          currentAction
-        );
-
+        // 2026-10-07: 内覧前は LLM を呼ばず、スタッフの手打ち（120日 67通）の3行を決定論で作る。
+        //   Haiku は形の記号を漏らす（「…」⏎②「…」）・初回の挨拶にする・物件名を足す で 101回中 21回直されていた（viewing-greeting-text.ts）。
+        //   挨拶は「今日こちらが送ったか」だけで決める（内覧の日は初回ではない＝「ご連絡頂きありがとうございます」にしない）
+        message_text = buildViewingBeforeGreeting({ name: gvName, greeting: staffMessagedToday ? "" : "お世話になっております！！", time: viewing_time });
       } else {
         // 内覧後 4択フロー
         const after_type = body.after_type as string | undefined;
         const property_label = body.property_label ? String(body.property_label).trim() : "";
         const freeword = body.freeword ? String(body.freeword).trim() : "";
-        const thankLine = `${name}本日お時間頂きありがとうございました！！`;
+        const thankLine = viewingAfterThankLine(gvName);
+        const gvNameNote = gvName ? `お客様名: ${gvName}\n` : "お客様名: 不明（1行目は「本日お時間頂きありがとうございました！！」から・名前も「お客様」も書かない）\n";
 
         // 学習済み差分ルール: AI生成サブパス（confirm_freeword / search_expand / search_change / フォールバック）のみ取得。
         // 固定テンプレサブパス（apply / apply_guide / confirm_estimate / search_new）はAIを呼ばないため対象外
@@ -6655,8 +6630,8 @@ ${jstTodayStr}
         } else if (after_type === "confirm_estimate") {
           // 確認事項 / 見積書 → 2通目テキスト生成
           const propLine = property_label
-            ? `${property_label}の御見積書となります。${name}お気に召されましたらお申込しお部屋抑えさせて頂きます！！お手隙の際にご査収ください！！`
-            : `御見積書となります。${name}お気に召されましたらお申込しお部屋抑えさせて頂きます！！お手隙の際にご査収ください！！`;
+            ? `${property_label}の御見積書となります。${gvName}お気に召されましたらお申込しお部屋抑えさせて頂きます！！お手隙の際にご査収ください！！`
+            : `御見積書となります。${gvName}お気に召されましたらお申込しお部屋抑えさせて頂きます！！お手隙の際にご査収ください！！`;
           message_text = `本日ご内覧頂きありがとうございました！！\n${propLine}`;
 
         } else if (after_type === "confirm_freeword") {
@@ -6669,7 +6644,7 @@ ${jstTodayStr}
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys, `確認事項: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
+          message_text = await callClaude(sys, `${gvNameNote}確認事項: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
 
         } else if (after_type === "search_new") {
           // 引き続き物件探す / 新着探す
@@ -6685,7 +6660,7 @@ ${SMORA_COMMON_RULES}`;
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys, `条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
+          message_text = await callClaude(sys, `${gvNameNote}条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
 
         } else if (after_type === "search_change") {
           // 引き続き物件探す / 条件変更 → AI生成
@@ -6697,7 +6672,7 @@ ${SMORA_COMMON_RULES}`;
 
 【スモラLINE営業ルール（必ず守る）】
 ${SMORA_COMMON_RULES}`;
-          message_text = await callClaude(sys, `変更条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
+          message_text = await callClaude(sys, `${gvNameNote}変更条件: ${freeword}${recentHistory}` + (afterDiffNote ? `\n\n${afterDiffNote}` : ""), currentAction, greetingAfterDynamic);
 
         } else {
           // フォールバック（after_type未指定 = 旧フロー）
@@ -7399,6 +7374,31 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         ? { notice: `メモに無い数字（${pfChecked.unmatched.join("・")}）を〇〇にしました。電話でお話しした内容を見て書き換えてから送信してください` }
         : undefined);
 
+    } else if (action === "property_search") {
+      // AIX【物件を探す】（2026-10-07 竹内「文の質をあげてボタンとしてつかっていく」）: この分岐が無く「Unknown action」で作れなかった（提案37回・押下0）。
+      //   条件を受けて「ピックアップしてお送りさせて頂きます」と約束する1通（スタッフの手打ち 517通の型・app/lib/property-search-promise.ts）。
+      //   中身（どの条件で探すか）は会話から LLM が書く・物件名や額の初出・内覧・見積・確認の約束は出口で注意（本文は変えない）
+      const psUser = buildPropertySearchUser({
+        name: familyName ? name : "",
+        history: recentHistory,
+        brainPreferences: aixBrainMeta?.property_search_params?.preferences ?? null,
+        staffNote: extra_input ? String(extra_input) : null,
+      });
+      const psSystemSpec: SystemSpecBlocks = {
+        routeStatic: PROPERTY_SEARCH_SYSTEM,
+        dynamic: [
+          brainGuidanceNote ? `【ブレインの判断（この局面の方針）】${brainGuidanceNote}` : "",
+          greetingTimeNote.trim(),
+        ].filter(Boolean).join("\n\n"),
+      };
+      let psText = "";
+      try { psText = (await callClaude(psSystemSpec, psUser, currentAction)).trim(); } catch (e) { console.warn("[aix/action] property_search: 生成失敗 → 最小の型:", e); }
+      if (!psText) psText = propertySearchFallback(familyName ? name : "");
+      const psIssues = propertySearchTextIssues(psText);
+      return finalizeResponse(psText, psIssues.length > 0
+        ? { notice: `探す約束の1通に要らない物（${psIssues.join("・")}）が入っています。見て直してから送信してください` }
+        : undefined);
+
     } else if (action === "guarantor_info") {
       // AIX【保証会社について】（2026-09-15 竹内・YUYA 事例）: 管理会社に確認した物件ごとの保証会社名・種類（独立系／信販系／信用系）を一覧で案内し、
       //   審査の通りやすさを種類ごとの決まった言い回しで伝える。「並行して審査かける」ON で、かぶっていない保証会社の並行審査を勧める。
@@ -7424,6 +7424,9 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
       const giParallel = body.parallel === true;
       const giMatch = body.conversation_match === true;
       const giFacts = formatGuarantorFacts(giProps, { parallel: giParallel });
+      // 2026-10-07 竹内「文の質をあげてボタンとしてつかっていく」（提案20回・押下0）: 物件1件＝手打ちの2行の答え／1番手・2番手のある一覧／今までの一覧
+      //   （guarantorInfoShape・固定も会話を合わせるも同じ形。1件に「こちら保証会社一覧」「キャンセル料不要」の5段を出していたのが手打ちに負けた所）
+      const giShape = guarantorInfoShape(giProps);
       // UI が「入力の確認」と onAfterSend（→ log-aix-usage → sent_facts）に使う
       const giExtra = { guarantor_properties: giProps, parallel_screening: giParallel, parallel_plan: giFacts.plan };
 
@@ -7432,6 +7435,10 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         const giFixed = buildGuarantorInfoText({ customerName: familyName || rawName || "", properties: giProps, parallel: giParallel });
         return finalizeResponse(giFixed, { ...giExtra, fixed: true });
       }
+      // 2026-10-07: 物件1件・1番手/2番手の一覧は「会話を合わせる」も LLM を呼ばない（土台＋審査の不安への支えの1文）。
+      //   YUMA の DeepSeek で土台を崩した（1番手が消える・種類不明の会社に「ブラックでも通る可能性十分」）＝事実の答えに LLM の足しは要らない
+      const giMatched = buildGuarantorMatchedText(giProps, latestCustomerMsg);
+      if (giMatched !== null) return finalizeResponse(giMatched, { ...giExtra, fixed: false });
 
       // 2026-09-17 竹内（AIX キャッシュ点検）: DB ルールは global（準静的・1h）と action 別（経路固有の末尾・5m）に分けてキャッシュ内へ（旧: 動的接尾で毎回割引なし）
       const [giKnowledge, giStarNote, giRules, giBrainAddendum] = await Promise.all([
@@ -7448,15 +7455,9 @@ ${SMORA_COMMON_RULES}
 【お客様名】ユーザーメッセージに記載のお客様名を使うこと
 
 【この返信の目的】
-・管理会社に確認した物件ごとの保証会社名と種類（独立系／信販系／信用系）を一覧で伝え、審査の通りやすさを種類に応じた決まった言い回しで説明し、（指示がある時だけ）保証会社がかぶっていないお部屋の並行審査を勧める1通を作る
+・管理会社に確認した物件ごとの保証会社名と種類（独立系／信販系／信用系）を伝え（物件1件なら下の【構成】の答えの形・複数なら一覧）、審査の通りやすさを種類に応じた決まった言い回しで説明し、（指示がある時だけ）保証会社がかぶっていないお部屋の並行審査を勧める1通を作る
 
-【構成】
-①お客様の直近の発言に質問・不安（審査が心配・保証会社はどこか・保証人は要るか 等）があれば、最初の1文でそれに直接答える（無ければ「こちら保証会社一覧となります！！」から始める）
-②物件ごとの一覧: 「・物件名」を1行ずつ並べ、続けて「の保証会社は〇〇と独立系の保証会社となりますので、…」の形（同じ会社の物件は同じ段落にまとめる。会社が違えば段落を分ける）
-③種類ごとの説明は【種類ごとに使ってよい言い回し】の文だけを使う（種類が「不明・その他」の物件は審査の緩い・厳しいに触れない）
-④【並行審査】の指示どおり（指示が「書かない」なら並行審査に一切触れない。同じ会社の組があれば「どちらか1件の審査となります」）
-⑤「よろしければお気に召されたお部屋一度審査かけさせて頂きます！！」
-⑥最終行は「※保証会社審査通過後、オーナー審査移行するまでキャンセル料不要となります！！」
+${guarantorInfoStructure(giShape)}
 
 【言い回し】下の「スタッフの実際の返信」の口調・構成に合わせる（「〜となります！！」「審査かけさせて頂きます！！」）。内容のまとまりごとに空行
 
@@ -7468,7 +7469,7 @@ ${SMORA_COMMON_RULES}
 ・謝罪表現（「申し訳ございません」等）・🙏 絵文字
 
 【スタッフの実際の返信（言い回しの手本。別のお客様・別の物件の話なので、物件名・保証会社名・種類は写さない。中身は必ず【物件ごとの保証会社】に従う）】
-${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
+${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_EXAMPLES).map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")}
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
@@ -7486,7 +7487,7 @@ ${GUARANTOR_INFO_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         dynamic,
       });
       const giUser = greetingTimeNote
-        + `${recentHistory}\n\n上記の会話を読み取り、${name}に物件ごとの保証会社の一覧と審査の通りやすさを案内する返信を生成してください。お客様の直近の質問・不安があれば最初の1文で答えてください。`
+        + `${recentHistory}\n\n上記の会話を読み取り、${giShape === "list" ? `${name}に物件ごとの保証会社の一覧と審査の通りやすさを案内する返信を生成してください。お客様の直近の質問・不安があれば最初の1文で答えてください` : `${name}のご質問（保証会社）に【土台の文】で答える返信を生成してください`}。`
         + (giKnowledge ? `\n\n${giKnowledge}` : "")
         + (giStarNote ? `\n\n【参考にすべき成功返信例（返信スタイルを合わせる）】\n${giStarNote}` : "");
       // 2026-10-06 ⑰: 読めない時に生の出力を文にしない（aix-message-json.ts）

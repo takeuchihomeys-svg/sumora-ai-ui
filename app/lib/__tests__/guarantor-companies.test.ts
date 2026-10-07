@@ -7,6 +7,7 @@ import {
   parseGuarantorTypeJa, guarantorTypeJa, guarantorNamesByType, GUARANTOR_OCR_NAME_HINT,
   GUARANTOR_TYPES, GUARANTOR_TYPE_DEFINITION, GUARANTOR_TYPE_SHORT, GUARANTOR_TYPES_JA, GUARANTOR_TYPE_SCREENING_NOTE,
   normalizeGuarantorType, GUARANTOR_INFO_STAFF_EXAMPLES, type GuarantorType,
+  guarantorInfoShape, guarantorInfoStructure, buildGuarantorAnswerText, buildGuarantorMatchedText, customerWorriesAboutScreening, GUARANTOR_ANSWER_TYPE_NOTE, GUARANTOR_ANSWER_STAFF_EXAMPLES, GUARANTOR_SUPPORT_LINE,
 } from "../guarantor-companies";
 import { normalizeAixActionKey, AIX_STAFF_NOTES, AIX_BUTTON_LABELS } from "../aix-taxonomy";
 import { aixLedgerKind, aixTextPromises, buildActionLedger, buildLedgerLinesForBrain, LEDGER_KIND_JA } from "../action-ledger";
@@ -119,18 +120,19 @@ it("全物件が同じ会社＋並行 ON → 「1件ずつ審査」・並行の�
   expect(t).notToContain("並行して");
   expect(t.startsWith("こちら保証会社一覧となります！！")).toBe(true);   // 名前が無ければ行ごと省く
 });
-it("物件が1件だけ＋並行 ON → 「いずれも同じ」「1件ずつ」にならず誘いの文（LLM 指示も同じ）", () => {
+it("物件が1件だけ＋並行 ON → 手打ちの2行の答え（ナップ 9/30 の型）・一覧／並行／キャンセル料の行は出さない（LLM 指示も土台の文）", () => {
   const one: GuarantorProperty[] = [{ name: "カーザSun I", company: "日本セーフティー", type: "independent" }];
   const t = buildGuarantorInfoText({ customerName: "YUYA", properties: one, parallel: true });
-  expect(t).notToContain("いずれも");
-  expect(t).notToContain("1件ずつ");
-  expect(t).notToContain("並行して");
-  expect(t).toContain("よろしければお気に召されたお部屋一度審査かけさせて頂きます！！");
-  expect(formatGuarantorFacts(one, { parallel: true }).block).toContain("並行審査の提案は書かない");
+  expect(t).toBe("保証会社は日本セーフティーとなります！！\n独立系の保証会社となりますので比較的審査通過しやすいお部屋となります😊！！");
+  for (const w of ["いずれも", "1件ずつ", "並行して", "一覧", "キャンセル料", "YUYAさん"]) expect(t).notToContain(w);
+  const f = formatGuarantorFacts(one, { parallel: true }).block;
+  expect(f).toContain(`【土台の文（会社名・種類・言い回しはこの文のまま）】\n${t}`);
+  expect(f).notToContain("【並行審査】");
+  expect(guarantorInfoShape(one)).toBe("answer");
 });
 it("種類が不明の物件 → 審査の緩い・厳しいに触れない", () => {
   const t = buildGuarantorInfoText({ customerName: "YUYA", properties: [{ name: "A", company: "スモラ保証", type: "unknown" }], parallel: false });
-  expect(t).toContain("・A\nの保証会社はスモラ保証となります！！");
+  expect(t).toBe("保証会社はスモラ保証となります！！");
   expect(t).notToContain("緩い");
   expect(t).notToContain("厳し");
 });
@@ -378,7 +380,8 @@ it("信用系の説明文: 定義の言葉だけ・審査の緩い・厳しい�
   const note = buildGuarantorCheckNote([{ name: "ALEX23", company: "K-net", type: "shinyou" }]);
   expect(note).toBe("K-netという信用系の保証会社を使用しており、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る保証会社となります！！");
   const info = buildGuarantorInfoText({ customerName: "", properties: [{ name: "ハイツ岩本", company: "全保連", type: "shinyou" }], parallel: false });
-  expect(info).toContain("の保証会社は全保連と信用系の保証会社となり、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る審査となります！！");
+  // 2026-10-07: 物件1件は2行の答え（「保証会社は全保連となります！！」＋種類の文）
+  expect(info).toBe("保証会社は全保連となります！！\n信用系の保証会社となり、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る審査となります！！");
   // 一覧の決まった締めの文（審査無事通過する為・キャンセル料不要・審査かけさせて頂きます）は除いて見る
   const body = (t: string) => t.split("\n").filter((l) => !/審査無事通過する為|キャンセル料不要|審査かけさせて頂きます/.test(l)).join("\n");
   for (const t of [note, info, GUARANTOR_TYPE_SCREENING_NOTE.shinyou]) {
@@ -432,7 +435,7 @@ it("後方互換: DB・旧画面に残る値 \"licc\" は信用系として読�
   // 保存済みの "licc" のまま渡されても信用系の文になる（型の外の値＝as で渡す）
   const legacy = [{ name: "A", company: "全保連", type: "licc" as unknown as GuarantorType }];
   expect(buildGuarantorCheckNote(legacy)).toBe("全保連という信用系の保証会社を使用しており、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る保証会社となります！！");
-  expect(buildGuarantorInfoText({ customerName: "", properties: legacy, parallel: false })).toContain("の保証会社は全保連と信用系の保証会社となり");
+  expect(buildGuarantorInfoText({ customerName: "", properties: legacy, parallel: false })).toContain("保証会社は全保連となります！！\n信用系の保証会社となり");
   expect(formatGuarantorFacts(legacy, { parallel: false }).block).toContain(`- A: 全保連（${GUARANTOR_TYPE_LABELS.shinyou}）`);
   expect(checkGuarantorFacts("Aの保証会社は全保連と信用系の保証会社となります！！", legacy).ok).toBe(true);
   // スタッフ登録の会社が旧 "licc" で保存されていても信用系
@@ -469,6 +472,60 @@ it("プロンプトの一般知識の会社名はマスタから: 全保連・�
   expect(guarantorNamesByType("credit").includes("クレディセゾン")).toBe(true);
   expect(GUARANTOR_OCR_NAME_HINT).toContain("レンポッポ");
   expect(/独立系|LICC|信販|信用系/.test(GUARANTOR_OCR_NAME_HINT)).toBe(false);   // 読み取りには種類を渡さない
+});
+
+// ─── 2026-10-07 文の形（提案20回・押下0 → 手打ちの型に）───
+it("1番手・2番手（ab7ea742 9/25 の実送信の型）: 同じ物件名のカード2枚＝上が1番手", () => {
+  const p: GuarantorProperty[] = [
+    { name: "ハーモニーテラス今林 202号室", company: "シノケン", type: "independent" },
+    { name: "ハーモニーテラス今林202", company: "ほっと保証", type: "independent" },
+  ];
+  expect(guarantorInfoShape(p)).toBe("answer");
+  const t = buildGuarantorInfoText({ customerName: "YUMA", properties: p, parallel: false });
+  expect(t).toBe("1番手の保証会社はシノケンコミュニケーションズ（独立系）となり、否決の場合2番手ほっと保証（独立系）で審査される形となります！！");
+  expect(checkGuarantorFacts(t, p).ok).toBe(true);
+});
+it("1件の答え: 種類ごとの2行目（独立系＝手打ちの「比較的審査通過しやすいお部屋」・信販系／信用系は一覧と同じ説明）", () => {
+  expect(buildGuarantorAnswerText([{ name: "A", company: "ナップ賃貸保証", type: "independent" }])).toBe("保証会社はナップとなります！！\n独立系の保証会社となりますので比較的審査通過しやすいお部屋となります😊！！");
+  expect(buildGuarantorAnswerText([{ name: "A", company: "エポス", type: "credit" }])).toBe("保証会社はエポスカードとなります！！\n信販系の保証会社となり、クレジット審査となりますので比較的審査厳し目のお部屋となります！！");
+  expect(GUARANTOR_ANSWER_TYPE_NOTE.unknown).toBe("");
+  for (const t of GUARANTOR_TYPES) {
+    const one: GuarantorProperty[] = [{ name: "A", company: "テスト保証", type: t }];
+    expect(checkGuarantorFacts(buildGuarantorAnswerText(one), one).ok).toBe(true);
+  }
+});
+it("物件2件以上で2番手のある物件 → 物件ごとの一覧（9/22 YUYA・6/29 の型）・並行審査は書かない", () => {
+  const p: GuarantorProperty[] = [
+    { name: "ハイツ大空", company: "日本セーフティ", type: "independent" },
+    { name: "メゾン永田", company: "ジェイリース", type: "shinyou" },
+    { name: "メゾン永田", company: "レンポッポ", type: "independent" },
+  ];
+  expect(guarantorInfoShape(p)).toBe("rank_list");
+  const t = buildGuarantorInfoText({ customerName: "YUMA", properties: p, parallel: true });
+  expect(t).toBe("YUMAさん\nそれぞれの保証会社確認させて頂きました！！\n\n・ハイツ大空 日本セーフティー（独立系）\n・メゾン永田 1番手:ジェイリース（信用系） 2番手:レンポッポ（独立系）\n\nとなります！！\nお手隙の際にご確認ください😊！！");
+  expect(t).notToContain("並行");
+  expect(formatGuarantorFacts(p, { parallel: true }).block).toContain("【土台の文");
+});
+it("物件2件以上・1物件1社は今までの一覧（YUYA 9/15 の型）のまま", () => {
+  expect(guarantorInfoShape(YUYA)).toBe("list");
+  expect(guarantorInfoStructure("list")).toContain("※保証会社審査通過後");
+  expect(guarantorInfoStructure("answer")).toContain(GUARANTOR_SUPPORT_LINE);
+  expect(guarantorInfoStructure("answer")).toContain("一覧");   // 「一覧の形にしない」の禁止として
+});
+it("物件1件の手本はスタッフの手打ちの実送信（創作しない）・会社名は手本だけで本文の照合には使わない", () => {
+  expect(GUARANTOR_ANSWER_STAFF_EXAMPLES[0]).toBe("保証会社はナップ賃貸保証となります！！\n独立系の保証会社となりますので比較的審査通過しやすいお部屋となります😌！！");
+  expect(GUARANTOR_ANSWER_STAFF_EXAMPLES.every((t) => !/LICC/.test(t))).toBe(true);
+});
+
+it("会話を合わせる（物件1件・1番手/2番手）は LLM なし: 土台＋審査の不安がある時だけ支えの1文・一覧の形は null（LLM へ）", () => {
+  const one: GuarantorProperty[] = [{ name: "H-maison大正VII 106号室", company: "興和アシスト", type: "unknown" }];
+  expect(buildGuarantorMatchedText(one, "ここは保証会社どこでしょうか？💦\nブラックでも通る可能性ありますか？")).toBe(`保証会社は興和アシストとなります！！\n${GUARANTOR_SUPPORT_LINE}`);
+  expect(buildGuarantorMatchedText(one, "保証会社はどこですか？")).toBe("保証会社は興和アシストとなります！！");
+  expect(buildGuarantorMatchedText([{ name: "マンションサンパール", company: "エルズ", type: "independent" }], "マンションサンパールは保証会社きついですか？")).toBe(`保証会社はエルズサポートとなります！！\n${GUARANTOR_ANSWER_TYPE_NOTE.independent}\n${GUARANTOR_SUPPORT_LINE}`);
+  expect(buildGuarantorMatchedText(YUYA, "審査心配です")).toBe(null);
+  expect(customerWorriesAboutScreening("保証会社って審査ゆるいとこですか")).toBe(true);
+  expect(customerWorriesAboutScreening("保証会社どちらですか？")).toBe(false);
+  expect(checkGuarantorFacts(buildGuarantorMatchedText(one, "ブラックでも通る？")!, one).ok).toBe(true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
