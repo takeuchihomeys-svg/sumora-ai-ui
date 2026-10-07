@@ -37,13 +37,16 @@ import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
+import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
+import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
+import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict } from "@/app/lib/two-stage";
+import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
@@ -283,6 +286,8 @@ export type SuggestedAixMeta = {
   // 2026-09-12 段2: 判断の出どころ（'llm' / 'correction:*' / 'signal:*' / 'signal:scene_S2|S3|S5' / 'guard:*'）と
   // 今回の顧客発言の場面の証拠（aix-scene-evidence の要約）。brain_decision_logs と cron/brain-aix-eval が読む
   decision_source?: string | null;
+  /** 3巡目（10/07）: AIX を外した番の出どころ（記録用・brain_decision_logs には no_aix: を付けて残す） */
+  decision_source_no_aix?: string;
   // 2026-09-12 竹内方針「条件がきたら AIX に連動して自動で物件検索」: 真の初回（スタッフ未返信）でお客様が条件を送ってきた時、
   //   初回例外で action/reply_mode は出さない（初回の挨拶下書きを優先）が、物件ピックアップが必要という判断はここに残す。
   //   aix-action-items.syncAixActionItem が読み、AIX要対応（物件ピックアップした）と AIX モードの自動検索を起こす
@@ -1321,6 +1326,8 @@ export async function analyzeConversation(
   opts?: { autoSendEnabled?: boolean; isHot?: boolean; isFlagged?: boolean; prevPhase?: string | null; prevAix?: string | null; customerName?: string; mode?: "full" | "incremental"; prevMeta?: SuggestedAixMeta; totalMsgCount?: number;
     /** 2026-09-13 2層ブレイン: "fresh"＝今回の発言の層（strategy を前提に今回の発言だけ・軽く）/ "combined"＝全項目（従来） */
     layer?: "combined" | "fresh"; strategy?: BrainStrategy | null;
+    /** 3巡目（10/07）: 材料を場面で絞るか（テストの前後比べ用・無ければ BRAIN_SCENE_MATERIALS） */
+    sceneMaterials?: "on" | "off";
     /** 2026-10-02: お客様ごと・1日ごとの温めのスイッチ（analyzeAndSaveBrainMeta が decideCacheWarm で決めた値。null＝OFF） */
     cacheWarm?: CacheWarmDecision | null },
 ): Promise<SuggestedAixMeta> {
@@ -1513,7 +1520,8 @@ export async function analyzeConversation(
       .gte("priority", 4)
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(15),
+      // 3巡目（10/07）: 場面で絞る時のために多めに読み、off の時は今まで通り先頭15行だけ使う（brain-scene.sceneActionRules）
+      .limit(40),
   // aix_transition_stats: AIX遷移マップ（成約会話の実測データ・DB動的）
   supabase
     .from("aix_transition_stats")
@@ -2046,11 +2054,16 @@ export async function analyzeConversation(
   // 会話依存（前回フェーズでフィルタ済み）のため必ず userPrompt 側に注入する
   // （system側に入れると prompt caching が会話ごとにミスして Sonnet コストが跳ね上がる）
   type ActionRule = { rule_key: string; action_type: string | null; rule_text: string; priority: number | null; condition_key: string | null; condition_value: string | null };
-  const actionRules = ((actionRulesResult.data ?? []) as ActionRule[])
+  // 3巡目（10/07）: ブレインの材料を場面で絞る（app/lib/brain-scene.ts・BRAIN_SCENE_MATERIALS=on／テストは opts.sceneMaterials）
+  const brainSceneOn = brainSceneMaterialsEnabled(process.env, opts?.sceneMaterials ?? null);
+  const brainScene: ReplyScene | null = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }).scene : null;
+  const actionRulesRaw = (actionRulesResult.data ?? []) as ActionRule[];
+  const actionRulesFiltered = (brainSceneOn ? actionRulesRaw : actionRulesRaw.slice(0, 15))
     // condition_key 付きルールは conversation_state 一致のみ許可（brain は他の条件コンテキストを持たない）
     .filter((r) => !r.condition_key || (r.condition_key === "conversation_state" && r.condition_value === convStatus))
     // 恒久グローバル枠（promptRules）と本文重複するものは除外
     .filter((r) => !promptRules.some((p) => p.rule_text === r.rule_text));
+  const actionRules = brainSceneOn ? sceneActionRules(actionRulesFiltered, brainScene, true) : actionRulesFiltered;
   const actionRulesText = actionRules.length > 0
     ? `\n【アクション別ルール（現局面候補: ${actionCandidates.join("/")}）】\n${actionRules.map((r) => `- [${r.action_type}] ${r.rule_text}`).join("\n")}`
     : "";
@@ -2101,7 +2114,7 @@ export async function analyzeConversation(
     ? `\n【成約・申込到達パターン（過去に契約/申込に至った会話から学習・参考）】${contractKnowledgeLines ? `\n■ 成功法則・転換点:\n${contractKnowledgeLines}` : ""}\n※現在の会話がこれらのパターンに近い場合、closing_strategy と next_steps は成約パターンの流れに沿って提案すること。`
     : "";
   // 会話フェーズ依存（convStatus でソート済み返信例）→ customerSpecificText に追加
-  const contractExamplesPhaseText = contractExamples.length > 0
+  const contractExamplesPhaseText = contractExamples.length > 0 && keepBrainMaterial(brainScene, "contractExamples", brainSceneOn)
     ? `\n【成約した会話の実際の返信例（現フェーズ:${convStatus}優先）】\n${contractExampleLines}`
     : "";
 
@@ -2151,12 +2164,12 @@ export async function analyzeConversation(
       return (bAix - aAix) || (b.similarity - a.similarity);
     })
     .slice(0, 8);
-  const ragKnowledgeText = ragKnowledge.length > 0
+  const ragKnowledgeText = ragKnowledge.length > 0 && keepBrainMaterial(brainScene, "ragKnowledge", brainSceneOn)
     ? `\n【関連ナレッジ（この会話に類似する過去の学習・RAG検索）】\n${ragKnowledge.map((k) => `- [${k.category ?? "knowledge"}${k.conversation_state ? `/${k.conversation_state}` : ""}] ${(k.title ?? "").replace(/\n/g, " ").slice(0, 40)}: ${(k.content ?? "").replace(/\n/g, " ").slice(0, 1200)}`).join("\n")}\n※現在の会話状況に該当するものがあれば aix / closing_strategy / next_steps の判断に反映すること。`
     : "";
 
   // winning_patterns: RAG検索結果から類似パターンを注入（バルクフェッチ廃止・会話コンテキスト最適化）
-  const winningPatternsText = ragWinningPatterns.length > 0
+  const winningPatternsText = ragWinningPatterns.length > 0 && keepBrainMaterial(brainScene, "winning", brainSceneOn)
     ? `\n【類似成約・失注パターン（RAG検索・この会話に類似した過去事例）】\n${ragWinningPatterns.map((w) => {
         const outcomeLabel = w.outcome_type === "closed_lost" ? "【失注】" : "【成約】";
         const parts = [`${outcomeLabel} ${w.pattern}`];
@@ -2551,7 +2564,7 @@ ${history}`;
       sentProps: sentPropsText.length, propertySearch: propertySearchText.length, history: history.length,
       customerState: customerStateBlockText.length, parallelSearch: parallelSearchBrainText.length,
     },
-    customerStage: customerState?.stage ?? null, parallelScene: parallelSearchCtx.scene,
+    customerStage: customerState?.stage ?? null, parallelScene: parallelSearchCtx.scene, brainScene: brainSceneOn ? brainScene : "off",
     userTotal: customerSpecificText.length, staticSystem: sys.staticText.length, dynamicSystem: sys.dynamicText.length,
   }));
   // 2026-09-23 竹内「問題は個人情報を deepseek 側が読み取ること」:
@@ -2708,7 +2721,9 @@ ${history}`;
       : null;
     // 2026-09-13 2層ブレイン: お客様の要約（ai_summary）は戦略の層が書く。今回の発言の層は（出力されても）保存しない
     if (propertyCustomerId && !isFreshLayer && (brainSummaryText || brainSummaryJson)) {
-      after(async () => {
+      // 2026-10-07 3巡目: リクエストの外（再生のスクリプト・監査）で after() が例外を投げ、ブレインの判断ごと null になっていた（条件の行がある会話だけ）
+      //   → 他の after() と同じく、使えない時はその場で走らせる
+      const saveSummary = async () => {
         try {
           await supabase
             .from("property_customers")
@@ -2721,7 +2736,8 @@ ${history}`;
         } catch (e) {
           console.warn("[brain-core] ai_summary save failed:", propertyCustomerId, e instanceof Error ? e.message : e);
         }
-      });
+      };
+      try { after(saveSummary); } catch { void saveSummary(); }
     }
 
     // Use a canonical action key from AIX_BRAIN_NOTES if Haiku returned one we recognise.
@@ -3003,6 +3019,20 @@ ${history}`;
       if (!promiseAix && vf && finalAix === "viewing_invite" && vf.stage === "date_agreed" && vf.currentReply === "date_time" && sceneEvidence?.reasonCode !== "viewing_date_alternative") {
         finalAix = "meeting_place";
         decisionSource = "signal:viewing_flow_date_time";
+      }
+      // 3巡目（10/07・AIX の判断のずれ A6・O4／竹内さん「３AIXで内覧調整する　直接」）: 内覧の AIX は内覧の流れの段階を門にする。VIEWING_FLOW_GATE=off で戻す
+      //   ①待ち合わせ場所は日にちが決まった後（date_agreed・confirmed）だけ。決まる前（希望・候補を出した）に LLM が待ち合わせを選んだ（「木曜日内見いけますか？」）→ 内覧調整
+      //   ②お客様が内覧の日時を指定・変更した（日だけ・日を選んだ・日時・都合が合わない）のに AIX なし／確認の AIX の時は、2段の約束ではなく内覧調整を直接
+      //     （日にちが決まった後の日＋時刻は上の①の逆で待ち合わせ。取りやめ・保留は触らない）
+      if (vf && !promiseAix && (process.env.VIEWING_FLOW_GATE ?? "").toLowerCase() !== "off") {
+        const dateReply = vf.currentReply === "date_time" || vf.currentReply === "day_pick" || vf.currentReply === "day_only" || vf.currentReply === "ask_back";
+        if (finalAix === "meeting_place" && (vf.stage === "none" || vf.stage === "wished" || vf.stage === "proposing") && decisionSource !== "promise:meeting") {
+          finalAix = "viewing_invite";
+          decisionSource = "signal:viewing_flow_meeting_too_early";
+        } else if (dateReply && decisionSource !== "guard:viewing" && (vf.stage === "wished" || vf.stage === "proposing" || vf.stage === "confirmed") && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
+          finalAix = "viewing_invite";
+          decisionSource = vf.stage === "confirmed" ? "signal:viewing_flow_reschedule" : "signal:viewing_flow_date_wish";
+        }
       }
       if (vf && vf.stage !== "none" && vf.stage !== "done") console.info("[brain:viewing-flow]", JSON.stringify({ conversationId, stage: vf.stage, confirmed: vf.confirmed, label: vf.label, lastReply: vf.lastReply, currentReply: vf.currentReply, askedDay: vf.askedDay, reason: vf.reason, aix: finalAix, source: decisionSource }));
     }
@@ -3287,8 +3317,10 @@ ${history}`;
       let pickupReady = false;
       if (finalAix === "property_send" || finalAix === "property_recommendation" || finalAix === "property_search") {
         try {
-          const { count } = await supabase.from("property_pickups").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).eq("status", "pending");
-          pickupReady = (count ?? 0) > 0;
+          // 3巡目（10/07）: pending の有無だけでなく新しさで（two-stage.freshPickupReady・PICKUP_READY_FRESH=off で戻す）
+          const { data: pend, error: pendErr } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
+          if (pendErr) throw pendErr;
+          pickupReady = freshPickupReady((pend ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
         } catch { pickupReady = true; } // 読めない時は AIX のまま（今まで通り）
       }
       twoStage = resolveTwoStage({
@@ -3296,6 +3328,8 @@ ${history}`;
         asksCost: /初期費用|見積|いくら|費用/.test(unrepliedTurn.text ?? ""),
         estimateTarget: focusedEstimateOverride,
         customerText: unrepliedTurn.text ?? "",
+        // 3巡目（10/07）: 約束の直後のお礼・了承だけ（ZWJ の絵文字 🙇🏻‍♀️ もお礼と読む isAckOnlyTurn）
+        ackRightAfterPromise: (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""))) && brainLedger.facts.lastStaffEntry?.status === "promised",
       });
       if (twoStage) {
         console.log(JSON.stringify({ tag: "brain:two-stage", conversationId, from: finalAix, src: decisionSource, kind: twoStage.kind }));
@@ -3896,6 +3930,8 @@ ${history}`;
       signal_aix_result: signalAixResult,
       // 2026-09-12 段2: 判断の出どころと今回の顧客発言の場面の証拠（JSONB・スキーマ変更不要）。brain_decision_logs にも同じ値を残す
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
+      // 3巡目（10/07・AIX の判断のずれの調査 1468132d）: AIX を外した番（2段の約束・手続きの質問・資料で答える・連絡待ち 等）の出どころを捨てていた → 記録用に別の欄で残す（画面・関所は decision_source だけを見るので挙動は変わらない）
+      decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource : undefined,
       first_contact_pickup: firstContactPickup,
       // 2026-10-02 ⑫ 17巡: 2段の場面（約束の返信）にした時の種類。自動送信の関所が「約束の無い下書き」を止めるのに使う（auto-reply-policy ⑥-4）
       two_stage: twoStage ? twoStage.kind : undefined,
@@ -4859,7 +4895,7 @@ async function analyzeAndSaveBrainMetaInner(
       const { error: insErr } = await supabase.from("brain_decision_logs").insert({
         ...baseRow,
         suggested_check_pattern: typeof metaObj.check_pattern === "string" ? metaObj.check_pattern : null,
-        decision_source: typeof metaObj.decision_source === "string" ? metaObj.decision_source : null,
+        decision_source: typeof metaObj.decision_source === "string" ? metaObj.decision_source : typeof metaObj.decision_source_no_aix === "string" ? `no_aix:${metaObj.decision_source_no_aix}` : null,
         analysis_mode: useFreshLayer ? "fresh" : analysisMode,
         analyzed_msg_ts: typeof metaObj.analyzed_msg_ts === "string" ? metaObj.analyzed_msg_ts : null,
         scene_evidence: metaObj.scene_evidence ? JSON.stringify(metaObj.scene_evidence) : null,

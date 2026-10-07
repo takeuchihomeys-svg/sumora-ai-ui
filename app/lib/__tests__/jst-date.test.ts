@@ -138,5 +138,18 @@ describe("jstAgo（どれだけ前か）", () => {
   });
 });
 
+describe("テストの時計（3巡目・営業時間外の例外）", () => {
+  it("試しの印がある時だけ TEST_CLOCK_JST_HOUR で今の時を変える・引数ありの時刻は変えない", () => {
+    const save = { ...process.env };
+    delete process.env.LLM_TEST_MODE; delete process.env.LLM_TEST_FINAL_CLAUDE; process.env.TEST_CLOCK_JST_HOUR = "14";
+    const real = new Date(Date.now() + 9 * 3600_000).getUTCHours();
+    expect(jstParts().hour).toBe(real);
+    process.env.LLM_TEST_MODE = "deepseek-all";
+    expect(jstParts().hour).toBe(14);
+    expect(jstParts(Date.parse("2026-10-07T13:00:00Z")).hour).toBe(22);
+    for (const k of ["LLM_TEST_MODE", "LLM_TEST_FINAL_CLAUDE", "TEST_CLOCK_JST_HOUR"]) { if (save[k] === undefined) delete process.env[k]; else process.env[k] = save[k]; }
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }

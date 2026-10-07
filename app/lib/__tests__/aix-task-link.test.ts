@@ -39,6 +39,15 @@ it("今ピックアップする宣言 → AIX 物件ピックアップした", (
   const t = "かしこまりました！！梅田周辺全域からオススメできるお部屋ピックアップしお送りさせて頂きます！！";
   expect(resolveStaffPromiseAix(facts(t), [C("梅田で探してほしいです"), S(t)])?.action ?? null).toBe("property_send");
 });
+// 3巡目（10/07・竹内さん「５それで大丈夫」）: 約束が複数残る時は確認・見積を先に果たす
+it("最後はピックアップの約束でも見積書の約束が残る → 見積書送るが先", () => {
+  const t = "かしこまりました！！梅田周辺全域からオススメできるお部屋ピックアップしお送りさせて頂きます！！";
+  expect(resolveStaffPromiseAix(facts(t, { est: true }), [C("見積もりとほかの部屋もお願いします"), S(t)], { propertyInPlay: true })?.action ?? null).toBe("estimate_sheet");
+});
+it("最後はピックアップの約束・確認の約束も残る（お客様の依頼あり）→ 物件確認したが先", () => {
+  const t = "かしこまりました！！梅田周辺全域からオススメできるお部屋ピックアップしお送りさせて頂きます！！";
+  expect(resolveStaffPromiseAix(facts(t, { conf: true }), [C("ここ空いてますか？あとほかの部屋も"), S(t)], { customerRequestedCheck: true })?.action ?? null).toBe("property_check_result");
+});
 it("「新着でオススメ出来るお部屋出次第お送り」（条件付き）→ AIX なし", () => {
   const t = "新着でオススメ出来るお部屋で次第お送りさせていただきます！！";
   expect(resolveStaffPromiseAix(facts(t), [C("ありがとうございます"), S(t)])).toBe(null);

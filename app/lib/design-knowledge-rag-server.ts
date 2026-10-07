@@ -2,7 +2,7 @@
 //   決まりは design-knowledge-rag.ts（純）。埋め込みは text-embedding-3-small（1536次元・$0.02/100万トークン）。
 //   設計知見に個人情報は入れない決まりだが、送る前に maskForEmbedding（共通の伏せ字）を通す。
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { hybridRank, kbEmbeddingInput, needsEmbedding, textHash, type RagRow, type Scored } from "@/app/lib/design-knowledge-rag";
+import { hybridRank, kbEmbeddingInput, needsEmbedding, sceneQuery, textHash, type KbScene, type RagRow, type Scored } from "@/app/lib/design-knowledge-rag";
 import { maskForEmbedding } from "@/app/lib/pii-mask";
 
 const EMBED_MODEL = "text-embedding-3-small";
@@ -71,8 +71,12 @@ export async function embedKbRows(sb: SupabaseClient, opts: { dry: boolean; ids?
   return { target: target.length, embedded, tokens, estTokens, usd: (tokens / 1e6) * EMBED_PRICE_PER_M };
 }
 
-/** 自然文の問いで引く（近さ＋語＋札＋新しさ）。返すのは上位 k */
-export async function searchKb(sb: SupabaseClient, q: string, opts: { k?: number; tags?: string[]; mode?: "hybrid" | "vector" | "keyword"; rows?: RagRow[]; vecCache?: Map<string, Map<string, number>> } = {}): Promise<Scored[]> {
+/**
+ * 自然文の問いで引く（近さ＋語＋札＋新しさ）。返すのは上位 k
+ *   scene（3巡目・10/07）: 返信の場面で引く＝問いに場面の語を足し（expand=false で足さない）、場面の札・題の型の行に点を足す
+ */
+export async function searchKb(sb: SupabaseClient, q0: string, opts: { k?: number; tags?: string[]; mode?: "hybrid" | "vector" | "keyword"; rows?: RagRow[]; vecCache?: Map<string, Map<string, number>>; scene?: KbScene | null; expand?: boolean; sceneWeight?: number } = {}): Promise<Scored[]> {
+  const q = opts.expand === true ? sceneQuery(q0, opts.scene) : q0; // 語を足すと当たりが下がった（問い33: 0.73→0.79 だが holdout 0.75→0.67）＝既定は足さない
   const rows = opts.rows ?? await loadRagRows(sb);
   let vec = opts.vecCache?.get(q) ?? null;
   if (!vec && (opts.mode ?? "hybrid") !== "keyword") {
@@ -85,7 +89,7 @@ export async function searchKb(sb: SupabaseClient, q: string, opts: { k?: number
     }
     opts.vecCache?.set(q, vec);
   }
-  return hybridRank(rows, vec ?? new Map(), q, { nowIso: new Date().toISOString(), tags: opts.tags, mode: opts.mode }).slice(0, opts.k ?? 8);
+  return hybridRank(rows, vec ?? new Map(), q, { nowIso: new Date().toISOString(), tags: opts.tags, mode: opts.mode, scene: opts.scene, sceneWeight: opts.sceneWeight }).slice(0, opts.k ?? 8);
 }
 
 /** 新しい行の近い現行の行（週の整理の似ている組の候補・全件比較の SQL 関数） */

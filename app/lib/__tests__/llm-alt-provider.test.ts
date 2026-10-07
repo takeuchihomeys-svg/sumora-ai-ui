@@ -6,7 +6,7 @@ import {
   readAltConfig, shouldRouteAlt, resolveRouteName, toOpenAIBody, fromOpenAIResponse, flattenContent, ROUTE_MARKERS,
   isAutoSendCall, isPostApplyCall, isPostApplyStatus, willRouteAlt, createSseConverter,
   DEEPSEEK_ENDPOINT, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_FLASH_MODEL,
-  readProviderTarget, readAltRoutes, targetConfigFor, isAltRouteDenied, QWEN_ENDPOINT, QWEN_DEFAULT_MODEL,
+  readProviderTarget, readAltRoutes, targetConfigFor, isAltRouteDenied, QWEN_ENDPOINT, QWEN_DEFAULT_MODEL, wellFormedJson,
 } from "../llm-alt-provider";
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 import { AIX_SHARED_SYSTEM_PREFIX, buildSystemBlocks } from "../aix-system-blocks";
@@ -487,6 +487,13 @@ console.log("── ★ Qwen（名前ごとの振り分け・2026-09-29「作り
   const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
   t("★ 出口は振り分けた相手（target）で呼び・記録する（主の model を書かない）", /const target = targetConfigFor\(cfg, routeName\)/.test(provider) && /model: target\.model, action: routeName/.test(provider));
   t("★ .env.local に QWEN_API_KEY / LLM_ALT_ROUTES は無い（既定 OFF・鍵が無いので動かさない）", !/^(QWEN_API_KEY|LLM_ALT_ROUTES)=/m.test((() => { try { return readFileSync(".env.local", "utf8"); } catch { return ""; } })()));
+}
+
+// 3巡目（10/07）: 絵文字の半分（孤立したサロゲート）は U+FFFD に置き換えて送る（DeepSeek の 400「unexpected end of hex escape」）
+{
+  const half = "あ😊い".slice(0, 2);
+  const j = wellFormedJson({ a: half, b: "😊🙇🏻‍♀️" });
+  t("孤立したサロゲートは置き換える・組の絵文字はそのまま", JSON.parse(j).a === "あ�" && JSON.parse(j).b === "😊🙇🏻‍♀️");
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`);

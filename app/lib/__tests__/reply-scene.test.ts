@@ -1,6 +1,6 @@
 // app/lib/__tests__/reply-scene.test.ts — 2026-10-07 場面の整理（実行: npx tsx app/lib/__tests__/reply-scene.test.ts）
 //   文は本番の実際のお客様の発言（9/07〜の番・名前は伏せた）
-import { resolveReplyScene, phaseGuideForScene, keepMaterial, sceneMaterialsEnabled, stripKnowledgeSections } from "../reply-scene";
+import { resolveReplyScene, phaseGuideForScene, keepMaterial, sceneMaterialsEnabled, stripKnowledgeSections, consideringAvoidTopics, CONSIDERING_AVOID_PUSH, CONSIDERING_DOOR_EXEMPT_NOTE } from "../reply-scene";
 import { PHASE_GUIDE } from "../line-reply-prompts";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -8,6 +8,15 @@ const sc = (s: string) => resolveReplyScene({ customerText: s }).scene;
 
 const cases: Array<[string, string]> = [
   ["ありがとうございます🙏🏻", "ack"],
+  // 3巡目: 「よろしくお願いします」は依頼の語ではない（内覧の駐車場の質問を条件にしていた）
+  ["よろしくお願いします\n駐車場は近くのパーキングでよろしいですか？", "question"],
+  // 3巡目: お礼の語を除いた残りに中身がある発言は短いお礼にしない（条件・断り・依頼を落とさない＝本番 1,000 発言で 41 が other へ）
+  ["[スタンプ]", "ack"],
+  ["お願い致します！", "ack"],
+  ["本当にご無理を言いまして申し訳ありません。\nよろしくお願い致します。", "ack"],
+  ["ありがとうございます！\nアーバネックス気になります！", "other"],
+  ["よろしくお願いします！\n心斎橋難波辺りが近めでお願いします。", "other"],
+  ["すいません。この物件はいらないです。", "other"],
   ["こちらこそよろしくお願いします🙇", "ack"],
   ["お願いします🤭", "ack"],
   ["ありがとうございます。 検討させていただきます", "considering"],
@@ -85,5 +94,12 @@ t("off なら全部入れる", keepMaterial("ack", "knowledge", false));
 t("env off", !sceneMaterialsEnabled({ REPLY_SCENE_MATERIALS: "off" }));
 t("テストの on は env off に勝つ", sceneMaterialsEnabled({ REPLY_SCENE_MATERIALS: "off" }, "on"));
 
+// 3巡目（10/07）検討中の決まりを1か所に: 避ける話題は催促だけに置き換え・扉の1文は但し書きで許す
+{
+  const out = consideringAvoidTopics(["申込誘導", "希少性煽り", "内見誘導", "物件追加提案"]);
+  t("検討中の避ける話題: 申込誘導→申込の催促・内見誘導→内覧の日程の打診", out.includes(CONSIDERING_AVOID_PUSH) && !out.includes("申込誘導") && !out.includes("内見誘導") && out.includes("希少性煽り"));
+  t("検討中の避ける話題: off の時は元のまま", consideringAvoidTopics(["申込誘導"], false)[0] === "申込誘導");
+  t("扉の1文の但し書きに竹内さんの許可の形", /お申込みでお部屋抑え/.test(CONSIDERING_DOOR_EXEMPT_NOTE) && /当たらない/.test(CONSIDERING_DOOR_EXEMPT_NOTE));
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

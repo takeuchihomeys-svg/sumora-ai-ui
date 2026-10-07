@@ -626,3 +626,17 @@ export function buildClosingTargetBrainNote(st: ClosingTargetState | null | unde
 状態: ${STATUS_JA[st.status]}${sent.length ? `／送った後の🌟: ${sent.join("・")}` : ""}
 扱い: ${t.scope === "permanent" ? "登録の条件に足してよい型" : "その回の検索と採点だけ（登録の条件は変えない）"}`;
 }
+
+/**
+ * 返信の材料（3巡目・2026-10-07 竹内さん「必要な場面では物件検索ブレインから分析してもらうのもあり」）:
+ *   決め手の条件（物件検索ブレインと同じ値）を、返信の下書きに材料として渡す（言い回しの指示は最小・数字は像にある物だけ）。
+ *   使う場面: お客様の「あと一つ」の後の番（検討中・お礼・条件・質問）で、探す宣言・次の一手の文が像とずれない（登録の条件の言い直しにしない）ため。
+ *   見つかった後（found）は渡さない。REPLY_PROPERTY_BRAIN=on（既定は off・テストは body.testFlags.property_brain）
+ */
+export function buildClosingTargetReplyNote(st: ClosingTargetState | null | undefined): string {
+  if (!st || st.status === "found") return "";
+  const t = st.target;
+  const fav = t.favorite ? `${t.favorite.name ?? ""}${t.favorite.room ? ` ${t.favorite.room}` : ""}`.trim() : "";
+  return `【物件検索ブレインの分析（決め手の条件）】${fav ? `お客様は${fav}を気に入っていて、` : ""}「${t.evidence.slice(0, 40)}」（${t.kinds.map((k) => GAP_KIND_JA[k]).join("・")}）。次に探すお部屋の像: ${t.rationale}。`
+    + `探す・お送りする約束を書く時は、この像（${t.kinds.map((k) => GAP_KIND_JA[k]).join("・")}の点）を具体的に書く（登録の条件の復唱にしない・像に無い数字は書かない）。`;
+}

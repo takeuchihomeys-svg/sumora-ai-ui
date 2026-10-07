@@ -41,9 +41,23 @@ function toMs(input: string | number | Date | null | undefined): number {
 }
 
 /** 日本時間の年月日・時分・曜日（ms 省略時は現在） */
-export function jstParts(input: string | number | Date = Date.now()): JstParts {
-  const j = new Date(toMs(input) + JST_OFFSET_MS);
-  return { y: j.getUTCFullYear(), m: j.getUTCMonth() + 1, d: j.getUTCDate(), hour: j.getUTCHours(), minute: j.getUTCMinutes(), dow: j.getUTCDay() };
+export function jstParts(input?: string | number | Date): JstParts {
+  const j = new Date(toMs(input ?? Date.now()) + JST_OFFSET_MS);
+  const hour = input === undefined ? (testClockHour() ?? j.getUTCHours()) : j.getUTCHours();
+  return { y: j.getUTCFullYear(), m: j.getUTCMonth() + 1, d: j.getUTCDate(), hour, minute: j.getUTCMinutes(), dow: j.getUTCDay() };
+}
+
+/**
+ * テストの時計（3巡目・2026-10-07 竹内さん「テストの際は営業時間外の例外でおねがい」）:
+ *   試しの印（LLM_TEST_MODE／LLM_TEST_FINAL_CLAUDE）がある時だけ、TEST_CLOCK_JST_HOUR=14 で「今」の時（jstParts() を引数なしで呼んだ時）を昼にする。
+ *   日付・分・経過時間（Date.now() の差）は変えない＝営業時間外の指示（管理会社の営業時間・明日一番で）だけが入らなくなる。本番は印が無いので効かない
+ */
+export function testClockHour(): number | null {
+  if (typeof process === "undefined" || !process.env) return null;
+  const raw = process.env.TEST_CLOCK_JST_HOUR;
+  if (!raw || !(process.env.LLM_TEST_MODE || process.env.LLM_TEST_FINAL_CLAUDE)) return null;
+  const h = Number(raw);
+  return Number.isInteger(h) && h >= 0 && h <= 23 ? h : null;
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0");

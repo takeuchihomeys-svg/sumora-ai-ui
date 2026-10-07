@@ -117,6 +117,15 @@ it("返信の案・スタッフは最初に AIX だけ → 別の事", () => {
   const j = judgeTurn({ draft: "はい", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "property_send", check_pattern: null, at: at(5), burst: true }]) });
   eq([j.verdict, j.detail.reason], ["different", "text_but_aix"]);
 });
+// v5（10/07 竹内さん「１それで大丈夫」）: AI の2段の約束の返信 → スタッフがその約束の AIX を直接（その場で済ませた）＝一致
+it("2段の約束（ピックアップ）・スタッフは物件ピックアップを直接 → 一致（two_stage_fulfilled）", () => {
+  const j = judgeTurn({ draft: "かしこまりました！！\nYUMAさんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "property_send", check_pattern: null, at: at(20), burst: true }]) });
+  eq([j.verdict, j.detail.reason], ["same_meaning", "two_stage_fulfilled"]);
+});
+it("2段の約束（見積書）・スタッフは物件確認した → 今まで通り別の事", () => {
+  const j = judgeTurn({ draft: "最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！", brainReplyMode: "auto_reply", hasBrain: true, window: win("", [{ aix_type: "property_check_result", check_pattern: null, at: at(20), burst: true }]) });
+  eq([j.verdict, j.detail.reason], ["different", "text_but_aix"]);
+});
 
 console.log("judgeTurn（AIX の番）");
 const aixTurn = (action: string, draft: string | null, w: Pick<StaffWindow, "closed" | "texts" | "presses" | "aixMessages" | "aixMessagesBurst">) => judgeTurn({ draft, brainAction: action, brainReplyMode: "aix", hasBrain: true, window: w });

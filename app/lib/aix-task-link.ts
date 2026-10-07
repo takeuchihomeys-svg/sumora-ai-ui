@@ -115,6 +115,13 @@ export function resolveStaffPromiseAix(
   //   「〇〇さんにオススメできるお部屋（の募集）を随時確認し、出次第お送りします」は「次第」が入るが、
   //   果たす手は決まっている（物件を送る）ので対象にする。どちらで送るかはスタッフが決める＝2つ目に物件オススメを並べる。
   //   実データ（365日・この型8件）: その後スタッフが送るのは物件資料（[画像]）4件・ピックアップ宣言1件で、確認結果の報告は0件
+  // 3巡目（10/07・竹内さん「５それで大丈夫」＝約束が複数残る時は確認・見積を先に果たす・AIX の判断のずれ O2/R2）:
+  //   こちらの最後の約束がピックアップでも、まだ果たしていない見積書（見積る物件がある）・確認の約束が残っていれば、そちらの AIX を先に。
+  //   スタッフは確認・見積を先に果たしていた（ブレインはピックアップ）。戻す: PROMISE_ORDER_CHECK_FIRST=off
+  if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && (typeof process === "undefined" || (process.env?.PROMISE_ORDER_CHECK_FIRST ?? "").toLowerCase() !== "off")) {
+    if (facts.estimatePromisedUnfulfilled && opts.propertyInPlay !== false && !opts.customerWillSend) return { action: "estimate_sheet", kind: "estimate" };
+    if (facts.confirmationPromisedUnfulfilled && (opts.customerRequestedCheck || opts.customerAckAfter)) return { action: "property_check_result", kind: "check" };
+  }
   if (e.kind === "pickup_declared" && facts.pickupPromisedUnfulfilled && e.detail?.watch === true) {
     return { action: "property_send", kind: "pickup", alt: "property_recommendation" };
   }

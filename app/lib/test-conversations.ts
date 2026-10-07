@@ -10,8 +10,15 @@
 /** YUMA（竹内さん本人のテスト用 LINE・sumora） */
 export const YUMA_CONVERSATION_ID = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 
-/** テスト用の会話の id */
-export const TEST_CONVERSATION_IDS: readonly string[] = [YUMA_CONVERSATION_ID];
+/**
+ * スタッフ同士のやり取りの会話（お客様ではない）。見張り・学習から外す（テスト用の会話と同じ扱い）。
+ * 2026-10-07 竹内さん「４スタッフ同士の会話外して良い」（AIX の判断のずれの調査で 469a614a の文がスタッフ同士＝「また井尻さんか！笑」等）。
+ * ※ YUMA だけに許す試し（LLM のテストの歯止め）は YUMA_CONVERSATION_ID で別に見ているので、ここに足しても試しには使われない
+ */
+export const STAFF_INTERNAL_CONVERSATION_IDS: readonly string[] = ["469a614a-7518-45c7-88cc-814e674fa881"];
+
+/** テスト用の会話の id（学習・見張りから外す会話＝YUMA＋スタッフ同士の会話） */
+export const TEST_CONVERSATION_IDS: readonly string[] = [YUMA_CONVERSATION_ID, ...STAFF_INTERNAL_CONVERSATION_IDS];
 const TEST_SET: ReadonlySet<string> = new Set(TEST_CONVERSATION_IDS);
 
 /** テスト用の会話か（null・空は false） */

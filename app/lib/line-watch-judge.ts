@@ -31,7 +31,7 @@ import { sceneKeyOf } from "./line-watch-turn";
 //   v3-2026-10-07: スタッフが返さなかった番で、AI の下書きがお礼・了承の番の読むべき範囲の外の行為（お部屋を探す宣言 等）を書いた → different（no_staff_out_of_topic）
 //     （uran. 10/05: 「よろしくお願いいたします」に43日前の物件探しの宣言・スタッフは返さず＝旧は na で数えず見えていなかった。範囲は ack-topic-scope.ts）
 //   v4-2026-10-07: 下書きの欄が __SHOWN__（画面が表示した印）の番は draft_first で比べる（pickJudgeDraft・draft_src）。旧は返信の番の 39% を na にしていた
-export const JUDGE_VERSION = "v4-2026-10-07";
+export const JUDGE_VERSION = "v5-2026-10-07";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -233,6 +233,7 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   aix_but_text: "AI は AIX・スタッフは手打ちの文だけ",
   aix_ack_by_text: "確認の AIX を手打ちの確認の宣言で",
   text_but_aix: "AI は返信・スタッフは AIX",
+  two_stage_fulfilled: "AI は約束の返信・スタッフはその約束の AIX を直接（決まりどおり）",
   text_plus_aix: "文は同じ・スタッフは AIX も足した",
   no_draft: "下書きが無い（手打ち）",
   sentinel_only: "印だけで下書きの文が無い",
@@ -307,6 +308,15 @@ export function judgeTurn(i: JudgeInput): Judgement {
 
   // ── AI は返信 ──
   if (burstPress.length || i.window.aixMessagesBurst > 0) {
+    // v5（2026-10-07 竹内さん「１それで大丈夫」・AIX の判断のずれ R1）: AI は2段の約束の返信（ピックアップ・確認・見積書）、スタッフは同じまとまりで
+    //   その約束を果たす AIX を直接押した（その場で確認・作成を済ませた）＝決まりどおりの流れ → 一致（two_stage_fulfilled）。2段の後の外れ 19 のうち 13
+    if (draft && burstPress.length) {
+      const dActs = staffActsOf(draft);
+      const fulfils = (a: string) => (dActs.has("pickup_promise") && /^property_(send|recommendation|search)$/.test(a))
+        || (dActs.has("check_promise") && (a === "property_check_result" || a === "acknowledge_check"))
+        || (dActs.has("estimate_promise") && a === "estimate_sheet");
+      if (burstPress.some(fulfils)) return { verdict: "same_meaning", detail: withText({ ...base, reason: "two_stage_fulfilled", brain_aix: null, staff_aix: burstPress, aix_verdict: "same" }) };
+    }
     // 文は下書きどおり・スタッフは AIX も足した → 一部違う（AI が AIX を出さなかった）。文も違う・文が無い → 別の事
     const textAgree = !!text && isAgree(text.verdict);
     return { verdict: textAgree ? "partial" : "different", detail: withText({ ...base, reason: textAgree ? "text_plus_aix" : "text_but_aix", brain_aix: null, staff_aix: burstPress, aix_verdict: "unexpected" }) };

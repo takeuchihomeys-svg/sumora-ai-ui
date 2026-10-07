@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/design-knowledge-rag.test.ts（自己完結・env 不要）
 import {
   kbEmbeddingInput, textHash, needsEmbedding, queryGrams, keywordScore, tagScore, recencyScore, hybridRank, cosine, isOwnerWords,
-  EMBED_MAX_CHARS, HYBRID_WEIGHTS, NEAR_DUP_MIN, type RagRow,
+  EMBED_MAX_CHARS, HYBRID_WEIGHTS, NEAR_DUP_MIN, rowInScene, KB_SCENES, sceneQuery, type RagRow,
 } from "../design-knowledge-rag";
 
 let passed = 0, failed = 0;
@@ -46,6 +46,18 @@ t("重みは評価で決めた値（keyword 0.5・tag 0.3・recency 0.15）", HY
 console.log("── 似ている組の近さ");
 t("コサイン", Math.abs(cosine([1, 0], [1, 0]) - 1) < 1e-9 && Math.abs(cosine([1, 0], [0, 1])) < 1e-9);
 t("似ている組の線は 0.80（DeepSeek が同じ・上書きとした27組の 20 が入る）", NEAR_DUP_MIN === 0.8);
+
+console.log("── 返信の場面で引く（3巡目）");
+{
+  t("題の型で場面に入る（検討します）", rowInScene({ title: "「検討します」と持ち帰った場面は2択", tags: [] }, "considering"));
+  t("札だけでも場面に入る", rowInScene({ title: "無関係", tags: [KB_SCENES.viewing.tag] }, "viewing"));
+  t("本文の語では入らない（題だけ）", !rowInScene({ title: "キャッシュの分け方", tags: [] }, "cost"));
+  const r1 = { id: "S", title: "検討中の締め", insight: "x", tags: [], is_current: true, created_at: NOW };
+  const r2 = { id: "O", title: "別の話", insight: "x", tags: [], is_current: true, created_at: NOW };
+  t("場面の行に点が足される", hybridRank([r2, r1], new Map([["S", 0.5], ["O", 0.6]]), "締め", { nowIso: NOW, scene: "considering" })[0].row.id === "S");
+  t("場面なしは今まで通り", hybridRank([r2, r1], new Map([["S", 0.5], ["O", 0.6]]), "締め", { nowIso: NOW })[0].row.id === "O");
+  t("問いに語を足す形", sceneQuery("締め", "ack") !== "締め" && sceneQuery("締め", null) === "締め");
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

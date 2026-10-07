@@ -681,7 +681,9 @@ async function callOpenAICompatible(
       ? { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` }
       // Azure は api-key / Authorization のどちらでも通るので両方送る
       : { "Content-Type": "application/json", "api-key": cfg.apiKey, Authorization: `Bearer ${cfg.apiKey}` },
-    body: JSON.stringify(payload),
+    // 2026-10-07 3巡目: 文字数で切った所で絵文字（サロゲートの組）が半分になると、JSON に孤立した \udXXX が入り
+    //   DeepSeek が 400「unexpected end of hex escape」で断る（再生のブレインで 54番中 1番・Claude は通す）→ 送る前に孤立した半分を U+FFFD に置き換える
+    body: wellFormedJson(payload),
     signal: AbortSignal.timeout(90_000),
   });
   if (!res.ok) throw new Error(`${cfg.provider} ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -929,4 +931,9 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
   if (cfg.testMode) console.warn(`[llm-test-mode] ${cfg.testMode}: ブレインも含めて全部の Claude 呼び出しを ${cfg.provider}（${cfg.model}）に回す・Claude に行く物は止める（LLM_TEST_ALLOW_CLAUDE で名札ごとに通す）・失敗しても Claude に戻さない（ローカル専用・手順書 memory/test_protocol_brain.md）`);
   return true;
+}
+
+/** JSON にする前に、孤立したサロゲート（絵文字の半分）を U+FFFD に置き換える（DeepSeek は孤立した \udXXX を受け付けない） */
+export function wellFormedJson(v: unknown): string {
+  return JSON.stringify(v, (_k, x) => (typeof x === "string" ? x.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�") : x));
 }

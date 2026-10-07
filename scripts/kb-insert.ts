@@ -5,6 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import { embedKbRows } from "../app/lib/design-knowledge-rag-server";
+import { sceneTagsToAdd } from "./kb-scene-tag";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const file = process.argv[2];
@@ -19,6 +20,8 @@ async function main() {
       if (!row[k]) { console.error(`必須の項目がありません: ${k}（${String(row.title ?? "無題")}）`); process.exit(1); }
     }
   }
+  // 2026-10-07（3巡目）題が返信の場面に当たる行には札「場面:〇〇」を足す（kb.ts --scene で引く入口）
+  for (const row of rows) { const add = sceneTagsToAdd({ title: String(row.title), tags: (row.tags as string[] | undefined) ?? [] }); if (add.length) row.tags = [...((row.tags as string[] | undefined) ?? []), ...add]; }
   const { data, error } = await sb.from("system_design_thinking").insert(rows).select("id");
   if (error) { console.error("INSERT 失敗:", error.message); process.exit(1); }
   for (const row of rows) console.log(`設計知見を INSERT しました: ${row.title}`);

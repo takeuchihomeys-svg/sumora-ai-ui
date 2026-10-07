@@ -44,13 +44,17 @@ const VIEWING_RE = /内覧|内見|見学|待ち合わせ|現地|到着|着きま
 const VIEWING_WEAK_RE = /[0-9０-９]{1,2}\s*時|日程|空いて(?:る|ます|い)日|[0-9０-９]{1,2}\s*[日\/／]\s*(?:[0-9０-９]|\(|（|曜|$)|[月火水木金土日]曜|平日|週末|明日|明後日|来週|今週/;
 const CONSIDER_RE = /検討|考え(?:ます|させ|てみ|中)|相談(?:して|します)|迷(?:って|い)|また(?:ご)?連絡|改めて(?:ご)?連絡|決まり次第|後ほど|保留|一旦|しばらく/;
 const COND_RE = /エリア|家賃|[0-9０-９.]+\s*万|間取|駅|徒歩|[1-4１-４]\s*(?:K|DK|LDK|R)\b|ワンルーム|ペット|築|条件|希望|広さ|広め|広く|周辺|あたり|敷金|礼金|㎡|帖|畳|オートロック|バス・?トイレ|独立洗面|駐車場|階以上|角部屋|他に|ほかに|他の(?:物件|お部屋|部屋)|もっと|別の(?:物件|お部屋|部屋)|探して/i;
-const REQUEST_VERB_RE = /探して|探し(?:です|てます|中)|お願い|送って|紹介|ピックアップ|変更|広げ|追加|(?:部屋|物件)[^。？?\n]{0,6}(?:ございます|あります|ない)(?:でしょう|です)?か|見ること可能|出して|(?:あれば|ありそう)|教えて(?:頂|いただ|下さ|くださ)|(?:は|とか|も)(?:ない|あり)(?:です|ます)か/;
+const REQUEST_VERB_RE = /探して|探し(?:です|てます|中)|(?<!よろしく|宜しく)お願い|送って|紹介|ピックアップ|変更|広げ|追加|(?:部屋|物件)[^。？?\n]{0,6}(?:ございます|あります|ない)(?:でしょう|です)?か|見ること可能|出して|(?:あれば|ありそう)|教えて(?:頂|いただ|下さ|くださ)|(?:は|とか|も)(?:ない|あり)(?:です|ます)か/;
 /** 書類の画像の読み取り文 */
 const DOC_IMAGE_RE = /御見積書|クレジットカード|本人確認|運転免許|マイナンバー|保険証|給与明細|源泉徴収|在籍証明/;
 /** 初期費用の語があっても「その条件で探して」の依頼（「初期費用23万くらいで探し」「初期費用安いお部屋ありますか」） */
 const COST_AS_CONDITION_RE = /初期費用[^。？?\n]{0,10}(?:以内|くらいで|位で|安い(?:お部屋|部屋|物件)|抑え(?:た|られる)(?:お部屋|部屋|物件))|(?:安い|抑え(?:た|られる))(?:お部屋|部屋|物件)/;
 const QUESTION_RE = /[?？]|ですか|ますか|でしょうか|ますかね|可能(?:です)?か|できますか|でき(?:ません)?か|ありますか|ないですか|どう(?:です|でしょう|なり)|なんですか|かな$/m;
-const ACK_RE = /ありがと|よろしく|宜しく|了解|わかりました|分かりました|承知|かしこまり|はい|お願いします|助かり|大丈夫|了承|こちらこそ|いえいえ|とんでもない|すみません|ok|おけ|了$/i;
+/** 評価の語（appeal-timing の CUSTOMER_APPRAISAL_RE と同じ語＋「気になります」） */
+const APPRAISAL_RE = /いいですね|良いですね|よいですね|良さそう|よさそう|いい感じ|良い感じ|素敵|気に入り|気に入っ|気になり|魅力|綺麗|きれい|最高|ありですね|アリですね|惹かれ|いいかも|良いかも|めっちゃいい|すごくいい|理想/;
+/** お礼・了承・挨拶の語（剥がして残りを見る） */
+const ACK_STRIP_RE = /ありがとう(?:ございます|ございました)?|有難う(?:ございます)?|(?:引き続き|今後とも|本日は?|今日は?|明日は?|当日は?)?(?:何卒)?(?:よろしく|宜しく)(?:お願い(?:し|致し|いたし)ます|です|おねがいします)?|お願い(?:し|致し|いたし)ます|了解(?:です|しました|致しました)?|わかりました|分かりました|承知(?:です|しました|致しました|いたしました)?|かしこまりました|はい|助かります|大丈夫(?:です)?|了承(?:しました)?|こちらこそ|いえいえ|とんでもない(?:です)?|すみません|お世話になっております|お疲れ様です|お手数(?:を)?(?:お掛け|おかけ)(?:して(?:しまい)?|します|しますが|致しますが)?|ご無理(?:を)?(?:言って|いって)(?:しまい)?|申し訳(?:ありません|ございません|ないです)|ご丁寧に|ご親切に|誠に|本当に|引き続き|お忙しい中|(?:早い|迅速な)?(?:ご)?対応(?:頂き|いただき)?|諸々|ご確認(?:頂き|いただき)|ご説明|ありがとござい(?:ます)?|おはようございます|こんにちは|こんばんは|お待ちして(?:ます|おります)|そうなんですね|わがままで|ご無理を言いまして|\((?:emoji|よろしく|すみません)\)|m\(\*_ _\)m|\(;_;\)|では|それでは|ok|OK|おけ|了|鈴木様|鈴木さん/g;
+const ACK_RE = /ありがと|よろしく|宜しく|了解|わかりました|分かりました|承知|かしこまり|はい|お願い(?:し|致し|いたし)ます|助かり|大丈夫|了承|こちらこそ|いえいえ|とんでもない|すみません|ok|おけ|了$/i;
 
 /** 番の文（連投は改行でつないだ物）から場面を1つ決める。evidence は当たった理由 */
 export function resolveReplyScene(i: { customerText: string }): { scene: ReplyScene; evidence: string } {
@@ -58,6 +62,8 @@ export function resolveReplyScene(i: { customerText: string }): { scene: ReplySc
   const raw = original.normalize("NFKC");
   const t = raw.replace(/⁣/g, "").trim();
   if (!t) return { scene: "other", evidence: "empty" };
+  // 3巡目: スタンプだけ（「[スタンプ]」）はお礼・了承と同じ（analyzeSubstance の decor_only と同じ）
+  if (/^(?:\[スタンプ\]\s*)+$/.test(t)) return { scene: "ack", evidence: "stamp_only" };
   const isImageOnly = /^\s*\[画像\]\s*$/.test(t);
   const hasImageText = /^\s*\[画像\]\s*\S/m.test(t);
   // 書類の画像（御見積書・クレジットカード・本人確認書類）は物件ではない（申込・手続きの番）
@@ -84,7 +90,12 @@ export function resolveReplyScene(i: { customerText: string }): { scene: ReplySc
   if (COND_RE.test(t) && (!isQuestion || REQUEST_VERB_RE.test(t))) return { scene: "conditions", evidence: "conditions" };
   if (isQuestion) return { scene: "question", evidence: "question" };
   const core = t.replace(EMOJI_RE, "").replace(/[\s!！。、.~〜ー]/g, "");
-  if (core.length <= 40 && ACK_RE.test(core)) return { scene: "ack", evidence: "short_ack" };
+  // 3巡目（10/07）: お礼に評価が付いた発言（「ありがとうございます！アーバネックス気になります！」）は短いお礼ではない＝前向きな反応（材料を絞らない・訴求のタイミングは内覧）
+  //   本番の発言 922 で4つのお礼の判定を並べた時、場面だけがお礼と読んだ 58 の中にあった
+  // 3巡目: お礼・了承の語を除いた残りに中身（「福島区も」「宅配ボックスの件だけ確認」）があれば短いお礼ではない（依頼・質問を落とさない）
+  const ackResidue = core.replace(ACK_STRIP_RE, "");
+  if (core.length <= 40 && ACK_RE.test(core) && !APPRAISAL_RE.test(core) && ackResidue.length <= 3) return { scene: "ack", evidence: "short_ack" };
+  if (core.length <= 40 && ACK_RE.test(core)) return { scene: "other", evidence: "ack_with_appraisal" };
   if (COND_RE.test(t)) return { scene: "conditions", evidence: "conditions_kw" };
   return { scene: "other", evidence: "none" };
 }
@@ -212,3 +223,60 @@ export function phaseGuideForScene(phaseKey: string, guide: string, scene: Reply
 
 /** 手本（few-shot）の並べ替えの加点: 手本のお客様の発言が同じ場面なら加点 */
 export const SCENE_EXAMPLE_BOOST = 0.12;
+
+// ─── 検討中の決まりを1か所に（3巡目・2026-10-07 竹内さん「２ 大丈夫」＝扉の1文を正式に許す）─────────────────
+//   旧は4か所で食い違っていた: PHASE_GUIDE パターンF（扉の1文を必ず1つ）／isThinkingMsg の方向（扉の1文を「必ず」＋同じ文で「申込誘導 絶対禁止」）／
+//   TPO の場面の札（申込誘導・希少性煽り 絶対禁止）／避ける話題（申込誘導・内見誘導 ＋「言い換え・同義語も禁止・書いたら削除して書き直す」）。
+//   → LLM は「お気に召されましたらお申込しお部屋抑え…」を申込誘導と読んで消していた（2巡目の最後の Claude で扉の1文が落ちた）。
+//   決まり: ①扉の1文（条件付きの「お気に召されましたら…」）は申込誘導・内見誘導に当たらない＝書いてよい
+//           ②禁止は催促だけ（お申込いかがでしょうか・お早めに・人気のため・残りわずか）③入れるかは必須ではない（実送信 検討の番の約2割・
+//           appeal-timing の材料があればその種類＝今ご内覧頂ける部屋は内覧・退去予定/御見積書の後は申込）
+//   戻す: REPLY_CONSIDERING_DOOR=off（旧の4か所の文に戻る）
+export const CONSIDERING_DOOR_LINES = {
+  apply: "お気に召されましたらお申込みでお部屋抑えさせて頂きます！！",
+  viewing: "お気に召されましたら実際にお部屋ご内覧出来ますので、いつでもお気軽にご連絡ください😌！！",
+} as const;
+/** 検討中の番の「避ける話題」の名前（催促だけを避ける。扉の1文と取り違えない名前にする） */
+export const CONSIDERING_AVOID_PUSH = "申込の催促（お申込いかがでしょうか・お早めに・人気のため）";
+export const CONSIDERING_AVOID_VIEWING_PUSH = "内覧の日程の打診（日時の候補を出す）";
+/** 避ける話題の行に足す但し書き（検討中の番だけ） */
+export const CONSIDERING_DOOR_EXEMPT_NOTE = `※ 検討中の番の扉の1文（「${CONSIDERING_DOOR_LINES.apply}」／「お気に召されましたら…ご内覧出来ますので」の条件付きの1文）は申込誘導・内見誘導・催促に当たらない（竹内さん 2026-10-07 正式に許可）。消さない。`;
+export function consideringDoorEnabled(env: Record<string, string | undefined>): boolean {
+  return (env.REPLY_CONSIDERING_DOOR ?? "").toLowerCase() !== "off";
+}
+/** 避ける話題の名前を検討中の番の名前に置き換える（申込誘導→申込の催促・内見誘導→内覧の日程の打診） */
+export function consideringAvoidTopics(topics: readonly string[], enabled = true): string[] {
+  if (!enabled) return [...topics];
+  return [...new Set(topics.map((t) => t === "申込誘導" ? CONSIDERING_AVOID_PUSH : t === "内見誘導" || t === "内覧誘導" ? CONSIDERING_AVOID_VIEWING_PUSH : t))];
+}
+
+// ─── 会社のルール（ai_prompt_rules generate_reply 296行・約4.2万字）を場面で絞る試し（3巡目・10/07）─────────────
+//   今は条件なしで全場面に毎回入る（system の準静的ブロック・1時間キャッシュ）。場面の語で分けると場面ごとに 28〜50% になる
+//   （scripts/_tmp-r3-rules-scene の試算: 全場面に入れる＝語なし・永久・3場面以上 73行 1.2万字）。
+//   ⚠ 絞るとキャッシュの鍵が場面ごとに分かれる（9通りの書き込み）＝本番に入れるかは質の差（再生）と費用を見て竹内さんと決める。
+//   今はテストの会話の testFlags.rules_scene=on だけで効く（本番は何も変わらない）。永久ルールの節は絞らない。
+export const RULE_SCENE_RE: Partial<Record<ReplyScene, RegExp>> = {
+  viewing: /内覧|内見|待ち合わせ|現地|案内日|ご案内/,
+  cost: /見積|初期費用|費用|敷金|礼金|仲介手数料|割引|スモ割|分割/,
+  apply: /申込|審査|保証会社|契約|書類|本人確認|在籍/,
+  considering: /検討|保留|迷/,
+  conditions: /条件|エリア|間取|家賃.{0,6}(?:以内|上限)|ヒアリング|ピックアップ/,
+  property_share: /URL|SUUMO|持ち込|送ってき|お客様が送|画像/,
+  ack: /了承|お礼|感謝|ありがとう/,
+};
+/** 1行のルールが当たる場面（0＝全場面向け・3つ以上も全場面向け） */
+export function ruleScenesOf(text: string): ReplyScene[] {
+  const hits = (Object.keys(RULE_SCENE_RE) as ReplyScene[]).filter((k) => RULE_SCENE_RE[k]!.test(text));
+  return hits.length >= 3 ? [] : hits;
+}
+/** formatPromptRuleSections の文字列から、この場面に関係ない「AI学習ルール」の行を落とす（永久ルールの節・見出しは残す・other は全部） */
+export function filterRulesTextForScene(text: string, scene: ReplyScene | null | undefined): string {
+  if (!text || !scene || scene === "other") return text;
+  let inPermanent = false;
+  return text.split("\n").filter((l) => {
+    if (l.startsWith("【")) { inPermanent = l.startsWith("【永久ルール"); return true; }
+    if (inPermanent || !l.startsWith("・")) return true;
+    const sc = ruleScenesOf(l);
+    return !sc.length || sc.includes(scene);
+  }).join("\n");
+}

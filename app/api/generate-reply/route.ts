@@ -281,7 +281,7 @@ import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
 import { applySituationalEmoji } from "@/app/lib/emoji-situational";
 import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-scope";
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
-import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, type ReplyScene } from "@/app/lib/reply-scene";
+import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, consideringAvoidTopics, consideringDoorEnabled, CONSIDERING_DOOR_LINES, CONSIDERING_DOOR_EXEMPT_NOTE, filterRulesTextForScene, type ReplyScene } from "@/app/lib/reply-scene";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -2958,6 +2958,8 @@ async function handleGenerateReply(req: NextRequest) {
   let testSceneMaterials: string | null = null;
   // 同じテストで: 本番の過去の番を再生する時、その番のスタッフの実送信（手本の表に入っている）を手本から外す（答えの写しで一致を水増ししない）
   let testExcludeReplyText: string | null = null;
+  // 3巡目（10/07）: テストの会話だけ、新しい決まりの on/off を番ごとに比べる（considering_door・property_brain。本番の会話・本番の環境では無視）
+  let testFlags: Record<string, "on" | "off"> = {};
   // reply_modeゲート: 自動生成経路（bg-async/cron/generate-draft-bg）のみtrueが渡される。
   // brain(suggested_aix_meta.reply_mode)が"aix"なら自動ドラフト生成を中止する
   let enforceReplyModeGate = false;
@@ -3060,6 +3062,10 @@ async function handleGenerateReply(req: NextRequest) {
     {
       const v = (body as Record<string, unknown>).testSceneMaterials;
       testSceneMaterials = (v === "off" || v === "on") && isTestConversation(conversationId) && !process.env.VERCEL_ENV ? v : null;
+      const tf = (body as Record<string, unknown>).testFlags;
+      if (tf && typeof tf === "object" && isTestConversation(conversationId) && !process.env.VERCEL_ENV) {
+        testFlags = Object.fromEntries(Object.entries(tf as Record<string, unknown>).filter(([, x]) => x === "on" || x === "off")) as Record<string, "on" | "off">;
+      }
       const ex = (body as Record<string, unknown>).testExcludeReplyText;
       testExcludeReplyText = typeof ex === "string" && ex.trim() && isTestConversation(conversationId) && !process.env.VERCEL_ENV ? ex : null;
     }
@@ -4296,6 +4302,7 @@ async function handleGenerateReply(req: NextRequest) {
       const thinkRe = /検討(?:します|させて|中です|中で|中なので|してみます|してみる|いたします|致します)|少し検討|考えさせて|(?<![でをはに])(?<!(?<!ちょっ)と)考え(?:てみます|てみる|ます|てます|中|てから)|悩(?:んで|み中)|迷って(?!る場所)|迷います|迷い|どうなのかな|どうかな|考えます|もう少し(?:考|時間|だけ)|時間を(?:ください|下さい|頂|いただ|もらえ)|考える時間|相談(?:して|します|してみ|の上|し(?:てから)?)|持ち帰|決めかね|決められ(?:ない|ず|ません)|決めきれ/;
       return anyPartRestNeutral((p) => thinkRe.test(p) && !/(キャンセル|やめ|断り|他社|他の会社)/.test(p));
     })();
+    const consideringDoorOn = testFlags.considering_door ? testFlags.considering_door === "on" : consideringDoorEnabled(process.env);
 
     // ── ネガ文脈（2026-09-08 監査刷新）──
     // ①断り表現を TPO_REQUEST_RE より先に評価（「キャンセルしたいです」到達不能バグ修正）
@@ -4565,7 +4572,10 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-09-09 Fable5 往復文脈: override_wait セル（懸念・持込予告・質問・条件変更）は待ち系TPO・AIX action より先に確定
       if (pairContext.rule?.precedence === "override_wait" && pairDirection) return pairDirection;
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」（単独行）一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。この場面では具体アクション宣言は不要（何も宣言しない）。物件追加・内見誘導・条件ヒアリング・長文説明は一切禁止";
-      if (isThinkingMsg) return "検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前送付物への次ステップ1文（「お気に召されましたらご内覧頂けます／お申込しお部屋抑えさせて頂きます」）は必ず入れる③気になる点出てきましたらいつでもお気軽にご連絡ください。「かしこまりました！！」単独終了・申込誘導・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
+      if (isThinkingMsg) return consideringDoorOn
+        // 2026-10-07 3巡目: 検討中の決まりを1か所に（reply-scene.ts CONSIDERING_*）。扉の1文は許可・必須ではない・禁止は催促だけ
+        ? `検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前に物件・御見積書を送っている時は扉の1文を置いてよい（今ご内覧頂ける部屋＝「${CONSIDERING_DOOR_LINES.viewing}」／まだ内覧できない・御見積書の後・他の申込あり＝「${CONSIDERING_DOOR_LINES.apply}」。【訴求のタイミング】の材料があればその種類）③気になる点出てきましたらいつでもお気軽にご連絡ください。扉の1文は申込誘導に当たらない。禁止は「かしこまりました！！」単独終了・申込の催促（お申込いかがでしょうか・お早めに）・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲`
+        : "検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前送付物への次ステップ1文（「お気に召されましたらご内覧頂けます／お申込しお部屋抑えさせて頂きます」）は必ず入れる③気になる点出てきましたらいつでもお気軽にご連絡ください。「かしこまりました！！」単独終了・申込誘導・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
       if (isPostStrongRecommendation) return "強推し直後の了承。開口語は「はい😊！！」一択（「かしこまりました」「承知いたしました」禁止）。①感謝を1行で受け取る②直前に推薦したお部屋（物件名は書かず「先ほどのお部屋」。2026-09-11 竹内方針2）をお手隙の際にごゆっくりご確認いただく旨1文③ご内覧・ご不明点はいつでもお申し付けくださいの開放1文④締め。合計50〜110字。他物件の募集確認・新規ピックアップ宣言・別物件の提案・申込誘導・「ご検討の程よろしくお願いします」の再掲は絶対禁止。顧客が「見てみます」（未来形）なら「ご覧頂きありがとう」等の既読扱いも禁止";
       if (isGratitudeReplyTPO) return `感謝を1行で受け取り、次のアクション文を1つだけ添える: ${gratitudeActionHint}。合計40〜130字。開口語は「はい😊！！」（単独行）一択（「かしこまりました」「承知いたしました」禁止）。締めは「何卒よろしくお願い致します！！」。上記以外のアクション・予告のみの進捗テンプレ・条件の再ヒアリング・情報追加は絶対禁止`;
       // A-13: 不安対応（applying より先に評価。謝罪は「ご不安にさせてしまい申し訳ございません」の1文のみ許可）
@@ -4622,7 +4632,8 @@ async function handleGenerateReply(req: NextRequest) {
       if (negativeDetail.kind === "staff_report") return [...new Set([...base, "見積提案", "申込誘導", "謝罪"])];
       // 両方 true（「出先なので後ほど検討します」）は thinking の禁止セットも和集合にする
       if (isTemporaryLeaveMsg) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "条件ヒアリング", "詳細説明", ...(isThinkingMsg ? ["希少性煽り", "内見誘導", "物件追加提案"] : [])])];
-      if (isThinkingMsg) return [...new Set([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング", "検討依頼の繰り返し"])];
+      // 2026-10-07 3巡目（竹内さん「２ 大丈夫」）: 検討中の番は「申込誘導・内見誘導」を避けると扉の1文まで消えていた → 催促・日程の打診だけを避ける（reply-scene.consideringAvoidTopics・REPLY_CONSIDERING_DOOR=off で戻す）
+      if (isThinkingMsg) return consideringAvoidTopics([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング", "検討依頼の繰り返し"], consideringDoorOn);
       if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し", "初期費用割引の再掲"])];
       if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
       // A-3: brain action=follow_up 経由の「検討中フォロー」ラベル（tpoNoteForLLM 後段）にも isThinkingMsg と同じ禁止セットを乗せる
@@ -4662,7 +4673,9 @@ async function handleGenerateReply(req: NextRequest) {
         ? "ネガ文脈（顧客自身の断り・キャンセル。開口語「かしこまりました！！」→扉を開ける1文→お礼で締め。引き留め禁止）"
         : "ネガ文脈（否決・募集終了報告への短い了承。開口語「はい！！」→顧客名先頭のサポート継続宣言→次の一手1文。謝罪禁止）";
       if (isTemporaryLeaveMsg) return "一時保留（顧客が今は確認できない・後で連絡すると宣言。30〜60字の超短返しのみ。「承知いたしました」絶対禁止）";
-      if (isThinkingMsg) return "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込誘導・希少性煽り絶対禁止。70〜120字）";
+      if (isThinkingMsg) return consideringDoorOn
+        ? "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込の催促・希少性煽りは禁止・「お気に召されましたら…」の扉の1文は可。70〜120字）"
+        : "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込誘導・希少性煽り絶対禁止。70〜120字）";
       if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客が確認/了承中の待ちフェーズ。再ピックアップ宣言・別物件提案は絶対禁止。開口語「はい😊！！」）";
       // 2026-09-08 語彙セマンティクス: 直前スタッフ約束が検出できる短い了承は「短い了承（約束の復唱）」場面に固定
       //（buildGenerationMessages の promiseEchoNote / final-check の WAIT_TPO_RE・GRATITUDE_OPENING と同名）
@@ -5135,6 +5148,7 @@ async function handleGenerateReply(req: NextRequest) {
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
       }
       if (activeAvoidTopics.length) {
+        if (isThinkingMsg && consideringDoorOn) lines.push(`- ${CONSIDERING_DOOR_EXEMPT_NOTE}`);
         lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに「${effectiveReplyDirection ?? fallbackDirection}」の方向性に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
       }
       if (lines.length === 0) return "";
@@ -5523,7 +5537,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         return "";
       }
     })();
-    const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote].filter(Boolean).join("\n");
+    // 3巡目（10/07 竹内さん「必要な場面では物件検索ブレインから分析してもらうのもあり」）: 決め手の条件（物件検索ブレインと同じ値）を返信の材料に。
+    //   REPLY_PROPERTY_BRAIN=on（既定 off）・テストは testFlags.property_brain。場面: お礼・検討中・条件・質問・その他（物件を送ってきた番・見積・内覧・申込は渡さない）
+    const propertyBrainReplyNote = await (async () => {
+      const on = testFlags.property_brain ? testFlags.property_brain === "on" : (process.env.REPLY_PROPERTY_BRAIN ?? "").toLowerCase() === "on";
+      if (!on || isTemplateOptimize || !replyScene || !["ack", "considering", "conditions", "question", "other"].includes(replyScene)) return "";
+      try {
+        const { loadClosingTargetState } = await import("@/app/lib/closing-target-server");
+        const { buildClosingTargetReplyNote } = await import("@/app/lib/closing-target");
+        const note = buildClosingTargetReplyNote(await loadClosingTargetState(supabase, { conversationId }));
+        if (note) console.log(JSON.stringify({ tag: "gen:property-brain", conversationId, scene: replyScene }));
+        return note;
+      } catch (e) { console.warn("[generate-reply] 決め手の条件を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e)); return ""; }
+    })();
+    const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote, propertyBrainReplyNote].filter(Boolean).join("\n");
     if (applyReadiness.level !== "low") {
       console.log(`[generate-reply] 申込が近い合図: ${applyReadiness.level} ${applyReadiness.score}点 (${applyReadiness.reason}) 窓${applyReadiness.windowCount}通`);
     }
@@ -5537,7 +5564,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       // 2026-09-16 竹内（𝒮 さん事例）: 決まっている内覧の住所（viewing_history）を道順の質問の時だけ渡す
-      isFirstEverReplyFromMsgs, viewingAccessNote || viewingNote, customerStructured, dbRules,
+      isFirstEverReplyFromMsgs, viewingAccessNote || viewingNote, customerStructured,
+      // 3巡目（10/07）: 会社のルールを場面で絞る試し（テストの会話の testFlags.rules_scene=on だけ・最終チェックは全部のまま）
+      testFlags.rules_scene === "on" && replyScene ? filterRulesTextForScene(dbRules, replyScene) : dbRules,
       resolvedSummaryJson, quotedContextNote, propertyStatus, templateSystemNote + templateNote, brainGuidanceNote, directionNote,
       estimatePromised, knowledgeResult.topPrinciples, lastAixHistoryText, aixDone,
       // 2026-09-17 YUYA 事例: ポータルの場面では LLM にポータルの説明を書かせない（決まった文を出口で足す）

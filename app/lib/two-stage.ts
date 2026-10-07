@@ -29,6 +29,8 @@ export type TwoStageInput = {
   estimateTarget?: string | null;
   /** 今回のお客様の発言（お仕事面のサポートの質問かを見る） */
   customerText?: string | null;
+  /** 今回のお客様の発言がお礼・了承だけで、こちらの最後の発言がまだ果たしていない約束（ピックアップ・確認・見積書）そのもの（3巡目 10/07） */
+  ackRightAfterPromise?: boolean;
 };
 
 // 2026-10-02 ⑫ 最後の確かめ（Claude）: 夜職のアリバイ会社の質問で、確認の約束の方向から「アリバイ会社の利用可否を管理会社に確認させて頂きます」と書いた（2回）。
@@ -63,6 +65,11 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   //   → 送れる物件が無い時のピックアップの約束も2段（約束の返信）にする。約束は台帳に残り、AIX要対応の取り下げも pending_pickup で止まる（brain-core）
   const pickupPromiseNotReady = /^(?:promise:pickup|signal:pending_pickup)/.test(i.decisionSource ?? "") && !i.pickupReady
     && (a === "property_send" || a === "property_recommendation" || a === "property_search");
+  // 2026-10-07 3巡目（道の違いの直し）: 約束の直後のお礼・了承だけの番は約束の言い直しの返信にしない（AIX のまま＝下書きを作らず約束を果たすのを待つ）。
+  //   本番 120日（scripts/audit-ack-after-promise-silent.ts）: ピックアップの約束の直後のお礼 199番＝スタッフは何も打たずに後で AIX・資料で果たす 159（80%・中央 6.4時間後）・手打ちの受け 40（20%）。
+  //   10/03〜の道の違い（scripts/audit-path-gap-by-scene.ts）の短いお礼の外れ（AI=返信→人=AIX）の形。設計知見 a92ec31b「約束の後のお礼・了承だけの番は約束の AIX のまま」と同じ向き
+  //   （⑫22巡の pickupPromiseNotReady は了承以外の発言も混ぜた 120番で引いた線＝了承だけの番はこちらが多数）。戻す: TWO_STAGE_ACK_WAIT=off
+  if (pickupPromiseNotReady && i.ackRightAfterPromise && (typeof process === "undefined" || (process.env?.TWO_STAGE_ACK_WAIT ?? "").toLowerCase() !== "off")) return null;
   if (KEEP_SOURCE_RE.test(i.decisionSource ?? "") && !pickupPromiseNotReady) return null;
   if (a === "property_send" || a === "property_recommendation" || a === "property_search") {
     if (i.pickupReady) return null;
@@ -81,6 +88,20 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
         direction: "お仕事面は弊社でサポートさせて頂く事を伝える返信にする（実際の送信の形「お仕事面こちらでサポートさせて頂きます😊！！」）。『アリバイ』の語・管理会社に確認・審査の見込みは書かない",
         keyTopic: "お仕事面のサポート",
         source: "rule:two_stage_promise(work_support)",
+      };
+    }
+    // 3巡目（10/07・AIX の判断のずれ A2 1468132d）: LLM が物件確認したを選んだ番でも、お客様の文が募集状況の問い・物件の持ち込みでない質問
+    //   （設備・入居日・保証会社・手続き…）なら「募集状況を確認する約束」にしない＝聞かれた事の答え（資料・会話・会社の事実にあれば答える・無ければその事の確認の約束）
+    //   旧は ack_to_check の時だけこの形で、LLM の物件確認したは聞かれていない募集状況の約束になった（2段の後 44番中 5番）。戻す: TWO_STAGE_CHECK_BY_QUESTION=off
+    const ct = i.customerText ?? "";
+    const askedOther = !i.asksCost && !/空い|空き|募集|まだ(?:あり|残)|埋ま|https?:|\[画像\]/.test(ct) && /[?？]|ですか|ますか|でしょうか|かな/.test(ct)
+      && (typeof process === "undefined" || (process.env?.TWO_STAGE_CHECK_BY_QUESTION ?? "").toLowerCase() !== "off");
+    if (askedOther && !/ack_to_check/.test(i.decisionSource ?? "")) {
+      return {
+        kind: "check",
+        direction: "お客様に聞かれた事に答える返信にする。会話・物件の資料・会社の事実に答えがあればそれで答える（確認の約束にしない）。無い時だけ聞かれた事そのもの（中身を具体的に・物件の事なら物件名も）を確認すると約束する（聞かれていない募集状況は書かない・誰に確認するかは書かない・結びは「確認出来次第ご連絡させて頂きます！！」）",
+        keyTopic: "聞かれた事への答え（無ければその事の確認の約束）",
+        source: "rule:two_stage_promise(check_question)",
       };
     }
     return {
@@ -120,4 +141,22 @@ export function twoStageOtherQuestions(customerTurn: string | null | undefined, 
   // 約束が答えになる問い（ピックアップ＝「〜ところありますか」・確認＝「空いてますか」）は除く
   const promiseQ = kind === "pickup" ? /(?:ところ|お部屋|部屋|物件)[^？?]{0,10}(?:あり|ない)|ありますか|ないですか/ : kind === "check" ? /空い|空き|募集/ : /見積|初期費用|いくら/;
   return sents.filter((x) => !promiseQ.test(x)).slice(0, 2).map((q) => `お客様の質問「${q.slice(0, 30)}」への答え（会話・資料にある事実で。無ければ確認の約束）`);
+}
+
+/**
+ * 売上サポに「今送れる」ピックアップがあるか（3巡目・2026-10-07・AIX の判断のずれの調査 096fe0ed／竹内さん「１それで大丈夫」）。
+ *   旧は property_pickups の pending の有無だけ＝スタッフが選ばなかった候補が pending のまま溜まり（2,347行・98会話・80会話は一番新しい候補が3日超）、
+ *   一度ピックアップした会話ではずっと「送れる物がある」になって2段（約束の返信）が効かなかった（2段の後の物件の AIX 11番すべて）。
+ *   → 新しさで決める: expired_at なし・最後に物件を送った時刻より後に作った・作ってから PICKUP_FRESH_DAYS 日以内。戻す: PICKUP_READY_FRESH=off
+ */
+export const PICKUP_FRESH_DAYS = 3;
+export function freshPickupReady(rows: ReadonlyArray<{ created_at: string; expired_at?: string | null }>, o: { lastPropertiesSentAt: string | null; nowMs: number; env?: Record<string, string | undefined> }): boolean {
+  if (((o.env ?? (typeof process !== "undefined" ? process.env : {})).PICKUP_READY_FRESH ?? "").toLowerCase() === "off") return rows.length > 0;
+  const sentMs = o.lastPropertiesSentAt ? Date.parse(o.lastPropertiesSentAt) : NaN;
+  return rows.some((r) => {
+    if (r.expired_at) return false;
+    const c = Date.parse(r.created_at);
+    if (!Number.isFinite(c) || o.nowMs - c > PICKUP_FRESH_DAYS * 86_400_000) return false;
+    return !Number.isFinite(sentMs) || c > sentMs;
+  });
 }

@@ -1,5 +1,5 @@
 // app/lib/__tests__/two-stage.test.ts — 2026-10-02 竹内さんの決定「2段の場面: 先に約束の返信・後で AIX」（実行: npx tsx app/lib/__tests__/two-stage.test.ts）
-import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions } from "../two-stage";
+import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady } from "../two-stage";
 import { classifyStaffTextFacts } from "../action-ledger";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} ${extra}`); } };
@@ -16,6 +16,23 @@ for (const src of ["promise:pickup", "promise:check", "promise:estimate", "signa
 }
 // 2026-10-02 ⑫（本番 60日: 送れる物件が無いピックアップの約束の番でスタッフが物件の AIX を押したのは 18%）
 for (const src of ["promise:pickup", "signal:pending_pickup"]) t(`送れる物件が無い時のピックアップの約束（${src}）→ 約束の返信`, resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: src })?.kind === "pickup");
+// 2026-10-07 3巡目: 約束の直後のお礼・了承だけの番は約束の言い直しにしない（本番 120日 199番の 80% はスタッフが打たずに後で果たす）
+for (const src of ["promise:pickup", "signal:pending_pickup"]) t(`約束の直後のお礼だけ（${src}）→ AIX のまま（下書きなし）`, resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: src, ackRightAfterPromise: true }) === null);
+t("お礼でもこちらの最後が約束でない（ackRightAfterPromise=false）→ 今まで通り約束の返信", resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: "signal:pending_pickup", ackRightAfterPromise: false })?.kind === "pickup");
+t("LLM のピックアップ（約束の外）はお礼の印があっても今まで通り", resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: "llm", ackRightAfterPromise: true })?.kind === "pickup");
+// 3巡目（10/07・A2）: LLM の物件確認したでも、募集状況でない質問は聞かれた事への答え（無ければその事の確認の約束）
+t("設備の質問に物件確認した → 聞かれた事への答え", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "ここって宅配ボックスありますか？" })?.source === "rule:two_stage_promise(check_question)");
+t("空きの質問に物件確認した → 今まで通り募集状況の約束", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "まだ空いてますか？" })?.source === "rule:two_stage_promise(check)");
+t("URL の持ち込み → 今まで通り募集状況の約束", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "https://suumo.jp/x ここはどうですか？" })?.source === "rule:two_stage_promise(check)");
+// 3巡目（10/07）: 送れる物件は新しさで（古い pending は数えない）
+{
+  const now = Date.parse("2026-10-07T03:00:00Z");
+  t("最後の送付より後・3日以内の候補 → 送れる", freshPickupReady([{ created_at: "2026-10-06T03:00:00Z" }], { lastPropertiesSentAt: "2026-10-05T00:00:00Z", nowMs: now, env: {} }));
+  t("最後の送付より前の候補（選ばれなかった残り）→ 送れない", !freshPickupReady([{ created_at: "2026-10-04T03:00:00Z" }], { lastPropertiesSentAt: "2026-10-05T00:00:00Z", nowMs: now, env: {} }));
+  t("4日前の候補 → 送れない", !freshPickupReady([{ created_at: "2026-10-03T00:00:00Z" }], { lastPropertiesSentAt: null, nowMs: now, env: {} }));
+  t("期限切れ → 送れない", !freshPickupReady([{ created_at: "2026-10-06T23:00:00Z", expired_at: "2026-10-07T00:00:00Z" }], { lastPropertiesSentAt: null, nowMs: now, env: {} }));
+  t("PICKUP_READY_FRESH=off は今まで通り（有無だけ）", freshPickupReady([{ created_at: "2026-09-01T00:00:00Z" }], { lastPropertiesSentAt: null, nowMs: now, env: { PICKUP_READY_FRESH: "off" } }));
+}
 t("見積書の約束（promise:estimate）は今まで通り AIX", resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate" }) === null);
 { // 16巡 other_45: 元が確認します（夜職の審査など）→ 募集状況に寄せず聞かれた事の確認の約束
   const v = resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: "llm+ack_to_check" });
@@ -29,7 +46,8 @@ t("見積書の約束（promise:estimate）は今まで通り AIX", resolveTwoSt
   t("勤務先を空欄で → お仕事面のサポート", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "勤務先は空欄でよろしいですか？" })?.source === "rule:two_stage_promise(work_support)");
   t("アリバイの質問に保証会社について → お仕事面のサポート", resolveTwoStage({ ...base, finalAix: "guarantor_info", customerText: "夜職なのですがアリバイ会社使えますか？" })?.source === "rule:two_stage_promise(work_support)");
   t("保証会社の質問の保証会社について → AIX のまま", resolveTwoStage({ ...base, finalAix: "guarantor_info", customerText: "保証会社はどこになりますか？" }) === null);
-  t("ペットの可否の確認 → 今まで通り確認の約束", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "ペット2匹飼えますか？" })?.source === "rule:two_stage_promise(check)");
+  // 3巡目（A2）: ペットの可否は募集状況ではない＝聞かれた事への答え（資料に無ければペットの可否を確認する約束）
+  t("ペットの可否の確認 → 聞かれた事（ペット）への答え・無ければその確認の約束", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "ペット2匹飼えますか？" })?.source === "rule:two_stage_promise(check_question)");
 }
 { // 2026-10-06 ⑫ ゆいと（10/03 の実物）: ピックアップの約束と別の質問も必須に
   const q = twoStageOtherQuestions("見てきました。\nここは最短11月中旬でしょうか？\n10月後半くらいに入れるところとかありますか？", "pickup");
