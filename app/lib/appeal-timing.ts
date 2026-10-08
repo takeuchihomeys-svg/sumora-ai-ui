@@ -36,6 +36,7 @@
 
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "./reply-context";
 import { resolveAckTopicScope } from "./ack-topic-scope";
+import { extractCircumstances, validCircumstances, circumstanceDelaysViewing } from "./customer-circumstances";
 
 /* ───────────── 検出（実送信の文から訴求を読む・監査とテストが同じ関数を使う） ───────────── */
 
@@ -484,7 +485,10 @@ export function buildAppealInput(o: {
     competing: COMPETING_RE.test(staffText7),
     urgent: URGENT_RE.test(cust14),
     estimateSent: /御見積書|お見積書|初期費用[:：]/.test(staffText7) || logs.some((l) => l.aixType === "estimate_sheet" && Date.parse(l.at) > turnStart - 7 * 86400_000),
-    viewingDelayed: VIEWING_DELAYED_RE.test(turnText),
+    // 2026-10-08 把握「お客様の事情」: 今の発言の決まった言い方に加え、前の発言の「〇日以降なら来られる」（2日より先）・遠方・しばらく来られない（鮮度つき）も
+    //   すぐ来られないに数える（customer-circumstances.ts・APPEAL_CIRCUMSTANCES=off で今の発言だけ）
+    viewingDelayed: VIEWING_DELAYED_RE.test(turnText) || circumstanceDelaysViewing(
+      validCircumstances(extractCircumstances(msgs.filter((m) => m.sender === "customer" && Date.parse(m.createdAt) > turnStart - 60 * 86400_000), turnStart), turnStart), turnStart),
     viewingCancelled,
     topicClosed: ((sc) => sc.closedNonPropertyTopic && !POST_VIEWING_STAFF_RE.test(sc.staffText) && !/内覧|ご案内|お部屋/.test(sc.staffText))(
       resolveAckTopicScope(msgs.map((m) => ({ sender: m.sender, text: m.text, created_at: m.createdAt })))),

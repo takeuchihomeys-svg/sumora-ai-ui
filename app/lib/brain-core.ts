@@ -2494,6 +2494,19 @@ ${catalogBlockForBrain(brainScene)}
     const ptNote = await Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]);
     if (ptNote) customerStateBlockText += `\n\n${ptNote}`;
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-10-08 把握「お客様の事情」（予定・〇日以降・遠方・時期の事情・同行者・体調／customer-circumstances.ts・決定論・言った日と鮮度つき・場面で要る物だけ）。CUSTOMER_CIRCUMSTANCES=off で止まる
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { extractCircumstances, validCircumstances, buildCircumstancesNote } = await import("@/app/lib/customer-circumstances");
+      const oldest = [...typedMessages].reverse();
+      let ts = oldest.length; while (ts > 0 && oldest[ts - 1].sender === "customer") ts--;
+      const turnStartMs = ts < oldest.length ? Date.parse(oldest[ts].created_at) : Date.now();
+      const ccNote = buildCircumstancesNote(
+        validCircumstances(extractCircumstances(oldest.filter((m) => m.sender === "customer").map((m) => ({ text: m.text, createdAt: m.created_at })), turnStartMs), Date.now()),
+        { nowMs: Date.now(), scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene });
+      if (ccNote) { customerStateBlockText += `\n\n${ccNote}`; console.log(JSON.stringify({ tag: "brain:customer-circumstances", conversationId, chars: ccNote.length, lines: ccNote.split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2, 40)) })); }
+    } catch (e) { console.warn("[brain-core] customer-circumstances skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   let viewingsText = customerStateText ? "" : viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {
         let s = `${v.viewing_date}${v.viewing_time ? ` ${String(v.viewing_time).slice(0, 5)}` : ""}（${viewingStatusLabel[v.status ?? ""] ?? v.status ?? "予定"}）`;
