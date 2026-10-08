@@ -50,7 +50,8 @@ export type PrefixWarmTarget = {
 export type PrefixWarmInputs = {
   finalCheck: FinalCheckWarmInputs;
   summary: { systemPrompt: string; nextActionRuleContents: string[] };
-  nextAction: SuggestNextActionPrefixInputs;
+  /** null＝次の一手の LLM を止めている（2026-10-08 一本化・SUGGEST_NEXT_ACTION_LLM が on でない）→ 温めない */
+  nextAction: SuggestNextActionPrefixInputs | null;
 };
 
 function chars(blocks: WarmSystemBlock[]): number { return blocks.reduce((n, b) => n + b.text.length, 0); }
@@ -78,6 +79,7 @@ export function buildPrefixWarmTargets(i: PrefixWarmInputs): PrefixWarmTarget[] 
     // system[0]=SYSTEM ≈1.9k・system[1]=改善ルール。先頭が当たっていれば read ≥ 1,500
     staticHitMinRead: sumBlocks.length >= 2 ? 1_500 : Infinity, chars: chars(sumBlocks),
   });
+  if (!i.nextAction) return out;
   const naBlocks = buildSuggestNextActionSystemBlocks(i.nextAction);
   out.push({
     name: "suggest_next_action_warm", realActions: ["suggest_next_action"], model: SUGGEST_NEXT_ACTION_MODEL,

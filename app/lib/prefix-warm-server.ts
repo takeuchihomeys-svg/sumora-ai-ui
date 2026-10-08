@@ -21,6 +21,7 @@ import { willRouteAlt } from "./llm-alt-provider";
 import { isWarmHourJst, parseHoursJst } from "./reply-warm-prefix";
 import { jstDayStartMs } from "./jst-date";
 import { sumoraLlmMarks } from "./llm-usage-recorder";
+import { suggestNextActionLlmEnabled } from "./next-action-unify";
 
 export type PrefixWarmResult = {
   name: string;
@@ -43,7 +44,8 @@ export async function loadPrefixWarmInputs(): Promise<PrefixWarmInputs> {
     getCachedPromptRules("generate_reply", { conversation_state: "proposing", is_first_reply: "false" }),
     getCachedPromptRules("final_check", {}, false),
     loadCustomerSummaryPrefixInputs(),
-    loadSuggestNextActionPrefixInputs(),
+    // 2026-10-08 竹内「一本化する」: 次の一手の LLM を止めている間は前置きを読まず・温めない（戻す: SUGGEST_NEXT_ACTION_LLM=on）
+    suggestNextActionLlmEnabled(process.env.SUGGEST_NEXT_ACTION_LLM) ? loadSuggestNextActionPrefixInputs() : Promise.resolve(null),
   ]);
   return { finalCheck: { dbRules, finalCheckRules }, summary, nextAction };
 }

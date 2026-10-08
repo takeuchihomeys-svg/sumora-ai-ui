@@ -9,6 +9,7 @@ import { PROPERTY_CHECK_RESULT_LABEL, PROPERTY_CHECK_RESULT_DESCRIPTION } from "
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { buildSuggestNextActionSystemBlocks } from "@/app/lib/suggest-next-action-prompt";
 import { loadSuggestNextActionPrefixInputs } from "@/app/lib/suggest-next-action-prompt-server";
+import { suggestNextActionLlmEnabled } from "@/app/lib/next-action-unify";
 
 export const maxDuration = 30;
 
@@ -347,6 +348,16 @@ export async function POST(req: NextRequest) {
     prediction_accuracy: actionType ? (accuracyMap[actionType]?.accuracy ?? null) : null,
   });
 
+  // 2026-10-08 竹内「一本化する」: テンプレート一覧の推しは画面がブレインの判断の AIX で引く（next-action-unify.brainTemplateSuggestion）。
+  //   そのため AIX ごとの推奨テンプレ（CHAIN-1/2）を全部返す（ブレインの判断はこの API の答えより後に変わることがあるので、画面が描く時に引く）
+  const recActions = new Set(Object.keys(chainRecommended).map((k) => k.split("|")[1]).filter((a): a is string => !!a));
+  const templateRecByAction: Record<string, { recommended_template_id: string | null; recommended_template_sequence: Array<{ id: string; seq: number }> | null }> = {};
+  for (const a of recActions) {
+    const id = recommendedTemplateFor(a);
+    if (id) templateRecByAction[a] = { recommended_template_id: id, recommended_template_sequence: recommendedSequenceFor(a) };
+  }
+  const json = (b: Record<string, unknown>) => NextResponse.json({ ...b, template_rec_by_action: templateRecByAction });
+
   // クライアントが last_aix_action を持っていない場合はDB（aix_usage_logs）から補完
   // ※古すぎるログでチェーンルールが誤発火しないよう直近24時間に限定
   let last_aix_action: string | null = clientLastAixAction ?? null;
@@ -413,18 +424,18 @@ export async function POST(req: NextRequest) {
         : !shouldSuppressAction("estimate_sheet") ? "estimate_sheet"
         : !shouldSuppressAction("viewing_invite") ? "viewing_invite"
         : null;
-      if (!nextAction) return NextResponse.json({ action: null, reason: "" });
+      if (!nextAction) return json({ action: null, reason: "" });
       const reason = nextAction === "property_check_result" ? "退去予定・入居可能日を確認"
         : nextAction === "estimate_sheet" ? "空室確認後・見積書"
         : "空室確認後・内覧へ";
-      return NextResponse.json({ action: nextAction, reason, source: nextAction === "property_check_result" ? "exit_scheduled_rule" : "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null, sub_mode_stats: subModeStats, ...templateRec(nextAction) });
+      return json({ action: nextAction, reason, source: nextAction === "property_check_result" ? "exit_scheduled_rule" : "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null, sub_mode_stats: subModeStats, ...templateRec(nextAction) });
     }
     if (available === false) {
       // 空室なしが明示された場合のみ → 代替物件送りへ誘導（抑制時は提案なしで確定）
       // ※ "alternative_send" はAixModalに存在しないactionTypeのため、
       //   property_send + send_mode:"alternative"（代替物件モード）に変換して返す
-      if (shouldSuppressAction("property_send")) return NextResponse.json({ action: null, reason: "" });
-      return NextResponse.json({ action: "property_send", reason: "代替物件を送る", source: "chain_rule", params: { ...buildParams("property_send"), send_mode: "alternative" }, acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_send") });
+      if (shouldSuppressAction("property_send")) return json({ action: null, reason: "" });
+      return json({ action: "property_send", reason: "代替物件を送る", source: "chain_rule", params: { ...buildParams("property_send"), send_mode: "alternative" }, acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_send") });
     }
     // available が undefined/null（クライアント未送信）の場合のみ後続フェーズにフォールスルー
   }
@@ -448,7 +459,7 @@ export async function POST(req: NextRequest) {
     !shouldSuppressAction("property_check_result") &&
     !isLowSourceRate("property_check_result", "image_quote_rule")
   ) {
-    return NextResponse.json({
+    return json({
       action: "property_check_result",
       action_label: "物件を確認する",
       reason: "画像引用＋指示語：どの物件か確認が必要",
@@ -481,7 +492,7 @@ export async function POST(req: NextRequest) {
     !shouldSuppressAction("property_check_result") &&
     !isLowSourceRate("property_check_result", "ambiguous_property_rule")
   ) {
-    return NextResponse.json({
+    return json({
       action: "property_check_result",
       action_label: "物件を確認する",
       reason: "どの物件か曖昧なメッセージ",
@@ -506,7 +517,7 @@ export async function POST(req: NextRequest) {
     !shouldSuppressAction("property_check_result") &&
     !isLowSourceRate("property_check_result", "exit_scheduled_rule")
   ) {
-    return NextResponse.json({
+    return json({
       action: "property_check_result",
       action_label: "物件を確認する",
       reason: "退去予定・空き時期を確認",
@@ -525,7 +536,7 @@ export async function POST(req: NextRequest) {
   // 「申込をやめたい」が application_push に誤マッチするのを防ぐ）
   if (conv.last_sender === "customer" && CANCEL_INTENT_RE.test(lastCustomerMsg)) {
     // キャンセル意向はセンシティブ案件 → AIX自動提案なし（スタッフの人間判断に委ねる）
-    return NextResponse.json({ action: null, reason: "キャンセル意向・手動対応推奨" });
+    return json({ action: null, reason: "キャンセル意向・手動対応推奨" });
   }
   // リスケは「内覧・待ち合わせの日程が既にある文脈」でのみ発火させる
   // （「入居予定が延期になりました」等の非内覧リスケに viewing_invite を誤提案しない）
@@ -540,7 +551,7 @@ export async function POST(req: NextRequest) {
     !shouldSuppressAction("viewing_invite") &&
     !isLowSourceRate("viewing_invite", "reschedule_rule")
   ) {
-    return NextResponse.json({
+    return json({
       action: "viewing_invite",
       reason: "日程変更・リスケ希望",
       source: "reschedule_rule",
@@ -563,7 +574,7 @@ export async function POST(req: NextRequest) {
     !shouldSuppressAction("property_recommendation") &&
     !isLowSourceRate("property_recommendation", "pattern_yachin_high")
   ) {
-    return NextResponse.json({
+    return json({
       action: "property_recommendation",
       reason: "お客様が家賃の高さを懸念しています。予算内の別物件を探してオススメしましょう。",
       source: "pattern_yachin_high",
@@ -621,7 +632,7 @@ export async function POST(req: NextRequest) {
       });
       const validChainRule = nonSuppressed.find((r) => !isLowWinRate(r.action_type as string) && !isLowAccuracy(r.action_type as string)) ?? nonSuppressed[0];
       if (validChainRule) {
-        return NextResponse.json({
+        return json({
           action: validChainRule.action_type,
           reason: CHAIN_REASON[validChainRule.action_type as string] ?? `${last_aix_action}の次`,
           source: "chain_rule",
@@ -642,20 +653,28 @@ export async function POST(req: NextRequest) {
       : 0;
     if (daysSince >= 3) {
       if (shouldSuppressAction("property_send")) {
-        return NextResponse.json({ action: null, reason: "" });
+        return json({ action: null, reason: "" });
       }
-      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, source: "followup_rule", params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_send") });
+      return json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, source: "followup_rule", params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_send") });
     }
-    return NextResponse.json({ action: null, reason: "" });
+    return json({ action: null, reason: "" });
   }
 
   // Layer1-4（竹内さんルール・ハードコードキーワード・triggerRulesスコアリング・applying既定）は削除済み。以下Haikuフォールバックへ
+
+  // 2026-10-08 竹内「一本化する」: AIX の推しはブレインの判断だけ（feedback_brain_owns_aix）。
+  //   ここから下の LLM（Haiku・本番7日 735回・$3.03＝月 約$13）は既定で呼ばない。帯（P8）はブレインと同じ AIX の時だけ出るので
+  //   LLM の答えは帯に何も足しておらず、テンプレート一覧の 💡 は画面がブレインの判断から引く形にした（next-action-unify.ts）。
+  //   戻す: SUGGEST_NEXT_ACTION_LLM=on
+  if (!suggestNextActionLlmEnabled(process.env.SUGGEST_NEXT_ACTION_LLM)) {
+    return json({ action: null, reason: "", llm: "off" });
+  }
 
   // ---- P8フォールバック（Sonnet 4.6 AI判断）----
   // ガード①: 会話履歴が5件未満の場合はデータ不足のためAI判断をスキップ
   // （少ない情報で幻覚ガイドに従い誤ったアクションを提案するリスクを防ぐ）
   if ((messages?.length ?? 0) < 5) {
-    return NextResponse.json({ action: null, reason: "" });
+    return json({ action: null, reason: "" });
   }
 
   // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイドを並列取得 ----
@@ -735,7 +754,7 @@ export async function POST(req: NextRequest) {
   // 3件以上あれば system プロンプトの基礎フロー知識のみで Sonnet を実行する。
   // ガイドも過去パターンも無い場合のみAI判断をスキップ
   if (!aixFlowGuide && totalPatterns < 3) {
-    return NextResponse.json({ action: null, reason: "" });
+    return json({ action: null, reason: "" });
   }
 
   // 上位3アクションを頻度付きで表示
@@ -878,17 +897,17 @@ ${recentText}
 
     const text = ((message.content[0] as { type: string; text: string }).text ?? "").trim();
     const match = text.match(/\{[^}]+\}/);
-    if (!match) return NextResponse.json({ action: null, reason: "" });
+    if (!match) return json({ action: null, reason: "" });
 
     const result = JSON.parse(match[0]) as { action: string | null; reason?: string };
     // AIが "null" を文字列で返すケースを null に正規化
     const action = (!result.action || result.action === "null") ? null : result.action;
-    if (!action) return NextResponse.json({ action: null, reason: result.reason ?? "" });
+    if (!action) return json({ action: null, reason: result.reason ?? "" });
     // Sonnet が提案したアクションも採択率が 30% 未満なら抑制
-    if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null, sub_mode_stats: subModeStats, ...templateRec(action) });
+    if (shouldSuppressAction(action)) return json({ action: null, reason: "" });
+    return json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null, sub_mode_stats: subModeStats, ...templateRec(action) });
   } catch (e) {
     console.error("[suggest-next-action] AI 呼び出しに失敗:", e);
-    return NextResponse.json({ action: null, reason: "" });
+    return json({ action: null, reason: "" });
   }
 }

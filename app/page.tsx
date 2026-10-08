@@ -25,6 +25,8 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
+// 2026-10-08 竹内「一本化する」: 次の一手の推しをブレインの判断に（純関数・依存なし＝画面から import してよい）
+import { brainTemplateSuggestion, brainCheckPatternFor, checkPatternTemplateCategory, nextActionFetchKey, reusableNextAction, type TemplateRec, type NextActionCacheEntry } from "./lib/next-action-unify";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 // 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
 import { useNewArrivalCards, useNewArrivalCounts, newArrivalElems, NewArrivalListBadge } from "./components/NewArrivalCard";
@@ -275,10 +277,9 @@ function templateCategoryForLatestAix(latest: { aixType: string; checkPattern: s
   const t = Date.parse(latest.at);
   if (!Number.isFinite(t) || Date.now() - t > 72 * 3600 * 1000) return undefined;
   if (latest.aixType === "property_check_result") {
-    const cp = latest.checkPattern ?? "";
-    if (cp === "nearby_parking") return "近隣の月極駐車場を確認した【AIX】";
-    if (cp === "owner_other") return "オーナーに確認した【AIX】";
-    if (cp.startsWith("mgmt_") || cp === "vacate_date") return "管理会社に確認した【AIX】";
+    // 確認先 → カテゴリの分け方は next-action-unify.checkPatternTemplateCategory の1か所（ブレインの推しと共用）
+    const byCp = checkPatternTemplateCategory(latest.checkPattern);
+    if (byCp) return byCp;
   }
   return AIX_ACTION_META[latest.aixType]?.templateCategory || undefined;
 }
@@ -1046,6 +1047,13 @@ export default function Home() {
   const [dismissReasonFor, setDismissReasonFor] = useState<string | null>(null);
   const [dismissedApplyFormIds, setDismissedApplyFormIds] = useState<Set<string>>(new Set());
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
+  // 2026-10-08 竹内「一本化する」: テンプレート一覧の推しをブレインの判断の AIX で引くため、AIX ごとの推奨テンプレを会話ごとに持つ
+  const [templateRecByConv, setTemplateRecByConv] = useState<Record<string, Record<string, TemplateRec>>>({});
+  // 2026-10-08: 次の一手の重ね呼び（同じ会話・同じ最新のお客様の発言・同じ last_aix・空室・最後の送り手・ステータス）は前の結果を使い回す
+  type NextActionCached = { entry: { action: string | null; reason: string; source?: string; params?: NextActionParams; recommendedTemplateId?: string | null; recommendedTemplateSequence?: Array<{ id: string; seq: number }> | null; sub_mode_stats?: Record<string, { rate: number; n: number }> } | null; rec: Record<string, TemplateRec> };
+  const nextActionCacheRef = useRef<Map<string, NextActionCacheEntry<NextActionCached>>>(new Map());
+  // 選択中の会話の今の番（鍵づくり用。購読のコールバックの古い閉包でも最新を読めるよう ref に置く）
+  const nextActionTurnRef = useRef<{ convId: string; custTs: string | null; lastSender: string | null; status: string | null } | null>(null);
   const lastAixByConvRef = useRef<Map<string, string>>(new Map());
   // 会話ごとの直近AIX送信テキスト（sendMessageTextが設定・post_aixテンプレのAIおすすめコンテキストに使用）
   const lastAixSentTextRef = useRef<Map<string, string>>(new Map());
@@ -3059,6 +3067,13 @@ export default function Home() {
   useEffect(() => {
     latestCustTsRef.current = latestCustomerTs(selectedConversation.messages || []);
   }, [selectedConversation.messages]);
+  // 次の一手の重ね呼びの鍵の材料（2026-10-08 一本化）。会話 id も持たせ、切り替え直後（別の会話の値が残っている間）は使い回さない
+  useEffect(() => {
+    const msgs = selectedConversation.messages || [];
+    nextActionTurnRef.current = selectedConversation?.id
+      ? { convId: selectedConversation.id, custTs: latestCustomerTs(msgs), lastSender: msgs.length ? (msgs[msgs.length - 1].sender ?? null) : (selectedConversation.lastSender ?? null), status: selectedConversation.status ?? null }
+      : null;
+  }, [selectedConversation?.id, selectedConversation.messages, selectedConversation.lastSender, selectedConversation.status]);
   // 2026-09-27 竹内「AIXのボタンが表示されるタイミングとかもズレや問題、違うのが出たりする場合そこのズレも修正する」:
   //   点滅・帯・ブレインのカード・2択・AIX ボタンを隠すか・メニューのおすすめ枠は resolveAixButtonView（app/lib/aix-button-view.ts）1つで決める。
   //   却下（✕・押下）の鍵は「会話＋判断」（aixDismissKey）。旧は会話 id だけで、同じタブの間は次の判断でも二度と出なかった（G）
@@ -3117,6 +3132,25 @@ export default function Home() {
     const sugg = nextActionMap[id];
     return !!(sugg?.action && !dismissedNextActionIds.has(id) && sameAixAction(sugg.action, brainAixAction));
   }, [selectedConversation?.id, nextActionMap, dismissedNextActionIds, brainAixAction]);
+
+  // 2026-10-08 竹内「一本化する」: テンプレート一覧の「💡〇〇がオススメ」・推奨カテゴリ・色・推奨テンプレの順番は
+  //   ブレインの判断の AIX（帯と同じ brainAixAction・確認先は同じ判断の check_pattern）から引く。ブレインが「AIX なし」なら 💡 を出さない。
+  //   旧は suggest-next-action の答え（LLM・固定のチェーンルール）をそのまま出していて、ブレインの判断とずれていた（feedback_brain_owns_aix）
+  const brainTemplateSugg = useMemo(() => {
+    const id = selectedConversation?.id ?? "";
+    const cp = brainCheckPatternFor(brainAixAction, [
+      aixView.pendingMeta,
+      selectedConversation.suggestedAixMeta as { action?: string | null; check_pattern?: string | null } | null,
+      suggestedAix as { action?: string | null; check_pattern?: string | null } | null,
+    ]);
+    return brainTemplateSuggestion({
+      brainAction: brainAixAction,
+      checkPattern: cp,
+      buttonLabel: brainAixButtonLabel(brainAixAction, cp) ?? null,
+      actionMeta: AIX_ACTION_META,
+      recByAction: templateRecByConv[id] ?? null,
+    });
+  }, [selectedConversation?.id, brainAixAction, aixView.pendingMeta, selectedConversation.suggestedAixMeta, suggestedAix, templateRecByConv]);
 
   // guideToEstimate: 削除済み（brain の action=estimate_sheet に一本化）
 
@@ -4492,8 +4526,25 @@ export default function Home() {
     void executeSend();
   };
 
-  const fetchNextAction = async (convId: string) => {
+  // opts.lastSender: 送信の直後に呼ぶ所は "staff" を渡す（画面のメッセージがまだ送信前のままでも、鍵が送信前の結果と同じにならないように）
+  const fetchNextAction = async (convId: string, opts?: { lastSender?: string }) => {
     if (nextActionFetchingRef.current.has(convId)) return;
+    // 2026-10-08 一本化: 同じ番の重ね呼び（会話を開いた直後の下書きの通知・送信の後の2か所 等）は前の結果を使い回す
+    const turn = nextActionTurnRef.current && nextActionTurnRef.current.convId === convId ? nextActionTurnRef.current : null;
+    const fetchKey = turn ? nextActionFetchKey({
+      convId,
+      latestCustomerTs: turn.custTs,
+      lastSender: opts?.lastSender ?? turn.lastSender,
+      lastAixAction: lastAixByConvRef.current.get(convId) ?? null,
+      available: propertyAvailableByConvRef.current.get(convId) ?? null,
+      status: turn.status,
+    }) : null;
+    const reused = reusableNextAction(nextActionCacheRef.current.get(convId), fetchKey, Date.now());
+    if (reused) {
+      setNextActionMap((prev) => ({ ...prev, [convId]: reused.entry }));
+      setTemplateRecByConv((prev) => ({ ...prev, [convId]: reused.rec }));
+      return;
+    }
     nextActionFetchingRef.current.add(convId);
     try {
       const res = await fetch("/api/suggest-next-action", {
@@ -4507,12 +4558,16 @@ export default function Home() {
           customer_message: convId === selectedConversation.id ? (latestCustomerMessage || "") : "",
         }),
       });
-      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams; recommended_template_id?: string | null; recommended_template_sequence?: Array<{ id: string; seq: number }> | null; sub_mode_stats?: Record<string, { rate: number; n: number }> };
+      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams; recommended_template_id?: string | null; recommended_template_sequence?: Array<{ id: string; seq: number }> | null; sub_mode_stats?: Record<string, { rate: number; n: number }>; template_rec_by_action?: Record<string, TemplateRec> };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
       // CHAIN-1: recommended_template_id（このAIXの後に最頻のテンプレ）も保持 → TemplateModal の priorityTemplateIds に使用
       // CHAIN-2: recommended_template_sequence（A→Bと続けて送る定番の順番）も保持 → 1枚送信後の「次はこれ」誘導に使用
       // H2: sub_mode_stats（サブモード別採択率）も保持 → AixModal を開く際のサブモードデフォルト選択に使用
-      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params, recommendedTemplateId: data.recommended_template_id ?? null, recommendedTemplateSequence: data.recommended_template_sequence ?? null, sub_mode_stats: data.sub_mode_stats } : null }));
+      const entry = (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params, recommendedTemplateId: data.recommended_template_id ?? null, recommendedTemplateSequence: data.recommended_template_sequence ?? null, sub_mode_stats: data.sub_mode_stats } : null;
+      const rec = data.template_rec_by_action ?? {};
+      setNextActionMap((prev) => ({ ...prev, [convId]: entry }));
+      setTemplateRecByConv((prev) => ({ ...prev, [convId]: rec }));
+      if (res.ok && fetchKey) nextActionCacheRef.current.set(convId, { key: fetchKey, at: Date.now(), value: { entry, rec } });
     } catch {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
@@ -5043,7 +5098,7 @@ export default function Home() {
       setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
       // 同一会話を開いたままだと useEffect([selectedId]) が再実行されないため即再フェッチ（sendMessageText と同パターン）
       nextActionFetchingRef.current.delete(selectedConversation.id);
-      void fetchNextAction(selectedConversation.id);
+      void fetchNextAction(selectedConversation.id, { lastSender: "staff" });
 
       // 旧: スタッフの送信文に「初期費用」等があれば【追客】初期費用テンプレート（見積書を送る）バナーを出していた → 2026-09-12 廃止。
       //   竹内（じゅにあ事例）「見積書はお客さんから物件が送られてからセットされる形」。「お送り頂き次第…初期費用の御見積書とあわせてご連絡」
@@ -5955,7 +6010,7 @@ export default function Home() {
     // 送信後に次アクション提案を再フェッチ（チェーンルール発火のため）
     const _convIdForNext = selectedConversation.id;
     nextActionFetchingRef.current.delete(_convIdForNext);
-    void fetchNextAction(_convIdForNext);
+    void fetchNextAction(_convIdForNext, { lastSender: "staff" });
   };
 
   const onAccountImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -10903,19 +10958,10 @@ export default function Home() {
               return undefined;
             })()
           }
-          suggestedCategory={(() => {
-            const action = nextActionMap[selectedConversation.id]?.action;
-            return action ? (AIX_ACTION_META[action]?.templateCategory ?? undefined) : undefined;
-          })()}
-          suggestedColor={(() => {
-            const action = nextActionMap[selectedConversation.id]?.action;
-            return action ? (AIX_ACTION_META[action]?.color ?? undefined) : undefined;
-          })()}
-          suggestedLabel={(() => {
-            const action = nextActionMap[selectedConversation.id]?.action;
-            const meta = action ? AIX_ACTION_META[action] : null;
-            return meta ? `💡 ${meta.label}がオススメ` : undefined;
-          })()}
+          // 2026-10-08 一本化: 💡・推奨カテゴリ・色はブレインの判断の AIX から（brainTemplateSugg）。AIX なし＝出さない
+          suggestedCategory={brainTemplateSugg.category}
+          suggestedColor={brainTemplateSugg.color}
+          suggestedLabel={brainTemplateSugg.label}
           conversationId={selectedConversation.id}
           // 「1件特にオススメ」訴求シナリオ判定用（比較選択型/代替新規提案型/初回提案型の分岐材料）
           pickupType={lastPickupTypeByConvRef.current.get(selectedConversation.id) ?? aixInitialPickupType ?? null}
@@ -10923,14 +10969,13 @@ export default function Home() {
           priorityTemplateIds={(() => {
             // CHAIN-2: チェーン誘導バナー経由なら「次のテンプレ」を最優先で昇格
             const chainNext = chainNextTemplateMap[selectedConversation.id];
-            const seq = nextActionMap[selectedConversation.id]?.recommendedTemplateSequence?.map((s) => s.id);
+            // 2026-10-08 一本化: 推奨テンプレの順番もブレインの判断の AIX から（旧は suggest-next-action の答えの AIX の順番）
+            const seq = brainTemplateSugg.priorityTemplateIds;
             if (templateOpenContext === "chain_next" && chainNext) {
               return [chainNext, ...(seq ?? []).filter((tid) => tid !== chainNext)];
             }
-            // AI提案のシーケンス（1番目=この流れの定番、2番目以降=次に続けて送ることが多い）
-            if (seq?.length) return seq;
-            const single = nextActionMap[selectedConversation.id]?.recommendedTemplateId;
-            return single ? [single] : undefined;
+            // ブレインの AIX のシーケンス（1番目=この流れの定番、2番目以降=次に続けて送ることが多い）。AIX なし＝無し
+            return seq?.length ? seq : undefined;
           })()}
         />
       )}
@@ -11257,7 +11302,7 @@ export default function Home() {
                 // 診断修正(内覧バナー誤表示): 物件オススメ/ピックアップ送信直後は「顧客の反応待ち」。
                 // 次アクションを再フェッチすると viewing_invite 等の先走り提案が再表示されるため抑制する
                 // （顧客が返信すれば webhook 経由の再分析で正当な次アクションが提案される）
-                void fetchNextAction(selectedConversation.id);
+                void fetchNextAction(selectedConversation.id, { lastSender: "staff" });
               }
               // 診断修正(問題2): AIX 申込①フォーマット送信完了 → ②（続き）誘導バナーを発火。
               // 従来はテンプレラベル「①申込」検知（テンプレモーダル経由）のみで、

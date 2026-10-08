@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { excludeTestConversations } from "@/app/lib/test-conversations";
+import { brainShadowEval, shadowPredictor } from "@/app/lib/next-action-unify";
 
 export const maxDuration = 300;
 
@@ -16,7 +17,14 @@ export const maxDuration = 300;
 // 4. actual_aix_type（実際に押された）と比較して matched を aix_shadow_logs に記録
 // 5. 結果サマリーを ai_prompts に key='shadow_eval_latest' で保存
 //
-// 注意（既知の近似）: suggest-next-action は現在のDB状態（会話ステータス・メッセージ履歴）で
+// 2026-10-08 竹内「一本化する」: AIX の推しはブレインの判断だけ（feedback_brain_owns_aix）。次の一手（suggest-next-action）の予想は
+//   画面でも学習でも使われていない（帯はブレインと同じ AIX の時だけ・aix_usage_logs.suggested_action は 9/27 からブレインの値）。
+//   既定（AIX_SHADOW_PREDICTOR 未設定）はブレインの予想（aix_usage_logs.suggested_action＝押す前の一番新しい判断）を実際の AIX と比べるだけ。
+//   API も LLM も呼ばない・今の DB で推し直す近似も無い（押す前の判断そのもの）。source は "brain"。
+//   trigger_action_rules の confidence の増減（Fix-1a）はブレインのモードでは行わない（ブレインの信号8が読む keyword_rule を
+//   ブレイン自身の当たり外れで一律に動かすのは別の決め事＝竹内さんに確認中）。旧に戻す: AIX_SHADOW_PREDICTOR=suggest
+//
+// 注意（既知の近似・旧 suggest モードのみ）: suggest-next-action は現在のDB状態（会話ステータス・メッセージ履歴）で
 // 判定するため、送信当時の状態と完全一致ではない。傾向計測としては十分なので許容する。
 const EVAL_LIMIT = 30; // maxDuration 300秒 / 1件あたり最大約8秒（Sonnetフォールバック含む）
 
@@ -53,12 +61,13 @@ export async function POST(req: NextRequest) {
     //    送信時刻としては sent_at ?? created_at を採用する）
     const { data: usageLogs, error: usageErr } = await supabase
       .from("aix_usage_logs")
-      .select("id, conversation_id, aix_type, previous_action_type, sent_at, created_at")
+      .select("id, conversation_id, aix_type, previous_action_type, sent_at, created_at, suggested_action")
       .gte("created_at", yesterdayStart.toISOString())
       .lt("created_at", todayStart.toISOString())
       .not("aix_type", "in", `(${EXCLUDED_AIX_TYPES.join(",")})`)
       .order("created_at", { ascending: true })
-      .limit(EVAL_LIMIT);
+      // ブレインのモードは API を呼ばないので前日の全件（上限 200・本番は1日 約30件。.in() の URL 長の上限を見て 200）を測る
+      .limit(shadowPredictor(process.env.AIX_SHADOW_PREDICTOR) === "brain" ? 200 : EVAL_LIMIT);
 
     if (usageErr) {
       await finishCronLog(runLogId, false, undefined, usageErr.message);
@@ -73,7 +82,9 @@ export async function POST(req: NextRequest) {
       previous_action_type: string | null;
       sent_at: string | null;
       created_at: string;
+      suggested_action: string | null;
     }>);
+    const predictor = shadowPredictor(process.env.AIX_SHADOW_PREDICTOR);
 
     if (logs.length === 0) {
       await finishCronLog(runLogId, true, { evaluated: 0, note: "no usage logs yesterday" });
@@ -99,6 +110,28 @@ export async function POST(req: NextRequest) {
     for (const log of logs) {
       if (evaluatedIds.has(log.id)) continue;
       const sendTime = log.sent_at ?? log.created_at;
+
+      if (predictor === "brain") {
+        const r = brainShadowEval(log);
+        if (!r.evaluated) continue; // 判断が無い行（こちらから送った AIX 等）は測らない
+        const { error: insertErr } = await supabase.from("aix_shadow_logs").insert({
+          usage_log_id: log.id,
+          conversation_id: log.conversation_id,
+          predicted_aix_type: r.predicted,
+          actual_aix_type: log.aix_type,
+          matched: r.matched,
+          source: "brain",
+          predicted_at: sendTime,
+          evaluated_at: new Date().toISOString(),
+        });
+        if (insertErr) { console.error("[aix-shadow-eval] insert failed:", insertErr.message); continue; }
+        evaluated += 1;
+        if (r.matched) matchedCount += 1;
+        sourceCounts.brain ??= { total: 0, matched: 0 };
+        sourceCounts.brain.total += 1;
+        if (r.matched) sourceCounts.brain.matched += 1;
+        continue;
+      }
 
       try {
         // 2. AIX送信直前の顧客メッセージ（受信時点の入力を再現する）
@@ -233,6 +266,7 @@ export async function POST(req: NextRequest) {
     const summary = {
       report_date: reportDate,
       target_logs: logs.length,
+      predictor,
       evaluated,
       matched: matchedCount,
       match_rate: matchRate,
