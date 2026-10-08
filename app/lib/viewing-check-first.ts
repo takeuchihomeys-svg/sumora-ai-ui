@@ -11,6 +11,8 @@
 //   → 会話の退去予定の話（move-out-context の moveOutViewingVerdict）の順。線は scripts/audit-viewing-wish-vacating.ts。
 //   戻す: VIEWING_CHECK_VACATING_ONLY=off（5巡目の「いつも確認を挟む」に戻る）
 
+import { vacatingViewableSentence, viewableFromVacancyYmd } from "./vacating-notice";
+
 /** スタッフの「内覧可能か確認します」の約束（手打ち） */
 export const VIEWING_CHECK_PROMISE_RE = /(?:ご)?内[覧見](?:可能か|可否|出来るか|できるか|が可能か)[^\n。！!]{0,20}(?:確認|お調べ)|(?:ご)?内[覧見][^\n。！!]{0,12}(?:可能|出来る|できる)か(?:どうか)?[^\n。！!]{0,12}(?:確認|お調べ)|(?:ご)?案内(?:可能か|可否|出来るか|できるか)[^\n。！!]{0,16}確認|(?:ご)?内[覧見](?:開始日|可能日|可能な?日|開始)[^\n。！!]{0,16}確認/;
 /** スタッフの候補日・ご都合の打診（手打ち） */
@@ -69,6 +71,38 @@ export function viewingCheckFirst(i: ViewingCheckFirstInput, env: Record<string,
     return !Number.isFinite(t0) || t0 - Date.parse(m.createdAt) <= 24 * 3600_000;
   });
   return !confirmed;
+}
+
+// ─── 8巡目（10/08）: 退去予定日が分かる時は確認の約束でなく「〇月〇日以降ご内覧出来ます」と直接答える ───
+//   竹内さん「資料で退去予定日が分かる時は『〇月〇日以降ご内覧出来ます』と答える…退去予定の物件の言い回しは実際の LINE を見て合わせる」。
+//   実送信（手打ち 180日・退去＋内覧 158通・書き手 A 88通）の多数派は「6月30日退去予定のため、7月1日以降にご内覧可能です！！」
+//   （vacating-notice.vacatingViewableSentence と同じ形・「〇月末退去予定のため、〇月1日以降にご内覧可能です！！」）。
+//   日付が分からない（「退去予定」だけ・相談）時は今まで通り確認の約束。戻す VIEWING_VACATING_DATE_ANSWER=off
+
+/** 資料の行（「現況: 退去予定(10/31)」「退去予定日：2026/07/27」「現況/入居時期 退去予定 / 2026年10月下旬」）から退去予定日（「10月31日」「10月末」）。日付・末だけ（上中下旬は内覧開始日を作らない） */
+export function vacancyDateFromMaterial(lines: ReadonlyArray<string | null | undefined>): string | null {
+  for (const raw of lines) {
+    const l = String(raw ?? "").normalize("NFKC");
+    if (!/退去予定|退去日/.test(l)) continue;
+    const s = l.replace(/\d{4}\s*[年/]\s*(?=\d{1,2}\s*[月/])/g, "");
+    const md = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/) ?? s.match(/(?<![\d/])(\d{1,2})\s*\/\s*(\d{1,2})(?![\d/])/);
+    if (md) return `${Number(md[1])}月${Number(md[2])}日`;
+    const end = s.match(/(\d{1,2})\s*月\s*末/);
+    if (end) return `${Number(end[1])}月末`;
+  }
+  return null;
+}
+
+/** 退去予定日（「9月30日」「9月末」）→ 内覧開始日がまだ先なら実送信の形の1文。もう過ぎている・読めない → null */
+export function vacatingViewingAnswer(vacancyRaw: string | null | undefined, nowMs: number = Date.now()): { sentence: string; viewableYmd: string } | null {
+  if (!vacancyRaw || !/\d{1,2}月(?:\d{1,2}日|末)/.test(vacancyRaw)) return null;
+  const ymd = viewableFromVacancyYmd(vacancyRaw, nowMs);
+  const s = vacatingViewableSentence(vacancyRaw, nowMs);
+  if (!ymd || !s) return null;
+  const jst = new Date(nowMs + 9 * 3600_000);
+  const today = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, "0")}-${String(jst.getUTCDate()).padStart(2, "0")}`;
+  if (ymd <= today) return null; // もう内覧できる日（退去予定ではない扱い）
+  return { sentence: s, viewableYmd: ymd };
 }
 
 // ─── 6巡目（10/07）: 内覧を希望されたお部屋が退去予定か（決定論・純関数）───

@@ -46,6 +46,25 @@ export function slotLengthFor(count: number | null | undefined): { min: number; 
 }
 
 /**
+ * 2026-10-08 8巡目 竹内さん「内覧は1部屋15〜30分程。そこから2件目への移動時間も考える」:
+ *   上の表の「1件増えるごとに30分」は内覧そのもの（1部屋15〜30分の上の方）と近い物件どうしの移動を余裕の中に含めた長さ。
+ *   内覧する物件どうしが離れている時（物件の場所が2つ以上読めて、一番離れた組が near／far）は、その移動の分を件数の間ごとに足す。
+ *   同じ区・市・場所が読めない時は今まで通り（0）。戻す VIEWING_SLOT_MOVE_R8=off
+ */
+export const INTER_PROPERTY_MOVE: Readonly<Record<"same" | "near" | "far", number>> = { same: 0, near: 30, far: 60 };
+export function interPropertyMoveMinutes(count: number | null | undefined, places: ReadonlyArray<PlacePoint>): number {
+  if ((typeof process !== "undefined" ? process.env.VIEWING_SLOT_MOVE_R8 : undefined) === "off") return 0;
+  const n = Math.max(1, Math.min(SLOT_LENGTH_BY_COUNT.length, Math.floor(Number(count) || 1)));
+  if (n < 2 || places.length < 2) return 0;
+  let worst: "same" | "near" | "far" = "same";
+  for (let i = 0; i < places.length; i++) for (let j = i + 1; j < places.length; j++) {
+    const t = travelTierBetween([places[i]], [places[j]]);
+    if (t === "far" || (t === "near" && worst === "same")) worst = t;
+  }
+  return INTER_PROPERTY_MOVE[worst] * (n - 1);
+}
+
+/**
  * 前後の予定との間に空ける時間（分）。予定の終わり → 内覧の枠の始まり／内覧の枠の終わり → 予定の始まり の両方に同じ値を使う。
  *   same    … 同じ区・市
  *   near    … 近い区・市（中心どうしが NEAR_KM 以内）
@@ -149,8 +168,10 @@ export type SlotPlan = {
  *   maxSlots      … 1日に返す枠の数（既定 3）
  */
 export function planDaySlots(o: { busy?: ReadonlyArray<SlotBusy>; count?: number | null; place?: string | null; notBeforeMin?: number | null; maxSlots?: number }): SlotPlan {
-  const { min, max } = slotLengthFor(o.count);
   const places = placesOfText(o.place);
+  const base = slotLengthFor(o.count);
+  const move = interPropertyMoveMinutes(o.count, places);
+  const { min, max } = { min: base.min + move, max: base.max + move };
   const busy = (o.busy ?? []).filter((b) => Number.isFinite(b.start) && Number.isFinite(b.end));
   const blocks = busy.map((b) => {
     const g = travelGapFor(b, places);

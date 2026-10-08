@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { staffDeviceHeader } from "./lib/staff-device";
 import AixModal, { type AixActionType } from "./components/AixModal";
 import AixManualModal from "./components/AixManualModal";
 // 2026-10-06 竹内（チンシャン事例）「内覧誘導の部分実際に送った物件のところ 読み取って選択できるようにする」
@@ -58,7 +59,8 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
-const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
+// 2026-10-08 竹内「端末で…竹内か従業員か」: 送った端末の印（x-staff-device・ブラウザごとの ID）を添える（app/lib/staff-device.ts）
+const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}`, ...staffDeviceHeader() };
 
 // suggest-next-action APIが返すAIX初期化パラメータ
 type NextActionParams = { imageUrl?: string; check_pattern?: string; send_mode?: string };

@@ -20,6 +20,8 @@ export async function loadCustomerStateInput(conversationId: string, opts: { now
     supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, prop_statuses, estimate_sent, template_name").eq("conversation_id", conversationId).not("sent_at", "is", null).order("created_at", { ascending: false }).limit(CUSTOMER_STATE_AIX_LIMIT),
     supabase.from("sent_facts").select("sent_at, origin, aix_type, kind, status, line_message_id, detail, evidence").eq("conversation_id", conversationId).order("sent_at", { ascending: false }).limit(300),
     supabase.from("viewing_history").select("scheduled_date, scheduled_time, status, property_name, actual_date, viewing_report, created_at").eq("conversation_id", conversationId).order("scheduled_date", { ascending: false }).limit(30),
+    // 2026-10-08 8巡目の点検: conversation_id が空の 27,707行は全部 source=line_group・delivery=shared（物件出しで売上番長グループへ出した候補）。
+    //   お客様に送った行（delivery=customer・vision/aix:*）は全部 conversation_id 付き → property_customer_id で広げると候補を「送った」と数える（広げない）
     supabase.from("sent_properties").select("property_name, room_no, sent_at").eq("conversation_id", conversationId).order("sent_at", { ascending: false }).limit(300),
     supabase.from("line_tasks").select("task_type, status, created_at, resolved_at, result").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(30),
   ]);

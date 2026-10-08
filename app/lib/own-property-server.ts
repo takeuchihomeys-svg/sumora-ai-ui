@@ -70,6 +70,7 @@ export async function resolveOwnPropertyForTurn(
   if (items.length === 0) return null;
   try {
     const [{ data: sp }, { data: sip }] = await Promise.all([
+      // 2026-10-08 8巡目の点検: conversation_id が空の行はグループへ出した候補（line_group・shared）＝お客様には届いていない。conversation_id だけで正しい
       supabase.from("sent_properties").select("property_name, room_no, sent_at").eq("conversation_id", conversationId).limit(300),
       supabase.from("sent_image_properties").select("property_name, room_no, created_at").eq("conversation_id", conversationId).limit(300),
     ]);

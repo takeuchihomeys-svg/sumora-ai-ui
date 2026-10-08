@@ -3,21 +3,27 @@
 //   保管は既存の記録（messages の引用・送った画像の記録 sent_image_properties／sent_properties・aix_usage_logs・estimate_records）＝二重に持たない。
 import { supabase } from "@/app/lib/supabase";
 import { propertyLabelsForImages } from "@/app/lib/quoted-context";
-import { resolvePropertyThreads, buildPropertyThreadNote, propertyThreadEnabled, type PropertyThreadState, type PtMsg, type PtAix, type PtEstimate } from "@/app/lib/property-thread";
+import { resolvePropertyThreads, buildPropertyThreadNote, propertyThreadEnabled, type PropertyThreadState, type PtMsg, type PtAix, type PtEstimate, type PtRecommendation } from "@/app/lib/property-thread";
 
 /** 会話の台帳を作る（asOf があればその時刻までの記録だけ＝再生・監査用）。失敗は null（材料を足さないだけ） */
 export async function loadPropertyThreads(conversationId: string, opts: { asOf?: string | null; days?: number } = {}): Promise<PropertyThreadState | null> {
   try {
     // 既定は「今＋1日」まで（テストの場面は未来の時刻に置くため・本番に未来の行は無い）
     const until = opts.asOf ?? new Date(Date.now() + 86400_000).toISOString();
-    const since = new Date(Date.parse(until) - (opts.days ?? 30) * 86400_000).toISOString();
-    const [msgs, aix, est] = await Promise.all([
+    // 2026-10-08 8巡目（記録の続き）: 窓を30日で切らない（その会話の物件は期間を問わず・件数の上限で）。戻す: PROPERTY_THREAD_DAYS=30
+    const days = opts.days ?? (Number(process.env.PROPERTY_THREAD_DAYS ?? "0") || 0);
+    const since = days > 0 ? new Date(Date.parse(until) - days * 86400_000).toISOString() : "2000-01-01T00:00:00Z";
+    const [msgs, aix, est, recs] = await Promise.all([
       supabase.from("messages").select("sender, text, created_at, line_message_id, quoted_message_id, image_url, is_aix_generated")
         .eq("conversation_id", conversationId).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(500),
       supabase.from("aix_usage_logs").select("created_at, aix_type, check_pattern, property_names, prop_statuses, estimate_sent, generated_text")
-        .eq("conversation_id", conversationId).not("sent_at", "is", null).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(200),
-      supabase.from("estimate_records").select("created_at, property_name, room_no")
-        .eq("conversation_id", conversationId).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(100),
+        .eq("conversation_id", conversationId).not("sent_at", "is", null).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(300),
+      // 2026-10-08 8巡目（記録）: 割引・初期費用も読んで台帳の「見積書を送った」に添える（AD は読まない＝お客様向けの文に出さない）
+      supabase.from("estimate_records").select("created_at, property_name, room_no, discount_yen, initial_cost_yen")
+        .eq("conversation_id", conversationId).gte("created_at", since).lte("created_at", until).order("created_at", { ascending: false }).limit(200),
+      // 2026-10-08: 物件オススメの控え（🌟の物件・本文）＝「オススメした」出来事（今までどこからも読まれていなかった）
+      supabase.from("recommendation_snapshots").select("sent_at, star_name, star_room, star_text")
+        .eq("conversation_id", conversationId).gte("sent_at", since).lte("sent_at", until).order("sent_at", { ascending: false }).limit(60),
     ]);
     if (msgs.error) throw new Error(msgs.error.message);
     const messages = ((msgs.data ?? []) as PtMsg[]).reverse();
@@ -32,6 +38,7 @@ export async function loadPropertyThreads(conversationId: string, opts: { asOf?:
       messages, imageLabels,
       aix: (aix.data ?? []) as PtAix[],
       estimates: (est.data ?? []) as PtEstimate[],
+      recommendations: (recs.data ?? []) as PtRecommendation[],
     });
   } catch (e) {
     console.warn("[property-thread] load failed:", e instanceof Error ? e.message : String(e));

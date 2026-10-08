@@ -220,6 +220,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // 2026-10-08 竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」「端末で…判断」:
+  //   どの端末から送ったか（画面が添える x-staff-device と User-Agent）を LINE の message id つきで残す。
+  //   画面が直後に入れる messages の行へは DB のトリガーが写す → 応答の前に待つ（表が無い・失敗しても送信は止めない・STAFF_SEND_LOG=off で止める）
+  if (!skipLinePush && sentMessageIds.length) {
+    const { recordStaffSend } = await import("@/app/lib/staff-send-log-server");
+    await recordStaffSend({
+      headers: req.headers, conversationId: conversation_id ?? null, lineMessageIds: sentMessageIds, origin: origin ?? null, aixType: aix_type ?? null,
+      kind: call_button ? "call_button" : batchImages.length ? "images" : image_url && !message ? "image" : "text",
+    });
+  }
+
   // 2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」: 手打ちの送信は送った時に1回だけ分類して記録する（sent_facts）。
   //   行動台帳はこの記録を本文の読み直しより優先し、メッセージの取得範囲より古い送信も忘れない。待ち合わせの案内なら内覧の記録も書く
   const sentAtIsoForFacts = new Date().toISOString();

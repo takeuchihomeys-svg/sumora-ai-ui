@@ -13,10 +13,15 @@ import { isTestConversation } from "../app/lib/test-conversations";
 import { cleanDraft } from "../app/lib/line-watch-judge";
 import { subSceneOf } from "../app/lib/reply-subscene";
 import { isStaffOnlyReport } from "../app/lib/text-diff-types";
+import { writerFromText, writerFromEdit, inAutoReplyPeriod, type StaffWriter } from "../app/lib/staff-writer";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const DAYS = Number(arg("days", "30"));
 const OUT = arg("out", "scripts/.replay-out/r7-diff.jsonl");
+// 2026-10-08 書き手で分ける（竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」）: takeuchi｜employee｜unknown｜all（既定 all＝旧と同じ）
+//   書き手は直した所の表記（app/lib/staff-writer.writerFromEdit）。直した所に手掛かりが無い組は送った文全体（writerFromText）で「たぶん」
+const WRITER = arg("writer", "all");
+const WRITER_FALLBACK = !process.argv.includes("--writer-edit-only"); // 直した所に手掛かりが無い組を不明にする
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 async function readAll<T>(q: (f: number, t: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const out: T[] = [];
@@ -25,7 +30,7 @@ async function readAll<T>(q: (f: number, t: number) => PromiseLike<{ data: unkno
 }
 const SCENES: ReplyScene[] = ["ack", "considering", "question", "conditions", "property_share", "cost", "viewing", "apply", "other"];
 
-type Pair = { src: "A" | "B"; cid: string; at: string; scene: ReplyScene; customer: string; draft: string; staff: string; watchVerdict?: string | null; watchReason?: string | null; tpo?: string | null; prev?: string; staffOnly?: boolean };
+type Pair = { writer?: StaffWriter | null; src: "A" | "B"; cid: string; at: string; scene: ReplyScene; customer: string; draft: string; staff: string; watchVerdict?: string | null; watchReason?: string | null; tpo?: string | null; prev?: string; staffOnly?: boolean };
 
 async function main() {
   const since = new Date(Date.now() - DAYS * 86_400_000).toISOString();
@@ -80,6 +85,10 @@ async function main() {
     const cust = msgsIn.map((m) => m.text ?? "").join("\n");
     pairs.push({ src: "B", cid: w.conversation_id, at, scene: resolveReplyScene({ customerText: cust }).scene, customer: cust, draft, staff, prev: prevStaffBefore(w.conversation_id, at), staffOnly: isStaffOnlyReport(staff), watchVerdict: w.verdict, watchReason: String(vd.reason ?? ""), tpo: w.tpo_label });
   }
+  for (const p of pairs) { const e = writerFromEdit(p.draft, p.staff); p.writer = e.writer ?? (WRITER_FALLBACK ? writerFromText(p.staff).writer : null); }
+  { const c = (w: StaffWriter | null) => pairs.filter((p) => (p.writer ?? null) === w).length; console.log(`書き手（直した所の表記→無ければ文全体）: 竹内 ${c("takeuchi")}・従業員 ${c("employee")}・不明 ${c(null)}`); }
+  const keep = pairs.filter((p) => !inAutoReplyPeriod(p.at) && (WRITER === "all" || (WRITER === "unknown" ? !p.writer : p.writer === WRITER)));
+  pairs.length = 0; pairs.push(...keep);
   console.log(`組 ${pairs.length}（A ${pairs.filter((p) => p.src === "A").length}・B ${pairs.filter((p) => p.src === "B").length}）`);
 
   // 型の数え

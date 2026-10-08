@@ -23,6 +23,10 @@
 // 戻す: PROPERTY_THREAD_NOTE=off（ブレイン・返信の材料に入れない）
 import { splitPropertyName, matchRoomRefs, buildingKeyOf, type RoomRef } from "./customer-state";
 import { jstParts } from "./jst-date";
+// 2026-10-08 8巡目（記録の続き・竹内「オススメした物件と、お客さんが送ってきた物件をちゃんと保管できていればできる」）
+import { extractScreenshotProperty } from "./own-property-match";
+import { customerSharedPropertyNames } from "./customer-property-names";
+import { collectStaffFreeRent, staffFreeRentFor, type StaffFreeRentFact } from "./staff-free-rent";
 
 export function propertyThreadEnabled(): boolean {
   return (process.env.PROPERTY_THREAD_NOTE ?? "").toLowerCase() !== "off";
@@ -36,9 +40,42 @@ export type PtAix = {
   created_at: string; aix_type: string | null; check_pattern?: string | null;
   property_names?: string[] | null; prop_statuses?: string[] | null; estimate_sent?: boolean | null; generated_text?: string | null;
 };
-export type PtEstimate = { created_at: string; property_name: string | null; room_no: string | null };
+export type PtEstimate = {
+  created_at: string; property_name: string | null; room_no: string | null;
+  /** 2026-10-08 8巡目（記録）: 見積書の割引・初期費用（estimate_records）。台帳の「見積書を送った」に金額を添える（AD は渡さない＝お客様向けの文に出さない） */
+  discount_yen?: number | null; initial_cost_yen?: number | null;
+};
+
+/** 見積書の金額の短い文（「割引 26,500円・初期費用 208,110円」）。金額が無い・PROPERTY_THREAD_ESTIMATE_AMOUNT=off なら null */
+export function estimateAmountText(e: Pick<PtEstimate, "discount_yen" | "initial_cost_yen">, env: Record<string, string | undefined> = process.env): string | null {
+  if ((env.PROPERTY_THREAD_ESTIMATE_AMOUNT ?? "").toLowerCase() === "off") return null;
+  const parts: string[] = [];
+  if (typeof e.discount_yen === "number" && e.discount_yen > 0) parts.push(`割引 ${e.discount_yen.toLocaleString("ja-JP")}円`);
+  if (typeof e.initial_cost_yen === "number" && e.initial_cost_yen > 0) parts.push(`初期費用 ${e.initial_cost_yen.toLocaleString("ja-JP")}円`);
+  return parts.length ? parts.join("・") : null;
+}
+/** 物件オススメの控え（recommendation_snapshots）: 🌟の物件と本文 */
+export type PtRecommendation = { sent_at: string; star_name: string | null; star_room: string | null; star_text?: string | null };
+
+/** 🌟の本文の要旨（見出しの次の「・」の行か最初の文・2つまで・60字） */
+export function recommendGist(starText: string | null | undefined): string | null {
+  const lines = String(starText ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const body = lines.filter((l) => !/^🌟/.test(l) && !/^（?オススメポイント）?$/.test(l) && !/ご査収|お手隙/.test(l));
+  const bullets = body.filter((l) => /^[・-]/.test(l)).map((l) => l.replace(/^[・-]\s*/, ""));
+  const picks = (bullets.length ? bullets : body).slice(0, 2).map((l) => l.replace(/[！!]+$/, ""));
+  const g = Array.from(picks.join("／")).slice(0, 60).join("");
+  return g || null;
+}
+
+/** 2本柱の拡張を戻す: PROPERTY_THREAD_ORIGIN=off（オススメ・持ち込み・食いつき・フリーレント・内覧の出来事を足さない＝7巡目の台帳） */
+export function propertyThreadOriginEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PROPERTY_THREAD_ORIGIN ?? "").toLowerCase() !== "off";
+}
+
 export type PtInput = {
   messages: ReadonlyArray<PtMsg>;
+  /** 物件オススメの控え（🌟の文）。2026-10-08 */
+  recommendations?: ReadonlyArray<PtRecommendation>;
   /** 画像 URL → 送った物件の名前（sent_image_properties → sent_properties の順） */
   imageLabels: ReadonlyMap<string, string>;
   aix?: ReadonlyArray<PtAix>;
@@ -48,10 +85,20 @@ export type PtInput = {
 export type PtTopic = "cost" | "discount" | "detail" | "vacancy" | "viewing" | "photo" | "like" | "ng" | "other";
 export type PtEventKind =
   | "sent" | "customer_shared" | "customer_ask" | "check_available" | "check_vacating" | "check_ended" | "estimate"
-  | "staff_negotiating" | "staff_checking" | "staff_result";
+  | "staff_negotiating" | "staff_checking" | "staff_result"
+  // 2026-10-08: こちらがオススメした（🌟）・内覧の候補日を出した・内覧（待ち合わせ）が決まった
+  | "recommended" | "viewing_offered" | "viewing_set";
 export type PtEvent = { at: string; kind: PtEventKind; topic?: PtTopic; by: "quote" | "named" | "record" | "inferred"; text?: string };
-export type PtRoom = { key: string; ref: RoomRef; names: string[]; events: PtEvent[]; sentByUs: boolean };
-export type PtTurnTarget = { roomKey: string; display: string; topic: PtTopic; by: "quote" | "named" | "inferred"; customerText: string; at: string };
+export type PtRoom = {
+  key: string; ref: RoomRef; names: string[]; events: PtEvent[]; sentByUs: boolean;
+  /** 2026-10-08 物件の出所: ours＝こちらが送った/オススメした物件・customer＝お客様が送ってきた（持ち込み）物件。最初の出来事で決める */
+  origin?: "ours" | "customer" | null;
+  /** お客様が食いついた（反応・質問・内覧希望・見積の依頼）最初の時刻と話題 */
+  hooked?: { at: string; topic: PtTopic } | null;
+  /** スタッフが送った文に書いたフリーレント（staff-free-rent・資料からは読まない） */
+  freeRent?: StaffFreeRentFact | null;
+};
+export type PtTurnTarget = { roomKey: string; display: string; topic: PtTopic; by: "quote" | "named" | "inferred"; customerText: string; at: string; why?: string };
 export type PropertyThreadState = { rooms: PtRoom[]; turnTargets: PtTurnTarget[] };
 
 const PLACEHOLDER_RE = /^(?:物件|お部屋)\s*[①-⑳0-9０-９]*$/;
@@ -122,6 +169,16 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
     push(r, { at: m.created_at, kind: "sent", by: "record" });
   }
 
+  const originOn = propertyThreadOriginEnabled();
+  // ①' 物件オススメの控え（🌟の物件・本文の要旨）。AIX の記録より先に置く（同じ送信の重なりは本文の要旨つきの方を残す）
+  if (originOn) {
+    for (const rc of input.recommendations ?? []) {
+      const name = rc.star_name ? (rc.star_room ? `${rc.star_name} ${rc.star_room}号室` : rc.star_name) : null;
+      const gist = recommendGist(rc.star_text);
+      push(roomOf(name, true), { at: rc.sent_at, kind: "recommended", by: "record", ...(gist ? { text: gist } : {}) });
+    }
+  }
+
   // ② AIX の記録（物件確認の結果・見積書）。名前の記録が無い画像は同じ AIX の物件名に寄せる
   const placeholderImages: Array<{ msg: PtMsg; aixAt: string }> = [];
   for (const a of [...(input.aix ?? [])].sort((x, y) => ms(x.created_at) - ms(y.created_at))) {
@@ -134,6 +191,13 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       const k = STATUS_KIND[String(sts[i] ?? "")];
       if (a.aix_type === "property_check_result" && k) push(r, { at: a.created_at, kind: k, by: "record" });
       if (a.estimate_sent) push(r, { at: a.created_at, kind: "estimate", by: "record" });
+      if (originOn) {
+        if (a.aix_type === "property_recommendation") { r.sentByUs = true; push(r, { at: a.created_at, kind: "recommended", by: "record" }); }
+        else if (a.aix_type === "property_send") { r.sentByUs = true; push(r, { at: a.created_at, kind: "sent", by: "record" }); }
+        else if (a.aix_type === "estimate_sheet") push(r, { at: a.created_at, kind: "estimate", by: "record" });
+        else if (a.aix_type === "viewing_invite") push(r, { at: a.created_at, kind: "viewing_offered", by: "record" });
+        else if (a.aix_type === "meeting_place") push(r, { at: a.created_at, kind: "viewing_set", by: "record" });
+      }
     });
     if (a.aix_type === "estimate_sheet") {
       for (const mm of String(a.generated_text ?? "").matchAll(/【([^】\n]{2,40})】/g)) push(roomOf(mm[1], false), { at: a.created_at, kind: "estimate", by: "record" });
@@ -166,7 +230,14 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
     }
   }
 
-  for (const e of input.estimates ?? []) push(roomOf(e.room_no ? `${e.property_name ?? ""} ${e.room_no}号室` : e.property_name, false), { at: e.created_at, kind: "estimate", by: "record" });
+  for (const e of input.estimates ?? []) {
+    const r = roomOf(e.room_no ? `${e.property_name ?? ""} ${e.room_no}号室` : e.property_name, false);
+    const amount = estimateAmountText(e);
+    // 同じ見積書が AIX の記録から先に載っている時（10分以内）は、そこに金額を添える（2つにしない）
+    const same = r && amount ? r.events.find((x) => x.kind === "estimate" && !x.text && Math.abs(ms(x.at) - ms(e.created_at)) < 10 * 60_000) : undefined;
+    if (same) same.text = amount ?? undefined;
+    else push(r, { at: e.created_at, kind: "estimate", by: "record", ...(amount ? { text: amount } : {}) });
+  }
 
   // ③ お客様の発言（引用・名指し）と、スタッフの手打ち（交渉・確認・結果）
   const customerAsks: Array<{ r: PtRoom; at: string; topic: PtTopic }> = [];
@@ -195,6 +266,21 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
         if (!target && q.text) target = roomsNamedIn(q.text)[0] ?? null;
       }
       if (!target) { const named = roomsNamedIn(text); if (named.length === 1) { target = named[0]; by = "named"; } }
+      // 2026-10-08 お客様が送ってきた物件（SUUMO 等の画面・資料の画像の書き起こし）: 知らない物件でも1件の物件として残す（持ち込み）
+      if (!target && originOn && /^\s*\[画像\]/.test(text)) {
+        const sp = extractScreenshotProperty(text);
+        // 書き起こしの文（「近隣の駐車場が満車で見つかっておりません。」）を物件名にしない（YUMA の実物・10/08）
+        if (sp?.name && sp.name.length <= 40 && !/[。！!？?]|ません|おります|ございます|です|ます$/.test(sp.name)) { target = roomOf(sp.room ? `${sp.name} ${sp.room}号室` : sp.name, false); by = "named"; }
+      }
+      // ポータルの共有文（SUUMO「物件名 / URL / by SUUMO」・athome「物件名：」）＝持ち込み。元の URL は出来事の text に残す
+      //   （本文に知っている物件名が出ていても、共有文なら「送ってきた」として残す＝名指しの質問にしない）
+      if ((!target || by === "named") && originOn && /https?:\/\//.test(text)) {
+        const cands = customerSharedPropertyNames([{ sender: "customer", text, createdAt: m.created_at }], { limit: 5 });
+        if (cands.length) {
+          for (const c of cands) push(roomOf(c.name, false), { at: m.created_at, kind: "customer_shared", by: "named", ...(c.url ? { text: c.url.slice(0, 120) } : {}) });
+          continue;
+        }
+      }
       if (!target) continue;
       // 画像の書き起こし（ポータルの画面・資料）は文の中の「敷金」等で話題を読まない＝お客様が物件を送ってきた（ゆなまる 10/6「シャーメゾン ソレイユ」の画面）
       if (/^\s*\[画像\]/.test(text)) { push(target, { at: m.created_at, kind: "customer_shared", by }); continue; }
@@ -216,6 +302,23 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
     if (r) push(r, { at: p.aixAt, kind: "estimate", by: "inferred" });
   }
   for (const r of rooms) r.events.sort((a, b) => ms(a.at) - ms(b.at));
+  if (originOn) {
+    const freeRent = collectStaffFreeRent(msgs.filter((m) => m.sender === "staff" && m.text && !isImage(m)).map((m) => ({ text: m.text, createdAt: m.created_at })));
+    for (const r of rooms) {
+      const first = r.events.find((e) => e.kind === "sent" || e.kind === "recommended" || e.kind === "customer_shared" || e.kind.startsWith("check_"));
+      r.origin = !first ? null : first.kind === "sent" || first.kind === "recommended" ? "ours" : "customer";
+      const h = r.events.find((e) => e.kind === "customer_ask" && e.topic !== "ng");
+      r.hooked = h ? { at: h.at, topic: h.topic ?? "other" } : null;
+      r.freeRent = freeRent.length ? staffFreeRentFor(freeRent, r.ref.building, r.ref.room) : null;
+    }
+    // 物件の名前が同じ行に無いフリーレント（「グランメール弁天 503号室現在募集中…\nこちらフリーレント1ヶ月…」）は、その通に名前が出た物件が1つならその物件
+    for (const f of freeRent) {
+      if (f.property) continue;
+      const m = msgs.find((x) => x.sender === "staff" && x.created_at === f.at);
+      const named = m?.text ? roomsNamedIn(m.text) : [];
+      if (named.length === 1 && !named[0].freeRent) named[0].freeRent = f;
+    }
+  }
 
   // ④ 今の番（最後のスタッフの発言より後のお客様の発言）がどの物件の話か
   const lastStaffAt = [...msgs].reverse().find((m) => m.sender === "staff")?.created_at;
@@ -226,19 +329,58 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       turnTargets.push({ roomKey: r.key, display: r.ref.display, topic: e.topic ?? "other", by: e.by === "record" ? "quote" : e.by, customerText: e.text ?? "", at: e.at });
     }
   }
+  // 2026-10-08 名前の無い「前にオススメしてくれた物件」「送ってもらったお部屋」: 一番新しいオススメ（無ければ送った物件）と推定する
+  if (originOn && turnTargets.length === 0) {
+    const turnMsgs = msgs.filter((m) => m.sender === "customer" && (!lastStaffAt || ms(m.created_at) > ms(lastStaffAt)) && !isImage(m));
+    const ref = turnMsgs.find((m) => GENERIC_REF_RE.test(String(m.text ?? "")) || CUSTOMER_SENT_REF_RE.test(String(m.text ?? "")));
+    if (ref) {
+      const rt = String(ref.text ?? "");
+      // 「私が送った物件」「最初に送ったお部屋」＝お客様が送ってきた物件（持ち込み）。「送って頂いた」はこちらが送った物件
+      const wantShared = CUSTOMER_SENT_REF_RE.test(rt) && !GENERIC_REF_RE.test(rt);
+      const wantRec = /オススメ|おすすめ|お勧め|お薦め/.test(rt);
+      const firstWanted = /最初|初め|はじめ/.test(rt);
+      const pickOf = (kinds: PtEventKind[]) => {
+        // 名前の無い呼び方は最近の話（14日以内の出来事）の中で決める（台帳は期間を問わず残すので、古い会話の物件に飛ばない）
+        const from = ms(ref.created_at) - 14 * 86400_000;
+        const xs = rooms.map((r) => ({ r, e: r.events.filter((e) => kinds.includes(e.kind) && ms(e.at) < ms(ref.created_at) && ms(e.at) >= from).at(-1) }))
+          .filter((x): x is { r: PtRoom; e: PtEvent } => !!x.e).sort((a, b) => ms(b.e.at) - ms(a.e.at));
+        return (firstWanted ? xs.at(-1) : xs[0]) ?? null;
+      };
+      const hit = wantShared ? pickOf(["customer_shared"]) : (wantRec ? pickOf(["recommended"]) : null) ?? pickOf(["recommended", "sent"]);
+      if (hit) {
+        const label = hit.e.kind === "recommended" ? "オススメした物件" : hit.e.kind === "customer_shared" ? "お客様が送ってきた物件" : "送った物件";
+        turnTargets.push({ roomKey: hit.r.key, display: hit.r.ref.display, topic: topicOf(rt), by: "inferred", customerText: Array.from(rt.replace(/\s+/g, " ")).slice(0, 40).join(""), at: ref.created_at,
+          why: `（名前の無い呼び方・${firstWanted ? "一番最初に" : "一番新しく"}${label} ${jstShort(hit.e.at)} と推定）` });
+      }
+    }
+  }
   turnTargets.sort((a, b) => ms(a.at) - ms(b.at));
   return { rooms, turnTargets };
 }
 
+const GENERIC_REF_RE = /(?:オススメ|おすすめ|お勧め|お薦め|送って(?:頂|いただ|くださ|くれ|もら)|頂いた|いただいた|前の|先日の|この前の|さっきの)[^。\n？?]{0,12}(?:物件|お部屋|部屋)/;
+const CUSTOMER_SENT_REF_RE = /(?:私が|自分が|こちらから|最初に|前に|さっき)?送った(?:物件|お部屋|部屋)|送らせて(?:頂|いただ)いた(?:物件|お部屋|部屋)|共有した(?:物件|お部屋|部屋)/;
 const TOPIC_JA: Record<PtTopic, string> = { cost: "初期費用", discount: "礼金・費用の値下げ", detail: "詳細", vacancy: "募集状況", viewing: "内覧", photo: "写真", like: "気に入った様子", ng: "合わない様子", other: "このお部屋の話" };
 const KIND_JA: Record<PtEventKind, string> = {
   sent: "こちらが資料を送った", customer_shared: "お客様が送ってきた", customer_ask: "お客様", check_available: "確認の結果 募集中",
   check_vacating: "確認の結果 退去予定", check_ended: "確認の結果 募集終了", estimate: "見積書を送った",
   staff_negotiating: "こちらが交渉中と伝えた", staff_checking: "こちらが確認中と伝えた", staff_result: "結果を伝えた",
+  recommended: "こちらがオススメした（🌟）", viewing_offered: "内覧の候補日を出した", viewing_set: "内覧（待ち合わせ）が決まった",
 };
 function eventLine(e: PtEvent): string {
-  const head = e.kind === "customer_ask" ? `お客様「${e.text ?? ""}」（${TOPIC_JA[e.topic ?? "other"]}）` : e.kind === "customer_shared" ? "お客様がこの物件の画面・資料を送ってきた" : KIND_JA[e.kind];
+  const head = e.kind === "customer_ask" ? `お客様「${e.text ?? ""}」（${TOPIC_JA[e.topic ?? "other"]}）` : e.kind === "customer_shared" ? "お客様がこの物件の画面・資料を送ってきた"
+    : (e.kind === "estimate" || e.kind === "recommended") && e.text ? `${KIND_JA[e.kind]}（${e.text}）` : KIND_JA[e.kind];
   return `${jstShort(e.at)} ${head}${e.by === "inferred" ? "（推定）" : ""}`;
+}
+
+/** 物件の出所・食いつき・フリーレントの1行（無ければ null） */
+export function roomSourceLine(r: PtRoom): string | null {
+  const parts: string[] = [];
+  if (r.origin === "customer") parts.push("お客様が送ってきた物件（持ち込み）");
+  else if (r.origin === "ours") parts.push(r.events.some((e) => e.kind === "recommended") ? "こちらがオススメした物件" : "こちらが送った物件");
+  if (r.hooked) parts.push(`お客様が食いついた ${jstShort(r.hooked.at)}（${TOPIC_JA[r.hooked.topic]}）`);
+  if (r.freeRent) parts.push(r.freeRent.kind === "none" ? `フリーレント: なし（スタッフの送付「${r.freeRent.phrase}」）` : `フリーレント: スタッフの送付「${r.freeRent.phrase}」`);
+  return parts.length ? parts.join("・") : null;
 }
 
 /**
@@ -254,12 +396,15 @@ export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOther
     const r = s.rooms.find((x) => x.key === k);
     if (!r) continue;
     const ts = s.turnTargets.filter((t) => t.roomKey === k);
-    const how = ts.map((t) => `${TOPIC_JA[t.topic]}${t.by === "quote" ? "・引用" : t.by === "inferred" ? "・引用先は名前の無い画像→推定" : "・名指し"}`).join("／");
+    const how = ts.map((t) => `${TOPIC_JA[t.topic]}${t.by === "quote" ? "・引用" : t.by === "inferred" ? (t.why ? "・名前の無い呼び方→推定" : "・引用先は名前の無い画像→推定") : "・名指し"}`).join("／");
     lines.push(`▶ 今の番の物件: ${r.ref.display}（${how}）${r.names.length > 1 ? ` 別の書き方: ${r.names.filter((n) => n !== r.ref.display).join("・")}` : ""}`);
+    // 2026-10-08 物件の出所・食いつき・フリーレント（スタッフが送った文に書いた物だけ）
+    const src = roomSourceLine(r);
+    if (src) lines.push(`  ・${src}`);
     for (const e of r.events.slice(-maxEvents)) lines.push(`  ・${eventLine(e)}`);
     // 今の番の「こちら」がどの物件かを1行で（引用先が名前の無い見積書の画像でも、根拠と一緒に名前を渡す）
     for (const t of ts) {
-      const why = t.by === "inferred" ? "（引用先はこちらが送った見積書の画像・その前にお客様が初期費用を聞いた物件の見積書と推定）" : t.by === "quote" ? "（引用先の画像の物件）" : "（物件名の名指し）";
+      const why = t.why ? t.why : t.by === "inferred" ? "（引用先はこちらが送った見積書の画像・その前にお客様が初期費用を聞いた物件の見積書と推定）" : t.by === "quote" ? "（引用先の画像の物件）" : "（物件名の名指し）";
       lines.push(`  → お客様「${t.customerText}」の「こちら」＝${r.ref.display}${why}`);
     }
   }
@@ -267,7 +412,7 @@ export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOther
     .sort((a, b) => ms(b.events.at(-1)!.at) - ms(a.events.at(-1)!.at)).slice(0, opts.maxOthers ?? 3);
   if (others.length) {
     lines.push("（同じ会話の他の物件・今の番の話ではない）");
-    for (const r of others) { const e = r.events.filter((x) => x.kind !== "sent").at(-1)!; lines.push(`・${r.ref.display}: ${eventLine(e)}`); }
+    for (const r of others) { const e = r.events.filter((x) => x.kind !== "sent").at(-1)!; const src = roomSourceLine(r); lines.push(`・${r.ref.display}: ${eventLine(e)}${src ? `（${src}）` : ""}`); }
   }
   lines.push("⚠ お客様が今話している物件は ▶ の物件（「こちら」は → の行の物件）。その物件の約束・答えは ▶ の物件名で書き、同じ会話の他の物件（直前の AIX の本文に名前が出ていた物件を含む）と取り違えない。");
   return lines.join("\n");

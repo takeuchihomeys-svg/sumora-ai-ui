@@ -237,6 +237,49 @@ export async function loadRecordedFacts(conversationId: string, limit = 120): Pr
   } catch { return []; }
 }
 
+/**
+ * 2026-10-08 8巡目（記録）: AIX【物件送付】は本文にも画面にも物件名が無い（60日 302通で名前があったのは13通）。
+ *   同じ時に送った資料の画像を読んだ記録（sent_properties・AIX の送信の後 中央値4秒・9割18秒で入る）から名前を取り、
+ *   送信時の記録（sent_facts の properties_sent の行）の detail.propertyNames に足す。名前が既にある行は触らない。
+ *   読み取りを待つため waits（ミリ秒）の後に読む（既定 10秒・22秒の2回）。失敗しても投げない。戻す: AIX_SENT_NAMES=off
+ */
+export async function fillPropertySendNamesFromSentProperties(o: { conversationId: string; sentAt: string; aixType: string; waits?: number[]; aixUsageLogId?: string | null }): Promise<{ names: number; updated: boolean; logUpdated?: boolean }> {
+  const { aixSentNamesEnabled, namesNearSend } = await import("@/app/lib/aix-sent-names");
+  if (!aixSentNamesEnabled()) return { names: 0, updated: false };
+  let names: string[] = [];
+  try {
+    const t = Date.parse(o.sentAt);
+    if (!Number.isFinite(t)) return { names: 0, updated: false };
+    for (const w of o.waits ?? [10_000, 12_000]) {
+      await new Promise((r) => setTimeout(r, w));
+      const { data } = await supabase.from("sent_properties").select("property_name, room_no, sent_at, delivery")
+        .eq("conversation_id", o.conversationId).gte("sent_at", new Date(t - 5 * 60_000).toISOString()).lte("sent_at", new Date(t + 3 * 60_000).toISOString()).limit(60);
+      names = namesNearSend((data ?? []) as Array<{ property_name: string | null; room_no: string | null; sent_at: string | null; delivery: string | null }>, o.sentAt);
+    }
+    if (names.length === 0) return { names: 0, updated: false };
+    // 2026-10-08 続き: AIX の記録（aix_usage_logs.property_names）にも残す（名前がまだ無い行だけ）
+    let logUpdated = false;
+    if (o.aixUsageLogId) {
+      const { error: le } = await supabase.from("aix_usage_logs").update({ property_names: names.map((n) => n.slice(0, 100)) }).eq("id", o.aixUsageLogId).is("property_names", null);
+      logUpdated = !le;
+      if (le) console.warn("[sent-facts] property_send log names update failed:", le.message);
+    }
+    const { data: rows } = await supabase.from("sent_facts").select("id, detail").eq("conversation_id", o.conversationId)
+      .eq("origin", "aix").eq("aix_type", o.aixType).eq("kind", "properties_sent").eq("sent_at", o.sentAt).limit(1);
+    const row = (rows ?? [])[0] as { id: number | string; detail: Record<string, unknown> | null } | undefined;
+    if (!row) return { names: names.length, updated: false, logUpdated };
+    const d = row.detail ?? {};
+    if (Array.isArray(d.propertyNames) && (d.propertyNames as unknown[]).length > 0) return { names: names.length, updated: false, logUpdated };
+    const cnt = typeof d.propertyCount === "number" ? d.propertyCount : 0;
+    const { error } = await supabase.from("sent_facts").update({ detail: { ...d, propertyNames: names, propertyCount: Math.max(cnt, names.length), namesFrom: "sent_properties" } }).eq("id", row.id);
+    if (error) console.warn("[sent-facts] property_send names update failed:", error.message);
+    return { names: names.length, updated: !error, logUpdated };
+  } catch (e) {
+    console.warn("[sent-facts] property_send names failed:", e instanceof Error ? e.message : String(e));
+    return { names: names.length, updated: false };
+  }
+}
+
 // ─── 内覧の記録（viewing_history）───
 
 /**

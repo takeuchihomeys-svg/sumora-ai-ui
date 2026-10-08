@@ -246,5 +246,24 @@ describe("最安値（cheapest_estimate）", () => {
   it("広告の画像の「初期費用最安値に」→ 出さない", () => falsy(ids("[画像] 関西SUMORAで見つける / 初期費用最安値に / 初期費用2,980円").includes("cheapest_estimate")));
 });
 
+// 2026-10-08 8巡目 竹内さん「車で来る方には近くのパーキングを案内する」「シャーメゾン等は AD が出ない物件が多いので割引できない事がある＝見積書による」
+//   実物は 365日のお客様の発言（当たり 車 3通・シャーメゾン 1通を全部読んだ）
+describe("8巡目 車で内覧・AD の出ない会社の物件", () => {
+  it("87f49e 05-17 車で行かせて頂いても", () => truthy(ids("おせわになっております。\nこちらこそよろしくお願いします！！\n車で行かせて頂いてもよろしかったですかね？😓").includes("car_visit")));
+  it("87f49e 05-17 車はどこに停め", () => truthy(ids("ただいま着きました！\n車はどこに停めさせてもらえばいいですか？").includes("car_visit")));
+  it("4ef4da 09-01 車で向かいます", () => truthy(ids("車で向かいますので14時くらいです！").includes("car_visit")));
+  it("c1d57c 引越しの荷物は別の話 → 出さない", () => falsy(ids("また車で荷物を運ぶのですが、停める場所とかはありますでしょうか？💭").includes("car_visit")));
+  it("条件の「電車で30分」→ 出さない", () => falsy(ids("JR野江まで電車で15〜20分でお願い致します").includes("car_visit")));
+  it("fecda0 10-05 シャーメゾンなんですね", () => truthy(ids("シャーメゾンなんですね。").includes("no_ad_discount")));
+  it("事実は割引の可否を見積書に回す", () => {
+    const f = matchCompanyFacts("シャーメゾンなんですね。").find((x) => x.id === "no_ad_discount");
+    truthy(f && /御見積書でお伝えする/.test(f.fact) && /断言しない/.test(f.fact));
+  });
+  it("viewing_duration に2件目への移動", () => {
+    const f = matchCompanyFacts("内覧時間は大体どのくらいになりますでしょうか？").find((x) => x.id === "viewing_duration");
+    truthy(f && /移動/.test(f.fact));
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { console.log(failures.map((f) => `- ${f}`).join("\n")); process.exit(1); }

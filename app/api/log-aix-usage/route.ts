@@ -11,6 +11,8 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { sanitizePickerChoices } from "@/app/lib/aix-pickers";
 import { sanitizePrefill } from "@/app/lib/aix-prefill";
 import { brainPredictionAt, PREDICTION_LOOKBACK_MS } from "@/app/lib/brain-outcome";
+// 2026-10-08 8巡目（記録）: 物件オススメ・物件送付で送った物件名を残す
+import { aixPropertyNamesForLog } from "@/app/lib/aix-sent-names";
 
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
@@ -275,6 +277,10 @@ export async function POST(req: NextRequest) {
 
     // 2026-09-27: ピッカーの選択（知らない鍵・選択肢に無い値は落とす）。空なら null
     const pickerChoices = sanitizePickerChoices(aix_type, picker_choices, { checkPattern: check_pattern ?? null, appSubMode: app_sub_mode ?? null, sendMode: send_mode ?? null });
+    // 2026-10-08 8巡目（記録）: 物件オススメは画面から物件名が来ない（60日 531通で 0通）→ 本文の🌟の行から（aix-sent-names.ts・戻す AIX_SENT_NAMES=off）
+    //   2026-10-08 続き: 物件送付・見積書・内覧調整・待ち合わせも（aixPropertyNamesForLog・画面から名前が来た時はそちらが正）
+    const recNames = !(Array.isArray(property_names) && property_names.length > 0)
+      ? aixPropertyNamesForLog({ aixType: aix_type, text: typeof generated_text === "string" ? generated_text : null, meetingPropertyName: meeting_property_name ?? null, sentPropertyNames: Array.isArray(properties_sent_names) ? properties_sent_names : null }) : [];
     const logRowInsert = {
       conversation_id,
       aix_type,
@@ -298,6 +304,7 @@ export async function POST(req: NextRequest) {
       // 空配列は NULL に落とす（brain 側の length>0 判定を簡潔に保つため）
       property_names: Array.isArray(property_names) && property_names.length > 0
         ? property_names.map((n) => String(n ?? "").slice(0, 100))
+        : recNames.length > 0 ? recNames.map((n) => n.slice(0, 100))
         : null,
       prop_statuses: Array.isArray(prop_statuses) && prop_statuses.length > 0
         ? prop_statuses.map((s) => String(s ?? "").slice(0, 40))
@@ -332,11 +339,16 @@ export async function POST(req: NextRequest) {
     //   見積書の本文（【物件名 号室】＋「N円割引」）を物件ごとに estimate_records に残し、候補プール・送付記録の AD と結び付ける。
     //   応答は待たせない（waitUntil）。失敗しても本処理は変えない。
     const logRow = insertedLog as { id?: string; created_at?: string } | null;
-    if (logRow?.id && (aix_type === "estimate_sheet" || estimate_sent === true) && typeof generated_text === "string" && generated_text.trim()) {
+    //   2026-10-08 8巡目（記録）: 本文が空・【】が無い見積書、物件確認した＋同封（金額は画像の中）も全件残す（60日で 68%→全件。
+    //   物件名は property_names・費用メモ prop_cost_notes から。決め方は estimate-record-items.ts・戻す ESTIMATE_RECORDS_ALL=off）
+    if (logRow?.id && (aix_type === "estimate_sheet" || estimate_sent === true) && ((typeof generated_text === "string" && generated_text.trim()) || (process.env.ESTIMATE_RECORDS_ALL ?? "").toLowerCase() !== "off")) {
       waitUntil((async () => {
         try {
           const { recordEstimateFromAix } = await import("@/app/lib/estimate-profit-server");
-          await recordEstimateFromAix({ aixUsageLogId: logRow.id as string, conversationId: conversation_id, generatedText: generated_text, createdAt: logRow.created_at ?? new Date().toISOString() });
+          await recordEstimateFromAix({
+            aixUsageLogId: logRow.id as string, conversationId: conversation_id, generatedText: generated_text ?? null, createdAt: logRow.created_at ?? new Date().toISOString(),
+            aixType: aix_type ?? null, propertyNames: logRowInsert.property_names ?? null, propStatuses: logRowInsert.prop_statuses ?? null, propCostNotes: logRowInsert.prop_cost_notes ?? null,
+          });
         } catch (e) {
           console.warn("[log-aix-usage] estimate_records failed:", e instanceof Error ? e.message : e);
         }
@@ -397,7 +409,10 @@ export async function POST(req: NextRequest) {
           skipCalendar: scheduled === true,
           conversationId: conversation_id, aixType: aix_type, sentAt: sent_at ?? new Date().toISOString(), lineMessageId: line_message_id ?? null,
           generatedText: generated_text ?? null, checkPattern: check_pattern ?? null,
-          propertyNames: Array.isArray(property_names) ? property_names.map((n) => String(n ?? "")).filter(Boolean) : null,
+          propertyNames: Array.isArray(property_names) && property_names.length > 0 ? property_names.map((n) => String(n ?? "")).filter(Boolean)
+            // 2026-10-08: 物件オススメの🌟の名前（売上サポの名前が来た時はそちらが正＝上書きしない）
+            : recNames.length > 0 && !(Array.isArray(properties_sent_names) && properties_sent_names.length > 0) ? recNames
+            : Array.isArray(property_names) ? [] : null,
           estimateSent: estimate_sent === true,
           // 2026-09-27: 物件ピックアップ・オススメで送った物件の数・名前（台帳の物件送付の件数。旧は1通＝1件）
           sentPropertyCount: typeof properties_sent_count === "number" ? properties_sent_count : null,
@@ -414,6 +429,14 @@ export async function POST(req: NextRequest) {
         });
       } catch (e) { console.error("[log-aix-usage] sent_facts record failed:", e); }
     })());
+    // 2026-10-08 8巡目（記録）: AIX【物件送付】の物件名を、同じ時に送った資料の読み取り（sent_properties）から送信時の記録に足す（戻す AIX_SENT_NAMES=off）
+    if (aix_type === "property_send" && scheduled !== true && typeof sent_at === "string" && sent_at && !(Array.isArray(properties_sent_names) && properties_sent_names.length > 0)) {
+      waitUntil((async () => {
+        const { fillPropertySendNamesFromSentProperties } = await import("@/app/lib/sent-facts");
+        const r = await fillPropertySendNamesFromSentProperties({ conversationId: conversation_id, sentAt: sent_at, aixType: aix_type, aixUsageLogId: logRow?.id ?? null });
+        console.log(JSON.stringify({ tag: "log-aix-usage:send-names", conversation_id, ...r }));
+      })().catch(() => { /* 記録だけ・本処理は変えない */ }));
+    }
 
     // ── 2026-09-20 竹内「物件ピックアップから送る物件もテーブルかクエリで保管したら…
     //   文生成される部分毎回直さなくて済む（退去予定物件の部分等）」────────────────────

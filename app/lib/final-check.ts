@@ -15,7 +15,8 @@
 // - check-reply/route.ts    …… 送信時の再チェック用ルート。2026-09-11 以降、画面からは呼ばない
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
-import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
+import { ungroundedFreeRentSentence, type StaffFreeRentFact } from "./staff-free-rent";
+import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, materialGroundsAssertion,PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
 import { isStyleOnlyNoError, isStyleNoErrorCode } from "./final-check-scope";
 // 2026-10-02 誤発火の線（FAREWELL_ON_MOVEOUT_INFO）
@@ -222,6 +223,11 @@ export interface FinalCheckContext {
   activeTaskTypes?: string[];
   /** G6: AIX【物件確認した】(property_check_result) / mgmt_* 完了（route.ts aixDone.vacancyCheck || mgmtCheck）。VACANCY/MOVEIN を免除 */
   aixVacancyDone?: boolean;
+  /** 2026-10-08 8巡目 竹内「フリーレントはスタッフが入れていた物件だけ」: この会話でスタッフが送った文のフリーレント（staff-free-rent.collectStaffFreeRent）。
+   *  渡された時だけ、保管の無い会話でフリーレントが付くと言った下書きを止める（FREE_RENT_UNGROUNDED）。undefined＝読めなかった＝見ない */
+  staffFreeRentFacts?: StaffFreeRentFact[];
+  /** 2026-10-08 8巡目: 対象の物件の資料に書いてある値（契約条件・入居時期）。退去予定・入居時期の言い切りが資料のとおりなら G6 を免除（validate-reply.materialGroundsAssertion） */
+  materialFacts?: string;
   /** G30: resolveGreeting().kind / .opening（OPENING_GREETING_* の対称検査） */
   greetingKind?: GreetingKind;
   expectedOpening?: string;
@@ -590,7 +596,11 @@ AIX_BOUNDARY_* にもBANNED_WORDにも分類できないが、[RULES]のルー�
   const ngPropertyNote = ctx.ngProperties?.length
     ? `【🚫 提案禁止物件チェック】以下の物件名がこの返信本文に1文字でも含まれていたら NG_PROPERTY_MENTION（severity: block）として報告してください。物件名を削除・言及を避けるよう suggestion に明記すること。\n禁止物件: ${ctx.ngProperties.join(" / ")}\n\n`
     : "";
-  const dynamic = `${ngPropertyNote}${brainBaselineNote}${aixNote}
+  // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 資料の値のとおりの答えは AIX_BOUNDARY_MOVEIN／AIX_BOUNDARY_DB にしない
+  //   （YUMA で「10月31日退去予定のため、11月1日以降にご内覧可能です」が AIX_BOUNDARY_MOVEIN で消えた）。戻す MATERIAL_FACTS_TO_CHECK=off
+  const materialNote = ctx.materialFacts && process.env.MATERIAL_FACTS_TO_CHECK !== "off"
+    ? `[MATERIAL_FACTS]（お客様が聞いた物件の資料・こちらの送付に書いてある値。これと同じ値を書いた直接回答は AIX_BOUNDARY_MOVEIN・AIX_BOUNDARY_DB・FABRICATED_* の違反ではない。資料に無い値・日付を足した文は従来どおり）\n${ctx.materialFacts.split("\n").map((l) => `- ${l}`).join("\n")}\n[/MATERIAL_FACTS]\n` : "";
+  const dynamic = `${ngPropertyNote}${brainBaselineNote}${aixNote}${materialNote}
 [REPLY]
 ${draft}
 [/REPLY]`;
@@ -792,7 +802,11 @@ function customerTextsForFabrication(ctx: FinalCheckContext): string[] {
 function companyFactsForCheck(ctx: FinalCheckContext): string {
   const custRecent = (ctx.recentMessages ?? []).filter((m) => m.sender !== "staff").slice(-3).map((m) => m.text ?? "");
   const lines = buildCompanyFactsForCheck([ctx.lastCustomerMessage ?? "", ...custRecent]);
-  return lines ? `[COMPANY_FACTS]（会社として答えが決まっている事実。お客様が今これを聞いている。これに反する断定は捏造）\n${lines}\n[/COMPANY_FACTS]\n` : "";
+  // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 対象の物件の資料の値（契約条件・入居時期）を判定役にも渡す
+  //   （YUMA で「保証人不要」を答えた下書きが FABRICATED_AVAILABILITY で再生成され「管理会社に確認」に戻った）。戻す MATERIAL_FACTS_TO_CHECK=off
+  const material = ctx.materialFacts && process.env.MATERIAL_FACTS_TO_CHECK !== "off"
+    ? `[MATERIAL_FACTS]（お客様が聞いた物件の資料に書いてある値。これと同じ事実を資料のとおりに書いた文は捏造ではない。資料に無い値・日付を足した文は従来どおり）\n${ctx.materialFacts.split("\n").map((l) => `- ${l}`).join("\n")}\n[/MATERIAL_FACTS]\n` : "";
+  return (lines ? `[COMPANY_FACTS]（会社として答えが決まっている事実。お客様が今これを聞いている。これに反する断定は捏造）\n${lines}\n[/COMPANY_FACTS]\n` : "") + material;
 }
 
 // ─── Pass 3: バグ探し思考（文脈・網羅性 / context_check）──────────────────────
@@ -2168,6 +2182,8 @@ function runStanceChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
 //   ① ctx.aixVacancyDone — AIX【物件確認した】/ mgmt_* 完了（空室・入居日のみ。告知・審査は対象外）
 //   ② スタッフ直近3件（AIX送付文含む）に確認結果報告（rule.staffConfirmedRe: 「管理会社に確認しましたところ空室」等）
 //   ③ AIX 結果送信フロー（ctx.isAix or brainMeta.action=property_check_result）で staffSourceText に対象語（rule.sourceRe）
+/** 断言の免除（資料のとおり）を文ごとに見るための区切り（。！？・改行） */
+const sentencesOf = (t: string): string[] => String(t ?? "").split(/(?<=[。！!？?\n])/).map((s) => s.trim()).filter(Boolean);
 function runAssertionBanChecks(text: string, ctx: FinalCheckContext): CheckIssue[] {
   const issues: CheckIssue[] = [];
   const staffRecent = lastStaffTexts(ctx, 3);
@@ -2183,6 +2199,9 @@ function runAssertionBanChecks(text: string, ctx: FinalCheckContext): CheckIssue
       // 6巡目（10/07）: スタッフ（AIX の送付文）が先に書いた退去予定・入居中の引用
       : r.staffQuotedRe && r.staffQuotedRe.match.test(m[0]) && r.staffQuotedRe.staff.test(staffRecent) ? "staffQuoted"
       : aixResultFlow && r.sourceRe.test(source) ? "staffSource"
+      // 8巡目（10/08）竹内「資料に書いてある事は返信の本文で答えて良い」: 資料の退去予定・入居時期のとおりの文（その文だけで判定）
+      : ctx.materialFacts && sentencesOf(text).some((s) => findAssertionMatch(r, s) && materialGroundsAssertion(r.code, s, ctx.materialFacts!))
+        && sentencesOf(text).every((s) => !findAssertionMatch(r, s) || materialGroundsAssertion(r.code, s, ctx.materialFacts!)) ? "material"
       : null;
     if (exemptBy) {
       // 監査用に info で残す（UI は block のみ止める）。clearedFacts と同様に2回目チェックでも再指摘しない
@@ -2190,6 +2209,13 @@ function runAssertionBanChecks(text: string, ctx: FinalCheckContext): CheckIssue
       continue;
     }
     issues.push({ pass: "rule_check", severity: "block", code: r.code, message: r.msg, evidence: m[0], suggestion: r.sug });
+  }
+  // 2026-10-08 8巡目 竹内（最優先）「フリーレントは全部の物件につくわけではない…スタッフが AIX で入れていたらフリーレント」:
+  //   この会話でスタッフがフリーレントを送った物件が1つも無いのに、下書きがフリーレントが付くと言った → 止める（資料・手本からの混入）。
+  //   線 scripts/audit-r8-free-rent.ts（AI の下書き 90日 14件で止める 0＝探す約束・条件の言い直し・確認の約束は対象外・戻す FREE_RENT_EXIT=off）
+  if (ctx.staffFreeRentFacts) {
+    const s = ungroundedFreeRentSentence(text, ctx.staffFreeRentFacts);
+    if (s) issues.push({ pass: "rule_check", severity: "block", code: "FREE_RENT_UNGROUNDED", message: "この会話でスタッフがフリーレントを送った物件が無いのに、フリーレントが付くと書いている（フリーレントはスタッフが送った物件だけ）", evidence: s.slice(0, 60), suggestion: "フリーレントの文を外す（聞かれている時は管理会社に確認する約束にする）" });
   }
 
   // ── 2026-09-19 竹内（慶次事例）「ペット飼育等お客さんいうていないのにペット飼育とでてしまった」──

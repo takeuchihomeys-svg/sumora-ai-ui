@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { staffDeviceHeader } from "@/app/lib/staff-device";
 import { supabase } from "../lib/supabase";
 import { IMAGE_BATCH_MAX } from "../lib/line-image-batch";
 import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDayResult } from "../lib/calendarSlots";
@@ -34,7 +35,8 @@ import { SITUATION_PRESETS, type SituationKind } from "../lib/recommendation-sit
 // 2026-09-18 竹内: 見積書に添えるキャンペーンの1文（骨組みは実送信の形・中身はスタッフの言葉）
 import { buildCampaignLine, CAMPAIGN_PLACEHOLDER } from "../lib/estimate-campaign";
 
-const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
+// 2026-10-08 竹内「端末で…竹内か従業員か」: 送った端末の印（x-staff-device・ブラウザごとの ID）を添える（app/lib/staff-device.ts）
+const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}`, ...staffDeviceHeader() };
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
 import { firstSentPickupId } from "../lib/sent-image-order";

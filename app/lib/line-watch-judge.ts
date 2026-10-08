@@ -31,7 +31,7 @@ import { sceneKeyOf } from "./line-watch-turn";
 //   v3-2026-10-07: スタッフが返さなかった番で、AI の下書きがお礼・了承の番の読むべき範囲の外の行為（お部屋を探す宣言 等）を書いた → different（no_staff_out_of_topic）
 //     （uran. 10/05: 「よろしくお願いいたします」に43日前の物件探しの宣言・スタッフは返さず＝旧は na で数えず見えていなかった。範囲は ack-topic-scope.ts）
 //   v4-2026-10-07: 下書きの欄が __SHOWN__（画面が表示した印）の番は draft_first で比べる（pickJudgeDraft・draft_src）。旧は返信の番の 39% を na にしていた
-export const JUDGE_VERSION = "v5-2026-10-07";
+export const JUDGE_VERSION = "v6-2026-10-08";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -190,6 +190,11 @@ export type JudgeInput = {
   window: Pick<StaffWindow, "closed" | "texts" | "presses" | "aixMessages" | "aixMessagesBurst">;
   /** 下書きの行為のうち、お礼・了承の番の読むべき範囲の外の物（ack-topic-scope.outOfTopicActs・呼び出し側が会話から決める） */
   outOfTopicActs?: StaffAct[];
+  /**
+   * 2026-10-08 返事を書いた人（app/lib/staff-writer）。従業員の文は書き方の差（言い回しが遠いだけ）を外れに数えない＝中身（行為・事実・聞き返し）だけで見る。
+   *   返信の書き方の基準は竹内さん（設計知見 22802738）。戻す: STAFF_WRITER_SPLIT=off（呼び出し側が渡さない）
+   */
+  staffWriter?: { writer: "takeuchi" | "employee" | null; confidence: "sure" | "likely" | "unknown"; source: string } | null;
 };
 export type VerdictDetail = {
   v: string;
@@ -216,6 +221,9 @@ export type VerdictDetail = {
   out_of_topic_acts?: StaffAct[];
   /** 比べた下書きの欄（pickJudgeDraft）。stale＝表示された文が分からない（比べない） */
   draft_src?: JudgeDraftSrc;
+  /** 返事を書いた人（takeuchi｜employee）と根拠（device｜group_speaker｜style_edit｜style）。一致率を竹内さんの番だけで見るため */
+  staff_writer?: string | null;
+  staff_writer_src?: string | null;
 };
 export type Judgement = { verdict: Verdict | null; detail: VerdictDetail };
 
@@ -246,6 +254,7 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   fact_one_side: "事実を片側だけが言っている",
   ask_diff: "聞き返しの有無が違う",
   wording_far: "行為は同じだが言い回しが遠い",
+  acts_equal_employee_wording: "行為は同じ・言い回しの差は従業員の書き方（数えない）",
 };
 
 /** 似ている度の線（行為が同じ時に same_meaning と見る下限）。監査 audit-line-watch-verdict.ts で決めた */
@@ -279,8 +288,14 @@ export function judgeTurn(i: JudgeInput): Judgement {
     return { verdict: "na", detail: { ...base, reason: "no_staff", brain_aix: brainAix } };
   }
   // 文の判定（下書きと返事のまとまりの両方がある時だけ）
-  const text = draft && staffText ? judgeText(draft, staffText) : null;
-  const withText = (d: VerdictDetail): VerdictDetail => (text ? { ...d, ...text.extra, text_verdict: text.verdict, text_reason: text.reason, later_texts: later } : { ...d, later_texts: later });
+  let text = draft && staffText ? judgeText(draft, staffText) : null;
+  // 従業員の文: 言い回しが遠いだけ（行為・事実・聞き返しは同じ）は一致に数える（書き方の基準は竹内さん）
+  const sw = i.staffWriter;
+  if (text && text.reason === "wording_far" && sw?.writer === "employee" && sw.confidence !== "unknown") {
+    text = { verdict: "same_meaning", reason: "acts_equal_employee_wording", extra: { ...text.extra, uncertain: false } };
+  }
+  const writerX: Partial<VerdictDetail> = sw?.writer ? { staff_writer: sw.writer, staff_writer_src: sw.source } : {};
+  const withText = (d: VerdictDetail): VerdictDetail => (text ? { ...d, ...writerX, ...text.extra, text_verdict: text.verdict, text_reason: text.reason, later_texts: later } : { ...d, ...writerX, later_texts: later });
 
   // ── AI は AIX ──
   //   返事のまとまりで AIX を押した → その種類で決める。

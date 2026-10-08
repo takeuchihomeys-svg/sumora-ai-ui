@@ -1,7 +1,7 @@
 // G32（2026-09-09 Fable5 じゅにあ事例）: 冒頭二層（挨拶行＋開口語）の回帰テスト。「お待たせ致しました」は如何なる場合も出ない。
 // 実行: npx tsx app/lib/__tests__/greeting.test.ts（全 PASS で exit 0）
 import {
-  resolveGreeting, enforceOpening, buildGreetingNote, stripWaited, isProgressPushMessage, normalizeGreetingLite, toGreetingLite, buildFirstGreeting, continuedSameDay,
+  resolveGreeting, enforceOpening, buildGreetingNote, stripWaited, isProgressPushMessage, normalizeGreetingLite, toGreetingLite, buildFirstGreeting, continuedSameDay, computeAlreadyGreetedToday,
 } from "../greeting";
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "../reply-context";
 import { runDeterministicChecks } from "../final-check";
@@ -318,7 +318,24 @@ describe("会話の続きは挨拶なし（continuedSameDay）", () => {
   it("同じ日にお客様が続けた → 続き", () => expect(continuedSameDay([staff as never, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" } as never])).toBe(true));
   it("こちらの後の画像だけの発言は飛ばす", () => expect(continuedSameDay([staff as never, { sender: "staff", text: "[画像]", createdAt: "2026-10-04T09:11:00Z" } as never, { sender: "customer", text: "はい", createdAt: "2026-10-04T10:00:00Z" } as never])).toBe(true));
   it("お客様の発言が翌日（JST）→ 続きではない", () => expect(continuedSameDay([staff as never, { sender: "customer", text: "おはようございます", createdAt: "2026-10-05T01:00:00Z" } as never])).toBe(false));
-  it("resolveGreeting も挨拶なし（下書きは翌日）", () => expect(resolveGreeting({ recentMessages: [staff, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse("2026-10-05T02:00:00Z"), customerName: "朱莉", isFirstEverReply: false, alreadyGreetedToday: false, jstHour: 11, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never).kind).toBe("none"));
+  // 2026-10-08 8巡目 竹内さん「日にちをまたいだら挨拶を入れている。日にち意識」→ 既定は「その日の最初のこちらの会話文か」だけ（続きの線は GREETING_BY_DAY_R8=off で旧）
+  const akari = (now: string) => resolveGreeting({ recentMessages: [staff, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse(now), customerName: "朱莉", isFirstEverReply: false, alreadyGreetedToday: computeAlreadyGreetedToday([staff, { sender: "customer", text: "審査通るかだけ試してもらうことって可能でしょうか？", createdAt: "2026-10-04T09:30:00Z" }], Date.parse(now)) ?? false, jstHour: 11, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never);
+  it("8巡目: 日をまたいで送る続きの会話は挨拶の番（standard・必須ではない）", () => expect(akari("2026-10-05T02:00:00Z").kind).toBe("standard"));
+  it("8巡目: 同じ日に返す続きは挨拶なし（当日送信済み）", () => expect(akari("2026-10-04T09:40:00Z").kind).toBe("none"));
+  it("GREETING_BY_DAY_R8=off で旧（続きは翌日でも挨拶なし）", () => { process.env.GREETING_BY_DAY_R8 = "off"; try { expect(akari("2026-10-05T02:00:00Z").kind).toBe("none"); } finally { delete process.env.GREETING_BY_DAY_R8; } });
+});
+
+// 2026-10-08 8巡目: 「今日こちらが送ったか」は資料文（🌟物件カード・【】見積の本体・室内イメージの URL）を数えない（staffTalkedToday と同じ線）
+describe("当日の会話文の判定は資料文を数えない（8巡目）", () => {
+  const card = { sender: "staff", text: "🌟メゾンクレール 201号室\n〇〇さんにかなりオススメ出来るお部屋となります！！\n（オススメポイント）\n・間取り：2LDK", createdAt: "2026-08-11T09:50:00Z" };
+  const url = { sender: "staff", text: "（室内イメージ）\nhttps://www.homes.co.jp/chintai/room/xxxx", createdAt: "2026-08-11T09:51:00Z" };
+  const est = { sender: "staff", text: "【L-IDEA MINAMI HORIE（リデア南堀江） 204号室】\n初期費用さらに\n🌟40,000円割引させて頂き", createdAt: "2026-08-11T09:52:00Z" };
+  const talk = { sender: "staff", text: "かしこまりました！！ご確認させて頂きます😊！！", createdAt: "2026-08-11T09:53:00Z" };
+  const now = Date.parse("2026-08-11T10:04:00Z");
+  it("資料文だけの日 → まだ（添え文に挨拶を置ける）", () => expect(computeAlreadyGreetedToday([card, url, est] as never, now)).toBe(false));
+  it("会話文がある日 → 済み", () => expect(computeAlreadyGreetedToday([card, talk] as never, now)).toBe(true));
+  it("前日の会話文は数えない", () => expect(computeAlreadyGreetedToday([{ ...talk, createdAt: "2026-08-10T09:53:00Z" }] as never, now)).toBe(false));
+  it("GREETING_TALK_ONLY_R8=off で旧（資料文も数える）", () => { process.env.GREETING_TALK_ONLY_R8 = "off"; try { expect(computeAlreadyGreetedToday([card] as never, now)).toBe(true); } finally { delete process.env.GREETING_TALK_ONLY_R8; } });
 });
 
 // 2026-10-07 7巡目: 開口語なしの決定で「〜で始めても良い」と誘わない（人は本題から 6〜8割）

@@ -6,7 +6,9 @@
 // 2026-09-24 竹内「AD − 見積書の割引金額が利益。物件オススメ・ピックアップで送った物件なら AD も分かっているはず。連動する」
 import { supabase } from "@/app/lib/supabase";
 import { rentFromSummary } from "@/app/lib/estimate-handoff";
-import { parseEstimateItems, linkAdForEstimate, computeProfitYen, summarizeEstimateProfit, type AdSource, type ProfitSummary } from "@/app/lib/estimate-profit";
+import { linkAdForEstimate, computeProfitYen, summarizeEstimateProfit, type AdSource, type ProfitSummary } from "@/app/lib/estimate-profit";
+// 2026-10-08 8巡目（記録）: 物件確認した＋同封・【】の無い見積書も全件残す（決め方は estimate-record-items.ts・戻す ESTIMATE_RECORDS_ALL=off）
+import { estimateRecordItemsFromLog } from "@/app/lib/estimate-record-items";
 
 const POOL_DAYS = 60;
 const SENT_DAYS = 180;
@@ -66,10 +68,15 @@ export async function recordEstimateFromAix(input: {
   generatedText: string | null | undefined;
   createdAt: string;
   dryRun?: boolean;
+  /** 2026-10-08: AIX の種類・物件確認の物件名・状態・費用メモ（本文に【】が無い見積書の物件の出所） */
+  aixType?: string | null;
+  propertyNames?: string[] | null;
+  propStatuses?: string[] | null;
+  propCostNotes?: string[] | null;
 }): Promise<RecordEstimateResult> {
   const res: RecordEstimateResult = { items: 0, recorded: 0, linked: 0, skipped: null };
   try {
-    const items = parseEstimateItems(input.generatedText);
+    const items = estimateRecordItemsFromLog({ aixType: input.aixType, generatedText: input.generatedText, propertyNames: input.propertyNames, propStatuses: input.propStatuses, propCostNotes: input.propCostNotes });
     res.items = items.length;
     if (items.length === 0) { res.skipped = "no_items"; return res; }
     const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", input.conversationId).maybeSingle();
@@ -87,13 +94,13 @@ export async function recordEstimateFromAix(input: {
         room_no: it.roomNo,
         discount_yen: it.discountYen,
         initial_cost_yen: it.initialCostYen,
-        rent: link?.rent ?? null,
+        rent: link?.rent ?? it.rentYen ?? null,
         ad_months: link?.adMonths ?? null,
         ad_yen: link?.adYen ?? null,
         ad_source: link?.source ?? null,
         ad_matched_name: link?.matchedName ?? null,
         profit_yen: computeProfitYen(link?.adYen, it.discountYen),
-        source: "aix_text",
+        source: it.source,
         estimated_at: input.createdAt,
       };
     });

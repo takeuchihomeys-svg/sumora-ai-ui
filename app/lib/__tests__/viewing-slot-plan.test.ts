@@ -1,6 +1,6 @@
 // 2026-09-30 竹内「内覧は1件なら1〜2時間の枠・件数で枠を増やす・予定の住所と移動時間も入れる・始まり11:00〜終了18:30・営業時間は伝えない」
 // 実行: npx tsx app/lib/__tests__/viewing-slot-plan.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { planDaySlots, slotLengthFor, travelGapFor, travelTierBetween, placesOfText, placeKeyOf, isOutingViewingNotes, TRAVEL_GAP, OFFER_START_MIN, OFFER_END_MIN, type SlotBusy } from "../viewing-slot-plan";
+import { planDaySlots, slotLengthFor, interPropertyMoveMinutes, travelGapFor, travelTierBetween, placesOfText, placeKeyOf, isOutingViewingNotes, TRAVEL_GAP, OFFER_START_MIN, OFFER_END_MIN, type SlotBusy } from "../viewing-slot-plan";
 import { parseCandidateSlots } from "../viewing-hold";
 import { limitSlotsPerDay } from "../viewing-slots";
 
@@ -123,6 +123,19 @@ it("枠の文字に営業時間（10:00・19:00）が出ない", () => {
   const all = [[], [ev("8:00", "9:00")], [ev("17:30", "19:00")]].flatMap((busy) => [1, 2, 3, 4].flatMap((count) => planDaySlots({ busy, count }).slots)).join(" ");
   expect(/(?:^|[^\d])10:00|19:00/.test(all)).toBe(false);
 });
+
+// ─── 2026-10-08 8巡目 竹内「内覧は1部屋15〜30分程。そこから2件目への移動時間も考える」───
+{
+  it("1件・場所が1つ → 足さない", () => expect(interPropertyMoveMinutes(1, placesOfText("住所: 大阪府大阪市北区天満3丁目"))).toBe(0));
+  it("2件・同じ区 → 足さない（今まで通り）", () => expect(interPropertyMoveMinutes(2, placesOfText("北区天満・北区天神橋"))).toBe(0));
+  it("2件・吹田と東大阪（離れている）→ 60分", () => expect(interPropertyMoveMinutes(2, placesOfText("吹田市・東大阪市"))).toBe(60));
+  it("3件・離れている → 間ごとに 60分", () => expect(interPropertyMoveMinutes(3, placesOfText("吹田市・東大阪市"))).toBe(120));
+  it("場所が読めない → 足さない", () => expect(interPropertyMoveMinutes(2, [])).toBe(0));
+  it("離れた2件の予定なしの日は枠が長くなる（2件 90〜150 → 150〜210）", () => {
+    const [s, e] = mins(planDaySlots({ busy: [], count: 2, place: "吹田市・東大阪市" }).slots[0]);
+    expect(e - s >= 150 && e - s <= 210).toBe(true);
+  });
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

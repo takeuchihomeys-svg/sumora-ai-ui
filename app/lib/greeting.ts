@@ -16,6 +16,7 @@ import { isConditionFormMessage, isApplyGuideThinking } from "./reply-context"; 
 // 2026-09-17 竹内（Hina 事例）: 了承＋こちらが既に言ったことの後押しは「はい」（依存ゼロの純関数モジュール）
 import { resolveAckPush } from "./opener-ack-push";
 import { isPropertyShareNoAsk, isViewingDayNotice, VIEWING_DAY_NOTICE_REPLY } from "./reply-subscene"; // reply-subscene は greeting を import しない（循環なし）
+import { isMaterialOnlyText } from "./daily-greeting"; // daily-greeting は import なしの純関数（循環なし）
 
 /** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
 export const CONDITION_FORM_THANKS = "ご条件お送り頂きありがとうございます😊！！";
@@ -235,6 +236,8 @@ export function msSinceLastStaff(messages: Msg[], now = Date.now()): number | nu
  * 2026-10-06 ⑫ 朱莉: 竹内さん「挨拶入れるのは1日最初のLINE 続けての会話のところに急に挨拶等入れない」。
  * 下書きを翌日に作ると「今日まだ挨拶していない」で「お世話になっております」が付いていた。
  * 線: scripts/audit-greeting-continuation.ts（続きの会話を翌日に返した 453 番でスタッフの挨拶 41%＝付けない方が多数）
+ * 2026-10-08 8巡目: 挨拶の決定には使わない（GREETING_BY_DAY_R8=off の時だけ）。竹内さん「日にちをまたいだら挨拶を入れている」・
+ *   この番は 60字以上で挨拶 59%（scripts/audit-r8-greeting-day.ts）＝お客様の頭が今日の番と同じ形
  */
 export function continuedSameDay(messages: Msg[]): boolean {
   let i = messages.length - 1;
@@ -249,14 +252,23 @@ export function continuedSameDay(messages: Msg[]): boolean {
   return day(prev.createdAt) === day(head.createdAt);
 }
 
-/** JST 当日 0:00〜23:59 にテキストのスタッフ送信（AIX 含む・画像/動画のみは除く）があれば true。createdAt が 1 件も無ければ undefined */
+/**
+ * JST 当日 0:00〜23:59（now＝送る時刻の日）にこちらの会話文（AIX 含む）があれば true。createdAt が 1 件も無ければ undefined。
+ * 2026-10-08 8巡目（竹内さん「スタッフは日にちをまたいだら挨拶を入れている。日にち意識」）: 資料文（🌟物件カード・【】見積の本体・
+ *   室内イメージの URL・画像・スタンプ等＝daily-greeting.isMaterialOnlyText）は「その日の会話文」に数えない（テンプレートの staffTalkedToday と同じ線・3b9e237f）。
+ *   人の手打ち 180日 5,496通（scripts/audit-r8-greeting-day.ts）: 資料文を数えない線で判定が変わる 347通のうち、人の送信と合う側へ 221通・外れる側へ 126通
+ *   （資料文だけの日の添え文「〇〇さんお世話になっております！！1件新着で…」に人が挨拶を置く）。
+ *   戻す: GREETING_TALK_ONLY_R8=off（旧＝画像/動画だけを除くテキストすべてを数える）
+ */
 export function computeAlreadyGreetedToday(messages: Msg[], now = Date.now()): boolean | undefined {
   if (!messages.some((m) => !!m.createdAt)) return undefined;
   const dayStartUtc = jstDayStartMs(now);
   const dayEndUtc = dayStartUtc + 24 * 3600 * 1000 - 1;
+  const talkOnly = process.env.GREETING_TALK_ONLY_R8 !== "off";
   return messages.some((m) => {
     if (m.sender !== "staff" || !m.createdAt) return false;
     if (!m.text || m.text === "[画像]" || m.text === "[動画]") return false;
+    if (talkOnly && isMaterialOnlyText(m.text)) return false;
     const ts = Date.parse(m.createdAt);
     return Number.isFinite(ts) && ts >= dayStartUtc && ts <= dayEndUtc;
   });
@@ -409,7 +421,12 @@ export function resolveGreeting(opts: {
   //   お客様の発言がこちらの前の発言と同じ日（JST）に続けて来た番は、返事が翌日になっても会話の続き＝挨拶を入れない。
   //   人の手打ち（180日・scripts/audit-greeting-continuation.ts）: この番 453 で「お世話になっております」を入れたのは 41%（入れない 59%）。
   //   お客様の発言が別の日の番は 43〜62% で入れる＝今まで通り
-  if (continuedSameDay(opts.recentMessages)) return mk("none", nightPrefix, !!nightPrefix, "会話の続き（お客様の発言がこちらの前の発言と同じ日）＝挨拶なし");
+  // 2026-10-08 8巡目 竹内さん「スタッフは日にちをまたいだら挨拶（お世話になっております）を入れている。日にち意識」:
+  //   上の線（続きの会話は翌日でも挨拶なし）を外し、挨拶は「その JST の日（送る時刻の日）の最初のこちらの会話文か」だけで決める。
+  //   人の手打ち 180日（scripts/audit-r8-greeting-day.ts）: この番 514通で挨拶 47%（60字以上 59%・60字未満 19%）＝
+  //   お客様の頭が今日の番（45%・60字以上 50%・未満 21%）と同じ形。standard は「必須ではない」（短い返信には置かない）の注記なので、
+  //   60字以上だけ挨拶と見なした一致は 旧 4,584 → 新 4,647 / 5,496。戻す: GREETING_BY_DAY_R8=off（旧＝続きの会話は挨拶なし）
+  if (process.env.GREETING_BY_DAY_R8 === "off" && continuedSameDay(opts.recentMessages)) return mk("none", nightPrefix, !!nightPrefix, "会話の続き（お客様の発言がこちらの前の発言と同じ日）＝挨拶なし");
   return mk("standard", `${nightPrefix}${call}お世話になっております！！`, !!nightPrefix, "継続会話・当日未挨拶");
 }
 

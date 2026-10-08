@@ -11,6 +11,8 @@ import { isJevEnabled } from "@/app/lib/jev-client";
 import { evaluateAixWithJev, evaluatePickerWithJev, hasPickerQuestion, recordJevShadow, toPickerShadowRow, toShadowRow } from "@/app/lib/aix-jev";
 import { buildAixJevMaterials } from "@/app/lib/aix-jev-materials";
 import { waitUntil } from "@vercel/functions";
+import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
+import { isTimeoutError } from "@/app/lib/line-watch-materials";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import {
   AIX_STAFF_NOTES,
@@ -37,7 +39,7 @@ import { loadKnownCustomerNames } from "@/app/lib/pii-known-names";
 // 2026-09-08 Fable5: 見積トリガーは共有 RE（CUSTOMER_ESTIMATE_INTENT_RE = 見積依頼 ∪ 費用質問）に統一。FORM_LABEL_RE で項目ラベルを剥がしてから照合する
 import { isConditionFormMessage, FORM_LABEL_RE, CUSTOMER_ESTIMATE_INTENT_RE } from "@/app/lib/line-reply-prompts";
 import { resolveStaffPromiseAix } from "@/app/lib/aix-task-link";
-import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
+import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threadRoomCheckForTurn, otherRoomSentAfterMoveOut, vacancyDateFromMaterial, vacatingViewingAnswer, type ThreadRoomCheck } from "@/app/lib/viewing-check-first";
 import { propertyThreadEnabled } from "@/app/lib/property-thread";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
@@ -1768,7 +1770,7 @@ export async function analyzeConversation(
                 const arr = (rows ?? []) as Array<{ similarity?: number }>;
                 return arr.length ? Math.round(Math.max(...arr.map((r) => r.similarity ?? 0)) * 1000) / 1000 : null;
               };
-              console.log(JSON.stringify({
+              logWatchMaterial(JSON.stringify({   // 2026-10-08 8巡目: 見張りの行にも件数・エラーを控える（line-watch-materials）
                 tag: "brain:rag", conversationId, tpo: tpoHint ?? null, qlen: ragQueryInput.length, slen: strategyQueryInput.length,
                 knowledge: { n: (knRes.data ?? []).length, max: maxSim(knRes.data), err: knRes.error?.message ?? null },
                 winning: { n: (wpRagResult.data ?? []).length, max: maxSim(wpRagResult.data), err: wpRagResult.error?.message ?? null },
@@ -1806,6 +1808,7 @@ export async function analyzeConversation(
       } catch (e) {
         // RAG失敗は静的バケットのみで動作継続（既存方針）。ただし握り潰さずログに残す
         console.warn(JSON.stringify({ tag: "brain:rag", conversationId, error: e instanceof Error ? e.message : String(e) }));
+        noteWatchMaterials(conversationId, "brain", "rag", { err: (e instanceof Error ? e.message : String(e)).slice(0, 120), timeout: isTimeoutError(e instanceof Error ? e.message : String(e)) });
       }
     }
   }
@@ -2440,8 +2443,22 @@ export async function analyzeConversation(
     console.log(JSON.stringify({ tag: "brain:procedure-answer", conversationId, kinds: procedureAnswer.plan.question.kinds, mode: procedureAnswer.plan.mode, target: procedureAnswer.plan.target?.name ?? null, moveIn: procedureAnswer.plan.moveIn?.why ?? null, source: procedureAnswer.source }));
   }
   //   「確認した」系（入居可能日・ペット・駐車場）の質問: 主のお部屋の資料に記載があれば資料で答える／無ければ AIX【確認した】（設備は上の equipment-answer）
+  // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 契約条件（礼金・敷金・フリーレント・保証会社・保証人・入居時期/退去予定・駐車場・管理会社）。
+  //   対象は送った物件（引用・名指し・直前の送付）→ 無ければ主のお部屋。受け持つ項目（駐車場・入居時期）は下の「確認した」系から外す（道が2つにならない）
+  let contractTerms: import("@/app/lib/contract-terms-answer-server").ContractTermsMaterial | null = null;
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { loadContractTermsAnswerWithin } = await import("@/app/lib/contract-terms-answer-server");
+      contractTerms = await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: unrepliedTurn.text, target: focusRoomForMaterial, excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] });
+    } catch (e) { console.warn("[brain-core] contract-terms skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  if (contractTerms?.note) {
+    customerStateBlockText += `\n\n${contractTerms.note}`;
+    console.log(JSON.stringify({ tag: "brain:contract-terms", conversationId, target: contractTerms.target.name, routes: contractTerms.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: contractTerms.source }));
+  }
   const confirmTopicsAsked = procedureAnswer || isPostApplyStatus(convStatus) ? []
-    : detectConfirmTopics(unrepliedTurn.text, { moveInAsked: sceneEvidence?.scene === "S2_move_in" });
+    : detectConfirmTopics(unrepliedTurn.text, { moveInAsked: sceneEvidence?.scene === "S2_move_in" })
+      .filter((t) => !(t === "parking" && contractTerms?.topics.includes("parking")) && !(t === "move_in" && contractTerms?.topics.includes("move_in")));
   const confirmTopic: ConfirmTopicMaterial | null = await loadConfirmTopicRoutesWithin(8_000, { conversationId, topics: confirmTopicsAsked, target: focusRoomForMaterial });
   if (confirmTopic?.note) {
     customerStateBlockText += `\n\n${confirmTopic.note}`;
@@ -2562,7 +2579,7 @@ ${history}`
 ${history}`;
 
   // 2026-09-13: ブレインの入力のどの部分に費用がかかっているかの見張り（分析モードごとに何を渡しているかを文字数で残す）
-  console.log(JSON.stringify({
+  logWatchMaterial(JSON.stringify({   // 2026-10-08 8巡目: 見張りの行にも届いた材料の文字数を控える（line-watch-materials）
     tag: "brain:blocks", conversationId, mode: opts?.mode ?? "full", layer: isFreshLayer ? "fresh" : "combined", freshStable: freshStableText.length,
     chars: {
       prevMeta: prevMetaText.length, winning: winningPatternsText.length, actionWinRate: actionWinRateText.length, templates: templatesText.length,
@@ -3196,12 +3213,29 @@ ${history}`;
     //   入居可能日・ペット・駐車場の質問で、主のお部屋の資料に答えが全部書いてある → AIX【確認した】ではなく返信（資料の文字のまま）。
     //   1つでも資料で分からない → 従来どおり AIX【確認した（条件・交渉）】（ブレインの選んだ AIX は変えない）。上書きは 物件確認した／確認します だけ
     let confirmTopicReply = false;
+    // 8巡目（10/08）: 退去予定で日付が分かる内覧の希望は「〇月〇日以降にご内覧可能です」と直接答える（下の内覧の判定で決める）
+    let viewingDateAnswer: { sentence: string; viewableYmd: string; from: string } | null = null;
     if (!promiseAix && !procedureDecision && confirmTopic?.allInMaterial && !isPostApplyStatus(convStatus)
       && (!sceneEvidence || sceneEvidence.scene === "S2_move_in")
       && (finalAix === "property_check_result" || finalAix === "acknowledge_check")) {
       finalAix = null;
       sceneSignalCheckPattern = null;
       decisionSource = "rule:confirm_topic_in_material";
+      confirmTopicReply = true;
+    }
+    // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 契約条件の質問で、聞かれた項目が全部その物件の資料に書いてある → 返信（資料の文字のまま）。
+    //   上書きは 物件確認した／確認します／保証会社について（資料に会社名が1社だけ）だけ。1つでも資料に無ければ従来どおり AIX。戻す CONTRACT_TERMS_REPLY=off
+    if (!confirmTopicReply && !promiseAix && !procedureDecision && contractTerms?.allInMaterial && !isPostApplyStatus(convStatus)
+      && process.env.CONTRACT_TERMS_REPLY !== "off"
+      && (!sceneEvidence || sceneEvidence.scene === "S2_move_in" || sceneEvidence.scene === "S3_screening"
+        // 礼金・敷金・フリーレントだけを聞いた番（初期費用の中身・総額は聞いていない）は S9 でも資料で答える（YUMA「礼金はかかりますか？」が AIX【初期費用について】になった）
+        || (sceneEvidence.scene === "S9_cost_breakdown" && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent")
+          && !/初期費用|内訳|総額|合計|全部で|トータル/.test(unrepliedTurn.text ?? "")))
+      && (finalAix === "property_check_result" || finalAix === "acknowledge_check" || (finalAix === "cost_breakdown" && sceneEvidence?.scene === "S9_cost_breakdown")
+        || (finalAix === "guarantor_info" && contractTerms.topics.every((t) => t === "guarantor_company") && contractTerms.routes.every((r) => !/複数/.test(r.why))))) {
+      finalAix = null;
+      sceneSignalCheckPattern = null;
+      decisionSource = "rule:contract_terms_in_material";
       confirmTopicReply = true;
     }
     // 2026-09-27 竹内（YUMA の返信テスト）「この場面は見積書を正解にする」: こちらが送ったお部屋（エステムコート大阪WEST）に「いいですね」→
@@ -3393,11 +3427,29 @@ ${history}`;
         } catch (e) {
           console.warn("[brain-core] 退去予定の判定に失敗（今まで通り確認を挟む）:", e instanceof Error ? e.message : String(e));
         }
+        // 8巡目（10/08 竹内さん「資料で退去予定日が分かる時は『〇月〇日以降ご内覧出来ます』と答える」）: 退去予定で日付が分かる時は確認の約束でなく直接答える。
+        //   日付は こちらの送付の文（brainPropertyState＝AIX の物件オススメ等の「9月30日退去予定」）→ 主のお部屋の資料（procedure-answer の資料の行）の順。
+        //   日付が分からない時だけ今まで通り確認の約束。戻す VIEWING_VACATING_DATE_ANSWER=off
+        if (viewingVacating?.vacating && process.env.VIEWING_VACATING_DATE_ANSWER !== "off") {
+          try {
+            let raw: string | null = brainPropertyState?.notViewable ? brainPropertyState.vacancyDate : null;
+            let from = "送付の文";
+            if (!raw && focusRoomForMaterial) {
+              const { loadRoomMaterialLines } = await import("@/app/lib/procedure-answer-server");
+              const mat = await Promise.race([loadRoomMaterialLines({ conversationId, name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo }), new Promise<null>((r) => setTimeout(() => r(null), 6_000))]);
+              raw = mat ? vacancyDateFromMaterial(mat.lines) : null;
+              from = "資料";
+            }
+            const ans = vacatingViewingAnswer(raw);
+            if (ans) viewingDateAnswer = { ...ans, from };
+            console.log(JSON.stringify({ tag: "brain:viewing-vacating-date", conversationId, raw, from, answer: ans?.sentence ?? null }));
+          } catch (e) { console.warn("[brain-core] 退去予定日の読み取りに失敗（確認の約束）:", e instanceof Error ? e.message : String(e)); }
+        }
       }
       twoStage = resolveTwoStage({
         finalAix, decisionSource, pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
-        viewingCheckFirst: finalAix === "viewing_invite" && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
+        viewingCheckFirst: finalAix === "viewing_invite" && !viewingDateAnswer && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
           stage: brainLedger.facts.viewingFlow.stage, currentReply: brainLedger.facts.viewingFlow.currentReply, currentWish: brainLedger.facts.viewingFlow.currentWish,
           turnAt: [...typedMessages].reverse().filter((m) => m.sender === "customer").slice(-1)[0]?.created_at ?? new Date().toISOString(),
           staffBefore: messagesOldestFirst.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text ?? "", createdAt: m.created_at })),
@@ -3419,6 +3471,22 @@ ${history}`;
           return n > 0 ? { ask: broughtPropertyAsk(unrepliedTurn.text ?? ""), count: n } : null;
         })(),
       });
+      // 8巡目: 退去予定日が分かる内覧の希望は AIX にせず返信で「〇月〇日以降にご内覧可能です」（候補日はまだ出さない・内覧開始日の後に AIX【内覧調整】）
+      // 8巡目: 聞かれた契約条件が全部資料にある番は、質問の2段（check_question＝答えが無ければ確認の約束）にせず資料で答える方向にする
+      //   （YUMA「この物件は駐車場あります？」で check_question の方向から DeepSeek が「空き状況確認させて頂きます」と書いた回があった）
+      if (twoStage && /check_question/.test(twoStage.source) && contractTerms?.allInMaterial && process.env.CONTRACT_TERMS_REPLY !== "off") {
+        console.log(JSON.stringify({ tag: "brain:contract-terms-over-two-stage", conversationId, from: twoStage.source }));
+        twoStage = null;
+        finalAix = null;
+        sceneSignalCheckPattern = null;
+        decisionSource = "rule:contract_terms_in_material";
+        confirmTopicReply = true;
+      }
+      if (!twoStage && viewingDateAnswer && finalAix === "viewing_invite") {
+        finalAix = null;
+        sceneSignalCheckPattern = null;
+        decisionSource = "rule:viewing_vacating_date_known";
+      } else viewingDateAnswer = null;
       if (twoStage) {
         console.log(JSON.stringify({ tag: "brain:two-stage", conversationId, from: finalAix, src: decisionSource, kind: twoStage.kind }));
         finalAix = null;
@@ -3598,6 +3666,8 @@ ${history}`;
     const procedureDirection = procedureDecision && procedureAnswer ? procedureReplyDirection(procedureAnswer.plan)
       : procedureDecision ? "審査・入居までの期間と流れ／必要書類のご質問に本文で答える（管理会社への確認の宣言はしない）"
       : confirmTopicReply && confirmTopic ? `${confirmTopic.routes.map((r) => r.lines.join("／")).join("・")} を資料のとおりに本文で答える（管理会社への確認の宣言はしない）`.slice(0, 120)
+      : viewingDateAnswer ? `お客様の内覧の希望に、退去予定日から内覧できる日を本文で答える（実際の送信の形「${viewingDateAnswer.sentence}」・物件名は会話から分かる時だけ前に置く・候補日はまだ出さない・管理会社への確認の宣言はしない）`.slice(0, 160)
+      : confirmTopicReply && contractTerms ? `${contractTerms.routes.map((r) => r.facts.join("／")).join("・")} を資料のとおりに本文で答える（管理会社への確認の宣言はしない）`.slice(0, 120)
       // 2026-10-01 竹内（ひまり「家賃込の価格でしょうか？」）: 家賃込みかの質問だけ → 返信で答える方向（LLM の「初期費用について AIX で…」を残さない）
       : rentIncludedReply ? "初期費用（御見積書の金額）は翌月分の前家賃込みであることを本文で答える（ご入居日によって別途日割家賃・金額は書かない）"
       : null;
@@ -3960,10 +4030,10 @@ ${history}`;
       // 2026-09-30: 決定論で返信に倒した・2択にした時は、LLM が別の AIX のつもりで入れたテンプレ・次の手順（「管理会社に確認」）を出さない
       // 2026-09-30 竹内「物件確認したと確認したがごっちゃになっている」: ボタンが「確認した（条件・交渉）」の時に
       //   LLM のテンプレ「物件確認した（募集状況）」を並べない（みこと「管理会社はどこ」の判断に付いていた）
-      template_hint: procedureDecision || confirmTopicReply || rentIncludedReply ? undefined
+      template_hint: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : checkKind?.ui_button === "確認した（条件・交渉）" && (templateHint ?? "").includes("物件確認した（募集状況）") ? undefined
         : templateHint,
-      next_steps: procedureDecision || confirmTopicReply || rentIncludedReply ? undefined
+      next_steps: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
       two_choice_mode: isTwoChoiceMode || undefined,

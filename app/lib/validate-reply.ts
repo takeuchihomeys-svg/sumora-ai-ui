@@ -822,6 +822,43 @@ export const ASSERTION_BAN_RULES: AssertionBanRule[] = [
   },
 ];
 
+/**
+ * 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」（礼金・退去予定日・入居時期 等）。
+ *   退去予定・入居時期の言い切り（VACANCY_ASSERTION の退去予定／MOVEIN_DATE_ASSERTION）が、対象の物件の資料の値のとおりなら免除する。
+ *   ・文の日付（M/D・M月上中下旬・M月末）が全部、資料の文字に有る（年の有無・「月」と「/」の違いは揃える）
+ *   ・退去予定の言い切りは資料に「退去予定」が有る時だけ／「即入居」は資料に即入居が有る時だけ
+ *   空室・募集中・申込が入っている（今の募集状況）は資料の時点の物なので免除しない（スタッフだけが知る＝AIX【物件確認した】）。
+ *   戻す MATERIAL_ASSERTION_EXEMPT=off
+ */
+export function materialDateTokens(text: string): string[] {
+  const t = String(text ?? "").normalize("NFKC").replace(/\d{4}\s*年/g, "");
+  const out = new Set<string>();
+  for (const m of t.matchAll(/(\d{1,2})\s*[/月]\s*(\d{1,2})(?!\d)/g)) out.add(`${Number(m[1])}/${Number(m[2])}`);
+  for (const m of t.matchAll(/(\d{1,2})\s*月\s*(上旬|中旬|下旬|初旬|末|頭)/g)) out.add(`${Number(m[1])}月${m[2] === "初旬" || m[2] === "頭" ? "上旬" : m[2]}`);
+  return [...out];
+}
+export function materialGroundsAssertion(code: AssertionBanCode, sentence: string, materialFacts: string): boolean {
+  if (process.env.MATERIAL_ASSERTION_EXEMPT === "off") return false;
+  if (code !== "VACANCY_ASSERTION" && code !== "MOVEIN_DATE_ASSERTION") return false;
+  const facts = String(materialFacts ?? "").normalize("NFKC");
+  if (!facts.trim()) return false;
+  const s = String(sentence ?? "").normalize("NFKC");
+  if (code === "VACANCY_ASSERTION") {
+    // 退去予定・入居中の言い切りだけ（空室・募集中・申込が入っている は今の募集状況＝免除しない）
+    if (/空室|募集中|満室|空いて|埋まって|申込|募集(?:は)?(?:終了|停止)/.test(s)) return false;
+    if (!/退去予定|入居中/.test(s)) return false;
+    if (/退去予定/.test(s) && !/退去予定/.test(facts)) return false;
+    if (/入居中/.test(s) && !/入居中|居住中|賃貸中/.test(facts)) return false;
+  }
+  const immediate = /即(?:日|入居|入)/.test(s);
+  if (immediate && !/即入|即時|即日/.test(facts)) return false;
+  const ds = materialDateTokens(s);
+  if (code === "MOVEIN_DATE_ASSERTION" && ds.length === 0 && !immediate) return false;
+  const fset = new Set(materialDateTokens(facts));
+  // 「10/31」は資料の「10月下旬」とは別（足さない・早めない）。日付は全部が資料に有る時だけ
+  return ds.every((d) => fset.has(d));
+}
+
 /** ゲートの判定に使う文脈（顧客条件の復唱免除に使う） */
 type GateOpts = { customerMessage?: string; lastStaffMsg?: string; customerConditions?: string; costBreakdownAix?: boolean; groundText?: string };
 
@@ -1054,6 +1091,8 @@ export function enforceAixGates(
     scheduledViewingHours?: number[];
     /** 2026-10-02 ⑫: この会話に既に出ている文字（物件の紹介・見積書の文・お客様の発言）。文の金額が全部ここに有れば見積金額内訳ゲートの対象外（isGroundedAmountSentence） */
     groundText?: string;
+    /** 2026-10-08 8巡目: 対象の物件の資料に書いてある値（契約条件・入居時期の材料）。退去予定・入居時期の言い切りが資料のとおりなら免除（materialGroundsAssertion） */
+    materialFacts?: string;
   },
 ): { cleaned: string; violations: string[]; edits: GateEdit[] } {
   const violations: string[] = [];
@@ -1131,6 +1170,8 @@ export function enforceAixGates(
         if (r.assertion && opts?.lastStaffMsg && r.assertion.staffConfirmedRe.test(opts.lastStaffMsg)) return false;
         // 6巡目（10/07）: スタッフが先に書いた退去予定・入居中の引用（staffQuotedRe）
         if (r.assertion?.staffQuotedRe && opts?.lastStaffMsg) { const am = findAssertionMatch(r.assertion, s); if (am && r.assertion.staffQuotedRe.match.test(am[0]) && r.assertion.staffQuotedRe.staff.test(opts.lastStaffMsg)) return false; }
+        // 8巡目（10/08）竹内「資料に書いてある事は返信の本文で答えて良い」: 対象の物件の資料の退去予定・入居時期のとおりの文
+        if (r.assertion && opts?.materialFacts && materialGroundsAssertion(r.assertion.code, s, opts.materialFacts)) return false;
         return true;
       });
       if (!rule) {
@@ -1243,6 +1284,8 @@ export function validateAndClean(
     scheduledViewingHours?: number[];
     /** 2026-10-02 ⑫: この会話に既に出ている文字（物件の紹介・見積書の文・お客様の発言）。文の金額が全部ここに有れば見積金額内訳ゲートの対象外（isGroundedAmountSentence） */
     groundText?: string;
+    /** 2026-10-08 8巡目: 対象の物件の資料に書いてある値（materialGroundsAssertion） */
+    materialFacts?: string;
     /** 2026-09-11 竹内方針3: resolveAddressName の aliases（呼びかけ位置の別名を確定名に統一する） */
     nameAliases?: string[];
     /** 曜日の自動修正の基準時刻（既定 Date.now()） */
@@ -1302,6 +1345,7 @@ export function validateAndClean(
       costBreakdownAix: opts.costBreakdownAix,
       scheduledViewingHours: opts.scheduledViewingHours,
       groundText: opts.groundText,
+      materialFacts: opts.materialFacts,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));

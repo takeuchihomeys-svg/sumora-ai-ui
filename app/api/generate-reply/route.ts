@@ -272,6 +272,7 @@ import { SHADOW_NO_WRITE_FIELD } from "@/app/lib/customer-sim-shadow";
 // 2026-09-29 竹内（林田さん「ガスコンロはついてないのですか？」）: 送った物件の設備の質問は資料から読んだ事実を材料に（equipment-question.ts）
 import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 import { loadProcedureAnswerWithin } from "@/app/lib/procedure-answer-server";
+import { loadContractTermsAnswerWithin, loadStaffFreeRentFacts } from "@/app/lib/contract-terms-answer-server";
 import { detectSensitiveCase } from "@/app/lib/sensitive-case";
 import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
 import { fixBulkCheckWording } from "@/app/lib/bulk-check-wording";
@@ -285,6 +286,9 @@ import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForSc
 import { previewRetiredRules, RETIRE_RULE_KEYS } from "@/app/lib/rules-retire-preview";
 import { R6_RETIRE_KEYS, R6_TEXT_OVERRIDES } from "@/app/lib/rules-review-r6";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
+// 2026-10-08 8巡目（記録）: 見張りの行に材料の要約・出さなかった下書きを控える
+import { logWatchMaterial, noteWatchMaterials, noteWatchSuppressedDraft } from "@/app/lib/line-watch-materials-server";
+import { replyMaterialSizes } from "@/app/lib/line-watch-materials";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -4052,6 +4056,24 @@ async function handleGenerateReply(req: NextRequest) {
       ? await loadProcedureAnswerWithin(8_000, { conversationId, customerText: message ?? "" })
       : null;
     if (procedureAnswer) console.info("[procedure-answer]", JSON.stringify({ conversationId, kinds: procedureAnswer.plan.question.kinds, mode: procedureAnswer.plan.mode, target: procedureAnswer.plan.target?.name ?? null, moveIn: procedureAnswer.plan.moveIn?.why ?? null, source: procedureAnswer.source }));
+    // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 契約条件（礼金・敷金・フリーレント・保証会社・保証人・入居時期/退去予定・駐車場・管理会社）の
+    //   質問の時だけ、対象の物件の資料の該当の所を材料に渡す（質問でなければ DB も引かない・枠 8秒・申込以降は渡さない・CONTRACT_TERMS_ANSWER=off で止まる）
+    const contractTerms = !isTemplateOptimize && !postApplyConversation && !!conversationId
+      ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
+      : null;
+    if (contractTerms) console.info("[contract-terms]", JSON.stringify({ conversationId, target: contractTerms.target.name, routes: contractTerms.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: contractTerms.source }));
+    // 資料に書いてある値（退去予定・入居時期の言い切りの免除に使う・validate-reply.materialGroundsAssertion）
+    const contractMaterialFacts = [
+      ...(contractTerms?.routes ?? []).filter((r) => r.route === "material").flatMap((r) => r.facts),
+      ...(procedureAnswer?.plan.moveIn?.route === "material" ? procedureAnswer.plan.moveIn.lines : []),
+      // ブレインが退去予定日から内覧できる日を決めた時（rule:viewing_vacating_date_known）の文（ブレインの決定論が作った文・YUMA で判定役が AIX_BOUNDARY_MOVEIN として日付を消した）
+      ...(/「([0-9０-９]{1,2}月[^」]{0,8}退去予定のため、[^」]{1,12}以降にご内覧可能です！！)」/.exec(String(brainMeta?.reply_direction ?? ""))?.slice(1, 2) ?? []),
+    ].join("\n") || undefined;
+    // 8巡目（10/08 竹内「フリーレントはスタッフが入れていた物件だけ」）: この会話でスタッフが送った文のフリーレント（最終チェックの FREE_RENT_UNGROUNDED に渡す・読めなければ見ない）
+    const staffFreeRentFacts = !isTemplateOptimize && conversationId ? await loadStaffFreeRentFacts(conversationId).catch(() => null) : null;
+    // 礼金・敷金・フリーレントだけを聞いて全部資料にある番（初期費用の中身・総額は聞いていない）は S9 でも本文で資料のとおりに答える（brain-core の contract_terms_in_material と同じ線）
+    const contractCostAnswer = !!contractTerms?.allInMaterial && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent")
+      && !/初期費用|内訳|総額|合計|全部で|トータル/.test(message ?? "");
     const confirmCtx: ConfirmationContextVerdict = resolveConfirmationContext({
       customerMessage: message ?? "",
       lastStaffMessage: lastStaffMsgForSearch,
@@ -5185,7 +5207,7 @@ async function handleGenerateReply(req: NextRequest) {
 
     // ── T1動的選択の監視ログ（Promise.all 前に spec の発火内容を記録） ──
     if (!isTemplateOptimize) {
-      console.log(JSON.stringify({ tag: "step2-spec", tier: tierResult.tier, spec: {
+      logWatchMaterial(JSON.stringify({ tag: "step2-spec", tier: tierResult.tier, spec: {   // 2026-10-08 8巡目: 見張りにも控える
         lossPatterns: fetchSpec.lossPatterns, adaptRules: fetchSpec.adaptRules, applyingPatterns: fetchSpec.applyingPatterns, viewingPatterns: fetchSpec.viewingPatterns,
         // M系T1動的選択の実発火率計測用（AIX-METAフル活用 2026-08）
         filterTopics: fetchSpec.knowledge.filterTopics,
@@ -5194,7 +5216,7 @@ async function handleGenerateReply(req: NextRequest) {
         knowledgeLimit: fetchSpec.knowledge.limit,
         // 2026-09-13: analysisContext は検索の問いに入れなくなった（文書と同じ構成の問いに変更）。長さは観測用に残す
         analysisContextLen: analysisContext?.length ?? 0,
-      } }));
+      } }), conversationId);
     }
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
@@ -5210,7 +5232,7 @@ async function handleGenerateReply(req: NextRequest) {
     const replySceneResolved = isTemplateOptimize ? null : resolveReplyScene({ customerText: message });
     const replyScene: ReplyScene | null = replySceneResolved?.scene ?? null;
     const sceneMaterialsOn = !!replyScene && sceneMaterialsEnabled(process.env, testSceneMaterials);
-    console.log(JSON.stringify({ tag: "gen:scene", conversationId, scene: replyScene, evidence: replySceneResolved?.evidence ?? null, materials: sceneMaterialsOn ? "on" : "off", override: testSceneMaterials }));
+    logWatchMaterial(JSON.stringify({ tag: "gen:scene", conversationId, scene: replyScene, evidence: replySceneResolved?.evidence ?? null, materials: sceneMaterialsOn ? "on" : "off", override: testSceneMaterials }), isTemplateOptimize ? "" : null);   // 2026-10-08 8巡目: 見張りにも控える（AIX の続き文は返信の番でないので控えない＝""）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
       fetchKnowledge(searchState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText,
         // 2026-09-13: 新しい判断（fresh かつ分析の省略でない）の時だけ、推奨 AIX・質問・話題・返信の方向で並べ替える
@@ -5296,6 +5318,8 @@ async function handleGenerateReply(req: NextRequest) {
         action: brainMeta?.action ?? null,
         conversationId,
       }));
+      // 2026-10-08 8巡目（記録）: その番に返信へ渡った材料の大きさ（空＝取れなかった）を見張りの行に控える（line-watch-materials・戻す LINE_WATCH_MATERIALS=off）
+      noteWatchMaterials(conversationId, "reply", "fetched", replyMaterialSizes({ knowledge: knowledgeResult.text, examples, phrases: phraseList, summary: autoSummary, rules: dbRules, quoted: quotedContextNote, templateAdapt: templateAdaptRules, categoryAdapt: categoryAdaptationRules, finalCheckRules }, { tier: tierResult.tier, phraseHits: knowledgeResult.phraseHits }));
     }
     // Build checkpoint note for prompt injection（ローリング累積方式: 最新1行が確認済み事実の全量）
     const checkpointNote = groundTruth.checkpointFacts
@@ -5610,7 +5634,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-09-29 林田さん事例: 送った物件の設備の質問＝資料から読んだ事実（質問の時だけ・毎回変わる所）
         + (equipmentAnswer?.note ? `\n\n${equipmentAnswer.note}` : "")
         // 2026-09-30 みこと事例: 手続きの質問（審査・入居までの期間と流れ・必要書類）＝流れの事実と資料の入居時期（質問の時だけ）
-        + (procedureAnswer?.note ? `\n\n${procedureAnswer.note}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+        + (procedureAnswer?.note ? `\n\n${procedureAnswer.note}` : "")
+        + (contractTerms?.note ? `\n\n${contractTerms.note}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
@@ -5816,13 +5841,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」: 家賃込みかの質問だけの連投は S9 に当たっても
                 //   本文で「初期費用は翌月分の前家賃込み」と答える（YUMA 実測: 「初期費用に翌月分（9月分）の前家賃が含まれております」がこの置換で
                 //   「ご質問ありがとうございます」に消えた）。判定はブレインの入口と同じ rent-included-question.rentIncludedOnlyTurn
-                costBreakdownAix: effectiveAction === "cost_breakdown" || (sceneEvidencePre?.scene === "S9_cost_breakdown" && !rentIncludedOnlyTurn(message ?? "")),
+                costBreakdownAix: effectiveAction === "cost_breakdown" || (sceneEvidencePre?.scene === "S9_cost_breakdown" && !rentIncludedOnlyTurn(message ?? "") && !contractCostAnswer),
                 protect: (s: string) => isCellRequiredSentence(s, pairContext),
-                aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend,
+                aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend, materialFacts: contractMaterialFacts,
                 // 2026-09-26（穴3）: 決まった内覧の日時の復唱は「待ち合わせ確定」の置換（詳細はご連絡）にしない
                 scheduledViewingHours,
                 // 2026-10-02 ⑫: 会話に既に出ている金額（こちらが送った物件の紹介・見積書の文）の引用は見積金額内訳ゲートで止めない（isGroundedAmountSentence）
-                groundText: recentMessages.map((m) => m.text ?? "").join(GROUND_SEP),
+                //   8巡目（10/08）: 対象の物件の資料の値（礼金〇ヶ月 等）も「既に出ている文字」として扱う（資料のとおりの答えをゲートで消さない）
+                groundText: [...recentMessages.map((m) => m.text ?? ""), ...(contractMaterialFacts ? [contractMaterialFacts] : [])].join(GROUND_SEP),
               };
               let vr = validateAndClean(openingFixed, vOpts);
               if (aixGates && vr.gateEdits.some((e) => e.reversible)) {
@@ -6220,7 +6246,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   // 2026-09-08 Fable5 G10/G26/G6/G30: 生成側と同一オブジェクトを検査側に渡す（三者同名）。detCtx / postDetCtx にも同じ行を置く
                   moveOutSubject,                                                  // G10
                   confirmationContext: confirmCtxFinal, activeTaskTypes, ownPropertyReturnedAll, // G26
-                  aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
+                  aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), materialFacts: contractMaterialFacts, staffFreeRentFacts: staffFreeRentFacts ?? undefined, // G6（validateAndClean と同値）・8巡目 資料のとおり・フリーレントはスタッフの送付だけ
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
@@ -6456,7 +6482,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     estimateContext: estimateVerdict,
                     moveOutSubject,                                                  // G10
                     confirmationContext: confirmCtxFinal, activeTaskTypes, ownPropertyReturnedAll, // G26
-                    aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
+                    aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), materialFacts: contractMaterialFacts, staffFreeRentFacts: staffFreeRentFacts ?? undefined, // G6（validateAndClean と同値）・8巡目 資料のとおり・フリーレントはスタッフの送付だけ
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                     hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
@@ -6634,7 +6660,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   estimateContext: estimateVerdict,
                   moveOutSubject,                                                  // G10
                   confirmationContext: confirmCtxFinal, activeTaskTypes, ownPropertyReturnedAll, // G26
-                  aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), // G6（validateAndClean と同値）
+                  aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), materialFacts: contractMaterialFacts, staffFreeRentFacts: staffFreeRentFacts ?? undefined, // G6（validateAndClean と同値）・8巡目 資料のとおり・フリーレントはスタッフの送付だけ
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
@@ -6943,6 +6969,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               } else if (duplicateOfSentSuppressed) {
                 // 直前に送った文とほぼ同じ下書き（朱莉事例）: 表示する下書きなし（__SHOWN__）。bg-async の保存（ai_draft IS NULL の時だけ）と
                 //   開いた時の再生成（bg-async の claim は ai_draft が空か [AIX誘導中] の時だけ）も止まる。お客様の次の発言で webhook が空に戻す
+                noteWatchSuppressedDraft(conversationId, finalDraftText, "duplicate_of_sent");   // 2026-10-08 8巡目: 出さなかった下書きも見張りに
                 const { error: dupErr } = await supabase
                   .from("conversations")
                   .update({ ai_draft: "__SHOWN__", draft_pending_at: null, ai_draft_check: { ...(finalCheck ?? {}), tpo_debug: finalCheck?.tpo_debug ?? null } })
@@ -6955,6 +6982,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               const notAReply = isNotACustomerReply(finalDraftText);
               if (notAReply) {
                 console.log(JSON.stringify({ tag: "draft:not-a-customer-reply", conversationId, head: finalDraftText.trim().slice(0, 80) }));
+                noteWatchSuppressedDraft(conversationId, finalDraftText, "not_a_customer_reply");   // 2026-10-08 8巡目: 出さなかった下書きも見張りに
               }
               const { error: saveErr } = await supabase
                 .from("conversations")

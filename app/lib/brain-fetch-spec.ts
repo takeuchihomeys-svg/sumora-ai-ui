@@ -5,7 +5,7 @@
 
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
 import { STATE_SEARCH_ALIASES } from "@/app/lib/line-reply-prompts";
-import { STATE_TO_PHRASE_CATEGORIES } from "@/app/lib/prompt-cache";
+import { STATE_TO_PHRASE_CATEGORIES, resolvePhraseCategories } from "@/app/lib/prompt-cache";
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "@/app/lib/brain-meta-restore";
 
 // ── ティア定義 ──────────────────────────────────────────────────────────────
@@ -165,7 +165,9 @@ export function buildBrainFetchSpec(
       pgvectorMatchCount: 20,
       filterByDirection: null,
     },
-    phrases: { categories: STATE_TO_PHRASE_CATEGORIES[currentState] ?? [] },
+    // 2026-10-08 8巡目: 対応表に無い state（generate-reply の searchState の first_reply・closed_won）は [] でフレーズが0件だった
+    //   → 既定（DEFAULT_PHRASE_CATEGORIES）に落とす。戻す PHRASE_CATEGORIES_DEFAULT=off（旧＝0件）
+    phrases: { categories: process.env.PHRASE_CATEGORIES_DEFAULT === "off" ? (STATE_TO_PHRASE_CATEGORIES[currentState] ?? []) : resolvePhraseCategories(currentState) },
     lossPatterns: { enabled: true, limit: 4 },
     applyingPatterns: { enabled: true },
     viewingPatterns: { enabled: true },

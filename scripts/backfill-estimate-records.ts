@@ -13,14 +13,16 @@ const DRY = process.argv.includes("--dry-run");
 
 async function main() {
   const since = new Date(Date.now() - DAYS * 86400_000).toISOString();
-  const { data, error } = await sb.from("aix_usage_logs").select("id, conversation_id, generated_text, created_at, estimate_sent, aix_type")
+  const { data, error } = await sb.from("aix_usage_logs").select("id, conversation_id, generated_text, created_at, estimate_sent, aix_type, property_names, prop_statuses, prop_cost_notes")
     .or("aix_type.eq.estimate_sheet,estimate_sent.eq.true").gte("created_at", since).order("created_at", { ascending: false }).limit(LIMIT);
   if (error) throw error;
-  const rows = (data ?? []) as Array<{ id: string; conversation_id: string; generated_text: string | null; created_at: string }>;
+  const rows = (data ?? []) as Array<{ id: string; conversation_id: string; generated_text: string | null; created_at: string; aix_type: string | null; property_names: string[] | null; prop_statuses: string[] | null; prop_cost_notes: string[] | null }>;
   console.log(`=== 見積書の AIX ${rows.length}通（${DAYS}日）${DRY ? "・下見だけ（書かない）" : ""} ===`);
   let items = 0, recorded = 0, linked = 0, noItems = 0, failed = 0;
   for (const r of rows) {
-    const res = await recordEstimateFromAix({ aixUsageLogId: r.id, conversationId: r.conversation_id, generatedText: r.generated_text, createdAt: r.created_at, dryRun: DRY });
+    const res = await recordEstimateFromAix({ aixUsageLogId: r.id, conversationId: r.conversation_id, generatedText: r.generated_text, createdAt: r.created_at, dryRun: DRY,
+      // 2026-10-08 8巡目: 物件確認した＋同封・【】の無い見積書も（estimate-record-items.ts）
+      aixType: r.aix_type, propertyNames: r.property_names, propStatuses: r.prop_statuses, propCostNotes: r.prop_cost_notes });
     items += res.items; recorded += res.recorded; linked += res.linked;
     if (res.skipped === "no_items") noItems++; else if (res.skipped) failed++;
   }

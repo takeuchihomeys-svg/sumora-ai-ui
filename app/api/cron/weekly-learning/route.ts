@@ -8,6 +8,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
+import { writerFromEdit, staffWriterSplitEnabled } from "@/app/lib/staff-writer";
+
+/** 2026-10-08 竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」: 直した所の表記が従業員の差分に印を付ける（STAFF_WRITER_SPLIT=off で付けない） */
+function writerTagOf(draft: string | null, sent: string | null): string {
+  if (!staffWriterSplitEnabled() || !draft) return "";
+  return writerFromEdit(draft, sent).writer === "employee" ? " 【書き手: 従業員＝書き方は学ばない・中身だけ】" : "";
+}
 
 export const maxDuration = 300;
 
@@ -158,7 +165,7 @@ async function analyzeStateGroup(
       e.brain_last_aix_history ? "直近AIX: " + e.brain_last_aix_history : "",
     ].filter(Boolean).join(" / ");
     return `
---- 差分${i + 1} [${label}] ${e.is_starred ? "⭐" : ""}${brainTag} ---
+--- 差分${i + 1} [${label}] ${e.is_starred ? "⭐" : ""}${brainTag}${writerTagOf(e.ai_draft, e.sent_reply)} ---
 顧客: ${(e.customer_message ?? "").slice(0, 200)}
 AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
 実際に送った返信: ${(e.sent_reply ?? "").slice(0, 300)}${brainExtra ? "\n[Brain戦略: " + brainExtra + "]" : ""}`.trim();
@@ -193,6 +200,7 @@ ${recentAnswersText}
 
 **重要ルール:**
 - 週内で「2件以上同じパターン」が繰り返された場合のみ newRules に含める（1件限りのケースは除外）
+- 【書き手: 従業員】の印がある差分は、表記・言い回し・改行・絵文字・締めの語（＝書き方）をルールにしない。こちらの行為・事実・AIX の番・構成（＝中身）だけ使う（返信の書き方の基準は竹内さん）
 - 既存ルールと実質的に同内容のものは newRules に含めない
 - 新ルールは具体的・行動的に書く（「〜する」「〜しない」の形式）
 - title は 30文字以内、content は 150文字以内

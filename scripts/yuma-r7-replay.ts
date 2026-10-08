@@ -12,6 +12,7 @@ import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness"
 import { MSG_SEP } from "../app/lib/reply-context";
 import { type ReplyScene } from "../app/lib/reply-scene";
 import { shiftDatesInText } from "./lib/scenario-date-shift";
+import { writerFromText } from "../app/lib/staff-writer";
 
 const URL_OR_PHONE_RE = /https?:\/\/[^\s　]+|0\d{1,4}[-ー－]?\d{1,4}[-ー－]?\d{3,4}/g;
 const MAIL_RE = /[\w.+-]+@[\w-]+\.[\w.]+/g;
@@ -42,6 +43,8 @@ const SRC = arg("src", "scripts/.replay-out/r7-turns.jsonl");
 const SCENES = arg("scenes").split(",").filter(Boolean);
 const ONLY = arg("only").split(",").filter(Boolean);
 const PER = Number(arg("per", "99"));
+// 2026-10-08 正解の書き手で絞る（竹内「竹内のLINEか従業員のLINEかで…」）: takeuchi＝竹内さんの手打ちだけを正解に／employee／空＝全部（旧）
+const WRITER = arg("writer", "");
 const VERSIONS = arg("versions", "before,after").split(",").filter(Boolean);
 const REPS = Math.max(1, Number(arg("reps", "1")));
 const LABEL = arg("label", "r7");
@@ -131,6 +134,7 @@ async function main() {
     const key = `${r.conv.slice(0, 8)}${r.at.slice(5, 16).replace(/[-T:]/g, "")}`;
     if (ONLY.length && !ONLY.includes(key)) continue;
     if (SCENES.length && !SCENES.includes(r.scene)) continue;
+    if (WRITER && writerFromText(r.staffText).writer !== WRITER) continue;
     if ((cnt.get(r.scene) ?? 0) >= PER) continue;
     cnt.set(r.scene, (cnt.get(r.scene) ?? 0) + 1);
     turns.push({ key, conv: r.conv, at: r.at, scene: r.scene, staffText: r.staffText, src: r.src });

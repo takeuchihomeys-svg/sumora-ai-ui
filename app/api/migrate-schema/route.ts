@@ -4194,6 +4194,10 @@ ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS verdict_reviewed_at TIMEST
 -- 未判定の番を拾う索引（毎晩の cron）・場面ごとの集計の索引
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_unevaluated ON line_watch_turns(customer_turn_at) WHERE evaluated_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_line_watch_turns_scene ON line_watch_turns(scene_key, customer_turn_at DESC);
+-- 2026-10-08 竹内「大丈夫」（返信の質 8巡目・記録）: その番に渡った材料の要約と、生成したが出さなかった下書き。
+--   {"brain":{"blocks":{chars,empty,mode..},"rag":{knowledge:{n,err,timeout}..}},"reply":{"scene":..,"spec":..,"fetched":{sizes,empty}},"suppressed":{"draft":{reason,text}}}
+--   書くのは app/lib/line-watch-materials-server.ts（トリガーではない・6,000字まで）。戻す: LINE_WATCH_MATERIALS=off
+ALTER TABLE line_watch_turns ADD COLUMN IF NOT EXISTS materials JSONB;
 
 -- conversations.call_tapped_at: お客様が「電話をかける」ボタン（AIX【電話する】→電話をかける）を最後に押した時刻（2026-10-02 竹内
 --   「こっちが電話でれなくて不在だった場合 不在の通知がはいるようにする」）。LINEコールは着信が webhook に来ないので /api/call-tap で拾う。
@@ -4668,6 +4672,83 @@ CREATE TABLE IF NOT EXISTS property_search_focus (
 );
 CREATE INDEX IF NOT EXISTS idx_psf_requested_at ON property_search_focus(requested_at DESC);
 ALTER TABLE property_search_focus DISABLE ROW LEVEL SECURITY;
+
+-- 2026-10-08 送った人（書き手）の記録（竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」「端末で…判断」）
+--   staff_devices: ブラウザごとの端末（画面が x-staff-device で添える ID）。writer は竹内さんが1回付ける（'takeuchi'｜'employee'）
+--   staff_send_log: /api/send-line-message の送信ごとに1行（LINE の message id・端末・User-Agent。IP は持たない）
+--   messages.staff_writer*: 書き手。端末（device）・グループの発言者（group_speaker）・人（manual）・文の癖（style／style_context）の順に強い
+--     確からしさ sure／likely／unknown。過去の通は scripts/backfill-staff-writer.ts（文の癖・app/lib/staff-writer.ts）が埋める
+--   書くのは app/lib/staff-send-log-server.ts（STAFF_SEND_LOG=off で止める）と下のトリガー
+CREATE TABLE IF NOT EXISTS staff_devices (
+  device_id TEXT PRIMARY KEY,
+  label TEXT,
+  user_agent TEXT,
+  writer TEXT CHECK (writer IN ('takeuchi','employee')),
+  note TEXT,
+  first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  send_count INTEGER DEFAULT 0
+);
+ALTER TABLE staff_devices DISABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS staff_send_log (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  conversation_id TEXT,
+  line_message_ids TEXT[] NOT NULL,
+  origin TEXT,
+  aix_type TEXT,
+  kind TEXT,
+  device_id TEXT,
+  device_label TEXT,
+  user_agent TEXT,
+  staff_writer TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_staff_send_log_ids ON staff_send_log USING GIN (line_message_ids);
+CREATE INDEX IF NOT EXISTS idx_staff_send_log_created ON staff_send_log(created_at DESC);
+ALTER TABLE staff_send_log DISABLE ROW LEVEL SECURITY;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_device_id TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS staff_writer TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS staff_writer_source TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS staff_writer_confidence TEXT;
+CREATE INDEX IF NOT EXISTS idx_messages_staff_writer ON messages(staff_writer) WHERE staff_writer IS NOT NULL;
+-- messages の行が入る時（画面は送信の後に line_message_id つきで入れる）に、送信の記録から端末と書き手を写す。
+--   グループの発言（speaker_user_id）は hanbancyo_settings の takeuchi_line_user_id／suzuki_line_user_id で決める
+CREATE OR REPLACE FUNCTION fill_message_staff_writer() RETURNS trigger AS $func$
+DECLARE log_row RECORD; dev_writer TEXT; tk TEXT; em TEXT;
+BEGIN
+  IF NEW.sender <> 'staff' OR NEW.staff_writer_source IN ('device','group_speaker','manual') THEN RETURN NEW; END IF;
+  IF NEW.line_message_id IS NOT NULL AND NEW.sent_device_id IS NULL THEN
+    SELECT device_id, staff_writer INTO log_row FROM staff_send_log
+      WHERE line_message_ids @> ARRAY[NEW.line_message_id] ORDER BY id DESC LIMIT 1;
+    IF FOUND AND log_row.device_id IS NOT NULL THEN
+      NEW.sent_device_id := log_row.device_id;
+      SELECT writer INTO dev_writer FROM staff_devices WHERE device_id = log_row.device_id;
+      IF coalesce(dev_writer, log_row.staff_writer) IS NOT NULL THEN
+        NEW.staff_writer := coalesce(dev_writer, log_row.staff_writer);
+        NEW.staff_writer_source := 'device';
+        NEW.staff_writer_confidence := 'sure';
+      END IF;
+    END IF;
+  END IF;
+  IF NEW.staff_writer IS NULL AND NEW.speaker_user_id IS NOT NULL THEN
+    SELECT value INTO tk FROM hanbancyo_settings WHERE key = 'takeuchi_line_user_id';
+    SELECT value INTO em FROM hanbancyo_settings WHERE key = 'suzuki_line_user_id';
+    IF NEW.speaker_user_id = tk THEN NEW.staff_writer := 'takeuchi';
+    ELSIF NEW.speaker_user_id = em THEN NEW.staff_writer := 'employee';
+    END IF;
+    IF NEW.staff_writer IS NOT NULL THEN NEW.staff_writer_source := 'group_speaker'; NEW.staff_writer_confidence := 'sure'; END IF;
+  END IF;
+  RETURN NEW;
+END;
+$func$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_fill_message_staff_writer ON messages;
+CREATE TRIGGER trg_fill_message_staff_writer BEFORE INSERT OR UPDATE OF speaker_user_id, line_message_id ON messages
+  FOR EACH ROW EXECUTE FUNCTION fill_message_staff_writer();
+-- 竹内さんの個人 LINE（グループの発言者・今の staff_line_user_ids の1件）。違っていれば直す
+INSERT INTO hanbancyo_settings (key, value) VALUES ('takeuchi_line_user_id', 'U3d8d9e48f947d85f270da34a32413a67') ON CONFLICT (key) DO NOTHING;
+-- 端末に書き手を付けた後、それまでの送信を埋め直す時（何度流してもよい）:
+--   UPDATE messages m SET staff_writer = d.writer, staff_writer_source = 'device', staff_writer_confidence = 'sure'
+--   FROM staff_devices d WHERE m.sent_device_id = d.device_id AND d.writer IS NOT NULL AND coalesce(m.staff_writer_source,'') <> 'manual';
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

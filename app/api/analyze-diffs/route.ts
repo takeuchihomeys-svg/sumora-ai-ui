@@ -13,6 +13,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { writerFromEdit, staffWriterSplitEnabled } from "@/app/lib/staff-writer";
 
 export const maxDuration = 300;
 
@@ -1550,6 +1551,13 @@ export async function POST(req: NextRequest) {
       // customer_intent / winning_pattern を含む共通ヘルパーに一元化
       const exBrainContext = await fetchBrainContext(exConversationId);
 
+      // 2026-10-08 竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」: 返信の書き方の基準は竹内さん。
+      //   直した所の表記が従業員（いただき・いたします等）の差分からは、言い回し・文体（phrase／style）を学ばない。構成（pattern／structure）＝中身だけ学ぶ。
+      //   書き手は app/lib/staff-writer.writerFromEdit（下書きに無い表記の手掛かりだけで決める）。戻す: STAFF_WRITER_SPLIT=off
+      const exWriter = staffWriterSplitEnabled() ? writerFromEdit(ai_draft, sent_reply) : null;
+      const employeeEdit = exWriter?.writer === "employee";
+      if (employeeEdit) console.log(JSON.stringify({ tag: "analyze-diffs:employee-edit", id, cues: exWriter?.cues }));
+
     // 完全一致はスキップ（構成が同じなので学習不要）
     if ((ai_draft ?? "").trim() === (sent_reply ?? "").trim()) {
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
@@ -1615,7 +1623,8 @@ export async function POST(req: NextRequest) {
       // STATE_LEARNABLE / COMPONENT_NAMES はモジュールレベルで定義済み
       const learnableList = STATE_LEARNABLE[conversation_state] ?? STATE_LEARNABLE["property_send"] ?? [];
       const learnableSet = new Set(learnableList);
-      const learnableChanges = parsedChanges.filter(({ comp }) => learnableSet.has(comp));
+      // 従業員の直し（employeeEdit）は言い回しの変化（phrase）を学ばない・構成の変化（structure）だけ
+      const learnableChanges = parsedChanges.filter(({ comp, changeType }) => learnableSet.has(comp) && !(employeeEdit && changeType === "phrase"));
 
       if (learnableChanges.length === 0) {
         // 固有情報コンポーネントのみ変化 → 学習不要
@@ -1829,7 +1838,11 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    if (!result.skip && result.title && result.rule) {
+    // 従業員の直し（employeeEdit）は言い回し・文体（phrase／style）を学ばない＝構成（pattern）だけ
+    const resultCat = (result.category ?? "pattern").split("=")[0].trim();
+    const employeeStyleOnly = employeeEdit && (resultCat === "style" || resultCat === "phrase");
+    if (employeeStyleOnly && !result.skip) console.log(JSON.stringify({ tag: "analyze-diffs:employee-style-skipped", id, category: resultCat, title: result.title ?? null }));
+    if (!result.skip && result.title && result.rule && !employeeStyleOnly) {
       // principle は diff 由来ルールの「絶対ルール」昇格を防ぐため許可しない（#4）
       const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase"]);
       const rawCategory = (result.category ?? "pattern").split("=")[0].trim();

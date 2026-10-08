@@ -7,6 +7,7 @@
 // LLM なし。送信・AIX・会話の表には一切書かない。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
+import { staffWriterOfBurst, staffWriterSplitEnabled } from "./staff-writer";
 import { staffWindowOf, judgeTurn, cleanDraft, pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
 import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
 import { sceneKeyOf } from "./line-watch-turn";
@@ -123,9 +124,11 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
     const pick = pickJudgeDraft({ ...t, customer_last_at: w.customerLastAt });
     // 読むべき範囲の外の行為は前と同じく draft_first まで見る（uran. の見張り・スタッフが返さなかった番の数え方は変えない）
     const topicOut = outOfTopicActs(cleanDraft(t.draft_last).text ?? cleanDraft(t.draft_first).text, resolveAckTopicScope(upto));
+    // 2026-10-08 返事を書いた人（直した所の表記→無ければ送った文全体の「確か」だけ）。STAFF_WRITER_SPLIT=off で渡さない
+    const staffWriter = staffWriterSplitEnabled() ? staffWriterOfBurst(cleanDraft(pick.draft).text, w.texts.filter((x) => x.burst).map((x) => x.text).join("\n")) : null;
     const j = judgeTurn({
       draft: pick.draft, sentinel: t.draft_sentinel, brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode,
-      convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w, outOfTopicActs: topicOut,
+      convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w, outOfTopicActs: topicOut, staffWriter,
     });
     if (topicOut.length && !j.detail.out_of_topic_acts) j.detail.out_of_topic_acts = topicOut;
     j.detail.draft_src = pick.src;
