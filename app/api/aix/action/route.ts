@@ -107,6 +107,17 @@ import { isMgmtAfterHours, ensureAfterHoursApplyLine, stripLeadingBareAck, APPLY
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 9巡目（10/08）: 学習ルールの総点検（rules-review-r9）を testFlags.rules_r9（off／on／stage2）で DB を変えずに重ねる。テストの会話・本番でない環境だけ
+import { runInRulesOverlayScope, setRulesOverlay, resolveTestRulesOverlay } from "@/app/lib/rules-overlay";
+// 9巡目（10/08）: 交渉が難しかった時の締め。旧「引き続き最大限サポートさせて頂きます！！で締める」は人の交渉の結果の文（全期間 16通・うち AIX 4）で 0通。
+//   人は結果と理由を書いて終えるか「お手隙の際にご確認ください！！」（4通）・次の一手が決まっている時だけその一手（ピックアップ・申込）。
+//   学習ルール 50380625（rules-review-r9 の書き換え）とも同じ向き。戻す NEGOTIATION_CLOSE_R9=off
+function negotiationFailCloseRule(head = "・交渉できなかった場合は"): string {
+  if ((process.env.NEGOTIATION_CLOSE_R9 ?? "").toLowerCase() === "off") {
+    return head === "・交渉できなかった場合は" ? "・交渉できなかった場合は「引き続き最大限サポートさせて頂きます！！」で締める（誘導文がある場合は誘導文を優先）" : `${head}「引き続き最大限サポートさせて頂きます！！」で締める`;
+  }
+  return `${head}結果とスタッフが入れた理由だけを簡潔に書き、締めは「お手隙の際にご確認ください！！」か締めなし（誘導文がある場合は誘導文を優先）。「引き続き最大限サポート」「全力でサポート」等の決まり文句・代わりの策のアピール・入力に無い理由は書かない`;
+}
 // 2026-10-01 竹内: 待ち合わせ場所の住所は番地まで（番地の無い住所は文を作らない）
 import { meetingAddressProblem } from "@/app/lib/meeting-address";
 import { ensureCardFeeLine } from "@/app/lib/company-fact-guard";
@@ -1542,6 +1553,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // 2026-09-26: 歯止め（申込以降・時刻の線）は本文を読む前に決める — DeepSeek に回る時は線より前の履歴をここで落とす
     const reqCtx = aixRequestCtx.getStore();
     const convId = typeof body.conversation_id === "string" && body.conversation_id ? body.conversation_id as string : null;
+    {
+      const tf = (body as Record<string, unknown>).testFlags as Record<string, unknown> | undefined;
+      if (tf && typeof tf === "object") setRulesOverlay(resolveTestRulesOverlay(tf.rules_r9, isTestConversation(convId)));
+    }
     if (reqCtx) {
       reqCtx.conversationId = convId;
       await setupAltProviderGuards(reqCtx, convId, typeof body.customer_name === "string" ? body.customer_name : null, String(body.action ?? ""));
@@ -5188,7 +5203,7 @@ ${guidanceRule}`,
 ${guidanceClose ?? ""}`,
               rules: `・[交渉結果]はスタッフ入力情報から抽出する（例:「礼金1→0に交渉成功」「礼金の交渉は難しい状況」）
 ・交渉成功の場合は「かなりお得にご入居頂けます！！」を末尾に追加してよい（誘導文がある場合は誘導文を優先）
-・交渉できなかった場合は「引き続き最大限サポートさせて頂きます！！」で締める（誘導文がある場合は誘導文を優先）
+${negotiationFailCloseRule()}
 ${guidanceRule}`,
             };
           }
@@ -5288,13 +5303,13 @@ ${SMORA_COMMON_RULES}
 ①挨拶：「（時候の挨拶）」
 ②交渉結果報告：「[物件名]の初期費用について管理会社へ交渉させて頂きました！！」
 ③結果の詳細（1〜2行）：スタッフ入力の交渉結果＋会話履歴のお客様の状況を踏まえた内容
-④締め（任意）：交渉成功なら喜びを共有、難しかった場合は前向きに締める
+④締め（任意）：交渉成功なら喜びを共有、${(process.env.NEGOTIATION_CLOSE_R9 ?? "").toLowerCase() === "off" ? "難しかった場合は前向きに締める" : "難しかった場合は下の③の書き方（結果と理由・お手隙の際にご確認ください！！）"}
 
 【③ 結果の詳細の書き方】
 ・スタッフ入力の交渉結果を具体的に書く（例:「礼金1ヶ月→0ヶ月に交渉成功致しました！！」）
 ・会話履歴からお客様が初期費用についてどんな懸念を持っていたか読み取り、それを解消する形で書く
 ・交渉成功の場合:「かなり初期費用抑えてご入居頂けます😊！！」を添える
-・交渉が難しかった場合:「引き続き最大限サポートさせて頂きます！！」で締める
+${negotiationFailCloseRule("・交渉が難しかった場合:")}
 
 【物件名の特定】
 会話履歴からお客様が確認依頼した物件を特定する（号室があれば「マンション名 806号室」形式・先頭0省略）。特定できない場合は「ご確認頂きましたお部屋」とする
@@ -7579,7 +7594,7 @@ export async function POST(request: NextRequest) {
   // 2026-09-27: 開発サーバで fetch の包み（使用量の記録）が外れていたら包み直す（本番では何もしない・llm-usage-recorder）
   await (await import("@/app/lib/llm-usage-recorder")).ensureLlmFetchChainInDev().catch(() => {});
   if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
-    return runInDeepseekScope(() => aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => handleAction(request)));
+    return runInDeepseekScope(() => aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => runInRulesOverlayScope(() => handleAction(request))));
   }
 
   const encoder = new TextEncoder();
@@ -7601,7 +7616,7 @@ export async function POST(request: NextRequest) {
 
       const ctx: AixStreamCtx = { emit, deadline, signal: ac.signal, seq: 0, busy: false };
       try {
-        const res = await runInDeepseekScope(() => aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => aixStream.run(ctx, () => handleAction(request))));
+        const res = await runInDeepseekScope(() => aixRequestCtx.run({ conversationId: null, postApply: false, masker: null }, () => aixStream.run(ctx, () => runInRulesOverlayScope(() => handleAction(request)))));
         const resData = await (res as Response).json().catch(() => ({}));
         emit({ t: "done", payload: resData });
       } catch (err) {

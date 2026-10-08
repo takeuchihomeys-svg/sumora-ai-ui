@@ -31,6 +31,10 @@ export type TwoStageInput = {
   customerText?: string | null;
   /** 今回のお客様の発言がお礼・了承だけで、こちらの最後の発言がまだ果たしていない約束（ピックアップ・確認・見積書）そのもの（3巡目 10/07） */
   ackRightAfterPromise?: boolean;
+  /** 今回のお客様の発言がお礼・了承だけか（10巡目 10/08）。false の時だけ物件の AIX を約束の返信にする（undefined＝今まで通り） */
+  ackOnly?: boolean;
+  /** こちらが今日（JST）すでにした約束の種類（promiseKindsToday）。同じ日の同じ件の2通目からは約束を挟まず AIX（10巡目 10/08） */
+  promisedTodayKinds?: readonly TwoStageKind[];
   /** 今回お客様が物件を送ってきた（持ち込み・URL／物件の画像）。ask＝お客様の言葉（broughtPropertyAsk）・count＝件数（broughtPropertyCount）。10/07 */
   brought?: { ask: BroughtAsk; count: number } | null;
   /** 室内写真の依頼の番（ブレインの S11）。atHand＝頼まれた物件の室内イメージが手元にある（room-photo-material.photoMaterialAtHand）。5巡目 10/07 */
@@ -47,7 +51,8 @@ export type TwoStageInput = {
 export const WORK_SUPPORT_ASK_RE = /アリバイ|勤務先[^\n。]{0,12}(?:用意|工作|空欄)|お仕事(?:先|面)[^\n。]{0,8}(?:用意|サポート)/;
 export type TwoStageVerdict = { kind: TwoStageKind; direction: string; keyTopic: string; source: string };
 
-const KEEP_SOURCE_RE = /^(?:promise:|signal:pending_pickup|rule:closed_ack_wait|correction:check_already_declared)/;
+// 10巡目（10/08）: rule:further_discount_daihyo＝御見積書の後の「更に安く」は AIX【確認します→代表確認（初期費用）】のまま（further-discount.ts）
+const KEEP_SOURCE_RE = /^(?:promise:|signal:pending_pickup|rule:closed_ack_wait|correction:check_already_declared|rule:further_discount_daihyo)/;
 
 export const TWO_STAGE_WORDING: Record<TwoStageKind, string> = {
   pickup: "〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！",
@@ -62,7 +67,42 @@ export const TWO_STAGE_WORDING: Record<TwoStageKind, string> = {
 export const TWO_STAGE_ALSO_ANSWER = "同じ発言の他のご希望・ご質問（内覧の日時のご希望など）にも一言ずつ応える（例: ご希望の日時でご案内出来るよう合わせて確認する）。";
 export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   const v = resolveTwoStageCore(i);
+  if (v && sameDayDirect(v, i)) return null;
   return v ? { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` } : null;
+}
+
+/**
+ * 2026-10-08 10巡目（竹内さん「約束の返信を入れて AIX にした方が一貫性があって良い。1日に何度も送ってきている場合は、2通目から直接（AIX）にするなどして分ける」）:
+ *   基本は約束の返信→後で AIX のまま。同じお客様が同じ日（JST）に同じ件（確認・見積）でもう一度送ってきた時は、2通目からは約束を挟まず AIX を直接。
+ *   「同じ件」＝こちらが今日すでに同じ種類の約束（確認・見積書）をしている。対象は募集状況の確認（持ち込み・空き）と見積書の約束だけ
+ *   （聞かれた事への答え check_question・お仕事面・室内写真の撮影・内覧の確認・ピックアップは対象外＝ピックアップは条件の番で約束が 96%）。
+ *   戻す: TWO_STAGE_SAME_DAY_DIRECT=off
+ */
+const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|estimate)\)$/;
+function sameDayDirect(v: TwoStageVerdict, i: TwoStageInput): boolean {
+  if (typeof process !== "undefined" && (process.env?.TWO_STAGE_SAME_DAY_DIRECT ?? "").toLowerCase() === "off") return false;
+  if (!SAME_DAY_SOURCES.test(v.source)) return false;
+  const kinds = i.promisedTodayKinds ?? [];
+  return v.kind === "estimate" ? kinds.includes("estimate") : kinds.includes("check") || (v.source.includes("brought_both") && kinds.includes("estimate"));
+}
+
+/** こちらが今日（JST・今の番より前）にした約束の種類（確認・見積書・ピックアップ）。brain-core が今日のこちらの文から作って渡す */
+const TODAY_CHECK_RE = /(?:募集状況|募集|空室|空き状況|空き|入居可能日|入居日|退去|管理会社|オーナー|お部屋の状況|詳細)[^\n。！!？?]{0,20}確認(?:させて(?:頂|いただ)きます|致します|いたします|します)|確認(?:でき|出来)次第[^\n。！!]{0,12}ご連絡/;
+const TODAY_ESTIMATE_RE = /(?:御|お)?見積(?:書|もり|り)?[^\n。！!？?]{0,16}(?:作成|お送り|送らせ|お出し|ご用意|お作り)[^\n。！!？?]{0,10}(?:させて(?:頂|いただ)きます|致します|いたします|します)/;
+const TODAY_PICKUP_RE = /ピックアップ[^\n。！!]{0,16}(?:させて(?:頂|いただ)きます|致します|いたします)|お部屋[^\n。！!]{0,20}お送りさせて(?:頂|いただ)きます/;
+export function promiseKindsToday(staffMsgs: ReadonlyArray<{ text: string | null; createdAt: string }>, nowMs: number): TwoStageKind[] {
+  const day = (ms: number) => Math.floor((ms + 9 * 3600_000) / 86_400_000);
+  const today = day(nowMs);
+  const out = new Set<TwoStageKind>();
+  for (const m of staffMsgs) {
+    const at = Date.parse(m.createdAt);
+    if (!Number.isFinite(at) || day(at) !== today || at > nowMs) continue;
+    const t = String(m.text ?? "").normalize("NFKC");
+    if (TODAY_ESTIMATE_RE.test(t)) out.add("estimate");
+    if (TODAY_CHECK_RE.test(t)) out.add("check");
+    if (TODAY_PICKUP_RE.test(t)) out.add("pickup");
+  }
+  return [...out];
 }
 function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   const a = (i.finalAix ?? "").trim();
@@ -79,6 +119,23 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   //   10/03〜の道の違い（scripts/audit-path-gap-by-scene.ts）の短いお礼の外れ（AI=返信→人=AIX）の形。設計知見 a92ec31b「約束の後のお礼・了承だけの番は約束の AIX のまま」と同じ向き
   //   （⑫22巡の pickupPromiseNotReady は了承以外の発言も混ぜた 120番で引いた線＝了承だけの番はこちらが多数）。戻す: TWO_STAGE_ACK_WAIT=off
   if (pickupPromiseNotReady && i.ackRightAfterPromise && (typeof process === "undefined" || (process.env?.TWO_STAGE_ACK_WAIT ?? "").toLowerCase() !== "off")) return null;
+  // 2026-10-08 10巡目（竹内さん「返信か AIX の判断を先に完全に」）: 物件の AIX（ピックアップ・オススメ・探す）は、お客様の今の発言がお礼・了承だけ
+  //   でない番では、売上サポに候補があっても（pickupReady）・前の約束・合図（promise:pickup・signal:pending_pickup）でも、まず約束の返信にする。
+  //   線（scripts/audit-r10-path-truth.ts・6/26〜 の全部の番・ピックアップの約束か物件の AIX か）: 条件の番 竹内さん 約束 126／AIX 5・従業員 106／4、
+  //   質問 19／11（AIX の 9 は1時間超後）・費用 12／2・内覧 7／2・検討中 7／1・申込 4／0。お礼・了承の番だけ 物件の AIX が多い（竹内さん 39／28＝黙って後で果たす）。
+  //   10/02〜の止めすぎ（返信の番に AIX）18番のうち 11番がこの形（LLM の property_send 6・pending_pickup 5＝内覧のキャンセル・内覧のお礼・検討中・エアコンの件など別の話の番）。
+  //   お礼・了承の番は今まで通り（AIX のまま＝黙って後で果たす）。戻す: TWO_STAGE_PICKUP_UNLESS_ACK=off
+  const pickupUnlessAck = i.ackOnly === false && (a === "property_send" || a === "property_recommendation" || a === "property_search")
+    && !/^promise:(?:estimate|check)/.test(i.decisionSource ?? "")
+    && (typeof process === "undefined" || (process.env?.TWO_STAGE_PICKUP_UNLESS_ACK ?? "").toLowerCase() !== "off");
+  if (pickupUnlessAck) {
+    return {
+      kind: "pickup",
+      direction: "お客様の今の発言（質問・ご希望・ご事情）に先に一言で応え、物件のご紹介が要る時だけ、新しいご条件（言い直し・追加があればその条件を具体的に）でお部屋をピックアップしてお送りすると約束する返信にする（物件名・家賃は書かない・送るのは後で AIX）。言い方は実際の送信の形「〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！」",
+      keyTopic: "お客様の発言への答え（物件のご紹介が要る時はピックアップしお送りする約束）",
+      source: "rule:two_stage_promise(pickup_unless_ack)",
+    };
+  }
   // 2026-10-07 5巡目（竹内さん「AIX を直接出す」）: 室内写真の依頼（ブレインの S11＝property_check_result/interior_photo）で、
   //   頼まれた物件の室内イメージが手元にある（こちらが送った物件＝資料がありサイトの室内イメージを送れる・既に送った室内イメージ）時は
   //   AIX【物件確認した→室内写真を確認した】を直接（2段にしない）。無い時（お客様の持ち込み・建築中・物件が分からない）は

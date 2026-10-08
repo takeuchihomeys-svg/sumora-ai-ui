@@ -51,6 +51,7 @@ export const BRAIN_AIX_LABELS: Record<string, string> = {
   cost_breakdown:          "AIX 初期費用について",
   phone_call:              "AIX 電話をかける",
   guarantor_info:          "AIX 保証会社について",
+  zenryoku_support:        "AIX 全力サポート",
 };
 
 /**

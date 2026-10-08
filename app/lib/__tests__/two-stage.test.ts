@@ -111,4 +111,18 @@ t("見積書の約束の言い回し → estimate_declared", kinds(TWO_STAGE_WOR
 t("条件の言い直し（area_change）→ 変わった", conditionChangedThisTurn("area_change", "question"));
 t("場面が conditions（「塚本駅、加島駅では同じ価格帯の物件ありますか？」）→ 変わった", conditionChangedThisTurn(null, "conditions"));
 t("ピックアップの依頼だけ（pickup_request）・場面が質問 → 変わっていない", !conditionChangedThisTurn("pickup_request", "question"));
+// 10巡目（10/08）: お礼・了承だけでない番の物件の AIX は、候補があっても・前の約束/合図でも約束の返信（正解の表 6/26〜: 条件の番 竹内さん 約束 126／AIX 5）
+t("10巡目: 条件の番・売上サポに候補あり（pickupReady）でも ackOnly=false → 約束の返信", resolveTwoStage({ ...base, finalAix: "property_send", pickupReady: true, ackOnly: false })?.source === "rule:two_stage_promise(pickup_unless_ack)");
+for (const src of ["promise:pickup", "signal:pending_pickup"]) t(`10巡目: 別の話の番の ${src} → 約束の返信（AIX を立てない）`, resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: src, pickupReady: true, ackOnly: false })?.kind === "pickup");
+t("10巡目: お礼・了承だけの番（ackOnly=true）は今まで通り（候補あり→AIX）", resolveTwoStage({ ...base, finalAix: "property_send", pickupReady: true, ackOnly: true }) === null);
+t("10巡目: お礼・了承だけの番・約束の直後 → AIX のまま", resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: "promise:pickup", ackOnly: true, ackRightAfterPromise: true }) === null);
+t("10巡目: ackOnly を渡さない呼び出しは今まで通り", resolveTwoStage({ ...base, finalAix: "property_send", pickupReady: true }) === null);
+t("10巡目: 物件オススメも同じ", resolveTwoStage({ ...base, finalAix: "property_recommendation", pickupReady: true, ackOnly: false })?.kind === "pickup");
+t("10巡目: 確認・見積の約束を果たす promise:check／promise:estimate は触らない", resolveTwoStage({ ...base, finalAix: "property_send", decisionSource: "promise:estimate", pickupReady: true, ackOnly: false }) === null);
+t("10巡目: 物件確認した は対象外（今まで通り）", resolveTwoStage({ ...base, finalAix: "property_check_result", decisionSource: "promise:check", ackOnly: false }) === null);
+{
+  const prev = process.env.TWO_STAGE_PICKUP_UNLESS_ACK; process.env.TWO_STAGE_PICKUP_UNLESS_ACK = "off";
+  t("10巡目: TWO_STAGE_PICKUP_UNLESS_ACK=off で旧（候補あり→AIX）", resolveTwoStage({ ...base, finalAix: "property_send", pickupReady: true, ackOnly: false }) === null);
+  if (prev === undefined) delete process.env.TWO_STAGE_PICKUP_UNLESS_ACK; else process.env.TWO_STAGE_PICKUP_UNLESS_ACK = prev;
+}
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

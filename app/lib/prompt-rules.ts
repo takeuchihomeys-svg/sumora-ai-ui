@@ -7,6 +7,8 @@ import {
 export type { PromptRuleRow, PromptRuleConditions } from "@/app/lib/prompt-rules-format";
 // 2026-09-18 上限・下限は prompt-rule-registry.ts の1つの表と同じ値を使う（点検スクリプトが同じ数で数える）
 import { PROMPT_RULE_LIMIT_HIGH, PROMPT_RULE_LIMIT_PERMANENT, PROMPT_RULE_MIN_PRIORITY } from "@/app/lib/prompt-rule-registry";
+// 9巡目（10/08）: テストの会話だけ、学習ルールの見直し（rules-review-r9）を DB を変えずに重ねる箱（rules-overlay.ts）。箱が無い／重ねが null なら何もしない
+import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 
 // 2026-09-16 竹内（カイナ事例）: 経路ごとに材料を分ける。会話を合わせる（物件確認した）には、通常返信用の「物件画像→見積書作成宣言」
 //   「内覧案内を混ぜるな」（PROP-URL-REPLY-001・FEEDBACK-d6f30f25）や構成を足す DIFF-POLICY-* を渡さない
@@ -67,13 +69,16 @@ function buildBaseQuery(actionType: string | null, includeGlobal: boolean, inclu
 async function queryRuleRows(actionType: string | null, includeGlobal: boolean, includeLearnAix: boolean, exclude: PromptRuleExclude, order?: "v1" | "v2"): Promise<RuleRows | { error: unknown }> {
   // 6巡目（10/07）: 返信生成（generate_reply＋global）だけ v2 の並び（prompt-rules-format.orderRulesForInjection）。AIX の経路は今まで通り
   const v2 = actionType === "generate_reply" && (order ? order === "v2" : promptRulesOrderV2());
+  // 9巡目（10/08）: 重ね（テストの会話だけ）がある時は「上限＋無効にする本数」を読んでから外して上限で切る＝SQL で無効にした後と同じ
+  const ov = currentRulesOverlay();
+  const extra = overlayExtraLimit(ov);
   const [permanentRes, highPrioRes] = await Promise.all([
     buildBaseQuery(actionType, includeGlobal, includeLearnAix, exclude)
       .eq("is_permanent", true)
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .order("rule_key", { ascending: true })
-      .limit(PROMPT_RULE_LIMIT_PERMANENT)
+      .limit(PROMPT_RULE_LIMIT_PERMANENT + extra)
       .abortSignal(AbortSignal.timeout(8_000)),
     buildBaseQuery(actionType, includeGlobal, includeLearnAix, exclude)
       .eq("is_permanent", false)
@@ -81,18 +86,21 @@ async function queryRuleRows(actionType: string | null, includeGlobal: boolean, 
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .order("rule_key", { ascending: true })
-      .limit(v2 ? 1000 : PROMPT_RULE_LIMIT_HIGH)
+      .limit((v2 ? 1000 : PROMPT_RULE_LIMIT_HIGH) + extra)
       .abortSignal(AbortSignal.timeout(8_000)),
   ]);
   if (highPrioRes.error || permanentRes.error) return { error: highPrioRes.error ?? permanentRes.error };
-  const permanent = (permanentRes.data ?? []) as PromptRuleRow[];
+  const permanent = applyRulesOverlay((permanentRes.data ?? []) as PromptRuleRow[], ov, ov ? PROMPT_RULE_LIMIT_PERMANENT : undefined);
+  const highData = (ov
+    ? applyRulesOverlay((highPrioRes.data ?? []) as Array<PromptRuleRow & { updated_at?: string | null }>, ov, v2 ? undefined : PROMPT_RULE_LIMIT_HIGH)
+    : (highPrioRes.data ?? [])) as Array<PromptRuleRow & { updated_at?: string | null }>;
   const high = v2
-    ? orderRulesForInjection((highPrioRes.data ?? []) as Array<PromptRuleRow & { updated_at?: string | null }>, { limit: PROMPT_RULE_LIMIT_HIGH })
-    : (highPrioRes.data ?? []) as PromptRuleRow[];
+    ? orderRulesForInjection(highData, { limit: PROMPT_RULE_LIMIT_HIGH })
+    : highData as PromptRuleRow[];
   // 2026-09-18 竹内「改善おねがい」: 上限に張り付いた時は「後ろが落ちている」ことを必ず出す。
   //   generate_reply は該当 429 件に対して上限 200 で **229 件が黙って落ちていた**（priority 7 の境目で、
   //   同じ priority の中は更新日の新しい順。古い方は永久に入らない）。件数が見えないと誰も気付けない。
-  const fetchedHigh = (highPrioRes.data ?? []).length;
+  const fetchedHigh = highData.length;
   if ((v2 ? fetchedHigh > high.length : high.length >= PROMPT_RULE_LIMIT_HIGH) || permanent.length >= PROMPT_RULE_LIMIT_PERMANENT) {
     console.warn(JSON.stringify({
       tag: "prompt-rules:limit-hit",
@@ -172,6 +180,10 @@ const GLOBAL_RULES_TTL_MS = 5 * 60 * 1000;
 let _globalRulesCache: { p: Promise<RuleRows>; exp: number } | null = null;
 
 function loadGlobalRuleRows(): Promise<RuleRows> {
+  // 9巡目（10/08）: 重ね（テストの会話だけ）がある時はキャッシュを使わず・残さない（本番の文字列と混ぜない）
+  if (currentRulesOverlay()) {
+    return queryRuleRows(null, true, false, {}).then((r) => { if ("error" in r) throw r.error; return r; });
+  }
   const now = Date.now();
   if (_globalRulesCache && now < _globalRulesCache.exp) return _globalRulesCache.p;
   const p = queryRuleRows(null, true, false, {}).then((r) => {

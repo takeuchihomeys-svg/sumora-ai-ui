@@ -106,6 +106,29 @@ export function writerUse(writer: StaffWriter | null | undefined, confidence?: W
   return "legacy";
 }
 
+/**
+ * 表記を竹内さんの形に直す（決定論の置換・中身は変えない）。従業員の直しから学んだナレッジの文を竹内さんの書き方に揃える時に使う。
+ *   対象は竹内さんの手打ちで 9割以上が片方に寄っている表記だけ（10/08 端末で竹内さんと決まった手打ち 573通 × 従業員 1,100通で数えた）:
+ *     いただ→頂（370:12）・いたし→致し（102:1）・いかが→如何・お見積書→御見積書（77:2）・お申し込み→お申込み（44:4）・おすすめ／おススメ→オススメ（136:0）・
+ *     でき次第／できる限り→出来次第／出来る限り（18:0・12:0）・〜でき（確認・ご用意・ご案内・お送り・作成・オススメ）→出来・下さい→ください（0:216）・
+ *     呼び名の後の改行を取る（竹内さん 7/573＝1%・従業員 267/1100）
+ *   「事が出来／ことができ」（40:20）・「ございます」（竹内さんも打つ）・絵文字・！の数は触らない（割れている物は直さない）。
+ */
+export function toTakeuchiNotation(text: string): string {
+  return String(text ?? "")
+    .replace(/^([^\n、。！!？?]{1,15}(?:さん|様))[ \t]*\n+/, "$1")
+    .replace(/いただ/g, "頂")
+    .replace(/いたし/g, "致し")
+    .replace(/いかが/g, "如何")
+    .replace(/お見積書/g, "御見積書")
+    .replace(/お申し込み/g, "お申込み")
+    .replace(/おすすめ|おススメ/g, "オススメ")
+    .replace(/でき次第/g, "出来次第")
+    .replace(/できる限り/g, "出来る限り")
+    .replace(/(確認|ご用意|ご案内|お送り|作成|オススメ)でき/g, "$1出来")
+    .replace(/下さい/g, "ください");
+}
+
 /** 書き手で分けるのを止める（旧に戻す）: STAFF_WRITER_SPLIT=off */
 export function staffWriterSplitEnabled(): boolean {
   return (process.env.STAFF_WRITER_SPLIT ?? "on").toLowerCase() !== "off";

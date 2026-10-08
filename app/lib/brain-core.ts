@@ -43,6 +43,8 @@ import { viewingCheckFirst, VIEWING_CHECK_PROMISE_RE, viewingRoomVacating, threa
 import { propertyThreadEnabled } from "@/app/lib/property-thread";
 import { isAckOnlyTurn } from "@/app/lib/ack-topic-scope";
 import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from "@/app/lib/brain-scene";
+// 10巡目（10/08 竹内「AIXのボタンの種類・ピッカーの種類を分かっていたら簡単に完全にすることできる」）: AIX の全ボタン×主のピッカーの一覧と判断の順番を場面で絞って渡す（BRAIN_AIX_CATALOG=off で外す）
+import { catalogBlockForBrain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
@@ -117,6 +119,11 @@ import { detectPropertyPass, CUST_WILL_SEND_SELF_PRED, analyzeSubstance } from "
 import { resolveClosedAck } from "@/app/lib/closed-ack";
 // 2026-09-16 竹内（YUYA 事例）: 内覧当日の送り出しの後のお礼は返信しない（次は内覧後の挨拶）
 import { resolveViewingDayAck } from "@/app/lib/viewing-day";
+// 10巡目（10/08 竹内さん）: 御見積書の後の「更に安く」＝AIX【確認します→代表確認】／確定した内覧の当日は AIX【内覧挨拶→内覧前】／同じ日の同じ件の2通目は AIX を直接
+import { furtherDiscountDaihyo, FURTHER_DISCOUNT_SOURCE, negotiationPromisePending, NEGOTIATION_PROMISE_SOURCE } from "@/app/lib/further-discount";
+import { viewingDayGreetingDue, VIEWING_DAY_GREETING_SOURCE } from "@/app/lib/viewing-day-greeting";
+import { promiseKindsToday } from "@/app/lib/two-stage";
+import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { absolutizeRelativeDays } from "@/app/lib/relative-date";
@@ -146,6 +153,9 @@ import { loadEquipmentAnswerWithin } from "@/app/lib/equipment-answer-server";
 // 2026-09-30 手続きの質問（審査・入居までの期間と流れ・必要書類）は返信で答える／「確認した」系は資料に記載あり→資料・無し→AIX【確認した】（みこと事例）
 import { loadProcedureAnswerWithin, loadConfirmTopicRoutesWithin, type ProcedureAnswerMaterial, type ConfirmTopicMaterial } from "@/app/lib/procedure-answer-server";
 import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics, procedureReplyDirection, procedureTwoChoiceNote } from "@/app/lib/procedure-question";
+// 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
+import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
+import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -419,18 +429,19 @@ const AIX_CAPABILITY_MAP = `
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 条件ヒアリングのフォーム（8項目そのまま・お客様からもらっている条件は項目に書き入れる）を送る。まだ物件を送っていないのに条件（エリア＋家賃）がそろっていない時は property_send ではなくこれ。エリアと家賃の両方が分かっていれば選ばない（property_send）（2026-10-02 竹内）
-- acknowledge_check: 管理会社への空室確認+見積書依頼を生成（お客様宛てではない。物件の問い合わせでは選ばない＝property_check_result）
+- acknowledge_check: 御見積書を送った後にお客様が「更に安くならないか」と聞いた時だけ（初期費用を更に割引できるか＝代表確認）。お客様あてに「弊社代表に更に割引可能か確認させて頂きます」をピッカー 代表確認（初期費用）で送り、結果は 確認した→代表に確認した で送る（10/08 竹内さん・実送信6回は全部この形）。物件の募集状況の確認には選ばない（確認の約束は返信＝2段）。御見積書の前の「安くなりますか」は estimate_sheet
 - followup_revive: 追客・再接触メッセージを生成
 - property_check_result: 空室確認結果の報告文を生成（「物件確認した」）→ 2番手での申込が可能と判明した場合は+1分30秒で「（2番手・申込）」を顧客名の置換のみで自発送信する。【室内写真】お客様が室内の写真・動画・室内イメージURL を頼んだ（「室内の写真ありますか」「これ室内写真欲しいです」「お部屋の画像ありますでしょうか」「内見の動画欲しいです」「URLとかありますでしょうか」）→ check_pattern=interior_photo（AIX【物件確認した】→「室内写真を確認した」ピッカー。スタッフが手元の写真・室内イメージURL を物件名とあわせて送る。AI は使わない・本文は受付の一文だけ）。【重要】フリーレント可否・礼金/初期費用の交渉結果・ペット可否・駐車場有無・設備有無など管理会社に確認した結果はすべてこのボタンの「管理会社に確認した」サブパターンで報告する。acknowledge_check で確認を依頼した後に管理会社から回答が届いたら必ず property_check_result を選ぶこと。confirm前に結果を捏造してはいけない。【誤選択防止】顧客が「駐車場付きのお部屋がないか」「駐車場付きで探してほしい」等と言っている場合は property_check_result ではなく property_send を選ぶ（これは現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 = equip_add）
-- property_recommendation: Vision読み取りで物件紹介文を生成（1件詳細）→ 押下後は「1件特にオススメ」で感情的フォローを追加する（実測1分22秒。原文そのままの送信実績はゼロなので"1件に絞って推す"思想のみ流用し全面リライトする）
+- property_recommendation: スタッフが選んだ1件の物件資料の画像から🌟の紹介文を作る（ピッカー＝初回・1件訴求／新着・1件訴求／送った中から・1件訴求／条件広げ・1件訴求／代替・1件訴求／現状伝えて・1件訴求）。物件ピックアップした の直後に1件を推す時・新着が1件出た時（追客）にスタッフが自分から押すのが中心で、お客様の発言への答えとして選ぶ事は少ない（10/08 点検: 旧の「押下後に感情的フォロー・実測1分22秒」の説明は古い）
 - meeting_place: 内覧の待ち合わせ場所案内を生成
-- greeting_viewing: 内覧前後の挨拶メッセージを生成
+- greeting_viewing: 内覧前後の挨拶メッセージを生成。内覧前（当日）の挨拶はお客様が内覧を忘れない・確実に来てもらうための確認（10/08 竹内さん「忘れないため」）＝確定した内覧の当日でまだ当日の挨拶を送っていなければ候補。内覧の後のお礼も AIX（内覧後）
+- zenryoku_support: 条件で探したが今は条件に合うお部屋が見つからなかった時（スタッフが探した結果）に、全域から探した旨と新着が出次第お送りする約束を1通で作る（10/08 竹内さん「進めて良い」）。送れる物件がある時は property_send
 - property_search: お客さんの条件に合う物件を拡張ツールで検索する（適用条件: 最終物件送付から7日以上経過、または送付件数0件。next_steps例:「リアプロ/itandiでエリア×間取りを検索」「家賃上限以下・駅徒歩条件で絞り込み」「検索結果から送付済み物件を除いて候補をピックアップ」）※顧客が今まさに条件を尋ねてきた場合（「〜はありますか」「広めがいい」等）は property_search ではなく property_send を選ぶこと。※弊社TikTok/Instagram等のSNS動画で見た物件に問い合わせてきた場合、内覧希望があればviewing_invite、物件を探している段階ならproperty_searchを選ぶ（弊社TikTok掲載物件は40㎡以上・家賃15万円以上が中心のため、顧客の予算・条件に合わない場合は別エリア・条件での代替提案をnext_stepsに含める）
 
 【aixキー選択の使いどころ基準（迷ったらここを優先）】
-- estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし）／初期費用・総額を質問してきた時点で迷わず選ぶ
+- estimate_sheet: 申込到達会話で最も効果実績が高いボタン（applying_pattern の most_effective 最多）。見積書画像が届いた／顧客が物件画像だけを送ってきた（テキストなし・スクショのみ）／顧客が特定物件を気に入った（かつ新条件指定なし）／初期費用・総額を質問してきた時点で迷わず選ぶ（御見積書がまだ無い時は、コードが「御見積書を作成しお送りさせて頂きます」の約束の返信に変える＝2段。aix は estimate_sheet のままでよい・10/08 点検）
   【重要例外】顧客が同時に路線・駅名・家賃上限・徒歩分数・間取り・広さ等の新しい検索条件を示している場合は、気に入り表現があっても estimate_sheet を選ばない → property_send が正しい（条件変更が主題のサイン）。「家賃は〜万まで」という家賃予算の表明は「初期費用・総額の話題」ではない（家賃予算 ≠ 初期費用）。「○○がいい感じ」+「環状線のみで調べてほしい」「9万以下で探してほしい」等の組み合わせは常に property_send。
-- 【お客様が自分で見つけた物件】顧客がポータルの物件URL（SUUMO 等）・物件の画像を送って「ここはどうでしょうか」「気になってます」「空いてますか」と聞いた時は property_check_result（スタッフが管理会社に募集状況・条件を確認し、その結果を AIX【物件確認した】で送る。最大限割引の御見積書を同封することが多い）。初期費用・見積を聞かれていれば estimate_sheet。acknowledge_check は管理会社宛ての確認依頼の文を作るボタンで、この場面では押されていない（実送信: URL を送ってきた後の最初の AIX 131回のうち 物件確認した 109・見積書送る 21・確認します 0。2026-10-01 竹内・和樹事例）。以前の「新着をピックアップしてお送りする」約束が未履行でも、お客様の物件の確認が先（同じ場面の31回中30回）
+- 【お客様が自分で見つけた物件】顧客がポータルの物件URL（SUUMO 等）・物件の画像を送って「ここはどうでしょうか」「気になってます」「空いてますか」と聞いた時は property_check_result（スタッフが管理会社に募集状況・条件を確認し、その結果を AIX【物件確認した】で送る。最大限割引の御見積書を同封することが多い。確認の結果が出る前の今の番は、コードが「募集状況確認＋最大限割引の御見積書をお送りします」の約束の返信に変える＝2段・10/07 竹内さん）。初期費用・見積を聞かれていれば estimate_sheet。acknowledge_check は管理会社宛ての確認依頼の文を作るボタンで、この場面では押されていない（実送信: URL を送ってきた後の最初の AIX 131回のうち 物件確認した 109・見積書送る 21・確認します 0。2026-10-01 竹内・和樹事例）。以前の「新着をピックアップしてお送りする」約束が未履行でも、お客様の物件の確認が先（同じ場面の31回中30回）
 - acknowledge_check: 管理会社への確認依頼の文を作る（お客様宛てではない）。物件の問い合わせ（お客様の持ち込み物件・URL・物件の画像・物件名＋空き／募集状況の質問）の次の一手には選ばない → いきなり property_check_result（2026-10-01 竹内「確認します あまり使わないので、いきなり物件確認したで大丈夫」。実送信150日: 確認しますの押下は全体で6回・あなたが確認しますを出した後にスタッフが押したのは 物件確認した 14・見積書送る 7・確認します 0）。確認前に内覧・申込の話へ進めない ※画像のみ送信（テキストなし）の場合は acknowledge_check ではなく estimate_sheet を選ぶこと ※スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて結果をまだ報告していない時は acknowledge_check ではなく property_check_result（その後のお客様の返事が了承・スタンプだけでも同じ。2026-09-12 竹内・Sさん事例。確認の約束の後に押された AIX に acknowledge_check は0件）
 - 【AIX なし】顧客が「何件か気になる物件送ってもいいですか」「送りますね」等、これから自分で物件を送る予告をしただけの時は、どの AIX も選ばない（aix:null）。物件が届いてから募集状況確認・御見積書（property_check_result / estimate_sheet）。返信は「いつでもお送りください＋お送り頂き次第募集状況確認し御見積書とあわせてご連絡」（2026-09-12 竹内）
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・この事例）
@@ -1036,18 +1047,21 @@ function compareActionWinRates(a: { action_type: string; avg_win_rate: number },
 
 /** 4クエリ＋勝率を読む（analyzeConversation の Promise.all から移した物。失敗はそれぞれ空配列＝従来と同じ fail-safe） */
 export async function loadBrainSystemInputs(): Promise<BrainSystemInputs> {
+  // 9巡目（10/08）: 重ね（テストの会話だけ）は「上限＋無効にする本数」を読んで外してから上限で切る（rules-overlay.ts）。重ねが無い時は今と同じ
+  const rulesOv = currentRulesOverlay();
+  const rulesExtra = overlayExtraLimit(rulesOv);
   const [promptRulesResult, knowledgePrinciplesResult, boundaryPromptRulesResult, boundaryTriggerRulesResult] = await Promise.all([
     // Global permanent operator rules (apply to all conversations, no pgvector needed)
     // B4(Fable5): limit 10→20 — 本番で恒久ルールがちょうど10行に達しており、11個目から無言欠落する状態だった
     supabase
       .from("ai_prompt_rules")
-      .select("rule_text, priority")
+      .select("rule_key, rule_text, priority") // 9巡目: rule_key は重ねで外す/書き換える時に使う（文面は rule_text だけ＝温めと同じ）
       .eq("is_active", true)
       .eq("is_permanent", true)
       .is("action_type", null)
       .order("priority", { ascending: false })
       .order("id", { ascending: true })
-      .limit(20),
+      .limit(20 + rulesExtra),
     // Confirmed top-importance principles (importance >= 9, no pgvector needed)
     // B11(Fable5): .neq は NULL 行を除外する（SQL <> セマンティクス）→ .or で NULL 許容に。
     // created_at 降順タイブレークで同 importance 内の選抜を決定的にする
@@ -1073,7 +1087,7 @@ export async function loadBrainSystemInputs(): Promise<BrainSystemInputs> {
       .eq("is_active", true)
       .order("priority", { ascending: false })
       .order("id", { ascending: true })
-      .limit(40),
+      .limit(40 + rulesExtra),
     supabase
       .from("trigger_action_rules")
       .select("keyword, action_type, rule_text")
@@ -1120,9 +1134,13 @@ export async function loadBrainSystemInputs(): Promise<BrainSystemInputs> {
   }
 
   return {
-    promptRules: (promptRulesResult.data ?? []) as BrainSystemInputs["promptRules"],
+    promptRules: (rulesOv
+      ? applyRulesOverlay((promptRulesResult.data ?? []) as Array<{ rule_key?: string; rule_text: string; priority: number }>, rulesOv, 20)
+      : (promptRulesResult.data ?? [])).map(({ rule_text, priority }) => ({ rule_text, priority })) as BrainSystemInputs["promptRules"],
     knowledgePrinciples: (knowledgePrinciplesResult.data ?? []) as BrainSystemInputs["knowledgePrinciples"],
-    boundaryPromptRules: (boundaryPromptRulesResult.data ?? []) as BrainSystemInputs["boundaryPromptRules"],
+    boundaryPromptRules: (rulesOv
+      ? applyRulesOverlay((boundaryPromptRulesResult.data ?? []) as BrainSystemInputs["boundaryPromptRules"], rulesOv, 40)
+      : (boundaryPromptRulesResult.data ?? [])) as BrainSystemInputs["boundaryPromptRules"],
     boundaryTriggerRules: (boundaryTriggerRulesResult.data ?? []) as BrainSystemInputs["boundaryTriggerRules"],
     actionWinRates,
   };
@@ -1526,7 +1544,8 @@ export async function analyzeConversation(
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       // 3巡目（10/07）: 場面で絞る時のために多めに読み、off の時は今まで通り先頭15行だけ使う（brain-scene.sceneActionRules）
-      .limit(40),
+      // 9巡目（10/08）: 重ね（テストの会話だけ）は無効にする本数ぶん多めに読み、下で外して 40 に切る
+      .limit(40 + overlayExtraLimit(currentRulesOverlay())),
   // aix_transition_stats: AIX遷移マップ（成約会話の実測データ・DB動的）
   supabase
     .from("aix_transition_stats")
@@ -2063,7 +2082,7 @@ export async function analyzeConversation(
   // 3巡目（10/07）: ブレインの材料を場面で絞る（app/lib/brain-scene.ts・既定 on・BRAIN_SCENE_MATERIALS=off で戻す／テストは opts.sceneMaterials）
   const brainSceneOn = brainSceneMaterialsEnabled(process.env, opts?.sceneMaterials ?? null);
   const brainScene: ReplyScene | null = brainSceneOn ? resolveReplyScene({ customerText: unrepliedCustomerTurn(typedMessages).text ?? "" }).scene : null;
-  const actionRulesRaw = (actionRulesResult.data ?? []) as ActionRule[];
+  const actionRulesRaw = applyRulesOverlay((actionRulesResult.data ?? []) as ActionRule[], currentRulesOverlay(), currentRulesOverlay() ? 40 : undefined);
   const actionRulesFiltered = (brainSceneOn ? actionRulesRaw : actionRulesRaw.slice(0, 15))
     // condition_key 付きルールは conversation_state 一致のみ許可（brain は他の条件コンテキストを持たない）
     .filter((r) => !r.condition_key || (r.condition_key === "conversation_state" && r.condition_value === convStatus))
@@ -2073,6 +2092,11 @@ export async function analyzeConversation(
   const actionRulesText = actionRules.length > 0
     ? `\n【アクション別ルール（現局面候補: ${actionCandidates.join("/")}）】\n${actionRules.map((r) => `- [${r.action_type}] ${r.rule_text}`).join("\n")}`
     : "";
+
+  // 10巡目（10/08）: 返信か AIX かの判断の土台＝AIX のボタン×ピッカーの一覧（場面に関係する物だけ・feedback_scene_first）。戻す BRAIN_AIX_CATALOG=off
+  const aixCatalogText = process.env.BRAIN_AIX_CATALOG === "off" ? "" : `
+${catalogBlockForBrain(brainScene)}
+`;
 
   const knowledgePrinciples = systemInputs.knowledgePrinciples;
 
@@ -2569,11 +2593,11 @@ export async function analyzeConversation(
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
+    ? `${aixCatalogText}${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
+    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -3004,6 +3028,15 @@ ${history}`;
       // 2026-10-06 ⑫ チンシャン: 条件・設備の確認の約束は 確認した（条件・交渉）→ 管理会社に確認した→〈要件〉のピッカーで開く（物件確認した ではない）
       if (promiseAix.checkPattern) sceneSignalCheckPattern = promiseAix.checkPattern;
     }
+    // 10巡目（10/08 竹内さんの答え7）: 交渉・申請の約束（台帳が約束と読まない）の直後のお礼・了承は、約束を果たす AIX【確認した→初期費用について】（further-discount.ts・NEGOTIATION_PROMISE_AIX=off）
+    if (!promiseAix && negotiationPromisePending({
+      lastStaffText: [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""))?.text ?? "",
+      customerAckOnly: customerAckAfter, reportedAfter: false,
+    })) {
+      finalAix = "property_check_result";
+      decisionSource = NEGOTIATION_PROMISE_SOURCE;
+      sceneSignalCheckPattern = "mgmt_initial_cost";
+    }
     // 2026-09-12 竹内（Sさん事例）: スタッフが既にお客様へ「募集状況確認させて頂きます」と伝えていて、まだ結果を報告していない
     //   （台帳の確認の約束が未履行）のに、LLM が 確認します（acknowledge_check）を選んだ → 物件確認した（結果の報告）に直す。
     //   実績（150日）: 確認の約束の後に押された AIX に 確認します は 0件（物件確認した 78・見積書送る 18）。
@@ -3238,6 +3271,20 @@ ${history}`;
       decisionSource = "rule:contract_terms_in_material";
       confirmTopicReply = true;
     }
+    // 9巡目（10/08・8巡目の残り）: 送った物件を指して契約条件を聞いた番（「ここ駐車場ありますか？？」）で、答えが全部資料にあるのに
+    //   LLM が物件の AIX（物件送付・オススメ・探す＝条件の追加と読んだ）を選んだ → 2段の「ピックアップの約束」にせず資料で答える返信に。
+    //   実送信 180日 22番で物件を指した駐車場の質問をピックアップの約束だけで返した番は 0（同じ連投で別の条件を言った1番だけ＝isTermsInquiryOnSentProperty が外す）。
+    //   約束を果たす AIX（promiseAix）・申込以降は触らない。戻す CONTRACT_TERMS_PICKUP_GUARD=off
+    if (!confirmTopicReply && !promiseAix && !procedureDecision && contractTerms?.allInMaterial && !isPostApplyStatus(convStatus)
+      && process.env.CONTRACT_TERMS_REPLY !== "off" && process.env.CONTRACT_TERMS_PICKUP_GUARD !== "off"
+      && (finalAix === "property_send" || finalAix === "property_recommendation" || finalAix === "property_search")
+      && isTermsInquiryOnSentProperty(unrepliedTurn.text)) {
+      console.log(JSON.stringify({ tag: "brain:contract-terms-over-pickup", conversationId, from: finalAix }));
+      finalAix = null;
+      sceneSignalCheckPattern = null;
+      decisionSource = "rule:contract_terms_in_material";
+      confirmTopicReply = true;
+    }
     // 2026-09-27 竹内（YUMA の返信テスト）「この場面は見積書を正解にする」: こちらが送ったお部屋（エステムコート大阪WEST）に「いいですね」→
     //   「見積もりお願いできますか」で、LLM が 物件確認した（募集状況を確認し報告）を選んだ。
     //   主のお部屋（customer-state の focus）がこちらの送ったお部屋で、今回の連投が見積もりの依頼なら 見積書送る（focused-estimate-request.ts）。
@@ -3312,6 +3359,28 @@ ${history}`;
       decisionSource = "rule:viewing_day_ack";
       viewingDayWait = true;
     }
+    // 10巡目（10/08 竹内さん「挨拶は、スタッフが内覧をちゃんとあると思うために入れている。忘れないため」）: 確定した内覧の当日で、まだ当日の挨拶を送っていない番は
+    //   AIX【内覧挨拶→内覧前】を優先の候補に（LLM が AIX なしにした番だけ・約束を果たす AIX は先）。済んだ・キャンセルの内覧は台帳が viewingAppointment を null にする。戻す VIEWING_DAY_GREETING=off
+    // 再生（10/08 r10b・60番）: 内覧当日の質問（「駐車場は近くのパーキングでよろしいですか」）・付き添いの連絡・紹介の話にも挨拶の AIX を立て、答えの返信を止めた（3番・人は返信）
+    //   → お客様の発言がお礼・了承だけの番に限る（質問・連絡には返信で答える。発言の無い朝に出すのは別の仕組み＝提案）
+    if (!promiseAix && !viewingDayWait && !closedAckWait && finalAix === null && !isPostApplyStatus(convStatus)
+      && (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")))
+      && viewingDayGreetingDue({
+        appointmentDay: brainLedger.facts.viewingAppointment?.day ?? null,
+        staffMessages: messagesOldestFirst.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text ?? "", createdAt: m.created_at })),
+        aixTypesToday: aixLogs.filter((l) => Math.floor((Date.parse(String((l as { created_at?: string }).created_at ?? "")) + 9 * 3600_000) / 86_400_000) === Math.floor((Date.now() + 9 * 3600_000) / 86_400_000)).map((l) => String(l.aix_type ?? "")),
+        nowMs: Date.now(),
+      })) {
+      finalAix = "greeting_viewing";
+      decisionSource = VIEWING_DAY_GREETING_SOURCE;
+      console.log(JSON.stringify({ tag: "brain:viewing-day-greeting", conversationId }));
+    }
+    // 10巡目（再生 r10c）: 内覧当日のお客様の連絡（遅れる・向かう・付き添い）に LLM が内覧挨拶の AIX を選んだ → 返信（「かしこまりました！！お気をつけてお越しください😌！！」人 12/17）。
+    //   お客様が来る事を自分で伝えている＝確認（リマインド）の挨拶は要らない。戻す VIEWING_DAY_GREETING=off
+    if (finalAix === "greeting_viewing" && decisionSource === "llm" && process.env.VIEWING_DAY_GREETING !== "off" && isViewingDayNotice(unrepliedTurn.text ?? "")) {
+      finalAix = null;
+      decisionSource = "rule:viewing_day_notice_reply";
+    }
     // 2026-09-23 竹内（あっぴ事例）「なんでこの場面 AIX の物件ピックアップがセットされていないのか。この状況は物件を次送る状況」:
     //   未履行のピックアップ宣言が残っている間は「反応待ち」ではない（ボールはこちら側）。LLM がルール⑧で null を出しても
     //   ここで property_send を立て直す（決定論の合図1本・pending-pickup.resolvePendingPickup）。
@@ -3358,7 +3427,15 @@ ${history}`;
     //   AIX【確認します】もブレインの候補から外す（同じ確認の約束の返信→後で AIX【物件確認した】・画面のボタンは残す）。判定は app/lib/two-stage.ts
     // AIX【確認します】はブレインの候補から外す（竹内さんの決定②）: 確認の約束を果たす場面（promise:check 等）は AIX【物件確認した】に、
     //   それ以外は下の2段の判定で約束の返信に
-    if (finalAix === "acknowledge_check") {
+    // 10巡目（10/08 竹内さんの答え1）: 御見積書を送った後の「更に安くならないか」は AIX【確認します】（ピッカー 代表確認（初期費用））＝代表に更なる割引を確認する約束を AIX で送る。
+    //   結果は AIX【確認した→代表に確認した】。御見積書の前の「安くなりますか」は見積書送る（9巡目 39d0ca54 と同じ線）。約束を果たす AIX・申込以降は触らない。戻す FURTHER_DISCOUNT_DAIHYO=off
+    if (!promiseAix && furtherDiscountDaihyo({ turnText: unrepliedTurn.text, estimateSent: brainLedger.facts.estimateSent, postApply: isPostApplyStatus(convStatus) })) {
+      console.log(JSON.stringify({ tag: "brain:further-discount-daihyo", conversationId, from: finalAix }));
+      finalAix = "acknowledge_check";
+      sceneSignalCheckPattern = null;
+      decisionSource = FURTHER_DISCOUNT_SOURCE;
+    }
+    if (finalAix === "acknowledge_check" && decisionSource !== FURTHER_DISCOUNT_SOURCE) {
       finalAix = "property_check_result";
       decisionSource = decisionSource ? `${decisionSource}+ack_to_check` : "correction:ack_to_check";
     }
@@ -3462,6 +3539,10 @@ ${history}`;
         customerText: unrepliedTurn.text ?? "",
         // 3巡目（10/07）: 約束の直後のお礼・了承だけ（ZWJ の絵文字 🙇🏻‍♀️ もお礼と読む isAckOnlyTurn）
         ackRightAfterPromise: (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""))) && brainLedger.facts.lastStaffEntry?.status === "promised",
+        // 10巡目（10/08）: お礼・了承だけでない番の物件の AIX は約束の返信（two-stage pickup_unless_ack・TWO_STAGE_PICKUP_UNLESS_ACK=off）
+        ackOnly: customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")),
+        // 10巡目（10/08 竹内さん「1日に何度も送ってきている場合は、2通目から直接」）: 今日すでにした約束の種類（two-stage sameDayDirect・TWO_STAGE_SAME_DAY_DIRECT=off）
+        promisedTodayKinds: promiseKindsToday(messagesOldestFirst.filter((m) => m.sender !== "customer" && !m.is_aix_generated).map((m) => ({ text: m.text ?? "", createdAt: m.created_at })), Date.now()),
         // 10/07 竹内さん: 持ち込み（今回の連投の URL・物件の画像）の約束は募集状況＋最大限割引の御見積書の両方（two-stage brought_both）
         brought: (() => {
           const turnMsgs: string[] = [];

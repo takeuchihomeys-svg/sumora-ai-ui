@@ -57,6 +57,23 @@ export function detectContractTermTopics(text: string | null | undefined): Contr
   return out;
 }
 
+/**
+ * 9巡目（10/08・8巡目の残り）: 送った物件を指して契約条件を聞いた番（「ここ駐車場ありますか？？」）か。
+ *   YUMA（七道駅前マンション・資料に駐車場なし）でブレイン（DeepSeek）が「駐車場付きの物件を探す」＝物件送付／オススメを選び、
+ *   2段（pickup）で「ご条件に合ったお部屋ピックアップ」の約束になった（資料の答えが本文に入らない）。
+ *   実送信（scripts/audit-r8-contract-terms.ts --topic=parking・180日 22番）: 物件を指した駐車場の質問に、ピックアップの約束だけで返した番は 0。
+ *   ピックアップの約束が入ったのは同じ連投で別の条件（「福島区、淀川区でお願いします。」）を言った 1番だけ → 条件の言い直しが同じ連投にある時は外す。
+ *   true の時だけ、ブレインの物件の AIX（物件送付・オススメ・探す）を資料の答えの返信に倒す（brain-core・CONTRACT_TERMS_PICKUP_GUARD=off で戻す）。
+ */
+const POINTS_AT_PROPERTY_RE = /ここ|こちら|こっち|この|そこ|そちら|その/;
+const CONDITION_CHANGE_RE = /[区市町]で|駅(?:で|周辺|近く|まで)|エリア|でお願いします|でお願い致します|探して|他に|ほかに|ほかの|他の|別の|広げ|以内|以下|万(?:円)?まで|条件/;
+export function isTermsInquiryOnSentProperty(text: string | null | undefined): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  if (!detectContractTermTopics(t).length) return false;
+  if (CONDITION_CHANGE_RE.test(t)) return false;
+  return POINTS_AT_PROPERTY_RE.test(t);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 2. 資料を読む（文字のまま・足さない）
 // ═════════════════════════════════════════════════════════════════════════════
@@ -257,5 +274,11 @@ export function buildContractTermsNote(target: ContractTarget | null, routes: re
       : `- ${CONTRACT_TERM_LABEL[r.topic]}: 資料では答えられない（${r.why}${r.facts.length ? `: ${r.facts.join("／")}` : ""}）→ 本文で断言しない。管理会社に確認して AIX【確認した（条件・交渉）】で答える`);
   }
   out.push("→ 資料の値は書いてある文字のまま使う（月数・金額・日付を足さない・丸めない）。資料に無い項目を「無い」と言わない。");
+  // 9巡目（10/08・8巡目の残り）: 礼金の番で最後の Claude が頼まれていない「最大限割引させて頂いた初期費用の御見積書を作成しお送り…」を足した。
+  //   実送信（scripts/audit-r8-contract-terms.ts・365日 契約条件の質問 45番の手打ち）で見積書の約束を書いたのは 2通＝どちらもお客様が「含めて見積もり」を頼んだ番。
+  //   出所の候補は学習ルール DIFF-POLICY-FULL-2c07f321（金額の質問→見積書の予告）。項目の質問は見積の依頼ではない → 聞かれた項目だけ答える。戻す CONTRACT_TERMS_NO_EXTRA_PROMISE=off
+  if ((typeof process === "undefined" || (process.env?.CONTRACT_TERMS_NO_EXTRA_PROMISE ?? "").toLowerCase() !== "off") && routes.some((r) => r.route === "material")) {
+    out.push("→ 聞かれた項目だけ答える。お客様が初期費用・見積を頼んでいない時は「御見積書を作成しお送り」「募集状況確認させて頂きます」等の約束を足さない（礼金・敷金・保証会社・駐車場の質問は見積の依頼ではない）。");
+  }
   return out.join("\n");
 }

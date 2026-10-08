@@ -3519,6 +3519,10 @@ export async function runFinalCheckWithRevision(
   // 2026-09-10 Fable5: 最終 CheckResult は recheck で丸ごと置換されるため、修正前の指摘をここで保存する
   const preRevisionIssues = check1.issues.map((i) => `${i.code}:${i.severity}`);
   check1.pre_revision_issues = preRevisionIssues;
+  // 9巡目（10/08）: 1回目の RULE_VIOLATION は直した後のトレーラーに中身が残らない（codes だけ）→ 誤発火の出所（どのルールを引用したか）を見るためにログに残す
+  for (const i of check1.issues) {
+    if (i.code === "RULE_VIOLATION") console.log(JSON.stringify({ tag: "final-check:rule-violation-first", severity: i.severity, message: String(i.message ?? "").slice(0, 200), evidence: String(i.evidence ?? "").slice(0, 120) }));
+  }
   if (check1.issues.length === 0) return { finalDraft: draft, finalCheck: check1 };
 
   // ── FABRICATED_* 照合検証: 本当にハルシネーションかを確認し clearedFacts を構築 ──

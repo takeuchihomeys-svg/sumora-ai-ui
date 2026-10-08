@@ -16,6 +16,9 @@ import { createClient } from "@supabase/supabase-js";
 // 2026-10-01 共通の入口（scripts/lib/llm-test-harness.ts・手順書 memory/test_protocol_brain.md）に置き換え:
 //   テストの種類の明示・包みの順・記録の待ち・route=script:<名前>・deepseek-all で Claude を止める・YUMA だけ、を1か所で
 import { setupLlmTest, type LlmTestHarness } from "./lib/llm-test-harness";
+// 9巡目（10/08）: --rules-r9=off|on|stage2 で学習ルールの総点検の重ね（rules-overlay.ts）を掛けてブレインを走らせる（省略＝重ねなし＝今の DB）
+import { buildR9Overlay, runWithRulesOverlay, parseRulesR9Flag } from "../app/lib/rules-overlay";
+const RULES_R9 = parseRulesR9Flag(process.argv.find((a) => a.startsWith("--rules-r9="))?.slice(11)) ?? "off";
 type Analyze = typeof import("../app/lib/brain-core").analyzeConversation;
 let h: LlmTestHarness | null = null;
 async function loadBrain(): Promise<Analyze> {
@@ -122,24 +125,26 @@ async function removeScene() {
 
 async function main() {
   const analyzeConversation = await loadBrain();
-  const reps = Math.max(1, Math.min(6, Number(process.argv[2] ?? 3)));
-  const only = (process.argv[3] ?? "").split(",").filter(Boolean);
+  const pos = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+  const reps = Math.max(1, Math.min(6, Number(pos[0] ?? 3)));
+  const only = (pos[1] ?? "").split(",").filter(Boolean);
   const { data: c } = await sb.from("conversations").select("status, brain_strategy, conversation_direction").eq("id", YUMA).maybeSingle();
   const cc = (c ?? {}) as Record<string, unknown>;
   const strategy = (cc.brain_strategy ?? null) as never;
   const prevDir = (cc.conversation_direction ?? null) as Record<string, unknown> | null;
-  console.log(`=== YUMA 場面テスト test-mode=${process.env.LLM_TEST_MODE ?? "（なし＝本番と同じ）"} alt=${process.env.LLM_ALT_ACTIONS ?? "-"} 回数=${reps} ===`);
+  console.log(`=== YUMA 場面テスト rules_r9=${RULES_R9} test-mode=${process.env.LLM_TEST_MODE ?? "（なし＝本番と同じ）"} alt=${process.env.LLM_ALT_ACTIONS ?? "-"} 回数=${reps} ===`);
   const summary: string[] = [];
   for (const sc of SCENES.filter((s) => !only.length || only.includes(s.id))) {
     let ok = 0;
     const got: string[] = [];
     for (let k = 0; k < reps; k++) {
+      await h!.waitUntilYumaQuiet(cleanup); // 9巡目: 他の担当の行が無くなるまで待つ（10/08 r10 と重なった）
       await insertScene(sc);
       try {
         // 出口の二重の鍵（llm-alt-provider cutoffGateDecision）: 会話の呼び出しは「時刻の線の印」が無いと DeepSeek に回らない。
         //   YUMA は竹内さん本人のテスト用の会話なので線は全部（kind=all）。本番のブレインは印を置かない＝Claude のまま
         const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
-        const meta = await runInDeepseekScope(async () => {
+        const meta = await runWithRulesOverlay(buildR9Overlay(RULES_R9), () => runInDeepseekScope(async () => {
           setDeepseekScope({ conversationId: YUMA, mark: { kind: "all" } });
           return analyzeConversation(YUMA, true, (cc.status as string) ?? "proposing", null, "brain", {
             autoSendEnabled: false, customerName: "YUMA",
@@ -147,7 +152,7 @@ async function main() {
             prevAix: null,
             mode: strategy ? "incremental" : "full", layer: strategy ? "fresh" : "combined", strategy: strategy ?? null,
           });
-        });
+        }));
         const m = (meta ?? {}) as Record<string, unknown>;
         const a = (m.action as string) || "(なし)";
         const cp = (m.check_pattern as string | null) ?? null;

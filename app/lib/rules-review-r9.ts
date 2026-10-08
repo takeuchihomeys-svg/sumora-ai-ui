@@ -241,6 +241,12 @@ export const RULES_REVIEW_R9_REPLY: ReadonlyArray<R9Decision> = [
   { id: "365bf010-d029-4daf-a435-c841c6b76d11", key: "DIFF-POLICY-FULL-258e056d-08fd-46bd-9f2f-6272673ce267", at: "generate_reply", verdict: "retire", weight: 3, why: "限度額0円等で割引の一文を必ず＝永久 12924481（限度額が家賃の3倍以内・20万以内で使う）の写しで条件がずれている" },
   { id: "691df8fe-c2df-40d8-9d92-cac25227c4d8", key: "DIFF-POLICY-FULL-e346a852-d0cb-459c-807e-0244d16d8525", at: "generate_reply", verdict: "retire", weight: 3, why: "物件確認の結果と見積書を送る AIX の文の話（返信生成の指示ではない）・「お手隙の際にご査収ください」は手打ち 全期間 767通" },
   { id: "0ea017c2-919f-43c3-ae84-3b78b168e75e", key: "DIFF-POLICY-FULL-a62b6521-e962-40ab-a979-41bd232d3c86", at: "generate_reply", verdict: "retire", weight: 3, why: "物件の推薦文（AIX【物件オススメ】）の話で返信生成の指示ではない" },
+  // ── 9巡目の前後比較（YUMA・10/08）で見つけた追加の候補（竹内さんに聞く＝SQL に入れない・重ねにも入れない）──
+  {
+    id: "ae6a34b2-62da-4b4c-834a-a6aac02c47ce", key: "FEEDBACK-821afc62-1510-4bd6-b514-699918bcbfe7-1", at: "(global)", verdict: "ask", weight: 2,
+    why: "最終チェックが検討中の返事の「お気に召されましたらお申込みでお部屋押さえさせて頂きます」をこのルール（「お送り頂き次第…お部屋抑え」は AIX【申込へ！】専用）で RULE_VIOLATION にした（YUMA 再生 2回）。人の手打ちは「お気に召されましたらお申込み…抑え／押さえ」全期間 85通・30日 14通＝検討中・内覧前の訴求の定型。書類を受けての確約（「お送り頂き次第」）は 全期間 11通。確約だけに絞る案",
+    newText: "「お送り頂き次第、お部屋お申込みしお部屋抑えさせて頂きます！！」（申込の書類を受けてお部屋を抑える確約）は AIX「申込へ！」専用で、通常返信では使わない。検討中・内覧前の訴求の「お気に召されましたらお申込みでお部屋抑えさせて頂きます」はこのルールの対象外（スタッフの定型）。",
+  },
 ];
 
 /**

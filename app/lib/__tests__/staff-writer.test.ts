@@ -1,6 +1,6 @@
 // staff-writer（書き手＝竹内さん／従業員）と staff-device（端末の印）のテスト。実物の文（10/08 の監査で読んだ送信）をそのまま使う
 // 実行: npx tsx app/lib/__tests__/staff-writer.test.ts（全 PASS で exit 0）
-import { writerFromText, writerFromEdit, writerFromContext, writerFromIdentity, writerUse, cannedSkeleton, inAutoReplyPeriod, staffWriterOfBurst, sortExamplesByWriter } from "../staff-writer";
+import { writerFromText, writerFromEdit, writerFromContext, writerFromIdentity, writerUse, cannedSkeleton, inAutoReplyPeriod, staffWriterOfBurst, sortExamplesByWriter, toTakeuchiNotation } from "../staff-writer";
 import { deviceLabelOf, parseStaffDeviceId } from "../staff-device";
 
 let passed = 0, failed = 0;
@@ -60,6 +60,22 @@ it("端末名（IP は持たない）", () => {
   eq(deviceLabelOf(""), "不明");
   eq(parseStaffDeviceId("3f2a9c1e-5b7d-4e2f-9a1b-0c3d4e5f6a7b"), "3f2a9c1e-5b7d-4e2f-9a1b-0c3d4e5f6a7b");
   eq(parseStaffDeviceId("x; drop"), null);
+});
+// 表記を竹内さんの形に（ナレッジの書き直し用・実物は 10/08 の従業員の直しから学んだ phrase）
+it("いただき・いたします・お見積書・お申し込みを竹内さんの表記に", () => {
+  eq(toTakeuchiNotation("お申込み時に保険証のご提出指示もございましたので、お手隙の際に保険証の表裏のお写真をお送りの程よろしくお願いいたします😊！！"),
+    "お申込み時に保険証のご提出指示もございましたので、お手隙の際に保険証の表裏のお写真をお送りの程よろしくお願い致します😊！！");
+  eq(toTakeuchiNotation("〇〇さんにご確認いただいた金額と相違がございましたので、訂正版のお見積書をお送りいたします！！"),
+    "〇〇さんにご確認頂いた金額と相違がございましたので、訂正版の御見積書をお送り致します！！");
+  eq(toTakeuchiNotation("○番手で申し込みいただくのをオススメいたします"), "○番手で申し込み頂くのをオススメ致します");
+});
+it("呼び名の後の改行を取る・中身は変えない", () => {
+  eq(toTakeuchiNotation("璃さん\nお世話になっております！！\n\nかしこまりました！！"), "璃さんお世話になっております！！\n\nかしこまりました！！");
+  eq(toTakeuchiNotation("確認でき次第ご連絡いたします！！ご都合いかがでしょうか"), "確認出来次第ご連絡致します！！ご都合如何でしょうか");
+  eq(toTakeuchiNotation("こちらに貼り付けて下さい"), "こちらに貼り付けてください");
+  eq(toTakeuchiNotation("引き続き新着でおすすめできる物件が出次第お送りさせて頂きます"), "引き続き新着でオススメ出来る物件が出次第お送りさせて頂きます");
+  // 割れている表記（ことができ）・ございます・本文中の改行は触らない
+  eq(toTakeuchiNotation("費用を抑えることができ、ございます\n次の行"), "費用を抑えることができ、ございます\n次の行");
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

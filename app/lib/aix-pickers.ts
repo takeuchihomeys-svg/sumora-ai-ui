@@ -290,6 +290,23 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
   phone_call: { aixType: "phone_call", button: "電話をかける", textType: "画面の固定文＋通話ボタンのカード", pickers: [{ key: "has_purpose", label: "用件あり", kind: "bool" }] },
   phone_followup: { aixType: "phone_followup", button: "電話終了後", textType: "aix/action 6950（LLM）", pickers: [] },
   zenryoku_support: { aixType: "zenryoku_support", button: "全力サポート", textType: "aix/action 6774（LLM）", pickers: [{ key: "has_area", label: "エリアあり", kind: "bool" }] },
+  // 2026-10-08 10巡目（AIX ボタンの点検「after:search_new が AIX_PICKERS に無い」）: 内覧挨拶の専用ピッカー（page.tsx の内覧前／内覧後→4つ→子）。
+  //   記録は aix_usage_logs.app_sub_mode に "before" / "after:<after_type>"（page.tsx 6532）。値は page.tsx の afterTypeForApi のまま
+  greeting_viewing: {
+    aixType: "greeting_viewing",
+    button: "挨拶（内覧前・内覧後）",
+    textType: "内覧前＝決定論の3行（viewing-greeting-text）／内覧後＝aix/action（LLM）。ピッカーは文を返信の入力欄に入れ普通の送信で送る",
+    pickers: [{ key: "app_sub_mode", label: "内覧前／内覧後の種類", kind: "choice", column: "app_sub_mode", options: [
+      { value: "before", label: "内覧前", when: "内覧の前の挨拶（日時登録）" },
+      { value: "after:apply", label: "内覧後→申込", when: "内覧の後にお申込みでお部屋を抑える" },
+      { value: "after:apply_guide", label: "内覧後→申込誘導", when: "内覧の後に気に入ったら申込を促す" },
+      { value: "after:confirm_estimate", label: "内覧後→確認事項を確認した（初期費用見積書）", when: "内覧で出た確認事項を御見積書と一緒に送る" },
+      { value: "after:confirm_freeword", label: "内覧後→確認事項を確認した（フリーワード）", when: "内覧で出た確認事項の答えを送る" },
+      { value: "after:search_new", label: "内覧後→引き続き物件探す（新着探す）", when: "内覧した物件が合わず新着を探す" },
+      { value: "after:search_expand", label: "内覧後→引き続き物件探す（条件広げる）", when: "内覧の後に条件を広げて探す" },
+      { value: "after:search_change", label: "内覧後→引き続き物件探す（条件変更）", when: "内覧の後に新しい条件で探す" },
+    ] }],
+  },
 };
 
 /** 選択肢の画面の文言（無ければ値のまま） */

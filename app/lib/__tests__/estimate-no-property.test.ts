@@ -81,5 +81,13 @@ it("costQuestionBeforeProperty: ゆうこ → true／物件あり・送付済み
   expect(costQuestionBeforeProperty(FORM, 0)).toBe(false);
 });
 
+// 9巡目（10/08）: 契約条件の1項目だけの質問は見積の依頼ではない（YUMA の礼金の番で頼まれていない見積書の約束が付いた）
+it("9巡目: 送付済みの物件に「礼金はかかりますか？」は declare にしない", () => {
+  const v = isMisumoriContextAppropriate({ ...base, customerMessage: "礼金はかかりますか？", recentCustomerMessages: [], sentPropertiesCount: 1 });
+  expect(v.mode === "declare").toBe(false); expect(v.signals.includes("contract_terms_only")).toBe(true);
+});
+it("9巡目: 「礼金と初期費用いくらですか？」は今まで通り費用の質問（declare）", () =>
+  expect(isMisumoriContextAppropriate({ ...base, customerMessage: "礼金と初期費用いくらですか？", recentCustomerMessages: [], sentPropertiesCount: 1 }).mode).toBe("declare"));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

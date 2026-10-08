@@ -12,7 +12,7 @@ import { isTestConversation } from "../app/lib/test-conversations";
 import { coreOf, dice } from "../app/lib/text-diff-types";
 import { cleanDraft } from "../app/lib/line-watch-judge";
 import { isMaterialOnlyText } from "../app/lib/daily-greeting";
-import { writerFromText, writerFromContext, WRITER_CUES, cannedSkeleton, CANNED_MIN_CONVERSATIONS, inAutoReplyPeriod, type WriterLabel } from "../app/lib/staff-writer";
+import { writerFromText, writerFromEdit, writerFromContext, WRITER_CUES, cannedSkeleton, CANNED_MIN_CONVERSATIONS, inAutoReplyPeriod, type WriterLabel } from "../app/lib/staff-writer";
 
 const arg = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const SINCE = arg("since", "2026-05-30");
@@ -42,6 +42,8 @@ async function main() {
   const aixBy = new Map<string, typeof aix>(); for (const a of aix) (aixBy.get(a.conversation_id) ?? aixBy.set(a.conversation_id, []).get(a.conversation_id)!).push(a);
   const exBy = new Map<string, typeof ex>(); for (const e of ex) (exBy.get(e.conversation_id ?? "") ?? exBy.set(e.conversation_id ?? "", []).get(e.conversation_id ?? "")!).push(e);
   const tplCores = tpls.map((t) => coreOf((t.text ?? "").replace(/アカウント名|〇〇|◯/g, ""))).filter((c) => c.length > 10);
+  // 直した通の下書き（10/08: 直した通は送った文全体でなく下書きとの差で決める＝端末で確かめた所、従業員が直した通の文全体の判定は 28〜50% しか当たらない＝下書きの「頂き」が残るため）
+  const draftOf = new Map<string, string>();
   const srcOf = (m: M): "group" | "aix" | "asis" | "edited" | "template" | "material" | "hand" => {
     if (m.speaker_user_id) return "group";
     if (isMaterialOnlyText(m.text)) return "material";
@@ -50,7 +52,7 @@ async function main() {
     for (const a of aixBy.get(m.conversation_id) ?? []) { const at = Date.parse(a.sent_at ?? a.created_at); if (Math.abs(at - ms) <= 2 * 3600_000 && a.generated_text && dice(coreOf(a.generated_text), core) >= 0.85) return "aix"; }
     let best: (typeof ex)[number] | null = null; let bd = 0;
     for (const e of exBy.get(m.conversation_id) ?? []) { const at = Date.parse(e.sent_at ?? e.created_at); if (Math.abs(at - ms) > 30 * 60_000) continue; const d = dice(coreOf(e.sent_reply ?? ""), core); if (d > bd) { bd = d; best = e; } }
-    if (best && bd >= 0.9) { const dr = cleanDraft(best.ai_draft).text; if (dr && dr.trim() === t) return "asis"; if (dr) return "edited"; }
+    if (best && bd >= 0.9) { const dr = cleanDraft(best.ai_draft).text; if (dr && dr.trim() === t) return "asis"; if (dr) { draftOf.set(m.id, dr); return "edited"; } }
     if (core.length > 10 && tplCores.some((c) => dice(c, core) >= 0.85)) return "template";
     return "hand";
   };
@@ -58,7 +60,7 @@ async function main() {
   const skelConvs = new Map<string, Set<string>>();
   for (const m of msgs) { const k = cannedSkeleton(m.text); if (k.length < 10) continue; (skelConvs.get(k) ?? skelConvs.set(k, new Set()).get(k)!).add(m.conversation_id); }
   const isCanned = (m: M) => { const k = cannedSkeleton(m.text); return k.length >= 10 && (skelConvs.get(k)?.size ?? 0) >= CANNED_MIN_CONVERSATIONS; };
-  const rows = msgs.map((m) => { let src: string = srcOf(m); if (src === "hand" && isCanned(m)) src = "canned"; if ((src === "hand" || src === "canned") && inAutoReplyPeriod(m.created_at)) src = "auto"; const w = src === "canned" || src === "auto" ? { writer: null, confidence: "unknown" as const, score: 0, cues: ["定型"] } : writerFromText(m.text ?? ""); const d = jst(m.created_at); return { m, src, w, hour: d.getUTCHours(), dow: d.getUTCDay(), day: d.toISOString().slice(0, 10) }; });
+  const rows = msgs.map((m) => { let src: string = srcOf(m); if (src === "hand" && isCanned(m)) src = "canned"; if ((src === "hand" || src === "canned") && inAutoReplyPeriod(m.created_at)) src = "auto"; const w = src === "canned" || src === "auto" ? { writer: null, confidence: "unknown" as const, score: 0, cues: ["定型"] } : src === "edited" && !process.argv.includes("--edited-whole") ? writerFromEdit(draftOf.get(m.id), m.text) : writerFromText(m.text ?? ""); const d = jst(m.created_at); return { m, src, w, hour: d.getUTCHours(), dow: d.getUTCDay(), day: d.toISOString().slice(0, 10) }; });
 
   // ① 出所ごとの分布
   console.log(`\n■ ① 出所ごとの判定（確か／たぶん／不明）`);

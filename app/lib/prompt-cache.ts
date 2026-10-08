@@ -5,6 +5,7 @@
 
 import { supabase } from "@/app/lib/supabase";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { currentRulesOverlay } from "@/app/lib/rules-overlay";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 汎用キャッシュ（TTL + SWR + singleflight）
@@ -157,6 +158,8 @@ export async function getCachedPromptRules(
   includeGlobal = true,
   includeLearnAix = false,  // LEARN-AIX-*（AIX編集差分学習）を含める。aix-template-generate のアクション別フェッチ用
 ): Promise<string> {
+  // 9巡目（10/08）: 学習ルールの見直しの重ね（テストの会話だけ・rules-overlay.ts）がある時はキャッシュを使わず・残さない
+  if (currentRulesOverlay()) return fetchPromptRules(actionType, conditions, includeGlobal, includeLearnAix).catch(() => "");
   const key = `rules:${actionType}:${JSON.stringify(conditions)}:${includeGlobal}:${includeLearnAix}`;
   const cache = getOrCreateCache<{ text: string }>(key, RULES_TTL_MS, async () => {
     const text = await fetchPromptRules(actionType, conditions, includeGlobal, includeLearnAix);

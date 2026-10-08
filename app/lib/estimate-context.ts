@@ -17,6 +17,7 @@
 //   6. staff_promise_echo(直前約束): 直前スタッフが見積約束 → 復唱のみ
 //   7. none                      : 条件フォーム受信・条件変更依頼・雑談・短い了承 → ピックアップ宣言/受付文に置換
 
+import { detectContractTermTopics } from "./contract-terms-question";
 import {
   CUSTOMER_COST_QUESTION_RE,
   CUSTOMER_ESTIMATE_REQUEST_RE,
@@ -141,7 +142,14 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
 
   // ── 決定論シグナル ──
   const asksEstimate = CUSTOMER_ESTIMATE_REQUEST_RE.test(burst);
-  const asksCost = CUSTOMER_COST_QUESTION_RE.test(burst);
+  // 9巡目（10/08・8巡目の残り）: 契約条件の1項目だけの質問（「礼金はかかりますか？」「敷金いくらですか」）は費用の質問＝見積の依頼ではない。
+  //   YUMA の礼金の番で [estimate-ctx] customer_cost_question declare → 頼まれていない「最大限割引…御見積書を作成しお送り」が付いた（DeepSeek・最後の Claude とも）。
+  //   実送信（scripts/audit-r8-contract-terms.ts・365日 契約条件の質問 45番の手打ち）で見積書の約束は 2通＝お客様が「含めて見積もり」を頼んだ番だけ。
+  //   初期費用・見積・総額・合計・内訳の語が同じ連投にある時は今まで通り費用の質問。戻す ESTIMATE_TERMS_ONLY_R9=off
+  const termsOnly = (typeof process === "undefined" || (process.env?.ESTIMATE_TERMS_ONLY_R9 ?? "").toLowerCase() !== "off")
+    && detectContractTermTopics(burst).length > 0 && !/初期費用|見積|総額|合計|トータル|全部で|内訳|スモ割|イエヤス割/.test(burst);
+  if (termsOnly) signals.push("contract_terms_only");
+  const asksCost = CUSTOMER_COST_QUESTION_RE.test(burst) && !termsOnly;
   // 条件フォーム画像は「物件送付」ではない。フォームでない時のみ画像・URL・号室を物件参照とみなす
   //   2026-09-22 𝓡さん事例: こちらが送った物件のスクショの送り返しは「新しい物件の送付」ではない
   //   （実送信・送り返し9回: 見積書の約束は2回＝お客様が「2部屋」等と言った時だけ。物件の送付を理由にした一律の見積宣言は誤り）
@@ -158,7 +166,7 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   const estimatePromised = !!input.estimatePromised || staffPromisedNow;
 
   // ── ブレイン補強シグナル（fresh 時のみ） ──
-  const brainCostQuestion =
+  const brainCostQuestion = !termsOnly &&
     !!bm &&
     (bm.customer_questions ?? []).some((q) => COST_WORD_RE.test(q)) &&
     (bm.customer_intent === "question" || bm.customer_intent === "consultation" || bm.customer_intent == null);

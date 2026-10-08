@@ -43,6 +43,7 @@ export const JEV_AIX_OPTIONS: Record<string, string> = {
   phone_call:              "お客様が電話で話したいと言い、電話をかける案内をする場面",
   phone_followup:          "電話が終わった後のまとめを送る場面",
   guarantor_info:          "保証会社の名前・種類・並行審査について聞かれた場面",
+  zenryoku_support:        "条件で探したが今は条件に合うお部屋が無く、新着が出次第お送りすると伝える場面（スタッフが探した結果）",
 };
 
 /**

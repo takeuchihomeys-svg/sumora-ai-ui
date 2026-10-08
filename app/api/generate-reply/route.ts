@@ -285,6 +285,8 @@ import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, consideringAvoidTopics, consideringDoorEnabled, CONSIDERING_DOOR_LINES, CONSIDERING_DOOR_EXEMPT_NOTE, filterRulesTextForScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { previewRetiredRules, RETIRE_RULE_KEYS } from "@/app/lib/rules-retire-preview";
 import { R6_RETIRE_KEYS, R6_TEXT_OVERRIDES } from "@/app/lib/rules-review-r6";
+// 9巡目（10/08）: 学習ルールの総点検（rules-review-r9）を testFlags.rules_r9（off／on＝段1／stage2＝段1＋段2）で DB を変えずに重ねる。テストの会話・本番でない環境だけ
+import { runInRulesOverlayScope, setRulesOverlay, resolveTestRulesOverlay, parseRulesR9Flag } from "@/app/lib/rules-overlay";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 // 2026-10-08 8巡目（記録）: 見張りの行に材料の要約・出さなかった下書きを控える
 import { logWatchMaterial, noteWatchMaterials, noteWatchSuppressedDraft } from "@/app/lib/line-watch-materials-server";
@@ -2934,7 +2936,7 @@ async function applyAixGateAndRespond(
 // 2026-09-26: リクエストごとに「DeepSeek に渡す時刻の線」の箱を開ける（app/lib/deepseek-scope.ts）。
 //   線を引くまでの呼び出し・名札の無い中の判定（最終チェック等）も、出口（llm-alt-provider）がこの箱の印で守る
 export async function POST(req: NextRequest) {
-  return runInDeepseekScope(() => handleGenerateReply(req));
+  return runInDeepseekScope(() => runInRulesOverlayScope(() => handleGenerateReply(req)));
 }
 
 async function handleGenerateReply(req: NextRequest) {
@@ -3075,6 +3077,9 @@ async function handleGenerateReply(req: NextRequest) {
       const tf = (body as Record<string, unknown>).testFlags;
       if (tf && typeof tf === "object" && isTestConversation(conversationId) && !process.env.VERCEL_ENV) {
         testFlags = Object.fromEntries(Object.entries(tf as Record<string, unknown>).filter(([, x]) => x === "on" || x === "off")) as Record<string, "on" | "off">;
+        // 9巡目（10/08）: rules_r9 は off／on／stage2 の3値。重ねは返信生成・最終チェック・（この中で走れば）ブレイン・ルールを読む全部の所に効く
+        const r9 = parseRulesR9Flag((tf as Record<string, unknown>).rules_r9);
+        if (r9) setRulesOverlay(resolveTestRulesOverlay(r9, true));
       }
       const ex = (body as Record<string, unknown>).testExcludeReplyText;
       testExcludeReplyText = typeof ex === "string" && ex.trim() && isTestConversation(conversationId) && !process.env.VERCEL_ENV ? ex : null;

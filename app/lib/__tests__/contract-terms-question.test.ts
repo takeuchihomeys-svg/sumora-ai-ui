@@ -3,7 +3,7 @@
 // 2026-10-08 竹内（8巡目）「資料に書いてある事は返信の本文で答えて良い」
 // 文はすべて実物（scripts/audit-r8-contract-terms.ts --days=180）。会話は id の先頭8文字。資料の行・文字層も実物（property_pickups）。
 // 実行: npx tsx app/lib/__tests__/contract-terms-question.test.ts
-import { detectContractTermTopics, routeContractTerm, buildContractTermsNote, contractTermsAllInMaterial, motodukeOfPdf } from "../contract-terms-question";
+import { detectContractTermTopics, isTermsInquiryOnSentProperty, routeContractTerm, buildContractTermsNote, contractTermsAllInMaterial, motodukeOfPdf } from "../contract-terms-question";
 import { materialGroundsAssertion, materialDateTokens } from "../validate-reply";
 import { vacancyDateFromMaterial, vacatingViewingAnswer } from "../viewing-check-first";
 import { freeRentFactsFromStaffText, collectStaffFreeRent, staffFreeRentFor, ungroundedFreeRentSentence } from "../staff-free-rent";
@@ -160,6 +160,20 @@ describe("フリーレントはスタッフの送付だけ（staff-free-rent）"
     eq(ungroundedFreeRentSentence("フリーレント・風呂トイレ別・エアコン付きのご希望も踏まえてお送りしております！", []), null);
     eq(ungroundedFreeRentSentence("石橋阪大前周辺全域からフリーレント物件も含めて、〇〇さんのご条件に合うお部屋ピックアップしてお送りさせて頂きます！！", []), null);
     eq(ungroundedFreeRentSentence("フリーレントにつきましては管理会社に確認させて頂きます！！", []), null);
+  });
+});
+
+describe("9巡目: 送った物件を指した契約条件の質問（ピックアップの約束にしない・実物）", () => {
+  it("8b260f7e 07-16「この物件は駐車場あります？」→ 物件の質問", () => eq(isTermsInquiryOnSentProperty("こっちで前向きに考えたいかもです！\nこの物件は駐車場あります？"), true));
+  it("YUMA 七道「ここ駐車場ありますか？？」→ 物件の質問", () => eq(isTermsInquiryOnSentProperty("ここ駐車場ありますか？？"), true));
+  it("921772f5 08-02「こちらの新築物件は駐車場は別途費用…」→ 物件の質問", () => eq(isTermsInquiryOnSentProperty("ありがとうございます！\n素敵ですね🥺⭐️\nこちらの新築物件は駐車場は別途費用かかりますでしょうか？"), true));
+  it("d3245ba7 08-12 同じ連投で条件の言い直し（福島区、淀川区でお願いします）→ 外す（スタッフはピックアップの約束も書いた）", () => eq(isTermsInquiryOnSentProperty("福島区、淀川区でお願いします。\nここの物件は駐車場はありますか？"), false));
+  it("物件を指さない（名前だけ）は外す（今まで通り）", () => eq(isTermsInquiryOnSentProperty("ウェルフォートはバイク置き場とか自転車置き場はありますか？"), false));
+  it("条件の物件探し「駐車場付きの物件ありますか？」は契約条件の質問でない", () => eq(isTermsInquiryOnSentProperty("駐車場付きの物件ありますか？"), false));
+  it("他の物件も聞く「この辺で他にも駐車場ある所ありますか？」は外す", () => eq(isTermsInquiryOnSentProperty("この辺で他にも駐車場ある所ありますか？"), false));
+  it("資料で答える番の注記に「頼まれていない御見積書の約束を足さない」", () => {
+    const n = buildContractTermsNote({ name: "アバンティオアネーロ", room: "202" } as never, [{ topic: "key_money", route: "material", facts: ["礼金: 1ヶ月"], why: "terms" }]);
+    ok(/御見積書を作成しお送り.*足さない/.test(n), n);
   });
 });
 
