@@ -95,6 +95,7 @@ import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
 import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
+import { buildAixTemplateDbKnowledgeBlock, aixTemplateCacheTtl } from "@/app/lib/aix-template-cache";
 
 export const maxDuration = 60;
 
@@ -1669,17 +1670,9 @@ export async function POST(req: NextRequest) {
   ].filter(Boolean).join("\n");
 
   // ── DB学習資産の第2システムブロック（TTLキャッシュ内はbyte-stable → prompt cache対象）──
-  const dbKnowledgeBlock = [
-    topPrinciples.length > 0
-      ? "【📌 絶対原則（DB学習・全顧客共通・常時遵守）】\n" +
-        topPrinciples.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
-      : "",
-    lossPatterns.length > 0
-      ? "【🚫 避けるべき対応（失注実例より）】\n" +
-        lossPatterns.map((p, i) => `${i + 1}. ${p.content}`).join("\n")
-      : "",
-    dbRules ? dbRules.trim() : "",
-  ].filter(Boolean).join("\n\n");
+  // 2026-10-08: 文面は同じまま app/lib/aix-template-cache.ts へ。絶対原則の同点（importance 10 が12件＝全部同点）の並びを
+  //   id 順に固定して、同じ中身なのに鍵が割れていたのを止める（AIX_TEMPLATE_PRINCIPLE_ORDER=db で旧）
+  const dbKnowledgeBlock = buildAixTemplateDbKnowledgeBlock(topPrinciples, lossPatterns, dbRules);
 
   // ── Anthropic API (Claude Sonnet + prompt cache) ─────────────────────────
   const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
@@ -1692,18 +1685,22 @@ export async function POST(req: NextRequest) {
     // cache_write_1h 74,644・cache_read 0）、1h TTL は書き込み料（×2）だけ払って一度も読まれない純損だった。
     // 5m にして書き込み料を ×1.25 に下げる（同一リクエスト内の frame violation 再生成では読まれる）。
     // 呼び出し頻度が上がったら cache_write_1h と cache_read の比で再判定する（1h の損益分岐は hit 率 53%）。
+    // 2026-10-08 竹内「質重視で」キャッシュ点検（再判定）: 本番 8.6日で 100回（1日 約12回）・次の呼び出しまで5〜60分が52%。
+    //   5m は毎回 約86k を書き直していた（命中24%）→ 既定 1h（中身が変われば外れるので鮮度は同じ）。AIX_TEMPLATE_CACHE_TTL=5m で旧。
+    //   同じ実物の計算は scripts/audit-aix-template-cache.ts（今 $16.70 → 1h＋並びの固定 $11.36／8.6日）
+    const cacheTtl = aixTemplateCacheTtl();
     const systemBlocks: Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } }> = [
       {
         type: "text",
         text: `${PRIORITY_ORDER_NOTE}\n\n${STATIC_GEN_SYSTEM}\n\n${SHARED_RULES_SYSTEM}`,
-        cache_control: { type: "ephemeral", ttl: "5m" },
+        cache_control: { type: "ephemeral", ttl: cacheTtl },
       },
     ];
     if (dbKnowledgeBlock) {
       systemBlocks.push({
         type: "text",
         text: dbKnowledgeBlock,
-        cache_control: { type: "ephemeral", ttl: "5m" },
+        cache_control: { type: "ephemeral", ttl: cacheTtl },
       });
     }
 
