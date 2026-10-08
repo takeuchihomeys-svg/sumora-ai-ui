@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse, after } from "next/server";
+import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { shouldSetApplyingImageFlag } from "@/app/lib/applying-promotion";
@@ -927,7 +928,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       console.log(JSON.stringify({ tag: "brain:image-trigger", convIds, images: imageJobs.length, readMs: inputUpdatedAt - readStartedAt }));
       // 2026-09-24: 画像の読み取り（Vision）は夜も行う（本文の書き起こしは朝の分析の材料）。ブレインだけ origin: image_read で夜は見送る（brain-core の保険が止める）
       await Promise.allSettled(convIds.map((cid) =>
-        runBrainAndNotify(cid, undefined, { inputUpdatedAt, origin: "image_read" })
+        runBrainWithFollowups(cid, undefined, { inputUpdatedAt, origin: "image_read" })
           .catch((e) => console.warn("[line-webhook] brain notify (image):", cid, e))
       ));
     });
@@ -948,7 +949,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const convIds = [...new Set(fileJobs.map((j) => j.convId))].filter((cid) => !imageConvIds.has(cid));
       console.log(JSON.stringify({ tag: "brain:file-trigger", convIds, files: fileJobs.length, names: fileJobs.map((j) => j.fileName) }));
       await Promise.allSettled(convIds.map((cid) =>
-        runBrainAndNotify(cid, undefined, { inputUpdatedAt, origin: "image_read" })
+        runBrainWithFollowups(cid, undefined, { inputUpdatedAt, origin: "image_read" })
           .catch((e) => console.warn("[line-webhook] brain notify (file):", cid, e))
       ));
     });

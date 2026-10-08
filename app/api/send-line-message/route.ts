@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
+import { flagOn } from "@/app/lib/brain-attention";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { isGenerationFailureText } from "@/app/lib/example-hygiene";
@@ -355,26 +357,35 @@ export async function POST(req: NextRequest) {
             .maybeSingle();
 
           // タスク未作成の場合のみ: タスク作成 + ステータス昇格 + 要対応 + 通知
+          // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」:
+          //   スタッフの送信の語ではやること（line_tasks）を作らない・要対応（is_flagged）も立てない。
+          //   この送信の後のブレイン（下の runBrainWithFollowups・promise:pickup）が約束を読んで やること を置く（brain-attention brainTaskTypes）。
+          //   段階の昇格（ヒアリング→物件提案中）は「次にやる事」ではないので今まで通り。戻す: BRAIN_TASKS_ONLY=off
+          const legacyTask = !flagOn(process.env.BRAIN_TASKS_ONLY);
           if (!existing?.id) {
             const currentStatus = (convRow.status as string) ?? "";
             const earlyStatuses = ["hearing", "first_reply", "condition_hearing", "availability_check"];
             const customerName = (convRow.customer_name as string) ?? "お客様";
 
             await Promise.all([
-              supabase.from("line_tasks").insert({
-                conversation_id: convRow.id as string,
-                task_type: "property_send",
-                customer_name: customerName,
-                status: "pending",
-              }),
-              // ヒアリング段階なら物件提案中に昇格、それ以外でも is_flagged=true
+              legacyTask
+                ? supabase.from("line_tasks").insert({
+                    conversation_id: convRow.id as string,
+                    task_type: "property_send",
+                    customer_name: customerName,
+                    status: "pending",
+                  })
+                : Promise.resolve(null),
+              // ヒアリング段階なら物件提案中に昇格、それ以外でも is_flagged=true（旧）
               earlyStatuses.includes(currentStatus)
                 ? supabase.from("conversations")
-                    .update({ status: "proposing", is_flagged: true })
+                    .update(legacyTask ? { status: "proposing", is_flagged: true } : { status: "proposing" })
                     .eq("id", convRow.id as string)
-                : supabase.from("conversations")
-                    .update({ is_flagged: true })
-                    .eq("id", convRow.id as string),
+                : legacyTask
+                  ? supabase.from("conversations")
+                      .update({ is_flagged: true })
+                      .eq("id", convRow.id as string)
+                  : Promise.resolve(null),
             ]);
 
             // H2: タスク起因のステータス昇格を stage_history に記録
@@ -450,7 +461,7 @@ export async function POST(req: NextRequest) {
           }
           await new Promise((r) => setTimeout(r, 2000)); // 会話行の更新（updated_at）が落ち着いてから分析（ウォーターマーク競合を避ける）
           // 2026-09-24 竹内「22時〜9時のお客さんは分析せず」: スタッフの宣言送信は夜も動かす（origin: staff・費用は人の操作回数で有界）
-          await runBrainAndNotify(cid, undefined, { forceIncremental: true, origin: "staff" });
+          await runBrainWithFollowups(cid, undefined, { forceIncremental: true, origin: "staff" });
         } catch (e) {
           console.warn("[send-line-message] brain after staff promise failed:", e instanceof Error ? e.message : e);
         }

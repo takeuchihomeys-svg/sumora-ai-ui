@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isWaitPromiseNotes } from "@/app/lib/promise-timing";
+import { flagOn } from "@/app/lib/brain-attention";
+import { aixButtonText } from "@/app/lib/aix-action-text";
 
 export const maxDuration = 60;
 
@@ -632,13 +634,36 @@ export async function GET(req: NextRequest) {
   }
 
   // ① 未完了タスク
-  const tasks = pendingTasks ?? [];
+  // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」:
+  //   やること＝ブレインの AIX要対応（aix_action_items の pending）＋ブレインが置いた／スタッフが手で作った やること（7日以内）。
+  //   7日より前の pending（語で作られた残り）は件数だけ（片付けの SQL は scripts/cleanup-stale-line-tasks-2026-10-08.sql）。戻す: BRAIN_TASKS_ONLY=off
+  const brainTasks = flagOn(process.env.BRAIN_TASKS_ONLY);
+  const staleCutoffMs = Date.now() - 7 * 86_400_000;
+  const allTasks = pendingTasks ?? [];
+  const tasks = brainTasks ? allTasks.filter((t) => Date.parse(t.created_at as string) >= staleCutoffMs) : allTasks;
+  const staleTaskCount = allTasks.length - tasks.length;
+  if (brainTasks) {
+    try {
+      const { data: items } = await supabase.from("aix_action_items")
+        .select("customer_name, action, check_pattern, notified_at, created_at")
+        .eq("status", "pending").order("created_at", { ascending: true }).limit(50);
+      const rows = (items ?? []) as Array<{ customer_name: string | null; action: string; check_pattern: string | null; notified_at: string | null; created_at: string }>;
+      if (rows.length > 0) {
+        const lines = rows.map((r, i) => `${i + 1}. ${r.customer_name ?? "不明"}さん → ${aixButtonText(r.action, r.check_pattern)}（${relTime(r.notified_at ?? r.created_at)}～）`);
+        sections.push(`🧠 ブレインの AIX要対応（${rows.length}件）\n\n${lines.join("\n")}`);
+      }
+    } catch (e) {
+      console.error("[morning-report] aix items section:", e);
+    }
+  }
+  if (brainTasks && staleTaskCount > 0 && tasks.length === 0) sections.push(`📋 7日より前の未完了タスク ${staleTaskCount}件（語で作られた残り・片付け待ち）`);
   if (tasks.length > 0) {
-    const TASK_EMOJI: Record<string, string> = { property_check: "🔍", property_send: "🏠" };
-    const TASK_LABEL: Record<string, string> = { property_check: "物件確認", property_send: "物件出し" };
+    const TASK_EMOJI: Record<string, string> = { property_check: "🔍", property_send: "🏠", estimate_sheet: "📋" };
+    const TASK_LABEL: Record<string, string> = { property_check: "物件確認", property_send: "物件出し", estimate_sheet: "見積書対応" };
     const lines = tasks.map((t, i) =>
       `${i + 1}. ${TASK_EMOJI[t.task_type as string] ?? "📋"} ${t.customer_name ?? "不明"}さん — ${TASK_LABEL[t.task_type as string] ?? t.task_type}（${relTime(t.created_at as string)}～）`
     );
+    if (brainTasks && staleTaskCount > 0) lines.push(`（ほかに7日より前の残り ${staleTaskCount}件）`);
     sections.push(`📋 未完了タスク（${tasks.length}件）\n\n${lines.join("\n")}`);
   }
 

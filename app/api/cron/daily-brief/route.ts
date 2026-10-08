@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { jstParts } from "@/app/lib/jst-date";
+import { flagOn } from "@/app/lib/brain-attention";
+import { loadBrainTargets, type BrainTarget } from "@/app/lib/brain-attention-server";
 
 export const maxDuration = 60;
 
@@ -15,7 +17,14 @@ type ConvRow = {
   is_hot?: boolean | null;
   updated_at: string | null;
   created_at?: string | null;
+  /** ブレインのターゲットの一言の要約（BRAIN_TARGET_LIST の時だけ） */
+  summary?: string | null;
 };
+
+/** ブレインのターゲット → この画面の行の形 */
+function targetRow(t: BrainTarget): ConvRow {
+  return { id: t.conversationId, customer_name: t.customerName, status: t.status, last_message: t.lastMessage, last_sender: t.lastSender, is_hot: true, updated_at: t.updatedAt, created_at: t.createdAt, summary: t.summary };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -276,6 +285,42 @@ export async function GET(req: NextRequest) {
   const todayStart = new Date(jstNow.getTime() - 9 * 60 * 60 * 1000).toISOString();
 
   // ── 締切モード（JST 19:00 / mode=deadline）────────────────────────────
+  // 2026-10-08 竹内さんの決定2「ブレインの判断に寄せる」（daily-brief の【返信あり】【最優先】【新着】）:
+  //   旧は is_flagged（受信のたびに true＝実質 全員）で【最優先】を、is_flagged=false で【返信あり】【物件出し】【新着】を選んでいた
+  //   （受信した人は全員 flagged になるので【返信あり】は実質いつも空）。新はブレインのターゲット（①内覧済み ②審査落ち ③新規 ④物件検索中）から:
+  //   【ターゲット】＝①②④／【新規問い合わせ】＝③／【返信あり】＝24時間以内にお客様が最後に送った人のうちターゲットに入っていない人。戻す: BRAIN_TARGET_LIST=off
+  const brainMode = flagOn(process.env.BRAIN_TARGET_LIST);
+  const brainTargets: BrainTarget[] | null = brainMode
+    ? await loadBrainTargets(supabase).catch((e) => { console.warn("[daily-brief] brain targets:", e); return null; })
+    : null;
+
+  if (isDeadline && brainTargets) {
+    // 締切: ターゲットのうち今日スタッフが最後に送った人＝対応済み・それ以外＝残り
+    const doneRows = brainTargets.filter((t) => t.lastSender === "staff" && !!t.updatedAt && t.updatedAt > todayStart).map(targetRow);
+    const doneIds0 = new Set(doneRows.map((r) => r.id));
+    const remaining0 = brainTargets.filter((t) => !doneIds0.has(t.conversationId)).map(targetRow);
+    const doneCount = doneRows.length;
+    let deadlineText: string;
+    if (doneCount >= 15 || remaining0.length === 0) {
+      deadlineText = `${mentionPrefix} 19時。今日${doneCount}人動かした。ナイス！！ ${pickByDay(DEADLINE_DONE_MESSAGES)}`;
+    } else {
+      const remainLines = remaining0.slice(0, 10).map((c, i) => `${i + 1}. ${c.customer_name || "名称未設定"}（${c.summary || (STATUS_LABELS[c.status ?? ""] ?? c.status ?? "状況不明")}）`);
+      deadlineText = [
+        `${mentionPrefix} 19時。今日は${doneCount}人対応して、まだ${remaining0.length}人残ってる。`,
+        "", pickByDay(DEADLINE_PUSH_MESSAGES), "", "【未対応】", ...remainLines,
+        ...(remaining0.length > 10 ? [`...他${remaining0.length - 10}人`] : []),
+        "", "明日は朝から動いて。遅れが続くと週の目標が厳しくなる。",
+      ].join("\n");
+    }
+    const result = await pushLineMessage(groupId, token, deadlineText, suzukiUserId);
+    if (!result.ok) {
+      console.error("[daily-brief deadline] LINE push failed:", result.error);
+      return NextResponse.json({ ok: false, error: result.error }, { status: 500 });
+    }
+    await supabase.from("hanbancyo_settings").upsert({ key: COOLDOWN_KEY, value: new Date().toISOString() }, { onConflict: "key" });
+    return NextResponse.json({ ok: true, sent: true, mode: "deadline", brain: true, doneCount, remainingCount: remaining0.length });
+  }
+
   if (isDeadline) {
     const [{ data: doneList }, { data: deadlineBukken }] = await Promise.all([
       // 今日JST0時以降にstaffが更新した顧客
@@ -342,7 +387,7 @@ export async function GET(req: NextRequest) {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [{ data: hannou }, { data: saiyuusen }, { data: bukkenDashi }, { data: shinchaku }] = await Promise.all([
+  const [{ data: hannouRaw }, { data: saiyuusenRaw }, { data: bukkenDashiRaw }, { data: shinchakuRaw }] = await Promise.all([
     // 【返信あり】= お客さんから返信が来ている（24h以内・flagなし）
     supabase.from("conversations")
       .select("id, customer_name, status, last_message, last_sender, is_hot, updated_at")
@@ -374,6 +419,24 @@ export async function GET(req: NextRequest) {
       .order("created_at", { ascending: false }).limit(8),
   ]);
 
+  // ブレインのターゲットがある時は【ターゲット】【新規】【返信あり】をそこから作る（上の旧の取得は戻す時だけ使う）
+  let hannou = hannouRaw as ConvRow[] | null;
+  let saiyuusen = saiyuusenRaw as ConvRow[] | null;
+  let bukkenDashi = bukkenDashiRaw as ConvRow[] | null;
+  let shinchaku = shinchakuRaw as ConvRow[] | null;
+  if (brainTargets) {
+    const targetIds = new Set(brainTargets.map((t) => t.conversationId));
+    saiyuusen = brainTargets.filter((t) => t.tier !== "new").slice(0, 15).map(targetRow);
+    shinchaku = brainTargets.filter((t) => t.tier === "new").slice(0, 8).map(targetRow);
+    bukkenDashi = brainTargets.slice(0, 20).map(targetRow);
+    const { data: replied } = await supabase.from("conversations")
+      .select("id, customer_name, status, last_message, last_sender, is_hot, updated_at")
+      .eq("last_sender", "customer").eq("line_status", "active")
+      .not("status", "in", CLOSED).gt("updated_at", twentyFourHoursAgo)
+      .order("updated_at", { ascending: false }).limit(40);
+    hannou = ((replied ?? []) as ConvRow[]).filter((c) => !targetIds.has(c.id)).slice(0, 10);
+  }
+
   const bukkenRows = (bukkenDashi as ConvRow[]) ?? [];
   const hotCount = bukkenRows.filter(r => r.is_hot).length;
   const fillCount = bukkenRows.filter(r => !r.is_hot).length;
@@ -401,7 +464,7 @@ export async function GET(req: NextRequest) {
         const statusLabel = STATUS_LABELS[c.status ?? ""] ?? c.status ?? "状況不明";
         const time = elapsedLabel(c.updated_at);
         const replyMark = c.last_sender === "customer" ? "【返信あり】" : "";
-        return `・${c.customer_name || "名称未設定"}（${statusLabel}）${replyMark}${time}`;
+        return `・${c.customer_name || "名称未設定"}（${c.summary || statusLabel}）${replyMark}${time}`;
       });
       parts.push(`【しょーへいのターゲット（要対応）】全員物件出して！！\n${lines.join("\n")}`);
     } else {
@@ -472,7 +535,7 @@ export async function GET(req: NextRequest) {
       const statusLabel = STATUS_LABELS[c.status ?? ""] ?? c.status ?? "状況不明";
       const time = elapsedLabel(c.updated_at);
       const replyMark = c.last_sender === "customer" ? "【返信あり】" : "";
-      return `・${c.customer_name || "名称未設定"}（${statusLabel}）${replyMark}${time}`;
+      return `・${c.customer_name || "名称未設定"}（${c.summary || statusLabel}）${replyMark}${time}`;
     });
     eveningParts.push(`【しょーへいのターゲット（要対応）残り確認】全員出せた？\n${lines.join("\n")}`);
   } else {

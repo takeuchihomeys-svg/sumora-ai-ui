@@ -25,6 +25,8 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
+// 2026-10-08 竹内さんの決定「ブレイン最優先・判断はブレインに一本化」: 要対応・やること・ブレイン以外の帯をブレインの判断で（純関数・画面から import してよい）
+import { brainNeedsStaff, flagOn, nonBrainBannerAllowed } from "./lib/brain-attention";
 // 2026-10-08 竹内「一本化する」: 次の一手の推しをブレインの判断に（純関数・依存なし＝画面から import してよい）
 import { brainTemplateSuggestion, brainCheckPatternFor, checkPatternTemplateCategory, nextActionFetchKey, reusableNextAction, type TemplateRec, type NextActionCacheEntry } from "./lib/next-action-unify";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
@@ -62,6 +64,11 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
 // 2026-10-08 竹内「端末で…竹内か従業員か」: 送った端末の印（x-staff-device・ブラウザごとの ID）を添える（app/lib/staff-device.ts）
+/**
+ * 2026-10-08 竹内さんの決定（ブレインに一本化）: 画面の要対応（絞り込み・橙・次に返信すべき1件）・やること帯・ブレイン以外の帯を
+ * ブレインの判断（suggested_aix_meta・AIX要対応）で決める。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off（ビルド時に埋まる）
+ */
+const BRAIN_ATTENTION_UI = flagOn(process.env.NEXT_PUBLIC_BRAIN_ATTENTION);
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}`, ...staffDeviceHeader() };
 
 // suggest-next-action APIが返すAIX初期化パラメータ
@@ -1115,6 +1122,9 @@ export default function Home() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(() => new Set(lineListCache()?.flagged ?? []));
+  // 2026-10-08: スタッフが手で「要対応にする」を押した会話（ブレインの要対応に足す・この端末の localStorage。担当者・メモと同じ置き方）。
+  //   is_flagged は受信のたびに true になるので、手で立てた物と見分けられない → 手の分はここに持つ
+  const [manualFlagIds, setManualFlagIds] = useState<Set<string>>(() => new Set());
   const [hotConvIds, setHotConvIds] = useState<Set<string>>(() => new Set(lineListCache()?.hot ?? []));
   const [manuallyReadAt, setManuallyReadAt] = useState<Record<string, string>>({});
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2899,9 +2909,20 @@ export default function Home() {
   //   2026-10-06 ⑫: 鮮度はメッセージを読み込んでいない会話でも DB のお客様の最後の発言の時刻で見る（conversation-list-sync.badgeMessages）
   const isAixBadge = (c: Conversation) =>
     isAixListBadge({ meta: c.suggestedAixMeta as Parameters<typeof isAixListBadge>[0]["meta"], lastSender: c.lastSender ?? null, messages: badgeMessages(c.messages, lastCustomerAtMap[c.id]) as Conversation["messages"] });
+  // 2026-10-08 竹内さんの決定「ブレインの判断に寄せる」: 画面の要対応（絞り込み・件数・橙・次に返信すべき1件）の元。
+  //   旧: is_flagged（受信のたびに true＝実質 全員・外すのは時間のルールだけ）。新: ブレインの判断（AIX要対応の pending・今の判断の AIX・
+  //   物件出しの約束）＋スタッフが手で立てた物（brain-attention brainNeedsStaff）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
+  const attentionConvIds = useMemo(() => {
+    if (!BRAIN_ATTENTION_UI) return flaggedConvIds;
+    const out = new Set<string>(manualFlagIds);
+    for (const c of conversations) {
+      if (brainNeedsStaff({ meta: c.suggestedAixMeta as Parameters<typeof brainNeedsStaff>[0]["meta"], pendingAixAction: pendingAixItems[c.id]?.action ?? null, lastSender: c.lastSender ?? null, status: STATUS_ALIAS[c.status] ?? c.status }).needs) out.add(c.id);
+    }
+    return out;
+  }, [conversations, pendingAixItems, manualFlagIds, flaggedConvIds]);
   // 一覧の「要対応」バッジ条件（手動フラグ or 顧客最終発言から12時間以上・未読）。バッジ・AIX絞り込みで共有する
   const isNeedsActionBadge = (c: Conversation) => {
-    if (flaggedConvIds.has(c.id)) return true;
+    if (attentionConvIds.has(c.id)) return true;
     if (c.lastSender !== "customer") return false;
     const age = Date.now() - new Date(c.updatedAt || 0).getTime();
     if (age < 12 * 60 * 60 * 1000) return false;
@@ -2921,7 +2942,7 @@ export default function Home() {
       result = result.filter((c) => hotConvIds.has(c.id));
     } else if (statusFilter === "flagged") {
       const postApplyStatuses = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
-      result = result.filter((c) => flaggedConvIds.has(c.id) && !postApplyStatuses.has(STATUS_ALIAS[c.status] ?? c.status));
+      result = result.filter((c) => attentionConvIds.has(c.id) && !postApplyStatuses.has(STATUS_ALIAS[c.status] ?? c.status));
     } else if (statusFilter === "aix_target") {
       // AIXバッジ かつ 要対応バッジの両方が付いている顧客のみ
       result = result.filter((c) => isAixBadge(c) && isNeedsActionBadge(c));
@@ -2952,7 +2973,7 @@ export default function Home() {
     return [...result].sort((a, b) =>
       compareConversationOrder({ updatedAtMs: sortMsOf(a.updatedAt) }, { updatedAtMs: sortMsOf(b.updatedAt) })
     );
-  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds, manuallyReadAt, messageSearchHit, lastCustomerAtMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, attentionConvIds, manuallyReadAt, messageSearchHit, lastCustomerAtMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 絞り込み・検索を変えたら一覧の描画は先頭40行からやり直す（LINE と同じく上から）
   useEffect(() => { setListRenderCount(LIST_RENDER_STEP); }, [statusFilter, deferredSearchQuery, aiSearchIds, accountFilter]);
@@ -2960,7 +2981,7 @@ export default function Home() {
   // AIX送信対象（AIXバッジ かつ 要対応バッジ）の件数。AIXボタンの紫ドットに使う
   const aixTargetCount = useMemo(() => {
     return conversations.filter((c) => isAixBadge(c) && isNeedsActionBadge(c)).length;
-  }, [conversations, flaggedConvIds, manuallyReadAt, lastCustomerAtMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversations, attentionConvIds, manuallyReadAt, lastCustomerAtMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -4419,6 +4440,10 @@ export default function Home() {
       const stored = localStorage.getItem("conv_read_at");
       if (stored) setManuallyReadAt(JSON.parse(stored));
     } catch {}
+    try {
+      const stored = localStorage.getItem("conv_manual_flags");
+      if (stored) setManualFlagIds(new Set(JSON.parse(stored) as string[]));
+    } catch {}
   }, []);
 
   const saveMemo = (convId: string, text: string) => {
@@ -4440,6 +4465,19 @@ export default function Home() {
   };
 
   const toggleFlaggedConv = (id: string) => {
+    if (BRAIN_ATTENTION_UI) {
+      // ブレインの要対応はブレインが決める。手で押すのは「手の要対応」を足す／外すだけ（DB の is_flagged も今まで通り合わせる）
+      const isNowFlagged = !manualFlagIds.has(id);
+      setManualFlagIds((prev) => {
+        const next = new Set(prev);
+        if (isNowFlagged) next.add(id); else next.delete(id);
+        try { localStorage.setItem("conv_manual_flags", JSON.stringify([...next])); } catch {}
+        return next;
+      });
+      setFlaggedConvIds((prev) => { const next = new Set(prev); if (isNowFlagged) next.add(id); else next.delete(id); return next; });
+      supabase.from("conversations").update({ is_flagged: isNowFlagged }).eq("id", id).then(() => {});
+      return;
+    }
     setFlaggedConvIds((prev) => {
       const next = new Set(prev);
       const isNowFlagged = !prev.has(id);
@@ -5315,7 +5353,9 @@ export default function Home() {
       // ※ピックアップ完了文（ご査収ください+ピックアップ/募集にでました）は上の明示キーワード
       //   ルール（P4物件オススメへの遷移）を優先し、矛盾するproperty_checkタスクは作らない。
       const _isPickupCompleteMsg = !!(textSent && textToSend && textToSend.includes("ご査収ください") && /ピックアップ|募集にでました/.test(textToSend));
-      if (trailerSaysPropertyCheck && !_isPickupCompleteMsg) {
+      // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」: 生成の印（<<<SUGGESTED_AIX>>>）からは
+      //   やることを作らない（送信の後のブレインが確認の約束を読んで置く・brain-attention-server）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
+      if (!BRAIN_ATTENTION_UI && trailerSaysPropertyCheck && !_isPickupCompleteMsg) {
         const convId = selectedConversation.id;
         const customerName = selectedConversation.customerName;
         // P6「物件ピックアップした」トリガーを消去
@@ -5950,7 +5990,9 @@ export default function Home() {
       return out.join("\n");
     })();
     const _custWillSendFirst = !!_lastCustTurn && !/https?:\/\/|\[画像\]/.test(_lastCustTurn) && CUST_WILL_SEND_SELF_PRED(_lastCustTurn).yes;
-    if (!isAix && text.trim() && /募集状況確認|空室確認|空き確認|募集確認/.test(text) && !_custWillSendFirst) {
+    // 2026-10-08 竹内さんの決定1: スタッフの送信の語（募集状況確認 等）でやることを作らない。送信の後のブレイン（send-line-message の
+    //   確認の約束の再分析 → promise:check）が置く。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
+    if (!BRAIN_ATTENTION_UI && !isAix && text.trim() && /募集状況確認|空室確認|空き確認|募集確認/.test(text) && !_custWillSendFirst) {
       const convId = selectedConversation.id;
       const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
       if (!alreadyHasCheck) {
@@ -6918,7 +6960,7 @@ export default function Home() {
                       fill={statusFilter === "flagged" ? "#ef4444" : "#cccccc"}
                     />
                   </svg>
-                  {flaggedConvIds.size > 0 && statusFilter !== "flagged" && (
+                  {attentionConvIds.size > 0 && statusFilter !== "flagged" && (
                     <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
                   )}
                 </button>
@@ -7005,8 +7047,8 @@ export default function Home() {
                   >
                     <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
                     要対応
-                    {flaggedConvIds.size > 0 && (
-                      <span className="ml-auto text-[11px] font-bold text-orange-500">{flaggedConvIds.size}</span>
+                    {attentionConvIds.size > 0 && (
+                      <span className="ml-auto text-[11px] font-bold text-orange-500">{attentionConvIds.size}</span>
                     )}
                   </button>
                   {DETAIL_STATUSES.map((s) => (
@@ -7085,7 +7127,7 @@ export default function Home() {
                   for (const c of filteredConversations) {
                     const lsv = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
                     if (lsv !== "customer" || c.status === "closed_won") continue;
-                    if (flaggedConvIds.has(c.id)) return c.id;
+                    if (attentionConvIds.has(c.id)) return c.id;
                   }
                   // ②要対応なし：お客さんが最後に送った直近順
                   for (const c of filteredConversations) {
@@ -7156,7 +7198,7 @@ export default function Home() {
                           if (age < 12 * 60 * 60 * 1000) return false;
                           return true;
                         })();
-                        const isFlagged = !isRead && !isPostApply && (flaggedConvIds.has(conversation.id) || autoFlag);
+                        const isFlagged = !isRead && !isPostApply && (attentionConvIds.has(conversation.id) || autoFlag);
                         return isFlagged
                           ? isActive
                             ? "border-orange-400 bg-orange-100"
@@ -7293,11 +7335,12 @@ export default function Home() {
                           <span
                             className={`${LIST_CHIP} ${LIST_CHIP_TONE.aix} font-bold`}
                             title={`AIX推奨: ${
+                              // 2026-10-08（C7）: バッジはブレインの判断で出しているので、名前もブレインの判断（suggested_aix_meta）を先に読む（旧の列 suggested_next_aix は無い時だけ）
                               AIX_ACTION_META[
-                                conversation.suggestedNextAix ?? conversation.suggestedAixMeta?.action ?? ""
+                                conversation.suggestedAixMeta?.action ?? conversation.suggestedNextAix ?? ""
                               ]?.label ??
-                              conversation.suggestedNextAix ??
                               conversation.suggestedAixMeta?.action ??
+                              conversation.suggestedNextAix ??
                               ""
                             }`}
                           >
@@ -7922,11 +7965,22 @@ export default function Home() {
             );
           })()}
           {!inputFocused && (() => {
-            const tasks = activeTasks[selectedConversation.id] ?? [];
+            // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」: やることは
+            //   ブレインが置いた／スタッフが手で作った やること（7日以内。7日より前は語で作られた残り）＋ブレインの AIX要対応（pending）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
+            const allTasks = activeTasks[selectedConversation.id] ?? [];
+            const tasks: Array<{ task_type: string }> = BRAIN_ATTENTION_UI
+              ? allTasks.filter((t) => Date.now() - Date.parse(t.created_at) < 7 * 86_400_000)
+              : allTasks;
+            if (BRAIN_ATTENTION_UI) {
+              const item = pendingAixItems[selectedConversation.id];
+              const itemTask = item?.action === "property_check_result" ? "property_check" : item?.action === "estimate_sheet" ? "estimate_sheet" : (item?.action === "property_send" || item?.action === "property_recommendation") ? "property_send" : item?.action ? `aix:${item.action}` : null;
+              if (itemTask && !tasks.some((t) => t.task_type === itemTask)) tasks.push({ task_type: itemTask });
+            }
             const bannerAixMeta = selectedConversation.suggestedAixMeta;
             // AIXアクション（ボタンあり）の場合は下部AIXカードに指示ごと統合表示するため、上部バナーは出さない（二重表示防止）
             const isAixAction = !!(bannerAixMeta?.action && BRAIN_AIX_LABELS[bannerAixMeta.action]);
-            const brainNote = isAixAction ? null : bannerAixMeta?.note;
+            // 2026-10-08（C7）: ブレインのメモは今の判断（最新のお客様の発言を見た判断）の時だけ（古い判断のメモを出さない）
+            const brainNote = isAixAction || (BRAIN_ATTENTION_UI && !aixView.metaFresh) ? null : bannerAixMeta?.note;
             if (tasks.length > 0) return (
               <div className="flex items-center gap-2 border-b border-[#a5d6a7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8f5e9, #f1f8e9)" }}>
                 <svg className="h-3.5 w-3.5 shrink-0 text-[#2e7d32]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -7941,7 +7995,7 @@ export default function Home() {
                     };
                     const counts: Record<string, number> = {};
                     for (const t of tasks) {
-                      const lbl = TASK_LABEL_MAP[t.task_type] ?? t.task_type;
+                      const lbl = TASK_LABEL_MAP[t.task_type] ?? (t.task_type.startsWith("aix:") ? (BRAIN_AIX_LABELS[t.task_type.slice(4)] ?? t.task_type.slice(4)) : t.task_type);
                       counts[lbl] = (counts[lbl] ?? 0) + 1;
                     }
                     return Object.entries(counts).map(([lbl, n]) => n > 1 ? `${n}件${lbl}` : lbl).join("・");
@@ -8791,10 +8845,15 @@ export default function Home() {
                 const _status = selectedConversation?.status ?? "";
                 const _msgs = selectedConversation?.messages || [];
                 const _lastStaff = [..._msgs].reverse().find((m: Message) => m.sender === "staff");
-                const _applyGlow = !activeAixFlow && (
-                  ["applying", "screening", "contract"].includes(_status) ||
-                  !!(_lastStaff?.text && /お申込み|申込み|申込フォーム/.test(_lastStaff.text))
-                );
+                // 2026-10-08 竹内さんの決定5: 点滅はブレインの判断を先に。ブレインの今の判断が 申込へ！ なら点滅・別の AIX なら点滅しない・
+                //   何も言っていない時だけ段階（申込・審査・契約）で点滅する。送った文の語（お申込み）だけでは点滅しない。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
+                const _applyGlow = !activeAixFlow && (BRAIN_ATTENTION_UI
+                  ? (aixView.metaFresh && sameAixAction(aixView.brainAixAction, "application_push")) ||
+                    (["applying", "screening", "contract"].includes(_status) && nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction }))
+                  : (
+                    ["applying", "screening", "contract"].includes(_status) ||
+                    !!(_lastStaff?.text && /お申込み|申込み|申込フォーム/.test(_lastStaff.text))
+                  ));
                 return (
                   <button
                     onClick={() => {
@@ -8840,12 +8899,16 @@ export default function Home() {
               const customerIsLastSender = (selectedConversation.lastSender ?? msgs[msgs.length - 1]?.sender) === "customer";
               const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
               const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
+              // 2026-10-08 竹内さんの決定5「ブレインの2択に寄せる。ブレインが画面に反映させる」: ブレイン以外の決め方の帯（テンプレの連番・連続送信・
+              //   申込・審査・契約・物件オススメの続き・AIX 後のテンプレ）は、ブレインの今の判断（最新のお客様の発言を見た判断）が別の AIX を言っている時は出さない
+              //   （ブレインの AIX の帯・カードが出る）。ブレインが何も言っていない時は今まで通り（brain-attention nonBrainBannerAllowed）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
+              const bannerOk = (bannerAix: string | null) => !BRAIN_ATTENTION_UI || nonBrainBannerAllowed({ bannerAix, brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction });
 
               // AIX鮮度チェック: analyzed_msg_ts が最新顧客メッセージより古い判断では帯・カードを出さない（aixView.metaFresh・resolveAixButtonView に一本化）
 
               // P0: 番号付きテンプレート連動 / 追客初期費用テンプレート誘導
               const nextTmpl = suggestNextTemplateMap[id];
-              if (nextTmpl && !dismissedNextTemplateIds.has(id) && !customerIsLastSender) {
+              if (nextTmpl && !dismissedNextTemplateIds.has(id) && !customerIsLastSender && bannerOk(nextTmpl.num === "追客初期費用" ? "estimate_sheet" : null)) {
                 const isFollowupCost = nextTmpl.num === "追客初期費用";
                 // 追客初期費用バナーは「家賃が高い」系のメッセージがある場合はスキップ
                 // （家賃懸念 → 物件を探す流れが正しい。初期費用テンプレより物件オススメが適切）
@@ -8883,7 +8946,7 @@ export default function Home() {
 
               // P0.6: CHAIN-2 テンプレ連続送信チェーン（1枚目送信後 → 学習済みシーケンスの次テンプレを誘導）
               const chainNextId = chainNextTemplateMap[id];
-              if (chainNextId && !dismissedChainNextIds.has(id) && !customerIsLastSender) {
+              if (chainNextId && !dismissedChainNextIds.has(id) && !customerIsLastSender && bannerOk(null)) {
                 const chainNextTmpl = templateCache.find((t) => t.id === chainNextId);
                 return (
                   <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-500 bg-violet-50 px-3 py-2 flex items-center gap-2">
@@ -8901,7 +8964,7 @@ export default function Home() {
               }
 
               // P1: 申込②（フロー途中 → 必ず完結させる）
-              if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id)) return (
+              if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id) && bannerOk("application_push")) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-500 bg-pink-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-pink-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>申込フォーマット ② （続き）を送る</span>
                   <button onClick={() => { setTemplateOpenContext("apply_step2"); setShowTemplateModal(true); }}
@@ -8916,7 +8979,7 @@ export default function Home() {
               // 診断修正(問題2・案1): 表示条件はステータス駆動のまま維持し、クリック先のみ
               // テンプレモーダル → AIX(application_push/format サブモード) に差し替え。
               // ②続きチェーンは onAfterSend の appSubMode==="format" 検知で発火する
-              if (selectedConversation.status === "applying" && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id)) return (
+              if (selectedConversation.status === "applying" && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id) && bannerOk("application_push")) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-pink-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>申込フォーマット ① を送る</span>
                   <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setAixInitAppSubMode("format"); openAixDirect("application_push"); }}
@@ -8928,7 +8991,7 @@ export default function Home() {
               );
 
               // P2.5: 審査中バナー（書類催促・審査状況テンプレートへ誘導）
-              if (selectedConversation.status === "screening" && !dismissedApplyStep1Ids.has(id)) return (
+              if (selectedConversation.status === "screening" && !dismissedApplyStep1Ids.has(id) && bannerOk(null)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>審査中：書類確認・審査フォローテンプレートを送る</span>
                   <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
@@ -8940,7 +9003,7 @@ export default function Home() {
               );
 
               // P2.6: 契約中バナー（契約手続きテンプレートへ誘導）
-              if (selectedConversation.status === "contract" && !dismissedApplyStep1Ids.has(id)) return (
+              if (selectedConversation.status === "contract" && !dismissedApplyStep1Ids.has(id) && bannerOk(null)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-purple-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>契約手続き：案内テンプレートを送る</span>
                   <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
@@ -9073,7 +9136,9 @@ export default function Home() {
               );
 
               // P4: 物件あり→物件オススメ / 物件なし→全力サポート の2択
-              if (suggestPropertyRecommendMap[id] && !dismissedPropertyRecommendIds.has(id)) return (
+              // 2026-10-08 竹内さんの決定5「ブレインの2択に寄せる」: 送った文の正規表現（ご査収ください＋ピックアップ）・物件ピックアップの送信で立てた2択は出さない。
+              //   2択はブレインの判断（two_choice_mode・alt_actions）のカード（P5・aixView.card）が出す。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
+              if (!BRAIN_ATTENTION_UI && suggestPropertyRecommendMap[id] && !dismissedPropertyRecommendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2">
                   <div className="flex items-center gap-1 mb-2">
                     <span className="text-[11px] font-bold text-indigo-700 flex-1">
@@ -9104,7 +9169,7 @@ export default function Home() {
 
               // P4.5: 物件オススメ送信直後 → 「AIX 物件オススメ」を続けて使うよう促す
               // property_checkタスクがある場合はP5.5（物件確認した）を優先するためここをスキップ
-              if (suggestPropertyRecommendFollowupMap[id] && !(activeTasks[id] ?? []).some(t => t.task_type === "property_check")) return (
+              if (suggestPropertyRecommendFollowupMap[id] && !(activeTasks[id] ?? []).some(t => t.task_type === "property_check") && bannerOk("property_recommendation")) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-400 bg-blue-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-blue-800 flex-1">
                     <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
@@ -9325,7 +9390,7 @@ export default function Home() {
               const isPostRec = postAixTemplateMap[id]?.actionType === "property_recommendation";
               // 2026-09-12 竹内（あや・名無しの権兵衛事例）: 帯はブレインが同じ AIX を判断している時だけ（残っているやることだけでは出さない）。
               //   旧: やることの有無だけで出ていて、ブレインが見積書送る（または AIX なし）の時に「物件確認した／物件を送る」が出ていた
-              if (hasPropertyCheckTask && sameAixAction(brainAixAction, "property_check_result") && !suggestPropertyRecommendMap[id] && !isPostRec) return (
+              if (hasPropertyCheckTask && sameAixAction(brainAixAction, "property_check_result") && (BRAIN_ATTENTION_UI || !suggestPropertyRecommendMap[id]) && !isPostRec) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-[#4CAF50] bg-[#e8f5e9] px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[12px] font-bold text-[#2e7d32] flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件確認した</span>
@@ -9381,7 +9446,7 @@ export default function Home() {
 
               // P7.5: B5 AIX送信完了後 → 同カテゴリのテンプレートを続けて送る（専用チェーンバナーが無い場合の汎用フォロー）
               const postAixTmpl = postAixTemplateMap[id];
-              if (postAixTmpl && !dismissedPostAixTemplateIds.has(id)) return (
+              if (postAixTmpl && !dismissedPostAixTemplateIds.has(id) && bannerOk(null)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 px-3 py-2 flex items-center gap-2" style={{ borderColor: postAixTmpl.color, backgroundColor: `${postAixTmpl.color}14` }}>
                   <span className="text-[12px] font-bold flex-1" style={{ color: postAixTmpl.color }}>
                     <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
@@ -9563,7 +9628,7 @@ export default function Home() {
             )}
 
             {/* AIドラフト提案バナー */}
-            {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && selectedConversation.aiDraft !== "[AIX誘導中]" && !activeTasks[selectedConversation.id]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type)) && !selectedConversation.suggestedAixMeta?.action && (
+            {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && selectedConversation.aiDraft !== "[AIX誘導中]" && (BRAIN_ATTENTION_UI || !activeTasks[selectedConversation.id]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type))) && !selectedConversation.suggestedAixMeta?.action && (
               <div className="mx-1 mb-1 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] font-bold text-blue-500 shrink-0">✨ AI返信案</span>
@@ -10013,15 +10078,15 @@ export default function Home() {
                 onClick={() => { toggleFlaggedConv(convMenuConvId!); setConvMenuConvId(null); }}
                 className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5] border-b border-[#f0f2f5]"
               >
-                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${flaggedConvIds.has(convMenuConvId ?? "") ? "bg-red-500" : "bg-[#f0f2f5]"}`}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill={flaggedConvIds.has(convMenuConvId ?? "") ? "white" : "#667781"} stroke="none">
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${(BRAIN_ATTENTION_UI ? manualFlagIds : flaggedConvIds).has(convMenuConvId ?? "") ? "bg-red-500" : "bg-[#f0f2f5]"}`}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill={(BRAIN_ATTENTION_UI ? manualFlagIds : flaggedConvIds).has(convMenuConvId ?? "") ? "white" : "#667781"} stroke="none">
                     <path d="M3 3h18v2H5v13.59L7.76 16H21v-2h1v4H7.24L3 21.41V3z"/>
                     <path d="M5 5v11.59L7.76 14H21V5H5z"/>
                   </svg>
                 </span>
                 <div>
                   <div className="text-[13px] font-medium text-[#111b21]">
-                    {flaggedConvIds.has(convMenuConvId ?? "") ? "要対応を解除" : "要対応にする"}
+                    {(BRAIN_ATTENTION_UI ? manualFlagIds : flaggedConvIds).has(convMenuConvId ?? "") ? "要対応を解除" : "要対応にする"}
                   </div>
                   <div className="text-[11px] text-[#8696a0]">フラグを立てる</div>
                 </div>

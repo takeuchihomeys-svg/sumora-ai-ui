@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { PROPERTY_DELIVERY_AIX } from "@/app/lib/aix-task-link";
+import { flagOn, TARGET_TIER_RANK } from "@/app/lib/brain-attention";
+import { loadBrainTargets, type BrainTarget } from "@/app/lib/brain-attention-server";
 
 export const maxDuration = 60;
 
@@ -79,6 +81,14 @@ export async function GET(req: NextRequest) {
     process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
   if (!token) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
+  }
+
+  // 2026-10-08 竹内さんの決定2「ブレインの判断に寄せる」＋ターゲットの正の基準
+  //   「ターゲットは、一度内覧に行った事がある人・申込をしたけど審査に落ちた人が最優先。それと新規のお客さんや、継続して食いついて物件検索しているお客さんは明確なターゲット」:
+  //   旧は is_flagged=true（受信のたびに true＝実質 全員）の会話を直近順に並べていた。新はブレインの判断から ①内覧済み ②審査落ち ③新規 ④物件検索中 の順に、
+  //   名前＋一言の要約（希望の条件・状況・次の AIX）で出す（brain-attention classifyTarget・targetSummary）。戻す: BRAIN_TARGET_LIST=off
+  if (flagOn(process.env.BRAIN_TARGET_LIST)) {
+    return await announceBrainTargets({ token, targetId, suzukiUserId });
   }
 
   // is_flagged=true の会話を取得（申込中以降は除外）
@@ -306,4 +316,67 @@ export async function GET(req: NextRequest) {
     removed: toRemove.length,
     sent: sorted.length,
   });
+}
+
+/** ブレインのターゲットの一覧を送る（決定2・ターゲットの正の基準）。✅ の付け方（今日 物件を届けた AIX）・☑（今日スタッフが送った）は旧と同じ */
+async function announceBrainTargets(cfg: { token: string; targetId: string; suzukiUserId: string | null }): Promise<NextResponse> {
+  const { token, targetId, suzukiUserId } = cfg;
+  let targets: BrainTarget[];
+  try {
+    targets = await loadBrainTargets(supabase);
+  } catch (e) {
+    console.error("announce-hot-customers brain targets error:", e);
+    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+  }
+  if (targets.length === 0) return NextResponse.json({ ok: true, skipped: true, reason: "no brain targets" });
+
+  const todayStart = getTodayJSTStart();
+  const ids = targets.map((t) => t.conversationId);
+  const [{ data: todayStaffMsgs }, { data: todayDeliveries }] = await Promise.all([
+    supabase.from("messages").select("conversation_id").eq("sender", "staff").gte("created_at", todayStart.toISOString()).in("conversation_id", ids),
+    supabase.from("aix_usage_logs").select("conversation_id").in("aix_type", [...PROPERTY_DELIVERY_AIX]).gte("created_at", todayStart.toISOString()).in("conversation_id", ids),
+  ]);
+  const delivered = new Set((todayDeliveries ?? []).map((r) => r.conversation_id as string));
+  const staffToday = new Set((todayStaffMsgs ?? []).map((r) => r.conversation_id as string));
+  const markOf = (id: string) => (delivered.has(id) ? "✅" : staffToday.has(id) ? "☑" : "・");
+  const markRank = (m: string) => (m === "☑" ? 0 : m === "・" ? 1 : 2);
+  const sorted = [...targets].sort((a, b) => {
+    const r = TARGET_TIER_RANK[a.tier] - TARGET_TIER_RANK[b.tier];
+    if (r !== 0) return r;
+    const m = markRank(markOf(a.conversationId)) - markRank(markOf(b.conversationId));
+    if (m !== 0) return m;
+    return Date.parse(b.lastCustomerAt ?? b.updatedAt ?? "") - Date.parse(a.lastCustomerAt ?? a.updatedAt ?? "") || 0;
+  });
+  const line = (t: BrainTarget) => `${markOf(t.conversationId)}${t.customerName}${t.summary ? `（${t.summary}）` : ""}`;
+  const top = sorted.filter((t) => t.tier === "viewed" || t.tier === "screening_failed").slice(0, 25);
+  const rest = sorted.filter((t) => t.tier === "new" || t.tier === "engaged").slice(0, 40);
+  const hour = getJSTHour();
+  const motivation = MOTIVATIONS[Math.floor(Date.now() / (24 * 3600 * 1000)) % MOTIVATIONS.length];
+  const bodyText = [
+    "【しょーへいの今日のターゲット全リスト】",
+    ...(top.length ? ["", "► 最優先（内覧済み・審査落ち）", ...top.map(line)] : []),
+    ...(rest.length ? ["", "► ターゲット（新規・物件検索中）", ...rest.map(line)] : []),
+    "",
+    motivation,
+    "",
+    `AIX LINX より ${hour}:00`,
+  ].join("\n");
+  const lineMessage = suzukiUserId
+    ? { type: "textV2", text: `{0}\n${bodyText}`, substitution: { "0": { type: "mention", mentionee: { type: "user", userId: suzukiUserId } } } }
+    : { type: "text", text: bodyText };
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ to: targetId, messages: [lineMessage] }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("announce-hot-customers LINE error:", text);
+    return NextResponse.json({ ok: false, error: text }, { status: 500 });
+  }
+  await supabase.from("hanbancyo_settings").upsert({ key: "announce_hot_last_sent_at", value: new Date().toISOString() }, { onConflict: "key" });
+  const byTier: Record<string, number> = {};
+  for (const t of targets) byTier[t.tier] = (byTier[t.tier] ?? 0) + 1;
+  return NextResponse.json({ ok: true, mode: "brain", sent: top.length + rest.length, byTier });
 }

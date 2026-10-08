@@ -1,4 +1,5 @@
 import { manYen } from "@/app/lib/man-yen";
+import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
@@ -530,7 +531,7 @@ export async function POST(req: NextRequest) {
         //   「打ち切り」に数えられ、原因を分けられなかった）。打ち切りとブレインが判断を返さなかった場合を分けて記録する
         const BRAIN_TIMEOUT = Symbol("brain_timeout");
         const raced = await Promise.race([
-          runBrainAndNotify(convId, targetMessage, { origin: brainOrigin }),
+          runBrainWithFollowups(convId, targetMessage, { origin: brainOrigin }),
           // FIX(post-Fable5): 旧値 60_000ms は extended thinking の最悪ケース（最大60s）と同値の境界で、
           // brain 完了と同時にタイムアウトが勝つと T3 フォールバックに落ちていた。
           // 90s に延ばすことで境界衝突を解消（90+180+α < maxDuration=300s で収支は安全）。
@@ -600,7 +601,7 @@ export async function POST(req: NextRequest) {
               if (elapsedMs < 75_000) {
                 try {
                   const rerun = await Promise.race([
-                    runBrainAndNotify(convId, latestTarget, { origin: brainOrigin }),
+                    runBrainWithFollowups(convId, latestTarget, { origin: brainOrigin }),
                     new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000)),
                   ]);
                   console.log("[bg-async] burst brain rerun:", convId, rerun ? "fresh" : "null(T2 fallback)", "elapsedMs:", elapsedMs);
@@ -772,17 +773,22 @@ export async function POST(req: NextRequest) {
           const ts = (m: unknown) => (m as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
           if (brainMissedCustomerMessage(lastCust?.created_at as string | undefined, [ts(seen?.suggested_aix_meta), ts(seen?.last_brain_meta)])) {
             console.log(JSON.stringify({ tag: "brain:catch-up", conversationId: convId, latestCustomerAt: lastCust?.created_at ?? null }));
-            await runBrainAndNotify(convId, undefined, { origin: brainOrigin });
+            await runBrainWithFollowups(convId, undefined, { origin: brainOrigin });
           }
         } catch (catchUpErr) {
           console.warn("[bg-async] catch-up brain failed:", convId, String(catchUpErr));
         }
       };
 
-      const { data: pendingTasks } = await db.from("line_tasks")
-        .select("task_type, created_at")
-        .eq("conversation_id", convId)
-        .eq("status", "pending");
+      // 2026-10-08 竹内さんの決定（ブレインに一本化）: 下書きを止めるかは reply_mode（ブレイン）だけで決める（下の reply_mode=aix の分岐）。
+      //   旧はやること（line_tasks の property_send・estimate_sheet・24時間以内）があると、ブレインが返信と判断していても [AIX誘導中] で止めていた
+      //   （語で作られた やること・6月の自由文の残り）。戻す: DRAFT_BLOCK_BY_TASK=on
+      const { data: pendingTasks } = process.env.DRAFT_BLOCK_BY_TASK === "on"
+        ? await db.from("line_tasks")
+          .select("task_type, created_at")
+          .eq("conversation_id", convId)
+          .eq("status", "pending")
+        : { data: [] as Array<{ task_type: string; created_at: string | null }> };
       // 2026-09-12 竹内（名無しの権兵衛事例）: 24時間以上前のやること（誤作成・放置）は下書きを止めない。
       //   旧: 「スタック救済」は ai_draft が既に [AIX誘導中] の時だけで、顧客の新着ごとに ai_draft が空に戻るため永久に救済されず、
       //   9/10 の誤作成タスクで 9/12 の「初期費用教えて下さい」に下書きが出なかった（残っていた物件ピックアップのやること 29件）

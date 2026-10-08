@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { manYen } from "@/app/lib/man-yen";
 import { createClient } from "@supabase/supabase-js";
 import { detectPlaceholders } from "@/app/lib/validate-reply";
@@ -343,17 +344,21 @@ async function run() {
         try {
           // 2026-09-24: targetMessage（お客様の未返信の通）も渡す。渡さないと runConditionBrain（条件ブレイン）が cron 経路では動かず、
           //   9:00 の一括処理が bg-async 経路より忠実さで劣る（既存の cron 経路の抜けの修正でもある）。origin: cron で夜は brain-core の保険が止める
-          brainGateDirect = await runBrainAndNotify(convId, targetMessage, { origin: "cron" });
+          brainGateDirect = await runBrainWithFollowups(convId, targetMessage, { origin: "cron" });
           console.log("[generate-pending-drafts] brain serial done:", convId, "gate:", brainGateDirect ? "fresh" : "null(fallback to DB fetch)");
         } catch (brainErr) {
           console.warn("[generate-pending-drafts] brain serial failed（DBフェッチにフォールバック）:", convId, String(brainErr));
         }
       }
 
-      const { data: cronPendingTasks } = await db.from("line_tasks")
-        .select("task_type, created_at")
-        .eq("conversation_id", convId)
-        .eq("status", "pending");
+      // 2026-10-08 竹内さんの決定（ブレインに一本化）: 下書きを止めるかは reply_mode（ブレイン）だけ（generate-reply が reply_mode=aix で止める）。
+      //   やること（line_tasks）では止めない。戻す: DRAFT_BLOCK_BY_TASK=on
+      const { data: cronPendingTasks } = process.env.DRAFT_BLOCK_BY_TASK === "on"
+        ? await db.from("line_tasks")
+          .select("task_type, created_at")
+          .eq("conversation_id", convId)
+          .eq("status", "pending")
+        : { data: [] as Array<{ task_type: string; created_at: string | null }> };
       // 2026-09-12 竹内（名無しの権兵衛事例）: 24時間以上前のやること（誤作成・放置）は下書きを止めない（bg-async と同じ）
       const AIX_TASK_FRESH_MS = 24 * 60 * 60 * 1000;
       const freshCronTasks = (cronPendingTasks ?? []).filter((t: { created_at: string | null }) =>

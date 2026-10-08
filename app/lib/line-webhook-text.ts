@@ -1,4 +1,6 @@
 // app/lib/line-webhook-text.ts
+import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
+import { flagOn } from "@/app/lib/brain-attention";
 // LINE webhook の「お客様の文字の発言を受けた時」の処理（保存・未読・引用・下書きの起動・ブレイン・条件の読み取り 等）。
 // 2026-09-27 竹内「YUMA で自動的に YUMA から自動返信が来て、返信を繰り返せたら理想」:
 //   お客様役（/api/test/customer-sim・テスト用の会話だけ）が webhook と**同じ関数**を通すため、app/api/line-webhook/route.ts から
@@ -385,7 +387,7 @@ export async function handleTextMessage(
         .maybeSingle();
       const convStatus = (convRow?.status as string) || "hearing";
       if (!BG_ASYNC_SKIP_STATUSES.has(convStatus)) return; // bg-async側のbrain直列実行に任せる
-      await runBrainAndNotify(convId, undefined, { origin: "customer_message" });
+      await runBrainWithFollowups(convId, undefined, { origin: "customer_message" });
     } catch (e) {
       console.warn("[line-webhook] brain-notify:", e);
     }
@@ -394,9 +396,13 @@ export async function handleTextMessage(
   updateProfileAsync(db, userId, convId, account, text, now);
 
   // 返信きたお客さんを自動で毎日物件出し（hot）に格上げ
-  after(async () => {
-    await autoUpgradeToHot(db, userId).catch((e) => console.warn("[line-webhook] autoUpgradeToHot:", e));
-  });
+  // 2026-10-08 竹内さんの決定4「（hot＝物件を出すべき人は）ブレインの判断にする」: 受信のたびの機械的な昇格はやめ、
+  //   ブレインの判断の後（brain-attention-server syncBrainFollowups → brainHotDecision）で上げる。戻す: HOT_BY_BRAIN=off
+  if (!flagOn(process.env.HOT_BY_BRAIN)) {
+    after(async () => {
+      await autoUpgradeToHot(db, userId).catch((e) => console.warn("[line-webhook] autoUpgradeToHot:", e));
+    });
+  }
 
   // 顧客返信 → pending中のエンゲージメントシグナルを resolve（fire-and-forget）
   // 成約パターンキーワード検出で positive / それ以外は neutral（時間閾値なし）
@@ -498,7 +504,12 @@ export async function handleTextMessage(
   }
 
   // タスク自動検知（物件確認・物件出し）
-  void autoDetectTask(db, convId, text).catch((e) => console.warn("[line-webhook] autoDetectTask:", e));
+  // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」: お客様の発言の語で line_tasks を作らない
+  //   （外れの実例: 「友人が物件を探していて」「301号室の内覧お願い」）。やることはブレインの判断の後（brain-attention-server）で作る。
+  //   戻す: BRAIN_TASKS_ONLY=off（決定3 の「物件出し依頼 自動検知」の通知は戻さない。戻すのは PICKUP_AUTODETECT_NOTICE=on）
+  if (!flagOn(process.env.BRAIN_TASKS_ONLY)) {
+    void autoDetectTask(db, convId, text).catch((e) => console.warn("[line-webhook] autoDetectTask:", e));
+  }
 
   // 「確認しました」→ 物件確認済み自動マーク
   if (isPropertyViewedMessage(text)) {
@@ -1818,6 +1829,9 @@ async function autoDetectTask(
   // 売上番長グループへアナウンス（物件出しのみ）
   // 2026-09-12 竹内方針: 物件確認の依頼は返信・AIX 系なので通知しない（ブレインの判断→「AIX要対応」で届く）
   if (taskType === "property_check") return;
+  // 2026-10-08 竹内さんの決定3「（物件出し依頼 自動検知の通知は）やめて良い ブレイン最優先」: AIX要対応（〇〇さん → AIX【物件ピックアップした】）と二重。
+  //   戻す: PICKUP_AUTODETECT_NOTICE=on
+  if (process.env.PICKUP_AUTODETECT_NOTICE !== "on") return;
   // 2026-09-27: お客様役（テスト・YUMA）の番では売上番長グループに出さない（customer-sim-guard）
   if (await isSimulatedCustomerTurn(convId)) return;
   const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();

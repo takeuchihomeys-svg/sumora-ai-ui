@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { flagOn } from "@/app/lib/brain-attention";
+import { loadBrainTargets } from "@/app/lib/brain-attention-server";
 
 export const maxDuration = 60;
 
@@ -55,14 +57,21 @@ export async function GET(req: NextRequest) {
   }
 
   // Step1: その他の会話 = is_flagged=false + 申込以降除外 + property_customer_id あり
-  const { data: convs, error: convError } = await supabase
+  // 2026-10-08 竹内さんの決定2「ブレインの判断に寄せる」: 「その他」＝今日のターゲット（ブレインの判断・announce-hot-customers と同じ一覧）に入っていない人。
+  //   旧は is_flagged=false（受信のたびに true になるので、返信の無い人だけが残っていた）。戻す: BRAIN_TARGET_LIST=off
+  const brainMode = flagOn(process.env.BRAIN_TARGET_LIST);
+  const targetIds = brainMode
+    ? new Set((await loadBrainTargets(supabase).catch((e) => { console.warn("announce-sonota brain targets:", e); return []; })).map((t) => t.conversationId))
+    : null;
+  const convQuery = supabase
     .from("conversations")
-    .select("id, customer_name, property_customer_id, line_status")
-    .eq("is_flagged", false)
+    .select("id, customer_name, property_customer_id, line_status");
+  const { data: convsRaw, error: convError } = await (brainMode ? convQuery : convQuery.eq("is_flagged", false))
     .not("status", "in", "(applying,screening,contract,closed_won,closed_lost)")
     .not("property_customer_id", "is", null)
     .neq("line_status", "blocked")
-    .limit(300);
+    .limit(brainMode ? 600 : 300);
+  const convs = targetIds ? (convsRaw ?? []).filter((c) => !targetIds.has(c.id as string)) : convsRaw;
 
   if (convError) {
     console.error("announce-sonota conv error:", convError);

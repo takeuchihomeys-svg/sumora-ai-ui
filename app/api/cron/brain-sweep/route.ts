@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { runBrainWithFollowups } from "@/app/lib/brain-attention-server";
 import { supabase } from "@/app/lib/supabase";
 import {
   runBrainAndNotify, BRAIN_SKIP_STATUSES, BRAIN_MODEL,
@@ -318,7 +319,7 @@ export async function GET(req: NextRequest) {
       // 2026-09-24: origin: sweep（夜は上の先頭で止まるが、brain-core の保険にも名札を渡す）。
       //   msgText（未返信のお客様の通）も渡す＝条件ブレインが cron / bg-async と同じく動く（loadUnrepliedCustomerText のコメント）
       const msgText = await loadUnrepliedCustomerText(conv.id).catch(() => undefined);
-      const saved = await runBrainAndNotify(conv.id, msgText, { origin: "sweep" }).catch((e) => {
+      const saved = await runBrainWithFollowups(conv.id, msgText, { origin: "sweep" }).catch((e) => {
         // B10(Fable5): 旧実装は throw されたエラーメッセージも握り潰していた
         const msg = e instanceof Error ? e.message : String(e);
         const kind = msg.includes("timed out") || msg.includes("timeout") ? "timeout" : "error";
