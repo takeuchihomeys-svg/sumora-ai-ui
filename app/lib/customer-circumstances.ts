@@ -170,11 +170,30 @@ export function validCircumstances(items: ReadonlyArray<Circumstance>, nowMs: nu
   return [...latest.values()];
 }
 
-/** 内覧にすぐ来られない事情（appeal-timing の viewingDelayed に足す）: 2日より先の「〇日以降」・しばらく来られない・遠方 */
+/**
+ * 内覧の日時より先に「お申込みでお部屋を抑えた状態でご内覧頂く」提案をする事情か（理由の文・無ければ null）。
+ *   2026-10-08 竹内さん「期間が1週間以上空いた場合や、遠方の方には、そのように提案する」:
+ *   「〇日以降」が今日から7日以上先／遠方 の時だけ。7日未満・遠方でない時は入れない（日付の無い「しばらく来られない」もこの線では入れない）。
+ *   戻す: HOLD_FIRST_MIN_DAYS=<日数>（既定 7）／APPEAL_CIRCUMSTANCES=off で appeal-timing に効かせない
+ */
+export function holdFirstMinDays(): number {
+  const n = Number(process.env.HOLD_FIRST_MIN_DAYS);
+  return Number.isFinite(n) && n > 0 ? n : 7;
+}
+export function holdFirstReason(valid: ReadonlyArray<Circumstance>, nowMs: number): string | null {
+  const min = holdFirstMinDays();
+  const from = valid.find((c) => c.kind === "available_from" && c.fromDayMs != null);
+  if (from && from.fromDayMs != null) {
+    const days = Math.round((from.fromDayMs - dayStart(nowMs)) / DAY);
+    if (days >= min) return `内覧に来られるのが今日から${days}日後（${min}日以上先）`;
+  }
+  if (valid.some((c) => c.kind === "remote")) return "遠方のお客様";
+  return null;
+}
+/** 内覧にすぐ来られない事情（appeal-timing の viewingDelayed に足す）＝ holdFirstReason がある時だけ */
 export function circumstanceDelaysViewing(valid: ReadonlyArray<Circumstance>, nowMs: number): boolean {
   if ((process.env.APPEAL_CIRCUMSTANCES ?? "").toLowerCase() === "off") return false;
-  return valid.some((c) => (c.kind === "available_from" && c.fromDayMs != null && c.fromDayMs > dayStart(nowMs) + 2 * DAY)
-    || c.kind === "cannot_come_soon" || c.kind === "remote");
+  return holdFirstReason(valid, nowMs) !== null;
 }
 
 const KIND_JA: Record<CircumstanceKind, string> = {
@@ -205,6 +224,13 @@ export function buildCircumstancesNote(valid: ReadonlyArray<Circumstance>, o: { 
     }
     return `- ${KIND_JA[c.kind]}: ${when}「${c.quote}」`;
   });
+  // 2026-10-08 竹内さん: 内覧の候補日は AIX【内覧調整】で「来られる日」以降から出す（返信の本文に日時を書かない）／
+  //   「〇日以降」が7日以上先・遠方の時だけ、内覧の日時より先にお部屋を抑える提案（7日未満・遠方でない時は入れない）
+  const hold = use.some((c) => c.kind === "available_from" || c.kind === "remote") ? holdFirstReason(use, o.nowMs) : null;
+  const guide: string[] = [];
+  if (use.some((c) => c.kind === "available_from")) guide.push("内覧の候補日は AIX【内覧調整】で来られる日以降から出す（返信の本文に日時を書かない・来られる日より前の日時で内覧を組まない）");
+  if (hold) guide.push(`${hold}のため、内覧の日時より先に「お申込みでお部屋を抑えた状態でご内覧頂く」提案を入れる${use.some((c) => c.kind === "remote") ? "（オンライン内見・撮影の道もある）" : ""}`);
+  else if (use.some((c) => c.kind === "available_from")) guide.push("来られる日まで7日未満なので、お部屋を抑える提案は入れない");
   return `【お客様の事情（会話から決定論で読んだ・言った日つき）】\n${lines.join("\n")}\n`
-    + "→ 次の一手・返信の方向はこの事情に合わせる（例: 来られる日より前の日時で内覧を組まない／すぐ来られない時は内覧の日時より先にお部屋を抑える・オンライン内見や撮影の道もある）。事情を推測で広げない・言い換えて断言しない。";
+    + `→ 次の一手・返信の方向はこの事情に合わせる${guide.length ? `（${guide.join("／")}）` : ""}。事情を推測で広げない・言い換えて断言しない。`;
 }

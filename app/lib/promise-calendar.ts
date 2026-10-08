@@ -13,6 +13,8 @@ import { jstParts } from "./jst-date";
 import { isConfirmPartyObject, confirmTopicForCheckPattern, checkPatternForConfirmTopic, type LedgerEntry, type LedgerKind } from "./action-ledger";
 // 2026-10-01 竹内（和樹事例）「『引き続き新着で…お送り』は『新着が出たら送る』約束として扱う」: ピックアップの約束がいつやる約束か（promise-timing.ts）
 import { classifyPickupPromiseTiming, isWaitPromiseNotes, PICKUP_TIMING_LABEL, WAIT_TIMINGS, type PickupPromiseTiming } from "./promise-timing";
+// 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる」: 「7月1日に…ピックアップしお送り」の様に日付つきの約束は連絡の日の行（contact-promise.ts）が持つ
+import { parseContactPromise, isContactPromiseNotes } from "./contact-promise";
 
 /** お客様への約束の印（notes の先頭）。この印がある行＝履行するまで消えない */
 export const PROMISE_MUST_MARK = "【必ず】";
@@ -129,6 +131,8 @@ export function promiseEventRows(
     //   旧: 「新着が出次第」（次第）だけは行を作らず（外の出来事待ち＝やることにしない・line_tasks と同じ）、それ以外は全部【今日中】。
     //   今は次第の約束も【新着待ち】の行にする（約束は消さない・物件を送ったら完了＝同じ property_send・赤帯では「必ず N日」にしない）
     const sentence = e.detail?.sentence ?? e.evidence ?? "";
+    // 2026-10-08: 2日以上先の日付つきのピックアップの約束は、今日の【必ず】（【今日中】・【時期待ち】）にしない（連絡の日の行が持つ・contact-promise.ts）
+    if (e.kind === "pickup_declared" && parseContactPromise(sentence, o.sentAt)) continue;
     const timing: PickupPromiseTiming | undefined = e.kind === "pickup_declared" ? classifyPickupPromiseTiming(sentence).timing : undefined;
     const waiting = !!timing && WAIT_TIMINGS.has(timing);
     const detail: PromiseDetail = { object: e.detail?.object ?? null, estimateFor: e.detail?.estimateFor ?? [], timing };
@@ -283,7 +287,8 @@ export function planPromiseCompletion(
   existingOpen: ReadonlyArray<{ id: number; event_type: string | null; notes: string | null; is_done?: boolean | null }>,
 ): number[] {
   const ids = new Set<number>();
-  const open = existingOpen.filter((r) => !r.is_done && isPromiseMustNotes(r.notes) && !!r.event_type);
+  // 連絡の日の約束（【連絡日 …】）は contact-promise.planContactPromiseSync が閉じる（物件の送付・連絡の日の連絡）
+  const open = existingOpen.filter((r) => !r.is_done && isPromiseMustNotes(r.notes) && !!r.event_type && !isContactPromiseNotes(r.notes));
   for (const d of done) {
     const k = FULFILLS_PROMISE[d.kind];
     const patternTopic = confirmTopicForCheckPattern(d.checkPattern);

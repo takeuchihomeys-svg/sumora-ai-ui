@@ -4,7 +4,7 @@
 // 実行: npx tsx app/lib/__tests__/brain-keyword-rules.test.ts（自己完結ハーネス。全 PASS で exit 0）
 import {
   isExplicitNoAix, isMeaninglessRuleKeyword, meaninglessRuleKeywordReason,
-  humanKeywordRuleHit, summedKeywordRuleHit, type KeywordRule,
+  humanKeywordRuleHit, summedKeywordRuleHit, adoptSignalAixOverBrainNull, type KeywordRule,
 } from "../brain-keyword-rules";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -99,6 +99,31 @@ it("本番: 「〜ですか」だけで信号5.5（0.95/10）が property_check_
 it("中身のある語は外した後も当たる: 「内覧希望です」→ viewing_invite・「2LDKも見たいです」→ property_recommendation", () => {
   eq(humanKeywordRuleHit("土曜に内覧希望です", CLEAN)?.action_type, "viewing_invite");
   eq(summedKeywordRuleHit("2LDKも見たいです", CLEAN)?.action, "property_recommendation");
+});
+
+// 2026-10-08 竹内さん「ちゃんとブレインを基盤に」: ブレインが「AIX なし」の時、語・状態の信号の AIX は採らない（本番 97番中 一致 3・AIX なし 84）
+//   実物（信号が立てた AIX・お客様の発言）: 「他社で決まりました」→property_recommendation／「検討してみます」→property_send／
+//   「本日電話いけますか」→property_search／「家賃をいくらまでにしたら…出てきますか」→estimate_sheet／「14:30-15:00くらいに掛けても大丈夫でしょうか」→S5 待ち合わせ
+it("ブレインがはっきり「なし」（null）→ 信号の AIX（見積書送る・物件オススメ・物件検索・申込へ・確認します）は採らない", () => {
+  const env = {};
+  for (const action of ["estimate_sheet", "property_recommendation", "property_search", "property_send", "application_push", "acknowledge_check", "followup_revive"]) {
+    eq(adoptSignalAixOverBrainNull(isExplicitNoAix(null), { kind: "signal", action }, env), false);
+  }
+});
+it("場面の信号: S5（日時の語→待ち合わせ）は採らない・S2/S3/S11（竹内さんの決定）は残す", () => {
+  const env = {};
+  eq(adoptSignalAixOverBrainNull(true, { kind: "scene", scene: "S5_time_spec" }, env), false);
+  eq(adoptSignalAixOverBrainNull(true, { kind: "scene", scene: "S2_move_in" }, env), true);
+  eq(adoptSignalAixOverBrainNull(true, { kind: "scene", scene: "S3_screening" }, env), true);
+  eq(adoptSignalAixOverBrainNull(true, { kind: "scene", scene: "S11_other_room" }, env), true);
+});
+it("ブレインが分からない語を返した（「なし」とは言っていない）→ 従来どおり信号で補う", () => {
+  eq(adoptSignalAixOverBrainNull(isExplicitNoAix("内覧したいので日程"), { kind: "signal", action: "viewing_invite" }, {}), true);
+  eq(adoptSignalAixOverBrainNull(isExplicitNoAix("unknown_button"), { kind: "scene", scene: "S5_time_spec" }, {}), true);
+});
+it("戻す: BRAIN_NULL_SIGNAL_FALLBACK=on で旧（信号で AIX を立てる）", () => {
+  eq(adoptSignalAixOverBrainNull(true, { kind: "signal", action: "estimate_sheet" }, { BRAIN_NULL_SIGNAL_FALLBACK: "on" }), true);
+  eq(adoptSignalAixOverBrainNull(true, { kind: "scene", scene: "S5_time_spec" }, { BRAIN_NULL_SIGNAL_FALLBACK: "ON" }), true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

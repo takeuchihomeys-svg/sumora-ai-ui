@@ -134,5 +134,38 @@ it("「本日は厳しいので18日はどうでしょうか？」は 18日 だ�
   expect(extractRequestedViewingDates("本日は厳しいので18日はどうでしょうか？", n).map((d) => d.label)).toBe(["9/18(金)"]);
 });
 
+console.log("── 2026-10-08 竹内さん「〇日以降の時は AIX の内覧調整でその日以降で出す」（お客様の事情）");
+const at = (iso: string) => `${iso}+09:00`;
+const convAt = (...rows: Array<[string, string, string]>) => rows.map(([sender, text, t]) => ({ sender, text, rawCreatedAt: new Date(Date.parse(at(t))).toISOString() }));
+it("前の発言「都合つくのが10月8日以降になりそうです」→ 今の発言に日付なし → 10/8 からの幅（10/8・10/9・10/10）", () => {
+  const s = customerViewingDateSpec(convAt(
+    ["customer", "内覧は都合つくのが10月8日以降になりそうです🙇", "2026-10-03T12:00:00"],
+    ["staff", "かしこまりました！！", "2026-10-03T12:10:00"],
+    ["customer", "ここめっちゃいいですね！内覧したいです！", "2026-10-05T14:40:00"],
+  ), NOW);
+  expect(s.kind).toBe("range");
+  expect(on(resolveViewingInvitePrefill({ days, spec: s }))).toBe("10-08,10-09,10-10");
+  expect(specExtraYmds(s)[0]).toBe("2026-10-08");
+});
+it("今の発言「20日以降でお願いします」はその日だけ（内覧日指定あり）でなく 20日からの幅", () => {
+  const s = spec("20日以降でお願いします");
+  expect(s.kind).toBe("range");
+  expect(specExtraYmds(s).slice(0, 2)).toBe(["2026-10-20", "2026-10-21"]);
+});
+it("「20日でお願いします」（以降なし）は今まで通りその日だけ", () => expect(spec("20日でお願いします").kind).toBe("dates"));
+it("前の発言の日付が過ぎていれば使わない（指定なし＝どの日も入れない）", () => {
+  const s = customerViewingDateSpec(convAt(
+    ["customer", "内覧は都合つくのが10月2日以降になりそうです", "2026-09-28T12:00:00"],
+    ["customer", "内覧したいです！", "2026-10-05T14:40:00"],
+  ), NOW);
+  expect(s.kind).toBe("none");
+});
+it("時刻の無い発言（rawCreatedAt なし）は前の発言の事情を読まない＝今まで通り", () => expect(spec("ここ内覧したいです").kind).toBe("none"));
+it("NEXT_PUBLIC_VIEWING_INVITE_FROM_CIRCUMSTANCE=off で今まで通り（以降でもその日だけ）", () => {
+  process.env.NEXT_PUBLIC_VIEWING_INVITE_FROM_CIRCUMSTANCE = "off";
+  expect(spec("20日以降でお願いします").kind).toBe("dates");
+  delete process.env.NEXT_PUBLIC_VIEWING_INVITE_FROM_CIRCUMSTANCE;
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  - " + f); process.exit(1); }

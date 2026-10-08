@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { GUARANTOR_OCR_NAME_HINT, resolveGuarantor, guarantorTypeJa } from "@/app/lib/guarantor-companies";
+import { GUARANTOR_OCR_NAME_HINT, resolveGuarantorForText, guarantorTypeJa } from "@/app/lib/guarantor-companies";
 
 export const maxDuration = 30;
 
@@ -111,7 +111,7 @@ ${GUARANTOR_OCR_NAME_HINT}
         };
         propertyName = parsed.property_name || "";
         // 種類はマスタで決める（マスタに無い会社は「不明」・会社名は正規名に名寄せ）
-        const resolved = resolveGuarantor(parsed.company_name || "");
+        const resolved = resolveGuarantorForText(parsed.company_name || "");   // 10/08: 種類は表で確かな時だけ
         companyName = resolved.name;
         guarantorType = companyName ? guarantorTypeJa(resolved.type) : "不明";
       }

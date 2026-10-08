@@ -93,6 +93,15 @@ it("申込へ: 申込を決めた → 申込フォーマット／書類 → 書�
   eq(pickerForScene({ aixType: "application_push", turnText: "身分証の写真これで大丈夫ですか" })?.value, "docs_request");
   eq(pickerForScene({ aixType: "application_push", turnText: "少し考えます" })?.value, "push");
 });
+it("物件オススメ: 画面の6種（10/08 竹内）・束を複数送った直後は送った中から", () => {
+  eq((AIX_PICKERS.property_recommendation.pickers[0].options ?? []).map((o) => o.value), ["新規ピックアップ", "新着1件", "継続ピックアップ", "条件広げピックアップ", "代替ピックアップ", "現状伝えて1件"]);
+  eq(pickerForScene({ aixType: "property_recommendation", sentPropertyCount: 5, bundleMinutesAgo: 3, bundleImageCount: 6 })?.value, "継続ピックアップ");
+  eq(pickerForScene({ aixType: "property_recommendation", sentPropertyCount: 1, bundleMinutesAgo: 3, bundleImageCount: 1 })?.value, "新着1件");
+  eq(pickerForScene({ aixType: "property_recommendation", sentPropertyCount: 5, bundleMinutesAgo: 300, bundleImageCount: 6 })?.value, "新着1件");
+  eq(pickerForScene({ aixType: "property_recommendation", widened: true, bundleMinutesAgo: 3, bundleImageCount: 6 })?.value, "条件広げピックアップ");
+  eq(pickerForScene({ aixType: "property_recommendation", afterEnded: true })?.value, "代替ピックアップ");
+  eq(pickerForScene({ aixType: "property_recommendation" })?.value, "新規ピックアップ");
+});
 it("ピッカーの無い AIX は null", () => {
   eq(pickerForScene({ aixType: "phone_followup" }), null);
 });

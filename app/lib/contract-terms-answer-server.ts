@@ -127,7 +127,7 @@ export async function loadContractTermsAnswer(o: {
     const facts = await loadStaffFreeRentFacts(o.conversationId).catch(() => []);
     material.staffFreeRent = staffFreeRentFor(facts, target.name, target.roomNo);
   }
-  const routes = usable.map((t) => routeContractTerm(t, material));
+  const routes = usable.map((t) => routeContractTerm(t, material, { questionText: o.customerText }));
   const t: ContractTarget = { name: target.name, roomNo: target.roomNo };
   return { topics: usable, target: t, routes, allInMaterial: contractTermsAllInMaterial(routes), note: buildContractTermsNote(t, routes), source };
 }

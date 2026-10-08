@@ -28,7 +28,7 @@ import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
 import { customerSharedPropertyNames } from "../lib/customer-property-names";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
-import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
+import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, resolveGuarantorForText, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
 // 2026-09-17 竹内（現状伝えて・1件訴求）: 探した現状の1文（実送信の骨組み）
 import { SITUATION_PRESETS, type SituationKind } from "../lib/recommendation-situation";
@@ -2451,7 +2451,7 @@ export default function AixModal({
       //   conversation_match false = 固定テンプレ（LLM なし）／true = 会話を合わせる（ボタンの extraFlags で決まる）。
       //   種類が未選択なら会社名から既定の種類（resolveGuarantor）を入れて送る
       if (actionType === "guarantor_info") {
-        const props = giFilled.map((c) => ({ name: c.name.trim(), company: c.company.trim(), type: c.type || resolveGuarantor(c.company, giCustomCompanies).type }));
+        const props = giFilled.map((c) => ({ name: c.name.trim(), company: c.company.trim(), type: c.type || resolveGuarantorForText(c.company, giCustomCompanies).type }));
         if (props.length === 0) throw new Error("物件名と保証会社名を1件以上入力してください");
         body.properties = props;
         body.parallel = giParallel;
@@ -6294,7 +6294,7 @@ export default function AixModal({
                               // 名前を入れたら種類を自動で決める（マスタ・スタッフ登録分。スタッフが種類を選び直した後は上書きしない）
                               setPropFacilities(prev => prev.map((f, i) => {
                                 if (i !== pi) return f;
-                                const r = resolveGuarantor(v, giCustomCompanies);
+                                const r = resolveGuarantorForText(v, giCustomCompanies);   // 10/08: 自動の種類は表で確かな時だけ
                                 const keepType = f.guarantorType && f.guarantorName.trim() === v.trim();
                                 return { ...f, guarantorName: v, guarantorType: keepType ? f.guarantorType : (r.known ? r.type : null) };
                               }));
@@ -7454,7 +7454,7 @@ export default function AixModal({
                           const v = e.target.value;
                           if (v === "__other__") { updateCard(c.id, { other: true, company: "", type: "" }); return; }
                           // 会社を選んだら種類は既定（手で変えられる）
-                          updateCard(c.id, { other: false, company: v, type: v ? resolveGuarantor(v, giCustomCompanies).type : "" });
+                          updateCard(c.id, { other: false, company: v, type: v ? resolveGuarantorForText(v, giCustomCompanies).type : "" });
                         }}
                         className={`mb-2 ${inputCls}`}
                       >

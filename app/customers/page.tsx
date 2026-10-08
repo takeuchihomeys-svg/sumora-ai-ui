@@ -6,6 +6,14 @@ import { useSearchParams } from "next/navigation";
 import BottomNav from "@/app/components/BottomNav";
 import { supabase } from "@/app/lib/supabase";
 import { effectiveRpUpdateDays, autoRpUpdateDays } from "@/app/lib/rp-update-days";
+import { flagOn } from "@/app/lib/brain-attention";
+import { customerAttention, type AttentionLite } from "@/app/lib/customer-attention";
+
+// 2026-10-08 竹内さん「その形でおねがい」: お客様一覧の「要対応」をブレインに寄せる（会話の画面と同じ NEXT_PUBLIC_BRAIN_ATTENTION で戻す）。
+//   要対応＝ブレインの判断（/api/brain-attention・brain-attention brainNeedsStaff）＋手で付けた印（会話の画面の「要対応にする」・この端末の conv_manual_flags）
+//   並び（要対応の絞り込み・AIX パネル）＝AIX要対応 → ①内覧済み ②審査落ち → ③新規 → ④物件検索中（attentionRank）
+//   ※ 12時間返事をしていない橙色（時間だけの安全網）は会話の画面の物で、ここは触らない
+const BRAIN_ATTENTION_UI = flagOn(process.env.NEXT_PUBLIC_BRAIN_ATTENTION);
 
 type LinkedConv = {
   id: string;
@@ -418,6 +426,29 @@ function CustomersPageInner() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
   const [filterMode, setFilterMode] = useState<"linked" | "all" | "urgent" | "applying" | "flagged" | "others">("linked");
+  // ブレインの要対応（会話 id → 要対応・段・並び）。読み込む前（null）は今まで通り is_flagged で出す（空の一覧が一瞬出ないように）
+  const [brainAttention, setBrainAttention] = useState<Record<string, AttentionLite> | null>(null);
+  const [manualFlagConvIds, setManualFlagConvIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (!BRAIN_ATTENTION_UI) return;
+    try {
+      const stored = localStorage.getItem("conv_manual_flags");
+      if (stored) setManualFlagConvIds(new Set(JSON.parse(stored) as string[]));
+    } catch { /* 読めなければ手の印なし */ }
+    let stop = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/brain-attention", { cache: "no-store" });
+        if (res.ok && !stop) setBrainAttention(((await res.json()) as { items?: Record<string, AttentionLite> }).items ?? {});
+      } catch (e) { console.warn("[brain-attention] load failed:", e); }
+    };
+    void load();
+    const iv = setInterval(() => void load(), 120_000);
+    return () => { stop = true; clearInterval(iv); };
+  }, []);
+  const attentionOf = (c: { linked_conversation?: LinkedConv | null }) =>
+    customerAttention({ convId: c.linked_conversation?.id ?? null, isFlaggedDb: !!c.linked_conversation?.is_flagged, brain: BRAIN_ATTENTION_UI ? brainAttention : null, manualFlags: manualFlagConvIds });
+  const isFlaggedCustomer = (c: { linked_conversation?: LinkedConv | null }) => attentionOf(c).flagged;
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
@@ -653,9 +684,9 @@ function CustomersPageInner() {
     } else if (filterMode === "all") {
       list = customers.filter((c) => !isApplying(c.status));
     } else if (filterMode === "flagged") {
-      list = customers.filter((c) => c.linked_conversation?.is_flagged && !isApplying(c.status));
+      list = customers.filter((c) => isFlaggedCustomer(c) && !isApplying(c.status));
     } else if (filterMode === "others") {
-      list = customers.filter((c) => c.is_linked && !c.linked_conversation?.is_flagged && !isApplying(c.status));
+      list = customers.filter((c) => c.is_linked && !isFlaggedCustomer(c) && !isApplying(c.status));
     } else {
       list = customers.filter((c) => c.is_linked && !isApplying(c.status));
     }
@@ -663,7 +694,8 @@ function CustomersPageInner() {
     if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
     return list.filter((c) => c.customer_name.toLowerCase().includes(q));
-  }, [customers, filterMode, searchQuery]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customers, filterMode, searchQuery, brainAttention, manualFlagConvIds]);
 
   const completedList = useMemo(() =>
     base.filter((c) => isDoneToday(c)),
@@ -687,7 +719,7 @@ function CustomersPageInner() {
         hot.push(c);
         hotIds.add(c.id);
       }
-      if (conv?.is_flagged) {
+      if (isFlaggedCustomer(c)) {
         flagged.push(c);
         flaggedIds.add(c.id);
       }
@@ -708,13 +740,20 @@ function CustomersPageInner() {
       .slice(0, 30)
       .forEach((c) => target.push(c));
 
+    // 要対応の並び: AIX要対応 → ①内覧済み ②審査落ち → ③新規 → ④物件検索中（ブレインを読んだ時だけ・同じ段は元の順）
+    if (BRAIN_ATTENTION_UI && brainAttention) flagged.sort((a, b) => attentionOf(a).rank - attentionOf(b).rank);
     return { hot, flagged, target };
-  }, [customers]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customers, brainAttention, manualFlagConvIds]);
 
   const sorted = useMemo(() =>
     base
       .filter((c) => !isDoneToday(c))
       .sort((a, b) => {
+        if (filterMode === "flagged" && BRAIN_ATTENTION_UI && brainAttention) {
+          const r = attentionOf(a).rank - attentionOf(b).rank;
+          if (r !== 0) return r;
+        }
         if (filterMode === "urgent") {
           // 未送信フィルタ: 送ってない日数が長い順（null=未送信=最優先=先頭）
           const ta = a.last_property_sent_at ? new Date(a.last_property_sent_at).getTime() : 0;
@@ -728,7 +767,8 @@ function CustomersPageInner() {
         const tb = b.last_property_sent_at ? new Date(b.last_property_sent_at).getTime() : 0;
         return tb - ta;
       }),
-  [base, filterMode, summaryJsons]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [base, filterMode, summaryJsons, brainAttention]);
 
   // ボックスビュー用: sorted を updated_at の年月でグループ化
   const boxGroups = useMemo((): Array<{ label: string; customers: Customer[] }> => {
@@ -748,8 +788,8 @@ function CustomersPageInner() {
   const replyCount     = customers.filter((c) => urgency(c) === "reply" && !isApplying(c.status)).length;
   const urgentCount    = customers.filter((c) => c.is_linked && urgency(c) === "property" && !isApplying(c.status)).length;
   const applyingCount  = customers.filter((c) => isApplying(c.status)).length;
-  const flaggedCount   = customers.filter((c) => c.linked_conversation?.is_flagged && !isApplying(c.status)).length;
-  const othersCount    = customers.filter((c) => c.is_linked && !c.linked_conversation?.is_flagged && !isApplying(c.status)).length;
+  const flaggedCount   = customers.filter((c) => isFlaggedCustomer(c) && !isApplying(c.status)).length;
+  const othersCount    = customers.filter((c) => c.is_linked && !isFlaggedCustomer(c) && !isApplying(c.status)).length;
 
   const markSent = async (id: string) => {
     setSentUpdating(id);
@@ -3745,7 +3785,7 @@ function CustomersPageInner() {
                   account: c.linked_conversation?.account ?? c.account,
                   status: c.status,
                   subLabel: c.linked_conversation?.updated_at ? relTime(c.linked_conversation.updated_at) : "",
-                  flagged: !!c.linked_conversation?.is_flagged,
+                  flagged: isFlaggedCustomer(c),
                 }))}
               />
               <AixPanelSection

@@ -12,7 +12,9 @@ import { propertyLabelsForImages } from "@/app/lib/quoted-context";
 import { resolveGuarantorTargets, type GuarantorTargetMsg, type GuarantorTargets } from "@/app/lib/guarantor-target";
 import { guarantorFromMaterial, type MaterialGuarantorResult } from "@/app/lib/guarantor-material";
 import { propertyKeyOf } from "@/app/lib/confirm-target-property";
-import { normalizeGuarantorType, type GuarantorType } from "@/app/lib/guarantor-companies";
+import { normalizeGuarantorType, guarantorTypeSure, isMasterGuarantor, type GuarantorType } from "@/app/lib/guarantor-companies";
+/** 先入れの種類: 分類表の会社は表で確かな種類だけ（確かでなければ空＝スタッフが選ぶ）・スタッフが登録した会社はその種類（10/08 竹内さん「独立系は確かな時だけ」） */
+const prefillType = (c: { name: string; type: GuarantorType }): GuarantorType | "" => !isMasterGuarantor(c.name) ? c.type : (process.env.GUARANTOR_TYPE_SURE_ONLY === "off" ? c.type : (guarantorTypeSure(c.name).sure ? c.type : ""));
 
 const PICKUP_MAX_DAYS = 60;
 
@@ -155,8 +157,8 @@ export async function loadGuarantorPrefill(conversationId: string, opts: { befor
     cards.push({
       name,
       company: named?.name ?? "",
-      type: named ? named.type : "",
-      candidates: m?.result.status === "multiple" ? m.result.companies.map((c) => ({ name: c.name, type: c.type })) : [],
+      type: named ? prefillType(named) : "",
+      candidates: m?.result.status === "multiple" ? m.result.companies.map((c) => ({ name: c.name, type: prefillType(c) || "unknown" as GuarantorType })) : [],
       materialSource: m?.source ?? null,
       materialStatus: m?.result.status ?? "no_material",
       note: guarantorCardNote(m),

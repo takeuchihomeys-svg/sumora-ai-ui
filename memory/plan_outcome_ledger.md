@@ -280,3 +280,20 @@
 - 実物での効き方: 表の1位の condition_hearing（1.9%）をブレインが選んだのは直近30日で 2回／2,400判断 → 目に見える影響は小さいが、「重視すること」という指示が雑音として毎回の system に乗っている
 - 案の比較: A 確定の成約だけで数え直す＝確定 3件で全部 0 か n=1（使えない）／C 内覧・申込までの到達率に置き換え＝件数はあるが段階の偏り②がそのまま／D 少ない時は出さない＝今は全部が線の下で B と同じ・定義の偏りは残る／**B 止める（ブレインに渡さない）＋段6で台帳から「場面×ブレインの判断→次の段階まで届いた割合」（確定だけ・案件の段階で揃える・n が線を超えた物・2択の時だけ）に置き換える**
 - **選ぶ: B**。理由: 今の数字は成約データでも効果でもない（推定込み・段階の偏り）・止めても判断の質は落ちない（実物で効いていない）・設計知見 a087aec0 との食い違いが消える・system が少し短くなる。戻す口は環境変数（案: `BRAIN_ACTION_WIN_RATES=on`）。aix/suggest と auto-reply-readiness の読み方も同じ時に揃える（auto-reply-readiness の関所は勝率でなく見張りの一致率で見る）
+
+## 9. 竹内さんの決定（2026-10-08 夕）と実装（未コミット・本番の DDL は未実行）
+
+| # | 決定 | 実装 |
+|---|---|---|
+| ① | 「申込までで成約データとして扱って大丈夫。申込までのツールなので」＝このツールの成功は**申込に届いた事** | `application-reach.ts` の `reachedApplication`・朝の日報は「📝 昨日の申込」（deal_outcomes.applied_at）・ブレインの成約パターンの札は【申込に届いた】（`winningOutcomeTag`）。戻す `OUTCOME_APPLY_BASIS=off` |
+| ② | 「申込して30日経ったら確認のアナウンスが入って選択できる」 | 会話画面のトークの上に小さい帯（`app/components/OutcomeConfirmBar.tsx`・`/api/deal-outcomes/confirm`）: 申込から30日・一番新しい案件が「申込中のまま」か「推定の成約」の時だけ 🔔「申込から〇日たちました。『物件』の結果を選んでください」→ 成約した／審査落ち・切り替え／キャンセル／まだ手続き中（14日後にまた聞く）。選んだ結果は deal_outcomes に locked・confirmed で残る（毎日の作り直しで上書きしない＝確認が推定より優先）。auto-seiyaku は「成約」以外を選んだ会話と待ちの間は飛ばす。朝の日報に「🔔 確認待ち N件」（名前5件まで）。グループへの別の通知は足さない（feedback_group_aix_only）。決まり `outcome-confirm.ts`・戻す `OUTCOME_CONFIRM=off` |
+| ③ | 成約の型の分析は「申込基準で考える」 | `analyze-closed-conversation.ts`: closed_won も applying として分析（`analysisOutcomeOf`）・会話は一番新しい案件の申込の時刻＋1分で切る（`analysisCutoffAt`・切り替え／失注で終わった案件の申込では切らない）・書き戻しは申込で closing_strategy_logs.outcome='applied'／winning_pattern_logs.actual_outcome='applying'・was_correct=true |
+| ④ | 審査に出したら段階を申込にする運用を「おこなう」 | 同じ帯に 📝「審査に出している連絡がありますが、段階が『申込』になっていません」＋［申込にする］（押すとステータスのメニューと同じ処理）［閉じる］（その形跡では出さない・端末に控え）。決まり `apply-stage-nudge.ts`（申込より前の段階・21日以内・最後に戻した後・その後に否決/取り消しが無い）。監査 `scripts/audit-apply-stage-nudge.ts`（120日・「審査」を含む 799通→形跡 64通を目で読んだ・物件の説明「審査通過しやすい」・他の申込者「1番手の方の審査中」・誘い「よろしければ…お申込みさせて頂きます」・流れの説明は外す）。**今出る会話 7**（全部スタッフが「お申込みさせていただきます」等の後も段階が提案中）。戻す `APPLY_STAGE_NUDGE=off` |
+| ⑥ | 勝率表は B（止めて台帳から作り直す）＋①に合わせる | 旧の成約の勝ち率（aix_action_attribution）は brain-core・aix/suggest・suggest-next-action・morning-report（TOP3）で読まない。auto-reply-readiness の関所は見張りの一致率（`watch-aix-match.ts`・line_watch_turns の aix_verdict same/(same+other+not_pressed)・5件以上・50%以上）。戻す `BRAIN_ACTION_WIN_RATES=on`（全部まとめて旧）。新: 場面（reply-scene）×段階（内覧前／内覧後）×ブレインの判断（AIX の種類か返信）→ 申込まで届いた割合（案件で数える・同じ案件は1つ・申込の後の判断と30日未満の進行中は数えない）を cron/outcome-ledger が毎日 `brain_action_reach_stats` に作り直し、ブレインは会話ごとの塊に「場面と段階が合い、線（既定20案件・`BRAIN_APPLY_REACH_MIN_N`）を超えた判断が2つ以上ある時だけ」1〜5行で受け取る（材料だけ・「重視すること」は書かない）。戻す `BRAIN_APPLY_REACH=off` |
+
+**ブレインに渡す数字の前後（実データ 10/08・`scripts/audit-application-reach.ts`）**
+- 前: 毎回の system[1] に7行「condition_hearing 成約率1.9% (n=52)／meeting_place 1.5%／application_push 1.2%／viewing_invite 1.2%／property_check_result 1.0%／property_send 0.6%／property_recommendation 0.2%」＋「この勝率を重視すること」
+- 後: system からは消える（キャッシュの鍵が1回変わる）。台帳から: 判断 2,440件（場面なし2）・会話182・案件206（申込に届いた60）→ 場面×段階×判断 123行のうち線（20案件）を超えたのは1行（条件・内覧前・property_send n=22・申込13＝59%）。同じ場面で2つ目（返信 n=16・25%）が線の下 → **今はブレインに何も足さない**。貯まれば（月 約2,400判断）条件・お礼の場面から出始める見込み
+
+**本番の DDL（未実行）**: migrate-schema 末尾の段（deal_outcomes に staff_confirmed_at・staff_confirm_choice・confirm_snooze_until・idx_deal_outcomes_applied／brain_action_reach_stats）。流すまでは: 確認の帯は出ない（列が無いと候補を返さない）・申込にする促しは出る・ブレインの注記は空・auto-seiyaku は今まで通り。
+**台帳の版**: ol2-20261008（判断の出来事に scene・vb）。次の cron（JST 9:30）で直近60日に動いた会話が作り直される。

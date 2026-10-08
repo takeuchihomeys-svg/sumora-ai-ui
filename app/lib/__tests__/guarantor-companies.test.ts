@@ -7,6 +7,7 @@ import {
   parseGuarantorTypeJa, guarantorTypeJa, guarantorNamesByType, GUARANTOR_OCR_NAME_HINT,
   GUARANTOR_TYPES, GUARANTOR_TYPE_DEFINITION, GUARANTOR_TYPE_SHORT, GUARANTOR_TYPES_JA, GUARANTOR_TYPE_SCREENING_NOTE,
   normalizeGuarantorType, GUARANTOR_INFO_STAFF_EXAMPLES, type GuarantorType,
+  guarantorTypeSure, guarantorTypeForText, GUARANTOR_COMPANY_MASTER,
   guarantorInfoShape, guarantorInfoStructure, buildGuarantorAnswerText, buildGuarantorMatchedText, customerWorriesAboutScreening, GUARANTOR_ANSWER_TYPE_NOTE, GUARANTOR_ANSWER_STAFF_EXAMPLES, GUARANTOR_SUPPORT_LINE,
 } from "../guarantor-companies";
 import { normalizeAixActionKey, AIX_STAFF_NOTES, AIX_BUTTON_LABELS } from "../aix-taxonomy";
@@ -324,8 +325,9 @@ it("決定どおりの分類: ナップ=独立系／クレディセゾン・エ�
   expect(resolveGuarantor("ジェイリース").type).toBe("shinyou");
   expect(resolveGuarantor("JID").type).toBe("shinyou");
 });
-it("足した会社（スタッフが独立系と説明）: シノケン・ほっと保証・レンポッポ・アーク・エイト・オセロ → 独立系", () => {
-  for (const [raw, name] of [["シノケンコミュニケーションズ", "シノケンコミュニケーションズ"], ["シノケン", "シノケンコミュニケーションズ"], ["ほっと保証", "ほっと保証"], ["レンポッポ", "レンポッポ"], ["アーク保証", "アーク保証"], ["アーク賃貸保証", "アーク保証"], ["エイト賃貸保証", "エイト賃貸保証"], ["オセロ・フィナンシャルサービス株式会社", "オセロ・フィナンシャルサービス"], ["JPMCファイナンス", "JPMC"]] as const) {
+it("足した会社: シノケン・ほっと保証・レンポッポ・エイト・オセロ → 独立系（10/08 公式の情報で確かめた・アークは LICC の正会員＝信用系に直した）", () => {
+  expect(resolveGuarantor("アーク賃貸保証")).toEqual({ name: "アーク保証", type: "shinyou", known: true });
+  for (const [raw, name] of [["シノケンコミュニケーションズ", "シノケンコミュニケーションズ"], ["シノケン", "シノケンコミュニケーションズ"], ["ほっと保証", "ほっと保証"], ["レンポッポ", "レンポッポ"], ["エイト賃貸保証", "エイト賃貸保証"], ["オセロ・フィナンシャルサービス株式会社", "オセロ・フィナンシャルサービス"], ["JPMCファイナンス", "JPMC"]] as const) {
     expect(resolveGuarantor(raw)).toEqual({ name, type: "independent", known: true });
   }
 });
@@ -333,12 +335,15 @@ it("興和アシストは信用系（2026-10-07 竹内さん「信用系」）",
   expect(resolveGuarantor("興和アシスト")).toEqual({ name: "興和アシスト", type: "shinyou", known: true });
   expect(buildGuarantorAnswerText([{ name: "H-maison大正VII 106号室", company: "興和アシスト", type: resolveGuarantor("興和アシスト").type }])).toBe(`保証会社は興和アシストとなります！！\n${GUARANTOR_ANSWER_TYPE_NOTE.shinyou}`);
 });
-it("説明の無い会社は種類を推測しない（不明）", () => {
-  for (const raw of ["テナントファースト", "プレサンスギャランティ", "ランドインシュア", "パナソニックホームズ賃貸サポート", "エフアール信用保証", "クレデンス"]) {
+it("確かめられない会社は種類を推測しない（不明）・10/08 公式の情報で確かめた会社は種類あり", () => {
+  for (const raw of ["テナントファースト", "ライフ", "グリーン保証", "GC保証"]) {
     const r = resolveGuarantor(raw);
     expect(r.known).toBe(true);
     expect(r.type).toBe("unknown");
   }
+  for (const raw of ["プレサンスギャランティ", "パナソニックホームズ賃貸サポート", "エフアール信用保証", "クレデンス", "JRAG"]) expect(resolveGuarantor(raw).type).toBe("independent");
+  expect(resolveGuarantor("ランドインシュア").type).toBe("shinyou");
+  expect(resolveGuarantor("日本賃貸住宅保証機構").name).toBe("JRAG");
 });
 it("短い呼び名（シノケン・アーク・プレサンス）は本文から拾わない（不動産会社名・一般語と重なる）", () => {
   expect(detectGuarantorInText("シノケンの物件です")).toBe(null);
@@ -364,11 +369,11 @@ it("種類は3つ＋不明（LICC系という種類は無い）", () => {
   }
   for (const ex of GUARANTOR_INFO_STAFF_EXAMPLES) expect(ex).notToContain("LICC");   // 手本で無くした種類名を見せない
 });
-it("信用系に入るのは LICC の会社（全保連・ジェイリース・日本賃貸保証）と K-net・興和アシスト（10/07）・エポス/クレディセゾンは信販系・ナップは独立系", () => {
+it("信用系に入るのは LICC の正会員（10/08 jpg.or.jp の一覧）と全保連（竹内さん）・日本賃貸保証（確かでない）・エポス/クレディセゾンは信販系・ナップは独立系", () => {
   expect(resolveGuarantor("K-net")).toEqual({ name: "K-net", type: "shinyou", known: true });
   expect(resolveGuarantor("ケーネット").type).toBe("shinyou");
   expect(resolveGuarantor("Knet").type).toBe("shinyou");
-  expect([...guarantorNamesByType("shinyou")].sort()).toEqual(["K-net", "ジェイリース", "全保連", "日本賃貸保証", "興和アシスト"].sort());
+  expect([...guarantorNamesByType("shinyou")].sort()).toEqual(["K-net", "ジェイリース", "全保連", "日本賃貸保証", "興和アシスト", "エルズサポート", "アーク保証", "ニッポンインシュア", "ルームバンクインシュア", "ランドインシュア", "大成保証", "宅建ブレインズ", "テンポスバスターズ"].sort());
   expect(guarantorNamesByType("credit").includes("K-net")).toBe(false);
   expect(guarantorNamesByType("credit").includes("エポスカード")).toBe(true);
   expect(guarantorNamesByType("credit").includes("全保連")).toBe(false);
@@ -534,6 +539,33 @@ it("会話を合わせる（物件1件・1社目/2社目）は LLM なし: 土�
   expect(customerWorriesAboutScreening("保証会社って審査ゆるいとこですか")).toBe(true);
   expect(customerWorriesAboutScreening("保証会社どちらですか？")).toBe(false);
   expect(checkGuarantorFacts(buildGuarantorMatchedText(one, "ブラックでも通る？")!, one).ok).toBe(true);
+});
+// 2026-10-08 竹内「全て何系かも分かるように」「独立系は確かな時だけ言い切る」: 種類の根拠（basis）と確かさ
+it("種類の確かさ: 竹内さん・公式の情報だけ sure（本文で言い切る）／確かでない会社・表に無い会社は unknown", () => {
+  expect(guarantorTypeSure("全保連")).toEqual({ sure: true, type: "shinyou", basis: "takeuchi", source: "https://www.zenhoren.jp/company/outline.html" });
+  expect(guarantorTypeSure("日本セーフティ").sure).toBe(true);
+  expect(guarantorTypeSure("エルズサポート").type).toBe("shinyou");   // LICC の正会員（9/26 は独立系にしていた）
+  expect(guarantorTypeSure("日本賃貸保証").sure).toBe(false);          // LICC にいた記録なし＝竹内さんに確認
+  expect(guarantorTypeSure("sumai保証").sure).toBe(false);             // エポスと提携
+  expect(guarantorTypeSure("えるく信用保証")).toEqual({ sure: true, type: "credit", basis: "official", source: "https://www.erc-card.co.jp/smarts/index/67/" });
+  expect(guarantorTypeSure("知らない保証").sure).toBe(false);
+  expect(guarantorTypeForText("sumai保証")).toBe("unknown");
+  expect(guarantorTypeForText("Casa")).toBe("independent");
+  expect(guarantorTypeForText("テナントファースト")).toBe("unknown");
+});
+it("表の会社は全部 basis があり、言い切る会社（takeuchi／official）は出所の URL がある", () => {
+  for (const c of GUARANTOR_COMPANY_MASTER) {
+    expect(!!c.basis).toBe(true);
+    if (c.basis === "official" || (c.basis === "takeuchi" && c.type !== "shinyou")) expect(/^https:\/\//.test(c.source ?? "")).toBe(true);
+    if (c.type === "unknown") expect(c.basis).toBe("none");
+  }
+});
+it("資料の表記ゆれ（パナソニック ホームズ・イエントラスト・ブレサンス・日本賃貸住宅保証機構）を正規名に", () => {
+  expect(normalizeGuarantorName("パナソニック ホームズ賃貸サポート")).toBe("パナソニックホームズ賃貸サポート");
+  expect(normalizeGuarantorName("イエントラスト")).toBe("イントラスト");
+  expect(normalizeGuarantorName("ブレサンスギャランティ")).toBe("プレサンスギャランティ");
+  expect(normalizeGuarantorName("日本賃貸住宅保証機構")).toBe("JRAG");
+  expect(normalizeGuarantorName("ライフ安心プラス")).toBe("あんしん保証");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

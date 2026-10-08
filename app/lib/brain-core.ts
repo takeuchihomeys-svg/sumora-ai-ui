@@ -77,6 +77,7 @@ import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOu
 import { getCustomerState } from "@/app/lib/customer-state-server";
 import { buildCustomerStateBrainBlock, type CustomerState } from "@/app/lib/customer-state";
 import { brainDecisionLedgerCols, brainDecisionDigestExtra } from "@/app/lib/brain-decision-ledger";
+import { legacyActionWinRatesEnabled, applicationReachEnabled, winningOutcomeTag } from "@/app/lib/application-reach";
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
 import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
@@ -127,6 +128,7 @@ import { promiseKindsToday } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
+import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE } from "@/app/lib/search-result-choice";
 import { absolutizeRelativeDays } from "@/app/lib/relative-date";
 // 2026-09-12 同 段2: 場面の証拠（決定論）とスタッフが押した AIX の実績（brain_aix_feedback）をブレインの入力にする
 import {
@@ -143,7 +145,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { resolveFocusedEstimateRequest } from "@/app/lib/focused-estimate-request";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 // 2026-09-27 竹内「重い順から治す」①: 語のルール（信号5.5・8）はブレインの「AIX なし」を上書きしない・意味の無い語は外す（穴:G5）
-import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedKeywordRuleHit } from "@/app/lib/brain-keyword-rules";
+import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedKeywordRuleHit, adoptSignalAixOverBrainNull } from "@/app/lib/brain-keyword-rules";
 // 2026-09-27 ②: お客様の「審査落ちた」（別物件への切り替え）に 物件確認した を選ばせない（本番の線は 物件ピックアップ）
 import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch";
 import { decidePostApplyBrainGate, POST_APPLY_GATE_STATUSES, type GateMsg } from "@/app/lib/post-apply-brain-gate";
@@ -157,6 +159,8 @@ import { detectProcedureQuestion, isProcedureReplyQuestion, detectConfirmTopics,
 // 9巡目（10/08）: 学習ルールの見直し（rules-review-r9）をテストの会話だけ DB を変えずに重ねる（【絶対ルール】【線引き】行動の候補のルール）。重ねが無ければ何もしない
 import { currentRulesOverlay, applyRulesOverlay, overlayExtraLimit } from "@/app/lib/rules-overlay";
 import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question";
+// 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
+import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
 // これまで brain/list と cron/brain-weekly に約250行が copy-paste され、
@@ -265,6 +269,8 @@ export type SuggestedAixMeta = {
   condition_change_scope?: "permanent" | "temporary" | "none" | null;
   hesitancy_pattern?: "thinking" | "callback" | "waiting" | "undecided" | "timeline" | null;  // 決断保留パターン
   future_timeline?: string | null;       // 顧客が示した決断・申込タイムライン（会話に実際に出た表現のみ・30字）
+  /** 2026-10-08 入居の時期が先（contact-promise・決定論）: 連絡の日の約束をする返信の番。generate-reply が実際の LINE の型で下書きを書く */
+  far_move_in?: { move_in_label: string; contact_label: string; contact_ymd: string; source: string } | null;
   checkpoint_stage?: "hearing" | "proposing" | "viewing" | "applying" | "contract" | null;  // 会話の実態フェーズ
   /** 2026-09-27: customer-state で段階を補正した時だけ LLM の元の値（null は "null"）。補正の件数と前後を数えるため（brain-stage.ts） */
   checkpoint_stage_llm?: string;
@@ -426,7 +432,7 @@ const AIX_CAPABILITY_MAP = `
 - cost_explain: 費用の安さの説明を生成（仕組み＝オーナー様からの広告料をお客様に還元。仲介手数料はスモラ＝一律2,980円／イエヤス・ギガ＝0円。＋この物件の具体額＝貸主から〇〇円頂き〇〇円を還元。金額はスタッフ入力のみ・金額なしの「仕組みを説明」も可）
 - cost_breakdown: 初期費用の中身の説明を生成（スタッフが貼り付けた御見積書の画像を読み取り、含まれる項目・合計・家賃だけで入居できるか・日割家賃の扱いを1通で答える。金額は御見積書の数字のみ）
 - phone_call: 「電話をかける」ボタン（LINEコール・お客様がボタンから公式LINEに電話できる）と案内文を送る。電話の後のまとめはスタッフが AIX【電話終了後】で送る（ブレインは選ばない）
-- guarantor_info: 物件ごとの保証会社名と種類（独立系＝審査基準が緩い／信販系／信用系）を一覧で案内し、かぶっていない保証会社の並行審査を勧める（会社名・種類はスタッフ入力のみ）。お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時に選ぶ。本文は「保証会社確認させて頂きます」の受付だけで、会社名・通りやすさを本文に書かない
+- guarantor_info: 物件ごとの保証会社名と種類（独立系＝審査基準が緩い／信販系／信用系）を一覧で案内し、かぶっていない保証会社の並行審査を勧める（会社名・種類はスタッフ入力のみ）。お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた時、**その物件の資料に保証会社名が無い時だけ**選ぶ（10/08 竹内さん: 資料に書いてあれば返信で答える＝【📄 お客様が聞いた契約条件】に記載ありと出ている時は aix: null）。AIX の番の本文は「保証会社確認させて頂きます」の受付だけで、会社名・通りやすさを本文に書かない
 - estimate_sheet: 見積書を読み取り自動計算+カバーメッセージ生成。見積書の後は申込へ進めない（2026-09-12 竹内）。スタッフの実際は見積送付に「お気に召されたお部屋ご都合よろしいお日にちにご案内させて頂きます」と内覧のご案内を添える形が中心で、見積書の次に申込へを押したのは185件中18件（10%）。次の一手はお客様の反応（内覧希望・検討・懸念・別物件）を見て決める
 - application_push: 申込クロージングメッセージ（①申込時フォーマット本体）を生成 → 送信直後（実測32秒〜4分48秒）に「②申込時フォーマット（続き）」を一字一句そのまま自発送信する（AI最適化禁止）
 - condition_hearing: 条件ヒアリングのフォーム（8項目そのまま・お客様からもらっている条件は項目に書き入れる）を送る。まだ物件を送っていないのに条件（エリア＋家賃）がそろっていない時は property_send ではなくこれ。エリアと家賃の両方が分かっていれば選ばない（property_send）（2026-10-02 竹内）
@@ -504,9 +510,9 @@ const REPLY_STYLE_RULES = `
 以下の質問にはAIが返信文で「答え」を生成することを絶対禁止とする。橋渡し文言（受付宣言）のみで返信を完結させ、aix フィールドには対応ボタンを提案すること。AIがこれらをテキストで返そうとしている場面は必ず「ご確認させて頂きます」系の橋渡し文言に差し替える:
 ① 空室・募集状況（「空いてますか」「取り扱いありますか」）→ aix: property_check_result。実会話では「募集終了」「申込有り2番手」「タッチの差で埋まった」が頻発しており「空いています」の生成は即事実誤認
 ② 初期費用・割引額・見積金額 → aix: estimate_sheet。金額は見積書Vision OCRの実数値のみ送信可。「🌟〇〇円割引」等の割引額はスタッフの交渉結果でありAIが数字を作るとクレーム直結。初期費用の中身（含まれる項目・家賃だけで入居できるか・別途かかる費用）の質問は aix: cost_breakdown（御見積書の内訳で答える。本文で中身を説明しない）
-②' 保証会社そのもの（「保証会社はどこですか」「保証会社は緩そうなところですか」「〇〇保証の物件はありますか」）→ aix: guarantor_info（物件ごとの会社名・種類を AIX【保証会社について】で一覧に。本文は「保証会社確認させて頂きます」の受付だけ・会社名や通りやすさを書かない）。審査の通りやすさだけの質問（「審査厳しいですか」）は property_check_result（保証会社・審査面）
+②' 保証会社そのもの（「保証会社はどこですか」「保証会社は緩そうなところですか」「〇〇保証の物件はありますか」）→ その物件の資料に保証会社名があれば aix: null（返信で資料の会社名を答える・種類は【📄 お客様が聞いた契約条件】の（独立系）等がある時だけ言う）。資料に無い・種類を聞かれたが表で確かでない・複数の物件の一覧 → aix: guarantor_info（AIX【保証会社について】。本文は「保証会社確認させて頂きます」の受付だけ・会社名や通りやすさを書かない）。審査の通りやすさだけの質問（「審査厳しいですか」）は property_check_result（保証会社・審査面）
 ③ 退去予定日・入居可能日・最短入居日 → 橋渡しのみ（「最短のご入居日につきまして管理会社に確認させていただきます」）。審査3日〜10日+契約手続きの実データ回答が正でありAIの楽観約束は引越し手配等の実害
-④ 審査進捗・審査通過可能性（「通りますか」「夜職だと厳しいですか」）→ 橋渡しのみ。スタッフ自身が「通過率は過去の滞納に左右されるので分からない」と明言している。「通りそうです」の生成は重大ハルシネーション。管理会社に確認した保証会社名・種類（独立系＝審査基準が緩い 等）・並行審査の勧めはスタッフが AIX【保証会社について】で送る（本文で保証会社名・審査の緩さを書かない）
+④ 審査進捗・審査通過可能性（「通りますか」「夜職だと厳しいですか」）→ 橋渡しのみ。スタッフ自身が「通過率は過去の滞納に左右されるので分からない」と明言している。「通りそうです」の生成は重大ハルシネーション。管理会社に確認した保証会社名・種類（独立系＝審査基準が緩い 等）・並行審査の勧めはスタッフが AIX【保証会社について】で送る（資料に無い保証会社名・表で確かでない種類・審査の緩さを本文に書かない）
 ④' 【2026-09-30 竹内・みこと事例】審査・入居までの**期間と流れ**、必要書類、本人確認書類の質問（「審査通るまでどのくらいの期間見といたらいいですか」「申込から入居まで何日くらいですか」「必要書類は何ですか」「マイナンバーカードで大丈夫ですか」）は④ではない → **aix は null・本文で答える**（管理会社に確認する話ではない。「確認させて頂きます」で返さない）。答えは材料の【📝 お客様の手続きの質問】の事実（申込→保証会社の審査 3日〜10日程→契約のお手続き→ご入居）で、実送信365日・22通すべて本文の回答（この質問の後に 物件確認した／確認します／保証会社について を押した回は0）。入居できる日は物件で変わる（即入居か退去予定か）ので、材料に資料の入居時期がある時は資料の文字のまま・無い時は断言しない
 【「物件確認した」と「確認した」は別の AIX（2026-09-30 竹内）】aix は同じ property_check_result でも画面のボタンは2つ: 「物件確認した（募集状況）」＝**物件そのもの**のこと（空き・募集状況・募集終了・別の部屋・室内写真）／「確認した（条件・交渉）」＝**設備・入居（入居可能日・退去予定）・管理会社そのもの（名前・連絡先）・ペット・駐車場・保証会社・初期費用の交渉など管理会社に確認が要る事**。「この物件の管理会社はどこですか」は空きの質問ではない → property_check_result（確認した（条件・交渉）→管理会社について）。管理会社の名前は本文で言い切らず AIX から送る。どちらも「確認した結果を報告する」ボタンで、お客様の質問が来ただけ・確認の要らない一般の質問（審査の期間・流れ・必要書類）では選ばない。材料に【🔎 お客様が聞いた入居・ペット・駐車場】【🔧 お客様が聞いた設備】があり「資料に記載あり」の項目は本文で資料のとおりに答える（aix は null）／「資料では答えられない」項目は property_check_result（確認した（条件・交渉））
 ⑤ 値下げ交渉の可否と結果 → 橋渡しのみ。「安くなります」は期待値誤誘導（実会話で「家賃減額・礼金減額は考えていないとのこと」と否決された実績あり）
@@ -1101,7 +1107,9 @@ export async function loadBrainSystemInputs(): Promise<BrainSystemInputs> {
   // aix_action_attribution: 各アクションの成約勝率（action_type別・usage_count加重平均）
   // brain が「どのアクションが成約につながるか」を実測データで知った上で推奨できるようにする
   let actionWinRates: Array<{ action_type: string; avg_win_rate: number; total_usage: number }> = [];
-  try {
+  // 2026-10-08 竹内さんの決定⑥（このツールの成功＝申込に届いた事）: 推定の成約込みの勝率は渡さない（成約データでも効果でもない・設計知見 5e006794）。
+  //   置き換えは「場面×段階×判断 → 申込到達率」（application-reach.ts・会話ごとの塊に場面が合う時だけ）。旧に戻す: BRAIN_ACTION_WIN_RATES=on
+  if (legacyActionWinRatesEnabled(process.env)) try {
     const { data: awrData } = await supabase
       .from("aix_action_attribution")
       .select("action_type, win_rate, usage_count")
@@ -2202,7 +2210,7 @@ ${catalogBlockForBrain(brainScene)}
   // winning_patterns: RAG検索結果から類似パターンを注入（バルクフェッチ廃止・会話コンテキスト最適化）
   const winningPatternsText = ragWinningPatterns.length > 0 && keepBrainMaterial(brainScene, "winning", brainSceneOn)
     ? `\n【類似成約・失注パターン（RAG検索・この会話に類似した過去事例）】\n${ragWinningPatterns.map((w) => {
-        const outcomeLabel = w.outcome_type === "closed_lost" ? "【失注】" : "【成約】";
+        const outcomeLabel = winningOutcomeTag(w.outcome_type, process.env); // 2026-10-08 決定①③: 申込基準では「申込に届いた」（OUTCOME_APPLY_BASIS=off で旧【成約】）
         const parts = [`${outcomeLabel} ${w.pattern}`];
         if (w.closing_action) parts.push(`→ 有効アクション: ${w.closing_action}`);
         if (w.notes) parts.push(`転換点: ${w.notes}`);
@@ -2507,6 +2515,51 @@ ${catalogBlockForBrain(brainScene)}
         { nowMs: Date.now(), scene: resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene });
       if (ccNote) { customerStateBlockText += `\n\n${ccNote}`; console.log(JSON.stringify({ tag: "brain:customer-circumstances", conversationId, chars: ccNote.length, lines: ccNote.split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2, 40)) })); }
     } catch (e) { console.warn("[brain-core] customer-circumstances skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-08 竹内さん「連投の依頼ごと全て把握する（Claude Code の読み込み方）」: 今の連投の依頼・質問の一覧（2件以上）＋前の束でまだ答えていない確認事項（request-ledger.ts・REQUEST_LEDGER=off）
+    try {
+      const { buildRequestLedger, currentTurnRequests, buildRequestLedgerNote } = await import("@/app/lib/request-ledger");
+      const lm = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!(m as { is_aix_generated?: boolean | null }).is_aix_generated }));
+      const rlNote = buildRequestLedgerNote(buildRequestLedger(lm, Date.now()), currentTurnRequests(lm));
+      if (rlNote) { customerStateBlockText += `\n\n${rlNote}`; console.log(JSON.stringify({ tag: "brain:request-ledger", conversationId, chars: rlNote.length })); }
+    } catch (e) { console.warn("[brain-core] request-ledger skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-10-08 竹内さん「2月に引っ越すなどなれば、物件を抑える事ができるのは1ヶ月のため、1ヶ月半前から探し出す形が理想の流れと伝えて、その日に連絡するように約束」:
+  //   入居・引越しの時期が先（連絡の日＝1ヶ月半前が7日以上先）で、まだ連絡の日を約束していない番だけ（contact-promise.farMoveInTurn・決定論）。FAR_MOVE_IN_CONTACT=off で止まる
+  let farMoveInEarly: import("@/app/lib/contact-promise").FarMoveInPlan | null = null;
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { farMoveInTurn, farMoveInBrainNote, isContactPromiseNotes, contactDue } = await import("@/app/lib/contact-promise");
+      const turn: Array<{ text: string | null; at: string }> = [];
+      for (const m of typedMessages) { if (m.sender !== "customer") break; turn.push({ text: m.text, at: m.created_at }); }
+      farMoveInEarly = farMoveInTurn({
+        customerTurn: turn.reverse(), conditionMoveIn: pc?.move_in_time ?? null, nowIso: new Date().toISOString(),
+        staffHistory: typedMessages.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text, at: m.created_at })),
+      });
+      if (farMoveInEarly) {
+        // 15通より前に約束していてもカレンダーの連絡の日の行が残っていれば約束済み
+        const { data: openContact } = await supabase.from("calendar_events").select("notes").eq("conversation_id", conversationId).eq("is_done", false).like("notes", "【必ず】%【連絡日%").limit(5);
+        if (((openContact ?? []) as Array<{ notes: string | null }>).some((r) => isContactPromiseNotes(r.notes) && !contactDue(r.notes, Date.now()))) farMoveInEarly = null;
+      }
+      if (farMoveInEarly) {
+        customerStateBlockText += `\n\n${farMoveInBrainNote(farMoveInEarly)}`;
+        console.log(JSON.stringify({ tag: "brain:far-move-in", conversationId, moveIn: farMoveInEarly.moveInLabel, contact: farMoveInEarly.contactLabel, days: farMoveInEarly.daysUntilContact, source: farMoveInEarly.source }));
+      }
+    } catch (e) { console.warn("[brain-core] far-move-in skipped:", e instanceof Error ? e.message : String(e)); }
+  }
+  // 2026-10-08 竹内さんの決定⑥: 「この場面で過去の案件が申込まで届いた割合」（場面×段階×ブレインの判断・台帳 deal_outcomes から毎日数える）。
+  //   場面と段階が合い、線（既定20案件）を超えた判断が2つ以上ある時だけ（比べられる2択の時だけ）。申込前だけ。材料だけで言い回しの指示は書かない。
+  //   毎回変わる並び（会話ごとの塊）に入れる（system の前置き＝キャッシュは変えない）。止める: BRAIN_APPLY_REACH=off
+  if (!isPostApplyStatus(convStatus) && applicationReachEnabled(process.env)) {
+    try {
+      const { loadReachNote } = await import("@/app/lib/application-reach-server");
+      const todayYmd = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+      const bucket = (customerState?.viewings ?? []).some((v) => v.status !== "cancelled" && v.ymd <= todayYmd) ? "post_viewing" as const : "pre_viewing" as const;
+      const reachNote = await Promise.race([
+        loadReachNote(resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene, bucket, { labels: AIX_LABEL_JP }),
+        new Promise<string>((r) => setTimeout(() => r(""), 5_000)),
+      ]);
+      if (reachNote) { customerStateBlockText += `\n\n${reachNote}`; console.log(JSON.stringify({ tag: "brain:apply-reach", conversationId, chars: reachNote.length })); }
+    } catch (e) { console.warn("[brain-core] apply-reach skipped:", e instanceof Error ? e.message : String(e)); }
   }
   let viewingsText = customerStateText ? "" : viewings.length > 0
     ? `\n【内覧履歴・予定】${viewings.map((v) => {
@@ -2906,16 +2959,26 @@ ${history}`;
         return "proposing";
       })();
       // 2026-09-27: ブレインがはっきり「なし」と言った時は語のルールで上書きしない（決まり: AIX の要否はブレインだけが判断）
-      const signalAix = await detectSignalBasedAixFallback(conversationId, propertyCustomerId, fallbackPhase, { skipKeywordRules: isExplicitNoAix(parsed.aix) });
+      const brainSaidNoAix = isExplicitNoAix(parsed.aix);
+      const signalAix = await detectSignalBasedAixFallback(conversationId, propertyCustomerId, fallbackPhase, { skipKeywordRules: brainSaidNoAix });
       signalAixRan = true;
       signalAixResult = signalAix && AIX_BRAIN_NOTES[signalAix] ? signalAix : null;
+      // 2026-10-08 竹内さん「ちゃんとブレインを基盤に」: ブレインがはっきり「AIX なし」と言った時は、語・状態の信号の AIX を採らない
+      //   （本番 97番中 スタッフが同じ AIX を押したのは 3番・AIX なし 84番。brain-keyword-rules.adoptSignalAixOverBrainNull・BRAIN_NULL_SIGNAL_FALLBACK=on で旧）
+      if (signalAixResult && !adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "signal", action: signalAixResult })) {
+        console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: `signal:${signalAixResult}` }));
+        signalAixResult = null;
+      }
       if (signalAixResult) {
         finalAix = signalAixResult;
         decisionSource = `signal:${signalAixResult}`;
       } else {
         // 2026-09-12 段2: 既存の信号でも決まらない時だけ、今回の顧客発言の場面の証拠（S2 入居日 / S3 審査 / S5 日時指定）を信号として加える。
         //   既存の信号の結果は変えない（加えるだけ）。decision_source='signal:scene_*' で brain-aix-eval の学習対象にする。
-        const sceneSig = sceneSignalFallback(sceneEvidence);
+        //   2026-10-08: S5（日時の語→待ち合わせ）はブレインが「なし」の時は採らない（本番 0/10・S2/S3/S11 は竹内さんの決定で残す）
+        const sceneSig0 = sceneSignalFallback(sceneEvidence);
+        const sceneSig = sceneSig0 && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
+        if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
         if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action]) {
           finalAix = sceneSig.action;
           sceneSignalCheckPattern = sceneSig.checkPattern;
@@ -3357,6 +3420,16 @@ ${history}`;
       waitingCustomerInfo = true;
       closedAckWait = false;
     }
+    // 2026-10-08 竹内さん（入居の時期が先）: 今は物件ピックアップの番ではなく「理想の流れ（1ヶ月半前から探す）＋連絡の日の約束」の返信の番
+    //   （スタッフだけが知る情報は無い＝返信）。上書きは AIX なし・物件の AIX・内覧調整・条件ヒアリングだけ（確認・見積書の約束を果たす番はそのまま）
+    let farMoveIn: import("@/app/lib/contact-promise").FarMoveInPlan | null = null;
+    if (farMoveInEarly && !waitingCustomerInfo && !/^promise:(?:check|estimate)/.test(String(decisionSource ?? ""))
+      && (finalAix === null || /^(?:property_send|property_recommendation|property_search|viewing_invite|condition_hearing)$/.test(finalAix))) {
+      finalAix = null;
+      sceneSignalCheckPattern = null;
+      decisionSource = "rule:far_move_in_contact";
+      farMoveIn = farMoveInEarly;
+    }
     // 2026-09-16 竹内（YUYA 事例）「内覧が10:40〜なので、AIX の挨拶ボタン内覧後のピッカーでセットしている形とする」:
     //   内覧当日にこちらが送り出した（お気をつけてお越しください）後のお客様のお礼だけ → 返信しないで内覧を待つ。
     //   次の一手は内覧が終わってからの挨拶 → AIX【挨拶（内覧後）】をセットし reply_mode=aix で自動の下書きを作らない。
@@ -3454,6 +3527,8 @@ ${history}`;
       decisionSource = decisionSource ? `${decisionSource}+ack_to_check` : "correction:ack_to_check";
     }
     let twoStage: TwoStageVerdict | null = null;
+    let pickupReadyForChoice: boolean | null = null; // 10/08 検索の結果で選ぶ2択（search-result-choice.ts）に渡す
+
     if (finalAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet|guarantor_info|viewing_invite)$/.test(finalAix)) {
       let pickupReady = false;
       if (finalAix === "property_send" || finalAix === "property_recommendation" || finalAix === "property_search") {
@@ -3475,6 +3550,7 @@ ${history}`;
             }
           }
         } catch { pickupReady = true; } // 読めない時は AIX のまま（今まで通り）
+        pickupReadyForChoice = pickupReady;
       }
       // 5巡目（10/07）: 室内写真の依頼は、頼まれた物件の室内イメージが手元にあれば AIX を直接（two-stage roomPhoto・room-photo-material）
       let roomPhoto: { atHand: boolean; why: string } | null = null;
@@ -3589,6 +3665,13 @@ ${history}`;
         decisionSource = twoStage.source;
       }
     }
+    // 2026-10-08 入居の時期が先: 上の約束の信号（promise:pickup 等）で物件の AIX が入り直しても、この番は理想の流れ＋連絡の日の約束の返信（2段の約束の方向にもしない）
+    if (farMoveIn && (finalAix === null || /^(?:property_send|property_recommendation|property_search|viewing_invite|condition_hearing)$/.test(finalAix) || twoStage)) {
+      twoStage = null;
+      finalAix = null;
+      sceneSignalCheckPattern = null;
+      decisionSource = "rule:far_move_in_contact";
+    } else if (farMoveIn) farMoveIn = null; // 確認・見積書など別の番に入れ替わった時は連絡の日の約束の番にしない
     if (finalAix) {
       const rate = feedbackGateRate(brainAixFeedback, finalAix);
       if (rate) {
@@ -3669,6 +3752,8 @@ ${history}`;
       finalAix = null;
       replyMode = undefined;
       decisionSource = "guard:first_contact";
+      // 入居の時期が先（2028年3月等）の初回は物件ピックアップの番にしない（AIX要対応・自動の検索を起こさない）
+      if (farMoveIn && firstContactPickup && /^property_(?:send|recommendation|search)$/.test(firstContactPickup)) firstContactPickup = null;
     }
 
     // template_hint バリデーションゲート: AIXタブのラベルカテゴリ名（許可リストの含む判定）のみ通す。
@@ -3758,7 +3843,8 @@ ${history}`;
     //   （方向を残すと返信が「募集状況確認させて頂きます」と AIX と食い違う）
     // 2026-09-30: 手続きの質問を返信に倒した時は、LLM の方向（「審査期間を管理会社に確認して報告する」）を返信で答える方向に合わせる
     //   （残すと下書きが「確認させて頂きます」と書く）。資料で答える時も同じ
-    const procedureDirection = procedureDecision && procedureAnswer ? procedureReplyDirection(procedureAnswer.plan)
+    // 2026-10-08 入居の時期が先: 理想の流れ＋連絡の日の約束の方向（contact-promise.farMoveInDirection）
+    const procedureDirection = farMoveIn ? farMoveInDirection(farMoveIn) : procedureDecision && procedureAnswer ? procedureReplyDirection(procedureAnswer.plan)
       : procedureDecision ? "審査・入居までの期間と流れ／必要書類のご質問に本文で答える（管理会社への確認の宣言はしない）"
       : confirmTopicReply && confirmTopic ? `${confirmTopic.routes.map((r) => r.lines.join("／")).join("・")} を資料のとおりに本文で答える（管理会社への確認の宣言はしない）`.slice(0, 120)
       : viewingDateAnswer ? `お客様の内覧の希望に、退去予定日から内覧できる日を本文で答える（実際の送信の形「${viewingDateAnswer.sentence}」・物件名は会話から分かる時だけ前に置く・候補日はまだ出さない・管理会社への確認の宣言はしない）`.slice(0, 160)
@@ -3779,7 +3865,10 @@ ${history}`;
     const keyTopicsGuard = stripRentNegotiationFromList(keyTopicsRaw, { customerAsked: custRentAsk });
     // 2026-09-27: 主のお部屋への見積もりの依頼で 見積書送る に上書きした時は、LLM が物件確認した のつもりで入れた「募集状況確認」を必須内容から外す
     //   （残すと返信が「募集状況確認させて頂きます」を約束し、物件確認のやることが立つ）
-    const keyTopics = twoStage
+    const keyTopics = farMoveIn
+      // 2026-10-08 入居の時期が先: 必須の話題は理想の流れと連絡の日の約束だけ（LLM が入れた「物件ピックアップ」等は外す＝検査が「今のピックアップが無い」と直さない）
+      ? [`お部屋を抑えられるのは${HOLD_PERIOD_LABEL}`, `${farMoveIn.contactLabel}頃から探すのが理想の流れ`, `${farMoveIn.contactLabel}にピックアップしお送りする約束`]
+      : twoStage
       // 2026-10-02 2段の場面: 約束の返信の必須の話題は約束1つ（LLM が AIX のつもりで入れた「物件の紹介」「結果の報告」を外す）
       // 2026-10-06 ⑫（ゆいと）: 約束と別のお客様の質問（「最短11月中旬でしょうか？」）も必須に（twoStageOtherQuestions）
       ? [twoStage.keyTopic, ...twoStageOtherQuestions(unrepliedTurn.text ?? "", twoStage.kind), ...keyTopicsGuard.items.filter((t) => !/物件|お部屋|募集中|空室|見積|金額|ピックアップ|確認/.test(t))].slice(0, 3)
@@ -4112,11 +4201,14 @@ ${history}`;
       closedAckWait ? ["property_recommendation"] : (promiseAltAction ? [promiseAltAction] : undefined),
     );
     if (parallelOut.parallel) console.log(JSON.stringify({ tag: "brain:parallel-search", conversationId, scene: parallelOut.parallel.scene, on: parallelOut.parallel.on, aix: finalAix ?? null, reason: parallelOut.parallel.reason }));
+    // 2026-10-08 竹内さん「物件が無ければそっちから送るので、その場面の時は2択にする」: 物件の AIX で売上サポに今送れる候補が無い番は【全力サポート】も並べる（search-result-choice.ts・SEARCH_RESULT_TWO_CHOICE=off）
+    const searchChoice = searchResultAltActions({ finalAix: finalAix ?? null, pickupReady: pickupReadyForChoice, postApply: isPostApplyStatus(convStatus), altActions: parallelOut.altActions });
+    if (searchChoice.added) console.log(JSON.stringify({ tag: "brain:search-result-choice", conversationId, aix: finalAix, alts: searchChoice.altActions }));
 
     return {
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
-      note: staffNote,
+      note: searchChoice.added ? `${staffNote}${SEARCH_RESULT_CHOICE_NOTE}` : staffNote,
       // 2026-09-27: 持ち込み物件の募集状況が先（availabilityFirstKind）は check_pattern が空＝結果はスタッフが選ぶ → null で残す
       check_pattern: checkKind?.check_pattern || null,
       source,
@@ -4136,7 +4228,7 @@ ${history}`;
       // 2026-09-15 竹内（朱莉事例）: 2つ目の AIX（画面のブレインのカードに並べて出す）。連絡待ちの時は物件ピックアップ＋物件オススメ
       // 2026-09-17 慶次事例: 探し続ける約束の後も同じ2つ（物件ピックアップ＋物件オススメ）を並べる
       // 2026-09-26 段3: 並行で探す時は物件ピックアップも並べる（parallelOut に畳んだ）
-      alt_actions: parallelOut.altActions,
+      alt_actions: searchChoice.altActions,
       // Chrome拡張フィードバックループ: 検索フォーム自動入力用の構造化パラメータ（TODO(P2)対応）
       property_search_params: pc ? {
         area: pc.desired_area ?? null,
@@ -4192,7 +4284,9 @@ ${history}`;
       rent_market: rentMarketForReply ?? undefined,
       // 2026-09-23 竹内（あっぴ事例）: 未履行のピックアップ宣言が残っている（＝「今回AIX不要」でも仕事は残っている）。
       //   aix-action-items がこれを見て brain_no_aix の取り下げを止める
-      pending_pickup: pendingPickup.pending || undefined,
+      // 入居の時期が先の番は、前のピックアップの宣言が残っていても今は物件出しの番にしない（連絡の日の約束の返信の番）
+      pending_pickup: (!farMoveIn && pendingPickup.pending) || undefined,
+      far_move_in: farMoveIn ? { move_in_label: farMoveIn.moveInLabel, contact_label: farMoveIn.contactLabel, contact_ymd: ymdStrOf(farMoveIn.contact), source: farMoveIn.source } : undefined,
       // 2026-09-23: 入口で落とした していない約束（家賃交渉）。digest に残して「何を落としたか」を追えるようにする
       dropped_direction: rentGuard.dropped ?? undefined,
       scene_evidence: compactSceneEvidence(sceneEvidence),
@@ -4626,7 +4720,7 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
       const rows = ((wp ?? []) as Array<{ pattern: string; closing_action: string | null; notes: string | null; human_type_label: string | null; outcome_type: string; similarity: number }>)
         .filter((w) => w.similarity >= 0.5);
       topHumanType = rows.find((w) => w.human_type_label)?.human_type_label ?? null;
-      patternsText = rows.map((w) => `- ${w.outcome_type === "closed_lost" ? "【失注】" : "【成約】"}${(w.pattern ?? "").slice(0, 140)}${w.closing_action ? ` → 有効: ${w.closing_action.slice(0, 60)}` : ""}${w.notes ? ` / 転換点: ${w.notes.slice(0, 80)}` : ""}`).join("\n");
+      patternsText = rows.map((w) => `- ${winningOutcomeTag(w.outcome_type, process.env)}${(w.pattern ?? "").slice(0, 140)}${w.closing_action ? ` → 有効: ${w.closing_action.slice(0, 60)}` : ""}${w.notes ? ` / 転換点: ${w.notes.slice(0, 80)}` : ""}`).join("\n");
     }
   } catch (e) {
     console.warn(JSON.stringify({ tag: "brain:strategy-rag", conversationId, error: e instanceof Error ? e.message : String(e) }));
@@ -5862,7 +5956,8 @@ async function createCalendarEventFromBrainAction(
     const { data: promised } = await supabase
       .from("calendar_events").select("id")
       .eq("conversation_id", conversationId).eq("event_type", cfg.eventType).eq("is_done", false)
-      .like("notes", "【必ず】%").limit(1);
+      // 2026-10-08: 先の連絡の日の約束（【連絡日】・contact-promise）は今の物件出しの約束ではないので数えない
+      .like("notes", "【必ず】%").not("notes", "like", "%【連絡日%").limit(1);
     if (promised && promised.length > 0) return;
 
     // 内覧の場合は手動フォームと同じ構造化notes形式で保存（後で編集しやすくするため）

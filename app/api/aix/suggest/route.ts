@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
+import { legacyActionWinRatesEnabled } from "@/app/lib/application-reach";
 
 export const maxDuration = 10;
 
@@ -79,12 +80,15 @@ export async function GET(req: NextRequest) {
     // ② bis: aix_action_attribution の win_rate で頻度スコアを補正
     const WIN_RATE_WEIGHT = 2.0;
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: attrRows } = await supabase
-      .from("aix_action_attribution")
-      .select("action_type, win_rate")
-      .gte("period_start", thirtyDaysAgo)
-      .order("period_start", { ascending: false })
-      .limit(50);
+    // 2026-10-08 竹内さんの決定⑥: 推定の成約込みの勝率で頻度を補正しない（既定）。旧に戻す: BRAIN_ACTION_WIN_RATES=on
+    const { data: attrRows } = legacyActionWinRatesEnabled(process.env)
+      ? await supabase
+        .from("aix_action_attribution")
+        .select("action_type, win_rate")
+        .gte("period_start", thirtyDaysAgo)
+        .order("period_start", { ascending: false })
+        .limit(50)
+      : { data: [] as Array<{ action_type: string; win_rate: number | null }> };
     const winMap: Record<string, { t: number; c: number }> = {};
     for (const r of attrRows ?? []) {
       if (r.win_rate == null) continue;

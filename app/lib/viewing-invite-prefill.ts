@@ -20,6 +20,7 @@
 import { latestCustomerTurnText, extractRequestedViewingDates, viewingAskClauses, type RequestedViewingDate } from "./viewing-date-request";
 import { jstParts } from "./jst-date";
 import { nearestBookableDays, isBookable, VIEWING_CANDIDATE_DAYS, type CandidateDay } from "./viewing-candidates";
+import { extractCircumstances, validCircumstances } from "./customer-circumstances";
 
 const DAY_MS = 86_400_000;
 
@@ -46,8 +47,14 @@ const WEEK_RE = /(再来週|来週|今週)(?!\s*の?\s*[月火水木金土日]�
  */
 export function customerViewingDateSpec(messagesOldestFirst: ReadonlyArray<Msg>, nowMs: number = Date.now()): ViewingDateSpec {
   const text = latestCustomerTurnText(messagesOldestFirst);
-  if (!text.trim()) return { kind: "none" };
+  const fromSpec = availableFromSpec(messagesOldestFirst, nowMs);
+  if (!text.trim()) return fromSpec ?? { kind: "none" };
   const dates = extractRequestedViewingDates(text, nowMs);
+  // 2026-10-08 竹内さん「〇日以降の時は AIX の内覧調整でその日以降で出す」: 「20日以降でお願いします」はその日だけ（内覧日指定あり）ではなく、
+  //   その日から先の空いている日（幅）。今の発言の日付が1つで「以降・以後・から」が付いている時だけ幅にする
+  if (dates.length === 1 && fromSpecEnabled() && hasFromWord(text, dates[0].m, dates[0].d)) {
+    return { kind: "range", ymds: ymdsFrom(dates[0].ymd, FROM_RANGE_DAYS), label: `${dates[0].md}以降`, evidence: text.slice(0, 80) };
+  }
   if (dates.length > 0) return { kind: "dates", dates, evidence: text.slice(0, 80) };
 
   const now = jstParts(nowMs);
@@ -87,7 +94,42 @@ export function customerViewingDateSpec(messagesOldestFirst: ReadonlyArray<Msg>,
       if (ymds.length) return { kind: "range", ymds, label: wk[1], evidence: clause.slice(0, 60) };
     }
   }
-  return { kind: "none" };
+  return fromSpec ?? { kind: "none" };
+}
+
+// ─── 2026-10-08 竹内さん（把握「お客様の事情」の続き）「その通りで AIX の内覧調整でその日以降で出すようにする。あくまでも AIX から返信」 ───
+//   お客様が前の発言（直近の会話）で「〇日以降なら来られる」と言っていて（customer-circumstances.ts の available_from・鮮度つき）、
+//   今の発言に日付の指定が無い時は、その日から先の空いている日を前から最大3つ（幅の指定と同じ形）。返信の本文では日時を書かない（今の決まりどおり AIX で）。
+//   戻す: NEXT_PUBLIC_VIEWING_INVITE_FROM_CIRCUMSTANCE=off
+export const FROM_RANGE_DAYS = 7;
+function fromSpecEnabled(): boolean {
+  return (process.env.NEXT_PUBLIC_VIEWING_INVITE_FROM_CIRCUMSTANCE ?? "").trim().toLowerCase() !== "off";
+}
+function hasFromWord(text: string, m: number, d: number): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  return new RegExp(`(?:${m}\\s*月\\s*${d}\\s*日?|${m}\\s*[/／]\\s*${d}|(?<![0-9])${d}\\s*日)\\s*(?:の)?\\s*(?:以降|以後|から)`).test(t);
+}
+function ymdsFrom(ymd: string, n: number): string[] {
+  const [y, mo, d] = ymd.split("-").map(Number);
+  const start = Date.UTC(y, mo - 1, d);
+  return Array.from({ length: n }, (_, i) => ymdOfUtc(start + i * DAY_MS));
+}
+/** 前の発言の「〇日以降なら来られる」（有効な物）を幅の指定にする。日付が今日以前・無ければ null */
+export function availableFromSpec(messagesOldestFirst: ReadonlyArray<Msg & { rawCreatedAt?: string | null; createdAt?: string | null }>, nowMs: number = Date.now()): ViewingDateSpec | null {
+  if (!fromSpecEnabled()) return null;
+  const cust = messagesOldestFirst
+    .filter((m) => m.sender === "customer" && (m.rawCreatedAt || m.createdAt))
+    .map((m) => ({ text: m.text ?? "", createdAt: String(m.rawCreatedAt || m.createdAt) }));
+  if (!cust.length) return null;
+  const from = validCircumstances(extractCircumstances(cust, nowMs + 1), nowMs).find((c) => c.kind === "available_from" && c.fromDayMs != null);
+  if (!from || from.fromDayMs == null) return null;
+  const today = jstParts(nowMs);
+  const todayUtc = Date.UTC(today.y, today.m - 1, today.d);
+  const fromUtc = from.fromDayMs + 9 * 3600_000; // JST 0時 → その日の UTC 0時と同じ暦日
+  if (fromUtc <= todayUtc) return null;
+  const ymd = ymdOfUtc(fromUtc);
+  const md = `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8, 10))}`;
+  return { kind: "range", ymds: ymdsFrom(ymd, FROM_RANGE_DAYS), label: `${md}以降（お客様のご都合）`, evidence: from.quote };
 }
 
 /** カレンダーの取得に足す日（日付の指定はその日・幅はその幅の日）。fetchCalendarSlots の extraYmds に渡す */

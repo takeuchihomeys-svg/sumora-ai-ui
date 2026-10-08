@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { writeBackClosedOutcome } from "@/app/lib/analyze-closed-conversation";
 import { autoSeiyakuDays, autoSeiyakuWritesBack, AUTO_SEIYAKU_TRIGGER } from "@/app/lib/deal-outcome";
+import { autoSeiyakuBlockedByConfirm } from "@/app/lib/outcome-confirm";
 
 export const maxDuration = 300;
 
@@ -55,6 +56,7 @@ async function runAutoSeiyaku() {
     let updated = 0;
     let skippedNoMessages = 0;
     let skippedRecentActivity = 0;
+    let skippedByConfirm = 0;
     const details: Array<{
       id: string;
       customer_name: string | null;
@@ -89,6 +91,19 @@ async function runAutoSeiyaku() {
           skippedRecentActivity += 1;
           continue;
         }
+
+        // 2026-10-08 竹内さんの決定②: 申込から30日の確認でスタッフが「成約」以外（審査落ち・キャンセル）を選んだ／「まだ手続き中」の待ちの間は、
+        //   推定の成約にしない（確認が推定より優先）。列が無い・読めない時は今まで通り
+        try {
+          const { data: confirmRows, error: confirmErr } = await supabase
+            .from("deal_outcomes")
+            .select("episode_no, locked, confirm_snooze_until, staff_confirm_choice")
+            .eq("conversation_id", conv.id);
+          if (!confirmErr && autoSeiyakuBlockedByConfirm((confirmRows ?? []) as Array<{ episode_no: number; locked: boolean | null; confirm_snooze_until: string | null; staff_confirm_choice: string | null }>, nowMs)) {
+            skippedByConfirm += 1;
+            continue;
+          }
+        } catch { /* 今まで通り */ }
 
         // INACTIVE_DAYS 日以上無連絡 → ご成約（closed_won・推定）へ更新
         // .in("status", ...) で競合ガード（実行中に手動でステータス変更された場合は上書きしない）
@@ -146,6 +161,7 @@ async function runAutoSeiyaku() {
       updated,
       skipped_no_messages: skippedNoMessages,
       skipped_recent_activity: skippedRecentActivity,
+      skipped_by_confirm: skippedByConfirm,
       failed: errors.length,
     };
     await finishCronLog(runLogId, true, { ...summary, errors: errors.slice(0, 5) });

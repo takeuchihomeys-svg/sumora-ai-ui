@@ -314,9 +314,10 @@ export async function recordJevShadow(sb: { from: (t: string) => any }, row: Jev
 //   ・物件確認した   check_pattern … 「何を確認したか」（JEV_CHECK_TOPIC_OPTIONS）。結果（あった／なかった）は会話から分からないのでスタッフ
 //   ・物件ピックアップした send_mode … 新規／新着／条件を広げた／代替
 //   ・申込へ！       app_sub_mode … 申込誘導／申込確定／フォーマット／書類依頼
-//   ・物件オススメ   send_mode … 新着／条件を広げた（物件ピックアップしたと同じ語）
+//   ・物件オススメ   pickup_type … 画面の6種（初回・新着・送った中から・条件広げ・代替・現状伝えて）
+//     2026-10-08 竹内「その形にする」: 旧は send_mode の3つ（通常・新着・条件を広げた）で画面と違い、正解（picker_choices.pickup_type）と比べられなかった
 // 質問はボタンごとに1つ（選択肢が狭いほど当たる）。state に「押すボタン」を入れて、その中から選ばせる。
-export type PickerField = "check_pattern" | "send_mode" | "app_sub_mode";
+export type PickerField = "check_pattern" | "send_mode" | "app_sub_mode" | "pickup_type";
 
 export const AIX_PICKER_CATALOG: Record<string, { field: PickerField; question: string; options: Record<string, string> }> = {
   property_check_result: {
@@ -334,13 +335,17 @@ export const AIX_PICKER_CATALOG: Record<string, { field: PickerField; question: 
       alternative: "代替: 気に入っていた物件が満室・紹介不可だったので、代わりの物件を送る",
     },
   },
+  // 2026-10-08 竹内: 画面の6種が正（キーは aix_usage_logs.picker_choices.pickup_type の値・app/lib/aix-pickers.ts と同じ）
   property_recommendation: {
-    field: "send_mode",
-    question: "AIX【物件オススメ】を押す。今回勧める物件はどのモードか",
+    field: "pickup_type",
+    question: "AIX【物件オススメ】（1件を特に推す）を押す。どの種類で送るか",
     options: {
-      normal:      "通常: 希望条件に合う物件を勧める",
-      new_arrival: "新着物件: 以前に物件を送った後、新しく出た物件を勧める",
-      widen:       "条件を広げた: 希望どおりの物件が無く、条件を広げて探した物件を勧める",
+      "新規ピックアップ": "初回・1件訴求: まだ物件を送っていない（初回の）お客様に、1件だけに絞って勧める",
+      "新着1件": "新着・1件訴求: 前に物件を送った後、新しく募集に出た1件を勧める（追客。束を送ってから時間が空いた時）",
+      "継続ピックアップ": "送った中から・1件訴求: AIX【物件ピックアップした】で複数件送った直後に、続けてその中から1件を推す",
+      "条件広げピックアップ": "条件広げ・1件訴求: 条件を広げて探した束を送った直後に、その中から1件を推す",
+      "代替ピックアップ": "代替・1件訴求: 気に入った・聞いた物件が募集終了・紹介不可だった後に、代わりの1件を勧める",
+      "現状伝えて1件": "現状伝えて・1件訴求: ご条件どおりの空室が無い・ご希望エリアに無い現状を伝えてから、退去予定・周辺の1件を勧める",
     },
   },
   application_push: {
@@ -374,9 +379,12 @@ export const PICKER_OPTIONS_WITH_MATERIALS: Record<string, Record<string, string
     alternative: "代替: 気に入っていた物件が満室・紹介不可だったので、代わりの物件を送る",
   },
   property_recommendation: {
-    normal:      "通常: まだ物件を送っていない（customer_materials.records.properties_sent が 0）お客様に、希望条件に合う物件を勧める",
-    new_arrival: "新着物件: 以前に物件を送った後（customer_materials.records.properties_sent が1件以上）、新しく出た物件を勧める",
-    widen:       "条件を広げた: お客様が条件を変えた・広げた、または希望どおりの物件が無く条件を広げて探した物件を勧める",
+    "新規ピックアップ": "初回・1件訴求: まだ物件を送っていない（customer_materials.records.properties_sent が 0）お客様に、1件だけに絞って勧める",
+    "新着1件": "新着・1件訴求: 以前に物件を送った後（customer_materials.records.properties_sent が1件以上）、新しく募集に出た1件を勧める（束を送ってから時間が空いた時）",
+    "継続ピックアップ": "送った中から・1件訴求: 直前（1時間以内）に AIX【物件ピックアップした】で複数件送り、続けてその中から1件を推す",
+    "条件広げピックアップ": "条件広げ・1件訴求: お客様が条件を変えた・広げた、または希望どおりが無く条件を広げて探した束を送った直後に、その中から1件を推す",
+    "代替ピックアップ": "代替・1件訴求: 気に入った・聞いた物件が募集終了・紹介不可だった後に、代わりの1件を勧める",
+    "現状伝えて1件": "現状伝えて・1件訴求: ご条件どおりの空室が無い・ご希望エリアに無い現状を伝えてから、退去予定・周辺の1件を勧める",
   },
 };
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { BRAIN_SKIP_STATUSES, URGENT_WINDOW_MS, type SuggestedAixMeta } from "@/app/lib/brain-core";
+import { brainNeedsStaff, flagOn, type AttentionMeta } from "@/app/lib/brain-attention";
 
 // ── brain/list: 純粋な read エンドポイント ──────────────────────────────────
 // FIX(Fable5 #2): 以前はこの GET の中で最大30会話ぶんの Haiku 分析を並列実行しており、
@@ -33,6 +34,8 @@ type BrainConversation = {
   is_urgent: boolean;
   is_hot: boolean;
   is_flagged: boolean;
+  /** ブレインの判断で「スタッフが動く番」（brain-attention brainNeedsStaff・会話の画面の要対応と同じ） */
+  brain_needs: boolean;
   // 優先度スコア（LLM不要・集計のみ）: 経過日数×ステータス重み + hot/flag/urgent ボーナス
   priority_score: number;
   // true = Section B（スタッフ送信後に顧客が沈黙している追客対象）
@@ -67,10 +70,21 @@ function statusWeight(status: string | null): number {
   return 0.5;
 }
 
-function toBrainConversation(c: ConversationRow, now: number, followUpSection: boolean): BrainConversation {
+// 2026-10-08 竹内さん「その形でおねがい」: 優先度の「要対応」の重みを is_flagged（受信のたびに true＝実質 全員）から
+//   ブレインの判断（AIX要対応 pending・今の AIX・物件出しの約束＝brain-attention brainNeedsStaff）に寄せる。戻す: BRAIN_ATTENTION_PRIORITY=off
+const BRAIN_PRIORITY = flagOn(process.env.BRAIN_ATTENTION_PRIORITY);
+
+function toBrainConversation(c: ConversationRow, now: number, followUpSection: boolean, pendingAix: Map<string, string>): BrainConversation {
   const isUrgent = now - new Date(c.updated_at).getTime() <= URGENT_WINDOW_MS;
   const isHot = c.is_hot === true;
-  const isFlagged = c.is_flagged === true;
+  const isFlaggedRaw = c.is_flagged === true;
+  const brainNeeds = brainNeedsStaff({
+    meta: (c.suggested_aix_meta ?? null) as unknown as AttentionMeta | null,
+    pendingAixAction: pendingAix.get(c.id) ?? null,
+    lastSender: followUpSection ? "staff" : "customer",
+    status: c.status,
+  }).needs;
+  const isFlagged = BRAIN_PRIORITY ? brainNeeds : isFlaggedRaw;
   const daysSinceLastMessage = Math.max(
     0,
     Math.floor((now - new Date(c.updated_at).getTime()) / 86_400_000)
@@ -92,7 +106,8 @@ function toBrainConversation(c: ConversationRow, now: number, followUpSection: b
     brain_analyzed_at: c.brain_analyzed_at ?? null,
     is_urgent: isUrgent,
     is_hot: isHot,
-    is_flagged: isFlagged,
+    is_flagged: isFlaggedRaw,
+    brain_needs: brainNeeds,
     priority_score: priorityScore,
     follow_up_section: followUpSection,
     days_since_last_message: daysSinceLastMessage,
@@ -141,16 +156,24 @@ export async function GET(_req: NextRequest) {
   const rowsA = (sectionAResult.data ?? []) as ConversationRow[];
   const rowsB = (sectionBResult.data ?? []) as ConversationRow[];
 
+  // AIX要対応（pending・1会話1件）— ブレインの要対応の材料
+  const pendingAix = new Map<string, string>();
+  const allIds = [...rowsA, ...rowsB].map((c) => c.id);
+  if (BRAIN_PRIORITY && allIds.length) {
+    const { data: items } = await supabase.from("aix_action_items").select("conversation_id, action").eq("status", "pending").in("conversation_id", allIds);
+    for (const r of (items ?? []) as Array<{ conversation_id: string; action: string | null }>) if (r.action) pendingAix.set(r.conversation_id, r.action);
+  }
+
   // Section A: urgent（最終顧客メッセージ ≤ 2h）を先頭に、各群内は updated_at DESC のまま
   //（従来動作を維持 — priority_score は付与するがソートには使わない）
-  const resultA = rowsA.map((c) => toBrainConversation(c, now, false));
+  const resultA = rowsA.map((c) => toBrainConversation(c, now, false, pendingAix));
   resultA.sort((a, b) => {
     if (a.is_urgent === b.is_urgent) return 0;
     return a.is_urgent ? -1 : 1;
   });
 
   // Section B: priority_score DESC（同点は沈黙が長い順 = updated_at ASC）
-  const resultB = rowsB.map((c) => toBrainConversation(c, now, true));
+  const resultB = rowsB.map((c) => toBrainConversation(c, now, true, pendingAix));
   resultB.sort((a, b) => {
     if (b.priority_score !== a.priority_score) return b.priority_score - a.priority_score;
     return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();

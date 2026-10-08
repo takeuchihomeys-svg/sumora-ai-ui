@@ -17,6 +17,7 @@ import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import type { SearchOverride } from "@/app/lib/search-override";
 import { staffTextFulfillsAixItem, brainPausedCustomer } from "@/app/lib/aix-item-cleanup";
+import { keepViewingGreetingItem } from "@/app/lib/viewing-day-greeting";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
 /** 売上番長グループへ push（宛先・トークンの決め方は notify-group と同じ: env → hanbancyo_settings.group_id） */
@@ -81,13 +82,19 @@ export async function syncAixActionItem(input: {
 
   const { data: open } = await supabase
     .from("aix_action_items")
-    .select("id, action, check_pattern")
+    .select("id, action, check_pattern, created_at")
     .eq("conversation_id", conversationId)
     .eq("status", "pending")
     .maybeSingle();
   const now = new Date().toISOString();
 
   if (!needsAix) {
+    // 2026-10-08 竹内さん（内覧当日の朝の挨拶）: 当日の内覧挨拶（内覧前）の要対応はお客様の発言の番に結び付かない（忘れないためのリマインド）。
+    //   その日のうちはブレインの「今回の発言に AIX は要らない」で取り下げない（済みは挨拶を送った時・日が変われば cron が取り下げる）。戻す VIEWING_MORNING_GREETING=off
+    if (open && keepViewingGreetingItem(open as { action: string; check_pattern: string | null; created_at?: string | null })) {
+      console.log("[aix-action-items] keep pending (当日の内覧挨拶):", conversationId);
+      return;
+    }
     // 2026-09-23 竹内（あっぴ事例）「こんな同じようなことなんかいもいれない成約率のためにも」:
     //   「今回の発言に AIX は要らない」と「残っている仕事が無くなった」を同じ扱いにしない。
     //   台帳に未履行の物件ピックアップ宣言が残っている間は、物件を送る要対応を取り下げずに pending のまま残す。
@@ -154,6 +161,24 @@ export async function syncAixActionItem(input: {
     await enqueueAixPropertySearch(conversationId, action!, searchOverride).catch((e) =>
       console.warn("[aix-action-items] enqueue auto search failed:", conversationId, e instanceof Error ? e.message : e));
   }
+}
+
+/**
+ * 2026-10-08 竹内さん（内覧当日の朝の挨拶「作る」）: お客様の発言の無い朝に、決まり（rule）で AIX要対応を1件立てて通知する。
+ *   1会話1件の pending（一意の索引）はそのまま: 既に未完了があれば立てない（呼ぶ側が morningViewingGreetingPlan で先に見る・同時実行は一意制約で弾く）。
+ *   済み: AIX を送った（completeAixActionItem）／通常の送信で当日の挨拶を送った（completeAixActionItemByStaffText → aix-item-cleanup の greeting_viewing）
+ * @returns 立てて通知したか
+ */
+export async function registerRuleAixActionItem(input: { conversationId: string; customerName: string; action: string; checkPattern: string | null; noticeExtra?: string | null; note?: string | null }): Promise<boolean> {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("aix_action_items").insert({
+    conversation_id: input.conversationId, customer_name: input.customerName || null, action: input.action, check_pattern: input.checkPattern,
+    status: "pending", brain_analyzed_msg_ts: null, notified_at: now, resolution_note: input.note ? input.note.slice(0, 200) : null,
+  });
+  if (error) { if (!/duplicate|unique/i.test(error.message)) console.warn("[aix-action-items] rule insert failed:", error.message); return false; }
+  const notice = buildAixActionNotice(input.customerName, input.action, input.checkPattern);
+  await pushToHanbancyoGroup(input.noticeExtra ? `${notice}\n${input.noticeExtra}` : notice);
+  return true;
 }
 
 /** AIX モード（拡張の AIX ボタン ON の PC）で自動の物件検索→売上番長グループ送信を行う AIX 指示 */

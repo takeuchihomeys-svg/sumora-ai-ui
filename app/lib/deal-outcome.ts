@@ -20,7 +20,8 @@ import { isApplicationFormMessage } from "./application-form-detect";
 import { splitPropertyName, isDecidedElsewhere } from "./customer-state";
 
 /** 台帳の作り方の版（決まりを変えたら上げる・行に残して前後を比べる） */
-export const LEDGER_VERSION = "ol1-20261008";
+// ol2（10/08 夕）: 判断の出来事に場面（scene）と段階（vb＝内覧前／内覧後）を足した（申込到達率 application-reach.ts の材料）
+export const LEDGER_VERSION = "ol2-20261008";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 日数（竹内さんの決定）

@@ -12,6 +12,7 @@ import {
   resolveDealOutcomes, buildOutcomeEventRows, toDealOutcomeRow,
   type DealInput, type DealPropertyClue, type RawOutcomeEvent, type DealEpisode, type OutcomeEventRow, type DealOutcomeRow, type StageHistoryRow,
 } from "@/app/lib/deal-outcome";
+import { turnSceneAt, stageBucketAt } from "@/app/lib/application-reach";
 
 type Sb = typeof supabase;
 const shortHash = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 16);
@@ -41,7 +42,7 @@ export async function computeConversationOutcome(conversationId: string, opts: {
     loadCustomerStateInput(conversationId, { now: nowMs }),
     must(db.from("messages").select("created_at").eq("conversation_id", conversationId).order("created_at", { ascending: true }).limit(1), "messages:first"),
     must(db.from("conversation_stage_history").select("id, from_status, to_status, changed_at, trigger").eq("conversation_id", conversationId).order("changed_at").limit(500), "stage_history"),
-    must(db.from("brain_decision_logs").select("id, created_at, suggested_action, decision_source, actual_aix_type, actual_at, prop:digest->>prop").eq("conversation_id", conversationId).order("created_at").limit(3000), "brain_decision_logs"),
+    must(db.from("brain_decision_logs").select("id, created_at, suggested_action, decision_source, actual_aix_type, actual_at, analyzed_msg_ts, scene_key, prop:digest->>prop").eq("conversation_id", conversationId).order("created_at").limit(3000), "brain_decision_logs"),
     must(db.from("aix_usage_logs").select("id, aix_type, check_pattern, created_at, sent_at, property_names").eq("conversation_id", conversationId).not("sent_at", "is", null).order("created_at").limit(2000), "aix_usage_logs"),
     must(db.from("estimate_records").select("id, created_at, property_name, room_no").eq("conversation_id", conversationId).order("created_at").limit(1000), "estimate_records"),
     must(db.from("recommendation_snapshots").select("id, created_at, sent_at, star_name, star_room").eq("conversation_id", conversationId).order("created_at").limit(1000), "recommendation_snapshots"),
@@ -53,7 +54,7 @@ export async function computeConversationOutcome(conversationId: string, opts: {
   const state = resolveCustomerState(csInput);
 
   type H = StageHistoryRow & { id: string };
-  type D = { id: string; created_at: string; suggested_action: string | null; decision_source: string | null; actual_aix_type: string | null; actual_at: string | null; prop: string | null };
+  type D = { id: string; created_at: string; suggested_action: string | null; decision_source: string | null; actual_aix_type: string | null; actual_at: string | null; analyzed_msg_ts: string | null; scene_key: string | null; prop: string | null };
   type A = { id: string; aix_type: string; check_pattern: string | null; created_at: string; sent_at: string | null; property_names: string[] | null };
   type E = { id: number; created_at: string; property_name: string | null; room_no: string | null };
   type R = { id: number; created_at: string; sent_at: string | null; star_name: string | null; star_room: string | null };
@@ -95,10 +96,17 @@ export async function computeConversationOutcome(conversationId: string, opts: {
     raw.push({ at, kind: "aix_sent", sourceTable: "aix_usage_logs", sourceId: a.id, propertyName: names.length === 1 ? names[0] : null, decisionId: decisionFor(a),
       detail: { aix_type: a.aix_type, ...(a.check_pattern ? { check_pattern: a.check_pattern } : {}), ...(names.length ? { n_props: names.length } : {}) } });
   }
+  // 2026-10-08 ⑥: 判断の場面（reply-scene・ブレインの brainScene と同じ形）と段階（内覧前／内覧後）を出来事に残す＝申込到達率（application-reach.ts）の材料。
+  //   判断の行に scene_key があればそれ（10/08 以降）・無ければ読んだお客様の番の文から作る
+  const msgsOldest = [...csInput.messages].map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt })).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  const viewingAts = state.viewings.filter((v) => v.status !== "cancelled").map((v) => v.thankedAt ?? `${v.ymd}T12:00:00+09:00`);
   for (const d of dRows) {
+    const readAt = Date.parse(d.analyzed_msg_ts ?? d.created_at);
+    const scene = d.scene_key ?? (Number.isFinite(readAt) ? turnSceneAt(msgsOldest, readAt) : null);
+    const bucket = stageBucketAt(viewingAts, Date.parse(d.created_at));
     if (d.prop) clues.push({ kind: "brain", at: d.created_at, name: d.prop, sourceTable: "brain_decision_logs", sourceId: d.id });
     raw.push({ at: d.created_at, kind: "brain_decision", sourceTable: "brain_decision_logs", sourceId: d.id, propertyName: d.prop, decisionId: d.id,
-      detail: { action: d.suggested_action || null, src: d.decision_source } });
+      detail: { action: d.suggested_action || null, src: d.decision_source, ...(scene ? { scene } : {}), vb: bucket } });
   }
   for (const r of rRows) {
     const at = r.sent_at ?? r.created_at;

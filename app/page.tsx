@@ -9,14 +9,16 @@ import SentPropertyPicker from "./components/SentPropertyPicker";
 import { preselectViewingCandidates, toggleCandidateInSlots, latestCustomerTurnStartAt } from "./lib/viewing-property-candidates";
 import BottomNav from "./components/BottomNav";
 import CustomerStateBar from "./components/CustomerStateBar";
+import OutcomeConfirmBar from "./components/OutcomeConfirmBar";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
-import { detectPlaceholders } from "./lib/validate-reply";
+import { detectPlaceholders, canonOf } from "./lib/validate-reply";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
 import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
 // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
 import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
+import { refreshDraftGreetingForNow, draftGreetingRefreshEnabled } from "./lib/time-greeting";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
@@ -26,6 +28,7 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
+import { buildRequestLedger, TOPIC_JA as REQUEST_TOPIC_JA } from "./lib/request-ledger";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 // 2026-10-08 竹内さんの決定「ブレイン最優先・判断はブレインに一本化」: 要対応・やること・ブレイン以外の帯をブレインの判断で（純関数・画面から import してよい）
 import { brainNeedsStaff, flagOn, nonBrainBannerAllowed } from "./lib/brain-attention";
@@ -73,6 +76,18 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
 const BRAIN_ATTENTION_UI = flagOn(process.env.NEXT_PUBLIC_BRAIN_ATTENTION);
 // 表示済みの下書きの控えと戻し（既定 on・戻す: NEXT_PUBLIC_SHOWN_DRAFT_RESTORE=off）
 const SHOWN_DRAFT_RESTORE = shownDraftRestoreEnabled(process.env.NEXT_PUBLIC_SHOWN_DRAFT_RESTORE);
+// 2026-10-08 竹内さん（り 8f705d16「こんばんは。この時間に送るのおかしい」）: 前に作った下書きを入力欄に出す時、送る今（JST の日）で挨拶を直す
+//   （時刻の挨拶→今日まだ送っていなければお世話になっております・送っていれば外す。お世話になっておりますは足しも外しもしない）。戻す: NEXT_PUBLIC_DRAFT_GREETING_REFRESH=off
+const DRAFT_GREETING_REFRESH = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_REFRESH);
+function refreshDraftGreeting(text: string, conv: { messages?: Message[]; customerName?: string }): string {
+  if (!DRAFT_GREETING_REFRESH || !text) return text;
+  const msgs = conv.messages || [];
+  // 呼び名は生成の挨拶（resolveGreeting の canonOf）と同じ線で決める（「り」など1字は呼ばない）
+  const name = canonOf(extractPreferredName(msgs, conv.customerName || ""));
+  const r = refreshDraftGreetingForNow(text, { messages: msgs.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.rawCreatedAt ?? null })), name: name ? `${name}さん` : "" });
+  if (r.fixes.length) console.log(JSON.stringify({ tag: "draft:greeting-refresh", fixes: r.fixes }));
+  return r.text;
+}
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}`, ...staffDeviceHeader() };
 
 // suggest-next-action APIが返すAIX初期化パラメータ
@@ -3328,8 +3343,9 @@ export default function Home() {
     if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
       suppressAiDraftAutoLoad.current = true; // Effect2の二重処理を防ぐ
       setDraftPreparing(false);
-      setReplyDraft(selectedConversation.aiDraft);
-      aiDraftRef.current = selectedConversation.aiDraft;
+      const loadedDraft = refreshDraftGreeting(selectedConversation.aiDraft, selectedConversation);
+      setReplyDraft(loadedDraft);
+      aiDraftRef.current = loadedDraft;
       setDisplaySource("ai_draft");
       // 事前生成ドラフトの最終チェック結果をDBから復元（ハッシュ一致なら送信時0msで通過）
       // 取得失敗は fail-open（送信時の再チェックは行わない＝スタッフが編集した文は正解として扱う）
@@ -3411,8 +3427,9 @@ export default function Home() {
             const restoredText = decision.text ? stripInternalTagsOrNull(decision.text) : null;
             if (restoredText && selectedIdRef.current === restoreConvId && !replyDraftLiveRef.current) {
               restored = true;
-              setReplyDraft(restoredText);
-              aiDraftRef.current = restoredText;
+              const restoredFixed = refreshDraftGreeting(restoredText, selectedConversation);
+              setReplyDraft(restoredFixed);
+              aiDraftRef.current = restoredFixed;
               setDisplaySource("ai_draft");
               setDraftPreparing(false);
               if (r?.ai_draft_check) setCheckResult(r.ai_draft_check);
@@ -7607,6 +7624,15 @@ export default function Home() {
             authHeader={INTERNAL_AUTH_HEADER}
           />
 
+          {/* 2026-10-08 竹内さんの決定②④: 申込から30日たった案件の結果の確認（成約した／審査落ち・切り替え／キャンセル／まだ手続き中）と、
+              審査に出した形跡があるのに段階が申込でない時の「申込にする」（/api/deal-outcomes/confirm・LLM なし・無い時は何も出さない） */}
+          <OutcomeConfirmBar
+            conversationId={selectedConversation.id}
+            status={selectedConversation.status}
+            authHeader={INTERNAL_AUTH_HEADER}
+            onSetApplying={() => { void updateConversationStatus("applying"); }}
+          />
+
           {/* 条件パネル: ▼ボタンで開閉 */}
           {showCondPanel && (() => {
             const lc = linkedCustomerMap[selectedConversation.id];
@@ -8015,6 +8041,28 @@ export default function Home() {
                 );
               })}
             </div>
+            );
+          })()}
+          {/* 2026-10-08 竹内さん「お客さんからたくさんの確認事項を頼まれた場合のリスト…表示されるようになるか」: 連投の依頼・質問を1つずつ（request-ledger・14日）。
+              約束のバナーと同じ見た目で、まだ結果を伝えていない行だけ（未対応／約束済み）。AIX で結果を送ったら消える。戻す NEXT_PUBLIC_REQUEST_LEDGER=off */}
+          {!inputFocused && process.env.NEXT_PUBLIC_REQUEST_LEDGER !== "off" && (() => {
+            const items = buildRequestLedger((selectedConversation.messages || []).map((m: Message) => ({ sender: m.sender, text: m.text, createdAt: m.rawCreatedAt ?? "", isAix: !!m.isAix })), Date.now())
+              .filter((x) => x.status !== "done");
+            if (!items.length) return null;
+            const openN = items.filter((x) => x.status === "open").length;
+            return (
+              <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}>
+                <p className="text-[11px] font-bold text-[#b71c1c]">お客様の確認事項{openN > 0 ? `（未対応 ${openN}）` : "（結果待ち）"}</p>
+                {items.slice(0, 6).map((x, n) => (
+                  <div key={`${x.saidAt}-${n}`} className="flex items-start gap-2">
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold text-white ${x.status === "open" ? "bg-[#d32f2f]" : "bg-[#5c6bc0]"}`}>{x.status === "open" ? "未対応" : "約束済み"}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-bold text-[#b71c1c]">{REQUEST_TOPIC_JA[x.topic]}「{x.quote}」</span>
+                      <span className="block text-[10px] text-[#8e24aa]">→ {x.route === "aix" ? "AIX で送る" : x.route === "promise" ? "約束の返信→結果を AIX で送ったら完了" : "返信で答える"}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
             );
           })()}
           {!inputFocused && (() => {

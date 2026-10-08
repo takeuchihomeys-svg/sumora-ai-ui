@@ -21,6 +21,19 @@ import { BRAIN_AIX_LABELS, sameAixAction } from "@/app/lib/aix-button-view";
 import { propertyCheckKindFor } from "@/app/lib/aix-taxonomy";
 import { brainPausedCustomer } from "@/app/lib/aix-item-cleanup";
 import { aixButtonText } from "@/app/lib/aix-action-text";
+import { brainHotDrop, type IgnoredAix } from "@/app/lib/brain-hot-drop";
+import { isTestConversation } from "@/app/lib/test-conversations";
+
+/**
+ * ターゲット一覧・要対応・hot の判定から外す会話（2026-10-08 竹内さん「出す前に YUMA を含むテストの会話を外して」）:
+ *   テスト用の会話の一覧（test-conversations: YUMA・スタッフ同士・業者）＋ YUMA が入っているグループ（名前に「YUMA」が並ぶ・
+ *   実物「【グループ】野口　力也, YUMA, スモラ(3)」「【グループ】喜子, YUMA, スモラ(3)」）。学習側の一覧（TEST_CONVERSATION_IDS）は変えない
+ */
+export function isAttentionExcluded(conversationId: string | null | undefined, customerName?: string | null): boolean {
+  if (isTestConversation(conversationId)) return true;
+  const n = (customerName ?? "").trim();
+  return /^【グループ】/.test(n) && /(^|[,、\s】])YUMA([,、\s(（]|$)/.test(n);
+}
 
 /** ブレインの判断のうち、ここで読む項目だけ（suggested_aix_meta の部分集合） */
 export type AttentionMeta = {
@@ -113,6 +126,8 @@ export type AttentionInput = {
   pendingAixAction?: string | null;
   lastSender?: string | null;
   status?: string | null;
+  /** 連絡の約束の日が来ている（YYYY-MM-DD）。無ければ null */
+  contactDueYmd?: string | null;
 };
 
 /**
@@ -123,6 +138,8 @@ export type AttentionInput = {
 export function brainNeedsStaff(i: AttentionInput): { needs: boolean; reason: string | null } {
   if (CLOSED_STATUSES.has(String(i.status ?? ""))) return { needs: false, reason: null };
   if (i.pendingAixAction && BRAIN_AIX_LABELS[i.pendingAixAction]) return { needs: true, reason: `AIX要対応:${i.pendingAixAction}` };
+  // 連絡の約束の日が来ている（カレンダーの【必ず】【連絡日】・contact-promise）
+  if (i.contactDueYmd) return { needs: true, reason: `連絡の約束の日:${i.contactDueYmd}` };
   const m = i.meta;
   if (!isLive(m)) return { needs: false, reason: null };
   const aix = brainAixOf(m);
@@ -135,9 +152,11 @@ export function brainNeedsStaff(i: AttentionInput): { needs: boolean; reason: st
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. 今日のターゲット（グループの全リスト・daily-brief・hot）
 // ─────────────────────────────────────────────────────────────────────────────
-export type TargetTier = "viewed" | "screening_failed" | "new" | "engaged";
-export const TARGET_TIER_RANK: Record<TargetTier, number> = { viewed: 1, screening_failed: 2, new: 3, engaged: 4 };
-export const TARGET_TIER_LABEL: Record<TargetTier, string> = { viewed: "内覧済み", screening_failed: "審査落ち・切り替え", new: "新規", engaged: "物件検索中" };
+// 2026-10-08 竹内さん「その日に連絡するように約束後カレンダーに組み込む」: 連絡の約束の日（contact-promise・カレンダーの【必ず】【連絡日】）が来た人は
+//   hot・追客の外し・終わった案件に関わらずその日のターゲットに戻す（段 contact_due・並びは審査落ちの次＝2.5）
+export type TargetTier = "viewed" | "screening_failed" | "contact_due" | "new" | "engaged";
+export const TARGET_TIER_RANK: Record<TargetTier, number> = { viewed: 1, screening_failed: 2, contact_due: 2.5, new: 3, engaged: 4 };
+export const TARGET_TIER_LABEL: Record<TargetTier, string> = { viewed: "内覧済み", screening_failed: "審査落ち・切り替え", contact_due: "連絡の約束の日", new: "新規", engaged: "物件検索中" };
 
 export type TargetInput = {
   status: string | null;
@@ -153,6 +172,23 @@ export type TargetInput = {
   screeningFailedAt?: string | null;
   /** スタッフの送信がまだ無い（初回の挨拶前） */
   staffNeverReplied?: boolean;
+  /** お客様の最後の発言より後に続けて返事の無い追客（AIX 物件ピックアップした／物件オススメ・brain-hot-drop ignoredFollowUpStreak）。無ければ数えない */
+  ignoredAix?: IgnoredAix | null;
+  /** スタッフが「今日も hot で回す」と確かめた時刻（property_customers.hot_confirmed_at） */
+  hotConfirmedAt?: string | null;
+  /** false＝外す判断をしない（HOT_DROP_BY_BRAIN=off）。既定 true */
+  hotDrop?: boolean;
+  /** 2本目の線（お客様の発言が無い日数・brain-hot-drop silentDaysSetting）。null/省略＝使わない */
+  hotDropSilentDays?: number | null;
+  /**
+   * 案件が終わった時刻（結果の台帳 deal_outcomes の失注の確定＝L1 他で決めた・L4 引越し中止・L6 申込の取り消し／
+   * お客様の文の決まった言い方＝deal-outcome detectDealLossText・isApplicationCancelText）。推測しない。無ければ null
+   */
+  dealEndedAt?: string | null;
+  /** 連絡の約束の日が来ている（今日以前・未完了）カレンダーの行の連絡の日（YYYY-MM-DD）。無ければ null（contact-promise・CONTACT_DUE_TARGET=off で使わない） */
+  contactDueYmd?: string | null;
+  /** その行の件名（「YUMAさんに連絡（入居2月）」） */
+  contactDueTitle?: string | null;
   nowMs: number;
 };
 
@@ -179,12 +215,21 @@ export function classifyTarget(i: TargetInput): { tier: TargetTier; reason: stri
   const failed = !!i.screeningFailedAt && daysSince(i.screeningFailedAt, i.nowMs) <= TARGET_PRIORITY_DAYS * 2;
   // 申込以降は審査落ちの切り替えだけ
   if (POST_APPLY_STATUSES.has(status) && !failed) return null;
+  // 連絡の約束の日（約束した日に戻す・終わった案件・止まった人・追客の外しより先）。内覧済み・審査落ちの人はその段のまま（上の段）
+  const contactDue = i.contactDueYmd ? { tier: "contact_due" as const, reason: `連絡の約束の日（${i.contactDueYmd.slice(5).replace("-", "/")}）` } : null;
+  if (contactDue && !(i.lastViewedAt && Math.min(custDays, daysSince(i.lastViewedAt, i.nowMs)) <= TARGET_PRIORITY_DAYS) && !failed) return contactDue;
+  // 2026-10-08 竹内さん「（審査落ちの後に引越し中止・来年再相談など終わった人は）その場合は外す」:
+  //   終わった後にお客様が話し出していなければ外す（①〜④ のどれにも入れない）。連絡の時期を約束した人は別の担当の「連絡の約束→カレンダー」で戻る
+  if (dealEnded(i)) return null;
   if (failed && Math.min(custDays, daysSince(i.screeningFailedAt, i.nowMs)) <= TARGET_PRIORITY_DAYS) return { tier: "screening_failed", reason: "申込→審査落ち（切り替え中）" };
   if (i.lastViewedAt && Math.min(custDays, daysSince(i.lastViewedAt, i.nowMs)) <= TARGET_PRIORITY_DAYS) return { tier: "viewed", reason: "一度内覧に行った" };
   const m = isLive(i.meta) ? i.meta : null;
   // 取り下げと同じ線だけ（intent=negative 単独では外さない: 実物 チンシャン 10/08 は物件1件への否定で、物件出しの約束は残っている）
   const paused = !!m && brainPausedCustomer(m as Parameters<typeof brainPausedCustomer>[0]).paused;
   if (paused) return null;
+  // 2026-10-08 竹内「hot から外す事もブレインがしてよい」「追客3回無視」: 追客（AIX 物件ピックアップした／物件オススメ）3回続けて返事なしで ③④ から外す（①② は最優先なので残す）。
+  //   お客様が戻れば ignoredAix は0に戻り、自然に入り直す
+  if (hotDropOf(i).drop) return null;
   if (daysSince(i.createdAt, i.nowMs) <= TARGET_NEW_DAYS || (i.staffNeverReplied && custDays <= TARGET_NEW_DAYS)) return { tier: "new", reason: "新規のお客様" };
   if (custDays <= TARGET_ENGAGED_DAYS) {
     const e = engagedSignal(m, i.pendingAixAction ?? null);
@@ -210,9 +255,38 @@ export function engagedSignal(m: AttentionMeta | null, pendingAixAction: string 
 /**
  * hot（今日物件を出すべき人）をブレインで決める。ターゲットの段と同じ基準（①〜④）で、物件を出す余地がある人。
  *   物件の中身（どの物件か）は物件検索ブレインの領分。ここは「誰に物件を出すか」の LINE 側の判断だけ
- *   ※ 昇格だけ（new_inquiry・property_search → hot）。下げるのは今まで通り物件ツールの側（送付回数）
+ *   上げる（new_inquiry・property_search → hot）のは発言の後（syncBrainHot）。下げる（hot → property_search）のは
+ *   続けて返事の無い AIX（brain-hot-drop・syncBrainHotDrops・2026-10-08）と、今まで通り物件ツールの側（送付回数）
  */
+/** 終わった後にお客様が話し出したと見る間（終わりの発言の続きの数通は同じ番） */
+export const DEAL_ENDED_RESUME_MS = 6 * 3_600_000;
+/**
+ * 案件が終わっていて、その後お客様が探しを再開していない。
+ *   後の発言がお礼だけ（実物 H「本当にありがとうございます🙇‍♀️」・アヤ「連絡します！😭 定期でいつも送っていただき…」）は再開ではない
+ *   → 再開＝終わりから6時間より後に発言があり、かつブレインがその後に物件の番と読んだ（AIX要対応の物件・engagedSignal）時だけ
+ */
+export function dealEnded(i: Pick<TargetInput, "dealEndedAt" | "lastCustomerAt" | "meta" | "pendingAixAction">): boolean {
+  const e = tms(i.dealEndedAt);
+  if (!Number.isFinite(e)) return false;
+  const c = tms(i.lastCustomerAt);
+  if (!(Number.isFinite(c) && c > e + DEAL_ENDED_RESUME_MS)) return true;
+  const m = isLive(i.meta) && tms(i.meta.analyzed_msg_ts) > e + DEAL_ENDED_RESUME_MS ? i.meta : null;
+  return !engagedSignal(m, i.pendingAixAction ?? null);
+}
+
+/** 外す判断（brain-hot-drop）。hotDrop=false の時は外さない */
+export function hotDropOf(i: TargetInput): { drop: boolean; reason: string | null } {
+  if (i.hotDrop === false) return { drop: false, reason: null };
+  return brainHotDrop({
+    ignored: i.ignoredAix ?? null, hotConfirmedAt: i.hotConfirmedAt ?? null,
+    lastCustomerAt: i.lastCustomerAt ?? null, silentSince: i.createdAt ?? null, silentDays: i.hotDropSilentDays ?? null, nowMs: i.nowMs,
+  });
+}
+
 export function brainHotDecision(i: TargetInput): { hot: boolean; reason: string | null } {
+  // 続けて返事の無い AIX の人は上げない（①② の人も hot の印は同じ線で外す・ターゲット一覧には残る）
+  const drop = hotDropOf(i);
+  if (drop.drop) return { hot: false, reason: drop.reason };
   const t = classifyTarget(i);
   if (!t) return { hot: false, reason: null };
   // 新規は条件が届いて物件の番になっている時だけ（挨拶だけの番は物件を出さない）
@@ -260,6 +334,16 @@ export function compareTargets(a: { tier: TargetTier; lastCustomerAt?: string | 
   if (r !== 0) return r;
   const ta = tms(a.lastCustomerAt), tb = tms(b.lastCustomerAt);
   return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+}
+
+/**
+ * 要対応の並び（小さいほど上）。グループのターゲット一覧・会話の画面・お客様一覧で同じ順（2026-10-08 竹内さん「その形でおねがい」）:
+ *   0 AIX要対応が残っている → 1 内覧済み → 2 審査落ち → 3 新規 → 4 物件検索中 → 9 それ以外（手で付けた印だけ等）
+ */
+export function attentionRank(i: { pendingAixAction?: string | null; tier?: TargetTier | null }): number {
+  if (i.pendingAixAction && BRAIN_AIX_LABELS[i.pendingAixAction]) return 0;
+  if (i.tier) return TARGET_TIER_RANK[i.tier];
+  return 9;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

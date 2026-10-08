@@ -10,6 +10,7 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { buildSuggestNextActionSystemBlocks } from "@/app/lib/suggest-next-action-prompt";
 import { loadSuggestNextActionPrefixInputs } from "@/app/lib/suggest-next-action-prompt-server";
 import { suggestNextActionLlmEnabled } from "@/app/lib/next-action-unify";
+import { legacyActionWinRatesEnabled } from "@/app/lib/application-reach";
 
 export const maxDuration = 30;
 
@@ -164,11 +165,14 @@ export async function POST(req: NextRequest) {
       .select("action_type, confidence")
       .eq("category", "stats")   // 用途分離: 統計行のみ（同名の通常キーワードルール混入を構造的に排除）
       .eq("keyword", "SUGGESTION_ACCEPT_RATE"),
-    supabase.from("aix_action_attribution")
-      .select("action_type, win_rate, usage_count")
-      .gte("period_start", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10))
-      .order("period_start", { ascending: false })
-      .limit(50),
+    // 2026-10-08 竹内さんの決定⑥: 推定の成約込みの勝率（成約貢献率）は使わない（既定・空＝データなしと同じ＝低評価しない）。旧に戻す: BRAIN_ACTION_WIN_RATES=on
+    legacyActionWinRatesEnabled(process.env)
+      ? supabase.from("aix_action_attribution")
+        .select("action_type, win_rate, usage_count")
+        .gte("period_start", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10))
+        .order("period_start", { ascending: false })
+        .limit(50)
+      : Promise.resolve({ data: [] as Array<{ action_type: string; win_rate: number | null; usage_count: number | null }> }),
     // 中1: 予測精度（next_action_logs.was_accurate 率 / update-action-confidence cron が毎日更新）
     supabase.from("trigger_action_rules")
       .select("action_type, confidence, total_occurrence")

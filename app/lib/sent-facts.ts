@@ -12,6 +12,9 @@ import { classifyStaffTextFacts, aixLedgerKind, aixTextPromises, extractViewingA
 import { promiseEventRows, planPromiseInsert, planPromiseCompletion, PROMISE_MUST_MARK } from "@/app/lib/promise-calendar";
 // 2026-09-26 お客様の状況（customer-state）: 見積の物件名を本文の【】から・申込の案内の物件をこちらの本文の「〇〇号室お申込み」から（純関数は customer-state に1つ）
 import { estimateNamesFromText, applicationPropertyFromText } from "@/app/lib/customer-state";
+// 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる」: 送った文の連絡の日の約束（contact-promise）を同じカレンダーの【必ず】の行に
+import { syncContactPromiseCalendar } from "@/app/lib/contact-promise-server";
+const deliveredOf = (entries: ReadonlyArray<{ kind: string; status: string }>) => entries.some((e) => e.status === "done" && (e.kind === "properties_sent" || e.kind === "estimate_sent"));
 
 type FactRow = RecordedFact & { conversation_id: string };
 type FactLike = Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">;
@@ -73,6 +76,7 @@ export async function syncPromiseCalendar(o: { conversationId: string; entries: 
  */
 export async function syncPromiseCalendarFromText(o: { conversationId: string; text: string; sentAt: string }): Promise<void> {
   const entries = classifyStaffTextFacts(o.text, o.sentAt).filter((e) => e.kind !== "media_sent");
+  await syncContactPromiseCalendar({ conversationId: o.conversationId, text: o.text, sentAt: o.sentAt, delivered: deliveredOf(entries) });
   if (entries.length === 0) return;
   await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt });
 }
@@ -111,7 +115,10 @@ export async function recordStaffTextFacts(o: { conversationId: string; text: st
   const meeting = entries.find((e) => e.kind === "meeting_place_sent")?.detail.appointment;
   if (meeting) await recordViewingFromAppointment({ conversationId: o.conversationId, appointment: meeting, sentAt: o.sentAt, source: "staff_text", onlyFrom: o.viewingOnlyFrom });
   // 遡って記録する時（viewingOnlyFrom あり）はカレンダーを触らない（過去の約束を今のやることにしない）
-  if (!o.viewingOnlyFrom) await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt });
+  if (!o.viewingOnlyFrom) {
+    await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt });
+    await syncContactPromiseCalendar({ conversationId: o.conversationId, text: o.text, sentAt: o.sentAt, delivered: deliveredOf(entries) });
+  }
   return entries.length;
 }
 
@@ -200,6 +207,7 @@ export async function recordAixFacts(o: {
       conversationId: o.conversationId, sentAt: o.sentAt,
       entries: rows.map((r) => ({ kind: r.kind as LedgerEntry["kind"], status: r.status as LedgerEntry["status"], evidence: r.evidence ?? "", detail: (r.detail ?? {}) as LedgerEntry["detail"] })),
     });
+    await syncContactPromiseCalendar({ conversationId: o.conversationId, text: o.generatedText ?? "", sentAt: o.sentAt, delivered: deliveredOf(rows) });
   }
 }
 

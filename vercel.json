@@ -323,6 +323,10 @@
     {
       "path": "/api/cron/design-knowledge",
       "schedule": "40 19 * * 0"
+    },
+    {
+      "path": "/api/cron/viewing-morning-greeting",
+      "schedule": "15 0 * * *"
     }
   ]
 }

@@ -51,7 +51,24 @@ export type DailyGreetingResult = { text: string; action: "removed" | "added" | 
  * @param greetingPhrase 今日はじめての時に使う挨拶（buildGreeting の値。"" なら付けない）
  * @param name 「〇〇さん」（分からなければ ""）
  */
-export function applyDailyGreeting(text: string, opts: { staffSentToday: boolean; greetingPhrase: string; name: string }): DailyGreetingResult {
+/**
+ * 2026-10-08 竹内「AIX テンプレート竹内の方に寄せる」: 挨拶を外して「〇〇さん」だけの行が残る時、次の行の本文を同じ行につなぐ（joinNameLine）。
+ *   竹内さんの手打ち（8/1〜）: 「〇〇さん」で始まる通 353 のうち名前だけの行 7（2%）・名前＋本文 162・名前＋挨拶 184（書き手 A＝呼び名の後で改行しない）。
+ *   つなぐのは次の行が普通の文の時だけ（🌟・【・・・※・（・①〜・名前で始まる行・空行はつながない）。消す文字は無い（改行1つだけ）。AIX の出口だけで使う
+ */
+export function joinNameOnlyLine(text: string): string {
+  const lines = text.split("\n");
+  const i = lines.findIndex((l) => l.trim());
+  // 「〇〇さん」だけ（「お客様」「〇〇様」の行は呼び方の出口 okyaku-address が直す物なので触らない）
+  if (i < 0 || !/^[ \t　]*[^\n！!。、\s]{1,15}さん[ \t　]*$/.test(lines[i])) return text;
+  // 名前の行の後の空行1つは飛ばす（「〇〇さん⏎⏎本文」も竹内さんの形では1行）
+  const j = lines[i + 1] !== undefined && !lines[i + 1].trim() ? i + 2 : i + 1;
+  const next = lines[j];
+  if (next === undefined || !next.trim() || /^[\s　]*(?:🌟|【|・|※|（|\(|[①-⑳]|[^\n！!。]{1,15}(?:さん|様))/u.test(next)) return text;
+  return [...lines.slice(0, i), `${lines[i].trim()}${next.trim()}`, ...lines.slice(j + 1)].join("\n");
+}
+
+export function applyDailyGreeting(text: string, opts: { staffSentToday: boolean; greetingPhrase: string; name: string; joinNameLine?: boolean }): DailyGreetingResult {
   if (!text?.trim()) return { text, action: "none" };
   const lines = text.split("\n");
   const idx = lines.map((l, i) => (l.trim() ? i : -1)).filter((i) => i >= 0).slice(0, 2);
@@ -65,7 +82,8 @@ export function applyDailyGreeting(text: string, opts: { staffSentToday: boolean
       //   挨拶の直後にまた名前が続く1行（「〇〇さんお世話になっております！！〇〇さんにオススメ…」・全件監査の実物）は名前を重ねない
       const replaced = /^[^\n！!。]{0,15}(?:さん|様)/.test(rest) ? rest : [keepName, rest].filter(Boolean).join("");
       const out = replaced ? [...lines.slice(0, i), replaced, ...lines.slice(i + 1)] : [...lines.slice(0, i), ...lines.slice(i + 1)];
-      return { text: out.join("\n").replace(/^\n+/, "").replace(/\n{3,}/g, "\n\n"), action: "removed" };
+      const removedText = out.join("\n").replace(/^\n+/, "").replace(/\n{3,}/g, "\n\n");
+      return { text: opts.joinNameLine ? joinNameOnlyLine(removedText) : removedText, action: "removed" };
     }
     return { text, action: "none" };
   }

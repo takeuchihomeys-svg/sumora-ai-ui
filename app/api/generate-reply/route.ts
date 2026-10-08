@@ -232,6 +232,7 @@ import { ensureWaitingCommitment, contactDateLabel } from "@/app/lib/waiting-com
 import { isNotACustomerReply } from "@/app/lib/meta-narration";
 // 2026-09-18 竹内（ゆーた 事例）: 「10月中」は 10/31 まで。幅のある入居時期を前倒しして急かさない
 import { resolveApplyDeadlineNote } from "@/app/lib/move-in-deadline";
+import { farMoveInReplyLine } from "@/app/lib/contact-promise";
 // 2026-09-12 竹内（YUYA 事例）: お客様が送った物件の呼び方（生成の指示と後処理が同じ判定）
 import { customerSharedProperty } from "@/app/lib/shared-property-ref";
 // 2026-09-09 Fable5 G1 行動台帳（Action Ledger）: 「我々が何をしたか＝done／何をすると言ったか＝promised」を一次証拠（aix_usage_logs > line_tasks > 本文）から
@@ -250,6 +251,9 @@ import { GENERATION_FAILURE_TEXT, isUsableExampleText, isCustomerFacingExample, 
 import { buildRentMarketNote, type RentMarketForReply } from "@/app/lib/rent-question";
 // 2026-09-11 竹内方針4・5: few-shot 注入前の「承知→かしこまりました」「すぐに除去」（後処理・検査と同じ定義）
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+// 2026-10-08 竹内さん（り 8f705d16「こんばんは。この時間に送るのおかしい」）: 手本の頭の時刻の挨拶（こんばんは／おはようございます）は
+//   「お世話になっております」に置き換えて見せる（入口・手本 7,974件中3件＝竹内さんの朝の2件と今回の1件）。戻す: TIME_GREETING_R11=off
+import { replaceHeadTimeGreeting, timeGreetingEnabled } from "@/app/lib/time-greeting";
 // 2026-10-01 竹内: 条件の復唱をスタッフの手直しの形に（入口の一文。出口は validate-reply の polishConditionEcho）
 import { CONDITION_ECHO_STYLE_NOTE } from "@/app/lib/condition-echo-polish";
 // 2026-09-12 竹内方針D: 日本時間の日付・曜日は jst-date の関数だけで計算する（曜日表をプロンプトに渡し LLM に曜日を計算させない）
@@ -291,6 +295,7 @@ import { fetchPromptRules } from "@/app/lib/prompt-rules";
 // 2026-10-08 8巡目（記録）: 見張りの行に材料の要約・出さなかった下書きを控える
 import { logWatchMaterial, noteWatchMaterials, noteWatchSuppressedDraft } from "@/app/lib/line-watch-materials-server";
 import { replyMaterialSizes } from "@/app/lib/line-watch-materials";
+import { splitRequests, buildRequestLedgerNote, requestLedgerEnabled } from "@/app/lib/request-ledger";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -351,6 +356,8 @@ function createTemplateOptimizeModel(defaultHeaders?: Record<string, string>) {
 // さらに「H!tom!.M」「ゆき♡」等の記号・数字・絵文字混じりのLINE表示名も名前として使わない
 // （実名「Hitomi」と食い違い、final-check が FABRICATED_NAME を出す原因になる）。
 // 判定は app/lib/validate-reply.ts の normalizeCustomerName に一元化する（二重定義禁止）。
+// （上の段落は normalizeCustomerName の説明）手本の頭の時刻の挨拶を「お世話になっております」に（2026-10-08・time-greeting.ts）
+function exampleTimeGreeting(t: string): string { return timeGreetingEnabled() ? replaceHeadTimeGreeting(t).text : t; }
 // G30（2026-09-08 Fable5）: buildFirstGreeting は app/lib/greeting.ts へ移設（resolveGreeting / enforceOpening と同一定義）。
 // sanitizeCustomerName は validate-reply の canonOf に一本化（2026-09-12 竹内方針C: resolveAddressName が決めた呼び名を再正規化しない。
 //   旧: normalizeCustomerName で「りおなちゃん」→「りおな」になり、nameNote・greetingNote・名前スロットだけスタッフの呼び方から外れていた）
@@ -2650,7 +2657,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
             // 2026-09-11 竹内方針4・5（E4-f）: 実例の「承知しました」「すぐに」は注入前に決定論で正規化（DB の本文は書き換えない）
             // 2026-09-12 竹内方針D: 曜日の誤りは日付を正として直す（RPC の戻りに created_at が無いので、食い違う曜日だけ外す）
             // 2026-09-23 S4: 手本の金額は伏せ字（同じ会話の実送信が類似検索で戻り ¥44,000 等を一字一句写していた。他の会話なら他人の金額の創作）
-            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text))}」`;
+            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(exampleTimeGreeting(normalizeBannedPhrasing(ex.sent_reply ?? "").text)))}」`;
           }).join("\n\n");
         }
       }
@@ -2737,7 +2744,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       const premise = derivePremiseLabel(ex.sent_reply ?? "");
       // 2026-09-11 竹内方針4・5: 注入前に承知→かしこまりました・すぐに除去（DB の本文は書き換えない）
       // 2026-09-12 竹内方針D: 曜日の誤りは書いた日（created_at）の暦で、日付を正として直す
-      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(normalizeBannedPhrasing(ex.sent_reply ?? "").text, ex.created_at))}」`;
+      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(exampleTimeGreeting(normalizeBannedPhrasing(ex.sent_reply ?? "").text), ex.created_at))}」`;
     }).join("\n\n");
 }
 
@@ -4063,6 +4070,9 @@ async function handleGenerateReply(req: NextRequest) {
     if (procedureAnswer) console.info("[procedure-answer]", JSON.stringify({ conversationId, kinds: procedureAnswer.plan.question.kinds, mode: procedureAnswer.plan.mode, target: procedureAnswer.plan.target?.name ?? null, moveIn: procedureAnswer.plan.moveIn?.why ?? null, source: procedureAnswer.source }));
     // 2026-10-08 8巡目 竹内「資料に書いてある事は返信の本文で答えて良い」: 契約条件（礼金・敷金・フリーレント・保証会社・保証人・入居時期/退去予定・駐車場・管理会社）の
     //   質問の時だけ、対象の物件の資料の該当の所を材料に渡す（質問でなければ DB も引かない・枠 8秒・申込以降は渡さない・CONTRACT_TERMS_ANSWER=off で止まる）
+    const requestListNote = !isTemplateOptimize && !postApplyConversation && requestLedgerEnabled()
+      ? buildRequestLedgerNote([], splitRequests(customerMsgUnits, new Date().toISOString()))
+      : "";
     const contractTerms = !isTemplateOptimize && !postApplyConversation && !!conversationId
       ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
       : null;
@@ -5033,7 +5043,13 @@ async function handleGenerateReply(req: NextRequest) {
       //   さらに残り日数に関わらず文面が「今週中」で固定だった。そのまま送信され、お客様を無用に急かした。
       //   →「一番遅い入居日」から申込の目安日を出し（move-in-deadline.ts）、**本当に近い時だけ**触れる。
       //     文面も「今週中」固定をやめ、計算した日付をそのまま渡す（スタッフ実送信の「9/20日辺りでのお申込み」の形）。
-      if (psp?.move_in_time && brainMeta?.urgency_appropriate !== false) {
+      // 2026-10-08 竹内さん「物件を抑える事ができるのは1ヶ月のため、1ヶ月半前から探し出す形が理想の流れと伝えて、その日に連絡するように約束」:
+      //   ブレインが入居の時期が先（連絡の日の約束の番）と決めた時だけ（contact-promise・実際の竹内さんの LINE の型）。申込の目安日の1行は出さない（先の話で急かさない）
+      const farMoveIn = brainFreshForMessage ? ((brainMeta as { far_move_in?: { move_in_label: string; contact_label: string } | null }).far_move_in ?? null) : null;
+      if (farMoveIn) {
+        lines.push(farMoveInReplyLine({ moveInLabel: farMoveIn.move_in_label, contactLabel: farMoveIn.contact_label }, sanitizeCustomerName(customerName)));
+      }
+      if (!farMoveIn && psp?.move_in_time && brainMeta?.urgency_appropriate !== false) {
         const dl = resolveApplyDeadlineNote(psp.move_in_time, new Date().toISOString());
         if (dl) {
           lines.push(`- ⚡ 申込の目安日: 入居希望「${psp.move_in_time}」（一番遅くて${dl.window.latest.m}月${dl.window.latest.d}日）から逆算すると、お申込みの目安は${dl.applyByLabel}ごろ（審査・契約手続きに最短でも2週間程かかるため）。触れる場合は「${psp.move_in_time}ご入居ですと${dl.applyByLabel}ごろまでにお申込みいただく形となります！！」の1文だけにし、これより前倒しした期限・「今週中」「至急」等の煽りは書かない`);
@@ -5119,7 +5135,10 @@ async function handleGenerateReply(req: NextRequest) {
     const vocabAnchorNote = isFollowUp || isTemplateOptimize
       ? ""
       : buildVocabAnchorNote(`${message ?? ""}\n${unrepliedCustomerTexts.join("\n")}`, pairContext);
-    const turnPairNote = (isFollowUp || isTemplateOptimize ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "", { strategy: brainStrategy, brainFresh: brainLocalFresh })) + vocabAnchorNote;
+    // 2026-10-08 入居の時期が先（ブレインの far_move_in）: 条件の受け取りのセル（ANY_CONDITION_CHANGE の「再ピックアップ宣言」）を入れない。
+    //   この番の約束は連絡の日の1つだけ（YUMA の Claude の確かめで「2028年3月以降入居・…のご条件でピックアップ」の今の宣言が足されていた）
+    const farMoveInFresh = !!(brainFreshForMessage && brainMeta && (brainMeta as { far_move_in?: unknown }).far_move_in);
+    const turnPairNote = (isFollowUp || isTemplateOptimize || farMoveInFresh ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "", { strategy: brainStrategy, brainFresh: brainLocalFresh })) + vocabAnchorNote;
     // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】（往復文脈の直前）＋ 直前発言の宣言／実行注記（staffContextNote）。shadow では注入しない
     // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（台帳と同じ「こちらが知っている事実」の位置・往復文脈の前提）
     const viewingReportNote = viewingReportNoteForReply(viewingReports);
@@ -5640,7 +5659,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         + (equipmentAnswer?.note ? `\n\n${equipmentAnswer.note}` : "")
         // 2026-09-30 みこと事例: 手続きの質問（審査・入居までの期間と流れ・必要書類）＝流れの事実と資料の入居時期（質問の時だけ）
         + (procedureAnswer?.note ? `\n\n${procedureAnswer.note}` : "")
-        + (contractTerms?.note ? `\n\n${contractTerms.note}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+        + (contractTerms?.note ? `\n\n${contractTerms.note}` : "")
+        // 2026-10-08 竹内さん「連投の依頼ごと全て把握する」: 今の連投の依頼・質問が2件以上の時だけ一覧（request-ledger・REQUEST_LEDGER=off）
+        + (requestListNote ? `\n\n${requestListNote}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）

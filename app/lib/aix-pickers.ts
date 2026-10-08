@@ -160,12 +160,15 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
     textType: "aix/action 2217〜（画像を読む LLM・🌟カード）",
     pickers: [
       { key: "pickup_type", label: "オススメの種類", kind: "choice", options: [
-        { value: "新規ピックアップ", label: "初回・1件訴求", when: "初めて1件に絞って勧める" },
-        { value: "新着1件", label: "新着・1件訴求", when: "前に送った後の新着を1件" },
-        { value: "継続ピックアップ", label: "送った中から・1件訴求", when: "これまで送った中から1件を推す" },
-        { value: "条件広げピックアップ", label: "条件広げ・1件訴求", when: "条件を広げて見つけた1件" },
-        { value: "代替ピックアップ", label: "代替・1件訴求", when: "気に入った物件が無くなった代わりの1件" },
-        { value: "現状伝えて1件", label: "現状伝えて・1件訴求", when: "希望どおりが無い現状を伝えてから1件" },
+        // 2026-10-08 竹内「その形にする。『送った中から1件推す』は物件ピックアップで複数送った時に、続けて推すために送る部分」＝画面の6種が正。
+        //   使う場面は竹内さんの実送信（6/26〜 物件オススメ 248回）から: 新着 150（60%）・送った中から 56（23%・束の直後1時間以内・「中でも」36）・
+        //   代替 16・条件広げ 14・初回 10・現状伝えて（9/17 M・6/14 コトミの2通）。数え方 scripts/audit-r11-rec-picker-scenes.ts
+        { value: "新規ピックアップ", label: "初回・1件訴求", when: "まだ物件を送っていない（初回の）お客様に、1件だけに絞って勧める" },
+        { value: "新着1件", label: "新着・1件訴求", when: "前に物件を送った後、新しく募集に出た1件を勧める（追客。束を送ってから時間が空いた時）" },
+        { value: "継続ピックアップ", label: "送った中から・1件訴求", when: "AIX【物件ピックアップした】で複数件送った直後に、続けてその中から1件を推す（「お送りさせて頂きましたお部屋の中でも」）" },
+        { value: "条件広げピックアップ", label: "条件広げ・1件訴求", when: "条件を広げて探した束（物件ピックアップした→条件を広げた）を送った直後に、その中から1件を推す" },
+        { value: "代替ピックアップ", label: "代替・1件訴求", when: "お客様が気に入った・聞いた物件が募集終了・紹介不可だった（物件確認した→物件なかった）後に、代わりの1件を勧める" },
+        { value: "現状伝えて1件", label: "現状伝えて・1件訴求", when: "ご条件どおりの空室が無い・ご希望エリアに無い現状を先に1文で伝えてから、退去予定・周辺の1件を勧める" },
       ] },
       { key: "situation_kind", label: "現状の種類", kind: "choice", onlyWhen: { key: "pickup_type", values: ["現状伝えて1件"] }, options: [
         { value: "vacancy_none", label: "空室が無い", when: "" }, { value: "area_none", label: "エリアに無い", when: "" }, { value: "custom", label: "自由文", when: "" },
@@ -386,6 +389,9 @@ export type PickerSceneInput = {
   afterEnded?: boolean;
   /** 希望どおりが無く条件を広げたか */
   widened?: boolean;
+  /** 直前の AIX【物件ピックアップした】（束）から何分か・束の物件の数（物件オススメの「送った中から」を選ぶ） */
+  bundleMinutesAgo?: number | null;
+  bundleImageCount?: number;
   /** 見積書にする物件の数 */
   estimateCount?: number;
   /** 退去予定のお部屋の内覧か */
@@ -432,6 +438,8 @@ export function pickerForScene(input: PickerSceneInput): PickerChoice | null {
     case "property_recommendation": {
       if (input.afterEnded) return mk("pickup_type", "代替ピックアップ", "気に入った物件が無くなった代わりの1件");
       if (input.widened) return mk("pickup_type", "条件広げピックアップ", "条件を広げて見つけた1件");
+      // 2026-10-08 竹内: 物件ピックアップで複数送った直後に続けて推す＝送った中から（竹内さんの実送信 56回・束から1時間以内）
+      if ((input.bundleImageCount ?? 0) >= 2 && input.bundleMinutesAgo != null && input.bundleMinutesAgo <= 60) return mk("pickup_type", "継続ピックアップ", "物件ピックアップで複数送った直後に続けて1件を推す");
       if ((input.sentPropertyCount ?? 0) > 0) return mk("pickup_type", "新着1件", "前に送った後の新着1件");
       return mk("pickup_type", "新規ピックアップ", "初めて1件に絞って勧める");
     }

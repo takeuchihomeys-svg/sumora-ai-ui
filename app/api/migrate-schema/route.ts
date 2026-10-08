@@ -4833,6 +4833,38 @@ ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS room_no TEXT;
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS scene_key TEXT;
 ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS brain_version TEXT;
 CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_building ON brain_decision_logs(building_key) WHERE building_key IS NOT NULL;
+-- 2026-10-08 竹内さんの決定②「申込して30日経ったら確認のアナウンスが入って選択できる」: スタッフが選んだ結果（成約した／審査落ち・切り替え／キャンセル）は locked=true と一緒に残す。
+--   「まだ手続き中」は locked にせず confirm_snooze_until（14日後にまた聞く）。決まりは app/lib/outcome-confirm.ts
+ALTER TABLE deal_outcomes ADD COLUMN IF NOT EXISTS staff_confirmed_at TIMESTAMPTZ;
+ALTER TABLE deal_outcomes ADD COLUMN IF NOT EXISTS staff_confirm_choice TEXT;
+ALTER TABLE deal_outcomes ADD COLUMN IF NOT EXISTS confirm_snooze_until TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_deal_outcomes_applied ON deal_outcomes(applied_at) WHERE applied_at IS NOT NULL;
+-- 2026-10-08 竹内さんの決定⑥: 場面×段階×ブレインの判断 → 申込まで届いた割合（台帳から毎日作り直す集計の置き場・cron/outcome-ledger が書き、ブレインが読む）。
+--   action は AIX の種類か 'reply'（AIX なし）・stage_bucket は pre_viewing／post_viewing。決まりは app/lib/application-reach.ts
+CREATE TABLE IF NOT EXISTS brain_action_reach_stats (
+  id BIGSERIAL PRIMARY KEY,
+  scene_key TEXT NOT NULL,
+  stage_bucket TEXT NOT NULL,
+  action TEXT NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0,
+  reached INTEGER NOT NULL DEFAULT 0,
+  rate NUMERIC NOT NULL DEFAULT 0,
+  computed_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (scene_key, stage_bucket, action)
+);
+ALTER TABLE brain_action_reach_stats DISABLE ROW LEVEL SECURITY;
+
+-- 2026-10-08 手本・ナレッジの個人情報（事故 9bbf9b90: 手本の customer_message に記入済みの申込フォーム）:
+--   伏せた行の印（pii_redacted_at）と、伏せる前の本文の控え（*_pii_backup・戻す時だけ使う）。判定は app/lib/example-pii-guard.ts・
+--   伏せる SQL は scripts/audit-example-pii.ts --sql=… が作る。控えは個人情報そのものなので RLS を有効にして公開キーからは読めなくする（ポリシーなし＝サービスキーと SQL だけ）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS pii_redacted_at TIMESTAMPTZ;
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS pii_redacted_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS ai_reply_examples_pii_backup (LIKE ai_reply_examples INCLUDING DEFAULTS);
+ALTER TABLE ai_reply_examples_pii_backup ADD COLUMN IF NOT EXISTS backed_up_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE ai_reply_examples_pii_backup ENABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS ai_reply_knowledge_pii_backup (LIKE ai_reply_knowledge INCLUDING DEFAULTS);
+ALTER TABLE ai_reply_knowledge_pii_backup ADD COLUMN IF NOT EXISTS backed_up_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE ai_reply_knowledge_pii_backup ENABLE ROW LEVEL SECURITY;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

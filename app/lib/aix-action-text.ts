@@ -25,6 +25,8 @@ export function aixButtonText(action: string, checkPattern?: string | null): str
   if (action === "property_check_result" && checkPattern && CHECK_PATTERN_TOPIC[checkPattern]) {
     return `AIX【確認した（条件・交渉）→${CHECK_PATTERN_TOPIC[checkPattern]}】`;
   }
+  // 2026-10-08 内覧当日の朝の挨拶: 内覧挨拶のピッカー「内覧前」まで書く（画面の 内覧前／内覧後 の選択）
+  if (action === "greeting_viewing" && checkPattern === "before") return `AIX【${AIX_BUTTON_LABELS[action] ?? action}→内覧前】`;
   return `AIX【${AIX_BUTTON_LABELS[action] ?? action}】`;
 }
 

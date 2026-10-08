@@ -5,6 +5,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { computeConversationOutcome, writeConversationOutcome, listOutcomeConversations } from "@/app/lib/deal-outcome-server";
+import { refreshReachStats } from "@/app/lib/application-reach-server";
+import { applicationReachEnabled } from "@/app/lib/application-reach";
 
 export const maxDuration = 300;
 const ACTIVE_DAYS = 60;
@@ -39,7 +41,13 @@ export async function GET(req: NextRequest) {
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-    const summary = { candidates: ids.length, done, rows, events, deferred, failed: errors.length };
+    // 2026-10-08 ⑥: 台帳を作り直した後に「場面×段階×ブレインの判断 → 申込到達率」を数え直す（brain_action_reach_stats・ブレインが読む）。BRAIN_APPLY_REACH=off で止まる
+    let reach: Awaited<ReturnType<typeof refreshReachStats>> | { skipped: string } = { skipped: "off" };
+    if (applicationReachEnabled(process.env)) {
+      if (Date.now() - started > BUDGET_MS + 30_000) reach = { skipped: "no_time" };
+      else { try { reach = await refreshReachStats({ nowMs: started }); } catch (e) { reach = { skipped: e instanceof Error ? e.message : String(e) }; } }
+    }
+    const summary = { candidates: ids.length, done, rows, events, deferred, failed: errors.length, reach };
     await finishCronLog(runLogId, errors.length === 0 || done > 0, { ...summary, errors: errors.slice(0, 5) });
     return NextResponse.json({ ok: true, ...summary, errors: errors.slice(0, 5) });
   } catch (e) {

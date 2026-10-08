@@ -71,6 +71,21 @@ describe("資料の道", () => {
     ok(r.route === "material" && /シノケン/.test(r.facts[0]), JSON.stringify(r));
   });
   it("保証会社「利用必須」だけは確認", () => eq(routeContractTerm("guarantor_company", { lines: ["保証会社: 保証会社利用必須"] }).route, "confirm"));
+  // 10/08 竹内さんの決定A・B: 資料に会社名があれば返信。種類（）は分類表で確かな時だけ。種類を聞かれて確かでなければ AIX
+  it("種類が確か（公式）なら（独立系）を付ける＝シノケン", () => eq(routeContractTerm("guarantor_company", { lines: LECIEL_LINES }).facts[0], "シノケンコミュニケーションズ（独立系）"));
+  it("種類が確かでない会社は（）を付けない＝sumai保証（エポスと提携）", () => eq(routeContractTerm("guarantor_company", { lines: ["保証会社: 保証会社利用必須 sumai保証 初回50%"] }).facts[0], "sumai保証"));
+  it("名前だけの質問は確かでない会社でも資料で答える", () => eq(routeContractTerm("guarantor_company", { lines: ["保証会社: 保証会社利用必須 sumai保証 初回50%"] }, { questionText: "ここ保証会社どこですか？" }).route, "material"));
+  it("種類・通りやすさの質問で種類が確かでない → 確認（AIX）", () => eq(routeContractTerm("guarantor_company", { lines: ["保証会社: 保証会社利用必須 sumai保証 初回50%"] }, { questionText: "保証会社は緩そうなところでしょうか？" }).route, "confirm"));
+  it("種類・通りやすさの質問で種類が確か → 資料で（独立系）", () => {
+    const r = routeContractTerm("guarantor_company", { lines: LECIEL_LINES }, { questionText: "保証会社は緩そうなところでしょうか？" });
+    eq([r.route, r.facts[0]], ["material", "シノケンコミュニケーションズ（独立系）"]);
+  });
+  it("「保証会社は緩そうなところでしょうか？」は保証会社の質問", () => eq(detectContractTermTopics("保証会社は緩そうなところでしょうか？"), ["guarantor_company"]));
+  it("GUARANTOR_TYPE_SURE_ONLY=off で旧（表の種類をそのまま）", () => {
+    process.env.GUARANTOR_TYPE_SURE_ONLY = "off";
+    try { eq(routeContractTerm("guarantor_company", { lines: ["保証会社: 保証会社利用必須 sumai保証 初回50%"] }).facts[0], "sumai保証（独立系）"); }
+    finally { delete process.env.GUARANTOR_TYPE_SURE_ONLY; }
+  });
   it("保証人不要は資料で（緊急連絡先）", () => eq(routeContractTerm("guarantor_person", { lines: LECIEL_LINES }).route, "material"));
   it("保証人「原則必須/相談」は確認", () => eq(routeContractTerm("guarantor_person", { lines: ["連帯保証人: 原則連帯保証人必須/相談可能"] }).route, "confirm"));
   it("入居可能日の日付は資料で", () => eq(routeContractTerm("move_in", { lines: LECIEL_LINES }).route, "material"));

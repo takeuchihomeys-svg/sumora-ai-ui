@@ -5,6 +5,9 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
+// 2026-10-08 竹内さんの決定①③「申込までで成約データとして扱って大丈夫。申込までのツールなので」「申込基準で考える」:
+//   成約（closed_won・自動の推定を含む）も「申込に届いた」として分析し、会話は申込の時刻までで切る。書き戻しも申込で付ける。戻す: OUTCOME_APPLY_BASIS=off
+import { outcomeApplyBasisEnabled, analysisOutcomeOf, analysisCutoffAt } from "@/app/lib/application-reach";
 
 // ── 申込/成約/失注確定時の会話全体分析（Opus 4.8）─────────────────────────────────
 // conversations.status が applying / closed_won / closed_lost に変わった瞬間に呼ばれ、
@@ -93,16 +96,20 @@ export async function writeBackClosedOutcome(
   conversationId: string,
   outcome: ClosedOutcome
 ): Promise<void> {
-  if (outcome !== "closed_won" && outcome !== "closed_lost") return;
+  // 2026-10-08 申込基準（既定）: 申込（applying）・成約（closed_won）はどちらも「申込に届いた」＝ 'applied'／'applying' で書き戻す（成約の確かさは問わない）
+  const applyBasis = outcomeApplyBasisEnabled(process.env);
+  if (!applyBasis && outcome !== "closed_won" && outcome !== "closed_lost") return;
   // 2026-09-27 竹内: テスト用の会話（YUMA）は成約・失注の答え合わせに入れない
   if (isTestConversation(conversationId)) return;
-  const isWon = outcome === "closed_won";
+  const isWon = applyBasis ? outcome !== "closed_lost" : outcome === "closed_won";
+  const wonOutcome = applyBasis ? "applied" : "contract";
+  const wonActual: ClosedOutcome = applyBasis ? "applying" : "closed_won";
 
   // closing_strategy_logs: outcome 未確定の戦略提案行に成約/失注結果を記録
   const { error: csErr } = await supabase
     .from("closing_strategy_logs")
     .update({
-      outcome: isWon ? "contract" : "lost",
+      outcome: isWon ? wonOutcome : "lost",
       outcome_recorded_at: new Date().toISOString(),
     })
     .eq("conversation_id", conversationId)
@@ -114,7 +121,7 @@ export async function writeBackClosedOutcome(
   const { error: wpErr } = await supabase
     .from("winning_pattern_logs")
     .update({
-      actual_outcome: outcome,
+      actual_outcome: isWon ? wonActual : outcome,
       was_correct: isWon,
     })
     .eq("conversation_id", conversationId)
@@ -124,8 +131,10 @@ export async function writeBackClosedOutcome(
 
 export async function analyzeClosedConversation(
   conversationId: string,
-  outcome: ClosedOutcome
+  rawOutcome: ClosedOutcome
 ): Promise<ClosedAnalysisResult> {
+  // 申込基準（既定）: 成約も「申込に届いた」として分析する（closed_won → applying）
+  const outcome: ClosedOutcome = analysisOutcomeOf(rawOutcome, process.env);
   // 2026-09-27 竹内: テスト用の会話（YUMA）は勝ちパターン（winning_patterns）・成約分析に入れない
   if (isTestConversation(conversationId)) return { ok: true, skipped: true, reason: "test_conversation" };
   const dedupeKey = `closed_analysis_${conversationId}`;
@@ -171,7 +180,19 @@ export async function analyzeClosedConversation(
   if (msgErr) {
     return { ok: false, error: `messages取得失敗: ${msgErr.message}` };
   }
-  const msgs = (msgRows ?? []) as Array<{ sender: string; text: string }>;
+  let msgs = (msgRows ?? []) as Array<{ sender: string; text: string; created_at?: string }>;
+  // 申込基準: 申込の時刻（結果の台帳 deal_outcomes の一番新しい案件の applied_at）までの会話で分析する。台帳が無い・読めない時は全部
+  if (outcomeApplyBasisEnabled(process.env) && outcome === "applying") {
+    try {
+      const { data: dealRows } = await supabase.from("deal_outcomes").select("episode_no, applied_at, result").eq("conversation_id", conversationId);
+      const cutoff = analysisCutoffAt((dealRows ?? []) as Array<{ episode_no: number; applied_at: string | null; result: string | null }>);
+      if (cutoff) {
+        const cut = Date.parse(cutoff) + 60_000;
+        const kept = msgs.filter((m) => !m.created_at || Date.parse(m.created_at) <= cut);
+        if (kept.length >= 3) msgs = kept;
+      }
+    } catch { /* 台帳が無い環境は全部で分析 */ }
+  }
   if (msgs.length < 3) {
     return { ok: true, skipped: true, reason: "too_few_messages" };
   }

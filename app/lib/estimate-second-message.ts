@@ -35,12 +35,14 @@
 // ■ 手本は創作しない（feedback_no_invented_phrases）: 下の EXAMPLES はスタッフが自分で書いて送った2通目の本文そのまま（名前だけ {{NAME}}）。
 
 import { hasClosingSentence } from "./recommend-cta";
+import { aixTakeuchiFormOn } from "./aix-takeuchi-form";
 
 const N = "{{NAME}}";
 
 export type EstimateClosing = "receipt" | "viewing" | "apply";
 
-type Example = { text: string; closing: EstimateClosing; multi: boolean; facts: string[] };
+/** employee＝従業員の送信（2026-10-08 竹内「竹内の方に寄せる」: AIX_TAKEUCHI_FORM が on の時は手本に出さない） */
+type Example = { text: string; closing: EstimateClosing; multi: boolean; facts: string[]; employee?: boolean };
 
 /** スタッフが自分で書いて送った2通目（本文そのまま・日付は実送信の日）。facts はその時の物件名（今回に持ち込まない語） */
 export const ESTIMATE_SECOND_EXAMPLES: Example[] = [
@@ -54,7 +56,7 @@ export const ESTIMATE_SECOND_EXAMPLES: Example[] = [
   },
   { // 2026-09-30
     text: "メゾンドF02の最大限割引させていただいたお見積書お送りさせていただきました😊！！\n\n他お気に召されましたお部屋ございましたらお見積書もお送りさせていただきます！！\nお気軽にお知らせください😌！！",
-    closing: "receipt", multi: false, facts: ["メゾンドF02"],
+    closing: "receipt", multi: false, facts: ["メゾンドF02"], employee: true,
   },
   { // 2026-09-22
     text: `${N}さんお世話になっております！！\nお送り頂きましたS-RESIDENCE堺筋本町Deuxの最大限割引しました初期費用の御見積書となります！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！\nお気軽にお申し付けください！！`,
@@ -66,7 +68,7 @@ export const ESTIMATE_SECOND_EXAMPLES: Example[] = [
   },
   { // 2026-09-17
     text: "2部屋の最大限割引させていただきましたお見積書お送りさせていただきました😊！！\n\nお手隙の際にご査収ください😌！！",
-    closing: "receipt", multi: true, facts: [],
+    closing: "receipt", multi: true, facts: [], employee: true,
   },
   { // 2026-09-16
     text: "セレニテ南堀江エクラ902号室・セレニテ難波プリエ611号室、それぞれ最大限割引しました初期費用の御見積書となります！！\nお気に召されましたらお部屋ご案内させて頂きます😌！！",
@@ -143,7 +145,7 @@ export function buildEstimateSecondNote(i: EstimateSecondInput): string {
   const multi = i.properties.length >= 2;
   const label = i.properties.length === 1 ? i.properties[0] : multi ? `${i.properties.length}部屋` : "";
   const score = (e: Example) => (e.closing === i.closing ? 2 : 0) + (e.multi === multi ? 1 : 0);
-  const picked = [...ESTIMATE_SECOND_EXAMPLES]
+  const picked = [...ESTIMATE_SECOND_EXAMPLES].filter((e) => !(e.employee && aixTakeuchiFormOn()))
     .filter((e) => i.closing === "apply" || e.closing !== "apply")
     .sort((a, b) => score(b) - score(a)).slice(0, 5);
   const L: string[] = [];

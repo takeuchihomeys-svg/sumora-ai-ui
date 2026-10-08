@@ -21,6 +21,11 @@ export type StaffTextFulfillment = { done: true; basis: string; evidence: string
 
 const sentencesOf = (t: string) => t.split(/\n|(?<=[。！!？?])(?![。！!？?])/).map((s) => s.trim()).filter(Boolean);
 const clip = (s: string) => s.replace(/\s+/g, " ").slice(0, 60);
+/**
+ * 内覧当日の挨拶・送り出しを送った（AIX要対応「内覧挨拶→内覧前」の済み・2026-10-08）。
+ * viewing-day-greeting の VIEWING_DAY_GREETED_RE より狭い（「ご連絡お待ちしております」だけでは済みにしない＝出口は誤り0の側）
+ */
+export const VIEWING_DAY_GREETING_DONE_RE = /お気をつけて|(?:本日|今日)[^\n]{0,30}(?:よろしくお願い|宜しくお願い|ご案内させて|ご案内いたし|ご案内致し|何卒|お待ちしております)|(?:ご内覧|内覧|現地|ご来場)[^\n]{0,15}お待ちしております/;
 
 /** 時刻（17:30・11:00.・18時）。「13日」「7/31」は時刻ではない */
 const CLOCK_RE = /[0-9０-９]{1,2}\s*[:：]\s*[0-9０-９]{2}|[0-9０-９]{1,2}\s*時(?![間期点])/;
@@ -121,6 +126,13 @@ export function staffTextFulfillsAixItem(item: AixItemRef, text: string | null |
         if (APPLY_COMPLETED_RE.test(x) || /並行(?:して|で)[^\n。！!]{0,8}審査(?:を)?(?:かけ|掛け)させて(?:頂|いただ)きます/.test(x)) return { done: true, basis: "application_done", evidence: clip(x) };
       }
       return { done: false };
+    }
+    case "greeting_viewing": {
+      // 2026-10-08 内覧当日の朝の挨拶（内覧前）: 内覧挨拶はピッカーが文を入力欄に入れ普通の送信で送る（押下の記録が残らない日があった）→
+      //   当日の挨拶・送り出しの文で済み。内覧後（after:*）の要対応はこの線では済みにしない
+      if (item.check_pattern && item.check_pattern !== "before") return { done: false };
+      const m = t.normalize("NFKC").match(VIEWING_DAY_GREETING_DONE_RE);
+      return m ? { done: true, basis: "viewing_day_greeted", evidence: clip(m[0]) } : { done: false };
     }
     default:
       return { done: false };

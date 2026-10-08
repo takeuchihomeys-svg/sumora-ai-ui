@@ -4,7 +4,7 @@
 import { findAiPhrases, roomOnlyMentions, ensureOneEmoji, fixMissingNi, styleStatsOf, sceneOfSecond, AI_PHRASE_RULES } from "../second-message-style";
 import {
   buildSecondSceneNote, buildSecondMaterialNote, vacatingFromMaterial, secondSceneOf, leakedExampleFacts, unfoundedCostClaim,
-  renderExample, SECOND_MESSAGE_EXAMPLES, type SecondMaterialRow,
+  renderExample, SECOND_MESSAGE_EXAMPLES, SECOND_MESSAGE_EXAMPLES_R10, type SecondMaterialRow,
 } from "../second-message-scene";
 import { buildAixChainNote } from "../aix-chain-note";
 import { setRecommendClosing, APPLY_CLOSING_LINE } from "../recommend-cta";
@@ -135,7 +135,7 @@ console.log("\n■ 場面の形（入口）");
   t("(a) 比較の形＋物件名＋名前が入る", a.includes("「お送りさせて頂きましたお部屋の中でも特にS-RESIDENCE福島玉川Deux 208号室が」") && a.includes("YUMAさんにかなりオススメ出来るお部屋となります！！"));
   t("(b) 新着の形・比較の言い方は書かない指示", b.includes("新着で1件YUMAさんにオススメ出来るお部屋が募集に出ました！！") && b.includes("「お送りさせて頂きましたお部屋の中でも」とは書かない"));
   t("(c) 1件だけの形", c.includes("こちらのお部屋如何でしょうか😊！！") && c.includes("「お送りさせて頂きましたお部屋の中でも」「新着で」とは書かない"));
-  t("(d) 退去予定の時だけ退去予定の一文の指示・退去予定の実物が先", d.includes("退去予定のお部屋: ") && !a.includes("退去予定のお部屋: ") && d.indexOf("アドバンス大阪セレーネ") < d.indexOf("Luxe難波西2"));
+  t("(d) 退去予定の時だけ退去予定の一文の指示・退去予定の実物が先", d.includes("退去予定のお部屋: ") && !a.includes("退去予定のお部屋: ") && d.indexOf("モンブラン") < d.indexOf("アトリエール堺寺地町"));
   // 2026-10-01: 退去予定の一文は決まった形をそのまま渡す／1通目が既に伝えていれば書かせない（退去予定の実物も見せない）
   const LINE = "退去予定のお部屋となり、11月中旬ごろご入居可能となります！！";
   const dl = buildSecondSceneNote({ ...base, scene: "compare", vacating: true, vacatingLine: LINE });
@@ -152,7 +152,7 @@ console.log("\n■ 場面の形（入口）");
   t("伏せ字（〇〇・○○・◯◯・{{NAME}}）が無い", [a, b, c, d].every((n) => !/[〇○◯]{2}|\{\{/.test(n)));
   const noName = buildSecondSceneNote({ scene: "compare", vacating: false, name: "", propertyLabel: null });
   t("名前が分からない時は呼びかけを落とす（伏せ字・「さん」単独を残さない）", !/\{\{|(?:^|[^ぁ-んァ-ヶ一-龥A-Za-z])さんに/.test(noName) && noName.includes("名前は書かない"), noName.slice(0, 400));
-  t("手本は実送信そのまま（名前だけ置き換え）", renderExample(SECOND_MESSAGE_EXAMPLES.compare[0].text, "A") === REAL[0]);
+  t("手本は実送信そのまま（名前だけ置き換え）", renderExample(SECOND_MESSAGE_EXAMPLES_R10.compare[0].text, "A") === REAL[0]);
   t("secondSceneOf: compare/new_listing はそのまま・ほかは single", secondSceneOf("compare") === "compare" && secondSceneOf("new_listing") === "new_listing" && secondSceneOf("first") === "single" && secondSceneOf("followup_single") === "single" && secondSceneOf("alternative") === "single" && secondSceneOf(null) === "single");
 }
 

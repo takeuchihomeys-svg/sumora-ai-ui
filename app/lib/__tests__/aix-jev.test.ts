@@ -93,6 +93,8 @@ console.log("── ★ answers → ブレインが使う形");
 
 console.log("── ★ ボタンが決まった後: そのボタンのピッカーを選ぶ（2026-09-23 竹内）");
 {
+  t("★ 物件オススメのピッカーは画面の6種（pickup_type・10/08 竹内）", AIX_PICKER_CATALOG.property_recommendation.field === "pickup_type" && ["新規ピックアップ", "新着1件", "継続ピックアップ", "条件広げピックアップ", "代替ピックアップ", "現状伝えて1件"].every((k) => k in AIX_PICKER_CATALOG.property_recommendation.options) && Object.keys(AIX_PICKER_CATALOG.property_recommendation.options).length === 6);
+  t("★ 物件オススメの答え（送った中から）はそのまま pickup_type の値", parsePickerJevAnswer("property_recommendation", { type: "choice", choice: "継続ピックアップ", probabilities: { "継続ピックアップ": 0.8 } })?.pickerValue === "継続ピックアップ");
   t("★ ピッカーのあるボタン: 物件確認した・物件ピックアップした・物件オススメ・申込へ！", ["property_check_result", "property_send", "property_recommendation", "application_push"].every(hasPickerQuestion));
   t("★ ピッカーの無いボタンは null（見積書送る・内覧日調整 等）", !hasPickerQuestion("estimate_sheet") && !hasPickerQuestion("viewing_invite") && buildPickerQuestion("estimate_sheet") === null);
   t("★ 選択肢は aix_usage_logs の実物の語（send_mode: normal/new_arrival/widen/alternative）", ["normal", "new_arrival", "widen", "alternative"].every((k) => k in AIX_PICKER_CATALOG.property_send.options));

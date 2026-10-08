@@ -78,13 +78,14 @@ import { stripUnfoundedSelectionClaim, SELECTION_CLAIM_NOTE } from "@/app/lib/se
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
-import { applyDailyGreeting } from "@/app/lib/daily-greeting";
+import { applyDailyGreeting, staffTalkedToday } from "@/app/lib/daily-greeting";
+import { staffTalkedTodayFromDb } from "@/app/lib/daily-greeting-server";
 import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 // 2026-09-30 竹内「2通目の言い回しが AI くさい。実際使っている言い回しが出るように／場面で違う／資料も読み取ったのを渡す」:
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
-import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
+import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, aixTakeuchiFormOn, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
 import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
 import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
@@ -1473,10 +1474,25 @@ export async function POST(req: NextRequest) {
   // 2026-10-01: 1通目が既に「1件新着で…募集に出ました」と新着を伝えている時は、2通目は新着の宣言も「お送りさせて頂きましたお部屋の中でも」も重ねず、
   //   1件だけの形（「◯◯ 号室が〜、◯◯さんにかなりオススメ出来るお部屋となります！！」）にする（ローカル生成で新着の1通目の後に比較の書き出しが付いた）
   const firstDeclaresNew = !pickupPushLabel && /新着/.test(sentMessage ?? "") && /募集に(?:出|で)ました/.test(sentMessage ?? "");
-  const secondScene = pickupPushLabel ? "compare" as const : firstDeclaresNew ? "single" as const : secondSceneOf(recommendationScenario);
+  // 2026-10-08 竹内「AIX テンプレート竹内の方に寄せる」: 竹内さんは1通目の🌟カードが「1件新着で…募集に出ました」でも、2通目で新着の一文をもう一度書く
+  //   （10/04〜10/06 の2通目 10通中 7通・「こちらのお部屋如何でしょうか」3通）→ 新着の形（new_listing・竹内さんの手本）。戻すのは AIX_TAKEUCHI_FORM=off
+  const secondScene = pickupPushLabel ? "compare" as const : firstDeclaresNew ? (aixTakeuchiFormOn() ? "new_listing" as const : "single" as const) : secondSceneOf(recommendationScenario);
   // 2通目の出口（別の物件の号室が出ていないか）で「1通目の物件」として見る文。ピックアップの後は推す物件だけ
   const secondFirstForCheck = pickupPushLabel ? `🌟${pickupPushLabel}` : sentMessage;
   const secondMaterialNote = isRecSecond ? buildSecondMaterialNote(materialRow) : "";
+  // 2026-10-08 竹内さんの実送信: 2通目の挨拶は「今日の会話文」で決まる（今送った🌟カード・【】見積の本体・画像は数えない）。
+  //   前の会話文なし → 挨拶から 物件オススメ 73%（95/131）・見積書 82%（31/38）。旧は🌟カード自体を「今日送った」と数え、挨拶を一律に消していた（staffSentTodayFromDb）
+  //   数え方 scripts/audit-r11-second-greeting.ts。戻すのは AIX_TAKEUCHI_FORM=off
+  let secondTalkedToday: boolean | null = null;
+  if ((isRecSecond || (actionType === "estimate_sheet" && isEstimateCard(sentMessage))) && aixTakeuchiFormOn()) {
+    const recentTalk = staffTalkedToday(((recentMessages ?? []) as Array<{ sender?: string; text?: string | null; createdAt?: string; rawCreatedAt?: string }>)
+      .map((m) => ({ sender: m.sender === "customer" ? "customer" : "staff", text: m.text ?? "", createdAt: m.createdAt, rawCreatedAt: m.rawCreatedAt })));
+    // 呼び出し側が「今日の会話文」を知っている時（画面・再生の道具）はそれを使う（body.staffTalkedToday）
+    const given = (body as { staffTalkedToday?: unknown }).staffTalkedToday;
+    secondTalkedToday = typeof given === "boolean" ? given : (recentTalk || await staffTalkedTodayFromDb(conversationId as string | undefined));
+  }
+  /** 挨拶を決める「今日送った」: 2通目は会話文だけで数える（上）・それ以外は今まで通り */
+  const greetSentToday = secondTalkedToday ?? staffSentToday;
   const secondSceneNote = isRecSecond
     ? buildSecondSceneNote({
         scene: secondScene,
@@ -1486,6 +1502,7 @@ export async function POST(req: NextRequest) {
         sentCount: recommendState.sentSource === "brain" ? recommendState.sentPropertyCount : null,
         vacatingLine: secondViewable.line,
         firstMentionsVacating: pickupPushLabel ? false : mentionsVacating(sentMessage),
+        ...(secondTalkedToday !== null ? { greet: !secondTalkedToday } : {}),
       })
     : "";
   if (isRecSecond) {
@@ -1516,7 +1533,7 @@ export async function POST(req: NextRequest) {
     const reaction = readCustomerReaction(Array.isArray(recentMessages) ? recentMessages : []);
     const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null });
     estimateClosing = dec.closing;
-    estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimatePropertiesOf(sentMessage), closing: dec.closing, staffSentToday });
+    estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimatePropertiesOf(sentMessage), closing: dec.closing, staffSentToday: greetSentToday });
     // 2026-10-06 ⑫ 竹内（R の見積書の2通目）「実際にスタッフが送っているような正確で具体的なちゃんとした返信を」:
     //   1通目の札に「報酬が出ない…仲介手数料〇円」等の行があれば、2通目に事情の文（スタッフの実送信の言い方・数字は札の字だけ）を入れる（estimate-explain）
     {
@@ -1623,7 +1640,7 @@ export async function POST(req: NextRequest) {
     (resolvedCustomerConditions || brainMeta?.property_search_params) && !fixedSecond
       ? `※顧客希望条件に合致するポイントを訴求する際は「（物件の具体的特徴）なので条件に合います」という形で物件のデータを根拠として示すこと。条件名だけを羅列しない。\n※訴求は【文章構造の原則】の段落構成に沿って、設備・立地・費用を別々の段落に分けて書くこと（1文に詰め込まない）。特に費用制約（家賃上限・初期費用を抑えたい）がある場合、礼金0円・フリーレント等の費用面メリットが会話/AIXメッセージに記載されていれば必ず1つ言及すること。`
       : "",
-    staffSentToday && isRecSecond ? `・本日すでにスタッフが送信済み（挨拶の行は書かない。「お世話になっております」・「お待たせ致しました」は禁止）` : staffSentToday ? `・本日すでにスタッフが送信済み（挨拶行なし。名前行のみ「〇〇さん」または本題から始める。「お世話になっております」の再使用・「お待たせ致しました」は禁止）` : "",
+    greetSentToday && isRecSecond ? `・本日すでにスタッフが送信済み（挨拶の行は書かない。「お世話になっております」・「お待たせ致しました」は禁止）` : greetSentToday ? `・本日すでにスタッフが送信済み（挨拶行なし。名前行のみ「〇〇さん」または本題から始める。「お世話になっております」の再使用・「お待たせ致しました」は禁止）` : "",
     noEmoji ? `・絵文字禁止モード: 絵文字を一切使わないこと` : "",
     "",
     pendingSection
@@ -2139,8 +2156,8 @@ ${text}
       if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix-template-generate:emoji-repeat-fixed", changes: dr.changes })); text = dr.text; }
     }
     // 2026-09-22 竹内: 今日すでにこちらが送っていれば、冒頭の「お世話になっております」を落とす（AIX 本体の finalize と同じ関数）
-    if (staffSentToday) {
-      const daily = applyDailyGreeting(text, { staffSentToday: true, greetingPhrase: "", name: "" });
+    if (greetSentToday) {
+      const daily = applyDailyGreeting(text, { staffSentToday: true, greetingPhrase: "", name: "", joinNameLine: aixTakeuchiFormOn() });
       if (daily.action === "removed") {
         console.log(JSON.stringify({ tag: "aix-template-generate:daily-greeting-removed", actionType, conversationId }));
         text = daily.text;

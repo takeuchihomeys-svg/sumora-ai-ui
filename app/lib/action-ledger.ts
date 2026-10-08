@@ -19,6 +19,8 @@ import {
 } from './reply-context';
 // 2026-09-12 竹内方針D: JST の日付表示は jst-date に一本化
 import { jstMDHm, jstParts, jstDayStartMs } from './jst-date';
+// 2026-10-08 竹内さん（入居の時期が先・連絡の日の約束）: 「7月1日に…ピックアップしお送り」は連絡の日までは未履行の物件出しに数えない
+import { parseContactPromise, ymdStr as contactYmd } from './contact-promise';
 // 2026-09-21 竹内（まりあさん事例）: 「内覧が終わった」の判定は viewing-thread と同じ1か所
 import { STAFF_VIEWING_DONE_RE } from './viewing-thread';
 import { findPrematureViewing, customerMentionsFixedViewing, findStaffViewingDeclaration } from './viewing-premature';
@@ -1006,7 +1008,12 @@ export function buildActionLedger(input: LedgerInput): ActionLedger {
     : [...merged].reverse().find((e) => e.source === 'aix_history') ?? null;
   const promises = merged.filter((e) => e.status === 'promised');
   const unfulfilled = (k: LedgerKind) => promises.filter((p) => p.kind === k && p.fulfilledBy == null);
-  const pickupOpen = unfulfilled('pickup_declared');
+  // 2026-10-08: 連絡の日（2日以上先の日付）の約束は、その日が来るまで物件出しの番（pending_pickup）にしない（カレンダーの連絡の日の行が持つ）
+  const todayYmdForContact = new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  const pickupOpen = unfulfilled('pickup_declared').filter((p) => {
+    const c = p.at ? parseContactPromise(p.detail?.sentence ?? p.evidence ?? '', p.at) : null;
+    return !c || contactYmd(c.contact) <= todayYmdForContact;
+  });
   const estimateOpen = unfulfilled('estimate_declared');
   const confirmOpen = unfulfilled('confirmation_promised');
   const reports = merged.filter((e) => e.kind === 'confirmation_reported');

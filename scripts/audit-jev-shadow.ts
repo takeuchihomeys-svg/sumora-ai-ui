@@ -85,15 +85,18 @@ async function main() {
     for (const r of v) {
       if (!r.brain_action || !(r.brain_action in AIX_PICKER_CATALOG)) continue;
       const at = r.customer_msg_at ?? r.created_at;
-      const { data: presses } = await sb.from("aix_usage_logs").select("aix_type, check_pattern, send_mode, app_sub_mode, created_at")
+      const { data: presses } = await sb.from("aix_usage_logs").select("aix_type, check_pattern, send_mode, app_sub_mode, picker_choices, created_at")
         .eq("conversation_id", r.conversation_id).eq("aix_type", r.brain_action).gte("created_at", at).lte("created_at", new Date(new Date(at).getTime() + WINDOW_MS).toISOString())
         .order("created_at", { ascending: true }).limit(1);
-      const p = (presses ?? [])[0] as { check_pattern: string | null; send_mode: string | null; app_sub_mode: string | null } | undefined;
+      const p = (presses ?? [])[0] as { check_pattern: string | null; send_mode: string | null; app_sub_mode: string | null; picker_choices: Record<string, unknown> | null } | undefined;
       const field = AIX_PICKER_CATALOG[r.brain_action].field;
       // 正解の値（Jev の選択肢のキーに揃える）。check_pattern は「何を確認したか」の物だけ（結果のピッカーは会話から分からない）
       const truth = !p ? null
         : field === "check_pattern" ? (p.check_pattern && TOPIC_CHECK_PATTERNS.has(p.check_pattern) ? CHECK_PATTERN_TO_TOPIC[p.check_pattern] : null)
-        : field === "send_mode" ? p.send_mode : p.app_sub_mode;
+        : field === "send_mode" ? p.send_mode
+        // 2026-10-08: 物件オススメは画面の6種（picker_choices.pickup_type）が正解
+        : field === "pickup_type" ? (typeof p.picker_choices?.pickup_type === "string" ? p.picker_choices.pickup_type : null)
+        : p.app_sub_mode;
       if (!truth) { noTruth++; continue; }
       const s = stats.get(r.brain_action) ?? { n: 0, jevOk: 0, brainOk: 0, brainHas: 0, hiN: 0, hiOk: 0 };
       s.n++;

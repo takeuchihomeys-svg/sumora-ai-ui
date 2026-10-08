@@ -60,7 +60,17 @@ export const GUARANTOR_TYPE_SENTENCE: Record<GuarantorType, (company: string) =>
   shinyou: (c) => `の保証会社は${c}と${GUARANTOR_TYPE_SCREENING_NOTE.shinyou}`,
   unknown: (c) => `の保証会社は${c}となります！！`,
 };
-export type GuarantorCompany = { name: string; aliases: readonly string[]; type: GuarantorType };
+/**
+ * 種類の根拠（2026-10-08 竹内「全て何系かも分かるように」「独立系は確認して判断が取れたら言い切って良い・曖昧な場合は入れない」）
+ *   takeuchi   = 竹内さんが種類を言った（全保連・エポス・興和アシスト 等）
+ *   official   = 公式の情報で確かめた（LICC の正会員の一覧・会社の公式サイトの母体／事業）。source に URL
+ *   unverified = 種類の候補はあるが公式の情報で確かめきれない（商品の提携・社名が見つからない 等）
+ *   staff_sent = スタッフの実送信の呼び方だけ（スタッフの取り違えがある＝確かではない）
+ *   none       = 種類が分からない（type は unknown）
+ * 返信・AIX の本文で種類を言い切るのは takeuchi／official の時だけ（guarantorTypeSure）
+ */
+export type GuarantorTypeBasis = "takeuchi" | "official" | "unverified" | "staff_sent" | "none";
+export type GuarantorCompany = { name: string; aliases: readonly string[]; type: GuarantorType; basis?: GuarantorTypeBasis; source?: string };
 export type GuarantorProperty = { name: string; company: string; type: GuarantorType };
 
 export function isGuarantorType(v: unknown): v is GuarantorType {
@@ -100,62 +110,112 @@ export function parseGuarantorTypeJa(raw: string | null | undefined): GuarantorT
   return null;
 }
 
-// ─── マスタ（正規名・別名・既定の種類）───
-// 出現頻度は 2025-09〜2026-09 のスタッフ実送信: 日本セーフティ(ー)24・エポス16・エルズサポート7・Casa5・全保連5・ジェイリース4・クレディセゾン3・
-//   オリコ3・アセス保証2・いえらぶ2・ライフ2・他各1。種類の語もスタッフの使い方（独立系＝審査基準が緩い／信販系＝クレジット審査・厳しめ／
-//   信用系＝全保連・ジェイリース・K-net 等 9/23 の実送信）に合わせる
+// ─── マスタ（正規名・別名・既定の種類・種類の根拠）───
+// 2026-10-08 竹内「保証会社、分からない保証会社あるかも。ちゃんと確認する。全て何系かも分かるように」:
+//   資料（売上サポの pdf_text・image_lines／送った画像の読み取り）・スタッフの送信・AIX に出た会社名を全期間で洗い出し（scripts/audit-guarantor-names.ts）、
+//   種類を公式の情報で確かめた（出所は source）。種類の決め方（竹内さんの定義の順）:
+//     信用系＝LICC（一般社団法人 全国賃貸保証業協会）の正会員（https://jpg.or.jp/member02.html・2026年4月現在の11社）＋竹内さんが言った会社
+//     信販系＝クレジットカード会社・信販会社が母体
+//     独立系＝そのどちらでもない家賃保証の会社（各社の公式の会社概要で母体を確かめた）
+//   basis が takeuchi／official の会社だけ本文で種類を言い切る（guarantorTypeSure）。unverified＝種類の候補はあるが確かでない（言わない）
+//   ⚠ 9/26 にスタッフの実送信の呼び方で「独立系」に入れていたエルズサポート・アーク・ニッポンインシュア・ルームバンクインシュアは LICC の正会員＝信用系に直した
+//   出現の件数（全期間・資料の行／スタッフの送信）は scripts/.replay-out/guarantor-names.json
+const JPG = "https://jpg.or.jp/member02.html";
 export const GUARANTOR_COMPANY_MASTER: readonly GuarantorCompany[] = [
-  // 独立系
-  { name: "日本セーフティー", aliases: ["日本セーフティ", "日本セーフティ―", "セーフティー", "セーフティ", "JSN"], type: "independent" },
-  { name: "Casa", aliases: ["カーサ", "CASA", "casa"], type: "independent" },
-  { name: "エルズサポート", aliases: ["エルズ", "L's"], type: "independent" },
-  { name: "いえらぶパートナーズ", aliases: ["いえらぶ", "いえらぶ保証", "いえらぶ賃貸保証"], type: "independent" },
-  { name: "アセス保証", aliases: ["アセス"], type: "independent" },
-  { name: "フォーシーズ", aliases: ["フォーシーズンズ", "4seasons"], type: "independent" },
-  { name: "ルームバンクインシュア", aliases: ["ルームバンク", "RoomBank"], type: "independent" },
-  { name: "日本トラストコーポレーション", aliases: ["日本トラスト"], type: "independent" },
-  { name: "ハウスリーブ", aliases: [], type: "independent" },
-  { name: "ナップ", aliases: ["NAP", "ナップ賃貸保証"], type: "independent" },
-  { name: "JPMC", aliases: ["ジェイピーエムシー", "日本管理センター", "JPMCファイナンス"], type: "independent" },
-  { name: "イントラスト", aliases: ["intrust"], type: "independent" },
-  { name: "ラクーン", aliases: ["ラクーンレント", "raccoon"], type: "independent" },
-  { name: "ニッポンインシュア", aliases: ["日本インシュア"], type: "independent" },
-  { name: "GTN", aliases: ["ジーティーエヌ", "グローバルトラストネットワークス"], type: "independent" },
-  // 2026-09-26 竹内さん決定「マスタに無い会社はスタッフが過去に説明した種類で足す」（scripts/audit-guarantor.ts の調査・スタッフ実送信）:
-  //   シノケン・ほっと保証 ab7ea742「シノケンコミュニケーションズ（独立系）…2番手ほっと保証（独立系）」／レンポッポ d25e07d1「レンポッポ（独立系）」／
-  //   アーク 359e5a77「アーク保証会社と独立系の保証会社」／エイト d46290ff「エイト賃貸保証と独立系の保証会社」／
-  //   オセロ 583171e6「オセロ・フィナンシャルサービス株式会社となり独立系の保証会社」
-  //   短い呼び名（シノケン・アーク・エイト・オセロ）は一般語・不動産会社名と重なるので名寄せだけに使い、本文の走査はしない（SCAN_SKIP）
-  { name: "シノケンコミュニケーションズ", aliases: ["シノケン", "シノケン保証"], type: "independent" },
-  { name: "ほっと保証", aliases: [], type: "independent" },
-  { name: "レンポッポ", aliases: [], type: "independent" },
-  { name: "アーク保証", aliases: ["アーク賃貸保証", "アーク"], type: "independent" },
-  { name: "エイト賃貸保証", aliases: ["エイト保証", "エイト"], type: "independent" },
-  { name: "オセロ・フィナンシャルサービス", aliases: ["オセロフィナンシャルサービス", "オセロ"], type: "independent" },
-  // 信販系（竹内さん「エポスは信販系」）
-  { name: "エポスカード", aliases: ["エポス", "EPOS", "ROOM iD", "ルームiD"], type: "credit" },
-  { name: "オリコフォレントインシュア", aliases: ["オリコ", "オリコフォレント", "ORICO"], type: "credit" },
-  { name: "クレディセゾン", aliases: ["セゾン", "SAISON"], type: "credit" },
-  { name: "ジャックス", aliases: ["JACCS"], type: "credit" },
-  { name: "アプラス", aliases: ["APLUS"], type: "credit" },
-  // 信用系（2026-09-26 竹内さん「全保連は信用系」「LICC系は全部信用系」: 旧 LICC系の全保連・ジェイリース・日本賃貸保証と K-net。
-  //   スタッフの実送信 9/23 86d1e936「全保連（信用系）」「ジェイリース（信用系）」「K-net（信用系）」）
-  { name: "全保連", aliases: ["ゼンホレン"], type: "shinyou" },
-  { name: "ジェイリース", aliases: ["Jリース", "J-LEASE"], type: "shinyou" },
-  { name: "日本賃貸保証", aliases: ["JID"], type: "shinyou" },
-  { name: "K-net", aliases: ["Knet", "ケーネット"], type: "shinyou" },
-  // 2026-10-07 竹内さん「信用系」（興和アシストの種類・旧は種類不明）
-  { name: "興和アシスト", aliases: [], type: "shinyou" },
-  // 種類が定まらない（スタッフが選ぶ）
-  { name: "ライフ", aliases: ["ライフ保証", "ライフ賃貸保証"], type: "unknown" },
-  // 2026-09-26 竹内さん決定「説明の無い会社は種類を推測しない」: 名寄せ・入力に無い会社名を伏せる走査のためだけに置く（種類は不明＝審査の緩い・厳しいに触れない）
-  //   スタッフの実送信に種類の説明が無い（クレデンスは「比較的審査通過しやすい」だけで種類の語なし）
-  { name: "クレデンス", aliases: [], type: "unknown" },
-  { name: "テナントファースト", aliases: [], type: "unknown" },
-  { name: "プレサンスギャランティ", aliases: ["プレサンス"], type: "unknown" },
-  { name: "ランドインシュア", aliases: [], type: "unknown" },
-  { name: "パナソニックホームズ賃貸サポート", aliases: [], type: "unknown" },
-  { name: "エフアール信用保証", aliases: [], type: "unknown" },
+  // ── 独立系（公式の会社概要で母体を確かめた・LICC の正会員ではない・信販が母体ではない）──
+  { name: "日本セーフティー", aliases: ["日本セーフティ", "日本セーフティ―", "セーフティー", "セーフティ", "JSN"], type: "independent", basis: "official", source: "https://www.nihon-safety.co.jp/company/" },
+  { name: "Casa", aliases: ["カーサ", "CASA", "casa"], type: "independent", basis: "official", source: "https://www.casa-inc.co.jp/company/about/" },
+  { name: "いえらぶパートナーズ", aliases: ["いえらぶ", "いえらぶ保証", "いえらぶ賃貸保証", "いえるぶ保証"], type: "independent", basis: "official", source: "https://www.ielove-partners.co.jp/company/" },
+  { name: "アセス保証", aliases: ["アセス", "アセス信用保証"], type: "independent", basis: "official", source: "https://www.assess-credit.co.jp/company.html" },
+  { name: "フォーシーズ", aliases: ["フォーシーズンズ", "4seasons"], type: "independent", basis: "official", source: "https://www.4cs.co.jp/corporate/profile.html" },
+  { name: "ハウスリーブ", aliases: [], type: "independent", basis: "official", source: "https://www.house-leave.com/company/" },
+  // ナップ賃貸保証は 2021〜2024 年の版では LICC の正会員だった（今の一覧には無い）
+  { name: "ナップ", aliases: ["NAP", "ナップ賃貸保証"], type: "independent", basis: "official", source: "https://www.nap-service.com/about/" },
+  { name: "JPMC", aliases: ["ジェイピーエムシー", "日本管理センター", "JPMCファイナンス"], type: "independent", basis: "official", source: "https://jpmc-finance.jp/co" },
+  { name: "イントラスト", aliases: ["intrust", "イエントラスト"], type: "independent", basis: "official", source: "https://www.entrust-inc.jp/ir/stock.php" },
+  // ラクーンレントは 2025-01-01 にイントラストの子会社（プレミアライフ）へ合併
+  { name: "ラクーン", aliases: ["ラクーンレント", "raccoon"], type: "independent", basis: "official", source: "https://www.entrust-inc.jp/rr/info/202412261.html" },
+  { name: "GTN", aliases: ["ジーティーエヌ", "グローバルトラストネットワークス"], type: "independent", basis: "official", source: "https://www.gtn.co.jp/company" },
+  { name: "シノケンコミュニケーションズ", aliases: ["シノケン", "シノケン保証", "シンケンユミュニケーションズ"], type: "independent", basis: "official", source: "https://www.shinoken-cm.com/company/" },
+  { name: "ほっと保証", aliases: [], type: "independent", basis: "official", source: "https://www.hothosyou.co.jp/corporate/" },
+  // レンポッポは会社名ではなく CAPCO AGENCY の商品「れんぽっぽ」（資料・スタッフはレンポッポと書くので名前は分けて置く・種類は同じ）
+  { name: "CAPCO AGENCY", aliases: ["CAPCO", "キャプコエージェンシー"], type: "independent", basis: "official", source: "https://www.capco-agency.co.jp/company/" },
+  { name: "レンポッポ", aliases: ["れんぽっぽ"], type: "independent", basis: "official", source: "https://www.capco-agency.co.jp/company/" },
+  { name: "オセロ・フィナンシャルサービス", aliases: ["オセロフィナンシャルサービス", "オセロ・ファイナンシャルサービス", "オセロ"], type: "independent", basis: "official", source: "https://www.othello-fs.com/about/" },
+  { name: "クレデンス", aliases: [], type: "independent", basis: "official", source: "https://credence-credit.com/company/history" },
+  { name: "プレサンスギャランティ", aliases: ["プレサンス", "ブレサンスギャランティ"], type: "independent", basis: "official", source: "https://www.pressance-guarantee.jp/company/" },
+  { name: "パナソニックホームズ賃貸サポート", aliases: ["パナソニック ホームズ賃貸サポート"], type: "independent", basis: "official", source: "https://homes.panasonic.com/phrs/company/" },
+  { name: "エフアール信用保証", aliases: [], type: "independent", basis: "official", source: "https://www.fr-s.com/company/index.html" },
+  { name: "JRAG", aliases: ["日本賃貸住宅保証機構", "IRAG", "JRAQ"], type: "independent", basis: "official", source: "https://www.jrag.co.jp/company/" },
+  // 旭化成賃貸サポート・旭化成信用保証サポートの社名は無い（資料の書き方・読み違いとみる）
+  { name: "旭化成不動産サポート", aliases: ["旭化成賃貸サポート", "旭化成信用保証サポート"], type: "independent", basis: "official", source: "https://www.afr-web.co.jp/" },
+  { name: "エステム保証", aliases: ["エステム保証サービス"], type: "independent", basis: "official", source: "https://www.n-estem.co.jp/hosyo/aboutus.html" },
+  { name: "レクストレントプラス", aliases: [], type: "independent", basis: "official", source: "https://rextrentplus.com/companyprofile/" },
+  { name: "日本プレミアム保証", aliases: [], type: "independent", basis: "official", source: "https://premium-guarantee.com/company/" },
+  // 運営はアークシステムテクノロジーズ（福岡）＝LICC のアーク株式会社（岩手）とは別
+  { name: "ピーマスター保証", aliases: ["マスター保証"], type: "independent", basis: "official", source: "https://www.arktech.ne.jp/about.html" },
+  // 2026-09-01 USEN TRUST と合併
+  { name: "新日本信用保証", aliases: ["USEN TRUST"], type: "independent", basis: "official", source: "https://www.snsh.co.jp/company/" },
+  { name: "ホワイト保証", aliases: [], type: "independent", basis: "official", source: "https://whiteguarantee.com/company.html" },
+  { name: "PSサポート", aliases: ["PS サポート"], type: "independent", basis: "official", source: "https://www.ps-support.net/profile01.html" },
+  { name: "アイシンクレント", aliases: [], type: "independent", basis: "official", source: "https://www.ithinkrent.co.jp/aboutus" },
+  { name: "アールエムトラスト", aliases: [], type: "independent", basis: "official", source: "https://www.mlit.go.jp/jutakukentiku/house/jutakukentiku_house_fr7_000028.html" },
+  { name: "スマートクレジット", aliases: [], type: "independent", basis: "official", source: "https://www.smartcredit.co.jp/company/" },
+  { name: "日本管理サポート", aliases: [], type: "independent", basis: "official", source: "https://www.jms0077.co.jp/company/" },
+  { name: "木下グループ保証", aliases: [], type: "independent", basis: "official", source: "https://www.kinoshita-chintai.com/service/kino-plus.html" },
+  { name: "大学生協住まいサービス", aliases: ["大学生協住まいサービス保証"], type: "independent", basis: "official", source: "https://www.univcoop-housing.co.jp/outline.html" },
+  { name: "リロ家賃サービス", aliases: ["リロ・フィナンシャル・ソリューションズ"], type: "independent", basis: "official", source: "https://www.relo-fs.jp/company/" },
+  { name: "レントラスト", aliases: [], type: "independent", basis: "official", source: "https://www.renttrust.jp/html/outline.html" },
+  { name: "日本テナント保証", aliases: [], type: "independent", basis: "official", source: "https://www.nihontenant-g.com/" },
+  { name: "インシュアランス", aliases: [], type: "independent", basis: "official", source: "https://d-insurance.jp/company/" },
+  // ── 種類の候補はあるが確かでない（本文で種類を言わない）──
+  // 日本賃貸保証（JID）: 9/26 に「LICC の会社」として信用系に入れたが、LICC にいた記録が見つからない（会社としては独立系の形）→ 竹内さんに確認
+  { name: "日本賃貸保証", aliases: ["JID"], type: "shinyou", basis: "unverified", source: "https://www.jid-net.co.jp/company/profile/" },
+  // sumai保証（スマサポ）: 会社は独立系だが 2024-01 からエポスカードと保証の業務を一緒に行う（信販寄りとも見られる）
+  { name: "sumai保証", aliases: ["Sumai保証", "スマサポ", "Sumai"], type: "independent", basis: "unverified", source: "https://www.sumasapo.co.jp/service_warranty.php" },
+  // あんしん保証: 会社は独立系・資料の「ライフ安心プラス」はライフカード提携の商品（筆頭株主アイフル＝公式では未確認）
+  { name: "あんしん保証", aliases: ["ライフ安心プラス", "ライフあんしんプラス", "ライフアンしんプラス"], type: "independent", basis: "unverified", source: "https://www.anshin-gs.co.jp/company/" },
+  // レジデンシャルパートナーズ: 東急住宅リース 100%・商品「RPプラスJ」（ジャックス提携）「EPOSプラスRP」（エポス提携）
+  { name: "レジデンシャルパートナーズ", aliases: [], type: "independent", basis: "unverified", source: "https://www.residential-partners.co.jp/company/" },
+  // 信和CM保証: 信和保証（2025年設立）か信和コミュニティ。社名の「CM」は確かめられない
+  { name: "信和CM保証", aliases: ["信和保証"], type: "independent", basis: "unverified", source: "https://www.shinwa-hosho.co.jp/company/profile/" },
+  // 日本トラストコーポレーション: この社名の保証会社が見つからない（株式会社日本トラスト・有限会社トラスト・コーポレーションの候補）
+  { name: "日本トラストコーポレーション", aliases: ["日本トラスト"], type: "independent", basis: "unverified" },
+  // エイト賃貸保証: 公式サイトが無く母体を確かめられない（2021〜2023 年の版では LICC の正会員）
+  { name: "エイト賃貸保証", aliases: ["エイト保証", "エイト"], type: "independent", basis: "unverified" },
+  // ── 信販系（母体がカード会社・信販会社）──
+  { name: "エポスカード", aliases: ["エポス", "EPOS", "ROOM iD", "ルームiD"], type: "credit", basis: "takeuchi", source: "https://www.eposcard.co.jp/room_id/companies.html" },
+  { name: "オリコフォレントインシュア", aliases: ["オリコ", "オリコフォレント", "ORICO"], type: "credit", basis: "official", source: "https://www.orico-fi.co.jp/profile/company/" },
+  { name: "クレディセゾン", aliases: ["セゾン", "SAISON"], type: "credit", basis: "official", source: "https://www.saisoncard.co.jp/rentquick/" },
+  { name: "ジャックス", aliases: ["JACCS"], type: "credit", basis: "official", source: "https://www.jaccs.co.jp/business/rent/" },
+  { name: "アプラス", aliases: ["APLUS"], type: "credit", basis: "official", source: "https://www.aplus.co.jp/business/service/rent/" },
+  // えるく信用保証＝カード会社 株式会社えるく（えるくカード）そのもの
+  { name: "えるく", aliases: ["えるく信用保証"], type: "credit", basis: "official", source: "https://www.erc-card.co.jp/smarts/index/67/" },
+  // ── 信用系（LICC の正会員＝jpg.or.jp の一覧・竹内さんが言った会社）──
+  // 全保連: 竹内さん「全保連は信用系」。⚠ LICC の今の会員の一覧（2026年4月）には無い（2010〜2024年4月の版にはあった・全保連の会社概要は今も LICC 加盟と書く）
+  { name: "全保連", aliases: ["ゼンホレン"], type: "shinyou", basis: "takeuchi", source: "https://www.zenhoren.jp/company/outline.html" },
+  { name: "ジェイリース", aliases: ["Jリース", "J-LEASE"], type: "shinyou", basis: "official", source: JPG },
+  { name: "K-net", aliases: ["Knet", "ケーネット", "近畿保証サービス", "近畿保証"], type: "shinyou", basis: "official", source: JPG },
+  { name: "興和アシスト", aliases: [], type: "shinyou", basis: "official", source: JPG },
+  { name: "エルズサポート", aliases: ["エルズ", "L's"], type: "shinyou", basis: "official", source: JPG },
+  { name: "アーク保証", aliases: ["アーク賃貸保証", "アーク"], type: "shinyou", basis: "official", source: JPG },
+  { name: "ニッポンインシュア", aliases: ["日本インシュア"], type: "shinyou", basis: "official", source: JPG },
+  { name: "ルームバンクインシュア", aliases: ["ルームバンク", "RoomBank"], type: "shinyou", basis: "official", source: JPG },
+  { name: "ランドインシュア", aliases: [], type: "shinyou", basis: "official", source: JPG },
+  { name: "大成保証", aliases: [], type: "shinyou", basis: "official", source: JPG },
+  { name: "宅建ブレインズ", aliases: [], type: "shinyou", basis: "official", source: JPG },
+  { name: "テンポスバスターズ", aliases: [], type: "shinyou", basis: "official", source: JPG },
+  // ── 種類が分からない（名寄せ・入力に無い会社名を伏せる走査のためだけ。種類に触れない）──
+  // ライフ: 資料の「ライフ」はライフ安心プラス・ライフサポート（駆け付け）等の一部が多い。会社として確かめられない
+  { name: "ライフ", aliases: ["ライフ保証", "ライフ賃貸保証"], type: "unknown", basis: "none" },
+  { name: "テナントファースト", aliases: ["テナントファスタート"], type: "unknown", basis: "none" },
+  { name: "グリーン保証", aliases: [], type: "unknown", basis: "none" },
+  { name: "東京保証", aliases: [], type: "unknown", basis: "none" },
+  { name: "GC保証", aliases: ["新GC保証"], type: "unknown", basis: "none" },
+  { name: "西日本賃貸保証サービス", aliases: [], type: "unknown", basis: "none" },
+  { name: "ミニミニ保証", aliases: [], type: "unknown", basis: "none" },
+  { name: "エイブル保証", aliases: ["エイブル賃貸保証", "エイブルくらしの安心保証"], type: "unknown", basis: "none" },
+  { name: "PMサポート保証", aliases: [], type: "unknown", basis: "none" },
 ];
 
 /** 種類ごとのマスタの正規名（プロンプトの一般知識の会社名はここから作る＝会社の種類の知識をマスタ1本に・2026-09-26） */
@@ -196,6 +256,33 @@ export function resolveGuarantor(raw: string, customs: ReadonlyArray<{ name: str
   const c = k ? customs.find((x) => nameKey(x.name) === k) : undefined;
   if (c) return { name: c.name, type: normalizeGuarantorType(c.type) ?? "unknown", known: true };   // 登録済みの旧 "licc" は信用系
   return { name: s, type: "unknown", known: false };
+}
+
+/**
+ * 種類が表で確か（竹内さん・公式の情報）か。返信・AIX の本文・ブレインの材料で「独立系」等を言い切るのは sure の時だけ（2026-10-08 竹内さん決定）。
+ * 表に無い会社・スタッフの呼び方だけの会社・種類不明は sure=false（種類に触れない）。スタッフが登録した会社（customs）も確かではない扱い
+ */
+export function guarantorTypeSure(raw: string): { sure: boolean; type: GuarantorType; basis: GuarantorTypeBasis; source: string | null } {
+  const m = masterOf((raw ?? "").trim());
+  if (!m || m.type === "unknown") return { sure: false, type: m?.type ?? "unknown", basis: "none", source: null };
+  const basis: GuarantorTypeBasis = m.basis ?? "staff_sent";
+  return { sure: basis === "takeuchi" || basis === "official", type: m.type, basis, source: m.source ?? null };
+}
+/** 本文で使ってよい種類（確かでなければ unknown＝種類に触れない）。戻す GUARANTOR_TYPE_SURE_ONLY=off（旧＝表の種類をそのまま） */
+export function guarantorTypeForText(raw: string, fallback: GuarantorType = "unknown"): GuarantorType {
+  if (typeof process !== "undefined" && process.env?.GUARANTOR_TYPE_SURE_ONLY === "off") { const r = resolveGuarantor(raw); return r.known ? r.type : fallback; }
+  const s = guarantorTypeSure(raw);
+  return s.sure ? s.type : "unknown";
+}
+
+/**
+ * 既定の種類を自動で入れる所（AIX の先入れ・画像の読み取り・種類を選ばなかった時）用の resolveGuarantor。
+ * 表の会社は表で確かな種類だけ（確かでなければ unknown＝スタッフが選ぶ）・スタッフが登録した会社（customs）はその種類。
+ */
+export function resolveGuarantorForText(raw: string, customs: ReadonlyArray<{ name: string; type: GuarantorType }> = []): { name: string; type: GuarantorType; known: boolean } {
+  const r = resolveGuarantor(raw, customs);
+  if (!isMasterGuarantor(raw)) return r;
+  return { ...r, type: guarantorTypeForText(raw, r.type) };
 }
 
 /** マスタの会社か（/api/guarantor-companies の POST がマスタ重複を弾くのに使う） */
@@ -436,7 +523,7 @@ export function formatGuarantorFacts(propertiesIn: readonly GuarantorProperty[],
 
 // ─── 本文の事実の照合（決定論）───
 /** 単独では走査しない一般語 */
-const SCAN_SKIP = new Set(["ライフ", "シノケン", "アーク", "エイト", "オセロ", "プレサンス"]);
+const SCAN_SKIP = new Set(["ライフ", "シノケン", "アーク", "エイト", "オセロ", "プレサンス", "インシュアランス", "マスター保証", "信和保証", "Sumai"]);
 /** 2026-09-15 検証指摘: 会社名の直後にこの語が続く時は別の言葉（「ナップサック」）なので伏せない */
 const SCAN_NOT_FOLLOWED_BY: Record<string, string[]> = { "ナップ": ["サック"] };
 /** UI の「会話履歴から保証会社名を自動検出」にも使える走査語（長い順） */

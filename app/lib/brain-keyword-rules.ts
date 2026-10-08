@@ -110,3 +110,35 @@ export function summedKeywordRuleHit(
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
   return top ? { action: top[0], score: top[1], keywords: hits[top[0]] ?? [] } : null;
 }
+
+// ── ブレインの「AIX なし」を語・状態の信号で上書きしない（2026-10-08）────────────────────────
+// 竹内さん（10/08）「旧ルールで、文の単語だけで変に判断してしまってボトルネックになっているのがあるはずやから、ちゃんとブレインを基盤に読み取るようにする」。
+//   9/27 は語のルール（信号5.5・8）だけを止め、語でない信号（費用の語→見積書・申込の語→申込へ・内覧の語・TikTok・画像だけ・URL・沈黙 3日 等の
+//   detectSignalBasedAixFallback の残り）と場面の信号（S5 日時の語→待ち合わせ）は残していた。
+//   本番の全期間（brain-aix-eval の matched・scripts/audit-word-vs-brain.ts の③）:
+//     ブレインが AIX なし → 信号が AIX を立てた番（signal:property_recommendation 22・property_search 22・property_send 20・followup_revive 10・
+//       application_push 8・estimate_sheet 7・acknowledge_check 6・その他 2）97番で、スタッフが同じ AIX を押したのは 3番・AIX を押さなかったのは 84番。
+//     場面の信号 S5（日時の語→待ち合わせ）10番は 0番一致・10番とも AIX なし（「14:30-15:00くらいに掛けても大丈夫でしょうか」＝電話の時刻・
+//       「今コンビニ行ったので…投函」「13時に変更…13時半で大丈夫です」＝確定済みの時刻の変更）。
+//     比べ: ブレインが AIX なしのまま（信号も立てない）番は 844番中 607番（72%）一致。
+//   実物: 「他社で決まりました」→物件オススメ／「検討してみます」→物件ピックアップ／「本日電話いけますか」→物件検索／
+//         「家賃をいくらまでにしたら…出てきますか」→見積書送る／広告の URL（temu）→確認します。
+//   → ブレインがはっきり「なし」と言った時は、これらの信号の AIX を採らない（AIX要対応・グループの通知・やることの元にしない）。
+//   残す物（竹内さんの決定で「ブレインが AIX なしの時に入れる」と決めた場面の信号）: S2（特定のお部屋の入居日の質問→物件確認した 9/14）・
+//     S3（審査・管理会社の名前の質問→物件確認した 9/30）・S11。約束（promise:*）・未履行のピックアップ（signal:pending_pickup）・締めの後の待ち・
+//     内覧当日の待ち 等の状態の規則は別の所（この関数は通らない）。
+//   ブレインが判断していない時（夜の見送り・失敗）は brain-core が走らないのでここは関係しない（決定論の確かな物だけが残る）。
+//   戻す: BRAIN_NULL_SIGNAL_FALLBACK=on（旧: 信号で AIX を立てる）
+export type SignalOverNullSource = { kind: "signal"; action: string } | { kind: "scene"; scene: string | null | undefined };
+/** ブレインが「AIX なし」の時に、この信号の AIX を採るか（true=採る＝旧の動き） */
+export function adoptSignalAixOverBrainNull(
+  explicitNoAix: boolean,
+  src: SignalOverNullSource,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!explicitNoAix) return true; // ブレインが分からない語を返した（「なし」とは言っていない）→ 従来どおり信号で補う
+  if ((env.BRAIN_NULL_SIGNAL_FALLBACK ?? "").toLowerCase() === "on") return true;
+  if (src.kind === "signal") return false;
+  // 場面の信号: 竹内さんの決定で入れている S2・S3・S11 は残す。S5（日時の語→待ち合わせ）は内覧の流れの段階（9/30）とぶつかる＋本番 0/10 → 採らない
+  return !/^S5/.test(String(src.scene ?? ""));
+}

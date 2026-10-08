@@ -1,6 +1,6 @@
 // 「お世話になっております」は1日1回（2026-09-22 竹内「今日初めてのLINEだったらつける／今日初めてじゃないときは使わない」）
 // 実行: npx tsx app/lib/__tests__/daily-greeting.test.ts（全 PASS で exit 0）
-import { sentByStaffToday, applyDailyGreeting, staffTalkedToday, isMaterialOnlyText } from "../daily-greeting";
+import { sentByStaffToday, applyDailyGreeting, staffTalkedToday, isMaterialOnlyText, joinNameOnlyLine } from "../daily-greeting";
 import { selectGreeting, applyGreetingSwap } from "../template-preprocess";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -137,6 +137,19 @@ it("入口: 資料文だけの日はテンプレの挨拶を残す・会話文�
   const tmpl = "お世話になっております！！\nアカウント名にかなりオススメ出来るお部屋が募集に出ました！！";
   expect(applyGreetingSwap(tmpl, staffTalkedToday([{ sender: "staff", text: CARD, createdAt: "2026-09-22T00:13:20Z" }], NOW)).startsWith("お世話になっております！！")).toBe(true);
   expect(applyGreetingSwap(tmpl, staffTalkedToday([{ sender: "staff", text: AIX_BODY, createdAt: "2026-09-22T00:46:00Z" }], NOW)).includes("お世話")).toBe(false);
+});
+
+it("AIX の出口（11巡目・竹内さんの形）: 「〇〇さん」だけの行は次の本文につなぐ・資料の行・お客様はつながない", () => {
+  expect(joinNameOnlyLine("YUMAさん\nお送り頂きました物件の募集状況確認させて頂きました！！")).toBe("YUMAさんお送り頂きました物件の募集状況確認させて頂きました！！");
+  expect(joinNameOnlyLine("YUMAさん\n\nこちら初期費用の御見積書となります！！\nお手隙の際にご査収ください😌！！")).toBe("YUMAさんこちら初期費用の御見積書となります！！\nお手隙の際にご査収ください😌！！");
+  expect(joinNameOnlyLine("YUMAさん\n🌟物件 101")).toBe("YUMAさん\n🌟物件 101");
+  expect(joinNameOnlyLine("YUMAさん\n【物件 101】")).toBe("YUMAさん\n【物件 101】");
+  expect(joinNameOnlyLine("お客様\n\n浪速区から…")).toBe("お客様\n\n浪速区から…");
+  expect(joinNameOnlyLine("YUMAさんお世話になっております！！\n本文")).toBe("YUMAさんお世話になっております！！\n本文");
+  const r = applyDailyGreeting("YUMAさんお世話になっております！！\n新着で1件オススメ出来るお部屋が募集に出ました！！", { staffSentToday: true, greetingPhrase: "", name: "", joinNameLine: true });
+  expect(r.text).toBe("YUMAさん新着で1件オススメ出来るお部屋が募集に出ました！！");
+  const r0 = applyDailyGreeting("YUMAさんお世話になっております！！\n新着で1件オススメ出来るお部屋が募集に出ました！！", { staffSentToday: true, greetingPhrase: "", name: "" });
+  expect(r0.text).toBe("YUMAさん\n新着で1件オススメ出来るお部屋が募集に出ました！！");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

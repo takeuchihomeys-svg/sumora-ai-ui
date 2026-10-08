@@ -77,7 +77,8 @@ const BUTTON_KNOW: Record<string, Know> = {
   },
   property_recommendation: {
     staffOnly: "スタッフが選んだ1件（資料の画像）とその推しどころ",
-    when: "物件ピックアップした の直後に1件を推す／新着が1件出た（追客）",
+    // 2026-10-08 竹内: ピッカーは画面の6種（初回・新着・送った中から・条件広げ・代替・現状伝えて）が正
+    when: "物件ピックアップした で複数送った直後に続けて1件を推す（送った中から）／新着が1件出た（追客・竹内さんの6割）／募集終了の代わり・条件を広げた・現状を伝えてから1件",
     lines: "複数件をまとめて送るのは物件ピックアップした。お客様の発言への答えとして選ぶ事は少ない（こちらから出す）",
     brainSelectable: true,
     scenes: S("conditions", "considering", "ack", "other"),
@@ -152,7 +153,7 @@ const BUTTON_KNOW: Record<string, Know> = {
   guarantor_info: {
     staffOnly: "物件ごとの保証会社名・種類（管理会社に確認した物）",
     when: "保証会社そのもの（どこか・種類・通りやすさ）を聞かれた・複数の物件の保証会社を伝える",
-    lines: "資料に保証会社が書いてある物件1件の質問は返信（8巡目 竹内さんの決定）",
+    lines: "資料に保証会社が書いてある物件1件の質問は返信（8巡目・10/08 竹内さんの決定）。資料に無い時・種類を聞かれたが分類表で確かでない時・複数の物件の一覧だけ AIX",
     brainSelectable: true,
     scenes: S("question", "apply"),
   },
@@ -204,6 +205,13 @@ const PICKER_KNOW: Record<string, Partial<Know>> = {
   "property_check_result/mgmt_equipment": { staffOnly: "管理会社に聞いた設備の有無", lines: "資料に書いてある設備は返信" },
   "property_check_result/nearby_parking": { staffOnly: "近隣の月極駐車場（名前・距離・料金・空き）" },
   "property_check_result/owner_other": { staffOnly: "オーナーに確認した内容と結果" },
+  // 物件オススメの6種（2026-10-08 竹内「その形にする」・使う場面は竹内さんの実送信 248回 scripts/audit-r11-rec-picker-scenes.ts）
+  "property_recommendation/新規ピックアップ": { when: "まだ物件を送っていない（初回の）お客様に1件だけ勧める（竹内さん 4%）", lines: "束を送った直後に続けて推すのは 送った中から" },
+  "property_recommendation/新着1件": { when: "前に物件を送った後に新しく募集に出た1件を勧める（追客・束から1時間超・竹内さん 60%）", lines: "2件以上まとめて送るのは 物件ピックアップした→新着" },
+  "property_recommendation/継続ピックアップ": { when: "AIX【物件ピックアップした】で複数件送った直後（1時間以内）に、続けてその中から1件を推す（竹内さん 23%・「お送りさせて頂きましたお部屋の中でも」）", lines: "1件しか送っていない時は使わない（「中でも」が成り立たない）" },
+  "property_recommendation/条件広げピックアップ": { when: "条件を広げた束（物件ピックアップした→条件を広げた）を送った直後に、その中から1件を推す（竹内さん 6%）" },
+  "property_recommendation/代替ピックアップ": { when: "気に入った・聞いた物件が募集終了・紹介不可だった（物件確認した→物件なかった）後に代わりの1件（竹内さん 6%）", lines: "募集終了の結果をまだ伝えていない時は 物件確認した→物件なかった が先" },
+  "property_recommendation/現状伝えて1件": { when: "ご条件どおりの空室が無い・ご希望エリアに無い現状を1文で伝えてから、退去予定・周辺の1件を勧める（まれ）" },
   "property_send/normal": { when: "まだ物件を送っていないお客様に初めて送る（初回まとめ）" },
   "property_send/new_arrival": { when: "前に送った後の新着（追客・他の物件も見たい）" },
   "property_send/widen": { when: "希望どおりが無く条件を広げて探した・お客様が条件を広げた" },

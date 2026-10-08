@@ -9,7 +9,7 @@
 //   証拠（scripts/audit-r8-contract-terms.ts）: スタッフの手打ち 60日で礼金212通・退去120・保証会社46・フリーレント30・駐車場21・緊急連絡先15。
 import { readMoveInMaterial } from "./procedure-question";
 import { guarantorFromMaterial } from "./guarantor-material";
-import { GUARANTOR_TYPE_SHORT } from "./guarantor-companies";
+import { GUARANTOR_TYPE_SHORT, guarantorTypeForText } from "./guarantor-companies";
 import type { StaffFreeRentFact } from "./staff-free-rent";
 
 export type ContractTermTopic =
@@ -31,7 +31,8 @@ const TOPIC_RES: Array<[ContractTermTopic, RegExp]> = [
   ["key_money", /礼金[^。\n]{0,10}(?:いくら|何ヶ月|何か月|かかり|かかる|必要|要り|いります|あります|ある\?|ですか|でしょうか|は\?)/],
   ["deposit", /(?:敷金|保証金)[^。\n]{0,10}(?:いくら|何ヶ月|何か月|かかり|かかる|必要|要り|いります|あります|ある\?|ですか|でしょうか|は\?)/],
   ["free_rent", /フリーレント[^。\n]{0,10}(?:あり|有り|ある|付い|つい|付き|つき|ですか|でしょうか|何ヶ月|何か月|適用)/],
-  ["guarantor_company", /保証会社[^。\n]{0,8}(?:どこ|どちら|何|なに|どの|名前)|(?:どこ|どちら)[^。\n]{0,6}保証会社|保証料[^。\n]{0,8}(?:いくら|何%|何パーセント|どれ|何円)/],
+  // 10/08 竹内さんの決定A: 保証会社の種類・通りやすさの質問（「保証会社は緩そうなところでしょうか」）も資料の会社名で答える側に入れる（種類は表で確かな時だけ＝routeContractTerm）
+  ["guarantor_company", /保証会社[^。\n]{0,8}(?:どこ|どちら|何|なに|どの|名前)|(?:どこ|どちら)[^。\n]{0,6}保証会社|保証料[^。\n]{0,8}(?:いくら|何%|何パーセント|どれ|何円)|保証会社[^。\n]{0,12}(?:緩|ゆる|甘|厳し|きつ|通りやす|通りにく|何系|種類|独立系|信販系|信用系)/],
   ["guarantor_person", /保証人[^。\n]{0,6}(?:不要|なし|無し|いら|必要|要り|要る|いります|なくて|無くて)|緊急連絡先(?:のみ|だけ)/],
   ["move_in", /退去予定日?[^。\n]{0,8}(?:いつ|何日|何月)|(?:いつ|何日|何月)[^。\n]{0,8}(?:から)?[^。\n]{0,6}(?:入居|住め|入れ|空く|空き|退去|引っ?越せ)|入居(?:可能)?(?:日|時期)[^。\n]{0,6}(?:いつ|何日|何月|ですか|でしょうか|分かり|わかり|決まって)|内覧(?:可能|でき)[^。\n]{0,4}(?:日|時期)[^。\n]{0,6}(?:いつ|ですか|でしょうか)/],
   ["parking", /(?:駐車場|駐輪場|バイク置き?場)[^。\n]{0,10}(?:あり|有り|ある|付い|つい|空き|空いて|いくら|料金|何台|ござい|でしょうか|ですか)|(?:車|バイク)[^。\n]{0,6}(?:停め|止め|置け)[^。\n]{0,6}(?:ますか|れますか|る\?|ますでしょうか)/],
@@ -145,7 +146,9 @@ const monthsLabel = (n: number) => (n === 0 ? "なし（0円）" : `${n}ヶ月`)
  *   ・駐車場: 資料の「駐車場: …」（「なし」は言い切る／空き・料金ありも資料のとおりに答える＝空きの最終確認は申込時）
  *   ・管理会社: 資料に書いてある会社名（リアプロの元付＝文字層の上の会社名）
  */
-export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial): ContractRoute {
+/** 保証会社の種類・通りやすさを聞いた文か（名前だけの質問と分ける） */
+export const GUARANTOR_TYPE_ASK_RE = /保証会社[^。\n]{0,12}(?:緩|ゆる|甘|厳し|きつ|通りやす|通りにく|何系|種類|独立系|信販系|信用系)|(?:緩|ゆる|甘|厳し|きつ|何系|独立系|信販系|信用系)[^。\n]{0,10}保証会社/;
+export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial, opts: { questionText?: string | null } = {}): ContractRoute {
   const terms = m.terms ?? null;
   const ev = terms?.evidence ?? {};
   const lines = m.lines ?? [];
@@ -177,7 +180,13 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial)
     const g = guarantorFromMaterial({ pdfText: m.pdfText ?? null, lines: (lines ?? []).map((l) => String(l ?? "")) });
     if (g.status === "named") {
       const c = g.companies[0];
-      return { topic, route: "material", facts: [`${c.name}${c.type && c.type !== "unknown" ? `（${GUARANTOR_TYPE_SHORT[c.type]}）` : ""}`, ...g.evidence.slice(0, 1)], why: "資料に保証会社の記載" };
+      // 10/08 竹内さんの決定B「独立系と言い切るのは表で確かな時だけ」: 種類は分類表で確か（竹内さん・公式の情報）な時だけ（）で渡す。
+      //   種類・通りやすさを聞かれたのに種類が確かでない → 資料の会社名だけでは答えにならない＝AIX【保証会社について】（スタッフが確かめる）
+      const sureType = guarantorTypeForText(c.name);
+      if (sureType === "unknown" && GUARANTOR_TYPE_ASK_RE.test(String(opts.questionText ?? "").normalize("NFKC"))) {
+        return { topic, route: "confirm", facts: [c.name, ...g.evidence.slice(0, 1)], why: "資料に会社名はあるが種類が表で確かでない（種類・通りやすさの質問）" };
+      }
+      return { topic, route: "material", facts: [`${c.name}${sureType !== "unknown" ? `（${GUARANTOR_TYPE_SHORT[sureType]}）` : ""}`, ...g.evidence.slice(0, 1)], why: "資料に保証会社の記載" };
     }
     if (g.status === "multiple") return { topic, route: "material", facts: [g.companies.map((c) => c.name).join("・"), ...g.evidence.slice(0, 1)], why: "資料に保証会社が複数（審査の順・条件は資料のまま）" };
     return { topic, route: "confirm", facts: g.evidence.slice(0, 1), why: g.status === "unnamed" ? "資料は保証会社の利用だけ（会社名なし）" : "資料に保証会社の記載なし" };
@@ -258,7 +267,7 @@ const HOW: Record<ContractTermTopic, string> = {
   key_money: "「敷金礼金なしのお部屋となります😊！！」「礼金〇ヶ月のお部屋となります！！」の形（資料の値のまま。手打ち90日で礼金の文 293 のうち値を言う文は「敷金礼金なし／N円」の形が主）",
   deposit: "「敷金礼金なしのお部屋となります😊！！」「敷金〇ヶ月のお部屋となります！！」の形（資料の値のまま）",
   free_rent: "スタッフの送付のとおり（月数・期限・条件を足さない）。内容が無い時の基本の形は「ご入居後1ヶ月分の家賃が無料となります」。相談可と送った物件は「フリーレントご相談可能なお部屋となります」（付くと言い切らない）",
-  guarantor_company: "「〇〇号室の保証会社が〇〇となります！！」の形（資料の会社名のまま。審査の通りやすさは言い切らない）",
+  guarantor_company: "「〇〇号室の保証会社が〇〇となります！！」の形（資料の会社名のまま）。会社名の後ろに（独立系）等がある時だけ種類の1文（独立系「独立系の保証会社となりますので比較的審査通過しやすいお部屋となります😊！！」・信販系「信販系の保証会社となり、クレジット審査となりますので比較的審査厳し目のお部屋となります！！」・信用系「信用系の保証会社となり、金融系の情報ではなく過去の家賃滞納やトラブルが無かったかを見る審査となります！！」）。（）が無ければ種類・通りやすさに触れない（審査が通るとは言い切らない）",
   guarantor_person: "「最初の審査時は緊急連絡先様での審査が可能です😊！！」の形（緊急連絡先＝電話のみ・支払い義務なし）",
   move_in: "「〇〇は〇月〇日退去予定のお部屋となります！！」「即入居可能なお部屋となります！！」の形（資料の文字のまま。早めない・足さない）",
   parking: "有る時「駐車場、月額〇円で空きございます！！」（資料に空き・料金がある時だけその値）／無い時「こちらの物件は駐車場がございませんので、近隣の月極駐車場をお探し頂く形となります！！」。資料に料金だけで空きの記載が無ければ、空きは確認すると添える",

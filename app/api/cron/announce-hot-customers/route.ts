@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { PROPERTY_DELIVERY_AIX } from "@/app/lib/aix-task-link";
 import { flagOn, TARGET_TIER_RANK } from "@/app/lib/brain-attention";
-import { loadBrainTargets, type BrainTarget } from "@/app/lib/brain-attention-server";
+import { loadBrainTargets, loadScreeningList, syncBrainHotDrops, type BrainTarget, type HotDropRow, type ScreeningRow } from "@/app/lib/brain-attention-server";
+import { formatTargetList, withScheduleAt } from "@/app/lib/target-list-format";
 
 export const maxDuration = 60;
 
@@ -321,9 +322,14 @@ export async function GET(req: NextRequest) {
 /** ブレインのターゲットの一覧を送る（決定2・ターゲットの正の基準）。✅ の付け方（今日 物件を届けた AIX）・☑（今日スタッフが送った）は旧と同じ */
 async function announceBrainTargets(cfg: { token: string; targetId: string; suzukiUserId: string | null }): Promise<NextResponse> {
   const { token, targetId, suzukiUserId } = cfg;
+  // 2026-10-08 竹内「hot から外す事もブレインがしてよい」「追客3回無視」: 追客（AIX 物件ピックアップした／物件オススメ）を3回続けて返事なしの人を hot から外してから一覧を作る
+  //   （線と根拠は brain-hot-drop.ts。グループには流さない＝ログと戻り値だけ。戻す: HOT_DROP_BY_BRAIN=off）
+  const dropped: HotDropRow[] = await syncBrainHotDrops(supabase).catch((e) => { console.warn("announce-hot-customers hot drops:", e); return []; });
   let targets: BrainTarget[];
+  let screening: ScreeningRow[] = [];
   try {
     targets = await loadBrainTargets(supabase);
+    screening = await loadScreeningList(supabase).catch((e) => { console.warn("announce-hot-customers screening:", e); return []; });
   } catch (e) {
     console.error("announce-hot-customers brain targets error:", e);
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
@@ -348,11 +354,22 @@ async function announceBrainTargets(cfg: { token: string; targetId: string; suzu
     return Date.parse(b.lastCustomerAt ?? b.updatedAt ?? "") - Date.parse(a.lastCustomerAt ?? a.updatedAt ?? "") || 0;
   });
   const line = (t: BrainTarget) => `${markOf(t.conversationId)}${t.customerName}${t.summary ? `（${t.summary}）` : ""}`;
-  const top = sorted.filter((t) => t.tier === "viewed" || t.tier === "screening_failed").slice(0, 25);
+  // 2026-10-08: 連絡の約束の日（contact-promise・カレンダーの【必ず】【連絡日】）の人も最優先の組に（約束した日に必ず出す）
+  const top = sorted.filter((t) => t.tier === "viewed" || t.tier === "screening_failed" || t.tier === "contact_due").slice(0, 25);
   const rest = sorted.filter((t) => t.tier === "new" || t.tier === "engaged").slice(0, 40);
   const hour = getJSTHour();
   const motivation = MOTIVATIONS[Math.floor(Date.now() / (24 * 3600 * 1000)) % MOTIVATIONS.length];
-  const bodyText = [
+  // 2026-10-08 竹内さん: 従業員に共有している「🌟ターゲット🌟」の形（時間割 →【内覧・申込】①〜④ → 決まった行 →【審査中】）にそろえる。
+  //   印（✅ 今日 物件を届けた AIX／☑ 今日スタッフが送った／・ まだ）は今まで通り。戻す: TARGET_LIST_FORMAT=off（旧の「最優先／ターゲット」の2段）
+  const shown = [...top, ...rest];
+  const bodyText = flagOn(process.env.TARGET_LIST_FORMAT)
+    ? formatTargetList({
+        targets: shown.map((t) => ({ mark: markOf(t.conversationId), name: t.customerName, summary: t.summaryLine })),
+        screening: screening.map((r) => ({ name: r.customerName, summary: r.summaryLine })),
+        footer: `AIX LINX より ${hour}:00`,
+        withSchedule: withScheduleAt(hour),
+      })
+    : [
     "【しょーへいの今日のターゲット全リスト】",
     ...(top.length ? ["", "► 最優先（内覧済み・審査落ち）", ...top.map(line)] : []),
     ...(rest.length ? ["", "► ターゲット（新規・物件検索中）", ...rest.map(line)] : []),
@@ -378,5 +395,5 @@ async function announceBrainTargets(cfg: { token: string; targetId: string; suzu
   await supabase.from("hanbancyo_settings").upsert({ key: "announce_hot_last_sent_at", value: new Date().toISOString() }, { onConflict: "key" });
   const byTier: Record<string, number> = {};
   for (const t of targets) byTier[t.tier] = (byTier[t.tier] ?? 0) + 1;
-  return NextResponse.json({ ok: true, mode: "brain", sent: top.length + rest.length, byTier });
+  return NextResponse.json({ ok: true, mode: "brain", sent: top.length + rest.length, byTier, screening: screening.length, hotDropped: dropped.map((d) => ({ name: d.customerName, reason: d.reason })) });
 }

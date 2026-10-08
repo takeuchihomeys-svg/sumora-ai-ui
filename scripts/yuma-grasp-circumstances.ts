@@ -23,6 +23,7 @@ const ESLEAD: Prop = { name: "エスリード難波レジデンス", room: "1406
 /** 今日（JST）から days 日後 */
 const ahead = (days: number) => { const d = new Date(Date.now() + 9 * 3600_000 + days * 86_400_000); return { md: `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`, slash: `${d.getUTCMonth() + 1}/${d.getUTCDate()}` }; };
 const D12 = ahead(12);
+const D5 = ahead(5);
 function rec(p: Prop, sec: number): Row[] {
   return [
     { s: "staff", t: "[画像]", sec, img: "p1", aix: true },
@@ -39,6 +40,35 @@ const SCENES: Record<string, { rows: Row[]; expect: string }> = {
     { s: "staff", t: "かしこまりました！！\nYUMAさんにオススメ出来るお部屋ピックアップしお送りさせて頂きます！！", sec: 600 },
     ...rec(ESLEAD, 86_400), { s: "customer", t: "ここめっちゃいいですね！内覧したいです！", sec: 90_000 }],
     expect: `${D12.slash} より前の日時を組まない・すぐ来られない＝お部屋抑えた状態で ${D12.slash} 以降にご内覧（申込の訴求）` },
+  // 10/08 竹内さん: 7日未満は抑える提案を入れない（5日先）
+  avail_5d: { rows: [
+    { s: "customer", t: `内覧は都合つくのが${D5.md}以降になりそうです🙇`, sec: 0 },
+    { s: "staff", t: "かしこまりました！！\nYUMAさんにオススメ出来るお部屋ピックアップしお送りさせて頂きます！！", sec: 600 },
+    ...rec(ESLEAD, 86_400), { s: "customer", t: "ここめっちゃいいですね！内覧したいです！", sec: 90_000 }],
+    expect: `${D5.slash} 以降（7日未満）＝抑える提案は入れない・候補日は AIX で ${D5.slash} 以降` },
+  // 10/08 竹内さん「物件が無ければそっちから送るので、その場面の時は2択にする」: ピックアップの約束の直後のお礼（売上サポに候補なし）
+  pickup_ack: { rows: [
+    { s: "customer", t: "難波で7万以内の1Kでお願いします", sec: 0 },
+    { s: "staff", t: "かしこまりました！！\n難波周辺全域からYUMAさんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！", sec: 600 },
+    { s: "customer", t: "ありがとうございます！お願いします🙇", sec: 1200 }],
+    expect: "AIX【物件ピックアップした】＋2つ目に【全力サポート】（検索の結果で選ぶ）" },
+  // 10/08 連投の依頼の一覧（request-ledger）: W51 の実物（日時の話＋初期費用）
+  rq_w51: { rows: [...rec(ESLEAD, 0),
+    { s: "customer", t: "こちら内見したいです", sec: 600 },
+    { s: "staff", t: "かしこまりました！！\nよろしければYUMAさんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！", sec: 1200 },
+    { s: "customer", t: "かしこまりました。\n日時調整します。\n初期費用いくらになりますでしょつか？", sec: 3600 }],
+    expect: "費用（見積の約束 or AIX 見積書）を落とさない・日時の話を受ける" },
+  // W23 の実物（審査の懸念＋物件 URL 3件）
+  rq_w23: { rows: [...rec(ESLEAD, 0),
+    { s: "customer", t: "カードブラックなので…厳しいかと💦", sec: 3600 },
+    { s: "customer", t: "https://www.homes.co.jp/chintai/room/aaaa1111/", sec: 3610 },
+    { s: "customer", t: "https://www.homes.co.jp/chintai/room/bbbb2222/", sec: 3620 },
+    { s: "customer", t: "https://www.homes.co.jp/chintai/room/cccc3333/", sec: 3630 }],
+    expect: "審査の懸念に触れる（審査の通りやすいお部屋・サポート）＋送って頂いた3件の募集状況の確認の約束" },
+  // 969f01 の実物（2物件の頭金）＋ 288d47（見積＋海外で収入証明なしの審査）
+  rq_288: { rows: [...rec(ESLEAD, 0),
+    { s: "customer", t: "ここがいいと思うのですが見積もり出してもらえますか？\nあと海外にいて収入証明がないのですが、しんさとおりますか？", sec: 3600 }],
+    expect: "見積の約束（or AIX）と審査の答えの両方" },
   // 前の発言で遠方 → 物件オススメ → 前向き
   remote_prev: { rows: [
     { s: "customer", t: "今広島に住んでいて、内見が難しい状況なのですが大丈夫でしょうか？", sec: 0 },
@@ -80,6 +110,8 @@ async function main() {
     for (let k = 0; k < reps; k++) for (const ver of VERSIONS) {
       process.env.CUSTOMER_CIRCUMSTANCES = ver === "off" ? "off" : "";
       process.env.APPEAL_CIRCUMSTANCES = ver === "off" ? "off" : "";
+      process.env.SEARCH_RESULT_TWO_CHOICE = ver === "off" ? "off" : "";
+      process.env.REQUEST_LEDGER = ver === "off" ? "off" : "";
       await h.waitUntilYumaQuiet(own.msg);
       const last = Math.max(...sc.rows.map((r) => r.sec));
       const t0 = Date.now() + 120_000 - last * 1000;
@@ -105,8 +137,8 @@ async function main() {
           return analyzeConversation(YUMA, true, "proposing", null, "brain", { autoSendEnabled: true, customerName: "YUMA", prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null });
         }) as unknown as Record<string, unknown> | null;
         const src = (meta?.decision_source as string | undefined) ?? (meta?.decision_source_no_aix as string | undefined) ?? "-";
-        Object.assign(out, { action: meta?.action ?? null, cp: meta?.check_pattern ?? null, reply_mode: meta?.reply_mode ?? null, src, dir: String(meta?.reply_direction ?? "").slice(0, 300), keyTopics: meta?.key_topics ?? null });
-        console.log(`\n[${name} ${ver} ${k + 1}] 期待: ${sc.expect}\n   action=${meta?.action ?? "-"} reply_mode=${meta?.reply_mode ?? "-"} src=${src}\n   方向: ${String(meta?.reply_direction ?? "").replace(/\n/g, " ").slice(0, 240)}`);
+        Object.assign(out, { action: meta?.action ?? null, cp: meta?.check_pattern ?? null, reply_mode: meta?.reply_mode ?? null, src, dir: String(meta?.reply_direction ?? "").slice(0, 300), keyTopics: meta?.key_topics ?? null, alts: meta?.alt_actions ?? null, note: String(meta?.note ?? "").slice(0, 200) });
+        console.log(`\n[${name} ${ver} ${k + 1}] 期待: ${sc.expect}\n   action=${meta?.action ?? "-"} reply_mode=${meta?.reply_mode ?? "-"} src=${src} alts=${JSON.stringify(meta?.alt_actions ?? null)}\n   方向: ${String(meta?.reply_direction ?? "").replace(/\n/g, " ").slice(0, 240)}`);
         if (meta) {
           const lastStaff = sc.rows.map((r) => r.s).lastIndexOf("staff");
           const cust = sc.rows.slice(lastStaff + 1).filter((r) => r.s === "customer").map((r) => r.t);
@@ -120,6 +152,10 @@ async function main() {
           const ct = res.headers.get("content-type") ?? "";
           out.draft = ct.includes("application/json") ? `（下書きなし: ${JSON.stringify(await res.json().catch(() => ({}))).slice(0, 160)}）` : parseStream(await res.text());
           console.log(`   下書き: ${String(out.draft).replace(/\n/g, " ／ ")}`);
+          // 連投の依頼の一覧に対して下書きが触れていない項目（request-ledger.uncoveredRequests・ログだけ）
+          const { splitRequests, uncoveredRequests, TOPIC_JA } = await import("../app/lib/request-ledger");
+          const items = splitRequests(cust, new Date().toISOString());
+          if (items.length >= 2) { out.items = items.map((x) => x.topic); out.uncovered = uncoveredRequests(items, String(out.draft ?? "")).map((x) => x.topic); console.log(`   一覧: ${items.map((x) => TOPIC_JA[x.topic]).join("・")}｜下書きの抜け: ${(out.uncovered as string[]).map((t) => TOPIC_JA[t as keyof typeof TOPIC_JA]).join("・") || "なし"}`); }
         }
       } catch (e) { out.error = e instanceof Error ? e.message : String(e); console.error(`   失敗: ${out.error}`); }
       finally { writeFloor(null); await cleanup(); }

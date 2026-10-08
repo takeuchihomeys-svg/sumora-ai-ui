@@ -11,6 +11,10 @@ for (const s of ["ただ家賃もう少し下がったりしないですよね�
 t("御見積書の後だけ", furtherDiscountDaihyo({ turnText: "もう少し安くなりませんか？", estimateSent: true, postApply: false, env: {} }) && !furtherDiscountDaihyo({ turnText: "もう少し安くなりませんか？", estimateSent: false, postApply: false, env: {} }));
 t("申込以降は当てない", !furtherDiscountDaihyo({ turnText: "もう少し安くなりませんか？", estimateSent: true, postApply: true, env: {} }));
 t("FURTHER_DISCOUNT_DAIHYO=off", !furtherDiscountDaihyo({ turnText: "もう少し安くなりませんか？", estimateSent: true, postApply: false, env: { FURTHER_DISCOUNT_DAIHYO: "off" } }));
+// 10/08（語→ブレインの点検）: 安いお部屋を探す依頼・条件を変えたらの仮定は割引の依頼ではない（実送信 1de819c9 はピックアップ）。本物の割引の依頼は外さない（実送信の文）
+for (const s of ["沢山考えた結果やはり家賃が高すぎて…もう少し安く初期費用がこの位の家は見つからないでしょうか( ; ; ) コロコロ変わって本当に申し訳ないです", "ありがとうございます。 ですが初期費用が高くて… 家賃と間取りを下げると初期費用も安くなりますか？", "初期費用をもう少し抑えたお部屋ありますか？"]) t(`安いお部屋の依頼＝割引ではない: ${s}`, !customerAsksFurtherDiscount(s));
+for (const s of ["大成マンションの初期費用もう少し安くなりませんか？", "ありがとうございます。 ここの物件前向きに検討中なんですが、もう少し金額安くなりませんか？", "②のほうの物件ですがもう少し安くなりませんか？", "割引はないんですか？？他社様から304500円で提示されたんですが", "コンフォート申し込みしたいんですがもう少し安くなりませんか？", "何度もごめんなさい🙇‍♀️ 他の不動産屋さんで初期費用約10万円まで抑えられると連絡あったのですが、イエヤスさんではこれ以上抑えることは難しいですかね？", "これは、いつから住めますか？初期費用もう少し安くお願いします"]) t(`割引の依頼のまま: ${s}`, customerAsksFurtherDiscount(s));
+process.env.FURTHER_DISCOUNT_ROOM_ASK = "off"; t("FURTHER_DISCOUNT_ROOM_ASK=off で旧", customerAsksFurtherDiscount("初期費用をもう少し抑えたお部屋ありますか？")); delete process.env.FURTHER_DISCOUNT_ROOM_ASK;
 t("2段は代表確認の AIX を約束の返信にしない", resolveTwoStage({ finalAix: "acknowledge_check", decisionSource: "rule:further_discount_daihyo", pickupReady: false, postApply: false }) === null);
 
 // ② 確定した内覧の当日の挨拶

@@ -6,6 +6,8 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isWaitPromiseNotes } from "@/app/lib/promise-timing";
 import { flagOn } from "@/app/lib/brain-attention";
 import { aixButtonText } from "@/app/lib/aix-action-text";
+import { legacyActionWinRatesEnabled, outcomeApplyBasisEnabled } from "@/app/lib/application-reach";
+import { pickConfirmCandidate, outcomeConfirmEnabled } from "@/app/lib/outcome-confirm";
 
 export const maxDuration = 60;
 
@@ -272,8 +274,54 @@ export async function GET(req: NextRequest) {
   // 📊 統計サマリー（昨日の成約・提案採択率・失注パターン・テンプレランキング）
   const statsLines: string[] = [];
 
-  // 昨日の成約数
-  statsLines.push(`🎉 昨日の成約: ${wonCount ?? 0}件`);
+  // 昨日の成約数 → 2026-10-08 竹内さんの決定①（このツールの成功＝申込に届いた事）: 昨日の申込（結果の台帳 deal_outcomes の applied_at・JST 9:30 に作り直した後）。
+  //   旧（closed_won＝自動の推定の成約込み）に戻す: OUTCOME_APPLY_BASIS=off
+  if (outcomeApplyBasisEnabled(process.env)) {
+    const { count: appliedCount, error: appliedErr } = await supabase
+      .from("deal_outcomes")
+      .select("id", { count: "exact", head: true })
+      .gte("applied_at", yesterdayStart.toISOString())
+      .lt("applied_at", todayStart.toISOString());
+    if (appliedErr) console.error("[morning-report] appliedCount query:", appliedErr.message);
+    statsLines.push(`📝 昨日の申込: ${appliedCount ?? 0}件`);
+  } else {
+    statsLines.push(`🎉 昨日の成約: ${wonCount ?? 0}件`);
+  }
+  // 2026-10-08 竹内さんの決定②: 申込から30日たって結果がまだ分からない案件（会話を開くと帯で選べる）。OUTCOME_CONFIRM=off で出さない
+  if (outcomeConfirmEnabled(process.env)) {
+    try {
+      const { data: confirmRows, error: confirmErr } = await supabase
+        .from("deal_outcomes")
+        .select("conversation_id, episode_no, applied_at, result, result_certainty, result_evidence, locked, staff_confirmed_at, confirm_snooze_until, property_name, room_no")
+        .lt("applied_at", new Date(Date.now() - 30 * 86_400_000).toISOString())
+        .in("result", ["in_progress", "won"])
+        .limit(1000);
+      if (confirmErr) throw new Error(confirmErr.message);
+      const byConv = new Map<string, unknown[]>();
+      for (const r of confirmRows ?? []) { const a = byConv.get(r.conversation_id) ?? []; a.push(r); byConv.set(r.conversation_id, a); }
+      // 一番新しい案件で聞く（pickConfirmCandidate）ので、会話ごとの全部の行を読む
+      const ids = [...byConv.keys()];
+      const allRows: unknown[] = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await supabase.from("deal_outcomes")
+          .select("conversation_id, episode_no, applied_at, result, result_certainty, result_evidence, locked, staff_confirmed_at, confirm_snooze_until, property_name, room_no")
+          .in("conversation_id", ids.slice(i, i + 200));
+        allRows.push(...(data ?? []));
+      }
+      const grouped = new Map<string, unknown[]>();
+      for (const r of allRows) { const a = grouped.get(r.conversation_id) ?? []; a.push(r); grouped.set(r.conversation_id, a); }
+      const waiting = [...grouped.values()].map((rows) => pickConfirmCandidate(rows, Date.now())).filter(Boolean)
+        .sort((a, b) => Date.parse(a.appliedAt) - Date.parse(b.appliedAt));
+      if (waiting.length) {
+        const { data: names } = await supabase.from("conversations").select("id, customer_name").in("id", waiting.slice(0, 5).map((w) => w.conversationId));
+        const nameOf = new Map((names ?? []).map((n) => [n.id, n.customer_name ?? "（名前なし）"]));
+        const lines = waiting.slice(0, 5).map((w) => `  ・${nameOf.get(w.conversationId) ?? "（名前なし）"} 申込から${w.daysSinceApplied}日${w.propertyLabel ? `（${w.propertyLabel}）` : ""}`);
+        statsLines.push(`🔔 申込から30日・結果の確認待ち ${waiting.length}件（会話を開くと選べます）:\n${lines.join("\n")}${waiting.length > 5 ? `\n  ほか${waiting.length - 5}件` : ""}`);
+      }
+    } catch (e) {
+      console.error("[morning-report] outcome confirm:", e instanceof Error ? e.message : String(e));
+    }
+  }
 
   // 提案採択率（直近7日）
   const accepted = adoptionLogs?.filter((l) => l.source === "suggestion_accepted").length || 0;
@@ -370,7 +418,8 @@ export async function GET(req: NextRequest) {
   }
 
   // 成果アトリビューション（最新週の成約率上位3テンプレ）
-  const latestPeriod = attributionRows?.[0]?.period_start as string | undefined;
+  // 2026-10-08 竹内さんの決定⑥: 推定の成約込みの成約率は出さない（既定）。旧に戻す: BRAIN_ACTION_WIN_RATES=on
+  const latestPeriod = legacyActionWinRatesEnabled(process.env) ? attributionRows?.[0]?.period_start as string | undefined : undefined;
   if (latestPeriod) {
     const topAttribution = (attributionRows ?? [])
       .filter((r) => r.period_start === latestPeriod && (r.usage_count ?? 0) > 0 && r.win_rate != null)
@@ -625,7 +674,10 @@ export async function GET(req: NextRequest) {
         const aix = (m.notes ?? "").split("\n").find((l) => l.startsWith("AIX: "))?.replace(/^AIX: /, "").replace(/を送ったら完了$/, "") ?? "";
         return `${i + 1}. ${m.title}（${relTime(m.start_at)}に約束）${aix ? `→ ${aix}` : ""}`;
       });
-      if (waits.length > 0) lines.push(`🆕 新着が出たら送る約束 ${waits.length}件（期日なし・物件を送ったら完了）`);
+      // 2026-10-08: 連絡の日の約束（【連絡日】・contact-promise）はその日より前は待ちの約束。数を分けて出す
+      const contactWaits = waits.filter((m) => /【連絡日 /.test((m.notes ?? "").split("\n")[0] ?? "")).length;
+      if (waits.length - contactWaits > 0) lines.push(`🆕 新着が出たら送る約束 ${waits.length - contactWaits}件（期日なし・物件を送ったら完了）`);
+      if (contactWaits > 0) lines.push(`📅 連絡の日の約束（まだ先） ${contactWaits}件（その日になったら上の一覧とターゲットに出る）`);
       if (stale.length > 0) lines.push(`⚠ 7日超の約束 ${stale.length}件（カレンダーで確認: ${stale.slice(0, 3).map((m) => m.title).join("・")}${stale.length > 3 ? " 他" : ""}）`);
       sections.push(`🔴 お客様との約束・未履行（${musts.length + stale.length}件）\n\n${lines.join("\n")}`);
     }

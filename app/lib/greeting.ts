@@ -17,6 +17,7 @@ import { isConditionFormMessage, isApplyGuideThinking } from "./reply-context"; 
 import { resolveAckPush } from "./opener-ack-push";
 import { isPropertyShareNoAsk, isViewingDayNotice, VIEWING_DAY_NOTICE_REPLY } from "./reply-subscene"; // reply-subscene は greeting を import しない（循環なし）
 import { isMaterialOnlyText } from "./daily-greeting"; // daily-greeting は import なしの純関数（循環なし）
+import { stripHeadTimeGreeting, timeGreetingEnabled } from "./time-greeting"; // time-greeting は daily-greeting だけを import（循環なし）
 
 /** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
 export const CONDITION_FORM_THANKS = "ご条件お送り頂きありがとうございます😊！！";
@@ -576,7 +577,20 @@ export function enforceOpening(text: string, d: GreetingDecision): { cleaned: st
   // 2026-10-02 ⑫: 以前のお客様の最初の返事は、挨拶行（GREETING_STRIP_RE）に加えて初回の自己紹介の文だけを剥がす
   //   （FIRST_GREETING_SENTENCE_RE は「ご連絡頂きありがとうございます」「本日ご案内させていただきました鈴木と申します」まで剥がす＝人の文 35会話で当てて目で読んだ）
   const firstIntroRe = d.stripFirstIntro ? RETURNING_FIRST_INTRO_RE : null;
-  for (let i = 0; i < 4 && (stripRe.test(rest) || (firstIntroRe?.test(rest) ?? false)); i++) {
+  // 2026-10-08 竹内さん（り 8f705d16「こんばんは。この時間に送るのおかしい」「お客さんに送る挨拶は『お世話になっております』」）:
+  //   時刻の挨拶（こんばんは／こんにちは／おはようございます）も挨拶の行として剥がす（お客様の挨拶のオウム返し）。
+  //   standard なら下で決定の挨拶「〇〇さんお世話になっております！！」に差し替わり、今日すでに送っていれば挨拶なし。
+  //   竹内さんの手打ち 1,812通で時刻の挨拶から書き出したのは朝の2通だけ（time-greeting.ts）。戻す: TIME_GREETING_R11=off
+  const timeOn = timeGreetingEnabled();
+  for (let i = 0; i < 4; i++) {
+    const tg = timeOn ? stripHeadTimeGreeting(rest) : { text: rest, removed: null };
+    if (tg.removed) {
+      rest = tg.text.trimStart();
+      stripped = true;
+      fixes.push(`時刻の挨拶「${tg.removed}」を除去（お客様の挨拶のオウム返し・送る時刻とずれる）`);
+      continue;
+    }
+    if (!(stripRe.test(rest) || (firstIntroRe?.test(rest) ?? false))) break;
     rest = rest.replace(stripRe, "");
     if (firstIntroRe) rest = rest.replace(firstIntroRe, "");
     stripped = true;
@@ -638,7 +652,9 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
   const vdLine = d.viewingDayNotice ? `お客様の発言は内覧当日の連絡（遅れる・向かっている・付き添い）。返事は「${VIEWING_DAY_NOTICE_REPLY}」の2行だけ（挨拶・「全然大丈夫です」「遅れて問題ございません」「現地でお待ちしております」「〇時に〇〇でお待ちしております」は足さない・スタッフの実送信 12/17 がこの形）。` : "";
   const forbidLine = vdLine + psLine + confirmQLine + bodyRuleLine + (forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "")
     + (d.conditionFormThanks ? `お客様が条件フォームを送ってくれたので、${where}は必ず「${CONDITION_FORM_THANKS}」（フォームへの感謝）→ 続けてお客様の条件（エリア・家賃・間取り等をお客様の語のまま）で物件をピックアップしてお送りする宣言。` : "");
-  const common = `「お待たせ致しました」「お待たせしました」は禁止語（返信を待たせた体裁を作らない。結果報告でも使わない）。「ありがとうございます」「ご連絡ありがとうございます」だけの書き出しは禁止（目的語付き「〇〇お送り頂きありがとうございます」は可）。「夜遅くに失礼します」「夜分遅くに失礼致します」は返信に書かない（時間帯を問わず）。`;
+  // 2026-10-08 竹内さん（り 8f705d16）: 時刻の挨拶は書かない（お客様が「こんばんは」と書いていてもまねない）。TIME_GREETING_R11=off で旧
+  const timeLine = timeGreetingEnabled() ? "「こんばんは」「こんにちは」「おはようございます」の時刻の挨拶は書かない（お客様が時刻の挨拶で始めていてもまねない・送る時刻とずれる。竹内さんは時刻の挨拶を使わず、挨拶は「〇〇さんお世話になっております！！」だけ）。" : "";
+  const common = `${timeLine}「お待たせ致しました」「お待たせしました」は禁止語（返信を待たせた体裁を作らない。結果報告でも使わない）。「ありがとうございます」「ご連絡ありがとうございます」だけの書き出しは禁止（目的語付き「〇〇お送り頂きありがとうございます」は可）。「夜遅くに失礼します」「夜分遅くに失礼致します」は返信に書かない（時間帯を問わず）。`;
   switch (d.kind) {
     case "first":
       return `${head}これはお客様への【はじめての返信】。必ず「${d.openingLine}」で始める（一字一句変更・省略・追加禁止。この行の後に空行を挟んで本文）。この後に「かしこまりました」「はい」を続けない。${common}`;

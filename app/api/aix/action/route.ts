@@ -22,7 +22,7 @@ import { stripEstimateAmountBlock, sanitizeCoverLetter } from "@/app/lib/estimat
 // 2026-09-20 竹内「物件オススメ置き換える」: 画像つきの呼び出しを種類ごとに DeepSeek へ回す
 import { shouldRouteVisionAlt, callVisionAlt } from "@/app/lib/vision-alt-provider";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
-import { sentByStaffToday, applyDailyGreeting } from "@/app/lib/daily-greeting";
+import { sentByStaffToday, applyDailyGreeting, joinNameOnlyLine } from "@/app/lib/daily-greeting";
 import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
@@ -91,7 +91,7 @@ import { buildApplicationNote, applicationBulletNote } from "@/app/lib/applicati
 import { buildCampaignNote, ensureCampaignLine } from "@/app/lib/estimate-campaign";
 import { buildViewingBeforeGreeting, viewingAfterThankLine } from "@/app/lib/viewing-greeting-text";
 import { PROPERTY_SEARCH_SYSTEM, buildPropertySearchUser, propertySearchFallback, propertySearchTextIssues } from "@/app/lib/property-search-promise";
-import { buildGuarantorInfoText, buildGuarantorMatchedText, guarantorInfoShape, guarantorInfoStructure, GUARANTOR_ANSWER_STAFF_EXAMPLES, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
+import { buildGuarantorInfoText, buildGuarantorMatchedText, guarantorInfoShape, guarantorInfoStructure, GUARANTOR_ANSWER_STAFF_EXAMPLES, formatGuarantorFacts, checkGuarantorFacts, resolveGuarantor, resolveGuarantorForText, buildGuarantorCheckNote, GUARANTOR_INFO_STAFF_EXAMPLES, normalizeGuarantorType, parseGuarantorTypeJa, guarantorTypeJa, GUARANTOR_OCR_NAME_HINT, GUARANTOR_TYPE_SCREENING_NOTE, type GuarantorProperty, type GuarantorType } from "@/app/lib/guarantor-companies";
 import { PROPERTY_SEND_MATCH_STAFF_EXAMPLES, extractPropertySendThreads, buildPropertySendThreadsBlock, stripViewingInviteLines, stripRepeatedThanksLines, fixPickupTense, ensureRequirementLine, ensureDeadlineSupportLine, stripUnanchoredThanksLines, freshCustomerTexts, stripUngroundedClaims, DEADLINE_SUPPORT_LINE, INSERTED_PROMISE_LINES, stripUnkeptConfirmPromiseLines } from "@/app/lib/property-send-match";
 import { wardOfPickupRow, moveInFactOfPickup, buildMoveInFactNote, findMoveInClaimConflict, findPickupAreaConflict, buildPickupWardNote, sanitizeSentPropertyCount, findCheckStatusContradiction, findCheckResultMoveInClaim, hasStaffMoveInClaim, PAST_MOVE_IN_CLAIM_NOTE, alignStarHeadToMaterial, type PickupMaterialRow } from "@/app/lib/aix-material-facts";
 import { labelHistoryTextForAix, labelsPastPickupFor, isPastPickupSend, PAST_PICKUP_HISTORY_NOTE, parsePickupFact, buildPickupFactsNote, findPickupSendConflicts, restoreConditionDots, type PickupFact } from "@/app/lib/pickup-send-facts";
@@ -125,6 +125,8 @@ import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, me
 import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
 // 2026-10-06 ⑰: {"message"} の JSON が読めない時に生の出力を文にしない（物件ピックアップの下書きに "} が残り名前の行が消えた・十数か所の同じ読み取りを1つに）
 import { readAixMessageJson, stripJsonEdgeResidue } from "@/app/lib/aix-message-json";
+import { moveInApplyInviteLine, equipmentDefaultClose, aixTakeuchiFormOn } from "@/app/lib/aix-takeuchi-form";
+import { buildEstimateSecondNote, resolveEstimateClosing, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message"; // 2026-10-08 11巡目 竹内さんの送信の形
 // 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
 // 2026-10-06 ⑫: 呼び名の固定（会話に出ない別の名前で呼ばない）
@@ -243,7 +245,7 @@ function guarantorPropertyOf(name: string, f: PropFacilityData | undefined | nul
   const raw = (f?.guarantorType ?? "").trim();
   // 旧クライアント（設備情報の「独立系／信用系」チップ）の日本語も受ける。
   //   「信用系」は信用系・旧の「LICC系」／"licc" も信用系（2026-09-26 竹内さん「LICC系は全部信用系」・種類は3つ）
-  const type: GuarantorType = parseGuarantorTypeJa(raw) ?? resolveGuarantor(company).type;
+  const type: GuarantorType = parseGuarantorTypeJa(raw) ?? resolveGuarantorForText(company).type;   // 10/08: 自動の種類は表で確かな時だけ
   return { name: (name ?? "").trim(), company, type };
 }
 function buildFacilityLines(f: PropFacilityData): string[] {
@@ -1668,7 +1670,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const mustUse = waitedAllowedHere ? "" : "必ず";
     const greetingTimeNote = greetingPhrase
       ? `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は${mustUse}「${greetingPhrase}」を使うこと（${nightGreeting ? "夜にこちらから届ける連絡のため。「お世話になっております」と重ねない" : "「夜分遅くに失礼致します」「夜遅くに失礼します」は書かない"}）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。${waitedBanNote}\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`
-      : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため「お世話になっております」は書かない。名前行「〇〇さん」または本題から始めること。${waitedBanNote}`;
+      : `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。本日すでにこちらから送信済みのため「お世話になっております」は書かない。${aixTakeuchiFormOn() ? "「〇〇さん」で始める時は名前の後で改行せず、同じ行に本文を続ける（例「〇〇さんこちら…」）か、本題から始めること（名前だけの行は竹内さんの手打ちで2%・2026-10-08）" : "名前行「〇〇さん」または本題から始めること"}。${waitedBanNote}`;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     // 2026-09-15 竹内（みく事例）: スタッフが送った画像（物件資料・御見積書）は履歴から丸ごと消えていて、どの物件の資料を送ったか見えなかった。
@@ -2080,11 +2082,14 @@ async function handleAction(request: NextRequest): Promise<Response> {
       }
       const addGreetingHere = (currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
         && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company";
-      const daily =applyDailyGreeting(sendCleaned, { staffSentToday: staffMessagedToday, greetingPhrase: addGreetingHere ? greetingPhrase : "", name: familyName ? name : "" });
+      const daily =applyDailyGreeting(sendCleaned, { staffSentToday: staffMessagedToday, greetingPhrase: addGreetingHere ? greetingPhrase : "", name: familyName ? name : "", joinNameLine: aixTakeuchiFormOn() });
       if (daily.action !== "none") {
         console.log(JSON.stringify({ tag: "aix:daily-greeting", action: currentAction, conversationId, result: daily.action, staffMessagedToday }));
         sendCleaned = daily.text;
       }
+      // 2026-10-08 竹内「AIX テンプレート竹内の方に寄せる」: 「〇〇さん」だけの行は次の本文とつなぐ（竹内さんの送信 2,282通で名前だけの行 20通＝0.9%・
+      //   消す文字は無い・全件監査 scripts/audit-r11-name-line-join.ts）。戻すのは AIX_TAKEUCHI_FORM=off
+      if (aixTakeuchiFormOn()) sendCleaned = joinNameOnlyLine(sendCleaned);
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
       return extractNotice(sendCleaned, familyName || rawName);
     };
@@ -3141,10 +3146,7 @@ ${SMORA_COMMON_RULES}
 【当社のLINEスタイル】
 ・絵文字は 😊 😌 ✨ のみ・1〜2個まで
 ・感嘆符は「！！」・「頂きます」を使う
-・お客様の名前（ユーザーメッセージに記載）で始める
-・30〜80文字程度のコンパクトなメッセージ
-・「お手隙の際にご査収ください😌！！」または「ご確認よろしくお願いします！！」で締める
-・LINEでそのまま送れる完成文のみ出力（解説・候補複数・見積書の金額の繰り返しは禁止）
+${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセージの最後の【この2通目の形】に従う（竹内さんの送信の形）\n" : "・お客様の名前（ユーザーメッセージに記載）で始める\n・30〜80文字程度のコンパクトなメッセージ\n・「お手隙の際にご査収ください😌！！」または「ご確認よろしくお願いします！！」で締める\n"}・LINEでそのまま送れる完成文のみ出力（解説・候補複数・見積書の金額の繰り返しは禁止）
 
 【ブランド名ルール（絶対厳守）】
 ・サービス名に言及する場合は【当社のサービス名】で渡す名称のみ使用すること。それ以外のサービス名（他ブランド・他社名）は絶対に出力しないこと。
@@ -3182,9 +3184,30 @@ ${SMORA_COMMON_RULES}
         const coverPropertyNote = coverProps.length > 0
           ? `\n\n【今回お送りする御見積書のお部屋】${coverProps.join(" / ")}\n※このお部屋の御見積書をお送りする場面です。お部屋の名前は本文に入れてよい（金額は1通目に載るので書かない）。`
           : "";
+        // 2026-10-08 竹内「AIX テンプレート竹内の方に寄せる」: 2通目（カバーレター）は竹内さんの送信の形（estimate-second-message の形・手本・締め）を最後に渡す。
+        //   竹内さんの送信: 「〇〇さんお待たせ致しました！！／〇〇号室最大限割引しました初期費用の御見積書となります！！／お手隙の際にご査収ください😌！！」。
+        //   旧の生成（14番の作り直し）は「〇〇さん」だけの行・「御見積書を作成しお送りさせて頂きます」（これからの約束）・頼まれていない申込の誘い・「ご確認よろしくお願いします」。
+        //   締めは見積書の✨2通目と同じ決め方（竹内さんの内覧の前 132通: ご査収 56%・内覧 23%・申込 21%）。戻すのは AIX_TAKEUCHI_FORM=off
+        let coverClosing: EstimateClosing = "receipt";
+        let coverShapeNote = "";
+        if (aixTakeuchiFormOn()) {
+          let viewed = false;
+          try {
+            if (conversationId) {
+              const { data: vrows } = await supabase.from("aix_usage_logs").select("id").eq("conversation_id", conversationId).in("aix_type", ["meeting_place", "greeting_viewing"]).not("sent_at", "is", null).limit(1);
+              viewed = (vrows ?? []).length > 0;
+            }
+          } catch { /* 読めない時は内覧の前（ご査収に倒れる側） */ }
+          const reaction = readCustomerReaction(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []);
+          const dec = resolveEstimateClosing({ viewed, reactionKind: reaction?.kind ?? null });
+          coverClosing = dec.closing;
+          coverShapeNote = buildEstimateSecondNote({ name: name.replace(/さん$/, ""), properties: coverProps, closing: dec.closing, staffSentToday: staffMessagedToday });
+          console.log(JSON.stringify({ tag: "aix:cover-takeuchi-form", closing: dec.closing, reason: dec.reason, viewed, props: coverProps.length }));
+        }
         const coverUserFinal = greetingTimeNote + `${name}への見積書送付メッセージを作成してください。${latestCustomerMsg ? `\nお客様の最新メッセージ: ${latestCustomerMsg}` : ""}${recentHistory}${coverPropertyNote}`
           + (campaignNote ? `\n\n${campaignNote}` : "")
-          + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "");
+          + (coverDiffNote ? `\n\n${coverDiffNote}` : "") + (coverStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + coverStarNote : "")
+          + (coverShapeNote ? `\n\n${coverShapeNote}` : "");
         const coverResult = await callClaudeHaiku(
           coverSystemSpec,
           coverUserFinal,
@@ -3238,6 +3261,11 @@ ${SMORA_COMMON_RULES}
         }
         // 2026-09-18 出口の保証: 指示だけでは落ちるので、キャンペーンの1文が無ければ締めの直前に足す
         //   （設計知見「決定論で足した文は出口でも保証する」・実送信の並び＝御見積書の案内→キャンペーン→締め）
+        // 2026-10-08: 決めた締めの文が無ければ足す（足すだけ・消さない＝見積書の✨2通目と同じ出口）
+        if (coverShapeNote && cover_letter.trim()) {
+          const ec = ensureEstimateClosing(cover_letter, coverClosing);
+          if (ec.added) { console.log(JSON.stringify({ tag: "aix:cover-closing-added", closing: coverClosing, conversationId })); cover_letter = ec.text; }
+        }
         const campaignFix = ensureCampaignLine(cover_letter, estimateCampaign);
         if (campaignFix.added) {
           console.log(JSON.stringify({ tag: "aix:estimate-campaign", added: true, conversationId }));
@@ -4911,14 +4939,14 @@ ${GUARANTOR_OCR_NAME_HINT}
           if (m) {
             const d = JSON.parse(m[0]) as { property_name?: string; company_name?: string };
             if (d.property_name && !inputPropertyName) property_name_override = d.property_name;
-            const resolved = resolveGuarantor(d.company_name || "");
+            const resolved = resolveGuarantorForText(d.company_name || "");   // 10/08: 自動の種類は表で確かな時だけ
             companyName = resolved.name;
             guarantorType = companyName ? guarantorTypeJa(resolved.type) : "不明";
           }
         } catch { /* 解析失敗時はデフォルト値を使用 */ }
       } else if (companyName && guarantorType === "不明") {
         // 会社名を手で入れて種類を選ばなかった時はマスタの既定（マスタに無ければ不明のまま）
-        guarantorType = guarantorTypeJa(resolveGuarantor(companyName).type);
+        guarantorType = guarantorTypeJa(resolveGuarantorForText(companyName).type);
       }
       // 日本語の種類名をそろえる（「信用系」は信用系のまま・旧の「LICC系」は信用系・2026-09-26 竹内さん: 種類は3つ）
       guarantorType = guarantorTypeJa(parseGuarantorTypeJa(guarantorType) ?? "unknown");
@@ -5177,7 +5205,7 @@ ${guidanceRule}`,
 ・[号室]はスタッフ入力に号室がある場合のみ「○○号室」形式で付ける（ない場合は省略）
 ・[退去予定日]はスタッフ入力の「退去予定日」をそのまま使う（例: 「7月20日」）
 ・[入居可能時期]はスタッフ入力の「最短入居可能時期」をそのまま使う（例: 「8月下旬」）
-・誘導タイプ「申込誘導」の場合: [誘導文]＝「[お客様名]良ければ先にお申込みでお部屋を抑えてから内覧もできます！！😊良ければお申込みはいかがでしょうか！！」
+・誘導タイプ「申込誘導」の場合: [誘導文]＝「${moveInApplyInviteLine("[お客様名]")}」（2026-10-08 竹内さんの送信の形・aix-takeuchi-form.ts）
 ・誘導タイプ「内覧誘導」の場合: [誘導文]＝「退去後のご内覧となりますが、[お客様名]ご都合よろしいお日にちにご案内させて頂きます😊！！」
 ・[誘導文]は必ず改行して最後の行に付ける`,
         },
@@ -5235,8 +5263,8 @@ ${guidanceRule}`,
           label: "設備",
           format: `${mgmtGreeting}
 [物件名]の設備状況につきまして管理会社へ確認させて頂きました！！
-[確認結果]
-${guidanceClose ?? `ご不明な点がございましたらお気軽にご連絡ください😊！！`}`,
+[確認結果]${(() => { const c = guidanceClose ?? equipmentDefaultClose(); return c ? `
+${c}` : ""; })()}`,
           rules: `・[確認結果]はスタッフ入力情報（エアコン・給湯器・バス・トイレ等の設備状況）から作成する（1〜3行）
 ・設備がある/新しい/使える場合:「[設備名]は[状態]でございます！！」のように具体的に前向きに伝える（スタッフ入力の値をそのまま記載・数値や型番の創作禁止）
 ・設備がない/古い場合も正直に伝えつつ（謝罪表現は使用禁止）、前向きに締める
@@ -7432,7 +7460,7 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
         const nm = String(p?.name ?? "").trim().slice(0, 100);
         const co = String(p?.company ?? "").trim().slice(0, 60);
         const r = resolveGuarantor(co, giCustoms);   // 名寄せ（正規名）と既定の種類
-        const ty: GuarantorType = normalizeGuarantorType(p?.type) ?? r.type;   // 画面で選んだ種類が最優先（旧画面の "licc" は信用系）。無ければ既定
+        const ty: GuarantorType = normalizeGuarantorType(p?.type) ?? resolveGuarantorForText(co, giCustoms).type;   // 10/08: 既定は表で確かな種類だけ・画面で選んだ種類が最優先（旧画面の "licc" は信用系）。無ければ既定
         return { name: nm, company: r.name, type: ty };
       }).filter((p) => p.name && p.company).slice(0, 20);
       if (giProps.length === 0) throw new Error("物件名と保証会社名を1件以上入力してください");

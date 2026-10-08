@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { legacyActionWinRatesEnabled } from "@/app/lib/application-reach";
+import { watchAixMatchRates, WATCH_MATCH_MIN, WATCH_MATCH_MIN_N } from "@/app/lib/watch-aix-match";
 
 export const maxDuration = 30;
 
@@ -10,7 +12,9 @@ export const maxDuration = 30;
 //   - acceptance_rate >= 0.65（提案採択率65%以上）
 //   - edit_rate < 0.30（編集率30%未満 = 7割以上そのまま送っている）
 //   - サンプル数 >= 15（採択率・編集率とも。rate表示自体は3件から）
-//   - win_rate データがある場合は 全aix_type平均の半分以上
+//   - 見張りの一致率（ブレインが出した AIX をスタッフが押した割合・line_watch_turns）が 50% 以上（5件以上ある時だけ見る）
+//     ※ 2026-10-08 竹内さんの決定⑥: 旧は成約の勝ち率（aix_action_attribution・推定の成約込み）で関所を作っていた → 見張りの一致率に置き換え。
+//       旧に戻す: BRAIN_ACTION_WIN_RATES=on（全aix_type平均の半分以上の成約率）
 //   - 全て満たす → ready: true
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -73,12 +77,25 @@ export async function POST(req: NextRequest) {
     // 2.5. aix_action_attribution から直近30日の aix_type 別 win_rate 平均を取得
     //      （HIGH-04: 成約率が低いaix_typeを ready:true にしないための条件）
     const since30dDate = since30d.slice(0, 10);
-    const { data: attrRows } = await supabase
-      .from("aix_action_attribution")
-      .select("action_type, win_rate")
-      .gte("period_start", since30dDate)
-      .not("win_rate", "is", null)
-      .limit(5000);
+    const legacyWin = legacyActionWinRatesEnabled(process.env);
+    const { data: attrRows } = legacyWin
+      ? await supabase
+        .from("aix_action_attribution")
+        .select("action_type, win_rate")
+        .gte("period_start", since30dDate)
+        .not("win_rate", "is", null)
+        .limit(5000)
+      : { data: [] as Array<{ action_type: string; win_rate: number | null }> };
+    // 見張りの一致率（新の関所）: ブレインが AIX を出した番で、スタッフが同じ AIX を押したか（line-watch-judge の aix_verdict）
+    const { data: watchRows } = legacyWin
+      ? { data: [] as Array<{ brain_action: string | null; aix_verdict: string | null }> }
+      : await supabase
+        .from("line_watch_turns")
+        .select("brain_action, aix_verdict:verdict_detail->>aix_verdict")
+        .gte("created_at", since30d)
+        .not("brain_action", "is", null)
+        .limit(5000);
+    const watchRates = watchAixMatchRates((watchRows ?? []) as Array<{ brain_action: string | null; aix_verdict: string | null }>);
 
     const winRateAgg: Record<string, { sum: number; n: number }> = {};
     for (const row of (attrRows ?? []) as Array<{ action_type: string; win_rate: number | null }>) {
@@ -116,8 +133,12 @@ export async function POST(req: NextRequest) {
         edit && edit.total >= MIN_SAMPLES ? Math.round((edit.edited / edit.total) * 1000) / 1000 : null;
 
       // win_rateデータがない場合は条件をスキップ（データありなら全aix_type平均の半分以上を要求）
-      const win_rate = winRateData[aix_type] ?? null;
-      const winRateOk = win_rate === null || win_rate >= avgWinRate * 0.5;
+      const win_rate = legacyWin ? winRateData[aix_type] ?? null : null;
+      const watch = watchRates[aix_type] ?? null;
+      const watch_match_rate = watch && watch.n >= WATCH_MATCH_MIN_N ? watch.rate : null;
+      const winRateOk = legacyWin
+        ? win_rate === null || win_rate >= avgWinRate * 0.5
+        : watch_match_rate === null || watch_match_rate >= WATCH_MATCH_MIN;
 
       const enoughSamples =
         (acc?.total ?? 0) >= MIN_SAMPLES_FOR_READY &&
@@ -131,9 +152,9 @@ export async function POST(req: NextRequest) {
         winRateOk &&
         enoughSamples;
 
-      const winRateInfo = win_rate !== null
-        ? `成約率${Math.round(win_rate * 100)}%（全体平均${Math.round(avgWinRate * 100)}%）`
-        : "成約率データなし";
+      const winRateInfo = legacyWin
+        ? (win_rate !== null ? `成約率${Math.round(win_rate * 100)}%（全体平均${Math.round(avgWinRate * 100)}%）` : "成約率データなし")
+        : (watch_match_rate !== null ? `見張りの一致率${Math.round(watch_match_rate * 100)}%（${watch!.same}/${watch!.n}件）` : `見張りの一致率データ不足（${watch?.n ?? 0}件）`);
 
       let reason: string;
       if (acceptance_rate === null && edit_rate === null) {
@@ -148,12 +169,12 @@ export async function POST(req: NextRequest) {
         const issues: string[] = [];
         if (acceptance_rate < 0.65) issues.push(`採択率${Math.round(acceptance_rate * 100)}%（65%未満）`);
         if (edit_rate >= 0.30) issues.push(`編集率${Math.round(edit_rate * 100)}%（30%以上）`);
-        if (!winRateOk) issues.push(`${winRateInfo}（平均の半分未満）`);
+        if (!winRateOk) issues.push(legacyWin ? `${winRateInfo}（平均の半分未満）` : `${winRateInfo}（${Math.round(WATCH_MATCH_MIN * 100)}%未満）`);
         if (!enoughSamples) issues.push(`サンプル数不足（採択${acc?.total ?? 0}件・編集${edit?.total ?? 0}件 / ${MIN_SAMPLES_FOR_READY}件以上必要）`);
         reason = issues.join("・") + `${winRateOk ? `・${winRateInfo}` : ""} → まだ学習が必要`;
       }
 
-      return { aix_type, acceptance_rate, edit_rate, win_rate, ready, reason };
+      return { aix_type, acceptance_rate, edit_rate, win_rate, watch_match_rate, ready, reason };
     }).sort((a, b) => {
       // ready=true を先頭に、次に acceptance_rate の降順
       if (a.ready && !b.ready) return -1;

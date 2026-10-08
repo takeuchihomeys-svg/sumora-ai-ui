@@ -30,6 +30,7 @@
 //   物件名・駅・金額はその時の物 → 今回の文に持ち込んでいないかを出口（leakedExampleFacts）で見る。
 
 import type { RecommendationScenario } from "./recommendation-frame";
+import { aixTakeuchiFormOn } from "./aix-takeuchi-form";
 import { readMaterialViewable } from "./recommend-viewable";
 import { sortForReview, type ReviewOrderRow } from "./pickup-review-order";
 
@@ -57,7 +58,134 @@ type Example = {
 };
 
 /** スタッフが実際に送った2通目（本文そのまま）。日付は実送信の日 */
+// 2026-10-08 竹内「AIX テンプレートの文の質も竹内が送っている形で。スタッフの方は質があんまり」: 手本は竹内さんの送信（messages.staff_writer='takeuchi'）だけ。
+//   旧の手本 15通のうち従業員の送信 6通（比べる型 4・新着 1・1件 1）を、竹内さんの送信に替えた（scripts/audit-r11-aix-takeuchi-form.ts）
 export const SECOND_MESSAGE_EXAMPLES: Record<SecondSceneKey, Example[]> = {
+  compare: [
+    { // 2026-10-05（竹内）
+      text: `お送りさせて頂きましたお部屋の中でも
+アトリエール堺寺地町 103号室が特にオススメ出来るお部屋となります！！
+敷金礼金なしで初期費用を抑える事ができ・2026年1月築の新築で、${N}さんにかなりオススメ出来るお部屋となります😊！！
+${N}さんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！`,
+      vacating: false, facts: ["アトリエール堺寺地町"],
+    },
+    { // 2026-10-04（竹内）
+      text: `お送りさせて頂きましたお部屋の中でも特にＭＥＬＤＩＡ千船 201号室が敷金礼金なしで初期費用を抑える事ができ・バス・トイレ別で、${N}さんにかなりオススメ出来るお部屋となります！！
+
+お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！`,
+      vacating: false, facts: ["ＭＥＬＤＩＡ千船", "千船"],
+    },
+    { // 2026-10-05（竹内）
+      text: `お送りさせて頂きましたお部屋の中でも
+スプランディッド天王寺SOUTH 203号室が
+特にオススメのお部屋となります！！
+
+駒川中野駅徒歩1分・敷金礼金なしで初期費用をかなり抑える事ができ、${N}さんにかなりオススメ出来るお部屋となります😊！！
+${N}さんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！`,
+      vacating: false, facts: ["スプランディッド天王寺SOUTH", "駒川中野"],
+    },
+    { // 2026-08-29（竹内）
+      text: `お送りさせて頂きましたお部屋の中でもヴェルテックス07が敷金礼金なし・2017年築で築年数浅く、${N}さんにかなりオススメ出来るお部屋となります！！
+
+${N}さんお気に召されたお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！`,
+      vacating: false, facts: ["ヴェルテックス"],
+    },
+    { // 2026-09-21（竹内・退去予定）
+      text: `モンブランⅡはお送りさせて頂きましたお部屋の中でも特にオススメ出来るお部屋となります！！
+
+${N}さんご希望のご条件をしっかり満たせるお部屋となっており、こちらは個人的にも、${N}さんにかなりオススメ出来るお部屋となります😊！！
+
+10月1日以降のご内覧可能となりますので、お気に召されましたらお部屋ご案内させて頂きます！！
+お気軽にお申し付けください！`,
+      vacating: true, facts: ["モンブラン"],
+    },
+  ],
+  new_listing: [
+    { // 2026-10-05（竹内・1通目の🌟カードも「1件新着で…募集に出ました」の後の2通目）
+      text: `お世話になっております！！
+1件新着で${N}さんにオススメ出来るお部屋募集に出ました！！
+
+2023年3月築、リビング13.2帖でペット飼育可能・インターネット無料の2LDKとなり、${N}さんにかなりオススメ出来るお部屋となります！！
+お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！
+お手隙の際にご査収ください😌！！`,
+      vacating: false, facts: ["リビング13.2帖"],
+    },
+    { // 2026-10-04（竹内）
+      text: `お世話になっております！
+1件新着でオススメ出来るお部屋が募集に出ました😊！！
+堺筋本町駅徒歩4分・南向き・独立洗面台完備、2020年2月築で築年数浅く、ペット飼育可となり、かなりオススメ出来るお部屋となります！！
+
+お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！`,
+      vacating: false, facts: ["堺筋本町"],
+    },
+    { // 2026-10-06（竹内）
+      text: `お世話になっております！！
+新着で1件オススメ出来るお部屋が募集に出ました😊！！
+ラフォルテ日本橋 305号室
+DK5.85帖・洋室9.4帖の1DKで、日本橋駅徒歩5分・独立洗面台・浴室換気乾燥機・追い焚きと水回り設備も充実しており、かなりオススメ出来るお部屋となります！！
+お手隙の際にご査収ください😌！！`,
+      vacating: false, facts: ["ラフォルテ日本橋"],
+    },
+    { // 2026-09-12（竹内）
+      text: `新着で1件${N}さんにオススメ出来るお部屋が募集に出ました！！
+お気に召されましたらお部屋ご案内させて頂きます！！
+お気軽にお申し付けください😌✨`,
+      vacating: false, facts: [],
+    },
+    { // 2026-09-08（竹内）
+      text: `1件新着で${N}さんにオススメ出来るお部屋募集に出ました😊！！
+初期費用面もかなり抑える事ができます！！
+お手隙の際にご査収ください😌！！`,
+      vacating: false, facts: [],
+    },
+    { // 2026-09-18（竹内・退去予定）
+      text: `今月末退去予定で1件${N}さんにかなりオススメ出来るお部屋が募集に出ました！！
+お気に召されましたら退去後お部屋ご案内させて頂きます😌！！
+お手隙の際にご査収ください！`,
+      vacating: true, facts: [],
+    },
+  ],
+  single: [
+    { // 2026-10-05（竹内）
+      text: `こちらのお部屋如何でしょうか！！
+
+リノベーション済みの角部屋で南向き・エアコン3基新設と設備も充実しており、${N}さんにかなりオススメ出来るお部屋となります！！
+
+お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！
+お手隙の際にご査収ください😊！！`,
+      vacating: false, facts: ["エアコン3基"],
+    },
+    { // 2026-08-17（竹内）
+      text: `こちらのお部屋如何でしょうか😊！！
+2015年築家賃管理費込61,000円、Wi-Fi無料の為毎月の費用を抑える事が出来ます！！
+${N}さんお気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！`,
+      vacating: false, facts: ["61,000"],
+    },
+    { // 2026-09-19（竹内）
+      text: `こちらのお部屋如何でしょうか！！
+家賃管理費込67,000円、独立洗面、御堂筋線大国町駅徒歩7分、なんば駅徒歩10分の立地となります😊！！
+お手隙の際にご査収ください😌！！`,
+      vacating: false, facts: ["大国町", "なんば駅"],
+    },
+    { // 2026-09-08（竹内）
+      text: `${N}さんこちらのお部屋如何でしょうか！！
+桜川駅まで徒歩7分、初期費用面もかなり抑える事ができます😊！！
+お部屋もご内覧可能となります！！
+${N}さんお手隙の際にご査収ください！`,
+      vacating: false, facts: ["桜川"],
+    },
+    { // 2026-09-20（竹内・退去予定）
+      text: `こちらのお部屋如何でしょうか😌！！
+9月末退去予定予定のため10月1日以降ご内覧出来ます！！
+お気に召されましたら10月1日以降お部屋ご案内させて頂きます！！
+お手隙の際にご査収ください😌！！`,
+      vacating: true, facts: [],
+    },
+  ],
+};
+
+/** 10巡目までの手本（従業員の送信 6通を含む）。AIX_TAKEUCHI_FORM=off で戻す */
+export const SECOND_MESSAGE_EXAMPLES_R10: Record<SecondSceneKey, Example[]> = {
   compare: [
     { // 2026-09-28
       text: `お送りさせて頂きましたお部屋の中でも特にLuxe難波西2 1009が芦原橋駅徒歩3分・敷金礼金なしで初期費用をかなり抑える事ができ、${N}さんにかなりオススメ出来るお部屋となります！！\n\n${N}さんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！`,
@@ -125,6 +253,12 @@ export const SECOND_MESSAGE_EXAMPLES: Record<SecondSceneKey, Example[]> = {
     },
   ],
 };
+
+/** 2026-10-08 竹内: AIX の文は竹内さんの送信に寄せる（戻すのは AIX_TAKEUCHI_FORM=off・呼ぶ時に読む） */
+export { aixTakeuchiFormOn };
+export function secondMessageExamples(): Record<SecondSceneKey, Example[]> {
+  return aixTakeuchiFormOn() ? SECOND_MESSAGE_EXAMPLES : SECOND_MESSAGE_EXAMPLES_R10;
+}
 
 /** 手本の名前を今回のお客様の名前にする。名前が分からない時は呼びかけごと落とす（伏せ字を残さない） */
 export function renderExample(text: string, name: string | null | undefined): string {
@@ -254,6 +388,12 @@ export type SecondSceneInput = {
   vacatingLine?: string | null;
   /** 1通目が既に退去予定を伝えている（2通目では繰り返さない） */
   firstMentionsVacating?: boolean;
+  /**
+   * 今日まだこちらから会話文を送っていない（🌟カード・【】見積・画像の資料は数えない）＝2通目の1行目に挨拶を書く。
+   * 2026-10-08 竹内さんの実送信（物件オススメの2通目・前の会話文なし 131通）: 「お世話になっております」から 95通（73%）／前の会話文あり 47通では 8通（17%）
+   * undefined は旧の扱い（挨拶の行を書かない）
+   */
+  greet?: boolean;
 };
 
 const SCENE_LABEL: Record<SecondSceneKey, string> = {
@@ -270,7 +410,7 @@ export function buildSecondSceneNote(i: SecondSceneInput): string {
   const nm = i.name.trim();
   const san = nm ? `${nm}さん` : "";
   const label = i.propertyLabel ?? "（1通目の見出しの建物名と号室）";
-  const pool = SECOND_MESSAGE_EXAMPLES[i.scene];
+  const pool = secondMessageExamples()[i.scene];
   // 退去予定の時は退去予定の実物を先に、空室の時は空室の実物だけ
   // 退去予定の一文を2通目に書く時だけ退去予定の実物を先に見せる。1通目が既に伝えている時は見せない（見せると同じ一文を重ねる）
   const writeVacating = i.vacating && !i.firstMentionsVacating;
@@ -283,6 +423,11 @@ export function buildSecondSceneNote(i: SecondSceneInput): string {
   L.push("■ 形");
   if (i.scene === "compare") {
     L.push(`・1段落目は1文: 「お送りさせて頂きましたお部屋の中でも特に${label}が」＋理由＋「、${san ? `${san}に` : ""}かなりオススメ出来るお部屋となります！！」`);
+  } else if (i.scene === "new_listing" && aixTakeuchiFormOn()) {
+    // 2026-10-08 竹内さんの実送信（10/04〜10/06・1通目の🌟カードが「1件新着で…募集に出ました」の時も）: 2通目でも新着の一文を書き、次の行に理由
+    L.push(`・${i.greet ? "挨拶の次の行" : "1行目"}は「1件新着で${san ? `${san}に` : ""}オススメ出来るお部屋が募集に出ました！！」（1通目に同じ一文があっても書く＝竹内さんの形）`);
+    L.push(`・次の行に理由＋「、${san ? `${san}に` : ""}かなりオススメ出来るお部屋となります！！」（物件名は書かなくてよい。書くなら建物名から）`);
+    L.push("・「お送りさせて頂きましたお部屋の中でも」とは書かない（新着の1件で、比べる相手が無い）");
   } else if (i.scene === "new_listing") {
     L.push(`・書き出しは「新着で1件${san ? `${san}に` : ""}オススメ出来るお部屋が募集に出ました！！」。物件名を入れる時は「新着で1件${label}が」＋理由＋「、${san ? `${san}に` : ""}かなりオススメ出来るお部屋となります！！」`);
     L.push("・「お送りさせて頂きましたお部屋の中でも」とは書かない（新着の1件で、比べる相手が無い）");
@@ -307,10 +452,17 @@ export function buildSecondSceneNote(i: SecondSceneInput): string {
   L.push("・最後は締めの1文だけ（下の【この2通目の締め】の指示のとおり）。締めの後に「気になる点があれば〜」等の一文を足さない。");
   L.push("・文の終わりは「！！」。「。」で終わる文にしない（実送信で0.3%）。");
   L.push("・絵文字は1個入れる（多くて2個）。置く所は文の最後の「！！」の直前だけ（😊。「ご査収ください」の文は😌か😊）。文の途中には置かない。締めの文が無い時はオススメの文の最後に😊。");
-  L.push(`・呼びかけ: ${san ? `「${san}」を文の中に入れる（実送信85%）。挨拶の行・「${san}」だけの行は書かない` : "名前は書かない"}。長さは100〜150字・2段落まで。`);
+  if (aixTakeuchiFormOn() && i.greet === true) {
+    L.push("・挨拶: 今日はまだこちらから会話文を送っていない（今送った🌟の資料は数えない）→ 1行目は「お世話になっております！！」の1行（竹内さんの実送信 73%）。「お待たせ致しました」は書かない。");
+    L.push(`・呼びかけ: ${san ? `「${san}」を文の中に入れる。「${san}」だけの行は書かない` : "名前は書かない"}。長さは100〜180字・4〜6行。`);
+  } else {
+    L.push(`・呼びかけ: ${san ? `「${san}」を文の中に入れる（実送信85%）。挨拶の行・「${san}」だけの行は書かない` : "名前は書かない"}。長さは100〜150字・2段落まで。`);
+  }
   L.push("");
   L.push(`■ この場面でスタッフが実際に送った2通目（本文そのまま。物件名・駅・金額・日付はその時の物なので今回の文に持ち込まない）`);
-  picked.forEach((e, k) => { L.push(`--- 実物${k + 1} ---`); L.push(renderExample(e.text, nm)); });
+  // 挨拶を書かない時は、手本の挨拶の行を外して見せる（指示と手本が食い違わないように・本文はそのまま）
+  const shown = (t: string) => (aixTakeuchiFormOn() && i.greet !== true ? t.replace(/^お世話になっております！*\n+/, "") : t);
+  picked.forEach((e, k) => { L.push(`--- 実物${k + 1} ---`); L.push(shown(renderExample(e.text, nm))); });
   return L.join("\n");
 }
 
@@ -339,7 +491,7 @@ export function leakedExampleFacts(text: string | null | undefined, allowed: str
   const t = String(text ?? "");
   const ok = String(allowed ?? "");
   const out: string[] = [];
-  for (const list of Object.values(SECOND_MESSAGE_EXAMPLES)) {
+  for (const list of [...Object.values(SECOND_MESSAGE_EXAMPLES), ...Object.values(SECOND_MESSAGE_EXAMPLES_R10)]) {
     for (const e of list) for (const f of e.facts) {
       if (f.length >= 3 && t.includes(f) && !ok.includes(f) && !out.includes(f)) out.push(f);
     }

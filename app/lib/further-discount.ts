@@ -20,8 +20,16 @@ export function customerAsksFurtherDiscount(turnText: string | null | undefined)
   if (RENT_ONLY_RE.test(t) && !COST_WORD_RE.test(t)) return false;
   // 他社の見積と比べての不審（安すぎる理由）は 初期費用を説明 の領分・分割の話は返信（カード払い）
   if (/なぜ|なんで|理由|大丈夫(?:です|でしょう)か/.test(t) && !/もう少し|これ以上|更に|さらに/.test(t)) return false;
+  // 2026-10-08（竹内さん「文の単語だけで変に判断…ブレインを基盤に」の点検）: 安いお部屋を探してほしい依頼（条件）は割引の依頼ではない。
+  //   実送信（365日・御見積書の後に「安く」と言った 21番）: 「もう少し安く初期費用がこの位の家は見つからないでしょうか」
+  //   「家賃と間取りを下げると初期費用も安くなりますか」→ スタッフは「家賃を抑えられるお部屋をピックアップ」（代表確認 0）。
+  //   同じ 21番の代表への確認・最安値の答え（「もう少し安くなりませんか」「礼金下げることは厳しいですか」等 18通）はこの線に当たらない（誤って外す 0）。
+  //   戻す: FURTHER_DISCOUNT_ROOM_ASK=off
+  if ((typeof process === "undefined" || (process.env?.FURTHER_DISCOUNT_ROOM_ASK ?? "").toLowerCase() !== "off") && CHEAPER_ROOM_ASK_RE.test(t)) return false;
   return true;
 }
+/** 安いお部屋を探す依頼・条件を変えたらの仮定（割引の依頼ではない） */
+export const CHEAPER_ROOM_ASK_RE = /(?:お?部屋|物件|家|ところ|とこ)(?:は|が|って|で|を)?[^\n。？?]{0,8}(?:見つから|探し|探して|あり(?:ます|ませ)|ござい(?:ます|ませ)|紹介|ピックアップ)|(?:家賃|間取り?)[^\n。]{0,8}(?:下げ|変え|落と)(?:ると|たら|れば)/;
 
 export type FurtherDiscountInput = { turnText: string | null | undefined; estimateSent: boolean; postApply: boolean; env?: Record<string, string | undefined> };
 /** AIX【確認します→代表確認（初期費用）】にするか（御見積書を送った後の更なる割引の依頼だけ） */

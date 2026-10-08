@@ -84,15 +84,31 @@ export const PICKUP_TIMING_LABEL: Record<PickupPromiseTiming, { label: string; m
 /** 待ちの印（見出しの末尾）。この印のある約束は期日が無い＝「必ず N日」・期限切れに数えない */
 export const WAIT_MARKS: readonly string[] = ["【新着待ち】", "【お客様待ち】", "【時期待ち】"];
 
-/** notes の1行目が待ちの約束か */
-export function isWaitPromiseNotes(notes: string | null | undefined): boolean {
+/**
+ * 連絡の日の約束（contact-promise.ts・見出しの末尾【連絡日 YYYY-MM-DD】）。
+ * 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる…その日に連絡するように」: 連絡の日より前は待ちの約束（🔴必ず・N日・期限切れに数えない）、
+ *   当日からは今日の約束（ふつうの【必ず】と同じ）。依存を増やさないよう印の形だけここでも読む
+ */
+const CONTACT_DATE_RE = /【連絡日 (\d{4})-(\d{2})-(\d{2})】/;
+function contactDateInHead(head: string): { ymd: string; m: number; d: number } | null {
+  const m = head.match(CONTACT_DATE_RE);
+  return m ? { ymd: `${m[1]}-${m[2]}-${m[3]}`, m: Number(m[2]), d: Number(m[3]) } : null;
+}
+const jstTodayYmd = (nowMs: number) => new Date(nowMs + 9 * 3600_000).toISOString().slice(0, 10);
+
+/** notes の1行目が待ちの約束か（連絡の日の約束は、その日より前だけ待ち） */
+export function isWaitPromiseNotes(notes: string | null | undefined, nowMs: number = Date.now()): boolean {
   const head = ((notes ?? "").trimStart().split("\n")[0] ?? "");
+  const c = contactDateInHead(head);
+  if (c) return jstTodayYmd(nowMs) < c.ymd;
   return WAIT_MARKS.some((m) => head.includes(m));
 }
 
 /** 赤帯・一覧に出す短い呼び名（「新着が出たら送る」等）。待ちでなければ null */
-export function waitPromiseBadge(notes: string | null | undefined): string | null {
+export function waitPromiseBadge(notes: string | null | undefined, nowMs: number = Date.now()): string | null {
   const head = ((notes ?? "").trimStart().split("\n")[0] ?? "");
+  const c = contactDateInHead(head);
+  if (c) return jstTodayYmd(nowMs) < c.ymd ? `${c.m}/${c.d}に連絡` : null;
   if (head.includes("【新着待ち】")) return "新着が出たら送る";
   if (head.includes("【お客様待ち】")) return "ご条件を頂いたら送る";
   if (head.includes("【時期待ち】")) return "時期が来たら送る";

@@ -1,7 +1,7 @@
 // 2026-10-08 把握「お客様の事情」（customer-circumstances.ts）
 // 実行: npx tsx app/lib/__tests__/customer-circumstances.test.ts
 // お客様の発言は実物（scripts/audit-customer-circumstances.ts で読んだ物・名前と物件名は伏せた）
-import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, buildCircumstancesNote, resolveDateExpr } from "../customer-circumstances";
+import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, buildCircumstancesNote, resolveDateExpr, holdFirstReason } from "../customer-circumstances";
 import { buildAppealInput, resolveAppealTiming } from "../appeal-timing";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -120,6 +120,42 @@ it("内覧の希望＋前の発言の「9/13以降」＝申込で抑えた状態
   process.env.APPEAL_CIRCUMSTANCES = "off";
   eq(buildAppealInput({ msgs, aixLogs: [], customerKind: "positive" }).viewingDelayed, false);
   delete process.env.APPEAL_CIRCUMSTANCES;
+});
+
+console.log("2026-10-08 竹内さん「期間が1週間以上空いた場合や、遠方の方には（先に抑える）提案する」");
+it("〇日以降が7日以上先＝抑える提案／6日先＝入れない／遠方＝入れる", () => {
+  const now = jst("2026-10-08T14:00:00");
+  const v7 = validCircumstances(one("都合つくのが10月15日以降の予定です", "2026-10-08T13:00:00"), now);
+  const v6 = validCircumstances(one("都合つくのが10月14日以降の予定です", "2026-10-08T13:00:00"), now);
+  const vr = validCircumstances(one("今広島に住んでいて、内見が難しい状況です", "2026-10-07T13:00:00"), now);
+  has(String(holdFirstReason(v7, now)), "今日から7日後"); eq(holdFirstReason(v6, now), null); eq(holdFirstReason(vr, now), "遠方のお客様");
+  eq(circumstanceDelaysViewing(v7, now), true); eq(circumstanceDelaysViewing(v6, now), false); eq(circumstanceDelaysViewing(vr, now), true);
+});
+it("しばらく来られない（日付なし）はこの線では抑える提案に入れない", () => {
+  const now = jst("2026-10-08T14:00:00");
+  eq(holdFirstReason(validCircumstances(one("今月前半結構予定詰まってて", "2026-10-08T10:00:00"), now), now), null);
+});
+it("注記: 7日以上先は抑える提案・候補日は AIX で来られる日以降／6日先は「入れない」と書く", () => {
+  const now = jst("2026-10-08T14:00:00");
+  const n7 = buildCircumstancesNote(validCircumstances(one("都合つくのが10月20日以降の予定です", "2026-10-08T13:00:00"), now), { nowMs: now, scene: "viewing" });
+  has(n7, "お申込みでお部屋を抑えた状態でご内覧頂く"); has(n7, "AIX【内覧調整】で来られる日以降から出す");
+  const n6 = buildCircumstancesNote(validCircumstances(one("都合つくのが10月14日以降の予定です", "2026-10-08T13:00:00"), now), { nowMs: now, scene: "viewing" });
+  has(n6, "お部屋を抑える提案は入れない");
+  if (n6.includes("お申込みでお部屋を抑えた状態")) throw new Error("6日先に抑える提案が入った");
+});
+it("HOLD_FIRST_MIN_DAYS で線を変えられる", () => {
+  const now = jst("2026-10-08T14:00:00");
+  const v6 = validCircumstances(one("都合つくのが10月14日以降の予定です", "2026-10-08T13:00:00"), now);
+  process.env.HOLD_FIRST_MIN_DAYS = "5"; eq(holdFirstReason(v6, now) !== null, true); delete process.env.HOLD_FIRST_MIN_DAYS;
+});
+it("訴求: 内覧の希望＋前の発言の「〇日以降」が5日先 → 抑えない（内覧の受け）", () => {
+  const msgs = [
+    { sender: "staff", text: "🌟〇〇 7階\n家賃8.5万円…オススメ出来るお部屋となります😊！！", createdAt: new Date(jst("2026-10-08T10:00:00")).toISOString() },
+    { sender: "customer", text: "都合つくのが10月13日以降の予定です", createdAt: new Date(jst("2026-10-08T12:00:00")).toISOString() },
+    { sender: "staff", text: "かしこまりました！！", createdAt: new Date(jst("2026-10-08T12:05:00")).toISOString() },
+    { sender: "customer", text: "内覧したいです！", createdAt: new Date(jst("2026-10-08T12:30:00")).toISOString() },
+  ];
+  eq(buildAppealInput({ msgs, aixLogs: [], customerKind: "positive" }).viewingDelayed, false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
