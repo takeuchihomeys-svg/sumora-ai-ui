@@ -76,6 +76,7 @@ import { MOVE_OUT_PATTERN, moveOutEvidenceFromMsgs, moveOutBlocksViewing, moveOu
 //   お客様の今の段階・お部屋ごとの状況（customer-state）と、主の一手＋並行で探す（parallel-search）
 import { getCustomerState } from "@/app/lib/customer-state-server";
 import { buildCustomerStateBrainBlock, type CustomerState } from "@/app/lib/customer-state";
+import { brainDecisionLedgerCols, brainDecisionDigestExtra } from "@/app/lib/brain-decision-ledger";
 // 2026-09-27 竹内「この問題直して大丈夫」: ブレインの段階を customer-state の事実で補正（viewing に上げる）・会話の方向の段階を段階から決める（穴:G1）
 import { correctBrainStage, resolveDirectionPhase, resolveNextStaffAction } from "@/app/lib/brain-stage";
 import { resolveParallelSearchScene, parallelSearchInputsFromMessages, buildParallelSearchBrainNote, resolveParallelSearchOutput, type ParallelSearchOutput } from "@/app/lib/parallel-search";
@@ -5166,7 +5167,10 @@ async function analyzeAndSaveBrainMetaInner(
         source: "brain_core",
       };
       // 2026-09-12 段2: cron/brain-aix-eval がスタッフの押した AIX と対にするための列（migrate-schema で追加）
-      const { error: insErr } = await supabase.from("brain_decision_logs").insert({
+      // 2026-10-08 結果の台帳 段2: 判断した物件の鍵・号室・場面・版（列）と 2択・約束・段階・戦略の要約（digest の tc/pp/cp/cs）。今ある出力を残すだけ（app/lib/brain-decision-ledger.ts）
+      const savedMeta = metaToWrite as unknown as Record<string, unknown>;
+      const ledgerCols = brainDecisionLedgerCols(savedMeta, latestTurnText, process.env);
+      const extendedRow = {
         ...baseRow,
         suggested_check_pattern: typeof metaObj.check_pattern === "string" ? metaObj.check_pattern : null,
         decision_source: typeof metaObj.decision_source === "string" ? metaObj.decision_source : typeof metaObj.decision_source_no_aix === "string" ? `no_aix:${metaObj.decision_source_no_aix}` : null,
@@ -5178,8 +5182,12 @@ async function analyzeAndSaveBrainMetaInner(
           ...toFreshDigest(metaObj, strategyShift),
           // 2026-10-02 温めのスイッチの判断（on/理由/今日のやり取り/閾値/mode/会話専用ブロックの指紋）。戦略の整理は名前の決まった項目だけ読むので材料には入らない
           ...(cacheWarm ? { cw: compactCacheWarm(cacheWarm, cacheWarmModeNow, convPrefixHashOf.get(conversationId) ?? null) } : {}),
+          ...brainDecisionDigestExtra(savedMeta),
         },
-      });
+      };
+      let { error: insErr } = await supabase.from("brain_decision_logs").insert({ ...extendedRow, ...ledgerCols });
+      // 段2 の列（building_key 等）がまだ無い環境では、その列だけ外して入れ直す（判断ログの他の列を失わない）
+      if (insErr) ({ error: insErr } = await supabase.from("brain_decision_logs").insert(extendedRow));
       convPrefixHashOf.delete(conversationId);
       if (insErr) {
         // 列がまだ無い環境（migrate-schema 未実行）でも判断ログを失わない

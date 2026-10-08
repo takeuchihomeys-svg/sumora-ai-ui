@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { writeBackClosedOutcome } from "@/app/lib/analyze-closed-conversation";
+import { autoSeiyakuDays, autoSeiyakuWritesBack, AUTO_SEIYAKU_TRIGGER } from "@/app/lib/deal-outcome";
 
 export const maxDuration = 300;
 
@@ -9,15 +10,17 @@ export const maxDuration = 300;
 // ※ closed_won は既に成約済みのため対象外
 const APPLYING_STATUSES = ["applying", "application", "screening", "contract"];
 
-// 「2週間無連絡」の閾値（日数）
-const INACTIVE_DAYS = 14;
+// 「無連絡」の閾値（日数）。2026-10-08 竹内さんの決定: 14→20日（AUTO_SEIYAKU_DAYS=14 で旧）。
+//   ここで付ける成約は「推定」（結果の台帳 deal_outcomes の result_certainty=estimated）。学習と実績の数字には使わない。
+//   確定はスタッフか申込のツールが成約にした時（app/lib/deal-outcome.ts closedWonCertainty）
+const INACTIVE_DAYS = autoSeiyakuDays(process.env);
 
 // 1回の実行で処理する会話の上限（安全弁）
 const MAX_CANDIDATES = 200;
 
 /**
  * 申込中（applying 相当）の会話で、最後のメッセージ（customer/staff どちらも）から
- * 14日以上経過しているものを自動的にご成約（closed_won）へ更新する。
+ * INACTIVE_DAYS 日（既定20日）以上経過しているものを自動的にご成約（closed_won・推定）へ更新する。
  *
  * - 成約パターン学習は cron/analyze-closed-conversations（毎日 JST 21:00）が
  *   「直近48時間に closed_won になった会話」を拾うため、ここでは updated_at を
@@ -64,7 +67,7 @@ async function runAutoSeiyaku() {
     for (const conv of candidates) {
       try {
         // 会話の最終メッセージ（sender問わず）を取得
-        // 「無連絡」= 顧客からもスタッフからも14日間やり取りがない状態
+        // 「無連絡」= 顧客からもスタッフからも INACTIVE_DAYS 日間やり取りがない状態
         const { data: lastMsg, error: msgErr } = await supabase
           .from("messages")
           .select("created_at")
@@ -87,7 +90,7 @@ async function runAutoSeiyaku() {
           continue;
         }
 
-        // 14日以上無連絡 → ご成約（closed_won）へ更新
+        // INACTIVE_DAYS 日以上無連絡 → ご成約（closed_won・推定）へ更新
         // .in("status", ...) で競合ガード（実行中に手動でステータス変更された場合は上書きしない）
         const { data: updatedRows, error: updateErr } = await supabase
           .from("conversations")
@@ -112,13 +115,15 @@ async function runAutoSeiyaku() {
             conversation_id: conv.id,
             from_status: conv.status,
             to_status: "closed_won",
-            trigger: "cron",
+            // 2026-10-08: 推定の成約の印（旧 "cron"。台帳は cron で始まる物を推定と読む）
+            trigger: AUTO_SEIYAKU_TRIGGER,
           });
 
           // 学習ループのクローズ: closing_strategy_logs.outcome / winning_pattern_logs.actual_outcome
           // へ成約結果を書き戻す。cron/analyze-closed-conversations は closed_analysis_{id} が
           // 既に存在する会話（applying時に分析済み等）を候補から除外するため、ここで直接実行する。
-          await writeBackClosedOutcome(conv.id, "closed_won");
+          // 2026-10-08 竹内さんの決定②: 推定の成約は学習に使わない → 既定では書き戻さない（AUTO_SEIYAKU_WRITEBACK=on で旧）
+          if (autoSeiyakuWritesBack(process.env)) await writeBackClosedOutcome(conv.id, "closed_won");
         }
 
         updated += 1;

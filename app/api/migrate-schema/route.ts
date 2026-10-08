@@ -4755,6 +4755,85 @@ INSERT INTO hanbancyo_settings (key, value) VALUES ('takeuchi_line_user_id', 'U3
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown TEXT;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown_at TIMESTAMPTZ;
 
+-- 2026-10-08 結果の台帳（計画 memory/plan_outcome_ledger.md・決まり app/lib/deal-outcome.ts・書くのは deal-outcome-server.ts／cron/outcome-ledger）
+--   deal_outcomes: 会話×案件（審査落ち・取り消しで切り替えたら次の案件）ごとに1行。結果（won/lost/switched/in_progress）と確かさ（confirmed/estimated）・各段階の時刻・決まった（落ちた）物件。
+--     推定の成約（auto-seiyaku）・推定の失注（申込前30日返事なし）は result_certainty=estimated。学習と実績の数字は confirmed だけ（竹内さんの決定 10/08）。
+--     失注の理由（lost_reason）は弱い参考（件数の集計だけ・ブレインや学習に重みとして使わない）。locked=true の行は作り直しで上書きしない（手で付けた結果・申込のツールから受けた結果）。
+--   outcome_events: 既存の表から集めた出来事（派生・会話ごとに消して作り直す・元の表が正）。申込中の文は写さない（種類・時刻・物件・id だけ）。
+CREATE TABLE IF NOT EXISTS deal_outcomes (
+  id BIGSERIAL PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  episode_no INTEGER NOT NULL DEFAULT 1,
+  started_at TIMESTAMPTZ,
+  ended_at TIMESTAMPTZ,
+  first_contact_at TIMESTAMPTZ,
+  condition_at TIMESTAMPTZ,
+  property_sent_at TIMESTAMPTZ,
+  viewing_at TIMESTAMPTZ,
+  viewing_held_at TIMESTAMPTZ,
+  applied_at TIMESTAMPTZ,
+  applied_at_estimated BOOLEAN DEFAULT FALSE,
+  screening_at TIMESTAMPTZ,
+  won_at TIMESTAMPTZ,
+  lost_at TIMESTAMPTZ,
+  max_stage TEXT,
+  result TEXT NOT NULL DEFAULT 'in_progress',
+  result_certainty TEXT,
+  result_evidence TEXT,
+  lost_type TEXT,
+  lost_reason TEXT,
+  lost_reason_source TEXT,
+  lost_reason_note TEXT,
+  switch_reason TEXT,
+  after_screening_fail BOOLEAN DEFAULT FALSE,
+  carried_trust_stage TEXT,
+  chased BOOLEAN,
+  property_name TEXT,
+  building_key TEXT,
+  room_no TEXT,
+  property_evidence TEXT,
+  property_certainty TEXT,
+  property_source_id TEXT,
+  locked BOOLEAN DEFAULT FALSE,
+  ledger_version TEXT,
+  computed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (conversation_id, episode_no)
+);
+CREATE INDEX IF NOT EXISTS idx_deal_outcomes_result ON deal_outcomes(result, result_certainty);
+CREATE INDEX IF NOT EXISTS idx_deal_outcomes_building ON deal_outcomes(building_key) WHERE building_key IS NOT NULL;
+ALTER TABLE deal_outcomes DISABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS outcome_events (
+  id BIGSERIAL PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  episode_no INTEGER NOT NULL DEFAULT 1,
+  at TIMESTAMPTZ NOT NULL,
+  kind TEXT NOT NULL,
+  property_name TEXT,
+  building_key TEXT,
+  room_no TEXT,
+  source_table TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  decision_id UUID,
+  detail JSONB,
+  ledger_version TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (conversation_id, source_table, source_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_outcome_events_conv_at ON outcome_events(conversation_id, at);
+CREATE INDEX IF NOT EXISTS idx_outcome_events_kind_at ON outcome_events(kind, at DESC);
+CREATE INDEX IF NOT EXISTS idx_outcome_events_building ON outcome_events(building_key) WHERE building_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_outcome_events_decision ON outcome_events(decision_id) WHERE decision_id IS NOT NULL;
+ALTER TABLE outcome_events DISABLE ROW LEVEL SECURITY;
+-- 段2: ブレインの判断の行に、判断した物件の鍵・号室・場面・版を残す（今ある出力を残すだけ・LLM は足さない）。
+--   two_choice・pending_pickup・checkpoint_stage・closing_strategy の要約は digest（JSONB）の tc・pp・cp・cs に入れる（列は足さない）
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS building_key TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS room_no TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS scene_key TEXT;
+ALTER TABLE brain_decision_logs ADD COLUMN IF NOT EXISTS brain_version TEXT;
+CREATE INDEX IF NOT EXISTS idx_brain_decision_logs_building ON brain_decision_logs(building_key) WHERE building_key IS NOT NULL;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
