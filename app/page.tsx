@@ -15,6 +15,8 @@ import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-
 import { detectPlaceholders } from "./lib/validate-reply";
 // 2026-09-18: 下書き→送る文の整形は画面と自動返信で同じ関数を使う（app/lib/draft-text.ts）
 import { stripInternalTags as stripInternalTagsLib, draftToSendableText, isDraftSentinel } from "./lib/draft-text";
+// 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 表示済みにした下書きの本文を DB に控え、別の端末・読み込み直しでも戻す
+import { decideShownDraftRestore, shownDraftUpdate, shownDraftRestoreEnabled } from "./lib/shown-draft-restore";
 import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
@@ -69,6 +71,8 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
  * ブレインの判断（suggested_aix_meta・AIX要対応）で決める。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off（ビルド時に埋まる）
  */
 const BRAIN_ATTENTION_UI = flagOn(process.env.NEXT_PUBLIC_BRAIN_ATTENTION);
+// 表示済みの下書きの控えと戻し（既定 on・戻す: NEXT_PUBLIC_SHOWN_DRAFT_RESTORE=off）
+const SHOWN_DRAFT_RESTORE = shownDraftRestoreEnabled(process.env.NEXT_PUBLIC_SHOWN_DRAFT_RESTORE);
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}`, ...staffDeviceHeader() };
 
 // suggest-next-action APIが返すAIX初期化パラメータ
@@ -1664,6 +1668,8 @@ export default function Home() {
   const generateAbortRef = useRef<AbortController | null>(null);
   // 表示済み（__SHOWN__化後）ドラフトの会話別キャッシュ（会話切替で下書きが消える問題の対策・クライアント側のみ）
   const shownDraftCacheRef = useRef<Record<string, { text: string; source?: "ai_draft" | "optimized"; aiDraft?: string }>>({});
+  // この端末で ✕ で消した会話（表示済みの控えを DB から戻さない・お客様の新着で外す。2026-10-08 shown-draft-restore）
+  const clearedShownDraftRef = useRef<Set<string>>(new Set());
   // 会話切替Effectで「直前の会話ID」を知るためのref（キャッシュ退避キーに使用）
   const prevConvIdRef = useRef("");
   const handleListScroll = () => {
@@ -1991,6 +1997,7 @@ export default function Home() {
             const cid = String((payload.new as { conversation_id: number }).conversation_id);
             // 新しい顧客メッセージで旧ドラフトは古くなる → 表示済みキャッシュを破棄
             delete shownDraftCacheRef.current[cid];
+            clearedShownDraftRef.current.delete(cid);
             // 返信入力中でも選択中の会話に届いたなら強制スクロール
             if (cid === selectedIdRef.current) forceScrollForCustomerMsgRef.current = true;
           }
@@ -3191,7 +3198,7 @@ export default function Home() {
       const polledDraft = stripInternalTagsOrNull(convRow?.ai_draft ?? null);
       if (polledDraft) {
         // 生成済み（Realtime取りこぼし含む）→ セットしてDBをクリア
-        supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
+        supabase.from("conversations").update(shownDraftUpdate(polledDraft, SHOWN_DRAFT_RESTORE)).eq("id", convIdForGen).then(() => {});
         setConversations((prev) =>
           prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: polledDraft, suggestedAixMeta: (convRow?.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
         );
@@ -3245,7 +3252,7 @@ export default function Home() {
             .from("conversations").select("ai_draft, suggested_aix_meta").eq("id", convIdForGen).single();
           const existingDraft = stripInternalTagsOrNull(convRow?.ai_draft ?? null);
           if (existingDraft && selectedIdRef.current === convIdForGen) {
-            supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
+            supabase.from("conversations").update(shownDraftUpdate(existingDraft, SHOWN_DRAFT_RESTORE)).eq("id", convIdForGen).then(() => {});
             setConversations((prev) =>
               prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: existingDraft, suggestedAixMeta: (convRow?.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
             );
@@ -3265,6 +3272,10 @@ export default function Home() {
         if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
       });
   };
+
+  // 2026-10-08 表示済みの下書きの戻し（shown-draft-restore）: 読み込みの間に入力が始まっていたら上書きしない／✕ で消した会話は戻さない
+  const replyDraftLiveRef = useRef("");
+  replyDraftLiveRef.current = replyDraft;
 
   useEffect(() => {
     // 会話切替の直前状態を退避: 前の会話の未送信ドラフトをキャッシュ（__SHOWN__化でDBから消えても切替復帰で復元できるように）
@@ -3335,7 +3346,7 @@ export default function Home() {
       setConversations((prev) =>
         prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c)
       );
-      supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
+      supabase.from("conversations").update(shownDraftUpdate(selectedConversation.aiDraft, SHOWN_DRAFT_RESTORE)).eq("id", selectedConversation.id).then(() => {});
     } else {
       // 表示済みドラフトのキャッシュがあれば復元（__SHOWN__化済みでDBにないケース）→ bg再生成もスキップ
       const cached = shownDraftCacheRef.current[selectedConversation.id];
@@ -3357,21 +3368,63 @@ export default function Home() {
       aiDraftRef.current = "";
       setDisplaySource(null);
       // 未読 + ai_draft未生成 → bg-async起動 + DBポーリングで下書きを受け取る（Realtimeは早期到着の高速パス）
-      if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
-        const rAt = manuallyReadAtRef.current[selectedConversation.id];
-        const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
-        // rawCreatedAtが未ロード（messages空）の場合は未読扱いにする
-        const isActuallyUnread = !rAt || !latestCust?.rawCreatedAt || latestCust.rawCreatedAt > rAt;
-        // bg-async/SKIP_STATUSES・brain-core/BRAIN_SKIP_STATUSESと必ず一致させる
-        const skipStatuses = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"]);
-        const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-        if (isActuallyUnread && !skipStatuses.has(ns)) {
-          triggerBgDraftGeneration(selectedConversation.id);
+      const startDraftForSelected = () => {
+        if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
+          const rAt = manuallyReadAtRef.current[selectedConversation.id];
+          const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
+          // rawCreatedAtが未ロード（messages空）の場合は未読扱いにする
+          const isActuallyUnread = !rAt || !latestCust?.rawCreatedAt || latestCust.rawCreatedAt > rAt;
+          // bg-async/SKIP_STATUSES・brain-core/BRAIN_SKIP_STATUSESと必ず一致させる
+          const skipStatuses = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost", "lost", "approved"]);
+          const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+          if (isActuallyUnread && !skipStatuses.has(ns)) {
+            triggerBgDraftGeneration(selectedConversation.id);
+          } else {
+            setDraftPreparing(false);
+          }
         } else {
           setDraftPreparing(false);
         }
+      };
+      // 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 下書きは作られていたが、別の端末・裏で選ばれていた会話・
+      //   読み込み直し（iPhone の Safari）で先に「表示済み」（ai_draft='__SHOWN__'）になり、本文がこの端末に無かった（入力欄が空・作り直しもしない）。
+      //   表示済みの時に DB の控え（ai_draft_shown）が今の番の物なら入力欄に戻す（判定は app/lib/shown-draft-restore.ts）。
+      //   この端末で ✕ で消した会話は戻さない。戻す: NEXT_PUBLIC_SHOWN_DRAFT_RESTORE=off
+      const restoreConvId = selectedConversation.id;
+      if (SHOWN_DRAFT_RESTORE && restoreConvId && selectedConversation.lastSender === "customer" && !clearedShownDraftRef.current.has(restoreConvId)) {
+        void (async () => {
+          let restored = false;
+          try {
+            const [{ data: row }, { data: lastCust }] = await Promise.all([
+              supabase.from("conversations").select("ai_draft, ai_draft_shown, ai_draft_shown_at, last_sender, ai_draft_check").eq("id", restoreConvId).maybeSingle(),
+              supabase.from("messages").select("created_at").eq("conversation_id", restoreConvId).eq("sender", "customer")
+                .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+            ]);
+            const r = row as { ai_draft?: string | null; ai_draft_shown?: string | null; ai_draft_shown_at?: string | null; last_sender?: string | null; ai_draft_check?: CheckResult | null } | null;
+            const decision = decideShownDraftRestore({
+              aiDraft: r?.ai_draft ?? null,
+              shownDraft: r?.ai_draft_shown ?? null,
+              shownAt: r?.ai_draft_shown_at ?? null,
+              latestCustomerAt: (lastCust as { created_at?: string } | null)?.created_at ?? null,
+              lastSender: r?.last_sender ?? null,
+            });
+            const restoredText = decision.text ? stripInternalTagsOrNull(decision.text) : null;
+            if (restoredText && selectedIdRef.current === restoreConvId && !replyDraftLiveRef.current) {
+              restored = true;
+              setReplyDraft(restoredText);
+              aiDraftRef.current = restoredText;
+              setDisplaySource("ai_draft");
+              setDraftPreparing(false);
+              if (r?.ai_draft_check) setCheckResult(r.ai_draft_check);
+              console.log(JSON.stringify({ tag: "draft:shown-restore", conversationId: restoreConvId }));
+            }
+          } catch (e) {
+            console.warn("[shown-draft-restore] 控えの読み込みに失敗（今までどおり続ける）:", e);
+          }
+          if (!restored && selectedIdRef.current === restoreConvId) startDraftForSelected();
+        })();
       } else {
-        setDraftPreparing(false);
+        startDraftForSelected();
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3408,7 +3461,7 @@ export default function Home() {
     setConversations((prev) =>
       prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c)
     );
-    supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
+    supabase.from("conversations").update(shownDraftUpdate(selectedConversation.aiDraft, SHOWN_DRAFT_RESTORE)).eq("id", selectedConversation.id).then(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.aiDraft]);
 
@@ -8829,7 +8882,7 @@ export default function Home() {
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (
                 <button
-                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDisplaySource(null); setReplyQuality(null); setSuggestedAix(null); }}
+                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDisplaySource(null); setReplyQuality(null); setSuggestedAix(null); if (selectedConversation.id) clearedShownDraftRef.current.add(selectedConversation.id); }}
                   className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
                   title="文章を消す"
                 >
@@ -9642,7 +9695,7 @@ export default function Home() {
                       if (selectedConversation.suggestedAixMeta) setSuggestedAix(selectedConversation.suggestedAixMeta);
                       setAiDraftExpanded(false);
                       setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c));
-                      supabase.from("conversations").update({ ai_draft: "__SHOWN__", suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
+                      supabase.from("conversations").update(shownDraftUpdate(selectedConversation.aiDraft, SHOWN_DRAFT_RESTORE)).eq("id", selectedConversation.id).then(() => {});
                       textareaRef.current?.focus();
                     }}
                     className="shrink-0 rounded-xl bg-blue-500 px-2.5 py-1 text-[11px] font-bold text-white active:bg-blue-600"

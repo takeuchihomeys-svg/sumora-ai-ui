@@ -4750,6 +4750,11 @@ INSERT INTO hanbancyo_settings (key, value) VALUES ('takeuchi_line_user_id', 'U3
 --   UPDATE messages m SET staff_writer = d.writer, staff_writer_source = 'device', staff_writer_confidence = 'sure'
 --   FROM staff_devices d WHERE m.sent_device_id = d.device_id AND d.writer IS NOT NULL AND coalesce(m.staff_writer_source,'') <> 'manual';
 
+-- 2026-10-08 竹内（未桜）「AI返信案がセットされていない事も多い」: 画面が下書きを「表示済み」（ai_draft='__SHOWN__'）にする時の本文と時刻の控え。
+--   本文が表示した端末のメモリにしか残らず、別の端末・読み込み直しで入力欄が空になっていた。開いた時に今の番の控えなら戻す（app/lib/shown-draft-restore.ts）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown TEXT;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft_shown_at TIMESTAMPTZ;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
