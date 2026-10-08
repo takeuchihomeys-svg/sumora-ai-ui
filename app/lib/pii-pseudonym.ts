@@ -108,7 +108,7 @@ export const APPLICATION_FORMAT_SENT_PLACEHOLDER = "[こちらが申込フォー
  * 値が書かれた申込の項目の行（「・氏名、フリガナ 中村七海 ヤマナカアオイ」「勤務先：株式会社〇〇」）。
  * 項目名を1行に並べただけの文（ルール・手本の「氏名・生年月日・現住所・緊急連絡先・勤務先…」）は数えない
  */
-function filledFormLineCount(seg: string): number {
+export function filledFormLineCount(seg: string): number {
   let n = 0;
   for (const line of seg.split("\n")) {
     const labels = line.match(APPLY_FIELD_RE) ?? [];

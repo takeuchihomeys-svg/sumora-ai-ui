@@ -4,6 +4,7 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { TEST_CONVERSATIONS_IN } from "@/app/lib/test-conversations";
+import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
 
 // ── AIX物件本文の週次学習（analyze-aix-property）──────────────────
 // AIXボタン「物件ピックアップ（property_send）」「物件オススメ（property_recommendation）」で
@@ -196,11 +197,16 @@ async function backfillFromUsageLog(log: UsageLogRow): Promise<LogResult> {
     }
   }
 
+  // 2026-10-08 手本の個人情報（入口）: 直前のお客様の発言に記入済みの申込フォーム・身分証の書き起こし・携帯等が入ると、
+  //   他のお客様の文作りの手本としてそのまま LLM に渡る（事故 9bbf9b90）。保存前に伏せる（example-pii-guard・EXAMPLE_PII_SAVE_GUARD=off で戻す）
+  const piiSafe = sanitizeExampleFields({ customer_message: customerMessage || "（初回連絡）", sent_reply: sentText, ai_draft: aiDraft }, process.env);
+  if (piiSafe.hits.length) console.log(JSON.stringify({ tag: "example-pii:save-redacted", route: "analyze-aix-property", conversationId: log.conversation_id ?? null, hits: piiSafe.hits }));
+  aiDraft = piiSafe.fields.ai_draft ?? null;
   const { error: insErr } = await supabase.from("ai_reply_examples").insert({
     entry_source: "aix_property",
     aix_action: log.aix_type,
-    customer_message: customerMessage || "（初回連絡）",
-    sent_reply: sentText,
+    customer_message: piiSafe.fields.customer_message as string,
+    sent_reply: piiSafe.fields.sent_reply as string,
     conversation_state: log.conversation_status ?? log.aix_type,
     conversation_id: log.conversation_id,
     sent_at: anchorAt,

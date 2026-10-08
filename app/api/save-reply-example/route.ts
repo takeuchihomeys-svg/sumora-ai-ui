@@ -11,6 +11,7 @@ import { computeStanceLite } from "@/app/lib/reply-context";
 import { isUsableExampleText, isUsableAiDraft, isGenerationFailureText } from "@/app/lib/example-hygiene";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は手本・学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
@@ -1159,9 +1160,9 @@ export async function POST(req: NextRequest) {
   }
   const {
     conversationState: rawState,
-    customerMessage,
-    sentReply,
-    aiDraft: aiDraftRaw,
+    customerMessage: customerMessageIn,
+    sentReply: sentReplyIn,
+    aiDraft: aiDraftIn,
     isStarred,
     previousStaffMessage,
     conversationId,
@@ -1172,6 +1173,13 @@ export async function POST(req: NextRequest) {
     entry_source,
     aix_action,
   } = body;
+  // 2026-10-08 手本の個人情報（入口）: 申込フォームの記入・身分証の書き起こし・携帯等の値は、手本・ナレッジの学習・埋め込みに入れる前に伏せる
+  //   （手本は他のお客様の返信生成に「お客様: 「…」」でそのまま渡る。事故 9bbf9b90）。判定は example-pii-guard.ts・戻す: EXAMPLE_PII_SAVE_GUARD=off
+  const piiSafe = sanitizeExampleFields({ customerMessage: customerMessageIn, sentReply: sentReplyIn, aiDraft: aiDraftIn }, process.env);
+  if (piiSafe.hits.length) console.log(JSON.stringify({ tag: "example-pii:save-redacted", route: "save-reply-example", conversationId: body.conversationId ?? null, hits: piiSafe.hits }));
+  const customerMessage = piiSafe.fields.customerMessage as string;
+  const sentReply = piiSafe.fields.sentReply as string;
+  const aiDraftRaw = piiSafe.fields.aiDraft;
   // 2026-09-11 データ衛生（統合設計 §7）: 生成失敗文の下書きは「AIの下書きが無かった」扱い
   //   （旧実装は無修正送信＝wasAiUsed で autoStarred が付き、失敗文が☆付きの正解例として保存されていた）
   const aiDraft = isUsableAiDraft(aiDraftRaw) ? aiDraftRaw : undefined;

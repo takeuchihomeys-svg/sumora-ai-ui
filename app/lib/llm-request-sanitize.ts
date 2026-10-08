@@ -9,7 +9,14 @@
 //   切る箇所は数百あり個別には直しきれないので、全経路が通る出口（fetch）で1回だけ直す（設計知見「LLM 呼び出しの出口の型」）。
 //   instrumentation.ts の register() で installLlmFetchSanitizer() を1回呼ぶ。
 
+import { mightHaveExamplePii, redactExampleSpansInPrompt } from "./example-pii-guard";
+
 const LLM_API_HOSTS = new Set(["api.anthropic.com", "api.openai.com"]);
+/** 手本の個人情報の歯止めを当てる宛先（Anthropic・OpenAI に加え、別クラウドの chat/completions＝DeepSeek・Azure・Qwen） */
+const PII_GUARD_HOSTS = new Set(["api.anthropic.com", "api.openai.com", "api.deepseek.com"]);
+function isLlmChatRequest(url: URL): boolean {
+  return PII_GUARD_HOSTS.has(url.hostname) || /\/chat\/completions$/.test(url.pathname) || /\/v1\/messages$/.test(url.pathname);
+}
 
 // JSON.stringify は正しい対（絵文字など）はそのまま書き、片割れだけを \udXXX で書く。
 // → 本文に \ud800〜\udfff のエスケープが無ければ直す物は無い（JSON.parse を省く速い判定）
@@ -52,6 +59,29 @@ export function sanitizeLlmJsonBody(body: string): { body: string; removed: numb
   return { body: JSON.stringify(cleaned), removed: counter.removed };
 }
 
+// ─── 2026-10-08 手本の個人情報の歯止め（出口）────────────────────────────────────────
+// 事故: 手本（ai_reply_examples）の customer_message に別のお客様の記入済み申込フォーム（氏名・フリガナ・生年月日…）が入っていて、
+//   返信生成（本番は DeepSeek）・AIX の文作り（Claude）に「お客様: 「…」」の形でそのまま渡っていた（読み替えは DeepSeek に回る時の名前・携帯等だけ）。
+//   手本を並べる経路は 6 か所以上（generate-reply・aix-template-generate・aix/action・enhance-reply・generate-reply-patterns…）あるので、
+//   全経路が通るこの出口で「手本の発言」の中だけを伏せる（判定は example-pii-guard.ts・入れる時と同じ関数）。
+//   今の会話の履歴（鉤括弧の無い形）・ルール・ブレインの判断には触らない。戻す: EXAMPLE_PII_GUARD=off
+export function redactExamplePiiInJsonBody(body: string, env: Record<string, string | undefined> = process.env): { body: string; redacted: number } {
+  if ((env.EXAMPLE_PII_GUARD ?? "").trim().toLowerCase() === "off") return { body, redacted: 0 };
+  if (!mightHaveExamplePii(body)) return { body, redacted: 0 };
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return { body, redacted: 0 }; }
+  let redacted = 0;
+  const walkPii = (v: unknown): unknown => {
+    if (typeof v === "string") { const r = redactExampleSpansInPrompt(v); redacted += r.redacted; return r.text; }
+    if (Array.isArray(v)) return v.map(walkPii);
+    if (v && typeof v === "object") { const o: Record<string, unknown> = {}; for (const [k, x] of Object.entries(v as Record<string, unknown>)) o[k] = walkPii(x); return o; }
+    return v;
+  };
+  const cleaned = walkPii(parsed);
+  if (redacted === 0) return { body, redacted: 0 };
+  return { body: JSON.stringify(cleaned), redacted };
+}
+
 function requestUrl(input: unknown): URL | null {
   try {
     if (typeof input === "string") return new URL(input);
@@ -70,12 +100,23 @@ export function wrapFetchWithLlmSanitizer(original: FetchLike): FetchLike {
   const wrapped: FetchLike = (input, init) => {
     try {
       const url = requestUrl(input);
-      if (url && LLM_API_HOSTS.has(url.hostname) && init && typeof init.body === "string") {
-        const r = sanitizeLlmJsonBody(init.body);
-        if (r.removed > 0) {
-          console.log(JSON.stringify({ tag: "llm:surrogate-fixed", host: url.hostname, path: url.pathname, removed: r.removed }));
-          return original(input, { ...init, body: r.body });
+      if (url && init && typeof init.body === "string" && (LLM_API_HOSTS.has(url.hostname) || isLlmChatRequest(url))) {
+        let body = init.body;
+        let changed = false;
+        if (LLM_API_HOSTS.has(url.hostname)) {
+          const r = sanitizeLlmJsonBody(body);
+          if (r.removed > 0) {
+            console.log(JSON.stringify({ tag: "llm:surrogate-fixed", host: url.hostname, path: url.pathname, removed: r.removed }));
+            body = r.body; changed = true;
+          }
         }
+        // 手本の個人情報（伏せる処理の失敗で送信を止めない＝外の try）
+        const p = redactExamplePiiInJsonBody(body);
+        if (p.redacted > 0) {
+          console.log(JSON.stringify({ tag: "llm:example-pii-redacted", host: url.hostname, redacted: p.redacted }));
+          body = p.body; changed = true;
+        }
+        if (changed) return original(input, { ...init, body });
       }
     } catch {
       // 直す処理の失敗で送信を止めない（そのまま送る）

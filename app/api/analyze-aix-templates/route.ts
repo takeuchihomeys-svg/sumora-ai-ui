@@ -4,6 +4,7 @@ import { requireInternalAuth } from "@/app/lib/api-auth";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { TEST_CONVERSATIONS_IN } from "@/app/lib/test-conversations";
+import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
 
 // ── AIXテンプレート実績の週次学習（analyze-aix-templates）────
 // スタッフがAIXボタン後にTemplateModalで選んで送ったテンプレート文
@@ -212,13 +213,18 @@ async function backfillFromTemplateLog(
   const wasModified = log.was_modified_after_adapt === true;
   // AI適応後・スタッフ編集前のテキストを ai_draft として保存する。
   // これがないと aix-weekly-learning の差分学習（ai_draft IS NOT NULL 条件）で永遠に対象外になる
-  const aiDraft = (log.adapted_text ?? "").trim();
+  const aiDraftRaw = (log.adapted_text ?? "").trim();
+  // 2026-10-08 手本の個人情報（入口）: 直前のお客様の発言3件に記入済みの申込フォーム・身分証の書き起こし・携帯等が入ると、
+  //   他のお客様の AIX の文作りの手本としてそのまま LLM に渡っていた（事故 9bbf9b90）。保存前に伏せる（example-pii-guard・EXAMPLE_PII_SAVE_GUARD=off で戻す）
+  const piiSafe = sanitizeExampleFields({ customer_message: customerMessage || "（初回連絡）", sent_reply: sentText, ai_draft: aiDraftRaw }, process.env);
+  if (piiSafe.hits.length) console.log(JSON.stringify({ tag: "example-pii:save-redacted", route: "analyze-aix-templates", conversationId: log.conversation_id ?? null, hits: piiSafe.hits }));
+  const aiDraft = piiSafe.fields.ai_draft ?? "";
   const { error: insErr } = await supabase.from("ai_reply_examples").insert({
     entry_source: "aix_template",
     aix_action: log.aix_action_type,
     // 顧客メッセージが1件もない場合は既存の慣例（save-reply-example）に合わせる
-    customer_message: customerMessage || "（初回連絡）",
-    sent_reply: sentText,
+    customer_message: piiSafe.fields.customer_message as string,
+    sent_reply: piiSafe.fields.sent_reply as string,
     conversation_state: log.conversation_status ?? "unknown",
     conversation_id: log.conversation_id,
     sent_at: sentAt,

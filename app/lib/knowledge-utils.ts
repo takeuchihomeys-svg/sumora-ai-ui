@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/app/lib/supabase";
 import { maskForEmbedding } from "@/app/lib/pii-mask";
+import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
 
 // ─── テキスト類似度（bigram Jaccard）#31 ─────────────────────────────────────
 // 空白除去後の2文字グラム集合の Jaccard 係数（0〜1）。語順の入れ替えに頑健。
@@ -272,7 +273,13 @@ export async function upsertKnowledge(
   supabase: SupabaseClient,
   params: UpsertKnowledgeParams,
 ): Promise<UpsertResult> {
-  const { title, content, category, importance, conversation_state, embedding, source_example_id } = params;
+  const { category, importance, conversation_state, embedding, source_example_id } = params;
+  // 2026-10-08 手本・ナレッジの個人情報（入口）: 申込フォームの記入・身分証の書き起こし・携帯等の値はナレッジに入れる前に伏せる
+  //   （ナレッジは他のお客様の返信生成に渡る。example-pii-guard・EXAMPLE_PII_SAVE_GUARD=off で戻す）
+  const piiSafe = sanitizeExampleFields({ title: params.title, content: params.content }, process.env);
+  if (piiSafe.hits.length) console.log(JSON.stringify({ tag: "example-pii:save-redacted", route: "upsertKnowledge", hits: piiSafe.hits }));
+  const title = piiSafe.fields.title as string;
+  const content = piiSafe.fields.content as string;
 
   // Step 1: embedding による意味的類似チェック
   if (embedding && embedding.length > 0) {
