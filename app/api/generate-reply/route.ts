@@ -6005,6 +6005,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //     断言禁止（G6・宅建業法）・内覧候補日時・待ち合わせ確定・物件固有金額・見積書カバー文・分割払い提案は取り消さない
             //   gen1・gen2 の両方が同じ関数を通る（旧実装は applyLedgerAutoFix が gen1 だけだった）
             const postprocessLog: Array<{ gen: number; code: string; introduced: string[]; reverted: string[] }> = [];
+            // 2026-10-09 竹内「単語をつなげただけのような部分がたまにある」: 生成の直後の文（出口・最終チェックの前）を残す（本文は変えない・DRAFT_RAW_GEN_LOG=off で止める）
+            const rawGenerations: string[] = [];
             let lastGateEdits: Array<{ rule: string; before: string; after: string | null; reversible: boolean }> = [];
             let lastValidateIssues: string[] = [];
             let genIndex = 0;
@@ -6214,6 +6216,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 }
                 fullText = back;
               }
+              if (process.env.DRAFT_RAW_GEN_LOG !== "off" && fullText) rawGenerations.push(fullText.slice(0, 1200));
               if (shouldPrependGreeting && !isTemplateOptimize) {
                 // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
                 // ※テンプレート最適化モードは常に下の通常バッファ経路（テンプレの構成を挨拶強制置換で壊さない）
@@ -7028,6 +7031,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-09-19 竹内（慶次事例）: 宣言行の条件語の根拠に登録条件も使う
         customerConditions,
                 reverted: postprocessLog.length ? postprocessLog : null,
+                // 2026-10-09: 生成の直後の文（[0]＝1回目・[1]＝最終チェックの作り直し）。出口・最終チェックで何が変わったかを最終の下書きと比べる
+                rawGen: rawGenerations.length ? rawGenerations : null,
               },
               // 2026-09-10 Fable5 みく事例: セル×brain方針の衝突・会話スコープ方針・修正前の指摘コード
               cellConflicts,
