@@ -44,7 +44,7 @@ export async function loadDraftGroundExtra(conversationId: string): Promise<stri
     const since = new Date(Date.now() - 120 * 86400_000).toISOString();
     const [aix, sip, est, vw, vh, cal] = await Promise.all([
       supabase.from("aix_usage_logs").select("generated_text, property_names").eq("conversation_id", conversationId).gte("created_at", since).limit(200),
-      supabase.from("sent_image_properties").select("property_name, room_no, facts").eq("conversation_id", conversationId).limit(400),
+      supabase.from("sent_image_properties").select("image_url, property_name, room_no, facts").eq("conversation_id", conversationId).limit(400),
       supabase.from("estimate_records").select("property_name, room_no").eq("conversation_id", conversationId).limit(200),
       supabase.from("viewings").select("viewing_date, viewing_time").eq("conversation_id", conversationId).limit(50),
       supabase.from("viewing_history").select("scheduled_date, scheduled_time, property_name").eq("conversation_id", conversationId).limit(50),
@@ -53,6 +53,12 @@ export async function loadDraftGroundExtra(conversationId: string): Promise<stri
     const lines: string[] = [];
     for (const a of (aix.data ?? []) as Array<{ generated_text: string | null; property_names: string[] | null }>) lines.push(a.generated_text ?? "", ...(a.property_names ?? []));
     for (const s of (sip.data ?? []) as Array<{ property_name: string | null; room_no: string | null; facts: unknown }>) lines.push(`${s.property_name ?? ""} ${s.room_no ?? ""}号室`, s.facts ? JSON.stringify(s.facts) : "");
+    // 2026-10-09: 送った資料の画像の中身の行（image_details.lines＝向き・ペット・設備・現況・入居可能日）。生成が資料の事実で答えた文を「根拠なし」にしない
+    const urls = [...new Set(((sip.data ?? []) as Array<{ image_url?: string | null }>).map((s) => s.image_url).filter((u): u is string => !!u))];
+    for (let i = 0; i < urls.length; i += 40) {
+      const { data: det } = await supabase.from("image_details").select("lines").in("image_url", urls.slice(i, i + 40));
+      for (const d of (det ?? []) as Array<{ lines: unknown }>) if (Array.isArray(d.lines)) lines.push((d.lines as string[]).join("\n"));
+    }
     for (const e of (est.data ?? []) as Array<{ property_name: string | null; room_no: string | null }>) lines.push(`${e.property_name ?? ""} ${e.room_no ?? ""}号室`);
     for (const v of (vw.data ?? []) as Array<{ viewing_date: string | null; viewing_time: string | null }>) lines.push(`${v.viewing_date ?? ""} ${v.viewing_time ?? ""}`);
     for (const v of (vh.data ?? []) as Array<{ scheduled_date: string | null; scheduled_time: string | null; property_name: string | null }>) lines.push(`${v.scheduled_date ?? ""} ${v.scheduled_time ?? ""} ${v.property_name ?? ""}`);

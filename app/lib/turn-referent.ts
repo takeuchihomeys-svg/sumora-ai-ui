@@ -12,10 +12,10 @@
 //   ③ こちらが最後に出した物件が1件（同じ束＝2分以内に並んだ物件が1件だけ）→ その物件（12/13）
 //   ④ お客様が最後に名前を出した物件 → その物件（10/16・弱い＝「推定」と書く）
 // 渡す所: property-thread の台帳の文（ブレインと返信の両方が同じ関数で読む）。turnTargets には入れない（内覧の確認・契約の答え等の他の利用者の動きを変えない）。
-// 既定 off（2026-10-09 竹内さん「本番に入れていく」: ブレインの試験の前後で確かめるまで。入れる: PROPERTY_REFERENT_FALLBACK=on）
+// 既定 on（2026-10-09 試験 ref1009-after の途中 36問で合格 16→16・道 23→24。悪くなった番の条件の言い直し4つは探す話の除外で台帳の文が付かなくなった）。戻す: PROPERTY_REFERENT_FALLBACK=off
 
 export function turnReferentEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.PROPERTY_REFERENT_FALLBACK ?? "").toLowerCase() === "on";
+  return (env.PROPERTY_REFERENT_FALLBACK ?? "").toLowerCase() !== "off";
 }
 
 /** 主語が要る述語・指示語（物件・話題を言わずに聞く／決める形） */
@@ -28,12 +28,26 @@ const MULTI_RE = /[2２二]件とも|どの物件も|どれも|全部|全て|す
 /** 物件と関係の無い発言（お礼・挨拶・スタンプだけ）は外す */
 const SMALLTALK_RE = /^(?:ありがとうございます|ありがとうございました|了解です|わかりました|分かりました|承知しました|よろしくお願いします|お願いします|はい)[!！。.〜~😊🙇‍♀️🙏\s]*$/u;
 
+/**
+ * 探す・条件の話（物件1件を指していない）。2026-10-09 試験 ref1009-after で悪くなった番（q009「もう少し家賃あげて他の部屋も」・q010「職場が本町なのでアクセス」・
+ *   q011「大国町、本町…はあまりありませんか」・q032「大国町エリアで1Kで探してます」）は、条件の言い直しに ▶ の物件が付いてピックアップの約束が確認に変わった。
+ *   q023（内見のキャンセル）・q036（保証会社）・q043（仲介手数料）も物件1件の話ではない
+ */
+const SEARCH_OR_GENERAL_RE = /探し|探して|ピックアップ|他の(?:部屋|お部屋|物件)|他にも|ありませんか|ないですか|エリア|アクセス|職場|通勤|家賃(?:を)?(?:もう少し)?(?:上げ|あげ|下げ|さげ)|[0-9０-９]+\s*万|[0-9０-９]+\s*(?:畳|帖)|以上|以内|条件|要望|パス|キャンセル|保証会社|仲介手数料|名義|審査/;
+const HARD_SEARCH_RE = /あったり|探し|探して|ピックアップ|他の(?:部屋|お部屋|物件)|他にも|新着|ありませんか|ないですか|ありますでしょうか/;
+const STRONG_REF_RE = /この(?:物件|マンション|お部屋|部屋|建物)|こちらの|ここの|これは|こちらは|ここは|そちらの/;
+/** 主語の抜けた物件の話にする強い述語（物件1件への問い・決め・反応） */
+const PROPERTY_PRED_RE = /空いて|空き|まだあり|募集|いくら|初期費用|見れ|見られ|見に行|見にいく|見に伺|内覧|内見|見学|対応でき|ペット|これに|こちらに|ここに|これで|ここで|決め|住め|入居|礼金|敷金|写真|詳細|間取り|気になり|こちら|これ|ここ|そちら|そこ/;
+
 /** この番の文（お客様の文字の発言をつないだ物）が主語の抜けた物件の話か */
 export function isHiddenSubjectTurn(text: string): boolean {
-  const t = String(text ?? "").trim();
+  // お礼・了承だけの行は外して残りで見る（「わかりました！\nありがとうございます！」＝物件の話ではない）
+  const t = String(text ?? "").split(/\n/).map((l) => l.trim()).filter((l) => l && !SMALLTALK_RE.test(l)).join("\n");
   if (!t || t.length > 160) return false;
-  if (SMALLTALK_RE.test(t)) return false;
-  if (!PRED_RE.test(t)) return false;
+  // 「この物件」「これは」「ここの」＝1件を指す強い印（あれば条件・一般の語があっても物件の話）。ただし「探して」「他の部屋」「ありませんか」は探す話のまま
+  const strongRef = STRONG_REF_RE.test(t);
+  if (!PRED_RE.test(t) || !(PROPERTY_PRED_RE.test(t) || strongRef)) return false;
+  if (strongRef ? HARD_SEARCH_RE.test(t) : SEARCH_OR_GENERAL_RE.test(t)) return false;
   if (NAMED_RE.test(t)) return false;
   return true;
 }

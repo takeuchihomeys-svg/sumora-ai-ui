@@ -28,7 +28,7 @@ import { extractScreenshotProperty, seriesTokens } from "./own-property-match";
 import { similarity } from "./property-name-match";
 import { customerSharedPropertyNames } from "./customer-property-names";
 import { collectStaffFreeRent, staffFreeRentFor, type StaffFreeRentFact } from "./staff-free-rent";
-// 2026-10-09 主語の抜けた発言の物件の候補（turn-referent.ts・既定 off・PROPERTY_REFERENT_FALLBACK=on で入る）
+// 2026-10-09 主語の抜けた発言の物件の候補（turn-referent.ts・既定 on・PROPERTY_REFERENT_FALLBACK=off で止まる）
 import { resolveTurnReferent, turnReferentEnabled, turnReferentLines, type ReferentMention, type TurnReferent } from "./turn-referent";
 
 export function propertyThreadEnabled(): boolean {
@@ -150,8 +150,8 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
 
   // 2026-10-09 読み取り（OCR）の名前の化け（「ロッジール城山町」↔「ロワジール城山町」・「セニャリプロ」↔「セニャリブロ」・「LOCHAS」↔「LOHAS」）:
   //   片方が画像の読み取りの名前の時だけ、名前が近く（matchRoomRefs の maybe）・号室が同じ・シリーズの番号が同じなら同じ部屋にし、
-  //   表示はスタッフが打った名前（AIX の物件名・手打ちの本文・見積書の記録）にする。既定 off（試験の前後で確かめるまで）・入れる: PROPERTY_THREAD_OCR_REPAIR=on
-  const ocrRepair = (process.env.PROPERTY_THREAD_OCR_REPAIR ?? "").toLowerCase() === "on";
+  //   表示はスタッフが打った名前（AIX の物件名・手打ちの本文・見積書の記録）にする。既定 on（10/09 試験の途中で全体が悪くならない）・戻す: PROPERTY_THREAD_OCR_REPAIR=off
+  const ocrRepair = (process.env.PROPERTY_THREAD_OCR_REPAIR ?? "").toLowerCase() !== "off";
   const ocrRooms = new Set<PtRoom>();
   const findRoom = (ref: RoomRef, ocr: boolean): PtRoom | null => {
     for (const r of rooms) { const k = matchRoomRefs(ref, r.ref); if (k === "same_room" || (k === "same_building" && (!ref.room || !r.ref.room))) return r; }
