@@ -332,7 +332,9 @@ export function buildMindsetReplyLinesNote(state: string | null | undefined, hes
 export function buildDecideGapNote(i: { gaps: ReadonlyArray<DecideGap>; brainGap?: BrainGap | null; hesitation?: { kind: HesitationKind; quote: string } | null; viewed?: boolean; farOrBusy?: boolean; env?: Record<string, string | undefined> }): string {
   const lines: string[] = [];
   if (decideGapEnabled(i.env)) {
-    for (const g of i.gaps.slice(0, 3)) lines.push(`- ${decideGapLine(g)} → 解く一手: ${solveMoveOf(g, { viewed: i.viewed, farOrBusy: i.farOrBusy })}`);
+    // 2026-10-09 試験 q003（出し切り後の「1個目の間取りは良いが…」）: (c)「似た物件を探す」を渡すと、出し切った番でも再ピックアップの返信に寄った
+    //   （DECIDE_GAP=off で 3/3・on で 1/3）。(c) は closing-target（決め手の条件）が物件検索の欄に同じ値を既に渡している＝ここでは重ねない（メモの画面には出す）
+    for (const g of i.gaps.filter((x) => x.solve !== "c").slice(0, 3)) lines.push(`- ${decideGapLine(g)} → 解く一手: ${solveMoveOf(g, { viewed: i.viewed, farOrBusy: i.farOrBusy })}`);
     const sig = decideSignalOf(i.gaps, null, i.brainGap ?? null);
     if (sig.strong) lines.push(`- ★決める寸前の信号: ${sig.why}。確かめた結果が問題無ければ、その結果の文で「お気に召されましたらお申込みしお部屋抑えさせて頂きます」につなぐ（竹内さんの実送信 4通・申込 3/4・弱い参考）`);
   }
