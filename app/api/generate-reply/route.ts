@@ -292,7 +292,7 @@ import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, r
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
 import { dedupeExamplesBySent, isReplyUnsafeKnowledge, ragReplyCleanEnabled } from "@/app/lib/rag-garbage";
-import { findUngroundedFacts, groundingKinds } from "@/app/lib/draft-fact-grounding";
+import { draftFactGroundingCheck } from "@/app/lib/draft-fact-grounding-server";
 import { stripWaited } from "@/app/lib/greeting";
 /** 2026-10-08 RAG の調査: 手本の「お待たせ致しました」を注入の直前に外す（DB は書き換えない・RAG_REPLY_CLEAN=off） */
 const stripWaitedForExample = (t: string) => (ragReplyCleanEnabled() ? stripWaited(t).text : t);
@@ -7072,11 +7072,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             if (finalCheck?.tpo_debug && !isTemplateOptimize && (finalDraftText ?? "").trim()) {
               try {
                 const groundForFacts = [...recentMessages.map((m) => m.text ?? ""), message ?? "", customerConditions ?? ""].join("\n");
-                const ung = (process.env.DRAFT_FACT_GROUNDING ?? "").toLowerCase() === "off" ? [] : findUngroundedFacts(finalDraftText, groundForFacts, groundingKinds());
                 const tcMiss = turnContract ? auditDraftAgainstContract(finalDraftText, turnContract, lastTwoStaffForContract) : [];
                 const aixC = classifyAixContent(finalDraftText, groundForFacts).filter((h) => !h.grounded).map((h) => h.catalogKey);
                 Object.assign(finalCheck.tpo_debug, {
-                  ungroundedFacts: ung.map((h) => `${h.kind}:${h.value}`).slice(0, 6),
                   turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
                   aixContent: aixC.slice(0, 6),
                 });
@@ -7239,16 +7237,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 監査ログ兼、事前生成ドラフト選択時のクライアント側ハッシュ照合用。
               // AIX切替時（aixBoundaryRequired）は ai_draft が無いためハッシュ照合対象も無く保存しない）
               if (finalCheck && !isTruncated && !aixBoundaryRequired && !supersededBy && finalDraftText.trim()) {
-                void supabase
+                // 2026-10-09 事実の照らし（draft-fact-grounding-server）: 材料に無い日付・時刻・号室・物件名の言い切りと、送るべき AIX を ai_draft_check.fact_grounding に（本文は変えない・JSONB・DRAFT_FACT_GROUNDING=off で止める）
+                void (async () => {
+                  const factGrounding = (process.env.DRAFT_FACT_GROUNDING ?? "").toLowerCase() === "off" ? null : await draftFactGroundingCheck(conversationId, finalDraftText);
+                  return supabase
                   .from("conversations")
                   // tpo_debug: TPO誤発動率の定量化用（2026-09-08）。JSONBのため migrate-schema 更新不要
                   // 2026-09-09 Fable5: 中身はトレーラー送出前に組み立てた tpoDebug（substance / turnPair / finalCheckCodes / draftHead 等）と同一
                   // 2026-09-12 竹内方針A: suggested_aix（resolveReplyAix の出力）を同梱 → 自動経路・手動経路とも画面で同じ AIX ボタンを出す（JSONB・migrate-schema 更新不要）
-                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null, suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null } })
+                  .update({ ai_draft_check: { ...finalCheck, tpo_debug: finalCheck.tpo_debug ?? null, suggested_aix: replyAixPost ? toSuggestedAixPayload(replyAixPost) : null, fact_grounding: factGrounding } })
                   .eq("id", conversationId)
                   .then(({ error: chkErr }) => {
                     if (chkErr) console.warn("[generate-reply] ai_draft_check save error:", conversationId, chkErr.message);
                   });
+                })().catch((e) => console.warn("[generate-reply] ai_draft_check save error:", conversationId, e instanceof Error ? e.message : String(e)));
               }
             }
           } catch (streamErr) {
