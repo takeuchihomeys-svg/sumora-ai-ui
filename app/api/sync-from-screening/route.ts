@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { resolveScreeningSync } from "@/app/lib/conversation-status";
 import webpush from "web-push";
 import Anthropic from "@anthropic-ai/sdk";
+import { isTestOnlyConversation } from "@/app/lib/test-conversations";
 
 export const maxDuration = 60;
 
@@ -610,7 +611,8 @@ export async function POST(req: NextRequest) {
     }
 
     // お客さんのメッセージが届いたら Web Push 通知を送る
-    if (record.sender === "customer") {
+    // 2026-10-09 竹内さん「テストの通知は切る」: YUMA・テスト専用の会話（YUMA2〜）に試験が入れるお客様の通では送らない
+    if (record.sender === "customer" && !isTestOnlyConversation(String(record.conversation_id))) {
       const notifBody = isImageMsg
         ? "📷 画像が届きました"
         : msgText || "新しいメッセージが届きました";
