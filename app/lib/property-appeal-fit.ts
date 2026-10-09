@@ -92,7 +92,7 @@ export const APPEAL_FIT_LINES = {
 export function resolvePropertyAppealFit(i: { pickup?: PickupAppealRow | null; reaction: AppealReaction; decideSignal?: { strong: boolean; why: string } | null }): AppealFit {
   const f = appealFromPickup(i.pickup ?? null);
   // 2026-10-09 竹内さん「確認して問題無ければ決まる、も重要な発想」: 「〇〇なら決める」「前向き＋(a)の残り1点」（customer-mindset.decideSignalOf）は刺さりの最上位の印
-  //   （120日 19通・申込30日 47%／前向きで物件が分かる決め手の残り 103番・申込 46%・普段 30%）。懸念の言葉より先に見る（「高いけど〇〇なら決める」は決める寸前）。既定 off・DECIDE_GAP=on で入る
+  //   （120日 19通・申込30日 47%／前向きで物件が分かる決め手の残り 103番・申込 46%・普段 30%）。懸念の言葉より先に見る（「高いけど〇〇なら決める」は決める寸前）。既定 on・DECIDE_GAP=off で戻す
   if (i.decideSignal?.strong) return { level: "strong", fit: f?.appeal ?? null, points: i.reaction.points, why: `決める寸前: ${i.decideSignal.why}` };
   const fit = f?.appeal ?? null;
   const r = i.reaction;

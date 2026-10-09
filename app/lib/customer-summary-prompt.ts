@@ -7,7 +7,7 @@
 //   直し: ①お客様によらない「next_action 予測の改善ルール」（ai_reply_knowledge・上位8件・全お客様で同じ）を user から system[1]（1h）へ移す
 //   ②前置きは route と温め（prefix-warm）がこの同じ関数で作る。文面は1文字も変えない（位置と切れ目だけ）。
 //   ⚠ system の2ブロック化で本番の最初の1回だけ作り直し（≈2.9k×$6/M ≈ $0.02）
-// 2026-10-09 竹内さん: 気持ちの7択を、お部屋探しに特化した12種（customer-mindset）に置き換える。既定 off＝旧のまま・CUSTOMER_MINDSET=on で入る
+// 2026-10-09 竹内さん: 気持ちの7択を、お部屋探しに特化した12種（customer-mindset）に置き換える。既定 on・CUSTOMER_MINDSET=off で旧
 import { emotionChoicesText } from "./customer-mindset";
 export const CUSTOMER_SUMMARY_MODEL = "claude-sonnet-5";
 

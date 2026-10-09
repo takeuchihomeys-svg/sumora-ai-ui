@@ -118,10 +118,10 @@ it("決め手の残り＋決める寸前＋迷い", () => {
 });
 it("DECIDE_GAP=off・HESITATION_NOTE=off で空", () => eq(buildDecideGapNote({ gaps: gapsCond, hesitation: hesitationKindOf("どちらにするか迷っています"), env: { DECIDE_GAP: "off", HESITATION_NOTE: "off" } }), ""));
 
-console.log("■ 既定は off（on で入る）");
-it("env 無しなら確認の結果の締めは足さない", () => eq(decideGapHoldClose({ text: okText, aixType: "property_check_result", checkPattern: "available", gaps: gapsCond, env: {} }).added, false));
-it("env 無しなら注記は空", () => eq(buildDecideGapNote({ gaps: gapsCond, env: {} }), ""));
-it("env 無しなら返信の1行も空", () => eq(buildMindsetReplyLinesNote("迷い", null, {}), ""));
+console.log("■ 既定 on・off で戻す");
+it("env 無しでも既定 on＝確認の結果の締めを足す", () => eq(decideGapHoldClose({ text: okText, aixType: "property_check_result", checkPattern: "available", gaps: gapsCond, env: {} }).added, true));
+it("DECIDE_GAP=off なら注記は空", () => eq(buildDecideGapNote({ gaps: gapsCond, env: { DECIDE_GAP: "off" } }), ""));
+it("MINDSET_REPLY_LINES=off なら返信の1行も空", () => eq(buildMindsetReplyLinesNote("迷い", null, { MINDSET_REPLY_LINES: "off" }), ""));
 
 console.log("■ 返信の任意の1行");
 it("迷い・保留 → 扉の一文の率", () => { const n = buildMindsetReplyLinesNote("迷い", "急がない・保留", ON); if (!/扉の一文/.test(n) || !/62%/.test(n)) throw new Error(n); });

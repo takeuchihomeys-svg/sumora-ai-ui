@@ -126,7 +126,7 @@ export function resolveEstimateClosing(i: {
   if (i.viewed) return { closing: "receipt", reason: "内覧の後（申込の話はブレインがお客様の反応で決める）" };
   // 2026-10-09 竹内さん「初期費用の見積を頼む＝その物件に興味がある。費用に納得できれば内覧や申込につなげられる。見積書の文には今まで通り内覧訴求や申込訴求を加え、
   //   お客様に次の方向を示しつつ待つ形（未内覧で空室なら内覧訴求が主）。代表確認を一度に出さない（further-discount の線は変えない）」。
-  //   竹内さんの実送信（120日・頼まれた見積・内覧の前 98通）: 内覧 36%・申込 33%・ご査収だけ 32%（＝7割が訴求を添えている）。既定 off・ESTIMATE_ASKED_APPEAL=on で入る
+  //   竹内さんの実送信（120日・頼まれた見積・内覧の前 98通）: 内覧 36%・申込 33%・ご査収だけ 32%（＝7割が訴求を添えている）。既定 on・ESTIMATE_ASKED_APPEAL=off で戻す
   if (i.customerAsked && estimateAskedAppealOn() && !(i.reactionKind && HOLD_BACK.has(i.reactionKind))) {
     return i.notViewable ? { closing: "apply", reason: "お客様が頼んだ見積・まだ見られない（申込訴求）" } : { closing: "viewing", reason: "お客様が頼んだ見積・内覧の前・空室（内覧訴求が主）" };
   }
@@ -146,7 +146,7 @@ export function resolveEstimateClosing(i: {
 const HOLD_BACK: ReadonlySet<string> = new Set(["concern", "condition_change", "decline"]);
 /** お客様が頼んだ見積に内覧・申込の訴求を添えるか。ESTIMATE_ASKED_APPEAL=off で旧（採点・反応だけで決める） */
 export function estimateAskedAppealOn(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.ESTIMATE_ASKED_APPEAL ?? "").trim().toLowerCase() === "on"; // 2026-10-09 試験・YUMA で確かめるまで既定 off（on で入る）
+  return (env.ESTIMATE_ASKED_APPEAL ?? "").trim().toLowerCase() !== "off"; // 2026-10-09 既定 on（竹内さん「できる限り早く本番に入れる」）・off で戻す
 }
 /** 見積書の締めを採点の刺さり具合で決めるか（呼ぶ時に読む）。ESTIMATE_CLOSING_BY_APPEAL=off で旧（お客様の反応だけ） */
 export function estimateClosingByAppealOn(env: Record<string, string | undefined> = process.env): boolean {

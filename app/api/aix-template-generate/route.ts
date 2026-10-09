@@ -1549,7 +1549,7 @@ export async function POST(req: NextRequest) {
     if (estimateClosingByAppealOn()) {
       try { ap = await loadEstimateAppeal(supabase, conversationId, estimatePropertiesOf(sentMessage), { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom }); } catch { /* 読めない時は採点なし */ }
     }
-    // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（既定 off・ESTIMATE_ASKED_APPEAL=on で入る）
+    // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（既定 on・ESTIMATE_ASKED_APPEAL=off で戻す）
     const customerAsked = customerAskedEstimate(Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null; created_at?: string | null }> : []);
     const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked });
     console.log(JSON.stringify({ tag: "aix-template-generate:estimate-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));

@@ -22,18 +22,17 @@
 //   「〇〇なら決める」の言い方（120日・全会話）: 19通・申込30日 47%（お客様の通全体 35%）
 //   確認の AIX（竹内さん 53通）: 結果が問題無し 26 → 同じ文で申込・抑える提案 4（申込 3/4）・締めなし 21（申込 42%）
 //
-// 切り替え（2026-10-09 既定は全部 off・on で入る）: CUSTOMER_MINDSET=on（ブレインの出力を mindset に）／DECIDE_GAP=on（決め手の残りの注記・メモの行・刺さりの印）／
-//       DECIDE_GAP_HOLD_CLOSE=on（確認の結果の締め・DECIDE_GAP=on も要る）／HESITATION_NOTE=on（迷いの中身の注記）／MINDSET_REPLY_LINES=on（返信の任意の1行の材料）
+// 切り替え（2026-10-09 竹内さん「できる限り早く本番に入れる」で既定 on・off で戻す）: CUSTOMER_MINDSET=off（旧の7択の気持ち）／DECIDE_GAP=off（決め手の残りの注記・メモの行・刺さりの印）／
+//       DECIDE_GAP_HOLD_CLOSE=off（確認の結果の締め）／HESITATION_NOTE=off（迷いの中身の注記）／MINDSET_REPLY_LINES=off（返信の任意の1行の材料）
 // テスト: app/lib/__tests__/customer-mindset.test.ts（実物の発言・伏せ字）
 
 const envOf = (env?: Record<string, string | undefined>) => env ?? (typeof process !== "undefined" ? process.env : {});
 const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
-// 2026-10-09 竹内さん「本番に入れていく」: 試験・YUMA で確かめるまで既定は off（=on で入る）。off の時はブレインのプロンプト・注記・文は今までと1文字も変わらない
-const on = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "on";
-export function customerMindsetEnabled(env?: Record<string, string | undefined>): boolean { return on(envOf(env).CUSTOMER_MINDSET); }
-export function decideGapEnabled(env?: Record<string, string | undefined>): boolean { return on(envOf(env).DECIDE_GAP); }
-export function decideGapHoldCloseEnabled(env?: Record<string, string | undefined>): boolean { return decideGapEnabled(env) && on(envOf(env).DECIDE_GAP_HOLD_CLOSE); }
-export function hesitationNoteEnabled(env?: Record<string, string | undefined>): boolean { return on(envOf(env).HESITATION_NOTE); }
+// 2026-10-09 竹内さん「できる限り早く本番に入れる」: 既定 on（off で戻す）
+export function customerMindsetEnabled(env?: Record<string, string | undefined>): boolean { return !off(envOf(env).CUSTOMER_MINDSET); }
+export function decideGapEnabled(env?: Record<string, string | undefined>): boolean { return !off(envOf(env).DECIDE_GAP); }
+export function decideGapHoldCloseEnabled(env?: Record<string, string | undefined>): boolean { return decideGapEnabled(env) && !off(envOf(env).DECIDE_GAP_HOLD_CLOSE); }
+export function hesitationNoteEnabled(env?: Record<string, string | undefined>): boolean { return !off(envOf(env).HESITATION_NOTE); }
 
 // ─── 状態（12種） ──────────────────────────────────────────────────────────
 export const MINDSET_STATES = [
@@ -313,7 +312,7 @@ export function decideGapLine(g: DecideGap): string {
 //   扉「気になる点ございましたら…」: 迷い 42%（全体 8%）・保留 62% ／お気軽に: 迷い 52%（13%）／申込・抑える提案: 抑えたい 33%・先に取られる不安 37%（5%）／
 //   安心の一文: 審査の不安 48%（23%）・内覧したい 0%・抑えたい 5% ／内覧の誘い: 刺さっている 33%・内覧したい 26%（7%）・審査の不安 0%。
 //   何卒・全力でサポートは状態ではなく、初回・その日最初・文の数で割れる（sent-shape の側）。戻す MINDSET_REPLY_LINES=off
-export function mindsetReplyLinesEnabled(env?: Record<string, string | undefined>): boolean { return on(envOf(env).MINDSET_REPLY_LINES); }
+export function mindsetReplyLinesEnabled(env?: Record<string, string | undefined>): boolean { return !off(envOf(env).MINDSET_REPLY_LINES); }
 const STATE_LINES: Partial<Record<MindsetState, string>> = {
   迷い: "扉の一文（「気になる点ございましたらいつでもお気軽にご連絡ください」系）竹内さん 42%（普段 8%）・「お気軽に」52%（普段 13%）。申込・内覧で押すのは少ない",
   抑えたい: "申込・抑える提案（「お申込みしお部屋抑えさせて頂きます」）33%（普段 5%）・受けは「かしこまりました」82%。安心の一文 5%",

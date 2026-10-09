@@ -294,7 +294,7 @@ export async function customerMemoReplyNoteFor(conversationId: string, o: { scen
   // 決め手の残り（線より後の発言の物だけ）
   const gapsAfter = cutoff ? b.gaps.filter((g) => !g.at || Date.parse(g.at) > Date.parse(String(cutoff))) : b.gaps;
   const gapNote = buildDecideGapNote({ gaps: gapsAfter, brainGap: b.prevBrain.gap, hesitation: null });
-  // 今の状態で竹内さんが足している1行の率（返信の番の直前のブレインの状態＝今回の判断）。既定 off・MINDSET_REPLY_LINES=on で入る
+  // 今の状態で竹内さんが足している1行の率（返信の番の直前のブレインの状態＝今回の判断）。既定 on・MINDSET_REPLY_LINES=off で戻す
   const linesNote = buildMindsetReplyLinesNote(b.prevBrain.state, b.prevBrain.hesitation);
   return [memoNote, style ? `【お客様の言葉づかい（AI の要約）】\n- ${style}` : "", moodNote, payNote, gapNote, linesNote].filter(Boolean).join("\n\n");
 }

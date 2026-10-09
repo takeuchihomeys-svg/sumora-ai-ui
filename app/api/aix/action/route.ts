@@ -2234,7 +2234,7 @@ async function handleAction(request: NextRequest): Promise<Response> {
     let confirmTargetName: string | null = null;
     // 2026-10-09 竹内さん（確定）: AIX【物件確認した】【確認した】の結果が問題無しの時、お客様が前に「〇〇なら決める」と言っていた時と
     //   ブレインが (a)（確かめれば解ける）の残り1点と読んだ時だけ、同じ文で「お気に召されましたらお申込みしお部屋抑えさせて頂きます！！」につなぐ
-    //   （竹内さんの実送信 120日: 問題無し 26通 → 同じ文で申込・抑える提案 4通・申込 3/4／締めなし 21通・申込 42%）。足すだけ・既定 off（DECIDE_GAP=on と DECIDE_GAP_HOLD_CLOSE=on で入る）
+    //   （竹内さんの実送信 120日: 問題無し 26通 → 同じ文で申込・抑える提案 4通・申込 3/4／締めなし 21通・申込 42%）。足すだけ・既定 on（DECIDE_GAP_HOLD_CLOSE=off で戻す）
     const holdCloseOf = (text: string): string => {
       if (currentAction !== "property_check_result" && currentAction !== "acknowledge_check") return text;
       try {
@@ -3243,7 +3243,7 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
           if (estimateClosingByAppealOn()) {
             try { ap = await loadEstimateAppeal(supabase, conversationId, coverProps, { notViewable: false }); } catch { /* 読めない時は採点なし（反応で決める） */ }
           }
-          // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（customer-mindset.customerAskedEstimate・既定 off・ESTIMATE_ASKED_APPEAL=on で入る）
+          // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（customer-mindset.customerAskedEstimate・既定 on・ESTIMATE_ASKED_APPEAL=off で戻す）
           const customerAsked = customerAskedEstimate(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null; created_at?: string | null }> : []);
           const dec = resolveEstimateClosing({ viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked });
           console.log(JSON.stringify({ tag: "aix:cover-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));
