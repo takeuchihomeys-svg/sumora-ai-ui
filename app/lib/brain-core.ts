@@ -167,7 +167,7 @@ import { isTermsInquiryOnSentProperty } from "@/app/lib/contract-terms-question"
 import { brainMsgWindow } from "@/app/lib/brain-msg-window"; // 2026-10-08 ブレインの窓 15→20通
 // 2026-10-08 竹内さん「入居の時期が先→理想の流れを伝えて連絡の日を約束」（決定論・純関数）
 import { farMoveInDirection, ymdStr as ymdStrOf, HOLD_PERIOD_LABEL } from "@/app/lib/contact-promise";
-// 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 off＝旧のまま・CUSTOMER_MINDSET=on で入る
+// 2026-10-09 竹内さん「ブレインの7択の気持ちは出さず mindset（お部屋探しに特化した12種＋不安の向き・迷いの中身・決め手の残り）に置き換える」。既定 on・CUSTOMER_MINDSET=off で旧
 import { mindsetFreshOutputItem, emotionChoicesText, normalizeMindset, mindsetEmotionLabel, customerMindsetEnabled, type CustomerMindset } from "@/app/lib/customer-mindset";
 
 // ── brain-core: 脳分析の単一実装（single writer）─────────────────────────────
@@ -480,7 +480,7 @@ const AIX_CAPABILITY_MAP = `
 - 【AIX なし・同じ流れ】顧客が「他社で内覧した・見つけた・気に入った物件があって、初期費用がどれくらいか知りたい」「調べて頂きたい物件がある」と、手元の物件の見積・確認を頼んだがまだ物件（URL・画像）を送っていない時も同じ（aix:null・estimate_sheet にしない。見積る物件がまだ無い）。reply_direction は「お気に召されたお部屋を送って頂けたら最大限割引した初期費用の御見積書を作成してお送りする」。物件が届いたら募集状況確認＋最大限割引した初期費用の御見積書。文中の「内覧した」は他社での過去の内覧で、内覧希望ではない（2026-09-12 竹内・この事例）
 - estimate_sheet（見積書を送った後の総額・追加分の確認）: 顧客が「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」「追加でかかる費用はありますか？」と総額や追加分（ペット敷金・火災保険等）を確かめた時は、追加分を反映した御見積書を送り直して見て確認して頂く（estimate_sheet）。見積書の再送を避けない。本文で総額を計算・断言しない（「〜円でお間違いございません」は書かない）（2026-09-12 竹内・この事例）
 - estimate_sheet（【主のお部屋への見積もりの依頼】）: 【お客様の今の状況】の主のお部屋が**こちらが送ったお部屋**で、お客様が見積もり・初期費用の金額を頼んだ（「〇〇いいですね」→「見積もりお願いできますか」「こちらの初期費用いくらですか」）→ estimate_sheet。物件確認した（募集状況の確認）を先に挟まない（実送信52件中 見積書送る47・物件確認した＋御見積書同封2・物件確認のみ1）。お客様が持ち込んだお部屋（URL・画像）は従来どおり募集状況の確認＋御見積書／物件が決まっていない費用の質問は AIX なし／同じ連投で空き状況・内覧も聞かれた時はその判断に任せる（物件確認した＋御見積書同封は両方に1通で答えられる）（2026-09-27 竹内・YUMA 事例）
-- cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・この事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない
+- cost_explain: 顧客が費用の安さを不審に思っている・安い理由を聞いた時（「仲介手数料無しで大丈夫でしょうか？」「安いのには何か理由があるのでしょうか？」「なぜここまで安くできるのですか？」「他社だと38万円だったのですが本当に高くならないですか？」）。見積書は送付済みなので estimate_sheet にしない（2026-09-12 竹内・この事例）。値引きの相談（「もう少し安くなりませんか」「これ以上抑えられますか」）・金額の質問（「初期費用いくらですか」）は cost_explain ではない。広告の金額で合っているかの確かめ（「初期費用2980円でしょうか？」＝送った物件の初期費用を聞いている）も cost_explain ではなく、送った物件があれば estimate_sheet（10/09 試験 q084・竹内さんは送った物件の御見積書）
 - cost_breakdown: 物件を送った後・御見積書を送った後に、顧客が初期費用の中身を聞いた時（「家賃だけ払ったら住めるんですか？」「家賃と管理費を先に振り込んだら住めるってことですか？」「初期費用に何が含まれますか？」「火災保険は初期費用とは別ですか？」「鍵交換代とかも上乗せされますよね」）。本文で「敷金礼金等含む総額となり家賃のみでは入居出来ない」等と中身を説明しない（その物件の敷金・礼金は0円かもしれない＝御見積書を見て答える）（2026-09-15 竹内・この事例）。境界: 「家賃込みの価格ですか」「〇月分の家賃は初期費用に含まれていますか」と家賃込みかだけを聞いた時は AIX なし（本文で「初期費用は翌月分の前家賃込み」と答える・2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」・実送信は手打ちの返信）／金額だけの質問・見積の依頼（「いくらですか」「内訳を送ってください」）は estimate_sheet／見積書の後の総額・追加分の確認（「〜円になる感じですか？」）は estimate_sheet／安さへの不安は cost_explain／物件が1件も無い時の一般的な質問は AIX なし
 - phone_call: 顧客がこちらと電話で話したい時（「ご相談があるのですがお電話では無理でしょうか？」「電話いける時間ありますか？」「1度お電話いただけませんか？」「物件の事で聞きたい事がありますのでお手隙の際電話いけますか？」）。他の話題が同じ発言にあっても電話の依頼を先に受ける。本文で電話番号・「こちらからお電話します」「〇時にお電話します」を作らない（2026-09-15 竹内・H 事例）。境界: 電話番号の質問・管理会社等から電話があった報告・他所への電話の相談・「電話は大丈夫です」は phone_call ではない
 - property_check_result: 未完了タスクに「物件確認（空室確認）」があり管理会社から回答が届いた時。物件確認（acknowledge_check / property_check_result）はお客様から確認の依頼（物件URL・物件画像・物件名＋空き/入居日/審査の質問）があった時だけ。こちらが物件を送った・見積書を送っただけの時は選ばない（2026-09-12 竹内）
@@ -3848,9 +3848,25 @@ ${history}`;
       const custSentConditionForm = typedMessages.some((m) => m.sender === "customer" && isConditionFormMessage(m.text ?? ""));
       // 画像の種類（Vision の分類）: 本人確認書類・見積書の画像なら募集状況の確認にしない（typedMessages は新しい順）
       const firstContactImageType = typedMessages.find((m) => m.sender === "customer" && m.image_type)?.image_type ?? null;
+      // 10/09 試験 q118（初回にエリア・家賃・設備までそろった条件）: LLM が条件ヒアリングを選んでも、条件がそろっていればピックアップの番（竹内さんは復唱してピックアップの約束）。戻す FIRST_CONTACT_READY_PICKUP=off
+      if (finalAix === "condition_hearing" && (process.env.FIRST_CONTACT_READY_PICKUP ?? "").toLowerCase() !== "off"
+        && pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready) {
+        console.log(JSON.stringify({ tag: "brain:first-contact-ready-pickup", conversationId }));
+        finalAix = "property_send";
+      }
       firstContactPickup = resolveFirstContactPickup({ finalAix, custSentConditionForm, sceneEvidence: compactSceneEvidence(sceneEvidence), imageType: firstContactImageType });
       // 2026-10-09 竹内さん「友だち追加だけで条件がまだ無い初回は AIX【条件ヒアリング】が正解・guard:first_contact で消さない（条件が既にある初回とは分ける）」
       //   戻す FIRST_CONTACT_KEEP_HEARING=off
+      // 2026-10-09 同じ竹内さんの答え（試験 q021「ブラックなど審査は通らないですか」・友だち追加の直後の最初の発言）: 条件がまだ無い初回に LLM が返信（AIX なし）を
+      //   選んだ番も AIX【条件ヒアリング】（審査の不安への答えはヒアリングの AIX の文に添える）。物件の画像・URL の初回（募集状況の確認）は触らない。戻す FIRST_CONTACT_HEARING_FROM_REPLY=off
+      // 会社の事実の質問（「不動産屋の会社名教えてください」試験 q066＝竹内さんは会社名を答えた返信）は返信のまま
+      if (finalAix === null && !twoStage && !custSentConditionForm && (process.env.FIRST_CONTACT_HEARING_FROM_REPLY ?? "").toLowerCase() !== "off"
+        && matchCompanyFacts(typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "").join(" ")).length === 0
+        && !typedMessages.some((m) => m.sender === "customer" && (!!m.image_type || /https?:\/\/|^\[画像\]|^\[動画\]/.test(m.text ?? "")))
+        && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready) {
+        console.log(JSON.stringify({ tag: "brain:first-contact-hearing-from-reply", conversationId }));
+        finalAix = "condition_hearing"; replyMode = "aix";
+      }
       const keepHearing = finalAix === "condition_hearing" && !custSentConditionForm && (process.env.FIRST_CONTACT_KEEP_HEARING ?? "").toLowerCase() !== "off"
         && !pickupConditionsReady(pc, typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "")).ready;
       if (keepHearing) {
@@ -4347,7 +4363,9 @@ ${history}`;
         brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null })),
         {
           // 10/09 試験（q006 q007）: 絞り込み（設備の追加・エリアを狭める）は出し切ったまま。広げた時だけ（condition_relax・広げる言い方は searchExhausted の中で読む）
-          conditionChangedThisTurn: conditionChangeType === "condition_relax",
+          // 10/09 試験 q036（審査落ちの後の「保証会社はクレカ系は控えたい」）: 保証会社の種類の条件は新しい条件で探し直す番（出し切りでない）。戻す EXHAUSTED_GUARANTOR_CONDITION=off
+          conditionChangedThisTurn: conditionChangeType === "condition_relax"
+            || ((process.env.EXHAUSTED_GUARANTOR_CONDITION ?? "").toLowerCase() !== "off" && turnRouteGuardsEnabled() && guarantorAsCondition(turnTextNoImg)),
           pickupReady: pickupReadyForChoice,
           placeMentioned: turnRouteGuardsEnabled() && !!placeMentioned(turnTextNoImg),
           deliveredAixAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),

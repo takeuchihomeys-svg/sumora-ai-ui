@@ -24,7 +24,13 @@ t("「大丈夫」等の普通の語は地名にしない", placeMentioned("家�
 t("画像の書き起こしは外す", textWithoutImages(["[画像] 動物園前 徒歩3分", "もう少し見てみたいです"]) === "もう少し見てみたいです");
 
 // 内覧調整
-t("q053 どっちも気になります（内覧を頼んでいない）", viewingInviteToReply({ text: "どっちも気になります", viewingDecided: false }).yes);
+// 10/09 竹内さんの答え: 見積書の後の「どっちも気になります」は AIX の番（内覧の語が無いだけで返信に戻さない・VIEWING_GUARD_NO_WORD=on で旧）
+t("q053 どっちも気になります → 内覧調整のまま", !viewingInviteToReply({ text: "どっちも気になります", viewingDecided: false }).yes);
+t("q085 日程のやり取りの中の「26日の夕方18時頃なら空いてますでしょうか」→ 内覧調整のまま", !viewingInviteToReply({ text: "26日の夕方18時頃なら空いてますでしょうか？", viewingDecided: false }).yes);
+t("q087 ここ見てみたいです → 内覧調整のまま", !viewingInviteToReply({ text: "ここ見てみたいです!", viewingDecided: false }).yes);
+{ const prev = process.env.VIEWING_GUARD_NO_WORD; process.env.VIEWING_GUARD_NO_WORD = "on";
+  t("VIEWING_GUARD_NO_WORD=on で旧（内覧の語が無い→返信）", viewingInviteToReply({ text: "どっちも気になります", viewingDecided: false }).yes);
+  if (prev === undefined) delete process.env.VIEWING_GUARD_NO_WORD; else process.env.VIEWING_GUARD_NO_WORD = prev; }
 t("q050 決まった内覧で全部見たい", viewingInviteToReply({ text: "全て見に行きたいです！", viewingDecided: true }).yes);
 t("q049 18日の内覧のあと行けますか", viewingInviteToReply({ text: "18の南船場の内覧のあと行けますか？", viewingDecided: true }).yes);
 t("q072 13日以降", viewingInviteToReply({ text: "内覧したいんですが都合つくのが9月13日以降の予定なんですが、今見てる物件埋まる可能性高いですかね", viewingDecided: false }).yes);

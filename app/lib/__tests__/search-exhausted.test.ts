@@ -52,5 +52,18 @@ t("印: AIX の物件の送付の記録", searchExhausted([m("customer", "もう
   t("q010: 条件のフォームの出し直しで取り消す", !searchExhausted([base, m("customer", "【お部屋お探し中！】\n（ご希望のお部屋探しご条件）\n①【ご入居の時期】⇒10月", "2T10:00:00Z")], { conditionChangedThisTurn: false, pickupReady: false }).exhausted);
 }
 
+// 10/09 q038: 新着の1件の送付の後に御見積書まで進んだ番は出し切りでない（竹内さんは礼金0の別の物件を推した）
+{
+  const msgs = [m("staff", "家賃ご上限オーバーしてしまいますが、中之島で8.1帖のお部屋が9月末退去予定で募集に出ました。", "1T10:00:00Z"),
+    m("customer", "こちらの初期費用見積もりだしていただきたいです！", "1T11:00:00Z"),
+    m("staff", "YUMAさんこちら初期費用の御見積書となります！！\nお手隙の際にご査収ください😌！！", "1T12:00:00Z"),
+    m("customer", "礼金がなかったらここで決めてました。。", "1T13:00:00Z")];
+  t("q038: 印の後に御見積書 → 出し切りでない", !searchExhausted(msgs, { conditionChangedThisTurn: false, pickupReady: false }).exhausted);
+  t("御見積書の約束（お送りさせて頂きます）だけは取り消さない", searchExhausted([msgs[0], m("staff", "最大限割引させて頂いた御見積書お送りさせて頂きます！！", "1T12:00:00Z"), msgs[3]], { conditionChangedThisTurn: false, pickupReady: false }).exhausted);
+  const prev = process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL; process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL = "off";
+  t("SEARCH_EXHAUSTED_ESTIMATE_CANCEL=off で旧", searchExhausted(msgs, { conditionChangedThisTurn: false, pickupReady: false }).exhausted);
+  if (prev === undefined) delete process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL; else process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL = prev;
+}
+
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exitCode = 1;

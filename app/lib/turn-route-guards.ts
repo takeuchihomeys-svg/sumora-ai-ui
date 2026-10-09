@@ -72,7 +72,9 @@ const LATER_DATE_RE = /[0-9０-９]{1,2}\s*(?:月\s*[0-9０-９]{1,2}\s*日?|日
  */
 export function viewingInviteToReply(i: { text: string; viewingDecided: boolean }): { yes: boolean; why: string } {
   const t = String(i.text ?? "").normalize("NFKC");
-  if (!VIEWING_WORD_RE.test(t)) return { yes: true, why: "内覧を頼んでいない" };
+  // 10/09 竹内さんの答え（q053「どっちも気になります」＝見積書の後の気になる・退去予定の内覧はスタッフだけが知る中身＝AIX の番）・試験 q085（日程のやり取りの中の
+  //   「26日の夕方18時頃なら空いてますでしょうか」）・q087（「ここ見てみたいです」）: 内覧の語が無いだけで返信に戻すと AIX の番を消していた → 既定で使わない。戻す VIEWING_GUARD_NO_WORD=on
+  if ((typeof process !== "undefined" && (process.env?.VIEWING_GUARD_NO_WORD ?? "").toLowerCase() === "on") && !VIEWING_WORD_RE.test(t)) return { yes: true, why: "内覧を頼んでいない" };
   if (i.viewingDecided && !/変更|別の日|日程を?変え|ずら/.test(t)) return { yes: true, why: "決まった内覧への追加" };
   if (LATER_DATE_RE.test(t)) return { yes: true, why: "〇日以降の事情" };
   return { yes: false, why: "内覧の依頼" };

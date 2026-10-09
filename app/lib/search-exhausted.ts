@@ -26,6 +26,8 @@ const NEW_AREA_ASK_RE = /[一-龥ァ-ヶ]{1,6}(?:駅|区|市|町|線)[^。\n]{0,
 /** お客様が条件を出し直した（条件のフォーム）＝新しい条件ではまだ探していない */
 const CONDITION_FORM_RE = /お部屋探しご条件|お部屋お探し中|【ご入居の時期】/;
 // ⚠ 「全てピックアップしてお送りさせて頂きます」（これから送る約束）は印にしない（60日の実送信を読んで確かめた）
+/** 御見積書を送った（「こちら初期費用の御見積書となります」「御見積書お送りさせて頂きます」は約束なので当てない） */
+const ESTIMATE_SENT_RE = /御見積書(?:と|に)なります|お見積書(?:と|に)なります|初期費用の御見積書をお送りさせて(?:頂|いただ)きました/;
 const NEW_ARRIVAL_PROMISE_RE = /新着[^。\n！!]{0,30}(?:出次第|出ましたら|出た際|出てき次第)[^。\n！!]{0,12}(?:お送り|ご連絡|ご紹介)/;
 /** お客様の条件の変更（エリア・家賃・間取り・設備・緩和）。brain の condition_change_type が無い過去の番の予備 */
 // 10/09 試験の分解⑥（q061「選択肢増えるかな」）: 選択肢を増やす言い方も広げる側
@@ -58,6 +60,12 @@ export function searchExhausted(msgs: ReadonlyArray<ExMsg>, o: { conditionChange
   // 広げた条件・条件のフォームの出し直しだけ取り消す（「ガスコンロ」「中央大通りより北側で」等の絞り込みは出し切ったまま＝竹内さん Q4「広がった時は除く」・試験 q006 q007）
   //   新しい地名・駅名で「〜はありませんか」と聞いた（試験 q011「大国町、本町、堺筋本町、などはあまりありませんか？」＝竹内さんは新しいエリアでピックアップの約束）も取り消す
   if (after.some((m) => { const x = (m.text ?? "").normalize("NFKC"); return CUSTOMER_CONDITION_CHANGE_RE.test(x) || CONDITION_FORM_RE.test(x) || NEW_AREA_ASK_RE.test(x); })) return { exhausted: false, markerAt: msgs[idx].createdAt, reason: "印の後に条件が変わった" };
+  // 10/09 試験 q038（見積書の後の「礼金がなかったらここで決めてました」）: 印の後に1件の御見積書まで進んだ＝話は物件1件の比べに移った。
+  //   竹内さんは礼金0の別の物件を推した（AIX【物件オススメ】・答え: オススメが第一＋ピックアップの約束も正解）＝新着待ちではない。戻す SEARCH_EXHAUSTED_ESTIMATE_CANCEL=off
+  if ((typeof process === "undefined" || (process.env?.SEARCH_EXHAUSTED_ESTIMATE_CANCEL ?? "").toLowerCase() !== "off")
+    && msgs.slice(idx + 1).some((m) => m.sender === "staff" && (m.aixType === "estimate_sheet" || ESTIMATE_SENT_RE.test((m.text ?? "").normalize("NFKC"))))) {
+    return { exhausted: false, markerAt: msgs[idx].createdAt, reason: "印の後に御見積書を送った（物件1件の話）" };
+  }
   return { exhausted: true, markerAt: msgs[idx].createdAt, reason: "今の条件の物件は出し切った（新着待ち）" };
 }
 
