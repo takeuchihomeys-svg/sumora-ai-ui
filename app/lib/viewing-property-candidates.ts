@@ -190,3 +190,62 @@ export function toggleCandidateInSlots(
   else { s[idx] = { name: "", roomNumber: "" }; im[idx] = ""; }
   return { slots: s, images: im };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AIX【内覧日調整】（viewing_invite）の物件を選ぶ欄（複数可）— 2026-10-08 竹内さんの決定6
+//   「送った物件の中から選ぶだけの欄（複数可）。選んだ物件名を送信時に aix_usage_logs.property_names に残す（物件ごとの記録・結果の記録につながる）。
+//    内覧の物件の候補を先に選んでおく」
+//   欄の値は今までどおり1つの文字（body.property_name＝【物件名】・日程の形の文「〇〇ご案内させて頂きます」に入る）。複数は「、」でつなぐ。
+//   送信の記録には「送った物件の候補と同じ」と言える物だけを候補の表記（物件名 号室）で残す（手で打った自由な文字は残さない＝推測しない。
+//   候補に無い時は今までどおりサーバーが本文から読む＝aix-sent-names.aixPropertyNamesForLog）。
+//   戻す: NEXT_PUBLIC_VIEWING_INVITE_MULTI=off（1つだけ選ぶ旧の欄・記録は本文から）
+// ─────────────────────────────────────────────────────────────────────────────
+export const VIEWING_NAMES_SEP = "、";
+
+export function viewingInviteMultiEnabled(env: Record<string, string | undefined> = { NEXT_PUBLIC_VIEWING_INVITE_MULTI: process.env.NEXT_PUBLIC_VIEWING_INVITE_MULTI }): boolean {
+  return (env.NEXT_PUBLIC_VIEWING_INVITE_MULTI ?? "").trim().toLowerCase() !== "off";
+}
+
+/** 欄の文字を物件ごとに分ける（「、」「,」・改行。物件名の中の「・」では分けない＝「★築浅★…」等の飾りを壊さない） */
+export function splitViewingNames(text: string | null | undefined): string[] {
+  return String(text ?? "").split(/[、，,\n]+/).map((s) => s.trim()).filter((s) => s.length >= 2);
+}
+
+/** 候補を欄の文字に足す／外す（足す時は候補の表記「物件名 号室」・同じお部屋が既にあれば何もしない） */
+export function toggleViewingNames(current: string | null | undefined, c: ViewingPropertyCandidate, select: boolean): string {
+  const parts = splitViewingNames(current);
+  const idx = parts.findIndex((p) => candidateMatchesName(c, p));
+  if (select) {
+    if (idx >= 0) return parts.join(VIEWING_NAMES_SEP);
+    return [...parts, c.label].join(VIEWING_NAMES_SEP);
+  }
+  if (idx < 0) return parts.join(VIEWING_NAMES_SEP);
+  return parts.filter((_, i) => i !== idx).join(VIEWING_NAMES_SEP);
+}
+
+/** 送信の記録に残す物件名: 欄の文字のうち送った物件の候補と同じ物だけ（候補の表記・重なりなし・欄の順） */
+export function pickedViewingLabels(cands: ReadonlyArray<ViewingPropertyCandidate>, current: string | null | undefined): string[] {
+  const out: string[] = [];
+  for (const p of splitViewingNames(current)) {
+    const hit = cands.find((c) => candidateMatchesName(c, p));
+    if (hit && !out.includes(hit.label)) out.push(hit.label);
+  }
+  return out.slice(0, 10);
+}
+
+/**
+ * 内覧日調整を開いた時に先に選ぶ候補（複数）。preselectViewingCandidates の invite と同じ決まりで、
+ *   ①欄に既に入っている物件名（AIX の先回りの入力・「、」で複数）と同じ候補 → それら
+ *   ②無ければお客様の最新の発言（引用・名前・持ち込み）で決まった物件（終わった物は除く）→ 全部（invite は旧は1件目だけ）
+ *   推測しない（こちらの送付・🌟からは選ばない）。
+ */
+export function preselectViewingInvite(cands: ReadonlyArray<ViewingPropertyCandidate>, o: { customerText?: string | null; currentName?: string | null; turnStartAt?: string | null }): ViewingPreselect {
+  const cur = splitViewingNames(o.currentName);
+  if (cur.length) {
+    const keys: string[] = [];
+    for (const p of cur) { const hit = cands.find((c) => candidateMatchesName(c, p)); if (hit && !keys.includes(hit.key)) keys.push(hit.key); }
+    if (keys.length) return { keys, reason: "欄に入った物件名（会話の決まり）と同じお部屋" };
+  }
+  const g = preselectViewingCandidates(cands, { mode: "guide", customerText: o.customerText, turnStartAt: o.turnStartAt });
+  return g;
+}

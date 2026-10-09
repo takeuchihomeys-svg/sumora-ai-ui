@@ -9,7 +9,7 @@ import { supabase } from "@/app/lib/supabase";
 import { buildActionLedger, type LedgerAixRow } from "@/app/lib/action-ledger";
 import { loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
-import { morningViewingGreetingPlan, morningGreetingNoticeLine, VIEWING_MORNING_GREETING_PATTERN, type MorningGreetingWhy } from "@/app/lib/viewing-day-greeting";
+import { morningViewingGreetingPlan, morningGreetingNoticeLine, VIEWING_MORNING_GREETING_PATTERN, MORNING_GREETING_NOTE_PREFIX, isMorningGreetingItem, viewingFlowCancelled, type MorningGreetingWhy } from "@/app/lib/viewing-day-greeting";
 import { registerRuleAixActionItem } from "@/app/lib/aix-action-items";
 import { isTestConversation } from "@/app/lib/test-conversations";
 
@@ -59,7 +59,8 @@ export async function runViewingMorningGreeting(opts: { nowMs?: number; dryRun?:
     try { input = await loadCustomerStateInput(id, { now: nowMs }); } catch { input = null; }
     const [{ data: conv }, { data: open }] = await Promise.all([
       supabase.from("conversations").select("customer_name").eq("id", id).maybeSingle(),
-      supabase.from("aix_action_items").select("action, check_pattern").eq("conversation_id", id).eq("status", "pending").maybeSingle(),
+      // 2026-10-08 竹内さん「（別の要対応が残っていても）立てる」: 未完了は2行まで（ブレインの依頼の行＋朝の挨拶の行）。朝の挨拶の行があればそれ（already_pending）・無ければブレインの行
+      supabase.from("aix_action_items").select("action, check_pattern, resolution_note").eq("conversation_id", id).eq("status", "pending").limit(5),
     ]);
     const customerName = String((conv as { customer_name?: string | null } | null)?.customer_name ?? "");
     if (!input) { rows.push({ conversationId: id, customerName, why: "read_failed", appointment: null, registered: false }); continue; }
@@ -80,10 +81,11 @@ export async function runViewingMorningGreeting(opts: { nowMs?: number; dryRun?:
     const plan = morningViewingGreetingPlan({
       appointmentDay: appt?.day ?? null,
       flowConfirmed: ledger.facts.viewingFlow ? ledger.facts.viewingFlow.confirmed : null,
-      flowCancelled: /cancelled/.test(ledger.facts.viewingFlow?.reason ?? ""),
+      flowCancelled: viewingFlowCancelled(ledger.facts.viewingFlow?.reason),
       appointmentTime: appt?.time ?? null,
       postApply: isPostApplyStatus(input.status),
-      pending: opts.ignorePending ? null : (open as { action: string; check_pattern: string | null } | null) ?? null,
+      pending: opts.ignorePending ? null : ((rows: Array<{ action: string; check_pattern: string | null; resolution_note: string | null }>) =>
+        rows.find((r) => isMorningGreetingItem(r)) ?? rows[0] ?? null)((open ?? []) as Array<{ action: string; check_pattern: string | null; resolution_note: string | null }>),
       staffMessages: messages.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text, createdAt: m.createdAt ?? "" })),
       aixTypesToday,
       nowMs,
@@ -94,7 +96,7 @@ export async function runViewingMorningGreeting(opts: { nowMs?: number; dryRun?:
       registered = await registerRuleAixActionItem({
         conversationId: id, customerName, action: "greeting_viewing", checkPattern: VIEWING_MORNING_GREETING_PATTERN,
         noticeExtra: morningGreetingNoticeLine({ time: appt?.time ?? null, place: appt?.place ?? null }),
-        note: `rule:viewing_morning_greeting ${apptLabel ?? ""}`,
+        note: `${MORNING_GREETING_NOTE_PREFIX} ${apptLabel ?? ""}`,
       });
     }
     rows.push({ conversationId: id, customerName, why: plan.why, appointment: apptLabel, registered });

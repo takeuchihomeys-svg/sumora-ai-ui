@@ -428,7 +428,23 @@ export function resolveGreeting(opts: {
   //   お客様の頭が今日の番（45%・60字以上 50%・未満 21%）と同じ形。standard は「必須ではない」（短い返信には置かない）の注記なので、
   //   60字以上だけ挨拶と見なした一致は 旧 4,584 → 新 4,647 / 5,496。戻す: GREETING_BY_DAY_R8=off（旧＝続きの会話は挨拶なし）
   if (process.env.GREETING_BY_DAY_R8 === "off" && continuedSameDay(opts.recentMessages)) return mk("none", nightPrefix, !!nightPrefix, "会話の続き（お客様の発言がこちらの前の発言と同じ日）＝挨拶なし");
+  // 2026-10-08 竹内さん「今日初めての連絡なら『お世話になっております』を付ける。2回目以降なら入れない」:
+  //   その JST の日の最初のこちらの会話文（資料文・画像は数えない＝computeAlreadyGreetedToday）なら「〇〇さんお世話になっております！！」を**必ず**置く（enforce=true）。
+  //   旧（G33・9/20）は「必須ではない（実送信の1/3）」で LLM に選ばせていた。お客様が時刻の挨拶で始めても同じ（enforceOpening が時刻の挨拶を剥がして差し替える）。
+  //   戻す: GREETING_DAILY_REQUIRED=off（旧＝付けてもよい）
+  // 2026-10-09 竹内さん「その日最初でも、お客様が了承・お礼だけの番は挨拶を省いてよい」: 竹内さんの手打ち（その日最初の返信）で了承だけ 28%・お礼だけ 11% しか挨拶しない。
+  //   了承・お礼だけの番は「必ず」にしない（付けてもよい＝enforce なし）。戻す GREETING_SKIP_ACK_DAILY=off
+  if (dailyGreetingRequired() && (process.env.GREETING_SKIP_ACK_DAILY ?? "").toLowerCase() !== "off" && ACK_THANKS_ONLY_RE.test(String(unrepliedCustomerText ?? "").normalize("NFKC").replace(/[s！!。、〜~ー😊😌🙇🙏✨👍]|[p{Extended_Pictographic}️‍]/gu, "")))
+    return mk("standard", `${nightPrefix}${call}お世話になっております！！`, !!nightPrefix, "その日最初・お客様は了承・お礼だけ（挨拶は省いてよい・竹内さん 10/09）");
+  if (dailyGreetingRequired()) return mk("standard", `${nightPrefix}${call}お世話になっております！！`, true, "その日最初のこちらの会話文（必ず「お世話になっております」・竹内さん 10/08）");
   return mk("standard", `${nightPrefix}${call}お世話になっております！！`, !!nightPrefix, "継続会話・当日未挨拶");
+}
+
+/** その日最初の会話文に「お世話になっております」を必ず置く（2026-10-08 竹内さん）。GREETING_DAILY_REQUIRED=off で旧（付けてもよい） */
+/** お礼・了承・よろしくだけの1通（記号・絵文字を除いて見る） */
+const ACK_THANKS_ONLY_RE = /^(?:はい|了解(?:です|しました)?|わかりました|分かりました|承知(?:しました|致しました|いたしました)|かしこまりました|ありがとうございます|ありがとうございました|有難うございます|よろしくお願い(?:します|致します|いたします)|宜しくお願い(?:します|致します)|お願いします|助かります)+$/;
+export function dailyGreetingRequired(): boolean {
+  return (process.env.GREETING_DAILY_REQUIRED ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 挨拶行の剥離（お待たせ系は禁止語なので剥がし対象として維持） */
@@ -617,6 +633,16 @@ export function enforceOpening(text: string, d: GreetingDecision): { cleaned: st
   }
   if (!d.openingLine) return { cleaned: rest || text, fixes };
   if (!rest) return { cleaned: text.trim() || d.openingLine, fixes }; // 本文ゼロ防止フェイルオープン
+  // 2026-10-08 その日最初の会話文の挨拶を必ず置く形（GREETING_DAILY_REQUIRED）: 本文が「〇〇さん」の呼びかけから始まる時は、
+  //   挨拶の行に名前があるので本文の頭の呼びかけを外す（「〇〇さんお世話になっております！！⏎〇〇さん…」と名前を重ねない）。
+  //   「〇〇さんにオススメ」「〇〇さんのご希望」のように名前が文の一部の時は外さない
+  if (d.kind === "standard") {
+    const call = d.openingLine.replace(d.nightPrefix, "").replace(/お世話になっております！！$/, "");
+    if (call && rest.startsWith(call) && !/^[にのがはへもとを]/.test(rest.slice(call.length))) {
+      const after = rest.slice(call.length).replace(/^[、,！!。\s　]+/, "");
+      if (after) { rest = after; fixes.push(`本文の頭の呼びかけ「${call}」を外した（挨拶の行に名前がある）`); }
+    }
+  }
   fixes.push(`冒頭を「${d.openingLine}」に固定（${d.kind}/${d.reason}）`);
   return { cleaned: `${d.openingLine}\n${d.kind === "first" ? "\n" : ""}${rest}`, fixes };
 }
@@ -649,7 +675,7 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
   // 2026-10-02 夜 竹内さん「かしこまりましたとか違う」: 確かめの質問（「〜ってことですかね？」）への答えは「かしこまりました」で始めない（本題から・答えなら「はい」）
   const confirmQLine = d.openerConfirmQuestion ? "お客様は確かめの質問（「〜ってことですかね？」等）をしている。「かしこまりました」で始めない（答えから書く・はい／いいえが答えなら「はい😊！！」も可）。" : "";
   const psLine = d.propertyShareNoAsk ? "お客様は物件を送ってきただけ（問い・依頼の言葉なし）。「かしこまりました」で始めない（スタッフは 37番中2番だけ）。「お部屋お送り頂きありがとうございます😊！！」か、本題（「お送り頂きました〇〇の募集状況確認させて頂きます！！」）から始める。" : "";
-  const vdLine = d.viewingDayNotice ? `お客様の発言は内覧当日の連絡（遅れる・向かっている・付き添い）。返事は「${VIEWING_DAY_NOTICE_REPLY}」の2行だけ（挨拶・「全然大丈夫です」「遅れて問題ございません」「現地でお待ちしております」「〇時に〇〇でお待ちしております」は足さない・スタッフの実送信 12/17 がこの形）。` : "";
+  const vdLine = d.viewingDayNotice ? `お客様の発言は内覧当日の連絡（遅れる・向かっている・付き添い）。返事は${d.kind === "standard" && d.enforce ? "（決まった挨拶の行の後に）" : ""}「${VIEWING_DAY_NOTICE_REPLY}」の2行だけ（${d.kind === "standard" && d.enforce ? "" : "挨拶・"}「全然大丈夫です」「遅れて問題ございません」「現地でお待ちしております」「〇時に〇〇でお待ちしております」は足さない・スタッフの実送信 12/17 がこの形）。` : "";
   const forbidLine = vdLine + psLine + confirmQLine + bodyRuleLine + (forbidden.length ? `開口語の禁止: ${forbidden.join("／")}で始めない。` : "")
     + (d.conditionFormThanks ? `お客様が条件フォームを送ってくれたので、${where}は必ず「${CONDITION_FORM_THANKS}」（フォームへの感謝）→ 続けてお客様の条件（エリア・家賃・間取り等をお客様の語のまま）で物件をピックアップしてお送りする宣言。` : "");
   // 2026-10-08 竹内さん（り 8f705d16）: 時刻の挨拶は書かない（お客様が「こんばんは」と書いていてもまねない）。TIME_GREETING_R11=off で旧
@@ -668,6 +694,10 @@ export function buildGreetingNote(d: GreetingDecision, jstHour: number): string 
       //   設計知見「必須にしてよいのは過半数が守っている形だけ」により、固定をやめて実測の比率を見せる。
       //   下書き→実送信の差分でも「お世話→名前」92件・「お世話→なし」94件がこの付けすぎ由来（計186件）。
       //   夜間接頭辞がある時だけは enforce=true（後処理が先頭を固定する）ので、従来どおり固定と伝える。
+      if (d.enforce && !d.nightPrefix) {
+        // 2026-10-08 竹内さん: その日最初の会話文は必ず「〇〇さんお世話になっております！！」（後処理 enforceOpening が先頭を固定する）
+        return `${head}現在${jstHour}時台（JST）・本日この方への最初の送信（${d.reason}）。先頭行は必ず「${d.openingLine}」（一字一句変更・省略禁止。名前の後で改行しない。この行の後に改行して本文）。${openerLine}。${forbidLine}${common}`;
+      }
       if (d.enforce) {
         return `${head}現在${jstHour}時台（JST）・深夜帯のため先頭行は「${d.openingLine}」で固定（一字一句変更禁止。この行の後に改行して本文）。${openerLine}。${forbidLine}${common}`;
       }

@@ -12,11 +12,13 @@
 //   送ってよい条件を全部満たした時だけ true を返し、1つでも欠けたら理由付きで false。
 import { jstParts } from "./jst-date";
 import { findStaffOnlyFact, findUngroundedAmount, findUngroundedAgeRange } from "./staff-confirm-facts";
+import { firstUngroundedAixContent } from "./aix-content-gate";
 import { STAFF_PICKUP_DECL_RE, STAFF_CONFIRM_DECL_RE, STAFF_ESTIMATE_DECL_RE } from "./reply-context";
 import { findExtraApplyDocs } from "./apply-docs-guard";
 import { findViewingDateReask } from "./viewing-reask";
 import { MEETING_PROMISE_RE } from "./meeting-promise";
 import { budgetSentenceKept } from "./rent-question";
+import { findUngroundedFacts, groundingKinds } from "./draft-fact-grounding";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -180,12 +182,23 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   //   言い切っている下書きは自動で送らない（スタッフが確かめてから送る）。本文は変えない＝人に残すだけ（staff-confirm-facts.ts）
   const staffFact = findStaffOnlyFact(draft);
   if (staffFact) return { ok: false, reason: `staff_only_fact:${staffFact.kind}` };
+  // ⑥-2b 2026-10-08 竹内さん「AIX の事が分かっていたら止められるのでは？」: AIX の全ボタン×ピッカー（aix-catalog の staffOnly）を物差しに、
+  //   どれかの AIX が送るべき中身（割引額・還元額・フリーレント・審査の結果・探した結果 等も）の言い切りで、会話・資料に無い物は自動で送らない（本文は変えない・aix-content-gate.ts・AIX_CONTENT_GATE=off）
+  const aixContent = firstUngroundedAixContent(draft, i.groundText ?? "");
+  if (aixContent) return { ok: false, reason: `aix_content:${aixContent.catalogKey}` };
   // ⑥-3 2026-10-02 ⑫ 11巡目: 会話に無い金額（相場・家賃帯・物件の金額）の言い切りは自動で送らない（本文は変えない）。
   //   AI の下書き 120日 920件で当たり 26・うちスタッフが金額を変えた/消した 23（scripts/audit-ungrounded-amount.ts）
   const ungrounded = findUngroundedAmount(draft, i.groundText);
   if (ungrounded) return { ok: false, reason: "staff_only_fact:ungrounded_amount" };
   // ⑥-3b 2026-10-02 ⑫ 21巡: 会話に無い築年数の幅（「築年数は古め（15〜25年程）」）も自動で送らない
   if (findUngroundedAgeRange(draft, i.groundText ?? "")) return { ok: false, reason: "staff_only_fact:ungrounded_age" };
+  // ⑥-3c 2026-10-09 竹内「書いた後に事実と1つずつ照らして見直す」: 下書きの日付・時刻・号室・物件名で、材料（会話・送った資料・AIX の記録・内覧の予定・会社の事実）に無い物は
+  //   自動で送らない（本文は変えない・人に残すだけ・draft-fact-grounding.ts）。線は 90日の下書きで誤検知 0（作った内覧の候補日・入居可能日だけが当たる）。
+  //   戻す: DRAFT_FACT_GROUNDING=off ／ 種類は DRAFT_FACT_GROUNDING_KINDS
+  {
+    const hit = findUngroundedFacts(draft, i.groundText, groundingKinds())[0];
+    if (hit) return { ok: false, reason: `staff_only_fact:ungrounded_${hit.kind}` };
+  }
   // ⑥-4 2026-10-02 ⑫ 17巡: 2段の場面（今は送れる物が無い→約束の返信）なのに約束が無い下書きは自動で送らない（本文は変えない）。
   //   17巡 flow1_t03: お客様の3つの話（フリーレント・別エリア・URL）に「かしこまりました！！全力でサポート」だけで約束も答えも無いまま送られた。
   //   約束が無いと行動台帳に promised が立たず、後の AIX も立たない（仕事が消える）＝人に残す

@@ -161,7 +161,12 @@ export function isMisumoriContextAppropriate(input: EstimateContextInput): Estim
   const hasOwnWords = msg.replace(/\[(?:画像|動画|スタンプ)\]/g, "").trim().length > 0;
   const isConditionChange =
     CUSTOMER_CONDITION_CHANGE_RE.test(msg) || (!!bm && bm.condition_change_type != null && hasOwnWords);
-  const rePositive = CUSTOMER_PROPERTY_POSITIVE_RE.test(msg);
+  // 2026-10-08 11巡目（竹内「場面の読み取りを、ブレインの判断に寄せる」）: 語の前向き（「内覧」「これが」「候補」等）は、ブレインが今の番を見て判断した時は使わない
+  //   （ブレインの前向き＝current_property×intent・ブレインの見積が受け持つ）。40日（scripts/audit-word-vs-brain.ts ②）: 語の前向きだけで見積の約束を許した 44番中
+  //   スタッフが見積に触れたのは 2（どちらもブレインも見積あり）・ブレインもスタッフも見積なし 41（「住之江内覧可能でしょうか？」「608で申し込みしたいです」等）。
+  //   ブレインが判断していない時（夜の見送り・失敗）は今まで通り語で。戻す ESTIMATE_POSITIVE_BRAIN=off
+  const positiveByBrain = !!bm && (typeof process === "undefined" || (process.env?.ESTIMATE_POSITIVE_BRAIN ?? "").toLowerCase() !== "off");
+  const rePositive = !positiveByBrain && CUSTOMER_PROPERTY_POSITIVE_RE.test(msg);
   const staffPromisedNow = STAFF_ESTIMATE_PROMISE_RE.test(lastStaff);
   const estimatePromised = !!input.estimatePromised || staffPromisedNow;
 

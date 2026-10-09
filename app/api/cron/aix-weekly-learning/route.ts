@@ -8,6 +8,8 @@ import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { excludeTestConversations } from "@/app/lib/test-conversations";
+// 2026-10-08 竹内さんの決定の2: 学習の窓 7日（線引きは14日）→30日（新しい7日×2・前の23日×1・LEARNING_WINDOW_30D=off で旧）
+import { learningWindow, pickRecentFirst, recencyTag, windowCountsLabel, weightingInstruction, meetsRecurrence, weightedCount, equivalentCount, isRecent, type LearningWindow } from "@/app/lib/learning-window";
 
 export const maxDuration = 300;
 
@@ -22,6 +24,8 @@ function getSupabase(): any {
   }
   return _supabase;
 }
+
+import { aixLearnBranchesEnabled, aixBelongsTo } from "@/app/lib/aix-branch-match";
 
 const AIX_ACTIONS = [
   "property_recommendation","property_send","viewing_invite","meeting_place",
@@ -70,6 +74,10 @@ const CHECK_PATTERN_UI_LABELS: Record<string, string> = {
   nearby_parking: '確認した（条件・交渉）→近隣の月極駐車場を確認した',
 };
 
+// 2026-10-08 学習の窓 30日: 編集差分を LLM に渡す上限（新しい7日／前の23日）
+const EDIT_RECENT_MAX = 12;
+const EDIT_OLDER_MAX = 6;
+
 // Special actions with no current boundary rule — trigger at lower threshold
 const UNDEFINED_BOUNDARY_ACTIONS = new Set(['acknowledge_check', 'followup_revive', 'greeting_viewing']);
 
@@ -94,6 +102,9 @@ const AIX_EDIT_DIFF_SYSTEM = `あなたはLINE賃貸営業AIシステムの品�
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  // 2026-10-08: 数える窓は 30日。件数は「新しい7日×2・前の23日×1」を14日あたりにならして旧の線（2件・3件）と比べる
+  //   （同じ頻度なら旧と同じ所で鳴る・新しい7日に固まった物を重く）。同じ質問を14日出し直さない線（fourteenDaysAgo）は変えない
+  const bwin = learningWindow("aix-weekly-learning", 14);
   let questionCount = 0;
   const MAX_QUESTIONS = 3;
 
@@ -104,31 +115,37 @@ async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
     // 無い行（旧ログ）は "property_check_result" にフォールバック集計する。
     const { data: discardedRows } = await supabase
       .from("aix_generate_log")
-      .select("action_type, check_pattern, conversation_id")
+      .select("action_type, check_pattern, conversation_id, created_at")
       .eq("status", "discarded")
-      .gte("created_at", fourteenDaysAgo);
+      .gte("created_at", bwin.sinceIso);
 
     const discardCounts: Record<string, number> = {};
+    const discardTimes: Record<string, string[]> = {};
     // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
-    for (const row of excludeTestConversations(discardedRows as Array<{ action_type: string | null; check_pattern: string | null; conversation_id: string | null }> | null)) {
+    for (const row of excludeTestConversations(discardedRows as Array<{ action_type: string | null; check_pattern: string | null; conversation_id: string | null; created_at: string | null }> | null)) {
       if (!row.action_type) continue;
       const key = row.action_type === "property_check_result" && row.check_pattern
         ? `property_check_result|${row.check_pattern}`
         : row.action_type;
       discardCounts[key] = (discardCounts[key] ?? 0) + 1;
+      (discardTimes[key] ??= []).push(row.created_at ?? "");
     }
 
     // Signal B: suggestion_bypassed — grouped by action_type
     const { data: bypassedRows } = await supabase
       .from("action_pattern_logs")
-      .select("action_type, conversation_id")
+      .select("action_type, conversation_id, created_at")
       .eq("source", "suggestion_bypassed")
-      .gte("created_at", fourteenDaysAgo);
+      .gte("created_at", bwin.sinceIso);
 
     const bypassCounts: Record<string, number> = {};
+    const bypassTimes: Record<string, string[]> = {};
     // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
-    for (const row of excludeTestConversations(bypassedRows as Array<{ action_type: string | null; conversation_id: string | null }> | null)) {
-      if (row.action_type) bypassCounts[row.action_type] = (bypassCounts[row.action_type] ?? 0) + 1;
+    for (const row of excludeTestConversations(bypassedRows as Array<{ action_type: string | null; conversation_id: string | null; created_at: string | null }> | null)) {
+      if (row.action_type) {
+        bypassCounts[row.action_type] = (bypassCounts[row.action_type] ?? 0) + 1;
+        (bypassTimes[row.action_type] ??= []).push(row.created_at ?? "");
+      }
     }
 
     // 集計ターゲット: 通常アクションは action_type 単位、property_check_result は check_pattern 単位に分割。
@@ -149,10 +166,11 @@ async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
       if (questionCount >= MAX_QUESTIONS) break;
 
       const countKey = checkPattern ? `${actionType}|${checkPattern}` : actionType;
-      const discards = discardCounts[countKey] ?? 0;
+      // 2026-10-08: 線と比べる件数は14日あたりにならした重み付きの件数（旧の窓では件数そのもの）
+      const discards = bwin.legacy ? (discardCounts[countKey] ?? 0) : equivalentCount(bwin, discardTimes[countKey] ?? [], 14);
       // action_pattern_logs（bypass）には check_pattern が無いため、
       // action_type 全体ターゲットにのみ計上する（check_pattern 別ターゲットとの二重カウント防止）
-      const bypasses = checkPattern ? 0 : (bypassCounts[actionType] ?? 0);
+      const bypasses = checkPattern ? 0 : (bwin.legacy ? (bypassCounts[actionType] ?? 0) : equivalentCount(bwin, bypassTimes[actionType] ?? [], 14));
       const isUndefined = !checkPattern && UNDEFINED_BOUNDARY_ACTIONS.has(actionType);
 
       // Threshold: lower for undefined actions
@@ -182,9 +200,11 @@ async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
       const boundaryTag = checkPattern ? `${actionType}|${checkPattern}` : actionType;
       const questionText = `【線引き質問】AIX「${actionLabel}」vs 通常返信AI — 担当範囲の確定
 
-過去14日間のデータ:
+${bwin.legacy ? `過去14日間のデータ:
 ・AIXが生成したが送信されなかった件数: ${discards}件
-・AIX提案をスタッフがスルーした件数: ${bypasses}件
+・AIX提案をスタッフがスルーした件数: ${bypasses}件` : `${windowCountsLabel(bwin)}のデータ（新しい${bwin.recentDays}日を2倍に数えて判定）:
+・AIXが生成したが送信されなかった件数: ${countSplit(bwin, discardTimes[countKey] ?? [])}
+・AIX提案をスタッフがスルーした件数: ${checkPattern ? "0件" : countSplit(bwin, bypassTimes[actionType] ?? [])}`}
 ${isUndefined ? "※このアクションは現在【AIXとの役割分担】ルールに明示されていない曖昧領域です。" : ""}
 質問: AIXボタン「${actionLabel}」はどのような場面で使うべきですか？通常返信AIとの役割をはっきりさせてください。
 例: 「〇〇の場面はAIX専用」「〇〇の時は通常AIで対応」など具体的に教えてください。
@@ -211,6 +231,12 @@ ${isUndefined ? "※このアクションは現在【AIXとの役割分担】ル
   return questionCount;
 }
 
+/** 「12件（新しい7日 5件・前の23日 7件）」 */
+function countSplit(w: LearningWindow, times: string[]): string {
+  const r = times.filter((t) => isRecent(w, t)).length;
+  return `${times.length}件（新しい${w.recentDays}日 ${r}件・前の${w.days - w.recentDays}日 ${times.length - r}件）`;
+}
+
 // ============================================================
 // AIXパターン蒸留（synthesizeAixPatterns・2026-08-29追加）
 // corpus2skill の P1（synthesizeSkills）は entry_source='line_reply' 専用で
@@ -227,6 +253,7 @@ const AIX_PATTERN_SOURCES = ["aix_template", "aix_property", "aix_adapt"];
 const AIX_PATTERN_MAX_ACTIONS = 6;      // 1実行あたりの蒸留対象アクション上限（コスト・時間制御）
 const AIX_PATTERN_MIN_EXAMPLES = 3;     // 蒸留に必要な最小実例数
 const AIX_PATTERN_EXAMPLES_PER_ACTION = 10;
+const AIX_PATTERN_OLDER_MAX = 4;          // 2026-10-08 窓 30日: 前の23日から足す上限（新しい7日の10件はそのまま）
 
 // prompt cache: アクション横断で共通の静的システムプロンプト。
 // アクション名（動的）は user メッセージに分離し、最大6アクション分の呼び出しで同一キャッシュを共有する
@@ -250,24 +277,26 @@ type AixPatternExample = {
   sent_reply: string | null;
   is_starred: boolean | null;
   outcome_status: string | null;
+  created_at?: string | null;
 };
 
 async function synthesizeAixPatterns(
   supabase: SupabaseClient,
   anthropic: Anthropic,
-  sevenDaysAgo: string
+  sevenDaysAgo: string,
+  win?: LearningWindow,
 ): Promise<{ actionsProcessed: number; inserted: number; merged: number; skipped: number }> {
   const result = { actionsProcessed: 0, inserted: 0, merged: 0, skipped: 0 };
 
   const { data: rowsRaw, error } = await supabase
     .from("ai_reply_examples")
-    .select("aix_action, entry_source, conversation_id, customer_message, sent_reply, is_starred, outcome_status")
+    .select("aix_action, entry_source, conversation_id, customer_message, sent_reply, is_starred, outcome_status, created_at")
     .in("entry_source", AIX_PATTERN_SOURCES)
     .gte("created_at", sevenDaysAgo)
     .not("sent_reply", "is", null)
     .not("aix_action", "is", null)
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(win && !win.legacy ? 400 : 200);
   if (error) {
     console.warn("[aix-weekly-learning] synthesizeAixPatterns 取得失敗:", error.message);
     return result;
@@ -310,23 +339,28 @@ async function synthesizeAixPatterns(
   }
 
   // 実例数の多いアクションから最大6件を処理対象にする
+  // 2026-10-08 窓 30日: 実例の数は重み付き（新しい7日×2・前の23日×1・線は旧の3件→5点）で数え、多い順に
+  const wide = !!win && !win.legacy;
   const targets = [...byAction.entries()]
-    .filter(([, examples]) => examples.length >= AIX_PATTERN_MIN_EXAMPLES)
-    .sort((a, b) => b[1].length - a[1].length)
+    .filter(([, examples]) => wide ? meetsRecurrence(win!, examples.map((e) => e.created_at), AIX_PATTERN_MIN_EXAMPLES) : examples.length >= AIX_PATTERN_MIN_EXAMPLES)
+    .sort((a, b) => wide ? weightedCount(win!, b[1].map((e) => e.created_at)) - weightedCount(win!, a[1].map((e) => e.created_at)) : b[1].length - a[1].length)
     .slice(0, AIX_PATTERN_MAX_ACTIONS);
 
   for (const [actionType, examples] of targets) {
     try {
       // 成約アウトカム還流: closed_won 実例 > ⭐実例 > その他 の優先順で採用
-      const picked = [...examples]
+      const sorted = [...examples]
         .sort((a, b) => {
           if (a.outcome_status === "closed_won" && b.outcome_status !== "closed_won") return -1;
           if (b.outcome_status === "closed_won" && a.outcome_status !== "closed_won") return 1;
           if (a.is_starred && !b.is_starred) return -1;
           if (!a.is_starred && b.is_starred) return 1;
           return 0;
-        })
-        .slice(0, AIX_PATTERN_EXAMPLES_PER_ACTION);
+        });
+      // 2026-10-08 窓 30日: 新しい7日を先に最大10件（旧と同じ枠）＋前の23日は成約・⭐を先に最大4件
+      const picked = wide
+        ? pickRecentFirst(win!, sorted, (e) => e.created_at, { recentMax: AIX_PATTERN_EXAMPLES_PER_ACTION, olderMax: AIX_PATTERN_OLDER_MAX, prefer: (e) => e.outcome_status === "closed_won" || !!e.is_starred })
+        : sorted.slice(0, AIX_PATTERN_EXAMPLES_PER_ACTION);
 
       const examplesText = picked.map((ex, i) => {
         const starLabel = ex.is_starred ? "⭐お客様が反応した実例" : "通常実例";
@@ -340,7 +374,7 @@ async function synthesizeAixPatterns(
           b.winning_pattern ? `勝ちパターン: ${String(b.winning_pattern)}` : "",
         ].filter(Boolean);
         const brainLine = brainParts.length > 0 ? `\n〔Brain文脈〕${brainParts.join(" / ")}` : "";
-        return `【実例${i + 1}】[${starLabel} / ${ex.entry_source}]
+        return `【実例${i + 1}】${wide ? recencyTag(win!, ex.created_at) : ""}[${starLabel} / ${ex.entry_source}]
 お客様の状況: ${(ex.customer_message ?? "").replace(/\n/g, " ").slice(0, 150)}${brainLine}
 送信文: ${(ex.sent_reply ?? "").slice(0, 300)}`;
       }).join("\n\n");
@@ -355,7 +389,9 @@ async function synthesizeAixPatterns(
         ],
         messages: [{
           role: "user",
-          content: `対象AIXボタン: 「${ACTION_LABELS[actionType] ?? actionType}」（${actionType}）\n\n以下は過去7日間の「${actionType}」アクションの実送信例です:\n\n${examplesText}`,
+          content: wide
+            ? `対象AIXボタン: 「${ACTION_LABELS[actionType] ?? actionType}」（${actionType}）\n\n以下は${windowCountsLabel(win!, picked.filter((e) => isRecent(win!, e.created_at)).length, picked.filter((e) => !isRecent(win!, e.created_at)).length)}の「${actionType}」アクションの実送信例です:\n\n${weightingInstruction(win!, AIX_PATTERN_MIN_EXAMPLES)}\n\n${examplesText}`
+            : `対象AIXボタン: 「${ACTION_LABELS[actionType] ?? actionType}」（${actionType}）\n\n以下は過去7日間の「${actionType}」アクションの実送信例です:\n\n${examplesText}`,
         }],
       });
 
@@ -416,7 +452,10 @@ export async function POST(req: NextRequest) {
     defaultHeaders: { "anthropic-beta": "prompt-caching-2024-07-31", ...sumoraLlmMarks("learn_aix_weekly") },
   });
 
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // 2026-10-08 竹内さんの決定の2: 窓 7日→30日。編集差分は「新しい7日 最大12件＋前の23日 最大6件」（旧は7日で最大15件）。
+  //   くり返しの線は旧の「2件以上」→重み付き3点（新しい7日の1件だけでは Opus を呼ばない）。LEARNING_WINDOW_30D=off で旧
+  const win = learningWindow("aix-weekly-learning", 7);
+  const sevenDaysAgo = win.sinceIso;
 
   // ISO week number for idempotent rule keys
   const now = new Date();
@@ -432,21 +471,31 @@ export async function POST(req: NextRequest) {
       // 2026-08-29: entry_source を aix_action のみ → 全AIXバケットに拡張。
       // aix_template（adapted_text 由来）/ aix_property・aix_adapt（aix_generate_log 由来）にも
       // ai_draft と was_ai_modified がバックフィルされるため、編集差分の学習対象に含める
-      const { data: examplesRaw } = await supabase
+      // 2026-10-08 学習の抜け: 枝の名前（property_check_result_available・property_send_new_arrival 等）も元の AIX として学ぶ（AIX_LEARN_BRANCHES=off で完全一致だけ）
+      const branchesOn = aixLearnBranchesEnabled(process.env);
+      let exQuery = supabase
         .from("ai_reply_examples")
-        .select("customer_message, ai_draft, sent_reply, conversation_id")
-        .in("entry_source", ["aix_action", "aix_template", "aix_property", "aix_adapt"])
-        .eq("aix_action", actionType)
+        .select("customer_message, ai_draft, sent_reply, conversation_id, created_at, aix_action")
+        .in("entry_source", ["aix_action", "aix_template", "aix_property", "aix_adapt"]);
+      exQuery = branchesOn ? exQuery.or(`aix_action.eq.${actionType},aix_action.like.${actionType}_*`) : exQuery.eq("aix_action", actionType);
+      const { data: examplesFetched } = await exQuery
         .eq("was_ai_modified", true)
         .gte("created_at", sevenDaysAgo)
         .not("ai_draft", "is", null)
         .not("sent_reply", "is", null)
         .order("created_at", { ascending: false })
-        .limit(15);
+        .limit(win.legacy ? 15 : 120);
+      // like の「_」は1文字の何でもなので、元の AIX に本当に属する行だけ残す（より長い元の AIX には譲る）
+      const examplesRaw = branchesOn
+        ? ((examplesFetched ?? []) as Array<{ aix_action?: string | null }>).filter((e) => aixBelongsTo(e.aix_action, actionType, AIX_ACTIONS))
+        : examplesFetched;
       // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
-      const examples = excludeTestConversations(examplesRaw);
+      const usable = excludeTestConversations(examplesRaw as Array<{ customer_message?: string | null; ai_draft?: string | null; sent_reply?: string | null; conversation_id?: string | null; created_at?: string | null }> | null);
+      const examples = win.legacy
+        ? usable
+        : pickRecentFirst(win, usable, (e) => e.created_at, { recentMax: EDIT_RECENT_MAX, olderMax: EDIT_OLDER_MAX });
 
-      if (!examples || examples.length < 2) {
+      if (!examples || (win.legacy ? examples.length < 2 : !meetsRecurrence(win, examples.map((e) => e.created_at), 2))) {
         results[actionType] = 0;
         continue;
       }
@@ -474,7 +523,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Format examples for Opus（Brainラベル付き）
-      const examplesText = (examples as Array<{ ai_draft?: string; sent_reply?: string; conversation_id?: string | null }>).map((ex, i) => {
+      const examplesText = (examples as Array<{ ai_draft?: string | null; sent_reply?: string | null; conversation_id?: string | null; created_at?: string | null }>).map((ex, i) => {
         const exBrain = brainByConvId.get(ex.conversation_id ?? "") ?? {};
         const brainParts = [
           exBrain.emotion ? "emotion:" + String(exBrain.emotion) : "",
@@ -482,7 +531,7 @@ export async function POST(req: NextRequest) {
           exBrain.reply_mode ? "mode:" + String(exBrain.reply_mode) : "",
         ].filter(Boolean);
         const brainTag = brainParts.length > 0 ? ` [${brainParts.join(" ")}]` : "";
-        return `【編集例${i + 1}】${brainTag}\nAI生成:\n${ex.ai_draft?.slice(0, 300) ?? ""}\n\nスタッフ送信:\n${ex.sent_reply?.slice(0, 300) ?? ""}`;
+        return `【編集例${i + 1}】${win.legacy ? "" : recencyTag(win, ex.created_at)}${brainTag}\nAI生成:\n${ex.ai_draft?.slice(0, 300) ?? ""}\n\nスタッフ送信:\n${ex.sent_reply?.slice(0, 300) ?? ""}`;
       }).join("\n\n---\n\n");
 
       const response = await anthropic.messages.create({
@@ -491,7 +540,9 @@ export async function POST(req: NextRequest) {
         thinking: { type: "disabled" },
         messages: [{
           role: "user",
-          content: `対象AIXボタン: 「${actionType}」\n\n以下は過去7日間の「${actionType}」アクションでスタッフが修正した編集例です:\n\n${examplesText}\n\n繰り返しの修正パターンからルールを抽出してください。`
+          content: win.legacy
+            ? `対象AIXボタン: 「${actionType}」\n\n以下は過去7日間の「${actionType}」アクションでスタッフが修正した編集例です:\n\n${examplesText}\n\n繰り返しの修正パターンからルールを抽出してください。`
+            : `対象AIXボタン: 「${actionType}」\n\n以下は${windowCountsLabel(win, examples.filter((e) => isRecent(win, e.created_at)).length, examples.filter((e) => !isRecent(win, e.created_at)).length)}の「${actionType}」アクションでスタッフが修正した編集例です:\n\n${weightingInstruction(win, 2)}\n\n${examplesText}\n\n繰り返しの修正パターンからルールを抽出してください。`
         }],
         // prompt cache: アクション横断で共通の静的指示をキャッシュ（11アクション分の呼び出しで同一キャッシュを共有）。
         // 動的なアクション名・編集例は user メッセージに分離
@@ -532,7 +583,7 @@ export async function POST(req: NextRequest) {
 
   // AIXパターン蒸留: aix_template / aix_property / aix_adapt バケットの品質精査ルート
   // （失敗しても編集差分学習・線引き質問の結果は返す）
-  const aixPatterns = await synthesizeAixPatterns(supabase, anthropic, sevenDaysAgo).catch((e) => {
+  const aixPatterns = await synthesizeAixPatterns(supabase, anthropic, sevenDaysAgo, win).catch((e) => {
     console.error("[aix-weekly-learning] synthesizeAixPatterns 失敗:", e);
     return { actionsProcessed: 0, inserted: 0, merged: 0, skipped: 0 };
   });

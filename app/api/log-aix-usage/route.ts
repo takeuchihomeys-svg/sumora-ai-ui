@@ -392,6 +392,16 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.warn("[log-aix-usage] completeAixActionItem failed:", conversation_id, e instanceof Error ? e.message : e);
     }
+    // 2026-10-09 竹内さん「約束した事を記録して、それを AIX で送っていけば完全にできる」: 1通で複数を約束した番は、1本送ったら次の約束の
+    //   AIX要対応を立てる（promise-queue-server・予約送信はまだ送っていないので立てない・既定 off・PROMISE_QUEUE=on で入る）
+    if (scheduled !== true) {
+      try {
+        const { advancePromiseQueue } = await import("@/app/lib/promise-queue-server");
+        await advancePromiseQueue(conversation_id, { trigger: "aix" });
+      } catch (e) {
+        console.warn("[log-aix-usage] advancePromiseQueue failed:", conversation_id, e instanceof Error ? e.message : e);
+      }
+    }
 
     // ステージ変化AIX送信 → 軽量メタパッチ更新（fire-and-forget）
     // 旧実装は last_brain_meta / brain_full_analyzed_at をクリアして次回強制フル分析を誘発していたが、

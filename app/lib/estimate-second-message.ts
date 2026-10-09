@@ -114,12 +114,59 @@ export function resolveEstimateClosing(i: {
   viewed: boolean;
   /** お客様の直近の発言の分類（recommend-cta.readCustomerReaction の kind） */
   reactionKind?: string | null;
+  /** 見積書のお部屋の採点から見た刺さり具合（estimateAppealOf）。採点が読めない時は null／省略 */
+  appeal?: "strong" | "weak" | null;
+  /** 刺さるお部屋がまだご内覧頂けない（退去予定・居住中） */
+  notViewable?: boolean;
+  /** お客様が直近（3日）にこのお部屋の見積・初期費用を頼んだ（customer-mindset.customerAskedEstimate） */
+  customerAsked?: boolean;
 }): { closing: EstimateClosing; reason: string } {
   if (i.ctaPreference === "apply") return { closing: "apply", reason: "スタッフが「申込へ押し込む」を選んだ" };
   if (i.ctaPreference === "viewing") return { closing: "viewing", reason: "スタッフが「内覧に誘う」を選んだ" };
   if (i.viewed) return { closing: "receipt", reason: "内覧の後（申込の話はブレインがお客様の反応で決める）" };
+  // 2026-10-09 竹内さん「初期費用の見積を頼む＝その物件に興味がある。費用に納得できれば内覧や申込につなげられる。見積書の文には今まで通り内覧訴求や申込訴求を加え、
+  //   お客様に次の方向を示しつつ待つ形（未内覧で空室なら内覧訴求が主）。代表確認を一度に出さない（further-discount の線は変えない）」。
+  //   竹内さんの実送信（120日・頼まれた見積・内覧の前 98通）: 内覧 36%・申込 33%・ご査収だけ 32%（＝7割が訴求を添えている）。既定 off・ESTIMATE_ASKED_APPEAL=on で入る
+  if (i.customerAsked && estimateAskedAppealOn() && !(i.reactionKind && HOLD_BACK.has(i.reactionKind))) {
+    return i.notViewable ? { closing: "apply", reason: "お客様が頼んだ見積・まだ見られない（申込訴求）" } : { closing: "viewing", reason: "お客様が頼んだ見積・内覧の前・空室（内覧訴求が主）" };
+  }
+  // 2026-10-08 竹内「刺さる条件（スコアリング的に刺さる条件）なら内覧または申込誘導する。空室なら内覧誘導」:
+  //   採点で刺さる → 今見られるなら内覧誘導・退去予定なら申込誘導（recommend-cta.resolveRecommendCta と同じ線）／刺さらない → ご査収。
+  //   お客様が懸念・条件の変更・断りを言っている時は押さない。戻すのは ESTIMATE_CLOSING_BY_APPEAL=off（旧＝反応だけで決める）
+  if (estimateClosingByAppealOn()) {
+    if (i.reactionKind && HOLD_BACK.has(i.reactionKind)) return { closing: "receipt", reason: `お客様が${i.reactionKind}を言っている（押さない）` };
+    if (i.appeal === "strong") return i.notViewable ? { closing: "apply", reason: "採点で刺さる・退去予定（申込誘導）" } : { closing: "viewing", reason: "採点で刺さる・今見られる（内覧誘導）" };
+    if (i.appeal === "weak") return { closing: "receipt", reason: "採点で刺さると言えない（ご査収）" };
+    if (i.reactionKind === "positive") return i.notViewable ? { closing: "apply", reason: "採点なし・お客様が前向き・退去予定" } : { closing: "viewing", reason: "採点なし・内覧の前・お客様が前向き" };
+    return { closing: "receipt", reason: `採点なし・お客様の反応=${i.reactionKind ?? "-"}（押さない）` };
+  }
   if (i.reactionKind === "positive") return { closing: "viewing", reason: "内覧の前・お客様が前向き" };
   return { closing: "receipt", reason: `内覧の前・お客様の反応=${i.reactionKind ?? "-"}（押さない）` };
+}
+const HOLD_BACK: ReadonlySet<string> = new Set(["concern", "condition_change", "decline"]);
+/** お客様が頼んだ見積に内覧・申込の訴求を添えるか。ESTIMATE_ASKED_APPEAL=off で旧（採点・反応だけで決める） */
+export function estimateAskedAppealOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.ESTIMATE_ASKED_APPEAL ?? "").trim().toLowerCase() === "on"; // 2026-10-09 試験・YUMA で確かめるまで既定 off（on で入る）
+}
+/** 見積書の締めを採点の刺さり具合で決めるか（呼ぶ時に読む）。ESTIMATE_CLOSING_BY_APPEAL=off で旧（お客様の反応だけ） */
+export function estimateClosingByAppealOn(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.ESTIMATE_CLOSING_BY_APPEAL ?? "on").trim() !== "off";
+}
+/**
+ * 見積書のお部屋（1件以上）の刺さり具合をまとめる。
+ *   どれか1件でも刺さる → strong（notViewable は刺さるお部屋が全部まだ見られない時だけ true＝今見られる刺さる部屋があれば内覧誘導）
+ *   採点が読めたが刺さる部屋が無い → weak ／ 1件も採点が読めない → null（＝決められない）
+ */
+export function estimateAppealOf(rows: ReadonlyArray<{ appeal: "strong" | "weak" | null; notViewable: boolean }>): { appeal: "strong" | "weak" | null; notViewable: boolean } {
+  const strong = rows.filter((r) => r.appeal === "strong");
+  if (strong.length > 0) return { appeal: "strong", notViewable: strong.every((r) => r.notViewable) };
+  if (rows.some((r) => r.appeal === "weak")) return { appeal: "weak", notViewable: false };
+  return { appeal: null, notViewable: false };
+}
+/** 見積書の見出し「建物名 号室」→ { name, room }（号室が読めなければ null） */
+export function estimateHeadOf(label: string): { name: string; room: string } | null {
+  const m = String(label ?? "").normalize("NFKC").trim().match(/^(.*?)[\s　]*([0-9]{2,4})(?:号室)?$/);
+  return m && m[1].trim().length >= 2 ? { name: m[1].trim(), room: m[2] } : null;
 }
 
 /** 手本の名前を今回のお客様の名前に。名前が分からない時は呼びかけごと落とす */
@@ -165,7 +212,7 @@ export function buildEstimateSecondNote(i: EstimateSecondInput): string {
   } else if (i.closing === "viewing") {
     L.push(`・締めは内覧のご案内「${ESTIMATE_VIEWING_LINE}」と「${ESTIMATE_RECEIPT_LINE}」（または「お気軽にお申し付けください！！」）。申込の誘いは書かない。`);
   } else {
-    L.push(`・締めは「${ESTIMATE_APPLY_LINE}」と「${ESTIMATE_RECEIPT_LINE}」（スタッフが申込を選んだ）。`);
+    L.push(`・締めは「${ESTIMATE_APPLY_LINE}」と「${ESTIMATE_RECEIPT_LINE}」（刺さるお部屋でまだご内覧頂けない・またはスタッフが申込を選んだ）。`);
   }
   L.push(i.staffSentToday
     ? "・今日はもうこちらから送っている: 挨拶の行（お世話になっております）は書かない。「お待たせ致しました」も書かない。"

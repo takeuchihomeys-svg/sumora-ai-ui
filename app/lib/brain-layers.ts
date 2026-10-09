@@ -17,6 +17,7 @@
 
 // 2026-09-23: 戦略の項目にも家賃交渉の守りを通す（純関数同士なので依存なしのまま）
 import { stripRentNegotiation, stripRentNegotiationFromList } from "./rent-negotiation-guard";
+import { mindsetDigest, type CustomerMindset } from "./customer-mindset";
 
 export type BrainStrategy = {
   closing_strategy?: string | null;
@@ -119,6 +120,13 @@ export type FreshDigest = {
   emo?: string | null; aix?: string | null; prop?: string | null; sig?: string | null; dir?: string | null; timeline?: string | null; shift?: string | null;
   /** 2026-09-23: 入口で落とした していない約束（家賃交渉）。「何を落としたか」を次の回でも追えるように残す（dir には入れない） */
   drop?: string | null;
+  /** 2026-10-08 この番の本質（turn-contract）の要約: 依頼の数・道ごとの数・閉じる番（例 "3:r1p1a1:c"）。見張り・監査で読む */
+  tc?: string | null;
+  /** 10/09: LLM の最初の AIX（la）と判断の出どころ（ds）＝本質と最終を分けて数える */
+  la?: string | null; ds?: string | null;
+  /** 2026-10-09 お客様の状態（customer-mindset.mindsetDigest＝状態|不安の向き|迷い|決め手の残り）と決め手の残りの中身（物件・点・解き方・言葉）。メモと試験で読む */
+  ms?: string | null;
+  mg?: { p: string | null; pt: string; s: string; q: string } | null;
 };
 export function toFreshDigest(meta: Record<string, unknown>, shift: string | null): FreshDigest {
   const str = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
@@ -141,6 +149,17 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 2026-09-23 竹内「家賃交渉は基本できないものだからいれない」: 落とした約束は dir と分けて残す。
     //   ここに入れても次の回の方向の材料にはならない（【前回の戦略以降の…要点】は intent/concern/cond/dir を読む）
     drop: str(meta.dropped_direction, 60),
+    // 10/09 調査の担当: LLM が選んだ AIX（決定論の規則で変わる前）。最終の aix と比べて「規則が変えた番」を数える
+    la: str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30),
+    ds: str(meta.decision_source, 60) ?? str(meta.decision_source_no_aix, 60),
+    ms: mindsetDigest((meta.customer_mindset as CustomerMindset | null | undefined) ?? null),
+    mg: (() => { const g = (meta.customer_mindset as CustomerMindset | null | undefined)?.decideGap; return g ? { p: g.property, pt: g.point, s: g.solve, q: g.quote } : null; })(),
+    tc: (() => {
+      const c = meta.turn_contract as { asks?: Array<{ route?: string }>; close_only?: boolean } | null | undefined;
+      if (!c || !Array.isArray(c.asks)) return null;
+      const n = (r: string) => c.asks!.filter((a) => a?.route === r).length;
+      return `${c.asks.length}:r${n("reply")}p${n("promise")}a${n("aix")}n${n("none")}${c.close_only ? ":c" : ""}`;
+    })(),
   };
 }
 

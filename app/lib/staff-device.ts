@@ -49,3 +49,29 @@ export function staffDeviceHeader(): Record<string, string> {
   const id = getStaffDeviceId();
   return id ? { [STAFF_DEVICE_HEADER]: id } : {};
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-08 竹内さんの決定11「管理者とスタッフにする」: 書き手の呼び方は画面では「管理者（竹内さん）」「スタッフ（従業員）」。
+//   中の値は今の 'takeuchi'／'employee' のまま（表示だけ）。新しい端末で印が無ければ画面の小さな欄で選び、staff_devices.writer に入れる。
+// ─────────────────────────────────────────────────────────────────────────────
+export type DeviceWriter = "takeuchi" | "employee";
+export const DEVICE_WRITERS: readonly DeviceWriter[] = ["takeuchi", "employee"];
+export const DEVICE_WRITER_JA: Record<DeviceWriter, string> = { takeuchi: "管理者（竹内さん）", employee: "スタッフ（従業員）" };
+
+export function parseDeviceWriter(v: unknown): DeviceWriter | null {
+  return v === "takeuchi" || v === "employee" ? v : null;
+}
+export function deviceWriterLabel(v: unknown): string {
+  const w = parseDeviceWriter(v);
+  return w ? DEVICE_WRITER_JA[w] : "未設定";
+}
+
+/** 端末の印を選ぶ欄を出すか（端末 ID があり・まだ印が無く・この端末で「後で」を押していない）。戻す: NEXT_PUBLIC_STAFF_DEVICE_PROMPT=off */
+export function shouldAskDeviceWriter(o: { deviceId: string | null; writer: unknown; dismissedAt?: string | null; nowMs?: number; envFlag?: string | undefined }): boolean {
+  if ((o.envFlag ?? "").trim().toLowerCase() === "off") return false;
+  if (!o.deviceId || parseDeviceWriter(o.writer)) return false;
+  // 「後で」は12時間だけ出さない（毎回の読み込みで邪魔をしない・忘れたままにもしない）
+  const d = o.dismissedAt ? Date.parse(o.dismissedAt) : NaN;
+  if (Number.isFinite(d) && (o.nowMs ?? Date.now()) - d < 12 * 3600_000) return false;
+  return true;
+}

@@ -66,7 +66,8 @@ console.log("\n■ 👑: 画像で分析が不要なお客様（判定の点）"
   t("判定の点が一番の物件（画像の点が高い物件より）", b?.id === 1 && b.basis === "score", b);
   // 2026-09-27 画像で分析をまとめた: 判定の点で決めた 👑 にも画像の点を並べる
   // 2026-09-27 版 b: 画像は判定の点に足した分で見せる。この例は希望の一覧が無い形なので足さない＝「判定 N点」
-  t("点の出し方は「判定 N点」（希望の一覧が無い画像の点は足さない）", b ? bestPointLabel(b) === "判定 90点" : false, b);
+  // 2026-10-06 👑 をオススメの点（star_mode fit）で決めた時はその点を先に・判定の点は括弧に（pickup-best bestPointLabel）
+  t("点の出し方は「オススメの点 N（判定 N）」（希望の一覧が無い画像の点は足さない）", b ? bestPointLabel(b) === "オススメの点 90（判定 90）" : false, b);
   t("画像の点が無ければ「判定 N点」だけ", bestPointLabel({ basis: "score", score: 88, match: null }) === "判定 88点");
   const star = pickCustomerBest([row(1, "rp", RP, 1, { score: 80 }), row(2, "rp", RP, 2, { score: 80, recommended: 1 })], { basis: "score" });
   t("同じ判定の点なら 🌟", star?.id === 2, star);

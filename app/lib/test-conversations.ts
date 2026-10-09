@@ -13,7 +13,7 @@ export const YUMA_CONVERSATION_ID = "dd34f5b0-03bf-4dfb-a598-a4d18ebb8df7";
 /**
  * スタッフ同士のやり取りの会話（お客様ではない）。見張り・学習から外す（テスト用の会話と同じ扱い）。
  * 2026-10-07 竹内さん「４スタッフ同士の会話外して良い」（AIX の判断のずれの調査で 469a614a の文がスタッフ同士＝「また井尻さんか！笑」等）。
- * ※ YUMA だけに許す試し（LLM のテストの歯止め）は YUMA_CONVERSATION_ID で別に見ているので、ここに足しても試しには使われない
+ * ※ LLM のテストの歯止めは TEST_ONLY_CONVERSATION_IDS（YUMA＋テスト専用の会話）で別に見ているので、ここに足しても試しには使われない
  */
 /**
  * お客様ではない会話の印（スタッフ同士・身内・業者・営業）。見張り・学習から外す（テスト用の会話と同じ扱い）。
@@ -29,8 +29,53 @@ export const INTERNAL_CONVERSATIONS: ReadonlyArray<{ id: string; kind: InternalC
 ];
 export const STAFF_INTERNAL_CONVERSATION_IDS: readonly string[] = INTERNAL_CONVERSATIONS.map((c) => c.id);
 
-/** テスト用の会話の id（学習・見張りから外す会話＝YUMA＋スタッフ同士の会話） */
-export const TEST_CONVERSATION_IDS: readonly string[] = [YUMA_CONVERSATION_ID, ...STAFF_INTERNAL_CONVERSATION_IDS];
+/**
+ * LINE につながっていないテスト専用の会話（YUMA2〜YUMA5）。
+ * 2026-10-09 竹内さん承認「YUMA の他に、LINE につながっていないテスト専用の会話を数本作り、担当ごとに別の会話で並べて回す」:
+ *   1巡＝試験121問を YUMA 1本で順番待ちして数時間かかっていた → 担当ごとに別の会話で並べる（scripts/lib/test-conv-lease.ts で占有）。
+ *   行は竹内さんが SQL で作る（conversations＋property_customers・id はここと同じ）。送信先にならない形:
+ *     line_user_id = "TEST-NOLINE-YUMAn"（LINE の ID の形でない＝line-target.checkSendTarget が invalid_target で止める・LINE の API も 400）
+ *     send_blocked_reason = "test_no_line"・auto_send_enabled = false（自動返信の cron が拾わない）
+ *   さらに送信の経路の歯止め（isNoLineTestConversation）で、宛先の形に関わらず送らない・要対応の登録／売上番長グループへの通知・自動の物件検索をしない。
+ *   学習・手本・見張り・ターゲット一覧・一覧の印からは TEST_CONVERSATION_IDS で外れる。LLM のテスト（deepseek-all／final-claude）は YUMA と同じく通す（TEST_ONLY_CONVERSATION_IDS）。
+ */
+export const NO_LINE_TEST_LINE_USER_ID_PREFIX = "TEST-NOLINE-";
+export type NoLineTestConversation = { id: string; name: string; propertyCustomerId: string; lineUserId: string };
+export const NO_LINE_TEST_CONVERSATIONS: ReadonlyArray<NoLineTestConversation> = [
+  { id: "d040f80a-4fae-4fd0-abca-66eb2630906f", name: "YUMA2", propertyCustomerId: "89c6c607-86f0-4ca9-a81a-3a57193fc5f6", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA2` },
+  { id: "f7deb105-f908-41ad-95e7-f13aafdfa032", name: "YUMA3", propertyCustomerId: "c4dc3bed-141f-447c-8712-b69e7eb11e7b", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA3` },
+  { id: "40f0db25-5fa9-4b96-bc19-3e1e5aba20c2", name: "YUMA4", propertyCustomerId: "f322abdd-dcc0-4ef2-b67b-bfdec1f8b3ad", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA4` },
+  { id: "a7ac4c90-26f7-4b8d-bd19-81d831fc75e0", name: "YUMA5", propertyCustomerId: "8ec2138a-e733-4fce-872a-1bfceac2eaaa", lineUserId: `${NO_LINE_TEST_LINE_USER_ID_PREFIX}YUMA5` },
+];
+export const NO_LINE_TEST_CONVERSATION_IDS: readonly string[] = NO_LINE_TEST_CONVERSATIONS.map((c) => c.id);
+const NO_LINE_SET: ReadonlySet<string> = new Set(NO_LINE_TEST_CONVERSATION_IDS);
+
+/** LINE につながっていないテスト専用の会話か（送信・要対応の通知・自動検索をしない） */
+export function isNoLineTestConversation(conversationId: string | null | undefined): boolean {
+  return !!conversationId && NO_LINE_SET.has(String(conversationId).trim());
+}
+/** 宛先がテスト専用の会話の印（TEST-NOLINE-…）か */
+export function isNoLineTestLineUserId(lineUserId: string | null | undefined): boolean {
+  return String(lineUserId ?? "").trim().startsWith(NO_LINE_TEST_LINE_USER_ID_PREFIX);
+}
+
+/** LLM のテストを回してよい会話（YUMA＋テスト専用の会話）。スタッフ同士の会話は入れない（試しには使わない） */
+export const TEST_ONLY_CONVERSATION_IDS: readonly string[] = [YUMA_CONVERSATION_ID, ...NO_LINE_TEST_CONVERSATION_IDS];
+const TEST_ONLY_SET: ReadonlySet<string> = new Set(TEST_ONLY_CONVERSATION_IDS);
+export function isTestOnlyConversation(conversationId: string | null | undefined): boolean {
+  return !!conversationId && TEST_ONLY_SET.has(String(conversationId).trim());
+}
+/** "YUMA2"・"yuma2"・id のどれでもテスト専用の会話（YUMA を含む）を引く。無ければ null */
+export function resolveTestOnlyConversation(nameOrId: string | null | undefined): { id: string; name: string } | null {
+  const s = String(nameOrId ?? "").trim();
+  if (!s) return null;
+  if (s === YUMA_CONVERSATION_ID || s.toUpperCase() === "YUMA") return { id: YUMA_CONVERSATION_ID, name: "YUMA" };
+  const c = NO_LINE_TEST_CONVERSATIONS.find((x) => x.id === s || x.name.toUpperCase() === s.toUpperCase());
+  return c ? { id: c.id, name: c.name } : null;
+}
+
+/** テスト用の会話の id（学習・見張りから外す会話＝YUMA＋テスト専用の会話＋スタッフ同士の会話） */
+export const TEST_CONVERSATION_IDS: readonly string[] = [YUMA_CONVERSATION_ID, ...NO_LINE_TEST_CONVERSATION_IDS, ...STAFF_INTERNAL_CONVERSATION_IDS];
 const TEST_SET: ReadonlySet<string> = new Set(TEST_CONVERSATION_IDS);
 
 /** テスト用の会話か（null・空は false） */

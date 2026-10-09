@@ -13,6 +13,7 @@ import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "
 import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
 // 2026-10-01: 物件確認した（御見積書同封）の締め（scripts/audit-check-result-lines.ts）
 import { appendCheckResultReceipt } from "@/app/lib/check-result-closing";
+import { customerAskedEstimate, decideGapHoldClose, readDecideGaps, type BrainGap } from "@/app/lib/customer-mindset";
 import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
 import { fixBulkCheckWording } from "@/app/lib/bulk-check-wording";
 import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
@@ -22,8 +23,8 @@ import { stripEstimateAmountBlock, sanitizeCoverLetter } from "@/app/lib/estimat
 // 2026-09-20 竹内「物件オススメ置き換える」: 画像つきの呼び出しを種類ごとに DeepSeek へ回す
 import { shouldRouteVisionAlt, callVisionAlt } from "@/app/lib/vision-alt-provider";
 import { normalizeBannedPhrasing, stripHeadGreeting } from "@/app/lib/banned-phrasing";
-import { sentByStaffToday, applyDailyGreeting, joinNameOnlyLine } from "@/app/lib/daily-greeting";
-import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
+import { sentByStaffToday, applyDailyGreeting, joinNameOnlyLine, staffTalkedToday, aixGreetingTalkOnly } from "@/app/lib/daily-greeting";
+import { staffSentTodayFromDb, staffTalkedTodayFromDb } from "@/app/lib/daily-greeting-server";
 // 2026-09-16 竹内（カイナ事例）: 申込のお部屋が決まっていない時の候補の号室
 import { parseRoomChoices, shouldAskRoomChoice, roomChoiceNote, stripUngroundedRoomNo } from "@/app/lib/room-choices";
 import { PHONE_FOLLOWUP_STAFF_EXAMPLES, maskNumbersNotInNotes } from "@/app/lib/phone-call";
@@ -35,7 +36,7 @@ import { loadViewingReports } from "@/app/lib/viewing-report-store";
 import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules, fetchPromptRulesSplit } from "@/app/lib/prompt-rules";
-import { isPlausiblePersonName } from "@/app/lib/validate-reply";
+import { isPlausiblePersonName, oneCharCallName } from "@/app/lib/validate-reply";
 import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 import { COST_BREAKDOWN_OCR_SYSTEM, COST_BREAKDOWN_STAFF_EXAMPLES, parseCostBreakdownJson, formatCostBreakdownFacts, checkAmountsAgainstBreakdown, type CostBreakdown } from "@/app/lib/cost-breakdown";
 import { stripReplyOnlyPhrases } from "@/app/lib/aix-send-phrasing";
@@ -67,7 +68,7 @@ import { extractPropertyLabels, confirmTopicForCheckPattern } from "@/app/lib/ac
 // 2026-09-27 竹内さん決定で上書き: AIX でも「お待たせ致しました」は使わない（許す一覧は空・出口は replaceWaitedOpening・手本は neutralizeWaitedInExample）
 import { isWaitedAllowed, buildWaitedNote, buildWaitedOpeningChoice, waitedSentRate, waitedUsedLastTime, replaceWaitedOpening, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
 // 2026-09-21 竹内「実際のスタッフが送るような文が生成されていない可能性があるってこと？」: 漢字/ひらがなの混ぜ方
-import { stripWaited } from "@/app/lib/greeting";
+import { stripWaited, dailyGreetingRequired } from "@/app/lib/greeting";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing } from "@/app/lib/recommend-closing";
 import { resolveRecommendCta, readCustomerReaction, removeRecommendClosing, buildFirstMessageNoClosingNote, buildFirstMessageCtaNote, setRecommendClosing, type RecommendCtaDecision } from "@/app/lib/recommend-cta";
@@ -125,8 +126,9 @@ import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, me
 import { joinAixJsonParts } from "@/app/lib/aix-json-parts";
 // 2026-10-06 ⑰: {"message"} の JSON が読めない時に生の出力を文にしない（物件ピックアップの下書きに "} が残り名前の行が消えた・十数か所の同じ読み取りを1つに）
 import { readAixMessageJson, stripJsonEdgeResidue } from "@/app/lib/aix-message-json";
-import { moveInApplyInviteLine, equipmentDefaultClose, aixTakeuchiFormOn } from "@/app/lib/aix-takeuchi-form";
-import { buildEstimateSecondNote, resolveEstimateClosing, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message"; // 2026-10-08 11巡目 竹内さんの送信の形
+import { moveInApplyInviteLine, equipmentDefaultClose, aixTakeuchiFormOn, aixTakeuchiPickupOn, takeuchiPickupSystem, takeuchiPickupConditionsRule } from "@/app/lib/aix-takeuchi-form";
+import { buildEstimateSecondNote, resolveEstimateClosing, ensureEstimateClosing, estimateClosingByAppealOn, type EstimateClosing } from "@/app/lib/estimate-second-message";
+import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server"; // 2026-10-08 11巡目 竹内さんの送信の形
 // 2026-10-06 ⑰: スタッフが冒頭で2回以上呼んだ名前は形を問わず使う（名前の欄の「お客様」をなくす）
 import { staffCalledName } from "@/app/lib/aix-staff-called-name";
 // 2026-10-06 ⑫: 呼び名の固定（会話に出ない別の名前で呼ばない）
@@ -294,6 +296,9 @@ function buildFacilityLines(f: PropFacilityData): string[] {
 const NIGHT_OUTBOUND_GAP_MIN = 90;
 function isNightOutbound(jstHour: number, minutesSinceLastCustomer: number | null): boolean {
   const night = jstHour >= 21 || jstHour < 5;
+  // 2026-10-09 竹内さん「夜分遅くに失礼致しますは 21時以降にこちらから LINE を送る時（AIX 等）だけ。お客様の発言から90分の線は使わず、送る時刻が JST 21時以降かで決める」
+  //   戻す AIX_NIGHT_BY_TIME=off（旧＝お客様の最後の発言から90分以上の時だけ）
+  if ((process.env.AIX_NIGHT_BY_TIME ?? "").toLowerCase() !== "off") return night;
   // お客様の発言の時刻が分からない時は返信扱い（夜分にしない）
   return night && minutesSinceLastCustomer !== null && minutesSinceLastCustomer >= NIGHT_OUTBOUND_GAP_MIN;
 }
@@ -351,7 +356,9 @@ function extractPreferredName(
     .replace(/^(もし)?(よろしければ|宜しければ|よければ|できれば|出来れば|ぜひ|是非)/, "")
     .replace(/さん$/, "")
     .trim();
-  // 1文字のみは頭文字の可能性があるのでスキップ（英字2文字以上はYUMAなど実名として使う）
+  // 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」: 1文字の名前（「あ」「R」）は呼ぶ（記号・絵文字だけは呼ばない＝oneCharCallName）
+  { const one = oneCharCallName(fallbackName); if (one) return one; }
+  // 1文字のみは頭文字の可能性があるのでスキップ（英字2文字以上はYUMAなど実名として使う）。ONE_CHAR_CALL_NAME=off の時の旧の線
   if (fallbackName.length <= 1) return "";
   // 絵文字・記号のみのLINE表示名（「⭐️」「♡」等）を実名として使わない（「⭐さん」生成バグの根本原因）。
   // generate-reply と同じ isPlausiblePersonName ゲートに一元化 → 不合格なら "" を返し「お客様」呼びにフォールバック
@@ -1622,9 +1629,21 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // 2026-09-22 竹内「今日お客さんとやりとりしているのに AIX で出てしまう。今日初めてじゃないときはお世話になっておりますはつかわない」:
     //   画面から渡された一覧だけでは、1分前に手打ちで送った通がまだ入っていないことがある（08:35 手打ち → 08:36 AIX で付いた実例）。
     //   一覧（sentByStaffToday・画面と同じ関数）と DB の両方で見て、どちらかで送っていれば「今日すでに送った」
-    const staffMessagedToday = (!!lastStaffMsg && !!lastStaffMsg.rawCreatedAt && toJSTDate(lastStaffMsg.rawCreatedAt) === todayJST)
-      || sentByStaffToday(recentMsgArray)
-      || await staffSentTodayFromDb(conversationId);
+    // 2026-10-08 竹内さんの決定8: 返信と同じ数え方（会話文だけ・🌟カード・【】見積の本体・画像は数えない）。戻す AIX_GREETING_TALK_ONLY=off（daily-greeting.aixGreetingTalkOnly）
+    const staffMessagedToday = aixGreetingTalkOnly()
+      ? (staffTalkedToday((Array.isArray(recent_messages) ? recent_messages : []) as Array<{ sender?: string; text?: string | null; rawCreatedAt?: string | null; createdAt?: string | null }>)
+        || await staffTalkedTodayFromDb(conversationId))
+      : (!!lastStaffMsg && !!lastStaffMsg.rawCreatedAt && toJSTDate(lastStaffMsg.rawCreatedAt) === todayJST)
+        || sentByStaffToday(recentMsgArray)
+        || await staffSentTodayFromDb(conversationId);
+    // 2026-10-08 竹内さん「今日初めての連絡なら『お世話になっております』を付ける。2回目以降なら入れない」:
+    //   仕上げ（applyDailyGreeting）の足す・外すは「今日の会話文」（資料文・画像は数えない＝返信の computeAlreadyGreetedToday・2通目と同じ線）で決め、
+    //   足すのは全てのお客様向けの AIX（旧は 物件送付・オススメ・物件確認した だけ）。戻す: GREETING_DAILY_REQUIRED=off
+    const aixDailyRequired = dailyGreetingRequired();
+    const aixTalkedToday = aixDailyRequired
+      ? (staffTalkedToday((Array.isArray(recent_messages) ? recent_messages : []) as Array<{ sender?: string; text?: string | null; rawCreatedAt?: string | null; createdAt?: string | null }>)
+        || await staffTalkedTodayFromDb(conversationId))
+      : staffMessagedToday;
     // 真の初回判定: スタッフ返信（AIX送信含む）が一度もない = 初めてのスタッフ返信
     const isFirstEverReply = !(recentMsgArray as Array<{ sender?: string; text?: string }>).some(
       m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
@@ -1762,6 +1781,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
       customer_emotion?: string | null;
       condition_change_type?: string | null;
       last_aix_history?: string | null;
+      // 2026-10-09 ブレインが読んだお客様の状態（customer-mindset）。決め手の残り（decideGap）を確認の結果の締めに使う
+      customer_mindset?: { decideGap?: BrainGap | null } | null;
     };
     const { brainContext, brainMeta: aixBrainMeta, propertyCustomerId: resolvedPCID } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null; propertyCustomerId: string | null }> => {
       if (!conversationId) return { brainContext: "", brainMeta: null, propertyCustomerId: null };
@@ -2080,9 +2101,12 @@ async function handleAction(request: NextRequest): Promise<Response> {
         const dr = dedupeRepeatedEmoji(sendCleaned);
         if (dr.changes.length) { console.log(JSON.stringify({ tag: "aix:emoji-repeat-fixed", action: currentAction, conversationId, changes: dr.changes })); sendCleaned = dr.text; }
       }
-      const addGreetingHere = (currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
-        && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company";
-      const daily =applyDailyGreeting(sendCleaned, { staffSentToday: staffMessagedToday, greetingPhrase: addGreetingHere ? greetingPhrase : "", name: familyName ? name : "", joinNameLine: aixTakeuchiFormOn() });
+      const addGreetingHere = aixDailyRequired
+        || ((currentAction === "property_send" || currentAction === "property_recommendation" || currentAction === "property_check_result")
+          && check_pattern !== "mgmt_proxy" && check_pattern !== "mgmt_company");
+      // 必ず付ける形（aixDailyRequired）では今日の会話文で決め、挨拶は「お世話になっております」（初回は「ご連絡頂きありがとうございます」・夜にこちらから届ける連絡は夜分の文＝buildGreeting のまま）
+      const dailyPhrase = aixDailyRequired && !aixTalkedToday ? (greetingPhrase || "お世話になっております！！") : greetingPhrase;
+      const daily =applyDailyGreeting(sendCleaned, { staffSentToday: aixTalkedToday, greetingPhrase: addGreetingHere ? dailyPhrase : "", name: familyName ? name : "", joinNameLine: aixTakeuchiFormOn() });
       if (daily.action !== "none") {
         console.log(JSON.stringify({ tag: "aix:daily-greeting", action: currentAction, conversationId, result: daily.action, staffMessagedToday }));
         sendCleaned = daily.text;
@@ -2208,7 +2232,22 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
     // 2026-10-06 竹内（R 事例・物件の特定）: 確認した（条件・交渉）で会話から決めた物件（confirm-target-property）。入力の物件名が無い時の「使うと決まった物件名」
     let confirmTargetName: string | null = null;
-    const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
+    // 2026-10-09 竹内さん（確定）: AIX【物件確認した】【確認した】の結果が問題無しの時、お客様が前に「〇〇なら決める」と言っていた時と
+    //   ブレインが (a)（確かめれば解ける）の残り1点と読んだ時だけ、同じ文で「お気に召されましたらお申込みしお部屋抑えさせて頂きます！！」につなぐ
+    //   （竹内さんの実送信 120日: 問題無し 26通 → 同じ文で申込・抑える提案 4通・申込 3/4／締めなし 21通・申込 42%）。足すだけ・既定 off（DECIDE_GAP=on と DECIDE_GAP_HOLD_CLOSE=on で入る）
+    const holdCloseOf = (text: string): string => {
+      if (currentAction !== "property_check_result" && currentAction !== "acknowledge_check") return text;
+      try {
+        const rm = (Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null; rawCreatedAt?: string | null; createdAt?: string | null; created_at?: string | null }> : [])
+          .map((m) => ({ sender: String(m?.sender ?? ""), text: m?.text ?? "", createdAt: String(m?.rawCreatedAt ?? m?.created_at ?? m?.createdAt ?? new Date().toISOString()) }));
+        const gaps = readDecideGaps(rm, { nowMs: Date.now() });
+        const r = decideGapHoldClose({ text, aixType: currentAction, checkPattern: typeof check_pattern === "string" ? check_pattern : null, gaps, brainGap: aixBrainMeta?.customer_mindset?.decideGap ?? null });
+        if (r.added) console.log(JSON.stringify({ tag: "aix:decide-gap-hold-close", conversationId, action: currentAction, checkPattern: check_pattern ?? null, reason: r.reason }));
+        return r.text;
+      } catch (e) { console.warn("[aix/action] decide-gap-hold-close skipped:", e instanceof Error ? e.message : String(e)); return text; }
+    };
+    const finalizeResponse = (text0: string, extra?: Record<string, unknown>) => {
+      const text = holdCloseOf(text0);
       const { message: finalizedMessage, notice } = finalize(text);
       // 2026-10-02 竹内さん「分割もクレジットカードの手数料いれる」: AIX の文は最終チェック（V16b）を通らない → 手数料の一文を足す（足すだけ・company-fact-guard）
       const feeFix = ensureCardFeeLine(finalizedMessage, [latestCustomerMsg]);
@@ -3199,7 +3238,15 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
             }
           } catch { /* 読めない時は内覧の前（ご査収に倒れる側） */ }
           const reaction = readCustomerReaction(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null }> : []);
-          const dec = resolveEstimateClosing({ viewed, reactionKind: reaction?.kind ?? null });
+          // 2026-10-08 竹内「刺さる条件なら内覧または申込誘導・空室なら内覧誘導」: 見積書のお部屋の採点（estimate-appeal-server）
+          let ap: { appeal: "strong" | "weak" | null; notViewable: boolean; found: number } = { appeal: null, notViewable: false, found: 0 };
+          if (estimateClosingByAppealOn()) {
+            try { ap = await loadEstimateAppeal(supabase, conversationId, coverProps, { notViewable: false }); } catch { /* 読めない時は採点なし（反応で決める） */ }
+          }
+          // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（customer-mindset.customerAskedEstimate・既定 off・ESTIMATE_ASKED_APPEAL=on で入る）
+          const customerAsked = customerAskedEstimate(Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string | null; text?: string | null; created_at?: string | null }> : []);
+          const dec = resolveEstimateClosing({ viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked });
+          console.log(JSON.stringify({ tag: "aix:cover-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));
           coverClosing = dec.closing;
           coverShapeNote = buildEstimateSecondNote({ name: name.replace(/さん$/, ""), properties: coverProps, closing: dec.closing, staffSentToday: staffMessagedToday });
           console.log(JSON.stringify({ tag: "aix:cover-takeuchi-form", closing: dec.closing, reason: dec.reason, viewed, props: coverProps.length }));
@@ -3370,7 +3417,9 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
       // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
       // 2026-09-27: 送る物件の所在地（区）も渡す（YUMA「大阪市北区・福島区から」で西区・大正区の20件を送った）
       const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote, searchedConditionsNote, bundleFit?.note ?? ""].filter(Boolean).join("\n");
-      const conditionsRule = conditionsInfo
+      const conditionsRule = conditionsInfo && aixTakeuchiPickupOn()
+        ? takeuchiPickupConditionsRule()
+        : conditionsInfo
         ? `・【最重要】「ご希望のご条件に合ったお部屋」「ご希望の条件に合うお部屋」などの抽象的な表現は絶対に使わない。お客様の具体的な希望条件を文中に自然に織り込むこと
   条件の入れ方（厳守）：
   ・エリアは必ず入れる
@@ -3510,7 +3559,7 @@ ${aixPropertySendRules}
 【構成（この順・空行で区切る）】
 ①挨拶行（動的に渡す実値をそのまま。挨拶行なしの指示ならお客様名の行から）
 ①'【会話の糸口】に＜お客様の期限・困りごと＞がある時だけ:「無事ご入居間に合いますようにサポートさせて頂きます！！」（スタッフ実送信の文そのまま。先に受け止めてから物件の行へ）
-②ピックアップ行（1行）:「〇〇（エリア）から…お部屋ピックアップさせて頂きました！！」（物件と一緒に送る文なので必ず過去形「しました」。直前のこちらの「お送りさせていただきます」を写さない）。エリア・特徴の呼び方は会話でスタッフ・お客様が使った言葉をそのまま（例:「広めのお部屋」「大きめのお部屋」「審査通過しやすい」）。希望条件を全部並べない（入れるのは最大2つ）
+②ピックアップ行（1行）:「〇〇（エリア）から…お部屋ピックアップさせて頂きました！！」（物件と一緒に送る文なので必ず過去形「しました」。直前のこちらの「お送りさせていただきます」を写さない）。エリア・特徴の呼び方は会話でスタッフ・お客様が使った言葉をそのまま（例:「広めのお部屋」「大きめのお部屋」「審査通過しやすい」）。希望条件を全部並べない（入れるのは最大2つ）${aixTakeuchiPickupOn() ? "。竹内さんの送信の多数派の形:「〇〇周辺全域から〇〇さんにオススメできる（条件）のお部屋ピックアップさせて頂きました😊！！」（条件は家賃・間取り・築年・駅徒歩・設備を合わせて2つまで。エリアだけでもよい）" : ""}
 ③会話に合わせた1〜2文:【会話の糸口（候補）】にある事柄だけから、今のお客様に一番効く物を選んで書く（例:「お気に召されたお部屋代理契約可能か全て交渉させて頂きます！！」「無事ご入居間に合いますようにサポートさせて頂きます！！」「ご希望の家賃ですと募集ございませんでしたので条件広げてお送りしております！！」「こちら2部屋となります！」）。候補が無ければ③は書かない
 ④退去予定の物件があれば「◎〇〇\n[退去日]退去予定となりますので[退去日の翌日]以降ご内覧可能です！」（渡された情報だけ）
 ⑤最終行「お手隙の際にご査収ください😌！！」
@@ -3885,7 +3934,13 @@ ${aixPropertySendRules}
       //   経路固有文＋☆実例＋action 別ルールは経路固有ブロック（5m）、挨拶・条件ルール・お客様名・ブレインは動的（cache なし）に分ける。
       //   DB ルールは上の Promise.all の sendRules（fetchPromptRulesSplit・会話を合わせると同じ物）をそのまま使う
       //   （2026-09-17 検査: 以前はここで同じ引数の fetchPromptRulesSplit をもう1回 await していた＝action 別クエリが1回多く直列で 100〜200ms 損）
-      const sendStaticSystem = sendSystem + areaWordingNote + skipViewingInviteNote;
+      // 2026-10-08 竹内「（物件ピックアップの文は）竹内が送っているような形で」: ②の型・条件の数（2つまで）・出力例を竹内さんの送信の形に（aix-takeuchi-form.takeuchiPickupSystem）。
+      //   エリアの後ろの「周辺全域から」は竹内さんの形（88通中52・10/01 竹内「全域にする」）なので、その時はエリア表現ルールの「全域」の禁止を外す。戻す AIX_TAKEUCHI_FORM=off
+      const pickupTakeuchi = aixTakeuchiPickupOn();
+      const areaWordingNoteForSend = pickupTakeuchi
+        ? `\n\n【エリア表現ルール（厳守・過去実例より優先）】エリア名の呼び方は、直近の会話履歴・希望条件データでお客様やスタッフが実際に使った表現をそのまま使うこと（例：スタッフが「日本橋周辺エリア」と書いていたら「日本橋周辺エリア」のまま）。エリア名の後ろの「周辺全域から」は竹内さんの送信の形なので付けてよい。それ以外の修飾語（「一帯」等）は付け足さない。`
+        : areaWordingNote;
+      const sendStaticSystem = (pickupTakeuchi ? takeuchiPickupSystem(sendSystem) : sendSystem) + areaWordingNoteForSend + skipViewingInviteNote;
       // キャッシュ対象の sendSystem からプレースホルダ化した動的値をここで実値として渡す
       // （[お客様への挨拶] / ①[挨拶行] / ②[条件ルール] / [新着件数] の実体）
       const sendContextBlock = [
@@ -4522,9 +4577,10 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
 お客様が申込フォームを記入・返送した後の会話履歴を読み取り、お申込みに必要な書類のうち「まだ届いていないもの」だけを特定して、追加提出をお願いするLINEメッセージを1つ作成してください。
 
 【前提知識 — お申込みに必要なもの（優先度順）】
-1. 本人確認書類 → 「運転免許証」または「マイナンバーカード」のどちらか一方（この2種類のみ・他の書類は不可。「等」を付けて曖昧にしない）→ 選んだ書類の表面・裏面の2枚の写真が必須
-2. 収入証明書（直近の給与明細・源泉徴収票等）
-3. 申込フォームの未記入・不完全項目の追記
+（2026-10-08 竹内さん・fact_application_documents: お申込みに必要なのは「申込フォーマット」と「本人確認書類の裏表の写真」の2つだけ）
+1. 本人確認書類 → 「運転免許証」または「マイナンバーカード」のどちらか一方（この2種類のみ・他の書類は不可。「等」を付けて曖昧にしない）→ 選んだ書類の表面・裏面の2枚の写真が必須。マイナンバーカードの時は「※マイナンバーカードの場合は、番号部分を隠して（マスキングして）お撮り頂けますと幸いです」を※で添える
+2. 申込フォーマットの未記入・不完全項目の追記
+・収入証明書（給与明細・源泉徴収票）・保険証・戸籍・顔写真・同居人の写真は申込時に不要。依頼リストに絶対に含めない（保証会社・管理会社から求められた時だけ後から）
 
 【保険証について — 重要】
 ・保険証は申込時には一切不要。依頼リストに絶対に含めない
@@ -4548,13 +4604,11 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
 ・判断基準：
   - 0枚 → 本人確認書類が未着 → 「本人確認書類（表面・裏面）」を依頼
   - 1枚 → 表面のみ届いている可能性が高い → 「本人確認書類（裏面）」を依頼
-  - 2枚以上 → 本人確認書類（表・裏）は揃っている可能性が高い → 本人確認書類は依頼しない。3枚目以降は収入証明書の可能性として手順3で考慮する
+  - 2枚以上 → 本人確認書類（表・裏）は揃っている可能性が高い → 本人確認書類は依頼しない
 
-手順3. 収入証明書の送付状況を確認する
-・お客様の発言に「免許証」「マイナンバー」「給与明細」「源泉徴収」等の言及があれば、その文脈で判断する
-・言及も該当画像もなければ未着と判断して依頼リストに含める
-・画像の枚数が本人確認2枚を超えている場合、超過分は収入証明書が届いている可能性があるため「揃っている」側に倒す（届いている書類を再依頼するのが最悪のミス）
-・保険証は申込時不要のため、お客様が保険証に言及していてもこの手順の判断対象・依頼対象にしない
+手順3. 本人確認書類の言及を確認する
+・お客様の発言に「免許証」「マイナンバー」等の言及があれば、その文脈で判断する
+・収入証明書・保険証は申込時不要のため、お客様が言及していてもこの手順の判断対象・依頼対象にしない
 
 手順4. 申込フォームの未記入項目を確認する
 ・お客様が返送したフォーム内で「〇〇」「-」「未記入」「空欄」のままの項目、値が入っていない項目を抽出する
@@ -4571,13 +4625,12 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
 　例：
 　・本人確認書類（裏面）
 　  ※運転免許証またはマイナンバーカードの裏面の写真をお送りください
-　・収入証明書
-　  ※直近の給与明細または源泉徴収票をお送りください
+　・申込フォーマットの以下項目のご記入：（項目名）
 ③完了への誘導（1行）：「お送りいただき次第お申込み完了させて頂きます😊！！」
 
 【絶対禁止】
 ・既に届いている書類を依頼リストに入れること（最悪のミス）
-・保険証を依頼リストに入れること（申込時は不要）
+・保険証・収入証明書を依頼リストに入れること（申込時は不要）
 ・本人確認書類の説明で「等」を使うこと（運転免許証・マイナンバーカードの2択のみを明記する）
 ・催促がましい表現・急かす表現（「早めに」「至急」等）
 ・書類リスト以外の話題（物件アピール・審査説明・初期費用等）
@@ -4856,6 +4909,18 @@ ${appealFocus}`;
       } // end else (non-confirm)
       // 2026-09-16 竹内（💜 さん事例）: 申込の情報を受け取った時の「はい😊！！」を落とし、営業時間外なら「明日確認してご連絡」を入れる
       message_text = applyReplyFinish(message_text);
+      // 2026-10-08 竹内さん「基本 A で、期間が長すぎたら B」: お金の用意できる時期が分かっていて A（今申し込んで抑える）の時だけ、
+      //   ご入居日とお振込の時期の一文（payment-timing の型・竹内さんの実送信の語）を最後に添える。書類依頼には付けない・既にお振込に触れていれば付けない。PAYMENT_TIMING=off
+      if (appSubMode !== "docs_request" && typeof conversationId === "string" && conversationId && !/お振込/.test(message_text ?? "")) {
+        try {
+          const { paymentPlanFor } = await import("@/app/lib/customer-memo-server");
+          const plan = await Promise.race([paymentPlanFor(conversationId, typeof customer_name === "string" ? customer_name : null), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
+          if (plan?.decision === "A") {
+            message_text = `${String(message_text ?? "").trimEnd()}\n${plan.core}`;
+            console.log(JSON.stringify({ tag: "aix:apply-payment-timing", conversationId, decision: plan.decision }));
+          }
+        } catch (e) { console.warn("[aix] payment-timing skipped:", e instanceof Error ? e.message : String(e)); }
+      }
 
     // ── ✅ 物件確認した ──────────────────────────────────────────────
     } else if (action === "property_check_result" && check_pattern === "move_in_date") {
@@ -7000,11 +7065,12 @@ ${SMORA_COMMON_RULES}
 ③ 必要書類・情報を「・」の箇条書きで列挙する
   ※補足情報に「まだ頂けていない書類」の指定がある場合は、それだけを列挙する（最優先・勝手に追加しない）
   ※補足情報がない場合は以下の一般的な申込書類を列挙する:
-  ・身分証明書（免許証・マイナンバーカード等）
-  ・収入証明書（源泉徴収票等）
-  ・緊急連絡先のご情報（氏名・続柄・携帯番号）
+  ・お申込みフォーマットのご入力
+  ・本人確認書類（運転免許証またはマイナンバーカード）の裏表のお写真
+  　※マイナンバーカードの場合は、番号部分を隠して（マスキングして）お撮り頂けますと幸いです
+  （2026-10-08 竹内さん・fact_application_documents: 申込時に必要なのはこの2つだけ。収入証明書・保険証等はこちらから並べない）
   ※連帯保証人を立てるお申込みと会話・補足から読み取れる場合のみ「・連帯保証人の印鑑証明書」を追加する
-④ 締め: 「上記お送り頂き次第お申込み完了致します！！」（書類が1点だけの場合はその書類名を入れる。例:「収入証明書頂き次第お申込み完了致します！！」）
+④ 締め: 「上記お送り頂き次第お申込み完了致します！！」（書類が1点だけの場合はその書類名を入れる。例:「本人確認書類のお写真頂き次第お申込み完了致します！！」）
 ⑤ 最終行: 「どうぞよろしくお願いいたします！！」
 
 【禁止事項】
@@ -7553,7 +7619,7 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
     }
 
     // ⑦修正: 共通後処理（号室の先頭ゼロ除去 + 内部メモ分離）を finalize() に統一
-    const { message: cleanedMessage, notice } = finalize(message_text);
+    const { message: cleanedMessage, notice } = finalize(holdCloseOf(message_text));
 
     // aix_generate_log 記録（メインフロー: finalizeResponse を使わない全アクションパス）
     // C-2: fire-and-forget（.then）だとレスポンス返却後にサーバレス実行が凍結されて

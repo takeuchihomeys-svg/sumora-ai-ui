@@ -7,10 +7,8 @@
 // LLM なし。送信・AIX・会話の表には一切書かない。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@supabase/supabase-js";
-import { staffWriterOfBurst, staffWriterSplitEnabled } from "./staff-writer";
-import { staffWindowOf, judgeTurn, cleanDraft, pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
-import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
-import { sceneKeyOf } from "./line-watch-turn";
+import { pickJudgeDraft, JUDGE_VERSION, type WindowMsg, type WindowPress, type Verdict, type VerdictDetail } from "./line-watch-judge";
+import { evalWatchTurn } from "./line-watch-turn-eval";
 import {
   sceneStats, finalCheckStats, lateStats, screeningCalendarDiff, reviewStats, buildLineWatchDaily, dailyLines, jstDayStartMs, jstYmd,
   type StatTurn, type OurViewing, type ScreeningTask, type C7Finding,
@@ -117,40 +115,9 @@ export async function evaluateLineWatchTurns(sb: SupabaseClient, opt: EvalOption
   const orphanIds: number[] = [];
   for (const t of turns) {
     if (!existing.has(t.conversation_id)) { orphanIds.push(t.id); continue; }
-    const w = staffWindowOf({ customerTurnAt: t.customer_turn_at, msgs: mBy.get(t.conversation_id) ?? [], presses: pBy.get(t.conversation_id) ?? [], nowMs });
-    // 2026-10-07 uran.: お礼・了承の番で下書きが読むべき範囲の外の行為を書いたか（下書きの欄が __SHOWN__ の時は最初の下書き）
-    const upto = (mBy.get(t.conversation_id) ?? []).filter((m) => P(m.created_at) <= P(w.customerLastAt));
-    // 2026-10-07: 下書きの欄が __SHOWN__（画面が表示した印）の番は draft_first で比べる（旧は返信の番の 39% を「印だけ」の na にしていた）
+    // 2026-10-08: 番1行の判定は line-watch-turn-eval.evalWatchTurn（過去の番の埋め戻しと同じ関数・中身はここから移した物）
+    const { judgement: j, scene, window: w, patch } = evalWatchTurn(t, { msgs: mBy.get(t.conversation_id) ?? [], presses: pBy.get(t.conversation_id) ?? [], decisions: dBy.get(t.conversation_id) ?? [], nowMs, hasVersionCol });
     const pick = pickJudgeDraft({ ...t, customer_last_at: w.customerLastAt });
-    // 読むべき範囲の外の行為は前と同じく draft_first まで見る（uran. の見張り・スタッフが返さなかった番の数え方は変えない）
-    const topicOut = outOfTopicActs(cleanDraft(t.draft_last).text ?? cleanDraft(t.draft_first).text, resolveAckTopicScope(upto));
-    // 2026-10-08 返事を書いた人（直した所の表記→無ければ送った文全体の「確か」だけ）。STAFF_WRITER_SPLIT=off で渡さない
-    const staffWriter = staffWriterSplitEnabled() ? staffWriterOfBurst(cleanDraft(pick.draft).text, w.texts.filter((x) => x.burst).map((x) => x.text).join("\n")) : null;
-    const j = judgeTurn({
-      draft: pick.draft, sentinel: t.draft_sentinel, brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode,
-      convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w, outOfTopicActs: topicOut, staffWriter,
-    });
-    if (topicOut.length && !j.detail.out_of_topic_acts) j.detail.out_of_topic_acts = topicOut;
-    j.detail.draft_src = pick.src;
-    const until = P(w.staffFirstAt ?? w.endAt);
-    const dec = (dBy.get(t.conversation_id) ?? []).filter((d) => {
-      const inTurn = d.analyzed_msg_ts ? P(d.analyzed_msg_ts) >= P(t.customer_turn_at) - 1000 && P(d.analyzed_msg_ts) <= P(w.customerLastAt) + 1000 : P(d.created_at) >= P(t.customer_turn_at);
-      return inTurn && P(d.created_at) <= until;
-    }).pop() ?? null;
-    const scene = sceneKeyOf({ brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode, tpoLabel: t.tpo_label, intent: dec?.intent ?? null, convStatus: t.conv_status });
-    const draftAt = t.draft_last_at ?? t.draft_first_at;
-    const patch: Record<string, unknown> = {
-      staff_first_at: w.staffFirstAt,
-      staff_texts: w.texts.map((x) => ({ at: x.at, burst: x.burst, text: x.text.slice(0, 2000) })),
-      staff_aix: w.presses.map((p) => ({ aix_type: p.aix_type, check_pattern: p.check_pattern, at: p.at, burst: p.burst })),
-      decision_id: dec?.id ?? null,
-      verdict: j.verdict,
-      verdict_detail: j.detail,
-      scene_key: scene.key,
-      draft_ready_before_staff: draftAt && w.staffFirstAt ? P(draftAt) <= P(w.staffFirstAt) : null,
-      ...(hasVersionCol ? { judge_version: JUDGE_VERSION } : {}),
-      evaluated_at: iso(nowMs),
-    };
     updates.push({ id: t.id, patch });
     if (j.verdict) { res.judged++; res.verdicts[j.verdict] = (res.verdicts[j.verdict] ?? 0) + 1; } else res.pending++;
     res.reasons[j.detail.reason] = (res.reasons[j.detail.reason] ?? 0) + 1;

@@ -1,6 +1,6 @@
 // 会社として答えが決まっている事実を、聞かれた時だけ渡す関数のテスト（自己完結ハーネス）
 // 実行: npx tsx app/lib/__tests__/company-facts.test.ts
-import { buildCompanyFactsNote, matchCompanyFacts, COMPANY_FACTS } from "../company-facts";
+import { buildCompanyFactsNote, matchCompanyFacts, COMPANY_FACTS, brandCostOverrideNote } from "../company-facts";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }
@@ -77,7 +77,7 @@ describe("物件によって変わる事を事実にしない", () => {
     for (const f of COMPANY_FACTS) falsy(/(エポス|全保連|GTN|ジャックス|オリコ|日本セーフティ|LICC|独立系|信販系)/.test(f.fact), f.id);
   });
   it("金額を持たない（仲介手数料はブランドで違うので入れない。手数料率3.24%は全物件共通なので可）", () => {
-    for (const f of COMPANY_FACTS) falsy(/[0-9０-９][0-9０-９,，]{2,}\s*円|仲介手数料.{0,6}(無料|0円)/.test(f.fact), `${f.id}: ${f.fact}`);
+    for (const f of COMPANY_FACTS.filter((x) => !x.brand)) falsy(/[0-9０-９][0-9０-９,，]{2,}\s*円|仲介手数料.{0,6}(無料|0円)/.test(f.fact), `${f.id}: ${f.fact}`);   // 10/08 Q11: ブランド別の事実（brand 付き）はそのブランドの会話にだけ渡るので金額を持ってよい
   });
   it("物件名・号室を持たない", () => {
     for (const f of COMPANY_FACTS) falsy(/\d{3,4}号室|[ァ-ヶー]{5,}\s*\d/.test(f.fact), f.id);
@@ -262,6 +262,28 @@ describe("8巡目 車で内覧・AD の出ない会社の物件", () => {
   it("viewing_duration に2件目への移動", () => {
     const f = matchCompanyFacts("内覧時間は大体どのくらいになりますでしょうか？").find((x) => x.id === "viewing_duration");
     truthy(f && /移動/.test(f.fact));
+  });
+});
+
+describe("10/08 本質の実装: 会社の名前・所在地／ブランド別の割引（Q8・Q11・Q-B・Q-C）", () => {
+  it("#64 会社名を聞かれた → company_profile", () => truthy(ids("会社名を教えてもらえますか？").includes("company_profile")));
+  it("#65 御社の住所 → company_profile（蓮産業・瓦町・本町）", () => {
+    const f = matchCompanyFacts("御社の住所ってどこですか？").find((x) => x.id === "company_profile");
+    truthy(f && /蓮産業株式会社/.test(f.fact) && /瓦町3-4-10/.test(f.fact) && /本町駅/.test(f.fact));
+  });
+  it("管理会社の住所は渡さない", () => falsy(ids("管理会社の住所ってどこですか？").includes("company_profile")));
+  it("スモラの会話×TikTok の物件の費用 → スモラの事実", () => truthy(matchCompanyFacts("TikTokの物件っていくらで入れますか？", { account: "sumora" }).some((f) => f.id === "max_discount_sumora")));
+  it("イエヤスの会話×同じ問い → イエヤス・ギガの事実（2,980円を渡さない）", () => {
+    const hit = matchCompanyFacts("TikTokの物件っていくらで入れますか？", { account: "ieyasu" });
+    truthy(hit.some((f) => f.id === "max_discount_ieyasu_giga")); falsy(hit.some((f) => f.id === "max_discount_sumora"));
+  });
+  it("アカウント不明はブランド別の事実を渡さない", () => falsy(matchCompanyFacts("前家賃だけで入れますか？").some((f) => !!f.brand)));
+  it("イエヤス・ギガの事実は最大額を言い切らない", () => {
+    const f = COMPANY_FACTS.find((x) => x.id === "max_discount_ieyasu_giga")!;
+    truthy(/最大額の決まりは無い/.test(f.fact) && /使わない/.test(f.fact));
+  });
+  it("Q-C: イエヤス・ギガの会話だけスモラの案内を打ち消す1行", () => {
+    truthy(brandCostOverrideNote("giga", {}).includes("使わない")); eq(brandCostOverrideNote("sumora", {}), ""); eq(brandCostOverrideNote(null, {}), "");
   });
 });
 

@@ -26,6 +26,8 @@ export type RequestItem = {
   saidAt: string;
   /** 依頼・質問・懸念 */
   kind: "request" | "question" | "concern";
+  /** 先の時期の相談（「来年あたりにその際再度相談させてもらってもいいですか？」）＝会話画面の帯には出すが、一覧の「確認事項 未対応」の数には入れない */
+  deferred?: boolean;
 };
 export type LedgerItem = RequestItem & { status: RequestStatus; doneAt?: string | null; doneBy?: string | null };
 export type LedgerMsg = { sender: string; text: string | null | undefined; createdAt: string; isAix?: boolean | null };
@@ -74,6 +76,13 @@ export function routeOf(topic: RequestTopic): RequestRoute {
   }
 }
 
+/**
+ * 先の時期の相談（2026-10-08 竹内さん⑤「来年あたりにまた相談 等は確認事項 未対応のバッジの数に入れない（会話画面の帯だけ）」）。
+ *   実物 7beca4f5 10/05「来年あたりを一旦考えていますので、その際再度相談させてもらってもいいですか？😭」
+ */
+//   「改めて見積書お願いします」「再度お願いします」は今の依頼＝当てない（先の時期の語＋相談・連絡の形だけ）
+export const DEFERRED_RE = /(?:来年|再来年|来月|再来月|年明け|落ち着い(?:たら|て)|時期が(?:来|近づ)|その際|その時|またの機会)[^。\n]{0,24}(?:相談|連絡|お声がけ|探し(?:て|始め))/;
+
 /** 束の文から依頼・質問・懸念を1つずつ（同じ種類が同じ束に2つあれば2行・ただし同じ言葉の重複は1つ）。申込の書類・条件のフォームは読まない */
 export function splitRequests(bundle: ReadonlyArray<string>, saidAt: string): RequestItem[] {
   const out: RequestItem[] = [];
@@ -94,7 +103,7 @@ export function splitRequests(bundle: ReadonlyArray<string>, saidAt: string): Re
       if (topic === "other" && !/[？?]|か[。！!]*$|教えて|おしえて|知りたい/.test(s)) continue;
       const quote = s.slice(0, 60);
       if (out.some((x) => x.quote === quote)) continue;
-      out.push({ quote, topic, route: routeOf(topic), saidAt, kind: isConcern ? "concern" : /[？?]|か(?:ね|な)?[。！!〜…\s]*$/.test(s) ? "question" : "request" });
+      out.push({ quote, topic, route: routeOf(topic), saidAt, kind: isConcern ? "concern" : /[？?]|か(?:ね|な)?[。！!〜…\s]*$/.test(s) ? "question" : "request", ...(DEFERRED_RE.test(s) ? { deferred: true } : {}) });
     }
   }
   if (brought > 0 && !out.some((x) => x.topic === "vacancy" || x.topic === "cost")) {
@@ -207,3 +216,30 @@ export function uncoveredRequests(current: ReadonlyArray<RequestItem>, draft: st
   const t = String(draft ?? "").normalize("NFKC");
   return current.filter((x) => x.topic !== "other" && !coverReOf(x).test(t) && !(x.topic === "vacancy" && /確認させて|確認(?:でき|出来)次第/.test(t)));
 }
+
+/**
+ * 会話の一覧のバッジ「確認事項 未対応 N」（2026-10-08 竹内さん「それにする。今のお客さんから」）。
+ *   会話ごとの発言（直近 windowDays 日・古い順でなくてよい）から、会話画面の帯と同じ buildRequestLedger の未対応（open）を数える。
+ *   0 の会話は入れない。読む範囲（申込前・直近14日に発言がある会話）は呼ぶ側（/api/request-ledger/counts）が決める
+ */
+export function countOpenRequestsByConversation(
+  rows: ReadonlyArray<{ conversation_id: string; sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null }>,
+  nowMs: number,
+  o: { windowDays?: number } = {},
+): Record<string, number> {
+  const by = new Map<string, LedgerMsg[]>();
+  for (const r of rows) {
+    const arr = by.get(r.conversation_id) ?? [];
+    arr.push({ sender: r.sender, text: r.text, createdAt: r.created_at, isAix: !!r.is_aix_generated });
+    by.set(r.conversation_id, arr);
+  }
+  const out: Record<string, number> = {};
+  for (const [id, msgs] of by) {
+    // 先の時期の相談は数に入れない（会話画面の帯には出す）。戻す REQUEST_LEDGER_DEFERRED_BADGE=off
+    const keepDeferred = (typeof process !== "undefined" ? process.env?.REQUEST_LEDGER_DEFERRED_BADGE ?? "" : "").toLowerCase() === "off";
+    const n = buildRequestLedger(msgs, nowMs, o).filter((x) => x.status === "open" && (keepDeferred || !x.deferred)).length;
+    if (n > 0) out[id] = n;
+  }
+  return out;
+}
+

@@ -220,7 +220,8 @@ export function isWholeShortAck(text: string | null | undefined): boolean {
 export const VIEWING_SCHEDULED_HEADING = "【🗓 内覧は決まっている】";
 export function buildViewingScheduledNote(v: ViewingScheduled): string {
   if (!v.scheduled) return "";
-  const when = v.label ? `（${v.label}）` : "";
+  // 2026-10-08 11巡目（r12 の調査⑨・#156「14日の16:00」→ 下書き「本日14時」）: 日時はこの値から書く（日にちの数と時刻を取り違えない）。戻す VIEWING_LABEL_LITERAL=off
+  const when = v.label ? `（${v.label}${(process.env.VIEWING_LABEL_LITERAL ?? "").toLowerCase() === "off" ? "" : "＝日時を書く時はこの値をそのまま使う。日にちの数字を時刻に、時刻を日にちにしない"}）` : "";
   const how = v.source === "customer_accepted"
     // 2026-09-26 YUMA の前後比較（S5）: 待ち合わせはまだ案内していないのに「現地エントランスにてお待ち合わせできますでしょうか」を作った（3回中1回）。
     //   待ち合わせの場所・集合は AIX【待ち合わせ】で送る事なので、日時だけを言うと渡す

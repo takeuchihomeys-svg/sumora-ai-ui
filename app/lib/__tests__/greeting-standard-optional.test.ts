@@ -10,6 +10,8 @@
 // 実行: npx tsx app/lib/__tests__/greeting-standard-optional.test.ts（全 PASS で exit 0）
 import { resolveGreeting, buildGreetingNote, enforceOpening, isProgressPushMessage } from "../greeting";
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "../reply-context";
+// 2026-10-08 竹内さん「今日初めての連絡なら必ず『お世話になっております』」で既定は必ず付ける形（GREETING_DAILY_REQUIRED）。このファイルは旧（必須ではない）の形を確かめる
+process.env.GREETING_DAILY_REQUIRED = "off";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }

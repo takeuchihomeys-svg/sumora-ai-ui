@@ -67,12 +67,20 @@ it("探し続ける約束 →「次第」が入っていても物件ピックア
   expect(r?.kind).toBe("pickup");
   expect(r?.alt).toBe("property_recommendation");
 });
-it("AIX【物件確認した】にはならない（お客様から確認の依頼があっても）", () => {
+it("AIX【物件確認した】にはならない（お客様から確認の依頼があっても・果たしていない確認の約束が無い時）", () => {
   const r = resolveStaffPromiseAix(
-    { lastStaffEntry: classifyStaffTextForLedger(KEIJI, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: true },
+    { lastStaffEntry: classifyStaffTextForLedger(KEIJI, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: false },
     msgs, { customerRequestedCheck: true },
   );
   expect(r?.action === "property_check_result").toBe(false);
+});
+// 2026-10-07 3巡目（竹内さん「５それで大丈夫」）: 約束が複数残る時は確認・見積を先に果たす（PROMISE_ORDER_CHECK_FIRST）
+it("果たしていない確認の約束が残っていれば確認を先に（PROMISE_ORDER_CHECK_FIRST=off で旧＝物件確認したにしない）", () => {
+  const facts = { lastStaffEntry: classifyStaffTextForLedger(KEIJI, AT), estimatePromisedUnfulfilled: false, pickupPromisedUnfulfilled: true, confirmationPromisedUnfulfilled: true };
+  expect(resolveStaffPromiseAix(facts, msgs, { customerRequestedCheck: true })?.action).toBe("property_check_result");
+  const prev = process.env.PROMISE_ORDER_CHECK_FIRST; process.env.PROMISE_ORDER_CHECK_FIRST = "off";
+  try { expect(resolveStaffPromiseAix(facts, msgs, { customerRequestedCheck: true })?.action === "property_check_result").toBe(false); }
+  finally { if (prev === undefined) delete process.env.PROMISE_ORDER_CHECK_FIRST; else process.env.PROMISE_ORDER_CHECK_FIRST = prev; }
 });
 it("本物の確認の約束は従来どおり物件確認した（2つ目は無し）", () => {
   const t = "お送り頂きました物件の募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます！！";

@@ -5,10 +5,18 @@ import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isUsableExampleText, isUsableAiDraft } from "@/app/lib/example-hygiene";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-10-08 竹内さん「自動的にする」（学習の抜け: 出力が途中で切れて毎週何も学べていない）:
+//   chunk3（20件の判定）・chunk4（30組の重複判定）は max_tokens 1000 で毎回切れ、閉じ括弧を要求する読み方で丸ごと捨てていた
+//   （「AI昇格0・AI却下0・重複却下0」が毎週続いていた）。→ 枠を広げ（3000／4000）、それでも切れたら完結した要素だけ拾う。
+//   戻す: WEEKLY_LEARNING_JSON_SALVAGE=off（旧の枠 1000・閉じ括弧が要る読み方）
+import { parseJsonArrayLoose } from "@/app/lib/json-array-salvage";
+const jsonSalvageOn = () => (process.env.WEEKLY_LEARNING_JSON_SALVAGE ?? "").trim().toLowerCase() !== "off";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation, excludeTestConversations } from "@/app/lib/test-conversations";
 import { writerFromEdit, staffWriterSplitEnabled } from "@/app/lib/staff-writer";
+// 2026-10-08 竹内さんの決定の2: 学習の窓 7日→30日（新しい7日×2・前の23日×1・LEARNING_WINDOW_30D=off で旧）
+import { learningWindow, pickRecentFirst, recencyTag, windowCountsLabel, weightingInstruction, isRecent, type LearningWindow } from "@/app/lib/learning-window";
 
 /** 2026-10-08 竹内「竹内のLINEか従業員のLINEかで考える方がかなり分析の質が変わる」: 直した所の表記が従業員の差分に印を付ける（STAFF_WRITER_SPLIT=off で付けない） */
 function writerTagOf(draft: string | null, sent: string | null): string {
@@ -30,6 +38,14 @@ export const maxDuration = 300;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CHUNK_SIZE = 40;
+// 2026-10-08 学習の窓 30日（learning-window.ts）: 前の23日から LLM に渡す上限・窓の中を読む上限
+const OLDER_MAX = 20;
+const WIDE_FETCH_LIMIT = 400;
+/** 旧の並び（⭐が先・古い順） */
+function starredThenOldest(a: { is_starred: boolean; created_at: string }, b: { is_starred: boolean; created_at: string }): number {
+  if (!!a.is_starred !== !!b.is_starred) return a.is_starred ? -1 : 1;
+  return Date.parse(a.created_at) - Date.parse(b.created_at);
+}
 const MAX_AI_QUESTIONS_PER_RUN = 5;
 const MAX_PENDING_AI_QUESTIONS = 120;
 const CONTRADICTION_BATCH = 30; // chunk=2: 1回のClaude呼び出しで処理するhypothesis件数
@@ -146,6 +162,7 @@ async function analyzeStateGroup(
   examples: DiffExample[],
   existingRules: ExistingRule[],
   recentAnswers: RecentAnswer[],
+  win?: LearningWindow,
 ): Promise<WeeklyAnalysisResult> {
   const empty: WeeklyAnalysisResult = { newRules: [], gaps: [], contradictions: [], weeklyQuestion: null };
 
@@ -165,7 +182,7 @@ async function analyzeStateGroup(
       e.brain_last_aix_history ? "直近AIX: " + e.brain_last_aix_history : "",
     ].filter(Boolean).join(" / ");
     return `
---- 差分${i + 1} [${label}] ${e.is_starred ? "⭐" : ""}${brainTag}${writerTagOf(e.ai_draft, e.sent_reply)} ---
+--- 差分${i + 1} [${label}] ${win ? recencyTag(win, e.created_at) : ""}${e.is_starred ? "⭐" : ""}${brainTag}${writerTagOf(e.ai_draft, e.sent_reply)} ---
 顧客: ${(e.customer_message ?? "").slice(0, 200)}
 AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
 実際に送った返信: ${(e.sent_reply ?? "").slice(0, 300)}${brainExtra ? "\n[Brain戦略: " + brainExtra + "]" : ""}`.trim();
@@ -181,25 +198,30 @@ AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
       ).join("\n---\n")
     : "（なし）";
 
+  // 2026-10-08 学習の窓 30日: 旧の窓（LEARNING_WINDOW_30D=off）では旧の文のまま
+  const wide = !!win && !win.legacy;
+  const recentN = wide ? examples.filter((e) => isRecent(win!, e.created_at)).length : examples.length;
+  const periodWord = wide ? windowCountsLabel(win!, recentN, examples.length - recentN) : "今週";
+  const answersWord = wide ? `直近${win!.days}日` : "直近7日";
   const prompt = `あなたは賃貸仲介の営業コーチです。
-以下は【${state}】フェーズで今週スタッフがAIを修正・手書きした返信の差分集（${examples.length}件）です。
-既存の確認済みルールと、直近7日の竹内さんの回答も参考にしてください。
-
-## 今週の差分集
+以下は【${state}】フェーズで${periodWord}スタッフがAIを修正・手書きした返信の差分集（${examples.length}件）です。
+既存の確認済みルールと、${answersWord}の竹内さんの回答も参考にしてください。
+${wide ? `\n${weightingInstruction(win!, 2)}\n` : ""}
+## ${wide ? "差分集（新しい順の札つき）" : "今週の差分集"}
 ${examplesText}
 
 ## 既存の確認済みルール（重複不要）
 ${existingRulesText}
 
-## 直近7日の竹内さんの回答（参考）
+## ${answersWord}の竹内さんの回答（参考）
 ${recentAnswersText}
 
 ## 分析指示
-今週の差分群を横断的に分析し、以下のJSONを返してください。
+${wide ? "差分群" : "今週の差分群"}を横断的に分析し、以下のJSONを返してください。
 各差分の [emotion/urgency/mode] ラベルを参照し、特定の顧客状況に依存するパターンがあれば条件付きルールとして記述すること（例: urgency=高の場合は〜、emotion=不安の場合は〜）。
 
 **重要ルール:**
-- 週内で「2件以上同じパターン」が繰り返された場合のみ newRules に含める（1件限りのケースは除外）
+${wide ? `- 上の【数え方】で合計3点以上（新しい${win!.recentDays}日の2件／新しい${win!.recentDays}日1件＋前の${win!.days - win!.recentDays}日1件／前の${win!.days - win!.recentDays}日だけなら3件）同じパターンが繰り返された場合のみ newRules に含める（1件限りのケースは除外）` : "- 週内で「2件以上同じパターン」が繰り返された場合のみ newRules に含める（1件限りのケースは除外）"}
 - 【書き手: 従業員】の印がある差分は、表記・言い回し・改行・絵文字・締めの語（＝書き方）をルールにしない。こちらの行為・事実・AIX の番・構成（＝中身）だけ使う（返信の書き方の基準は竹内さん）
 - 既存ルールと実質的に同内容のものは newRules に含めない
 - 新ルールは具体的・行動的に書く（「〜する」「〜しない」の形式）
@@ -269,9 +291,12 @@ ${recentAnswersText}
 async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
   const offset = (chunk - 1) * CHUNK_SIZE; // chunk=1 → offset=0
 
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // 2026-10-08 竹内さんの決定の2: 窓 7日→30日。LLM に渡す差分は「新しい7日を先に最大40件（旧の CHUNK_SIZE）＋前の23日は最大20件」
+  //   （10/08 の実数: 修正差分 新しい7日 40・前の23日 155。旧は 40件で上限に当たっていた）。LEARNING_WINDOW_30D=off で旧の 7日・40件
+  const win = learningWindow("weekly-learning", 7);
+  const sevenDaysAgo = win.sinceIso;
 
-  // 直近7日の竹内さんの回答（user_answer）をコンテキストとして取得
+  // 直近7日（新: 窓の中）の竹内さんの回答（user_answer）をコンテキストとして取得
   const { data: recentAnswersRaw } = await supabase
     .from("ai_feedback_items")
     .select("question, user_answer, created_at")
@@ -292,19 +317,25 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
     .not("sent_reply", "is", null)
     // AIX生成文を除外しLINE返信AI由来のみ対象にする（entry_source で明示的に区分）
     .eq("entry_source", "line_reply")
-    .order("is_starred", { ascending: false })
-    .order("created_at", { ascending: true })
-    .range(offset, offset + CHUNK_SIZE - 1);
+    // 30日: 窓の中を新しい順に広めに読み（上限に当たっても新しい7日が切れない）、下で「新しい7日 40件＋前の23日 20件」に絞る
+    //   旧の窓（LEARNING_WINDOW_30D=off）では旧と同じ並び（⭐→古い順）・40件の範囲
+    .order(win.legacy ? "is_starred" : "created_at", { ascending: false })
+    .order(win.legacy ? "created_at" : "is_starred", { ascending: win.legacy })
+    .range(offset, offset + (win.legacy ? CHUNK_SIZE : WIDE_FETCH_LIMIT) - 1);
 
   if (fetchErr) throw new Error(fetchErr.message);
 
   // 2026-09-11 データ衛生: 生成失敗文（下書き・送信文とも）・テスト送信は差分分析の対象にしない
-  const examples = ((rawExamples ?? []) as DiffExample[]).filter((ex) => isUsableExampleText(ex.sent_reply) && (ex.ai_draft == null || isUsableAiDraft(ex.ai_draft))
+  const usable = ((rawExamples ?? []) as DiffExample[]).filter((ex) => isUsableExampleText(ex.sent_reply) && (ex.ai_draft == null || isUsableAiDraft(ex.ai_draft))
     // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
     && !isTestConversation(ex.conversation_id));
+  // 新しい7日は旧の並び（⭐→古い順）のまま最大40件・前の23日は⭐を先に、残りは23日の中で偏らないよう最大20件
+  const examples = win.legacy
+    ? usable
+    : pickRecentFirst(win, [...usable].sort(starredThenOldest), (e) => e.created_at, { recentMax: CHUNK_SIZE, olderMax: OLDER_MAX, prefer: (e) => !!e.is_starred });
 
   if (examples.length === 0) {
-    return { chunk, processed: 0, newRules: 0, questionsRaised: 0, message: `chunk${chunk}: 直近7日の修正差分なし` };
+    return { chunk, processed: 0, newRules: 0, questionsRaised: 0, message: `chunk${chunk}: ${win.legacy ? "直近7日" : `直近${win.days}日`}の修正差分なし` };
   }
 
   const stateGroups = new Map<string, DiffExample[]>();
@@ -364,7 +395,7 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
         if (b.last_aix_history) (ex as Record<string, unknown>).brain_last_aix_history = String(b.last_aix_history);
       }
 
-      const analysis = await analyzeStateGroup(state, stateExamples, existingRules, recentAnswers);
+      const analysis = await analyzeStateGroup(state, stateExamples, existingRules, recentAnswers, win);
 
       for (const rule of analysis.newRules) {
         if (!rule.title || !rule.content) continue;
@@ -851,7 +882,7 @@ JSON形式のみ返答（keepは最大3件まで）：
   try {
     const res = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 1000,
+      max_tokens: jsonSalvageOn() ? 3000 : 1000,
       thinking: { type: "disabled" },
       system: [
         { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -861,6 +892,11 @@ JSON形式のみ返答（keepは最大3件まで）：
     });
 
     const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
+    if (jsonSalvageOn()) {
+      const loose = parseJsonArrayLoose<AiClassifyResult["results"][number]>(text);
+      if (loose.truncated) console.warn(`[weekly-learning] chunk=3: 出力が途中で切れた（stop=${res.stop_reason}）→ 完結した ${loose.items.length}件だけ使う`);
+      return { results: loose.items.filter((r) => r && typeof r.id === "string" && typeof r.verdict === "string") };
+    }
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return empty;
     const parsed = JSON.parse(jsonMatch[0]) as AiClassifyResult;
@@ -1192,7 +1228,7 @@ JSON形式のみ返答：
     try {
       const res = await client.messages.create({
         model: "claude-sonnet-5",
-        max_tokens: 1000,
+        max_tokens: jsonSalvageOn() ? 4000 : 1000,
         thinking: { type: "disabled" },
         system: [
           { type: "text" as const, text: SUMORA_QUESTION_SYSTEM_CONTEXT, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -1203,8 +1239,11 @@ JSON形式のみ返答：
 
       const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
       const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const judged = JSON.parse(jsonMatch[0]) as DedupJudgeResult;
+      // 10/08: 切れても完結した組だけ拾う（WEEKLY_LEARNING_JSON_SALVAGE=off で旧）
+      const loosePairs = jsonSalvageOn() ? parseJsonArrayLoose<DedupJudgeResult["pairs"][number]>(text) : null;
+      if (loosePairs?.truncated) console.warn(`[weekly-learning] chunk=4: 出力が途中で切れた（stop=${res.stop_reason}）→ 完結した ${loosePairs.items.length}組だけ使う`);
+      if (loosePairs || jsonMatch) {
+        const judged = (loosePairs ? { pairs: loosePairs.items } : JSON.parse(jsonMatch![0])) as DedupJudgeResult;
 
         for (const pair of judged.pairs ?? []) {
           if (pair.verdict === "same" && pair.keep_id) {

@@ -1,6 +1,6 @@
 import { supabase } from "@/app/lib/supabase";
 import {
-  formatPromptRuleSections, promptRuleMatchesConditions, dedupePromptRules, promptRuleNotExcluded, orderRulesForInjection, promptRulesOrderV2, PROMPT_RULE_V2_MIN_PRIORITY,
+  formatPromptRuleSections, promptRulesSafetyTop, promptRuleMatchesConditions, dedupePromptRules, promptRuleNotExcluded, orderRulesForInjection, promptRulesOrderV2, PROMPT_RULE_V2_MIN_PRIORITY,
   type PromptRuleRow, type PromptRuleConditions,
 } from "@/app/lib/prompt-rules-format";
 
@@ -158,7 +158,7 @@ export async function fetchPromptRules(
     // ── 永久ルール（卒業済み・絶対に漏れない）── → 【永久ルール】節
     // FEEDBACK-* / IMPLEMENT-* 等を priority 降順で注入 → 【AI学習ルール】節
     // HUMAN-* は is_active=false（RAGへ完全移行済み）のためここには現れない
-    return formatPromptRuleSections(permanentApplicable, deduped);
+    return formatPromptRuleSections(permanentApplicable, deduped, { safetyTop: promptRulesSafetyTop(actionType) });   // 10/08 Q12: 返信生成だけ安全の線を最上位に
   } catch (error) {
     console.error("[fetchPromptRules] CRITICAL: 予期しないエラー — ルールが注入されません", error);
     return RULES_SYSTEM_ERROR_TEXT;

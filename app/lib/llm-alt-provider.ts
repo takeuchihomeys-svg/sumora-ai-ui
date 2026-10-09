@@ -25,7 +25,7 @@ import { parseCutoffMark, countCutoffLeaks, type CutoffMark } from "./post-apply
 import { currentDeepseekScope } from "./deepseek-scope";
 import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, strictClaudeBlockReason, testConversationRefusal, noteTestBlocked, LlmTestBlockedError, type LlmTestMode } from "./llm-test-mode";
 import { AIX_PICKERS } from "./aix-pickers";
-import { YUMA_CONVERSATION_ID } from "./test-conversations";
+import { isTestOnlyConversation } from "./test-conversations";
 import { testPiiRefusal } from "./test-pii-guard";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -845,7 +845,8 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     // 2026-10-01: テストの間だけ、YUMA（竹内さん本人のテスト用の会話）で印が無い呼び出しは「全部渡してよい」と読む
     //   （10/01 08:03 の brain_fresh 30回は、スクリプトが印を置かずに呼んで黙って Claude に行っていた。YUMA 以外は上で断っている）
     const markRaw = parseCutoffMark(headers.get(LLM_CUTOFF_HEADER)) ?? scope?.mark ?? null;
-    const mark: CutoffMark | null = markRaw ?? (cfg.testMode && convForGate === YUMA_CONVERSATION_ID ? { kind: "all" } as CutoffMark : null);
+    //   2026-10-09: LINE につながっていないテスト専用の会話（YUMA2〜）も YUMA と同じ（isTestOnlyConversation）
+    const mark: CutoffMark | null = markRaw ?? (cfg.testMode && isTestOnlyConversation(convForGate) ? { kind: "all" } as CutoffMark : null);
     const gate = cutoffGateDecision({ conversationId: convForGate, inScope: !!scope, mark });
     if (gate !== "route") {
       console.warn("[llm-alt] 時刻の線の印なし・渡さない会話 → Claude のまま", JSON.stringify({ route: routeName, gate, conversationId: convForGate }));

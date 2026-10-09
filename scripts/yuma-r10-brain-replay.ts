@@ -6,10 +6,12 @@
 //   番の出所: scripts/audit-r10-path-truth.ts --out の jsonl（正解 truth・truthKey・小場面 sub・書き手 writer）。--pick で層ごとに選ぶ
 // 実行: TEST_CLOCK_JST_HOUR=14 REPLAY_FLOOR_FILE=<floor> LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/yuma-r10-brain-replay.ts \
 //        --floor=<floor> --src=scripts/.replay-out/r10-truth.jsonl [--per=3] [--max=90] [--since=2026-09-12] [--versions=before,after] [--label=r10a] [--only=<key,..>]
+//        [--conv=auto|YUMA2〜YUMA5]（2026-10-09: LINE につながっていないテスト専用の会話で並べて回す・鍵で占有・--floor は会話ごとに別のファイルにする）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
+import { acquireTestConversation } from "./lib/test-conv-lease";
 import { shiftDatesInText } from "./lib/scenario-date-shift";
 
 const URL_OR_PHONE_RE = /https?:\/\/[^\s　]+|0\d{1,4}[-ー－]?\d{1,4}[-ー－]?\d{3,4}/g;
@@ -47,7 +49,10 @@ const LABEL = arg("label", "r10a");
 const OUT = arg("out", `scripts/.replay-out/r10-${LABEL}.jsonl`);
 const GAP_MS = Number(arg("gap-ms", "3000"));
 const PREFIX = "r10scene-";
-const PC_BACKUP = arg("pc-backup", `scripts/.replay-out/.r10-${LABEL}-yuma-pc-backup.json`);
+// 2026-10-09: --conv=auto|YUMA2〜YUMA5 で LINE につながっていないテスト専用の会話を使う（鍵で担当ごとに占有・無ければ今まで通り YUMA）
+const lease = acquireTestConversation(arg("conv"), `yuma-r10-${LABEL}`);
+const CONV = lease.id, CONV_TAG = lease.tag;
+const PC_BACKUP = arg("pc-backup", `scripts/.replay-out/.r10-${LABEL}-${CONV_TAG}-pc-backup.json`);
 const R10_ENV = ["BRAIN_AIX_CATALOG", "TWO_STAGE_PICKUP_UNLESS_ACK", "FURTHER_DISCOUNT_DAIHYO", "VIEWING_DAY_GREETING", "NEGOTIATION_PROMISE_AIX"] as const;
 const PC_FIELDS = ["desired_area", "floor_plan", "rent_min", "rent_max", "move_in_time", "preferences", "ng_points", "walk_minutes", "pet", "floor_area_min", "floor_area_max", "commute_station", "commute_minutes", "area_mode", "initial_cost_limit", "building_age", "other_requests", "occupants", "property_send_count", "last_property_sent_at", "ai_summary", "ai_summary_json", "ai_summary_at", "personality_profile"] as const;
 const PC_BLANK = new Set(["ai_summary", "ai_summary_json", "ai_summary_at", "personality_profile"]);
@@ -66,12 +71,12 @@ function setVersion(v: string) {
 }
 function writeFloor(floor: string | null) {
   if (!FLOOR_FILE) return;
-  writeFileSync(FLOOR_FILE, JSON.stringify(floor ? { conversationId: YUMA, floor, status: "proposing", messageIdPrefix: PREFIX, keepPropertyCustomer: true } : {}));
+  writeFileSync(FLOOR_FILE, JSON.stringify(floor ? { conversationId: CONV, floor, status: "proposing", messageIdPrefix: PREFIX, keepPropertyCustomer: true } : {}));
 }
 async function waitOtherPcCopies(maxMin = 240) {
   const deadline = Date.now() + maxMin * 60_000;
   for (;;) {
-    const busy = readdirSync("scripts/.replay-out").filter((f) => /^\..*-yuma-pc-backup\.json$/.test(f) && `scripts/.replay-out/${f}` !== PC_BACKUP.replace(/\\/g, "/"))
+    const busy = readdirSync("scripts/.replay-out").filter((f) => (CONV_TAG === "yuma" ? /^\..*-yuma-pc-backup\.json$/ : new RegExp(`^\\..*-${CONV_TAG}-pc-backup\\.json$`)).test(f) && `scripts/.replay-out/${f}` !== PC_BACKUP.replace(/\\/g, "/"))
       .filter((f) => { try { return readFileSync(`scripts/.replay-out/${f}`, "utf8").trim().length > 0; } catch { return false; } });
     if (!busy.length) return;
     if (Date.now() > deadline) throw new Error(`他の担当の再生が YUMA の条件の行を写したまま（${busy.join(",")}）`);
@@ -80,7 +85,7 @@ async function waitOtherPcCopies(maxMin = 240) {
   }
 }
 async function yumaPcId(): Promise<string> {
-  const { data } = await sb.from("conversations").select("property_customer_id").eq("id", YUMA).maybeSingle();
+  const { data } = await sb.from("conversations").select("property_customer_id").eq("id", CONV).maybeSingle();
   const id = (data?.property_customer_id as string | null) ?? null; if (!id) throw new Error("YUMA の条件の行が無い"); return id;
 }
 async function copyPc(srcConv: string, yumaPc: string): Promise<boolean> {
@@ -166,23 +171,23 @@ async function main() {
       rec.customer = customer.join(" / ").slice(0, 300);
       h.assertSceneSafe([...context.map((m) => m.t), ...customer], t.key);
       await waitOtherPcCopies();
-      await h.waitUntilYumaQuiet(own, { maxWaitMin: 120 });
+      await h.waitUntilYumaQuiet(own, { maxWaitMin: 120, conversationId: CONV });
       await waitOtherPcCopies();
       rec.pc = await copyPc(t.conv, yumaPc);
       const msgsAll = [...context, ...customer.map((x) => ({ s: "customer", t: x, aix: false }))];
       const times = h.sceneTimes(msgsAll.length, { stepSec: 90 });
-      const ins = await sb.from("messages").insert(msgsAll.map((m, i) => ({ conversation_id: YUMA, sender: m.s, text: m.t || "[画像]", is_aix_generated: !!m.aix, line_message_id: `${PREFIX}${randomUUID()}`, created_at: times[i] }))).select("id");
+      const ins = await sb.from("messages").insert(msgsAll.map((m, i) => ({ conversation_id: CONV, sender: m.s, text: m.t || "[画像]", is_aix_generated: !!m.aix, line_message_id: `${PREFIX}${randomUUID()}`, created_at: times[i] }))).select("id");
       if (ins.error) throw new Error(ins.error.message);
       own = ((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id);
       writeFloor(new Date(Date.parse(times[0]) - 1000).toISOString());
       await new Promise((r) => setTimeout(r, 1300));
-      h.assertYuma(YUMA, "brain");
+      if (lease.isYuma) h.assertYuma(CONV, "brain"); else h.assertTestConversation(CONV, "brain");
       for (const v of VERSIONS) {
         setVersion(v);
         let meta: Record<string, unknown> | null = null;
         try {
           for (let attempt = 0; attempt < 2 && !meta; attempt++) {
-            meta = await runInDeepseekScope(async () => { setDeepseekScope({ conversationId: YUMA, mark: { kind: "all" } }); return analyzeConversation(YUMA, true, "proposing", rec.pc ? yumaPc : null, "brain", { autoSendEnabled: true, customerName: "YUMA", prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }); }) as unknown as Record<string, unknown> | null;
+            meta = await runInDeepseekScope(async () => { setDeepseekScope({ conversationId: CONV, mark: { kind: "all" } }); return analyzeConversation(CONV, true, "proposing", rec.pc ? yumaPc : null, "brain", { autoSendEnabled: true, customerName: "YUMA", prevPhase: null, prevAix: null, mode: "full", layer: "combined", strategy: null }); }) as unknown as Record<string, unknown> | null;
           }
         } finally { setVersion("after"); }
         if (!meta) { rec[`err_${v}`] = "ブレインが null"; continue; }
@@ -194,7 +199,7 @@ async function main() {
       writeFloor(null);
       if (own.length) {
         const del = await sb.from("messages").delete().in("id", own);
-        if (del.error) await sb.from("messages").delete().eq("conversation_id", YUMA).like("line_message_id", `${PREFIX}%`);
+        if (del.error) await sb.from("messages").delete().eq("conversation_id", CONV).like("line_message_id", `${PREFIX}%`);
         own = [];
       }
     }
@@ -207,6 +212,7 @@ async function main() {
 }
 main().catch((e) => { console.error(e); process.exitCode = 1; }).finally(async () => {
   writeFloor(null);
+  lease.release();
   if (own.length) await sb.from("messages").delete().in("id", own);
   await restorePc().catch((e) => console.warn("restorePc:", String(e)));
   if (h) await h.finish();

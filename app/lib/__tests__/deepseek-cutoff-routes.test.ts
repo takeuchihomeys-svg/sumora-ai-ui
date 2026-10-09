@@ -150,7 +150,7 @@ async function main() {
   const src = (p: string) => readFileSync(join(root, p), "utf8");
   const gen = src("app/api/generate-reply/route.ts");
   const aix = src("app/api/aix/action/route.ts");
-  await it("返信生成: リクエストごとに箱を開ける", () => ok(/return runInDeepseekScope\(\(\) => handleGenerateReply\(req\)\)/.test(gen), "POST"));
+  await it("返信生成: リクエストごとに箱を開ける", () => ok(/return runInDeepseekScope\(\(\) => (?:runInRulesOverlayScope\(\(\) => )?handleGenerateReply\(req\)\)/.test(gen), "POST"));
   await it("返信生成: 戻した会話を丸ごと Claude にする旧の歯止め（movedBack）を線に置き換えた", () =>
     ok(!/postApplyConversation = r\.postApply \|\| r\.movedBack/.test(gen) && /deepseekCutoff = deepseekSafeCutoff\(facts\)/.test(gen), "movedBack"));
   await it("返信生成: 線より前の発言への返信は blocked（Claude）", () => ok(/isAfterCutoff\(latestCustomerAtForCut, deepseekCutoff\)/.test(gen) && /else deepseekBlocked = true/.test(gen), "blocked"));

@@ -151,3 +151,15 @@ export function staffTalkedToday(messages: ReadonlyArray<TalkMsg>, now: number =
     return Number.isFinite(t) && jstDay(t) === today;
   });
 }
+
+/**
+ * 2026-10-08 竹内さんの決定8: AIX の挨拶の「今日もう送ったか」を返信と同じ数え方（会話文だけ＝staffTalkedToday・🌟物件カード・【】見積の本体・
+ *   室内イメージ・画像は数えない＝greeting.computeAlreadyGreetedToday の GREETING_TALK_ONLY_R8）にそろえる。
+ *   aix/action の staffMessagedToday（挨拶の行の決定 buildGreeting・見積書の2通目の形・内覧の前の挨拶）と aix-template-generate の staffSentToday に効く。
+ *   実測（scripts/audit-aix-greeting-day.ts・8/8〜の押下 1,521）: 判定が変わるのは 11件（0.7%・見積書6・オススメ2 等＝その日に資料の文だけを送っていた日）。
+ *   戻す: AIX_GREETING_TALK_ONLY=off（旧＝画像も含めて1通でも送っていれば「送った」）。返信側を戻す GREETING_TALK_ONLY_R8=off でも一緒に戻る
+ */
+export function aixGreetingTalkOnly(env: Record<string, string | undefined> = process.env): boolean {
+  const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
+  return !off(env.AIX_GREETING_TALK_ONLY) && !off(env.GREETING_TALK_ONLY_R8);
+}

@@ -1,6 +1,6 @@
 // 「お世話になっております」は1日1回（2026-09-22 竹内「今日初めてのLINEだったらつける／今日初めてじゃないときは使わない」）
 // 実行: npx tsx app/lib/__tests__/daily-greeting.test.ts（全 PASS で exit 0）
-import { sentByStaffToday, applyDailyGreeting, staffTalkedToday, isMaterialOnlyText, joinNameOnlyLine } from "../daily-greeting";
+import { sentByStaffToday, applyDailyGreeting, staffTalkedToday, isMaterialOnlyText, joinNameOnlyLine, aixGreetingTalkOnly } from "../daily-greeting";
 import { selectGreeting, applyGreetingSwap } from "../template-preprocess";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -150,6 +150,21 @@ it("AIX の出口（11巡目・竹内さんの形）: 「〇〇さん」だけ�
   expect(r.text).toBe("YUMAさん新着で1件オススメ出来るお部屋が募集に出ました！！");
   const r0 = applyDailyGreeting("YUMAさんお世話になっております！！\n新着で1件オススメ出来るお部屋が募集に出ました！！", { staffSentToday: true, greetingPhrase: "", name: "" });
   expect(r0.text).toBe("YUMAさん\n新着で1件オススメ出来るお部屋が募集に出ました！！");
+});
+
+// 2026-10-08 竹内さんの決定8: AIX の「今日もう送ったか」も会話文だけで数える（実物: 見積書の押下 9/14 その日の前の通が [画像]・【カーザSun I 202号…】だけ）
+it("AIX の挨拶の判定: 資料の文（画像・【】見積の本体・🌟カード）だけの日は「まだ」・戻すスイッチ", () => {
+  const now = Date.parse("2026-09-14T03:44:00Z");
+  const msgs = [
+    { sender: "staff", text: "[画像]", createdAt: "2026-09-14T03:40:00Z" },
+    { sender: "staff", text: "【カーザSun I 202号室】\n初期費用総額 ¥123,000", createdAt: "2026-09-14T03:40:10Z" },
+    { sender: "staff", text: "🌟ブルーキューブ 101号室", createdAt: "2026-09-14T03:41:00Z" },
+  ];
+  expect(sentByStaffToday(msgs, now)).toBe(true);
+  expect(staffTalkedToday(msgs, now)).toBe(false);
+  expect(aixGreetingTalkOnly({})).toBe(true);
+  expect(aixGreetingTalkOnly({ AIX_GREETING_TALK_ONLY: "off" })).toBe(false);
+  expect(aixGreetingTalkOnly({ GREETING_TALK_ONLY_R8: "off" })).toBe(false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

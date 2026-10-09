@@ -1,6 +1,6 @@
 // 2026-10-08 竹内さん「物件が無ければそっちから送るので、その場面の時は2択にする」（search-result-choice.ts）
 // 実行: npx tsx app/lib/__tests__/search-result-choice.test.ts
-import { searchResultAltActions } from "../search-result-choice";
+import { searchResultAltActions, searchResultChoiceCaption } from "../search-result-choice";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -26,6 +26,19 @@ it("物件の AIX でない（見積書・内覧調整・約束の返信にし�
 it("申込以降 → 並べない", () => eq(searchResultAltActions({ finalAix: "property_send", pickupReady: false, postApply: true, altActions: undefined }).added, false));
 it("既に並んでいる時は重ねない", () => eq(searchResultAltActions({ finalAix: "property_send", pickupReady: false, postApply: false, altActions: ["zenryoku_support"] }).added, false));
 it("SEARCH_RESULT_TWO_CHOICE=off で今まで通り", () => eq(searchResultAltActions({ finalAix: "property_send", pickupReady: false, postApply: false, altActions: undefined, env: { SEARCH_RESULT_TWO_CHOICE: "off" } }).added, false));
+
+console.log("2026-10-08 竹内さん「下に『物件なかった場合』と小さく文字を入れて」（ボタンの下の説明）");
+it("物件ピックアップした＋2つ目に全力サポート → 1つ目「物件あった場合」・全力サポート「物件なかった場合」", () => {
+  const alts = ["property_recommendation", "zenryoku_support"];
+  eq(searchResultChoiceCaption({ brainAction: "property_send", altActions: alts, button: "property_send" }), "物件あった場合");
+  eq(searchResultChoiceCaption({ brainAction: "property_send", altActions: alts, button: "property_recommendation" }), "物件あった場合");
+  eq(searchResultChoiceCaption({ brainAction: "property_send", altActions: alts, button: "zenryoku_support" }), "物件なかった場合");
+});
+it("全力サポートが並んでいない・物件の AIX でない・off → 出さない", () => {
+  eq(searchResultChoiceCaption({ brainAction: "property_send", altActions: ["property_recommendation"], button: "property_send" }), null);
+  eq(searchResultChoiceCaption({ brainAction: "estimate_sheet", altActions: ["zenryoku_support"], button: "zenryoku_support" }), null);
+  eq(searchResultChoiceCaption({ brainAction: "property_send", altActions: ["zenryoku_support"], button: "zenryoku_support", off: true }), null);
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  - " + f); process.exit(1); }

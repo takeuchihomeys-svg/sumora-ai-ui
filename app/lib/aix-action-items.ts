@@ -17,7 +17,9 @@ import { AIX_BUTTON_LABELS } from "@/app/lib/aix-taxonomy";
 import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import type { SearchOverride } from "@/app/lib/search-override";
 import { staffTextFulfillsAixItem, brainPausedCustomer } from "@/app/lib/aix-item-cleanup";
-import { keepViewingGreetingItem } from "@/app/lib/viewing-day-greeting";
+import { keepViewingGreetingItem, MAIN_AIX_ITEM_OR, MORNING_GREETING_NOTE_PREFIX } from "@/app/lib/viewing-day-greeting";
+import { keepPromiseQueueItem } from "@/app/lib/promise-queue";
+import { isNoLineTestConversation } from "@/app/lib/test-conversations";
 export { aixButtonText, buildAixActionNotice, buildAixActionList, isFreshAixTurn, AIX_NOTICE_FRESH_MS, type AixActionItemRow } from "@/app/lib/aix-action-text";
 
 /** 売上番長グループへ push（宛先・トークンの決め方は notify-group と同じ: env → hanbancyo_settings.group_id） */
@@ -62,6 +64,8 @@ export async function syncAixActionItem(input: {
   const searchOverride = input.searchOverride ?? null;
   // cached は今回の顧客発言を見ていない判断なので使わない
   if (!meta || meta.source === "cached") return;
+  // 2026-10-09: LINE につながっていないテスト専用の会話（YUMA2〜）は要対応の登録・売上番長グループへの通知・自動の物件検索をしない（判断は suggested_aix_meta に残る）
+  if (isNoLineTestConversation(conversationId)) return;
   // 2026-09-27 お客様役（テスト・YUMA）の番: 要対応の登録・売上番長グループへの通知・物件の自動検索をしない
   //   （判断は suggested_aix_meta に残るので、お客様役の実行は そこを読む）。本物の発言（竹内さんの手動テスト）は今まで通り
   if (await isSimulatedCustomerTurn(conversationId)) {
@@ -80,11 +84,13 @@ export async function syncAixActionItem(input: {
   const needsAix = wantsAix && !pause.paused;
   const checkPattern = meta.check_pattern ?? null;
 
+  // 2026-10-08 竹内さん（内覧当日の朝の挨拶は別の行として並べる）: ブレインの依頼の行（1会話1件）だけを読む。朝の挨拶の行（resolution_note が rule:viewing_morning_greeting…）は触らない
   const { data: open } = await supabase
     .from("aix_action_items")
-    .select("id, action, check_pattern, created_at")
+    .select("id, action, check_pattern, created_at, resolution_note")
     .eq("conversation_id", conversationId)
     .eq("status", "pending")
+    .or(MAIN_AIX_ITEM_OR)
     .maybeSingle();
   const now = new Date().toISOString();
 
@@ -102,6 +108,12 @@ export async function syncAixActionItem(input: {
     //     14日以内にスタッフが実際に物件を送った 6/11（55%）＝取り下げが過半数で間違い。
     //     送らなかった5件はいずれも取り下げ直後に会話が停止＝失注そのもの。逆方向の誤り（取り下げないと困る例）は0件。
     //   再通知はしない（下の「同じ指示は再通知しない」早期 return と同じく、ここでは push しない）ので売上番長グループは荒れない。
+    // 2026-10-09 竹内さん「約束した事を記録して、それを AIX で送っていけば」: 約束の続き（promise-queue が AIX を1本送った後に立てた次の約束）は、
+    //   今回の発言に AIX が要らないだけ（お礼・了承）なら取り下げない（約束はまだ果たしていない）。お客様が止まった・断った時（pause）は下で取り下げる。72時間を過ぎたら今まで通り
+    if (open && !pause.paused && keepPromiseQueueItem(open as { resolution_note?: string | null; created_at?: string | null })) {
+      console.log("[aix-action-items] keep pending (約束の続き):", conversationId, open.action);
+      return;
+    }
     if (open && meta.pending_pickup === true && (open.action === "property_send" || open.action === "property_recommendation")) {
       console.log("[aix-action-items] keep pending (未履行のピックアップ宣言あり):", conversationId, open.action);
       return;
@@ -170,6 +182,7 @@ export async function syncAixActionItem(input: {
  * @returns 立てて通知したか
  */
 export async function registerRuleAixActionItem(input: { conversationId: string; customerName: string; action: string; checkPattern: string | null; noticeExtra?: string | null; note?: string | null }): Promise<boolean> {
+  if (isNoLineTestConversation(input.conversationId)) return false; // 2026-10-09: テスト専用の会話（YUMA2〜）は立てない・通知しない
   const now = new Date().toISOString();
   const { error } = await supabase.from("aix_action_items").insert({
     conversation_id: input.conversationId, customer_name: input.customerName || null, action: input.action, check_pattern: input.checkPattern,
@@ -197,6 +210,7 @@ const AIX_AUTO_SEARCH_SITES = ["realnetpro", "itandi"];
  * 物件出し顧客（property_customers）に紐付いていない会話は条件が無いので積まない。同じ顧客の未実行・実行中があれば積まない。
  */
 async function enqueueAixPropertySearch(conversationId: string, action: string, searchOverride: SearchOverride | null = null): Promise<void> {
+  if (isNoLineTestConversation(conversationId)) return; // 2026-10-09: テスト専用の会話（YUMA2〜）は拡張の検索を積まない
   const { data: conv } = await supabase
     .from("conversations").select("property_customer_id, line_user_id").eq("id", conversationId).maybeSingle();
   let customerId = (conv?.property_customer_id as string | null | undefined) ?? null;
@@ -257,13 +271,20 @@ async function findStaffTextFulfillment(conversationId: string, item: { action: 
  * 画面のカード（aix-button-view の pendingItemMeta）とグループの一覧は同じ pending を読むので、両方から同時に消える（一覧は今日の ✅ に「返信で済み」で出る）
  */
 export async function completeAixActionItemByStaffText(conversationId: string, text: string, sentAtIso: string): Promise<boolean> {
-  const { data: open } = await supabase
+  // 未完了は2行まで（ブレインの依頼の行＋内覧当日の朝の挨拶の行・2026-10-08）。どちらも同じ線で済みにする
+  const { data: opens } = await supabase
     .from("aix_action_items")
     .select("id, action, check_pattern, brain_analyzed_msg_ts")
     .eq("conversation_id", conversationId)
     .eq("status", "pending")
-    .maybeSingle();
-  if (!open) return false;
+    .limit(5);
+  let any = false;
+  for (const open of (opens ?? []) as Array<{ id: string; action: string; check_pattern: string | null; brain_analyzed_msg_ts: string | null }>) {
+    if (await completeOneByStaffText(conversationId, open, text, sentAtIso)) any = true;
+  }
+  return any;
+}
+async function completeOneByStaffText(conversationId: string, open: { id: string; action: string; check_pattern: string | null; brain_analyzed_msg_ts: string | null }, text: string, sentAtIso: string): Promise<boolean> {
   if (open.brain_analyzed_msg_ts && new Date(sentAtIso).getTime() <= new Date(open.brain_analyzed_msg_ts as string).getTime()) return false;
   const r = staffTextFulfillsAixItem({ action: open.action as string, check_pattern: (open.check_pattern as string | null) ?? null }, text);
   if (!r.done) return false;
@@ -278,15 +299,22 @@ export async function completeAixActionItemByStaffText(conversationId: string, t
 
 /** スタッフがその会話で AIX を送った → 未完了を完了（✅）にする。押した AIX がブレインの指示と同じかも残す */
 export async function completeAixActionItem(conversationId: string, aixType: string): Promise<void> {
+  const norm = (x: string) => (x === "property_check" ? "property_check_result" : x);
+  const now = new Date().toISOString();
+  // 2026-10-08: 内覧当日の朝の挨拶の行（別の行）は内覧挨拶の AIX を送った時だけ済み
+  if (aixType === "greeting_viewing") {
+    await supabase.from("aix_action_items")
+      .update({ status: "done", done_at: now, done_aix_type: aixType, done_matched: true, done_by: "aix", updated_at: now })
+      .eq("conversation_id", conversationId).eq("status", "pending").like("resolution_note", `${MORNING_GREETING_NOTE_PREFIX}%`);
+  }
   const { data: open } = await supabase
     .from("aix_action_items")
     .select("id, action")
     .eq("conversation_id", conversationId)
     .eq("status", "pending")
+    .or(MAIN_AIX_ITEM_OR)
     .maybeSingle();
   if (!open) return;
-  const norm = (x: string) => (x === "property_check" ? "property_check_result" : x);
-  const now = new Date().toISOString();
   await supabase.from("aix_action_items")
     .update({ status: "done", done_at: now, done_aix_type: aixType, done_matched: norm(open.action) === norm(aixType), done_by: "aix", updated_at: now })
     .eq("id", open.id).eq("status", "pending");

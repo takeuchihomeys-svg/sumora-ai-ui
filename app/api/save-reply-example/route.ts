@@ -12,6 +12,7 @@ import { isUsableExampleText, isUsableAiDraft, isGenerationFailureText } from "@
 // 2026-09-27 竹内: テスト用の会話（YUMA）は手本・学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
+import { ragIntakeExcludeReason, ragIntakeGuardEnabled, inApplyWindow, POST_APPLY_TEXT_RE, RAG_EXCLUDED_ENTRY_SOURCE } from "@/app/lib/rag-garbage";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
@@ -1326,6 +1327,18 @@ export async function POST(req: NextRequest) {
   //   → この2つは送信文からの自動登録をしない
   const skipCalendarDetect = entry_source === "aix_action" && (aixActionStr.startsWith("meeting_place") || aixActionStr.startsWith("viewing_invite"));
 
+  // ─── 2026-10-09 RAG の入口の歯止め（竹内さん承認）: 返信の手本が AIX の番の文・申込以降の中身なら検索の外（rag_excluded）で保存 ───
+  //   判定は rag-garbage.ts ragIntakeExcludeReason（純関数）。申込以降の期間は deal_outcomes（applied_at〜ended_at）。戻す: RAG_INTAKE_GUARD=off
+  const ragExcludeFor = async (text: string): Promise<string | null> => {
+    if (!ragIntakeGuardEnabled() || entry_source === "aix_action") return null;
+    let windows: Array<{ applied_at: string | null; ended_at: string | null }> = [];
+    if (conversationId && POST_APPLY_TEXT_RE.test(text)) {
+      const { data: outs } = await supabase.from("deal_outcomes").select("applied_at, ended_at").eq("conversation_id", conversationId).not("applied_at", "is", null);
+      windows = (outs ?? []) as typeof windows;
+    }
+    return ragIntakeExcludeReason({ entrySource: "line_reply", sentReply: text, inPostApplyWindow: inApplyWindow(windows, sentAt ?? new Date().toISOString()) });
+  };
+
   // ─── 分割送信マージ: 90秒以内に同じcustomerMessageで送ったものは1レコードに結合 ───
   // LINEでは1つの返信を複数メッセージに分けて送ることが多い。別レコードにすると
   // RAGが断片的な文のみ参照してしまうため、1つの完全な返信として結合して保存する。
@@ -1365,6 +1378,14 @@ export async function POST(req: NextRequest) {
     const mergedEmbedding = await generateEmbedding(mergedEmbeddingInput);
     const updatePayload: Record<string, unknown> = { sent_reply: mergedReply };
     if (mergedEmbedding) updatePayload.embedding = JSON.stringify(mergedEmbedding);
+    // RAG の入口の歯止め: 結合後の文で見る（1通目は約束・2通目が物件カード等の分割送信）。line_reply の行だけ付け替える
+    {
+      const mergedExclude = await ragExcludeFor(mergedReply);
+      if (mergedExclude) {
+        const { count } = await supabase.from("ai_reply_examples").select("id", { count: "exact", head: true }).eq("id", splitCandidate.id).eq("entry_source", "line_reply");
+        if (count) { updatePayload.entry_source = RAG_EXCLUDED_ENTRY_SOURCE; console.info(JSON.stringify({ tag: "rag-intake:excluded", reason: mergedExclude, id: splitCandidate.id, merged: true })); }
+      }
+    }
     if (isStarred) updatePayload.is_starred = true;
     await supabase.from("ai_reply_examples").update(updatePayload).eq("id", splitCandidate.id);
 
@@ -1491,6 +1512,8 @@ export async function POST(req: NextRequest) {
 
   // 無修正送信（AIドラフトをそのまま採用）は挿入時に自動スター
   const autoStarred = wasAiUsed === true && wasAiModified === false ? true : false;
+  const ragExcludeReason = await ragExcludeFor(sentReply);
+  if (ragExcludeReason) console.info(JSON.stringify({ tag: "rag-intake:excluded", reason: ragExcludeReason, conversationId: conversationId ?? null }));
 
   const [embedding, insertResult] = await Promise.all([
     embeddingPromise,
@@ -1513,14 +1536,16 @@ export async function POST(req: NextRequest) {
         ai_similarity: aiDraft ? sim : null,
         // entry_source は whitelist 検証（'line_reply' | 'aix_action' のみ）。
         // 任意文字列を通すと typo 由来の第3の値が .eq('entry_source','line_reply') フィルタから漏れるため入口で正規化する
-        entry_source: entry_source === "aix_action" ? "aix_action" : "line_reply",
+        // 2026-10-09: 返信の手本が AIX の番の文・申込以降の中身なら rag_excluded（検索の外・理由は reply_context_snapshot.rag_excluded_reason）
+        entry_source: entry_source === "aix_action" ? "aix_action" : ragExcludeReason ? RAG_EXCLUDED_ENTRY_SOURCE : "line_reply",
         aix_action: typeof aix_action === "string" && aix_action ? aix_action : null,
         customer_intent: customerIntent,
         // 2026-09-09 Fable5 往復文脈スナップショット（migrate-schema: reply_context_snapshot JSONB）
         // 2026-09-09 Fable5 みく事例: 送信文側の stance_sent_lite をマージ（was_ai_modified=false は stance_draft と同値なので draft をコピー）。
         //   pair/hedge は snapshot から再構築できないため pair 非依存の軽量版のみ（締め種別・ヘッジ種別・復唱率・絵文字・字数）。新カラム不要（JSONB）
         reply_context_snapshot: (() => {
-          const base = body.tpoDebug && typeof body.tpoDebug === "object" ? { ...body.tpoDebug } : null;
+          const base0 = body.tpoDebug && typeof body.tpoDebug === "object" ? { ...body.tpoDebug } : null;
+          const base = ragExcludeReason ? { ...(base0 ?? {}), rag_excluded_reason: ragExcludeReason } : base0;
           if (!sentReply?.trim()) return base;
           try {
             const lite = wasAiModified === false && base?.stance_draft
@@ -1576,11 +1601,17 @@ export async function POST(req: NextRequest) {
     shouldDeepAnalyze = false;
     shouldExtractPhrases = false;
   }
+  // 2026-10-09 RAG の入口の歯止め: 検索の外にした手本（AIX の番の文・申込以降の中身）からはナレッジ・フレーズも作らない
+  //   （監査: 申込以降の手本から作られたナレッジ 202行・物件カードのフレーズが返信の枠に出ていた）
+  if (ragExcludeReason) {
+    shouldDeepAnalyze = false;
+    shouldExtractPhrases = false;
+  }
 
   // after()化: ai_reply_examples の INSERT（最低限の保存）は上で完了済み。
   // Sonnet/Haiku 分析チェーン（タグ・カテゴリ付与等の後処理）はレスポンス返却後に実行し、
   // スタッフがタブを閉じても Vercel Function が分析を完走できるようにする
-  if ((shouldDeepAnalyze || shouldExtractPhrases || (isFullRewrite && !!aiDraft)) && data?.id) {
+  if ((shouldDeepAnalyze || shouldExtractPhrases || (isFullRewrite && !!aiDraft && !ragExcludeReason)) && data?.id) {
     const savedId = data.id as string;
     after(async () => {
       const analysisJobs: Promise<void>[] = [];
@@ -1591,7 +1622,7 @@ export async function POST(req: NextRequest) {
         analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, effectiveStarred));
       }
       // ② isFullRewrite: AI文案が完全に捨てられた = 最重要失敗ケース → 対比学習で「なぜ外したか」を抽出
-      if (isFullRewrite && aiDraft) {
+      if (isFullRewrite && aiDraft && !ragExcludeReason) {   // 検索の外の手本（AIX の番の文等）は対比学習もしない
         analysisJobs.push(analyzeDiff(savedId, conversationState, customerMessage, aiDraft, sentReply, sim));
       }
       await Promise.all(analysisJobs);

@@ -9,6 +9,8 @@ import { APPLICATION_FORMAT_RE } from "@/app/lib/apply-sub-mode";
 import { VIEWING_DATE_ASK_RE } from "@/app/lib/viewing-reask";
 import { resolveAckTopicScope, outOfTopicActs, type ScopeMsg } from "@/app/lib/ack-topic-scope";
 import { staffActsOf } from "@/app/lib/customer-sim-shadow";
+import { extractDraftFacts } from "@/app/lib/draft-fact-grounding";
+import { loadDraftGroundExtra } from "@/app/lib/draft-fact-grounding-server";
 
 export const maxDuration = 60;
 
@@ -110,6 +112,15 @@ export async function GET(req: NextRequest) {
       const rm = (c.suggested_aix_meta as { rent_market?: { sentences?: string[] } } | null)?.rent_market;
       const rentSentences = Array.isArray(rm?.sentences) ? rm!.sentences.join("\n") : "";
       groundText = `${((recent ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n")}\n${rents}\n${rentSentences}`;
+    }
+    // 2026-10-09 下書きの事実の照らし（canAutoReply ⑥-3c・draft-fact-grounding.ts）: 日付・時刻・号室・物件名がある下書きの時だけ、
+    //   直近の通に加えて本文の外の材料（送った資料の画像の名前・AIX の記録・見積書・内覧の予定・カレンダー・会社の事実）を読む
+    if (sendable && extractDraftFacts(sendable).length) {
+      if (groundText == null) {
+        const { data: recent } = await supabase.from("messages").select("text").eq("conversation_id", c.id).order("created_at", { ascending: false }).limit(40);
+        groundText = ((recent ?? []) as Array<{ text: string | null }>).map((m) => m.text ?? "").join("\n");
+      }
+      groundText += `\n${await loadDraftGroundExtra(c.id)}`;
     }
     const input: AutoReplyInput = {
       autoSendEnabled: c.auto_send_enabled,

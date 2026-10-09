@@ -231,7 +231,7 @@ export const AIX_PICKERS: Record<string, AixPickerSpec> = {
         { value: "push", label: "申込誘導", when: "まだ決めていないお客様の申込を後押し" },
         { value: "confirm", label: "申込確定", when: "お客様が申込を決めた（確定のご連絡と次の手順）" },
         { value: "format", label: "申込フォーマット送る", when: "申込書（記入フォーマット）を送る" },
-        { value: "docs_request", label: "書類依頼", when: "不足している書類（本人確認・収入証明 等）を依頼" },
+        { value: "docs_request", label: "書類依頼", when: "不足している書類（申込フォーマットの未記入・本人確認書類の裏表）を依頼" },
       ] },
       { key: "push_type", label: "申込誘導の種類", kind: "choice", onlyWhen: { key: "app_sub_mode", values: ["push"] }, options: [
         { value: "simple", label: "シンプル申込", when: "" }, { value: "scheduled", label: "退去予定", when: "" }, { value: "hold_view", label: "部屋抑えて内覧", when: "" },

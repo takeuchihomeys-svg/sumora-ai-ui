@@ -24,7 +24,7 @@
 //          お世話になっておりますを外す・足す向きはしない（外す向きは監査で誤削除 32/122 ＝入れない）。
 // 戻す: TIME_GREETING_R11=off（生成の入口と出口）／NEXT_PUBLIC_DRAFT_GREETING_REFRESH=off（画面）
 
-import { staffTalkedToday, type TalkMsg } from "./daily-greeting";
+import { staffTalkedToday, applyDailyGreeting, type TalkMsg } from "./daily-greeting";
 
 /** 時刻の挨拶の語（長い方を先に） */
 // 「今晩は」は「今晩はご都合…」の文頭と見分けられないので入れない
@@ -100,7 +100,7 @@ export type DraftGreetingRefresh = { text: string; fixes: string[] };
  * @param messages 会話（こちらの会話文が今日あるかを見る。資料文・画像は数えない＝生成の computeAlreadyGreetedToday と同じ線）
  * @param name 「〇〇さん」（分からなければ ""）
  */
-export function refreshDraftGreetingForNow(draft: string, opts: { messages: ReadonlyArray<TalkMsg>; name: string; now?: number }): DraftGreetingRefresh {
+export function refreshDraftGreetingForNow(draft: string, opts: { messages: ReadonlyArray<TalkMsg>; name: string; now?: number; ensureDaily?: boolean }): DraftGreetingRefresh {
   if (!draft?.trim()) return { text: draft, fixes: [] };
   const now = opts.now ?? Date.now();
   const talkedToday = staffTalkedToday(opts.messages, now);
@@ -119,6 +119,23 @@ export function refreshDraftGreetingForNow(draft: string, opts: { messages: Read
   }
   // 「お世話になっております」を今日すでに送った後に外す向きは入れない（監査 scripts/audit-time-greeting.ts D: AI の下書き 2,927件に当てて
   //   変わる 122件のうち送った文と挨拶の有無が合う 90／外れ 32＝スタッフが残して送った番がある＝誤削除0にならない。C: 人の手打ちでも 152通が変わる）
+  // 2026-10-08 竹内さんの決定「今日初めての連絡なら『お世話になっております』を付ける。2回目以降なら入れない」で上の線を上書き（ensureDaily）:
+  //   今日まだ会話文を送っていない → 挨拶が無ければ「〇〇さんお世話になっております！！」を足す（🌟物件カード・【】見積・初回のはじめまして・催促の謝罪には足さない）／
+  //   今日すでに送っている → 冒頭の「お世話になっております」を外す（名前の行は残す）。足し外しは daily-greeting.applyDailyGreeting（AIX の仕上げと同じ関数）。
+  //   戻す: NEXT_PUBLIC_DRAFT_GREETING_REQUIRED=off（画面）
+  if (opts.ensureDaily) {
+    const head = text.split("\n").filter((l) => l.trim()).slice(0, 2).join("\n");
+    if (!talkedToday && /申し訳|お待たせ/.test(head)) return { text, fixes };
+    // 外す向きは「お世話になっております」だけ（夜にこちらから届ける「夜分遅くに失礼致します」は竹内さんが2通目以降にも書く＝決定の対象外・監査 scripts/audit-1008-greeting-name.ts）
+    if (talkedToday && !/お世話になっております/.test(head)) return { text, fixes };
+    const call = opts.name.replace(/さん$/, "");
+    const r = applyDailyGreeting(text, { staffSentToday: talkedToday, greetingPhrase: "お世話になっております！！", name: call ? `${call}さん` : "", joinNameLine: true });
+    if (r.action === "added") fixes.push("今日はじめての会話文なので「お世話になっております」を足した（竹内さん 10/08）");
+    if (r.action === "removed") fixes.push("今日すでに会話文を送っているので「お世話になっております」を外した（竹内さん 10/08）");
+    // 外した後に「〇〇さん⏎⏎本文」と名前の行の後に空行が残る時は空行を詰める（監査で 10通・名前の行だけ残す形は書き手 B の形）
+    const out = r.action === "removed" ? r.text.replace(/^([ \t　]*[^\n！!。、\s]{1,15}さん[ \t　]*)\n[ \t　]*\n+/, "$1\n") : r.text;
+    return { text: out, fixes };
+  }
   return { text, fixes };
 }
 

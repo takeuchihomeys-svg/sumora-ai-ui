@@ -61,7 +61,8 @@ describe("few-shot 注入前の曜日補正（2026-09-12 竹内方針D）", () =
   });
   it("W4 generate-reply の few-shot 注入2か所が fixExampleWeekdays を通している", () => {
     const s = src("api/generate-reply/route.ts");
-    expect((s.match(/fixExampleWeekdays\(normalizeBannedPhrasing\(ex\.sent_reply/g) ?? []).length).toBe(2);
+    // 曜日の補正の内側に時刻の挨拶（exampleTimeGreeting）・お待たせの外し（stripWaitedForExample）等が入っても、補正の外側は fixExampleWeekdays のまま
+    expect((s.match(/fixExampleWeekdays\((?:\w+\()*normalizeBannedPhrasing\(ex\.sent_reply/g) ?? []).length).toBe(2);
   });
 });
 

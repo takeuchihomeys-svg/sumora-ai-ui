@@ -71,3 +71,9 @@ scripts/.brain-cache/
 #   作り直しは scripts/replay-scenarios-mine.ts --pick=scripts/replay-scenarios.keys.json（keys と expect は個人情報なし＝入れる）
 scripts/replay-scenarios.json
 scripts/.replay-out/
+# 2026-10-09 ブレインの試験: problems.json と結果は本番の会話（伏せ済み）と答案が入るので入れない。spec.json（正解の鍵）と scripts は入れる。作り直しは scripts/brain-exam-add.ts --rebuild
+scripts/brain-exam/problems.json
+scripts/brain-exam/results/
+# 2026-10-08 設計知見の場面の札の控え・計画（一時ファイル）
+scripts/backup-kb-scene-tags-*.json
+scripts/kb-scene-tag-plan-*.json

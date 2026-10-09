@@ -94,6 +94,14 @@ export async function POST(req: NextRequest) {
   if (!line_user_id || (!message && !image_url && !call_button && batchImages.length === 0)) {
     return NextResponse.json({ ok: false, error: "line_user_id and message or image_url required" }, { status: 400 });
   }
+  // 2026-10-09 竹内さん承認: LINE につながっていないテスト専用の会話（YUMA2〜）には送らない（宛先の形に関わらず・記録の書き込みより前で止める）
+  {
+    const { isNoLineTestConversation, isNoLineTestLineUserId } = await import("@/app/lib/test-conversations");
+    if (isNoLineTestConversation(conversation_id) || isNoLineTestLineUserId(line_user_id)) {
+      console.warn(JSON.stringify({ tag: "send-line-message:test-no-line", conversationId: conversation_id ?? null }));
+      return NextResponse.json({ ok: false, errorCode: "test_no_line", error: "LINE につながっていないテスト専用の会話です。送信しません" }, { status: 409 });
+    }
+  }
   // 2026-09-11 データ衛生（統合設計 §7）: 生成失敗文（「AI返信の生成に失敗しました…」）はお客様に送らない
   //   （9/11 に手動送信で実際に LINE 配信された。スタッフが下書き欄の失敗文をそのまま送信した経路を止める）
   if (message && isGenerationFailureText(message)) {
@@ -416,11 +424,16 @@ export async function POST(req: NextRequest) {
   //   済ませていれば完了（✅ 返信で済み）にする（判定 aix-item-cleanup.staffTextFulfillsAixItem）。
   //   下の宣言の再分析（ブレインが次の AIX を登録し直す）より先に済ませる＝同じ after の中で await してから再分析へ進む
   //   （順が逆だと、再分析の「同じ指示は再通知しない」に吸われた後に完了して、宣言の要対応が消える）
-  const completeByText = async (cid: string | null): Promise<void> => {
+  const completeByText = async (cid: string | null, o: { advanceQueue?: boolean } = {}): Promise<void> => {
     if (!message || origin === "aix" || !cid) return;
     try {
       const { completeAixActionItemByStaffText } = await import("@/app/lib/aix-action-items");
-      await completeAixActionItemByStaffText(cid, message, sentAtIsoForFacts);
+      const done = await completeAixActionItemByStaffText(cid, message, sentAtIsoForFacts);
+      // 2026-10-09: 返信の本文で要対応を済ませた → 残りの約束の次の AIX要対応を立てる（約束の送信の後はブレインの再分析が立てるので呼ばない・既定 off・PROMISE_QUEUE=on で入る）
+      if (done && o.advanceQueue) {
+        const { advancePromiseQueue } = await import("@/app/lib/promise-queue-server");
+        await advancePromiseQueue(cid, { trigger: "staff_text", sentText: message, sentAt: sentAtIsoForFacts });
+      }
     } catch (e) {
       console.warn("[send-line-message] complete aix item by staff text failed:", e instanceof Error ? e.message : e);
     }
@@ -434,7 +447,7 @@ export async function POST(req: NextRequest) {
           const { data: convRow } = await supabase.from("conversations").select("id").eq("line_user_id", line_user_id).eq("account", accountKey).maybeSingle();
           cid = (convRow?.id as string | undefined) ?? null;
         }
-        await completeByText(cid);
+        await completeByText(cid, { advanceQueue: true });
       });
     }
     // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言（「お送り頂きました物件、募集状況確認させて頂きます」）も対象

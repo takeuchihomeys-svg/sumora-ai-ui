@@ -142,6 +142,26 @@ console.log("── ★ 保存済みの本文から読む（ブレイン・物�
   t("見出しだけの本文は条件の画面にしない", classifyImageTranscript(head("【物件以外：検索条件の画面】")) === "image_other");
 }
 
+console.log("── ★ 支払いの控え・携帯番号（2026-10-09）");
+{
+  // 実データの形（名前・番号は伏せ・桁は保つ）
+  const TRANSFER = "21:08↑\n\n5G 50\n\n振込完了 ⊃ログアウト\n\n振込を正常に受け付けました。\n\n振込先口座　GMOあおぞらネット銀行\n普通 1542253\n\n振込金額　100,000円\n\n引落口座　〇〇支店\n普通\n0000000\n\n振込依頼人名　ヤマダ　ハナコ";
+  const MEISAI = "ご利用明細\n\n取扱店：イオン銀行\n取扱店番号：104\n利用日：2026.9.25\n時刻：（記載あり）\n\n銀行業務：店業務\n口座番号：000000000000****3\n\n振込み\nお振込金額：¥49,000\n\nお振替人：ヤマダ タロウ 様";
+  const RECEIPT_FULL = "インターネット受付　払込受領証（お客様控え）\n\nお客様氏名：山田花子\n電話番号：090-0000-0000\n\nお申込商品代金：20,000円\n発行者：全管協少額短期保険";
+  const OVERLAP = "複数の書類が重なった状態で撮影されており、以下のテキストが確認できます：\n- \"090-0000-0000\"という電話番号\n- \"初期費用明細書\" と思われるテキスト";
+  const EST_FURIKOMI = "御見積書\n様\n\n尚、振り込み期日は厳守願います。\n\n御請求金額 ¥292,500\n\n物件名：ISM大阪城公園\n家　賃：150,000";
+  const on = (k: string, v: string | undefined, f: () => void) => { const o = process.env[k]; if (v == null) delete process.env[k]; else process.env[k] = v; try { f(); } finally { if (o == null) delete process.env[k]; else process.env[k] = o; } };
+  t("★ 振込完了の画面 → 見出しだけ（振込依頼人名・口座を残さない）", imageTextForSave("other", TRANSFER) === "[画像] 【物件以外：振込・支払いの控え】");
+  t("★ ご利用明細（振込）→ 見出しだけ", imageTextForSave("other", MEISAI) === "[画像] 【物件以外：振込・支払いの控え】");
+  t("★ 見積書と分類された払込受領証 → 見出しだけ（氏名・携帯を残さない）", imageTextForSave("estimate", RECEIPT_FULL) === "[画像] 【物件以外：振込・支払いの控え】");
+  t("支払いの控えの見出しは読み戻せる（物件以外）", customerImageGroup(imageTextForSave("estimate", RECEIPT_FULL), "estimate") === "non_property");
+  t("★ 見積書の「振り込み期日」は支払いの控えにしない（書き起こしを残す）", imageTextForSave("estimate", EST_FURIKOMI) === `[画像] 【見積書・初期費用の明細】\n${EST_FURIKOMI}`);
+  t("★ 種類不明の書き起こしの携帯番号は伏せる", imageTextForSave("other", OVERLAP).includes("（携帯番号）") && !imageTextForSave("other", OVERLAP).includes("090-0000-0000"));
+  t("物件の資料の業者の番号（06・0120）は伏せない", labeledImageText("property_material", MAISOKU + "\nTEL 06-1234-5678 / 0120-000-000").includes("06-1234-5678"));
+  on("IMAGE_PAYMENT_DROP", "off", () => t("IMAGE_PAYMENT_DROP=off で旧の形（見出し＋書き起こし）", imageTextForSave("other", TRANSFER).startsWith("[画像] 【物件以外：振込・支払いの控え】\n")));
+  on("IMAGE_MOBILE_MASK", "off", () => t("IMAGE_MOBILE_MASK=off で伏せない", imageTextForSave("other", OVERLAP).includes("090-0000-0000")));
+}
+
 console.log("── ★ つながり（webhook・ブレイン）");
 {
   const webhook = readFileSync("app/api/line-webhook/route.ts", "utf8");

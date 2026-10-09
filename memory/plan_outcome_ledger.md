@@ -297,3 +297,9 @@
 
 **本番の DDL（未実行）**: migrate-schema 末尾の段（deal_outcomes に staff_confirmed_at・staff_confirm_choice・confirm_snooze_until・idx_deal_outcomes_applied／brain_action_reach_stats）。流すまでは: 確認の帯は出ない（列が無いと候補を返さない）・申込にする促しは出る・ブレインの注記は空・auto-seiyaku は今まで通り。
 **台帳の版**: ol2-20261008（判断の出来事に scene・vb）。次の cron（JST 9:30）で直近60日に動いた会話が作り直される。
+
+## 10. 竹内さんの決定（2026-10-08 夜）と実装（未コミット）
+- 「申込で良いけど、さらにちゃんと成約したのはより良いデータとして入れておく」→ 成功は申込到達のまま・確定の成約（result=won・result_certainty=confirmed）を重い正解に: 申込到達率に won（並べ方に重み・WIN_CONFIRMED_WEIGHT 既定1）・ブレインの注記に「うち成約確定」・winning_patterns に [成約確定]＋重要度10（markConfirmedWinPatterns・cron/outcome-ledger の後と 30日の確認で成約した時）・analyze-closed も分析時に印・strongPositiveWeight（成約確定3／申込2／内覧1）。DDL: brain_action_reach_stats.won（migrate-schema の段・竹内さんが流す）。
+- 失注は負の正解にしない: analyze-closed は closed_lost を分析しない・書き戻さない・ブレインに【失注】の成約パターンを渡さない（LOST_AS_NEGATIVE=on で旧）。
+- 朝の日報の AI貢献率は申込（applied_at 30日）で数え、確定の成約を別に並べる（calc-ai-attribution basis=applied）。
+- BRAIN_APPLY_REACH_MIN_N の既定 20→10。

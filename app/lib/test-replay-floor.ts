@@ -43,9 +43,15 @@ export const TABLE_TIME_COLUMN: Readonly<Record<string, string>> = {
   conversation_checkpoints: "created_at",
   apply_period_summaries: "created_at",
   estimate_action_log: "created_at",
+  // 2026-10-09 試験の担当の案（承認済み）: 結果の記録・段階の履歴も線で切る
+  deal_outcomes: "computed_at",
+  outcome_events: "at",
+  conversation_stage_history: "changed_at",
   viewing_action_log: "created_at",
   property_recommendation_action_log: "created_at",
   application_action_log: "created_at",
+  // 2026-10-08 お客様のメモ（1会話1行）: 場面より前に作った YUMA のメモを読まない
+  customer_memos: "updated_at",
 };
 
 /** conversations の行で空にする列（YUMA の過去の判断・戦略・紐付けを混ぜない） */

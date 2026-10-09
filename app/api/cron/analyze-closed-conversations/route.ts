@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { analyzeClosedConversation, type ClosedOutcome } from "@/app/lib/analyze-closed-conversation";
 import { loadBlockedItems, recordAttemptFailure } from "@/app/lib/llm-job-attempts";
+import { lostAsNegativeEnabled } from "@/app/lib/application-reach";
 
 export const maxDuration = 300;
 
@@ -35,7 +36,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: convErr.message }, { status: 500 });
     }
 
-    const candidates = (convs ?? []) as Array<{ id: string; status: string }>;
+    // 2026-10-08 竹内さん: 失注は分析しない（負の正解にしない・LOST_AS_NEGATIVE=on で旧）＝候補から外す（毎回スキップで枠を埋めない）
+    const candidates = ((convs ?? []) as Array<{ id: string; status: string }>).filter((c) => c.status !== "closed_lost" || lostAsNegativeEnabled(process.env));
     if (candidates.length === 0) {
       await finishCronLog(runLogId, true, { analyzed: 0, candidates: 0 });
       return NextResponse.json({ ok: true, analyzed: 0, candidates: 0 });

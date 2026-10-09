@@ -5,6 +5,10 @@ import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 import { loadBlockedItems, recordAttemptFailure, markAttemptDone } from "@/app/lib/llm-job-attempts";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+// 2026-10-08 竹内さんの決定の2: 窓 14日→30日（新しい順に20件＝新しい7日が先・LEARNING_WINDOW_30D=off で旧）
+import { learningWindow } from "@/app/lib/learning-window";
+// 2026-10-08 竹内さん（学習の重み①）: 失注した会話は弱い参考のまま・悪い見本（負の正解）には使わない＝「避けるべき対応パターン」を知識に入れない。LOST_AS_NEGATIVE=on で旧
+import { lostAsNegativeEnabled } from "@/app/lib/application-reach";
 
 const LOSERS_JOB = "auto-analyze-losers";
 
@@ -17,8 +21,12 @@ export const maxDuration = 300;
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30_000, maxRetries: 1 });
 
 async function run() {
-  // 過去14日以内に closed_lost になった会話（最大20件）
-  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  if (!lostAsNegativeEnabled(process.env)) {
+    return NextResponse.json({ ok: true, analyzed: 0, skipped: "lost_not_negative", message: "失注は負の正解にしない（LOST_AS_NEGATIVE=on で旧）" });
+  }
+  // 過去14日（新: 30日）以内に closed_lost になった会話（最大20件・新しい順）
+  const win = learningWindow("auto-analyze-losers", 14);
+  const since = win.sinceIso;
 
   const { data: fetchedConvs, error: convErr } = await supabase
     .from("conversations")
@@ -39,7 +47,7 @@ async function run() {
   const lostConvs = (fetchedConvs ?? []).filter((c) => !blocked.has(c.id as string) && !isTestConversation(c.id as string)).slice(0, 20);
 
   if (!lostConvs?.length) {
-    return NextResponse.json({ ok: true, analyzed: 0, message: "no closed_lost conversations in 14 days" });
+    return NextResponse.json({ ok: true, analyzed: 0, message: `no closed_lost conversations in ${win.days} days` });
   }
 
   const today = new Date();

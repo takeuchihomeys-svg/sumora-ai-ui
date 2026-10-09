@@ -1,7 +1,7 @@
 // 2026-10-06 竹内「設計知見の更新や成長はツールを完成させるにあたってかなり重要」（⑯）: 設計知見の整理の決まりを固定する
 // 実行: npx tsx app/lib/__tests__/design-knowledge-curation.test.ts（自己完結・env 不要。全 OK で exit 0）
 import {
-  findDuplicates, findDecisionConflicts, decisionRow, similarPairs, parseSimilar, maskForLlm, buildDigest, areasOf, pickKeeper,
+  findDuplicates, findDecisionConflicts, decisionRow, similarPairs, parseSimilar, maskForLlm, looksMojibake, mojibakeFields, buildDigest, areasOf, pickKeeper,
   DECISIONS, type KbRow,
 } from "../design-knowledge-curation";
 
@@ -58,6 +58,15 @@ console.log("── ③ 似ている組・DeepSeek の答え");
   t("週の見直しは新しい行を含む組だけ", similarPairs([a, b], { sinceIso: "2026-10-01T00:00:00Z" }).length === 0);
   t("答えの読み取り（JSON）", parseSimilar('{"relation":"same","reason":"同じ"}')?.relation === "same" && parseSimilar("ちがう") === null && parseSimilar('{"relation":"maybe"}') === null);
   t("電話・メールの形は伏せて渡す", !/090|@/.test(maskForLlm("連絡は 090-1234-5678 か a@b.co へ")));
+  // 2026-10-08 竹内さん: LINE の表示名・呼び名は渡して良い／申込フォーマットの本名は渡さない
+  {
+    const m = maskForLlm("ゆなまるさんの件。氏名：山田 花子\nフリガナ：ヤマダ ハナコ\n生年月日：1998年4月5日\n緊急連絡先氏名(続柄)：山田太郎\n年収：300万");
+    t("記入欄の本名・フリガナ・生年月日は伏せる", !/山田|ヤマダ|1998/.test(m) && m.includes("氏名：［伏せ］"));
+    t("LINE の表示名・呼び名は伏せない・年収は基準として残す", m.includes("ゆなまるさん") && m.includes("年収：300万"));
+    t("文字化け: 9/01 の実物の題は文字化け・普通の日本語や ? を1つ含む文は違う", looksMojibake("Chrome??????????3???(?????itandi?????)???????") && looksMojibake("area_mode?DB???autofill??????????") && looksMojibake("文字�け") && !looksMojibake("審査通りますか？") && !looksMojibake("What? 内覧の希望") && !looksMojibake(""));
+    t("文字化けの欄を挙げる（札も見る）", JSON.stringify(mojibakeFields({ title: "正しい題", insight: "????????", tags: ["Chrome拡張", "??????"] })) === JSON.stringify(["insight", "tags"]));
+    t("記入欄でない語（呼び名・表示名の説明）は触らない", maskForLlm("呼び名: あかり／表示名：あ") === "呼び名: あかり／表示名：あ");
+  }
 }
 
 console.log("── ④ 分野ごとのまとめ");

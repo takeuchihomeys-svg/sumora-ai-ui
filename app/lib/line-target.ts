@@ -18,6 +18,8 @@
 //   会話の宛先（conversations.line_user_id）にグループなら**グループID**を入れれば、
 //   送信（push の to）はそのままグループに届く。1つの会話＝1つの宛先なので取り違えが起きない。
 
+import { isNoLineTestLineUserId } from "./test-conversations";
+
 export type LineTargetKind = "user" | "group" | "room";
 
 /** LINE の ID の種類（先頭の1文字で決まる）。形が違えば null */
@@ -111,6 +113,10 @@ export function checkSendTarget(
   to: string | null | undefined,
   conversation: { line_user_id?: string | null; send_blocked_reason?: string | null } | null,
 ): SendTargetCheck {
+  // 2026-10-09 竹内さん承認: LINE につながっていないテスト専用の会話（YUMA2〜・宛先 TEST-NOLINE-…）には送らない（形の判定より先に、理由をはっきり出す）
+  if (isNoLineTestLineUserId(to) || isNoLineTestLineUserId(conversation?.line_user_id)) {
+    return { ok: false, reason: "test_no_line", message: sendBlockedMessage("test_no_line") };
+  }
   const kind = lineTargetKind(to);
   if (!kind) return { ok: false, reason: "invalid_target", message: "送信先の LINE ID の形が正しくありません" };
   if (!conversation) return { ok: true };
@@ -134,6 +140,9 @@ export function checkSendTarget(
 export function sendBlockedMessage(reason: string): string {
   if (reason === "created_from_group") {
     return "この会話は LINE グループのメッセージから誤って個人として作られたため、送信を止めています。グループの会話（【グループ】…）から送ってください";
+  }
+  if (reason === "test_no_line") {
+    return "この会話は LINE につながっていないテスト専用の会話（YUMA2〜）です。送信しません（LINE で確かめる時は YUMA から）";
   }
   if (reason === "merged_to_group") {
     return "この会話の履歴はグループの会話（【グループ】…）へ引き継ぎました。グループの会話から送ってください";

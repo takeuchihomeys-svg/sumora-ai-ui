@@ -91,7 +91,9 @@ import { findCompanyFactContradiction, buildCompanyFactsForCheck, findMissingCar
 // 2026-10-02 お客様自身の言葉の復唱を捏造と読まない（fabricated-customer-words.ts・scripts/audit-fabricated-customer-words.ts）
 import { isCustomerEchoFabrication } from "./fabricated-customer-words";
 import { isStaffSelfIntroNameFlag, STAFF_SELF_NAME } from "./final-check-staff-name";
+import { isViewingOfferFlag, photoOfferExempt } from "./final-check-viewing-offer";
 import { isMissingElementRuleFlag, isPassiveMisfire, isAllowedDiscountMisfire, staffStandardFilterEnabled } from "./final-check-staff-standard";
+import { issueContradictsContract, renderTurnContractNote, type TurnContract } from "./turn-contract";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -123,6 +125,9 @@ export interface CheckResult {
    *  最終 CheckResult は recheck で丸ごと置換されるため、revision_count>0 で issues が空になった時に
    *  「何を直したのか」を追える唯一の記録。みく事例は「誤った direction に合わせて1回書き換えて問題解消と表示した」が追跡不能だった */
   pre_revision_issues?: string[];
+  /** 2026-10-08 竹内さん「最終チェックがボトルネックにならないように」: 書き直しを採った時の書き直す前の下書き（先頭600字）。
+   *  書き直しが竹内さんの実送信から遠ざけたかを後で数えるため（それまで書き直す前の文はどこにも残っていなかった）。ログ tag final-check:revised にも出す */
+  pre_revision_text?: string;
   // ── 2026-09-11 統合設計（経路G・観測）: JSONB のキー追加のみ（新カラムなし → migrate-schema 更新不要）──
   /** 完了しなかったパスと理由（reina の 183ms 全パス即時失敗のような原因を DB から特定するため） */
   pass_failures?: Array<{ pass: CheckPass; reason: "timeout" | "http" | "max_tokens" | "parse" | "other"; status?: number; ms: number }>;
@@ -253,6 +258,8 @@ export interface FinalCheckContext {
    *  検査は「今回のメッセージが何か」の判定にはこれを使わない。UNPROMPTED_PROPOSAL の severity と
    *  CELL_AVOID_CONFLICT の警告にのみ使う。check-reply 経路は省略可（severity が warning に落ちるだけ） */
   brainStrategy?: BrainConversationScope | null;
+  /** 2026-10-08 この番の本質（turn-contract.ts）。本質に反する中身を足させる指摘は書き直しに渡さない（指摘は記録に残す・TURN_CONTRACT_FINAL_CHECK=off） */
+  turnContract?: TurnContract | null;
   /**
    * 2026-09-26 段3: ブレインが今回の発言を見て「主の一手＋並行でほかも探す」と判断した（parallel-search.ts・route の parallelSearchReplyOn と同じ値）。
    *   true の時、引き続き探す一文は余計な提案（UNPROMPTED_PROPOSAL）に数えない
@@ -630,6 +637,11 @@ function buildBrainBaselineNote(ctx: FinalCheckContext): string {
   if (b.recommended_tone) parts.push(`トーン=${b.recommended_tone}`);
   if (b.reply_opener) parts.push(`書き出し=${b.reply_opener}`);
   if (b.closing_strategy) parts.push(`会話全体の締め方「${String(b.closing_strategy).slice(0, 120)}」`);
+  // 2026-10-08 本質の仕様: 依頼ごとの答え方（返信／約束／AIX／触れない）。検査もこれに沿って見る（本質に無い中身を足せと指摘しない）
+  const tc = ctx.turnContract && ctx.turnContract.source === "brain" ? renderTurnContractNote(ctx.turnContract) : "";
+  if (tc) parts.push(`この番の本質:
+${tc}
+（本質に無い確認・約束・説明を足せと指摘しない）`);
   if (parts.length === 0) return "";
   return `【Brain判定済み】Brain（Sonnet）が次のように判断しています: ${parts.join(" ／ ")}。\n`
     + `この判断に沿った返信かどうかで見ること。絶対ルール違反・禁止語彙・明らかなミスのみ指摘し、`
@@ -1707,6 +1719,13 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
         message: `冒頭は「${expected}」で始める決定です（${gdl.kind}: ${gdl.reason}）が、本文の冒頭が異なります`,
         evidence: head.slice(0, 30), suggestion: `先頭行を「${expected}」に置き換える（その後に改行して本文）` });
     }
+    // 7-a' 2026-10-08 竹内さん: その日最初の会話文は必ず「〇〇さんお世話になっております！！」（GREETING_DAILY_REQUIRED・enforce=true の standard）。
+    //   後処理 enforceOpening が先頭を固定するので、ここは書き直しが挨拶の行を落とした時の見張り（warning・止めない）
+    if (gdl.kind === "standard" && gdl.enforce && !expectsNight && expected && !headRaw.startsWith(expected)) {
+      issues.push({ pass: "rule_check", severity: "warning", code: "OPENING_GREETING_MISMATCH",
+        message: `今日はじめての会話文なので冒頭は「${expected}」の決定です（${gdl.reason}）が、本文の冒頭が異なります`,
+        evidence: head.slice(0, 30), suggestion: `先頭行を「${expected}」にする（その後に改行して本文）` });
+    }
     // 7-b 進捗催促（late_apology）以外で謝罪行から始めている（催促の実質が無い謝罪は禁止: PHASE_COMMON_FORMAT）
     if (hasLateApology && gdl.kind !== "late_apology") {
       issues.push({ pass: "rule_check", severity: "warning", code: "OPENING_GREETING_UNEXPECTED",
@@ -2633,14 +2652,16 @@ export function runVocabSemanticChecks(text: string, ctx: FinalCheckContext): Ch
     }
   }
   // V7 前提の無い「撮影」— 履歴（スタッフ約束 or 顧客希望）に撮影・写真・動画が無い
-  if (PHOTO_RE.test(text) && !PHOTO_PREMISE_RE.test(staffHist) && !CUSTOMER_PHOTO_WANT_RE.test(custHist + "\n" + cust)) {
+  //   2026-10-08 竹内さん①: 来られない事情のお客様へのオンライン内見・撮影の申し出は前提あり（final-check-viewing-offer.ts）
+  if (PHOTO_RE.test(text) && !PHOTO_PREMISE_RE.test(staffHist) && !CUSTOMER_PHOTO_WANT_RE.test(custHist + "\n" + cust) && !photoOfferExempt(text, custHist + "\n" + cust)) {
     issues.push({ pass: "context_check", severity: "block", code: "PHOTO_NO_PREMISE",
       message: "会話履歴に撮影・写真・動画の約束もお客様の希望も無いのに「撮影」を持ち出しています（実例の文脈外流用）",
       evidence: firstSentenceAround(text, PHOTO_RE),
       suggestion: "「撮影」を含む文を削除し、直前のスタッフ約束があればその対象語のままの復唱に変更する（新しい約束・固有名詞は足さない）" });
   }
   // V8 お客様の「内見したい」を撮影・動画送付に置き換え
-  if (PHOTO_RE.test(text) && SATSUEI_SUBST_RE.test(cust) && !/(?:内覧|内見)(?:不可|できません|出来ません|が難しい)/.test(text)) {
+  //   2026-10-08 竹内さん①: 「内覧したいのですが出張中で伺えない」への申し出（抑えた状態でのご内覧と並べる）は置き換えではない（final-check-viewing-offer.ts）
+  if (PHOTO_RE.test(text) && SATSUEI_SUBST_RE.test(cust) && !/(?:内覧|内見)(?:不可|できません|出来ません|が難しい)/.test(text) && !photoOfferExempt(text, custHist + "\n" + cust)) {
     issues.push({ pass: "context_check", severity: "block", code: "PHOTO_REPLACES_VIEWING",
       message: "お客様は自分で内覧したいと言っています。スタッフの撮影・動画送付に置き換えず「ご案内させて頂きます」で受けてください",
       evidence: firstSentenceAround(text, PHOTO_RE),
@@ -2857,6 +2878,11 @@ export async function runFinalCheck(draft: string, ctx: FinalCheckContext, optsO
       // 2026-10-07 最後の Claude の確かめで残った誤発火: 行動宣言への「受け身」・使ってよい時の初期費用の割引の一文（final-check-staff-standard.ts ③）
       if (staffStandardFilterEnabled() && (isPassiveMisfire(pass, code, raw.message ?? "", evidence) || isAllowedDiscountMisfire(pass, code, evidence, customerTextsForFabrication(ctx).join("\n")))) {
         console.log(JSON.stringify({ tag: "final-check:staff-standard-misfire-dropped", pass, code, message: (raw.message ?? "").slice(0, 60), evidence: evidence.slice(0, 80) }));
+        continue;
+      }
+      // 2026-10-08 竹内さん①: 来られない事情（出張・遠方・予定が詰まって）のお客様への「オンライン内見や、室内の撮影もご対応させて頂きます」は返信の番（final-check-viewing-offer.ts・FINAL_CHECK_VIEWING_OFFER=off）
+      if (isViewingOfferFlag(code, evidence, draft, customerTextsForFabrication(ctx).join("\n"))) {
+        console.log(JSON.stringify({ tag: "final-check:viewing-offer-dropped", pass, code, evidence: evidence.slice(0, 80) }));
         continue;
       }
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
@@ -3567,6 +3593,8 @@ export async function runFinalCheckWithRevision(
         // 2026-09-10 Fable5: CELL_AVOID_CONFLICT は診断専用（本文を直しても解消しない）＝修正ループに渡さない
         // 2026-09-11 竹内方針1（V-1）: 観測専用・表示のみ・誤字・info は isRevisable で除外（「要素を足す書き直し」を修正 LLM に渡さない）
         isRevisable(i) &&
+        // 2026-10-08 竹内さん Q1「本質を勝たせる」: 本質に反する中身を足させる指摘（閉じる番に要素・本質に無い確認の約束・AIX／触れない項目への答え）は書き直しに渡さない
+        !issueContradictsContract(i, ctx.turnContract ?? null) &&
         (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
     );
     if (passableWarnIssues.length === 0) return dropW("no_passable");
@@ -3625,6 +3653,8 @@ export async function runFinalCheckWithRevision(
       recheck.revised_text = revised;
       recheck.revision_count = 1;
       recheck.pre_revision_issues = preRevisionIssues;
+      recheck.pre_revision_text = draft.slice(0, 600);
+      console.log(JSON.stringify({ tag: "final-check:revised", path: "warning", codes: preRevisionIssues, before: draft.slice(0, 300), after: revised.slice(0, 300) }));
       return { finalDraft: revised, finalCheck: recheck };
     }
 
@@ -3653,6 +3683,8 @@ export async function runFinalCheckWithRevision(
       (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
         // 2026-09-11 竹内方針1（V-1）: block と一緒に観測専用・表示のみ・誤字の指摘を修正 LLM へ渡さない（同じ isRevisable）
         isRevisable(i) &&
+        // 2026-10-08 竹内さん Q1「本質を勝たせる」: 本質に反する中身を足させる指摘（閉じる番に要素・本質に無い確認の約束・AIX／触れない項目への答え）は書き直しに渡さない
+        !issueContradictsContract(i, ctx.turnContract ?? null) &&
         (!i.evidence || draftNormB.includes(normalizeForMatch(i.evidence)))
     );
     if (passableBlockIssues.length === 0) { droppedB = "no_passable"; break; }
@@ -3709,6 +3741,10 @@ export async function runFinalCheckWithRevision(
 
   bestCheck.revision_count = revisionCount;
   bestCheck.pre_revision_issues = preRevisionIssues;
+  if (bestDraft !== draft) {
+    bestCheck.pre_revision_text = draft.slice(0, 600);
+    console.log(JSON.stringify({ tag: "final-check:revised", path: "block", codes: preRevisionIssues, before: draft.slice(0, 300), after: bestDraft.slice(0, 300) }));
+  }
   if (droppedB && bestDraft === draft) bestCheck.revision_dropped = droppedB;
   if (bestCheck.issues.some((i) => i.severity === "block")) {
     bestCheck.revision_exhausted = true; // blockが残った → スタッフ手動確認必須

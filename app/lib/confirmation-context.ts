@@ -26,6 +26,7 @@ export type ConfirmationSource =
   | "active_property_check"
   | "aix_property_check_bridge"
   | "customer_self_confirm"
+  | "answerable"
   | "none";
 
 export interface ConfirmationContextVerdict {
@@ -57,6 +58,8 @@ export const CUSTOMER_SELF_CONFIRM_RE = /確認(?:します|しておきます|�
 /** 直前スタッフの確認約束。STAFF_CONFIRM_DECL_RE（reply-context）を基に、読点で続く「確認させて頂き、」も通す（E5-n: 1件の取りこぼし） */
 const STAFF_CONFIRM_PROMISE_RE = new RegExp(`${STAFF_CONFIRM_DECL_RE.source}|(?<!ご)確認(?:させて(?:頂|いただ)き|いたし|致し|し)(?:ます|て|[、,])|お調べ(?:して|させて)`);
 const STAFF_CONFIRM_OBJECT_RE = /募集状況|空室|空き|管理会社|オーナー|貸主|番手|入居可能|退去|交渉|ペット|駐車場|保証会社|設備|水道|ネット|鍵|暗証番号|初期費用|見積|内覧|内見/;
+/** 一般的な事で答えられる質問（物件固有の事実ではない・10/08 Q2） */
+export const GENERAL_ANSWERABLE_RE = /虫(?:が|って|は)?(?:入|出|多|来)|ゴキブリ|換気(?:扇|は|って|が)?[^。\n]{0,10}(?:大丈夫|ありますか|できますか)|(?:二人|2人|ふたり)で(?:住め|暮らせ|十分|狭)|(?:内覧|内見)[^。\n]{0,10}(?:何分|どのくらい|どれくらい|時間)(?:かかり|ですか|でしょうか|くらい)/;
 /** 顧客の物件指名（URL・物件名転記・「この物件」・番号の並び「86、87…番」）— CUSTOMER_PROPERTY_REF_RE（prompts）と URL */
 const PROPERTY_NOMINATION_RE = new RegExp(`${CUSTOMER_PROPERTY_REF_RE.source}|https?:\\/\\/|物件名|号室|賃料|管理費|[0-9０-９]+(?:件目|つ目|番目)|[0-9０-９]{2,3}(?:[、,][0-9０-９]{2,3})+(?:番)?`);
 /** 顧客の見積・初期費用の依頼（CUSTOMER_COST_QUESTION_RE ＋ 依頼形） */
@@ -130,6 +133,11 @@ export function resolveConfirmationContext(input: {
   // 内覧の希望（明示・日付付き）→ ご内覧可否・募集状況の確認（VIEWING_BEFORE_VACANCY と同じ前提）
   if (CUST_VIEWING_INTENT_RE.test(cust) || CUSTOMER_DATED_VIEWING_RE.test(cust)) {
     return { allowed: true, source: "customer_viewing_request", object: "ご内覧可否・募集状況", reason: "顧客が内覧を希望" };
+  }
+  // 2026-10-08 竹内さん Q2「資料に無い事は確認の約束」は**お客様が聞いた物件固有の事だけ**。一般的な事（虫・換気・二人で住める広さ・内覧の所要時間）は
+  //   確認の約束にせず答える（不一致 #49 #50 #163 #271）。直前のこちらの確認の約束の復唱（下）より先に見る。戻す CONFIRM_ANSWERABLE=off
+  if ((typeof process === "undefined" || (process.env?.CONFIRM_ANSWERABLE ?? "").toLowerCase() !== "off") && GENERAL_ANSWERABLE_RE.test(cust)) {
+    return { allowed: false, source: "answerable", object: null, reason: "一般的な事の質問（確認せず答える）" };
   }
   if (staff && STAFF_CONFIRM_PROMISE_RE.test(staff) && STAFF_CONFIRM_OBJECT_RE.test(staff)) {
     return { allowed: true, source: "staff_confirm_promise", object: findConfirmObject(staff) ?? "募集状況", reason: "直前スタッフ発言の確認約束を復唱" };

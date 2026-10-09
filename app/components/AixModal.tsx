@@ -9,7 +9,7 @@ import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDa
 import { customerViewingDateSpec, resolveViewingInvitePrefill, specExtraYmds, noSpecBehaviorFromEnv } from "../lib/viewing-invite-prefill";
 // 2026-10-06 竹内（ゆいと・チンシャン事例）「送った物件選択してそこから おこなえるようにする（見積書作成の時のように）」: 内覧の AIX の送った物件の候補
 import SentPropertyPicker from "./SentPropertyPicker";
-import { preselectViewingCandidates, latestCustomerTurnStartAt, type ViewingPropertyCandidate } from "../lib/viewing-property-candidates";
+import { preselectViewingCandidates, latestCustomerTurnStartAt, preselectViewingInvite, splitViewingNames, toggleViewingNames, pickedViewingLabels, viewingInviteMultiEnabled, VIEWING_NAMES_SEP, type ViewingPropertyCandidate } from "../lib/viewing-property-candidates";
 // 2026-09-19 竹内（a🤫 事例）: 退去予定物件の「内覧可能日時」は退去日の翌日から（純関数・テストあり）
 import { viewableFromYmd, vacancyExtraYmds, resolveVacancySlotEnabled, isBeforeViewable } from "../lib/viewing-window";
 import { meetingAddressProblem, meetingTextAddressProblem } from "../lib/meeting-address";
@@ -1013,6 +1013,16 @@ export default function AixModal({
   // 内覧へ！通常モード: 物件名（任意）＋物件資料画像OCR
   const [viewingPropertyName, setViewingPropertyName] = useState("");
   const [viewingPropImagePreview, setViewingPropImagePreview] = useState("");
+  // 2026-10-08 竹内さんの決定6: 内覧日調整の物件を送った物件から選ぶ（複数可）・選んだ物件を送信の記録（property_names）へ。戻す NEXT_PUBLIC_VIEWING_INVITE_MULTI=off
+  const viewingMulti = viewingInviteMultiEnabled();
+  const [viewingInviteCands, setViewingInviteCands] = useState<ViewingPropertyCandidate[]>([]);
+  const sendPropNames = (): string[] => {
+    if (actionType === "viewing_invite" && viewingMulti && !viewingIsVacancy) {
+      const picked = pickedViewingLabels(viewingInviteCands, viewingPropertyName);
+      if (picked.length) return picked;
+    }
+    return lastCheckPropNamesRef.current;
+  };
   const [isExtractingPropertyName, setIsExtractingPropertyName] = useState(false);
   // 2026-09-30 竹内「内覧は1件なら1〜2時間の枠・件数も含めて時間の枠ふやす・予定の住所も踏まえて移動時間も含めて考える」:
   //   件数（枠の長さ）と内覧のエリア（前後の予定との間の空け方）。決まりは app/lib/viewing-slot-plan.ts
@@ -3380,7 +3390,7 @@ export default function AixModal({
         noSecondMessage: actionType === "property_recommendation" && recClosingInFirst ? true : undefined,
         conversationMatch: lastGenConvMatchRef.current,
         // M1: 物件別空き状況（brain の確定事実ソース）
-        propertyNames: lastCheckPropNamesRef.current.length > 0 ? lastCheckPropNamesRef.current : undefined,
+        propertyNames: sendPropNames().length > 0 ? sendPropNames() : undefined,
         propStatuses: lastCheckPropStatusesRef.current.length > 0 ? lastCheckPropStatusesRef.current : undefined,
         // M2: 見積書同封の事実・費用情報（generate-reply / brain の確定事実ソース）
         estimateSent: lastEstimateSentRef.current || undefined,
@@ -3529,7 +3539,7 @@ export default function AixModal({
             const capturedSuggestTemplateCategory = suggestTemplateCategoryRef.current;
             const capturedConvMatch = lastGenConvMatchRef.current;
             // M1: 物件別空き状況も遅延送信パスでキャプチャ（30秒後に別会話へ切替わっても値が壊れない）
-            const capturedPropNames = [...lastCheckPropNamesRef.current];
+            const capturedPropNames = [...sendPropNames()];
             const capturedPropStatuses = [...lastCheckPropStatusesRef.current];
             // M2: 見積書同封フラグ・費用メモも同様にキャプチャ
             const capturedEstimateSent = lastEstimateSentRef.current;
@@ -3736,7 +3746,7 @@ export default function AixModal({
         noSecondMessage: actionType === "property_recommendation" && recClosingInFirst ? true : undefined,
         conversationMatch: lastGenConvMatchRef.current,
         // M1: 物件別空き状況（brain の確定事実ソース）
-        propertyNames: lastCheckPropNamesRef.current.length > 0 ? lastCheckPropNamesRef.current : undefined,
+        propertyNames: sendPropNames().length > 0 ? sendPropNames() : undefined,
         propStatuses: lastCheckPropStatusesRef.current.length > 0 ? lastCheckPropStatusesRef.current : undefined,
         // M2: 見積書同封の事実・費用情報（generate-reply / brain の確定事実ソース）
         estimateSent: lastEstimateSentRef.current || undefined,
@@ -6802,13 +6812,27 @@ export default function AixModal({
                   {/* 2026-10-06 竹内（チンシャン事例）「実際に送った物件のところ 読み取って選択できるようにする」: 内覧へ！も同じ候補（1つ選ぶ・物件名と資料の画像） */}
                   <SentPropertyPicker
                     conversationId={conversationId}
-                    selected={viewingPropertyName ? [{ name: viewingPropertyName }] : []}
-                    onToggle={(c, select) => { setViewingPropertyName(select ? c.label : ""); setViewingPropImagePreview(select ? (c.imageUrl ?? "") : ""); }}
+                    selected={viewingMulti ? splitViewingNames(viewingPropertyName).map((name) => ({ name })) : viewingPropertyName ? [{ name: viewingPropertyName }] : []}
+                    multiple={viewingMulti}
+                    onToggle={(c, select) => {
+                      if (viewingMulti) {
+                        setViewingPropertyName((v) => toggleViewingNames(v, c, select));
+                        if (select) setViewingPropImagePreview(c.imageUrl ?? "");
+                        else setViewingPropImagePreview((u) => (u && u === c.imageUrl ? "" : u));
+                        return;
+                      }
+                      setViewingPropertyName(select ? c.label : ""); setViewingPropImagePreview(select ? (c.imageUrl ?? "") : "");
+                    }}
                     onLoaded={(cands) => {
-                      const p = preselectViewingCandidates(cands, { mode: "invite", customerText: latestCustomerTurnText(recentMessages ?? []), currentName: viewingPropertyName, turnStartAt: latestCustomerTurnStartAt(recentMessages ?? []) });
+                      setViewingInviteCands(cands);
+                      const turn = { customerText: latestCustomerTurnText(recentMessages ?? []), currentName: viewingPropertyName, turnStartAt: latestCustomerTurnStartAt(recentMessages ?? []) };
+                      const p = viewingMulti ? preselectViewingInvite(cands, turn) : preselectViewingCandidates(cands, { mode: "invite", ...turn });
                       setViewingPickNote(p.reason);
-                      const c = cands.find((x) => p.keys.includes(x.key));
-                      if (c && !viewingPropertyName) { setViewingPropertyName(c.label); setViewingPropImagePreview(c.imageUrl ?? ""); }
+                      const picked = cands.filter((x) => p.keys.includes(x.key));
+                      if (picked.length && !viewingPropertyName) {
+                        setViewingPropertyName(viewingMulti ? picked.map((x) => x.label).join(VIEWING_NAMES_SEP) : picked[0].label);
+                        setViewingPropImagePreview(picked[0].imageUrl ?? "");
+                      }
                     }}
                     note={viewingPickNote ? `💬 ${viewingPickNote}` : undefined}
                     accent="emerald"

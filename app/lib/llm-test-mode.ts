@@ -13,7 +13,8 @@
 //   鍵2: 実行環境が Vercel／NODE_ENV=production なら、鍵1が入っていても無視する（isTestModeAllowed）
 //   → 本番の Vercel に誤って LLM_TEST_MODE が入っても、切り替えは起きず、今までの経路のまま。
 //
-// このファイルは純関数だけ（import なし）。llm-alt-provider（振り向け）と llm-usage-recorder（記録の印）の両方が読む。
+// このファイルは純関数だけ（import は test-conversations の定数だけ）。llm-alt-provider（振り向け）と llm-usage-recorder（記録の印）の両方が読む。
+import { isTestOnlyConversation } from "./test-conversations";
 
 export type EnvLike = Record<string, string | undefined>;
 
@@ -156,13 +157,17 @@ export function strictClaudeBlockReason(env: EnvLike, o: { action: string | null
     `\n  手順書: memory/test_protocol_brain.md`;
 }
 
-/** テストの間（deepseek-all／final-claude）に、YUMA 以外の会話で LLM を呼ぼうとした時の断りの文（YUMA・会話なし・テストでない時は null） */
+/**
+ * テストの間（deepseek-all／final-claude）に、テスト用の会話以外で LLM を呼ぼうとした時の断りの文（テスト用の会話・会話なし・テストでない時は null）。
+ * 2026-10-09 竹内さん承認: YUMA に加えて LINE につながっていないテスト専用の会話（YUMA2〜YUMA5＝test-conversations の TEST_ONLY_CONVERSATION_IDS）も通す。
+ *   本物のお客様の会話・スタッフ同士の会話は今まで通り断る。
+ */
 export function testConversationRefusal(env: EnvLike, conversationId: string | null | undefined, what = "LLM の呼び出し"): string | null {
   const run = readTestRun(env);
   if (!run) return null;
   const id = String(conversationId ?? "").trim();
-  if (!id || id === YUMA_ID) return null;
-  return `[llm-test-mode] ⛔ テスト（${run}）の間は YUMA（${YUMA_ID}）以外の会話で${what}をしません（会話 ${id}）。` +
+  if (!id || id === YUMA_ID || isTestOnlyConversation(id)) return null;
+  return `[llm-test-mode] ⛔ テスト（${run}）の間は YUMA（${YUMA_ID}）とテスト専用の会話（YUMA2〜・test-conversations.ts）以外の会話で${what}をしません（会話 ${id}）。` +
     `\n  お客様の会話を試したい時は scripts/replay-brain-readonly.ts --copy-to-yuma で伏せ字にして YUMA の場面に写してから。手順書: memory/test_protocol_brain.md`;
 }
 

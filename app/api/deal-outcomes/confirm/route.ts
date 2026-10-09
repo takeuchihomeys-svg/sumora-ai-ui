@@ -8,6 +8,7 @@ import { supabase } from "@/app/lib/supabase";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { pickConfirmCandidate, confirmPatch, isConfirmChoice, outcomeConfirmEnabled, type ConfirmCandidateRow } from "@/app/lib/outcome-confirm";
 import { resolveApplyStageNudge, applyStageNudgeEnabled, applyStageNudgeText } from "@/app/lib/apply-stage-nudge";
+import { markConfirmedWinPatterns } from "@/app/lib/application-reach-server";
 
 export const maxDuration = 20;
 const ID_RE = /^[0-9a-f-]{36}$/i;
@@ -84,5 +85,7 @@ export async function POST(req: NextRequest) {
     .eq("conversation_id", conversationId).eq("episode_no", episodeNo);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   console.log(JSON.stringify({ tag: "outcome-confirm", conversationId, episodeNo, choice: body!.choice, current: c.current, days: c.daysSinceApplied }));
+  // 2026-10-08 竹内さん: 「成約した」を選んだらすぐに成約パターンへ確定の成約の印（より重い正解）。失敗しても記録は済んでいる
+  if (body!.choice === "won") { try { await markConfirmedWinPatterns({ conversationIds: [conversationId] }); } catch { /* 毎日の台帳でも付く */ } }
   return NextResponse.json({ ok: true });
 }

@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { computeConversationOutcome, writeConversationOutcome, listOutcomeConversations } from "@/app/lib/deal-outcome-server";
-import { refreshReachStats } from "@/app/lib/application-reach-server";
+import { refreshReachStats, markConfirmedWinPatterns } from "@/app/lib/application-reach-server";
 import { applicationReachEnabled } from "@/app/lib/application-reach";
 
 export const maxDuration = 300;
@@ -47,7 +47,10 @@ export async function GET(req: NextRequest) {
       if (Date.now() - started > BUDGET_MS + 30_000) reach = { skipped: "no_time" };
       else { try { reach = await refreshReachStats({ nowMs: started }); } catch (e) { reach = { skipped: e instanceof Error ? e.message : String(e) }; } }
     }
-    const summary = { candidates: ids.length, done, rows, events, deferred, failed: errors.length, reach };
+    // 2026-10-08 竹内さん「ちゃんと成約したのはより良いデータとして」: 確定の成約の会話の成約パターンに印と重要度 10（WIN_CONFIRMED_WEIGHT=off で何もしない）
+    let confirmedWin: Awaited<ReturnType<typeof markConfirmedWinPatterns>> | { skipped: string } = { skipped: "no_time" };
+    if (Date.now() - started <= BUDGET_MS + 60_000) { try { confirmedWin = await markConfirmedWinPatterns(); } catch (e) { confirmedWin = { skipped: e instanceof Error ? e.message : String(e) }; } }
+    const summary = { candidates: ids.length, done, rows, events, deferred, failed: errors.length, reach, confirmedWin };
     await finishCronLog(runLogId, errors.length === 0 || done > 0, { ...summary, errors: errors.slice(0, 5) });
     return NextResponse.json({ ok: true, ...summary, errors: errors.slice(0, 5) });
   } catch (e) {

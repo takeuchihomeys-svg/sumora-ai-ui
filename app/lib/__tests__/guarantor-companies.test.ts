@@ -317,17 +317,25 @@ it("会話（古い順）からは一番新しい発言の保証会社を拾う"
 });
 
 // ─── 10. 2026-09-26 竹内さん決定（ナップ=独立系・クレディセゾン=信販系・マスタに無い会社はスタッフの説明どおり）───
-it("決定どおりの分類: ナップ=独立系／クレディセゾン・エポス=信販系／全保連・ジェイリース・日本賃貸保証=信用系", () => {
+it("決定どおりの分類: ナップ=独立系／クレディセゾン・エポス=信販系／全保連・ジェイリース=信用系／日本賃貸保証・テナントファースト=独立系（10/08 竹内さん）", () => {
   expect(resolveGuarantor("ナップ賃貸保証").type).toBe("independent");
   expect(resolveGuarantor("クレディセゾン").type).toBe("credit");
   expect(resolveGuarantor("エポス").type).toBe("credit");
   expect(resolveGuarantor("全保連").type).toBe("shinyou");
   expect(resolveGuarantor("ジェイリース").type).toBe("shinyou");
-  expect(resolveGuarantor("JID").type).toBe("shinyou");
+  expect(resolveGuarantor("JID").type).toBe("independent");
+  expect(resolveGuarantor("日本賃貸保証")).toEqual({ name: "日本賃貸保証", type: "independent", known: true });
+  expect(resolveGuarantor("株式会社テナントファースト")).toEqual({ name: "テナントファースト", type: "independent", known: true });
+  for (const raw of ["エルズサポート", "アーク保証", "ニッポンインシュア", "ルームバンクインシュア"]) expect(resolveGuarantor(raw).type).toBe("shinyou");
+  // 10/08 竹内さん（2回目）: sumai保証・日本トラストコーポレーション・グリーン保証・東京保証＝独立系／あんしん保証・レジデンシャルパートナーズ・GC保証＝信販系／エイト賃貸保証＝信用系
+  for (const [raw, ty] of [["sumai保証", "independent"], ["日本トラストコーポレーション", "independent"], ["グリーン保証", "independent"], ["東京保証", "independent"], ["あんしん保証", "credit"], ["ライフ安心プラス", "credit"], ["レジデンシャルパートナーズ", "credit"], ["GC保証", "credit"], ["エイト賃貸保証", "shinyou"]] as const) {
+    expect(resolveGuarantor(raw).type).toBe(ty);
+    expect(guarantorTypeSure(raw).sure).toBe(true);
+  }
 });
 it("足した会社: シノケン・ほっと保証・レンポッポ・エイト・オセロ → 独立系（10/08 公式の情報で確かめた・アークは LICC の正会員＝信用系に直した）", () => {
   expect(resolveGuarantor("アーク賃貸保証")).toEqual({ name: "アーク保証", type: "shinyou", known: true });
-  for (const [raw, name] of [["シノケンコミュニケーションズ", "シノケンコミュニケーションズ"], ["シノケン", "シノケンコミュニケーションズ"], ["ほっと保証", "ほっと保証"], ["レンポッポ", "レンポッポ"], ["エイト賃貸保証", "エイト賃貸保証"], ["オセロ・フィナンシャルサービス株式会社", "オセロ・フィナンシャルサービス"], ["JPMCファイナンス", "JPMC"]] as const) {
+  for (const [raw, name] of [["シノケンコミュニケーションズ", "シノケンコミュニケーションズ"], ["シノケン", "シノケンコミュニケーションズ"], ["ほっと保証", "ほっと保証"], ["レンポッポ", "レンポッポ"], ["オセロ・フィナンシャルサービス株式会社", "オセロ・フィナンシャルサービス"], ["JPMCファイナンス", "JPMC"]] as const) {
     expect(resolveGuarantor(raw)).toEqual({ name, type: "independent", known: true });
   }
 });
@@ -336,7 +344,7 @@ it("興和アシストは信用系（2026-10-07 竹内さん「信用系」）",
   expect(buildGuarantorAnswerText([{ name: "H-maison大正VII 106号室", company: "興和アシスト", type: resolveGuarantor("興和アシスト").type }])).toBe(`保証会社は興和アシストとなります！！\n${GUARANTOR_ANSWER_TYPE_NOTE.shinyou}`);
 });
 it("確かめられない会社は種類を推測しない（不明）・10/08 公式の情報で確かめた会社は種類あり", () => {
-  for (const raw of ["テナントファースト", "ライフ", "グリーン保証", "GC保証"]) {
+  for (const raw of ["ライフ"]) {
     const r = resolveGuarantor(raw);
     expect(r.known).toBe(true);
     expect(r.type).toBe("unknown");
@@ -349,7 +357,7 @@ it("短い呼び名（シノケン・アーク・プレサンス）は本文か�
   expect(detectGuarantorInText("シノケンの物件です")).toBe(null);
   expect(detectGuarantorInText("アークヒルズ近くのお部屋")).toBe(null);
   expect(detectGuarantorInText("プレサンス難波のお部屋")).toBe(null);
-  expect(detectGuarantorInText("保証会社はエイト賃貸保証です")).toEqual({ name: "エイト賃貸保証", type: "independent" });
+  expect(detectGuarantorInText("保証会社はエイト賃貸保証です")).toEqual({ name: "エイト賃貸保証", type: "shinyou" });   // 10/08 竹内さん「信用系」
   expect(detectGuarantorInText("3番手:K-net となります")).toEqual({ name: "K-net", type: "shinyou" });
 });
 
@@ -369,11 +377,11 @@ it("種類は3つ＋不明（LICC系という種類は無い）", () => {
   }
   for (const ex of GUARANTOR_INFO_STAFF_EXAMPLES) expect(ex).notToContain("LICC");   // 手本で無くした種類名を見せない
 });
-it("信用系に入るのは LICC の正会員（10/08 jpg.or.jp の一覧）と全保連（竹内さん）・日本賃貸保証（確かでない）・エポス/クレディセゾンは信販系・ナップは独立系", () => {
+it("信用系に入るのは LICC の正会員（10/08 jpg.or.jp の一覧）と全保連（竹内さん）・エポス/クレディセゾンは信販系・ナップは独立系", () => {
   expect(resolveGuarantor("K-net")).toEqual({ name: "K-net", type: "shinyou", known: true });
   expect(resolveGuarantor("ケーネット").type).toBe("shinyou");
   expect(resolveGuarantor("Knet").type).toBe("shinyou");
-  expect([...guarantorNamesByType("shinyou")].sort()).toEqual(["K-net", "ジェイリース", "全保連", "日本賃貸保証", "興和アシスト", "エルズサポート", "アーク保証", "ニッポンインシュア", "ルームバンクインシュア", "ランドインシュア", "大成保証", "宅建ブレインズ", "テンポスバスターズ"].sort());
+  expect([...guarantorNamesByType("shinyou")].sort()).toEqual(["K-net", "ジェイリース", "全保連", "興和アシスト", "エイト賃貸保証", "エルズサポート", "アーク保証", "ニッポンインシュア", "ルームバンクインシュア", "ランドインシュア", "大成保証", "宅建ブレインズ", "テンポスバスターズ"].sort());
   expect(guarantorNamesByType("credit").includes("K-net")).toBe(false);
   expect(guarantorNamesByType("credit").includes("エポスカード")).toBe(true);
   expect(guarantorNamesByType("credit").includes("全保連")).toBe(false);
@@ -545,18 +553,19 @@ it("種類の確かさ: 竹内さん・公式の情報だけ sure（本文で言
   expect(guarantorTypeSure("全保連")).toEqual({ sure: true, type: "shinyou", basis: "takeuchi", source: "https://www.zenhoren.jp/company/outline.html" });
   expect(guarantorTypeSure("日本セーフティ").sure).toBe(true);
   expect(guarantorTypeSure("エルズサポート").type).toBe("shinyou");   // LICC の正会員（9/26 は独立系にしていた）
-  expect(guarantorTypeSure("日本賃貸保証").sure).toBe(false);          // LICC にいた記録なし＝竹内さんに確認
-  expect(guarantorTypeSure("sumai保証").sure).toBe(false);             // エポスと提携
+  expect(guarantorTypeSure("日本賃貸保証")).toEqual({ sure: true, type: "independent", basis: "takeuchi", source: "https://www.jid-net.co.jp/company/profile/" });   // 10/08 竹内さん「独立系」
+  expect(guarantorTypeSure("sumai保証")).toEqual({ sure: true, type: "independent", basis: "takeuchi", source: "https://www.sumasapo.co.jp/service_warranty.php" });   // 10/08 竹内さん「独立系」
+  expect(guarantorTypeSure("信和CM保証").sure).toBe(false);            // 答えの無い会社は今のまま
   expect(guarantorTypeSure("えるく信用保証")).toEqual({ sure: true, type: "credit", basis: "official", source: "https://www.erc-card.co.jp/smarts/index/67/" });
   expect(guarantorTypeSure("知らない保証").sure).toBe(false);
-  expect(guarantorTypeForText("sumai保証")).toBe("unknown");
+  expect(guarantorTypeForText("sumai保証")).toBe("independent");
   expect(guarantorTypeForText("Casa")).toBe("independent");
-  expect(guarantorTypeForText("テナントファースト")).toBe("unknown");
+  expect(guarantorTypeForText("テナントファースト")).toBe("independent");   // 10/08 竹内さん「独立系」
 });
 it("表の会社は全部 basis があり、言い切る会社（takeuchi／official）は出所の URL がある", () => {
   for (const c of GUARANTOR_COMPANY_MASTER) {
     expect(!!c.basis).toBe(true);
-    if (c.basis === "official" || (c.basis === "takeuchi" && c.type !== "shinyou")) expect(/^https:\/\//.test(c.source ?? "")).toBe(true);
+    if (c.basis === "official") expect(/^https:\/\//.test(c.source ?? "")).toBe(true);
     if (c.type === "unknown") expect(c.basis).toBe("none");
   }
 });

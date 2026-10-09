@@ -5,10 +5,12 @@
 export const WATCH_MATCH_MIN = 0.5;
 export const WATCH_MATCH_MIN_N = 5;
 
-export type WatchAixRow = { brain_action: string | null; aix_verdict: string | null };
+//   2026-10-08: 過去の番の埋め戻し（verdict_detail.backfill・line-watch-backfill.ts）は関所に入れない（今の控えだけで見る）。backfill を読んだ行だけ外す
+export type WatchAixRow = { brain_action: string | null; aix_verdict: string | null; backfill?: string | null };
 export function watchAixMatchRates(rows: ReadonlyArray<WatchAixRow>): Record<string, { same: number; n: number; rate: number }> {
   const out: Record<string, { same: number; n: number; rate: number }> = {};
   for (const r of rows) {
+    if (r.backfill) continue;
     const a = (r.brain_action ?? "").trim();
     const v = (r.aix_verdict ?? "").trim();
     if (!a || !["same", "other", "not_pressed"].includes(v)) continue;

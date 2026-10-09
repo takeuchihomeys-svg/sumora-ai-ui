@@ -246,7 +246,8 @@ console.log("── ★ 見分けの語が実際のプロンプトと合って�
   // ここで実ファイルと照合しておけば、文面を変えた時にこのテストが落ちて気付ける。
   const replyRoute = readFileSync("app/api/generate-reply/route.ts", "utf8");
   t("★ 返信生成の system 先頭（priorityOrderNote）に『ハードゲート』がある",
-    new RegExp(`priorityOrderNote\\s*=\\s*"【指示の優先順位[^"]*${ROUTE_MARKERS.reply_generate}`).test(replyRoute),
+    // 10/09: 本質（turn-contract）の有無で2つの文の三項（turnContractEnabled() ? "…" : "…"）になった。どちらにもハードゲートがある
+    new RegExp(`priorityOrderNote\\s*=\\s*(?:[^"]*\\?\\s*)?"【指示の優先順位[^"]*${ROUTE_MARKERS.reply_generate}`).test(replyRoute),
     "app/api/generate-reply/route.ts の priorityOrderNote を変えたらここも直す");
 
   const brainCore = readFileSync("app/lib/brain-core.ts", "utf8");

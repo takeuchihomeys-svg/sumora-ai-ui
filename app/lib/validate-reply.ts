@@ -79,6 +79,27 @@ export function isPlausiblePersonName(raw?: string | null): boolean {
   return segments.length >= 1 && segments.length <= 3;
 }
 
+/**
+ * 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」: 表示名（・顧客管理の名前）が1文字の名前（「あ」「り」「R」「し」）なら、その1文字で「〇さん」と呼ぶ。
+ *   前後の記号・絵文字だけ外す（「り🍀」→「り」・「Ｒ」→「R」）。記号・絵文字だけの名前（「⭐」「♡」）・数字・小さい字（っ・ゃ）・長音（ー）・踊り字（々）・
+ *   2つ以上の字（「A.B」の頭文字の並び）は今まで通り呼ばない（"" を返す）。漢字1字は前から isPlausiblePersonName が許している。
+ *   isPlausiblePersonName（本文の中の候補の検査にも使う）は変えない＝本文の「は」「お」等を名前と読まない。
+ *   使う所: normalizeDisplayName（呼び名の決定 resolveAddressName）・canonOf（挨拶・名前の欄）・AIX の呼び名（extractPreferredName・aix-template-generate）。
+ *   戻す: ONE_CHAR_CALL_NAME=off（サーバー）／NEXT_PUBLIC_ONE_CHAR_CALL_NAME=off（画面）
+ */
+export function oneCharCallName(raw?: string | null): string {
+  const off = (process.env.ONE_CHAR_CALL_NAME ?? process.env.NEXT_PUBLIC_ONE_CHAR_CALL_NAME ?? "").trim().toLowerCase() === "off";
+  if (off) return "";
+  const s0 = (typeof (raw ?? "").normalize === "function" ? (raw ?? "").normalize("NFKC") : raw ?? "").trim();
+  // 敬称（「あさん」「R様」）を外してから、前後の名前の字でない物（記号・絵文字・空白・数字）を外す
+  const s = s0.replace(/(?:さん|様|さま|サマ|氏)$/, "")
+    .replace(/^[^ぁ-んァ-ヴ一-鿿A-Za-z]+|[^ぁ-んァ-ヴ一-鿿A-Za-z]+$/gu, "");
+  if ([...s].length !== 1) return "";
+  if (/[ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶ]/.test(s)) return "";
+  if (GENERIC_NICKNAMES.has(s) || PLACEHOLDER_NAME_CORE_RE.test(s)) return "";
+  return s;
+}
+
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -150,7 +171,8 @@ export function enforceCustomerName(
   opts: { customerName?: string | null; lineDisplayName?: string | null },
 ): { cleaned: string; fixes: string[] } {
   const canonicalRaw = (opts.customerName ?? "").trim();
-  const canonical = isPlausiblePersonName(canonicalRaw) ? canonicalRaw : "";
+  // 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」: 1文字の呼び名（「あ」）も正の名前として扱う（oneCharCallName）
+  const canonical = isPlausiblePersonName(canonicalRaw) || (!!canonicalRaw && oneCharCallName(canonicalRaw) === canonicalRaw) ? canonicalRaw : "";
   const display = (opts.lineDisplayName ?? "").trim();
   const fixes: string[] = [];
   let cleaned = text;
@@ -292,6 +314,9 @@ export function canonOf(raw: string | null | undefined): string {
   const t = (raw ?? "").trim().replace(/(?:さん|様|さま)$/, "");
   if (!t) return "";
   if (!/[\s・]/.test(t) && isPlausiblePersonName(t) && !PLACEHOLDER_NAME_CORE_RE.test(t) && !GENERIC_NICKNAMES.has(t)) return t;
+  // 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」: 1文字の名前（「あ」「R」）はそのまま（oneCharCallName）
+  const one = oneCharCallName(t);
+  if (one && one === t) return one;
   return normalizeCustomerName(t);
 }
 /** 本文 index の候補が呼びかけ位置（行頭の挨拶・強いつながり）か */
@@ -391,7 +416,8 @@ export function normalizeDisplayName(raw?: string | null): string {
     return ok(j) ? j : "";
   }
   for (const t of tokens) if (ok(t)) return t;
-  return "";
+  // 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」（oneCharCallName）
+  return oneCharCallName(raw);
 }
 
 export type AddressNameSource = "staff_greeting_head" | "staff_inline" | "staff_original_locked" | "customer_self_intro" | "pc_name" | "display" | "none";

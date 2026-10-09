@@ -2,6 +2,13 @@
 import { createClient } from "@supabase/supabase-js";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
+// 2026-10-08 竹内さんの決定の2: 学習の窓 7日（AIXのずれ14日）→30日（新しい7日を先に・札つき・LEARNING_WINDOW_30D=off で旧）
+import { learningWindow, recencyTag, windowCountsLabel, weightingInstruction, isRecent } from "@/app/lib/learning-window";
+// 2026-10-08 竹内さん「自動的にする」（AI 質問の回答が 8/12 から止まっている）: 待っている質問を設計知見（竹内さんの決定 P0/P1）で自動で答えてから候補を作る。
+//   自動の答えは status='auto_answered'（ルールは直接変えない＝ここの承認待ちの候補にだけ流れる）。FEEDBACK_AUTO_ANSWER=off で旧
+import { runFeedbackAutoAnswer } from "@/app/lib/feedback-auto-answer-server";
+import { feedbackAutoAnswerEnabled, AUTO_ANSWER_STATUS } from "@/app/lib/feedback-auto-answer";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const maxDuration = 300;
 
@@ -44,6 +51,7 @@ type FeedbackItem = {
   question: string | null;
   user_answer: string | null;
   applied_rule: string | null;
+  answered_at?: string | null;
 };
 
 type ActiveRule = {
@@ -94,12 +102,21 @@ async function run(): Promise<NextResponse> {
       return NextResponse.json({ ok: true, generated: 0, skipped: true, weekLabel });
     }
 
-    // 2. 直近7日間の applied AI質問を取得
-    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // 1.5 待っている AI 質問を設計知見で自動で答える（答えられた物だけ・推測しない）
+    let autoAnswer: Awaited<ReturnType<typeof runFeedbackAutoAnswer>> | { skipped: string } = { skipped: "off" };
+    if (feedbackAutoAnswerEnabled(process.env)) {
+      try { autoAnswer = await runFeedbackAutoAnswer(db as unknown as SupabaseClient); }
+      catch (e) { autoAnswer = { skipped: e instanceof Error ? e.message : String(e) }; }
+      console.log("[prompt-candidate-gen] AI質問の自動回答:", JSON.stringify(autoAnswer).slice(0, 400));
+    }
+
+    // 2. 直近7日間（新: 30日・新しい順＝新しい7日が先に SOURCE_LIMIT を埋める）の applied AI質問を取得（10/08: 自動の答え auto_answered も）
+    const win = learningWindow("prompt-candidate-gen", 7);
+    const since = win.sinceIso;
     const { data: feedbackItems, error: fbErr } = await db
       .from("ai_feedback_items")
-      .select("question, user_answer, applied_rule")
-      .eq("status", "applied")
+      .select("question, user_answer, applied_rule, answered_at")
+      .in("status", feedbackAutoAnswerEnabled(process.env) ? ["applied", AUTO_ANSWER_STATUS] : ["applied"])
       .gte("answered_at", since)
       .order("answered_at", { ascending: false })
       .limit(SOURCE_LIMIT);
@@ -107,8 +124,8 @@ async function run(): Promise<NextResponse> {
 
     const items = (feedbackItems ?? []) as FeedbackItem[];
     if (items.length === 0) {
-      await finishCronLog(runId, true, { skipped: true, reason: "no_source_items", weekLabel });
-      return NextResponse.json({ ok: true, generated: 0, skipped: true, reason: "no_source_items", weekLabel });
+      await finishCronLog(runId, true, { skipped: true, reason: "no_source_items", weekLabel, autoAnswer });
+      return NextResponse.json({ ok: true, generated: 0, skipped: true, reason: "no_source_items", weekLabel, autoAnswer });
     }
 
     // 3. 既存アクティブルール上位20件（重複候補の生成を防ぐコンテキスト）
@@ -121,8 +138,9 @@ async function run(): Promise<NextResponse> {
     if (ruleErr) throw new Error(`ai_prompt_rules 取得失敗: ${ruleErr.message}`);
     const rules = (activeRules ?? []) as ActiveRule[];
 
-    // 3b. 直近14日のAIXミスマッチ提案（alignment_fix / mismatch_fix）
-    const since14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    // 3b. 直近14日（新: 30日・新しい順で10件）のAIXミスマッチ提案（alignment_fix / mismatch_fix）
+    const win14 = learningWindow("prompt-candidate-gen", 14);
+    const since14 = win14.sinceIso;
     const { data: aixSuggestions } = await db
       .from("aix_feature_suggestions")
       .select("suggestion_type, description, action_type, status, created_at")
@@ -135,7 +153,7 @@ async function run(): Promise<NextResponse> {
     // 4. Claude で候補生成
     const answersText = items
       .map((it, i) => {
-        const parts = [`【質問${i + 1}】${(it.question ?? "").slice(0, 300)}`];
+        const parts = [`【質問${i + 1}】${recencyTag(win, it.answered_at)}${(it.question ?? "").slice(0, 300)}`];
         if (it.user_answer) parts.push(`回答: ${it.user_answer.slice(0, 300)}`);
         if (it.applied_rule) parts.push(`適用済みルール: ${it.applied_rule.slice(0, 200)}`);
         return parts.join("\n");
@@ -147,16 +165,16 @@ async function run(): Promise<NextResponse> {
       : "（アクティブルールなし）";
 
     const aixSuggestionsText = aixSuggestions && aixSuggestions.length > 0
-      ? "\n\n【直近14日のAIXミスマッチ（自動検出）】\n" + aixSuggestions.map((s) => `・[${s.action_type ?? "不明"}] ${s.description ?? ""}`).join("\n")
+      ? `\n\n【${win14.legacy ? "直近14日" : windowCountsLabel(win14)}のAIXミスマッチ（自動検出）】\n` + aixSuggestions.map((s) => `・${recencyTag(win14, s.created_at as string | null)}[${s.action_type ?? "不明"}] ${s.description ?? ""}`).join("\n")
       : "";
 
     const prompt = `あなたは不動産賃貸仲介のLINE返信AIのプロンプト改善アナリストです。
 
 以下は、スタッフが回答済みのAI質問（AIが業務知識の欠落を検知して起票し、人間が回答したもの）です。
 
-## 回答済みAI質問（直近7日間）
+## 回答済みAI質問（${win.legacy ? "直近7日間" : windowCountsLabel(win, items.filter((it) => isRecent(win, it.answered_at)).length, items.filter((it) => !isRecent(win, it.answered_at)).length)}）
 ${answersText}
-
+${win.legacy ? "" : `\n${weightingInstruction(win, 2)}\n`}
 ## 既存のアクティブなプロンプトルール（重複禁止の対象）
 ${rulesText}
 

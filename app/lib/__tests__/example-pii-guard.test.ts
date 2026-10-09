@@ -131,6 +131,26 @@ console.log("── 出口（fetch の本文）");
   t("個人情報が無い本文は同一の文字列", redactExamplePiiInJsonBody(clean, {}).body === clean);
 }
 
+// ─── 2026-10-09 ラベル無しの住所（監査 scripts/audit-example-pii-unlabeled-address.ts の実物の形・氏名と住所は作り物に置き換えた）───
+{
+  const FAMILY = "山田花子ヤマダハナコ 〇〇年〇月〇日 兵庫県神戸市中央区港島11-22 知らない 〇〇〇-〇〇〇〇-〇〇〇〇 母 専業主婦";
+  const FAMILY_RAW_BIRTH = "山田太郎ヤマダタロウ 1960.4.1 兵庫県神戸市中央区港島11-22 知らない 知らない 父 自営業(タクシー) 自宅";
+  t("ご家族の情報の並び（伏せ済みの値＋続柄）→ 塊ごと伏せる", examplePiiReason(FAMILY)?.kind === "application_form" && sanitizeExampleText(FAMILY, "customer").text === APPLICATION_FORM_PLACEHOLDER);
+  t("西暦の生年月日のまま＋続柄・職業", examplePiiReason(FAMILY_RAW_BIRTH)?.kind === "application_form");
+  t("こちらの文に引用された時も塊ごと（スタッフ側の伏せ字）", sanitizeExampleText(`${FAMILY}\n前回頂いております緊急連絡先のご情報でお母様のお名前がお父様のお名前になっております。`, "staff").text === STAFF_PII_PLACEHOLDER);
+  const VISIT = "はい！！ 大丈夫です😊！！ お伺いさせていただくご住所枚方市岡本町7-8-9でよろしいでしょうか！！";
+  const v = sanitizeExampleText(VISIT, "staff");
+  t("お客様の自宅（ご住所）だけの文 → 住所だけ伏せる", examplePiiReason(VISIT)?.kind === "personal_value" && v.changed && !v.text.includes("7-8-9") && v.text.includes("でよろしいでしょうか"), v.text);
+  t("★ 待ち合わせの住所（住所: の後）は伏せない", examplePiiReason("15:00に現地エントランス前お待ち合わせで何卒よろしくお願い致します！！ 住所: 大阪府大阪市淀川区西中島2丁目14-20") === null);
+  t("★ 物件資料の所在地は伏せない", examplePiiReason("号室名：402（4階部分） 所在地：大阪府大阪市淀川区十三東1丁目10-5 交通：阪急京都線") === null);
+  t("★ 弊社の住所の案内は伏せない（ご住所の言い方でも）", examplePiiReason("レターパックをお送りさせていただくご住所は 大阪市中央区瓦町3-4-10 日宝御堂ビル5F 蓮産業株式会社") === null);
+  t("★ 事故物件サイトの投稿日（平成の日付）＋物件の住所は伏せない", examplePiiReason("[画像] 平成31年2月13日 大阪府大阪市浪速区数津西一丁目1-31 投稿年月日 平成31年2月13日") === null);
+  t("★ 物件の一覧（住所＋築年）は伏せない", examplePiiReason("ジェイラピス ナンバ 大阪府大阪市浪速区元町３丁目10-20 築10年 / 9階 100,000円") === null);
+  t("★ 職場の場所（宗右衛門町2-3から自転車）は伏せない", examplePiiReason("③職場が宗右衛門町2-3なのでそこから自転車で10分か") === null);
+  t("出口: 手本の中のご家族の情報も伏せる", !redactExampleSpansInPrompt(`お客様: 「${FAMILY}」\nスモラ: 「お送り頂きありがとうございます！！」`).text.includes("港島11-22"));
+  t("出口の速い判定に掛かる", mightHaveExamplePii(JSON.stringify({ c: `お客様: 「${FAMILY}」` })));
+}
+
 async function fetchCases() {
   console.log("── 出口（fetch の包み・DeepSeek の宛先も）");
   const seen: string[] = [];

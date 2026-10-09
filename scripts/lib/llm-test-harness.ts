@@ -21,7 +21,7 @@
 //   await h.finish();   // 最後に必ず（失敗しても finally で）
 import { createClient } from "@supabase/supabase-js";
 import { readTestRun, readTestMode, readFinalClaude, readAllowClaude, testBlockedLog, isTestModeAllowed, applyFinalClaudeProductionModels, type LlmTestRun } from "../../app/lib/llm-test-mode";
-import { YUMA_CONVERSATION_ID } from "../../app/lib/test-conversations";
+import { YUMA_CONVERSATION_ID, isTestOnlyConversation } from "../../app/lib/test-conversations";
 import { claudeUsageUsd, altUsageUsd } from "../../app/lib/llm-price";
 import { cutBeforeApplicationMaterial, applicationMaterialReason } from "../../app/lib/test-pii-guard";
 
@@ -43,6 +43,8 @@ export type LlmTestHarness = {
   envLabel: string;
   /** YUMA 以外なら止める（LLM の呼び出し・書き込みの前に呼ぶ） */
   assertYuma: (conversationId: string | null | undefined, what?: string) => void;
+  /** 2026-10-09: YUMA かテスト専用の会話（YUMA2〜・LINE につながっていない）でなければ止める。--conv で別の会話を使うスクリプトはこちら */
+  assertTestConversation: (conversationId: string | null | undefined, what?: string) => void;
   /** 場面の材料（1通ずつ）に申込の書類・本人確認書類・収入の書類・個人の値があれば止める */
   assertSceneSafe: (texts: ReadonlyArray<string | null | undefined>, sceneId?: string) => void;
   /** 本番の会話から写す材料を、最初の書類の手前で切る（切った理由を出す） */
@@ -50,9 +52,9 @@ export type LlmTestHarness = {
   /** 場面の時刻（他の実行より新しく・重ならないように、今＋offsetMin 分を最後の通にして stepSec 秒ずつ前へ） */
   sceneTimes: (count: number, opts?: { offsetMin?: number; stepSec?: number }) => string[];
   /** YUMA に自分以外の新しい行（今から recentMin 分以内・未来の時刻）があるか。ownIds は自分が入れた行の id */
-  foreignYumaRows: (ownIds: ReadonlyArray<string>, recentMin?: number) => Promise<Array<{ id: string; created_at: string; sender: string; text: string }>>;
-  /** 他の実行の行が無くなるまで待つ（最大 maxWaitMin 分・過ぎたら止める） */
-  waitUntilYumaQuiet: (ownIds: ReadonlyArray<string>, opts?: { maxWaitMin?: number; recentMin?: number }) => Promise<void>;
+  foreignYumaRows: (ownIds: ReadonlyArray<string>, recentMin?: number, conversationId?: string) => Promise<Array<{ id: string; created_at: string; sender: string; text: string }>>;
+  /** 他の実行の行が無くなるまで待つ（最大 maxWaitMin 分・過ぎたら止める）。conversationId でテスト専用の会話（YUMA2〜）を見る（既定 YUMA） */
+  waitUntilYumaQuiet: (ownIds: ReadonlyArray<string>, opts?: { maxWaitMin?: number; recentMin?: number; conversationId?: string }) => Promise<void>;
   /** この回の llm_usage_logs を数える（書き込みを待ってから） */
   summary: () => Promise<UsageSummary>;
   /** 終わり: 書き込みを待ち、数を出し、deepseek-all で Claude があれば・止めた呼び出しがあれば exitCode=1 */
@@ -109,6 +111,9 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
   const assertYuma = (conversationId: string | null | undefined, what = "LLM の呼び出し・書き込み") => {
     if (String(conversationId ?? "").trim() !== YUMA) fail(`テストは YUMA（${YUMA}）だけ。${conversationId ?? "(なし)"} で${what}をしません。お客様の会話は scripts/replay-brain-readonly.ts --copy-to-yuma で伏せ字にして写してから`);
   };
+  const assertTestConversation = (conversationId: string | null | undefined, what = "LLM の呼び出し・書き込み") => {
+    if (!isTestOnlyConversation(conversationId)) fail(`テストは YUMA かテスト専用の会話（YUMA2〜・app/lib/test-conversations.ts）だけ。${conversationId ?? "(なし)"} で${what}をしません`);
+  };
   const assertSceneSafe = (texts: ReadonlyArray<string | null | undefined>, sceneId = "") => {
     for (const t of texts) {
       const r = applicationMaterialReason(t ?? "");
@@ -120,20 +125,23 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
     const step = (opts.stepSec ?? 20) * 1000;
     return Array.from({ length: count }, (_, i) => new Date(end - (count - 1 - i) * step).toISOString());
   };
-  const foreignYumaRows = async (ownIds: ReadonlyArray<string>, recentMin = 10) => {
+  const foreignYumaRows = async (ownIds: ReadonlyArray<string>, recentMin = 10, conversationId: string = YUMA) => {
+    assertTestConversation(conversationId, "行の確かめ");
     const since = new Date(Date.now() - recentMin * 60_000).toISOString();
-    const { data } = await sb().from("messages").select("id, created_at, sender, text").eq("conversation_id", YUMA).gte("created_at", since).order("created_at", { ascending: true }).limit(200);
+    const { data } = await sb().from("messages").select("id, created_at, sender, text").eq("conversation_id", conversationId).gte("created_at", since).order("created_at", { ascending: true }).limit(200);
     const own = new Set(ownIds);
     // 2026-10-01: 未来の時刻の行（他の実行が「自分の場面を一番新しくする」ために置いた物）も他人の物として数える（⑤の行が⑦の3巡目に混ざった）
     return ((data ?? []) as Array<{ id: string; created_at: string; sender: string; text: string | null }>).filter((r) => !own.has(r.id)).map((r) => ({ ...r, text: String(r.text ?? "") }));
   };
-  const waitUntilYumaQuiet = async (ownIds: ReadonlyArray<string>, opts: { maxWaitMin?: number; recentMin?: number } = {}) => {
+  const waitUntilYumaQuiet = async (ownIds: ReadonlyArray<string>, opts: { maxWaitMin?: number; recentMin?: number; conversationId?: string } = {}) => {
+    const conv = opts.conversationId ?? YUMA;
+    const convName = conv === YUMA ? "YUMA" : `テストの会話 ${conv.slice(0, 8)}`;
     const deadline = Date.now() + (opts.maxWaitMin ?? 10) * 60_000;
     for (;;) {
-      const f = await foreignYumaRows(ownIds, opts.recentMin ?? 10);
+      const f = await foreignYumaRows(ownIds, opts.recentMin ?? 10, conv);
       if (f.length === 0) return;
-      if (Date.now() > deadline) fail(`YUMA に他の実行の行が ${f.length} 件あります（最新 ${f[f.length - 1].created_at}）。他の担当のテストが終わるのを待つか、相手に片付けを頼んでから流してください`);
-      console.warn(`  … YUMA に他の実行の行 ${f.length} 件（未来の時刻 ${f.filter((r) => Date.parse(r.created_at) > Date.now()).length} 件）→ 30秒待ちます`);
+      if (Date.now() > deadline) fail(`${convName} に他の実行の行が ${f.length} 件あります（最新 ${f[f.length - 1].created_at}）。他の担当のテストが終わるのを待つか、相手に片付けを頼んでから流してください`);
+      console.warn(`  … ${convName} に他の実行の行 ${f.length} 件（未来の時刻 ${f.filter((r) => Date.parse(r.created_at) > Date.now()).length} 件）→ 30秒待ちます`);
       await new Promise((r) => setTimeout(r, 30_000));
     }
   };
@@ -171,5 +179,5 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
     return s;
   };
 
-  return { name, run: run as LlmTestRun, t0, routeLabel, envLabel, assertYuma, assertSceneSafe, cutBeforeApplicationMaterial, sceneTimes, foreignYumaRows, waitUntilYumaQuiet, summary, finish };
+  return { name, run: run as LlmTestRun, t0, routeLabel, envLabel, assertYuma, assertTestConversation, assertSceneSafe, cutBeforeApplicationMaterial, sceneTimes, foreignYumaRows, waitUntilYumaQuiet, summary, finish };
 }

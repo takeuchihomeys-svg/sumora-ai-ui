@@ -92,18 +92,26 @@ it("場面: 実物の質問「2年ごとに更新日がかかりますか？」�
   expect(customerSceneOf("2年ごとに更新日がかかりますか？", deps)).toBe("質問");
   expect(customerSceneOf("ありがとうございます！！", deps)).toBe("短い了承・お礼");
 });
-it("① 質問への返事は何卒 5.6%（成約 2.8%）＝付けない方が普通 ／ 条件フォームは 47.7%＝半々", () => {
+// 2026-10-08 11巡目: 率は竹内さんの手打ちだけで測り直した表（sent-shape TAKEUCHI_SCENE_STYLE・書き方の正解は竹内さん＝設計知見 22802738 P1）。旧の表は SENT_SHAPE_TAKEUCHI=off
+it("① 質問への返事は何卒 14.2%（竹内さんの手打ち 267組）＝付けない方が普通 ／ 条件フォームは 59.1%＝付ける方が普通", () => {
   const q = buildCustomerSceneStyleNote("質問");
-  expect(q).toContain("5.6%");
+  expect(q).toContain("14.2%");
   expect(q).toContain("付けない方が普通");
-  expect(buildCustomerSceneStyleNote("条件フォーム受領")).toContain("半々");
+  expect(buildCustomerSceneStyleNote("条件フォーム受領")).toContain("付ける方が普通");
 });
 it("② 絵文字: 説明・報告の行と URL には付けない／お客様に合わせる必要はない（率を渡す）", () => {
   const all = buildSentShapeNoteAll("質問");
   expect(all).toContain("説明・報告の行");
   expect(all).toContain("付けない");
   expect(all).toContain("合わせる必要はない");
-  expect(all).toContain("絵文字なしの返信も 29% ある");
+  expect(all).toContain("絵文字なしの返信も 34% ある");
+});
+it("SENT_SHAPE_TAKEUCHI=off で旧の表（何卒 5.6%・絵文字なし 29%）", () => {
+  const prev = process.env.SENT_SHAPE_TAKEUCHI; process.env.SENT_SHAPE_TAKEUCHI = "off";
+  try {
+    expect(buildCustomerSceneStyleNote("質問")).toContain("5.6%");
+    expect(buildSentShapeNoteAll("質問")).toContain("絵文字なしの返信も 29% ある");
+  } finally { if (prev === undefined) delete process.env.SENT_SHAPE_TAKEUCHI; else process.env.SENT_SHAPE_TAKEUCHI = prev; }
 });
 it("場面が分からない時は場面の行を出さない（従来の表だけ）", () => {
   expect(buildSentShapeNoteAll(null).includes("お客様の発言の場面は")).toBe(false);

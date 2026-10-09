@@ -68,7 +68,25 @@ const KIND_GROUP: Readonly<Record<ImageKind, ImageGroup>> = {
 };
 
 /** 書き起こしを残さない種類（個人情報が載る） */
-const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_document"]);
+// 2026-10-09 振込・支払いの控え（払込受領証・振込完了の画面・ご利用明細）も書き起こしを残さない:
+//   実データ（お客様の画像の全期間）で支払いの控え 6件の全部に 振込依頼人名・お客様氏名・携帯番号・引落口座の番号 が残っていた。
+//   書き起こしを読む所は無い（物件の取り出し・条件の読み取りは物件以外を飛ばす）＝見出し「支払いの控えが届いた」だけで足りる。
+//   戻す: IMAGE_PAYMENT_DROP=off（見出し＋書き起こしの旧の形）
+const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_document", "payment"]);
+const dropsTranscript = (kind: ImageKind): boolean =>
+  DROP_TRANSCRIPT.has(kind) && !(kind === "payment" && process.env.IMAGE_PAYMENT_DROP === "off");
+
+/**
+ * 残す書き起こしの中の携帯番号（070/080/090）を伏せる。
+ * 2026-10-09: 種類が決まらない書類の写真（重なった書類）に携帯番号だけ残っていた（1件）。
+ *   物件の画像（間取り図・物件写真 244件）・見積書の書き起こしに携帯番号は 0件（業者の番号は 0120・06 等）＝物件の話を落とさない。
+ *   戻す: IMAGE_MOBILE_MASK=off
+ */
+const MOBILE_IN_TRANSCRIPT_RE = /0[789]0[-‐－ー\s]?\d{4}[-‐－ー\s]?\d{4}/g;
+export function maskTranscriptMobile(t: string): string {
+  if (process.env.IMAGE_MOBILE_MASK === "off") return t;
+  return t.replace(MOBILE_IN_TRANSCRIPT_RE, "（携帯番号）");
+}
 
 // ── Vision の出力の解析 ─────────────────────────────────────────────
 const TYPE_TOKEN = VISION_IMAGE_TYPES.join("|");
@@ -114,7 +132,8 @@ const PERSON_WORD_RE = /人物|顔写真|ポートレート|自撮り|セルフ�
 /** ペットの書類（飼い主の氏名・住所が載る → 書き起こしを残さない） */
 const PET_DOCUMENT_RE = /狂犬病予防注射済証|狂犬病.{0,6}(?:注射|予防).{0,6}(?:済|証明)|犬の鑑札|ワクチン接種証明書/;
 /** 振込・支払いの控え（振込先は弊社の口座。物件ではない） */
-const PAYMENT_RE = /振込完了|振込を(?:正常に)?受け付け|払込受領証|お振込金額|振込予定日|ご利用明細[\s\S]{0,80}振込/;
+//   2026-10-09: 振込の控え・振込明細・領収書（「上記正に領収」「但し」の欄つき）も足した（見積書の「振り込み期日」は当てない）
+const PAYMENT_RE = /振込完了|振込を(?:正常に)?受け付け|払込受領証|お振込金額|振込予定日|ご利用明細[\s\S]{0,120}振込|振込(?:の)?(?:控え|明細書?|受付書)|領収(?:書|証)[\s\S]{0,200}(?:上記(?:の)?(?:金額を)?正に|但し)/;
 /** 契約・入居の手続き（電子契約・口座振替・保険・入居後のアプリ・申込の管理画面・誓約書類） */
 const PROCEDURE_RE = /電子契約|Web\s*口座振替|口座振替(?:登録|受付|手続)|ネット口座振替|GMOサイン|署名(?:が)?完了|ruum|生活支援サービス|お部屋の各種手続き|少額短期保険|ご契約一覧|本申込|入居予定者|申込み?(?:が)?完了|駐車場使用契約書|誓約書|差入書|重要事項説明書\s*[✓✔]|賃貸借契約書\s*\/|契約手続き/;
 /** 不具合の報告（入居後の設備の不具合フォーム） */
@@ -196,7 +215,7 @@ export function labeledImageText(kind: ImageKind, content: string | null | undef
   const t = (content ?? "").trim();
   if (!t) return "[画像]";
   const head = `[画像] 【${IMAGE_KIND_LABEL[kind]}】`;
-  return DROP_TRANSCRIPT.has(kind) ? head : `${head}\n${t}`;
+  return dropsTranscript(kind) ? head : `${head}\n${maskTranscriptMobile(t)}`;
 }
 
 // ── 保存済みの本文から読む ──────────────────────────────────────────
