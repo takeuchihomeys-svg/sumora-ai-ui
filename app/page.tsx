@@ -10,6 +10,10 @@ import { preselectViewingCandidates, toggleCandidateInSlots, latestCustomerTurnS
 import BottomNav from "./components/BottomNav";
 import CustomerStateBar from "./components/CustomerStateBar";
 import OutcomeConfirmBar from "./components/OutcomeConfirmBar";
+import UndatedPromiseBar from "./components/UndatedPromiseBar";
+import PromiseQueueBar from "./components/PromiseQueueBar";
+import CustomerMemoBar from "./components/CustomerMemoBar";
+import StaffDeviceWriterBar from "./components/StaffDeviceWriterBar"; // 2026-10-08 決定11 端末の印（管理者／スタッフ）
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
 import { isApplicationFormMessage, PRE_APPLY_STATUSES } from "./lib/application-form-detect";
@@ -37,6 +41,8 @@ import { brainTemplateSuggestion, brainCheckPatternFor, checkPatternTemplateCate
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 // 2026-09-27 竹内「AIXツールで採点された新着物件をトーク画面（スタッフだけ）に折りたたみで」: 表示だけ（messages に入れない）
 import { useNewArrivalCards, useNewArrivalCounts, newArrivalElems, NewArrivalListBadge } from "./components/NewArrivalCard";
+import { useRequestLedgerCounts, RequestLedgerListBadge } from "./components/RequestLedgerBadge";
+import { searchResultChoiceCaption } from "./lib/search-result-choice";
 import { QuotedReplyBanner, useQuotedMessages } from "./components/QuotedReplyBanner";
 import { LIST_CHIP, LIST_CHIP_TONE, propertyCheckTone } from "./lib/list-row-chip";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
@@ -65,6 +71,8 @@ import { parsePickupAixHandoff, planPickupMarkSent, type PickupAixType } from ".
 import { buildEstimateHref, parseEstimateReturn, wantsLowInitialCostText } from "./lib/estimate-handoff";
 import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 import { decideApplySubMode } from "./lib/apply-sub-mode";
+import { normalizePetWording } from "./lib/pet-wording";
+import { YUMA_CONVERSATION_ID } from "./lib/test-conversations";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -79,12 +87,14 @@ const SHOWN_DRAFT_RESTORE = shownDraftRestoreEnabled(process.env.NEXT_PUBLIC_SHO
 // 2026-10-08 竹内さん（り 8f705d16「こんばんは。この時間に送るのおかしい」）: 前に作った下書きを入力欄に出す時、送る今（JST の日）で挨拶を直す
 //   （時刻の挨拶→今日まだ送っていなければお世話になっております・送っていれば外す。お世話になっておりますは足しも外しもしない）。戻す: NEXT_PUBLIC_DRAFT_GREETING_REFRESH=off
 const DRAFT_GREETING_REFRESH = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_REFRESH);
+// 2026-10-08 竹内さん「今日初めての連絡なら『お世話になっております』を付ける。2回目以降なら入れない」: 下書きを出す時にも足す・外す。戻す: NEXT_PUBLIC_DRAFT_GREETING_REQUIRED=off
+const DRAFT_GREETING_REQUIRED = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_REQUIRED);
 function refreshDraftGreeting(text: string, conv: { messages?: Message[]; customerName?: string }): string {
   if (!DRAFT_GREETING_REFRESH || !text) return text;
   const msgs = conv.messages || [];
   // 呼び名は生成の挨拶（resolveGreeting の canonOf）と同じ線で決める（「り」など1字は呼ばない）
   const name = canonOf(extractPreferredName(msgs, conv.customerName || ""));
-  const r = refreshDraftGreetingForNow(text, { messages: msgs.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.rawCreatedAt ?? null })), name: name ? `${name}さん` : "" });
+  const r = refreshDraftGreetingForNow(text, { messages: msgs.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.rawCreatedAt ?? null })), name: name ? `${name}さん` : "", ensureDaily: DRAFT_GREETING_REQUIRED });
   if (r.fixes.length) console.log(JSON.stringify({ tag: "draft:greeting-refresh", fixes: r.fixes }));
   return r.text;
 }
@@ -1901,11 +1911,13 @@ export default function Home() {
     // 2026-09-27 竹内「それでおねがい」: AIX要対応（pending）も30秒の読み直しで取る。返信の後もその判断のカードを残し、
     //   ✅（AIX を送った）・取り下げ（ブレインが AIX なしと判断し直した・48時間）になったら次の読み直しで消える
     const refreshPendingAixItems = () =>
-      supabase.from("aix_action_items").select("conversation_id, action, check_pattern, brain_analyzed_msg_ts")
+      supabase.from("aix_action_items").select("conversation_id, action, check_pattern, brain_analyzed_msg_ts, resolution_note")
         .eq("status", "pending").limit(500)
         .then(({ data }) => {
           const map: Record<string, PendingAixItem> = {};
-          for (const r of (data ?? []) as Array<{ conversation_id: string; action: string | null; check_pattern: string | null; brain_analyzed_msg_ts: string | null }>) {
+          for (const r of (data ?? []) as Array<{ conversation_id: string; action: string | null; check_pattern: string | null; brain_analyzed_msg_ts: string | null; resolution_note?: string | null }>) {
+            // 2026-10-08: 内覧当日の朝の挨拶の行（別の行）より、ブレインの依頼の行をカードに使う
+            if (map[String(r.conversation_id)] && String(r.resolution_note ?? "").startsWith("rule:viewing_morning_greeting")) continue;
             map[String(r.conversation_id)] = { action: r.action, check_pattern: r.check_pattern, brain_analyzed_msg_ts: r.brain_analyzed_msg_ts };
           }
           setPendingAixItems(map);
@@ -2008,8 +2020,9 @@ export default function Home() {
           // お客様メッセージが届いたら通知＋手動既読を解除
           if (payload.new && (payload.new as { sender: string }).sender === "customer") {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
-            showNotif("AIX LINX — 新着メッセージ", msgText, "/");
             const cid = String((payload.new as { conversation_id: number }).conversation_id);
+            // 2026-10-09 竹内さん「テストの通知は切っておく」: YUMA の再生・試験が入れるお客様の通で通知を出さない
+            if (cid !== YUMA_CONVERSATION_ID) showNotif("AIX LINX — 新着メッセージ", msgText, "/");
             // 新しい顧客メッセージで旧ドラフトは古くなる → 表示済みキャッシュを破棄
             delete shownDraftCacheRef.current[cid];
             clearedShownDraftRef.current.delete(cid);
@@ -3053,6 +3066,7 @@ export default function Home() {
   }, [filteredConversations, conversations, selectedId]);
   const nacTalk = useNewArrivalCards(selectedConversation.id || null);
   const nacCounts = useNewArrivalCounts();
+  const requestLedgerCounts = useRequestLedgerCounts(); // 2026-10-08 一覧の「確認事項 未対応 N」（NEXT_PUBLIC_REQUEST_LEDGER_BADGE=off）
 
   // 会話を開いた時に、その会話で最後に送った AIX を DB から読む（テンプレート一覧を送った AIX のカテゴリで開くため）
   useEffect(() => {
@@ -6962,6 +6976,7 @@ export default function Home() {
         touchAction: "manipulation",
       }}
     >
+      <StaffDeviceWriterBar authHeader={INTERNAL_AUTH_HEADER} />
       <div className="mx-auto flex h-full w-full max-w-[1600px] overflow-hidden bg-white shadow-2xl">
         <aside
           className={`${
@@ -7386,6 +7401,7 @@ export default function Home() {
                             </span>
                           );
                         })()}
+                        <RequestLedgerListBadge count={requestLedgerCounts[conversation.id]} />
                         {(activeTasks[conversation.id] ?? []).map((task) => {
                           // 物件確認の待ち（お客様から依頼された確認）だけ残す。日数で色が強くなる
                           if (task.task_type !== "property_check") return null;
@@ -8043,6 +8059,22 @@ export default function Home() {
             </div>
             );
           })()}
+          {/* 2026-10-08 竹内さん「人間でいうメモが必要」: お客様のメモ（芯・事情・気にしている事・伝えた事・聞かれた事・もう伝えた種類・気持ち）。直せる・手で直した物は上書きされない。戻す NEXT_PUBLIC_CUSTOMER_MEMO=off */}
+          {!inputFocused && (
+            <CustomerMemoBar
+              conversationId={selectedConversation.id}
+              refreshKey={selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""}
+              authHeader={INTERNAL_AUTH_HEADER}
+            />
+          )}
+          {/* 2026-10-08 竹内さん「約束してカレンダーに入れる」: 日付の無い約束（来年再相談・時期が来ましたら）は連絡の日をスタッフが選んで【必ず】に入れる（推測で日付を作らない） */}
+          {!inputFocused && (
+            <UndatedPromiseBar
+              conversationId={selectedConversation.id}
+              refreshKey={selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""}
+              authHeader={INTERNAL_AUTH_HEADER}
+            />
+          )}
           {/* 2026-10-08 竹内さん「お客さんからたくさんの確認事項を頼まれた場合のリスト…表示されるようになるか」: 連投の依頼・質問を1つずつ（request-ledger・14日）。
               約束のバナーと同じ見た目で、まだ結果を伝えていない行だけ（未対応／約束済み）。AIX で結果を送ったら消える。戻す NEXT_PUBLIC_REQUEST_LEDGER=off */}
           {!inputFocused && process.env.NEXT_PUBLIC_REQUEST_LEDGER !== "off" && (() => {
@@ -8065,6 +8097,8 @@ export default function Home() {
               </div>
             );
           })()}
+          {/* 2026-10-09 竹内さん「約束した事を記録して、それを AIX で送っていけば」: 1通で複数を約束した時の次に送る AIX と残り（promise-queue・既定 off・NEXT_PUBLIC_PROMISE_QUEUE=on で出す） */}
+          {!inputFocused && <PromiseQueueBar conversationId={selectedConversation.id} refreshKey={selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""} authHeader={INTERNAL_AUTH_HEADER} />}
           {!inputFocused && (() => {
             // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」: やることは
             //   ブレインが置いた／スタッフが手で作った やること（7日以内。7日より前は語で作られた残り）＋ブレインの AIX要対応（pending）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
@@ -9399,6 +9433,8 @@ export default function Home() {
                           style={{ background: `linear-gradient(135deg, ${brainBtnColor}, ${brainBtnColor}cc)` }}>
                           {brainBtnLabel}
                         </button>
+                        {/* 2026-10-08 竹内さん「下に『物件なかった場合』と小さく文字を入れて」: 検索の結果で選ぶ2択の番だけ（search-result-choice・NEXT_PUBLIC_SEARCH_RESULT_CAPTION=off） */}
+                        {(() => { const c = searchResultChoiceCaption({ brainAction, altActions: brainMeta.alt_actions, button: brainAction ?? "", off: process.env.NEXT_PUBLIC_SEARCH_RESULT_CAPTION === "off" }); return c ? <p className="mt-0.5 text-center text-[10px] font-bold text-violet-700">{c}</p> : null; })()}
                         {brainAction !== "estimate_sheet" && (
                           <p className="mt-0.5 text-center" style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</p>
                         )}
@@ -9419,7 +9455,8 @@ export default function Home() {
                           </a>
                         )}
                         {(brainMeta.alt_actions ?? []).filter((a) => a !== brainAction && BRAIN_AIX_LABELS[a]).map((alt) => (
-                          <button key={alt}
+                          <div key={alt}>
+                          <button
                             onClick={() => {
                               setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
                               setShowAixMenu(false);
@@ -9432,6 +9469,8 @@ export default function Home() {
                             style={{ background: `linear-gradient(135deg, ${AIX_ACTION_META[alt]?.color ?? "#7C3AED"}, ${AIX_ACTION_META[alt]?.color ?? "#7C3AED"}cc)` }}>
                             {BRAIN_AIX_LABELS[alt]}
                           </button>
+                          {(() => { const c = searchResultChoiceCaption({ brainAction, altActions: brainMeta.alt_actions, button: alt, off: process.env.NEXT_PUBLIC_SEARCH_RESULT_CAPTION === "off" }); return c ? <p className="mt-0.5 text-center text-[10px] font-bold text-violet-700">{c}</p> : null; })()}
+                          </div>
                         ))}
                       </div>
                       <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))}
@@ -10980,7 +11019,8 @@ export default function Home() {
             // 🚫 AIXカテゴリのテンプレートは通常返信学習に含めない
             isAixTemplateDraftRef.current = !!(category?.includes("AIX"));
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
-            const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
+            // 2026-10-09 竹内さん「ペットの部分だけペット飼育可能に統一」: テンプレートの「ペットの飼育も相談可能」「ペット（〇〇）飼育可」も入力欄に入れる時に揃える（pet-wording.ts・戻す NEXT_PUBLIC_PET_WORDING=off）
+            const resolvedText = normalizePetWording(text.replace(/アカウント名/g, preferredCustomerName), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text;
             setReplyDraft(resolvedText);
             // テンプレート選択ログ（phase=select）を記録。送信時に修正有無を追記
             // CRIT-01修正: 先に PENDING 状態をセットして race condition を防ぐ

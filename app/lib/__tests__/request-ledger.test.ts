@@ -1,6 +1,6 @@
 // 2026-10-08 連投の「やる事の一覧」（request-ledger.ts）。お客様の発言は実物（名前・物件名は伏せた）
 // 実行: npx tsx app/lib/__tests__/request-ledger.test.ts
-import { splitRequests, buildRequestLedger, currentTurnRequests, buildRequestLedgerNote, uncoveredRequests, type LedgerMsg } from "../request-ledger";
+import { splitRequests, buildRequestLedger, currentTurnRequests, buildRequestLedgerNote, uncoveredRequests, countOpenRequestsByConversation, type LedgerMsg } from "../request-ledger";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -70,6 +70,35 @@ it("出口: W51 の下書き（日時だけ）は費用が抜け／見積の約�
   const cur = splitRequests(["かしこまりました。\n日時調整します。\n初期費用いくらになりますでしょつか？"], T);
   eq(uncoveredRequests(cur, "かしこまりました！！\nご内覧のご都合よろしいお日にちが決まり次第、ご連絡頂けますと幸いです！！").map((x) => x.topic), ["cost"]);
   eq(uncoveredRequests(cur, "かしこまりました！！\n最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます！！").length, 0);
+});
+
+console.log("一覧のバッジ（会話ごとの未対応の数・2026-10-08）");
+it("会話ごとに帯と同じ未対応の数（W51 は費用1件・答えた会話・お礼だけは入れない）", () => {
+  const r = (id: string, sender: string, text: string, min: number, aix = false) => ({ conversation_id: id, sender, text, created_at: at(min), is_aix_generated: aix });
+  const rows = [
+    r("a", "customer", "かしこまりました。\n日時調整します。\n初期費用いくらになりますでしょつか？", 0),
+    r("a", "staff", "かしこまりました！！\nご内覧のご都合よろしいお日にちが決まり次第、ご連絡頂けますと幸いです！！", 5),
+    r("b", "customer", "ここの頭金おしえてほしいです", 0),
+    r("b", "staff", "最大限割引しました初期費用の御見積書となります！！", 60, true),
+    r("c", "customer", "ありがとうございます！", 0),
+  ];
+  eq(countOpenRequestsByConversation(rows, Date.parse(at(120))), { a: 1 });
+});
+
+// 2026-10-08 竹内さん⑤: 先の時期の相談は一覧の「確認事項 未対応」の数に入れない（会話画面の帯には出す）
+//   監査 scripts/audit-request-ledger-deferred.ts（365日・依頼・質問 266行）で当たるのはこの1行だけ
+it("7beca4f5「来年あたりを一旦考えていますので、その際再度相談させてもらってもいいですか？😭」→ 帯には出す・バッジの数には入れない", () => {
+  const text = "いつもありがとうございます！\n仕事の都合で、引越しできそうになくなってしまいました😭\n来年あたりを一旦考えていますので、その際再度相談させてもらってもいいですか？😭";
+  const items = buildRequestLedger([{ sender: "customer", text, createdAt: at(0) }], Date.parse(at(60)));
+  eq(items.filter((x) => x.status === "open").length >= 1, true);
+  eq(items.some((x) => x.deferred), true);
+  eq(countOpenRequestsByConversation([{ conversation_id: "a", sender: "customer", text, created_at: at(0) }], Date.parse(at(60))), {});
+  process.env.REQUEST_LEDGER_DEFERRED_BADGE = "off";
+  try { eq(Object.keys(countOpenRequestsByConversation([{ conversation_id: "a", sender: "customer", text, created_at: at(0) }], Date.parse(at(60)))), ["a"]); }
+  finally { delete process.env.REQUEST_LEDGER_DEFERRED_BADGE; }
+});
+it("「改めて見積書お願いします」「再度お願いします」は今の依頼（先の時期の相談にしない）", () => {
+  for (const t of ["改めて見積書お願いします", "再度初期費用の見積もりお願いできますか？"]) eq(splitRequests([t], T).some((x) => x.deferred), false, t);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

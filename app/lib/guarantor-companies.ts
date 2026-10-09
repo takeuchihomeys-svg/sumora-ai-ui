@@ -7,7 +7,8 @@
 
 // ─── 型 ───
 // 2026-09-26 竹内さん決定（同日3回目・最新）: 保証会社の種類は**3つ**（独立系・信販系・信用系）＋不明。
-//   「全保連は信用系」「エポスは信販系」「LICC系は全部信用系」→ 「LICC系」という種類は無くし、LICC の会社（全保連・ジェイリース・日本賃貸保証）は信用系。K-net も信用系。
+//   「全保連は信用系」「エポスは信販系」「LICC系は全部信用系」→ 「LICC系」という種類は無くし、LICC の会社（全保連・ジェイリース）は信用系。K-net も信用系。
+//   2026-10-08 竹内さん: 日本賃貸保証・テナントファーストは独立系（日本賃貸保証を信用系にしていたのを直した）
 //   経緯（同日に2回取り違えた）: fd989546「スタッフの信用系＝信販系」（誤り）→ 4a3a0e79「4種類（独立系・LICC系・信販系・信用系=K-net）」
 //     → 04883e71「LICC系の説明を加盟会社同士で滞納情報を共有に」→ 本変更「LICC系は信用系に統合して3種類」。
 //     スタッフの実送信（9/23 86d1e936「全保連（信用系）」「ジェイリース（信用系）」「K-net（信用系）」）もこの3種類の呼び方
@@ -169,20 +170,23 @@ export const GUARANTOR_COMPANY_MASTER: readonly GuarantorCompany[] = [
   { name: "日本テナント保証", aliases: [], type: "independent", basis: "official", source: "https://www.nihontenant-g.com/" },
   { name: "インシュアランス", aliases: [], type: "independent", basis: "official", source: "https://d-insurance.jp/company/" },
   // ── 種類の候補はあるが確かでない（本文で種類を言わない）──
-  // 日本賃貸保証（JID）: 9/26 に「LICC の会社」として信用系に入れたが、LICC にいた記録が見つからない（会社としては独立系の形）→ 竹内さんに確認
-  { name: "日本賃貸保証", aliases: ["JID"], type: "shinyou", basis: "unverified", source: "https://www.jid-net.co.jp/company/profile/" },
+  // 日本賃貸保証（JID）・テナントファースト: 2026-10-08 竹内さん「日本賃貸保証は独立系／テナントファーストは独立系」（9/26 は日本賃貸保証を信用系にしていた・LICC にいた記録も無い）
+  { name: "日本賃貸保証", aliases: ["JID"], type: "independent", basis: "takeuchi", source: "https://www.jid-net.co.jp/company/profile/" },
+  { name: "テナントファースト", aliases: ["テナントファスタート"], type: "independent", basis: "takeuchi" },
+  // 2026-10-08 竹内さん（根拠＝竹内さん）: sumai保証＝独立系／あんしん保証＝信販系／レジデンシャルパートナーズ＝信販系／日本トラストコーポレーション＝独立系／エイト賃貸保証＝信用系。
+  //   LGO・CGO の会員（日本セーフティー・Casa 等）＝独立系（表の独立系の会社はこのまま）。信和CM保証など答えの無い会社は今のまま（種類を言わない）
   // sumai保証（スマサポ）: 会社は独立系だが 2024-01 からエポスカードと保証の業務を一緒に行う（信販寄りとも見られる）
-  { name: "sumai保証", aliases: ["Sumai保証", "スマサポ", "Sumai"], type: "independent", basis: "unverified", source: "https://www.sumasapo.co.jp/service_warranty.php" },
+  { name: "sumai保証", aliases: ["Sumai保証", "スマサポ", "Sumai"], type: "independent", basis: "takeuchi", source: "https://www.sumasapo.co.jp/service_warranty.php" },
   // あんしん保証: 会社は独立系・資料の「ライフ安心プラス」はライフカード提携の商品（筆頭株主アイフル＝公式では未確認）
-  { name: "あんしん保証", aliases: ["ライフ安心プラス", "ライフあんしんプラス", "ライフアンしんプラス"], type: "independent", basis: "unverified", source: "https://www.anshin-gs.co.jp/company/" },
+  { name: "あんしん保証", aliases: ["ライフ安心プラス", "ライフあんしんプラス", "ライフアンしんプラス"], type: "credit", basis: "takeuchi", source: "https://www.anshin-gs.co.jp/company/" },
   // レジデンシャルパートナーズ: 東急住宅リース 100%・商品「RPプラスJ」（ジャックス提携）「EPOSプラスRP」（エポス提携）
-  { name: "レジデンシャルパートナーズ", aliases: [], type: "independent", basis: "unverified", source: "https://www.residential-partners.co.jp/company/" },
+  { name: "レジデンシャルパートナーズ", aliases: [], type: "credit", basis: "takeuchi", source: "https://www.residential-partners.co.jp/company/" },
   // 信和CM保証: 信和保証（2025年設立）か信和コミュニティ。社名の「CM」は確かめられない
   { name: "信和CM保証", aliases: ["信和保証"], type: "independent", basis: "unverified", source: "https://www.shinwa-hosho.co.jp/company/profile/" },
   // 日本トラストコーポレーション: この社名の保証会社が見つからない（株式会社日本トラスト・有限会社トラスト・コーポレーションの候補）
-  { name: "日本トラストコーポレーション", aliases: ["日本トラスト"], type: "independent", basis: "unverified" },
+  { name: "日本トラストコーポレーション", aliases: ["日本トラスト"], type: "independent", basis: "takeuchi" },
   // エイト賃貸保証: 公式サイトが無く母体を確かめられない（2021〜2023 年の版では LICC の正会員）
-  { name: "エイト賃貸保証", aliases: ["エイト保証", "エイト"], type: "independent", basis: "unverified" },
+  { name: "エイト賃貸保証", aliases: ["エイト保証", "エイト"], type: "shinyou", basis: "takeuchi" },
   // ── 信販系（母体がカード会社・信販会社）──
   { name: "エポスカード", aliases: ["エポス", "EPOS", "ROOM iD", "ルームiD"], type: "credit", basis: "takeuchi", source: "https://www.eposcard.co.jp/room_id/companies.html" },
   { name: "オリコフォレントインシュア", aliases: ["オリコ", "オリコフォレント", "ORICO"], type: "credit", basis: "official", source: "https://www.orico-fi.co.jp/profile/company/" },
@@ -192,7 +196,8 @@ export const GUARANTOR_COMPANY_MASTER: readonly GuarantorCompany[] = [
   // えるく信用保証＝カード会社 株式会社えるく（えるくカード）そのもの
   { name: "えるく", aliases: ["えるく信用保証"], type: "credit", basis: "official", source: "https://www.erc-card.co.jp/smarts/index/67/" },
   // ── 信用系（LICC の正会員＝jpg.or.jp の一覧・竹内さんが言った会社）──
-  // 全保連: 竹内さん「全保連は信用系」。⚠ LICC の今の会員の一覧（2026年4月）には無い（2010〜2024年4月の版にはあった・全保連の会社概要は今も LICC 加盟と書く）
+  // 全保連: 竹内さん「全保連は信用系」（2026-10-08 にも確定）。LICC の今の会員の一覧（2026年4月）には無いが竹内さんの決定で信用系（2010〜2024年4月の版にはあった）
+  // エルズサポート・アーク・ニッポンインシュア・ルームバンクインシュア: 2026-10-08 竹内さん「信用系にする」（LICC の正会員）
   { name: "全保連", aliases: ["ゼンホレン"], type: "shinyou", basis: "takeuchi", source: "https://www.zenhoren.jp/company/outline.html" },
   { name: "ジェイリース", aliases: ["Jリース", "J-LEASE"], type: "shinyou", basis: "official", source: JPG },
   { name: "K-net", aliases: ["Knet", "ケーネット", "近畿保証サービス", "近畿保証"], type: "shinyou", basis: "official", source: JPG },
@@ -208,10 +213,10 @@ export const GUARANTOR_COMPANY_MASTER: readonly GuarantorCompany[] = [
   // ── 種類が分からない（名寄せ・入力に無い会社名を伏せる走査のためだけ。種類に触れない）──
   // ライフ: 資料の「ライフ」はライフ安心プラス・ライフサポート（駆け付け）等の一部が多い。会社として確かめられない
   { name: "ライフ", aliases: ["ライフ保証", "ライフ賃貸保証"], type: "unknown", basis: "none" },
-  { name: "テナントファースト", aliases: ["テナントファスタート"], type: "unknown", basis: "none" },
-  { name: "グリーン保証", aliases: [], type: "unknown", basis: "none" },
-  { name: "東京保証", aliases: [], type: "unknown", basis: "none" },
-  { name: "GC保証", aliases: ["新GC保証"], type: "unknown", basis: "none" },
+  // 2026-10-08 竹内さん: グリーン保証・東京保証＝独立系／GC保証＝信販系（根拠＝竹内さん）
+  { name: "グリーン保証", aliases: [], type: "independent", basis: "takeuchi" },
+  { name: "東京保証", aliases: [], type: "independent", basis: "takeuchi" },
+  { name: "GC保証", aliases: ["新GC保証"], type: "credit", basis: "takeuchi" },
   { name: "西日本賃貸保証サービス", aliases: [], type: "unknown", basis: "none" },
   { name: "ミニミニ保証", aliases: [], type: "unknown", basis: "none" },
   { name: "エイブル保証", aliases: ["エイブル賃貸保証", "エイブルくらしの安心保証"], type: "unknown", basis: "none" },
@@ -445,7 +450,7 @@ export function buildGuarantorInfoText(o: { customerName: string; properties: re
 // ※ credit（クレディセゾン・エポス等）の呼び名は「信販系」。9/16 の実送信はクレディセゾンを「信用系」と書いていたが、
 //   2026-09-26 竹内さん決定でクレディセゾンは信販系・信用系は別の種類（全保連・ジェイリース・K-net 等）なので、種類名だけ「信販系」にして文の型は実送信のまま。
 //   「クレジットカードの滞納歴で審査する」は竹内さんの信販系の定義（クレジットカード会社や信販会社が母体）に沿う
-// ※ shinyou（全保連・ジェイリース・日本賃貸保証・K-net）: この場面の実送信は無い → 同じ型（〇〇という△△の保証会社を使用しており、…）に竹内さんの信用系の定義の言葉だけを入れる
+// ※ shinyou（全保連・ジェイリース・K-net 等）: この場面の実送信は無い → 同じ型（〇〇という△△の保証会社を使用しており、…）に竹内さんの信用系の定義の言葉だけを入れる
 // ※ 旧実装（AixModal で generatedMsg に追記）は種類を見ずに「クレジットカードの滞納歴で審査する中級程の保証会社」固定で、
 //   独立系（審査が緩い）の物件にも信販系の説明が付いていた。事実関係の説明なので種類ごとに分ける
 export const GUARANTOR_CHECK_SENTENCE: Record<GuarantorType, (company: string) => string> = {

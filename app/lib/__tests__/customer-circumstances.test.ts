@@ -1,7 +1,7 @@
 // 2026-10-08 把握「お客様の事情」（customer-circumstances.ts）
 // 実行: npx tsx app/lib/__tests__/customer-circumstances.test.ts
 // お客様の発言は実物（scripts/audit-customer-circumstances.ts で読んだ物・名前と物件名は伏せた）
-import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, buildCircumstancesNote, resolveDateExpr, holdFirstReason } from "../customer-circumstances";
+import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, buildCircumstancesNote, resolveDateExpr, holdFirstReason, onlineViewingReason, ONLINE_VIEWING_LINE } from "../customer-circumstances";
 import { buildAppealInput, resolveAppealTiming } from "../appeal-timing";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -131,9 +131,71 @@ it("〇日以降が7日以上先＝抑える提案／6日先＝入れない／�
   has(String(holdFirstReason(v7, now)), "今日から7日後"); eq(holdFirstReason(v6, now), null); eq(holdFirstReason(vr, now), "遠方のお客様");
   eq(circumstanceDelaysViewing(v7, now), true); eq(circumstanceDelaysViewing(v6, now), false); eq(circumstanceDelaysViewing(vr, now), true);
 });
-it("しばらく来られない（日付なし）はこの線では抑える提案に入れない", () => {
+console.log("2026-10-08 竹内さん「（予定が詰まって・出張中＝日付なし）先に部屋を抑える方向で。出張中ならオンライン内見も対応可能と伝える」");
+it("予定が詰まって（日付なし・実物 fb8ab8d5＝竹内さんは「一度室内撮影…お部屋を抑えた状態で…ご案内」）→ 抑える提案／オンライン内見は付けない", () => {
   const now = jst("2026-10-08T14:00:00");
-  eq(holdFirstReason(validCircumstances(one("今月前半結構予定詰まってて", "2026-10-08T10:00:00"), now), now), null);
+  const v = validCircumstances(one("今月前半結構予定詰まってて🥲", "2026-10-08T10:00:00"), now);
+  has(String(holdFirstReason(v, now)), "予定が詰まって");
+  eq(circumstanceDelaysViewing(v, now), true);
+  eq(onlineViewingReason(v), null);
+  const n = buildCircumstancesNote(v, { nowMs: now, scene: "viewing" });
+  has(n, "お申込みでお部屋を抑えた状態でご内覧頂く");
+  if (n.includes("オンライン内見")) throw new Error("予定が詰まっての時にオンライン内見が入った");
+});
+it("出張中（日付なし・実物 d367d1b9 の2通目）→ 抑える提案＋オンライン内見（竹内さんの実送信の形）", () => {
+  const now = jst("2026-10-08T14:00:00");
+  const v = validCircumstances(one("申し訳ございません。\n現在出張中のため、そちらへ伺うことができません", "2026-10-08T10:00:00"), now);
+  has(String(holdFirstReason(v, now)), "出張中");
+  eq(onlineViewingReason(v), "business_trip");
+  const n = buildCircumstancesNote(v, { nowMs: now, scene: "viewing" });
+  has(n, "お申込みでお部屋を抑えた状態でご内覧頂く"); has(n, ONLINE_VIEWING_LINE); has(n, "出張中なのでオンライン内見も対応可能");
+});
+it("出張でも日付がある（実物 749c5559「明日から15日までお仕事の出張で厳しい」）→ 日付の線（7日）が正・オンライン内見は付けない", () => {
+  const now = jst("2026-08-08T10:48:00");
+  const v = validCircumstances(one("明日から15日までお仕事の出張で厳しいです💦", "2026-08-08T10:48:00"), now);
+  eq(v.map((c) => c.kind), ["available_from"]);
+  eq(onlineViewingReason(v), null);
+});
+it("出張中＋戻る日（実物 d367d1b9 7/27「北海道へ出張中です。来月5日に大阪へ戻る予定」）→ 戻る日の「〇日以降」（日付が正）", () => {
+  const v = one("現在、北海道へ出張中です。\n来月5日に大阪へ戻る予定なのですが、内見はいつ頃でしたらご都合がよろしいでしょうか。", "2026-07-27T18:08:00");
+  eq(v.map((c) => c.kind), ["available_from"]); eq(md(v[0].fromDayMs as number), "8/5");
+});
+it("今週は無理（日付なし・短い）は抑える提案に入れない／CIRCUMSTANCE_UNDATED_HOLD=off で旧", () => {
+  const now = jst("2026-10-08T14:00:00");
+  eq(holdFirstReason(validCircumstances(one("今週は内覧に行けないです", "2026-10-08T10:00:00"), now), now), null);
+  const v = validCircumstances(one("今月前半結構予定詰まってて", "2026-10-08T10:00:00"), now);
+  eq(holdFirstReason(v, now, { CIRCUMSTANCE_UNDATED_HOLD: "off" }), null);
+  eq(onlineViewingReason(validCircumstances(one("現在出張中のため伺えません", "2026-10-08T10:00:00"), now), { CIRCUMSTANCE_ONLINE_VIEWING: "off" }), null);
+});
+it("遠方（実物 c1d57c97 広島）→ オンライン内見の言い回しも注記に", () => {
+  const now = jst("2026-10-08T14:00:00");
+  const v = validCircumstances(one("今が広島に住んでいて、内見が難しい状況なのですが", "2026-10-07T13:00:00"), now);
+  eq(onlineViewingReason(v), "remote");
+  has(buildCircumstancesNote(v, { nowMs: now, scene: "viewing" }), ONLINE_VIEWING_LINE);
+});
+it("訴求: 内覧の希望＋今の発言「出張中」→ 抑える提案＋オンライン内見／APPEAL_ONLINE_VIEWING=off で付けない", () => {
+  const msgs = [
+    { sender: "staff", text: "🌟〇〇 7階\n家賃8.5万円…オススメ出来るお部屋となります😊！！", createdAt: new Date(jst("2026-10-08T10:00:00")).toISOString() },
+    { sender: "customer", text: "内覧したいのですが、現在出張中のため伺うことができません", createdAt: new Date(jst("2026-10-08T12:30:00")).toISOString() },
+  ];
+  const inp = buildAppealInput({ msgs, aixLogs: [], customerKind: "positive" });
+  eq(inp.viewingDelayed, true); eq(inp.onlineViewing, "business_trip");
+  const v = resolveAppealTiming(inp);
+  eq(v.kind, "apply"); has(v.note, ONLINE_VIEWING_LINE);
+  process.env.APPEAL_ONLINE_VIEWING = "off";
+  const inp2 = buildAppealInput({ msgs, aixLogs: [], customerKind: "positive" });
+  delete process.env.APPEAL_ONLINE_VIEWING;
+  eq(inp2.onlineViewing, null);
+  if (resolveAppealTiming(inp2).note.includes("オンライン内見")) throw new Error("off でもオンライン内見が入った");
+});
+it("訴求: 前の発言の「出張中」（2日前）＋今「気になります」→ すぐ来られない・オンライン内見", () => {
+  const msgs = [
+    { sender: "customer", text: "現在出張中のため、そちらへ伺うことができません", createdAt: new Date(jst("2026-10-06T12:00:00")).toISOString() },
+    { sender: "staff", text: "🌟〇〇 7階\n家賃8.5万円…オススメ出来るお部屋となります😊！！", createdAt: new Date(jst("2026-10-08T10:00:00")).toISOString() },
+    { sender: "customer", text: "ここ気になります！", createdAt: new Date(jst("2026-10-08T12:30:00")).toISOString() },
+  ];
+  const inp = buildAppealInput({ msgs, aixLogs: [], customerKind: "positive" });
+  eq(inp.viewingDelayed, true); eq(inp.onlineViewing, "business_trip");
 });
 it("注記: 7日以上先は抑える提案・候補日は AIX で来られる日以降／6日先は「入れない」と書く", () => {
   const now = jst("2026-10-08T14:00:00");

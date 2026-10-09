@@ -1,6 +1,6 @@
 // app/lib/__tests__/viewing-morning-greeting.test.ts — 内覧当日の朝の挨拶の要対応（10/08 竹内さん「作る」）
 // 実行: npx tsx app/lib/__tests__/viewing-morning-greeting.test.ts
-import { morningViewingGreetingPlan, keepViewingGreetingItem, morningGreetingNoticeLine } from "../viewing-day-greeting";
+import { morningViewingGreetingPlan, keepViewingGreetingItem, morningGreetingNoticeLine, isMorningGreetingItem, viewingDayGreetingDue, viewingFlowCancelled } from "../viewing-day-greeting";
 import { staffTextFulfillsAixItem } from "../aix-item-cleanup";
 import { buildActionLedger } from "../action-ledger";
 import { aixButtonText } from "../aix-action-text";
@@ -42,11 +42,19 @@ t("今日 内覧挨拶の AIX を押した → 立てない", morningViewingGree
 // お客様の取りやめ（流れが none に戻る）
 const lc = ledgerOf([{ sender: "customer", text: "すみません、明日の内覧キャンセルでお願いします", createdAt: "2026-10-08T12:00:00Z" }]);
 t("取りやめの後は立てない", morningViewingGreetingPlan(base(lc)).register === false, `${lc.facts.viewingFlow?.stage}/${lc.facts.viewingFlow?.reason}`);
+// 2026-10-08 竹内さん「取りやめの後はブレインの当日の挨拶も出さないようにそろえる」（viewingDayGreetingDue も同じ viewingFlowCancelled）
+t("ブレインの当日の挨拶も取りやめの後は出さない", viewingDayGreetingDue({ appointmentDay: "today", flowReason: lc.facts.viewingFlow?.reason ?? null, staffMessages: [], nowMs: now, env: {} }) === false
+  && viewingFlowCancelled(lc.facts.viewingFlow?.reason), `${lc.facts.viewingFlow?.reason}`);
+t("取りやめが無ければブレインの当日の挨拶は出す（今まで通り）", viewingDayGreetingDue({ appointmentDay: "today", flowReason: l1.facts.viewingFlow?.reason ?? null, staffMessages: [], nowMs: now, env: {} }) === true);
+t("VIEWING_DAY_GREETING_CANCEL_GUARD=off → 旧（取りやめでも出す）", viewingDayGreetingDue({ appointmentDay: "today", flowReason: "customer_cancelled_after_confirm", staffMessages: [], nowMs: now, env: { VIEWING_DAY_GREETING_CANCEL_GUARD: "off" } }) === true);
 // 内覧後のお礼（済んだ）→ 台帳が null
 t("申込以降 → 立てない", morningViewingGreetingPlan({ ...base(l1), postApply: true }).why === "post_apply");
 t("内覧まで30分を切った → 立てない", morningViewingGreetingPlan({ ...base(l1), appointmentTime: "9:30" }).why === "too_late");
 t("時刻なし → 時刻では止めない", morningViewingGreetingPlan({ ...base(l1), appointmentTime: null }).why === "due");
-t("別の AIX要対応が未完了 → 上書きしない", morningViewingGreetingPlan(base(l1, { action: "estimate_sheet", check_pattern: null })).why === "other_pending");
+// 2026-10-08 竹内さん「（別の AIX要対応が残っていても）立てる」: 別の行として並べる（ブレインの依頼は上書きしない）
+t("別の AIX要対応が未完了 → 立てる（別の行）", morningViewingGreetingPlan(base(l1, { action: "estimate_sheet", check_pattern: null })).why === "due");
+t("VIEWING_MORNING_GREETING_SIDE=off → 旧（立てない）", morningViewingGreetingPlan({ ...base(l1, { action: "estimate_sheet", check_pattern: null }), env: { VIEWING_MORNING_GREETING_SIDE: "off" } }).why === "other_pending");
+t("朝の挨拶の行の見分け（resolution_note の頭）", isMorningGreetingItem({ resolution_note: "rule:viewing_morning_greeting 10/9 16:00" }) && !isMorningGreetingItem({ resolution_note: null }) && !isMorningGreetingItem({ resolution_note: "brain_customer_paused" }));
 t("同じ内覧挨拶が未完了 → 何もしない", morningViewingGreetingPlan(base(l1, { action: "greeting_viewing", check_pattern: "before" })).why === "already_pending");
 t("VIEWING_MORNING_GREETING=off", morningViewingGreetingPlan({ ...base(l1), env: { VIEWING_MORNING_GREETING: "off" } }).why === "off");
 t("VIEWING_DAY_GREETING=off でも止まる", morningViewingGreetingPlan({ ...base(l1), env: { VIEWING_DAY_GREETING: "off" } }).why === "off");

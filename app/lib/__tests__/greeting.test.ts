@@ -181,12 +181,12 @@ describe("2026-09-12 竹内（あや事例）: 条件フォームを送ってく
   it("F3 「かしこまりました！！」で始めた下書き → 感謝の1文に置き換わる", () => {
     const d = decide([ASK, FORM], NOW, 12);
     expect(enforceOpening("かしこまりました！！\n大国町周辺全域から6万〜7万・1K、1LDKでピックアップしお送りさせて頂きます！！", d).cleaned)
-      .toStartWith("ご条件お送り頂きありがとうございます😊！！\n大国町周辺全域から");
+      .toStartWith("じゅにあさんお世話になっております！！\nご条件お送り頂きありがとうございます😊！！\n大国町周辺全域から"); // 10/08 今日はじめての会話文は必ず挨拶の行
   });
   it("F4 既に感謝がある下書きは足さない", () => {
     const d = decide([ASK, FORM], NOW, 12);
     const t = "ご条件お送り頂きありがとうございます😊！！\n大国町周辺全域からピックアップしお送りさせて頂きます！！";
-    expect(enforceOpening(t, d).cleaned).toBe(t);
+    expect(enforceOpening(t, d).cleaned).toBe(`じゅにあさんお世話になっております！！\n${t}`); // 10/08 感謝は足さない・挨拶の行だけ置く
   });
 });
 
@@ -351,6 +351,14 @@ describe("開口語なしの決定の注記（7巡目）", () => {
     expect(!!d.propertyShareNoAsk).toBe(false);
   });
   it("GREETING_OPENER_R7=off で前の文", () => { process.env.GREETING_OPENER_R7 = "off"; try { expect(buildGreetingNote(base, 14)).toContain("で始めても良い"); } finally { delete process.env.GREETING_OPENER_R7; } });
+});
+
+describe("10/09 竹内さん: その日最初でも了承・お礼だけの番は挨拶を省いてよい", () => {
+  const staff = { sender: "staff", text: "ピックアップしお送りさせて頂きます！！", createdAt: "2026-10-03T09:10:00Z" };
+  const g = (text: string) => resolveGreeting({ recentMessages: [staff, { sender: "customer", text, createdAt: "2026-10-04T09:30:00Z" }], now: Date.parse("2026-10-04T09:31:00Z"), customerName: "YUMA", isFirstEverReply: false, alreadyGreetedToday: false, jstHour: 18, isSubstantive: (x: string) => analyzeSubstance(x).has, customerKind: null } as never);
+  it("お願いします🙏 → 挨拶は必ずではない", () => expect(g("お願いします🙏").enforce).toBe(false));
+  it("質問の番 → 今まで通り必ず", () => expect(g("駐車場はありますか？").enforce).toBe(true));
+  it("GREETING_SKIP_ACK_DAILY=off で旧（必ず）", () => { process.env.GREETING_SKIP_ACK_DAILY = "off"; try { expect(g("お願いします🙏").enforce).toBe(true); } finally { delete process.env.GREETING_SKIP_ACK_DAILY; } });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

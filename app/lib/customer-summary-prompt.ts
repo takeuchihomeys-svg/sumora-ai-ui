@@ -7,6 +7,8 @@
 //   直し: ①お客様によらない「next_action 予測の改善ルール」（ai_reply_knowledge・上位8件・全お客様で同じ）を user から system[1]（1h）へ移す
 //   ②前置きは route と温め（prefix-warm）がこの同じ関数で作る。文面は1文字も変えない（位置と切れ目だけ）。
 //   ⚠ system の2ブロック化で本番の最初の1回だけ作り直し（≈2.9k×$6/M ≈ $0.02）
+// 2026-10-09 竹内さん: 気持ちの7択を、お部屋探しに特化した12種（customer-mindset）に置き換える。CUSTOMER_MINDSET=off で旧
+import { emotionChoicesText } from "./customer-mindset";
 export const CUSTOMER_SUMMARY_MODEL = "claude-sonnet-5";
 
 export type PromptBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
@@ -32,7 +34,7 @@ export const CUSTOMER_SUMMARY_SYSTEM = `あなたは賃貸仲介の営業アシ�
   "our_actions": ["スタッフがやったこと（最大2件・各20文字以内）"],
   "winning_pattern": "今この瞬間に成約につながる具体的な行動を50文字以内で。物件名・理由・タイミングまで含めて詳しく書く",
   "next_action": "今すぐスタッフが打つべき具体的な次の1手を40文字以内で（いつ・何を・どうする）",
-  "emotion": "顧客の温度感（前向き/不安/冷めかけ/普通 のいずれか）",
+  "emotion": "顧客の温度感（${emotionChoicesText()} のいずれか）",
   "urgency": "引越し・入居希望の時期感（今月中/3ヶ月以内/半年以上/未確認 のいずれか）",
   "style": "顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか）",
   "personality_profile": "顧客の人間性・行動パターンを100字以内で端的に"
@@ -57,7 +59,7 @@ export const CUSTOMER_SUMMARY_SYSTEM = `あなたは賃貸仲介の営業アシ�
 ・inspection.requested: お客さんが内覧したいと言っている or 内覧日程を調整中なら true
 ・inspection.done: 実際に内覧済みなら true。スタッフが内覧当日の挨拶文（「本日はよろしくお願いします」「内覧前挨拶」等、当日の待ち合わせや挨拶を送った記録）を送った場合も true とみなす。ただし、その後に「キャンセル」「流れました」「流れちゃいました」「行けなくなりました」「やっぱりやめます」「中止」等のキャンセルを示す発言がお客さんまたはスタッフから確認できる場合は false に戻す
 ・estimate.requested: 初期費用・見積計算を求めているなら true
-・emotion: 顧客の温度感。会話トーン全体から判断（前向き/不安/冷めかけ/普通）
+・emotion: 顧客の温度感。会話トーン全体から判断（${emotionChoicesText()}）。不安は語だけでなく何が不安か・進みたいがゆえ（審査・先に申込が入る）かで選ぶ
 ・urgency: 引越し・入居希望の時期感（今月中/3ヶ月以内/半年以上/未確認）
 ・style: 顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通）
 

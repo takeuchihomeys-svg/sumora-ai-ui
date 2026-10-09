@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { outcomeApplyBasisEnabled } from "@/app/lib/application-reach";
 
 // AI貢献率（アトリビューション）日次計算バッチ
 // 直近30日の closed_won 会話のうち、AIが貢献（was_ai_used=true または was_ai_modified=true）した割合を算出し、
@@ -24,23 +25,42 @@ function isAuthorized(req: NextRequest): boolean {
 }
 
 async function run() {
-  // 1. 直近30日の closed_won 会話一覧
+  // 1. 直近30日の対象の会話一覧
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: wonConvs, error: convErr } = await supabase
-    .from("conversations")
-    .select("id")
-    .eq("status", "closed_won")
-    .gte("updated_at", since)
-    .limit(10000);
-
-  if (convErr) {
-    console.error("[calc-ai-attribution] conv fetch error:", convErr.message);
-    return NextResponse.json({ ok: false, error: convErr.message }, { status: 500 });
+  // 2026-10-08 竹内さん「申込で数える」（このツールの成功＝申込に届いた事）: 台帳（deal_outcomes）の applied_at が直近30日の会話。
+  //   確定の成約（result=won・result_certainty=confirmed）は別に数えて並べる（重い正解・推定の成約は数えない）。
+  //   台帳が読めない・OUTCOME_APPLY_BASIS=off の時は旧（conversations.status=closed_won・updated_at 30日）
+  let basis: "applied" | "closed_won" = "closed_won";
+  let rawIds: string[] = [];
+  const wonConfirmedIds = new Set<string>();
+  if (outcomeApplyBasisEnabled(process.env)) {
+    const { data: ap, error: apErr } = await supabase.from("deal_outcomes").select("conversation_id, result, result_certainty")
+      .gte("applied_at", since).limit(10000);
+    if (!apErr) {
+      basis = "applied";
+      for (const r of (ap ?? []) as Array<{ conversation_id: string; result: string | null; result_certainty: string | null }>) {
+        rawIds.push(r.conversation_id);
+        if (r.result === "won" && r.result_certainty === "confirmed") wonConfirmedIds.add(r.conversation_id);
+      }
+    } else console.warn("[calc-ai-attribution] deal_outcomes 読めず旧の数え方:", apErr.message);
+  }
+  if (basis === "closed_won") {
+    const { data: wonConvs, error: convErr } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("status", "closed_won")
+      .gte("updated_at", since)
+      .limit(10000);
+    if (convErr) {
+      console.error("[calc-ai-attribution] conv fetch error:", convErr.message);
+      return NextResponse.json({ ok: false, error: convErr.message }, { status: 500 });
+    }
+    rawIds = (wonConvs ?? []).map((c) => c.id as string);
   }
 
   // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
-  const convIds = (wonConvs ?? []).map((c) => c.id as string).filter((id) => !isTestConversation(id));
+  const convIds = [...new Set(rawIds)].filter((id) => !isTestConversation(id));
   const total = convIds.length;
 
   // 2. AIが貢献した返信例（was_ai_used=true または was_ai_modified=true）を取得
@@ -81,10 +101,14 @@ async function run() {
   const rate = total > 0 ? Math.round((aiAssisted / total) * 1000) / 1000 : 0;
   const avgMsgs = aiAssisted > 0 ? Math.round((aiMessageCount / aiAssisted) * 100) / 100 : 0;
 
+  const wonIds = convIds.filter((id) => wonConfirmedIds.has(id));
   const metrics = {
+    basis,
     rate,
     total,
     ai_assisted: aiAssisted,
+    won_total: wonIds.length,
+    won_assisted: wonIds.filter((id) => assistedConvIds.has(id)).length,
     avg_msgs: avgMsgs,
     calculated_at: new Date().toISOString(),
   };

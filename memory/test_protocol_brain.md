@@ -169,6 +169,47 @@ WHERE created_at >= '<開始>' AND env LIKE 'local:%' AND conversation_id IS NOT
 - 掘った場面に申込以降・申込の書類・第三者の名前（紹介者 等）が残っていないかを読んでから流す（伏せ字は「〇〇」）。
 - 報告に網羅の数（前→後）を書く。
 
+## 9.7 ブレインの試験（読み違いの回帰の物差し・2026-10-08 竹内さん①）
+
+竹内「ブレインの読み違いを極力無くすために細部までこだわる。①読み違えた実例を正解つきの試験問題にして、ブレインを直すたびに全部解かせ、前より悪くならないか確かめる」
+
+- **いつ回すか（必ず）**: ブレイン（brain-core・brain-layers・brain の材料／注記）・two-stage・返信の生成に関わる変更（generate-reply・reply-context・場面の整理・最終チェック）の**前と後**。前の点が基準・後で悪くなった問題が出たらそのまま入れない。
+- **問題**: `scripts/brain-exam/spec.json`（正解・人が書く）→ `scripts/brain-exam/problems.json`（伏せた会話の写し・`scripts/brain-exam-add.ts --rebuild` が作る）。
+  正解＝竹内さんが実際に取った行動（返信／約束の種類／AIX の種類×ピッカー）＋返信の要点（依頼ごとの答え方 reply/promise/aix/none・言ってはいけない事）。**正解が決まらない番は入れない**。申込以降・社内・YUMA は入れない（作る時に自動で外す）。審査落ちの後の切り替えは否決の連絡より後の通だけで作る。
+- **回し方（前と後で同じ label の名前の付け方）**:
+  ```
+  # 前（基準）: 直す前のコードで
+  REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-<label>.json LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/brain-exam.ts --label=<作業>-before
+  # 後: 直した後で、前と比べる（悪くなった問題・良くなった問題が出る）
+  REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-<label>.json LLM_TEST_MODE=deepseek-all npx tsx --env-file=.env.local scripts/brain-exam.ts --label=<作業>-after --baseline=<作業>-before
+  # 直した型だけ素早く: --types=出し切り,待って・閉じる ／ 1問: --only=q001 ／ 揺れを見る: --repeat=3
+  # 最後の Claude（本番のブレイン）: 型ごとに1問（約15回・$1〜3）。全部は --allow-many-claude（竹内さんに聞いてから）
+  REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-<label>.json LLM_TEST_FINAL_CLAUDE=1 npx tsx --env-file=.env.local scripts/brain-exam.ts --label=<作業>-claude --per-type=1
+  # 結果だけ並べ直す（ブレインを回さない）
+  npx tsx --env-file=.env.local scripts/brain-exam.ts --report=<label> --baseline=<label>
+  ```
+  結果は `scripts/brain-exam/results/<label>.jsonl`・`<label>.summary.txt`（合格／道／依頼が入った割合を全体と型ごと・問題ごとの ○✕・前との比べ）。同じ label なら途中から続く。
+- **判定**: 道（返信・2段・AIX の種類・ピッカー）は決まった計算（`scripts/lib/brain-exam-score.ts`・テスト `scripts/lib/__tests__/brain-exam-score.test.ts`）。依頼（asks）が答え方つきで入ったか・言ってはいけない事を守ったかは DeepSeek の判定（直に呼ぶ・費用はスクリプトが出す・`--no-judge` で止める）。
+- **YUMA**: 手順の 1〜2・6 どおり（同時1本: 他の担当の条件の写し `scripts/.replay-out/.*-yuma-pc-backup.json` が空になるまで待つ・**問題ごとに条件の行を戻す**＝他の担当が間に入れる・自分の行だけ消す）。返信の文は作らない（ブレインだけ）。
+- **DeepSeek の揺れ**: 1回の ✕ が直した所の効果か揺れかを分けるため、悪くなった問題は `--only=<id> --repeat=3` で回し直す（過半数で合否）。方向が決まったら最後の Claude で型ごとに1問。
+- **問題を足す**: 本番の見張りで新しい読み違いを見つけたら `npx tsx --env-file=.env.local scripts/brain-exam-add.ts --suggest --days=14`（竹内さんの番でブレインと違った番の候補・足すコマンドの雛形つき）→ 会話を読んで正解が決まる番だけ `--add --conv= --at= --type= --accept= --must-not= --ask="言葉|reply|要点" --ng= --why=`。型の名前は今ある物にそろえる（`spec.json` の type）。
+- **出し切りの正解の切り替え（10/08 竹内さん）**: search-exhausted（出し切ったら AIX 全力サポート）が入るまでは「新着待ちの返信 or 全力サポート」の両方、入ったら全力サポートだけ（spec の acceptWhen.searchExhausted）。入ったか＝brain-core が search-exhausted を読んでいて SEARCH_EXHAUSTED_ZENRYOKU が off でない（自動）・`--exhausted-rule=on|off` で上書き。保存した答案は `--report` の時に今の正解で採点し直す。出し切った後に条件を足した番も実送信どおり新着待ち＝出し切り。
+- **10/09 試験の穴を直した（竹内さん「テストの際ブレインの判断を邪魔している部分も調査」）**:
+  ① 台帳: 問題に、その番の時点の aix_usage_logs・sent_properties・property_pickups・estimate_records・viewings・viewing_history・sent_facts を写してある（`brain-exam-add --rebuild`）。試験の時に YUMA へ場面の時刻で入れ、問題ごとに id で消す（内覧は告知済みの印・scheduled_messages／line_tasks／calendar_events は写さない）。`--no-ledger` で止める。
+  ② 層: 既定 `--layer=prod`＝番の前までの会話で全体の分析 → 戦略・前回の AIX・前回の判断を渡して今回の発言の層（本番と同じ2層・ブレイン2回）。`--layer=combined` が 10/08 までの形。
+  ③ 条件の行は写した後に読み直し、前の実行の要約の書き戻しが遅れて来たら写し直す（結果の pcMismatch）。線の表に無い表（deal_outcomes・outcome_events・conversation_stage_history）の YUMA の行を数えて meta に出す。
+  ④ 3段の採点: 本質の道（LLM が最初に出した答え＝決まり・補正の前。fetch で控える）→ 最終の道 → 下書き（`--draft`: 返信・2段が正解の問題だけ、答案を固定して generate-reply を同じプロセスで1回・DeepSeek で下書きの道と依頼を判定）。要約に「本質は正解・最終で外れ」「最終は正解・下書きで外れ」の一覧。
+  ⑤ 他の担当も同時に試験を回す: **線のファイルは label ごと**（`REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-<label>.json`・同じファイルを生きている別の実行が使っていたら止まる）・記録の route も `script:brain-exam-<label>`。
+- **10/09 試験の直し②（竹内さん「90%超えたい」）**:
+  ① 条件の行はその番の時点に巻き戻す（`scripts/lib/brain-exam-pc.ts`・property_condition_history の番の後の最初の old_value・行が番の後に作られたら条件なし・送付の時刻と数は台帳から）。⚠ 履歴に残らない書き換え（ng_points 等）は戻せない＝problems.json の pcAsOf に残る。未来の値で当たっていた問題は下がってよい
+  ② 日付のずらしは会話・お客様の日だけの言い方（「18の〇〇の内覧」「18日」）・竹内さんの実送信・正解の要点／言ってはいけない事にも同じく当てる（`scripts/lib/brain-exam-dates.ts`・テストあり）
+  ③ 出し切りで全力サポートが正解の時は依頼も AIX の文で（spec の acceptWhen.searchExhaustedAsks）。正解の道が2つの番は依頼の答え方も両方（ask.routes）
+  ④ **物差しは4つ**: ①道 ②依頼の答え方（道＋依頼ごとの返信／約束／AIX の区別＋言ってはいけない事・要点は見ない）＝**目標90%は①②** ③要点まで（旧の合格）④下書きの要点（--draft）。要約の「物差し」の行
+  ⑤ **関所は `--majority`**（ブレインも判定も3回の過半数＝`--repeat=3 --judge-repeat=3`）。費用は1問 約$0.05（110問で約$5）
+  ⑥ 問題を足す源: `brain-exam-add.ts --suggest-sends`（竹内さんの番でブレインと違った AIX の番＋手打ちでもスタッフだけが知る中身の番＝AIX の番）・`--suggest-scenes`（画像・内覧の後・閉じる・不安）→ 人が正解を書いて `--add-batch=<json>`
+  ⑦ 保存した答案を判定だけやり直す: `scripts/brain-exam-rejudge.ts --label=<label> --measures`（今の正解で①②③を出す・ブレインは回さない）
+- 報告には **試験の点（前→後・型ごと）・悪くなった問題・model・回数・費用** を書く。
+
 ## 10. 知られている落とし穴（2026-10-01 に起きた事）
 
 | 起きた事 | 原因 | 今の歯止め |

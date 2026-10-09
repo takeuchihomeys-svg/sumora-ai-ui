@@ -59,10 +59,10 @@ it("置き換える: 竹内さんの形「〇〇さんお世話になってお�
 
 it("生成の出口: 今日まだ送っていない（standard）→ こんばんは が「〇〇さんお世話になっております！！」に差し替わる", () => {
   const prev = process.env.TIME_GREETING_R11; delete process.env.TIME_GREETING_R11;
-  // 「り」（1字）は呼び名の検査（canonOf）で名前にしない＝実物は「お世話になっております！！」（竹内さんのこの会話の 9/11 の送信も名前なし）
+  // 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」: 「り」も「りさん」（旧: 1字は名前にしない＝「お世話になっております！！」・この会話の 9/11 の送信は名前なし）
   const gdRi = resolveGreeting({ customerName: "り", isFirstEverReply: false, alreadyGreetedToday: false, recentMessages: HISTORY, jstHour: 11, now: NOW_1107,
     isSubstantive: () => true, customerKind: "question", substanceKinds: [] });
-  expect(enforceOpening(REAL_DRAFT, gdRi).cleaned).toBe("お世話になっております！！\nサンライト阿倍野8の202号室、お子様不可か確認させて頂きます！！確認出来次第ご連絡させて頂きます！！");
+  expect(enforceOpening(REAL_DRAFT, gdRi).cleaned).toBe("りさんお世話になっております！！\nサンライト阿倍野8の202号室、お子様不可か確認させて頂きます！！確認出来次第ご連絡させて頂きます！！");
   const gd = resolveGreeting({ customerName: "りさ", isFirstEverReply: false, alreadyGreetedToday: false, recentMessages: HISTORY, jstHour: 11, now: NOW_1107,
     isSubstantive: () => true, customerKind: "question", substanceKinds: [] });
   expect(gd.kind).toBe("standard");
@@ -82,11 +82,12 @@ it("生成の出口: 今日すでに送った（none）→ 時刻の挨拶を外
 });
 
 it("生成の出口: TIME_GREETING_R11=off なら旧（触らない）", () => {
-  process.env.TIME_GREETING_R11 = "off";
-  const gd = resolveGreeting({ customerName: "り", isFirstEverReply: false, alreadyGreetedToday: false, recentMessages: HISTORY, jstHour: 11, now: NOW_1107,
-    isSubstantive: () => true, customerKind: "question", substanceKinds: [] });
-  expect(enforceOpening(REAL_DRAFT, gd).cleaned).toBe(REAL_DRAFT);
-  delete process.env.TIME_GREETING_R11;
+  process.env.TIME_GREETING_R11 = "off"; process.env.GREETING_DAILY_REQUIRED = "off"; // 10/08 の必ず付ける形も戻した旧
+  try {
+    const gd = resolveGreeting({ customerName: "り", isFirstEverReply: false, alreadyGreetedToday: false, recentMessages: HISTORY, jstHour: 11, now: NOW_1107,
+      isSubstantive: () => true, customerKind: "question", substanceKinds: [] });
+    expect(enforceOpening(REAL_DRAFT, gd).cleaned).toBe(REAL_DRAFT);
+  } finally { delete process.env.TIME_GREETING_R11; delete process.env.GREETING_DAILY_REQUIRED; }
 });
 
 it("生成の入口: 注記に時刻の挨拶を書かない線がある", () => {

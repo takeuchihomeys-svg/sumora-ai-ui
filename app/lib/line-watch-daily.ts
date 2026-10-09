@@ -10,6 +10,7 @@
 //   buildLineWatchDaily / dailyLines … 知らせる事と人が読む形
 // テスト: app/lib/__tests__/line-watch-daily.test.ts
 import { isAgree, type Verdict, type VerdictDetail } from "./line-watch-judge";
+import { isBackfillTurn, jstMonthOf } from "./line-watch-backfill";
 import { compactFinalCheck, businessMinutesBetween, type FcStage } from "./line-watch-turn";
 import { jstParts } from "./jst-date";
 import { SCREENING_SYNC_ID_PREFIX, shouldSyncViewingToScreening } from "./screening-calendar-sync";
@@ -70,6 +71,8 @@ export function sceneStats(turns: ReadonlyArray<StatTurn>, nowMs: number): Scene
   for (const t of turns) {
     const key = t.scene_key;
     if (!key || key.startsWith("対象外")) continue;
+    // 2026-10-08 過去の番の埋め戻し（verdict_detail.backfill）は解禁・停止の線に入れない（線は今の控えだけで見る）。月ごとは sceneStatsByMonth
+    if (isBackfillTurn(t)) continue;
     const age = nowMs - Date.parse(t.customer_turn_at);
     if (!(age >= 0)) continue;
     const s = by.get(key) ?? by.set(key, { cur: emptyWin(), prev: emptyWin(), last7: emptyWin(), prev7: emptyWin(), d14: 0 }).get(key)!;
@@ -98,6 +101,33 @@ export function sceneStats(turns: ReadonlyArray<StatTurn>, nowMs: number): Scene
     });
   }
   return out.sort((a, b) => b.cur.n - a.cur.n || a.scene.localeCompare(b.scene));
+}
+
+/**
+ * 2026-10-08 竹内さんの決定 10/08 の1: 場面ごとの一致率を1ヶ月単位で（日本時間の月）。数え方は sceneStats と同じ addTo（na と判定待ちは数えない・対象外は入れない）。
+ *   埋め戻した行（isBackfillTurn）も入れる（月ごとに見るための物）。group で分けて並べる（例: 埋め戻し／今の控え・ブレインの判断の有無）。
+ *   scene が "（全体）"・"AIX（全体）"・"返信（全体）" の行も出す
+ */
+export type MonthSceneRow = { month: string; scene: string; group: string; win: SceneWindow };
+export function sceneStatsByMonth(turns: ReadonlyArray<StatTurn>, opt: { group?: (t: StatTurn) => string } = {}): MonthSceneRow[] {
+  const m = new Map<string, MonthSceneRow>();
+  const add = (month: string, scene: string, group: string, t: StatTurn) => {
+    const k = `${month}|${scene}|${group}`;
+    const r = m.get(k) ?? m.set(k, { month, scene, group, win: emptyWin() }).get(k)!;
+    addTo(r.win, t);
+  };
+  for (const t of turns) {
+    const key = t.scene_key;
+    if (!key || key.startsWith("対象外")) continue;
+    if (!Number.isFinite(Date.parse(t.customer_turn_at))) continue;
+    const month = jstMonthOf(t.customer_turn_at);
+    const group = opt.group ? opt.group(t) : "all";
+    add(month, key, group, t);
+    add(month, `${key.split(":")[0]}（全体）`, group, t);
+    add(month, "（全体）", group, t);
+  }
+  return [...m.values()].map((r) => ({ ...r, win: fin(r.win) }))
+    .sort((a, b) => a.month.localeCompare(b.month) || b.win.n - a.win.n || a.scene.localeCompare(b.scene) || a.group.localeCompare(b.group));
 }
 
 /** 場面の鍵を人が読む名前に（「返信:条件提示」→「返信／条件提示」・「AIX:estimate_sheet」→ ラベル） */

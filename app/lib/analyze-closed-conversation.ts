@@ -7,7 +7,7 @@ import { isTestConversation } from "@/app/lib/test-conversations";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-10-08 竹内さんの決定①③「申込までで成約データとして扱って大丈夫。申込までのツールなので」「申込基準で考える」:
 //   成約（closed_won・自動の推定を含む）も「申込に届いた」として分析し、会話は申込の時刻までで切る。書き戻しも申込で付ける。戻す: OUTCOME_APPLY_BASIS=off
-import { outcomeApplyBasisEnabled, analysisOutcomeOf, analysisCutoffAt } from "@/app/lib/application-reach";
+import { outcomeApplyBasisEnabled, analysisOutcomeOf, analysisCutoffAt, lostAsNegativeEnabled, confirmedWinWeightEnabled, withConfirmedWinMark, CONFIRMED_WIN_IMPORTANCE } from "@/app/lib/application-reach";
 
 // ── 申込/成約/失注確定時の会話全体分析（Opus 4.8）─────────────────────────────────
 // conversations.status が applying / closed_won / closed_lost に変わった瞬間に呼ばれ、
@@ -101,6 +101,8 @@ export async function writeBackClosedOutcome(
   if (!applyBasis && outcome !== "closed_won" && outcome !== "closed_lost") return;
   // 2026-09-27 竹内: テスト用の会話（YUMA）は成約・失注の答え合わせに入れない
   if (isTestConversation(conversationId)) return;
+  // 2026-10-08 竹内さん: 失注を負の正解にしない（was_correct=false・outcome='lost' を書かない＝未確定のまま）。LOST_AS_NEGATIVE=on で旧
+  if (outcome === "closed_lost" && !lostAsNegativeEnabled(process.env)) return;
   const isWon = applyBasis ? outcome !== "closed_lost" : outcome === "closed_won";
   const wonOutcome = applyBasis ? "applied" : "contract";
   const wonActual: ClosedOutcome = applyBasis ? "applying" : "closed_won";
@@ -137,6 +139,8 @@ export async function analyzeClosedConversation(
   const outcome: ClosedOutcome = analysisOutcomeOf(rawOutcome, process.env);
   // 2026-09-27 竹内: テスト用の会話（YUMA）は勝ちパターン（winning_patterns）・成約分析に入れない
   if (isTestConversation(conversationId)) return { ok: true, skipped: true, reason: "test_conversation" };
+  // 2026-10-08 竹内さん: 失注は分析しない（負の事例＝「避けるべき対応」を知識・成約パターンに入れない・Opus も呼ばない）。LOST_AS_NEGATIVE=on で旧
+  if (rawOutcome === "closed_lost" && !lostAsNegativeEnabled(process.env)) return { ok: true, skipped: true, reason: "lost_not_negative" };
   const dedupeKey = `closed_analysis_${conversationId}`;
 
   // 0. 成果の書き戻し（学習ループのクローズ）
@@ -181,11 +185,16 @@ export async function analyzeClosedConversation(
     return { ok: false, error: `messages取得失敗: ${msgErr.message}` };
   }
   let msgs = (msgRows ?? []) as Array<{ sender: string; text: string; created_at?: string }>;
+  // 2026-10-08 竹内さん「さらにちゃんと成約したのはより良いデータとして入れておく」: 確定の成約（台帳 result=won・result_certainty=confirmed）の会話は印と重要度 10
+  let confirmedWonNow = false;
   // 申込基準: 申込の時刻（結果の台帳 deal_outcomes の一番新しい案件の applied_at）までの会話で分析する。台帳が無い・読めない時は全部
   if (outcomeApplyBasisEnabled(process.env) && outcome === "applying") {
     try {
-      const { data: dealRows } = await supabase.from("deal_outcomes").select("episode_no, applied_at, result").eq("conversation_id", conversationId);
-      const cutoff = analysisCutoffAt((dealRows ?? []) as Array<{ episode_no: number; applied_at: string | null; result: string | null }>);
+      const { data: dealRows } = await supabase.from("deal_outcomes").select("episode_no, applied_at, result, result_certainty").eq("conversation_id", conversationId);
+      const dr = (dealRows ?? []) as Array<{ episode_no: number; applied_at: string | null; result: string | null; result_certainty: string | null }>;
+      const latestEp = [...dr].sort((a, b) => b.episode_no - a.episode_no)[0];
+      confirmedWonNow = confirmedWinWeightEnabled(process.env) && latestEp?.result === "won" && latestEp?.result_certainty === "confirmed";
+      const cutoff = analysisCutoffAt(dr);
       if (cutoff) {
         const cut = Date.parse(cutoff) + 60_000;
         const kept = msgs.filter((m) => !m.created_at || Date.parse(m.created_at) <= cut);
@@ -313,11 +322,11 @@ ${customerInfo || "（登録情報なし）"}
   // 失注の場合は「避けるべきパターン」として明示し、正例と混同されないようにする
   const { error: kErr1 } = await supabase.from("ai_reply_knowledge").insert({
     category: "pattern",
-    title: `[${isLost ? "失注分析" : "成約分析"}] ${label}`.slice(0, 100),
+    title: `[${isLost ? "失注分析" : confirmedWonNow ? "成約分析・成約確定" : "成約分析"}] ${label}`.slice(0, 100),
     content: isLost
       ? `【失注パターン・避けるべき対応】${result.winning_pattern}\n---\n後ろ向きになった転換点: ${result.turning_point ?? ""}\n取るべきだった対応: ${result.what_worked ?? ""}`
       : `${result.winning_pattern}\n---\n転換点: ${result.turning_point ?? ""}\n効果: ${result.what_worked ?? ""}`,
-    importance: 9,
+    importance: confirmedWonNow ? CONFIRMED_WIN_IMPORTANCE : 9,
     personality_tags: result.personality_profile,
     conversation_state: "applying",
     ...embeddingField,
@@ -386,14 +395,14 @@ ${customerInfo || "（登録情報なし）"}
     closing_action: closingAction,
     human_type_label: label,
     outcome_type: outcome,
-    notes: [
+    notes: (confirmedWonNow ? withConfirmedWinMark : (x: string) => x)([
       result.turning_point ?? null,
       purchaseSignalLevel ? `[signal:${purchaseSignalLevel}]` : null,
       aixSequenceString ? `[aix:${aixSequenceString}]` : null,
-    ].filter(Boolean).join(" / ") || null,
+    ].filter(Boolean).join(" / ")) || null,
     source_conversation_id: conversationId,
     embedding: wpEmbedding ? JSON.stringify(wpEmbedding) : null,
-    importance: isLost ? 8 : 9,
+    importance: isLost ? 8 : confirmedWonNow ? CONFIRMED_WIN_IMPORTANCE : 9,
     customer_intent: result.customer_intent ?? null,
     staff_reply_intent: result.staff_reply_intent ?? null,
     checkpoint_stage: checkpointStageFromMeta,

@@ -3378,13 +3378,18 @@ CREATE TABLE IF NOT EXISTS aix_action_items (
 );
 -- conversations.id は TEXT（初版で UUID にしていたため揃える）
 ALTER TABLE aix_action_items ALTER COLUMN conversation_id TYPE TEXT USING conversation_id::text;
-CREATE UNIQUE INDEX IF NOT EXISTS aix_action_items_one_pending ON aix_action_items (conversation_id) WHERE status = 'pending';
+-- 1会話1件の pending の一意の索引は 2026-10-08 に main／morning の2つに分けた（下の resolution_note の後）
 CREATE INDEX IF NOT EXISTS aix_action_items_status_done_at ON aix_action_items (status, done_at);
 ALTER TABLE aix_action_items DISABLE ROW LEVEL SECURITY;
 -- 2026-09-27 竹内「その方向でおねがい」: 返信の本文で済ませた（done_by='staff_text'）／AIX を送った（'aix'）を分ける。
 --   resolution_note = 片付けの根拠（本文で済んだ文・ブレインが取り下げた理由 brain_customer_paused の保留の型と判断の出どころ）
 ALTER TABLE aix_action_items ADD COLUMN IF NOT EXISTS done_by TEXT;
 ALTER TABLE aix_action_items ADD COLUMN IF NOT EXISTS resolution_note TEXT;
+-- 2026-10-08 竹内さん「（内覧当日の朝の挨拶は別の AIX要対応が残っていても）立てる」: 朝の挨拶の行（resolution_note が rule:viewing_morning_greeting で始まる）は
+--   ブレインの依頼の行と別に並べる。1会話1件はブレインの行どうし・朝の挨拶の行どうしで別々に守る（旧の aix_action_items_one_pending を2つに分ける）
+CREATE UNIQUE INDEX IF NOT EXISTS aix_action_items_one_pending_main ON aix_action_items (conversation_id) WHERE status = 'pending' AND COALESCE(resolution_note, '') NOT LIKE 'rule:viewing_morning_greeting%';
+CREATE UNIQUE INDEX IF NOT EXISTS aix_action_items_one_pending_morning ON aix_action_items (conversation_id) WHERE status = 'pending' AND resolution_note LIKE 'rule:viewing_morning_greeting%';
+DROP INDEX IF EXISTS aix_action_items_one_pending;
 
 -- ── RAG の厳密化（2026-09-13 RAG 監査）──
 -- ivfflat.probes=1（既定）＋索引後の WHERE で近い行を取りこぼしていた（例文検索は厳密上位8件と0〜4件しか重ならない→修正後 8/8）。
@@ -3428,12 +3433,18 @@ LANGUAGE sql STABLE AS $$
   LIMIT match_count
 $$;
 GRANT EXECUTE ON FUNCTION match_reply_knowledge(vector, integer, integer, text) TO anon, authenticated, service_role;
-ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET ivfflat.probes = 100;
-ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET ivfflat.probes = 100;
-ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET ivfflat.probes = 100;
-ALTER FUNCTION match_winning_patterns(vector, integer, text, integer) SET ivfflat.probes = 100;
-ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes = 100;
-ALTER FUNCTION match_conversation_checkpoints(uuid, vector, integer, double precision) SET ivfflat.probes = 100;
+-- ※ 2026-10-08 RAG 調査: 上の SELECT と ALTER は exec_sql の別の呼び出し＝別の接続になり、vector が読み込まれていない接続で
+--   ALTER が permission denied で失敗→毎晩の cron の CREATE OR REPLACE で SET が消えたまま（9/13 以降に近似の検索へ戻っていた）。
+--   vector の読み込みと ALTER を1つの DO ブロック（1回の呼び出し）にまとめる。確かめ: select proname, proconfig from pg_proc where proname like 'match_%';
+DO $$ BEGIN
+  PERFORM '[1,0]'::vector <=> '[0,1]'::vector;
+  EXECUTE 'ALTER FUNCTION match_reply_knowledge(vector, integer, integer, text) SET ivfflat.probes = 100';
+  EXECUTE 'ALTER FUNCTION match_reply_examples(vector, integer, text[]) SET ivfflat.probes = 100';
+  EXECUTE 'ALTER FUNCTION match_aix_reply_examples(vector, integer, text) SET ivfflat.probes = 100';
+  EXECUTE 'ALTER FUNCTION match_winning_patterns(vector, integer, text, integer) SET ivfflat.probes = 100';
+  EXECUTE 'ALTER FUNCTION match_design_thinking(vector, integer, text) SET ivfflat.probes = 100';
+  EXECUTE 'ALTER FUNCTION match_conversation_checkpoints(uuid, vector, integer, double precision) SET ivfflat.probes = 100';
+END $$;
 
 -- ── sent_facts: こちらが送ったこと・約束したことの送信時の記録（2026-09-14 竹内「自分が送った内容を記憶して次の解析に引き継ぐ」）──
 -- 送った時に1回だけ書く（AIX: log-aix-usage／手打ち: send-line-message）。行動台帳（action-ledger buildActionLedger）が
@@ -4853,6 +4864,8 @@ CREATE TABLE IF NOT EXISTS brain_action_reach_stats (
   UNIQUE (scene_key, stage_bucket, action)
 );
 ALTER TABLE brain_action_reach_stats DISABLE ROW LEVEL SECURITY;
+-- 2026-10-08 竹内さん「さらにちゃんと成約したのはより良いデータとして」: 申込に届いた案件のうち確定の成約まで行った数（並べ方で重く扱う・application-reach.reachScore）
+ALTER TABLE brain_action_reach_stats ADD COLUMN IF NOT EXISTS won INTEGER NOT NULL DEFAULT 0;
 
 -- 2026-10-08 手本・ナレッジの個人情報（事故 9bbf9b90: 手本の customer_message に記入済みの申込フォーム）:
 --   伏せた行の印（pii_redacted_at）と、伏せる前の本文の控え（*_pii_backup・戻す時だけ使う）。判定は app/lib/example-pii-guard.ts・
@@ -4865,6 +4878,20 @@ ALTER TABLE ai_reply_examples_pii_backup ENABLE ROW LEVEL SECURITY;
 CREATE TABLE IF NOT EXISTS ai_reply_knowledge_pii_backup (LIKE ai_reply_knowledge INCLUDING DEFAULTS);
 ALTER TABLE ai_reply_knowledge_pii_backup ADD COLUMN IF NOT EXISTS backed_up_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE ai_reply_knowledge_pii_backup ENABLE ROW LEVEL SECURITY;
+
+-- 2026-10-08 竹内さん「人間でいうメモが必要」: お客様ごとのメモ（app/lib/customer-memo.ts・customer-memo-server.ts）。1会話1行。
+--   items＝DeepSeek が差分で読んだ行（origin=llm）とスタッフが画面で付けた・直した行（origin=staff・locked＝自動で上書きしない）。外した行も retiredAt の印で残す。
+--   hidden_rule_ids＝決まった計算の「もう伝えた事」をスタッフが外した印。llm_watermark＝DeepSeek が読み終えた最後の通の時刻（差分の起点）。
+CREATE TABLE IF NOT EXISTS customer_memos (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  hidden_rule_ids TEXT[] NOT NULL DEFAULT '{}',
+  llm_watermark TIMESTAMPTZ,
+  llm_at TIMESTAMPTZ,
+  version TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE customer_memos DISABLE ROW LEVEL SECURITY;
 
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');

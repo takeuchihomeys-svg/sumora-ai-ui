@@ -26,6 +26,8 @@ export const LIST_CHIP_TONE = {
   checkFresh: "bg-black/[0.05] text-[#54656f]",
   checkLate: "bg-white text-[#e65100] ring-1 ring-inset ring-[#ffb74d]",
   checkOverdue: "bg-white text-[#c62828] ring-1 ring-inset ring-[#ef9a9a]",
+  /** お客様の確認事項・未対応（request-ledger・2026-10-08）。赤の塗り（必ず）と分けて白地＋赤の縁 */
+  request: "bg-white text-[#c62828] ring-1 ring-inset ring-[#ef9a9a]",
   /** 補足（アカウント・担当・今日返信済み） */
   muted: "bg-black/[0.05] text-[#667781]",
 } as const;

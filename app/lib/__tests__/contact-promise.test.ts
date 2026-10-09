@@ -3,7 +3,7 @@
 // 実行: npx tsx app/lib/__tests__/contact-promise.test.ts（文は実際の LINE のまま・名前は伏せ字）
 import {
   parseContactPromise, resolveMoveInStart, moveInFromCustomerText, contactDateFor, farMoveInPlan, farMoveInTurn,
-  contactEventRow, planContactPromiseSync, isContactPromiseNotes, contactDue, ymdStr, farMoveInCoreText,
+  contactEventRow, planContactPromiseSync, isContactPromiseNotes, contactDue, ymdStr, farMoveInCoreText, twoMonthMinDays,
 } from "../contact-promise";
 import { isWaitPromiseNotes, waitPromiseBadge } from "../promise-timing";
 import { promiseEventRows } from "../promise-calendar";
@@ -93,6 +93,19 @@ t("連絡の約束の日 → 段 contact_due（終わった案件・発言なし
 t("約束の日が無ければ外れる（同じ人）", classifyTarget({ status: "property_search", lastCustomerAt: "2026-10-08T03:00:00Z", meta: null, nowMs: NOW }) === null);
 t("申込以降は戻さない", classifyTarget({ status: "applying", meta: null, contactDueYmd: "2026-12-17", nowMs: NOW }) === null);
 t("要対応（スタッフが動く番）", brainNeedsStaff({ meta: null, contactDueYmd: "2026-12-17" }).needs);
+
+console.log("■ 10/08 遠い先（半年以上）は「2ヶ月前から」・数ヶ月先は今まで通り1ヶ月半前");
+{
+  const plan = farMoveInPlan, mv = moveInFromCustomerText, core = farMoveInCoreText, parse = parseContactPromise, tmd = twoMonthMinDays;
+  t("遠い先の線は半年（180日）", tmd() === 180);
+  const far = plan(mv("2028年3月に引っ越し予定です", "2026-10-06T03:00:00Z")!, "2026-10-06T03:00:00Z", "customer_text");
+  t("10-06 カメ（2028年3月）→ 2ヶ月前＝2028年1月1日・探し始め 2028年1月", !!far && far.twoMonth === true && far.contact.y === 2028 && far.contact.m === 1 && far.contact.d === 1 && far.startMonthLabel === "2028年1月", JSON.stringify(far));
+  const text = core(far!, "カメ");
+  t("本文は「弊社では2ヶ月前から…」の型", text.startsWith("弊社では2ヶ月前からお引越しのサポートをさせて頂いております！！") && text.includes("2028年1月からお部屋探しをさせて頂ければと思います"), text);
+  t("本文の連絡の日はカレンダーが読める（parseContactPromise）", (() => { const p = parse(text, "2026-10-06T03:00:00Z"); return !!p && p.contact.y === 2028 && p.contact.m === 1 && p.contact.d === 1; })());
+  const near = plan(mv("8月20日頃に入居したいです", "2026-06-07T03:00:00Z")!, "2026-06-07T03:00:00Z", "customer_text");
+  t("06-07 きむら（2ヶ月半先）→ 今まで通り1ヶ月半前（twoMonth なし）", !!near && !near.twoMonth && near.contact.m === 7 && near.contact.d === 5, JSON.stringify(near));
+}
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

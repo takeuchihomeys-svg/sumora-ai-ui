@@ -1,6 +1,79 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-10-08
+最終更新: 2026-10-09
+## 🗑️ RAG のゴミ調査と直し（10/08 竹内さん「RAG のゴミデータが質を下げている可能性も調査」→ 10/09「案は全部おすすめで承認」・未コミット）
+- **一番効いていたのはゴミより検索の近似**: 9/13 の `ivfflat.probes=100`（match_* 6本）が migrate-schema の毎晩（JST 0:10）の CREATE OR REPLACE で消え、後の ALTER は別の exec_sql 呼び出しで permission denied（結果の JSON に積まれるだけ）。本番の問い40件で手本の上位24件のうち厳密と重なるのは 3.7件・AIX の手本 1.2/8・1位の近さ 0.82→0.76。10/09 竹内さんが本番で戻し、migrate-schema を DO ブロックに。**見張り**: `app/lib/rag-probes-check.ts`（読むだけ）を朝の報告（morning-report 9:45）の学習ヘルスに1行（消えたら ⚠️ と `rag:probes-missing` ログ）。設計知見 P1「RAG の厳密化が migrate-schema の毎晩の作り直しで静かに消えていた」
+- **ゴミの数え方**（`scripts/audit-rag-garbage.ts`・型は `app/lib/rag-garbage.ts`・$0）: 手本 line_reply 4,074行のうち今も効くゴミ 455行（AIX の番の文 308・申込以降 57・お待たせ 54・重複 23・テスト会話 17・文字化け 8）／従業員の書き方 1,300・AI の下書きのまま⭐ 570 は並べ替えで下げる物。ナレッジ（検索の対象 7,019行）は 9%（元の手本が外れた手本・外れの方が多い・お待たせのフレーズ 等）。**上位に出た割合**: 手本の上位8件の 13.4%・ナレッジの 5%。**写った番**は 514番中1番（82e2d5cf 9/11 作り話の内覧の枠）＝ゴミは主に枠を食う。設計知見 P2「【汎用】RAG のゴミは『写る』より『枠を食う』」
+- **既存の行を外す SQL**（控えの表 `ai_reply_examples_rag_garbage_backup`・`entry_source='rag_excluded'`・戻し方つき・竹内さんが流す）: `scratchpad/rag-garbage-exclude-v3.sql`（段1 文字化け8・テスト会話20／段2 AIX の番304・申込以降56）。⚠ 10/09 00:17 の `rag-garbage-exclude-run.sql` は古い線で誤外しを含む＝使わない
+- **入口の歯止め**（save-reply-example・`RAG_INTAKE_GUARD=off`）: 返信の手本が AIX の番の文（物件カード・見積書の本体・時刻つきの待ち合わせ／到着・候補日時・物件オススメ）か申込以降の手続きの連絡なら `rag_excluded`・理由は reply_context_snapshot.rag_excluded_reason・ナレッジ／フレーズ／対比学習も作らない。線は `scripts/audit-rag-intake-guard.ts` で過去 4,074行を全部読んで4回直し誤外し0（強調の🌟・【13:30】は物件カードにしない／時刻の無い現地待ち合わせ・審査の説明・申込の誘い・条件の書式は外さない）。設計知見 P1
+- **ペットの言い回しを全部「ペット飼育可能」に**（10/09 竹内さん）: pet-wording.ts を ペット可・可能・OK・相談可・飼育可・対応可・括弧つき に広げた（否定・可否・聞く形・「の詳細」は触らない）。共通の仕上げ＋画面のテンプレート選択（page.tsx・`NEXT_PUBLIC_PET_WORDING=off`）。監査 `scripts/audit-pet-wording-unify.ts`（1,105通・416か所・誤変換0）。旧の設計知見 5052a2ee は退役（→ 9df6c38f）
+- **個人情報の穴**: ラベル無しの住所（「頼経… 〇〇年〇月〇日 岡山県…66-11 知らない 〇〇〇-… 母 専業主婦」）が素通りしていた → example-pii-guard に scanUnlabeledAddresses（人の情報の強い印と一緒なら塊ごと・「ご住所／自宅」の直後なら住所だけ・物件の所在地／待ち合わせ／弊社の住所は伏せない）。監査 `scripts/audit-example-pii-unlabeled-address.ts`（手本・ナレッジ全件で新しく伏せる9・誤伏せ0）。既存の行の UPDATE 案 `scratchpad/pii-unlabeled-address.sql`（控え `rag_pii_unlabeled_address_backup`・未実行・埋め込みは元の本文のまま）
+## 🏢 会社の事実の追加・内覧後の見積書・ピックアップの条件の数（10/08 竹内さんの答え・未コミット）— 黄金ルール
+- **会社の事実（company-facts.ts・聞かれた時だけ渡す）に足した物**: `apply_window`（申込は**基本的に**入居の30日前から・例外あり＝言い切らない・payment-timing の HOLD_DAYS=30／hold_period と同じ向き・`COMPANY_FACT_APPLY_WINDOW=off`）／
+  `cancel`・`hold_room`（保証会社の審査通過後オーナー審査に移るまで無料・**オーナー審査以降は家賃1ヶ月分**・`COMPANY_FACT_OWNER_CANCEL=off`）／
+  `suumo_listing`（SUUMO 掲載は募集していれば基本すべて取り扱える・掲載は2週間ごとの更新＝言い切らず募集状況の確認の約束→結果は AIX・`COMPANY_FACT_SUUMO=off`）／
+  `bugs_high_floor`（7階以上は虫が入りにくい＝一般論で即答・`COMPANY_FACT_BUGS=off`）／`vendor_name`（業者の名前は聞かれた時だけ・`COMPANY_FACT_VENDOR_NAME=off`）／`emergency_contact` に申込フォームの欄の説明。
+- **出口（company-fact-guard → final-check V16・block）**: 聞かれていない業者の社名（`findUnaskedVendorName`・聞かれた時は通す）／緊急連絡先に支払い義務があると書く形。手打ちの実送信 7,463通で当たり 0（scripts/audit-r12-company-facts-1008.ts）。
+- **内覧後の見積書はお客様が頼んだ時だけ**（post-viewing-estimate.ts・`POST_VIEWING_ESTIMATE_ON_REQUEST=off`）: 出所は line-reply-prompts viewing【パターンC】「内覧後の感想→即・見積書の作成宣言」と generate-reply の場面の要約。返信の見積の約束が行動台帳の estimate_declared→ブレインの見積書送る に流れていた。
+  実送信: 内覧後の感想だけに見積の宣言 0通／内覧後5日の見積 85通は依頼あり71・残り14も内覧の場で口頭依頼（AIX【挨拶→内覧後→確認事項を確認した（初期費用見積書）】の番＝P0）。
+- **ピックアップに添える条件の数は決め打ちしない**（pickup-condition-count.ts・`PICKUP_COND_COUNT=off` で旧「2つまで」「最大3つ」）: 竹内さんの宣言（フォーム直後・9/15〜）は条件の半分以上〜全部 18/27・届けた行（AIX）は宣言より少なく 0〜2 が8割（中央値1）。scripts/audit-r12-pickup-condition-count.ts。
+- ペットの言い回しは既存の pet-wording.ts（「ペット相談可」→「ペット飼育可能」・banned-phrasing の共通の入口）。「ペット可」は竹内さんの送信にも 36通あり触っていない。
+## 🧪 ブレインの試験（読み違いの回帰の物差し・10/08 竹内さん①「読み違えた実例を正解つきの試験問題にして、ブレインを直すたびに全部解かせ、前より悪くならないか確かめる」・未コミット）— 黄金ルール
+- **ブレイン・two-stage・返信の生成に関わる変更の前と後に必ず回す**（手順は `memory/test_protocol_brain.md` 9.7）。後で「悪くなった問題」が出たらそのまま入れない（揺れか確かめる: `--only=<id> --repeat=3`）。
+- 問題: `scripts/brain-exam/spec.json`（正解・人が書く）→ `problems.json`（伏せた会話の写し）。初版 70問（14型: 出し切り7・約束の返信を先に8・一般的な事を保留しない11・不安→次の手7・待って・閉じる6・本質の asks 取りこぼし6・AIX の種類5・決まった事4・お客様の事情4・初回3・返信か AIX か3・謝罪を受ける2・広告の理解2・頼まれていない約束をしない2）。
+  出所: 10巡目の正解の表（scripts/audit-r10-path-truth.ts・竹内さんの番で本番のブレインの道が外れた番）＋12巡目の差の束（AI の下書きと竹内さんの実送信の差 194番から、本質の調査の型が付いた番）。当時の本番のブレインは道だけで 5/59（選び方の通り・外れた番を集めた）。
+  正解 = 竹内さんが実際に取った行動（返信／約束の種類／AIX の種類×ピッカー）＋依頼ごとの答え方（reply/promise/aix/none）と要点＋言ってはいけない事。今の決まりで道が2つ認められる番は両方を accept（例: 出し切り＝新着待ちの返信 or AIX 全力サポート）。正解が決まらない番・申込以降・申込の書類が場面に入る番は入れない（作る時に自動で外す・審査落ちの後は否決の連絡より後だけで作る）。
+- 道具: `scripts/brain-exam.ts`（解かせて採点）・`scripts/brain-exam-add.ts`（--rebuild／--suggest で本番の見張りから候補／--add で1問）・`scripts/lib/brain-exam-score.ts`（道の決まった計算・テスト `scripts/lib/__tests__/brain-exam-score.test.ts`）・`scripts/lib/brain-exam-mask.ts`（伏せ方）。
+- 判定: 道は決まった計算・依頼（asks）と言ってはいけない事は DeepSeek（直・1問 約$0.001）。ブレインは既定 DeepSeek（1問 約$0.007）・最後に Claude（本番のブレイン）を型ごとに1問。
+- ⚠ 試験は「今の作業ツリーのブレイン」を測る（他の担当の未コミットの変更も入る）。基準の点を取った時の作業の名前を label に入れる。
+- **基準の点（10/08 夜・作業ツリー＝11巡目と本質の準備・お客様のメモの未コミット込み）**: DeepSeek `base-ds-1008` 合格 25/70（36%）・道 39/70（56%）・依頼が入った 59/95（62%）・言ってはいけない事 17/17。
+  型ごとの合格: 約束の返信を先に 7/8・AIX の種類 4/5・頼まれていない約束 2/2・本質の asks 3/6・一般的な事 5/11・待って 2/6・初回 1/3・広告 1/2／**0点: 出し切り 0/7（5問で再ピックアップの約束）・不安→次の手 0/7・決まった事 0/4（内覧が決まった後も内覧調整 AIX）・お客様の事情 0/4・返信か AIX か 0/3・謝罪を受ける 0/2（道は合うが謝りを受ける指示が無い）**。
+  Claude（本番のブレイン）`base-claude-1008` 型ごとに1問: 合格 6/14（43%）・道 6/14（$0.76・14回）。DeepSeek と同じ所で落ちる（出し切り q001・待って q022・決まった事 q049・返信か AIX か q053・一般的な事 q057・広告 q069）。
+  **Claude 全70問 `base-claude-all-1008`（10/08 23時〜10/09・竹内さん承認の1回だけ・$3.06）: 合格 24/70（34%）・道 36/70（51%）・依頼 57/95（60%）・言ってはいけない事 15/17**。0点: 出し切り 0/7（7問とも 2段:pickup＝再ピックアップの約束）・不安→次の手 0/7・お客様の事情 0/4・謝罪 0/2・広告 0/2。
+  ⚠ 作業ツリーの search-exhausted（出し切ったら全力サポート）は「物件の AIX を選んだ時」だけ効くので、ブレインが 2段:pickup（約束の返信）を選ぶ出し切りの番は直らない（70問中で発火1回）。
+  → **10/09 訂正**: 台帳を写さない試験では AIX の記録が空で印を読めていなかっただけ。台帳を写す `base-ds-1009` では出し切り 4/7 で全力サポートになった一方、**出し切りでない番（q008 神崎川を除いて・q011 トイレ扉＋エリア・q032 謝罪＋大国町・q062 京橋）でも 2段:pickup を全力サポートに変えた（出どころ rule:two_stage_promise(pickup_unless_ack)+search_exhausted＝条件が変わった番を2択に残す線が効いていない）**。
+- **10/09 試験の穴を直した後の基準 `base-ds-1009`（DeepSeek・層 prod＝2層・台帳を写す・下書きあり）**: 合格 23/70（33%）・最終の道 36/70（51%）・依頼 54/95（57%）。3段: **本質の道 41/70（59%）→ 最終の道 36/70 → 下書き（返信・2段が正解の54問）道 35/54・合格 26/54**。前（1008）は合格 25・道 37/70・依頼 59/95（同じ DeepSeek・揺れを含む）。
+  本質は正解・最終で外れ 14問（決まりが LLM を変えた: two_stage_promise(pickup_unless_ack) が「検討します」「キャンセル」「最速入居いつ」を 2段:pickup に＝q022 q023 q065／search_exhausted の誤発火 q008 q011 q032／conditions_incomplete_hearing q067／LLM 自身が内覧が決まった後に内覧調整 q049 q050 q053 q072）。最終は正解・下書きで外れ 3問（q042 q064 q075）。
+  試験の仕組みの直し: 台帳の写し・本番と同じ2層（--layer=prod）・条件の行の読み直し・線の表に無い表の数え・本質／最終／下書きの3段・label ごとの線のファイルと記録の route（他の担当が同じスクリプトを同時に回していて線のファイルを共有していた）。
+- **出し切りの正解の切り替え（10/08 竹内さん）**: search-exhausted が入るまでは「新着待ちの返信 or 全力サポート」の両方、入ったら全力サポートだけ（spec の acceptWhen・brain-exam.ts が brain-core の import と SEARCH_EXHAUSTED_ZENRYOKU で自動判定・`--exhausted-rule=on|off`）。出し切った後に条件を足した番も実送信どおり新着待ち。q074 は「答えない」のまま・q043 は両方正解・依頼の判定の厳しさは今のまま。
+
+## ✍️ 11巡目＝返信の文を詰める＋場面の読み取りをブレインに寄せる（10/08 竹内「場面の読み取りを、ブレインの判断に寄せる。ブレインが判断」「返信の文を細かく詰めて完全な文に」・r12 の調査①〜⑩・未コミット）— 黄金ルール
+- **物差し（LLM なし）**: `scripts/audit-r11-reply-table.ts`（本番の下書き×竹内さんの手打ち＝messages.staff_writer・小場面×差の型13＝冒頭・挨拶・呼び名・受けの語・改行・！・絵文字・敬語・何卒・語尾・文の数・順番・事実）／`scripts/lib/r11-table.ts`（同じ物差しで再生も採点）／`audit-r11-takeuchi-style.ts`（竹内さんの小場面ごとの形の率）／`audit-r11-takeuchi-length.ts`（字数・文・行・！！・呼び名の幅）／`audit-r11-sent-shape-takeuchi.ts`（sent-shape の表を竹内さんだけで）
+- **本番の現状（40日・竹内さんの手打ちの返信 275番）**: 完全 29%・近い 61%・似 0.77。型の差なし: 冒頭81・挨拶95・呼び名98・受けの語81・**改行51**・**！60**・絵文字76・敬語98・何卒85・語尾72・**文の数46**・順番99・事実78。近い 9割超は「条件のフォーム・初回」（n43・93%）だけ（完全一致 9割の小場面は無い）
+- **場面をブレインに寄せた** `app/lib/reply-scene-brain.ts`（`REPLY_SCENE_BRAIN=off`）: 語の場面を出発点に、ブレインが今の番を見た時はブレインの判断で上書き（形の場面は語のまま・ブレインが判断していない時は語だけ）。40日 952番で変わる 163番（17%）を1番ずつ読んで線を決めた（`audit-r11-scene-brain.ts`）。引きずり（お礼だけの番に前の q・cond・hes）は使わない・内覧当日の連絡/電話は cond を使わない・undecided は検討中にしない・positive は短いお礼にしない・検討中の語で問いの形の無い q は使わない（r11b で f193d13d）。テスト 31
+- **ブレインの今の番の読み方**: 質問欄の引きずりは 40日 980問中 8（お礼・了承だけの番だけに絞ると誤り0・`audit-r11-brain-q-drag.ts`）。brain-core の今回の発言の層に1行（`BRAIN_THIS_TURN_ONLY=off`・cond は直前の提案への了承の時だけ）。estimate-context の語の前向きはブレインが判断した時は使わない（`ESTIMATE_POSITIVE_BRAIN=off`・40日 語だけで許した 44番中 スタッフが見積 2）
+- **竹内さんの形に（r12 の調査）**: ①sent-shape の率を竹内さんの手打ち 1,859通で（何卒 21.1%・ピックアップの約束 41.7%・短い返し 30.5%・1行 24字・空行は文の数で 8/38/82/91%・`SENT_SHAPE_TAKEUCHI=off`）・手本は竹内さんの送信を先に（`EXAMPLE_WRITER_BOOST=off`）②数の制約と受けの語 `app/lib/prompt-r11.ts`（！！3回以内・名前2回・3〜4行100〜180字・字数の表・GENERATION_SYSTEM ②の確認の決め打ち・開口語の表・エリアのミラーリング→「周辺全域から」・DB ルール 7c600c23／46195788 を行ごと外す＝呼ぶ時に system・user に当てる・`PROMPT_R11=off`・無効化の SQL 案 `scripts/.replay-out/r11-rules-retire.sql`）③質問の番は答えから（`REPLY_STYLE_R11=off`）④直前2通の約束・誘いを繰り返さない（受けだけ・検討中の番だけ・締めと扉の1文は除く・`REPLY_NO_REPEAT_R11=off`）⑤こちらの送信が1通でもあれば初回にしない（`FIRST_CONTACT_ANY_SEND=off`）⑥物件0件の番は「新着で出次第」を書かない（`REPLY_NO_NEWARRIVAL_R11=off`）⑦約束の文末の「ね」を出口で取る（竹内さん 0通・下書き 60日 5通・`TAKEUCHI_WORDING_R11=off`）⑧お客様の事情 `customer-situation-r11.ts`（審査の不安・お金の用意・同居の相談・人生の出来事・業者/代理・`CUSTOMER_SITUATION_R11=off`・180日の当たりを読んだ `audit-r11-customer-situation.ts`）⑨内覧の日時は決まった値から（`VIEWING_LABEL_LITERAL=off`）⑩ブレインの q を下書きが扱ったかのログ `reply:brain-q-uncovered`
+- **入れなかった出口**（`audit-r11-style-exits.ts`・`audit-r11-wording-exits.ts`）: 開口語の後の空行を詰める・絵文字の後に！！（竹内さん 99% だが下書きは既に揃っていて効き目なし）・夜分遅くに失礼致します（竹内さんが夜の報告で 32通・下書き 0）・くらい→程・らへん→周辺（下書き 0・竹内さん 1）
+- **YUMA の前後（DeepSeek・竹内さんの手打ちの番 80・r11c＝before／after／after2＝同じ版の2回目で揺れを測る）**: 似ている度 0.53／0.53／0.55・近い 17／13／19（揺れの内＝全体の一致は上がっていない）。直した所の的: 質問の番の書き出しが竹内さんと同じ 43%→71%／57%・何卒の有無 69%→74%／72%・！！の数の差1以内 79%→88%／82%・空行の有無 69%→72%／81%。悪くなった所: 「確認出来次第」の有無 96%→94%／89%・行の数の差1以内 88%→86%／81%（下書きの平均の行 2.78→2.86／2.71・竹内さん 3.26）
+- **最後の Claude（r11d・本番と同じ組み合わせ・場面ごとに1番・10番×2版）**: 何卒の有無 5/10→8/10・「確認出来次第」9/10→10/10・空行の有無 10/10→7/10・似 0.41→0.40。質問の番で資料から答えた（c1c065ce「洋室が大きいのはケイアイズ102」＝前は「確認出来次第ご連絡」）。⚠ 4f1df513「今日中に決めて折り返します」の後の版に「中に決められましたら」の欠けた文（出所は未特定・本日の語を落とす既存の出口の疑い）
+- **残り**: 全体の一致は DeepSeek の揺れ（同じ版の2回の差 0.02）より大きく動いていない＝文の差の主因は 文の数（足した/消した）・改行・！ で、竹内さんの任意の1行（何卒・扉の1文・締め）と中身（スタッフだけが知る段取り）。完全一致 9割の小場面は無い（自動送信の候補なし）。何卒の決め方の木・受けだけの2行の型・会社の事実などは竹内さんの返事待ち
+- 費用（10/08 09:59Z〜）: DeepSeek 2,006回 $6.97（r11a 27番で止めた・r11b 80番×2版・r11c 80番×3版）／Claude 86回 $0.77（r11d 10番×2版）・漏れ0・止めた 10（物件資料の年を生年月日と読む歯止め＝前から）・YUMA 以外 0・自分の行（r11scene-）0件・YUMA の条件の行は戻した
+## 📝 お客様のメモ（人の営業のメモ帳）＋気持ちの流れ（10/08 竹内「重要な部分は残す場所を作る…人間でいうメモが必要。気持ちの判断も強化…LINE で流れを見たら判断できる」・未コミット）— 黄金ルール
+- **実データ**: 11巡目の不一致 194番を1番ずつ読むと、メモで防げた番 57（29%）＝繰り返し 13・食い違い 6・事情/芯 14・答え漏れ 7・気持ち 8・決まった事 9。**52番は材料が直前12通の中に見えていた**（窓の外 5）＝長く残すより「項目に取り出して目の前に置く」。残り: 書き方の癖 66・場面の決まり 40・下書きの壊れ 22・AIX の番 8
+- **重ねない**: 決まった事＝customer-state／物件ごとの送付・金額・オススメ・持ち込み＝property-thread／来られる日の事情＝customer-circumstances／連投の依頼＝request-ledger／約束＝action-ledger。メモが足すのは ①「もう伝えた事」の**種類**（決まった計算・本文は引用しない）②文から読む芯・妥協・事情・決める人/同居・気にしている事・好き/NG・言葉づかい・具体的に伝えた事・聞かれた事と答え（DeepSeek flash・差分だけ）③スタッフの手の直し（locked＝上書きしない）
+- **作り**: `app/lib/customer-memo.ts`（純関数）・`customer-memo-server.ts`・表 `customer_memos`（DDL は migrate-schema・本番は未実行）・`/api/customer-memo`（GET/POST）・画面 `CustomerMemoBar`（約束のバナーの上・普段1行）。ブレイン: customerStateBlockText（request-ledger の後）＋ after で `refreshCustomerMemoLlm`（前回読んだ所より後の通だけ・書類と個人の値の通は落とす・maskPII・URL/書き起こしは伏せる・DeepSeek に渡してよい線より後だけ）。返信: generate-reply の注記 `customerMemoNote`（線より後に作った行だけ）
+- **気持ちの流れ** `app/lib/customer-mood-flow.ts`: このお客様のいつも（前の束 6つの中央値）と比べた返事の間・長さ・質問・言葉・前の提案への反応・返事なしで日をまたいで追った後か＋前回までのブレインの気持ち。監査 `scripts/audit-customer-mood-flow.ts`（120日 2,789束）: 効くのは「追った後の返事」（返事 75% vs 92%・申込 24% vs 40%）と言葉。「！・絵文字が無くなった」は効かない（出さない）。ブレインの emotion は 64% が前向き＝区別していない。竹内さん: 迷い→ごゆっくり/ご検討/いつでも 67%（普段 13%）・前向き→受け 71%・不安→長め
+- **もう伝えた事の種類だけ**で防げる番は 9/194（`scripts/audit-customer-memo-told.ts`）＝人も全力サポート・割引の説明は繰り返す（種類で禁止しない）。具体（「全て送った→新着待ち」「〇〇は10/15退去」）は DeepSeek の told に
+- 戻す: `CUSTOMER_MEMO=off`／`CUSTOMER_MEMO_LLM=off`／`CUSTOMER_MOOD_FLOW=off`／`NEXT_PUBLIC_CUSTOMER_MEMO=off`。テスト `app/lib/__tests__/customer-memo.test.ts`（28）
+- **10/08 竹内さんの答え**: ①表 customer_memos は本番に作った ②**影で1週間**: DeepSeek の行は保存と画面だけ・ブレインと返信に渡さない（`CUSTOMER_MEMO_LLM_NOTE=on` で渡す）。スタッフの行・もう伝えた種類・気持ちの流れ・お金の逆算は今から渡す。確かめ `scripts/audit-customer-memo-shadow.ts --days=7`（根拠の言葉が会話に無い行に ⚠） ③emotion の選択肢を 前向き/迷い/不安/不満/急ぎ/離れかけ/普通 に（brain-core 4か所・customer-summary-prompt 2か所の文字列だけ・旧の冷めかけは離れかけとして並べる） ④ai_summary_json の urgency・style はメモの言葉づかいに（返信と画面だけ・ブレインは【顧客プロファイル】で既に読む）
+- **10/08 夕 竹内さんの答え2**: ①A/B＝M−今日 ≤ 20日（`APPLY_NOW_MAX_MONEY_LEAD_DAYS`＝抑える1ヶ月−期日10日）なら A（今申し込んで抑える・AIX【申込へ】の最後に入居日とお振込の一文）／超えたら B（ブレインが申込へを外す rule:payment_timing_wait・返信は「〇月〇日〜〇月〇日頃にお申込み頂く形」＋〇月〇日にピックアップの約束＝カレンダーに入る形・meta.payment_timing→generate-reply）②お振込の期日は**ご入居の10日前で確定**（会社の事実 payment_method にも）③一文の型は竹内さんの実送信の語だけ（paymentTimingCoreText）④**影をやめて既定 on**（`CUSTOMER_MEMO_LLM_NOTE=off` で影に戻す）: 過去の実会話 40（1ヶ月以上・`scripts/yuma-memo-dryrun.ts`・DB に書かない・書類の手前で切る・YUMA の写しとして DeepSeek）を8巡＝⚠（根拠の言葉が渡した通に無い）は毎回0。目で読んだ誤りの型を線で落とした（resolveOpSources: 根拠は #番号で返させ時刻・送り手をこちらで引く／種類と送り手の不一致／名前・名乗り／伏せ字「お客様」の読み違い（maskPII が「スモラさん」を「お客様」にしていた→（弊社）に）／問いを条件にした／数字・語を足した／断りの言葉の無い NG／told の約束／こちらの文の写し）。テスト 31
+- **お金の時期から申込を逆算** `app/lib/payment-timing.ts`（`PAYMENT_TIMING=off`・テスト 15）: お客様の「初期費用の用意ができるのが〇日」「〇月末にしか用意出来ない」等（365日で 6発言・全部正しい・`scripts/audit-money-ready.ts`）→ 申込の目安＝用意できる日の20日前〜10日前（審査 3〜10日・抑えられる1ヶ月・お振込の期日はご入居の10日前＝実送信 6/9。8/17 の従業員は5日〜1週間前＝安全側の10日）→ ご入居は用意できる日の10日後以降。内覧はそのまま。今日が目安より前なら「今申し込むと1ヶ月の中で入居日を後ろにできない＝振込期日・入居日の延長は交渉＝スタッフの番」。決まった言い回しは実送信に無い＝材料だけ。実データ `scripts/audit-payment-timing.ts`（申込→審査通過の連絡 中央 6.2日・n=15）
+## 👋 竹内さんの決定 10/08 夕（挨拶は必ず・1文字の名前・確定の成約は重い正解・失注は負にしない・日付の無い約束・未コミット）— 黄金ルール
+- **② 挨拶**: その JST の日の最初のこちらの会話文（資料文・画像は数えない）なら必ず「〇〇さんお世話になっております！！」・2回目以降は付けない。返信 greeting.resolveGreeting の standard を enforce=true（`GREETING_DAILY_REQUIRED=off` で旧）・本文頭の呼びかけを重ねない・final-check 7-a'（warning）。AIX は仕上げの applyDailyGreeting を全お客様向け AIX に・今日の会話文で判定（同じ env）。2通目（aix-template-generate）も足す。画面の下書き refreshDraftGreetingForNow ensureDaily（`NEXT_PUBLIC_DRAFT_GREETING_REQUIRED=off`・外すのは「お世話になっております」だけ・夜分は外さない）。
+  - 実データ（120日・人の手打ち・scripts/audit-1008-greeting-name.ts A）: 竹内さんのその日最初の会話文 569通中 **50%** が挨拶あり（従業員 53%）・2通目以降 2%。＝決定は最初の会話文の半分で竹内さんの今の送信と違う（足す 166/1,630通）。2通目以降の外しは 17通。
+- **③ 1文字の名前**: validate-reply.oneCharCallName（記号・絵文字だけ・数字・小さい字・頭文字の並びは呼ばない）→ normalizeDisplayName・canonOf・enforceCustomerName・AIX の呼び名。`ONE_CHAR_CALL_NAME=off`。全会話で新しく呼ぶ 37: 人も同じ名前で呼んでいる 27／別の名前 2（スタッフの呼び名が先なので変わらない）／呼びかけなし 8。
+- **① 確定の成約＝重い正解**（成功は申込到達のまま）: 申込到達率に won を足して並べ方に重み（`WIN_CONFIRMED_WEIGHT`・既定1）・注記に「うち成約確定」・winning_patterns に [成約確定]＋重要度10（cron/outcome-ledger・30日の確認で成約した時・analyze-closed）・ブレインは【申込に届いた・成約確定】を先に・strongPositiveWeight（3/2/1）。今の確定の成約は 3会話（成約 45 のうち 40 が推定）。DDL: brain_action_reach_stats.won（未実行の間は外して入れる）。
+- **追加**: 失注は analyze-closed で分析しない・書き戻さない・ブレインに【失注】の成約パターンを渡さない（`LOST_AS_NEGATIVE=on` で旧・今ある失注の成約パターン 3行は残っている）／朝の日報の AI貢献率は申込（deal_outcomes.applied_at 30日）で数え確定の成約を別に並べる／`BRAIN_APPLY_REACH_MIN_N` 既定 20→10。
+- **⑤ 日付の無い約束**: contact-promise.parseUndatedContactPromise／pendingUndatedPromise → 会話の画面の UndatedPromiseBar（日付を選ぶ→【必ず】の連絡の日の行・/api/contact-promise/undated・`CONTACT_PROMISE_UNDATED=off`）。全期間の実送信で拾ったのは 4通（全部正しい・scripts/audit-contact-promise-undated.ts）・今出る会話 0。④ 土日はずらさない（今のまま）。
+- テスト: app/lib/__tests__/decisions-1008-takeuchi.test.ts（24）・古いテストは旧の env で（greeting-standard-optional）・期待を決定に合わせた（greeting F3/F4・time-greeting の「り」）。YUMA scripts/yuma-1008-greeting-test.ts（DeepSeek 36回 $0.21・最後の Claude 12回 $0.12・漏れ0・止めた0・YUMA の行は全部消した）。設計知見 67646c7e／8a32bbf4／87ae3917／（日付の無い約束）P1。
+## 🧾 12巡目＝竹内さんの決定 10/08（保証会社の表・お待たせの時間・ピックアップの行・ペット飼育可能・見積書の締め・申込書類・未コミット）— 黄金ルール
+- **保証会社**（guarantor-companies.ts・basis:"takeuchi"）: 全保連・LICC 正会員・エイト＝信用系／日本賃貸保証・テナントファースト・sumai・日本トラストコーポレーション・グリーン・東京保証・LGO/CGO 会員＝独立系／あんしん保証・レジデンシャルパートナーズ・GC保証＝信販系。答えの無い会社（信和CM保証）は種類を言わない
+- **お待たせ**（決まりは変えていない・提案だけ）: `scripts/audit-r12-omatase-gap.ts`。竹内さんの送信で「X時間以上」は説明力なし（F1 ≦0.15）。結果を届ける場面（物件ピックアップ 27%・物件確認 20%・見積書の2通目 43%・他 0%）の中で、前の文から3時間未満 44%・3〜24時間 24%・24時間以上 0%／お客様の最後の発言が同じ日 43%・前の日以前 5%
+- **物件ピックアップの行**: aix-takeuchi-form.takeuchiPickupSystem／takeuchiPickupConditionsRule（〜周辺全域から〇〇さんにオススメできる・条件2つまで・新着は間取り必須を外す）。戻す AIX_TAKEUCHI_PICKUP=off。道具 `scripts/audit-r12-pickup-line-form.ts`・`yuma-r11-aix-text.ts --toggle=AIX_TAKEUCHI_PICKUP`。DeepSeek 0.65→0.68・条件3つ以上 6→3・作り事 1→0／Claude 2番×2。残り: 約束（こちらが約束したこと）に条件5つ → 会話を合わせる経路はそのまま写す
+- **ペット飼育可能**: pet-wording.ts を banned-phrasing の共通の入口に（PET_WORDING=off）。監査 `scripts/audit-r12-pet-wording.ts`（220通・変わる 169・聞く形 0）
+- **見積書の2通目の締め**: resolveEstimateClosing に採点の刺さり具合（estimate-appeal-server・ESTIMATE_CLOSING_BY_APPEAL=off）。⚠ 竹内さんの98番で採点の行は1番だけ（持ち込みのお部屋）＝今はほぼ旧のまま。監査 `scripts/audit-r12-estimate-closing.ts`（竹内さん 申込33・ご査収46・内覧19）
+- **申込書類**（aix/action docs_request・申込の催促）: 申込フォーマット＋本人確認書類の裏表（マイナンバーは※マスキング）だけ。収入証明書を外した（aix-jev・aix-pickers の説明も）
+- **名前だけの行**: aix-template-generate の✨2通目にも joinNameOnlyLine（竹内さん「それで大丈夫」）
 ## ✍️ 11巡目＝AIX の文を竹内さんの送信の形に（10/08 竹内「AIX テンプレートの文の質も竹内が送っている形で…竹内の方に寄せる」「物件オススメのピッカーはその形にする」・未コミット）— 黄金ルール
 - **正解**: 竹内さんが送った AIX の通（staff_writer='takeuchi'）。従業員の送信は正にしない。戻すのは `AIX_TAKEUCHI_FORM=off`（app/lib/aix-takeuchi-form.ts・呼ぶ時に読む）。提案タブ（aix_feature_suggestions）に implemented で5行（1d869a22・a52eb9d8・32a228e0・f78d681f・021ca68d）
 - **道具**: `scripts/audit-r11-aix-takeuchi-form.ts`（種類×ピッカーの竹内さんの多数派・生成との差・`--recent-only`）／`audit-r11-aix-second-cases.ts`（✨2通目の番）＋`audit-r9s2-aix-cases.ts`（1通目の番）→ `yuma-r11-aix-text.ts`（同じ番を off/on で交互・rules_r9=off・after() は空）→ `audit-r11-aix-score.ts`／`audit-r11-second-greeting.ts`／`audit-r11-name-line-join.ts`／`audit-r11-rec-picker-scenes.ts`
@@ -13,18 +86,37 @@
 - **直した①**: ブレインが「AIX なし」の番に語・状態の信号（detectSignalBasedAixFallback 全部＋場面の信号 S5）が AIX を立てない（`brain-keyword-rules.adoptSignalAixOverBrainNull`・`BRAIN_NULL_SIGNAL_FALLBACK=on` で旧・ログ `[brain:signal-over-null]`）。全期間 91番で旧は一致 3・AIX なし 79。S2/S3/S11 の場面の信号は竹内さんの決定で残す
 - **直した②**: 「更に安く→代表確認」（further-discount）から安いお部屋を探す依頼・条件を変えたらの仮定を外す（`CHEAPER_ROOM_ASK_RE`・`FURTHER_DISCOUNT_ROOM_ASK=off`）。見積後の 21番で外れる 2・本物の割引の依頼 18 は外さない
 - 案のまま: reply-scene の語の場面（ack なのにブレインは質問 15・other で質問 23 等＝ブレインの q も前の発言を引く事があり、どちらが正か決めきれない）／estimate-context の語の前向き（内覧・申込の語）で declare 41番（下書きに見積の約束が出たのは 0＝害は小さい）／signal:pending_pickup（25番中一致 2）・rule:closed_ack_wait（18番中 0）は約束の後の AIX で窓の外に押す形＝竹内さんに聞く
+## 🎯 刺さり具合・オンライン内見の申し出・代表確認の読み取り（10/08 竹内さんの答え①〜⑦・未コミット）
+- **①出張中（日付なし）の「内覧したい」**: 返信で抑えた状態でのご内覧＋`ONLINE_VIEWING_LINE`。最終チェックが申し出の一文を落としていた原因は3つ（決定論 PHOTO_REPLACES_VIEWING／PHOTO_NO_PREMISE が出張・伺えない・予定が詰まって・〇日以降を事情と読まない／LLM の AIX_BOUNDARY_PROMISE・FABRICATED_POLICY 等）→ `app/lib/final-check-viewing-offer.ts`（来られない事情のお客様への申し出の文＝日時・金額・撮影済みの言い切りが無い文だけ外す・`FINAL_CHECK_VIEWING_OFFER=off`）。監査 `scripts/audit-viewing-offer-final-check.ts`（人の実送信 73通: PHOTO_* 18→14・増えた通 0・減った4通は全部申し出）。DeepSeek の最終チェック（`scripts/yuma-final-check-viewing-offer-test.ts`）: 出張中 2/2→1/2（残りは FABRICATED_POLICY→外す型に足した）・広島 2/2→0/2・対照（事情なしで内覧を撮影に置き換え）2/2→2/2＝止めたまま
+- **②③④刺さり具合**: `app/lib/property-appeal-fit.ts`（採点＝recommend-cta.appealFromPickup・反応＝前向き1・内覧の希望1・申込の意思2・物件への質問1・60分以内の返事1）。線＝3点（会話ごとの最大点→申込到達 2点 24%／3点 47%・`scripts/audit-appeal-fit-hold.ts --any-turn`）・採点が外れ寄りは反応だけでは刺さっていると言わない（60番で申込0）。appeal-timing の `resolveDelayKind`（fixed＝出張中・遠方・7日以上先は今まで通り抑える／busy＝予定が詰まって／short＝今週は無理・来週出張）で、busy・short はかなり刺さっている時だけ抑える提案、そうでなければ内覧調整（AIX）／撮影して送る（AIX）→気に入ってから抑える。注記に物件名と刺さり具合。戻す `PROPERTY_APPEAL_FIT=off`・`CIRCUMSTANCE_BUSY_BY_APPEAL=off`
+- **⑤**: request-ledger `DEFERRED_RE`（来年・その際…相談）は一覧の「確認事項 未対応」に数えない（帯には出す）。365日で当たるのは 7beca4f5 の1行だけ（`scripts/audit-request-ledger-deferred.ts`）。戻す `REQUEST_LEDGER_DEFERRED_BADGE=off`
+- **⑥代表確認の読み取り**: `scripts/audit-further-discount-reading.ts`（365日・御見積書の後の値下げの語 94番）。足した読み取り＝御見積書の後の持ち込みの物件（URL・ポータルの共有文）への「安くなりますか」は代表確認にしない（`FURTHER_DISCOUNT_NEW_PROPERTY=off`・「これ以上・更に」は除く）／取りこぼしの言い方（抑えること厳しい・割引頑張って・もう少し安い業者）（`FURTHER_DISCOUNT_ASK_WIDE=off`）。旧から変わった6番は全部人の答えの側・逆向き0。brain-core は `recent: messagesOldestFirst` を渡す1か所だけ
+- **⑦** 内覧当日の朝の挨拶の要対応はそのまま
+- YUMA（`scripts/yuma-appeal-fit-test.ts`・6場面）最後の Claude 1回ずつ: trip_now ○（抑えた状態のご内覧＋オンライン内見・撮影が下書きに残る）／week_weak ○（内覧調整 AIX・抑えない）／daihyo_newprop ○（DeepSeek の off は代表確認＝誤り→on は持ち込みの約束）／busy_strong △（方向に抑える案内はあるが返信の生成で落ちる）／busy_weak △（抑えないは○・撮影の約束が出ない）／week_strong ✕（ブレインが内覧調整・下書きは confirmCtx の「ご内覧可否・募集状況確認」）＝生成側（confirmCtx customer_viewing_request・訴求が suggest のまま）は本質の担当へ
+- 費用: DeepSeek 134回 約$0.43／Claude 29回 約$0.54（ブレイン6・最終チェック23）・YUMA 以外 0・止めた 0・YUMA の行は自分の id だけ消した（残り 0）
+
 ## 🧩 足りない把握の続き（10/08 竹内さんの答え①〜④の実装・未コミット）— 黄金ルール
 - **①「〇日以降」の候補日は AIX【内覧調整】でその日以降から**（「あくまでも AIX から返信」）: `viewing-invite-prefill.availableFromSpec`（お客様の事情の available_from・鮮度つき）＝今の発言に日付が無い時はその日から7日の幅の空いている日を前から3つ。今の発言の「20日以降でお願いします」もその日だけ（内覧日指定あり）でなく幅に（`hasFromWord`）。返信の本文は日時を書かない（今まで通り）。戻す `NEXT_PUBLIC_VIEWING_INVITE_FROM_CIRCUMSTANCE=off`。テスト viewing-invite-prefill 29
 - **②先に抑える提案は「〇日以降」が7日以上先・遠方の時だけ**（「期間が1週間以上空いた場合や、遠方の方には」）: `customer-circumstances.holdFirstReason`（線 `HOLD_FIRST_MIN_DAYS`=7）。注記は7日以上・遠方なら「内覧の日時より先に『お申込みでお部屋を抑えた状態でご内覧頂く』提案」、7日未満なら「抑える提案は入れない」と書く。appeal-timing の「すぐ来られない」も同じ関数（日付の無い「しばらく来られない」はこの線では入れない・今の発言の決まった言い方 VIEWING_DELAYED_RE は前のまま）。テスト customer-circumstances 42
 - **③検索の結果で選ぶ番は AIX の2択**（「物件が無ければそっちから送るので、その場面の時は2択にする」）: `app/lib/search-result-choice.ts`＝物件の AIX（物件ピックアップした・物件オススメ・物件を探す）で売上サポに今送れる候補が無い（pickupReady=false）時は alt_actions に【全力サポート】（画面のブレインのカードに2つ目の AIX として並ぶ）。note に「送れる物件があれば…無ければ全力サポート」。申込以降・候補あり・2段の約束の返信にした番は並べない。戻す `SEARCH_RESULT_TWO_CHOICE=off`。⚠ two_choice_mode（AIX か返信か）ではなく alt_actions（AIX か AIX か）で出している。テスト 8
 - **④連投の「やる事の一覧」**（「直す必要がある…Claude Code の読み込み方」「たくさんの確認事項…表示されるようになるか」）: `app/lib/request-ledger.ts`（純関数・保存しない＝会話から毎回組み立てる）。連投の束を文に分け、依頼・質問・懸念を1つずつ（種類＝費用・空き・内覧・審査・写真・探す・入居・設備・契約条件・その他／道の目安＝返信・約束・AIX）。ポータルの画面の文字・画像の書き起こし・申込の書類・条件のフォーム・お礼だけは読まない。設備・契約条件はお客様の語ごと（駐車場とペットを1つにしない）。状態はその後のこちらの送信から: 未対応→約束した（約束の形でその項目に触れた）→完了（答えた・AIX で結果）。14日。
   - ブレイン: 今の束が2件以上なら【お客様の依頼の一覧】＋前の束の【まだ答えていない確認事項】（tag `brain:request-ledger`）／返信: 今の束が2件以上なら同じ一覧（全部に一言ずつ）。戻す `REQUEST_LEDGER=off`
-  - 画面: 約束のバナーの下に同じ見た目で「お客様の確認事項（未対応 N）」の行（未対応／約束済み・道）。戻す `NEXT_PUBLIC_REQUEST_LEDGER=off`。一覧のバッジ（会話一覧）は全会話の発言を読んでいないので未（入れていない）
+  - 画面: 約束のバナーの下に同じ見た目で「お客様の確認事項（未対応 N）」の行（未対応／約束済み・道）。戻す `NEXT_PUBLIC_REQUEST_LEDGER=off`。一覧のバッジは下の「10/08 竹内さんの決定①」で入れた
   - line_tasks は (conversation_id, task_type) の pending が一意＝確認事項が複数でも1件に潰れる → 一覧は別に（会話から組み立て）
   - 出口: `uncoveredRequests`（下書きが触れていない項目）。人の最初の手打ちに当てると 60日 192束中 81 で「抜け」（人は1通目で1つ答え・残りは AIX や次の通で果たす形が多い）＝誤検知0にならないので最終チェックには入れない（ログ・監査だけ）。監査 `scripts/audit-request-ledger.ts --show=items|open|exit`（60日: 項目 1,698・2件以上の束 269・人の応答48時間の後も未対応 153）
   - テスト `request-ledger.test.ts` 16（W51・W23・288d47・969f01・4a79a4・3d9b67 の実物）
 - **YUMA**（`scripts/yuma-grasp-circumstances.ts`）: DeepSeek 2回ずつ（off／on）: 〇日以降12日 on は方向に「10/20以降の候補日・抑える」2/2（off は「10月中以降」の読み違い 1/2）／5日 on は抑える 0/2・「10/13以降の候補日」1/2／ピックアップの約束の後のお礼 on は alt に全力サポート 2/2（off 0/2）／W23 on は審査の懸念に触れる 2/2（off 1/2）・288d47 両方 2/2・W51 は今の YUMA では off でも費用を落とさない（一覧は1件で注記なし）。最後の Claude: 5日＝viewing_invite・抑える提案なし／ピックアップ＝alt に全力サポート／W23 off＝審査を落とす→on＝「カードブラックでもご入居できるお部屋は多数…3件の募集状況確認」（御見積書の一文は落ちた）
 - 費用: DeepSeek 70回 $0.45＋80回 $0.48／Claude 11回 $0.15＋11回 $0.12（＋DeepSeek 3回 $0.08）・漏れ0・止めた0・YUMA 以外0・自分の行（grcc-）は残り0
+## 🧩 足りない把握の続き2（10/08 竹内さんの決定①②③＋追加 A・B・C・未コミット）
+- **① 一覧のバッジ「確認事項 未対応 N」**: `GET /api/request-ledger/counts`（申込前・直近14日にお客様の発言がある会話だけ・発言も14日だけ・60秒のサーバーの記憶・スタッフ同士の会話は外す）→ `request-ledger.countOpenRequestsByConversation`（帯と同じ buildRequestLedger の未対応）。画面 `app/components/RequestLedgerBadge.tsx`（2分ごと・戻った時・必ず の札の右・白地に赤の縁 LIST_CHIP_TONE.request）。今の本番 71会話・約2,400通・バッジ 17会話・約2秒。戻す `NEXT_PUBLIC_REQUEST_LEDGER_BADGE=off`
+- **② 2択のボタンの下の説明**: `search-result-choice.searchResultChoiceCaption`＝ブレインが物件の AIX で2つ目に全力サポートがある時だけ、物件の AIX の下に「物件あった場合」・全力サポートの下に「物件なかった場合」（10px 太字）。戻す `NEXT_PUBLIC_SEARCH_RESULT_CAPTION=off`
+- **③ 予定が詰まって・出張中（日付なし）**: `customer-circumstances.holdFirstReason` が日付なしの「予定が詰まって／しばらく／当分／出張中・出張で行けない」でも抑える提案（日付があれば7日の線・「今週は無理」は入れない）。出張中（日付なし）・遠方は `ONLINE_VIEWING_LINE`「オンライン内見や、室内の撮影もご対応させて頂きます😊！！」（竹内さんの手打ち5通の最多形）をブレインの注記と appeal-timing（onlineViewing）に。「15日まで出張」は日付つき（COME_CTX に出張）・「来月5日に大阪へ戻る」も日付つき（RETURN_RE を広げた）。戻す `CIRCUMSTANCE_UNDATED_HOLD=off`・`CIRCUMSTANCE_ONLINE_VIEWING=off`・`APPEAL_ONLINE_VIEWING=off`
+  - YUMA（`yuma-grasp-circumstances.ts` 場面 busy_now・trip_now・版 pre/on）: DeepSeek 2回ずつ＝方向にオンライン内見 on 2/2・pre 0/2（出張）。最後の Claude 1回ずつ: 予定詰まって pre=viewing_invite（後半の候補日）→ on=application_push（抑えて内覧は空いてから）／出張中 pre=phone_call → on=返信（オンライン内見・撮影と抑えた状態でのご内覧）。⚠ 下書きは最終チェック AIX_BOUNDARY_PROMISE の再生成と「内覧の希望→確認の約束」（confirmCtx）でオンライン内見の一文が落ちる（竹内さんに確認中）
+- **A 「抑えたいですね」**: `further-discount.wishWithoutPointer`（願いの形で物件を指す語が無い・問いの形でない）は代表確認にしない。監査 `scripts/audit-further-discount-target.ts`（365日・代表確認 21→19・外れたのは人がお部屋を探した 9faff2ec・cb1a46e3 の2番だけ）。戻す `FURTHER_DISCOUNT_POINTER=off`
+- **B 朝の挨拶は別の行**: 一意の索引を aix_action_items_one_pending_main／_morning に分けた（DB 入れ替え済み・migrate-schema も）。朝の行＝resolution_note が `rule:viewing_morning_greeting` で始まる。ブレインの登録・AIX の完了は main だけ読む（MAIN_AIX_ITEM_OR）・内覧挨拶の AIX は朝の行も済み・本文での済みは両方・画面のカードはブレインの行を先に。戻す `VIEWING_MORNING_GREETING_SIDE=off`（立てない＝旧）
+- **C 取りやめの後**: ブレインの viewingDayGreetingDue も cron と同じ `viewingFlowCancelled`（流れの理由 customer_cancelled*）で出さない。戻す `VIEWING_DAY_GREETING_CANCEL_GUARD=off`
+- テスト: request-ledger 17・search-result-choice 10・customer-circumstances 49・further-discount 6・viewing-morning-greeting 30・appeal-timing 35・viewing-invite-prefill 29・r10-decision 38
+- 費用: DeepSeek 75回 $0.60／Claude 28回 $0.29（最後の確かめ・ブレイン4）・漏れ0・止めた0・YUMA 以外0・grcc- の行は残り0
 ## 🧾 保証会社の資料の答え・種類の表／内覧当日の朝の挨拶（10/08 竹内さんの決定 A・B・C・未コミット）
 - **A** 保証会社の質問は資料に会社名（1社）があれば返信・無い／複数の物件／2社以上／種類を聞かれたが表で確かでない時だけ AIX【保証会社について】（contract-terms-question の guarantor_company に種類・通りやすさの質問を足した・GUARANTOR_TYPE_ASK_RE・brain-core プロンプトと aix-catalog の線を揃えた）
 - **B** 種類の表は guarantor-companies.ts の1か所（basis・source）。本文で種類を言うのは確かな時だけ（guarantorTypeForText／resolveGuarantorForText＝AIX の先入れ・画像の読み取り・AixModal の自動の種類も同じ・GUARANTOR_TYPE_SURE_ONLY=off）。洗い出し scripts/audit-guarantor-names.ts（売上サポ 2,532行・画像 3,359・スタッフ 295通・AIX 37）。資料の読み取りの「ギャランティ」を別会社に数えていた穴も直した
@@ -9076,3 +9168,83 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   申込中の 58番: スタッフが AIX を押した21番・ブレインの AIX が当たった10番。軽くする形: (a) 否決・取り消し・クレームだけで回す＝月 $3 だが当たり7/10を落とす／自分で書いた質問・お部屋も足す＝月 $18・当たり2/10を落とす＝入れない (a') 書類の画像・ファイル・申込フォームの記入だけを見る呼び出しを回さない＝月 −$2.4・道の一致 23→23・切り替えの取りこぼし0（未実装・竹内さんの判断待ち）(c) 申込中は DeepSeek に渡せない＝Haiku だけ（未検証・月 約 −$12 の見込み）(d) 申込中は会話が数日続き10分以内に次の発言が来た途中の呼び出しは166回中46回だけ。審査落ち→別物件の切り替えの番は27（申込中5・戻した期間22）で、どの形でも取りこぼし0
 - テスト費用: DeepSeek 291回 $2.33（2回の実行の合計・1回目は PC の停止で3番で落ちた）／Claude 0回／YUMA 以外 0。YUMA の条件の行は控えから戻した・costburst- の行は残り0
 - 設計知見: 「ブレインの費用の3つの手は本番の記録で先に天井を測る」「【汎用】同じ前置きを並べて流すと冷えた時に並んだ本数ぶん書き込む」「申込以降のブレイン『月$50』の半分は審査落ちで提案中に戻した期間」
+
+## 10/08 毎週の学習の窓 7〜14日→30日（竹内さんの決定の2）— 未コミット
+- 共通の純関数 `app/lib/learning-window.ts`（テスト `npx tsx app/lib/__tests__/learning-window.test.ts`）: 新しい7日を先に上限まで＋前の23日は別の上限／札【新しい7日】【前の23日】／数え方 新2点・前1点・「N件以上」は 2N−1 点／件数の線は旧の窓の長さにならす
+- weekly-learning chunk1（7→30・新40＋前20・⭐→古い順は保つ・metrics の週の集計は7日のまま）／aix-weekly-learning（編集差分 7→30・新12＋前6・線3点／線引き 14→30・14日あたりにならした件数／パターン 7→30・新10＋前4・線5点）／prompt-candidate-gen（7・14→30）／auto-star-winners・auto-analyze-losers（14→30・新しい方を先に）
+- 戻す: `LEARNING_WINDOW_30D=off`（全部）・cron 名をカンマで並べるとその cron だけ／`LEARNING_WINDOW_DAYS=N`
+- 費用の見込み: weekly-learning chunk1 $0.06〜0.09→約$0.12・aix-weekly-learning $0.25→約$0.39（Opus 6〜9回→約12回）・他3つは今0円（材料が無い）。全部で月 +約$0.8。時間は各 300秒の内側（最長見込み 約150秒）
+- 入れなかった: corpus2skill（6週連続 inserted 0・parse_errors 3〜7＝先に直す）・update-template-suggest-quality（GET が無く cron が 405 で動いていない）・eval-winning-pattern（評価の付け直しで窓の学習ではない）・design-knowledge／calc-aix-attribution／週の metrics（週の区切りの集計）
+- 見つけた事: 回答済みの AI 質問は 8/12 から0件（pending 178）＝prompt-candidate-gen は毎週空振り／closed_lost の会話は0件／aix-weekly-learning は aix_action の完全一致で property_check_result_available・property_send_new_arrival 等の枝の名前を学んでいない／weekly-learning chunk3・4 は max_tokens 1000 で毎回切れている
+
+## 10/08 竹内さんの決定 3・6・8・11（ブレインの窓20通／内覧日調整の物件を選ぶ欄／AIX の挨拶の数え方／端末の印）— 未コミット
+- 3 ブレインの窓 15→20通（毎回・差分とも）: `app/lib/brain-msg-window.ts`（戻す BRAIN_MSG_WINDOW=15）。監査 `scripts/audit-brain-window.ts`: こぼれる判断 7.0%→2.5%（窓25なら0.3%）・+約380字/回＝月 約+$2 の見込み
+- 6 AIX【内覧日調整】の物件を送った物件から選ぶ（複数可・「、」でつなぐ）→ aix_usage_logs.property_names（候補と同じ物だけ）→ property-thread の viewing_offered。`viewing-property-candidates.ts`（splitViewingNames・toggleViewingNames・pickedViewingLabels・preselectViewingInvite）・AixModal。戻す NEXT_PUBLIC_VIEWING_INVITE_MULTI=off
+- 8 AIX の挨拶の「今日もう送ったか」を返信と同じ会話文だけで（aix/action の staffMessagedToday・aix-template-generate の staffSentToday）。`daily-greeting.aixGreetingTalkOnly`（戻す AIX_GREETING_TALK_ONLY=off）。監査 `scripts/audit-aix-greeting-day.ts`: 8/8〜 1,521押下で変わるのは11（0.7%）
+- 11 端末の印: 画面の帯 `StaffDeviceWriterBar`（管理者（竹内さん）／スタッフ（従業員））→ POST `/api/staff-device` が staff_devices.writer を付け、その端末の送信（sent_device_id）を埋め直す。戻す NEXT_PUBLIC_STAFF_DEVICE_PROMPT=off。10/08 時点で端末1台（iPhone・46回・51通）が印なし
+
+## 10/08 見張りの判定の埋め戻し（竹内さんの決定 10/08 の1「過去1〜3ヶ月分埋めて場面ごとの一致率を1ヶ月単位で」）— 未コミット
+- 番1行の判定を `app/lib/line-watch-turn-eval.ts`（evalWatchTurn）に切り出し、毎晩の cron（line-watch-eval-server）と埋め戻しが同じ関数を通す（前後で cron の dry の判定・理由は同じ）
+- 埋め戻し `scripts/line-watch-backfill.ts`（既定 dry・`--apply`・`--compare-live` で控えと校正・40日以内の番は `--readers-deployed` が要る）／材料と決まり `app/lib/line-watch-backfill.ts`（テスト `app/lib/__tests__/line-watch-backfill.test.ts`）
+  - 番は10巡目の正解の表と同じ切り方（申込以降は入れない）・AI の案は ai_reply_examples(line_reply) の ai_draft（返事のまとまりの文の送信時刻に合う物・前の番の下書きのままは使わない）・ブレインは brain_decision_logs（9/05〜）
+  - 材料の無い所は na（`guardBackfillJudgement`・元は bf_raw）。手本の ai_draft が空でも画面が AIX の時に隠した事がある → snapshot があり draftHead も空の時だけ「下書きは無かった」
+  - 印は `verdict_detail.backfill`（列は足していない）。解禁の線 sceneStats・自動返信の関所 watchAixMatchRates は印で外す。created_at/updated_at は番の時刻・evaluated_at/judge_version/final 入り＝cron は読み直さない
+- 足した行: 7〜8月 525（7月 220・8月 305・LLM なし $0）。9月 747 は読む側の新しい版（sceneStats・watch-aix-match・auto-reply-readiness）が本番に出てから `--readers-deployed` で足す（古い版は35日・30日の窓で外さずに数える）
+- 月ごとの表 `scripts/line-watch-monthly.ts`（読むだけ・`--group=src|brain|writer`）。同じ作り方の一致率: 7月 51%・8月 54%・9月 55%（足す前の dry）・10月 56%（控えのある番に当てた値・控えそのものは 43%）
+- 校正: 10/01〜10/07 の控えの番 162 で、両方数えた 102 番の判定が同じ 100。埋め戻しは「スタッフが AIX を押し手本が無い（text_but_aix 12）・2段の約束（4）」等を数えられず、高めに出る
+- 設計知見「見張りの判定の埋め戻しは cron と同じ関数を通し、材料が無い所は na・印は verdict_detail.backfill で今の線から外す」
+
+## 10/08 竹内さんの答え 15・16・19・20（申込到達率の改善案1〜6／学習の抜けを自動に／設計知見の整理／CLAUDE.md の引き方）— 未コミット
+- 15 申込到達率の厳密な数え方（application-reach.ts computeReachStats(strict)・buildReachNote(strict)・戻す REACH_STRICT=off）: ①判断から30日たった物だけ・届いた＝30日以内に申込（片側の打ち切りをやめた）②実際に送った AIX（outcome_events aix_sent の decision_id で結ぶ・無ければ返信）③案件は場面×段階ごとに最初の判断1つ ④確定の審査落ちは届いた・理由不明の切り替えは外す ⑤guard:first_contact は外す ⑥線10＋95%の幅（Wilson）が重ならない組がある時だけブレインに渡す（幅を添える）。監査 `scripts/audit-application-reach.ts --strict --min=10`: 10/08 の台帳で線を超える組 旧5→厳密0（＝今はブレインに何も渡さない・30日たった判断が 9/05〜9/08 の分しか無いため）
+- 16 学習の抜け（人の手を待たず cron の中で回す）:
+  - ☆を申込に届いた会話にも（auto-star-winners・auto-star-applied.ts・最初の申込より前の返信だけ・戻す AUTO_STAR_APPLIED=off）。直近30日 30会話・未☆の候補 259
+  - weekly-learning chunk3・4 の出力切れ（max_tokens 1000 で毎週0件）→ 3000／4000＋切れても完結した要素だけ拾う（json-array-salvage）。戻す WEEKLY_LEARNING_JSON_SALVAGE=off
+  - aix-weekly-learning の編集差分が枝の名前（property_check_result_available 等）を学んでいなかった → 元の AIX に寄せる（aix-branch-match.ts・戻す AIX_LEARN_BRANCHES=off）
+  - AI 質問（ai_feedback_items）: prompt-candidate-gen の最初に、待っている knowledge_gap・prompt_ambiguity を設計知見（P0/P1）で DeepSeek に答えさせ、決まりがはっきり答えている物だけ status=auto_answered（ルールは直接変えない・候補は承認待ち）。aix_pattern は7日で閉じる（aix-weekly-learning が編集差分から学ぶ）。feedback-auto-answer(.ts/-server.ts)・監査 `scripts/audit-feedback-auto-answer.ts`・戻す FEEDBACK_AUTO_ANSWER=off。10/08 の試し: 20問中答えられる0（残りはフレーズの confirmed 昇格の質問で決まりに無い＝推測しない）・aix_pattern 11を閉じる対象・DeepSeek 19回 $0.005
+  - 失注を負の正解にしない を auto-analyze-losers にも（LOST_AS_NEGATIVE=on で旧）。成約の重み＝申込の2倍（WIN_CONFIRMED_WEIGHT 既定1）・日付の無い約束は60日 は実装どおり
+- 19 設計知見: フリーレント（e99b6362・dedae5ed→2205372b・89c7f282）・周辺全域（0748b19d→7e9f2b33）・遠い先の入居（900059a6・22c7e985 は残す）を入れ直し／上書きの候補 39組（約30組）から本文を読んではっきり上書きされた13行を退役／文字化け11行を当日の記録から UTF-8 で入れ直し退役（原因＝PowerShell 5.1 の Invoke-RestMethod に文字列の本文→Latin-1。kb-insert が文字化けを断る・週の整理が要確認に出す mojibakeFields）／DeepSeek に渡す伏せ: LINE の表示名・呼び名は渡す・申込フォーマットの記入欄（氏名・フリガナ・生年月日・現住所・勤務先・緊急連絡先 等）は伏せる（maskForLlm・戻す KB_LLM_MASK_FORM=off・kb-priority は表示名を伏せない／旧は --mask-line-names）／場面:その他 は今のまま（札の無い P0/P1 3行に付けた）
+- 20 CLAUDE.md の「参照方法」に細部を確かめる時の手順①〜⑥を1行で足した
+
+## 10/08 本質の実装（この番の本質＝turn-contract を返信の最上位に・竹内さん「ブレインが本質判断も一任できているか」Q1〜Q12・Q-A〜Q-D）
+- 調べ: 不一致 194番を1番ずつ（中身の差 112番）＝ブレインの読み違い A≒41／ブレインは正しいのに別の層に負けた B≒34・D≒15／材料が届かない C≒20。人の当たり前の抜け: 頼まれていない約束 27・先に答えない 21・繰り返し 17・気持ち 11・出し切った後の再ピックアップ 7 等（scratchpad r12/r13）
+- `app/lib/turn-contract.ts`: ブレインの turn_contract（依頼ごとの答え方 返信／約束／AIX／触れない・先に答える・閉じる番・言わない事・気持ち）＋request-ledger の一覧（落とせない）＋もう言った事（reply-style-r11.repeatCandidates）＋決まった事（台帳の内覧）。
+  - 生成: 【🧭 この番の本質】を場面と返信方針の一番上・型の方向は「形だけ」・brain-specific-note は出さない・11巡目の noRepeatNote は本質がある時は出さない（二重にしない）
+  - 確認の約束の関門: applyContractToConfirm（本質に promise が無い→書かせない／ある→許す）＋confirmation-context の一般的な事（虫・換気・二人で住める・内覧の所要時間）は確認にしない（CONFIRM_ANSWERABLE）
+  - 最終チェック: 本質に反する中身を足させる指摘（閉じる番の WE_DO/締め/往復の要素・本質に無い確認の約束・AIX/触れない項目への MISSED_QUESTION）は書き直しに渡さない・Brain 判定の注記に本質・書き直す前の文を pre_revision_text と tag final-check:revised に残す
+  - ブレイン: brain-core の出力に turn_contract（BRAIN_TURN_CONTRACT_FIELD・RULES）・digest に tc（"3:r1p1a1n0:c"）
+  - 戻す: TURN_CONTRACT=off／TURN_CONTRACT_BRAIN=off（ブレインの出力・指示）／TURN_CONTRACT_CONFIRM_GATE=off／TURN_CONTRACT_FINAL_CHECK=off／testFlags.turn_contract
+- 出し切ったら AIX【全力サポート】が主・物件の AIX は2つ目（`search-exhausted.ts`・印＝「全てピックアップさせて頂きました」「全て確認させて頂きましたところ」・新着待ちの約束・全力サポートの送信／「全てピックアップしてお送りさせて頂きます」は印にしない／戻す SEARCH_EXHAUSTED_ZENRYOKU=off）
+- AIX の中身の関所（`aix-content-gate.ts`・aix-catalog の staffOnly を物差しに・下書きの文→ボタン×ピッカー）: 自動送信を止める（auto-reply-policy ⑥-2b）＋記録 tag turn-contract:audit。本文の書き換えは監査で誤削除0の型だけ（今は0型）。監査 `scripts/audit-aix-content-gate.ts`（竹内さんの手打ち 124/1,785 当たり＝ほぼ本物・AI の下書きの当たりの 7割はスタッフも同じ事を送っていた）。戻す AIX_CONTENT_GATE=off
+- 会社の事実: company_profile（蓮産業株式会社・瓦町3-4-10 日宝御堂ビル5階・本町駅・聞かれた時だけ）・ブランド別（スモラ＝最大2,980円＋前家賃・TikTok 掲載の物件／イエヤス・ギガ＝最大額の決まり無し・最大限割引の御見積書で）・イエヤス・ギガの会話はスモラの案内を打ち消す1行（brandCostOverrideNote）。line-reply-prompts の「参考例の会社名を引用しない」は自社名の質問に効かない。戻す COMPANY_FACT_PROFILE=off・COMPANY_FACT_BRAND=off
+- 永久ルールの札（Q12）: 返信生成だけ【永久ルール（安全の線・最上位）】6本／書き方の永久ルール7本は【AI学習ルール（書き方の決まり・形だけ）】へ（final-check-rules で core にならない）。is_permanent は変えない。戻す PROMPT_RULES_SAFETY_TOP=off
+- 学習ルール: rules_fix.sql（10/08 11:03Z 調整役が流した・書き換え5・無効6）。prompt-r11 の DROP_LINES は旧の文だけに当たる（書き換え後は通る・テストで固定）
+- 竹内さんの型（`takeuchi-reply-form-r13.ts`）: 検討中は誘わず閉じる（CONSIDERING_CLOSE・10/07 の扉の1文の決定を上書き）／了承だけ（了解です）への3行の注記／何卒の注記（歯止め＝問い・ご査収・事実の終わりには付けない）／何時でも＝当日・申込・時間の範囲、それ以外いつでも（ITSUDEMO_R13）／手がかりの無い「さん達」→「さん」（SANTACHI_R13）／人生の出来事は新しい状態に合わせて確かめ直す（customer-situation-r11 の life）。戻す TAKEUCHI_FORM_R13=off
+- 遠い先の入居: 入居まで180日以上（FAR_MOVE_IN_TWO_MONTH_DAYS・根拠は実送信5件＝2〜3ヶ月先4件は1ヶ月半前・17ヶ月先1件だけ2ヶ月前・間の実例なし＝竹内さんの案「半年以上」）は「弊社では2ヶ月前から…」＋入居の2ヶ月前の月の1日に連絡の約束（カレンダーが読む形）。戻す FAR_MOVE_IN_TWO_MONTH=off
+- 10/09 追加（調査の担当 audit-brain-interference の邪魔の型・刺さりの担当の穴・RAG）:
+  - 確認の関門: 見積・ピックアップの約束は「確認」の約束ではない（isConfirmPromiseAsk・内覧日調整の AIX も）＝「初期費用・募集状況確認させて頂きます」への置き換えを止める・全 source に当てる（staff_confirm_promise も）
+  - 自動の指定（募集状況確認中・受け身モード）は本質がある時は材料の注記（replyHint＝全ルールの上書きにしない・TURN_CONTRACT_AUTOHINT=off）
+  - AIX の関所が本質の約束の文を消さない（contractProtectsSentence・金額/結果の言い切りは消す・TURN_CONTRACT_PROTECT=off）／フィードバック再生成に本質に反する指摘を渡さない（ESTIMATE_NO_TRIGGER・提案への UNPROMPTED_PROPOSAL 等）
+  - 出口の差し込み（初期費用の一文・連絡の日・ポータル）は閉じる番・言わない事で止める（TURN_CONTRACT_POSTPROCESS=off）
+  - 本質がある時はブレインの方向を型より上に1行（記録 [turn-contract:direction]）／優先順位の宣言と絶対原則の札に本質（静的・1回だけキャッシュ書き直し）／「全生成ルールを上書き」の塊は形だけ
+  - brain-core: 決定論の規則で AIX が外れたら本質の aix の項目を promise に（reconcileTurnContractWithAix）・meta.llm_raw と digest の la（LLM の AIX）・ds（判断の出どころ）・BRAIN_ACK_TO_CHECK=off
+  - 試験の14問（10/09）: turn-route-guards.ts（探す依頼でない番の物件の AIX→返信・内覧を頼んでいない／決まった内覧への追加／〇日以降の内覧調整→返信・TURN_ROUTE_GUARDS=off）・出し切りは地名を言った番を外す・test-replay-floor に deal_outcomes／outcome_events／conversation_stage_history
+  - 古い判断: 控え（last_brain_meta）が今の発言を見ていれば本質に使う（TURN_CONTRACT_LASTMETA=off）／ブレインが返信を選んだ番は [AIX誘導中] で本文を消さない（TURN_CONTRACT_KEEP_DRAFT=off）
+  - 提案（proposals: 抑える・オンライン内見・撮影）を本質に・段階/撮影の前提の指摘で消させない
+  - 出し切り: 印に「ピックアップさせて頂きました」「募集に出ました」・AIX の物件の送付を足し、絞り込みは出し切ったまま（広げた時・条件のフォームだけ取り消す）・2段の pickup の約束にした番にも当てる
+  - RAG（返信の経路）: 手本のお待たせを外す・お待たせ/夜分の言い回しのナレッジを渡さない・上位8件の前に同じ文を落とす（RAG_REPLY_CLEAN=off）
+  - 10/09 竹内さんの答え: 「全力でサポート」の後の何卒＝初回は続ける（竹内さん 64%）・それ以外は続けない（27%）（nanisotsuNote）／その日最初でも了承・お礼だけの番は挨拶を必ずにしない（GREETING_SKIP_ACK_DAILY=off）／出産・家族が増える時は広さ・間取りを聞き直す（FAMILY_GROWS_NOTE）／遠い先の線は180日で確定／AIX の夜分は送る時刻が JST 21時以降かだけ（AIX_NIGHT_BY_TIME=off で旧の90分）・返信には付けない（今まで通り）／何時でも・いつでもは今の決まりで1週間見張る
+
+## 10/09 Claude Code にあってツールに無い力（2. 画像を見る → 1. 必要な材料を引く → 3. 書いた後に事実と照らす）
+- 2. 画像: お客様の画像は line-webhook が Haiku の Vision で1回だけ読み、messages.text に「[画像] 【見出し】＋書き起こし」として保存済み（9月以降に読めなかった物は 0）。brain-core の history と generate-reply に全文が届いている＝新しく作らない
+  - 量った（scripts/audit-image-turn-reach.ts・60日）: 竹内さんが返した画像の番 50・返事が画像の中身に依った番 20・画像だけが出所 17。ブレインに画像の語が出た 6/7・下書き 7/11。外れは判断（見積書送る／物件確認した の選び方）で、材料の届き方ではない
+  - 支払いの控え（払込受領証・振込完了・ご利用明細）は見出しだけ保存（氏名・携帯・口座が全6件に残っていた）・残す書き起こしの携帯番号は伏せる（image-label.ts・IMAGE_PAYMENT_DROP=off／IMAGE_MOBILE_MASK=off）。既存6行の UPDATE は案（本番に未適用）
+  - webhook_image_vision の記録の穴は無かった（9/29 に名札を付ける前は action=null で記録されていた）
+- 1. 材料を引く: 道具を持たせる（a）・2段（c）ではなく、決定論で先に引く（b）にした（試験の不合格 47 のうち材料が束に無かったのは2番だけ＝q064 資料の設備・q053 管理会社に確かめた退去日）
+  - app/lib/turn-referent.ts: 主語の抜けた発言の物件（直前の送信が1件 → こちらが最後に出した束が1件（その後にお客様が名前を出した物件があればそちら）→ お客様が最後に名前を出した物件・決まらない時は候補を送った順で）。property-thread の台帳の文（ブレインと返信の両方）に出す・turnTargets には入れない（PROPERTY_REFERENT_FALLBACK=off）
+  - property-thread の読み取りの名前の化けの直し（片方が画像の読み取り・号室とシリーズが同じ・括弧を外した近さ 0.65 以上→同じ部屋・表示は打った名前・PROPERTY_THREAD_OCR_REPAIR=off）／挨拶・ポータルの一覧の見出しを物件にしない
+  - 実データ（scripts/audit-turn-referent.ts・主語の抜けの正解56番）: 1件で正しく指す番 10 → 27・外れ 10 → 9・候補で渡す 7番（全部に正解を含む）
+  - 試験: 型「主語の抜け」q082〜q087（spec の property＝正解の建物）・current_property の採点（brain-exam-score.judgeCurrentProperty）
+- 3. 事実の照らし: app/lib/draft-fact-grounding.ts（日付・時刻・号室・物件名・設備を抜き出し、会話・送った資料・AIX の記録・見積書・内覧の予定・会社の事実と照らす）。canAutoReply ⑥-3c で自動送信だけ止める（本文は変えない・DRAFT_FACT_GROUNDING=off／_KINDS）
+  - 線（scripts/audit-draft-fact-grounding.ts・90日）: 下書きの根拠なし 11件は全部作り話（作った内覧の候補日・入居可能日）＝誤検知 0。既定は日付・時刻・号室・物件名。設備は記録だけ
+  - 巡1（10/09）: P0 の基本（スタッフしか分からない・確認の要る事は AIX・返信は約束まで）を BRAIN_TURN_CONTRACT_RULES の一番上に／出し切りで全力サポートにした番は方向と本質も新着待ちに（exhaustContract）／オンライン内覧の日時の了承は待ち合わせ・内覧調整にしない（onlineViewingAck）／内覧調整の歯止めを最後にも／出し切った後の条件の追加に返信を選んだ番も全力サポートへ／下書きの tpo_debug に ungroundedFacts・turnContract・aixContent の印
+  - 巡2（10/09 竹内さんの答え）: 「全力でサポート」は初回だけ（竹内さん 初回 73%・ピックアップの約束 28%・新着待ち 16%・審査 6%・見積/内覧 ≈0%・reply-context resolveCloser・ZENRYOKU_FIRST_ONLY=off）／検討しますの扉＝確認の結果・見積書の後は申込の一言・詳細の直後は内覧の案内だけ・それ以外は閉じる（consideringDirectionFor）／退去予定の部屋の内覧（退去日が資料で分かる）は AIX のまま（VIEWING_VACATING_REPLY=on で旧の返信）／ブレインのプロンプト②'「審査の通りやすさ→物件確認した」を「返信でサポート宣言・独立系中心に探す」に／友だち追加だけで条件の無い初回は条件ヒアリングを guard:first_contact で消さない（FIRST_CONTACT_KEEP_HEARING=off）／見積の AIX を費用の語が無い・まだ送っていない物件の費用で返信に（estimateToReply）／保証会社の種類を条件として言った番は探す約束（guarantorAsCondition）／お礼・了承だけの番は出し切りの振り替えをしない／選択肢を増やす言い方は広げる側

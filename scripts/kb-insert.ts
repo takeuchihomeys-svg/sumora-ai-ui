@@ -8,6 +8,7 @@ import * as fs from "fs";
 import { embedKbRows, neighborsOf } from "../app/lib/design-knowledge-rag-server";
 import { sceneTagsToAdd } from "./kb-scene-tag";
 import { inferPriority, normalizeTags, P0_TAG, PRIORITY_LABEL } from "../app/lib/design-knowledge-priority";
+import { mojibakeFields } from "../app/lib/design-knowledge-curation";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const file = process.argv[2];
@@ -23,12 +24,16 @@ if (overlapsOf) {
 
 async function main() {
   // 2026-09-20: 1セッションで複数の知見が出る事が多いので配列も受ける（1件の時は今まで通りオブジェクト）
-  const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown> | Array<Record<string, unknown>>;
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, "")) as Record<string, unknown> | Array<Record<string, unknown>>;
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   for (const row of rows) {
     for (const k of ["title", "category", "insight", "rationale"]) {
       if (!row[k]) { console.error(`必須の項目がありません: ${k}（${String(row.title ?? "無題")}）`); process.exit(1); }
     }
+    // 2026-10-08 竹内さん「文字化けでないようにする」: 「????」・置換文字の入った行は入れない（JSON を Windows の既定の文字コードで書いた等）。
+    //   JSON は UTF-8 で書く（PowerShell なら Out-File -Encoding utf8・Set-Content -Encoding utf8）。REST に直接 POST しない（PowerShell 5.1 の Invoke-RestMethod は本文を Latin-1 で送る）
+    const mb = mojibakeFields(row as Parameters<typeof mojibakeFields>[0]);
+    if (mb.length) { console.error(`文字化けしています（${mb.join("・")}）: ${String(row.title ?? "").slice(0, 60)} — JSON を UTF-8 で書き直してください`); process.exit(1); }
   }
   // 2026-10-07（3巡目）題が返信の場面に当たる行には札「場面:〇〇」を足す（kb.ts --scene で引く入口）
   for (const row of rows) { const add = sceneTagsToAdd({ title: String(row.title), tags: (row.tags as string[] | undefined) ?? [] }); if (add.length) row.tags = [...((row.tags as string[] | undefined) ?? []), ...add]; }

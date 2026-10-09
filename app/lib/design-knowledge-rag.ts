@@ -43,19 +43,66 @@ export function needsEmbedding(r: RagRow & { embedding_hash?: string | null }): 
 
 // 問いの語: 助詞・よくある語を除いた2文字組で見る（日本語は空白で切れないため）
 const STOP = /(?:は|が|を|に|で|と|の|も|へ|や|か|って|する|した|して|ます|です|どう|なぜ|何|いつ|どこ|ため|こと|もの|ような|られ|れる|たら|ない|ある|いる|なる|から|まで|より|よう|決め|方法)/g;
-export function queryGrams(q: string): Set<string> {
-  const n = normKb(q).replace(STOP, "|");
+// 2026-10-08 同義・表記ゆれの辞書（竹内「ちゃんと RAG で正確に確かめられるようにする」）: 問いと行の両方を同じ形に寄せてから語を比べる（語の点だけ・埋め込みには使わない）。
+//   normKb の後（小文字・記号なし）の形で書く。意味が変わる寄せはしない（例: 物件確認した≠確認した・従業員≠竹内さん・新着≠ピックアップ）。
+//   足す時は scripts/kb-eval.ts で前後を測る（holdout が下がる寄せは入れない）
+export const KB_SYNONYMS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/内見/g, "内覧"],
+  [/(?:御|お)?見積(?:もり|り)?書?/g, "見積"],
+  [/お?申し?込み?/g, "申込"],
+  [/いただ/g, "頂"],
+  [/下さい/g, "ください"],
+  [/おすすめ|お勧め|お薦め|おススメ/g, "オススメ"],
+  [/(?:もっと|さらに|これ以上)(?=安)/g, "更に"],
+  [/お客さん|顧客/g, "お客様"],
+  [/返事/g, "返信"],
+  [/集合場所/g, "待ち合わせ場所"],
+  [/押さえ/g, "抑え"],
+  [/敷金礼金|敷金・礼金/g, "敷礼"],
+  [/問い?合わ?せ/g, "問合せ"],
+  [/星(?!の絵文字)/g, "🌟"],
+  [/内覧前の挨拶|内覧当日の挨拶|当日の挨拶/g, "内覧挨拶"],
+];
+export function synKb(n: string): string {
+  let s = n;
+  for (const [re, to] of KB_SYNONYMS) s = s.replace(re, to);
+  return s;
+}
+const synMemo = new WeakMap<object, { t?: string; b?: string }>();
+function synCached(r: RagRow, k: "t" | "b", text: string): string {
+  let m = synMemo.get(r);
+  if (!m) { m = {}; synMemo.set(r, m); }
+  return (m[k] ??= synKb(normKb(text)));
+}
+export function queryGrams(q: string, opts: { syn?: boolean } = {}): Set<string> {
+  const n = (opts.syn ? synKb(normKb(q)) : normKb(q)).replace(STOP, "|");
   const g = new Set<string>();
   for (const part of n.split("|")) for (let i = 0; i + 2 <= part.length; i++) g.add(part.slice(i, i + 2));
   return g;
 }
 /** 語の重なり（問いの2文字組のうち、題に何割・本文に何割あるか。題を重く） */
-export function keywordScore(r: RagRow, qg: Set<string>): number {
+export function keywordScore(r: RagRow, qg: Set<string>, opts: { syn?: boolean } = {}): number {
   if (!qg.size) return 0;
-  const t = normKb(r.title), b = normKb(r.insight);
+  const t = opts.syn ? synCached(r, "t", r.title) : normKb(r.title), b = opts.syn ? synCached(r, "b", r.insight) : normKb(r.insight);
   let inT = 0, inB = 0;
   for (const x of qg) { if (t.includes(x)) inT++; else if (b.includes(x)) inB++; }
   return (inT * 1.0 + inB * 0.5) / qg.size;
+}
+/**
+ * 2026-10-08 句の当たり: 問いを助詞で切った句（3字以上）が題・本文にそのまま入っているか（字数の重みで 0〜1・題は 1・本文は 0.5）。
+ *   並びの点に足すと全体が下がった（kb-eval: 句 0.3〜1.0 で recall@5 0.95→0.92〜0.95・MRR 0.86→0.82〜0.85）＝並びには入れず、
+ *   上位 k の外で本文にそのまま句がある行を「本文の一節で当たった行」として別に出す（phraseSupplement・長い決定の行の奥の一節を拾う）
+ */
+export function queryPhrases(q: string, opts: { syn?: boolean } = {}): string[] {
+  const n = (opts.syn ? synKb(normKb(q)) : normKb(q)).replace(STOP, "|");
+  return [...new Set(n.split("|").filter((x) => x.length >= 3))];
+}
+export function phraseScore(r: RagRow, phrases: string[], opts: { syn?: boolean } = {}): number {
+  if (!phrases.length) return 0;
+  const t = opts.syn ? synCached(r, "t", r.title) : normKb(r.title), b = opts.syn ? synCached(r, "b", r.insight) : normKb(r.insight);
+  let hit = 0, all = 0;
+  for (const p of phrases) { all += p.length; if (t.includes(p)) hit += p.length; else if (b.includes(p)) hit += p.length * 0.5; }
+  return all ? hit / all : 0;
 }
 /** 札の当たり（問いの文に札の語がそのまま入っている・または指定の札） */
 export function tagScore(r: RagRow, q: string, wantTags: string[] = []): number {
@@ -82,7 +129,14 @@ export function isOwnerWords(r: RagRow): boolean {
 /** 重み（scripts/kb-rag-eval.ts で当て直して決めた値・変える時は評価を回し直す） */
 // 2026-10-06 当て直し（問い24・格子）: 近さだけ recall@5 0.79 → keyword 0.5・tag 0.3・recency 0.15 で 0.88（別の問い12で確かめた・scripts/kb-rag-eval.ts）
 // 2026-10-07 竹内「設計知見もちゃんと整理して優先順位あげれる環境」: priority＝段の点（PRIORITY_BOOST）の掛け率。0 で段を効かせない（前と同じ並び）
-export const HYBRID_WEIGHTS = { vector: 1.0, keyword: 0.5, tag: 0.3, recency: 0.15, ownerTie: 0.01, priority: 1.0 } as const;
+// 2026-10-08 当て直し（scripts/kb-eval.ts・新しい物差し 194問＋前の物差し 78問・手元で全行の近さを計算した格子）:
+//   近さを 0 にそろえる線を「上位 80 番目」→「上位 1,000 番目」（KB_VEC_FETCH）にし、keyword 0.5→1.0・tag 0.3→0.15・同義の辞書 on・場面は札のある行は札だけ（sceneTagOnly）。
+//   新しい物差し recall@5 0.90→0.95・MRR 0.79→0.86（holdout 0.85→0.91・0.76→0.80）／前の物差し 0.94→0.97・0.74→0.82。
+//   上位 80 だと長い決定の行（本文が複数の話題）の近さが 80 番目より下で 0 になり、語が全部当たっても上がらなかった（例「🌟が同点の時の決め方」は語 1.00 で 24位）。
+//   埋め込みの文を「題＋札＋本文の頭 600字」や「題だけ」にする案は下がった（同じ格子で MRR 0.85・0.83）＝埋め込みの文は今のまま
+export const HYBRID_WEIGHTS = { vector: 1.0, keyword: 1.0, tag: 0.15, recency: 0.15, ownerTie: 0.01, priority: 1.0 } as const;
+/** 近さを取る数（RPC match_design_thinking_exact の match_count・PostgREST の上限 1,000）。並びの近さは「この中の最小〜最大」で 0〜1 にそろえる */
+export const KB_VEC_FETCH = 1000;
 /** 場面の行に足す点（scripts/kb-scene-rag-eval.ts の格子で決める） */
 // 10/07 当て直し（scripts/kb-scene-rag-eval.ts）: 問い33 recall@5 0.73→0.94・別の問い12 0.75→0.92（0.3 は 0.91/0.75・0.8 は holdout 同じ）
 export const SCENE_WEIGHT = 0.5;
@@ -91,21 +145,23 @@ export type Scored = { row: RagRow; score: number; vector: number; keyword: numb
  * 並べる。vecSim＝id→埋め込みの近さ（0〜1・無い行は 0）。近さは候補の中の最小〜最大で 0〜1 にそろえる（問いごとに近さの幅が違うため）
  *   mode: "hybrid"（全部）／"vector"（近さだけ）／"keyword"（語と札だけ＝旧の札・部分一致に相当）
  */
-export function hybridRank(rows: RagRow[], vecSim: Map<string, number>, q: string, opts: { nowIso: string; tags?: string[]; mode?: "hybrid" | "vector" | "keyword"; weights?: Partial<Record<keyof typeof HYBRID_WEIGHTS, number>>; scene?: KbScene | null; sceneWeight?: number } ): Scored[] {
+export function hybridRank(rows: RagRow[], vecSim: Map<string, number>, q: string, opts: { nowIso: string; tags?: string[]; mode?: "hybrid" | "vector" | "keyword"; weights?: Partial<Record<keyof typeof HYBRID_WEIGHTS, number>>; scene?: KbScene | null; sceneWeight?: number; syn?: boolean; vecNormRank?: number; sceneTagOnly?: boolean } ): Scored[] {
   const w: Record<keyof typeof HYBRID_WEIGHTS, number> = { ...HYBRID_WEIGHTS, ...(opts.weights ?? {}) };
   const mode = opts.mode ?? "hybrid";
-  const qg = queryGrams(q);
+  const syn = opts.syn ?? true;
+  const qg = queryGrams(q, { syn });
   const cur = rows.filter((r) => r.is_current);
-  const sims = cur.map((r) => vecSim.get(r.id) ?? 0).filter((x) => x > 0);
-  const lo = sims.length ? Math.min(...sims) : 0, hi = sims.length ? Math.max(...sims) : 1;
+  const sims = cur.map((r) => vecSim.get(r.id) ?? 0).filter((x) => x > 0).sort((a, b) => b - a);
+  // vecNormRank: 近さを 0 にそろえる線を「N 番目の近さ」にする（無い時は渡された中の最小＝前の形）
+  const lo = sims.length ? (opts.vecNormRank ? sims[Math.min(sims.length - 1, opts.vecNormRank - 1)] : sims[sims.length - 1]) : 0, hi = sims.length ? sims[0] : 1;
   const out: Scored[] = cur.map((r) => {
     const raw = vecSim.get(r.id) ?? 0;
-    const vector = raw > 0 && hi > lo ? (raw - lo) / (hi - lo) : raw > 0 ? 1 : 0;
-    const keyword = keywordScore(r, qg);
+    const vector = raw > 0 && hi > lo ? Math.max(0, (raw - lo) / (hi - lo)) : raw > 0 ? 1 : 0;
+    const keyword = keywordScore(r, qg, { syn });
     const tag = tagScore(r, q, opts.tags ?? []);
     const recency = recencyScore(r.created_at, opts.nowIso);
     const owner = isOwnerWords(r) ? 1 : 0;
-    const sceneHit = opts.scene && opts.scene !== "other" && rowInScene(r, opts.scene) ? 1 : 0;
+    const sceneHit = opts.scene && opts.scene !== "other" && rowInScene(r, opts.scene, { tagOnly: opts.sceneTagOnly }) ? 1 : 0;
     const priority = effectivePriority(r);
     const score = (mode === "vector" ? vector
       : mode === "keyword" ? keyword + w.tag * tag
@@ -144,10 +200,14 @@ export const KB_SCENES: Record<KbScene, { tag: string; titleRe: RegExp | null; t
   apply: { tag: "場面:申込", titleRe: /申込|申し込|審査|仮押さえ|お部屋を?抑え|必要書類/, terms: "申込・審査の返信" },
   other: { tag: "場面:その他", titleRe: null, terms: "" },
 };
+const SCENE_TAGS = new Set<string>(Object.values(KB_SCENES).map((s) => s.tag));
 /** 行がその場面の物か（札 or 題の型） */
-export function rowInScene(r: Pick<RagRow, "title" | "tags">, scene: KbScene): boolean {
+export function rowInScene(r: Pick<RagRow, "title" | "tags">, scene: KbScene, opts: { tagOnly?: boolean } = {}): boolean {
   const s = KB_SCENES[scene];
   if ((r.tags ?? []).includes(s.tag)) return true;
+  // tagOnly（既定 on・2026-10-08）: 場面の札が1つでも付いている行（場面を確かめた行・P0/P1 は全部）は札だけで決め、題の型で他の場面に振らない
+  //   （題に「見積」があるだけの採点の行が 場面:初期費用 に入っていた。札の無い行だけ題の型で入る）
+  if ((opts.tagOnly ?? true) && (r.tags ?? []).some((t) => SCENE_TAGS.has(t))) return false;
   return !!s.titleRe && s.titleRe.test(r.title);
 }
 /** 場面の問い: 問いに場面の語を足す（埋め込みと語の両方に効く）。語が既に入っていれば足さない */
@@ -175,3 +235,34 @@ export function cosine(a: number[], b: number[]): number {
 // 2026-10-06 測り直し: DeepSeek が同じ・上書きと判定した27組の近さは 0.71〜0.92（中央 0.83）。0.80 以上で 20/27・全体の組で 162（0.86 は 23 組で取りこぼしが多い）
 export const NEAR_DUP_MIN = 0.80;
 export { grams, jaccard };
+
+/**
+ * 2026-10-08 本文の一節で当たった行（kb.ts の「本文の一節」欄）: 上位 k に出ていない行のうち、問いの句（4字以上）が題・本文にそのまま入っている物を
+ *   句の字数の多い順（同じなら並びの点の順）に max 件。長い決定の行の奥の一節（例「物件出し依頼の自動検知の通知」は ce22b1c6 の本文の1か所）を拾う。
+ *   並びの点には入れない（入れると全体の recall が下がった＝phraseScore の注記）
+ */
+export const PHRASE_SUPPLEMENT = { minLen: 4, max: 3 } as const;
+export function phraseSupplement(ranked: Scored[], shownIds: Set<string>, q: string, opts: { syn?: boolean; max?: number } = {}): Array<Scored & { phrases: string[] }> {
+  const ps = queryPhrases(q, { syn: opts.syn }).filter((p) => p.length >= PHRASE_SUPPLEMENT.minLen);
+  if (!ps.length) return [];
+  const out: Array<Scored & { phrases: string[]; len: number }> = [];
+  for (const s of ranked) {
+    if (shownIds.has(s.row.id)) continue;
+    const t = opts.syn ? synCached(s.row, "t", s.row.title) : normKb(s.row.title), b = opts.syn ? synCached(s.row, "b", s.row.insight) : normKb(s.row.insight);
+    const hit = ps.filter((p) => t.includes(p) || b.includes(p));
+    if (hit.length) out.push({ ...s, phrases: hit, len: hit.reduce((n, p) => n + p.length, 0) });
+  }
+  out.sort((a, b) => b.len - a.len || b.score - a.score);
+  return out.slice(0, opts.max ?? PHRASE_SUPPLEMENT.max).map(({ len: _len, ...x }) => x);
+}
+
+/** 週の整理の要確認（memory/rules_digest_review.md）の「上書き」の組（--id=古い --by=新しい）。日付が逆の組は除く（どちらが新しい決定か言い切れない） */
+export function reviewSupersedePairs(md: string): Array<{ oldId: string; newId: string }> {
+  const out: Array<{ oldId: string; newId: string }> = [];
+  for (const line of String(md ?? "").split(/\r?\n/)) {
+    if (!line.includes("上書き") || line.includes("日付は逆")) continue;
+    const m = line.match(/--id=([0-9a-f-]{36})\s+--by=([0-9a-f-]{36})/);
+    if (m) out.push({ oldId: m[1], newId: m[2] });
+  }
+  return out;
+}

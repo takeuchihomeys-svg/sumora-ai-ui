@@ -1,6 +1,6 @@
 // 2026-10-06 竹内（ゆいと・チンシャン事例）「送った物件選択してそこから おこなえるようにする（見積書作成の時のように）」: 内覧の AIX の送った物件の候補
 // 実行: npx tsx app/lib/__tests__/viewing-property-candidates.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { viewingCandidatesFromChoice, preselectViewingCandidates, isAdditionalViewingRequest, candidateMatchesName, toggleCandidateInSlots } from "../viewing-property-candidates";
+import { viewingCandidatesFromChoice, preselectViewingCandidates, isAdditionalViewingRequest, candidateMatchesName, toggleCandidateInSlots, splitViewingNames, toggleViewingNames, pickedViewingLabels, preselectViewingInvite, viewingInviteMultiEnabled } from "../viewing-property-candidates";
 import type { EstimateTarget } from "../estimate-handoff";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -116,6 +116,38 @@ it("枠: 空いている最初の枠に入れる・外すと枠を消す（1枠�
 it("枠が埋まっていれば足す", () => {
   const r = toggleCandidateInSlots([{ name: "A荘", roomNumber: "" }], ["a"], cands[2], true);
   expect(r.slots.map((x) => x.name)).toBe(["A荘", "グランエクラ天満"]);
+});
+
+console.log("── 内覧日調整の物件を選ぶ欄（複数可・2026-10-08 決定6）");
+it("欄の文字を「、」で分ける（物件名の中の「・」では分けない）", () => {
+  expect(splitViewingNames("カーサ・クラシオンF 102号室、ディアコート曽根 302号室")).toBe(["カーサ・クラシオンF 102号室", "ディアコート曽根 302号室"]);
+  expect(splitViewingNames("")).toBe([]);
+});
+it("足す・外す（同じお部屋は重ねない・候補の表記で入る）", () => {
+  let v = toggleViewingNames("", cands[0], true);
+  expect(v).toBe("ディアコート曽根 302号室");
+  v = toggleViewingNames(v, cands[1], true);
+  expect(v).toBe("ディアコート曽根 302号室、カーサ・クラシオンF 102号室");
+  expect(toggleViewingNames(v, cands[1], true)).toBe(v);
+  expect(toggleViewingNames(v, cands[0], false)).toBe("カーサ・クラシオンF 102号室");
+  // 手で打った名前（ディアコート曽根302）も同じお部屋として外せる
+  expect(toggleViewingNames("ディアコート曽根302", cands[0], false)).toBe("");
+});
+it("送信の記録には送った物件の候補と同じ物だけ（手で打った別の文字は残さない）", () => {
+  expect(pickedViewingLabels(cands, "ディアコート曽根302、駅近のお部屋、グランエクラ天満 805号室")).toBe(["ディアコート曽根 302号室", "グランエクラ天満 805号室"]);
+  expect(pickedViewingLabels(cands, "")).toBe([]);
+});
+it("先に選ぶ: 欄の物件名（複数）→ それら／無ければお客様の発言で決まった物件（全部）", () => {
+  expect(preselectViewingInvite(cands, { currentName: "カーサ・クラシオンF 102号室、グランエクラ天満" }).keys).toBe([cands[1].key, cands[2].key]);
+  expect(preselectViewingInvite(cands, { customerText: "ここも行けますか？" }).keys).toBe([cands[0].key]);
+  // 前の日の引用は持ち越さない
+  expect(preselectViewingInvite(cands, { customerText: "内覧したいです", turnStartAt: "2026-10-06T04:41:00Z" }).keys).toBe([]);
+  // こちらの送付だけ（お客様が指していない）なら選ばない
+  expect(preselectViewingInvite(viewingCandidatesFromChoice({ target: null, candidates: [], others: [casa] }), { customerText: "内覧したいです" }).keys).toBe([]);
+});
+it("戻すスイッチ NEXT_PUBLIC_VIEWING_INVITE_MULTI=off", () => {
+  expect(viewingInviteMultiEnabled({})).toBe(true);
+  expect(viewingInviteMultiEnabled({ NEXT_PUBLIC_VIEWING_INVITE_MULTI: "off" })).toBe(false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

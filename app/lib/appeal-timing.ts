@@ -36,7 +36,10 @@
 
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "./reply-context";
 import { resolveAckTopicScope } from "./ack-topic-scope";
-import { extractCircumstances, validCircumstances, circumstanceDelaysViewing } from "./customer-circumstances";
+import { extractCircumstances, validCircumstances, circumstanceDelaysViewing, onlineViewingReason, ONLINE_VIEWING_LINE, holdFirstMinDays, undatedHoldKind, type Circumstance } from "./customer-circumstances";
+import { propertyAppealFitEnabled, readAppealReaction, resolvePropertyAppealFit, type AppealFit } from "./property-appeal-fit";
+import { decideGapEnabled, decideSignalOf, readDecideGapsInTurn } from "./customer-mindset";
+import { headOfFirstMessage, type PickupAppealRow } from "./recommend-cta";
 
 /* ───────────── 検出（実送信の文から訴求を読む・監査とテストが同じ関数を使う） ───────────── */
 
@@ -141,6 +144,18 @@ export type AppealTimingInput = {
   viewingDelayed?: boolean;
   /** お客様が内覧の予約を取り消した（今回の発言） */
   viewingCancelled?: boolean;
+  /**
+   * すぐ来られない理由の型（2026-10-08 竹内さん②③④）:
+   *   fixed＝出張中（日付なし）・遠方・「〇日以降」が7日以上先（竹内さんの決定どおり先に抑える提案）／
+   *   busy＝予定が詰まって・しばらく（日付なし）／short＝今週は無理・来週出張・伺えない 等（刺さり具合で抑える提案か内覧調整・撮影かを分ける）
+   */
+  delayKind?: "fixed" | "busy" | "short" | null;
+  /** 主のお部屋の刺さり具合（property-appeal-fit・採点＋お客様の反応） */
+  appealFit?: AppealFit | null;
+  /** 刺さり具合を読んだお部屋（🌟の見出し「建物名 号室」・読めなければ null） */
+  appealFitLabel?: string | null;
+  /** 出張中・遠方＝オンライン内見も伝えてよい（2026-10-08 竹内さん「出張中ならオンライン内見も対応可能と伝える」・APPEAL_ONLINE_VIEWING=off で付けない） */
+  onlineViewing?: "business_trip" | "remote" | null;
   /** お礼・了承の番で、読むべき範囲（こちらの直前の返事＋それが答えたお客様の番）が物件の話でも約束でもなく閉じている（ack-topic-scope の closedNonPropertyTopic） */
   topicClosed?: boolean;
   /** 前回こちらが訴求してからの時間（時間）。null＝訴求していない（監査・画面の表示用。判定には使わない） */
@@ -267,10 +282,40 @@ export function resolveAppealTiming(i: AppealTimingInput): AppealTimingVerdict {
   if (i.scene === "after_apply_push" && i.customer !== "apply_intent") return none("avoid", "申込へ！の直後", `【訴求のタイミング】直前に申込のご案内を送っている。もう一度の申込・内覧の訴求は書かない${avoidTxt}。`);
 
   const cannotViewSoon = i.room === "move_out_not_viewable" || Boolean(i.viewingDelayed);
+  // 2026-10-08 竹内さん「出張中ならオンライン内見も対応可能と伝える。これは実際の LINE にある言い回し」: すぐ来られない理由が出張中・遠方の時だけ、抑える提案に添える
+  const onlineTxt = i.viewingDelayed && i.onlineViewing
+    ? `${i.onlineViewing === "business_trip" ? "出張中" : "遠方"}のお客様なので、オンライン内見も対応可能と伝える（竹内さんの実送信の形「${ONLINE_VIEWING_LINE}」）。`
+    : "";
 
   // ② 申込の意思 → 受ける
   if (i.customer === "apply_intent") {
     return none("avoid", "お客様が申込の意思を伝えた", "【訴求のタイミング】お客様は申込の意思を伝えている。後押し・内覧の誘いは書かず、受け止めて手続き（申込フォーマット＝AIX）に進む。");
+  }
+
+  // 2026-10-08 竹内さん②③④: すぐ来られない（今週は無理・予定が詰まって・来週出張 等）は、かなり刺さっている時だけ先に抑える提案。
+  //   そうでなければ抑える提案は入れず、来られる日以降で内覧調整（AIX）／予定が詰まっている時は室内を撮影して送る（AIX）→ 気に入って頂けたら抑える。
+  //   出張中（日付なし）・遠方・7日以上先（delayKind=fixed）と退去予定は今まで通り。戻す: PROPERTY_APPEAL_FIT=off
+  const fitGated = Boolean(i.viewingDelayed) && i.room !== "move_out_not_viewable" && (i.delayKind === "busy" || i.delayKind === "short") && propertyAppealFitEnabled()
+    && (i.customer === "viewing_wish" || i.customer === "positive" || i.customer === "thinking" || i.customer === "ack" || i.customer === "other" || i.scene === "viewing_adjusting");
+  if (fitGated) {
+    const fit = i.appealFit ?? null;
+    const delayJa = i.delayKind === "busy" ? "予定が詰まっている" : "今週・近いうちは来られない";
+    const fitJa = (i.appealFitLabel ? `（${i.appealFitLabel}）` : "") + (fit ? `${fit.level === "strong" ? "かなり刺さっている" : fit.level === "medium" ? "刺さり具合はそこそこ" : fit.level === "weak" ? "あまり刺さっていない" : "刺さり具合は分からない"}（${fit.why}）` : "刺さり具合は分からない");
+    if (fit?.level === "strong") {
+      return {
+        kind: "apply", level: "suggest", line: APPEAL_LINES.apply_hold_then_view, staffRate: rateOf("apply"),
+        reason: `すぐ来られない（${i.delayKind}）・かなり刺さっている`,
+        note: `【訴求のタイミング】お客様は${delayJa}が、この物件は${fitJa}。内覧の日時より先に、入れるなら申込の訴求「${APPEAL_LINES.apply_hold_then_view}」の型${rateTxt("apply")}。`
+          + (i.delayKind === "busy" ? "抑える提案の後に、室内を撮影してお送りする（撮影して送るのは AIX・返信は「一度室内撮影しお送りさせて頂きます」の約束まで）。" : "")
+          + "日時のない内覧の誘いは書かない。押し付けない（お気に召されましたら）。" + onlineTxt,
+      };
+    }
+    return none("suggest", `すぐ来られない（${i.delayKind}）・${fit?.level ?? "unknown"}＝抑える提案は入れない`,
+      `【訴求のタイミング】お客様は${delayJa}。この物件は${fitJa}なので、お部屋を抑える提案（申込の訴求）は入れない。`
+      + (i.delayKind === "busy"
+        ? "基本は室内を撮影してお送りし（撮影して送るのは AIX）、お気に召されてからお部屋を抑える順。返信は「一度室内撮影しお送りさせて頂きます」の約束まで（撮った・送ったとは書かない）。"
+        : "来られる日以降で内覧調整（候補日は AIX【内覧調整】で出す・返信に日時を書かない）。")
+      + onlineTxt);
   }
 
   // ③ 内覧の希望
@@ -281,7 +326,7 @@ export function resolveAppealTiming(i: AppealTimingInput): AppealTimingVerdict {
         kind: "apply", level: "suggest", line: APPEAL_LINES.apply_hold_then_view, staffRate: rateOf("apply"),
         reason: `内覧の希望・${i.room === "move_out_not_viewable" ? "まだ内覧できない部屋（退去予定）" : "すぐ来られない"}`,
         note: `【訴求のタイミング】お客様は内覧を希望しているが、${why}。内覧の日時を約束せず、入れるなら申込の訴求「${APPEAL_LINES.apply_hold_then_view}」の型${rateTxt("apply")}。`
-          + "（実送信: 見られない・来られない部屋の内覧の希望には「お部屋抑えた状態でご内覧」をスタッフが書いている）",
+          + "（実送信: 見られない・来られない部屋の内覧の希望には「お部屋抑えた状態でご内覧」をスタッフが書いている）" + onlineTxt,
       };
     }
     if (i.scene === "viewing_confirmed") {
@@ -300,7 +345,7 @@ export function resolveAppealTiming(i: AppealTimingInput): AppealTimingVerdict {
       return {
         kind: "apply", level: "suggest", line: APPEAL_LINES.apply_hold_then_view, staffRate: rateOf("apply"),
         reason: "内覧の調整中・お客様がしばらく来られない",
-        note: `【訴求のタイミング】お客様はしばらく内覧に来られない。入れるなら「${APPEAL_LINES.apply_hold_then_view}」の型（実送信: 「後半になりますとお部屋埋まってしまう可能性…お部屋を抑えた状態で」）。日時は作らない。`,
+        note: `【訴求のタイミング】お客様はしばらく内覧に来られない。入れるなら「${APPEAL_LINES.apply_hold_then_view}」の型（実送信: 「後半になりますとお部屋埋まってしまう可能性…お部屋を抑えた状態で」）。日時は作らない。${onlineTxt}`,
       };
     }
     return none("avoid", i.scene === "viewing_confirmed" ? "内覧の日にちが決まっている" : "内覧の日にちの調整中",
@@ -344,6 +389,7 @@ export function resolveAppealTiming(i: AppealTimingInput): AppealTimingVerdict {
         + (kind === "apply" ? "日時のない内覧の誘い（ご都合よろしいお日にち）は書かない。" : "申込の一文は書かない。")
         + (i.customer === "thinking" ? "「ごゆっくりご検討ください」で受け止めた後に置く。急かさない（この1文は扉の文で、禁止している申込の催促・申込誘導には当たらない）。" : "")
         + (i.customer === "positive" ? "御見積書の約束・送付を書く時も、締めの訴求を落とさない。" : "")
+        + (kind === "apply" && i.viewingDelayed ? onlineTxt : "")
         + "煽り（埋まってしまう前に・残り1部屋・好条件）は会話・資料に書いてある時だけ。",
     };
   }
@@ -388,6 +434,8 @@ export function buildAppealInput(o: {
   /** 主のお部屋がまだ内覧できない（ブレインの notViewable が分かっていれば・こちらが正） */
   notViewable?: boolean | null;
   nowMs?: number;
+  /** 主のお部屋の採点の行（property_pickups・recommend-cta.pickupForFirstMessage で選んだ物）。無ければ反応だけで刺さりを読む */
+  pickup?: PickupAppealRow | null;
 }): AppealTimingInput {
   const msgs = [...o.msgs].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   // 今回のお客様の連投（最後のこちらの文の後）
@@ -472,6 +520,19 @@ export function buildAppealInput(o: {
     } else room = "move_out_not_viewable";
   }
 
+  // 2026-10-08 竹内さん②③④: すぐ来られない理由の型と、主のお部屋の刺さり具合（採点＋お客様の反応）
+  const valid = validCircumstances(extractCircumstances(msgs.filter((m) => m.sender === "customer" && Date.parse(m.createdAt) > turnStart - 60 * 86400_000), turnStart), turnStart);
+  const delayKind = resolveDelayKind(turnText, valid, turnStart);
+  const shownAt = lastShown ? Date.parse(lastShown.createdAt) : null;
+  const appealFit = shownAt != null && propertyAppealFitEnabled()
+    ? resolvePropertyAppealFit({
+      pickup: o.pickup ?? null,
+      reaction: readAppealReaction(msgs.filter((m) => m.sender === "customer" && Date.parse(m.createdAt) > shownAt).map((m) => ({ text: m.text, createdAt: m.createdAt })), { sentAt: lastShown?.createdAt ?? null }),
+      // 2026-10-09 決める寸前の印（「〇〇なら決める」＝決まった計算で強いのはこの言い方だけ・customer-mindset.decideSignalOf）
+      decideSignal: decideGapEnabled() ? decideSignalOf(readDecideGapsInTurn({ text: msgs.filter((m) => m.sender === "customer" && Date.parse(m.createdAt) > shownAt).map((m) => String(m.text ?? "")).join("\n") })) : null,
+    })
+    : null;
+
   // 前回の訴求（表示用）
   let lastAt: number | null = null; let lastKind: "apply" | "viewing" | null = null;
   for (const m of staffBefore) {
@@ -487,14 +548,44 @@ export function buildAppealInput(o: {
     estimateSent: /御見積書|お見積書|初期費用[:：]/.test(staffText7) || logs.some((l) => l.aixType === "estimate_sheet" && Date.parse(l.at) > turnStart - 7 * 86400_000),
     // 2026-10-08 把握「お客様の事情」: 今の発言の決まった言い方に加え、前の発言の「〇日以降なら来られる」（2日より先）・遠方・しばらく来られない（鮮度つき）も
     //   すぐ来られないに数える（customer-circumstances.ts・APPEAL_CIRCUMSTANCES=off で今の発言だけ）
-    viewingDelayed: VIEWING_DELAYED_RE.test(turnText) || circumstanceDelaysViewing(
-      validCircumstances(extractCircumstances(msgs.filter((m) => m.sender === "customer" && Date.parse(m.createdAt) > turnStart - 60 * 86400_000), turnStart), turnStart), turnStart),
+    viewingDelayed: VIEWING_DELAYED_RE.test(turnText) || circumstanceDelaysViewing(valid, turnStart) || delayKind === "short" || delayKind === "busy",
+    delayKind,
+    appealFit,
+    appealFitLabel: ((h) => (h ? h.name + " " + h.room + "号室" : null))(headOfFirstMessage(shownText)),
     viewingCancelled,
+    onlineViewing: onlineViewingOf(turnText, msgs, turnStart),
     topicClosed: ((sc) => sc.closedNonPropertyTopic && !POST_VIEWING_STAFF_RE.test(sc.staffText) && !/内覧|ご案内|お部屋/.test(sc.staffText))(
       resolveAckTopicScope(msgs.map((m) => ({ sender: m.sender, text: m.text, created_at: m.createdAt })))),
     hoursSinceLastAppeal: lastAt !== null ? Math.round((turnStart - lastAt) / 3600_000) : null,
     lastAppealKind: lastKind,
   };
+}
+
+/**
+ * すぐ来られない理由の型（2026-10-08 竹内さん②③④）。無ければ null。
+ *   fixed … 出張中（日付なし）・遠方・「〇日以降」が7日以上先（今まで通り先に抑える提案＝竹内さんの決定 a8bfe733・e6a9b05e）
+ *   busy  … 予定が詰まって・しばらく・当分（日付なし）
+ *   short … 今週は無理・来週出張・伺えない・行けない（今の発言）
+ */
+export function resolveDelayKind(turnText: string, valid: ReadonlyArray<Circumstance>, nowMs: number): "fixed" | "busy" | "short" | null {
+  const t = String(turnText ?? "").normalize("NFKC");
+  const from = valid.find((c) => c.kind === "available_from" && c.fromDayMs != null);
+  if (from?.fromDayMs != null && Math.round((from.fromDayMs - nowMs) / 86400_000) >= holdFirstMinDays()) return "fixed";
+  if (valid.some((c) => c.kind === "remote") || /遠方|(?:東京|県外|地方)(?:在住|に住)/.test(t)) return "fixed";
+  const soon = valid.filter((c) => c.kind === "cannot_come_soon");
+  if (soon.some((c) => undatedHoldKind(c.quote) === "business_trip") || (/出張中/.test(t) && !/来週|再来週|来月|[0-9]{1,2}日/.test(t))) return "fixed";
+  if (soon.some((c) => undatedHoldKind(c.quote) === "busy") || /予定(?:が)?(?:詰ま|埋ま|立た)|しばらく|当分/.test(t)) return "busy";
+  if (soon.some((c) => c.thisTurn) || VIEWING_DELAYED_RE.test(t) || /今週は?[^。\n]{0,6}(?:無理|難し|厳し|行けな)|出張[^。\n]{0,10}(?:行け|伺え|厳し|無理|難し)/.test(t)) return "short";
+  return null;
+}
+
+/** 出張中・遠方（今の発言の決まった言い方か、前の発言のお客様の事情）。APPEAL_ONLINE_VIEWING=off で null */
+export function onlineViewingOf(turnText: string, msgs: ReadonlyArray<AppealMsg>, turnStart: number, env: Record<string, string | undefined> = process.env): "business_trip" | "remote" | null {
+  if ((env.APPEAL_ONLINE_VIEWING ?? "").trim().toLowerCase() === "off") return null;
+  const t = String(turnText ?? "").normalize("NFKC");
+  if (/出張中|出張で[^。\n]{0,8}(?:行け|伺え|厳し|無理|難し)/.test(t)) return "business_trip";
+  if (/遠方|(?:東京|県外|地方)(?:在住|に住)/.test(t)) return "remote";
+  return onlineViewingReason(validCircumstances(extractCircumstances(msgs.filter((m) => m.sender === "customer" && Date.parse(m.createdAt) > turnStart - 60 * 86400_000), turnStart), turnStart), env);
 }
 
 /** 画面・ログ用の短い説明（「見積書後×検討します×空室 → 申込（材料）」） */
@@ -553,6 +644,7 @@ export function resolveAppealFromConversation(o: {
   aixLogs: ReadonlyArray<AppealAixLog>;
   viewingStage?: string | null;
   notViewable?: boolean | null;
+  pickup?: PickupAppealRow | null;
 }): { input: AppealTimingInput; verdict: AppealTimingVerdict } | null {
   const msgs = [...o.msgs].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   let k = msgs.length - 1;
@@ -565,7 +657,7 @@ export function resolveAppealFromConversation(o: {
   const staffTurn = classifyLastStaffTurn(prevStaff?.text ?? "", { lastStaffAt: prevStaff?.createdAt ?? null });
   const sub = analyzeSubstance(turnText, undefined, { staffAskedQuestion: staffTurn.kind === "question_to_customer" });
   const cr = classifyCustomerResponse(sub, staffTurn, { recentStaffText: prevStaff?.text ?? "" });
-  const input = buildAppealInput({ msgs, aixLogs: o.aixLogs, customerKind: cr.kind, viewingStage: o.viewingStage ?? null, notViewable: o.notViewable ?? null });
+  const input = buildAppealInput({ msgs, aixLogs: o.aixLogs, customerKind: cr.kind, viewingStage: o.viewingStage ?? null, notViewable: o.notViewable ?? null, pickup: o.pickup ?? null });
   return { input, verdict: resolveAppealTiming(input) };
 }
 

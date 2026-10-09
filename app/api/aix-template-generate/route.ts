@@ -29,7 +29,7 @@ import {
 } from "@/app/lib/prompt-cache";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 // 顧客名の妥当性判定（generate-reply と同一ソース — LINE表示名を実名として使わないゲート）
-import { stripNonNameChars, isPlausiblePersonName } from "@/app/lib/validate-reply";
+import { stripNonNameChars, isPlausiblePersonName, oneCharCallName } from "@/app/lib/validate-reply";
 // 2026-09-18 竹内（𝒮 さん事例）: 1件しか送っていないなら比較の言い方を書かない／まだ内覧できない部屋は申込誘導
 import { fixRecommendClosing, buildRecommendClosingNote } from "@/app/lib/recommend-closing";
 // 2026-10-06 竹内（見木さん）: 近さの言葉（先ほど・先程）は前の物件のやり取りから3時間以内だけ・時系列の1行を生成に渡す
@@ -47,7 +47,7 @@ import { resolvePropertySendState, describePropertySendState } from "@/app/lib/p
 // 2026-09-18 竹内「テンプレートよくわからん文生成される」: ブレインの判断の整形と渡し方を返信生成と揃える
 import { buildBrainStrategyNote, describeBrainStrategyNote } from "@/app/lib/brain-strategy-note";
 // 2026-09-18 出口の決定論を返信生成・AIX 本体と揃える（テンプレートには1つも通っていなかった）
-import { stripWaited } from "@/app/lib/greeting";
+import { stripWaited, dailyGreetingRequired } from "@/app/lib/greeting";
 // 2026-09-20 竹内「結果を届ける AIX では『お待たせ致しました』を許す」: 場面の判定を一本化（四者同名）
 // 2026-09-27 竹内さん決定で上書き: AIX でも使わない（許す一覧は空＝全部落とす・手本も置き換えて見せる）
 import { isWaitedAllowed, neutralizeWaitedInExample, isWaitedAllowedForAix, lastExchangeAt } from "@/app/lib/waited-scope";
@@ -78,7 +78,7 @@ import { stripUnfoundedSelectionClaim, SELECTION_CLAIM_NOTE } from "@/app/lib/se
 import { extractPropertyLabels } from "@/app/lib/action-ledger";
 // AIX-META（suggested_aix_meta）の型は brain-core を単一ソースとして参照（type-only importのためランタイム依存なし）
 import type { SuggestedAixMeta } from "@/app/lib/brain-core";
-import { applyDailyGreeting, staffTalkedToday } from "@/app/lib/daily-greeting";
+import { applyDailyGreeting, staffTalkedToday, joinNameOnlyLine, aixGreetingTalkOnly } from "@/app/lib/daily-greeting";
 import { staffTalkedTodayFromDb } from "@/app/lib/daily-greeting-server";
 import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
@@ -93,7 +93,9 @@ import { fixAdjectiveNakaguro } from "@/app/lib/first-message-style";
 import { resolveTemplateSentMessage } from "@/app/lib/aix-template-source";
 import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 // 2026-10-01 竹内「見積書や他のよく使うAIXテンプレートの部分も改善する」: 見積書の直後の2通目の形・締め・検査（スタッフが書いた2通目 132通から）
-import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
+import { isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, estimateClosingByAppealOn, buildEstimateSecondNote, findEstimateSecondProblems, ensureEstimateClosing, type EstimateClosing } from "@/app/lib/estimate-second-message";
+import { customerAskedEstimate } from "@/app/lib/customer-mindset";
+import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
 import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
 import { buildAixTemplateDbKnowledgeBlock, aixTemplateCacheTtl } from "@/app/lib/aix-template-cache";
@@ -608,7 +610,15 @@ export async function POST(req: NextRequest) {
   console.log(JSON.stringify({ tag: "aix-template-generate:sent-message", actionType: actionType ?? null, source: body.sentMessage ? (sentMessageSource ?? "post_aix") : sentFallback.source, len: (sentMessage ?? "").length, ctaPreference: ctaPreference ?? null }));
 
   // 2026-09-22 竹内「今日初めてじゃないときはお世話になっておりますはつかわない」: 画面の判定（AIX テンプレートは false 固定だった）に頼らず DB でも見る
-  const staffSentToday = !!staffMessagedToday || await staffSentTodayFromDb(conversationId as string | undefined);
+  // 2026-10-08 竹内さんの決定8: 返信と同じ数え方（会話文だけ・🌟カード・【】見積の本体・画像は数えない）。画面の staffMessagedToday は画像も数えるので使わない。
+  //   戻す AIX_GREETING_TALK_ONLY=off（daily-greeting.aixGreetingTalkOnly）
+  const givenTalked = (body as { staffTalkedToday?: unknown }).staffTalkedToday;
+  const staffSentToday = aixGreetingTalkOnly()
+    ? (typeof givenTalked === "boolean" ? givenTalked
+      : (staffTalkedToday(((recentMessages ?? []) as Array<{ sender?: string; text?: string | null; createdAt?: string; rawCreatedAt?: string }>)
+          .map((m) => ({ sender: m.sender === "customer" ? "customer" : "staff", text: m.text ?? "", createdAt: m.createdAt, rawCreatedAt: m.rawCreatedAt })))
+        || await staffTalkedTodayFromDb(conversationId as string | undefined)))
+    : !!staffMessagedToday || await staffSentTodayFromDb(conversationId as string | undefined);
 
   if (!actionType && !actionCategory) {
     return NextResponse.json({ ok: false, error: "actionType or actionCategory is required" }, { status: 400 });
@@ -631,6 +641,9 @@ export async function POST(req: NextRequest) {
         const stripped = stripNonNameChars(customerName ?? "");
         return isPlausiblePersonName(stripped) ? stripped : "";
       })();
+
+  // 2026-10-08 竹内さん「名前1文字でも『さん』を付ける」: 1文字の表示名（「あ」「R」）も呼ぶ（記号・絵文字だけは呼ばない＝oneCharCallName）
+  if (!resolvedCustomerName && !isGroupConversationName(customerName)) resolvedCustomerName = oneCharCallName(customerName);
 
   // ── customerConditions ground-truth フォールバック ─────────────────────────
   // body.customerConditions が空のとき、conversations → property_customers を辿って
@@ -1531,7 +1544,15 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* 読めない時は内覧の前として扱う（ご査収に倒れる側） */ }
     const reaction = readCustomerReaction(Array.isArray(recentMessages) ? recentMessages : []);
-    const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null });
+    // 2026-10-08 竹内「刺さる条件なら内覧または申込誘導・空室なら内覧誘導」: 見積書のお部屋の採点（estimate-appeal-server）
+    let ap: { appeal: "strong" | "weak" | null; notViewable: boolean; found: number } = { appeal: null, notViewable: false, found: 0 };
+    if (estimateClosingByAppealOn()) {
+      try { ap = await loadEstimateAppeal(supabase, conversationId, estimatePropertiesOf(sentMessage), { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom }); } catch { /* 読めない時は採点なし */ }
+    }
+    // 2026-10-09 竹内さん: お客様が頼んだ見積は興味の印＝内覧の前・空室なら内覧訴求（ESTIMATE_ASKED_APPEAL=off で旧）
+    const customerAsked = customerAskedEstimate(Array.isArray(recentMessages) ? recentMessages as Array<{ sender?: string | null; text?: string | null; created_at?: string | null }> : []);
+    const dec = resolveEstimateClosing({ ctaPreference, viewed, reactionKind: reaction?.kind ?? null, appeal: ap.appeal, notViewable: ap.notViewable, customerAsked });
+    console.log(JSON.stringify({ tag: "aix-template-generate:estimate-appeal", appeal: ap.appeal, notViewable: ap.notViewable, found: ap.found }));
     estimateClosing = dec.closing;
     estimateSecondNote = buildEstimateSecondNote({ name: resolvedCustomerName, properties: estimatePropertiesOf(sentMessage), closing: dec.closing, staffSentToday: greetSentToday });
     // 2026-10-06 ⑫ 竹内（R の見積書の2通目）「実際にスタッフが送っているような正確で具体的なちゃんとした返信を」:
@@ -2162,6 +2183,20 @@ ${text}
         console.log(JSON.stringify({ tag: "aix-template-generate:daily-greeting-removed", actionType, conversationId }));
         text = daily.text;
       }
+    } else if (secondTalkedToday === false && dailyGreetingRequired()) {
+      // 2026-10-08 竹内さん「今日初めての連絡なら『お世話になっております』を付ける」: 2通目（🌟カード・【】見積の本体の後）が今日はじめての会話文なら必ず付ける
+      //   （足すだけ・既に挨拶がある時と🌟・【で始まる時は触らない＝applyDailyGreeting）。戻す: GREETING_DAILY_REQUIRED=off
+      const daily = applyDailyGreeting(text, { staffSentToday: false, greetingPhrase: "お世話になっております！！", name: resolvedCustomerName ? `${String(resolvedCustomerName).replace(/さん$/, "")}さん` : "", joinNameLine: aixTakeuchiFormOn() });
+      if (daily.action === "added") {
+        console.log(JSON.stringify({ tag: "aix-template-generate:daily-greeting-added", actionType, conversationId }));
+        text = daily.text;
+      }
+    }
+    // 2026-10-08 竹内「（『〇〇さん』だけの行を次の本文につなぐ出口は）それで大丈夫」: AIX 本体（aix/action の finalize）と同じく、テンプレートの文にも統一して当てる
+    //   （消す文字は無い・🌟【・※ 等で始まる行はつながない・daily-greeting.joinNameOnlyLine）。戻すのは AIX_TAKEUCHI_FORM=off
+    if (aixTakeuchiFormOn()) {
+      const joined = joinNameOnlyLine(text);
+      if (joined !== text) { console.log(JSON.stringify({ tag: "aix-template-generate:name-line-joined", actionType })); text = joined; }
     }
     // 2026-09-20 竹内「生成される文が長すぎる」: 長さを**記録する**（切らない）。
     //   出口で切ると文の途中で終わって壊れるので、ここでは測ってログに残すだけ。

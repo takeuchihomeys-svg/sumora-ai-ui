@@ -125,4 +125,10 @@ t("10巡目: 物件確認した は対象外（今まで通り）", resolveTwoSt
   t("10巡目: TWO_STAGE_PICKUP_UNLESS_ACK=off で旧（候補あり→AIX）", resolveTwoStage({ ...base, finalAix: "property_send", pickupReady: true, ackOnly: false }) === null);
   if (prev === undefined) delete process.env.TWO_STAGE_PICKUP_UNLESS_ACK; else process.env.TWO_STAGE_PICKUP_UNLESS_ACK = prev;
 }
+// 10/09 (d) 型（q095 q100 q105）: 約束の直後の「よろしく」の番で約束を果たす AIX はそのまま
+for (const aix of ["estimate_sheet", "property_check_result"]) for (const src of ["llm", "promise:estimate", "promise:check"]) t(`(d) 約束の直後・${aix}（${src}）→ AIX のまま`, resolveTwoStage({ ...base, finalAix: aix, decisionSource: src, ackRightAfterPromise: true }) === null);
+t("(d) 約束の直後でなければ今まで通り", resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate", ackRightAfterPromise: false }) === resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate" }));
+{ const prev = process.env.TWO_STAGE_ACK_FULFIL; process.env.TWO_STAGE_ACK_FULFIL = "off";
+  t("(d) TWO_STAGE_ACK_FULFIL=off で旧", JSON.stringify(resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate", ackRightAfterPromise: true })) === JSON.stringify(resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate" })));
+  if (prev === undefined) delete process.env.TWO_STAGE_ACK_FULFIL; else process.env.TWO_STAGE_ACK_FULFIL = prev; }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

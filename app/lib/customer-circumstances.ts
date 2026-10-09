@@ -98,16 +98,16 @@ export function resolveDateExpr(expr: string, saidMs: number, end = false): numb
   return null;
 }
 
-const COME_CTX = /都合|行け|行ける|伺え|伺う|内覧|内見|見に|見学|空い|空き|予定|来れ|来られ|こられ|帰|戻|時間|案内/;
+const COME_CTX = /都合|行け|行ける|伺え|伺う|内覧|内見|見に|見学|空い|空き|予定|来れ|来られ|こられ|帰|戻|時間|案内|出張/;
 // 〇日以降・〇日から（来られる）
 const FROM_RE = new RegExp(`${DATE_SRC}(?:の)?(?:以降|以後|から)`);
 // 〇日まで（は）来られない
 const UNTIL_RE = new RegExp(`${DATE_SRC}(?:まで|中)は?[^。\\n]{0,8}(?:行け|伺え|無理|難し|忙し|予定|仕事|出張|帰れ|いない|居ない|不在)`);
 // 〇日に帰国・帰ってくる
-const RETURN_RE = new RegExp(`${DATE_SRC}(?:に|頃に?|ごろに?)?(?:は)?(?:日本に|大阪に|こっちに)?(?:帰国|帰って|戻って|戻り|帰り|帰ります|戻ります|来阪|大阪に来)`);
+const RETURN_RE = new RegExp(`${DATE_SRC}(?:に|頃に?|ごろに?)?(?:は)?(?:日本|大阪|こっち)?(?:に|へ)?(?:帰国|帰って|戻って|戻り|帰り|帰ります|戻ります|戻る|帰る|来阪|大阪に来)`);
 // 「〇日以降」がお客様自身の都合である印（行ける・伺える・都合・予定・大阪にいない・お願いします 等）
 const SELF_CTX = /都合|行け|伺え|伺い|予定|いない|居ない|帰|来ます|来れ|来られ|お願い|希望|空いて|休み|時間/;
-const SOON_RE = /予定(?:が)?(?:詰ま|埋ま|立た)|しばらく(?:は)?(?:行け|伺え|難し|無理)|当分(?:は)?(?:行け|伺え|難し|無理)|今週は(?:内覧に|内見に)?(?:行けない|無理|難し)|出張中|(?:内覧|内見)(?:は|に)?(?:行けない|行けません|伺えない|難しい状況)/;
+const SOON_RE = /予定(?:が)?(?:詰ま|埋ま|立た)|しばらく(?:は)?(?:行け|伺え|難し|無理)|当分(?:は)?(?:行け|伺え|難し|無理)|今週は(?:内覧に|内見に)?(?:行けない|無理|難し)|出張中|出張で[^。\n]{0,8}(?:行け|伺え|厳し|無理|難し)|(?:内覧|内見)(?:は|に)?(?:行けない|行けません|伺えない|難しい状況)/;
 const REMOTE_RE = /(?:今|現在|いま)?(?:は)?(?:東京|神奈川|千葉|埼玉|名古屋|愛知|静岡|福岡|広島|岡山|山口|四国|九州|北海道|沖縄|東北|新潟|長野|石川|富山|海外|県外|地方)(?:に|で|の方に|在住)?(?:住んで|在住|に住|おり|いて|居て|暮らし)|海外にいて|今海外|遠方(?:に住|在住|のため|なので|に)/;
 const LIFE_RE = /(?:\d{1,2}月の?)?更新(?:月|を|まで|せず|しない|の時期|前)|転勤|異動|(?:移動|配属|勤務)先(?:が|は)?(?:変わ|決ま|未定)|出産|入社(?:予定|日)|(?:今|現在)(?:の|住んで(?:い)?る)?(?:家|お部屋|部屋|ところ|所)?の?退去(?:可能|日|時期|予告)|解約(?:予告|通知)/;
 const COMPANION_RE = /(彼氏|彼女|主人|旦那|夫|妻|嫁|両親|親|母|父|家族|パートナー|相方|同居人|友人|友達)(?:さん)?(?:が|と|に|も|の方が)(?:[^。\n]{0,6})(?:行|見|内覧|内見|相談|確認|決め|住|一緒|来|立ち会)/;
@@ -180,7 +180,7 @@ export function holdFirstMinDays(): number {
   const n = Number(process.env.HOLD_FIRST_MIN_DAYS);
   return Number.isFinite(n) && n > 0 ? n : 7;
 }
-export function holdFirstReason(valid: ReadonlyArray<Circumstance>, nowMs: number): string | null {
+export function holdFirstReason(valid: ReadonlyArray<Circumstance>, nowMs: number, env: Record<string, string | undefined> = process.env): string | null {
   const min = holdFirstMinDays();
   const from = valid.find((c) => c.kind === "available_from" && c.fromDayMs != null);
   if (from && from.fromDayMs != null) {
@@ -188,6 +188,40 @@ export function holdFirstReason(valid: ReadonlyArray<Circumstance>, nowMs: numbe
     if (days >= min) return `内覧に来られるのが今日から${days}日後（${min}日以上先）`;
   }
   if (valid.some((c) => c.kind === "remote")) return "遠方のお客様";
+  // 2026-10-08 竹内さん「（予定が詰まって・出張中＝日付なし）先に部屋を抑える方向で」: 日付の無い時は7日の線にそろえず抑える提案に倒す。
+  //   日付のある「〇日以降」がある時はそちら（上の7日の線）が正。戻す CIRCUMSTANCE_UNDATED_HOLD=off
+  if (!from && (env.CIRCUMSTANCE_UNDATED_HOLD ?? "").trim().toLowerCase() !== "off") {
+    const soon = valid.find((c) => c.kind === "cannot_come_soon" && undatedHoldKind(c.quote));
+    if (soon) return undatedHoldKind(soon.quote) === "business_trip" ? "出張中で内覧にすぐ来られない（日付なし）" : "予定が詰まっていて内覧にすぐ来られない（日付なし）";
+  }
+  return null;
+}
+
+/**
+ * 日付の無い「すぐ来られない」のうち、先に抑える提案に倒す物（2026-10-08 竹内さんの決定）。
+ *   business_trip＝出張中（オンライン内見も伝える）／busy＝予定が詰まって・しばらく・当分。「今週は無理」「内覧行けない」だけは入れない（来週なら来られる＝短い）
+ */
+export function undatedHoldKind(quote: string): "business_trip" | "busy" | null {
+  const t = String(quote ?? "").normalize("NFKC");
+  if (DATE_RE.test(t)) return null; // 日付のある言い方は「〇日以降」の7日の線が正
+  if (/出張(?:中|で)/.test(t)) return "business_trip";
+  if (/予定(?:が)?(?:詰ま|埋ま|立た)|しばらく|当分/.test(t)) return "busy";
+  return null;
+}
+
+/**
+ * 出張中・遠方の時にオンライン内見を伝える言い回し（竹内さんの実際の LINE＝messages.staff_writer='takeuchi'・全期間）。
+ *   2026-10-08 竹内さん「出張中ならオンライン内見も対応可能と伝える。これは実際の LINE にある言い回し」:
+ *   竹内さんがお客様にオンライン内見を案内した手打ち 5通（8/30〜9/22）は全部「オンライン内見」（「内覧」は日程の確定の通だけ）・3通が室内の撮影と並べる
+ *   （「オンライン内見や、室内の撮影もご対応させて頂きます😊！！」広島在住 8/30／「オンライン内見や、室内撮影も行わせていただきます！！」9/1／
+ *    「一度弊社撮影またはオンライン内見をさせて頂き…抑えた状態で…ご内覧」9月13日以降 8/30）。最多の形＝下の1文
+ */
+export const ONLINE_VIEWING_LINE = "オンライン内見や、室内の撮影もご対応させて頂きます😊！！";
+/** オンライン内見を伝える事情か（出張中＝日付なしのすぐ来られない／遠方）。戻す CIRCUMSTANCE_ONLINE_VIEWING=off */
+export function onlineViewingReason(valid: ReadonlyArray<Circumstance>, env: Record<string, string | undefined> = process.env): "business_trip" | "remote" | null {
+  if ((env.CIRCUMSTANCE_ONLINE_VIEWING ?? "").trim().toLowerCase() === "off") return null;
+  if (valid.some((c) => c.kind === "cannot_come_soon" && undatedHoldKind(c.quote) === "business_trip")) return "business_trip";
+  if (valid.some((c) => c.kind === "remote")) return "remote";
   return null;
 }
 /** 内覧にすぐ来られない事情（appeal-timing の viewingDelayed に足す）＝ holdFirstReason がある時だけ */
@@ -226,10 +260,17 @@ export function buildCircumstancesNote(valid: ReadonlyArray<Circumstance>, o: { 
   });
   // 2026-10-08 竹内さん: 内覧の候補日は AIX【内覧調整】で「来られる日」以降から出す（返信の本文に日時を書かない）／
   //   「〇日以降」が7日以上先・遠方の時だけ、内覧の日時より先にお部屋を抑える提案（7日未満・遠方でない時は入れない）
-  const hold = use.some((c) => c.kind === "available_from" || c.kind === "remote") ? holdFirstReason(use, o.nowMs) : null;
+  const hold = use.some((c) => c.kind === "available_from" || c.kind === "remote" || c.kind === "cannot_come_soon") ? holdFirstReason(use, o.nowMs) : null;
+  const online = onlineViewingReason(use);
   const guide: string[] = [];
   if (use.some((c) => c.kind === "available_from")) guide.push("内覧の候補日は AIX【内覧調整】で来られる日以降から出す（返信の本文に日時を書かない・来られる日より前の日時で内覧を組まない）");
-  if (hold) guide.push(`${hold}のため、内覧の日時より先に「お申込みでお部屋を抑えた状態でご内覧頂く」提案を入れる${use.some((c) => c.kind === "remote") ? "（オンライン内見・撮影の道もある）" : ""}`);
+  // 2026-10-08 竹内さん②「予定が詰まっている時の室内撮影: 基本は撮影して送る→気に入ってから抑える。かなり刺さっているなら抑える提案をしてから撮影して送る」:
+  //   予定が詰まって（日付なし）は刺さり具合（appeal-timing の【訴求のタイミング】・property-appeal-fit）で分ける。戻す CIRCUMSTANCE_BUSY_BY_APPEAL=off（いつも抑える提案）
+  const busyOnly = hold != null && /予定が詰まって/.test(hold) && (process.env.CIRCUMSTANCE_BUSY_BY_APPEAL ?? "").toLowerCase() !== "off";
+  if (busyOnly) guide.push(`${hold}: かなり刺さっている物件なら内覧の日時より先に「お申込みでお部屋を抑えた状態でご内覧頂く」提案をしてから室内を撮影してお送りする／そうでなければ一度室内を撮影してお送りし（撮影して送るのは AIX）、お気に召されてから抑える（どちらかは【訴求のタイミング】の刺さり具合で決める）`);
+  else if (hold) guide.push(`${hold}のため、内覧の日時より先に「お申込みでお部屋を抑えた状態でご内覧頂く」提案を入れる`);
+  // 2026-10-08 竹内さん「出張中ならオンライン内見も対応可能と伝える」（竹内さんの実送信の形・ONLINE_VIEWING_LINE）
+  if (online) guide.push(`${online === "business_trip" ? "出張中" : "遠方"}なのでオンライン内見も対応可能と伝える（竹内さんの実送信の形「${ONLINE_VIEWING_LINE}」）`);
   else if (use.some((c) => c.kind === "available_from")) guide.push("来られる日まで7日未満なので、お部屋を抑える提案は入れない");
   return `【お客様の事情（会話から決定論で読んだ・言った日つき）】\n${lines.join("\n")}\n`
     + `→ 次の一手・返信の方向はこの事情に合わせる${guide.length ? `（${guide.join("／")}）` : ""}。事情を推測で広げない・言い換えて断言しない。`;

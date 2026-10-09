@@ -102,6 +102,45 @@ export const LINE_CHARS_P90 = 55;
 /** 2行以上の文で空行を使う割合（実測） */
 export const BLANK_LINE_RATE = 66.3;
 
+// ─── 2026-10-08 11巡目: 竹内さんの手打ちだけで測り直した表（scripts/audit-r11-sent-shape-takeuchi.ts・180日・竹内さんの手打ち 1,859通）─────
+//   旧の表は従業員の送信（書き手 B＝何卒 2%）・AIX の送信・定型の物件カードが混ざった 12,093通で、何卒を「付けない方が普通」と言い過ぎていた
+//   （竹内さんの手打ち: 全体 21.1%・ピックアップの約束 41.7%・短い返し 30.5%・確認の約束 24.1%）。1行の字数も 17字→24字（上位10% 59字）。
+//   空行は文の数で決まる（1〜2文 8%・3〜4文 38%・5〜6文 82%・7文以上 91%）＝「1文ずつ改行・話題ごとに空行 66.3%」は竹内さんの形ではない。
+//   書き方の正解は竹内さん（設計知見 22802738 P1・10/08）。⚠ 何卒の付け方の決まり（木）は竹内さんに確認中＝ここは率（材料）だけ。戻す: SENT_SHAPE_TAKEUCHI=off（旧の表）
+export function sentShapeTakeuchiEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.SENT_SHAPE_TAKEUCHI ?? "").toLowerCase() !== "off";
+}
+export const TAKEUCHI_NANITOZO_RATE: Record<SentKind, number> = {
+  "内覧の待ち合わせ": 65, "ピックアップの約束": 41.7, "その他": 32, "短い返し": 30.5, "確認の約束": 24.1, "申込": 12.7,
+  "内覧の案内": 11.6, "見積書": 6.9, "物件・書類の送付（ご査収）": 4.7, "物件カード": 1.8, "画像・URLのみ": 0,
+};
+export const TAKEUCHI_SHAPE: Record<SentKind, ShapeStat> = {
+  "物件カード": { lines: 5, blanks: 1, lineChars: 23 }, "見積書": { lines: 4, blanks: 0, lineChars: 25 }, "内覧の待ち合わせ": { lines: 5, blanks: 1, lineChars: 19 },
+  "物件・書類の送付（ご査収）": { lines: 4, blanks: 1, lineChars: 21 }, "内覧の案内": { lines: 3, blanks: 0, lineChars: 28 }, "ピックアップの約束": { lines: 3, blanks: 1, lineChars: 38 },
+  "確認の約束": { lines: 3, blanks: 0, lineChars: 20 }, "申込": { lines: 3, blanks: 0, lineChars: 20 }, "その他": { lines: 3, blanks: 0, lineChars: 24 },
+  "短い返し": { lines: 2, blanks: 0, lineChars: 17 }, "画像・URLのみ": { lines: 1, blanks: 0, lineChars: 4 },
+};
+export const TAKEUCHI_SCENE_STYLE: Partial<Record<CustomerScene, { n: number; nanitozo: number; nanitozoWon: number | null; emoji: number }>> = {
+  "条件フォーム受領": { n: 88, nanitozo: 59.1, nanitozoWon: null, emoji: 96.6 },
+  "短い了承・お礼": { n: 103, nanitozo: 53.4, nanitozoWon: null, emoji: 87.4 },
+  "その他": { n: 264, nanitozo: 41.7, nanitozoWon: null, emoji: 82.6 },
+  "条件提示": { n: 42, nanitozo: 40.5, nanitozoWon: null, emoji: 71.4 },
+  "申込・審査・書類": { n: 98, nanitozo: 30.6, nanitozoWon: null, emoji: 64.3 },
+  "断り・キャンセル": { n: 17, nanitozo: 29.4, nanitozoWon: null, emoji: 64.7 },
+  "内覧の話": { n: 79, nanitozo: 21.5, nanitozoWon: null, emoji: 84.8 },
+  "検討中・一時保留": { n: 42, nanitozo: 21.4, nanitozoWon: null, emoji: 90.5 },
+  "質問": { n: 267, nanitozo: 14.2, nanitozoWon: null, emoji: 66.3 },
+};
+export const TAKEUCHI_FIRST_CONTACT_FORM = { n: 67, nanitozo: 64.2, emoji: 97 } as const;
+export const TAKEUCHI_BLANK_RULE = "空行は文の数で決まる（竹内さんの手打ち: 1〜2文の返信は空行なし 92%・3〜4文は空行あり 38%・5〜6文は 82%・7文以上は 91%）。開口語（はい／かしこまりました）の後は改行1つ（空行は 8%）。1行に1〜2文を書いてよい。";
+/** 今効いている表（竹内さん／旧） */
+export function sentShapeTables() {
+  const tk = sentShapeTakeuchiEnabled();
+  return tk
+    ? { takeuchi: true, nanitozo: TAKEUCHI_NANITOZO_RATE, shape: TAKEUCHI_SHAPE, sceneStyle: TAKEUCHI_SCENE_STYLE, firstForm: TAKEUCHI_FIRST_CONTACT_FORM as { n: number; nanitozo: number; emoji: number }, lineMedian: 24, lineP90: 59, nanitozoLastLine: 96.4, nanitozoAll: 21.1, blankRule: TAKEUCHI_BLANK_RULE }
+    : { takeuchi: false, nanitozo: NANITOZO_RATE, shape: SHAPE, sceneStyle: SCENE_STYLE, firstForm: FIRST_CONTACT_FORM_NANITOZO as { n: number; nanitozo: number; emoji: number }, lineMedian: 17, lineP90: LINE_CHARS_P90, nanitozoLastLine: NANITOZO_LAST_LINE_RATE, nanitozoAll: 5.5, blankRule: "" };
+}
+
 /**
  * これから書く返信の「形」を材料として渡す文。
  * 種類が決められない（本文がまだ無い）時は、これから書く内容の見込みを kind で受ける。
@@ -110,20 +149,22 @@ export const BLANK_LINE_RATE = 66.3;
  *   実送信がほぼ0（2%未満）の場面だけ「付けない」と言い切る。
  */
 export function buildSentShapeNote(kind: SentKind): string {
-  const rate = NANITOZO_RATE[kind];
-  const s = SHAPE[kind];
+  const T = sentShapeTables();
+  const rate = T.nanitozo[kind];
+  const s = T.shape[kind];
+  const top = T.takeuchi ? "（竹内さんの手打ち全体は21.1%。一番高いのは内覧の待ち合わせ65%、次がピックアップの約束41.7%）" : "（全体は5.5%。一番高いのは内覧の待ち合わせ64.3%、次がピックアップの約束22.6%）";
   const nanitozo = rate < NANITOZO_NEAR_ZERO
     ? `この場面の実送信で「何卒よろしくお願い致します」を付けるのは **${rate}%**（ほぼ0）。**付けない**。`
     : `この場面の実送信で「何卒よろしくお願い致します」を付けるのは **${rate}%**`
-      + `（全体は5.5%。一番高いのは内覧の待ち合わせ64.3%、次がピックアップの約束22.6%）。`
+      + top
       + `${rate >= 50 ? "付ける方が普通。" : "付けない方が普通。"}`
-      + `付けるなら**最終行に1行**（実送信の86.1%が最終行。本文の途中に置かない）。`;
+      + `付けるなら**最終行に1行**（実送信の${T.nanitozoLastLine}%が最終行。本文の途中に置かない）。`;
   return `\n\n【最後に確認：実送信の形に合わせる】この返信は「${kind}」。${nanitozo}`
     + `改行: 実送信の中央値は **${s.lines}行**`
     + `${s.blanks > 0 ? `・段落の区切りに空行を${s.blanks}つ` : "・空行なし"}`
     + `・1行 **${s.lineChars}字**前後。`
-    + `1行が${LINE_CHARS_P90}字を超えたら、意味の切れ目（「〜となります」「〜ので」「〜ため」の後）で改行して分ける。`
-    + `1文ずつ改行し、話題が変わる所で空行を入れる（2行以上の文の${BLANK_LINE_RATE}%が空行で段落を分けている）。`;
+    + `1行が${T.lineP90}字を超えたら、意味の切れ目（「〜となります」「〜ので」「〜ため」の後）で改行して分ける。`
+    + (T.takeuchi ? T.blankRule : `1文ずつ改行し、話題が変わる所で空行を入れる（2行以上の文の${BLANK_LINE_RATE}%が空行で段落を分けている）。`);
 }
 
 // ─── お客様の発言の場面（2026-09-22 竹内「かしこまりましたや何卒を入れる場面／絵文字を使うタイミング／約束している場面」）───
@@ -200,15 +241,16 @@ export const SCENE_PHRASE_RATE: Partial<Record<CustomerScene, string>> = {
 
 /** その場面の材料（何卒・絵文字）。場面の母数が少なすぎる・不明の時は空 */
 export function buildCustomerSceneStyleNote(scene: CustomerScene, opts: { firstContact?: boolean } = {}): string {
-  const base = SCENE_STYLE[scene];
+  const T = sentShapeTables();
+  const base = T.sceneStyle[scene];
   if (!base) return "";
   const s = opts.firstContact && scene === "条件フォーム受領"
-    ? { n: FIRST_CONTACT_FORM_NANITOZO.n, nanitozo: FIRST_CONTACT_FORM_NANITOZO.nanitozo, nanitozoWon: null, emoji: FIRST_CONTACT_FORM_NANITOZO.emoji }
+    ? { n: T.firstForm.n, nanitozo: T.firstForm.nanitozo, nanitozoWon: null, emoji: T.firstForm.emoji }
     : base;
   const label = opts.firstContact && scene === "条件フォーム受領" ? "条件フォーム受領（真の初回・こちらの送信がまだ無い）" : scene;
   const nani = s.nanitozo < NANITOZO_NEAR_ZERO ? "付けない" : s.nanitozo >= 50 ? "付ける方が普通" : s.nanitozo >= 30 ? "半々" : "付けない方が普通";
   const phrase = SCENE_PHRASE_RATE[scene];
-  return `\n③ お客様の発言の場面は「${label}」（実送信${s.n}組）: 「何卒よろしくお願い致します」を付けたのは **${s.nanitozo}%**`
+  return `\n③ お客様の発言の場面は「${label}」（${T.takeuchi ? "竹内さんの手打ち" : "実送信"}${s.n}組）: 「何卒よろしくお願い致します」を付けたのは **${s.nanitozo}%**`
     + `${s.nanitozoWon != null ? `（成約した会話では ${s.nanitozoWon}%）` : ""}＝${nani}。`
     + `絵文字を使った返信は ${s.emoji}%${s.emoji < 80 ? `（絵文字なしの返信も ${Math.round(100 - s.emoji)}% ある）` : ""}。`
     + (phrase ? `言い回しの率: ${phrase}。` : "");
@@ -231,16 +273,31 @@ export function buildEmojiLineNote(): string {
  *     設計知見「汚れた材料は渡さない方がまし」）
  */
 export function buildSentShapeNoteAll(customerScene: CustomerScene | null = null, opts: { firstContact?: boolean } = {}): string {
+  const T = sentShapeTables();
   const order: SentKind[] = ["内覧の待ち合わせ", "ピックアップの約束", "短い返し", "内覧の案内", "確認の約束", "申込", "見積書", "物件・書類の送付（ご査収）", "物件カード"];
-  const table = order.map((k) => `${k} ${NANITOZO_RATE[k]}%`).join(" ／ ");
+  const table = order.map((k) => `${k} ${T.nanitozo[k]}%`).join(" ／ ");
+  const shape = T.takeuchi
+    ? `② 改行（竹内さんの手打ち）: 1行は **${T.lineMedian}字前後**（長くても${T.lineP90}字）。`
+      + `${T.lineP90}字を超える行は意味の切れ目（「〜となります」「〜ので」「〜ため」の後）で分ける。`
+      + T.blankRule
+      + `全体の行数は中央値（短い返し${T.shape["短い返し"].lines}行・約束や案内${T.shape["確認の約束"].lines}行・見積書${T.shape["見積書"].lines}行）。`
+    : `② 改行: 1行は **17字前後**（長くても${LINE_CHARS_P90}字）。1文ごとに改行する。`
+      + `${LINE_CHARS_P90}字を超える行は意味の切れ目（「〜となります」「〜ので」「〜ため」の後）で分ける。`
+      + `話題が変わる所は**空行**で段落を分ける（2行以上の実送信の${BLANK_LINE_RATE}%が空行を使っている）。`
+      + `全体の行数は中央値2行・上位25%で4行（短い返しは2行・約束や案内は3行・見積書6行・物件カード11行）。`;
   return `\n\n【最後に確認：実送信の形】`
-    + `①「何卒よろしくお願い致します」は実送信 全体の5.5%しか付いていない。書こうとしている内容で決める: ${table}。`
-    + `付けるなら**最終行に1行だけ**（実送信の86.1%が最終行。本文の途中に置かない）。`
+    + (T.takeuchi
+      ? `①「何卒よろしくお願い致します」は竹内さんの手打ちの${T.nanitozoAll}%に付いている。書こうとしている内容で決める: ${table}。`
+      : `①「何卒よろしくお願い致します」は実送信 全体の5.5%しか付いていない。書こうとしている内容で決める: ${table}。`)
+    // 2026-10-09 竹内さん「入れたり入れなかったりする1行も…違いが明確になる可能性」: 竹内さんの手打ち 180日 739番で、何卒は文の長さとその日最初で割れる
+    //   （初回 5文以上 71%・3〜4文 24%／続きの会話 5文以上 39%・3〜4文 30%・1〜2文 22%／その日最初 41%・続き 28%）。中身の種類だけより当たる（67%→71%）。
+    //   時間帯・やり取りの回数・日数・直前の文の長さは効かなかった（scripts/audit-customer-mindset.ts --phase=optional-lines）。既定 off・SENT_SHAPE_NANITOZO_LEN=on で入る（試験で確かめるまで）
+    + (T.takeuchi && (process.env.SENT_SHAPE_NANITOZO_LEN ?? "").trim().toLowerCase() === "on"
+      ? `文の長さとその日最初でも割れる: 5文以上の返信 39%（初回は71%）・3〜4文 30%・1〜2文 22%／その日最初の返信 41%・同じ日の続き 28%。`
+      : "")
+    + `付けるなら**最終行に1行だけ**（実送信の${T.nanitozoLastLine}%が最終行。本文の途中に置かない）。`
     + `物件カード・ご査収・画像だけの送付には**付けない**（実送信ほぼ0）。`
-    + `② 改行: 1行は **17字前後**（長くても${LINE_CHARS_P90}字）。1文ごとに改行する。`
-    + `${LINE_CHARS_P90}字を超える行は意味の切れ目（「〜となります」「〜ので」「〜ため」の後）で分ける。`
-    + `話題が変わる所は**空行**で段落を分ける（2行以上の実送信の${BLANK_LINE_RATE}%が空行を使っている）。`
-    + `全体の行数は中央値2行・上位25%で4行（短い返しは2行・約束や案内は3行・見積書6行・物件カード11行）。`
+    + shape
     + (customerScene ? buildCustomerSceneStyleNote(customerScene, opts) : "")
     + buildEmojiLineNote();
 }

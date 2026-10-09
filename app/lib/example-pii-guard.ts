@@ -50,6 +50,58 @@ function personalValueKinds(t: string): number {
   return [MOBILE_RE.test(t), POSTAL_VALUE_RE.test(t) || POSTAL_BARE_RE.test(t), HOME_ADDRESS_RE.test(t), BIRTH_LABELED_RE.test(t), EMAIL_RE.test(t)].filter(Boolean).length;
 }
 
+/**
+ * 2026-10-09 RAG のゴミ調査で見つけた穴: 緊急連絡先・ご家族の情報を**ラベル無し**で並べた発言
+ *   （「頼経大ヨリツネダイ 〇〇年〇月〇日 岡山県岡山市中区祇園66-11 知らない 〇〇〇-〇〇〇〇-〇〇〇〇 母 専業主婦」）は
+ *   「現住所：」のラベルが無いので HOME_ADDRESS_RE に当たらず、携帯・生年月日は伏せ済みで値が1種類も残らない＝素通りしていた（手本 7行・ナレッジの元）。
+ * 線: ラベル無しの住所の形（市区町村＋番地の数字）＋同じ文に**人の情報の強い印**（生年月日の値・伏せ字・携帯・続柄・緊急連絡先・職業の語 等）。
+ *   物件の住所（「住所：大阪市…」「所在地」「現地エントランス」「弊社」の直後）は当てない。人の印が無い住所（物件カードの所在地）も当てない。
+ */
+const UNLABELED_ADDRESS_RE = /(?:[一-龥]{2,3}(?:都|道|府|県))?[一-龥ぁ-んヶ]{1,6}(?:市|区|郡|町|村)[一-龥ぁ-んァ-ヶヶ0-9０-９]{0,14}?[0-9０-９]{1,4}(?:丁目|番地?)?\s*[-‐－ー−]\s*[0-9０-９]{1,4}(?:\s*[-‐－ー−]\s*[0-9０-９]{1,4})?/g;
+/** 物件・会社の住所の印（住所の直前 12字にあれば当てない。「現住所」「旧住所」は人の住所なので除く） */
+const PROPERTY_ADDRESS_LEAD_RE = /(?<![現旧前]|登記)住所|所在地|現地|エントランス|弊社|本社|会社|店舗|📍|物件|マンション|号室/;
+/** 人の情報の強い印（物件の文には出ない物だけ） */
+const PERSON_SIGNAL_RE = /〇〇年〇月〇日|〇〇〇-〇〇〇〇-〇〇〇〇|続柄|緊急連絡先|生年月日|住居年数|フリガナ|氏名|専業主婦|自営業|会社員|(?:^|[\s　])(?:母|父|兄|姉|弟|妹|祖母|祖父|義母|義父)(?=[\s　]|$)/m;
+/** 住所の直後に会社・ビルの名前（弊社・取引先の住所） */
+const COMPANY_TRAIL_RE = /日宝御堂|蓮産業|株式会社|ビル\s*[0-9０-９]*\s*[FＦ階]|支社|本社|事務所/;
+/** お客様の自宅の住所と分かる直前の言い方 */
+const PERSONAL_ADDRESS_LEAD_RE = /ご?自宅|ご?実家|ご住所|お住まい|住んで(?:いる|おり)/;
+/** ラベル無しの人の住所を探す（addresses: 箇所・withPerson: 人の情報の並びの中の住所が1つでもあるか） */
+function scanUnlabeledAddresses(text: string | null | undefined): { addresses: string[]; withPerson: boolean } {
+  const t = String(text ?? "");
+  if (!/[0-9０-９]/.test(t)) return { addresses: [], withPerson: false };
+  // 生年月日は西暦の数字の形だけ（「平成31年2月13日 大阪府…」＝事故物件サイトの投稿日のスクショを人の情報にしない・10/09 監査 1106ad3c）
+  const hasPerson = PERSON_SIGNAL_RE.test(t) || MOBILE_RE.test(t) || /(?:19\d{2}|200\d)\s*[.．/／年]\s*\d{1,2}\s*[.．/／月]\s*\d{1,2}/.test(t);
+  const addresses: string[] = [];
+  let withPerson = false;
+  for (const m of t.matchAll(UNLABELED_ADDRESS_RE)) {
+    const i = m.index ?? 0;
+    const lead = t.slice(Math.max(0, i - 12), i);
+    const trail = t.slice(i + m[0].length, i + m[0].length + 25);
+    // 会社・ビルの住所（「…瓦町3-4-10 日宝御堂ビル5F 蓮産業株式会社」＝弊社の住所の案内）は当てない（10/09 監査 7efcd3f9）
+    if (COMPANY_TRAIL_RE.test(trail)) continue;
+    // お客様の自宅と分かる言い方（「お伺いさせていただくご住所四條畷市…」「自宅住所（…）」）は人の印が無くても人の住所（10/09 監査 244d865c・c01a4b0a）。
+    //   住所の形の先頭が「住所四條畷市」のように言い方の語を含むことがあるので、先頭の数字までも見る
+    if (PERSONAL_ADDRESS_LEAD_RE.test(lead + m[0].slice(0, 4))) { addresses.push(m[0]); continue; }
+    if (!hasPerson) continue;
+    if (PROPERTY_ADDRESS_LEAD_RE.test(lead)) continue;
+    if (/(?:現|旧|前|登記)住所[^\n]{0,8}$/.test(lead)) continue;   // ラベル付きは HOME_ADDRESS_RE の担当
+    addresses.push(m[0]);
+    withPerson = true;
+  }
+  return { addresses, withPerson };
+}
+/** ラベル無しの人の住所の箇所（無ければ空） */
+export function unlabeledPersonalAddresses(text: string | null | undefined): string[] {
+  return scanUnlabeledAddresses(text).addresses;
+}
+/** ラベル無しの住所が人の情報の並び（続柄・伏せ字・携帯 等）と一緒か（＝発言の塊ごと伏せる）。自宅の言い方だけの時は住所だけ伏せる */
+export function unlabeledAddressKind(text: string | null | undefined): "with_person" | "address_only" | null {
+  const r = scanUnlabeledAddresses(text);
+  if (!r.addresses.length) return null;
+  return r.withPerson ? "with_person" : "address_only";
+}
+
 export type ExamplePiiKind = "id_document" | "personal_document" | "application_form" | "personal_value";
 export type ExamplePiiHit = { kind: ExamplePiiKind; reason: string };
 
@@ -75,6 +127,10 @@ export function examplePiiReason(text: string | null | undefined): ExamplePiiHit
   if (doc) return { kind: "personal_document", reason: `個人の書類（${doc}）` };
   const formShape = FORM_HEAD_RE.test(t) || APPLICATION_FORM_RE.test(t) || (isApplicationPayload(t) && filledFormLineCount(t) >= 2);
   if (formShape && value) return { kind: "application_form", reason: "記入済みの申込フォーム" };
+  // 2026-10-09: ラベル無しの住所＋人の情報の印（緊急連絡先・ご家族の情報の並び）＝発言の塊ごと伏せる（カナの氏名・続柄も一緒に消える）
+  { const k = unlabeledAddressKind(t);
+    if (k === "with_person") return { kind: "application_form", reason: "ラベル無しの住所と人の情報（連絡先の記入）" };
+    if (k === "address_only") return { kind: "personal_value", reason: "ラベル無しの自宅の住所" }; }
   // 連絡先の記入（携帯＋郵便番号・現住所・生年月日・メールのうち2種類以上）＝フォームの見出しが無くても申込・身元の記入として丸ごと伏せる（カナの氏名が値だけ伏せでは残るため）
   if (personalValueKinds(t) >= 2) return { kind: "application_form", reason: "連絡先の記入（2種類以上の値）" };
   // 申込の情報を管理会社・保証会社へ回す文（年収の値＋勤務先・勤続・〒・生年月日 等）。「年収300万以上が目安」のような説明文は組の語が無いので当てない
@@ -95,7 +151,9 @@ const HOME_ADDRESS_LINE_G = /(現住所|登記住所|旧住所|前住所)(\s*[:�
 
 /** 個人の値だけを伏せる（文の他の部分は残す） */
 export function maskPersonalValues(text: string): string {
-  return text
+  let out = text;
+  for (const a of unlabeledPersonalAddresses(text)) out = out.split(a).join(a.startsWith("ご住所") ? "ご住所〇〇" : "〇〇（住所）");
+  return out
     .replace(MOBILE_G, "〇〇〇-〇〇〇〇-〇〇〇〇")
     .replace(BIRTH_G, "〇〇年〇月〇日")
     .replace(POSTAL_G, "〒〇〇〇-〇〇〇〇")
@@ -171,7 +229,7 @@ export function redactExampleSpansInPrompt(text: string): { text: string; redact
 
 /** 出口の速い判定: 本文（JSON の文字列のまま）に手本の形と個人情報の手掛かりの両方が無ければ何もしない */
 const QUICK_EXAMPLE_RE = /お客様:\s?「|スモラ:\s?「|\[お客様の状況\]|段階\) 「/;
-const QUICK_PII_RE = /生年月日|フリガナ|氏名|現住所|緊急連絡先|勤務先|年収|0[789]0[-‐－ー\s]?\d{4}|公安委員会|@[A-Za-z0-9-]+\.|(?:19\d{2}|200\d|201\d)\s*[年.／/]|昭和|平成|〒|臓器|脳死|資格確認書|주민등록|マイナンバー総合/;
+const QUICK_PII_RE = /生年月日|フリガナ|氏名|現住所|緊急連絡先|勤務先|年収|0[789]0[-‐－ー\s]?\d{4}|公安委員会|@[A-Za-z0-9-]+\.|(?:19\d{2}|200\d|201\d)\s*[年.／/]|昭和|平成|〒|臓器|脳死|資格確認書|주민등록|マイナンバー総合|〇〇年〇月〇日|〇〇〇-〇〇〇〇|続柄|専業主婦|自営業|ご住所|自宅/;   // 10/09: ラベル無しの住所の並び（伏せ済みの値＋続柄・職業）も
 export function mightHaveExamplePii(rawBody: string): boolean {
   return QUICK_EXAMPLE_RE.test(rawBody) && QUICK_PII_RE.test(rawBody);
 }

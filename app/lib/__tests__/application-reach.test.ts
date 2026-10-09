@@ -3,7 +3,7 @@
 // 文は実物（scripts/audit-apply-stage-nudge.ts で読んだ物・名前と物件名は伏せた）
 import {
   applicationReachEnabled, legacyActionWinRatesEnabled, outcomeApplyBasisEnabled, reachMinN, reachActionKey, turnSceneAt, stageBucketAt,
-  computeReachStats, buildReachNote, reachedApplication, winningOutcomeTag, analysisOutcomeOf, analysisCutoffAt,
+  computeReachStats, buildReachNote, reachedApplication, reachStrictEnabled, wilsonInterval, hasSeparatedPair, winningOutcomeTag, analysisOutcomeOf, analysisCutoffAt,
   type ReachDecisionPoint, type ReachEpisode,
 } from "../application-reach";
 import { pickConfirmCandidate, confirmPatch, autoSeiyakuBlockedByConfirm, confirmHeadline, isConfirmChoice, type ConfirmCandidateRow } from "../outcome-confirm";
@@ -27,7 +27,7 @@ it("戻す口: 新は既定 on・旧の勝率は既定 off（BRAIN_ACTION_WIN_RA
   eq(applicationReachEnabled({}), true); eq(applicationReachEnabled({ BRAIN_APPLY_REACH: "off" }), false);
   eq(legacyActionWinRatesEnabled({}), false); eq(legacyActionWinRatesEnabled({ BRAIN_ACTION_WIN_RATES: "on" }), true);
   eq(outcomeApplyBasisEnabled({}), true); eq(outcomeApplyBasisEnabled({ OUTCOME_APPLY_BASIS: "off" }), false);
-  eq(reachMinN({}), 20); eq(reachMinN({ BRAIN_APPLY_REACH_MIN_N: "8" }), 8); eq(reachMinN({ BRAIN_APPLY_REACH_MIN_N: "1" }), 20);
+  eq(reachMinN({}), 10); eq(reachMinN({ BRAIN_APPLY_REACH_MIN_N: "8" }), 8); eq(reachMinN({ BRAIN_APPLY_REACH_MIN_N: "1" }), 10);
 });
 
 // ─── 場面と段階 ─────────────────────────────────────────────────────
@@ -200,6 +200,51 @@ it("見張りの一致率: same／other／not_pressed だけで数える", () =>
     { brain_action: "", aix_verdict: "unexpected" }, { brain_action: "property_send", aix_verdict: "other" },
   ]);
   eq(r.viewing_invite, { same: 2, n: 3, rate: 0.667 }); eq(r.property_send, { same: 0, n: 1, rate: 0 }); eq(r[""], undefined);
+});
+
+// ─── 申込到達率の厳密な数え方（10/08 竹内さん「進めて良い」＝改善案1〜6・REACH_STRICT=off で旧） ─────
+it("厳密: ①30日たった判断だけ・届いた＝30日以内の申込 ②実際に送った AIX ③案件は最初の判断1つ ④理由不明の切り替えは外す ⑤初回のガードは外す", () => {
+  eq(reachStrictEnabled({}), true); eq(reachStrictEnabled({ REACH_STRICT: "off" }), false);
+  const P = (c: string, daysAgo: number, o: Partial<ReachDecisionPoint> = {}): ReachDecisionPoint =>
+    ({ conversationId: c, episodeNo: 1, at: iso(NOW - daysAgo * DAY), action: "viewing_invite", scene: "viewing", bucket: "pre_viewing", ...o });
+  const points: ReachDecisionPoint[] = [
+    P("a", 40, { actualAction: "viewing_invite" }),                        // 申込 5日後 → 届いた
+    P("a", 39, { actualAction: null }),                                     // ③ 同じ案件の2つ目（別の判断でも数えない）
+    P("b", 10, { actualAction: "viewing_invite" }),                        // ① 30日たっていない（申込済みでも数えない）
+    P("c", 50, { actualAction: "viewing_invite" }),                        // 申込 40日後 → 30日の外＝届いていない
+    P("d", 45, { action: "viewing_invite", actualAction: null }),         // ② 提案は内覧誘導でも送っていない→返信
+    P("e", 45, { actualAction: "viewing_invite" }),                        // ④ 理由不明の切り替え→外す
+    P("f", 45, { actualAction: "viewing_invite" }),                        // ④ 確定の審査落ち→申込に届いた
+    P("g", 45, { actualAction: null, src: "guard:first_contact" }),        // ⑤ 初回のガード→外す
+  ];
+  const episodes: ReachEpisode[] = [
+    { conversationId: "a", episodeNo: 1, appliedAt: iso(NOW - 35 * DAY), result: "in_progress" },
+    { conversationId: "b", episodeNo: 1, appliedAt: iso(NOW - 5 * DAY), result: "in_progress" },
+    { conversationId: "c", episodeNo: 1, appliedAt: iso(NOW - 10 * DAY), result: "in_progress" },
+    { conversationId: "d", episodeNo: 1, appliedAt: null, result: "lost" },
+    { conversationId: "e", episodeNo: 1, appliedAt: iso(NOW - 40 * DAY), result: "switched", switchReason: "unknown" },
+    { conversationId: "f", episodeNo: 1, appliedAt: iso(NOW - 40 * DAY), result: "switched", switchReason: "screening_rejected" },
+    { conversationId: "g", episodeNo: 1, appliedAt: null, result: "lost" },
+  ];
+  const rows = computeReachStats(points, episodes, { nowMs: NOW, strict: true });
+  eq(rows.map((r) => [r.action, r.n, r.reached]), [["viewing_invite", 3, 2], ["reply", 1, 0]]);
+  // 旧の数え方は変わらない（strict を付けない時）
+  const old = computeReachStats(points, episodes, { nowMs: NOW });
+  ok(old.some((r) => r.action === "viewing_invite" && r.n >= 4), "旧は提案で数え・30日前の届いた判断も入る");
+});
+it("厳密: ⑥95%の幅が重ならない時だけ渡す（幅を添える）", () => {
+  const [lo, hi] = wilsonInterval(6, 10);
+  ok(lo > 0.3 && lo < 0.32 && hi > 0.83 && hi < 0.84, `${lo} ${hi}`);
+  eq(wilsonInterval(0, 0), [0, 1]);
+  const close = [{ scene_key: "viewing", stage_bucket: "pre_viewing" as const, action: "viewing_invite", n: 10, reached: 6, rate: 0.6 }, { scene_key: "viewing", stage_bucket: "pre_viewing" as const, action: "reply", n: 10, reached: 2, rate: 0.2 }];
+  eq(hasSeparatedPair(close), false);
+  eq(buildReachNote(close, "viewing", "pre_viewing", { minN: 10, strict: true }), "", "幅が重なる＝渡さない");
+  ok(buildReachNote(close, "viewing", "pre_viewing", { minN: 10 }) !== "", "旧は渡す");
+  const far = [{ ...close[0], n: 30, reached: 24, rate: 0.8 }, { ...close[1], n: 30, reached: 6, rate: 0.2 }];
+  eq(hasSeparatedPair(far), true);
+  const note = buildReachNote(far, "viewing", "pre_viewing", { minN: 10, strict: true });
+  ok(note.includes("80%（24/30案件・95%の幅 63〜90%）"), note);
+  ok(note.includes("30日以内に申込"), note);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

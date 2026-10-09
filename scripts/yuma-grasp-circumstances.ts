@@ -69,6 +69,13 @@ const SCENES: Record<string, { rows: Row[]; expect: string }> = {
   rq_288: { rows: [...rec(ESLEAD, 0),
     { s: "customer", t: "ここがいいと思うのですが見積もり出してもらえますか？\nあと海外にいて収入証明がないのですが、しんさとおりますか？", sec: 3600 }],
     expect: "見積の約束（or AIX）と審査の答えの両方" },
+  // 10/08 竹内さん③「予定が詰まって・出張中（日付なし）は先に部屋を抑える方向で。出張中ならオンライン内見も対応可能と伝える」（版 pre＝この決定の前／on）
+  // fb8ab8d5 9/7 の実物（物件オススメの後「今月前半結構予定詰まってて🥲」→ 竹内さん「一度室内撮影…お申込しお部屋を抑えた状態で…ご案内」）
+  busy_now: { rows: [...rec(ESLEAD, 0), { s: "customer", t: "ここ気になるんですが、今月前半結構予定詰まってて🥲", sec: 3600 }],
+    expect: "人: 埋まる可能性→室内撮影→お申込しお部屋を抑えた状態でご都合よろしい日にご案内（オンライン内見は無し）" },
+  // d367d1b9 7/29 の実物「現在出張中のため、そちらへ伺うことができません」（日付なし）
+  trip_now: { rows: [...rec(ESLEAD, 0), { s: "customer", t: "内覧したいのですが、現在出張中のため、そちらへ伺うことができません", sec: 3600 }],
+    expect: "お部屋を抑えた状態でご内覧の提案＋オンライン内見や、室内の撮影もご対応（竹内さんの形）・日時を組まない" },
   // 前の発言で遠方 → 物件オススメ → 前向き
   remote_prev: { rows: [
     { s: "customer", t: "今広島に住んでいて、内見が難しい状況なのですが大丈夫でしょうか？", sec: 0 },
@@ -112,6 +119,8 @@ async function main() {
       process.env.APPEAL_CIRCUMSTANCES = ver === "off" ? "off" : "";
       process.env.SEARCH_RESULT_TWO_CHOICE = ver === "off" ? "off" : "";
       process.env.REQUEST_LEDGER = ver === "off" ? "off" : "";
+      // pre＝③の決定（日付なしの抑える提案・オンライン内見）だけ前に戻す
+      for (const k of ["CIRCUMSTANCE_UNDATED_HOLD", "CIRCUMSTANCE_ONLINE_VIEWING", "APPEAL_ONLINE_VIEWING"]) process.env[k] = ver === "pre" || ver === "off" ? "off" : "";
       await h.waitUntilYumaQuiet(own.msg);
       const last = Math.max(...sc.rows.map((r) => r.sec));
       const t0 = Date.now() + 120_000 - last * 1000;

@@ -3,7 +3,7 @@
 //   YUMA の生成（直す前・DeepSeek）と、スタッフが自分で書いて送った2通目（名前だけ置き換え）をそのまま使う。
 import {
   isEstimateCard, estimatePropertiesOf, resolveEstimateClosing, buildEstimateSecondNote,
-  findEstimateSecondProblems, ensureEstimateClosing, ESTIMATE_SECOND_EXAMPLES, ESTIMATE_RECEIPT_LINE, ESTIMATE_VIEWING_LINE,
+  findEstimateSecondProblems, ensureEstimateClosing, estimateAppealOf, estimateHeadOf, ESTIMATE_SECOND_EXAMPLES, ESTIMATE_RECEIPT_LINE, ESTIMATE_VIEWING_LINE,
 } from "../estimate-second-message";
 
 let pass = 0, fail = 0;
@@ -24,6 +24,22 @@ t("内覧の前・質問だけ → ご査収", resolveEstimateClosing({ viewed: 
 t("内覧の後 → ご査収（申込はブレインが決める）", resolveEstimateClosing({ viewed: true, reactionKind: "positive" }).closing === "receipt");
 t("スタッフが申込を選んだ時だけ申込", resolveEstimateClosing({ viewed: false, reactionKind: null, ctaPreference: "apply" }).closing === "apply");
 t("スタッフが内覧を選んだ → 内覧（内覧の後でも）", resolveEstimateClosing({ viewed: true, ctaPreference: "viewing" }).closing === "viewing");
+// 2026-10-08 竹内「刺さる条件（スコアリング的に）なら内覧または申込誘導・空室なら内覧誘導」
+t("採点で刺さる・今見られる → 内覧誘導", resolveEstimateClosing({ viewed: false, reactionKind: "question", appeal: "strong", notViewable: false }).closing === "viewing");
+t("採点で刺さる・退去予定 → 申込誘導", resolveEstimateClosing({ viewed: false, reactionKind: null, appeal: "strong", notViewable: true }).closing === "apply");
+t("採点で刺さると言えない → ご査収（お客様が前向きでも）", resolveEstimateClosing({ viewed: false, reactionKind: "positive", appeal: "weak" }).closing === "receipt");
+t("刺さっても懸念を言っている → ご査収", resolveEstimateClosing({ viewed: false, reactionKind: "concern", appeal: "strong" }).closing === "receipt");
+t("刺さっても内覧の後 → ご査収", resolveEstimateClosing({ viewed: true, appeal: "strong" }).closing === "receipt");
+t("採点なし・前向き・退去予定 → 申込誘導", resolveEstimateClosing({ viewed: false, reactionKind: "positive", appeal: null, notViewable: true }).closing === "apply");
+{
+  const prev = process.env.ESTIMATE_CLOSING_BY_APPEAL; process.env.ESTIMATE_CLOSING_BY_APPEAL = "off";
+  t("off で旧（採点を見ない）", resolveEstimateClosing({ viewed: false, reactionKind: "question", appeal: "strong" }).closing === "receipt");
+  if (prev === undefined) delete process.env.ESTIMATE_CLOSING_BY_APPEAL; else process.env.ESTIMATE_CLOSING_BY_APPEAL = prev;
+}
+t("複数のお部屋: 1件でも刺さる → strong・今見られる刺さる部屋があれば内覧", JSON.stringify(estimateAppealOf([{ appeal: "weak", notViewable: false }, { appeal: "strong", notViewable: true }, { appeal: "strong", notViewable: false }])) === JSON.stringify({ appeal: "strong", notViewable: false }));
+t("複数のお部屋: 刺さるのが退去予定だけ → 申込側", estimateAppealOf([{ appeal: "strong", notViewable: true }, { appeal: null, notViewable: false }]).notViewable === true);
+t("採点が1件も読めない → null", estimateAppealOf([{ appeal: null, notViewable: false }]).appeal === null);
+t("見出し → 建物名・号室", JSON.stringify(estimateHeadOf("エステムコート大阪WEST 805号室")) === JSON.stringify({ name: "エステムコート大阪WEST", room: "805" }) && JSON.stringify(estimateHeadOf("グレース畑中202号室")) === JSON.stringify({ name: "グレース畑中", room: "202" }) && estimateHeadOf("2部屋") === null);
 
 // ── 指示（最後に置く形）──
 {

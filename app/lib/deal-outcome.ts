@@ -544,3 +544,14 @@ export function strongPositiveStage(r: Pick<DealOutcomeRow, "max_stage" | "resul
   if (stageRank(r.max_stage) >= stageRank("viewing_held")) return "viewing_held";
   return null;
 }
+/**
+ * 強い正の重み（2026-10-08 竹内さん「申込で良いけど、さらにちゃんと成約したのはより良いデータとして入れておく」）。
+ *   オススメの学習（段6・計画④）で「送った＝正（1）」に足す重み: 確定の成約 3／申込 2／内覧の実施 1／それ以外 0。負は無い（失注は 0＝ラベルにしない）。
+ *   WIN_CONFIRMED_WEIGHT=off の時は確定の成約も申込と同じ 2（旧＝申込までで同じ扱い）
+ */
+export function strongPositiveWeight(stage: ReturnType<typeof strongPositiveStage>, env: Record<string, string | undefined> = process.env): number {
+  if (stage === "won") return (env.WIN_CONFIRMED_WEIGHT ?? "").trim().toLowerCase() === "off" ? 2 : 3;
+  if (stage === "applied") return 2;
+  if (stage === "viewing_held") return 1;
+  return 0;
+}

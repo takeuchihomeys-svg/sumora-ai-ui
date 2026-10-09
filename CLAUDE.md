@@ -37,6 +37,7 @@
 - 見積書作業 → `memory/dept_estimate_tool.md` を必ず読む
 - LINE返信AI作業 → `memory/dept_line_reply.md` を必ず読む
 - **🧪 テスト（YUMA・ブレイン・返信・AIX）を行う前に必ず `memory/test_protocol_brain.md` を読む**（YUMA だけ・試行錯誤は `LLM_TEST_MODE=deepseek-all`／最後の Claude は `LLM_TEST_FINAL_CLAUDE=1` で場面ごとに1〜2回・スクリプトは `scripts/lib/llm-test-harness.ts` を通す・報告に model/回数/費用。2026-10-01 竹内さん指示）
+- 🧪 ブレイン・two-stage・返信の生成・最終チェックを変える時は、変える前と後に `scripts/brain-exam.ts` を回し、`--baseline` で「悪くなった問題」が0か確かめる（`memory/test_protocol_brain.md` 9.7・2026-10-08 竹内さん承認）
 - 部署詳細・チーム構成が必要な場合 → `AGENTS.md` を読む（常時ロードしない）
 
 ---
@@ -123,6 +124,7 @@ VALUES (
 ### 参照方法（次セッション冒頭・設計作業前）
 - **まず `npx tsx --env-file=.env.local scripts/kb.ts --q="自然文の問い"` で引く（RAG・近さ＋語＋札＋新しさ＋段・退役した行は出ない）、次に分野の rules_digest**（2026-10-06 竹内さん）
   - 「★ 絶対・最優先」の別枠が出たら、それが一番上の決まり（下の行と食い違ったら P0 → P1 の順で従う）。決まりだけ欲しい時は `--max-p=1`
+  - **細部を確かめる時の手順**（2026-10-08 竹内さん承認・`kb.ts --help` と同じ）: ① 言い方を変えて2〜3回引く（症状で・決まりの言葉で・ボタン名やコード名で）② 返信・AIX の作業なら `--scene=..` ③ 題で判断せず `--id=<id8>` か `--full` で本文まで読む（「本文の一節で当たった行」も読む）④ 行どうしが食い違えば ★P0 → 新しい P1 の決定 → 古い行 の順に従い、「⚠ 要確認」の上書きの候補が出たら新しい方を読んで報告に書く ⑤ 見つからない・決まらない時は「設計知見に無い／決まっていない」と報告し、推測で埋めずに竹内さんに聞く ⑥ 決定を記録したら `scripts/kb-eval-set.ts` にも問いを2〜3個足す
 - **その分野の「今の決まり」を先に読む**: `memory/rules_digest_<reply|aix|brain|search|extension|estimate|viewing|cost>.md`（最新にするのは `npx tsx --env-file=.env.local scripts/kb-digest.ts --write`）
 ```sql
 SELECT title, insight, rationale FROM system_design_thinking

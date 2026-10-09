@@ -6,8 +6,9 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { isWaitPromiseNotes } from "@/app/lib/promise-timing";
 import { flagOn } from "@/app/lib/brain-attention";
 import { aixButtonText } from "@/app/lib/aix-action-text";
-import { legacyActionWinRatesEnabled, outcomeApplyBasisEnabled } from "@/app/lib/application-reach";
+import { legacyActionWinRatesEnabled, outcomeApplyBasisEnabled, attributionLineOf } from "@/app/lib/application-reach";
 import { pickConfirmCandidate, outcomeConfirmEnabled } from "@/app/lib/outcome-confirm";
+import { checkRagProbes, ragProbesWarningLine } from "@/app/lib/rag-probes-check";
 
 export const maxDuration = 60;
 
@@ -264,9 +265,9 @@ export async function GET(req: NextRequest) {
   let attributionLine = "";
   try {
     const m = attributionRow?.content ? JSON.parse(attributionRow.content as string) : null;
-    if (m && typeof m.rate === "number" && typeof m.total === "number") {
-      attributionLine = `\n\n🤖 AI貢献率: ${Math.round(m.rate * 100)}%（直近30日成約${m.total}件中${m.ai_assisted ?? 0}件AI貢献）`;
-    }
+    // 2026-10-08 竹内さん: 申込で数える（calc-ai-attribution が basis=applied で作る）・確定の成約は別に並べる（attributionLineOf）
+    const line = attributionLineOf(m);
+    if (line) attributionLine = `\n\n${line}`;
   } catch {
     // JSONパース失敗時はスキップ（レポート本体は送る）
   }
@@ -636,6 +637,13 @@ export async function GET(req: NextRequest) {
     }
     if (!applyLog24hErr && applyLog24hCount === 0) {
       loopWarnings.push("⚠️ 学習ループ停止の可能性: knowledge_apply_log 24h=0件（ナレッジ適用記録が止まっています）");
+    }
+    // 2026-10-09 RAG の見張り: match_* の ivfflat.probes が migrate-schema（毎晩 0:10）の作り直しで消えていないか（読むだけ・rag-probes-check.ts）
+    {
+      const probes = await checkRagProbes(supabase);
+      const w = ragProbesWarningLine(probes);
+      if (w) { loopWarnings.push(w); console.warn(JSON.stringify({ tag: "rag:probes-missing", funcs: probes.status === "missing" ? probes.funcs : [] })); }
+      else if (probes.status === "unknown") console.warn(JSON.stringify({ tag: "rag:probes-check-failed", error: probes.error }));
     }
     const loopWarningBlock = loopWarnings.length > 0 ? `\n${loopWarnings.join("\n")}` : "";
     statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}${boundaryLine ? `\n${boundaryLine}` : ""}\n${alignLine}${loopWarningBlock}`);

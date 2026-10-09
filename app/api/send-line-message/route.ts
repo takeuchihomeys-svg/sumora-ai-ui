@@ -416,11 +416,16 @@ export async function POST(req: NextRequest) {
   //   済ませていれば完了（✅ 返信で済み）にする（判定 aix-item-cleanup.staffTextFulfillsAixItem）。
   //   下の宣言の再分析（ブレインが次の AIX を登録し直す）より先に済ませる＝同じ after の中で await してから再分析へ進む
   //   （順が逆だと、再分析の「同じ指示は再通知しない」に吸われた後に完了して、宣言の要対応が消える）
-  const completeByText = async (cid: string | null): Promise<void> => {
+  const completeByText = async (cid: string | null, o: { advanceQueue?: boolean } = {}): Promise<void> => {
     if (!message || origin === "aix" || !cid) return;
     try {
       const { completeAixActionItemByStaffText } = await import("@/app/lib/aix-action-items");
-      await completeAixActionItemByStaffText(cid, message, sentAtIsoForFacts);
+      const done = await completeAixActionItemByStaffText(cid, message, sentAtIsoForFacts);
+      // 2026-10-09: 返信の本文で要対応を済ませた → 残りの約束の次の AIX要対応を立てる（約束の送信の後はブレインの再分析が立てるので呼ばない・既定 off・PROMISE_QUEUE=on で入る）
+      if (done && o.advanceQueue) {
+        const { advancePromiseQueue } = await import("@/app/lib/promise-queue-server");
+        await advancePromiseQueue(cid, { trigger: "staff_text", sentText: message, sentAt: sentAtIsoForFacts });
+      }
     } catch (e) {
       console.warn("[send-line-message] complete aix item by staff text failed:", e instanceof Error ? e.message : e);
     }
@@ -434,7 +439,7 @@ export async function POST(req: NextRequest) {
           const { data: convRow } = await supabase.from("conversations").select("id").eq("line_user_id", line_user_id).eq("account", accountKey).maybeSingle();
           cid = (convRow?.id as string | undefined) ?? null;
         }
-        await completeByText(cid);
+        await completeByText(cid, { advanceQueue: true });
       });
     }
     // 2026-09-12 竹内（Sさん事例）: 募集状況等の確認の宣言（「お送り頂きました物件、募集状況確認させて頂きます」）も対象

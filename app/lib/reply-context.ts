@@ -2710,6 +2710,12 @@ export function resolveCloser(
   if (ruleCloser && ruleCloser !== "commit_until_found") return mk(ruleCloser, pair.rule?.nanisotsu ?? false, `PAIR_MATRIX ${pair.ruleId} の closer 指定`);
   // s === "condition_ask" は「ヒアリング回答（answer / condition_change）」を含む
   const milestone = c === "condition_change" || c === "concern" || s === "condition_ask" || !!opts.isFirstContact || ruleCloser === "commit_until_found";
+  // 2026-10-09 竹内さん「全部の文に全力サポートを入れると胡散臭い。入れる場面を絞る」: 竹内さんの手打ち（全期間）で「全力でサポート」を入れた率は
+  //   初回 73%（67/92）・ピックアップの約束 28%（62/224）・新着待ち 16%・審査 6%・見積 0%・内覧 1%＝初回だけ入れる（節目の条件変更・懸念・フォームの回答は入れない）。
+  //   戻す ZENRYOKU_FIRST_ONLY=off（旧＝節目は全部）
+  if (milestone && sig.hasConcreteDeclaration && !opts.isFirstContact && ruleCloser !== "commit_until_found" && (process.env.ZENRYOKU_FIRST_ONLY ?? "").toLowerCase() !== "off") {
+    return mk("none", false, "節目だが初回でない→全力サポートは入れない（竹内さん 初回以外は 28%以下・10/09）");
+  }
   if (milestone && sig.hasConcreteDeclaration) {
     if (priorCommit) return mk("none", pair.rule?.nanisotsu ?? true, "直前で全力サポート済み→約束宣言＋何卒のみ（PRIOR_CLOSING_RE）");
     // 何卒＝「お願いの入口」（初回・ヒアリング回答＝フォーム受領・顧客への依頼）のみ。進行中の条件変更（瑞希例）は付けない

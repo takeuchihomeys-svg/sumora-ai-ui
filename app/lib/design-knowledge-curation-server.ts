@@ -4,7 +4,7 @@
 //   まとめ（分野ごと）と要確認の一覧は design_rules_digest（1分野1行）に置く。手元では scripts/kb-digest.ts が memory/rules_digest_<分野>.md に写す
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  AREAS, buildDigest, CONFLICT_RULE, findDecisionConflicts, findDuplicates, parseSimilar, planFromRelation, similarPairs, similarPrompt, SIMILAR_SYSTEM,
+  AREAS, buildDigest, CONFLICT_RULE, mojibakeFields, findDecisionConflicts, findDuplicates, parseSimilar, planFromRelation, similarPairs, similarPrompt, SIMILAR_SYSTEM,
   type KbRow, type RetirePlan, type ReviewItem,
 } from "@/app/lib/design-knowledge-curation";
 import { callDeepSeek } from "@/app/lib/vision-alt-provider";
@@ -144,6 +144,9 @@ export async function normalizeKbTags(sb: SupabaseClient, rows: KbRow[], dry: bo
     if (!r.is_current) continue;
     const n = normalizeTags(r.tags);
     if (n.tags.length > TAG_MAX) over.push({ kind: "tags", ids: [r.id], note: `札が ${n.tags.length}個（${TAG_MAX}個まで）— 軸1〜2＋機能1〜2＋事例1 に絞る` });
+    // 2026-10-08 文字化けの行（PowerShell の REST で入れた「????」等）は要確認へ（元の文を記録から探して kb-insert で入れ直し、kb-retire で退役）
+    const mb = mojibakeFields(r as Parameters<typeof mojibakeFields>[0]);
+    if (mb.length) over.push({ kind: "mojibake", ids: [r.id], note: `文字化け（${mb.join("・")}）— 元の文を探して scripts/kb-insert.ts で入れ直し、古い行は kb-retire` });
     if (!n.changed) continue;
     planned++;
     if (examples.length < 8) examples.push(`${(r.tags ?? []).join("/")} → ${n.tags.join("/")}`);
@@ -237,12 +240,12 @@ export async function runDesignKnowledgeCycle(sb: SupabaseClient, opts: { dry: b
   };
 }
 
-const REVIEW_ORDER: Record<ReviewItem["kind"], number> = { priority: 0, conflict: 1, decision: 2, similar: 3, tags: 4 };
+const REVIEW_ORDER: Record<ReviewItem["kind"], number> = { priority: 0, conflict: 1, decision: 2, similar: 3, tags: 4, mojibake: 5 };
 export function reviewMarkdown(review: ReviewItem[], rows: KbRow[], nowIso: string, counts?: Record<number, number>): string {
   const byId = new Map(rows.map((r) => [r.id, r]));
   const t = (id: string) => { const r = byId.get(id); return r ? `${r.title.replace(/\s+/g, " ").slice(0, 90)} ［P${effectivePriority(r)}・${r.created_at.slice(0, 10)}・${id.slice(0, 8)}］` : id; };
   const sorted = [...review].sort((a, b) => REVIEW_ORDER[a.kind] - REVIEW_ORDER[b.kind]);
-  const head: Record<ReviewItem["kind"], string> = { priority: "段（優先順位）", conflict: "食い違い・上書き（新しい決定の方を残す案）", decision: "竹内さんの決定と食い違うかもしれない行", similar: "似ている組", tags: "札の数" };
+  const head: Record<ReviewItem["kind"], string> = { priority: "段（優先順位）", conflict: "食い違い・上書き（新しい決定の方を残す案）", decision: "竹内さんの決定と食い違うかもしれない行", similar: "似ている組", tags: "札の数", mojibake: "文字化け" };
   const out: string[] = [
     `# 設計知見の要確認（自動で退役しなかった物・${nowIso.slice(0, 10)}）`,
     "",

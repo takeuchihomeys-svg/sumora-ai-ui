@@ -2,7 +2,7 @@
 //   決まりは design-knowledge-rag.ts（純）。埋め込みは text-embedding-3-small（1536次元・$0.02/100万トークン）。
 //   設計知見に個人情報は入れない決まりだが、送る前に maskForEmbedding（共通の伏せ字）を通す。
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { cosine, hybridRank, kbEmbeddingInput, needsEmbedding, sceneQuery, splitPinned, textHash, type KbScene, type RagRow, type Scored } from "@/app/lib/design-knowledge-rag";
+import { cosine, hybridRank, kbEmbeddingInput, KB_VEC_FETCH, needsEmbedding, sceneQuery, splitPinned, textHash, type KbScene, type RagRow, type Scored } from "@/app/lib/design-knowledge-rag";
 import { maskForEmbedding } from "@/app/lib/pii-mask";
 
 const EMBED_MODEL = "text-embedding-3-small";
@@ -94,7 +94,7 @@ export async function searchKb(sb: SupabaseClient, q0: string, opts: { k?: numbe
     vec = new Map<string, number>();
     if (vectors[0]) queryVectors.set(q, vectors[0]);
     if (vectors[0]) {
-      const { data, error } = await sb.rpc("match_design_thinking_exact", { query_embedding: vectors[0], match_count: 80 });
+      const { data, error } = await sb.rpc("match_design_thinking_exact", { query_embedding: vectors[0], match_count: KB_VEC_FETCH });
       if (error) throw new Error(`match_design_thinking_exact: ${error.message}`);
       for (const r of (data ?? []) as Array<{ id: string; similarity: number }>) vec.set(r.id, r.similarity);
     }
@@ -106,10 +106,10 @@ export async function searchKb(sb: SupabaseClient, q0: string, opts: { k?: numbe
 /**
  * 2026-10-07 段の別枠つき（kb.ts が使う）: P0（絶対・最優先）のうち問いに関係する物は pinned（上位 k の外・先頭に出す）、残りは searchKb と同じ上位 k
  */
-export async function searchKbPinned(sb: SupabaseClient, q0: string, opts: Parameters<typeof searchKb>[2] = {}): Promise<{ pinned: Scored[]; hits: Scored[] }> {
+export async function searchKbPinned(sb: SupabaseClient, q0: string, opts: Parameters<typeof searchKb>[2] = {}): Promise<{ pinned: Scored[]; hits: Scored[]; all: Scored[] }> {
   const k = opts.k ?? 8;
   const all = await searchKb(sb, q0, { ...opts, k: 10_000 });
-  // P0 の近さは上位 80 の外のことが多い（並びの近さは上位 80 だけ）→ P0 の行だけ全件比較の近さを取り直す（並びの点は変えない）
+  // P0 の近さは並びの近さ（上位 KB_VEC_FETCH）の外のこともある → P0 の行だけ全件比較の近さを取り直す（並びの点は変えない）
   const p0Sims = new Map<string, number>();
   const p0Ids = new Set(all.filter((s) => s.priority === 0).map((s) => s.row.id));
   if (p0Ids.size && (opts.mode ?? "hybrid") !== "keyword") {
@@ -125,7 +125,7 @@ export async function searchKbPinned(sb: SupabaseClient, q0: string, opts: Param
       }
     }
   }
-  return splitPinned(all, k, { p0Sims, scene: !!opts.scene && opts.scene !== "other" });
+  return { ...splitPinned(all, k, { p0Sims, scene: !!opts.scene && opts.scene !== "other" }), all };
 }
 
 /** 新しい行の近い現行の行（週の整理の似ている組の候補・全件比較の SQL 関数） */
@@ -133,4 +133,16 @@ export async function neighborsOf(sb: SupabaseClient, id: string, k = 5, min = 0
   const { data, error } = await sb.rpc("design_thinking_neighbors", { p_id: id, match_count: k, min_similarity: min });
   if (error) throw new Error(`design_thinking_neighbors: ${error.message}`);
   return (data ?? []) as Array<{ id: string; similarity: number }>;
+}
+
+/** 2026-10-08 置き換えの記録: ids の行が置き換えた（superseded_by＝その行）退役した行。kb.ts が「この行が置き換えた古い決まり」を出す */
+export async function loadReplacedRows(sb: SupabaseClient, ids: string[]): Promise<Map<string, Array<{ id: string; title: string; retired_at: string | null; retired_reason: string | null }>>> {
+  const out = new Map<string, Array<{ id: string; title: string; retired_at: string | null; retired_reason: string | null }>>();
+  if (!ids.length) return out;
+  const { data, error } = await sb.from("system_design_thinking").select("id, title, retired_at, retired_reason, superseded_by").eq("is_current", false).in("superseded_by", ids);
+  if (error) return out; // 列が無い古い DB でも引けるように（置き換えの表示だけ出さない）
+  for (const r of (data ?? []) as Array<{ id: string; title: string; retired_at: string | null; retired_reason: string | null; superseded_by: string }>) {
+    out.set(r.superseded_by, [...(out.get(r.superseded_by) ?? []), { id: r.id, title: r.title, retired_at: r.retired_at, retired_reason: r.retired_reason }]);
+  }
+  return out;
 }

@@ -20,15 +20,27 @@ export type ViewingDayGreetingInput = {
   staffMessages: ReadonlyArray<{ text: string | null; createdAt: string }>;
   /** 今日押した AIX の種類 */
   aixTypesToday?: ReadonlyArray<string>;
+  /** 内覧の流れの理由（行動台帳 facts.viewingFlow.reason）。取りやめ（customer_cancelled*）なら出さない＝朝の cron と同じ判定（viewingFlowCancelled） */
+  flowReason?: string | null;
   nowMs: number;
   env?: Record<string, string | undefined>;
 };
+
+/**
+ * 内覧の取りやめの後か（朝の cron・ブレインの当日の挨拶で同じ判定）。2026-10-08 竹内さん「取りやめの後はブレインの当日の挨拶も出さないようにそろえる」
+ *   行動台帳の待ち合わせ（viewingAppointment）は取りやめの後も残る事があり、流れ（viewing-flow）の理由 customer_cancelled* で見分ける
+ */
+export function viewingFlowCancelled(reason: string | null | undefined): boolean {
+  return /cancelled/.test(String(reason ?? ""));
+}
 
 /** 今日が確定した内覧の日で、まだ当日の挨拶（内覧挨拶・送り出し）を送っていないか */
 export function viewingDayGreetingDue(i: ViewingDayGreetingInput): boolean {
   const env = i.env ?? (typeof process !== "undefined" ? process.env : {});
   if ((env.VIEWING_DAY_GREETING ?? "").toLowerCase() === "off") return false;
   if (i.appointmentDay !== "today") return false;
+  // 取りやめの後は出さない（朝の cron の flowCancelled と同じ）。戻す VIEWING_DAY_GREETING_CANCEL_GUARD=off
+  if ((env.VIEWING_DAY_GREETING_CANCEL_GUARD ?? "").toLowerCase() !== "off" && viewingFlowCancelled(i.flowReason)) return false;
   if ((i.aixTypesToday ?? []).includes("greeting_viewing")) return false;
   const today = jstDay(i.nowMs);
   return !i.staffMessages.some((m) => jstDay(Date.parse(m.createdAt)) === today && VIEWING_DAY_GREETED_RE.test(String(m.text ?? "").normalize("NFKC")));
@@ -43,7 +55,9 @@ export const VIEWING_DAY_GREETING_SOURCE = "rule:viewing_day_greeting_before";
 //   ・今日すでに当日の挨拶（本日…よろしく・お気をつけて・内覧挨拶の AIX）を送った → 立てない（viewingDayGreetingDue と同じ線）
 //   ・内覧の時刻まで MORNING_MIN_LEAD_MIN 分を切っている → 立てない（もう間に合わない・スタッフは現地へ向かう）
 //   ・申込以降 → 立てない（今の対象外）
-//   ・同じ会話に別の AIX要対応が未完了 → 立てない（1会話1件・ブレインの依頼を上書きしない）。同じ内覧挨拶なら何もしない
+//   ・同じ会話に別の AIX要対応が未完了 → 2026-10-08 竹内さん「立てる」: 別の行として並べる（ブレインの依頼は上書きしない・朝の挨拶の行は
+//     resolution_note が MORNING_GREETING_NOTE_PREFIX で始まる＝1会話1件の一意の索引の外・朝の挨拶どうしは1会話1件）。同じ内覧挨拶なら何もしない。
+//     旧（立てない）に戻す: VIEWING_MORNING_GREETING_SIDE=off
 //   戻す: VIEWING_MORNING_GREETING=off（VIEWING_DAY_GREETING=off でも止まる）
 export const MORNING_MIN_LEAD_MIN = 30;
 export const VIEWING_MORNING_GREETING_PATTERN = "before";
@@ -77,9 +91,21 @@ export function morningViewingGreetingPlan(i: MorningGreetingInput): { register:
     const nowMin = jst.getUTCHours() * 60 + jst.getUTCMinutes();
     if (apptMin - nowMin < MORNING_MIN_LEAD_MIN) return no("too_late");
   }
-  if (i.pending) return no(i.pending.action === "greeting_viewing" ? "already_pending" : "other_pending");
+  if (i.pending) {
+    if (i.pending.action === "greeting_viewing") return no("already_pending");
+    if ((env.VIEWING_MORNING_GREETING_SIDE ?? "").toLowerCase() === "off") return no("other_pending");
+  }
   return { register: true, why: "due" };
 }
+
+/** 朝の挨拶の要対応の印（resolution_note の頭）。一意の索引（aix_action_items_one_pending_main／_morning）もこの頭で分ける */
+export const MORNING_GREETING_NOTE_PREFIX = "rule:viewing_morning_greeting";
+/** 朝の挨拶の行か（ブレインの依頼の行と分ける） */
+export function isMorningGreetingItem(r: { resolution_note?: string | null } | null | undefined): boolean {
+  return String(r?.resolution_note ?? "").startsWith(MORNING_GREETING_NOTE_PREFIX);
+}
+/** PostgREST の or: 朝の挨拶でない行（ブレインの依頼の行＝1会話1件）だけ */
+export const MAIN_AIX_ITEM_OR = `resolution_note.is.null,resolution_note.not.like.${MORNING_GREETING_NOTE_PREFIX}*`;
 
 /** 売上番長グループへの1件通知の2行目（「本日 13:00 のご内覧（メゾン〇〇 305号室）」） */
 export function morningGreetingNoticeLine(appt: { time: string | null; place: string | null }): string {

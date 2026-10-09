@@ -56,13 +56,44 @@ export function dedupePromptRules(rows: PromptRuleRow[], seen: Set<string> = new
  * 【永久ルール】【AI学習ルール】の2節に整形する。どちらも空なら ""。
  * BOUNDARY-* ルールは【線引き】プレフィックスを付けて final-check が AIX_BOUNDARY_DB として識別できるようにする。
  */
-export function formatPromptRuleSections(permanent: PromptRuleRow[], others: PromptRuleRow[]): string {
+export function formatPromptRuleSections(permanent: PromptRuleRow[], others: PromptRuleRow[], opts: { safetyTop?: boolean } = {}): string {
   if (!permanent.length && !others.length) return "";
   const line = (r: PromptRuleRow) => `・${r.rule_key.startsWith("BOUNDARY-") ? "【線引き】" : ""}${r.rule_text}`;
   const sections: string[] = [];
+  if (opts.safetyTop) {
+    // 2026-10-08 竹内さん Q12「永久ルールの最上位の札は安全の線だけ」＋Q1「本質（ブレインの turn-contract）を勝たせる」:
+    //   永久ルールのうち安全の線（SAFETY_PERMANENT_RULE_KEYS）だけ最上位の節に置き、書き方の決まりは形だけの節（見出しは【AI学習ルール…】＝final-check-rules では core にならない）に、
+    //   学習ルールは「形の参考・中身はこの番の本質に従う」と札を替える。is_permanent の列は変えない（変えると 90日の減衰で届かなくなる）。
+    //   ⚠ 見出しの中に【】を入れない（final-check-rules の HEADER_RE が [^】]* で読む）
+    const top = permanent.filter((r) => SAFETY_PERMANENT_RULE_KEYS.has(r.rule_key));
+    const form = permanent.filter((r) => !SAFETY_PERMANENT_RULE_KEYS.has(r.rule_key));
+    if (top.length > 0) sections.push(`【永久ルール（安全の線・最上位・絶対厳守）】\n${top.map(line).join("\n")}`);
+    if (form.length > 0) sections.push(`【AI学習ルール（書き方の決まり・形だけ・中身はこの番の本質に従う）】\n${form.map(line).join("\n")}`);
+    if (others.length > 0) sections.push(`【AI学習ルール（形の参考・中身はこの番の本質に従う。本質とぶつかる時は本質）】\n${others.map(line).join("\n")}`);
+    return "\n\n" + sections.join("\n\n");
+  }
   if (permanent.length > 0) sections.push(`【永久ルール（最上位・絶対厳守）】\n${permanent.map(line).join("\n")}`);
   if (others.length > 0) sections.push(`【AI学習ルール（参考）】\n${others.map(line).join("\n")}`);
   return "\n\n" + sections.join("\n\n");
+}
+
+/**
+ * 2026-10-08 竹内さん Q12: 永久ルールのうち「安全の線」（金額・日付・空き・AIX の線・事実）として最上位に残す物。それ以外の永久ルールは書き方の決まり（形だけ）。
+ *   7eb0ff87 物件が無い時に見積の語を使わない（AIX の線）／c98d9a80 条件の追加と物件の質問（約束の線）／4f2474ee 仲介手数料の事実／
+ *   fecaf9f5 資料にある事は答える・無い事は確認（AIX の線）／6c6380d9 これ以上安くならないと断言しない（金額の線）／99eeb95e 日割家賃の事実
+ *   書き方に下げた7本: 12924481（割引の一文の条件）・278492cd（初回の挨拶）・1fad83a6／6e47bed0（謝罪しない）・c81a55f2（少々お待ち）・7c600c23（承認の一言）・6e12f06f（交渉の言い方）
+ */
+export const SAFETY_PERMANENT_RULE_KEYS: ReadonlySet<string> = new Set([
+  "hearing-condition-only-no-estimate",
+  "condition-addition-vs-property-check-distinction",
+  "PERM-AGENCY-FEE-001",
+  "FEEDBACK-04789491-1064-4b20-87f2-dede592618c3-2",
+  "FEEDBACK-1b7d2d2d-97db-46c0-a892-d00c2a75b104-1",
+  "FEEDBACK-d77b3ba1-621f-4a84-8df4-1fc2e11b5ec4-1",
+]);
+/** 返信生成（generate_reply）だけ安全の線を最上位にする。戻す PROMPT_RULES_SAFETY_TOP=off */
+export function promptRulesSafetyTop(actionType: string | null, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return actionType === "generate_reply" && (env.PROMPT_RULES_SAFETY_TOP ?? "").toLowerCase() !== "off" && (env.TURN_CONTRACT ?? "").toLowerCase() !== "off";
 }
 
 /** exclude（rule_key の接頭辞・完全一致）をコード側で適用する。global の行はキャッシュ済み（exclude なしで取得）なので、経路ごとの exclude はここで掛ける */

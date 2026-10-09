@@ -1,7 +1,7 @@
 // 2026-09-17 竹内（AIX キャッシュ点検）: ai_prompt_rules の整形（prompt-rules-format.ts）の回帰テスト。
 //   fetchPromptRules と fetchPromptRulesSplit が同じ整形を使う（見出し・接頭辞・並びが揃わないとキャッシュの鍵が外れる）
 // 実行: npx tsx app/lib/__tests__/prompt-rules-format.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { formatPromptRuleSections, promptRuleMatchesConditions, dedupePromptRules, promptRuleNotExcluded, type PromptRuleRow } from "../prompt-rules-format";
+import { formatPromptRuleSections, promptRulesSafetyTop, promptRuleMatchesConditions, dedupePromptRules, promptRuleNotExcluded, type PromptRuleRow } from "../prompt-rules-format";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -59,6 +59,19 @@ it("exclude: 接頭辞・完全一致（カイナ事例: DIFF-POLICY-*・PROP-UR
   expect(promptRuleNotExcluded(row("FEEDBACK-d6f30f25", "x"), ex)).toBe(false);
   expect(promptRuleNotExcluded(row("FEEDBACK-other", "x"), ex)).toBe(true);
   expect(promptRuleNotExcluded(row("DIFF-POLICY-12", "x"))).toBe(true);
+});
+
+it("10/08 Q12: safetyTop は安全の線だけ最上位・書き方の永久ルールは【AI学習ルール…】の節（final-check-rules で core にならない）", () => {
+  const s = formatPromptRuleSections([row("PERM-AGENCY-FEE-001", "仲介手数料の事実"), row("FEEDBACK-2d157740-6791-40c1-b866-758117108904-2", "承認の一言")], [row("DIFF-POLICY-1", "学習")], { safetyTop: true });
+  expect(s.includes("【永久ルール（安全の線・最上位・絶対厳守）】\n・仲介手数料の事実")).toBe(true);
+  expect(s.includes("【AI学習ルール（書き方の決まり・形だけ・中身はこの番の本質に従う）】\n・承認の一言")).toBe(true);
+  expect(/【[^】]*【/.test(s.split("\n").filter((l) => l.startsWith("【")).join("\n"))).toBe(false);   // 見出しの中に【】を入れない
+});
+it("10/08 Q12: promptRulesSafetyTop は返信生成だけ・PROMPT_RULES_SAFETY_TOP=off／TURN_CONTRACT=off で旧", () => {
+  expect(promptRulesSafetyTop("generate_reply", {})).toBe(true);
+  expect(promptRulesSafetyTop("application_push", {})).toBe(false);
+  expect(promptRulesSafetyTop("generate_reply", { PROMPT_RULES_SAFETY_TOP: "off" })).toBe(false);
+  expect(promptRulesSafetyTop("generate_reply", { TURN_CONTRACT: "off" })).toBe(false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

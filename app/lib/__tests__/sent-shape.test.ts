@@ -5,6 +5,8 @@
 //
 // ⚠ テストに使う本文は実送信の形をそのまま使う。
 // 実行: npx tsx app/lib/__tests__/sent-shape.test.ts（全 PASS で exit 0）
+// 2026-10-08 11巡目: 下の旧のテストは旧の表（SENT_SHAPE_TAKEUCHI=off）で見る。竹内さんの表は末尾の T1〜T5
+process.env.SENT_SHAPE_TAKEUCHI = "off";
 import {
   classifySentKind, buildSentShapeNote, buildSentShapeNoteAll, checkSentShape, buildCustomerSceneStyleNote,
   NANITOZO_RATE, SHAPE, LINE_CHARS_P90,
@@ -185,6 +187,26 @@ describe("E 場面ごとの言い回しの率", () => {
   it("E4 率の無い場面には言い回しの行が出ない", () => {
     expect(buildCustomerSceneStyleNote("内覧の話")).notToContain("言い回しの率");
   });
+});
+
+describe("T 竹内さんの手打ちの表（11巡目・SENT_SHAPE_TAKEUCHI 既定）", () => {
+  const on = (f: () => void) => { process.env.SENT_SHAPE_TAKEUCHI = ""; try { f(); } finally { process.env.SENT_SHAPE_TAKEUCHI = "off"; } };
+  it("T1 ピックアップの約束 41.7%・最終行 96.4%", () => on(() => {
+    const n = buildSentShapeNote("ピックアップの約束");
+    expect(n).toContain("41.7%"); expect(n).toContain("96.4%");
+  }));
+  it("T2 全体は 21.1%・1行 24字・空行は文の数", () => on(() => {
+    const n = buildSentShapeNoteAll();
+    expect(n).toContain("21.1%"); expect(n).toContain("24字前後"); expect(n).toContain("空行は文の数で決まる"); expect(n).notToContain("1文ごとに改行する");
+  }));
+  it("T3 短い了承・お礼 53.4%＝付ける方が普通", () => on(() => {
+    const n = buildCustomerSceneStyleNote("短い了承・お礼");
+    expect(n).toContain("53.4%"); expect(n).toContain("付ける方が普通"); expect(n).toContain("竹内さんの手打ち");
+  }));
+  it("T4 真の初回の条件フォーム 64.2%", () => on(() => {
+    expect(buildCustomerSceneStyleNote("条件フォーム受領", { firstContact: true })).toContain("64.2%");
+  }));
+  it("T5 off で旧の 5.5%", () => { expect(buildSentShapeNoteAll()).toContain("5.5%"); });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

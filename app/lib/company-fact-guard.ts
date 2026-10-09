@@ -41,7 +41,7 @@
 //   検査も同じ関数（四者同名）で場面を決める。聞かれていない時の断定は anomaly_scan の [COMPANY_FACTS] にも載らないので、
 //   ここでは見ない（監査で「聞かれていない時の断定」が実送信に無いことも確かめてある＝ゲート無しでも 0通）。
 
-import { matchCompanyFacts, COMPANY_FACTS } from "./company-facts";
+import { matchCompanyFacts, COMPANY_FACTS, isVendorNameQuestion } from "./company-facts";
 
 /** 文の中（区切りをまたがない） */
 const SEG = "[^。！!？?\\n]";
@@ -161,6 +161,16 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
     suggestion: "断定の文を削除し「緊急連絡先は3親等以内のご家族（お母様・お父様・ご兄弟など）で必須となります」の形にする",
   },
   {
+    // 2026-10-08 竹内さん「申込フォームの緊急連絡先は、連帯保証人とは違い電話のみ・支払いの義務なし」（memory feedback_real_estate_rules と同じ）:
+    //   緊急連絡先に支払い義務・責任が「ある」と書く形。実送信（全期間・スタッフ）で 0通。
+    //   連帯保証人と並べて対比する文（「連帯保証人は支払い義務がございます」）は当てない（exclude）。否定（ございません・ありません）は先読みで外す
+    factId: "emergency_contact",
+    re: new RegExp(`緊急連絡先${SEG}{0,30}?(?:お?支払い?|家賃|滞納)${SEG}{0,8}?(?:義務|責任)(?:が|は|を)?(?:あり(?!ません)|ござい(?!ません)|御座い(?!ません)|発生(?!しません|致しません|いたしません)|生じ(?!ません)|負(?:う|い(?!ません)))`),
+    exclude: /保証人/,
+    label: "緊急連絡先は確認のお電話だけで支払い義務は無い（会社の事実・連帯保証人とは別物）のに、支払い義務・責任があると書いています",
+    suggestion: "断定の文を削除し「緊急連絡先の方には確認のお電話が入るだけで、お支払いの義務はございません（連帯保証人とは異なります）」の形にする",
+  },
+  {
     // 2026-10-07 5巡目（d46290ff 10/01 の下書き「基本的に連帯保証人様へのご連絡はございません！！」）: 連帯保証人には審査の際に本人確認のお電話が入る可能性がある（会社の事実）。
     //   連帯保証人（保証人）と連絡・電話の否定が同じ文にある形。緊急連絡先の文（「緊急連絡先様にはご連絡はございません」は支払いの話と別に正しい事もある）は外す。
     //   実送信（365日）で 0通（scripts/audit-joint-guarantor.ts）
@@ -257,8 +267,41 @@ export function findCompanyFactContradiction(
   customerTexts: ReadonlyArray<string | null | undefined>,
 ): CompanyFactContradictionHit | null {
   const asked = new Set(matchCompanyFacts(customerTexts.map((t) => t ?? "")).map((f) => f.id));
+  // 2026-10-08 竹内さん「業者の名前は聞かれた時だけ」: こちらは「聞かれていない時」に当てる（下の findUnaskedVendorName）
+  if (!asked.has("vendor_name")) {
+    const v = findUnaskedVendorName(body, customerTexts);
+    if (v) return v;
+  }
   if (asked.size === 0) return null;
   for (const h of findCompanyFactContradictionsUngated(body)) if (asked.has(h.factId)) return h;
+  return null;
+}
+
+// ─── 2026-10-08 竹内さん「管理会社などの業者の名前は、お客様から聞かれた時だけ返信に出す」 ───
+//   本文が管理会社・元付・仲介業者の社名を書いている形（「管理会社は株式会社〇〇」「株式会社〇〇という管理会社」）。
+//   実送信（365日・手打ち）で社名を書いた送信 4通は全部お客様が直前に聞いていた（9/30・9/11・6/15）＝聞かれていない時は 0通。
+//   聞いたかは直近のお客様の発言（最新＋数通）に isVendorNameQuestion が当たるか。自社名（蓮産業）は外す。戻す COMPANY_FACT_VENDOR_NAME=off
+const CORP = "(?:株式会社|㈱|（株）|\\(株\\)|有限会社|合同会社)";
+const VENDOR_NAME_RE = new RegExp(
+  `(?:管理会社|元付(?:業者)?|管理業者|仲介業者|仲介会社)(?:様|さん)?(?:は|が|の|：|:)\\s*${SEG}{0,6}?${CORP}` +
+  `|${CORP}[^\\s。、！!？?\\n]{1,20}(?:という|と言う)(?:管理)?(?:会社|業者)`,
+);
+export function findUnaskedVendorName(
+  body: string | null | undefined,
+  customerTexts: ReadonlyArray<string | null | undefined>,
+): CompanyFactContradictionHit | null {
+  if ((process.env.COMPANY_FACT_VENDOR_NAME ?? "").trim() === "off") return null;
+  if (customerTexts.some((t) => isVendorNameQuestion(String(t ?? "")))) return null;
+  for (const s of splitSentencesForFactGuard(body ?? "")) {
+    if (/蓮産業/.test(s)) continue;
+    if (VENDOR_NAME_RE.test(s)) {
+      return {
+        factId: "vendor_name", sentence: s,
+        label: "管理会社などの業者の名前は、お客様から聞かれた時だけ書く（会社の事実・聞かれていない時の社名は実送信0通）のに、聞かれていない社名を書いています",
+        suggestion: "社名を消し「管理会社」等の役割だけで書く（例「管理会社に確認させて頂きます！！」）",
+      };
+    }
+  }
   return null;
 }
 

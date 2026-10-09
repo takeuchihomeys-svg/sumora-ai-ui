@@ -37,3 +37,24 @@ export function searchResultAltActions(o: {
 
 /** 画面・ブレインのメモに付ける一文 */
 export const SEARCH_RESULT_CHOICE_NOTE = "（検索の結果で選ぶ: 送れる物件があれば AIX【物件ピックアップした／物件オススメ】・今は条件に合うお部屋が無ければ AIX【全力サポート】）";
+
+/**
+ * 画面のブレインのカードで、2択のボタンの下に出す小さな説明（2026-10-08 竹内さん「下に『物件なかった場合』と小さく文字を入れてスタッフが分かりやすいようにする」）。
+ *   物件の AIX（1つ目・物件の 2つ目）の下は「物件あった場合」／全力サポートの下は「物件なかった場合」。
+ *   出すのは、ブレインの AIX が物件の AIX で、2つ目に全力サポートが並んでいる時だけ（＝この2択の番）。それ以外は null（今まで通り）。
+ *   戻す: NEXT_PUBLIC_SEARCH_RESULT_CAPTION=off（画面から読むので NEXT_PUBLIC_。呼ぶ側が env を渡す）
+ */
+export function searchResultChoiceCaption(o: {
+  brainAction: string | null | undefined;
+  altActions: ReadonlyArray<string> | null | undefined;
+  /** この説明を付けるボタンの AIX（1つ目は brainAction と同じ） */
+  button: string;
+  off?: boolean;
+}): string | null {
+  if (o.off) return null;
+  if (!o.brainAction || !PROPERTY_AIX.has(o.brainAction)) return null;
+  if (!(o.altActions ?? []).includes("zenryoku_support")) return null;
+  if (o.button === "zenryoku_support") return "物件なかった場合";
+  if (PROPERTY_AIX.has(o.button)) return "物件あった場合";
+  return null;
+}

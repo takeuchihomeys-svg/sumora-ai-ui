@@ -27,7 +27,7 @@ export type KbRow = {
 };
 
 export type RetirePlan = { id: string; supersededBy: string; reason: string; kind: "duplicate" | "decision" };
-export type ReviewItem = { kind: "decision" | "similar" | "conflict" | "priority" | "tags"; ids: string[]; note: string; relation?: string };
+export type ReviewItem = { kind: "decision" | "similar" | "conflict" | "priority" | "tags" | "mojibake"; ids: string[]; note: string; relation?: string };
 
 // ── 文字の重なり（決定論）──
 export function normKb(s: string | null | undefined): string {
@@ -158,13 +158,49 @@ export function similarPairs(rows: KbRow[], opts: { sinceIso?: string } = {}): A
   return out.slice(0, SIMILAR_RULE.max);
 }
 
-/** DeepSeek への問い（2つの設計知見の関係）。設計知見に個人情報は入れない決まりだが、念のため電話・メールの形は伏せる */
+/**
+ * DeepSeek に設計知見を渡す前の伏せ（kb-curate・週の整理・kb-scene-tag・kb-priority 共通）。
+ *   2026-10-08 竹内さん「DeepSeek に渡す時にお客様の LINE 名や呼んでいる名前は渡して良い・フォーマットの本名は渡さない」:
+ *   - LINE の表示名・呼び名（conversations.customer_name・call_name）は伏せない
+ *   - 申込フォーマット等の記入欄（氏名・フリガナ・生年月日・現住所・勤務先・緊急連絡先・連帯保証人 等。年収は基準として残す）の値は伏せる＝本名を渡さない
+ *   - 電話・メール・生年月日・郵便番号の形は今まで通り伏せる
+ *   戻す: KB_LLM_MASK_FORM=off（記入欄の値を伏せない＝旧の電話・メールだけ）
+ */
+const KB_FORM_FIELD_RE = /((?:ご?契約者|入居者|申込者|緊急連絡先|連帯保証人|保証人)?(?:の)?(?:氏名|お名前|フリガナ|ふりがな|生年月日|現住所|勤務先|勤め先|続柄|本籍))(\s*[（(][^）)\n]{0,10}[）)])?(\s*[:：]\s*)([^\n、,。]{1,40})/g;
 export function maskForLlm(s: string): string {
-  return String(s ?? "")
+  let t = String(s ?? "");
+  if ((process.env.KB_LLM_MASK_FORM ?? "").trim().toLowerCase() !== "off") {
+    t = t.replace(KB_FORM_FIELD_RE, (_m, label: string, paren: string | undefined, sep: string) => `${label}${paren ?? ""}${sep}［伏せ］`)
+      .replace(/(?:19\d{2}|200\d|201[0-5])\s*[年.．/／]\s*\d{1,2}\s*[月.．/／]\s*\d{1,2}\s*日?生?/g, "［生年月日］")
+      .replace(/〒\s*\d{3}\s*[-‐－ー]?\s*\d{4}/g, "［郵便番号］");
+  }
+  return t
     .replace(/0\d{1,4}-?\d{1,4}-?\d{3,4}/g, "［電話］")
     .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "［メール］")
     .slice(0, 1200);
 }
+/**
+ * 文字化け（2026-10-08 竹内さん「文字化けでないようにする」）: 9/01〜9/02 に PowerShell 5.1 の Invoke-RestMethod／Invoke-WebRequest へ
+ *   文字列の -Body を渡して REST で INSERT した 11行は、本文が Latin-1 で送られて日本語が全部「?」になった（札だけは後の正規化で直っていた）。
+ *   → 書く入口（kb-insert）で文字化けの形を断り、週の整理で現行の文字化けの行を要確認に出す。
+ *   形: 置換文字（U+FFFD）・「?」が4つ以上続く・「?」が文字の2割以上（8文字以上の時）
+ */
+export function looksMojibake(s: string | null | undefined): boolean {
+  const t = String(s ?? "");
+  if (!t) return false;
+  if (t.includes("�")) return true;
+  if (/\?{4,}/.test(t)) return true;
+  const q = (t.match(/\?/g) ?? []).length;
+  return t.length >= 8 && q / t.length >= 0.2;
+}
+/** 行のどの欄が文字化けしているか（無ければ空） */
+export function mojibakeFields(r: { title?: string | null; insight?: string | null; rationale?: string | null; context?: string | null; applied_to?: string | null; tags?: string[] | null }): string[] {
+  const out: string[] = [];
+  for (const k of ["title", "insight", "rationale", "context", "applied_to"] as const) if (looksMojibake(r[k] ?? "")) out.push(k);
+  if ((r.tags ?? []).some((t) => looksMojibake(t))) out.push("tags");
+  return out;
+}
+
 export const SIMILAR_SYSTEM = "あなたは社内の設計メモの整理係です。2つのメモ（A・B）の関係を1語で判定し、JSONだけで答えてください。"
   + "関係: same（同じ決まりの言い直し・どちらか1つで足りる）／supersedes_a（Bが新しくAの決まりを変えた・Aは古い）／supersedes_b（Aが新しくBの決まりを変えた）"
   + "／conflict（食い違うがどちらが正しいか書いていない）／related（関係はあるが別の決まり）／different（別の話）。"

@@ -21,6 +21,8 @@ const IDS = arg("ids", "").split(",").filter(Boolean);
 const VARIANTS = arg("variants", "before,after").split(",") as Array<"before" | "after">;
 const CASES = arg("cases", "scripts/.replay-out/r11-aix-cases.json,scripts/.replay-out/r11-aix-second-cases.json").split(",");
 const WAIT_MIN = Number(arg("wait-min", "30"));
+// 切り替える環境変数（既定 AIX_TAKEUCHI_FORM・10/08 12巡目: --toggle=AIX_TAKEUCHI_PICKUP で物件ピックアップの行だけを前後に）
+const TOGGLE = arg("toggle", "AIX_TAKEUCHI_FORM");
 const OUT_DIR = "scripts/.replay-out";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 
@@ -66,7 +68,7 @@ async function main() {
   for (const c of list) for (let rep = 0; rep < REPS; rep++) for (const v of (rep % 2 ? [...VARIANTS].reverse() : VARIANTS)) {
     const recent = ((c.body.recent_messages ?? c.body.recentMessages) as Array<{ text: string }> | undefined) ?? [];
     h.assertSceneSafe(recent.map((m) => m.text), c.id);
-    process.env.AIX_TAKEUCHI_FORM = v === "before" ? "off" : "on";
+    process.env[TOGGLE] = v === "before" ? "off" : "on";
     const t0 = Date.now();
     let text = "", err = "";
     try {
@@ -89,7 +91,7 @@ async function main() {
     appendFileSync(outFile, JSON.stringify(rec) + "\n");
     console.log(`[${n}] ${c.id} ${v} r${rep + 1} ${Math.round(rec.ms / 1000)}s ${err ? "ERR " + err.slice(0, 120) : text.replace(/\n+/g, "／").slice(0, 100)}`);
   }
-  delete process.env.AIX_TAKEUCHI_FORM;
+  delete process.env[TOGGLE];
   const after = await yumaState();
   console.log(after.hash === before.hash ? "YUMA の会話・条件の行: 変わっていない" : `⚠ YUMA の会話・条件の行が変わった → 控え ${OUT_DIR}/r11-aix-${LABEL}-yuma-before.json から戻す`);
   const foreign = await h.foreignYumaRows([]);

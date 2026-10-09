@@ -1,7 +1,9 @@
 // scripts/kb-priority.ts — 設計知見に段（P0〜P3）を付ける計画を作る・当てる
 // 2026-10-07 竹内「設計知見もちゃんと整理して優先順位あげれる環境もつくる　そうすれば質が良くなるから」
 //   段の決まりは app/lib/design-knowledge-priority.ts。決定論の目印が先 → 言い切れない行だけ DeepSeek（推論なし・温度0・12行ずつ）。
-//   DeepSeek に送る前に、お客様の名前（conversations.customer_name）と電話・メールを伏せる。費用は llm_usage_logs（action=kb-priority）にも残す。
+//   DeepSeek に送る前に、申込フォーマット等の記入欄の値（本名・生年月日・現住所 等）と電話・メールを伏せる（maskForLlm）。費用は llm_usage_logs（action=kb-priority）にも残す。
+//   2026-10-08 竹内さん「DeepSeek に渡す時にお客様の LINE 名や呼んでいる名前は渡して良い・フォーマットの本名は渡さない」→ LINE の表示名（customer_name）は伏せない。
+//   旧（表示名も伏せる）に戻す: --mask-line-names
 //
 // 実行:
 //   npx tsx --env-file=.env.local scripts/kb-priority.ts                         … 決定論だけで数える（DB に書かない・LLM なし）
@@ -140,7 +142,7 @@ async function main() {
   }
   if (!has("llm")) return;
 
-  const mask = makeMask(await customerNames());
+  const mask = has("mask-line-names") ? makeMask(await customerNames()) : maskForLlm;
   const B = Number(arg("batch") || 12);
   const llm = new Map<string, { p: 1 | 2 | 3; why: string }>();
   const usage = { calls: 0, failed: 0, input: 0, cacheHit: 0, output: 0, usd: 0, model: "" };

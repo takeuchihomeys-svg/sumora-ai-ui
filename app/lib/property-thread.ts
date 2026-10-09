@@ -24,9 +24,12 @@
 import { splitPropertyName, matchRoomRefs, buildingKeyOf, type RoomRef } from "./customer-state";
 import { jstParts } from "./jst-date";
 // 2026-10-08 8巡目（記録の続き・竹内「オススメした物件と、お客さんが送ってきた物件をちゃんと保管できていればできる」）
-import { extractScreenshotProperty } from "./own-property-match";
+import { extractScreenshotProperty, seriesTokens } from "./own-property-match";
+import { similarity } from "./property-name-match";
 import { customerSharedPropertyNames } from "./customer-property-names";
 import { collectStaffFreeRent, staffFreeRentFor, type StaffFreeRentFact } from "./staff-free-rent";
+// 2026-10-09 主語の抜けた発言の物件の候補（turn-referent.ts・既定 off・PROPERTY_REFERENT_FALLBACK=on で入る）
+import { resolveTurnReferent, turnReferentEnabled, turnReferentLines, type ReferentMention, type TurnReferent } from "./turn-referent";
 
 export function propertyThreadEnabled(): boolean {
   return (process.env.PROPERTY_THREAD_NOTE ?? "").toLowerCase() !== "off";
@@ -99,9 +102,17 @@ export type PtRoom = {
   freeRent?: StaffFreeRentFact | null;
 };
 export type PtTurnTarget = { roomKey: string; display: string; topic: PtTopic; by: "quote" | "named" | "inferred"; customerText: string; at: string; why?: string };
-export type PropertyThreadState = { rooms: PtRoom[]; turnTargets: PtTurnTarget[] };
+export type PropertyThreadState = {
+  rooms: PtRoom[]; turnTargets: PtTurnTarget[];
+  /** 2026-10-09 引用・名指しが無い主語の抜けた番の物件の候補（turnTargets とは別に持つ＝内覧の確認・契約の答え等の他の利用者の動きは変えない） */
+  turnReferent?: TurnReferent | null;
+  /** turnReferent の元になったお客様の文 */
+  turnReferentText?: string;
+};
 
 const PLACEHOLDER_RE = /^(?:物件|お部屋)\s*[①-⑳0-9０-９]*$/;
+/** 物件名でない物（挨拶・ポータルの一覧の見出し・省略の点） */
+const NOT_PROPERTY_NAME_RE = /お世話になって|お疲れ様|ありがとうございます|賃貸物件一覧|物件一覧|検索結果|・・・|…|最近見た物件/;
 const TOPIC_RES: Array<[PtTopic, RegExp]> = [
   ["discount", /礼金|敷金|安く|値下|減額|交渉|割引|まけ|下げ/],
   ["cost", /初期費用|費用|見積|いくら|金額|総額/],
@@ -137,18 +148,44 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
   const byLmid = new Map<string, PtMsg>();
   for (const m of msgs) if (m.line_message_id) byLmid.set(m.line_message_id, m);
 
-  const findRoom = (ref: RoomRef): PtRoom | null => {
+  // 2026-10-09 読み取り（OCR）の名前の化け（「ロッジール城山町」↔「ロワジール城山町」・「セニャリプロ」↔「セニャリブロ」・「LOCHAS」↔「LOHAS」）:
+  //   片方が画像の読み取りの名前の時だけ、名前が近く（matchRoomRefs の maybe）・号室が同じ・シリーズの番号が同じなら同じ部屋にし、
+  //   表示はスタッフが打った名前（AIX の物件名・手打ちの本文・見積書の記録）にする。既定 off（試験の前後で確かめるまで）・入れる: PROPERTY_THREAD_OCR_REPAIR=on
+  const ocrRepair = (process.env.PROPERTY_THREAD_OCR_REPAIR ?? "").toLowerCase() === "on";
+  const ocrRooms = new Set<PtRoom>();
+  const findRoom = (ref: RoomRef, ocr: boolean): PtRoom | null => {
     for (const r of rooms) { const k = matchRoomRefs(ref, r.ref); if (k === "same_room" || (k === "same_building" && (!ref.room || !r.ref.room))) return r; }
+    if (ocrRepair) {
+      for (const r of rooms) {
+        if (!ocr && !ocrRooms.has(r)) continue; // どちらかが読み取りの名前の時だけ
+        if (!ref.room || !r.ref.room || ref.room !== r.ref.room) continue;
+        // 近さは括弧の読み仮名（「（ロッジールシヤマヤマチヤウ）」「(テン)」）を外して測る。線 0.65（実物: ロッジール↔ロワジール 0.67・スブランディッド↔スプランディッド 0.75／
+        //   別の建物: スプランディッド難波WESTⅢ↔鶴渡西Ⅲ 0.59・エスリード弁天町グランツ↔ベイコート 0.60 は同じ号室でも寄せない）
+        const keyOf = (b: string) => buildingKeyOf(b.replace(/[（(][^）)]*[）)]/g, ""));
+        if (matchRoomRefs(ref, r.ref) !== "maybe" && similarity(keyOf(ref.building), keyOf(r.ref.building)) < 0.65) continue;
+        if (seriesTokens(ref.building) !== seriesTokens(r.ref.building)) continue;
+        return r;
+      }
+    }
     return null;
   };
-  const roomOf = (name: string | null | undefined, sentByUs: boolean): PtRoom | null => {
+  const roomOf = (name: string | null | undefined, sentByUs: boolean, ocr = false): PtRoom | null => {
     if (!name || PLACEHOLDER_RE.test(name.trim())) return null;
+    // 2026-10-09 物件名でない物（お客様のスクショの挨拶・ポータルの一覧の見出し）を物件にしない（audit-hidden-subject の実物）
+    if (NOT_PROPERTY_NAME_RE.test(name)) return null;
     const ref = splitPropertyName(name);
     if (!ref) return null;
-    const hit = findRoom(ref);
-    if (hit) { if (!hit.names.includes(ref.display)) hit.names.push(ref.display); if (!hit.ref.room && ref.room) hit.ref = ref; hit.sentByUs ||= sentByUs; return hit; }
+    const hit = findRoom(ref, ocr);
+    if (hit) {
+      if (!hit.names.includes(ref.display)) hit.names.push(ref.display);
+      // 読み取りの名前の部屋に、打った名前が来たら表示を打った名前に替える
+      if (!ocr && ocrRooms.has(hit)) { hit.ref = { ...ref, room: ref.room ?? hit.ref.room }; ocrRooms.delete(hit); }
+      else if (!hit.ref.room && ref.room) hit.ref = ref;
+      hit.sentByUs ||= sentByUs; return hit;
+    }
     const r: PtRoom = { key: `${ref.buildingKey}#${ref.room ?? ""}`, ref, names: [ref.display], events: [], sentByUs };
     rooms.push(r);
+    if (ocr) ocrRooms.add(r);
     return r;
   };
   const push = (r: PtRoom | null, e: PtEvent) => {
@@ -163,7 +200,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
   for (const m of msgs) {
     if (m.sender !== "staff" || !m.image_url) continue;
     const label = input.imageLabels.get(m.image_url);
-    const r = roomOf(label, true);
+    const r = roomOf(label, true, true);
     if (!r) continue;
     imageRoom.set(m.line_message_id ?? m.image_url, r);
     push(r, { at: m.created_at, kind: "sent", by: "record" });
@@ -241,6 +278,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
 
   // ③ お客様の発言（引用・名指し）と、スタッフの手打ち（交渉・確認・結果）
   const customerAsks: Array<{ r: PtRoom; at: string; topic: PtTopic }> = [];
+  const staffTextMentions: ReferentMention[] = [];
   const resolvePlaceholder = (aixAt: string): PtRoom | null => {
     // 仮の名前の画像＝その AIX より前に、お客様が費用・募集状況を聞き、まだ見積・確認の結果が無い物件（一番新しい物）
     const cands = customerAsks.filter((c) => ms(c.at) < ms(aixAt) && (c.topic === "cost" || c.topic === "vacancy" || c.topic === "discount")
@@ -270,7 +308,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       if (!target && originOn && /^\s*\[画像\]/.test(text)) {
         const sp = extractScreenshotProperty(text);
         // 書き起こしの文（「近隣の駐車場が満車で見つかっておりません。」）を物件名にしない（YUMA の実物・10/08）
-        if (sp?.name && sp.name.length <= 40 && !/[。！!？?]|ません|おります|ございます|です|ます$/.test(sp.name)) { target = roomOf(sp.room ? `${sp.name} ${sp.room}号室` : sp.name, false); by = "named"; }
+        if (sp?.name && sp.name.length <= 40 && !/[。！!？?]|ません|おります|ございます|です|ます$/.test(sp.name)) { target = roomOf(sp.room ? `${sp.name} ${sp.room}号室` : sp.name, false, true); by = "named"; }
       }
       // ポータルの共有文（SUUMO「物件名 / URL / by SUUMO」・athome「物件名：」）＝持ち込み。元の URL は出来事の text に残す
       //   （本文に知っている物件名が出ていても、共有文なら「送ってきた」として残す＝名指しの質問にしない）
@@ -289,6 +327,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       customerAsks.push({ r: target, at: m.created_at, topic });
     } else if (m.sender === "staff" && m.text && !isImage(m)) {
       const named = roomsNamedIn(m.text);
+      for (const r of named) staffTextMentions.push({ at: m.created_at, roomKey: r.key, display: r.ref.display, by: "ours" });
       if (named.length !== 1) continue;
       const r = named[0];
       if (RESULT_RE.test(m.text) && /(?:交渉|確認)させて(?:頂|いただ)きました|ご返事|ご返答/.test(m.text)) push(r, { at: m.created_at, kind: "staff_result", by: "named", text: Array.from(m.text.replace(/\s+/g, " ")).slice(0, 60).join("") });
@@ -355,7 +394,26 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
     }
   }
   turnTargets.sort((a, b) => ms(a.at) - ms(b.at));
-  return { rooms, turnTargets };
+  // 2026-10-09 主語の抜けた番（「空いてますか？」「いくらですか？」・引用も名指しも無い）: 直前の送信が1件 → こちらが最後に出した1件 → お客様が最後に名前を出した物件。
+  //   決まらない時は候補を送った順で渡す（推測で1件にしない）。turnTargets には入れない
+  let turnReferent: TurnReferent | null = null; let turnReferentText = "";
+  if (originOn && turnReferentEnabled() && turnTargets.length === 0) {
+    const turn = msgs.filter((m) => m.sender === "customer" && (!lastStaffAt || ms(m.created_at) > ms(lastStaffAt)));
+    if (turn.length && !turn.some(isImage) && !turn.some((m) => m.quoted_message_id)) {
+      turnReferentText = turn.map((m) => String(m.text ?? "")).join("\n");
+      const t0 = turn[0].created_at;
+      const prevCustomer = [...msgs].reverse().find((m) => m.sender === "customer" && ms(m.created_at) < ms(t0));
+      const OURS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_vacating", "check_ended", "staff_negotiating", "staff_checking", "staff_result", "viewing_offered", "viewing_set"]);
+      const mentions: ReferentMention[] = [...staffTextMentions];
+      for (const r of rooms) for (const e of r.events) {
+        if (e.by === "inferred") continue;
+        if (OURS.has(e.kind)) mentions.push({ at: e.at, roomKey: r.key, display: r.ref.display, by: "ours" });
+        else if (e.kind === "customer_ask" || e.kind === "customer_shared") mentions.push({ at: e.at, roomKey: r.key, display: r.ref.display, by: "customer" });
+      }
+      turnReferent = resolveTurnReferent({ turnText: turnReferentText, turnStartAt: t0, prevCustomerAt: prevCustomer?.created_at ?? null, mentions, jst: jstShort });
+    }
+  }
+  return { rooms, turnTargets, turnReferent, turnReferentText };
 }
 
 const GENERIC_REF_RE = /(?:オススメ|おすすめ|お勧め|お薦め|送って(?:頂|いただ|くださ|くれ|もら)|頂いた|いただいた|前の|先日の|この前の|さっきの)[^。\n？?]{0,12}(?:物件|お部屋|部屋)/;
@@ -388,7 +446,7 @@ export function roomSourceLine(r: PtRoom): string | null {
  * 同じ会話で状況が動いた他の物件（見積・確認・交渉・お客様の反応があった物）を短く添える（最大 maxOthers 件）。
  */
 export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOthers?: number; maxEvents?: number } = {}): string {
-  if (!s.turnTargets.length) return "";
+  if (!s.turnTargets.length) return s.turnReferent ? buildReferentNote(s, opts) : "";
   const maxEvents = opts.maxEvents ?? 6;
   const targetKeys = [...new Set(s.turnTargets.map((t) => t.roomKey))];
   const lines: string[] = ["【🏠 物件ごとの状況（この会話の台帳・今の番の物件を先に）】"];
@@ -415,5 +473,26 @@ export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOther
     for (const r of others) { const e = r.events.filter((x) => x.kind !== "sent").at(-1)!; const src = roomSourceLine(r); lines.push(`・${r.ref.display}: ${eventLine(e)}${src ? `（${src}）` : ""}`); }
   }
   lines.push("⚠ お客様が今話している物件は ▶ の物件（「こちら」は → の行の物件）。その物件の約束・答えは ▶ の物件名で書き、同じ会話の他の物件（直前の AIX の本文に名前が出ていた物件を含む）と取り違えない。");
+  return lines.join("\n");
+}
+
+/** 主語の抜けた番の台帳の文（引用・名指しが無く、turn-referent が物件の候補を出した時だけ） */
+function buildReferentNote(s: PropertyThreadState, opts: { maxOthers?: number; maxEvents?: number }): string {
+  const ref = s.turnReferent;
+  if (!ref) return "";
+  const maxEvents = opts.maxEvents ?? 6;
+  const lines: string[] = ["【🏠 物件ごとの状況（この会話の台帳・今の番の物件を先に）】", ...turnReferentLines(ref, s.turnReferentText ?? "", jstShort)];
+  const keys = ref.kind === "one" ? [ref.roomKey] : ref.candidates.map((c) => c.roomKey);
+  for (const k of keys.slice(0, 3)) {
+    const r = s.rooms.find((x) => x.key === k);
+    if (!r) continue;
+    if (ref.kind === "many") lines.push(`・${r.ref.display}`);
+    const src = roomSourceLine(r);
+    if (src) lines.push(`  ・${src}`);
+    for (const e of r.events.slice(ref.kind === "one" ? -maxEvents : -2)) lines.push(`  ・${eventLine(e)}`);
+  }
+  lines.push(ref.kind === "one"
+    ? "⚠ 主語の無い発言の物件は ▶ の物件（会話の流れから決めた・推定を含む）。同じ会話の他の物件と取り違えない。"
+    : "⚠ 主語の無い発言の物件は決まっていない。▶ の候補のどれかに勝手に決めて答えない。");
   return lines.join("\n");
 }

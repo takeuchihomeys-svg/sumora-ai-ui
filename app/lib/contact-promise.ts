@@ -138,11 +138,37 @@ export type FarMoveInPlan = {
   contactLabel: string;
   source: "customer_text" | "condition";
   evidence: string;
+  /** 2026-10-08 竹内さん「2028年など遠い先の人は『2ヶ月前からサポート・その頃から探します』」: 入居が遠い先（twoMonthMinDays 以上）の時 true。
+   *  連絡の日は入居の月の2ヶ月前の月の1日・本文は「弊社では2ヶ月前から…」の型（竹内さん 10-06 カメ） */
+  twoMonth?: boolean;
+  /** twoMonth の時の探し始めの月（「2028年1月」） */
+  startMonthLabel?: string;
 };
+
+/**
+ * 入居まで何日以上先なら「遠い先」（2ヶ月前から）にするか。
+ *   竹内さんの実送信（全期間・5件）: 入居 2〜3ヶ月先の4件は連絡が入居の 30〜50日前（中央 約41日＝1ヶ月半前）／約17ヶ月先の1件（10-06 カメ 2028年3月）だけ「2ヶ月前から」。
+ *   実送信の間（3ヶ月〜17ヶ月）が無く線を数で決めきれない → 竹内さんの案「半年以上先」＝180日を置く（定数・テストで固定・FAR_MOVE_IN_TWO_MONTH_DAYS で変えられる）
+ */
+export function twoMonthMinDays(): number {
+  const n = Number(process.env.FAR_MOVE_IN_TWO_MONTH_DAYS);
+  return Number.isFinite(n) && n > 0 ? n : 180;
+}
 
 /** 入居の始まりから、連絡の日（1ヶ月半前）が今日から minDays 以上先なら計画を返す */
 export function farMoveInPlan(start: MoveInStart, nowIso: string | number, source: FarMoveInPlan["source"], minDays = farMoveInMinDays()): FarMoveInPlan | null {
   const today = todayOf(nowIso);
+  // 2026-10-08: 入居が遠い先（半年以上）は「2ヶ月前から」＝入居の月の2ヶ月前の月の1日に連絡（戻す FAR_MOVE_IN_TWO_MONTH=off）
+  if ((process.env.FAR_MOVE_IN_TWO_MONTH ?? "").toLowerCase() !== "off" && daysBetween(today, start.ymd) >= twoMonthMinDays()) {
+    let y = start.ymd.y, m = start.ymd.m - 2;
+    if (m < 1) { m += 12; y -= 1; }
+    const contact2: Ymd = { y, m, d: 1 };
+    const days2 = daysBetween(today, contact2);
+    if (days2 >= minDays) {
+      const startMonthLabel = `${daysBetween(today, contact2) > 300 || y !== today.y ? `${y}年` : ""}${m}月`;
+      return { moveIn: start.ymd, contact: contact2, daysUntilContact: days2, moveInLabel: start.label, contactLabel: mdLabel(contact2, today), source, evidence: start.evidence, twoMonth: true, startMonthLabel };
+    }
+  }
   const contact = contactDateFor(start.ymd);
   const days = daysBetween(today, contact);
   if (days < minDays) return null;
@@ -187,6 +213,7 @@ export function farMoveInTurn(i: {
 
 /** ブレインの返信の方向（generate-reply がこの番の下書きを書く方向） */
 export function farMoveInDirection(p: FarMoveInPlan): string {
+  if (p.twoMonth) return `入居が遠い先（${p.moveInLabel}）なので、弊社では2ヶ月前からお引越しのサポートをしている事をお伝えし、${p.startMonthLabel}からお部屋探しをする事と、${p.contactLabel}にご条件に合ったお部屋をピックアップしてお送りする（ご連絡する）約束をする（今は物件を送らない・AIX なし）`.slice(0, 200);
   return `入居の時期が先（${p.moveInLabel}）なので、お部屋を抑えられるのはお申込みから${HOLD_PERIOD_LABEL}のため${p.contactLabel}頃から本格的にお部屋探しを進めるのが理想の流れとお伝えし、${p.contactLabel}にご条件に合ったお部屋をピックアップしてお送りする（ご連絡する）約束をする（今は物件を送らない・AIX なし）`.slice(0, 200);
 }
 
@@ -197,8 +224,16 @@ export function farMoveInBrainNote(p: FarMoveInPlan): string {
 }
 
 /** この番の本文の芯（竹内さんの実送信 06-07 きむら・06-14 あいの文の形・数字と日付だけ差し替え）。決定論 */
-export function farMoveInCoreText(p: { contactLabel: string }, customerName?: string | null): string {
+export function farMoveInCoreText(p: { contactLabel: string; twoMonth?: boolean; startMonthLabel?: string }, customerName?: string | null): string {
   const name = (customerName ?? "").trim();
+  // 2026-10-08 遠い先（竹内さん 10-06 カメ「弊社では2ヶ月前からお引越しのサポートをさせて頂いております。2028年1月からお部屋探しをさせて頂ければと思います」）
+  //   ＋連絡の日の約束（カレンダーに置くため・parseContactPromise が読む形＝1ヶ月半前の型の2文目と同じ）
+  if (p.twoMonth && p.startMonthLabel) return [
+    "弊社では2ヶ月前からお引越しのサポートをさせて頂いております！！",
+    `${p.startMonthLabel}からお部屋探しをさせて頂ければと思います😊！！`,
+    `${p.contactLabel}に${name ? `${name}さん` : ""}のご条件に合ったお部屋をピックアップしお送りさせて頂きます！！`,
+    "引き続き何卒よろしくお願い致します！！",
+  ].join("\n");
   return [
     `お部屋を抑える事が出来るのが${HOLD_PERIOD_LABEL}となりますので、${p.contactLabel}頃から本格的にお部屋探しを進めて頂くのが理想の流れとなります！！`,
     `${p.contactLabel}に${name ? `${name}さん` : ""}のご条件に合ったお部屋をピックアップしお送りさせて頂きます😊！！`,
@@ -206,9 +241,9 @@ export function farMoveInCoreText(p: { contactLabel: string }, customerName?: st
   ].join("\n");
 }
 
-export function farMoveInReplyLine(p: { contactLabel: string; moveInLabel: string }, customerName?: string | null): string {
+export function farMoveInReplyLine(p: { contactLabel: string; moveInLabel: string; twoMonth?: boolean; startMonthLabel?: string }, customerName?: string | null): string {
   return `- 📅 入居の時期が先（${p.moveInLabel}）: この返信は「理想の流れを伝えて連絡の日を約束する」番（実際の竹内さんの LINE の型）。`
-    + `本文の芯は次の3文をこの順にそのまま使う（日付・語を変えない・言い換えない）:\n「${farMoveInCoreText(p, customerName).replace(/\n/g, "／")}」\n`
+    + `本文の芯は次の文（${p.twoMonth ? 4 : 3}文）をこの順にそのまま使う（日付・語を変えない・言い換えない）:\n「${farMoveInCoreText(p, customerName).replace(/\n/g, "／")}」\n`
     + `前に足してよいのはお客様の入居の時期の受け止め（「かしこまりました！！」「${p.moveInLabel}のご入居とのことで」等）だけ。`
     + `物件は送らない・ご条件を並べた「ピックアップさせて頂きます」「出来次第お送り」等の今の約束は書かない（約束は${p.contactLabel}の1つだけ）。抑えられる期間を「40日」「2ヶ月」等に言い換えない`;
 }
@@ -356,4 +391,71 @@ export function contactDue(notes: string | null | undefined, nowMs: number): boo
   const d = contactDateOfNotes(notes);
   if (!d) return false;
   return d <= new Date(nowMs + JST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. 日付の無い連絡の約束（「来年再相談させて頂きます」「お時期が近づきましたらご連絡させて頂きます」）
+//   2026-10-08 竹内さん「約束してカレンダーに入れる」＝日付の無い約束もカレンダーに入れる。日付は推測で作らない:
+//   会話の画面の約束のバナーに「連絡の日を入れてください」の行を出し、スタッフが日付を選んだらカレンダーの【必ず】（連絡の日の行）に入れる。
+//   戻す: CONTACT_PROMISE_UNDATED=off（サーバー）／NEXT_PUBLIC_CONTACT_PROMISE_UNDATED=off（画面）
+// ─────────────────────────────────────────────────────────────────────────────
+/** 先の時期を指す言い方（日付は無い）。今日・確認の約束（「確認出来次第」）・新着の待ち（promise-timing）は別の仕組み */
+const UNDATED_CUE_RE = /来年|再来年|年明け|(?:春|夏|秋|冬)(?:頃|ごろ|先|以降|になりましたら|に(?:なり|入り)ましたら)|(?:お引っ?越し?の?|ご入居の?|お部屋探しの?)?(?:お?時期)(?:が|に)(?:来|近づ|近くな|なりましたら)|タイミングが(?:来|近づ)|その頃|頃になりましたら|近くなりましたら|近づきましたら|落ち着(?:き|かれ)ましたら|再相談|(?:数|[0-9０-９一二三]+)\s*[ヶか]月(?:後|先|程|ほど)/;
+const UNDATED_EXCLUDE_RE = /新着|次第|本日|今日|明日|明後日|今週|来週/;
+/** 日付の無い約束のこちらの動き（連絡・送付・ピックアップ・探し・再相談・ご案内・募集状況の確認） */
+const UNDATED_VERB_RE = new RegExp(`${OUR_VERB_RE.source}|ご案内(?:させて|致し|いたし)|サポート(?:させて|致し|いたし)|(?:募集状況|空き状況|空室)[^。\n]{0,6}確認(?:させて|致し|いたし)`);
+
+export type UndatedPromise = { sentence: string; sentAt: string };
+
+/** こちらの送信1通から、日付の無い連絡・再開の約束の文（無ければ null）。日付の読める約束（parseContactPromise）は除く */
+export function parseUndatedContactPromise(text: string | null | undefined, sentIso: string): UndatedPromise | null {
+  if ((process.env.CONTACT_PROMISE_UNDATED ?? process.env.NEXT_PUBLIC_CONTACT_PROMISE_UNDATED ?? "").toLowerCase() === "off") return null;
+  const t = normalizeDateText(text);
+  if (!t.trim()) return null;
+  if (parseContactPromise(t, sentIso)) return null;
+  const sentences = t.split(/[。！!？?]+|\n{2,}/).map((s) => s.replace(/\s*\n\s*/g, "")).filter(Boolean);
+  for (const s of sentences) {
+    if (!UNDATED_VERB_RE.test(s) || NOT_PROMISE_RE.test(s) || UNDATED_EXCLUDE_RE.test(s) || !UNDATED_CUE_RE.test(s)) continue;
+    return { sentence: s.trim().slice(0, 120), sentAt: sentIso };
+  }
+  return null;
+}
+
+/** 日付を選んだ時の印（notes に残す・同じ約束の文から2回入れない） */
+export const UNDATED_FROM_MARK = "（日付の無い約束から・スタッフが日付を選んだ）";
+
+/**
+ * 会話の画面に「連絡の日を入れてください」を出す約束（無ければ null）。
+ *   こちらの最後の会話文（資料文・画像以外）に日付の無い約束があり、その後に日付の約束・カレンダーの連絡の日の行が無い時だけ（60日以内）。
+ * @param messages 古い順
+ * @param contactRows この会話の連絡の日の行（未完了・完了どちらも・notes と作った時刻）
+ */
+export function pendingUndatedPromise(
+  messages: ReadonlyArray<{ sender: string; text: string | null | undefined; createdAt: string }>,
+  contactRows: ReadonlyArray<{ notes: string | null; created_at?: string | null }>,
+  nowMs: number,
+): UndatedPromise | null {
+  const MATERIAL = /^\s*(?:【|🌟|[①-⑳]\s*【|\[(?:画像|動画|スタンプ|ファイル|通話リクエスト)\]|https?:\/\/|（室内イメージ）)/u;
+  const staff = messages.filter((m) => m.sender === "staff" && (m.text ?? "").trim() && !MATERIAL.test(m.text ?? ""));
+  const last = staff[staff.length - 1];
+  if (!last) return null;
+  const at = Date.parse(last.createdAt);
+  if (!Number.isFinite(at) || nowMs - at > 60 * DAY) return null;
+  const p = parseUndatedContactPromise(last.text, last.createdAt);
+  if (!p) return null;
+  // 約束の後に作った連絡の日の行（日付つきの約束・スタッフが選んだ日）があれば済み
+  if (contactRows.some((r) => isContactPromiseNotes(r.notes) && (!r.created_at || Date.parse(r.created_at) >= at - 60_000))) return null;
+  return p;
+}
+
+/** スタッフが選んだ日（YYYY-MM-DD）→ 連絡の日の約束（contactEventRow に渡す形）。今日より前・3年より先は null */
+export function undatedPromiseToContact(p: UndatedPromise, ymd: string, nowIso: string | number): ContactPromise | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return null;
+  const d: Ymd = { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+  if (!(d.m >= 1 && d.m <= 12 && d.d >= 1 && d.d <= lastDay(d.y, d.m))) return null;
+  const today = todayOf(nowIso);
+  const diff = daysBetween(today, d);
+  if (diff < 0 || diff > 3 * 366) return null;
+  return { contact: d, sentence: p.sentence, kind: /ピックアップ|お送り|探し|ご提案/.test(p.sentence) ? "pickup" : "contact", moveInLabel: null };
 }

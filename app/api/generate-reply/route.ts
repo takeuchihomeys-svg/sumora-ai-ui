@@ -19,7 +19,8 @@ import { runInDeepseekScope, setDeepseekScope, onceAsync } from "@/app/lib/deeps
 import { loadApplyPeriodNote, ensureApplyPeriodSummary } from "@/app/lib/apply-period-summary-server";
 import { createMasker, type Masker } from "@/app/lib/pii-pseudonym";
 import { buildBrainSpecificNote } from "@/app/lib/brain-specific-note";
-import { buildCompanyFactsNote } from "@/app/lib/company-facts";
+import { buildCompanyFactsNote, brandCostOverrideNote } from "@/app/lib/company-facts";
+import { VIEWING_SCENE_SUMMARY } from "@/app/lib/post-viewing-estimate";
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」（S9 の本文の置換を外す判定）
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { isRoomPhotoRequest } from "@/app/lib/room-photo-request";
@@ -286,6 +287,20 @@ import { fixPaymentTimingWording } from "@/app/lib/payment-timing-wording";
 import { applySituationalEmoji } from "@/app/lib/emoji-situational";
 import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-scope";
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
+import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
+import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
+import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
+import { classifyAixContent } from "@/app/lib/aix-content-gate";
+import { dedupeExamplesBySent, isReplyUnsafeKnowledge, ragReplyCleanEnabled } from "@/app/lib/rag-garbage";
+import { findUngroundedFacts, groundingKinds } from "@/app/lib/draft-fact-grounding";
+import { stripWaited } from "@/app/lib/greeting";
+/** 2026-10-08 RAG の調査: 手本の「お待たせ致しました」を注入の直前に外す（DB は書き換えない・RAG_REPLY_CLEAN=off） */
+const stripWaitedForExample = (t: string) => (ragReplyCleanEnabled() ? stripWaited(t).text : t);
+import { consideringCloseEnabled, CONSIDERING_CLOSE_DIRECTION, CONSIDERING_CLOSE_AVOID, consideringDirectionFor, normalizeItsudemo, fixSanTachi, isAckOnlyAgree, ACK_ONLY_NOTE, nanisotsuNote } from "@/app/lib/takeuchi-reply-form-r13";
+import { writerFromText } from "@/app/lib/staff-writer";
+import { applyPromptR11, promptR11Enabled } from "@/app/lib/prompt-r11";
+import { fixTakeuchiWording } from "@/app/lib/takeuchi-wording-r11";
+import { buildSituationNote } from "@/app/lib/customer-situation-r11";
 import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, consideringAvoidTopics, consideringDoorEnabled, CONSIDERING_DOOR_LINES, CONSIDERING_DOOR_EXEMPT_NOTE, filterRulesTextForScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { previewRetiredRules, RETIRE_RULE_KEYS } from "@/app/lib/rules-retire-preview";
 import { R6_RETIRE_KEYS, R6_TEXT_OVERRIDES } from "@/app/lib/rules-review-r6";
@@ -462,7 +477,7 @@ const GRATITUDE_POS_RE = /ありがと|感謝|助かり|嬉しい|うれしい|�
 // 短い了承語への返信は「直前のスタッフ約束の復唱WE DO」に固定する（promiseEchoNote / tpoNoteForLLM「短い了承」）。
 // 検出順は 撮影 → 見積 → 募集状況確認 → ピックアップ → 内覧確定 に固定（複数該当時は最も具体的な約束を優先）。
 // 送付完了文（ご査収ください／お送りさせて頂きました）は「約束中」ではないので null。
-export function detectStaffPromise(staffText: string): { label: string; echo: string } | null {
+function detectStaffPromise(staffText: string): { label: string; echo: string } | null {
   if (!staffText) return null;
   if (/ご査収ください|お送りさせて頂きました|お送りさせていただきました|お送りいたしました|お送りしました|送付いたしました|送付させて頂きました/.test(staffText) && !/次第/.test(staffText)) return null;
   if (/撮影|写真.{0,6}お送り|動画.{0,6}お送り/.test(staffText)) return { label: "室内撮影して送付", echo: "撮影出来次第お送りさせて頂きます！！" };
@@ -519,7 +534,7 @@ const STATE_FALLBACK_DIRECTION: Record<string, string> = {
     "②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ " +
     "⑤費用の交渉（礼金・敷金・管理費・初期費用・仲介手数料のみ。お客様が費用について頼んだ・聞いた時だけ選ぶ。" +
     "家賃・賃料の値下げ交渉はこちらから宣言しない＝「家賃交渉できないか確認します」は書かない）。100〜150字",
-  viewing: "内覧調整・内覧後フォロー。日程は確定分をそのまま復唱（新規提案はAIX）。内覧後は感想を受けて見積橋渡しまたは次物件ピックアップ宣言。80〜150字",
+  viewing: VIEWING_SCENE_SUMMARY, // 2026-10-08 竹内さん「内覧後の見積書はお客様の希望があった時だけ」（post-viewing-estimate.ts・POST_VIEWING_ESTIMATE_ON_REQUEST=off で旧）
   applying: "申込・審査中。書類受領・審査進捗・契約案内のいずれかに直接回答。別物件提案・再ピックアップ・条件ヒアリング禁止。60〜150字",
   closed_won: "成約後サポート。質問に直接回答し「ご入居までしっかりサポートさせて頂きます」で締める。申込打診・ピックアップ・見積・内覧禁止。60〜120字",
   closed_lost: "失注後の再接触。「お世話になっております」→再連絡への感謝1文→以前のご条件を基にしたピックアップ宣言（「改めて」は【📒 行動台帳】に送付実績がある時のみ）→サポート継続宣言。初回挨拶・謝罪・フォーム再送禁止。80〜140字",
@@ -985,6 +1000,8 @@ function buildGenerationMessages(
              /^スモラ:\s*「?[^\s]{1,10}さん/.test(l)
       );
   // G31（2026-09-09 Fable5 じゅにあ事例）: 挨拶行（接触・約束の事実）＋開口語（顧客メッセージの意味）の二層を greeting.ts buildGreetingNote が decision から生成（四者同名）
+  // 2026-10-08 11巡目: 場面の書き方の注記（質問の番＝答えから書く・竹内さんの手打ち）。戻す REPLY_STYLE_R11=off
+  const sceneStyleNoteText = sceneStyleNote(sceneSel?.scene ?? null, replyStyleR11Enabled());
   const greetingNote = gd
     ? buildGreetingNote(gd, jstHour)
     : (isFirstEverReply
@@ -1661,7 +1678,7 @@ ${aixDone.answeredByAix
   // G-9: pickupPromiseAckNote（2行以内）と secondClosingNote（3行構成）の行数指示競合を防ぐため、pickup 側発火時は抑制
   const isSecondClosing = !pickupPromiseAckNote && PRIOR_CLOSING_RE.test(lastStaffMsgRaw) && CUSTOMER_SIMPLE_ACK_RE.test(customerMessage.trim());
   const secondClosingNote = isSecondClosing
-    ? `\n【🔁 2回目締め検出（最優先・全生成ルールを上書き）】直前スタッフ返信で「全力でサポートさせて頂きます」等の大きな締め文を既に送っている。お客様は「ありがとうございます」「よろしくお願いします」等でシンプルに承認している。
+    ? `\n【🔁 2回目締め検出（最優先・形は全生成ルールを上書き・中身は【🧭 この番の本質】があればそれに従う）】直前スタッフ返信で「全力でサポートさせて頂きます」等の大きな締め文を既に送っている。お客様は「ありがとうございます」「よろしくお願いします」等でシンプルに承認している。
 【返信の型（絶対に守る・これ以外は入れない）】
 ① 冒頭挨拶 — 【⏰ 挨拶ルール・最優先】に従う（1フレーズのみ）
 ② 短い受け返し 1行 — 「こちらこそよろしくお願い致します！！」「ありがとうございます！！」等
@@ -1696,7 +1713,7 @@ ${aixDone.answeredByAix
       && CUSTOMER_VIEWING_ACK_RE.test(customerMessage.trim())
       && !RESCHEDULE_RE.test(customerMessage));
   const viewingAppointmentAckNote = isViewingAppointmentAck
-    ? `\n【🤝 内覧日程確定後シンプル締め（最優先・全生成ルールを上書き・以下の全ルールより上位）】スタッフがすでに内覧日時・物件・待ち合わせ場所を確定しており、お客様がシンプルに承認している。詳細はすでに伝達済み。
+    ? `\n【🤝 内覧日程確定後シンプル締め（最優先・形は全生成ルールを上書き・以下の全ルールより上位・中身は【🧭 この番の本質】があればそれに従う）】スタッフがすでに内覧日時・物件・待ち合わせ場所を確定しており、お客様がシンプルに承認している。詳細はすでに伝達済み。
 【返信の型（絶対に守る・これ以外は入れない）】
 ① 冒頭挨拶 — 【⏰ 挨拶ルール・最優先】に従う（1フレーズのみ）
 ② 締め 1行 — ${doneState ? `「${viewingAckLine(doneState.viewingAppointment)}」` : "内覧が本日なら「本日何卒よろしくお願い致します！！」、それ以外は「〇日何卒よろしくお願い致します！！」"}
@@ -1818,7 +1835,10 @@ ${aixDone.answeredByAix
   // importance=10 の principle（絶対原則）。DB由来の動的コンテンツのため staticBlock ではなく
   // dynamicBlock 先頭に注入する（staticBlock に入れると行の増減でキャッシュ全体が無効化されるため）
   const topPrinciplesNote = topPrinciples.length > 0
-    ? "【📌 絶対原則（importance=10・全顧客共通・常時遵守）】\n" +
+    // 2026-10-09 調査の担当: 絶対原則（約4,900字）も永久ルールの札（Q12）と同じく「形の参考」に。中身は【🧭 この番の本質】が上（準静的なので1回だけキャッシュを書き直す）
+    ? (turnContractEnabled() && (process.env.PROMPT_RULES_SAFETY_TOP ?? "").toLowerCase() !== "off"
+      ? "【📌 原則（importance=10・全顧客共通・書き方の形と安全の線。何に答える・何を約束するかは【🧭 この番の本質】に従う）】\n"
+      : "【📌 絶対原則（importance=10・全顧客共通・常時遵守）】\n") +
       topPrinciples.map((p, i) => `${i + 1}. ${p.title ? `[${p.title}] ` : ""}${p.content}`).join("\n")
     : "";
   const staticBlock = [
@@ -1879,7 +1899,7 @@ ${aixDone.answeredByAix
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? moveInTimingNote : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + newConditionRequestNote + conditionExpansionNote + searchAgainNote : ""}${promiseEchoNote}${waitFormAckNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? moveInTimingNote : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + newConditionRequestNote + conditionExpansionNote + searchAgainNote : ""}${promiseEchoNote}${waitFormAckNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${sceneKeep("knowledge") ? knowledgeNote : ""}
@@ -1899,7 +1919,10 @@ ${examples}${examplesInstruction}
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
   // A-8: tpoGuidanceNote ヘッダ（「AIX-META戦略より上位」）と矛盾していた優先順位宣言に「場面と返信方針」を追加
-  const priorityOrderNote = "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時・見積・物件事実制約）> 場面と返信方針（TPO）> AIX-META戦略 > フェーズ別パターン > ai_summary参考情報\n\n";
+  // 2026-10-09 調査の担当: 優先順位の宣言に本質（turn-contract）を入れる（静的なので1回だけキャッシュを書き直す・本質が無い番は2番目が飛ぶだけ）。戻すのは TURN_CONTRACT=off（この行は旧の文になる）
+  const priorityOrderNote = turnContractEnabled()
+    ? "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時・見積・物件事実制約・スタッフだけが知る事）> 【🧭 この番の本質】（ある時・何に答える／何を約束する／何を言わない）> 場面と返信方針（TPO・本質がある時は形だけ）> AIX-META戦略 > フェーズ別パターン・学習ルール・手本（形の参考）> ai_summary参考情報\n\n"
+    : "【指示の優先順位（競合時はこの順で解決すること）】ハードゲート（内覧日時・見積・物件事実制約）> 場面と返信方針（TPO）> AIX-META戦略 > フェーズ別パターン > ai_summary参考情報\n\n";
   const baseSystem = promptOverrides?.generationSystem ?? GENERATION_SYSTEM;
   // ── プロンプトキャッシュ（2026-08）──
   // 全顧客共通の priorityOrderNote + GENERATION_SYSTEM（約8,900字 ≒ 5,000+トークン）を
@@ -1955,8 +1978,11 @@ ${examples}${examplesInstruction}
   //   ⚠ systemBlocks / humanBlocks は**配列**（プロンプトキャッシュのブロック）なので、
   //     各ブロックの text を1つずつ見る。壊れたブロックの番号と先頭をログに出す（原因を追えるように）。
   type PromptBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" } };
+  // 2026-10-08 11巡目: 数の制約・受けの語を竹内さんの幅に（app/lib/prompt-r11.ts・PROMPT_R11=off で旧）。呼ぶ時に当てる＝キャッシュの文も同じ版で揃う
+  const r11On = promptR11Enabled();
   const cleanBlocks = (blocks: PromptBlock[], where: string): PromptBlock[] =>
-    blocks.map((b, i) => {
+    blocks.map((b0, i) => {
+      const b = b0?.text && r11On ? { ...b0, text: applyPromptR11(b0.text, true).text } : b0;
       if (!b?.text || !hasBrokenSurrogate(b.text)) return b;
       console.warn(JSON.stringify({
         tag: "prompt:broken-surrogate", where, blockIndex: i, length: b.text.length,
@@ -2498,8 +2524,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
   const critical = principlesList;
-  const patterns = all.filter(k => (k.importance || 0) >= 7 && k.category === "pattern");
-  const phrases  = all.filter(k => k.category === "phrase");
+  // 2026-10-08 RAG の調査: 返信の経路では「お待たせ」「夜分遅く」を言い回しとして含むナレッジを渡さない（rag-garbage.isReplyUnsafeKnowledge・RAG_REPLY_CLEAN=off）
+  const patterns = all.filter(k => (k.importance || 0) >= 7 && k.category === "pattern" && !isReplyUnsafeKnowledge(k));
+  const phrases  = all.filter(k => k.category === "phrase" && !isReplyUnsafeKnowledge(k));
 
   // 使用追跡（fire-and-forget）
   const usedIds = [
@@ -2584,6 +2611,12 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   // テストの再生だけ: その番のスタッフの実送信（と言い回しがほぼ同じ物）を手本から外す
   const isTestExcluded = (s: string | null | undefined) => !!testExcludeReply && bigramSim(editCore(s ?? ""), editCore(testExcludeReply)) >= 0.8;
   // 2026-10-07 場面の整理: 手本のお客様の発言が今の番と同じ場面なら加点（reply-scene.ts の同じ判定）。scene=null は今まで通り
+  // 2026-10-08 11巡目: 手本は竹内さんの送信を先に（書き方の正解は竹内さん・従業員の送信は書き方を真似させない）。match_reply_examples は書き手を返さないので
+  //   文の癖（staff-writer.writerFromText）で 竹内さん +0.12 ／ 従業員 −0.12（類似度の幅 0.5〜0.8 に対して星 0.15 と同じ桁）。戻す EXAMPLE_WRITER_BOOST=off
+  const exampleWriterBoost = (t: string | null | undefined) => {
+    if ((process.env.EXAMPLE_WRITER_BOOST ?? "").toLowerCase() === "off") return 0;
+    const w = writerFromText(t ?? "").writer; return w === "takeuchi" ? 0.12 : w === "employee" ? -0.12 : 0;
+  };
   const sceneBoost = (cm: string | null | undefined) => (scene && resolveReplyScene({ customerText: cm ?? "" }).scene === scene ? SCENE_EXAMPLE_BOOST : 0);
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
   // 前提フィルタ用のスタッフ履歴（follow-up でなくても直前スタッフ発言を使う）
@@ -2634,8 +2667,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         //   本番の問い38件で 0.05 が最良（上位8件の平均 cos 0.5536 → 0.5575）→ fresh 0.05 / stale 0.02
         const intentBoost = brainFresh ? 0.05 : 0.02;
         const ranked = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(a.customer_message);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(b.customer_message);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0) + (boostStates.includes(a.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (a.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && a.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(a.customer_message) + exampleWriterBoost(a.sent_reply);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0) + (boostStates.includes(b.conversation_state) ? 0.1 : 0) + (dirKwds.some(k => (b.sent_reply ?? "").includes(k)) ? 0.05 : 0) + (brainIntent && b.customer_intent === brainIntent ? intentBoost : 0) + sceneBoost(b.customer_message) + exampleWriterBoost(b.sent_reply);
           return scoreB - scoreA;
         });
         // T1: excludeReplyRe ポストフィルタ（floor付き: 残件が minKeep 未満ならフィルタ放棄＝フェイルオープン）
@@ -2648,7 +2681,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
           const filtered = ranked.filter(ex => !combinedExclude(ex.sent_reply ?? ""));
           kept = filtered.length >= minKeep ? filtered : ranked;
         }
-        const sorted = kept.slice(0, 8);
+        // 2026-10-08 RAG の調査: 上位8件を取る前に同じ文の重複を落とす（rag-garbage.dedupeExamplesBySent・RAG_REPLY_CLEAN=off）
+        const sorted = dedupeExamplesBySent(kept).slice(0, 8);
 
         return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）" + EXAMPLES_HEADER_NOTE +
           sorted.map((ex, i) => {
@@ -2657,7 +2691,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
             // 2026-09-11 竹内方針4・5（E4-f）: 実例の「承知しました」「すぐに」は注入前に決定論で正規化（DB の本文は書き換えない）
             // 2026-09-12 竹内方針D: 曜日の誤りは日付を正として直す（RPC の戻りに created_at が無いので、食い違う曜日だけ外す）
             // 2026-09-23 S4: 手本の金額は伏せ字（同じ会話の実送信が類似検索で戻り ¥44,000 等を一字一句写していた。他の会話なら他人の金額の創作）
-            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(exampleTimeGreeting(normalizeBannedPhrasing(ex.sent_reply ?? "").text)))}」`;
+            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(exampleTimeGreeting(stripWaitedForExample(normalizeBannedPhrasing(ex.sent_reply ?? "").text))))}」`;
           }).join("\n\n");
         }
       }
@@ -2699,6 +2733,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   ].sort((a, b) => {
     if (a.priority !== b.priority) return a.priority - b.priority;
     if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
+    { const wa = exampleWriterBoost(a.sent_reply), wb = exampleWriterBoost(b.sent_reply); if (wa !== wb) return wb - wa; }   // 11巡目: 竹内さんの送信を先に
     const aBoost = boostStatesFb.includes(a.conversation_state) ? 1 : 0;
     const bBoost = boostStatesFb.includes(b.conversation_state) ? 1 : 0;
     return bBoost - aBoost;
@@ -2733,7 +2768,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     if (filtered.length >= minKeepFb) fallbackRanked = filtered;
   }
 
-  const all = fallbackRanked.slice(0, 8);
+  const all = dedupeExamplesBySent(fallbackRanked).slice(0, 8);   // 2026-10-08 同じ文の重複を落としてから上位8件
 
   if (all.length === 0) return "";
 
@@ -2744,7 +2779,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       const premise = derivePremiseLabel(ex.sent_reply ?? "");
       // 2026-09-11 竹内方針4・5: 注入前に承知→かしこまりました・すぐに除去（DB の本文は書き換えない）
       // 2026-09-12 竹内方針D: 曜日の誤りは書いた日（created_at）の暦で、日付を正として直す
-      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(exampleTimeGreeting(normalizeBannedPhrasing(ex.sent_reply ?? "").text), ex.created_at))}」`;
+      return `[例${i + 1}${angleTag}]${premise ? `\n[前提] ${premise}` : ""}\nお客様: 「${ex.customer_message}」\nスモラ: 「${maskExampleAmounts(fixExampleWeekdays(exampleTimeGreeting(stripWaitedForExample(normalizeBannedPhrasing(ex.sent_reply ?? "").text)), ex.created_at))}」`;
     }).join("\n\n");
 }
 
@@ -2955,6 +2990,9 @@ async function handleGenerateReply(req: NextRequest) {
 
   type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string; isAix?: boolean };
   let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
+  // 2026-10-09 調査の担当（audit-brain-interference）: 自動で足す指定（募集状況確認中・受け身モード）は replyHint（「通常の生成ルールをすべて上書き」・ブレインの AIX 判断を消す）に入れず、
+  //   ここに貯めて、本質（turn-contract）がブレインの判断の時は材料の注記に下げる（無い時は今まで通り replyHint に足す）。戻す TURN_CONTRACT_AUTOHINT=off
+  const autoHints: { text: string; at: "head" | "tail" }[] = [];
   // 呼び出し元から渡された生の名前（多くの経路で LINE表示名そのもの）。
   // 生成には使わず、生成後クリーニングで「本文に混入した表示名」を検出・除去するために保持する。
   let lineDisplayName = "";
@@ -3464,8 +3502,7 @@ async function handleGenerateReply(req: NextRequest) {
   }
   // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
   if (activeTaskTypes.includes("property_check")) {
-    replyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！募集状況確認出来次第ご連絡させて頂きます😊！！」のような短い返しのみ行う（確認対象「募集状況」を必ず書く。「すぐに」禁止）。（この指示は property_check タスクがアクティブな場合のみ適用。スタッフが物件送付済みでお客様が受取確認しているだけの場合は対象外）"
-      + (replyHint ? "\n" + replyHint : "");
+    autoHints.push({ at: "head", text: "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！募集状況確認出来次第ご連絡させて頂きます😊！！」のような短い返しのみ行う（確認対象「募集状況」を必ず書く。「すぐに」禁止）。（この指示は property_check タスクがアクティブな場合のみ適用。スタッフが物件送付済みでお客様が受取確認しているだけの場合は対象外）" });
   }
 
   // スクショがある場合: Sonnet Vision でトーク内容を抽出して replyHint に注入
@@ -3637,7 +3674,11 @@ async function handleGenerateReply(req: NextRequest) {
     // ※ AIXでのみ送信した場合に isFirstEverReply=true のまま残るバグを防ぐ
     // S-4: 「初回か否か」は履歴窓（20件）ではなく DB 事実（body.hasStaffReplied）を優先。未渡しなら従来の推定
     //      メディアのみ（画像・動画・スタンプ・ファイル）のスタッフ送信は「返信済み」に数えない（final-check MEDIA_ONLY_RE と同定義）
-    const isFirstEverReplyFromMsgs = typeof hasStaffRepliedFromBody === "boolean"
+    // 2026-10-08 11巡目（r12 の調査・設計知見 788de85d を事実の線に）: こちらの送信が1通でもあれば（画像・AIX の物件カードだけでも）初回ではない＝
+    //   はじめまして・自己紹介を出さない。旧は画像だけの送信を数えず、物件を先に送った会話で2通目に「はじめまして」を書いた。戻す FIRST_CONTACT_ANY_SEND=off
+    const anyStaffSendInHistory = (process.env.FIRST_CONTACT_ANY_SEND ?? "").toLowerCase() !== "off"
+      && recentMessages.some((m) => m.sender === "staff" && !!(m.text ?? "").trim());
+    const isFirstEverReplyFromMsgs = anyStaffSendInHistory ? false : typeof hasStaffRepliedFromBody === "boolean"
       ? !hasStaffRepliedFromBody
       : !hasAnyStaffTextMsg;
     const shouldPrependGreeting = isFirstEverReplyFromMsgs && currentState === "first_reply";
@@ -4073,6 +4114,13 @@ async function handleGenerateReply(req: NextRequest) {
     const requestListNote = !isTemplateOptimize && !postApplyConversation && requestLedgerEnabled()
       ? buildRequestLedgerNote([], splitRequests(customerMsgUnits, new Date().toISOString()))
       : "";
+    // 2026-10-08 竹内さん「人間でいうメモ」: お客様のメモ（場面で要る種類・もう伝えた事の種類・気持ちの流れ）。DeepSeek に渡してよい線より後の行だけ（customer-memo-server・CUSTOMER_MEMO=off・枠 5秒）
+    const customerMemoNote = !isTemplateOptimize && !postApplyConversation && !!conversationId
+      ? await Promise.race([
+          import("@/app/lib/customer-memo-server").then((m) => m.customerMemoReplyNoteFor(conversationId!, { scene: resolveReplyScene({ customerText: message ?? "" }).scene })).catch(() => ""),
+          new Promise<string>((r) => setTimeout(() => r(""), 5_000)),
+        ])
+      : "";
     const contractTerms = !isTemplateOptimize && !postApplyConversation && !!conversationId
       ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
       : null;
@@ -4083,13 +4131,18 @@ async function handleGenerateReply(req: NextRequest) {
       ...(procedureAnswer?.plan.moveIn?.route === "material" ? procedureAnswer.plan.moveIn.lines : []),
       // ブレインが退去予定日から内覧できる日を決めた時（rule:viewing_vacating_date_known）の文（ブレインの決定論が作った文・YUMA で判定役が AIX_BOUNDARY_MOVEIN として日付を消した）
       ...(/「([0-9０-９]{1,2}月[^」]{0,8}退去予定のため、[^」]{1,12}以降にご内覧可能です！！)」/.exec(String(brainMeta?.reply_direction ?? ""))?.slice(1, 2) ?? []),
+      // 2026-10-08 お金の時期の B（ブレインが申込へを外した番）: 判定役が「申込したいのに時期を伝えて待つ」を STATE_REGRESSION で書き換えた（YUMA）→ 決まりと文を渡す
+      ...(((brainMeta as { payment_timing?: { decision?: string; core?: string } | null } | null)?.payment_timing?.decision === "B")
+        ? ["（会社の決まり）初期費用のお振込の期日はご入居の10日前・お部屋を抑えられるのはお申込みから1ヶ月。お客様のお金の用意できる時期が先なので、今はお申込みに進めず、お申込みの時期を伝えて連絡の日を約束する番（後退ではない）",
+          ...String((brainMeta as { payment_timing?: { core?: string } }).payment_timing?.core ?? "").split("\n").filter(Boolean)]
+        : []),
     ].join("\n") || undefined;
     // 8巡目（10/08 竹内「フリーレントはスタッフが入れていた物件だけ」）: この会話でスタッフが送った文のフリーレント（最終チェックの FREE_RENT_UNGROUNDED に渡す・読めなければ見ない）
     const staffFreeRentFacts = !isTemplateOptimize && conversationId ? await loadStaffFreeRentFacts(conversationId).catch(() => null) : null;
     // 礼金・敷金・フリーレントだけを聞いて全部資料にある番（初期費用の中身・総額は聞いていない）は S9 でも本文で資料のとおりに答える（brain-core の contract_terms_in_material と同じ線）
     const contractCostAnswer = !!contractTerms?.allInMaterial && contractTerms.topics.every((t) => t === "key_money" || t === "deposit" || t === "free_rent")
       && !/初期費用|内訳|総額|合計|全部で|トータル/.test(message ?? "");
-    const confirmCtx: ConfirmationContextVerdict = resolveConfirmationContext({
+    const confirmCtxWord: ConfirmationContextVerdict = resolveConfirmationContext({
       customerMessage: message ?? "",
       lastStaffMessage: lastStaffMsgForSearch,
       brainAction: effectiveAction,
@@ -4098,6 +4151,47 @@ async function handleGenerateReply(req: NextRequest) {
       conversationObjects: { propertyNames: ledger.facts.propertiesSentNames },
       ownPropertyReturnedAll,
     });
+    // ── 2026-10-08 この番の本質（turn-contract.ts・竹内さん「ブレインが本質判断も一任できているか」Q1「本質を勝たせる・安全の線は上」）──
+    //   ブレインの turn_contract（依頼ごとの答え方）＋決定論の依頼の一覧（request-ledger）＋もう言った事（reply-style-r11.repeatCandidates＝直前2通）＋決まった事（行動台帳の内覧）。
+    //   返信の中身の最上位にし、確認の約束の関門・場面の型・最終チェックの書き直しはこれに従う。戻す TURN_CONTRACT=off（テストの会話だけ testFlags.turn_contract）
+    // 2026-10-08 竹内さん Q11・Q-C: 会社の事実はブランド（conversations.account）で分ける
+    const convAccount: string | null = !conversationId ? null : await (async () => {
+      try { const { data } = await supabase.from("conversations").select("account").eq("id", conversationId).maybeSingle(); return ((data as { account?: string | null } | null)?.account ?? null); }
+      catch { return null; }
+    })();
+    const lastTwoStaffForContract = recentMessages.filter((m) => m.sender === "staff" && !!(m.text ?? "").trim() && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text ?? "")).slice(-2).map((m) => m.text ?? "");
+    const turnContract: TurnContract | null = (() => {
+      if (isTemplateOptimize || postApplyConversation || !turnContractEnabled(process.env, testFlags.turn_contract ?? null)) return null;
+      try {
+        const brainFreshTc = brainFreshForMessage && !isCachedMeta;
+        const va = ledger.facts.viewingAppointment;
+        const settled: string[] = [];
+        if (va && (va.dateMD || va.time)) settled.push(`内覧の日時 ${[va.dateMD, va.time].filter(Boolean).join(" ")}${va.place ? `（${va.place.slice(0, 20)}）` : ""}`);
+        const ds = String((brainMeta as { decision_source?: string | null } | null)?.decision_source ?? "");
+        const sceneWord = resolveReplyScene({ customerText: message ?? "" }).scene;
+        // 2026-10-09 調査の担当（古い判断 T3 10%）: 画面の表示・webhook が suggested_aix_meta を消した後でも、控え（last_brain_meta）が今のお客様の発言を見た判断なら本質に使う
+        const lastMetaTc = (brainGate?.lastMeta ?? null) as { turn_contract?: BrainTurnContractRaw; analyzed_msg_ts?: string | null } | null;
+        const lastMetaFresh = !brainFreshTc && !!lastMetaTc?.turn_contract && !!lastCustomerMsgAt && !!lastMetaTc?.analyzed_msg_ts
+          && Date.parse(String(lastMetaTc.analyzed_msg_ts)) >= Date.parse(lastCustomerMsgAt) - 1000 && (process.env.TURN_CONTRACT_LASTMETA ?? "").toLowerCase() !== "off";
+        if (lastMetaFresh) console.log(JSON.stringify({ tag: "turn-contract:from-last-meta", conversationId }));
+        return buildTurnContract({
+          brain: lastMetaFresh ? lastMetaTc!.turn_contract! : ((brainMeta as { turn_contract?: BrainTurnContractRaw } | null)?.turn_contract ?? null),
+          brainFresh: brainFreshTc || lastMetaFresh,
+          ledgerItems: requestLedgerEnabled() ? splitRequests(customerMsgUnits, new Date().toISOString()) : [],
+          alreadySaid: repeatCandidates(lastTwoStaffForContract),
+          settled,
+          facts: {
+            exhausted: brainFreshTc && /search_exhausted/.test(ds),
+            returning: !isFirstEverReplyFromMsgs,
+            sentMedia: /\[(?:画像|ファイル)\]|https?:\/\//.test(message ?? ""),
+            closeOnlyByForm: sceneWord === "ack" || sceneWord === "considering",
+            nightOutsideHours: getJSTHour() >= 18,
+          },
+        });
+      } catch (e) { console.warn("[turn-contract] skipped:", e instanceof Error ? e.message : String(e)); return null; }
+    })();
+    const confirmCtx: ConfirmationContextVerdict = applyContractToConfirm(confirmCtxWord, turnContract);
+    if (turnContract) console.info("[turn-contract]", JSON.stringify({ source: turnContract.source, asks: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, said: turnContract.alreadySaid.length, settled: turnContract.settled.length, confirm: `${confirmCtxWord.allowed}->${confirmCtx.allowed}` }));
     console.info("[confirmCtx]", JSON.stringify({ allowed: confirmCtx.allowed, source: confirmCtx.source, object: confirmCtx.object, moveOutSubject }));
 
     // ── 条件提示判定（2026-09-08 監査改修）──
@@ -4346,6 +4440,11 @@ async function handleGenerateReply(req: NextRequest) {
       return anyPartRestNeutral((p) => thinkRe.test(p) && !/(キャンセル|やめ|断り|他社|他の会社)/.test(p));
     })();
     const consideringDoorOn = testFlags.considering_door ? testFlags.considering_door === "on" : consideringDoorEnabled(process.env);
+    // 2026-10-08 竹内さん「検討します→誘わず閉じる」（takeuchi-reply-form-r13.ts・CONSIDERING_CLOSE=off で扉の1文の旧）。テストの会話だけ testFlags.considering_close
+    const consideringCloseOn = testFlags.considering_close ? testFlags.considering_close === "on" : consideringCloseEnabled(process.env);
+    // 10/09: 確認の結果・見積書の後（申込の一言）／詳細を送った直後（内覧の案内）は扉の1文を許す＝避ける話題から扉を外す
+    const consideringAfterEstimateOrCheck = !!ledger.facts.estimateSent || /募集中となります|御見積書|ご確認させて頂きましたところ|確認させていただき/.test(lastStaffMsgForSearch ?? "");
+    const consideringAfterDetails = /🌟|オススメポイント|号室/.test(lastStaffMsgForSearch ?? "");
 
     // ── ネガ文脈（2026-09-08 監査刷新）──
     // ①断り表現を TPO_REQUEST_RE より先に評価（「キャンセルしたいです」到達不能バグ修正）
@@ -4615,7 +4714,10 @@ async function handleGenerateReply(req: NextRequest) {
       // 2026-09-09 Fable5 往復文脈: override_wait セル（懸念・持込予告・質問・条件変更）は待ち系TPO・AIX action より先に確定
       if (pairContext.rule?.precedence === "override_wait" && pairDirection) return pairDirection;
       if (isTemporaryLeaveMsg) return "顧客が今は確認できない・後で連絡すると伝えている。30〜60字の超短文で受け取り、待ちの姿勢を示す。開口語は「はい😊！！」（単独行）一択。「承知いたしました」「ご連絡お待ちくださいませ」禁止。この場面では具体アクション宣言は不要（何も宣言しない）。物件追加・内見誘導・条件ヒアリング・長文説明は一切禁止";
-      if (isThinkingMsg) return consideringDoorOn
+      if (isThinkingMsg) return consideringCloseOn ? consideringDirectionFor({
+        afterEstimateOrCheck: consideringAfterEstimateOrCheck,
+        afterPropertyDetails: consideringAfterDetails,
+      }) : consideringDoorOn
         // 2026-10-07 3巡目: 検討中の決まりを1か所に（reply-scene.ts CONSIDERING_*）。扉の1文は許可・必須ではない・禁止は催促だけ
         ? `検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前に物件・御見積書を送っている時は扉の1文を置いてよい（今ご内覧頂ける部屋＝「${CONSIDERING_DOOR_LINES.viewing}」／まだ内覧できない・御見積書の後・他の申込あり＝「${CONSIDERING_DOOR_LINES.apply}」。【訴求のタイミング】の材料があればその種類）③気になる点出てきましたらいつでもお気軽にご連絡ください。扉の1文は申込誘導に当たらない。禁止は「かしこまりました！！」単独終了・申込の催促（お申込いかがでしょうか・お早めに）・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲`
         : "検討中の待ちフェーズ。70〜130字の短返し。開口語は「はい😊！！」（単独行）。①「ごゆっくりご検討頂けますと幸いです！！」（命令形「ごゆっくりご検討ください」は不可）②直前送付物への次ステップ1文（「お気に召されましたらご内覧頂けます／お申込しお部屋抑えさせて頂きます」）は必ず入れる③気になる点出てきましたらいつでもお気軽にご連絡ください。「かしこまりました！！」単独終了・申込誘導・希少性煽り（人気のため早めに）・物件追加提案・「ご検討の程よろしく」の再掲は絶対禁止";
@@ -4676,7 +4778,7 @@ async function handleGenerateReply(req: NextRequest) {
       // 両方 true（「出先なので後ほど検討します」）は thinking の禁止セットも和集合にする
       if (isTemporaryLeaveMsg) return [...new Set([...base, "物件提案", "見積提案", "申込誘導", "条件ヒアリング", "詳細説明", ...(isThinkingMsg ? ["希少性煽り", "内見誘導", "物件追加提案"] : [])])];
       // 2026-10-07 3巡目（竹内さん「２ 大丈夫」）: 検討中の番は「申込誘導・内見誘導」を避けると扉の1文まで消えていた → 催促・日程の打診だけを避ける（reply-scene.consideringAvoidTopics・REPLY_CONSIDERING_DOOR=off で戻す）
-      if (isThinkingMsg) return consideringAvoidTopics([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング", "検討依頼の繰り返し"], consideringDoorOn);
+      if (isThinkingMsg) return consideringCloseOn && !consideringAfterEstimateOrCheck && !consideringAfterDetails ? [...new Set([...base, ...CONSIDERING_CLOSE_AVOID, "条件ヒアリング", "検討依頼の繰り返し"])] : consideringAvoidTopics([...base, "申込誘導", "希少性煽り", "内見誘導", "物件追加提案", "条件ヒアリング", "検討依頼の繰り返し"], consideringDoorOn);
       if (isPostStrongRecommendation) return [...new Set([...base, "他物件の募集状況確認", "新規物件ピックアップ", "別物件の提案", "申込誘導", "検討依頼の繰り返し", "初期費用割引の再掲"])];
       if (isGratitudeReplyTPO) return [...new Set([...base, "検討依頼の繰り返し", "中身のない進捗テンプレ", "条件の再ヒアリング"])];
       // A-3: brain action=follow_up 経由の「検討中フォロー」ラベル（tpoNoteForLLM 後段）にも isThinkingMsg と同じ禁止セットを乗せる
@@ -4716,7 +4818,7 @@ async function handleGenerateReply(req: NextRequest) {
         ? "ネガ文脈（顧客自身の断り・キャンセル。開口語「かしこまりました！！」→扉を開ける1文→お礼で締め。引き留め禁止）"
         : "ネガ文脈（否決・募集終了報告への短い了承。開口語「はい！！」→顧客名先頭のサポート継続宣言→次の一手1文。謝罪禁止）";
       if (isTemporaryLeaveMsg) return "一時保留（顧客が今は確認できない・後で連絡すると宣言。30〜60字の超短返しのみ。「承知いたしました」絶対禁止）";
-      if (isThinkingMsg) return consideringDoorOn
+      if (isThinkingMsg) return consideringCloseOn ? "検討中フォロー（誘わず閉じる・扉の1文も書かない・竹内さん 10/08）" : consideringDoorOn
         ? "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込の催促・希少性煽りは禁止・「お気に召されましたら…」の扉の1文は可。70〜120字）"
         : "検討中フォロー（顧客がまだ迷っている・判断保留。急かさない。申込誘導・希少性煽り絶対禁止。70〜120字）";
       if (isPostStrongRecommendation) return "強推し直後の了承（1件に絞って推薦済み・顧客が確認/了承中の待ちフェーズ。再ピックアップ宣言・別物件提案は絶対禁止。開口語「はい😊！！」）";
@@ -5045,11 +5147,16 @@ async function handleGenerateReply(req: NextRequest) {
       //     文面も「今週中」固定をやめ、計算した日付をそのまま渡す（スタッフ実送信の「9/20日辺りでのお申込み」の形）。
       // 2026-10-08 竹内さん「物件を抑える事ができるのは1ヶ月のため、1ヶ月半前から探し出す形が理想の流れと伝えて、その日に連絡するように約束」:
       //   ブレインが入居の時期が先（連絡の日の約束の番）と決めた時だけ（contact-promise・実際の竹内さんの LINE の型）。申込の目安日の1行は出さない（先の話で急かさない）
-      const farMoveIn = brainFreshForMessage ? ((brainMeta as { far_move_in?: { move_in_label: string; contact_label: string } | null }).far_move_in ?? null) : null;
+      const farMoveIn = brainFreshForMessage ? ((brainMeta as { far_move_in?: { move_in_label: string; contact_label: string; two_month?: boolean; start_month_label?: string } | null }).far_move_in ?? null) : null;
       if (farMoveIn) {
-        lines.push(farMoveInReplyLine({ moveInLabel: farMoveIn.move_in_label, contactLabel: farMoveIn.contact_label }, sanitizeCustomerName(customerName)));
+        lines.push(farMoveInReplyLine({ moveInLabel: farMoveIn.move_in_label, contactLabel: farMoveIn.contact_label, twoMonth: farMoveIn.two_month, startMonthLabel: farMoveIn.start_month_label }, sanitizeCustomerName(customerName)));
       }
-      if (!farMoveIn && psp?.move_in_time && brainMeta?.urgency_appropriate !== false) {
+      // 2026-10-08 竹内さん「基本 A で、期間が長すぎたら B」: ブレインがお金の時期の B（申込へを外して時期を伝える番）と決めた時だけ、payment-timing の一文の型をそのまま芯に
+      const payWait = brainFreshForMessage ? ((brainMeta as { payment_timing?: { decision: string; core: string } | null }).payment_timing ?? null) : null;
+      if (!farMoveIn && payWait?.decision === "B" && payWait.core) {
+        lines.push(`- 💴 初期費用のお金の時期（判断 B）: この返信は申込の時期を伝えて連絡の日を約束する番。本文の芯は次の文をこの順にそのまま使う（日付・語を変えない・言い換えない）:\n「${payWait.core.split("\n").join("／")}」\n前に足してよいのは受け止め（「かしこまりました！！」等）だけ。申込の手続き・募集状況の確認の約束は書かない`);
+      }
+      if (!farMoveIn && !payWait && psp?.move_in_time && brainMeta?.urgency_appropriate !== false) {
         const dl = resolveApplyDeadlineNote(psp.move_in_time, new Date().toISOString());
         if (dl) {
           lines.push(`- ⚡ 申込の目安日: 入居希望「${psp.move_in_time}」（一番遅くて${dl.window.latest.m}月${dl.window.latest.d}日）から逆算すると、お申込みの目安は${dl.applyByLabel}ごろ（審査・契約手続きに最短でも2週間程かかるため）。触れる場合は「${psp.move_in_time}ご入居ですと${dl.applyByLabel}ごろまでにお申込みいただく形となります！！」の1文だけにし、これより前倒しした期限・「今週中」「至急」等の煽りは書かない`);
@@ -5155,12 +5262,23 @@ async function handleGenerateReply(req: NextRequest) {
       if (tpoNoteForLLM) lines.push(`- 📍 現在の場面: 【${tpoNoteForLLM}】— この場面に合った返し方をすること`);
       // 2026-09-10 Fable5 Sさん事例: WE DO の選択肢に内覧のご案内提案を第1候補として含める（四者同名）
       const fallbackDirection = "顧客の最新メッセージ内の質問・条件・依頼にそれぞれ直接回答し、具体名詞（エリア・条件。物件名・号室・日付は書かない）を含む WE DO 宣言を1つだけ添える（次のいずれか1つ: ①内覧のご案内提案「よろしければ〇〇さんご都合よろしいお日にちにお部屋ご案内させて頂きます😌！！」＝具体的な候補日時は書かない ②募集状況の確認 ③御見積書の作成・送付 ④ご条件に合うお部屋のピックアップ ⑤費用の交渉（礼金・敷金・管理費・初期費用・仲介手数料のみ。お客様が費用について頼んだ・聞いた時だけ選ぶ。家賃・賃料の値下げ交渉はこちらから宣言しない））";
-      lines.push(`- 🎯 返信の方向性: ${effectiveReplyDirection ?? fallbackDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
+      // 2026-10-08 この番の本質（turn-contract）を一番上に。本質がブレインの判断の時は、下の方向性は「形」（開口語・字数・締め）だけ（Q1・本質を勝たせる）
+      const tcNote = renderTurnContractNote(turnContract);
+      if (tcNote) lines.push(tcNote);
+      const tcBrain = turnContract?.source === "brain";
+      // 2026-10-09 調査の担当: effectiveReplyDirection はブレインの方向が14番目（早い者勝ちの型が先）。本質がある時はブレインの方向（中身）を型より上に置き、どちらが使われたかを記録する
+      const brainDirTop = tcBrain && brainFreshForMessage && !isCachedMeta ? brainDirForGen(brainMeta?.reply_direction) : null;
+      if (brainDirTop) lines.push(`- 🧠 ブレインの返信の方向（中身・上の本質と同じ側）: ${brainDirTop.slice(0, 160)}`);
+      console.info("[turn-contract:direction]", JSON.stringify({ tc: turnContract?.source ?? null, brainTop: !!brainDirTop, typeWonOverBrain: !!brainDirTop && !!effectiveReplyDirection && effectiveReplyDirection !== brainDirTop }));
+      lines.push(tcBrain
+        ? `- 🎯 返信の形（場面の型）: ${effectiveReplyDirection ?? fallbackDirection}（※この型は開口語・字数・締めの形だけに使う。何に答える・何を約束するかは上の【🧭 この番の本質】が優先。ぶつかる中身は書かない）`
+        : `- 🎯 返信の方向性: ${effectiveReplyDirection ?? fallbackDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
       // 2026-09-23 竹内「スタッフの文の生成との間でブレインの部分にギャップがある」:
       //   上の方向性は早い者勝ちの型で決まり、ブレインの reply_direction は採用されなければ
       //   **生成プロンプトに1文字も入らない**（実測で56.3%が差し替わっていた）。
       //   型（どう書くか）はそのまま、ブレインの中身（何について書くか）を1行足す。詳細は brain-specific-note.ts
-      const brainSpecific = buildBrainSpecificNote({
+      // 2026-10-08: 本質（ブレイン）がある番は「🧠 今回ブレインが掴んだ中身」は本質に含まれる＝出さない（二重にしない・旧は「型を優先」と書いていた）
+      const brainSpecific = tcBrain ? "" : buildBrainSpecificNote({
         brainDirection: brainDirForGen(brainMeta?.reply_direction),
         effectiveDirection: effectiveReplyDirection,
         fresh: brainFreshForMessage && !isCachedMeta,
@@ -5173,7 +5291,7 @@ async function handleGenerateReply(req: NextRequest) {
       //   会社として答えが決まっている事（店舗の有無・緊急連絡先のルール・キャンセルできる時期）を
       //   AI が知らずに作文していた。聞かれた時だけ確実に渡す。詳細は app/lib/company-facts.ts
       //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
-      const companyFacts = buildCompanyFactsNote(message);
+      const companyFacts = buildCompanyFactsNote(message, { account: convAccount }) + brandCostOverrideNote(convAccount);   // 10/08 Q11・Q-C ブランド別
       if (companyFacts) lines.push(companyFacts.trim());
       // 2026-10-02 ⑫ 竹内さん「相場の知識は物件検索ブレインからもらう形」: ブレインがこの発言で受けた相場の材料（meta.rent_market・
       //   物件検索のブレインの1つの元 area-rent-server から）。このメッセージについての材料なので fresh の時だけ使う。数字は材料の文の物だけ
@@ -5191,7 +5309,7 @@ async function handleGenerateReply(req: NextRequest) {
       //   ブロックの中で「必ず答える」と書くだけでは弱く、3回中1回しか直らなかった。
       //   → **必ず含める内容そのものに足す**（同じ強さにする。受け止めとは両立するので打ち消し合わない）。
       //   実データでは 2.0%（120日で48件）と少ないが、自動返信では事故になる場面。
-      const factTopics = buildCompanyFactsNote(message)
+      const factTopics = buildCompanyFactsNote(message, { account: convAccount })
         ? [`お客様が聞いている会社の事実（上の【🏢】の内容）への直接の回答`]
         : [];
       const mustInclude = [...factTopics, ...effectiveKeyTopics];
@@ -5200,8 +5318,24 @@ async function handleGenerateReply(req: NextRequest) {
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
       }
       if (activeAvoidTopics.length) {
-        if (isThinkingMsg && consideringDoorOn) lines.push(`- ${CONSIDERING_DOOR_EXEMPT_NOTE}`);
+        if (isThinkingMsg && consideringDoorOn && !consideringCloseOn) lines.push(`- ${CONSIDERING_DOOR_EXEMPT_NOTE}`);
         lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに「${effectiveReplyDirection ?? fallbackDirection}」の方向性に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
+      }
+      // 2026-10-08 11巡目（r12 の調査④⑥）: 直前2通（AIX を含む）の約束・誘いを繰り返さない／物件を1度も送っていない番は「新着で出次第」を書かない
+      if (!isTemplateOptimize) {
+        const lastTwoStaff = recentMessages.filter((m) => m.sender === "staff" && !!(m.text ?? "").trim() && !/^\s*\[(?:画像|動画|スタンプ|ファイル)\]\s*$/.test(m.text ?? "")).slice(-2).map((m) => m.text ?? "");
+        // 2026-10-08: 本質（turn-contract）がある番は「もう言った事」は本質の一覧に入っている（同じ repeatCandidates）＝11巡目の注記は出さない（二重にしない）
+        const nr = turnContract && turnContract.alreadySaid.length ? "" : noRepeatNote(lastTwoStaff, resolveReplyScene({ customerText: message }).scene);   // 受けだけかは語の場面（形）で十分
+        if (nr) lines.push(nr);
+        const na = noNewArrivalNote(ledger.facts.propertiesSentCount);
+        if (na) lines.push(na);
+        // 2026-10-08 竹内さん: 了承だけ（了解です・わかりました）への3行の型／締めの何卒の付け方（竹内さんの手打ちの率・takeuchi-reply-form-r13.ts）
+        const ackOnly = isAckOnlyAgree(message);
+        if (ackOnly) lines.push(ACK_ONLY_NOTE);
+        const nn = nanisotsuNote({ scene: resolveReplyScene({ customerText: message ?? "" }).scene, isFirstContact: isFirstEverReplyFromMsgs === true, ackOnly });
+        if (nn) lines.push(nn);
+        const sit = buildSituationNote(message);   // r12 の調査⑧: お客様の事情（審査の不安・お金の用意・同居の相談・人生の出来事…）。CUSTOMER_SITUATION_R11=off
+        if (sit) lines.push(sit);
       }
       if (lines.length === 0) return "";
       return `\n【📍 場面と返信方針 — ハードゲートの次に優先。AIX-META戦略・フェーズ別パターンより上位】\n${lines.join("\n")}\n`;
@@ -5253,10 +5387,29 @@ async function handleGenerateReply(req: NextRequest) {
       : Promise.resolve(null);
     // ─── 2026-10-07 場面の整理（reply-scene.ts・唯一の場面の判定）: 材料の取捨・PHASE_GUIDE の絞り・手本の並べ替えに使う ───
     //   テンプレ最適化（AIX の続き）は返信の場面ではないので使わない。戻す: REPLY_SCENE_MATERIALS=off
-    const replySceneResolved = isTemplateOptimize ? null : resolveReplyScene({ customerText: message });
+    // 2026-10-08 11巡目（竹内「場面の読み取りを、ブレインの判断に寄せる。ブレインが判断」）: ブレインが今の番を見て判断した時（brainLocalFresh）は
+    //   ブレインの意図・質問・条件変更・迷い・AIX を主に場面を決める（app/lib/reply-scene-brain.ts）。語の場面はブレインが判断していない時の予備。
+    //   戻す: REPLY_SCENE_BRAIN=off ／ テストの会話だけ testFlags.scene_brain="off"|"on"
+    const replySceneResolved = isTemplateOptimize ? null : resolveReplySceneBrainFirst({
+      customerText: message,
+      enabled: replySceneBrainEnabled(process.env, testFlags.scene_brain ?? null),
+      brain: brainMeta ? {
+        fresh: brainLocalFresh,
+        intent: brainMeta.customer_intent ?? null,
+        questions: brainMeta.customer_questions ?? null,
+        conditionChangeType: brainMeta.condition_change_type ?? null,
+        conditionChangeScope: (brainMeta as { condition_change_scope?: string | null }).condition_change_scope ?? null,
+        hesitancy: brainMeta.hesitancy_pattern ?? null,
+        action: rawAction,
+        replyMode: (brainMeta as { reply_mode?: string | null }).reply_mode ?? null,
+      } : null,
+    });
     const replyScene: ReplyScene | null = replySceneResolved?.scene ?? null;
+    if (replySceneResolved && replySceneResolved.scene !== replySceneResolved.wordScene) {
+      console.log(JSON.stringify({ tag: "gen:scene-brain", conversationId, word: replySceneResolved.wordScene, scene: replySceneResolved.scene, evidence: replySceneResolved.evidence, dragged: replySceneResolved.dragged.length }));
+    }
     const sceneMaterialsOn = !!replyScene && sceneMaterialsEnabled(process.env, testSceneMaterials);
-    logWatchMaterial(JSON.stringify({ tag: "gen:scene", conversationId, scene: replyScene, evidence: replySceneResolved?.evidence ?? null, materials: sceneMaterialsOn ? "on" : "off", override: testSceneMaterials }), isTemplateOptimize ? "" : null);   // 2026-10-08 8巡目: 見張りにも控える（AIX の続き文は返信の番でないので控えない＝""）
+    logWatchMaterial(JSON.stringify({ tag: "gen:scene", conversationId, scene: replyScene, evidence: replySceneResolved?.evidence ?? null, source: replySceneResolved?.source ?? null, wordScene: replySceneResolved?.wordScene ?? null, materials: sceneMaterialsOn ? "on" : "off", override: testSceneMaterials }), isTemplateOptimize ? "" : null);   // 2026-10-08 8巡目: 見張りにも控える（AIX の続き文は返信の番でないので控えない＝""）
     const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules, groundTruth, finalCheckRules] = await Promise.all([
       fetchKnowledge(searchState, message, analysisContext, conversationId, fetchSpec, brainMeta, lastStaffMsgForSearch, lastAixHistoryText,
         // 2026-09-13: 新しい判断（fresh かつ分析の省略でない）の時だけ、推奨 AIX・質問・話題・返信の方向で並べ替える
@@ -5405,8 +5558,21 @@ async function handleGenerateReply(req: NextRequest) {
     const hadAggressivePush = !!latestStaffMsg &&
       /(お申込み|お申込|申し込み|お部屋(を)?抑え|お部屋抑えさせ|抑えさせて頂き)/.test(latestStaffMsg.text ?? "");
     if (isAmbiguousReply && hadAggressivePush) {
-      replyHint = (replyHint ? replyHint + "\n" : "") +
-        "【受け身モード】直前に申込誘導を送りお客様が曖昧な返答をした。今回は追い込まず受け身で締めること。「ご都合のよい日時をお聞かせください！！」等の追い込みは絶対にしない。「お気軽にお申し付けください！！」「いつでもご連絡くださいね！！」等の柔らかい一言で締める。";
+      autoHints.push({ at: "tail", text:
+        "【受け身モード】直前に申込誘導を送りお客様が曖昧な返答をした。今回は追い込まず受け身で締めること。「ご都合のよい日時をお聞かせください！！」等の追い込みは絶対にしない。「お気軽にお申し付けください！！」「いつでもご連絡くださいね！！」等の柔らかい一言で締める。" });
+    }
+    // 2026-10-09 自動の指定（募集状況確認中・受け身モード）: 本質（ブレインの判断）がある番は材料の注記に下げ、replyHint（全ルールの上書き・AIX 判断を消す）にしない
+    let autoHintMaterialNote = "";
+    if (autoHints.length) {
+      const toMaterial = turnContract?.source === "brain" && (process.env.TURN_CONTRACT_AUTOHINT ?? "").toLowerCase() !== "off";
+      if (toMaterial) {
+        autoHintMaterialNote = `\n【📎 自動の注記（材料・中身は【🧭 この番の本質】に従う）】\n${autoHints.map((h) => `- ${h.text}`).join("\n")}\n`;
+      } else {
+        const head = autoHints.filter((h) => h.at === "head").map((h) => h.text);
+        const tail = autoHints.filter((h) => h.at === "tail").map((h) => h.text);
+        replyHint = [...head, ...(replyHint ? [replyHint] : []), ...tail].join("\n");
+      }
+      console.log(JSON.stringify({ tag: "turn-contract:autohint", conversationId, toMaterial, n: autoHints.length }));
     }
 
     // ─── テンプレート最適化モード: プロンプト最末尾に注入する上書きブロックを構築 ───
@@ -5649,7 +5815,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       // 2026-09-17 あや事例: この会話で既に送った言い回しを渡して同じ文を繰り返させない（コピペに見える）
       // 2026-09-17 慶次事例: 謝っている場面は受け止めから入る
       // 2026-09-17 友哉事例: 既に届いている書類（PDF・書類の画像）をもう一度お願いさせない
-      tpoGuidanceNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict) + buildAvoidRepeatNote(usedSentences) + buildApologyNote(apologyVerdict.apology)
+      tpoGuidanceNote + autoHintMaterialNote + relativeDayNote + conversationClockNote + buildPortalPromptNote(portalVerdict) + buildAvoidRepeatNote(usedSentences) + buildApologyNote(apologyVerdict.apology)
         + (receivedDocs.length > 0 ? `\n\n${buildReceivedDocumentNote(receivedDocs)}` : "")
         // 2026-09-17 a🤫 事例: お客様が物件を2件以上送ってきた場面だけ「名前を並べたら数は書かない」を渡す
         + (customerSentMultipleProperties ? `\n\n${VAGUE_QUANTIFIER_NOTE}` : "")
@@ -5661,7 +5827,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         + (procedureAnswer?.note ? `\n\n${procedureAnswer.note}` : "")
         + (contractTerms?.note ? `\n\n${contractTerms.note}` : "")
         // 2026-10-08 竹内さん「連投の依頼ごと全て把握する」: 今の連投の依頼・質問が2件以上の時だけ一覧（request-ledger・REQUEST_LEDGER=off）
-        + (requestListNote ? `\n\n${requestListNote}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
+        + (requestListNote ? `\n\n${requestListNote}` : "")
+        // 2026-10-08 お客様のメモ（customer-memo）
+        + (customerMemoNote ? `\n\n${customerMemoNote}` : ""), // 2026-09-15 yasuki 事例: お客様の「明日」／2026-09-16 𝒮 さん事例: いつの発言かを渡す
       phaseGuideKey, isConditionPresented,
       estimateVerdict,
       confirmCtx,          // G26: 確認約束 verdict（生成・bridge・final-check の三層同一）
@@ -5868,7 +6036,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 //   本文で「初期費用は翌月分の前家賃込み」と答える（YUMA 実測: 「初期費用に翌月分（9月分）の前家賃が含まれております」がこの置換で
                 //   「ご質問ありがとうございます」に消えた）。判定はブレインの入口と同じ rent-included-question.rentIncludedOnlyTurn
                 costBreakdownAix: effectiveAction === "cost_breakdown" || (sceneEvidencePre?.scene === "S9_cost_breakdown" && !rentIncludedOnlyTurn(message ?? "") && !contractCostAnswer),
-                protect: (s: string) => isCellRequiredSentence(s, pairContext),
+                // 2026-10-09: 本質（ブレイン）が決めた約束の文も消さない（turn-contract.contractProtectsSentence・TURN_CONTRACT_PROTECT=off）
+                protect: (s: string) => isCellRequiredSentence(s, pairContext) || contractProtectsSentence(turnContract, s),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend, materialFacts: contractMaterialFacts,
                 // 2026-09-26（穴3）: 決まった内覧の日時の復唱は「待ち合わせ確定」の置換（詳細はご連絡）にしない
                 scheduledViewingHours,
@@ -5908,7 +6077,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (deferralStripped !== vr.cleaned) console.info("[viewing-access] 中身のない先送りを削除");
               // 2026-09-16 竹内（YUYA 事例）「SUUMO以外のポータルサイトはオトリ広告等があるので、このような文を生成する。聞かれた場合」:
               //   ポータルの掲載について聞かれた時の説明はスタッフの実送信そのままなので、LLM に書かせず決定論で足す
-              const withPortal = ensurePortalNotice(deferralStripped, portalVerdict);
+              const withPortal = contractSkipsInsertion(turnContract, "portal") ? deferralStripped : ensurePortalNotice(deferralStripped, portalVerdict);
               if (withPortal !== deferralStripped) console.info("[portal-notice]", JSON.stringify({ conversationId, kind: portalVerdict.kind, portal: portalVerdict.portalLabel }));
               // 2026-09-17 竹内（あや事例）「ご案内させて頂きますとは、意味がわからない文なので、いれない。無理やり入れない」:
               //   案内する対象が無いまま「ご案内させて頂きますので、」が締めの文に混ざったら、その節だけ落とす（app/lib/reply-phrasing.ts）
@@ -6276,6 +6445,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
+                  turnContract,   // 2026-10-08 本質（turn-contract）: 本質に反する中身を足させる指摘は書き直さない
                   brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
                   // 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後）。生成ノート・後処理・検査が同じ値
@@ -6322,7 +6492,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 }
                 finalCheck.issues = scoped.shown;
                 const retryIssues = finalCheck.issues.filter(
-                  (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND"
+                  // 2026-10-09: 本質（ブレイン）に反する中身を足させる・消させる指摘はフィードバック再生成に渡さない（turn-contract.issueContradictsContract）
+                  (it) => it.severity === "block" && it.code !== "UNCHECKED_AUTO_SEND" && !issueContradictsContract(it, turnContract)
                 );
                 // 2026-09-11 統合設計（D1）: 再生成すると finalCheck が loop2 で丸ごと置換されるため、1回目生成のチェック結果を別に残す
                 const firstPass = { issues: finalCheck.pre_revision_issues ?? finalCheck.issues.map((i) => `${i.code}:${i.severity}`), head: draftBody.slice(0, 80) };
@@ -6434,7 +6605,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 }
                 // 2026-09-17 竹内（YUYA 事例）: ポータルの決まった説明も修正ループ（接地修正・再生成）の後に確定的に掛け直す。
                 //   出口（validate）で足した後に final-check:revision が走り、「比較的オトリ物件が少ない…」と書き換えられていた
-                const portalFixed = ensurePortalNotice(draftBody, portalVerdict);
+                const portalFixed = contractSkipsInsertion(turnContract, "portal") ? draftBody : ensurePortalNotice(draftBody, portalVerdict);
                 if (portalFixed !== draftBody) {
                   console.info("[portal-notice] 修正ループ後に再適用", JSON.stringify({ conversationId, kind: portalVerdict.kind }));
                   draftBody = portalFixed;
@@ -6512,6 +6683,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                     hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
+                    turnContract,   // 2026-10-08 本質（turn-contract）: 本質に反する中身を足させる指摘は書き直さない
                     brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                     ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   };
@@ -6628,7 +6800,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // 2026-09-14 竹内（くれあ事例）: 条件フォームの ⑦初期費用の限度額が家賃の3倍未満（「10〜20」・家賃15〜17万）等なら
             //   「初期費用も最大限割引させて頂き…費用を出来る限り抑えさせて頂きます！！」を必ず入れる（判定は initial-cost-tight.ts・セルの必須要素と同じ）。
             //   必須要素の指示だけでは YUMA 再現で 1/3 しか書かれなかったため、挨拶の固定と同じく決定論で差し込む（金額・物件を含まない自社方針の文）
-            if (!isTemplateOptimize && draftBody && requiresInitialCostSave(pairContext)) {
+            // 2026-10-09: 本質が閉じる番・費用を言わない番は差し込まない（turn-contract.contractSkipsInsertion・TURN_CONTRACT_POSTPROCESS=off）
+            if (!isTemplateOptimize && draftBody && requiresInitialCostSave(pairContext) && !contractSkipsInsertion(turnContract, "initial_cost")) {
               const ins = insertInitialCostSave(draftBody, customerName ?? "");
               if (ins.inserted) {
                 console.log(JSON.stringify({ tag: "initial-cost-save:inserted", conversationId, evidence: resolveInitialCostTight(pairContext.substance.units.join("\n")).evidence || "cost_question_before_property" }));
@@ -6643,7 +6816,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   必須要素の指示だけでは書かれないことがあるので、初期費用の一文と同じく決定論でも差し込む。
             if (!isTemplateOptimize && draftBody) {
               const waiting = requiresWaitingCommitment(pairContext);
-              if (waiting) {
+              if (waiting && !contractSkipsInsertion(turnContract, "waiting")) {
                 const withCommit = ensureWaitingCommitment(draftBody, waiting);
                 if (withCommit !== draftBody) {
                   console.log(JSON.stringify({ tag: "waiting-commitment:inserted", conversationId, date: contactDateLabel(waiting), evidence: waiting.evidence }));
@@ -6664,12 +6837,27 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               // 2026-10-02 ⑫の再生: 「確認しご連絡…！！確認出来次第ご連絡…！！」の2回目（人 1/13,260＝同じ重なり）・条件を「」で囲む（人 0）を直す
               const dc = dropDoubleConfirmContact(draftBody); if (dc.removed.length) { w.push(...dc.removed.map((x) => `二重の約束を外す: ${x}`)); draftBody = dc.text; }
               const uq = unquoteConditions(draftBody); if (uq.removed.length) { w.push(...uq.removed.map((x) => `条件の「」を外す: ${x}`)); draftBody = uq.text; }
+              // 2026-10-08 11巡目: 約束の文末の「ね」を取る（竹内さんの手打ち 0通・takeuchi-wording-r11.ts・TAKEUCHI_WORDING_R11=off）
+              const tw = fixTakeuchiWording(draftBody); if (tw.changes.length) { w.push(...tw.changes); draftBody = tw.text; }
+              // 2026-10-08 竹内さん: 「何時でも／いつでも」（当日・申込は何時でも・それ以外はいつでも）／手がかりの無い「〇〇さん達」は「さん」（takeuchi-reply-form-r13.ts）
+              if (!isTemplateOptimize) {
+                const it = normalizeItsudemo(draftBody, { customerText: message ?? "", scene: resolveReplyScene({ customerText: message ?? "" }).scene });
+                if (it.changed) { w.push(`何時でも/いつでも ${it.changed}`); draftBody = it.text; }
+                const st = fixSanTachi(draftBody, [...recentMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? ""), message ?? "", customerConditions ?? ""]);
+                if (st.changed) { w.push(`さん達→さん ${st.changed}`); draftBody = st.text; }
+              }
               if (!noEmoji) {
                 // 2026-10-02 竹内「スタッフのを基に構成する」: 場面ごとのスタッフの割合（2通目＝直前10分以内にこちらが送った後の通も場面に）
                 const em = applySituationalEmoji(draftBody, { seed: conversationId ?? null, firstContact: isFirstEverReplyFromMsgs === true, afterStaffSend: (() => { const last = recentMessages[recentMessages.length - 1]; return !!last && last.sender === "staff" && !!last.createdAt && Date.now() - Date.parse(last.createdAt) < 10 * 60_000; })() });
                 if (em.removed) { w.push(`絵文字を外す（${em.reason}）`); draftBody = em.text; }
               }
               if (w.length) console.log(JSON.stringify({ tag: "generate-reply:wording-1002", conversationId, changes: w }));
+              // 2026-10-08 11巡目（r12 の調査⑩）: ブレインの今の番の質問（引きずりを外した物）を下書きが全部扱ったかの点検（ログだけ・本文は変えない）
+              const brainQs = replySceneResolved?.questions ?? [];
+              if (brainQs.length) {
+                const missed = brainQs.filter((q) => questionTurnOverlap(q, draftBody) < 0.25);
+                if (missed.length) console.log(JSON.stringify({ tag: "reply:brain-q-uncovered", conversationId, scene: replyScene, missed, total: brainQs.length }));
+              }
             }
             // A-3（H-3/H-4）: 後処理（enforceCustomerName・絵文字重複除去・「」除去・マーカー除去）で本文が変わった後に
             //   決定論チェックを再実行し、決定論由来の指摘を最新本文の結果で差し替える（checked_text_hash 更新より前）
@@ -6690,6 +6878,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   greetingKind: greetingDecision.kind, expectedOpening: greetingDecision.openingLine, greetingDecision: toGreetingLite(greetingDecision), // G30/G31
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
+                  turnContract,   // 2026-10-08 本質（turn-contract）: 本質に反する中身を足させる指摘は書き直さない
                   brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   ngProperties: brainFreshForMessage
@@ -6729,6 +6918,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             //   旧: 【⚠️センシティブ案件: …】を本文の冒頭に付けていた → テキストボックスに警告文が入り、消し忘れるとお客様に送られる。
             //   block なので、未編集の AI 下書きのまま送る時は送信確認が出る（手動確認必須は維持）
             finalDraftText = draftBody;
+            // 2026-10-08 本質の確かめ（記録だけ・本文は変えない）: 本質に無い確認の約束（H4）・閉じる番の長さ（H5）・もう言った文（H1）／
+            //   AIX の中身の言い切り（aix-content-gate・どのボタン×ピッカーの中身か）。止める（自動送信）のは auto-reply-policy の ⑥-2b
+            if (!isTemplateOptimize && draftBody) {
+              try {
+                const tcAudit = turnContract ? auditDraftAgainstContract(draftBody, turnContract, lastTwoStaffForContract) : [];
+                const groundForAix = [...recentMessages.slice(-30).map((m) => m.text ?? ""), message ?? ""].join("\n");
+                const aixHits = classifyAixContent(draftBody, groundForAix).filter((h) => !h.grounded).map((h) => ({ kind: h.kind, key: h.catalogKey, s: h.sentence.slice(0, 20) }));
+                if (tcAudit.length || aixHits.length) console.log(JSON.stringify({ tag: "turn-contract:audit", conversationId, source: turnContract?.source ?? null, misses: tcAudit, aixContent: aixHits }));
+              } catch { /* 記録だけ */ }
+            }
             if (draftBody && sensitiveGateNote && finalCheck) {
               const sensitiveKind = detectSensitiveCase(message) ?? "センシティブ";
               finalCheck.issues.unshift({
@@ -6868,6 +7067,21 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               draftHead: (finalDraftText ?? "").trim().slice(0, 200),
             } : null;
             if (finalCheck && tpoDebug) finalCheck.tpo_debug = tpoDebug;
+            // 2026-10-09 事実の照らしの担当: 自動にしていない会話の下書きにも「根拠なし」の印（日付・時刻・号室・物件名が材料に無い言い切り）を残す（本文は変えない・DRAFT_FACT_GROUNDING=off）
+            //   ＋本質の確かめ（H4・H5・H1）と AIX の中身の言い切りの型も同じ所に（見張りで数える）
+            if (finalCheck?.tpo_debug && !isTemplateOptimize && (finalDraftText ?? "").trim()) {
+              try {
+                const groundForFacts = [...recentMessages.map((m) => m.text ?? ""), message ?? "", customerConditions ?? ""].join("\n");
+                const ung = (process.env.DRAFT_FACT_GROUNDING ?? "").toLowerCase() === "off" ? [] : findUngroundedFacts(finalDraftText, groundForFacts, groundingKinds());
+                const tcMiss = turnContract ? auditDraftAgainstContract(finalDraftText, turnContract, lastTwoStaffForContract) : [];
+                const aixC = classifyAixContent(finalDraftText, groundForFacts).filter((h) => !h.grounded).map((h) => h.catalogKey);
+                Object.assign(finalCheck.tpo_debug, {
+                  ungroundedFacts: ung.map((h) => `${h.kind}:${h.value}`).slice(0, 6),
+                  turnContract: turnContract ? { source: turnContract.source, routes: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, misses: tcMiss } : null,
+                  aixContent: aixC.slice(0, 6),
+                });
+              } catch { /* 印だけ */ }
+            }
             // 2026-10-06 ⑫ 竹内「名前間違えているの絶対にいれない」（あ・「森本様」）: 最後の網。呼びかけの名前が固定の呼び名でも
             //   会話・表示名・登録名に出てくる名前でもない時は固定の呼び名に直す（無ければ呼びかけごと外す）。最終チェックの block が影の運用でも必ず効く
             if (finalDraftText && !isTemplateOptimize) {
@@ -6971,7 +7185,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 console.log(JSON.stringify({ tag: "draft:superseded", conversationId, answeredAt: lastCustomerMsgAt, newerAt: supersededBy, caller: generationCaller }));
                 const { error: supErr } = await supabase.from("conversations").update(SUPERSEDED_DRAFT_UPDATE).eq("id", conversationId);
                 if (supErr) console.error("[generate-reply] superseded update error:", conversationId, supErr.message);
-              } else if (aixBoundaryRequired) {
+              // 2026-10-09 調査の担当: ブレインが返信を選んだ番（AIX なし・本質がブレインの判断）は [AIX誘導中] で本文を消さず、block の指摘つきの下書きとして残す（自動送信は block で止まる）。戻す TURN_CONTRACT_KEEP_DRAFT=off
+              } else if (aixBoundaryRequired && !(turnContract?.source === "brain" && !replyAixPost && (process.env.TURN_CONTRACT_KEEP_DRAFT ?? "").toLowerCase() !== "off")) {
                 console.warn(
                   "[generate-reply] AIX境界block解消不能 → ai_draftクリア+AIX切替:",
                   conversationId, aixBoundaryRequired.code, "→", aixBoundaryRequired.action

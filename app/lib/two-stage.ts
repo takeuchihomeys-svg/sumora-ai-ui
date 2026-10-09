@@ -15,6 +15,7 @@
 //   確認: 「お部屋の募集状況確認させていただきます！！」33・「確認出来次第ご連絡させて頂きます！！」25
 //   ピックアップ: 「〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！」・「〇〇さんにオススメできるお部屋ピックアップさせていただきます！！」
 //   見積書: 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」・「お部屋の募集状況と最大限割引させて頂いたお見積書お送りさせていただきます！！」
+import { splitRequests } from "./request-ledger";
 export type TwoStageKind = "pickup" | "check" | "estimate";
 export type TwoStageInput = {
   finalAix: string | null;
@@ -49,7 +50,7 @@ export type TwoStageInput = {
 //   実送信（お客様がアリバイ・勤務先の用意を聞いた 9番）: スタッフは「お仕事面こちらでサポートさせて頂きます😊！！」「お仕事先こちらでご用意させて頂きます」と答え、
 //   線（お客様の発言で当たる 11通を目で読んだ）: 「在籍確認」は管理会社・保証会社の名前を聞く質問（確認が要る）だったので外した。「アリバイ」の語を書いた送信は全期間で 2通・「管理会社に確認」は 0 ＝ 確認の約束にしない。お仕事面のサポートを伝える返信（自動では送らない＝約束が無いので関所 ⑥-4 が人に残す）
 export const WORK_SUPPORT_ASK_RE = /アリバイ|勤務先[^\n。]{0,12}(?:用意|工作|空欄)|お仕事(?:先|面)[^\n。]{0,8}(?:用意|サポート)/;
-export type TwoStageVerdict = { kind: TwoStageKind; direction: string; keyTopic: string; source: string };
+export type TwoStageVerdict = { kind: TwoStageKind; direction: string; keyTopic: string; source: string; /** 同じ返信でまとめて足した約束（TWO_STAGE_MULTI_PROMISE・10/09） */ extraPromises?: string[] };
 
 // 10巡目（10/08）: rule:further_discount_daihyo＝御見積書の後の「更に安く」は AIX【確認します→代表確認（初期費用）】のまま（further-discount.ts）
 const KEEP_SOURCE_RE = /^(?:promise:|signal:pending_pickup|rule:closed_ack_wait|correction:check_already_declared|rule:further_discount_daihyo)/;
@@ -68,7 +69,56 @@ export const TWO_STAGE_ALSO_ANSWER = "同じ発言の他のご希望・ご質問
 export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   const v = resolveTwoStageCore(i);
   if (v && sameDayDirect(v, i)) return null;
-  return v ? { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` } : null;
+  if (!v) return null;
+  const extra = multiPromiseExtras(v, i);
+  if (extra.length) {
+    return {
+      ...v,
+      direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}${multiPromiseDirection(extra)}`,
+      keyTopic: `${v.keyTopic}＋あわせて${extra.map((x) => x.what).join("・")}の約束`,
+      extraPromises: extra.map((x) => x.kind),
+    };
+  }
+  return { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` };
+}
+
+/**
+ * 2026-10-09 竹内さん「複数の依頼が重なる番は、ちゃんと返信して約束してから AIX をセットしたらどうか…読み込んで約束して、約束した事を記録して、それを AIX で送っていけば完全にできる」:
+ *   2段の約束は1種類（pickup/check/estimate）だけで、同じ連投の別の依頼（空き＋内覧・見積＋他の物件・空き＋室内写真）は「一言ずつ応える」だけだった。
+ *   竹内さんの実送信（scripts/audit-multi-request-turns.ts --show=wording）は1通にまとめて約束し「あわせて」でつなぐ:
+ *     「〇〇の募集状況確認させて頂きます！！確認出来次第、…初期費用の御見積書もあわせてお送りさせて頂きます😌！！」（db3722）
+ *     「募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます！！あわせて、〈条件〉のお部屋もピックアップしてお送りさせて頂きます😌！！」（b3bae3）
+ *     「お送り頂きました物件の募集状況を確認させて頂きます！！…最大限割引して御見積書をご用意いたします😊！！」（ac7c7f）
+ *   → 今の連投を request-ledger で数え、主の約束（v.kind）で果たさない依頼のうち AIX で果たす物（空き・見積・内覧・ピックアップ・室内写真・条件の確認）を、同じ返信の約束に足す。
+ *     約束した事は送った通の記録（sent_facts の約束の行）に残り、AIX を1本送るごとに次の AIX要対応が立つ（promise-queue）。
+ *   足さない物: 返信で答える依頼（審査・入居の時期・その他＝TWO_STAGE_ALSO_ANSWER）・先の時期の相談・申込以降。物件が無い番の費用（見積る物件が無い＝estimate-needs-property）。
+ *   入れる: TWO_STAGE_MULTI_PROMISE=on（既定 off・2026-10-09 時点）
+ */
+type ExtraPromise = { kind: "check" | "estimate" | "viewing" | "pickup" | "photo" | "confirm"; what: string; wording: string };
+function multiPromiseExtras(v: TwoStageVerdict, i: TwoStageInput): ExtraPromise[] {
+  // 既定 off（2026-10-09 本番に入れる前の区切り）。入れる: TWO_STAGE_MULTI_PROMISE=on
+  if (typeof process === "undefined" || (process.env?.TWO_STAGE_MULTI_PROMISE ?? "").toLowerCase() !== "on") return [];
+  // 決まった型の約束（お仕事面のサポート・室内写真の撮影・内覧の確認）は今まで通り
+  if (/work_support|room_photo_shoot|viewing_check/.test(v.source)) return [];
+  const items = splitRequests([String(i.customerText ?? "")], new Date(0).toISOString()).filter((x) => !x.deferred && x.topic !== "other");
+  if (items.length < 2) return [];
+  const topics = new Set(items.map((x) => x.topic));
+  const dir = v.direction;
+  const covers = (re: RegExp) => re.test(dir) || re.test(v.keyTopic);
+  const out: ExtraPromise[] = [];
+  const propertyInPlay = !!i.brought?.count || v.kind === "check" || v.kind === "estimate" || !!(i.estimateTarget ?? "").trim();
+  if (topics.has("vacancy") && !covers(/募集状況/)) out.push({ kind: "check", what: "募集状況の確認", wording: "お部屋の募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます！！" });
+  if (topics.has("cost") && propertyInPlay && !covers(/御?見積/)) out.push({ kind: "estimate", what: "御見積書", wording: "最大限割引させて頂いた初期費用の御見積書もあわせてお送りさせて頂きます！！" });
+  if (topics.has("viewing") && !covers(/内覧/)) out.push({ kind: "viewing", what: "ご内覧の日程", wording: "ご内覧のお日にちもあわせて調整させて頂きます！！" });
+  if (topics.has("pickup") && v.kind !== "pickup") out.push({ kind: "pickup", what: "お部屋のピックアップ", wording: "あわせて、〇〇さんご希望のご条件に合ったお部屋もピックアップしてお送りさせて頂きます！！" });
+  if (topics.has("photo") && !covers(/写真/)) out.push({ kind: "photo", what: "室内のお写真", wording: "室内のお写真もあわせてお送りさせて頂きます！！" });
+  if ((topics.has("equipment") || topics.has("contract")) && v.kind !== "check") {
+    out.push({ kind: "confirm", what: "聞かれた条件・設備", wording: "（資料・会話に答えがあればその答え。無ければ）〇〇（聞かれた事）もあわせて確認させて頂きます！！" });
+  }
+  return out.slice(0, 3);
+}
+function multiPromiseDirection(extra: readonly ExtraPromise[]): string {
+  return `【同じ連投の別の依頼も同じ返信でまとめて約束する（竹内さんの形＝1通にまとめて「あわせて」でつなぐ・結果や金額や日時は書かない・送るのは後で AIX を1つずつ）】${extra.map((x, n) => `${n + 1}. ${x.what}: 「${x.wording}」`).join(" ")}。物件名は会話から分かる時だけ。約束の順は お客様が聞いた順でよい。`;
 }
 
 /**
@@ -119,6 +169,10 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   //   10/03〜の道の違い（scripts/audit-path-gap-by-scene.ts）の短いお礼の外れ（AI=返信→人=AIX）の形。設計知見 a92ec31b「約束の後のお礼・了承だけの番は約束の AIX のまま」と同じ向き
   //   （⑫22巡の pickupPromiseNotReady は了承以外の発言も混ぜた 120番で引いた線＝了承だけの番はこちらが多数）。戻す: TWO_STAGE_ACK_WAIT=off
   if (pickupPromiseNotReady && i.ackRightAfterPromise && (typeof process === "undefined" || (process.env?.TWO_STAGE_ACK_WAIT ?? "").toLowerCase() !== "off")) return null;
+  // 2026-10-09 試験の (d) 型（q095 q100 q105）: こちらが約束した直後のお客様の「よろしく」等の番で、LLM が約束を果たす AIX（見積書送る・物件確認した）を
+  //   選んだのに、下の2段が約束の返信に戻していた（もう約束は済んでいる＝言い直しになる・竹内さんは黙って AIX で果たす）。この番は AIX のまま。戻す TWO_STAGE_ACK_FULFIL=off
+  if (i.ackRightAfterPromise && (a === "estimate_sheet" || a === "property_check_result" || a === "acknowledge_check")
+    && (typeof process === "undefined" || (process.env?.TWO_STAGE_ACK_FULFIL ?? "").toLowerCase() !== "off")) return null;
   // 2026-10-08 10巡目（竹内さん「返信か AIX の判断を先に完全に」）: 物件の AIX（ピックアップ・オススメ・探す）は、お客様の今の発言がお礼・了承だけ
   //   でない番では、売上サポに候補があっても（pickupReady）・前の約束・合図（promise:pickup・signal:pending_pickup）でも、まず約束の返信にする。
   //   線（scripts/audit-r10-path-truth.ts・6/26〜 の全部の番・ピックアップの約束か物件の AIX か）: 条件の番 竹内さん 約束 126／AIX 5・従業員 106／4、
