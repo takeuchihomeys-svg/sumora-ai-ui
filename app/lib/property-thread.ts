@@ -246,6 +246,26 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       && ms(m.created_at) <= ms(a.created_at) + 2000 && ms(m.created_at) >= ms(a.created_at) - 20_000);
     if (!burst.length || !names.length) continue;
     const idOf = (m: PtMsg) => m.line_message_id ?? m.image_url ?? "";
+    // 2026-10-09 引用先の画像の名前の化け（読み取り「RIHGII Saison 3F田 1505号室」↔ AIX の物件名「RISING Maison 本町橋 1505号室」・名前の近さ 0.38）:
+    //   同じ AIX の束の画像で、読み取りの名前の部屋が AIX の物件名のどれとも合わず、号室（3〜4桁）が同じ物件名が1つだけある時は、その物件に寄せる
+    //   （画像の行き先と出来事を打った名前の部屋へ移し、読み取りの部屋は消す）。戻す: PROPERTY_THREAD_OCR_REPAIR=off
+    if (ocrRepair) {
+      for (const m of burst) {
+        const r = imageRoom.get(idOf(m));
+        if (!r || !ocrRooms.has(r) || named.includes(r) || !r.ref.room || r.ref.room.length < 3) continue;
+        // シリーズの番号が両方にあって違う（サウスプレイスⅧ／Ⅵ）なら別の建物＝寄せない
+        const sr = seriesTokens(r.ref.building);
+        const same = named.filter((x): x is PtRoom => !!x && x.ref.room === r.ref.room && !(sr && seriesTokens(x.ref.building) && seriesTokens(x.ref.building) !== sr));
+        if (same.length !== 1) continue;
+        const to = same[0];
+        for (const [k, v] of imageRoom) if (v === r) imageRoom.set(k, to);
+        for (const e of r.events) if (!to.events.some((x) => x.kind === e.kind && Math.abs(ms(x.at) - ms(e.at)) < 10 * 60_000)) to.events.push(e);
+        for (const n of r.names) if (!to.names.includes(n)) to.names.push(n);
+        to.sentByUs ||= r.sentByUs;
+        const idx = rooms.indexOf(r); if (idx >= 0) rooms.splice(idx, 1);
+        ocrRooms.delete(r);
+      }
+    }
     const anchorIdx = burst.map((m) => { const r = imageRoom.get(idOf(m)); return r ? named.findIndex((x) => x === r) : -1; });
     const assign = (m: PtMsg, slot: number) => {
       if (slot < 0 || slot >= names.length || imageRoom.has(idOf(m))) return;

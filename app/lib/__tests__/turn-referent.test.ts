@@ -108,6 +108,16 @@ describe("読み取りの名前の化け（OCR）", () => {
     const s = resolvePropertyThreads({ messages, imageLabels: new Map([["u1", "ロッジール城山町 101号室"]]), aix });
     eq(s.rooms.length, 1); eq(s.rooms[0].ref.display, "ロワジール城山町 101号室");
   });
+  it("b50fd451 の形: 束の画像の読み取り「RIHGII Saison 3F田 1505号室」は AIX の「RISING Maison 本町橋 1505号室」に寄せる（引用先の名前）", () => {
+    const messages: PtMsg[] = [
+      img("s1", "2026-09-19T03:10:00Z", "u1"),
+      { sender: "customer", text: "内見行きたいです！", created_at: "2026-09-19T03:25:55Z", line_message_id: "c1", quoted_message_id: "s1" },
+    ];
+    const aix: PtAix[] = [{ created_at: "2026-09-19T03:10:02Z", aix_type: "property_send", property_names: ["RISING Maison 本町橋 1505号室"] }];
+    const s = resolvePropertyThreads({ messages, imageLabels: new Map([["u1", "RIHGII Saison 3F田 1505号室"]]), aix });
+    eq(s.turnTargets[0]?.display, "RISING Maison 本町橋 1505号室");
+    eq(s.rooms.length, 1);
+  });
   it("号室が違えば同じにしない（同じ建物の別の部屋かもしれない）", () => {
     const messages: PtMsg[] = [img("s1", "2026-09-10T03:10:00Z", "u1")];
     const aix: PtAix[] = [{ created_at: "2026-09-10T03:10:02Z", aix_type: "property_send", property_names: ["ロワジール城山町 102号室"] }];
