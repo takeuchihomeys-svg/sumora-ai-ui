@@ -22,7 +22,7 @@ import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists, refineCurrentProperty, currentPropertiesOf } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
 import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
-import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, staffPromiseMaterialLine, samePromiseFamily, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, staffPromiseMaterialLine, samePromiseFamily, isPromiseNudge, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -3279,7 +3279,8 @@ ${history}`;
     //   約束が残っている事は LLM の前に材料（行動台帳＋staffPromiseMaterialLine）で渡している
     //   10/14 試験（route1014-final-b・sp-on）: 約束の直後のお礼・了承だけの番（q094「ありがとうございます！よろしくお願いいたします」）を返信にした＝
     //   この番は約束を果たす AIX（竹内さんは黙って後で AIX 80%・3巡目の線）。下げるのはお客様が中身を書いた番だけ
-    if (promiseAix && !customerAckAfter && !samePromiseFamily(promiseAix.action, finalAix ?? null)
+    //   10/14 確かめる人: 約束の催促（「まだですか」「どうなりましたか」）も約束を果たす番＝下げない（isPromiseNudge）
+    if (promiseAix && !customerAckAfter && !isPromiseNudge(unrepliedTurn.text ?? "") && !samePromiseFamily(promiseAix.action, finalAix ?? null)
       && !applyOverride(demotedOverrides, "staff_promise", `promise:${promiseAix.kind}`, promiseAix.action, finalAix ?? null)) {
       console.log(JSON.stringify({ tag: "brain:staff-promise-demoted", conversationId, kind: promiseAix.kind, would: promiseAix.action, brain: finalAix ?? null }));
       promiseAix = null;
@@ -3917,7 +3918,8 @@ ${history}`;
       //   「約束でなく AIX で直接」と言い、送れる物件がある時は上書きしない（食い違いはログ）。それ以外は今まで通り約束の返信。戻す BRAIN_DEMOTE_TWO_STAGE=off
       // 2026-10-14: まだこの件のピックアップを約束していない番は直接にしない（竹内さんはまず約束・TWO_STAGE_DIRECT_NEEDS_PROMISE=off で旧）
       if (twoStage && twoStage.kind === "pickup" && pickupReadyForChoice === true
-        && (!directPropertyNeedsPromise() || pickupPromisedOpenNow !== false)
+        // 10/14 確かめる人: 材料の1行（「お礼や了承だけの番は直接でよい」）とそろえる。お礼・了承だけの番は two-stage が先に AIX のまま返すが、ここでも明示する
+        && (!directPropertyNeedsPromise() || pickupPromisedOpenNow !== false || customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")))
         && brainContractSaysDirectPropertyAix((parsed as { turn_contract?: unknown }).turn_contract, finalAix)
         && !applyOverride(demotedOverrides, "two_stage_promise", twoStage.source, null, finalAix)) {
         twoStage = null;

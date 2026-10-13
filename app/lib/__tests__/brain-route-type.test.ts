@@ -1,9 +1,10 @@
 // app/lib/__tests__/brain-route-type.test.ts — 返信か AIX かの材料（実行: npx tsx app/lib/__tests__/brain-route-type.test.ts）
 import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, isAixWritingRule, actionRulesJudgeOnlyEnabled } from "../brain-rules-facts";
+import { zenryokuCandidateMaterial, zenryokuCandidateStrongEnabled } from "../search-result-split";
 import { routeTypeOf, pickRouteExamples, routeTypeBrainText, routeStatLine, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteExample } from "../brain-route-type";
 import { ROUTE_EXAMPLES, ROUTE_TYPE_STATS } from "../brain-route-type-data";
 import { lowPressNote, catalogBlockForBrain } from "../aix-catalog";
-import { pickupPromiseOpen, pickupReadyMaterialLine, directPropertyNeedsPromise, overrideDemoted, samePromiseFamily, staffPromiseMaterialLine, applyOverride } from "../override-demote";
+import { pickupPromiseOpen, pickupReadyMaterialLine, directPropertyNeedsPromise, overrideDemoted, samePromiseFamily, staffPromiseMaterialLine, applyOverride, isPromiseNudge } from "../override-demote";
 import { textFingerprint } from "../brain-judge-examples";
 
 let pass = 0, fail = 0;
@@ -90,15 +91,38 @@ t("下げた時は記録して false", applyOverride(dl, "staff_promise", "promi
 t("上書きのままの家族は true（記録なし）", applyOverride(dl, "turn_route_guards", "guard:not_pickup_turn", null, "property_send", {}) === true && dl.length === 1);
 
 // ── 10/14 入口の洗い出し #3: 品質ルール⑥⑦⑧を事実の材料に（brain-rules-facts）
-t("⑥⑦⑧の事実の材料: 既定 on・戻す BRAIN_RULES_678_FACTS=off", rules678FactsEnabled({}) && !rules678FactsEnabled({ BRAIN_RULES_678_FACTS: "off" }));
+t("⑥⑦⑧の事実の材料: 既定 off・入れる BRAIN_RULES_678_FACTS=on", !rules678FactsEnabled({}) && rules678FactsEnabled({ BRAIN_RULES_678_FACTS: "on" }));
+t("⑦: 当てる範囲は直近3通（engagement_stance とそろえる）", /直近3メッセージ以内のお客様自身の発言/.test(RULE7_FACTS));
 t("⑥: aix を null と決め打ちしない・竹内さんの数がある", !/aix フィールドは null にする/.test(RULE6_FACTS) && /36番＝23%/.test(RULE6_FACTS));
 t("⑦: 弔事・病気のキャンセルの線は残す・お客様の恐縮とスタッフの文の語は外す", /弔事・病気/.test(RULE7_FACTS) && /恐縮/.test(RULE7_FACTS) && /スタッフ自身の文の語/.test(RULE7_FACTS));
 t("⑧: 別物件の提案を禁止しない（代わりの物件・続けて1件の事実）", !/別物件の提案」を追加/.test(RULE8_FACTS) && /82%/.test(RULE8_FACTS));
 
 // ── 10/14 入口の洗い出し #1: アクション別ルールは判断の行だけ
-t("文の書き方の規則（DIFF-POLICY・構成・冒頭）は外す", isAixWritingRule({ rule_key: "DIFF-POLICY-AIX-1", rule_text: "x" }) && isAixWritingRule({ rule_key: "R1", rule_text: "冒頭は「お世話になっております」から書く" }));
+t("文の書き方の規則は rule_key の頭（DIFF-POLICY・LEARN-AIX）だけで外す", isAixWritingRule({ rule_key: "DIFF-POLICY-AIX-1", rule_text: "x" }) && isAixWritingRule({ rule_key: "LEARN-AIX-3", rule_text: "x" }) && !isAixWritingRule({ rule_key: "R1", rule_text: "冒頭は「お世話になっております」から書く" }));
 t("判断の規則は残す", !isAixWritingRule({ rule_key: "R2", rule_text: "見積書の後の前向きな反応だけでは申込へを選ばない" }));
 t("戻す BRAIN_ACTION_RULES_JUDGE_ONLY=off", actionRulesJudgeOnlyEnabled({}) && !actionRulesJudgeOnlyEnabled({ BRAIN_ACTION_RULES_JUDGE_ONLY: "off" }));
+
+// ── 10/14 確かめる人の直し
+// ① 本番 ai_prompt_rules の判断の行（10/14 に読んだ実物の rule_key と本文の頭）は残る（旧の語の網は「構成」「記載」「！！」で落としていた）
+const JUDGE_RULES = [
+  { rule_key: "condition-addition-vs-property-check-distinction-ack", rule_text: "【最重要: 条件追加型 vs 特定物件確認型の区別】■ 条件追加型（「あと〇〇で」「〇〇も条件に追加」…" },
+  { rule_key: "FEEDBACK-10efc731-f69c-42bf-b689-c555c017653c-1", rule_text: "他社の見積と比べて高い・もっと安くと言われた時は、返信で金額や差額を書かない。その物件の御見積書をまだ送っていなければ AIX【見積書送る】" },
+  { rule_key: "FEEDBACK-07ff6769-7717-4bf2-81ec-61cc83b24712-2", rule_text: "御見積書を送った物件で「もう少し安くなりませんか」と聞かれた時は、AI が金額で答えず AIX【確認します】で「弊社代表に更に割引可能か確認させて頂きます！！確認出来次第ご連絡させ" },
+  { rule_key: "FEEDBACK-415b3544-475c-4c2f-a4bb-9d5b82e7d107-1", rule_text: "管理会社に確認して分かった内覧の可否・内覧開始日は AIX で伝える。資料に退去予定日がある時は返信で「〇月〇日退去予定のため、〇月〇日以降にご内覧可能です！！」と答えてよい。" },
+  { rule_key: "FEEDBACK-8627ab82-a6df-449a-9c9e-25215043841c-1", rule_text: "契約者と入居者が異なる代理契約・複雑な家族構成が判明した場合は、必ずスタッフによる管理会社への代理契約可否確認を挟む。" },
+  { rule_key: "FEEDBACK-1efd48f7-1cdb-4b94-8b3f-2189546bd272-merged", rule_text: "条件未記載で問い合わせが来た場合や条件を聞き出したい場合、初回は挨拶のみを返し、AI側で条件フォーム8項目をその場で送らない。" },
+  { rule_key: "FEEDBACK-a6f7c1f4-61fd-40bf-bd29-819602aaf2d8-1", rule_text: "この AIX【内覧調整】では、お客様から日にちの指定が無くても内覧の候補日を出す（スタッフが予定表から選んだ直近の空いている日を3つが基本" },
+];
+t("判断の行 7本はブレインに残る（isAixWritingRule=false）", JUDGE_RULES.every((r) => !isAixWritingRule(r)));
+// ④ 約束の催促は staff_promise を下げない
+t("催促: まだですか・どうなりましたか・物件まだ？", isPromiseNudge("まだですか？") && isPromiseNudge("先日の件どうなりましたか") && isPromiseNudge("物件まだ？") && isPromiseNudge("いつ頃届きますか"));
+t("催促でない: 新しい問い・お礼", !isPromiseNudge("ペットは何匹まで可能ですか？") && !isPromiseNudge("ありがとうございます！") && !isPromiseNudge("この物件まだ空いてますか？ 初期費用も知りたいです。駐車場もありますか？ 内覧はいつできますか？ 他の物件も見たいです"));
+
+// ⑦ 全力サポートを候補にする材料を強める（前に送った後で出し切りの印・他の物件の問いがある番だけ・新規は出さない）
+const zStrong = zenryokuCandidateMaterial({ sentPropertyCount: 5, lastSentAt: "2026-10-10T00:00:00Z", exhaustLine: "【出し切りの材料】…", customerText: "もう少し探して頂けますか", pickupReady: false });
+t("強める一文: 前に送った後＋出し切りの印", /「新着・他にあるか」の番/.test(zStrong));
+t("強める一文: 新規（送付0）には出さない", !/「新着・他にあるか」の番/.test(zenryokuCandidateMaterial({ sentPropertyCount: 0, lastSentAt: null, exhaustLine: "", customerText: "他にありますか", pickupReady: false })));
+t("強める一文: 戻す ZENRYOKU_CANDIDATE_STRONG=off", zenryokuCandidateStrongEnabled({}) && !zenryokuCandidateStrongEnabled({ ZENRYOKU_CANDIDATE_STRONG: "off" }));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

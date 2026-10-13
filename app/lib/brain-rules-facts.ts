@@ -6,15 +6,16 @@
 //   ⑧ 物件オススメ／物件確認したの後のお礼は「別物件の提案を禁止・待つ」→ 申込が入っていた報告の後は代わりの物件（5cb4bd2f）と逆
 //   段階 proposing「顧客が興味・内覧希望を示すまで内覧提案はしない」（8/16）→ 竹内さんは見積書の後に内覧のご案内 46%・物件ピックアップの後10分以内に物件オススメ 82%
 // 残す安全の線: 弔事・病気・ご家族の事情のキャンセルは受け止めのみ（ea4fceee）・中身の無い進捗テンプレ・条件の再ヒアリングを書かない
-// 戻す: BRAIN_RULES_678_FACTS=off（旧の⑥⑦⑧・段階の説明）
+// 既定 off（入れる: BRAIN_RULES_678_FACTS=on）。10/14 確かめる人: 7構成のうち off の時だけ一番高い（17/30）・⑥を「事実で決める」にするとお礼の番を AIX に寄せ、
+//   AIX の言い過ぎを減らす目的と逆。⑦の当てる範囲は旧と同じ直近3通（engagement_stance の STANCE_WAIT2_FACTS とそろえた）
 
 export function rules678FactsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_RULES_678_FACTS ?? "").trim().toLowerCase() !== "off";
+  return (env.BRAIN_RULES_678_FACTS ?? "").trim().toLowerCase() === "on";
 }
 
 export const RULE6_FACTS = "ルール⑥（感謝・了承だけの番・事実の材料）: 顧客の最新メッセージが感謝・了承だけ（60字未満・質問・要望・懸念なし）の番。竹内さんの実際（お礼だけの 154番）: 短い返信で受ける・何も送らない・約束を果たす AIX（物件の AIX を押した 36番＝23%・約束の直後のお礼は黙って後で AIX が多い）。aix は会話の事実で決める（まだ果たしていない約束があり結果が出ていれば果たす AIX・送る物件があれば物件の AIX・受けるだけなら null）。返信を書く時は reply_direction を「感謝を1行で受け取り、既に済んだ・これからする具体を1つだけ添える（合計50〜130字）」にする。中身のない進捗テンプレ（急いで進めております等）・条件の再ヒアリング・検討依頼の繰り返しは書かない（avoid_topics に追加）。直前スタッフ発言に既に「ご検討ください」がある時は特に繰り返さない。迷った時: メッセージに質問・要求が1つでもあればこのルールを当てない。";
 
-export const RULE7_FACTS = "ルール⑦（ネガ文脈・事実の材料）: お客様自身の最新の発言が断り・キャンセル・否決の受け止め・残念などのネガの気持ちの番は、まず受け止める。弔事・病気・ご家族の事情によるキャンセル・取りやめの番は受け止めのみ（50〜110字・avoid_topics に「物件提案」「見積提案」「申込誘導」・key_topics は空）。それ以外では次の一手は会話の事実で決める（募集終了・申込が入っていた報告の後は竹内さんは代わりの物件を出す番が多い）。お客様の恐縮（「申し訳ありません」「お手数おかけします」「わがままですみません」）はネガではない。スタッフ自身の文の語（「申し訳ございません」「難しい」）ではこのルールを当てない。";
+export const RULE7_FACTS = "ルール⑦（ネガ文脈・事実の材料）: 直近3メッセージ以内のお客様自身の発言が断り・キャンセル・否決の受け止め・残念などのネガの気持ちの番は、まず受け止める。弔事・病気・ご家族の事情によるキャンセル・取りやめの番は受け止めのみ（50〜110字・avoid_topics に「物件提案」「見積提案」「申込誘導」・key_topics は空）。それ以外では次の一手は会話の事実で決める（募集終了・申込が入っていた報告の後は竹内さんは代わりの物件を出す番が多い）。お客様の恐縮（「申し訳ありません」「お手数おかけします」「わがままですみません」）はネガではない。スタッフ自身の文の語（「申し訳ございません」「難しい」）ではこのルールを当てない。";
 
 export const RULE8_FACTS = "ルール⑧（1件を推した直後・確認の結果を送った直後のお礼・事実の材料）: 直前の AIX が property_recommendation または property_check_result で、顧客の最新メッセージが感謝・了承だけの番。竹内さんの実際: 物件ピックアップの後10分以内に続けて1件を推す（物件オススメ）82%・募集終了や申込が入っていた報告の後は代わりの物件を出す（5cb4bd2f）・強く1件を推した後のお礼には待つ番もある。返信は感謝を1行で（50〜110字）。次の一手（待つ・代わりの物件・続けて1件）は直前に何を送ったか（推した1件か・募集終了の報告か）と約束の有無で決める。同じ1件を推し直す・同じ確認の結果を言い直すことはしない。";
 
@@ -27,10 +28,13 @@ export const STAGE_PROPOSING_FACTS = "物件提案中（物件を送った後。
 export function actionRulesJudgeOnlyEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.BRAIN_ACTION_RULES_JUDGE_ONLY ?? "").trim().toLowerCase() !== "off";
 }
-const AIX_WRITING_RE = /NG構成|OK構成|冒頭|末尾|文末|語尾|表現|言い回し|書く|書き|明記|記載|構成|一文|1文|添え|締め|絵文字|改行|空行|！！|フレーズ|文は|文では|文に/;
-/** AIX の文の書き方の規則か（判断＝どの AIX・返信か の行でない） */
+/**
+ * AIX の文の書き方の規則か（判断＝どの AIX・返信か の行でない）。rule_key の頭（DIFF-POLICY・LEARN-AIX）だけで決める。
+ *   10/14 確かめる人: 本文の語の網（構成・記載・！！ 等）は判断の行も落とした（本番 297行中 280行が外れ、残り8行のうち判断の行 7本＝
+ *   condition-addition-vs-property-check-distinction-ack・他社の見積より高い→見積書送る・もう少し安く→確認します 等）→ 語の網はやめた
+ */
 export function isAixWritingRule(r: { rule_key?: string | null; rule_text?: string | null }): boolean {
-  return /^(?:DIFF-POLICY|LEARN-AIX)/.test(String(r.rule_key ?? "")) || AIX_WRITING_RE.test(String(r.rule_text ?? ""));
+  return /^(?:DIFF-POLICY|LEARN-AIX)/.test(String(r.rule_key ?? ""));
 }
 
 export const STANCE_WAIT2_FACTS ="②直近3メッセージ以内の**お客様自身の**発言に「断り」「キャンセル」「できません」「否決」「残念」等のネガの気持ちがある直後（お客様の恐縮「申し訳ありません」「お手数おかけします」と、スタッフ自身の文の語は除く・ルール⑦の局面）";

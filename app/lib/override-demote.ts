@@ -106,6 +106,15 @@ export function staffPromiseMaterialLine(f: { estimatePromisedUnfulfilled?: bool
   if (!ks.length) return "";
   return `【まだ果たしていないこちらの約束（材料）】${ks.join("・")}。お客様の今の発言がお礼・了承だけ・約束の催促なら、約束を果たす AIX の番。お客様が新しい問い・ご事情を書いた番は、その問いに答える返信が先のこともある（30日・確認の約束が残る番の食い違い: ブレインの答えが正 12・約束の AIX が正 4）`;
 }
+/**
+ * 約束の催促か（「まだですか」「どうなりましたか」「いつ頃になりますか」「物件まだ？」）。10/14 確かめる人: 催促はお礼・了承だけではないが、
+ *   約束を果たす番＝staff_promise を下げない（約束の AIX のまま）。ai_prompt_rules FEEDBACK-cff5a26b（催促には口約束で終わらせず AIX）と同じ向き
+ */
+export function isPromiseNudge(text: string | null | undefined): boolean {
+  const t = String(text ?? "").normalize("NFKC");
+  if (t.length > 80) return false;
+  return /まだ(?:です|でしょう|かな|ですか|ですかね)?[?？]|まだ(?:来|届|き|ですか|でしょうか)|どう(?:なり|なって)(?:まし|ます)|進捗|いつ(?:頃|ごろ)?(?:に)?(?:なり|届|来|送)|(?:提案|物件|見積|結果|連絡)(?:は)?まだ(?:[?？]|です|でしょう|来|届|かな|$)/.test(t);
+}
 /** 約束の AIX と LLM の AIX が同じ族か（同じなら今まで通り promise:* の出所にして2段の言い直しを防ぐ） */
 export function samePromiseFamily(promiseAction: string, llmAix: string | null): boolean {
   if (!llmAix) return false;

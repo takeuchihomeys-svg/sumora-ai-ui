@@ -607,7 +607,9 @@ async function main() {
   const gaps = await floorGaps();
   if (Object.keys(gaps).length) console.warn(`⚠ 線の表に無い表に YUMA の行がある（ブレインが読むと混ざる）: ${JSON.stringify(gaps)}`);
   let head = ""; try { head = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* */ }
-  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ conv: lease?.name ?? "YUMA", layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null }, null, 1));
+  writeFileSync(`${RESULTS_DIR}/${LABEL}.meta.json`, JSON.stringify({ conv: lease?.name ?? "YUMA", layer: LAYER, ledger: USE_LEDGER, draft: DRAFT, exhaustedRule: EXHAUSTED_RULE, model, startedAt: new Date().toISOString(), head, floorGaps: Object.keys(gaps).length ? gaps : null, inject: process.env.BRAIN_EXAM_INJECT_FILE ?? null, think: THINK || null,
+    // 10/14 構成のスイッチ（試験の頃の環境変数・BRAIN_*/TWO_STAGE_*/SEARCH_*/TURN_* 等）。答案の比べで「どの構成か」を残す
+    switches: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_)/.test(k) && !/KEY|SECRET|TOKEN/.test(k)).sort()) }, null, 1));
   console.log(`問題 ${problems.length}・回 ${REPEAT}・${model}・層 ${LAYER}・台帳 ${USE_LEDGER ? "写す" : "写さない"}・下書き ${DRAFT ? "あり" : "なし"}・判定 ${NO_JUDGE ? "なし" : "DeepSeek"}`);
   const yumaPc = await yumaPcId();
   if (existsSync(PC_BACKUP) && readFileSync(PC_BACKUP, "utf8").trim()) {
