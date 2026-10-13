@@ -24,7 +24,7 @@ export function missingPropertyNameIndexes(names: ReadonlyArray<string | null | 
 
 /** 画面に出す1文 */
 export function missingPropertyNameMessage(indexes: ReadonlyArray<number>, count: number): string {
-  const marks = "①②③④⑤";
+  const marks = "①②③④⑤⑥⑦⑧⑨⑩";
   const which = count > 1 ? indexes.map((i) => `物件${marks[i] ?? String(i + 1)}`).join("・") : "物件";
   return `${which}の物件名（マンション名・号室）を入れてください（「物件①」のような仮の名前・空では送れません。送った物件の候補から選ぶか資料の画像から読み取れます）`;
 }

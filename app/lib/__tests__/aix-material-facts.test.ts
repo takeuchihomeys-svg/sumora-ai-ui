@@ -70,7 +70,7 @@ console.log("■ ② 入居時期（即入居）");
 
 console.log("■ ③ 物件確認した（募集中）の件数と状態");
 {
-  t("送られた物件数は 1〜5 だけ", sanitizeSentPropertyCount(3) === 3 && sanitizeSentPropertyCount(53) === null && sanitizeSentPropertyCount(0) === null && sanitizeSentPropertyCount("2") === null && sanitizeSentPropertyCount(2.5) === null);
+  t("送られた物件数は 1〜10 だけ（10/13 竹内さん 10件まで）", sanitizeSentPropertyCount(3) === 3 && sanitizeSentPropertyCount(10) === 10 && sanitizeSentPropertyCount(11) === null && sanitizeSentPropertyCount(53) === null && sanitizeSentPropertyCount(0) === null && sanitizeSentPropertyCount("2") === null && sanitizeSentPropertyCount(2.5) === null);
   const yuma = "YUMAさん\nRainbow Court 立売堀の募集状況を確認しましたが、現在募集に出ていないお部屋となります。\nお送りいただいた他の52件につきましても、いずれも募集終了（申込済み・募集に出ていない）のお部屋でございます。\nYUMAさんにご満足頂けるお部屋が見つかるまで、引き続き新着でピックアップしてお送りさせて頂きます！！";
   const base = { pattern: "available", statuses: ["available"], propertyCount: 1 };
   t("YUMA 04:40（名前も別の物件）→ 止める", !!findCheckStatusContradiction(yuma, { ...base, endedCount: 0, propertyNames: ["エステムコート大阪WEST"] }));

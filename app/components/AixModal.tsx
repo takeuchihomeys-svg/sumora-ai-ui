@@ -45,6 +45,10 @@ import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import ZumenZipImport from "./ZumenZipImport";
 import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyNameMessage } from "../lib/property-name-required";
+import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
+// 2026-10-13 竹内さん（くれあ）: 物件確認した（物件あった）で見積書を同封する時は物件ごとに［資料・見積書 → 費用の文］→ 最後に確認の結果の文。
+//   戻す: NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off（今まで通りの並び）
+const CHECK_ESTIMATE_BUNDLE_ON = checkResultEstimateBundleOn(process.env.NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE);
 import { propertyNamePrefill, meetingPropertyPrefill, areaFromConditions, customerTurnOf, sendModePrefill, prefillNote, summarizePrefillUse, type Prefilled } from "../lib/aix-prefill";import {
   buildCostExplainMessage, buildCostMechanismMessage, costExplainMissing, extractEstimateAmounts, mentionsBrokerFee, parseYen, LANDLORD_FEE_MONTH_OPTIONS,
 } from "../lib/cost-explain-text";
@@ -819,8 +823,8 @@ export default function AixModal({
   const [checkEstimateFile, setCheckEstimateFile] = useState<File | null>(null);
   const [checkEstimatePreview, setCheckEstimatePreview] = useState<string>("");
   // 複数物件対応: 件数 + per-property 画像・見積書・物件名・退去予定日
-  const [sentPropertyCount, setSentPropertyCount] = useState<1|2|3|4|5|null>(null);
-  const [checkPropertyCount, setCheckPropertyCount] = useState<1|2|3>(1);
+  const [sentPropertyCount, setSentPropertyCount] = useState<number | null>(null);   // 1〜10（2026-10-13 竹内さん「10件まで」）
+  const [checkPropertyCount, setCheckPropertyCount] = useState<number>(1);   // 1〜10
   // 2026-09-15 竹内（みく事例）: 送られた物件数は会話（お客様の最新の発言の物件 URL・画像）から自動で入れる（違えばスタッフが直す）
   const [sentCountAuto, setSentCountAuto] = useState(false);
   const sentCountAppliedRef = useRef(false);
@@ -829,17 +833,17 @@ export default function AixModal({
   const [checkViewingContinue, setCheckViewingContinue] = useState(false);
   const [viewingContinueAuto, setViewingContinueAuto] = useState(false);
   const viewingAutoAppliedRef = useRef(false);
-  const [checkPropRoomCounts, setCheckPropRoomCounts] = useState<(number | null)[]>([null, null, null]);
+  const [checkPropRoomCounts, setCheckPropRoomCounts] = useState<(number | null)[]>(() => Array(CHECK_MAX_PROPS).fill(null));
   // スタッフだけが知っている事実（「同じ間取りのお部屋は301号室と101号室のみ」等）。会話を合わせるでそのまま本文に入る
   const [checkStaffNote, setCheckStaffNote] = useState("");
-  const [checkPropImages, setCheckPropImages] = useState<File[][]>([[], [], []]);
-  const [checkPropImagePreviews, setCheckPropImagePreviews] = useState<string[][]>([[], [], []]);
-  const [checkPropEstimates, setCheckPropEstimates] = useState<(File|null)[]>([null, null, null]);
-  const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(["", "", ""]);
-  const [checkPropNames, setCheckPropNames] = useState<string[]>(["", "", ""]);
-  const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
+  const [checkPropImages, setCheckPropImages] = useState<File[][]>(() => Array.from({ length: CHECK_MAX_PROPS }, () => []));
+  const [checkPropImagePreviews, setCheckPropImagePreviews] = useState<string[][]>(() => Array.from({ length: CHECK_MAX_PROPS }, () => []));
+  const [checkPropEstimates, setCheckPropEstimates] = useState<(File|null)[]>(() => Array(CHECK_MAX_PROPS).fill(null));
+  const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(() => Array(CHECK_MAX_PROPS).fill(""));
+  const [checkPropNames, setCheckPropNames] = useState<string[]>(() => Array(CHECK_MAX_PROPS).fill(""));
+  const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(() => Array(CHECK_MAX_PROPS).fill(""));
   // 物件画像追加時の物件名・号室OCR読取中フラグ（per-property）
-  const [checkPropOcrLoading, setCheckPropOcrLoading] = useState<boolean[]>([false, false, false]);
+  const [checkPropOcrLoading, setCheckPropOcrLoading] = useState<boolean[]>(() => Array(CHECK_MAX_PROPS).fill(false));
   // 物件確認「空室あり」専用: per-property 設備情報（駐車場・バイク置き場・ペット・ネット・保証会社）
   type PropFacility = {
     parkingAvail: 'あり' | 'なし' | null;
@@ -864,10 +868,10 @@ export default function AixModal({
     internet: null, internetDetail: '',
     guarantorName: '', guarantorType: null,
   });
-  const [propFacilities, setPropFacilities] = useState<PropFacility[]>(Array.from({ length: 3 }, emptyPropFacility));
-  const [propFacilitiesExpanded, setPropFacilitiesExpanded] = useState<boolean[]>([false, false, false]);
+  const [propFacilities, setPropFacilities] = useState<PropFacility[]>(() => Array.from({ length: CHECK_MAX_PROPS }, emptyPropFacility));
+  const [propFacilitiesExpanded, setPropFacilitiesExpanded] = useState<boolean[]>(() => Array(CHECK_MAX_PROPS).fill(false));
   const [checkAllAvailable, setCheckAllAvailable] = useState(false);
-  const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(["available", "available", "available"]);
+  const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(() => Array(CHECK_MAX_PROPS).fill("available"));
   const [checkRecommendProp, setCheckRecommendProp] = useState<number | null>(null);
   const [checkIncludeEstimateText, setCheckIncludeEstimateText] = useState(false);
   const [checkApplicationInvite, setCheckApplicationInvite] = useState(false);
@@ -876,6 +880,10 @@ export default function AixModal({
   // 物件あった専用: 申込有（2番手）ボタンのON/OFF
   const [checkApplicationOrder, setCheckApplicationOrder] = useState(false);
   const [estimateTextReady, setEstimateTextReady] = useState("");
+  // 2026-10-13 竹内さん（くれあ）: 物件ごとの費用の文（AIX【見積書送る】と同じ文・送る前にスタッフが直せる）と、送り終えた手順（押し直しで二重に送らない）
+  const [estimateBundleTexts, setEstimateBundleTexts] = useState<string[]>([]);
+  const bundleSentStepsRef = useRef<Set<string>>(new Set());
+  const bundleImgDoneRef = useRef<Record<string, number>>({});   // 画像の手順ごとに届いた枚数（途中で切れたら続きから）
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<CalendarDayResult[]>([]);
@@ -1107,10 +1115,10 @@ export default function AixModal({
     if (checkPattern !== "available" && checkPattern !== "unavailable") return;
     sentCountAppliedRef.current = true;
     if (sentPropertyAuto.basis === "none" || sentPropertyCount !== null) return; // 物件の URL・画像が無い質問（「こちら3階は？」）は空欄のまま
-    setSentPropertyCount(Math.min(5, Math.max(1, sentPropertyAuto.count)) as 1 | 2 | 3 | 4 | 5);
+    setSentPropertyCount(Math.min(CHECK_MAX_PROPS, Math.max(1, sentPropertyAuto.count)));
     setSentCountAuto(true);
-    // 物件情報の欄も送られた数だけ出す（最大3）
-    if (checkPattern === "available") setCheckPropertyCount(Math.min(3, Math.max(1, sentPropertyAuto.count)) as 1 | 2 | 3);
+    // 物件情報の欄も送られた数だけ出す（最大10）
+    if (checkPattern === "available") setCheckPropertyCount(Math.min(CHECK_MAX_PROPS, Math.max(1, sentPropertyAuto.count)));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, checkPattern, sentPropertyAuto.count]);
   // 2026-09-16 竹内（カイナ事例）: 内覧の流れ（こちらが日時を提案して返事待ち／お客様が見たいと言っている）を会話から判定（サーバと同じ関数・同じ recentMessages）
@@ -1144,12 +1152,24 @@ export default function AixModal({
   // 確認できた物件数 = 物件情報に入れた欄の数（物件名・画像・見積書のどれかが入っている最後の欄まで）。何も入っていなければ欄の数
   const checkFilledCount = (() => {
     let last = 0;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < CHECK_MAX_PROPS; i++) {
       if ((checkPropNames[i] ?? "").trim() || (checkPropImages[i]?.length ?? 0) > 0 || checkPropEstimates[i]) last = i + 1;
     }
     return last;
   })();
-  const effectiveCheckCount = (checkFilledCount > 0 ? Math.min(checkFilledCount, checkPropertyCount) : checkPropertyCount) as 1 | 2 | 3;
+  const effectiveCheckCount = checkFilledCount > 0 ? Math.min(checkFilledCount, checkPropertyCount) : checkPropertyCount;
+  // 2026-10-13 竹内さん（くれあ）: 見積書を同封する時の送る並び（物件ごとに［資料・見積書の画像 → 費用の文］→ 最後に確認の結果の文）。
+  //   見積書が1件も無い時・NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off の時は今まで通り（bundleActive=false）
+  const bundleProps: BundlePropertyInput[] = Array.from({ length: effectiveCheckCount }, (_, pi) => ({
+    name: checkPropNames[pi] ?? "",
+    docCount: checkPropImages[pi]?.length ?? 0,
+    hasEstimate: !!checkPropEstimates[pi],
+    costText: estimateBundleTexts[pi] ?? "",
+  }));
+  const bundleActive = actionType === "property_check_result" && shouldUseEstimateBundle({
+    on: CHECK_ESTIMATE_BUNDLE_ON, pattern: checkPattern, estimateCount: bundleProps.filter((p) => p.hasEstimate).length,
+  });
+  const bundlePlan = bundleActive ? buildCheckResultSendPlan(bundleProps) : [];
 
   const saveCallUrl = async () => {
     setCallUrlSaving(true);
@@ -1499,12 +1519,9 @@ export default function AixModal({
   const checkFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkEstimateInputRef = useRef<HTMLInputElement | null>(null);
   // 複数物件対応: 物件①②③の画像・見積書 refs
-  const checkProp1FileRef = useRef<HTMLInputElement | null>(null);
-  const checkProp2FileRef = useRef<HTMLInputElement | null>(null);
-  const checkProp3FileRef = useRef<HTMLInputElement | null>(null);
-  const checkProp1EstRef = useRef<HTMLInputElement | null>(null);
-  const checkProp2EstRef = useRef<HTMLInputElement | null>(null);
-  const checkProp3EstRef = useRef<HTMLInputElement | null>(null);
+  // 2026-10-13: 10件まで（ref の入れ物を CHECK_MAX_PROPS 個・hooks の順は固定）
+  const checkPropFileRefs = useRef(Array.from({ length: CHECK_MAX_PROPS }, () => ({ current: null as HTMLInputElement | null }))).current;
+  const checkPropEstRefs = useRef(Array.from({ length: CHECK_MAX_PROPS }, () => ({ current: null as HTMLInputElement | null }))).current;
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
   const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const mgmtMoveInImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -2039,9 +2056,6 @@ export default function AixModal({
     sentImageIndexRef.current = -1; // 画像リストが変わるとindexがずれるためリセット
   };
 
-  // 複数物件: ref配列（hooks順序は固定なのでここで結合）
-  const checkPropFileRefs = [checkProp1FileRef, checkProp2FileRef, checkProp3FileRef];
-  const checkPropEstRefs = [checkProp1EstRef, checkProp2EstRef, checkProp3EstRef];
 
   const onSelectPropImages = (propIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -2172,14 +2186,14 @@ export default function AixModal({
           await ensureOk(res);
           const data = await res.json() as { propertyName: string | null; vacancyDate: string | null };
           results.push({
-            name: manualName || data.propertyName || `物件${["①", "②", "③"][pi]}`,
+            name: manualName || data.propertyName || `物件${circled(pi)}`,
             vacancyDate: manualDate || data.vacancyDate || "",
           });
         } catch {
-          results.push({ name: manualName || `物件${["①", "②", "③"][pi]}`, vacancyDate: manualDate });
+          results.push({ name: manualName || `物件${circled(pi)}`, vacancyDate: manualDate });
         }
       } else {
-        results.push({ name: manualName || `物件${["①", "②", "③"][pi]}`, vacancyDate: manualDate });
+        results.push({ name: manualName || `物件${circled(pi)}`, vacancyDate: manualDate });
       }
     }
     return results;
@@ -2741,6 +2755,17 @@ export default function AixModal({
             estimateUrls.push(ef ? await uploadImageCached(ef) : null);
           }
           if (estimateUrls.some(u => u)) body.estimate_image_urls = estimateUrls;
+          // 2026-10-13 竹内さん（くれあ）: 見積書の同封は物件ごとのセット（資料・見積書 → 費用の文）で送る。費用の文は【見積書送る】と同じ読み取りで作る（サーバ）。
+          //   資料の1枚目は見積書に家賃等が無い時の補い（【見積書送る】の property_image_url と同じ）
+          if (shouldUseEstimateBundle({ on: CHECK_ESTIMATE_BUNDLE_ON, pattern: checkPattern, estimateCount: estimateUrls.filter(Boolean).length })) {
+            body.estimate_bundle = true;
+            const firstDocUrls: (string | null)[] = [];
+            for (let pi = 0; pi < cpc; pi++) {
+              const f0 = checkPropImages[pi]?.[0];
+              firstDocUrls.push(f0 && estimateUrls[pi] ? await uploadImageCached(f0, 0) : null);
+            }
+            body.estimate_prop_image_urls = firstDocUrls;
+          }
         } else if (checkPattern === "exclusive") {
           // 専任物件: 固定文送信（AI不要）。画像はOCR内部用のみでお客さんには送らない
           if (!exclusivePropName.trim()) throw new Error("物件名を入力してください");
@@ -2789,7 +2814,8 @@ export default function AixModal({
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = limitSlotsPerDay(checkCalendarInfo);
         if (checkPattern === "available") body.all_properties_available = checkAllAvailable;
         if (checkPattern === "available" && checkRecommendProp !== null) body.recommend_prop_index = checkRecommendProp;
-        if (checkPattern === "available" && checkIncludeEstimateText) body.include_estimate_text = true;
+        // 物件ごとのセットで送る時は、まとめた見積書テキスト（旧）は作らない（費用の文は物件ごとに estimate_texts で返る）
+        if (checkPattern === "available" && checkIncludeEstimateText && !body.estimate_bundle) body.include_estimate_text = true;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (actionType === "estimate_sheet" && estimateMultiMode) {
@@ -3059,6 +3085,12 @@ export default function AixModal({
         : null;
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
       setEstimateTextReady(data.estimate_text || "");
+      // 物件確認した（見積書の同封・物件ごとのセット）: 物件ごとの費用の文。生成し直すたびに作り直す（送信の途中の印も消す）
+      if (actionType === "property_check_result") {
+        setEstimateBundleTexts(Array.isArray(data.estimate_texts) ? (data.estimate_texts as (string | null)[]).map((t) => t ?? "") : []);
+        bundleSentStepsRef.current = new Set();
+        bundleImgDoneRef.current = {};
+      }
       // ① LL-07: カバーレターを保存（見積書に添える挨拶文）
       if (data.coverLetter) setEstimateCoverLetter(data.coverLetter as string);
       // condition_hearing: 条件フォームテンプレを保存（previewには入れず「フォームのみ送る」ボタンで別送）
@@ -3479,6 +3511,38 @@ export default function AixModal({
         } else if (checkPattern === "move_in_date") {
           // 入居日確認: テキストのみ送信（物件資料はお客さんに送らない）
           await sendAsAix(preview);
+        } else if (checkPattern === "available" && bundleActive) {
+          // 2026-10-13 竹内さん（くれあ）: 見積書の同封は物件ごとのセット → 最後に確認の結果の文。
+          //   実送信の見本（S 9/13 の6件・YUYA 9/14 の5件・かぁな 9/11）と同じ並び: 物件ごとに［資料・見積書の画像（1回でまとめて）→ 費用の文］、最後に本文。
+          //   持っていない物は送らない（plan が空の手順を作らない）。押し直しは送り終えた手順を飛ばす（二重に送らない）
+          for (const step of bundlePlan) {
+            if (step.kind === "main_text") break;
+            if (bundleSentStepsRef.current.has(step.id)) continue;
+            if (step.kind === "images") {
+              const pi = step.propIndex;
+              const files: Array<{ file: File; idx?: number }> = [
+                ...(checkPropImages[pi] ?? []).map((file, j) => ({ file, idx: j })),
+                ...(checkPropEstimates[pi] ? [{ file: checkPropEstimates[pi] as File }] : []),
+              ];
+              let done = bundleImgDoneRef.current[step.id] ?? 0;
+              while (done < files.length) {
+                const chunk = files.slice(done, done + IMAGE_BATCH_MAX);
+                const urls: string[] = [];
+                for (const g of chunk) urls.push(await uploadImageCached(g.file, g.idx));
+                const delivered = await sendImageUrlsGrouped(urls);
+                done += delivered;
+                bundleImgDoneRef.current[step.id] = done;
+                if (delivered < urls.length) throw new Error(PARTIAL_IMAGE_ERROR);
+              }
+            } else {
+              await sendAsAix(useEmoji ? step.text : stripEmoji(step.text));
+            }
+            bundleSentStepsRef.current.add(step.id);
+          }
+          await sendAsAix(preview);
+          bundleSentStepsRef.current = new Set();
+          bundleImgDoneRef.current = {};
+          sentImageIndexRef.current = -1;
         } else if (checkPattern === "available") {
           // available: 物件①資料→見積書①→物件②資料→見積書②→[見積書テキスト→30s]→本文
           const shouldSendEstimateFirst = !!(estimateTextReady && checkIncludeEstimateText);
@@ -5398,7 +5462,7 @@ export default function AixModal({
                         // パターン切替時に旧パターンの下書きを破棄（「会話を合わせる」で古い base_message が使われるバグ防止）
                         setAiDraft("");
                         setShowCheckCalendar(false);
-                        setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts([null, null, null]);
+                        setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts(Array(CHECK_MAX_PROPS).fill(null));
                         if (p.key !== "exclusive") {
                           setExclusiveImageFile(null);
                           setExclusivePropName("");
@@ -5451,7 +5515,7 @@ export default function AixModal({
                         setCheckPattern(null);
                         setPreview("");
                         setShowCheckCalendar(false);
-                        setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts([null, null, null]);
+                        setCheckViewingContinue(false); setViewingContinueAuto(false); viewingAutoAppliedRef.current = false; setCheckPropRoomCounts(Array(CHECK_MAX_PROPS).fill(null));
                         setExclusiveImageFile(null);
                         setExclusivePropName("");
                         setExclusiveRoomNo("");
@@ -5900,8 +5964,8 @@ export default function AixModal({
                     送られた物件数
                     {sentCountAuto && sentPropertyCount !== null && <span className="ml-1 font-normal text-[#2e7d32]">（会話から自動・違えば選び直し）</span>}
                   </p>
-                  <div className="flex gap-2">
-                    {([1, 2, 3, 4, 5] as const).map((n) => (
+                  <div className="grid grid-cols-5 gap-2">
+                    {Array.from({ length: CHECK_MAX_PROPS }, (_, k) => k + 1).map((n) => (
                       <button
                         key={n}
                         onClick={() => { setSentCountAuto(false); setSentPropertyCount(sentPropertyCount === n ? null : n); }}
@@ -5921,8 +5985,8 @@ export default function AixModal({
                       {checkFilledCount > 0 ? `${effectiveCheckCount}件（物件情報に入れた数から自動）` : "（物件情報に入れた数が自動で入ります・欄を増やす時は下で選ぶ）"}
                     </span>
                   </p>
-                  <div className="flex gap-2">
-                    {([1, 2, 3] as const).map((n) => (
+                  <div className="grid grid-cols-5 gap-2">
+                    {Array.from({ length: CHECK_MAX_PROPS }, (_, k) => k + 1).map((n) => (
                       <button
                         key={n}
                         onClick={() => setCheckPropertyCount(n)}
@@ -6028,7 +6092,7 @@ export default function AixModal({
                         const arr = [...prev];
                         for (const lb of labels) {
                           if (arr.includes(lb)) continue;
-                          const i = arr.findIndex((v, k) => k < 3 && isPlaceholderPropertyName(v));
+                          const i = arr.findIndex((v, k) => k < checkPropertyCount && isPlaceholderPropertyName(v));
                           if (i >= 0) arr[i] = lb;
                         }
                         return arr;
@@ -6040,7 +6104,7 @@ export default function AixModal({
                   {Array.from({ length: checkPropertyCount }, (_, pi) => (
                     <div key={pi} className={`rounded-2xl border p-3 ${checkRecommendProp === pi ? "border-[#FFB300] bg-[#fffde7]" : "border-[#d1d7db] bg-[#f8f9fa]"}`}>
                       <div className="mb-2 flex items-center justify-between">
-                        <p className="text-xs font-bold text-[#54656f]">{checkPropertyCount > 1 ? `物件${"①②③"[pi]}` : "物件情報"}</p>
+                        <p className="text-xs font-bold text-[#54656f]">{checkPropertyCount > 1 ? `物件${circled(pi)}` : "物件情報"}</p>
                         {checkPropertyCount > 1 && (
                           <button
                             onClick={() => setCheckRecommendProp(checkRecommendProp === pi ? null : pi)}
@@ -6489,7 +6553,13 @@ export default function AixModal({
                       </button>
                     </div>
                   </div>
-                  {/* 見積書テキスト同封 あり/なし */}
+                  {/* 見積書テキスト同封 あり/なし
+                      2026-10-13: 物件ごとのセット（CHECK_ESTIMATE_BUNDLE_ON）の時は、見積書を入れた物件に費用の文が必ず付く（送る前に並びと文を見られる）ので出さない */}
+                  {CHECK_ESTIMATE_BUNDLE_ON ? (
+                    <p className="mt-2 rounded-xl border border-[#e1bee7] bg-[#faf5fc] px-3 py-2 text-[11px] text-[#7B1FA2]">
+                      見積書を入れた物件は「資料・見積書の画像 → 費用の文（【見積書送る】と同じ文）」を物件ごとに送り、最後に確認の結果の文を送ります（生成後に並びを表示）
+                    </p>
+                  ) : (
                   <div className="mt-2 flex items-center justify-between rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
                     <span className="text-sm font-bold text-[#54656f]">見積書テキスト同封</span>
                     <div className="flex gap-1">
@@ -6507,6 +6577,7 @@ export default function AixModal({
                       </button>
                     </div>
                   </div>
+                  )}
                   {showCheckCalendar && (
                     <div className="mt-2 rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
                       <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（自動取得）</p>
@@ -7804,6 +7875,28 @@ export default function AixModal({
                 rows={2}
                 className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
               />
+            </div>
+          )}
+
+          {/* 2026-10-13 竹内さん（くれあ）: 見積書を同封する時の送る並び（送る前に見る）・物件ごとの費用の文（【見積書送る】と同じ文・直せる・空にするとその文は送らない） */}
+          {preview && bundleActive && (
+            <div className="mb-3 rounded-2xl border border-[#ce93d8] bg-[#faf5fc] px-3 py-2.5">
+              <p className="mb-1 text-xs font-bold text-[#7B1FA2]">送る順番（見積書を同封・物件ごとのセット → 最後に確認の結果）</p>
+              <ol className="mb-2 text-[11px] leading-5 text-[#54656f]">
+                {describeSendPlan(bundlePlan, bundleProps).map((line, k) => <li key={k}>{line}</li>)}
+              </ol>
+              {bundleProps.map((p, pi) => p.hasEstimate ? (
+                <div key={pi} className="mb-2">
+                  <p className="mb-0.5 text-[11px] font-bold text-[#54656f]">{(p.name || "").trim() || `物件${circled(pi)}`} の費用の文</p>
+                  <textarea
+                    value={estimateBundleTexts[pi] ?? ""}
+                    onChange={(e) => setEstimateBundleTexts((prev) => { const a = [...prev]; while (a.length <= pi) a.push(""); a[pi] = e.target.value; return a; })}
+                    rows={5}
+                    placeholder="見積書を読み取れませんでした（空のままならこの物件の費用の文は送りません）"
+                    className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-xs text-[#111b21] outline-none focus:border-[#7B1FA2]"
+                  />
+                </div>
+              ) : null)}
             </div>
           )}
 

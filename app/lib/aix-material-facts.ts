@@ -172,12 +172,12 @@ export const PAST_MOVE_IN_CLAIM_NOTE = "【履歴のこちらの文の入居時�
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * 送られた物件数（画面のセレクターは 1〜5）。範囲外・整数でない値は使わない（null）。
+ * 送られた物件数（画面のセレクターは 1〜10・2026-10-13 竹内さん「10件まで」）。範囲外・整数でない値は使わない（null）。
  * 2026-09-27 YUMA: お客様役が会話の送付物件数（約53）を入れ、「他の52件も募集終了」が作られた。
- * 5 に丸めると「他4件は募集終了」をまた作るので、丸めずに捨てる
+ * 上限に丸めると「他N件は募集終了」をまた作るので、丸めずに捨てる
  */
 export function sanitizeSentPropertyCount(v: unknown): number | null {
-  return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 5 ? v : null;
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
 }
 
 /** 募集していない・申込ありを言う語 */

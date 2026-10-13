@@ -10,7 +10,7 @@ import { safeSlice } from "@/app/lib/safe-slice";
 import { fixDateWeekdays, weekdayTable, jstDayStartMs } from "@/app/lib/jst-date";
 import { stripMetaNarration, isNotACustomerReply, stripMarkdownEmphasis } from "@/app/lib/meta-narration";
 // 2026-09-20 竹内（H さん事例）: 見積書の金額文は4経路で同じ純関数から作る（1か所だけ崩れていた）
-import { buildEstimateItem, buildEstimateMessage, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
+import { buildEstimateItem, calcSavings, DAY_RENT_NOTE, NO_AMOUNT_FALLBACK } from "@/app/lib/estimate-body";
 // 2026-10-01: 物件確認した（御見積書同封）の締め（scripts/audit-check-result-lines.ts）
 import { appendCheckResultReceipt } from "@/app/lib/check-result-closing";
 import { customerAskedEstimate, decideGapHoldClose, readDecideGaps, type BrainGap } from "@/app/lib/customer-mindset";
@@ -134,7 +134,9 @@ import { staffCalledName } from "@/app/lib/aix-staff-called-name";
 // 2026-10-06 ⑫: 呼び名の固定（会話に出ない別の名前で呼ばない）
 import { enforceCallName } from "@/app/lib/call-name-guard";
 // 2026-10-06 ⑫: 御見積書の費用の事情の1行（報酬が出ない・スモ割なし・仲介手数料の額）
-import { estimateExplain } from "@/app/lib/estimate-explain";
+// （estimateExplain は check-result-estimate-bundle.composeSingleEstimateCostText の中で使う）
+import { composeSingleEstimateCostText, bundleEstimateName, CHECK_RESULT_MAX_PROPS, CIRCLED_NUMS } from "@/app/lib/check-result-estimate-bundle";
+import { ensureAppliedTalk, findPickerTalkMismatch, alternativeSingleLine, cmAvailableResultDesc } from "@/app/lib/check-result-status-lines";
 // 2026-10-06 ⑰（あかりさん）: 会話を合わせるの物件ピックアップで、前回の送付より後のやり取りを時系列で読む
 import { readSendNow, effectiveSendFrame, buildSendNowBlock } from "@/app/lib/property-send-now";
 // 2026-10-06 ⑰: 「お送りした中でも」は直近の束の中から推す時だけ（束の時間と束の部屋）
@@ -1244,6 +1246,78 @@ async function callClaudeVision(system: SystemSpec, content: unknown[], action: 
   return visionText;
 }
 
+/**
+ * AIX【見積書送る】（1枚）の見積書の読み取り。2026-10-13 に estimate_sheet の中から移した（中身は同じ）。
+ * AIX【物件確認した】で見積書を同封する時の物件ごとの費用の文も、同じ読み取り→composeSingleEstimateCostText で作る。
+ * 読めない時は {}（金額の無い受け皿の文になる）。
+ */
+async function ocrSingleEstimate(imageUrl: string, propImgUrl: string | undefined, action: string): Promise<Record<string, unknown>> {
+  // Sonnet5対応: JSON形式のみ返答を明示（前置き文・コードブロック出力を防止）
+  // 「見積書」に限定せず「以下の画像から」と汎用表現にすることでマイソク等でも対応可
+  // 2026-09-17 竹内（AIX キャッシュ点検）: ≈600字（1,500字未満）なので cache_control は付かない（propImgUrl で1行変わるが cache 対象外）
+  const ocrSystem = `以下の画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文・コードブロック・前置き・後置き一切不要）：
+{"property_name":"","room_number":"","rent":0,"management_fee":0,"total":0,"discount":0,"commission":0,"commission_tax":0,"cleaning_fee":0}
+
+- property_name: マンション名のみ（号室は含めない）。読み取れなければ""
+- room_number: 号室番号のみ（例: 502）。読み取れなければ""
+- rent: 月額家賃（整数。円・¥・カンマ除く。共益費・管理費は含めない）。なければ0
+- management_fee: 共益費または管理費（月額・整数）。なければ0${propImgUrl ? "\n  ※見積書に物件名・家賃・共益費の記載がない場合は物件資料画像から補完すること" : ""}
+- total: 初期費用合計（割引後・整数）。なければ0
+- discount: 割引額（整数）。なければ0
+- commission: 仲介手数料税抜（整数）。なければ0
+- commission_tax: 仲介手数料消費税（整数）。なければ0
+- cleaning_fee: クリーニング費用（契約時に支払う物として見積書に載っている額・整数）。なければ0`;
+
+  const _ocrKey = `${imageUrl}|${propImgUrl ?? ""}`;
+  const _ocrCached = ocrCacheGet(_ocrKey);
+  let raw: string;
+  if (_ocrCached !== undefined) {
+    raw = _ocrCached;
+  } else {
+    const ocrContent: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+      { type: "text", text: "画像から指定の項目を抽出し、JSONのみ返答してください。" },
+      { type: "image", source: { type: "url", url: imageUrl } },
+    ];
+    if (propImgUrl) {
+      ocrContent.push({ type: "text", text: "物件資料画像（見積書に物件名・家賃・共益費の記載がない場合はこちらから補完）：" });
+      ocrContent.push({ type: "image", source: { type: "url", url: propImgUrl } });
+    }
+    raw = await callClaudeVision(ocrSystem, ocrContent, action);
+    ocrCacheSet(_ocrKey, raw);
+  }
+
+  // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
+  const codeBlockMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  const rawJson = codeBlockMatch ? codeBlockMatch[1] : raw.match(/\{[\s\S]*\}/)?.[0];
+  if (!rawJson) return {};
+  try { return JSON.parse(rawJson) as Record<string, unknown>; } catch { return {}; }
+}
+
+/**
+ * AIX【物件確認した】（物件あった）で見積書を同封する時の、物件ごとの費用の文（AIX【見積書送る】の1枚と同じ読み取り・同じ文）。
+ * 物件 index と並びを合わせて返す（見積書の無い物件・読めなかった物件は null）。2026-10-13 竹内さん（くれあ）
+ */
+async function buildCheckResultEstimateTexts(o: {
+  estimateUrls: ReadonlyArray<string | null | undefined>;
+  propImageUrls: ReadonlyArray<string | null | undefined>;
+  propNames: ReadonlyArray<string | null | undefined>;
+  accountName: string;
+  account: string;
+  action: string;
+}): Promise<(string | null)[]> {
+  return Promise.all(o.estimateUrls.slice(0, CHECK_RESULT_MAX_PROPS).map(async (url, pi) => {
+    if (!url) return null;
+    try {
+      const est = await ocrSingleEstimate(url, o.propImageUrls[pi] || undefined, o.action);
+      const nm = bundleEstimateName(o.propNames[pi], est.property_name, est.room_number);
+      return composeSingleEstimateCostText(est, { accountName: o.accountName, account: o.account, ...nm }).text;
+    } catch (e) {
+      console.warn(JSON.stringify({ tag: "aix:check-estimate-bundle-ocr-failed", pi, error: String(e).slice(0, 200) }));
+      return null;
+    }
+  }));
+}
+
 // AIが内部メモを出力した場合、顧客向けメッセージと分離する
 // 検出対象: 「名前さん＋挨拶キーワード」または「挨拶キーワード単体」の前にある前置き
 // ※ 名前が本文中に出てくる物件オススメ等では誤検出しないよう、名前は挨拶との直接連接のみ対象
@@ -2259,7 +2333,15 @@ async function handleAction(request: NextRequest): Promise<Response> {
       const nearMiss = propertyNameNearMisses(nameFix.text, knownPropertyNamesFrom(
         (Array.isArray(recent_messages) ? recent_messages as Array<{ text?: string | null }> : []).map((m) => m?.text ?? null), [chosenName]));
       if (nearMiss.length) console.warn(JSON.stringify({ tag: "aix:property-name-near-miss", action: currentAction, conversationId, nearMiss }));
-      const message = nameFix.text;
+      // 2026-10-13 竹内さん（未桜）: 物件確認した（物件あった）でピッカーの「申込あり」が文に無い時は申込の説明を足す（足すだけ・実送信で最多の言い方）
+      let message = nameFix.text;
+      if (action === "property_check_result" && check_pattern === "available" && Array.isArray(prop_statuses)) {
+        const ap = ensureAppliedTalk(message, {
+          statuses: prop_statuses as string[], names: Array.isArray(property_names) ? (property_names as string[]) : [],
+          propertyCount: typeof property_count === "number" && property_count > 0 ? property_count : (prop_statuses as unknown[]).length,
+        });
+        if (ap.added) { console.log(JSON.stringify({ tag: "aix:check-applied-talk-added", conversationId })); message = ap.text; }
+      }
       if (feeFix.added) console.log(JSON.stringify({ tag: "aix:card-fee-added", action: currentAction, conversationId }));
       if (conversationId) {
         after(async () => {
@@ -2453,6 +2535,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
         ...(Array.isArray(property_vacancy_dates) ? (property_vacancy_dates as string[]) : []),
         typeof body.staff_note === "string" ? body.staff_note : "", typeof extra_input === "string" ? extra_input : "",
       ]);
+      // 2026-10-13 竹内さん（未桜）: ピッカー（申込あり・別の部屋・退去予定）が文に出ていない時も止める（足す直し ensureAppliedTalk の後でも残った物）
+      const pickerMiss = !hold && check_pattern === "available" && Array.isArray(prop_statuses)
+        ? findPickerTalkMismatch(text, { statuses: prop_statuses as string[], names: Array.isArray(property_names) ? (property_names as string[]) : [], propertyCount: pc })
+        : null;
+      if (pickerMiss) return { notice: `⛔ ${pickerMiss}（このまま送る時はもう一度「送信」を押してください）${mi ? `\n⚠ ${mi}` : ""}`, hold: pickerMiss };
       if (hold || mi) console.log(JSON.stringify({ tag: "aix:check-result-exit", conversationId, hold, moveIn: mi }));
       return { notice: [hold ? `⛔ ${hold}（このまま送る時はもう一度「送信」を押してください）` : "", mi ? `⚠ ${mi}` : ""].filter(Boolean).join("\n"), hold };
     };
@@ -2478,6 +2565,8 @@ async function handleAction(request: NextRequest): Promise<Response> {
     let message_text = "";
     let parsed_estimate_result = null;
     let estimate_text_result = "";
+    // 2026-10-13 竹内さん（くれあ）: 物件確認した（物件あった）で見積書を同封する時の物件ごとの費用の文（物件 index と並びを合わせる・無い物件は null）
+    let estimate_texts_result: (string | null)[] | null = null;
     // M2: このAIX送信で御見積書を同封したか（レスポンス経由で aix_usage_logs.estimate_sent に永続化する）
     let estimate_sent_result = false;
     let hearing_intro_result = ""; // condition_hearing のAI導入メッセージ（LL-09）
@@ -3061,73 +3150,13 @@ ${SMORA_COMMON_RULES}`;
       if (!estimate) {
         if (!image_url) throw new Error("見積書画像が必要です");
 
-        const propImgUrl = property_image_url as string | undefined;
-        // Sonnet5対応: JSON形式のみ返答を明示（前置き文・コードブロック出力を防止）
-        // 「見積書」に限定せず「以下の画像から」と汎用表現にすることでマイソク等でも対応可
-        // 2026-09-17 竹内（AIX キャッシュ点検）: ≈600字（1,500字未満）なので cache_control は付かない（propImgUrl で1行変わるが cache 対象外）
-        const ocrSystem = `以下の画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文・コードブロック・前置き・後置き一切不要）：
-{"property_name":"","room_number":"","rent":0,"management_fee":0,"total":0,"discount":0,"commission":0,"commission_tax":0,"cleaning_fee":0}
-
-- property_name: マンション名のみ（号室は含めない）。読み取れなければ""
-- room_number: 号室番号のみ（例: 502）。読み取れなければ""
-- rent: 月額家賃（整数。円・¥・カンマ除く。共益費・管理費は含めない）。なければ0
-- management_fee: 共益費または管理費（月額・整数）。なければ0${propImgUrl ? "\n  ※見積書に物件名・家賃・共益費の記載がない場合は物件資料画像から補完すること" : ""}
-- total: 初期費用合計（割引後・整数）。なければ0
-- discount: 割引額（整数）。なければ0
-- commission: 仲介手数料税抜（整数）。なければ0
-- commission_tax: 仲介手数料消費税（整数）。なければ0
-- cleaning_fee: クリーニング費用（契約時に支払う物として見積書に載っている額・整数）。なければ0`;
-
-        const _ocrKey = `${image_url}|${propImgUrl ?? ""}`;
-        const _ocrCached = ocrCacheGet(_ocrKey);
-        let raw: string;
-        if (_ocrCached !== undefined) {
-          raw = _ocrCached;
-        } else {
-          const ocrContent: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
-            { type: "text", text: "画像から指定の項目を抽出し、JSONのみ返答してください。" },
-            { type: "image", source: { type: "url", url: image_url } },
-          ];
-          if (propImgUrl) {
-            ocrContent.push({ type: "text", text: "物件資料画像（見積書に物件名・家賃・共益費の記載がない場合はこちらから補完）：" });
-            ocrContent.push({ type: "image", source: { type: "url", url: propImgUrl } });
-          }
-          raw = await callClaudeVision(ocrSystem, ocrContent, currentAction);
-          ocrCacheSet(_ocrKey, raw);
-        }
-
-        // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
-        const codeBlockMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-        const rawJson = codeBlockMatch ? codeBlockMatch[1] : raw.match(/\{[\s\S]*\}/)?.[0];
-        if (rawJson) {
-          try { estimate = JSON.parse(rawJson); } catch { estimate = {}; }
-        } else {
-          estimate = {};
-        }
+        // 2026-10-13: 読み取り（プロンプト・キャッシュ・JSON の取り出し）は ocrSingleEstimate に移した（物件確認したの見積書の同封でも同じ読み取りを使う・中身は同じ）
+        estimate = await ocrSingleEstimate(String(image_url), property_image_url as string | undefined, currentAction);
       }
 
-      // アカウント名マッピング
-      const est = estimate as Record<string, unknown>;
-      const propertyName = String(est.property_name || "");
-      const roomNumber   = String(est.room_number   || "");
-      // 数値として正常に読み取れた値のみ使用（NaN・0は未取得扱い）
-      const totalRaw     = Number(est.total    || 0);
-      const discountRaw  = Number(est.discount || 0);
-      const rentRaw      = Number(est.rent     || 0);
-      const mgmtFeeRaw   = Number(est.management_fee || 0);
-      const commRaw      = Number(est.commission || 0);
-      const commTaxRaw   = Number(est.commission_tax || 0);
-      const total         = isNaN(totalRaw)    || totalRaw    < 0 ? 0 : totalRaw;
-      const discount      = isNaN(discountRaw) || discountRaw < 0 ? 0 : discountRaw;
-      const rent          = isNaN(rentRaw)     || rentRaw     < 0 ? 0 : rentRaw;
-      const managementFee = isNaN(mgmtFeeRaw)  || mgmtFeeRaw  < 0 ? 0 : mgmtFeeRaw;
-      const commission    = isNaN(commRaw)    ? 0 : commRaw;
-      const commTax       = isNaN(commTaxRaw) ? 0 : commTaxRaw;
-
-      // イエヤスのように仲介手数料0円が正当なアカウントでも節約額を正しく表示するため、
-      // 見積書作成画面（estimate/page.tsx）と同じ式を estimate-body.calcSavings に1本化した
-      const savings = calcSavings({ rent, commission, commissionTax: commTax, discount });
-
+      // 2026-10-13: 文の組み立て（金額の札＋日割の注記＋費用の事情の1行）は app/lib/check-result-estimate-bundle.composeSingleEstimateCostText に移した
+      //   （AIX【物件確認した】で見積書を同封する時の物件ごとの「費用の文」も同じ関数＝同じ見積書なら同じ文。文の形は変えていない）。
+      //   イエヤスのように仲介手数料0円が正当なアカウントでも節約額を正しく表示するため、節約は estimate-body.calcSavings（見積書作成画面と同じ式）。
       // 2026-09-20 竹内（H さん事例）: ここだけ割引と節約を抱き合わせにしていた。
       //   旧: if (discount > 0 && total > 0) { 割引 + 初期費用 + 節約 } else if (total > 0) { 初期費用だけ }
       //   → スモ割 0円の見積書（H さん・差引 178,090円・節約 61,910円）が「初期費用：178,090円」だけになり、
@@ -3135,19 +3164,12 @@ ${SMORA_COMMON_RULES}`;
       //   実送信365日 319通のうち「割引なし＋節約あり」は3通あり（ROCCO・グレイス ガーデン・
       //   マンションサンパール）、どれも「初期費用：〇円／〇〇なら…節約出来ます！！」の形。
       //   他の3経路（複数枚・物件確認・見積書作成画面）は元から独立していたので、4経路を同じ関数に寄せた。
-      message_text = buildEstimateMessage([{
-        propertyName, roomNumber, total, discount, savings, accountName,
-      }]);
       // 2026-10-06 ⑫ 竹内さん（R の見積書 10/04）: このお部屋の費用の事情（報酬が出ない・スモ割なし・仲介手数料の額）の1行を札の最後に。
       //   数字は見積書の読み取りの値だけ（読めない値＝JSON に数で無い時は文を出さない・app/lib/estimate-explain.ts）
       {
-        const ex = estimateExplain({
-          account: String(account || "sumora"),
-          discountYen: typeof est.discount === "number" ? discount : null,
-          commissionYen: typeof est.commission === "number" ? commission + (typeof est.commission_tax === "number" ? commTax : 0) : null,
-          cleaningFeeYen: typeof est.cleaning_fee === "number" && est.cleaning_fee > 0 ? est.cleaning_fee : null,
-        });
-        if (ex.cardLine) { message_text = `${message_text}\n\n${ex.cardLine}`; console.log(JSON.stringify({ tag: "aix:estimate-explain", conversationId, cardLine: ex.cardLine.slice(0, 40) })); }
+        const single = composeSingleEstimateCostText(estimate as Record<string, unknown>, { accountName, account: String(account || "sumora") });
+        message_text = single.text;
+        if (single.cardLine) console.log(JSON.stringify({ tag: "aix:estimate-explain", conversationId, cardLine: single.cardLine.slice(0, 40) }));
       }
       parsed_estimate_result = estimate;
 
@@ -5513,6 +5535,21 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
       // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
 
     } else if (action === "property_check_result") {
+      // 2026-10-13 竹内さん（くれあ）: 見積書を同封する時は物件ごとに［資料・見積書の画像 → 費用の文］→ 最後に確認の結果の文。
+      //   費用の文は AIX【見積書送る】（1枚）と同じ読み取り・同じ文（ocrSingleEstimate → composeSingleEstimateCostText）。
+      //   実送信の見本（S 9/13 の6件・YUYA 9/14 の5件・かぁな 9/11 等）: 物件ごとに［画像 → 【物件名 号室】の費用の文（①なし・日割の注記つき）］を繰り返し、
+      //   最後に「こちらの6件現在募集中となります！！最大限割引しました初期費用の御見積書同封させて頂きました！！」。
+      //   画面が estimate_bundle を送った時だけ作る（戻す: NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off）。会話を合わせるの経路でも同じ物を返す
+      const bundleTextsP: Promise<(string | null)[] | null> =
+        check_pattern === "available" && body.estimate_bundle === true
+          && Array.isArray(body.estimate_image_urls) && (body.estimate_image_urls as unknown[]).some(Boolean)
+          ? buildCheckResultEstimateTexts({
+              estimateUrls: body.estimate_image_urls as (string | null)[],
+              propImageUrls: Array.isArray(body.estimate_prop_image_urls) ? (body.estimate_prop_image_urls as (string | null)[]) : [],
+              propNames: (property_names as string[] | undefined) ?? [],
+              accountName, account: String(account || "sumora"), action: currentAction,
+            }).catch((e) => { console.warn(JSON.stringify({ tag: "aix:check-estimate-bundle-failed", error: String(e).slice(0, 200) })); return null; })
+          : Promise.resolve(null);
       // conversation_match: 会話に合わせた自然文生成（テンプレ固定なし・GENERATION_SYSTEM品質）
       if (body.conversation_match) {
         // M2: 同封する見積書の費用情報（割引額・クリーニング費用・初期費用総額）をOCRして確定事実化する。
@@ -5533,8 +5570,13 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
         ]);
         const pcrQuotedBlock = formatQuotedContextBlock(pcrQuoted);
         // 見積書送付の事実 + 費用メモを aix_usage_logs へ永続化させる（クライアント → log-aix-usage）
+        const cmBundleTexts = await bundleTextsP;
         const cmEstimateExtra = cmHasEstimate
-          ? { estimate_sent: true, ...(cmEstimateFacts.notes.length > 0 ? { prop_cost_notes: cmEstimateFacts.notes } : {}) }
+          ? {
+              estimate_sent: true,
+              ...(cmEstimateFacts.notes.length > 0 ? { prop_cost_notes: cmEstimateFacts.notes } : {}),
+              ...(cmBundleTexts ? { estimate_texts: cmBundleTexts } : {}),
+            }
           : undefined;
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
@@ -5610,7 +5652,8 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
         // 「物件あった」「別の部屋が募集してた」等: 自由生成だが確認結果を必ず注入
         const CM_RESULT_DESC: Record<string, string> = {
           // 2026-09-27: 旧「空室あり・入居可能（募集中）」の「入居可能」が「空室のため即入居可能」を誘っていた（YUMA 04:18）。入居時期は確認結果に無い
-          available: "募集中（入居時期は確認結果に無い。入居可能日の入力が無ければ「即入居」等の入居時期は書かない）",
+          // 2026-10-13 竹内さん（未桜）: 物件ごとのピッカーが全部「申込あり」の時に「募集中」とだけ渡していたので「現在募集中のお部屋」だけの文になった → ピッカーから決める
+          available: cmAvailableResultDesc((prop_statuses as string[] | undefined) ?? [], (property_count as number | undefined) ?? 1),
           alternative: "リクエストのお部屋は募集終了。ただし同じ物件で別のお部屋が募集中",
         };
         const CM_STATUS_LABEL: Record<string, string> = {
@@ -5628,7 +5671,7 @@ ${mgmtInfo}${mgmtTargetNote}${recentHistory}` + (mgmtDiffNote ? `\n\n${mgmtDiffN
           ? Array.from({ length: cmPropCount }, (_, i) => {
               // 物件名が未入力（「物件①」は画面の仮の名前）なら本文に仮の名前を書かせない（2026-09-15 みく事例）
               const rawNm = cmPropNamesRaw[i] ?? "";
-              const nm = rawNm && !/^物件[①②③\d]?$/.test(rawNm) ? rawNm : `物件${i + 1}（物件名は未入力。本文に「物件${i + 1}」と書かず、引用返信・会話から分かる階・お部屋として伝える）`;
+              const nm = rawNm && !/^物件[①-⑩\d]?$/.test(rawNm) ? rawNm : `物件${i + 1}（物件名は未入力。本文に「物件${i + 1}」と書かず、引用返信・会話から分かる階・お部屋として伝える）`;
               const rawVac = (cmVacancyDates[i] ?? "").trim();
               // 過去日付・年号は落とす（通常生成パスの propList と同じ正規化）
               const vac = rawVac && !isPastVacancyDate(rawVac) ? rawVac.replace(/^\d{4}年/, "") : "";
@@ -6104,7 +6147,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             status: resolvedStatus,
           };
         });
-        const fallbackNames = ["①", "②", "③", "④", "⑤"];
+        const fallbackNames: readonly string[] = CIRCLED_NUMS; // 2026-10-13: 10件まで（①〜⑩）
         // estimate_image_urls は物件indexと対応した配列（見積書が無い物件は null）。some() で判定する
         const hasAnyEstimate = ((body.estimate_image_urls as (string | null)[] | undefined) ?? []).some((u) => !!u) || !!(estimate_image_url as string | undefined);
         if (hasAnyEstimate) estimate_sent_result = true;
@@ -6155,7 +6198,10 @@ ${patternExample}${knowledgeText}${examplesText}`;
           } else {
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
             const facSection = facilityText ? `\n\n${facilityText}` : "";
-            message_text = `${pName}現在募集中となります！！${estimate1}${facSection}${guarantorSection1}${inviteText}`;
+            // 2026-10-13 竹内さん（ピッカーを理解して文を作る）: 1件の「別の部屋」の分岐が無く「〇〇現在募集中となります」になっていた（30日で3通・スタッフが全部直した）。
+            //   スタッフの直しの形「{建物} 別のお部屋ですが{号室}現在募集中となります！！」（check-result-status-lines.alternativeSingleLine）
+            const statusLine = p.status === "alternative" ? alternativeSingleLine(pName) : `${pName}現在募集中となります！！`;
+            message_text = `${statusLine}${estimate1}${facSection}${guarantorSection1}${inviteText}`;
           }
           // greeting1 を先頭に連結（1件モードで挨拶が抜けていたバグ修正）
           // 送られた物件数指定時: ケース1=「確認させていただきました」/ ケース2=「物件の中で」ヘッダー + 他N件募集終了
@@ -6460,7 +6506,7 @@ ${templateText}`;
 - initial_cost: 初期費用合計（「〇〇〇,〇〇〇円」形式）
 - savings: スモラ節約額（一般業者との差額）
 不明はnull。`;
-          const checkEstBadges = ["①","②","③","④","⑤"];
+          const checkEstBadges: readonly string[] = CIRCLED_NUMS; // 2026-10-13: 10件まで
           // null を含むため「実際に見積書がある件数」で単数/複数を判定する
           const estAttachedCount = estUrls.filter((u) => !!u).length;
           const checkEstResults = await Promise.all(
@@ -6492,6 +6538,8 @@ ${templateText}`;
           }
         }
       }
+      // 2026-10-13: 見積書の同封を物件ごとのセットで送る時の費用の文（上の bundleTextsP・読み取りは本文の生成と並べて走らせている）
+      if (pattern === "available") estimate_texts_result = await bundleTextsP;
 
     // ── 📋 条件ヒアリング（フォームをテンプレ生成 + AI導入メッセージ） ───
     } else if (action === "condition_hearing") {
@@ -7619,6 +7667,14 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
     }
 
     // ⑦修正: 共通後処理（号室の先頭ゼロ除去 + 内部メモ分離）を finalize() に統一
+    // 2026-10-13 竹内さん（未桜）: 物件確認した（物件あった）の文にピッカーの「申込あり」が出ていない時は足す（finalizeResponse と同じ・足すだけ）
+    if (action === "property_check_result" && check_pattern === "available" && Array.isArray(prop_statuses) && message_text) {
+      const ap = ensureAppliedTalk(message_text, {
+        statuses: prop_statuses as string[], names: Array.isArray(property_names) ? (property_names as string[]) : [],
+        propertyCount: typeof property_count === "number" && property_count > 0 ? property_count : (prop_statuses as unknown[]).length,
+      });
+      if (ap.added) { console.log(JSON.stringify({ tag: "aix:check-applied-talk-added", conversationId })); message_text = ap.text; }
+    }
     const { message: cleanedMessage, notice } = finalize(holdCloseOf(message_text));
 
     // aix_generate_log 記録（メインフロー: finalizeResponse を使わない全アクションパス）
@@ -7660,6 +7716,7 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
       ...(mainCheckExit.hold ? { send_hold: mainCheckExit.hold } : {}),
       ...(parsed_estimate_result ? { parsed_estimate: parsed_estimate_result } : {}),
       ...(estimate_text_result ? { estimate_text: estimate_text_result } : {}),
+      ...(estimate_texts_result ? { estimate_texts: estimate_texts_result } : {}),
       // M2: 御見積書を同封したか（AixModal → onAfterSend → log-aix-usage → aix_usage_logs.estimate_sent）
       ...(estimate_sent_result ? { estimate_sent: true } : {}),
       // 各ピッカーのパーツ別生成結果（コンポーネント学習ループ用）
