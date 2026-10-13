@@ -9549,14 +9549,17 @@ export default function Home() {
                 //   ボタンの位置と色は一手に関係なく固定（押し間違えない）。押した時の動きは今の各 AIX と同じ。戻す: NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off
                 const splitView = aixView.card?.split ? searchSplitView({ brainAction, altActions: brainMeta.alt_actions, twoChoiceMode: brainMeta.two_choice_mode }) : null;
                 if (splitView) {
+                  // 10/13 レビュー（軽微4）: 3つは AIX メニューの同じボタンと同じ動きにそろえる（一手かどうかで変えない）
+                  //   物件ピックアップ＝ピッカー（初回／新着／条件広げ／代替・lastPickupTypeByConvRef をセット）・物件オススメ＝オススメのピッカー・全力サポート＝openAixDirect
                   const runSplit = (a: string) => {
-                    if (a === brainAction) { runBrainAix(); return; }
                     setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
                     setShowAixMenu(false);
                     setAixInspectLabel(null);
+                    if (a === "property_send") { setActiveAixFlow("property_send"); setShowPropertySendPicker(true); return; }
+                    if (a === "property_recommendation") { setActiveAixFlow("property_recommendation" as AixActionType); openPropertyRecommendationPicker("withImage"); return; }
+                    if (a === brainAction) { runBrainAix(); return; }
                     setActiveAixFlow(a as AixActionType);
-                    if (a === "property_recommendation") openPropertyRecommendationPicker("withImage");
-                    else openAixDirect(a as AixActionType);
+                    openAixDirect(a as AixActionType);
                   };
                   const splitBtn = (b: { action: string; label: string; sub: string }, grow: boolean) => {
                     const c = AIX_ACTION_META[b.action]?.color ?? "#7C3AED";
@@ -9581,11 +9584,14 @@ export default function Home() {
                                 {splitView.found.map((b) => splitBtn(b, false))}
                               </div>
                             </div>
+                            {/* 2026-10-13 竹内さんの決定（B）: 右はブレインが全力サポートを候補にした番だけ（新規は左だけ・幅いっぱい） */}
+                            {splitView.notFound && (<>
                             <div className="w-px self-stretch bg-violet-200" />
                             <div className="flex-2 min-w-0 flex flex-col">
                               <p className="mb-1 text-center text-[10px] font-bold text-orange-700">{splitView.notFoundHeading}</p>
                               {splitBtn(splitView.notFound, true)}
                             </div>
+                            </>)}
                           </div>
                           <p className="mt-0.5 text-center" style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</p>
                           {brainAction === "property_recommendation" && selectedConversation.messages.some((m) => m.sender === "customer" && wantsLowInitialCostText(m.text)) && (
@@ -9602,8 +9608,9 @@ export default function Home() {
                             </button>
                           ))}
                         </div>
-                        <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))}
-                          className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
+                        {/* 10/13 レビュー（軽微）: ✕ の押せる範囲を 44px 四方に（見た目の位置は枠の余白に寄せて変えない） */}
+                        <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))} aria-label="閉じる"
+                          className="shrink-0 -mr-3 -mt-2.5 flex min-h-11 min-w-11 items-center justify-center text-violet-400 text-[11px] font-bold">✕</button>
                       </div>
                       {brainMeta.note && (
                       <div className="mt-1.5 border-t border-violet-200 pt-1.5" onClick={() => setExpandedBrainNote((v) => !v)}>

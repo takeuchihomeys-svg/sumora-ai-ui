@@ -29,13 +29,28 @@ eq("出し切り 再ピックアップ=外れ", judgePath(brainPathCode({ two_st
 eq("出し切り 全力サポート=正解", judgePath(brainPathCode({ reply_mode: "aix", action: "zenryoku_support" }), ["返信", "AIX:zenryoku_support"], ["AIX:物件"]).ok, true);
 eq("物件の族 mustNot", judgePath(brainPathCode({ reply_mode: "aix", action: "property_recommendation" }), ["返信"], ["AIX:物件"]).mustNotHit, "AIX:物件");
 
-// 10/13 竹内さん（KAORI）: 物件を探す番は左右の形（物件ピックアップ・物件オススメ｜全力サポート）＝どちらの読みでも道が合えば正解
-eq("左右の形: 出し切りで一手が物件ピックアップ（全力サポートも並ぶ）=正解", judgePath(brainPathCode({ reply_mode: "aix", action: "property_send", alt_actions: ["zenryoku_support"] }), ["AIX:zenryoku_support"], ["2段:pickup", "AIX:物件"]).ok, true);
-eq("左右の形: 一手が全力サポート・正解が物件オススメ=正解", judgePath(brainPathCode({ reply_mode: "aix", action: "zenryoku_support" }), ["AIX:property_recommendation"], []).ok, true);
-eq("左右の形でも返信が正解の番は外れ", judgePath(brainPathCode({ reply_mode: "aix", action: "property_send" }), ["返信"], ["AIX"]).ok, false);
+// 10/13 竹内さん（KAORI）＋決定（B）: 物件を探す番は左右の形。右（全力サポート）はブレインが候補にした時だけ
+//   新着・他にあるかの番＝accept "AIX:左右"／新規の番＝accept "AIX:物件"＋mustNot "右:全力"
+const sendRight = brainPathCode({ reply_mode: "aix", action: "property_send", alt_actions: ["zenryoku_support"] });
+const sendLeft = brainPathCode({ reply_mode: "aix", action: "property_send", alt_actions: ["property_recommendation"] });
+const zen = brainPathCode({ reply_mode: "aix", action: "zenryoku_support" });
+eq("新着・他にあるか: 物件の AIX＋右に全力サポート=正解", judgePath(sendRight, ["AIX:左右"], ["2段:pickup"]).ok, true);
+eq("新着・他にあるか: 一手が全力サポート（左も並ぶ）=正解", judgePath(zen, ["AIX:左右"], ["2段:pickup"]).ok, true);
+eq("新着・他にあるか: 左だけ（全力サポートを候補にしない）=外れ", judgePath(sendLeft, ["AIX:左右"], ["2段:pickup"]).ok, false);
+eq("新規: 左だけ=正解", judgePath(sendLeft, ["AIX:物件"], ["右:全力"]).ok, true);
+eq("新規: 右も出した=外れ", judgePath(sendRight, ["AIX:物件"], ["右:全力"]), { ok: false, acceptHit: "AIX:物件", mustNotHit: "右:全力" });
+eq("新規: 一手が全力サポート=外れ", judgePath(zen, ["AIX:物件"], ["右:全力"]).ok, false);
+eq("左右の形でも返信が正解の番は外れ", judgePath(sendRight, ["返信"], ["AIX"]).ok, false);
+// 10/13 レビュー（重要3）: 厳しい採点はピックアップ（複数）とオススメ（1件）を分ける。ふつうの採点は今まで通り物件の族で同じ
+eq("ふつう: オススメが正解・ピックアップ=正解（族）", judgePath(sendLeft, ["AIX:property_recommendation"]).ok, true);
+eq("厳しい: オススメが正解・ピックアップ=外れ", judgePath(sendLeft, ["AIX:property_recommendation"], [], { strict: true }).ok, false);
+eq("厳しい: オススメが正解・オススメ=正解", judgePath(brainPathCode({ reply_mode: "aix", action: "property_recommendation" }), ["AIX:property_recommendation"], [], { strict: true }).ok, true);
+eq("厳しい: ピックアップが正解・物件を探す=正解（探してピックアップで送る）", judgePath(brainPathCode({ reply_mode: "aix", action: "property_search" }), ["AIX:property_send"], [], { strict: true }).ok, true);
+eq("厳しい: 物件の族の正解（AIX:物件）はそのまま", judgePath(sendLeft, ["AIX:物件"], [], { strict: true }).ok, true);
+eq("厳しい: 全力サポートと物件の取り違え=外れ", judgePath(zen, ["AIX:物件"], [], { strict: true }).ok, false);
 {
   const prev = process.env.SEARCH_SPLIT_CHOICE; process.env.SEARCH_SPLIT_CHOICE = "off";
-  eq("SEARCH_SPLIT_CHOICE=off は旧の採点", judgePath(brainPathCode({ reply_mode: "aix", action: "property_send" }), ["AIX:zenryoku_support"], ["AIX:物件"]).ok, false);
+  eq("SEARCH_SPLIT_CHOICE=off は左右の符号を足さない", brainPathCode({ reply_mode: "aix", action: "property_send", alt_actions: ["zenryoku_support"] }).codes.includes("AIX:左右"), false);
   if (prev === undefined) delete process.env.SEARCH_SPLIT_CHOICE; else process.env.SEARCH_SPLIT_CHOICE = prev;
 }
 

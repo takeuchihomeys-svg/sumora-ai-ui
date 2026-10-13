@@ -41,6 +41,8 @@ export type ExamSpec = {
   accept: string[]; mustNot?: string[]; asks?: ExamAsk[]; ng?: string[]; why: string; addedAt?: string; addedBy?: string;
   /** 決まりが入ったら正解が変わる番（10/08: 出し切り＝search-exhausted が入ったら全力サポートだけ。brain-exam.ts の acceptOf） */
   acceptWhen?: { searchExhausted?: string[]; /** 10/09: 全力サポートが正解の時の依頼（答え方は aix＝AIX の文で応える） */ searchExhaustedAsks?: ExamAsk[]; note?: string };
+  /** 10/13 レビュー（重要3）: 厳しい採点の正解（物件の AIX の種類まで分ける。無ければ accept）。brain-exam-score.judgePath の strict で当てる */
+  acceptStrict?: string[];
   /** 10/09: 日付をずらさない（月の家賃の計算など、ずらすと月の言い方と食い違う問題） */
   noDateShift?: boolean;
   /** 2026-10-09 主語の抜け: 今の番の物件の正解（竹内さんの返事が指した建物）。ブレインの current_property と照らす（brain-exam-score.judgeCurrentProperty） */

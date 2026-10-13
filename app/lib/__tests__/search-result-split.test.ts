@@ -1,6 +1,6 @@
 // 2026-10-13 竹内さん（KAORI）「左右にボタンを分ける。物件あった場合（複数＝物件ピックアップ・1件＝物件オススメ）／物件なかった場合（全力サポート）」（search-result-split.ts）
 // 実行: npx tsx app/lib/__tests__/search-result-split.test.ts
-import { searchSplitView, isSearchSplitTurn, applySearchSplit, searchSplitServerEnabled } from "../search-result-split";
+import { searchSplitView, isSearchSplitTurn, applySearchSplit, searchSplitServerEnabled, splitReplyToAix, splitMaterialLine, searchSplitNote, zenryokuShown, zenryokuCandidateMaterial, OTHER_PROPERTY_ASK_RE } from "../search-result-split";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -25,7 +25,7 @@ it("KAORI の形（旧は一手＝全力サポート・2つ目＝物件ピック
   eq(v.foundHeading, "物件あった場合"); eq(v.notFoundHeading, "物件なかった場合");
   eq(v.found.map((b) => b.action), ["property_send", "property_recommendation"]);
   eq(v.found.map((b) => b.sub), ["複数あった時", "1件の時"]);
-  eq(v.notFound.action, "zenryoku_support"); eq(v.notFound.isBrain, true);
+  eq(v.notFound?.action, "zenryoku_support"); eq(v.notFound?.isBrain, true);
   eq(v.others, []);
 });
 it("一手が物件オススメでも同じ位置（色・位置で押し間違えない）", () => {
@@ -40,11 +40,11 @@ it("3つ以外の2つ目の AIX（見積書）は下に残す・重複は1つ", 
 
 console.log("■ サーバー: 出し切りで一手を【全力サポート】に書き換えない");
 it("出し切り・一手が物件ピックアップした → 一手はそのまま・全力サポートを2つ目に", () => {
-  eq(applySearchSplit({ finalAix: "property_send", fromReply: false, altActions: ["property_recommendation"], exhausted: true, postApply: false }),
+  eq(applySearchSplit({ finalAix: "property_send", fromReply: false, altActions: ["property_recommendation"], exhausted: true, postApply: false, zenryokuCandidate: true }),
     { applies: true, finalAix: "property_send", altActions: ["property_recommendation", "zenryoku_support"], toAix: false });
 });
 it("出し切り・2段のピックアップの約束（返信）→ AIX の番にし、一手は LLM の物件の AIX（物件オススメ）", () => {
-  const r = applySearchSplit({ finalAix: null, fromReply: true, llmAix: "property_recommendation", altActions: undefined, exhausted: true, postApply: false });
+  const r = applySearchSplit({ finalAix: null, fromReply: true, llmAix: "property_recommendation", altActions: undefined, exhausted: true, postApply: false, zenryokuCandidate: true });
   eq(r, { applies: true, finalAix: "property_recommendation", altActions: ["zenryoku_support"], toAix: true });
 });
 it("出し切り・返信で LLM の AIX が物件でない → 物件ピックアップ（全力サポートには決め打ちしない）", () => {
@@ -58,6 +58,56 @@ it("出し切りでない・申込以降・SEARCH_SPLIT_CHOICE=off → 何もし
 });
 it("返信のままの番（fromReply=false で一手なし）は触らない", () => {
   eq(applySearchSplit({ finalAix: null, fromReply: false, altActions: undefined, exhausted: true, postApply: false }).applies, false);
+});
+
+console.log("■ 10/13 レビュー（重要2）: 返信を AIX に移すのは明示の印の時だけ・材料は答えを書かない");
+it("strong → gate に任せる（gate が false＝BRAIN_DEMOTE_SEARCH_EXHAUSTED=on なら移さない）", () => {
+  let rec = 0;
+  eq(splitReplyToAix({ strength: "strong", gate: () => true, record: () => { rec++; } }), true);
+  eq(splitReplyToAix({ strength: "strong", gate: () => false, record: () => { rec++; } }), false);
+  eq(rec, 0);
+});
+it("weak（送付だけ）→ 移さず記録だけ", () => {
+  let rec = 0, gated = 0;
+  eq(splitReplyToAix({ strength: "weak", gate: () => { gated++; return true; }, record: () => { rec++; } }), false);
+  eq([rec, gated], [1, 0]);
+});
+it("材料の1行: 印が無ければ空・strong と weak で言い方が違う・左右の形の事実を入れ、答え（どちらにせよ）を書かない", () => {
+  eq(splitMaterialLine({ exhausted: false, markerAt: null }), "");
+  const s = splitMaterialLine({ exhausted: true, markerAt: "2026-10-12T03:00:00Z", strength: "strong", markerText: "全てピックアップさせて頂きました" });
+  eq(/出し切ったと言った印/.test(s) && /物件なかった場合＝AIX【全力サポート】/.test(s) && /あなたが決める/.test(s), true);
+  eq(/が主/.test(s), false);
+  const w = splitMaterialLine({ exhausted: true, markerAt: "2026-10-12T03:00:00Z", strength: "weak", markerText: "ピックアップさせて頂きました" });
+  eq(/1回送っただけ/.test(w), true);
+});
+
+console.log("■ 10/13 竹内さんの決定（B）: 右（全力サポート）はブレインが候補にした時だけ・新規は左だけ");
+it("新規（一手が物件ピックアップ・2つ目に全力サポートなし）→ 左だけ（notFound=null）", () => {
+  const v = searchSplitView({ brainAction: "property_send", altActions: ["property_recommendation"] })!;
+  eq(v.notFound, null); eq(v.found.length, 2);
+  eq(searchSplitNote({ brainAction: "property_send", altActions: [] }).includes("全力サポート"), false);
+});
+it("新着・他にあるか（ブレインが2つ目に全力サポート）→ 右も出す", () => {
+  eq(searchSplitView({ brainAction: "property_recommendation", altActions: ["zenryoku_support"] })!.notFound?.action, "zenryoku_support");
+  eq(searchSplitNote({ brainAction: "property_send", altActions: ["zenryoku_support"] }).includes("全力サポート"), true);
+});
+it("一手が全力サポート → 右も出す（左も並ぶ）", () => eq(zenryokuShown({ brainAction: "zenryoku_support" }), true));
+it("出し切りでもブレインが候補にしていない → 全力サポートを足さない", () => {
+  eq(applySearchSplit({ finalAix: "property_send", fromReply: false, altActions: undefined, exhausted: true, postApply: false }).altActions, []);
+});
+it("2段の規則が LLM の物件の AIX を約束に書き換えた番 → ブレインの答えに戻す（印の強さに関係なく）", () => {
+  let gated = 0, rec = 0;
+  eq(splitReplyToAix({ strength: "weak", llmAixIsProperty: true, gate: () => { gated++; return false; }, record: () => { rec++; } }), true);
+  eq([gated, rec], [0, 0]);
+});
+it("候補の材料: 新規・他にあるか・答えを書かない", () => {
+  const n = zenryokuCandidateMaterial({ sentPropertyCount: 0, lastSentAt: null, exhaustLine: "", customerText: "梅田で1LDK探してます" });
+  eq(/まだ物件を送っていない（新規）/.test(n) && /ほかの物件・新着を聞いている: いいえ/.test(n) && /zenryoku_candidate/.test(n), true);
+  const o = zenryokuCandidateMaterial({ sentPropertyCount: 5, lastSentAt: "2026-10-10T00:00:00Z", exhaustLine: "", customerText: "他にもありますか？" });
+  eq(/前に物件を送っている（5件・最後 2026-10-10）/.test(o) && /聞いている: はい/.test(o), true);
+  eq(OTHER_PROPERTY_ASK_RE.test("他まだありますか"), true);
+  eq(OTHER_PROPERTY_ASK_RE.test("新着出たら教えてください"), true);
+  eq(OTHER_PROPERTY_ASK_RE.test("ありがとうございます"), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -67,6 +67,8 @@ const DRAFT = flag("draft");
 //   spec の acceptWhen.searchExhausted がその時の正解。入ったか＝brain-core が search-exhausted を読んでいて SEARCH_EXHAUSTED_ZENRYOKU が off でない（--exhausted-rule=on|off で上書き）
 const EXHAUSTED_RULE = arg("exhausted-rule") ? arg("exhausted-rule") === "on" : (() => { try { return readFileSync("app/lib/brain-core.ts", "utf8").includes('from "@/app/lib/search-exhausted"') && process.env.SEARCH_EXHAUSTED_ZENRYOKU !== "off"; } catch { return false; } })();
 type AcceptWhen = { acceptWhen?: { searchExhausted?: string[]; searchExhaustedAsks?: ExamProblem["asks"] } };
+/** 10/13 レビュー（重要3）: 厳しい採点の正解（spec の acceptStrict・無ければ acceptOf） */
+function acceptStrictOf(p: { accept: string[]; acceptStrict?: string[] } & AcceptWhen): string[] { return p.acceptStrict?.length ? p.acceptStrict : acceptOf(p); }
 function acceptOf(p: { accept: string[] } & AcceptWhen): string[] { return EXHAUSTED_RULE && p.acceptWhen?.searchExhausted?.length ? p.acceptWhen.searchExhausted : p.accept; }
 /** 10/09: 全力サポートが正解の時は依頼も AIX の文で応える（spec の acceptWhen.searchExhaustedAsks）。それ以外はそのまま */
 function effectiveProblem(p: ExamProblem): ExamProblem {
@@ -112,6 +114,8 @@ type ResultRow = {
   draft?: { text: string | null; skipped?: string; code: string; ok: boolean; asks: boolean[] | null; ng: boolean[] | null; pass: boolean } | null;
   ledger?: { inserted: Record<string, number>; errors: string[] };
   pcMismatch?: string[];
+  /** 10/13 厳しい採点（物件の AIX の種類まで分ける）の道 */
+  pathStrict?: boolean;
 };
 
 // ─── YUMA の写し（yuma-r10-brain-replay と同じ線） ─────────────────────────
@@ -432,7 +436,9 @@ function perProblem(rows: ResultRow[]) {
     // 10/09 物差しを分ける: 道（過半数）／依頼の答え方（道＋全部の依頼の答え方＋言ってはいけない事・要点は見ない）／要点（旧の合格）／下書きの要点
     const routeOk = (r: ResultRow) => r.score.path && (!r.asks || r.asks.every((a) => a.route ?? a.covered)) && (!r.ng || !r.ng.some((g) => g.violated));
     const routeN = rs.filter(routeOk).length;
-    return { id, type: rs[0].type, tags: rs[0].tags, n: rs.length, pass: pass * 2 > rs.length, passN: pass, pathN: path, pathMaj: path * 2 > rs.length, routeN, routeMaj: routeN * 2 > rs.length, routeKnown: rs.some((r) => r.asks?.some((a) => a.route !== undefined)), drMaj: dr.length ? drOk * 2 > dr.length : null, asksHit, asksN, ngOk, ngN, ess: ess, essOk, dr: dr.length, drOk, drPath, codes: [...new Set(rs.map((r) => r.path.code))], rows: rs };
+    const strictN = rs.filter((r) => r.pathStrict ?? r.score.path).length;
+    const strictPassN = rs.filter((r) => r.score.pass && (r.pathStrict ?? true)).length;
+    return { id, type: rs[0].type, tags: rs[0].tags, n: rs.length, pass: pass * 2 > rs.length, passN: pass, pathN: path, pathMaj: path * 2 > rs.length, routeN, routeMaj: routeN * 2 > rs.length, strictN, strictMaj: strictN * 2 > rs.length, strictPass: strictPassN * 2 > rs.length, routeKnown: rs.some((r) => r.asks?.some((a) => a.route !== undefined)), drMaj: dr.length ? drOk * 2 > dr.length : null, asksHit, asksN, ngOk, ngN, ess: ess, essOk, dr: dr.length, drOk, drPath, codes: [...new Set(rs.map((r) => r.path.code))], rows: rs };
   }).sort((a, b) => a.id.localeCompare(b.id));
 }
 /** 保存した答案を今の正解（出し切りの決まりの切り替え・spec の直し）で採点し直す（asks・言ってはいけない事の判定はそのまま） */
@@ -442,10 +448,12 @@ function rescore(rows: ResultRow[], probs: Map<string, ExamProblem>): ResultRow[
     if (!p || r.error || !r.brain) return r;
     const acc = acceptOf(p), mn = p.mustNot ?? [];
     const pv = judgePath(brainPathCode(r.brain as BrainExamOutput), acc, mn);
+    // 10/13 レビュー（重要3）: 厳しい採点（物件の AIX の種類まで分ける・spec の acceptStrict）も別に持つ
+    const pathStrict = judgePath(brainPathCode(r.brain as BrainExamOutput), acceptStrictOf(p), mn, { strict: true }).ok;
     const asks = r.asks ? r.asks.map((a) => a.covered) : null, ng = r.ng ? r.ng.map((g) => g.violated) : null;
     const essence = r.essence ? (() => { const v = judgePath(codeFromString(r.essence!.code), acc, mn); return { ...r.essence!, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
     const draft = r.draft ? (() => { const v = judgePath(codeFromString(normalizeDraftCode(r.draft!.code, r.draft!.text, acc)), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) }; })() : r.draft;
-    return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, score: problemScore(pv, asks, ng), essence, draft };
+    return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, pathStrict, score: problemScore(pv, asks, ng), essence, draft };
   });
 }
 function summarize(label: string, baseline: string | null): string {
@@ -468,6 +476,8 @@ function summarize(label: string, baseline: string | null): string {
   const essN = pp.reduce((s, p) => s + p.ess, 0), essOk = pp.reduce((s, p) => s + p.essOk, 0);
   const drN = pp.reduce((s, p) => s + p.dr, 0), drOk = pp.reduce((s, p) => s + p.drOk, 0), drPath = pp.reduce((s, p) => s + p.drPath, 0);
   L.push(`合格（道・依頼・言ってはいけない事が全部）: ${pct(totalPass, pp.length)}｜最終の道: ${pct(pathAll, runAll)}｜依頼が入った: ${pct(aH, aN)}｜言ってはいけない事を守った: ${pct(gO, gN)}`);
+  // 10/13 レビュー（重要3）: 厳しい採点（物件の AIX の種類まで分ける・acceptStrict）を並べる
+  L.push(`厳しい採点（物件の AIX の種類まで分ける・acceptStrict）: 合格 ${pct(pp.filter((p) => p.strictPass).length, pp.length)}｜最終の道 ${pct(pp.reduce((s, p) => s + p.strictN, 0), runAll)}`);
   {
     const pc2 = (f: (p: (typeof pp)[number]) => boolean, ps2 = pp) => pct(ps2.filter(f).length, ps2.length);
     const known = pp.filter((p) => p.routeKnown || !(p.rows[0].asks ?? []).length);
@@ -521,7 +531,7 @@ function summarize(label: string, baseline: string | null): string {
     const both = pp.filter((p) => bp.has(p.id));
     const bPath = both.reduce((s, p) => s + bp.get(p.id)!.pathN, 0), bRun = both.reduce((s, p) => s + bp.get(p.id)!.n, 0);
     const bA = both.reduce((s, p) => s + bp.get(p.id)!.asksHit, 0), bAN = both.reduce((s, p) => s + bp.get(p.id)!.asksN, 0);
-    L.push(`\n## 前との物差し: 道 ${both.filter((p) => bp.get(p.id)!.pathMaj).length} → ${both.filter((p) => p.pathMaj).length}／答え方 ${both.filter((p) => bp.get(p.id)!.routeMaj).length} → ${both.filter((p) => p.routeMaj).length}（${both.length} 問）`);
+    L.push(`\n## 前との物差し: 道 ${both.filter((p) => bp.get(p.id)!.pathMaj).length} → ${both.filter((p) => p.pathMaj).length}（厳しい採点 ${both.filter((p) => bp.get(p.id)!.strictMaj).length} → ${both.filter((p) => p.strictMaj).length}）／答え方 ${both.filter((p) => bp.get(p.id)!.routeMaj).length} → ${both.filter((p) => p.routeMaj).length}（${both.length} 問）`);
     L.push(`\n## 前（${baseline}・${bModel}）との比べ${crossModel ? "（モデルが違う＝参考・関所にしない）" : ""}（両方で解いた ${both.length} 問）: 合格 前 ${both.filter((p) => bp.get(p.id)!.pass).length} → 今 ${both.filter((p) => p.pass).length}｜道 前 ${pct(bPath, bRun)} → 今 ${pct(both.reduce((s, p) => s + p.pathN, 0), both.reduce((s, p) => s + p.n, 0))}｜依頼 前 ${pct(bA, bAN)} → 今 ${pct(both.reduce((s, p) => s + p.asksHit, 0), both.reduce((s, p) => s + p.asksN, 0))}`);
     const typesAll = [...new Set(both.map((p) => p.type))];
     L.push(`  型ごとの合格（前→今）: ${typesAll.map((t) => { const x = both.filter((p) => p.type === t); return `${t} ${x.filter((p) => bp.get(p.id)!.pass).length}→${x.filter((p) => p.pass).length}/${x.length}`; }).join("・")}`);
@@ -712,6 +722,7 @@ async function main() {
       row.raw = rawPlanOf(rawOut);
       const code = brainPathCode(meta as BrainExamOutput);
       const pv = judgePath(code, acc, mn);
+      row.pathStrict = judgePath(code, acceptStrictOf(p), mn, { strict: true }).ok;
       row.path = { code: code.label, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok };
       // 本質の道: LLM が AIX を選んでいれば決まった計算、それ以外は判定の分類
       const rawAction = String(row.raw?.aix ?? "").trim() || String(row.raw?.action ?? "").trim();

@@ -25,23 +25,21 @@ export type PathCode = {
   hard: string[];
   /** 表示用 */
   label: string;
-  /**
-   * 2026-10-13 竹内さん（KAORI）: 物件を探す番（一手が物件の AIX か全力サポート）は画面が左右の形で3つを並べ、スタッフが検索の結果で押す
-   * （search-result-split）。その番は「物件の AIX」と「全力サポート」のどちらの読みでも道が合えば正解（judgePath が両方を当てる）。
-   * SEARCH_SPLIT_CHOICE=off（または NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off）の時は付けない（旧の採点）
-   */
-  alternates?: PathCode[];
 };
 
+/**
+ * 2026-10-13 竹内さん（KAORI）＋決定（B）: 物件を探す番（一手が物件の AIX か全力サポート）は画面が左右の形で並べる（search-result-split）。
+ *   左＝物件ピックアップ（複数）・物件オススメ（1件）は毎回。右＝全力サポートはブレインが候補にした番だけ（一手が全力サポートか、alt_actions に全力サポート）。
+ *   その番の道の符号に足す: 右も並んだ → "AIX:左右"（正解の符号）と "右:全力"（mustNot の符号）。左だけ → 足さない。
+ *   正解の書き方: 新着・他にあるかの番＝accept "AIX:左右"／新規の番＝accept "AIX:物件"＋mustNot "右:全力"。
+ *   SEARCH_SPLIT_CHOICE=off（または NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off）の時は足さない。
+ * 10/13 レビュー（重要3）: 旧の alternates（物件の AIX か全力サポートなら3つのどれでも正解）はやめた（取り違えが測れない）。
+ *   厳しい採点（judgePath の strict）＝物件の AIX の種類（ピックアップ／オススメ）まで分ける。spec の acceptStrict があればそれで当てる。
+ */
 const SPLIT_PROP = new Set(["property_send", "property_recommendation", "property_search"]);
 function splitScoringOn(): boolean {
   const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
   return typeof process === "undefined" || !(off(process.env.SEARCH_SPLIT_CHOICE) || off(process.env.NEXT_PUBLIC_SEARCH_SPLIT_CHOICE));
-}
-function aixCode(action: string): PathCode {
-  const fam = aixFamily(action);
-  const codes = [...new Set([`AIX:${action}`, `AIX:${fam}`, "AIX"])];
-  return { codes, hard: codes, label: `AIX:${action}` };
 }
 
 const PROP = /^property_(?:send|recommendation|pickup|search)$/;
@@ -75,8 +73,9 @@ export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
     const codes = [base, `AIX:${fam}`, "AIX"];
     const main: PathCode = { codes: [...new Set(codes)], hard: [...new Set(codes)], label: cp ? `AIX:${action}/${cp}` : `AIX:${action}` };
     if (splitScoringOn() && (SPLIT_PROP.has(action) || action === "zenryoku_support")) {
-      const others = ["property_send", "property_recommendation", "zenryoku_support"].filter((a) => a !== action && !(action === "property_search" && a === "property_send"));
-      return { ...main, label: `${main.label}（左右の形）`, alternates: others.map(aixCode) };
+      const right = action === "zenryoku_support" || (b.alt_actions ?? []).includes("zenryoku_support");
+      if (right) return { codes: [...main.codes, "AIX:左右"], hard: [...main.hard, "右:全力"], label: `${main.label}（左右）` };
+      return { ...main, label: `${main.label}（左だけ）` };
     }
     return main;
   }
@@ -94,7 +93,7 @@ export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
 }
 
 /** 正解の1つの符号に、ブレインの符号のどれかが当たるか */
-export function codeMatches(want: string, have: ReadonlyArray<string>): boolean {
+export function codeMatches(want: string, have: ReadonlyArray<string>, strict = false): boolean {
   const w = want.trim();
   if (!w) return false;
   if (w.startsWith("AIX:") && !w.startsWith("AIX:物件")) {
@@ -103,19 +102,18 @@ export function codeMatches(want: string, have: ReadonlyArray<string>): boolean 
     const [a, p] = body.split("/");
     const fam = aixFamily(a);
     if (p) return have.includes(`AIX:${topicKey(`${fam}/${p}`)}`) || have.includes(`AIX:${fam}/${p}`);
+    // 厳しい採点: 物件の AIX は種類まで（ピックアップとオススメの取り違えを外れにする）
+    if (strict && fam === "物件" && a !== "property_pickup") return have.includes(`AIX:${a}`) || (a === "property_send" && have.includes("AIX:property_search"));
     return have.includes(`AIX:${a}`) || have.includes(`AIX:${fam}`);
   }
   return have.includes(w);
 }
 
 export type PathVerdict = { ok: boolean; acceptHit: string | null; mustNotHit: string | null };
-export function judgePath(code: PathCode, accept: ReadonlyArray<string>, mustNot: ReadonlyArray<string> = []): PathVerdict {
-  const acceptHit = accept.find((a) => codeMatches(a, code.codes)) ?? null;
+export function judgePath(code: PathCode, accept: ReadonlyArray<string>, mustNot: ReadonlyArray<string> = [], opts: { strict?: boolean } = {}): PathVerdict {
+  const acceptHit = accept.find((a) => codeMatches(a, code.codes, !!opts.strict)) ?? null;
   const mustNotHit = mustNot.find((m) => codeMatches(m, code.hard)) ?? null;
-  const v = { ok: !!acceptHit && !mustNotHit, acceptHit, mustNotHit };
-  // 左右の形の番: 画面に並ぶ別の AIX の読みで正解なら正解（スタッフが検索の結果で押す）
-  if (!v.ok && code.alternates?.length) for (const alt of code.alternates) { const w = judgePath(alt, accept, mustNot); if (w.ok) return w; }
-  return v;
+  return { ok: !!acceptHit && !mustNotHit, acceptHit, mustNotHit };
 }
 
 /** 1問の合否（道・asks・言ってはいけない事）。判定が無い項目（DeepSeek を回さなかった）は数えない */
