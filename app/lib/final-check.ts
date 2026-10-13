@@ -3568,10 +3568,12 @@ async function runDiffRecheck(
 /** 2026-10-13 ブレイン基準: 書き直しの選び方の記録（selectRevisionIssues の held と、ブレインの裏付けで渡した指摘） */
 type AlignLog = { held: Array<{ issue: CheckIssue; reason: HoldReason }>; brainBacked: string[] };
 /** 書き直しに渡す指摘を選ぶ（warning・block の道で同じ関数）。旧の条件（isRevisable・本質とぶつからない・引用が本文にそのまま）は FINAL_CHECK_BRAIN_ALIGN=off で戻る */
-function pickRevisionIssues(issues: CheckIssue[], draft: string, ctx: FinalCheckContext, log: AlignLog): CheckIssue[] {
+function pickRevisionIssues(issues: CheckIssue[], draft: string, ctx: FinalCheckContext, log: AlignLog, path: "warning" | "block"): CheckIssue[] {
   const draftNorm = normalizeForMatch(draft);
   const legacyAnchored = (i: CheckIssue) => !i.evidence || draftNorm.includes(normalizeForMatch(i.evidence));
-  const { pass, held } = selectRevisionIssues(issues, draft, {
+  const { pass, held, viaBrain } = selectRevisionIssues(issues, draft, {
+    // 10/13 レビュー: 引用が下書きに無くブレインの裏付けだけで通る指摘は warning の道だけ（block の道は block の数だけで採るので誤った追記を止められない）
+    allowBrainBacked: path === "warning",
     contract: ctx.turnContract ?? null,
     customerQuestions: ctx.customerQuestions ?? null,
     isRevisable,
@@ -3580,7 +3582,7 @@ function pickRevisionIssues(issues: CheckIssue[], draft: string, ctx: FinalCheck
     legacyAnchored,
   });
   log.held = held;
-  log.brainBacked = pass.filter((i) => !legacyAnchored(i)).map((i) => i.code);
+  log.brainBacked = viaBrain.map((i) => i.code);
   return pass;
 }
 
@@ -3669,7 +3671,7 @@ async function runFinalCheckWithRevisionCore(
     // 2026-09-10 Fable5: CELL_AVOID_CONFLICT は診断専用（本文を直しても解消しない）＝修正ループに渡さない
     // 2026-09-11 竹内方針1（V-1）: 観測専用・表示のみ・誤字・info は isRevisable で除外（「要素を足す書き直し」を修正 LLM に渡さない）
     // 2026-10-13 ブレイン基準: 引用が本文に「そのまま」ある指摘だけ → 引用の断片が本文にある／ブレインが答えると決めた項目の取りこぼし も渡す（pickRevisionIssues）
-    const passableWarnIssues = pickRevisionIssues(check1.issues, draft, ctx, alignLog);
+    const passableWarnIssues = pickRevisionIssues(check1.issues, draft, ctx, alignLog, "warning");
     if (passableWarnIssues.length === 0) return dropW("no_passable");
     // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」:
     //   直す指摘が全部「文に間違いの無い文体」（開口語・締め・言い回しの数・骨格・共感の言い方。final-check-scope の isStyleOnlyNoError）なら書き直さない。
@@ -3694,6 +3696,11 @@ async function runFinalCheckWithRevisionCore(
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
     //     「確認して…ご連絡」系の句（AIX_BOUNDARY_PROMISE と正面衝突）を検出したら即破棄
     if (BANNED_WORDS_DETERMINISTIC.some((w) => revised.includes(w))) {
+      return dropW("banned_word");
+    }
+    // 10/13 レビュー: ブレインの裏付けだけで渡した指摘（引用が下書きに無い）を含む書き直しは、置き換え（applySurfaceFixes＝承知→かしこまりました）の前の文でも禁止語を見る
+    //   （誤指摘で書き直した文が置き換えで禁止語の関門をすり抜けるのを止める・2fcd0fa3「承知しました」）
+    if (alignLog.brainBacked.length && BANNED_WORDS_DETERMINISTIC.some((w) => revisedRaw.includes(w))) {
       return dropW("banned_word");
     }
     // 2026-09-12 竹内方針B: 禁止語から外した2語は、初回検査と同じ場面判定で block になる修正版だけを捨てる
@@ -3753,7 +3760,7 @@ async function runFinalCheckWithRevisionCore(
 
     // 2026-09-11 竹内方針1（V-1）: block と一緒に観測専用・表示のみ・誤字の指摘を修正 LLM へ渡さない（同じ isRevisable）
     // 2026-10-13 ブレイン基準: warning の道と同じ選び方（pickRevisionIssues）
-    const passableBlockIssues = pickRevisionIssues(currentCheck.issues, currentDraft, ctx, alignLog);
+    const passableBlockIssues = pickRevisionIssues(currentCheck.issues, currentDraft, ctx, alignLog, "block");
     if (passableBlockIssues.length === 0) { droppedB = "no_passable"; break; }
     // 2026-09-09 行動台帳: block が台帳系（再度／お送りした／完了形）だけなら決定論置換（applyLedgerAutoFix）で直す（Sonnet 15s 節約・意味の変質ゼロ）。
     //   他の block が混在する時は Sonnet 修正に台帳の根拠・制約を添える

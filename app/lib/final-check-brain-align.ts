@@ -16,6 +16,7 @@
 //   直さなかった指摘には「直さなかった理由」を付けて画面に出す（直せない時は理由を出す）。ブレインとぶつかる warning は画面の指摘から外し brain_overruled に残す。
 // 戻す: FINAL_CHECK_BRAIN_ALIGN=off（旧の「引用が本文にそのまま」だけ・理由の注記なし・ぶつかる指摘も画面に出す）
 import type { TurnContract } from "./turn-contract";
+import { CONFIRM_PROMISE_SENTENCE_RE, SEARCH_CONFIRM_RE } from "./confirmation-context";
 
 type Env = Record<string, string | undefined>;
 const envOf = (env?: Env): Env => env ?? (typeof process !== "undefined" ? process.env : {});
@@ -103,22 +104,25 @@ export function brainBacksIssue(issue: AlignIssue, contract: TurnContract | null
   // 検査がブレインの判断（検査に渡した【Brain判定済み】）を根拠に「ブレインが決めた中身が本文に無い」と言う指摘
   //   （例 615499ba「Brain指示には『11月末入居のご条件に合うお部屋を』と明記されているが、実返信に入居時期の言及がない」）。
   //   ＝竹内さんの言う「指摘のアナウンスでブレインが正しい」の型。作り話・名前の指摘（引用が本文に無いと書き直しの根拠が無い）は除く。閉じる番は除く（足す指摘になる）
+  // 10/13 レビュー: どちらの道でも、指している本質の項目が AIX／触れないなら通さない（書き直しが AIX の中身＝募集状況・金額を本文に書く恐れ・P0「確認の要る事は AIX」）
+  const askHit = contract && contract.source === "brain" ? contract.asks.find((a) => refersTo(text, a.quote)) : undefined;
+  if (askHit && (askHit.route === "aix" || askHit.route === "none")) return false;
   if (BRAIN_CITED_RE.test(text) && !BRAIN_DISCLAIM_RE.test(text) && !/^(?:FABRICATED_|NAME_|BANNED_WORD|NG_PROPERTY)/.test(issue.code) && !(contract?.closeOnly)) return true;
   if (!OMISSION_CODES.test(issue.code)) return false;
   if (contract && contract.source === "brain") {
     if (contract.closeOnly) return false;
-    const hit = contract.asks.find((a) => refersTo(text, a.quote));
-    if (hit) return hit.route === "reply" || hit.route === "promise";
+    if (askHit) return askHit.route === "reply" || askHit.route === "promise";
     // 本質の項目に無い質問は、ブレインが読んだ質問（customer_questions）にあれば裏付け
   }
   return (customerQuestions ?? []).some((q) => String(q ?? "").trim() && !/^\(未対応\)/.test(String(q)) && refersTo(text, String(q)));
 }
 
-export type HoldReason = "contradicts_brain" | "not_revisable" | "unanchored";
+export type HoldReason = "contradicts_brain" | "not_revisable" | "unanchored" | "brain_backed_block_path";
 export const HOLD_REASON_JA: Record<HoldReason, string> = {
   contradicts_brain: "ブレインの判断（この番の本質）と逆の指摘のため直していません",
   not_revisable: "表示だけの指摘（自動では直しません）",
   unanchored: "指摘の引用が下書きに無く、ブレインの判断の裏付けも無いため直していません",
+  brain_backed_block_path: "止める指摘の書き直しとは一緒に直していません（引用が下書きに無い指摘は warning の書き直しだけで直す・手で直してください）",
 };
 
 /**
@@ -133,23 +137,29 @@ export function selectRevisionIssues<T extends AlignIssue>(
     customerQuestions?: ReadonlyArray<string> | null;
     isRevisable: (i: T) => boolean;
     contradicts: (i: T) => boolean;
+    /** 10/13 レビュー: false＝引用が下書きに無くブレインの裏付けだけで通る指摘は渡さない（block の道。block の数だけで採るので誤った追記を止められない） */
+    allowBrainBacked?: boolean;
     /** 旧の判定（引用が本文にそのまま）。FINAL_CHECK_BRAIN_ALIGN=off の時に使う */
     legacyAnchored: (i: T) => boolean;
     env?: Env;
   },
-): { pass: T[]; held: Array<{ issue: T; reason: HoldReason }> } {
+): { pass: T[]; held: Array<{ issue: T; reason: HoldReason }>; viaBrain: T[] } {
   const on = finalCheckBrainAlignEnabled(opts.env);
   const pass: T[] = [];
   const held: Array<{ issue: T; reason: HoldReason }> = [];
+  const viaBrain: T[] = [];
   for (const i of issues) {
     if (i.code === "UNCHECKED_AUTO_SEND" || !opts.isRevisable(i)) { held.push({ issue: i, reason: "not_revisable" }); continue; }
     if (opts.contradicts(i)) { held.push({ issue: i, reason: "contradicts_brain" }); continue; }
-    const anchored = on
-      ? evidenceAnchoredInDraft(i.evidence, draft) || brainBacksIssue(i, opts.contract, opts.customerQuestions)
-      : opts.legacyAnchored(i);
-    if (anchored) pass.push(i); else held.push({ issue: i, reason: "unanchored" });
+    if (!on) { if (opts.legacyAnchored(i)) pass.push(i); else held.push({ issue: i, reason: "unanchored" }); continue; }
+    if (evidenceAnchoredInDraft(i.evidence, draft)) { pass.push(i); continue; }
+    if (brainBacksIssue(i, opts.contract, opts.customerQuestions)) {
+      if (opts.allowBrainBacked === false) { held.push({ issue: i, reason: "brain_backed_block_path" }); continue; }
+      pass.push(i); viaBrain.push(i); continue;
+    }
+    held.push({ issue: i, reason: "unanchored" });
   }
-  return { pass, held };
+  return { pass, held, viaBrain };
 }
 
 /**
@@ -162,17 +172,32 @@ export function selectRevisionIssues<T extends AlignIssue>(
 export function contractConfirmMiss(draft: string, contract: TurnContract | null | undefined, canConfirm: (a: TurnContract["asks"][number]) => boolean, env?: Env): { sentence: string; suggestion: string } | null {
   if (!finalCheckBrainAlignEnabled(env) || !contract || contract.source !== "brain") return null;
   if (contract.asks.some(canConfirm)) return null;
-  const t = String(draft ?? "").normalize("NFKC");
-  // 「ご確認の上」「ご確認ください」（お客様の行い）は数えない
-  const m = t.match(/[^\n。！!]*(?<!ご)確認(?:させて|出来次第|でき次第|しご連絡|の上)[^\n。！!]*[。！!]*/);
-  if (!m) return null;
+  const hit = findConfirmPromiseSentence(draft);
+  if (!hit) return null;
   const promise = contract.asks.find((a) => a.route === "promise" && a.answer)?.answer ?? null;
   return {
-    sentence: m[0].trim().slice(0, 80),
+    sentence: hit.slice(0, 80),
     suggestion: contract.closeOnly
       ? "返事の要らない番（ブレインの判断）: 確認の約束の文を消し、受けの一言＋締めだけにする"
       : promise ? `ブレインが決めた約束「${promise}」の一文に置き換える（確認の約束にしない）` : "確認の約束の文を消す（ブレインの本質に確認・作成の約束が無い）",
   };
+}
+
+/**
+ * 下書きの「確認の約束」の文を1つ探す（確かめる人のレビュー 10/13: 聞き取り・受け取り・案内を約束と取り違えない）。
+ *   約束＝検査と書き直しの関門が使う CONFIRM_PROMISE_SENTENCE_RE（確認…ご連絡させて頂きます）か、「確認させて頂きます／いたします」で文が終わる形。
+ *   外す: お願い・聞き取り（〜たい・〜てください）・済んだ事（〜ました）・問い（？・か）・物件を探す約束（お部屋/物件/新着 確認でき次第＝SEARCH_CONFIRM_RE）・お客様の行い（ご確認）。
+ *   設計知見 0be2d9f5（最終チェックは足を引っ張らない）・c9368e68・9dff3717
+ */
+export function findConfirmPromiseSentence(draft: string): string | null {
+  const sentences = String(draft ?? "").normalize("NFKC").split(/(?<=[。！!？?])|\n+/).map((s) => s.trim()).filter(Boolean);
+  for (const s of sentences) {
+    const core = s.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}！!。\s]+$/gu, "");
+    if (/たい|て(?:ください|下さい)|ました|[？?]|か$/.test(core)) continue;
+    if (SEARCH_CONFIRM_RE.test(core)) continue;
+    if (CONFIRM_PROMISE_SENTENCE_RE.test(core) || /(?<!ご)確認(?:させて(?:頂|いただ)き|いたし|致し)ます$/.test(core)) return s;
+  }
+  return null;
 }
 
 /** 書き直しを採らなかった理由（final-check の revision_dropped）を画面の言葉に */
@@ -208,12 +233,12 @@ export function annotateUnfixed<T extends AlignIssue & { unfixed_reason?: string
   const key = (i: AlignIssue) => `${i.code}|${normForAnchor(i.evidence ?? "").slice(0, 40)}`;
   const heldBy = new Map<string, HoldReason>();
   for (const h of held) heldBy.set(key(h.issue), h.reason);
-  const heldByCode = new Map<string, HoldReason>();
-  for (const h of held) if (!heldByCode.has(h.issue.code)) heldByCode.set(h.issue.code, h.reason);
+  // 10/13 レビュー: code だけの予備はやめる（書き直しに渡した本物の指摘が、同じ code の「ブレインと逆」の指摘に引きずられて画面から消えていた）。
+  //   書き直しを採らなかった時の finalIssues は check1 そのまま＝code＋引用の鍵で必ず引ける。書き直した後の新しい指摘は held に無い＝理由は「書き直した後も残りました」
   const shown: T[] = [], overruled: T[] = [];
   for (const i of finalIssues) {
     if (i.severity === "info") { shown.push(i); continue; }
-    const r = heldBy.get(key(i)) ?? (revised ? undefined : heldByCode.get(i.code));
+    const r = heldBy.get(key(i));
     if (r === "contradicts_brain" && i.severity !== "block") { overruled.push({ ...i, unfixed_reason: HOLD_REASON_JA[r] }); continue; }
     if (r === "not_revisable") { shown.push(i); continue; }
     const why = r ? HOLD_REASON_JA[r] : revisionDropped ? (DROP_REASON_JA[revisionDropped] ?? `書き直しを採りませんでした（${revisionDropped}）`) : revised ? "書き直した後も残りました（手で直してください）" : null;

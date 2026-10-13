@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/final-check-brain-align.test.ts
 //   例は本番の画面に残った指摘（conversations.ai_draft_check・9/18〜10/13）の実物（名前は伏せた）
 import { evidenceAnchoredInDraft, brainBacksIssue, selectRevisionIssues, annotateUnfixed, normForAnchor, type AlignIssue } from "../final-check-brain-align";
-import { contractConfirmMiss } from "../final-check-brain-align";
+import { contractConfirmMiss, findConfirmPromiseSentence } from "../final-check-brain-align";
 import { isConfirmPromiseAsk, issueContradictsContract, type TurnContract } from "../turn-contract";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -99,6 +99,40 @@ console.log("⑤ 本質に無い確認の約束（ブレインの物差しの検
   t("閉じる番 → 受けの一言＋締めの案", /受けの一言/.test(contractConfirmMiss("確認させて頂きます！！", { ...base, closeOnly: true }, isConfirmPromiseAsk, {})?.suggestion ?? ""));
   t("off で何もしない", !contractConfirmMiss("確認させて頂きます！！", c, isConfirmPromiseAsk, { FINAL_CHECK_BRAIN_ALIGN: "off" }));
   t("この指摘は本質とぶつかる指摘に数えない", !issueContradictsContract({ code: "CONTRACT_UNASKED_CONFIRM", message: "ブレインの判断（この番の本質）に確認・作成の約束が無いのに、確認の約束を書いています", evidence: r?.sentence ?? "", suggestion: r?.suggestion ?? "" }, c, {}));
+}
+
+console.log("⑥ 10/13 レビューの直し");
+{
+  // 重要1: 書き直しに渡した本物の指摘が、同じ code の「ブレインと逆」の指摘に引きずられて画面から消えない
+  const contract: TurnContract = { ...base, asks: [
+    { quote: "空いてますか", topic: "vacancy" as never, kind: "question", route: "aix", answer: null, basis: null, aixKey: "property_check_result" },
+    { quote: "駐車場はありますか", topic: "equipment" as never, kind: "question", route: "reply", answer: "資料どおり敷地内に1台", basis: "material", aixKey: null },
+  ] };
+  const a: AlignIssue & { unfixed_reason?: string } = { code: "MISSED_QUESTION", severity: "warning", message: "「空いてますか」に答えていない", evidence: "空いてますか" };
+  const b: AlignIssue & { unfixed_reason?: string } = { code: "MISSED_QUESTION", severity: "warning", message: "「駐車場はありますか」に答えていない", evidence: "駐車場はありますか" };
+  const draft = "かしこまりました！！";
+  const sel = selectRevisionIssues([a, b], draft, { contract, customerQuestions: null, isRevisable: () => true, contradicts: (i) => i === a, legacyAnchored: () => false, env: {} });
+  t("再現: a はぶつかる・b は書き直しに渡す", sel.held.some((h) => h.issue === a && h.reason === "contradicts_brain") && sel.pass.includes(b));
+  const ann = annotateUnfixed([a, b], sel.held, "new_warn_type", false, {});
+  t("再現: 書き直しを採らなくても b は画面に残る（旧は shown=[]）", ann.shown.some((i) => i.evidence === "駐車場はありますか") && ann.overruled.length === 1 && ann.overruled[0].evidence === "空いてますか");
+  t("b の理由は書き直しを採らなかった理由", /別の種類の指摘/.test(ann.shown.find((i) => i.evidence === "駐車場はありますか")?.unfixed_reason ?? ""));
+
+  // 軽微1: ブレインの裏付けだけの指摘は block の道に渡さない
+  const blk = selectRevisionIssues([b], draft, { contract, customerQuestions: null, isRevisable: () => true, contradicts: () => false, legacyAnchored: () => false, allowBrainBacked: false, env: {} });
+  t("block の道: 裏付けだけの指摘は渡さない（理由つき）", blk.pass.length === 0 && blk.held[0]?.reason === "brain_backed_block_path");
+  t("warning の道: 渡して viaBrain に数える", sel.viaBrain.includes(b));
+
+  // 軽微2: ブレインを根拠に挙げた指摘でも、指す項目が AIX／触れないなら通さない
+  t("Brain を挙げても AIX の項目を指す → 裏付けなし", !brainBacksIssue({ code: "RULE_VIOLATION", severity: "warning", evidence: "Brain指示では「空いてますか」への回答が必要だが返信に募集状況の言及がない", message: "" }, contract, null));
+  t("Brain を挙げて返信の項目を指す → 裏付け", brainBacksIssue({ code: "RULE_VIOLATION", severity: "warning", evidence: "Brain指示では「駐車場はありますか」への回答が必要だが返信に言及がない", message: "" }, contract, null));
+
+  // 重要2: 確認の約束の取り違え（聞き取り・受け取り・案内は約束でない）・取りこぼし
+  const NOT = ["ご希望のエリアを確認させて頂きたいのですが、いかがでしょうか！！", "念のため確認させてください！！ご入居時期はいつ頃でしょうか😊", "お送り頂いた内容確認させて頂きました！！", "確認の上、改めてご案内させて頂きます！！", "お手隙の際にご確認の上ご連絡ください！！", "お部屋確認でき次第お送りさせて頂きます！！", "こちらで確認させて頂いてもよろしいでしょうか？"];
+  for (const s of NOT) t(`約束でない: ${s.slice(0, 20)}`, findConfirmPromiseSentence(s) === null);
+  const YES = ["確認次第ご連絡させて頂きます！！", "管理会社に確認してご連絡させて頂きます😊！！", "確認出来次第ご連絡させて頂きます😊！！", "初期費用につきまして管理会社に確認させて頂きます！！"];
+  for (const s of YES) t(`約束: ${s.slice(0, 20)}`, findConfirmPromiseSentence(s) !== null);
+  const c2: TurnContract = { ...base, asks: [{ quote: "わかりました", topic: "pickup" as never, kind: "request", route: "promise", answer: "小型犬2匹可の物件をピックアップしてお送り", basis: null, aixKey: null }] };
+  t("聞き取りの文だけの下書きは指摘しない", !contractConfirmMiss("かしこまりました！！\nご希望のエリアを確認させて頂きたいのですが、いかがでしょうか！！", c2, isConfirmPromiseAsk, {}));
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);

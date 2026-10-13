@@ -60,6 +60,7 @@ async function main() {
       const ev = String(i.evidence ?? "");
       const oldP = legacyAnchored(ev, draft);
       const anch = evidenceAnchoredInDraft(ev, draft);
+      // ⚠ line_watch_turns の控えには指摘の文（message）と本質が無い＝「ブレインを根拠に挙げた指摘」の道は引用に Brain の語がある時だけ数える（少なめに出る・② が文と本質ありの数）
       const bb = !anch && brainBacksIssue({ code: i.code, severity: i.severity, evidence: ev, message: "" } as AlignIssue, null, cq);
       const newP = anch || bb;
       const cls = oldP ? "旧でも渡る（渡したのに残った）" : anch ? "新で渡る（引用の断片が本文）" : bb ? "新で渡る（ブレインの質問が裏付け）" : "渡らない（引用が本文に無く裏付けなし）";
@@ -89,7 +90,9 @@ async function main() {
     cN++;
     const bm = c.last_brain_meta ?? {};
     const contract = bm.turn_contract ? buildTurnContract({ brain: bm.turn_contract, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] }) : null;
-    const draft = String(c.ai_draft_check?.revised_text ?? c.ai_draft_check?.tpo_debug?.draftHead ?? "");
+    // 下書きは同じ会話の最後の番の draft_last（無ければ書き直しの文・下書きの頭）
+    const lastTurn = turns.filter((t) => t.conversation_id === c.id).sort((a, b) => String(b.customer_turn_at).localeCompare(String(a.customer_turn_at)))[0];
+    const draft = String(lastTurn?.draft_last ?? c.ai_draft_check?.revised_text ?? c.ai_draft_check?.tpo_debug?.draftHead ?? "");
     for (const i of iss) {
       cIss++;
       const ai: AlignIssue = { code: i.code, severity: i.severity, message: i.message, evidence: i.evidence, suggestion: i.suggestion };
@@ -116,12 +119,15 @@ async function main() {
   }
   console.log(`\n■③ 送った例の書き直しの道（finalCheckGate あり ${gate}）: ${[...drop].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(" / ")}`);
   // 10/13 から（ブレイン基準の直しの後）: 渡さなかった理由・ブレインの裏付け・画面から外した指摘
-  const held = new Map<string, number>(); let bb = 0, ov = 0;
+  const held = new Map<string, number>(); let bb = 0, ov = 0; const ovCode = new Map<string, number>();
   for (const e of ex) {
     const g = e.reply_context_snapshot?.finalCheckGate; if (!g || TEST_IDS.has(e.conversation_id)) continue;
     for (const x of g.revisionHeld ?? []) { const r = String(x).split(":")[1] ?? "?"; held.set(r, (held.get(r) ?? 0) + 1); }
     bb += (g.brainBacked ?? []).length; ov += (g.brainOverruled ?? []).length;
+    for (const c of g.brainOverruled ?? []) ovCode.set(String(c), (ovCode.get(String(c)) ?? 0) + 1);
   }
   console.log(`  （10/13〜）渡さなかった指摘の理由: ${[...held].map(([k, n]) => `${k} ${n}`).join(" / ") || "記録なし"}・ブレインの裏付けで渡した ${bb}・ブレインと逆で画面から外した ${ov}`);
+  // 10/13 レビュー（軽微3・見張り）: 画面から外した warning の code ごと（AIX_BOUNDARY_ESTIMATE/VIEWING が多ければ見直す。block は外さないので安全の線は残る）
+  console.log(`  画面から外した warning の code: ${[...ovCode].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(" / ") || "記録なし"}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
