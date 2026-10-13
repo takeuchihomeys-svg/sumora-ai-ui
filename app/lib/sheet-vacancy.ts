@@ -303,7 +303,8 @@ export function alignVacancyLines(lines: string[], sourceText: string | null | u
       if (lab === "現況" && v.current) {
         // 「新築 空室」→ 欄「空室」: LLM の値の末尾が欄の値なら前の語（新築）を残す
         const fv = v.current;
-        const lhead = splitSlash(lv)[0] ?? lv; // 「新築 空室 / 即入 / 商談中」の前
+        // 「新築 空室 / 即入 / 商談中」の前。前に添えた語（「・商談中」「・新築」）は外して比べる＝2回かけても同じ（2026-10-13 レビュー）
+        const lhead = (splitSlash(lv)[0] ?? lv).split("・")[0].trim();
         const i = fromSheet.findIndex((x) => labelOf(x) === "現況");
         if (i >= 0 && sq(lhead).length > sq(fv).length && sq(lhead).endsWith(sq(fv)) && !/\d/.test(lhead)) {
           fromSheet[i] = `現況: ${lhead.replace(/\s+/g, " ")}${v.extras.length ? `・${v.extras.join("・")}` : ""}`;
@@ -335,6 +336,9 @@ export function alignVacancyLines(lines: string[], sourceText: string | null | u
       // 元の文字にその日付があるのに退去の字が付いていない＝入居時期などの日付の取り違え → 落とす。
       //   元の文字に日付が見つからない（和暦・書式が読めない）時は落とさず残す（2026-10-13 レビュー）
       if (!srcVac.has(k) && srcDates.has(k)) continue;
+      //   ただし残すのは、元の文字に和暦か退去・解約・明渡し・空き予定の字がある時だけ（読めない書き方の退去日がありうる時）。
+      //   どちらも無い資料（「現況 居住中／入居時期 相談」）で LLM が書いた退去日は作り事の形 → 落とす（2026-10-13 レビュー）
+      if (!srcVac.has(k) && !/令和|(?<![A-Za-z])R\s*\d|退去|解約|明け?渡|空き?予定|空予定|空室予定/.test(nf(src))) continue;
     }
     if (lab === "入居可能日" && v.vacate) {
       // 欄で読んだ退去予定日と同じ日付の入居可能日＝退去予定日を入居可能日にした（ハーモニーテラス森ノ宮「入居予定日 2026/9/中旬退去予定」）

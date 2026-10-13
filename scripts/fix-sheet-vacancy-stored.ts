@@ -26,6 +26,7 @@ async function main() {
     if (!data || data.length < 500) break;
   }
   const fix = (lines: string[], text: string | null) => normalizeVacancyLines(alignVacancyLines(lines, text).lines);
+  let again = 0, againB = 0;
   let aChanged = 0, aWritten = 0, shown = 0, lostVac = 0, lostOther = 0, infoLost = 0, infoShown = 0;
   const urlText = new Map<string, string>();
   for (const r of rows) {
@@ -33,6 +34,8 @@ async function main() {
     const il = Array.isArray(r.image_lines) ? (r.image_lines as unknown[]).map(String) : [];
     if (!il.length) continue;
     const next = fix(il, r.pdf_text);
+    // 2回目に流したと見なして変わるか（同じ行を毎回書き直さないか）
+    if (JSON.stringify(fix(next, r.pdf_text)) !== JSON.stringify(next)) { again++; if (again <= 5) console.log(`(A2) #${r.id} 2回目で変わる: ${next.filter((l) => VAC.test(l)).join(" ／ ")}`); }
     if (JSON.stringify(next) === JSON.stringify(il)) continue;
     aChanged++;
     // 退去予定の行が消える行（入居時期を退去予定にした行のはず）を数え、入居時期と同じ値でない物は見せる
@@ -65,6 +68,7 @@ async function main() {
     const text = urlText.get(d.image_url);
     if (text) {
       const next = fix(ls, text);
+      if (JSON.stringify(fix(next, text)) !== JSON.stringify(next)) againB++;
       if (JSON.stringify(next) !== JSON.stringify(ls)) {
         bChanged++;
         if (shown++ < show) console.log(`(B) ${d.image_url.slice(-40)}\n    前: ${ls.filter((l) => VAC.test(l)).join(" ／ ")}\n    後: ${next.filter((l) => VAC.test(l)).join(" ／ ")}`);
@@ -79,8 +83,8 @@ async function main() {
     if (/退去|解約/.test(mv)) hit("入居可能日に退去・解約の字");
     if (/\d{4}年/.test(vc) && !mv) hit("退去予定の行が年月日で入居可能日なし（入居時期を写した恐れ）");
   }
-  console.log(`\n(A) 売上サポの行（文字層あり・${days}日）${rows.length}行のうち 行が変わる ${aChanged}（退去予定の行が消える ${lostVac}・うち入居時期と同じ値でない ${lostOther}・現況・入居可能日の語が落ちる ${infoLost}）${apply ? `・書いた ${aWritten}` : ""}`);
-  console.log(`(B) 売上サポの画像の image_details ${[...urlText.keys()].length}枚の URL のうち 行が変わる ${bChanged}${apply ? `・書いた ${bWritten}` : ""}`);
+  console.log(`\n(A) 売上サポの行（文字層あり・${days}日）${rows.length}行のうち 行が変わる ${aChanged}（退去予定の行が消える ${lostVac}・うち入居時期と同じ値でない ${lostOther}・現況・入居可能日の語が落ちる ${infoLost}・2回目に流したと見なして変わる ${again}）${apply ? `・書いた ${aWritten}` : ""}`);
+  console.log(`(B) 売上サポの画像の image_details ${[...urlText.keys()].length}枚の URL のうち 行が変わる ${bChanged}（2回目に流したと見なして変わる ${againB}）${apply ? `・書いた ${bWritten}` : ""}`);
   console.log(`(C) 送った画像の image_details（元の文字なし）で読み直す候補 ${rereadUrls.size}枚: ${JSON.stringify(reread)}（読み直し 1枚 約$0.002 ＝ 約$${(rereadUrls.size * 0.002).toFixed(2)}）`);
   if (!apply) console.log("（数えるだけ。書く時は --apply・竹内さんの承認の後）");
 }
