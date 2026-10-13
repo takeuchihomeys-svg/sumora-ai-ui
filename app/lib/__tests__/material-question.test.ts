@@ -2,6 +2,8 @@
 // 実行: npx tsx app/lib/__tests__/material-question.test.ts
 import { detectMaterialQuestion, parseMaterialPlanRead, planReadLines, buildMaterialAnswerNote } from "../material-question";
 import { fixChineseGlyphs, hasChineseGlyph } from "../japanese-glyph";
+import { isEvaluativePrinciple } from "../principle-eval";
+import { applySurfaceFixes } from "../validate-reply";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -61,6 +63,18 @@ it("呼びかけの直前・守る名前の中は直さない／止めれば直�
   eq(fixChineseGlyphs("圖書さん、地圖です", { protect: [] }).text, "圖書さん、地図です");
   eq(fixChineseGlyphs("ザ・东京タワー", { protect: ["ザ・东京タワー"] }).text, "ザ・东京タワー");
   eq(fixChineseGlyphs("费用", { env: { JAPANESE_GLYPH_FIX: "off" } }).text, "费用");
+});
+
+console.log("入口 #9・#14");
+it("学習 cron の評価文（原則：…・〜している）を見分ける・決まりの形は残す", () => {
+  eq(isEvaluativePrinciple({ title: "原則：物件への反応", content: "お客様の不安に寄り添っている" }), true);
+  eq(isEvaluativePrinciple({ title: "", content: "条件を復唱し安心感を与えている。" }), true);
+  eq(isEvaluativePrinciple({ title: "見積の決まり", content: "見積書の金額は本文に書かない" }), false);
+});
+it("生成の出口で中国の字形を直す（お客様の名前は触らない）", () => {
+  const r = applySurfaceFixes("澤田さん\nお世话になっております！！", { customerName: "澤田" });
+  eq(r.text, "澤田さん\nお世話になっております！！");
+  eq(r.applied.some((a) => /JAPANESE_GLYPH/.test(a)), true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -112,6 +112,7 @@ import {
 // 2026-09-12 竹内方針C: 呼び名のサーバー側決定（DB名・履歴・is_aix_generated）。check-reply と同じ関数
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { createExitRecorder } from "@/app/lib/exit-edits";
+import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
 import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
@@ -2380,7 +2381,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // hypothesis_status が null の行は hypothesis 制度導入前のlegacy（人手キュレーション）として信頼扱いで許可
         const criticalVector = filteredResults.filter(r =>
           r.importance >= 8 && r.importance < 10 && r.category === "principle" &&
-          (r.hypothesis_status === "confirmed" || r.hypothesis_status == null)
+          (r.hypothesis_status === "confirmed" || r.hypothesis_status == null) &&
+          // 2026-10-14 区切り4 #9: 学習 cron の評価文（「原則：…」）は RAG の決まりの枠に入れない（PRINCIPLE_EVAL_FILTER=off）
+          !(principleEvalFilterEnabled() && isEvaluativePrinciple(r))
         ).slice(0, 16);
         const critical = criticalVector;
         // patternバケット一本化: closed_won_analysis（成約実例）はhypothesis制限免除・全体上限8件

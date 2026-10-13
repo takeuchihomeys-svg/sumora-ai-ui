@@ -2,6 +2,7 @@
 //   reply-context は他の app/lib/* を runtime import しない（依存ゼロ）ので循環 import にならない
 import { fillNameSlot } from "./reply-context";
 import { redeclareGateBrainEnabled, sentenceNamesOtherProperty } from "./redeclare-gate";
+import { fixChineseGlyphs } from "./japanese-glyph";
 // 2026-09-11 竹内方針1・4・5（統合設計 §1）: 後処理の決定論修正（承知→かしこまりました・すぐに除去・誤字）は依存ゼロの2モジュールが唯一の定義
 import { normalizeBannedPhrasing } from "./banned-phrasing";
 import { polishConditionEcho } from "./condition-echo-polish";
@@ -655,6 +656,9 @@ export function applySurfaceFixes(
   // 2026-09-12 竹内（あや事例）: AI の作業メモ（「〜という質問への直接回答を組み立てます。」「〇〇さんへの返信案：」）は下書き欄に絶対に入れない
   const meta = stripMetaNarration(out);
   if (meta.removed.length) { out = meta.text; applied.push(`META_NARRATION_REMOVED×${meta.removed.length}`); }
+  // 2026-10-14 区切り4 #14（P0 89bc2c3e）: 中国の字形（a2d4befd「お世话」「费用」）を日本の字形に。お客様の名前・呼びかけの直前は触らない（japanese-glyph.ts・JAPANESE_GLYPH_FIX=off）
+  const jg = fixChineseGlyphs(out, { protect: [opts?.customerName ?? "", ...(opts?.aliases ?? [])] });
+  if (jg.fixed.length) { out = jg.text; applied.push(`JAPANESE_GLYPH×${jg.fixed.length}`); }
   const sp = normalizeSharedPropertyReference(out, opts?.customerMessage, { ownPropertyReturnedAll: opts?.ownPropertyReturnedAll });
   if (sp.count) { out = sp.text; applied.push(`SHARED_PROPERTY_REF×${sp.count}`); }
   // 2026-10-07 竹内（ゆなまる事例）「室内の写真は撮影して送るものとなる」: 写真の依頼の番の受付は「撮影出来次第お送り」の形（room-photo-request.fixPhotoPromiseToShooting・人の文 0通に当たる）
