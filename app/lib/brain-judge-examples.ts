@@ -7,7 +7,7 @@
 //   P0「判断はすべてブレイン基準」: 手本は答えを決める規則ではなく、ブレインが文を読んで決める時の材料（上書きしない）。
 //   置き場所: ブレインの材料の「3 毎回変わる並び」（customerSpecificText・キャッシュの印の無い所・場面の証拠の後ろ）＝system と会話専用ブロックのキャッシュは変えない。
 //   前の調べ（brain-exam の BRAIN_EXAM_INJECT_FILE で判断の手本を足した試し）で 12問の道が 1→4。
-// 入れる: BRAIN_JUDGE_EXAMPLES=on（2026-10-13 は試験の前後が出るまで既定 off）
+// 戻す: BRAIN_JUDGE_EXAMPLES=off（2026-10-13 v2 の絞り込みの後に既定 on）
 import { resolveReplyScene, REPLY_SCENE_JA, type ReplyScene } from "./reply-scene";
 
 export type JudgeExample = {
@@ -41,8 +41,10 @@ export function textFingerprint(t: string): string | null {
 }
 
 export function judgeExamplesEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  // 2026-10-13: 混ざりの無い試験（YUMA3・11問）で道 8→5 に悪化（お礼・了承の場面で AIX を押した手本が効きすぎ）→ 既定 off に戻す。直して測り直してから on（BRAIN_JUDGE_EXAMPLES=on で入れる）
-  return (env.BRAIN_JUDGE_EXAMPLES ?? "").trim().toLowerCase() === "on";
+  // 2026-10-13: 混ざりの無い試験（YUMA3・11問）で道 8→5 に悪化（お礼・了承の場面で AIX を押した手本が効きすぎ）→ 一度 off に戻した。
+  //   v2（場面の除外・一手が AIX の手本だけ・中身の近さ 0.12 以上）の後、同じ会話・同じ HEAD の off/on（YUMA2・b3476f98・関係する15問・混ざり 0）で
+  //   道 9→10・合格 8→8・本質 8→10 → 既定 on。戻す: BRAIN_JUDGE_EXAMPLES=off
+  return (env.BRAIN_JUDGE_EXAMPLES ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 見張りの理由のうち「道（返信か AIX か・AIX の種類）」の外れ（文の言い回し・事実の違いは入れない） */
@@ -54,6 +56,23 @@ function bigrams(s: string): Set<string> {
   const out = new Set<string>();
   for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
   return out;
+}
+/** 中身の2文字の組（漢字・カタカナ・英数を含む組だけ・どの依頼にも出る語の組は外す）。手本の近さはこれで測る（「ありがとうございます」で近くならない） */
+const CONTENT_CH = /[一-龯々ァ-ヶー0-9A-Za-z]/;
+const COMMON_BIGRAMS = new Set(["物件", "部屋", "お部", "宜し", "有難", "大丈", "丈夫", "今日", "明日", "本日", "確認", "可能"]);
+function contentBigrams(s: string): Set<string> {
+  const t = norm(s);
+  const out = new Set<string>();
+  for (let i = 0; i < t.length - 1; i++) { const b = t.slice(i, i + 2); if ((CONTENT_CH.test(b[0]) || CONTENT_CH.test(b[1])) && !COMMON_BIGRAMS.has(b)) out.add(b); }
+  return out;
+}
+/** 中身の近さ（中身の2文字の組の Jaccard） */
+export function contentSim(a: string, b: string): number {
+  const A = contentBigrams(a), B = contentBigrams(b);
+  if (!A.size || !B.size) return 0;
+  let n = 0;
+  for (const x of A) if (B.has(x)) n++;
+  return n / (A.size + B.size - n);
 }
 /** 2文字の組の重なり（Jaccard） */
 export function textSim(a: string, b: string): number {
@@ -72,6 +91,11 @@ function seenIn(ex: JudgeExample, history: ReadonlyArray<string>, histFp: Readon
   return history.some((h) => norm(h).length >= 6 && textSim(ex.customer, h) >= SAME_TURN_SIM);
 }
 
+/** 手本を入れない場面（発言の中身で一手が決まらない・前の流れで決まる番） */
+export const JUDGE_EXAMPLE_SKIP_SCENES: ReadonlySet<ReplyScene> = new Set<ReplyScene>(["ack", "considering", "other"]);
+/** 今の発言と手本の発言の近さの下限（2文字の組の重なり） */
+export const JUDGE_EXAMPLE_MIN_SIM = Number((typeof process !== "undefined" ? process.env.BRAIN_JUDGE_EXAMPLES_MIN_SIM : "") || 0.12);
+
 /**
  * 今の番に入れる手本（最大 max 件）。同じ場面だけ・同じ会話と、この会話に既に出ている発言の番は外す（答えが漏れない）。
  *   並べ方: 発言の近さ＋竹内さんの番＋新しさ。近さが同じなら新しい方
@@ -88,12 +112,17 @@ export function pickJudgeExamples(all: ReadonlyArray<JudgeExample>, ctx: {
   // 試験（scripts/brain-exam.ts）は問題の元の会話を BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV で渡す（写しの会話 id は元と違う＝指紋で外し切れない番がある）
   const envEx = new Set((typeof process !== "undefined" ? process.env.BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV ?? "" : "").split(",").map((x) => x.trim()).filter(Boolean));
   const ex = new Set([...(ctx.excludeConversationIds ?? []), ...envEx]);
-  const pool = all.filter((e) => e.scene === scene && e.conv !== ctx.conversationId && !ex.has(e.conv) && !seenIn(e, hist, histFp));
+  // v2（2026-10-13 試験 YUMA3 で道 8→5 の後）: 発言で一手が決まらない場面（お礼・了承・検討中・その他）は入れない／
+  //   竹内さんの一手が AIX（押した・手打ちの AIX の中身）の番だけ（「返信」の手本は2段の約束と食い違って AIX の番を返信に寄せた）／
+  //   時刻で押す AIX（内覧後の挨拶・追客）は入れない／今の発言と近い番だけ（場面が同じでも別の依頼の番は外す）
+  if (JUDGE_EXAMPLE_SKIP_SCENES.has(scene)) return [];
+  const pool = all.filter((e) => e.scene === scene && e.conv !== ctx.conversationId && !ex.has(e.conv) && !seenIn(e, hist, histFp)
+    && e.actual.startsWith("AIX") && !/greeting_viewing|followup_revive/.test(e.actual) && contentSim(text, e.customer) >= JUDGE_EXAMPLE_MIN_SIM);
   if (!pool.length) return [];
   const newest = Math.max(...pool.map((e) => Date.parse(e.at) || 0));
   const scored = pool.map((e) => {
     const ageDays = Math.max(0, (newest - (Date.parse(e.at) || 0)) / 86_400_000);
-    return { e, s: textSim(text, e.customer) + (e.writer === "takeuchi" ? 0.15 : 0) + Math.max(0, 0.1 - ageDays * 0.002) };
+    return { e, s: contentSim(text, e.customer) + (e.writer === "takeuchi" ? 0.05 : 0) + Math.max(0, 0.03 - ageDays * 0.001) };
   }).sort((a, b) => b.s - a.s || Date.parse(b.e.at) - Date.parse(a.e.at));
   // 同じ一手ばかりにしない（同じ actual は1件まで）
   const out: JudgeExample[] = [];

@@ -12,19 +12,25 @@ function eq<T>(actual: T, exp: T) { if (JSON.stringify(actual) !== JSON.stringif
 
 const ex = (o: Partial<JudgeExample>): JudgeExample => ({ conv: "c-other", at: "2026-10-01T00:00:00Z", scene: "property_share", customer: "このお部屋空いてますか？", state: "段階 提案中", brain: "返信", actual: "AIX【物件確認した】", reason: "text_but_aix", writer: "takeuchi", ...o });
 
-it("同じ場面だけ・最大3件・同じ一手は1件まで", () => {
+it("同じ場面だけ・最大3件・同じ一手は1件まで・中身の近い番だけ", () => {
   const all = [
-    ex({ customer: "このお部屋まだ空いてますか？", actual: "A1" }), ex({ customer: "こちらの物件空いてますか", actual: "A1" }),
-    ex({ customer: "ここ見れますか", actual: "A2" }), ex({ customer: "これどうですか", actual: "A3" }), ex({ customer: "こちらは？", actual: "A4" }),
-    ex({ scene: "cost", customer: "初期費用いくら", actual: "B" }),
+    ex({ customer: "このお部屋まだ空いてますか？募集中ですか", actual: "AIX1" }), ex({ customer: "こちらのお部屋空いてますか 募集中？", actual: "AIX1" }),
+    ex({ customer: "このお部屋の空き状況教えてください", actual: "AIX2" }), ex({ customer: "空いてますか？募集は", actual: "AIX3" }), ex({ customer: "空いてる？募集中なら", actual: "AIX4" }),
+    ex({ customer: "駐車場ありますか", actual: "AIX5" }),
+    ex({ scene: "cost", customer: "初期費用いくら", actual: "AIX6" }),
   ];
-  const p = pickJudgeExamples(all, { customerText: "https://suumo.jp/chintai/xxx このお部屋空いてますか？", scene: "property_share" });
-  eq(p.length, 3);
-  eq(new Set(p.map((x) => x.actual)).size, 3);
-  eq(p.every((x) => x.scene === "property_share"), true);
+  const p = pickJudgeExamples(all, { customerText: "https://suumo.jp/chintai/xxx このお部屋空いてますか？募集中ですか", scene: "property_share" });
+  eq(p.length >= 2 && p.length <= 3, true);
+  eq(new Set(p.map((x) => x.actual)).size, p.length);
+  eq(p.every((x) => x.scene === "property_share" && x.actual !== "AIX5"), true);
+});
+it("v2: お礼・了承の場面には入れない・一手が返信の手本と内覧後の挨拶は入れない", () => {
+  eq(pickJudgeExamples([ex({ scene: "ack", customer: "ありがとうございます", actual: "AIX【物件オススメ】" })], { customerText: "ありがとうございます！", scene: "ack" }).length, 0);
+  eq(pickJudgeExamples([ex({ customer: "このお部屋空いてますか", actual: "返信（確認の宣言）" })], { customerText: "このお部屋空いてますか？", scene: "property_share" }).length, 0);
+  eq(pickJudgeExamples([ex({ customer: "このお部屋空いてますか", actual: "AIX【内覧後の挨拶（greeting_viewing）】" })], { customerText: "このお部屋空いてますか？", scene: "property_share" }).length, 0);
 });
 it("同じ会話の番は入れない（conv が同じ）", () => {
-  const p = pickJudgeExamples([ex({ conv: "c1" })], { customerText: "このお部屋空いてますか？", conversationId: "c1", scene: "property_share" });
+  const p = pickJudgeExamples([ex({ conv: "c1", actual: "AIX【物件確認した】" })], { customerText: "このお部屋空いてますか？", conversationId: "c1", scene: "property_share" });
   eq(p.length, 0);
 });
 it("この会話に既に出ている発言の番は入れない（試験の写し・答えが漏れない）", () => {
@@ -51,9 +57,9 @@ it("一手の書き方: 押した AIX＞手打ちの AIX の中身＞返信の�
   eq(describeActualMove({ burstPress: [], staffFacts: [{ kind: "vacancy", key: "property_check_result/unavailable", family: "確認" }] }).startsWith("AIX の中身"), true);
   eq(describeActualMove({ burstPress: [], staffActs: ["check_promise"], actJa: { check_promise: "確認の宣言" }, laterPress: [{ aix_type: "estimate_sheet" }] }), "返信（確認の宣言）（その後 AIX estimate_sheet）");
 });
-it("スイッチ: 既定 off・BRAIN_JUDGE_EXAMPLES=on で入れる", () => {
+it("スイッチ: 既定 on・BRAIN_JUDGE_EXAMPLES=off で戻す", () => {
   eq(judgeExamplesEnabled({ BRAIN_JUDGE_EXAMPLES: "off" }), false);
-  eq(judgeExamplesEnabled({}), false);
+  eq(judgeExamplesEnabled({}), true);
   eq(judgeExamplesEnabled({ BRAIN_JUDGE_EXAMPLES: "on" }), true);
 });
 it("作った手本: 個人の値（電話・メール）が無い・場面が入っている", () => {
