@@ -9,6 +9,7 @@
 //   ※ aix 行の ±3分にあるスタッフ発言は本文 regex を当てない（estimate_sheet 本文の「🌟割引」「[画像]」を物件送付と誤カウントしない）
 //   依存方向: action-ledger → reply-context（runtime）。reply-context 側は `import type` のみ（循環 import による TDZ を構造的に回避）
 // ─────────────────────────────────────────────────────────────────────────────
+import { isNotPropertyName } from "./not-property-words";
 import {
   analyzeSubstance, classifyCustomerResponse,
   STAFF_PICKUP_DECL_RE, STAFF_PROPERTIES_DONE_RE, STAFF_ESTIMATE_WORD_RE, STAFF_ESTIMATE_DECL_RE, staffEstimateDelivered,
@@ -430,24 +431,38 @@ function promiseSentenceText(s: string | null | undefined): string | null {
  * （「お部屋の件」「インターネットの件」）は拾わない。戻す: PROMISE_PROPERTY_NAME=off
  */
 const CONFIRM_PROPERTY_RE = /([^\n、。！!？?「」『』（）()【】]{3,60}?)(?:の件|の募集状況|の空室状況|の空き状況|の空室|の空き|の初期費用|の入居(?:可能)?日)/g;
-/** 物件名でない片仮名の語（設備・手続き） */
-const NOT_PROPERTY_KATAKANA_RE = /インターネット|ネット|エアコン|ペット|オートロック|クリーニング|キャンセル|フリーレント|カード|ガス|コンロ|バス|トイレ|キッチン|ベランダ|クローゼット|カウンター|モニター|ボックス|フォーマット|オンライン|スケジュール|ローン|クレジット|ポイント|キャンペーン|プラン|サイト|アプリ|メール|ライン|LINE|wifi|WiFi|Wi-Fi/i;
+/** 1つの名前の候補が物件名らしいか（設備・SNS/ポータル・間取り・人の名前は not-property-words.ts の共通の表で外す） */
+function confirmNamePart(raw: string): string | null {
+  const name = raw.replace(/^[・\-ー.]+/, '').trim();
+  if (Array.from(name).length < 3 || Array.from(name).length > 40) return null;
+  if (!/[ァ-ヶー]{3,}|[A-Za-z][A-Za-z.]{2,}|マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|荘|ビル|タワー|コート|パレス|ヴィラ|ハウス/.test(name)) return null;
+  if (isNotPropertyName(name) || /御見積|見積|初期費用|保証会社|管理会社|駐車場|物件|部屋|条件/.test(name)) return null;
+  // 駅＋間取り（「森ノ宮1LDK3階」）は建物の名前ではない（60日の監査 b380d0e3）
+  if (/[0-9](?:S?LDK|DK|K|R)(?![A-Za-z])/.test(name)) return null;
+  return name;
+}
 export function confirmPropertyNameOf(text: string | null | undefined, env: Record<string, string | undefined> = process.env): string | null {
   if ((env.PROMISE_PROPERTY_NAME ?? '').toLowerCase() === 'off') return null;
   // 確認結果の報告の文（「エグゼ難波西Ⅱの募集状況確認させていただきましたが…」）の名前は約束の物件ではない＝報告の文は読まない（60日の監査 3db9db75）
   const t = String(text ?? '').normalize('NFKC').split(/\n|(?<=[。！!？?])(?![。！!？?])/)
     .filter((s) => !(STAFF_CONFIRM_REPORT_RE.test(s) || LEDGER_CONFIRM_REPORT_RE.test(s))).join('\n');
   for (const m of t.matchAll(CONFIRM_PROPERTY_RE)) {
-    // 前の平仮名の語（「併せてお送り頂きました」）を外す＝最後の平仮名より後ろが名前
-    const cap = m[1];
-    const lastHira = Math.max(...Array.from(cap).map((c, i) => (/[ぁ-ゖ]/.test(c) ? i : -1)));
-    const name = Array.from(cap).slice(lastHira + 1).join('').replace(/^[・\-ー.]+/, '').trim();
-    if (Array.from(name).length < 3 || Array.from(name).length > 40) continue;
-    if (!/[ァ-ヶー]{3,}|[A-Za-z][A-Za-z.]{2,}|マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|荘|ビル|タワー|コート|パレス|ヴィラ|ハウス/.test(name)) continue;
-    if (NOT_PROPERTY_KATAKANA_RE.test(name) || /御見積|見積|初期費用|保証会社|管理会社|駐車場|物件|部屋|条件/.test(name)) continue;
-    // 駅＋間取り（「森ノ宮1LDK3階」）は建物の名前ではない（60日の監査 b380d0e3）
-    if (/[0-9](?:S?LDK|DK|K|R)(?![A-Za-z])/.test(name)) continue;
-    return name;
+    // 「Renuts新大阪の他のお部屋」→「Renuts新大阪」（同じ建物の別の部屋）
+    const chars = Array.from(m[1].replace(/の(?:他|ほか)の(?:お)?部屋/g, ''));
+    // 前の平仮名の語（「併せてお送り頂きました」）を外す＝最後の平仮名より後ろが名前。
+    //   ただし両隣が平仮名でない「と」は2つの物件のつなぎ（「クレアート新大阪パンルループとエスリード大阪シティノース」2026-10-13 レビュー）
+    const isHira = (i: number) => i >= 0 && i < chars.length && /[ぁ-ゖ]/.test(chars[i]);
+    const isJoin = (i: number) => chars[i] === 'と' && i > 0 && i < chars.length - 1 && !isHira(i - 1) && !isHira(i + 1);
+    let start = chars.length;
+    while (start > 0 && (!isHira(start - 1) || isJoin(start - 1))) start--;
+    const tail = chars.slice(start);
+    const parts: string[] = [];
+    let cur: string[] = [];
+    tail.forEach((c, k) => { if (isJoin(start + k)) { parts.push(cur.join('')); cur = []; } else cur.push(c); });
+    parts.push(cur.join(''));
+    // 片方が物件名に見えなければその片方は落とす
+    const names = parts.map(confirmNamePart).filter((x): x is string => !!x);
+    if (names.length) return [...new Set(names)].join('・');
   }
   return null;
 }

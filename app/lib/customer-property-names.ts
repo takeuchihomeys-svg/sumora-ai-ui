@@ -13,6 +13,8 @@
 //   C. athome: 「物件名：大阪市旭区 太子橋１丁目 （太子橋今市駅 ） 2階 １ＬＤＫ / …」→「物件名：」の値
 // B は物件名が無いので候補にしない（設計知見「共有文の駅名・徒歩分で物件を呼ばない」＝shared-property-ref と同じ考え）。
 
+import { isNotPropertyName } from "./not-property-words";
+
 export type CustomerPropertyCandidate = {
   /** 物件名欄に入れる値（建物名。末尾の「N階」は外す） */
   name: string;
@@ -129,9 +131,15 @@ export function customerSharedPropertyNames(
 //   送ってきたら、それを持ち込みの物件の名前の**候補**にする（決定論は候補の網・どの物件の話かはブレインが文を読んで決める＝P0 9eb6aa9c）。
 //   名前らしさは「カタカナ3字以上・英字3字以上・建物の語（マンション・ハイツ…）」のどれか。駅・地名だけ（「梅田です」）・質問・お礼・条件は候補にしない。
 //   線は scripts/audit-customer-name-after-share.ts（60日の実データで、こちらの次の返事・AIX がその名前で受けたか）で決めた。
-// 戻す: CUSTOMER_NAME_AFTER_SHARE=off
+// 戻す: CUSTOMER_NAME_AFTER_SHARE=off（サーバ）／NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE=off（画面。"use client" では NEXT_PUBLIC_ しか入らない＝
+//   画面は customerNameAfterShareEnvFromPublic() の値を env に渡す）
 export function customerNameAfterShareEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.CUSTOMER_NAME_AFTER_SHARE ?? "").toLowerCase() !== "off";
+  const v = env.CUSTOMER_NAME_AFTER_SHARE ?? env.NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE ?? "";
+  return v.toLowerCase() !== "off";
+}
+/** 画面（"use client"）用: NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE はビルド時に埋め込まれる（process.env.NEXT_PUBLIC_… をそのまま書く） */
+export function customerNameAfterShareEnvFromPublic(): Record<string, string | undefined> {
+  return { CUSTOMER_NAME_AFTER_SHARE: process.env.NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE };
 }
 
 /** お客様が物件を持ち込んだ発言（URL＝ポータル・動画・SNS／画像・動画） */
@@ -170,11 +178,29 @@ export function nameOnlyMessage(text: string | null | undefined): { name: string
   if (len < 3 || len > 40) return null;
   if (NOT_NAME_WORD_RE.test(t) || /[@＠]/.test(t)) return null;
   if (!NAME_SHAPE_RE.test(t)) return null;
+  // 設備・SNS/ポータル名・間取り・人の名前・単独で曖昧な語（ミナミ・レオパレス）は外す（not-property-words.ts の共通の表・2026-10-13 レビュー）
+  if (isNotPropertyName(t)) return null;
   // 平仮名の混ざる文は名前ではない（60日の監査: 「ギリギリにすみせん」「旦那の方からLINE来る」「クリエオーレの方は」が名前に読まれた）。
   //   平仮名を含む建物名（「さくらハイツ」）は建物の語があり平仮名4字以下の時だけ
   const hira = (t.match(/[ぁ-ゖ]/g) ?? []).length;
   if (hira > 0 && !(hira <= 4 && BUILDING_WORD_RE.test(t))) return null;
   return { name: t, room };
+}
+
+/**
+ * AIX の「お客様が送った物件」の候補（共有文の物件名＋持ち込みの後の名前だけの1通・新しい順・同じ名前は1つ・最大5）。
+ * 画面（AixModal）から呼ぶ純関数。env は画面では customerNameAfterShareEnvFromPublic() を渡す（off で共有文の物件名だけ＝旧と同じ）
+ */
+export function customerPropertyOptionsForAix(
+  messagesOldestFirst: ReadonlyArray<Msg>,
+  env: Record<string, string | undefined>,
+): CustomerPropertyCandidate[] {
+  const shared = customerSharedPropertyNames(messagesOldestFirst);
+  const named = customerNamedAfterShare(messagesOldestFirst, { env }).map(({ name, label, url, at }) => ({ name, label, url, at }));
+  if (!named.length) return shared;
+  const all = [...shared, ...named].sort((a, b) => Date.parse(b.at ?? "") - Date.parse(a.at ?? ""));
+  const seen = new Set<string>();
+  return all.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true))).slice(0, 5);
 }
 
 export type NamedAfterShare = CustomerPropertyCandidate & {

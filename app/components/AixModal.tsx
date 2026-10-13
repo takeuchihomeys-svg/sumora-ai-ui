@@ -26,7 +26,7 @@ import { customerRequestsPhoneCall, buildCallText, customerAsksStaffCallTime, cu
 import { staffTalkedToday } from "../lib/daily-greeting";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
-import { customerSharedPropertyNames, customerNamedAfterShare } from "../lib/customer-property-names";
+import { customerPropertyOptionsForAix, customerNameAfterShareEnvFromPublic } from "../lib/customer-property-names";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, resolveGuarantorForText, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
@@ -808,13 +808,11 @@ export default function AixModal({
   //   折りたたみをやめて最初から出す。この state は「6件以上ある時に全部出すか」だけに使う
   const [showCustomerPropertyList, setShowCustomerPropertyList] = useState(false);
   // 2026-10-13 竹内（未桜）: 動画の URL・画像の後に名前だけ送ってきた物件（「レジュールアッシュ難波MINAMIです」）も候補に（新しい順・同じ名前は1つ）
-  const customerPropertyOptions = useMemo(() => {
-    const msgs = recentMessages ?? [];
-    const named = customerNamedAfterShare(msgs).map(({ name, label, url, at }) => ({ name, label, url, at }));
-    const all = [...customerSharedPropertyNames(msgs), ...named].sort((a, b) => Date.parse(b.at ?? "") - Date.parse(a.at ?? ""));
-    const seen = new Set<string>();
-    return all.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true))).slice(0, 5);
-  }, [recentMessages]);
+  //   画面では process.env.CUSTOMER_NAME_AFTER_SHARE が入らないので NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE を渡す（off で共有文の物件名だけ＝旧と同じ）
+  const customerPropertyOptions = useMemo(
+    () => customerPropertyOptionsForAix(recentMessages ?? [], customerNameAfterShareEnvFromPublic()),
+    [recentMessages],
+  );
   // 別の部屋について確認した専用: 物件名 + 画像OCR + 有無ピッカー（会話を合わせる専用パターン）
   const [otherRoomPropertyName, setOtherRoomPropertyName] = useState<string>("");
   const [otherRoomImagePreview, setOtherRoomImagePreview] = useState<string>("");

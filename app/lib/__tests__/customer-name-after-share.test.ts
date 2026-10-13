@@ -2,7 +2,8 @@
 //   持ち込み（動画の URL・画像）の後の名前だけの発言を、持ち込みの物件の名前の候補として台帳（property-thread・customer-state）に結ぶ。
 //   こちらの確認の約束の通に書いた物件名を【必ず】の行に残す。実物（会話 22b2511e・10/7〜10/9）の本文をそのまま使う。
 // 実行: npx tsx app/lib/__tests__/customer-name-after-share.test.ts（自己完結ハーネス。全 PASS で exit 0）
-import { nameOnlyMessage, customerNamedAfterShare } from "../customer-property-names";
+import { nameOnlyMessage, customerNamedAfterShare, customerPropertyOptionsForAix, customerNameAfterShareEnabled } from "../customer-property-names";
+import { propertyNamePrefill, customerTurnOf } from "../aix-prefill";
 import { resolvePropertyThreads, buildPropertyThreadNote, type PtMsg, type PtAix } from "../property-thread";
 import { resolveCustomerState } from "../customer-state";
 import { classifyStaffTextFacts, confirmPropertyNameOf } from "../action-ledger";
@@ -111,5 +112,54 @@ console.log("■ 【必ず】の行に物件名");
   t("条件の確認（入居時期）は物件送付で閉じない（物件名つきでも要件を読む）", !planPromiseCompletion([{ kind: "properties_sent" }], cond).includes(2));
 }
 
+
+console.log("■ レビュー 2026-10-13: 物件でない語は名前にしない（持ち込みの後の1行）");
+for (const w of ["TikTok", "インスタ", "SUUMO", "ホームズ", "アットホーム", "ユーチューブ", "ワンルーム", "1LDK", "オートロック", "ペット可", "ヤマダハナコ", "Yuma Takeuchi", "ヤマダ ハナコ", "オッケー", "ミナミ", "レオパレス"]) {
+  for (const s of [w, `${w}です`]) t(`「${s}」→ 名前ではない`, nameOnlyMessage(s) === null, nameOnlyMessage(s));
+}
+t("実物の正解は今まで通り: レジュールアッシュ難波MINAMI", nameOnlyMessage("レジュールアッシュ難波MINAMIです🙇🏻‍♀️")?.name === "レジュールアッシュ難波MINAMI");
+t("実物の正解は今まで通り: コンフォリアリブ博労町一丁目", nameOnlyMessage("コンフォリアリブ博労町一丁目")?.name === "コンフォリアリブ博労町一丁目", nameOnlyMessage("コンフォリアリブ博労町一丁目"));
+t("実物の正解は今まで通り: メゾンボヌールの203", nameOnlyMessage("メゾンボヌールの203です！")?.name === "メゾンボヌール");
+{
+  const share = (s: string) => customerNamedAfterShare([
+    { sender: "customer", text: "https://vt.tiktok.com/abc/", createdAt: "2026-10-01T00:00:00Z" },
+    { sender: "customer", text: s, createdAt: "2026-10-01T01:00:00Z" },
+  ]);
+  t("持ち込みの後の「TikTokです」は結ばない", share("TikTokです").length === 0);
+  t("持ち込みの後の「Yuma Takeuchi」は結ばない", share("Yuma Takeuchi").length === 0);
+}
+
+console.log("■ レビュー: 確認の約束の「AとB」・設備の語");
+{
+  const a = "YUYAさん\nお部屋お送りいただきありがとうございます！！\nクレアート新大阪パンルループとエスリード大阪シティノースの募集状況と初期費用確認させて頂きます！！";
+  t("クレアート新大阪パンルループとエスリード大阪シティノース → 両方", confirmPropertyNameOf(a) === "クレアート新大阪パンルループ・エスリード大阪シティノース", confirmPropertyNameOf(a));
+  const b = "お部屋お送りいただきありがとうございます😊！！\nRenuts新大阪の他のお部屋とハイツ西三国の募集状況確認させていただきます！！";
+  t("Renuts新大阪の他のお部屋とハイツ西三国 → 両方", confirmPropertyNameOf(b) === "Renuts新大阪・ハイツ西三国", confirmPropertyNameOf(b));
+  const c = "インターネットとハイツ西三国の空き状況確認させていただきます！！";
+  t("インターネットとハイツ西三国 → 物件に見えない片方は落とす", confirmPropertyNameOf(c) === "ハイツ西三国", confirmPropertyNameOf(c));
+  const d = "ご希望のお部屋とメゾンデリアンの募集状況確認させて頂きます！！";
+  t("平仮名の語の「と」では分けない・名前だけ", confirmPropertyNameOf(d) === "メゾンデリアン", confirmPropertyNameOf(d));
+}
+for (const w of ["ロフト", "カーテン", "エレベーター", "セキュリティ", "ウォシュレット", "リフォーム", "オーナー様", "トランクルーム", "デザイナーズ", "ルームシェア", "インスタ"]) {
+  const s = `${w}の件確認させて頂きます！！`;
+  t(`「${w}の件」→ 物件名ではない`, confirmPropertyNameOf(s) === null, confirmPropertyNameOf(s));
+}
+
+console.log("■ レビュー: 画面（AIX）の戻すスイッチ");
+{
+  const msgs = MSGS.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, rawCreatedAt: m.created_at }));
+  const on = customerPropertyOptionsForAix(msgs, {});
+  const off = customerPropertyOptionsForAix(msgs, { CUSTOMER_NAME_AFTER_SHARE: "off" });
+  t("on: 候補にレジュールアッシュ難波MINAMI", on.some((c) => c.name === "レジュールアッシュ難波MINAMI"), on);
+  t("off: 候補に出ない（旧と同じ）", !off.some((c) => c.name === "レジュールアッシュ難波MINAMI"), off);
+  t("画面の NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE=off も効く", !customerNameAfterShareEnabled({ NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE: "off" }));
+  // namePrefill（AixModal と同じ組み立て）: お客様が送った物件の候補は値に使わない作り（aix-prefill 114行）＝ on/off で同じ
+  const prefill = (opts: typeof on) => {
+    const turn = customerTurnOf(msgs);
+    const ts = Date.parse(turn[0]?.rawCreatedAt ?? "");
+    return propertyNamePrefill({ pickupNames: [], customerSharedThisTurn: opts.filter((c) => c.at && Date.parse(c.at) >= ts).map((c) => c.name), staffSent: ["Alivis新町 802号室"], customerTurnText: turn.map((m) => m.text).join("\n") });
+  };
+  t("namePrefill は off で元と同じ値（on と同じ）", JSON.stringify(prefill(on)) === JSON.stringify(prefill(off)), [prefill(on), prefill(off)]);
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
