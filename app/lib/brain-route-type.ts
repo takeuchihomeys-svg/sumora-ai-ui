@@ -118,6 +118,9 @@ export function routeTypeExamplesEnabled(env: Record<string, string | undefined>
   return routeTypeMaterialEnabled(env) && (env.BRAIN_ROUTE_TYPE_EXAMPLES ?? "").trim().toLowerCase() !== "off";
 }
 
+/** 手本の近さの下限（中身の2文字の組の Jaccard）。戻す・変える: BRAIN_ROUTE_EXAMPLES_MIN_SIM */
+export const ROUTE_EXAMPLE_MIN_SIM = Number((typeof process !== "undefined" ? process.env.BRAIN_ROUTE_EXAMPLES_MIN_SIM : "") || 0.15);
+
 const routeOfActual = (a: string) => (a.startsWith("返信→") ? "返信→AIX" : a.startsWith("返信") ? "返信" : a.startsWith("約束") ? "約束" : "AIX");
 
 /**
@@ -126,6 +129,7 @@ const routeOfActual = (a: string) => (a.startsWith("返信→") ? "返信→AIX"
  */
 export function pickRouteExamples(all: ReadonlyArray<RouteExample>, ctx: {
   type: RouteType; customerText: string; conversationId?: string | null; historyCustomerTexts?: ReadonlyArray<string>; max?: number; excludeConversationIds?: ReadonlyArray<string>;
+  /** 直前のこちらの文（お礼・了承だけの型は、発言でなく直前のこちらの文の近さで選ぶ） */ prevStaffText?: string | null; minSim?: number;
 }): RouteExample[] {
   const text = String(ctx.customerText ?? "").trim();
   if (!text) return [];
@@ -138,7 +142,13 @@ export function pickRouteExamples(all: ReadonlyArray<RouteExample>, ctx: {
   const pool = all.filter((e) => e.type === ctx.type && e.conv !== ctx.conversationId && !ex.has(e.conv) && !seen(e));
   if (!pool.length) return [];
   const newest = Math.max(...pool.map((e) => Date.parse(e.at) || 0));
-  const scored = pool.map((e) => ({ e, s: contentSim(text, e.customer) + Math.max(0, 0.03 - Math.max(0, (newest - (Date.parse(e.at) || 0)) / 86_400_000) * 0.001) }))
+  // 10/14 試験（route1014-after-a）: 近さの無い手本（0.00〜0.05）も入り、別の道の手本が判断をずらした（q062 q141）→ 近い手本だけ。
+  //   お礼・了承だけの型は発言がどれも同じ（近さ 1.0）＝直前のこちらの文の近さで選ぶ
+  const ackType = /^ack_/.test(ctx.type);
+  const minSim = ctx.minSim ?? ROUTE_EXAMPLE_MIN_SIM;
+  const simOf = (e: RouteExample) => (ackType ? contentSim(String(ctx.prevStaffText ?? ""), e.prev) : contentSim(text, e.customer));
+  const scored = pool.map((e) => ({ e, sim: simOf(e) })).filter((x) => x.sim >= minSim)
+    .map(({ e, sim }) => ({ e, s: sim + Math.max(0, 0.03 - Math.max(0, (newest - (Date.parse(e.at) || 0)) / 86_400_000) * 0.001) }))
     .sort((a, b) => b.s - a.s || Date.parse(b.e.at) - Date.parse(a.e.at));
   const max = ctx.max ?? 3;
   const out: RouteExample[] = [];

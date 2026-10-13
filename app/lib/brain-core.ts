@@ -2417,13 +2417,14 @@ ${catalogBlockForBrain(brainScene)}
   let routeTypeText = "";
   let routeTypeNow: RouteType | null = null;
   if (routeTypeMaterialEnabled() && !isPostApplyStatus(convStatus)) {
+    const prevStaffForRoute = typedMessages.find((m) => m.sender !== "customer")?.text ?? "";
     routeTypeNow = routeTypeOf({
       customerText: unrepliedTurn.text ?? "",
-      prevStaffText: typedMessages.find((m) => m.sender !== "customer")?.text ?? "",
+      prevStaffText: prevStaffForRoute,
       ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""),
     });
     const picked = routeTypeNow && routeTypeExamplesEnabled()
-      ? pickRouteExamples(ROUTE_EXAMPLES, { type: routeTypeNow, customerText: unrepliedTurn.text ?? "", conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") })
+      ? pickRouteExamples(ROUTE_EXAMPLES, { type: routeTypeNow, customerText: unrepliedTurn.text ?? "", prevStaffText: prevStaffForRoute, conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") })
       : [];
     routeTypeText = routeTypeBrainText(routeTypeNow, { stats: ROUTE_TYPE_STATS, examples: picked });
     if (routeTypeNow) console.log(JSON.stringify({ tag: "brain:route-type", conversationId, type: routeTypeNow, examples: picked.length }));
