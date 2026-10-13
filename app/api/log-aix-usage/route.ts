@@ -12,7 +12,8 @@ import { sanitizePickerChoices } from "@/app/lib/aix-pickers";
 import { sanitizePrefill } from "@/app/lib/aix-prefill";
 import { brainPredictionAt, PREDICTION_LOOKBACK_MS } from "@/app/lib/brain-outcome";
 // 2026-10-08 8巡目（記録）: 物件オススメ・物件送付で送った物件名を残す
-import { aixPropertyNamesForLog } from "@/app/lib/aix-sent-names";
+import { aixPropertyNamesForLog, reconcileAixPropertyNames } from "@/app/lib/aix-sent-names";
+import { matchLoose, isSameLoose } from "@/app/lib/property-name-loose";
 import { brainOnlySummaryEnabled, aixMetaPatchEnabled } from "@/app/lib/brain-only-summary";
 
 // POST /api/log-aix-usage
@@ -238,10 +239,17 @@ export async function POST(req: NextRequest) {
       prefill?: unknown;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled, picker_choices, properties_sent_count, properties_sent_names, prefill } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited, conversation_match, property_names: propertyNamesFromScreen, prop_statuses, estimate_sent, prop_cost_notes, send_keyword, meeting_property_name, meeting_property_address, meeting_date, meeting_time, guarantor_properties, parallel_screening, scheduled, picker_choices, properties_sent_count, properties_sent_names, prefill } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
+    // 2026-10-13 当たり率の直し（区切り3・記録）: 画面の物件名がどれも送った本文に出ず、本文に物件名がある時は本文の名前を正にする
+    //   （未桜 10/9・dd34f5b0 9/27 の型）。戻す: AIX_NAMES_FROM_TEXT=off
+    const reconciled = Array.isArray(propertyNamesFromScreen) && propertyNamesFromScreen.length > 0
+      ? reconcileAixPropertyNames(propertyNamesFromScreen, typeof generated_text === "string" ? generated_text : null, (a, b) => isSameLoose(matchLoose(a, b)), process.env, aix_type)
+      : null;
+    if (reconciled?.changed) console.log(JSON.stringify({ tag: "aix:property_names_from_text", conversation_id, aix_type, from: propertyNamesFromScreen, to: reconciled.names }));
+    const property_names = reconciled ? reconciled.names : propertyNamesFromScreen;
 
     // PA-1: 前回AIXの確実な記録
     let previousAction: string | null = previous_action_type ?? null;

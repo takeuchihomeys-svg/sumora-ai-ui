@@ -11435,7 +11435,12 @@ export default function Home() {
           initialInputText={aixInitInputText || undefined}
           initialCheckPattern={aixInitCheckPattern ?? undefined}
           // 2026-10-01 竹内「AIX 開いたら…物件名等はセットされていて」: 売上サポで選んで渡した物件（同じ会話の時だけ）
-          prefillPropertyNames={pickupHandoffRef.current?.conv === selectedConversation.id ? pickupHandoffRef.current?.handoffNames : undefined}
+          // 2026-10-13 当たり率の直し（区切り3・未桜 10/9・dd34f5b0 9/27）: 売上サポの handoff はその AIX（物件ピックアップ／オススメ）の1回分。
+          //   旧は会話が同じなら別の AIX（物件確認した・待ち合わせ・見積書）にも handoff の物件名を先入れしていた → 送った本文と違う物件名が記録に残った。
+          //   戻す: NEXT_PUBLIC_PICKUP_PREFILL_SAME_AIX=off
+          prefillPropertyNames={pickupHandoffRef.current?.conv === selectedConversation.id
+            && ((process.env.NEXT_PUBLIC_PICKUP_PREFILL_SAME_AIX ?? "").toLowerCase() === "off" || pickupHandoffRef.current?.aix === aixModalType)
+            ? pickupHandoffRef.current?.handoffNames : undefined}
           // 2026-10-13 P1 0593a0aa（未桜）: ブレインの今の物件を物件名の候補の一番上に出す（下書き表示中は suggestedAixMeta が空で suggestedAix に退避されている）
           brainPropertyPick={brainPickFromMetas(
             selectedConversation.suggestedAixMeta as { current_property?: unknown; analyzed_msg_ts?: unknown } | null,

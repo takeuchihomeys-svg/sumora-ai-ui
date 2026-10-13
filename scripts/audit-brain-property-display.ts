@@ -226,8 +226,59 @@ async function partPromise() {
   for (const s of out.slice(0, SHOW)) console.log(s);
 }
 
+// ─── 区切り2: current_property の安全の線・台帳の表記への寄せ（refineCurrentProperty）を 60日の判断に当てる ───
+//   判断の時点の会話の文（直近120通）・台帳（送った物件・AIX の記録の物件名）で、通さない／台帳の表記に直す番を数えて出す（目で読む）
+async function partRefine() {
+  const { refineCurrentProperty } = await import("../app/lib/current-property-gate");
+  const decs = await loadDecisions();
+  const list = [...decs.entries()].map(([cid, l]) => [cid, l.filter((d) => d.created_at >= since && (d.prop ?? "").trim())] as const).filter(([, l]) => l.length);
+  const cnt: Record<string, number> = {};
+  const out: string[] = [];
+  for (const [cid, ds] of list) {
+    const [{ data: ms }, { data: sp }, { data: ax }] = await Promise.all([
+      sb.from("messages").select("text, created_at").eq("conversation_id", cid).gte("created_at", new Date(Date.parse(since) - 30 * 86400_000).toISOString()).order("created_at").limit(3000),
+      sb.from("sent_properties").select("property_name, room_no, sent_at").eq("conversation_id", cid).order("sent_at").limit(500),
+      sb.from("aix_usage_logs").select("created_at, property_names").eq("conversation_id", cid).not("sent_at", "is", null).order("created_at").limit(500),
+    ]);
+    const seen = new Set<string>();
+    for (const d of ds) {
+      const k = `${d.analyzed_msg_ts}|${d.prop}`; if (seen.has(k)) continue; seen.add(k);
+      const texts = (ms ?? []).filter((m) => m.created_at <= d.created_at).slice(-120).map((m) => m.text as string | null);
+      const ledgerNames = [
+        ...(sp ?? []).filter((s) => (s.sent_at ?? "") <= d.created_at).map((s) => `${s.property_name ?? ""}${s.room_no ? ` ${s.room_no}` : ""}`),
+        ...(ax ?? []).filter((a) => a.created_at <= d.created_at).flatMap((a) => (a.property_names ?? []) as string[]),
+      ];
+      const r = refineCurrentProperty(d.prop, { texts, ledgerNames });
+      cnt[r.reason] = (cnt[r.reason] ?? 0) + 1;
+      if (r.reason !== "kept") out.push(`● [${r.reason}] ${d.created_at.slice(0, 16)} ${cid.slice(0, 8)} 「${d.prop}」→「${r.value ?? "（null）"}」`);
+    }
+  }
+  console.log(`■ current_property の安全の線（${days}日・物件を言った判断）`, cnt);
+  for (const s of out.slice(0, SHOW)) console.log(s);
+}
+
+// ─── 区切り3: AIX の記録の物件名を送った本文に合わせる（reconcileAixPropertyNames）を 60日の記録に当てる ───
+async function partRecords() {
+  const { reconcileAixPropertyNames } = await import("../app/lib/aix-sent-names");
+  const { matchLoose, isSameLoose } = await import("../app/lib/property-name-loose");
+  const logs = await pageAll<{ conversation_id: string; created_at: string; aix_type: string; property_names: string[] | null; generated_text: string | null }>((a, b) =>
+    sb.from("aix_usage_logs").select("conversation_id, created_at, aix_type, property_names, generated_text").not("sent_at", "is", null).not("property_names", "is", null).gte("created_at", since).order("created_at").range(a, b));
+  let n = 0, changed = 0;
+  for (const l of logs) {
+    if (!(l.property_names ?? []).length) continue;
+    n++;
+    const r = reconcileAixPropertyNames(l.property_names, l.generated_text, (a, b) => isSameLoose(matchLoose(a, b)), {}, l.aix_type);
+    if (!r.changed) continue;
+    changed++;
+    console.log(`● ${l.created_at.slice(0, 16)} ${l.conversation_id.slice(0, 8)} ${l.aix_type}｜記録「${(l.property_names ?? []).join("・")}」→ 本文「${(r.names ?? []).join("・")}」\n   ${one(l.generated_text, 140)}`);
+  }
+  console.log(`■ AIX の記録の物件名（${days}日・名前のある記録 ${n}）: 本文に合わせて変わる ${changed}`);
+}
+
 (async () => {
   const part = arg("part", "prefill");
+  if (part === "refine") { await partRefine(); return; }
+  if (part === "records") { await partRecords(); return; }
   if (part === "prefill") await partPrefill();
   else if (part === "state") await partState();
   else if (part === "promise") await partPromise();
