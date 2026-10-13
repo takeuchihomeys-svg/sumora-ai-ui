@@ -29,6 +29,16 @@ eq("出し切り 再ピックアップ=外れ", judgePath(brainPathCode({ two_st
 eq("出し切り 全力サポート=正解", judgePath(brainPathCode({ reply_mode: "aix", action: "zenryoku_support" }), ["返信", "AIX:zenryoku_support"], ["AIX:物件"]).ok, true);
 eq("物件の族 mustNot", judgePath(brainPathCode({ reply_mode: "aix", action: "property_recommendation" }), ["返信"], ["AIX:物件"]).mustNotHit, "AIX:物件");
 
+// 10/13 竹内さん（KAORI）: 物件を探す番は左右の形（物件ピックアップ・物件オススメ｜全力サポート）＝どちらの読みでも道が合えば正解
+eq("左右の形: 出し切りで一手が物件ピックアップ（全力サポートも並ぶ）=正解", judgePath(brainPathCode({ reply_mode: "aix", action: "property_send", alt_actions: ["zenryoku_support"] }), ["AIX:zenryoku_support"], ["2段:pickup", "AIX:物件"]).ok, true);
+eq("左右の形: 一手が全力サポート・正解が物件オススメ=正解", judgePath(brainPathCode({ reply_mode: "aix", action: "zenryoku_support" }), ["AIX:property_recommendation"], []).ok, true);
+eq("左右の形でも返信が正解の番は外れ", judgePath(brainPathCode({ reply_mode: "aix", action: "property_send" }), ["返信"], ["AIX"]).ok, false);
+{
+  const prev = process.env.SEARCH_SPLIT_CHOICE; process.env.SEARCH_SPLIT_CHOICE = "off";
+  eq("SEARCH_SPLIT_CHOICE=off は旧の採点", judgePath(brainPathCode({ reply_mode: "aix", action: "property_send" }), ["AIX:zenryoku_support"], ["AIX:物件"]).ok, false);
+  if (prev === undefined) delete process.env.SEARCH_SPLIT_CHOICE; else process.env.SEARCH_SPLIT_CHOICE = prev;
+}
+
 // 1問の合否
 const pv = judgePath(brainPathCode({ two_stage: "pickup" }), ["2段:pickup"]);
 eq("asks を1つ落とすと不合格", problemScore(pv, [true, false], []).pass, false);

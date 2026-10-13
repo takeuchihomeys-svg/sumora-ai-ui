@@ -140,6 +140,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
+import { applySearchSplit, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_NOTE, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract } from "@/app/lib/turn-contract";
@@ -4437,6 +4438,7 @@ ${history}`;
     //   物件の AIX を選んだら、主を AIX【全力サポート】にする（search-exhausted.ts・SEARCH_EXHAUSTED_ZENRYOKU=off で今の2択のまま）
     let altForChoice = parallelOut.altActions;
     let exhaustedNote = "";
+    let splitFromReply = false;
     // 10/08 ブレインの試験（Claude 70問）: 出し切り7問は全部「2段の約束（pickup）」の返信＝物件の AIX を選んだ番だけ見ていたので効かなかった（70問で1回）。
     //   2段の pickup の約束にした番（AIX なし・decision_source が two_stage…pickup）も同じ判定に入れる
     // 10/09 試験 q049・q050: 内覧調整は早い所の歯止めの後の規則（内覧の流れ・信号）でも立つ＝最後にもう一度当てる
@@ -4479,7 +4481,20 @@ ${history}`;
       // 2026-10-13 ブレイン基準（棚卸し B-1）: 送付だけの印（weak）での出し切りは上書きしない（材料は LLM の前に渡した・食い違いは demoted_overrides）。明示の印（strong）は今まで通り
       const weakOnly = exh.exhausted && exh.strength === "weak" && weakExhaustDemoted();
       if (weakOnly && !isPostApplyStatus(convStatus)) applyOverride(demotedOverrides, "search_exhausted", "rule:search_exhausted(weak)", "zenryoku_support", finalAix ?? (twoStagePickupNow ? "two_stage:pickup" : null));
-      const ex = applySearchExhausted({ finalAix: twoStagePickupNow || replyCondTurn ? "property_send" : finalAix, altActions: altForChoice, exhausted: exh.exhausted && !weakOnly, postApply: isPostApplyStatus(convStatus) });
+      // 2026-10-13 竹内さん（KAORI の画面）「左右にボタンを分ける。物件あった場合（複数＝物件ピックアップ・1件＝物件オススメ）／物件なかった場合（全力サポート）」:
+      //   新着があるかは探したスタッフにしか分からない＝一手を【全力サポート】に決め打ちしない。一手はブレインの物件の AIX のまま・【全力サポート】を2つ目に
+      //   （画面は search-result-split.searchSplitView で左右に並べる）。戻す SEARCH_SPLIT_CHOICE=off（旧の書き換え）
+      const split = applySearchSplit({ finalAix: finalAix ?? null, fromReply: twoStagePickupNow || replyCondTurn, llmAix: normalizeAixActionKey(parsed.aix) ?? null, altActions: altForChoice, exhausted: exh.exhausted && !weakOnly, postApply: isPostApplyStatus(convStatus) });
+      if (split.applies) {
+        if (split.toAix) { replyMode = "aix"; twoStage = null; splitFromReply = true; }
+        console.log(JSON.stringify({ tag: "brain:search-split", conversationId, from: finalAix ?? null, to: split.finalAix, markerAt: exh.markerAt, strength: exh.strength ?? null }));
+        finalAix = split.finalAix;
+        altForChoice = split.altActions;
+        // "search_exhausted" の語を含めない（generate-reply の本質がこの語で「出し切り＝全力サポートの番」と読むため）
+        decisionSource = decisionSource ? `${decisionSource}+search_split` : "rule:search_split";
+        exhaustedNote = SEARCH_SPLIT_EXHAUSTED_NOTE;
+      }
+      const ex = split.applies ? { changed: false, finalAix, altActions: altForChoice } : applySearchExhausted({ finalAix: twoStagePickupNow || replyCondTurn ? "property_send" : finalAix, altActions: altForChoice, exhausted: exh.exhausted && !weakOnly, postApply: isPostApplyStatus(convStatus) });
       if (ex.changed) {
         // 2段の pickup の約束にしていた番は、約束の返信をやめて AIX【全力サポート】の番にする（返信の下書きは作らない＝reply_mode aix・two_stage を外す）
         if (twoStagePickupNow || replyCondTurn) { replyMode = "aix"; twoStage = null; }
@@ -4491,13 +4506,15 @@ ${history}`;
       }
     }
     const searchChoice = searchResultAltActions({ finalAix: finalAix ?? null, pickupReady: pickupReadyForChoice, postApply: isPostApplyStatus(convStatus), altActions: altForChoice });
+    // 左右の形の番（ブレインの一手が物件を探す番）のメモは決め打ちしない言い方にそろえる（search-result-split）
+    const splitTurn = searchSplitServerEnabled() && !isTwoChoiceMode && isSearchSplitTurn({ brainAction: finalAix ?? null });
     if (searchChoice.added) console.log(JSON.stringify({ tag: "brain:search-result-choice", conversationId, aix: finalAix, alts: searchChoice.altActions }));
 
     if (demotedOverrides.length) console.log(JSON.stringify({ tag: "brain:override-demoted", conversationId, final: finalAix ?? null, demoted: compactDemoted(demotedOverrides) }));
     return {
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
-      note: `${searchChoice.added ? `${staffNote}${SEARCH_RESULT_CHOICE_NOTE}` : staffNote}${exhaustedNote}`,
+      note: splitTurn ? `${staffNote}${SEARCH_SPLIT_NOTE}${exhaustedNote === SEARCH_SPLIT_EXHAUSTED_NOTE ? exhaustedNote : ""}` : `${searchChoice.added ? `${staffNote}${SEARCH_RESULT_CHOICE_NOTE}` : staffNote}${exhaustedNote}`,
       // 2026-09-27: 持ち込み物件の募集状況が先（availabilityFirstKind）は check_pattern が空＝結果はスタッフが選ぶ → null で残す
       check_pattern: checkKind?.check_pattern || null,
       source,
@@ -4543,7 +4560,7 @@ ${history}`;
         })(),
       } : null,
       // 10/09 試験 q006 q007: 出し切りで全力サポートにした番は、方向も「新着待ち」に（ピックアップの約束のままだと依頼の答え方が食い違う）
-      reply_direction: exhaustedNote ? "お客様の今の言葉（お詫び・新しいご希望）を受け、今の条件のお部屋は出し切ったので、そのご希望も含めて新着状況を随時確認し募集に出次第お送りする（AIX【全力サポート】の文）" : withAppealDirection(rentFirst.applied ? rentFirst.direction : replyDirection, appealTiming?.verdict ?? null),
+      reply_direction: splitFromReply ? SEARCH_SPLIT_DIRECTION : exhaustedNote && exhaustedNote !== SEARCH_SPLIT_EXHAUSTED_NOTE ? "お客様の今の言葉（お詫び・新しいご希望）を受け、今の条件のお部屋は出し切ったので、そのご希望も含めて新着状況を随時確認し募集に出次第お送りする（AIX【全力サポート】の文）" : withAppealDirection(rentFirst.applied ? rentFirst.direction : replyDirection, appealTiming?.verdict ?? null),
       key_topics: rentFirst.applied ? rentFirst.keyTopics : keyTopics,
       avoid_topics: avoidTopics,
       urgency_appropriate: urgencyAppropriate,
@@ -4553,7 +4570,7 @@ ${history}`;
       // 10/09 調査の担当: 決定論の規則で finalAix を変えた時は本質も合わせる（AIX が外れて2段の約束になった項目は promise に・食い違いは記録）
       // 2026-10-13 P0: 確認事項の候補ごとの状態（済み／約束済み／まだ／取り下げ・どの手段で）。画面の帯・一覧のバッジがそのまま使う（request-ledger.applyBrainRequestStatus）
       request_status: requestCands.length ? (await import("@/app/lib/request-ledger")).normalizeBrainRequestStatus((parsed as { request_status?: unknown }).request_status, requestCands, requestStatusAt) ?? undefined : undefined,
-      turn_contract: TURN_CONTRACT_BRAIN_ON ? (exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote) ?? undefined) : undefined,
+      turn_contract: TURN_CONTRACT_BRAIN_ON ? (exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote && exhaustedNote !== SEARCH_SPLIT_EXHAUSTED_NOTE) ?? undefined) : undefined,
       aix_llm: normalizeAixActionKey(parsed.aix) ?? undefined,
       // 10/09 試験の担当の案（承認済み）: LLM の最初の判断（決定論の規則で変わる前）。本番の見張りでも本質と最終を分けて数える
       llm_raw: { action: normalizeAixActionKey(parsed.aix) ?? null, reply_mode: typeof parsed.reply_mode === "string" ? parsed.reply_mode : null, dir: typeof parsed.reply_direction === "string" ? parsed.reply_direction.slice(0, 40) : null,

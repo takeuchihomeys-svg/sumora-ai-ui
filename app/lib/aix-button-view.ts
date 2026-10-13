@@ -32,6 +32,7 @@
 
 import { BRAIN_FRESHNESS_TOLERANCE_MS } from "./brain-meta-restore";
 import { propertyCheckKindFor } from "./aix-taxonomy";
+import { isSearchSplitTurn } from "./search-result-split";
 
 /** ブレインの action → 画面の AIX ボタンの名前（page.tsx の BRAIN_AIX_LABELS をここに移した。表記は aix-taxonomy と揃える） */
 export const BRAIN_AIX_LABELS: Record<string, string> = {
@@ -229,6 +230,8 @@ export type AixCard = {
   action: string;
   altActions: string[];
   replyDirectionLabel: string | null;
+  /** 2026-10-13 物件を探す番の左右の形（物件あった場合｜物件なかった場合）で出す（search-result-split） */
+  split?: boolean;
 };
 
 export type AixButtonView = {
@@ -266,6 +269,8 @@ export type AixButtonViewInput = {
   viewingTemplatePending?: boolean;
   /** I: この会話の AIX要対応（pending）。返信の後もカードを残すかの元 */
   pendingItem?: PendingAixItem;
+  /** 物件を探す番の左右の形を止める（NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off） */
+  searchSplitOff?: boolean;
   legacy?: boolean;
 };
 
@@ -304,14 +309,17 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
     const cardAllowed = legacy ? (!!meta?.note && (hasValidAction || two)) : (two || hasValidAction);
     if (cardAllowed) {
       if (two) card = { kind: "two_choice", action, altActions: [], replyDirectionLabel: meta?.reply_direction_label ?? null };
-      else card = { kind: "brain_button", action, altActions: alt, replyDirectionLabel: null };
+      else card = { kind: "brain_button", action, altActions: alt, replyDirectionLabel: null, split: !legacy && isSearchSplitTurn({ brainAction: action, twoChoiceMode: false, off: input.searchSplitOff }) };
     }
   }
 
   // P3.2.5〜P4.5 の帯（旧の並び・条件のまま）
   let earlyBanner: AixEarlyBanner | null = null;
   // E: 2択・2つ目の AIX を持つカードを出す時は単独の帯で隠さない
-  const cardOwnsTurn = !legacy && !!card && (card.kind === "two_choice" || card.altActions.length > 0);
+  // 2026-10-13: 物件を探す番の左右の形（物件ピックアップ・物件オススメ｜全力サポート）もカードが出す（単独の「AIX 物件ピックアップ」の帯で隠さない）
+  //   左右の形の番はカードを ✕ で閉じた後も単独の帯を出さない（閉じたのに同じ物件ピックアップが帯で出直さない）
+  const splitTurn = !legacy && metaFresh && !meta?.two_choice_mode && isSearchSplitTurn({ brainAction: action, off: input.searchSplitOff });
+  const cardOwnsTurn = !legacy && ((!!card && (card.kind === "two_choice" || card.altActions.length > 0 || !!card.split)) || splitTurn);
   if (!cardOwnsTurn) {
     if (!flow && customerIsLast && brainAixAction === "viewing_invite" && !d.viewingSpecific) earlyBanner = "viewing_specific";
     else if (metaFresh && guideMeeting && !d.meetingPlace) earlyBanner = "meeting_place_guide";

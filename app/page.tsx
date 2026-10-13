@@ -48,6 +48,7 @@ import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { useNewArrivalCards, useNewArrivalCounts, newArrivalElems, NewArrivalListBadge } from "./components/NewArrivalCard";
 import { useRequestLedgerCounts, RequestLedgerListBadge } from "./components/RequestLedgerBadge";
 import { searchResultChoiceCaption } from "./lib/search-result-choice";
+import { searchSplitView } from "./lib/search-result-split";
 import { QuotedReplyBanner, useQuotedMessages } from "./components/QuotedReplyBanner";
 import { LIST_CHIP, LIST_CHIP_TONE, propertyCheckTone } from "./lib/list-row-chip";
 import { latestCustomerTurnText, requestedViewingDatesFromMessages } from "./lib/viewing-date-request";
@@ -3204,6 +3205,7 @@ export default function Home() {
       activeAixFlow: activeAixFlow ?? null,
       viewingTemplatePending: !!suggestViewingTemplateMap[id],
       pendingItem: selectedPendingAixItem,
+      searchSplitOff: process.env.NEXT_PUBLIC_SEARCH_SPLIT_CHOICE === "off",
       dismissed: {
         brainHint: has(dismissedBrainHintIds),
         viewingSpecific: has(dismissedViewingSpecificIds),
@@ -9538,6 +9540,81 @@ export default function Home() {
                           {rdLabel ? `返信する（${rdLabel}）` : "テキスト返信"}
                         </button>
                       </div>
+                    </div>
+                  );
+                }
+                // 2026-10-13 竹内さん（KAORI の画面）「左右にボタンを分ける。物件あった場合と物件なかった場合と上に小さく記載。
+                //   複数あった場合が物件ピックアップ、1件の場合が物件オススメ、物件なかった場合が全力サポート」「物件あった場合のところは縦並び」「スマホで使いやすく」:
+                //   ブレインの一手が物件を探す番（物件ピックアップした・物件オススメ・物件を探す・全力サポート）の時だけ（search-result-split・aixView.card.split）。
+                //   ボタンの位置と色は一手に関係なく固定（押し間違えない）。押した時の動きは今の各 AIX と同じ。戻す: NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off
+                const splitView = aixView.card?.split ? searchSplitView({ brainAction, altActions: brainMeta.alt_actions, twoChoiceMode: brainMeta.two_choice_mode }) : null;
+                if (splitView) {
+                  const runSplit = (a: string) => {
+                    if (a === brainAction) { runBrainAix(); return; }
+                    setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]));
+                    setShowAixMenu(false);
+                    setAixInspectLabel(null);
+                    setActiveAixFlow(a as AixActionType);
+                    if (a === "property_recommendation") openPropertyRecommendationPicker("withImage");
+                    else openAixDirect(a as AixActionType);
+                  };
+                  const splitBtn = (b: { action: string; label: string; sub: string }, grow: boolean) => {
+                    const c = AIX_ACTION_META[b.action]?.color ?? "#7C3AED";
+                    const [head, ...rest] = b.label.split(" ");
+                    return (
+                      <button key={b.action} onClick={() => runSplit(b.action)}
+                        className={`${grow ? "flex-1 " : ""}flex w-full min-h-11 flex-col items-center justify-center rounded-xl px-2 py-1.5 text-white text-center leading-tight active:opacity-80`}
+                        style={{ background: `linear-gradient(135deg, ${c}, ${c}cc)` }}>
+                        <span className="text-[13px] font-bold">{head} <span className="whitespace-nowrap">{rest.join(" ")}</span></span>
+                        <span className="mt-0.5 text-[10px] font-bold opacity-90">{b.sub}</span>
+                      </button>
+                    );
+                  };
+                  return (
+                    <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-400 bg-violet-50 px-3 py-2.5">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex gap-2">
+                            <div className="flex-3 min-w-0 flex flex-col">
+                              <p className="mb-1 text-center text-[10px] font-bold text-teal-700">{splitView.foundHeading}</p>
+                              <div className="flex flex-col gap-1.5">
+                                {splitView.found.map((b) => splitBtn(b, false))}
+                              </div>
+                            </div>
+                            <div className="w-px self-stretch bg-violet-200" />
+                            <div className="flex-2 min-w-0 flex flex-col">
+                              <p className="mb-1 text-center text-[10px] font-bold text-orange-700">{splitView.notFoundHeading}</p>
+                              {splitBtn(splitView.notFound, true)}
+                            </div>
+                          </div>
+                          <p className="mt-0.5 text-center" style={{ fontSize: "9px", opacity: 0.5, color: "#7C3AED" }}>テンプレ自動選択</p>
+                          {brainAction === "property_recommendation" && selectedConversation.messages.some((m) => m.sender === "customer" && wantsLowInitialCostText(m.text)) && (
+                            <a href={buildEstimateHref(selectedConversation.id, "with_property")}
+                              className="mt-1.5 block w-full rounded-xl border border-orange-300 bg-white px-4 py-1.5 text-[12px] font-bold text-orange-700 text-center active:opacity-80">
+                              🧾 御見積書も作って同封する（初期費用を抑えたいお客様）
+                            </a>
+                          )}
+                          {splitView.others.filter((a) => BRAIN_AIX_LABELS[a]).map((alt) => (
+                            <button key={alt} onClick={() => runSplit(alt)}
+                              className="mt-1.5 block w-full min-h-11 rounded-xl px-4 py-2 text-[13px] font-bold text-white text-center active:opacity-80"
+                              style={{ background: `linear-gradient(135deg, ${AIX_ACTION_META[alt]?.color ?? "#7C3AED"}, ${AIX_ACTION_META[alt]?.color ?? "#7C3AED"}cc)` }}>
+                              {BRAIN_AIX_LABELS[alt]}
+                            </button>
+                          ))}
+                        </div>
+                        <button onClick={() => setDismissedBrainHintIds((prev) => new Set([...prev, aixKey]))}
+                          className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
+                      </div>
+                      {brainMeta.note && (
+                      <div className="mt-1.5 border-t border-violet-200 pt-1.5" onClick={() => setExpandedBrainNote((v) => !v)}>
+                        <p className="text-xs text-violet-700 leading-relaxed"
+                          style={expandedBrainNote ? undefined : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                          <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                          {brainMeta.note}
+                        </p>
+                        <p className="text-[10px] text-violet-400 text-right">{expandedBrainNote ? "▲ たたむ" : "▼ 全文"}</p>
+                      </div>
+                      )}
                     </div>
                   );
                 }

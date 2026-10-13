@@ -25,7 +25,24 @@ export type PathCode = {
   hard: string[];
   /** 表示用 */
   label: string;
+  /**
+   * 2026-10-13 竹内さん（KAORI）: 物件を探す番（一手が物件の AIX か全力サポート）は画面が左右の形で3つを並べ、スタッフが検索の結果で押す
+   * （search-result-split）。その番は「物件の AIX」と「全力サポート」のどちらの読みでも道が合えば正解（judgePath が両方を当てる）。
+   * SEARCH_SPLIT_CHOICE=off（または NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off）の時は付けない（旧の採点）
+   */
+  alternates?: PathCode[];
 };
+
+const SPLIT_PROP = new Set(["property_send", "property_recommendation", "property_search"]);
+function splitScoringOn(): boolean {
+  const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
+  return typeof process === "undefined" || !(off(process.env.SEARCH_SPLIT_CHOICE) || off(process.env.NEXT_PUBLIC_SEARCH_SPLIT_CHOICE));
+}
+function aixCode(action: string): PathCode {
+  const fam = aixFamily(action);
+  const codes = [...new Set([`AIX:${action}`, `AIX:${fam}`, "AIX"])];
+  return { codes, hard: codes, label: `AIX:${action}` };
+}
 
 const PROP = /^property_(?:send|recommendation|pickup|search)$/;
 /** 同じ族として扱う（物件確認した＝反応確認・物件の4種） */
@@ -56,7 +73,12 @@ export function brainPathCode(b: BrainExamOutput | null | undefined): PathCode {
     const cp = (b.check_pattern ?? "").trim();
     const base = fam === "property_check_result" ? `AIX:${topicKey(`property_check_result/${cp}`)}` : `AIX:${action}`;
     const codes = [base, `AIX:${fam}`, "AIX"];
-    return { codes: [...new Set(codes)], hard: [...new Set(codes)], label: cp ? `AIX:${action}/${cp}` : `AIX:${action}` };
+    const main: PathCode = { codes: [...new Set(codes)], hard: [...new Set(codes)], label: cp ? `AIX:${action}/${cp}` : `AIX:${action}` };
+    if (splitScoringOn() && (SPLIT_PROP.has(action) || action === "zenryoku_support")) {
+      const others = ["property_send", "property_recommendation", "zenryoku_support"].filter((a) => a !== action && !(action === "property_search" && a === "property_send"));
+      return { ...main, label: `${main.label}（左右の形）`, alternates: others.map(aixCode) };
+    }
+    return main;
   }
   const ts = (b.two_stage ?? "").trim();
   if (ts) return { codes: [`2段:${ts}`, "2段"], hard: [`2段:${ts}`, "2段"], label: `2段:${ts}` };
@@ -90,7 +112,10 @@ export type PathVerdict = { ok: boolean; acceptHit: string | null; mustNotHit: s
 export function judgePath(code: PathCode, accept: ReadonlyArray<string>, mustNot: ReadonlyArray<string> = []): PathVerdict {
   const acceptHit = accept.find((a) => codeMatches(a, code.codes)) ?? null;
   const mustNotHit = mustNot.find((m) => codeMatches(m, code.hard)) ?? null;
-  return { ok: !!acceptHit && !mustNotHit, acceptHit, mustNotHit };
+  const v = { ok: !!acceptHit && !mustNotHit, acceptHit, mustNotHit };
+  // 左右の形の番: 画面に並ぶ別の AIX の読みで正解なら正解（スタッフが検索の結果で押す）
+  if (!v.ok && code.alternates?.length) for (const alt of code.alternates) { const w = judgePath(alt, accept, mustNot); if (w.ok) return w; }
+  return v;
 }
 
 /** 1問の合否（道・asks・言ってはいけない事）。判定が無い項目（DeepSeek を回さなかった）は数えない */

@@ -108,8 +108,20 @@ it("朱莉 型: 物件ピックアップ＋2つ目 物件オススメ → 旧は
   const now = resolveAixButtonView({ meta, messages: [cust(C1)] });
   expect(now.card?.altActions).toBe(["property_recommendation"]); expect(now.earlyBanner).toBe(null);
 });
-it("2つ目が無い物件ピックアップは今まで通り帯", () => {
-  expect(resolveAixButtonView({ meta: brain("property_send"), messages: [cust(C1)] }).earlyBanner).toBe("property_send");
+// 2026-10-13 竹内さん（KAORI）: 物件を探す番は左右の形のカード（物件ピックアップ・物件オススメ｜全力サポート）。単独の帯は止めた時（NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off）だけ
+it("2つ目が無い物件ピックアップ → 左右の形のカード（帯は出さない）", () => {
+  const v = resolveAixButtonView({ meta: brain("property_send"), messages: [cust(C1)] });
+  expect(v.earlyBanner).toBe(null); expect(v.card?.split).toBe(true);
+});
+it("左右の形を止めた時（searchSplitOff）は今まで通り帯", () => {
+  expect(resolveAixButtonView({ meta: brain("property_send"), messages: [cust(C1)], searchSplitOff: true }).earlyBanner).toBe("property_send");
+});
+it("左右の形のカードを ✕ で閉じたら単独の帯も出さない", () => {
+  const v = resolveAixButtonView({ meta: brain("property_send"), messages: [cust(C1)], dismissed: { brainHint: true } });
+  expect(v.earlyBanner).toBe(null); expect(v.card).toBe(null);
+});
+it("物件の番でない AIX（見積書）は左右の形にしない", () => {
+  expect(resolveAixButtonView({ meta: brain("estimate_sheet"), messages: [cust(C1)] }).card?.split ?? false).toBe(false);
 });
 
 console.log("■ F: note が空でもカードを出す・AIX ボタンを隠すのはカードを出している時だけ");
