@@ -22,7 +22,7 @@ import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists, refineCurrentProperty, currentPropertiesOf } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
 import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
-import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, staffPromiseMaterialLine, samePromiseFamily, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -2590,6 +2590,11 @@ ${catalogBlockForBrain(brainScene)}
   // 2026-10-13（ブレインの使い残し 4-3）: 送れる物件が手元にあるか（2段の約束をブレインが決める材料・申込以降は出さない）
   let pickupReadyMaterial: boolean | null = null; // 10/13 全力サポートを候補にするかの材料にも使う
   let pickupPromisedOpenNow: boolean | null = null; // 10/14 この件のピックアップの約束がもうあるか（4-3 で物件の AIX を直接にしてよいか）
+  // 2026-10-14 #3: 約束の AIX の差し替え（promise:*）を下げた時の材料（まだ果たしていない約束・果たす AIX）
+  if (overrideDemoted("staff_promise") && !isPostApplyStatus(convStatus)) {
+    const spLine = staffPromiseMaterialLine(brainLedger.facts);
+    if (spLine) customerStateBlockText += `\n\n${spLine}`;
+  }
   if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
     try {
       const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
@@ -3251,7 +3256,7 @@ ${history}`;
     // 見積る物件があるか（こちらの送付・見積の送付・お客様の URL/画像/「ここの」/見積の語）。見積書送るの約束・補正の共通の前提（ゆうこ事例）
     const estimatePropertyInPlay = brainLedger.facts.propertiesSentCount > 0 || brainLedger.facts.estimateSent || unrepliedTurn.hasImage
       || messagesOldestFirst.some((m) => m.sender === "customer" && customerPointsAtProperty(m.text ?? ""));
-    const promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
+    let promiseAix = resolveStaffPromiseAix(brainLedger.facts, messagesOldestFirst, {
       customerRequestedCheck: customerRequestedPropertyCheck({
         recentMessages: promiseBasis.map((m) => ({ sender: m.sender, text: m.text })),
         sentPropertyCount: brainLedger.facts.propertiesSentCount,
@@ -3263,6 +3268,14 @@ ${history}`;
     // 2026-09-17 竹内（慶次事例）: 探し続ける約束（オススメできるお部屋を随時確認→出次第お送り）は
     //   物件ピックアップ（複数）と物件オススメ（1件）の2つを並べる（どちらで送るかはスタッフが決める）
     let promiseAltAction: string | null = null;
+    // 2026-10-14（ブレイン基準でない所の洗い出し #3）: 約束の AIX の差し替えは override-demote の家族 staff_promise（BRAIN_DEMOTE_STAFF_PROMISE=off で旧）。
+    //   LLM が同じ族の AIX を選んだ番は今まで通り（promise:* の出所＝2段で言い直さない）。違う時（返信・別の AIX）はブレインの答えのまま・食い違いを記録。
+    //   約束が残っている事は LLM の前に材料（行動台帳＋staffPromiseMaterialLine）で渡している
+    if (promiseAix && !samePromiseFamily(promiseAix.action, finalAix ?? null)
+      && !applyOverride(demotedOverrides, "staff_promise", `promise:${promiseAix.kind}`, promiseAix.action, finalAix ?? null)) {
+      console.log(JSON.stringify({ tag: "brain:staff-promise-demoted", conversationId, kind: promiseAix.kind, would: promiseAix.action, brain: finalAix ?? null }));
+      promiseAix = null;
+    }
     if (promiseAix) {
       finalAix = promiseAix.action;
       decisionSource = `promise:${promiseAix.kind}`;
@@ -3702,7 +3715,7 @@ ${history}`;
           hesitancy: typeof parsed.hesitancy_pattern === "string" ? parsed.hesitancy_pattern : null,
           companyFactAsked: matchCompanyFacts(turnTextNoImg).length > 0,
         });
-        if (np.yes) {
+        if (np.yes && applyOverride(demotedOverrides, "turn_route_guards", "guard:not_pickup_turn", null, finalAix)) {
           console.log(JSON.stringify({ tag: "brain:not-pickup-turn", conversationId, from: finalAix, why: np.why }));
           finalAix = null; sceneSignalCheckPattern = null;
           decisionSource = `${decisionSource ?? "llm"}+not_pickup_turn`;
@@ -3710,20 +3723,20 @@ ${history}`;
       }
       if (finalAix === "estimate_sheet") {
         const er = estimateToReply({ text: turnTextNoImg, turnHasPropertyMedia: unrepliedTurn.hasImage || /https?:\/\//.test(unrepliedTurn.text ?? "") });
-        if (er.yes) {
+        if (er.yes && applyOverride(demotedOverrides, "turn_route_guards", "guard:estimate_to_reply", null, finalAix)) {
           console.log(JSON.stringify({ tag: "brain:estimate-to-reply", conversationId, why: er.why }));
           finalAix = null; sceneSignalCheckPattern = null;
           decisionSource = `${decisionSource ?? "llm"}+estimate_to_reply`;
         }
       }
-      if (finalAix === "guarantor_info" && guarantorAsCondition(turnTextNoImg)) {
+      if (finalAix === "guarantor_info" && guarantorAsCondition(turnTextNoImg) && applyOverride(demotedOverrides, "turn_route_guards", "guard:guarantor_as_condition", "property_send", finalAix)) {
         console.log(JSON.stringify({ tag: "brain:guarantor-as-condition", conversationId }));
         finalAix = "property_send"; sceneSignalCheckPattern = null;   // 後の2段の判定で探す約束（pickup）になる
         decisionSource = `${decisionSource ?? "llm"}+guarantor_as_condition`;
       }
       if (finalAix === "viewing_invite") {
         const vr = viewingInviteToReply({ text: turnTextNoImg, viewingDecided: !!brainLedger.facts.viewingAppointment });
-        if (vr.yes) {
+        if (vr.yes && applyOverride(demotedOverrides, "turn_route_guards", "guard:viewing_to_reply", null, finalAix)) {
           console.log(JSON.stringify({ tag: "brain:viewing-invite-to-reply", conversationId, why: vr.why }));
           finalAix = null; sceneSignalCheckPattern = null;
           decisionSource = `${decisionSource ?? "llm"}+viewing_to_reply`;
@@ -4524,7 +4537,7 @@ ${history}`;
     // 10/09 試験 q049・q050: 内覧調整は早い所の歯止めの後の規則（内覧の流れ・信号）でも立つ＝最後にもう一度当てる
     if (finalAix === "viewing_invite" && !promiseAix && turnRouteGuardsEnabled() && !isPostApplyStatus(convStatus)) {
       const vr = viewingInviteToReply({ text: turnTextNoImg, viewingDecided: !!brainLedger.facts.viewingAppointment });
-      if (vr.yes) {
+      if (vr.yes && applyOverride(demotedOverrides, "turn_route_guards", "guard:viewing_to_reply(late)", null, finalAix)) {
         console.log(JSON.stringify({ tag: "brain:viewing-invite-to-reply", conversationId, why: vr.why, late: true }));
         finalAix = null; replyMode = "auto_reply";
         decisionSource = `${decisionSource ?? "llm"}+viewing_to_reply`;
@@ -4534,7 +4547,7 @@ ${history}`;
       lastStaffTexts: messagesOldestFirst.filter((m) => m.sender !== "customer").map((m) => m.text ?? ""),
       customerText: turnTextNoImg,
       ackOnly: customerAckAfter || isAckOnlyTurn(unrepliedTurn.text ?? ""),
-    })) {
+    }) && applyOverride(demotedOverrides, "turn_route_guards", "guard:online_viewing_ack", null, finalAix)) {
       console.log(JSON.stringify({ tag: "brain:online-viewing-ack", conversationId, from: finalAix }));
       finalAix = null; replyMode = "auto_reply";
       decisionSource = `${decisionSource ?? "llm"}+online_viewing_ack`;

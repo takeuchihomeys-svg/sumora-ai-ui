@@ -2,7 +2,7 @@
 import { routeTypeOf, pickRouteExamples, routeTypeBrainText, routeStatLine, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteExample } from "../brain-route-type";
 import { ROUTE_EXAMPLES, ROUTE_TYPE_STATS } from "../brain-route-type-data";
 import { lowPressNote, catalogBlockForBrain } from "../aix-catalog";
-import { pickupPromiseOpen, pickupReadyMaterialLine, directPropertyNeedsPromise } from "../override-demote";
+import { pickupPromiseOpen, pickupReadyMaterialLine, directPropertyNeedsPromise, overrideDemoted, samePromiseFamily, staffPromiseMaterialLine, applyOverride } from "../override-demote";
 import { textFingerprint } from "../brain-judge-examples";
 
 let pass = 0, fail = 0;
@@ -75,6 +75,18 @@ t("約束なし", !pickupPromiseOpen({ lastPromisedKind: null }));
 t("材料の行: 送れる物件があり約束なし → まず約束の一文", /まだピックアップしてお送りする約束をしていない/.test(pickupReadyMaterialLine(true, false, {})));
 t("材料の行: 約束あり・分からない → 旧の行", !/まだピックアップ/.test(pickupReadyMaterialLine(true, true, {})) && !/まだピックアップ/.test(pickupReadyMaterialLine(true, null, {})));
 t("戻す: TWO_STAGE_DIRECT_NEEDS_PROMISE=off", !directPropertyNeedsPromise({ TWO_STAGE_DIRECT_NEEDS_PROMISE: "off" }) && !/まだピックアップ/.test(pickupReadyMaterialLine(true, false, { TWO_STAGE_DIRECT_NEEDS_PROMISE: "off" })));
+
+// ── 10/14 #3 約束の AIX の差し替え（staff_promise）・#5 turn_route_guards の配線
+t("staff_promise は既定で下げる・off で旧", overrideDemoted("staff_promise", {}) && !overrideDemoted("staff_promise", { BRAIN_DEMOTE_STAFF_PROMISE: "off" }));
+t("turn_route_guards は既定で上書きのまま（今の動き）・on で下げる", !overrideDemoted("turn_route_guards", {}) && overrideDemoted("turn_route_guards", { BRAIN_DEMOTE_TURN_GUARDS: "on" }));
+t("同じ族: 物件ピックアップの約束 × LLM の物件オススメ", samePromiseFamily("property_send", "property_recommendation"));
+t("同じ族: 確認の約束 × 確認します", samePromiseFamily("property_check_result", "acknowledge_check"));
+t("違う族: 見積の約束 × LLM の返信（null）・内覧調整", !samePromiseFamily("estimate_sheet", null) && !samePromiseFamily("estimate_sheet", "viewing_invite"));
+t("材料: 約束なしは空", staffPromiseMaterialLine({}) === "");
+t("材料: 確認と見積の約束", /確認（果たすのは AIX【物件確認した】/.test(staffPromiseMaterialLine({ confirmationPromisedUnfulfilled: true, estimatePromisedUnfulfilled: true })) && /御見積書/.test(staffPromiseMaterialLine({ estimatePromisedUnfulfilled: true })));
+const dl: Parameters<typeof applyOverride>[0] = [];
+t("下げた時は記録して false", applyOverride(dl, "staff_promise", "promise:check", "property_check_result", null, {}) === false && dl.length === 1 && dl[0].family === "staff_promise");
+t("上書きのままの家族は true（記録なし）", applyOverride(dl, "turn_route_guards", "guard:not_pickup_turn", null, "property_send", {}) === true && dl.length === 1);
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

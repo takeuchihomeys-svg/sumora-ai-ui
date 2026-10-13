@@ -10,7 +10,7 @@
 
 type Env = Record<string, string | undefined>;
 
-export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards" | "search_exhausted";
+export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards" | "search_exhausted" | "staff_promise";
 
 /** 家族ごとの戻す環境変数（"off" で旧の上書きに戻す） */
 export const DEMOTE_ENV: Record<OverrideFamily, string> = {
@@ -23,6 +23,8 @@ export const DEMOTE_ENV: Record<OverrideFamily, string> = {
   turn_route_guards: "BRAIN_DEMOTE_TURN_GUARDS",
   // 2026-10-13 棚卸し B-1: 送付だけの印（weak）での出し切り→【全力サポート】の書き換え（search-exhausted.weakExhaustDemoted と同じ変数）
   search_exhausted: "BRAIN_DEMOTE_SEARCH_EXHAUSTED",
+  // 2026-10-14 まだ果たしていないこちらの約束（aix-task-link.resolveStaffPromiseAix・promise:*）が LLM の AIX を約束の AIX に差し替える
+  staff_promise: "BRAIN_DEMOTE_STAFF_PROMISE",
 };
 
 /** 下げた家族（既定は下げる＝on。家族を足す時はここで既定を決める） */
@@ -35,9 +37,14 @@ const DEFAULT_ON: Record<OverrideFamily, boolean> = {
   two_stage_promise: true,
   closed_ack_wait: true,
   viewing_day_ack: true,
-  turn_route_guards: true,
+  // 2026-10-14 配線（brain-core の turn-route-guards 6か所が applyOverride を通る）。宣言は true だったが配線漏れで実際は上書きだった＝今の動きのまま false にした。
+  //   この歯止めは AIX→返信の向き（検討します・キャンセル・決まった内覧への追加）＝AIX の言い過ぎを減らす側。下げるのは BRAIN_DEMOTE_TURN_GUARDS=on（試験で比べた結果は dept_line_reply.md 10/14）
+  turn_route_guards: false,
   // 10/13 試験の出し切り7問で下げると道 7→5（試験の正解は送付だけの印の後でも全力サポート）＝今は上書きのまま。材料を強くしてから下げる（search-exhausted.weakExhaustDemoted）
   search_exhausted: false,
+  // 2026-10-14 30日: promise:check 74・pickup 169・estimate 45番。LLM の生の答えがある番の食い違い check 21（ブレイン正 12／規則正 4）・estimate 5（3／1）・pickup 4（2／2）
+  //   ＝ブレインの答えのまま・約束が残っている事は材料（行動台帳の宣言＋staffPromiseMaterialLine）。LLM が同じ族を選んだ番は今まで通り promise:* の出所にする
+  staff_promise: true,
 };
 
 export function overrideDemoted(f: OverrideFamily, env: Env = process.env): boolean {
@@ -87,6 +94,23 @@ export function pickupReadyMaterialLine(ready: boolean, promised: boolean | null
   return ready
     ? `【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補がある＝物件の AIX（物件ピックアップした・1件特にオススメ）を直接出せる。ただし今のお客様の発言が条件の言い直し・質問・ご事情なら、先に答えてピックアップの約束（turn_contract の該当の route は promise）でもよい。どちらかを aix と turn_contract で同じに書く${notPromised}`
     : "【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補は無い＝物件の AIX を選ぶ番でも、まずピックアップしてお送りする約束の返信（turn_contract の該当の route は promise・aix は物件の AIX のままでよい＝約束の後で AIX）";
+}
+
+// ─── 2026-10-14: まだ果たしていないこちらの約束（promise:*）─────────────────────────────
+/** LLM の前に渡す材料の行（約束が残っている事・果たす AIX・食い違いの数）。約束が無ければ空 */
+export function staffPromiseMaterialLine(f: { estimatePromisedUnfulfilled?: boolean; pickupPromisedUnfulfilled?: boolean; confirmationPromisedUnfulfilled?: boolean }): string {
+  const ks: string[] = [];
+  if (f.confirmationPromisedUnfulfilled) ks.push("確認（果たすのは AIX【物件確認した】・内覧できるかの確認は【内覧調整】）");
+  if (f.estimatePromisedUnfulfilled) ks.push("御見積書（果たすのは AIX【見積書送る】）");
+  if (f.pickupPromisedUnfulfilled) ks.push("ピックアップ（果たすのは AIX【物件ピックアップした】／【物件オススメ】）");
+  if (!ks.length) return "";
+  return `【まだ果たしていないこちらの約束（材料）】${ks.join("・")}。お客様の今の発言がお礼・了承だけ・約束の催促なら、約束を果たす AIX の番。お客様が新しい問い・ご事情を書いた番は、その問いに答える返信が先のこともある（30日・確認の約束が残る番の食い違い: ブレインの答えが正 12・約束の AIX が正 4）`;
+}
+/** 約束の AIX と LLM の AIX が同じ族か（同じなら今まで通り promise:* の出所にして2段の言い直しを防ぐ） */
+export function samePromiseFamily(promiseAction: string, llmAix: string | null): boolean {
+  if (!llmAix) return false;
+  const fam = (a: string) => (/^property_(?:send|recommendation|search)$/.test(a) ? "物件" : a === "acknowledge_check" ? "property_check_result" : a);
+  return fam(promiseAction) === fam(llmAix);
 }
 
 /**
