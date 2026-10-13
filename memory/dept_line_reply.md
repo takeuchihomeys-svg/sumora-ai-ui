@@ -1,6 +1,15 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-10-13
+最終更新: 2026-10-14
+## 🎯 AIX の物件名の当たり率の直し（10/13 竹内さん「なぜここができていないのか、原因を見つけて改善」→ OK・ブランチ brain-propname-1013）
+- **原因（外れ70件を1件ずつ）**: 表記ゆれ（照合の弱さ）24・ブレインの取り違え 12・お客様の名前の無い持ち込み 8・複数の物件の番 6・別の部屋で答えた 5・時間のずれ 5・記録の誤り 5・読み取りの化け 5
+- **区切り1 照合**（property-name-loose.ts）: 号室の形・WEST/ウエスト・旧字・誤字1〜2字・名前の並び。区別の印（数字・ローマ数字・方角）が違えば別。台帳の寄せ方 matchRoomRefs は変えない。戻す PROPERTY_NAME_LOOSE_MATCH=off
+- **区切り2 実在ゲート**（current-property-gate.refineCurrentProperty）: URL の番号・仮の名前は通さない。画像の読み取りにしか無い名前を通さない案は 60日で 131番を落とし多くが正しい名前だったので入れず、こちらの本文に書いた台帳の名前×同じ部屋の時だけ表記を直す。戻す CURRENT_PROPERTY_LEDGER_CANON=off
+- **区切り3 記録**: 売上サポの handoff の物件名が別の種類の AIX に先入れされていた（未桜 10/9・YUMA 9/27 の原因）→ 同じ種類だけ（NEXT_PUBLIC_PICKUP_PREFILL_SAME_AIX=off）。記録の物件名が本文に出ない時は本文の名前（AIX_NAMES_FROM_TEXT=off・60日 3件・誤り0）
+- **区切り4 材料**（property-thread）: 「1番上のやつ・2番目・最後の」＝直前の送付の並び（PROPERTY_THREAD_ORDINAL=off）・内覧の日にちの返事＝日程を出した物件（PROPERTY_THREAD_VIEWING_REPLY=off）
+- **区切り5 複数**: current_properties（ブレインの物件を先・台帳の ▶ を後ろ・LLM の出力は変えない）を AIX の候補に並べる（CURRENT_PROPERTIES=off）
+- **当たり率（60日・同じ測り方）**: 54%（82/152）→ 区切り1 68% → 1＋3＋5 72%（109/152）。10/8以降 56%→65%。試験（DeepSeek・53問）合格 35→39・current_property 2/6→3/6・悪くなった2問は --repeat=3 で合格（揺れ）
+- 先入れの線（90d263b1）に届く形は件数のある物には無い（待ち合わせ×部屋まで 83%）→ 先入れはまだしない
 ## 🧠 画面の物件名をブレイン基準にそろえる（3-2・10/13 竹内さん「ブレインとぶつかる独立の判断を根本からブレイン基準に」・未桜・ブランチ）
 - **やった事**: ブレインの今の物件（current_property＝suggested_aix_meta / last_brain_meta の新しい方・判断した顧客発言の時刻 analyzed_msg_ts が最新のお客様の発言より前でない時だけ）を ①状況の1行の主のお部屋 ②AIX の物件名の候補の一番上 ③【必ず】の確認の約束の物件名 に使う。純関数は `app/lib/brain-property-display.ts`（照合・新しさは `customer-state.ts` の `isBrainPickFresh`・`brainFocusRoom`）
 - **【輪】**: customer-state はブレインの入力（brain-core の `getCustomerState(conversationId)`）。`getCustomerState`/`loadCustomerStateInput` の `brainProperty` は既定 false、**画面の経路 `GET /api/customer-state` だけが true**。テスト（brain-property-display.test.ts）が brain-core・生成・見積の引き継ぎ等で渡していない事を文で確かめる
