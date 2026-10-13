@@ -3889,5 +3889,185 @@
   "id": "q138",
   "addedAt": "2026-10-13",
   "addedBy": "brain-exam-add --add-batch"
+ },
+ {
+  "type": "返信かAIXか",
+  "tags": [
+   "延期・取りやめ",
+   "竹内さんの番"
+  ],
+  "source": "10/14 返信か AIX かの材料（audit-split-reply-aix・竹内さんの番の再生）",
+  "conv": "db3722a5-1345-422c-8720-5134eeeee6c9",
+  "at": "2026-09-10T08:51:45.033+00:00",
+  "accept": [
+   "返信"
+  ],
+  "mustNot": [
+   "AIX:物件",
+   "2段:pickup",
+   "AIX:followup_revive"
+  ],
+  "asks": [
+   {
+    "q": "転勤が無くなり今回は見送り",
+    "route": "reply",
+    "point": "見送りを受け、またお部屋探しの際はいつでも連絡くださいと閉じる"
+   }
+  ],
+  "why": "竹内さんは返信で受けて閉じた（物件の AIX・探す約束をしない）",
+  "id": "q139",
+  "addedAt": "2026-10-14",
+  "addedBy": "brain-exam-add --add-batch"
+ },
+ {
+  "type": "返信かAIXか",
+  "tags": [
+   "費用の問い",
+   "答えられる質問",
+   "竹内さんの番"
+  ],
+  "source": "10/14 返信か AIX かの材料",
+  "conv": "851c5a0d-3c8e-4b08-aec5-41fe69303946",
+  "at": "2026-09-14T06:18:40.717+00:00",
+  "accept": [
+   "返信"
+  ],
+  "mustNot": [
+   "AIX:estimate_sheet",
+   "2段:estimate"
+  ],
+  "asks": [
+   {
+    "q": "見積の合計に駐車場代11,000円が足される感じか",
+    "route": "reply",
+    "point": "はい、駐車場費用は別途必要と答える"
+   }
+  ],
+  "why": "送った御見積書の合計に駐車場代が別かは会話で答えられる＝竹内さんは返信で一言",
+  "id": "q140",
+  "addedAt": "2026-10-14",
+  "addedBy": "brain-exam-add --add-batch"
+ },
+ {
+  "type": "返信かAIXか",
+  "tags": [
+   "内覧の希望・日程",
+   "決まった事",
+   "竹内さんの番"
+  ],
+  "source": "10/14 返信か AIX かの材料",
+  "conv": "ad97cd40-26d2-4e22-8f0f-b18159786f1d",
+  "at": "2026-10-12T01:25:00.806+00:00",
+  "accept": [
+   "返信"
+  ],
+  "mustNot": [
+   "AIX:meeting_place",
+   "AIX:viewing_invite"
+  ],
+  "asks": [
+   {
+    "q": "17時からお願いします・行きたい場所は決まったら言う",
+    "route": "reply",
+    "point": "17時を受け、行きたいお部屋が決まったら連絡をと返す（待ち合わせの場所はまだ決めない）"
+   }
+  ],
+  "why": "こちらが出した時間の枠で時刻を決めただけ・行き先が未定＝竹内さんは返信で受けた",
+  "id": "q141",
+  "addedAt": "2026-10-14",
+  "addedBy": "brain-exam-add --add-batch"
+ },
+ {
+  "type": "返信かAIXか",
+  "tags": [
+   "内覧の希望・日程",
+   "竹内さんの番"
+  ],
+  "source": "10/14 返信か AIX かの材料",
+  "conv": "22b2511e-034e-44f4-8c10-b737716a3284",
+  "at": "2026-10-13T10:51:24.854+00:00",
+  "accept": [
+   "2段:check",
+   "返信"
+  ],
+  "mustNot": [
+   "AIX:viewing_invite"
+  ],
+  "asks": [
+   {
+    "q": "日曜日とかは案内可能か",
+    "route": "promise",
+    "routes": [
+     "promise",
+     "reply"
+    ],
+    "point": "土日で時間を調整して明日連絡すると約束（候補日はまだ出さない）"
+   }
+  ],
+  "why": "竹内さんは候補日を出さず「土日でお時間調整し明日ご連絡」と約束した",
+  "id": "q142",
+  "addedAt": "2026-10-14",
+  "addedBy": "brain-exam-add --add-batch"
+ },
+ {
+  "type": "返信かAIXか",
+  "tags": [
+   "受けだけ（約束の後）",
+   "竹内さんの番"
+  ],
+  "source": "10/14 返信か AIX かの材料",
+  "conv": "63fa0c26-2e4a-4818-a225-16584ac7d842",
+  "at": "2026-10-12T09:00:41.632+00:00",
+  "accept": [
+   "返信",
+   "2段:check"
+  ],
+  "mustNot": [
+   "AIX:zenryoku_support",
+   "AIX:物件"
+  ],
+  "asks": [
+   {
+    "q": "よろしくお願いします",
+    "route": "reply",
+    "routes": [
+     "reply",
+     "promise"
+    ],
+    "point": "交渉の結果が分かり次第連絡すると受ける"
+   }
+  ],
+  "why": "交渉の約束の後の了承。竹内さんは返信（全力サポート・物件の AIX ではない）",
+  "id": "q143",
+  "addedAt": "2026-10-14",
+  "addedBy": "brain-exam-add --add-batch"
+ },
+ {
+  "type": "返信かAIXか",
+  "tags": [
+   "検討中",
+   "竹内さんの番"
+  ],
+  "source": "10/14 返信か AIX かの材料",
+  "conv": "f5e92bc6-6549-464d-80f2-9515d5809696",
+  "at": "2026-09-15T08:17:07.76+00:00",
+  "accept": [
+   "返信"
+  ],
+  "mustNot": [
+   "AIX:物件",
+   "2段:pickup"
+  ],
+  "asks": [
+   {
+    "q": "長居と悩んでいるので検討する",
+    "route": "reply",
+    "point": "受けて、気になる点はいつでもと閉じる"
+   }
+  ],
+  "why": "検討しますの番＝竹内さんは返信で閉じた",
+  "id": "q144",
+  "addedAt": "2026-10-14",
+  "addedBy": "brain-exam-add --add-batch"
  }
 ]

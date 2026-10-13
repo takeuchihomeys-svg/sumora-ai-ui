@@ -371,6 +371,22 @@ export const AIX_DECISION_ORDER = [
 /** 物件確認した の「結果」のピッカー（スタッフが確認してから選ぶ＝ブレインは選ばない・まとめて1行で見せる） */
 const RESULT_PICKERS = new Set(["available", "unavailable", "alternative", "exclusive"]);
 
+/**
+ * 2026-10-14 押されない AIX（ブレインが選んでもスタッフが押さない）の材料（竹内さん 10/13「AIX か返信か分別できる必要がある」）。
+ *   数え（30日 839番・scripts/audit-split-reply-aix.ts）: ブレインが選んだ番でスタッフが同じ AIX を押した／返信で済ませた
+ *     guarantor_info 0/10・返信 6 ／ cost_explain 1/5・返信 3 ／ greeting_viewing 1/5（内覧の挨拶は時刻でスタッフが出す）
+ *   候補からは消さない（押す番はある）＝出す条件を材料で絞る。戻す: BRAIN_AIX_LOW_PRESS_NOTE=off
+ */
+export const LOW_PRESS_NOTES: Record<string, string> = {
+  guarantor_info: "押された実績（30日）: ブレインが選んだ 10番で押されたのは 0（返信で答えた 6）。保証会社の一般的な事・審査の通りやすさ・資料に書いてある保証会社は返信で答える。選ぶのは、スタッフが確かめた複数の物件の保証会社の一覧を送る時だけ",
+  cost_explain: "押された実績（30日）: ブレインが選んだ 5番で押されたのは 1（返信で答えた 3）。2,980円・仲介手数料0円の仕組みは会社の事実＝返信で答える。選ぶのは、お客様が安さを強く疑い、物件ごとの還元の説明（スタッフだけが知る AD）を送る時だけ",
+  greeting_viewing: "押された実績（30日）: ブレインが選んだ 5番で押されたのは 1。内覧の挨拶は当日の朝（内覧前）・内覧が終わった後（内覧後）にスタッフが時刻で出す物＝お客様の発言（お礼・了承・遅れる・着いた）への答えとしては選ばない（その番は返信）",
+};
+export function lowPressNote(aixType: string, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string {
+  if ((env.BRAIN_AIX_LOW_PRESS_NOTE ?? "").trim().toLowerCase() === "off") return "";
+  return LOW_PRESS_NOTES[aixType] ?? "";
+}
+
 export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { includeAll?: boolean } = {}): string {
   const rows = AIX_CATALOG.filter((e) => e.brainSelectable && (o.includeAll || !scene || !e.scenes.length || e.scenes.includes(scene)));
   const byBtn = new Map<string, CatalogEntry[]>();
@@ -380,6 +396,8 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
     const [t, btn] = k.split("|");
     const bk = BUTTON_KNOW[t];
     lines.push(`- ${t}【${btn}】 送る情報: ${bk?.staffOnly || "（定型の文・フォーム。スタッフだけが知る情報なし）"}${bk?.lines && !es[0].picker ? `｜線: ${bk.lines}` : ""}${!es[0].picker ? `｜使う時: ${es[0].when}` : ""}`);
+    const low = lowPressNote(t);
+    if (low) lines.push(`    ・${low}`);
     if (!es[0].picker) continue;
     if (t === "property_check_result" && btn.startsWith("物件確認した")) {
       const res = es.filter((e) => RESULT_PICKERS.has(e.picker!.value)).map((e) => e.picker!.label);

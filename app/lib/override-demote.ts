@@ -78,11 +78,32 @@ export function compactDemoted(list: DemotedOverride[]): Array<{ f: OverrideFami
 //   ブレインが同じ出力の turn_contract でその依頼を route=aix（約束でなく AIX で直接）と言い、送れる物件があり、約束の項目が無い時だけ上書きしない。
 //   ブレインの turn_contract が無い・約束と言っている・送れる物件が無い時は今まで通り約束の返信（安全側）。
 
-/** プロンプトに入れる材料の行（物件の AIX を直接出せるか） */
-export function pickupReadyMaterialLine(ready: boolean): string {
+/** プロンプトに入れる材料の行（物件の AIX を直接出せるか）。promised＝この件のピックアップの約束がもうある（pickupPromiseOpen）・null は分からない */
+export function pickupReadyMaterialLine(ready: boolean, promised: boolean | null = null, env: Env = process.env): string {
+  // 2026-10-14 竹内さん（10/13「AIX か返信か分別」）: 約束していない番の物件の AIX は、竹内さんはまず約束（条件の番 竹内さん 約束 126／AIX 5・two-stage の線）
+  const notPromised = ready && promised === false && directPropertyNeedsPromise(env)
+    ? "。ただし、この件ではまだピックアップしてお送りする約束をしていない＝竹内さんはまず約束の返信（条件の番 約束 126・物件の AIX を直接 5）。物件の AIX を直接出すのは、もう約束している・今日もう同じ約束をした・お礼や了承だけの番"
+    : "";
   return ready
-    ? "【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補がある＝物件の AIX（物件ピックアップした・1件特にオススメ）を直接出せる。ただし今のお客様の発言が条件の言い直し・質問・ご事情なら、先に答えてピックアップの約束（turn_contract の該当の route は promise）でもよい。どちらかを aix と turn_contract で同じに書く"
+    ? `【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補がある＝物件の AIX（物件ピックアップした・1件特にオススメ）を直接出せる。ただし今のお客様の発言が条件の言い直し・質問・ご事情なら、先に答えてピックアップの約束（turn_contract の該当の route は promise）でもよい。どちらかを aix と turn_contract で同じに書く${notPromised}`
     : "【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補は無い＝物件の AIX を選ぶ番でも、まずピックアップしてお送りする約束の返信（turn_contract の該当の route は promise・aix は物件の AIX のままでよい＝約束の後で AIX）";
+}
+
+/**
+ * 2026-10-14 竹内さん（10/13）「ちゃんと AIX か返信か分別」: 物件の AIX を直接出す（2段の約束を挟まない）のは、この件のピックアップの約束が
+ *   もうある時だけ（下げた 4-3 の「ブレインが route=aix と言い・送れる物件がある」に「約束済み」を足す）。まだ約束していない番は約束の返信が先
+ *   （two-stage の線: 条件の番 竹内さん 約束 126／AIX 5）。戻す: TWO_STAGE_DIRECT_NEEDS_PROMISE=off
+ */
+export function directPropertyNeedsPromise(env: Env = process.env): boolean {
+  return (env.TWO_STAGE_DIRECT_NEEDS_PROMISE ?? "").trim().toLowerCase() !== "off";
+}
+/** この件のピックアップの約束がまだ果たされずにあるか（台帳の最後の約束がピックアップで、その後に物件を送っていない・または今日もうピックアップを約束した） */
+export function pickupPromiseOpen(f: { lastPromisedKind?: string | null; lastPromisedAt?: string | null; lastPropertiesSentAt?: string | null }, promisedTodayKinds: ReadonlyArray<string> = []): boolean {
+  if (promisedTodayKinds.includes("pickup")) return true;
+  if (f.lastPromisedKind !== "pickup_declared" || !f.lastPromisedAt) return false;
+  const p = Date.parse(f.lastPromisedAt);
+  const s = f.lastPropertiesSentAt ? Date.parse(f.lastPropertiesSentAt) : NaN;
+  return Number.isFinite(p) && (!Number.isFinite(s) || s < p);
 }
 
 const PROPERTY_AIX_RE = /^(?:property_send|property_recommendation|property_search)$/;

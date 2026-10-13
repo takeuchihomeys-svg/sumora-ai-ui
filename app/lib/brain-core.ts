@@ -22,7 +22,7 @@ import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists, refineCurrentProperty, currentPropertiesOf } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
 import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
-import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -56,6 +56,8 @@ import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from 
 import { catalogBlockForBrain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
+import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
+import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
 import { JUDGE_EXAMPLES } from "@/app/lib/brain-judge-examples-data";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
@@ -303,7 +305,7 @@ export type SuggestedAixMeta = {
   /** 10/09: LLM が選んだ AIX（決定論の規則で変わる前・記録用） */
   aix_llm?: string;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
-  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null };
+  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null };
   // 2026-09-10 Fable5 みく事例: これは **conversation-scope**（会話全体で2回以上登場した論点）。
   // 「今回のメッセージが懸念である」ことを一切示さない。reply-context.ts の分類器（mergeBrainEvidence /
   // classifyCustomerResponse）には toBrainConversationScope 経由でしか渡らず、型として渡せない
@@ -2410,6 +2412,22 @@ ${catalogBlockForBrain(brainScene)}
   const judgeExamplesText = judgeExamplesEnabled() && !isPostApplyStatus(convStatus)
     ? judgeExamplesBrainText(pickJudgeExamples(JUDGE_EXAMPLES, { customerText: unrepliedTurn.text ?? "", conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") }))
     : "";
+  // 2026-10-14 返信か AIX かの材料（今の発言の型の候補・竹内さんの実際の数・見分け方・竹内さんの実送信の手本 最大3件・app/lib/brain-route-type.ts）。
+  //   答えは書かない（P0 9eb6aa9c）。毎回変わる並び＝キャッシュの印の外。戻す BRAIN_ROUTE_TYPE_MATERIAL=off（手本だけ BRAIN_ROUTE_TYPE_EXAMPLES=off）
+  let routeTypeText = "";
+  let routeTypeNow: RouteType | null = null;
+  if (routeTypeMaterialEnabled() && !isPostApplyStatus(convStatus)) {
+    routeTypeNow = routeTypeOf({
+      customerText: unrepliedTurn.text ?? "",
+      prevStaffText: typedMessages.find((m) => m.sender !== "customer")?.text ?? "",
+      ackOnly: !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""),
+    });
+    const picked = routeTypeNow && routeTypeExamplesEnabled()
+      ? pickRouteExamples(ROUTE_EXAMPLES, { type: routeTypeNow, customerText: unrepliedTurn.text ?? "", conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") })
+      : [];
+    routeTypeText = routeTypeBrainText(routeTypeNow, { stats: ROUTE_TYPE_STATS, examples: picked });
+    if (routeTypeNow) console.log(JSON.stringify({ tag: "brain:route-type", conversationId, type: routeTypeNow, examples: picked.length }));
+  }
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
   type ScheduledMsg = { text: string | null; scheduled_at: string };
@@ -2570,12 +2588,15 @@ ${catalogBlockForBrain(brainScene)}
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-13（ブレインの使い残し 4-3）: 送れる物件が手元にあるか（2段の約束をブレインが決める材料・申込以降は出さない）
   let pickupReadyMaterial: boolean | null = null; // 10/13 全力サポートを候補にするかの材料にも使う
+  let pickupPromisedOpenNow: boolean | null = null; // 10/14 この件のピックアップの約束がもうあるか（4-3 で物件の AIX を直接にしてよいか）
   if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
     try {
       const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
       const readyNow = freshPickupReady((pendNow ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
       pickupReadyMaterial = readyNow;
-      customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow)}`;
+      // 2026-10-14: この件のピックアップの約束がもうあるか（無ければ竹内さんはまず約束・材料の1行に足す）
+      pickupPromisedOpenNow = pickupPromiseOpen(brainLedger.facts, promiseKindsToday(typedMessages.filter((m) => m.sender !== "customer" && !m.is_aix_generated).map((m) => ({ text: m.text ?? "", createdAt: m.created_at })), Date.now()));
+      customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow, pickupPromisedOpenNow)}`;
     } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13 ブレイン基準（棚卸し B-1）: 出し切りの印（いつ・どの文・明示の印か送付だけか）を LLM の前に材料で渡す。
@@ -2805,11 +2826,11 @@ ${catalogBlockForBrain(brainScene)}
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${aixCatalogText}${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${ragKnowledgeText}
+    ? `${aixCatalogText}${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${ragKnowledgeText}
+    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${routeTypeText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -2820,7 +2841,7 @@ ${history}`;
     chars: {
       prevMeta: prevMetaText.length, winning: winningPatternsText.length, actionWinRate: actionWinRateText.length, templates: templatesText.length,
       actionRules: actionRulesText.length, contractExamples: contractExamplesPhaseText.length, status: statusText.length, timing: timingText.length,
-      flags: flagsText.length, aixHistory: aixHistoryText.length, ledger: ledgerText.length, sceneEvidence: sceneEvidenceText.length, judgeExamples: judgeExamplesText.length,
+      flags: flagsText.length, aixHistory: aixHistoryText.length, ledger: ledgerText.length, sceneEvidence: sceneEvidenceText.length, judgeExamples: judgeExamplesText.length, routeType: routeTypeText.length,
       cond: condText.length, profile: profileText.length, aiSummary: aiSummaryNote.length, scheduled: scheduledText.length, tasks: tasksText.length,
       viewings: viewingsText.length, examples: examplesText.length, checkpoint: checkpointText.length, ragKnowledge: ragKnowledgeText.length,
       sentProps: sentPropsText.length, propertySearch: propertySearchText.length, history: history.length,
@@ -3872,7 +3893,9 @@ ${history}`;
       } else viewingDateAnswer = null;
       // 2026-10-13（ブレインの使い残し 4-3）: 物件の AIX の2段（pickup・pickup_unless_ack）は、ブレインが同じ出力の turn_contract で
       //   「約束でなく AIX で直接」と言い、送れる物件がある時は上書きしない（食い違いはログ）。それ以外は今まで通り約束の返信。戻す BRAIN_DEMOTE_TWO_STAGE=off
+      // 2026-10-14: まだこの件のピックアップを約束していない番は直接にしない（竹内さんはまず約束・TWO_STAGE_DIRECT_NEEDS_PROMISE=off で旧）
       if (twoStage && twoStage.kind === "pickup" && pickupReadyForChoice === true
+        && (!directPropertyNeedsPromise() || pickupPromisedOpenNow !== false)
         && brainContractSaysDirectPropertyAix((parsed as { turn_contract?: unknown }).turn_contract, finalAix)
         && !applyOverride(demotedOverrides, "two_stage_promise", twoStage.source, null, finalAix)) {
         twoStage = null;
@@ -4651,7 +4674,9 @@ ${history}`;
         // 2026-10-13 棚卸し B-6: LLM が出した current_property（ゲートの前・記録だけ）
         cp: rawCurrentProperty || null,
         // 2026-10-13 棚卸しの表 2: 生の本質の道の数（reconcile の前）。digest.tc は規則の後の値なので、2段の食い違いはこちらで数える
-        tc: rawContractRouteDigest((parsed as { turn_contract?: unknown }).turn_contract) },
+        tc: rawContractRouteDigest((parsed as { turn_contract?: unknown }).turn_contract),
+        // 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ）
+        rt: routeTypeNow },
       repeated_concern: repeatedConcern,
       current_property: currentProperty,
       // 2026-10-13 当たり率の直し（区切り5）: 今の番の物件の並び（ブレインの物件を先・台帳の ▶ を後ろ）。LLM の出力は変えない。戻す CURRENT_PROPERTIES=off
