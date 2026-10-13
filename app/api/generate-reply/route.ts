@@ -289,7 +289,7 @@ import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
 import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
-import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled } from "@/app/lib/repeat-brain-align";
+import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterial } from "@/app/lib/repeat-brain-align";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -1333,9 +1333,8 @@ function buildGenerationMessages(
   //   （ピックアップ・撮影でない）なら復唱させず受けだけ（竹内さんの手打ち60日: 受けだけの番の言い直し mgmt 0/9・vacancy 0/10・estimate 0/4・screening 0/5）。
   //   CP_ACK→CP_ACK_WAIT（route の waitFormPromised）・確認の橋渡しの3注記（waitFormConfirmAck）も同じ値でそろえる。ピックアップ・撮影は竹内さんの形（待ちの形の1文）のまま
   const echoToWait = !!staffPromise && ackEchoToWait(staffPromise.label, brainContractOn);
-  const echoToWaitNote = echoToWait
-    ? `\n【🔁 直前の約束はお伝え済み（材料・中身は【🧭 この番の本質】の「もう言った事」が上）】直前にこちらが「${staffPromise!.label}」を約束済みで、お客様は了承しただけ。竹内さんは受けへの返事で確認・連絡・見積・審査の約束を言い直さない＝同じ約束を書き直さず、受けだけ（「はい😊！！」＋「気になる点出てきましたら何時でもお気軽にご連絡ください！！」か「何卒よろしくお願い致します！！」）。`
-    : "";
+  // 2026-10-13: 待ちの形の1文（「確認出来次第ご連絡させて頂きますので、何卒…」）も竹内さんの形として許す（repeat-brain-align.confirmAckMaterial・ACK_CONFIRM_WAIT_LINE=off で旧の受けだけ）
+  const echoToWaitNote = echoToWait ? confirmAckMaterial(staffPromise!.label) : "";
   const promiseEchoNote = echoToWait ? echoToWaitNote : staffPromise
     ? `\n【🔁 直前のスタッフ約束の復唱（決定論・最優先）】お客様の最新メッセージは短い了承語で、内容は「直前のスタッフ約束への了承」です。直前の約束: ${staffPromise.label}（未履行）。返信は開口語「はい😊！！」（単独行）＋この約束をそのまま復唱するWE DO 1文（例:「${staffPromise.echo}」）＋締め1文のみ（場面【短い了承】）。撮影・ご査収・内覧日程・申込誘導など、直前の約束に無い業務語彙を新たに持ち出さない。「ご都合よろしいお日にちに」をスタッフ作業に接続しない。`
     : "";

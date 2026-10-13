@@ -100,6 +100,7 @@ export function judgeTurn(t: Turn, draft = t.draft): Judged[] {
   return hits.map((h) => ({ ...h, sentAlso: sentSs.some((x) => sentenceSimilarity(x, h.ref) >= 0.6 || sentenceSimilarity(x, h.sentence) >= 0.6) }));
 }
 
+const CONFIRM_FAMILY: ReadonlySet<string> = new Set(["vacancy", "mgmt", "estimate", "screening", "contact"]);
 /** 竹内さんの手打ちだけで: お客様が受けだけの番に、前のこちらの約束（何通前か）を言い直したか（下書きの有無に関わらず） */
 async function takeuchiBaseline(days: number) {
   const since = new Date(Date.now() - days * 86400e3).toISOString();
@@ -110,12 +111,15 @@ async function takeuchiBaseline(days: number) {
   const shapes = new Map<string, number>();
   const shapeSamples: string[] = [];
   let ackTurns = 0, ackWithPrior = 0, lines: number[] = [];
+  const confirmSplit = new Map<string, number>();
+  const confirmSamples: string[] = [];
+  const confirmTurnsOut: string[] | null = arg("write-confirm-turns") ? [] : null;
   for (let i = 0; i < convs.length; i += 40) {
     const ms = await page<Record<string, unknown>>((a, b) => sb.from("messages").select("conversation_id,sender,text,created_at,staff_writer")
       .in("conversation_id", convs.slice(i, i + 40)).gte("created_at", new Date(Date.now() - (days + 15) * 86400e3).toISOString()).order("created_at").range(a, b));
     const by = new Map<string, Msg[]>();
     for (const m of ms) { const c = String(m.conversation_id); if (!by.has(c)) by.set(c, []); by.get(c)!.push({ id: "", sender: String(m.sender), text: String(m.text ?? "").trim(), at: Date.parse(String(m.created_at)), writer: (m.staff_writer as string) ?? null, aix: false }); }
-    for (const arr of by.values()) {
+    for (const [convId, arr] of by.entries()) {
       for (let k = 1; k < arr.length; k++) {
         const m = arr[k];
         if (m.sender !== "staff" || m.writer !== "takeuchi" || m.at < Date.parse(since)) continue;
@@ -142,6 +146,16 @@ async function takeuchiBaseline(days: number) {
           const pf = priorPromiseForm(prior[0]?.text ?? "");
           if (pf) { const k2 = `前=${pf.form}・${pf.topic}→${sh}`; shapes.set(k2, (shapes.get(k2) ?? 0) + 1); }
           if (shapeSamples.length < 40) shapeSamples.push(`${sh}｜前: ${mask(prior[0].text).slice(-70)}｜竹内: ${mask(reply).slice(0, 80)}`);
+          // 2026-10-13（作る人・確認の約束への了承）: 前の約束が確認・連絡・見積・審査の時、待ちの形の1文が「同じ中身」か「別の中身（ピックアップ等）」かを分ける
+          if (pf && CONFIRM_FAMILY.has(pf.topic)) {
+            const waitSame = splitSentencesJa(reply).some((x) => /次第/.test(x) && (promiseTopics(x).some((t) => CONFIRM_FAMILY.has(t)) || /確認|ご連絡|進捗|結果/.test(x)) && !/ピックアップ|募集に出|新着|撮影/.test(x));
+            const cat = sh === "待ちの形で言い直す" ? (waitSame ? "待ちの形（同じ確認・連絡の中身）" : "待ちの形（別の中身＝探す・新着 等）") : sh;
+            confirmSplit.set(cat, (confirmSplit.get(cat) ?? 0) + 1);
+            confirmSplit.set(`前=${pf.form}→${cat}`, (confirmSplit.get(`前=${pf.form}→${cat}`) ?? 0) + 1);
+            if (confirmSamples.length < 30) confirmSamples.push(`${cat}｜前(${pf.topic}): ${mask(prior[0].text).slice(-60)}｜竹内: ${mask(reply).slice(0, 90)}`);
+            // 再生の番（scripts/yuma-repeat-replay.ts --src）: 受けへの返事（新しい中身・別の中身は除く）だけ
+            if (confirmTurnsOut && /待ちの形（同じ|受けだけ|日付の締め/.test(cat)) confirmTurnsOut.push(JSON.stringify({ key: `ca${confirmTurnsOut.length + 1}`, conv: convId, at: new Date(m.at).toISOString(), scene: "ack", staffText: reply, src: `confirm-ack:${cat}` }));
+          }
         }
         for (const [t, b] of pTopics) {
           const key = `${b <= 1 ? "1" : b <= 2 ? "2" : b <= 4 ? "3-4" : "5+"}通前・${t}`;
@@ -159,6 +173,10 @@ async function takeuchiBaseline(days: number) {
   console.log(`\n   直前1通に約束がある受けだけの番の竹内さんの返事の形`);
   for (const [k, v] of [...shapes.entries()].sort((a, b) => b[1] - a[1])) console.log(`   ${k.padEnd(28)} ${v}`);
   for (const s of shapeSamples) console.log(`   ${s}`);
+  console.log(`\n   前の約束が確認・連絡・見積・審査（vacancy・mgmt・estimate・screening・contact）の受けだけの番の竹内さんの返事（待ちの形を中身で分ける）`);
+  for (const [k, v] of [...confirmSplit.entries()].sort((a, b) => b[1] - a[1])) console.log(`   ${k.padEnd(34)} ${v}`);
+  for (const s of confirmSamples) console.log(`   ${s}`);
+  if (confirmTurnsOut) { fs.writeFileSync(arg("write-confirm-turns")!, confirmTurnsOut.join("\n") + "\n"); console.log(`   → 再生の番 ${confirmTurnsOut.length} を ${arg("write-confirm-turns")} に（個人情報を含む・リポジトリの外の scripts/.replay-out は .gitignore）`); }
 }
 
 /** 最終チェックの決定論（repeat-brain-align.contractAlreadySaidRepeat）を過去の下書きに当てる: 指摘した文を実送信も言っていたら誤り（誤って消させる） */

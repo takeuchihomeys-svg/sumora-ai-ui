@@ -53,6 +53,32 @@ export function ackEchoToWait(promiseLabel: string, brainContract: boolean, env:
 }
 
 /**
+ * 2026-10-13（作る人・確認の約束への了承の1文）: 確認・連絡・見積・審査の約束への了承だけの番でも、待ちの形の1文
+ *   「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」は竹内さんの形（言い直しに当たらない）。
+ *   数え（scripts/audit-draft-repeat.ts --takeuchi-baseline・60日・竹内さんの手打ち・直前1通が確認・連絡・見積・審査の約束の受けだけの番 16）:
+ *     待ちの形（同じ確認・連絡の中身）3・受けだけ 4・日付の締め 1・新しい中身 5（申込のフォーム・結果の報告）・待ちの形（別の中身＝探す）3
+ *     ＝受けへの返事（新しい中身を除く 8）のうち待ちの形の1文 3・受けだけ 4＝どちらも竹内さんの形（前の約束が待ちの形でも 2/5 は待ちの形をもう一度）。
+ *   → 最終チェックの決定論（contractAlreadySaidRepeat）は、竹内さんの短い待ちの形の1文を「言い直し」と指摘しない（既定 on・60日の下書き・実送信で指摘の数は変わらない＝誤り 0 のまま）。
+ *   ⚠ 生成の材料（confirmAckMaterial で「受けだけ／待ちの形の1文のどちらも可」と書く）は試しで悪くなった番があったので既定 off:
+ *     再生（scripts/yuma-repeat-replay.ts・竹内さんの番 6・2回ずつ・DeepSeek）: 竹内さんが待ちの形の番 fb8ab8d5 は待ちの形の1文が入った（ただし言い切りの約束も残る）／
+ *     竹内さんが受けだけの番 d3a56a97 は「9月30日に…ご連絡させて頂きますので」と日付の約束を言い直した（前 1/2 → 後 0/2）。ACK_CONFIRM_WAIT_LINE=on で試せる
+ *   戻す: ACK_CONFIRM_WAIT_DETECTOR=off（決定論も旧の指摘）
+ */
+export function confirmAckWaitLineEnabled(env: Env = process.env): boolean {
+  return repeatBrainAlignEnabled(env) && (env.ACK_CONFIRM_WAIT_LINE ?? "").trim().toLowerCase() === "on";
+}
+export function confirmAckWaitDetectorEnabled(env: Env = process.env): boolean {
+  return repeatBrainAlignEnabled(env) && (env.ACK_CONFIRM_WAIT_DETECTOR ?? "").trim().toLowerCase() !== "off";
+}
+/** 確認・連絡・見積・審査の約束への了承だけの番の材料の1行（generate-reply の echoToWaitNote） */
+export function confirmAckMaterial(promiseLabel: string, env: Env = process.env): string {
+  const head = `\n【🔁 直前の約束はお伝え済み（材料・中身は【🧭 この番の本質】の「もう言った事」が上）】直前にこちらが「${promiseLabel}」を約束済みで、お客様は了承しただけ。`;
+  return confirmAckWaitLineEnabled(env)
+    ? `${head}同じ約束を言い切りで書き直さない（「〜確認させて頂きます」をもう一度書かない・何を・いつ・誰からを並べ直さない・結果を先取りしない）。竹内さんの形はどちらか: 受けだけ（「はい😊！！」＋「気になる点出てきましたら何時でもお気軽にご連絡ください！！」か「何卒よろしくお願い致します！！」）／待ちの形の1文（「はい！！」＋「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」・竹内さん 3/7）。`
+    : `${head}竹内さんは受けへの返事で確認・連絡・見積・審査の約束を言い直さない＝同じ約束を書き直さず、受けだけ（「はい😊！！」＋「気になる点出てきましたら何時でもお気軽にご連絡ください！！」か「何卒よろしくお願い致します！！」）。`;
+}
+
+/**
  * ピックアップの約束の後の受けだけの番の材料（pickupPromiseAckNote の中身・ブレインの本質がある番）。
  *   旧「ピックアップ宣言を絶対にもう一度生成しない・2行以内・例: はい😊！！何卒よろしくお願い致します😌！！」は竹内さんの実送信と逆:
  *   前が言い切りのピックアップの約束→受けだけの番の竹内さんの返事は 待ちの形の1文 8/10（「ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」）。
@@ -81,6 +107,8 @@ export function pendingPickupAckLine(env: Env = process.env): string | null {
 const WAIT_RE = /次第/;const DATE_CLOSE_RE = /(?:明日|本日|当日|明後日|[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[0-9０-９]{1,2}\/[0-9０-９]{1,2}).{0,8}(?:何卒|よろしく|宜しく|ご案内させて)/;
 /** 言い直してよい（待ちの形にしてよい）約束の中身＝探す・撮影（竹内さんは受けだけの番でも待ちの形で1文言う） */
 const RESTATE_OK_TOPICS: ReadonlySet<PromiseTopic> = new Set(["pickup"]);
+/** 竹内さんの確認の約束への了承の待ちの形の短い1文（中身を並べ直さない・「ので、何卒」で結ぶ）。normalizeSentence の後の形に当てる */
+const CONFIRM_WAIT_LINE_RE = /^(?:明日|本日|明後日)?(?:すぐに?)?(?:確認|ご返事|ご返答|進捗|結果)[^ぁ-んァ-ヶ一-龥]{0,2}(?:出来|でき|あり|が出)?次第(?:すぐに?)?ご連絡させて(?:頂|いただ)きますので何卒/;
 const PHOTO_RE = /撮影/;
 
 export type AlreadySaidHit = { sentence: string; ref: string; sim: number; suggestion: string };
@@ -115,6 +143,9 @@ export function contractAlreadySaidRepeat(
     // 待ちの形の1文は竹内さんの形（外す）。
     //   ⚠ 10/13 試して止めた: 「もう言った約束が既に待ちの形なら3回目として見る」（YUMA4 の試し 9f6b948a）は竹内さんの実送信にも当たる（39c5b353・4a387eac＝竹内さんも待ちの形を重ねる）＝誤り 0 にならない
     if (restateOk && WAIT_RE.test(s)) continue;
+    // 10/13: 確認・連絡・見積・審査の約束の待ちの形の短い1文（「確認出来次第ご連絡させて頂きますので、何卒…」）は竹内さんの形（受けだけの番 3/7・前が待ちの形でも 2/5）。
+    //   中身（何を・誰から・いつ）を並べ直した文（4f9d58e8「火曜日に無事1番手で…確認させて頂き、確認出来次第」・8cad64b0「管理会社担当者よりご返事あり次第」）は竹内さんも消した＝今まで通り指摘
+    if (confirmAckWaitDetectorEnabled(opts.env) && CONFIRM_WAIT_LINE_RE.test(normalizeSentence(s).replace(/^はい/, ""))) continue;
     // お客様が中身（新しい物件・条件・質問）を送った番の約束は、新しい対象への約束（竹内さんも同じ文で約束し直す: 募集状況の確認 5/5・条件を足したピックアップ 87〜91%）＝約束でない文（サポートの宣言・説明）だけ見る
     //   サポートの宣言（審査面も無事通過出来ますよう…）も中身のある番は竹内さんも言い直す事がある（7f36cba8 書いた・e8b790af 書かない＝線が引けない）＝見ない
     //   ⚠ 10/13 試して止めた: 「前の文をほぼそのまま（近さ 0.9 以上）写した約束は見る」（YUMA4 の試し 5ed01085）は竹内さんの実送信にも当たる（cc1a78bd・44e89917・3cbfb5f2）

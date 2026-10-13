@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/repeat-brain-align.test.ts
 //   例は本番の下書きと竹内さんの実送信（scripts/audit-draft-repeat.ts の見本・名前は伏せた）
 import { repeatSentences, sentenceSimilarity, isAckOnlyTurn, isCourtesyOnly, promiseTopics, ackReplyShape, priorPromiseForm, topicRepeats } from "../draft-repeat";
-import { contractAlreadySaidRepeat, demoteRepeatNote, pickupAckMaterial, alreadySaidAllowance, pendingPickupAckLine, ackEchoToWait } from "../repeat-brain-align";
+import { contractAlreadySaidRepeat, demoteRepeatNote, pickupAckMaterial, alreadySaidAllowance, pendingPickupAckLine, ackEchoToWait, confirmAckMaterial } from "../repeat-brain-align";
 import { renderTurnContractNote, issueContradictsContract, type TurnContract } from "../turn-contract";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -61,5 +61,15 @@ t("ピックアップがある番は付ける", /待ちの形の1文/.test(rende
 t("確認・見積の約束は本質がある番だけ受けだけ", ackEchoToWait("募集状況の確認", true, ON) && ackEchoToWait("お見積書の作成・送付", true, ON) && !ackEchoToWait("募集状況の確認", false, ON) && !ackEchoToWait("募集状況の確認", true, OFF));
 t("ピックアップ・撮影・内覧は竹内さんの形のまま", !ackEchoToWait("条件に合う物件のピックアップ送付", true, ON) && !ackEchoToWait("室内撮影して送付", true, ON) && !ackEchoToWait("内覧の実施（日時確定）", true, ON));
 t("未履行のピックアップの1行は竹内さんの3行の形（戻すと null）", /何卒よろしくお願い致します/.test(pendingPickupAckLine(ON) ?? "") && /3回目/.test(pendingPickupAckLine(ON) ?? "") && pendingPickupAckLine(OFF) === null);
+// 10/13（作る人・確認の約束への了承の1文）: 待ちの形の1文も竹内さんの形（受けだけの番 3/7）
+t("確認の約束への了承: 材料（ACK_CONFIRM_WAIT_LINE=on）は受けだけ／待ちの形の1文のどちらも許す", /待ちの形の1文/.test(confirmAckMaterial("募集状況の確認", { ACK_CONFIRM_WAIT_LINE: "on" })) && /言い切りで書き直さない/.test(confirmAckMaterial("募集状況の確認", { ACK_CONFIRM_WAIT_LINE: "on" })));
+t("既定は旧（受けだけ・試しで日付の言い直しが出たため）", !/待ちの形の1文/.test(confirmAckMaterial("募集状況の確認", ON)) && /受けだけ/.test(confirmAckMaterial("募集状況の確認", ON)));
+{
+  const said = ["お送り頂きましたお部屋の募集状況確認させて頂き、確認出来次第ご連絡させて頂きます！！"];
+  const waitLine = "はい！！\n確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！";
+  t("待ちの形の確認の1文（竹内さんの形）は指摘しない", contractAlreadySaidRepeat(waitLine, said, { env: ON }) === null);
+  t("言い切りの書き直しは今まで通り指摘", contractAlreadySaidRepeat("はい！！\nお送り頂きましたお部屋の募集状況確認させて頂きます！！", said, { env: ON }) !== null);
+  t("ACK_CONFIRM_WAIT_DETECTOR=off で待ちの形の1文も旧どおり見る", contractAlreadySaidRepeat(waitLine, ["確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します！！"], { env: { ACK_CONFIRM_WAIT_DETECTOR: "off" } }) !== null);
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
