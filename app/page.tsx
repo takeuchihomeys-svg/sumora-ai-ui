@@ -40,7 +40,7 @@ import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonV
 import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA } from "./lib/request-ledger";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 // 2026-10-08 竹内さんの決定「ブレイン最優先・判断はブレインに一本化」: 要対応・やること・ブレイン以外の帯をブレインの判断で（純関数・画面から import してよい）
-import { brainNeedsStaff, flagOn, nonBrainBannerAllowed } from "./lib/brain-attention";
+import { brainNeedsStaff, flagOn, nonBrainBannerAllowed, extraBannerAllowed } from "./lib/brain-attention";
 // 2026-10-08 竹内「一本化する」: 次の一手の推しをブレインの判断に（純関数・依存なし＝画面から import してよい）
 import { brainTemplateSuggestion, brainCheckPatternFor, checkPatternTemplateCategory, nextActionFetchKey, reusableNextAction, type TemplateRec, type NextActionCacheEntry } from "./lib/next-action-unify";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
@@ -9158,6 +9158,10 @@ export default function Home() {
               //   （ブレインの AIX の帯・カードが出る）。ブレインが何も言っていない時は今まで通り（brain-attention nonBrainBannerAllowed）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
               // 2026-10-13: ブレインが「AIX なし」の時はブレイン以外の札も出さない（申込以降の札は postApply=true で今まで通り）
               const bannerOk = (bannerAix: string | null, postApply = false) => !BRAIN_ATTENTION_UI || nonBrainBannerAllowed({ bannerAix, brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction, postApply });
+              // 2026-10-13 棚卸しの表 8: 関所を通っていなかった札（P3 内覧テンプレ・P7 2番手・P8 の AIX なしの提案＝suggest-next-action の独立の判断）も同じ関所に。
+              //   ブレインの今の判断がある時はブレインの札だけ（判断が古い・無い時だけ規則の札で補う＝設計知見 0593a0aa）。P5.1（[AIX誘導中]）はブレインの reply_mode なので対象外。
+              //   戻す: NEXT_PUBLIC_BANNER_GATE_ALL=off
+              const bannerOkExtra = (bannerAix: string | null) => !BRAIN_ATTENTION_UI || extraBannerAllowed({ bannerAix, brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction });
 
               // AIX鮮度チェック: analyzed_msg_ts が最新顧客メッセージより古い判断では帯・カードを出さない（aixView.metaFresh・resolveAixButtonView に一本化）
 
@@ -9270,7 +9274,7 @@ export default function Home() {
               );
 
               // P3: 内覧テンプレ（内覧LINE送信直後）
-              if (suggestViewingTemplateMap[id] && !dismissedViewingTemplateIds.has(id) && !customerIsLastSender) return (
+              if (suggestViewingTemplateMap[id] && !dismissedViewingTemplateIds.has(id) && !customerIsLastSender && bannerOkExtra(null)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-purple-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>追加で訴求LINEを送る → 内覧テンプレート辞書</span>
                   <button onClick={() => { setDismissedViewingTemplateIds((prev) => new Set([...prev, id])); setTemplateOpenContext("viewing_follow"); setShowTemplateModal(true); }}
@@ -9775,7 +9779,7 @@ export default function Home() {
               //   （旧 sessionStorage に残った suggestApplicationPushMap でも表示しないよう、表示ブロックごと削除）
 
               // P7: 2番手
-              if (suggest2ndHandMap[id]) return (
+              if (suggest2ndHandMap[id] && bannerOkExtra(null)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-orange-600 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → 2番手内覧誘いをする</span>
                   <button onClick={() => setShowTemplateModal(true)}
@@ -9895,8 +9899,8 @@ export default function Home() {
                   );
                 }
 
-                // action なし + reason が「内覧」関連 → カレンダー登録ボタン
-                if (nextSugg.reason && (nextSugg.reason.includes("内覧") || nextSugg.reason.includes("予約") || nextSugg.reason.includes("確定"))) {
+                // action なし + reason が「内覧」関連 → カレンダー登録ボタン（10/13: ブレインの今の判断がある時はブレインの札だけ＝bannerOkExtra）
+                if (nextSugg.reason && bannerOkExtra(null) && (nextSugg.reason.includes("内覧") || nextSugg.reason.includes("予約") || nextSugg.reason.includes("確定"))) {
                   const customerName = selectedConversation.customerName ?? "";
                   return (
                     <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-400 bg-teal-50 px-3 py-2 flex items-center gap-2">

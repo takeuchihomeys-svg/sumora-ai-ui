@@ -8,6 +8,9 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-12 竹内方針E: 実例の注入前に生成と同じ決定論置換（出力は validateAndClean → applySurfaceFixes で同じ関数を通る）
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
+// 2026-10-13 棚卸しの表 8: 学習の見出しを返信生成と同じ形に（中身の上はお客様の発言と会話の事実・安全の線は必ず守る）。戻す KNOWLEDGE_HEADING_FORM=off
+const PATTERNS_KNOWLEDGE_ANCHOR = "お客様の今の発言と会話の事実";
 
 export const maxDuration = 30;
 
@@ -134,7 +137,7 @@ async function fetchKnowledge(state: string, customerMessage?: string): Promise<
         const globalDeduped = globalKnowledge.filter(k => !stateKeys.has(k.content));
 
         const parts: string[] = [];
-        if (diffLearned.length > 0) parts.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
+        if (diffLearned.length > 0) parts.push(knowledgeHeading("diff", undefined, false, PATTERNS_KNOWLEDGE_ANCHOR) + "\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
         if (correctionPairs.length > 0) parts.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs.map(k => `・${k.content}`).join("\n"));
         if (stateSpecific.length > 0) parts.push("【スモラの営業ルール】\n" + stateSpecific.map(k => `・${k.content}`).join("\n"));
         if (globalDeduped.length > 0) parts.push("【スモラ共通ノウハウ】\n" + globalDeduped.map(k => `・${k.content}`).join("\n"));
@@ -173,7 +176,7 @@ async function fetchKnowledge(state: string, customerMessage?: string): Promise<
   const globalDeduped = (global ?? []).filter(k => !stateKeys.has(k.content));
 
   const parts: string[] = [];
-  if ((diffLearned?.length ?? 0) > 0) parts.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned!.map(k => `・${k.content}`).join("\n"));
+  if ((diffLearned?.length ?? 0) > 0) parts.push(knowledgeHeading("diff", undefined, false, PATTERNS_KNOWLEDGE_ANCHOR) + "\n" + diffLearned!.map(k => `・${k.content}`).join("\n"));
   if ((correctionPairs?.length ?? 0) > 0) parts.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs!.map(k => `・${k.content}`).join("\n"));
   if ((stateSpecific?.length ?? 0) > 0) parts.push("【スモラの営業ルール】\n" + stateSpecific!.map(k => `・${k.content}`).join("\n"));
   if (globalDeduped.length > 0) parts.push("【スモラ共通ノウハウ】\n" + globalDeduped.map(k => `・${k.content}`).join("\n"));

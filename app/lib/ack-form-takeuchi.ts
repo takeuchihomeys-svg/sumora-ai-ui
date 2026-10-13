@@ -46,12 +46,19 @@ export function curatedPickupAckRule(env?: Env): string {
  */
 /** 安全の線（本質の注記 turn-contract と同じ並び＋DB の重要度8〜9の principle の中身）。本質がある番でもこの中身のナレッジは「必ず守る」 */
 export const KNOWLEDGE_SAFETY_LINE = "嘘・個人情報・金額（見積の数字を本文に書かない）・空き/退去日の断言・内覧の確定・審査の結果/期間の断言・キャンセル料を独自に案内しない・送ってはいけない物・虚偽への加担";
-export function knowledgeHeading(kind: "diff" | "critical", env?: Env, hasBrainContract = false): string {
+/**
+ * 2026-10-13 棚卸しの表 8（作る人）: 返信生成の他の経路（AIX の文の生成 aix-template-generate・返信の候補 generate-reply-patterns・スタッフの文の手直し enhance-reply）も
+ *   同じ見出しにそろえる。中身の上に立つ物（anchor）はその経路のプロンプトに実際にある物を書く（無い【🧭 この番の本質】を指さない）:
+ *   aix-template-generate＝AIX の入力（構造化データ）とブレインの判断／generate-reply-patterns＝お客様の今の発言と会話の事実／enhance-reply＝スタッフが書いた本文の中身。
+ *   anchor が無い時（既定）は返信生成と同じ【🧭 この番の本質】で、hasBrainContract の時だけ新しい見出し。戻す KNOWLEDGE_HEADING_FORM=off（全経路）
+ */
+export function knowledgeHeading(kind: "diff" | "critical", env?: Env, hasBrainContract = false, anchor?: string): string {
   const e = env ?? ((typeof process !== "undefined" ? process.env : {}) as Env);
   // 2026-10-13 レビュー: 本質（ブレインの turn_contract）が無い番は旧の見出しのまま（参照先の【🧭 この番の本質】がその番に無い・principle を形に下げない）
-  const on = hasBrainContract && (e.KNOWLEDGE_HEADING_FORM ?? "").trim().toLowerCase() !== "off";
-  if (kind === "diff") return on ? `【🔴 AIが過去に間違えたパターン（学習ルール＝書き方の形・中身は【🧭 この番の本質】が上・安全の線＝${KNOWLEDGE_SAFETY_LINE} は必ず守る）】` : "【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】";
-  return on ? `【⚠️ 確認済みの決まり（安全の線＝${KNOWLEDGE_SAFETY_LINE} は必ず守る／それ以外は形・中身は【🧭 この番の本質】が上）】` : "【⚠️ 絶対ルール】";
+  const on = (hasBrainContract || !!anchor) && (e.KNOWLEDGE_HEADING_FORM ?? "").trim().toLowerCase() !== "off";
+  const top = anchor ?? "【🧭 この番の本質】";
+  if (kind === "diff") return on ? `【🔴 AIが過去に間違えたパターン（学習ルール＝書き方の形・中身は${top}が上・安全の線＝${KNOWLEDGE_SAFETY_LINE} は必ず守る）】` : "【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】";
+  return on ? `【⚠️ 確認済みの決まり（安全の線＝${KNOWLEDGE_SAFETY_LINE} は必ず守る／それ以外は形・中身は${top}が上）】` : "【⚠️ 絶対ルール】";
 }
 
 /**

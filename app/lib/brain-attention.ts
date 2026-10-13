@@ -364,6 +364,15 @@ export function nonBrainBannerAllowed(i: { bannerAix: string | null; brainFresh:
   return sameAixAction(i.bannerAix, i.brainAix);
 }
 
+/**
+ * 2026-10-13 棚卸しの表 8: 関所を通っていなかった札（P3 内覧テンプレ・P7 2番手・P8 の AIX なしの提案＝suggest-next-action の独立の判断）も同じ関所に。
+ *   ブレインの今の判断がある時はブレインの札だけ・判断が古い／無い時だけ規則の札で補う（設計知見 0593a0aa）。戻す NEXT_PUBLIC_BANNER_GATE_ALL=off
+ */
+export function extraBannerAllowed(i: { bannerAix: string | null; brainFresh: boolean; brainAix: string | null; noAixHides?: boolean }, gateAll: string | null | undefined = process.env.NEXT_PUBLIC_BANNER_GATE_ALL): boolean {
+  if (!flagOn(gateAll)) return true;
+  return nonBrainBannerAllowed({ ...i, postApply: false });
+}
+
 /** ブレインが「AIX なし」の時にブレイン以外の札を隠す（既定 on・NEXT_PUBLIC_BRAIN_NO_AIX_HIDES_BANNERS=off で旧＝出す） */
 export function brainNoAixHidesBanners(v: string | null | undefined = process.env.NEXT_PUBLIC_BRAIN_NO_AIX_HIDES_BANNERS): boolean {
   return (v ?? "").trim().toLowerCase() !== "off";

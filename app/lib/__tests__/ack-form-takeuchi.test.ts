@@ -26,6 +26,10 @@ t("短い時はそのまま", clipAtBoundary("駐車場空いてますか", 40, 
 t("文の途中で切らない（区切りで）", clipAtBoundary("オンライン内見をご提案、室内の撮影もさせて頂く", 20, ON) === "オンライン内見をご提案");
 t("区切りが無ければ旧の slice", clipAtBoundary("あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもや", 30, ON).length === 30);
 t("戻すと旧の slice", clipAtBoundary("オンライン内見をご提案、室内の撮影もさせて頂く", 10, OFF) === "オンライン内見をご提");
+// 2026-10-13 棚卸しの表 8: 他の経路（AIX の文・返信の候補・手直し）は、その経路のプロンプトにある物を中身の上に書く
+t("anchor ありは本質が無くても新しい見出し・anchor を指す", /AIX の入力/.test(knowledgeHeading("diff", ON, false, "AIX の入力")) && !/最優先/.test(knowledgeHeading("diff", ON, false, "AIX の入力")) && !/この番の本質/.test(knowledgeHeading("critical", ON, false, "AIX の入力")));
+t("anchor でも安全の線は必ず守る", knowledgeHeading("critical", ON, false, "x").includes("キャンセル料") && /必ず守る/.test(knowledgeHeading("diff", ON, false, "x")));
+t("anchor でも KNOWLEDGE_HEADING_FORM=off で旧", knowledgeHeading("diff", OFF, false, "x") === "【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】" && knowledgeHeading("critical", OFF, false, "x") === "【⚠️ 絶対ルール】");
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

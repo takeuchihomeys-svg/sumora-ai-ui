@@ -5,6 +5,7 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { isUsableExampleText, fixExampleWeekdays } from "@/app/lib/example-hygiene";
 // 2026-09-12 竹内方針E: 実例の注入前と出力に、生成と同じ決定論置換を通す
 import { normalizeBannedPhrasing } from "@/app/lib/banned-phrasing";
+import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi"; // 2026-10-13 棚卸しの表 8: 学習の見出しを返信生成と同じ形に（戻す KNOWLEDGE_HEADING_FORM=off）
 
 export const maxDuration = 30;
 
@@ -76,7 +77,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
   // ナレッジ文字列を構築（差分学習→修正対比→フェーズ別→グローバルの4層）
   const knowledgeSections: string[] = [];
   if (diffLearned?.length) {
-    knowledgeSections.push("【🔴 AIが過去に間違えたパターン（最優先）】\n" + diffLearned.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
+    knowledgeSections.push(knowledgeHeading("diff", undefined, false, "スタッフが書いた本文の中身").replace("（最優先・必ず守る）", "（最優先）") + "\n" + diffLearned.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
   }
   if (correctionPairs?.length) {
     knowledgeSections.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs.slice(0, 8).map((k) => `・${k.content}`).join("\n"));

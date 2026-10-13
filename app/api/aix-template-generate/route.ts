@@ -99,6 +99,9 @@ import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
 import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
 import { buildAixTemplateDbKnowledgeBlock, aixTemplateCacheTtl } from "@/app/lib/aix-template-cache";
+import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
+// 2026-10-13 棚卸しの表 8: 学習の見出しを返信生成と同じ形に（中身の上は AIX の入力・ブレインの判断・安全の線は必ず守る）。戻す KNOWLEDGE_HEADING_FORM=off
+const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）とブレインの判断";
 
 export const maxDuration = 60;
 
@@ -504,13 +507,13 @@ function buildKnowledgeSections(rows: KnowledgeHit[]): { text: string; usedIds: 
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
-    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push(knowledgeHeading("diff", undefined, false, AIX_TEMPLATE_KNOWLEDGE_ANCHOR) + "\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (correctionPairs.length > 0) {
     sections.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール（状況関連・DB学習）】\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push(knowledgeHeading("critical", undefined, false, AIX_TEMPLATE_KNOWLEDGE_ANCHOR).replace(/^【⚠️ 絶対ルール】$/, "【⚠️ 絶対ルール（状況関連・DB学習）】") + "\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
     sections.push("【スモラの営業パターン・原則】\n" + patterns.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));

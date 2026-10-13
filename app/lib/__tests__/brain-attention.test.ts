@@ -3,7 +3,7 @@
 // 実物: 10/08 の本番の判断（suggested_aix_meta）と、語で作られていた やること（line_tasks）の組
 import {
   brainTaskTypes, brainTaskTypesToCancel, brainNeedsStaff, classifyTarget, brainHotDecision, targetSummary,
-  nonBrainBannerAllowed, brainNoAixHidesBanners, compareTargets, flagOn, type AttentionMeta,
+  nonBrainBannerAllowed, extraBannerAllowed, brainNoAixHidesBanners, compareTargets, flagOn, type AttentionMeta,
 } from "../brain-attention";
 import { decideAutoTask } from "../property-check-task";
 import { buildActionLedger } from "../action-ledger";
@@ -121,6 +121,11 @@ t("申込②の帯・ブレインも 申込へ！ → 出す", nonBrainBannerAll
 t("申込②の帯・ブレインは 物件確認した → 出さない", !nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: true, brainAix: "property_check_result" }));
 t("テンプレの帯（AIX なし）・ブレインが AIX → 出さない（ブレインの AIX を先に）", !nonBrainBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite" }));
 t("物件確認した の旧名 property_check は同じ AIX", nonBrainBannerAllowed({ bannerAix: "property_check", brainFresh: true, brainAix: "property_check_result" }));
+// 10/13 棚卸しの表 8: P3・P7・P8（AIX なしの提案）も同じ関所
+t("P3/P7/P8: ブレインの今の判断が AIX → 出さない", !extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite" }, undefined));
+t("P3/P7/P8: ブレインの今の判断が AIX なし → 出さない", !extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: null, noAixHides: true }, undefined));
+t("P3/P7/P8: ブレインの判断が古い → 出す（規則で補う）", extraBannerAllowed({ bannerAix: null, brainFresh: false, brainAix: "viewing_invite" }, undefined));
+t("P3/P7/P8: NEXT_PUBLIC_BANNER_GATE_ALL=off で旧（いつも出す）", extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite" }, "off"));
 
 console.log("■ 5. 環境変数");
 t("既定（未設定）は on", flagOn(undefined) && flagOn("") && flagOn("on"));
