@@ -275,8 +275,33 @@ async function partRecords() {
   console.log(`■ AIX の記録の物件名（${days}日・名前のある記録 ${n}）: 本文に合わせて変わる ${changed}`);
 }
 
+// ─── 区切り4: 台帳の新しい ▶（並びの何番目・内覧の日にちの返事）が出る番と、その ▶ がスタッフが入れた物件名と合うか ───
+async function partMaterial() {
+  const { loadPropertyThreads } = await import("../app/lib/property-thread-server");
+  const { brainNameMatchesAny } = await import("../app/lib/property-name-loose");
+  const TYPES = ["property_check_result", "meeting_place", "viewing_invite", "application_push", "guarantor_info", "estimate_sheet"];
+  const logs = (await pageAll<{ conversation_id: string; created_at: string; aix_type: string; property_names: string[] | null }>((a, b) =>
+    sb.from("aix_usage_logs").select("conversation_id, created_at, aix_type, property_names").in("aix_type", TYPES).not("sent_at", "is", null)
+      .not("property_names", "is", null).gte("created_at", since).order("created_at").range(a, b))).filter((l) => (l.property_names ?? []).some((n) => (n ?? "").trim()));
+  const decs = await loadDecisions();
+  let fired = 0, hit = 0;
+  for (const l of logs) {
+    const d = decisionAt(decs.get(l.conversation_id), l.created_at);
+    if (!d) continue;
+    const s = await loadPropertyThreads(l.conversation_id, { asOf: d.created_at });
+    const tt = (s?.turnTargets ?? []).filter((t) => /＝直前にこちらが送った|内覧の日にちの返事/.test(t.why ?? ""));
+    if (!tt.length) continue;
+    fired++;
+    const ok = tt.some((t) => brainNameMatchesAny(t.display, l.property_names ?? []));
+    if (ok) hit++;
+    console.log(`● [${ok ? "合う" : "合わない"}] ${l.created_at.slice(0, 16)} ${l.conversation_id.slice(0, 8)} ${l.aix_type}｜▶「${tt.map((t) => t.display).join("・")}」${tt[0].why}｜スタッフ「${(l.property_names ?? []).join("・")}」｜ブレイン「${d.prop ?? ""}」`);
+  }
+  console.log(`■ 新しい ▶ が出た番 ${fired}・スタッフの物件名と合う ${hit}`);
+}
+
 (async () => {
   const part = arg("part", "prefill");
+  if (part === "material") { await partMaterial(); return; }
   if (part === "refine") { await partRefine(); return; }
   if (part === "records") { await partRecords(); return; }
   if (part === "prefill") await partPrefill();

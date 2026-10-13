@@ -1,7 +1,7 @@
 // 物件ごとの状況の台帳（app/lib/property-thread.ts）のテスト（自己完結ハーネス）
 // 2026-10-07 竹内（S❤ 事例）。並びは本番の会話の実物（d3a56a97・c024b7b9・63fa0c26）を写した（名前は物件名だけ・画像は記号）。
 // 実行: npx tsx app/lib/__tests__/property-thread.test.ts
-import { resolvePropertyThreads, buildPropertyThreadNote, topicOf, type PtMsg, type PtAix } from "../property-thread";
+import { resolvePropertyThreads, buildPropertyThreadNote, topicOf, ordinalIndexOf, isViewingDateReply, type PtMsg, type PtAix } from "../property-thread";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }
@@ -84,6 +84,66 @@ describe("話題・画像の書き起こし", () => {
       imageLabels: new Map([["u1", "フェリオ永田 101号室"]]),
     });
     eq(s.rooms[0].events.map((e) => e.kind).join(","), "sent,staff_negotiating,staff_result");
+  });
+});
+
+describe("区切り4① 並びの何番目（ad97cd40 10/12「1番上のやつ」）", () => {
+  const messages: PtMsg[] = [
+    { sender: "staff", text: "【プレジオ難波EURO 0402号室】\n初期費用さらに", created_at: "2026-10-11T05:00:00Z", is_aix_generated: true },
+    { sender: "customer", text: "5時40分くらいに変更できますか？", created_at: "2026-10-12T07:19:16Z" },
+    img("p1", "2026-10-12T07:20:04.316Z", "u-alivis"),
+    img("p2", "2026-10-12T07:20:04.469Z", "u-noah"),
+    img("p3", "2026-10-12T07:20:04.584Z", "u-buena"),
+    { sender: "staff", text: "他のお部屋以前お送りさせて頂きましたお部屋も併せてこちらの3部屋となります！！", created_at: "2026-10-12T07:20:04.826Z", is_aix_generated: true },
+    { sender: "customer", text: "この3つ全部初期費用知りたいです！", created_at: "2026-10-12T07:22:46Z" },
+    { sender: "customer", text: "1番上のやつ最短入居いくらですか？", created_at: "2026-10-12T07:22:55Z" },
+  ];
+  const imageLabels = new Map([["u-alivis", "Alivis浪速東SoL TERRACE 602号室"], ["u-noah", "大阪難波Noah 1006号室"], ["u-buena", "ブエナビスタ難波タワー 704号室"]]);
+  const s = resolvePropertyThreads({ messages, imageLabels, aix: [] });
+  it("▶ は並びの1件目（Alivis浪速東SoL TERRACE）・推定", () => {
+    eq(s.turnTargets.length, 1); eq(s.turnTargets[0].display, "Alivis浪速東SoL TERRACE 602号室"); eq(s.turnTargets[0].by, "inferred");
+    truthy(/1件目/.test(s.turnTargets[0].why ?? ""), s.turnTargets[0].why);
+  });
+  it("「最後の」は並びの最後", () => {
+    const s2 = resolvePropertyThreads({ messages: [...messages.slice(0, -1), { sender: "customer", text: "最後のやつ内覧できますか？", created_at: "2026-10-12T07:22:55Z" }], imageLabels, aix: [] });
+    eq(s2.turnTargets[0]?.display, "ブエナビスタ難波タワー 704号室");
+  });
+  it("並びが1件しかない時は決めない", () => {
+    const s3 = resolvePropertyThreads({ messages: [messages[0], messages[1], messages[2], { sender: "customer", text: "1番上のやつ最短入居いくらですか？", created_at: "2026-10-12T07:22:55Z" }], imageLabels, aix: [] });
+    eq(s3.turnTargets.length, 0);
+  });
+  it("PROPERTY_THREAD_ORDINAL=off で今まで通り", () => {
+    process.env.PROPERTY_THREAD_ORDINAL = "off";
+    try { eq(resolvePropertyThreads({ messages, imageLabels, aix: [] }).turnTargets.length, 0); } finally { delete process.env.PROPERTY_THREAD_ORDINAL; }
+  });
+  it("ordinalIndexOf の形", () => {
+    eq(ordinalIndexOf("2番目のお部屋気になります"), 1); eq(ordinalIndexOf("上から3つ目"), 2); eq(ordinalIndexOf("一番下のやつ"), -1);
+    eq(ordinalIndexOf("最初は1人で住む予定でした"), null); eq(ordinalIndexOf("2件目以降も"), null);
+  });
+});
+
+describe("区切り4② 内覧の日にちの返事（615499ba 10/5「10日でお願い致します！」）", () => {
+  const messages: PtMsg[] = [
+    { sender: "staff", text: "【アトリエール堺寺地町 103号室】\n初期費用さらに", created_at: "2026-10-03T05:00:00Z", is_aix_generated: true },
+    { sender: "staff", text: "【リヴィエール桜之町東 102号室】\n初期費用さらに", created_at: "2026-10-04T05:00:00Z", is_aix_generated: true },
+    { sender: "staff", text: "かしこまりました！！\nリヴィエール桜之町東 102号室\n直近ですと 10/9(金) 13:00〜・10/10(土) 13:00〜 ご案内可能です😊！！\nご都合よろしいお日にち御座いますでしょうか！！", created_at: "2026-10-05T04:46:00Z" },
+    { sender: "customer", text: "10日でお願い致します！", created_at: "2026-10-05T06:47:00Z" },
+  ];
+  const aixV: PtAix[] = [
+    { created_at: "2026-10-03T05:00:01Z", aix_type: "estimate_sheet", property_names: ["アトリエール堺寺地町 103号室"], prop_statuses: null, estimate_sent: true },
+    { created_at: "2026-10-04T05:00:01Z", aix_type: "estimate_sheet", property_names: ["リヴィエール桜之町東 102号室"], prop_statuses: null, estimate_sent: true },
+  ];
+  const s = resolvePropertyThreads({ messages, imageLabels: new Map(), aix: aixV });
+  it("▶ は日程を出した通の物件（リヴィエール桜之町東）", () => {
+    eq(s.turnTargets.length, 1); eq(s.turnTargets[0].display, "リヴィエール桜之町東 102号室"); eq(s.turnTargets[0].topic, "viewing");
+  });
+  it("isViewingDateReply の形", () => {
+    truthy(isViewingDateReply("13時でお願いします！")); truthy(isViewingDateReply("12時〜14時でお願いしたいです！"));
+    truthy(!isViewingDateReply("ありがとうございます")); truthy(!isViewingDateReply("初期費用はいくらですか？"));
+  });
+  it("PROPERTY_THREAD_VIEWING_REPLY=off で今まで通り", () => {
+    process.env.PROPERTY_THREAD_VIEWING_REPLY = "off";
+    try { eq(resolvePropertyThreads({ messages, imageLabels: new Map(), aix: aixV }).turnTargets.length, 0); } finally { delete process.env.PROPERTY_THREAD_VIEWING_REPLY; }
   });
 });
 

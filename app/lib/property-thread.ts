@@ -425,6 +425,41 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       }
     }
   }
+  // 2026-10-13 当たり率の直し（区切り4 材料①）: 「1番上のやつ」「2番目」「最後の」＝直前にこちらが送った物件の並び（同じ束の資料・オススメ・見積）の何番目か。
+  //   ad97cd40 10/12「1番上のやつ最短入居いくらですか？」→ ブレインは前の物件（プレジオ難波EURO）を言った。材料を渡すだけ（決めるのはブレイン）。戻す: PROPERTY_THREAD_ORDINAL=off
+  if (originOn && propertyThreadOrdinalEnabled() && turnTargets.length === 0) {
+    const turnMsgs = msgs.filter((m) => m.sender === "customer" && (!lastStaffAt || ms(m.created_at) > ms(lastStaffAt)) && !isImage(m));
+    const hit = turnMsgs.map((m) => ({ m, idx: ordinalIndexOf(String(m.text ?? "")) })).find((x) => x.idx !== null);
+    if (hit) {
+      const batch = lastOursBatch(rooms, hit.m.created_at);
+      const i = hit.idx === -1 ? batch.length - 1 : hit.idx!;
+      if (batch.length >= 2 && i >= 0 && i < batch.length) {
+        const r = batch[i];
+        turnTargets.push({ roomKey: r.key, display: r.ref.display, topic: topicOf(String(hit.m.text ?? "")), by: "inferred", customerText: Array.from(String(hit.m.text ?? "").replace(/\s+/g, " ")).slice(0, 40).join(""), at: hit.m.created_at,
+          why: `（「${ordinalWordOf(String(hit.m.text ?? ""))}」＝直前にこちらが送った${batch.length}件の並び（${batch.map((x) => x.ref.display).join("・")}）の${hit.idx === -1 ? "最後" : `${i + 1}件目`}と推定）` });
+      }
+    }
+  }
+  // 2026-10-13 当たり率の直し（区切り4 材料②）: 内覧の日にち・時間だけの返事（「10日でお願い致します」「13時でお願いします」）は、
+  //   直前にこちらが内覧の日程を出した通に書いた物件（無ければ内覧調整の記録の物件）の話。5dd2d456・63fa0c26・615499ba で別の物件を言っていた。戻す: PROPERTY_THREAD_VIEWING_REPLY=off
+  if (originOn && propertyThreadViewingReplyEnabled() && turnTargets.length === 0) {
+    const turnMsgs = msgs.filter((m) => m.sender === "customer" && (!lastStaffAt || ms(m.created_at) > ms(lastStaffAt)) && !isImage(m));
+    const reply = turnMsgs.find((m) => isViewingDateReply(String(m.text ?? "")));
+    if (reply) {
+      const from = ms(reply.created_at) - 7 * 86400_000;
+      const offer = [...msgs].reverse().find((m) => m.sender === "staff" && m.text && !isImage(m) && ms(m.created_at) < ms(reply.created_at) && ms(m.created_at) >= from && VIEWING_OFFER_RE.test(String(m.text)));
+      let named = offer ? roomsNamedIn(String(offer.text)) : [];
+      if (!named.length) {
+        const ev = rooms.flatMap((r) => r.events.filter((e) => (e.kind === "viewing_offered" || e.kind === "viewing_set") && ms(e.at) < ms(reply.created_at) && ms(e.at) >= from).map((e) => ({ r, e })))
+          .sort((a, b) => ms(b.e.at) - ms(a.e.at));
+        if (ev.length) named = rooms.filter((r) => ev.some((x) => x.r.key === r.key && ms(x.e.at) >= ms(ev[0].e.at) - 5 * 60_000));
+      }
+      for (const r of named.slice(0, 3)) {
+        turnTargets.push({ roomKey: r.key, display: r.ref.display, topic: "viewing", by: "inferred", customerText: Array.from(String(reply.text ?? "").replace(/\s+/g, " ")).slice(0, 40).join(""), at: reply.created_at,
+          why: `（内覧の日にちの返事＝直前にこちらが内覧の日程を出した物件${offer ? ` ${jstShort(offer.created_at)}` : "（内覧調整の記録）"}と推定）` });
+      }
+    }
+  }
   turnTargets.sort((a, b) => ms(a.at) - ms(b.at));
   // 2026-10-09 主語の抜けた番（「空いてますか？」「いくらですか？」・引用も名指しも無い）: 直前の送信が1件 → こちらが最後に出した1件 → お客様が最後に名前を出した物件。
   //   決まらない時は候補を送った順で渡す（推測で1件にしない）。turnTargets には入れない
@@ -448,7 +483,55 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
   return { rooms, turnTargets, turnReferent, turnReferentText };
 }
 
-const GENERIC_REF_RE = /(?:オススメ|おすすめ|お勧め|お薦め|送って(?:頂|いただ|くださ|くれ|もら)|頂いた|いただいた|前の|先日の|この前の|さっきの)[^。\n？?]{0,12}(?:物件|お部屋|部屋)/;
+// ─── 2026-10-13 当たり率の直し（区切り4）: 並びの何番目・内覧の日にちの返事 ───
+export function propertyThreadOrdinalEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PROPERTY_THREAD_ORDINAL ?? "").toLowerCase() !== "off";
+}
+export function propertyThreadViewingReplyEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PROPERTY_THREAD_VIEWING_REPLY ?? "").toLowerCase() !== "off";
+}
+const N_JA: Record<string, number> = { "1": 0, "一": 0, "１": 0, "2": 1, "二": 1, "２": 1, "3": 2, "三": 2, "３": 2, "4": 3, "四": 3, "４": 3, "5": 4, "五": 4, "５": 4 };
+const ORDINAL_RES: Array<[RegExp, (m: RegExpMatchArray) => number]> = [
+  [/(?:一番|1番|１番|いちばん)(?:上|最初|はじめ|初め)/, () => 0],
+  [/(?:一番|1番|１番|いちばん)(?:下|最後)|最後(?:の|に送(?:って|られ)|のやつ)/, () => -1],
+  [/上から([1-5１-５一二三四五])(?:つ目|番目|件目|個目|枚目)?/, (m) => N_JA[m[1]]],
+  [/([1-5１-５一二三四五])(?:つ目|番目|件目|個目|枚目)(?:の|に|は|が|って)/, (m) => N_JA[m[1]]],
+  [/最初の(?:やつ|物件|お部屋|部屋|とこ|ところ|方)/, () => 0],
+];
+/** お客様の文の「1番上のやつ」「2番目の」「最後の」→ 並びの番号（0始まり・最後は -1）。無ければ null */
+export function ordinalIndexOf(text: string): number | null {
+  const t = text.normalize("NFKC");
+  for (const [re, f] of ORDINAL_RES) { const m = t.match(re); if (m) return f(m); }
+  return null;
+}
+function ordinalWordOf(text: string): string {
+  const t = text.normalize("NFKC");
+  for (const [re] of ORDINAL_RES) { const m = t.match(re); if (m) return m[0]; }
+  return "";
+}
+/** その時刻より前の、こちらが一番新しく送った物件の束（資料・オススメ・見積・確認の結果を10分以内にまとめて）。送った順・同じ物件は1つ */
+function lastOursBatch(rooms: ReadonlyArray<PtRoom>, beforeAt: string): PtRoom[] {
+  const KINDS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_vacating"]);
+  const evs = rooms.flatMap((r) => r.events.filter((e) => KINDS.has(e.kind) && e.by !== "inferred" && ms(e.at) < ms(beforeAt)).map((e) => ({ r, t: ms(e.at) })));
+  if (!evs.length) return [];
+  const last = Math.max(...evs.map((x) => x.t));
+  const batch = evs.filter((x) => x.t >= last - 10 * 60_000).sort((a, b) => a.t - b.t);
+  const out: PtRoom[] = [];
+  for (const x of batch) if (!out.includes(x.r)) out.push(x.r);
+  return out;
+}
+/** 内覧の日程を出したこちらの文（「〇日 〇時〜ご案内可能です」「ご都合よろしいお日にち」） */
+const VIEWING_OFFER_RE = /ご案内(?:可能|させて)|内覧|内見|お日にち|ご都合/;
+/** 内覧の日にち・時間だけの返事（短い・物件の名前が無い） */
+export function isViewingDateReply(text: string): boolean {
+  const t = text.normalize("NFKC").trim();
+  if (!t || Array.from(t).length > 40) return false;
+  const when = /\d{1,2}\s*(?:日|時|:\d{2})|\d{1,2}\s*\/\s*\d{1,2}|午前|午後|明日|明後日|今日|本日|[月火水木金土日]曜/.test(t);
+  const ask = /でお願い|で大丈夫|からで|可能ですか|いけます|行けます|でいいですか|で良いですか|希望です|がいいです|が良いです/.test(t);
+  return when && ask;
+}
+
+const GENERIC_REF_RE =/(?:オススメ|おすすめ|お勧め|お薦め|送って(?:頂|いただ|くださ|くれ|もら)|頂いた|いただいた|前の|先日の|この前の|さっきの)[^。\n？?]{0,12}(?:物件|お部屋|部屋)/;
 const CUSTOMER_SENT_REF_RE = /(?:私が|自分が|こちらから|最初に|前に|さっき)?送った(?:物件|お部屋|部屋)|送らせて(?:頂|いただ)いた(?:物件|お部屋|部屋)|共有した(?:物件|お部屋|部屋)/;
 const TOPIC_JA: Record<PtTopic, string> = { cost: "初期費用", discount: "礼金・費用の値下げ", detail: "詳細", vacancy: "募集状況", viewing: "内覧", photo: "写真", like: "気に入った様子", ng: "合わない様子", other: "このお部屋の話" };
 const KIND_JA: Record<PtEventKind, string> = {
