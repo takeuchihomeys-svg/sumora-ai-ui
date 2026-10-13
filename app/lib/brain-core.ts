@@ -14,6 +14,12 @@ import { waitUntil } from "@vercel/functions";
 import { logWatchMaterial, noteWatchMaterials } from "@/app/lib/line-watch-materials-server";
 import { isTimeoutError } from "@/app/lib/line-watch-materials";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
+// 2026-10-13 要約はブレインの戦略の層だけが書く（送信の後の customer-summary をやめた）。要約側の成約パターンの RAG も戦略へ
+import { saveBrainSummary } from "@/app/lib/brain-only-summary-save";
+import { fetchWinningPatterns } from "@/app/lib/summary-winning-patterns";
+import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from "@/app/lib/brain-only-summary";
+import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
+import { currentPropertyExists } from "@/app/lib/current-property-gate";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -46,13 +52,15 @@ import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from 
 // 10巡目（10/08 竹内「AIXのボタンの種類・ピッカーの種類を分かっていたら簡単に完全にすることできる」）: AIX の全ボタン×主のピッカーの一覧と判断の順番を場面で絞って渡す（BRAIN_AIX_CATALOG=off で外す）
 import { catalogBlockForBrain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
+import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
+import { JUDGE_EXAMPLES } from "@/app/lib/brain-judge-examples-data";
 import { customerImageGroup, savedImageKind } from "@/app/lib/image-label";
 import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-inquiry";
 // 2026-10-01 竹内「家賃込みだけの部分ならAIXじゃなくて自動返信からでも大丈夫」
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
@@ -192,6 +200,9 @@ function buildFreshStrategyBlock(s: BrainStrategy): string {
   return `\n【前回の全体分析（会話全体の戦略・JSON。${at}までのお客様の発言を整理した結果）】\n${JSON.stringify(strategyForPrompt(s))}`;
 }
 
+// 2026-10-13 竹内さん（ブレインの使い残し 1）: AIX の後の続きのテンプレをブレインの1項目に（/api/recommend-templates の Sonnet の代わり・post-aix-template-rec.ts）。
+//   戻す: BRAIN_AFTER_AIX_TEMPLATE=off（出力の欄を外す・画面のおすすめは集計だけになる）
+const AFTER_AIX_TEMPLATE_SCHEMA = (process.env.BRAIN_AFTER_AIX_TEMPLATE ?? "").trim().toLowerCase() === "off" ? "" :" \"after_aix_template\": \"aix に入れた AIX を送った直後に続けて送るテンプレの名前を1つ（【AIXボタン後に送るべきテンプレート】の名前そのまま。例: 物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・【申込誘導】・②申込時フォーマット（続き）・ヒアリング締め）。aix が null・続けて送る物が無い（内覧の確定文など）時は null\",";
 /** 今回の発言の層の出力の指定（システムの「JSONは常に全フィールド完全出力」をこのモードでは上書きする） */
 const FRESH_LAYER_OUTPUT_RULES = `【今回の発言の分析モード（2層ブレイン）— 判断の仕方と出力の指定】
 - 上の【前回の全体分析】はこの会話の前提（会話全体の戦略）。今回のお客様の発言（最後のスタッフ発言より後の連投）で変わった点だけを判断する。
@@ -200,7 +211,7 @@ const FRESH_LAYER_OUTPUT_RULES = `【今回の発言の分析モード（2層ブ
 - 前回の全体分析の next_steps・closing_strategy は作成時点のもの。その後に会話履歴・直近AIXアクション・行動台帳で実行済みになった手順は完了扱いにする。スタッフがすでに送った AIX（例: 御見積書を送付済み）を、お客様の新しい依頼が無いのに再提案しない（送った直後でお客様の反応待ちなら aix は null）。
 - 出力しない項目: ai_summary / ai_summary_json / closing_strategy / next_steps（前回の全体分析の値をコード側で使う）。システムの「JSONは常に全フィールド完全出力」はこのモードでは適用しない。
 - 追加で出力する項目: ${mindsetFreshOutputItem()}、"purchase_signal_event"（今回の発言だけで見た購買シグナル none/soft/strong/peak。基準は ai_summary_json.purchase_signal_level の説明と同じ。会話全体の蓄積はコード側で前回と合わせる）。
-- それ以外の項目（aix・action・reason・template_hint・reply_mode・reply_direction・reply_opener・key_topics・avoid_topics・customer_questions・turn_contract・customer_concern・condition_change_type・condition_change_scope・hesitancy_pattern・customer_intent・latent_intent・current_property・repeated_concern・future_timeline・checkpoint_stage・engagement_stance・urgency_appropriate・recommended_tone・two_choice_mode・reply_direction_label）はいつも通り出力する。`;
+- それ以外の項目（aix・action・reason・template_hint・${AFTER_AIX_TEMPLATE_SCHEMA ? "after_aix_template・" : ""}reply_mode・reply_direction・reply_opener・key_topics・avoid_topics・customer_questions・turn_contract・customer_concern・condition_change_type・condition_change_scope・hesitancy_pattern・customer_intent・latent_intent・current_property・repeated_concern・future_timeline・checkpoint_stage・engagement_stance・urgency_appropriate・recommended_tone・two_choice_mode・reply_direction_label）はいつも通り出力する。`;
 /**
  * 2026-10-08 11巡目（竹内「場面の読み取りを、ブレインの判断に寄せる」）: 今回の発言がお礼・了承だけの時に、前の発言の質問・条件変更・迷いを書き写さない。
  *   40日（scripts/audit-r11-brain-q-drag.ts・audit-r11-scene-brain.ts）: 「承知致しました。宜しくお願い致します。」に q=前の募集確認／「お願いします」に cond=equip_add（11番）／
@@ -237,6 +248,7 @@ export type SuggestedAixMeta = {
   check_pattern?: string | null;
   closing_strategy?: string;
   template_hint?: string;  // 次に使うべきAIXタブのラベルカテゴリ名（TEMPLATE_HINT_ALLOWED_LABELS の含む判定を通過した値のみ。例: "物件ピックアップした", "1件特にオススメする", "①申込み時フォーマット（連帯保証人）"。トーン説明等の自由記述はゲートで null に落ちる）
+  after_aix_template?: string;  // 2026-10-13: aix を送った直後に続けて送るテンプレの名前（post-aix-template-rec.ts が候補のテンプレに当てる）
   next_steps?: string[];  // ["Step1: 具体的アクション", "Step2: AIXボタン○○を押す", "Step3: 【AIX】○○テンプレートを送る"]
   reply_mode?: "aix" | "auto_reply";  // 'aix'=スタッフがAIXで手動対応 / 'auto_reply'=AI自動返信OK
   // 2択UIフラグ: proposing フェーズで条件トレードオフ質問が来た場合に「AIXで物件追加オススメ」か「テキスト返信」かをスタッフが選ぶ
@@ -1202,7 +1214,7 @@ ${PHASE_TEMPLATE_HINTS}
 【日付の厳守】closing_strategy・next_steps には会話に実際に出た物件名・日付のみ使用（推測日付の創作禁止）。
 
 回答形式（JSONのみ・説明文・コードブロック不要）:
-{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）。※但し書き（2026-09-23 あっぴ事例）: 直前のスタッフ送信に物件ピックアップの宣言（『出次第お送りします』『ピックアップしてお送りします』等）があり、その後まだ物件を送っていない場合は『反応待ち』ではない（ボールはこちら側）。この時は null にせず property_send を選ぶ", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂きます」「〜する」の行動宣言形で書く（例: 「今日中にご希望条件の物件をピックアップしてお送りします」）。情報提供・受け身文体は禁止。※条件変更（condition_change_type非null）時は変更後の具体条件名（エリア・駅・家賃・設備等）を必ず明記し「その条件で全力ピックアップします」の行動宣言形にすること（「ご希望の条件」「ご希望のご条件」等の抽象表現は禁止）", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ '申込誘導'（お客様が自分から申込の意思を示した時の申込促進テンプレート。見積書送付直後には選ばない）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない", "next_steps": ["Step1（今すぐ）: 具体的アクション。※条件変更（condition_change_type非null）時のStep1は必ず「変更後の具体条件名（エリア・駅・家賃・設備等を明記）でChrome拡張を使って物件を再検索する」を含めること", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "two_choice_mode": "true または false（boolean）。以下の全条件が揃う場合 true: checkpoint_stage='proposing' かつ 送付済み物件が1件以上ある かつ 顧客の最新メッセージが条件に関するトレードオフ質問（例: '築年数は古くなりますか？' '家賃5万円台だとこの条件は難しいですか？' 'ユニットバスOKでもいいですが室内洗濯機は難しいですか？' '5.5万と6.2万の違いは何ですか？' 'この価格は妥当ですか？'等・現在提案中の物件の条件・価格・設備について納得・比較・トレードオフの判断を求める質問）かつ 顧客が明示的に拒否・離脱していない。→ true の場合、AIXで条件に合う物件を追加オススメするか、テキストで相場や理由を説明するかをスタッフが2択で判断する場面。trueにならないケース: 顧客が「この物件の空室はありますか？」等の募集状況確認をしている場合 / 顧客が新しい検索条件を追加している場合（condition_change_type非null）/ aix=viewing_invite・application_push等の確定アクションがある場合。不明な場合は false に倒す", "reply_direction_label": "two_choice_mode=true の場合のみ設定。返信する場合の方向性を10字以内の日本語で（例: '条件説明' '相場説明' '不安解消' '内覧誘導' '価格の根拠説明'）。two_choice_mode=false の場合は必ずnull", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。必ず「〜する」「〜させて頂く」の行動宣言形で書く。受け身文体は禁止。※条件変更直後（condition_change_type非null時）は「変更後条件の具体名+全力ピックアップ宣言」の構成が成約につながる（成約データから検証済み）。「ご希望のご条件」等の抽象表現ではなく変更後の具体条件名（エリア・駅・間取り・こだわり等）を明記すること。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "${emotionChoicesText()} のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で", "purchase_signal_level": "none/soft/strong/peak のいずれか。none=購買シグナルなし（挨拶・一般質問・雑談のみ、customer_intent=chat/null含む）/ soft=設備・費用・間取り・審査等の具体的な物件確認質問が1件=本気検討始まりシグナル（customer_questions が1件以上かつ具体的内容）/ strong=異カテゴリ2件以上の質問が重なっている（設備→入居日・費用→審査等）または複数物件の同時比較=申込前の高熱シグナル（customer_questions が2件以上かつ異カテゴリ、またはhesitancy_pattern=undecided）/ peak=申込直前最強シグナル。以下のいずれか1つでも該当したら質問件数に関係なく必ず peak にすること（成約データ分析で判明した盲点シグナル。1件しか質問がなくても soft/strong に落とさない）: ①申込許可伺い=「申し込んでもいいですか？」「一度お申し込みして内覧行きたいです」「抑えるだけ抑えててもいいんですか？」「申し込みするだけして通れば進みたい」「見学して決める形になりますが、それでも申し込みできますか？」等、申込の可否・許可を顧客側から伺ってきた ②物件名指し確定=「待ってください！！ここがいいです！」「○○に決めます」「○○で申請したいと思います」「やはり○○の物件にしようかな」等、特定物件を名指しで選んだ ③金額そのものの復唱=「153,200円ですか😭」「18万ですか😭」「4万台で、お願いします」等、見積・費用の金額をそのまま復唱してきた（落胆の絵文字を伴っても離脱ではなく最終障壁が価格のみのサイン） ④手続き・審査プロセスの具体質問=「保証会社はどこになりますか？」「クレジット払いは可能ですか？どのような流れになりますか」「必要書類は何ですか」等、買う前提の手続き質問 ⑤入居日逆算質問=「いつ入居なりそうですか？」「ここの入居はいつからいけるんですか？」「最長はいつまで伸ばせますか？」 ⑥入居日が具体的な日付・曜日・月で確定している ⑦他の申込者の有無を顧客側から自発的に確認している ⑧customer_questions が3件以上の連続具体質問。判断できない場合は none"}, "reply_direction": "返信の方向性を120字以内の1文で（今回の返信で何にどう応えるかが分かる具体さで。短いラベルはコード側の reply_direction_label が担う）。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大5件・各20字以内）。'来阪' は常に含める。顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ['来阪', '見積書', '初期費用']）。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）", "customer_concern": "顧客の最新メッセージで提案物件・見積・条件に対して述べた懸念があれば {\\"topic\\": \\"階数|築年数|費用|駅距離|広さ|日当たり|審査|騒音治安|家族構成|設備|ペット駐車場|時期 のいずれか\\", \\"object\\": \\"顧客が使った語をそのまま（例: '2階' 'お風呂が狭い' '審査'）\\"}。懸念（迷い・不安・〜どうかな・高い・狭い・古い等）が無ければ null。過去メッセージの懸念は含めない", "customer_questions": ["顧客の最新メッセージに含まれる質問・確認事項を全て列挙（最大5件・各40字以内・質問の意図が分かる形で）。過去メッセージの質問は含めない。質問がなければ空配列 []"]${TURN_CONTRACT_BRAIN_ON ? ", " + BRAIN_TURN_CONTRACT_FIELD : ""}, "repeated_concern": "顧客が会話全体で繰り返し確認しているテーマを短句で（例: '費用' '審査' 'キャンセル'）。会話履歴・前回セーブデータで2回以上登場した話題のみ。なければnull", "current_property": "現在話題の中心になっている物件名・号室（例: 'ライオンズ渋谷401'）。会話履歴または【送付済み物件】に実際に登場した表記を一字一句そのまま使う（創作・言い換え・要約禁止）。特定できなければnull", "condition_change_type": "顧客の最新メッセージで検索条件の変更・追加・緩和、または物件ピックアップ依頼があったか。次のいずれか1つの文字列のみ: 'area_change'（エリア変更）/ 'rent_change'（家賃変更）/ 'layout_change'（間取り変更）/ 'equip_add'（設備・収納・こだわり条件の追加。WIC広め・SIC・南向き・オートロック・駐車場付き・ガレージ・ペット可等。【重要】「駐車場付きのお部屋がないか」「駐車場付きで探して」等は equip_add。現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 → aix は property_send が正解。絶対に property_check_result・acknowledge_check を選ばないこと）/ 'condition_relax'（条件緩和・拡大）/ 'pickup_request'（物件を送って・ピックアップ依頼・おすすめ依頼）/ 'multi'（複数変更）。なければnull。※すでに検討中の物件があっても新しい条件を追加したら必ず種別を返す。※【お客様の希望条件】（DB登録済み条件）と同じ内容の再言及は変更ではない", "condition_change_scope": "condition_change_type が非null の時だけ: 'permanent'（今後ずっとこの条件で探す＝希望条件の言い直し・変更・追加）/ 'temporary'（今回だけ・ついでに・比較や参考に別の条件でも見たい＝登録の希望条件は変えない）/ 'none'（検索条件の話ではない＝お客様が送った物件・特定の物件の質問・見積依頼等）。迷ったら permanent。condition_change_type が null なら null", "hesitancy_pattern": "顧客が決断を保留するパターンを最新メッセージで示しているか。'thinking'（検討します）/ 'callback'（また連絡します）/ 'waiting'（少し待ってほしい）/ 'undecided'（複数物件で迷い）/ 'timeline'（○月に決めたい）のいずれか1つ。なければnull", "future_timeline": "顧客が示した具体的な決断・申込タイムライン（例: '9月上旬'）。会話に実際に出た表現のみ（推測日付の創作禁止）。urgencyフィールドと矛盾させない。なければnull", "checkpoint_stage": "会話の実態フェーズ。hearing(ヒアリング中)・proposing(物件提案中)・viewing(内覧の調整中〜内覧後の検討中)・applying(申込検討中〜申込書提出)・contract(契約済み)のいずれか。conversations.statusやconversation_checkpointsの内容、メッセージの文脈を総合して判断。判断できない場合はnull。", "customer_intent": "お客様の今回の問い合わせ意図。次のいずれか1つ: question(疑問・確認質問―答えるだけでOK) / consultation(相談・アドバイス求め―選択肢提示) / desire(希望・条件・要望の表明―受け止め→提案) / decision(申込・内見・決定の意思表示―次ステップ案内) / positive(物件や提案への前向き反応―背中を押す) / negative(懸念・不安・否定的反応―解消してから次へ) / chat(雑談・一言―軽い返し)。当てはまるものがなければnull。※条件変更ルール（最重要）:最新メッセージにエリア・家賃・間取り・こだわり等の変更・追加・緩和が明示されている場合は、他のintent種別との競合に関係なく必ずdesireに設定すること（condition_change_typeと同一判定基準。フェイルクローズはnullではなくdesireに倒すこと）", "latent_intent": "お客様の送信動機・潜在意識の推論（20〜50字の自由記述）。次の3視点を総合して1文で言語化する: ①なぜ今このタイミングでこのメッセージを送ってきたのか（背景・きっかけ）を推測する ②表面的な質問の裏にある本当の懸念・不安・期待を推測する（例: 築年数を聞く→きれいな部屋への期待 / 初期費用を聞く→予算ギリギリの不安 / 審査を遠回しに確認→審査に落ちる不安） ③会話パターンから心理状態を読む（沈黙後の突然の質問→他社比較・状況変化の可能性 / 返信が短くなった→温度低下や多忙 / 同じ質問の繰り返し→説明が腹落ちしていない不安）。会話履歴に根拠がなく推測できない場合はnull（創作禁止）。※条件変更時の補足（condition_change_type非null時）:latent_intentには「複数回条件を変更しているが物件探しへの意欲は本物。変更を歓迎し新条件で即動くスタンスを明示することで信頼が積み重なり成約につながる」という趣旨を含めること", "engagement_stance": "今この局面で「押す」べきか「待つ」べきかの姿勢。'push' / 'wait' / null のいずれか1つだけを出力する。'wait'（押してはいけない局面）= ①直前AIXアクションが property_recommendation または property_check_result であり、顧客の最新メッセージが感謝・了承のみ（60字未満・質問・要望・懸念なし）の場合（ルール⑧の局面＝強推し直後の待ちフェーズ。**但し直前スタッフ送信に物件ピックアップの宣言があり、その後まだ物件を送っていない時は 'wait' にしない**＝ボールはこちら側）／②直前スタッフ発言または直近3メッセージ以内の顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等のネガワードがある直後（ルール⑦の局面）。'push'（背中を押すべき局面）= purchase_signal_level が 'strong' または 'peak' であり、かつ顧客がまだ迷っている・質問を重ねている（hesitancy_pattern が非null、または customer_questions が1件以上）場合。上記いずれにも当てはまらない場合は null（デフォルト）。判断に迷ったら null に倒す。※'wait' を出した場合、返信側では購買シグナル強度によるクロージング指示（希少性訴求・CTA・申込期限の明示）が全て無効化される。押しの強さより局面判定が優先される設計であり、'wait' と 'push' を同時に成立させてはならない（ルール⑦・⑧が成立するなら purchase_signal_level が peak でも必ず 'wait'）"}
+{"action": "スタッフが次にすべき具体的なアクション（20字以内）", "reason": "その理由（30字以内）", "aix": "上記能力マップのキー1つ。該当なし・物件送付直後等で顧客の反応待ちの場合は null（null は正当な出力であり、無理に何かを提案しない）。※但し書き（2026-09-23 あっぴ事例）: 直前のスタッフ送信に物件ピックアップの宣言（『出次第お送りします』『ピックアップしてお送りします』等）があり、その後まだ物件を送っていない場合は『反応待ち』ではない（ボールはこちら側）。この時は null にせず property_send を選ぶ", "closing_strategy": "この顧客が契約に至るための具体的な戦略を1〜2文で。必ず「〜させて頂きます」「〜する」の行動宣言形で書く（例: 「今日中にご希望条件の物件をピックアップしてお送りします」）。情報提供・受け身文体は禁止。※条件変更（condition_change_type非null）時は変更後の具体条件名（エリア・駅・家賃・設備等）を必ず明記し「その条件で全力ピックアップします」の行動宣言形にすること（「ご希望の条件」「ご希望のご条件」等の抽象表現は禁止）", "template_hint": "次に使うべきAIXテンプレートのラベルカテゴリ名を正確に入れる。必ず次のいずれかの文字列を使うこと（他の表現は禁止）: '物件ピックアップした'（property_send・複数件ピックアップ後）/ '1件特にオススメする'（property_recommendation・1件詳細後）/ '物件確認した（募集状況）'（property_check_result・空室確認の結果報告）/ '申込誘導'（お客様が自分から申込の意思を示した時の申込促進テンプレート。見積書送付直後には選ばない）/ ①申込系ラベル（application_push時。'①申込み時フォーマット（連帯保証人）'・'①申込時フォーマット（緊急連絡先）'・'①緊急連絡先・同居人なし' 等を正確に）/ '内覧日アポ'（内覧日程の打診）/ '直近の日にち'（直近日程の提案）。どのラベルにも当てはまらない場合はnull。トーン説明・文体の感想・フリーテキスト（'プッシュ強め・親身' 等）は絶対に入れない",${AFTER_AIX_TEMPLATE_SCHEMA} "next_steps": ["Step1（今すぐ）: 具体的アクション。※条件変更（condition_change_type非null）時のStep1は必ず「変更後の具体条件名（エリア・駅・家賃・設備等を明記）でChrome拡張を使って物件を再検索する」を含めること", "Step2: AIXボタン○○を押す", "Step3: 物件事実系（物件ピックアップ紹介（後続）・駅周辺物件ピックアップ（後続）・1件特にオススメ・【申込誘導】・【全件案内可能】）は『【AIX】○○をAI最適化して送る（AIXクラスター完了1〜2分後・顧客返信を待たない）』、定型追撃系（②申込時フォーマット（続き）・ヒアリング締め・（2番手・申込））は『【AIX】○○をそのまま送る（1分以内・編集不要・AI最適化禁止）』の書式でテンプレートまでセットで提示"], "reply_mode": "aixまたはauto_reply。auto_replyはAIが人の確認なしで送信する。線引きルール該当時・金額/契約/入居日/内覧日程の確定に関わる時・判断に迷う時は必ずaix。雑談や単純な質問への一般返信のみauto_reply", "two_choice_mode": "true または false（boolean）。以下の全条件が揃う場合 true: checkpoint_stage='proposing' かつ 送付済み物件が1件以上ある かつ 顧客の最新メッセージが条件に関するトレードオフ質問（例: '築年数は古くなりますか？' '家賃5万円台だとこの条件は難しいですか？' 'ユニットバスOKでもいいですが室内洗濯機は難しいですか？' '5.5万と6.2万の違いは何ですか？' 'この価格は妥当ですか？'等・現在提案中の物件の条件・価格・設備について納得・比較・トレードオフの判断を求める質問）かつ 顧客が明示的に拒否・離脱していない。→ true の場合、AIXで条件に合う物件を追加オススメするか、テキストで相場や理由を説明するかをスタッフが2択で判断する場面。trueにならないケース: 顧客が「この物件の空室はありますか？」等の募集状況確認をしている場合 / 顧客が新しい検索条件を追加している場合（condition_change_type非null）/ aix=viewing_invite・application_push等の確定アクションがある場合。不明な場合は false に倒す", "reply_direction_label": "two_choice_mode=true の場合のみ設定。返信する場合の方向性を10字以内の日本語で（例: '条件説明' '相場説明' '不安解消' '内覧誘導' '価格の根拠説明'）。two_choice_mode=false の場合は必ずnull", "ai_summary": "この顧客の全文脈ストーリー（経緯・現状・次の必須対応）を200字以内で書く。顧客を知らない人でも状況が分かる詳しさで。", "ai_summary_json": {"situation": "現在状況を15字以内（例: 内覧3物件の日程調整中）", "requirements": ["顧客の要望・こだわり（最大3件・各30字以内・具体的に）"], "opinions": ["顧客の性格・傾向（最大2件・各30字以内・具体的に）"], "winning_pattern": "成約につながる具体的行動を50字以内で。物件名・理由・タイミングを含む。必ず「〜する」「〜させて頂く」の行動宣言形で書く。受け身文体は禁止。※条件変更直後（condition_change_type非null時）は「変更後条件の具体名+全力ピックアップ宣言」の構成が成約につながる（成約データから検証済み）。「ご希望のご条件」等の抽象表現ではなく変更後の具体条件名（エリア・駅・間取り・こだわり等）を明記すること。", "next_action": "今すぐスタッフが打つべき次の1手を40字以内で", "emotion": "${emotionChoicesText()} のいずれか", "urgency": "今月中/3ヶ月以内/半年以上/未確認 のいずれか", "style": "絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか", "personality_profile": "顧客の人間性・行動パターンを100字以内で", "purchase_signal_level": "none/soft/strong/peak のいずれか。none=購買シグナルなし（挨拶・一般質問・雑談のみ、customer_intent=chat/null含む）/ soft=設備・費用・間取り・審査等の具体的な物件確認質問が1件=本気検討始まりシグナル（customer_questions が1件以上かつ具体的内容）/ strong=異カテゴリ2件以上の質問が重なっている（設備→入居日・費用→審査等）または複数物件の同時比較=申込前の高熱シグナル（customer_questions が2件以上かつ異カテゴリ、またはhesitancy_pattern=undecided）/ peak=申込直前最強シグナル。以下のいずれか1つでも該当したら質問件数に関係なく必ず peak にすること（成約データ分析で判明した盲点シグナル。1件しか質問がなくても soft/strong に落とさない）: ①申込許可伺い=「申し込んでもいいですか？」「一度お申し込みして内覧行きたいです」「抑えるだけ抑えててもいいんですか？」「申し込みするだけして通れば進みたい」「見学して決める形になりますが、それでも申し込みできますか？」等、申込の可否・許可を顧客側から伺ってきた ②物件名指し確定=「待ってください！！ここがいいです！」「○○に決めます」「○○で申請したいと思います」「やはり○○の物件にしようかな」等、特定物件を名指しで選んだ ③金額そのものの復唱=「153,200円ですか😭」「18万ですか😭」「4万台で、お願いします」等、見積・費用の金額をそのまま復唱してきた（落胆の絵文字を伴っても離脱ではなく最終障壁が価格のみのサイン） ④手続き・審査プロセスの具体質問=「保証会社はどこになりますか？」「クレジット払いは可能ですか？どのような流れになりますか」「必要書類は何ですか」等、買う前提の手続き質問 ⑤入居日逆算質問=「いつ入居なりそうですか？」「ここの入居はいつからいけるんですか？」「最長はいつまで伸ばせますか？」 ⑥入居日が具体的な日付・曜日・月で確定している ⑦他の申込者の有無を顧客側から自発的に確認している ⑧customer_questions が3件以上の連続具体質問。判断できない場合は none"}, "reply_direction": "返信の方向性を120字以内の1文で（今回の返信で何にどう応えるかが分かる具体さで。短いラベルはコード側の reply_direction_label が担う）。必ず『〜する』の行動方針形で書く（例: '申込みを前に進める' '内覧日を確定する' '不安を解消して継続する' '物件提案を再開する'）。brainにしかわからないDB知識（内覧履歴・送付済み物件・成約パターン・未完了タスク）から導く。必須フィールド・nullは避ける", "key_topics": ["返信本文に必ず含める実質的内容（最大3件・各30字以内）。挨拶・定型文・トーン指示・抽象的方針は書かない（それらは reply_direction / recommended_tone の役割）。具体的な情報・アクションのみ（例: '本人確認書類送付の催促' '申込みで物件を抑える提案' '空室確認結果の報告'）。該当なければ空配列 []"], "avoid_topics": ["返信で絶対に言及しない語・話題（最大5件・各20字以内）。'来阪' は常に含める。顧客が質問していない費用の話題・直前スタッフ送信で使用済みの緊急表現・文脈に合わないCTA等（例: ['来阪', '見積書', '初期費用']）。理由説明・トーン説明は書かず、禁止する語そのものを書く"], "urgency_appropriate": "true または false（boolean値で出力）。直近のスタッフ送信メッセージ1〜2件（[スタッフ] / [AIX:xxx]）に顧客を急かす危機感・緊急表現（ルール③の表現リスト参照）が含まれていれば false、含まれていなければ true", "recommended_tone": "次の5つの文字列のうち1つだけを正確に出力（組み合わせ・修飾・他の表現は禁止）: '共感的'（顧客が不安・悩んでいる時）/ 'テキパキ'（忙しそうな顧客・手続き系の返信）/ '慎重'（費用・審査・契約等の重要事項を扱う時）/ '明るく前向き'（物件が見つかった・内覧確定等の好機）/ '普通'（どれにも当てはまらない場合）", "customer_concern": "顧客の最新メッセージで提案物件・見積・条件に対して述べた懸念があれば {\\"topic\\": \\"階数|築年数|費用|駅距離|広さ|日当たり|審査|騒音治安|家族構成|設備|ペット駐車場|時期 のいずれか\\", \\"object\\": \\"顧客が使った語をそのまま（例: '2階' 'お風呂が狭い' '審査'）\\"}。懸念（迷い・不安・〜どうかな・高い・狭い・古い等）が無ければ null。過去メッセージの懸念は含めない", "customer_questions": ["顧客の最新メッセージに含まれる質問・確認事項を全て列挙（最大5件・各40字以内・質問の意図が分かる形で）。過去メッセージの質問は含めない。質問がなければ空配列 []"]${TURN_CONTRACT_BRAIN_ON ? ", " + BRAIN_TURN_CONTRACT_FIELD : ""}, "repeated_concern": "顧客が会話全体で繰り返し確認しているテーマを短句で（例: '費用' '審査' 'キャンセル'）。会話履歴・前回セーブデータで2回以上登場した話題のみ。なければnull", "current_property": "現在話題の中心になっている物件名・号室（例: 'ライオンズ渋谷401'）。会話履歴・【送付済み物件】・物件ごとの状況（▶ 今の番の物件・候補）に実際に登場した表記を一字一句そのまま使う（創作・言い換え・要約禁止）。主語の無い発言（引用・「ここ」「空いてますか」）でも ▶ が1件を指していればその名前、候補が複数でも引用・文脈で1件に決まればその候補の名前を書く。特定できなければnull", "condition_change_type": "顧客の最新メッセージで検索条件の変更・追加・緩和、または物件ピックアップ依頼があったか。次のいずれか1つの文字列のみ: 'area_change'（エリア変更）/ 'rent_change'（家賃変更）/ 'layout_change'（間取り変更）/ 'equip_add'（設備・収納・こだわり条件の追加。WIC広め・SIC・南向き・オートロック・駐車場付き・ガレージ・ペット可等。【重要】「駐車場付きのお部屋がないか」「駐車場付きで探して」等は equip_add。現在提案中の物件の設備確認ではなく、新しい設備条件での物件探しの依頼 → aix は property_send が正解。絶対に property_check_result・acknowledge_check を選ばないこと）/ 'condition_relax'（条件緩和・拡大）/ 'pickup_request'（物件を送って・ピックアップ依頼・おすすめ依頼）/ 'multi'（複数変更）。なければnull。※すでに検討中の物件があっても新しい条件を追加したら必ず種別を返す。※【お客様の希望条件】（DB登録済み条件）と同じ内容の再言及は変更ではない", "condition_change_scope": "condition_change_type が非null の時だけ: 'permanent'（今後ずっとこの条件で探す＝希望条件の言い直し・変更・追加）/ 'temporary'（今回だけ・ついでに・比較や参考に別の条件でも見たい＝登録の希望条件は変えない）/ 'none'（検索条件の話ではない＝お客様が送った物件・特定の物件の質問・見積依頼等）。迷ったら permanent。condition_change_type が null なら null", "hesitancy_pattern": "顧客が決断を保留するパターンを最新メッセージで示しているか。'thinking'（検討します）/ 'callback'（また連絡します）/ 'waiting'（少し待ってほしい）/ 'undecided'（複数物件で迷い）/ 'timeline'（○月に決めたい）のいずれか1つ。なければnull", "future_timeline": "顧客が示した具体的な決断・申込タイムライン（例: '9月上旬'）。会話に実際に出た表現のみ（推測日付の創作禁止）。urgencyフィールドと矛盾させない。なければnull", "checkpoint_stage": "会話の実態フェーズ。hearing(ヒアリング中)・proposing(物件提案中)・viewing(内覧の調整中〜内覧後の検討中)・applying(申込検討中〜申込書提出)・contract(契約済み)のいずれか。conversations.statusやconversation_checkpointsの内容、メッセージの文脈を総合して判断。判断できない場合はnull。", "customer_intent": "お客様の今回の問い合わせ意図。次のいずれか1つ: question(疑問・確認質問―答えるだけでOK) / consultation(相談・アドバイス求め―選択肢提示) / desire(希望・条件・要望の表明―受け止め→提案) / decision(申込・内見・決定の意思表示―次ステップ案内) / positive(物件や提案への前向き反応―背中を押す) / negative(懸念・不安・否定的反応―解消してから次へ) / chat(雑談・一言―軽い返し)。当てはまるものがなければnull。※条件変更ルール（最重要）:最新メッセージにエリア・家賃・間取り・こだわり等の変更・追加・緩和が明示されている場合は、他のintent種別との競合に関係なく必ずdesireに設定すること（condition_change_typeと同一判定基準。フェイルクローズはnullではなくdesireに倒すこと）", "latent_intent": "お客様の送信動機・潜在意識の推論（20〜50字の自由記述）。次の3視点を総合して1文で言語化する: ①なぜ今このタイミングでこのメッセージを送ってきたのか（背景・きっかけ）を推測する ②表面的な質問の裏にある本当の懸念・不安・期待を推測する（例: 築年数を聞く→きれいな部屋への期待 / 初期費用を聞く→予算ギリギリの不安 / 審査を遠回しに確認→審査に落ちる不安） ③会話パターンから心理状態を読む（沈黙後の突然の質問→他社比較・状況変化の可能性 / 返信が短くなった→温度低下や多忙 / 同じ質問の繰り返し→説明が腹落ちしていない不安）。会話履歴に根拠がなく推測できない場合はnull（創作禁止）。※条件変更時の補足（condition_change_type非null時）:latent_intentには「複数回条件を変更しているが物件探しへの意欲は本物。変更を歓迎し新条件で即動くスタンスを明示することで信頼が積み重なり成約につながる」という趣旨を含めること", "engagement_stance": "今この局面で「押す」べきか「待つ」べきかの姿勢。'push' / 'wait' / null のいずれか1つだけを出力する。'wait'（押してはいけない局面）= ①直前AIXアクションが property_recommendation または property_check_result であり、顧客の最新メッセージが感謝・了承のみ（60字未満・質問・要望・懸念なし）の場合（ルール⑧の局面＝強推し直後の待ちフェーズ。**但し直前スタッフ送信に物件ピックアップの宣言があり、その後まだ物件を送っていない時は 'wait' にしない**＝ボールはこちら側）／②直前スタッフ発言または直近3メッセージ以内の顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等のネガワードがある直後（ルール⑦の局面）。'push'（背中を押すべき局面）= purchase_signal_level が 'strong' または 'peak' であり、かつ顧客がまだ迷っている・質問を重ねている（hesitancy_pattern が非null、または customer_questions が1件以上）場合。上記いずれにも当てはまらない場合は null（デフォルト）。判断に迷ったら null に倒す。※'wait' を出した場合、返信側では購買シグナル強度によるクロージング指示（希少性訴求・CTA・申込期限の明示）が全て無効化される。押しの強さより局面判定が優先される設計であり、'wait' と 'push' を同時に成立させてはならない（ルール⑦・⑧が成立するなら purchase_signal_level が peak でも必ず 'wait'）"}
 
 ${TURN_CONTRACT_BRAIN_ON ? BRAIN_TURN_CONTRACT_RULES + "\n" : ""}
 【差分分析モード】userプロンプトに【前回の分析結論】がある場合、それを仮説として参照してよい。新着メッセージが前回結論を変えない場合は前回結論をほぼ維持してJSON出力してよい。ただし申込・内見確定・キャンセル・条件変更・送付物件の一部の見送り（ルール⑩）・フェーズ遷移のシグナルがあれば前回結論を破棄して再判断すること。JSONは常に全フィールド完全出力（ai_summary/ai_summary_json含む）。ただし customer_questions・customer_concern・repeated_concern・current_property・condition_change_type・hesitancy_pattern・future_timeline・key_topics・customer_intent・latent_intent・engagement_stance の11フィールド（turn_contract も同じく毎回ゼロから）（＝毎メッセージ再判定＝**鮮度リセット**対象。※このリストは「いつ判定したか（鮮度）」のリストであって「何についての判定か（意味のスコープ）」のリストではない。repeated_concern / future_timeline / current_property は会話全体スコープの値なので、下流では『今回のメッセージが何であるか』の判定に使われない）は前回結論を引き継がず、必ず今回の新着メッセージから毎回ゼロから再判定すること（前回の質問リスト・保留パターン・前回の物件名や日付を含む必須内容の再掲は禁止）。purchase_signal_level は累積シグナル（message-localではない）。前回値を継承しつつ今回の新着メッセージのシグナルで更新すること（soft→strong への昇圧はするが、strong→none への突然の降格は禁止。会話全体でシグナルを積み上げる設計）。key_topicsは今回のメッセージ文脈から本当に必要な内容のみ。前回送った物件の空き日付・案内可能日など文脈が変わった情報は絶対に引き継がない。
@@ -2379,6 +2391,10 @@ ${catalogBlockForBrain(brainScene)}
     console.warn("[brain-core] brain_aix_feedback read failed (fail-open):", e instanceof Error ? e.message : e);
   }
   const sceneEvidenceText = buildSceneEvidencePromptText(sceneEvidence, brainAixFeedback);
+  // 2026-10-13 判断の手本（見張りで道が外れた番の竹内さんの一手・同じ場面で最大3件・毎回変わる並び＝キャッシュの印の外・app/lib/brain-judge-examples.ts）。既定 off・入れる: BRAIN_JUDGE_EXAMPLES=on
+  const judgeExamplesText = judgeExamplesEnabled() && !isPostApplyStatus(convStatus)
+    ? judgeExamplesBrainText(pickJudgeExamples(JUDGE_EXAMPLES, { customerText: unrepliedTurn.text ?? "", conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") }))
+    : "";
 
   // H6(Fable5): 予約送信・未完了タスク・内覧予定を注入（重複提案防止・next_steps の接地）
   type ScheduledMsg = { text: string | null; scheduled_at: string };
@@ -2530,10 +2546,12 @@ ${catalogBlockForBrain(brainScene)}
     console.log(JSON.stringify({ tag: "brain:confirm-topic", conversationId, target: confirmTopic.target.name, routes: confirmTopic.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: confirmTopic.source }));
   }
   // 2026-10-07 4巡目（竹内さん S❤「物件ごとに状況を把握…」）: 今の番が物件の話（引用・名指し）の時だけ、物件ごとの状況の台帳（property-thread.ts）。PROPERTY_THREAD_NOTE=off で止まる
+  // 2026-10-13 主語の抜け（q082〜q087）: 台帳の文（▶ 指している物件の候補）の名前も current_property の実在ゲートに入れる
+  let propertyThreadNoteText = "";
   try {
     const { propertyThreadNoteFor } = await import("@/app/lib/property-thread-server");
     const ptNote = await Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]);
-    if (ptNote) customerStateBlockText += `\n\n${ptNote}`;
+    if (ptNote) { customerStateBlockText += `\n\n${ptNote}`; propertyThreadNoteText = ptNote; }
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
@@ -2561,7 +2579,7 @@ ${catalogBlockForBrain(brainScene)}
       const askStatus = requestStatusBrainOn();
       if (askStatus) { requestCands = requestCandidatesForBrain(rlLedger); requestStatusAt = typedMessages[0]?.created_at ?? ""; }
       const rlNote = [buildRequestLedgerNote(askStatus ? [] : rlLedger, currentTurnRequests(lm)), askStatus ? buildRequestStatusAsk(requestCands) : ""].filter(Boolean).join("\n\n");
-      if (rlNote) { customerStateBlockText += `\n\n${rlNote}`; console.log(JSON.stringify({ tag: "brain:request-ledger", conversationId, chars: rlNote.length })); }
+      if (rlNote) { customerStateBlockText += `\n\n${rlNote}`; console.log(JSON.stringify({ tag: "brain:request-ledger", conversationId, chars: rlNote.length, cands: requestCands.length })); }
     } catch (e) { console.warn("[brain-core] request-ledger skipped:", e instanceof Error ? e.message : String(e)); }
     // 2026-10-08 竹内さん「人間でいうメモ」「気持ちの判断の強化」: お客様のメモ（芯・事情・決める人・気にしている事・好き嫌い・伝えた事・聞かれた事＋もう伝えた事の種類）と
     //   気持ちの流れ（このお客様のいつもとの違い・前の提案への反応・前回までの気持ち）。場面で要る種類だけ（customer-memo-server.ts・CUSTOMER_MEMO=off／CUSTOMER_MOOD_FLOW=off）
@@ -2712,11 +2730,11 @@ ${catalogBlockForBrain(brainScene)}
   const customerSpecificText = isFreshLayer
     // 2026-09-23 並べ替え（プロンプトキャッシュ）: 1フェーズで決まる物 → 2この会話で当分変わらない物 → 3毎回変わる物。
     //   DeepSeek は先頭から一致した所までをキャッシュに使い、時間の期限が無い。同じ会話の次の呼び出しは97.8%が1時間以内なので 2 までが一致する
-    ? `${aixCatalogText}${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
+    ? `${aixCatalogText}${actionRulesText}${templatesText}${statusText}${condText}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${examplesText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`
-    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${ragKnowledgeText}
+    : `${aixCatalogText}${actionRulesText}${contractExamplesPhaseText}${winningPatternsText}${templatesText}${statusText}${condText}${profileText}${aiSummaryNote}${sentPropsText}${propertySearchText}${viewingsText}${tasksText}${scheduledText}${checkpointText}${examplesText}${prevMetaText}${timingText}${companyFactsText}${sendReplyTimingText}${flagsText}${aixHistoryText}${ledgerText}${promiseBrainText}${seeMoreBrainText}${customerStateBlockText}${parallelSearchBrainText}${applyReadinessText}${appealTimingText}${sceneEvidenceText}${judgeExamplesText}${ragKnowledgeText}
 
 会話履歴（[AIX:xxx 日付]=AIXツールxxxで送信済み / [AIX 日付]=AIX送信(種別不明) / [スタッフ 日付]=手動送信 / [顧客 日付]=顧客メッセージ）:
 ${history}`;
@@ -2727,7 +2745,7 @@ ${history}`;
     chars: {
       prevMeta: prevMetaText.length, winning: winningPatternsText.length, actionWinRate: actionWinRateText.length, templates: templatesText.length,
       actionRules: actionRulesText.length, contractExamples: contractExamplesPhaseText.length, status: statusText.length, timing: timingText.length,
-      flags: flagsText.length, aixHistory: aixHistoryText.length, ledger: ledgerText.length, sceneEvidence: sceneEvidenceText.length,
+      flags: flagsText.length, aixHistory: aixHistoryText.length, ledger: ledgerText.length, sceneEvidence: sceneEvidenceText.length, judgeExamples: judgeExamplesText.length,
       cond: condText.length, profile: profileText.length, aiSummary: aiSummaryNote.length, scheduled: scheduledText.length, tasks: tasksText.length,
       viewings: viewingsText.length, examples: examplesText.length, checkpoint: checkpointText.length, ragKnowledge: ragKnowledgeText.length,
       sentProps: sentPropsText.length, propertySearch: propertySearchText.length, history: history.length,
@@ -2858,6 +2876,7 @@ ${history}`;
       aix?: string | null;
       closing_strategy?: string;
       template_hint?: string;
+      after_aix_template?: string | null;
       next_steps?: string[];
       reply_mode?: "aix" | "auto_reply";
       two_choice_mode?: boolean;
@@ -2896,14 +2915,8 @@ ${history}`;
       //   → 他の after() と同じく、使えない時はその場で走らせる
       const saveSummary = async () => {
         try {
-          await supabase
-            .from("property_customers")
-            .update({
-              ...(brainSummaryText ? { ai_summary: brainSummaryText } : {}),
-              ...(brainSummaryJson ? { ai_summary_json: brainSummaryJson } : {}),
-              ai_summary_at: new Date().toISOString(),
-            })
-            .eq("id", propertyCustomerId);
+          // 2026-10-13 要約はブレインだけが書く（brain-only-summary.ts）: our_actions 等を残す・予測の記録も書く
+          await saveBrainSummary({ propertyCustomerId, conversationId, summaryText: brainSummaryText || null, summaryJson: brainSummaryJson });
         } catch (e) {
           console.warn("[brain-core] ai_summary save failed:", propertyCustomerId, e instanceof Error ? e.message : e);
         }
@@ -3888,6 +3901,11 @@ ${history}`;
       }
       // 入居の時期が先（2028年3月等）の初回は物件ピックアップの番にしない（AIX要対応・自動の検索を起こさない）
       if (farMoveIn && firstContactPickup && /^property_(?:send|recommendation|search)$/.test(firstContactPickup)) firstContactPickup = null;
+      // 2026-10-13 竹内さん（いしのまさや・初回に物件の画像＋希望）: 初回の物件の確認も約束の順（2件の確認と御見積書→2通目に希望を受ける一言・探すは後）にする（two-stage firstContactCheckTwoStage・TWO_STAGE_PROMISE_SEQUENCE=off で旧）
+      if ((firstContactPickup === "property_check_result" || firstContactPickup === "property_send") && !twoStage) {
+        const tm: string[] = []; for (const m of typedMessages) { if (m.sender !== "customer") break; tm.unshift(m.text ?? ""); }
+        twoStage = firstContactCheckTwoStage(tm.filter((t) => /https?:\/\//.test(t) || (/^\s*\[画像\]/.test(t) && isPropertyCandidateImage(t))), unrepliedTurn.text ?? "");
+      }
     }
 
     // template_hint バリデーションゲート: AIXタブのラベルカテゴリ名（許可リストの含む判定）のみ通す。
@@ -4133,9 +4151,10 @@ ${history}`;
     const latestPropertyPass = detectPropertyPass(latestCustomerForPass, {
       recentStaffText: typedMessages.find((m) => m.sender === "staff")?.text ?? "",
     });
+    // 2026-10-13 主語の抜けの6問で current_property が 0/6（5問 null）: ブレインが ▶ の候補（台帳の表示＝「名前 号室」の形）から書いた名前が
+    //   会話の文と空白・号室の書き方で一字一句合わず落ちていた → 空白を除いて比べ、台帳の文（▶ の候補）も実在に含める（current-property-gate.ts）
     const currentProperty = rawCurrentProperty && propertyNameCore &&
-      (history.includes(propertyNameCore) ||
-       sentProps.some((s) => s.property_name.includes(propertyNameCore) || rawCurrentProperty.includes(s.property_name))) &&
+      currentPropertyExists(rawCurrentProperty, propertyNameCore, { history, sentNames: sentProps.map((s) => s.property_name), threadNote: propertyThreadNoteText }) &&
       !(latestPropertyPass && !latestCustomerForPass.includes(propertyNameCore))
       ? rawCurrentProperty
       : null;
@@ -4410,6 +4429,8 @@ ${history}`;
       template_hint: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : checkKind?.ui_button === "確認した（条件・交渉）" && (templateHint ?? "").includes("物件確認した（募集状況）") ? undefined
         : templateHint,
+      // 2026-10-13 竹内さん（ブレインの使い残し 1）: この AIX を送った直後の続きのテンプレ（/api/recommend-templates の Sonnet の代わり・post-aix-template-rec.ts）
+      after_aix_template: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer || !finalAix ? undefined : sanitizeAfterAixTemplate(parsed.after_aix_template),
       next_steps: procedureDecision || confirmTopicReply || rentIncludedReply || viewingDateAnswer ? undefined
         : Array.isArray(parsed.next_steps) && parsed.next_steps.length > 0 ? parsed.next_steps : undefined,
       reply_mode: replyMode,
@@ -4928,6 +4949,18 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   } catch (e) {
     console.warn(JSON.stringify({ tag: "brain:strategy-rag", conversationId, error: e instanceof Error ? e.message : String(e) }));
   }
+  // 2026-10-13 要約をブレインだけにした: 要約（customer-summary）が winning_pattern に使っていた「人間性が似た成約事例」
+  //   （match_reply_knowledge の成約パターン・当たった予測）は match_winning_patterns と別の源 → 戦略にも渡す（STRATEGY_SUMMARY_PATTERNS=off で止める）
+  if (strategySummaryPatternsEnabled()) {
+    try {
+      const condText = [pc?.desired_area, pc?.floor_plan, pc?.rent_max ? `${pc.rent_max}円以下` : null, pc?.preferences].filter(Boolean).join(" ");
+      const sp = await fetchWinningPatterns(pc?.personality_profile ?? "", condText);
+      const extra = formatSummaryPatternsForStrategy(sp, patternsText);
+      if (extra) patternsText = patternsText ? `${patternsText}\n${extra}` : extra;
+    } catch (e) {
+      console.warn(JSON.stringify({ tag: "brain:strategy-rag-summary", conversationId, error: e instanceof Error ? e.message : String(e) }));
+    }
+  }
 
   const digestText = digests.map((d) => {
     const parts = [d.ts ? jstMD(d.ts) : "", d.intent ? `意図:${d.intent}` : "", d.q?.length ? `質問:${d.q.join("／")}` : "", d.concern ? `懸念:${d.concern}` : "",
@@ -5002,11 +5035,8 @@ async function consolidateStrategy(conversationId: string, conv: Record<string, 
   const summaryText = str(p.ai_summary, 2000);
   const summaryJson = p.ai_summary_json && typeof p.ai_summary_json === "object" ? p.ai_summary_json : null;
   if (pcid && (summaryText || summaryJson)) {
-    await supabase.from("property_customers").update({
-      ...(summaryText ? { ai_summary: summaryText } : {}),
-      ...(summaryJson ? { ai_summary_json: summaryJson } : {}),
-      ai_summary_at: nowIso,
-    }).eq("id", pcid).then(() => {}, () => {});
+    // 2026-10-13 要約はブレインだけが書く（brain-only-summary.ts）: our_actions 等を残す・予測の記録も書く
+    await saveBrainSummary({ propertyCustomerId: pcid, conversationId, summaryText, summaryJson, nowIso }).then(() => {}, () => {});
   }
   return next;
 }
@@ -5311,6 +5341,7 @@ async function analyzeAndSaveBrainMetaInner(
       note: "",
       reason: null,
       template_hint: undefined,
+      after_aix_template: undefined,
     };
     // 2026-09-13 監査 抜け4: 省略の書き込みにも旧ウォーターマーク（updated_at 一致）が残っていて、sync-from-screening 等の
     //   無関係な更新で捨てられ、短い返事（お願いします等）の返信生成が判断なし（T3）になっていた。本分析と同じ見送り判定に揃える。

@@ -34,7 +34,7 @@ import { execSync } from "node:child_process";
 import { setupLlmTest, YUMA, type LlmTestHarness } from "./lib/llm-test-harness";
 import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lease";
 import { shiftExamText } from "./lib/brain-exam-dates";
-import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCurrentProperty, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
+import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 
@@ -116,7 +116,9 @@ type ResultRow = {
 
 // ─── YUMA の写し（yuma-r10-brain-replay と同じ線） ─────────────────────────
 function floorFile(): string { return String(process.env.REPLAY_FLOOR_FILE ?? ""); }
+let curFloor: string | null = null; // 10/09: 今の問題の線（他の問題の発言の混ざりを数える時に使う）
 function writeFloor(floor: string | null) {
+  curFloor = floor;
   writeFileSync(floorFile(), JSON.stringify(floor ? { conversationId: CONV, floor, status: "proposing", messageIdPrefix: PREFIX, keepPropertyCustomer: true } : {}));
 }
 async function waitOtherPcCopies(maxMin = 240) {
@@ -442,7 +444,7 @@ function rescore(rows: ResultRow[], probs: Map<string, ExamProblem>): ResultRow[
     const pv = judgePath(brainPathCode(r.brain as BrainExamOutput), acc, mn);
     const asks = r.asks ? r.asks.map((a) => a.covered) : null, ng = r.ng ? r.ng.map((g) => g.violated) : null;
     const essence = r.essence ? (() => { const v = judgePath(codeFromString(r.essence!.code), acc, mn); return { ...r.essence!, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
-    const draft = r.draft ? (() => { const v = judgePath(codeFromString(r.draft!.code), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) }; })() : r.draft;
+    const draft = r.draft ? (() => { const v = judgePath(codeFromString(normalizeDraftCode(r.draft!.code, r.draft!.text, acc)), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) }; })() : r.draft;
     return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, score: problemScore(pv, asks, ng), essence, draft };
   });
 }
@@ -472,6 +474,10 @@ function summarize(label: string, baseline: string | null): string {
     const drs = pp.filter((p) => p.drMaj !== null);
     const nRep = Math.max(...pp.map((p) => p.n), 1);
     L.push(`物差し（目標90%は①道と②答え方・③④は文の中身の参考。問題ごと${nRep > 1 ? `・${nRep}回の過半数` : "・1回"}${JUDGE_REPEAT > 1 ? `・判定 ${JUDGE_REPEAT}回の過半数` : ""}）: ①道 ${pc2((p) => p.pathMaj)}｜②依頼の答え方（道＋依頼ごとに返信／約束／AIX の区別＋言ってはいけない事・要点は見ない）${!pp.some((p) => p.routeKnown) ? "-（この回は答え方の判定なし＝10/09 より前）" : known.length === pp.length ? pc2((p) => p.routeMaj) : `${pc2((p) => p.routeMaj, known)}（答え方の判定がある ${known.length} 問）`}｜③要点まで（旧の合格）${pc2((p) => p.pass)}｜④下書きの要点（返信・2段が正解の問題）${drs.length ? pct(drs.filter((p) => p.drMaj).length, drs.length) : "-"}`);
+  }
+  {
+    const all = rows.filter((r) => !r.error) as Array<ResultRow & { pcWriteback?: string[]; foreignMsgs?: number }>;
+    L.push(`混ざりの印（回 ${all.length}）: 条件の行が回す前に違った ${all.filter((r) => (r.pcMismatch ?? []).some((k) => k !== "他の問題の発言")).length}・他の問題の発言 ${all.filter((r) => (r.foreignMsgs ?? 0) > 0).length}・ブレイン自身の条件の書き戻し（pcWriteback・混ざりではない） ${all.filter((r) => r.pcWriteback?.length).length}`);
   }
   if (essN || drN) L.push(`3段: 本質の道（LLM の最初の答え）${pct(essOk, essN)} → 最終の道 ${pct(pathAll, runAll)}${drN ? ` → 下書き（返信・2段が正解の問題）道 ${pct(drPath, drN)}・合格 ${pct(drOk, drN)}` : ""}`);
   // 2026-10-09 主語の抜け: spec の property（今の番の物件の正解）がある問題だけ、ブレインの current_property を照らす
@@ -614,9 +620,19 @@ async function main() {
   let curPc: Record<string, unknown> | null = null;
   const pcDiff = async () => (await verifyPc(yumaPc, pcPatchOf(curPc))).filter((k) => !PC_SELF_WRITE.has(k));
   const ensurePc = async () => { let d = await pcDiff(); for (let k = 0; k < 2 && d.length; k++) { await writePc(yumaPc, curPc); /* 他の担当を待たない（互いに控えを持ったまま待つと詰まる） */ await new Promise((r) => setTimeout(r, 800)); d = await pcDiff(); } return d; };
+  // 10/09（本質の担当の調べ: 同時に回した試験で他の問題の発言が混ざった）: 線より後の会話の行が自分の行だけかを数える
+  const foreignMsgs = async (): Promise<number> => {
+    if (!curFloor) return 0;
+    const { data } = await sb.from("messages").select("id").eq("conversation_id", CONV).gte("created_at", curFloor).limit(500);
+    const mine = new Set(own);
+    return ((data ?? []) as Array<{ id: string }>).filter((m) => !mine.has(m.id)).length;
+  };
   const runBrainChecked = async (o: Parameters<typeof analyzeConversation>[5], pcOn: boolean, row: ResultRow) => {
     const before = await ensurePc();
+    const fb = await foreignMsgs();
     const out = await runBrain(o, pcOn);
+    const fa = await foreignMsgs();
+    if (fb || fa) { (row as ResultRow & { foreignMsgs?: number }).foreignMsgs = Math.max(fb, fa, (row as ResultRow & { foreignMsgs?: number }).foreignMsgs ?? 0); row.pcMismatch = [...new Set([...(row.pcMismatch ?? []), "他の問題の発言"])]; }
     // 回した後の違いはブレイン自身の条件の書き戻し（発言から条件を拾って property_customers に書く）が主＝混ざりとは数えず、印だけ残す。次の呼び出しの前に ensurePc が写し直す
     const after = await pcDiff();
     if (before.length) row.pcMismatch = [...new Set([...(row.pcMismatch ?? []), ...before])];
@@ -629,6 +645,7 @@ async function main() {
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
     const acc = acceptOf(p), mn = p.mustNot ?? [];
     currentProblemId = p.id;
+    process.env.BRAIN_JUDGE_EXAMPLES_EXCLUDE_CONV = p.conv; // 10/13 判断の手本: 問題の元の会話の番は手本に入れない（答えが漏れない）
     curPc = p.pc;
     try {
       const jd = (x: number) => Math.floor((x + 9 * 3600_000) / 86_400_000);
@@ -730,7 +747,7 @@ async function main() {
           } catch (e) { skipped = `失敗: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120); }
           if (text) {
             const dj = NO_JUDGE ? null : await judgeDraft(ps, text);
-            const dcode = dj?.code ?? "返信";
+            const dcode = normalizeDraftCode(dj?.code ?? "返信", text, acc); // 10/13 確認＋見積の1文は 2段:check にも数える
             const dv = judgePath(codeFromString(dcode), acc, mn);
             row.draft = { text, code: dcode, ok: dv.ok, asks: dj?.asks ?? null, ng: dj?.ng ?? null, pass: dv.ok && (!dj || (dj.asks.every(Boolean) && !dj.ng.some(Boolean))) };
           } else row.draft = { text: null, skipped: skipped ?? "下書きなし", code: "（下書きなし）", ok: false, asks: null, ng: null, pass: false };

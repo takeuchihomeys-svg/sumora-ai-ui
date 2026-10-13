@@ -3,7 +3,7 @@
 // 実物: 10/08 の本番の判断（suggested_aix_meta）と、語で作られていた やること（line_tasks）の組
 import {
   brainTaskTypes, brainTaskTypesToCancel, brainNeedsStaff, classifyTarget, brainHotDecision, targetSummary,
-  nonBrainBannerAllowed, compareTargets, flagOn, type AttentionMeta,
+  nonBrainBannerAllowed, brainNoAixHidesBanners, compareTargets, flagOn, type AttentionMeta,
 } from "../brain-attention";
 import { decideAutoTask } from "../property-check-task";
 import { buildActionLedger } from "../action-ledger";
@@ -110,7 +110,13 @@ t("審査落ちは状況を先頭に", targetSummary({ tier: "screening_failed",
 
 console.log("■ 4. ブレイン以外の帯（ブレインと食い違う時は出さない）");
 t("ブレインの今の判断なし → 出す（今まで通り）", nonBrainBannerAllowed({ bannerAix: null, brainFresh: false, brainAix: "property_send" }));
-t("ブレインが AIX なし → 出す（食い違いではない）", nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: true, brainAix: null }));
+// 2026-10-13: ブレインの新しい判断が AIX なし → ブレイン以外の札も出さない（申込以降の札は今まで通り）
+t("ブレインが AIX なし → 出さない（10/13〜）", !nonBrainBannerAllowed({ bannerAix: "estimate_sheet", brainFresh: true, brainAix: null, noAixHides: true }));
+t("ブレインが AIX なし・テンプレの帯 → 出さない", !nonBrainBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: null, noAixHides: true }));
+t("ブレインが AIX なし・申込以降の札 → 出す（今まで通り）", nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: true, brainAix: null, postApply: true, noAixHides: true }));
+t("ブレインが AIX なし・戻す（off）→ 出す", nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: true, brainAix: null, noAixHides: false }));
+t("既定は隠す・off で戻す", brainNoAixHidesBanners(undefined) && !brainNoAixHidesBanners("off"));
+t("ブレインの判断が古い → AIX なしでも出す（何も言っていない）", nonBrainBannerAllowed({ bannerAix: null, brainFresh: false, brainAix: null, noAixHides: true }));
 t("申込②の帯・ブレインも 申込へ！ → 出す", nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: true, brainAix: "application_push" }));
 t("申込②の帯・ブレインは 物件確認した → 出さない", !nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: true, brainAix: "property_check_result" }));
 t("テンプレの帯（AIX なし）・ブレインが AIX → 出さない（ブレインの AIX を先に）", !nonBrainBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite" }));

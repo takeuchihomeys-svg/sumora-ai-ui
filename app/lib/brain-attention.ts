@@ -353,12 +353,20 @@ export function attentionRank(i: { pendingAixAction?: string | null; tier?: Targ
  * ブレイン以外の決め方の帯（P0 テンプレ連番・P0.6 連続送信・P1/P2〜P2.6 申込・審査・契約・P4.5 物件オススメ続き・P7.5 AIX 後のテンプレ・テンプレの点滅）を出してよいか。
  *   ブレインの今の判断（最新のお客様の発言を見た判断）が AIX を言っている時: その帯の AIX が同じ時だけ出す（違う AIX＝食い違い→出さない）。
  *     AIX を持たないテンプレの帯（bannerAix=null）はブレインの AIX を先に出すため出さない
- *   ブレインの今の判断が無い・AIX なし: 今まで通り出す（ブレインは何も言っていない＝食い違いではない）
+ *   ブレインの今の判断が無い: 今まで通り出す。ブレインの今の判断が AIX なし: 出さない（10/13〜・申込以降の札は postApply で今まで通り）
  */
-export function nonBrainBannerAllowed(i: { bannerAix: string | null; brainFresh: boolean; brainAix: string | null }): boolean {
-  if (!i.brainFresh || !i.brainAix) return true;
+export function nonBrainBannerAllowed(i: { bannerAix: string | null; brainFresh: boolean; brainAix: string | null; postApply?: boolean; noAixHides?: boolean }): boolean {
+  if (!i.brainFresh) return true;
+  // 2026-10-13 竹内さん（ブレインの使い残し 3）: ブレインの新しい判断が「AIX なし」なら、ブレイン以外の札も出さない（設計知見 P0 9eb6aa9c ③画面の札はブレインの判断をそのまま）。
+  //   申込以降の札（P1/P2〜P2.6 申込・審査・契約・申込②）だけは今のまま（postApply）。戻す: NEXT_PUBLIC_BRAIN_NO_AIX_HIDES_BANNERS=off
+  if (!i.brainAix) return i.postApply ? true : !(i.noAixHides ?? brainNoAixHidesBanners());
   if (!i.bannerAix) return false;
   return sameAixAction(i.bannerAix, i.brainAix);
+}
+
+/** ブレインが「AIX なし」の時にブレイン以外の札を隠す（既定 on・NEXT_PUBLIC_BRAIN_NO_AIX_HIDES_BANNERS=off で旧＝出す） */
+export function brainNoAixHidesBanners(v: string | null | undefined = process.env.NEXT_PUBLIC_BRAIN_NO_AIX_HIDES_BANNERS): boolean {
+  return (v ?? "").trim().toLowerCase() !== "off";
 }
 
 /** 環境変数の on/off（既定 on。"off" の時だけ旧に戻す） */

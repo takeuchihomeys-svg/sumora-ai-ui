@@ -13,6 +13,9 @@ import OutcomeConfirmBar from "./components/OutcomeConfirmBar";
 import UndatedPromiseBar from "./components/UndatedPromiseBar";
 import PromiseQueueBar from "./components/PromiseQueueBar";
 import TopBandsFold, { FoldSlot } from "./components/TopBandsFold";
+import ConditionHistoryBand from "./components/ConditionHistoryBand";
+// 2026-10-13 未桜: 条件の更新の履歴（たたむ札・新しい順）。戻す NEXT_PUBLIC_CONDITION_HISTORY=off
+const CONDITION_HISTORY_UI = (process.env.NEXT_PUBLIC_CONDITION_HISTORY ?? "").toLowerCase() !== "off";
 import { splitDraftBubbles, draftBubblesEnabled } from "./lib/draft-bubbles";
 import CustomerMemoBar from "./components/CustomerMemoBar";
 import StaffDeviceWriterBar from "./components/StaffDeviceWriterBar"; // 2026-10-08 決定11 端末の印（管理者／スタッフ）
@@ -5498,7 +5501,9 @@ export default function Home() {
 
       // 送信完了後にAI要約をバックグラウンド更新（送信した文も含めた最新状態で要約）
       const linkedForSummary = linkedCustomerMap[selectedConversation.id];
-      if (linkedForSummary?.id) {
+      // 2026-10-13 竹内さん（ブレインの使い残し 1）: 要約はブレインの戦略の層だけが書く（お客様の発言10件ごとか72時間）。送信の後には呼ばない。
+      //   戻す: NEXT_PUBLIC_BRAIN_ONLY_SUMMARY=off
+      if (linkedForSummary?.id && (process.env.NEXT_PUBLIC_BRAIN_ONLY_SUMMARY ?? "").trim().toLowerCase() === "off") {
         const convIdForSummary = selectedConversation.id;
         fetch("/api/customer-summary", {
           method: "POST",
@@ -7932,6 +7937,28 @@ export default function Home() {
             );
           })()}
 
+          <TopBandsFold resetKey={selectedConversation.id}>
+          {/* 2026-10-13 竹内さん（未桜）「ブレイン自動反映のところも大きくて枠を取りすぎている。ちゃんと折りたたんで、更新があった時に日時を入れて記憶していけば見やすい」:
+              条件の更新（ブレインの自動反映・画面で直した・条件フォーム・元に戻した）は札「条件の更新 M/D HH:MM」にたたみ、押すと履歴を新しい順（行ごとに元に戻す・確認済み）。
+              戻す NEXT_PUBLIC_CONDITION_HISTORY=off（下の今までの帯） */}
+          <FoldSlot id="cond-history" label="条件の更新">
+          {!inputFocused && CONDITION_HISTORY_UI && linkedCustomerMap[selectedConversation.id] && (() => {
+            const lc = linkedCustomerMap[selectedConversation.id];
+            const notices = String(lc.additional_conditions ?? "").split("\n").filter((line) => line.trim()).map(parseCondLine)
+              .filter((l) => !l.isLog && (l.pattern === "auto" || l.pattern === "format")).map((l) => ({ timestamp: l.timestamp, content: stripMarkdown(l.content) }));
+            const convId = selectedConversation.id;
+            return (
+              <ConditionHistoryBand
+                pcId={lc.id}
+                autoNotices={notices}
+                refreshKey={`${selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""}:${lc.additional_conditions ?? ""}`}
+                onCustomerPatched={(c) => setLinkedCustomerMap((prev) => ({ ...prev, [convId]: { ...prev[convId], ...(c as object) } }))}
+                onNoticeCleared={() => setLinkedCustomerMap((prev) => ({ ...prev, [convId]: { ...prev[convId], additional_conditions: null } }))}
+              />
+            );
+          })()}
+          </FoldSlot>
+          <FoldSlot id="cond-request" label="新着要望">
           {!inputFocused && (() => {
             const lc = linkedCustomerMap[selectedConversation.id];
             if (!lc?.additional_conditions) return null;
@@ -7944,6 +7971,8 @@ export default function Home() {
             const patCfg = latest.pattern ? PATTERN_CFG[latest.pattern] ?? null : null;
             const recommendedMode = patCfg?.defaultMode ?? null;
             const isAutoReflected = latest.pattern === "auto" || latest.pattern === "format";
+            // 10/13: 自動反映の知らせは上の「条件の更新」の履歴に出す（ここは人が入れ替える・追加するを決める「新着要望」だけ）
+            if (isAutoReflected && CONDITION_HISTORY_UI) return null;
             return (
               <div className={`border-b px-3 pt-2 pb-2.5 ${isAutoReflected ? "border-indigo-200 bg-indigo-50" : "border-amber-200 bg-amber-50"}`}>
                 {/* ヘッダー行: バッジ + クリア */}
@@ -8019,10 +8048,11 @@ export default function Home() {
               </div>
             );
           })()}
+          </FoldSlot>
 
           {/* 2026-10-13 竹内さん「メモや約束した事はツールに折りたたんで隠す…押したら展開する形にすれば見やすい」: 下の帯（必ず・メモ・日付の無い約束・確認事項・約束の続き・申込30日の確認）は
-              既定で小さな札の1行にたたみ、押したら展開（会話ごとに覚えない）。急ぎ（申込30日の確認・期日を過ぎた必ず）だけ札を赤地に。戻す NEXT_PUBLIC_TOP_BANDS_FOLD=off */}
-          <TopBandsFold resetKey={selectedConversation.id}>
+              既定で小さな札の1行にたたみ、押したら展開（会話ごとに覚えない）。急ぎ（申込30日の確認・期日を過ぎた必ず）だけ札を赤地に。戻す NEXT_PUBLIC_TOP_BANDS_FOLD=off
+              （10/13 未桜: 条件の更新・新着要望も同じ入れ物へ＝ TopBandsFold の始まりは上の条件の帯の前） */}
           <FoldSlot id="must" label="必ず">
           {/* お客様への約束（【必ず】・未履行）: この会話を開いた瞬間に見える。タップでその AIX を開く（2026-09-16 竹内・𝒮❦ 事例） */}
           {/* 2026-10-01 竹内（和樹事例）: ブレインが今のお客様の発言に 物件確認した／見積書送る を判断している間は、
@@ -9025,7 +9055,7 @@ export default function Home() {
                 //   何も言っていない時だけ段階（申込・審査・契約）で点滅する。送った文の語（お申込み）だけでは点滅しない。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
                 const _applyGlow = !activeAixFlow && (BRAIN_ATTENTION_UI
                   ? (aixView.metaFresh && sameAixAction(aixView.brainAixAction, "application_push")) ||
-                    (["applying", "screening", "contract"].includes(_status) && nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction }))
+                    (["applying", "screening", "contract"].includes(_status) && nonBrainBannerAllowed({ bannerAix: "application_push", brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction, postApply: true }))
                   : (
                     ["applying", "screening", "contract"].includes(_status) ||
                     !!(_lastStaff?.text && /お申込み|申込み|申込フォーム/.test(_lastStaff.text))
@@ -9078,7 +9108,8 @@ export default function Home() {
               // 2026-10-08 竹内さんの決定5「ブレインの2択に寄せる。ブレインが画面に反映させる」: ブレイン以外の決め方の帯（テンプレの連番・連続送信・
               //   申込・審査・契約・物件オススメの続き・AIX 後のテンプレ）は、ブレインの今の判断（最新のお客様の発言を見た判断）が別の AIX を言っている時は出さない
               //   （ブレインの AIX の帯・カードが出る）。ブレインが何も言っていない時は今まで通り（brain-attention nonBrainBannerAllowed）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off
-              const bannerOk = (bannerAix: string | null) => !BRAIN_ATTENTION_UI || nonBrainBannerAllowed({ bannerAix, brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction });
+              // 2026-10-13: ブレインが「AIX なし」の時はブレイン以外の札も出さない（申込以降の札は postApply=true で今まで通り）
+              const bannerOk = (bannerAix: string | null, postApply = false) => !BRAIN_ATTENTION_UI || nonBrainBannerAllowed({ bannerAix, brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction, postApply });
 
               // AIX鮮度チェック: analyzed_msg_ts が最新顧客メッセージより古い判断では帯・カードを出さない（aixView.metaFresh・resolveAixButtonView に一本化）
 
@@ -9140,7 +9171,7 @@ export default function Home() {
               }
 
               // P1: 申込②（フロー途中 → 必ず完結させる）
-              if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id) && bannerOk("application_push")) return (
+              if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id) && bannerOk("application_push", true)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-500 bg-pink-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-pink-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>申込フォーマット ② （続き）を送る</span>
                   <button onClick={() => { setTemplateOpenContext("apply_step2"); setShowTemplateModal(true); }}
@@ -9155,7 +9186,7 @@ export default function Home() {
               // 診断修正(問題2・案1): 表示条件はステータス駆動のまま維持し、クリック先のみ
               // テンプレモーダル → AIX(application_push/format サブモード) に差し替え。
               // ②続きチェーンは onAfterSend の appSubMode==="format" 検知で発火する
-              if (selectedConversation.status === "applying" && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id) && bannerOk("application_push")) return (
+              if (selectedConversation.status === "applying" && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id) && bannerOk("application_push", true)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-pink-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>申込フォーマット ① を送る</span>
                   <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setAixInitAppSubMode("format"); openAixDirect("application_push"); }}
@@ -9167,7 +9198,7 @@ export default function Home() {
               );
 
               // P2.5: 審査中バナー（書類催促・審査状況テンプレートへ誘導）
-              if (selectedConversation.status === "screening" && !dismissedApplyStep1Ids.has(id) && bannerOk(null)) return (
+              if (selectedConversation.status === "screening" && !dismissedApplyStep1Ids.has(id) && bannerOk(null, true)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>審査中：書類確認・審査フォローテンプレートを送る</span>
                   <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
@@ -9179,7 +9210,7 @@ export default function Home() {
               );
 
               // P2.6: 契約中バナー（契約手続きテンプレートへ誘導）
-              if (selectedConversation.status === "contract" && !dismissedApplyStep1Ids.has(id) && bannerOk(null)) return (
+              if (selectedConversation.status === "contract" && !dismissedApplyStep1Ids.has(id) && bannerOk(null, true)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-purple-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>契約手続き：案内テンプレートを送る</span>
                   <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}

@@ -18,6 +18,8 @@ import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 // 2026-09-29 API 費用の調査: テンプレのおすすめの Sonnet（7日で57回・$1.5・キャッシュなし）が名前なしだった → 名札だけ付ける
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
+import { brainTemplateRecEnabled, rankPostAixTemplates } from "@/app/lib/post-aix-template-rec";
+import { normalizeStatus } from "@/app/lib/status-normalize";
 
 export const maxDuration = 30;
 
@@ -136,6 +138,31 @@ export async function POST(req: NextRequest) {
             : "",
         templateHint ? `・Brain推奨テンプレカテゴリ（template_hint）: ${templateHint}（このカテゴリに近いテンプレを優先選択すること）` : "",
       ].filter(Boolean).join("\n");
+    }
+
+    // 2026-10-13 竹内さん（ブレインの使い残し 1）: Sonnet で会話を読み直さず、ブレインの判断の after_aix_template（この AIX の後の続き）と
+    //   DB の集計（aix_template_chain_stats・template_chain_transitions）で並べる（post-aix-template-rec.ts・LLM なし）。戻す: BRAIN_TEMPLATE_REC=off
+    if (brainTemplateRecEnabled()) {
+      const [metaRes, chainRes, transRes] = await Promise.all([
+        conversation_id
+          ? supabase.from("conversations").select("status, suggested_aix_meta, last_brain_meta").eq("id", conversation_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase.from("ai_prompts").select("content").eq("key", "aix_template_chain_stats").maybeSingle(),
+        supabase.from("ai_prompts").select("content").eq("key", "template_chain_transitions").maybeSingle(),
+      ]);
+      const conv = (metaRes.data ?? null) as { status?: string | null; suggested_aix_meta?: Record<string, unknown> | null; last_brain_meta?: Record<string, unknown> | null } | null;
+      const parse = <T,>(c: unknown, k: string): T | null => { try { const o = JSON.parse(String(c ?? "{}")) as Record<string, unknown>; return (o[k] as T) ?? null; } catch { return null; } };
+      const recommendations = rankPostAixTemplates({
+        actionType: action_type ?? null,
+        status: conv?.status ? normalizeStatus(conv.status) : null,
+        templates: templates.map((t) => ({ id: t.id, label: t.label, use_count: t.use_count ?? null, recommend_shown_count: t.recommend_shown_count ?? null, recommend_picked_count: t.recommend_picked_count ?? null })),
+        brainMetas: [conv?.suggested_aix_meta ?? null, conv?.last_brain_meta ?? null],
+        chainRecommended: parse<Record<string, string>>((chainRes.data as { content?: unknown } | null)?.content, "recommended"),
+        chainTransitions: parse<Record<string, { next: string; count: number }>>((transRes.data as { content?: unknown } | null)?.content, "transitions"),
+        subCategory: sub_category ?? null,
+      });
+      console.log(JSON.stringify({ tag: "recommend-templates:brain", conversation_id: conversation_id ?? null, action_type: action_type ?? null, n: recommendations.length, top: recommendations[0]?.reason ?? null }));
+      return NextResponse.json({ ok: true, recommendations, source: "brain" });
     }
 
     // 2. Sonnet でおすすめを判断（ギャップ分析が複雑なため）

@@ -13,6 +13,7 @@ import { sanitizePrefill } from "@/app/lib/aix-prefill";
 import { brainPredictionAt, PREDICTION_LOOKBACK_MS } from "@/app/lib/brain-outcome";
 // 2026-10-08 8巡目（記録）: 物件オススメ・物件送付で送った物件名を残す
 import { aixPropertyNamesForLog } from "@/app/lib/aix-sent-names";
+import { brainOnlySummaryEnabled, aixMetaPatchEnabled } from "@/app/lib/brain-only-summary";
 
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
@@ -505,7 +506,9 @@ export async function POST(req: NextRequest) {
       "greeting_viewing",
       "meeting_place",
     ];
-    if (STAGE_TRANSITION_AIX_TYPES.includes(aix_type)) {
+    // 2026-10-13 竹内さん（ブレインの使い残し 1）: Haiku がブレインの判断（次の手順・成約戦略）を書き換える aix_meta_patch はやめる。
+    //   送った AIX は aix_usage_logs → 行動台帳でブレインが次の判断で読む（事実は台帳に任せる）。戻す: AIX_META_PATCH=on
+    if (aixMetaPatchEnabled() && STAGE_TRANSITION_AIX_TYPES.includes(aix_type)) {
       waitUntil(
         (async () => {
           try {
@@ -614,7 +617,8 @@ JSONのみ返してください。説明文不要。`,
         ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
       // AIX送信後に要約を再生成（状況最新化 / fire-and-forget → waitUntilで確実実行）
-      waitUntil(fetch(`${baseUrl}/api/customer-summary`, {
+      // 2026-10-13 要約はブレインの戦略の層だけが書く（brain-only-summary.ts）。戻す: BRAIN_ONLY_SUMMARY=off
+      if (!brainOnlySummaryEnabled()) waitUntil(fetch(`${baseUrl}/api/customer-summary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customer_id: pcId, conversation_id, fetch_from_db: true }),
