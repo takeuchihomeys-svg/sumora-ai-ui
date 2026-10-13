@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
   if (authError) return authError;
   const conversationId = (req.nextUrl.searchParams.get("conversation_id") ?? "").trim();
   if (!/^[0-9a-f-]{36}$/i.test(conversationId)) return NextResponse.json({ ok: false, error: "conversation_id required" }, { status: 400 });
-  const state = await getCustomerState(conversationId);
+  // 2026-10-13 P1 0593a0aa: 画面の1行はブレインの今の物件を主のお部屋に使う（画面の経路だけ・ブレインの入力には戻さない）。戻す: BRAIN_PROPERTY_DISPLAY=off
+  const state = await getCustomerState(conversationId, { brainProperty: true });
   if (!state) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   // ?view=compact … 画面のトークの上の表示用（送っただけの候補は件数だけ・出来事は直近だけ。1会話 最大約30KB → 数KB）
   const body = req.nextUrl.searchParams.get("view") === "compact" ? compactCustomerStateForView(state) : state;

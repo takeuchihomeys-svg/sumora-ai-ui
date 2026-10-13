@@ -8,14 +8,21 @@ import {
   type CustomerState, type CustomerStateInput, type CustomerStateMessage, type CustomerStateAixRow, type ViewingHistoryRow, type SentPropertyRow,
 } from "@/app/lib/customer-state";
 import type { RecordedFact, LedgerTask } from "@/app/lib/action-ledger";
+import { brainPickFromMetas, brainPropertyDisplayEnabled } from "@/app/lib/brain-property-display";
 
 /** 読む範囲（メッセージは新しい方から）。見積・内覧・申込の出来事は数か月前でも効くので広めに */
 export const CUSTOMER_STATE_MESSAGE_LIMIT = 600;
 export const CUSTOMER_STATE_AIX_LIMIT = 200;
 
-export async function loadCustomerStateInput(conversationId: string, opts: { now?: number } = {}): Promise<CustomerStateInput | null> {
+/**
+ * @param opts.brainProperty 画面の経路（GET /api/customer-state）だけが true にする。ブレインの今の物件（suggested_aix_meta / last_brain_meta の
+ *   current_property）を読んで主のお部屋に使う（2026-10-13 P1 0593a0aa）。**ブレインの入力（brain-core）からは渡さない**＝前回の答えが
+ *   次の入力に戻る輪を作らない。BRAIN_PROPERTY_DISPLAY=off で読まない
+ */
+export async function loadCustomerStateInput(conversationId: string, opts: { now?: number; brainProperty?: boolean } = {}): Promise<CustomerStateInput | null> {
+  const withBrain = !!opts.brainProperty && brainPropertyDisplayEnabled();
   const [conv, msgs, aix, facts, vh, sp, tasks] = await Promise.all([
-    supabase.from("conversations").select("id, status, is_post_apply, status_manual_back_at, conversation_direction, property_customer_id").eq("id", conversationId).maybeSingle(),
+    supabase.from("conversations").select(`id, status, is_post_apply, status_manual_back_at, conversation_direction, property_customer_id${withBrain ? ", suggested_aix_meta, last_brain_meta" : ""}`).eq("id", conversationId).maybeSingle(),
     supabase.from("messages").select("sender, text, created_at, is_aix_generated, line_message_id").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(CUSTOMER_STATE_MESSAGE_LIMIT),
     supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at, line_message_id, generated_text, property_names, prop_statuses, estimate_sent, template_name").eq("conversation_id", conversationId).not("sent_at", "is", null).order("created_at", { ascending: false }).limit(CUSTOMER_STATE_AIX_LIMIT),
     supabase.from("sent_facts").select("sent_at, origin, aix_type, kind, status, line_message_id, detail, evidence").eq("conversation_id", conversationId).order("sent_at", { ascending: false }).limit(300),
@@ -31,8 +38,10 @@ export async function loadCustomerStateInput(conversationId: string, opts: { now
   const failed = ([["conversations", conv], ["messages", msgs], ["aix_usage_logs", aix], ["sent_facts", facts], ["viewing_history", vh], ["sent_properties", sp], ["line_tasks", tasks]] as const)
     .filter(([, r]) => r.error).map(([name, r]) => `${name}: ${r.error?.message ?? "error"}`);
   if (failed.length) throw new Error(`read failed (${failed.join(" / ")})`);
-  const c = conv.data as { status: string | null; is_post_apply: boolean | null; status_manual_back_at: string | null; conversation_direction: { current_phase?: string | null; updated_at?: string | null } | null; property_customer_id: string | null } | null;
+  type BrainMeta = { current_property?: unknown; analyzed_msg_ts?: unknown } | null;
+  const c = conv.data as unknown as { status: string | null; is_post_apply: boolean | null; status_manual_back_at: string | null; conversation_direction: { current_phase?: string | null; updated_at?: string | null } | null; property_customer_id: string | null; suggested_aix_meta?: BrainMeta; last_brain_meta?: BrainMeta } | null;
   if (!c) return null;
+  const brainProperty = withBrain ? brainPickFromMetas(c.suggested_aix_meta, c.last_brain_meta) : null;
   let situation: string | null = null;
   if (c.property_customer_id) {
     const { data: pc } = await supabase.from("property_customers").select("ai_summary_json").eq("id", c.property_customer_id).maybeSingle();
@@ -47,6 +56,7 @@ export async function loadCustomerStateInput(conversationId: string, opts: { now
     brainPhase: c.conversation_direction?.current_phase ?? null,
     brainPhaseUpdatedAt: c.conversation_direction?.updated_at ?? null,
     brainSituation: situation,
+    brainProperty,
     messages: ((msgs.data ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; line_message_id: string | null }>)
       .reverse().map((m): CustomerStateMessage => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!m.is_aix_generated, lineMessageId: m.line_message_id })),
     aixRows: ((aix.data ?? []) as CustomerStateAixRow[]).reverse(),
@@ -63,7 +73,7 @@ export async function loadCustomerStateInput(conversationId: string, opts: { now
  * 2026-09-26 反証レビュー: 旧は失敗時に空の状況（段階＝初回・お部屋なし・内覧なし）を返していた。空の状況は「読めなかった」と区別が付かず、
  *   ブレインには「今の段階: 初回・お部屋: まだ送った・話に出たお部屋なし（こちらが正）」、生成には「内覧の話なし」として届く → null にして呼ぶ側の従来の経路に戻す
  */
-export async function getCustomerState(conversationId: string, opts: { now?: number } = {}): Promise<CustomerState | null> {
+export async function getCustomerState(conversationId: string, opts: { now?: number; brainProperty?: boolean } = {}): Promise<CustomerState | null> {
   try {
     const input = await loadCustomerStateInput(conversationId, opts);
     if (!input) return null;

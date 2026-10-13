@@ -27,6 +27,7 @@ import { staffTalkedToday } from "../lib/daily-greeting";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
 import { customerPropertyOptionsForAix, customerNameAfterShareEnvFromPublic } from "../lib/customer-property-names";
+import { withBrainPropertyFirst, brainPropertyDisplayEnvFromPublic, type BrainPropertyPick } from "../lib/brain-property-display";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, resolveGuarantorForText, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
@@ -144,6 +145,11 @@ interface AixModalProps {
    * 売上サポで選んで渡した物件（「物件名 号室」・選んだ並び）。物件名の欄の先入れ（aix-prefill.ts propertyNamePrefill）の一番の出所
    */
   prefillPropertyNames?: string[];
+  /**
+   * 2026-10-13 P1 0593a0aa: ブレインの今の物件（suggested_aix_meta の current_property と判断した顧客発言の時刻）。
+   * 物件名の候補の一番上に出すだけ（先入れには使わない）
+   */
+  brainPropertyPick?: BrainPropertyPick | null;
 }
 
 /** お客様が送った物件を畳まずに出す件数（これを超えた分だけ「他N件を見る」で畳む） */
@@ -591,6 +597,7 @@ export default function AixModal({
   onVacatingDetected,
   onOpenTemplateFiltered,
   prefillPropertyNames,
+  brainPropertyPick,
 }: AixModalProps) {
   const config = CONFIG[actionType];
   // AIX経由の全送信に isAix=true フラグを付与（挨拶判定から除外するため）
@@ -809,10 +816,17 @@ export default function AixModal({
   const [showCustomerPropertyList, setShowCustomerPropertyList] = useState(false);
   // 2026-10-13 竹内（未桜）: 動画の URL・画像の後に名前だけ送ってきた物件（「レジュールアッシュ難波MINAMIです」）も候補に（新しい順・同じ名前は1つ）
   //   画面では process.env.CUSTOMER_NAME_AFTER_SHARE が入らないので NEXT_PUBLIC_CUSTOMER_NAME_AFTER_SHARE を渡す（off で共有文の物件名だけ＝旧と同じ）
-  const customerPropertyOptions = useMemo(
+  const customerPropertyBaseOptions = useMemo(
     () => customerPropertyOptionsForAix(recentMessages ?? [], customerNameAfterShareEnvFromPublic()),
     [recentMessages],
   );
+  // 2026-10-13 P1 0593a0aa（未桜）: 候補の一番上にブレインの今の物件を出す（ブレインの判断が今のお客様の発言に対して新しい時だけ）。
+  //   **先入れ（namePrefill）には使わない**＝候補の表示だけ（設計知見 90d263b1・当たり率は scripts/audit-brain-property-display.ts）。
+  //   戻す: NEXT_PUBLIC_BRAIN_PROPERTY_DISPLAY=off
+  const customerPropertyOptions = useMemo(() => {
+    const latestCustomerAt = [...(recentMessages ?? [])].reverse().find((m) => m.sender === "customer")?.rawCreatedAt ?? null;
+    return withBrainPropertyFirst(customerPropertyBaseOptions, brainPropertyPick ?? null, { latestCustomerAt, env: brainPropertyDisplayEnvFromPublic() });
+  }, [customerPropertyBaseOptions, brainPropertyPick, recentMessages]);
   // 別の部屋について確認した専用: 物件名 + 画像OCR + 有無ピッカー（会話を合わせる専用パターン）
   const [otherRoomPropertyName, setOtherRoomPropertyName] = useState<string>("");
   const [otherRoomImagePreview, setOtherRoomImagePreview] = useState<string>("");
@@ -1312,7 +1326,7 @@ export default function AixModal({
     const turn = customerTurnOf(msgs);
     const turnStartMs = turn[0]?.rawCreatedAt ? Date.parse(turn[0].rawCreatedAt) : NaN;
     // お客様が今回の連投で送ってきた物件（共有文の時刻が今回の連投の最初より後）
-    const sharedThisTurn = customerPropertyOptions
+    const sharedThisTurn = customerPropertyBaseOptions
       .filter((c) => Number.isFinite(turnStartMs) && c.at && Date.parse(c.at) >= turnStartMs)
       .map((c) => c.name);
     // こちらが送った物件（🌟〇〇 305号室・【〇〇 305号室】）新しい順
@@ -1322,7 +1336,7 @@ export default function AixModal({
       for (const n of extractPropertyLabels(m.text)) if (!staffSent.includes(n)) staffSent.push(n);
     }
     return propertyNamePrefill({ pickupNames: prefillPropertyNames, customerSharedThisTurn: sharedThisTurn, staffSent, customerTurnText: turn.map((m) => m.text).join("\n") });
-  }, [recentMessages, customerPropertyOptions, prefillPropertyNames]);
+  }, [recentMessages, customerPropertyBaseOptions, prefillPropertyNames]);
   const areaPrefill = useMemo(() => areaFromConditions(linkedCustomer?.conditions ?? customerConditions), [linkedCustomer?.conditions, customerConditions]);
   /** 欄に先に入れる（1欄1回・空の時だけ） */
   const applyPrefill = (field: string, p: Prefilled<string> | null, current: string, set: (v: string) => void) => {
@@ -5749,6 +5763,7 @@ export default function AixModal({
                             >
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-[13px] font-bold text-[#111b21]">{c.label}</span>
+                                {c.fromBrain && <span className="block text-[10px] font-bold text-blue-600">🧠 ブレインが今の話の物件と判断</span>}
                                 {c.at && <span className="block text-[10px] text-[#8696a0]">お客様が {(() => { const p = jstParts(c.at!); return `${p.m}/${p.d} ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`; })()} に送付</span>}
                               </span>
                               <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-bold ${picked ? "bg-orange-500 text-white" : "border border-orange-300 text-orange-600"}`}>

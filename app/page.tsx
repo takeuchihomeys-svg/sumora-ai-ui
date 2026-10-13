@@ -79,6 +79,7 @@ import { imageUrlsInRankOrder } from "./lib/sent-image-order";
 import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
+import { brainPickFromMetas } from "./lib/brain-property-display";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -11428,6 +11429,11 @@ export default function Home() {
           initialCheckPattern={aixInitCheckPattern ?? undefined}
           // 2026-10-01 竹内「AIX 開いたら…物件名等はセットされていて」: 売上サポで選んで渡した物件（同じ会話の時だけ）
           prefillPropertyNames={pickupHandoffRef.current?.conv === selectedConversation.id ? pickupHandoffRef.current?.handoffNames : undefined}
+          // 2026-10-13 P1 0593a0aa（未桜）: ブレインの今の物件を物件名の候補の一番上に出す（下書き表示中は suggestedAixMeta が空で suggestedAix に退避されている）
+          brainPropertyPick={brainPickFromMetas(
+            selectedConversation.suggestedAixMeta as { current_property?: unknown; analyzed_msg_ts?: unknown } | null,
+            suggestedAix as { current_property?: unknown; analyzed_msg_ts?: unknown } | null,
+          )}
           templateId={pendingTemplateSource?.id ?? undefined}
           onClose={() => {
             setAixModalType(null);

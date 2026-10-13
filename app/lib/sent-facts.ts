@@ -14,6 +14,8 @@ import { promiseEventRows, planPromiseInsert, planPromiseCompletion, PROMISE_MUS
 import { estimateNamesFromText, applicationPropertyFromText } from "@/app/lib/customer-state";
 // 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる」: 送った文の連絡の日の約束（contact-promise）を同じカレンダーの【必ず】の行に
 import { syncContactPromiseCalendar } from "@/app/lib/contact-promise-server";
+// 2026-10-13 P1 0593a0aa: 【必ず】の確認の約束の物件名をブレイン基準に
+import { applyBrainToPromiseEntries, brainPickFromMetas, brainPropertyDisplayEnabled } from "@/app/lib/brain-property-display";
 const deliveredOf = (entries: ReadonlyArray<{ kind: string; status: string }>) => entries.some((e) => e.status === "done" && (e.kind === "properties_sent" || e.kind === "estimate_sent"));
 
 type FactRow = RecordedFact & { conversation_id: string };
@@ -25,7 +27,7 @@ type FactLike = Pick<LedgerEntry, "kind" | "status" | "evidence" | "detail">;
  *   ・約束（ピックアップ・見積書・確認）→ 同じ要件の未完了が無ければ「お客様名 要件」の行を約束した日に置く
  *   【必ず】の行は calendar-auto-complete（時刻経過の自動完了）の対象外＝履行するまで残る（連絡漏れが見える）
  */
-export async function syncPromiseCalendar(o: { conversationId: string; entries: ReadonlyArray<FactLike>; sentAt: string }): Promise<void> {
+export async function syncPromiseCalendar(o: { conversationId: string; entries: ReadonlyArray<FactLike>; sentAt: string; /** 送った本文（【必ず】の物件名をブレイン基準にする時の安全の線に使う） */ text?: string | null }): Promise<void> {
   try {
     // checkPattern: AIX【確認した（条件・交渉）】の種類（入居時期・保証会社…）。どの約束を閉じるかは本文の先頭語よりこちらが確か（𝒮❦ 事例）
     const done = o.entries.filter((e) => e.status === "done").map((e) => ({ kind: e.kind, object: e.detail?.object ?? null, checkPattern: e.detail?.checkPattern ?? null }));
@@ -41,9 +43,24 @@ export async function syncPromiseCalendar(o: { conversationId: string; entries: 
     }
     let inserted: string[] = [];
     if (hasPromise) {
-      const { data: conv } = await supabase.from("conversations").select("customer_name").eq("id", o.conversationId).maybeSingle();
+      // 2026-10-13 P1 0593a0aa（未桜）: 確認の約束の物件名はブレインの今の物件を先にする（送る前の最新のお客様の発言に対する判断の時だけ。
+      //   本文の「A・B」にブレインの1件が入る時は本文のまま・食い違う時は本文の名前を notes に残す）。戻す: BRAIN_PROPERTY_DISPLAY=off
+      const withBrain = brainPropertyDisplayEnabled() && o.entries.some((e) => e.kind === "confirmation_promised" && e.status === "promised");
+      const [{ data: conv }, lastCust] = await Promise.all([
+        supabase.from("conversations").select(withBrain ? "customer_name, suggested_aix_meta, last_brain_meta" : "customer_name").eq("id", o.conversationId).maybeSingle(),
+        withBrain
+          ? supabase.from("messages").select("created_at").eq("conversation_id", o.conversationId).eq("sender", "customer").lte("created_at", o.sentAt).order("created_at", { ascending: false }).limit(1)
+          : Promise.resolve({ data: null }),
+      ]);
+      const cv = conv as unknown as { customer_name?: string | null; suggested_aix_meta?: { current_property?: unknown; analyzed_msg_ts?: unknown } | null; last_brain_meta?: { current_property?: unknown; analyzed_msg_ts?: unknown } | null } | null;
+      const entries = withBrain
+        ? applyBrainToPromiseEntries(o.entries, brainPickFromMetas(cv?.suggested_aix_meta, cv?.last_brain_meta), {
+          latestCustomerAt: ((lastCust.data ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null,
+          promiseText: o.text ?? null,
+        })
+        : o.entries;
       const rows = planPromiseInsert(
-        promiseEventRows(o.entries, { customerName: (conv?.customer_name as string | null) ?? null, conversationId: o.conversationId, sentAt: o.sentAt }),
+        promiseEventRows(entries, { customerName: cv?.customer_name ?? null, conversationId: o.conversationId, sentAt: o.sentAt }),
         openRows.filter((r) => !closeIds.includes(r.id)),
       );
       if (rows.length > 0) {
@@ -78,7 +95,7 @@ export async function syncPromiseCalendarFromText(o: { conversationId: string; t
   const entries = classifyStaffTextFacts(o.text, o.sentAt).filter((e) => e.kind !== "media_sent");
   await syncContactPromiseCalendar({ conversationId: o.conversationId, text: o.text, sentAt: o.sentAt, delivered: deliveredOf(entries) });
   if (entries.length === 0) return;
-  await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt });
+  await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt, text: o.text });
 }
 
 async function upsertFacts(rows: FactRow[]): Promise<void> {
@@ -116,7 +133,7 @@ export async function recordStaffTextFacts(o: { conversationId: string; text: st
   if (meeting) await recordViewingFromAppointment({ conversationId: o.conversationId, appointment: meeting, sentAt: o.sentAt, source: "staff_text", onlyFrom: o.viewingOnlyFrom });
   // 遡って記録する時（viewingOnlyFrom あり）はカレンダーを触らない（過去の約束を今のやることにしない）
   if (!o.viewingOnlyFrom) {
-    await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt });
+    await syncPromiseCalendar({ conversationId: o.conversationId, entries, sentAt: o.sentAt, text: o.text });
     await syncContactPromiseCalendar({ conversationId: o.conversationId, text: o.text, sentAt: o.sentAt, delivered: deliveredOf(entries) });
   }
   return entries.length;
@@ -204,7 +221,7 @@ export async function recordAixFacts(o: {
   // AIX の送信で約束を履行（物件ピックアップした→ピックアップの約束・物件確認した→確認の約束）／AIX 本文に書き足した約束は【必ず】に
   if (!o.viewingOnlyFrom && !o.skipCalendar) {
     await syncPromiseCalendar({
-      conversationId: o.conversationId, sentAt: o.sentAt,
+      conversationId: o.conversationId, sentAt: o.sentAt, text: o.generatedText ?? null,
       entries: rows.map((r) => ({ kind: r.kind as LedgerEntry["kind"], status: r.status as LedgerEntry["status"], evidence: r.evidence ?? "", detail: (r.detail ?? {}) as LedgerEntry["detail"] })),
     });
     await syncContactPromiseCalendar({ conversationId: o.conversationId, text: o.generatedText ?? "", sentAt: o.sentAt, delivered: deliveredOf(rows) });

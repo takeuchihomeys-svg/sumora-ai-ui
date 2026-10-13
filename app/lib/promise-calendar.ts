@@ -158,6 +158,8 @@ export function promiseEventRows(
         // 約束の文（何を確認するか）。旧: 正規表現の一致部分「確認出来次第」の6文字だけで中身が読めなかった（𝒮❦ 事例）
         `約束: 「${(e.detail?.sentence ?? e.evidence ?? "").trim()}」`,
         `AIX: 【${PROMISE_SPEC[e.kind].aix(detail)}】を送ったら完了`,
+        // 2026-10-13 P1 0593a0aa: 物件名をブレインの今の物件にした時は、本文に書いた名前も残す（brain-property-display.resolvePromisePropertyName）
+        ...(e.detail?.textPropertyName ? [`本文の名前: ${e.detail.textPropertyName}`] : []),
         `（${jstLabel(o.sentAt)} の送信から）`,
       ].join("\n"),
     });

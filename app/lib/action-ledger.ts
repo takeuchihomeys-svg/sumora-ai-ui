@@ -84,6 +84,8 @@ export interface LedgerEntry {
     question?: string | null;
     /** confirmation_promised: 約束の通にこちらが書いた物件名（【必ず】の行に残す・confirmPropertyNameOf。2026-10-13 未桜事例） */
     propertyName?: string | null;
+    /** confirmation_promised: 【必ず】の行をブレインの物件にした時の本文の名前（カレンダーの notes に「本文の名前: 〇〇」で残すだけ・sent_facts には書かない。2026-10-13） */
+    textPropertyName?: string | null;
     taskStatus?: string | null;
     /** meeting_place_sent: 案内した内覧の待ち合わせ（日付 M/D・時刻・場所）。AIX 待ち合わせ場所の本文・スタッフ本文から */
     appointment?: ViewingAppointment | null;

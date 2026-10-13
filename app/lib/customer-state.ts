@@ -121,7 +121,8 @@ export type ConflictCode =
   | "FORM_BUT_PROPOSING"          // 申込フォームを受けたが状態は申込前
   | "DECIDED_ELSEWHERE_OPEN"      // お客様は他で決めたと言っているが状態は失注でない
   | "UPCOMING_VIEWING_NO_ROOM"    // これからの内覧の物件名が記録に無い
-  | "APPLY_NO_ROOM";             // 申込準備・申込中なのに、申込の物件名が記録にも本文にも無い
+  | "APPLY_NO_ROOM"              // 申込準備・申込中なのに、申込の物件名が記録にも本文にも無い
+  | "BRAIN_PROPERTY_DIFFERS";    // ブレインの今の物件が、記録で決まる主のお部屋（内覧予定・申込）と違う（画面の経路だけ）
 export type Conflict = {
   code: ConflictCode;
   /** warn＝画面で「⚠ずれ」を出す（スタッフが直す）／info＝読む側で吸収済み・参考 */
@@ -172,6 +173,8 @@ export type CustomerState = {
   viewings: CustomerViewing[];
   /** 主のお部屋（今の段階の相手。無ければ null） */
   focusKey: string | null;
+  /** 主のお部屋をどこで決めたか（brain＝ブレインの今の物件・画面の経路だけ／rule＝記録の規則） */
+  focusSource?: "brain" | "rule";
   properties: RoomState[];
   searching: SearchingMark;
   conflicts: Conflict[];
@@ -212,6 +215,11 @@ export type CustomerStateInput = {
   sentProperties: SentPropertyRow[];
   /** 既に作った台帳があれば渡す（無ければ中で作る） */
   ledger?: ActionLedger | null;
+  /**
+   * 2026-10-13 ブレインの今の物件（current_property と判断した顧客発言の時刻）。**画面の経路（GET /api/customer-state）だけが渡す**。
+   *   ブレインの入力（brain-core の getCustomerState）には渡さない＝前回の答えが次の入力に戻る輪を作らない
+   */
+  brainProperty?: BrainPropertyPick | null;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -313,6 +321,70 @@ export function matchRoomRefs(a: RoomRef, b: RoomRef): RoomMatch {
   if (ka.length >= 3 && kb.length >= 3 && (ka.includes(kb) || kb.includes(ka))) return "maybe";
   if (similarity(ka, kb) >= MATCH_MIN_SCORE) return "maybe";
   return "different";
+}
+
+// ─── ブレインの物件（2026-10-13 P1 0593a0aa・app/lib/brain-property-display.ts の説明）───
+//   画面の経路（GET /api/customer-state）だけが input.brainProperty を渡す。ブレインの入力（brain-core の getCustomerState）には渡さない（輪を作らない）。
+export function brainPropertyDisplayEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  const v = env.BRAIN_PROPERTY_DISPLAY ?? env.NEXT_PUBLIC_BRAIN_PROPERTY_DISPLAY ?? "";
+  return v.toLowerCase() !== "off";
+}
+/** ブレインが決めた今の物件（suggested_aix_meta / last_brain_meta の current_property・または判断ログの building_key＋room_no） */
+export type BrainPropertyPick = {
+  /** current_property の表記（判断ログから作る時は null でよい） */
+  name?: string | null;
+  /** 判断ログの building_key（buildingKeyOf と同じ正規化）。name が無い時に使う */
+  buildingKey?: string | null;
+  roomNo?: string | null;
+  /** その判断が読んだ最新の顧客発言の時刻 */
+  analyzedMsgTs: string | null;
+};
+/** 判断の時刻と発言の時刻は同じ値が入る（丸めで数 ms ずれることがある）→ 1秒の余裕 */
+const BRAIN_FRESH_SLACK_MS = 1000;
+/**
+ * ブレインの判断が今のお客様の発言に対して新しいか（判断した顧客発言の時刻が、最新のお客様の発言より前でない）。
+ *   analyzed_msg_ts が無い判断は古いものとして扱う。お客様の発言がまだ無い会話は判断があれば新しい
+ */
+export function isBrainPickFresh(pick: Pick<BrainPropertyPick, "analyzedMsgTs"> | null | undefined, latestCustomerAt: string | null | undefined): boolean {
+  if (!pick) return false;
+  const a = Date.parse(pick.analyzedMsgTs ?? "");
+  if (!Number.isFinite(a)) return false;
+  const c = Date.parse(latestCustomerAt ?? "");
+  if (!Number.isFinite(c)) return true;
+  return a >= c - BRAIN_FRESH_SLACK_MS;
+}
+/** ブレインの物件を照合の形に（無ければ null） */
+export function brainPickRef(pick: BrainPropertyPick | null | undefined): RoomRef | null {
+  if (!pick) return null;
+  const name = (pick.name ?? "").trim();
+  if (name) return splitPropertyName(name, pick.roomNo ?? null);
+  const key = (pick.buildingKey ?? "").trim();
+  if (!key) return null;
+  const room = normalizeRoomNo(pick.roomNo);
+  return { building: key, buildingKey: key, room, floor: null, display: room ? `${key} ${room}号室` : key };
+}
+/** 同じ物件か（同じ部屋・同じ建物で片方に部屋が無い）。似ているだけ（maybe）は寄せない */
+export function sameBrainPropertyRef(a: RoomRef, b: RoomRef): boolean {
+  const m = matchRoomRefs(a, b);
+  return m === "same_room" || m === "same_building";
+}
+/**
+ * ブレインの物件に合う台帳のお部屋（無ければ null＝新しい部屋は作らない）。
+ *   同じ部屋 ＞ 同じ建物（部屋が片方に無い）。同じ順位が複数なら一番新しい出来事の部屋
+ */
+export function brainFocusRoom<R extends Pick<RoomState, "name" | "room" | "lastAt">>(rooms: ReadonlyArray<R>, pick: BrainPropertyPick | null | undefined): R | null {
+  const ref = brainPickRef(pick);
+  if (!ref) return null;
+  let best: { r: R; rank: number } | null = null;
+  for (const r of rooms) {
+    const rr = splitPropertyName(r.name, r.room);
+    if (!rr) continue;
+    const m = matchRoomRefs(ref, rr);
+    const rank = m === "same_room" ? 2 : m === "same_building" ? 1 : 0;
+    if (!rank) continue;
+    if (!best || rank > best.rank || (rank === best.rank && Date.parse(r.lastAt) > Date.parse(best.r.lastAt))) best = { r, rank };
+  }
+  return best?.r ?? null;
 }
 
 /**
@@ -964,6 +1036,20 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
     }
   }
 
+  // ─── ブレインの今の物件（画面の経路だけ・2026-10-13 P1 0593a0aa）───
+  //   ブレインの判断が新しく（判断した顧客発言が最新の発言）、台帳のお部屋に合う時だけ主のお部屋にする（新しい部屋は作らない）。
+  //   記録で決まる相手（これからの内覧の物件・申込の物件）は安全の線として残し、違う時は食い違い（info）に出す
+  let focusSource: "brain" | "rule" = "rule";
+  const brainConflicts: Conflict[] = [];
+  if (input.brainProperty && isBrainPickFresh(input.brainProperty, lastCustomerAt)) {
+    const br = brainFocusRoom(rooms, input.brainProperty);
+    if (br && br.key !== focus?.key) {
+      const pinned = !!focus && ((!!upcoming?.roomKey && focus.key === upcoming.roomKey) || ((stage === "applying" || stage === "apply_prep") && focus.events.some((e) => e.kind === "application")));
+      if (pinned) brainConflicts.push({ code: "BRAIN_PROPERTY_DIFFERS", severity: "info", detail: `ブレインの今の物件＝${br.name}・主のお部屋（${upcoming?.roomKey === focus!.key ? "内覧予定" : "申込"}）＝${focus!.name}` });
+      else { focus = br; focusSource = "brain"; }
+    } else if (br) focusSource = "brain";
+  }
+
   // ─── 探し続けている印 ───
   const f = ledger.facts;
   let searching: SearchingMark = { active: false, reason: null, since: null };
@@ -1019,6 +1105,7 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
     conflicts.push({ code: "APPLY_NO_ROOM", severity: "info", detail: "申込の物件名が記録に無い（案内の前後に「〇〇号室お申込み」の本文が無い）" });
   }
   if (upcoming && !upcoming.name) conflicts.push({ code: "UPCOMING_VIEWING_NO_ROOM", severity: "info", detail: `${upcoming.label} の内覧の物件名が記録に無い` });
+  conflicts.push(...brainConflicts);
 
   // ─── 並べる・1行 ───
   const properties = [...rooms].map(({ ref: _ref, ...r }) => r).sort((a, b) => {
@@ -1037,7 +1124,7 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
   }));
   return {
     stage, stageLabel: STAGE_LABEL[stage], since: since != null && Number.isFinite(since) ? iso(since) : null, stageDetail,
-    upcomingViewing: upcoming, viewings: viewingList, focusKey: focus?.key ?? null, properties, searching, conflicts, headline,
+    upcomingViewing: upcoming, viewings: viewingList, focusKey: focus?.key ?? null, focusSource, properties, searching, conflicts, headline,
     statusRaw: status, brainPhase: input.brainPhase ?? null, brainSituation: input.brainSituation ?? null,
   };
 }
