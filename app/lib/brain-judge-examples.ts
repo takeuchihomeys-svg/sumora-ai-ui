@@ -41,8 +41,8 @@ export function textFingerprint(t: string): string | null {
 }
 
 export function judgeExamplesEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  // 2026-10-13: 試験（関係する24問）では良くも悪くもない（揺れの範囲）。竹内さんの決定「できる限り早く本番に入れ、本番で直す」で既定 on（BRAIN_JUDGE_EXAMPLES=off で戻す）
-  return (env.BRAIN_JUDGE_EXAMPLES ?? "").trim().toLowerCase() !== "off";
+  // 2026-10-13: 混ざりの無い試験（YUMA3・11問）で道 8→5 に悪化（お礼・了承の場面で AIX を押した手本が効きすぎ）→ 既定 off に戻す。直して測り直してから on（BRAIN_JUDGE_EXAMPLES=on で入れる）
+  return (env.BRAIN_JUDGE_EXAMPLES ?? "").trim().toLowerCase() === "on";
 }
 
 /** 見張りの理由のうち「道（返信か AIX か・AIX の種類）」の外れ（文の言い回し・事実の違いは入れない） */
