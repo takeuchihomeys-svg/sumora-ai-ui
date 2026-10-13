@@ -56,6 +56,8 @@ const DASH_RE = /^[\s\-ー－—―−~〜]*$/;
 const STATUS_RE = /空室予定|空き予定|空予定|退去予定|解約予定|空室|空き家|空家|空き|居住中|入居中|賃貸中|建築中|建設中|新築|改装中|リフォーム中|内装中|未完成|完成済|未入居/;
 const DEAL_RE = /^(?:商談中|内装中|審査中|清掃中|申込あり|申込有|申込中|リフォーム中|改装中)$/;
 const MOVEIN_VALUE_RE = /即|相談|未定|期日指定|指定|調整|応相談|\d/;
+/** 現況に添える状態の語（LLM の現況にだけあって欄の値に無い時に落とさない） */
+const STATUS_EXTRA_RE = /新築|未入居|内装中|清掃中|リフォーム中|改装中|商談中|審査中|申込あり|申込中/;
 
 /** 日付の比べる鍵（「10/31」「10/末」「9/中旬」・年は外す） */
 export function sheetDateKey(raw: string | null | undefined): string | null {
@@ -82,19 +84,51 @@ function squashDate(s: string): string {
   return s.replace(/\s*([年月日/])\s*/g, "$1").replace(/\s+/g, " ").trim();
 }
 
-/** 文の中の「退去・解約・空き予定」の字が付いた日付（字のまま）を全部 */
-function vacatePhrases(s: string): string[] {
+/**
+ * 和暦を西暦に（「令和8年10月31日」→「2026年10月31日」・「R8.10.31」「R8/10/31」→「2026/10/31」）。
+ * 2026-10-13 レビュー: 和暦の退去日が読めず、alignVacancyLines が LLM の正しい「退去予定:」の行まで落としていた
+ */
+export function seirekiText(s: string): string {
+  return String(s ?? "")
+    .replace(/令和\s*(\d{1,2}|元)\s*年/g, (_x, n: string) => `${2018 + (n === "元" ? 1 : Number(n))}年`)
+    .replace(/(?<![A-Za-z])R\s*(\d{1,2})\s*[.\/年]\s*(\d{1,2})\s*[.\/月]\s*(\d{1,2})\s*日?/g, (_x, y: string, mo: string, d: string) => `${2018 + Number(y)}/${mo}/${d}`);
+}
+
+/** 退去予定日の欄の見出し（2026-10-13 レビュー: 空き予定日・空室予定日・退去予定時期・退去時期・明渡し予定を足した） */
+const VAC_LABEL_SRC = "退去予定日|解約予定日|退去日|解約日|空き予定日|空予定日|空室予定日|退去予定時期|退去時期|明け?渡し?予定日?|明渡予定日?";
+
+/**
+ * 文の中の「退去・解約・空き予定」の字が付いた日付（字のまま）を全部。
+ * 2026-10-13 レビュー: 契約期間の終わり（「2026年11月1日～2028年10月31日 解約予告1ヶ月前」「定期借家 …～2028/10/31 解約不可」）と
+ *   「※2026/9/30退去済み」を退去予定日にしていた → 「〜」の後の日付・後ろに「予告・不可・時・違約・済」が続く物・来年より先の年は外す
+ */
+function vacatePhrases(s0: string, nowYear: number = new Date().getFullYear()): string[] {
+  const s = seirekiText(s0);
   const out: string[] = [];
   const D = SHEET_DATE_SRC;
-  const pats = [
-    new RegExp(`(?:退去予定|解約予定|空き?予定|空室予定|退去)\\s*[（(]\\s*(${D})\\s*[)）]`, "g"),
-    new RegExp(`(?:退去予定日|解約予定日|退去日|解約日)\\s*(?:は|[:：])?\\s*(${D})`, "g"),
-    new RegExp(`(?:退去予定|解約予定)\\s*(?:は|[:：])\\s*(${D})`, "g"),
+  const NOT_AFTER = String.raw`(?!\s*(?:済|時|予告|不可|違約))`;
+  const pats: Array<{ re: RegExp; checkPrefix: boolean }> = [
+    { re: new RegExp(`(?:退去予定|解約予定|空き?予定|空室予定|退去)\\s*[（(]\\s*(${D})\\s*[)）]`, "g"), checkPrefix: false },
+    { re: new RegExp(`(?:${VAC_LABEL_SRC})\\s*(?:は|[:：])?\\s*(${D})`, "g"), checkPrefix: false },
+    { re: new RegExp(`(?:退去予定|解約予定)\\s*(?:は|[:：])\\s*(${D})`, "g"), checkPrefix: false },
     // 「解約予定 6月30日」（空白だけ）は解約の日付。「退去予定 2026年12月上旬」は空白だけでは決めない（リアプロの / 抜けの入居時期の恐れ）
-    new RegExp(`解約予定\\s+(${D})`, "g"),
-    new RegExp(`(${D})\\s*(?:日)?\\s*(?:に|頃|ごろ|迄|まで)?\\s*(?:退去予定|退去|解約予定|解約|空き?予定|空室予定)`, "g"),
+    { re: new RegExp(`解約予定\\s+(${D})`, "g"), checkPrefix: false },
+    { re: new RegExp(`(${D})\\s*(?:日)?\\s*(?:に|頃|ごろ|迄|まで)?\\s*(?:退去予定|退去|解約予定|解約|空き?予定|空室予定)${NOT_AFTER}`, "g"), checkPrefix: true },
   ];
-  for (const re of pats) for (const m of s.matchAll(re)) { const v = squashDate(m[1]); if (sheetDateKey(v)) out.push(v); }
+  for (const { re, checkPrefix } of pats) for (const m of s.matchAll(re)) {
+    if (checkPrefix && /[〜~～\-－]\s*$/.test(s.slice(Math.max(0, (m.index ?? 0) - 3), m.index ?? 0))) continue; // 期間の終わり
+    const v = squashDate(m[1]);
+    const y = v.match(/^(\d{4})/);
+    if (y && Number(y[1]) > nowYear + 1) continue; // 来年より先＝契約の満了などで退去予定ではない
+    if (sheetDateKey(v)) out.push(v);
+  }
+  return out;
+}
+
+/** 文の中の日付の鍵を全部（退去の字の有無に関係なく） */
+function allDateKeys(s: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of seirekiText(s).matchAll(new RegExp(SHEET_DATE_SRC, "g"))) { const k = sheetDateKey(squashDate(m[0])); if (k && !/月$/.test(k)) out.add(k); }
   return out;
 }
 
@@ -105,11 +139,11 @@ const MOVEIN_LABEL = /^(?:入居可能時期|入居可能日|入居時期|入居
 /** 入居時期の値の始まり（「入居日より1ヶ月」のような文は値にしない） */
 const MOVEIN_START_RE = /^(?:即|相談|未定|期日|応相談|要相談|調整|\d|令和|R\s*\d|[上中下]旬|退去|解約|空き?予定)/;
 const VIEW_LABEL = /(?:内覧|内見)(?:可能日|開始日|開始|可能)\s*[:：]?\s*((?:\d{4}\s*[年/.\-]\s*)?\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?\s*(?:[〜~～]|以降|より|から)?)/;
-const EMBEDDED_LABELS = /(入居可能時期|入居可能日|入居予定日|入居時期|解約予定日|退去予定日)/g;
+const EMBEDDED_LABELS = /(入居可能時期|入居可能日|入居予定日|入居時期|解約予定日|退去予定日|空き予定日|空室予定日|退去予定時期)/g;
 
 /** 1行に並んだ見出し（itandi「現況 居住中 入居可能時期 2026年11月上旬」）を行に分ける。行頭の印（※・■・【】）を外す */
 function toLines(text: string): string[] {
-  const raw = nf(text).replace(/\r/g, "").split("\n");
+  const raw = seirekiText(nf(text)).replace(/\r/g, "").split("\n");
   const out: string[] = [];
   for (const l0 of raw) {
     const l = l0.replace(/^[\s※＊*■□●・\-]+/, "").replace(/^【([^】]{1,8})】\s*/, "$1: ").trim();
@@ -190,7 +224,7 @@ export function readSheetVacancy(text: string | null | undefined): SheetVacancy 
       continue;
     }
     // 退去予定日・解約予定日の欄／備考・特記・案内方法の文
-    const isVacLabel = /^(?:退去予定日?|解約予定日?|退去日|解約日)\s*[:：]?/.test(l);
+    const isVacLabel = new RegExp(`^(?:${VAC_LABEL_SRC}|退去予定|解約予定)\\s*[:：]?`).test(l);
     for (const p of vacatePhrases(l)) vac.push({ raw: p, from: isVacLabel ? `${l.match(/^[^:：\s\d]+/)?.[0] ?? "退去予定"}の欄` : "備考・特記の文", rank: isVacLabel ? 1 : 3 });
     if (isVacLabel && !curs.length && !vacatePhrases(l).length && /^退去予定\s*[:：]?\s*$/.test(l)) curs.push({ raw: "退去予定", from: "退去予定の欄", rank: 3 });
     const vw = l.match(VIEW_LABEL);
@@ -251,18 +285,56 @@ export function alignVacancyLines(lines: string[], sourceText: string | null | u
   if (v.multiRoom) return { lines, changed: false, read: v };
   const fromSheet = sheetVacancyLines(v);
   const got = new Set(fromSheet.map((l) => labelOf(l)));
-  const srcVac = new Set(vacatePhrases(toLines(src).join("\n")).map((x) => sheetDateKey(x)));
+  const srcText = toLines(src).join("\n");
+  const srcVac = new Set(vacatePhrases(srcText).map((x) => sheetDateKey(x)));
+  const srcDates = allDateKeys(srcText);
+  const valOf = (l: string) => seirekiText(nf(l)).replace(/^[^:：]+[:：]\s*/, "").trim();
+  const sq = (s: string) => s.replace(/[\s・]+/g, "");
   const out: string[] = [];
+  const notes: string[] = [];
   let at = -1;
   for (const l of lines) {
     const lab = VAC_LINE_RE.test(nf(l)) ? labelOf(l) : null;
     if (!lab) { out.push(l); continue; }
     if (at < 0) at = out.length;
-    if (got.has(lab)) continue; // 欄の値に置き換える
+    if (got.has(lab)) {
+      // 欄の値に置き換える。2026-10-13 レビュー: 置き換えで情報を落とさない
+      const lv = valOf(l);
+      if (lab === "現況" && v.current) {
+        // 「新築 空室」→ 欄「空室」: LLM の値の末尾が欄の値なら前の語（新築）を残す
+        const fv = v.current;
+        const lhead = splitSlash(lv)[0] ?? lv; // 「新築 空室 / 即入 / 商談中」の前
+        const i = fromSheet.findIndex((x) => labelOf(x) === "現況");
+        if (i >= 0 && sq(lhead).length > sq(fv).length && sq(lhead).endsWith(sq(fv)) && !/\d/.test(lhead)) {
+          fromSheet[i] = `現況: ${lhead.replace(/\s+/g, " ")}${v.extras.length ? `・${v.extras.join("・")}` : ""}`;
+        } else if (i >= 0) {
+          // LLM の現況にだけある状態の語（新築・未入居・内装中・清掃中…）は添える（欄の値は変えない）
+          const words = (lv.match(new RegExp(STATUS_EXTRA_RE.source, "g")) ?? []).filter((w) => !fromSheet[i].includes(w));
+          if (words.length) fromSheet[i] = `${fromSheet[i]}・${[...new Set(words)].join("・")}`;
+        }
+      }
+      if (lab === "入居可能日" && v.moveIn) {
+        // 欄で決めた入居可能日と違う LLM の値（「即入居可」「27日後入居可」「退去及び内装完了後」）は捨てずに別の行に添える。
+        //   「入居可能日:」の見出しにしない＝読み口（readMoveInMaterial）が即入居と取り違えない
+        const a = sq(lv), b = sq(v.moveIn);
+        const same = a === b || a.includes(b) || b.includes(a)
+          || (!!sheetDateKey(a.replace(/^[^\d]*/, "")) && sheetDateKey(a.replace(/^[^\d]*/, "")) === sheetDateKey(b.replace(/^[^\d]*/, "")))
+          || (/即/.test(a) && /即/.test(b)) || (/相談/.test(a) && /相談/.test(b))
+          || (!!v.vacate && !!sheetDateKey(a.replace(/^[^\d]*/, "")) && sheetDateKey(a.replace(/^[^\d]*/, "")) === sheetDateKey(v.vacate));
+        // 日付が同じでも、日付の外の言葉（「10/10 契約開始 必須」の契約開始・必須）は条件なので添える
+        const rest = seirekiText(lv).replace(new RegExp(SHEET_DATE_SRC, "g"), "").replace(/^\d{4}\s*[年/.\-]?/, "").replace(/[\s・/／()（）、,~〜～]+/g, " ").trim();
+        const extraWords = same && /\d/.test(lv) && rest.length >= 2 && !/^(?:即入?居?可?|相談|日|頃|以降|より|から|可)$/.test(rest) && !b.includes(sq(rest)) ? rest : "";
+        if (!same && lv) notes.push(`入居の別の記載: ${lv}（資料の別の所）`);
+        else if (extraWords) notes.push(`入居の別の記載: ${lv}（資料の別の所）`);
+      }
+      continue;
+    }
     if (lab === "退去予定") {
-      const k = sheetDateKey(nf(l).replace(/^[^:：]+[:：]\s*/, "").match(DATE_RE)?.[0] ?? "");
-      if (k && !srcVac.has(k)) continue; // 元の文字で退去の字が付いていない日付＝取り違え・作り事
+      const k = sheetDateKey(valOf(l).match(DATE_RE)?.[0] ?? "");
       if (!k) continue; // 日付の無い退去予定の行は現況が持つ
+      // 元の文字にその日付があるのに退去の字が付いていない＝入居時期などの日付の取り違え → 落とす。
+      //   元の文字に日付が見つからない（和暦・書式が読めない）時は落とさず残す（2026-10-13 レビュー）
+      if (!srcVac.has(k) && srcDates.has(k)) continue;
     }
     if (lab === "入居可能日" && v.vacate) {
       // 欄で読んだ退去予定日と同じ日付の入居可能日＝退去予定日を入居可能日にした（ハーモニーテラス森ノ宮「入居予定日 2026/9/中旬退去予定」）
@@ -272,7 +344,7 @@ export function alignVacancyLines(lines: string[], sourceText: string | null | u
     out.push(l);
   }
   if (at < 0) at = out.length;
-  out.splice(at, 0, ...fromSheet);
+  out.splice(at, 0, ...fromSheet, ...notes);
   return { lines: out, changed: JSON.stringify(out) !== JSON.stringify(lines), read: v };
 }
 

@@ -10,13 +10,14 @@
 //   ・置き場から消えた画像は読まない（HEAD で 200 以外）
 //   ・時間切れ（読めず）は1回だけ読み直す
 //   ・書くのは読めた時だけ（ensureImageDetail は失敗を残さない）
-// 実行: npx tsx --env-file=.env.local scripts/backfill-sent-image-details-90d.ts [--days=90] [--limit=50] [--conc=4] [--dry]
+// 実行: npx tsx --env-file=.env.local scripts/backfill-sent-image-details-90d.ts [--days=90] [--limit=50] [--conc=4] [--apply]
+// 既定は数えるだけ（LLM も DB の書き込みもしない）。読んで書くのは --apply の時だけ（2026-10-13 レビュー）
 import { createClient } from "@supabase/supabase-js";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=")[1];
 const DAYS = Number(arg("days", "90")), LIMIT = Number(arg("limit", "50")), CONC = Number(arg("conc", "4"));
-const DRY = process.argv.includes("--dry");
+const DRY = !process.argv.includes("--apply");
 
 type Row = { image_url: string; conversation_id: string; created_at: string; source: string | null };
 
@@ -56,7 +57,7 @@ async function main() {
   });
   console.log(`送った資料の画像 ${rows.length}（${DAYS}日）・読む候補 ${cands.length}・飛ばす ${JSON.stringify(skip)}`);
   const todo = cands.slice(0, LIMIT);
-  if (DRY) { console.log(`（--dry・読まない）対象 ${todo.length}`); return; }
+  if (DRY) { console.log(`（数えるだけ・読まない。読んで書く時は --apply）対象 ${todo.length}`); return; }
 
   const t0 = new Date().toISOString();
   const res = { ok: 0, gone: 0, cutoffOrFailed: 0, retried: 0 };

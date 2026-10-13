@@ -10,7 +10,7 @@
 import { createClient } from "@supabase/supabase-js";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=").slice(1).join("=");
-const VAC = /^(現況|退去予定|入居可能日|内覧可能日)/;
+const VAC = /^(現況|退去予定|入居可能日|内覧可能日|入居の別の記載)/;
 
 async function main() {
   const days = Number(arg("days", "90")), show = Number(arg("show", "10")), apply = process.argv.includes("--apply");
@@ -26,7 +26,7 @@ async function main() {
     if (!data || data.length < 500) break;
   }
   const fix = (lines: string[], text: string | null) => normalizeVacancyLines(alignVacancyLines(lines, text).lines);
-  let aChanged = 0, aWritten = 0, shown = 0, lostVac = 0, lostOther = 0;
+  let aChanged = 0, aWritten = 0, shown = 0, lostVac = 0, lostOther = 0, infoLost = 0, infoShown = 0;
   const urlText = new Map<string, string>();
   for (const r of rows) {
     for (const u of [r.page_image_url, r.agent_image_url, r.trim_image_url]) if (u && r.pdf_text) urlText.set(u, r.pdf_text);
@@ -38,6 +38,13 @@ async function main() {
     // 退去予定の行が消える行（入居時期を退去予定にした行のはず）を数え、入居時期と同じ値でない物は見せる
     const vOf = (ls: string[]) => ls.find((l) => /^退去予定\s*[:：]/.test(l))?.replace(/^[^:：]+[:：]\s*/, "") ?? null;
     const mOf = (ls: string[]) => ls.find((l) => /^入居可能日\s*[:：]/.test(l))?.replace(/^[^:：]+[:：]\s*/, "") ?? null;
+    // 落ちる情報: 前の現況・入居可能日の値（空白・記号を除く）が後の行のどこにも無い（入居時期を退去予定にした行は除く）
+    // 語に分けて（括弧・/・、・空白で）、後の行のどこにも無い語がある値（数字の頭の 0 は外して比べる）
+    const sqz = (x: string) => x.normalize("NFKC").replace(/(?<!\d)0(\d)/g, "$1").replace(/[\s・/／()（）、,:：|]+/g, "");
+    const afterAll = sqz(next.join("|"));
+    const lostWords = il.filter((l) => /^(現況|入居可能日)\s*[:：]/.test(l)).map((l) => l.replace(/^[^:：]+[:：]\s*/, ""))
+      .filter((x) => x.normalize("NFKC").split(/[\s・/／()（）、,]+/).map(sqz).filter(Boolean).some((p) => !afterAll.includes(p)));
+    if (lostWords.length) { infoLost++; if (infoShown++ < show) console.log(`(A-) #${r.id} 落ちる「${lostWords.join(" / ")}」 後: ${next.filter((l) => VAC.test(l) || /^入居の別/.test(l)).join(" ／ ")}`); }
     if (vOf(il) && !vOf(next)) { lostVac++; if (mOf(next)?.replace(/\s/g, "") !== vOf(il)?.replace(/\s/g, "")) { lostOther++; console.log(`(A!) #${r.id} 退去予定「${vOf(il)}」が消えた・入居可能日「${mOf(next) ?? "なし"}」`); } }
     if (shown++ < show) console.log(`(A) #${r.id}\n    前: ${il.filter((l) => VAC.test(l)).join(" ／ ") || "（なし）"}\n    後: ${next.filter((l) => VAC.test(l)).join(" ／ ") || "（なし）"}`);
     if (apply) { const { error } = await sb.from("property_pickups").update({ image_lines: next }).eq("id", r.id); if (!error) aWritten++; }
@@ -72,7 +79,7 @@ async function main() {
     if (/退去|解約/.test(mv)) hit("入居可能日に退去・解約の字");
     if (/\d{4}年/.test(vc) && !mv) hit("退去予定の行が年月日で入居可能日なし（入居時期を写した恐れ）");
   }
-  console.log(`\n(A) 売上サポの行（文字層あり・${days}日）${rows.length}行のうち 行が変わる ${aChanged}（退去予定の行が消える ${lostVac}・うち入居時期と同じ値でない ${lostOther}）${apply ? `・書いた ${aWritten}` : ""}`);
+  console.log(`\n(A) 売上サポの行（文字層あり・${days}日）${rows.length}行のうち 行が変わる ${aChanged}（退去予定の行が消える ${lostVac}・うち入居時期と同じ値でない ${lostOther}・現況・入居可能日の語が落ちる ${infoLost}）${apply ? `・書いた ${aWritten}` : ""}`);
   console.log(`(B) 売上サポの画像の image_details ${[...urlText.keys()].length}枚の URL のうち 行が変わる ${bChanged}${apply ? `・書いた ${bWritten}` : ""}`);
   console.log(`(C) 送った画像の image_details（元の文字なし）で読み直す候補 ${rereadUrls.size}枚: ${JSON.stringify(reread)}（読み直し 1枚 約$0.002 ＝ 約$${(rereadUrls.size * 0.002).toFixed(2)}）`);
   if (!apply) console.log("（数えるだけ。書く時は --apply・竹内さんの承認の後）");

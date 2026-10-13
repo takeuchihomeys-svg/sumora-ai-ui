@@ -171,6 +171,51 @@ it("moveInFactOfPickup: 資料の文字のままの1行に、欄で分けた行�
   ok(f && f.lines.includes("現況/入居時期 退去予定 / 2026年11月28日") && f.lines.includes("入居可能日: 2026年11月28日") && !f.lines.some((l) => /^退去予定:/.test(l)), JSON.stringify(f));
 });
 
+// ── 2026-10-13 レビューの直し ──
+it("【軽微2】契約期間の終わり「2026年11月1日～2028年10月31日 解約予告1ヶ月前」は退去予定日にしない", () => {
+  eq(readSheetVacancy("契約期間: 2026年11月1日～2028年10月31日 解約予告1ヶ月前").vacate, null);
+});
+it("【軽微2】定期借家「…～2028/10/31 解約不可」・「※2026/9/30退去済み」は退去予定日にしない", () => {
+  eq(readSheetVacancy("契約期間: 定期借家 2026/11/1～2028/10/31 解約不可").vacate, null);
+  eq(readSheetVacancy("現況: 空室\n※2026/9/30退去済み").vacate, null);
+  eq(readSheetVacancy("備考: 退去時クリーニング 2026年10月1日退去時精算").vacate, null);
+});
+it("【軽微2】来年より先の年の日付は退去予定日にしない・今年の日付は読む", () => {
+  const y = new Date().getFullYear();
+  eq(readSheetVacancy(`備考: ${y + 2}年3月31日解約予定`).vacate, null);
+  eq(readSheetVacancy(`備考: ${y}年10月31日解約予定`).vacate, `${y}年10月31日`);
+});
+it("【軽微3】見出し 空き予定日・空室予定日・退去予定時期・退去時期・明渡し予定", () => {
+  eq(readSheetVacancy("空き予定日: 2026年10月31日").vacate, "2026年10月31日");
+  eq(readSheetVacancy("空室予定日：10/20").vacate, "10/20");
+  eq(readSheetVacancy("退去予定時期: 2026年11月中旬").vacate, "2026年11月中旬");
+  eq(readSheetVacancy("退去時期 10月末").vacate, "10月末");
+  eq(readSheetVacancy("明渡し予定日: 2026/12/15").vacate, "2026/12/15");
+});
+it("【軽微3】和暦（令和8年10月31日・R8.10.31）を読む", () => {
+  eq(vacateMonthDay(readSheetVacancy("解約予定日: 令和8年10月31日").vacate), "10月31日");
+  eq(vacateMonthDay(readSheetVacancy("退去予定日 R8.10.31").vacate), "10月31日");
+});
+it("【軽微3】元の文字で日付が読めない時は LLM の「退去予定:」の行を落とさず残す", () => {
+  const r = alignVacancyLines(["間取り: 1K", "退去予定: 10/31"], "間取り 1K\n備考: 立会 拾月参拾壱日 予定（手書き）\n所在階 3階", {});
+  eq(r.lines, ["間取り: 1K", "退去予定: 10/31"]);
+});
+it("【軽微1】「新築 空室」→ 欄「空室」の時は新築を残す", () => {
+  const r = alignVacancyLines(["現況: 新築 空室", "入居可能日: 相談"], "現況/入居時期 空室 / 相談\n築年 2026年09月", {});
+  eq(r.lines, ["現況: 新築 空室", "入居可能日: 相談"]);
+});
+it("【軽微1】欄と違う LLM の入居可能日（即入居可・27日後入居可・退去及び内装完了後）は捨てずに別の行に添える（読み口は欄の値）", () => {
+  const r = alignVacancyLines(["現況: 退去予定", "入居可能日: 退去及び内装完了後"], "現況/入居時期 退去予定(10/26) / 相談\n入居時期 退去及び内装完了後", {});
+  eq(r.lines, ["現況: 退去予定", "退去予定: 10/26", "入居可能日: 相談", "入居の別の記載: 退去及び内装完了後（資料の別の所）"]);
+  eq(readMoveInMaterial(r.lines).kind, "leaving");
+  const r2 = alignVacancyLines(["入居可能日: 即入居可"], "現況/入居時期 空室 / 相談\n備考 即入居可", {});
+  ok(r2.lines.includes("入居可能日: 相談") && r2.lines.includes("入居の別の記載: 即入居可（資料の別の所）"), JSON.stringify(r2.lines));
+  eq(readMoveInMaterial(r2.lines).kind, "unknown");
+  // 同じ中身（即入 と 即入居可・日付が同じ）は添えない＝2回かけても同じ
+  eq(alignVacancyLines(["入居可能日: 即入居可"], "間取タイプ 1K\n現況/入居時期 空室 / 即入", {}).lines, ["現況: 空室", "入居可能日: 即入"]);
+  eq(alignVacancyLines(r.lines, "現況/入居時期 退去予定(10/26) / 相談\n入居時期 退去及び内装完了後", {}).lines, r.lines);
+});
+
 // ── AIX【物件確認した】の画像の退去予定日（/api/extract-vacancy-date）: Haiku は書き写すだけ・欄で決める ──
 it("extract-vacancy-date: 書き写しの「退去予定 / 2026年10月20日」は退去予定日にしない（旧の Haiku は 2026年10月20日 を返した）", () => {
   eq(parseExtractVacancyResponse(`{"propertyName":"maison de Villa 北畠 202号室","fields":["現況/入居時期: 退去予定 / 2026年10月20日 / 商談中"]}`, {}), { propertyName: "maison de Villa 北畠 202号室", vacancyDate: null, fields: ["現況/入居時期: 退去予定 / 2026年10月20日 / 商談中"], vacancyFrom: null });

@@ -3,7 +3,8 @@
 //   ・現況が退去予定・空き予定なのに退去の日付の行が無い（備考・特記事項・案内方法の「9/30退去予定」「8月末空き予定」を落とした）
 //   ・入居可能日に「即日指定」「期日指定」（字の書き換え）
 // 読めた時だけ書く（読めなかった物は今の行を残す）。申込以降の線は送った時刻で見る（ensureImageDetail と同じ線）。
-// 実行: npx tsx --env-file=.env.local scripts/reread-image-details-vacancy.ts [--since=2026-10-13T00:15:00Z] [--limit=400] [--conc=6] [--dry]
+// 実行: npx tsx --env-file=.env.local scripts/reread-image-details-vacancy.ts [--since=2026-10-13T00:15:00Z] [--limit=400] [--conc=6] [--apply]
+// 既定は数えるだけ（LLM も DB の書き込みもしない）。読み直して書くのは --apply の時だけ（2026-10-13 レビュー: fix-sheet-vacancy-stored と同じ形）
 import { createClient } from "@supabase/supabase-js";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=")[1];
@@ -27,7 +28,7 @@ async function main() {
     return vacNoDate || /即日指定|期日指定/.test(mv);
   }).slice(0, Number(arg("limit", "400")));
   console.log(`今日の中身の行 ${rows.length}・読み直す型 ${target.length}`);
-  if (process.argv.includes("--dry")) return;
+  if (!process.argv.includes("--apply")) { console.log("（数えるだけ。読み直して書く時は --apply・竹内さんの承認の後）"); return; }
   let ok = 0, skip = 0, fail = 0, changed = 0; let idx = 0;
   async function worker() {
     while (idx < target.length) {
