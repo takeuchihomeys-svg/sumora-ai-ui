@@ -15,6 +15,7 @@
 // 監査: scripts/audit-aix-material-facts.ts（実送信の過去分に当てて前後を目で読む）
 import { wardOfAddress, wardsInText } from "./osaka-geo";
 import { normalizePropertyName, similarity } from "./property-name-match";
+import { readSheetVacancy, sheetVacancyLines, sheetVacancyFieldsEnabled } from "./sheet-vacancy";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ① 送る物件の区（ピックアップの地域）
@@ -113,6 +114,11 @@ export function moveInFactOfPickup(row: PickupMaterialRow): MoveInFact | null {
   if (it) lines.push(`入居可能時期 ${it}`);
   const note = pdf.match(/[※＊*]?\s*入居(?:可能)?日[^\n]{0,4}?(未定|相談|調整中|[0-9０-９]{1,4}年?[0-9０-９]{1,2}月[^\n]{0,8})/);
   if (note) lines.push(note[0].trim());
+  // 2026-10-13 竹内「退去予定日がどこに書いていて…」: 資料の文字のまま（「現況/入居時期 退去予定 / 2026年11月28日」）だけだと、
+  //   / の後ろ（入居時期）を退去予定日と読み違える（生成・正規表現とも）。欄で分けた行（現況／退去予定／入居可能日）を添える。戻す SHEET_VACANCY_FIELDS=off
+  if (lines.length && sheetVacancyFieldsEnabled()) {
+    for (const l of sheetVacancyLines(readSheetVacancy(pdf))) if (!lines.includes(l)) lines.push(l);
+  }
   if (lines.length === 0) {
     for (const l of row.image_lines ?? []) {
       if (/^\s*(?:現況|入居可能日|入居時期|退去予定)\s*[:：]/.test(String(l))) lines.push(String(l).trim());

@@ -23,6 +23,7 @@
 
 import { parseDetailResult, type DetailResult } from "./property-image-read";
 import { resolveReadProperty } from "./property-name-match";
+import { alignVacancyLines } from "./sheet-vacancy";
 
 export type DetailSource = "text" | "image" | "none";
 
@@ -85,7 +86,86 @@ export const PROPERTY_TRANSCRIPT_DETAIL_SYSTEM = PROPERTY_TEXT_DETAIL_SYSTEM
   + `
 - 2部屋以上の一覧（「号室: 203 / 状況: 10/末」の行が2つ以上）がある時だけ、その状況を「現況: 203号室 10/末・205号室 10/末」の形で1行にまとめる。
   1部屋の資料の「現況」「入居可能日（入居時期）」の欄はいつも通りそれぞれの行にする
-- 所在階は部屋の階だけ（「6階建」「地上10階」は建物の階数なので所在階にしない）`;
+- 所在階は部屋の階だけ（「6階建」「地上10階」は建物の階数なので所在階にしない）${sheetReadR2Enabled() ? sheetReadR2Rules() : ""}`;
+
+/**
+ * 2026-10-13 竹内「退去予定日がどこに書いていて空室がどこに書いているか。退去予定と入居予定（入居可能日）の部分を正確に読み取る場所が分かるように」
+ *   読み直した 1,213枚の見本 14枚を画像と突き合わせた取り違え（scripts/backfill-sent-image-details-90d.ts の後の目読み）:
+ *   ① 備考の【現況】「空き予定（9/30退去予定）」の日付を落とした（リアプロ・サザンパークス）
+ *   ② 特記事項の「内覧可能日：2026年8月1日〜」を落とした（項目に無かった・サンプラザ山坂）
+ *   ③ 「案内方法: 8月末空き予定」を落とし、「期日指定(2026年09月上旬)」を「即日指定(2026年09月16日)」と書き換えた（元付・ジェントリー3）
+ *   ④ 「現況/入居時期: 空室 / 即入」を「現況: 入居可能」「入居可能日: 空室 即入」に分けた（リアプロ・S-FORT桜川南）
+ *   ⑤ 「解約予定日: 2026年6月30日」を退去予定にしなかった（エステムプラザ本町クロス）
+ *   書き写しの文字の読み取り（送った画像）だけに足す（文字層の指示は売上サポの前置きキャッシュのため変えない）。戻す: SHEET_READ_R2=off
+ */
+export function sheetReadR2Enabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.SHEET_READ_R2 ?? "").trim().toLowerCase() !== "off";
+}
+export function sheetReadR2Rules(): string {
+  // 関数の中に文を置く（上の PROPERTY_TRANSCRIPT_DETAIL_SYSTEM が読み込みの時に呼ぶ＝const だと初期化前で落ちる）
+  return `
+- 「現況/入居時期: A / B」（リアプロの資料）は「/」の前が現況・後ろが入居可能日（例「退去予定 / 2026年10月20日」→ 現況: 退去予定 ／ 入居可能日: 2026年10月20日。「空室 / 即入」→ 現況: 空室 ／ 入居可能日: 即入）。「入居可能」という現況は作らない
+- 退去予定の日付は表の欄だけでなく 備考・特記事項・案内方法・【現況】 の文にもある（「空き予定（9/30退去予定）」「8月末空き予定」「解約予定日 2026年6月30日」）。あれば「退去予定: 9/30」の行にする（解約予定日＝退去予定）。退去予定の行にするのは「退去」「解約」「空き予定」の字が付いた日付だけ（入居時期・入居可能日の日付を退去予定にしない）
+- 内覧（内見）の開始日（「内覧可能日：2026年8月1日〜」）があれば「内覧可能日: 2026年8月1日〜」の行にする（項目に内覧可能日を足す）
+- 日付・「上旬/中旬/下旬」・「期日指定」「即入」「相談」は書いてある字のまま（日付に直したり言い換えたりしない）`;
+}
+
+/**
+ * 読んだ行の現況・入居可能日・退去予定を決定論で整える（純関数・読み取りの後の出口）。取り違えの形（上の①〜⑤）のうち文字で直せる物:
+ *   ・「現況: 退去予定 / 2026年10月20日」→ 現況: 退去予定 ＋ 入居可能日: 2026年10月20日（入居可能日の行が無い時）
+ *   ・「現況: 入居可能」＋「入居可能日: 空室 即入」→ 現況: 空室 ＋ 入居可能日: 即入
+ *   ・「現況: 解約予定日 2026年6月30日」「現況: 2026/9/中旬退去予定」「入居可能日: 2026/9/中旬退去予定」→ 現況: 退去予定 ＋ 退去予定: 日付
+ * 書いていない値は作らない（日付は行の中の字だけ）。戻す: SHEET_READ_R2=off
+ */
+export function normalizeVacancyLines(lines: string[], env: Record<string, string | undefined> = process.env): string[] {
+  if (!sheetReadR2Enabled(env)) return lines;
+  const out = lines.map((l) => String(l ?? ""));
+  const idxOf = (label: RegExp) => out.findIndex((l) => label.test(l));
+  const valOf = (i: number) => (i >= 0 ? out[i].replace(/^[^:：]+[:：]\s*/, "").trim() : "");
+  const has = (label: RegExp) => idxOf(label) >= 0;
+  // 2026-10-13: リアプロの「(10/下)」の「下」だけの旬も日付に数える（数えないと ⑤ が「退去予定: 10/下」を落とした）
+  const DATE = /(\d{4}[年/.-]\s*\d{1,2}(?:[月/.-]\s*(?:\d{1,2}日?|上旬|中旬|下旬|末|上|中|下))?|\d{1,2}\s*[月/]\s*(?:\d{1,2}日?|上旬|中旬|下旬|末|上|中|下))/;
+  const S = /^現況\s*[:：]/, M = /^入居可能日\s*[:：]/, V = /^退去予定\s*[:：]/;
+  // ① 現況に「A / B」
+  let si = idxOf(S);
+  if (si >= 0) {
+    const m = valOf(si).match(/^(空室|退去予定|居住中|入居中|空き予定|賃貸中)\s*[\/／]\s*(.+)$/);
+    // 「/」の後ろが入居時期の値（即入・相談・日付・上中下旬）の時だけ分ける。内装中・商談中・申込あり 等の状態は現況に残す（消さない）
+    const MOVEIN_VAL = /^(?:即入(?:居)?(?:可)?|即日|相談|期日指定.*|\d{4}[年/.-].*|\d{1,2}\s*[月/].*)$/;
+    if (m && MOVEIN_VAL.test(m[2].trim())) {
+      const mv = idxOf(M);
+      if (mv < 0) { out[si] = `現況: ${m[1]}`; out.push(`入居可能日: ${m[2].trim()}`); }
+      else if (valOf(mv).replace(/\s+/g, "") === m[2].replace(/\s+/g, "") || /^相談$/.test(m[2].trim())) out[si] = `現況: ${m[1]}`;
+    }
+  }
+  // ② 現況「入居可能」＋ 入居可能日「空室 …」
+  si = idxOf(S); let mi = idxOf(M);
+  if (si >= 0 && mi >= 0 && /^入居可能$/.test(valOf(si)) && /^空室/.test(valOf(mi))) {
+    const rest = valOf(mi).replace(/^空室\s*[\/／、・]?\s*/, "").trim();
+    out[si] = "現況: 空室"; if (rest) out[mi] = `入居可能日: ${rest}`; else out.splice(mi, 1);
+  }
+  // ③ 解約予定日・〇〇退去予定（日付つき）が現況・入居可能日に入っている
+  for (const lab of [S, M]) {
+    const i = idxOf(lab);
+    if (i < 0) continue;
+    const v = valOf(i);
+    if (!/解約予定|退去予定|空き?予定/.test(v)) continue;
+    // 退去の日付と言えるのは「解約予定日 日付」「退去予定日 日付」「退去予定(日付)」「日付＋退去予定／空き予定」の形だけ。
+    //   「退去予定 2026年12月上旬」（日付が後ろ・区切りなし）はリアプロの「現況/入居時期」の入居時期かもしれない＝退去予定の行にしない
+    const explicit = v.match(new RegExp(`(?:解約予定日?|退去予定日)\\s*[:：]?\\s*${DATE.source}|退去予定\\s*[（(]\\s*${DATE.source}\\s*[）)]|${DATE.source}\\s*(?:に)?(?:退去予定|退去|空き?予定)`));
+    const d = explicit ? explicit[0].match(DATE) : null;
+    if (lab === M) { out.splice(i, 1); if (!has(S)) out.push("現況: 退去予定"); }
+    else if (d && /解約予定/.test(v)) out[i] = "現況: 退去予定";
+    if (d && !has(V)) out.push(`退去予定: ${d[0].replace(/\s+/g, "")}`);
+  }
+  // ④ 退去予定が入居可能日と同じ値（入居時期の日付を写した・サンプラザ山坂「退去予定 / 2026年8月下旬」の読み直し）は退去予定の行を落とす
+  const vi = idxOf(V), mi2 = idxOf(M);
+  if (vi >= 0 && mi2 >= 0 && valOf(vi).replace(/\s+/g, "") === valOf(mi2).replace(/\s+/g, "")) out.splice(vi, 1);
+  // ⑤ 日付の無い退去予定の行（「退去予定: 退去予定」）は落とす（現況の行が持つ）
+  const vi2 = idxOf(V);
+  if (vi2 >= 0 && !DATE.test(valOf(vi2))) out.splice(vi2, 1);
+  return out;
+}
 
 /** 読み直しでも同じ形（前置きの先頭一致を保つ） */
 export function buildTextDetailUser(pdfText: string): string {
@@ -156,7 +236,8 @@ export function pickupRowDetailPlan(
   for (const r of rows) {
     if (!Array.isArray(r.image_lines) || r.image_lines.length === 0) continue;
     const lines = (r.image_lines as unknown[]).map((x) => String(x ?? "").trim()).filter((s) => s.length >= 2 && s.length <= 120);
-    if (lines.length > 0) return { kind: "lines", lines };
+    // 2026-10-13: 写す行も同じ行の文字層の欄に合わせる（9/26〜29 の画像読みは「退去予定 / 2026年10月20日」の入居時期を退去予定にした行が 127行ある）
+    if (lines.length > 0) return { kind: "lines", lines: normalizeVacancyLines(alignVacancyLines(lines, r.pdf_text).lines) };
   }
   for (const r of rows) {
     if (detailSourceFor(r.pdf_text, false) === "text") return { kind: "text", text: r.pdf_text as string };
@@ -267,6 +348,11 @@ export async function readPropertyDetailFromText(
   // 2026-09-29: 文字層に言葉の無い可否の行（作った行）を落とす（dropUngroundedLines・誤削除0）
   const g = dropUngroundedLines(v0.lines, text.slice(0, DETAIL_TEXT_MAX_CHARS));
   if (g.dropped.length) console.log(JSON.stringify({ tag: "text-detail:ungrounded-dropped", conversationId: opts?.conversationId ?? null, dropped: g.dropped }));
-  const v = { ...v0, lines: g.kept };
+  // 2026-10-13: 現況・入居可能日・退去予定の取り違えの形を決定論で整える（normalizeVacancyLines・SHEET_READ_R2=off で止まる）
+  //   さらに、元の文字（文字層・書き写し）の欄で読んだ現況・退去予定・入居可能日・内覧可能日に合わせる（alignVacancyLines・SHEET_VACANCY_FIELDS=off で止まる）
+  //   ＝リアプロ「現況/入居時期 退去予定 / 2026年10月20日」の入居時期を退去予定にした行・備考の退去日を落とした行を、欄の値に直す
+  const al = alignVacancyLines(g.kept, text.slice(0, DETAIL_TEXT_MAX_CHARS));
+  if (al.changed) console.log(JSON.stringify({ tag: "text-detail:vacancy-aligned", conversationId: opts?.conversationId ?? null, before: g.kept.filter((l) => /^(現況|退去予定|入居可能日|内覧可能日)/.test(l)), after: al.lines.filter((l) => /^(現況|退去予定|入居可能日|内覧可能日)/.test(l)), from: al.read ? { current: al.read.currentFrom, vacate: al.read.vacateFrom, moveIn: al.read.moveInFrom } : null }));
+  const v = { ...v0, lines: normalizeVacancyLines(al.lines) };
   return { ...v, usage: read.res ? { input: read.res.usage.input, output: read.res.usage.output, cacheHit: read.res.usage.cacheHit } : undefined, ms, model: read.res?.model ?? model, failed: false };
 }

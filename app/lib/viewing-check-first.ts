@@ -12,6 +12,7 @@
 //   戻す: VIEWING_CHECK_VACATING_ONLY=off（5巡目の「いつも確認を挟む」に戻る）
 
 import { vacatingViewableSentence, viewableFromVacancyYmd } from "./vacating-notice";
+import { readSheetVacancy, sheetVacancyFieldsEnabled, vacateMonthDay } from "./sheet-vacancy";
 
 /** スタッフの「内覧可能か確認します」の約束（手打ち） */
 export const VIEWING_CHECK_PROMISE_RE = /(?:ご)?内[覧見](?:可能か|可否|出来るか|できるか|が可能か)[^\n。！!]{0,20}(?:確認|お調べ)|(?:ご)?内[覧見][^\n。！!]{0,12}(?:可能|出来る|できる)か(?:どうか)?[^\n。！!]{0,12}(?:確認|お調べ)|(?:ご)?案内(?:可能か|可否|出来るか|できるか)[^\n。！!]{0,16}確認|(?:ご)?内[覧見](?:開始日|可能日|可能な?日|開始)[^\n。！!]{0,16}確認/;
@@ -81,6 +82,15 @@ export function viewingCheckFirst(i: ViewingCheckFirstInput, env: Record<string,
 
 /** 資料の行（「現況: 退去予定(10/31)」「退去予定日：2026/07/27」「現況/入居時期 退去予定 / 2026年10月下旬」）から退去予定日（「10月31日」「10月末」）。日付・末だけ（上中下旬は内覧開始日を作らない） */
 export function vacancyDateFromMaterial(lines: ReadonlyArray<string | null | undefined>): string | null {
+  // 2026-10-13 竹内「退去予定日がどこに書いていて…読み取る箇所を間違えていた」: 資料の欄で読む（sheet-vacancy）。
+  //   旧は「退去予定」の字がある行の最初の日付＝リアプロ「現況/入居時期 退去予定 / 2026年10月20日」の入居時期（10/20）を退去予定日にしていた
+  //   （売上サポの行 90日でこの形 126行・括弧の退去日つきでも入居時期の日付を先に拾う）。戻す SHEET_VACANCY_FIELDS=off
+  if (sheetVacancyFieldsEnabled()) return vacateMonthDay(readSheetVacancy(lines.map((l) => String(l ?? "")).join("\n")).vacate);
+  return vacancyDateFromMaterialLegacy(lines);
+}
+
+/** 旧の読み方（SHEET_VACANCY_FIELDS=off・監査の比べ用） */
+export function vacancyDateFromMaterialLegacy(lines: ReadonlyArray<string | null | undefined>): string | null {
   for (const raw of lines) {
     const l = String(raw ?? "").normalize("NFKC");
     if (!/退去予定|退去日/.test(l)) continue;

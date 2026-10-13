@@ -1,6 +1,13 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-13
+## 📄 物件資料の退去予定日・入居可能日・空室を「欄」で読む（10/13 竹内「退去予定日がどこに書いていて空室がどこに書いているか…読み取る箇所を間違えていた部分も正確に」・未コミット→ブランチ）
+- **取り違えの型（実物で数えた）**: ①リアプロ「現況/入居時期 退去予定 / 2026年10月20日」の **/ の後ろは入居時期**なのに退去予定日にした（売上サポの行 90日・この形 250行中 LLM の行 127行／読み口 `vacancyDateFromMaterial` は括弧の退去日つきの行でも入居時期を先に拾い 151行誤り＝ブレインの「10月20日退去予定のため10月21日以降ご内覧可能」の元）②備考・特記・案内方法・カギ所在の「9/30退去予定」「8月末空き予定」を落とす③「解約予定日」「入居予定日 2026/9/中旬退去予定」④特記の内覧可能日が項目に無い⑤`readMoveInMaterial` が「退去予定(10/31) / 相談」の (10/31) を入居可能日の日付と見た⑥AIX【物件確認した】の画像の退去予定日（Haiku に判断させていた）が b1 で入居時期を返した
+- **直し（1本の読み手）** `app/lib/sheet-vacancy.ts`（純関数・テスト `sheet-vacancy.test.ts` 39）: readSheetVacancy＝欄ごと（現況/入居時期の前・括弧／/ の後ろ＝入居時期／現況／入居可能時期・入居時期・入居予定日／退去予定日・解約予定日・退去日／備考の「日付＋退去・解約・空き予定」／内覧可能日）。入居時期の日付は退去予定日にしない・入居時期と同じ日付の退去予定は捨てる・現況の欄が空室なら備考の退去日は古い文として出さない・同じ順位で食い違えば出さない・2部屋以上の一覧は決めない
+  - 使う所: 書き写し／文字層の読み取りの後 `alignVacancyLines`（property-detail-source.readPropertyDetailFromText・pickupRowDetailPlan）／`vacancyDateFromMaterial`（ブレインの内覧の答え）／`readMoveInMaterial`・`routeContractTerm`（資料の答え）／`moveInFactOfPickup`（AIX の材料に欄で分けた行を添える）／`/api/extract-vacancy-date`（Haiku は欄を書き写すだけ・`app/lib/extract-vacancy-date-prompt.ts`）。前の担当の SHEET_READ_R2（書き写しの指示・normalizeVacancyLines）も取り込み、旬「(10/下)」を落とすのを直した
+  - 戻す: `SHEET_VACANCY_FIELDS=off`（全部）・`SHEET_READ_R2=off`（書き写しの指示と normalize）
+- **数字**: 売上サポ（リアプロ 2,012行）読み口の退去日 旧 正しい112・誤り151（入居時期136）→ 新 正しい122・誤り0・旧の誤りを分からないに100・括弧の外の文で見つけた69（目で読んで正しい・現況が空室の古い備考の日付は出さない）／保存の行で入居時期を退去予定にした 127→0（`scripts/audit-sheet-vacancy-fields.ts`）。画像12枚の読み直し（`scripts/verify-sheet-vacancy-read.ts`・DeepSeek）前 正しい17・誤り1・分からない5 → 後 22・1・0（残る1＝ジェントリー3 の書き写しが「期日指定(2026年09月上旬)」を「…16日」と読む）。extract-vacancy-date（Haiku 4枚）前 1/4（入居時期を退去日に1）→ 後 2/4・誤った日付0（残り2は分からない＝スタッフが入れる）。スタッフの実送信との比べ（`scripts/audit-sheet-vacancy-vs-staff-sends.ts`）は資料の読み取りがある組 34 で一致10→10
+- **既存データ**（`scripts/fix-sheet-vacancy-stored.ts`・数えるだけ・--apply は承認の後）: (A) 売上サポの行 781 (B) その画像の image_details 731 は文字層で直せる（LLM なし）(C) 送った画像の image_details 259枚は読み直し（`scripts/reread-image-details-vacancy.ts --since=…`・約$0.5）
 ## 🧾 AIX【物件確認した】見積書の同封は物件ごとのセット・件数10件まで・ピッカーと文の食い違い（10/13 竹内さん くれあ・未桜）— 黄金ルール
 - **見積書を同封する時の並び**: 物件ごとに［資料・見積書の画像（1回でまとめて）→ 費用の文］を繰り返し、最後に確認の結果の文。見積書が1件も無ければ今まで通り。持っていない物（資料なし・見積書なし）は飛ばす。見本＝実送信 S 9/13 の6件・YUYA 9/14 の5件・かぁな 9/11（同じ並び・費用の文は①なし・日割の注記つき）
 - **費用の文は新しく作らない**: AIX【見積書送る】（1枚）の読み取り＋組み立てを `app/lib/check-result-estimate-bundle.composeSingleEstimateCostText`／route の `ocrSingleEstimate` に移し、【見積書送る】もこれを通す（文の形は変えていない・テストで1字一致）。見出しの物件名はスタッフが入れた名前（号室の二重は避ける）

@@ -34,6 +34,7 @@
 // ① 手続きの質問の検出
 // ═════════════════════════════════════════════════════════════════════════════
 
+import { readSheetVacancy, sheetVacancyFieldsEnabled } from "./sheet-vacancy";
 export type ProcedureKind = "screening_period" | "move_in_lead" | "flow" | "docs" | "id_doc";
 export type ProcedureQuestion = {
   kinds: ProcedureKind[];
@@ -188,7 +189,11 @@ export function readMoveInMaterial(lines: readonly (string | null | undefined)[]
     .filter((l) => !EMPTY_VALUE_RE.test(valueOf(l)));
   if (hit.length === 0) return { lines: [], kind: "unknown" };
   const moveInLines = hit.filter((l) => /^(?:入居|引渡)/.test(l) || /^現況\s*\/\s*入居時期/.test(l));
-  const moveInText = moveInLines.map(valueOf).join(" ");
+  // 2026-10-13: 入居時期は欄で読む（sheet-vacancy）。旧は「現況/入居時期 退去予定(10/31) / 相談」の (10/31)＝退去予定日を入居可能日の日付と見ていた。
+  //   欄で読めた時はその値、読めない時は旧の行の値（SHEET_VACANCY_FIELDS=off で旧）
+  const fieldsOn = sheetVacancyFieldsEnabled();
+  const field = fieldsOn ? readSheetVacancy(hit.join("\n")).moveIn : null;
+  const moveInText = field ?? moveInLines.filter((l) => !fieldsOn || !/^現況\s*\/\s*入居時期/.test(l)).map(valueOf).join(" ");
   const all = hit.join(" ");
   // 監査（売上サポ 1,720行）: 「現況: 居住中／入居可能日: 即入居可」が4行 → 食い違いは即入居にしない（確認が要る側）
   if (/即入|即時|即日/.test(all) && !/未定/.test(all) && !/退去予定|居住中|賃貸中|入居中/.test(all)) return { lines: hit, kind: "immediate" };

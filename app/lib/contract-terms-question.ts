@@ -11,6 +11,7 @@ import { readMoveInMaterial } from "./procedure-question";
 import { guarantorFromMaterial } from "./guarantor-material";
 import { GUARANTOR_TYPE_SHORT, guarantorTypeForText } from "./guarantor-companies";
 import type { StaffFreeRentFact } from "./staff-free-rent";
+import { readSheetVacancy, sheetVacancyFieldsEnabled } from "./sheet-vacancy";
 
 export type ContractTermTopic =
   | "key_money" | "deposit" | "free_rent" | "guarantor_company" | "guarantor_person" | "move_in" | "parking" | "management_company";
@@ -203,7 +204,10 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial,
     const mv = readMoveInMaterial(lines.length ? lines : (ev.moveIn ? [`現況/入居時期: ${ev.moveIn}`] : []));
     if (mv.kind === "immediate" || mv.kind === "date") return { topic, route: "material", facts: mv.lines, why: mv.kind === "immediate" ? "資料に即入居の記載" : "資料に入居可能日の記載" };
     // 退去予定の日付（「退去予定: 10/31」「現況: 退去予定(9/30)」）は資料のまま
-    const outDate = mv.lines.find((l) => /退去予定[^0-9０-９]{0,4}[(（]?\s*(?:\d{4}年)?\d{1,2}\s*[月/]\s*(?:\d{1,2}|[上中下]旬)/.test(l.normalize("NFKC")));
+    // 2026-10-13: 退去予定日は欄で読む（sheet-vacancy）。旧の正規表現は「退去予定 / 2026年11月28日」（/ の後ろは入居時期）も退去予定日と見た。戻す SHEET_VACANCY_FIELDS=off
+    const outDate = sheetVacancyFieldsEnabled()
+      ? readSheetVacancy(mv.lines.join("\n")).vacate
+      : mv.lines.find((l) => /退去予定[^0-9０-９]{0,4}[(（]?\s*(?:\d{4}年)?\d{1,2}\s*[月/]\s*(?:\d{1,2}|[上中下]旬)/.test(l.normalize("NFKC")));
     if (outDate) return { topic, route: "material", facts: mv.lines, why: "資料に退去予定日の記載" };
     return { topic, route: "confirm", facts: mv.lines, why: mv.kind === "leaving" ? "退去予定・居住中で日付が資料に無い" : mv.lines.length ? "資料の入居時期が相談・未定" : "資料に入居時期の記載なし" };
   }
