@@ -15,7 +15,7 @@
 //     食い違う時はブレインを先にし、本文の名前は notes に「本文の名前: 〇〇」で残す。
 // 戻す: BRAIN_PROPERTY_DISPLAY=off（サーバ）／NEXT_PUBLIC_BRAIN_PROPERTY_DISPLAY=off（画面。"use client" では NEXT_PUBLIC_ しか入らない）
 import {
-  splitPropertyName, brainPickRef, isBrainPickFresh, sameBrainPropertyRef, brainPropertyDisplayEnabled, matchRoomRefs,
+  splitPropertyName, brainPickRef, isBrainPickFresh, sameBrainPropertyRef, brainPropertyDisplayEnabled, matchRoomRefs, buildingKeyOf,
   type BrainPropertyPick, type RoomRef,
 } from "./customer-state";
 import { isNotPropertyName } from "./not-property-words";
@@ -41,11 +41,20 @@ export type BrainOptionCandidate = { name: string; label: string; url: string | 
 export function withBrainPropertyFirst(
   options: ReadonlyArray<BrainOptionCandidate>,
   pick: BrainPropertyPick | null | undefined,
-  o: { latestCustomerAt: string | null | undefined; env?: Record<string, string | undefined> },
+  o: {
+    latestCustomerAt: string | null | undefined; env?: Record<string, string | undefined>;
+    /**
+     * 会話の文（画像の読み取り「[画像] …」を除いたお客様・こちらの本文）。候補に無いブレインの物件を足すのは、建物名がこの文に出る時だけ
+     * （読み取りが化けた名前「プレサンス戸原橋ヴィプラス」・URL の番号「bc_…」を足さない。2026-10-13 レビュー）。渡さない時は足さない
+     */
+    conversationTexts?: ReadonlyArray<string | null> | null;
+  },
 ): BrainOptionCandidate[] {
   if (!brainPropertyDisplayEnabled(o.env ?? process.env)) return [...options];
   const name = (pick?.name ?? "").trim();
   if (!name || !isBrainPickFresh(pick, o.latestCustomerAt)) return [...options];
+  // 2件を並べた名前（「MY江之子島マンション403・701」）・仮の名前は使わない
+  if (/[・、]/.test(name) || PLACEHOLDER_NAME_RE.test(name)) return [...options];
   const ref = brainPickRef(pick);
   if (!ref) return [...options];
   const idx = options.findIndex((c) => { const cr = splitPropertyName(c.name); return !!cr && sameBrainPropertyRef(ref, cr); });
@@ -53,6 +62,9 @@ export function withBrainPropertyFirst(
     const hit = { ...options[idx], fromBrain: true };
     return [hit, ...options.slice(0, idx), ...options.slice(idx + 1)];
   }
+  const key = ref.buildingKey;
+  const seen = key.length >= 3 && (o.conversationTexts ?? []).some((t) => !/^\s*\[(?:画像|動画)\]/.test(t ?? "") && buildingKeyOf(t ?? "").includes(key));
+  if (!seen) return [...options];
   // at は null（お客様が送った時刻ではない＝「お客様が〇時に送付」を出さない・今回の連投の共有にも数えない）
   return [{ name, label: name, url: null, at: null, fromBrain: true }, ...options];
 }
@@ -89,8 +101,11 @@ const MULTI_PROPERTY_RE = /[2-9２-９二三四五六七八九十]\s*(?:件|部�
 const NAME_WORD_RE = /[ァ-ヶー]{3,}|[A-Za-z][A-Za-z.]{2,}/g;
 /** 約束の文によく出る、物件名ではない片仮名・英字（設備・ポータル等は not-property-words の表） */
 const STAFF_COMMON_WORD_RE = /^(?:エリア|フェンス|サポート|スムーズ|スタッフ|タイミング|ピックアップ|オススメ|ページ|ルール|チェック|リスト|データ|サービス|イメージ|サイズ|タイプ|センター|ショップ|SNS|URL|PDF|お部屋)$/i;
+/** お客様の持ち込み（URL・画像・動画）の1通 */
+const SHARE_IN_TURN_RE = /https?:\/\/|^\s*\[(?:画像|動画)\]/;
 /** 画面の仮の名前（「物件no.92」「物件①」） */
-const PLACEHOLDER_NAME_RE = /^物件\s*(?:no\.?|番号)?\s*[0-9０-９①-⑳]+/i;
+//   ポータルの URL の番号（「bc_100525219054」が実在ゲートを通った 9b9b81ba 9/29）も物件名ではない
+const PLACEHOLDER_NAME_RE = /^物件\s*(?:no\.?|番号)?\s*[0-9０-９①-⑳]+|^[a-z]{0,4}_?\d{6,}$/i;
 /**
  * 約束の本文に、ブレインの物件ではない別の物件名らしい語があるか（「アービングNeo岸里玉出の駐車場」「クリエオーレ一津屋Ⅱの代理契約」）。
  *   本文から物件名を読み取れなかった（confirmPropertyNameOf が null）時に、ブレインの1件で埋めてよいかの安全の線。
@@ -112,7 +127,11 @@ export function otherPropertyWordsIn(text: string | null | undefined, brainName:
 export function resolvePromisePropertyName(
   textName: string | null | undefined,
   pick: BrainPropertyPick | null | undefined,
-  o: { latestCustomerAt: string | null | undefined; env?: Record<string, string | undefined>; promiseText?: string | null },
+  o: {
+    latestCustomerAt: string | null | undefined; env?: Record<string, string | undefined>; promiseText?: string | null;
+    /** お客様の今の連投（送る直前のこちらの発言より後のお客様の発言・古い順）。本文に名前の無い約束でブレインを使ってよいかの材料 */
+    customerTurnTexts?: ReadonlyArray<string | null> | null;
+  },
 ): PromisePropertyResolution {
   const text = (textName ?? "").trim() || null;
   const keep: PromisePropertyResolution = { name: text, textName: null, source: text ? "text" : "none" };
@@ -123,8 +142,21 @@ export function resolvePromisePropertyName(
   const brainRefs = brainName.split(/[・、]/).map((s) => brainPickRef({ ...pick!, name: s.trim() })).filter((r): r is NonNullable<typeof r> => !!r);
   if (!brainRefs.length) return keep;
   if (!text) {
+    // 2026-10-13 レビュー: 名前の無い約束にブレインの1件を入れると 60日 41通中 6〜7通が誤るか何件もの約束が1件に縮んだ
+    //   （サウスパーク・メゾンベルクレール中津・クリエオーレ一津屋Ⅱ・スプランディッド本町グラン・アモーレ本町ウエスト／連投で4件・3件）。
+    //   → ブレインの建物名が文に出ている時だけ使う（誤り0を優先・それ以外は旧の動き＝名前なし）
+    //   (a) 約束の本文に出る（読み取り confirmPropertyNameOf が落としただけの番）
+    //   (b) お客様の今の連投に出て、その連投の共有（URL・画像・動画）が1件以下
+    if (brainRefs.length !== 1) return keep;
     if (MULTI_PROPERTY_RE.test(o.promiseText ?? "")) return keep;
     if (otherPropertyWordsIn(o.promiseText, brainName).length) return keep;
+    const key = brainRefs[0].buildingKey;
+    if (key.length < 3) return keep;
+    const inPromise = buildingKeyOf(o.promiseText ?? "").includes(key);
+    const turn = o.customerTurnTexts ?? [];
+    const shares = turn.filter((t) => SHARE_IN_TURN_RE.test(t ?? "")).length;
+    const inTurn = shares <= 1 && turn.some((t) => buildingKeyOf(t ?? "").includes(key));
+    if (!inPromise && !inTurn) return keep;
     return { name: brainName, textName: null, source: "brain" };
   }
   const parts = text.split("・").map((s) => s.trim()).filter(Boolean);
@@ -136,13 +168,34 @@ export function resolvePromisePropertyName(
 }
 
 /**
+ * 送信時の【必ず】の同期で使う材料（新しい順のメッセージ・送った時刻）→ 最新のお客様の発言の時刻と、お客様の今の連投（古い順）。
+ *   送った時刻までのこちらの発言（今回の送信の束・その前の返事）は飛ばし、一番新しいお客様の連投を、こちらの発言に当たるまで集める。
+ *   送った時刻より後の発言は見ない。お客様の発言が1つも読めない時は null（ブレインを使わない）
+ */
+export function promiseBrainContext(
+  messagesNewestFirst: ReadonlyArray<{ sender: string; text: string | null; created_at: string }>,
+  sentAt: string,
+): { latestCustomerAt: string; customerTurnTexts: string[] } | null {
+  const sentMs = Date.parse(sentAt);
+  if (!Number.isFinite(sentMs)) return null;
+  const msgs = messagesNewestFirst.filter((m) => Number.isFinite(Date.parse(m.created_at)) && Date.parse(m.created_at) <= sentMs);
+  let i = 0;
+  while (i < msgs.length && msgs[i].sender !== "customer") i++;
+  const turn: string[] = [];
+  for (; i < msgs.length && msgs[i].sender === "customer"; i++) turn.push(msgs[i].text ?? "");
+  const latest = msgs.find((m) => m.sender === "customer");
+  if (!latest) return null;
+  return { latestCustomerAt: latest.created_at, customerTurnTexts: turn.reverse() };
+}
+
+/**
  * 約束の行を作る前の送信時の記録（1通分）の確認の約束の物件名をブレイン基準にする（カレンダーの行だけに使う。sent_facts の記録は本文のまま）。
  *   変えた時は detail.textPropertyName に本文の名前を残す（無ければ付けない）
  */
 export function applyBrainToPromiseEntries<E extends { kind: string; status: string; evidence?: string | null; detail?: { propertyName?: string | null; textPropertyName?: string | null; sentence?: string | null } | null }>(
   entries: ReadonlyArray<E>,
   pick: BrainPropertyPick | null | undefined,
-  o: { latestCustomerAt: string | null | undefined; env?: Record<string, string | undefined>; /** 送った本文の全体（無ければ約束の文） */ promiseText?: string | null },
+  o: { latestCustomerAt: string | null | undefined; env?: Record<string, string | undefined>; /** 送った本文の全体（無ければ約束の文） */ promiseText?: string | null; customerTurnTexts?: ReadonlyArray<string | null> | null },
 ): E[] {
   return entries.map((e) => {
     if (e.kind !== "confirmation_promised" || e.status !== "promised") return e;

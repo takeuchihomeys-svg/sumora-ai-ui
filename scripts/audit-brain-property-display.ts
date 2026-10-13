@@ -171,11 +171,20 @@ async function partState() {
 // ─── 【必ず】の物件名 ───
 async function partPromise() {
   const { classifyStaffTextFacts } = await import("../app/lib/action-ledger");
-  const { resolvePromisePropertyName } = await import("../app/lib/brain-property-display");
+  const { resolvePromisePropertyName, promiseBrainContext } = await import("../app/lib/brain-property-display");
   const rows = await pageAll<{ conversation_id: string; text: string | null; created_at: string }>((a, b) => sb.from("messages").select("conversation_id, text, created_at")
     .eq("sender", "staff").gte("created_at", since).ilike("text", "%確認%").order("created_at").range(a, b));
   const decs = await loadDecisions();
   const ct = await customerTimes([...new Set(rows.map((r) => r.conversation_id))]);
+  const msgsBy = new Map<string, Array<{ sender: string; text: string | null; created_at: string }>>();
+  const pcIds = [...new Set(rows.map((r) => r.conversation_id))];
+  for (let i = 0; i < pcIds.length; i += 30) {
+    const ids = pcIds.slice(i, i + 30);
+    for (const m of await pageAll<{ conversation_id: string; sender: string; text: string | null; created_at: string }>((a, b) => sb.from("messages").select("conversation_id, sender, text, created_at")
+      .in("conversation_id", ids).gte("created_at", new Date(Date.parse(since) - 14 * 86400_000).toISOString()).order("created_at").range(a, b))) {
+      const x = msgsBy.get(m.conversation_id) ?? []; x.push(m); msgsBy.set(m.conversation_id, x);
+    }
+  }
   let promises = 0, fresh = 0, toBrainNoText = 0, keepAB = 0, conflict = 0, keepNoBrain = 0, guarded = 0;
   const pv = { brain: 0, wrong: 0, unknown: 0 };
   const out: string[] = [];
@@ -185,11 +194,14 @@ async function partPromise() {
     promises++;
     const d = decisionAt(decs.get(r.conversation_id), r.created_at);
     const pick = pickOf(d);
-    const lc = lastBefore(ct.get(r.conversation_id), r.created_at);
-    if (!pick || !isBrainPickFresh(pick, lc) || !(pick.name ?? "").trim()) { keepNoBrain++; continue; }
+    // 送信時と同じ材料（promiseBrainContext: 送信より前の発言・今回の送信の束を飛ばしたお客様の今の連投）
+    const before = (msgsBy.get(r.conversation_id) ?? []).filter((m) => m.created_at <= r.created_at).slice(-30).reverse();
+    const ctx = promiseBrainContext(before, r.created_at);
+    const lc = ctx?.latestCustomerAt ?? lastBefore(ct.get(r.conversation_id), r.created_at);
+    if (!ctx || !pick || !isBrainPickFresh(pick, lc) || !(pick.name ?? "").trim()) { keepNoBrain++; continue; }
     fresh++;
     const textName = es[0].detail.propertyName ?? null;
-    const res = resolvePromisePropertyName(textName, pick, { latestCustomerAt: lc, env: {}, promiseText: r.text });
+    const res = resolvePromisePropertyName(textName, pick, { latestCustomerAt: lc, env: {}, promiseText: r.text, customerTurnTexts: ctx.customerTurnTexts });
     if (res.source === "text") { keepAB++; continue; }
     if (res.source === "none") { guarded++; continue; }
     if (res.textName) conflict++; else toBrainNoText++;

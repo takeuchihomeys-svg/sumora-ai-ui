@@ -15,7 +15,7 @@ import { estimateNamesFromText, applicationPropertyFromText } from "@/app/lib/cu
 // 2026-10-08 竹内さん「連絡する期間を約束したらカレンダーに入れる」: 送った文の連絡の日の約束（contact-promise）を同じカレンダーの【必ず】の行に
 import { syncContactPromiseCalendar } from "@/app/lib/contact-promise-server";
 // 2026-10-13 P1 0593a0aa: 【必ず】の確認の約束の物件名をブレイン基準に
-import { applyBrainToPromiseEntries, brainPickFromMetas, brainPropertyDisplayEnabled } from "@/app/lib/brain-property-display";
+import { applyBrainToPromiseEntries, brainPickFromMetas, brainPropertyDisplayEnabled, promiseBrainContext } from "@/app/lib/brain-property-display";
 const deliveredOf = (entries: ReadonlyArray<{ kind: string; status: string }>) => entries.some((e) => e.status === "done" && (e.kind === "properties_sent" || e.kind === "estimate_sent"));
 
 type FactRow = RecordedFact & { conversation_id: string };
@@ -46,16 +46,19 @@ export async function syncPromiseCalendar(o: { conversationId: string; entries: 
       // 2026-10-13 P1 0593a0aa（未桜）: 確認の約束の物件名はブレインの今の物件を先にする（送る前の最新のお客様の発言に対する判断の時だけ。
       //   本文の「A・B」にブレインの1件が入る時は本文のまま・食い違う時は本文の名前を notes に残す）。戻す: BRAIN_PROPERTY_DISPLAY=off
       const withBrain = brainPropertyDisplayEnabled() && o.entries.some((e) => e.kind === "confirmation_promised" && e.status === "promised");
-      const [{ data: conv }, lastCust] = await Promise.all([
+      const [{ data: conv }, recent] = await Promise.all([
         supabase.from("conversations").select(withBrain ? "customer_name, suggested_aix_meta, last_brain_meta" : "customer_name").eq("id", o.conversationId).maybeSingle(),
         withBrain
-          ? supabase.from("messages").select("created_at").eq("conversation_id", o.conversationId).eq("sender", "customer").lte("created_at", o.sentAt).order("created_at", { ascending: false }).limit(1)
-          : Promise.resolve({ data: null }),
+          ? supabase.from("messages").select("sender, text, created_at").eq("conversation_id", o.conversationId).lte("created_at", o.sentAt).order("created_at", { ascending: false }).limit(30)
+          : Promise.resolve({ data: null, error: null }),
       ]);
       const cv = conv as unknown as { customer_name?: string | null; suggested_aix_meta?: { current_property?: unknown; analyzed_msg_ts?: unknown } | null; last_brain_meta?: { current_property?: unknown; analyzed_msg_ts?: unknown } | null } | null;
-      const entries = withBrain
-        ? applyBrainToPromiseEntries(o.entries, brainPickFromMetas(cv?.suggested_aix_meta, cv?.last_brain_meta), {
-          latestCustomerAt: ((lastCust.data ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null,
+      // 2026-10-13 レビュー: 送信より後のお客様の発言への判断は使わない・最新のお客様の発言が読めない時は使わない（promiseBrainContext）
+      const ctx = withBrain && !recent.error ? promiseBrainContext((recent.data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>, o.sentAt) : null;
+      const entries = ctx
+        ? applyBrainToPromiseEntries(o.entries, brainPickFromMetas(...[cv?.suggested_aix_meta, cv?.last_brain_meta].filter((m) => typeof m?.analyzed_msg_ts === "string" && m.analyzed_msg_ts <= o.sentAt)), {
+          latestCustomerAt: ctx.latestCustomerAt,
+          customerTurnTexts: ctx.customerTurnTexts,
           promiseText: o.text ?? null,
         })
         : o.entries;

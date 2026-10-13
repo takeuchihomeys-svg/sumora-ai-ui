@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveCustomerState, isBrainPickFresh, brainFocusRoom, type CustomerStateInput } from "../customer-state";
-import { withBrainPropertyFirst, resolvePromisePropertyName, applyBrainToPromiseEntries, brainPickFromMetas, brainPropertyDisplayEnabled } from "../brain-property-display";
+import { withBrainPropertyFirst, resolvePromisePropertyName, applyBrainToPromiseEntries, brainPickFromMetas, brainPropertyDisplayEnabled, promiseBrainContext } from "../brain-property-display";
 import { promiseEventRows } from "../promise-calendar";
 import { classifyStaffTextFacts } from "../action-ledger";
 
@@ -99,8 +99,12 @@ console.log("■ AIX の物件名の候補（withBrainPropertyFirst）");
   const latestCustomerAt = "2026-10-09T03:12:55.207Z";
   const r = withBrainPropertyFirst(opts, BRAIN_MIOU, { latestCustomerAt, env: {} });
   t("候補にある物件は一番上に移す（印あり・表記はそのまま）", r[0].name === "レジュールアッシュ難波MINAMI" && r[0].fromBrain === true && r[0].url === "https://vt.tiktok.com/x/" && r.length === 2, r);
-  const add = withBrainPropertyFirst(opts, { name: "Mv.fm大阪大正 405号室", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {} });
-  t("無い物件は一番上に足す（at は null＝お客様の送付時刻を出さない・今回の連投の共有に数えない）", add[0].name === "Mv.fm大阪大正 405号室" && add[0].at === null && add.length === 3, add[0]);
+  const conv = ["併せてお送り頂きましたＭｖ．ｆｍ大阪大正の募集状況確認させて頂きます！！"];
+  const add = withBrainPropertyFirst(opts, { name: "Mv.fm大阪大正 405号室", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: conv });
+  t("無い物件は会話の本文に出る時だけ一番上に足す（at は null＝お客様の送付時刻を出さない・今回の連投の共有に数えない）", add[0].name === "Mv.fm大阪大正 405号室" && add[0].at === null && add.length === 3, add[0]);
+  t("会話の本文に出ない名前（読み取りの化け）は足さない", withBrainPropertyFirst(opts, { name: "プレサンス戸原橋ヴィプラス0201", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: ["[画像] 物件名：プレサンス戸原橋ヴィプラス / 号室名：0201", "初期費用お願いします"] }).length === 2);
+  t("2件を並べた名前は足さない", withBrainPropertyFirst(opts, { name: "MY江之子島マンション403・701", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: ["MY江之子島マンション403と701"] }).length === 2);
+  t("URL の番号は足さない", withBrainPropertyFirst(opts, { name: "bc_100525219054", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: ["https://suumo.jp/chintai/bc_100525219054/"] }).every((c) => !c.name.startsWith("bc_")));
   t("古い判断は候補のまま", withBrainPropertyFirst(opts, BRAIN_MIOU, { latestCustomerAt: "2026-10-09T05:00:00Z", env: {} })[0].name === "プルス新北野");
   t("ブレインが物件を決めていない（null）時は候補のまま", withBrainPropertyFirst(opts, { name: null, analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {} })[0].name === "プルス新北野");
   t("NEXT_PUBLIC_BRAIN_PROPERTY_DISPLAY=off で候補のまま", withBrainPropertyFirst(opts, BRAIN_MIOU, { latestCustomerAt, env: { NEXT_PUBLIC_BRAIN_PROPERTY_DISPLAY: "off" } })[0].name === "プルス新北野");
@@ -113,7 +117,23 @@ console.log("■ 【必ず】の物件名（resolvePromisePropertyName）");
 {
   const latestCustomerAt = "2026-10-09T03:12:55.207Z";
   const o = { latestCustomerAt, env: {} };
-  t("本文に名前が無い → ブレイン", JSON.stringify(resolvePromisePropertyName(null, BRAIN_MIOU, o)) === JSON.stringify({ name: "レジュールアッシュ難波MINAMI", textName: null, source: "brain" }));
+  const turnMiou = ["レジュールアッシュ難波MINAMIです🙇🏻‍♀️"];
+  t("本文に名前が無い・お客様の今の連投にブレインの建物名（共有0件）→ ブレイン", JSON.stringify(resolvePromisePropertyName(null, BRAIN_MIOU, { ...o, customerTurnTexts: turnMiou, promiseText: "お送り頂きました物件の募集状況確認させて頂きます！！" })) === JSON.stringify({ name: "レジュールアッシュ難波MINAMI", textName: null, source: "brain" }));
+  t("本文にも連投にも建物名が無い → 名前なし（旧の動き）", resolvePromisePropertyName(null, BRAIN_MIOU, { ...o, promiseText: "お送り頂きました物件の募集状況確認させて頂きます！！", customerTurnTexts: ["よろしくお願いします"] }).name === null);
+  // 2026-10-13 レビュー: 60日で誤った・縮んだ7通の形（本文にも今の連投にもブレインの建物名が無い／連投の共有が2件以上）
+  const NG: Array<[string, string, string[], string]> = [
+    ["fecda03f サウスパーク 3-C", "サウスパーク 3-C", ["この物件なのですが、すごくいいと思ったんですけど礼金の部分がどうしてもネックで無理なら大丈夫なんですが交渉できたりできないでしょうか？"], "かしこまりました！！\n管理会社に礼金の減額が可能か交渉させていただきます😊！！\n確認出来次第ご連絡させて頂きます😌！！"],
+    ["ac34b364 メゾンベルクレール中津 605", "メゾンベルクレール中津 605号室", ["[画像] 物件名：メゾンベルクレール中津", "https://suumo.jp/chintai/bc_1/", "ここも"], "お部屋お送りいただきありがとうございます！！\nお部屋の募集状況確認させていただきます！！"],
+    ["d3a56a97 クリエオーレ一津屋Ⅱ", "クリエオーレ一津屋Ⅱ 103号室", ["代理契約ってどの物件でもできますか？"], "Sさんがご入居頂けるお部屋見つかるまで探させて頂きます！！\n代理契約が可能かどうかは、お部屋ごとの条件で異なりますのでお気に召されましたお部屋代理契約可能か確認させて頂きます！！"],
+    ["3890f691 スプランディッド本町グラン 1003", "スプランディッド本町グラン 1003", ["白っぽいお部屋がいいです"], "Sさん本日お時間頂きありがとうございました！！\n白基調のお部屋でご希望の間取りの17階がございませんでしたので13階、15階のベランダのフェンス確認させていただき、出来次第ご連絡させて頂きます！！"],
+    ["58ae93f3 アモーレ本町ウエスト", "アモーレ本町ウエスト 702", ["初期費用どのくらいですか？"], "紗季さん\n先ほどはお電話ありがとうございました😊！！\nかしこまりました！！\n初期費用確認出来次第、最大限割引させていただいたお見積書お送りさせていただきます😌！！"],
+    ["1191b1eb ブリリアンス（連投で4件）", "ブリリアンス1階", ["[画像] ブリリアンス1階", "[画像] 物件2", "https://suumo.jp/chintai/bc_2/", "https://suumo.jp/chintai/bc_3/"], "お部屋お送りいただきありがとうございます😊！！\nお部屋の募集状況確認させていただきます！！"],
+    ["8a77820b TWIN-I（連投で3件）", "レジュールアッシュPREMIUM TWIN-I 3階", ["レジュールアッシュPREMIUM TWIN-I 3階\nhttps://suumo.jp/chintai/bc_100524638178/\nby SUUMO", "https://suumo.jp/chintai/bc_4/", "https://suumo.jp/chintai/bc_5/"], "みことさん\nこの度ご連絡頂きありがとうございます！！\nお送り頂きました物件の募集状況確認させて頂きます！！"],
+  ];
+  for (const [label, brain, turn, text] of NG) {
+    const r = resolvePromisePropertyName(null, { name: brain, analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { ...o, customerTurnTexts: turn, promiseText: text });
+    t(`誤りの形 ${label} → 名前なしのまま`, r.name === null, r);
+  }
   t("本文「A・B」にブレインの1件が入る → 本文のまま", resolvePromisePropertyName("クレアート新大阪パンルループ・レジュールアッシュ難波MINAMI", BRAIN_MIOU, o).name === "クレアート新大阪パンルループ・レジュールアッシュ難波MINAMI");
   t("本文の名前が号室付きでも同じ建物なら本文のまま", resolvePromisePropertyName("レジュールアッシュ難波MINAMI 302号室", BRAIN_MIOU, o).source === "text");
   const diff = resolvePromisePropertyName("Alivis新町", BRAIN_MIOU, o);
@@ -124,14 +144,15 @@ console.log("■ 【必ず】の物件名（resolvePromisePropertyName）");
   t("「確認出来次第まとめてご連絡」も名前なしのまま", resolvePromisePropertyName(null, BRAIN_MIOU, { ...o, promiseText: "お送り頂きました物件の募集状況確認させて頂きます！！確認出来次第まとめてご連絡させて頂きます！！" }).name === null);
   t("本文に別の物件名らしい語（アービングNeo岸里玉出の駐車場）→ 名前なしのまま", resolvePromisePropertyName(null, { name: "堀江サン・ユー 501号室", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { ...o, promiseText: "アービングNeo岸里玉出の駐車場の詳細につきまして明日管理会社に確認させて頂き、確認出来次第ご連絡させて頂きます！！" }).name === null);
   t("本文の語がブレインの物件の一部（ヴィレ堺湊の管理会社）→ ブレイン", resolvePromisePropertyName(null, { name: "ヴィレ堺湊 102号室", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { ...o, promiseText: "ヴィレ堺湊の管理会社にご連絡させていただきましたが、本日お休みとなっており確認が出来ませんでしたので明日確認出来次第ご連絡させていただきます！！" }).name === "ヴィレ堺湊 102号室");
-  t("設備の語（エアコンの件）は別の物件名にしない → ブレイン", resolvePromisePropertyName(null, { name: "カーサピエント 203号室", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { ...o, promiseText: "はい😊！！\nエアコンの件、明日確認してご連絡させて頂きます😌！！" }).name === "カーサピエント 203号室");
+  t("設備の語（エアコンの件）は別の物件名にしない・連投に建物名 → ブレイン", resolvePromisePropertyName(null, { name: "カーサピエント 203号室", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { ...o, customerTurnTexts: ["カーサピエントのエアコンって新しいですか？"], promiseText: "はい😊！！\nエアコンの件、明日確認してご連絡させて頂きます😌！！" }).name === "カーサピエント 203号室");
+  t("URL の番号のブレインの名前は使わない", resolvePromisePropertyName(null, { name: "bc_100525219054", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { ...o, customerTurnTexts: ["https://suumo.jp/chintai/bc_100525219054/"] }).name === null);
   t("画面の仮の名前（物件no.92）は使わない", resolvePromisePropertyName(null, { name: "物件no.92", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, o).name === null);
   t("古い判断 → 本文のまま", resolvePromisePropertyName("Alivis新町", BRAIN_MIOU, { latestCustomerAt: "2026-10-09T09:00:00Z", env: {} }).name === "Alivis新町");
   t("off → 本文のまま", resolvePromisePropertyName(null, BRAIN_MIOU, { latestCustomerAt, env: { BRAIN_PROPERTY_DISPLAY: "off" } }).name === null);
   // 実物の本文（10/7 の約束「お送り頂きました物件の募集状況確認」＝名前なし）→ 行に物件名
   const sentAt = "2026-10-09T03:30:00Z";
   const entries = classifyStaffTextFacts("未桜さんお世話になっております！！\nお送り頂きました物件の募集状況確認させて頂きます！！\n確認出来次第ご連絡させて頂きます😊！！", sentAt);
-  const withBrain = applyBrainToPromiseEntries(entries, BRAIN_MIOU, o);
+  const withBrain = applyBrainToPromiseEntries(entries, BRAIN_MIOU, { ...o, customerTurnTexts: turnMiou });
   const rows = promiseEventRows(withBrain, { customerName: "未桜", conversationId: "c", sentAt });
   const row = rows.find((r) => r.event_type === "follow_up");
   t("名前の無い約束の【必ず】にブレインの物件名", !!row && /（レジュールアッシュ難波MINAMI）/.test(row.notes.split("\n")[0]), rows.map((r) => r.notes.split("\n")[0]));
@@ -139,6 +160,37 @@ console.log("■ 【必ず】の物件名（resolvePromisePropertyName）");
   const r2 = rows2.find((r) => r.event_type === "follow_up");
   t("食い違う時は notes に「本文の名前: Alivis新町」", !!r2 && /（レジュールアッシュ難波MINAMI）/.test(r2.notes) && /本文の名前: Alivis新町/.test(r2.notes), r2?.notes);
   t("sent_facts の記録（元の entries）は本文のまま", !entries.some((e) => (e.detail as { textPropertyName?: string }).textPropertyName));
+}
+
+console.log("■ 送信時の材料（promiseBrainContext）");
+{
+  const m = [
+    { sender: "customer", text: "後の発言", created_at: "2026-10-09T03:40:00Z" },
+    { sender: "staff", text: "今回の送信", created_at: "2026-10-09T03:30:00Z" },
+    { sender: "staff", text: "[画像]", created_at: "2026-10-09T03:29:59Z" },
+    { sender: "customer", text: "レジュールアッシュ難波MINAMIです", created_at: "2026-10-09T03:12:55Z" },
+    { sender: "customer", text: "https://vt.tiktok.com/x/", created_at: "2026-10-09T03:12:00Z" },
+    { sender: "staff", text: "特定出来ませんでした", created_at: "2026-10-08T07:27:00Z" },
+  ];
+  const c = promiseBrainContext(m, "2026-10-09T03:30:00Z");
+  t("送信より後の発言は見ない・今回の送信の束を飛ばして連投を古い順に", c?.latestCustomerAt === "2026-10-09T03:12:55Z" && JSON.stringify(c?.customerTurnTexts) === JSON.stringify(["https://vt.tiktok.com/x/", "レジュールアッシュ難波MINAMIです"]), c);
+  t("お客様の発言が読めない時は null（ブレインを使わない）", promiseBrainContext([{ sender: "staff", text: "x", created_at: "2026-10-09T03:30:00Z" }], "2026-10-09T03:30:00Z") === null);
+  const sf = readFileSync(join(__dirname, "..", "sent-facts.ts"), "utf8");
+  t("sent-facts は送信より後の判断（analyzed_msg_ts > 送信）を使わない", /m\.analyzed_msg_ts <= o\.sentAt/.test(sf));
+}
+{
+  // 終わったお部屋（募集終了）は主にしない
+  const st = resolveCustomerState({
+    status: "proposing", now: Date.parse("2026-10-07T10:30:00Z"), recordedFacts: [], viewingHistory: [], sentProperties: [],
+    messages: [{ sender: "customer", text: "ありがとうございます", createdAt: "2026-10-07T10:00:00Z" }],
+    aixRows: [
+      { created_at: "2026-10-07T09:00:00Z", sent_at: "2026-10-07T09:00:00Z", aix_type: "property_check_result", property_names: ["Alivis新町 802号室"], prop_statuses: ["available"], estimate_sent: true, generated_text: null },
+      { created_at: "2026-10-07T09:10:00Z", sent_at: "2026-10-07T09:10:00Z", aix_type: "property_check_result", property_names: ["エグゼ難波西Ⅱ 202号室"], prop_statuses: ["unavailable"], estimate_sent: false, generated_text: null },
+    ],
+    brainProperty: { name: "エグゼ難波西Ⅱ 202号室", analyzedMsgTs: "2026-10-07T10:00:00Z" },
+  });
+  const ended = st.properties.find((p) => /エグゼ/.test(p.name));
+  t("ブレインの物件が終わったお部屋なら主にしない", ended?.status === "ended" && st.focusKey !== ended.key && st.focusSource === "rule", { focus: st.focusKey, ended: ended?.status });
 }
 
 console.log("■ suggested_aix_meta / last_brain_meta から取る（brainPickFromMetas）");

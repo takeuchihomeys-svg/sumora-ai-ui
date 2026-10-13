@@ -1042,7 +1042,8 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
   let focusSource: "brain" | "rule" = "rule";
   const brainConflicts: Conflict[] = [];
   if (input.brainProperty && isBrainPickFresh(input.brainProperty, lastCustomerAt)) {
-    const br = brainFocusRoom(rooms, input.brainProperty);
+    // 終わったお部屋（募集終了・見送り）は主にしない（2026-10-13 レビュー）
+    const br = brainFocusRoom(liveRooms, input.brainProperty);
     if (br && br.key !== focus?.key) {
       const pinned = !!focus && ((!!upcoming?.roomKey && focus.key === upcoming.roomKey) || ((stage === "applying" || stage === "apply_prep") && focus.events.some((e) => e.kind === "application")));
       if (pinned) brainConflicts.push({ code: "BRAIN_PROPERTY_DIFFERS", severity: "info", detail: `ブレインの今の物件＝${br.name}・主のお部屋（${upcoming?.roomKey === focus!.key ? "内覧予定" : "申込"}）＝${focus!.name}` });

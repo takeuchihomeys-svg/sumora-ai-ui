@@ -825,8 +825,12 @@ export default function AixModal({
   //   戻す: NEXT_PUBLIC_BRAIN_PROPERTY_DISPLAY=off
   const customerPropertyOptions = useMemo(() => {
     const latestCustomerAt = [...(recentMessages ?? [])].reverse().find((m) => m.sender === "customer")?.rawCreatedAt ?? null;
-    return withBrainPropertyFirst(customerPropertyBaseOptions, brainPropertyPick ?? null, { latestCustomerAt, env: brainPropertyDisplayEnvFromPublic() });
+    return withBrainPropertyFirst(customerPropertyBaseOptions, brainPropertyPick ?? null, {
+      latestCustomerAt, env: brainPropertyDisplayEnvFromPublic(), conversationTexts: (recentMessages ?? []).map((m) => m.text),
+    });
   }, [customerPropertyBaseOptions, brainPropertyPick, recentMessages]);
+  /** ブレインの物件がお客様の送った物件に無く、足した時（見出しを「物件の候補」にする＝件数をお客様が送った物件と混ぜない） */
+  const customerPropertyHasBrainOnly = customerPropertyOptions.length > customerPropertyBaseOptions.length;
   // 別の部屋について確認した専用: 物件名 + 画像OCR + 有無ピッカー（会話を合わせる専用パターン）
   const [otherRoomPropertyName, setOtherRoomPropertyName] = useState<string>("");
   const [otherRoomImagePreview, setOtherRoomImagePreview] = useState<string>("");
@@ -5743,7 +5747,7 @@ export default function AixModal({
                     <div>
                       <div className="mb-1.5 flex items-center justify-between">
                         <p className="text-xs font-bold text-[#54656f]">
-                          🏠 お客様が送った物件 <span className="font-normal text-[#90a4ae]">（{customerPropertyOptions.length}件・押すと物件名に入ります）</span>
+                          {customerPropertyHasBrainOnly ? "🏠 物件の候補" : "🏠 お客様が送った物件"} <span className="font-normal text-[#90a4ae]">（{customerPropertyHasBrainOnly ? `お客様が送った物件 ${customerPropertyBaseOptions.length}件＋🧠ブレインの今の物件` : `${customerPropertyOptions.length}件`}・押すと物件名に入ります）</span>
                         </p>
                         {customerPropertyOptions.length > CUSTOMER_PROPERTY_VISIBLE && (
                           <button
@@ -6152,13 +6156,13 @@ export default function AixModal({
                           お客様が送った物件を確認した結果を報告する場面なので、名前は同じ所にある */}
                       {customerPropertyOptions.length > 0 && !checkPropNames[pi].trim() && (
                         <div className="mb-2 flex flex-wrap gap-1.5">
-                          <span className="w-full text-[10px] text-[#8696a0]">🏠 お客様が送った物件（押すと入ります）</span>
+                          <span className="w-full text-[10px] text-[#8696a0]">{customerPropertyHasBrainOnly ? "🏠 物件の候補（🧠＝ブレインが今の話の物件と判断・押すと入ります）" : "🏠 お客様が送った物件（押すと入ります）"}</span>
                           {customerPropertyOptions.slice(0, CUSTOMER_PROPERTY_VISIBLE).map((c) => (
                             <button
                               key={`${pi}-${c.name}-${c.at ?? ""}`}
                               onClick={() => { const arr = [...checkPropNames]; arr[pi] = c.label; setCheckPropNames(arr); setPreview(""); }}
                               className="max-w-full truncate rounded-lg border border-orange-300 bg-orange-50 px-2 py-1 text-[11px] font-bold text-orange-600 active:opacity-70"
-                            >{c.label}</button>
+                            >{c.fromBrain ? "🧠 " : ""}{c.label}</button>
                           ))}
                         </div>
                       )}
