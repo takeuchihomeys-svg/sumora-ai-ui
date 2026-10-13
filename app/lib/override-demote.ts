@@ -99,3 +99,11 @@ export function closedAckMaterialLine(staffLine: string): string {
   const q = Array.from(String(staffLine ?? "").replace(/\s+/g, " ")).slice(0, 40).join("");
   return `【こちらの締めの後のお礼・了承だけ（材料）】こちらの最後の送信は締め（「${q}」）で、お客様の今の発言はお礼・了承だけ。実データ（8月〜10件）: スタッフは返信しなかった 8（うち4件は後で次の物件を AIX で送った）・新しい内容の返信 2。同じ締めを繰り返す返信は書かない。物件を送っている提案中なら次の一手は次の物件（AIX【物件ピックアップした】・後で）`;
 }
+
+// ─── 4-5: 内覧当日の送り出しの後のお礼だけ（rule:viewing_day_ack）──────────────────────
+// 旧: 内覧当日にこちらが送り出した（お気をつけてお越しください）後のお礼だけの番は、ブレインの判断に関わらず AIX【挨拶（内覧後）】＋下書きなし（30日 12番・押された AIX と同じ 0）。
+// 新: 材料の1行を LLM の前に渡し、ブレインが決める。戻す BRAIN_DEMOTE_VIEWING_DAY_ACK=off
+export function viewingDayAckMaterialLine(staffLine: string): string {
+  const q = Array.from(String(staffLine ?? "").replace(/\s+/g, " ")).slice(0, 40).join("");
+  return `【内覧当日の送り出しの後のお礼だけ（材料）】今日は内覧の日で、こちらの最後の送信は送り出し（「${q}」）、お客様の今の発言はお礼・了承だけ。実データ（180日）: この場面でスタッフは返信せず、内覧が終わってから「本日お時間頂きありがとうございました」（AIX【挨拶→内覧後】・60件）を送っている。同じ送り出しを繰り返す返信は書かない`;
+}

@@ -21,7 +21,7 @@ import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
-import { applyOverride, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -2566,12 +2566,15 @@ ${catalogBlockForBrain(brainScene)}
     } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
-  if (overrideDemoted("closed_ack_wait")) {
-    const oldestNow = [...typedMessages].reverse();
+  if (overrideDemoted("closed_ack_wait") || overrideDemoted("viewing_day_ack")) {
+    const oldestNow = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text }));
     const ackNow = oldestNow[oldestNow.length - 1]?.sender === "customer" && !unrepliedTurn.hasImage && !!unrepliedTurn.text.trim()
       && analyzeSubstance(unrepliedTurn.text, [unrepliedTurn.text]).isAckOnly;
-    const caNow = resolveClosedAck(oldestNow.map((m) => ({ sender: m.sender, text: m.text })), ackNow);
-    if (caNow.closed) customerStateBlockText += `\n\n${closedAckMaterialLine(caNow.staffLine)}`;
+    const caNow = overrideDemoted("closed_ack_wait") ? resolveClosedAck(oldestNow, ackNow) : null;
+    if (caNow?.closed) customerStateBlockText += `\n\n${closedAckMaterialLine(caNow.staffLine)}`;
+    // 2026-10-13（ブレインの使い残し 4-5）: 内覧当日の送り出しの後のお礼だけの番か（後の rule:viewing_day_ack と同じ判定）も材料に
+    const vdNow = overrideDemoted("viewing_day_ack") ? resolveViewingDayAck(oldestNow, ackNow, brainLedger.facts.viewingAppointment?.day === "today") : null;
+    if (vdNow?.hold) customerStateBlockText += `\n\n${viewingDayAckMaterialLine(vdNow.staffLine)}`;
   }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
@@ -3551,7 +3554,9 @@ ${history}`;
     );
     let viewingDayWait = false;
     if (!promiseAix && !closedAckWait && viewingDayAck.hold
-      && (finalAix === null || finalAix === "meeting_place" || finalAix === "acknowledge_check" || finalAix === "greeting_viewing")) {
+      && (finalAix === null || finalAix === "meeting_place" || finalAix === "acknowledge_check" || finalAix === "greeting_viewing")
+      // 2026-10-13（ブレインの使い残し 4-5）: 下げる（材料は LLM の前に viewingDayAckMaterialLine で渡した）。戻す BRAIN_DEMOTE_VIEWING_DAY_ACK=off
+      && applyOverride(demotedOverrides, "viewing_day_ack", "rule:viewing_day_ack", "greeting_viewing", finalAix)) {
       finalAix = "greeting_viewing";
       decisionSource = "rule:viewing_day_ack";
       viewingDayWait = true;
@@ -3560,7 +3565,7 @@ ${history}`;
     //   AIX【内覧挨拶→内覧前】を優先の候補に（LLM が AIX なしにした番だけ・約束を果たす AIX は先）。済んだ・キャンセルの内覧は台帳が viewingAppointment を null にする。戻す VIEWING_DAY_GREETING=off
     // 再生（10/08 r10b・60番）: 内覧当日の質問（「駐車場は近くのパーキングでよろしいですか」）・付き添いの連絡・紹介の話にも挨拶の AIX を立て、答えの返信を止めた（3番・人は返信）
     //   → お客様の発言がお礼・了承だけの番に限る（質問・連絡には返信で答える。発言の無い朝に出すのは別の仕組み＝提案）
-    if (!promiseAix && !viewingDayWait && !closedAckWait && finalAix === null && !isPostApplyStatus(convStatus)
+    if (!promiseAix && !viewingDayWait && !(viewingDayAck.hold && overrideDemoted("viewing_day_ack")) && !closedAckWait && finalAix === null && !isPostApplyStatus(convStatus)
       && (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")))
       && viewingDayGreetingDue({
         appointmentDay: brainLedger.facts.viewingAppointment?.day ?? null,
