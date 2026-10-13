@@ -976,6 +976,56 @@ export function isGeneralCostExplanation(s: string): boolean {
   return GENERAL_COST_MARK_RE.test(s) || SEARCH_CAP_RE.test(s);
 }
 
+/**
+ * 2026-10-13（作る人・家賃の幅の誤検知）: 家賃・管理費の条件の幅・上限（「家賃6〜7万円」「管理費込み7万円以内」「家賃条件10万円程」）を言い直す文は、
+ *   見積の金額（初期費用・敷金礼金の内訳）ではない＝見積金額内訳ゲートの対象外。
+ *   旧: isCustomerConditionEcho は数字が今の発言・DB の条件・直前のこちらの文に有る時だけ免除＝ピックアップの約束の受け（「よろしくお願いします」）に
+ *     条件を言い直すと数字が今の発言に無く、文ごと消えて「はい！！」だけになった（10/13 YUMA 再生・最終チェックの書き直しの後）。
+ *   免除の条件: 初期費用の語（敷金・礼金・初期費用・見積・割引…）が無い／家賃・賃料・管理費・共益費・予算の語がある／幅・上限・目安の形／
+ *     数字（万・円）が全部この会話のどれかの通（groundText）か DB の条件に有る（値でそろえる＝7万＝70000＝7.0万）。物件固有の金額（幅でない「家賃72,000円」）は従来どおり止める。
+ *   戻す: RENT_RANGE_NOT_ESTIMATE=off
+ */
+const RENT_WORD_RE = /家賃|賃料|管理費|共益費|ご予算|予算/;
+const RENT_RANGE_FORM_RE = /[0-9０-９.．]+\s*万?(?:円)?\s*[〜~～ー-]\s*[0-9０-９.．]+\s*万|[0-9０-９.．,，]+\s*(?:万\s*)?円?\s*(?:以内|以下|以上|前後|まで|程度|程|くらい|ぐらい|台)/;
+const NON_RENT_COST_RE = /初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前家賃|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約|還元|お得/;
+/** 金額の表記を円の値に（7万→70000・6.5万円→65000・72,000円→72000）。値の一覧 */
+function yenValues(t: string): number[] {
+  const h = t.normalize("NFKC").replace(/[,，]/g, "");
+  const out: number[] = [];
+  for (const m of h.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*(?:(万)|(?=\s*(?:円|[〜~～ー-]|以内|以下|以上|前後|まで|程|くらい|ぐらい|台)))/g)) {
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n === 0) continue;
+    out.push(m[2] ? Math.round(n * 10_000) : n);
+  }
+  return out;
+}
+export function isRentConditionRangeSentence(s: string, o?: { groundText?: string; customerConditions?: string; customerMessage?: string; lastStaffMsg?: string }, env: Record<string, string | undefined> = process.env): boolean {
+  if ((env.RENT_RANGE_NOT_ESTIMATE ?? "").trim().toLowerCase() === "off") return false;
+  // 金額の無い条件の語（「初期費用を抑えられる」「敷金礼金無料」）は条件の列挙の一部＝見積の金額ではない（先に外して判定）
+  const n = s.normalize("NFKC")
+    .replace(/初期費用(?:も|を|が)?[^0-9。、・\n]{0,6}(?:抑え|安く|少な|かからな)[^\s・、。！!]{0,8}/g, "")
+    .replace(/(?:敷金|礼金|敷礼|敷金礼金)(?:・?(?:敷金|礼金))?\s*(?:0円|0|無料|なし|無し|ゼロ)/g, "");
+  if (!RENT_WORD_RE.test(n) || NON_RENT_COST_RE.test(n) || !RENT_RANGE_FORM_RE.test(n)) return false;
+  // 「万」の後ろに単位が無い幅の片方（「6〜7万」の 6）は万で読む
+  const vals = yenValues(n.replace(/([0-9.]+)\s*[〜~～ー-]\s*([0-9.]+)\s*万/g, "$1万〜$2万"));
+  if (vals.length === 0) return false;
+  // 漢数字（「六万〜八万」）は数字に・幅の片方の万を補う
+  const kanji = (k: string) => { const d = "一二三四五六七八九"; if (k === "十") return 10; const m = /^([一二三四五六七八九])?十([一二三四五六七八九])?$/.exec(k); if (m) return (m[1] ? d.indexOf(m[1]) + 1 : 1) * 10 + (m[2] ? d.indexOf(m[2]) + 1 : 0); return k.length === 1 ? d.indexOf(k) + 1 : NaN; };
+  const ground = [o?.groundText ?? "", o?.customerConditions ?? "", o?.customerMessage ?? "", o?.lastStaffMsg ?? ""].join("\n").normalize("NFKC")
+    .replace(/([一二三四五六七八九十]{1,3})(?=\s*万)/g, (k) => { const v = kanji(k); return Number.isFinite(v) && v > 0 ? String(v) : k; })
+    .replace(/([0-9.]+)\s*[〜~～ー-]\s*([0-9.]+)\s*万/g, "$1万〜$2万");
+  const have = new Set(yenValues(ground));
+  // 条件のフォームの家賃の欄（「②【ご希望の家賃（◯万円〜◯万円）】⇒7〜11」）は万を書かない＝家賃・予算の行の 100 未満の数字は万で読む
+  for (const line of ground.split("\n")) {
+    if (!/家賃|予算/.test(line)) continue;
+    const tail = line.replace(/^.*[⇒→:：】]/, "");
+    for (const m of tail.matchAll(/(?<![0-9.])([0-9]{1,2}(?:\.[0-9])?)(?![0-9.]|\s*(?:分|階|年|畳|K|LDK|DK|R|号|月|日|件|人|歳|㎡))/g)) have.add(Math.round(Number(m[1]) * 10_000));
+  }
+  // 「6万」「60000」のどちらの表記でもよい（万なしの裸の数字 60000 も値で拾う）
+  for (const m of ground.replace(/[,，]/g, "").matchAll(/(?<![0-9.])([1-9][0-9]{4,6})(?![0-9])/g)) have.add(Number(m[1]));
+  return vals.every((v) => have.has(v) || (v < 1000 && have.has(Math.round(v * 10_000))));
+}
+
 /** 見積書の約束・案内を入れる置換文（見積の文脈が不許可の時は入れない） */
 const ESTIMATE_REPLACEMENT_RE = /見積/;
 
@@ -1002,7 +1052,7 @@ const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean
     name: "見積金額内訳",
     // 2026-10-02 竹内「見積・空室の断言ゲートの当てすぎを直す」: 一般の説明（家賃の相場・仲介手数料の決まり・条件を広げて探した報告）まで
     //   見積書の宣言に置き換えていた（人の手打ちで約20通・scripts/audit-exits-vs-human.ts）。特定のお部屋の金額の断言だけを止める（isGeneralCostExplanation）
-    test: (s, o) => !isCustomerConditionEcho(s, o) && !isGeneralCostExplanation(s) && !isGroundedAmountSentence(s, o?.groundText) && (
+    test: (s, o) => !isCustomerConditionEcho(s, o) && !isGeneralCostExplanation(s) && !isGroundedAmountSentence(s, o?.groundText) && !isRentConditionRangeSentence(s, o) && (
       (/[0-9０-９][0-9０-９,，．.]*\s*(?:万\s*)?円/.test(s) &&
         /(?:初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前?家賃|管理費|共益費|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約)/.test(s)) ||
       // 「敷金1ヶ月分」等の月数表記（円なし）も物件固有数値としてブロック
