@@ -2494,6 +2494,14 @@ async function handleAction(request: NextRequest): Promise<Response> {
           .then((m) => m.loadBundleWantsFit(supabase, pickupRowsForFacts.map((r) => r.id), customer_conditions ? String(customer_conditions) : null, { conversationId: conversationId ? String(conversationId) : null }))
           .catch(() => null)
       : null;
+    // 2026-10-13 竹内「訴求ポイントがお客さんの条件に合わせて正確に読み取れるようにする」: 物件オススメ（1件・売上サポから来た時）に
+    //   資料の事実×お客様の希望で選んだ強み・広げた軸・満たさない希望を文の材料に（recommend-appeal-points・既定 off＝RECOMMEND_APPEAL_POINTS=on で入れる）
+    const recAppeal = action === "property_recommendation" && pickupRowsForFacts.length === 1
+      ? await import("@/app/lib/recommend-appeal-points-server")
+          .then((m) => m.loadRecommendAppealNote(supabase, { row: pickupRowsForFacts[0], propertyCustomerId: resolvedPCID ?? null, recentMessages: recent_messages }))
+          .catch(() => ({ note: "", points: null }))
+      : { note: "", points: null };
+    if (recAppeal.points) console.log(JSON.stringify({ tag: "aix:recommend-appeal-points", conversationId, points: recAppeal.points.points.map((p) => p.fact), widened: recAppeal.points.widened.map((w) => w.code), unmet: recAppeal.points.unmet.map((u) => u.label) }));
     if (bundleFit) console.log(JSON.stringify({ tag: "aix:pickup-wants-fit", conversationId, toneRead: bundleFit.toneRead, wants: bundleFit.fit.wants.map((w) => `${w.label}:${w.verdict}(${w.ok}/${w.ng}/${w.unknown})`) }));
     // 2026-09-30: 物件オススメの見出し「🌟建物 号室」を資料の字に揃えられなかった時の注意（揃えた時は null のまま）
     let recHeadMismatch: string | null = null;
@@ -2924,7 +2932,7 @@ ${SMORA_COMMON_RULES}`;
         && isExampleFrameCompatible((template_structure ?? []).map((b) => `${b.label}：${b.text}`).join("\n"), recScenario));
       if (!recTemplateOk && (templateSampleNote || templateStructureNote)) console.log(JSON.stringify({ tag: "aix:recommend-template-dropped", conversationId, scenario: recScenario }));
 
-      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${recTemplateOk ? templateSampleNote + templateStructureNote : ""}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}${scenarioNote}`;
+      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${pspGuidanceNote}${recAppeal.note}${patternHintsNote}${extra_input ? `\n追加情報: ${extra_input}` : ""}${recTemplateOk ? templateSampleNote + templateStructureNote : ""}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${situationNote}${scenarioNote}`;
 
       const knowledgeSection = knowledge ? `\n\n【物件オススメ時のノウハウ】\n${knowledge}` : "";
       // aix_property実例（実送信文・⭐顧客反応あり優先）があれば☆手動実例より優先。両方ある場合は実送信文を先に置く
