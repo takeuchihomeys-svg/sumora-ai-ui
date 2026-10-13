@@ -9352,3 +9352,15 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   - 全力サポートを候補にするかの材料は物件を探す番になりうる時だけ（`zenryokuCandidateTurn`: 条件の場面・場面の証拠の候補が物件の AIX／全力サポート・他の物件の問い・今送れる候補あり）。材料に今送れる候補の有無（pickupReady）を1行
   - OTHER_PROPERTY_ASK_RE を「他の物件／他にも物件・お部屋／他（に）まだありますか／新着」に絞った（「他に質問はありません」「このお部屋まだありますか」は拾わない）
   - 設計知見 f6af682d（06fc9670 の書き直し・search-result-choice の2択もブレインの候補で外れる・材料の範囲・戻す範囲）を入れ、06fc9670 を退役
+
+## 10/13 棚卸しの残り（作る人・branch brain-rest-1013）— 2段の約束・返信の方向・家賃の幅・画面の札と見出し・確認の約束への了承
+物差し＝竹内さんの実送信（staff_writer=takeuchi）。費用 DeepSeek 約 $0.95（試験 25問・再生 6番×2版×2回 等）・Claude 4回 $0.20（試験 q009 q110）。
+- **表2 2段の約束**（2295dbbe）: 表の「la と最終が違う 24/24」は la＝約束の後で出す AIX の欄＝食い違いではなかった。digest.tc は reconcile（規則で AIX が外れたら aix→promise）の後の値で、生の答えが読めない → llm_raw.tc・digest.ltc を足した。
+  確かな食い違い（約束も AIX も無い本質）7番（全部 close_only）→ 12時間に約束の返信 0（竹内さん AIX 1・締め 1・申込 1・何もしない 4）。閉じる番だけ2段で書き換えない（AIX はそのまま）。答えるだけの番は例が無く試験 q008 で外れた＝既定は下げない（TWO_STAGE_BRAIN_NO_PROMISE_REPLY=on）。
+  監査 scripts/audit-two-stage-vs-takeuchi.ts。戻す TWO_STAGE_BRAIN_NO_PROMISE=off。試験 25問: 悪くなった問題 0（下げの発火 0）
+- **表3 返信の方向**（直していない）: 60日・竹内さんの番 156 で方向の型の経路の食い違いは実送信が型（下書き）側 約95・ブレイン側 約14（conditionDirection 39 対 1・ANY_CONDITION_CHANGE 10 対 2・PS_CONDITION_CHANGE 10 対 3）。ブレインの方向（9月の短い「物件提案を開始する」）より型の方が竹内さんに近い＝方向を入れ替えると悪くなる。10/09 から本質がある番はブレインの方向を上に1行（brainDirTop）で済み。ブレイン側の例（SUUMO の URL・金額の質問に条件変更のセル）は 2段の brought_both・estimate の方向が勝つべき番だが 1 対 1 で線が引けない
+- **家賃の幅の誤検知**（3369339a）: validate-reply.isRentConditionRangeSentence（家賃・管理費・予算の幅/上限・会話か DB の条件に値で有る・漢数字・条件フォームの ⇒7〜11）。60日 竹内さんの手打ち 消える文 74→73・AI の下書き 2→1。戻す RENT_RANGE_NOT_ESTIMATE=off。監査 scripts/audit-rent-range-gate.ts
+- **表8 画面の札・見出し**（1975fb71）: P3・P7・P8 の AIX なしの提案も brain-attention.extraBannerAllowed（NEXT_PUBLIC_BANNER_GATE_ALL=off）。P5.1 はブレインの reply_mode なので対象外。nonBrainBannerAllowed の「判断が古い時は規則の札」は設計知見 0593a0aa（古い時だけ規則で補う）どおりで変えていない。
+  見出しは knowledgeHeading(…, anchor) で aix-template-generate・generate-reply-patterns・enhance-reply もそろえた（KNOWLEDGE_HEADING_FORM=off）
+- **確認の約束への了承の1文**（45ec15cd）: 60日 16番＝待ちの形（同じ中身）3・受けだけ 4・日付 1・新しい中身 5・待ちの形（別）3。最終チェックの決定論は竹内さんの短い待ちの形の1文を指摘しない（ACK_CONFIRM_WAIT_DETECTOR=off）。
+  生成の材料（どちらも可）は再生で受けだけの番が日付の約束を言い直した＝既定 off（ACK_CONFIRM_WAIT_LINE=on）。CP_ACK_WAIT（前が待ちの形・c9368e68）は変えていない（竹内さん 待ちの形 2・受けだけ 3）＝竹内さんに確認
