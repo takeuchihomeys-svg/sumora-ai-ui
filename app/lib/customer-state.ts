@@ -35,6 +35,7 @@ import { resolveViewingScheduled } from "./done-state";
 import { viewingFlowStageDetail } from "./viewing-flow";
 import { normalizePropertyName, similarity, MATCH_MIN_SCORE } from "./property-name-match";
 import { customerSharedPropertyNames, customerNamedAfterShare } from "./customer-property-names";
+import { matchLoose, isSameLoose, splitBrainNames, looseMatchEnabled } from "./property-name-loose";
 import { isApplicationFormMessage } from "./application-form-detect";
 import { parseEstimateItems } from "./estimate-profit";
 import { jstParts, jstYmd, WEEKDAYS_JA } from "./jst-date";
@@ -366,7 +367,10 @@ export function brainPickRef(pick: BrainPropertyPick | null | undefined): RoomRe
 /** 同じ物件か（同じ部屋・同じ建物で片方に部屋が無い）。似ているだけ（maybe）は寄せない */
 export function sameBrainPropertyRef(a: RoomRef, b: RoomRef): boolean {
   const m = matchRoomRefs(a, b);
-  return m === "same_room" || m === "same_building";
+  if (m === "same_room" || m === "same_building") return true;
+  // 2026-10-13 当たり率の直し（区切り1）: ブレインの名前と比べる所だけ、書き方の違い（号室の形・WEST/ウエスト・旧字・誤字1〜2字）を許す。
+  //   台帳のお部屋の寄せ方（matchRoomRefs）は変えない。戻す: PROPERTY_NAME_LOOSE_MATCH=off
+  return m !== "different_room" && looseMatchEnabled() && isSameLoose(matchLoose(a.display, b.display));
 }
 /**
  * ブレインの物件に合う台帳のお部屋（無ければ null＝新しい部屋は作らない）。
@@ -380,7 +384,14 @@ export function brainFocusRoom<R extends Pick<RoomState, "name" | "room" | "last
     const rr = splitPropertyName(r.name, r.room);
     if (!rr) continue;
     const m = matchRoomRefs(ref, rr);
-    const rank = m === "same_room" ? 2 : m === "same_building" ? 1 : 0;
+    let rank = m === "same_room" ? 2 : m === "same_building" ? 1 : 0;
+    // 書き方の違いを許す照合（区切り1）。ブレインが「A・B」と並べた時はそれぞれと比べる
+    if (!rank && m !== "different_room" && pick?.name && looseMatchEnabled()) {
+      for (const part of splitBrainNames(pick.name)) {
+        const lm = matchLoose(part, rr.display);
+        rank = Math.max(rank, lm === "same_room" ? 2 : lm === "same_building" ? 1 : 0);
+      }
+    }
     if (!rank) continue;
     if (!best || rank > best.rank || (rank === best.rank && Date.parse(r.lastAt) > Date.parse(best.r.lastAt))) best = { r, rank };
   }

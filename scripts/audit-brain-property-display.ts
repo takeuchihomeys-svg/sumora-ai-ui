@@ -11,6 +11,7 @@
 //
 // 実行: npx tsx --env-file=.env.local scripts/audit-brain-property-display.ts --part=prefill|state|promise [--days=60] [--show=60]
 import { createClient } from "@supabase/supabase-js";
+import { brainNameMatchesAny, looseMatchEnabled } from "../app/lib/property-name-loose";
 import { splitPropertyName, sameBrainPropertyRef, matchRoomRefs, buildingKeyOf, isBrainPickFresh, resolveCustomerState, type BrainPropertyPick, type CustomerStateInput } from "../app/lib/customer-state";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
@@ -84,7 +85,9 @@ async function partPrefill() {
     if (!isBrainPickFresh(pick, lastBefore(ct.get(l.conversation_id), l.created_at))) { v.stale++; all.stale++; continue; }
     if (!(d.prop ?? "").trim()) { v.nullProp++; all.nullProp++; continue; }
     const br = splitPropertyName(d.prop);
-    const ok = !!br && names.some((n) => { const r = splitPropertyName(n); return !!r && sameBrainPropertyRef(br, r); });
+    // 区切り1（property-name-loose）: 書き方の違いを許す照合。PROPERTY_NAME_LOOSE_MATCH=off で前の測り方
+    const ok = (!!br && names.some((n) => { const r = splitPropertyName(n); return !!r && sameBrainPropertyRef(br, r); }))
+      || (looseMatchEnabled() && brainNameMatchesAny(d.prop, names));
     // 表記ゆれ（似ている・片方がもう片方を含む＝customer-state では寄せない）は外れに数えるが別に数える
     if (!ok && br && names.some((n) => { const r = splitPropertyName(n); return !!r && matchRoomRefs(br, r) === "maybe"; })) nearMiss++;
     // 部屋の形: ブレインが部屋まで言ったか
