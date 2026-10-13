@@ -80,6 +80,13 @@ it("空室: 結果の報告・お客様が送る物件・管理会社だけの�
   eq(gateRules(enforceAixGates("TKハイツ募集状況確認させていただきます！！", { ...o, brainKeepVacancy: true })), []);
   eq(gateRules(enforceAixGates("TKハイツ募集状況確認させていただきます！！", { aixVacancyDone: true, vacancyRedeclareArmed: false })), []);
 });
+it("確かめる人: 二重の約束・空室の再宣言では「も一緒に」「お見積書も」だけで免除しない", () => {
+  const s = "募集状況確認させて頂き、最大限割引のお見積書も一緒にお送りさせて頂きます！！";
+  eq(gateRules(enforceAixGates(s, { estimatePromised: true, estimateRedeclareArmed: true, estimateDoublePromise: true })), ["見積作成宣言の繰り返し"]);
+  eq(gateRules(enforceAixGates(s, { estimatePromised: true, estimateRedeclareArmed: true })), []);
+  eq(gateRules(enforceAixGates("他お気に召されましたお部屋ございましたらお見積書もお送りさせていただきます！！", { estimatePromised: true, estimateRedeclareArmed: true, estimateDoublePromise: true })), []);
+  eq(gateRules(enforceAixGates("TKハイツの募集状況も一緒に確認させていただきます！！", { aixVacancyDone: true, vacancyRedeclareArmed: true })), ["空室確認の再宣言"]);
+});
 
 console.log("#8・#13");
 it("閉じる番は EMPTY_CLOSER・SPLIT_ACK_REPLY・PROMISE_ECHO_MISSING を書き直しに渡さない", () => {

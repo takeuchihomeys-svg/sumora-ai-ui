@@ -1148,6 +1148,10 @@ const VACANCY_REDECLARE_PAST_EXTRA_RE =
 /** 2026-10-14 区切り2: 新しい相手への約束（お客様がこれから送る・送ってくれたお部屋・新着・他のお部屋・〜も一緒に）＝再宣言ではない */
 const REDECLARE_NEW_TARGET_RE =
   /お送り(?:頂|いただ)(?:き(?:まし)?た(?:お部屋|物件)|けましたら|けれ(?:ば)?|きますと|く(?:と|際))|新着|新しく|他(?:の)?[^。！!？?\n]{0,12}(?:お部屋|物件)|気になる(?:お部屋|物件)|お気に召され|お見積書も|も一緒に/;
+/** 2026-10-14 確かめる人: 「お見積書も」「も一緒に」「新しく」は相手が新しい印ではない（同じ物件の同じ約束の言い直しにも出る）。
+ *  直前のこちらの文が同じ約束（二重の約束）の時と空室の再宣言では、相手が新しいと言える形だけで免除する */
+const REDECLARE_NEW_TARGET_STRICT_RE =
+  /お送り(?:頂|いただ)(?:き(?:まし)?た(?:お部屋|物件)|けましたら|けれ(?:ば)?|きますと|く(?:と|際))|新着|他(?:の)?[^。！!？?\n]{0,12}(?:お部屋|物件)|気になる(?:お部屋|物件)|お気に召され/;
 /** 2026-10-14 区切り2: 見積の結果の報告（送った・作成した）。送っていない時は従来どおり消す（見積書カバー文と同じ線） */
 const ESTIMATE_REPORT_RE = /(?:お送り|作成|同封|ご用意)[^。！!？?\n]{0,14}(?:ました|ており(?:ます)?|ております)/;
 
@@ -1248,7 +1252,7 @@ export function enforceAixGates(
       const estArmed = redeclareBrain ? (opts?.estimateRedeclareArmed ?? opts?.estimatePromised) : opts?.estimatePromised;
       const estKeep = redeclareBrain && estimateDeclarationRe.test(s) && (
         (ESTIMATE_REPORT_RE.test(s) ? !!opts?.estimateSentSameProperty
-          : REDECLARE_NEW_TARGET_RE.test(s) || sentenceNamesOtherProperty(s, opts?.estimateSentNames ?? []) || (!opts?.estimateDoublePromise && (!!opts?.brainKeepEstimate || !!opts?.protect?.(s)))));
+          : (opts?.estimateDoublePromise ? REDECLARE_NEW_TARGET_STRICT_RE : REDECLARE_NEW_TARGET_RE).test(s) || sentenceNamesOtherProperty(s, opts?.estimateSentNames ?? []) || (!opts?.estimateDoublePromise && (!!opts?.brainKeepEstimate || !!opts?.protect?.(s)))));
       if (estArmed && estimateDeclarationRe.test(s) && !estKeep) {
         violations.push(`見積作成宣言の繰り返し: ${s.trim().slice(0, 40)}`);
         edits.push({ rule: "見積作成宣言の繰り返し", before: s, after: null, reversible: false });
@@ -1263,7 +1267,7 @@ export function enforceAixGates(
         (redeclareBrain ? VACANCY_REDECLARE_TOPIC_RE : VACANCY_REDECLARE_RE).test(s) &&
         VACANCY_REDECLARE_FUTURE_RE.test(s) &&
         !VACANCY_REDECLARE_PAST_RE.test(s) &&
-        !(redeclareBrain && (VACANCY_REDECLARE_PAST_EXTRA_RE.test(s) || REDECLARE_NEW_TARGET_RE.test(s) || !!opts?.brainKeepVacancy || !!opts?.protect?.(s)))
+        !(redeclareBrain && (VACANCY_REDECLARE_PAST_EXTRA_RE.test(s) || REDECLARE_NEW_TARGET_STRICT_RE.test(s) || !!opts?.brainKeepVacancy || !!opts?.protect?.(s)))
       ) {
         violations.push(`空室確認の再宣言(実行済): ${s.trim().slice(0, 40)}`);
         edits.push({ rule: "空室確認の再宣言", before: s, after: null, reversible: false });

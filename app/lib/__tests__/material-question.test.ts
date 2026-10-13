@@ -63,6 +63,9 @@ it("呼びかけの直前・守る名前の中は直さない／止めれば直�
   eq(fixChineseGlyphs("圖書さん、地圖です", { protect: [] }).text, "圖書さん、地図です");
   eq(fixChineseGlyphs("ザ・东京タワー", { protect: ["ザ・东京タワー"] }).text, "ザ・东京タワー");
   eq(fixChineseGlyphs("费用", { env: { JAPANESE_GLYPH_FIX: "off" } }).text, "费用");
+  // 確かめる人: 日本の資料の「1个月」は「1ヶ月」（「個月」にしない）・日本の字形（対・単・大國町）は触らない
+  eq(fixChineseGlyphs("敷金1个月・礼金1个月").text, "敷金1ヶ月・礼金1ヶ月");
+  eq(fixChineseGlyphs("対応・単身・大國町").text, "対応・単身・大國町");
 });
 
 console.log("入口 #9・#14");

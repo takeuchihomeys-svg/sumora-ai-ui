@@ -56,10 +56,13 @@ export function hasChineseGlyph(text: string | null | undefined): boolean {
  * 返り値の fixed は直した字（「话→話」の形）
  */
 export function fixChineseGlyphs(text: string, opts: { protect?: ReadonlyArray<string | null | undefined>; env?: Record<string, string | undefined> } = {}): { text: string; fixed: string[] } {
-  const src = String(text ?? "");
-  if (!src || !japaneseGlyphFixEnabled(opts.env)) return { text: src, fixed: [] };
+  // 2026-10-14 確かめる人: 日本の資料の「1个月」（ヶの略字）は「個月」ではなく「ヶ月」（个→個は「一个」等の中国語の文だけ）
+  const raw = String(text ?? "");
+  if (!raw || !japaneseGlyphFixEnabled(opts.env)) return { text: raw, fixed: [] };
+  const pre: string[] = [];
+  const src = raw.replace(/(?<=[0-9０-９一二三四五六七八九十])个(?=月|所)/g, () => { pre.push("个→ヶ"); return "ヶ"; });
   RE.lastIndex = 0;
-  if (!RE.test(src)) return { text: src, fixed: [] };
+  if (!RE.test(src)) return { text: src, fixed: pre };
   // 守る範囲（名前・呼びかけの直前）
   const keep = new Array<boolean>(src.length).fill(false);
   for (const p of opts.protect ?? []) {
@@ -72,7 +75,7 @@ export function fixChineseGlyphs(text: string, opts: { protect?: ReadonlyArray<s
     const end = m.index ?? 0;
     for (let k = Math.max(0, end - 8); k < end; k++) keep[k] = true;
   }
-  const fixed: string[] = [];
+  const fixed: string[] = [...pre];
   let out = "";
   for (let i = 0; i < src.length; i++) {
     const ch = src[i];

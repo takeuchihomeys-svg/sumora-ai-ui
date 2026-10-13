@@ -31,6 +31,13 @@ it("④ 即入居の部屋の入居まで", () => {
   has("大阪市内で 初期費用2000円くらいで 即入居できる物件があれば知りたいです", "immediate_move_in", false);
   has("ちなみにこちら内見可能日は最短でいつ頃可能になりますでしょうか…？", "immediate_move_in", false);
 });
+it("確かめる人: 契約・鍵渡し・入居の当日の持ち物・退去予定のお部屋には渡さない", () => {
+  has("契約当日に必要なものはありますか？", "apply_line_viewing_items", false);
+  has("鍵渡し当日は何か持っていくものありますか？", "apply_line_viewing_items", false);
+  has("入居当日に準備するものは？", "apply_line_viewing_items", false);
+  has("申込の方法を教えてください", "apply_line_viewing_items");
+  has("このお部屋いつから住めますか？退去予定って書いてあったので", "immediate_move_in", false);
+});
 it("止めれば渡さない", () => {
   process.env.COMPANY_FACT_1014 = "off";
   has("学生で審査通すにはどうしたらいいですかね", "student_contract", false);
