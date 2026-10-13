@@ -135,5 +135,18 @@ console.log("⑥ 10/13 レビューの直し");
   t("聞き取りの文だけの下書きは指摘しない", !contractConfirmMiss("かしこまりました！！\nご希望のエリアを確認させて頂きたいのですが、いかがでしょうか！！", c2, isConfirmPromiseAsk, {}));
 }
 
+console.log("⑧ 確認の約束の取りこぼしの直し（2026-10-13・CONFIRM_PROMISE_TIGHT）");
+{
+  t("物件の空き確認でき次第ご連絡 → 約束", findConfirmPromiseSentence("お送り頂きました物件の空き確認でき次第ご連絡させて頂きます！！") !== null);
+  t("文の途中の「ました」で外さない", findConfirmPromiseSentence("お送り頂きました物件の募集状況を確認させて頂きます！！") !== null);
+  t("文の途中の「たい」で外さない", findConfirmPromiseSentence("ご希望されたいお日にちで内覧可能か管理会社に確認させて頂きます！！") !== null);
+  t("ご来店時に身分証を確認 → 手続きの説明で約束でない", findConfirmPromiseSentence("ご来店時に身分証を確認させて頂きます！！") === null);
+  t("ご契約の際に〜確認 → 約束でない", findConfirmPromiseSentence("ご契約の際に本人確認書類を確認させて頂きます！！") === null);
+  t("お部屋確認でき次第お送り（探す約束）は今まで通り外す", findConfirmPromiseSentence("ご条件に合うお部屋確認でき次第お送りさせて頂きます！！") === null);
+  t("文の終わりの「たい」はお願い（外す）", findConfirmPromiseSentence("ご都合よろしいお日にちを確認させて頂きたいです！！") === null);
+  const OFF = { CONFIRM_PROMISE_TIGHT: "off" };
+  t("戻す: 文の途中の「ました」で外れる（旧）", findConfirmPromiseSentence("お送り頂きました物件の募集状況を確認させて頂きます！！", OFF) === null);
+}
+
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

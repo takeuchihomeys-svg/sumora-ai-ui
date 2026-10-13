@@ -290,6 +290,7 @@ import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
 import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
 import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine } from "@/app/lib/repeat-brain-align";
+import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
 import { dedupeExamplesBySent, isReplyUnsafeKnowledge, ragReplyCleanEnabled } from "@/app/lib/rag-garbage";
@@ -1292,7 +1293,7 @@ function buildGenerationMessages(
     ? pickupAckMat ?? `\n【🚫 ピックアップ宣言の繰り返し禁止（最優先・フェーズ別パターン/条件変更検出より上位）】
 スタッフは直前の返信で既に「物件をピックアップしてお送りします」と約束済み。今回のお客様のメッセージはその約束に対する感謝・承諾のみ。
 → 「ピックアップしてお送りさせて頂きます」宣言・エリアや家賃等の条件列挙・「初期費用も最大限割引」文を絶対にもう一度生成しない（二重宣言になる）
-→ 返信は短い確認文のみ（2行以内・挨拶ルールに従う）。例:「はい😊！！何卒よろしくお願い致します😌！！」
+→ 返信は短い確認文のみ（${pickupAckLengthPhrase()}）。例:「はい😊！！何卒よろしくお願い致します😌！！」
 　（2026-09-23 反証: 旧の例文「ピックアップ出来次第お送りさせて頂きますので」は再宣言そのもので、生成の50%がこれを写していた。実送信の再宣言は5.4%・受けだけ8.1%・返信なし24%・次は物件カード57%）
 → 実際の物件送付はこの後AIX「物件ピックアップした」で行うため、AI返信で物件・条件の話を展開しない`
     : "";
@@ -1922,7 +1923,7 @@ ${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${
 ${examples}${examplesInstruction}
 
 ↑${isAixTemplateNote ? "これはお客様への返信ではなく、直前に送った AIX の続きの1通。末尾の【🟣✨ AIXテンプレート最適化モード】に従って、テンプレートを書き直した本文を1つ生成してください。" : isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : `スモラの直前返信の流れを踏まえ、${examples ? "⭐実例の文体・テンポ" : "PHASE_GUIDE の例文の文体・テンポ"}を参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。`}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}${openerNote}${applicationStageNote}`;
+長さの目安: ${ackLengthGuide()}、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}${previousSendNote}${sentShapeNote}${openerNote}${applicationStageNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   // 戦略の優先規定（AIX-META一元化）: 指示が競合した場合の解決順を最上位で1行宣言する
@@ -2414,13 +2415,13 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
         const sections: string[] = [];
         if (diffLearned.length > 0) {
-          sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+          sections.push(knowledgeHeading("diff") + "\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (correctionPairs.length > 0) {
           sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (critical.length > 0) {
-          sections.push("【⚠️ 絶対ルール】\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+          sections.push(knowledgeHeading("critical") + "\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (patterns.length > 0) {
           sections.push("【スモラの営業パターン・原則】\n" + patterns.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
@@ -2553,7 +2554,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
-    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push(knowledgeHeading("diff") + "\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (correctionList.length > 0) {
     sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionList.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
@@ -2561,7 +2562,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // importance=10 は dynamicBlock 先頭（topPrinciplesNote）に注入済みのため knowledgeNote への再注入はスキップ
   const criticalFallback = (critical as KnowledgeRow[]).filter(p => (p.importance ?? 10) < 10);
   if (criticalFallback.length > 0) {
-    sections.push("【⚠️ 絶対ルール】\n" + criticalFallback.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push(knowledgeHeading("critical") + "\n" + criticalFallback.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
     sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));

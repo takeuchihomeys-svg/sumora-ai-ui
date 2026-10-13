@@ -172,7 +172,7 @@ export function selectRevisionIssues<T extends AlignIssue>(
 export function contractConfirmMiss(draft: string, contract: TurnContract | null | undefined, canConfirm: (a: TurnContract["asks"][number]) => boolean, env?: Env): { sentence: string; suggestion: string } | null {
   if (!finalCheckBrainAlignEnabled(env) || !contract || contract.source !== "brain") return null;
   if (contract.asks.some(canConfirm)) return null;
-  const hit = findConfirmPromiseSentence(draft);
+  const hit = findConfirmPromiseSentence(draft, env);
   if (!hit) return null;
   const promise = contract.asks.find((a) => a.route === "promise" && a.answer)?.answer ?? null;
   return {
@@ -189,12 +189,26 @@ export function contractConfirmMiss(draft: string, contract: TurnContract | null
  *   外す: お願い・聞き取り（〜たい・〜てください）・済んだ事（〜ました）・問い（？・か）・物件を探す約束（お部屋/物件/新着 確認でき次第＝SEARCH_CONFIRM_RE）・お客様の行い（ご確認）。
  *   設計知見 0be2d9f5（最終チェックは足を引っ張らない）・c9368e68・9dff3717
  */
-export function findConfirmPromiseSentence(draft: string): string | null {
+export function confirmPromiseTightEnabled(env?: Env): boolean {
+  return (envOf(env).CONFIRM_PROMISE_TIGHT ?? "").trim().toLowerCase() !== "off";
+}
+export function findConfirmPromiseSentence(draft: string, env?: Env): string | null {
   const sentences = String(draft ?? "").normalize("NFKC").split(/(?<=[。！!？?])|\n+/).map((s) => s.trim()).filter(Boolean);
   for (const s of sentences) {
     const core = s.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}！!。\s]+$/gu, "");
-    if (/たい|て(?:ください|下さい)|ました|[？?]|か$/.test(core)) continue;
-    if (SEARCH_CONFIRM_RE.test(core)) continue;
+    if (confirmPromiseTightEnabled(env)) {
+      // 2026-10-13 取りこぼしの直し（戻す CONFIRM_PROMISE_TIGHT=off）:
+      //   ①お願い・聞き取り・済んだ事は文の終わり近く（最後の10字）だけで見る（「頂きました物件の募集状況を確認させて頂きます」「ご希望されたい〜を確認」で外れていた）
+      //   ②物件を探す約束（SEARCH_CONFIRM_RE）でも、空き・募集・空室の確認なら確認の約束（「物件の空き確認でき次第ご連絡」）
+      //   ③「ご来店時に／ご契約の際に〜確認させて頂きます」は手続きの説明（その時に確かめる）で約束ではない
+      const tail = core.slice(-10);
+      if (/たい|て(?:ください|下さい)|ました|[？?]|か$/.test(tail)) continue;
+      if (SEARCH_CONFIRM_RE.test(core) && !/空き|空室|募集/.test(core)) continue;
+      if (/(?:時|際)に[^。！!]{0,20}確認(?:させて(?:頂|いただ)き|いたし|致し)ます$/.test(core)) continue;
+    } else {
+      if (/たい|て(?:ください|下さい)|ました|[？?]|か$/.test(core)) continue;
+      if (SEARCH_CONFIRM_RE.test(core)) continue;
+    }
     if (CONFIRM_PROMISE_SENTENCE_RE.test(core) || /(?<!ご)確認(?:させて(?:頂|いただ)き|いたし|致し)ます$/.test(core)) return s;
   }
   return null;
