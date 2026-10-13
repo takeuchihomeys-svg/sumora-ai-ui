@@ -13,7 +13,6 @@ import OutcomeConfirmBar from "./components/OutcomeConfirmBar";
 import UndatedPromiseBar from "./components/UndatedPromiseBar";
 import PromiseQueueBar from "./components/PromiseQueueBar";
 import TopBandsFold, { FoldSlot } from "./components/TopBandsFold";
-import ConditionHistoryBand from "./components/ConditionHistoryBand";
 // 2026-10-13 未桜: 条件の更新の履歴（たたむ札・新しい順）。戻す NEXT_PUBLIC_CONDITION_HISTORY=off
 const CONDITION_HISTORY_UI = (process.env.NEXT_PUBLIC_CONDITION_HISTORY ?? "").toLowerCase() !== "off";
 import { splitDraftBubbles, draftBubblesEnabled } from "./lib/draft-bubbles";
@@ -7942,21 +7941,7 @@ export default function Home() {
               条件の更新（ブレインの自動反映・画面で直した・条件フォーム・元に戻した）は札「条件の更新 M/D HH:MM」にたたみ、押すと履歴を新しい順（行ごとに元に戻す・確認済み）。
               戻す NEXT_PUBLIC_CONDITION_HISTORY=off（下の今までの帯） */}
           <FoldSlot id="cond-history" label="条件の更新">
-          {!inputFocused && CONDITION_HISTORY_UI && linkedCustomerMap[selectedConversation.id] && (() => {
-            const lc = linkedCustomerMap[selectedConversation.id];
-            const notices = String(lc.additional_conditions ?? "").split("\n").filter((line) => line.trim()).map(parseCondLine)
-              .filter((l) => !l.isLog && (l.pattern === "auto" || l.pattern === "format")).map((l) => ({ timestamp: l.timestamp, content: stripMarkdown(l.content) }));
-            const convId = selectedConversation.id;
-            return (
-              <ConditionHistoryBand
-                pcId={lc.id}
-                autoNotices={notices}
-                refreshKey={`${selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""}:${lc.additional_conditions ?? ""}`}
-                onCustomerPatched={(c) => setLinkedCustomerMap((prev) => ({ ...prev, [convId]: { ...prev[convId], ...(c as object) } }))}
-                onNoticeCleared={() => setLinkedCustomerMap((prev) => ({ ...prev, [convId]: { ...prev[convId], additional_conditions: null } }))}
-              />
-            );
-          })()}
+          {/* 2026-10-13 条件の更新の履歴の帯は次の区切りで入れる（部品が未コミット） */}
           </FoldSlot>
           <FoldSlot id="cond-request" label="新着要望">
           {!inputFocused && (() => {
