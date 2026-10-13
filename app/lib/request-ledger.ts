@@ -284,7 +284,7 @@ export function uncoveredRequests(current: ReadonlyArray<RequestItem>, draft: st
 export function countOpenRequestsByConversation(
   rows: ReadonlyArray<{ conversation_id: string; sender: string; text: string | null; created_at: string; is_aix_generated?: boolean | null }>,
   nowMs: number,
-  o: { windowDays?: number } = {},
+  o: { windowDays?: number; brainByConv?: Record<string, unknown> } = {},
 ): Record<string, number> {
   const by = new Map<string, LedgerMsg[]>();
   for (const r of rows) {
@@ -296,9 +296,104 @@ export function countOpenRequestsByConversation(
   for (const [id, msgs] of by) {
     // 先の時期の相談は数に入れない（会話画面の帯には出す）。戻す REQUEST_LEDGER_DEFERRED_BADGE=off
     const keepDeferred = (typeof process !== "undefined" ? process.env?.REQUEST_LEDGER_DEFERRED_BADGE ?? "" : "").toLowerCase() === "off";
-    const n = buildRequestLedger(msgs, nowMs, o).filter((x) => x.status === "open" && (keepDeferred || !x.deferred)).length;
+    // 2026-10-13 P0「判断はすべてブレイン基準」: ブレインの判断（suggested_aix_meta.request_status）があればそれを使う（無い・古い所だけ決定論の網）
+    const led = applyBrainRequestStatus(buildRequestLedger(msgs, nowMs, o), o.brainByConv?.[id], msgs);
+    const n = led.filter((x) => x.status === "open" && (keepDeferred || !x.deferred)).length;
     if (n > 0) out[id] = n;
   }
   return out;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-13 竹内さんの決定（P0 絶対ルール 9eb6aa9c「判断はすべてブレイン基準。決定論の計算は候補を拾う網に下げ、済み・まだ・どの一手かはブレインが文を読んで決める」）:
+//   確認事項の「済み／まだ／取り下げ」はブレインが毎回の判断の中で文を読んで決める（追加の LLM 呼び出しは無し・出力が少し増えるだけ）。
+//   ここ（buildRequestLedger）は候補を拾う網＝候補の一覧と網の見立てを作るだけ。画面の帯・一覧のバッジはブレインの判断をそのまま使い、
+//   ブレインの判断が無い項目・ブレインが「まだ」と言った後にこちらが送った項目だけ網の見立てを出す（applyBrainRequestStatus）。
+//   入れる: REQUEST_STATUS_BRAIN=on（10/13 時点の既定は off＝比べる試しの後に on）／戻す: 未設定・off（ブレインに聞かない）／NEXT_PUBLIC_REQUEST_STATUS_BRAIN=off（画面・バッジがブレインの判断を使わない）
+// ─────────────────────────────────────────────────────────────────────────────
+export type BrainRequestState = "done" | "promised" | "open" | "withdrawn";
+export type BrainRequestStatusItem = { key: string; status: BrainRequestState; via: string | null };
+/** suggested_aix_meta.request_status に保存する形。at＝ブレインが読んだ最後の通の時刻 */
+export type BrainRequestStatus = { at: string; items: BrainRequestStatusItem[] };
+export type RequestCandidate = { id: string; key: string; item: LedgerItem };
+
+/** 候補の鍵（時刻は表記の揺れ「+00:00」「Z」をそろえる＝ブレインの保存と画面・バッジの読み込みで同じ鍵になる） */
+export const requestKey = (x: Pick<RequestItem, "saidAt" | "quote">): string => {
+  const t = Date.parse(x.saidAt);
+  return `${Number.isFinite(t) ? new Date(t).toISOString() : x.saidAt}|${x.quote}`;
+};
+
+export function requestStatusBrainOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  // 10/13: 比べる試し（④）の結果が出るまで既定は off（REQUEST_STATUS_BRAIN=on で入る）。off の間は前の注記（網の「まだ答えていない確認事項」）のまま
+  return (env.REQUEST_STATUS_BRAIN ?? "").trim().toLowerCase() === "on" && requestLedgerEnabled(env);
+}
+function requestStatusBrainUiOn(): boolean {
+  let v = "";
+  try { v = String(process.env.NEXT_PUBLIC_REQUEST_STATUS_BRAIN ?? ""); } catch { v = ""; }
+  return v.trim().toLowerCase() !== "off";
+}
+
+/** ブレインに見せる候補（網が拾った依頼・質問・懸念。直近の物から最大 max 件・古い順に r1..）。網の見立ても添える（ブレインはそれを上書きしてよい） */
+export function requestCandidatesForBrain(ledger: ReadonlyArray<LedgerItem>, o: { max?: number } = {}): RequestCandidate[] {
+  const max = o.max ?? 10;
+  const picked = [...ledger].sort((a, b) => Date.parse(a.saidAt) - Date.parse(b.saidAt)).slice(-max);
+  return picked.map((item, n) => ({ id: `r${n + 1}`, key: requestKey(item), item }));
+}
+
+const NET_JA: Record<RequestStatus, string> = { open: "まだ", promised: "約束済み", done: "済み" };
+/** ブレインの材料に足す一覧＋出力の指示（候補が無ければ空文字） */
+export function buildRequestStatusAsk(cands: ReadonlyArray<RequestCandidate>): string {
+  if (!cands.length) return "";
+  const fmt = (iso: string) => { const d = new Date(Date.parse(iso) + 9 * 3600_000); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
+  return `【お客様の確認事項の候補（決定論の網が拾った物・状態はあなたが会話を読んで決める）】
+${cands.map((c) => `${c.id}. ${fmt(c.item.saidAt)} ${TOPIC_JA[c.item.topic]}「${c.item.quote}」（網の見立て: ${NET_JA[c.item.status]}${c.item.doneBy ? `・${c.item.doneBy}` : ""}）`).join("\n")}
+→ 出力の JSON に "request_status": [{"id": "r1", "status": "done|promised|open|withdrawn", "via": "返信|AIX|電話・対面|内覧の確定|お客様が取り下げ|null"}] を足す。候補の全部（r1〜r${cands.length} の ${cands.length} 件すべて・済みの物も省かない）について1行ずつ。
+  - done＝こちらがその問いに答えた・結果を送った（手打ちの返信・AIX・電話や内覧の場で話した・内覧の日が決まった等、手段は問わない。言い回しが違っても中身で答えていれば done）
+  - promised＝「確認させて頂きます」等の約束だけで、結果はまだ送っていない／open＝まだ触れていない／withdrawn＝お客様が「もう大丈夫です」等で取り下げた・別の流れで要らなくなった
+  - 網の見立ては語の一致で作った目安。文を読んで違えば直す（網が「まだ」でも答えていれば done、網が「済み」でも別の話で触れただけなら open）`;
+}
+
+/** ブレインの出力を整える（候補に無い id・型の外れた値は落とす）。候補が無い・出力が無ければ null */
+export function normalizeBrainRequestStatus(raw: unknown, cands: ReadonlyArray<RequestCandidate>, at: string): BrainRequestStatus | null {
+  if (!cands.length || !Array.isArray(raw)) return null;
+  const byId = new Map(cands.map((c) => [c.id, c.key]));
+  const items: BrainRequestStatusItem[] = [];
+  for (const r of raw as Array<Record<string, unknown>>) {
+    if (!r || typeof r !== "object") continue;
+    const key = byId.get(String(r.id ?? "").trim());
+    const st = String(r.status ?? "").trim().toLowerCase();
+    if (!key || !["done", "promised", "open", "withdrawn"].includes(st) || items.some((x) => x.key === key)) continue;
+    const via = typeof r.via === "string" && r.via.trim() && r.via.trim() !== "null" ? r.via.trim().slice(0, 12) : null;
+    items.push({ key, status: st as BrainRequestState, via });
+  }
+  return items.length ? { at, items } : null;
+}
+
+function asBrainStatus(v: unknown): BrainRequestStatus | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as { at?: unknown; items?: unknown };
+  if (typeof o.at !== "string" || !Array.isArray(o.items)) return null;
+  return { at: o.at, items: (o.items as BrainRequestStatusItem[]).filter((x) => x && typeof x.key === "string" && typeof x.status === "string") };
+}
+
+/**
+ * 網の一覧にブレインの判断を当てる（画面の帯・一覧のバッジ）。
+ *   ・ブレインが判断した項目はブレインの状態（done/withdrawn＝済み・promised・open）
+ *   ・ただしブレインが「済み」以外を言った後にこちら（スタッフ・AIX）が送っていたら、その送信はブレインがまだ読んでいない＝網の見立て（古い時だけ決定論）
+ *   ・ブレインの判断が無い項目は網の見立て
+ */
+export function applyBrainRequestStatus(ledger: ReadonlyArray<LedgerItem>, brainRaw: unknown, msgs: ReadonlyArray<LedgerMsg>, o: { ui?: boolean } = {}): LedgerItem[] {
+  const brain = asBrainStatus(brainRaw);
+  if (!brain || (o.ui !== false && !requestStatusBrainUiOn())) return [...ledger];
+  const at = Date.parse(brain.at);
+  const staffAfter = Number.isFinite(at) && msgs.some((m) => m.sender !== "customer" && Date.parse(m.createdAt) > at && String(m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]$/.test(String(m.text ?? "").trim()));
+  const by = new Map(brain.items.map((x) => [x.key, x]));
+  return ledger.map((x) => {
+    const b = by.get(requestKey(x));
+    if (!b) return x;
+    if (b.status === "done" || b.status === "withdrawn") return { ...x, status: "done" as RequestStatus, doneBy: `ブレイン:${b.via ?? (b.status === "withdrawn" ? "取り下げ" : "済み")}` };
+    if (staffAfter) return x; // ブレインの「まだ」の後にこちらが送った＝その送信は網で見る
+    return { ...x, status: b.status === "promised" ? "promised" as RequestStatus : "open" as RequestStatus, doneBy: b.status === "promised" ? "ブレイン:約束済み" : null };
+  });
+}

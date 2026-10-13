@@ -19,6 +19,8 @@
 import { classifyStaffTextFacts, checkPatternForConfirmTopic } from "./action-ledger";
 import { VIEWING_CHECK_PROMISE_RE } from "./viewing-check-first";
 import { AIX_BUTTON_LABELS } from "./aix-taxonomy";
+import { splitRequests } from "./request-ledger";
+import { customerAreaKnown } from "./two-stage";
 
 export type PromiseKind = "check" | "confirm" | "photo" | "estimate" | "viewing_check" | "pickup";
 export type PromiseStep = {
@@ -37,6 +39,8 @@ export type PromiseStep = {
   doneBy: string | null;
   /** 探し続ける約束（「新着出次第お送り」「随時確認し出次第」）＝次の AIX には並べない（いつ果たすかは新着しだい・pending-pickup が持つ） */
   watch?: boolean;
+  /** 10/13: この返信では約束せず後に回した依頼（お客様の連投にあったが約束しなかった探す・内覧の依頼）。約束した物の後に並ぶ */
+  deferred?: boolean;
 };
 export type QueueMsg = { sender: string; text: string | null | undefined; createdAt: string; isAix?: boolean | null };
 export type QueueAixLog = { aixType: string; checkPattern?: string | null; sentAt: string; estimateSent?: boolean | null; text?: string | null };
@@ -132,7 +136,8 @@ function aixFulfills(step: PromiseStep, log: QueueAixLog): boolean {
     // 物件の AIX（ピックアップ・オススメ）に御見積書を同封した送信も見積の約束を果たす（試算の外れ 7462e5）
     case "estimate": return a === "estimate_sheet" || ((a === "property_check_result" || a === "property_send" || a === "property_recommendation") && (log.estimateSent === true || /御?見積書|お見積/.test(log.text ?? "")));
     case "viewing_check": return a === "viewing_invite" || a === "meeting_place" || a === "property_check_result";
-    case "pickup": return a === "property_send" || a === "property_recommendation" || a === "property_search" || a === "zenryoku_support";
+    // 後に回した探す依頼（条件ヒアリング）は 条件ヒアリング か物件の送付で果たす
+    case "pickup": return a === "property_send" || a === "property_recommendation" || a === "property_search" || a === "zenryoku_support" || a === "condition_hearing";
   }
 }
 /** 手打ち（AIX でない）の通がその約束を果たしたか（台帳の done の行で見る） */
@@ -157,7 +162,8 @@ export function buildPromiseQueue(msgs: ReadonlyArray<QueueMsg>, aixLogs: Readon
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   const logs = [...aixLogs].filter((l) => Number.isFinite(Date.parse(l.sentAt))).sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt));
   const steps: PromiseStep[] = [];
-  for (const m of sorted) {
+  for (let mi = 0; mi < sorted.length; mi++) {
+    const m = sorted[mi];
     if (m.sender === "customer") continue;
     const at = m.createdAt;
     const atMs = Date.parse(at);
@@ -171,6 +177,16 @@ export function buildPromiseQueue(msgs: ReadonlyArray<QueueMsg>, aixLogs: Readon
     for (const p of promisesInStaffText(text, at)) {
       if (steps.some((s) => s.status === "pending" && s.kind === p.kind)) continue;
       steps.push(p);
+    }
+    // 10/13 竹内さん①: 後に回した依頼（この返信で約束しなかった探す・内覧の依頼）を約束の続きの後ろに並べる。
+    //   こちらの通の並び（3分以内の続き）の最後で、直前のお客様の連投と並びの約束を比べる
+    const nx = sorted[mi + 1];
+    if (!m.isAix && deferEnabled() && (!nx || nx.sender === "customer" || Date.parse(nx.createdAt) - atMs > 180_000)) {
+      let a = mi; while (a > 0 && sorted[a - 1].sender !== "customer" && atMs - Date.parse(sorted[a - 1].createdAt) <= 180_000) a--;
+      let b = a; const bundle: string[] = []; while (b > 0 && sorted[b - 1].sender === "customer") { bundle.unshift(String(sorted[b - 1].text ?? "")); b--; }
+      const run = sorted.slice(a, mi + 1).filter((x) => !x.isAix);
+      const kinds = new Set(run.flatMap((x) => promisesInStaffText(x.text, x.createdAt).map((p) => p.kind)));
+      for (const d of deferredFromTurn(bundle, kinds, at)) if (!steps.some((s) => s.status === "pending" && s.kind === d.kind)) steps.push(d);
     }
   }
   for (const l of logs) {
@@ -210,19 +226,27 @@ export function promiseOrderFor(need?: PickupNeed | null): readonly PromiseKind[
 export function nextPromiseAix(steps: ReadonlyArray<PromiseStep>, o: { nowMs?: number; maxAgeMs?: number; need?: PickupNeed | null } = {}): { next: PromiseStep; rest: PromiseStep[] } | null {
   const now = o.nowMs ?? Date.now(); const age = o.maxAgeMs ?? PROMISE_QUEUE_MAX_AGE_MS;
   const order = promiseOrderFor(o.need);
-  const pending = steps.filter((s) => s.status === "pending" && !s.watch && now - Date.parse(s.promisedAt) <= age).sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || Date.parse(a.promisedAt) - Date.parse(b.promisedAt));
+  // 後に回した依頼（deferred）は約束した物の後（確認の結果を送ってから・竹内さん①）
+  const pending = steps.filter((s) => s.status === "pending" && !s.watch && now - Date.parse(s.promisedAt) <= age).sort((a, b) => Number(!!a.deferred) - Number(!!b.deferred) || order.indexOf(a.kind) - order.indexOf(b.kind) || Date.parse(a.promisedAt) - Date.parse(b.promisedAt));
   if (!pending.length) return null;
   return { next: pending[0], rest: pending.slice(1) };
 }
 
-export function promiseStepLabel(s: Pick<PromiseStep, "kind" | "action" | "object">): string {
-  return `${PROMISE_KIND_JA[s.kind]}${s.object ? `（${s.object}）` : ""} → AIX【${AIX_BUTTON_LABELS[s.action] ?? s.action}】`;
+export function promiseStepName(s: Pick<PromiseStep, "kind" | "action">): string {
+  return s.action === "condition_hearing" ? "ご条件のヒアリング→ピックアップ" : PROMISE_KIND_JA[s.kind];
+}
+export function promiseStepLabel(s: Pick<PromiseStep, "kind" | "action" | "object"> & { deferred?: boolean }): string {
+  return `${promiseStepName(s)}${s.object ? `（${s.object}）` : ""} → AIX【${AIX_BUTTON_LABELS[s.action] ?? s.action}】${s.deferred ? "（後に回した依頼）" : ""}`;
+}
+/** 10/13 竹内さん④「AIX に順番を付け、スタッフが一目で分かって返せる形」: 1. 次 → 2. その後 …（帯・要対応の印・グループの通知で同じ番号） */
+export function numberedPromiseLabels(next: PromiseStep, rest: ReadonlyArray<PromiseStep>): string[] {
+  return [next, ...rest].map((s, n) => `${n + 1}. ${promiseStepLabel(s)}`);
 }
 
 /** 要対応の行の resolution_note（main の行のまま＝朝の挨拶の印と別）。advancePromiseQueue が書き、画面・取り下げの判定が読む */
 export const PROMISE_QUEUE_NOTE_PREFIX = "rule:promise_queue";
 export function promiseQueueNote(next: PromiseStep, rest: ReadonlyArray<PromiseStep>): string {
-  return `${PROMISE_QUEUE_NOTE_PREFIX}｜次: ${promiseStepLabel(next)}${rest.length ? `｜残り: ${rest.map((s) => PROMISE_KIND_JA[s.kind]).join("・")}` : ""}`.slice(0, 200);
+  return `${PROMISE_QUEUE_NOTE_PREFIX}｜次: ${promiseStepLabel(next)}${rest.length ? `｜残り: ${rest.map((s, n) => `${n + 2}. ${promiseStepName(s)}`).join("・")}` : ""}`.slice(0, 200);
 }
 /**
  * 2026-10-09 竹内さん③「ピックアップが必要なお客様（まだ物件を送っていない・送った物件が合わない/出し切って新しく探す必要がある・お客様が『他にも送って』等を頼んだ）は、
@@ -253,4 +277,27 @@ export function keepPromiseQueueItem(row: { resolution_note?: string | null; cre
   if (!String(row.resolution_note ?? "").startsWith(PROMISE_QUEUE_NOTE_PREFIX)) return false;
   const c = Date.parse(row.created_at ?? "");
   return Number.isFinite(c) && nowMs - c <= PROMISE_QUEUE_MAX_AGE_MS;
+}
+
+/** 10/13 後に回した依頼を並べる（戻す PROMISE_QUEUE_DEFERRED=off） */
+function deferEnabled(): boolean { return typeof process === "undefined" || (process.env?.PROMISE_QUEUE_DEFERRED ?? "").toLowerCase() !== "off"; }
+const WANTS_PICKUP_RE = /良い物件|いい物件|良いお部屋|他にも|ほかにも|他の物件|探して|①|【ご希望のエリア/;
+/**
+ * 2026-10-13 竹内さん①（いしのまさや）「まず送って頂いた物件の募集状況を確認する（約束）→確認の結果を AIX で伝えた後に、北浜以外などの条件は AIX【条件ヒアリング】で聞く」:
+ *   こちらが確認・見積を約束した並びの直前のお客様の連投に、探す依頼（「良い物件ありますか」「他にも」・探す）があって、並びで探す約束をしていなければ、
+ *   約束の続きの後ろに「探す」を置く（エリアが分かれば 物件ピックアップした・分からなければ 条件ヒアリング）。内覧の依頼で内覧の約束をしていなければ 内覧日調整。
+ *   確認・見積の約束が無い並び（答えだけ・受けだけ）では置かない（約束の続きではない）
+ */
+export function deferredFromTurn(bundle: readonly string[], promised: ReadonlySet<PromiseKind>, at: string): PromiseStep[] {
+  if (!(promised.has("check") || promised.has("estimate"))) return [];
+  const own = bundle.filter((t) => !/^\s*\[(?:画像|ファイル)\]/.test(t)).join("\n");
+  const topics = new Set(splitRequests(bundle, at).filter((x) => !x.deferred).map((x) => x.topic));
+  const out: PromiseStep[] = [];
+  const base = { promisedAt: at, status: "pending" as const, doneAt: null, doneBy: null, deferred: true, object: null };
+  if (!promised.has("pickup") && (topics.has("pickup") || WANTS_PICKUP_RE.test(own))) {
+    const area = customerAreaKnown(own);
+    out.push({ ...base, kind: "pickup", action: area ? "property_send" : "condition_hearing", checkPattern: null, evidence: area ? "探す依頼（後に回した）" : "探す依頼（条件ヒアリングから・後に回した）" });
+  }
+  if (!promised.has("viewing_check") && topics.has("viewing")) out.push({ ...base, kind: "viewing_check", action: "viewing_invite", checkPattern: null, evidence: "内覧の依頼（後に回した）" });
+  return out;
 }

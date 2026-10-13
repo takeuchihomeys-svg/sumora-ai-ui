@@ -37,7 +37,7 @@ export type TwoStageInput = {
   /** こちらが今日（JST）すでにした約束の種類（promiseKindsToday）。同じ日の同じ件の2通目からは約束を挟まず AIX（10巡目 10/08） */
   promisedTodayKinds?: readonly TwoStageKind[];
   /** 今回お客様が物件を送ってきた（持ち込み・URL／物件の画像）。ask＝お客様の言葉（broughtPropertyAsk）・count＝件数（broughtPropertyCount）。10/07 */
-  brought?: { ask: BroughtAsk; count: number } | null;
+  brought?: { ask: BroughtAsk; count: number; /** 10/13: 送って頂いた物件が SNS・TikTok の画面で物件名が無く題だけ（broughtTitleOnly） */ titleOnly?: boolean } | null;
   /** 室内写真の依頼の番（ブレインの S11）。atHand＝頼まれた物件の室内イメージが手元にある（room-photo-material.photoMaterialAtHand）。5巡目 10/07 */
   roomPhoto?: { atHand: boolean; why?: string } | null;
   /** 内覧の希望（日時の指定なし・内覧できるかまだ確かめていない）に、まず内覧できるかの確認の約束を挟む（viewing-check-first.viewingCheckFirst）。5巡目 10/07 */
@@ -50,7 +50,7 @@ export type TwoStageInput = {
 //   実送信（お客様がアリバイ・勤務先の用意を聞いた 9番）: スタッフは「お仕事面こちらでサポートさせて頂きます😊！！」「お仕事先こちらでご用意させて頂きます」と答え、
 //   線（お客様の発言で当たる 11通を目で読んだ）: 「在籍確認」は管理会社・保証会社の名前を聞く質問（確認が要る）だったので外した。「アリバイ」の語を書いた送信は全期間で 2通・「管理会社に確認」は 0 ＝ 確認の約束にしない。お仕事面のサポートを伝える返信（自動では送らない＝約束が無いので関所 ⑥-4 が人に残す）
 export const WORK_SUPPORT_ASK_RE = /アリバイ|勤務先[^\n。]{0,12}(?:用意|工作|空欄)|お仕事(?:先|面)[^\n。]{0,8}(?:用意|サポート)/;
-export type TwoStageVerdict = { kind: TwoStageKind; direction: string; keyTopic: string; source: string; /** 同じ返信でまとめて足した約束（TWO_STAGE_MULTI_PROMISE・10/09） */ extraPromises?: string[] };
+export type TwoStageVerdict = { kind: TwoStageKind; direction: string; keyTopic: string; source: string; /** 同じ返信でまとめて足した約束（TWO_STAGE_MULTI_PROMISE・10/09。10/13 からは2通目の約束だけ） */ extraPromises?: string[]; /** この返信では約束せず後に回した依頼（10/13 竹内さん・TWO_STAGE_PROMISE_SEQUENCE） */ laterPromises?: string[] };
 
 // 10巡目（10/08）: rule:further_discount_daihyo＝御見積書の後の「更に安く」は AIX【確認します→代表確認（初期費用）】のまま（further-discount.ts）
 const KEEP_SOURCE_RE = /^(?:promise:|signal:pending_pickup|rule:closed_ack_wait|correction:check_already_declared|rule:further_discount_daihyo)/;
@@ -70,37 +70,103 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   const v = resolveTwoStageCore(i);
   if (v && sameDayDirect(v, i)) return null;
   if (!v) return null;
-  const extra = multiPromiseExtras(v, i);
-  if (extra.length) {
-    return {
-      ...v,
-      direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}${multiPromiseDirection(extra)}`,
-      keyTopic: `${v.keyTopic}＋あわせて${extra.map((x) => x.what).join("・")}の約束`,
-      extraPromises: extra.map((x) => x.kind),
-    };
+  if (!promiseSequenceEnabled()) {
+    // 旧（10/09）: 同じ連投の別の依頼を「あわせて」で最大5つ同じ返信に足す
+    const extra = multiPromiseExtras(v, i);
+    if (extra.length) {
+      return {
+        ...v,
+        direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}${multiPromiseDirection(extra)}`,
+        keyTopic: `${v.keyTopic}＋あわせて${extra.map((x) => x.what).join("・")}の約束`,
+        extraPromises: extra.map((x) => x.kind),
+      };
+    }
+    return { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` };
   }
-  return { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` };
+  const plan = planPromiseSequence(v, i);
+  if (!plan) return { ...v, direction: `${v.direction}${TWO_STAGE_ALSO_ANSWER}` };
+  return {
+    ...v,
+    direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : TWO_STAGE_ALSO_ANSWER}${plan.direction}`,
+    keyTopic: plan.second ? `${v.keyTopic}＋2通目にあわせまして${plan.second.what}の約束` : v.keyTopic,
+    ...(plan.second ? { extraPromises: [plan.second.kind] } : {}),
+    ...(plan.later.length ? { laterPromises: plan.later.map((x) => x.kind) } : {}),
+  };
 }
 
 /**
- * 2026-10-09 竹内さん「複数の依頼が重なる番は、ちゃんと返信して約束してから AIX をセットしたらどうか…読み込んで約束して、約束した事を記録して、それを AIX で送っていけば完全にできる」:
- *   2段の約束は1種類（pickup/check/estimate）だけで、同じ連投の別の依頼（空き＋内覧・見積＋他の物件・空き＋室内写真）は「一言ずつ応える」だけだった。
- *   竹内さんの実送信（scripts/audit-multi-request-turns.ts --show=wording）は1通にまとめて約束し「あわせて」でつなぐ:
- *     「〇〇の募集状況確認させて頂きます！！確認出来次第、…初期費用の御見積書もあわせてお送りさせて頂きます😌！！」（db3722）
- *     「募集状況確認させて頂きます！！確認出来次第ご連絡させて頂きます！！あわせて、〈条件〉のお部屋もピックアップしてお送りさせて頂きます😌！！」（b3bae3）
- *     「お送り頂きました物件の募集状況を確認させて頂きます！！…最大限割引して御見積書をご用意いたします😊！！」（ac7c7f）
- *   → 今の連投を request-ledger で数え、主の約束（v.kind）で果たさない依頼のうち AIX で果たす物（空き・見積・内覧・ピックアップ・室内写真・条件の確認）を、同じ返信の約束に足す。
- *     約束した事は送った通の記録（sent_facts の約束の行）に残り、AIX を1本送るごとに次の AIX要対応が立つ（promise-queue）。
- *   足さない物: 返信で答える依頼（審査・入居の時期・その他＝TWO_STAGE_ALSO_ANSWER）・先の時期の相談・申込以降。物件が無い番の費用（見積る物件が無い＝estimate-needs-property）。
- *   戻す: TWO_STAGE_MULTI_PROMISE=off（既定 on）
+ * 2026-10-13 竹内さん（いしのまさや: 初回に TikTok の物件の画像2件＋「初期費用を安く・敷金礼金なし…良い物件ありますでしょうか？」→ 下書きが
+ *   「…ご連絡させて頂きます！！ご質問ありがとうございます！！良い物件ありますでしょうか？とのことですが、北浜以外にも…ピックアップ」と約束を全部詰めた）:
+ *   「約束を全部入れない。優先順位で組み立て、順序立てられる時は順に」「物件を2件送ってきたら2件確認する旨」「TikTok のタイトルの時は物件名を言わない」
+ *   「要件に合わせて文を分けて送る」「まとめ方は実際の LINE を見れば分かる」。
+ *   竹内さんの実送信（scripts/audit-first-turn-split.ts・150日・お客様が物件を送った番 142）:
+ *     ・1通 127・2通 13・3通 2。2通に分けたのは「確認」と「探す」の両方を約束した番（初回＋条件フォーム 10番中 2番: b87d85・fb8043）で、
+ *       1通目＝挨拶＋送って頂いた物件の募集状況確認、2通目＝「あわせまして／あわせて〈エリア〉周辺全域から…ご条件に合ったお部屋もピックアップ」。書いた順はいつも確認が先
+ *     ・探す約束を書いたのはお客様の希望のエリア・条件が分かっている番（フォームのエリア欄・会話のエリア）。エリアが分からない番で探す約束をした実送信は無い
+ *       → エリアが分からない時は探す約束をしない（確認の結果を AIX で送った後に AIX【条件ヒアリング】＝約束の続きの順番に回す・竹内さん①）
+ *     ・物件2件以上 64番: 件数を言った 13（「お送り頂きました2件、募集状況確認」）・総称 22（「お送り頂きました物件全て」）。
+ *       SNS・TikTok の画像 7番: 物件名を言わず総称（「TikTokの物件につきまして」「お送り頂きました物件」）
+ *   → この返信で約束するのは順序の先頭（主の約束）と同じ種類だけ（確認＋御見積書は同じ流れ・件数をまとめる）。
+ *     探す依頼: エリア・条件が分かれば2通目「あわせまして…」で約束、分からなければ後（条件ヒアリング）。内覧・写真・条件の確認などの別の依頼は後（約束の続きの順番）。
+ *   戻す: TWO_STAGE_PROMISE_SEQUENCE=off（10/09 の「あわせて最大5つ」）／TWO_STAGE_MULTI_PROMISE=off（どちらも足さない）
  */
-/** 主の約束に「あわせて」で足す約束の上限（2026-10-09 竹内さん「念のため、あわせて最大5つ」） */
+export function promiseSequenceEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_PROMISE_SEQUENCE ?? "").toLowerCase() !== "off";
+}
+/** お客様の自分の言葉（画像の書き起こし・URL を除く）に希望のエリア・駅が書いてあるか（条件フォームのエリア欄・「〇〇区」「〇〇駅」「〇〇周辺」） */
+export function customerAreaKnown(turn: string | null | undefined): boolean {
+  const own = String(turn ?? "").normalize("NFKC").split(/\n+/).filter((l) => !/https?:\/\/|^\s*\[(?:画像|ファイル)\]/.test(l)).join("\n");
+  if (/【ご希望のエリア[^】]*】\s*⇒\s*[^\s⑥【]/.test(own)) return true;
+  return /[\p{Script=Han}\p{Script=Katakana}ぁ-ん]{1,8}(?:区|市|駅|線|周辺|エリア|沿線|方面)(?:[でにのあらか]|$|\s|、|・)/u.test(own.replace(/【[^】]*】/g, ""));
+}
+export type PromiseSequencePlan = {
+  second: { kind: "pickup"; what: string } | null;
+  later: Array<{ kind: "pickup_hearing" | "viewing" | "photo" | "confirm" | "check"; what: string }>;
+  direction: string;
+};
+export function planPromiseSequence(v: TwoStageVerdict, i: TwoStageInput): PromiseSequencePlan | null {
+  if (typeof process !== "undefined" && (process.env?.TWO_STAGE_MULTI_PROMISE ?? "").toLowerCase() === "off") return null;
+  if (/work_support|room_photo_shoot|viewing_check/.test(v.source)) return null;
+  const items = splitRequests([String(i.customerText ?? "")], new Date(0).toISOString()).filter((x) => !x.deferred && x.topic !== "other");
+  const topics = new Set(items.map((x) => x.topic));
+  const brought = !!i.brought?.count;
+  // 物件の確認の流れ（持ち込み・募集状況・見積）が主の時の「探す」依頼（フォーム・「良い物件ありますか」「他にも」）
+  // 条件フォーム（①【ご入居の時期】・【ご希望のエリア】）を送ってきた＝探す依頼（splitRequests はフォームを読まない）
+  const wantsPickup = topics.has("pickup") || /良い物件|いい物件|良いお部屋|他にも|ほかにも|他の物件|探して|①|【ご希望のエリア/.test(String(i.customerText ?? ""));
+  const checkFlow = v.kind === "check" || v.kind === "estimate";
+  let second: PromiseSequencePlan["second"] = null;
+  const later: PromiseSequencePlan["later"] = [];
+  if (checkFlow && wantsPickup) {
+    if (customerAreaKnown(i.customerText)) second = { kind: "pickup", what: "お部屋のピックアップ" };
+    else later.push({ kind: "pickup_hearing", what: "ご希望のご条件（エリア等）のヒアリング→ピックアップ" });
+  }
+  if (v.kind === "pickup" && (topics.has("vacancy") || brought)) later.push({ kind: "check", what: "送って頂いた物件の募集状況の確認" });
+  if (topics.has("viewing") && !/内覧/.test(v.direction)) later.push({ kind: "viewing", what: "ご内覧の日程" });
+  if (topics.has("photo") && !/写真/.test(v.direction)) later.push({ kind: "photo", what: "室内のお写真" });
+  if ((topics.has("equipment") || topics.has("contract")) && v.kind !== "check") later.push({ kind: "confirm", what: "聞かれた条件・設備" });
+  if (!second && !later.length && !brought) return null;
+  const parts: string[] = [];
+  const n = i.brought?.count ?? 0;
+  if (brought) {
+    parts.push(i.brought?.titleOnly
+      ? `送って頂いた物件は SNS・TikTok 等の画面で、物件名ではなく題（駅名・キャッチ）しか書かれていない。物件名・駅名・題の言葉で呼ばず「お送り頂きました${n >= 2 ? `${n}件の` : ""}物件」と書く（「〇〇以外にも」等、題の駅名を条件として扱わない）。`
+      : n >= 2 ? `送って頂いた物件は${n}件。件数を書く（「お送り頂きました${n}件の物件の募集状況確認させて頂きます」）。` : "");
+  }
+  if (second) {
+    parts.push(`【2通に分けて書く（竹内さんの形）】1通目＝${v.kind === "estimate" ? "御見積書" : "送って頂いた物件の募集状況の確認（と最大限割引の初期費用の御見積書）"}の約束まで。空行を1つ挟み、2通目は「あわせまして」から書き出し、お客様のご希望のエリア・ご条件（お客様が書いた物だけ・具体的に）に合ったお部屋もピックアップしお送りする約束（実際の送信の形「あわせまして〈エリア〉周辺全域から、〇〇さんご希望のご条件に合ったお部屋もピックアップしてお送りさせて頂きます！！」）。`);
+  }
+  if (later.length) {
+    parts.push(`【この返信では約束しない（順番の後ろ・確認の結果を AIX で送った後に AIX で順に進める）】${later.map((x) => x.what).join("・")}。この返信ではこれらに触れない（「〜とのことですが」と問いを繰り返さない・「〇〇以外にも」等の探す約束を書かない）。`);
+  }
+  return { second, later, direction: parts.filter(Boolean).join("") };
+}
+
+/** 主の約束に「あわせて」で足す約束の上限（2026-10-09 竹内さん「念のため、あわせて最大5つ」・旧の形＝TWO_STAGE_PROMISE_SEQUENCE=off の時だけ） */
 export const TWO_STAGE_MULTI_PROMISE_MAX = 5;
 type ExtraPromise = { kind: "check" | "estimate" | "viewing" | "pickup" | "photo" | "confirm"; what: string; wording: string };
+// 旧（10/09・TWO_STAGE_PROMISE_SEQUENCE=off）: 同じ連投の別の依頼を同じ返信に「あわせて」で足す
 function multiPromiseExtras(v: TwoStageVerdict, i: TwoStageInput): ExtraPromise[] {
-  // 既定 on（2026-10-09 竹内さん「できる限り早く本番に入れる」）。戻す: TWO_STAGE_MULTI_PROMISE=off
   if (typeof process !== "undefined" && (process.env?.TWO_STAGE_MULTI_PROMISE ?? "").toLowerCase() === "off") return [];
-  // 決まった型の約束（お仕事面のサポート・室内写真の撮影・内覧の確認）は今まで通り
   if (/work_support|room_photo_shoot|viewing_check/.test(v.source)) return [];
   const items = splitRequests([String(i.customerText ?? "")], new Date(0).toISOString()).filter((x) => !x.deferred && x.topic !== "other");
   if (items.length < 2) return [];
@@ -315,7 +381,10 @@ export function twoStageOtherQuestions(customerTurn: string | null | undefined, 
   // 約束が答えになる問い（ピックアップ＝「〜ところありますか」・確認＝「空いてますか」）は除く
   // 10/07: 確認の約束は持ち込み・費用の質問で御見積書もまとめて約束する（brought_both・asksCost）ので、確認の時も費用の問いは約束が答え
   const promiseQ = kind === "pickup" ? /(?:ところ|お部屋|部屋|物件)[^？?]{0,10}(?:あり|ない)|ありますか|ないですか/ : kind === "check" ? /空い|空き|募集|見積|初期費用|いくら/ : /見積|初期費用|いくら/;
-  return sents.filter((x) => !promiseQ.test(x)).slice(0, 2).map((q) => `お客様の質問「${q.slice(0, 30)}」への答え（会話・資料にある事実で。無ければ確認の約束）`);
+  // 10/13 竹内さん（いしのまさや）: 確認・見積の約束の番の「良い物件ありますか」「他にも」「内覧」「写真」は順番の後ろ（planPromiseSequence）＝必須の話題にしない
+  //   （「良い物件ありますでしょうか？とのことですが、北浜以外にも…」と問いを繰り返して探す約束を詰めた）。戻す TWO_STAGE_PROMISE_SEQUENCE=off
+  const laterQ = kind !== "pickup" && promiseSequenceEnabled() ? /(?:物件|お部屋|部屋|ところ)[^？?]{0,10}(?:あり|ない)|ありますか|ないですか|他にも|ほかにも|内[覧見]|写真/ : null;
+  return sents.filter((x) => !promiseQ.test(x) && !(laterQ && laterQ.test(x))).slice(0, 2).map((q) => `お客様の質問「${q.slice(0, 30)}」への答え（会話・資料にある事実で。無ければ確認の約束）`);
 }
 
 /**
@@ -368,4 +437,15 @@ export function broughtPropertyCount(turnMsgs: readonly string[]): number {
  */
 export function conditionChangedThisTurn(conditionChangeType: string | null | undefined, replyScene: string | null | undefined): boolean {
   return /^(?:area_change|rent_change|layout_change|equip_add|condition_relax|multi)$/.test(String(conditionChangeType ?? "")) || replyScene === "conditions";
+}
+
+/**
+ * 2026-10-13 竹内さん「物件名ではなく TikTok のタイトル等が書かれている時は、物件名を言わずに『お送り頂きました物件の募集状況確認させて頂きます』の形」:
+ *   送って頂いた物件（持ち込みの通）が全部 SNS・広告の画面（画像の見出し【物件の画面（SNS・広告）】・image-label.ts）＝物件名ではなく題・キャッチしか無い。
+ *   URL（ポータルの物件ページ）・資料・ポータルの画面が1つでもあれば false（物件名が分かる）。
+ *   実物 61219753（いしのまさや 10/08）: 「【物件の画面（SNS・広告）】SUMORA 初期費用最安値に…「北浜」駅徒歩2分」→ 下書きが「北浜以外にも」と題の駅名を条件にした
+ */
+export function broughtTitleOnly(propertyMsgs: readonly string[]): boolean {
+  if (!propertyMsgs.length) return false;
+  return propertyMsgs.every((t) => !/https?:\/\/(?!mypage)/.test(t.replace(/\[画像\][\s\S]*/, "")) && /^\s*\[画像\]\s*【物件の画面（SNS・広告）】/.test(t));
 }

@@ -12,6 +12,8 @@ import CustomerStateBar from "./components/CustomerStateBar";
 import OutcomeConfirmBar from "./components/OutcomeConfirmBar";
 import UndatedPromiseBar from "./components/UndatedPromiseBar";
 import PromiseQueueBar from "./components/PromiseQueueBar";
+import TopBandsFold, { FoldSlot } from "./components/TopBandsFold";
+import { splitDraftBubbles, draftBubblesEnabled } from "./lib/draft-bubbles";
 import CustomerMemoBar from "./components/CustomerMemoBar";
 import StaffDeviceWriterBar from "./components/StaffDeviceWriterBar"; // 2026-10-08 決定11 端末の印（管理者／スタッフ）
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
@@ -32,7 +34,7 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
-import { buildRequestLedger, TOPIC_JA as REQUEST_TOPIC_JA } from "./lib/request-ledger";
+import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA } from "./lib/request-ledger";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 // 2026-10-08 竹内さんの決定「ブレイン最優先・判断はブレインに一本化」: 要対応・やること・ブレイン以外の帯をブレインの判断で（純関数・画面から import してよい）
 import { brainNeedsStaff, flagOn, nonBrainBannerAllowed } from "./lib/brain-attention";
@@ -1653,6 +1655,18 @@ export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
   const aiDraftRef = useRef<string>("");
+  // 2026-10-13 竹内さん「要件に合わせて文を分けて送る」: AI の下書き（手で直す前）が「確認の約束／あわせまして…ピックアップ」の形なら2通目の欄に分ける（draft-bubbles・NEXT_PUBLIC_DRAFT_BUBBLES=off）。同じ下書きは1回だけ（✕で戻した後に分け直さない）
+  const bubbleSplitDoneRef = useRef<string>("");
+  useEffect(() => {
+    if (!draftBubblesEnabled() || !replyDraft || replyDraft !== aiDraftRef.current || extraDraftMessages.length > 0 || bubbleSplitDoneRef.current === replyDraft) return;
+    bubbleSplitDoneRef.current = replyDraft;
+    const parts = splitDraftBubbles(replyDraft);
+    if (!parts) return;
+    aiDraftRef.current = parts[0];
+    bubbleSplitDoneRef.current = parts[0];
+    setReplyDraft(parts[0]);
+    setExtraDraftMessages([{ text: parts[1], delaySec: 30 }]);
+  }, [replyDraft, extraDraftMessages.length]);
   const selectedPatternAngleRef = useRef<string | null>(null);
   const replyTargetCustomerMsgRef = useRef<string>("");
   // G-10: 直近に選択したテンプレートID（送信成功時に使用回数をインクリメント）
@@ -2029,7 +2043,7 @@ export default function Home() {
             // 返信入力中でも選択中の会話に届いたなら強制スクロール
             if (cid === selectedIdRef.current) forceScrollForCustomerMsgRef.current = true;
           }
-          const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; file_url?: string; file_name?: string; created_at: string; quoted_message_id?: string | null };
+          const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; file_url?: string; file_name?: string; created_at: string; quoted_message_id?: string | null; is_aix_generated?: boolean | null };
           if (!newMsg?.id) {
             scheduleFullRefresh();
             return;
@@ -2061,6 +2075,8 @@ export default function Home() {
             fileName: newMsg.file_name || undefined,
             time: formatTime(newMsg.created_at),
             rawCreatedAt: newMsg.created_at,
+            // 2026-10-13 ゆなまる: 別の端末・Worker から届いた AIX も AIX として持つ（無いと確認事項の帯が AIX の結果を手打ち扱いにする）
+            isAix: !!newMsg.is_aix_generated,
             quotedMessageId: newMsg.quoted_message_id || undefined,
           };
 
@@ -2359,6 +2375,7 @@ export default function Home() {
         fileName: m.file_name || undefined,
         time: formatTime(m.created_at),
         rawCreatedAt: m.created_at,
+        isAix: m.is_aix_generated || false,
         quotedMessageId: m.quoted_message_id || undefined,
           speakerName: (m as { speaker_name?: string | null }).speaker_name || undefined,
         lineMessageId: m.line_message_id || undefined,
@@ -7641,13 +7658,8 @@ export default function Home() {
           />
 
           {/* 2026-10-08 竹内さんの決定②④: 申込から30日たった案件の結果の確認（成約した／審査落ち・切り替え／キャンセル／まだ手続き中）と、
-              審査に出した形跡があるのに段階が申込でない時の「申込にする」（/api/deal-outcomes/confirm・LLM なし・無い時は何も出さない） */}
-          <OutcomeConfirmBar
-            conversationId={selectedConversation.id}
-            status={selectedConversation.status}
-            authHeader={INTERNAL_AUTH_HEADER}
-            onSetApplying={() => { void updateConversationStatus("applying"); }}
-          />
+              審査に出した形跡があるのに段階が申込でない時の「申込にする」（/api/deal-outcomes/confirm・LLM なし・無い時は何も出さない）
+              → 2026-10-13 下のたたむ帯（TopBandsFold）の中へ移した */}
 
           {/* 条件パネル: ▼ボタンで開閉 */}
           {showCondPanel && (() => {
@@ -8008,6 +8020,10 @@ export default function Home() {
             );
           })()}
 
+          {/* 2026-10-13 竹内さん「メモや約束した事はツールに折りたたんで隠す…押したら展開する形にすれば見やすい」: 下の帯（必ず・メモ・日付の無い約束・確認事項・約束の続き・申込30日の確認）は
+              既定で小さな札の1行にたたみ、押したら展開（会話ごとに覚えない）。急ぎ（申込30日の確認・期日を過ぎた必ず）だけ札を赤地に。戻す NEXT_PUBLIC_TOP_BANDS_FOLD=off */}
+          <TopBandsFold resetKey={selectedConversation.id}>
+          <FoldSlot id="must" label="必ず">
           {/* お客様への約束（【必ず】・未履行）: この会話を開いた瞬間に見える。タップでその AIX を開く（2026-09-16 竹内・𝒮❦ 事例） */}
           {/* 2026-10-01 竹内（和樹事例）: ブレインが今のお客様の発言に 物件確認した／見積書送る を判断している間は、
               それより前の物件ピックアップの約束を「後で」の1行に回す（消さない・完了にしない）。分け方は promise-calendar splitPromisesForFreshInquiry */}
@@ -8015,8 +8031,11 @@ export default function Home() {
             const split = splitPromisesForFreshInquiry(openPromises[selectedConversation.id] ?? [], {
               brainAction: brainAixAction, latestCustomerAt: latestCustomerTs(selectedConversation.messages || []),
             });
+            // たたんだ札: 数＝今の約束＋後での約束・急ぎ＝待ちでない約束が1日以上たった／今日中
+            const mustUrgent = split.now.some((p) => !waitPromiseBadge(p.notes) && (Date.now() - new Date(p.start_at).getTime() >= 86400000 || (p.notes ?? "").includes(TODAY_MARK)));
             return (
-            <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}>
+            <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}
+              data-fold-count={split.now.length + split.later.length} data-fold-tone="red" data-fold-urgent={mustUrgent ? "1" : undefined}>
               {split.later.length > 0 && (
                 <p className="text-[11px] font-bold text-[#6a1b9a]">先に: お客様が送った物件の確認（{brainAixAction === "estimate_sheet" ? "AIX 見積書送る" : "AIX 物件確認した"}）</p>
               )}
@@ -8059,7 +8078,9 @@ export default function Home() {
             </div>
             );
           })()}
+          </FoldSlot>
           {/* 2026-10-08 竹内さん「人間でいうメモが必要」: お客様のメモ（芯・事情・気にしている事・伝えた事・聞かれた事・もう伝えた種類・気持ち）。直せる・手で直した物は上書きされない。戻す NEXT_PUBLIC_CUSTOMER_MEMO=off */}
+          <FoldSlot id="memo" label="メモ">
           {!inputFocused && (
             <CustomerMemoBar
               conversationId={selectedConversation.id}
@@ -8067,7 +8088,9 @@ export default function Home() {
               authHeader={INTERNAL_AUTH_HEADER}
             />
           )}
+          </FoldSlot>
           {/* 2026-10-08 竹内さん「約束してカレンダーに入れる」: 日付の無い約束（来年再相談・時期が来ましたら）は連絡の日をスタッフが選んで【必ず】に入れる（推測で日付を作らない） */}
+          <FoldSlot id="undated" label="日付の無い約束">
           {!inputFocused && (
             <UndatedPromiseBar
               conversationId={selectedConversation.id}
@@ -8075,15 +8098,20 @@ export default function Home() {
               authHeader={INTERNAL_AUTH_HEADER}
             />
           )}
+          </FoldSlot>
+          <FoldSlot id="requests" label="確認事項">
           {/* 2026-10-08 竹内さん「お客さんからたくさんの確認事項を頼まれた場合のリスト…表示されるようになるか」: 連投の依頼・質問を1つずつ（request-ledger・14日）。
               約束のバナーと同じ見た目で、まだ結果を伝えていない行だけ（未対応／約束済み）。AIX で結果を送ったら消える。戻す NEXT_PUBLIC_REQUEST_LEDGER=off */}
           {!inputFocused && process.env.NEXT_PUBLIC_REQUEST_LEDGER !== "off" && (() => {
-            const items = buildRequestLedger((selectedConversation.messages || []).map((m: Message) => ({ sender: m.sender, text: m.text, createdAt: m.rawCreatedAt ?? "", isAix: !!m.isAix })), Date.now())
+            // 2026-10-13 P0「判断はすべてブレイン基準」: 状態はブレインの判断（suggested_aix_meta.request_status）をそのまま使い、無い・古い項目だけ網（決定論）の見立て
+            const rlMsgs = (selectedConversation.messages || []).map((m: Message) => ({ sender: m.sender, text: m.text, createdAt: m.rawCreatedAt ?? "", isAix: !!m.isAix }));
+            const items = applyBrainRequestStatus(buildRequestLedger(rlMsgs, Date.now()), (selectedConversation.suggestedAixMeta as { request_status?: unknown } | null | undefined)?.request_status, rlMsgs)
               .filter((x) => x.status !== "done");
             if (!items.length) return null;
             const openN = items.filter((x) => x.status === "open").length;
             return (
-              <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}>
+              <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}
+                data-fold-count={openN > 0 ? openN : items.length} data-fold-tone={openN > 0 ? "red" : "blue"}>
                 <p className="text-[11px] font-bold text-[#b71c1c]">お客様の確認事項{openN > 0 ? `（未対応 ${openN}）` : "（結果待ち）"}</p>
                 {items.slice(0, 6).map((x, n) => (
                   <div key={`${x.saidAt}-${n}`} className="flex items-start gap-2">
@@ -8098,7 +8126,20 @@ export default function Home() {
             );
           })()}
           {/* 2026-10-09 竹内さん「約束した事を記録して、それを AIX で送っていけば」: 1通で複数を約束した時の次に送る AIX と残り（promise-queue・戻す NEXT_PUBLIC_PROMISE_QUEUE=off） */}
+          </FoldSlot>
+          <FoldSlot id="promise-queue" label="約束の続き">
           {!inputFocused && <PromiseQueueBar conversationId={selectedConversation.id} refreshKey={selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""} authHeader={INTERNAL_AUTH_HEADER} />}
+          </FoldSlot>
+          {/* 申込30日の確認（下の OutcomeConfirmBar の説明・2026-10-13 にここへ移した＝たたんでも札を赤地で出す） */}
+          <FoldSlot id="outcome" label="申込30日の確認" urgent>
+          <OutcomeConfirmBar
+            conversationId={selectedConversation.id}
+            status={selectedConversation.status}
+            authHeader={INTERNAL_AUTH_HEADER}
+            onSetApplying={() => { void updateConversationStatus("applying"); }}
+          />
+          </FoldSlot>
+          </TopBandsFold>
           {!inputFocused && (() => {
             // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」: やることは
             //   ブレインが置いた／スタッフが手で作った やること（7日以内。7日より前は語で作られた残り）＋ブレインの AIX要対応（pending）。戻す: NEXT_PUBLIC_BRAIN_ATTENTION=off

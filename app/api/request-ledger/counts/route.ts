@@ -31,13 +31,16 @@ export async function GET() {
     }
     // ② 申込前だけ（申込以降・スタッフ同士の会話は外す）
     const ids: string[] = [];
+    // 2026-10-13 P0「判断はすべてブレイン基準」: ブレインの判断（suggested_aix_meta.request_status）を会話ごとに持つ（帯と同じ applyBrainRequestStatus）
+    const brainByConv: Record<string, unknown> = {};
     const all = [...active];
     for (let i = 0; i < all.length; i += 200) {
-      const { data, error } = await supabase.from("conversations").select("id, status").in("id", all.slice(i, i + 200));
+      const { data, error } = await supabase.from("conversations").select("id, status, request_status:suggested_aix_meta->request_status").in("id", all.slice(i, i + 200));
       if (error) throw new Error(error.message);
-      for (const c of (data ?? []) as Array<{ id: string; status: string | null }>) {
+      for (const c of (data ?? []) as Array<{ id: string; status: string | null; request_status?: unknown }>) {
         if (POST_APPLY_STATUSES.has(String(c.status ?? "")) || STAFF_INTERNAL_CONVERSATION_IDS.includes(c.id)) continue;
         ids.push(c.id);
+        if (c.request_status) brainByConv[c.id] = c.request_status;
       }
     }
     // ③ その会話の直近14日の発言（こちらの送信も＝状態を決める）
@@ -51,7 +54,7 @@ export async function GET() {
         if (!data || data.length < 1000) break;
       }
     }
-    const body = { ok: true as const, counts: countOpenRequestsByConversation(rows, Date.now(), { windowDays: WINDOW_DAYS }), conversations: ids.length, messages: rows.length };
+    const body = { ok: true as const, counts: countOpenRequestsByConversation(rows, Date.now(), { windowDays: WINDOW_DAYS, brainByConv }), conversations: ids.length, messages: rows.length };
     cache = { at: Date.now(), body };
     return NextResponse.json(body);
   } catch (e) {

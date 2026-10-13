@@ -9,7 +9,7 @@
 //   記録は増やさない: 約束は送った通の記録（sent_facts の約束の行・行動台帳）と通の本文に既にある＝毎回ここで組み立てる（DDL なし）。
 //   戻す: 戻す PROMISE_QUEUE=off
 import { supabase } from "@/app/lib/supabase";
-import { buildPromiseQueue, nextPromiseAix, pickupNeedSignals, type PickupNeed, promiseQueueEnabled, promiseQueueNote, promiseStepLabel, PROMISE_KIND_JA, type PromiseStep, type QueueAixLog, type QueueMsg } from "@/app/lib/promise-queue";
+import { buildPromiseQueue, nextPromiseAix, numberedPromiseLabels, promiseStepName, pickupNeedSignals, type PickupNeed, promiseQueueEnabled, promiseQueueNote, promiseStepLabel, PROMISE_KIND_JA, type PromiseStep, type QueueAixLog, type QueueMsg } from "@/app/lib/promise-queue";
 import { isTestConversation, isNoLineTestConversation } from "@/app/lib/test-conversations";
 import { MAIN_AIX_ITEM_OR } from "@/app/lib/viewing-day-greeting";
 
@@ -71,7 +71,7 @@ export async function advancePromiseQueue(conversationId: string, o: { trigger: 
   console.log(JSON.stringify({ tag: "promise-queue:next", conversationId, trigger: o.trigger, next: nx.next.kind, action: nx.next.action, rest: nx.rest.map((s) => s.kind) }));
   if (!isTestConversation(conversationId)) {
     const { buildAixActionNotice, pushToHanbancyoGroup } = await import("@/app/lib/aix-action-items");
-    const extra = `（約束の続き: ${PROMISE_KIND_JA[nx.next.kind]}${nx.rest.length ? `／残り ${nx.rest.map((s) => PROMISE_KIND_JA[s.kind]).join("・")}` : ""}）`;
+    const extra = `（約束の続き: 1. ${promiseStepName(nx.next)}${nx.rest.length ? `／${nx.rest.map((s, n) => `${n + 2}. ${promiseStepName(s)}`).join("／")}` : ""}）`;
     await pushToHanbancyoGroup(`${buildAixActionNotice((conv.customer_name as string | null) ?? "", nx.next.action, nx.next.checkPattern)}\n${extra}`);
   }
   return true;
@@ -82,8 +82,8 @@ export async function promiseQueueView(conversationId: string): Promise<{ next: 
   const { steps, need } = await loadPromiseQueueWithNeed(conversationId);
   const nx = nextPromiseAix(steps, { need });
   return {
-    next: nx ? promiseStepLabel(nx.next) : null,
-    rest: nx ? nx.rest.map(promiseStepLabel) : [],
+    next: nx ? numberedPromiseLabels(nx.next, nx.rest)[0] : null,
+    rest: nx ? numberedPromiseLabels(nx.next, nx.rest).slice(1) : [],
     done: steps.filter((s) => s.status !== "pending").map((s) => `${PROMISE_KIND_JA[s.kind]}（${s.doneBy ?? "済み"}）`),
     steps,
   };

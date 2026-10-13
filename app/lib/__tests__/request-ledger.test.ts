@@ -1,6 +1,6 @@
 // 2026-10-08 連投の「やる事の一覧」（request-ledger.ts）。お客様の発言は実物（名前・物件名は伏せた）
 // 実行: npx tsx app/lib/__tests__/request-ledger.test.ts
-import { splitRequests, buildRequestLedger, currentTurnRequests, buildRequestLedgerNote, uncoveredRequests, countOpenRequestsByConversation, type LedgerMsg } from "../request-ledger";
+import { splitRequests, buildRequestLedger, currentTurnRequests, buildRequestLedgerNote, uncoveredRequests, countOpenRequestsByConversation, requestCandidatesForBrain, buildRequestStatusAsk, normalizeBrainRequestStatus, applyBrainRequestStatus, requestKey, type LedgerMsg } from "../request-ledger";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -150,6 +150,43 @@ it("駐車場の質問は「パーキング」で答えた（84434172）・礼�
 it("本当に未対応は残す: 関係の無い返信（60e6d3ab「養生は必要ですか?」→採寸の共有）", () => {
   eq(buildRequestLedger(conv([["customer", "後引っ越しの際養生は必要ですか？", 0], ["staff", "かしこまりました！！\nお部屋の採寸完了しましたら、共有させていただきます！！", 60]]), Date.parse(at(70)))[0].status, "open");
 });
+
+// 2026-10-13 P0「判断はすべてブレイン基準」: 状態はブレインが決め、網は候補を拾うだけ
+console.log("ブレインの判断（request_status）");
+{
+  const c = conv([["customer", "後引っ越しの際養生は必要ですか？\n初期費用いくらですか？", 0], ["staff", "養生は不要です！！", 5]]);
+  const led = buildRequestLedger(c, Date.parse(at(10)));
+  const cands = requestCandidatesForBrain(led);
+  it("候補は網の全項目（古い順に r1..）・指示に網の見立てと出力の形", () => {
+    eq(cands.map((x) => x.id), ["r1", "r2"]);
+    const ask = buildRequestStatusAsk(cands);
+    has(ask, "r1."); has(ask, "網の見立て"); has(ask, "\"request_status\"");
+  });
+  it("ブレインの出力を整える（候補に無い id・型の外れは落とす）", () => {
+    const st = normalizeBrainRequestStatus([{ id: "r1", status: "done", via: "返信" }, { id: "r9", status: "done" }, { id: "r2", status: "maybe" }], cands, at(5));
+    eq(st?.items.map((x) => `${x.key === requestKey(led[0])}:${x.status}:${x.via}`), ["true:done:返信"]);
+    eq(normalizeBrainRequestStatus(null, cands, at(5)), null);
+  });
+  it("帯: ブレインの済みは網が「まだ」でも済み・ブレインの「まだ」は網が済みでもまだ", () => {
+    const st = { at: at(5), items: [{ key: requestKey(led[0]), status: "done", via: "返信" }, { key: requestKey(led[1]), status: "open", via: null }] };
+    const out = applyBrainRequestStatus(led, st, c, { ui: false });
+    eq(out.map((x) => x.status), ["done", "open"]);
+  });
+  it("ブレインが「まだ」と言った後にこちらが送った項目は網の見立て（古い時だけ決定論）", () => {
+    const c2 = [...c, ...conv([["staff", "最大限割引しました初期費用の御見積書となります！！", 60, true]])];
+    const led2 = buildRequestLedger(c2, Date.parse(at(70)));
+    const st = { at: at(5), items: [{ key: requestKey(led2[1]), status: "open", via: null }] };
+    eq(applyBrainRequestStatus(led2, st, c2, { ui: false })[1].status, "done");
+  });
+  it("ブレインの判断が無ければ網のまま", () => eq(applyBrainRequestStatus(led, null, c, { ui: false }).map((x) => x.status), led.map((x) => x.status)));
+  it("一覧のバッジもブレインの判断を使う", () => {
+    const rows = c.map((m) => ({ conversation_id: "a", sender: m.sender, text: m.text ?? "", created_at: m.createdAt, is_aix_generated: false }));
+    const before = countOpenRequestsByConversation(rows, Date.parse(at(10)));
+    const st = { at: at(5), items: led.map((x) => ({ key: requestKey(x), status: "done", via: "返信" })) };
+    eq(Object.keys(before).length, 1);
+    eq(countOpenRequestsByConversation(rows, Date.parse(at(10)), { brainByConv: { a: st } }), {});
+  });
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  - " + f); process.exit(1); }

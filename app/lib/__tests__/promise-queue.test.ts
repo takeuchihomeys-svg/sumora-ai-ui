@@ -73,7 +73,7 @@ it("72時間を過ぎた約束は次の要対応にしない", () => {
 it("要対応の印と取り下げない線", () => {
   const nx = nextPromiseAix(buildPromiseQueue(msgs, [], Date.parse(T0) + 600_000), { nowMs: Date.parse(T0) + 600_000 })!;
   const note = promiseQueueNote(nx.next, nx.rest);
-  has(note, PROMISE_QUEUE_NOTE_PREFIX); has(note, "物件確認した"); has(note, "残り: 内覧の確認・日程");
+  has(note, PROMISE_QUEUE_NOTE_PREFIX); has(note, "物件確認した"); has(note, "残り: 2. 内覧の確認・日程");
   eq(keepPromiseQueueItem({ resolution_note: note, created_at: T0 }, Date.parse(T0) + 3600_000), true);
   eq(keepPromiseQueueItem({ resolution_note: note, created_at: T0 }, Date.parse(T0) + 80 * 3600_000), false);
   eq(keepPromiseQueueItem({ resolution_note: null, created_at: T0 }, Date.parse(T0) + 3600_000), false);
@@ -106,7 +106,8 @@ it("送った物件が合わない（AIX で送った後「どれもいまいち
 });
 it("送った後・信号なし → 基本の順", () => eq(promiseOrderFor({ noPropertiesSent: false, sentNotFit: false, customerAskedMore: false }), PROMISE_ORDER));
 
-console.log("resolveTwoStage（同じ連投の別の依頼もまとめて約束）");
+console.log("resolveTwoStage 旧の形（TWO_STAGE_PROMISE_SEQUENCE=off＝10/09 のあわせて最大5つ。10/13 からの形は promise-sequence.test.ts）");
+process.env.TWO_STAGE_PROMISE_SEQUENCE = "off";
 it("あわせて足す約束の上限は5（竹内さん②）", () => {
   eq(TWO_STAGE_MULTI_PROMISE_MAX, 5);
   const v = resolveTwoStage({ finalAix: "estimate_sheet", decisionSource: "llm", pickupReady: false, postApply: false, estimateTarget: "〇〇",

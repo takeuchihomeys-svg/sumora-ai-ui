@@ -52,7 +52,7 @@ import { correctCustomerPropertyInquiryAix } from "@/app/lib/customer-property-i
 import { rentIncludedOnlyTurn } from "@/app/lib/rent-included-question";
 import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
-import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, conditionChangedThisTurn } from "@/app/lib/two-stage";
+import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
@@ -279,6 +279,8 @@ export type SuggestedAixMeta = {
   customer_questions?: string[];         // 最新メッセージ内の質問・確認事項（最大5件・各40字）
   /** 2026-10-08 この番の本質（turn-contract.ts の BrainTurnContractRaw）。返信の中身の最上位の決まり（今の番だけ・毎回ゼロから） */
   turn_contract?: import("@/app/lib/turn-contract").BrainTurnContractRaw;
+  /** 2026-10-13 P0: お客様の確認事項の候補ごとの状態（request-ledger の網が拾った候補をブレインが判断・画面の帯とバッジがそのまま使う） */
+  request_status?: import("@/app/lib/request-ledger").BrainRequestStatus;
   /** 10/09: LLM が選んだ AIX（決定論の規則で変わる前・記録用） */
   aix_llm?: string;
   llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null };
@@ -2535,6 +2537,9 @@ ${catalogBlockForBrain(brainScene)}
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
+  // 2026-10-13 P0「判断はすべてブレイン基準」: 確認事項の候補（request-ledger の網）と、ブレインが読んだ最後の通の時刻（出力の request_status に使う）
+  let requestCands: import("@/app/lib/request-ledger").RequestCandidate[] = [];
+  let requestStatusAt = "";
   // 2026-10-08 把握「お客様の事情」（予定・〇日以降・遠方・時期の事情・同行者・体調／customer-circumstances.ts・決定論・言った日と鮮度つき・場面で要る物だけ）。CUSTOMER_CIRCUMSTANCES=off で止まる
   if (!isPostApplyStatus(convStatus)) {
     try {
@@ -2549,9 +2554,13 @@ ${catalogBlockForBrain(brainScene)}
     } catch (e) { console.warn("[brain-core] customer-circumstances skipped:", e instanceof Error ? e.message : String(e)); }
     // 2026-10-08 竹内さん「連投の依頼ごと全て把握する（Claude Code の読み込み方）」: 今の連投の依頼・質問の一覧（2件以上）＋前の束でまだ答えていない確認事項（request-ledger.ts・REQUEST_LEDGER=off）
     try {
-      const { buildRequestLedger, currentTurnRequests, buildRequestLedgerNote } = await import("@/app/lib/request-ledger");
+      const { buildRequestLedger, currentTurnRequests, buildRequestLedgerNote, requestStatusBrainOn, requestCandidatesForBrain, buildRequestStatusAsk } = await import("@/app/lib/request-ledger");
       const lm = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at, isAix: !!(m as { is_aix_generated?: boolean | null }).is_aix_generated }));
-      const rlNote = buildRequestLedgerNote(buildRequestLedger(lm, Date.now()), currentTurnRequests(lm));
+      const rlLedger = buildRequestLedger(lm, Date.now());
+      // 2026-10-13 P0: 状態はブレインが決める＝網の「まだ答えていない」の代わりに候補の一覧と出力の指示（REQUEST_STATUS_BRAIN=off で前の形）
+      const askStatus = requestStatusBrainOn();
+      if (askStatus) { requestCands = requestCandidatesForBrain(rlLedger); requestStatusAt = typedMessages[0]?.created_at ?? ""; }
+      const rlNote = [buildRequestLedgerNote(askStatus ? [] : rlLedger, currentTurnRequests(lm)), askStatus ? buildRequestStatusAsk(requestCands) : ""].filter(Boolean).join("\n\n");
       if (rlNote) { customerStateBlockText += `\n\n${rlNote}`; console.log(JSON.stringify({ tag: "brain:request-ledger", conversationId, chars: rlNote.length })); }
     } catch (e) { console.warn("[brain-core] request-ledger skipped:", e instanceof Error ? e.message : String(e)); }
     // 2026-10-08 竹内さん「人間でいうメモ」「気持ちの判断の強化」: お客様のメモ（芯・事情・決める人・気にしている事・好き嫌い・伝えた事・聞かれた事＋もう伝えた事の種類）と
@@ -3734,7 +3743,7 @@ ${history}`;
           for (const m of typedMessages) { if (m.sender !== "customer") break; turnMsgs.unshift(m.text ?? ""); }
           const props = turnMsgs.filter((t) => /https?:\/\//.test(t) || (/^\s*\[画像\]/.test(t) && isPropertyCandidateImage(t)));
           const n = broughtPropertyCount(props);
-          return n > 0 ? { ask: broughtPropertyAsk(unrepliedTurn.text ?? ""), count: n } : null;
+          return n > 0 ? { ask: broughtPropertyAsk(unrepliedTurn.text ?? ""), count: n, titleOnly: broughtTitleOnly(props) } : null; // 10/13 titleOnly: SNS・TikTok の題だけ（two-stage）
         })(),
       });
       // 8巡目: 退去予定日が分かる内覧の希望は AIX にせず返信で「〇月〇日以降にご内覧可能です」（候補日はまだ出さない・内覧開始日の後に AIX【内覧調整】）
@@ -4441,6 +4450,8 @@ ${history}`;
       customer_questions: customerQuestions,
       // 2026-10-08 本質の仕様（turn-contract.ts）: 今の番の依頼ごとの答え方（返信／約束／AIX／触れない）・閉じる番か・言わない事・気持ち。返信の最上位の決まりになる
       // 10/09 調査の担当: 決定論の規則で finalAix を変えた時は本質も合わせる（AIX が外れて2段の約束になった項目は promise に・食い違いは記録）
+      // 2026-10-13 P0: 確認事項の候補ごとの状態（済み／約束済み／まだ／取り下げ・どの手段で）。画面の帯・一覧のバッジがそのまま使う（request-ledger.applyBrainRequestStatus）
+      request_status: requestCands.length ? (await import("@/app/lib/request-ledger")).normalizeBrainRequestStatus((parsed as { request_status?: unknown }).request_status, requestCands, requestStatusAt) ?? undefined : undefined,
       turn_contract: TURN_CONTRACT_BRAIN_ON ? (exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote) ?? undefined) : undefined,
       aix_llm: normalizeAixActionKey(parsed.aix) ?? undefined,
       // 10/09 試験の担当の案（承認済み）: LLM の最初の判断（決定論の規則で変わる前）。本番の見張りでも本質と最終を分けて数える
