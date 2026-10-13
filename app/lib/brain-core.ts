@@ -21,7 +21,7 @@ import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
-import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -302,7 +302,7 @@ export type SuggestedAixMeta = {
   /** 10/09: LLM が選んだ AIX（決定論の規則で変わる前・記録用） */
   aix_llm?: string;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
-  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null };
+  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null };
   // 2026-09-10 Fable5 みく事例: これは **conversation-scope**（会話全体で2回以上登場した論点）。
   // 「今回のメッセージが懸念である」ことを一切示さない。reply-context.ts の分類器（mergeBrainEvidence /
   // classifyCustomerResponse）には toBrainConversationScope 経由でしか渡らず、型として渡せない
@@ -3866,6 +3866,21 @@ ${history}`;
         && !applyOverride(demotedOverrides, "two_stage_promise", twoStage.source, null, finalAix)) {
         twoStage = null;
       }
+      // 2026-10-13 棚卸しの表 2: ブレインの本質が「この番は約束しない」（約束・AIX の項目が無い＝閉じる・答える・触れないだけ）なら2段は上書きしない。
+      //   閉じる番は AIX のまま（下書きを作らず後で果たす）・答える番は AIX を外して返信（ブレインの方向）。戻す TWO_STAGE_BRAIN_NO_PROMISE=off
+      //   答える番（close でない）で LLM 自身が同じ AIX を選んでいる時はブレインの出力が自分と食い違う（aix と本質）＝下げない（今まで通り約束・記録だけ）
+      const llmOwnAix = normalizeAixActionKey(parsed.aix) ?? null;
+      if (twoStage && twoStageSourceDemotable(twoStage.source)) {
+        const nop0 = brainContractRejectsPromise((parsed as { turn_contract?: unknown }).turn_contract);
+        const selfConflict = nop0.reject && !nop0.close && !!llmOwnAix && llmOwnAix === finalAix;
+        if (selfConflict) console.log(JSON.stringify({ tag: "brain:two-stage-brain-self-conflict", conversationId, src: twoStage.source, aix: finalAix }));
+        const nop = selfConflict ? { reject: false, close: false } : nop0;
+        if (nop.reject && !applyOverride(demotedOverrides, "two_stage_promise", `${twoStage.source}(brain_no_promise)`, "promise", nop.close ? finalAix : "reply")) {
+          console.log(JSON.stringify({ tag: "brain:two-stage-brain-no-promise", conversationId, src: twoStage.source, close: nop.close, aix: finalAix }));
+          twoStage = null;
+          if (!nop.close) { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:contract_no_promise"; }
+        }
+      }
       if (twoStage) {
         console.log(JSON.stringify({ tag: "brain:two-stage", conversationId, from: finalAix, src: decisionSource, kind: twoStage.kind }));
         finalAix = null;
@@ -4612,7 +4627,9 @@ ${history}`;
       // 10/09 試験の担当の案（承認済み）: LLM の最初の判断（決定論の規則で変わる前）。本番の見張りでも本質と最終を分けて数える
       llm_raw: { action: normalizeAixActionKey(parsed.aix) ?? null, reply_mode: typeof parsed.reply_mode === "string" ? parsed.reply_mode : null, dir: typeof parsed.reply_direction === "string" ? parsed.reply_direction.slice(0, 40) : null,
         // 2026-10-13 棚卸し B-6: LLM が出した current_property（ゲートの前・記録だけ）
-        cp: rawCurrentProperty || null },
+        cp: rawCurrentProperty || null,
+        // 2026-10-13 棚卸しの表 2: 生の本質の道の数（reconcile の前）。digest.tc は規則の後の値なので、2段の食い違いはこちらで数える
+        tc: rawContractRouteDigest((parsed as { turn_contract?: unknown }).turn_contract) },
       repeated_concern: repeatedConcern,
       current_property: currentProperty,
       condition_change_type: conditionChangeType,

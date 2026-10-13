@@ -96,6 +96,43 @@ export function brainContractSaysDirectPropertyAix(raw: unknown, finalAix: strin
   return direct && !promised;
 }
 
+/**
+ * 2026-10-13 棚卸しの表 2（作る人・2段の約束をブレイン基準に）:
+ *   ブレインが同じ出力の turn_contract で「この番は約束をしない」（約束の項目も AIX の項目も無く、閉じる番 close_only か、答える・触れないだけ）と
+ *   言っている時、2段の規則（物件・確認・見積の AIX → 約束の返信）は上書きしない（食い違いは demoted_overrides に記録）。
+ *   ⚠ 本番の digest.tc は reconcileTurnContractWithAix（規則で AIX が外れたら aix の項目を promise に直す）の後の値＝「ブレインも約束と言った」に見える。
+ *     reconcile は aix→promise しか変えないので、記録の tc に約束も AIX も無い番は LLM の生の答えでも約束が無い（確かな食い違い）。
+ *   数え（60日・2段の番 115・出し切りを除く 74・YUMA 除く・scripts/audit-two-stage-vs-takeuchi.ts）: 約束も AIX も無い番 7 → 12時間の内に約束の返信を送ったスタッフ 0
+ *     （竹内さんの AIX 1・締めの返信 1・申込のフォーム 1・何もしない 4）＝ブレイン正 7・規則正 0。約束と言った番（記録で p>0）は竹内さんの手打ち 9 が約束・答えの返信。
+ *   対象の種類: pickup・pickup_unless_ack・check・check_question・brought_both・estimate（竹内さんの決め打ちの言い回し work_support・viewing_check・room_photo_shoot は対象外）。
+ *   戻す: TWO_STAGE_BRAIN_NO_PROMISE=off（この形だけ）／BRAIN_DEMOTE_TWO_STAGE=off（2段の下げ全部）
+ */
+export function brainContractRejectsPromise(raw: unknown, env: Env = process.env): { reject: boolean; close: boolean } {
+  if ((env.TWO_STAGE_BRAIN_NO_PROMISE ?? "").trim().toLowerCase() === "off") return { reject: false, close: false };
+  if (!raw || typeof raw !== "object") return { reject: false, close: false };
+  const r = raw as { asks?: unknown; close_only?: unknown };
+  const close = r.close_only === true || r.close_only === "true";
+  const asks = Array.isArray(r.asks) ? (r.asks as Array<Record<string, unknown>>) : [];
+  if (!asks.length && !close) return { reject: false, close: false }; // 中身の無い本質は判断に使わない（安全側＝今まで通り約束）
+  if (asks.some((a) => a?.route === "promise" || a?.route === "aix")) return { reject: false, close };
+  // 本番の確かな食い違い 7番は全部 閉じる番（close_only）。閉じない「答えるだけ」の番は本番の例が無い＝既定は下げない（TWO_STAGE_BRAIN_NO_PROMISE_REPLY=on で試せる）
+  if (!close && (env.TWO_STAGE_BRAIN_NO_PROMISE_REPLY ?? "").trim().toLowerCase() !== "on") return { reject: false, close };
+  return { reject: true, close };
+}
+const NO_PROMISE_KINDS_RE = /^rule:two_stage_promise\((?:pickup|pickup_unless_ack|check|check_question|brought_both|estimate)\)$/;
+/** 2段の source がブレインの「約束しない」で下げてよい種類か */
+export function twoStageSourceDemotable(source: string | null | undefined): boolean {
+  return NO_PROMISE_KINDS_RE.test(String(source ?? ""));
+}
+/** 生の turn_contract の道ごとの数（reconcile の前・digest.ltc）。例 "2:r0p1a1n0:c" */
+export function rawContractRouteDigest(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || !Array.isArray((raw as { asks?: unknown }).asks)) return null;
+  const asks = (raw as { asks: Array<Record<string, unknown>> }).asks;
+  const n = (k: string) => asks.filter((a) => a?.route === k).length;
+  const c = (raw as { close_only?: unknown }).close_only;
+  return `${asks.length}:r${n("reply")}p${n("promise")}a${n("aix")}n${n("none")}${c === true || c === "true" ? ":c" : ""}`;
+}
+
 // ─── 4-4: 締めの後のお礼・了承だけ（rule:closed_ack_wait）────────────────────────────
 // 旧: こちらが締め（「何時でもお気軽にご連絡ください」）を送った後のお礼・了承だけの番は、ブレインの判断に関わらず AIX【物件ピックアップした】＋下書きなし（30日 18番・押された AIX と同じ 0）。
 // 新: 材料の行（締めの後のお礼だけ・実データ）を LLM の前に渡し、ブレインが「返信しない（aix null・reply_mode=aix）／次の物件の AIX／返信」を決める。戻す BRAIN_DEMOTE_CLOSED_ACK=off

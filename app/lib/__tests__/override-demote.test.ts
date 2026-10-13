@@ -1,6 +1,6 @@
 // app/lib/__tests__/override-demote.test.ts — 2026-10-13 決定論の上書きを材料＋食い違いのログに下げる
 //   実行: npx tsx app/lib/__tests__/override-demote.test.ts
-import { overrideDemoted, applyOverride, compactDemoted, DEMOTE_ENV, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "../override-demote";
+import { overrideDemoted, applyOverride, compactDemoted, DEMOTE_ENV, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "../override-demote";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
@@ -27,6 +27,17 @@ t("約束の項目がある → 直接ではない", !brainContractSaysDirectPro
 t("約束だけ → 直接ではない", !brainContractSaysDirectPropertyAix(promised, "property_send"));
 t("物件以外の AIX は対象外", !brainContractSaysDirectPropertyAix({ asks: [{ route: "aix", aix: "estimate_sheet" }] }, "estimate_sheet"));
 t("turn_contract が無い → 直接ではない（安全側）", !brainContractSaysDirectPropertyAix(null, "property_send"));
+// 棚卸しの表 2（10/13）: ブレインの本質が「約束しない」なら2段は上書きしない
+t("閉じる番（close_only・約束なし）→ 下げる・close", (() => { const v = brainContractRejectsPromise({ asks: [{ route: "none" }], close_only: true }, {}); return v.reject && v.close; })());
+t("答えるだけ（reply・閉じない）→ 既定は下げない（本番の例が無い）", !brainContractRejectsPromise({ asks: [{ route: "reply" }], close_only: false }, {}).reject);
+t("答えるだけ（reply）→ TWO_STAGE_BRAIN_NO_PROMISE_REPLY=on で下げる・close でない", (() => { const v = brainContractRejectsPromise({ asks: [{ route: "reply" }], close_only: false }, { TWO_STAGE_BRAIN_NO_PROMISE_REPLY: "on" }); return v.reject && !v.close; })());
+t("asks 空でも close_only → 下げる", brainContractRejectsPromise({ asks: [], close_only: "true" }, {}).reject);
+t("約束の項目がある → 下げない", !brainContractRejectsPromise({ asks: [{ route: "reply" }, { route: "promise" }] }, {}).reject);
+t("AIX の項目がある → 下げない（別の関所）", !brainContractRejectsPromise({ asks: [{ route: "aix", aix: "property_send" }] }, {}).reject);
+t("本質が無い・中身が空 → 下げない（安全側）", !brainContractRejectsPromise(null, {}).reject && !brainContractRejectsPromise({ asks: [] }, {}).reject);
+t("TWO_STAGE_BRAIN_NO_PROMISE=off で戻す", !brainContractRejectsPromise({ asks: [{ route: "none" }], close_only: true }, { TWO_STAGE_BRAIN_NO_PROMISE: "off" }).reject);
+t("対象の種類", twoStageSourceDemotable("rule:two_stage_promise(pickup_unless_ack)") && twoStageSourceDemotable("rule:two_stage_promise(brought_both)") && !twoStageSourceDemotable("rule:two_stage_promise(work_support)") && !twoStageSourceDemotable("rule:two_stage_promise(viewing_check)") && !twoStageSourceDemotable("rule:two_stage_promise(room_photo_shoot)"));
+t("生の道の数", rawContractRouteDigest({ asks: [{ route: "aix" }, { route: "promise" }], close_only: true }) === "2:r0p1a1n0:c" && rawContractRouteDigest(null) === null);
 // 4-4: 締めの後のお礼
 t("締めの材料の行に締めの文と実データ", /何時でもお気軽に/.test(closedAckMaterialLine("気になる点出てきましたら何時でもお気軽にご連絡ください😊")) && /返信しなかった 8/.test(closedAckMaterialLine("x")));
 t("内覧当日の材料の行", /お気をつけて/.test(viewingDayAckMaterialLine("お気をつけてお越しください😊")) && /60件/.test(viewingDayAckMaterialLine("x")));
