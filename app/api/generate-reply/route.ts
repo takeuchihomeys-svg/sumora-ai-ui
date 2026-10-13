@@ -289,7 +289,7 @@ import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
 import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
-import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterial } from "@/app/lib/repeat-brain-align";
+import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterialFor, pickupAckMaterialFor, ackFormCell } from "@/app/lib/repeat-brain-align";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -970,7 +970,7 @@ function buildGenerationMessages(
     /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX（物件確認した）で答えた（checkAnsweredFollowUp） */
     checkAnsweredFollowUp?: boolean } | null = null,
   // 2026-10-07 場面の整理（reply-scene.ts）: この番の場面と、場面ごとの材料の取捨を効かせるか。null／on=false は今まで通り全部
-  sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean; brainContract?: boolean } | null = null,
+  sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean; brainContract?: boolean; ackForm?: "receive_only" | "wait_line" | null } | null = null,
 ): [SystemMessage, HumanMessage] {
   const sceneKeep = (k: Parameters<typeof keepMaterial>[1]) => keepMaterial(sceneSel?.scene ?? null, k, !!sceneSel?.on);
   const jstHour = getJSTHour();
@@ -1288,7 +1288,9 @@ function buildGenerationMessages(
   // 2026-10-13 繰り返し（repeat-brain-align）: ブレインの本質がある番は、約束の言い直しの「最優先」ノートを材料に下げる（中身は本質の「もう言った事」が上）。
   //   ピックアップの約束の後の受けだけの番は竹内さんの形（言い切りの約束→待ちの形の1文 8/10）を渡す。戻す REPEAT_BRAIN_ALIGN=off
   const brainContractOn = !!sceneSel?.brainContract;
-  const pickupAckMat = brainContractOn ? pickupAckMaterial() : null;
+  // 2026-10-13 竹内さん「了承の返事はブレインに任せる」: ブレインが ack_form を決めた番は、了承の返事の注記をその1つの値に従わせる（ACK_FORM_BRAIN=on）
+  const ackForm = brainContractOn ? (sceneSel?.ackForm ?? null) : null;
+  const pickupAckMat = brainContractOn ? (ackForm ? pickupAckMaterialFor(ackForm) : pickupAckMaterial()) : null;
   const pickupPromiseAckNote = (!isFollowUp && staffPromisedPickup && isShortAckMsg)
     ? pickupAckMat ?? `\n【🚫 ピックアップ宣言の繰り返し禁止（最優先・フェーズ別パターン/条件変更検出より上位）】
 スタッフは直前の返信で既に「物件をピックアップしてお送りします」と約束済み。今回のお客様のメッセージはその約束に対する感謝・承諾のみ。
@@ -1327,14 +1329,16 @@ function buildGenerationMessages(
       : staffPromiseRaw;
   // 2026-09-26（穴1）: 待ちの形の約束は復唱させない。復唱の材料が他に無ければ「伝え済み・受けだけ」を渡す（感謝返しの WAIT_FORM_ACK_HINT と同じ向き）
   const waitFormAckNote = (!isFollowUp && isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote && !staffPromiseRaw && waitFormInLast.length > 0)
-    ? `\n【🔁 直前の約束はお伝え済み（決定論）】直前にこちらが「${[...new Set(waitFormInLast.map((w) => w.kind))].join("・")}」の約束を待ちの形（〜次第・日付）で伝え済みで、お客様はそれに了承しただけ。同じ約束・「ご査収」を書き直さず、受けだけにする（開口語「はい😊！！」＋締め。新しい日付・時刻が言える時だけ1文足す）。`
+    ? ackForm === "wait_line"
+      ? `\n【🔁 直前の約束はお伝え済み（材料・ブレインの判断）】直前にこちらが「${[...new Set(waitFormInLast.map((w) => w.kind))].join("・")}」の約束を伝え済みで、お客様は了承しただけ。ブレインの判断は待ちの形の短い1文（「はい！！」＋「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」）。何を・いつ・日付・「ご査収」を並べ直さない。`
+      : `\n【🔁 直前の約束はお伝え済み（決定論）】直前にこちらが「${[...new Set(waitFormInLast.map((w) => w.kind))].join("・")}」の約束を待ちの形（〜次第・日付）で伝え済みで、お客様はそれに了承しただけ。同じ約束・「ご査収」を書き直さず、受けだけにする（開口語「はい😊！！」＋締め。新しい日付・時刻が言える時だけ1文足す）。`
     : "";
   // 2026-10-13 レビュー（設計知見 c9368e68 の型＝同じ場面に「書け」と「書くな」を並べない）: 本質がブレインの番で、直前の約束が確認・連絡・見積・審査
   //   （ピックアップ・撮影でない）なら復唱させず受けだけ（竹内さんの手打ち60日: 受けだけの番の言い直し mgmt 0/9・vacancy 0/10・estimate 0/4・screening 0/5）。
   //   CP_ACK→CP_ACK_WAIT（route の waitFormPromised）・確認の橋渡しの3注記（waitFormConfirmAck）も同じ値でそろえる。ピックアップ・撮影は竹内さんの形（待ちの形の1文）のまま
   const echoToWait = !!staffPromise && ackEchoToWait(staffPromise.label, brainContractOn);
   // 2026-10-13: 待ちの形の1文（「確認出来次第ご連絡させて頂きますので、何卒…」）も竹内さんの形として許す（repeat-brain-align.confirmAckMaterial・ACK_CONFIRM_WAIT_LINE=off で旧の受けだけ）
-  const echoToWaitNote = echoToWait ? confirmAckMaterial(staffPromise!.label) : "";
+  const echoToWaitNote = echoToWait ? confirmAckMaterialFor(staffPromise!.label, ackForm) : "";
   const promiseEchoNote = echoToWait ? echoToWaitNote : staffPromise
     ? `\n【🔁 直前のスタッフ約束の復唱（決定論・最優先）】お客様の最新メッセージは短い了承語で、内容は「直前のスタッフ約束への了承」です。直前の約束: ${staffPromise.label}（未履行）。返信は開口語「はい😊！！」（単独行）＋この約束をそのまま復唱するWE DO 1文（例:「${staffPromise.echo}」）＋締め1文のみ（場面【短い了承】）。撮影・ご査収・内覧日程・申込誘導など、直前の約束に無い業務語彙を新たに持ち出さない。「ご都合よろしいお日にちに」をスタッフ作業に接続しない。`
     : "";
@@ -1525,8 +1529,8 @@ ${aixDone.answeredByAix
   const bodySafety = (templateNote || replyHint) ? null : bodySafetyPre;
   // 2026-09-26（穴1・YUMA の前後比較）: 直前に確認・連絡の約束を待ちの形で言い終えた後の短い了承。
   //   CP_ACK_WAIT（往復文脈）と同じ場面で、AIX の橋渡し・確認対象・管理会社の状況の3つの注記も「確認出来次第ご連絡」を書かせない（書くなと書けを別の場所から渡さない）
-  const waitFormConfirmAck = (!isFollowUp && isShortAckMsg && waitFormInLast.some((w) => w.kind !== "見積"))
-    || (echoToWait && /募集状況|確認/.test(staffPromise?.label ?? ""));   // 2026-10-13 レビュー: 本質がブレインの番の確認の約束の受けも同じ（上の echoToWait）
+  const waitFormConfirmAck = ackForm !== "wait_line" && ((!isFollowUp && isShortAckMsg && waitFormInLast.some((w) => w.kind !== "見積"))
+    || (echoToWait && /募集状況|確認/.test(staffPromise?.label ?? "")));   // 2026-10-13 レビュー: 本質がブレインの番の確認の約束の受けも同じ（上の echoToWait）・ブレインが待ちの形と決めた番は3注記で止めない
   const checkAnswered = !!doneState?.checkAnsweredFollowUp;
   const aixTimingNote = buildAixTimingNote(aixTiming, bodySafety, doneState?.viewingScheduled.scheduled ? viewingAckLine(doneState.viewingAppointment) : null, waitFormConfirmAck, checkAnswered);
 
@@ -4614,6 +4618,8 @@ async function handleGenerateReply(req: NextRequest) {
         // 2026-10-13 レビュー: 本質がブレインの番は確認・連絡の約束への了承を CP_ACK（復唱が必須）でなく CP_ACK_WAIT（受けだけ）に（buildGenerationMessages の echoToWait と同じ向き）
         || (turnContract?.source === "brain" && repeatBrainAlignEnabled()),
     });
+    // 2026-10-13 竹内さん「了承の返事はブレインに任せる」: ブレインが待ちの形の1文と決めた番は、受けだけのセル（CP_ACK_WAIT）を待ちの形の1文のセルにする（書けと書くなを並べない）
+    if (turnContract?.source === "brain" && turnContract.ackForm) pairContext.rule = ackFormCell(pairContext.rule, turnContract.ackForm);
     // ── 2026-09-11 統合設計（経路F1・YUYA/it_0 事例）: aixDone.propertySend（aix_usage_logs 72h 窓）を台帳・往復文脈と整合させる ──
     //   送付後の未履行ピックアップ宣言／顧客の条件変更／ピックアップ宣言を必須要素に持つセルでは「再宣言禁止」にしない。
     //   生成ノート（aixDoneAckNote）・後処理（validateAndClean aixPickupDone）・検査（finalCheckCtx.aixDone）が同じ値を見る（四者同名）。
@@ -5070,7 +5076,7 @@ async function handleGenerateReply(req: NextRequest) {
           //   50% で書いた。実送信の同場面は 返信なし24.3%／物件カード56.8%／「はい！！」＋何卒だけ8.1%／再宣言5.4%。
           //   本文から消す出口は入れない（スタッフ自身の再宣言も 31.9% あり誤削除になる）。率を渡して受けだけにする（入口）。
           if (effectiveAction === "property_send" && brainMeta?.pending_pickup === true) {
-            lines.push((turnContract?.source === "brain" ? pendingPickupAckLine() : null) ?? `- ⚠ 直前のピックアップ宣言がまだ果たされていない（物件は AIX で送る）。この場面の実送信: 返信なし24%／物件そのものを送る57%／「はい！！」＋何卒の受けだけ8%／同じ宣言の再宣言5%。**再宣言（「ピックアップ出来次第お送りします」「募集出次第お送りします」）は書かず、受けだけ（「はい！！」＋締め）の2行以内**にする`);
+            lines.push((turnContract?.source === "brain" ? (turnContract.ackForm ? "- ⚠ 直前のピックアップの約束がまだ果たされていない（物件は AIX で送る）。了承の返事は【🧭 この番の本質】の「前の約束への了承の返事」（ブレインの判断）に従う。条件の並べ直し・言い切りの再宣言は書かない" : pendingPickupAckLine()) : null) ?? `- ⚠ 直前のピックアップ宣言がまだ果たされていない（物件は AIX で送る）。この場面の実送信: 返信なし24%／物件そのものを送る57%／「はい！！」＋何卒の受けだけ8%／同じ宣言の再宣言5%。**再宣言（「ピックアップ出来次第お送りします」「募集出次第お送りします」）は書かず、受けだけ（「はい！！」＋締め）の2行以内**にする`);
           }
           // property_check_result 時は propertyFactGateNote の保証会社名断言禁止を解除して明示を強制
           if (effectiveAction === "property_check_result") {
@@ -5874,7 +5880,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
-      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
+      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackForm: turnContract?.source === "brain" ? (turnContract.ackForm ?? null) : null, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───

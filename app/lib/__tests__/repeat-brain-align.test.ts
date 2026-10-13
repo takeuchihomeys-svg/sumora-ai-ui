@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/repeat-brain-align.test.ts
 //   例は本番の下書きと竹内さんの実送信（scripts/audit-draft-repeat.ts の見本・名前は伏せた）
 import { repeatSentences, sentenceSimilarity, isAckOnlyTurn, isCourtesyOnly, promiseTopics, ackReplyShape, priorPromiseForm, topicRepeats } from "../draft-repeat";
-import { contractAlreadySaidRepeat, demoteRepeatNote, pickupAckMaterial, alreadySaidAllowance, pendingPickupAckLine, ackEchoToWait, confirmAckMaterial } from "../repeat-brain-align";
+import { contractAlreadySaidRepeat, demoteRepeatNote, pickupAckMaterial, alreadySaidAllowance, pendingPickupAckLine, ackEchoToWait, confirmAckMaterial, ackFormFacts, ackFormMaterialLine, ackFormContractLine, ackFormCell, isCompactWaitLine, confirmAckMaterialFor, pickupAckMaterialFor } from "../repeat-brain-align";
 import { renderTurnContractNote, issueContradictsContract, type TurnContract } from "../turn-contract";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -70,6 +70,33 @@ t("既定は旧（受けだけ・試しで日付の言い直しが出たため�
   t("待ちの形の確認の1文（竹内さんの形）は指摘しない", contractAlreadySaidRepeat(waitLine, said, { env: ON }) === null);
   t("言い切りの書き直しは今まで通り指摘", contractAlreadySaidRepeat("はい！！\nお送り頂きましたお部屋の募集状況確認させて頂きます！！", said, { env: ON }) !== null);
   t("ACK_CONFIRM_WAIT_DETECTOR=off で待ちの形の1文も旧どおり見る", contractAlreadySaidRepeat(waitLine, ["確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します！！"], { env: { ACK_CONFIRM_WAIT_DETECTOR: "off" } }) !== null);
+}
+// 10/13 竹内さん「了承の返事はブレインに任せる」（ACK_FORM_BRAIN=on）
+{
+  const ONF = { ACK_FORM_BRAIN: "on" };
+  const msgs = [
+    { sender: "staff", text: "お送り頂きました物件の募集状況確認させて頂きます！！", created_at: "2026-10-13T01:00:00Z" },
+    { sender: "customer", text: "宜しくお願いします🙇🏻‍♀️", created_at: "2026-10-13T01:10:00Z" },
+  ];
+  const f = ackFormFacts(msgs);
+  t("材料: 確認の約束・言い切り・了承だけ・10分前", !!f && f.family === "確認・連絡・見積・審査" && f.form === "言い切り" && f.customer === "了承だけ" && f.minutes === 10);
+  const fd = ackFormFacts([{ sender: "staff", text: "それでは9月30日に改めてご連絡させて頂きます！！", created_at: null }, { sender: "customer", text: "お願いします🙏", created_at: null }]);
+  t("材料: 日付の入った約束は「日付つき」（d3a56a97）", fd?.form === "日付つき");
+  t("材料: ピックアップの約束は「探す」", ackFormFacts([{ sender: "staff", text: "ご条件に合ったお部屋ピックアップしてお送りさせて頂きます！！" }, { sender: "customer", text: "よろしくお願いします" }])?.family === "探す");
+  t("材料: 前に約束が無い → null", ackFormFacts([{ sender: "staff", text: "ご連絡頂きありがとうございます！！" }, { sender: "customer", text: "はい" }]) === null);
+  const line = ackFormMaterialLine(f, ONF);
+  t("材料の1行: 竹内さんの並びと ack_form の選び方（答えは書かない）", /ack_form/.test(line) && /受けだけ 5・待ちの形 3/.test(line) && /日付が入っている→受けだけ/.test(line));
+  t("既定（ACK_FORM_BRAIN 無し）は材料を出さない", ackFormMaterialLine(f, {}) === "");
+  t("本質の行: receive_only／wait_line／null", /受けだけ/.test(ackFormContractLine("receive_only")) && /待ちの形の短い1文/.test(ackFormContractLine("wait_line")) && ackFormContractLine(null) === "");
+  const cell = { id: "CP_ACK_WAIT", direction: "受けの締め1文だけ。同じ約束を言い直さない", mustNot: ["直前の約束（〜次第ご連絡・確認させて頂きます）の言い直し"], example: "はい😊！！" };
+  const c2 = ackFormCell(cell, "wait_line");
+  t("セル: wait_line の時だけ待ちの形の1文のセル（言い直し禁止を外す）", !!c2 && /確認出来次第ご連絡させて頂きますので/.test(c2.direction) && !c2.mustNot.some((m) => /〜次第ご連絡/.test(m)) && ackFormCell(cell, "receive_only") === cell && ackFormCell({ ...cell, id: "CP_ACK" }, "wait_line")?.id === "CP_ACK");
+  const said = ["お送り頂きましたお部屋の募集状況確認させて頂き、確認出来次第ご連絡させて頂きます！！"];
+  const waitLine = "はい！！\n確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！";
+  t("最終チェック: ブレインが wait_line → 短い待ちの形は指摘しない", contractAlreadySaidRepeat(waitLine, said, { env: ON, ackForm: "wait_line" }) === null);
+  t("最終チェック: ブレインが receive_only → 短い待ちの形も言い直しとして指摘", contractAlreadySaidRepeat(waitLine, ["確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します！！"], { env: ON, ackForm: "receive_only" }) !== null);
+  t("待ちの形の1文の判定（確認・探す）", isCompactWaitLine("確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！") && isCompactWaitLine("ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！") && !isCompactWaitLine("火曜日に無事1番手でお申込出来ているか確認させて頂き、確認出来次第ご連絡させて頂きます！！"));
+  t("材料の注記: wait_line／receive_only でブレインの判断を書く", /待ちの形の短い1文/.test(confirmAckMaterialFor("募集状況の確認", "wait_line")) && /受けだけ/.test(confirmAckMaterialFor("募集状況の確認", "receive_only")) && /待ちの形/.test(pickupAckMaterialFor("wait_line")));
 }
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

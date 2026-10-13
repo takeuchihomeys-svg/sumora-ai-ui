@@ -17,7 +17,7 @@
 // テスト: app/lib/__tests__/turn-contract.test.ts
 
 import type { RequestItem, RequestTopic } from "./request-ledger";
-import { alreadySaidAllowance } from "./repeat-brain-align";
+import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormContractLine, isCompactWaitLine, type AckForm } from "./repeat-brain-align";
 import { promiseTopics } from "./draft-repeat";
 import { truncateAtBoundary } from "./brain-strategy-note";
 import { closeOnlyShape } from "./ack-form-takeuchi";
@@ -52,6 +52,8 @@ export type TurnContract = {
   settled: string[];
   feeling: { kind: FeelingKind | null; acknowledge: boolean };
   humanChecks: HumanCheckId[];
+  /** 2026-10-13: 前の約束への了承の返事（ブレインが決めた時だけ・ACK_FORM_BRAIN=on）。receive_only＝受けだけ／wait_line＝待ちの形の短い1文 */
+  ackForm?: AckForm | null;
   /** brain＝今の番を見たブレイン／ledger＝決定論の一覧だけ（予備） */
   source: "brain" | "ledger";
 };
@@ -94,7 +96,7 @@ export function turnContractFinalCheckEnabled(env: Record<string, string | undef
 
 // ── ブレインへの指示（brain-core の出力の指定に入れる文）───────────────────────
 /** ブレインの JSON に足す欄の説明（brain-core の出力の指定・今回の発言の層の出力の指定の両方に入れる） */
-export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}}`;
+export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
 
 /** ブレインの判断の仕方（出力の指定の後ろに置く短い規則・竹内さん 10/08 の答え Q1〜Q10 をそのまま） */
 export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract）の決め方 — 返信の中身はここだけで決まる】
@@ -109,7 +111,8 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - 人生の出来事（出産・結婚・別れ・転職・同居 等）を話した時は、決まり文句で受けて終わらず、新しい状態（住む人数・広さ・時期・審査）の変化として読み、それに合わせた確かめ直し・探し方を asks の主にする（条件が変わるなら登録の条件そのものを直す）。出産・家族が増える時はこちらから広さ・間取りを聞き直す（竹内さん 10/09）。
 - feeling: 不安・恐縮・謝罪・急ぎ・落胆がある時は kind を付け、受ける一言が要るなら acknowledge=true。
 - proposals: お客様がすぐ来られない事情（今週は無理・出張中・予定が詰まって・遠方）があり物件が刺さっている時の「お申込みでお部屋を抑える」「オンライン内見・室内の撮影」の申し出は proposals に入れる（返信で消さない・「ご内覧可否確認」に置き換えない）。内覧したいだけの依頼は aix=viewing_invite（確認の約束にしない）。
-- must_not: 聞かれていない事・この場面で言うと外れる事（例「見積書」「申込誘導」「管理会社に確認」）。`;
+- must_not: 聞かれていない事・この場面で言うと外れる事（例「見積書」「申込誘導」「管理会社に確認」）。${ackFormBrainEnabled() ? `
+- ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}`;
 
 // ── ブレインの出力を読む ─────────────────────────────────────────────
 export type BrainTurnContractRaw = {
@@ -119,6 +122,7 @@ export type BrainTurnContractRaw = {
   must_not?: unknown;
   proposals?: unknown;
   feeling?: { kind?: unknown; acknowledge?: unknown } | null;
+  ack_form?: unknown;
 };
 
 const ROUTES: ReadonlySet<string> = new Set(["reply", "promise", "aix", "none"]);
@@ -154,10 +158,12 @@ export function normalizeBrainTurnContract(raw: unknown): BrainTurnContractRaw |
   const mustNot = (Array.isArray(r.must_not) ? r.must_not : []).map((s) => clip(s, 20)).filter(Boolean).slice(0, 4);
   const proposals = (Array.isArray(r.proposals) ? r.proposals : []).map((s) => clip(s, 30)).filter(Boolean).slice(0, 2);
   const fk = r.feeling && FEELINGS.has(String(r.feeling.kind)) ? String(r.feeling.kind) : null;
-  if (!asks.length && !truthy(r.close_only) && !mustNot.length && !fk && !proposals.length) return null;
+  const af = normalizeAckForm(r.ack_form);
+  if (!asks.length && !truthy(r.close_only) && !mustNot.length && !fk && !proposals.length && !af) return null;
   return {
     asks, lead_with: lw != null && lw >= 0 && lw < asks.length ? lw : null, close_only: truthy(r.close_only), must_not: mustNot, proposals,
     feeling: fk ? { kind: fk, acknowledge: truthy(r.feeling?.acknowledge) } : null,
+    ...(af ? { ack_form: af } : {}),
   };
 }
 
@@ -233,6 +239,7 @@ export function buildTurnContract(input: {
     alreadySaid: input.alreadySaid.map((s) => clip(s, 60)).filter(Boolean).slice(0, 6),
     settled: input.settled.map((s) => clip(s, 60)).filter(Boolean).slice(0, 4),
     feeling, humanChecks, source: b ? "brain" : "ledger",
+    ackForm: b && ackFormBrainEnabled() ? normalizeAckForm(b.ack_form) : null,
   };
 }
 
@@ -263,9 +270,11 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   //   10/13 レビュー: もう言った事にピックアップ・撮影の約束がある時だけ（無い番に「ピックアップの1文は可」を付けない）
   const allowance = c.alreadySaid.some((s) => promiseTopics(s).includes("pickup") || /撮影/.test(s)) ? alreadySaidAllowance() : "";
   L.push(`【🧭 この番の本質（${c.source === "brain" ? "ブレインの判断" : "依頼の一覧"}・最上位）】中身（何に答える・何を約束する・何を言わない）はここで決まる。下の場面の型・学習ルール・手本・注記は**形**（開口語・字数・言い回し・締め）だけに使い、ここと違う中身を足さない・消さない。ただし安全の線（スタッフだけが知る事・金額・空き・内覧の確定を本文で言い切らない）はここより上。`);
-  if (c.closeOnly) L.push(`- 返事の要らない番: ${closeOnlyShape()}。前にした約束・予定・日付を言い直さない${allowance ? "（ただし下の「もう言った事」の竹内さんの形＝待ちの形のピックアップの1文は可）" : ""}。新しい約束・提案・説明を足さない（お客様が『決まったら連絡します』等と待ってと言った時は「お決まりになりましたらご連絡ください」の形・物件を送り続ける約束をしない）。`);
+  if (c.closeOnly) L.push(`- 返事の要らない番: ${closeOnlyShape()}。前にした約束・予定・日付を言い直さない${c.ackForm === "wait_line" ? "（ただし下の「了承の返事」＝待ちの形の短い1文は可）" : allowance && c.ackForm !== "receive_only" ? "（ただし下の「もう言った事」の竹内さんの形＝待ちの形のピックアップの1文は可）" : ""}。新しい約束・提案・説明を足さない（お客様が『決まったら連絡します』等と待ってと言った時は「お決まりになりましたらご連絡ください」の形・物件を送り続ける約束をしない）。`);
+  const ackLine = ackFormContractLine(c.ackForm);
+  if (ackLine) L.push(ackLine);
   c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」→ ${ROUTE_JA[a.route]}${a.answer ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
-  if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance ? `\n${allowance}` : ""}`);
+  if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);
   if (c.proposals.length) L.push(`- こちらから添える提案（消さない・確認の約束に置き換えない）: ${c.proposals.join(" ／ ")}`);
@@ -296,6 +305,9 @@ export function issueContradictsContract(issue: { code: string; message?: string
   const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH)$/;
   if (c.closeOnly && ADD_CODES.test(issue.code)) return true;
   const msg = `${issue.message ?? ""} ${issue.evidence ?? ""} ${issue.suggestion ?? ""}`;
+  // 2026-10-13（了承の返事はブレインに任せる）: ブレインが待ちの形の1文と決めた番は、その短い1文を言い直し・二重の宣言と見る指摘を書き直しに渡さない
+  if (c.ackForm === "wait_line" && /DOUBLE_DECLARATION|REDECLAR|REPEAT|PAIR_AVOID|CELL_AVOID/.test(issue.code)
+    && [issue.evidence, issue.message].some((x) => !!x && /次第/.test(x) && x.split(/[」「\n]/).some((p) => isCompactWaitLine(p)))) return true;
   if (!c.asks.some(canConfirm) && /確認(?:出来|でき)次第|確認の約束|確認させて|確認宣言/.test(msg) && /(?:足|入れ|加え|書|追加|挿入)/.test(msg)) return true;
   // 刺さりの基準の担当から（10/08）: 段階・撮影の前提の指摘（STAGE_MISMATCH・STAGE_SKIP・PHOTO_NO_PREMISE）が、ブレインの決めた提案（抑える・オンライン内見・撮影）の文に付いて消させていた
   if (c.proposals.length && /^(?:STAGE_MISMATCH|STAGE_SKIP|PHOTO_NO_PREMISE)$/.test(issue.code) && /抑え|撮影|オンライン|動画|写真/.test(msg)) return true;

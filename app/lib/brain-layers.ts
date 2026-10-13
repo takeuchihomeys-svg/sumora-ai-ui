@@ -165,7 +165,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
       const c = meta.turn_contract as { asks?: Array<{ route?: string }>; close_only?: boolean } | null | undefined;
       if (!c || !Array.isArray(c.asks)) return null;
       const n = (r: string) => c.asks!.filter((a) => a?.route === r).length;
-      return `${c.asks.length}:r${n("reply")}p${n("promise")}a${n("aix")}n${n("none")}${c.close_only ? ":c" : ""}`;
+      const af = (c as { ack_form?: unknown }).ack_form;
+      return `${c.asks.length}:r${n("reply")}p${n("promise")}a${n("aix")}n${n("none")}${c.close_only ? ":c" : ""}${af === "wait_line" ? ":w" : af === "receive_only" ? ":o" : ""}`;
     })(),
   };
 }

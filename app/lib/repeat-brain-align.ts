@@ -15,7 +15,7 @@
 //   ② contractAlreadySaidRepeat … 最終チェックの決定論の段（ブレインの「もう言った事」を言い直した文を書き直しに渡す。言い直してよい形は外す）
 // 戻す: REPEAT_BRAIN_ALIGN=off（①②とも出さない＝旧の「繰り返さない」の1行だけ・最終チェックは今まで通り LLM の DOUBLE_DECLARATION だけ）
 // テスト: app/lib/__tests__/repeat-brain-align.test.ts
-import { splitSentencesJa, sentenceSimilarity, normalizeSentence, repeatTypeOf, isCourtesyOnly, promiseTopics, type PromiseTopic } from "./draft-repeat";
+import { splitSentencesJa, sentenceSimilarity, normalizeSentence, repeatTypeOf, isCourtesyOnly, promiseTopics, isAckOnlyTurn, type PromiseTopic } from "./draft-repeat";
 
 type Env = Record<string, string | undefined>;
 export function repeatBrainAlignEnabled(env: Env = process.env): boolean {
@@ -122,7 +122,7 @@ export type AlreadySaidHit = { sentence: string; ref: string; sim: number; sugge
 export function contractAlreadySaidRepeat(
   draft: string,
   alreadySaid: ReadonlyArray<string>,
-  opts: { customerAddsContent?: boolean; env?: Env } = {},
+  opts: { customerAddsContent?: boolean; env?: Env; ackForm?: AckForm | null } = {},
 ): AlreadySaidHit | null {
   if (!repeatBrainAlignEnabled(opts.env) || !alreadySaid.length) return null;
   const refs = alreadySaid.map((s) => s.replace(/…$/, "")).filter((s) => normalizeSentence(s).length >= 8);
@@ -142,10 +142,12 @@ export function contractAlreadySaidRepeat(
     const restateOk = topics.some((t) => RESTATE_OK_TOPICS.has(t)) || PHOTO_RE.test(s);
     // 待ちの形の1文は竹内さんの形（外す）。
     //   ⚠ 10/13 試して止めた: 「もう言った約束が既に待ちの形なら3回目として見る」（YUMA4 の試し 9f6b948a）は竹内さんの実送信にも当たる（39c5b353・4a387eac＝竹内さんも待ちの形を重ねる）＝誤り 0 にならない
-    if (restateOk && WAIT_RE.test(s)) continue;
+    if (restateOk && WAIT_RE.test(s) && opts.ackForm !== "receive_only") continue;
     // 10/13: 確認・連絡・見積・審査の約束の待ちの形の短い1文（「確認出来次第ご連絡させて頂きますので、何卒…」）は竹内さんの形（受けだけの番 3/7・前が待ちの形でも 2/5）。
     //   中身（何を・誰から・いつ）を並べ直した文（4f9d58e8「火曜日に無事1番手で…確認させて頂き、確認出来次第」・8cad64b0「管理会社担当者よりご返事あり次第」）は竹内さんも消した＝今まで通り指摘
-    if (confirmAckWaitDetectorEnabled(opts.env) && CONFIRM_WAIT_LINE_RE.test(normalizeSentence(s).replace(/^はい/, ""))) continue;
+    // 10/13（ブレインに任せる）: ブレインが ack_form を決めた番はそれに従う（receive_only＝待ちの形の1文も言い直し・wait_line＝短い待ちの形の1文は可）
+    const compactWait = CONFIRM_WAIT_LINE_RE.test(normalizeSentence(s).replace(/^はい/, ""));
+    if (compactWait && (opts.ackForm === "wait_line" || (opts.ackForm == null && confirmAckWaitDetectorEnabled(opts.env)))) continue;
     // お客様が中身（新しい物件・条件・質問）を送った番の約束は、新しい対象への約束（竹内さんも同じ文で約束し直す: 募集状況の確認 5/5・条件を足したピックアップ 87〜91%）＝約束でない文（サポートの宣言・説明）だけ見る
     //   サポートの宣言（審査面も無事通過出来ますよう…）も中身のある番は竹内さんも言い直す事がある（7f36cba8 書いた・e8b790af 書かない＝線が引けない）＝見ない
     //   ⚠ 10/13 試して止めた: 「前の文をほぼそのまま（近さ 0.9 以上）写した約束は見る」（YUMA4 の試し 5ed01085）は竹内さんの実送信にも当たる（cc1a78bd・44e89917・3cbfb5f2）
@@ -158,4 +160,96 @@ export function contractAlreadySaidRepeat(
     };
   }
   return null;
+}
+
+// ─── 2026-10-13 竹内さんの決定「確認の約束への了承の返事（受けだけか、待ちの形の1文を足すか）はブレインに任せる」───
+//   答えは書かず、竹内さんの使い分けの材料をブレインに渡し、ブレインの本質（turn_contract.ack_form）に決めさせる。
+//   生成（本質の行・確認の受けの注記・往復のセル CP_ACK_WAIT・橋渡しの3注記）と最終チェック（contractAlreadySaidRepeat）はこの1つの値に従う
+//   （「書け」と「書くな」を並べない・設計知見 c9368e68）。日付・言い切りの約束の言い直しはブレインが決めた時以外は出さない。
+//   竹内さんの手打ち（75日・届け物を除く・了承だけの番）:
+//     探す（ピックアップ）の約束が言い切り → 待ちの形の1文 7・受けだけ 0・言い切りの言い直し 1／探すが待ちの形 → 待ちの形 2・受けだけ 2
+//     確認・連絡・見積・審査の約束 → 受けだけ 5・待ちの形 3（言い切り 受け 2・待ち 1／待ちの形 受け 3・待ち 2）
+//     前の約束に日付が入っている（「9月30日に改めてご連絡」d3a56a97）→ 受けだけ／お客様が急ぎ・日付・質問を足した → 待ちの形が増える
+//   既定 off（再生で竹内さんの形に近づいたら on）。ACK_FORM_BRAIN=on で材料・ack_form・生成と最終チェックの従い方が全部入る
+export type AckForm = "receive_only" | "wait_line";
+/** 竹内さんの短い待ちの形の1文か（確認の「確認出来次第ご連絡させて頂きますので、何卒」・探すの「ピックアップ出来次第お送りさせて頂きますので」） */
+export function isCompactWaitLine(s: string): boolean {
+  const n = normalizeSentence(s).replace(/^はい/, "");
+  return CONFIRM_WAIT_LINE_RE.test(n) || /^(?:ピックアップ|お部屋|物件)?(?:出来|でき)次第お送りさせて頂きますので何卒/.test(n);
+}
+export function ackFormBrainEnabled(env: Env = process.env): boolean {
+  return repeatBrainAlignEnabled(env) && (env.ACK_FORM_BRAIN ?? "").trim().toLowerCase() === "on";
+}
+export function normalizeAckForm(v: unknown): AckForm | null {
+  return v === "receive_only" || v === "wait_line" ? v : null;
+}
+const ACK_DATE_RE = /(?:明日|本日|明後日|週明け|月末|[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[0-9０-９]{1,2}\/[0-9０-９]{1,2}|[月火水木金土日]曜)/;
+const CONFIRM_FAMILY_T: ReadonlySet<PromiseTopic> = new Set(["vacancy", "mgmt", "estimate", "screening", "contact"]);
+export type AckFormFacts = {
+  family: "探す" | "確認・連絡・見積・審査";
+  form: "言い切り" | "待ちの形" | "日付つき";
+  promise: string;
+  customer: "了承だけ" | "質問あり" | "急ぎ・日付あり" | "その他の中身";
+  minutes: number | null;
+};
+/** 前のこちらの約束と今のお客様の発言から材料を読む（無い時 null）。messages は古い順 */
+export function ackFormFacts(messagesOldestFirst: ReadonlyArray<{ sender: string; text: string | null; created_at?: string | null }>): AckFormFacts | null {
+  const arr = messagesOldestFirst;
+  let i = arr.length - 1;
+  const cust: string[] = [];
+  while (i >= 0 && arr[i].sender === "customer") { cust.unshift(String(arr[i].text ?? "")); i--; }
+  if (!cust.length || i < 0) return null;
+  const prev = arr[i];
+  const ss = splitSentencesJa(String(prev.text ?? ""));
+  let promise: string | null = null; let topic: PromiseTopic | null = null;
+  for (let k = ss.length - 1; k >= 0 && !promise; k--) { const t = promiseTopics(ss[k]); if (t.length) { promise = ss[k]; topic = t.find((x) => x !== "contact") ?? t[0]; } }
+  if (!promise || !topic) return null;
+  const family = topic === "pickup" ? "探す" : CONFIRM_FAMILY_T.has(topic) ? "確認・連絡・見積・審査" : null;
+  if (!family) return null;
+  const form = ACK_DATE_RE.test(promise) ? "日付つき" : /次第/.test(promise) ? "待ちの形" : "言い切り";
+  const joined = cust.join("\n");
+  const customer = isAckOnlyTurn(cust) ? "了承だけ" : /[?？]|ですか|ますか|でしょうか/.test(joined) ? "質問あり" : /急|早め|今日中|明日|[0-9０-９]+[\/月日時]/.test(joined) ? "急ぎ・日付あり" : "その他の中身";
+  const firstCust = arr[i + 1];
+  const minutes = prev.created_at && firstCust?.created_at ? Math.max(0, Math.round((Date.parse(firstCust.created_at) - Date.parse(prev.created_at)) / 60000)) : null;
+  return { family, form, promise: promise.slice(0, 60), customer, minutes };
+}
+/** ブレインのプロンプトに入れる材料の1行（答えは書かない）。お客様の発言に中身が多い番は出さない */
+export function ackFormMaterialLine(f: AckFormFacts | null, env: Env = process.env): string {
+  if (!f || !ackFormBrainEnabled(env) || f.customer === "その他の中身") return "";
+  const ago = f.minutes == null ? "" : f.minutes < 60 ? `・${f.minutes}分前` : `・約${Math.round(f.minutes / 60)}時間前`;
+  return `【前の約束への了承（材料・turn_contract の ack_form を決める）】前のこちらの約束「${f.promise}」（${f.family}・${f.form}${ago}）／お客様の今の発言: ${f.customer}。
+竹内さんの実送信（75日・了承だけの番）: 探すの約束が言い切り→待ちの形の1文 7・受けだけ 0／探すが待ちの形→待ちの形 2・受けだけ 2／確認・連絡・見積・審査→受けだけ 5・待ちの形 3（割れる）／前の約束に日付が入っている→受けだけ（日付を言い直さない）／お客様が急ぎ・日付・質問を足した→待ちの形が増える。
+→ ack_form に "receive_only"（受けだけ＝約束・日付を言い直さない）か "wait_line"（「〜出来次第ご連絡（お送り）させて頂きますので、何卒…」の短い1文だけ・何を・いつ・日付を並べ直さない・言い切りの約束を書かない）を入れる。`;
+}
+/** 生成の本質の行（ブレインが ack_form を決めた番） */
+export function ackFormContractLine(f: AckForm | null | undefined): string {
+  if (f === "receive_only") return "- 前の約束への了承の返事（ブレインの判断）: 受けだけ（約束・日付・確認の中身を言い直さない・待ちの形の1文も書かない）。";
+  if (f === "wait_line") return "- 前の約束への了承の返事（ブレインの判断）: 待ちの形の短い1文だけ（「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」／探す約束なら「ピックアップ出来次第お送りさせて頂きますので、何卒…」）。何を・いつ・誰から・日付を並べ直さない・言い切りの約束（「〜確認させて頂きます」）を書かない。";
+  return "";
+}
+/** 確認の約束への了承の材料（generate-reply の echoToWaitNote）をブレインの ack_form に合わせる */
+export function confirmAckMaterialFor(promiseLabel: string, f: AckForm | null | undefined, env: Env = process.env): string {
+  if (!f) return confirmAckMaterial(promiseLabel, env);
+  const head = `\n【🔁 直前の約束はお伝え済み（材料・中身は【🧭 この番の本質】が上）】直前にこちらが「${promiseLabel}」を約束済みで、お客様は了承しただけ。`;
+  return f === "wait_line"
+    ? `${head}ブレインの判断は待ちの形の短い1文（「はい！！」＋「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」）。言い切りの約束・何を・いつ・日付を並べ直さない。`
+    : `${head}ブレインの判断は受けだけ（「はい😊！！」＋「気になる点出てきましたら何時でもお気軽にご連絡ください！！」か「何卒よろしくお願い致します！！」）。約束・日付を言い直さない。`;
+}
+/** ピックアップの約束の後の受けの材料（pickupAckMaterial）をブレインの ack_form に合わせる */
+export function pickupAckMaterialFor(f: AckForm): string {
+  return `\n【📎 材料: ピックアップの約束はお伝え済み（中身は【🧭 この番の本質】が上）】
+直前にこちらが物件のピックアップを約束済みで、お客様はその了承・お礼だけ。
+→ 条件の並べ直し・「〜ピックアップしてお送りさせて頂きます」の言い切りの宣言・初期費用の文はもう一度書かない（二重の宣言）
+→ ブレインの判断: ${f === "wait_line" ? "待ちの形の1文「ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」" : "受けだけ（「はい😊！！」＋何卒・待ちの形の1文も書かない）"}
+→ 実際の物件の送付はこの後 AIX「物件ピックアップした」で行う（返信で物件・条件の話を広げない）`;
+}
+/** 往復のセル CP_ACK_WAIT（受けだけ）を、ブレインが wait_line と決めた番だけ待ちの形の1文のセルにする（同じ場面に「書け」と「書くな」を並べない） */
+export function ackFormCell<T extends { id: string; direction: string; mustNot: string[]; example?: string }>(rule: T | null, f: AckForm | null | undefined): T | null {
+  if (!rule || rule.id !== "CP_ACK_WAIT" || f !== "wait_line") return rule;
+  return {
+    ...rule,
+    direction: "直前にこちらが確認・連絡を約束していて、お客様はそれに了承しただけ。ブレインの判断で待ちの形の短い1文を返す: 開口語「はい！！」→「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」。何を・いつ・誰から・日付を並べ直さない・言い切りの約束（「〜確認させて頂きます」）を書かない・まだ送っていない物に「ご査収」を書かない。20〜60字",
+    mustNot: ["言い切りの約束（〜確認させて頂きます）の言い直し", "何を・いつ・日付の並べ直し", "ご査収（まだ送っていない物）", "約束に無い業務語彙（撮影・内覧日程）"],
+    example: "はい！！\n確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！",
+  };
 }

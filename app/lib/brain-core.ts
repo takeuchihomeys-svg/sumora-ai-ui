@@ -21,6 +21,7 @@ import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
+import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
 import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
@@ -2605,6 +2606,14 @@ ${catalogBlockForBrain(brainScene)}
     pickupReady: pickupReadyMaterial,
   })) {
     customerStateBlockText += `\n${zenryokuCandidateMaterial({ sentPropertyCount: sentProps.length, lastSentAt: brainLedger.facts.lastPropertiesSentAt ?? null, exhaustLine: splitExhaustLine, customerText: unrepliedTurn.text ?? "", pickupReady: pickupReadyMaterial })}`;
+  }
+  // 2026-10-13 竹内さん「確認の約束への了承の返事（受けだけか待ちの形の1文か）はブレインに任せる」: 答えでなく竹内さんの使い分けの材料を渡し、
+  //   turn_contract.ack_form に決めさせる（repeat-brain-align.ackFormFacts／ackFormMaterialLine・ACK_FORM_BRAIN=on）
+  if (ackFormBrainEnabled() && !isPostApplyStatus(convStatus)) {
+    try {
+      const ackLine = ackFormMaterialLine(ackFormFacts([...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text, created_at: m.created_at }))));
+      if (ackLine) customerStateBlockText += `\n\n${ackLine}`;
+    } catch (e) { console.warn("[brain-core] ack-form material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
   if (overrideDemoted("closed_ack_wait") || overrideDemoted("viewing_day_ack")) {

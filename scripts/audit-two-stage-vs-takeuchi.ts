@@ -17,7 +17,7 @@ const PROMISE_TEXT = /ピックアップ|確認させ|お送りさせ|作成し|
 
 function routeOf(tc: string | null): "promise" | "aix" | "no_promise" | "unknown" {
   if (!tc) return "unknown";
-  const m = /^(\d+):r(\d+)p(\d+)a(\d+)n(\d+)(:c)?$/.exec(tc);
+  const m = /^(\d+):r(\d+)p(\d+)a(\d+)n(\d+)(:c)?(?::[wo])?$/.exec(tc);
   if (!m) return "unknown";
   if (Number(m[3]) > 0) return "promise";
   if (Number(m[4]) > 0) return "aix";

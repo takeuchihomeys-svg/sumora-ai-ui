@@ -1967,7 +1967,7 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
   //   warning・引用＝本文の文＝書き直しに渡る。戻す REPEAT_BRAIN_ALIGN=off
   if (ctx.turnContract && ctx.turnContract.source === "brain" && ctx.turnContract.alreadySaid.length) {
     const custMsgs = String(ctx.lastCustomerMessage ?? "").split("⁣").map((s) => s.trim()).filter(Boolean);   // 連投は MSG_SEP（\n⁣\n）でつないである
-    const rp = contractAlreadySaidRepeat(text, ctx.turnContract.alreadySaid, { customerAddsContent: !custMsgs.length || !isAckOnlyTurn(custMsgs) });
+    const rp = contractAlreadySaidRepeat(text, ctx.turnContract.alreadySaid, { customerAddsContent: !custMsgs.length || !isAckOnlyTurn(custMsgs), ackForm: ctx.turnContract.ackForm ?? null });
     if (rp) {
       issues.push({
         pass: "rule_check", severity: "warning", code: "BRAIN_ALREADY_SAID",
