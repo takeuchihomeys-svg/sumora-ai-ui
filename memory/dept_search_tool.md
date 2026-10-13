@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-10-13 このお客様に「広げて提案してよい範囲」をブレインの判断で決め、判定（点・👑・保留）に使う（拡張の変更なし）
+竹内さん（10/13）「ブレインとぶつかる変な決まり・昔の制限を根本からブレイン基準に」→ 訂正「広げて検索の部分ではなくて、お客さんに広げて提案できるところの範囲」。
+- **範囲**（`app/lib/proposal-range.ts`・純）: 材料はブレインが毎回書く `conversations.suggested_aix_meta`（customer_mindset の状態・決め手の残り・condition_change_type）＋ requirement_strength（エリア・家賃）＋ 決め手の条件（closing-target の型・気に入った部屋の駅）だけ。段 tight（エリアは必ず・決め手の残りが立地・駅・駅近・エリアの言い直し）／standard（材料なし＝今までの点）／broad（急いでいる・安くしたい・家賃/初期費用/広さ/築年が決め手で別の物件で解く・条件を緩めた・エリアはできれば・気に入った部屋が希望の外）。両方ある時は tight。軸: 家賃が決め手→上限を超えない／築浅が決め手→築年を広げない／広さが決め手→広さ・部屋数を広げない
+- **判定の札**（`proposal-range-codes.ts`・property-brain の opts.proposalRange）: tight の隣の区・4km・遠い＝`PROPOSAL_AREA_OUT` −10 保留／2駅・2km・範囲＝`PROPOSAL_AREA_EDGE` −3／broad の遠い＝`PROPOSAL_AREA_WIDE_OK` +3（AREA_FAR −3 を戻す）・隣の区＝`PROPOSAL_AREA_CLOSE_OK` +2／家賃が決め手の上限超え（RENT_WIDE・SLIGHTLY_OVER）＝`PROPOSAL_RENT_OUT` −12 保留／築浅が決め手の BUILDING_AGE_WIDE＝`PROPOSAL_AGE_OUT` −5。AREA_MUST_NG が付いた物には場所の札を足さない
+- **広さ・間取りの帯**（範囲を渡さなくても既定 on・`PROPOSAL_SIZE_WIDE=off` で旧）: 30㎡以上の希望は −10㎡まで SQM_WIDE（未満は −5㎡・この表の「30㎡以上 → −10㎡まで OK」を判定に入れた）／2LDK 希望の 1LDK は 30㎡以上（広さの希望があればそれ以上）で `FLOOR_PLAN_FEWER_ROOM_WIDE` +5（保留にしない）。広さが決め手のお客様は今まで通り
+- **呼ぶ所**: `proposal-range-server.loadProposalRange`（売上サポの記録 property-pickups-server と拡張の判定 /api/property-brain/judge）。戻す: `PROPOSAL_RANGE=off`
+- **実送信の当て直し**（`scripts/audit-proposal-range.ts`・120日・送った物件×その後の🌟・反応・内覧・申込）: 刺さり 希望の駅 23%／2駅 21%／2km 20%／範囲 24%／隣の区・4km 17%／遠い 16%（点の帯の中は希望どおりと同じくらい）。broad の遠い物件 25部屋 刺さり 28%・隣の区 15部屋 13%。広さ −5〜−10㎡ 31部屋 保留→通す側（刺さり 16%）・2LDK 希望の広い 1LDK 35部屋 保留→通す側（23%・残る保留 16部屋 13%）。前に広げた物件が刺さったかで次は変わらない（20%／19%）＝反応の数は弱い物差し
+- **案（未接続）検索の網**: `netExtrasFor`（点の帯の駅・区を matchArea で選ぶ）。`scripts/audit-widen-scope.ts`（拡張の resolution-core.js を node で動かした今の網）: 点は付くのに網の外 355部屋のうち standard 115・broad 180 を取れる・点の付かない物件（FAR）は 0。拡張（popup・background・resolution-core）の変更と配布が要るので竹内さんの判断待ち
+
 ## 2026-10-07 v2.5.88 AIX【物件を探す】を送ったら 📌 会話から物件検索 に出す＋印のお客様を開いたら決め手の条件を一時調整の欄へ（**拡張の再読み込み必須**・サーバーはデプロイが要る・DB の変更なし＝表 property_search_focus は本番に作成済み・未コミット＝commit は親）
 竹内さん（10/07）「それにする　設計知見と協力しておこなう」: AIX【物件を探す】（property_search・c714b3d8 で aix/action に分岐を新設）を送った時、拡張の自動検索に積むのではなく（自動検索は 10/01 から停止中）、v2.5.86 の印（property_search_focus）を置いて拡張の一覧の一番上「📌 会話から物件検索」に出す。決め手の条件（closing-target）が拡張の案内の条件に載るか確かめる（載らないなら載せる）
 - **印を置く所**: `/api/log-aix-usage`（AIX を送った後に画面が1回だけ呼ぶ）で aix_type=property_search・予約送信でない時に waitUntil で `placeSearchFocus`（`app/lib/search-focus-server.ts`・device="aix"・by="AIX物件を探す"・時刻は送った時刻）。**2分以内に置かれた印があれば置かない**（🔍 を押した直後の送信・記録の2回目＝`shouldPlaceAutoFocus`）。失敗しても送信・記録は止めない（ログ tag `log-aix-usage:search-focus`）。aix/action・AixModal・send-line-message は触っていない。※予約送信は実際に送られた時に印が付かない（今は対象外）

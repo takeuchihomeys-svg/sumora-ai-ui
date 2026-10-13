@@ -40,6 +40,7 @@ import { parseMoveInWant, type MoveInWant } from "./move-in-want";
 import { strengthCodes, readRequirementStrengths, normalizeRequirementStrengths, type RequirementStrengths } from "./requirement-strength";
 // 2026-10-07 決め手の条件（気に入った部屋＋あと一つの不満から作る次の物件の像・closing-target.ts）
 import { closingTargetCodes, CLOSING_POINTS, CLOSING_JA, type ClosingTargetJudgeInput } from "./closing-target";
+import { proposalRangeCodes, wideSqmMargin, proposalSizeWideEnabled, FEWER_ROOM_LDK_MIN_SQM, PROPOSAL_POINTS, PROPOSAL_JA, PROPOSAL_HOLD_CODES, PROPOSAL_POSITIVE_CODES, type ProposalRange } from "./proposal-range-codes";
 import { hookLeanCodesOf, HOOK_LEAN_CODES, HOOK_FEATURE_JA, HOOK_FEATURE_KEYS, HOOK_BONUS, hookLeanCode, type HookLeanJudgeInput } from "./hook-lean-core";
 
 /** お客様の行の要望の強さ（保存の値＝LINE から webhook が書いた物を正に、条件の欄の文から読めた物で埋める） */
@@ -517,6 +518,8 @@ export const REASON_JA: Record<string, string> = {
   // 2026-09-25 任務B（実際の🌟で「間取り不一致」の保留が 35件・うち希望より大きい間取り 5人9件・2DK↔1LDK 4人5件）
   FLOOR_PLAN_SAME_CLASS: "間取りが希望と同じ広さの級（2DK↔1LDK）",
   FLOOR_PLAN_LARGER: "間取りが希望より広い",
+  // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」: 部屋数が1つ少ない LDK でも 30㎡以上（2LDK 希望の広い 1LDK）
+  FLOOR_PLAN_FEWER_ROOM_WIDE: "部屋数は1つ少ないが広い LDK（広げて提案してよい）",
   WALK_OK: "徒歩は希望内",
   WALK_SLIGHTLY_OVER: "徒歩が希望を少し超過",
   WALK_OVER: "徒歩が希望の1.5倍超",
@@ -584,7 +587,7 @@ export const REASON_JA: Record<string, string> = {
   FLOOR_PLAN_ALT_MATCH: "間取りが「も可」の型に一致（本命ではない）",
   SQM_OK: "広さは希望以上",
   SQM_SLIGHTLY_UNDER: "広さが希望を少し下回る（9割以上）",
-  SQM_WIDE: "広さが広げた検索の幅の中（希望−5㎡まで）",
+  SQM_WIDE: "広さが広げて提案してよい幅の中（30㎡以上の希望は−10㎡・未満は−5㎡まで）",
   SQM_UNDER: "広さが希望の9割未満",
   SQM_UNKNOWN: "要確認: 広さ",
   // 2026-09-27 竹内「7畳以上は、帖数が資料に書かれていなかったら間取り図から読み取る」（room-jo.ts）
@@ -655,6 +658,8 @@ export const REASON_JA: Record<string, string> = {
   ...Object.fromEntries(HOOK_FEATURE_KEYS.map((f) => [hookLeanCode(f), `刺さった新着に多い特徴（${HOOK_FEATURE_JA[f]}・この型のお客様）`])),
   // 2026-10-07 決め手の条件（closing-target.ts）
   ...CLOSING_JA,
+  // 2026-10-13 このお客様に広げて提案してよい範囲（proposal-range-codes.ts）
+  ...PROPOSAL_JA,
 };
 
 /**
@@ -926,6 +931,9 @@ export const REASON_POINTS: Record<string, number> = {
   ...Object.fromEntries(HOOK_LEAN_CODES.map((c) => [c, HOOK_BONUS.bonusEach])),
   // 2026-10-07 決め手の条件に合う +12・一番の点だけ合う +6（加点だけ・推測の像なので外れの減点はしない・closing-target.CLOSING_POINTS）
   ...CLOSING_POINTS,
+  // 2026-10-13 このお客様に広げて提案してよい範囲（proposal-range-codes.PROPOSAL_POINTS）・部屋数が1つ少ない広い LDK（FLOOR_PLAN_LARGER と同じ +5）
+  ...PROPOSAL_POINTS,
+  FLOOR_PLAN_FEWER_ROOM_WIDE: 5,
 };
 
 /** 設備 ○ の点（案B: 必須 +5／普通 +3／できれば +2・合計 +15 まで）。札は EQUIP_<KEY>_MUST_OK／EQUIP_<KEY>_OK／EQUIP_<KEY>_SOFT_OK */
@@ -1294,6 +1302,19 @@ export function isLargerPlan(want: FloorPlanWant, plan: string | null | undefine
 }
 
 /**
+ * 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」: 2LDK 希望（いちばん少ない部屋数が2）に 1LDK で、広さが 30㎡以上（広さの希望があればそれ以上）。
+ *   実送信（120日）の 2LDK 希望の 1LDK 45部屋: 30㎡以上 39部屋のうち刺さり 13（33%）・30㎡未満 6部屋 1。広さの希望を書いた人は 0人だった。
+ *   3LDK 希望の 2LDK・4LDK 希望の 3LDK は実送信が少なく刺さりも無い（10部屋 1）ので当てない（2→1 だけ）
+ */
+export function isFewerRoomWideLdk(want: FloorPlanWant, plan: string | null | undefined, areaSqm: number | null, sqmMin: number | null): boolean {
+  const p = normalizeFloorPlanToken(plan);
+  if (!p || want.any || p !== "1LDK" || areaSqm == null || !Number.isFinite(areaSqm)) return false;
+  const rooms = [...want.plans.map((w) => parseInt(w[0], 10)), ...(want.minRank != null ? [Math.floor(want.minRank / 10)] : [])].filter((n) => Number.isFinite(n));
+  if (!rooms.length || Math.min(...rooms) !== 2) return false;
+  return areaSqm >= Math.max(FEWER_ROOM_LDK_MIN_SQM, sqmMin ?? 0);
+}
+
+/**
  * 2026-09-30 竹内「なんで 2LDK でピックアップするとお客さんに伝えているのに、1K でピックアップしているのか」（c さん・2LDK／14万）:
  *   検索に間取りが入らないまま取れた 1K・1DK 50件が「間取りが希望と違う（保留 −15）」で売上サポに並び、その中の一番に 👑 と
  *   「この物件を AIX物件オススメで送る」が付いた。希望のどの型よりも部屋数が少なく、LDK でもない（K・DK・R）物件は外す候補にする。
@@ -1599,7 +1620,7 @@ const FIT_TABLE: Record<string, [string, FitVerdict]> = {
   RENT_OK: ["家賃", "ok"], RENT_UNDER_MIN: ["家賃", "ng"], RENT_WIDE: ["家賃", "wide"], RENT_SLIGHTLY_OVER: ["家賃", "soft_ng"], RENT_OVER_110: ["家賃", "ng"], RENT_OVER_130: ["家賃", "ng"], RENT_UNKNOWN: ["家賃", "unread"],
   ZERO_ZERO_MATCH: ["初期費用（敷礼0）", "ok"], INITIAL_COST_NOT_ZERO: ["初期費用（敷礼0）", "ng"], INITIAL_COST_NOT_ZERO_SOFT: ["初期費用（敷礼0）", "ng"], INITIAL_COST_OVER_LIMIT: ["初期費用の上限", "ng"],
   FLOOR_PLAN_MATCH: ["間取り", "ok"], FLOOR_PLAN_ALT_MATCH: ["間取り", "ok"], FLOOR_PLAN_WIDE: ["間取り", "wide"], FLOOR_PLAN_NEAR: ["間取り", "wide"],
-  FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"], FLOOR_PLAN_TOO_SMALL: ["間取り", "ng"],
+  FLOOR_PLAN_SAME_CLASS: ["間取り", "wide"], FLOOR_PLAN_LARGER: ["間取り", "wide"], FLOOR_PLAN_FEWER_ROOM_WIDE: ["間取り", "wide"], FLOOR_PLAN_MISMATCH: ["間取り", "ng"], FLOOR_PLAN_TOO_SMALL: ["間取り", "ng"],
   SQM_OK: ["広さ", "ok"], SQM_SLIGHTLY_UNDER: ["広さ", "wide"], SQM_WIDE: ["広さ", "wide"], SQM_UNDER: ["広さ", "ng"], SQM_UNKNOWN: ["広さ", "unread"],
   ROOM_JO_OK: ["洋室の帖数", "ok"], ROOM_JO_NG: ["洋室の帖数", "ng"], ROOM_JO_SOFT_NG: ["洋室の帖数", "ng"], ROOM_JO_IMG_NG: ["洋室の帖数", "ng"], ROOM_JO_UNKNOWN: ["洋室の帖数", "unread"],
   LDK_JO_OK: ["リビングの帖数", "ok"], LDK_JO_NG: ["リビングの帖数", "ng"], LDK_JO_UNKNOWN: ["リビングの帖数", "unread"],
@@ -1987,6 +2008,12 @@ export type JudgeOptions = {
    *   保留・外す候補には付けない（hookLean と同じ）。equipmentText は資料の文字層（設備を読む）。渡さなければ今まで通り（CLOSING_TARGET_MODE=off は呼ぶ側が null）
    */
   closingTarget?: ClosingTargetJudgeInput | null;
+  /**
+   * 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」: このお客様に広げて提案してよい範囲（proposal-range-server.loadProposalRange＝
+   *   ブレインの判断 customer_mindset・condition_change_type と requirement_strength・決め手の条件から）。渡すと PROPOSAL_* の札（場所・家賃・築年）を足し、
+   *   広さ・間取りの帯（sizeWide）もこれで決める。渡さなければ場所・家賃・築年は今まで通り・広さと間取りは既定の帯（PROPOSAL_SIZE_WIDE=off で旧）
+   */
+  proposalRange?: ProposalRange | null;
 };
 
 /** 「送ってきた家賃帯より高め」を見るのに要る送付の件数（1〜2件の中央値は1件の家賃そのもの） */
@@ -2077,6 +2104,8 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
   else if (isLargerPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_LARGER", reasonPoints("FLOOR_PLAN_LARGER"));
   // 2026-09-30 希望より部屋数が少ない K／DK／R（2LDK 希望に 1K・1DK・3LDK 希望に 2DK）は外す候補（👑・既定の選び方に入れない）
   else if (fpm === "mismatch" && isTooSmallPlan(profile.floorPlanWant, facts.floorPlan)) add("FLOOR_PLAN_TOO_SMALL", reasonPoints("FLOOR_PLAN_TOO_SMALL"), "drop");
+  // 2026-10-13 2LDK 希望の広い 1LDK（30㎡以上・広さの希望があればそれ以上）は保留にしない（広さが決め手のお客様は今まで通り保留）
+  else if (fpm === "mismatch" && (opts.proposalRange?.sizeWide ?? true) && proposalSizeWideEnabled() && isFewerRoomWideLdk(profile.floorPlanWant, facts.floorPlan, facts.areaSqm ?? null, profile.sqmMin ?? null)) add("FLOOR_PLAN_FEWER_ROOM_WIDE", reasonPoints("FLOOR_PLAN_FEWER_ROOM_WIDE"));
   else if (fpm === "mismatch") add("FLOOR_PLAN_MISMATCH", -15, "hold");
   else if (facts.floorPlan == null) missing.push("floor_plan");
 
@@ -2087,7 +2116,9 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     else if (a >= profile.sqmMin) add("SQM_OK", reasonPoints("SQM_OK"));
     else if (a >= profile.sqmMin * 0.9) add("SQM_SLIGHTLY_UNDER", 0);
     // 広げた検索の広さ（−5㎡まで）は情報の札（保留にしない）
-    else if (a >= profile.sqmMin - WIDE_SQM) add("SQM_WIDE", reasonPoints("SQM_WIDE"));
+    // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」: 30㎡以上の希望は −10㎡まで提案してよい（dept_search_tool.md の決まり・
+    //   実送信 −5〜−10㎡ 32部屋の刺さり 19%＝希望以上 17%）。広さが決め手のお客様（提案の範囲 sizeWide=false）は今まで通り −5㎡。PROPOSAL_SIZE_WIDE=off で旧
+    else if (a >= profile.sqmMin - wideSqmMargin(profile.sqmMin, opts.proposalRange?.sizeWide ?? true)) add("SQM_WIDE", reasonPoints("SQM_WIDE"));
     else add("SQM_UNDER", reasonPoints("SQM_UNDER"), "hold");
   }
 
@@ -2217,6 +2248,12 @@ export function judgeProperty(facts: PropertyFacts, profile: CustomerProfile, in
     if (codes.includes(code)) continue;
     add(code, reasonPoints(code), DROP_REASON_CODES.has(code) ? "drop" : isHoldCode(code) ? "hold" : undefined);
   }
+  // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」: このお客様に広げて提案してよい範囲（ブレインの判断から・proposal-range-codes）。
+  //   場所をはっきり言っている人の隣の区・遠い物件＝保留／広げてよい人の遠い物件＝−3 を戻す／家賃が決め手の人の上限超え＝保留／築年が決め手の人の築年の帯＝−5
+  for (const code of proposalRangeCodes(opts.proposalRange ?? null, codes)) {
+    if (codes.includes(code)) continue;
+    add(code, reasonPoints(code), PROPOSAL_HOLD_CODES.has(code) ? "hold" : undefined);
+  }
 
   // 上限は SCORE_MAX（200・旧 130・その前は 100）。条件が全部合う物件は AD なしで 150 台に届き、130 で切ると AD の差（1ヶ月／2ヶ月／3ヶ月）が消えるため。
   //   100 を超える分は「AD の上乗せ」＝報酬の差がそのまま順位に出る（竹内 2026-09-24）
@@ -2326,13 +2363,15 @@ function isNewPositive(c: string): boolean {
     || c.startsWith("HOOK_LEAN_")
     // 2026-10-07 決め手の条件に合う
     || c === "CLOSING_FIT" || c === "CLOSING_MAIN_OK" || c === "CLOSING_NEAR_FAVORITE"
+    // 2026-10-13 広げて提案してよい範囲の中（このお客様）・部屋数が1つ少ない広い LDK
+    || PROPOSAL_POSITIVE_CODES.has(c) || c === "FLOOR_PLAN_FEWER_ROOM_WIDE"
     || /^(?:RENT_WIDE|FLOOR_PLAN_WIDE|BUILDING_AGE_WIDE|AREA_STATION_WIDE|AREA_STATION_2STOPS|AREA_WARD_WIDE)$/.test(c)
     // 案B（書いた条件の重み・全部合う）
     || /^(?:ZERO_ZERO_INFERRED|AGE_W5|AGE_W10|AGE_W15|AGE_COL_W5|AGE_COL_W10|WALK_NEAR_W5|WALK_NEAR_W7|WALK_TEXT_OK|RENT_CHEAP_W80|RENT_CHEAP_W90|RENT_CHEAP_W95)(?:_MUST|_SOFT)?$|^FIT_(?:ALL|ALL_HALF|ONE_MISS|ONE_MISS_HALF)$/.test(c);
 }
 /** 2026-09-25 に足した情報の札（減点するが保留にしない物・理由の日本語で保留の後に出す） */
 function isNewInfo(c: string): boolean {
-  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AD_ASSUMED_BUILDING|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR|CLOSING_MAIN_MISS)$/.test(c);
+  return /^(?:RENT_BELOW_MIN|RENT_NEAR_MIN|RENT_UNDER_MIN_SOFT|RENT_BAND_MID|RENT_BAND_LOWER|RENT_BAND_LOW|RENT_TARGET_MID|RENT_TARGET_FAR|AREA_FAR|AREA_ANCHOR_FAR|AREA_ANCHOR_TAXI_OVER|AREA_DIRECTION_NG|COMMUTE_OVER|SQM_UNKNOWN|ROOM_JO_UNKNOWN|AREA_UNKNOWN|COMMUTE_UNKNOWN|SQM_WIDE|ALREADY_SENT_OTHER_ROOM|AD_ASSUMED_AGENT|AD_ASSUMED_BUILDING|AGE_W_OLD|WALK_TEXT_OVER|WALK_TEXT_FAR|CLOSING_MAIN_MISS|PROPOSAL_AREA_EDGE|PROPOSAL_AGE_OUT)$/.test(c);
 }
 
 /** judgeProperty で「外す（drop）」「保留（hold）」にするコード（IMAGE_*_NG・EQUIP_*_NG は hold） */
@@ -2357,6 +2396,8 @@ export const HOLD_REASON_CODES = new Set([
   "RENT_UNDER_MIN",
   // 2026-10-06 絶対の入居時期に間に合うか分からない（スタッフが入居可能日を確かめる）・絶対のエリアの外
   "MOVE_IN_UNKNOWN_MUST", "AREA_MUST_NG",
+  // 2026-10-13 このお客様に広げて提案する範囲の外（場所をはっきり言っている人の隣の区・遠い物件／家賃が決め手の人の上限超え）
+  ...PROPOSAL_HOLD_CODES,
 ]);
 const isHoldCode = (c: string) => HOLD_REASON_CODES.has(c) || /^(?:IMAGE|EQUIP|CONDITION)_.*_NG$/.test(c);
 

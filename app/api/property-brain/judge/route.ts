@@ -133,7 +133,10 @@ export async function POST(req: NextRequest) {
     // 2026-10-07 決め手の条件（会話の「あと一つ」から作る次の物件の像・closing-target）。像に合う物件を上げる（加点だけ・CLOSING_TARGET_MODE=off で止める）
     const { loadClosingTargetState } = await import("@/app/lib/closing-target-server");
     const closing = await loadClosingTargetState(supabase, { propertyCustomerId: customerId, conversationId: body.conversation_id ?? null });
-    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target } : null }));
+    // 2026-10-13 このお客様に広げて提案してよい範囲（ブレインの判断から・売上サポと同じ値・PROPOSAL_RANGE=off で止める）
+    const { loadProposalRange } = await import("@/app/lib/proposal-range-server");
+    const proposalRange = (await loadProposalRange(supabase, { propertyCustomerId: customerId, conversationId: body.conversation_id ?? null }, { closing })).range;
+    let judgments: Judgment[] = items.map((it, i) => judgeProperty(parsePropertyFacts(it.summary, it.data ?? null), profile, i, { equipment: matchFromSummary(it.summary, equipWants), prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target } : null, proposalRange }));
 
     // ── 画像でしか分からない有無（要る時だけ・5枚まで・時間で切る） ──
     let imageRead = 0, imageOk = 0, imageFailed = 0;

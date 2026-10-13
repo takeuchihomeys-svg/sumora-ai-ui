@@ -216,6 +216,9 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
     // 2026-10-07 決め手の条件（会話の「あと一つ」から作る次の物件の像・closing-target）。資料の文字層で設備も見る（加点だけ・CLOSING_TARGET_MODE=off で止める）
     const { loadClosingTargetState } = await import("@/app/lib/closing-target-server");
     const closing = await loadClosingTargetState(supabase, { propertyCustomerId: input.propertyCustomerId, conversationId });
+    // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」: このお客様に広げて提案してよい範囲（ブレインの判断・要望の強さ・決め手の条件から・PROPOSAL_RANGE=off で止める）
+    const { loadProposalRange } = await import("@/app/lib/proposal-range-server");
+    const proposalRange = (await loadProposalRange(supabase, { propertyCustomerId: input.propertyCustomerId, conversationId }, { closing })).range;
     // 2026-10-06 重みの版（scoring_weights の active）を判定に入れる（版が無い間は定数のまま・SCORING_WEIGHTS_MODE=off で止める・scoring-learning-server）
     const { applyScoringWeightsForJudge } = await import("@/app/lib/scoring-learning-server");
     await applyScoringWeightsForJudge(supabase);
@@ -352,7 +355,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const lc = locOf.get(i);
       it.location = lc?.saved ?? null;
       if (profile && facts) {
-        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: it.pdfText ?? null } : null }); } catch { it.judgment = null; }
+        try { it.judgment = judgeProperty(facts, profile, i, { equipment: e?.match ?? null, terms: tm?.t ?? null, locationCodes: lc?.codes ?? null, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: it.pdfText ?? null } : null, proposalRange }); } catch { it.judgment = null; }
       }
       if (tm && tm.t.hasText) {
         try { it.terms = buildPickupTerms(tm.t, profile, { equipment: e?.match ?? null, filled: tm.filled }); } catch { it.terms = null; }
@@ -385,7 +388,7 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
         if (facts.areaSqm == null && text) { const a = parseListingText(text).areaSqm; if (a != null) facts.areaSqm = a; }
         const dl = locateItem(input.summaries[d.index], text, loaded?.location ?? null);
         let judgment: Judgment | null = null;
-        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: text } : null }); } catch { judgment = null; }
+        try { judgment = judgeProperty(facts, profile, d.index, { equipment: eqOf.get(`d${d.index}`)?.match ?? null, terms: dt, locationCodes: dl.codes, searchMode, prefWeight: prefW, hookLean, closingTarget: closing ? { target: closing.target, equipmentText: text } : null, proposalRange }); } catch { judgment = null; }
         droppedAd.push({ pdfUrl, judgment });
       }
     }
