@@ -67,3 +67,27 @@ export function compactDemoted(list: DemotedOverride[]): Array<{ f: OverrideFami
   if (list.length === 0) return undefined;
   return list.slice(0, 8).map((d) => ({ f: d.family, src: d.src, would: d.would, brain: d.brain }));
 }
+
+// ─── 4-3: 2段の約束（物件の AIX → ピックアップの約束の返信）───────────────────────────
+// 2段（two-stage.ts）の pickup・pickup_unless_ack は、ブレインが物件の AIX を選んでも約束の返信に書き換えていた（30日 rule:two_stage_promise(pickup_unless_ack) 29番）。
+//   材料: 送れる物件が手元にあるか（売上サポの新しい候補＝pickupReady）を LLM の前にプロンプトへ渡す（pickupReadyMaterialLine）。
+//   ブレインが同じ出力の turn_contract でその依頼を route=aix（約束でなく AIX で直接）と言い、送れる物件があり、約束の項目が無い時だけ上書きしない。
+//   ブレインの turn_contract が無い・約束と言っている・送れる物件が無い時は今まで通り約束の返信（安全側）。
+
+/** プロンプトに入れる材料の行（物件の AIX を直接出せるか） */
+export function pickupReadyMaterialLine(ready: boolean): string {
+  return ready
+    ? "【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補がある＝物件の AIX（物件ピックアップした・1件特にオススメ）を直接出せる。ただし今のお客様の発言が条件の言い直し・質問・ご事情なら、先に答えてピックアップの約束（turn_contract の該当の route は promise）でもよい。どちらかを aix と turn_contract で同じに書く"
+    : "【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補は無い＝物件の AIX を選ぶ番でも、まずピックアップしてお送りする約束の返信（turn_contract の該当の route は promise・aix は物件の AIX のままでよい＝約束の後で AIX）";
+}
+
+const PROPERTY_AIX_RE = /^(?:property_send|property_recommendation|property_search)$/;
+/** ブレインの turn_contract が、物件の依頼を約束でなく AIX で直接と言っているか（route=aix の物件の項目があり、探す・送る約束の項目が無い） */
+export function brainContractSaysDirectPropertyAix(raw: unknown, finalAix: string | null): boolean {
+  if (!finalAix || !PROPERTY_AIX_RE.test(finalAix)) return false;
+  const asks = raw && typeof raw === "object" && Array.isArray((raw as { asks?: unknown }).asks) ? (raw as { asks: Array<Record<string, unknown>> }).asks : null;
+  if (!asks || asks.length === 0) return false;
+  const direct = asks.some((a) => a?.route === "aix" && PROPERTY_AIX_RE.test(String(a?.aix ?? "")));
+  const promised = asks.some((a) => a?.route === "promise" && /ピックアップ|探|お送り|物件|pickup|property/.test(`${a?.answer ?? ""} ${a?.topic ?? ""} ${a?.aix ?? ""}`));
+  return direct && !promised;
+}

@@ -21,7 +21,7 @@ import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
-import { applyOverride, compactDemoted, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -2557,6 +2557,14 @@ ${catalogBlockForBrain(brainScene)}
     const ptNote = await Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]);
     if (ptNote) { customerStateBlockText += `\n\n${ptNote}`; propertyThreadNoteText = ptNote; }
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-10-13（ブレインの使い残し 4-3）: 送れる物件が手元にあるか（2段の約束をブレインが決める材料・申込以降は出さない）
+  if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
+    try {
+      const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
+      const readyNow = freshPickupReady((pendNow ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
+      customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow)}`;
+    } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
   // 2026-10-13 P0「判断はすべてブレイン基準」: 確認事項の候補（request-ledger の網）と、ブレインが読んだ最後の通の時刻（出力の request_status に使う）
@@ -3795,6 +3803,13 @@ ${history}`;
         sceneSignalCheckPattern = null;
         decisionSource = "rule:viewing_vacating_date_known";
       } else viewingDateAnswer = null;
+      // 2026-10-13（ブレインの使い残し 4-3）: 物件の AIX の2段（pickup・pickup_unless_ack）は、ブレインが同じ出力の turn_contract で
+      //   「約束でなく AIX で直接」と言い、送れる物件がある時は上書きしない（食い違いはログ）。それ以外は今まで通り約束の返信。戻す BRAIN_DEMOTE_TWO_STAGE=off
+      if (twoStage && twoStage.kind === "pickup" && pickupReadyForChoice === true
+        && brainContractSaysDirectPropertyAix((parsed as { turn_contract?: unknown }).turn_contract, finalAix)
+        && !applyOverride(demotedOverrides, "two_stage_promise", twoStage.source, null, finalAix)) {
+        twoStage = null;
+      }
       if (twoStage) {
         console.log(JSON.stringify({ tag: "brain:two-stage", conversationId, from: finalAix, src: decisionSource, kind: twoStage.kind }));
         finalAix = null;
