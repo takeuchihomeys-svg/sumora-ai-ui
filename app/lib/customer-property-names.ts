@@ -118,3 +118,96 @@ export function customerSharedPropertyNames(
   }
   return out;
 }
+
+// ── 持ち込みの後の「名前だけ」の発言（2026-10-13 竹内・未桜事例）──
+// 「動画の URL が送られてきたけど、それが物件の URL で『レジュールアッシュ難波MINAMI』と把握できていない。LINE の内容で把握できているはず」:
+//   未桜 10/8 14:14 TikTok の動画の URL＋「ここはもう埋まっちゃてますか？」→ こちら「特定出来ませんでした…マンション名など頂けますと」
+//   → 10/9 12:12 お客様「レジュールアッシュ難波MINAMIです🙇🏻‍♀️」→ こちら「レジュールアッシュ難波MINAMIの件、かしこまりました！！募集状況確認させて頂きます」。
+//   旧: TikTok は物件でないリンク（NON_PROPERTY_URL_RE）・名前だけの発言は URL も画像も無い → どの台帳（property-thread・customer-state・AIX の候補）にも
+//   物件として残らず、状況の1行は前の「見積送付済み Alivis新町 802号室」のまま・【必ず】は物件名なしだった。
+// 決めた事: お客様が物件を持ち込んだ（URL＝動画・SNS も含む／画像・動画）後 72 時間以内に、お客様が物件名だけ（「〇〇です」「〇〇 302号室です」）を
+//   送ってきたら、それを持ち込みの物件の名前の**候補**にする（決定論は候補の網・どの物件の話かはブレインが文を読んで決める＝P0 9eb6aa9c）。
+//   名前らしさは「カタカナ3字以上・英字3字以上・建物の語（マンション・ハイツ…）」のどれか。駅・地名だけ（「梅田です」）・質問・お礼・条件は候補にしない。
+//   線は scripts/audit-customer-name-after-share.ts（60日の実データで、こちらの次の返事・AIX がその名前で受けたか）で決めた。
+// 戻す: CUSTOMER_NAME_AFTER_SHARE=off
+export function customerNameAfterShareEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.CUSTOMER_NAME_AFTER_SHARE ?? "").toLowerCase() !== "off";
+}
+
+/** お客様が物件を持ち込んだ発言（URL＝ポータル・動画・SNS／画像・動画） */
+const SHARE_RE = /https?:\/\/|^\s*\[(?:画像|動画)\]/;
+/** 物件ではない画像（本人確認書類・振込の控え等の読み取りの見出し）。60日の監査: 本人確認書類の後の申込の物件名を「持ち込み」に読んだ（394b4cbc） */
+const NOT_PROPERTY_IMAGE_RE = /^\s*\[画像\]\s*(?:【物件以外|本人確認書類|免許証|マイナンバー|保険証|在留カード|給与明細|源泉徴収|振込|口座)/;
+/** 名前だけの発言の語尾（です・になります・という物件です 等） */
+const NAME_TAIL_RE = /(?:という|って|の)?(?:物件|マンション|お部屋|部屋|建物)?(?:の?名前)?(?:です|でした|になります|になってます|みたいです|だと思います|と思います|ですね|ですよ)?$/;
+/** 前置き（物件名は・名前は） */
+const NAME_HEAD_RE = /^(?:物件名|マンション名|建物名|名前|物件|お部屋|こちら|ここ|それ)(?:は|が|：|:)\s*/;
+/** 名前ではない（質問・お礼・了承・条件・地名の語） */
+const NOT_NAME_WORD_RE = /ます|ません|ください|下さい|でしょう|ですか|お願い|ありがと|了解|分かり|わかり|承知|大丈夫|すみません|はい|いいえ|探し|希望|以内|以下|以上|万円|[0-9０-９]+\s*万|円|駅|徒歩|沿線|エリア|内覧|内見|空い|空き|募集|費用|家賃|見積|いつ|どこ|何|どれ|どう|気にな|良い|いい|好き|無理|厳し|検討|職場|勤務|会社|学校|彼|同棲|入居|引越|引っ越|審査|保証|[？?。、,]/;
+/** 名前らしさ（カタカナ3字以上・英字3字以上・建物の語） */
+const BUILDING_WORD_RE = /マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|荘|ビル|タワー|コート|パレス|ヴィラ|ハウス|ガーデン|プラザ|ヒルズ/;
+const NAME_SHAPE_RE = new RegExp(`[ァ-ヶー]{3,}|[A-Za-zＡ-Ｚａ-ｚ][A-Za-zＡ-Ｚａ-ｚ.．]{2,}|${BUILDING_WORD_RE.source}`);
+const ROOM_TAIL_RE = /\s*([0-9０-９]{2,4})\s*(?:号室|号)?$/;
+/** 絵文字・記号（ZWJ・肌の色・異体字の選択子も） */
+const EMOJI_RE = /[\p{Extended_Pictographic}‍️\u{1F3FB}-\u{1F3FF}]/gu;
+
+/**
+ * お客様の1通が「物件名だけ」か。名前（建物）と号室を返す。名前でなければ null。
+ *   例: 「レジュールアッシュ難波MINAMIです🙇🏻‍♀️」→ { name: "レジュールアッシュ難波MINAMI", room: null }
+ *       「セレニテ本町グラン 1203号室です」→ { name: "セレニテ本町グラン", room: "1203" }
+ *       「梅田です」「ありがとうございます」「ここ空いてますか？」→ null
+ */
+export function nameOnlyMessage(text: string | null | undefined): { name: string; room: string | null } | null {
+  const raw = String(text ?? "").replace(EMOJI_RE, "").trim();
+  if (!raw || raw.includes("\n") || /https?:\/\/|^\s*\[/.test(raw)) return null;
+  let t = raw.replace(/[!！~〜～…\s]+$/u, "").trim();
+  t = t.replace(NAME_HEAD_RE, "").replace(NAME_TAIL_RE, "").trim();
+  let room: string | null = null;
+  const rm = t.match(ROOM_TAIL_RE);
+  if (rm && rm.index != null && rm.index > 0) { room = rm[1].normalize("NFKC"); t = t.slice(0, rm.index).trim(); }
+  t = t.replace(NAME_TAIL_RE, "").replace(/[、,の]$/, "").trim();
+  const len = Array.from(t).length;
+  if (len < 3 || len > 40) return null;
+  if (NOT_NAME_WORD_RE.test(t) || /[@＠]/.test(t)) return null;
+  if (!NAME_SHAPE_RE.test(t)) return null;
+  // 平仮名の混ざる文は名前ではない（60日の監査: 「ギリギリにすみせん」「旦那の方からLINE来る」「クリエオーレの方は」が名前に読まれた）。
+  //   平仮名を含む建物名（「さくらハイツ」）は建物の語があり平仮名4字以下の時だけ
+  const hira = (t.match(/[ぁ-ゖ]/g) ?? []).length;
+  if (hira > 0 && !(hira <= 4 && BUILDING_WORD_RE.test(t))) return null;
+  return { name: t, room };
+}
+
+export type NamedAfterShare = CustomerPropertyCandidate & {
+  /** 持ち込みの発言の時刻（URL・画像） */
+  sharedAt: string | null;
+  /** 号室（名前に付いていた時） */
+  room: string | null;
+};
+
+/**
+ * 持ち込み（URL・画像・動画）の後 72 時間以内にお客様が名前だけを送った発言 → 持ち込みの物件の名前の候補（古い順）。
+ *   その間にお客様の別の持ち込みがあれば、その新しい持ち込みを起点にする（名前は一番新しい持ち込みに結ぶ）。
+ *   url は起点の持ち込みの URL（画像なら null）。
+ */
+export function customerNamedAfterShare(
+  messagesOldestFirst: ReadonlyArray<Msg>,
+  opts: { windowHours?: number; env?: Record<string, string | undefined> } = {},
+): NamedAfterShare[] {
+  if (!customerNameAfterShareEnabled(opts.env ?? process.env)) return [];
+  const win = (opts.windowHours ?? 72) * 3600_000;
+  const out: NamedAfterShare[] = [];
+  let share: { at: string | null; t: number; url: string | null } | null = null;
+  for (const m of messagesOldestFirst) {
+    if (m.sender !== "customer") continue;
+    const text = String(m.text ?? "");
+    const at = m.createdAt ?? m.created_at ?? m.rawCreatedAt ?? null;
+    const t = at ? Date.parse(at) : NaN;
+    if (NOT_PROPERTY_IMAGE_RE.test(text)) { share = null; continue; }
+    if (SHARE_RE.test(text)) { share ={ at, t, url: (text.match(PORTAL_URL_RE) ?? [])[0] ?? null }; continue; }
+    if (!share || !Number.isFinite(t) || !Number.isFinite(share.t) || t < share.t || t - share.t > win) continue;
+    const n = nameOnlyMessage(text);
+    if (!n) continue;
+    out.push({ name: n.name, label: n.room ? `${n.name} ${n.room}号室` : n.name, url: share.url, at, sharedAt: share.at, room: n.room });
+  }
+  return out;
+}

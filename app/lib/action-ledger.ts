@@ -81,6 +81,8 @@ export interface LedgerEntry {
     objectFrom?: "staff" | "customer";
     /** confirmation_promised: お客様の質問の文（AIX の画面で何を確認したかの手がかり） */
     question?: string | null;
+    /** confirmation_promised: 約束の通にこちらが書いた物件名（【必ず】の行に残す・confirmPropertyNameOf。2026-10-13 未桜事例） */
+    propertyName?: string | null;
     taskStatus?: string | null;
     /** meeting_place_sent: 案内した内覧の待ち合わせ（日付 M/D・時刻・場所）。AIX 待ち合わせ場所の本文・スタッフ本文から */
     appointment?: ViewingAppointment | null;
@@ -421,6 +423,39 @@ function promiseSentenceText(s: string | null | undefined): string | null {
   const t = (s ?? '').replace(/[！!。、\s]+$/g, '').replace(/[\p{Extended_Pictographic}️]/gu, '').trim();
   return t ? t.slice(0, 80) : null;
 }
+/**
+ * 確認の約束の通にこちらが書いた物件名（「レジュールアッシュ難波MINAMIの件、かしこまりました…募集状況確認させて頂きます」
+ * 「お送り頂きましたＭｖ．ｆｍ大阪大正の募集状況確認させて頂きます」）。【必ず】の行に物件名を残す（2026-10-13 竹内・未桜事例:
+ * 帯が物件名なしの「募集状況の確認→ご連絡」だった）。こちらが打った名前を拾うだけ（判断ではない）。名前らしくない物
+ * （「お部屋の件」「インターネットの件」）は拾わない。戻す: PROMISE_PROPERTY_NAME=off
+ */
+const CONFIRM_PROPERTY_RE = /([^\n、。！!？?「」『』（）()【】]{3,60}?)(?:の件|の募集状況|の空室状況|の空き状況|の空室|の空き|の初期費用|の入居(?:可能)?日)/g;
+/** 物件名でない片仮名の語（設備・手続き） */
+const NOT_PROPERTY_KATAKANA_RE = /インターネット|ネット|エアコン|ペット|オートロック|クリーニング|キャンセル|フリーレント|カード|ガス|コンロ|バス|トイレ|キッチン|ベランダ|クローゼット|カウンター|モニター|ボックス|フォーマット|オンライン|スケジュール|ローン|クレジット|ポイント|キャンペーン|プラン|サイト|アプリ|メール|ライン|LINE|wifi|WiFi|Wi-Fi/i;
+export function confirmPropertyNameOf(text: string | null | undefined, env: Record<string, string | undefined> = process.env): string | null {
+  if ((env.PROMISE_PROPERTY_NAME ?? '').toLowerCase() === 'off') return null;
+  // 確認結果の報告の文（「エグゼ難波西Ⅱの募集状況確認させていただきましたが…」）の名前は約束の物件ではない＝報告の文は読まない（60日の監査 3db9db75）
+  const t = String(text ?? '').normalize('NFKC').split(/\n|(?<=[。！!？?])(?![。！!？?])/)
+    .filter((s) => !(STAFF_CONFIRM_REPORT_RE.test(s) || LEDGER_CONFIRM_REPORT_RE.test(s))).join('\n');
+  for (const m of t.matchAll(CONFIRM_PROPERTY_RE)) {
+    // 前の平仮名の語（「併せてお送り頂きました」）を外す＝最後の平仮名より後ろが名前
+    const cap = m[1];
+    const lastHira = Math.max(...Array.from(cap).map((c, i) => (/[ぁ-ゖ]/.test(c) ? i : -1)));
+    const name = Array.from(cap).slice(lastHira + 1).join('').replace(/^[・\-ー.]+/, '').trim();
+    if (Array.from(name).length < 3 || Array.from(name).length > 40) continue;
+    if (!/[ァ-ヶー]{3,}|[A-Za-z][A-Za-z.]{2,}|マンション|ハイツ|コーポ|レジデンス|ハイム|メゾン|荘|ビル|タワー|コート|パレス|ヴィラ|ハウス/.test(name)) continue;
+    if (NOT_PROPERTY_KATAKANA_RE.test(name) || /御見積|見積|初期費用|保証会社|管理会社|駐車場|物件|部屋|条件/.test(name)) continue;
+    // 駅＋間取り（「森ノ宮1LDK3階」）は建物の名前ではない（60日の監査 b380d0e3）
+    if (/[0-9](?:S?LDK|DK|K|R)(?![A-Za-z])/.test(name)) continue;
+    return name;
+  }
+  return null;
+}
+/** 物件名がある時だけ detail に足す（無い時は今までと同じ形） */
+function confirmPropertyDetail(text: string): { propertyName?: string } {
+  const n = confirmPropertyNameOf(text);
+  return n ? { propertyName: n } : {};
+}
 /** 1通の中で「何を確認するか」が書かれた文（要件の語がある文）。無ければ約束の型に当たった文 */
 function confirmTopicSentence(sentences: string[], fallback: string | null | undefined): string | null {
   const s = sentences.find((x) => CONFIRM_TOPIC_RULES.some((r) => r.re.test(x))) ?? sentences.find((x) => CONFIRM_PARTY_RE.test(x)) ?? fallback;
@@ -630,11 +665,11 @@ export function classifyStaffTextForLedger(text: string, at: string | null): Led
   }
   if (STAFF_CONFIRM_DECL_RE.test(t)) {
     const declSentence = sentences.find((s) => STAFF_CONFIRM_DECL_RE.test(s)) ?? null;
-    return base('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: confirmObjectOf(t), sentence: confirmTopicSentence(sentences, declSentence) });
+    return base('confirmation_promised', 'promised', t.match(STAFF_CONFIRM_DECL_RE)![0], { object: confirmObjectOf(t), sentence: confirmTopicSentence(sentences, declSentence), ...confirmPropertyDetail(t) });
   }
   // 「Nicher'a 加美の募集状況確認させていただきます！！」だけの通（ご連絡・出来次第が無い）も確認の約束（慶次事例 2026-09-16）
   const bare = findConfirmPromiseSentence(sentences);
-  if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: confirmObjectOf(bare.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([bare.sentence, ...sentences], bare.sentence) });
+  if (bare) return base('confirmation_promised', 'promised', bare.evidence, { object: confirmObjectOf(bare.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([bare.sentence, ...sentences], bare.sentence), ...confirmPropertyDetail(t) });
   if (STAFF_QUESTION_RE.test(lastLine)) return base('question_asked', 'done', lastLine.slice(-30));
   return null;
 }
@@ -684,7 +719,7 @@ export function classifyStaffTextFacts(text: string, at: string | null): LedgerE
   //   報告の文そのものは findConfirmPromiseSentence が飛ばす（報告を約束に読まない）。並びは報告→約束なので、この約束は未履行のまま
   if (!has('confirmation_promised')) {
     const c = findConfirmPromiseSentence(sentences);
-    if (c) add('confirmation_promised', 'promised', c.evidence, { object: confirmObjectOf(c.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([c.sentence, ...sentences], c.sentence) });
+    if (c) add('confirmation_promised', 'promised', c.evidence, { object: confirmObjectOf(c.sentence) ?? confirmObjectOf(t), sentence: confirmTopicSentence([c.sentence, ...sentences], c.sentence), ...confirmPropertyDetail(t) });
   }
   return out;
 }

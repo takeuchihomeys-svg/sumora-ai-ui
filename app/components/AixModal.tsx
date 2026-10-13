@@ -26,7 +26,7 @@ import { customerRequestsPhoneCall, buildCallText, customerAsksStaffCallTime, cu
 import { staffTalkedToday } from "../lib/daily-greeting";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
-import { customerSharedPropertyNames } from "../lib/customer-property-names";
+import { customerSharedPropertyNames, customerNamedAfterShare } from "../lib/customer-property-names";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, resolveGuarantorForText, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
@@ -807,10 +807,14 @@ export default function AixModal({
   // 2026-09-21 竹内「反映ボタンあれば、送られた物件名表示されるようにしたら分かりやすい」:
   //   折りたたみをやめて最初から出す。この state は「6件以上ある時に全部出すか」だけに使う
   const [showCustomerPropertyList, setShowCustomerPropertyList] = useState(false);
-  const customerPropertyOptions = useMemo(
-    () => customerSharedPropertyNames(recentMessages ?? []),
-    [recentMessages],
-  );
+  // 2026-10-13 竹内（未桜）: 動画の URL・画像の後に名前だけ送ってきた物件（「レジュールアッシュ難波MINAMIです」）も候補に（新しい順・同じ名前は1つ）
+  const customerPropertyOptions = useMemo(() => {
+    const msgs = recentMessages ?? [];
+    const named = customerNamedAfterShare(msgs).map(({ name, label, url, at }) => ({ name, label, url, at }));
+    const all = [...customerSharedPropertyNames(msgs), ...named].sort((a, b) => Date.parse(b.at ?? "") - Date.parse(a.at ?? ""));
+    const seen = new Set<string>();
+    return all.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true))).slice(0, 5);
+  }, [recentMessages]);
   // 別の部屋について確認した専用: 物件名 + 画像OCR + 有無ピッカー（会話を合わせる専用パターン）
   const [otherRoomPropertyName, setOtherRoomPropertyName] = useState<string>("");
   const [otherRoomImagePreview, setOtherRoomImagePreview] = useState<string>("");

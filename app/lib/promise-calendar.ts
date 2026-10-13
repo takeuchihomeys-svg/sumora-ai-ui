@@ -39,12 +39,13 @@ function confirmAixLabel(object: string | null | undefined): string {
   const o = (object ?? "").trim();
   return o && CONDITION_TOPIC_RE.test(o) ? `確認した（条件・交渉）→${o}` : "物件確認した（確認結果を送る）";
 }
-type PromiseDetail = { object?: string | null; estimateFor?: string[]; timing?: PickupPromiseTiming };
+type PromiseDetail = { object?: string | null; estimateFor?: string[]; timing?: PickupPromiseTiming; propertyName?: string | null };
 const PROMISE_SPEC: Record<PromiseKind, { eventType: string; label: (o: PromiseDetail) => string; aix: (o: { object?: string | null }) => string; fulfilledBy: LedgerKind }> = {
   // 2026-10-01: 待ちの約束は「新着が出たら物件送付【新着待ち】」等（promise-timing.PICKUP_TIMING_LABEL）。今日・日付は従来の「物件ピックアップ送付」
   pickup_declared: { eventType: "property_send", label: (o) => { const t = PICKUP_TIMING_LABEL[o.timing ?? "today"]; return `${t.label}${t.mark}`; }, aix: () => "物件ピックアップした（または 物件オススメ）", fulfilledBy: "properties_sent" },
   estimate_declared: { eventType: "estimate_sheet", label: (o) => o.estimateFor?.length ? `御見積書送付（${o.estimateFor.slice(0, 2).join("・")}${o.estimateFor.length > 2 ? " 他" : ""}）` : "御見積書送付", aix: () => "見積書送る", fulfilledBy: "estimate_sent" },
-  confirmation_promised: { eventType: "follow_up", label: (o) => `${o.object ?? "確認事項"}の確認→ご連絡`, aix: (o) => confirmAixLabel(o.object), fulfilledBy: "confirmation_reported" },
+  // 2026-10-13 未桜事例: 約束の通にこちらが書いた物件名を末尾の（）に残す（「募集状況の確認→ご連絡（レジュールアッシュ難波MINAMI）」）
+  confirmation_promised: { eventType: "follow_up", label: (o) => `${o.object ?? "確認事項"}の確認→ご連絡${o.propertyName ? `（${o.propertyName}）` : ""}`, aix: (o) => confirmAixLabel(o.object), fulfilledBy: "confirmation_reported" },
 };
 export const PROMISE_KINDS = Object.keys(PROMISE_SPEC) as PromiseKind[];
 /**
@@ -135,7 +136,7 @@ export function promiseEventRows(
     if (e.kind === "pickup_declared" && parseContactPromise(sentence, o.sentAt)) continue;
     const timing: PickupPromiseTiming | undefined = e.kind === "pickup_declared" ? classifyPickupPromiseTiming(sentence).timing : undefined;
     const waiting = !!timing && WAIT_TIMINGS.has(timing);
-    const detail: PromiseDetail = { object: e.detail?.object ?? null, estimateFor: e.detail?.estimateFor ?? [], timing };
+    const detail: PromiseDetail = { object: e.detail?.object ?? null, estimateFor: e.detail?.estimateFor ?? [], timing, propertyName: e.detail?.propertyName ?? null };
     const head = promiseHeadline(e.kind, detail);
     if (out.some((r) => r.notes.split("\n")[0] === head)) continue;
     // 件名（title）には待ちの印を入れない（「和樹 新着が出たら物件送付」）
@@ -253,7 +254,7 @@ export function splitPromisesForFreshInquiry<T extends { event_type: string | nu
 /** 確認の約束の要件（notes 1行目「【必ず】保証会社の確認→ご連絡」→「保証会社」） */
 function confirmObjectOfNotes(notes: string | null | undefined): string | null {
   const head = headlineOf(notes);
-  const m = head.match(new RegExp(`^${PROMISE_MUST_MARK}(.+?)の確認→ご連絡$`));
+  const m = head.match(new RegExp(`^${PROMISE_MUST_MARK}(.+?)の確認→ご連絡(?:（[^）]*）)?$`));
   return m ? m[1] : null;
 }
 /**

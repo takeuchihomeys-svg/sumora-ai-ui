@@ -34,7 +34,7 @@ import { resolveViewingThread, STAFF_VIEWING_DONE_RE, CUSTOMER_VIEWING_WISH_RE, 
 import { resolveViewingScheduled } from "./done-state";
 import { viewingFlowStageDetail } from "./viewing-flow";
 import { normalizePropertyName, similarity, MATCH_MIN_SCORE } from "./property-name-match";
-import { customerSharedPropertyNames } from "./customer-property-names";
+import { customerSharedPropertyNames, customerNamedAfterShare } from "./customer-property-names";
 import { isApplicationFormMessage } from "./application-form-detect";
 import { parseEstimateItems } from "./estimate-profit";
 import { jstParts, jstYmd, WEEKDAYS_JA } from "./jst-date";
@@ -628,6 +628,11 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
   //   2026-09-26 監査: 物件の載るポータルの URL の時だけ（ギフトの案内・口座振替・契約書の URL の直前の行を物件にしていた 914a82e9・4ef4daa8・68464362 型）
   for (const c of customerSharedPropertyNames(cust.map((m) => ({ sender: "customer", text: m.text, createdAt: m.createdAt })), { limit: 30 })) {
     if (c.url && PROPERTY_PORTAL_URL_RE.test(c.url)) push(c.name, "customer_shared", c.at, "customer_shared");
+  }
+  // 2026-10-13 竹内（未桜）: 動画の URL・画像の後に名前だけ送ってきた物件（「レジュールアッシュ難波MINAMIです」）も持ち込み。
+  //   旧: TikTok の URL は物件のポータルでなく、名前だけの発言は URL が無い → 主のお部屋が前の「見積送付済み Alivis新町 802号室」のままだった。戻す: CUSTOMER_NAME_AFTER_SHARE=off
+  for (const c of customerNamedAfterShare(cust.map((m) => ({ sender: "customer", text: m.text, createdAt: m.createdAt })))) {
+    push(c.name, "customer_shared", c.at, "customer_named_after_share", c.room);
   }
 
   // 内覧: viewing_history と待ち合わせの案内を日付で束ねる

@@ -26,7 +26,7 @@ import { jstParts } from "./jst-date";
 // 2026-10-08 8巡目（記録の続き・竹内「オススメした物件と、お客さんが送ってきた物件をちゃんと保管できていればできる」）
 import { extractScreenshotProperty, seriesTokens } from "./own-property-match";
 import { similarity } from "./property-name-match";
-import { customerSharedPropertyNames } from "./customer-property-names";
+import { customerSharedPropertyNames, customerNamedAfterShare, type NamedAfterShare } from "./customer-property-names";
 import { collectStaffFreeRent, staffFreeRentFor, type StaffFreeRentFact } from "./staff-free-rent";
 // 2026-10-09 主語の抜けた発言の物件の候補（turn-referent.ts・既定 on・PROPERTY_REFERENT_FALLBACK=off で止まる）
 import { resolveTurnReferent, turnReferentEnabled, turnReferentLines, type ReferentMention, type TurnReferent } from "./turn-referent";
@@ -310,9 +310,21 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
     const t = buildingKeyOf(text);
     return rooms.filter((r) => r.ref.buildingKey.length >= 3 && t.includes(r.ref.buildingKey));
   };
+  // 2026-10-13 竹内（未桜）: 持ち込み（動画の URL・画像）の後にお客様が名前だけ送った発言（「レジュールアッシュ難波MINAMIです」）は持ち込みの物件の名前の候補
+  //   （customer-property-names.customerNamedAfterShare・戻す: CUSTOMER_NAME_AFTER_SHARE=off）。どの物件の話かはブレインが台帳の文を読んで決める
+  const namedAfterShare = new Map<string, NamedAfterShare>();
+  if (originOn) for (const c of customerNamedAfterShare(msgs.map((m) => ({ sender: m.sender, text: m.text ?? (m.image_url ? "[画像]" : ""), createdAt: m.created_at })))) if (c.at) namedAfterShare.set(c.at, c);
   for (const m of msgs) {
     if (m.sender === "customer") {
       const text = String(m.text ?? "");
+      const nas = namedAfterShare.get(m.created_at);
+      if (nas && roomsNamedIn(text).length === 0) {
+        const r = roomOf(nas.label, false);
+        if (r) {
+          push(r, { at: m.created_at, kind: "customer_shared", by: "named", text: `名前だけ・${nas.sharedAt ? jstShort(nas.sharedAt) : ""}の持ち込み（${nas.url ? "URL" : "画像"}）の続き` });
+          continue;
+        }
+      }
       const q = m.quoted_message_id ? byLmid.get(m.quoted_message_id) : undefined;
       let target: PtRoom | null = null; let by: PtEvent["by"] = "quote";
       if (q) {
@@ -446,7 +458,8 @@ const KIND_JA: Record<PtEventKind, string> = {
   recommended: "こちらがオススメした（🌟）", viewing_offered: "内覧の候補日を出した", viewing_set: "内覧（待ち合わせ）が決まった",
 };
 function eventLine(e: PtEvent): string {
-  const head = e.kind === "customer_ask" ? `お客様「${e.text ?? ""}」（${TOPIC_JA[e.topic ?? "other"]}）` : e.kind === "customer_shared" ? "お客様がこの物件の画面・資料を送ってきた"
+  const head = e.kind === "customer_ask" ? `お客様「${e.text ?? ""}」（${TOPIC_JA[e.topic ?? "other"]}）`
+    : e.kind === "customer_shared" ? (e.text?.startsWith("名前だけ") ? `お客様がこの物件の名前を送ってきた（${e.text}）` : "お客様がこの物件の画面・資料を送ってきた")
     : (e.kind === "estimate" || e.kind === "recommended") && e.text ? `${KIND_JA[e.kind]}（${e.text}）` : KIND_JA[e.kind];
   return `${jstShort(e.at)} ${head}${e.by === "inferred" ? "（推定）" : ""}`;
 }
