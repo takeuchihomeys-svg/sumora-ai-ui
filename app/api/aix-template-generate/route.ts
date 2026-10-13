@@ -1348,7 +1348,8 @@ export async function POST(req: NextRequest) {
   //   途中で切れていた（「契約書類・手続きの確認（引き落とし口座書」）。それを「必ず拾え」と渡していた。
   //   → 整形と渡し方を brain-strategy-note.ts に1本化し、返信生成と同じ扱いに揃える（四者同名）
   // 2026-10-13 竹内「AIX テンプレートはブレインに連動できていない」: ブレインの本質（turn_contract）とお客様の状態を材料に（aix/action と同じ関数・AIX_BRAIN_CONTRACT=off で旧）
-  const tplContractNote = actionType
+  //   ⚠ 10/14 既定 off（案）: ✨（AIX の後の2通目）は試し3回とも近さ 0.44→0.43 と少し下がった（材料が1通目の番の依頼で、2通目の形には効かない）。AIX_BRAIN_CONTRACT_TEMPLATE=on で入れる
+  const tplContractNote = actionType && (process.env.AIX_BRAIN_CONTRACT_TEMPLATE ?? "").trim().toLowerCase() === "on"
     ? buildAixContractNote({ meta: brainMeta as AixContractMeta, action: actionType, checkPattern: actionType === "property_check_result" ? effectiveCheckPattern : null, messages: Array.isArray(recentMessages) ? recentMessages : [] })
     : "";
   const brainMetaSection = buildBrainStrategyNote(brainMeta, {

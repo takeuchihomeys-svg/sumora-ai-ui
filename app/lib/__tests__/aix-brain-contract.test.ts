@@ -1,6 +1,6 @@
 // app/lib/__tests__/aix-brain-contract.test.ts — ブレインの本質を AIX の文の材料に（実行: npx tsx app/lib/__tests__/aix-brain-contract.test.ts）
 //   実物: 10/13 の本番の判断（内覧日調整の番「日曜日とかは案内可能ですか？」・言わない「申込誘導」）を伏せて使う
-import { buildAixContractNote, contractFreshForAix, askIsThisAix, keepAllQuestionsRule, aixBrainContractOn, lastCustomerAt } from "../aix-brain-contract";
+import { buildAixContractNote, contractFreshForAix, askIsThisAix, keepAllQuestionsRule, aixBrainContractOn, lastCustomerAt, mustNotForAix, promiseFulfilledBy, STAFF_VALUE_LINE_RE } from "../aix-brain-contract";
 import { buildBrainStrategyNote } from "../brain-strategy-note";
 
 let pass = 0, fail = 0;
@@ -22,7 +22,7 @@ const msgs = [
   t("内覧日調整: この AIX で受ける依頼に日曜の質問", n.includes("この AIX で受ける依頼") && n.includes("日曜日とかは"), n);
   t("内覧日調整: 言わない（申込誘導）が届く", n.includes("言わない") && n.includes("申込誘導"), n);
   t("内覧日調整: 提案（返信の材料）は渡さない", !n.includes("2物件を同日にまとめて内覧"), n);
-  t("内覧日調整: 値の言い切りの線（時間・空き）は AIX に渡さない", !n.includes("土曜の時間を再提示") && !n.includes("日曜の空きを手打ちで断定"), n);
+  t("内覧日調整: 話題の線・空きの断言の線は渡す（確かめる人 重要1）", n.includes("土曜の時間を再提示") && n.includes("日曜の空きを手打ちで断定"), n);
   t("内覧日調整: お客様の今（状態・気にしている事の形・迷い）", n.includes("内覧したい") && n.includes("気にしている事: 費用・前向き") && n.includes("迷い: 内覧してから決めたい") && !n.includes("[object Object]"), n);
   t("内覧日調整: 新しい約束を足さない", n.includes("新しい**確認・交渉・作成の約束は足さない"), n);
   t("内覧日調整: 旧の全て回答は出さない", keepAllQuestionsRule(n) === false);
@@ -30,7 +30,9 @@ const msgs = [
 // ② 別の AIX の番は答えない
 {
   const n = buildAixContractNote({ meta: viewingMeta, action: "property_send", messages: msgs, env: {} });
-  t("物件ピックアップで内覧の依頼は別の AIX の番", n.includes("この文では触れない依頼") && n.includes("別の AIX viewing_invite") && !n.includes("この AIX で受ける依頼"), n);
+  t("ブレインの読みと違う AIX を押した番は振り分けを渡さない（重要2）", !n.includes("この文では触れない依頼") && !n.includes("この AIX で受ける依頼") && n.includes("申込誘導"), n);
+  const n2 = buildAixContractNote({ meta: { ...viewingMeta, action: "property_send" }, action: "property_send", messages: msgs, env: {} });
+  t("ブレインの一手がこの AIX なら別の AIX の依頼は触れない", n2.includes("この文では触れない依頼") && n2.includes("別の AIX viewing_invite"), n2);
 }
 // ③ 古い判断（お客様の新しい発言の前の分析）は渡さない
 {
@@ -38,6 +40,7 @@ const msgs = [
   t("古い判断は空", buildAixContractNote({ meta: viewingMeta, action: "viewing_invite", messages: later, env: {} }) === "");
   t("鮮度: 新しい発言の後の分析は新しい", contractFreshForAix(viewingMeta, msgs) === true);
   t("鮮度: analyzed_msg_ts が無い判断は使わない", contractFreshForAix({ turn_contract: viewingMeta.turn_contract }, msgs) === false);
+  t("鮮度: 5秒の幅（他の鮮度の線と同じ）", contractFreshForAix({ ...viewingMeta, analyzed_msg_ts: "2026-10-13T12:40:36.000Z" }, msgs) === true && contractFreshForAix({ ...viewingMeta, analyzed_msg_ts: "2026-10-13T12:40:34.000Z" }, msgs) === false);
   t("鮮度: 時刻の無い会話は判断を信じる", contractFreshForAix(viewingMeta, [{ sender: "customer" }]) === true);
   t("最後のお客様の時刻", lastCustomerAt(msgs) === Date.parse("2026-10-13T12:40:40.000Z"));
 }
@@ -58,7 +61,7 @@ const msgs = [
 }
 // ⑥ 返信・約束の番の依頼はこの AIX の文の外（10/13 試し link1: 御見積書の約束・審査の励ましを AIX に足した）・気持ち
 {
-  const meta = { analyzed_msg_ts: "2026-10-13T12:40:43.006Z", turn_contract: { asks: [
+  const meta = { analyzed_msg_ts: "2026-10-13T12:40:43.006Z", action: "property_send", turn_contract: { asks: [
     { quote: "初期費用はどれくらい？", route: "promise", answer: "最大限割引の御見積書を作成しお送り", kind: "question" },
     { quote: "ペットは大丈夫？", route: "reply", answer: "資料にペット可", kind: "question" },
     { quote: "よろしくお願いします", route: "none", kind: "feeling" },
@@ -67,6 +70,41 @@ const msgs = [
   t("返信・約束の依頼はこの文で触れない（中身は渡さない）", n.includes("この文では触れない依頼") && n.includes("初期費用はどれくらい？」（約束で受ける）") && n.includes("ペットは大丈夫？」（返信で答える）") && !n.includes("最大限割引"), n);
   t("触れない（none）", n.includes("触れない: 「よろしくお願いします」"), n);
   t("気持ち（不安）を一言で受ける", n.includes("不安") && n.includes("一言で受ける"), n);
+}
+// ⑧ 実物 viewing_invite:02c26493（10/13 試し・内覧の依頼＋初期費用の約束）: 値の線は落とし、話題の線は残す・初期費用の約束はこの文の外
+{
+  const meta = { analyzed_msg_ts: "2026-10-13T12:40:43.006Z", action: "viewing_invite", turn_contract: { asks: [
+    { quote: "プレミアス鳳の内見お願い致します。", kind: "request", route: "aix", answer: null, aix: "viewing_invite" },
+    { quote: "初期費用もお願い致します。", kind: "request", route: "promise", answer: "最大限割引した御見積書を作成してお送りします" },
+  ], must_not: ["内覧日程を本文で確定する", "初期費用の金額を本文で示す", "申込誘導"], proposals: [], feeling: null, close_only: false } };
+  const n = buildAixContractNote({ meta, action: "viewing_invite", messages: msgs, env: {} });
+  t("02c26493: 内覧の依頼はこの AIX", n.includes("この AIX で受ける依頼: 「プレミアス鳳の内見"), n);
+  t("02c26493: 初期費用の約束はこの文の外", n.includes("初期費用もお願い致します。」（約束で受ける）"), n);
+  t("02c26493: 候補日を消す線（日程を本文で確定）は渡さない・申込誘導は渡す", !n.includes("内覧日程を本文で確定") && !n.includes("金額を本文で示す") && n.includes("申込誘導"), n);
+  t("02c26493 2回目の線も落とす", mustNotForAix(["内覧日時を本文で確定させる", "見積書の金額を本文で書く"], "viewing_invite").length === 0);
+}
+// ⑨ 実物 property_send:88d3839f（ブレインは物件確認したの番・スタッフは物件ピックアップを押した）: 振り分けは渡さず、見積書・初期費用の線は渡す
+{
+  const meta = { analyzed_msg_ts: "2026-10-13T12:40:43.006Z", action: "property_check_result", turn_contract: { asks: [
+    { quote: "ここって空いてますでしょうか？？", kind: "question", route: "promise", answer: "管理会社に募集状況を確認し、結果を報告する" },
+    { quote: "4月とかの繁忙期より、今みたいな時期の方が家賃安いですかね？", kind: "question", route: "reply", answer: "繁忙期は家賃が上がる" },
+  ], must_not: ["来阪", "見積書", "初期費用", "申込誘導", "物件名の断定"], proposals: [], feeling: null, close_only: false } };
+  const n = buildAixContractNote({ meta, action: "property_send", messages: msgs, env: {} });
+  t("88d3839f: 振り分けを渡さない（全部が触れないにならない）", !n.includes("この文では触れない依頼") && !n.includes("この AIX で受ける依頼"), n);
+  t("88d3839f: 見積書・初期費用の線は届く（重要1）", n.includes("見積書") && n.includes("初期費用") && n.includes("申込誘導"), n);
+  t("88d3839f: この AIX 自身の話題（物件）の線は渡さない", !n.includes("物件名の断定"), n);
+  const n2 = buildAixContractNote({ meta, action: "property_check_result", messages: msgs, env: {} });
+  t("88d3839f: 確認の約束は物件確認したで受ける（重要2）", n2.includes("この AIX で受ける依頼: 「ここって空いてますでしょうか"), n2);
+}
+// ⑩ 線の物差し（本番の must_not から）
+{
+  const keep = ["見積書", "見積書の話", "日程の催促", "内覧日程の打診", "土曜の時間を再提示", "審査の通過断言", "審査結果の断定", "空室の断言", "申込誘導", "来阪"];
+  const drop = ["金額を書く", "内覧日の確定", "日時の創作", "初期費用の金額を書く", "内覧の候補日提示", "日時を本文で作る", "金額の断言"];
+  t("話題の線・審査や空室の断言は値の線ではない", keep.every((s) => !STAFF_VALUE_LINE_RE.test(s)), keep.filter((s) => STAFF_VALUE_LINE_RE.test(s)));
+  t("値を書く線は値の線", drop.every((s) => STAFF_VALUE_LINE_RE.test(s)), drop.filter((s) => !STAFF_VALUE_LINE_RE.test(s)));
+  t("約束の種類: 見積→見積書送る", promiseFulfilledBy("御見積書を作成しお送り", "estimate_sheet") && !promiseFulfilledBy("御見積書を作成しお送り", "property_send"));
+  t("約束の種類: 探す→物件ピックアップ", promiseFulfilledBy("ご条件でピックアップしお送り", "property_send"));
+  t("約束の種類: 内覧の調整→内覧日調整", promiseFulfilledBy("内覧の日程を調整", "viewing_invite"));
 }
 // ⑦ ✨ の戦略の注記: 本質がある時は宣言1文の強制を材料に下げる
 {
