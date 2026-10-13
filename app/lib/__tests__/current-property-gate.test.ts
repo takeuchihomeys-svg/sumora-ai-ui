@@ -37,6 +37,7 @@ console.log("■ 区切り5 currentPropertiesOf（今の番の物件の並び）
   t("ブレインの物件を先・台帳の ▶ を後ろ（同じ物件は1つ）", JSON.stringify(currentPropertiesOf("カシータ神戸元町JP 401号室", note2)) === JSON.stringify(["カシータ神戸元町JP 401号室", "エステムコートみなと元町THE FIRST"]));
   t("ブレインの「A、B」を分ける", currentPropertiesOf("リブリ・スカイブルー ライズ 202、エイペックス神戸みなと元町", "").length === 2);
   t("ブレインが null なら ▶ だけ（使う側は current_property がある時だけ並びを使う）", currentPropertiesOf(null, note2).length === 2);
+  t("同じシリーズで地名だけ違う物件は別に残す（エステムコート梅田＋▶ 難波）", currentPropertiesOf("エステムコート梅田", "▶ 今の番の物件: エステムコート難波（募集状況・引用）").length === 2);
   t("CURRENT_PROPERTIES=off で current_property だけ", JSON.stringify(currentPropertiesOf("カシータ神戸元町JP 401号室", note2, { CURRENT_PROPERTIES: "off" })) === JSON.stringify(["カシータ神戸元町JP 401号室"]));
 }
 console.log(`\n${pass} pass / ${fail} fail`);

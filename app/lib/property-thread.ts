@@ -108,6 +108,11 @@ export type PropertyThreadState = {
   turnReferent?: TurnReferent | null;
   /** turnReferent の元になったお客様の文 */
   turnReferentText?: string;
+  /**
+   * 2026-10-13 区切り4（レビュー）: 並びの何番目・内覧の日にちの返事からの推定の ▶（turnTargets には入れない＝契約の答え・内覧の確認・
+   * 写真の材料・turnReferent の動きを変えない）。台帳の文（ブレインの材料）にだけ出す
+   */
+  turnHints?: PtTurnTarget[];
 };
 
 const PLACEHOLDER_RE = /^(?:物件|お部屋)\s*[①-⑳0-9０-９]*$/;
@@ -425,6 +430,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       }
     }
   }
+  const turnHints: PtTurnTarget[] = [];
   // 2026-10-13 当たり率の直し（区切り4 材料①）: 「1番上のやつ」「2番目」「最後の」＝直前にこちらが送った物件の並び（同じ束の資料・オススメ・見積）の何番目か。
   //   ad97cd40 10/12「1番上のやつ最短入居いくらですか？」→ ブレインは前の物件（プレジオ難波EURO）を言った。材料を渡すだけ（決めるのはブレイン）。戻す: PROPERTY_THREAD_ORDINAL=off
   if (originOn && propertyThreadOrdinalEnabled() && turnTargets.length === 0) {
@@ -435,7 +441,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       const i = hit.idx === -1 ? batch.length - 1 : hit.idx!;
       if (batch.length >= 2 && i >= 0 && i < batch.length) {
         const r = batch[i];
-        turnTargets.push({ roomKey: r.key, display: r.ref.display, topic: topicOf(String(hit.m.text ?? "")), by: "inferred", customerText: Array.from(String(hit.m.text ?? "").replace(/\s+/g, " ")).slice(0, 40).join(""), at: hit.m.created_at,
+        turnHints.push({ roomKey: r.key, display: r.ref.display, topic: topicOf(String(hit.m.text ?? "")), by: "inferred", customerText: Array.from(String(hit.m.text ?? "").replace(/\s+/g, " ")).slice(0, 40).join(""), at: hit.m.created_at,
           why: `（「${ordinalWordOf(String(hit.m.text ?? ""))}」＝直前にこちらが送った${batch.length}件の並び（${batch.map((x) => x.ref.display).join("・")}）の${hit.idx === -1 ? "最後" : `${i + 1}件目`}と推定）` });
       }
     }
@@ -455,7 +461,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
         if (ev.length) named = rooms.filter((r) => ev.some((x) => x.r.key === r.key && ms(x.e.at) >= ms(ev[0].e.at) - 5 * 60_000));
       }
       for (const r of named.slice(0, 3)) {
-        turnTargets.push({ roomKey: r.key, display: r.ref.display, topic: "viewing", by: "inferred", customerText: Array.from(String(reply.text ?? "").replace(/\s+/g, " ")).slice(0, 40).join(""), at: reply.created_at,
+        turnHints.push({ roomKey: r.key, display: r.ref.display, topic: "viewing", by: "inferred", customerText: Array.from(String(reply.text ?? "").replace(/\s+/g, " ")).slice(0, 40).join(""), at: reply.created_at,
           why: `（内覧の日にちの返事＝直前にこちらが内覧の日程を出した物件${offer ? ` ${jstShort(offer.created_at)}` : "（内覧調整の記録）"}と推定）` });
       }
     }
@@ -480,7 +486,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       turnReferent = resolveTurnReferent({ turnText: turnReferentText, turnStartAt: t0, prevCustomerAt: prevCustomer?.created_at ?? null, mentions, jst: jstShort });
     }
   }
-  return { rooms, turnTargets, turnReferent, turnReferentText };
+  return { rooms, turnTargets, turnReferent, turnReferentText, turnHints };
 }
 
 // ─── 2026-10-13 当たり率の直し（区切り4）: 並びの何番目・内覧の日にちの返事 ───
@@ -499,9 +505,16 @@ const ORDINAL_RES: Array<[RegExp, (m: RegExpMatchArray) => number]> = [
   [/最初の(?:やつ|物件|お部屋|部屋|とこ|ところ|方)/, () => 0],
 ];
 /** お客様の文の「1番上のやつ」「2番目の」「最後の」→ 並びの番号（0始まり・最後は -1）。無ければ null */
+/** 序数の後ろに続くと物件の並びの話ではない語（「1番上の階」「2番目に安い」「最後の確認」「3つ目の質問」） */
+const ORDINAL_NOT_AFTER_RE = /^(?:の|に|は|が|って)?\s*(?:階|安い|安く|高い|高く|広い|狭い|近い|遠い|質問|確認|お願い|ご質問|件|点|理由)/;
 export function ordinalIndexOf(text: string): number | null {
   const t = text.normalize("NFKC");
-  for (const [re, f] of ORDINAL_RES) { const m = t.match(re); if (m) return f(m); }
+  for (const [re, f] of ORDINAL_RES) {
+    const m = t.match(re);
+    if (!m || m.index == null) continue;
+    if (ORDINAL_NOT_AFTER_RE.test(t.slice(m.index + m[0].length))) continue;
+    return f(m);
+  }
   return null;
 }
 function ordinalWordOf(text: string): string {
@@ -528,6 +541,8 @@ export function isViewingDateReply(text: string): boolean {
   if (!t || Array.from(t).length > 40) return false;
   const when = /\d{1,2}\s*(?:日|時|:\d{2})|\d{1,2}\s*\/\s*\d{1,2}|午前|午後|明日|明後日|今日|本日|[月火水木金土日]曜/.test(t);
   const ask = /でお願い|で大丈夫|からで|可能ですか|いけます|行けます|でいいですか|で良いですか|希望です|がいいです|が良いです/.test(t);
+  // 入金・契約・重説・鍵の日にちの返事は内覧の返事ではない（2026-10-13 レビュー「本日の振込で大丈夫ですか」「契約は15日でお願いします」）
+  if (/入金|振込|振り込|支払|払い|契約|審査|鍵|引渡|引き渡|重説|重要事項|書類|までに/.test(t)) return false;
   return when && ask;
 }
 
@@ -562,14 +577,16 @@ export function roomSourceLine(r: PtRoom): string | null {
  * 同じ会話で状況が動いた他の物件（見積・確認・交渉・お客様の反応があった物）を短く添える（最大 maxOthers 件）。
  */
 export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOthers?: number; maxEvents?: number } = {}): string {
-  if (!s.turnTargets.length) return s.turnReferent ? buildReferentNote(s, opts) : "";
+  // 2026-10-13 区切り4（レビュー）: 引用・名指しが無い番は、推定の ▶（turnHints＝並びの何番目・内覧の日にちの返事）を材料の文にだけ出す
+  const targets = s.turnTargets.length ? s.turnTargets : (s.turnHints ?? []);
+  if (!targets.length) return s.turnReferent ? buildReferentNote(s, opts) : "";
   const maxEvents = opts.maxEvents ?? 6;
-  const targetKeys = [...new Set(s.turnTargets.map((t) => t.roomKey))];
+  const targetKeys = [...new Set(targets.map((t) => t.roomKey))];
   const lines: string[] = ["【🏠 物件ごとの状況（この会話の台帳・今の番の物件を先に）】"];
   for (const k of targetKeys) {
     const r = s.rooms.find((x) => x.key === k);
     if (!r) continue;
-    const ts = s.turnTargets.filter((t) => t.roomKey === k);
+    const ts = targets.filter((t) => t.roomKey === k);
     const how = ts.map((t) => `${TOPIC_JA[t.topic]}${t.by === "quote" ? "・引用" : t.by === "inferred" ? (t.why ? "・名前の無い呼び方→推定" : "・引用先は名前の無い画像→推定") : "・名指し"}`).join("／");
     lines.push(`▶ 今の番の物件: ${r.ref.display}（${how}）${r.names.length > 1 ? ` 別の書き方: ${r.names.filter((n) => n !== r.ref.display).join("・")}` : ""}`);
     // 2026-10-08 物件の出所・食いつき・フリーレント（スタッフが送った文に書いた物だけ）

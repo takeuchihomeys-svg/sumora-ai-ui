@@ -21,6 +21,7 @@ console.log("■ 本文の物件名");
 t("未桜: レジュールアッシュ難波MINAMI", JSON.stringify(reportNamesFromText(MIOU)) === JSON.stringify(["レジュールアッシュ難波MINAMI"]), reportNamesFromText(MIOU));
 t("YUMA: プレサンス難波WEST 0205号室", JSON.stringify(reportNamesFromText(YUMA1)) === JSON.stringify(["プレサンス難波WEST 0205号室"]), reportNamesFromText(YUMA1));
 t("YUMA: Rainbow Court 立売堀（「他の52件につきまして」は名前にしない）", JSON.stringify(reportNamesFromText(YUMA2)) === JSON.stringify(["Rainbow Court 立売堀"]), reportNamesFromText(YUMA2));
+t("「大阪市内」「梅田駅徒歩10分圏内」は物件名にしない", reportNamesFromText("大阪市内の募集状況確認させて頂きます！！\n梅田駅徒歩10分圏内の募集状況も確認させて頂きます！！").length === 0, reportNamesFromText("大阪市内の募集状況確認させて頂きます！！\n梅田駅徒歩10分圏内の募集状況も確認させて頂きます！！"));
 t("名前の無い本文", reportNamesFromText(YUMA3).length === 0, reportNamesFromText(YUMA3));
 t("ブラービ南船場 / 7階…607号室現在募集中", reportNamesFromText("ブラービ南船場\n7階のお部屋は募集に出ておらず、同じ間取りの 607号室現在募集中となります！！").every((n) => !/間取り/.test(n)), reportNamesFromText("ブラービ南船場\n7階のお部屋は募集に出ておらず、同じ間取りの 607号室現在募集中となります！！"));
 

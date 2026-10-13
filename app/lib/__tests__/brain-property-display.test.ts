@@ -166,6 +166,22 @@ console.log("■ 【必ず】の物件名（resolvePromisePropertyName）");
   t("sent_facts の記録（元の entries）は本文のまま", !entries.some((e) => (e.detail as { textPropertyName?: string }).textPropertyName));
 }
 
+console.log("■ 書き方の違いで合うお部屋が2件以上なら寄せない（レビュー・abce93ff）");
+{
+  const rooms = [
+    { name: "ラ ヴィータ西梅田 603号室", room: "603", lastAt: "2026-10-01T00:00:00Z" },
+    { name: "ラ ヴィータ西梅田 101号室", room: "101", lastAt: "2026-10-02T00:00:00Z" },
+  ];
+  t("1件だけ合う（同じ部屋の表記ゆれ）→ そのお部屋", brainFocusRoom(rooms, { name: "ラヴィータ西橘田603号室", analyzedMsgTs: "x" })?.room === "603");
+  const two = [
+    { name: "CRESTTAPP野田 204号室", room: "204", lastAt: "2026-10-01T00:00:00Z" },
+    { name: "CRESTTAPP野田 301号室", room: "301", lastAt: "2026-10-02T00:00:00Z" },
+  ];
+  t("書き方違いで2件合う（建物だけの名前）→ 寄せない", brainFocusRoom(two, { name: "CRESTAPP野田", analyzedMsgTs: "x" }) === null);
+  t("書き方違いで1件だけ合う → そのお部屋", brainFocusRoom(two.slice(0, 1), { name: "CRESTAPP野田", analyzedMsgTs: "x" })?.room === "204");
+  t("地名だけ違う同じシリーズ（エステムコート梅田→難波）に寄せない", brainFocusRoom([{ name: "エステムコート難波", room: null, lastAt: "2026-10-01T00:00:00Z" }], { name: "エステムコート梅田", analyzedMsgTs: "x" }) === null);
+}
+
 console.log("■ 送信時の材料（promiseBrainContext）");
 {
   const m = [

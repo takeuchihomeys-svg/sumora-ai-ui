@@ -62,7 +62,11 @@ export function withBrainPropertyFirst(
     if ((names.length === 1 && /[・、]/.test(n)) || PLACEHOLDER_NAME_RE.test(n)) continue;
     const ref = brainPickRef({ ...pick!, name: n });
     if (!ref) continue;
-    const idx = rest.findIndex((c) => { const cr = splitPropertyName(c.name); return !!cr && sameBrainPropertyRef(ref, cr); });
+    // 書き方の違いで合う候補が2件以上ある時は寄せない（決まった照合で合う候補を先に）
+    const strictIdx = rest.findIndex((c) => { const cr = splitPropertyName(c.name); const m = cr ? matchRoomRefs(ref, cr) : "different"; return m === "same_room" || m === "same_building"; });
+    const looseIdx = rest.map((c, i) => { const cr = splitPropertyName(c.name); return cr && sameBrainPropertyRef(ref, cr) ? i : -1; }).filter((i) => i >= 0);
+    const idx = strictIdx >= 0 ? strictIdx : looseIdx.length === 1 ? looseIdx[0] : -1;
+    if (idx < 0 && looseIdx.length > 1) continue;
     if (idx >= 0) { top.push({ ...rest[idx], fromBrain: true }); rest.splice(idx, 1); continue; }
     if (top.some((c) => { const cr = splitPropertyName(c.name); return !!cr && sameBrainPropertyRef(ref, cr); })) continue;
     const key = ref.buildingKey;

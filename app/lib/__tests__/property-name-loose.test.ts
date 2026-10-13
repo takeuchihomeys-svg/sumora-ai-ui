@@ -29,6 +29,8 @@ const SAME: Array<[string, string]> = [
   ["セレニテ難波プリエ 0611", "セレニテ難波プリエ 611号室"],
   ["レジュールアッシュ難波MINAMI", "レジュールアッシュ難波MINAMI"],
   ["ハイムMK", "ハイムM&K 306号室"],
+  ["プレサンス戸原橋ヴィプラス0201", "プレサンス芦原橋ヴィブラス 201号室"],
+  ["エステムプラザ雑賀WESTⅢ 703", "エステムプラザ難波WESTⅢ 703号室"],
 ];
 for (const [a, b] of SAME) t(`${a} ＝ ${b}`, same(a, b), { m: matchLoose(a, b), a: parseLoose(a), b: parseLoose(b) });
 
@@ -48,6 +50,18 @@ const DIFF: Array<[string, string]> = [
   ["サンハイツ", "サンハイム"],
   ["エスリード大阪城EAST 506号室", "エスリード大阪城WEST 506号室"],
   ["アモーレ本町 WEST 7階", "アモーレ本町ウエスト 302号室"],
+  // 2026-10-13 レビュー: 同じシリーズで地名だけ違う建物（設計知見 abce93ff）
+  ["エステムコート梅田", "エステムコート難波"],
+  ["プレサンスロジェ梅田", "プレサンスロジェ福島"],
+  ["エスリードレジデンス梅田", "エスリードレジデンス福島"],
+  ["ファーストフィオーレ江坂", "ファーストフィオーレ堺筋"],
+  ["セレニテ谷町", "セレニテ本町"],
+  ["ミラージュパレス本町", "ミラージュパレス谷町"],
+  ["プレサンス大阪", "プレサンス新大阪"],
+  ["プレサンス天満", "プレサンス天満橋"],
+  ["グランカリテ大阪", "グランカリテ大阪城"],
+  ["スプランディッド堀江", "スプランディッド難波 403号室"],
+  ["スプランディッド堀江", "スプランディッド難波キャトル 803号室"],
 ];
 for (const [a, b] of DIFF) t(`${a} ≠ ${b}`, !same(a, b), { m: matchLoose(a, b), a: parseLoose(a), b: parseLoose(b) });
 
@@ -62,6 +76,8 @@ t("splitBrainNames: 号室つきの「・」は分ける", JSON.stringify(splitB
 t("splitBrainNames: 「／」も分ける", splitBrainNames("ラクラス阿倍野元町 0507／エクセレンス新今宮1202").length === 2);
 t("splitBrainNames: 建物名の中の「・」は分けない（コンフォリア・リヴ博労町一丁目Q 406号室）", splitBrainNames("コンフォリア・リヴ博労町一丁目Q 406号室").length === 1);
 t("splitBrainNames: 1件はそのまま", splitBrainNames("コンフォリア・リヴ博労町一丁目Q").length === 1);
+t("画面用: NEXT_PUBLIC_PROPERTY_NAME_LOOSE_MATCH=off でも止まる", !looseMatchEnabled({ NEXT_PUBLIC_PROPERTY_NAME_LOOSE_MATCH: "off" }));
+t("既定の env は process.env.NEXT_PUBLIC_PROPERTY_NAME_LOOSE_MATCH を名指しで読む（画面でビルド時に埋まる）", /process\.env\.NEXT_PUBLIC_PROPERTY_NAME_LOOSE_MATCH/.test(require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "property-name-loose.ts"), "utf8")));
 t("PROPERTY_NAME_LOOSE_MATCH=off", !looseMatchEnabled({ PROPERTY_NAME_LOOSE_MATCH: "off" }) && looseMatchEnabled({}));
 
 console.log(`\n${passed} passed, ${failed} failed`);

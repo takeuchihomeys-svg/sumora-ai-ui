@@ -113,7 +113,7 @@ export function aixNamesFromTextEnabled(env: Record<string, string | undefined> 
 /** 物件確認の報告の文の物件名（「〇〇の募集状況確認させて頂きました」「〇〇 607号室現在募集中」「〇〇につきまして」）＋【】の名前 */
 const REPORT_NAME_RE = /([^\n、。！!？?「」]{3,40}?)\s*(?:([0-9]{1,4})\s*号室?)?\s*(?:の募集状況|の空室|現在も?募集中|につきまして)/g;
 /** 物件名ではない語（報告の文の手続き・条件の語・【ペット飼育不可】等の見出し・「茨木市全域から」） */
-const REPORT_NOT_NAME_RE = /お部屋|物件|件数|こちら|ご希望|状況|件の|^\d+件|審査|結果|費用|入居|管理会社|内覧|契約|申込|保証|お支払|日程|ご案内|詳細|条件|駐車場|ペット|飼育|可否|不可|全域|エリア|から$/;
+const REPORT_NOT_NAME_RE = /お部屋|物件|件数|こちら|ご希望|状況|件の|^\d+件|審査|結果|費用|入居|管理会社|内覧|契約|申込|保証|お支払|日程|ご案内|詳細|条件|駐車場|ペット|飼育|可否|不可|全域|エリア|から$|市内|圏内|駅徒歩|周辺/;
 /** 本文に合わせるのは物件名を画面で入れる AIX だけ（物件送付は資料の読み取りの名前・本文はご条件の文） */
 const RECONCILE_AIX_TYPES = new Set(["property_check_result", "meeting_place", "viewing_invite", "estimate_sheet", "application_push", "guarantor_info"]);
 const REPORT_LEAD_RE =/^.*(?:さん|様|しました|致しました|いたしました|ました|ところ)[！!、。\s]*/;

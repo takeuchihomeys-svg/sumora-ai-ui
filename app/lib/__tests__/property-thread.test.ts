@@ -101,24 +101,27 @@ describe("区切り4① 並びの何番目（ad97cd40 10/12「1番上のやつ�
   const imageLabels = new Map([["u-alivis", "Alivis浪速東SoL TERRACE 602号室"], ["u-noah", "大阪難波Noah 1006号室"], ["u-buena", "ブエナビスタ難波タワー 704号室"]]);
   const s = resolvePropertyThreads({ messages, imageLabels, aix: [] });
   it("▶ は並びの1件目（Alivis浪速東SoL TERRACE）・推定", () => {
-    eq(s.turnTargets.length, 1); eq(s.turnTargets[0].display, "Alivis浪速東SoL TERRACE 602号室"); eq(s.turnTargets[0].by, "inferred");
-    truthy(/1件目/.test(s.turnTargets[0].why ?? ""), s.turnTargets[0].why);
+    eq(s.turnTargets.length, 0); eq(s.turnHints?.length, 1); eq(s.turnHints![0].display, "Alivis浪速東SoL TERRACE 602号室"); eq(s.turnHints![0].by, "inferred");
+    truthy(/▶ 今の番の物件: Alivis浪速東SoL TERRACE 602号室/.test(buildPropertyThreadNote(s)), "材料の文に ▶");
+    truthy(/1件目/.test(s.turnHints![0].why ?? ""), s.turnHints![0].why);
   });
   it("「最後の」は並びの最後", () => {
     const s2 = resolvePropertyThreads({ messages: [...messages.slice(0, -1), { sender: "customer", text: "最後のやつ内覧できますか？", created_at: "2026-10-12T07:22:55Z" }], imageLabels, aix: [] });
-    eq(s2.turnTargets[0]?.display, "ブエナビスタ難波タワー 704号室");
+    eq(s2.turnHints?.[0]?.display, "ブエナビスタ難波タワー 704号室");
   });
   it("並びが1件しかない時は決めない", () => {
     const s3 = resolvePropertyThreads({ messages: [messages[0], messages[1], messages[2], { sender: "customer", text: "1番上のやつ最短入居いくらですか？", created_at: "2026-10-12T07:22:55Z" }], imageLabels, aix: [] });
-    eq(s3.turnTargets.length, 0);
+    eq(s3.turnHints?.length ?? 0, 0);
   });
   it("PROPERTY_THREAD_ORDINAL=off で今まで通り", () => {
     process.env.PROPERTY_THREAD_ORDINAL = "off";
-    try { eq(resolvePropertyThreads({ messages, imageLabels, aix: [] }).turnTargets.length, 0); } finally { delete process.env.PROPERTY_THREAD_ORDINAL; }
+    try { eq(resolvePropertyThreads({ messages, imageLabels, aix: [] }).turnHints?.length ?? 0, 0); } finally { delete process.env.PROPERTY_THREAD_ORDINAL; }
   });
   it("ordinalIndexOf の形", () => {
     eq(ordinalIndexOf("2番目のお部屋気になります"), 1); eq(ordinalIndexOf("上から3つ目"), 2); eq(ordinalIndexOf("一番下のやつ"), -1);
     eq(ordinalIndexOf("最初は1人で住む予定でした"), null); eq(ordinalIndexOf("2件目以降も"), null);
+    // 2026-10-13 レビュー: 並びの話ではない序数
+    for (const x of ["1番上の階がいいです", "2番目に安いところはどこですか", "最後の確認ですが", "3つ目の質問ですが"]) eq(ordinalIndexOf(x), null);
   });
 });
 
@@ -135,15 +138,17 @@ describe("区切り4② 内覧の日にちの返事（615499ba 10/5「10日で�
   ];
   const s = resolvePropertyThreads({ messages, imageLabels: new Map(), aix: aixV });
   it("▶ は日程を出した通の物件（リヴィエール桜之町東）", () => {
-    eq(s.turnTargets.length, 1); eq(s.turnTargets[0].display, "リヴィエール桜之町東 102号室"); eq(s.turnTargets[0].topic, "viewing");
+    eq(s.turnTargets.length, 0); eq(s.turnHints?.length, 1); eq(s.turnHints![0].display, "リヴィエール桜之町東 102号室"); eq(s.turnHints![0].topic, "viewing");
   });
   it("isViewingDateReply の形", () => {
     truthy(isViewingDateReply("13時でお願いします！")); truthy(isViewingDateReply("12時〜14時でお願いしたいです！"));
     truthy(!isViewingDateReply("ありがとうございます")); truthy(!isViewingDateReply("初期費用はいくらですか？"));
+    // 2026-10-13 レビュー: 入金・契約の日にちの返事は内覧の返事ではない
+    for (const x of ["本日の振込で大丈夫ですか", "明日入金でお願いします", "10日までに入金で大丈夫ですか", "契約は15日でお願いします"]) truthy(!isViewingDateReply(x), x);
   });
   it("PROPERTY_THREAD_VIEWING_REPLY=off で今まで通り", () => {
     process.env.PROPERTY_THREAD_VIEWING_REPLY = "off";
-    try { eq(resolvePropertyThreads({ messages, imageLabels: new Map(), aix: aixV }).turnTargets.length, 0); } finally { delete process.env.PROPERTY_THREAD_VIEWING_REPLY; }
+    try { eq(resolvePropertyThreads({ messages, imageLabels: new Map(), aix: aixV }).turnHints?.length ?? 0, 0); } finally { delete process.env.PROPERTY_THREAD_VIEWING_REPLY; }
   });
 });
 

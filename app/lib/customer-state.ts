@@ -382,22 +382,27 @@ export function brainFocusRoom<R extends Pick<RoomState, "name" | "room" | "last
   const ref = brainPickRef(pick);
   if (!ref) return null;
   let best: { r: R; rank: number } | null = null;
+  const loose: Array<{ r: R; rank: number }> = [];
   for (const r of rooms) {
     const rr = splitPropertyName(r.name, r.room);
     if (!rr) continue;
     const m = matchRoomRefs(ref, rr);
-    let rank = m === "same_room" ? 2 : m === "same_building" ? 1 : 0;
+    const rank = m === "same_room" ? 2 : m === "same_building" ? 1 : 0;
     // 書き方の違いを許す照合（区切り1）。ブレインが「A・B」と並べた時はそれぞれと比べる
     if (!rank && m !== "different_room" && pick?.name && looseMatchEnabled()) {
+      let lr = 0;
       for (const part of splitBrainNames(pick.name)) {
         const lm = matchLoose(part, rr.display);
-        rank = Math.max(rank, lm === "same_room" ? 2 : lm === "same_building" ? 1 : 0);
+        lr = Math.max(lr, lm === "same_room" ? 2 : lm === "same_building" ? 1 : 0);
       }
+      if (lr) loose.push({ r, rank: lr });
+      continue;
     }
     if (!rank) continue;
     if (!best || rank > best.rank || (rank === best.rank && Date.parse(r.lastAt) > Date.parse(best.r.lastAt))) best = { r, rank };
   }
-  return best?.r ?? null;
+  // 書き方の違いで合うお部屋は1件だけの時に使う（2件以上は寄せない＝似ているだけで決めない・設計知見 abce93ff）
+  return best?.r ?? (loose.length === 1 ? loose[0].r : null);
 }
 
 /**

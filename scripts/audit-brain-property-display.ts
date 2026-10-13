@@ -306,7 +306,7 @@ async function partMaterial() {
     const d = decisionAt(decs.get(l.conversation_id), l.created_at);
     if (!d) continue;
     const s = await loadPropertyThreads(l.conversation_id, { asOf: d.created_at });
-    const tt = (s?.turnTargets ?? []).filter((t) => /＝直前にこちらが送った|内覧の日にちの返事/.test(t.why ?? ""));
+    const tt = (s?.turnHints ?? []).filter((t) => /＝直前にこちらが送った|内覧の日にちの返事/.test(t.why ?? ""));
     if (!tt.length) continue;
     fired++;
     const ok = tt.some((t) => brainNameMatchesAny(t.display, l.property_names ?? []));

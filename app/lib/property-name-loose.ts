@@ -10,7 +10,14 @@
 // 戻す: PROPERTY_NAME_LOOSE_MATCH=off（従来の照合だけ）
 import { normalizePropertyName } from "./property-name-match";
 
-export function looseMatchEnabled(env: Record<string, string | undefined> = process.env): boolean {
+/**
+ * 既定の env は名前を名指しで読む（画面＝"use client" では process.env を丸ごと渡しても NEXT_PUBLIC_ が入らない。
+ *   process.env.NEXT_PUBLIC_… をそのまま書くとビルド時に埋まる・2026-10-13 レビュー）
+ */
+export function looseMatchEnvFromProcess(): Record<string, string | undefined> {
+  return { PROPERTY_NAME_LOOSE_MATCH: process.env.PROPERTY_NAME_LOOSE_MATCH, NEXT_PUBLIC_PROPERTY_NAME_LOOSE_MATCH: process.env.NEXT_PUBLIC_PROPERTY_NAME_LOOSE_MATCH };
+}
+export function looseMatchEnabled(env: Record<string, string | undefined> = looseMatchEnvFromProcess()): boolean {
   const v = env.PROPERTY_NAME_LOOSE_MATCH ?? env.NEXT_PUBLIC_PROPERTY_NAME_LOOSE_MATCH ?? "";
   return v.toLowerCase() !== "off";
 }
@@ -85,23 +92,38 @@ function editDistance(a: string, b: string, cap: number): number {
 }
 
 /** 建物が同じか（書き方の違いを許す・区別の印が違えば別） */
-export function sameBuildingLoose(a: LooseRef, b: LooseRef): boolean {
+const KANJI_RE = /[一-龯々]/;
+/** 片方にだけある漢字の数（多い方）。地名だけ違う同じシリーズの建物（エステムコート梅田／難波）を見分ける */
+function kanjiDiff(a: string, b: string): number {
+  const count = (s: string) => { const m = new Map<string, number>(); for (const c of Array.from(s)) if (KANJI_RE.test(c)) m.set(c, (m.get(c) ?? 0) + 1); return m; };
+  const x = count(a), y = count(b);
+  const only = (p: Map<string, number>, q: Map<string, number>) => { let n = 0; for (const [c, k] of p) n += Math.max(0, k - (q.get(c) ?? 0)); return n; };
+  return Math.max(only(x, y), only(y, x));
+}
+/**
+ * 建物が同じか（書き方の違いを許す・区別の印が違えば別）。
+ * 2026-10-13 レビュー: 同じシリーズで地名だけ違う建物（エステムコート梅田／難波・セレニテ谷町／本町・スプランディッド堀江／難波）を同じと見ていた
+ *   （設計知見 abce93ff「似ている・略称は寄せずに未確認」）→ 漢字の書き換えは号室まで同じ時（sameRoom）だけ（読み取りの取り違え「西橘田／西梅田 603」）。
+ *   「含む」の枝は足りない字に漢字があれば別（プレサンス大阪／新大阪・天満／天満橋・大阪／大阪城）
+ */
+export function sameBuildingLoose(a: LooseRef, b: LooseRef, opts: { sameRoom?: boolean } = {}): boolean {
   if (a.key === b.key) return true;
   if (a.marks !== b.marks) return false;
   const short = Math.min(Array.from(a.key).length, Array.from(b.key).length);
   if (short < 6) return false;
   const cap = short >= 8 ? 2 : 1;
-  if (editDistance(a.key, b.key, cap) <= cap) return true;
-  // 片方がもう片方を含み、差が2字以内（「コンフォリアリブ博労町一丁目／…一丁目Q」）
+  if (editDistance(a.key, b.key, cap) <= cap && (opts.sameRoom || kanjiDiff(a.key, b.key) === 0)) return true;
+  // 片方がもう片方を含み、差が2字以内・足りない字に漢字が無い（「コンフォリアリブ博労町一丁目／…一丁目Q」）
   const [s, l] = a.key.length <= b.key.length ? [a.key, b.key] : [b.key, a.key];
-  return short >= 6 && l.includes(s) && Array.from(l).length - Array.from(s).length <= 2;
+  if (!(short >= 6 && l.includes(s) && Array.from(l).length - Array.from(s).length <= 2)) return false;
+  return !KANJI_RE.test(l.replace(s, ""));
 }
 
 export type LooseMatch = "same_room" | "same_building" | "different_room" | "different";
 /** 2つの物件名が同じ物件か（号室が両方にあって違えば different_room・階だけなら建物で見る） */
 export function matchLoose(a: string | null | undefined, b: string | null | undefined): LooseMatch {
   const x = parseLoose(a), y = parseLoose(b);
-  if (!x || !y || !sameBuildingLoose(x, y)) return "different";
+  if (!x || !y || !sameBuildingLoose(x, y, { sameRoom: !!x.room && x.room === y.room })) return "different";
   if (x.room && y.room) {
     if (x.room === y.room) return "same_room";
     // 「1-C」と「103」のように片方が階＋英字の時は、部屋の番号の対応が分からない → 階が同じなら建物で見る
