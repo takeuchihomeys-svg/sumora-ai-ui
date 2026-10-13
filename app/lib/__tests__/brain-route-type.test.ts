@@ -54,8 +54,8 @@ const txt = routeTypeBrainText("considering", { stats: { considering: { n: 23, r
 t("材料: 見分け・数・手本・ブレインが決める旨", /返信か AIX かの材料/.test(txt) && /返信 17/.test(txt) && /竹内さんの実送信（同じ型）/.test(txt) && /決めるのはこの会話の事実/.test(txt));
 t("材料: 型が無ければ空", routeTypeBrainText(null) === "");
 t("数は5番未満なら出さない", routeStatLine({ n: 3, reply: 1, promise: 1, aix: 1 }) === "");
-t("戻す: BRAIN_ROUTE_TYPE_MATERIAL=off", !routeTypeMaterialEnabled({ BRAIN_ROUTE_TYPE_MATERIAL: "off" }) && routeTypeMaterialEnabled({}));
-t("戻す: BRAIN_ROUTE_TYPE_EXAMPLES=off は手本だけ", !routeTypeExamplesEnabled({ BRAIN_ROUTE_TYPE_EXAMPLES: "off" }) && routeTypeMaterialEnabled({ BRAIN_ROUTE_TYPE_EXAMPLES: "off" }));
+t("既定 off・入れる: BRAIN_ROUTE_TYPE_MATERIAL=on", routeTypeMaterialEnabled({ BRAIN_ROUTE_TYPE_MATERIAL: "on" }) && !routeTypeMaterialEnabled({}));
+t("BRAIN_ROUTE_TYPE_EXAMPLES=off は手本だけ", !routeTypeExamplesEnabled({ BRAIN_ROUTE_TYPE_MATERIAL: "on", BRAIN_ROUTE_TYPE_EXAMPLES: "off" }) && routeTypeExamplesEnabled({ BRAIN_ROUTE_TYPE_MATERIAL: "on" }));
 
 // ── 作った data（竹内さんの番だけ・伏せた）
 t("data: 手本がある", ROUTE_EXAMPLES.length > 50);

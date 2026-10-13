@@ -2413,7 +2413,7 @@ ${catalogBlockForBrain(brainScene)}
     ? judgeExamplesBrainText(pickJudgeExamples(JUDGE_EXAMPLES, { customerText: unrepliedTurn.text ?? "", conversationId, historyCustomerTexts: typedMessages.filter((m) => m.sender === "customer").map((m) => m.text ?? "") }))
     : "";
   // 2026-10-14 返信か AIX かの材料（今の発言の型の候補・竹内さんの実際の数・見分け方・竹内さんの実送信の手本 最大3件・app/lib/brain-route-type.ts）。
-  //   答えは書かない（P0 9eb6aa9c）。毎回変わる並び＝キャッシュの印の外。戻す BRAIN_ROUTE_TYPE_MATERIAL=off（手本だけ BRAIN_ROUTE_TYPE_EXAMPLES=off）
+  //   答えは書かない（P0 9eb6aa9c）。毎回変わる並び＝キャッシュの印の外。既定 off（試験で下がる側）・入れる BRAIN_ROUTE_TYPE_MATERIAL=on
   let routeTypeText = "";
   let routeTypeNow: RouteType | null = null;
   if (routeTypeMaterialEnabled() && !isPostApplyStatus(convStatus)) {

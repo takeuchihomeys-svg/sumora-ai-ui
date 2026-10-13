@@ -9,7 +9,7 @@
 //   測った事（30日 839番・scripts/audit-split-reply-aix.ts）: ブレインの AIX 62%・AIX の番で人が文で済ませた 126・文の後で同じ AIX 132。
 //     型ごとの竹内さんの並びは brain-route-type-data.ts の ROUTE_TYPE_STATS（作る時の数）。
 //   置き場所: ブレインの材料の「毎回変わる並び」（judgeExamplesText の隣・キャッシュの印の無い所）＝system と会話専用ブロックのキャッシュは変えない。
-// 戻す: BRAIN_ROUTE_TYPE_MATERIAL=off（材料も手本も）／BRAIN_ROUTE_TYPE_EXAMPLES=off（手本だけ）
+// 既定 off（試験で下がる側・routeTypeMaterialEnabled の注記）。入れる: BRAIN_ROUTE_TYPE_MATERIAL=on／手本だけ外す BRAIN_ROUTE_TYPE_EXAMPLES=off
 import { contentSim, textFingerprint, textSim } from "./brain-judge-examples";
 
 export type RouteType =
@@ -111,8 +111,14 @@ export type RouteExample = {
   fp?: string[];
 };
 
+/**
+ * 2026-10-14 既定 off（入れる: BRAIN_ROUTE_TYPE_MATERIAL=on）。試験（DeepSeek・関係する6型 54答案・1回ずつ）で道の合格が
+ *   材料なし 39・39（2回）→ 材料あり 35（手本・近さの下限なし）・37（手本・近さ 0.15）・36（手本なし）＝どれも揺れの幅の中で下がる側。
+ *   AIX の言い過ぎ（返信の問題で AIX）も 6・7 → 9・9・7。直った番（q011 q014 q050 q057）より崩れた番（q022 q055 q056 q141 等）が多く、
+ *   型の網が粗い（内覧の希望で「時刻だけ決めた・行き先未定」と「日時を選んだ」が同じ型）・手本が別の道を見せる、が原因の見込み。最後の Claude の確かめは dept_line_reply.md 10/14
+ */
 export function routeTypeMaterialEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.BRAIN_ROUTE_TYPE_MATERIAL ?? "").trim().toLowerCase() !== "off";
+  return (env.BRAIN_ROUTE_TYPE_MATERIAL ?? "").trim().toLowerCase() === "on";
 }
 export function routeTypeExamplesEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return routeTypeMaterialEnabled(env) && (env.BRAIN_ROUTE_TYPE_EXAMPLES ?? "").trim().toLowerCase() !== "off";
