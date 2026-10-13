@@ -28,6 +28,8 @@ export type SheetVacancy = {
   /** 現況（資料の字のまま。「退去予定」「空室」「居住中」「空き予定」…）。無ければ null */
   current: string | null;
   currentFrom: string | null;
+  /** 現況の欄が無く、退去日から「退去予定」とした（LLM の現況の行があればそちらを残す） */
+  currentInferred?: boolean;
   /** 退去予定日（資料の字のまま。「9/30」「2026年6月30日」「8月末」「2026/9/中旬」「9/下」） */
   vacate: string | null;
   vacateFrom: string | null;
@@ -56,6 +58,12 @@ const DASH_RE = /^[\s\-ー－—―−~〜]*$/;
 const STATUS_RE = /空室予定|空き予定|空予定|退去予定|解約予定|空室|空き家|空家|空き|居住中|入居中|賃貸中|建築中|建設中|新築|改装中|リフォーム中|内装中|未完成|完成済|未入居/;
 const DEAL_RE = /^(?:商談中|内装中|審査中|清掃中|申込あり|申込有|申込中|リフォーム中|改装中)$/;
 const MOVEIN_VALUE_RE = /即|相談|未定|期日指定|指定|調整|応相談|\d/;
+/** 現況の値として成り立つ状態の語 */
+const REAL_STATE_RE = /空室|空き|空家|退去|解約予定|居住中|入居中|賃貸中|予定|新築|建築中|建設中|改装中|内装中|リフォーム中|完成|未入居|清掃中|申込|商談|審査|募集/;
+/** 状態の語ではないが現況の欄に書かれる事がある値（金額・面積・号室が混ざらない時だけ採る） */
+const SOFT_STATE_RE = /相談|即入|即時|即日|入居可/;
+/** 現況の値として成り立たない（隣の欄の値を取った）印 */
+const NOT_STATE_RE = /円|㎡|m2|m²|帖|畳|号室|^[\d,.\s/]+$/;
 /** 現況に添える状態の語（LLM の現況にだけあって欄の値に無い時に落とさない） */
 const STATUS_EXTRA_RE = /新築|未入居|内装中|清掃中|リフォーム中|改装中|商談中|審査中|申込あり|申込中/;
 
@@ -177,6 +185,14 @@ export function readSheetVacancy(text: string | null | undefined): SheetVacancy 
     const sp = from === "現況" ? v.match(new RegExp(`^(?:退去予定|解約予定|空き?予定)\\s+(${SHEET_DATE_SRC})\\s*$`)) : null;
     if (sp && sheetDateKey(squashDate(sp[1]))) vac.push({ raw: squashDate(sp[1]), from: "現況の欄", rank: 1 });
     if (!val || DASH_RE.test(val)) return;
+    // 2026-10-13 B の読み直しで「現況: 7,700円/月」（隣の欄＝駐車場の値を取った）・「現況: 相談(2026年7月17日退去予定)」→「相談」:
+    //   現況の値として採るのは状態の語（空室・退去予定・居住中・空き予定・新築・建築中・内装中…）がある時だけ。
+    //   状態の語が無く括弧・文に退去日がある時は「退去予定」。相談・即入居だけは金額・面積・号室が混ざらない時だけ。それ以外は採らない（LLM の行を残す）
+    if (/円|㎡|m2|m²|帖|畳/.test(val)) return; // 金額・面積が混ざる＝隣の欄（駐車場「空有 7,700円/月」等）
+    if (!REAL_STATE_RE.test(val)) {
+      if (vacatePhrases(v).length) { curs.push({ raw: "退去予定", from, rank }); return; }
+      if (!SOFT_STATE_RE.test(val) || NOT_STATE_RE.test(val)) return;
+    }
     const w = val.match(STATUS_RE);
     // 短い値は字のまま（「新築 空室」の新築を落とさない）。日付や文が混ざる長い値だけ状態の語にする
     const short = val.replace(/\s+/g, " ");
@@ -253,7 +269,7 @@ export function readSheetVacancy(text: string | null | undefined): SheetVacancy 
   if (cu0 && /(?:空室|空き家|空家|^空き)$/.test(cu0.raw) && !/予定/.test(cu0.raw) && out.vacate) { out.conflicts.push(`vacate(空室): ${out.vacate}(${out.vacateFrom})`); out.vacate = null; out.vacateFrom = null; }
   const cu = cu0;
   if (cu) { out.current = cu.raw; out.currentFrom = cu.from; }
-  else if (out.vacate) { out.current = "退去予定"; out.currentFrom = out.vacateFrom; }
+  else if (out.vacate) { out.current = "退去予定"; out.currentFrom = out.vacateFrom; out.currentInferred = true; }
   // 現況が「空き予定」等で退去日があれば現況は退去予定の側（字のまま残す）
   out.extras = [...new Set(out.extras)];
   return out;
@@ -284,6 +300,11 @@ export function alignVacancyLines(lines: string[], sourceText: string | null | u
   const v = readSheetVacancy(src);
   if (v.multiRoom) return { lines, changed: false, read: v };
   const fromSheet = sheetVacancyLines(v);
+  // 現況の欄が無く退去日から決めた「現況: 退去予定」は、LLM が現況の行を持っていればそちらを残す（欄で読めていない値で置き換えない）
+  if (v.currentInferred && lines.some((l) => labelOf(l) === "現況" && VAC_LINE_RE.test(nf(l)))) {
+    const i = fromSheet.findIndex((x) => labelOf(x) === "現況");
+    if (i >= 0) fromSheet.splice(i, 1);
+  }
   const got = new Set(fromSheet.map((l) => labelOf(l)));
   const srcText = toLines(src).join("\n");
   const srcVac = new Set(vacatePhrases(srcText).map((x) => sheetDateKey(x)));
@@ -292,6 +313,7 @@ export function alignVacancyLines(lines: string[], sourceText: string | null | u
   const sq = (s: string) => s.replace(/[\s・]+/g, "");
   const out: string[] = [];
   const notes: string[] = [];
+  const kept: string[] = [];
   let at = -1;
   for (const l of lines) {
     const lab = VAC_LINE_RE.test(nf(l)) ? labelOf(l) : null;
@@ -345,10 +367,14 @@ export function alignVacancyLines(lines: string[], sourceText: string | null | u
       const k = sheetDateKey(nf(l).replace(/^[^:：]+[:：]\s*/, "").match(DATE_RE)?.[0] ?? "");
       if (k && k === sheetDateKey(v.vacate)) continue;
     }
-    out.push(l);
+    kept.push(l); // 残す LLM の行は並べ直す塊に入れる
   }
   if (at < 0) at = out.length;
-  out.splice(at, 0, ...fromSheet, ...notes);
+  // 現況 → 退去予定 → 入居可能日 → 内覧可能日 → 入居の別の記載 の順に並べる（残した LLM の行と欄の行の並びが回ごとに変わらない＝2回かけても同じ）
+  const ORDER = ["現況", "退去予定", "入居可能日", "内覧可能日"];
+  const rank = (l: string) => { const lab = labelOf(l); return lab ? ORDER.indexOf(lab) : ORDER.length; };
+  const block = [...kept, ...fromSheet].map((l, i) => ({ l, i })).sort((a, b) => rank(a.l) - rank(b.l) || a.i - b.i).map((x) => x.l);
+  out.splice(at, 0, ...block, ...notes);
   return { lines: out, changed: JSON.stringify(out) !== JSON.stringify(lines), read: v };
 }
 

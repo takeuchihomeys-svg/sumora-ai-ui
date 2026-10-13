@@ -239,6 +239,28 @@ it("【見直し2】元の文字に退去・解約・明渡し・空き予定の
   ok(alignVacancyLines(["間取り: 1K", "退去予定: 10/31"], "間取 1K\n備考: 令和捌年拾月 予定 所在階 3階", {}).lines.includes("退去予定: 10/31"));
 });
 
+it("【B の読み直し】現況の欄が空で次の行が金額（「現況:」⏎「7,700円/月」）は現況にしない・LLM の現況の行を残す（ba1527de 1788404857079）", () => {
+  const src = "号室: 201\n現況:\n7,700円/月\n入居時期: 期日指定(2026年10月上旬)\n案内方法: 9月末空き予定";
+  const v = readSheetVacancy(src);
+  ok(v.current !== "7,700円/月", JSON.stringify(v));
+  const r = alignVacancyLines(["間取り: 2DK", "現況: 201号室 9月末空き予定", "入居可能日: 期日指定(2026年10月上旬)", "退去予定: 9月末"], src, {});
+  ok(!r.lines.some((l) => /円/.test(l) && /^現況/.test(l)), JSON.stringify(r.lines));
+  ok(r.lines.includes("現況: 201号室 9月末空き予定") && r.lines.includes("退去予定: 9月末") && r.lines.includes("入居可能日: 期日指定(2026年10月上旬)"), JSON.stringify(r.lines));
+  eq(alignVacancyLines(r.lines, src, {}).lines, r.lines);
+});
+it("【B の読み直し】金額・面積・号室だけの現況は採らない（現況: 7,700円/月・25.3㎡・203号室）", () => {
+  eq(readSheetVacancy("現況: 7,700円/月").current, null);
+  eq(readSheetVacancy("現況 25.3㎡").current, null);
+  eq(readSheetVacancy("現況: 203号室").current, null);
+  eq(readSheetVacancy("現況: 空室").current, "空室");
+  eq(readSheetVacancy("現況: 即入居可").current, "即入居可");
+  eq(readSheetVacancy("現況: 申込有り").current, "申込有り");
+});
+it("【B の読み直し】「現況: 相談(2026年7月17日退去予定)」は 現況 退去予定・退去予定日 2026年7月17日（「相談」を現況にしない）", () => {
+  const v = readSheetVacancy("現況: 相談(2026年7月17日退去予定)");
+  eq([v.current, v.vacate], ["退去予定", "2026年7月17日"]);
+});
+
 // ── AIX【物件確認した】の画像の退去予定日（/api/extract-vacancy-date）: Haiku は書き写すだけ・欄で決める ──
 it("extract-vacancy-date: 書き写しの「退去予定 / 2026年10月20日」は退去予定日にしない（旧の Haiku は 2026年10月20日 を返した）", () => {
   eq(parseExtractVacancyResponse(`{"propertyName":"maison de Villa 北畠 202号室","fields":["現況/入居時期: 退去予定 / 2026年10月20日 / 商談中"]}`, {}), { propertyName: "maison de Villa 北畠 202号室", vacancyDate: null, fields: ["現況/入居時期: 退去予定 / 2026年10月20日 / 商談中"], vacancyFrom: null });
