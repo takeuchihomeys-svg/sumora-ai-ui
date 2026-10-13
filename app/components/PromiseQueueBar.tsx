@@ -1,7 +1,7 @@
 "use client";
 // app/components/PromiseQueueBar.tsx — 会話画面「約束の続き」: 1通で複数を約束した時の、次に送る AIX と残り（promise-queue）
 //   2026-10-09 竹内さん「読み込んで約束して、約束した事を記録して、それを AIX で送っていけば完全にできる」。
-//   値は GET /api/promise-queue（LLM なし）。次が無ければ出さない。失敗しても画面は落とさない。入れる: NEXT_PUBLIC_PROMISE_QUEUE=on（既定 off）
+//   値は GET /api/promise-queue（LLM なし）。次が無ければ出さない。失敗しても画面は落とさない。戻す: NEXT_PUBLIC_PROMISE_QUEUE=off
 import { useEffect, useRef, useState } from "react";
 
 type View = { next: string | null; rest: string[]; done: string[] };
@@ -13,7 +13,7 @@ export default function PromiseQueueBar({ conversationId, refreshKey, authHeader
   authRef.current = authHeader;
   useEffect(() => {
     setV(null);
-    if (!conversationId || process.env.NEXT_PUBLIC_PROMISE_QUEUE !== "on") return;
+    if (!conversationId || process.env.NEXT_PUBLIC_PROMISE_QUEUE === "off") return;
     const ac = new AbortController();
     (async () => {
       try {

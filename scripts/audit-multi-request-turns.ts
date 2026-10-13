@@ -61,7 +61,7 @@ async function main() {
   let twoStageTurns = 0, twoStageOneKindHumanMulti = 0;
   const combo: Record<string, number> = {}; const seq: Record<string, number> = {}; const aixCount: Record<number, number> = {};
   const doneTimes: number[] = []; const gapTimes: number[] = [];
-  const exWording: string[] = [], exDrop: string[] = [], exSeq: string[] = [], exOne: string[] = [];
+  const exWording: string[] = [], exDrop: string[] = [], exSeq: string[] = [], exOne: string[] = [], exList: string[] = [];
   for (const [cid, list] of byConv) {
     if (postApply.has(cid)) continue;
     const cLogs = (logsBy.get(cid) ?? []).map((l) => ({ ...l, at: l.sent_at ?? l.created_at }));
@@ -88,6 +88,7 @@ async function main() {
       const hp = firstHandMsg ? promisesInStaffText(firstHandMsg.text, firstHandMsg.created_at) : [];
       humanPromiseKinds += hp.length;
       if (!first.is_aix_generated) { if (hp.length >= 2) bundled++; else if (hp.length === 1) onePromise++; else answerOnly++; }
+      exList.push(`${cid} at=${list[j - 1].created_at} [${key}] 最初=${first.is_aix_generated ? "AIX" : "手打ち"} 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・") || "なし"}｜依頼: ${its.map((x) => `[${TOPIC_JA[x.topic]}]${x.quote.slice(0, 30)}`).join(" ")}｜人: ${String(firstHandMsg?.text ?? "").replace(/s+/g, " ").slice(0, 140)}`);
       if (!first.is_aix_generated && hp.length <= 1 && exOne.length < N) exOne.push(`${cid.slice(0, 6)} ${list[i].created_at.slice(5, 16)} [${key}] 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・") || "なし"}｜客: ${bundle.join(" / ").replace(/s+/g, " ").slice(-160)}｜人: ${String(firstHandMsg?.text ?? "").replace(/s+/g, " ").slice(0, 160)}`);
       if (hp.length >= 2 && exWording.length < N) exWording.push(`${cid.slice(0, 6)} ${list[i].created_at.slice(5, 16)} [${key}] 約束=${hp.map((p) => PROMISE_KIND_JA[p.kind]).join("・")}｜人: ${String(firstHandMsg!.text).replace(/\s+/g, " ").slice(0, 200)}`);
       // AIX の並び（72時間）
@@ -178,7 +179,7 @@ async function main() {
   console.log(`約束も答えもしなかった依頼（72時間）: ${openItems}/${itemsTotal}（その番 ${openTurns}）`);
   console.log(`下書き（最初の手打ちに対の AI の下書き ${draftTurns} 番）: 依頼に触れた ${draftItemsCovered}/${draftItemsTotal}（${pct(draftItemsCovered, draftItemsTotal)}）・下書きの約束の種類 計 ${draftPromiseKinds}・人がまとめて約束した番で下書きの約束が少ない ${draftOneWhileHumanMulti}`);
   console.log(`ブレインが2段（約束の返信・1種類）にした番 ${twoStageTurns}・そのうち人は2種類以上を約束 ${twoStageOneKindHumanMulti}`);
-  const show = SHOW === "wording" ? exWording : SHOW === "drop" ? exDrop : SHOW === "seq" ? exSeq : SHOW === "one" ? exOne : [];
+  const show = SHOW === "wording" ? exWording : SHOW === "drop" ? exDrop : SHOW === "seq" ? exSeq : SHOW === "one" ? exOne : SHOW === "list" ? exList : [];
   if (SHOW) { console.log(`\n== ${SHOW}`); for (const e of show) console.log("  " + e); }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

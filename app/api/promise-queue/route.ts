@@ -1,6 +1,6 @@
 // app/api/promise-queue/route.ts — 会話画面「約束の続き」（次に送る AIX・残り・果たした物）を返す（内部認証・読むだけ・LLM なし）
 //   GET ?conversation_id=… → { next: string | null, rest: string[], done: string[] }
-//   2026-10-09 竹内さん「読み込んで約束して、約束した事を記録して、それを AIX で送っていけば完全にできる」。決まりは app/lib/promise-queue.ts。戻す: 既定 off・PROMISE_QUEUE=on で入る
+//   2026-10-09 竹内さん「読み込んで約束して、約束した事を記録して、それを AIX で送っていけば完全にできる」。決まりは app/lib/promise-queue.ts。戻す: 戻す PROMISE_QUEUE=off
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { promiseQueueEnabled } from "@/app/lib/promise-queue";

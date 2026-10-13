@@ -92,12 +92,14 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
  *   → 今の連投を request-ledger で数え、主の約束（v.kind）で果たさない依頼のうち AIX で果たす物（空き・見積・内覧・ピックアップ・室内写真・条件の確認）を、同じ返信の約束に足す。
  *     約束した事は送った通の記録（sent_facts の約束の行）に残り、AIX を1本送るごとに次の AIX要対応が立つ（promise-queue）。
  *   足さない物: 返信で答える依頼（審査・入居の時期・その他＝TWO_STAGE_ALSO_ANSWER）・先の時期の相談・申込以降。物件が無い番の費用（見積る物件が無い＝estimate-needs-property）。
- *   入れる: TWO_STAGE_MULTI_PROMISE=on（既定 off・2026-10-09 時点）
+ *   戻す: TWO_STAGE_MULTI_PROMISE=off（既定 on）
  */
+/** 主の約束に「あわせて」で足す約束の上限（2026-10-09 竹内さん「念のため、あわせて最大5つ」） */
+export const TWO_STAGE_MULTI_PROMISE_MAX = 5;
 type ExtraPromise = { kind: "check" | "estimate" | "viewing" | "pickup" | "photo" | "confirm"; what: string; wording: string };
 function multiPromiseExtras(v: TwoStageVerdict, i: TwoStageInput): ExtraPromise[] {
-  // 既定 off（2026-10-09 本番に入れる前の区切り）。入れる: TWO_STAGE_MULTI_PROMISE=on
-  if (typeof process === "undefined" || (process.env?.TWO_STAGE_MULTI_PROMISE ?? "").toLowerCase() !== "on") return [];
+  // 既定 on（2026-10-09 竹内さん「できる限り早く本番に入れる」）。戻す: TWO_STAGE_MULTI_PROMISE=off
+  if (typeof process !== "undefined" && (process.env?.TWO_STAGE_MULTI_PROMISE ?? "").toLowerCase() === "off") return [];
   // 決まった型の約束（お仕事面のサポート・室内写真の撮影・内覧の確認）は今まで通り
   if (/work_support|room_photo_shoot|viewing_check/.test(v.source)) return [];
   const items = splitRequests([String(i.customerText ?? "")], new Date(0).toISOString()).filter((x) => !x.deferred && x.topic !== "other");
@@ -115,7 +117,7 @@ function multiPromiseExtras(v: TwoStageVerdict, i: TwoStageInput): ExtraPromise[
   if ((topics.has("equipment") || topics.has("contract")) && v.kind !== "check") {
     out.push({ kind: "confirm", what: "聞かれた条件・設備", wording: "（資料・会話に答えがあればその答え。無ければ）〇〇（聞かれた事）もあわせて確認させて頂きます！！" });
   }
-  return out.slice(0, 3);
+  return out.slice(0, TWO_STAGE_MULTI_PROMISE_MAX);
 }
 function multiPromiseDirection(extra: readonly ExtraPromise[]): string {
   return `【同じ連投の別の依頼も同じ返信でまとめて約束する（竹内さんの形＝1通にまとめて「あわせて」でつなぐ・結果や金額や日時は書かない・送るのは後で AIX を1つずつ）】${extra.map((x, n) => `${n + 1}. ${x.what}: 「${x.wording}」`).join(" ")}。物件名は会話から分かる時だけ。約束の順は お客様が聞いた順でよい。`;

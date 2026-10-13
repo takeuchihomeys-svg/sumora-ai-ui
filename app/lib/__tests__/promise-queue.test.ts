@@ -1,7 +1,7 @@
 // 2026-10-09 約束の並び（promise-queue.ts）と2段のまとめた約束（two-stage multiPromise）。こちらの文・お客様の連投は実物（名前・物件名は伏せた）
 // 実行: npx tsx app/lib/__tests__/promise-queue.test.ts
-import { promisesInStaffText, buildPromiseQueue, nextPromiseAix, keepPromiseQueueItem, promiseQueueNote, PROMISE_QUEUE_NOTE_PREFIX, type QueueMsg, type QueueAixLog } from "../promise-queue";
-import { resolveTwoStage } from "../two-stage";
+import { promisesInStaffText, buildPromiseQueue, nextPromiseAix, keepPromiseQueueItem, promiseQueueNote, pickupNeedSignals, promiseOrderFor, PROMISE_ORDER, PROMISE_QUEUE_NOTE_PREFIX, type QueueMsg, type QueueAixLog } from "../promise-queue";
+import { resolveTwoStage, TWO_STAGE_MULTI_PROMISE_MAX } from "../two-stage";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -11,8 +11,7 @@ function it(name: string, fn: () => void) {
 function eq<T>(a: T, b: T, label = "") { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${label} expected ${JSON.stringify(b)} but got ${JSON.stringify(a)}`); }
 function has(s: string, sub: string) { if (!s.includes(sub)) throw new Error(`expected ${JSON.stringify(s.slice(0, 300))} to contain ${JSON.stringify(sub)}`); }
 function not(s: string, sub: string) { if (s.includes(sub)) throw new Error(`expected not to contain ${JSON.stringify(sub)}`); }
-// 既定 off（2026-10-09）の物を on にして確かめる
-process.env.PROMISE_QUEUE = "on"; process.env.TWO_STAGE_MULTI_PROMISE = "on";
+// 既定 on（2026-10-09）
 const kinds = (t: string) => promisesInStaffText(t, "2026-10-01T00:00:00.000Z").map((p) => p.kind).sort();
 
 console.log("promisesInStaffText（竹内さんのまとめた約束）");
@@ -78,10 +77,43 @@ it("要対応の印と取り下げない線", () => {
   eq(keepPromiseQueueItem({ resolution_note: note, created_at: T0 }, Date.parse(T0) + 3600_000), true);
   eq(keepPromiseQueueItem({ resolution_note: note, created_at: T0 }, Date.parse(T0) + 80 * 3600_000), false);
   eq(keepPromiseQueueItem({ resolution_note: null, created_at: T0 }, Date.parse(T0) + 3600_000), false);
-  eq(keepPromiseQueueItem({ resolution_note: note, created_at: T0 }, Date.parse(T0) + 3600_000, { PROMISE_QUEUE: "" }), false);
+  eq(keepPromiseQueueItem({ resolution_note: note, created_at: T0 }, Date.parse(T0) + 3600_000, { PROMISE_QUEUE: "off" }), false);
 });
 
+console.log("ピックアップが必要なお客様はピックアップを上げる（竹内さん③）");
+const mixMsgs: QueueMsg[] = [
+  { sender: "customer", text: "ここ空いてますか？初期費用も知りたいです\n他にも物件送ってほしいです", createdAt: T0 },
+  { sender: "staff", text: "お送り頂きました物件の募集状況確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書もあわせてお送りさせて頂きます！！\nあわせて、ご希望のご条件に合ったお部屋もピックアップしてお送りさせて頂きます！！", createdAt: "2026-10-05T01:05:00.000Z" },
+];
+const nowMix = Date.parse("2026-10-05T01:10:00.000Z");
+const qMix = buildPromiseQueue(mixMsgs, [], nowMix);
+it("信号: まだ物件を送っていない・他にもと頼んだ", () => {
+  const n = pickupNeedSignals(mixMsgs.slice(0, 1), []);
+  eq(n, { noPropertiesSent: true, sentNotFit: false, customerAskedMore: true });
+});
+it("基本（信号なし）: 確認 → 見積 → ピックアップ", () => eq([nextPromiseAix(qMix, { nowMs: nowMix })!.next.kind, ...nextPromiseAix(qMix, { nowMs: nowMix })!.rest.map((s) => s.kind)], ["check", "estimate", "pickup"]));
+it("まだ物件を送っていない → ピックアップが一番先", () => {
+  const nx = nextPromiseAix(qMix, { nowMs: nowMix, need: { noPropertiesSent: true, sentNotFit: false, customerAskedMore: false } })!;
+  eq([nx.next.kind, ...nx.rest.map((s) => s.kind)], ["pickup", "check", "estimate"]);
+});
+it("送った後で「他にも」と頼んだ → 確認の次・見積より前", () => {
+  const nx = nextPromiseAix(qMix, { nowMs: nowMix, need: { noPropertiesSent: false, sentNotFit: false, customerAskedMore: true } })!;
+  eq([nx.next.kind, ...nx.rest.map((s) => s.kind)], ["check", "pickup", "estimate"]);
+});
+it("送った物件が合わない（AIX で送った後「どれもいまいち」）→ 合わない", () => {
+  const n = pickupNeedSignals([{ sender: "customer", text: "どれもいまいちでした", createdAt: T0 }], [{ aixType: "property_send", sentAt: "2026-10-04T00:00:00.000Z" }]);
+  eq(n.sentNotFit, true); eq(n.noPropertiesSent, false); eq(promiseOrderFor(n)[1], "pickup");
+});
+it("送った後・信号なし → 基本の順", () => eq(promiseOrderFor({ noPropertiesSent: false, sentNotFit: false, customerAskedMore: false }), PROMISE_ORDER));
+
 console.log("resolveTwoStage（同じ連投の別の依頼もまとめて約束）");
+it("あわせて足す約束の上限は5（竹内さん②）", () => {
+  eq(TWO_STAGE_MULTI_PROMISE_MAX, 5);
+  const v = resolveTwoStage({ finalAix: "estimate_sheet", decisionSource: "llm", pickupReady: false, postApply: false, estimateTarget: "〇〇",
+    customerText: "ここ空いてますか？\n初期費用いくらですか？\n内覧したいです\n他にも物件ありますか？\n室内の写真ありますか？\nペット可ですか？" })!;
+  eq((v.extraPromises ?? []).length <= TWO_STAGE_MULTI_PROMISE_MAX, true);
+  eq(v.extraPromises, ["check", "viewing", "pickup", "photo", "confirm"]);
+});
 const base = { finalAix: "property_check_result", decisionSource: "llm", pickupReady: false, postApply: false } as const;
 it("空き（主）＋内覧＋他の物件 → 内覧の日程・ピックアップをあわせて約束", () => {
   const v = resolveTwoStage({ ...base, customerText: "こちらまだ空いてますか？\n空いていたら内覧したいです\n他にも似たような物件ありますか？", ackOnly: false })!;
@@ -100,10 +132,10 @@ it("ピックアップの約束（主）＋空き＋見積（物件が無い番�
   const v = resolveTwoStage({ ...base, finalAix: "property_send", customerText: "このURLの物件空いてますか？\nあと初期費用っていくらくらいですか？", ackOnly: false })!;
   eq(v.kind, "pickup"); eq(v.extraPromises, ["check"]);
 });
-it("既定（TWO_STAGE_MULTI_PROMISE が on でない）は足さない", () => {
-  process.env.TWO_STAGE_MULTI_PROMISE = "";
+it("戻す TWO_STAGE_MULTI_PROMISE=off", () => {
+  process.env.TWO_STAGE_MULTI_PROMISE = "off";
   try { eq(resolveTwoStage({ ...base, customerText: "こちらまだ空いてますか？\n空いていたら内覧したいです\n他にも似たような物件ありますか？" })!.extraPromises, undefined); }
-  finally { process.env.TWO_STAGE_MULTI_PROMISE = "on"; }
+  finally { delete process.env.TWO_STAGE_MULTI_PROMISE; }
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

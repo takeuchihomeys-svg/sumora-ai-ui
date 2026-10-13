@@ -7,15 +7,19 @@
 //     まだ果たしていない約束があって今の要対応（ブレインの行）が無ければ、次の AIX を要対応に立てる（resolution_note=rule:promise_queue…）。
 //   ブレインの判断とぶつかる時はブレインが勝つ（次のお客様の発言でブレインが違う AIX にしたら上書き・お客様が止まった/断ったら取り下げ＝aix-action-items）。
 //   記録は増やさない: 約束は送った通の記録（sent_facts の約束の行・行動台帳）と通の本文に既にある＝毎回ここで組み立てる（DDL なし）。
-//   戻す: 既定 off・PROMISE_QUEUE=on で入る
+//   戻す: 戻す PROMISE_QUEUE=off
 import { supabase } from "@/app/lib/supabase";
-import { buildPromiseQueue, nextPromiseAix, promiseQueueEnabled, promiseQueueNote, promiseStepLabel, PROMISE_KIND_JA, type PromiseStep, type QueueAixLog, type QueueMsg } from "@/app/lib/promise-queue";
-import { isTestConversation } from "@/app/lib/test-conversations";
+import { buildPromiseQueue, nextPromiseAix, pickupNeedSignals, type PickupNeed, promiseQueueEnabled, promiseQueueNote, promiseStepLabel, PROMISE_KIND_JA, type PromiseStep, type QueueAixLog, type QueueMsg } from "@/app/lib/promise-queue";
+import { isTestConversation, isNoLineTestConversation } from "@/app/lib/test-conversations";
 import { MAIN_AIX_ITEM_OR } from "@/app/lib/viewing-day-greeting";
 
 const WINDOW_DAYS = 7;
 
 export async function loadPromiseQueue(conversationId: string, nowMs = Date.now(), extra?: { text: string; at: string } | null): Promise<PromiseStep[]> {
+  return (await loadPromiseQueueWithNeed(conversationId, nowMs, extra)).steps;
+}
+/** 約束の並び＋ピックアップが必要か（まだ果たしていないピックアップの約束の時点の会話で読む・竹内さん③） */
+export async function loadPromiseQueueWithNeed(conversationId: string, nowMs = Date.now(), extra?: { text: string; at: string } | null): Promise<{ steps: PromiseStep[]; need: PickupNeed | null }> {
   const since = new Date(nowMs - (WINDOW_DAYS + 1) * 86_400_000).toISOString();
   const [{ data: msgs, error: mErr }, { data: logs, error: lErr }] = await Promise.all([
     supabase.from("messages").select("sender, text, created_at, is_aix_generated").eq("conversation_id", conversationId).gte("created_at", since).order("created_at", { ascending: true }).limit(400),
@@ -28,7 +32,19 @@ export async function loadPromiseQueue(conversationId: string, nowMs = Date.now(
   if (extra?.text && !qMsgs.some((m) => m.sender !== "customer" && (m.text ?? "") === extra.text)) qMsgs.push({ sender: "staff", text: extra.text, createdAt: extra.at, isAix: false });
   const qLogs: QueueAixLog[] = ((logs ?? []) as Array<{ aix_type: string; check_pattern: string | null; sent_at: string | null; created_at: string; estimate_sent: boolean | null; generated_text: string | null }>)
     .map((l) => ({ aixType: l.aix_type, checkPattern: l.check_pattern, sentAt: l.sent_at ?? l.created_at, estimateSent: l.estimate_sent, text: l.generated_text }));
-  return buildPromiseQueue(qMsgs, qLogs, nowMs, { windowDays: WINDOW_DAYS });
+  const steps = buildPromiseQueue(qMsgs, qLogs, nowMs, { windowDays: WINDOW_DAYS });
+  const pk = steps.find((s) => s.kind === "pickup" && s.status === "pending" && !s.watch);
+  // ⚠ 読む範囲は直近 8日。それより前に物件を送っていても「まだ送っていない」と読む＝ AIX の送付の記録（全期間）でも見る
+  let need: PickupNeed | null = null;
+  if (pk) {
+    const at = Date.parse(pk.promisedAt);
+    need = pickupNeedSignals(qMsgs.filter((m) => Date.parse(m.createdAt) <= at), qLogs.filter((l) => Date.parse(l.sentAt) <= at));
+    if (need.noPropertiesSent) {
+      const { count } = await supabase.from("aix_usage_logs").select("id", { count: "exact", head: true }).eq("conversation_id", conversationId).in("aix_type", ["property_send", "property_recommendation"]).lt("created_at", pk.promisedAt);
+      if ((count ?? 0) > 0) need = { ...need, noPropertiesSent: false };
+    }
+  }
+  return { steps, need };
 }
 
 /**
@@ -37,10 +53,11 @@ export async function loadPromiseQueue(conversationId: string, nowMs = Date.now(
  */
 export async function advancePromiseQueue(conversationId: string, o: { trigger: "aix" | "staff_text"; sentText?: string | null; sentAt?: string | null } = { trigger: "aix" }): Promise<boolean> {
   if (!promiseQueueEnabled()) return false;
+  if (isNoLineTestConversation(conversationId)) return false; // テスト専用の会話（YUMA2〜）は要対応を立てない（aix-action-items と同じ）
   const { data: conv } = await supabase.from("conversations").select("customer_name, is_post_apply").eq("id", conversationId).maybeSingle();
   if (!conv || conv.is_post_apply) return false;
-  const steps = await loadPromiseQueue(conversationId, Date.now(), o.sentText ? { text: o.sentText, at: o.sentAt ?? new Date().toISOString() } : null);
-  const nx = nextPromiseAix(steps);
+  const { steps, need } = await loadPromiseQueueWithNeed(conversationId, Date.now(), o.sentText ? { text: o.sentText, at: o.sentAt ?? new Date().toISOString() } : null);
+  const nx = nextPromiseAix(steps, { need });
   if (!nx) return false;
   const { data: open } = await supabase.from("aix_action_items").select("id").eq("conversation_id", conversationId).eq("status", "pending").or(MAIN_AIX_ITEM_OR).limit(1);
   if (open && open.length) return false;
@@ -62,8 +79,8 @@ export async function advancePromiseQueue(conversationId: string, o: { trigger: 
 
 /** 画面「約束の続き」用（次に送る AIX・残り・果たした物） */
 export async function promiseQueueView(conversationId: string): Promise<{ next: string | null; rest: string[]; done: string[]; steps: PromiseStep[] }> {
-  const steps = await loadPromiseQueue(conversationId);
-  const nx = nextPromiseAix(steps);
+  const { steps, need } = await loadPromiseQueueWithNeed(conversationId);
+  const nx = nextPromiseAix(steps, { need });
   return {
     next: nx ? promiseStepLabel(nx.next) : null,
     rest: nx ? nx.rest.map(promiseStepLabel) : [],

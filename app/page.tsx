@@ -8097,7 +8097,7 @@ export default function Home() {
               </div>
             );
           })()}
-          {/* 2026-10-09 竹内さん「約束した事を記録して、それを AIX で送っていけば」: 1通で複数を約束した時の次に送る AIX と残り（promise-queue・既定 off・NEXT_PUBLIC_PROMISE_QUEUE=on で出す） */}
+          {/* 2026-10-09 竹内さん「約束した事を記録して、それを AIX で送っていけば」: 1通で複数を約束した時の次に送る AIX と残り（promise-queue・戻す NEXT_PUBLIC_PROMISE_QUEUE=off） */}
           {!inputFocused && <PromiseQueueBar conversationId={selectedConversation.id} refreshKey={selectedConversation.messages[selectedConversation.messages.length - 1]?.id ?? ""} authHeader={INTERNAL_AUTH_HEADER} />}
           {!inputFocused && (() => {
             // 2026-10-08 竹内さんの決定1「タスクは、ブレインの判断（AIX要対応）から作る形に一本化する」: やることは

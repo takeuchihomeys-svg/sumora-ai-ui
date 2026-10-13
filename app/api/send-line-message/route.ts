@@ -429,7 +429,7 @@ export async function POST(req: NextRequest) {
     try {
       const { completeAixActionItemByStaffText } = await import("@/app/lib/aix-action-items");
       const done = await completeAixActionItemByStaffText(cid, message, sentAtIsoForFacts);
-      // 2026-10-09: 返信の本文で要対応を済ませた → 残りの約束の次の AIX要対応を立てる（約束の送信の後はブレインの再分析が立てるので呼ばない・既定 off・PROMISE_QUEUE=on で入る）
+      // 2026-10-09: 返信の本文で要対応を済ませた → 残りの約束の次の AIX要対応を立てる（約束の送信の後はブレインの再分析が立てるので呼ばない・戻す PROMISE_QUEUE=off）
       if (done && o.advanceQueue) {
         const { advancePromiseQueue } = await import("@/app/lib/promise-queue-server");
         await advancePromiseQueue(cid, { trigger: "staff_text", sentText: message, sentAt: sentAtIsoForFacts });

@@ -13,7 +13,7 @@
 //     使い道: ①AIX を1本送った後に次の要対応を立てる（promise-queue-server.advancePromiseQueue）②画面「次に送る AIX」と残り ③監査（scripts/audit-multi-request-turns.ts）
 //
 // 順番（竹内さんの「５それで大丈夫」10/07＝確認・見積を先に／物件の話はその後）: 募集状況の確認 → 条件・設備の確認 → 室内写真 → 見積書 → 内覧の確認 → ピックアップ
-// 入れる: PROMISE_QUEUE=on（既定 off・2026-10-09 時点）。on で次の要対応を立てる・画面に出す（画面は NEXT_PUBLIC_PROMISE_QUEUE=on も）
+// 戻す: PROMISE_QUEUE=off（次の要対応を立てない）／NEXT_PUBLIC_PROMISE_QUEUE=off（画面に出さない）。既定 on（2026-10-09 竹内さん「できる限り早く本番に入れる」）
 // テスト: app/lib/__tests__/promise-queue.test.ts（実物の約束の文）
 
 import { classifyStaffTextFacts, checkPatternForConfirmTopic } from "./action-ledger";
@@ -47,8 +47,8 @@ export const PROMISE_KIND_JA: Record<PromiseKind, string> = {
 };
 
 export function promiseQueueEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  // 2026-10-09 本番に入れる前の区切り（竹内さん「本番に入れていく」）: 既定は off・入れる時は PROMISE_QUEUE=on
-  return (env.PROMISE_QUEUE ?? "").trim().toLowerCase() === "on";
+  // 2026-10-09 竹内さん「できる限り早く本番に入れる」: 既定 on・戻す PROMISE_QUEUE=off
+  return (env.PROMISE_QUEUE ?? "").trim().toLowerCase() !== "off";
 }
 
 const PHOTO_PROMISE_RE = /(?:室内)?(?:の)?(?:お)?写真[^\n。！!]{0,12}(?:撮影|お撮り)[^\n。！!]{0,12}(?:次第|させて(?:頂|いただ)きます)|撮影(?:出来|でき)次第[^\n。！!]{0,12}(?:お写真|写真|動画)?[^\n。！!]{0,6}お送り/;
@@ -195,9 +195,22 @@ export function buildPromiseQueue(msgs: ReadonlyArray<QueueMsg>, aixLogs: Readon
 /** 次の AIX に並べる約束の古さの上限（竹内さんの番で全部果たすまで中央 32時間・audit-multi-request-turns）。それより古い約束は画面に出すが要対応は立てない */
 export const PROMISE_QUEUE_MAX_AGE_MS = 72 * 3600_000;
 /** 次に送る AIX と残り（順番どおり）。探し続ける約束・古い約束は入れない。無ければ null */
-export function nextPromiseAix(steps: ReadonlyArray<PromiseStep>, o: { nowMs?: number; maxAgeMs?: number } = {}): { next: PromiseStep; rest: PromiseStep[] } | null {
+/**
+ * 順番（2026-10-09 竹内さん③）: 基本は 確認 → 見積 → 内覧 → ピックアップ。ピックアップが必要なお客様はピックアップを上げる:
+ *   ・まだ物件を送っていない → 一番先（線: scripts/audit-promise-order-pickup.ts・120日でピックアップと他を同じ通で約束し両方果たした組 12:
+ *     まだ送っていない時 ピックアップを先に 8/10・送った後 0/2）
+ *   ・送った物件が合わない・出し切り／お客様が「他にも」と頼んだ → 確認の次（見積より前）。実データの組は少ない（頼んだ 1/2・合わない 0）＝竹内さんの決めどおり
+ */
+export function promiseOrderFor(need?: PickupNeed | null): readonly PromiseKind[] {
+  if (!need) return PROMISE_ORDER;
+  if (need.noPropertiesSent) return ["pickup", "check", "confirm", "photo", "estimate", "viewing_check"];
+  if (need.sentNotFit || need.customerAskedMore) return ["check", "pickup", "confirm", "photo", "estimate", "viewing_check"];
+  return PROMISE_ORDER;
+}
+export function nextPromiseAix(steps: ReadonlyArray<PromiseStep>, o: { nowMs?: number; maxAgeMs?: number; need?: PickupNeed | null } = {}): { next: PromiseStep; rest: PromiseStep[] } | null {
   const now = o.nowMs ?? Date.now(); const age = o.maxAgeMs ?? PROMISE_QUEUE_MAX_AGE_MS;
-  const pending = steps.filter((s) => s.status === "pending" && !s.watch && now - Date.parse(s.promisedAt) <= age).sort((a, b) => PROMISE_ORDER.indexOf(a.kind) - PROMISE_ORDER.indexOf(b.kind) || Date.parse(a.promisedAt) - Date.parse(b.promisedAt));
+  const order = promiseOrderFor(o.need);
+  const pending = steps.filter((s) => s.status === "pending" && !s.watch && now - Date.parse(s.promisedAt) <= age).sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || Date.parse(a.promisedAt) - Date.parse(b.promisedAt));
   if (!pending.length) return null;
   return { next: pending[0], rest: pending.slice(1) };
 }
@@ -211,6 +224,29 @@ export const PROMISE_QUEUE_NOTE_PREFIX = "rule:promise_queue";
 export function promiseQueueNote(next: PromiseStep, rest: ReadonlyArray<PromiseStep>): string {
   return `${PROMISE_QUEUE_NOTE_PREFIX}｜次: ${promiseStepLabel(next)}${rest.length ? `｜残り: ${rest.map((s) => PROMISE_KIND_JA[s.kind]).join("・")}` : ""}`.slice(0, 200);
 }
+/**
+ * 2026-10-09 竹内さん③「ピックアップが必要なお客様（まだ物件を送っていない・送った物件が合わない/出し切って新しく探す必要がある・お客様が『他にも送って』等を頼んだ）は、
+ *   ピックアップの優先度を上げる」の信号（決定論・約束の時点までの会話）。線は scripts/audit-promise-order-pickup.ts（人がピックアップを先に送った組）で決める
+ */
+export type PickupNeed = { noPropertiesSent: boolean; sentNotFit: boolean; customerAskedMore: boolean };
+const SENT_NOT_FIT_RE = /どれも|いまいち|微妙|ちょっと違|合わな|ピンと来|(?:他|ほか|別)の(?:エリア|ところ|とこ)|出し切|ご条件に合うお部屋(?:が)?(?:現在|今)?(?:御座いません|ございません|ありません)/;
+const ASK_MORE_RE = /(?:他|ほか|別)(?:に|の|にも)[^\n。]{0,12}(?:物件|お部屋|部屋|ところ|とこ)|(?:もっと|もう少し|追加で)[^\n。]{0,8}(?:送|探|見)|探して(?:ほし|欲し|もら|頂|いただ|くだ)|(?:物件|お部屋)[^\n。]{0,6}(?:送って|紹介して|ピックアップして)/;
+export function pickupNeedSignals(msgsBefore: ReadonlyArray<QueueMsg>, aixBefore: ReadonlyArray<{ aixType: string; sentAt: string }>): PickupNeed {
+  const sentAix = aixBefore.some((l) => /^(?:property_send|property_recommendation)$/.test(l.aixType));
+  const sorted = [...msgsBefore].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  const sentHand = sorted.some((m) => m.sender !== "customer" && !m.isAix && /^\[画像\]/.test(String(m.text ?? "").trim()));
+  // 約束の前の、直近のお客様の連投
+  let k = sorted.length - 1; while (k >= 0 && sorted[k].sender !== "customer") k--;
+  const turn: string[] = []; while (k >= 0 && sorted[k].sender === "customer") { turn.unshift(String(sorted[k].text ?? "")); k--; }
+  const turnText = turn.filter((t) => !/^\s*\[(?:画像|ファイル)\]/.test(t)).join("\n").normalize("NFKC");
+  const recent = sorted.slice(-12).filter((m) => !/^\s*\[(?:画像|ファイル)\]/.test(String(m.text ?? ""))).map((m) => String(m.text ?? "")).join("\n").normalize("NFKC");
+  return {
+    noPropertiesSent: !sentAix && !sentHand,
+    sentNotFit: (sentAix || sentHand) && SENT_NOT_FIT_RE.test(recent),
+    customerAskedMore: ASK_MORE_RE.test(turnText),
+  };
+}
+
 /** 約束の続きの要対応か（72時間以内・戻していない）。ブレインの「今回の発言に AIX は要らない」で取り下げない（aix-action-items.syncAixActionItem） */
 export function keepPromiseQueueItem(row: { resolution_note?: string | null; created_at?: string | null }, nowMs = Date.now(), env?: Record<string, string | undefined>): boolean {
   if (!promiseQueueEnabled(env)) return false;
