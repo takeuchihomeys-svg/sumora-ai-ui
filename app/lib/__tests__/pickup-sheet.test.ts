@@ -165,7 +165,8 @@ const cell = (x: number, y: number): NormBox => ({ x, y, w: 0.089, h: 0.126 });
   t("★ 並び: 文（前置き）→ 画像。画像を先頭にしない", c.length === 2 && c[0].type === "text" && c[1].type === "image_url");
   // 固定の前置きを変えたら、このハッシュと SHEET_PROMPT_VERSION（保存した読み取りの版）を一緒に上げる
   const h = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
-  const pinned = { common: "fdd7f85dd75ad073", floor: "c9891c8b854b0598", image_area: "12bb4c89907fdcf6", itandi_pdf: "4c3bf9d4c58404b5", page: "7568fa981277514a" };
+  // 2026-10-14 sheet-v9: 共通の頭に日本語の漢字の1行（P0 89bc2c3e）
+  const pinned = { common: "30ea8d34fdba4c6a", floor: "f579afe1c85a9fdd", image_area: "57ce7e422e3df94b", itandi_pdf: "0dfc2f3dccb24326", page: "ba24f0724fb58583" };
   const now = { common: h(SHEET_COMMON_HEAD), floor: h(sheetPromptPrefix("floor")), image_area: h(sheetPromptPrefix("image_area")), itandi_pdf: h(sheetPromptPrefix("itandi_pdf")), page: h(sheetPromptPrefix("page")) };
   t(`★ 前置きの固定（変えたら SHEET_PROMPT_VERSION=${SHEET_PROMPT_VERSION} も上げる）`, JSON.stringify(now) === JSON.stringify(pinned), now);
   t("★ 型の説明は4つ（リアプロ・itandi 画像・itandi PDF・1ページ全体）", Object.keys(SHEET_TYPE_SECTIONS).length === 4);

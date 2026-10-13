@@ -11,6 +11,7 @@
 //     どれが退去予定日かは sheet-vacancy（決定論・欄で読む）が決める。分からない時は null（作らない）。
 //   戻す: SHEET_VACANCY_FIELDS=off（旧の指示・旧の返し方）
 import { readSheetVacancy, sheetDateKey, sheetVacancyFieldsEnabled } from "./sheet-vacancy";
+import { JA_KANJI_INSTRUCTION, jaKanji } from "./ja-kanji";
 
 const LEGACY_SYSTEM = `あなたは日本の物件資料（不動産マイソク・物件概要書）から情報を抽出するAIです。
 以下の2つをJSONで返してください。
@@ -50,6 +51,7 @@ JSONで返してください。
 - 「現況/入居時期」「現況」「入居可能時期」「入居可能日」「入居時期」「入居予定日」「退去予定日」「解約予定日」「退去日」の欄（例「現況/入居時期: 退去予定 / 2026年10月20日 / 商談中」）
 - 備考・特記事項・案内方法・カギ所在・【現況】などの文のうち「退去」「解約」「空き予定」「空予定」の字を含む文（例「備考: 空き予定(9/30退去予定)」「案内方法: 8月末空き予定」）
 - 日付・「上旬/中旬/下旬」「末」「期日指定」「即入」「相談」は字のまま（日付に直さない・言い換えない）
+${JA_KANJI_INSTRUCTION}
 
 出力はJSONのみ・説明文なし：
 {"propertyName":"KTIレジデンス西中島II 202号室","fields":["現況/入居時期: 退去予定 / 2026年10月20日"]}`;
@@ -78,9 +80,9 @@ export function parseExtractVacancyResponse(raw: string, env: Record<string, str
   if (!m) return { propertyName: null, vacancyDate: null };
   let o: { propertyName?: string | null; vacancyDate?: string | null; fields?: unknown };
   try { o = JSON.parse(m[0]); } catch { return { propertyName: null, vacancyDate: null }; }
-  const propertyName = typeof o.propertyName === "string" && o.propertyName.trim() ? o.propertyName.trim() : null;
+  const propertyName = typeof o.propertyName === "string" && o.propertyName.trim() ? jaKanji(o.propertyName).trim() : null;
   if (!sheetVacancyFieldsEnabled(env)) return { propertyName, vacancyDate: typeof o.vacancyDate === "string" && o.vacancyDate.trim() ? o.vacancyDate.trim() : null };
-  const fields = Array.isArray(o.fields) ? (o.fields as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean).slice(0, 20) : [];
+  const fields = Array.isArray(o.fields) ? (o.fields as unknown[]).map((x) => jaKanji(String(x ?? "")).trim()).filter(Boolean).slice(0, 20) : [];
   const v = readSheetVacancy(fields.join("\n"));
   return { propertyName, vacancyDate: vacancyDateLabel(v.vacate), fields, vacancyFrom: v.vacateFrom };
 }

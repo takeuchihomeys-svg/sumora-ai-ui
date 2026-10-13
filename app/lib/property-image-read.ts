@@ -24,6 +24,9 @@
 //   ⚠ thinking:{type:"disabled"} は最速（1.4秒・推論0）だが「本町橋」を「本町筋」と誤読したので使わない。
 //     → 2026-09-29 に物件名の読み取り（readPropertyImage）だけ推論なしに変えた（ファイル末尾の注記・照合で会話の物件名に寄せる）。条件の行は推論 low のまま
 
+// 2026-10-14 P0 89bc2c3e「漢字は必ず日本語の漢字」: 読み取りの指示に JA_KANJI_INSTRUCTION を入れ、出力は jaKanji（決定論）で日本の字形に直す
+import { JA_KANJI_INSTRUCTION, jaKanji } from "./ja-kanji";
+
 export const PROPERTY_IMAGE_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
 /** DeepSeek-V4.1-Flash。DeepSeek 側で新しい名前が出たら PROPERTY_IMAGE_MODEL で差し替える */
 export const PROPERTY_IMAGE_MODEL_DEFAULT = "deepseek-flash";
@@ -68,7 +71,8 @@ export const PROPERTY_IMAGE_PROMPT =`この画像から物件情報を読み取�
     ・「現況」「入居時期」「入居可能日」の欄は**退去後に入居できる日**なので退去予定日にしない
     ・読めなければ ""
 - is_property: 物件の資料・マイソク・室内写真なら true、それ以外（見積書・本人確認書類・スクショ）なら false
-- 画像に書かれていない物件名・金額・日付を作らないこと（読めない項目は null か "" のまま）`;
+- 画像に書かれていない物件名・金額・日付を作らないこと（読めない項目は null か "" のまま）
+${JA_KANJI_INSTRUCTION}`;
 
 // ─── 2026-09-21 竹内「引用とあれば引用先の画像を読み取れるように。こっちが送った画像なら
 //   deepseek で読み取れるようになってるはずなので、そこで読み取ってちゃんとした文を生成できるようにする」──
@@ -99,7 +103,8 @@ export const PROPERTY_IMAGE_DETAIL_PROMPT = `この画像が何かを判定し�
   間取り／所在階／向き／築年／構造／現況／入居可能日／退去予定／駐車場／駐輪場／バイク置場／
   ペット／楽器／保証会社／連帯保証人／洗濯機置場／設備／フリーレント／入居条件
 - **金額・住所・駅徒歩・専有面積は書かない**（別の所で扱う）
-- 値は画像の文字をそのまま短く写す。推測しない。「不明」「記載なし」という行も作らない`;
+- 値は画像の文字をそのまま短く写す。推測しない。「不明」「記載なし」という行も作らない
+${JA_KANJI_INSTRUCTION}`;
 
 /**
  * 詳細の読み取りの上限。
@@ -146,7 +151,7 @@ export function parseDetailResult(content: string): DetailResult {
     const kind: ImageKind = KIND_OK.has(kindRaw) ? kindRaw : "other";
     if (kind !== "property") return { kind, lines: [], raw };
     const lines = (Array.isArray(parsed.lines) ? parsed.lines : [])
-      .map((x) => clipLongLine(String(x ?? "").replace(/\s+/g, " ").trim()))
+      .map((x) => clipLongLine(jaKanji(String(x ?? "")).replace(/\s+/g, " ").trim()))
       .filter((s) => s.length >= 2 && s.length <= 120)
       .filter((s) => /[:：]/.test(s))          // 「項目: 値」の形だけ（地の文・感想を入れない）
       .filter((s) => !EMPTY_VALUE_RE.test(s))  // 「不明」「記載なし」は材料にしない
@@ -266,7 +271,7 @@ export function parseReadResult(content: string): ReadResult {
     const items: ReadItem[] = [];
     for (const o of arr) {
       // 日本語のキーで返す事もあった（{"物件名":"…","号室":[...]}）
-      const name = String(o.property_name ?? o["物件名"] ?? "").trim();
+      const name = jaKanji(String(o.property_name ?? o["物件名"] ?? "")).trim();
       const roomRaw = o.room_number ?? o["号室"];
       if (!name) continue;
       // 2026-09-21: 条件（家賃・敷金・礼金）と募集状況・退去予定日も読む。
@@ -286,7 +291,7 @@ export function parseReadResult(content: string): ReadResult {
       // 「6月30日」の形だけ受ける（西暦付き・曖昧な語は捨てる）
       const vacancyDate = /^[0-9０-９]{1,2}月[0-9０-９]{1,2}日$/.test(vacancyRaw) ? vacancyRaw : null;
       // 2026-09-25: 候補の記録用（管理費・間取り・㎡・駅と徒歩・築年月・AD）。読めない・空は null
-      const str = (v: unknown): string | null => { const t = String(v ?? "").trim(); return t && t !== "null" ? t.slice(0, 40) : null; };
+      const str = (v: unknown): string | null => { const t = jaKanji(String(v ?? "")).trim(); return t && t !== "null" ? t.slice(0, 40) : null; };
       const extra = {
         adminFee: num(o.admin_fee ?? o["管理費"]),
         floorPlan: str(o.floor_plan ?? o["間取り"]),
@@ -397,6 +402,7 @@ export const PROPERTY_IMAGE_TRANSCRIBE_PROMPT = `この画像の文字を、書�
 - 読めない文字は飛ばす。画像に無い言葉を足さない・推測しない${(process.env.SHEET_READ_R2 ?? "").trim().toLowerCase() !== "off" ? `
 - 備考・特記事項・案内方法・【現況】の欄の文も全部写す（「空き予定（9/30退去予定）」「内覧可能日：8月1日〜」「8月末空き予定」など）
 - 日付・「上旬/中旬/下旬」・「期日指定」「即入」は字のまま写す（「期日指定」を「即日指定」にしない・「上旬」を日付にしない）` : ""}
+${JA_KANJI_INSTRUCTION}
 【物件の資料】以外は1行目だけで終わる（中身は写さない）`;
 /** 書き写しの上限（推論なし＝出力は写した文字だけ。資料1枚で 600〜1,500 前後の見込み・上限は費用にならない） */
 export const PROPERTY_IMAGE_TRANSCRIBE_MAX_TOKENS = 3000;
@@ -408,7 +414,7 @@ const TRANSCRIBE_KIND: Array<[RegExp, ImageKind]> = [
  * 書き写しの1行目（種類）と本文を分ける（純関数）。1行目に種類が無ければ kind=null（本文は全部＝文字層の読み取りに種類を決めさせる）
  */
 export function parseTranscript(text: string): { kind: ImageKind | null; body: string } {
-  const t = String(text ?? "").replace(/\r/g, "").replace(/^```[a-z]*\n?|\n?```$/g, "").trim();
+  const t = jaKanji(String(text ?? "")).replace(/\r/g, "").replace(/^```[a-z]*\n?|\n?```$/g, "").trim();
   const [first, ...rest] = t.split("\n");
   const head = (first ?? "").trim();
   for (const [re, kind] of TRANSCRIBE_KIND) if (re.test(head)) return { kind, body: rest.join("\n").trim() };
