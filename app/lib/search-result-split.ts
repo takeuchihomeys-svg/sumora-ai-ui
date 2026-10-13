@@ -200,5 +200,17 @@ export function zenryokuCandidateMaterial(o: { sentPropertyCount: number; lastSe
   return `\n【全力サポートを候補にするかの材料】${sent}。お客様の今の発言がほかの物件・新着を聞いている: ${asked ? "はい" : "いいえ"}。${ready}${o.exhaustLine ? `${o.exhaustLine}。` : ""}` +
     `物件の AIX（物件ピックアップ・物件オススメ）か全力サポートを選ぶ番では、出力 JSON に "zenryoku_candidate"（true/false）を足す。` +
     `true にするのは、探しても今の条件に合うお部屋が無い事もあり得る番（前に送った物件の後の新着の確認・お客様が「他にありますか」と聞いた番 等）。` +
-    `新規（まだ物件を送っていない・初めて探す番）は false（竹内さん: 新規のときには使わない）。true の時、画面は左に物件の AIX・右に AIX【全力サポート】を並べ、スタッフが検索の結果で押す。`;
+    `新規（まだ物件を送っていない・初めて探す番）は false（竹内さん: 新規のときには使わない）。true の時、画面は左に物件の AIX・右に AIX【全力サポート】を並べ、スタッフが検索の結果で押す。` +
+    (zenryokuCandidateStrongEnabled() && o.sentPropertyCount > 0 && (o.exhaustLine || asked)
+      ? `【この番は「新着・他にあるか」の番】前に物件を送った後で${o.exhaustLine ? "出し切りの印もある" : "お客様がほかの物件・新着を聞いている"}＝竹内さんの決定（B）の右を出す番。物件の AIX か全力サポートで応える時は zenryoku_candidate を true にする（新着があるかは探したスタッフにしか分からない）。お客様が条件を足した・言い直した番でも、前に送った物件の後なら同じ。`
+      : "");
+}
+/**
+ * 2026-10-14 確かめる人⑦: 10/13 の決定（B）の後、DeepSeek が zenryoku_candidate をほぼ立てず右が出ない（出し切りの試験 9/13→0〜1/8）。
+ *   前に物件を送った後で、出し切りの印があるか、お客様がほかの物件・新着を聞いた番だけ、候補にする事を材料で強く渡す（新規は今まで通り false）。
+ *   既定 off（入れる: ZENRYOKU_CANDIDATE_STRONG=on）。10/14 試験（DeepSeek・出し切り7問＋AIX:左右 1問＋新規2問）: 強めない 6/10（出し切り 3/7）→ 強める 4/10（2/7）。
+ *   強めても候補は 8番中 1番しか立たなかった（brain:search-split-right candidate:false 7）＝材料の文では動かない。次は候補にする判断の場所（出力の項目の説明・2層のどちらで出すか）を調べる
+ */
+export function zenryokuCandidateStrongEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.ZENRYOKU_CANDIDATE_STRONG ?? "").trim().toLowerCase() === "on";
 }

@@ -119,10 +119,12 @@ t("催促: まだですか・どうなりましたか・物件まだ？", isProm
 t("催促でない: 新しい問い・お礼", !isPromiseNudge("ペットは何匹まで可能ですか？") && !isPromiseNudge("ありがとうございます！") && !isPromiseNudge("この物件まだ空いてますか？ 初期費用も知りたいです。駐車場もありますか？ 内覧はいつできますか？ 他の物件も見たいです"));
 
 // ⑦ 全力サポートを候補にする材料を強める（前に送った後で出し切りの印・他の物件の問いがある番だけ・新規は出さない）
+process.env.ZENRYOKU_CANDIDATE_STRONG = "on";
 const zStrong = zenryokuCandidateMaterial({ sentPropertyCount: 5, lastSentAt: "2026-10-10T00:00:00Z", exhaustLine: "【出し切りの材料】…", customerText: "もう少し探して頂けますか", pickupReady: false });
-t("強める一文: 前に送った後＋出し切りの印", /「新着・他にあるか」の番/.test(zStrong));
+t("強める一文: 前に送った後＋出し切りの印（on の時）", /「新着・他にあるか」の番/.test(zStrong));
 t("強める一文: 新規（送付0）には出さない", !/「新着・他にあるか」の番/.test(zenryokuCandidateMaterial({ sentPropertyCount: 0, lastSentAt: null, exhaustLine: "", customerText: "他にありますか", pickupReady: false })));
-t("強める一文: 戻す ZENRYOKU_CANDIDATE_STRONG=off", zenryokuCandidateStrongEnabled({}) && !zenryokuCandidateStrongEnabled({ ZENRYOKU_CANDIDATE_STRONG: "off" }));
+delete process.env.ZENRYOKU_CANDIDATE_STRONG;
+t("強める一文: 既定 off・入れる ZENRYOKU_CANDIDATE_STRONG=on", !zenryokuCandidateStrongEnabled({}) && zenryokuCandidateStrongEnabled({ ZENRYOKU_CANDIDATE_STRONG: "on" }));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
