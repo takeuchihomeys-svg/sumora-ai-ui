@@ -352,11 +352,29 @@ export function parseAreaWant(desiredArea: string | null | undefined, freeText?:
 // ───────────────────────── 物件の場所 ─────────────────────────
 
 /** 説明文と資料の文字層から物件の場所を読む（交通の行・所在地） */
+/**
+ * 2026-10-13 竹内「場所不明を減らす」: 資料・画像の読み取りで路線名が駅名の前に付いた形（「御堂筋線東三国」「近鉄大阪線河内山本」「大板メトロ千日前線小路」）と
+ *   旧字（「大國町」）を、駅の表にある駅名に直す。表に無い時だけ・最後の「線」の後ろが表にある駅の時だけ（「長堀鶴見緑地」のような路線名だけの語は直さない）。
+ *   送った物件の場所不明 312部屋のうち 146 が「駅の表に無い駅名」で、その多くがこの形（scripts/audit-area-unknown.ts）。戻す: AREA_STATION_LINE_PREFIX=off
+ */
+export function fixStationName(raw: string, env: Record<string, string | undefined> = (typeof process !== "undefined" ? process.env : {})): string {
+  const s = normStation(raw);
+  if (!s || isKnownStation(s) || String(env.AREA_STATION_LINE_PREFIX ?? "").trim().toLowerCase() === "off") return s;
+  const v = s.replace(/國/g, "国");
+  if (v !== s && isKnownStation(v)) return normStation(v);
+  const i = v.lastIndexOf("線");
+  if (i >= 1 && i < v.length - 1) {
+    const rem = normStation(v.slice(i + 1));
+    if (rem && isKnownStation(rem)) return rem;
+  }
+  return s;
+}
+
 export function buildPropertyLocation(summary: string | null | undefined, pdfText: string | null | undefined): PropertyLocation {
   const stations: PropertyLocation["stations"] = [];
   const push = (station: string | null, walk: number | null, line: string | null) => {
     if (!station) return;
-    const s = normStation(station);
+    const s = fixStationName(station);
     if (!s) return;
     const prev = stations.find((x) => x.station === s);
     if (prev) { if (walk != null && (prev.walk == null || walk < prev.walk)) prev.walk = walk; return; }

@@ -168,9 +168,9 @@ console.log("■ 家賃下限・間取りの「も可」・広さ・築浅（pro
   const p5 = buildCustomerProfile({ rent_max: 90_000, floor_area_min: 30 });
   const sqOk = judgeProperty(parsePropertyFacts(S("80,000円", "1LDK 31.2㎡")), p5);
   const sqWide = judgeProperty(parsePropertyFacts(S("80,000円", "1K 25.0㎡")), p5);
-  const sqUnder = judgeProperty(parsePropertyFacts(S("80,000円", "1K 24.5㎡")), p5);
+  const sqUnder = judgeProperty(parsePropertyFacts(S("80,000円", "1K 19.5㎡")), p5);
   const sqNone = judgeProperty(parsePropertyFacts(S("80,000円", "1K")), p5);
-  t("広さ: 以上 +3・−5㎡まで（広げた検索の幅）は −3 の情報・それより下は保留・読めない時は要確認",
+  t("広さ: 以上 +3・−5㎡まで（30㎡以上の希望は 2026-10-13 から −10㎡まで・proposal-range-codes）は −3 の情報・それより下は保留・読めない時は要確認",
     sqOk.reasonCodes.includes("SQM_OK") && sqWide.reasonCodes.includes("SQM_WIDE") && !sqWide.flagCodes.includes("SQM_WIDE")
     && sqUnder.flagCodes.includes("SQM_UNDER") && sqUnder.verdict === "hold" && sqNone.reasonCodes.includes("SQM_UNKNOWN"));
   const p6 = buildCustomerProfile({ rent_max: 90_000, preferences: "築浅が良い" });
