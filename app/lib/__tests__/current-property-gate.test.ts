@@ -1,6 +1,6 @@
 // app/lib/__tests__/current-property-gate.test.ts — 2026-10-13 主語の抜けの current_property の実在ゲート
 //   実行: npx tsx app/lib/__tests__/current-property-gate.test.ts
-import { currentPropertyExists, propertyCmpKey } from "../current-property-gate";
+import { currentPropertyExists, propertyCmpKey, refineCurrentProperty } from "../current-property-gate";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
@@ -12,5 +12,24 @@ t("全角・半角の差", currentPropertyExists("ＨＲ　ＦＲＯＮＴ", "�
 t("どこにも無い名前は止める（創作）", !currentPropertyExists("グランドメゾン梅田", "グランドメゾン梅田", { history: "こちらのお部屋", sentNames: ["栄美グランドハイツ"], threadNote: note }));
 t("戻す（off）と台帳は見ない", !currentPropertyExists("大阪難波 Noah 203号室", "大阪難波 Noah", { history: "", sentNames: [], threadNote: note }, { CURRENT_PROPERTY_GATE_V2: "off" }));
 t("比べる形", propertyCmpKey(" A　b ") === "ab");
+console.log("■ 区切り2 refineCurrentProperty（URL の番号・画像の読み取りにしか無い名前）");
+{
+  const img = "[画像] 物件種目：【住居用】マンション / 物件名：プレサンス戸原橋ヴィプラス / 号室名：0201（2階部分）";
+  const staff = "【プレサンス芦原橋ヴィブラス 201号室】\n初期費用さらに";
+  const r1 = refineCurrentProperty("プレサンス戸原橋ヴィプラス0201", { texts: [img, "初期費用お願いします", staff], ledgerNames: ["プレサンス芦原橋ヴィブラス 201号室", "スプランディッド難波キャトル 803号室"] });
+  t("画像の読み取りにしか無い名前 → こちらの本文に書いた台帳の表記（同じ部屋）", r1.value === "プレサンス芦原橋ヴィブラス 201号室" && r1.reason === "ledger_canon");
+  const r2 = refineCurrentProperty("プレサンス戸原橋ヴィプラス0201", { texts: [img], ledgerNames: ["スプランディッド難波キャトル 803号室"] });
+  t("台帳に近い名前が無ければそのまま（お客様の画面の写しの名前は正しいことが多い）", r2.value === "プレサンス戸原橋ヴィプラス0201" && r2.reason === "kept");
+  t("台帳の名前がこちらの本文に出ない（読み取りの化けの台帳）なら寄せない", refineCurrentProperty("セレニテ難波ブリエ 0611", { texts: ["[画像] セレニテ難波ブリエ 0611"], ledgerNames: ["セレニテ兼渡ブリエ 0611"] }).value === "セレニテ難波ブリエ 0611");
+  t("階だけの名前は同じ階の部屋に寄せない（Luxe難波WEST 11階角部屋）", refineCurrentProperty("Luxe難波WEST 11階角部屋", { texts: ["[画像] Luxe難波WEST 11階", "Luxe難波WEST 1104号室抑えさせて頂きました"], ledgerNames: ["Luxe難波WEST 1104"] }).value === "Luxe難波WEST 11階角部屋");
+  t("画面の仮の名前（物件no.92）は通さない", refineCurrentProperty("物件no.92", { texts: ["物件no.92"], ledgerNames: [] }).value === null);
+  t("URL の番号は通さない", refineCurrentProperty("bc_100525219054", { texts: ["https://suumo.jp/chintai/bc_100525219054/"], ledgerNames: [] }).value === null);
+  t("本文（画像以外）にある名前はそのまま", refineCurrentProperty("レジュールアッシュ難波MINAMI", { texts: ["レジュールアッシュ難波MINAMIです"], ledgerNames: [] }).value === "レジュールアッシュ難波MINAMI");
+  t("台帳にある名前はそのまま", refineCurrentProperty("サウスパーク 3-C", { texts: [], ledgerNames: ["サウスパーク 3-C"] }).value === "サウスパーク 3-C");
+  t("▶ の候補にある名前はそのまま", refineCurrentProperty("大阪難波 Noah 203号室", { texts: ["[画像]"], ledgerNames: [], threadNote: note }).value === "大阪難波 Noah 203号室");
+  t("台帳の近い名前でも別の部屋なら寄せない", refineCurrentProperty("プレサンス戸原橋ヴィプラス0201", { texts: [img, "【プレサンス芦原橋ヴィブラス 305号室】"], ledgerNames: ["プレサンス芦原橋ヴィブラス 305号室"] }).value === "プレサンス戸原橋ヴィプラス0201");
+  t("CURRENT_PROPERTY_LEDGER_CANON=off で今まで通り", refineCurrentProperty("bc_100525219054", { texts: [], ledgerNames: [] }, { CURRENT_PROPERTY_LEDGER_CANON: "off" }).value === "bc_100525219054");
+  t("null はそのまま", refineCurrentProperty(null, { texts: [], ledgerNames: [] }).value === null);
+}
 console.log(`\n${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

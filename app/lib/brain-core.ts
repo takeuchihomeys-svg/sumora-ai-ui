@@ -19,7 +19,7 @@ import { saveBrainSummary } from "@/app/lib/brain-only-summary-save";
 import { fetchWinningPatterns } from "@/app/lib/summary-winning-patterns";
 import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from "@/app/lib/brain-only-summary";
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
-import { currentPropertyExists } from "@/app/lib/current-property-gate";
+import { currentPropertyExists, refineCurrentProperty } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
 import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
 import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
@@ -4273,11 +4273,20 @@ ${history}`;
     });
     // 2026-10-13 主語の抜けの6問で current_property が 0/6（5問 null）: ブレインが ▶ の候補（台帳の表示＝「名前 号室」の形）から書いた名前が
     //   会話の文と空白・号室の書き方で一字一句合わず落ちていた → 空白を除いて比べ、台帳の文（▶ の候補）も実在に含める（current-property-gate.ts）
-    const currentProperty = rawCurrentProperty && propertyNameCore &&
+    const gatedCurrentProperty = rawCurrentProperty && propertyNameCore &&
       currentPropertyExists(rawCurrentProperty, propertyNameCore, { history, sentNames: sentProps.map((s) => s.property_name), threadNote: propertyThreadNoteText }) &&
       !(latestPropertyPass && !latestCustomerForPass.includes(propertyNameCore))
       ? rawCurrentProperty
       : null;
+    // 2026-10-13 当たり率の直し（区切り2・P0 の安全の線）: URL の番号・画像の読み取りにしか無い名前は通さず、台帳（送った物件・AIX の記録）に
+    //   近い名前があれば台帳の表記に直す（current-property-gate.refineCurrentProperty）。戻す: CURRENT_PROPERTY_LEDGER_CANON=off
+    const refinedCp = refineCurrentProperty(gatedCurrentProperty, {
+      texts: typedMessages.map((m) => m.text),
+      ledgerNames: [...sentProps.map((s) => s.property_name), ...aixLogs.flatMap((l) => l.property_names ?? [])],
+      threadNote: propertyThreadNoteText,
+    });
+    if (refinedCp.reason !== "kept") console.log(JSON.stringify({ tag: "brain:current_property_refined", conversationId, from: gatedCurrentProperty, to: refinedCp.value, reason: refinedCp.reason }));
+    const currentProperty = refinedCp.value;
 
     // enum ゲート（許可リスト不一致は null フェイルクローズ — template_hintゲートと同型）
     const conditionChangeType = (typeof parsed.condition_change_type === "string" && CONDITION_CHANGE_TYPES.has(parsed.condition_change_type))
