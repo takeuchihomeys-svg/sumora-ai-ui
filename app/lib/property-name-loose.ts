@@ -131,6 +131,11 @@ export function brainNameMatchesAny(brainName: string | null | undefined, names:
 export function splitBrainNames(brainName: string | null | undefined): string[] {
   const whole = String(brainName ?? "").trim();
   if (!whole) return [];
-  const parts = whole.split(/[、,，]/).map((s) => s.trim()).filter(Boolean);
-  return parts.length > 1 && parts.every((p) => (parseLoose(p)?.key.length ?? 0) >= 4) ? parts : [whole];
+  const parts = whole.split(/[、,，／/]/).map((s) => s.trim()).filter(Boolean);
+  const byComma = parts.length > 1 && parts.every((p) => (parseLoose(p)?.key.length ?? 0) >= 4) ? parts : [whole];
+  // 「・」は建物名の中にもある（コンフォリア・リヴ）→ 分けた全部に号室か階がある時だけ物件の並びと読む（「ミラージュパレス本町Depart1302・スプランディッド本町グラン1003」）
+  return byComma.flatMap((p) => {
+    const ds = p.split("・").map((s) => s.trim()).filter(Boolean);
+    return ds.length > 1 && ds.every((d) => { const r = parseLoose(d); return !!r && r.key.length >= 4 && (!!r.room || !!r.floor); }) ? ds : [p];
+  });
 }

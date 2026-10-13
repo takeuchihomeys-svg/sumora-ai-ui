@@ -53,20 +53,24 @@ export function withBrainPropertyFirst(
   if (!brainPropertyDisplayEnabled(o.env ?? process.env)) return [...options];
   const name = (pick?.name ?? "").trim();
   if (!name || !isBrainPickFresh(pick, o.latestCustomerAt)) return [...options];
-  // 2件を並べた名前（「MY江之子島マンション403・701」）・仮の名前は使わない
-  if (/[・、]/.test(name) || PLACEHOLDER_NAME_RE.test(name)) return [...options];
-  const ref = brainPickRef(pick);
-  if (!ref) return [...options];
-  const idx = options.findIndex((c) => { const cr = splitPropertyName(c.name); return !!cr && sameBrainPropertyRef(ref, cr); });
-  if (idx >= 0) {
-    const hit = { ...options[idx], fromBrain: true };
-    return [hit, ...options.slice(0, idx), ...options.slice(idx + 1)];
+  // 2026-10-13 区切り5: 今の番の物件の並び（current_properties）があれば全部を上に並べる（ブレインの物件が先）。無ければ current_property の1件
+  const names = (pick?.names?.length ? pick.names : [name]).map((n) => n.trim()).filter(Boolean).slice(0, 5);
+  const rest = [...options];
+  const top: BrainOptionCandidate[] = [];
+  for (const n of names) {
+    // 2件を並べた名前（「MY江之子島マンション403・701」）・仮の名前は使わない
+    if ((names.length === 1 && /[・、]/.test(n)) || PLACEHOLDER_NAME_RE.test(n)) continue;
+    const ref = brainPickRef({ ...pick!, name: n });
+    if (!ref) continue;
+    const idx = rest.findIndex((c) => { const cr = splitPropertyName(c.name); return !!cr && sameBrainPropertyRef(ref, cr); });
+    if (idx >= 0) { top.push({ ...rest[idx], fromBrain: true }); rest.splice(idx, 1); continue; }
+    if (top.some((c) => { const cr = splitPropertyName(c.name); return !!cr && sameBrainPropertyRef(ref, cr); })) continue;
+    const key = ref.buildingKey;
+    const seen = key.length >= 3 && (o.conversationTexts ?? []).some((t) => !/^\s*\[(?:画像|動画)\]/.test(t ?? "") && buildingKeyOf(t ?? "").includes(key));
+    // at は null（お客様が送った時刻ではない＝「お客様が〇時に送付」を出さない・今回の連投の共有にも数えない）
+    if (seen) top.push({ name: n, label: n, url: null, at: null, fromBrain: true });
   }
-  const key = ref.buildingKey;
-  const seen = key.length >= 3 && (o.conversationTexts ?? []).some((t) => !/^\s*\[(?:画像|動画)\]/.test(t ?? "") && buildingKeyOf(t ?? "").includes(key));
-  if (!seen) return [...options];
-  // at は null（お客様が送った時刻ではない＝「お客様が〇時に送付」を出さない・今回の連投の共有にも数えない）
-  return [{ name, label: name, url: null, at: null, fromBrain: true }, ...options];
+  return [...top, ...rest];
 }
 
 // ─── 【必ず】の約束の物件名 ───
@@ -209,7 +213,7 @@ export function applyBrainToPromiseEntries<E extends { kind: string; status: str
  * conversations.suggested_aix_meta / last_brain_meta から、新しい方の判断の current_property を取る（どちらも判断の時刻が無ければ null）。
  *   current_property が null の判断も「ブレインは物件を決めなかった」という新しい判断（古い判断の物件に戻さない）
  */
-export function brainPickFromMetas(...metas: Array<{ current_property?: unknown; analyzed_msg_ts?: unknown } | null | undefined>): BrainPropertyPick | null {
+export function brainPickFromMetas(...metas: Array<{ current_property?: unknown; current_properties?: unknown; analyzed_msg_ts?: unknown } | null | undefined>): BrainPropertyPick | null {
   let best: BrainPropertyPick | null = null;
   for (const m of metas) {
     if (!m) continue;
@@ -217,7 +221,9 @@ export function brainPickFromMetas(...metas: Array<{ current_property?: unknown;
     if (!ts) continue;
     if (best && ms(best.analyzedMsgTs) >= ms(ts)) continue;
     const cp = typeof m.current_property === "string" ? m.current_property.trim() : "";
-    best = { name: cp || null, analyzedMsgTs: ts };
+    const list = Array.isArray(m.current_properties) ? (m.current_properties as unknown[]).filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+    // 並びは current_property がある時だけ使う（ブレインが物件を決めなかった番に台帳の ▶ だけで物件を出さない）
+    best = { name: cp || null, analyzedMsgTs: ts, ...(cp && list.length > 1 ? { names: list } : {}) };
   }
   return best;
 }

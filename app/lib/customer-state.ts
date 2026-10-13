@@ -339,6 +339,8 @@ export type BrainPropertyPick = {
   roomNo?: string | null;
   /** その判断が読んだ最新の顧客発言の時刻 */
   analyzedMsgTs: string | null;
+  /** 2026-10-13 区切り5: 今の番の物件の並び（suggested_aix_meta.current_properties・先頭は name と同じ） */
+  names?: string[] | null;
 };
 /** 判断の時刻と発言の時刻は同じ値が入る（丸めで数 ms ずれることがある）→ 1秒の余裕 */
 const BRAIN_FRESH_SLACK_MS = 1000;

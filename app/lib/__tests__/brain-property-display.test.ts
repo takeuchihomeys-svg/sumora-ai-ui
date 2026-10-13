@@ -104,6 +104,10 @@ console.log("■ AIX の物件名の候補（withBrainPropertyFirst）");
   t("無い物件は会話の本文に出る時だけ一番上に足す（at は null＝お客様の送付時刻を出さない・今回の連投の共有に数えない）", add[0].name === "Mv.fm大阪大正 405号室" && add[0].at === null && add.length === 3, add[0]);
   t("会話の本文に出ない名前（読み取りの化け）は足さない", withBrainPropertyFirst(opts, { name: "プレサンス戸原橋ヴィプラス0201", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: ["[画像] 物件名：プレサンス戸原橋ヴィプラス / 号室名：0201", "初期費用お願いします"] }).length === 2);
   t("2件を並べた名前は足さない", withBrainPropertyFirst(opts, { name: "MY江之子島マンション403・701", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: ["MY江之子島マンション403と701"] }).length === 2);
+  const multi = withBrainPropertyFirst(opts, { name: "Mv.fm大阪大正 405号室", names: ["Mv.fm大阪大正 405号室", "プルス新北野"], analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: conv });
+  t("区切り5: 並び（current_properties）を全部上に（候補にある物は移す・無い物は会話に出る時だけ足す）", multi.map((c) => c.name).join("|") === "Mv.fm大阪大正 405号室|プルス新北野|レジュールアッシュ難波MINAMI" && multi[1].fromBrain === true, multi.map((c) => c.name));
+  t("区切り5: brainPickFromMetas は current_property がある時だけ並びを持つ", brainPickFromMetas({ current_property: "A棟 101号室", current_properties: ["A棟 101号室", "B棟"], analyzed_msg_ts: "2026-10-09T00:00:00Z" })?.names?.length === 2
+    && !brainPickFromMetas({ current_property: null, current_properties: ["B棟"], analyzed_msg_ts: "2026-10-09T00:00:00Z" })?.names);
   t("URL の番号は足さない", withBrainPropertyFirst(opts, { name: "bc_100525219054", analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {}, conversationTexts: ["https://suumo.jp/chintai/bc_100525219054/"] }).every((c) => !c.name.startsWith("bc_")));
   t("古い判断は候補のまま", withBrainPropertyFirst(opts, BRAIN_MIOU, { latestCustomerAt: "2026-10-09T05:00:00Z", env: {} })[0].name === "プルス新北野");
   t("ブレインが物件を決めていない（null）時は候補のまま", withBrainPropertyFirst(opts, { name: null, analyzedMsgTs: BRAIN_MIOU.analyzedMsgTs }, { latestCustomerAt, env: {} })[0].name === "プルス新北野");

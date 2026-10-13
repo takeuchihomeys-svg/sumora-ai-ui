@@ -1,6 +1,6 @@
 // app/lib/__tests__/current-property-gate.test.ts — 2026-10-13 主語の抜けの current_property の実在ゲート
 //   実行: npx tsx app/lib/__tests__/current-property-gate.test.ts
-import { currentPropertyExists, propertyCmpKey, refineCurrentProperty } from "../current-property-gate";
+import { currentPropertyExists, propertyCmpKey, refineCurrentProperty, currentPropertiesOf } from "../current-property-gate";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
@@ -30,6 +30,14 @@ console.log("■ 区切り2 refineCurrentProperty（URL の番号・画像の読
   t("台帳の近い名前でも別の部屋なら寄せない", refineCurrentProperty("プレサンス戸原橋ヴィプラス0201", { texts: [img, "【プレサンス芦原橋ヴィブラス 305号室】"], ledgerNames: ["プレサンス芦原橋ヴィブラス 305号室"] }).value === "プレサンス戸原橋ヴィプラス0201");
   t("CURRENT_PROPERTY_LEDGER_CANON=off で今まで通り", refineCurrentProperty("bc_100525219054", { texts: [], ledgerNames: [] }, { CURRENT_PROPERTY_LEDGER_CANON: "off" }).value === "bc_100525219054");
   t("null はそのまま", refineCurrentProperty(null, { texts: [], ledgerNames: [] }).value === null);
+}
+console.log("■ 区切り5 currentPropertiesOf（今の番の物件の並び）");
+{
+  const note2 = "【🏠 物件ごとの状況】\n▶ 今の番の物件: カシータ神戸元町JP 401号室（募集状況・引用）\n  ・…\n▶ 今の番の物件: エステムコートみなと元町THE FIRST（募集状況・引用）";
+  t("ブレインの物件を先・台帳の ▶ を後ろ（同じ物件は1つ）", JSON.stringify(currentPropertiesOf("カシータ神戸元町JP 401号室", note2)) === JSON.stringify(["カシータ神戸元町JP 401号室", "エステムコートみなと元町THE FIRST"]));
+  t("ブレインの「A、B」を分ける", currentPropertiesOf("リブリ・スカイブルー ライズ 202、エイペックス神戸みなと元町", "").length === 2);
+  t("ブレインが null なら ▶ だけ（使う側は current_property がある時だけ並びを使う）", currentPropertiesOf(null, note2).length === 2);
+  t("CURRENT_PROPERTIES=off で current_property だけ", JSON.stringify(currentPropertiesOf("カシータ神戸元町JP 401号室", note2, { CURRENT_PROPERTIES: "off" })) === JSON.stringify(["カシータ神戸元町JP 401号室"]));
 }
 console.log(`\n${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

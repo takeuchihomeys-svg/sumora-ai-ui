@@ -74,26 +74,43 @@ async function partPrefill() {
   const misses: string[] = [];
   let nearMiss = 0;
   const bump = (k: K) => { const v = tally.get(k) ?? { n: 0, noDec: 0, stale: 0, nullProp: 0, hit: 0, miss: 0 }; tally.set(k, v); return v; };
+  // --after=1: 区切り3（記録の物件名を本文に合わせる）・区切り5（今の番の物件の並び＝ブレインの物件＋判断の時点の台帳の ▶）も当てる
+  const after = arg("after", "") === "1";
+  const { reconcileAixPropertyNames } = await import("../app/lib/aix-sent-names");
+  const { matchLoose, isSameLoose } = await import("../app/lib/property-name-loose");
+  const { currentPropertiesOf } = await import("../app/lib/current-property-gate");
+  const { loadPropertyThreads } = await import("../app/lib/property-thread-server");
+  const { buildPropertyThreadNote } = await import("../app/lib/property-thread");
+  const genText = new Map<string, string | null>();
+  if (after) {
+    for (const l of await pageAll<{ conversation_id: string; created_at: string; generated_text: string | null }>((a, b) => sb.from("aix_usage_logs").select("conversation_id, created_at, generated_text").in("aix_type", TYPES).not("sent_at", "is", null).not("property_names", "is", null).gte("created_at", since).order("created_at").range(a, b))) genText.set(`${l.conversation_id}|${l.created_at}`, l.generated_text);
+  }
   for (const l of named) {
-    const names = (l.property_names ?? []).filter((n) => (n ?? "").trim());
+    let names = (l.property_names ?? []).filter((n) => (n ?? "").trim());
+    if (after) names = reconcileAixPropertyNames(names, genText.get(`${l.conversation_id}|${l.created_at}`) ?? null, (a, b) => isSameLoose(matchLoose(a, b)), {}, l.aix_type).names ?? names;
     const key = `${l.aix_type}${l.check_pattern ? `/${l.check_pattern}` : ""}${names.length > 1 ? "（2件以上）" : ""}`;
-    const v = bump(key), all = bump("全部");
-    v.n++; all.n++;
+    const v = bump(key), all = bump("全部"), per = bump(l.created_at >= "2026-10-08" ? "全部（10/8以降）" : "全部（10/8より前）");
+    v.n++; all.n++; per.n++;
     const d = decisionAt(decs.get(l.conversation_id), l.created_at);
-    if (!d) { v.noDec++; all.noDec++; continue; }
+    if (!d) { v.noDec++; all.noDec++; per.noDec++; continue; }
     const pick = pickOf(d)!;
-    if (!isBrainPickFresh(pick, lastBefore(ct.get(l.conversation_id), l.created_at))) { v.stale++; all.stale++; continue; }
-    if (!(d.prop ?? "").trim()) { v.nullProp++; all.nullProp++; continue; }
+    if (!isBrainPickFresh(pick, lastBefore(ct.get(l.conversation_id), l.created_at))) { v.stale++; all.stale++; per.stale++; continue; }
+    if (!(d.prop ?? "").trim()) { v.nullProp++; all.nullProp++; per.nullProp++; continue; }
     const br = splitPropertyName(d.prop);
     // 区切り1（property-name-loose）: 書き方の違いを許す照合。PROPERTY_NAME_LOOSE_MATCH=off で前の測り方
-    const ok = (!!br && names.some((n) => { const r = splitPropertyName(n); return !!r && sameBrainPropertyRef(br, r); }))
+    let ok = (!!br && names.some((n) => { const r = splitPropertyName(n); return !!r && sameBrainPropertyRef(br, r); }))
       || (looseMatchEnabled() && brainNameMatchesAny(d.prop, names));
+    if (!ok && after) {
+      const s = await loadPropertyThreads(l.conversation_id, { asOf: d.created_at });
+      const list = currentPropertiesOf(d.prop, s ? buildPropertyThreadNote(s) : "");
+      ok = list.some((x) => brainNameMatchesAny(x, names));
+    }
     // 表記ゆれ（似ている・片方がもう片方を含む＝customer-state では寄せない）は外れに数えるが別に数える
     if (!ok && br && names.some((n) => { const r = splitPropertyName(n); return !!r && matchRoomRefs(br, r) === "maybe"; })) nearMiss++;
     // 部屋の形: ブレインが部屋まで言ったか
     const shape = bump(`${key}｜ブレイン${br?.room ? "部屋あり" : "建物だけ"}`);
     shape.n++;
-    if (ok) { v.hit++; all.hit++; shape.hit++; } else { v.miss++; all.miss++; shape.miss++; misses.push(`${l.created_at.slice(0, 16)} ${l.conversation_id.slice(0, 8)} ${key}｜ブレイン「${d.prop}」｜スタッフ「${names.join("・")}」`); }
+    if (ok) { v.hit++; all.hit++; shape.hit++; per.hit++; } else { v.miss++; all.miss++; shape.miss++; per.miss++; misses.push(`${l.created_at.slice(0, 16)} ${l.conversation_id.slice(0, 8)} ${key}｜ブレイン「${d.prop}」｜スタッフ「${names.join("・")}」`); }
   }
   console.log(`■ AIX の物件名 × 直前の新しいブレインの物件（${days}日・名前を入れた送信 ${named.length}件）`);
   console.log("種類 | 件数 | 判断なし | 古い | ブレイン null | 当たり | 外れ | 当たり率（ブレインが物件を言った番）");

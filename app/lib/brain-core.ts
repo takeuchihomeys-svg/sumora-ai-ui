@@ -19,7 +19,7 @@ import { saveBrainSummary } from "@/app/lib/brain-only-summary-save";
 import { fetchWinningPatterns } from "@/app/lib/summary-winning-patterns";
 import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from "@/app/lib/brain-only-summary";
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
-import { currentPropertyExists, refineCurrentProperty } from "@/app/lib/current-property-gate";
+import { currentPropertyExists, refineCurrentProperty, currentPropertiesOf } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
 import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
 import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
@@ -309,6 +309,8 @@ export type SuggestedAixMeta = {
   // classifyCustomerResponse）には toBrainConversationScope 経由でしか渡らず、型として渡せない
   repeated_concern?: string | null;      // 会話全体で2回以上登場した繰り返し確認テーマ（20字）
   current_property?: string | null;      // 話題の中心の物件名・号室（実在ゲート通過値のみ・創作はnull）
+  /** 2026-10-13 区切り5: 今の番の物件の並び（current_property を先・台帳の ▶ を後ろ・決定論。current-property-gate.currentPropertiesOf） */
+  current_properties?: string[];
   condition_change_type?: "area_change" | "rent_change" | "layout_change" | "equip_add" | "condition_relax" | "pickup_request" | "multi" | null;  // 最新メッセージでの条件変更種別
   /** 2026-09-27 竹内「一時調整か、そもそもの条件の切り替えかをブレインが判断」: permanent＝登録の条件を直す／temporary＝その回だけ（search_override）。反映の経路は condition-change-scope.ts resolveConditionChangeScope で決める */
   condition_change_scope?: "permanent" | "temporary" | "none" | null;
@@ -4652,6 +4654,8 @@ ${history}`;
         tc: rawContractRouteDigest((parsed as { turn_contract?: unknown }).turn_contract) },
       repeated_concern: repeatedConcern,
       current_property: currentProperty,
+      // 2026-10-13 当たり率の直し（区切り5）: 今の番の物件の並び（ブレインの物件を先・台帳の ▶ を後ろ）。LLM の出力は変えない。戻す CURRENT_PROPERTIES=off
+      current_properties: currentPropertiesOf(currentProperty, propertyThreadNoteText),
       condition_change_type: conditionChangeType,
       condition_change_scope: conditionChangeType ? normalizeBrainScope(parsed.condition_change_scope) : null,
       hesitancy_pattern: hesitancyPattern,

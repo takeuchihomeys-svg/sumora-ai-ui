@@ -7,7 +7,27 @@
 // 直し: ①空白（全角・半角）と全角半角の差を除いて比べる ②台帳の文（▶ の候補を含む物件ごとの状況）にある名前も「実在」に入れる。
 //   創作の名前を止める線（会話・送付・台帳のどこにも無い名前は null）は変えない。戻す: CURRENT_PROPERTY_GATE_V2=off
 
-import { matchLoose, isSameLoose } from "./property-name-loose";
+import { matchLoose, isSameLoose, splitBrainNames } from "./property-name-loose";
+
+// ─── 2026-10-13 当たり率の直し（区切り5 複数）: 今の番の物件の並び（current_properties）───
+// 外れの型 i: お客様が「この二つ」「全てお願いします」と複数の物件を聞き、スタッフは2〜4件に答えたのに、ブレインの current_property は1件。
+//   ブレインの出力（LLM）は変えず、ブレインの current_property（「A・B」「A、B」の並びは分ける）を先に、台帳の ▶ 今の番の物件（引用・名指し・推定）を
+//   後ろに並べる（同じ物件は1つ）。AIX の物件名の候補に並べ、表示・照合は「どれか」で見る。戻す: CURRENT_PROPERTIES=off
+export function currentPropertiesEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.CURRENT_PROPERTIES ?? "").trim().toLowerCase() !== "off";
+}
+export function currentPropertiesOf(currentProperty: string | null | undefined, threadNote: string | null | undefined, env: Record<string, string | undefined> = process.env): string[] {
+  if (!currentPropertiesEnabled(env)) return currentProperty?.trim() ? [currentProperty.trim()] : [];
+  const out: string[] = [];
+  const add = (n: string) => {
+    const t = n.trim();
+    if (!t || out.some((x) => x === t || isSameLoose(matchLoose(x, t)))) return;
+    out.push(t.slice(0, 40));
+  };
+  for (const n of splitBrainNames(currentProperty)) add(n);
+  for (const m of String(threadNote ?? "").matchAll(/^▶ 今の番の物件: (.+?)（/gm)) add(m[1]);
+  return out.slice(0, 5);
+}
 
 type Env = Record<string, string | undefined>;
 

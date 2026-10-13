@@ -58,6 +58,9 @@ t("「リブリ・スカイブルー ライズ 202、エイペックス神戸み
 t("建物名の中の「・」はそのまま（コンフォリア・リヴ）", brainNameMatchesAny("コンフォリア・リヴ博労町一丁目Q 406号室", ["コンフォリアリブ博労町一丁目Q 406号室"]));
 t("並びのどれにも合わない", !brainNameMatchesAny("ハイツカトレアB・ハイムMK", ["エスリード弁天町パークプレイス 303号室"]));
 t("splitBrainNames: 「、」で分ける", JSON.stringify(splitBrainNames("リブリ・スカイブルー ライズ 202、エイペックス神戸みなと元町")) === JSON.stringify(["リブリ・スカイブルー ライズ 202", "エイペックス神戸みなと元町"]));
+t("splitBrainNames: 号室つきの「・」は分ける", JSON.stringify(splitBrainNames("ミラージュパレス本町Depart1302・スプランディッド本町グラン1003")) === JSON.stringify(["ミラージュパレス本町Depart1302", "スプランディッド本町グラン1003"]));
+t("splitBrainNames: 「／」も分ける", splitBrainNames("ラクラス阿倍野元町 0507／エクセレンス新今宮1202").length === 2);
+t("splitBrainNames: 建物名の中の「・」は分けない（コンフォリア・リヴ博労町一丁目Q 406号室）", splitBrainNames("コンフォリア・リヴ博労町一丁目Q 406号室").length === 1);
 t("splitBrainNames: 1件はそのまま", splitBrainNames("コンフォリア・リヴ博労町一丁目Q").length === 1);
 t("PROPERTY_NAME_LOOSE_MATCH=off", !looseMatchEnabled({ PROPERTY_NAME_LOOSE_MATCH: "off" }) && looseMatchEnabled({}));
 
