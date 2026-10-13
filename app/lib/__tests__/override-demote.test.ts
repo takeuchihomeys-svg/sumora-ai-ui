@@ -1,6 +1,6 @@
 // app/lib/__tests__/override-demote.test.ts — 2026-10-13 決定論の上書きを材料＋食い違いのログに下げる
 //   実行: npx tsx app/lib/__tests__/override-demote.test.ts
-import { overrideDemoted, applyOverride, compactDemoted, DEMOTE_ENV, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, type DemotedOverride } from "../override-demote";
+import { overrideDemoted, applyOverride, compactDemoted, DEMOTE_ENV, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, type DemotedOverride } from "../override-demote";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
@@ -27,6 +27,9 @@ t("約束の項目がある → 直接ではない", !brainContractSaysDirectPro
 t("約束だけ → 直接ではない", !brainContractSaysDirectPropertyAix(promised, "property_send"));
 t("物件以外の AIX は対象外", !brainContractSaysDirectPropertyAix({ asks: [{ route: "aix", aix: "estimate_sheet" }] }, "estimate_sheet"));
 t("turn_contract が無い → 直接ではない（安全側）", !brainContractSaysDirectPropertyAix(null, "property_send"));
+// 4-4: 締めの後のお礼
+t("締めの材料の行に締めの文と実データ", /何時でもお気軽に/.test(closedAckMaterialLine("気になる点出てきましたら何時でもお気軽にご連絡ください😊")) && /返信しなかった 8/.test(closedAckMaterialLine("x")));
+t("BRAIN_DEMOTE_CLOSED_ACK=off で戻す", !overrideDemoted("closed_ack_wait", { BRAIN_DEMOTE_CLOSED_ACK: "off" }) && overrideDemoted("closed_ack_wait", {}));
 
 console.log(`\n${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

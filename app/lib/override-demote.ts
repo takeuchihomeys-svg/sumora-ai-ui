@@ -91,3 +91,11 @@ export function brainContractSaysDirectPropertyAix(raw: unknown, finalAix: strin
   const promised = asks.some((a) => a?.route === "promise" && /ピックアップ|探|お送り|物件|pickup|property/.test(`${a?.answer ?? ""} ${a?.topic ?? ""} ${a?.aix ?? ""}`));
   return direct && !promised;
 }
+
+// ─── 4-4: 締めの後のお礼・了承だけ（rule:closed_ack_wait）────────────────────────────
+// 旧: こちらが締め（「何時でもお気軽にご連絡ください」）を送った後のお礼・了承だけの番は、ブレインの判断に関わらず AIX【物件ピックアップした】＋下書きなし（30日 18番・押された AIX と同じ 0）。
+// 新: 材料の行（締めの後のお礼だけ・実データ）を LLM の前に渡し、ブレインが「返信しない（aix null・reply_mode=aix）／次の物件の AIX／返信」を決める。戻す BRAIN_DEMOTE_CLOSED_ACK=off
+export function closedAckMaterialLine(staffLine: string): string {
+  const q = Array.from(String(staffLine ?? "").replace(/\s+/g, " ")).slice(0, 40).join("");
+  return `【こちらの締めの後のお礼・了承だけ（材料）】こちらの最後の送信は締め（「${q}」）で、お客様の今の発言はお礼・了承だけ。実データ（8月〜10件）: スタッフは返信しなかった 8（うち4件は後で次の物件を AIX で送った）・新しい内容の返信 2。同じ締めを繰り返す返信は書かない。物件を送っている提案中なら次の一手は次の物件（AIX【物件ピックアップした】・後で）`;
+}

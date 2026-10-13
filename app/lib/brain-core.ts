@@ -21,7 +21,7 @@ import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
-import { applyOverride, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, closedAckMaterialLine, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -2565,6 +2565,14 @@ ${catalogBlockForBrain(brainScene)}
       customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow)}`;
     } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
+  if (overrideDemoted("closed_ack_wait")) {
+    const oldestNow = [...typedMessages].reverse();
+    const ackNow = oldestNow[oldestNow.length - 1]?.sender === "customer" && !unrepliedTurn.hasImage && !!unrepliedTurn.text.trim()
+      && analyzeSubstance(unrepliedTurn.text, [unrepliedTurn.text]).isAckOnly;
+    const caNow = resolveClosedAck(oldestNow.map((m) => ({ sender: m.sender, text: m.text })), ackNow);
+    if (caNow.closed) customerStateBlockText += `\n\n${closedAckMaterialLine(caNow.staffLine)}`;
+  }
   // 2026-10-08 お金の時期の逆算の A/B（customer-memo-server が payment-timing で作る・B の時は下で申込へを外す）
   let paymentPlan: (import("@/app/lib/payment-timing").ApplyPlan & { core: string }) | null = null;
   // 2026-10-13 P0「判断はすべてブレイン基準」: 確認事項の候補（request-ledger の網）と、ブレインが読んだ最後の通の時刻（出力の request_status に使う）
@@ -3493,7 +3501,9 @@ ${history}`;
     let closedAckWait = false;
     if (!promiseAix && !rentIncludedReply && closedAck.closed && brainLedger.facts.propertiesSentCount > 0
       && (phaseNow === "proposing" || phaseNow === "hearing")
-      && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_send" || finalAix === "property_recommendation")) {
+      && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_send" || finalAix === "property_recommendation")
+      // 2026-10-13（ブレインの使い残し 4-4）: 下げる（材料は LLM の前に closedAckMaterialLine で渡した）。戻す BRAIN_DEMOTE_CLOSED_ACK=off
+      && applyOverride(demotedOverrides, "closed_ack_wait", "rule:closed_ack_wait", "property_send", finalAix)) {
       finalAix = "property_send";
       decisionSource = "rule:closed_ack_wait";
       closedAckWait = true;
