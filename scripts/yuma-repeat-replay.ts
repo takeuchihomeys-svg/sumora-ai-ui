@@ -213,7 +213,7 @@ async function main() {
           message: customer.join(MSG_SEP), customerMessages: customer, state: staffEngaged ? "proposing" : "first_reply", conversationId: CONV, customerName: "YUMA",
           hasViewed: false, activeTaskTypes: [], hasStaffReplied: staffEngaged,
           recentMessages: msgsAll.slice(-25).map((m, i, arr) => ({ sender: m.s, text: m.t, createdAt: times[times.length - arr.length + i], isAix: !!m.aix })),
-          brainMetaDirect: { meta: { ...meta, reply_mode: meta.reply_mode === "aix" ? "reply" : meta.reply_mode }, customerName: "YUMA", conversationDirection: (meta.conversation_direction as Record<string, unknown> | undefined) ?? null, brainAnalyzedAt: new Date().toISOString() },
+          brainMetaDirect: { meta: { ...meta, analyzed_msg_ts: new Date(Date.parse(times[times.length - 1]) + 1000).toISOString(), reply_mode: meta.reply_mode === "aix" ? "reply" : meta.reply_mode }, customerName: "YUMA", conversationDirection: (meta.conversation_direction as Record<string, unknown> | undefined) ?? null, brainAnalyzedAt: new Date(Date.parse(times[times.length - 1]) + 2000).toISOString() },
           shadowNoWrite: true, testSceneMaterials: "on", testExcludeReplyText: t.staffText ?? "",
         };
         const t0 = Date.now();

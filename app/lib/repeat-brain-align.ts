@@ -67,8 +67,7 @@ export function pendingPickupAckLine(env: Env = process.env): string | null {
   return "- ⚠ 直前のピックアップの約束がまだ果たされていない（物件は AIX で送る）。お客様が受けだけなら竹内さんの形の3行: 「はい😊！！」＋（前の約束が言い切り「〜ピックアップさせて頂きます」なら待ちの形の1文「ピックアップ出来次第お送りさせて頂きますので」／もう待ちの形で伝えていれば「気になる点出てきましたら何時でもお気軽にご連絡ください！！」）＋「何卒よろしくお願い致します😌！！」。条件の並べ直し・言い切りの再宣言・待ちの形の3回目は書かない";
 }
 
-const WAIT_RE = /次第/;
-const DATE_CLOSE_RE = /(?:明日|本日|当日|明後日|[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[0-9０-９]{1,2}\/[0-9０-９]{1,2}).{0,8}(?:何卒|よろしく|宜しく|ご案内させて)/;
+const WAIT_RE = /次第/;const DATE_CLOSE_RE = /(?:明日|本日|当日|明後日|[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[0-9０-９]{1,2}\/[0-9０-９]{1,2}).{0,8}(?:何卒|よろしく|宜しく|ご案内させて)/;
 /** 言い直してよい（待ちの形にしてよい）約束の中身＝探す・撮影（竹内さんは受けだけの番でも待ちの形で1文言う） */
 const RESTATE_OK_TOPICS: ReadonlySet<PromiseTopic> = new Set(["pickup"]);
 const PHOTO_RE = /撮影/;
@@ -102,9 +101,12 @@ export function contractAlreadySaidRepeat(
     if (!best) continue;
     const topics = promiseTopics(s);
     const restateOk = topics.some((t) => RESTATE_OK_TOPICS.has(t)) || PHOTO_RE.test(s);
+    // 待ちの形の1文は竹内さんの形（外す）。
+    //   ⚠ 10/13 試して止めた: 「もう言った約束が既に待ちの形なら3回目として見る」（YUMA4 の試し 9f6b948a）は竹内さんの実送信にも当たる（39c5b353・4a387eac＝竹内さんも待ちの形を重ねる）＝誤り 0 にならない
     if (restateOk && WAIT_RE.test(s)) continue;
     // お客様が中身（新しい物件・条件・質問）を送った番の約束は、新しい対象への約束（竹内さんも同じ文で約束し直す: 募集状況の確認 5/5・条件を足したピックアップ 87〜91%）＝約束でない文（サポートの宣言・説明）だけ見る
     //   サポートの宣言（審査面も無事通過出来ますよう…）も中身のある番は竹内さんも言い直す事がある（7f36cba8 書いた・e8b790af 書かない＝線が引けない）＝見ない
+    //   ⚠ 10/13 試して止めた: 「前の文をほぼそのまま（近さ 0.9 以上）写した約束は見る」（YUMA4 の試し 5ed01085）は竹内さんの実送信にも当たる（cc1a78bd・44e89917・3cbfb5f2）
     if (opts.customerAddsContent && (topics.length || /確認|ご連絡|お送り|お届け|サポート/.test(s))) continue;
     return {
       sentence: s.slice(0, 80), ref: best.ref, sim: best.sim,
