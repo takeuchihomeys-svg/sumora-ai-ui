@@ -2573,6 +2573,19 @@ ${catalogBlockForBrain(brainScene)}
       contractTerms = await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: unrepliedTurn.text, target: focusRoomForMaterial, excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] });
     } catch (e) { console.warn("[brain-core] contract-terms skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-10-14 区切り3（竹内さん「物件資料に書いてある事を聞かれたら、資料を物件検索ブレインで解析して答える」）:
+  //   間取り・水回りの配置・広さ・階・向き・収納・キッチンの質問（網）の時だけ、対象の物件（主のお部屋→送った物件）の読み取りを材料に。
+  //   まだ読めていない図はその場で1回読む（物件の資料の画像だけ・保存して使い回す）。答えるか確認の約束にするかはブレインが決める。MATERIAL_ANSWER=off
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const { loadMaterialAnswerWithin } = await import("@/app/lib/material-answer-server");
+      const materialAnswer = await loadMaterialAnswerWithin(10_000, { conversationId, customerText: unrepliedTurn.text, target: focusRoomForMaterial ? { name: focusRoomForMaterial.name, roomNo: focusRoomForMaterial.roomNo ?? null } : null });
+      if (materialAnswer?.note) {
+        customerStateBlockText += `\n\n${materialAnswer.note}`;
+        console.log(JSON.stringify({ tag: "brain:material-answer", conversationId, topics: materialAnswer.question.topics, log: materialAnswer.log }));
+      }
+    } catch (e) { console.warn("[brain-core] material-answer skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   if (contractTerms?.note) {
     customerStateBlockText += `\n\n${contractTerms.note}`;
     console.log(JSON.stringify({ tag: "brain:contract-terms", conversationId, target: contractTerms.target.name, routes: contractTerms.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: contractTerms.source }));

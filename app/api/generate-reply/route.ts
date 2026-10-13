@@ -4149,10 +4149,19 @@ async function handleGenerateReply(req: NextRequest) {
       ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
       : null;
     if (contractTerms) console.info("[contract-terms]", JSON.stringify({ conversationId, target: contractTerms.target.name, routes: contractTerms.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: contractTerms.source }));
+    // 2026-10-14 区切り3（竹内さん「物件資料に書いてある事を聞かれたら、資料を物件検索ブレインで解析して答える」）:
+    //   間取り・水回りの配置・広さ・階・向き・収納・キッチンの質問（網）の時だけ、対象の物件の読み取り（送った資料の書き写し・売上サポの読み・その場の間取り図の読み）を材料に。
+    //   答えるか確認の約束にするかはブレイン（本質）が決める。ブレインの側で読んだ物は保存してあるのでここは引くだけ（無ければ同じ読みを1回）。MATERIAL_ANSWER=off で止まる
+    const materialAnswer = !isTemplateOptimize && !postApplyConversation && !!conversationId
+      ? await import("@/app/lib/material-answer-server").then((m) => m.loadMaterialAnswerWithin(10_000, { conversationId: conversationId!, customerText: message ?? "", target: brainFreshForMessage && brainMeta?.current_property ? { name: brainMeta.current_property, roomNo: null } : null })).catch(() => null)
+      : null;
+    if (materialAnswer) console.info("[material-answer]", JSON.stringify({ conversationId, topics: materialAnswer.question.topics, log: materialAnswer.log }));
     // 資料に書いてある値（退去予定・入居時期の言い切りの免除に使う・validate-reply.materialGroundsAssertion）
     const contractMaterialFacts = [
       ...(contractTerms?.routes ?? []).filter((r) => r.route === "material").flatMap((r) => r.facts),
       ...(procedureAnswer?.plan.moveIn?.route === "material" ? procedureAnswer.plan.moveIn.lines : []),
+      // 2026-10-14 区切り3: 物件資料の読み取り（間取り・水回り等）
+      ...(materialAnswer?.properties ?? []).flatMap((p) => [...p.planLines, ...p.textLines]),
       // ブレインが退去予定日から内覧できる日を決めた時（rule:viewing_vacating_date_known）の文（ブレインの決定論が作った文・YUMA で判定役が AIX_BOUNDARY_MOVEIN として日付を消した）
       ...(/「([0-9０-９]{1,2}月[^」]{0,8}退去予定のため、[^」]{1,12}以降にご内覧可能です！！)」/.exec(String(brainMeta?.reply_direction ?? ""))?.slice(1, 2) ?? []),
       // 2026-10-08 お金の時期の B（ブレインが申込へを外した番）: 判定役が「申込したいのに時期を伝えて待つ」を STATE_REGRESSION で書き換えた（YUMA）→ 決まりと文を渡す
@@ -5861,6 +5870,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-09-30 みこと事例: 手続きの質問（審査・入居までの期間と流れ・必要書類）＝流れの事実と資料の入居時期（質問の時だけ）
         + (procedureAnswer?.note ? `\n\n${procedureAnswer.note}` : "")
         + (contractTerms?.note ? `\n\n${contractTerms.note}` : "")
+        // 2026-10-14 区切り3: 物件資料の読み取り（間取り・水回りの配置・広さ等の質問の時だけ）
+        + (materialAnswer?.note ? `\n\n${materialAnswer.note}` : "")
         // 2026-10-08 竹内さん「連投の依頼ごと全て把握する」: 今の連投の依頼・質問が2件以上の時だけ一覧（request-ledger・REQUEST_LEDGER=off）
         + (requestListNote ? `\n\n${requestListNote}` : "")
         // 2026-10-08 お客様のメモ（customer-memo）
@@ -6466,6 +6477,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     customerName ? `お客様のお名前: ${customerName}さん` : "",
                     aixSourceMessage,
                     customerConditions,
+                    // 2026-10-14 区切り3: 物件資料の読み取り（資料のとおりの答えを作り話と見ない）
+                    materialAnswer?.note ?? "",
                   ].filter(Boolean).join("\n") || undefined,
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
