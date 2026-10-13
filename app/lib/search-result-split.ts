@@ -124,6 +124,15 @@ export function splitMaterialLine(r: { exhausted: boolean; markerAt: string | nu
  * 10/13（試験の分解）: その約束の多く（4/5）は LLM 自身は物件の AIX を選び、2段の規則（two_stage_promise）が約束の返信に書き換えた番だった。
  *   llmAixIsProperty＝LLM が最初に物件の AIX を選んでいた → ブレイン自身の答えに戻す（規則の上書きを外すだけ・食い違いの記録は要らない）。
  */
+/**
+ * 10/13 レビュー（重要）: LLM の物件の AIX に戻してよい番か＝2段の規則（two_stage…pickup）が約束の返信に書き換えた番だけ。
+ *   条件の言い直しへの返信（replyCondTurn）は、別の規則（お客様が先に送ってくる番・送った物件の契約条件の質問・お客様の情報待ち・
+ *   入居がだいぶ先・初回の聞き取りを続ける番 等）が物件の AIX を消した判断なので戻さない（強い印なら gate・送付だけなら記録だけ）
+ */
+export function llmAixRestorable(o: { twoStagePickup: boolean; llmAix: string | null | undefined }): boolean {
+  return o.twoStagePickup && !!o.llmAix && ["property_send", "property_recommendation", "property_search"].includes(o.llmAix);
+}
+
 export function splitReplyToAix(o: { strength: "strong" | "weak" | null; llmAixIsProperty?: boolean; gate: () => boolean; record: () => void }): boolean {
   if (o.llmAixIsProperty) return true;
   if (o.strength === "strong") return o.gate();
@@ -169,13 +178,26 @@ export function applySearchSplit(o: {
  * 2026-10-13 竹内さんの決定（B）: ブレインが全力サポートを候補にするための材料（LLM の前・答えは書かない）と、出力の項目の説明。
  *   材料は事実だけ: 前に物件を送ったか（件数・最後の時刻）・出し切りの印・お客様の今の発言がほかの物件／新着を聞いているか（語の網＝候補を拾うだけ）。
  */
-export const OTHER_PROPERTY_ASK_RE = /(?:他|ほか)に(?:も)?(?:物件|お部屋|部屋|いい|良い)?[^。\n]{0,8}(?:あり|あれ|ない|無い)|他の(?:物件|お部屋|部屋)|(?:他|ほか)(?:は|も)(?:まだ)?(?:あり|ない|無い)|まだ(?:あり|ない|無い)(?:ます|です)?か|新着/;
-export function zenryokuCandidateMaterial(o: { sentPropertyCount: number; lastSentAt: string | null; exhaustLine: string; customerText: string }): string {
+// 10/13 レビュー: 「他の物件／他のお部屋／他にも物件・お部屋（がありますか）／他（に）まだありますか／新着」に寄せる。
+//   「他に質問はありません」（他に＋別の語）・「このお部屋まだありますか」（1件の募集状況の確認・他が無い）は拾わない
+export const OTHER_PROPERTY_ASK_RE = /(?:他|ほか)の(?:物件|お部屋|部屋)|(?:他|ほか)に(?:も)?(?:(?:いい|良い|おすすめの|オススメの)?(?:物件|お部屋|部屋))|(?:他|ほか)(?:に|は)?(?:も)?(?:まだ)?(?:あり|ある|ない|無い)(?:ます|ません|です)?(?:か|\?|？)|新着/;
+/**
+ * 全力サポートを候補にするかの材料を渡す番か（物件を探す番になりうる時だけ・決定論の網＝候補を拾うだけ）。
+ *   条件の場面（もっと探して・条件の変更）／場面の証拠の候補が物件の AIX か全力サポート／お客様が他の物件・新着を聞いた／今送れる候補がある
+ */
+export function zenryokuCandidateTurn(o: { scene: string | null | undefined; sceneCandidate: string | null | undefined; customerText: string; pickupReady: boolean | null | undefined }): boolean {
+  if (o.scene === "conditions") return true;
+  if (o.sceneCandidate && (SPLIT_TRIGGER_AIX.has(o.sceneCandidate))) return true;
+  if (OTHER_PROPERTY_ASK_RE.test((o.customerText ?? "").normalize("NFKC"))) return true;
+  return o.pickupReady === true;
+}
+export function zenryokuCandidateMaterial(o: { sentPropertyCount: number; lastSentAt: string | null; exhaustLine: string; customerText: string; pickupReady?: boolean | null }): string {
   const asked = OTHER_PROPERTY_ASK_RE.test((o.customerText ?? "").normalize("NFKC"));
+  const ready = o.pickupReady === true ? "今送れる物件の候補（売上サポのピックアップ）がある。" : o.pickupReady === false ? "今送れる物件の候補（売上サポのピックアップ）は無い（探してみないと分からない）。" : "";
   const sent = o.sentPropertyCount > 0
     ? `前に物件を送っている（${o.sentPropertyCount}件・最後 ${(o.lastSentAt ?? "").slice(0, 10) || "日付不明"}）`
     : "まだ物件を送っていない（新規）";
-  return `\n【全力サポートを候補にするかの材料】${sent}。お客様の今の発言がほかの物件・新着を聞いている: ${asked ? "はい" : "いいえ"}。${o.exhaustLine ? `${o.exhaustLine}。` : ""}` +
+  return `\n【全力サポートを候補にするかの材料】${sent}。お客様の今の発言がほかの物件・新着を聞いている: ${asked ? "はい" : "いいえ"}。${ready}${o.exhaustLine ? `${o.exhaustLine}。` : ""}` +
     `物件の AIX（物件ピックアップ・物件オススメ）か全力サポートを選ぶ番では、出力 JSON に "zenryoku_candidate"（true/false）を足す。` +
     `true にするのは、探しても今の条件に合うお部屋が無い事もあり得る番（前に送った物件の後の新着の確認・お客様が「他にありますか」と聞いた番 等）。` +
     `新規（まだ物件を送っていない・初めて探す番）は false（竹内さん: 新規のときには使わない）。true の時、画面は左に物件の AIX・右に AIX【全力サポート】を並べ、スタッフが検索の結果で押す。`;

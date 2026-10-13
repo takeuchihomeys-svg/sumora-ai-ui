@@ -1,6 +1,6 @@
 // 2026-10-13 竹内さん（KAORI）「左右にボタンを分ける。物件あった場合（複数＝物件ピックアップ・1件＝物件オススメ）／物件なかった場合（全力サポート）」（search-result-split.ts）
 // 実行: npx tsx app/lib/__tests__/search-result-split.test.ts
-import { searchSplitView, isSearchSplitTurn, applySearchSplit, searchSplitServerEnabled, splitReplyToAix, splitMaterialLine, searchSplitNote, zenryokuShown, zenryokuCandidateMaterial, OTHER_PROPERTY_ASK_RE } from "../search-result-split";
+import { searchSplitView, isSearchSplitTurn, applySearchSplit, searchSplitServerEnabled, splitReplyToAix, splitMaterialLine, searchSplitNote, zenryokuShown, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, OTHER_PROPERTY_ASK_RE } from "../search-result-split";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -108,6 +108,38 @@ it("候補の材料: 新規・他にあるか・答えを書かない", () => {
   eq(OTHER_PROPERTY_ASK_RE.test("他まだありますか"), true);
   eq(OTHER_PROPERTY_ASK_RE.test("新着出たら教えてください"), true);
   eq(OTHER_PROPERTY_ASK_RE.test("ありがとうございます"), false);
+});
+
+console.log("■ 10/13 見直し: 戻すのは2段の規則の番だけ・材料は物件の番だけ・問いの網を絞る");
+it("LLM の物件の AIX に戻すのは2段の規則（two_stage…pickup）の番だけ", () => {
+  eq(llmAixRestorable({ twoStagePickup: true, llmAix: "property_send" }), true);
+  eq(llmAixRestorable({ twoStagePickup: true, llmAix: "property_recommendation" }), true);
+  eq(llmAixRestorable({ twoStagePickup: false, llmAix: "property_send" }), false); // 条件の言い直しへの返信（別の規則が消した）
+  eq(llmAixRestorable({ twoStagePickup: true, llmAix: "estimate_sheet" }), false);
+  eq(llmAixRestorable({ twoStagePickup: true, llmAix: null }), false);
+});
+it("条件の言い直しへの返信（戻せない）・送付だけの印 → 移さず記録だけ／強い印 → gate", () => {
+  let rec = 0;
+  eq(splitReplyToAix({ strength: "weak", llmAixIsProperty: llmAixRestorable({ twoStagePickup: false, llmAix: "property_send" }), gate: () => true, record: () => { rec++; } }), false);
+  eq(rec, 1);
+  eq(splitReplyToAix({ strength: "strong", llmAixIsProperty: llmAixRestorable({ twoStagePickup: false, llmAix: "property_send" }), gate: () => false, record: () => {} }), false);
+});
+it("他の物件の問いの網: 他の物件／他にも物件・お部屋／他（に）まだありますか／新着だけ", () => {
+  for (const t of ["他の物件も見たいです", "他のお部屋ありますか", "他にも物件ありますか？", "ほかにいいお部屋あれば", "他まだありますか", "他にありますか？", "他にもありますか", "新着出たら教えてください"]) eq(OTHER_PROPERTY_ASK_RE.test(t), true, t);
+  for (const t of ["他に質問はありません", "このお部屋まだありますか", "まだありますか？", "他に何か必要な書類はありますか", "ありがとうございます"]) eq(OTHER_PROPERTY_ASK_RE.test(t), false, t);
+});
+it("材料を渡す番: 条件の場面・場面の証拠が物件／全力サポート・他の物件の問い・今送れる候補あり（それ以外は渡さない）", () => {
+  eq(zenryokuCandidateTurn({ scene: "conditions", sceneCandidate: null, customerText: "", pickupReady: null }), true);
+  eq(zenryokuCandidateTurn({ scene: "question", sceneCandidate: "property_send", customerText: "", pickupReady: null }), true);
+  eq(zenryokuCandidateTurn({ scene: "ack", sceneCandidate: null, customerText: "他にもありますか", pickupReady: null }), true);
+  eq(zenryokuCandidateTurn({ scene: "ack", sceneCandidate: null, customerText: "ありがとうございます", pickupReady: true }), true);
+  eq(zenryokuCandidateTurn({ scene: "apply", sceneCandidate: "estimate_sheet", customerText: "審査の書類を送りました", pickupReady: false }), false);
+  eq(zenryokuCandidateTurn({ scene: "question", sceneCandidate: null, customerText: "他に質問はありません", pickupReady: null }), false);
+});
+it("材料に今送れる候補の有無を1行（答えは書かない）", () => {
+  eq(/今送れる物件の候補（売上サポのピックアップ）がある/.test(zenryokuCandidateMaterial({ sentPropertyCount: 3, lastSentAt: null, exhaustLine: "", customerText: "", pickupReady: true })), true);
+  eq(/は無い（探してみないと分からない）/.test(zenryokuCandidateMaterial({ sentPropertyCount: 3, lastSentAt: null, exhaustLine: "", customerText: "", pickupReady: false })), true);
+  eq(/売上サポ/.test(zenryokuCandidateMaterial({ sentPropertyCount: 3, lastSentAt: null, exhaustLine: "", customerText: "" })), false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

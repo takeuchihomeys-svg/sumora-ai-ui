@@ -140,7 +140,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { applySearchSplit, splitReplyToAix, splitMaterialLine, zenryokuCandidateMaterial, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
+import { applySearchSplit, splitReplyToAix, splitMaterialLine, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract } from "@/app/lib/turn-contract";
@@ -2566,10 +2566,12 @@ ${catalogBlockForBrain(brainScene)}
     if (ptNote) { customerStateBlockText += `\n\n${ptNote}`; propertyThreadNoteText = ptNote; }
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-13（ブレインの使い残し 4-3）: 送れる物件が手元にあるか（2段の約束をブレインが決める材料・申込以降は出さない）
+  let pickupReadyMaterial: boolean | null = null; // 10/13 全力サポートを候補にするかの材料にも使う
   if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
     try {
       const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
       const readyNow = freshPickupReady((pendNow ?? []) as Array<{ created_at: string; expired_at: string | null }>, { lastPropertiesSentAt: brainLedger.facts.lastPropertiesSentAt, nowMs: Date.now() });
+      pickupReadyMaterial = readyNow;
       customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow)}`;
     } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
   }
@@ -2595,8 +2597,14 @@ ${catalogBlockForBrain(brainScene)}
   }
   // 2026-10-13 竹内さんの決定（B）「新規のときには使わない。新着物件のところや、他に物件あるのかの部分で使う」:
   //   右（全力サポート）はブレインが候補にした時だけ出す＝候補にするかの材料（前に送った物件・出し切りの印・お客様が他の物件を聞いたか）と出力の項目 zenryoku_candidate
-  if (searchSplitServerEnabled() && !isPostApplyStatus(convStatus)) {
-    customerStateBlockText += `\n${zenryokuCandidateMaterial({ sentPropertyCount: sentProps.length, lastSentAt: brainLedger.facts.lastPropertiesSentAt ?? null, exhaustLine: splitExhaustLine, customerText: unrepliedTurn.text ?? "" })}`;
+  //   10/13 レビュー: 渡すのは物件を探す番になりうる時だけ（条件の場面・場面の証拠の候補が物件の AIX・他の物件／新着の問い・今送れる候補あり＝zenryokuCandidateTurn）
+  if (searchSplitServerEnabled() && !isPostApplyStatus(convStatus) && zenryokuCandidateTurn({
+    scene: brainScene ?? resolveReplyScene({ customerText: unrepliedTurn.text ?? "" }).scene,
+    sceneCandidate: sceneEvidence?.candidateAction ?? null,
+    customerText: unrepliedTurn.text ?? "",
+    pickupReady: pickupReadyMaterial,
+  })) {
+    customerStateBlockText += `\n${zenryokuCandidateMaterial({ sentPropertyCount: sentProps.length, lastSentAt: brainLedger.facts.lastPropertiesSentAt ?? null, exhaustLine: splitExhaustLine, customerText: unrepliedTurn.text ?? "", pickupReady: pickupReadyMaterial })}`;
   }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
   if (overrideDemoted("closed_ack_wait") || overrideDemoted("viewing_day_ack")) {
@@ -4502,7 +4510,9 @@ ${history}`;
       const replyToAix = fromReplyNow ? splitReplyToAix({
         strength: exh.strength ?? null,
         // 10/13 試験の分解: LLM 自身は物件の AIX を選び、2段の規則が約束の返信に書き換えた番は、ブレインの答えに戻す
-        llmAixIsProperty: PROPERTY_AIX.has(normalizeAixActionKey(parsed.aix) ?? ""),
+        //   10/13 レビュー: 2段の規則（two_stage…pickup）が書き換えた番だけ。条件の言い直しへの返信（replyCondTurn）は、別の規則
+        //   （お客様が先に送ってくる番・契約条件の質問・情報待ち・入居がだいぶ先・初回の聞き取り 等）が物件の AIX を消した判断なので戻さない
+        llmAixIsProperty: llmAixRestorable({ twoStagePickup: twoStagePickupNow, llmAix: normalizeAixActionKey(parsed.aix) ?? null }),
         gate: () => applyOverride(demotedOverrides, "search_exhausted", "rule:search_split(reply_to_aix)", "property_send", twoStagePickupNow ? "two_stage:pickup" : "reply"),
         record: () => addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:search_split(reply_to_aix,weak)", would: "property_send", brain: twoStagePickupNow ? "two_stage:pickup" : "reply" }),
       }) : false;
