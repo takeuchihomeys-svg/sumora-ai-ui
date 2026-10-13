@@ -3274,7 +3274,9 @@ ${history}`;
     // 2026-10-14（ブレイン基準でない所の洗い出し #3）: 約束の AIX の差し替えは override-demote の家族 staff_promise（BRAIN_DEMOTE_STAFF_PROMISE=off で旧）。
     //   LLM が同じ族の AIX を選んだ番は今まで通り（promise:* の出所＝2段で言い直さない）。違う時（返信・別の AIX）はブレインの答えのまま・食い違いを記録。
     //   約束が残っている事は LLM の前に材料（行動台帳＋staffPromiseMaterialLine）で渡している
-    if (promiseAix && !samePromiseFamily(promiseAix.action, finalAix ?? null)
+    //   10/14 試験（route1014-final-b・sp-on）: 約束の直後のお礼・了承だけの番（q094「ありがとうございます！よろしくお願いいたします」）を返信にした＝
+    //   この番は約束を果たす AIX（竹内さんは黙って後で AIX 80%・3巡目の線）。下げるのはお客様が中身を書いた番だけ
+    if (promiseAix && !customerAckAfter && !samePromiseFamily(promiseAix.action, finalAix ?? null)
       && !applyOverride(demotedOverrides, "staff_promise", `promise:${promiseAix.kind}`, promiseAix.action, finalAix ?? null)) {
       console.log(JSON.stringify({ tag: "brain:staff-promise-demoted", conversationId, kind: promiseAix.kind, would: promiseAix.action, brain: finalAix ?? null }));
       promiseAix = null;
