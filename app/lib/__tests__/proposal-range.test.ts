@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/proposal-range.test.ts
 // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」。線は scripts/audit-proposal-range.ts（実送信 120日）
 import { decideProposalRange, brainRecentOfDigest, proposalRangeCodes, wideSqmMargin, netExtrasFor, proposalRangeLine, DEFAULT_PROPOSAL_RANGE } from "../proposal-range";
-import { proposalMaterialsOf } from "../proposal-range-server";
+import { proposalMaterialsOf, digestsForStreak } from "../proposal-range-server";
 import { buildCustomerProfile, judgeProperty, parsePropertyFacts, isFewerRoomWideLdk, normalizeFloorPlanWant, HOLD_REASON_CODES, REASON_POINTS, reasonJa } from "../property-brain";
 import { parseAreaWant } from "../area-want";
 
@@ -41,6 +41,19 @@ console.log("■ 材料（要望の強さ・決め手の条件・brain_decision_
   const m = proposalMaterialsOf(JSON.stringify({ area: { strength: "nice" }, rent_max: { strength: "must" } }), null, [{ ms: "急いでいる|||" }, { ms: null }, { ms: "急いでいる|||" }]);
   t("エリア・家賃の強さとブレインの直近の判断を読む", m.areaStrength === "nice" && m.rentStrength === "must" && m.brainRecent?.length === 2, m);
   t("材料なしでも投げない", proposalMaterialsOf(null, null).areaStrength === null);
+  // 確かめる人 A: 同じ1通を分析し直した行（analyzed_msg_ts が同じ）は1件に数える（続いているの水増しを防ぐ）
+  const rows = [
+    { digest: { ms: "急いでいる|||" }, analyzed_msg_ts: "2026-10-12T10:00:00Z" },
+    { digest: { ms: "急いでいる|||" }, analyzed_msg_ts: "2026-10-12T10:00:00Z" },
+    { digest: { ms: "普通の依頼|||" }, analyzed_msg_ts: "2026-10-11T09:00:00Z" },
+  ];
+  const ds = digestsForStreak(rows);
+  t("同じ analyzed_msg_ts は新しい方の1件だけ", ds.length === 2 && ds[0].ms === "急いでいる|||", ds);
+  t("分析し直しの2行では broad にしない", decideProposalRange(proposalMaterialsOf(null, null, ds)).level === "standard");
+  const ds2 = digestsForStreak([...rows, { digest: { ms: "急いでいる|||" }, analyzed_msg_ts: "2026-10-10T09:00:00Z" }]);
+  t("別の通で2回なら broad", decideProposalRange(proposalMaterialsOf(null, null, ds2)).level === "broad");
+  t("ts が無い行はそれぞれ数える・ms の無い行は数えない", digestsForStreak([{ digest: { ms: "a|||" } }, { digest: { ms: "a|||" } }, { digest: null }]).length === 2);
+  t("上限（6件）", digestsForStreak(Array.from({ length: 10 }, (_, i) => ({ digest: { ms: "a|||" }, analyzed_msg_ts: `t${i}` }))).length === 6);
   t("最新の1通の判断（suggested_aix_meta）は材料の型に無い", !("brainState" in proposalMaterialsOf(null, null)));
 }
 
