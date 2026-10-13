@@ -2,7 +2,7 @@
 //
 // 2026-10-13 竹内さん「同じ事を何度も繰り返してしまう所。ブレイン基準に考えたらその文がおかしいと気づくのではないか」
 //   物差しは竹内さんの実送信（scripts/audit-draft-repeat.ts）。ここは文を並べて近さを測るだけ（何を削るかは呼ぶ側）。
-// テスト: app/lib/__tests__/draft-repeat.test.ts
+// テスト: app/lib/__tests__/repeat-brain-align.test.ts（この部品のテストも同じファイル）
 
 /** 文に分ける（改行・。！!？? の後）。空は落とす */
 export function splitSentencesJa(text: string): string[] {
@@ -60,11 +60,20 @@ export function repeatTypeOf(sentence: string): RepeatType {
 }
 
 /** 礼・お願いの決まり文句だけの文か（オウム返し・二度言いに数えない＝「よろしくお願いします」への「何卒よろしくお願い致します」は普通） */
+/** 問い・動詞の「〜ます／〜です」で終わる文（受けではない・10/13 レビュー: 「空いてますか？」「明日いけます」を受けとみなしていた） */
+const COURTESY_END_RE = /(?:お願い(?:いた|致)?します|ありがとうございます|ありがとうございました|有難うございます|了解です|承知です|大丈夫です|助かります|嬉しいです|うれしいです|よろしくです|かしこまりました|わかりました|分かりました|承知しました|了解しました|失礼します|申し上げます)$/;
+function isQuestionOrStatement(s: string): boolean {
+  const t = String(s ?? "").replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️\s！!。、〜ー♪]+$/gu, "").replace(/\([^)]*\)$/, "");
+  if (/[？?]$/.test(t) || /(?:か|かね|かな|でしょうか)$/.test(t)) return true;
+  if (/(?:ます|です)$/.test(t) && !COURTESY_END_RE.test(t)) return true;
+  return false;
+}
 export function isCourtesyOnly(s: string): boolean {
+  if (isQuestionOrStatement(s)) return false;
   const rest = normalizeSentence(s)
     .replace(/(?:ご連絡|ご確認|ご条件お送り|お送り|ご要望お聞かせ|お聞かせ|ご質問)?(?:頂き|いただき)?(?:誠に|本当に)?(?:ありがとう|有難う)(?:ございます|ございました)?/g, "")
     .replace(/(?:何卒|引き続き|明日|本日|当日)?(?:よろしく|宜しく)(?:お願い)?(?:いたします|致します|します|申し上げます)?/g, "")
-    .replace(/この度は?|お願いいたします|お願いします|かしこまりました|承知しました|了解しました|どうぞ|です|ます/g, "");
+    .replace(/この度は?|お願いいたします|お願いします|かしこまりました|承知しました|了解しました|どうぞ|了解です|承知です|大丈夫です/g, "");
   return rest.length < 6;
 }
 
@@ -198,5 +207,5 @@ export function priorPromiseForm(prev: string): { form: "待ちの形" | "言い
 export function isAckOnlyTurn(customer: ReadonlyArray<string>): boolean {
   const ss = customer.flatMap(splitSentencesJa).filter((x) => !/^\[スタンプ\]$/.test(x.trim()));
   if (!ss.length) return true;
-  return ss.every((s) => isCourtesyOnly(s) || normalizeSentence(s).length < 4 || /^(?:はい|了解|承知|OK|ok|わかりました|分かりました|かしこまりました)/i.test(normalizeSentence(s).replace(/^/, "")) && normalizeSentence(s).length < 14);
+  return ss.every((s) => !isQuestionOrStatement(s) && (isCourtesyOnly(s) || normalizeSentence(s).length < 4 || /^(?:はい|了解|承知|OK|ok|わかりました|分かりました|かしこまりました)/i.test(normalizeSentence(s).replace(/^/, "")) && normalizeSentence(s).length < 14));
 }

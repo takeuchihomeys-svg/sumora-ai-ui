@@ -37,8 +37,19 @@ export function alreadySaidAllowance(env: Env = process.env): string {
 export function demoteRepeatNote(note: string, brainContract: boolean, env: Env = process.env): string {
   if (!note || !brainContract || !repeatBrainAlignEnabled(env)) return note;
   return note
-    .replace(/【([^【】]*?)（[^】]*?最優先[^】]*?）】/, "【📎 材料: $1（中身は【🧭 この番の本質】の「もう言った事」が上）】")
+    // 見出しは1行。括弧の中に入れ子の【】がある（estimatePromiseAckNote「（最優先・【💰 見積書カバー文】ゲートより上位）」）ので、行の最後の「）】」まで取る
+    .replace(/【([^【】（\n]*?)（[^\n]*最優先[^\n]*）】/, "【📎 材料: $1（中身は【🧭 この番の本質】の「もう言った事」が上）】")
     .replace(/絶対に/g, "").replace(/絶対禁止/g, "書かない");
+}
+
+/**
+ * 本質がブレインの番で、受けだけの番の直前の約束を復唱させず受けだけにするか（2026-10-13 レビュー・設計知見 c9368e68 の型）。
+ *   確認・連絡・見積・審査の約束＝受けだけ（竹内さんの手打ち60日の受けだけの番: mgmt 0/9・vacancy 0/10・estimate 0/4・screening 0/5）。
+ *   ピックアップ・撮影は竹内さんの形（待ちの形の1文）のまま＝false
+ */
+export function ackEchoToWait(promiseLabel: string, brainContract: boolean, env: Env = process.env): boolean {
+  if (!brainContract || !repeatBrainAlignEnabled(env)) return false;
+  return !/ピックアップ|撮影|内覧/.test(promiseLabel ?? "");
 }
 
 /**

@@ -44,11 +44,14 @@ export function curatedPickupAckRule(env?: Env): string {
  * 指示の優先順位（本質【🧭】＞場面＞…＞学習ルール＝形）と逆の言葉（差分学習 9,563回/150会話・絶対ルール 1,772回）。
  * 中身は変えず、見出しを順位に合う言葉にする。安全の線（嘘・個人情報・空き/退去日の断言・送ってはいけない物）は「必ず守る」のまま。戻す KNOWLEDGE_HEADING_FORM=off
  */
-export function knowledgeHeading(kind: "diff" | "critical", env?: Env): string {
+/** 安全の線（本質の注記 turn-contract と同じ並び＋DB の重要度8〜9の principle の中身）。本質がある番でもこの中身のナレッジは「必ず守る」 */
+export const KNOWLEDGE_SAFETY_LINE = "嘘・個人情報・金額（見積の数字を本文に書かない）・空き/退去日の断言・内覧の確定・審査の結果/期間の断言・キャンセル料を独自に案内しない・送ってはいけない物・虚偽への加担";
+export function knowledgeHeading(kind: "diff" | "critical", env?: Env, hasBrainContract = false): string {
   const e = env ?? ((typeof process !== "undefined" ? process.env : {}) as Env);
-  const on = (e.KNOWLEDGE_HEADING_FORM ?? "").trim().toLowerCase() !== "off";
-  if (kind === "diff") return on ? "【🔴 AIが過去に間違えたパターン（学習ルール＝書き方の形・中身は【🧭 この番の本質】が上）】" : "【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】";
-  return on ? "【⚠️ 確認済みの決まり（安全の線＝嘘・個人情報・空き/退去日の断言・送ってはいけない物は必ず守る／それ以外は形・中身は【🧭 この番の本質】が上）】" : "【⚠️ 絶対ルール】";
+  // 2026-10-13 レビュー: 本質（ブレインの turn_contract）が無い番は旧の見出しのまま（参照先の【🧭 この番の本質】がその番に無い・principle を形に下げない）
+  const on = hasBrainContract && (e.KNOWLEDGE_HEADING_FORM ?? "").trim().toLowerCase() !== "off";
+  if (kind === "diff") return on ? `【🔴 AIが過去に間違えたパターン（学習ルール＝書き方の形・中身は【🧭 この番の本質】が上・安全の線＝${KNOWLEDGE_SAFETY_LINE} は必ず守る）】` : "【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】";
+  return on ? `【⚠️ 確認済みの決まり（安全の線＝${KNOWLEDGE_SAFETY_LINE} は必ず守る／それ以外は形・中身は【🧭 この番の本質】が上）】` : "【⚠️ 絶対ルール】";
 }
 
 /**

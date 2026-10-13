@@ -289,7 +289,7 @@ import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
 import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
-import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine } from "@/app/lib/repeat-brain-align";
+import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled } from "@/app/lib/repeat-brain-align";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -1329,7 +1329,14 @@ function buildGenerationMessages(
   const waitFormAckNote = (!isFollowUp && isShortAckMsg && !pickupPromiseAckNote && !estimatePromiseAckNote && !staffPromiseRaw && waitFormInLast.length > 0)
     ? `\n【🔁 直前の約束はお伝え済み（決定論）】直前にこちらが「${[...new Set(waitFormInLast.map((w) => w.kind))].join("・")}」の約束を待ちの形（〜次第・日付）で伝え済みで、お客様はそれに了承しただけ。同じ約束・「ご査収」を書き直さず、受けだけにする（開口語「はい😊！！」＋締め。新しい日付・時刻が言える時だけ1文足す）。`
     : "";
-  const promiseEchoNote = staffPromise
+  // 2026-10-13 レビュー（設計知見 c9368e68 の型＝同じ場面に「書け」と「書くな」を並べない）: 本質がブレインの番で、直前の約束が確認・連絡・見積・審査
+  //   （ピックアップ・撮影でない）なら復唱させず受けだけ（竹内さんの手打ち60日: 受けだけの番の言い直し mgmt 0/9・vacancy 0/10・estimate 0/4・screening 0/5）。
+  //   CP_ACK→CP_ACK_WAIT（route の waitFormPromised）・確認の橋渡しの3注記（waitFormConfirmAck）も同じ値でそろえる。ピックアップ・撮影は竹内さんの形（待ちの形の1文）のまま
+  const echoToWait = !!staffPromise && ackEchoToWait(staffPromise.label, brainContractOn);
+  const echoToWaitNote = echoToWait
+    ? `\n【🔁 直前の約束はお伝え済み（材料・中身は【🧭 この番の本質】の「もう言った事」が上）】直前にこちらが「${staffPromise!.label}」を約束済みで、お客様は了承しただけ。竹内さんは受けへの返事で確認・連絡・見積・審査の約束を言い直さない＝同じ約束を書き直さず、受けだけ（「はい😊！！」＋「気になる点出てきましたら何時でもお気軽にご連絡ください！！」か「何卒よろしくお願い致します！！」）。`
+    : "";
+  const promiseEchoNote = echoToWait ? echoToWaitNote : staffPromise
     ? `\n【🔁 直前のスタッフ約束の復唱（決定論・最優先）】お客様の最新メッセージは短い了承語で、内容は「直前のスタッフ約束への了承」です。直前の約束: ${staffPromise.label}（未履行）。返信は開口語「はい😊！！」（単独行）＋この約束をそのまま復唱するWE DO 1文（例:「${staffPromise.echo}」）＋締め1文のみ（場面【短い了承】）。撮影・ご査収・内覧日程・申込誘導など、直前の約束に無い業務語彙を新たに持ち出さない。「ご都合よろしいお日にちに」をスタッフ作業に接続しない。`
     : "";
 
@@ -1519,7 +1526,8 @@ ${aixDone.answeredByAix
   const bodySafety = (templateNote || replyHint) ? null : bodySafetyPre;
   // 2026-09-26（穴1・YUMA の前後比較）: 直前に確認・連絡の約束を待ちの形で言い終えた後の短い了承。
   //   CP_ACK_WAIT（往復文脈）と同じ場面で、AIX の橋渡し・確認対象・管理会社の状況の3つの注記も「確認出来次第ご連絡」を書かせない（書くなと書けを別の場所から渡さない）
-  const waitFormConfirmAck = !isFollowUp && isShortAckMsg && waitFormInLast.some((w) => w.kind !== "見積");
+  const waitFormConfirmAck = (!isFollowUp && isShortAckMsg && waitFormInLast.some((w) => w.kind !== "見積"))
+    || (echoToWait && /募集状況|確認/.test(staffPromise?.label ?? ""));   // 2026-10-13 レビュー: 本質がブレインの番の確認の約束の受けも同じ（上の echoToWait）
   const checkAnswered = !!doneState?.checkAnsweredFollowUp;
   const aixTimingNote = buildAixTimingNote(aixTiming, bodySafety, doneState?.viewingScheduled.scheduled ? viewingAckLine(doneState.viewingAppointment) : null, waitFormConfirmAck, checkAnswered);
 
@@ -2188,7 +2196,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // 2026-09-13: 最新のブレインの判断（推奨 AIX・質問・話題・返信の方向）による並べ替え。新しい判断の時だけ非 null（knowledge-aixmeta-rerank.ts）
   aixMetaSignals: AixMetaRerankSignals | null = null,
   // 2026-09-22 竹内（𝓡さん事例）: 前提が無い語を含む営業パターン・フレーズを出さない（手本の前提フィルタと同じ語・今は送り返しの時の CUSTOMER_FOUND_PROPERTY_VOCAB だけ）
-  knowledgePremiseExclude: RegExp | null = null): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
+  knowledgePremiseExclude: RegExp | null = null,
+  // 2026-10-13 レビュー: ナレッジの見出しを新しい言葉にするのは本質（ブレインの turn_contract）がある番だけ（無い番は旧の見出しのまま）
+  hasBrainContract = false): Promise<{ text: string; phraseHits: number; topPrinciples: KnowledgeRow[] }> {
   const premiseDrop = (k: { category?: string | null; content?: string | null }) =>
     !!knowledgePremiseExclude && (k.category === "pattern" || k.category === "phrase") && knowledgePremiseExclude.test(k.content ?? "");
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
@@ -2415,13 +2425,13 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
         const sections: string[] = [];
         if (diffLearned.length > 0) {
-          sections.push(knowledgeHeading("diff") + "\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+          sections.push(knowledgeHeading("diff", undefined, hasBrainContract) + "\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (correctionPairs.length > 0) {
           sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (critical.length > 0) {
-          sections.push(knowledgeHeading("critical") + "\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+          sections.push(knowledgeHeading("critical", undefined, hasBrainContract) + "\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (patterns.length > 0) {
           sections.push("【スモラの営業パターン・原則】\n" + patterns.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
@@ -2554,7 +2564,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
-    sections.push(knowledgeHeading("diff") + "\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push(knowledgeHeading("diff", undefined, hasBrainContract) + "\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (correctionList.length > 0) {
     sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionList.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
@@ -2562,7 +2572,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // importance=10 は dynamicBlock 先頭（topPrinciplesNote）に注入済みのため knowledgeNote への再注入はスキップ
   const criticalFallback = (critical as KnowledgeRow[]).filter(p => (p.importance ?? 10) < 10);
   if (criticalFallback.length > 0) {
-    sections.push(knowledgeHeading("critical") + "\n" + criticalFallback.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push(knowledgeHeading("critical", undefined, hasBrainContract) + "\n" + criticalFallback.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
     sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
@@ -4404,7 +4414,9 @@ async function handleGenerateReply(req: NextRequest) {
     // 2026-09-26（穴1）: 待ちの形で言い終えた約束は復唱の対象にしない（buildGenerationMessages の promiseEchoNote と同じ関数）
     const shortAckPromiseRaw = detectEchoablePromise(lastStaffMsgForSearch ?? "");
     const shortAckPromise = isGratitudeReplyTPO && !isFollowUp && !!shortAckPromiseRaw
-      && !(/ピックアップ/.test(shortAckPromiseRaw.label) && ledgerPickupOpenForLabel === false);
+      && !(/ピックアップ/.test(shortAckPromiseRaw.label) && ledgerPickupOpenForLabel === false)
+      // 2026-10-13 レビュー: 本質がブレインの番の確認・連絡・見積の約束は「短い了承（復唱）」の札にしない（buildGenerationMessages の echoToWait と同じ関数）
+      && !ackEchoToWait(shortAckPromiseRaw.label, turnContract?.source === "brain");
     const staffPromisedPickupForLabel = !!lastStaffMsgForSearch
       && /ピックアップ/.test(lastStaffMsgForSearch)
       && /(お送り|送らせて|お届け|送付)/.test(lastStaffMsgForSearch)
@@ -4599,7 +4611,9 @@ async function handleGenerateReply(req: NextRequest) {
       customerName: customerName ?? "", brainCurrentProperty: brainStrategy?.current_property ?? null,
       priorCustomerText,
       // 2026-09-26（穴1）: 待ちの形で言い終えた確認・連絡の約束（見積は estimatePromiseAckNote が受ける）→ CP_ACK_WAIT（受けだけ）
-      waitFormPromised: findWaitFormPromises(lastStaffMsgForSearch || tpoLatestStaffText || "").some((w) => w.kind !== "見積"),
+      waitFormPromised: findWaitFormPromises(lastStaffMsgForSearch || tpoLatestStaffText || "").some((w) => w.kind !== "見積")
+        // 2026-10-13 レビュー: 本質がブレインの番は確認・連絡の約束への了承を CP_ACK（復唱が必須）でなく CP_ACK_WAIT（受けだけ）に（buildGenerationMessages の echoToWait と同じ向き）
+        || (turnContract?.source === "brain" && repeatBrainAlignEnabled()),
     });
     // ── 2026-09-11 統合設計（経路F1・YUYA/it_0 事例）: aixDone.propertySend（aix_usage_logs 72h 窓）を台帳・往復文脈と整合させる ──
     //   送付後の未履行ピックアップ宣言／顧客の条件変更／ピックアップ宣言を必須要素に持つセルでは「再宣言禁止」にしない。
@@ -5426,7 +5440,7 @@ async function handleGenerateReply(req: NextRequest) {
           ? { action: effectiveAction, words: extractMetaKeywords([...(brainMeta.customer_questions ?? []), ...(brainMeta.key_topics ?? []), brainMeta.reply_direction ?? null]) }
           : null,
         // 2026-09-22 𝓡さん事例: こちらの物件の送り返しの時は「お客様が見つけた物件」前提のナレッジを見せない（手本と同じ語）
-        ownPropertyReturnedAll ? CUSTOMER_FOUND_PROPERTY_VOCAB : null)
+        ownPropertyReturnedAll ? CUSTOMER_FOUND_PROPERTY_VOCAB : null, turnContract?.source === "brain")
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0, topPrinciples: [] as KnowledgeRow[] }; }),
       // 2026-09-19 竹内（慶次事例）: 手本の前提フィルタに**行動台帳の事実（場面）**と**内覧の鮮度**を渡す
       //   「内覧挨拶は当日にAIXからおこなうなら分かるが、持ち越したことで変な文になっていた」

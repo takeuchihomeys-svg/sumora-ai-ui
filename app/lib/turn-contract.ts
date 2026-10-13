@@ -18,6 +18,7 @@
 
 import type { RequestItem, RequestTopic } from "./request-ledger";
 import { alreadySaidAllowance } from "./repeat-brain-align";
+import { promiseTopics } from "./draft-repeat";
 import { truncateAtBoundary } from "./brain-strategy-note";
 import { closeOnlyShape } from "./ack-form-takeuchi";
 
@@ -259,7 +260,8 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   if (!c.asks.length && !c.closeOnly && !c.alreadySaid.length && !c.settled.length) return "";
   const L: string[] = [];
   // 2026-10-13 繰り返し（repeat-brain-align）: 竹内さんが言い直す形だけ許す1行（戻す REPEAT_BRAIN_ALIGN=off）
-  const allowance = c.alreadySaid.length ? alreadySaidAllowance() : "";
+  //   10/13 レビュー: もう言った事にピックアップ・撮影の約束がある時だけ（無い番に「ピックアップの1文は可」を付けない）
+  const allowance = c.alreadySaid.some((s) => promiseTopics(s).includes("pickup") || /撮影/.test(s)) ? alreadySaidAllowance() : "";
   L.push(`【🧭 この番の本質（${c.source === "brain" ? "ブレインの判断" : "依頼の一覧"}・最上位）】中身（何に答える・何を約束する・何を言わない）はここで決まる。下の場面の型・学習ルール・手本・注記は**形**（開口語・字数・言い回し・締め）だけに使い、ここと違う中身を足さない・消さない。ただし安全の線（スタッフだけが知る事・金額・空き・内覧の確定を本文で言い切らない）はここより上。`);
   if (c.closeOnly) L.push(`- 返事の要らない番: ${closeOnlyShape()}。前にした約束・予定・日付を言い直さない${allowance ? "（ただし下の「もう言った事」の竹内さんの形＝待ちの形のピックアップの1文は可）" : ""}。新しい約束・提案・説明を足さない（お客様が『決まったら連絡します』等と待ってと言った時は「お決まりになりましたらご連絡ください」の形・物件を送り続ける約束をしない）。`);
   c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」→ ${ROUTE_JA[a.route]}${a.answer ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));

@@ -16,8 +16,10 @@ t("返事の要らない番も真ん中の1文（決定 3696fe20）", /真ん中
 t("旧ノートの長さ", pickupAckLengthPhrase(ON).startsWith("2〜3行") && pickupAckLengthPhrase(OFF).startsWith("2行以内"));
 
 console.log("② ナレッジの見出し（本質＞学習ルール＝形）");
-t("差分学習の見出しから「最優先・必ず守る」を外す", !/最優先/.test(knowledgeHeading("diff", ON)) && /最優先・必ず守る/.test(knowledgeHeading("diff", OFF)));
-t("絶対ルールの見出しは安全の線は守る・中身は本質", /安全の線/.test(knowledgeHeading("critical", ON)) && /本質/.test(knowledgeHeading("critical", ON)) && knowledgeHeading("critical", OFF) === "【⚠️ 絶対ルール】");
+t("本質がある番: 差分学習の見出しから「最優先・必ず守る」を外す", !/最優先/.test(knowledgeHeading("diff", ON, true)) && /最優先・必ず守る/.test(knowledgeHeading("diff", OFF, true)));
+t("本質がある番: 絶対ルールの見出しは安全の線は守る・中身は本質", /安全の線/.test(knowledgeHeading("critical", ON, true)) && /本質/.test(knowledgeHeading("critical", ON, true)) && knowledgeHeading("critical", OFF, true) === "【⚠️ 絶対ルール】");
+t("本質が無い番（夜の見送り・古い判断）は旧の見出しのまま", knowledgeHeading("critical", ON, false) === "【⚠️ 絶対ルール】" && /最優先・必ず守る/.test(knowledgeHeading("diff", ON, false)) && knowledgeHeading("critical", ON) === "【⚠️ 絶対ルール】");
+for (const w of ["嘘", "個人情報", "金額", "空き/退去日", "内覧の確定", "審査の結果/期間", "キャンセル料", "送ってはいけない物", "虚偽への加担"]) t(`安全の線に「${w}」`, knowledgeHeading("critical", ON, true).includes(w) && knowledgeHeading("diff", ON, true).includes(w));
 
 console.log("③ 本質の字数切りを文の区切りで");
 t("短い時はそのまま", clipAtBoundary("駐車場空いてますか", 40, ON) === "駐車場空いてますか");

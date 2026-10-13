@@ -2,7 +2,7 @@
 //   実行: npx tsx app/lib/__tests__/repeat-brain-align.test.ts
 //   例は本番の下書きと竹内さんの実送信（scripts/audit-draft-repeat.ts の見本・名前は伏せた）
 import { repeatSentences, sentenceSimilarity, isAckOnlyTurn, isCourtesyOnly, promiseTopics, ackReplyShape, priorPromiseForm, topicRepeats } from "../draft-repeat";
-import { contractAlreadySaidRepeat, demoteRepeatNote, pickupAckMaterial, alreadySaidAllowance, pendingPickupAckLine } from "../repeat-brain-align";
+import { contractAlreadySaidRepeat, demoteRepeatNote, pickupAckMaterial, alreadySaidAllowance, pendingPickupAckLine, ackEchoToWait } from "../repeat-brain-align";
 import { renderTurnContractNote, issueContradictsContract, type TurnContract } from "../turn-contract";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -51,6 +51,15 @@ t("絶対禁止 → 書かない", /書かない/.test(demoteRepeatNote(aixNote,
 t("ピックアップの後の材料に竹内さんの待ちの形", /ピックアップ出来次第お送りさせて頂きますので/.test(pickupAckMaterial(ON) ?? "") && pickupAckMaterial(OFF) === null);
 t("本質の「もう言った事」に竹内さんの形の1行", /待ちの形の1文/.test(renderTurnContractNote({ ...base, alreadySaid: ["ピックアップしてお送りさせて頂きます！！"] })) && alreadySaidAllowance(OFF) === "");
 
+console.log("⑤ 10/13 レビューの直し");
+const est = "\n【🚫 見積書作成宣言の繰り返し禁止（最優先・【💰 見積書カバー文】ゲートより上位）】\nスタッフは直前の返信で既に…";
+t("入れ子の【】がある見積の見出しも材料に下げる", /📎 材料: 🚫 見積書作成宣言の繰り返し禁止/.test(demoteRepeatNote(est, true, ON)) && !/最優先/.test(demoteRepeatNote(est, true, ON)));
+for (const q of ["空いてますか？", "内覧できますか？", "安くなりますか？", "いつですか？", "明日いけます"]) t(`受けではない: ${q}`, !isAckOnlyTurn([q]) && !isCourtesyOnly(q));
+for (const a of ["よろしくお願いします🙇‍♀️", "ありがとうございます！", "了解です！", "よろしくお願いします(ぺこり)", "わかりました"]) t(`受け: ${a}`, isAckOnlyTurn([a]));
+t("もう言った事にピックアップが無い番は竹内さんの形の1行を付けない", !/待ちの形の1文/.test(renderTurnContractNote({ ...base, closeOnly: true, alreadySaid: ["確認出来次第ご連絡させて頂きます！！"] })));
+t("ピックアップがある番は付ける", /待ちの形の1文/.test(renderTurnContractNote({ ...base, closeOnly: true, alreadySaid: ["大阪駅周辺からピックアップしてお送りさせて頂きます！！"] })));
+t("確認・見積の約束は本質がある番だけ受けだけ", ackEchoToWait("募集状況の確認", true, ON) && ackEchoToWait("お見積書の作成・送付", true, ON) && !ackEchoToWait("募集状況の確認", false, ON) && !ackEchoToWait("募集状況の確認", true, OFF));
+t("ピックアップ・撮影・内覧は竹内さんの形のまま", !ackEchoToWait("条件に合う物件のピックアップ送付", true, ON) && !ackEchoToWait("室内撮影して送付", true, ON) && !ackEchoToWait("内覧の実施（日時確定）", true, ON));
 t("未履行のピックアップの1行は竹内さんの3行の形（戻すと null）", /何卒よろしくお願い致します/.test(pendingPickupAckLine(ON) ?? "") && /3回目/.test(pendingPickupAckLine(ON) ?? "") && pendingPickupAckLine(OFF) === null);
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
