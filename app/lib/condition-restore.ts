@@ -155,6 +155,14 @@ function sameGroup(a: RestoreHistoryRow, b: RestoreHistoryRow): boolean {
   return Math.abs(Date.parse(a.created_at) - Date.parse(b.created_at)) <= 120_000;
 }
 
+/** 画面の履歴の束（10/13）: 同じ発言の id（「brain_bridge:<id>」と「condition_brain:<id>」の : の後）でも同じ束にする（2分以内） */
+function looseSameGroup(a: RestoreHistoryRow, b: RestoreHistoryRow): boolean {
+  if (sameGroup(a, b)) return true;
+  const tail = (x: RestoreHistoryRow) => { const v = String(x.source_message_id ?? ""); const i = v.indexOf(":"); return i >= 0 ? v.slice(i + 1).trim() : ""; };
+  const ta = tail(a);
+  return !!ta && ta === tail(b) && Math.abs(Date.parse(a.created_at) - Date.parse(b.created_at)) <= 120_000;
+}
+
 export type RestorePlan = { updates: Record<string, unknown>; skipped: string[]; target: Record<string, string | null> };
 
 /**
@@ -203,14 +211,33 @@ export function planConditionRestore(rows: ReadonlyArray<RestoreHistoryRow>, cur
  *   今の値がその束の new_value と違う列（後で人が直した等）は戻さない。戻す先が空の列も戻さない（消さない）
  */
 export function planUndoLatestChange(rows: ReadonlyArray<RestoreHistoryRow>, current: Record<string, unknown> | null | undefined): RestorePlan & { group: RestoreHistoryRow[] } {
+  return planUndoGroup(rows, current, null);
+}
+
+/** 変更の束の鍵（束の最初の行の時刻＋書き手の印）。画面の履歴の1行と「元に戻す」「確認済み」をつなぐ */
+export const historyGroupKey = (r: Pick<RestoreHistoryRow, "created_at" | "source_message_id">): string => {
+  const t = Date.parse(r.created_at);
+  return `${Number.isFinite(t) ? new Date(t).toISOString() : r.created_at}|${String(r.source_message_id ?? "")}`;
+};
+
+/**
+ * 2026-10-13 竹内さん（未桜）「ブレイン自動反映のところも大きくて枠を取りすぎている。ちゃんと折りたたんで、更新があった時に日時を入れて記憶していけば見やすい」:
+ *   画面の「条件の更新」の履歴の1行に指定した束を取り消す（groupKey が null なら一番新しい束＝今までの「元に戻す」と同じ）。
+ *   今の値がその束の new_value と違う列（後で変わった）・戻す先が空の列は戻さない（誤削除0・planUndoLatestChange と同じ線）
+ */
+export function planUndoGroup(rows: ReadonlyArray<RestoreHistoryRow>, current: Record<string, unknown> | null | undefined, groupKey: string | null): RestorePlan & { group: RestoreHistoryRow[] } {
   const sorted = [...rows].filter((r) => (RESTORE_FIELDS as readonly string[]).includes(r.changed_field) && Number.isFinite(Date.parse(r.created_at)))
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
   const updates: Record<string, unknown> = {};
   const skipped: string[] = [];
   const target: Record<string, string | null> = {};
   if (!sorted.length) return { updates, skipped: ["履歴が無い"], target, group: [] };
-  const last = sorted[sorted.length - 1];
-  const group = sorted.filter((r) => sameGroup(r, last));
+  // 鍵は束の最初の行（条件の列でない「希望」等の行のこともある）の時刻＋書き手＝その時刻と書き手の束を探す
+  const head: RestoreHistoryRow | undefined = groupKey
+    ? (() => { const i = groupKey.indexOf("|"); return { changed_field: "", old_value: null, new_value: null, created_at: groupKey.slice(0, i), source_message_id: groupKey.slice(i + 1) || null }; })()
+    : sorted[sorted.length - 1];
+  const group = head ? sorted.filter((r) => (groupKey ? looseSameGroup(r, head) : sameGroup(r, head))) : [];
+  if (!group.length) return { updates, skipped: ["その変更に戻せる条件の列が無い"], target, group: [] };
   const byField = new Map<string, RestoreHistoryRow[]>();
   for (const r of group) byField.set(r.changed_field, [...(byField.get(r.changed_field) ?? []), r]);
   for (const [f, list] of byField) {
@@ -234,4 +261,56 @@ export function describeAreaChange(oldArea: string | null | undefined, newArea: 
   if (added.length) parts.push(`+${added.join("・")}`);
   if (removed.length) parts.push(`−${removed.join("・")}`);
   return `エリア変更: ${parts.join(" ")}`;
+}
+
+/** 画面の履歴の1行（同じ書き手・同じ発言・2分以内の変更を1つにまとめる・新しい順） */
+export type ConditionHistoryGroup = {
+  key: string; at: string; writer: string; writerJa: string;
+  changes: Array<{ field: string; label: string; old: string | null; new: string | null }>;
+  /** 元に戻せる列があるか（今の値がこの束の値のまま・戻す先が空でない） */
+  undoable: boolean;
+  confirmed: boolean;
+};
+export const CONDITION_FIELD_JA: Record<string, string> = {
+  desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限", floor_area_min: "広さ(㎡以上)", walk_minutes: "徒歩分数", building_age: "築年数",
+  preferences: "希望", other_requests: "その他の要望", ng_points: "NG", move_in_timing: "入居時期", station: "駅",
+};
+const WRITER_JA: Record<string, string> = {
+  condition_brain: "ブレイン", brain_bridge: "ブレイン", brain: "ブレイン", p4: "ブレイン（LINE の言葉）", path_c: "ブレイン（LINE の言葉）", scope: "ブレイン（今回だけ）",
+  screen_edit: "画面で直した", format: "条件フォーム", manual: "手で直した", restore: "LINE で元に戻した", undo: "画面で元に戻した",
+};
+export function writerJaOf(src: string | null | undefined): string {
+  const w = writerOf(src);
+  return WRITER_JA[w] ?? (w ? w : "記録");
+}
+/**
+ * 履歴（古い順でも新しい順でもよい）を画面の1行ずつにまとめる（新しい順・最大 max 束）。
+ *   confirmed: 行の confirmed_at があればその束、さらに確認した束より古い束も確認済み（新しい物を見て確認した＝前の物も見た）
+ */
+export function groupConditionHistory(
+  rows: ReadonlyArray<RestoreHistoryRow & { confirmed_at?: string | null }>,
+  current: Record<string, unknown> | null | undefined,
+  o: { max?: number } = {},
+): ConditionHistoryGroup[] {
+  const sorted = [...rows].filter((r) => Number.isFinite(Date.parse(r.created_at))).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const groups: Array<Array<RestoreHistoryRow & { confirmed_at?: string | null }>> = [];
+  for (const r of sorted) {
+    const g = groups[groups.length - 1];
+    if (g && looseSameGroup(g[0], r)) g.push(r); else groups.push([r]);
+  }
+  let confirmedFrom = -1;
+  groups.forEach((g, i) => { if (g.some((r) => r.confirmed_at)) confirmedFrom = i; });
+  const out: ConditionHistoryGroup[] = groups.map((g, i) => {
+    const key = historyGroupKey(g[0]);
+    const byField = new Map<string, { old: string | null; new: string | null }>();
+    for (const r of g) { const prev = byField.get(r.changed_field); byField.set(r.changed_field, { old: prev ? prev.old : r.old_value, new: r.new_value }); }
+    const undo = planUndoGroup(sorted, current, key);
+    return {
+      key, at: g[0].created_at, writer: writerOf(g[0].source_message_id), writerJa: writerJaOf(g[0].source_message_id),
+      changes: [...byField].map(([field, v]) => ({ field, label: CONDITION_FIELD_JA[field] ?? field, old: v.old, new: v.new })),
+      undoable: Object.keys(undo.updates).length > 0,
+      confirmed: i <= confirmedFrom,
+    };
+  });
+  return out.reverse().slice(0, o.max ?? 20);
 }

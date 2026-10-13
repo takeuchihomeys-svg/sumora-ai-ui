@@ -5,7 +5,7 @@
 //   画面の帯（additional_conditions の auto 行）に「条件を元に戻しました: …」を出す。
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordConditionHistory, conditionSourceTag } from "@/app/lib/condition-history";
-import { planConditionRestore, planUndoLatestChange, RESTORE_FIELDS, type RevertCue, type RestoreHistoryRow, type RestorePlan } from "@/app/lib/condition-restore";
+import { planConditionRestore, planUndoGroup, RESTORE_FIELDS, type RevertCue, type RestoreHistoryRow, type RestorePlan } from "@/app/lib/condition-restore";
 
 const LABEL: Record<string, string> = {
   desired_area: "エリア", floor_plan: "間取り", rent_max: "家賃上限", rent_min: "家賃下限", floor_area_min: "広さ(㎡以上)", walk_minutes: "徒歩分数", building_age: "築年数",
@@ -72,10 +72,12 @@ export async function undoLatestConditionChange(
   db: SupabaseClient,
   pcId: string,
   inferAreaMode?: (area: string) => Promise<"station" | "ward" | "auto">,
+  /** 2026-10-13: 画面の履歴の1行（historyGroupKey）。無ければ一番新しい束（今までと同じ） */
+  groupKey: string | null = null,
 ): Promise<{ plan: RestorePlan; changed: Record<string, unknown>; error?: string }> {
   const { row, hist } = await loadRowAndHistory(db, pcId);
   if (!row) return { plan: { updates: {}, skipped: ["顧客が見つからない"], target: {} }, changed: {} };
-  const plan = planUndoLatestChange(hist, row);
+  const plan = planUndoGroup(hist, row, groupKey);
   const res = await applyPlan(db, pcId, row, plan, "undo", null, inferAreaMode);
   console.log(JSON.stringify({ tag: "condition-restore:undo", pcId, changed: res.changed, skipped: plan.skipped, error: res.error ?? null }));
   return { plan, changed: res.changed, error: res.error };

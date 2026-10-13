@@ -7,10 +7,12 @@ import { undoLatestConditionChange } from "@/app/lib/condition-restore-server";
 import { inferAreaMode } from "@/app/lib/line-webhook-text";
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as { id?: string };
+  const body = (await req.json().catch(() => ({}))) as { id?: string; group?: string };
+  // 2026-10-13: 履歴の1行の「元に戻す」は group（historyGroupKey）でその束を取り消す。無ければ一番新しい束
+  const group = typeof body.group === "string" && body.group.length < 300 ? body.group : null;
   const id = typeof body.id === "string" ? body.id : "";
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "id is required" }, { status: 400 });
-  const res = await undoLatestConditionChange(supabase, id, (a) => inferAreaMode(supabase as never, a));
+  const res = await undoLatestConditionChange(supabase, id, (a) => inferAreaMode(supabase as never, a), group);
   if (res.error) return NextResponse.json({ error: res.error }, { status: 500 });
   const { data: row } = await supabase.from("property_customers")
     .select("desired_area, floor_plan, rent_max, rent_min, floor_area_min, walk_minutes, building_age, area_mode, additional_conditions").eq("id", id).maybeSingle();

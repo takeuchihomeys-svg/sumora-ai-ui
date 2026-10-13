@@ -2,7 +2,7 @@
 // 2026-10-06 ⑫ 竹内さん（R・スモラ 10/03）「このように連絡きた場合物件検索の条件に反映させる。やっぱり元々の条件で等きたばあいは、もともとの条件に戻す」
 import {
   areaAskCue, areaMergeMode, areasBeforeNegation, areaAddedTokens, describeAreaChange, detectConditionRevert,
-  planConditionRestore, planUndoLatestChange, placeTokens, type RestoreHistoryRow,
+  planConditionRestore, planUndoLatestChange, placeTokens, groupConditionHistory, planUndoGroup, type RestoreHistoryRow,
 } from "../condition-restore";
 import { resolveConditionChangeScope, stripRevertedAutoNotes } from "../condition-change-scope";
 
@@ -86,6 +86,30 @@ const R_HIST: RestoreHistoryRow[] = [
   // 戻す先が空（初めて入った列）は消さない
   const e = planConditionRestore([{ changed_field: "floor_plan", old_value: null, new_value: "1K", created_at: "2026-09-20T00:00:00Z", source_message_id: "p4" }], { floor_plan: "1K" }, { kind: "previous", fields: ["floor_plan"] });
   t("戻す先が空の列は消さない（誤削除0）", !("floor_plan" in e.updates) && e.skipped.length === 1, JSON.stringify(e));
+}
+
+// 2026-10-13 竹内さん（未桜）: 条件の更新の履歴（日時付き・新しい順）と、行ごとの「元に戻す」「確認済み」
+{
+  // 未桜の実物の並び（条件の値だけ）
+  const rows = [
+    { changed_field: "floor_plan", old_value: "1LDK", new_value: "1K 1LDK", created_at: "2026-09-21T09:48:03Z", source_message_id: null },
+    { changed_field: "rent_max", old_value: "90000", new_value: "80000", created_at: "2026-09-27T12:24:14Z", source_message_id: "manual:2026-09-27 竹内さん指示" },
+    { changed_field: "floor_area_min", old_value: "25", new_value: "19", created_at: "2026-09-27T12:24:14Z", source_message_id: "manual:2026-09-27 竹内さん指示" },
+    { changed_field: "desired_area", old_value: "大国町", new_value: "浪速区", created_at: "2026-10-06T09:25:56Z", source_message_id: "screen_edit" },
+    { changed_field: "preferences", old_value: "7畳以上の部屋", new_value: "7畳以上の部屋・独立洗面台", created_at: "2026-10-10T04:54:36Z", source_message_id: "brain_bridge:a1" },
+    { changed_field: "other_requests", old_value: "共益費込みで8万未満希望", new_value: "7畳以上の部屋、共益費込みで8万未満希望、独立洗面台", created_at: "2026-10-10T04:54:38Z", source_message_id: "condition_brain:a1" },
+  ] as Array<RestoreHistoryRow & { confirmed_at?: string | null }>;
+  const cur = { desired_area: "浪速区", rent_max: 80000, floor_area_min: 19, floor_plan: "1K 1LDK" };
+  const g = groupConditionHistory(rows, cur);
+  t("新しい順に束（同じ発言・2分以内は1行＝ブレインの2行は1つ・書き手が違えば別）", g.length === 4 && g[0].writerJa === "ブレイン" && g[0].changes.length === 2 && g[1].writerJa === "画面で直した" && g[2].changes.length === 2, JSON.stringify(g.map((x) => [x.writerJa, x.changes.length])));
+  t("条件の列の束は元に戻せる・希望だけの束は戻せない", g[1].undoable === true && g[0].undoable === false, JSON.stringify(g.map((x) => x.undoable)));
+  const u = planUndoGroup(rows, cur, g[2].key);
+  t("古い束も元に戻せる（今の値がその束の値のまま）", u.updates.rent_max === 90000 && u.updates.floor_area_min === 25, JSON.stringify(u));
+  const u2 = planUndoGroup(rows, { ...cur, rent_max: 75000 }, g[2].key);
+  t("後で変わった列は戻さない", !("rent_max" in u2.updates) && u2.updates.floor_area_min === 25, JSON.stringify(u2));
+  const rows2 = rows.map((r) => r.changed_field === "desired_area" ? { ...r, confirmed_at: "2026-10-07T00:00:00Z" } : r);
+  const g2 = groupConditionHistory(rows2, cur);
+  t("確認済みはその束とそれより古い束・新しい束はまだ", g2[1].confirmed && g2[2].confirmed && g2[3].confirmed && !g2[0].confirmed, JSON.stringify(g2.map((x) => x.confirmed)));
 }
 
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

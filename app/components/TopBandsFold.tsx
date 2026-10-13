@@ -32,7 +32,8 @@ function readChips(root: HTMLElement): Chip[] {
     const n = c != null && c !== "" && Number.isFinite(Number(c)) ? Number(c) : null;
     if (n === 0 && pick("foldUrgent") !== "1") return; // 数が 0 の帯は札にしない
     const tone = (pick("foldTone") as Tone | undefined) ?? "gray";
-    out.push({ key: el.dataset.foldSlot ?? "", label: el.dataset.foldLabel ?? "", count: n, tone, urgent: pick("foldUrgent") === "1" });
+    // 札の文字は帯の側（data-fold-label・例「条件の更新 10/12 22:41」）があればそれ、無ければ枠の label
+    out.push({ key: el.dataset.foldSlot ?? "", label: inner.dataset.foldLabel ?? el.dataset.foldLabel ?? "", count: n, tone, urgent: pick("foldUrgent") === "1" });
   });
   return out;
 }
@@ -55,7 +56,7 @@ export default function TopBandsFold({ resetKey, children }: { resetKey: string;
     };
     sync();
     const mo = new MutationObserver(sync);
-    mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-fold-count", "data-fold-tone", "data-fold-urgent"] });
+    mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-fold-count", "data-fold-tone", "data-fold-urgent", "data-fold-label"] });
     return () => mo.disconnect();
   }, []);
 

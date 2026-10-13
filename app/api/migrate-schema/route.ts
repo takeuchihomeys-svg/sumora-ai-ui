@@ -2518,6 +2518,8 @@ CREATE TABLE IF NOT EXISTS property_condition_history (
 );
 CREATE INDEX IF NOT EXISTS idx_pch_customer ON property_condition_history(property_customer_id, created_at DESC);
 ALTER TABLE property_condition_history DISABLE ROW LEVEL SECURITY;
+-- 2026-10-13 竹内さん（未桜）: 会話画面の「条件の更新」の履歴の行ごとの「確認済み」（app/api/property-customers/condition-history）
+ALTER TABLE property_condition_history ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
 
 -- ⑤ line_tasks に確認結果（空室確認の回答を構造化 → urgency_appropriate / property_check_result の事実化）
 -- 'available' | 'taken' | 'second_position' | 'move_out_planned'
