@@ -153,6 +153,11 @@ export type BrainStrategyNoteOptions = {
   ngPropertyLabels?: string[];
   /** 購買シグナルの言い換え表（呼び出し側の既存表をそのまま使う） */
   signalGuides?: Record<string, string>;
+  /**
+   * 2026-10-13: ブレインの本質（turn_contract）がこの番に届いている（aix-brain-contract の材料を同じプロンプトに入れる）時は、
+   *   勝ちパターン×成約戦略の「宣言を1文だけ入れる」を強制せず材料に下げる（本質の一覧に無い新しい約束を作らせない＝ぶつかる規則を材料に）
+   */
+  contractPresent?: boolean;
 };
 
 /** 「必ず入れろ」ではなく「今回の場面に関係する時だけ」に変える（創作を誘発しない言い方） */
@@ -184,7 +189,9 @@ export function buildBrainStrategyNote(meta: BrainStrategyMeta | null | undefine
   const cs = safeBrainPhrase(meta.closing_strategy, 200);
   // 2026-09-18: winning_pattern は「鍵受け渡し最短時間を管理会社に確認し…」のような**スタッフの行動計画**。
   //   生のまま「応用しろ」と渡すと、お客様向けの文に社内の段取りが混ざる。返信AI と同じく WE DO 宣言1文に統合する
-  if (wp && cs) {
+  if (o.contractPresent && (wp || cs)) {
+    L.push(`・${wp ? `勝ちパターン: ${wp}` : ""}${wp && cs ? " ／ " : ""}${cs ? `成約戦略: ${cs}` : ""} → 下の【ブレインが読んだこの番】に合う時だけ、その方向の一言にする（一覧に無い新しい約束・社内の段取りは書かない）`);
+  } else if (wp && cs) {
     L.push(`・勝ちパターン×成約戦略: 【勝ちパターン】${wp} ／ 【成約戦略】${cs} → 両者を統合した1アクションを「〜させて頂きます！！」の形の宣言で**1文だけ**入れる（社内の段取り＝管理会社への確認・調整の手順はお客様向けの文に書かない）`);
   } else if (wp) {
     L.push(`・勝ちパターン: ${wp} → このパターンに沿った1アクションを「〜させて頂きます！！」の形の宣言で**1文だけ**入れる（社内の段取りはそのまま書かない）`);

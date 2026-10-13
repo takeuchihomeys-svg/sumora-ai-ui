@@ -9364,3 +9364,15 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
   見出しは knowledgeHeading(…, anchor) で aix-template-generate・generate-reply-patterns・enhance-reply もそろえた（KNOWLEDGE_HEADING_FORM=off）
 - **確認の約束への了承の1文**（45ec15cd）: 60日 16番＝待ちの形（同じ中身）3・受けだけ 4・日付 1・新しい中身 5・待ちの形（別）3。最終チェックの決定論は竹内さんの短い待ちの形の1文を指摘しない（ACK_CONFIRM_WAIT_DETECTOR=off）。
   生成の材料（どちらも可）は再生で受けだけの番が日付の約束を言い直した＝既定 off（ACK_CONFIRM_WAIT_LINE=on）。CP_ACK_WAIT（前が待ちの形・c9368e68）は変えていない（竹内さん 待ちの形 2・受けだけ 3）＝竹内さんに確認
+
+## 10/13 AIX の文をブレインに連動（作る人・4番・branch worktree-agent-af06ad49c412cbbc6）
+竹内さん「AIX テンプレートはブレインに連動できていない…実際に竹内が送っているのと比べてずれている部分や届いていない部分を改善」。物差しは竹内さんの実送信だけ（3b508208・ce349a3f）。
+- **量った（scripts/audit-aix-text-vs-takeuchi.ts・LLM なし）**: 60日・竹内さんが送った AIX 629組（生成 aix_generate_log／✨🟣 template_selection_logs × 送った文）。生成のまま送った 31%。
+  ボタン別（組・そのまま）: 物件オススメ 216・19%／見積書送る 127・93%（雛形）／物件ピックアップ normal 50・10%・new_arrival 21・0%・widen 17・0%／内覧日調整 38・11%／✨🟣 継続ピックアップ 18・11%・見積書 16・13%。画面の was_edited（固定の雛形も）: 待ち合わせ場所 33押下中 27（82%）・申込フォーマット 0%。
+  竹内さんが消した/足した文: 物件オススメ＝訴求の箇条 消116/足59・新着の行 消30・退去予定/内覧可否 消31（直近15日は 15/8・6/0・0/0＝多くは直し済み）／内覧日調整＝締め 消11・挨拶 消9／ピックアップ new_arrival＝約束の文 消5。
+- **ブレインが届いていなかった所**: turn_contract は AIX の2経路に一度も届いていなかった。代わりに aix/action は customer_questions を「全て回答すること」と強制・✨は勝ちパターン×成約戦略を「宣言1文を必ず入れる」。customer_mindset は確認したの decideGap だけ。全力サポート・ヒアリング/待ち合わせ（会話を合わせる）・内覧の後の挨拶はブレインを何も読まない。reply_direction は RAG の問いだけ。
+- **直し（app/lib/aix-brain-contract.ts・戻す AIX_BRAIN_CONTRACT=off・既定 on）**: 今の番を見た判断（analyzed_msg_ts ≥ 最後のお客様の発言）の時だけ「この AIX で受ける依頼／この文では触れない依頼（返信・約束・別の AIX の通で受ける）／一覧に無い新しい約束は足さない／言わない（値の言い切りの線は渡さない）／気持ち／お客様の今」。本質が届いた番は「全て回答すること」を出さない・✨の宣言1文は材料に（brain-strategy-note contractPresent）。電話の後（メモだけ）と proposals は渡さない。
+  - 試して直した2つ: ①must_not「内覧日程を本文で確定」を渡すとスタッフの候補日まで消した ②返信・約束の依頼を「この通で触れるなら」と渡すと御見積書の約束・審査の励ましを足した（竹内さんは書かない）
+- **待ち合わせ場所の2行目（app/lib/meeting-place-form.ts・戻す NEXT_PUBLIC_MEETING_DAY_WORD=off／MEETING_DAY_WORD=off）**: 今日・明日なら「本日/明日{時間}〜ご案内させて頂きます！！」。scripts/audit-meeting-place-line.ts（120日・竹内さん30押下）: 2行目の一致 9→11・悪くなる1（7/11）。
+- **前と後（scripts/yuma-aix-brain-link-test.ts＝本番の場面をテスト専用の会話に入れブレインを2層で回し同じ判断で前/後・scripts/audit-aix-brain-link-score.ts）**: DeepSeek 30番×2回（link2）本質ありの52生成: 近さ 0.60→0.61・余計な文 1.19→0.98・竹内さんに無い約束 0.13→0.10・作り事 0.31→0.27・冒頭一致 48→56%。最後の Claude 2番: 内覧日調整 0.71→0.94・ピックアップ 0.80→0.90。✨物件オススメは揺れの範囲。
+- 費用: DeepSeek 約 $0.9＋生成・Claude 7回 $0.63。テスト専用の会話（YUMA4/5）の行は0件残り。設計知見への記録は未（本番 DB は読むだけの指示）。

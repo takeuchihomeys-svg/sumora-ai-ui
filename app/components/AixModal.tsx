@@ -46,6 +46,7 @@ import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import ZumenZipImport from "./ZumenZipImport";
 import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyNameMessage } from "../lib/property-name-required";
+import { meetingSecondLine, meetingDayWordOn } from "../lib/meeting-place-form";
 import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
 // 2026-10-13 竹内さん（くれあ）: 物件確認した（物件あった）で見積書を同封する時は物件ごとに［資料・見積書 → 費用の文］→ 最後に確認の結果の文。
 //   戻す: NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off（今まで通りの並び）
@@ -2942,7 +2943,9 @@ export default function AixModal({
           // 時間あり: 即座にローカル生成（曜日は月/日から再計算して誤りを補正）
           const meetingDateFixed = fixDateWeekday(meetingDate);
           const meetingDateNoWd = meetingDateFixed.replace(/[（(][日月火水木金土][）)]/, "");
-          let msg = `かしこまりました！！\n${meetingDateFixed}ご案内させて頂きます！！\n\n${meetingDateNoWd} ${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
+          // 2026-10-13 竹内さんの送り方: 内覧が今日・明日の時は2行目を「本日/明日{時間}〜ご案内させて頂きます！！」（meeting-place-form・戻す NEXT_PUBLIC_MEETING_DAY_WORD=off）
+          const meetingLine2 = meetingSecondLine(meetingDateFixed, meetingTime, Date.now(), meetingDayWordOn({ NEXT_PUBLIC_MEETING_DAY_WORD: process.env.NEXT_PUBLIC_MEETING_DAY_WORD }, "NEXT_PUBLIC_MEETING_DAY_WORD"));
+          let msg = `かしこまりました！！\n${meetingLine2}\n\n${meetingDateNoWd} ${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
           if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
           setAiDraft(msg);
           setPreview(useEmoji ? msg : stripEmoji(msg));

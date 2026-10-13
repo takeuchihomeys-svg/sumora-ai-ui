@@ -82,7 +82,7 @@ import { applyDailyGreeting, staffTalkedToday, joinNameOnlyLine, aixGreetingTalk
 import { staffTalkedTodayFromDb } from "@/app/lib/daily-greeting-server";
 import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
-import { isTestConversation } from "@/app/lib/test-conversations";
+import { isTestConversation, isTestOnlyConversation } from "@/app/lib/test-conversations";
 // 2026-09-30 竹内「2通目の言い回しが AI くさい。実際使っている言い回しが出るように／場面で違う／資料も読み取ったのを渡す」:
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
 import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, aixTakeuchiFormOn, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
@@ -102,6 +102,8 @@ import { buildAixTemplateDbKnowledgeBlock, aixTemplateCacheTtl } from "@/app/lib
 import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 // 2026-10-13 棚卸しの表 8: 学習の見出しを返信生成と同じ形に（中身の上は AIX の入力・安全の線は必ず守る）。戻す KNOWLEDGE_HEADING_FORM=off
 const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）"; // 10/13 レビュー（軽微2）: ✨ を押した時はブレインの判断がほぼ無いので AIX の入力だけを指す
+
+import { buildAixContractNote, type AixContractMeta } from "@/app/lib/aix-brain-contract";
 
 export const maxDuration = 60;
 
@@ -826,7 +828,11 @@ export async function POST(req: NextRequest) {
   ]);
   // 2026-09-13 監査 抜け1: 下書きを表示すると suggested_aix_meta が消えるため、✨ を押す時点ではほぼ常にブレインの判断なしだった。
   //   表示で消えただけ（控えが最新のお客様発言を見た本分析）なら last_brain_meta から戻す
-  const brainMeta = conversationId
+  // 2026-10-13 テスト専用: その番のブレインの判断を本文で渡す（手元＋テスト専用の会話だけ・本番は isTestModeAllowed が false＝読まない・scripts/yuma-aix-brain-link-test.ts）
+  const testBrainMeta = (body as { testBrainMeta?: unknown }).testBrainMeta;
+  const brainMeta = testBrainMeta && typeof testBrainMeta === "object" && isTestModeAllowed(process.env) && isTestOnlyConversation(conversationId)
+    ? testBrainMeta as BrainMeta
+    : conversationId
     ? ((await resolveBrainMetaForGeneration(conversationId, (convResult.data ?? null) as BrainMetaRow | null, "aix-template-generate")).meta as BrainMeta | null)
     : null;
 
@@ -1341,6 +1347,10 @@ export async function POST(req: NextRequest) {
   //   さらに repeated_concern は brain-core が20字で機械的に切っており、実データの20字ちょうど5件は全部
   //   途中で切れていた（「契約書類・手続きの確認（引き落とし口座書」）。それを「必ず拾え」と渡していた。
   //   → 整形と渡し方を brain-strategy-note.ts に1本化し、返信生成と同じ扱いに揃える（四者同名）
+  // 2026-10-13 竹内「AIX テンプレートはブレインに連動できていない」: ブレインの本質（turn_contract）とお客様の状態を材料に（aix/action と同じ関数・AIX_BRAIN_CONTRACT=off で旧）
+  const tplContractNote = actionType
+    ? buildAixContractNote({ meta: brainMeta as AixContractMeta, action: actionType, checkPattern: actionType === "property_check_result" ? effectiveCheckPattern : null, messages: Array.isArray(recentMessages) ? recentMessages : [] })
+    : "";
   const brainMetaSection = buildBrainStrategyNote(brainMeta, {
     fresh: !isStaleMeta,
     otherActionLabel: actionType && brainMeta?.action && brainMeta.action !== actionType
@@ -1349,7 +1359,8 @@ export async function POST(req: NextRequest) {
     actionLabel,
     ngPropertyLabels: ngPropLabels,
     signalGuides: SIGNAL_CTA_GUIDES,
-  });
+    contractPresent: !!tplContractNote,
+  }) + (tplContractNote ? `${tplContractNote}\n\n` : "");
 
   // preferences が string の場合は配列化、null/undefined の場合は空配列
   // （string を配列スプレッドすると1文字ずつ分解され「広 / め / ・ / 綺 / 麗」になるバグ防止 — ragQuery側と同処理）

@@ -107,7 +107,8 @@ import { isMgmtAfterHours, ensureAfterHoursApplyLine, stripLeadingBareAck, APPLY
 // 2026-09-16 竹内（カイナ事例）: 物件確認した×会話を合わせる — 内覧の流れの判定・部屋数・出口の決定論
 import { resolveViewingThread, buildViewingThreadBlock, stripEstimatePromiseLines, stripNewSlotLines, ensureViewingContinuationLine, resolveEnclosedRooms, buildEnclosedCountLines, ensureRoomCountPhrase, ESTIMATE_PROMISE_LINE_RE, NEW_SLOT_LINE_RE, VIEWING_CONTINUATION_LINE } from "@/app/lib/viewing-thread";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
-import { isTestConversation } from "@/app/lib/test-conversations";
+import { isTestConversation, isTestOnlyConversation } from "@/app/lib/test-conversations";
+import { isTestModeAllowed } from "@/app/lib/llm-test-mode";
 // 9巡目（10/08）: 学習ルールの総点検（rules-review-r9）を testFlags.rules_r9（off／on／stage2）で DB を変えずに重ねる。テストの会話・本番でない環境だけ
 import { runInRulesOverlayScope, setRulesOverlay, resolveTestRulesOverlay } from "@/app/lib/rules-overlay";
 // 9巡目（10/08）: 交渉が難しかった時の締め。旧「引き続き最大限サポートさせて頂きます！！で締める」は人の交渉の結果の文（全期間 16通・うち AIX 4）で 0通。
@@ -149,6 +150,9 @@ import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFr
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
 // 2026-10-06 竹内（R 事例）: 確認した（条件・交渉）の物件を会話から決定論で決める
 import { resolveConfirmTargetProperty, otherPropertyNamedInText } from "@/app/lib/confirm-target-property";
+// 2026-10-13 竹内「AIX テンプレートはブレインに連動できていない」: ブレインの本質（turn_contract）とお客様の状態を AIX の文の材料に（AIX_BRAIN_CONTRACT=off で旧）
+import { buildAixContractNote, keepAllQuestionsRule } from "@/app/lib/aix-brain-contract";
+import { meetingSecondLine, meetingDayWordOn } from "@/app/lib/meeting-place-form";
 
 export const maxDuration = 300;
 
@@ -1856,7 +1860,10 @@ async function handleAction(request: NextRequest): Promise<Response> {
       condition_change_type?: string | null;
       last_aix_history?: string | null;
       // 2026-10-09 ブレインが読んだお客様の状態（customer-mindset）。決め手の残り（decideGap）を確認の結果の締めに使う
-      customer_mindset?: { decideGap?: BrainGap | null } | null;
+      customer_mindset?: { decideGap?: BrainGap | null; state?: string | null; anxiety?: string | null; hesitation?: string | null } | null;
+      // 2026-10-13 この番の本質（turn_contract）と分析した発言の時刻（鮮度）＝AIX の文の材料（aix-brain-contract）
+      turn_contract?: unknown;
+      analyzed_msg_ts?: string | null;
     };
     const { brainContext, brainMeta: aixBrainMeta, propertyCustomerId: resolvedPCID } = await (async (): Promise<{ brainContext: string; brainMeta: AixLocalBrainMeta | null; propertyCustomerId: string | null }> => {
       if (!conversationId) return { brainContext: "", brainMeta: null, propertyCustomerId: null };
@@ -1869,7 +1876,11 @@ async function handleAction(request: NextRequest): Promise<Response> {
         const row = data as (BrainMetaRow & { property_customer_id?: string | null }) | null;
         // 2026-09-13 監査 抜け1: 下書きを表示すると suggested_aix_meta が消えるため、AIX を押す時点ではほぼ常にブレインの判断なしだった。
         //   表示で消えただけ（控えが最新のお客様発言を見た本分析）なら last_brain_meta から戻す
-        const metaRaw = (await resolveBrainMetaForGeneration(conversationId, row, "aix-action")).meta as AixLocalBrainMeta | null;
+        // 2026-10-13 テスト専用: その番のブレインの判断を本文で渡す（手元＋テスト専用の会話だけ・本番は isTestModeAllowed が false＝読まない）
+        //   scripts/yuma-aix-brain-link-test.ts が、本番の場面をテスト専用の会話に入れてブレインを回した判断で AIX の文の前後を比べる
+        const testMeta = body.testBrainMeta && typeof body.testBrainMeta === "object" && isTestModeAllowed(process.env) && isTestOnlyConversation(conversationId)
+          ? body.testBrainMeta as AixLocalBrainMeta : null;
+        const metaRaw = testMeta ?? (await resolveBrainMetaForGeneration(conversationId, row, "aix-action")).meta as AixLocalBrainMeta | null;
         // 2026-09-26 時刻の線: DeepSeek に回る時は、線より前の発言を見て作ったブレインの判断（台帳・AIX の履歴を含む）は渡さない
         const cutCtx = aixRequestCtx.getStore();
         const meta = cutCtx?.cutActive ? keepBrainMeta(metaRaw, cutCtx.cutoff ?? null) : metaRaw;
@@ -1905,6 +1916,13 @@ async function handleAction(request: NextRequest): Promise<Response> {
     const aixApplyPeriodNote = conversationId && aixRequestCtx.getStore()?.cutActive
       ? (await loadApplyPeriodNote(conversationId, aixRequestCtx.getStore()?.cutoff ?? null)).note
       : "";
+    // 2026-10-13 竹内「AIX テンプレートはブレインに連動できていない」: ブレインがこの番に決めた本質（依頼ごとの答え方・言わない事・提案・気持ち）と
+    //   お客様の状態を、AIX の文の材料に（app/lib/aix-brain-contract.ts・古い判断は渡さない・戻す AIX_BRAIN_CONTRACT=off）
+    const aixContractNote = buildAixContractNote({
+      meta: aixBrainMeta, action: String(action ?? ""), checkPattern: typeof check_pattern === "string" ? check_pattern : null,
+      messages: Array.isArray(recent_messages) ? recent_messages as Array<{ sender?: string; createdAt?: string; rawCreatedAt?: string }> : [],
+    });
+    if (aixContractNote) console.log(JSON.stringify({ tag: "aix:brain-contract", action, conversationId, len: aixContractNote.length }));
     // ブレインノートをプロンプトに注入（戦略系→制約系の順）
     const brainGuidanceNote = (() => {
       if (!aixBrainMeta) return "";
@@ -1990,9 +2008,12 @@ async function handleAction(request: NextRequest): Promise<Response> {
       } else if (aixBrainMeta.future_timeline) {
         lines.push(`【📅 顧客の決断タイムライン】${aixBrainMeta.future_timeline}（前倒し・急かし禁止）`);
       }
-      if (aixBrainMeta.customer_questions?.length) {
+      // 2026-10-13: ブレインの本質がこの番に届いている時は、依頼ごとの答え方（この AIX／別の AIX／返信・約束／触れない）が下の材料にある
+      //   ＝「全て回答すること」の強制（別の AIX・返信で受ける依頼まで AIX の文で答えさせる規則）は出さない。本質が無い時だけ旧のまま
+      if (aixBrainMeta.customer_questions?.length && keepAllQuestionsRule(aixContractNote)) {
         lines.push(`【⚠️ 顧客の質問（全て回答すること）】${aixBrainMeta.customer_questions.join("・")}`);
       }
+      if (aixContractNote) lines.push(aixContractNote);
       return lines.length > 0 ? "\n\n" + lines.join("\n") : "";
     })() + aixViewingReportNote + aixApplyPeriodNote;
 
@@ -6612,7 +6633,7 @@ ${SMORA_COMMON_RULES}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         // キャッシュ最適化: hearingCMSystem は全て静的。動的なブレイン改善ルールのみ第4引数へ
-        const hearingCMDynamicSuffix = hearingCMBrainAddendum ? `【ブレイン改善ルール】\n${hearingCMBrainAddendum}` : "";
+        const hearingCMDynamicSuffix = [hearingCMBrainAddendum ? `【ブレイン改善ルール】\n${hearingCMBrainAddendum}` : "", aixContractNote /* 2026-10-13 ブレインの本質（材料） */].filter(Boolean).join("\n\n");
         const hearingCMUserFinal = greetingTimeNote + `${recentHistory}\n\n上記の会話を読み取り、${name}への挨拶＋ヒアリング導入メッセージを生成してください。` + (hearingCMDiffNote ? `\n\n${hearingCMDiffNote}` : "") + (hearingCMStarNote ? "\n\n【参考にすべき成功返信例（必ず参考にして返信スタイルを合わせてください）】\n" + hearingCMStarNote : "");
         const rawHCM = await callClaude(
           hearingCMSystem,
@@ -6777,7 +6798,7 @@ ${jstTodayStr}
           loadBrainTemplate("greeting_viewing"),
         ]);
         // 2026-09-17 竹内（AIX キャッシュ点検）: ブレイン改善ルール（呼び出しごとに変わる）は静的 system から出して動的接尾へ（固定文だけが 5m の鍵）
-        const greetingAfterDynamic = greetingAfterBrainAddendum ? `【ブレイン改善ルール】\n${greetingAfterBrainAddendum}` : undefined;
+        const greetingAfterDynamic = [greetingAfterBrainAddendum ? `【ブレイン改善ルール】\n${greetingAfterBrainAddendum}` : "", aixContractNote /* 2026-10-13 ブレインの本質（材料） */].filter(Boolean).join("\n\n") || undefined;
 
         if (after_type === "apply") {
           // 申込
@@ -6900,6 +6921,7 @@ ${SMORA_COMMON_RULES}
           mpAddress ? `【住所】${mpAddress}` : "",
           mpDate ? `【内覧日】${mpDate}` : "",
           mpCMBrainAddendum ? `【ブレイン改善ルール】\n${mpCMBrainAddendum}` : "",
+          aixContractNote, // 2026-10-13 ブレインの本質（材料）
         ].filter(Boolean).join("\n\n");
         // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [物件名・住所・内覧日・ブレイン（動的）]
         const mpShared = splitSharedPrefix(mpSystem);
@@ -6948,9 +6970,10 @@ ${SMORA_COMMON_RULES}
 ${SMORA_COMMON_RULES}`;
 
       // 日程・物件名・住所は呼び出しごとに変わる動的コンテンツ → キャッシュ対象の system から分離
+      // 2026-10-13 竹内さんの送り方: 内覧が今日・明日の時は2行目を「本日/明日ご案内させて頂きます！！」（meeting-place-form・戻す MEETING_DAY_WORD=off）
       const meetingDynamicSuffix = `【出力形式（一字一句この構成で）】
 かしこまりました！！
-${mDate}ご案内させて頂きます！！
+${meetingSecondLine(mDate, null, Date.now(), meetingDayWordOn(process.env, "MEETING_DAY_WORD"))}
 
 ${mDate}[時間]に${mName}
 現地エントランスお待ち合わせで何卒よろしくお願い致します！！${mAddr ? `\n住所: ${mAddr}` : ""}`;
@@ -7338,6 +7361,7 @@ ${SMORA_COMMON_RULES}
       const zenryokuDynamic = [
         zenryokuBrainAddendum ? `【ブレイン改善ルール】\n${zenryokuBrainAddendum}` : "",
         greetingPhrase ? `【挨拶フレーズ】${greetingPhrase}\n` : "",
+        aixContractNote, // 2026-10-13 ブレインの本質（材料）
       ].filter(Boolean).join("\n\n") || undefined;
       const zenryokuUser = `${name}への全力サポートメッセージを生成してください。
 探しているエリア: ${area || "（未指定）"}${memo ? `\n補足・特記事項: ${memo}` : ""}${recentHistory}`;
@@ -7517,6 +7541,7 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\n で）"}`;
+      // 2026-10-13: ブレインの本質（aixContractNote）はここには渡さない＝電話の後の文は電話で話した内容（スタッフのメモ）だけで書く。前の依頼はもう電話で答えている事がある
       const pfDynamicSuffix = `【電話でお話しした内容（スタッフのメモ・この内容だけで書く）】\n${pfNotes}`;
       // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [メモ（動的）]
       const pfShared = splitSharedPrefix(pfStaticSystem);
