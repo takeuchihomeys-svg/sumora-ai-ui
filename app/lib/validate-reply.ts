@@ -986,6 +986,8 @@ export function isGeneralCostExplanation(s: string): boolean {
  *   戻す: RENT_RANGE_NOT_ESTIMATE=off
  */
 const RENT_WORD_RE = /家賃|賃料|管理費|共益費|ご予算|予算/;
+/** 物件探し・条件の言い直しの文の印（isRentConditionRangeSentence の対象） */
+const RENT_SEARCH_DECL_RE = /ご希望|ご条件|ピックアップ|お探し|探させ|お送り/;
 const RENT_RANGE_FORM_RE = /[0-9０-９.．]+\s*万?(?:円)?\s*[〜~～ー-]\s*[0-9０-９.．]+\s*万|[0-9０-９.．,，]+\s*(?:万\s*)?円?\s*(?:以内|以下|以上|前後|まで|程度|程|くらい|ぐらい|台)/;
 const NON_RENT_COST_RE = /初期費用|敷金|礼金|仲介手数料|保証料|鍵交換|火災保険|前家賃|日割|御見積|お見積|見積|合計|総額|内訳|割引|スモ割|節約|還元|お得/;
 /** 金額の表記を円の値に（7万→70000・6.5万円→65000・72,000円→72000）。値の一覧 */
@@ -1002,8 +1004,15 @@ function yenValues(t: string): number[] {
 export function isRentConditionRangeSentence(s: string, o?: { groundText?: string; customerConditions?: string; customerMessage?: string; lastStaffMsg?: string }, env: Record<string, string | undefined> = process.env): boolean {
   if ((env.RENT_RANGE_NOT_ESTIMATE ?? "").trim().toLowerCase() === "off") return false;
   // 金額の無い条件の語（「初期費用を抑えられる」「敷金礼金無料」）は条件の列挙の一部＝見積の金額ではない（先に外して判定）
-  const n = s.normalize("NFKC")
-    .replace(/初期費用(?:も|を|が)?[^0-9。、・\n]{0,6}(?:抑え|安く|少な|かからな)[^\s・、。！!]{0,8}/g, "")
+  const raw = s.normalize("NFKC");
+  // 10/13 レビュー（重要1）: 物件探し・条件の言い直しの文だけ（ご希望／ご条件／ピックアップ／お探し／お送り）。
+  //   物件を主語に言い切る文（「〇〇ハイツは家賃6万円台でご案内可能です」「…でご入居頂けます」）は物件固有の金額の疑い＝免除しない
+  if (!RENT_SEARCH_DECL_RE.test(raw)) return false;
+  if (/(?:は|が)(?:家賃|賃料)|となります|(?:です|でございます|頂けます|いただけます|出来ます|できます)[😊😌！!。]*$/u.test(raw.trim())) return false;
+  // 初期費用の語の後ろに金額が残る文（「初期費用を抑えて25万円程」）は見積の金額＝免除しない
+  if (/初期費用[^。！!\n]{0,12}?[0-9]+(?:\.[0-9]+)?\s*万?\s*円?/.test(raw)) return false;
+  const n = raw
+    .replace(/初期費用(?:も|を|が)?[^0-9。、・\n]{0,6}(?:抑え|安く|少な|かからな)[^\s・、。！!0-9]{0,8}/g, "")
     .replace(/(?:敷金|礼金|敷礼|敷金礼金)(?:・?(?:敷金|礼金))?\s*(?:0円|0|無料|なし|無し|ゼロ)/g, "");
   if (!RENT_WORD_RE.test(n) || NON_RENT_COST_RE.test(n) || !RENT_RANGE_FORM_RE.test(n)) return false;
   // 「万」の後ろに単位が無い幅の片方（「6〜7万」の 6）は万で読む
@@ -1016,10 +1025,11 @@ export function isRentConditionRangeSentence(s: string, o?: { groundText?: strin
     .replace(/([0-9.]+)\s*[〜~～ー-]\s*([0-9.]+)\s*万/g, "$1万〜$2万");
   const have = new Set(yenValues(ground));
   // 条件のフォームの家賃の欄（「②【ご希望の家賃（◯万円〜◯万円）】⇒7〜11」）は万を書かない＝家賃・予算の行の 100 未満の数字は万で読む
+  //   10/13 レビュー: フォームの家賃・予算の欄（【…家賃…】⇒ の後）だけ。欄の印が無い行（「家賃7万以内、洋室6帖以上、駐車場8台」「家賃は6万から、10/1入居希望」）は読まない
   for (const line of ground.split("\n")) {
-    if (!/家賃|予算/.test(line)) continue;
-    const tail = line.replace(/^.*[⇒→:：】]/, "");
-    for (const m of tail.matchAll(/(?<![0-9.])([0-9]{1,2}(?:\.[0-9])?)(?![0-9.]|\s*(?:分|階|年|畳|K|LDK|DK|R|号|月|日|件|人|歳|㎡))/g)) have.add(Math.round(Number(m[1]) * 10_000));
+    if (!/【[^】]*(?:家賃|予算)[^】]*】\s*[⇒→]/.test(line)) continue;
+    const tail = line.replace(/^.*[⇒→]/, "");
+    for (const m of tail.matchAll(/(?<![0-9.\/])([0-9]{1,2}(?:\.[0-9])?)(?![0-9.\/]|\s*(?:分|階|年|畳|帖|台|匹|S|K|LDK|DK|R|号|月|日|件|人|歳|㎡|\/))/g)) have.add(Math.round(Number(m[1]) * 10_000));
   }
   // 「6万」「60000」のどちらの表記でもよい（万なしの裸の数字 60000 も値で拾う）
   for (const m of ground.replace(/[,，]/g, "").matchAll(/(?<![0-9.])([1-9][0-9]{4,6})(?![0-9])/g)) have.add(Number(m[1]));

@@ -14,7 +14,13 @@ t("敷金礼金無料（金額でない条件）を含む幅の言い直しは�
 t("漢数字の条件（六万〜八万・実物 3db9db75）", isRentConditionRangeSentence(s1, { groundText: "六万〜八万 ワンケー、ワンルーム 10年以内 十分以内" }, {}));
 t("条件のフォームの家賃の欄（⇒7〜11・実物 5befce17）", isRentConditionRangeSentence(s2, { groundText: "①【ご入居の時期】⇒10/1\n②【ご希望の家賃（◯万円〜◯万円）】⇒7〜11\n③【希望の広さ・間取り】⇒1DK" }, {}));
 t("家賃の行の他の数字（徒歩10分）を万で読まない", !isRentConditionRangeSentence("家賃10万円以内のお部屋をピックアップさせて頂きます", { groundText: "家賃は駅から10分以内で" }, {}));
-t("家賃条件10万円程（目安）", isRentConditionRangeSentence("家賃条件10万円程でしたら1DKや1LDKのお部屋をオススメいたします！！", { groundText: "予算は10万くらいです" }, {}));
+// 10/13 レビュー（重要1）: 旧では止まり新で通っていた5文＝全部止まる
+t("R1 初期費用の金額（25万円程）が残る文は免除しない", !isRentConditionRangeSentence("家賃7万以内で初期費用を抑えて25万円程でご入居頂けます！！", { groundText: "家賃7万以内 初期費用25万円程" }, {}));
+t("R2 初期費用の金額（20万円以内）は免除しない", !isRentConditionRangeSentence("家賃5万円程でしたら初期費用も抑えて20万円以内に出来ます", { groundText: "家賃5万円程 初期費用20万円以内" }, {}));
+t("R3 物件を主語に言い切る文は免除しない", !isRentConditionRangeSentence("〇〇ハイツは家賃6万円台でご案内可能です😊！！", { groundText: "家賃6〜8万" }, {}));
+t("R4 6帖・8台を家賃の万で読まない", !isRentConditionRangeSentence("家賃6〜8万円のお部屋をピックアップしてお送りさせて頂きます！！", { groundText: "家賃7万以内、洋室6帖以上、駐車場8台" }, {}));
+t("R5 10/1 を家賃の万で読まない", !isRentConditionRangeSentence("家賃6〜10万円のお部屋をピックアップしてお送りさせて頂きます！！", { groundText: "家賃は6万から、10/1入居希望" }, {}));
+t("家賃条件10万円程（目安・物件探しの文でない）は免除しない（10/13 レビューで範囲を物件探し・条件の言い直しに絞った）", !isRentConditionRangeSentence("家賃条件10万円程でしたら1DKや1LDKのお部屋をオススメいたします！！", { groundText: "予算は10万くらいです" }, {}));
 // 止めるもの（従来どおり）
 t("物件固有の金額（幅でない）は免除しない", !isRentConditionRangeSentence("コートエスト都島は1LDKで家賃管理費込99,000円となります！！", { groundText: "家賃管理費込99,000円" }, {}));
 t("敷金の金額を含む文は免除しない", !isRentConditionRangeSentence("家賃7万円以内・敷金50,000円のお部屋です", { groundText: "家賃7万円以内 敷金50,000円" }, {}));
