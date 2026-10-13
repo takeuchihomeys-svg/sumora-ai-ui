@@ -13,6 +13,7 @@ import { extractPropertyLabels, extractViewingAppointment } from "./action-ledge
 import { estimateNamesFromText } from "./customer-state";
 import { estimateRecordItemsFromLog } from "./estimate-record-items";
 import { isStarNameLine, starNameRoom } from "./closing-target";
+import { canonicalRoomNo, canonicalRoomLabel } from "./room-no";
 
 export function aixSentNamesEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.AIX_SENT_NAMES ?? "").toLowerCase() !== "off";
@@ -53,8 +54,9 @@ export function namesNearSend(rows: ReadonlyArray<SentPropertyRow>, sentAtIso: s
     if (r.delivery && r.delivery !== "customer") continue;
     const name = String(r.property_name ?? "").trim();
     if (!name) continue;
-    const room = String(r.room_no ?? "").trim();
-    const label = room ? `${name} ${room.replace(/号室?$/, "")}号室` : name;
+    // 2026-10-14 号室は先頭の0を読まない（00201→201・room-no.ts）。記録の名前と台帳・照合の形をそろえる
+    const room = canonicalRoomNo(String(r.room_no ?? "").trim());
+    const label = room ? `${name} ${room}号室` : name;
     if (!out.includes(label)) out.push(label);
   }
   return out.slice(0, opts.max ?? 20);
@@ -71,6 +73,13 @@ export function namesNearSend(rows: ReadonlyArray<SentPropertyRow>, sentAtIso: s
  *   ・物件送付 … 売上サポの名前（properties_sent_names）。無ければ送った後の資料の読み取りから（sent-facts.fillPropertySendNamesFromSentProperties）
  */
 export function aixPropertyNamesForLog(o: {
+  aixType: string | null | undefined; text: string | null | undefined;
+  meetingPropertyName?: string | null; sentPropertyNames?: ReadonlyArray<string | null | undefined> | null;
+}, env: Record<string, string | undefined> = process.env): string[] {
+  // 2026-10-14 記録の名前の号室は先頭の0を読まない形に（「Comforza 0302号室」→「Comforza 302号室」・ROOM_NO_CANONICAL=off で戻す）
+  return [...new Set(aixPropertyNamesForLogRaw(o, env).map((n) => canonicalRoomLabel(n, env)))];
+}
+function aixPropertyNamesForLogRaw(o: {
   aixType: string | null | undefined; text: string | null | undefined;
   meetingPropertyName?: string | null; sentPropertyNames?: ReadonlyArray<string | null | undefined> | null;
 }, env: Record<string, string | undefined> = process.env): string[] {
@@ -141,7 +150,8 @@ export function reconcileAixPropertyNames(
   env: Record<string, string | undefined> = process.env,
   aixType: string | null = "property_check_result",
 ): { names: string[] | null; changed: boolean } {
-  const cur = (names ?? []).map((n) => String(n ?? "").trim()).filter(Boolean);
+  // 2026-10-14 号室は先頭の0を読まない形で記録する（画面の欄の「0302号室」も・数と並びは変えない）
+  const cur = (names ?? []).map((n) => canonicalRoomLabel(String(n ?? "").trim(), env)).filter(Boolean);
   if (!cur.length || !aixNamesFromTextEnabled(env) || !RECONCILE_AIX_TYPES.has(aixType ?? "")) return { names: names ? cur : null, changed: false };
   const cmp = (s: string) => s.normalize("NFKC").replace(/[\s　]+/g, "").toLowerCase();
   const tk = cmp(String(text ?? ""));
@@ -154,5 +164,5 @@ export function reconcileAixPropertyNames(
   if (curInText) return { names: cur, changed: false };
   // 物件ごとの結果（prop_statuses）は名前と同じ並び → 件数が同じ時だけ置き換える（並びが崩れる時は触らない）
   if (textNames.length !== cur.length) return { names: cur, changed: false };
-  return { names: textNames, changed: true };
+  return { names: textNames.map((n) => canonicalRoomLabel(n, env)), changed: true };
 }

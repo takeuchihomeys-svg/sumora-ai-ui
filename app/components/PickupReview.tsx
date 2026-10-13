@@ -40,6 +40,7 @@ import PickupEstimateButton from "@/app/components/PickupEstimateButton";
 import { latestOverrideLabel } from "@/app/lib/customer-condition-view";
 // 2026-10-06 ⑰: 物件オススメ＝送った束の中から1件（AIX の判定と同じ時間の線・recommendation-frame は純関数で画面から読める）
 import { BUNDLE_COMPARE_WINDOW_HOURS } from "@/app/lib/recommendation-frame";
+import { canonicalRoomNo } from "@/app/lib/room-no";
 
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
 
@@ -1642,7 +1643,7 @@ export default function PickupReview({ focusKey = null, focusBatch = null, onCha
                         <img src={it.trim_image_url ?? undefined} alt={it.property_name} loading="lazy" decoding="async" className="w-full block" style={{ aspectRatio: "1.41", objectFit: "cover", objectPosition: "top", background: "#fff" }} />
                       </a>
                       <div className="flex items-center justify-between gap-1 px-2 py-1.5" style={{ background: "#f7f9fb" }}>
-                        <span className="text-[11px] font-bold truncate min-w-0">【{it.rank}】{it.property_name}{it.room_no ? ` ${it.room_no}号室` : ""}</span>
+                        <span className="text-[11px] font-bold truncate min-w-0">【{it.rank}】{it.property_name}{it.room_no ? ` ${canonicalRoomNo(it.room_no)}号室` : ""}</span>
                         <button onClick={() => void saveImage(it.trim_image_url as string, name)}
                           className="text-[11px] font-bold px-2 py-1 rounded-lg shrink-0" style={{ background: "#6a1b9a", color: "#fff" }}>💾 保存</button>
                       </div>

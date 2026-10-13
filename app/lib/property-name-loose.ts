@@ -9,6 +9,7 @@
 //   ・書き方の違いを許すのは、区別の印が同じで、短い方が5字以上の時だけ（編集距離: 8字以上 2・5〜7字 1）
 // 戻す: PROPERTY_NAME_LOOSE_MATCH=off（従来の照合だけ）
 import { normalizePropertyName } from "./property-name-match";
+import { canonicalRoomLabel } from "./room-no";
 
 /**
  * 既定の env は名前を名指しで読む（画面＝"use client" では process.env を丸ごと渡しても NEXT_PUBLIC_ が入らない。
@@ -54,7 +55,8 @@ const room0 = (r: string) => r.replace(/^0+(?=\d)/, "").toUpperCase();
 
 /** 物件名を建物と部屋に分ける（号室の形を広く読む）。物件名でなければ null */
 export function parseLoose(raw: string | null | undefined): LooseRef | null {
-  let t = stripHead(String(raw ?? "").normalize("NFKC").replace(/\s+/g, " ").trim());
+  // 2026-10-14 号室の読み取りの化け（1O1号室→101号室）をそろえてから読む（room-no.ts・先頭の0は下の room0 が外す）
+  let t = canonicalRoomLabel(stripHead(String(raw ?? "").normalize("NFKC").replace(/\s+/g, " ").trim()));
   if (!t) return null;
   t = t.replace(/\s*(?:号室|号)\s*$/, "").replace(/\s*(?:部分|角部屋|の?お部屋)$/, "").trim();
   let building = t, room: string | null = null, floor: string | null = null;

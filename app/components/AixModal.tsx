@@ -48,6 +48,7 @@ import ZumenZipImport from "./ZumenZipImport";
 import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyNameMessage } from "../lib/property-name-required";
 import { meetingSecondLine, meetingDayWordOn } from "../lib/meeting-place-form";
 import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
+import { canonicalRoomNo } from "../lib/room-no";
 // 2026-10-13 竹内さん（くれあ）: 物件確認した（物件あった）で見積書を同封する時は物件ごとに［資料・見積書 → 費用の文］→ 最後に確認の結果の文。
 //   戻す: NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off（今まで通りの並び）
 const CHECK_ESTIMATE_BUNDLE_ON = checkResultEstimateBundleOn(process.env.NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE);
@@ -636,7 +637,9 @@ export default function AixModal({
   const buildEstimateAppealText = (): string => {
     const propName = parsedEstimate?.["物件名"] ?? parsedEstimate?.["property_name"] ?? "";
     const roomRaw = parsedEstimate?.["号室"] ?? parsedEstimate?.["room_number"] ?? "";
-    const roomText = roomRaw ? (roomRaw.includes("号室") ? roomRaw : `${roomRaw}号室`) : "";
+    // 2026-10-14 号室は先頭の0を読まない（0302→302・読み取りの化け 1O1→101・room-no.ts）
+    const roomCanon = canonicalRoomNo(roomRaw);
+    const roomText = roomCanon ? `${roomCanon}号室` : "";
     const propLine = [propName, roomText].filter(Boolean).join(" ");
     const lines = [
       `${customerName}さんお世話になっております！！`,

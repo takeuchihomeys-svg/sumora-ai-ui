@@ -26,6 +26,7 @@
 
 // 2026-10-14 P0 89bc2c3e「漢字は必ず日本語の漢字」: 読み取りの指示に JA_KANJI_INSTRUCTION を入れ、出力は jaKanji（決定論）で日本の字形に直す
 import { JA_KANJI_INSTRUCTION, jaKanji } from "./ja-kanji";
+import { canonicalRoomNo } from "./room-no";
 
 export const PROPERTY_IMAGE_ENDPOINT = "https://api.deepseek.com/v1/chat/completions";
 /** DeepSeek-V4.1-Flash。DeepSeek 側で新しい名前が出たら PROPERTY_IMAGE_MODEL で差し替える */
@@ -303,7 +304,8 @@ export function parseReadResult(content: string): ReadResult {
       };
       // 号室が配列で返る事がある（物件一覧の画像）
       const rooms = Array.isArray(roomRaw) ? roomRaw.map((x) => String(x)) : [String(roomRaw ?? "")];
-      for (const r of rooms) items.push({ propertyName: name, roomNumber: r.trim(), rent, deposit, keyMoney, status, vacancyDate, ...extra });
+      // 2026-10-14 号室は先頭の0を読まない・読み取りの化け（1O1）を直す（room-no.ts・ROOM_NO_CANONICAL=off）
+      for (const r of rooms) items.push({ propertyName: name, roomNumber: canonicalRoomNo(r.trim()), rent, deposit, keyMoney, status, vacancyDate, ...extra });
     }
     const isProp = typeof (parsed as { is_property?: unknown }).is_property === "boolean"
       ? Boolean((parsed as { is_property: boolean }).is_property) : items.length > 0;
