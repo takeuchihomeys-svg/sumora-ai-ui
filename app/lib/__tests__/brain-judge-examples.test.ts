@@ -51,9 +51,9 @@ it("一手の書き方: 押した AIX＞手打ちの AIX の中身＞返信の�
   eq(describeActualMove({ burstPress: [], staffFacts: [{ kind: "vacancy", key: "property_check_result/unavailable", family: "確認" }] }).startsWith("AIX の中身"), true);
   eq(describeActualMove({ burstPress: [], staffActs: ["check_promise"], actJa: { check_promise: "確認の宣言" }, laterPress: [{ aix_type: "estimate_sheet" }] }), "返信（確認の宣言）（その後 AIX estimate_sheet）");
 });
-it("スイッチ: 既定 off・BRAIN_JUDGE_EXAMPLES=on で入れる", () => {
+it("スイッチ: 既定 on・BRAIN_JUDGE_EXAMPLES=off で止める", () => {
   eq(judgeExamplesEnabled({ BRAIN_JUDGE_EXAMPLES: "off" }), false);
-  eq(judgeExamplesEnabled({}), false);
+  eq(judgeExamplesEnabled({}), true);
   eq(judgeExamplesEnabled({ BRAIN_JUDGE_EXAMPLES: "on" }), true);
 });
 it("作った手本: 個人の値（電話・メール）が無い・場面が入っている", () => {
