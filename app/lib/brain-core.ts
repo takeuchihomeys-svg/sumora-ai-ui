@@ -1331,7 +1331,7 @@ export function buildBrainSystemBlocks(inputs: BrainSystemInputs): BrainSystemBl
 
   const knowledgePrinciples = inputs.knowledgePrinciples ?? [];
   const knowledgeText = knowledgePrinciples.length > 0
-    ? `\n${(process.env.KNOWLEDGE_HEADING_FORM ?? "").toLowerCase() === "off" ? "【重要原則】" : knowledgeHeading("critical", undefined, false, "会話の事実とあなたの判断")}\n${knowledgePrinciples.map((k) => `- ${k.content}`).join("\n")}`
+    ? `\n${(process.env.BRAIN_PRINCIPLE_HEADING ?? "").toLowerCase() === "off" ? "【重要原則】" : knowledgeHeading("critical", undefined, false, "会話の事実とあなたの判断")}\n${knowledgePrinciples.map((k) => `- ${k.content}`).join("\n")}`
     : "";
 
   // Boundary rules — when AIX is required vs auto-reply is allowed
