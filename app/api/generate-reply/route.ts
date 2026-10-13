@@ -6457,6 +6457,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
                   turnContract,   // 2026-10-08 本質（turn-contract）: 本質に反する中身を足させる指摘は書き直さない
+                  // 2026-10-13 ブレイン基準: ブレインが今の発言から読んだ質問（今の発言を見た時だけ）＝context_check の答えるべき項目の補い・取りこぼしの指摘を直す裏付け
+                  customerQuestions: brainFreshForMessage ? (brainMeta?.customer_questions ?? null) : null,
                   brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突（四者同名）
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳（生成側と同一オブジェクト・四者同名）
                   // 2026-09-11 統合設計（経路F1）: 後処理ゲートの判断（resolvePickupGate 整合後）。生成ノート・後処理・検査が同じ値
@@ -6695,6 +6697,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                     hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
                     turnContract,   // 2026-10-08 本質（turn-contract）: 本質に反する中身を足させる指摘は書き直さない
+                  // 2026-10-13 ブレイン基準: ブレインが今の発言から読んだ質問（今の発言を見た時だけ）＝context_check の答えるべき項目の補い・取りこぼしの指摘を直す裏付け
+                  customerQuestions: brainFreshForMessage ? (brainMeta?.customer_questions ?? null) : null,
                     brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                     ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   };
@@ -6890,6 +6894,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   substance, pairContext,                                          // 2026-09-09 REPLY_SKELETON（四者同名）
                   hedge, closerVerdict,                                            // 2026-09-09 この事例: ヘッジゲート・締めポリシー（四者同名）
                   turnContract,   // 2026-10-08 本質（turn-contract）: 本質に反する中身を足させる指摘は書き直さない
+                  // 2026-10-13 ブレイン基準: ブレインが今の発言から読んだ質問（今の発言を見た時だけ）＝context_check の答えるべき項目の補い・取りこぼしの指摘を直す裏付け
+                  customerQuestions: brainFreshForMessage ? (brainMeta?.customer_questions ?? null) : null,
                   brainStrategy: brainLocalFresh ? brainStrategy : null, parallelSearch: parallelSearchReplyOn, cellConflicts, // 2026-09-10 この事例: 会話スコープ方針・セル衝突
                   ledger: ledgerForCtx ?? undefined, isDeliverableReply: isAixPropertySendMode, ledgerStrict: ledgerActive, // 2026-09-09 行動台帳
                   ngProperties: brainFreshForMessage

@@ -9998,6 +9998,8 @@ export default function Home() {
                       <div className="font-medium text-[#333]">{it.severity === "block" ? "🔴" : "🟡"} {it.message}</div>
                       {it.evidence && <div className="pl-4 text-[#999]">「{it.evidence}」</div>}
                       {it.suggestion && <div className="pl-4 text-[#667781]">💡 {it.suggestion}</div>}
+                      {/* 2026-10-13 ブレイン基準: 直さなかった・直らなかった理由（final-check-brain-align.annotateUnfixed） */}
+                      {it.unfixed_reason && <div className="pl-4 text-[#b45309]">↳ {it.unfixed_reason}</div>}
                     </div>
                   ))}
                   {checkResult.revision_exhausted && (

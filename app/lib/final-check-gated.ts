@@ -31,6 +31,12 @@ export type FinalCheckGateLog = {
   revisionSkipped?: string;
   /** 2026-10-06 点検: 直す指摘があったのに書き直しを採らなかった理由（CheckResult.revision_dropped と同じ値・scripts/audit-final-check-coverage.ts ②） */
   revisionDropped?: string;
+  /** 2026-10-13 ブレイン基準（final-check-brain-align）: 書き直しに渡さなかった指摘 "CODE:理由" */
+  revisionHeld?: string[];
+  /** 2026-10-13: 引用が本文に無いがブレインの判断が裏付けて書き直しに渡した指摘の code */
+  brainBacked?: string[];
+  /** 2026-10-13: ブレインの判断と逆のため直さず画面からも外した warning の code */
+  brainOverruled?: string[];
 };
 
 export type GatedOptions = {
@@ -94,6 +100,10 @@ export async function runFinalCheckGated(draft: string, ctx: FinalCheckContext, 
   if (loop.finalDraft !== draft) gate.draftIn = draft.slice(0, 600);
   if (loop.finalCheck.revision_skipped) gate.revisionSkipped = loop.finalCheck.revision_skipped;
   if (loop.finalCheck.revision_dropped) gate.revisionDropped = loop.finalCheck.revision_dropped;
+  // 2026-10-13 ブレイン基準: 書き直しに渡さなかった指摘・ブレインの裏付けで渡した指摘・ブレインとぶつかり画面から外した指摘（送った例の記録に残る＝scripts/audit-final-check-unfixed.ts で前後を数える）
+  if (loop.finalCheck.revision_held?.length) gate.revisionHeld = loop.finalCheck.revision_held.slice(0, 12);
+  if (loop.finalCheck.revision_brain_backed?.length) gate.brainBacked = loop.finalCheck.revision_brain_backed.slice(0, 8);
+  if (loop.finalCheck.brain_overruled?.length) gate.brainOverruled = loop.finalCheck.brain_overruled.map((i) => i.code).slice(0, 8);
   (loop.finalCheck as CheckResult & { gate?: FinalCheckGateLog }).gate = gate;
   return { ...loop, gate };
 }

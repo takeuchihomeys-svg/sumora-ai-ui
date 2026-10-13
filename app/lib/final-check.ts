@@ -15,6 +15,7 @@
 // - check-reply/route.ts    …… 送信時の再チェック用ルート。2026-09-11 以降、画面からは呼ばない
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
+import { buildContextCheckAnswerList, contextCheckAnalysisLimit } from "@/app/lib/context-check-answer-list";
 import { ungroundedFreeRentSentence, type StaffFreeRentFact } from "./staff-free-rent";
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, materialGroundsAssertion,PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
@@ -93,7 +94,9 @@ import { isCustomerEchoFabrication } from "./fabricated-customer-words";
 import { isStaffSelfIntroNameFlag, STAFF_SELF_NAME } from "./final-check-staff-name";
 import { isViewingOfferFlag, photoOfferExempt } from "./final-check-viewing-offer";
 import { isMissingElementRuleFlag, isPassiveMisfire, isAllowedDiscountMisfire, staffStandardFilterEnabled } from "./final-check-staff-standard";
-import { issueContradictsContract, renderTurnContractNote, type TurnContract } from "./turn-contract";
+import { issueContradictsContract, renderTurnContractNote, isConfirmPromiseAsk, type TurnContract } from "./turn-contract";
+// 2026-10-13 竹内さん「指摘のアナウンスでブレインが正しいが、実際の文が修正されていない」: 直すかどうかをブレインの判断にそろえる
+import { selectRevisionIssues, annotateUnfixed, finalCheckBrainAlignEnabled, contractConfirmMiss, type HoldReason } from "./final-check-brain-align";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -105,6 +108,8 @@ export interface CheckIssue {
   message: string;     // 日本語・スタッフ向け1文（何が問題か）
   evidence: string;    // 本文からの引用（必須。空なら code ごと破棄）
   suggestion: string;  // 具体的な修正案
+  /** 2026-10-13 ブレイン基準: 書き直しで直さなかった・直らなかった理由（画面に出す。final-check-brain-align.annotateUnfixed） */
+  unfixed_reason?: string;
 }
 
 export interface CheckResult {
@@ -150,6 +155,12 @@ export interface CheckResult {
    *  banned_word・await_block・confirm_promise＝書き直しが禁止の形を入れた / recheck_unverified＝再検査が完走しない /
    *  recheck_block・warn_worse・new_warn_type＝再検査で悪化 / evidence_kept＝block の引用が書き直しで1つも消えない / no_improve＝block が減らない */
   revision_dropped?: string;
+  /** 2026-10-13 ブレイン基準（final-check-brain-align）: ブレインの判断（本質）と逆のため直さず、画面の指摘からも外した warning（記録・監査用） */
+  brain_overruled?: CheckIssue[];
+  /** 2026-10-13: 書き直しに渡さなかった指摘と理由（"CODE:reason"・監査用） */
+  revision_held?: string[];
+  /** 2026-10-13: ブレインの裏付けで書き直しに渡した指摘（引用が本文に無い取りこぼし・"CODE"）（監査用） */
+  revision_brain_backed?: string[];
 }
 
 export interface FinalCheckContext {
@@ -260,6 +271,9 @@ export interface FinalCheckContext {
   brainStrategy?: BrainConversationScope | null;
   /** 2026-10-08 この番の本質（turn-contract.ts）。本質に反する中身を足させる指摘は書き直しに渡さない（指摘は記録に残す・TURN_CONTRACT_FINAL_CHECK=off） */
   turnContract?: TurnContract | null;
+  /** 2026-10-13 ブレインが今の発言から読んだお客様の質問（brainMeta.customer_questions・今の発言を見た時だけ）。
+   *  context_check の「答えるべき項目の一覧」の補いと、取りこぼしの指摘を書き直しに渡すかの裏付けに使う（final-check-brain-align） */
+  customerQuestions?: string[] | null;
   /**
    * 2026-09-26 段3: ブレインが今回の発言を見て「主の一手＋並行でほかも探す」と判断した（parallel-search.ts・route の parallelSearchReplyOn と同じ値）。
    *   true の時、引き続き探す一文は余計な提案（UNPROMPTED_PROPOSAL）に数えない
@@ -1127,12 +1141,15 @@ CONDITION_ADD_MISROUTED の誤発行を避けるべきケース:
 【現在時刻】は日本標準時（JST・UTC+9）で表示される。
 「18時以降」の判定は JST 18:00 以降を指す。日本の営業時間は一般的に9:00-18:00。
 深夜（22:00以降）や早朝（7:00以前）の「本日中に」等の約束も実行不可能とみなすこと。`;
-  const dynamic = `${brainBaselineNote}【現在時刻】${nowJstString()}
+  // 2026-10-13 竹内さん（ブレインの使い残し 5）: ブレインの本質（turn_contract）を「答えるべき項目の一覧」として渡し、質問の取りこぼしはこれで見る（会話から探し直さない）。
+  //   一覧がある時は [ANALYSIS] を短く（context-check-answer-list.ts・戻す CONTEXT_CHECK_ANSWER_LIST=off）
+  const answerList = buildContextCheckAnswerList(ctx.turnContract ?? null, ctx.customerQuestions ?? null);
+  const dynamic = `${brainBaselineNote}${answerList}【現在時刻】${nowJstString()}
 ${stageBlock}[CUSTOMER_MESSAGE]
 ${(ctx.lastCustomerMessage || "（不明）").slice(0, 1500)}
 [/CUSTOMER_MESSAGE]
 [ANALYSIS]
-${(ctx.brainContextJson || "なし").slice(0, 2500)}
+${(ctx.brainContextJson || "なし").slice(0, contextCheckAnalysisLimit(!!answerList))}
 [/ANALYSIS]
 [RECENT_STAFF_MESSAGES]
 ${formatStaffMessages(ctx.recentMessages, 5)}
@@ -1927,6 +1944,18 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
       message: `お客様の名前「${h.name}」が語の途中に入っています（文字の置き換えの壊れ）`,
       evidence: h.evidence,
       suggestion: `「${h.name}」を語の途中から外し、元の語（かしこまりました・して 等）に戻して書き直す。呼びかけは「${h.name}さん」の形だけ`,
+    });
+  }
+
+  // ⑰ 2026-10-13 ブレイン基準（final-check-brain-align.contractConfirmMiss）: ブレインの本質に無い確認の約束（H4）。
+  //   旧は記録（turn-contract:audit）だけで直らなかった。別の物差しの指摘（確認の対象を足せ）はブレインとぶつかって直さない＝本質の物差しで直す指摘を出す（warning・書き直しに渡る）
+  const cm = contractConfirmMiss(text, ctx.turnContract ?? null, isConfirmPromiseAsk);
+  if (cm) {
+    issues.push({
+      pass: "rule_check", severity: "warning", code: "CONTRACT_UNASKED_CONFIRM",
+      message: "ブレインの判断（この番の本質）に確認・作成の約束が無いのに、確認の約束を書いています",
+      evidence: cm.sentence,
+      suggestion: cm.suggestion,
     });
   }
 
@@ -3054,9 +3083,14 @@ AIXボタン（物件送付・見積提示・内見日程調整等の具体的�
 
 // 2026-09-29: scripts/eval-sonnet55.ts（Sonnet 5 と 5.5 の比べ）が本番と同じ前置きを作るため export（動きは変えない）
 export function buildSonnetRevisionPrompt(draft: string, issues: CheckIssue[], ctx: FinalCheckContext): PromptBlock[] {
-  const brainNote = ctx.brainContextJson
+  // 2026-10-13 ブレイン基準: 書き直しの LLM にもブレインの本質（依頼ごとの答え方・言わない事・閉じる番）を最上位で渡す。
+  //   旧は方向性の JSON だけで、本質（turn_contract）は生成と検査には届いていたが書き直しには届いていなかった＝書き直しが別の基準で直していた（戻す FINAL_CHECK_BRAIN_ALIGN=off）
+  const contractNote = finalCheckBrainAlignEnabled() && ctx.turnContract && ctx.turnContract.source === "brain" ? renderTurnContractNote(ctx.turnContract) : "";
+  const brainNote = (contractNote
+    ? `\n[BRAIN_CONTRACT]（ブレインが決めたこの番の本質＝修正の正解の基準。指摘はこれに沿って直す。これに無い約束・説明を足さない・ここで答える項目は必ず答える）\n${contractNote}\n[/BRAIN_CONTRACT]\n`
+    : "") + (ctx.brainContextJson
     ? `\n[BRAIN_META]（返信の目指すべき方向性・修正後もこの方向性を維持すること）\n${ctx.brainContextJson}\n[/BRAIN_META]\n`
-    : "";
+    : "");
   const customerMsgNote = ctx.lastCustomerMessage
     ? `\n[CUSTOMER_MESSAGE]（この返信の宛先：顧客の最新メッセージ。MISSED_QUESTION/STAGE_MISMATCH指摘の修正はこの内容に沿って行うこと）\n${ctx.lastCustomerMessage.slice(0, 1500)}\n[/CUSTOMER_MESSAGE]\n`
     : "";
@@ -3400,7 +3434,9 @@ function buildDiffRecheckPrompt(revised: string, check1Issues: CheckIssue[], ctx
   const clearedFactsNote = ctx.clearedFacts?.length
     ? `\n【照合済み確認済み】以下の記述はすでに情報源との照合で根拠ありと確認されています。問題として指摘しないこと：\n${ctx.clearedFacts.map((f) => `・「${f}」`).join("\n")}\n`
     : "";
-  return `あなたは修正後の文章の検証担当者です。
+  // 2026-10-13 ブレイン基準: 再検査もブレインの判断に沿って見る（旧は何も渡さず、ブレインどおりに直した文を別の物差しで「新しい問題」にして書き直しを捨てていた＝new_warn_type・recheck_block）
+  const brainNote = finalCheckBrainAlignEnabled() ? buildBrainBaselineNote(ctx) : "";
+  return `${brainNote}あなたは修正後の文章の検証担当者です。
 元の返信文に対して以下の問題（Check1）が検出され、自動修正が行われました。
 修正後のドラフトを検証してください。
 ${clearedFactsNote}
@@ -3485,6 +3521,8 @@ async function runDiffRecheck(
       // 2026-10-07 「修正後ドラフト全文に〜の記述がない」も同じ（1回目と同じ・final-check-staff-standard.ts ②）
       if (staffStandardFilterEnabled() && isMissingElementRuleFlag(pass, code, evidence, draftNorm.includes(normalizeForMatch(evidence)))) continue;
       if (staffStandardFilterEnabled() && (isPassiveMisfire(pass, code, r.message ?? "", evidence) || isAllowedDiscountMisfire(pass, code, evidence, customerTextsForFabrication(ctx).join("\n")))) continue;
+      // 2026-10-13 ブレイン基準: 再検査がブレインの本質と逆の事を言う指摘（閉じる番に要素を足せ・AIX/触れない項目に答えろ 等）は数えない（1回目の書き直しの選び方と同じ関数）
+      if (finalCheckBrainAlignEnabled() && issueContradictsContract({ code, message: r.message ?? "", evidence, suggestion: r.suggestion ?? "" }, ctx.turnContract ?? null)) continue;
       let severity = assignSeverity(pass, code, ctx.isAutoSend, ctx.isEarlyConversation);
       // block は evidence が修正後本文に実在する場合のみ（誤ブロック防止・runFinalCheckと同一）
       if (severity === "block" && !draftNorm.includes(normalizeForMatch(evidence))) severity = "warning";
@@ -3527,10 +3565,51 @@ async function runDiffRecheck(
   }
 }
 
+/** 2026-10-13 ブレイン基準: 書き直しの選び方の記録（selectRevisionIssues の held と、ブレインの裏付けで渡した指摘） */
+type AlignLog = { held: Array<{ issue: CheckIssue; reason: HoldReason }>; brainBacked: string[] };
+/** 書き直しに渡す指摘を選ぶ（warning・block の道で同じ関数）。旧の条件（isRevisable・本質とぶつからない・引用が本文にそのまま）は FINAL_CHECK_BRAIN_ALIGN=off で戻る */
+function pickRevisionIssues(issues: CheckIssue[], draft: string, ctx: FinalCheckContext, log: AlignLog): CheckIssue[] {
+  const draftNorm = normalizeForMatch(draft);
+  const legacyAnchored = (i: CheckIssue) => !i.evidence || draftNorm.includes(normalizeForMatch(i.evidence));
+  const { pass, held } = selectRevisionIssues(issues, draft, {
+    contract: ctx.turnContract ?? null,
+    customerQuestions: ctx.customerQuestions ?? null,
+    isRevisable,
+    // 2026-10-08 竹内さん Q1「本質を勝たせる」: 本質に反する中身を足させる指摘（閉じる番に要素・本質に無い確認の約束・AIX／触れない項目への答え）は書き直しに渡さない
+    contradicts: (i) => issueContradictsContract(i, ctx.turnContract ?? null),
+    legacyAnchored,
+  });
+  log.held = held;
+  log.brainBacked = pass.filter((i) => !legacyAnchored(i)).map((i) => i.code);
+  return pass;
+}
+
 export async function runFinalCheckWithRevision(
   draft: string,
   ctx: FinalCheckContext,
   budgetMs = 90000,  // check1(≤30s) + verify(≤8s) + revision(≤15s) + recheck(≤15s) = 68s + 22sバッファ（呼び出し元は90s/60sを渡す）
+): Promise<RevisionLoopResult> {
+  const log: AlignLog = { held: [], brainBacked: [] };
+  const r = await runFinalCheckWithRevisionCore(draft, ctx, budgetMs, log);
+  // 2026-10-13 ブレイン基準: 残った指摘に「直さなかった理由」を付け、ブレインとぶつかる warning は画面の指摘から外す（brain_overruled に残す）
+  if (finalCheckBrainAlignEnabled()) {
+    const fc = r.finalCheck;
+    const revised = r.finalDraft !== draft;
+    const { shown, overruled } = annotateUnfixed(fc.issues, log.held, fc.revision_dropped ?? null, revised);
+    fc.issues = shown;
+    if (overruled.length) fc.brain_overruled = overruled;
+    fc.ok = !fc.issues.some((i) => i.severity === "block");
+    if (log.held.length) fc.revision_held = log.held.map((h) => `${h.issue.code}:${h.reason}`);
+    if (log.brainBacked.length) fc.revision_brain_backed = log.brainBacked;
+  }
+  return r;
+}
+
+async function runFinalCheckWithRevisionCore(
+  draft: string,
+  ctx: FinalCheckContext,
+  budgetMs: number,
+  alignLog: AlignLog,
 ): Promise<RevisionLoopResult> {
   const started = Date.now();
   let checkIterations = 0;
@@ -3587,16 +3666,10 @@ export async function runFinalCheckWithRevision(
     }
 
     // (2) 接地修正（失敗/ガード違反は null = fail-open）
-    const draftNormW = normalizeForMatch(draft);
-    const passableWarnIssues = check1.issues.filter(
-      (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
-        // 2026-09-10 Fable5: CELL_AVOID_CONFLICT は診断専用（本文を直しても解消しない）＝修正ループに渡さない
-        // 2026-09-11 竹内方針1（V-1）: 観測専用・表示のみ・誤字・info は isRevisable で除外（「要素を足す書き直し」を修正 LLM に渡さない）
-        isRevisable(i) &&
-        // 2026-10-08 竹内さん Q1「本質を勝たせる」: 本質に反する中身を足させる指摘（閉じる番に要素・本質に無い確認の約束・AIX／触れない項目への答え）は書き直しに渡さない
-        !issueContradictsContract(i, ctx.turnContract ?? null) &&
-        (!i.evidence || draftNormW.includes(normalizeForMatch(i.evidence)))
-    );
+    // 2026-09-10 Fable5: CELL_AVOID_CONFLICT は診断専用（本文を直しても解消しない）＝修正ループに渡さない
+    // 2026-09-11 竹内方針1（V-1）: 観測専用・表示のみ・誤字・info は isRevisable で除外（「要素を足す書き直し」を修正 LLM に渡さない）
+    // 2026-10-13 ブレイン基準: 引用が本文に「そのまま」ある指摘だけ → 引用の断片が本文にある／ブレインが答えると決めた項目の取りこぼし も渡す（pickRevisionIssues）
+    const passableWarnIssues = pickRevisionIssues(check1.issues, draft, ctx, alignLog);
     if (passableWarnIssues.length === 0) return dropW("no_passable");
     // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」:
     //   直す指摘が全部「文に間違いの無い文体」（開口語・締め・言い回しの数・骨格・共感の言い方。final-check-scope の isStyleOnlyNoError）なら書き直さない。
@@ -3678,15 +3751,9 @@ export async function runFinalCheckWithRevision(
     // 時間予算: 残りが 修正+再チェック に満たなければ修正せず即スタッフ確認へ
     if (budgetMs - (Date.now() - started) < REVISION_MS + RECHECK_MS) { droppedB = "budget"; break; }
 
-    const draftNormB = normalizeForMatch(currentDraft);
-    const passableBlockIssues = currentCheck.issues.filter(
-      (i) => i.code !== "UNCHECKED_AUTO_SEND" &&
-        // 2026-09-11 竹内方針1（V-1）: block と一緒に観測専用・表示のみ・誤字の指摘を修正 LLM へ渡さない（同じ isRevisable）
-        isRevisable(i) &&
-        // 2026-10-08 竹内さん Q1「本質を勝たせる」: 本質に反する中身を足させる指摘（閉じる番に要素・本質に無い確認の約束・AIX／触れない項目への答え）は書き直しに渡さない
-        !issueContradictsContract(i, ctx.turnContract ?? null) &&
-        (!i.evidence || draftNormB.includes(normalizeForMatch(i.evidence)))
-    );
+    // 2026-09-11 竹内方針1（V-1）: block と一緒に観測専用・表示のみ・誤字の指摘を修正 LLM へ渡さない（同じ isRevisable）
+    // 2026-10-13 ブレイン基準: warning の道と同じ選び方（pickRevisionIssues）
+    const passableBlockIssues = pickRevisionIssues(currentCheck.issues, currentDraft, ctx, alignLog);
     if (passableBlockIssues.length === 0) { droppedB = "no_passable"; break; }
     // 2026-09-09 行動台帳: block が台帳系（再度／お送りした／完了形）だけなら決定論置換（applyLedgerAutoFix）で直す（Sonnet 15s 節約・意味の変質ゼロ）。
     //   他の block が混在する時は Sonnet 修正に台帳の根拠・制約を添える

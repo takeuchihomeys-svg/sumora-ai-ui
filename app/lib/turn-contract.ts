@@ -274,6 +274,8 @@ export function contractAllowsConfirmPromise(c: TurnContract | null | undefined,
  */
 export function issueContradictsContract(issue: { code: string; message?: string; evidence?: string; suggestion?: string }, c: TurnContract | null | undefined, env?: Record<string, string | undefined>): boolean {
   if (!c || c.source !== "brain" || !turnContractFinalCheckEnabled(env)) return false;
+  // 2026-10-13: 本質そのものを物差しにした指摘（final-check-brain-align.contractConfirmMiss）は本質とぶつからない
+  if (issue.code === "CONTRACT_UNASKED_CONFIRM") return false;
   const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH)$/;
   if (c.closeOnly && ADD_CODES.test(issue.code)) return true;
   const msg = `${issue.message ?? ""} ${issue.evidence ?? ""} ${issue.suggestion ?? ""}`;
