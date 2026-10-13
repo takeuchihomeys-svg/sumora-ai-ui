@@ -1,4 +1,5 @@
 // app/lib/__tests__/brain-route-type.test.ts — 返信か AIX かの材料（実行: npx tsx app/lib/__tests__/brain-route-type.test.ts）
+import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS } from "../brain-rules-facts";
 import { routeTypeOf, pickRouteExamples, routeTypeBrainText, routeStatLine, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteExample } from "../brain-route-type";
 import { ROUTE_EXAMPLES, ROUTE_TYPE_STATS } from "../brain-route-type-data";
 import { lowPressNote, catalogBlockForBrain } from "../aix-catalog";
@@ -87,6 +88,12 @@ t("材料: 確認と見積の約束", /確認（果たすのは AIX【物件確�
 const dl: Parameters<typeof applyOverride>[0] = [];
 t("下げた時は記録して false", applyOverride(dl, "staff_promise", "promise:check", "property_check_result", null, {}) === false && dl.length === 1 && dl[0].family === "staff_promise");
 t("上書きのままの家族は true（記録なし）", applyOverride(dl, "turn_route_guards", "guard:not_pickup_turn", null, "property_send", {}) === true && dl.length === 1);
+
+// ── 10/14 入口の洗い出し #3: 品質ルール⑥⑦⑧を事実の材料に（brain-rules-facts）
+t("⑥⑦⑧の事実の材料: 既定 on・戻す BRAIN_RULES_678_FACTS=off", rules678FactsEnabled({}) && !rules678FactsEnabled({ BRAIN_RULES_678_FACTS: "off" }));
+t("⑥: aix を null と決め打ちしない・竹内さんの数がある", !/aix フィールドは null にする/.test(RULE6_FACTS) && /36番＝23%/.test(RULE6_FACTS));
+t("⑦: 弔事・病気のキャンセルの線は残す・お客様の恐縮とスタッフの文の語は外す", /弔事・病気/.test(RULE7_FACTS) && /恐縮/.test(RULE7_FACTS) && /スタッフ自身の文の語/.test(RULE7_FACTS));
+t("⑧: 別物件の提案を禁止しない（代わりの物件・続けて1件の事実）", !/別物件の提案」を追加/.test(RULE8_FACTS) && /82%/.test(RULE8_FACTS));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

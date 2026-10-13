@@ -35,7 +35,9 @@ t("topicKey: 条件は条件:〈値〉", topicKey("property_check_result/mgmt_pe
 // ブレインに渡す一覧（場面で絞る）
 const v = catalogBlockForBrain("viewing");
 t("内覧の場面に 内覧日調整・待ち合わせ がある", /viewing_invite【/.test(v) && /meeting_place【/.test(v));
-t("内覧の場面に 条件ヒアリング は無い", !/condition_hearing【/.test(v));
+t("内覧の場面に 条件ヒアリング の行（ピッカーの細目）は無い・場面の外の1行には名前がある（10/14）", !/^- condition_hearing【/m.test(v) && /今の場面の外のボタン.*condition_hearing【/.test(v));
+t("10/14: 場面 other でも 申込へ・内覧調整・見積書送る・待ち合わせ場所 の名前が出る", ["application_push【", "viewing_invite【", "estimate_sheet【", "meeting_place【"].every((x) => catalogBlockForBrain("other").includes(x)));
+t("10/14: 戻す BRAIN_CATALOG_ALL_BUTTONS=off で旧（場面の外は出ない）", !/condition_hearing【/.test(catalogBlockForBrain("viewing", { env: { BRAIN_CATALOG_ALL_BUTTONS: "off" } })));
 t("判断の順番が先頭", v.startsWith("【返信か AIX かの決め方"));
 t("確認した（条件・交渉）に 代表／オーナー が出る", /代表に確認した/.test(catalogBlockForBrain("question")) && /オーナーに確認した/.test(catalogBlockForBrain("question")));
 t("ブレインが選ばないボタン（電話終了後・物件を探す）は出ない", !/phone_followup【|property_search【/.test(catalogBlockForBrain(null)));
@@ -43,5 +45,6 @@ t("全力サポート・内覧挨拶はブレインに出る（10/08 竹内さ�
 t("AIX で送る定型（条件ヒアリング・申込フォーマット・内覧挨拶）の決まりが判断の順番にある", /⑤ スタッフだけが知る情報が無くても AIX で送る物/.test(catalogBlockForBrain("other")));
 t("結果のピッカー（物件あった等）はまとめて1行・ブレインは空", /結果のピッカー（物件あった／/.test(catalogBlockForBrain("property_share")));
 const lens = (["ack", "question", "conditions", "property_share", "viewing", "cost", "apply", "considering", "other"] as const).map((s) => catalogBlockForBrain(s).length);
-t(`場面ごとの長さは 5,000字以内（${lens.join("/")}）`, lens.every((n) => n <= 5000));
+// 10/14 場面の外のボタンの1行を足した（最大 約5,200字）
+t(`場面ごとの長さは 5,500字以内（${lens.join("/")}）`, lens.every((n) => n <= 5500));
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

@@ -387,14 +387,28 @@ export function lowPressNote(aixType: string, env: Record<string, string | undef
   return LOW_PRESS_NOTES[aixType] ?? "";
 }
 
-export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { includeAll?: boolean } = {}): string {
-  const rows = AIX_CATALOG.filter((e) => e.brainSelectable && (o.includeAll || !scene || !e.scenes.length || e.scenes.includes(scene)));
+/**
+ * 2026-10-14（ブレインの入口の洗い出し #2）: 決定論の場面（reply-scene）でボタンまで絞ると、場面 other で申込へ・内覧調整・見積書送る・待ち合わせ場所が消えた
+ *   （60日・押下ありの 458番中、押された AIX が一覧に無い番 80＝17.5%・other では 54中24。「ここの家で決めたいです」「1303号室でお願いします」「ここ見てみたいです」）。
+ *   ボタンは全場面で全部出し、場面で絞るのはピッカーの細目だけ（場面外のボタンはピッカーの行を省いて1行）。戻す: BRAIN_CATALOG_ALL_BUTTONS=off
+ */
+export function catalogAllButtonsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_CATALOG_ALL_BUTTONS ?? "").trim().toLowerCase() !== "off";
+}
+export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { includeAll?: boolean; env?: Record<string, string | undefined> } = {}): string {
+  const inScene = (e: CatalogEntry) => o.includeAll || !scene || !e.scenes.length || e.scenes.includes(scene);
+  const allButtons = catalogAllButtonsEnabled(o.env);
+  const rows = AIX_CATALOG.filter((e) => e.brainSelectable && (allButtons || inScene(e)));
   const byBtn = new Map<string, CatalogEntry[]>();
   for (const e of rows) { const k = `${e.aixType}|${e.button}`; if (!byBtn.has(k)) byBtn.set(k, []); byBtn.get(k)!.push(e); }
   const lines: string[] = [AIX_DECISION_ORDER, `【AIX のボタン×ピッカー（${scene ? `場面「${scene}」に関係する物` : "全部"}）＝aix の値はボタンのキー・check_pattern はピッカーの値】`];
-  for (const [k, es] of byBtn) {
+  const outside: string[] = [];
+  for (const [k, es0] of byBtn) {
     const [t, btn] = k.split("|");
     const bk = BUTTON_KNOW[t];
+    // 場面の外のボタンは1行にまとめる（ボタン名と送る情報の頭だけ・ピッカーの細目は省く）
+    if (allButtons && !es0.some(inScene)) { outside.push(`${t}【${btn}】${bk?.staffOnly ? `＝${Array.from(bk.staffOnly).slice(0, 24).join("")}` : ""}`); continue; }
+    const es = allButtons ? es0.filter(inScene) : es0;
     lines.push(`- ${t}【${btn}】 送る情報: ${bk?.staffOnly || "（定型の文・フォーム。スタッフだけが知る情報なし）"}${bk?.lines && !es[0].picker ? `｜線: ${bk.lines}` : ""}${!es[0].picker ? `｜使う時: ${es[0].when}` : ""}`);
     const low = lowPressNote(t);
     if (low) lines.push(`    ・${low}`);
@@ -414,5 +428,6 @@ export function catalogBlockForBrain(scene: ReplyScene | null | undefined, o: { 
       lines.push(`    ・${e.picker!.label}（${e.picker!.value}）: ${e.when}${own ? `｜${own}` : ""}`);
     }
   }
+  if (outside.length) lines.push(`- 今の場面の外のボタン（場面の読みが外れていることもある＝会話の事実で選んでよい・ピッカーは画面でスタッフが選ぶ）: ${outside.join(" ／ ")}`);
   return lines.join("\n");
 }
