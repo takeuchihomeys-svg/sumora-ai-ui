@@ -17,6 +17,7 @@
 // テスト: app/lib/__tests__/turn-contract.test.ts
 
 import type { RequestItem, RequestTopic } from "./request-ledger";
+import { alreadySaidAllowance } from "./repeat-brain-align";
 
 /** 1つの依頼への答え方 */
 export type AnswerRoute =
@@ -245,10 +246,12 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   if (!c) return "";
   if (!c.asks.length && !c.closeOnly && !c.alreadySaid.length && !c.settled.length) return "";
   const L: string[] = [];
+  // 2026-10-13 繰り返し（repeat-brain-align）: 竹内さんが言い直す形だけ許す1行（戻す REPEAT_BRAIN_ALIGN=off）
+  const allowance = c.alreadySaid.length ? alreadySaidAllowance() : "";
   L.push(`【🧭 この番の本質（${c.source === "brain" ? "ブレインの判断" : "依頼の一覧"}・最上位）】中身（何に答える・何を約束する・何を言わない）はここで決まる。下の場面の型・学習ルール・手本・注記は**形**（開口語・字数・言い回し・締め）だけに使い、ここと違う中身を足さない・消さない。ただし安全の線（スタッフだけが知る事・金額・空き・内覧の確定を本文で言い切らない）はここより上。`);
-  if (c.closeOnly) L.push("- 返事の要らない番: 受けの一言＋締めだけ（竹内さんの形「はい😊！！⏎何卒よろしくお願い致します！！」・よろしくだけへの返し 62%・了承だけ 65% が何卒）。前にした約束・予定・日付を言い直さない。新しい約束・提案・説明を足さない（お客様が『決まったら連絡します』等と待ってと言った時は「お決まりになりましたらご連絡ください」の形・物件を送り続ける約束をしない）。");
+  if (c.closeOnly) L.push(`- 返事の要らない番: 受けの一言＋締めだけ（竹内さんの形「はい😊！！⏎何卒よろしくお願い致します！！」・よろしくだけへの返し 62%・了承だけ 65% が何卒）。前にした約束・予定・日付を言い直さない${allowance ? "（ただし下の「もう言った事」の竹内さんの形＝待ちの形のピックアップの1文は可）" : ""}。新しい約束・提案・説明を足さない（お客様が『決まったら連絡します』等と待ってと言った時は「お決まりになりましたらご連絡ください」の形・物件を送り続ける約束をしない）。`);
   c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」→ ${ROUTE_JA[a.route]}${a.answer ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
-  if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}`);
+  if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);
   if (c.proposals.length) L.push(`- こちらから添える提案（消さない・確認の約束に置き換えない）: ${c.proposals.join(" ／ ")}`);
@@ -275,7 +278,7 @@ export function contractAllowsConfirmPromise(c: TurnContract | null | undefined,
 export function issueContradictsContract(issue: { code: string; message?: string; evidence?: string; suggestion?: string }, c: TurnContract | null | undefined, env?: Record<string, string | undefined>): boolean {
   if (!c || c.source !== "brain" || !turnContractFinalCheckEnabled(env)) return false;
   // 2026-10-13: 本質そのものを物差しにした指摘（final-check-brain-align.contractConfirmMiss）は本質とぶつからない
-  if (issue.code === "CONTRACT_UNASKED_CONFIRM") return false;
+  if (issue.code === "CONTRACT_UNASKED_CONFIRM" || issue.code === "BRAIN_ALREADY_SAID") return false;
   const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH)$/;
   if (c.closeOnly && ADD_CODES.test(issue.code)) return true;
   const msg = `${issue.message ?? ""} ${issue.evidence ?? ""} ${issue.suggestion ?? ""}`;

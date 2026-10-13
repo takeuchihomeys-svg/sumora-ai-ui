@@ -289,6 +289,7 @@ import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
 import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
+import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine } from "@/app/lib/repeat-brain-align";
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
 import { dedupeExamplesBySent, isReplyUnsafeKnowledge, ragReplyCleanEnabled } from "@/app/lib/rag-garbage";
@@ -968,7 +969,7 @@ function buildGenerationMessages(
     /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX（物件確認した）で答えた（checkAnsweredFollowUp） */
     checkAnsweredFollowUp?: boolean } | null = null,
   // 2026-10-07 場面の整理（reply-scene.ts）: この番の場面と、場面ごとの材料の取捨を効かせるか。null／on=false は今まで通り全部
-  sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean } | null = null,
+  sceneSel: { scene: ReplyScene | null; on: boolean; ackUnified?: boolean; brainContract?: boolean } | null = null,
 ): [SystemMessage, HumanMessage] {
   const sceneKeep = (k: Parameters<typeof keepMaterial>[1]) => keepMaterial(sceneSel?.scene ?? null, k, !!sceneSel?.on);
   const jstHour = getJSTHour();
@@ -1283,8 +1284,12 @@ function buildGenerationMessages(
 例: 「はい😊！！気になるお部屋があればいつでもお送りください！！こちらでも随時ピックアップしてお送りさせて頂きます😊！！何卒よろしくお願い致します！！」`
     : "";
 
+  // 2026-10-13 繰り返し（repeat-brain-align）: ブレインの本質がある番は、約束の言い直しの「最優先」ノートを材料に下げる（中身は本質の「もう言った事」が上）。
+  //   ピックアップの約束の後の受けだけの番は竹内さんの形（言い切りの約束→待ちの形の1文 8/10）を渡す。戻す REPEAT_BRAIN_ALIGN=off
+  const brainContractOn = !!sceneSel?.brainContract;
+  const pickupAckMat = brainContractOn ? pickupAckMaterial() : null;
   const pickupPromiseAckNote = (!isFollowUp && staffPromisedPickup && isShortAckMsg)
-    ? `\n【🚫 ピックアップ宣言の繰り返し禁止（最優先・フェーズ別パターン/条件変更検出より上位）】
+    ? pickupAckMat ?? `\n【🚫 ピックアップ宣言の繰り返し禁止（最優先・フェーズ別パターン/条件変更検出より上位）】
 スタッフは直前の返信で既に「物件をピックアップしてお送りします」と約束済み。今回のお客様のメッセージはその約束に対する感謝・承諾のみ。
 → 「ピックアップしてお送りさせて頂きます」宣言・エリアや家賃等の条件列挙・「初期費用も最大限割引」文を絶対にもう一度生成しない（二重宣言になる）
 → 返信は短い確認文のみ（2行以内・挨拶ルールに従う）。例:「はい😊！！何卒よろしくお願い致します😌！！」
@@ -1902,7 +1907,7 @@ ${aixDone.answeredByAix
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? moveInTimingNote : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + newConditionRequestNote + conditionExpansionNote + searchAgainNote : ""}${promiseEchoNote}${waitFormAckNote}${pickupPromiseAckNote}${estimatePromiseAckNote}${aixDoneAckNote}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? moveInTimingNote : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + newConditionRequestNote + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${sceneKeep("knowledge") ? knowledgeNote : ""}
@@ -5051,7 +5056,7 @@ async function handleGenerateReply(req: NextRequest) {
           //   50% で書いた。実送信の同場面は 返信なし24.3%／物件カード56.8%／「はい！！」＋何卒だけ8.1%／再宣言5.4%。
           //   本文から消す出口は入れない（スタッフ自身の再宣言も 31.9% あり誤削除になる）。率を渡して受けだけにする（入口）。
           if (effectiveAction === "property_send" && brainMeta?.pending_pickup === true) {
-            lines.push(`- ⚠ 直前のピックアップ宣言がまだ果たされていない（物件は AIX で送る）。この場面の実送信: 返信なし24%／物件そのものを送る57%／「はい！！」＋何卒の受けだけ8%／同じ宣言の再宣言5%。**再宣言（「ピックアップ出来次第お送りします」「募集出次第お送りします」）は書かず、受けだけ（「はい！！」＋締め）の2行以内**にする`);
+            lines.push((turnContract?.source === "brain" ? pendingPickupAckLine() : null) ?? `- ⚠ 直前のピックアップ宣言がまだ果たされていない（物件は AIX で送る）。この場面の実送信: 返信なし24%／物件そのものを送る57%／「はい！！」＋何卒の受けだけ8%／同じ宣言の再宣言5%。**再宣言（「ピックアップ出来次第お送りします」「募集出次第お送りします」）は書かず、受けだけ（「はい！！」＋締め）の2行以内**にする`);
           }
           // property_check_result 時は propertyFactGateNote の保証会社名断言禁止を解除して明示を強制
           if (effectiveAction === "property_check_result") {
@@ -5855,7 +5860,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       applyReadinessNote,      // 2026-09-20 竹内: 申込が近い合図（hot の時だけ・文面ではなく材料）
       ownProperty && ownProperty.ours > 0 ? { note: ownProperty.note, all: ownProperty.all } : null, // 2026-09-22 こちらが送った物件の送り返し
       { lastStaffBlockOverride: staffBlock.dropped > 0 ? staffBlock.text : undefined, viewingScheduled, viewingAppointment: ledger.facts.viewingAppointment, checkAnsweredFollowUp }, // 2026-09-26 済んだ事（done-state）
-      { scene: replyScene, on: sceneMaterialsOn, ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
+      { scene: replyScene, on: sceneMaterialsOn, brainContract: turnContract?.source === "brain", ackUnified: testFlags.ack_unified ? testFlags.ack_unified === "on" : (process.env.REPLY_ACK_UNIFIED ?? "").toLowerCase() !== "off" }, // 2026-10-07 場面の整理（3巡目: 短い了承の判定も場面に寄せる）
     );
 
     // ─── reply_modeゲート チェックポイントB（本命）───

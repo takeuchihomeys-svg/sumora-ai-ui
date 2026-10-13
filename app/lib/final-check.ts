@@ -97,6 +97,8 @@ import { isMissingElementRuleFlag, isPassiveMisfire, isAllowedDiscountMisfire, s
 import { issueContradictsContract, renderTurnContractNote, isConfirmPromiseAsk, type TurnContract } from "./turn-contract";
 // 2026-10-13 竹内さん「指摘のアナウンスでブレインが正しいが、実際の文が修正されていない」: 直すかどうかをブレインの判断にそろえる
 import { selectRevisionIssues, annotateUnfixed, finalCheckBrainAlignEnabled, contractConfirmMiss, type HoldReason } from "./final-check-brain-align";
+import { contractAlreadySaidRepeat } from "./repeat-brain-align";
+import { isAckOnlyTurn } from "./draft-repeat";
 
 export type CheckPass = "rule_check" | "anomaly_scan" | "context_check" | "meta";
 export type CheckSeverity = "block" | "warning" | "info";
@@ -1957,6 +1959,23 @@ export function runDeterministicChecks(text: string, ctx: FinalCheckContext): Ch
       evidence: cm.sentence,
       suggestion: cm.suggestion,
     });
+  }
+
+  // ⑱ 2026-10-13 繰り返し（repeat-brain-align.contractAlreadySaidRepeat）: ブレインの本質の「もう言った事」を言い直した文。
+  //   旧は LLM の DOUBLE_DECLARATION（揺れる・引用が要約で本文に無いと直らない）だけ＝ブレインは知っているのに直らない。
+  //   竹内さんが言い直す形（待ちの形のピックアップ・撮影の約束・日付の締め・中身のある番の約束）は外す。60日の下書き 493番で 4（誤り 0）・竹内さんの実送信に当てて 0。
+  //   warning・引用＝本文の文＝書き直しに渡る。戻す REPEAT_BRAIN_ALIGN=off
+  if (ctx.turnContract && ctx.turnContract.source === "brain" && ctx.turnContract.alreadySaid.length) {
+    const custMsgs = String(ctx.lastCustomerMessage ?? "").split("⁣").map((s) => s.trim()).filter(Boolean);   // 連投は MSG_SEP（\n⁣\n）でつないである
+    const rp = contractAlreadySaidRepeat(text, ctx.turnContract.alreadySaid, { customerAddsContent: !custMsgs.length || !isAckOnlyTurn(custMsgs) });
+    if (rp) {
+      issues.push({
+        pass: "rule_check", severity: "warning", code: "BRAIN_ALREADY_SAID",
+        message: `ブレインの「もう言った事」（「${rp.ref.slice(0, 40)}」）をもう一度書いています`,
+        evidence: rp.sentence,
+        suggestion: rp.suggestion,
+      });
+    }
   }
 
   return issues;

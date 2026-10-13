@@ -26,6 +26,8 @@
 //   知らない物を黙って捨てない（設計知見「迷ったら安全側」）。
 //   fact（一覧は持たない＝既定）に入る物の例: FABRICATED_*・*_ASSERTION・UNSENT_CLAIM・RENT_NEGOTIATION_PROMISE・
 //   MGMT_DISCOUNT_NEGOTIATION_PROMISE・COMPANY_FACT_CONTRADICTION（2026-09-23 会社の事実に反する断定・block）
+//   BRAIN_ALREADY_SAID（2026-10-13 ブレインの「もう言った事」の言い直し・repeat-brain-align）はわざと fact（＝出す・書き直しに渡す）:
+//     文体ではなくブレインが決めた中身（もう言った事）に反する。style に入れると isStyleNoErrorCode で書き直しから外れ、竹内さんの「気づくのに直らない」に戻る
 
 export type IssueScope = "fact" | "safety" | "style";
 
