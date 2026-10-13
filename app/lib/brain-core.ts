@@ -56,7 +56,7 @@ import { brainSceneMaterialsEnabled, sceneActionRules, keepBrainMaterial } from 
 import { catalogBlockForBrain } from "@/app/lib/aix-catalog";
 import { resolveReplyScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { judgeExamplesEnabled, pickJudgeExamples, judgeExamplesBrainText } from "@/app/lib/brain-judge-examples";
-import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS } from "@/app/lib/brain-rules-facts";
+import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, STAGE_PROPOSING_FACTS, STANCE_WAIT2_FACTS, actionRulesJudgeOnlyEnabled, isAixWritingRule } from "@/app/lib/brain-rules-facts";
 import { routeTypeOf, routeTypeBrainText, pickRouteExamples, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteType } from "@/app/lib/brain-route-type";
 import { ROUTE_TYPE_STATS, ROUTE_EXAMPLES } from "@/app/lib/brain-route-type-data";
 import { JUDGE_EXAMPLES } from "@/app/lib/brain-judge-examples-data";
@@ -2160,7 +2160,10 @@ export async function analyzeConversation(
     // condition_key 付きルールは conversation_state 一致のみ許可（brain は他の条件コンテキストを持たない）
     .filter((r) => !r.condition_key || (r.condition_key === "conversation_state" && r.condition_value === convStatus))
     // 恒久グローバル枠（promptRules）と本文重複するものは除外
-    .filter((r) => !promptRules.some((p) => p.rule_text === r.rule_text));
+    .filter((r) => !promptRules.some((p) => p.rule_text === r.rule_text))
+    // 2026-10-14（入口の洗い出し #1）: AIX の文の書き方の規則（DIFF-POLICY・LEARN-AIX・構成／冒頭／語尾…）はブレインの判断の材料にならない＝AIX の生成の側だけ。
+    //   判断に関わる行だけ渡す（戻す BRAIN_ACTION_RULES_JUDGE_ONLY=off）
+    .filter((r) => !actionRulesJudgeOnlyEnabled() || !isAixWritingRule(r));
   const actionRules = brainSceneOn ? sceneActionRules(actionRulesFiltered, brainScene, true) : actionRulesFiltered;
   const actionRulesText = actionRules.length > 0
     ? `\n【アクション別ルール（現局面候補: ${actionCandidates.join("/")}）】\n${actionRules.map((r) => `- [${r.action_type}] ${r.rule_text}`).join("\n")}`

@@ -21,4 +21,16 @@ export const RULE8_FACTS = "ルール⑧（1件を推した直後・確認の結
 export const STAGE_PROPOSING_FACTS = "物件提案中（物件を送った後。竹内さんは物件ピックアップの後に続けて1件を推す（10分以内に物件オススメ 82%）・見積書の後に内覧のご案内を添える（46%）。次の一手はお客様の反応で決める）";
 
 /** ⑦の engagement_stance 'wait' の②（語の網）: お客様の発言だけ・恐縮を除く */
-export const STANCE_WAIT2_FACTS = "②直近3メッセージ以内の**お客様自身の**発言に「断り」「キャンセル」「できません」「否決」「残念」等のネガの気持ちがある直後（お客様の恐縮「申し訳ありません」「お手数おかけします」と、スタッフ自身の文の語は除く・ルール⑦の局面）";
+// ─── 2026-10-14 入口の洗い出し #1: ブレインの【アクション別ルール】は判断に関わる行だけ ─────────────
+// 本番の並び（ai_prompt_rules・段階の候補の AIX・priority>=4・40件→場面で15件）の中身はほぼ AIX の文の書き方で、毎回の材料の 19.1%（会話は 8.7%）。
+// 文の書き方の行は AIX の生成（aix-template-generate 等）の側だけが使う。戻す: BRAIN_ACTION_RULES_JUDGE_ONLY=off
+export function actionRulesJudgeOnlyEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_ACTION_RULES_JUDGE_ONLY ?? "").trim().toLowerCase() !== "off";
+}
+const AIX_WRITING_RE = /NG構成|OK構成|冒頭|末尾|文末|語尾|表現|言い回し|書く|書き|明記|記載|構成|一文|1文|添え|締め|絵文字|改行|空行|！！|フレーズ|文は|文では|文に/;
+/** AIX の文の書き方の規則か（判断＝どの AIX・返信か の行でない） */
+export function isAixWritingRule(r: { rule_key?: string | null; rule_text?: string | null }): boolean {
+  return /^(?:DIFF-POLICY|LEARN-AIX)/.test(String(r.rule_key ?? "")) || AIX_WRITING_RE.test(String(r.rule_text ?? ""));
+}
+
+export const STANCE_WAIT2_FACTS ="②直近3メッセージ以内の**お客様自身の**発言に「断り」「キャンセル」「できません」「否決」「残念」等のネガの気持ちがある直後（お客様の恐縮「申し訳ありません」「お手数おかけします」と、スタッフ自身の文の語は除く・ルール⑦の局面）";

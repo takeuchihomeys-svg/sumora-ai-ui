@@ -1,5 +1,5 @@
 // app/lib/__tests__/brain-route-type.test.ts — 返信か AIX かの材料（実行: npx tsx app/lib/__tests__/brain-route-type.test.ts）
-import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS } from "../brain-rules-facts";
+import { rules678FactsEnabled, RULE6_FACTS, RULE7_FACTS, RULE8_FACTS, isAixWritingRule, actionRulesJudgeOnlyEnabled } from "../brain-rules-facts";
 import { routeTypeOf, pickRouteExamples, routeTypeBrainText, routeStatLine, routeTypeMaterialEnabled, routeTypeExamplesEnabled, type RouteExample } from "../brain-route-type";
 import { ROUTE_EXAMPLES, ROUTE_TYPE_STATS } from "../brain-route-type-data";
 import { lowPressNote, catalogBlockForBrain } from "../aix-catalog";
@@ -94,6 +94,11 @@ t("⑥⑦⑧の事実の材料: 既定 on・戻す BRAIN_RULES_678_FACTS=off", r
 t("⑥: aix を null と決め打ちしない・竹内さんの数がある", !/aix フィールドは null にする/.test(RULE6_FACTS) && /36番＝23%/.test(RULE6_FACTS));
 t("⑦: 弔事・病気のキャンセルの線は残す・お客様の恐縮とスタッフの文の語は外す", /弔事・病気/.test(RULE7_FACTS) && /恐縮/.test(RULE7_FACTS) && /スタッフ自身の文の語/.test(RULE7_FACTS));
 t("⑧: 別物件の提案を禁止しない（代わりの物件・続けて1件の事実）", !/別物件の提案」を追加/.test(RULE8_FACTS) && /82%/.test(RULE8_FACTS));
+
+// ── 10/14 入口の洗い出し #1: アクション別ルールは判断の行だけ
+t("文の書き方の規則（DIFF-POLICY・構成・冒頭）は外す", isAixWritingRule({ rule_key: "DIFF-POLICY-AIX-1", rule_text: "x" }) && isAixWritingRule({ rule_key: "R1", rule_text: "冒頭は「お世話になっております」から書く" }));
+t("判断の規則は残す", !isAixWritingRule({ rule_key: "R2", rule_text: "見積書の後の前向きな反応だけでは申込へを選ばない" }));
+t("戻す BRAIN_ACTION_RULES_JUDGE_ONLY=off", actionRulesJudgeOnlyEnabled({}) && !actionRulesJudgeOnlyEnabled({ BRAIN_ACTION_RULES_JUDGE_ONLY: "off" }));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
