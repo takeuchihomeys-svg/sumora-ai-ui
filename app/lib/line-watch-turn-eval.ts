@@ -9,6 +9,10 @@ import { resolveAckTopicScope, outOfTopicActs } from "./ack-topic-scope";
 import { sceneKeyOf, type SceneKey } from "./line-watch-turn";
 
 const P = (s: string) => Date.parse(s);
+/** 2026-10-13 v7「手打ちでも AIX の番」の判定を使うか（既定 on・戻す LINE_WATCH_STAFF_FACT=off） */
+export function staffFactJudgeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.LINE_WATCH_STAFF_FACT ?? "").trim().toLowerCase() !== "off";
+}
 
 /** 判定に要る line_watch_turns の列（1段目の控え） */
 export type WatchTurnInput = {
@@ -48,6 +52,8 @@ export function evalWatchTurn(t: WatchTurnInput, ctx: {
   const j = judgeTurn({
     draft: pick.draft, sentinel: t.draft_sentinel, brainAction: t.brain_action, brainReplyMode: t.brain_reply_mode,
     convStatus: t.conv_status, hasBrain: (t.brain_versions ?? 0) > 0, window: w, outOfTopicActs: topicOut, staffWriter,
+    // 2026-10-13 v7「手打ちでも AIX の番」: 引用の照合は番の最後のお客様の発言までの会話（msgs は番の4日前から）。戻す: LINE_WATCH_STAFF_FACT=off
+    staffFactGround: staffFactJudgeEnabled() ? upto.map((m) => m.text ?? "").join("\n") : null,
   });
   if (topicOut.length && !j.detail.out_of_topic_acts) j.detail.out_of_topic_acts = topicOut;
   j.detail.draft_src = pick.src;

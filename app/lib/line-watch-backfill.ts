@@ -145,8 +145,9 @@ export type SkipReason = "post_apply" | "no_later_staff" | "no_draft_no_brain" |
  *   ②ブレインの判断が無い（9/05 より前・番に判断が無い）: AI が AIX を出したかが分からない → スタッフが AIX を押した番（text_but_aix・
  *     text_plus_aix・two_stage_fulfilled）は数えない。文の判定（下書き×送った文）は残す
  */
-export const BF_KEEP_WITHOUT_DRAFT = new Set(["aix_same", "aix_other"]);
-export const BF_NEEDS_BRAIN = new Set(["text_but_aix", "text_plus_aix", "two_stage_fulfilled"]);
+//   2026-10-13 v7: aix_by_text_staff_fact（AI の AIX×手打ちの AIX の中身）は下書きが要らない／two_stage_fulfilled_by_text・text_but_staff_fact は AI が返信だったと分かる事（ブレイン）が要る
+export const BF_KEEP_WITHOUT_DRAFT = new Set(["aix_same", "aix_other", "aix_by_text_staff_fact"]);
+export const BF_NEEDS_BRAIN = new Set(["text_but_aix", "text_plus_aix", "two_stage_fulfilled", "two_stage_fulfilled_by_text", "text_but_staff_fact"]);
 export function guardBackfillJudgement(j: Judgement, o: { hasDraft: boolean; hasBrain: boolean }): Judgement & { bfNa: "no_draft" | "no_brain" | null } {
   const reason = j.detail.reason;
   let why: "no_draft" | "no_brain" | null = null;

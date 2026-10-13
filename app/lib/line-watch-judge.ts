@@ -26,12 +26,18 @@ import { classifyEdit, editCore, factTokensOf, type FactKind } from "./edit-diff
 import { staffActsOf, type StaffAct } from "./customer-sim-shadow";
 import { normalizeAixForMatch } from "./brain-aix-feedback";
 import { sceneKeyOf } from "./line-watch-turn";
+import { classifyAixContent } from "./aix-content-gate";
 
 /** 判定の規則の版（規則を変えたら上げる。再判定の対象を見分ける） */
 //   v3-2026-10-07: スタッフが返さなかった番で、AI の下書きがお礼・了承の番の読むべき範囲の外の行為（お部屋を探す宣言 等）を書いた → different（no_staff_out_of_topic）
 //     （uran. 10/05: 「よろしくお願いいたします」に43日前の物件探しの宣言・スタッフは返さず＝旧は na で数えず見えていなかった。範囲は ack-topic-scope.ts）
 //   v4-2026-10-07: 下書きの欄が __SHOWN__（画面が表示した印）の番は draft_first で比べる（pickJudgeDraft・draft_src）。旧は返信の番の 39% を na にしていた
-export const JUDGE_VERSION = "v6-2026-10-08";
+//   v7-2026-10-13（竹内さん 10/09「手打ちでも AIX の番として考える」・10/13 承認）: スタッフが AIX で送るべき中身（スタッフだけが知る事＝
+//     aix-content-gate.classifyAixContent・引用でない物）を手打ちで送った番は AIX の番として数える。
+//     ①AI は AIX（同じ系統）・スタッフは手打ちでその中身 → same_meaning（aix_by_text_staff_fact）
+//     ②AI は返信・スタッフは手打ちでその中身 → 下書きがその約束（確認・見積・ピックアップ）なら same_meaning（two_stage_fulfilled_by_text）・他は different（text_but_staff_fact）
+//     下書きも同じ系統の中身を言っている番は今まで通り文で比べる。戻す: LINE_WATCH_STAFF_FACT=off（呼び出し側が根拠の文を渡さない＝v6 と同じ判定）
+export const JUDGE_VERSION = "v7-2026-10-13";
 
 export type Verdict = "same" | "same_meaning" | "partial" | "different" | "na";
 export const VERDICTS: readonly Verdict[] = ["same", "same_meaning", "partial", "different", "na"];
@@ -195,6 +201,11 @@ export type JudgeInput = {
    *   返信の書き方の基準は竹内さん（設計知見 22802738）。戻す: STAFF_WRITER_SPLIT=off（呼び出し側が渡さない）
    */
   staffWriter?: { writer: "takeuchi" | "employee" | null; confidence: "sure" | "likely" | "unknown"; source: string } | null;
+  /**
+   * 2026-10-13 v7: 番の最後のお客様の発言までの会話の文（引用の照合に使う・aix-content-gate の groundText）。
+   *   渡した時だけ「手打ちでも AIX の番」を見る（null／未指定は v6 と同じ）。戻す: LINE_WATCH_STAFF_FACT=off（呼び出し側が渡さない）
+   */
+  staffFactGround?: string | null;
 };
 export type VerdictDetail = {
   v: string;
@@ -203,7 +214,7 @@ export type VerdictDetail = {
   final: boolean;
   brain_aix?: string | null;
   staff_aix?: string[];
-  aix_verdict?: "same" | "other" | "not_pressed" | "unexpected" | null;
+  aix_verdict?: "same" | "other" | "not_pressed" | "unexpected" | "by_text" | null;
   text_verdict?: Verdict | null;
   text_reason?: string;
   sim?: number;
@@ -224,6 +235,8 @@ export type VerdictDetail = {
   /** 返事を書いた人（takeuchi｜employee）と根拠（device｜group_speaker｜style_edit｜style）。一致率を竹内さんの番だけで見るため */
   staff_writer?: string | null;
   staff_writer_src?: string | null;
+  /** v7: 返事のまとまりの手打ちにあった AIX の中身（型・aix-catalog の鍵・系統） */
+  staff_fact?: Array<{ kind: string; key: string; family: string }>;
 };
 export type Judgement = { verdict: Verdict | null; detail: VerdictDetail };
 
@@ -255,7 +268,59 @@ export const VERDICT_REASON_JA: Record<string, string> = {
   ask_diff: "聞き返しの有無が違う",
   wording_far: "行為は同じだが言い回しが遠い",
   acts_equal_employee_wording: "行為は同じ・言い回しの差は従業員の書き方（数えない）",
+  aix_by_text_staff_fact: "AI は AIX・スタッフは AIX の中身（スタッフだけが知る事）を手打ちで（AIX の番）",
+  two_stage_fulfilled_by_text: "AI は約束の返信・スタッフはその約束の中身を手打ちで直接（決まりどおり）",
+  text_but_staff_fact: "AI は返信・スタッフは AIX の中身（スタッフだけが知る事）を手打ちで（AIX の番）",
 };
+
+/**
+ * AIX の系統（2026-10-13 v7）。手打ちの文から読める中身は「どのボタンか」まで細かく決まらないので、系統で AI の AIX と照らす。
+ *   物件（送る・オススメ・探す・ピックアップ・全力サポート）／確認（物件確認した・確認した・保証会社）／費用（見積書・費用の説明）／内覧（内覧調整・待ち合わせ）／電話
+ */
+export function aixContentFamily(keyOrAix: string | null | undefined): string {
+  const a = String(keyOrAix ?? "").split("/")[0].trim();
+  if (/^property_(?:send|recommendation|search|pickup)$/.test(a) || a === "zenryoku_support") return "物件";
+  if (a === "property_check_result" || a === "acknowledge_check" || a === "guarantor_info") return "確認";
+  if (a === "estimate_sheet" || a === "cost_breakdown" || a === "cost_explain") return "費用";
+  if (a === "meeting_place" || a === "viewing_invite") return "内覧";
+  if (a === "phone_call") return "電話";
+  return a;
+}
+/** その系統の約束（下書きの行為）。手打ちで約束の中身を直接送った＝2段の決まりどおり */
+const FAMILY_PROMISE: Record<string, StaffAct> = { 確認: "check_promise", 費用: "estimate_promise", 物件: "pickup_promise" };
+
+/**
+ * 見張りだけで足す「手打ちの AIX の中身」の型（aix-content-gate は自動送信の関所なので止めすぎない線＝手打ちの報告の言い方の多くを拾わない）。
+ *   線は scripts/line-watch-rejudge.ts --reason=aix_but_text（直近30日の「AI は AIX・スタッフは手打ち」の番を全部読んだ・2026-10-13）:
+ *   ①確認の結果の報告（「確認させて頂きましたところ」「〜とのご返事でした」「ご返事あり」）②申込の状況（「1番手の方が審査中」「2番手で受け付け」）
+ *   ③内覧の枠（「19:00からのご内覧ですと1件でしたらご案内可能」「9/21日 12:00〜16:00にてご案内可能」）④待ち合わせの時刻（「明日16:00に〇〇現地エントランスお待ち合わせ」）
+ *   これからの約束（「確認させて頂きます」）・聞き返し（「ご都合よろしいお時間」）は当てない。時刻・日付が番までの会話に全部あれば引用（当てない）
+ */
+const WATCH_EXTRA_FACTS: ReadonlyArray<{ kind: string; key: string; re: RegExp; exclude?: RegExp }> = [
+  { kind: "check_reported", key: "property_check_result/mgmt_availability", re: /確認(?:させて(?:頂|いただ)き|し|致し|いたし)ました(?:ところ|が|結果)|(?:との|という)(?:ご)?(?:返事|返答|回答|ご連絡)(?:でした|となりました|がございました)|ご(?:返事|返答)(?:あり|がございました)/, exclude: /(?:返事|返答|回答)(?:が)?(?:あり|有り)次第|確認(?:して|中)/ },
+  { kind: "screening_status", key: "property_check_result/unavailable", re: /[0-9０-９]番手(?:の方|で|にて|と)|審査中(?:と(?:なり|なって)|とのこと|の(?:お客様|方))/ },
+  { kind: "viewing_slot", key: "viewing_invite", re: /[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}[^。\n！!]{0,30}(?:ご案内|ご内覧|内見)(?:が)?(?:可能|出来|でき|かのう)|(?:ご案内|ご内覧)(?:が)?(?:可能|出来|でき)[^。\n]{0,6}(?:時間|お時間)?[^。\n]{0,6}[0-9０-９]{1,2}[:：時]/, exclude: /ご都合|お時間ございますか|でしょうか[^。\n]*$/ },
+  { kind: "meeting_time", key: "meeting_place", re: /[0-9０-９]{1,2}[:：時][0-9０-９]{0,2}[^。\n]{0,40}(?:お?待ち合わせ|現地エントランス)/ },
+];
+function timeDateTokens(s: string): string[] {
+  return [...s.normalize("NFKC").matchAll(/[0-9]{1,2}\s*[\/月]\s*[0-9]{1,2}日?|[0-9]{1,2}[:時][0-9]{0,2}/g)].map((m) => m[0].replace(/\s/g, "").replace(/日$/, ""));
+}
+
+/** 返事のまとまりの手打ちにある AIX の中身（引用でない物だけ）。ground が null なら見ない */
+export function staffFactsOf(staffText: string, ground: string | null | undefined): Array<{ kind: string; key: string; family: string }> {
+  if (ground == null || !staffText.trim()) return [];
+  const out: Array<{ kind: string; key: string; family: string }> = classifyAixContent(staffText, ground).filter((h) => !h.grounded).map((h) => ({ kind: String(h.kind), key: h.catalogKey, family: aixContentFamily(h.catalogKey) }));
+  const g = ground.normalize("NFKC").replace(/\s/g, "");
+  for (const s of staffText.split(/(?<=[。！!？?])|\n/).map((x) => x.trim()).filter(Boolean)) {
+    for (const e of WATCH_EXTRA_FACTS) {
+      if (!e.re.test(s) || (e.exclude && e.exclude.test(s))) continue;
+      const vals = timeDateTokens(s);
+      if (vals.length && vals.every((v) => g.includes(v))) continue; // 決まった日時の引用
+      if (!out.some((o) => o.kind === e.kind)) out.push({ kind: e.kind, key: e.key, family: aixContentFamily(e.key) });
+    }
+  }
+  return out;
+}
 
 /** 似ている度の線（行為が同じ時に same_meaning と見る下限）。監査 audit-line-watch-verdict.ts で決めた */
 export const SAME_MEANING_SIM = 0.5;
@@ -279,6 +344,8 @@ export function judgeTurn(i: JudgeInput): Judgement {
   const cd = cleanDraft(i.draft);
   const sentinel = (i.sentinel ?? cd.sentinel ?? "").trim() || null;
   const draft = cd.text;
+  // v7: 返事のまとまりの手打ちにある AIX の中身（スタッフだけが知る事・引用でない）
+  const sfacts = staffFactsOf(staffText, i.staffFactGround);
 
   if (scene.path === "対象外") return { verdict: "na", detail: { ...base, reason: "out_of_scope" } };
   if (!sentAnything) {
@@ -306,6 +373,10 @@ export function judgeTurn(i: JudgeInput): Judgement {
     if (burstPress.length) {
       const hit = aixOf(burstPress) === "same";
       return { verdict: hit ? "same" : "different", detail: withText({ ...base, reason: hit ? "aix_same" : "aix_other", brain_aix: brainAix, staff_aix: allPress, aix_verdict: hit ? "same" : "other" }) };
+    }
+    // v7: 手打ちでも AIX の番（AI の AIX と同じ系統の中身・AIX の種類なしは系統を問わない）
+    if (sfacts.length && (!brainAix || sfacts.some((f) => f.family === aixContentFamily(brainAix)))) {
+      return { verdict: "same_meaning", detail: withText({ ...base, reason: "aix_by_text_staff_fact", brain_aix: brainAix, staff_aix: allPress, aix_verdict: "by_text", staff_fact: sfacts }) };
     }
     if (text) return { verdict: text.verdict, detail: withText({ ...base, reason: text.reason, brain_aix: brainAix, staff_aix: allPress, aix_verdict: aixOf(allPress) }) };
     if (allPress.length) {
@@ -340,6 +411,16 @@ export function judgeTurn(i: JudgeInput): Judgement {
   if (!draft) {
     if (i.hasBrain === false) return { verdict: "na", detail: withText({ ...base, reason: "no_brain" }) };
     return { verdict: "na", detail: withText({ ...base, reason: sentinel ? "sentinel_only" : "no_draft" }) };
+  }
+  // v7: AI は返信・スタッフは AIX の中身を手打ちで（下書きも同じ系統の中身を言っている番は文で比べる）
+  if (sfacts.length && staffText) {
+    const draftFam = new Set(classifyAixContent(draft, "").map((h) => aixContentFamily(h.catalogKey)));
+    const fresh = sfacts.filter((f) => !draftFam.has(f.family));
+    if (fresh.length) {
+      const dActs = staffActsOf(draft);
+      const fulfilled = fresh.some((f) => FAMILY_PROMISE[f.family] && dActs.has(FAMILY_PROMISE[f.family]));
+      return { verdict: fulfilled ? "same_meaning" : "different", detail: withText({ ...base, reason: fulfilled ? "two_stage_fulfilled_by_text" : "text_but_staff_fact", brain_aix: null, staff_aix: allPress, aix_verdict: "by_text", staff_fact: sfacts }) };
+    }
   }
   if (!staffText) {
     // 返事のまとまりが AIX だけ・文は後から（まとまりの外）→ 後の文と比べない。スタッフは返事をしていない扱い

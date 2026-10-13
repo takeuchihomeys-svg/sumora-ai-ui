@@ -200,5 +200,53 @@ it("pickJudgeDraft: draft_last が __SHOWN__ の番は draft_first で比べる�
   eq(reply(st.draft ?? "", "はい").detail.reason, "sentinel_only");
 });
 
+console.log("v7 手打ちでも AIX の番（2026-10-13・本番の実物・名前は伏せた）");
+const G = "お客様の発言\nお送りいただきましたお部屋の募集状況確認させて頂きます！！"; // 番までの会話（引用の照合）
+const aixFact = (action: string, draft: string | null, staffText: string, ground: string | null = G) =>
+  judgeTurn({ draft, brainAction: action, brainReplyMode: "aix", hasBrain: true, window: win(staffText), staffFactGround: ground });
+const replyFact = (draft: string, staffText: string, ground: string | null = G) =>
+  judgeTurn({ draft, brainAction: "", brainReplyMode: "auto_reply", hasBrain: true, window: win(staffText), staffFactGround: ground });
+it("AI は物件確認した・スタッフは募集終了を手打ち → 同じ事（AIX の番）", () => {
+  const j = aixFact("property_check_result", null, "お待たせいたしました！！ お送りいただきました〇〇は募集が終了しているお部屋となります！！  引き続きオススメできるお部屋ピックアップさせていただきます！！");
+  eq([j.verdict, j.detail.reason, j.detail.aix_verdict], ["same_meaning", "aix_by_text_staff_fact", "by_text"]);
+});
+it("AI は物件確認した・スタッフは確認の結果の報告（〜とのご返事でした）を手打ち → 同じ事", () => {
+  const j = aixFact("property_check_result", null, "管理会社に確認させていただきましたが、まだ一番手お申込みの方での審査中とのご返事でした！！");
+  eq([j.verdict, j.detail.reason], ["same_meaning", "aix_by_text_staff_fact"]);
+});
+it("AI は内覧調整・スタッフは内覧の枠を手打ち → 同じ事（内覧の系統）", () => {
+  const j = aixFact("viewing_invite", null, "土日もご案内可能です😊！！ 10/4日（日曜）13:30〜15:30、18:00〜18:30でしたらお部屋ご案内可能です😌！！");
+  eq([j.verdict, j.detail.reason], ["same_meaning", "aix_by_text_staff_fact"]);
+});
+it("AI は見積書・スタッフは待ち合わせを手打ち → 系統が違う＝今まで通り別の事", () => {
+  const j = aixFact("estimate_sheet", null, "本日12:00に〇〇現地エントランス前待ち合わせの程よろしくお願いいたします！！");
+  eq([j.verdict, j.detail.reason], ["different", "aix_but_text"]);
+});
+it("これからの約束（ご返事あり次第ご連絡）は中身に数えない", () => {
+  const j = aixFact("property_check_result", null, "緊急連絡先での審査が可能か交渉させていただきます！！ 管理会社担当者よりご返事あり次第ご連絡させていただきます😊 ！！");
+  eq(j.detail.reason, "aix_but_text");
+});
+it("決まった日時の引用（番までの会話にある）は中身に数えない", () => {
+  const j = aixFact("meeting_place", null, "明日16:00に〇〇現地エントランスお待ち合わせで何卒よろしくお願い致します😌！！", "明日16:00に〇〇現地エントランスでお待ち合わせ");
+  eq(j.detail.reason, "aix_but_text");
+});
+it("根拠の文を渡さない（LINE_WATCH_STAFF_FACT=off）→ v6 と同じ", () => {
+  const j = aixFact("property_check_result", null, "お送りいただきました〇〇は募集が終了しているお部屋となります！！", null);
+  eq([j.verdict, j.detail.reason], ["different", "aix_but_text"]);
+});
+it("AI は返信（約束でない）・スタッフは管理会社の回答を手打ち → 別の事（AIX の番を返信にした）", () => {
+  const j = replyFact("はい！！ お申込み情報のご連絡ありがとうございます！！", "確認させて頂きましたところ、10月中旬まで工事中となり工事中はご内覧出来ないとの事です！！");
+  eq([j.verdict, j.detail.reason], ["different", "text_but_staff_fact"]);
+});
+it("AI は確認の約束・スタッフはその結果を手打ちで直接 → 同じ事（決まりどおり）", () => {
+  const j = replyFact("お送り頂きましたお部屋の募集状況確認させて頂きます！！ 確認出来次第ご連絡させて頂きます！！", "お送り頂きました〇〇の募集状況確認させていただきましたが、既にご契約が決まったお部屋となります！！");
+  eq([j.verdict, j.detail.reason], ["same_meaning", "two_stage_fulfilled_by_text"]);
+});
+it("AI の下書きも同じ系統の中身を言っている → 今まで通り文で比べる", () => {
+  const d = "〇〇は募集が終了しているお部屋となります！！";
+  const j = replyFact(d, d);
+  eq([j.verdict, j.detail.reason], ["same", "exact"]);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

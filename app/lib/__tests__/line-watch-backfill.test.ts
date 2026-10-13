@@ -88,7 +88,8 @@ it("ブレインが AIX・スタッフが同じ AIX を押した → 下書き�
   eq([plan.source, plan.input.brain_versions, ev.scene.key, g.verdict, g.bfNa], ["brain_decision_logs", 1, "AIX:estimate_sheet", "same", null]);
 });
 it("下書きの欄が空の手本: snapshot があり draftHead も空なら「下書きは無かった」・draftHead があれば分からない（画面が AIX の時に隠した）", () => {
-  const msgs = [cust(0, "何時にどこに行ったらいいですか？"), staff(5, "明日16:00に現地エントランスお待ち合わせで何卒よろしくお願い致します😌！！")];
+  // 2026-10-13 v7: 待ち合わせの時刻を手打ちした文は「手打ちでも AIX の番」（aix_by_text_staff_fact）になるので、中身の無い手打ちの文で下書きの有無を見る
+  const msgs = [cust(0, "何時にどこに行ったらいいですか？"), staff(5, "かしこまりました！！ 追ってご連絡させて頂きます😌！！")];
   const turn = pastTurnsOf(msgs, [], RULES)[0];
   const decs = [dec(2, "meeting_place", "aix")];
   const absent = planBackfillTurn({ conversationId: "c1", turn, msgs, presses: [], examples: [ex("n", 5, null, { has_snapshot: true, draft_head: null })], decisions: decs, nowMs: NOW });
@@ -98,6 +99,15 @@ it("下書きの欄が空の手本: snapshot があり draftHead も空なら「
   eq([absent.draftKnownAbsent, hidden.draftKnownAbsent, noSnap.draftKnownAbsent, absent.example], [true, false, false, null]);
   const ev = evalWatchTurn(absent.input, { msgs, presses: [], decisions: decs, nowMs: NOW });
   eq([ev.judgement.detail.reason, guardBackfillJudgement(ev.judgement, { hasDraft: absent.draftKnownAbsent, hasBrain: true }).verdict, guardBackfillJudgement(ev.judgement, { hasDraft: false, hasBrain: true }).verdict], ["aix_but_text", "different", "na"]);
+});
+it("v7: 待ち合わせの時刻を手打ち（AI は待ち合わせ場所）→ 同じ事・下書きが分からなくても残す（BF_KEEP_WITHOUT_DRAFT）", () => {
+  const msgs = [cust(0, "何時にどこに行ったらいいですか？"), staff(5, "明日16:00に現地エントランスお待ち合わせで何卒よろしくお願い致します😌！！")];
+  const turn = pastTurnsOf(msgs, [], RULES)[0];
+  const decs = [dec(2, "meeting_place", "aix")];
+  const plan = planBackfillTurn({ conversationId: "c1", turn, msgs, presses: [], examples: [], decisions: decs, nowMs: NOW });
+  if ("skip" in plan) throw new Error("skip");
+  const ev = evalWatchTurn(plan.input, { msgs, presses: [], decisions: decs, nowMs: NOW });
+  eq([ev.judgement.detail.reason, guardBackfillJudgement(ev.judgement, { hasDraft: false, hasBrain: true }).verdict], ["aix_by_text_staff_fact", "same_meaning"]);
 });
 it("スタッフの最初の行動の後のブレインの判断は寄せない", () => {
   const msgs = [cust(0), staff(5, "はい")];
