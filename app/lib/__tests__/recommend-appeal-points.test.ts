@@ -28,8 +28,10 @@ t("既定 off・on で入る", !recommendAppealPointsEnabled({}) && recommendApp
   const a = buildAppealPoints(G, wants, { ageMax: 10 });
   t("希望の築10年以内なのに築25年 → 満たさない希望", a.unmet.some((u) => u.key === "new_build"), a.unmet);
   const note = buildAppealPointsNote({ ...a, widened: widenedAxesOf(["AREA_STATION_2STOPS", "SQM_WIDE"]) });
-  t("注記: 強み・広げた所・満たさない所・作らない", /刺さる強み/.test(note) && /希望の駅から2駅/.test(note) && /満たさない所/.test(note) && /資料に無い強みは書かない/.test(note), note);
+  t("注記: 強み・広げた所・満たさない所・作らない", /刺さる強み/.test(note) && /希望の駅から2駅/.test(note) && /満たさない所/.test(note) && /に無い強みは書かない/.test(note), note);
 }
+t("新築は築0年だけ・築1年は築浅", factPhrase("new_build", { building_age: 0 }) === "新築" && factPhrase("new_build", { building_age: 1 }) === "築浅（築1年）");
+t("注記: 一覧は全部ではない（家賃・広さのいつもの行は書く）と明記", /全部ではない/.test(buildAppealPointsNote({ points: [{ key: "zero_deposit", label: "敷礼0", fact: "敷金礼金なし", why: "general" }], unmet: [], widened: [] })) && /家賃・間取り・広さ/.test(buildAppealPointsNote({ points: [{ key: "zero_deposit", label: "敷礼0", fact: "敷金礼金なし", why: "general" }], unmet: [], widened: [] })));
 t("広げた軸は軸ごとに1つ", widenedAxesOf(["AREA_NEAR", "AREA_FAR", "RENT_WIDE"]).length === 2);
 t("何も無ければ注記は空", buildAppealPointsNote({ points: [], unmet: [], widened: [] }) === "");
 t("事実の言い方: 値が無ければ null", factPhrase("station_near", {}) == null && factPhrase("zero_deposit", { deposit_months: 0, key_money_months: 0 }) === "敷金礼金なし");

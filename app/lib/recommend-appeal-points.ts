@@ -43,7 +43,8 @@ export function factPhrase(key: TopicKey, c: CandidateFacts): string | null {
   switch (key) {
     case "zero_deposit": return c.deposit_months === 0 && c.key_money_months === 0 ? "敷金礼金なし" : null;
     case "station_near": return c.walk_minutes != null ? `${c.station ? `${String(c.station).replace(/駅$/, "")}駅` : "駅"}徒歩${c.walk_minutes}分` : null;
-    case "new_build": return c.building_age != null ? (c.building_age <= 1 ? "新築・築浅" : `築${c.building_age}年`) : null;
+    // 新築と言うのは築0年の時だけ（築1年は「築浅」＝claimContradicts の「新築なのに築2年以上」より厳しく・言い切りを作らない）
+    case "new_build": return c.building_age != null ? (c.building_age === 0 ? "新築" : c.building_age === 1 ? "築浅（築1年）" : `築${c.building_age}年`) : null;
     case "spacious": return c.area_sqm != null ? `${c.area_sqm}㎡${c.floor_plan ? `の${c.floor_plan}` : ""}` : null;
     case "floor2": return c.floor != null ? `${c.floor}階` : null;
     case "rent": return c.rent != null ? `家賃${Math.round(c.rent / 1000) / 10}万円${c.admin_fee_yen ? `＋管理費${c.admin_fee_yen.toLocaleString()}円` : ""}` : null;
@@ -127,6 +128,7 @@ export function buildAppealPointsNote(a: AppealPoints | null | undefined): strin
   if (a.points.length) lines.push(`・お客様に刺さる強み（上から優先・1〜2点を選んで書く）: ${a.points.map((p) => `${p.fact}${p.why === "wanted" ? "（希望に合う）" : ""}`).join("／")}`);
   if (a.widened.length) lines.push(`・希望から広げた所: ${a.widened.map((w) => w.ja).join("／")} → 隠さず、上の強みで補う形で（例「〇〇から少し離れますが、△△なので〜」）。広げた事を謝りすぎない`);
   if (a.unmet.length) lines.push(`・希望なのにこの物件で満たさない所（強みとして書かない・満たすと言い切らない）: ${a.unmet.map((u) => u.label).join("／")}`);
-  lines.push("・資料に無い強みは書かない（ここに無い設備・数字を足さない）");
+  // 2026-10-13 確かめる人の重要3: 「ここに無い物は書くな」と読まれると、竹内さんの🌟でほぼ毎回書く家賃（96/100）・広さ（93/100）の行が抜ける → 一覧は全部ではないと明記
+  lines.push("・資料（画像・資料の文字）に無い強みは書かない。この一覧は優先の順であって全部ではない（家賃・間取り・広さ・駅・設備などいつもの行は今まで通り書く）");
   return lines.join("\n");
 }

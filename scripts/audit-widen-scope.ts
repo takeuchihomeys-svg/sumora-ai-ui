@@ -94,12 +94,9 @@ const POINT_OUT = new Set(["AREA_STATION_2STOPS", "AREA_NEAR", "AREA_REGION_MATC
     const inWd = (W: Set<string>) => mode !== "station" && !!loc.ward && W.has(loc.ward);
     const inCur = inSt(net.st) || inWd(net.wd);
     if (inCur && /FAR/.test(code)) far.current++;
-    const m = meta.get(r.conversation_id) ?? {};
     let rs: any = pc.requirement_strength; if (typeof rs === "string") { try { rs = JSON.parse(rs); } catch { rs = null; } }
+    // 案の網の当て直しは要望の強さだけで段を出す（続いている判断・決め手の条件は audit-proposal-range が本番の道で読む）
     const mats: ProposalMaterials = {
-      brainState: m?.customer_mindset?.state ?? null,
-      brainGap: m?.customer_mindset?.decideGap ?? null,
-      conditionChangeType: m?.condition_change_type ?? null,
       areaStrength: rs?.area?.strength ?? null,
       rentStrength: rs?.rent_max?.strength ?? null,
     };

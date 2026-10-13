@@ -318,15 +318,15 @@ const CHIP_JA: Record<string, string> = {
   RENT_WIDE: "広げた家賃の幅（上限＋5千/1万円）",
   FLOOR_PLAN_WIDE: "広げた間取り（LDK→DK）",
   BUILDING_AGE_WIDE: "広げた築年の幅（＋5年）",
-  SQM_WIDE: "広げた広さの幅（30㎡以上の希望は−10㎡・未満は−5㎡）",
+  SQM_WIDE: "広さが希望より少し狭い（広げてよい幅）",
   // 2026-10-13 竹内「お客さんに広げて提案できるところの範囲」（proposal-range）
   FLOOR_PLAN_FEWER_ROOM_WIDE: "部屋数は1つ少ないが広い LDK",
   PROPOSAL_AREA_OUT: "このお客様には場所を広げない（保留）",
   PROPOSAL_AREA_EDGE: "希望の場所の少し外（場所をはっきり言っている）",
   PROPOSAL_AREA_WIDE_OK: "希望の場所の外だが広げて提案してよいお客様",
   PROPOSAL_AREA_CLOSE_OK: "隣の区だが広げて提案してよいお客様",
-  PROPOSAL_RENT_OUT: "家賃が決め手のお客様に上限超え（保留）",
-  PROPOSAL_AGE_OUT: "築年が決め手のお客様に築年の広げた帯",
+  PROPOSAL_RENT_OUT: "家賃の上限が必ずのお客様に上限超え（保留）",
+  PROPOSAL_AGE_OUT: "築年を広げないお客様に築年の広げた帯",
   // 2026-09-25 監査（任務A・B）
   ALREADY_SENT_OTHER_ROOM: "同じ建物の別の部屋を送付済み",
   ALREADY_SENT_SAME_ROOM: "この部屋は送付済み（送り直し？）",

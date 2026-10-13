@@ -587,7 +587,7 @@ export const REASON_JA: Record<string, string> = {
   FLOOR_PLAN_ALT_MATCH: "間取りが「も可」の型に一致（本命ではない）",
   SQM_OK: "広さは希望以上",
   SQM_SLIGHTLY_UNDER: "広さが希望を少し下回る（9割以上）",
-  SQM_WIDE: "広さが広げて提案してよい幅の中（30㎡以上の希望は−10㎡・未満は−5㎡まで）",
+  SQM_WIDE: "広さが希望より少し狭い（広げて提案してよい幅の中・保留にしない）",
   SQM_UNDER: "広さが希望の9割未満",
   SQM_UNKNOWN: "要確認: 広さ",
   // 2026-09-27 竹内「7畳以上は、帖数が資料に書かれていなかったら間取り図から読み取る」（room-jo.ts）

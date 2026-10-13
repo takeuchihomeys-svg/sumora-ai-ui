@@ -10,7 +10,7 @@ import { createClient } from "@supabase/supabase-js";
 import { parseAreaWant, buildPropertyLocation, matchArea, matchAnchors } from "../app/lib/area-want";
 import { normalizeFloorPlanWant, matchFloorPlan, isTooSmallPlan, isWideFloorPlan, isSameClassPlan, isLargerPlan, normalizeBuildingName, isFewerRoomWideLdk } from "../app/lib/property-brain";
 import { decideProposalRange, proposalRangeCodes, wideSqmMargin } from "../app/lib/proposal-range";
-import { proposalMaterialsOf } from "../app/lib/proposal-range-server";
+import { loadProposalRange } from "../app/lib/proposal-range-server";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.split("=").slice(1).join("=");
 const DAYS = Number(arg("days") ?? 120);
@@ -54,18 +54,14 @@ const add = (m: Record<string, Cell>, k: string, o: { star: boolean; viewed: boo
     const { data } = await sb.from("property_customers").select("id,desired_area,area_mode,preferences,other_requests,requirement_strength,floor_plan,floor_area_min").in("id", ids.slice(i, i + 200));
     for (const p of data ?? []) pcs.set(p.id, p);
   }
-  const convIds = [...conv2pc.keys()];
-  const meta = new Map<string, any>();
-  for (let i = 0; i < convIds.length; i += 200) {
-    const { data } = await sb.from("conversations").select("id,suggested_aix_meta").in("id", convIds.slice(i, i + 200));
-    for (const c of data ?? []) meta.set(c.id, c.suggested_aix_meta ?? null);
-  }
   const byArea: Record<string, Cell> = {}, byAreaType: Record<string, Cell> = {}, bySqm: Record<string, Cell> = {}, byPlan: Record<string, Cell> = {}, byPlanPair: Record<string, Cell> = {};
   const byAreaKm: Record<string, Cell> = {};
   const custOut = new Map<string, { far: number; farHit: number }>();
   const hist = new Map<string, { sent: number; hit: number }>();
   const byPrev: Record<string, Cell> = {};
   const ldkList: string[] = [];
+  const rangeCache = new Map<string, ReturnType<typeof decideProposalRange>>();
+  const custLevel = new Map<string, string>();
   const byLevel: Record<string, Cell> = {}, byProposal: Record<string, Cell> = {}, sqmJudge: Record<string, Cell> = {}, planJudge: Record<string, Cell> = {};
   imgs.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
   const seen = new Set<string>();
@@ -76,11 +72,18 @@ const add = (m: Record<string, Cell>, k: string, o: { star: boolean; viewed: boo
     const pc = pcs.get(pcId); if (!pc) continue;
     const key = `${r.conversation_id}|${bk(r.property_name)}`; if (seen.has(key)) continue; seen.add(key);
     const o = { star: star.has(key), viewed: viewed.has(key), applied: applied.has(key), interested: interested.has(key) };
-    const m = meta.get(r.conversation_id) ?? {};
     let rs: any = pc.requirement_strength; if (typeof rs === "string") { try { rs = JSON.parse(rs); } catch { rs = null; } }
     const type = `area:${rs?.area?.strength ?? "-"}`;
-    // このお客様の提案してよい範囲（ブレインの今の判断・要望の強さ。決め手の条件は読まない＝近似）
-    const range = decideProposalRange(proposalMaterialsOf(m, rs, null), {});
+    // このお客様の提案してよい範囲（本番と同じ道 loadProposalRange・送った日の時点のブレインの判断と決め手の条件。要望の強さは今の行＝近似）
+    const day = String(r.created_at).slice(0, 10);
+    const rk = `${pcId}|${day}`;
+    if (!rangeCache.has(rk)) {
+      const ld = await loadProposalRange(sb as never, { propertyCustomerId: pcId, conversationId: r.conversation_id }, { now: new Date(`${day}T23:59:59+09:00`) });
+      rangeCache.set(rk, ld.range ?? decideProposalRange({}));
+      const lv = rangeCache.get(rk)!;
+      if (!custLevel.has(pcId) || lv.level !== "standard") custLevel.set(pcId, `${lv.level}${lv.reasons.length ? `（${lv.reasons.join("・")}）` : ""}`);
+    }
+    const range = rangeCache.get(rk)!;
     add(byLevel, range.level, o);
     // エリア
     const sts: any[] = Array.isArray(f.stations) ? f.stations : [];
@@ -133,7 +136,7 @@ const add = (m: Record<string, Cell>, k: string, o: { star: boolean; viewed: boo
   const fmt = (m: Record<string, Cell>) => Object.fromEntries(Object.entries(m).sort((x, y) => y[1].n - x[1].n).map(([k, c]) => [k, `${c.n}件 刺さり${c.hit}(${Math.round((c.hit / c.n) * 100)}%) 🌟${c.star} 内覧${c.viewed} 申込${c.applied}`]));
   let custFar = 0, custFarHit = 0;
   for (const v of custOut.values()) if (v.far) { custFar++; if (v.farHit) custFarHit++; }
-  const res = { days: DAYS, area: fmt(byArea), areaFarKm: fmt(byAreaKm), areaByType: fmt(byAreaType), widenedByPrevReaction: fmt(byPrev), sqm: fmt(bySqm), plan: fmt(byPlan), planPairs: fmt(byPlanPair), ldk2to1: arg("ldk") ? ldkList.sort() : ldkList.length, rangeLevels: fmt(byLevel), proposalCodes: fmt(byProposal), sqmJudge: fmt(sqmJudge), planJudge: fmt(planJudge), customersWithFarOrClose: custFar, ofWhichSomeHit: custFarHit };
+  const res = { days: DAYS, area: fmt(byArea), areaFarKm: fmt(byAreaKm), areaByType: fmt(byAreaType), widenedByPrevReaction: fmt(byPrev), sqm: fmt(bySqm), plan: fmt(byPlan), planPairs: fmt(byPlanPair), ldk2to1: arg("ldk") ? ldkList.sort() : ldkList.length, rangeLevels: fmt(byLevel), customerLevels: (() => { const c: Record<string, number> = {}; for (const v of custLevel.values()) { const k = v.replace(/（.*$/, ""); c[k] = (c[k] ?? 0) + 1; } return c; })(), customerLevelExamples: [...custLevel.values()].filter((v) => !/^standard/.test(v)).slice(0, 15), proposalCodes: fmt(byProposal), sqmJudge: fmt(sqmJudge), planJudge: fmt(planJudge), customersWithFarOrClose: custFar, ofWhichSomeHit: custFarHit };
   console.log(JSON.stringify(res, null, 1));
   const j = arg("json"); if (j) writeFileSync(j, JSON.stringify(res, null, 1));
 })();

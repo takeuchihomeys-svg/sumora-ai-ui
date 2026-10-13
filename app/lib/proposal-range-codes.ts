@@ -38,8 +38,8 @@ export const PROPOSAL_JA: Record<string, string> = {
   PROPOSAL_AREA_EDGE: "希望の場所の少し外（場所をはっきり言っている）",
   PROPOSAL_AREA_WIDE_OK: "希望の場所の外だが、このお客様には広げて提案してよい",
   PROPOSAL_AREA_CLOSE_OK: "隣の区・4km だが、このお客様には広げて提案してよい",
-  PROPOSAL_RENT_OUT: "家賃が決め手のお客様に上限を超える物件（保留）",
-  PROPOSAL_AGE_OUT: "築年が決め手のお客様に築年の広げた帯",
+  PROPOSAL_RENT_OUT: "家賃の上限が必ずのお客様に上限を超える物件（保留）",
+  PROPOSAL_AGE_OUT: "築年を広げないお客様に築年の広げた帯",
 };
 export const PROPOSAL_HOLD_CODES: ReadonlySet<string> = new Set(["PROPOSAL_AREA_OUT", "PROPOSAL_RENT_OUT"]);
 export const PROPOSAL_POSITIVE_CODES: ReadonlySet<string> = new Set(["PROPOSAL_AREA_WIDE_OK", "PROPOSAL_AREA_CLOSE_OK"]);

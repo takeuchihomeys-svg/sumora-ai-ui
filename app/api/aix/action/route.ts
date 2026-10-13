@@ -2406,14 +2406,14 @@ async function handleAction(request: NextRequest): Promise<Response> {
     //   画面が渡した画像の枚数と行の数が同じ時だけ使う（スタッフが画像を外した・足した時は並びが合わない）
     // 2026-09-27 竹内「重い順から治す」: 区（所在地）・入居時期も同じ行から読む（app/lib/aix-material-facts.ts）。
     //   物件オススメ（1件）も売上サポから来た時は行 ID が来る（画面がセットした資料のまま送る時だけ）
-    type PickupRowForFacts = { id: number; property_name: string | null; summary_text: string | null; image_lines: string[] | null; location: { ward?: string | null } | null; pdf_text: string | null; terms: PickupMaterialRow["terms"]; verdict?: string | null; reason_codes?: string[] | null };
+    type PickupRowForFacts = { id: number; property_name: string | null; summary_text: string | null; image_lines: string[] | null; location: { ward?: string | null } | null; pdf_text: string | null; terms: PickupMaterialRow["terms"]; verdict?: string | null; reason_codes?: string[] | null; equipment?: unknown };
     const pickupRowsForFacts: PickupRowForFacts[] = await (async () => {
       if ((action !== "property_send" && action !== "property_recommendation") || !conversationId || !Array.isArray(body.pickup_ids)) return [];
       const ids = (body.pickup_ids as unknown[]).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0).slice(0, 20);
       const imgCount = action === "property_send" ? (Array.isArray(image_urls) ? (image_urls as unknown[]).length : 0) : (image_url ? 1 : 0);
       if (ids.length === 0 || ids.length !== imgCount) return [];
       try {
-        const { data } = await supabase.from("property_pickups").select("id, property_name, summary_text, image_lines, location, pdf_text, terms, verdict, reason_codes")
+        const { data } = await supabase.from("property_pickups").select("id, property_name, summary_text, image_lines, location, pdf_text, terms, verdict, reason_codes, equipment")
           .in("id", ids).eq("conversation_id", conversationId);
         const byId = new Map(((data ?? []) as PickupRowForFacts[]).map((r) => [r.id, r]));
         if (byId.size !== ids.length) return [];
