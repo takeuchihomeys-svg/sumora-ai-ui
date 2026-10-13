@@ -1,5 +1,7 @@
 // app/lib/__tests__/condition-restore.test.ts — LINE の言葉どおりに検索の条件を足す・入れ替える・元に戻す（実行: npx tsx app/lib/__tests__/condition-restore.test.ts）
 // 2026-10-06 ⑫ 竹内さん（R・スモラ 10/03）「このように連絡きた場合物件検索の条件に反映させる。やっぱり元々の条件で等きたばあいは、もともとの条件に戻す」
+// 2026-10-13: この試験は旧の順（文の語がブレインより先）を確かめる。既定のブレインの欄だけの形は condition-scope-brain-first.test.ts
+process.env.CONDITION_SCOPE_BRAIN_FIRST = "off";
 import {
   areaAskCue, areaMergeMode, areasBeforeNegation, areaAddedTokens, describeAreaChange, detectConditionRevert,
   planConditionRestore, planUndoLatestChange, placeTokens, groupConditionHistory, planUndoGroup, type RestoreHistoryRow,

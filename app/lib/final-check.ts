@@ -15,6 +15,7 @@
 // - check-reply/route.ts    …… 送信時の再チェック用ルート。2026-09-11 以降、画面からは呼ばない
 //                              （スタッフが編集した文はスタッフの判断が正解。チェックはAI生成時のみ＝ハルシネーション防止）
 
+import { buildContextCheckAnswerList, contextCheckAnalysisLimit } from "@/app/lib/context-check-answer-list";
 import { ungroundedFreeRentSentence, type StaffFreeRentFact } from "./staff-free-rent";
 import { checkNameConsistency, ASSERTION_BAN_RULES, findAssertionMatch, materialGroundsAssertion,PLACEHOLDER_ADDRESS_DET_RE, PLACEHOLDER_NAME_CORE_RE, applySurfaceFixes } from "./validate-reply";
 // 2026-10-02 竹内「文体だけの指摘とは文に間違いがないことかな？それなら大丈夫」: 文に間違いの無い文体だけの warning では書き直さない
@@ -1127,12 +1128,15 @@ CONDITION_ADD_MISROUTED の誤発行を避けるべきケース:
 【現在時刻】は日本標準時（JST・UTC+9）で表示される。
 「18時以降」の判定は JST 18:00 以降を指す。日本の営業時間は一般的に9:00-18:00。
 深夜（22:00以降）や早朝（7:00以前）の「本日中に」等の約束も実行不可能とみなすこと。`;
-  const dynamic = `${brainBaselineNote}【現在時刻】${nowJstString()}
+  // 2026-10-13 竹内さん（ブレインの使い残し 5）: ブレインの本質（turn_contract）を「答えるべき項目の一覧」として渡し、質問の取りこぼしはこれで見る（会話から探し直さない）。
+  //   一覧がある時は [ANALYSIS] を短く（context-check-answer-list.ts・戻す CONTEXT_CHECK_ANSWER_LIST=off）
+  const answerList = buildContextCheckAnswerList(ctx.turnContract ?? null);
+  const dynamic = `${brainBaselineNote}${answerList}【現在時刻】${nowJstString()}
 ${stageBlock}[CUSTOMER_MESSAGE]
 ${(ctx.lastCustomerMessage || "（不明）").slice(0, 1500)}
 [/CUSTOMER_MESSAGE]
 [ANALYSIS]
-${(ctx.brainContextJson || "なし").slice(0, 2500)}
+${(ctx.brainContextJson || "なし").slice(0, contextCheckAnalysisLimit(!!answerList))}
 [/ANALYSIS]
 [RECENT_STAFF_MESSAGES]
 ${formatStaffMessages(ctx.recentMessages, 5)}

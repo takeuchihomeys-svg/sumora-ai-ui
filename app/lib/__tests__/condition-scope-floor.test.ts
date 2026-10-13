@@ -4,6 +4,8 @@
 //   ① 一時調整（search_override）に階（floor_min）を足す ② 今回だけ／切り替えの決め方を強化 ③ 判断の当たり外れを付ける物差し
 // 文は YUMA のテストと本番の実物（scripts/audit-condition-scope.ts で読んだ物）。
 // 実行: npx tsx app/lib/__tests__/condition-scope-floor.test.ts（全 PASS で exit 0）
+// 2026-10-13: この試験は旧の順（文の語がブレインより先）を確かめる。既定のブレインの欄だけの形は condition-scope-brain-first.test.ts
+process.env.CONDITION_SCOPE_BRAIN_FIRST = "off";
 import {
   resolveConditionChangeScope, preBrainMayWriteRegistered, weakTemporaryScopeCue, futurePermanentScopeCue, permanentScopeCue,
   hasRegisteredConditions, planScopeRevert, labelScopeOutcome, scoreScopeDecisions,

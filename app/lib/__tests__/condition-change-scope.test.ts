@@ -1,6 +1,8 @@
 // app/lib/__tests__/condition-change-scope.test.ts
 // 2026-09-27 竹内「一時調整か、そもそもの条件の切り替えかの判断をブレインが行う」。文は本番のお客様の実物（scripts/tmp の監査で読んだ物）。
 // 実行: npx tsx app/lib/__tests__/condition-change-scope.test.ts（全 PASS で exit 0）
+// 2026-10-13: この試験は旧の順（文の語がブレインより先）を確かめる。既定のブレインの欄だけの形は condition-scope-brain-first.test.ts
+process.env.CONDITION_SCOPE_BRAIN_FIRST = "off";
 import { resolveConditionChangeScope, temporaryScopeCue, permanentScopeCue, normalizeBrainScope, preBrainMayWriteRegistered, planScopeRevert } from "../condition-change-scope";
 import { buildTemporaryOverride, looksLikePropertyShare } from "../condition-scope-override";
 
