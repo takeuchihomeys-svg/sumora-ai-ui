@@ -54,6 +54,13 @@ export function isFirstContactPropertyNomination(scene: FirstContactSceneLite): 
 }
 
 export function resolveFirstContactPickup(i: FirstContactPickupInput): FirstContactPickup {
+  // 2026-10-13 竹内さん（いしのまさや: 初回に TikTok の物件の画像2件＋「良い物件ありますか」→ ブレインが物件ピックアップを選び、約束を全部詰めた）
+  //   「まず送って頂いた物件の募集状況を確認する（約束）→確認の結果を AIX で伝えた後に条件は AIX【条件ヒアリング】」:
+  //   条件フォームが無い初回で物件の画像／URL の指名がある時は、LLM が物件送付を選んでも最初の一手は募集状況の確認（物件確認した）。
+  //   竹内さんの実送信（scripts/audit-first-turn-split.ts・初回に物件（フォームなし）22番）: 約束は 確認 8・見積→確認 4・見積 2・確認→見積 1・ピックアップ 2 ほか。戻す FIRST_CONTACT_NOMINATION_FIRST=off
+  if (!i.custSentConditionForm && isFirstContactPropertyNomination(i.sceneEvidence) && (typeof process === "undefined" || (process.env?.FIRST_CONTACT_NOMINATION_FIRST ?? "").toLowerCase() !== "off")) {
+    if (!(i.sceneEvidence?.property_by === "image" && NON_PROPERTY_IMAGE_TYPES.has((i.imageType ?? "").trim().toLowerCase()))) return "property_check_result";
+  }
   // 1) 条件フォーム（または LLM が物件送付／検索を選んだ）→ 物件ピックアップ（2026-09-12 竹内方針・現行のまま）
   if (i.custSentConditionForm || i.finalAix === "property_send" || i.finalAix === "property_search") return "property_send";
   // 2) 物件の画像／URL の指名 → 募集状況の確認（2026-09-23 追加）

@@ -1,6 +1,6 @@
 // ブレインの試験の決まった計算（scripts/lib/brain-exam-score.ts）
 // 実行: npx tsx scripts/lib/__tests__/brain-exam-score.test.ts（自己完結。全 PASS で exit 0）
-import { brainPathCode, judgePath, codeMatches, problemScore, rateByType, pathOfDirection } from "../brain-exam-score";
+import { brainPathCode, judgePath, codeMatches, problemScore, rateByType, pathOfDirection, normalizeDraftCode } from "../brain-exam-score";
 
 let fail = 0, pass = 0;
 function eq(name: string, a: unknown, b: unknown) {
@@ -42,6 +42,11 @@ const r = rateByType([
   { type: "出し切り", tags: ["謝罪"], score: problemScore(judgePath(brainPathCode(null), ["返信"]), null, null) },
 ]);
 eq("型ごと", r.map((x) => `${x.type}:${x.pass}/${x.n}`), ["出し切り:1/2", "（札）謝罪:0/1"]);
+
+// 10/13 竹内さん③: 確認＋見積の1文は正解が 2段:check の時 2段:check に数える（q138 の下書き）
+eq("確認＋見積→check", normalizeDraftCode("2段:estimate", "お送り頂きました2件の物件、募集状況を確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書をお送りさせて頂きます！！", ["2段:check"]), "2段:check");
+eq("見積だけ→そのまま", normalizeDraftCode("2段:estimate", "御見積書を作成しお送りさせて頂きます！！", ["2段:check"]), "2段:estimate");
+eq("正解に estimate がある→そのまま", normalizeDraftCode("2段:estimate", "募集状況確認させて頂きます 御見積書", ["2段:check", "2段:estimate"]), "2段:estimate");
 
 console.log(`${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);

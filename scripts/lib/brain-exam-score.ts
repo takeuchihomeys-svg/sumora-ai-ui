@@ -127,3 +127,14 @@ export function rateByType(rows: ReadonlyArray<{ type: string; tags?: string[]; 
   for (const r of rows) { add(r.type, r.score); for (const t of r.tags ?? []) if (t !== r.type) add(`（札）${t}`, r.score); }
   return [...m].map(([type, v]) => ({ type, ...v })).sort((a, b) => (a.type.startsWith("（札）") === b.type.startsWith("（札）") ? b.n - a.n : a.type.startsWith("（札）") ? 1 : -1));
 }
+
+/**
+ * 2026-10-13 竹内さん③「確認＋見積を1文で約束した形を 2段:check の正解に含める」:
+ *   下書きの判定（DeepSeek）は「募集状況確認させて頂きます！！確認出来次第、…御見積書を作成しお送り」を主な約束＝見積（2段:estimate）と読むことがある。
+ *   竹内さんの実送信（db3722・ed7695・ac7c7f）と同じ「確認＋見積」の形なので、正解が 2段:check の時は 2段:check に数える。
+ */
+export function normalizeDraftCode(code: string, draft: string | null | undefined, accept: ReadonlyArray<string>): string {
+  if (code !== "2段:estimate" || !accept.includes("2段:check") || accept.includes("2段:estimate")) return code;
+  const t = String(draft ?? "").normalize("NFKC");
+  return /(?:募集状況|空室状況|空き状況)[^\n]{0,20}確認/.test(t) && /御?見積/.test(t) ? "2段:check" : code;
+}

@@ -88,7 +88,7 @@ export function resolveTwoStage(i: TwoStageInput): TwoStageVerdict | null {
   return {
     ...v,
     direction: `${v.direction}${plan.later.length ? "同じ発言の他のご質問のうち、会話・資料・会社の事実で答えられる物（例 敷金礼金・初期費用に含まれるか）にだけ一言で答える（下の後に回す依頼は除く）。" : TWO_STAGE_ALSO_ANSWER}${plan.direction}`,
-    keyTopic: plan.second ? `${v.keyTopic}＋2通目にあわせまして${plan.second.what}の約束` : v.keyTopic,
+    keyTopic: plan.second ? (plan.second.kind === "wish" ? `${v.keyTopic}＋2通目に${plan.second.what}` : `${v.keyTopic}＋2通目にあわせまして${plan.second.what}の約束`) : v.keyTopic,
     ...(plan.second ? { extraPromises: [plan.second.kind] } : {}),
     ...(plan.later.length ? { laterPromises: plan.later.map((x) => x.kind) } : {}),
   };
@@ -120,7 +120,7 @@ export function customerAreaKnown(turn: string | null | undefined): boolean {
   return /[\p{Script=Han}\p{Script=Katakana}ぁ-ん]{1,8}(?:区|市|駅|線|周辺|エリア|沿線|方面)(?:[でにのあらか]|$|\s|、|・)/u.test(own.replace(/【[^】]*】/g, ""));
 }
 export type PromiseSequencePlan = {
-  second: { kind: "pickup"; what: string } | null;
+  second: { kind: "pickup" | "wish"; what: string } | null;
   later: Array<{ kind: "pickup_hearing" | "viewing" | "photo" | "confirm" | "check"; what: string }>;
   direction: string;
 };
@@ -140,6 +140,12 @@ export function planPromiseSequence(v: TwoStageVerdict, i: TwoStageInput): Promi
     if (customerAreaKnown(i.customerText)) second = { kind: "pickup", what: "お部屋のピックアップ" };
     else later.push({ kind: "pickup_hearing", what: "ご希望のご条件（エリア等）のヒアリング→ピックアップ" });
   }
+  // 10/13 竹内さん②（いしのまさや）: 探す約束を2通目にしない番で、お客様が初期費用・敷金礼金の希望を書いた時は、2通目でその希望を受ける一言
+  //   （「1通目 挨拶＋2件の確認と御見積書／2通目 初期費用を安く・敷金礼金なしのご希望を受ける一言」・言い回しは実送信 b87d85・fb8043・631f99・fb8ab8 の
+  //    「初期費用も最大限割引させて頂き、〇〇さんのお引越しにかかる費用を出来る限り抑えさせて頂きます！！」）。戻す TWO_STAGE_WISH_BUBBLE=off
+  if (!second && checkFlow && brought && wishWords(i.customerText).length && (typeof process === "undefined" || (process.env?.TWO_STAGE_WISH_BUBBLE ?? "").toLowerCase() !== "off")) {
+    second = { kind: "wish", what: `ご希望（${wishWords(i.customerText).join("・")}）を受ける一言` };
+  }
   if (v.kind === "pickup" && (topics.has("vacancy") || brought)) later.push({ kind: "check", what: "送って頂いた物件の募集状況の確認" });
   if (topics.has("viewing") && !/内覧/.test(v.direction)) later.push({ kind: "viewing", what: "ご内覧の日程" });
   if (topics.has("photo") && !/写真/.test(v.direction)) later.push({ kind: "photo", what: "室内のお写真" });
@@ -152,7 +158,9 @@ export function planPromiseSequence(v: TwoStageVerdict, i: TwoStageInput): Promi
       ? `送って頂いた物件は SNS・TikTok 等の画面で、物件名ではなく題（駅名・キャッチ）しか書かれていない。物件名・駅名・題の言葉で呼ばず「お送り頂きました${n >= 2 ? `${n}件の` : ""}物件」と書く（「〇〇以外にも」等、題の駅名を条件として扱わない）。`
       : n >= 2 ? `送って頂いた物件は${n}件。件数を書く（「お送り頂きました${n}件の物件の募集状況確認させて頂きます」）。` : "");
   }
-  if (second) {
+  if (second?.kind === "wish") {
+    parts.push(`【2通に分けて書く（竹内さんの形）】1通目＝挨拶（初回なら）＋送って頂いた物件の募集状況の確認と最大限割引の初期費用の御見積書の約束まで。空行を1つ挟み、2通目は「初期費用も」から書き出し、お客様が書いたご希望（${wishWords(i.customerText).join("・")}）を一言で受ける（実際の送信の形「初期費用も最大限割引させて頂き、〇〇さんのお引越しにかかる費用を出来る限り抑えさせて頂きます！！」。お客様の言葉（敷金礼金なし等）はそのまま使ってよい・新しい決まり文句を作らない・できる／含まれると断定しない）。`);
+  } else if (second) {
     parts.push(`【2通に分けて書く（竹内さんの形）】1通目＝${v.kind === "estimate" ? "御見積書" : "送って頂いた物件の募集状況の確認（と最大限割引の初期費用の御見積書）"}の約束まで。空行を1つ挟み、2通目は「あわせまして」から書き出し、お客様のご希望のエリア・ご条件（お客様が書いた物だけ・具体的に）に合ったお部屋もピックアップしお送りする約束（実際の送信の形「あわせまして〈エリア〉周辺全域から、〇〇さんご希望のご条件に合ったお部屋もピックアップしてお送りさせて頂きます！！」）。`);
   }
   if (later.length) {
@@ -448,4 +456,30 @@ export function conditionChangedThisTurn(conditionChangeType: string | null | un
 export function broughtTitleOnly(propertyMsgs: readonly string[]): boolean {
   if (!propertyMsgs.length) return false;
   return propertyMsgs.every((t) => !/https?:\/\/(?!mypage)/.test(t.replace(/\[画像\][\s\S]*/, "")) && /^\s*\[画像\]\s*【物件の画面（SNS・広告）】/.test(t));
+}
+
+/** お客様の自分の言葉にある初期費用の希望（「初期費用を安く」「敷金礼金なし」）。画像の書き起こし・URL は見ない */
+export function wishWords(turn: string | null | undefined): string[] {
+  const own = String(turn ?? "").normalize("NFKC").split(/\n+/).filter((l) => !/https?:\/\/|^\s*\[(?:画像|ファイル)\]/.test(l)).join("\n");
+  const out: string[] = [];
+  if (/初期費用[^\n。]{0,12}(?:安く|抑え|少な|お得)/.test(own)) out.push("初期費用を抑えたい");
+  if (/敷金[^\n。]{0,4}礼金[^\n。]{0,6}(?:なし|無し|ゼロ|0)|敷礼[^\n。]{0,4}(?:なし|無し|ゼロ|0)/.test(own)) out.push("敷金礼金なし");
+  return out;
+}
+
+/**
+ * 2026-10-13 竹内さん（いしのまさや）: 初回（スタッフの送信が無い）の物件の持ち込みは brain-core の初回ガードで AIX を外すので2段が立たず、
+ *   ブレイン（Claude）の方向「…御見積書をお送りする約束で受ける。条件に合うお部屋もピックアップする」で下書きが約束を全部詰めた（試験 q138 の Claude 1回）。
+ *   初回で今回の連投に物件（URL・物件の画像）がある時は、持ち込みの2段（brought_both）と同じ約束の順を使う。
+ *   propertyMsgs＝今回の連投の物件の通。物件が無ければ null。戻す TWO_STAGE_PROMISE_SEQUENCE=off（初回は今まで通りブレインの方向）
+ */
+export function firstContactCheckTwoStage(propertyMsgs: readonly string[], customerText: string): TwoStageVerdict | null {
+  if (!promiseSequenceEnabled()) return null;
+  const n = broughtPropertyCount([...propertyMsgs]);
+  if (n <= 0) return null;
+  return resolveTwoStage({
+    finalAix: "property_check_result", decisionSource: "guard:first_contact", pickupReady: false, postApply: false,
+    customerText, asksCost: /初期費用|見積|いくら|費用/.test(customerText), ackOnly: false,
+    brought: { ask: broughtPropertyAsk(customerText), count: n, titleOnly: broughtTitleOnly(propertyMsgs) },
+  });
 }

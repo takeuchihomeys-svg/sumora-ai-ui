@@ -1,7 +1,8 @@
 // 2026-10-13 竹内さん（いしのまさや）: 約束は順序の先頭だけ・後は約束の続き・件数・題だけの物件・2通に分ける。お客様の文は実物（名前を伏せた）
 // 実行: npx tsx app/lib/__tests__/promise-sequence.test.ts
 import { buildPromiseQueue, nextPromiseAix, numberedPromiseLabels, type QueueMsg } from "../promise-queue";
-import { resolveTwoStage, broughtTitleOnly, customerAreaKnown, twoStageOtherQuestions } from "../two-stage";
+import { resolveTwoStage, broughtTitleOnly, customerAreaKnown, twoStageOtherQuestions, firstContactCheckTwoStage } from "../two-stage";
+import { resolveFirstContactPickup } from "../first-contact-pickup";
 import { splitDraftBubbles } from "../draft-bubbles";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -26,8 +27,17 @@ it("いしのまさや: 2件の確認＋御見積書だけ約束・探す依頼�
   const v = resolveTwoStage({ finalAix: "property_check_result", decisionSource: "llm", pickupReady: false, postApply: false, customerText: text, asksCost: true, ackOnly: false, brought: { ask: "cost", count: 2, titleOnly: true } })!;
   eq(v.source, "rule:two_stage_promise(brought_both)");
   has(v.direction, "2件"); has(v.direction, "物件名・駅名・題の言葉で呼ばず"); has(v.direction, "この返信では約束しない");
-  eq(v.extraPromises, undefined); eq(v.laterPromises, ["pickup_hearing"]);
+  // 10/13 竹内さんの答え②: 2通目＝ご希望（初期費用を抑えたい・敷金礼金なし）を受ける一言
+  eq(v.extraPromises, ["wish"]); eq(v.laterPromises, ["pickup_hearing"]);
+  has(v.direction, "2通目は「初期費用も」から"); has(v.direction, "初期費用を抑えたい・敷金礼金なし");
   eq(twoStageOtherQuestions(text, "check"), []);
+});
+it("初回: 物件の指名（画像）があれば LLM がピックアップを選んでも最初の一手は募集状況の確認・約束の順を使う（q138 の Claude）", () => {
+  eq(resolveFirstContactPickup({ finalAix: "property_send", custSentConditionForm: false, sceneEvidence: { scene: "S1_vacancy", reason: "property_nomination", property_by: "image" } }), "property_check_result");
+  eq(resolveFirstContactPickup({ finalAix: "property_send", custSentConditionForm: true, sceneEvidence: { scene: "S1_vacancy", reason: "property_nomination", property_by: "image" } }), "property_send");
+  const v = firstContactCheckTwoStage([img1, img2], text)!;
+  eq(v.kind, "check"); eq(v.extraPromises, ["wish"]); eq(v.laterPromises, ["pickup_hearing"]); has(v.direction, "2件");
+  eq(firstContactCheckTwoStage([], text), null);
 });
 it("エリアが分かる（条件フォーム）＋確認 → 2通目「あわせまして」でピックアップ（b87d85 の形）", () => {
   const t = "①【ご入居の時期】⇒12月\n⑤【ご希望のエリア・駅名】⇒西区・西淀川区\nこちらの物件空いてますか？";
@@ -72,6 +82,14 @@ it("2通に分ける: 確認の約束＋「あわせまして…ピックアッ�
   const d = "りおなさん、はじめまして😊！！お送り頂きました物件につきまして、募集状況確認させて頂き、確認出来次第ご連絡させて頂きます！！\n\nあわせまして西区・西淀川区・淀川区周辺全域から、りおなさんご希望のご条件に合ったお部屋もピックアップしてお送りさせて頂きます！！";
   const s2 = splitDraftBubbles(d)!;
   has(s2[0], "募集状況確認"); has(s2[1], "あわせまして"); eq(s2[0].includes("あわせまして"), false);
+});
+it("2通に分ける: 確認＋御見積書の約束＋空行＋「初期費用も…抑え」（q138 の下書き）", () => {
+  const d = "YUMAさん、はじめまして😊！！\nお送り頂きました2件の物件、募集状況を確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書をお送りさせて頂きます！！\n\n初期費用も最大限割引させて頂き、YUMAさんのお引越しにかかる費用を出来る限り抑えさせて頂きます！！\n何卒よろしくお願い致します😌！！";
+  const s2 = splitDraftBubbles(d)!;
+  has(s2[0], "2件の物件"); has(s2[1], "初期費用も最大限割引"); eq(s2[0].includes("お引越しにかかる"), false);
+});
+it("分けない: 空行の無い「初期費用も…」（1通の続き）", () => {
+  eq(splitDraftBubbles("お送り頂きました物件の募集状況確認させて頂きます！！\n初期費用も最大限割引させて頂き、費用を抑えさせて頂きます！！"), null);
 });
 it("分けない: 行の途中の「あわせて」・前に約束が無い", () => {
   eq(splitDraftBubbles("お送り頂きました物件の募集状況確認させて頂きます！！確認出来次第、御見積書とあわせてご連絡させて頂きます！！"), null);
