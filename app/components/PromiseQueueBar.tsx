@@ -28,7 +28,7 @@ export default function PromiseQueueBar({ conversationId, refreshKey, authHeader
   }, [conversationId, refreshKey]);
   if (!v?.next) return null;
   return (
-    <div className="border-b border-[#b39ddb] px-4 py-2" style={{ background: "linear-gradient(90deg, #ede7f6, #f8f5ff)" }}>
+    <div className="border-b border-[#b39ddb] px-3 py-1.5 md:px-4" style={{ background: "linear-gradient(90deg, #ede7f6, #f8f5ff)" }}>
       <p className="text-[11px] font-bold text-[#4527a0]">約束の続き{v.rest.length ? `（残り ${v.rest.length + 1}）` : ""}</p>
       <div className="flex items-start gap-2">
         <span className="shrink-0 rounded-full bg-[#5e35b1] px-1.5 py-0.5 text-[9px] font-bold text-white">次</span>

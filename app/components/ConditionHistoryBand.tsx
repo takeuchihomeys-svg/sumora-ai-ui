@@ -94,35 +94,35 @@ export default function ConditionHistoryBand({ pcId, autoNotices, refreshKey, on
   };
 
   return (
-    <div className="border-b border-indigo-200 bg-indigo-50 px-3 py-2"
+    <div className="border-b border-[#c5cae9] bg-[#f5f6ff] px-3 py-1.5 md:px-4"
       data-fold-label={`条件の更新${latestLabel ? ` ${latestLabel}` : ""}`}
       data-fold-count={unconfirmed > 0 ? unconfirmed : undefined} data-fold-tone="blue">
-      <p className="mb-1 text-[11px] font-bold text-indigo-700">条件の更新（新しい順）</p>
+      <p className="mb-1 text-[11px] font-bold text-[#283593]">条件の更新（新しい順）</p>
       {autoNotices.length > 0 && (
-        <div className="mb-1.5 rounded-md border border-indigo-200 bg-white px-2 py-1">
+        <div className="mb-1.5 rounded-lg border border-[#c5cae9] bg-white px-2 py-1">
           {autoNotices.slice(-3).reverse().map((n, i) => (
-            <p key={i} className="text-[11px] leading-snug text-indigo-800"><span className="mr-1 text-[10px] text-indigo-400">{n.timestamp}</span>{n.content}</p>
+            <p key={i} className="text-[11px] leading-snug text-[#283593]"><span className="mr-1 text-[10px] text-[#7986cb]">{n.timestamp}</span>{n.content}</p>
           ))}
           <div className="mt-0.5 flex items-center justify-between">
-            <span className="text-[10px] text-indigo-400">ブレインが自動で DB に反映済みのお知らせ</span>
-            <button type="button" disabled={busy === "notice"} onClick={() => void clearNotices()} className="text-[10px] font-bold text-indigo-500 active:opacity-60 disabled:opacity-50">確認済み</button>
+            <span className="text-[10px] text-[#7986cb]">ブレインが自動で DB に反映済みのお知らせ</span>
+            <button type="button" disabled={busy === "notice"} onClick={() => void clearNotices()} className="text-[10px] font-bold text-[#5c6bc0] active:opacity-60 disabled:opacity-50">確認済み</button>
           </div>
         </div>
       )}
       {recent.map((g) => (
-        <div key={g.key} className="flex items-start gap-2 border-t border-indigo-100 py-1 first:border-t-0">
+        <div key={g.key} className="flex items-start gap-2 border-t border-[#e8eaf6] py-1 first:border-t-0">
           <span className="min-w-0 flex-1">
-            <span className="block text-[10px] text-indigo-400">{jst(g.at)}・{g.writerJa}{g.confirmed ? "・確認済み" : ""}</span>
+            <span className="block text-[10px] text-[#7986cb]">{jst(g.at)}・{g.writerJa}{g.confirmed ? "・確認済み" : ""}</span>
             {g.changes.map((c) => (
-              <span key={c.field} className="block text-[11px] leading-snug text-indigo-900">{c.label}: {short(c.old)} → {short(c.new)}</span>
+              <span key={c.field} className="block text-[11px] leading-snug text-[#1a237e]">{c.label}: {short(c.old)} → {short(c.new)}</span>
             ))}
           </span>
           <span className="flex shrink-0 flex-col items-end gap-1">
             {g.undoable && (
-              <button type="button" disabled={busy === g.key} onClick={() => void undo(g)} className="rounded-md border border-indigo-300 bg-white px-2 py-0.5 text-[10px] font-bold text-indigo-600 active:opacity-60 disabled:opacity-50">元に戻す</button>
+              <button type="button" disabled={busy === g.key} onClick={() => void undo(g)} className="rounded-full border border-[#9fa8da] bg-white px-2 py-0.5 text-[10px] font-bold text-[#3949ab] active:opacity-60 disabled:opacity-50">元に戻す</button>
             )}
             {!g.confirmed && (
-              <button type="button" disabled={busy === g.key} onClick={() => void confirm(g)} className="text-[10px] font-bold text-indigo-500 active:opacity-60 disabled:opacity-50">確認済み</button>
+              <button type="button" disabled={busy === g.key} onClick={() => void confirm(g)} className="text-[10px] font-bold text-[#5c6bc0] active:opacity-60 disabled:opacity-50">確認済み</button>
             )}
           </span>
         </div>

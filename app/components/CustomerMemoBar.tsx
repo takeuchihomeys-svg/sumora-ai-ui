@@ -57,7 +57,7 @@ export default function CustomerMemoBar({ conversationId, refreshKey, authHeader
   const moodText = mood ? `${mood.prevEmotions.length ? `${mood.prevEmotions.join("→")}／` : ""}今回の見立て: ${mood.hint}` : "";
 
   return (
-    <div className="border-b border-[#c5cae9] bg-[#f5f6ff] px-4 py-1.5">
+    <div className="border-b border-[#c5cae9] bg-[#f5f6ff] px-3 py-1.5 md:px-4">
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 text-left">
         <span className="shrink-0 rounded-full bg-[#3949ab] px-1.5 py-0.5 text-[9px] font-bold text-white">メモ</span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-[#283593]">

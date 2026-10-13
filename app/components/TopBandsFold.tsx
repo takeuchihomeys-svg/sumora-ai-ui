@@ -69,13 +69,13 @@ export default function TopBandsFold({ resetKey, children }: { resetKey: string;
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className={`flex w-full items-center gap-1.5 overflow-x-auto whitespace-nowrap border-b px-3 py-1 text-left active:opacity-70 ${anyUrgent ? "border-[#ef9a9a] bg-[#fff5f5]" : "border-[#e9edef] bg-[#f7f8fa]"}`}
+          className={`flex w-full items-center gap-1.5 overflow-x-auto whitespace-nowrap border-b px-3 py-1 text-left active:opacity-70 md:px-4 ${anyUrgent ? "border-[#ef9a9a] bg-[#fff5f5]" : "border-[#e9edef] bg-[#f7f8fa]"}`}
           style={{ scrollbarWidth: "none" }}
         >
           {chips.map((c) => (
             <span
               key={c.key}
-              className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-[1px] text-[10px] font-bold ${
+              className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-[1px] text-[10px] font-bold leading-[16px] ${
                 c.urgent ? "bg-[#d32f2f] text-white" : "border border-[#d1d7db] bg-white text-[#54656f]"
               }`}
             >

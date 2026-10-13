@@ -143,7 +143,7 @@ export default function CustomerStateBar({ conversationId, refreshKey, authHeade
   const stageDetail = state.stageDetail && !(state.upcomingViewing && state.stageDetail === state.upcomingViewing.label) ? state.stageDetail : null;
 
   return (
-    <div data-customer-state-bar="" className="border-b border-[#e9edef] bg-white/90 px-3 py-[3px] backdrop-blur-md md:px-4">
+    <div data-customer-state-bar="" className="border-b border-[#e9edef] bg-white/90 px-3 py-1 backdrop-blur-md md:px-4">
       <div className="flex min-w-0 items-center gap-1.5">
         <button
           type="button"
@@ -153,7 +153,7 @@ export default function CustomerStateBar({ conversationId, refreshKey, authHeade
           aria-expanded={open}
         >
           {/* 閉じている時は1行で省略、開いた時は全体を折り返して見せる */}
-          <span className={`min-w-0 flex-1 text-[11.5px] leading-[18px] text-[#3b4a54] ${open ? "break-words" : "truncate"}`}>
+          <span className={`min-w-0 flex-1 text-[12px] leading-[18px] text-[#3b4a54] ${open ? "break-words" : "truncate"}`}>
             <span className="font-bold text-[#111b21]">{head}</span>
             {rest}
           </span>
@@ -172,7 +172,7 @@ export default function CustomerStateBar({ conversationId, refreshKey, authHeade
       </div>
 
       {open && (
-        <div className="mt-1 max-h-[55vh] space-y-2 overflow-y-auto overflow-x-hidden pb-1.5 text-[11.5px] leading-snug text-[#3b4a54]">
+        <div className="mt-1 max-h-[55vh] space-y-2 overflow-y-auto overflow-x-hidden pb-1.5 text-[12px] leading-snug text-[#3b4a54]">
           {warns.length > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5">
               <div className="mb-0.5 text-[11px] font-bold text-amber-800">⚠ ずれ（記録どうしが食い違っています）</div>
@@ -228,12 +228,12 @@ export default function CustomerStateBar({ conversationId, refreshKey, authHeade
                         </span>
                         <span className={`shrink-0 whitespace-nowrap rounded px-1 text-[10px] font-bold leading-[16px] ${ROOM_STATUS_TONE[p.status] ?? ROOM_STATUS_TONE.candidate}`}>{p.statusLabel}</span>
                       </div>
-                      {flags.length > 0 && <div className="text-[10.5px] text-[#54656f]">{flags.join("・")}</div>}
+                      {flags.length > 0 && <div className="text-[11px] text-[#54656f]">{flags.join("・")}</div>}
                       {p.maybeSameAs.length > 0 && (
-                        <div className="break-words text-[10.5px] text-amber-800">未確認: {p.maybeSameAs.slice(0, 2).join("／")} と同じ？</div>
+                        <div className="break-words text-[11px] text-amber-800">未確認: {p.maybeSameAs.slice(0, 2).join("／")} と同じ？</div>
                       )}
                       {p.events.length > 0 && (
-                        <div className="break-words text-[10.5px] text-[#8696a0]">
+                        <div className="break-words text-[11px] text-[#8696a0]">
                           {p.events.map((e) => `${jstMd(e.at)} ${EVENT_LABEL[e.kind] ?? e.kind}`).join(" · ")}
                         </div>
                       )}
@@ -242,7 +242,7 @@ export default function CustomerStateBar({ conversationId, refreshKey, authHeade
                 })}
               </ul>
               {(state.candidateCount > 0 || state.hiddenNotable > 0) && (
-                <div className="mt-0.5 text-[10.5px] text-[#8696a0]">
+                <div className="mt-0.5 text-[11px] text-[#8696a0]">
                   {state.hiddenNotable > 0 ? `ほかに進んだお部屋 ${state.hiddenNotable}件` : ""}
                   {state.hiddenNotable > 0 && state.candidateCount > 0 ? "・" : ""}
                   {state.candidateCount > 0 ? `ほかに送っただけの候補 ${state.candidateCount}件` : ""}
@@ -253,11 +253,11 @@ export default function CustomerStateBar({ conversationId, refreshKey, authHeade
 
           {infos.length > 0 && (
             <div>
-              <button type="button" onClick={() => setShowInfo((v) => !v)} className="text-[10.5px] text-[#8696a0] active:opacity-60">
+              <button type="button" onClick={() => setShowInfo((v) => !v)} className="text-[11px] text-[#8696a0] active:opacity-60">
                 {showInfo ? "▲" : "▾"} 参考（読む側で吸収済みの食い違い {infos.length}件）
               </button>
               {showInfo && (
-                <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[10.5px] text-[#667781]">
+                <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[11px] text-[#667781]">
                   {infos.map((c, i) => (<li key={i} className="break-words">{c.detail}</li>))}
                 </ul>
               )}

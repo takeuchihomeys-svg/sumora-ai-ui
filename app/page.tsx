@@ -8019,7 +8019,7 @@ export default function Home() {
             // 10/13: 自動反映の知らせは上の「条件の更新」の履歴に出す（ここは人が入れ替える・追加するを決める「新着要望」だけ）
             if (isAutoReflected && CONDITION_HISTORY_UI) return null;
             return (
-              <div className={`border-b px-3 pt-2 pb-2.5 ${isAutoReflected ? "border-indigo-200 bg-indigo-50" : "border-amber-200 bg-amber-50"}`}>
+              <div className={`border-b px-3 py-1.5 md:px-4 ${isAutoReflected ? "border-indigo-200 bg-indigo-50" : "border-amber-200 bg-amber-50"}`}>
                 {/* ヘッダー行: バッジ + クリア */}
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-1.5">
@@ -8045,7 +8045,7 @@ export default function Home() {
                   </button>
                 </div>
                 {/* 条件テキスト */}
-                <p className={`text-[12px] leading-relaxed mb-1.5 ${isAutoReflected ? "text-indigo-800" : "text-amber-800"}`}>{stripMarkdown(latest.content)}</p>
+                <p className={`text-[12px] leading-snug mb-1.5 ${isAutoReflected ? "text-indigo-800" : "text-amber-800"}`}>{stripMarkdown(latest.content)}</p>
                 {isAutoReflected && (
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <p className="text-[10px] text-indigo-400">条件はブレインが自動でDBに反映済みです</p>
@@ -8109,7 +8109,7 @@ export default function Home() {
             // たたんだ札: 数＝今の約束＋後での約束・急ぎ＝待ちでない約束が1日以上たった／今日中
             const mustUrgent = split.now.some((p) => !waitPromiseBadge(p.notes) && (Date.now() - new Date(p.start_at).getTime() >= 86400000 || (p.notes ?? "").includes(TODAY_MARK)));
             return (
-            <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}
+            <div className="border-b border-[#ef9a9a] px-3 py-1.5 md:px-4" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}
               data-fold-count={split.now.length + split.later.length} data-fold-tone="red" data-fold-urgent={mustUrgent ? "1" : undefined}>
               {split.later.length > 0 && (
                 <p className="text-[11px] font-bold text-[#6a1b9a]">先に: お客様が送った物件の確認（{brainAixAction === "estimate_sheet" ? "AIX 見積書送る" : "AIX 物件確認した"}）</p>
@@ -8185,7 +8185,7 @@ export default function Home() {
             if (!items.length) return null;
             const openN = items.filter((x) => x.status === "open").length;
             return (
-              <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}
+              <div className="border-b border-[#ef9a9a] px-3 py-1.5 md:px-4" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}
                 data-fold-count={openN > 0 ? openN : items.length} data-fold-tone={openN > 0 ? "red" : "blue"}>
                 <p className="text-[11px] font-bold text-[#b71c1c]">お客様の確認事項{openN > 0 ? `（未対応 ${openN}）` : "（結果待ち）"}</p>
                 {items.slice(0, 6).map((x, n) => (
@@ -8233,7 +8233,7 @@ export default function Home() {
             // 2026-10-08（C7）: ブレインのメモは今の判断（最新のお客様の発言を見た判断）の時だけ（古い判断のメモを出さない）
             const brainNote = isAixAction || (BRAIN_ATTENTION_UI && !aixView.metaFresh) ? null : bannerAixMeta?.note;
             if (tasks.length > 0) return (
-              <div className="flex items-center gap-2 border-b border-[#a5d6a7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8f5e9, #f1f8e9)" }}>
+              <div className="flex items-center gap-2 border-b border-[#a5d6a7] px-3 py-1.5 md:px-4" style={{ background: "linear-gradient(90deg, #e8f5e9, #f1f8e9)" }}>
                 <svg className="h-3.5 w-3.5 shrink-0 text-[#2e7d32]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" fill="currentColor" />
                 </svg>
@@ -8255,7 +8255,7 @@ export default function Home() {
               </div>
             );
             if (brainNote) return (
-              <div className="flex items-center gap-2 border-b border-[#c5cae9] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8eaf6, #f3f4ff)" }}>
+              <div className="flex items-center gap-2 border-b border-[#c5cae9] px-3 py-1.5 md:px-4" style={{ background: "linear-gradient(90deg, #e8eaf6, #f3f4ff)" }}>
                 <svg className="h-3.5 w-3.5 shrink-0 text-[#3949ab]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" fill="currentColor" />
                 </svg>

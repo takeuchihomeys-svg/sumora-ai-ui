@@ -42,7 +42,7 @@ export default function UndatedPromiseBar({ conversationId, refreshKey, authHead
   }, [conversationId, refreshKey]);
 
   if (!pending && !done) return null;
-  if (done) return <div className="border-b border-[#ef9a9a] bg-[#fff5f5] px-4 py-1.5 text-[11px] font-bold text-[#2e7d32]">{done}</div>;
+  if (done) return <div className="border-b border-[#ef9a9a] bg-[#fff5f5] px-3 py-1.5 text-[11px] md:px-4 font-bold text-[#2e7d32]">{done}</div>;
 
   const save = async () => {
     if (!pending || !date || saving) return;
@@ -70,7 +70,7 @@ export default function UndatedPromiseBar({ conversationId, refreshKey, authHead
   };
 
   return (
-    <div className="border-b border-[#ef9a9a] px-4 py-2" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}>
+    <div className="border-b border-[#ef9a9a] px-3 py-1.5 md:px-4" style={{ background: "linear-gradient(90deg, #ffebee, #fff5f5)" }}>
       <div className="flex items-start gap-2">
         <span className="shrink-0 rounded-full bg-[#d32f2f] px-1.5 py-0.5 text-[9px] font-bold text-white">日付なし</span>
         <span className="min-w-0 flex-1">

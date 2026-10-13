@@ -88,7 +88,7 @@ export default function OutcomeConfirmBar({ conversationId, status, authHeader, 
   if (!conversationId || forId !== conversationId) return null;
   if (!confirm && !nudge && !done) return null;
   return (
-    <div className="border-b border-[#d1d7db] bg-white/95 px-3 py-1.5 text-[11px] leading-snug">
+    <div className="border-b border-[#d1d7db] bg-white/95 px-3 py-1.5 text-[11px] leading-snug md:px-4">
       {done && <div className="text-[#54656f]">{done}</div>}
       {confirm && (
         <div className="rounded-lg bg-amber-50 px-2 py-1.5 text-amber-900">
