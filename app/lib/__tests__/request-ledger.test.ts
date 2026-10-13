@@ -166,6 +166,10 @@ console.log("ブレインの判断（request_status）");
     const st = normalizeBrainRequestStatus([{ id: "r1", status: "done", via: "返信" }, { id: "r9", status: "done" }, { id: "r2", status: "maybe" }], cands, at(5));
     eq(st?.items.map((x) => `${x.key === requestKey(led[0])}:${x.status}:${x.via}`), ["true:done:返信"]);
     eq(normalizeBrainRequestStatus(null, cands, at(5)), null);
+    // 表の形（10/13 既定 on と同時に変えた指示）
+    const m = normalizeBrainRequestStatus({ r1: "done|電話・対面", r2: "open" }, cands, at(5));
+    eq(m?.items.map((x) => `${x.status}:${x.via}`), ["done:電話・対面", "open:null"]);
+    has(buildRequestStatusAsk(cands), `"r1": "", "r2": ""`);
   });
   it("帯: ブレインの済みは網が「まだ」でも済み・ブレインの「まだ」は網が済みでもまだ", () => {
     const st = { at: at(5), items: [{ key: requestKey(led[0]), status: "done", via: "返信" }, { key: requestKey(led[1]), status: "open", via: null }] };

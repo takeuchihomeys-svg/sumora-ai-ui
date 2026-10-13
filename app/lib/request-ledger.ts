@@ -310,7 +310,7 @@ export function countOpenRequestsByConversation(
 //   確認事項の「済み／まだ／取り下げ」はブレインが毎回の判断の中で文を読んで決める（追加の LLM 呼び出しは無し・出力が少し増えるだけ）。
 //   ここ（buildRequestLedger）は候補を拾う網＝候補の一覧と網の見立てを作るだけ。画面の帯・一覧のバッジはブレインの判断をそのまま使い、
 //   ブレインの判断が無い項目・ブレインが「まだ」と言った後にこちらが送った項目だけ網の見立てを出す（applyBrainRequestStatus）。
-//   入れる: REQUEST_STATUS_BRAIN=on（10/13 時点の既定は off＝比べる試しの後に on）／戻す: 未設定・off（ブレインに聞かない）／NEXT_PUBLIC_REQUEST_STATUS_BRAIN=off（画面・バッジがブレインの判断を使わない）
+//   戻す: REQUEST_STATUS_BRAIN=off（ブレインに聞かない）／NEXT_PUBLIC_REQUEST_STATUS_BRAIN=off（画面・バッジがブレインの判断を使わない）
 // ─────────────────────────────────────────────────────────────────────────────
 export type BrainRequestState = "done" | "promised" | "open" | "withdrawn";
 export type BrainRequestStatusItem = { key: string; status: BrainRequestState; via: string | null };
@@ -325,8 +325,8 @@ export const requestKey = (x: Pick<RequestItem, "saidAt" | "quote">): string => 
 };
 
 export function requestStatusBrainOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
-  // 10/13: 比べる試し（④）の結果が出るまで既定は off（REQUEST_STATUS_BRAIN=on で入る）。off の間は前の注記（網の「まだ答えていない確認事項」）のまま
-  return (env.REQUEST_STATUS_BRAIN ?? "").trim().toLowerCase() === "on" && requestLedgerEnabled(env);
+  // 10/13: 比べる試し（分かれた4件でブレイン3・網1／Claude は4件とも正しい）を受けて既定 on。REQUEST_STATUS_BRAIN=off で前の注記（網の「まだ答えていない確認事項」）
+  return (env.REQUEST_STATUS_BRAIN ?? "").trim().toLowerCase() !== "off" && requestLedgerEnabled(env);
 }
 function requestStatusBrainUiOn(): boolean {
   let v = "";
@@ -348,7 +348,8 @@ export function buildRequestStatusAsk(cands: ReadonlyArray<RequestCandidate>): s
   const fmt = (iso: string) => { const d = new Date(Date.parse(iso) + 9 * 3600_000); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
   return `【お客様の確認事項の候補（決定論の網が拾った物・状態はあなたが会話を読んで決める）】
 ${cands.map((c) => `${c.id}. ${fmt(c.item.saidAt)} ${TOPIC_JA[c.item.topic]}「${c.item.quote}」（網の見立て: ${NET_JA[c.item.status]}${c.item.doneBy ? `・${c.item.doneBy}` : ""}）`).join("\n")}
-→ 出力の JSON に "request_status": [{"id": "r1", "status": "done|promised|open|withdrawn", "via": "返信|AIX|電話・対面|内覧の確定|お客様が取り下げ|null"}] を足す。候補の全部（r1〜r${cands.length} の ${cands.length} 件すべて・済みの物も省かない）について1行ずつ。
+→ 出力の JSON に次の "request_status" を足す。鍵は r1〜r${cands.length} の ${cands.length} 個すべて（済みの物も省かない・鍵を消さない）。値は「状態|手段」（状態＝done/promised/open/withdrawn、手段＝返信/AIX/電話・対面/内覧の確定/取り下げ。open は手段なし）:
+  "request_status": {${cands.map((c) => `"${c.id}": ""`).join(", ")}}
   - done＝こちらがその問いに答えた・結果を送った（手打ちの返信・AIX・電話や内覧の場で話した・内覧の日が決まった等、手段は問わない。言い回しが違っても中身で答えていれば done）
   - promised＝「確認させて頂きます」等の約束だけで、結果はまだ送っていない／open＝まだ触れていない／withdrawn＝お客様が「もう大丈夫です」等で取り下げた・別の流れで要らなくなった
   - 網の見立ては語の一致で作った目安。文を読んで違えば直す（網が「まだ」でも答えていれば done、網が「済み」でも別の話で触れただけなら open）`;
@@ -356,6 +357,14 @@ ${cands.map((c) => `${c.id}. ${fmt(c.item.saidAt)} ${TOPIC_JA[c.item.topic]}「$
 
 /** ブレインの出力を整える（候補に無い id・型の外れた値は落とす）。候補が無い・出力が無ければ null */
 export function normalizeBrainRequestStatus(raw: unknown, cands: ReadonlyArray<RequestCandidate>, at: string): BrainRequestStatus | null {
+  // 形は2つ受ける: 表 {"r1": "done|返信"}（今の指示）／並び [{id, status, via}]（前の指示）
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    raw = Object.entries(raw as Record<string, unknown>).map(([id, v]) => {
+      if (v && typeof v === "object") return { id, ...(v as Record<string, unknown>) };
+      const [status, via] = String(v ?? "").split(/[|｜]/).map((z) => z.trim());
+      return { id, status, via: via ?? null };
+    });
+  }
   if (!cands.length || !Array.isArray(raw)) return null;
   const byId = new Map(cands.map((c) => [c.id, c.key]));
   const items: BrainRequestStatusItem[] = [];
