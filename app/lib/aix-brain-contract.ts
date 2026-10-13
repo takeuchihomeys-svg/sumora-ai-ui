@@ -129,20 +129,39 @@ export const STAFF_VALUE_LINE_RE = /(?:日時|日程|内覧日|内見日|候補�
  * その AIX 自身が送る事柄の話題（must_not の話題の行がこれに当たる時は AIX には渡さない＝内覧日調整に「言わない: 内覧の日程」を渡さない）。
  *   ブレインの must_not は返信のための線（返信では内覧の日程・見積・物件の提案を言わず AIX に任せる）。
  */
-const OWN_TOPIC_RE: Record<string, RegExp> = {
-  viewing_invite: /内覧|内見|日程|日時|案内/, meeting_place: /内覧|内見|日程|日時|案内|待ち合わせ/,
-  estimate_sheet: /見積|初期費用|金額|割引/, cost_explain: /見積|初期費用|金額|割引|費用/, cost_breakdown: /見積|初期費用|金額|割引|費用/,
-  property_send: /物件|ピックアップ|提案|お部屋/, property_recommendation: /物件|ピックアップ|提案|お部屋/, zenryoku_support: /物件|ピックアップ|提案|新着/,
-  property_check_result: /空室|空き|募集|確認の?結果/, application_push: /申込|お申込/,
+// 10/14 見直し: 旧は話題の語が行のどこかにあれば落とした（物件の AIX で「見積書の提案」「内覧日の提案」「物件の創作」まで落ちた）。
+//   → 自分の話題が行の頭（主）で、他の AIX の話題の語を含まず、安全の線（創作・断言・断定・初出）でない行だけ落とす
+const LEAD = "^(?:新しい|新規|新たな|新着の?|追加の?|再度の|別の)?";
+const FAMILY: Record<string, string> = {
+  view: "内覧|内見|日程|日時|案内|待ち合わせ", cost: "見積|初期費用|金額|割引|費用|分割",
+  prop: "物件|ピックアップ|お部屋|新着", check: "空室|空き|募集", apply: "申込|お申込",
 };
+const FAMILY_OF: Record<string, string> = {
+  viewing_invite: "view", meeting_place: "view", estimate_sheet: "cost", cost_explain: "cost", cost_breakdown: "cost",
+  property_send: "prop", property_recommendation: "prop", zenryoku_support: "prop", property_check_result: "check", application_push: "apply",
+};
+const MUST_NOT_SAFETY_RE = /創作|断言|断定|初出/;
+/** その行がこの AIX 自身の話題の線か（＝AIX には渡さない） */
+export function isOwnTopicLine(line: string, action: string): boolean {
+  const fam = FAMILY_OF[action];
+  if (!fam) return false;
+  const s = String(line ?? "").trim();
+  if (MUST_NOT_SAFETY_RE.test(s)) return false;
+  if (!new RegExp(LEAD + "(?:" + FAMILY[fam] + ")").test(s)) return false;
+  const others = Object.entries(FAMILY).filter(([k]) => k !== fam).map(([, v]) => v).join("|");
+  // 物件の AIX の「物件」と内覧の AIX の「内覧」は同じ語を含みうるので、頭の語を除いた残りで他の話題を見る
+  const rest = s.replace(new RegExp(LEAD + "(?:" + FAMILY[fam] + ")"), "");
+  return !new RegExp(others).test(rest);
+}
 export function mustNotForAix(lines: ReadonlyArray<string>, action: string): string[] {
-  const own = OWN_TOPIC_RE[action];
-  return lines.filter((s) => !STAFF_VALUE_LINE_RE.test(s) && !(own && own.test(s)));
+  return lines.filter((s) => !STAFF_VALUE_LINE_RE.test(s) && !isOwnTopicLine(s, action));
 }
 
 /** 約束（確認・見積・探す・内覧の調整）の中身が、押された AIX で果たされる約束か（約束の依頼をこの AIX で受ける依頼に入れる） */
 export function promiseFulfilledBy(text: string, action: string): boolean {
   const t = String(text ?? "");
+  // 10/14 見直し: 内覧の可否・日程の約束を先に（「管理会社に内覧可否を確認」が確認の判定に先に当たり内覧日調整で受けなかった）。物件確認したでも受ける
+  if (/内覧|内見/.test(t)) return /^(?:viewing_invite|meeting_place)$/.test(action) || (action === "property_check_result" && /可否|確認|管理会社|可能/.test(t));
   if (/見積|初期費用|割引/.test(t)) return /^(?:estimate_sheet|cost_explain|cost_breakdown|acknowledge_check)$/.test(action) || (action === "property_check_result" && /募集|空き|空室/.test(t));
   if (/募集|空き|空室|確認|管理会社|入居日|退去|設備|保証会社/.test(t)) return /^(?:property_check_result|acknowledge_check|guarantor_info)$/.test(action);
   if (/ピックアップ|探|新着|お部屋.*お送り/.test(t)) return /^(?:property_send|property_recommendation|zenryoku_support)$/.test(action);
