@@ -3785,7 +3785,12 @@ async function runFinalCheckWithRevisionCore(
 
     // 2026-09-11 竹内方針1（V-1）: block と一緒に観測専用・表示のみ・誤字の指摘を修正 LLM へ渡さない（同じ isRevisable）
     // 2026-10-13 ブレイン基準: warning の道と同じ選び方（pickRevisionIssues）
-    const passableBlockIssues = pickRevisionIssues(currentCheck.issues, currentDraft, ctx, alignLog, "block");
+    const passableBlockIssues0 = pickRevisionIssues(currentCheck.issues, currentDraft, ctx, alignLog, "block");
+    // 2026-10-14 区切り2（#8 出口で言葉だけを見て文を消す所）: block の道でも「文に間違いの無い文体」の指摘（EMPTY_CLOSER・SPLIT_ACK_REPLY 等の骨格の block）は
+    //   書き直しに渡さない（warning の道の 10/02 の決まりと同じ・文体は画面にも出さない）。直す block が文体だけなら書き直さない。戻す FINAL_CHECK_BLOCK_STYLE_SKIP=off
+    const blockStyleSkip = (process.env.FINAL_CHECK_BLOCK_STYLE_SKIP ?? "").toLowerCase() !== "off";
+    const passableBlockIssues = blockStyleSkip ? passableBlockIssues0.filter((i) => !isStyleNoErrorCode(i.code)) : passableBlockIssues0;
+    if (blockStyleSkip && passableBlockIssues0.length > 0 && !passableBlockIssues.some((i) => i.severity === "block")) { droppedB = "style_only"; break; }
     if (passableBlockIssues.length === 0) { droppedB = "no_passable"; break; }
     // 2026-09-09 行動台帳: block が台帳系（再度／お送りした／完了形）だけなら決定論置換（applyLedgerAutoFix）で直す（Sonnet 15s 節約・意味の変質ゼロ）。
     //   他の block が混在する時は Sonnet 修正に台帳の根拠・制約を添える
@@ -3847,7 +3852,8 @@ async function runFinalCheckWithRevisionCore(
     console.log(JSON.stringify({ tag: "final-check:revised", path: "block", codes: preRevisionIssues, before: draft.slice(0, 300), after: bestDraft.slice(0, 300) }));
   }
   if (droppedB && bestDraft === draft) bestCheck.revision_dropped = droppedB;
-  if (bestCheck.issues.some((i) => i.severity === "block")) {
+  // 2026-10-14 区切り2: 残った block が文体だけ（書き直しに渡さなかった）なら修正切れにしない
+  if (bestCheck.issues.some((i) => i.severity === "block" && !(droppedB === "style_only" && isStyleNoErrorCode(i.code)))) {
     bestCheck.revision_exhausted = true; // blockが残った → スタッフ手動確認必須
   }
   return { finalDraft: bestDraft, finalCheck: bestCheck };

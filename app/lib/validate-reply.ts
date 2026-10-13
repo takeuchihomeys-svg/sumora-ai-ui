@@ -1,6 +1,7 @@
 // 2026-09-11 統合設計（経路B）: 顧客名スロット（{name}／〇〇さん）の決定論置換は reply-context の fillNameSlot が唯一の実装。
 //   reply-context は他の app/lib/* を runtime import しない（依存ゼロ）ので循環 import にならない
 import { fillNameSlot } from "./reply-context";
+import { redeclareGateBrainEnabled, sentenceNamesOtherProperty } from "./redeclare-gate";
 // 2026-09-11 竹内方針1・4・5（統合設計 §1）: 後処理の決定論修正（承知→かしこまりました・すぐに除去・誤字）は依存ゼロの2モジュールが唯一の定義
 import { normalizeBannedPhrasing } from "./banned-phrasing";
 import { polishConditionEcho } from "./condition-echo-polish";
@@ -688,8 +689,10 @@ export function applySurfaceFixes(
   const b = normalizeBannedPhrasing(out);
   // 2026-10-01: 「くらい」→「程」だけが当たった時に本文へ戻していなかった（条件に b.kurai が無く、b.text が捨てられていた）
   // 2026-10-07: 「YYYY年M月築の新築」→築浅（b.newBuild）も同じく戻す
-  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup || b.kurai || b.emoji || b.newBuild) {
+  // 2026-10-14 区切り2（#13）: ペットの言い回しだけが当たった時（b.pet）も本文へ戻す（条件に無く b.text が捨てられていた・kurai と同じ穴）
+  if (b.shochi || b.hasty || b.uketamawari || b.night || b.greetDup || b.kurai || b.emoji || b.newBuild || b.pet) {
     out = b.text;
+    if (b.pet) applied.push(`PET_WORDING×${b.pet}`);
     if (b.emoji) applied.push(`EMOJI_ALLOWLIST×${b.emoji}`);              // 2026-10-02 竹内「入れて良い絵文字だけ・女性の絵文字いれない」
     if (b.shochi) applied.push(`SHOCHI_TO_KASHIKOMARI×${b.shochi}`);
     if (b.hasty) applied.push(`HASTY_ADVERB_REMOVED×${b.hasty}`);
@@ -1128,10 +1131,21 @@ const AIX_GATE_RULES: { name: string; test: (s: string, o?: GateOpts) => boolean
 // 過去形・完了形（「確認しましたところ」「確認済み」）は正当な結果報告なので除外する。
 const VACANCY_REDECLARE_RE =
   /(?:空室|空き)(?:状況|状態)?|募集(?:状況|状態)?|お部屋の(?:状況|空き)|管理会社/;
+/** 2026-10-14 区切り2: 空室の話題の文だけ（「管理会社に確認」は設備・契約・費用の確認にも使う＝空室の再宣言ではない）。REDECLARE_GATE_BRAIN=off で旧 */
+const VACANCY_REDECLARE_TOPIC_RE =
+  /(?:空室|空き)(?:状況|状態)?|募集(?:状況|状態)?|お部屋の(?:状況|空き)/;
 const VACANCY_REDECLARE_FUTURE_RE =
   /(?:確認|問い合わせ|問合せ)(?:を)?(?:し(?:て|、)?)?(?:改めて)?(?:させて(?:頂|いただ)き|いたします|致します|します|でき次第|次第)|(?:確認|問い合わせ)し(?:て)?ご連絡/;
 const VACANCY_REDECLARE_PAST_RE =
   /確認(?:し(?:まし)?た|済み|できまし|が取れ|したところ|いたしましたところ)|確認結果/;
+/** 2026-10-14 区切り2: 結果の報告の形を足す（「確認させて頂きましたところ」「確認させていただき、〜とのこと」） */
+const VACANCY_REDECLARE_PAST_EXTRA_RE =
+  /させて(?:頂|いただ)きました(?:ところ|が|。|！|!)|させて(?:頂|いただ)きましたところ|させて(?:頂|いただ)き[、,][^。！!？?\n]{0,60}とのこと/;
+/** 2026-10-14 区切り2: 新しい相手への約束（お客様がこれから送る・送ってくれたお部屋・新着・他のお部屋・〜も一緒に）＝再宣言ではない */
+const REDECLARE_NEW_TARGET_RE =
+  /お送り(?:頂|いただ)(?:き(?:まし)?た(?:お部屋|物件)|けましたら|けれ(?:ば)?|きますと|く(?:と|際))|新着|新しく|他(?:の)?[^。！!？?\n]{0,12}(?:お部屋|物件)|気になる(?:お部屋|物件)|お気に召され|お見積書も|も一緒に/;
+/** 2026-10-14 区切り2: 見積の結果の報告（送った・作成した）。送っていない時は従来どおり消す（見積書カバー文と同じ線） */
+const ESTIMATE_REPORT_RE = /(?:お送り|作成|同封|ご用意)[^。！!？?\n]{0,14}(?:ました|ており(?:ます)?|ております)/;
 
 // AIX【物件ピックアップ】で物件送付済みなのに「これからピックアップします」と再宣言する文。
 const PICKUP_REDECLARE_RE =
@@ -1179,6 +1193,19 @@ export function enforceAixGates(
     groundText?: string;
     /** 2026-10-08 8巡目: 対象の物件の資料に書いてある値（契約条件・入居時期の材料）。退去予定・入居時期の言い切りが資料のとおりなら免除（materialGroundsAssertion） */
     materialFacts?: string;
+    /** 2026-10-14 区切り2（redeclare-gate.ts）: 見積作成宣言の繰り返しを消す旗（物件ごと・7日・費用の質問で解除）。未指定は estimatePromised */
+    estimateRedeclareArmed?: boolean;
+    /** 見積書をこの物件に送った（結果の報告の文を残してよい） */
+    estimateSentSameProperty?: boolean;
+    /** 窓の中で見積書を送った物件の名前（文が別の物件の見積を言っていれば消さない） */
+    estimateSentNames?: string[];
+    /** 直前のこちらの文が同じ見積の約束（二重の約束はブレインの免除があっても消す） */
+    estimateDoublePromise?: boolean;
+    /** 空室確認の再宣言を消す旗（同じ物件の確認だけ）。未指定は aixVacancyDone */
+    vacancyRedeclareArmed?: boolean;
+    /** ブレインがこの番で見積／確認の約束（か AIX）を決めた（brainKeepsRedeclare） */
+    brainKeepEstimate?: boolean;
+    brainKeepVacancy?: boolean;
   },
 ): { cleaned: string; violations: string[]; edits: GateEdit[] } {
   const violations: string[] = [];
@@ -1200,6 +1227,7 @@ export function enforceAixGates(
   // 見積書作成宣言ゲート: 約束済み（estimatePromised=true）の場合、LLMが再生成した
   // 「御見積書を作成しお送りします」宣言文そのものも二重宣言となるため短い受付文へ置換する
   const estimateDeclarationRe = /(?:御?見積書|お見積書)[^。！!？?\n]{0,20}(?:作成|お送り)|最大限割引[^。！!？?\n]{0,25}(?:作成|お送り)/;
+  const redeclareBrain = redeclareGateBrainEnabled();
   const outLines = text.split("\n").map((line) => {
     // 文末（。！!？?）で分割。「！！」等の連続記号は1文として保持する
     const sentences = line.split(/(?<=[。！!？?])(?![。！!？?])/);
@@ -1211,7 +1239,13 @@ export function enforceAixGates(
         continue;
       }
       // 見積書作成宣言の繰り返し（約束済みの場合のみ削除。受付文は本文先頭に1回だけ入れる）
-      if (opts?.estimatePromised && estimateDeclarationRe.test(s)) {
+      // 2026-10-14 区切り2: 旗は物件ごと（estimateRedeclareArmed）・ブレインが約束を決めた番／本質が守る文は消さない・送った後の結果の報告は消さない
+      //   残す線: 同じ物件への二重の約束（estimateDoublePromise）・送っていないのに送ったと書く文
+      const estArmed = redeclareBrain ? (opts?.estimateRedeclareArmed ?? opts?.estimatePromised) : opts?.estimatePromised;
+      const estKeep = redeclareBrain && estimateDeclarationRe.test(s) && (
+        (ESTIMATE_REPORT_RE.test(s) ? !!opts?.estimateSentSameProperty
+          : REDECLARE_NEW_TARGET_RE.test(s) || sentenceNamesOtherProperty(s, opts?.estimateSentNames ?? []) || (!opts?.estimateDoublePromise && (!!opts?.brainKeepEstimate || !!opts?.protect?.(s)))));
+      if (estArmed && estimateDeclarationRe.test(s) && !estKeep) {
         violations.push(`見積作成宣言の繰り返し: ${s.trim().slice(0, 40)}`);
         edits.push({ rule: "見積作成宣言の繰り返し", before: s, after: null, reversible: false });
         needAck = true;
@@ -1219,11 +1253,13 @@ export function enforceAixGates(
       }
       // AIX実行済みアクションの再宣言（空室確認・物件ピックアップ）→ 該当文を削除
       // プロンプトの【🚫 AIX実行済みアクションの再宣言禁止】が無視された場合の最終防衛線。
+      // 2026-10-14 区切り2: 同じ物件の確認だけ（vacancyRedeclareArmed）・空室の話題の文だけ・結果の報告の形を足す・ブレインが確認を決めた番／本質が守る文は消さない
       if (
-        opts?.aixVacancyDone &&
-        VACANCY_REDECLARE_RE.test(s) &&
+        (redeclareBrain ? (opts?.vacancyRedeclareArmed ?? opts?.aixVacancyDone) : opts?.aixVacancyDone) &&
+        (redeclareBrain ? VACANCY_REDECLARE_TOPIC_RE : VACANCY_REDECLARE_RE).test(s) &&
         VACANCY_REDECLARE_FUTURE_RE.test(s) &&
-        !VACANCY_REDECLARE_PAST_RE.test(s)
+        !VACANCY_REDECLARE_PAST_RE.test(s) &&
+        !(redeclareBrain && (VACANCY_REDECLARE_PAST_EXTRA_RE.test(s) || REDECLARE_NEW_TARGET_RE.test(s) || !!opts?.brainKeepVacancy || !!opts?.protect?.(s)))
       ) {
         violations.push(`空室確認の再宣言(実行済): ${s.trim().slice(0, 40)}`);
         edits.push({ rule: "空室確認の再宣言", before: s, after: null, reversible: false });
@@ -1372,6 +1408,14 @@ export function validateAndClean(
     groundText?: string;
     /** 2026-10-08 8巡目: 対象の物件の資料に書いてある値（materialGroundsAssertion） */
     materialFacts?: string;
+    /** 2026-10-14 区切り2: enforceAixGates へ（redeclare-gate.ts） */
+    estimateRedeclareArmed?: boolean;
+    estimateSentSameProperty?: boolean;
+    estimateSentNames?: string[];
+    estimateDoublePromise?: boolean;
+    vacancyRedeclareArmed?: boolean;
+    brainKeepEstimate?: boolean;
+    brainKeepVacancy?: boolean;
     /** 2026-09-11 竹内方針3: resolveAddressName の aliases（呼びかけ位置の別名を確定名に統一する） */
     nameAliases?: string[];
     /** 曜日の自動修正の基準時刻（既定 Date.now()） */
@@ -1432,6 +1476,13 @@ export function validateAndClean(
       scheduledViewingHours: opts.scheduledViewingHours,
       groundText: opts.groundText,
       materialFacts: opts.materialFacts,
+      estimateRedeclareArmed: opts.estimateRedeclareArmed,
+      estimateSentSameProperty: opts.estimateSentSameProperty,
+      estimateSentNames: opts.estimateSentNames,
+      estimateDoublePromise: opts.estimateDoublePromise,
+      vacancyRedeclareArmed: opts.vacancyRedeclareArmed,
+      brainKeepEstimate: opts.brainKeepEstimate,
+      brainKeepVacancy: opts.brainKeepVacancy,
     });
     if (violations.length > 0) {
       issues.push(...violations.map(v => "AIXゲート違反(置換済): " + v));

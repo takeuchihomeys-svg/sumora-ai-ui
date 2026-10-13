@@ -302,7 +302,8 @@ export function issueContradictsContract(issue: { code: string; message?: string
   if (!c || c.source !== "brain" || !turnContractFinalCheckEnabled(env)) return false;
   // 2026-10-13: 本質そのものを物差しにした指摘（final-check-brain-align.contractConfirmMiss）は本質とぶつからない
   if (issue.code === "CONTRACT_UNASKED_CONFIRM" || issue.code === "BRAIN_ALREADY_SAID") return false;
-  const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH)$/;
+  // 2026-10-14 区切り2（#8）: 閉じる番に文を足させる骨格の指摘（EMPTY_CLOSER・SPLIT_ACK_REPLY・PROMISE_ECHO_MISSING）も同じ（足すと閉じる番が開く）
+  const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH|EMPTY_CLOSER|SPLIT_ACK_REPLY|PROMISE_ECHO_MISSING)$/;
   if (c.closeOnly && ADD_CODES.test(issue.code)) return true;
   const msg = `${issue.message ?? ""} ${issue.evidence ?? ""} ${issue.suggestion ?? ""}`;
   // 2026-10-13（了承の返事はブレインに任せる）: ブレインが待ちの形の1文と決めた番は、その短い1文を言い直し・二重の宣言と見る指摘を書き直しに渡さない

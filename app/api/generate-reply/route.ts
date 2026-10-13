@@ -112,6 +112,7 @@ import {
 // 2026-09-12 竹内方針C: 呼び名のサーバー側決定（DB名・履歴・is_aix_generated）。check-reply と同じ関数
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
 import { createExitRecorder } from "@/app/lib/exit-edits";
+import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
@@ -6055,6 +6056,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               ledger: ledgerForCtx ?? undefined, ledgerStrict: ledgerActive, isDeliverableReply: isAixPropertySendMode,
               nameAliases: addressName.aliases,
             };
+            // 2026-10-14 区切り2（出口のゲートをブレイン基準に・redeclare-gate.ts）: 見積作成宣言の繰り返し・空室確認の再宣言の旗を物件ごと・時間の窓・費用の質問で決め、
+            //   ブレインが約束（か AIX）を決めた番の文は消さない。戻す REDECLARE_GATE_BRAIN=off
+            const redeclareNow = Date.now();
+            const redeclareProps = brainFreshForMessage ? [...(brainMeta?.current_properties ?? []), brainMeta?.current_property ?? ""].filter((s): s is string => !!s && !!s.trim()) : [];
+            const redeclareLogs = recentAixRows.map((r) => ({ aix_type: r.aix_type ?? null, created_at: r.created_at ?? null, property_names: (r as { property_names?: string[] | null }).property_names ?? null, estimate_sent: (r as { estimate_sent?: boolean | null }).estimate_sent ?? null, check_pattern: r.check_pattern ?? null }));
+            const estimateGate = estimateRedeclareArmed({
+              legacy: estimatePromised, logs: redeclareLogs, now: redeclareNow, currentProperties: redeclareProps,
+              costAsk: asksCost || customerAskingAboutPrice || CUSTOMER_ESTIMATE_REQUEST_RE.test(intentMessage),
+              staffPromisedEstimate,
+            });
+            const estimateSentSameProperty = redeclareLogs.some((l) => (l.aix_type === "estimate_sheet" || l.estimate_sent) && redeclareNow - Date.parse(l.created_at ?? "") <= ESTIMATE_REDECLARE_WINDOW_MS && logMatchesCurrent(l.property_names, redeclareProps));
+            const estimateSentNames = [...new Set(redeclareLogs.filter((l) => (l.aix_type === "estimate_sheet" || l.estimate_sent) && redeclareNow - Date.parse(l.created_at ?? "") <= ESTIMATE_REDECLARE_WINDOW_MS).flatMap((l) => l.property_names ?? []))];
+            const vacancyGate = vacancyRedeclareArmed({ legacy: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), logs: redeclareLogs, now: redeclareNow, currentProperties: redeclareProps });
+            const redeclareKeep = brainKeepsRedeclare(turnContract, replyAixPre?.action ?? null);
+            if (estimatePromised !== estimateGate.armed || !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck) !== vacancyGate.armed || redeclareKeep.estimate || redeclareKeep.vacancy) {
+              console.info("[redeclare-gate]", JSON.stringify({ conversationId, estimate: estimateGate, vacancy: vacancyGate, keep: redeclareKeep }));
+            }
             const runValidate = (openingFixed: string, aixGates: boolean): { cleaned: string; issues: string[] } => {
               const vOpts = {
                 aixGates, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch,
@@ -6077,6 +6095,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // 2026-10-09: 本質（ブレイン）が決めた約束の文も消さない（turn-contract.contractProtectsSentence・TURN_CONTRACT_PROTECT=off）
                 protect: (s: string) => isCellRequiredSentence(s, pairContext) || contractProtectsSentence(turnContract, s),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend, materialFacts: contractMaterialFacts,
+                // 2026-10-14 区切り2: 再宣言の2つのゲートだけの旗とブレインの免除（置換文の選び方は今まで通り estimatePromised・aixVacancyDone）
+                estimateRedeclareArmed: estimateGate.armed, estimateSentSameProperty, estimateSentNames, estimateDoublePromise: estimateGate.reason === "staff_promised",
+                vacancyRedeclareArmed: vacancyGate.armed, brainKeepEstimate: redeclareKeep.estimate, brainKeepVacancy: redeclareKeep.vacancy,
                 // 2026-09-26（穴3）: 決まった内覧の日時の復唱は「待ち合わせ確定」の置換（詳細はご連絡）にしない
                 scheduledViewingHours,
                 // 2026-10-02 ⑫: 会話に既に出ている金額（こちらが送った物件の紹介・見積書の文）の引用は見積金額内訳ゲートで止めない（isGroundedAmountSentence）
