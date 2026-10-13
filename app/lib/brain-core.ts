@@ -3001,6 +3001,9 @@ ${history}`;
       //   ＝見積書を送る場面ではなかった。物件以外・本人確認書類・物件（見出しで分かった物）は矯正しない
       (() => { const g = customerImageGroup(lastCustomerMsg.text, lastCustomerMsg.image_type); return g === "estimate" || g === "unknown"; })() &&
       !turnAsksPropertyCheck
+      // 2026-10-13（ブレインの使い残し 4-2）: 画像だけの番の「見積書送る」の決め打ちは下げる（30日 28番で押された AIX と同じ 0）。
+      //   材料: 画像の見出し（customerImageGroup・[画像] の後の読み取り）はプロンプトの会話にある。戻す BRAIN_DEMOTE_IMAGE_ONLY=off
+      && applyOverride(demotedOverrides, "image_only", "correction:image_only", "estimate_sheet", finalAix)
     ) {
       finalAix = "estimate_sheet";
       decisionSource = "correction:image_only";
