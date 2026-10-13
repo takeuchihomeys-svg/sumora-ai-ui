@@ -62,8 +62,25 @@ function splitSentences(text: string): string[] {
     // ポータルの画面の文字（「- 無料 最新の空室状況を知りたい」等のボタン）はお客様の依頼ではない
     .filter((s) => !/^[-・*]\s|無料|カンタン|お気に入り|お問い?合わせ(?:先|する)|ボタン|\(Check /.test(s));
 }
+/**
+ * 2026-10-13 竹内さん（ゆなまる）「ここの部分答えているのに、なぜか残り続けている。こちらから送った事は認識していないのか？」:
+ *   直近30日の帯に残る項目（未対応 131・約束済み 11）を目で読み（scripts/audit-request-ledger-open-now.ts）、答え済みの取りこぼしの型だけ足した（cover v2）:
+ *   ①種類の読み違い「他のところで見積もり…安くなる」は他社の話（探すではなく費用）・「もう少し候補見たいです」は探す
+ *   ②答えの語の不足: 契約の段取り（申込・書類・本人確認）／審査（緊急連絡先・在籍・保護者・代理契約、審査を出しての依頼には「お申込み」）／
+ *     探す（お部屋探し・ご紹介・ご説明）／駐車場（パーキング）
+ *   ③結果の形: 御見積書（初期費用：N円・御見積書となります）は持ち込み・空き・費用の答え／「お送り頂きました〇〇…」の AIX は持ち込み・空きの答え／
+ *     電話で済んだ（「先程はお電話ありがとうございました」）は前の項目を全部済み／種類の無い質問は直後の最初の AIX でも答え
+ *   戻す: REQUEST_LEDGER_COVER_V2=off（サーバー）／NEXT_PUBLIC_REQUEST_LEDGER_COVER_V2=off（会話画面の帯）
+ */
+export function requestLedgerCoverV2On(): boolean {
+  let v = "";
+  try { v = `${process.env.NEXT_PUBLIC_REQUEST_LEDGER_COVER_V2 ?? ""}|${process.env.REQUEST_LEDGER_COVER_V2 ?? ""}`; } catch { v = ""; }
+  return !/\boff\b/i.test(v);
+}
+const PICKUP_RE_V2 = /(?:他|ほか|別)(?:に|の).{0,10}(?:物件|お部屋|部屋|ところ(?!で)|とこ(?![ろで]))|探して|ピックアップ|紹介して|(?:物件|お部屋|部屋)[^。\n]{0,8}出して(?:貰|もら|ほし|欲し)|(?:物件|お部屋|ところ|とこ)(?:は|って|が|も)?(?:あったり|ありますか|ありませんか|ないですか|無いですか|あったら|あれば)|候補.{0,4}(?:見たい|欲しい|ほしい|ください|下さい|頂|いただ)/;
 function topicOf(s: string): RequestTopic {
-  for (const [t, re] of TOPIC_RE) if (re.test(s)) return t;
+  const v2 = requestLedgerCoverV2On();
+  for (const [t, re] of TOPIC_RE) if ((v2 && t === "pickup" ? PICKUP_RE_V2 : re).test(s)) return t;
   return "other";
 }
 /** 道の目安（返信で答えられる物／約束→AIX／スタッフだけが知る物）。最後に決めるのはブレイン（aix-catalog の順番） */
@@ -127,13 +144,32 @@ const COVER_RE: Record<RequestTopic, RegExp> = {
 };
 /** 設備・契約条件はお客様が聞いた語そのもの（駐車場とペットを1つの「設備」にまとめない）。他の種類は種類の語 */
 const ITEM_WORD_RE = /駐車場|駐輪|ペット|ネット|Wi-?Fi|エアコン|洗濯|オートロック|宅配|バス.?トイレ|風呂|キッチン|コンロ|畳|収納|礼金|敷金|保証会社|管理会社|更新料|フリーレント|仲介手数料/g;
+/** cover v2: 聞かれた語の言い換え（スタッフの答えの語） */
+//   礼金・仲介手数料・敷金の交渉の結果は語を繰り返さない（fecda03f「サウスパーク管理会社に交渉させていただきましたが…減額は考えていない」）
+const NEGOTIATION_RESULT = "|減額|交渉させて(?:頂|いただ)きました";
+const ITEM_WORD_ALIAS: Record<string, string> = { 駐車場: "駐車場|パーキング|お車", 礼金: `礼金${NEGOTIATION_RESULT}`, 仲介手数料: `仲介手数料${NEGOTIATION_RESULT}`, 敷金: `敷金${NEGOTIATION_RESULT}` };
+/** 審査を出して・申込したい＝依頼（答えは「お申込みさせて頂きます」）。「申込通りますか」（通るかの質問）は当てない */
+const APPLY_REQ_RE = /審査(?:を|も)?(?:掛|かけ|出し|だし|に出|お願い|して)|申(?:し)?込み?(?:したい|させて|お願い|して(?:ほし|欲し|もら|貰|いただ|頂))/;
 function coverReOf(x: RequestItem): RegExp {
+  const v2 = requestLedgerCoverV2On();
+  const q = x.quote.normalize("NFKC");
   if (x.topic === "equipment" || x.topic === "contract") {
-    const words = [...new Set(x.quote.normalize("NFKC").match(ITEM_WORD_RE) ?? [])];
-    if (words.length) return new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"));
+    const words = [...new Set(q.match(ITEM_WORD_RE) ?? [])];
+    if (words.length) return new RegExp(words.map((w) => (v2 && ITEM_WORD_ALIAS[w]) || w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"));
   }
+  if (!v2) return COVER_RE[x.topic];
+  if (x.topic === "contract" && /契約|書類|必要な(?:もの|物)/.test(q)) return new RegExp(`${COVER_RE.contract.source}|お?申(?:し)?込|書類|本人確認|フォーマット|手続き`);
+  if (x.topic === "screening") return new RegExp(`${COVER_RE.screening.source}|緊急連絡先|在籍|保護者|代理契約|連帯保証${APPLY_REQ_RE.test(q) ? "|お?申(?:し)?込" : ""}`);
+  if (x.topic === "pickup") return new RegExp(`${COVER_RE.pickup.source}|お部屋探し|ご紹介|ご説明させて`);
   return COVER_RE[x.topic];
 }
+/** cover v2: 御見積書の結果（AIX の「初期費用：N円」・手打ちの「御見積書となります／お送りさせて頂きました」）＝持ち込み・空き・費用の答え */
+const ESTIMATE_RESULT_RE = /初期費用[：:]\s*[0-9,，]+円|[御お]見積書(?:と|に)なります|[御お]見積書(?:を|も)?(?:同封|お送りさせて(?:頂|いただ)きました)/;
+/** cover v2: 物件確認の結果の AIX（「お送り頂きました〇〇…確認させて頂き／募集／可能」） */
+const PROPERTY_CHECK_RESULT_RE = /お送り(?:頂|いただ)きました[^\n]{0,40}(?:確認させて(?:頂|いただ)き|募集|可能|出来ない|できない|お部屋となります)|お送り(?:頂|いただ)きました[^\n]{0,40}\n[^\n]{0,60}(?:募集|可能|出来ない|できない|お部屋となります)/;
+/** cover v2: 電話で済んだ（その前の項目は電話で答えた） */
+//   会って話した（「本日お時間頂きありがとうございました」「本日はご内覧お越しいただきありがとうございました」）も同じ＝その場で答えた
+const PHONE_DONE_RE = /お電話(?:頂き|いただき)?(?:誠に)?ありがとうございました|お電話にて(?:お伝え|ご説明|お話)させて(?:頂|いただ)きました|本日は?(?:お時間|ご内覧(?:お越し)?)(?:頂|いただ)き(?:誠に)?ありがとうございました/;
 const PROMISE_RE = /(?:確認|お調べ|お探し|交渉|作成|撮影|ピックアップ)[^\n。！!]{0,12}(?:させて(?:頂|いただ)きます|致します|いたします)|(?:でき|出来)次第|お送りさせて(?:頂|いただ)きます|ご連絡させて(?:頂|いただ)きます/;
 /** AIX の送信が結果を送ったか（約束ではなく答え） */
 const RESULT_RE = /御見積書(?:と|を|になります|となります|同封)|お見積書(?:と|を|お送りさせていただきました)|募集中(?:と|で)|募集終了|現在募集|🌟|室内(?:写真|イメージ)|【お待ち合わせ場所】|直近ですと|ご案内(?:出来|でき|可能)/;
@@ -154,15 +190,38 @@ export function buildRequestLedger(msgs: ReadonlyArray<LedgerMsg>, nowMs: number
     const saidAt = sorted[i].createdAt;
     if (nowMs - Date.parse(saidAt) <= win) {
       const items: LedgerItem[] = splitRequests(bundle, saidAt).map((x) => ({ ...x, status: "open" as RequestStatus, doneAt: null, doneBy: null }));
+      const v2 = requestLedgerCoverV2On();
+      let firstStaff = true;
       for (let k = j; k < sorted.length && items.some((x) => x.status !== "done"); k++) {
         const m = sorted[k];
         if (m.sender === "customer") continue;
         const t = String(m.text ?? "").normalize("NFKC");
         if (!t.trim() || /^\[(?:画像|動画|スタンプ|ファイル)\]$/.test(t.trim())) continue;
+        const isFirst = firstStaff; firstStaff = false;
         const sents = t.split(/\n+|(?<=[。！!？?])/).map((z) => z.trim()).filter(Boolean);
+        // cover v2: 電話・対面で済んだ → この束の残りは済み。ただし同じ通でその項目に約束の形で触れた物（「先ほどはお電話…管理会社に確認させていただきます」）は下の通常の判定（約束済み）
+        if (v2 && !m.isAix && PHONE_DONE_RE.test(t)) {
+          for (const x of items) {
+            if (x.status === "done") continue;
+            const hit = x.topic === "other" ? [] : sents.filter((z) => coverReOf(x).test(z));
+            if (hit.length && PROMISE_RE.test(hit.join("\n"))) { if (x.status === "open") { x.status = "promised"; x.doneBy = "約束の返信"; } continue; }
+            x.status = "done"; x.doneAt = m.createdAt; x.doneBy = "電話・対面";
+          }
+          continue;
+        }
+        // cover v2: 申込のフォーマット（【お申込者様記入欄】の項目の並び）は答えではない（a3cc571e「申込通りますかね?」が欄の「緊急連絡先」で済みになった）
+        if (v2 && /【お申込者様記入欄】|^\s*①【/.test(t)) continue;
+        const estimateResult = v2 && ESTIMATE_RESULT_RE.test(t);
+        const checkResult = v2 && !!m.isAix && PROPERTY_CHECK_RESULT_RE.test(t);
         for (const x of items) {
           if (x.status === "done") continue;
-          if (x.topic === "other") { if (!m.isAix) { x.status = "done"; x.doneAt = m.createdAt; x.doneBy = "返信"; } continue; }
+          if (x.topic === "other") {
+            if (!m.isAix || (v2 && isFirst && !/^\[通話リクエスト\]/.test(t.trim()))) { x.status = "done"; x.doneAt = m.createdAt; x.doneBy = m.isAix ? "AIX" : "返信"; }
+            continue;
+          }
+          if ((estimateResult && (x.topic === "vacancy" || x.topic === "cost")) || (checkResult && x.topic === "vacancy")) {
+            x.status = "done"; x.doneAt = m.createdAt; x.doneBy = m.isAix ? "AIX" : "返信"; continue;
+          }
           const cover = coverReOf(x);
           const hit = sents.filter((z) => cover.test(z));
           if (!hit.length) continue;

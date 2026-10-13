@@ -101,5 +101,55 @@ it("「改めて見積書お願いします」「再度お願いします」は�
   for (const t of ["改めて見積書お願いします", "再度初期費用の見積もりお願いできますか？"]) eq(splitRequests([t], T).some((x) => x.deferred), false, t);
 });
 
+// 2026-10-13 竹内さん（ゆなまる）「ここの部分答えているのに、なぜか残り続けている」: cover v2（答えた語・結果の形・電話/対面）。実物は監査 scripts/audit-request-ledger-cover-v2.ts（30日 新しく済み 22・済みでなくなった 0）
+console.log("cover v2（答え済みの取りこぼし・2026-10-13）");
+it("ゆなまる「もしその日のうちに契約したいってなった場合必要なものとか書類ってありますか?」→ 手打ちの申込の段取りの答えで済み", () => {
+  const c = conv([["customer", "もしその日のうちに契約したいってなった場合必要なものとか書類ってありますか？", 0],
+    ["staff", "お申し込みはこちらのLINEにてお申込み用フォーマットのご入力と、ご本人確認書類として運転免許証またはマイナンバーカードの裏表の写真お送りいただく形となります😊！！\n10/12の内覧当日は必要なものはございません！！", 3]]);
+  const l = buildRequestLedger(c, Date.parse(at(10)));
+  eq(l.map((x) => `${x.topic}:${x.status}:${x.doneBy}`), ["contract:done:返信"]);
+  process.env.REQUEST_LEDGER_COVER_V2 = "off";
+  try { eq(buildRequestLedger(c, Date.parse(at(10)))[0].status, "open"); } finally { delete process.env.REQUEST_LEDGER_COVER_V2; }
+});
+it("ゆなまる「その後に違うところ直接紹介してもらったり話だけ聞かせてもらえたりする事って可能ですか?」→「今後のお部屋探しに関してご説明させていただきます」で済み", () => {
+  const c = conv([["customer", "今日カーサエテルナだけ観に行って、その後に違うところ直接紹介してもらったり話だけ聞かせてもらえたりする事って可能ですか？", 0],
+    ["staff", "はい！！\n大丈夫です！！\nご内覧時に担当者から今後のお部屋探しに関してご説明させていただきます😊！！", 7]]);
+  eq(buildRequestLedger(c, Date.parse(at(10))).map((x) => `${x.topic}:${x.status}`), ["pickup:done"]);
+});
+it("持ち込みの物件 → 約束の返信 → AIX の御見積書（初期費用：N円）で済み（1048773d）", () => {
+  const c = conv([["customer", "https://suumo.jp/chintai/bc_1/", 0],
+    ["staff", "お送り頂きました物件の募集状況確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書とあわせてお送りさせて頂きます！！", 60],
+    ["staff", "【〇〇本町 501号室】\n初期費用さらに\n🌟106,900円割引させて頂き\n初期費用：172,980円\nスモラなら一般的な不動産業者より290,920円節約出来ます！！", 70, true]]);
+  eq(buildRequestLedger(c, Date.parse(at(80))).map((x) => `${x.topic}:${x.status}`), ["vacancy:done"]);
+});
+it("「お送りいただきました〇〇 こちらペットの飼育が出来ないお部屋となります」の AIX は空きの質問の答え（d3a56a97）", () => {
+  const c = conv([["customer", "こちら〇〇Iの方も募集してますか？", 0], ["staff", "お送りいただきました〇〇I\nこちらペットの飼育が出来ないお部屋となります！！\nお手隙の際にご確認ください！！", 60, true]]);
+  eq(buildRequestLedger(c, Date.parse(at(80)))[0].status, "done");
+});
+it("電話で済んだ（「先程はお電話ありがとうございました」）は前の項目を済み・同じ通の約束は約束済み（0133b787）", () => {
+  const c = conv([["customer", "ここまだ空いてますかー？", 0], ["staff", "先程はお電話ありがとうございました！！\nこちらのLINEを追加頂きスタンプをお送りの程よろしくお願い致します！！", 30]]);
+  eq(buildRequestLedger(c, Date.parse(at(40)))[0].doneBy, "電話・対面");
+  const c2 = conv([["customer", "〇〇募集中が出ているかの確認をお願い致します。", 0], ["staff", "先ほどはお電話ありがとうございました😊！！\n〇〇12階のお部屋募集予定か管理会社に確認させていただきます！！", 30]]);
+  eq(buildRequestLedger(c2, Date.parse(at(40)))[0].status, "promised");
+});
+it("審査を出しての依頼は「お申込させて頂きます」で済み・「申込通りますかね?」は申込のフォーマットでは済みにしない（60547092・a3cc571e）", () => {
+  eq(buildRequestLedger(conv([["customer", "〇〇審査出して欲しいです！", 0], ["staff", "かしこまりました！！\nお申込させて頂きます！！", 5]]), Date.parse(at(10)))[0].status, "done");
+  eq(buildRequestLedger(conv([["customer", "申込通りますかね？", 0], ["staff", "【お申込者様記入欄】\n・入居希望日\n・氏名、フリガナ\n・緊急連絡先", 5, true]]), Date.parse(at(10)))[0].status, "open");
+});
+it("「他のところで見積もりをだしてもらって…もっと安くなる可能性はありますか?」は探すではなく費用（ac7c7fd3）・「もう少し候補見たいです」は探す（fd241181）", () => {
+  eq(topics(["他のところで見積もりをだしてもらって、28万くらいやったんですけどもっと安くなる可能性はありますか？"]), ["cost"]);
+  eq(topics(["敷金礼金もっと上がっていいのでもう少し候補見たいです"]), ["pickup"]);
+});
+it("駐車場の質問は「パーキング」で答えた（84434172）・礼金の交渉は「減額は考えていない」の結果で済み（fecda03f）", () => {
+  eq(buildRequestLedger(conv([["customer", "駐車場は近くのパーキングでよろしいですか？", 0], ["staff", "はい！！\nお近くのパーキングにお停めください！！", 3]]), Date.parse(at(10)))[0].status, "done");
+  const c = conv([["customer", "礼金の部分がどうしてもネックで交渉できたりできないですか？", 0], ["staff", "かしこまりました！！\n管理会社に礼金の減額が可能か交渉させていただきます😊！！\n確認出来次第ご連絡させて頂きます😌！！", 5]]);
+  eq(buildRequestLedger(c, Date.parse(at(10)))[0].status, "promised");
+  const c2 = [...c, ...conv([["staff", "〇〇管理会社に交渉させていただきましたが、昨日お申込みが入り現在お申込みをストップしているとのことです。\n再度募集に出た場合も減額は考えていないとのことです。", 20]])];
+  eq(buildRequestLedger(c2, Date.parse(at(30)))[0].status, "done");
+});
+it("本当に未対応は残す: 関係の無い返信（60e6d3ab「養生は必要ですか?」→採寸の共有）", () => {
+  eq(buildRequestLedger(conv([["customer", "後引っ越しの際養生は必要ですか？", 0], ["staff", "かしこまりました！！\nお部屋の採寸完了しましたら、共有させていただきます！！", 60]]), Date.parse(at(70)))[0].status, "open");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  - " + f); process.exit(1); }
