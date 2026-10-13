@@ -16,7 +16,7 @@ import { isConditionFormMessage, isApplyGuideThinking } from "./reply-context"; 
 // 2026-09-17 竹内（Hina 事例）: 了承＋こちらが既に言ったことの後押しは「はい」（依存ゼロの純関数モジュール）
 import { resolveAckPush } from "./opener-ack-push";
 import { isPropertyShareNoAsk, isViewingDayNotice, VIEWING_DAY_NOTICE_REPLY } from "./reply-subscene"; // reply-subscene は greeting を import しない（循環なし）
-import { isMaterialOnlyText } from "./daily-greeting"; // daily-greeting は import なしの純関数（循環なし）
+import { countsAsTalkOrGreeting } from "./daily-greeting"; // daily-greeting は import なしの純関数（循環なし）
 import { stripHeadTimeGreeting, timeGreetingEnabled } from "./time-greeting"; // time-greeting は daily-greeting だけを import（循環なし）
 
 /** お客様が条件フォームを送ってくれた時の感謝の1文（竹内 2026-09-12・あや事例。スタッフ実送信の型） */
@@ -269,7 +269,8 @@ export function computeAlreadyGreetedToday(messages: Msg[], now = Date.now()): b
   return messages.some((m) => {
     if (m.sender !== "staff" || !m.createdAt) return false;
     if (!m.text || m.text === "[画像]" || m.text === "[動画]") return false;
-    if (talkOnly && isMaterialOnlyText(m.text)) return false;
+    // 2026-10-13 竹内さん（ゆーた）: 挨拶の語を含む通は資料文の形でも「今日挨拶した」に数える（daily-greeting.countsAsTalkOrGreeting・GREETING_ONCE_PER_DAY=off で旧）
+    if (talkOnly && !countsAsTalkOrGreeting(m.text)) return false;
     const ts = Date.parse(m.createdAt);
     return Number.isFinite(ts) && ts >= dayStartUtc && ts <= dayEndUtc;
   });

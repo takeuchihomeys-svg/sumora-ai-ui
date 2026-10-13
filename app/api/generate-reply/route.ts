@@ -150,7 +150,7 @@ import {
   applyGreetingSwap,
   type VacatingDate,
 } from "@/app/lib/template-preprocess";
-import { staffTalkedToday, applyDailyGreeting } from "@/app/lib/daily-greeting";
+import { staffTalkedToday, applyDailyGreeting, greetingOncePerDayEnabled } from "@/app/lib/daily-greeting";
 import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
 import { staffTalkedTodayFromDb } from "@/app/lib/daily-greeting-server";
 // Step1完全廃止（2026-08）: brain(suggested_aix_meta) が唯一の分析ソース。
@@ -1424,7 +1424,10 @@ ${aixDone.answeredByAix
   //   ブレインが reply_opener を決めていればそれを渡す。決めていない時は**実測の分布**を渡す
   //   （「一択」とは言わない。どの場面でも一番多い書き出しが過半数に届かないため）。
   //   検査（final-check の judgeOpener）も同じ opener-rates.ts を見る＝四者同名。
-  const brainOpener = (brainMeta as { reply_opener?: string | null } | null)?.reply_opener ?? null;
+  // 2026-10-13 竹内さん（ゆーた）「挨拶はお客さん1人につき1日一度」: 今日すでに挨拶・会話文を送った番で、ブレインの書き出しが「お世話になっております」
+  //   だった時はそれを渡さない（挨拶の事実が勝つ・出口の enforceOpening も外す）。戻す: GREETING_ONCE_PER_DAY=off
+  const brainOpenerRaw = (brainMeta as { reply_opener?: string | null } | null)?.reply_opener ?? null;
+  const brainOpener = brainOpenerRaw === "お世話になっております" && alreadyGreetedToday === true && greetingOncePerDayEnabled() ? null : brainOpenerRaw;
   const openerNote = templateNote ? "" : (() => {
     if (brainOpener) return `\n\n【最後に確認：書き出し】ブレインはこの場面の書き出しを「${brainOpener}」と判断した。これに合わせる。`;
     const rates = buildOpenerRateNote(sceneFromTpo(tpoGuidanceNote || null));
@@ -5530,7 +5533,12 @@ async function handleGenerateReply(req: NextRequest) {
 
     // JST 当日（0:00〜23:59）で挨拶済み判定（AIX 自動返信も「挨拶済み」に数える。画像/動画のみは除く）。
     // G31: 同一ロジックを greeting.ts computeAlreadyGreetedToday へ移設（check-reply と同関数）。createdAt が無ければ undefined → フォールバック
-    const alreadyGreetedToday = computeAlreadyGreetedToday(recentMessages);
+    // 2026-10-13 竹内さん（ゆーた）「挨拶はお客さん1人につき1日一度」: 画面から渡る一覧に今日の送信（AIX・予約・グループ経由）がまだ無い時は
+    //   DB の今日のこちらの送信でも確かめる（挨拶の事実が勝つ・足す向きを止めるだけ）。戻す: GREETING_ONCE_PER_DAY=off
+    const alreadyGreetedFromList = computeAlreadyGreetedToday(recentMessages);
+    const alreadyGreetedToday = alreadyGreetedFromList === false && greetingOncePerDayEnabled() && !isTemplateOptimize
+      ? (await staffTalkedTodayFromDb(conversationId)) || false
+      : alreadyGreetedFromList;
 
     // G32（2026-09-09 Fable5 じゅにあ事例・竹内方針）: 「お待たせ致しました」全廃。挨拶行は接触の事実（初回／催促／当日未挨拶／当日挨拶済み／夜間）、
     // 開口語は顧客メッセージの意味（classifyCustomerResponse）から確定。経過時間は audit にのみ保存し決定に使わない。

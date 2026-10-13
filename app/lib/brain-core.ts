@@ -134,6 +134,7 @@ import { resolveViewingDayAck } from "@/app/lib/viewing-day";
 // 10巡目（10/08 竹内さん）: 御見積書の後の「更に安く」＝AIX【確認します→代表確認】／確定した内覧の当日は AIX【内覧挨拶→内覧前】／同じ日の同じ件の2通目は AIX を直接
 import { furtherDiscountDaihyo, FURTHER_DISCOUNT_SOURCE, negotiationPromisePending, NEGOTIATION_PROMISE_SOURCE } from "@/app/lib/further-discount";
 import { viewingDayGreetingDue, VIEWING_DAY_GREETING_SOURCE } from "@/app/lib/viewing-day-greeting";
+import { staffTalkedToday, greetingOncePerDayEnabled } from "@/app/lib/daily-greeting";
 import { promiseKindsToday } from "@/app/lib/two-stage";
 import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
@@ -1892,7 +1893,10 @@ export async function analyzeConversation(
     : null;
   // 2026-09-12 方針D: 今日に曜日を付け、14日分の曜日表も渡す（closing_strategy 等で曜日を自分で計算させない）
   const todayStr = jstYmdWeekday();
-  const timingText = `\n【時間情報】今日: ${todayStr}（曜日表: ${weekdayTable(Date.now(), 14)}。日付に曜日を付ける時はこの表を使い、表に無い日付には曜日を付けない） /最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）`;
+  // 2026-10-13 竹内さん（ゆーた）「挨拶はお客さん1人につき1日一度で、2度目からは挨拶抜き」: 今日（JST）こちらが既に挨拶・会話文を送った事実を材料に渡す
+  //   （判定は daily-greeting.staffTalkedToday＝返信・AIX・画面と同じ関数。手打ち・AIX・予約・グループ経由すべての staff の通）。戻す: GREETING_ONCE_PER_DAY=off
+  const greetedTodayFact = greetingOncePerDayEnabled() && staffTalkedToday(typedMessages.map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })));
+  const timingText = `\n【時間情報】今日: ${todayStr}（曜日表: ${weekdayTable(Date.now(), 14)}。日付に曜日を付ける時はこの表を使い、表に無い日付には曜日を付けない） /最終顧客メッセージ: ${daysSinceLastCustomerMsg !== null ? `${daysSinceLastCustomerMsg}日前` : "不明"} / 総メッセージ数: ${totalMessageCount ?? typedMessages.length}件（履歴は直近${typedMessages.length}件のみ表示）${greetedTodayFact ? "\n【今日の挨拶】今日こちらは既にこのお客様へ送っている（挨拶はお客様1人につき1日1回）。reply_opener に「お世話になっております」を選ばない" : ""}`;
 
   // 2026-09-23 竹内「送信の時間にたいしてどのように返信しているかも学べば…返信したのとAIXも掛け合わせたらより鮮明になる」:
   //   上の【時間情報】は日単位の1行しか無く、「何を送って何時間経ったか」「その種類は普通どれくらいで返るか」が無かった。

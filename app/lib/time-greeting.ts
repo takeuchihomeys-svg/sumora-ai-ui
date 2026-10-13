@@ -100,13 +100,17 @@ export type DraftGreetingRefresh = { text: string; fixes: string[] };
  * @param messages 会話（こちらの会話文が今日あるかを見る。資料文・画像は数えない＝生成の computeAlreadyGreetedToday と同じ線）
  * @param name 「〇〇さん」（分からなければ ""）
  */
-export function refreshDraftGreetingForNow(draft: string, opts: { messages: ReadonlyArray<TalkMsg>; name: string; now?: number; ensureDaily?: boolean }): DraftGreetingRefresh {
+export function refreshDraftGreetingForNow(draft: string, opts: { messages: ReadonlyArray<TalkMsg>; name: string; now?: number; ensureDaily?: boolean; allowAdd?: boolean }): DraftGreetingRefresh {
   if (!draft?.trim()) return { text: draft, fixes: [] };
   const now = opts.now ?? Date.now();
   const talkedToday = staffTalkedToday(opts.messages, now);
+  // 2026-10-13 竹内さん（ゆーた）: 足す向き（今日まだ挨拶していない）は、渡した一覧が今日の送信を全部持っている時だけ（allowAdd）。
+  //   画面は開いた直後の一覧（読み込み前で空・古い）では足さず、DB の今日の送信で決め直す（page.tsx）。外す向きは一覧に今日の会話文があれば確か
+  const allowAdd = opts.allowAdd !== false;
   const fixes: string[] = [];
   let text = draft;
   if (findHeadTimeGreeting(text)) {
+    if (!talkedToday && !allowAdd) return { text, fixes };
     if (talkedToday) {
       const s = stripHeadTimeGreeting(text);
       text = s.text;
@@ -126,6 +130,7 @@ export function refreshDraftGreetingForNow(draft: string, opts: { messages: Read
   if (opts.ensureDaily) {
     const head = text.split("\n").filter((l) => l.trim()).slice(0, 2).join("\n");
     if (!talkedToday && /申し訳|お待たせ/.test(head)) return { text, fixes };
+    if (!talkedToday && !allowAdd) return { text, fixes };
     // 外す向きは「お世話になっております」だけ（夜にこちらから届ける「夜分遅くに失礼致します」は竹内さんが2通目以降にも書く＝決定の対象外・監査 scripts/audit-1008-greeting-name.ts）
     if (talkedToday && !/お世話になっております/.test(head)) return { text, fixes };
     const call = opts.name.replace(/さん$/, "");

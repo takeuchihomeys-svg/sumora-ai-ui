@@ -94,14 +94,44 @@ const SHOWN_DRAFT_RESTORE = shownDraftRestoreEnabled(process.env.NEXT_PUBLIC_SHO
 const DRAFT_GREETING_REFRESH = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_REFRESH);
 // 2026-10-08 竹内さん「今日初めての連絡なら『お世話になっております』を付ける。2回目以降なら入れない」: 下書きを出す時にも足す・外す。戻す: NEXT_PUBLIC_DRAFT_GREETING_REQUIRED=off
 const DRAFT_GREETING_REQUIRED = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_REQUIRED);
+// 2026-10-13 竹内さん（ゆーた 969f0162「今日お世話になっておりますの挨拶は入っているのに、なぜ2回目の挨拶が生成されているのか」）:
+//   サーバーの下書きは挨拶なし（今日挨拶済みと正しく判定）だったが、入力欄に出す時に開いた直後の一覧（conv.messages・読み込み前で空のことがある）で
+//   「今日まだ送っていない」と決めて「〇〇さんお世話になっております！！」を足していた。足す向きは DB の今日のこちらの送信（手打ち・AIX・予約・グループ経由）で決める。
+//   戻す: NEXT_PUBLIC_DRAFT_GREETING_DB=off（旧＝手元の一覧だけで足す）
+const DRAFT_GREETING_DB = draftGreetingRefreshEnabled(process.env.NEXT_PUBLIC_DRAFT_GREETING_DB);
 function refreshDraftGreeting(text: string, conv: { messages?: Message[]; customerName?: string }): string {
   if (!DRAFT_GREETING_REFRESH || !text) return text;
   const msgs = conv.messages || [];
   // 呼び名は生成の挨拶（resolveGreeting の canonOf）と同じ線で決める（「り」など1字は呼ばない）
   const name = canonOf(extractPreferredName(msgs, conv.customerName || ""));
-  const r = refreshDraftGreetingForNow(text, { messages: msgs.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.rawCreatedAt ?? null })), name: name ? `${name}さん` : "", ensureDaily: DRAFT_GREETING_REQUIRED });
+  const r = refreshDraftGreetingForNow(text, { messages: msgs.map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.rawCreatedAt ?? null })), name: name ? `${name}さん` : "", ensureDaily: DRAFT_GREETING_REQUIRED, allowAdd: !DRAFT_GREETING_DB });
   if (r.fixes.length) console.log(JSON.stringify({ tag: "draft:greeting-refresh", fixes: r.fixes }));
   return r.text;
+}
+/**
+ * DB の今日（JST）のこちらの送信で、入力欄に出した下書きの挨拶を決め直す（足す・外す）。変わらない・読めない時は null（足さない＝安全側）。
+ * 判定は refreshDraftGreetingForNow（staffTalkedToday＝会話文か挨拶の入った通）と同じ関数。
+ */
+async function refreshDraftGreetingFromDb(text: string, convId: string, conv: { messages?: Message[]; customerName?: string }): Promise<string | null> {
+  if (!DRAFT_GREETING_REFRESH || !DRAFT_GREETING_REQUIRED || !DRAFT_GREETING_DB || !text || !convId) return null;
+  try {
+    const now = Date.now();
+    const jst = new Date(now + 9 * 3600_000);
+    const dayStartUtc = new Date(Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()) - 9 * 3600_000).toISOString();
+    const { data, error } = await supabase.from("messages").select("sender,text,created_at").eq("conversation_id", convId)
+      .eq("sender", "staff").gte("created_at", dayStartUtc).order("created_at", { ascending: false }).limit(200);
+    if (error) return null;
+    const name = canonOf(extractPreferredName(conv.messages || [], conv.customerName || ""));
+    const r = refreshDraftGreetingForNow(text, {
+      messages: ((data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, rawCreatedAt: m.created_at })),
+      name: name ? `${name}さん` : "", ensureDaily: true, allowAdd: true, now,
+    });
+    if (r.text === text) return null;
+    console.log(JSON.stringify({ tag: "draft:greeting-refresh-db", fixes: r.fixes }));
+    return r.text;
+  } catch {
+    return null;
+  }
 }
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}`, ...staffDeviceHeader() };
 
@@ -3381,6 +3411,16 @@ export default function Home() {
       setReplyDraft(loadedDraft);
       aiDraftRef.current = loadedDraft;
       setDisplaySource("ai_draft");
+      {
+        // 2026-10-13 ゆーた: 挨拶の足す・外すは DB の今日の送信で決め直す（スタッフが書き換え始めていたら触らない）
+        const greetConvId = selectedConversation.id;
+        void refreshDraftGreetingFromDb(loadedDraft, greetConvId, selectedConversation).then((fixed) => {
+          if (fixed && selectedIdRef.current === greetConvId && replyDraftLiveRef.current === loadedDraft) {
+            setReplyDraft(fixed);
+            aiDraftRef.current = fixed;
+          }
+        });
+      }
       // 事前生成ドラフトの最終チェック結果をDBから復元（ハッシュ一致なら送信時0msで通過）
       // 取得失敗は fail-open（送信時の再チェックは行わない＝スタッフが編集した文は正解として扱う）
       {
@@ -3464,6 +3504,11 @@ export default function Home() {
               const restoredFixed = refreshDraftGreeting(restoredText, selectedConversation);
               setReplyDraft(restoredFixed);
               aiDraftRef.current = restoredFixed;
+              const fixedByDb = await refreshDraftGreetingFromDb(restoredFixed, restoreConvId, selectedConversation);
+              if (fixedByDb && selectedIdRef.current === restoreConvId && (!replyDraftLiveRef.current || replyDraftLiveRef.current === restoredFixed)) {
+                setReplyDraft(fixedByDb);
+                aiDraftRef.current = fixedByDb;
+              }
               setDisplaySource("ai_draft");
               setDraftPreparing(false);
               if (r?.ai_draft_check) setCheckResult(r.ai_draft_check);

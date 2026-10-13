@@ -141,11 +141,41 @@ export function isMaterialOnlyText(text: string | null | undefined): boolean {
 
 export type TalkMsg = DayMsg & { text?: string | null };
 
-/** 今日（日本時間）こちらが会話文（資料文・画像・動画ではない通）を1通でも送っているか。時刻の無い通は数えない */
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-13 竹内さん（ゆーた 969f0162・10/09 の画面）「今日お世話になっておりますの挨拶は入っているのに、なぜ2回目の挨拶が生成されているのか。
+//   挨拶はお客さん1人につき1日一度で、2度目からは挨拶抜きで LINE を入れること」
+// ■ 実物: 12:31 こちら「お世話になっております！！⏎1件新着で…」→ 13:48 お客様「ありがとうございます。拝見させていただきます！」→
+//   サーバーの下書き（ai_draft_shown）は「はい😊！！⏎お手隙の際に…」＝挨拶なし（generate-reply の判定 alreadyGreetedToday=true で正しい）。
+//   画面が入力欄に出す時（page.tsx refreshDraftGreeting → refreshDraftGreetingForNow ensureDaily）に、会話を開いた瞬間の一覧
+//   （conv.messages。開いた直後はまだ読み込み前で空のことがある）で「今日まだ会話文を送っていない」と決め、「ゆーたさんお世話になっております！！」を足していた。
+//   ＝事実（今日すでに挨拶した）が DB にあるのに、画面の手元の一覧だけで決めていた（足す向きの材料が届いていない）。
+// ■ 直した形: その日の挨拶の事実は「こちらの送信（手打ち・AIX・予約送信・グループ経由すべて＝messages の staff）の本文に今日（JST）
+//   挨拶があるか、会話文があるか」で決める。挨拶の語を含む通は資料文の形（🌟・【）でも「挨拶済み」に数える（hasGreetingPhrase）。
+//   画面は足す向きを DB の今日の送信で決め直す（page.tsx）。戻す: GREETING_ONCE_PER_DAY=off（数え方）／NEXT_PUBLIC_DRAFT_GREETING_DB=off（画面）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** その日の挨拶を済ませた印の語（先頭3行で見る。結びの「今後ともお世話になります」等を拾わないため） */
+const GREETING_PHRASE_RE = /お世話になっております|お世話になります|はじめまして|初めまして|夜分(?:遅く)?に?(?:大変)?失礼(?:致|いた)?します/;
+export function hasGreetingPhrase(text: string | null | undefined): boolean {
+  const head = (text ?? "").split("\n").filter((l) => l.trim()).slice(0, 3).join("\n");
+  return GREETING_PHRASE_RE.test(head);
+}
+
+export function greetingOncePerDayEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.GREETING_ONCE_PER_DAY ?? "").trim().toLowerCase() !== "off";
+}
+
+/** この通は「その日の挨拶・会話」に数えるか（会話文、または挨拶の語を含む通） */
+export function countsAsTalkOrGreeting(text: string | null | undefined, env: Record<string, string | undefined> = process.env): boolean {
+  if (!isMaterialOnlyText(text)) return true;
+  return greetingOncePerDayEnabled(env) && hasGreetingPhrase(text);
+}
+
+/** 今日（日本時間）こちらが会話文（資料文・画像・動画ではない通）か挨拶の入った通を1通でも送っているか。時刻の無い通は数えない */
 export function staffTalkedToday(messages: ReadonlyArray<TalkMsg>, now: number = Date.now()): boolean {
   const today = jstDay(now);
   return messages.some((m) => {
-    if (m.sender !== "staff" || isMaterialOnlyText(m.text)) return false;
+    if (m.sender !== "staff" || !countsAsTalkOrGreeting(m.text)) return false;
     const iso = m.rawCreatedAt ?? m.createdAt;
     const t = iso ? Date.parse(iso) : NaN;
     return Number.isFinite(t) && jstDay(t) === today;
