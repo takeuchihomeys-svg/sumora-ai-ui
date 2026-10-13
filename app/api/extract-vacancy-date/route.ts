@@ -39,7 +39,17 @@ export async function POST(req: Request) {
     const raw = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const parsed = parseExtractVacancyResponse(raw);
     if (parsed.fields) console.log(JSON.stringify({ tag: "extract-vacancy-date:fields", fields: parsed.fields, vacancyDate: parsed.vacancyDate, from: parsed.vacancyFrom ?? null }));
-    return NextResponse.json({ propertyName: parsed.propertyName, vacancyDate: parsed.vacancyDate });
+    // 2026-10-14 読み取りの化け（プレアール速里小野・スプランディッド雜波キャトル）を直してから AIX の欄に入れる（候補が1つの時だけ・property-name-fix.ts）。
+    //   ここで入った名前はスタッフがそのまま送り、帳簿の「スタッフの入力」になる（直した化けの名前 173種類のうち 10種類は、スタッフがその字のまま AIX で送っていた）
+    let propertyName = parsed.propertyName;
+    if (propertyName) {
+      try {
+        const { fixReadPropertyNameWithLedger } = await import("@/app/lib/property-name-ledger-server");
+        const nf = await fixReadPropertyNameWithLedger(propertyName);
+        if (nf.status === "fixed") { console.log(JSON.stringify({ tag: "property-name-fix", route: "extract-vacancy-date", from: propertyName, to: nf.name, rule: nf.rule })); propertyName = nf.name; }
+      } catch { /* 直せなくても読んだ名前のまま */ }
+    }
+    return NextResponse.json({ propertyName, vacancyDate: parsed.vacancyDate });
   } catch {
     return NextResponse.json({ propertyName: null, vacancyDate: null });
   }

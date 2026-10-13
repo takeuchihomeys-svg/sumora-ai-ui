@@ -97,10 +97,23 @@ export async function recordSentImageProperty(opts: {
       if (!read.isProperty || read.items.length === 0) { out.read = !read.isProperty && read.raw.startsWith("{") ? "not_property" : "failed"; return out; }
       item = read.items[0];
       out.read = "deepseek";
+      // 2026-10-14 竹内さん「物件名はシリーズ名＋地名…化けは正しい地名に直す（候補が1つの時だけ）」:
+      //   読んだ名前を地名の表・物件名の帳簿・化けの癖の表で直す（property-name-fix.ts）。迷う時はそのまま（下の照合で寄らなければ vision＝確かではない印）
+      try {
+        const { fixReadPropertyNameWithLedger } = await import("@/app/lib/property-name-ledger-server");
+        const nf = await fixReadPropertyNameWithLedger(item.propertyName);
+        if (nf.status === "fixed") {
+          console.log(JSON.stringify({ tag: "property-name-fix", route: "sent-image-record", from: item.propertyName, to: nf.name, rule: nf.rule }));
+          item = { ...item, propertyName: nf.name };
+        }
+      } catch { /* 直せなくても記録は続ける */ }
       if (read.items.length === 1) {
         try {
           const { factsFromImageRead } = await import("@/app/lib/candidate-facts");
-          const f = factsFromImageRead(read.items[0]);
+          const { fixReadStationName } = await import("@/app/lib/property-name-fix");
+          const it0 = read.items[0];
+          // 駅の名前は確かな直しだけ（旧字「大國町→大国町」・3つ以上の建物で見た化け）
+          const f = factsFromImageRead({ ...it0, station: it0.station ? fixReadStationName(it0.station) : it0.station });
           if (Object.keys(f).length) freshFacts = { ...f, src: "image", model: process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash" };
         } catch { /* 値が読めなくても物件の記録は続ける */ }
       }
