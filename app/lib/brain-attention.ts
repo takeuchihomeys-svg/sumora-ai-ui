@@ -368,8 +368,12 @@ export function nonBrainBannerAllowed(i: { bannerAix: string | null; brainFresh:
  * 2026-10-13 棚卸しの表 8: 関所を通っていなかった札（P3 内覧テンプレ・P7 2番手・P8 の AIX なしの提案＝suggest-next-action の独立の判断）も同じ関所に。
  *   ブレインの今の判断がある時はブレインの札だけ・判断が古い／無い時だけ規則の札で補う（設計知見 0593a0aa）。戻す NEXT_PUBLIC_BANNER_GATE_ALL=off
  */
-export function extraBannerAllowed(i: { bannerAix: string | null; brainFresh: boolean; brainAix: string | null; noAixHides?: boolean }, gateAll: string | null | undefined = process.env.NEXT_PUBLIC_BANNER_GATE_ALL): boolean {
+export function extraBannerAllowed(i: { bannerAix: string | null; brainFresh: boolean; brainAix: string | null; noAixHides?: boolean; lastStaffAt?: string | null; brainAt?: string | null }, gateAll: string | null | undefined = process.env.NEXT_PUBLIC_BANNER_GATE_ALL): boolean {
   if (!flagOn(gateAll)) return true;
+  // 10/13 レビュー（重要2）: P3・P7・P8 はスタッフが送った（AIX の送信を含む）直後に出る札。スタッフの最後の送信がブレインの判断（見たお客様の発言）より後なら、
+  //   ブレインはまだその段階を判断していない＝規則の札で補う（設計知見 0593a0aa「判断していない時だけ規則で補う」）
+  const staffMs = i.lastStaffAt ? Date.parse(i.lastStaffAt) : NaN, brainMs = i.brainAt ? Date.parse(i.brainAt) : NaN;
+  if (Number.isFinite(staffMs) && (!Number.isFinite(brainMs) || staffMs > brainMs)) return true;
   return nonBrainBannerAllowed({ ...i, postApply: false });
 }
 

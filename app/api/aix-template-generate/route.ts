@@ -100,8 +100,8 @@ import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
 import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
 import { buildAixTemplateDbKnowledgeBlock, aixTemplateCacheTtl } from "@/app/lib/aix-template-cache";
 import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
-// 2026-10-13 棚卸しの表 8: 学習の見出しを返信生成と同じ形に（中身の上は AIX の入力・ブレインの判断・安全の線は必ず守る）。戻す KNOWLEDGE_HEADING_FORM=off
-const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）とブレインの判断";
+// 2026-10-13 棚卸しの表 8: 学習の見出しを返信生成と同じ形に（中身の上は AIX の入力・安全の線は必ず守る）。戻す KNOWLEDGE_HEADING_FORM=off
+const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）"; // 10/13 レビュー（軽微2）: ✨ を押した時はブレインの判断がほぼ無いので AIX の入力だけを指す
 
 export const maxDuration = 60;
 

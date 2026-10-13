@@ -9161,7 +9161,10 @@ export default function Home() {
               // 2026-10-13 棚卸しの表 8: 関所を通っていなかった札（P3 内覧テンプレ・P7 2番手・P8 の AIX なしの提案＝suggest-next-action の独立の判断）も同じ関所に。
               //   ブレインの今の判断がある時はブレインの札だけ（判断が古い・無い時だけ規則の札で補う＝設計知見 0593a0aa）。P5.1（[AIX誘導中]）はブレインの reply_mode なので対象外。
               //   戻す: NEXT_PUBLIC_BANNER_GATE_ALL=off
-              const bannerOkExtra = (bannerAix: string | null) => !BRAIN_ATTENTION_UI || extraBannerAllowed({ bannerAix, brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction });
+              // 10/13 レビュー（重要2）: スタッフの最後の送信（AIX を含む）がブレインの見たお客様の発言より後なら、ブレインはまだ判断していない＝規則の札で補う
+              const lastStaffAtForBanner = [...(selectedConversation.messages ?? [])].reverse().find((m) => m.sender !== "customer")?.rawCreatedAt ?? null;
+              const brainAtForBanner = (selectedConversation.suggestedAixMeta as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
+              const bannerOkExtra = (bannerAix: string | null) => !BRAIN_ATTENTION_UI || extraBannerAllowed({ bannerAix, brainFresh: aixView.metaFresh, brainAix: aixView.brainAixAction, lastStaffAt: lastStaffAtForBanner, brainAt: brainAtForBanner });
 
               // AIX鮮度チェック: analyzed_msg_ts が最新顧客メッセージより古い判断では帯・カードを出さない（aixView.metaFresh・resolveAixButtonView に一本化）
 

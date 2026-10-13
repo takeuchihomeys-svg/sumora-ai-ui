@@ -3875,10 +3875,11 @@ ${history}`;
         const selfConflict = nop0.reject && !nop0.close && !!llmOwnAix && llmOwnAix === finalAix;
         if (selfConflict) console.log(JSON.stringify({ tag: "brain:two-stage-brain-self-conflict", conversationId, src: twoStage.source, aix: finalAix }));
         const nop = selfConflict ? { reject: false, close: false } : nop0;
-        if (nop.reject && !applyOverride(demotedOverrides, "two_stage_promise", `${twoStage.source}(brain_no_promise)`, "promise", nop.close ? finalAix : "reply")) {
-          console.log(JSON.stringify({ tag: "brain:two-stage-brain-no-promise", conversationId, src: twoStage.source, close: nop.close, aix: finalAix }));
+        // 10/13 レビュー（軽微1）: 記録のブレインの答えは LLM 自身の AIX。閉じる番で LLM が AIX を選んでいない（規則・信号の AIX だけ）時は AIX も外し LLM の reply_mode に従う
+        if (nop.reject && !applyOverride(demotedOverrides, "two_stage_promise", `${twoStage.source}(brain_no_promise)`, "promise", nop.close ? llmOwnAix : "reply")) {
+          console.log(JSON.stringify({ tag: "brain:two-stage-brain-no-promise", conversationId, src: twoStage.source, close: nop.close, aix: finalAix, llmAix: llmOwnAix }));
           twoStage = null;
-          if (!nop.close) { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:contract_no_promise"; }
+          if (!nop.close || !llmOwnAix) { finalAix = null; sceneSignalCheckPattern = null; decisionSource = "brain:contract_no_promise"; }
         }
       }
       if (twoStage) {

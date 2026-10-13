@@ -125,6 +125,8 @@ t("物件確認した の旧名 property_check は同じ AIX", nonBrainBannerAll
 t("P3/P7/P8: ブレインの今の判断が AIX → 出さない", !extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite" }, undefined));
 t("P3/P7/P8: ブレインの今の判断が AIX なし → 出さない", !extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: null, noAixHides: true }, undefined));
 t("P3/P7/P8: ブレインの判断が古い → 出す（規則で補う）", extraBannerAllowed({ bannerAix: null, brainFresh: false, brainAix: "viewing_invite" }, undefined));
+t("P3/P7/P8: スタッフが AIX を送った後（ブレインの判断より後）→ ブレインは未判断＝規則の札を出す", extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite", lastStaffAt: "2026-10-13T10:05:00Z", brainAt: "2026-10-13T10:00:00Z" }, undefined));
+t("P3/P7/P8: お客様がその後に送り、ブレインが判断済み → ブレインの札だけ", !extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite", lastStaffAt: "2026-10-13T10:05:00Z", brainAt: "2026-10-13T10:10:00Z" }, undefined));
 t("P3/P7/P8: NEXT_PUBLIC_BANNER_GATE_ALL=off で旧（いつも出す）", extraBannerAllowed({ bannerAix: null, brainFresh: true, brainAix: "viewing_invite" }, "off"));
 
 console.log("■ 5. 環境変数");
