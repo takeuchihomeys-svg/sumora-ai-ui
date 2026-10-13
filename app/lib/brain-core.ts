@@ -20,6 +20,8 @@ import { fetchWinningPatterns } from "@/app/lib/summary-winning-patterns";
 import { strategySummaryPatternsEnabled, formatSummaryPatternsForStrategy } from "@/app/lib/brain-only-summary";
 import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists } from "@/app/lib/current-property-gate";
+// 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
+import { applyOverride, compactDemoted, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -348,6 +350,8 @@ export type SuggestedAixMeta = {
   decision_source?: string | null;
   /** 3巡目（10/07）: AIX を外した番の出どころ（記録用・brain_decision_logs には no_aix: を付けて残す） */
   decision_source_no_aix?: string;
+  /** 2026-10-13（ブレインの使い残し 4）: 下げた上書き（override-demote.ts）。f=家族・would=規則の答え・brain=ブレインの判断 */
+  demoted_overrides?: Array<{ f: string; src: string; would: string | null; brain: string | null }>;
   // 2026-09-12 竹内方針「条件がきたら AIX に連動して自動で物件検索」: 真の初回（スタッフ未返信）でお客様が条件を送ってきた時、
   //   初回例外で action/reply_mode は出さない（初回の挨拶下書きを優先）が、物件ピックアップが必要という判断はここに残す。
   //   aix-action-items.syncAixActionItem が読み、AIX要対応（物件ピックアップした）と AIX モードの自動検索を起こす
@@ -2932,6 +2936,8 @@ ${history}`;
     let finalAix: string | null = normalizeAixActionKey(parsed.aix);
     // 2026-09-12 段2: 判断の出どころ（brain_decision_logs.decision_source・brain-aix-eval で出どころ別の一致率を測る）
     let decisionSource: string | null = finalAix ? "llm" : null;
+    // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則は当たったがブレインの判断のまま）。meta.demoted_overrides とログ brain:override-demoted に残す
+    const demotedOverrides: DemotedOverride[] = [];
     // 場面の信号（S2/S3）で決まった時の check_pattern（証拠の check_pattern を優先する）
     let sceneSignalCheckPattern: string | null = null;
     // Case1対策（決定論的矯正・プロンプト任せにしない）:
@@ -3034,17 +3040,20 @@ ${history}`;
         console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: `signal:${signalAixResult}` }));
         signalAixResult = null;
       }
+      // 2026-10-13 /*demote:signal*/ 語・状態の信号はブレインの AIX を埋めない（30日: 押された AIX と同じは signal:* 約150番中9）。材料は場面の証拠・行動台帳でプロンプトに既にある。戻す BRAIN_DEMOTE_SIGNAL=off
+      const signalDemoted = !!signalAixResult && !applyOverride(demotedOverrides, "signal", `signal:${signalAixResult}`, signalAixResult, finalAix);
+      if (signalDemoted) signalAixResult = null;
       if (signalAixResult) {
         finalAix = signalAixResult;
         decisionSource = `signal:${signalAixResult}`;
-      } else {
+      } else if (!signalDemoted) {
         // 2026-09-12 段2: 既存の信号でも決まらない時だけ、今回の顧客発言の場面の証拠（S2 入居日 / S3 審査 / S5 日時指定）を信号として加える。
         //   既存の信号の結果は変えない（加えるだけ）。decision_source='signal:scene_*' で brain-aix-eval の学習対象にする。
         //   2026-10-08: S5（日時の語→待ち合わせ）はブレインが「なし」の時は採らない（本番 0/10・S2/S3/S11 は竹内さんの決定で残す）
         const sceneSig0 = sceneSignalFallback(sceneEvidence);
         const sceneSig = sceneSig0 && adoptSignalAixOverBrainNull(brainSaidNoAix, { kind: "scene", scene: sceneEvidence?.scene }) ? sceneSig0 : null;
         if (sceneSig0 && !sceneSig) console.info("[brain:signal-over-null]", JSON.stringify({ conversationId, dropped: sceneSig0.decisionSource }));
-        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action]) {
+        if (sceneSig && AIX_BRAIN_NOTES[sceneSig.action] && applyOverride(demotedOverrides, /^signal:scene_S(?:2|3|11)(?:_|$)/.test(sceneSig.decisionSource) ? "signal_decided" : "signal", sceneSig.decisionSource, sceneSig.action, finalAix)) {
           finalAix = sceneSig.action;
           sceneSignalCheckPattern = sceneSig.checkPattern;
           decisionSource = sceneSig.decisionSource;
@@ -3213,7 +3222,7 @@ ${history}`;
     // 2026-09-12 竹内（愛乃事例）「AIX の内覧日調整をセット」: 内覧日調整を送った後にお客様が別の日程を尋ねた
     //   （「それ以外だと何日になりますか？」「土日は可能ですか」）→ 候補日時は AIX【内覧日調整】で送る（候補日時の手打ち・AI 生成は禁止）。
     //   判定は場面の証拠（aix-scene-evidence S4' viewing_date_alternative）と同じ。実データでスタッフの次の AIX も内覧日調整
-    if (!promiseAix && sceneEvidence?.reasonCode === "viewing_date_alternative") {
+    if (!promiseAix && sceneEvidence?.reasonCode === "viewing_date_alternative" && applyOverride(demotedOverrides, "signal", "signal:scene_S4_date_alt", "viewing_invite", finalAix)) {
       finalAix = "viewing_invite";
       decisionSource = "signal:scene_S4_date_alt";
     }
@@ -3224,7 +3233,8 @@ ${history}`;
     //   見積・確認など他の AIX を選んだ時は変えない（ブレインの判断のまま）。別日程の問い合わせ（S4'）は上で内覧調整にしてある
     {
       const vf = brainLedger.facts.viewingFlow;
-      if (!promiseAix && vf && finalAix === "viewing_invite" && vf.stage === "date_agreed" && vf.currentReply === "date_time" && sceneEvidence?.reasonCode !== "viewing_date_alternative") {
+      if (!promiseAix && vf && finalAix === "viewing_invite" && vf.stage === "date_agreed" && vf.currentReply === "date_time" && sceneEvidence?.reasonCode !== "viewing_date_alternative"
+        && applyOverride(demotedOverrides, "signal_decided", "signal:viewing_flow_date_time", "meeting_place", finalAix)) {
         finalAix = "meeting_place";
         decisionSource = "signal:viewing_flow_date_time";
       }
@@ -3234,12 +3244,16 @@ ${history}`;
       //     （日にちが決まった後の日＋時刻は上の①の逆で待ち合わせ。取りやめ・保留は触らない）
       if (vf && !promiseAix && (process.env.VIEWING_FLOW_GATE ?? "").toLowerCase() !== "off") {
         const dateReply = vf.currentReply === "date_time" || vf.currentReply === "day_pick" || vf.currentReply === "day_only" || vf.currentReply === "ask_back";
-        if (finalAix === "meeting_place" && (vf.stage === "none" || vf.stage === "wished" || vf.stage === "proposing") && decisionSource !== "promise:meeting") {
+        if (finalAix === "meeting_place" && (vf.stage === "none" || vf.stage === "wished" || vf.stage === "proposing") && decisionSource !== "promise:meeting"
+          && applyOverride(demotedOverrides, "signal_decided", "signal:viewing_flow_meeting_too_early", "viewing_invite", finalAix)) {
           finalAix = "viewing_invite";
           decisionSource = "signal:viewing_flow_meeting_too_early";
         } else if (dateReply && decisionSource !== "guard:viewing" && (vf.stage === "wished" || vf.stage === "proposing" || vf.stage === "confirmed") && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
-          finalAix = "viewing_invite";
-          decisionSource = vf.stage === "confirmed" ? "signal:viewing_flow_reschedule" : "signal:viewing_flow_date_wish";
+          const vfSrc = vf.stage === "confirmed" ? "signal:viewing_flow_reschedule" : "signal:viewing_flow_date_wish";
+          if (applyOverride(demotedOverrides, "signal_decided", vfSrc, "viewing_invite", finalAix)) {
+            finalAix = "viewing_invite";
+            decisionSource = vfSrc;
+          }
         }
       }
       if (vf && vf.stage !== "none" && vf.stage !== "done") console.info("[brain:viewing-flow]", JSON.stringify({ conversationId, stage: vf.stage, confirmed: vf.confirmed, label: vf.label, lastReply: vf.lastReply, currentReply: vf.currentReply, askedDay: vf.askedDay, reason: vf.reason, aix: finalAix, source: decisionSource }));
@@ -3248,7 +3262,7 @@ ${history}`;
     //   「仲介手数料無しで大丈夫でしょうか？…安いのには何か理由があるのでしょうか？」は「初期費用」を含むため 見積書送る に倒れていた
     //   （見積書は送付済み）。場面の証拠 S8（aix-scene-evidence・customerDoubtsCheapness）なら 見積書送る／確認します／AIX なし を 初期費用を説明 にする。
     //   実データ（200日）: S8 の3件（あや・𝓡・みこと）全てでスタッフは仕組み（仲介手数料0円・広告料の還元）を説明した
-    if (!promiseAix && sceneEvidence?.scene === "S8_cost_doubt" && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "acknowledge_check")) {
+    if (!promiseAix && sceneEvidence?.scene === "S8_cost_doubt" && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "acknowledge_check") && applyOverride(demotedOverrides, "signal", "signal:scene_S8_cost_doubt", "cost_explain", finalAix)) {
       finalAix = "cost_explain";
       decisionSource = "signal:scene_S8_cost_doubt";
     }
@@ -3256,7 +3270,7 @@ ${history}`;
     //   物件を送った後・見積書の後の初期費用の中身の質問（「家賃だけ払ったら住めるんですか？」）は AIX【初期費用について】
     //   （御見積書の内訳で答える）。旧: 信号0.96（家賃＋ですか）で 見積書送る、または AIX なしで本文が「敷金礼金等含む総額」と断言した。
     //   場面の証拠 S9（aix-scene-evidence・customerAsksCostComposition）なら 見積書送る／確認します／AIX なし を 初期費用について にする
-    if (!promiseAix && sceneEvidence?.scene === "S9_cost_breakdown" && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "acknowledge_check")) {
+    if (!promiseAix && sceneEvidence?.scene === "S9_cost_breakdown" && (finalAix === null || finalAix === "estimate_sheet" || finalAix === "acknowledge_check") && applyOverride(demotedOverrides, "signal", "signal:scene_S9_cost_breakdown", "cost_breakdown", finalAix)) {
       finalAix = "cost_breakdown";
       decisionSource = "signal:scene_S9_cost_breakdown";
     }
@@ -3280,7 +3294,7 @@ ${history}`;
     //   お客様が電話で話したい（「ご相談があるのですがお電話では無理でしょうか？」）→ AIX【電話をかける】（LINEコールのボタン＋案内文）。
     //   場面の証拠 S10（customerRequestsPhoneCall・実データ271件中30件の検出は全て電話の依頼）なら AIX なし／確認します を 電話をかける にする。
     //   ブレインが他の AIX（見積書送る等）を選んだ時はそのまま（同じ発言の別の依頼を読んだ判断を壊さない）
-    if (!promiseAix && sceneEvidence?.scene === "S10_phone_request" && (finalAix === null || finalAix === "acknowledge_check")) {
+    if (!promiseAix && sceneEvidence?.scene === "S10_phone_request" && (finalAix === null || finalAix === "acknowledge_check") && applyOverride(demotedOverrides, "signal", "signal:scene_S10_phone_request", "phone_call", finalAix)) {
       finalAix = "phone_call";
       decisionSource = "signal:scene_S10_phone_request";
     }
@@ -3306,14 +3320,14 @@ ${history}`;
     // 2026-09-15 竹内（YUYA 事例）: お客様が保証会社そのもの（どこか・緩いか・種類）を尋ねた（場面の証拠 S3・guarantor_question）→ AIX【保証会社について】。
     //   実データ（240日）: 保証会社・審査の質問の後に 物件確認した→保証会社 が押されたのは1件だけ。「保証会社は緩そうなところでしょうか？」への実送信は保証会社の一覧。
     //   AIX なし／確認します／物件確認した を 保証会社について にする（他の AIX を選んだ時はそのまま）
-    if (!promiseAix && sceneEvidence?.reasonCode === "guarantor_question" && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")) {
+    if (!promiseAix && sceneEvidence?.reasonCode === "guarantor_question" && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result") && applyOverride(demotedOverrides, "signal", "signal:scene_S3_guarantor", "guarantor_info", finalAix)) {
       finalAix = "guarantor_info";
       decisionSource = "signal:scene_S3_guarantor";
     }
     // 2026-09-12 竹内（あや事例）「見積書を見てもらった方が分かりやすい為、見積書を送ってお客さんに確認してもらう」:
     //   見積書を送った後の総額・追加分の確認（「日割り家賃無しで284,500円になる感じですか？」「猫がいるのでプラス67000になりますか？」）
     //   → 追加分を反映した御見積書を送り直す。旧: LLM が AIX なし＋本文から「見積書の再送」を外し、本文で総額を「お間違いございません」と断言した
-    if (!promiseAix && sceneEvidence?.reasonCode === "estimate_amount_confirm" && (finalAix === null || finalAix === "acknowledge_check")) {
+    if (!promiseAix && sceneEvidence?.reasonCode === "estimate_amount_confirm" && (finalAix === null || finalAix === "acknowledge_check") && applyOverride(demotedOverrides, "signal", "signal:scene_S6_amount_confirm", "estimate_sheet", finalAix)) {
       finalAix = "estimate_sheet";
       decisionSource = "signal:scene_S6_amount_confirm";
     }
@@ -3327,7 +3341,8 @@ ${history}`;
     //   内覧のご案内／待ち合わせ／申込へ は確定アクション優先でそのまま
     if (!promiseAix && sceneEvidence?.reasonCode === "room_photo_request"
       && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result"
-        || finalAix === "property_recommendation" || finalAix === "property_send")) {
+        || finalAix === "property_recommendation" || finalAix === "property_send")
+      && applyOverride(demotedOverrides, "signal_decided", "signal:scene_S11_room_photo", "property_check_result", finalAix)) {
       finalAix = "property_check_result";
       sceneSignalCheckPattern = "interior_photo";
       decisionSource = "signal:scene_S11_room_photo";
@@ -3442,7 +3457,7 @@ ${history}`;
       const focusRoom = customerState?.focusKey ? customerState.properties.find((p) => p.key === customerState.focusKey) ?? null : null;
       const fe = resolveFocusedEstimateRequest(unrepliedTurn.text,
         focusRoom ? { name: focusRoom.name, sentByUs: focusRoom.sentByUs, ended: focusRoom.status === "ended" } : null);
-      if (fe.hit) {
+      if (fe.hit && applyOverride(demotedOverrides, "signal", "signal:focused_estimate_request", "estimate_sheet", finalAix)) {
         finalAix = "estimate_sheet";
         sceneSignalCheckPattern = null;
         decisionSource = "signal:focused_estimate_request";
@@ -3561,7 +3576,8 @@ ${history}`;
     // 2026-10-01 YUMA の再生: 手続きの質問（rule:procedure_question_reply）・資料で答えられる確認（rule:confirm_topic_in_material）も返信で答える番。
     //   「15日までに入居となると審査も…間に合うんですかね」（スタッフは審査と入居までの期間を手打ち）に、未履行の「新着で…随時お送り」の宣言から
     //   物件ピックアップを立て直して下書きが出なかった（signal:pending_pickup・穴:G5）
-    if (!promiseAix && !closedAckWait && !viewingDayWait && !rentIncludedReply && procedureDecision !== "reply" && !confirmTopicReply && pendingPickup.pending && finalAix === null) {
+    if (!promiseAix && !closedAckWait && !viewingDayWait && !rentIncludedReply && procedureDecision !== "reply" && !confirmTopicReply && pendingPickup.pending && finalAix === null
+      && applyOverride(demotedOverrides, "signal", "signal:pending_pickup", "property_send", finalAix)) {
       finalAix = "property_send";
       decisionSource = "signal:pending_pickup";
       promiseAltAction = promiseAltAction ?? "property_recommendation";
@@ -4414,6 +4430,7 @@ ${history}`;
     const searchChoice = searchResultAltActions({ finalAix: finalAix ?? null, pickupReady: pickupReadyForChoice, postApply: isPostApplyStatus(convStatus), altActions: altForChoice });
     if (searchChoice.added) console.log(JSON.stringify({ tag: "brain:search-result-choice", conversationId, aix: finalAix, alts: searchChoice.altActions }));
 
+    if (demotedOverrides.length) console.log(JSON.stringify({ tag: "brain:override-demoted", conversationId, final: finalAix ?? null, demoted: compactDemoted(demotedOverrides) }));
     return {
       action: finalAix ?? "",
       parallel_search: parallelOut.parallel,
@@ -4497,6 +4514,8 @@ ${history}`;
       decision_source: finalAix ? decisionSource : (decisionSource === "guard:viewing" || decisionSource === "guard:first_contact" ? decisionSource : null),
       // 3巡目（10/07・AIX の判断のずれの調査 1468132d）: AIX を外した番（2段の約束・手続きの質問・資料で答える・連絡待ち 等）の出どころを捨てていた → 記録用に別の欄で残す（画面・関所は decision_source だけを見るので挙動は変わらない）
       decision_source_no_aix: !finalAix && decisionSource && decisionSource !== "guard:viewing" && decisionSource !== "guard:first_contact" ? decisionSource : undefined,
+      // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則の答え would とブレインの判断 brain の食い違い）
+      demoted_overrides: compactDemoted(demotedOverrides),
       first_contact_pickup: firstContactPickup,
       // 2026-10-02 ⑫ 17巡: 2段の場面（約束の返信）にした時の種類。自動送信の関所が「約束の無い下書き」を止めるのに使う（auto-reply-policy ⑥-4）
       two_stage: twoStage ? twoStage.kind : undefined,
