@@ -9268,3 +9268,29 @@ AI下書き 6,940件で落ちるのは2件で、2件ともスタッフは別の�
 - 戻す: FINAL_CHECK_BRAIN_ALIGN=off（全部）・CONTEXT_CHECK_ANSWER_LIST=off
 - 試し（DeepSeek・Claude 0）: 再生（旧と新・その番を見た本質の会話 4件＋近似 12件）は check1 の揺れが大きく件数での差は出ない。書き直しの直接の試し（旧で渡らず新で渡る本番の指摘 5件）: 本質どおりに直った 2（ccdea0b5 お詫びを外す・53536c0e 見積の約束を足す）・中立 2・検査の誤指摘で書き直し 1（2fcd0fa3・本番では禁止語と再検査の関門が拾う形）。費用 DeepSeek 約 $0.13
 - 確かめる人へ: 取りこぼしの指摘の裏付け（customer_questions の6割一致）が誤指摘を通さないか／overruled で画面から消える warning に本物が無いか（fecda03f 型は CONTRACT_UNASKED_CONFIRM で出し直す）
+## 10/13 ブレインを邪魔している所の棚卸し（B・作る人・区切り2）— 読むだけの調べ＋上位の直し
+数え方: brain_decision_logs の ds（coalesce(decision_source, digest->>'ds')）・digest.la（10/09〜）・押された AIX と後12時間の aix_usage_logs・llm_usage_logs・竹内さんの手打ち（staff_writer=takeuchi 60日 1,318通: 文字 p50 95/p90 187/p99 334・行 p50 3/p90 5）。
+| # | 項目（どこで） | ブレインとどうぶつかる | 30日の回数 | ブレインが正しかった | 直す見込み・API・リスク | いつ・今も要るか |
+|---|---|---|---|---|---|---|
+| 1 | 出し切り→【全力サポート】（search-exhausted.ts isExhaustMarker・brain-core 4437〜・方向の固定文・exhaustContract） | 物件を1回送った（AIX・「ピックアップさせて頂きました」）だけで出し切り＝一手・方向・本質を書き換え | 45番（10/09〜）・明示の印（全て…・新着待ち・全力サポート）が前にあった番 31 以下・送付だけ 14 以上 | 後12時間にスタッフが物件の AIX 21/42・全力サポート 2/42（試験の正解は逆＝下記） | 大・$0・試験 7問が戻る | 97504047 10/09 試験に合わせて印を広げた |
+| 2 | 2段の約束 two_stage_promise（brain-core 3776〜・override-demote は pickupReady=true だけ） | ブレインの物件・確認の AIX を約束の返信に | 107番（la と最終が違う 24/24・10/09〜） | 見本15: ブレイン正 6・規則正 2・両方外れ 4 | 中〜大・$0・check_question/持ち込みは規則が当たる番あり | f137f7a4 10/08 |
+| 3 | 返信の方向（generate-reply 4701〜 effectiveReplyDirection・往復セルが先） | セルの方向がブレインの reply_direction に勝つ | 下書きと実送信がある 235番で食い違い 161・実送信がブレイン側 22（ANY_CONDITION_CHANGE 5/16） | 22 | 中・$0 | a9ac7bee 9/09 |
+| 4 | 了承の返事の長さ「2行以内」（generate-reply 1920・1291 pickupPromiseAckNote・line-reply-prompts 994/874/2083） | 長さを語の場面で一律に。本質（close_only・asks）を見ない | 竹内さんの了承への返事 133通の 58% が3行以上／下書き2行以内で実送信3行以上 13/70（19%） | 7/13 は次の一手の1文が足りない | 中・$0・閉じる番が長くなる（H5 で見張る） | 0e54689b 6/06（古い制限） |
+| 5 | ナレッジの見出し「🔴最優先・必ず守る」「⚠️絶対ルール」（generate-reply 2412/2418/2551/2559） | 1927 の優先順位（本質＞…＞学習ルール＝形）と逆の言葉 | 差分学習 9,563回/150会話・絶対ルール 1,772回 | 数えられない（記録なし） | 中（推測）・$0 | 651ad195 6/09（古い言い回し） |
+| 6 | 決定論の「最優先」ノート（pickupPromiseAckNote・aixDoneAckNote・promiseEchoNote・条件変更の CTA 禁止） | 中身を正規表現で決めて最優先で指示 | 数えられない／約束済みの了承への竹内さんの返事 8通中5通が約束を言い直す | 見本 a19778a3・c7ab324e | 中・$0 | 8/17〜9/23（中身は古い制限・空き/退去日の断言禁止は安全の線で残す） |
+| 7 | 最終チェックの後に消す決定論（stripPointlessGuidance・stripVagueQuantifier・stripRepeatedFullSupport 等） | 足す側は本質を見るが消す側は見ない | 記録なし | — | 小〜中 | 9/17〜10/02 |
+| 8 | 画面の札 nonBrainBannerAllowed（brain-attention 358・page 9157）／関所を通らない札（P3・P7・P5.1・P8） | ブレインが古い時は規則の札を全部出す | 記録なし | — | 小〜中 | dd632910 10/08 |
+| 9 | 物件名の表示（customer-state focus・reply-context 1220・aix/action 1947・confirm-target-property） | 表示の物件にブレインの current_property を使わない（customer-state は入力なので戻さない） | 記録なし | — | 中・輪に注意 | 4d0e90d1・fb728adf |
+| 10 | 送った後の3つの呼び出し（customer-summary・aix_meta_patch・recommend-templates） | 同じ判断を別に | 約 $21/30日 | — | 10/13 990e1db2 で停止済み。customer-summary はデプロイ後も 15回（古いタブ／customers/page.tsx:1241 の手動ボタンと推測） | — |
+| 11 | signal:*・image_only・closed_ack_wait・viewing_day_ack | 規則が AIX を書き換え | 約150・29・13・12（押された AIX と一致ほぼ0） | — | 10/13 に材料へ下げ済み（signal_decided は上書きのまま） | — |
+| 12 | turn-route-guards・guard:first_contact | ブレインの AIX を消す・初回の決め打ち | 11・80 | 押下 0 で数えられない | 小 | 10/09 |
+| 13 | 条件の範囲（condition-change-scope 152〜・文の語が先） | ブレインは5番目 | 78件中 文の語で決まった 3・ぶつかった 1（4f1df513） | 1? | 小 | 7b18dca7・0e5318b0 |
+| 14 | avoid_topics に「来阪」を必ず（brain-core 1222） | 5枠の1つを固定 | 62/62 会話 | 実送信に来阪 0 | 小・$0 | 88083da9 8/20（古い決め打ち） |
+| 15 | 本質の字数切り（turn-contract clip・brain-core 4030 reply_direction 120） | 文の途中で切る | proposals 30字ちょうど 1/2・方向 0/62 | — | 小（truncateAtBoundary にそろえるだけ） | 97504047 |
+| 16 | 返信の会話の窓 25通（generate-reply 3606）・生成 max_tokens 2048 | — | 窓の外にだけ要る語 約1% | — | 変えなくてよい | — |
+| 17 | current_property（ブレインが物件を決める番） | 「6%」は 10/08 に足した列で数えたずれ。列ができた後は 163/237（69%）・物件の話の番 38/62（61%） | 入らない見本: 全角・空白の物件名（22b2511e）・画像（63fa0c26） | — | ゲートか LLM の null かを分ける記録を足した（下） | — |
+
+直したこと（区切り2）:
+- B-1 出し切り: 印の強さ（strong＝全て…・新着待ち・全力サポート／weak＝送付だけ）を searchExhausted が返す・weak の時は上書きせず材料（exhaustedMaterialLine）にする形を作った。**試験（出し切り7問・DeepSeek）で下げると道 7/7→5/7・合格 1→0（q003 悪化・q002 q006 が2段の約束）＝既定 off（入れない）**。BRAIN_DEMOTE_SEARCH_EXHAUSTED=on で有効。本番の数（後12時間にスタッフが物件の AIX 21/42）と試験の正解（送付だけの後でも全力サポート）が食い違う＝竹内さんに確認が要る
+- B-17: llm_raw.cp と digest.lp（LLM が出した current_property・ゲートの前）を記録（$0・本文や判断は不変）。次に「ゲートで落ちた／LLM が null」を数えられる
+- 案のまま（実装しない）: 2・3・4・5・6・7・14・15（上の表）。4 と 5 は生成の文が変わるので見本の会話の前後比べ（dry-run）が要る

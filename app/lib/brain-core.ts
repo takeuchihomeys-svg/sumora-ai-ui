@@ -140,7 +140,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { searchExhausted, applySearchExhausted } from "@/app/lib/search-exhausted";
+import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract } from "@/app/lib/turn-contract";
 /** 2026-10-08 本質の仕様（turn-contract.ts）をブレインに出させるか。戻す TURN_CONTRACT_BRAIN=off（出力・指示を足さない＝静的 system も旧に戻る） */
@@ -298,7 +298,8 @@ export type SuggestedAixMeta = {
   request_status?: import("@/app/lib/request-ledger").BrainRequestStatus;
   /** 10/09: LLM が選んだ AIX（決定論の規則で変わる前・記録用） */
   aix_llm?: string;
-  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null };
+  /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
+  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null };
   // 2026-09-10 Fable5 みく事例: これは **conversation-scope**（会話全体で2回以上登場した論点）。
   // 「今回のメッセージが懸念である」ことを一切示さない。reply-context.ts の分類器（mergeBrainEvidence /
   // classifyCustomerResponse）には toBrainConversationScope 経由でしか渡らず、型として渡せない
@@ -2569,6 +2570,22 @@ ${catalogBlockForBrain(brainScene)}
       customerStateBlockText += `\n\n${pickupReadyMaterialLine(readyNow)}`;
     } catch (e) { console.warn("[brain-core] pickup-ready material skipped:", e instanceof Error ? e.message : String(e)); }
   }
+  // 2026-10-13 ブレイン基準（棚卸し B-1）: 出し切りの印（いつ・どの文・明示の印か送付だけか）を LLM の前に材料で渡す。
+  //   後の上書き（rule:search_exhausted）は明示の印（strong）の時だけ・送付だけ（weak）の時は材料にしてブレインが決める（戻す BRAIN_DEMOTE_SEARCH_EXHAUSTED=off）
+  if (weakExhaustDemoted() && searchExhaustedEnabled() && !isPostApplyStatus(convStatus)) {
+    try {
+      const exNow = searchExhausted(
+        brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null })),
+        {
+          conditionChangedThisTurn: false, pickupReady: null,
+          deliveredAixAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),
+          zenryokuSentAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => r.aix_type === "zenryoku_support" && r.sent_at).map((r) => r.sent_at as string),
+        },
+      );
+      const line = exhaustedMaterialLine(exNow);
+      if (line) customerStateBlockText += `\n\n${line}`;
+    } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   // 2026-10-13（ブレインの使い残し 4-4）: こちらの締めの後のお礼・了承だけの番か（後の rule:closed_ack_wait と同じ判定）を材料として渡す
   if (overrideDemoted("closed_ack_wait") || overrideDemoted("viewing_day_ack")) {
     const oldestNow = [...typedMessages].reverse().map((m) => ({ sender: m.sender, text: m.text }));
@@ -4453,7 +4470,10 @@ ${history}`;
           zenryokuSentAt: (brainLedgerInput.recentAixRows ?? []).filter((r) => r.aix_type === "zenryoku_support" && r.sent_at).map((r) => r.sent_at as string),
         },
       );
-      const ex = applySearchExhausted({ finalAix: twoStagePickupNow || replyCondTurn ? "property_send" : finalAix, altActions: altForChoice, exhausted: exh.exhausted, postApply: isPostApplyStatus(convStatus) });
+      // 2026-10-13 ブレイン基準（棚卸し B-1）: 送付だけの印（weak）での出し切りは上書きしない（材料は LLM の前に渡した・食い違いは demoted_overrides）。明示の印（strong）は今まで通り
+      const weakOnly = exh.exhausted && exh.strength === "weak" && weakExhaustDemoted();
+      if (weakOnly && !isPostApplyStatus(convStatus)) applyOverride(demotedOverrides, "search_exhausted", "rule:search_exhausted(weak)", "zenryoku_support", finalAix ?? (twoStagePickupNow ? "two_stage:pickup" : null));
+      const ex = applySearchExhausted({ finalAix: twoStagePickupNow || replyCondTurn ? "property_send" : finalAix, altActions: altForChoice, exhausted: exh.exhausted && !weakOnly, postApply: isPostApplyStatus(convStatus) });
       if (ex.changed) {
         // 2段の pickup の約束にしていた番は、約束の返信をやめて AIX【全力サポート】の番にする（返信の下書きは作らない＝reply_mode aix・two_stage を外す）
         if (twoStagePickupNow || replyCondTurn) { replyMode = "aix"; twoStage = null; }
@@ -4530,7 +4550,9 @@ ${history}`;
       turn_contract: TURN_CONTRACT_BRAIN_ON ? (exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote) ?? undefined) : undefined,
       aix_llm: normalizeAixActionKey(parsed.aix) ?? undefined,
       // 10/09 試験の担当の案（承認済み）: LLM の最初の判断（決定論の規則で変わる前）。本番の見張りでも本質と最終を分けて数える
-      llm_raw: { action: normalizeAixActionKey(parsed.aix) ?? null, reply_mode: typeof parsed.reply_mode === "string" ? parsed.reply_mode : null, dir: typeof parsed.reply_direction === "string" ? parsed.reply_direction.slice(0, 40) : null },
+      llm_raw: { action: normalizeAixActionKey(parsed.aix) ?? null, reply_mode: typeof parsed.reply_mode === "string" ? parsed.reply_mode : null, dir: typeof parsed.reply_direction === "string" ? parsed.reply_direction.slice(0, 40) : null,
+        // 2026-10-13 棚卸し B-6: LLM が出した current_property（ゲートの前・記録だけ）
+        cp: rawCurrentProperty || null },
       repeated_concern: repeatedConcern,
       current_property: currentProperty,
       condition_change_type: conditionChangeType,

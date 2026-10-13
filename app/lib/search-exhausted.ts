@@ -38,13 +38,59 @@ export function searchExhaustedEnabled(env: Record<string, string | undefined> =
 }
 
 export function isExhaustMarker(m: ExMsg): boolean {
-  if (m.sender !== "staff") return false;
-  if (m.aixType === "zenryoku_support" || m.aixType === "property_send" || m.aixType === "property_recommendation") return true;
-  const t = (m.text ?? "").normalize("NFKC");
-  return ALL_PICKED_RE.test(t) || DELIVERED_RE.test(t) || NEW_ARRIVAL_PROMISE_RE.test(t);
+  return markerStrength(m) !== null;
 }
 
-export function searchExhausted(msgs: ReadonlyArray<ExMsg>, o: { conditionChangedThisTurn: boolean; pickupReady: boolean | null | undefined; zenryokuSentAt?: ReadonlyArray<string>; deliveredAixAt?: ReadonlyArray<string>; placeMentioned?: boolean }): { exhausted: boolean; markerAt: string | null; reason: string } {
+/**
+ * 2026-10-13 ブレイン基準（棚卸し B-1）: 印の強さ。
+ *   strong＝今の条件を出し切ったと**言った**印（「全て…ピックアップさせて頂きました」・新着待ちの約束・AIX【全力サポート】）
+ *   weak  ＝物件を1回送った・送付を報告しただけ（AIX の物件の送付・「ピックアップさせて頂きました」「募集に出ました」）
+ *   10/09 に weak も印にした（試験の出し切り7問）ら、物件を送った事のある会話はほぼ全部「出し切り」になり、
+ *   4日 43番でブレインの一手と方向を【全力サポート】に書き換え、その後スタッフが物件の AIX を送ったのは 21/42・全力サポートは 2/42。
+ */
+export function markerStrength(m: ExMsg): "strong" | "weak" | null {
+  if (m.sender !== "staff") return null;
+  if (m.aixType === "zenryoku_support") return "strong";
+  if (m.aixType === "property_send" || m.aixType === "property_recommendation") return "weak";
+  const t = (m.text ?? "").normalize("NFKC");
+  if (ALL_PICKED_RE.test(t) || NEW_ARRIVAL_PROMISE_RE.test(t)) return "strong";
+  if (DELIVERED_RE.test(t)) return "weak";
+  return null;
+}
+
+/** 弱い印だけの出し切りはブレインの材料に下げる（上書きしない）か。**既定 off（旧のまま）**・BRAIN_DEMOTE_SEARCH_EXHAUSTED=on で下げる。
+ *  10/13 試験（出し切り7問・DeepSeek）: 下げると道 7/7→5/7・合格 1→0（q003 が悪化・q002 q006 は2段の約束に）＝試験の正解（竹内さんの実送信）は送付だけの印の後でも全力サポート。
+ *  本番4日の 43番ではスタッフが物件の AIX を送った番が多い（21/42）＝食い違う。材料を強くしてから on にする（入れない判断・報告に書いた） */
+export function weakExhaustDemoted(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BRAIN_DEMOTE_SEARCH_EXHAUSTED ?? "").trim().toLowerCase() === "on";
+}
+
+/** ブレインに渡す材料の1行（LLM の前）。印が無ければ空 */
+export function exhaustedMaterialLine(r: { exhausted: boolean; markerAt: string | null; strength?: "strong" | "weak" | null; markerText?: string | null }): string {
+  if (!r.markerAt) return "";
+  const q = Array.from(String(r.markerText ?? "").replace(/\s+/g, " ")).slice(0, 40).join("");
+  const when = r.markerAt.slice(0, 16).replace("T", " ");
+  if (r.exhausted && r.strength === "strong") {
+    return `【出し切りの材料】${when}（UTC）にこちらが今の条件の物件を出し切った印${q ? `（「${q}」）` : "（AIX【全力サポート】）"}を送り、その後お客様は条件を広げていない＝物件を求める番は AIX【全力サポート】が主（新着が見つかっていれば物件の AIX は2つ目）`;
+  }
+  return `【出し切りの材料】${when}（UTC）に物件を送った・送付を報告した${q ? `（「${q}」）` : "（AIX の物件の送付）"}。これは1回送っただけで、今の条件を出し切ったと言った印（「全てピックアップさせて頂きました」・新着待ちの約束・AIX【全力サポート】）は無い＝出し切りとは限らない。お客様が物件を求めた時は、出し切ったかどうかを会話から読んで決める（まだ探せるなら物件の AIX かピックアップの約束・本当に出し切ったなら【全力サポート】）`;
+}
+
+export type ExhaustResult = { exhausted: boolean; markerAt: string | null; reason: string; strength?: "strong" | "weak" | null; markerText?: string | null };
+
+/**
+ * 出し切りの判定（旧と同じ答え）に、強さ（strong＝出し切ったと言った印から判定しても出し切り／weak＝送付の印だけで出し切り）を付ける。
+ * 強さの判定は「強い印だけ」で同じ判定をやり直した結果（強い印の後に条件が変わった・見積に進んだなら強くない）。
+ */
+export function searchExhausted(msgs: ReadonlyArray<ExMsg>, o: { conditionChangedThisTurn: boolean; pickupReady: boolean | null | undefined; zenryokuSentAt?: ReadonlyArray<string>; deliveredAixAt?: ReadonlyArray<string>; placeMentioned?: boolean }): ExhaustResult {
+  const all = searchExhaustedCore(msgs, o, null);
+  if (!all.exhausted) return { ...all, strength: null };
+  const strong = searchExhaustedCore(msgs, o, "strong");
+  return { ...all, strength: strong.exhausted ? "strong" : "weak" };
+}
+
+function searchExhaustedCore(msgs: ReadonlyArray<ExMsg>, o: { conditionChangedThisTurn: boolean; pickupReady: boolean | null | undefined; zenryokuSentAt?: ReadonlyArray<string>; deliveredAixAt?: ReadonlyArray<string>; placeMentioned?: boolean }, only: "strong" | null): ExhaustResult {
+  const isMarker = (m: ExMsg) => (only ? markerStrength(m) === only : isExhaustMarker(m));
   // 10/09 試験（q008 神崎川・q011 大国町・q032 大国町・q062 京橋）: この番で地名（駅・区・市）を言った＝新しい条件で探す番（出し切っていない）
   if (o.placeMentioned) return { exhausted: false, markerAt: null, reason: "この番で地名を言った（新しい条件）" };
   // AIX の物件の送付（property_send・property_recommendation を送った時刻）も印
@@ -54,7 +100,7 @@ export function searchExhausted(msgs: ReadonlyArray<ExMsg>, o: { conditionChange
   if (o.pickupReady === true) return { exhausted: false, markerAt: null, reason: "売上サポに送れる新しい候補がある" };
   if (o.conditionChangedThisTurn) return { exhausted: false, markerAt: null, reason: "この番で条件が変わった（2択のまま）" };
   let idx = -1;
-  for (let i = msgs.length - 1; i >= 0; i--) if (isExhaustMarker(msgs[i])) { idx = i; break; }
+  for (let i = msgs.length - 1; i >= 0; i--) if (isMarker(msgs[i])) { idx = i; break; }
   if (idx < 0) return { exhausted: false, markerAt: null, reason: "出し切った印が無い" };
   const after = msgs.slice(idx + 1).filter((m) => m.sender === "customer");
   // 広げた条件・条件のフォームの出し直しだけ取り消す（「ガスコンロ」「中央大通りより北側で」等の絞り込みは出し切ったまま＝竹内さん Q4「広がった時は除く」・試験 q006 q007）
@@ -66,7 +112,7 @@ export function searchExhausted(msgs: ReadonlyArray<ExMsg>, o: { conditionChange
     && msgs.slice(idx + 1).some((m) => m.sender === "staff" && (m.aixType === "estimate_sheet" || ESTIMATE_SENT_RE.test((m.text ?? "").normalize("NFKC"))))) {
     return { exhausted: false, markerAt: msgs[idx].createdAt, reason: "印の後に御見積書を送った（物件1件の話）" };
   }
-  return { exhausted: true, markerAt: msgs[idx].createdAt, reason: "今の条件の物件は出し切った（新着待ち）" };
+  return { exhausted: true, markerAt: msgs[idx].createdAt, reason: "今の条件の物件は出し切った（新着待ち）", markerText: msgs[idx].text ?? null };
 }
 
 /** brain-core の最後の AIX に当てる: 物件の AIX で出し切っていれば主を【全力サポート】に（物件の AIX は2つ目） */

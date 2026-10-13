@@ -10,7 +10,7 @@
 
 type Env = Record<string, string | undefined>;
 
-export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards";
+export type OverrideFamily = "signal" | "signal_decided" | "image_only" | "two_stage_promise" | "closed_ack_wait" | "viewing_day_ack" | "turn_route_guards" | "search_exhausted";
 
 /** 家族ごとの戻す環境変数（"off" で旧の上書きに戻す） */
 export const DEMOTE_ENV: Record<OverrideFamily, string> = {
@@ -21,6 +21,8 @@ export const DEMOTE_ENV: Record<OverrideFamily, string> = {
   closed_ack_wait: "BRAIN_DEMOTE_CLOSED_ACK",
   viewing_day_ack: "BRAIN_DEMOTE_VIEWING_DAY_ACK",
   turn_route_guards: "BRAIN_DEMOTE_TURN_GUARDS",
+  // 2026-10-13 棚卸し B-1: 送付だけの印（weak）での出し切り→【全力サポート】の書き換え（search-exhausted.weakExhaustDemoted と同じ変数）
+  search_exhausted: "BRAIN_DEMOTE_SEARCH_EXHAUSTED",
 };
 
 /** 下げた家族（既定は下げる＝on。家族を足す時はここで既定を決める） */
@@ -34,6 +36,8 @@ const DEFAULT_ON: Record<OverrideFamily, boolean> = {
   closed_ack_wait: true,
   viewing_day_ack: true,
   turn_route_guards: true,
+  // 10/13 試験の出し切り7問で下げると道 7→5（試験の正解は送付だけの印の後でも全力サポート）＝今は上書きのまま。材料を強くしてから下げる（search-exhausted.weakExhaustDemoted）
+  search_exhausted: false,
 };
 
 export function overrideDemoted(f: OverrideFamily, env: Env = process.env): boolean {

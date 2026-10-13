@@ -1,6 +1,6 @@
 // app/lib/__tests__/search-exhausted.test.ts — 今の条件の物件を出し切ったか（実行: npx tsx app/lib/__tests__/search-exhausted.test.ts）
 //   実物は不一致 #178 #194 #200 #214 の形と、60日の実送信の言い回し（名前は伏せた）
-import { searchExhausted, applySearchExhausted, isExhaustMarker, type ExMsg } from "../search-exhausted";
+import { searchExhausted, applySearchExhausted, isExhaustMarker, markerStrength, exhaustedMaterialLine, weakExhaustDemoted, type ExMsg } from "../search-exhausted";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}${info !== undefined ? ` → ${JSON.stringify(info)}` : ""}`); } };
 const m = (sender: string, text: string, at: string, aixType?: string): ExMsg => ({ sender, text, createdAt: `2026-10-0${at}`, isAix: sender === "staff", aixType: aixType ?? null });
@@ -63,6 +63,27 @@ t("印: AIX の物件の送付の記録", searchExhausted([m("customer", "もう
   const prev = process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL; process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL = "off";
   t("SEARCH_EXHAUSTED_ESTIMATE_CANCEL=off で旧", searchExhausted(msgs, { conditionChangedThisTurn: false, pickupReady: false }).exhausted);
   if (prev === undefined) delete process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL; else process.env.SEARCH_EXHAUSTED_ESTIMATE_CANCEL = prev;
+}
+
+// 2026-10-13 ブレイン基準（棚卸し B-1）: 印の強さ。送付だけ（weak）の出し切りは上書きせずブレインの材料に
+{
+  const delivered = "天王寺周辺全域から〇〇さんのご条件に合ったお部屋ピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！";
+  t("強さ: 全てピックアップさせて頂きました＝strong", markerStrength(m("staff", allPicked, "1T10:00:00Z")) === "strong");
+  t("強さ: 新着待ちの約束＝strong", markerStrength(m("staff", newArrival, "1T10:00:00Z")) === "strong");
+  t("強さ: 全力サポートの AIX＝strong", markerStrength(m("staff", "", "1T10:00:00Z", "zenryoku_support")) === "strong");
+  t("強さ: 物件の送付の AIX＝weak", markerStrength(m("staff", "", "1T10:00:00Z", "property_send")) === "weak");
+  t("強さ: 「ピックアップさせて頂きました」（全て無し）＝weak", markerStrength(m("staff", delivered, "1T10:00:00Z")) === "weak");
+  const ask = m("customer", "他にもありますか？", "2T10:00:00Z");
+  const rw = searchExhausted([m("staff", delivered, "1T10:00:00Z"), ask], { conditionChangedThisTurn: false, pickupReady: false });
+  t("送付だけ → 出し切り（旧と同じ）・強さ weak", rw.exhausted && rw.strength === "weak", rw);
+  const rs = searchExhausted([m("staff", allPicked, "1T09:00:00Z"), m("staff", delivered, "1T10:00:00Z"), ask], { conditionChangedThisTurn: false, pickupReady: false });
+  t("明示の印の後に送付 → strong（明示の印から見ても出し切り）", rs.exhausted && rs.strength === "strong", rs);
+  const rc = searchExhausted([m("staff", allPicked, "1T09:00:00Z"), m("customer", "エリア広げてもいいです", "1T09:30:00Z"), m("staff", delivered, "1T10:00:00Z"), ask], { conditionChangedThisTurn: false, pickupReady: false });
+  t("明示の印の後に条件を広げ、その後に送付だけ → weak", rc.exhausted && rc.strength === "weak", rc);
+  t("材料: weak は「出し切りとは限らない」", /出し切りとは限らない/.test(exhaustedMaterialLine(rw)));
+  t("材料: strong は【全力サポート】が主", /全力サポート】が主/.test(exhaustedMaterialLine(rs)));
+  t("材料: 印が無ければ空", exhaustedMaterialLine({ exhausted: false, markerAt: null }) === "");
+  t("既定は旧（weak も上書き）・on で下げる（10/13 試験で道 7→5 のため）", !weakExhaustDemoted({}) && weakExhaustDemoted({ BRAIN_DEMOTE_SEARCH_EXHAUSTED: "on" }));
 }
 
 console.log(`\n${pass} OK / ${fail} NG`);

@@ -124,6 +124,8 @@ export type FreshDigest = {
   tc?: string | null;
   /** 10/09: LLM の最初の AIX（la）と判断の出どころ（ds）＝本質と最終を分けて数える */
   la?: string | null; ds?: string | null;
+  /** 2026-10-13: LLM が出した current_property（ゲートの前） */
+  lp?: string | null;
   /** 2026-10-09 お客様の状態（customer-mindset.mindsetDigest＝状態|不安の向き|迷い|決め手の残り）と決め手の残りの中身（物件・点・解き方・言葉）。メモと試験で読む */
   ms?: string | null;
   mg?: { p: string | null; pt: string; s: string; q: string } | null;
@@ -152,6 +154,8 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 10/09 調査の担当: LLM が選んだ AIX（決定論の規則で変わる前）。最終の aix と比べて「規則が変えた番」を数える
     la: str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30),
     ds: str(meta.decision_source, 60) ?? str(meta.decision_source_no_aix, 60),
+    // 2026-10-13 棚卸し B-6: LLM が出した current_property（実在ゲートの前）。prop（最終）と比べてゲートで落ちた番を数える
+    lp: str((meta.llm_raw as { cp?: unknown } | undefined)?.cp, 40),
     ms: mindsetDigest((meta.customer_mindset as CustomerMindset | null | undefined) ?? null),
     mg: (() => { const g = (meta.customer_mindset as CustomerMindset | null | undefined)?.decideGap; return g ? { p: g.property, pt: g.point, s: g.solve, q: g.quote } : null; })(),
     tc: (() => {
