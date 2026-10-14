@@ -21,7 +21,7 @@ import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormCon
 import { promiseTopics } from "./draft-repeat";
 import { truncateAtBoundary } from "./brain-strategy-note";
 import { closeOnlyShape } from "./ack-form-takeuchi";
-import { brainDeepCheckEnabled, BRAIN_DEEP_CHECK_ASK_FIELD, BRAIN_DEEP_CHECK_RULE } from "./brain-deep-check";
+import { brainDeepCheckGapEnabled, BRAIN_DEEP_CHECK_ASK_FIELD, BRAIN_DEEP_CHECK_RULE } from "./brain-deep-check";
 
 /** 1つの依頼への答え方 */
 export type AnswerRoute =
@@ -97,7 +97,7 @@ export function turnContractFinalCheckEnabled(env: Record<string, string | undef
 
 // ── ブレインへの指示（brain-core の出力の指定に入れる文）───────────────────────
 /** ブレインの JSON に足す欄の説明（brain-core の出力の指定・今回の発言の層の出力の指定の両方に入れる） */
-export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"${brainDeepCheckEnabled() ? `, ${BRAIN_DEEP_CHECK_ASK_FIELD}` : ""}}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
+export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"${brainDeepCheckGapEnabled() ? `, ${BRAIN_DEEP_CHECK_ASK_FIELD}` : ""}}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
 
 /** ブレインの判断の仕方（出力の指定の後ろに置く短い規則・竹内さん 10/08 の答え Q1〜Q10 をそのまま） */
 export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract）の決め方 — 返信の中身はここだけで決まる】
@@ -113,7 +113,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - feeling: 不安・恐縮・謝罪・急ぎ・落胆がある時は kind を付け、受ける一言が要るなら acknowledge=true。
 - proposals: お客様がすぐ来られない事情（今週は無理・出張中・予定が詰まって・遠方）があり物件が刺さっている時の「お申込みでお部屋を抑える」「オンライン内見・室内の撮影」の申し出は proposals に入れる（返信で消さない・「ご内覧可否確認」に置き換えない）。内覧したいだけの依頼は aix=viewing_invite（確認の約束にしない）。
 - must_not: 聞かれていない事・この場面で言うと外れる事（この番の会話から書く）。${ackFormBrainEnabled() ? `
-- ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}${brainDeepCheckEnabled() ? `
+- ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}${brainDeepCheckGapEnabled() ? `
 ${BRAIN_DEEP_CHECK_RULE}` : ""}`;
 
 // ── ブレインの出力を読む ─────────────────────────────────────────────

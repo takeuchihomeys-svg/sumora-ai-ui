@@ -1,7 +1,7 @@
 // app/lib/__tests__/brain-deep-check.test.ts — 根拠が足りない時だけ追加で調べる（実行: npx tsx app/lib/__tests__/brain-deep-check.test.ts）
 //   例は 30日の洗い出し（scripts/audit-brain-deep-check.ts）の番を伏せて作った
 import assert from "node:assert/strict";
-import { classifyDeepCheckTopics, decideDeepCheck, newMaterialOnly, deepCheckBlock, pastConversationLines, STAFF_ONLY_RE, queryKeywords, adoptSecondJudgement } from "../brain-deep-check";
+import { brainDeepCheckGapEnabled, classifyDeepCheckTopics, decideDeepCheck, newMaterialOnly, deepCheckBlock, pastConversationLines, STAFF_ONLY_RE, queryKeywords, adoptSecondJudgement } from "../brain-deep-check";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -74,7 +74,34 @@ t("型に当たらない依頼は言葉の語で探す", () => {
 });
 t("2回目は返信で答えた依頼が増えた時だけ使う・返信の依頼の印ではかけない", () => {
   assert.equal(adoptSecondJudgement(tc([{ quote: "x", route: "aix" }]), tc([{ quote: "x", route: "promise" }])).adopt, false);
-  assert.equal(adoptSecondJudgement(tc([{ quote: "x", route: "aix" }]), tc([{ quote: "x", route: "reply" }])).adopt, true);
+  assert.equal(adoptSecondJudgement(tc([{ quote: "x", route: "aix" }]), tc([{ quote: "x", route: "reply" }]), ["x"]).adopt, true);
   assert.equal(decideDeepCheck({ parsed: tc([{ quote: "洗面台とトイレ一緒か", route: "reply", gap: "material" }]), customerText: "洗面台とトイレ一緒ですか？", postApply: false, env: {} }).run, false);
+});
+t("10/15 レビュー: 30日の取りこぼし（管理会社の事）", () => {
+  for (const s of ["こちらはもう募集終わってしまいましたか？", "まだ空きはありますか？💦", "その日のうちにラフィーネも見に行けますか❓", "こちら、礼金下げることは厳しいですか🥲",
+    "こちら礼金は少し安くなったりはしないでしょうか？", "初期費用はだいたいどのぐらいでしょうか？", "初期費用30万以内にできないですか？"]) assert.ok(STAFF_ONLY_RE.test(s), s);
+  for (const s of ["初期費用の支払いはいつですか？", "初期費用なのですが現金とカード決済の併用は可能でしょうか？", "ここって洗面台とトイレ一緒な感じですか？"]) assert.ok(!STAFF_ONLY_RE.test(s), s);
+  assert.deepEqual(classifyDeepCheckTopics("こちら礼金は少し安くなったりはしないでしょうか？"), []);
+  assert.deepEqual(classifyDeepCheckTopics("こちら初期費用しりたいです！ 駐車場ありますか？"), ["parking"]);
+});
+t("10/15 レビュー: 確認の AIX だけ（物件を探す AIX の依頼にはかけない）", () => {
+  const p = tc([{ quote: "ペット可の物件を探してほしい", route: "aix", aix: "property_pickup", gap: "material" }]);
+  assert.equal(decideDeepCheck({ parsed: p, customerText: "ペット可能ですか？", postApply: false, env: {} }).run, false);
+  const p2 = tc([{ quote: "駐車場の有無", route: "aix", aix: "property_check_result", gap: "material" }]);
+  assert.equal(decideDeepCheck({ parsed: p2, customerText: "駐車場ありますか？", postApply: false, env: {} }).run, true);
+});
+t("10/15 レビュー: 調べた依頼の外の約束・AIX が2回目で消えたら1回目のまま", () => {
+  const first = { aix: "property_check_result", ...tc([{ quote: "空いているか", route: "aix", aix: "property_check_result" }, { quote: "駐車場の有無", route: "promise", gap: "material" }]) };
+  const lost = { aix: null, ...tc([{ quote: "空いているか", route: "reply" }, { quote: "駐車場の有無", route: "reply" }]) };
+  assert.equal(adoptSecondJudgement(first, lost, ["駐車場の有無"]).adopt, false);
+  const ok = { aix: "property_check_result", ...tc([{ quote: "空いているか", route: "aix", aix: "property_check_result" }, { quote: "駐車場の有無", route: "reply" }]) };
+  assert.equal(adoptSecondJudgement(first, ok, ["駐車場の有無"]).adopt, true);
+  const changed = { aix: "estimate_sheet", ...tc([{ quote: "空いているか", route: "aix", aix: "estimate_sheet" }, { quote: "駐車場の有無", route: "reply" }]) };
+  assert.equal(adoptSecondJudgement(first, changed, ["駐車場の有無"]).adopt, false);
+});
+t("10/15 レビュー: gap 欄だけ止める", () => {
+  assert.equal(brainDeepCheckGapEnabled({}), true);
+  assert.equal(brainDeepCheckGapEnabled({ BRAIN_DEEP_CHECK_GAP: "off" }), false);
+  assert.equal(brainDeepCheckGapEnabled({ BRAIN_DEEP_CHECK: "off" }), false);
 });
 console.log(`${n} passed`);

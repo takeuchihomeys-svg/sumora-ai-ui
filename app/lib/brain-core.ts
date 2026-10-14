@@ -3065,7 +3065,7 @@ ${history}`;
             const before = rawContractRouteDigest((parsedAny as { turn_contract?: unknown }).turn_contract);
             const after = rawContractRouteDigest((secondParsed as { turn_contract?: unknown }).turn_contract);
             // 返信で答えた依頼が増えた時だけ2回目を使う（増えない時は1回目のまま＝AIX の種類・2段の印を揺らさない）
-            const adopt = adoptSecondJudgement(parsedAny, secondParsed).adopt;
+            const adopt = adoptSecondJudgement(parsedAny, secondParsed, dc.queries).adopt;
             deepCheckInfo = { ...deepCheckInfo, second: adopt, changed: adopt && (before !== after || String(parsedAny.aix ?? "") !== String(secondParsed.aix ?? "")), before, after };
             if (adopt) parsedAny = secondParsed;
           }
