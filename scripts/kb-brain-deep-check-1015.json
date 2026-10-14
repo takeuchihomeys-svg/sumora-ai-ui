@@ -6,7 +6,31 @@
     "rationale": "竹内さん 10/14「自信が無い時・根拠が見つからない時は深く調査する…全部に毎回かけない」。30日の洗い出し（scripts/audit-brain-deep-check.ts）: ブレインが約束・確認の約束・聞き返しに倒れた番 189 のうち、大半は物件の持ち込みの募集状況（AIX が正しい）で、資料で答えられる型の問いは 17 番・目で読んで手元に答えがあったのは 4〜6 番（入居可能日＝送った資料の退去予定・水回りの配置＝間取り図・前日の会話（火災保険はサポートに含む）・内覧の車＝近くのパーキング・保証人）。1回目の網は お客様の文だけ・お客様が物件を持ち込んだ番は対象の物件なし で動くので、ブレインの言い換えと current_property で引き直すと届く。全部にかけると費用が倍になるので印のある番だけ。",
     "context": "2026-10-15 作る人・ブランチ brain-deep-check-1015（設計知見 56ecf24a の『ブレインの材料不足時の追加調査』）",
     "applied_to": "app/lib/brain-deep-check.ts・app/lib/brain-deep-check-server.ts・app/lib/brain-core.ts（1回目の判断の後）・app/lib/turn-contract.ts（gap 欄と規則）・brain-decision-ledger（digest.dc）・scripts/audit-brain-deep-check.ts・試験 q145〜q151",
-    "tags": ["ブレイン", "確信度", "深く調べる", "API節約", "材料", "竹内さんの決定"],
+    "tags": [
+      "ブレイン",
+      "確信度",
+      "深く調べる",
+      "API節約",
+      "材料",
+      "竹内さんの決定"
+    ],
     "priority": 1
+  },
+  {
+    "title": "追加の調査の2回目は『調べた依頼の外の約束・AIX が残る時だけ』採る — 管理会社の事の語は実データ30日の取りこぼしで広げ、物件を探す AIX の依頼にはかけない",
+    "category": "ai_design",
+    "insight": "brain-deep-check の安全の線（10/15 確かめる人）。①2回目は返信で答えた依頼が増えた時に加えて、調べた依頼（queries）の外の約束・AIX の数が減らず、その外に AIX があれば parsed.aix が同じ時だけ採る（減る・変わる＝AIX の種類・2段の印が落ちる道）②対象は route=promise か確認の AIX（property_check_result・acknowledge_check・other_room_check）だけ ③STAFF_ONLY_RE に 募集（全部）・空き・見に行・下げ・減額・値引・安くなっ・初期費用（払い方・時期・カードを除く）・総額 を足し、お客様の文の型の数え方でも管理会社の事の文は外す ④gap 欄だけ止める BRAIN_DEEP_CHECK_GAP=off。gap 欄 on/off を関係しない10問（DeepSeek 1回ずつ）で比べ 道 off 5→on 7・合格 5/5 で悪くならない（揺れの幅）＝既定 on。",
+    "rationale": "効き目（採った2回目）がまだ0の段階で入れるので、空振りでも他の判断を揺らさない線を先に固める。30日の客の文 2,175 通に当てると旧の網は『募集終わって』『空きは』『見に行けますか』『礼金下げる』『少し安くなったり』『初期費用はだいたい』を取りこぼしていた。",
+    "context": "2026-10-15 確かめる人・ブランチ brain-deep-check-1015 のレビュー",
+    "applied_to": "app/lib/brain-deep-check.ts（STAFF_ONLY_RE・checkRoute・adoptSecondJudgement・brainDeepCheckGapEnabled）・app/lib/turn-contract.ts・app/lib/brain-core.ts",
+    "tags": [
+      "ブレイン",
+      "深く調べる",
+      "安全の線",
+      "AIX",
+      "2段",
+      "確かめる人"
+    ],
+    "priority": 2
   }
 ]

@@ -6,6 +6,7 @@
 - **動き** `app/lib/brain-deep-check.ts`＋`-server.ts`・brain-core の1回目の後: ブレインの asks[].gap（material/staff）が主・網は gap の無い時だけ（約束か確認の AIX の依頼×資料で答えられる型×お客様の文も質問・管理会社しか知らない事の語は外す）。ブレインの言い換えと current_property で材料の関数を引き直し＋古い履歴の該当行（型の語・型の無い依頼は言葉の語）。新しい材料がある時だけ2回目・**返信で答えた依頼が増えた時だけ2回目を使う**（空振りで AIX の種類・2段の印を揺らさない）。digest.dc に記録。戻す BRAIN_DEEP_CHECK=off／網だけ BRAIN_DEEP_CHECK_NET=off
 - 試験（DeepSeek・YUMA3・関係21問・1回）: 前 道 11・答え方 10 → 後 道 13・答え方 13。かけた 2/21・2回目を使った 0（入居時期はブレインが「入居日の確定は AIX」のまま）。悪くなった q064 q115 は off でも同じ（3回の過半数 on/off とも 1/3・0/3）＝揺れ。誤って言い切った 0（q149〜q151）。調整前（採用の線なし）は2回目6・aix→promise で2段の印が消えた2問
 - 本番の見込み: ブレイン 約68回/日（Sonnet 5.5・1回 約$0.06）×かける率 1〜3% → 1〜2回/日・$0.05〜0.12/日。かけた番は材料の引き直し最大12秒＋1回分の待ち
+- **確かめる人（10/15）**: 2回目は調べた依頼の外の約束・AIX が減らず AIX が同じ時だけ採る・確認の AIX だけ・管理会社の事の語を30日の取りこぼしで追加・gap 欄だけ止める BRAIN_DEEP_CHECK_GAP=off。gap 欄 on/off（関係しない10問・DeepSeek 1回ずつ）: 道 5→7・合格 5→5＝悪くならない
 - ⚠ 試験の穴: 送った画像の読み（sent_image_properties・PK が image_url）は試験の会話に写らない＝「送った資料に答えがある」番は試験で再現できない
 ## 🧹 小さな直し（10/15 作る人・ブランチ small-fixes-1015）
 - **使った額の見張り**: 週の見張り（reading-audit-weekly・月曜 JST 9:40）に llmSpend（`app/lib/llm-spend-audit.ts`・llm_usage_logs を読むだけ・単価は llm-price.ts）。日ごと×Claude/DeepSeek/Jev・本番/手元・前の週との差。印: 週が前の週の1.5倍超かつ+$10／Claude・DeepSeek 別も同じ／1日が前週の1日平均の3倍超かつ$10以上（9/24〜10/14 の揺れ: 1日 $8〜$69・週 $184→$247）。10/15 時点の印「DeepSeek 2.14倍（$72→$154・手元 $171 が大半）」。手元 `scripts/llm-spend-audit.ts`。戻す LLM_SPEND_AUDIT=off・線 LLM_SPEND_ALERT_RATIO／_MIN_USD／LLM_SPEND_DAY_RATIO
