@@ -21,6 +21,10 @@ t("お礼・了承だけは触らない", !np("ありがとうございます", 
 t("q102 他まだありますでしょうか → 探す側", !np("ありがとうございます。\n他まだありますでしょうか？").yes);
 t("q102 ZENRYOKU_CANDIDATE_EXIT=off → 旧（返信に戻す）", notPickupTurn({ text: "ありがとうございます。\n他まだありますでしょうか？", ackOnly: false, conditionChangeType: null, hesitancy: null, companyFactAsked: false, env: { ZENRYOKU_CANDIDATE_EXIT: "off" } }).yes);
 t("ブレインが全力サポートを候補にした質問 → 探す側", !notPickupTurn({ text: "最速で入居できるとしていつくらいになりそうですか？", ackOnly: false, conditionChangeType: null, hesitancy: null, companyFactAsked: false, zenryokuCandidate: true }).yes);
+// 10/15 review: 実データ 30日で網に新しく当たった1件の募集状況の確認は今まで通り返信
+t("こちらの物件新着でスーモ出てる…まだ募集ないですか → 返信", np("かしこまりました。\nお願いします\nこちらの物件新着でスーモ出てるんですけどまだ募集ないですか？").yes);
+t("SUUMO の URL＋新着でありましたが → 返信", np("内見は可能でしょうか？\n募集終了て言われた物件がSUUMOで即入居でありますが見落としとかではないですか？\nhttps://suumo.jp/chintai/bc_1/\n新着でありましたが").yes);
+t("新着ありますか（他にあるかの問い）→ 探す側", !np("新着ありますか？").yes);
 t("q065 候補にしていない質問は今まで通り返信", np("ありがとうございます\n最速で入居できるとしていつくらいになりそうですか？").yes);
 
 // 地名

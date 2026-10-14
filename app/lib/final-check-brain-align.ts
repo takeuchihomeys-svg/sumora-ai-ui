@@ -176,7 +176,7 @@ export function contractConfirmMiss(draft: string, contract: TurnContract | null
   const hit = findConfirmPromiseSentence(draft, env);
   if (!hit) return null;
   // 2026-10-15: ブレインが了承の返事を待ちの形の1文と決めた番の短い1文（確認出来次第ご連絡させて頂きますので、何卒）は指摘しない（ACK_FORM_FOLLOW=off で旧）
-  if (contract.ackForm === "wait_line" && ackFormFollowEnabled(envOf(env)) && isCompactWaitLine(hit)) return null;
+  if (contract.ackForm === "wait_line" && contract.ackFollow && ackFormFollowEnabled(envOf(env)) && isCompactWaitLine(hit)) return null;
   const promise = contract.asks.find((a) => a.route === "promise" && a.answer)?.answer ?? null;
   return {
     sentence: hit.slice(0, 80),

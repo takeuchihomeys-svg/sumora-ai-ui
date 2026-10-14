@@ -4234,6 +4234,8 @@ async function handleGenerateReply(req: NextRequest) {
     //   出口をその1つの値にそろえる（repeat-brain-align.ackFormShapeLine・戻す ACK_FORM_FOLLOW=off）
     const ackFollowForm = turnContract?.source === "brain" && turnContract.ackForm && ackFormFollowEnabled() && !isFollowUp && isAckOnlyTurn(customerMsgUnits) ? turnContract.ackForm : null;
     const ackShape = ackFollowForm ? ackFormShapeLine(ackFollowForm) : null;
+    // 10/15 review: 本質の側（答えの要点・最終チェック）も了承だけの番に限る（ack_form は質問・急ぎの番にも出うる＝中身の答えを外さない）
+    if (turnContract && ackFollowForm) turnContract.ackFollow = true;
     if (ackFollowForm) console.info("[ack-form-follow]", JSON.stringify({ conversationId, ackForm: ackFollowForm }));
     if (turnContract) console.info("[turn-contract]", JSON.stringify({ source: turnContract.source, asks: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, said: turnContract.alreadySaid.length, settled: turnContract.settled.length, confirm: `${confirmCtxWord.allowed}->${confirmCtx.allowed}` }));
     console.info("[confirmCtx]", JSON.stringify({ allowed: confirmCtx.allowed, source: confirmCtx.source, object: confirmCtx.object, moveOutSubject }));
