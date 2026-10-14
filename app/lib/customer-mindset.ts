@@ -25,6 +25,7 @@
 // 切り替え（2026-10-09 竹内さん「できる限り早く本番に入れる」で既定 on・off で戻す）: CUSTOMER_MINDSET=off（旧の7択の気持ち）／DECIDE_GAP=off（決め手の残りの注記・メモの行・刺さりの印）／
 //       DECIDE_GAP_HOLD_CLOSE=off（確認の結果の締め）／HESITATION_NOTE=off（迷いの中身の注記）／MINDSET_REPLY_LINES=off（返信の任意の1行の材料）
 // テスト: app/lib/__tests__/customer-mindset.test.ts（実物の発言・伏せ字）
+import { withLatinHead } from "./latin-name-head";
 
 const envOf = (env?: Record<string, string | undefined>) => env ?? (typeof process !== "undefined" ? process.env : {});
 const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
@@ -187,7 +188,7 @@ export function sentPropertyNames(msgs: ReadonlyArray<GapMsg>): string[] {
       if (star && !/割引|見積|初期費用|節約|ご査収/.test(star[1])) out.push(star[1].replace(/[!！。]+$/, "").trim());
     }
     for (const mm of t.matchAll(/【([^】]{3,40})】/g)) if (!/希望|ご入居|家賃|間取り|築年数|エリア|駅名|徒歩|初期費用|その他|広さ|見積|オススメ|ポイント/.test(mm[1])) out.push(mm[1].trim());
-    for (const mm of t.matchAll(/([^\s、。！!「」（）()【】\n]{3,24}?)\s?([0-9０-９]{3,4})号室/g)) out.push(`${mm[1]} ${mm[2]}`.trim());
+    for (const mm of t.matchAll(/([^\s、。！!「」（）()【】\n]{3,24}?)\s?([0-9０-９]{3,4})号室/g)) out.push(`${withLatinHead(t, mm.index ?? 0, mm[1])} ${mm[2]}`.trim());
   }
   return [...new Set(out)];
 }
