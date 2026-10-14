@@ -10,7 +10,7 @@
 //                 ③ それでも決まらなければ facts に「単位不明」の印（deposit_unit="unclear"）を付ける（断定するか確認の約束にするかはブレインに任せる）
 //   読み直しは1枚1回（欄をまとめて読む）。
 // 戻す: READING_CONFIDENCE=off（ゲートごと止める）・READING_RECHECK=off（LLM の読み直しだけ止める）・PROPERTY_NAME_ATTR_FIX=off（①の名前の照らしを止める）
-//       PROPERTY_NAME_ATTR_FIX_PLACELESS=on（地名の無い片仮名・英字だけの名前も①で直す・既定は off＝竹内さんと打ち合わせ中）
+//       PROPERTY_NAME_ATTR_FIX_PLACELESS=off（地名の無い片仮名・英字だけの名前は①で直さない。既定は直す＝竹内悠馬 10/14「直す」・賃料・㎡・間取りで1つに決まり名前が似ている時だけ）
 import { supabase } from "@/app/lib/supabase";
 import {
   readingConfidenceEnabled, nameSignals, NAME_TRIGGER, roomSignals, amountUnitSignals, lookupByAttributes, attrNameFix,
@@ -25,7 +25,7 @@ export function attrNameFixEnabled(env: Record<string, string | undefined> = pro
   return (env.PROPERTY_NAME_ATTR_FIX ?? "").trim().toLowerCase() !== "off";
 }
 export function attrNameFixPlacelessEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return (env.PROPERTY_NAME_ATTR_FIX_PLACELESS ?? "").trim().toLowerCase() === "on";
+  return (env.PROPERTY_NAME_ATTR_FIX_PLACELESS ?? "").trim().toLowerCase() !== "off";
 }
 /** 読み直した名前を使う時の、1回目の名前との近さの下限（まったく別の建物の名前に入れ替えない） */
 export const RECHECK_NAME_MIN_SIM = 0.3;
