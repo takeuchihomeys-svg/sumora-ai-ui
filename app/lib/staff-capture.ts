@@ -46,7 +46,9 @@ function roomOf(s: string | null | undefined): string | null {
  */
 export function alternativeBuildingFromText(text: string | null | undefined): string | null {
   const m = String(text ?? "").match(/お送り(?:頂|いただ)きました\s*(.+?)\s*(?:[A-Za-z]?-?\d{1,4}[A-Za-z]?\s*号室)?\s*ですが[、,]?\s*確認/);
-  const b = m?.[1]?.replace(/[「」『』【】]/g, "").trim();
+  // fix(review): 本番の固定文は「[物件名]${N}階${号室}号室」「${N}階部分」「のお部屋」（action/route.ts endedRoomStr）→ 階・部分・のお部屋を外す
+  const b = m?.[1]?.replace(/[「」『』【】]/g, "")
+    .replace(/\s*[（(]?\s*[0-9０-９]{1,3}\s*階(?:部分)?\s*[）)]?$/, "").replace(/\s*の?お部屋$/, "").trim();
   if (!b || b.length < 2 || b.length > 40 || /\[物件名\]|物件名/.test(b)) return null;
   return b;
 }

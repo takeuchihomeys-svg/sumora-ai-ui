@@ -176,6 +176,10 @@ export function applyMemoOps(memo: StoredMemo, ops: ReadonlyArray<MemoOp>, o: { 
       if (!(LLM_MEMO_KINDS.includes(op.kind) || ((op.kind === "decide_gap" || op.kind === "call") && o.origin === "staff")) || !op.text?.trim()) { refused++; continue; }
       const text = clip(op.text, memoChars(op.kind));
       const dup = items.find((x) => !x.retiredAt && x.kind === op.kind && (norm(x.text) === norm(text) || (norm(text).length >= 6 && (norm(x.text).includes(norm(text)) || norm(text).includes(norm(x.text))))));
+      // fix(review): 電話で分かった事は「記録だけする」→ 本文を書き足して文を作る、で前の行を含む長い中身が来る。旧は重なりとして捨てていた（書き足した分が消える）→ 前の行を書き換える
+      if (dup && op.kind === "call" && o.origin === "staff" && norm(text).length > norm(dup.text).length && norm(text).includes(norm(dup.text))) {
+        dup.text = text; dup.sourceAt = op.at ?? dup.sourceAt; dup.updatedAt = o.nowIso; applied++; continue;
+      }
       if (dup) { refused++; continue; }
       const ttl = op.ttlDays != null && op.ttlDays > 0 ? Math.min(op.ttlDays, 365) : null;
       const base = Date.parse(op.at ?? o.nowIso);

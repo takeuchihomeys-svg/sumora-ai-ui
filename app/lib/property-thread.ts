@@ -490,8 +490,12 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       const prevCustomer = [...msgs].reverse().find((m) => m.sender === "customer" && ms(m.created_at) < ms(t0));
       const OURS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_alternative", "check_vacating", "check_ended", "staff_negotiating", "staff_checking", "staff_result", "viewing_offered", "viewing_set"]);
       const mentions: ReferentMention[] = [...staffTextMentions];
+      // fix(review): 「別の部屋」の記録は代わりの部屋（募集中）と募集終了の部屋を同じ時刻に残す。主語の無い次の番（「そちら見に行けますか」）で
+      //   募集終了の部屋が並んで候補になり「どちらのお部屋か」と聞き返していた → 同じ記録の募集終了の部屋は候補に入れない（名指しの番は別の道で読む）
+      const altAts = new Set(rooms.flatMap((r) => r.events.filter((e) => e.kind === "check_alternative").map((e) => e.at)));
       for (const r of rooms) for (const e of r.events) {
         if (e.by === "inferred") continue;
+        if (e.kind === "check_ended" && altAts.has(e.at)) continue;
         if (OURS.has(e.kind)) mentions.push({ at: e.at, roomKey: r.key, display: r.ref.display, by: "ours" });
         else if (e.kind === "customer_ask" || e.kind === "customer_shared") mentions.push({ at: e.at, roomKey: r.key, display: r.ref.display, by: "customer" });
       }

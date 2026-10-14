@@ -1160,11 +1160,19 @@ export default function AixModal({
         body: JSON.stringify({ conversation_id: conversationId, op: "add", kind: "call", text: report }),
       });
       const d = await r.json().catch(() => ({})) as { ok?: boolean; error?: string };
-      if (!r.ok || !d.ok) return d.error ?? `HTTP ${r.status}`;
+      // fix(review): 同じ中身がもうある（開き直して同じ内容で作り直した等）は保存済みとして扱う
+      if (!r.ok || !d.ok) { if (/同じ中身/.test(d.error ?? "")) { setPhoneSavedText(report); return null; } return d.error ?? `HTTP ${r.status}`; }
       setPhoneSavedText(report);
       return null;
     } catch (e) { return e instanceof Error ? e.message : String(e); }
   };
+  // fix(review): 上の「別の部屋が募集してた」の記録は送る文（スタッフが直した後の建物名）と今の号室の欄から作り直す
+  //   （旧は生成した時の文と号室だけ＝生成の後に号室を入れた・建物名を直した時に記録が残らない／違う名前で残る）
+  useEffect(() => {
+    if (actionType !== "property_check_result" || checkPattern !== "alternative" || !staffCaptureUiEnabled() || !preview.trim()) return;
+    const rec = alternativeCheckRecord({ text: preview, endedFloor: checkEndedFloor, endedUnit: checkEndedUnit, altUnit: checkAltUnit });
+    lastCheckPropNamesRef.current = rec.names; lastCheckPropStatusesRef.current = rec.statuses;
+  }, [actionType, checkPattern, preview, checkEndedFloor, checkEndedUnit, checkAltUnit]);
   const [callUrlInfo, setCallUrlInfo] = useState<{ loading: boolean; url: string | null; accountLabel: string; error?: string }>({ loading: false, url: null, accountLabel: "" });
   const [callUrlInput, setCallUrlInput] = useState("");
   const [callUrlEditing, setCallUrlEditing] = useState(false);

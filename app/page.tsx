@@ -6762,7 +6762,8 @@ export default function Home() {
         : null;
 
       // 2026-10-14（37af1885）: 保存を待ってから文を作る（旧は保存と生成が同時に走り、作る文の材料に内覧の内容が届かない事があった）
-      if (reportSave && staffCaptureUiEnabled()) await reportSave;
+      //   fix(review): 保存が遅い時に挨拶の生成を止めない（8秒で先へ・保存は裏で続き、結果は下の await で拾う）
+      if (reportSave && staffCaptureUiEnabled()) await Promise.race([reportSave, new Promise<void>((res) => setTimeout(res, 8000))]);
 
       const afterTypeForApi = greetingViewingAfterType === "confirm"
         ? (greetingViewingConfirmType === "estimate" ? "confirm_estimate" : "confirm_freeword")
