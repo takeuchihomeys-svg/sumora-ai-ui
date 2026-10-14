@@ -1,0 +1,22 @@
+[
+  {
+    "title": "物件確認した の「別の部屋」は台帳・お客様の状況で『募集中の別の部屋（こちらが案内）』として読む — 旧は状態を読まず出来事が無かった",
+    "category": "data_model",
+    "insight": "AIX【物件確認した】の物件カードの「別の部屋」（prop_statuses=alternative）は、property-thread の STATUS_KIND にも customer-state の関心の出来事にも無く、ただの『送った』扱いか出来事なしだった＝今の番の物件の候補・主のお部屋・台帳の文に出ない。台帳に check_alternative（『確認の結果 別の部屋が募集中（聞かれた部屋の代わりにこちらが案内）』・出所は ours）、お客様の状況では check_available（募集中・主のお部屋の候補）にする。上の「別の部屋が募集してた」（check_pattern=alternative）は物件名を何も記録していなかった → 本文の固定文から建物名を読み、画面の『代わりに案内するお部屋』の号室（任意）と募集終了の号室で記録する。号室が無い時は記録しない（建物だけだと募集終了の部屋に寄る＝abce93ff の寄せない線）。",
+    "rationale": "120日: 物件カードの「別の部屋」7番で次のブレインの今の物件がその部屋 0/6、台帳に募集中の出来事 0/7 → 直した後 7/7・材料の文に載る 0→2（台帳の文は物件の話の番だけ出す）。上の「別の部屋が募集してた」9番は記録の名前 0。DeepSeek の見本（YUMA4・前後各1回）は M1 の【物件別空き状況】で前も 502 を言えた番があり、揺れ（1回目は前後とも null）＝材料を台帳・状況にもそろえる意味がある。",
+    "context": "2026-10-14 竹内さん「その別の部屋が空いていて別の部屋にお客さんが食いついていたら、その別の部屋が中心になるようにしたらずれがなくなる」・作る人・ブランチ capture-staff-info-1014",
+    "applied_to": "app/lib/staff-capture.ts・property-thread.ts・customer-state.ts・viewing-check-first.ts・brain-core.ts（PROP_STATUS_LABEL）・components/AixModal.tsx・scripts/audit-staff-info-capture.ts",
+    "tags": ["取りこぼし", "物件確認", "台帳", "ブレイン", "AIX"],
+    "priority": 2
+  },
+  {
+    "title": "内覧の結果・電話の結果はタップで入れて文を作る前に保存する — 自由入力の欄だけでは誰も書かない（内覧後9番で0）・電話の後は記録がどこにも無い",
+    "category": "architecture",
+    "insight": "内覧後の挨拶: 内覧の内容の欄（05331f79）はあったが 120日で 9番中 0。タップ（内覧の結果 4択・気に入った点・気になった点・次の動き）を内容の頭の行に組み（viewing_history.viewing_report・既存の材料の道）、生成の前に保存を待つ（旧は保存と生成が同時に走った）。入れなくても挨拶は送れる。電話: 電話をかけるボタン 19回・電話終了後 0回・電話で分かった事の記録 0。電話終了後の画面にタップ＋『記録だけする』を置き、お客様のメモ（customer_memos）の新しい種類 call（スタッフだけ・200字）に保存。メモの注記は場面で種類を絞るが、call は場面に関係なく先頭に（60日・3件）。新しい表は作らない。",
+    "rationale": "DeepSeek の見本（YUMA4・前後各1回）: 電話の後「当日はどこに行けば」に、前は会話に無い物件の待ち合わせを案内する方向、後は電話の記録（駐車場を気にしている）を踏まえた方向。判断はブレイン（入れた事は材料だけ）。",
+    "context": "2026-10-14 竹内さん「内覧終了の挨拶を送る際、内覧の結果をスタッフが共有する画面をつくる…電話完了後も」「これできれば100%取りこぼしないようにできる」",
+    "applied_to": "app/lib/staff-capture.ts・customer-memo.ts（kind=call）・api/customer-memo・app/page.tsx（内覧後の挨拶）・components/AixModal.tsx（電話終了後）・scripts/yuma-staff-capture-test.ts",
+    "tags": ["取りこぼし", "内覧", "電話", "お客様のメモ", "ブレイン", "AIX"],
+    "priority": 2
+  }
+]

@@ -1,6 +1,10 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-14
+## 📥 スタッフしか知らない事を AIX の入力からブレインへ（10/14 作る人・ブランチ capture-staff-info-1014・設計知見 37af1885）
+- **物差し** `scripts/audit-staff-info-capture.ts`（LLM なし）: 120日 物件カードの「別の部屋」7番＝次のブレインの今の物件がその部屋 0/6・台帳に募集中の出来事 0/7（状態 alternative を誰も読まない）／上の「別の部屋が募集してた」9番＝記録の名前 0／内覧後の挨拶 9番＝内覧の内容 0／電話をかけるボタン 19回・電話終了後 0回・電話の記録 0
+- **直し** `app/lib/staff-capture.ts`: ①台帳 check_alternative・状況 check_available（STAFF_CAPTURE_ALTERNATIVE=off）→ 台帳 0→7 ②上の別の部屋は本文の建物名＋『代わりに案内するお部屋』の号室で記録 ③内覧後: タップ（結果・気に入った点・気になった点・次の動き）→ viewing_report・生成の前に保存を待つ ④電話終了後: タップ＋『記録だけする』→ お客様のメモ kind=call（場面に関係なくブレイン・返信へ・STAFF_CAPTURE_CALL=off）。画面は NEXT_PUBLIC_STAFF_CAPTURE_UI=off で旧
+- DeepSeek 見本 `scripts/yuma-staff-capture-test.ts`（YUMA4・前後各1回・Claude 0）: 電話の後「当日どこに」→ 前は会話に無い物件の待ち合わせ・後は記録（駐車場）を踏まえる。別の部屋は前も M1 の空き状況で 502 を言えた番あり（揺れ）
 ## 🔁 AIX の後の文（✨テンプレート）と「返信なのに下書きが無い番」をブレイン基準に（10/14 作る人・ブランチ aix-after-reply-1014）
 - **物差し**: scripts/audit-aix-after-text.ts（AIX を送った直後15分以内にスタッフが打った文 × 画面にあった材料＝✨・🟣・下書き）・scripts/audit-reply-no-draft.ts（audit-split-reply-aix の --out × line_watch_turns・10/01 以降だけ理由が分かる）・scripts/audit-recommend-cta-takeuchi.ts。30日 AIX の後の文 340番（竹内さん 168: 材料あり 47%・直さず 5%・似ている度 0.66／10/08 以降 30番: 材料 87%・0.68）
 - **原因1（材料が届いていない）**: AIX の1通目の送信で画面が suggested_aix_meta を消し、✨ 2通目は __SHOWN__ の時しか last_brain_meta から戻さない → 10/08〜 ✨ 51回中 49回 brain=none（42回は新しい判断があった）。brain-meta-load の opts.afterStaffSend で同じ線で戻す（AIX_TEMPLATE_BRAIN_RESTORE=off）。今の DB のスタッフの番 92会話でブレインあり 8→56
