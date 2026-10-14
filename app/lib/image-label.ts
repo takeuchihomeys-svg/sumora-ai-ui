@@ -84,7 +84,7 @@ const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_documen
  *   物件の画像（物件の資料・画面・写真 362件）・見積書に当たる語は入れない（実データで 0件）。
  *   戻す: IMAGE_PERSONAL_HINT_DROP=off（【種類不明】＋書き起こしの旧の形）
  */
-export const PERSONAL_HINT_RE = /生年月日|保険者番号|被保険者|記号\s*番号|口座番号|マイナンバー|個人番号|本籍|勤務先|年収|旅券番号|在留(?:カード|資格|期間)|免許証番号|印鑑登録|続柄|(?:契約者|申込者|入居者|借主)(?:の)?(?:氏名|名前)|(?:重要事項説明書|賃貸借契約書)[\s\S]{0,120}様/;
+export const PERSONAL_HINT_RE = /生年月日|保険者番号|被保険者|記号\s*番号|口座番号|マイナンバー|個人番号|本籍|勤務先|年収|旅券番号|在留(?:カード|資格|期間)|免許証番号|印鑑登録|続柄|(?:契約者|申込者|入居者|借主)(?:の)?(?:氏名|名前)|(?:重要事項説明書|賃貸借契約書)[\s\S]{0,120}様|氏名(?:\s*フリガナ)?\s*[:：]?\s*[\p{Script=Han}\p{Script=Katakana}]{1,6}[ 　]?[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}]{1,6}|名義人|(?<![\p{Script=Han}])[\p{Script=Han}]{1,4}[ 　][\p{Script=Han}\p{Script=Hiragana}]{1,4}\s*様/u;
 export function personalHintIn(content: string | null | undefined): boolean {
   return PERSONAL_HINT_RE.test(String(content ?? "").normalize("NFKC"));
 }
@@ -185,7 +185,10 @@ function hasPropertyValues(t: string): boolean {
 export function classifyCustomerImage(imageType: string | null | undefined, content: string | null | undefined): ImageKind {
   const kind = classifyCustomerImageBase(imageType, content);
   // 種類が決まらない物で個人情報の語が当たれば、書き起こしを残さない種類にする（PERSONAL_HINT_RE の注記）
-  if (kind === "unknown" && personalHintDropEnabled() && personalHintIn(content)) return "personal_unknown";
+  // 2026-10-14 独立レビュー: 【種類不明】だけでなく、書き起こしを残す物件以外（契約・入居の手続きの画面・やり取りの画面 等）も同じ網に掛ける。
+  //   実データ（お客様の画像 全期間）で手続きの画面 5件に お客様の氏名（「姓 名 様」「氏名 姓 名」）が全文で残っていた。
+  //   氏名の形（氏名のラベル＋値・名義人・「姓 名 様」）も網に足した（画像 6,642件で物件の画像・見積書・スタッフの画像に当たる物 0件）
+  if ((kind === "unknown" || (KIND_GROUP[kind] === "non_property" && !dropsTranscript(kind))) && personalHintDropEnabled() && personalHintIn(content)) return "personal_unknown";
   return kind;
 }
 

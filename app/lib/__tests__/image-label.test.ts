@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import {
   parseVisionTypeOutput, splitLeakedTypeLine, classifyCustomerImage, labeledImageText,
-  savedImageKind, stripImageLabel, customerImageGroup, IMAGE_KIND_LABEL,
+  savedImageKind, stripImageLabel, customerImageGroup, IMAGE_KIND_LABEL, personalHintIn,
 } from "../image-label";
 import { imageTextForSave, imageTypeForSave, ID_DOCUMENT_TEXT } from "../id-document-guard";
 import { extractScreenshotProperty } from "../own-property-match";
@@ -177,6 +177,12 @@ console.log("── 2026-10-14 種類不明で個人情報の語（迷う物は�
   t("物件の資料（other）も変えない", !imageTextForSave("other", MAISOKU).includes("個人情報"));
   on2("IMAGE_PERSONAL_HINT_DROP", "off", () => t("IMAGE_PERSONAL_HINT_DROP=off で旧（種類不明＋書き起こし）", imageTextForSave("other", JUSETSU).startsWith("[画像] 【種類不明】\n")));
   t("condition-source-gate の見出しの行に当たる（物件以外：…24字以内）", IMAGE_KIND_LABEL.personal_unknown.replace(/^物件以外：/, "").length <= 24);
+  // 独立レビュー: 手続きの画面（書き起こしを残す物件以外）に氏名が載る形（実物 9f5fdba7・2321d918 の形・氏名は伏せた）
+  const PROC_NAME = "フレックス少額短期保険：入金完了 山田 花子 様 フレックス少額短期保険です。2026/08/25 にお申込みいただいた保険契約の入金を確認しました。";
+  t("手続きの画面＋「姓 名 様」は書き起こしを残さない", imageTextForSave("other", PROC_NAME) === "[画像] 【物件以外：個人情報の載った画像】", imageTextForSave("other", PROC_NAME));
+  t("手続きの画面＋「氏名 姓 名」も残さない", imageTextForSave("other", "電子契約 「本人」が登録されている。 氏名 山田 花子 氏名フリガナ ヤマダ ハナコ").startsWith("[画像] 【物件以外：個人情報の載った画像】"));
+  t("名前の無い手続きの画面は見出し＋書き起こしのまま", imageTextForSave("other", "フレックス少額短期保険：入金完了 フレックス少額短期保険です。保険契約の入金を確認しました。").startsWith("[画像] 【物件以外：契約・入居の手続きの画面】\n"));
+  t("物件の資料（担当者名つきでない）に氏名の網が当たらない", !personalHintIn(MAISOKU));
 }
 
 console.log("── ★ つながり（webhook・ブレイン）");
