@@ -23,7 +23,7 @@ function fixOcrDigits(tok: string): string {
 
 /**
  * 号室の形（「0704」→「704」・「00101号室」→「101」・「1O1」→「101」・「B-0102」→「B-102」・「3-C」はそのまま）。空は ""
- * 全部 0 の号室（「000」）は潰さない
+ * 全部 0 の号室（「000」）は「0」になる（0 を全部は消さない）
  */
 export function canonicalRoomNo(raw: string | null | undefined, env: Record<string, string | undefined> = process.env): string {
   let s = String(raw ?? "").normalize("NFKC").trim().replace(/\s*(?:号室|号)\s*$/, "").trim();
