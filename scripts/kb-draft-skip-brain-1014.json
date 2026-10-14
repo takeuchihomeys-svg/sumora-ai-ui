@@ -1,0 +1,10 @@
+{
+  "title": "返信なのに下書きが無い番: 下書きを止めるかはブレインが決める（締めの後の受けだけの規則はブレインの判断が無い時だけ）・sweep でブレインだけ走った番は下書きの待ち行列に載せる・比較の形は件数でなく場面で決める",
+  "category": "ai_design",
+  "priority": 2,
+  "insight": "①generate-draft-bg-async の『締めの後の受けだけ／連絡待ち』の規則は、ブレインの判断がある時はブレインで決める（staff_note が『返信不要』で始まる・decision_source_no_aix=rule:waiting_customer_info の時だけ止める）。ブレインの判断が無い（T3）時は旧の規則のまま（BRAIN_DRAFT_SKIP=off で旧）。②brain-sweep（webhook の分析が落ちた会話の保険）はブレインだけ走らせて下書きを作らなかった → ブレインが返信（AIX でも返信不要でもない）・下書きの欄が空か印・お客様の番 の時は draft_pending_at を 61秒前にして generate-pending-drafts に拾わせる（BRAIN_SWEEP_QUEUE_DRAFT=off）。③AIX【物件オススメ】の比較の形（お送りさせて頂きましたお部屋の中でも）は、場面（recommendation-frame・直近の束の中の🌟）が比べると言っているのに、件数（ブレインが無い時は AIX の送付の『回数』）1 以下で出口が消していた（30日の ✨ 2通目 scenario=compare 37回中 sent<=1 の 9回が全部消えた）。場面の判定がある時は件数の線を使わない（COMPARE_FRAME_SCENARIO_FIRST=off）。10/01〜10/14 の人が文を送った番 181 のうち下書きなし 69: ブレイン AIX で止めた 25（残す）・下書きはあったが送った例に無い 24（画面の外）・ブレインだけ 17（うち sweep の道 5）・[返信不要] 1（ブレインは返信）。",
+  "rationale": "竹内悠馬 2026-10-14「ブレインが返信と決めているのに昔の決まりで下書きを止めている所はブレイン基準に直す・本当に返信が要らない番（ブレインが不要と決めた）は残す」。line_watch_turns は 10/01 から下書きと印を控えている（それより前は理由が分からない）。",
+  "context": "ブランチ aix-after-reply-1014。scripts/audit-reply-no-draft.ts（audit-split-reply-aix の --out を line_watch_turns と結ぶ）。試した・入れない: 物件オススメの2通目の締めを『決められない→誘導』（竹内さんの誘導率 57% に合うが1番ごとの一致 53%→54%＝率だけ合わせる浅い直し・RECOMMEND_CTA_TAKEUCHI=on で入る・既定 off）。",
+  "applied_to": "app/lib/brain-draft-skip.ts・app/api/generate-draft-bg-async/route.ts・app/api/cron/brain-sweep/route.ts・app/lib/recommend-closing.ts・app/lib/recommend-cta.ts",
+  "tags": ["下書き", "ブレイン", "generate-draft-bg-async", "brain-sweep", "返信不要", "AIX", "物件オススメ", "出口の決定論"]
+}
