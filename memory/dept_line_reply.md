@@ -1,6 +1,12 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-14
+## 🔎 読み取りの確信度のゲート（10/14 作る人・設計知見 56ecf24a「自信が無い時だけ深く調べる」・ブランチ reading-confidence-1014）
+- **印**（`app/lib/reading-confidence.ts`・数え `scripts/audit-reading-confidence.ts`＝送った画像の1回目 2,409件 × 売上サポの行）: 物件名＝会話の名前に寄らず、直しが迷った・地名が表に無い・似た名前2つ以上（13.7%・精度 77%。帳簿に無いだけは 37% に出るので印にしない）／号室＝1K・不明・5K3・3077・5字以上・階数超え（2.6%）／敷金＝1〜3 の整数（2.4%・礼金は 22% に出て当たりが少ないので印にしない・READING_CONFIDENCE_KEY_MONEY=on）。どれか 9.2%
+- **調べ方**（`reading-gate-server.ts`・sent-image-record の照合の後・今読んだ1件の画像だけ）: ① 売上サポの行（rent_observations）と照らす＝名前は賃料・㎡・間取りで1つの建物に決まり名前が似ている時（栄養→栄美・輝渡→難波）・敷金は同じ部屋の行（2→20,000円）② 決まらない欄だけ全体＋4分割の拡大で1回読み直す（`reading-recheck-server.ts`・DeepSeek・入力 約4,200・$0.00065/回）③ 敷金が決まらなければ facts.deposit_unit="unclear"＋候補（ブレインの材料に渡すのは返信側の担当＝読み側は印を付けるまで）
+- 見本 34回（$0.016）: 敷金の単位の取り違え 2/2 直る・月数5件は確かめて変えず・名前 2件直る（アーネックス御幣筋本町→アーバネックス堺筋本町）・号室 1K→403・3077→307・誤って直す 0。読み直しは読み取りの約 8.5%（約3回/日・$0.002/日）
+- 竹内さんの判断待ち: 地名の無い名前（片仮名・英字だけ）を賃料・㎡・間取りで直す＝5件・誤り 0（目視）→ PROPERTY_NAME_ATTR_FIX_PLACELESS=on（既定 off）
+- 戻す: READING_CONFIDENCE=off（全部）・READING_RECHECK=off（LLM だけ）・PROPERTY_NAME_ATTR_FIX=off（名前の照らし）
 ## 🔤 物件の読み取りの仕上げ（10/14 作る人・竹内さん 10/14 の決定 1〜7・ブランチ reading-finish-1014）
 - **区切り1 日本語の漢字（P0 89bc2c3e）** `app/lib/ja-kanji.ts`: 読み取りの指示（物件名・条件の行・書き写し・文字層・画像で分析 sheet-v9・物件確認の Haiku）に1行「日本語の漢字（日本の字形・新字体）で書き写す」（中国の字形の例は書かない＝d6d4d331）。出力は parse の所で決定論で日本の字形に（Shift_JIS に無い中国の字形 約400字＋日本の資料で使わない繁体字 區驛樣號 等・互換漢字/康煕部首は NFKC。名前に普通の旧字 淺龍澤濱萬條眞髙﨑國 は直さない）。保存済み 379行・2,174字（大半は ⽉⾻⼊ の部首の字・戶內）→ `scripts/fix-reading-kanji-stored.ts`（数えるだけ）。戻す JA_KANJI_NORMALIZE=off
 - **区切り2 物件名の化け** `app/lib/property-name-fix.ts`（純関数）＋`property-name-ledger-server.ts`（帳簿をその場で引く）: 地名の表（osaka-geo の駅・町名・区市＋資料の文字から覚えた並び 59）・帳簿（資料の文字 text／スタッフ staff 2回／共有 3回で信頼）・化けの癖の表（`property-name-confusions.ts`＝生成物・地名の並び 30・字 6: 賀→波 雑→難 渡→波 鶴→難 雜→難 木→本）。直すのは候補が1つ・区別の印（数字・ローマ数字・方角・棟/館の印・第二）が同じ・地名の違いは「似ている」（1字・半分以下・字の癖）時だけ。読み取りの名前 1,592種類で 直す 166・確かではない（そのまま）346・誤って別の物件 0（同じ会話の資料・共有に読んだ名前の方が出た数＝0）。つないだ所: 送った画像の記録（sent-image-record）・AIX 物件確認の物件名の先入れ（/api/extract-vacancy-date）・駅の名前は確かな直しだけ（大國町→大国町）。本番の引き（ilike）は全部の帳簿より控えめ（220件で別の名前にした 0）。表を作り直す `scripts/build-property-name-ledger.ts --write`・保存済み `scripts/fix-property-names-stored.ts`。戻す PROPERTY_NAME_FIX=off
