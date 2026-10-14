@@ -922,6 +922,8 @@ export async function POST(req: NextRequest) {
             // 条件ヒアリング状況（missingConditionsNote注入のために必要）
             ...(customerStructured ? { customerStructured } : {}),
             replyHint,
+            // 2026-10-15 #7: お客様の文の語から作った自動の手がかり（本質がブレインの番は generate-reply が材料の注記に下げる・REPLY_HINT_BRAIN=off で旧）
+            replyHintAuto: !!replyHint,
             activeTaskTypes,
             // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
             // （knowledge_apply_log 記録 → text_retention / deal_outcome フィードバック対象化）

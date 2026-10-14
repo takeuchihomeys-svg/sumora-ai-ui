@@ -81,6 +81,34 @@ export function openerLabelOf(text: string | null | undefined): OpenerLabel {
   return "開口語なし";
 }
 
+// 2026-10-15 監査の残り #9（scripts/audit-rest-1015.ts --part=opener）: ブレインの reply_opener は LLM に決めさせていたのに
+//   brain-core が判断（meta）に写していなかった（本番の last_brain_meta 231会話で reply_opener あり 0）＝生成の【書き出し】・最終チェックの judgeOpener・
+//   出口の enforceOpener のどれにも届かず、毎回「実測の分布」と決定論の開口語（greeting.opener）で決まっていた。
+//   ここで値をそろえて写す（選べる値の外・空は null＝今まで通りコードの既定）。戻す BRAIN_OPENER_META=off
+const BRAIN_OPENER_VALUES: readonly OpenerLabel[] = ["かしこまりました", "はい", "開口語なし", "〇〇頂きありがとうございます", "お世話になっております", "はじめまして"];
+export function brainOpenerMetaEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.BRAIN_OPENER_META ?? "").toLowerCase() !== "off";
+}
+/** 2026-10-15 確かめる人: 試験でブレインの書き出しが 8/8「かしこまりました」（LLM の癖）で竹内さんの実送信から離れた。
+ *   meta への写し・digest.op の記録は続け（本番で竹内さんの実送信と数える）、生成と出口で使うのは BRAIN_OPENER_USE=on の時だけ（既定 off＝旧の決め方）。 */
+export function brainOpenerUseEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return brainOpenerMetaEnabled(env) && (env.BRAIN_OPENER_USE ?? "").toLowerCase() === "on";
+}
+/** LLM の reply_opener を選べる値にそろえる（「承知」「了解」はかしこまりました・「なし」は開口語なし）。外の値は null */
+export function normalizeBrainOpener(v: unknown): OpenerLabel | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim().replace(/[「」"'！!😊😌\s]/g, "");
+  if (!s || /^null$/i.test(s)) return null;
+  if (/^(?:承知|了解)/.test(s)) return "かしこまりました";
+  if (/^(?:なし|開口語なし|本題)/.test(s)) return "開口語なし";
+  if (/頂きありがとう|いただきありがとう/.test(s)) return "〇〇頂きありがとうございます";
+  return BRAIN_OPENER_VALUES.find((x) => x === s) ?? null;
+}
+/** ブレインの書き出しを出口の開口語の種類に（はい・かしこまりました・開口語なしだけ。挨拶・お礼の書き出しは挨拶の行の決まりが受け持つので null） */
+export function brainOpenerKind(label: OpenerLabel | null | undefined): "hai" | "kashikomari" | "none" | null {
+  return label === "はい" ? "hai" : label === "かしこまりました" ? "kashikomari" : label === "開口語なし" ? "none" : null;
+}
+
 export type OpenerJudgement = { ok: true } | { ok: false; message: string; suggestion: string; rate: number };
 
 /**

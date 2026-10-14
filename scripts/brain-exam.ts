@@ -36,6 +36,7 @@ import { acquireTestConversation, type TestConvLease } from "./lib/test-conv-lea
 import { shiftExamText } from "./lib/brain-exam-dates";
 import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCurrentProperty, normalizeDraftCode, type BrainExamOutput, type ProblemScore, type PathCode } from "./lib/brain-exam-score";
 import { similarity } from "../app/lib/property-name-match";
+import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
@@ -750,6 +751,12 @@ async function main() {
             recentMessages: p.context.slice(-25).map((m, k, arr) => ({ sender: m.s, text: texts[p.context.length - arr.length + k], createdAt: times[times.length - arr.length + k], isAix: !!m.aix })),
             brainMetaDirect: { meta, customerName: "YUMA", conversationDirection: (meta.conversation_direction as Record<string, unknown> | undefined) ?? null, brainAnalyzedAt: new Date().toISOString() },
             shadowNoWrite: true, testSceneMaterials: "on", testExcludeReplyText: p.staffText ?? "",
+            // 2026-10-15 監査の残り #7: --auto-hint で本番の bg-async と同じ自動の手がかり（replyHint＋replyHintAuto）を渡す（REPLY_HINT_BRAIN=off で旧の上書き）
+            ...(flag("auto-hint") ? (() => {
+              const lastStaff = [...p.context].reverse().find((m) => m.s === "staff" && !m.aix)?.t ?? "";
+              const h = autoReplyHintOf(customer.join("\n"), { firstReply: !staffEngaged, lastStaffText: lastStaff });
+              return h.hint ? { replyHint: h.hint, replyHintAuto: true } : {};
+            })() : {}),
           };
           let text: string | null = null, skipped: string | undefined;
           try {
