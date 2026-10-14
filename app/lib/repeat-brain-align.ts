@@ -243,6 +243,32 @@ export function pickupAckMaterialFor(f: AckForm): string {
 → ブレインの判断: ${f === "wait_line" ? "待ちの形の1文「ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」" : "受けだけ（「はい😊！！」＋何卒・待ちの形の1文も書かない）"}
 → 実際の物件の送付はこの後 AIX「物件ピックアップした」で行う（返信で物件・条件の話を広げない）`;
 }
+// ─── 2026-10-15 作る人（zenryoku-ack-1015）: ブレインが決めた ack_form を出口（生成の指示）まで届ける ───
+//   試し（scripts/yuma-ack-form-follow-test.ts・竹内さんの了承の番 23・DeepSeek）: ブレインが ack_form を決めても、生成の指示の別の場所が
+//   「次のアクション文を1つ添える（場面の型）」「必ず含める内容（約束の進行）」「最後は行動宣言で終える（往復文脈・姿勢）」「WE DO 宣言（必須）」を
+//   そのまま渡していた＝書けと書くなが並び、受けだけの判断の番で待ちの形・約束の言い直しが出た。
+//   了承だけの番でブレインが ack_form を決めた時は、これらの場所を同じ1つの値（ackFormShapeLine）にそろえる。戻す ACK_FORM_FOLLOW=off
+export function ackFormFollowEnabled(env: Env = process.env): boolean {
+  return (env.ACK_FORM_FOLLOW ?? "").trim().toLowerCase() !== "off";
+}
+/** 了承の返事の形の1行（場面の型・往復文脈の役割・avoid の「代わりに」に同じ値を渡す） */
+export function ackFormShapeLine(f: AckForm): string {
+  return f === "wait_line"
+    ? "前の約束への了承の返事（ブレインの判断＝待ちの形の短い1文）: 開口語「はい！！」→「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」（探す約束なら「ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」）だけ。何を・いつ・日付・条件を並べ直さない・言い切りの約束（〜させて頂きます！！）を書かない。20〜70字"
+    : "前の約束への了承の返事（ブレインの判断＝受けだけ）: 開口語「はい😊！！」→締め「何卒よろしくお願い致します！！」（または「気になる点出てきましたら何時でもお気軽にご連絡ください！！」）だけ。約束・確認・ピックアップ・日付・待ちの形（〜次第・〜出来ましたら）の文は書かない。10〜60字";
+}
+/** 姿勢の締めの行（了承の返事の番） */
+export function ackFormCloserLine(f: AckForm): string {
+  return f === "wait_line"
+    ? "- 🔚 締め（了承の返事・ブレインの判断）: 待ちの形の1文の「…ので、何卒よろしくお願い致します😌！！」で終える（行動宣言・サポート継続宣言を足さない）"
+    : "- 🔚 締め（了承の返事・ブレインの判断）: 「何卒よろしくお願い致します！！」で終える（行動宣言・待ちの形・サポート継続宣言を足さない）";
+}
+const ACK_DROP_TOPIC_RE = /確認|見積|ピックアップ|探|ご連絡|お送り|送付|進捗|募集状況|作成|進め|約束|割引|新着/;
+/** 了承の返事の番で「必ず含める内容」から外す項目（前の約束の中身の言い直しになる物） */
+export function ackFormDropTopic(topic: string): boolean {
+  return ACK_DROP_TOPIC_RE.test(topic ?? "");
+}
+
 /** 往復のセル CP_ACK_WAIT（受けだけ）を、ブレインが wait_line と決めた番だけ待ちの形の1文のセルにする（同じ場面に「書け」と「書くな」を並べない） */
 export function ackFormCell<T extends { id: string; direction: string; mustNot: string[]; example?: string }>(rule: T | null, f: AckForm | null | undefined): T | null {
   if (!rule || rule.id !== "CP_ACK_WAIT" || f !== "wait_line") return rule;

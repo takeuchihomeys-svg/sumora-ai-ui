@@ -95,6 +95,11 @@ console.log("⑤ 本質に無い確認の約束（ブレインの物差しの検
   const cc: TurnContract = { ...base, asks: [{ quote: "空いてますか", topic: "vacancy" as never, kind: "question", route: "aix", answer: null, basis: null, aixKey: "property_check_result" }] };
   t("本質に確認の AIX がある → 指摘しない", !contractConfirmMiss("お送り頂きました物件の募集状況確認させて頂きます！！", cc, isConfirmPromiseAsk, {}));
   t("お客様の『ご確認の上』は数えない", !contractConfirmMiss("お手隙の際にご確認の上ご連絡ください！！", c, isConfirmPromiseAsk, {}));
+  // 10/15: ブレインが了承の返事を待ちの形の1文と決めた番の短い1文は指摘しない（ACK_FORM_FOLLOW=off で旧）
+  const cw = { ...base, asks: [], closeOnly: true, ackForm: "wait_line" } as unknown as TurnContract;
+  t("ack_form=wait_line の短い待ちの形の1文 → 指摘しない", !contractConfirmMiss("はい！！\n確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！", cw, isConfirmPromiseAsk, {}));
+  t("ACK_FORM_FOLLOW=off → 旧（指摘）", !!contractConfirmMiss("はい！！\n確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！", cw, isConfirmPromiseAsk, { ACK_FORM_FOLLOW: "off" }));
+  t("ack_form=wait_line でも中身を並べ直した約束 → 指摘", !!contractConfirmMiss("はい！！\n明日管理会社に募集状況確認させて頂き、確認出来次第ご連絡させて頂きます！！", cw, isConfirmPromiseAsk, {}));
   t("本質が依頼の一覧（ledger）だけ → 指摘しない", !contractConfirmMiss("確認させて頂きます！！", { ...c, source: "ledger" }, isConfirmPromiseAsk, {}));
   t("閉じる番 → 受けの一言＋締めの案", /受けの一言/.test(contractConfirmMiss("確認させて頂きます！！", { ...base, closeOnly: true }, isConfirmPromiseAsk, {})?.suggestion ?? ""));
   t("off で何もしない", !contractConfirmMiss("確認させて頂きます！！", c, isConfirmPromiseAsk, { FINAL_CHECK_BRAIN_ALIGN: "off" }));

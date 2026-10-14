@@ -292,7 +292,8 @@ import { ackTopicScopeFromRecent, buildAckTopicNote } from "@/app/lib/ack-topic-
 import { bigramSim, editCore } from "@/app/lib/edit-diff";
 import { resolveReplySceneBrainFirst, replySceneBrainEnabled, questionTurnOverlap } from "@/app/lib/reply-scene-brain";
 import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, repeatCandidates } from "@/app/lib/reply-style-r11";
-import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterialFor, pickupAckMaterialFor, ackFormCell } from "@/app/lib/repeat-brain-align";
+import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterialFor, pickupAckMaterialFor, ackFormCell, ackFormFollowEnabled, ackFormShapeLine, ackFormCloserLine, ackFormDropTopic } from "@/app/lib/repeat-brain-align";
+import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
@@ -1555,7 +1556,9 @@ ${aixDone.answeredByAix
           : `\n【管理会社の状況】現在${jstHour}時台（JST）。管理会社営業中（平日9時〜18時）。「${confirmCtx.object}確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」と伝えてよい（確認対象「${confirmCtx.object}」を必ず本文に書く。「すぐに」は付けない）。`;
 
   // G26: 確認約束の決定論ゲート（dynamicBlock 末尾・お客様メッセージ直後に注入）。募集状況確認文脈（availabilityCheckNote）は型自体が確認宣言なので二重注入しない
-  const confirmationGateNote = !confirmCtx.allowed && !isAvailabilityCheckContext
+  // 2026-10-15: ブレインが了承の返事を待ちの形の1文（「確認出来次第ご連絡させて頂きますので、何卒…」）と決めた了承だけの番は、確認の約束の禁止を出さない（書けと書くなを並べない・ACK_FORM_FOLLOW=off で旧）
+  const ackWaitConfirmOk = ackForm === "wait_line" && isShortAckMsg && !isFollowUp && ackFormFollowEnabled();
+  const confirmationGateNote = !confirmCtx.allowed && !isAvailabilityCheckContext && !ackWaitConfirmOk
     // 2026-09-11 統合設計（経路B/D・🐥事例）: 旧文は TPO に関係なく（生成の 68%）「〇〇周辺全域から〇〇さんに…ピックアップ出来次第」の固定句を
     //   行動宣言として命じ、感謝返し・締めの場面にもピックアップ約束と 〇〇 リテラルを持ち込ませていた。行動宣言は往復文脈にだけ従わせる
     ? `\n\n【🚫 確認約束の禁止（決定論・確認対象なし）】この返信に「確認出来次第ご連絡」「確認しご連絡」「確認の上ご連絡」を書いてはいけない（理由: ${confirmCtx.reason}）。確認する事実が会話に存在しないのに確認を約束するのは創作約束。確認約束は書かない。行動宣言は【🔁 往復文脈】の方向と必須要素だけに従う（感謝返し・締めの場面では行動宣言を足さない）。`
@@ -4227,6 +4230,11 @@ async function handleGenerateReply(req: NextRequest) {
       } catch (e) { console.warn("[turn-contract] skipped:", e instanceof Error ? e.message : String(e)); return null; }
     })();
     const confirmCtx: ConfirmationContextVerdict = applyContractToConfirm(confirmCtxWord, turnContract);
+    // 2026-10-15 作る人（zenryoku-ack-1015）: ブレインが了承の返事の形（ack_form）を決めた了承だけの番は、場面の型・往復文脈・姿勢の締め・必ず含める内容・WE DO の
+    //   出口をその1つの値にそろえる（repeat-brain-align.ackFormShapeLine・戻す ACK_FORM_FOLLOW=off）
+    const ackFollowForm = turnContract?.source === "brain" && turnContract.ackForm && ackFormFollowEnabled() && !isFollowUp && isAckOnlyTurn(customerMsgUnits) ? turnContract.ackForm : null;
+    const ackShape = ackFollowForm ? ackFormShapeLine(ackFollowForm) : null;
+    if (ackFollowForm) console.info("[ack-form-follow]", JSON.stringify({ conversationId, ackForm: ackFollowForm }));
     if (turnContract) console.info("[turn-contract]", JSON.stringify({ source: turnContract.source, asks: turnContract.asks.map((a) => a.route), close: turnContract.closeOnly, said: turnContract.alreadySaid.length, settled: turnContract.settled.length, confirm: `${confirmCtxWord.allowed}->${confirmCtx.allowed}` }));
     console.info("[confirmCtx]", JSON.stringify({ allowed: confirmCtx.allowed, source: confirmCtx.source, object: confirmCtx.object, moveOutSubject }));
 
@@ -4984,7 +4992,7 @@ async function handleGenerateReply(req: NextRequest) {
       //   AIX のテンプレート最適化・AIX の後の一言（isTemplateOptimize・aixSourceMessage）はスタッフが選んだ AIX の文なので当てない（物件オススメはお礼の後でも送る）
       const ackTopicNote = isTemplateOptimize || aixSourceMessage ? "" : buildAckTopicNote(ackTopicScopeFromRecent(recentMessages));
       if (ackTopicNote) lines.push(ackTopicNote);
-      if (!seeMoreTurn && !ackTopicNote && brainMeta.note && brainMeta.reply_mode !== 'aix' && brainLocalFresh && !noteIsStaffReference) {
+      if (!seeMoreTurn && !ackTopicNote && !ackFollowForm && brainMeta.note && brainMeta.reply_mode !== 'aix' && brainLocalFresh && !noteIsStaffReference) {
         lines.push(`- 📌 スモラスタイル②WE DO宣言（必須・返信末尾に1文として明示する）: ${brainMeta.note} → このスタッフアクションをお客様向けに「私が〇〇させて頂きます！！」の形に言い換えて返信の最後の1文に含めること（例: 「明日管理会社に交渉させて頂きます！！」「ご希望のお部屋をピックアップしてお送りさせて頂きます！！」「お申込みでお部屋押さえさせて頂きます！！」）。ただしZ/F3/Yパターン等の短い締め返信では追加しない`);
       }
       // winning_pattern + closing_strategy の両方がある場合は1文のWE DO宣言に統合（二重宣言防止）
@@ -5287,7 +5295,7 @@ async function handleGenerateReply(req: NextRequest) {
     // 2026-10-08 入居の時期が先（ブレインの far_move_in）: 条件の受け取りのセル（ANY_CONDITION_CHANGE の「再ピックアップ宣言」）を入れない。
     //   この番の約束は連絡の日の1つだけ（YUMA の Claude の確かめで「2028年3月以降入居・…のご条件でピックアップ」の今の宣言が足されていた）
     const farMoveInFresh = !!(brainFreshForMessage && brainMeta && (brainMeta as { far_move_in?: unknown }).far_move_in);
-    const turnPairNote = (isFollowUp || isTemplateOptimize || farMoveInFresh ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "", { strategy: brainStrategy, brainFresh: brainLocalFresh })) + vocabAnchorNote;
+    const turnPairNote = (isFollowUp || isTemplateOptimize || farMoveInFresh ? "" : buildTurnPairNote(pairContext, message ?? "", customerName ?? "", { strategy: brainStrategy, brainFresh: brainLocalFresh, ackShape })) + vocabAnchorNote;
     // 2026-09-09 Fable5 行動台帳: 【📒 我々の行動台帳】（往復文脈の直前）＋ 直前発言の宣言／実行注記（staffContextNote）。shadow では注入しない
     // 2026-09-15 竹内（yasuki 事例）: 内覧に行ったスタッフが分かったこと（台帳と同じ「こちらが知っている事実」の位置・往復文脈の前提）
     const viewingReportNote = viewingReportNoteForReply(viewingReports);
@@ -5297,7 +5305,7 @@ async function handleGenerateReply(req: NextRequest) {
     const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
-    const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "" });
+    const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm) : null });
 
     const tpoGuidanceNote = (() => {
       const lines: string[] = [];
@@ -5313,7 +5321,7 @@ async function handleGenerateReply(req: NextRequest) {
       if (brainDirTop) lines.push(`- 🧠 ブレインの返信の方向（中身・上の本質と同じ側）: ${brainDirTop.slice(0, 160)}`);
       console.info("[turn-contract:direction]", JSON.stringify({ tc: turnContract?.source ?? null, brainTop: !!brainDirTop, typeWonOverBrain: !!brainDirTop && !!effectiveReplyDirection && effectiveReplyDirection !== brainDirTop }));
       lines.push(tcBrain
-        ? `- 🎯 返信の形（場面の型）: ${effectiveReplyDirection ?? fallbackDirection}（※この型は開口語・字数・締めの形だけに使う。何に答える・何を約束するかは上の【🧭 この番の本質】が優先。ぶつかる中身は書かない）`
+        ? `- 🎯 返信の形（場面の型）: ${ackShape ?? effectiveReplyDirection ?? fallbackDirection}（※この型は開口語・字数・締めの形だけに使う。何に答える・何を約束するかは上の【🧭 この番の本質】が優先。ぶつかる中身は書かない）`
         : `- 🎯 返信の方向性: ${effectiveReplyDirection ?? fallbackDirection}（返信全体をこの1点に収束させる。関係ない話題を足さない）`);
       // 2026-09-23 竹内「スタッフの文の生成との間でブレインの部分にギャップがある」:
       //   上の方向性は早い者勝ちの型で決まり、ブレインの reply_direction は採用されなければ
@@ -5354,14 +5362,15 @@ async function handleGenerateReply(req: NextRequest) {
       const factTopics = buildCompanyFactsNote(message, { account: convAccount })
         ? [`お客様が聞いている会社の事実（上の【🏢】の内容）への直接の回答`]
         : [];
-      const mustInclude = [...factTopics, ...effectiveKeyTopics];
+      // 10/15: 了承の返事の番は前の約束の中身（確認・見積・ピックアップの進行）を必ず含める内容から外す（ack_form と書けと書くなを並べない）
+      const mustInclude = [...factTopics, ...(ackFollowForm ? effectiveKeyTopics.filter((t) => !ackFormDropTopic(t)) : effectiveKeyTopics)];
       if (mustInclude.length) {
         lines.push(`- ✅ 必ず含める内容（${mustInclude.length}件すべて必須）: ${mustInclude.join(" / ")}`);
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
       }
       if (activeAvoidTopics.length) {
         if (isThinkingMsg && consideringDoorOn && !consideringCloseOn) lines.push(`- ${CONSIDERING_DOOR_EXEMPT_NOTE}`);
-        lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに「${effectiveReplyDirection ?? fallbackDirection}」の方向性に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
+        lines.push(`- 🚫 今回は ${activeAvoidTopics.join(" / ")} には触れない（言い換え・同義語も禁止: 「来阪」なら「大阪にお越し」「お越しの際」等の来訪誘導全般、「見積書」なら「お見積り」「費用のご案内」等も含む）。代わりに「${ackShape ?? effectiveReplyDirection ?? fallbackDirection}」の方向性に沿った具体アクション・事実情報で返信を構成すること。本文を書き終えたら各語について自己チェックし、該当する文があれば削除して書き直すこと`);
       }
       // 2026-10-08 11巡目（r12 の調査④⑥）: 直前2通（AIX を含む）の約束・誘いを繰り返さない／物件を1度も送っていない番は「新着で出次第」を書かない
       if (!isTemplateOptimize) {

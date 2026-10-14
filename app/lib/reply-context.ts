@@ -2401,7 +2401,7 @@ export function buildPairDirection(
 /** dynamicBlock に注入する【往復文脈】ブロック（tpoGuidanceNote より上位・ハードゲートの次） */
 export function buildTurnPairNote(
   pair: PairContext, customerMessage: string, customerName: string,
-  opts: { strategy?: BrainConversationScope | null; brainFresh?: boolean } = {},
+  opts: { strategy?: BrainConversationScope | null; brainFresh?: boolean; /** 2026-10-15 ブレインが了承の返事の形（ack_form）を決めた番の形の1行（repeat-brain-align.ackFormShapeLine） */ ackShape?: string | null } = {},
 ): string {
   const staffJa = STAFF_KIND_JA[pair.staff.kind];
   const custJa = CUSTOMER_KIND_JA[pair.customer.kind];
@@ -2415,6 +2415,12 @@ export function buildTurnPairNote(
   // 2026-09-11 統合設計（経路E1）: 「約束の維持」注記は送付件数ではなく未履行約束の有無で出す（2回目以降の宣言でも同じ）
   if (pair.ledger) lines.push(`- 我々が既にしたこと（行動台帳・確定事実）: ${pair.ledger.summary}${pair.ledger.facts.pickupPromisedUnfulfilled ? ` → 直前の宣言はまだ履行していない（${pickupRound(pair.ledger).note}）。この返信は『約束の維持』であって『やり直し』ではない` : ""}`);
   lines.push(`- お客様の返答（${custJa}${pair.customer.secondary.length ? " ＋ " + pair.customer.secondary.map((k) => CUSTOMER_KIND_JA[k]).join("・") : ""}）: 「${customerMessage.split(MSG_SEP).join(" ／ ").replace(/\s+/g, " ").slice(0, 200)}」`);
+  if (opts.ackShape) {
+    // 2026-10-15: ブレインが了承の返事の形を決めた番は、往復のセルの役割・必須要素・型（行動宣言で終える骨格）を渡さず、その1つの値だけ（書けと書くなを並べない）
+    lines.push(`- → この返信の役割: ${opts.ackShape}`);
+    lines.push("- 構成規則: 開口語は1つ。了承の返事は上の形だけ（行動宣言・サポート継続宣言・条件の並べ直しを足さない）");
+    return lines.join("\n") + "\n\n";
+  }
   if (pair.rule) {
     lines.push(`- → この返信の役割: ${fillPairPlaceholders(pair.rule.direction, pair)}`);
     // 2026-09-21 竹内「ブレインが勝つようにする」: ブレインが避けろと言った話題にぶつかる必須要素は落とす
@@ -2929,7 +2935,7 @@ export function computeStanceLite(text: string, customerText: string): StanceLit
 }
 
 /** dynamicBlock【姿勢】ブロック（往復文脈ブロックの直後・tpoGuidanceNote より上位）。決定論の値をリテラルで渡し LLM に選ばせない */
-export function buildStanceNote(pair: PairContext, hedge: HedgeVerdict, closer: CloserVerdict, opts: { customerName: string; customerText: string }): string {
+export function buildStanceNote(pair: PairContext, hedge: HedgeVerdict, closer: CloserVerdict, opts: { customerName: string; customerText: string; /** 2026-10-15 了承の返事の番の締めの行（repeat-brain-align.ackFormCloserLine） */ ackCloserLine?: string | null }): string {
   // 2026-09-11 統合設計（経路B）: 名前不明時に「〇〇さん」を生成ノートへ書かない（呼びかけごと省く）
   const name = opts.customerName ? `${opts.customerName}さん` : "";
   // 2026-09-11 竹内方針2: 復唱の指示は条件フォーム・自由記述の条件の時だけ（物件送付・申込フォームで物件属性・個人情報を「一字も変えずに」埋め込ませていた）
@@ -2946,13 +2952,14 @@ export function buildStanceNote(pair: PairContext, hedge: HedgeVerdict, closer: 
     L.push(`- ✅ ヘッジ判定（${hedge.summary}）: 傾向を「傾向として〜が多いですが」と1文で正直に答えてよい。必ず「${name ? `${name}の` : ""}ご条件でしっかりピックアップしてお送りさせて頂きます！！」の探索宣言を同じ返信に入れる。優先順位の聞き返しは禁止（まず探す）`);
   if (isEchoableScope(docScope) && (docScope.areaWords.length > 0 || tokens.length >= 2))
     L.push(`- 📌 条件の復唱（任意）: エリアはお客様の表記のまま${docScope.areaWords.length ? `「${docScope.areaWords.slice(0, 3).join("・")}周辺全域から」の形` : "「（エリア）周辺全域から」の形"}。家賃・間取りは入れてよい（必須ではない）${tokens.some((t) => !/(?:駅|線|区|市|町)$/.test(t)) ? `: ${tokens.filter((t) => !/(?:駅|線|区|市|町)$/.test(t)).slice(0, 6).join("・")}` : ""}。物件名・建物名・号室・階・住所・日付は書かない`);
-  L.push(closer.text
+  if (opts.ackCloserLine) L.push(opts.ackCloserLine);
+  else L.push(closer.text
     ? `- 🔚 締め（最終行に置く。行動宣言の代わりにしない）: 「${closer.text.replace(/\n/g, "」＋「")}」（${closer.reason}）`
     : `- 🔚 締め: 追加の締め文なし（${closer.reason}）。「全力でサポート」「何卒よろしく」を足さない`);
   if (fact) L.push(`- ✅ 即答: 「${fact.answer}」と言い切る（「確認させて頂きます」に逃がさない）${fact.next ? `→続けて「${fact.next}」` : ""}`);
   if (sched === "customer_asking" || sched === "staff_proposing")
     L.push(`- 🗓 日程は提案形: お客様が日時を確定していない。「はい！！お部屋ご案内可能です😊！！」→日付・時刻・場所を数字で→「〜お待ち合わせ如何でしょうか！！」。「〜で何卒よろしくお願い致します」の決め打ち禁止`);
-  L.push("- 🌡 温度: 😊😌は2個以内・！！は3回以内。「ご安心ください」「ご検討ください」「恐縮ですが」「〜いただけますと幸いです」「少々お時間」で終えず、こちらの行動宣言で終える。" + (name ? `呼称は「${name}」` : "お客様名は不明のため呼びかけは書かない"));
+  L.push("- 🌡 温度: 😊😌は2個以内・！！は3回以内。「ご安心ください」「ご検討ください」「恐縮ですが」「〜いただけますと幸いです」「少々お時間」で終えず、" + (opts.ackCloserLine ? "上の締めで終える。" : "こちらの行動宣言で終える。") + (name ? `呼称は「${name}」` : "お客様名は不明のため呼びかけは書かない"));
   L.push("- 🕰 急かさない: 「埋まってしまう前に」「お早めに」は見積送付後・お客様の前向き反応後のみ");
   return L.join("\n") + "\n\n";
 }
