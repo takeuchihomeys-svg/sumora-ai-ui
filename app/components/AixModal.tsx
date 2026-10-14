@@ -49,6 +49,7 @@ import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyN
 import { meetingSecondLine, meetingDayWordOn } from "../lib/meeting-place-form";
 import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
 import { canonicalRoomNo } from "../lib/room-no";
+import { alternativeCheckRecord, staffCaptureUiEnabled, CALL_RESULT_OPTIONS, composeCallReport } from "../lib/staff-capture";
 import { portalUrlsIn } from "../lib/portal-page-read";
 // 2026-10-13 竹内さん（くれあ）: 物件確認した（物件あった）で見積書を同封する時は物件ごとに［資料・見積書 → 費用の文］→ 最後に確認の結果の文。
 //   戻す: NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off（今まで通りの並び）
@@ -806,6 +807,9 @@ export default function AixModal({
   // 物件確認した「別の部屋」専用
   const [checkEndedFloor, setCheckEndedFloor] = useState<number | null>(null);
   const [checkEndedUnit, setCheckEndedUnit] = useState<string>("");
+  // 2026-10-14（37af1885 取りこぼしの無い設計）: 代わりに案内するお部屋の号室（任意）。入れると記録（property_names）に別の部屋として残り、
+  //   台帳・お客様の状況・ブレインの今の物件の材料に届く（旧は上の「別の部屋が募集してた」は物件名を何も記録しなかった＝120日で9番中0）
+  const [checkAltUnit, setCheckAltUnit] = useState<string>("");
   const [checkFloorPlan, setCheckFloorPlan] = useState<"same" | "different" | null>(null);
   // 専任物件だった専用: スクショOCR + 物件名・号室
   const [exclusiveImageFile, setExclusiveImageFile] = useState<File | null>(null);
@@ -1142,6 +1146,33 @@ export default function AixModal({
   // 2026-10-02 竹内さん「電話の AIX の文は会話に合わせる」: お客様に電話できる時間を聞かれた時にスタッフが入れる（スタッフしか知らない事実＝空欄なら時間を作らない）
   const [phoneAvailability, setPhoneAvailability] = useState("");
   const [phoneNotes, setPhoneNotes] = useState("");       // 電話終了後: 電話でお話しした内容
+  // 2026-10-14（37af1885）: 電話の結果のタップ・保存（お客様のメモ kind=call → ブレイン・返信の材料）。同じ中身を二重に保存しない
+  const [phoneTaps, setPhoneTaps] = useState<string[]>([]);
+  const [phoneSavedText, setPhoneSavedText] = useState<string | null>(null);
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  /** 電話の結果をお客様のメモに保存（成功・同じ中身で保存済み＝null／失敗＝エラー文） */
+  const saveCallReport = async (): Promise<string | null> => {
+    const report = composeCallReport(phoneTaps, phoneNotes);
+    if (!report.trim() || report === phoneSavedText || !conversationId) return null;
+    try {
+      const r = await fetch("/api/customer-memo", {
+        method: "POST", headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+        body: JSON.stringify({ conversation_id: conversationId, op: "add", kind: "call", text: report }),
+      });
+      const d = await r.json().catch(() => ({})) as { ok?: boolean; error?: string };
+      // fix(review): 同じ中身がもうある（開き直して同じ内容で作り直した等）は保存済みとして扱う
+      if (!r.ok || !d.ok) { if (/同じ中身/.test(d.error ?? "")) { setPhoneSavedText(report); return null; } return d.error ?? `HTTP ${r.status}`; }
+      setPhoneSavedText(report);
+      return null;
+    } catch (e) { return e instanceof Error ? e.message : String(e); }
+  };
+  // fix(review): 上の「別の部屋が募集してた」の記録は送る文（スタッフが直した後の建物名）と今の号室の欄から作り直す
+  //   （旧は生成した時の文と号室だけ＝生成の後に号室を入れた・建物名を直した時に記録が残らない／違う名前で残る）
+  useEffect(() => {
+    if (actionType !== "property_check_result" || checkPattern !== "alternative" || !staffCaptureUiEnabled() || !preview.trim()) return;
+    const rec = alternativeCheckRecord({ text: preview, endedFloor: checkEndedFloor, endedUnit: checkEndedUnit, altUnit: checkAltUnit });
+    lastCheckPropNamesRef.current = rec.names; lastCheckPropStatusesRef.current = rec.statuses;
+  }, [actionType, checkPattern, preview, checkEndedFloor, checkEndedUnit, checkAltUnit]);
   const [callUrlInfo, setCallUrlInfo] = useState<{ loading: boolean; url: string | null; accountLabel: string; error?: string }>({ loading: false, url: null, accountLabel: "" });
   const [callUrlInput, setCallUrlInput] = useState("");
   const [callUrlEditing, setCallUrlEditing] = useState(false);
@@ -2527,8 +2558,15 @@ export default function AixModal({
       }
       // 電話終了後: 電話でお話しした内容のメモからサーバで1通を作る（メモに無い数字は〇〇）
       if (actionType === "phone_followup") {
-        if (!phoneNotes.trim()) throw new Error("電話でお話しした内容を入力してください");
-        body.call_notes = phoneNotes.trim();
+        const tapsOn = staffCaptureUiEnabled() && phoneTaps.length > 0;
+        if (!phoneNotes.trim() && !tapsOn) throw new Error("電話でお話しした内容を入力してください");
+        // 文の材料はメモの本文（タップはブレインの材料用・本文が空の時だけタップを渡す）
+        body.call_notes = phoneNotes.trim() || composeCallReport(phoneTaps, "");
+        // 2026-10-14（37af1885）: 電話で分かった事は文を作る前にブレインの材料（お客様のメモ）へ保存する（送らなくても残る）
+        if (staffCaptureUiEnabled()) {
+          const saveErr = await saveCallReport();
+          if (saveErr) console.warn("[AixModal] 電話の結果の保存に失敗:", saveErr);
+        }
         setGenLabel("電話の内容をまとめています");
       }
       // 保証会社について（2026-09-15 竹内・YUYA 事例）: 物件ごとの保証会社名・種類と並行審査トグルをサーバへ。
@@ -3132,6 +3170,12 @@ export default function AixModal({
       //   種類に関わらず足していたため、独立系（審査が緩い）の物件にも信販系の説明が付いていた
       setAiDraft(generatedMsg);
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
+      // 2026-10-14（37af1885）: 上の「別の部屋が募集してた」は物件名を記録していなかった → 本文の建物名＋入れた号室で
+      //   代わりのお部屋（alternative）・募集終了のお部屋（unavailable）を記録（号室が無い時は記録しない＝建物だけだと終了の部屋に寄る）
+      if (actionType === "property_check_result" && checkPattern === "alternative" && staffCaptureUiEnabled()) {
+        const rec = alternativeCheckRecord({ text: generatedMsg, endedFloor: checkEndedFloor, endedUnit: checkEndedUnit, altUnit: checkAltUnit });
+        if (rec.names.length) { lastCheckPropNamesRef.current = rec.names; lastCheckPropStatusesRef.current = rec.statuses; }
+      }
       // 「会話を合わせる」生成かを記録（通常生成・再生成で上書きされるため常に最新の生成モードを反映）
       lastGenConvMatchRef.current = !!extraFlags?.conversation_match;
       // 申込催促系：2通目の締め文を自動生成（1分後送信）
@@ -3946,7 +3990,7 @@ export default function AixModal({
     : actionType === "cost_breakdown"
     ? cbImages.length > 0
     : actionType === "phone_followup"
-    ? !!phoneNotes.trim()
+    ? !!phoneNotes.trim() || (staffCaptureUiEnabled() && phoneTaps.length > 0)
     : actionType === "guarantor_info"
     ? giFilled.length > 0
     : actionType === "estimate_sheet" && estimateMultiMode
@@ -6111,6 +6155,20 @@ export default function AixModal({
                       />
                     </div>
                   </div>
+                  {/* 2026-10-14（37af1885）: 代わりに案内するお部屋の号室 → ブレインの今の物件の材料（お客様には送らない・本文は変えない） */}
+                  {staffCaptureUiEnabled() && (
+                    <div>
+                      <p className="mb-1.5 text-xs font-bold text-[#54656f]">代わりに案内するお部屋 <span className="font-normal text-[#90a4ae]">（任意・入れるとブレインがこの部屋を把握します）</span></p>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={checkAltUnit}
+                        onChange={(e) => setCheckAltUnit(e.target.value)}
+                        placeholder="号室（例: 502）"
+                        className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3] placeholder:text-[#90a4ae]"
+                      />
+                    </div>
+                  )}
                   {/* 間取り選択 */}
                   <div>
                     <p className="mb-1.5 text-xs font-bold text-[#54656f]">代替お部屋の間取り <span className={floorPlanTouched && !checkFloorPlan ? "text-red-500" : "text-[#90a4ae]"}>*必須</span></p>
@@ -7534,6 +7592,28 @@ export default function AixModal({
           {/* 電話終了後専用UI（2026-09-15 竹内・H 事例）: 電話でお話しした内容 → お礼＋まとめの1通 */}
           {actionType === "phone_followup" && (
             <div className="mb-4">
+              {/* 2026-10-14（37af1885 取りこぼしの無い設計）: 電話で分かった事をタップで → お客様のメモ（ブレイン・返信の材料）。お客様には送られない */}
+              {staffCaptureUiEnabled() && (
+                <div className="mb-3 rounded-2xl border border-[#b2dfdb] bg-[#f3fbfa] p-3">
+                  <p className="text-xs font-bold text-[#00796B]">電話の結果（タップ・複数可）</p>
+                  <p className="mb-2 text-[11px] text-[#4b6b67]">お客様には送られません。ブレインがこの後の判断・文に使います</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CALL_RESULT_OPTIONS.map((o) => {
+                      const on = phoneTaps.includes(o);
+                      return (
+                        <button key={o} type="button"
+                          onClick={() => { setPhoneTaps((p) => on ? p.filter((x) => x !== o) : [...p, o]); setPreview(""); }}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-bold ${on ? "border-[#00796B] bg-[#00796B] text-white" : "border-[#b2dfdb] bg-white text-[#00796B]"}`}
+                        >{o}</button>
+                      );
+                    })}
+                  </div>
+                  <button type="button" disabled={phoneSaving || (!phoneTaps.length && !phoneNotes.trim())}
+                    onClick={async () => { setPhoneSaving(true); const err = await saveCallReport(); setPhoneSaving(false); if (err) setError(`電話の結果を保存できませんでした（${err}）`); }}
+                    className="mt-2 w-full rounded-xl border border-[#00796B] bg-white py-2 text-xs font-bold text-[#00796B] disabled:opacity-40"
+                  >{phoneSaving ? "保存中…" : phoneSavedText && phoneSavedText === composeCallReport(phoneTaps, phoneNotes) ? "✓ ブレインに共有済み" : "記録だけする（文は作らない）"}</button>
+                </div>
+              )}
               <label className="mb-1 block text-xs font-semibold text-[#54656f]">電話でお話しした内容 <span className="text-red-400">*</span></label>
               <textarea
                 value={phoneNotes}

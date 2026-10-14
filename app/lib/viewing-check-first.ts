@@ -168,8 +168,9 @@ export function threadRoomCheckForTurn(s: { rooms: ReadonlyArray<{ key: string; 
   const keys = [...new Set(s.turnTargets.map((t) => t.roomKey))];
   if (keys.length !== 1) return null;
   const r = s.rooms.find((x) => x.key === keys[0]);
-  const last = r ? [...r.events].reverse().find((e) => e.kind === "check_vacating" || e.kind === "check_available" || e.kind === "check_ended") : undefined;
-  return last ? (last.kind === "check_vacating" ? "vacating" : last.kind === "check_available" ? "available" : "ended") : null;
+  // 2026-10-14: 別の部屋（check_alternative）は募集中の部屋（staff-capture.ts）
+  const last = r ? [...r.events].reverse().find((e) => e.kind === "check_vacating" || e.kind === "check_available" || e.kind === "check_alternative" || e.kind === "check_ended") : undefined;
+  return last ? (last.kind === "check_vacating" ? "vacating" : last.kind === "check_available" || last.kind === "check_alternative" ? "available" : "ended") : null;
 }
 
 /**

@@ -39,6 +39,7 @@ import { matchLoose, isSameLoose, splitBrainNames, looseMatchEnabled } from "./p
 import { isApplicationFormMessage } from "./application-form-detect";
 import { parseEstimateItems } from "./estimate-profit";
 import { jstParts, jstYmd, WEEKDAYS_JA } from "./jst-date";
+import { alternativeCaptureEnabled } from "./staff-capture";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 型
@@ -538,7 +539,7 @@ export function focusEventsFromAixRows(rows: ReadonlyArray<Pick<CustomerStateAix
       const names = estimateNamesFromText(r.generated_text);
       if (names.length || r.property_names?.length) out.push({ at, names: names.length ? names : [...(r.property_names ?? [])] });
     } else if (r.aix_type === "property_check_result" && r.property_names?.length) {
-      const ok = r.property_names.filter((_, i) => { const s = String(r.prop_statuses?.[i] ?? ""); return s === "available" || s === "vacating"; });
+      const ok = r.property_names.filter((_, i) => { const s = String(r.prop_statuses?.[i] ?? ""); return s === "available" || s === "vacating" || (s === "alternative" && alternativeCaptureEnabled()); });
       if (ok.length) out.push({ at, names: ok });
     } else if (r.estimate_sent === true && r.property_names?.length) {
       out.push({ at, names: [...r.property_names] });
@@ -706,7 +707,9 @@ export function resolveCustomerState(input: CustomerStateInput): CustomerState {
     if (r.aix_type === "property_check_result" && r.property_names?.length) {
       r.property_names.forEach((n, i) => {
         const st = String(r.prop_statuses?.[i] ?? "");
-        const kind: RoomEventKind = st === "unavailable" ? "check_unavailable" : st === "vacating" ? "check_vacating" : st === "available" ? "check_available" : "sent";
+        // 2026-10-14（37af1885）: 「別の部屋」（alternative）＝同じ建物で募集中の部屋をこちらが案内した＝募集中（旧は「送った」扱いで主のお部屋の候補に入らなかった）
+        const altOk = st === "alternative" && alternativeCaptureEnabled();
+        const kind: RoomEventKind = st === "unavailable" ? "check_unavailable" : st === "vacating" ? "check_vacating" : st === "available" || altOk ? "check_available" : "sent";
         push(n, kind, at, "aix:property_check_result");
       });
     }

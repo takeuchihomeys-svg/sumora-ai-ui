@@ -22,6 +22,7 @@
 //
 // 戻す: PROPERTY_THREAD_NOTE=off（ブレイン・返信の材料に入れない）
 import { splitPropertyName, matchRoomRefs, buildingKeyOf, type RoomRef } from "./customer-state";
+import { alternativeCaptureEnabled } from "./staff-capture";
 import { jstParts } from "./jst-date";
 // 2026-10-08 8巡目（記録の続き・竹内「オススメした物件と、お客さんが送ってきた物件をちゃんと保管できていればできる」）
 import { extractScreenshotProperty, seriesTokens } from "./own-property-match";
@@ -90,7 +91,9 @@ export type PtEventKind =
   | "sent" | "customer_shared" | "customer_ask" | "check_available" | "check_vacating" | "check_ended" | "estimate"
   | "staff_negotiating" | "staff_checking" | "staff_result"
   // 2026-10-08: こちらがオススメした（🌟）・内覧の候補日を出した・内覧（待ち合わせ）が決まった
-  | "recommended" | "viewing_offered" | "viewing_set";
+  | "recommended" | "viewing_offered" | "viewing_set"
+  // 2026-10-14 取りこぼしの無い設計（37af1885）: AIX【物件確認した】の「別の部屋」＝聞かれた部屋の代わりに同じ建物で募集中の部屋を案内した
+  | "check_alternative";
 export type PtEvent = { at: string; kind: PtEventKind; topic?: PtTopic; by: "quote" | "named" | "record" | "inferred"; text?: string };
 export type PtRoom = {
   key: string; ref: RoomRef; names: string[]; events: PtEvent[]; sentByUs: boolean;
@@ -134,6 +137,14 @@ export function topicOf(text: string): PtTopic {
   return "other";
 }
 const STATUS_KIND: Record<string, PtEventKind> = { available: "check_available", vacating: "check_vacating", unavailable: "check_ended", ended: "check_ended" };
+/**
+ * 物件確認の状態 → 出来事。2026-10-14（37af1885）: 「別の部屋」（alternative）は旧は読まず出来事が無かった
+ *   （台帳に無い＝今の番の物件の候補・並びに入らず、次のブレインの今の物件がその部屋 0/6）。STAFF_CAPTURE_ALTERNATIVE=off で旧
+ */
+function statusKindOf(st: string): PtEventKind | undefined {
+  if (st === "alternative") return alternativeCaptureEnabled() ? "check_alternative" : undefined;
+  return STATUS_KIND[st];
+}
 const NEGOTIATE_RE = /交渉/;
 const CHECK_PROMISE_RE = /確認(?:させて|致し|いたし|し)[^\n。！!]{0,20}(?:ます|次第)/;
 const RESULT_RE = /(?:とのご返事|とのご返答|とのことでした|難しい|出来ません|できません|可能です|可能との)/;
@@ -230,7 +241,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
     names.forEach((n, i) => {
       const r = named[i];
       if (!r) return;
-      const k = STATUS_KIND[String(sts[i] ?? "")];
+      const k = statusKindOf(String(sts[i] ?? ""));
       if (a.aix_type === "property_check_result" && k) push(r, { at: a.created_at, kind: k, by: "record" });
       if (a.estimate_sent) push(r, { at: a.created_at, kind: "estimate", by: "record" });
       if (originOn) {
@@ -382,7 +393,8 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
     const freeRent = collectStaffFreeRent(msgs.filter((m) => m.sender === "staff" && m.text && !isImage(m)).map((m) => ({ text: m.text, createdAt: m.created_at })));
     for (const r of rooms) {
       const first = r.events.find((e) => e.kind === "sent" || e.kind === "recommended" || e.kind === "customer_shared" || e.kind.startsWith("check_"));
-      r.origin = !first ? null : first.kind === "sent" || first.kind === "recommended" ? "ours" : "customer";
+      // 別の部屋（check_alternative）はこちらが代わりに案内した部屋＝ours
+      r.origin = !first ? null : first.kind === "sent" || first.kind === "recommended" || first.kind === "check_alternative" ? "ours" : "customer";
       const h = r.events.find((e) => e.kind === "customer_ask" && e.topic !== "ng");
       r.hooked = h ? { at: h.at, topic: h.topic ?? "other" } : null;
       r.freeRent = freeRent.length ? staffFreeRentFor(freeRent, r.ref.building, r.ref.room) : null;
@@ -476,10 +488,14 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       turnReferentText = turn.map((m) => String(m.text ?? "")).join("\n");
       const t0 = turn[0].created_at;
       const prevCustomer = [...msgs].reverse().find((m) => m.sender === "customer" && ms(m.created_at) < ms(t0));
-      const OURS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_vacating", "check_ended", "staff_negotiating", "staff_checking", "staff_result", "viewing_offered", "viewing_set"]);
+      const OURS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_alternative", "check_vacating", "check_ended", "staff_negotiating", "staff_checking", "staff_result", "viewing_offered", "viewing_set"]);
       const mentions: ReferentMention[] = [...staffTextMentions];
+      // fix(review): 「別の部屋」の記録は代わりの部屋（募集中）と募集終了の部屋を同じ時刻に残す。主語の無い次の番（「そちら見に行けますか」）で
+      //   募集終了の部屋が並んで候補になり「どちらのお部屋か」と聞き返していた → 同じ記録の募集終了の部屋は候補に入れない（名指しの番は別の道で読む）
+      const altAts = new Set(rooms.flatMap((r) => r.events.filter((e) => e.kind === "check_alternative").map((e) => e.at)));
       for (const r of rooms) for (const e of r.events) {
         if (e.by === "inferred") continue;
+        if (e.kind === "check_ended" && altAts.has(e.at)) continue;
         if (OURS.has(e.kind)) mentions.push({ at: e.at, roomKey: r.key, display: r.ref.display, by: "ours" });
         else if (e.kind === "customer_ask" || e.kind === "customer_shared") mentions.push({ at: e.at, roomKey: r.key, display: r.ref.display, by: "customer" });
       }
@@ -524,7 +540,7 @@ function ordinalWordOf(text: string): string {
 }
 /** その時刻より前の、こちらが一番新しく送った物件の束（資料・オススメ・見積・確認の結果を10分以内にまとめて）。送った順・同じ物件は1つ */
 function lastOursBatch(rooms: ReadonlyArray<PtRoom>, beforeAt: string): PtRoom[] {
-  const KINDS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_vacating"]);
+  const KINDS: ReadonlySet<PtEventKind> = new Set<PtEventKind>(["sent", "recommended", "estimate", "check_available", "check_alternative", "check_vacating"]);
   const evs = rooms.flatMap((r) => r.events.filter((e) => KINDS.has(e.kind) && e.by !== "inferred" && ms(e.at) < ms(beforeAt)).map((e) => ({ r, t: ms(e.at) })));
   if (!evs.length) return [];
   const last = Math.max(...evs.map((x) => x.t));
@@ -551,6 +567,7 @@ const CUSTOMER_SENT_REF_RE = /(?:私が|自分が|こちらから|最初に|前�
 const TOPIC_JA: Record<PtTopic, string> = { cost: "初期費用", discount: "礼金・費用の値下げ", detail: "詳細", vacancy: "募集状況", viewing: "内覧", photo: "写真", like: "気に入った様子", ng: "合わない様子", other: "このお部屋の話" };
 const KIND_JA: Record<PtEventKind, string> = {
   sent: "こちらが資料を送った", customer_shared: "お客様が送ってきた", customer_ask: "お客様", check_available: "確認の結果 募集中",
+  check_alternative: "確認の結果 別の部屋が募集中（聞かれた部屋の代わりにこちらが案内）",
   check_vacating: "確認の結果 退去予定", check_ended: "確認の結果 募集終了", estimate: "見積書を送った",
   staff_negotiating: "こちらが交渉中と伝えた", staff_checking: "こちらが確認中と伝えた", staff_result: "結果を伝えた",
   recommended: "こちらがオススメした（🌟）", viewing_offered: "内覧の候補日を出した", viewing_set: "内覧（待ち合わせ）が決まった",

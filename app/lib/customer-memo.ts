@@ -18,6 +18,7 @@
 // テスト: app/lib/__tests__/customer-memo.test.ts
 
 import { maskPII } from "./pii-mask";
+import { callCaptureEnabled } from "./staff-capture";
 import { applicationMaterialReason } from "./test-pii-guard";
 
 export type MemoKind =
@@ -31,12 +32,27 @@ export type MemoKind =
   | "style"        // 言葉づかい・距離感
   | "told"         // こちらが伝えた事（物件の事実・会社の説明・約束の中身）
   | "asked"        // 聞かれた重要な事と、その答え
+  | "call"         // 電話で分かった事（2026-10-14 37af1885・スタッフだけが AIX【電話する→電話終了後】から書く・200字まで・場面に関係なくブレインへ）
   | "decide_gap";  // 決め手の残り（あと1点で決まる・物件・解き方）。2026-10-09 竹内さん「メモとブレインの両方に同じ値で」＝決まった計算の行は customer-mindset.readDecideGaps（保存しない）・スタッフも手で足せる
 
 export const MEMO_KIND_JA: Record<MemoKind, string> = {
   core: "条件の芯", flexible: "妥協できる所", circumstance: "事情・予定", people: "決める人・同居", concern: "気にしている事",
-  like: "好き・気に入った", ng: "NG・嫌い", style: "言葉づかい", told: "こちらが伝えた事", asked: "聞かれた事", decide_gap: "決め手の残り",
+  like: "好き・気に入った", ng: "NG・嫌い", style: "言葉づかい", told: "こちらが伝えた事", asked: "聞かれた事", decide_gap: "決め手の残り", call: "電話で分かった事",
 };
+/** 電話で分かった事の1行の長さ（他の種類は60字） */
+export const CALL_MEMO_CHARS = 200;
+/** 電話の記録を場面に関係なく先頭に出す日数（2026-10-14 竹内さん「14日まで」・それより古い物は普通のメモ） */
+export const CALL_MEMO_LEAD_DAYS = 14;
+/**
+ * 2026-10-14 竹内さん「判断に使うが書かない」: 電話・内覧で分かったスタッフの記録は判断の材料。お客様への文に書き写さない
+ *   （お客様のメモ・内覧の内容の材料の文の末尾に付ける。viewing-report.ts も同じ文を使う）
+ */
+export const STAFF_RECORD_NO_COPY_RULE = "※電話・内覧のスタッフの記録は判断の材料（方向・一手・言い方を決めるため）。お客様への文にそのまま書き写さない。こちらの見立て・推測（「他社でも検討中」「見送りそう」「迷っている」等）は書かない。お客様が自分で言った事・電話や内覧で一緒に決めた事（日時・場所・物件）を受けて答えるのは可";
+/** 書き写さない指示を付けるか（STAFF_RECORD_NO_COPY=off で付けない＝旧） */
+export function staffRecordNoCopyOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.STAFF_RECORD_NO_COPY ?? "").trim().toLowerCase() !== "off";
+}
+const memoChars = (k: MemoKind) => (k === "call" ? CALL_MEMO_CHARS : 60);
 export const LLM_MEMO_KINDS: ReadonlyArray<MemoKind> = ["core", "flexible", "circumstance", "people", "concern", "like", "ng", "style", "told", "asked"];
 
 export type MemoOrigin = "llm" | "staff";
@@ -167,9 +183,14 @@ export function applyMemoOps(memo: StoredMemo, ops: ReadonlyArray<MemoOp>, o: { 
   for (const op of ops) {
     if (op.op === "add") {
       // decide_gap（決め手の残り）は決まった計算の行が正。手で足すのはスタッフだけ（DeepSeek の読み取りには出させない）
-      if (!(LLM_MEMO_KINDS.includes(op.kind) || (op.kind === "decide_gap" && o.origin === "staff")) || !op.text?.trim()) { refused++; continue; }
-      const text = clip(op.text, 60);
+      // 電話で分かった事（call）もスタッフだけ（DeepSeek は電話の中身を知らない）
+      if (!(LLM_MEMO_KINDS.includes(op.kind) || ((op.kind === "decide_gap" || op.kind === "call") && o.origin === "staff")) || !op.text?.trim()) { refused++; continue; }
+      const text = clip(op.text, memoChars(op.kind));
       const dup = items.find((x) => !x.retiredAt && x.kind === op.kind && (norm(x.text) === norm(text) || (norm(text).length >= 6 && (norm(x.text).includes(norm(text)) || norm(text).includes(norm(x.text))))));
+      // fix(review): 電話で分かった事は「記録だけする」→ 本文を書き足して文を作る、で前の行を含む長い中身が来る。旧は重なりとして捨てていた（書き足した分が消える）→ 前の行を書き換える
+      if (dup && op.kind === "call" && o.origin === "staff" && norm(text).length > norm(dup.text).length && norm(text).includes(norm(dup.text))) {
+        dup.text = text; dup.sourceAt = op.at ?? dup.sourceAt; dup.updatedAt = o.nowIso; applied++; continue;
+      }
       if (dup) { refused++; continue; }
       const ttl = op.ttlDays != null && op.ttlDays > 0 ? Math.min(op.ttlDays, 365) : null;
       const base = Date.parse(op.at ?? o.nowIso);
@@ -185,7 +206,7 @@ export function applyMemoOps(memo: StoredMemo, ops: ReadonlyArray<MemoOp>, o: { 
       const it = items.find((x) => x.id === op.id && !x.retiredAt);
       if (!it || (o.origin === "llm" && it.locked)) { refused++; continue; }
       if (op.op === "update") {
-        it.text = clip(op.text, 60); if (op.quote) it.sourceQuote = clip(op.quote, 30); if (op.at) it.sourceAt = op.at;
+        it.text = clip(op.text, memoChars(it.kind)); if (op.quote) it.sourceQuote = clip(op.quote, 30); if (op.at) it.sourceAt = op.at;
         if (op.certainty) it.certainty = op.certainty;
         it.updatedAt = o.nowIso; if (o.origin === "staff") { it.locked = true; it.origin = "staff"; }
       } else { it.retiredAt = o.nowIso; it.retiredReason = clip(op.reason, 60) || "外した"; }
@@ -372,8 +393,10 @@ export function buildCustomerMemoNote(i: { memo: StoredMemo; told: ReadonlyArray
   const scene = (i.scene && i.scene in SCENE_KINDS ? i.scene : "other") as SceneKey;
   const kinds = SCENE_KINDS[scene];
   const hidden = new Set(i.memo.hiddenRuleIds ?? []);
+  // 2026-10-14 竹内さん: 電話の記録（call）を先頭に出すのは14日まで。それより古い物は普通のメモとして（どの場面でも・数の上限の中で）
+  const callFresh = (x: MemoItem) => x.kind === "call" && i.nowMs - Date.parse(x.sourceAt ?? x.updatedAt) <= CALL_MEMO_LEAD_DAYS * 86_400_000;
   const items = liveItems(i.memo, i.nowMs)
-    .filter((x) => kinds.includes(x.kind))
+    .filter((x) => kinds.includes(x.kind) || (x.kind === "call" && callCaptureEnabled() && !callFresh(x)))
     .sort((a, b) => Number(!!b.locked) - Number(!!a.locked) || kinds.indexOf(a.kind) - kinds.indexOf(b.kind) || Date.parse(b.sourceAt ?? b.updatedAt) - Date.parse(a.sourceAt ?? a.updatedAt))
     .slice(0, i.maxItems ?? 8);
   const lines: string[] = [];
@@ -381,10 +404,18 @@ export function buildCustomerMemoNote(i: { memo: StoredMemo; told: ReadonlyArray
     const src = [x.sourceAt ? mdOf(x.sourceAt) : "", x.sourceQuote ? `「${x.sourceQuote}」` : ""].filter(Boolean).join(" ");
     lines.push(`- ${MEMO_KIND_JA[x.kind]}: ${x.text}${x.property ? `（${x.property}）` : ""}${x.certainty === "maybe" ? "（たぶん）" : ""}${x.locked ? "【スタッフのメモ】" : ""}${src ? ` ＝${src}` : ""}`);
   }
+  // 2026-10-14（37af1885）: 電話で分かった事（スタッフの記録）は場面に関係なく・数の上限の外で先頭に（新しい順・14日・3件＝竹内さん 10/14）。STAFF_CAPTURE_CALL=off で渡さない
+  const callLines = callCaptureEnabled()
+    ? liveItems(i.memo, i.nowMs).filter(callFresh)
+      .sort((a, b) => Date.parse(b.sourceAt ?? b.updatedAt) - Date.parse(a.sourceAt ?? a.updatedAt)).slice(0, 3)
+      .map((x) => `- 📞 ${mdOf(x.sourceAt ?? x.updatedAt)} 電話で分かった事【スタッフの記録・確定事実・会話に書かれていない】: ${x.text}`)
+    : [];
   const told = i.told.filter((t) => !hidden.has(toldRuleId(t.kind))).slice(0, 8);
   const toldLine = told.length ? `- もう伝えた事（種類と最後の日・回数）: ${told.map((t) => `${TOLD_JA[t.kind]} ${mdOf(t.lastAt)}${t.count > 1 ? `・${t.count}回` : ""}`).join("／")}` : "";
-  if (!lines.length && !toldLine) return "";
-  return `【お客様のメモ（人の営業のメモ帳・出所つき）】\n${[...lines, toldLine].filter(Boolean).join("\n")}\n→ メモの事情・芯・気にしている事を踏まえて方向を決める。もう伝えた事は言い直さず先へ進める（今回の答えにその中身が要る時・日付や物件を足して進める時だけ書く）`;
+  if (!lines.length && !toldLine && !callLines.length) return "";
+  // 2026-10-14 竹内さん「判断に使うが書かない」: スタッフの記録（電話）がある時は書き写さない指示を末尾に
+  const noCopy = staffRecordNoCopyOn() && (callLines.length > 0 || items.some((x) => x.kind === "call")) ? `\n${STAFF_RECORD_NO_COPY_RULE}` : "";
+  return `【お客様のメモ（人の営業のメモ帳・出所つき）】\n${[...callLines, ...lines, toldLine].filter(Boolean).join("\n")}\n→ メモの事情・芯・気にしている事を踏まえて方向を決める。もう伝えた事は言い直さず先へ進める（今回の答えにその中身が要る時・日付や物件を足して進める時だけ書く）${noCopy}`;
 }
 
 /** 画面の行（短い箇条・出所つき）。決まった計算の「もう伝えた事」も id 付きで出す（スタッフが外せる） */

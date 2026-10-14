@@ -6,6 +6,10 @@
 - **敷金の単位不明の印**: facts.deposit_unit/key_money_unit="unclear" を契約条件の材料に（route=confirm＋候補・言い切るか確認かはブレイン・allInMaterial にしない）・下書きの照らしは値を外す（「敷金2ヶ月」を根拠ありにしない）。DEPOSIT_UNIT_UNCLEAR=off。本番の印の行は今 0
 - 見積書送付の後の行を a43ade78（2通目はご査収のまま）と別の対象と明記／間取り図の読みはキッチンの形・向きを字がある時だけ（material-plan-v4・MATERIAL_PLAN_TEXT_ONLY=off）
 - 設計知見の案: scripts/kb-answer-brain-1014.json（区切り1〜6）・scripts/kb-ack-after-promise-brain-1014.json（b0be2568 の書き直し・決定 C のブレイン基準・単位不明）。DB には未投入
+## 📥 スタッフしか知らない事を AIX の入力からブレインへ（10/14 作る人・ブランチ capture-staff-info-1014・設計知見 37af1885）
+- **物差し** `scripts/audit-staff-info-capture.ts`（LLM なし）: 120日 物件カードの「別の部屋」7番＝次のブレインの今の物件がその部屋 0/6・台帳に募集中の出来事 0/7（状態 alternative を誰も読まない）／上の「別の部屋が募集してた」9番＝記録の名前 0／内覧後の挨拶 9番＝内覧の内容 0／電話をかけるボタン 19回・電話終了後 0回・電話の記録 0
+- **直し** `app/lib/staff-capture.ts`: ①台帳 check_alternative・状況 check_available（STAFF_CAPTURE_ALTERNATIVE=off）→ 台帳 0→7 ②上の別の部屋は本文の建物名＋『代わりに案内するお部屋』の号室で記録 ③内覧後: タップ（結果・気に入った点・気になった点・次の動き）→ viewing_report・生成の前に保存を待つ ④電話終了後: タップ＋『記録だけする』→ お客様のメモ kind=call（場面に関係なくブレイン・返信へ・STAFF_CAPTURE_CALL=off）。画面は NEXT_PUBLIC_STAFF_CAPTURE_UI=off で旧
+- DeepSeek 見本 `scripts/yuma-staff-capture-test.ts`（YUMA4・前後各1回・Claude 0）: 電話の後「当日どこに」→ 前は会話に無い物件の待ち合わせ・後は記録（駐車場）を踏まえる。別の部屋は前も M1 の空き状況で 502 を言えた番あり（揺れ）
 ## 🔎 読み取りの確信度のゲート（10/14 作る人・設計知見 56ecf24a「自信が無い時だけ深く調べる」・ブランチ reading-confidence-1014）
 - **印**（`app/lib/reading-confidence.ts`・数え `scripts/audit-reading-confidence.ts`＝送った画像の1回目 2,409件 × 売上サポの行）: 物件名＝会話の名前に寄らず、直しが迷った・地名が表に無い・似た名前2つ以上（13.7%・精度 77%。帳簿に無いだけは 37% に出るので印にしない）／号室＝1K・不明・5K3・3077・5字以上・階数超え（2.6%）／敷金＝1〜3 の整数（2.4%・礼金は 22% に出て当たりが少ないので印にしない・READING_CONFIDENCE_KEY_MONEY=on）。どれか 9.2%
 - **調べ方**（`reading-gate-server.ts`・sent-image-record の照合の後・今読んだ1件の画像だけ）: ① 売上サポの行（rent_observations）と照らす＝名前は賃料・㎡・間取りで1つの建物に決まり名前が似ている時（栄養→栄美・輝渡→難波）・敷金は同じ部屋の行（2→20,000円）② 決まらない欄だけ全体＋4分割の拡大で1回読み直す（`reading-recheck-server.ts`・DeepSeek・入力 約4,200・$0.00065/回）③ 敷金が決まらなければ facts.deposit_unit="unclear"＋候補（ブレインの材料に渡すのは返信側の担当＝読み側は印を付けるまで）

@@ -80,6 +80,7 @@ import { decideApplySubMode } from "./lib/apply-sub-mode";
 import { normalizePetWording } from "./lib/pet-wording";
 import { isTestOnlyConversation } from "./lib/test-conversations";
 import { brainPickFromMetas } from "./lib/brain-property-display";
+import { VIEWING_MOOD_OPTIONS, VIEWING_LIKE_OPTIONS, VIEWING_CONCERN_OPTIONS, VIEWING_NEXT_OPTIONS, composeViewingReport, parseViewingReport, staffCaptureUiEnabled, type ViewingTaps } from "./lib/staff-capture";
 
 // LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
 // 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
@@ -1064,6 +1065,8 @@ export default function Home() {
   // 2026-09-15 竹内（yasuki 事例）: 内覧の内容（内覧に行ったスタッフが分かったこと）。お客様には送らず、この後の返信・AIX・ブレインの前提にする
   const [greetingViewingReport, setGreetingViewingReport] = useState("");
   const [greetingViewingReportSaved, setGreetingViewingReportSaved] = useState<string | null>(null);
+  // 2026-10-14（37af1885 取りこぼしの無い設計）: 内覧の結果のタップ（気に入った・迷っている・見送り・気になった点・次の動き）。内覧の内容の行に組んで保存（staff-capture.ts）
+  const [greetingViewingTaps, setGreetingViewingTaps] = useState<ViewingTaps>({});
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   // 2026-09-24: 売上サポから来た時の property_pickups 行 ID（aixInitialSendImages と同じ並び）
   const [aixInitialPickupIds, setAixInitialPickupIds] = useState<number[]>([]);
@@ -6695,7 +6698,7 @@ export default function Home() {
   // 内覧前・後挨拶を生成してreplyDraftに反映
   // 内覧後を選んだ時: 直近3日に入れた内覧の内容があれば入力欄に戻す（作り直しで入力が消えない・同じ内容を二重に保存しない）
   const prefillGreetingViewingReport = async (conversationId: string) => {
-    setGreetingViewingReport("");
+    setGreetingViewingReport(""); setGreetingViewingTaps({});
     setGreetingViewingReportSaved(null);
     try {
       const r = await fetch(`/api/viewing-report?conversation_id=${encodeURIComponent(conversationId)}`, { headers: INTERNAL_AUTH_HEADER });
@@ -6703,7 +6706,14 @@ export default function Home() {
       if (!d.ok || !d.report) return;
       if (Date.now() - Date.parse(d.report.reportedAt) > 3 * 86_400_000) return;
       if (selectedIdRef.current !== conversationId) return;
-      setGreetingViewingReport((cur) => cur || d.report!.report);
+      if (staffCaptureUiEnabled()) {
+        // 保存した内容のタップの行はタップに戻し、残りを自由入力に（作り直しで重ならない）
+        const parsed = parseViewingReport(d.report.report);
+        setGreetingViewingTaps((cur) => (Object.keys(cur).length ? cur : parsed.taps));
+        setGreetingViewingReport((cur) => cur || parsed.free);
+      } else {
+        setGreetingViewingReport((cur) => cur || d.report!.report);
+      }
       setGreetingViewingReportSaved(d.report.report);
     } catch { /* 初期値が入らないだけ */ }
   };
@@ -6731,7 +6741,10 @@ export default function Home() {
       }
 
       // 内覧後 → 内覧の内容をその日の内覧の記録に書く（実施済みにする）。生成とは別に保存する（下書きを消しても内覧の事実は残る）
-      const reportText = greetingViewingMode === "after" ? greetingViewingReport.trim() : "";
+      // 2026-10-14（37af1885）: タップの結果（内覧の結果・気に入った点・気になった点・次の動き）を内覧の内容の頭に組む
+      const reportText = greetingViewingMode === "after"
+        ? (staffCaptureUiEnabled() ? composeViewingReport(greetingViewingTaps, greetingViewingReport) : greetingViewingReport).trim()
+        : "";
       const reportSave = reportText && reportText !== greetingViewingReportSaved
         ? fetch("/api/viewing-report", {
             method: "POST",
@@ -6747,6 +6760,10 @@ export default function Home() {
             return !r.ok || !d.ok ? (d.error ?? `HTTP ${r.status}`) : null;
           }).catch((e: unknown) => (e instanceof Error ? e.message : String(e)))
         : null;
+
+      // 2026-10-14（37af1885）: 保存を待ってから文を作る（旧は保存と生成が同時に走り、作る文の材料に内覧の内容が届かない事があった）
+      //   fix(review): 保存が遅い時に挨拶の生成を止めない（8秒で先へ・保存は裏で続き、結果は下の await で拾う）
+      if (reportSave && staffCaptureUiEnabled()) await Promise.race([reportSave, new Promise<void>((res) => setTimeout(res, 8000))]);
 
       const afterTypeForApi = greetingViewingAfterType === "confirm"
         ? (greetingViewingConfirmType === "estimate" ? "confirm_estimate" : "confirm_freeword")
@@ -6828,7 +6845,7 @@ export default function Home() {
       setGreetingViewingSearchType(null);
       setGreetingViewingPropertyInput("");
       setGreetingViewingFreeword("");
-      setGreetingViewingReport("");
+      setGreetingViewingReport(""); setGreetingViewingTaps({});
       setGreetingViewingReportSaved(null);
     } catch (err) {
       console.error("[greetingViewing]", err);
@@ -9478,7 +9495,7 @@ export default function Home() {
                     setActiveAixFlow(brainAction);
                     setGreetingViewingMode(null);
                     setGreetingViewingDate(""); setGreetingViewingTime("");
-                    setGreetingViewingReport(""); setGreetingViewingReportSaved(null);
+                    setGreetingViewingReport(""); setGreetingViewingTaps({}); setGreetingViewingReportSaved(null);
                     setShowGreetingViewingPicker(true);
                   } else if (Object.keys(AIX_ACTION_META).includes(brainAction)) {
                     setActiveAixFlow(brainAction);
@@ -13919,7 +13936,7 @@ export default function Home() {
       {showGreetingViewingPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => { setShowGreetingViewingPicker(false); setActiveAixFlow(null); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingAfterType(null); setGreetingViewingConfirmType(null); setGreetingViewingSearchType(null); setGreetingViewingPropertyInput(""); setGreetingViewingFreeword(""); setGreetingViewingReport(""); setGreetingViewingReportSaved(null); }}
+          onClick={() => { setShowGreetingViewingPicker(false); setActiveAixFlow(null); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingAfterType(null); setGreetingViewingConfirmType(null); setGreetingViewingSearchType(null); setGreetingViewingPropertyInput(""); setGreetingViewingFreeword(""); setGreetingViewingReport(""); setGreetingViewingTaps({}); setGreetingViewingReportSaved(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -14013,6 +14030,40 @@ export default function Home() {
                 <div className="mt-3 mb-4 rounded-2xl border border-[#B2DFDB] bg-[#F3FBFA] px-3.5 py-3">
                   <p className="text-[12px] font-bold text-[#00796B]">内覧の内容（内覧に行ったスタッフが分かったこと）</p>
                   <p className="mt-0.5 mb-2 text-[10.5px] leading-snug text-[#4B6B67]">お客様には送られません。この後の返信・AIX・ブレインが前提として使います</p>
+                  {/* 2026-10-14（37af1885 取りこぼしの無い設計）: 内覧の結果をタップで（入れなくても挨拶は送れる） */}
+                  {staffCaptureUiEnabled() && (() => {
+                    const chip = (on: boolean) => `rounded-full border px-2.5 py-1 text-[11.5px] font-bold transition ${on ? "border-[#00796B] bg-[#00796B] text-white" : "border-[#B2DFDB] bg-white text-[#00796B]"}`;
+                    const toggle = (k: "likes" | "concerns" | "next", v: string) => setGreetingViewingTaps((t) => { const cur = t[k] ?? []; return { ...t, [k]: cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v] }; });
+                    const groups: Array<{ k: "likes" | "concerns" | "next"; label: string; opts: readonly string[] }> = [
+                      { k: "likes", label: "気に入った点", opts: VIEWING_LIKE_OPTIONS },
+                      { k: "concerns", label: "気になった点", opts: VIEWING_CONCERN_OPTIONS },
+                      { k: "next", label: "次の動き", opts: VIEWING_NEXT_OPTIONS },
+                    ];
+                    return (
+                      <div className="mb-2 flex flex-col gap-2">
+                        <div>
+                          <p className="mb-1 text-[11px] font-bold text-[#374151]">内覧の結果</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {VIEWING_MOOD_OPTIONS.map((m) => (
+                              <button key={m} type="button" className={chip(greetingViewingTaps.mood === m)}
+                                onClick={() => setGreetingViewingTaps((t) => ({ ...t, mood: t.mood === m ? null : m }))}>{m}</button>
+                            ))}
+                          </div>
+                        </div>
+                        {groups.map((g) => (
+                          <div key={g.k}>
+                            <p className="mb-1 text-[11px] font-bold text-[#374151]">{g.label}<span className="font-normal text-[#9CA3AF]">（複数可）</span></p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {g.opts.map((v) => (
+                                <button key={v} type="button" className={chip((greetingViewingTaps[g.k] ?? []).includes(v))} onClick={() => toggle(g.k, v)}>{v}</button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        <p className="text-[10.5px] text-[#4B6B67]">足りない事（誰が決めるか・気に入った部屋・細かい事情）は下に書いてください</p>
+                      </div>
+                    );
+                  })()}
                   <textarea
                     value={greetingViewingReport}
                     onChange={(e) => setGreetingViewingReport(e.target.value)}
@@ -14021,7 +14072,7 @@ export default function Home() {
                     maxLength={600}
                     className="w-full rounded-xl border border-[#D1D5DB] bg-white px-3 py-2.5 text-[13px] leading-relaxed focus:border-teal-400 focus:outline-none resize-none"
                   />
-                  {greetingViewingReportSaved && greetingViewingReport.trim() === greetingViewingReportSaved && (
+                  {greetingViewingReportSaved && (staffCaptureUiEnabled() ? composeViewingReport(greetingViewingTaps, greetingViewingReport).trim() : greetingViewingReport.trim()) === greetingViewingReportSaved && (
                     <p className="mt-1 text-[10.5px] text-[#00796B]">✓ 保存済みの内容です（書き換えると保存し直します）</p>
                   )}
                 </div>
@@ -15281,7 +15332,7 @@ export default function Home() {
                   { color: "#9C27B0", label: "内覧日を調整する", actionType: "viewing_invite", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込（誘導・決定）", actionType: "application_push", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
-                  { color: "#00796B", label: "挨拶（内覧前・内覧後）", actionType: "greeting_viewing", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化・内覧後は内覧の内容を記録", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingReport(""); setGreetingViewingReportSaved(null); setShowGreetingViewingPicker(true); } },
+                  { color: "#00796B", label: "挨拶（内覧前・内覧後）", actionType: "greeting_viewing", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化・内覧後は内覧の内容を記録", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingReport(""); setGreetingViewingTaps({}); setGreetingViewingReportSaved(null); setShowGreetingViewingPicker(true); } },
                   { color: "#546E7A", label: "確認した（条件・交渉）", actionType: "acknowledge_result", sub: "管理会社・代表・オーナー・近隣月極の確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
                   { color: "#607D8B", label: "確認します", actionType: "acknowledge_check", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
                   { color: "#8E24AA", label: "追客する", actionType: "followup_revive", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); setShowFollowupPicker(true); } },

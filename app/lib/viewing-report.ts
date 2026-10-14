@@ -6,6 +6,7 @@
 //   → 下書き「息子様からのご返答お待ちしております」（連絡してくるのはお客様ご本人）。ブレインも「息子（保証人候補）に代理契約可否を確認する必要」
 //   と読み違えた（代理契約できることは伝え済み）。対面で分かった事情（誰が契約するか・誰と相談するか）は会話に書かれず、どこにも残っていなかった
 import { jstMD } from "./jst-date";
+import { STAFF_RECORD_NO_COPY_RULE, staffRecordNoCopyOn } from "./customer-memo";
 
 export const VIEWING_REPORT_MAX_CHARS = 600;
 /** 渡す内覧の内容の件数と古さの上限 */
@@ -56,7 +57,9 @@ export function viewingReportBlockForBrain(reports: ViewingReport[], nowMs: numb
   const rs = recentViewingReports(reports, nowMs);
   if (rs.length === 0) return "";
   return `\n【内覧に行ったスタッフの記録（確定事実・会話に書かれていない事情はここが正）】\n${reportLines(rs)}\n`
-    + `※お客様の発言はこの事情（誰が契約するか・誰と相談しているか・気に入った物件・気にしている点）を踏まえて読む。latent_intent・reply_direction・closing_strategy・next_steps をこの記録と矛盾させない`;
+    + `※お客様の発言はこの事情（誰が契約するか・誰と相談しているか・気に入った物件・気にしている点）を踏まえて読む。latent_intent・reply_direction・closing_strategy・next_steps をこの記録と矛盾させない\n`
+    // 2026-10-14 竹内さん「判断に使うが書かない」: reply_direction に記録の見立て（「迷っている」「見送りそう」）を文に書く指示を入れない
+    + (staffRecordNoCopyOn() ? `${STAFF_RECORD_NO_COPY_RULE}（reply_direction に記録の見立てを文に書く指示を入れない）` : "");
 }
 
 /** 返信生成・AIX の文面生成に渡す */
@@ -65,5 +68,6 @@ export function viewingReportNoteForReply(reports: ViewingReport[], nowMs: numbe
   if (rs.length === 0) return "";
   return `\n\n【🏠 内覧に行ったスタッフが分かったこと（スタッフの記録・確定事実）】\n${reportLines(rs)}\n`
     + `・会話に書かれていない事情（誰が契約するか・誰と相談しているか・気に入った物件・気にしている点）はこの記録が正。お客様の今回の発言はこの事情を踏まえて読む（例:「息子に確認して折り返します」なら、連絡してくるのはお客様ご本人）\n`
-    + `・記録の文をそのまま書き写さない。お客様が言っていない評価・こちらの見立ては本文に書かない`;
+    + `・記録の文をそのまま書き写さない。お客様が言っていない評価・こちらの見立ては本文に書かない\n`
+    + (staffRecordNoCopyOn() ? `・${STAFF_RECORD_NO_COPY_RULE.replace(/^※/, "")}` : "");
 }
