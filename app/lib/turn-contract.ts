@@ -111,7 +111,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - 人生の出来事（出産・結婚・別れ・転職・同居 等）を話した時は、決まり文句で受けて終わらず、新しい状態（住む人数・広さ・時期・審査）の変化として読み、それに合わせた確かめ直し・探し方を asks の主にする（条件が変わるなら登録の条件そのものを直す）。出産・家族が増える時はこちらから広さ・間取りを聞き直す（竹内さん 10/09）。
 - feeling: 不安・恐縮・謝罪・急ぎ・落胆がある時は kind を付け、受ける一言が要るなら acknowledge=true。
 - proposals: お客様がすぐ来られない事情（今週は無理・出張中・予定が詰まって・遠方）があり物件が刺さっている時の「お申込みでお部屋を抑える」「オンライン内見・室内の撮影」の申し出は proposals に入れる（返信で消さない・「ご内覧可否確認」に置き換えない）。内覧したいだけの依頼は aix=viewing_invite（確認の約束にしない）。
-- must_not: 聞かれていない事・この場面で言うと外れる事（例「見積書」「申込誘導」「管理会社に確認」）。${ackFormBrainEnabled() ? `
+- must_not: 聞かれていない事・この場面で言うと外れる事（この番の会話から書く）。${ackFormBrainEnabled() ? `
 - ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}`;
 
 // ── ブレインの出力を読む ─────────────────────────────────────────────
@@ -302,7 +302,8 @@ export function issueContradictsContract(issue: { code: string; message?: string
   if (!c || c.source !== "brain" || !turnContractFinalCheckEnabled(env)) return false;
   // 2026-10-13: 本質そのものを物差しにした指摘（final-check-brain-align.contractConfirmMiss）は本質とぶつからない
   if (issue.code === "CONTRACT_UNASKED_CONFIRM" || issue.code === "BRAIN_ALREADY_SAID") return false;
-  const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH)$/;
+  // 2026-10-14 区切り2（#8）: 閉じる番に文を足させる骨格の指摘（EMPTY_CLOSER・SPLIT_ACK_REPLY・PROMISE_ECHO_MISSING）も同じ（足すと閉じる番が開く）
+  const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH|EMPTY_CLOSER|SPLIT_ACK_REPLY|PROMISE_ECHO_MISSING)$/;
   if (c.closeOnly && ADD_CODES.test(issue.code)) return true;
   const msg = `${issue.message ?? ""} ${issue.evidence ?? ""} ${issue.suggestion ?? ""}`;
   // 2026-10-13（了承の返事はブレインに任せる）: ブレインが待ちの形の1文と決めた番は、その短い1文を言い直し・二重の宣言と見る指摘を書き直しに渡さない

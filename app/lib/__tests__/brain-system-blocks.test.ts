@@ -56,7 +56,7 @@ async function main() {
     const base = brainRequestBase(f) as Record<string, unknown>;
     t("brainRequestBase に tools・temperature キーが無い・thinking.type \"disabled\"・model \"claude-sonnet-5\"", !("tools" in base) && !("temperature" in base) && (base.thinking as { type: string }).type === "disabled" && base.model === BRAIN_MODEL && BRAIN_MODEL === "claude-sonnet-5");
     t("brainRequestBase のキーは model / thinking / system の3つだけ", Object.keys(base).sort().join(",") === "model,system,thinking");
-    t("dynamicText は4節を \\n\\n で結合（先頭 \\n を trim・空節は省略）", f.dynamicText.startsWith("【絶対ルール") && f.dynamicText.includes("\n\n【重要原則】") && f.dynamicText.includes("\n\n【線引きルール") && f.dynamicText.includes("\n\n【成約につながりやすいアクション"), f.dynamicText.slice(0, 200));
+    t("dynamicText は4節を \\n\\n で結合（先頭 \\n を trim・空節は省略）", f.dynamicText.startsWith("【絶対ルール") && (f.dynamicText.includes("\n\n【重要原則】") || f.dynamicText.includes("\n\n【⚠️ 確認済みの決まり")) && f.dynamicText.includes("\n\n【線引きルール") && f.dynamicText.includes("\n\n【成約につながりやすいアクション"), f.dynamicText.slice(0, 200));
     t("線引きルール: action_type 付き → AIX・null / generate_reply → 自動返信禁止", f.boundaryText.includes("初期費用の質問 → AIX: estimate_sheet") && f.boundaryText.includes("内覧日の確定 → 自動返信禁止") && f.boundaryText.includes("雑談 → 自動返信禁止"));
     t("勝率表: 成約率 xx.x% (n=…) の形", f.actionWinRateText.includes("- property_send: 成約率31.0% (n=120)"));
   }

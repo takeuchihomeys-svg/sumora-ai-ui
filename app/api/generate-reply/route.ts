@@ -111,6 +111,9 @@ import {
 } from "@/app/lib/validate-reply";
 // 2026-09-12 竹内方針C: 呼び名のサーバー側決定（DB名・履歴・is_aix_generated）。check-reply と同じ関数
 import { resolveAddressNameForConversation } from "@/app/lib/address-name-server";
+import { createExitRecorder } from "@/app/lib/exit-edits";
+import { isEvaluativePrinciple, principleEvalFilterEnabled } from "@/app/lib/principle-eval";
+import { estimateRedeclareArmed, vacancyRedeclareArmed, brainKeepsRedeclare, logMatchesCurrent, ESTIMATE_REDECLARE_WINDOW_MS } from "@/app/lib/redeclare-gate";
 import { runFinalCheck, runFinalCheckWithRevision, runDeterministicChecks, sha1, findUnanchoredConditionEchoes, skeletonBlockCodes, cellElementGaps, type CheckResult, type CheckIssue } from "@/app/lib/final-check";
 // 2026-10-02 竹内「ファイナルチェックが必要かどうかの監査」: 要否の判定（既定は影の運用＝記録だけ・FINAL_CHECK_GATE=on で省く）
 import { runFinalCheckGated, type FinalCheckGateLog } from "@/app/lib/final-check-gated";
@@ -2378,7 +2381,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         // hypothesis_status が null の行は hypothesis 制度導入前のlegacy（人手キュレーション）として信頼扱いで許可
         const criticalVector = filteredResults.filter(r =>
           r.importance >= 8 && r.importance < 10 && r.category === "principle" &&
-          (r.hypothesis_status === "confirmed" || r.hypothesis_status == null)
+          (r.hypothesis_status === "confirmed" || r.hypothesis_status == null) &&
+          // 2026-10-14 区切り4 #9: 学習 cron の評価文（「原則：…」）は RAG の決まりの枠に入れない（PRINCIPLE_EVAL_FILTER=off）
+          !(principleEvalFilterEnabled() && isEvaluativePrinciple(r))
         ).slice(0, 16);
         const critical = criticalVector;
         // patternバケット一本化: closed_won_analysis（成約実例）はhypothesis制限免除・全体上限8件
@@ -4147,10 +4152,19 @@ async function handleGenerateReply(req: NextRequest) {
       ? await loadContractTermsAnswerWithin(8_000, { conversationId, customerText: message ?? "", excludeTopics: procedureAnswer?.plan.moveIn ? ["move_in"] : [] })
       : null;
     if (contractTerms) console.info("[contract-terms]", JSON.stringify({ conversationId, target: contractTerms.target.name, routes: contractTerms.routes.map((r) => ({ topic: r.topic, route: r.route, why: r.why })), source: contractTerms.source }));
+    // 2026-10-14 区切り3（竹内さん「物件資料に書いてある事を聞かれたら、資料を物件検索ブレインで解析して答える」）:
+    //   間取り・水回りの配置・広さ・階・向き・収納・キッチンの質問（網）の時だけ、対象の物件の読み取り（送った資料の書き写し・売上サポの読み・その場の間取り図の読み）を材料に。
+    //   答えるか確認の約束にするかはブレイン（本質）が決める。ブレインの側で読んだ物は保存してあるのでここは引くだけ（無ければ同じ読みを1回）。MATERIAL_ANSWER=off で止まる
+    const materialAnswer = !isTemplateOptimize && !postApplyConversation && !!conversationId
+      ? await import("@/app/lib/material-answer-server").then((m) => m.loadMaterialAnswerWithin(10_000, { conversationId: conversationId!, customerText: message ?? "", target: brainFreshForMessage && brainMeta?.current_property ? { name: brainMeta.current_property, roomNo: null } : null })).catch(() => null)
+      : null;
+    if (materialAnswer) console.info("[material-answer]", JSON.stringify({ conversationId, topics: materialAnswer.question.topics, log: materialAnswer.log }));
     // 資料に書いてある値（退去予定・入居時期の言い切りの免除に使う・validate-reply.materialGroundsAssertion）
     const contractMaterialFacts = [
       ...(contractTerms?.routes ?? []).filter((r) => r.route === "material").flatMap((r) => r.facts),
       ...(procedureAnswer?.plan.moveIn?.route === "material" ? procedureAnswer.plan.moveIn.lines : []),
+      // 2026-10-14 区切り3: 物件資料の読み取り（間取り・水回り等）
+      ...(materialAnswer?.properties ?? []).flatMap((p) => [...p.planLines, ...p.textLines]),
       // ブレインが退去予定日から内覧できる日を決めた時（rule:viewing_vacating_date_known）の文（ブレインの決定論が作った文・YUMA で判定役が AIX_BOUNDARY_MOVEIN として日付を消した）
       ...(/「([0-9０-９]{1,2}月[^」]{0,8}退去予定のため、[^」]{1,12}以降にご内覧可能です！！)」/.exec(String(brainMeta?.reply_direction ?? ""))?.slice(1, 2) ?? []),
       // 2026-10-08 お金の時期の B（ブレインが申込へを外した番）: 判定役が「申込したいのに時期を伝えて待つ」を STATE_REGRESSION で書き換えた（YUMA）→ 決まりと文を渡す
@@ -5859,6 +5873,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         // 2026-09-30 みこと事例: 手続きの質問（審査・入居までの期間と流れ・必要書類）＝流れの事実と資料の入居時期（質問の時だけ）
         + (procedureAnswer?.note ? `\n\n${procedureAnswer.note}` : "")
         + (contractTerms?.note ? `\n\n${contractTerms.note}` : "")
+        // 2026-10-14 区切り3: 物件資料の読み取り（間取り・水回りの配置・広さ等の質問の時だけ）
+        + (materialAnswer?.note ? `\n\n${materialAnswer.note}` : "")
         // 2026-10-08 竹内さん「連投の依頼ごと全て把握する」: 今の連投の依頼・質問が2件以上の時だけ一覧（request-ledger・REQUEST_LEDGER=off）
         + (requestListNote ? `\n\n${requestListNote}` : "")
         // 2026-10-08 お客様のメモ（customer-memo）
@@ -6041,6 +6057,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // 2026-10-09 竹内「単語をつなげただけのような部分がたまにある」: 生成の直後の文（出口・最終チェックの前）を残す（本文は変えない・DRAFT_RAW_GEN_LOG=off で止める）
             const rawGenerations: string[] = [];
             let lastGateEdits: Array<{ rule: string; before: string; after: string | null; reversible: boolean }> = [];
+            // 2026-10-14 区切り1（記録の穴）: 出口ごとの変化（消えた文・足された文）を gen1・gen2・最終チェックの後まで残す（本文は変えない・EXIT_EDITS_LOG=off）
+            const exitRec = createExitRecorder();
             let lastValidateIssues: string[] = [];
             let genIndex = 0;
             const gateCheckCtx = {
@@ -6052,6 +6070,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               ledger: ledgerForCtx ?? undefined, ledgerStrict: ledgerActive, isDeliverableReply: isAixPropertySendMode,
               nameAliases: addressName.aliases,
             };
+            // 2026-10-14 区切り2（出口のゲートをブレイン基準に・redeclare-gate.ts）: 見積作成宣言の繰り返し・空室確認の再宣言の旗を物件ごと・時間の窓・費用の質問で決め、
+            //   ブレインが約束（か AIX）を決めた番の文は消さない。戻す REDECLARE_GATE_BRAIN=off
+            const redeclareNow = Date.now();
+            const redeclareProps = brainFreshForMessage ? [...(brainMeta?.current_properties ?? []), brainMeta?.current_property ?? ""].filter((s): s is string => !!s && !!s.trim()) : [];
+            const redeclareLogs = recentAixRows.map((r) => ({ aix_type: r.aix_type ?? null, created_at: r.created_at ?? null, property_names: (r as { property_names?: string[] | null }).property_names ?? null, estimate_sent: (r as { estimate_sent?: boolean | null }).estimate_sent ?? null, check_pattern: r.check_pattern ?? null }));
+            const estimateGate = estimateRedeclareArmed({
+              legacy: estimatePromised, logs: redeclareLogs, now: redeclareNow, currentProperties: redeclareProps,
+              costAsk: asksCost || customerAskingAboutPrice || CUSTOMER_ESTIMATE_REQUEST_RE.test(intentMessage),
+              staffPromisedEstimate,
+            });
+            const estimateSentSameProperty = redeclareLogs.some((l) => (l.aix_type === "estimate_sheet" || l.estimate_sent) && redeclareNow - Date.parse(l.created_at ?? "") <= ESTIMATE_REDECLARE_WINDOW_MS && logMatchesCurrent(l.property_names, redeclareProps));
+            const estimateSentNames = [...new Set(redeclareLogs.filter((l) => (l.aix_type === "estimate_sheet" || l.estimate_sent) && redeclareNow - Date.parse(l.created_at ?? "") <= ESTIMATE_REDECLARE_WINDOW_MS).flatMap((l) => l.property_names ?? []))];
+            const vacancyGate = vacancyRedeclareArmed({ legacy: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), logs: redeclareLogs, now: redeclareNow, currentProperties: redeclareProps });
+            const redeclareKeep = brainKeepsRedeclare(turnContract, replyAixPre?.action ?? null);
+            if (estimatePromised !== estimateGate.armed || !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck) !== vacancyGate.armed || redeclareKeep.estimate || redeclareKeep.vacancy) {
+              console.info("[redeclare-gate]", JSON.stringify({ conversationId, estimate: estimateGate, vacancy: vacancyGate, keep: redeclareKeep }));
+            }
             const runValidate = (openingFixed: string, aixGates: boolean): { cleaned: string; issues: string[] } => {
               const vOpts = {
                 aixGates, customerName, lineDisplayName, estimatePromised, customerMessage: message, lastStaffMsg: lastStaffMsgForSearch,
@@ -6074,6 +6109,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // 2026-10-09: 本質（ブレイン）が決めた約束の文も消さない（turn-contract.contractProtectsSentence・TURN_CONTRACT_PROTECT=off）
                 protect: (s: string) => isCellRequiredSentence(s, pairContext) || contractProtectsSentence(turnContract, s),
                 aixVacancyDone: !!(aixDone?.vacancyCheck || aixDone?.mgmtCheck), aixPickupDone: !!aixDone?.propertySend, materialFacts: contractMaterialFacts,
+                // 2026-10-14 区切り2: 再宣言の2つのゲートだけの旗とブレインの免除（置換文の選び方は今まで通り estimatePromised・aixVacancyDone）
+                estimateRedeclareArmed: estimateGate.armed, estimateSentSameProperty, estimateSentNames, estimateDoublePromise: estimateGate.reason === "staff_promised",
+                vacancyRedeclareArmed: vacancyGate.armed, brainKeepEstimate: redeclareKeep.estimate, brainKeepVacancy: redeclareKeep.vacancy,
                 // 2026-09-26（穴3）: 決まった内覧の日時の復唱は「待ち合わせ確定」の置換（詳細はご連絡）にしない
                 scheduledViewingHours,
                 // 2026-10-02 ⑫: 会話に既に出ている金額（こちらが送った物件の紹介・見積書の文）の引用は見積金額内訳ゲートで止めない（isGroundedAmountSentence）
@@ -6081,6 +6119,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 groundText: [...recentMessages.map((m) => m.text ?? ""), ...(contractMaterialFacts ? [contractMaterialFacts] : [])].join(GROUND_SEP),
               };
               let vr = validateAndClean(openingFixed, vOpts);
+              const exitG = genIndex;
               if (aixGates && vr.gateEdits.some((e) => e.reversible)) {
                 try {
                   // 多重集合で比較（同じ要素が別に既に欠けていても、ゲートの削除で1件増えたら検知する）
@@ -6105,22 +6144,23 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               }
               lastGateEdits = vr.gateEdits;
               lastValidateIssues = vr.issues;
+              exitRec.record(exitG, "validateAndClean", openingFixed, vr.cleaned, vr.issues.slice(0, 8));
               // 2026-09-16 竹内（𝒮 さん事例）「詳細明日等適当なことを俺は入れない」:
               //   何を届けるか決まっていない先送り（「当日迷われないよう明日また詳細ご案内させて頂きます」）を落とす。
               //   何を・いつ・どうするかが決まっている約束（「明日午前中に初期費用詳細確認させて頂き御見積しお送りします」）は残る
-              const deferralStripped = stripVagueDeferral(vr.cleaned);
+              const deferralStripped = exitRec.record(exitG, "stripVagueDeferral", vr.cleaned, stripVagueDeferral(vr.cleaned));
               if (deferralStripped !== vr.cleaned) console.info("[viewing-access] 中身のない先送りを削除");
               // 2026-09-16 竹内（YUYA 事例）「SUUMO以外のポータルサイトはオトリ広告等があるので、このような文を生成する。聞かれた場合」:
               //   ポータルの掲載について聞かれた時の説明はスタッフの実送信そのままなので、LLM に書かせず決定論で足す
-              const withPortal = contractSkipsInsertion(turnContract, "portal") ? deferralStripped : ensurePortalNotice(deferralStripped, portalVerdict);
+              const withPortal = exitRec.record(exitG, "ensurePortalNotice", deferralStripped, contractSkipsInsertion(turnContract, "portal") ? deferralStripped : ensurePortalNotice(deferralStripped, portalVerdict));
               if (withPortal !== deferralStripped) console.info("[portal-notice]", JSON.stringify({ conversationId, kind: portalVerdict.kind, portal: portalVerdict.portalLabel }));
               // 2026-09-17 竹内（あや事例）「ご案内させて頂きますとは、意味がわからない文なので、いれない。無理やり入れない」:
               //   案内する対象が無いまま「ご案内させて頂きますので、」が締めの文に混ざったら、その節だけ落とす（app/lib/reply-phrasing.ts）
-              const guidanceFixed = stripPointlessGuidance(withPortal);
+              const guidanceFixed = exitRec.record(exitG, "stripPointlessGuidance", withPortal, stripPointlessGuidance(withPortal));
               if (guidanceFixed !== withPortal) console.info("[reply-phrasing] 対象の無いご案内を削除", JSON.stringify({ conversationId }));
               // 2026-09-18 竹内（ゆうこ事例）「情報ではなくて、ここでは点と答える」:
               //   「懸念となる情報はございません」→「懸念となる点はございません」（実送信0件の形だけ直す）
-              const wordingFixed = fixAbsenceWording(guidanceFixed);
+              const wordingFixed = exitRec.record(exitG, "fixAbsenceWording", guidanceFixed, fixAbsenceWording(guidanceFixed));
               if (wordingFixed !== guidanceFixed) console.info("[reply-phrasing] 無い事を言う「情報」を「点」に", JSON.stringify({ conversationId }));
               // 2026-09-19 竹内（ゆうこ事例）「ここで物件名いれると内覧する物件名間違えてしまう可能性があるのでリスクがある」:
               //   こちらが複数のお部屋を送っていて、お客様がまだどれとも言っていない受け止めの文で、
@@ -6134,26 +6174,28 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               if (propNameGuard.removed.length > 0) {
                 console.info("[property-name-guard] 絞れていない物件名を削除", JSON.stringify({ conversationId, removed: propNameGuard.removed }));
               }
-              const propNameFixed = propNameGuard.text;
+              const propNameFixed = exitRec.record(exitG, "guardPropertyNames", wordingFixed, propNameGuard.text, propNameGuard.removed.map(String));
               // 2026-09-17 竹内（慶次事例）: 謝っている場面の冒頭「かしこまりました！！」を受け止めの言葉に置き換える
-              const apologyFixed = ensureApologyOpener(propNameFixed, apologyVerdict.apology);
+              const apologyFixed = exitRec.record(exitG, "ensureApologyOpener", propNameFixed, ensureApologyOpener(propNameFixed, apologyVerdict.apology));
               if (apologyFixed !== propNameFixed) console.info("[apology-ack] 冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
               // 2026-09-17 竹内（a🤫 事例）「複数の 等いれない」: 物件名を並べた直後の数のまとめ語を落とす
               //   （実データ365日・募集状況の確認を宣言した実送信208通のうち「複数の物件／複数のお部屋」は0件）
               const quantFixed = stripVagueQuantifier(apologyFixed);
+              exitRec.record(exitG, "stripVagueQuantifier", apologyFixed, quantFixed.text);
               if (quantFixed.removed.length > 0) console.info("[vague-quantifier] 数のまとめ語を削除", JSON.stringify({ conversationId, removed: quantFixed.removed }));
               // 2026-09-18 竹内（ゆうこ事例）: 今日2回目の「全力でサポート」は落とし、締めが無くなったら引き続き何卒〜を足す
               const fsFixed = stripRepeatedFullSupport(quantFixed.text, fullSupportSentToday);
+              exitRec.record(exitG, "stripRepeatedFullSupport", quantFixed.text, fsFixed.text);
               if (fsFixed.removed.length > 0) console.info("[full-support] 今日2回目の全力サポートを削除", JSON.stringify({ conversationId, removed: fsFixed.removed }));
               // 2026-10-02 ⑫: 行末の空白（半角・全角・タブ）を落とす（見えない・人の手打ちでも 7,078通中58通だけ＝飾りに使っていない・scripts/audit-trailing-space.ts）
               // 2026-10-02 ⑫ 6巡目: 日付だけの【】の行・初回の自己紹介の2回目も落とす（人の手打ち 13,630通で 0）
-              return { cleaned: dedupeFirstIntroSentences(stripSystemDateTagLines(stripTrailingLineSpaces(fsFixed.text))), issues: vr.issues };
+              return { cleaned: exitRec.record(exitG, "tidy", fsFixed.text, dedupeFirstIntroSentences(stripSystemDateTagLines(stripTrailingLineSpaces(fsFixed.text)))), issues: vr.issues };
             };
             /** 行動台帳の決定論自動修正（gen1・gen2 共通。名前不明時は呼びかけごと省く＝「〇〇さん」を本文に書き込まない） */
             const applyLedgerFixToDraft = (body: string): string => {
               if (!ledgerActive || isFollowUp || !body.trim()) return body;
               const fx = applyLedgerAutoFix(body, ledger, { customerMessage: message ?? "", name: customerName ? `${customerName}さん` : "", isDeliverableReply: isAixPropertySendMode });
-              if (fx.applied.length) { console.info("[ledger-autofix]", JSON.stringify(fx.applied)); return fx.text; }
+              if (fx.applied.length) { console.info("[ledger-autofix]", JSON.stringify(fx.applied)); return exitRec.record(genIndex, "applyLedgerAutoFix", body, fx.text, fx.applied.map(String)); }
               return body;
             };
             // ─── 生成ストリーム消費＋後処理の共通関数 ───────────────────────
@@ -6257,6 +6299,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 // 剥がして固定挨拶に置換する（greeting.ts enforceOpening。旧 aiGreetingPattern / greetingSentencePattern を移設）
                 const { cleaned: openingFixed, fixes: openingFixes } = enforceOpening(fullText, greetingDecision);
                 if (openingFixes.length) console.log("[greeting] enforce:", openingFixes);
+                exitRec.record(genIndex, "enforceOpening", fullText, openingFixed, openingFixes.map(String));
                 // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
                 // customerName/lineDisplayName: 本文に混入したLINE表示名を確定的に実名へ置換／除去
                 const { cleaned, issues } = runValidate(openingFixed, true);
@@ -6271,6 +6314,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 ? { cleaned: fullText, fixes: [] as string[] }
                 : enforceOpening(fullText, greetingDecision);
               if (openingFixes.length) console.log("[greeting] enforce:", openingFixes);
+              exitRec.record(genIndex, "enforceOpening", fullText, openingFixed, openingFixes.map(String));
               // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
               const { cleaned, issues } = runValidate(openingFixed, !isTemplateOptimize);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
@@ -6349,7 +6393,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const dr = dedupeRepeatedEmoji(outText);
                 if (dr.changes.length) {
                   console.log(JSON.stringify({ tag: "generate-reply:emoji-repeat-fixed", conversationId, changes: dr.changes }));
-                  outText = dr.text;
+                  outText = exitRec.record(genIndex, "dedupeRepeatedEmoji", outText, dr.text);
                 }
               }
               // enqueue はここでは行わない: 下の最終チェック（前頭前野モデル）＋センシティブ警告付与後に一括出力する
@@ -6436,6 +6480,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                     customerName ? `お客様のお名前: ${customerName}さん` : "",
                     aixSourceMessage,
                     customerConditions,
+                    // 2026-10-14 区切り3: 物件資料の読み取り（資料のとおりの答えを作り話と見ない）
+                    materialAnswer?.note ?? "",
                   ].filter(Boolean).join("\n") || undefined,
                   checkpointFacts: groundTruth.checkpointFacts,
                   customerConditionsDb: groundTruth.customerConditionsDb,
@@ -6503,6 +6549,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 });
                 finalCheckGateLog = loop.gate;
                 finalCheck = loop.finalCheck;
+                // 2026-10-14 区切り1: 最終チェックの書き直し（引き金の指摘コード＋書き直しの後の applySurfaceFixes）を出口として残す（DOUBLE_DECLARATION の削除もここに出る）
+                exitRec.record(1, "final_check_revision", draftBody, loop.finalDraft, [...(loop.finalCheck.pre_revision_issues ?? []), ...(loop.finalCheck.revision_surface_fixes ?? []).map((f) => `surface:${f}`)]);
                 draftBody = loop.finalDraft; // ベスト草稿（成功時=修正版 / 修正不能時=元ドラフト）
                 if (finalCheck.revision_count === undefined) finalCheck.revision_count = 0;
                 finalCheck.regen_count = 0;
@@ -6604,6 +6652,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                       // 全体上限150s − 経過時間、下限20s）
                       const loop2Budget = Math.max(20000, 150000 - (Date.now() - finalCheckStart));
                       const loop2 = await runFinalCheckWithRevision(gen2Body, finalCheckCtx, Math.min(60000, loop2Budget));
+                      exitRec.record(2, "final_check_revision", gen2Body, loop2.finalDraft, [...(loop2.finalCheck.pre_revision_issues ?? []), ...(loop2.finalCheck.revision_surface_fixes ?? []).map((f) => `surface:${f}`)]);
                       draftBody = loop2.finalDraft;
                       finalCheck = loop2.finalCheck;
                       // 2026-09-21 竹内: 2回目のチェックでも文体・構成は見せない（1回目と同じ絞り込み）
@@ -6635,7 +6684,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 });
                 if (nameFixes.length > 0) {
                   console.warn("[generate-reply] 最終チェック後の顧客名修正:", nameFixes);
-                  draftBody = nameFixed;
+                  draftBody = exitRec.record(0, "enforceCustomerName", draftBody, nameFixed, nameFixes.map(String));
                   // S-5(f): FABRICATED_NAME の一括削除は、実際に置換した名前（nameFixes の evidence）を含む指摘のみに限定
                   const fixedNames = nameFixes.map((f) => (f.match(/「([^」]+)さん」/)?.[1] ?? "")).filter(Boolean);
                   finalCheck.issues = finalCheck.issues.filter((i) => !(i.code === "FABRICATED_NAME" && fixedNames.some((n) => i.evidence.includes(n))));
@@ -6646,20 +6695,20 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 const portalFixed = contractSkipsInsertion(turnContract, "portal") ? draftBody : ensurePortalNotice(draftBody, portalVerdict);
                 if (portalFixed !== draftBody) {
                   console.info("[portal-notice] 修正ループ後に再適用", JSON.stringify({ conversationId, kind: portalVerdict.kind }));
-                  draftBody = portalFixed;
+                  draftBody = exitRec.record(0, "ensurePortalNotice", draftBody, portalFixed);
                 }
                 // 2026-09-17 竹内（あや事例）: 対象の無い「ご案内させて頂きますので、」も修正ループの後に掛け直す
                 //   （最終チェックの「WE DO を入れる」指摘で再生成が戻すことがあるため。ポータルと同じ位置・同じ理由）
                 const guidanceFixedFinal = stripPointlessGuidance(draftBody);
                 if (guidanceFixedFinal !== draftBody) {
                   console.info("[reply-phrasing] 修正ループ後に対象の無いご案内を削除", JSON.stringify({ conversationId }));
-                  draftBody = guidanceFixedFinal;
+                  draftBody = exitRec.record(0, "stripPointlessGuidance", draftBody, guidanceFixedFinal);
                 }
                 // 2026-09-18 竹内（ゆうこ事例）: 「情報はございません」→「点はございません」も修正ループの後に掛け直す
                 const wordingFixedFinal = fixAbsenceWording(draftBody);
                 if (wordingFixedFinal !== draftBody) {
                   console.info("[reply-phrasing] 修正ループ後に「情報」を「点」に", JSON.stringify({ conversationId }));
-                  draftBody = wordingFixedFinal;
+                  draftBody = exitRec.record(0, "fixAbsenceWording", draftBody, wordingFixedFinal);
                 }
                 // 2026-09-19 竹内（ゆうこ事例）: 絞れていない物件名も修正ループの後に掛け直す（再生成が戻すため）
                 const propNameFinal = guardPropertyNames({
@@ -6670,28 +6719,28 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 });
                 if (propNameFinal.removed.length > 0) {
                   console.info("[property-name-guard] 修正ループ後に絞れていない物件名を削除", JSON.stringify({ conversationId, removed: propNameFinal.removed }));
-                  draftBody = propNameFinal.text;
+                  draftBody = exitRec.record(0, "guardPropertyNames", draftBody, propNameFinal.text, propNameFinal.removed.map(String));
                 }
                 // 2026-09-17 竹内（慶次事例）: 冒頭の受け止めも修正ループの後に掛け直す（挨拶の強制置換が「かしこまりました」を戻すことがある）
                 const apologyFixedFinal = ensureApologyOpener(draftBody, apologyVerdict.apology);
                 if (apologyFixedFinal !== draftBody) {
                   console.info("[apology-ack] 修正ループ後に冒頭を受け止めに置き換え", JSON.stringify({ conversationId }));
-                  draftBody = apologyFixedFinal;
+                  draftBody = exitRec.record(0, "ensureApologyOpener", draftBody, apologyFixedFinal);
                 }
                 // 2026-09-17 竹内（a🤫 事例）: 数のまとめ語も修正ループの後に掛け直す（同じ理由）
                 const quantFinal = stripVagueQuantifier(draftBody);
                 if (quantFinal.removed.length > 0) {
                   console.info("[vague-quantifier] 修正ループ後に数のまとめ語を削除", JSON.stringify({ conversationId, removed: quantFinal.removed }));
-                  draftBody = quantFinal.text;
+                  draftBody = exitRec.record(0, "stripVagueQuantifier", draftBody, quantFinal.text);
                 }
                 // 2026-09-18 ゆうこ事例: 今日2回目の全力サポートも修正ループの後に掛け直す（最終チェックが戻すことがある）
                 const fsFinal = stripRepeatedFullSupport(draftBody, fullSupportSentToday);
                 if (fsFinal.removed.length > 0) {
                   console.info("[full-support] 修正ループ後に今日2回目の全力サポートを削除", JSON.stringify({ conversationId, removed: fsFinal.removed }));
-                  draftBody = fsFinal.text;
+                  draftBody = exitRec.record(0, "stripRepeatedFullSupport", draftBody, fsFinal.text);
                 }
                 // 2026-10-02 ⑫: 行末の空白も修正ループの後に落とし直す（書き直しが戻すことがある）
-                draftBody = dedupeFirstIntroSentences(stripSystemDateTagLines(stripTrailingLineSpaces(draftBody)));
+                draftBody = exitRec.record(0, "tidy", draftBody, dedupeFirstIntroSentences(stripSystemDateTagLines(stripTrailingLineSpaces(draftBody))));
                 // 2026-10-02 ⑫（YUMA の実送信テスト・再生 first_contact_02／flow4 t01）: 挨拶行（初回の はじめまして・催促の謝罪）も修正ループの後に掛け直す。
                 //   書き直しが「かしこまりました！！ / 西淀川区内…」のように挨拶行ごと落とした下書きが出た（本番の記録では 177 中 1・DeepSeek の書き直しで多い）。
                 //   挨拶行が既に先頭にある時は触らない（同じ関数を2回掛けて本文の文を剥がさない）
@@ -6699,7 +6748,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                   const reopen = enforceOpening(draftBody, greetingDecision);
                   if (reopen.cleaned !== draftBody) {
                     console.info("[greeting] 修正ループ後に挨拶行を掛け直し", JSON.stringify({ conversationId, kind: greetingDecision.kind }));
-                    draftBody = reopen.cleaned;
+                    draftBody = exitRec.record(0, "enforceOpening", draftBody, reopen.cleaned, reopen.fixes.map(String));
                   }
                 }
               } catch (checkErr) {
@@ -7035,6 +7084,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             if (finalCheck) finalCheck.checked_text_hash = await sha1(finalDraftText.trim());
             // 2026-09-11 統合設計（経路G・T4）: check-reply が「同じテキスト×同じ顧客文」なら生成時の3パス結果を再利用する判定キー
             if (finalCheck) finalCheck.context_hash = await sha1((message ?? "").trim());
+            // 2026-10-14 区切り1: 画面は連投の最後の1通を customerMessage に送る時がある（latestCustomerMessage）→ 最後の1通の hash も持つ（tpo-debug-fallback）
+            if (finalCheck) { const units = (message ?? "").split(MSG_SEP).map((u) => u.trim()).filter(Boolean); if (units.length > 1) finalCheck.context_last_hash = await sha1(units[units.length - 1]); }
             // 2026-09-09 Fable5: tpo_debug をトレーラーと ai_draft_check の両方に載せる（page.tsx が save-reply-example へ転送し reply_context_snapshot に保存）
             //   TPO誤発動率・往復ペア・final-check 結果の定量化用。JSONB のため migrate-schema 更新不要
             const tpoDebug: Record<string, unknown> | null = finalCheck && !isTemplateOptimize ? {
@@ -7066,6 +7117,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               postprocess: {
                 validateIssues: lastValidateIssues.slice(0, 12),
                 gateEdits: lastGateEdits.map((e) => ({ rule: e.rule, before: e.before.trim().slice(0, 60), after: e.after, reversible: e.reversible })),
+                // 2026-10-14 区切り1: 出口ごとの変化（gen 1・2＝生成の後処理・0＝最終チェックの後の掛け直し・final_check_revision＝書き直し）
+                exitEdits: exitRec.edits.length ? exitRec.edits : null,
                 aixDone: aixDone ? { propertySend: aixDone.propertySend, vacancyCheck: aixDone.vacancyCheck, mgmtCheck: aixDone.mgmtCheck, pickupGateReason: aixDone.pickupGateReason ?? null } : null,
         // 2026-09-19 竹内（慶次事例）: 宣言行の条件語の根拠に登録条件も使う
         customerConditions,

@@ -1235,7 +1235,11 @@ export function compactCustomerStateForView(s: CustomerState, opts: { maxRooms?:
 export function buildCustomerStateBrainBlock(s: CustomerState, opts: { maxRooms?: number } = {}): string {
   const maxRooms = opts.maxRooms ?? 8;
   const md = (isoStr: string | null | undefined) => (isoStr && Number.isFinite(ms(isoStr)) ? jstMdOf(isoStr) : "");
-  const lines: string[] = ["\n【お客様の今の状況（決定論・送った記録と本文から毎回決め直した値。セーブデータの要約・前回の段階の推定と食い違う時はこちらが正）】"];
+  // 2026-10-14 区切り4 #10: 段階・主のお部屋・探し続けているかは記録から作った値（参考）＝会話を読んだブレインの判断が上。送った事実・内覧の日付は記録のとおり（正）。戻す CUSTOMER_STATE_REFERENCE=off
+  const reference = (typeof process !== "undefined" ? process.env.CUSTOMER_STATE_REFERENCE ?? "" : "").toLowerCase() !== "off";
+  const lines: string[] = [reference
+    ? "\n【お客様の今の状況（記録から作った値・参考。送った物件・見積・内覧の日付は記録のとおり＝正。段階・主のお部屋・探し続けているかは参考で、会話を読んだあなたの判断が上）】"
+    : "\n【お客様の今の状況（決定論・送った記録と本文から毎回決め直した値。セーブデータの要約・前回の段階の推定と食い違う時はこちらが正）】"];
   lines.push(`- 今の段階: ${s.stageLabel}${s.stageDetail ? `（${s.stageDetail}）` : ""}${s.since ? `・${md(s.since)}〜` : ""}`);
   const roomLine = (p: RoomState) => {
     const marks = [p.estimateSent && p.status !== "estimate_sent" ? "見積済" : null, p.customerInterest ? "お客様が指名" : null, !p.sentByUs ? "お客様の持ち込み" : null].filter(Boolean);

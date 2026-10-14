@@ -1,5 +1,10 @@
 // audit-split-reply-aix.ts — 「AIX と返信を分けた物差し」（読むだけ・LLM なし・本番 DB を読むだけ）
 //
+// 2026-10-14 区切り6（竹内さん「物差しを直す」）: scratchpad の split/audit-split-reply-aix.ts をリポジトリに写した。
+//   人が文で送った番でも、その文に AIX の中身（交渉の結果・確認の結果・探した結果・スタッフの予定・空き・内覧の確定 等＝aix-content-gate.classifyAixContent
+//   の根拠の無い（前の会話の引用でない）文、＋スタッフの予定の文）があれば AIX の番として数える（truth="AIX"・truthKey="文:<AIX の鍵>"・aixByText=true）。
+//   旧の数え方は --no-aix-text（返信の番に人だけが知る中身の番が混ざり、返信の一致率の分母を汚していた）
+//
 // 2026-10-13 竹内さん「AIX と返信をちゃんと区別していれば、直さず送れる率はもっと高くなるのでは」「分けた物差しで考える」
 //   番 = お客様の連投（audit-r10-path-truth と同じ: staffWindowOf の返事のまとまり・YUMA 等のテスト会話と申込以降を除く）
 //   ブレインの判断 = brain_decision_logs の「スタッフの最初の行動より前の最後」（無ければその番の最後＝遅れ）
@@ -14,9 +19,7 @@
 //   ③ 区別の外れ: ブレイン返信→人 AIX／ブレイン AIX→人 返信（型と見本）
 //   ④ 全体の「直さず送った」を ブレインの判断の種類ごとに割る
 //
-// 実行（2026-10-14 scripts/ に置いた）:
-//   npx tsx --env-file=.env.local scripts/audit-split-reply-aix.ts [--days=30] [--since2=2026-10-13T15:00:00+09:00] [--samples=5] [--out=<jsonl>] [--route-out=<jsonl>]
-//   --route-out: 番の生の文と指紋（scripts/brain-route-type-build.ts の元・gitignore の scripts/.replay-out/ へ）
+// 実行: npx tsx --env-file=.env.local scripts/audit-split-reply-aix.ts [--days=30] [--since2=2026-10-13T15:00:00+09:00] [--samples=5] [--out=<jsonl・個人情報あり＝リポジトリに置かない>] [--no-aix-text]
 import { createClient } from "@supabase/supabase-js";
 import { writeFileSync } from "node:fs";
 import { staffWindowOf, cleanDraft, type WindowMsg } from "../app/lib/line-watch-judge";
@@ -26,8 +29,8 @@ import { subSceneOf } from "../app/lib/reply-subscene";
 import { staffActsOf, APPLY_FORM_RE } from "../app/lib/customer-sim-shadow";
 import { STAFF_FAIL_RE } from "../app/lib/post-apply-brain-gate";
 import { catalogKeyOfPress, topicKey } from "../app/lib/aix-catalog";
-import { splitSentencesJa, promiseTopics, normalizeSentence, isAckOnlyTurn } from "./lib/split-draft-repeat";
-import { textFingerprint } from "../app/lib/brain-judge-examples";
+import { splitSentencesJa, promiseTopics, normalizeSentence, isAckOnlyTurn } from "../app/lib/draft-repeat";
+import { classifyAixContent } from "../app/lib/aix-content-gate";
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const arg = (k: string, d = "") => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -35,10 +38,16 @@ const DAYS = Number(arg("days", "30"));
 const SINCE2 = arg("since2", "2026-10-13T15:00:00+09:00");
 const SAMPLES = Number(arg("samples", "5"));
 const OUT = arg("out");
-// 2026-10-14 返信か AIX かの材料（brain-route-type）の元: 番の生の文と指紋（本番 DB は読むだけ・出力は gitignore の場所へ）。scripts/brain-route-type-build.ts が伏せて data を作る
-const ROUTE_OUT = arg("route-out");
-type RouteRaw = { conv: string; at: string; writer: string; truth: string; truthFam: string | null; promise: string | null; laterAix: string[]; brain: string; brainKey: string; custRaw: string; prevRaw: string; staffRaw: string; fp: string[] };
-const routeRaws: RouteRaw[] = [];
+const AIX_TEXT = !process.argv.includes("--no-aix-text");
+/** スタッフの予定（スタッフだけが知る）: 「13時から予定が入っており」「18時半からであればご案内可能」 */
+const STAFF_SCHEDULE_RE = /(?:予定|別件|ご案内)(?:が)?(?:入って(?:おり|い)|ございま|ありま)|(?:[0-9０-９]{1,2}(?:時|:|：)[0-9０-９半]*)[^。\n]{0,8}(?:以降|から|まで)(?:であれば|でしたら|なら)?[^。\n]{0,6}(?:ご案内|ご内覧|ご対応)(?:が)?(?:可能|出来|でき)/;
+/** 人の文に AIX の中身があるか（根拠の無い＝前の会話の引用でない文だけ） */
+function aixTextOf(text: string, ground: string): string | null {
+  if (!AIX_TEXT || !text.trim()) return null;
+  const hit = classifyAixContent(text, ground).find((h) => !h.grounded);
+  if (hit) return hit.catalogKey;
+  return STAFF_SCHEDULE_RE.test(text.normalize("NFKC")) ? "staff_schedule" : null;
+}
 const H = 3_600_000;
 const ms = (s: string) => Date.parse(s);
 const NOW = Date.now();
@@ -102,6 +111,8 @@ type Row = {
   conv: string; at: string; period2: boolean; writer: string; scene: string; sub: string; intent: string; ack: boolean;
   brain: string; brainKey: string; brainLate: boolean; brainSrc: string; brainDir: string; tc: boolean;
   truth: string; truthKey: string; truthFam: string | null; promise: Promise2; laterAix: string[];
+  /** 2026-10-14 区切り6: 人の文に AIX の中身があったので AIX の番に数えた */
+  aixByText?: boolean;
   replyKind: string | null; draft: string | null; sent: string | null; exId: string | null;
   customer: string; staffText: string; prevStaff: string;
 };
@@ -147,7 +158,7 @@ type Row = {
       const prevStaff = [...mm.slice(0, i)].reverse().find((m) => m.sender !== "customer");
       const firstStaffMsg = mm.slice(j + 1).find((m) => m.sender !== "customer" && w.staffFirstAt && ms(m.created_at) >= ms(w.staffFirstAt) - 1000);
       const writer = (firstStaffMsg && w.staffFirstAt && ms(firstStaffMsg.created_at) <= ms(w.endAt) ? firstStaffMsg.staff_writer : null) ?? "unknown";
-      let truth = "", truthKey = "", truthFam: string | null = null, promise: Promise2 = null;
+      let truth = "", truthKey = "", truthFam: string | null = null, promise: Promise2 = null, aixByText = false;
       const bt = burstTexts.map((t) => t.text).join("\n");
       if (bp.length || w.aixMessagesBurst) {
         const p0 = bp.length ? burstPress.find((p) => p.aix_type === bp[0].aix_type && Math.abs(ms(p.created_at) - ms(bp[0].at)) < 1000) ?? null : null;
@@ -156,6 +167,9 @@ type Row = {
         promise = promiseOf(burstTexts.filter((t) => !bp.length || ms(t.at) <= ms(bp[0].at)).map((t) => t.text).join("\n"));
         if (promise && p0 && PROMISE_FAM[promise].test(p0.aix_type ?? "")) { truth = "2段→AIX"; truthKey = `2段:${promise}→${pk.key}`; }
         else { truth = "AIX"; truthKey = pk.key; }
+      } else if (burstTexts.length && aixTextOf(bt, mm.slice(Math.max(0, i - 25), i).map((m) => m.text ?? "").join("\n"))) {
+        // 2026-10-14 区切り6: 人が文で送ったが、中身は AIX の中身（スタッフだけが知る事）＝AIX の番
+        truth = "AIX"; truthKey = `文:${aixTextOf(bt, mm.slice(Math.max(0, i - 25), i).map((m) => m.text ?? "").join("\n"))}`; aixByText = true; truthFam = famOf(truthKey.slice(2).split("/")[0]);
       } else if (burstTexts.length) {
         promise = promiseOf(bt);
         truth = promise ? "2段" : "返信"; truthKey = promise ? `2段:${promise}` : "返信";
@@ -198,21 +212,20 @@ type Row = {
       const row: Row = {
         conv, at: custLast, period2: ms(custLast) >= ms(SINCE2), writer, scene, sub, intent, ack: isAckOnlyTurn(custTexts),
         brain, brainKey, brainLate, brainSrc, brainDir, tc,
-        truth, truthKey, truthFam, promise, laterAix, replyKind, draft, sent, exId,
+        truth, truthKey, truthFam, promise, laterAix, replyKind, draft, sent, exId, aixByText,
         customer: mask(custText).slice(0, 160), staffText: mask(bt).slice(0, 160), prevStaff: mask(prevStaff?.text ?? "").slice(-90),
       };
       rows.push(row);
-      if (ROUTE_OUT) {
-        const before = mm.slice(0, i).filter((m) => m.sender === "customer");
-        const fpSrc = [...before.slice(0, 4), ...before.slice(-20)].map((m) => m.text ?? "");
-        routeRaws.push({ conv, at: custLast, writer, truth, truthFam, promise, laterAix, brain, brainKey, custRaw: custText, prevRaw: prevStaff?.text ?? "", staffRaw: bt,
-          fp: [...new Set(fpSrc.map((t) => textFingerprint(t)).filter((x): x is string => !!x))] });
-      }
       if (exId) exToRow.set(exId, row);
     }
   }
 
   // ─── 出力 ───
+  {
+    const byText = rows.filter((r) => r.aixByText);
+    const k: Record<string, number> = {}; for (const r of byText) k[r.truthKey] = (k[r.truthKey] ?? 0) + 1;
+    console.log(`【区切り6】人の文に AIX の中身＝AIX の番に数えた: ${byText.length}番（竹内さん ${byText.filter((r) => r.writer === "takeuchi").length}）${AIX_TEXT ? "" : "（--no-aix-text: 数えていない）"} ${JSON.stringify(k)}`);
+  }
   const pct = (a: number, b: number) => (b ? `${a}/${b}（${Math.round((a / b) * 100)}%）` : `${a}/0`);
   const count = <T>(xs: T[], f: (x: T) => string) => { const m = new Map<string, number>(); for (const x of xs) { const k = f(x); m.set(k, (m.get(k) ?? 0) + 1); } return [...m].sort((a, b) => b[1] - a[1]); };
   const brainGroup = (r: Row) => (r.brain === "AIX" ? "AIX の番" : r.brain === "2段" ? "両方（2段＝約束＋AIX）" : r.brain === "返信" ? "返信の番" : r.brain === "なし" ? "連絡待ち（なし）" : "判断なし");
@@ -332,6 +345,5 @@ type Row = {
     for (const [k, c] of count(ex, g2)) { const xs = ex.filter((e) => g2(e) === k); console.log(`    ${k.padEnd(28)} n=${String(c).padStart(4)} 直さず ${pct(xs.filter(same).length, c)}・竹内さんの番 ${pct(xs.filter((e) => exToRow.get(e.id)?.writer === "takeuchi" && same(e)).length, xs.filter((e) => exToRow.get(e.id)?.writer === "takeuchi").length)}`); }
     // 番に結べない下書きの中身（どの時刻・書き手）
   }
-  if (ROUTE_OUT) writeFileSync(ROUTE_OUT, routeRaws.filter((r) => ms(r.at) >= SINCE).map((r) => JSON.stringify(r)).join("\n"));
   if (OUT) writeFileSync(OUT, rows.map((r) => JSON.stringify({ ...r, draft: r.draft ? mask(r.draft).slice(0, 300) : null, sent: r.sent ? mask(r.sent).slice(0, 300) : null })).join("\n"));
 })().catch((e) => { console.error(e); process.exit(1); });

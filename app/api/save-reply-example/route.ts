@@ -12,6 +12,7 @@ import { isUsableExampleText, isUsableAiDraft, isGenerationFailureText } from "@
 // 2026-09-27 竹内: テスト用の会話（YUMA）は手本・学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { sanitizeExampleFields } from "@/app/lib/example-pii-guard";
+import { pickServerTpoDebug, tpoDebugFallbackEnabled } from "@/app/lib/tpo-debug-fallback";
 import { ragIntakeExcludeReason, ragIntakeGuardEnabled, inApplyWindow, POST_APPLY_TEXT_RE, RAG_EXCLUDED_ENTRY_SOURCE } from "@/app/lib/rag-garbage";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
@@ -1515,6 +1516,19 @@ export async function POST(req: NextRequest) {
   const ragExcludeReason = await ragExcludeFor(sentReply);
   if (ragExcludeReason) console.info(JSON.stringify({ tag: "rag-intake:excluded", reason: ragExcludeReason, conversationId: conversationId ?? null }));
 
+  // 2026-10-14 区切り1（記録の穴）: 画面から tpo_debug が来なかった時は、会話の ai_draft_check が同じ番（下書きの hash・お客様の発言の hash）の時だけそれを使う
+  //   （画面の checkResult は会話の切り替え・復元・スパークル等で無くなる＝送った例の 6 割に生成の記録が無かった）。戻す TPO_DEBUG_SERVER_FALLBACK=off
+  let tpoDebugBody: Record<string, unknown> | null = body.tpoDebug && typeof body.tpoDebug === "object" ? body.tpoDebug : null;
+  let tpoDebugSource: "page" | "server_draft_hash" | "server_context_hash" | null = tpoDebugBody ? "page" : null;
+  if (!tpoDebugBody && conversationId && entry_source !== "aix_action" && tpoDebugFallbackEnabled()) {
+    try {
+      const { data: convChk } = await supabase.from("conversations").select("ai_draft_check").eq("id", conversationId).maybeSingle();
+      const pick = pickServerTpoDebug((convChk as { ai_draft_check?: unknown } | null)?.ai_draft_check, { aiDraft: aiDraftIn ?? null, customerMessage: customerMessageIn ?? null });
+      if (pick) { tpoDebugBody = pick.tpo; tpoDebugSource = pick.by === "draft_hash" ? "server_draft_hash" : "server_context_hash"; }
+    } catch (e) {
+      console.warn("[save-reply-example] tpo_debug の補い（ai_draft_check）に失敗:", e instanceof Error ? e.message : e);
+    }
+  }
   const [embedding, insertResult] = await Promise.all([
     embeddingPromise,
     supabase
@@ -1544,7 +1558,7 @@ export async function POST(req: NextRequest) {
         // 2026-09-09 Fable5 みく事例: 送信文側の stance_sent_lite をマージ（was_ai_modified=false は stance_draft と同値なので draft をコピー）。
         //   pair/hedge は snapshot から再構築できないため pair 非依存の軽量版のみ（締め種別・ヘッジ種別・復唱率・絵文字・字数）。新カラム不要（JSONB）
         reply_context_snapshot: (() => {
-          const base0 = body.tpoDebug && typeof body.tpoDebug === "object" ? { ...body.tpoDebug } : null;
+          const base0: Record<string, unknown> | null = tpoDebugBody ? { ...tpoDebugBody, ...(tpoDebugSource && tpoDebugSource !== "page" ? { tpo_source: tpoDebugSource } : {}) } : null;
           const base = ragExcludeReason ? { ...(base0 ?? {}), rag_excluded_reason: ragExcludeReason } : base0;
           if (!sentReply?.trim()) return base;
           try {

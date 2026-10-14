@@ -80,7 +80,9 @@ ${sentReply}
       { category: "pattern" as const,    title: analysis.situation,          content: analysis.pattern,    importance: 7 },
       // principle は importance=9 で保存する（generate-reply の fetchKnowledge は principle を
       // importance>=9 の保証バケットでのみ注入するため、8 だとプロンプトに一切届かず死蔵される）
-      { category: "principle" as const,  title: `原則：${analysis.situation}`, content: analysis.principle,  importance: 9 },
+      // 2026-10-14 区切り4 #9: この principle は1通への評価文（「〜している」）＝決まりではない。重さを 9→6 に下げ、ブレインの【重要原則】と返信の RAG（principle 8〜9）に入れない
+      //   （ブレイン・生成は principle-eval.isEvaluativePrinciple でも外す）。戻す UPDATE_KNOWLEDGE_PRINCIPLE_IMP=9
+      { category: "principle" as const,  title: `原則：${analysis.situation}`, content: analysis.principle,  importance: Number(process.env.UPDATE_KNOWLEDGE_PRINCIPLE_IMP ?? "") >= 1 ? Number(process.env.UPDATE_KNOWLEDGE_PRINCIPLE_IMP) : 6 },
       ...analysis.style_elements.map((el) => ({ category: "style" as const, title: "口調・スタイル", content: el, importance: 6 })),
       ...analysis.key_phrases.map((p)  => ({ category: "phrase" as const,   title: "フレーズ",      content: p,  importance: 6 })),
     ];

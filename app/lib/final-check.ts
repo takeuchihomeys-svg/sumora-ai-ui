@@ -135,6 +135,10 @@ export interface CheckResult {
   /** 2026-10-08 竹内さん「最終チェックがボトルネックにならないように」: 書き直しを採った時の書き直す前の下書き（先頭600字）。
    *  書き直しが竹内さんの実送信から遠ざけたかを後で数えるため（それまで書き直す前の文はどこにも残っていなかった）。ログ tag final-check:revised にも出す */
   pre_revision_text?: string;
+  /** 2026-10-14 区切り1（記録の穴）: 書き直しを採った時に、書き直した文へ掛けた applySurfaceFixes の applied（tpo_debug.postprocess.exitEdits の why に積む） */
+  revision_surface_fixes?: string[];
+  /** 2026-10-14 区切り1: 連投の最後の1通の sha1（save-reply-example の tpo_debug の補いで同じ番かを見る） */
+  context_last_hash?: string;
   // ── 2026-09-11 統合設計（経路G・観測）: JSONB のキー追加のみ（新カラムなし → migrate-schema 更新不要）──
   /** 完了しなかったパスと理由（reina の 183ms 全パス即時失敗のような原因を DB から特定するため） */
   pass_failures?: Array<{ pass: CheckPass; reason: "timeout" | "http" | "max_tokens" | "parse" | "other"; status?: number; ms: number }>;
@@ -3710,7 +3714,8 @@ async function runFinalCheckWithRevisionCore(
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用
     // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（別名の統一・承知→かしこまりました・すぐに除去・誤字・名前スロット）。
     //   下の禁止語プリスキャンで「承知」を含む修正版を丸ごと捨てていた（E4）のを、置換で救う
-    const revised = applySurfaceFixes(revisedRaw, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage, customerMessageAt: lastCustomerMessageAtOf(ctx), ownPropertyReturnedAll: ctx.ownPropertyReturnedAll }).text;
+    const sfW = applySurfaceFixes(revisedRaw, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage, customerMessageAt: lastCustomerMessageAtOf(ctx), ownPropertyReturnedAll: ctx.ownPropertyReturnedAll });
+    const revised = sfW.text;
 
     // (3) 決定的プリスキャン（約0ms）: 禁止語彙、および修正で新規挿入された
     //     「確認して…ご連絡」系の句（AIX_BOUNDARY_PROMISE と正面衝突）を検出したら即破棄
@@ -3753,6 +3758,7 @@ async function runFinalCheckWithRevisionCore(
       recheck.revision_count = 1;
       recheck.pre_revision_issues = preRevisionIssues;
       recheck.pre_revision_text = draft.slice(0, 600);
+      if (sfW.applied.length) recheck.revision_surface_fixes = sfW.applied.slice(0, 8);
       console.log(JSON.stringify({ tag: "final-check:revised", path: "warning", codes: preRevisionIssues, before: draft.slice(0, 300), after: revised.slice(0, 300) }));
       return { finalDraft: revised, finalCheck: recheck };
     }
@@ -3779,7 +3785,12 @@ async function runFinalCheckWithRevisionCore(
 
     // 2026-09-11 竹内方針1（V-1）: block と一緒に観測専用・表示のみ・誤字の指摘を修正 LLM へ渡さない（同じ isRevisable）
     // 2026-10-13 ブレイン基準: warning の道と同じ選び方（pickRevisionIssues）
-    const passableBlockIssues = pickRevisionIssues(currentCheck.issues, currentDraft, ctx, alignLog, "block");
+    const passableBlockIssues0 = pickRevisionIssues(currentCheck.issues, currentDraft, ctx, alignLog, "block");
+    // 2026-10-14 区切り2（#8 出口で言葉だけを見て文を消す所）: block の道でも「文に間違いの無い文体」の指摘（EMPTY_CLOSER・SPLIT_ACK_REPLY 等の骨格の block）は
+    //   書き直しに渡さない（warning の道の 10/02 の決まりと同じ・文体は画面にも出さない）。直す block が文体だけなら書き直さない。戻す FINAL_CHECK_BLOCK_STYLE_SKIP=off
+    const blockStyleSkip = (process.env.FINAL_CHECK_BLOCK_STYLE_SKIP ?? "").toLowerCase() !== "off";
+    const passableBlockIssues = blockStyleSkip ? passableBlockIssues0.filter((i) => !isStyleNoErrorCode(i.code)) : passableBlockIssues0;
+    if (blockStyleSkip && passableBlockIssues0.length > 0 && !passableBlockIssues.some((i) => i.severity === "block")) { droppedB = "style_only"; break; }
     if (passableBlockIssues.length === 0) { droppedB = "no_passable"; break; }
     // 2026-09-09 行動台帳: block が台帳系（再度／お送りした／完了形）だけなら決定論置換（applyLedgerAutoFix）で直す（Sonnet 15s 節約・意味の変質ゼロ）。
     //   他の block が混在する時は Sonnet 修正に台帳の根拠・制約を添える
@@ -3798,7 +3809,8 @@ async function runFinalCheckWithRevisionCore(
     if (!revised) { droppedB = "revision_failed"; break; } // 修正失敗/ガード違反 → give up gracefully
     // 2026-09-11 統合設計（経路B/N3）: 修正版にも顧客名スロットを決定論で適用（修正 LLM が「〇〇さん」を書いても BANNED_WORD にしない）
     // 2026-09-11 竹内方針1・3・4・5: 生成の後処理と同じ applySurfaceFixes（fillNameSlot を含む）
-    revised = applySurfaceFixes(revised, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage, customerMessageAt: lastCustomerMessageAtOf(ctx), ownPropertyReturnedAll: ctx.ownPropertyReturnedAll }).text;
+    const sfB = applySurfaceFixes(revised, { customerName: ctx.customerName ?? "", aliases: ctx.nameAliases, now: ctx.now, customerMessage: ctx.lastCustomerMessage, customerMessageAt: lastCustomerMessageAtOf(ctx), ownPropertyReturnedAll: ctx.ownPropertyReturnedAll });
+    revised = sfB.text;
     // CONFIRM_PROMISE_RE ガード（blockパス・warningパスと対称）。確認約束が verdict で許可されている／直前スタッフが確認約束の時は外す（M14）
     if (!confirmPromiseOk(ctx) && CONFIRM_PROMISE_RE.test(revised) && !CONFIRM_PROMISE_RE.test(currentDraft)) { droppedB = "confirm_promise"; break; }
 
@@ -3812,6 +3824,7 @@ async function runFinalCheckWithRevisionCore(
     const recheck = await runDiffRecheck(revised, currentCheck.issues, ctxForRecheck, RECHECK_MS, currentCheck.passes_completed);
     checkIterations++;
     recheck.revised_text = revised;
+    if (sfB.applied.length) recheck.revision_surface_fixes = sfB.applied.slice(0, 8);
 
     // FN-003: 採用条件は差分検証の完走確認（2026-09-11: diff_verified。passes_completed は check1 の実値を引き継ぐ）
     const verified = recheck.diff_verified === true;
@@ -3839,7 +3852,8 @@ async function runFinalCheckWithRevisionCore(
     console.log(JSON.stringify({ tag: "final-check:revised", path: "block", codes: preRevisionIssues, before: draft.slice(0, 300), after: bestDraft.slice(0, 300) }));
   }
   if (droppedB && bestDraft === draft) bestCheck.revision_dropped = droppedB;
-  if (bestCheck.issues.some((i) => i.severity === "block")) {
+  // 2026-10-14 区切り2: 残った block が文体だけ（書き直しに渡さなかった）なら修正切れにしない
+  if (bestCheck.issues.some((i) => i.severity === "block" && !(droppedB === "style_only" && isStyleNoErrorCode(i.code)))) {
     bestCheck.revision_exhausted = true; // blockが残った → スタッフ手動確認必須
   }
   return { finalDraft: bestDraft, finalCheck: bestCheck };
