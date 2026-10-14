@@ -158,7 +158,7 @@ console.log("── ★ 支払いの控え・携帯番号（2026-10-09）");
   t("★ 見積書の「振り込み期日」は支払いの控えにしない（書き起こしを残す）", imageTextForSave("estimate", EST_FURIKOMI) === `[画像] 【見積書・初期費用の明細】\n${EST_FURIKOMI}`);
   t("★ 種類不明の書き起こしの携帯番号は伏せる", imageTextForSave("other", OVERLAP).includes("（携帯番号）") && !imageTextForSave("other", OVERLAP).includes("090-0000-0000"));
   t("物件の資料の業者の番号（06・0120）は伏せない", labeledImageText("property_material", MAISOKU + "\nTEL 06-1234-5678 / 0120-000-000").includes("06-1234-5678"));
-  on("IMAGE_PAYMENT_DROP", "off", () => t("IMAGE_PAYMENT_DROP=off で旧の形（見出し＋書き起こし）", imageTextForSave("other", TRANSFER).startsWith("[画像] 【物件以外：振込・支払いの控え】\n")));
+  on("IMAGE_PERSONAL_HINT_DROP", "off", () => on("IMAGE_PAYMENT_DROP", "off", () => t("IMAGE_PAYMENT_DROP=off で旧の形（見出し＋書き起こし）", imageTextForSave("other", TRANSFER).startsWith("[画像] 【物件以外：振込・支払いの控え】\n"))));
   on("IMAGE_MOBILE_MASK", "off", () => t("IMAGE_MOBILE_MASK=off で伏せない", imageTextForSave("other", OVERLAP).includes("090-0000-0000")));
 }
 
@@ -183,6 +183,7 @@ console.log("── 2026-10-14 種類不明で個人情報の語（迷う物は�
   t("手続きの画面＋「氏名 姓 名」も残さない", imageTextForSave("other", "電子契約 「本人」が登録されている。 氏名 山田 花子 氏名フリガナ ヤマダ ハナコ").startsWith("[画像] 【物件以外：個人情報の載った画像】"));
   t("名前の無い手続きの画面は見出し＋書き起こしのまま", imageTextForSave("other", "フレックス少額短期保険：入金完了 フレックス少額短期保険です。保険契約の入金を確認しました。").startsWith("[画像] 【物件以外：契約・入居の手続きの画面】\n"));
   t("物件の資料（担当者名つきでない）に氏名の網が当たらない", !personalHintIn(MAISOKU));
+  t("振込人・会員IDの画面は網に当たる・物件は当たらない（10/15 迷う物は個人情報側）", personalHintIn("パソコン振込 ハスサギ ヨウ") && personalHintIn("会員ID 123456") && !personalHintIn("2LDK 駅徒歩5分 敷金1ヶ月"));
 }
 
 console.log("── ★ つながり（webhook・ブレイン）");
