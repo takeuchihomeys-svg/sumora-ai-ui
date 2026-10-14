@@ -1,6 +1,10 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-15
+## 🎯 全力サポートの候補・了承の返事をブレインの値のまま出口へ（10/15 作る人・ブランチ zenryoku-ack-1015）
+- **全力サポート**: 「他まだありますでしょうか」を規則 not_pickup_turn が質問として物件の AIX ごと返信に戻していた（q102）→ 他の物件・新着の問い・候補の番は消さない。2つ目は候補1つの値で足す／外す（splitFinalAlts）。候補を meta.llm_raw.zc・digest.zc に記録。試験 1/6→3/6。戻す ZENRYOKU_CANDIDATE_EXIT=off
+- **了承の返事**: ack_form を決めた了承だけの番で、場面の型・往復文脈・姿勢の締め・必ず含める内容・WE DO・確認約束の禁止・最終チェックが逆を渡していた→ 1つの値（ackFormShapeLine）にそろえた。竹内さんの形に固定した試し 19番: 従った 14/18→17/18・同じ形 15/19→18/19。戻す ACK_FORM_FOLLOW=off。ack_form 自体は ACK_FORM_BRAIN=on の時だけ（本番 0）
+- 物差し `scripts/audit-ack-form-takeuchi.ts`・試し `scripts/yuma-ack-form-follow-test.ts`（YUMA5）・設計知見の案 scripts/kb-zenryoku-exit-1015.json・kb-ack-form-follow-1015.json（未投入）
 ## 🧠 物件検索ブレインの読みを AIX へ（10/15 作る人・ブランチ aix-property-brain-1014）
 - **洗い出し**（30日・LLM なし）: 返信の下書きは物件の中身をほぼ書けている（竹内さん手打ち163番で足したのは6番）。AIX は材料の有無が壁＝物件オススメ 239押下で売上サポの行 15%・送った資料の保存した読み（sent_image_properties.facts）64%。物件ピックアップは画像を上げ直すので行と結べない（手渡しの束のまま送った時だけ）
 - **つないだ**: 物件オススメの2通目（✨）で売上サポの行が無い時、保存した読みの駅・築年・敷礼なし＋お客様の希望との合う・満たさない（`app/lib/second-material-saved-read.ts`・`SECOND_MATERIAL_SAVED_READ=off` で旧）。材料が届く2通目 4→33/60。礼金ありの読みでは止めない（12中4が実送信「敷金礼金なし」）
