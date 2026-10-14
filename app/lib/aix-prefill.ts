@@ -12,6 +12,7 @@
 //
 // 記録: 画面は送る時に「自動で入れた値・出所・そのまま使ったか」を aix_usage_logs.prefill に残す（summarizePrefillUse）。
 //   見張りで欄ごとの当たり率を数え、当たりの低い欄から直す。
+import { withLatinHead } from "./latin-name-head";
 
 export type PrefillSource = "pickup" | "customer_shared" | "staff_sent" | "conversation" | "conditions" | "aix_history" | "material";
 
@@ -197,8 +198,10 @@ const toHalfNum = (s: string) => Number(s.replace(/[０-９]/g, (d) => String.fr
 /** 内覧のご案内の文の「物件名 ＋ 号室」（並んだ順）。🌟・【】が無い文の形（「安立荘(アンリュウソウ) 203号室、お部屋ご案内」「13:00〜アーバネックス堺筋本町 502号室」） */
 export function viewingPropertyLabels(text: string): string[] {
   const out: string[] = [];
-  for (const m of String(text ?? "").matchAll(/([^\s／/、。！!「」・〜~～:：\n]{2,30}?)\s*([0-9０-９]{2,4})\s*号室/g)) {
-    const name = m[1].replace(/^(?:[0-9０-９]{1,2}[:：][0-9０-９]{2}|🌟|【)+/, "").replace(/^(?:[0-9０-９]{1,2}に)/, "").replace(/^(?:と|や|および|及び)/, "").trim();
+  const src = String(text ?? "");
+  for (const m of src.matchAll(/([^\s／/、。！!「」・〜~～:：\n]{2,30}?)\s*([0-9０-９]{2,4})\s*号室/g)) {
+    // 2026-10-15 英字の語が空白で並ぶ名前（「GRAN TOYONAKA 102号室」）の頭を戻す（latin-name-head.ts・LATIN_NAME_HEAD=off）
+    const name = withLatinHead(src, m.index ?? 0, m[1]).replace(/^(?:[0-9０-９]{1,2}[:：][0-9０-９]{2}|🌟|【)+/, "").replace(/^(?:[0-9０-９]{1,2}に)/, "").replace(/^(?:と|や|および|及び)/, "").trim();
     const v = `${name} ${m[2]}号室`;
     if (name.length >= 2 && !out.includes(v)) out.push(v);
   }

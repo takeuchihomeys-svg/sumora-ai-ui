@@ -13,6 +13,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { CHINESE_FORM_RE } from "@/app/lib/ja-kanji";
 import { canonicalRoomNo, canonicalRoomLabel } from "@/app/lib/room-no";
+import type { LlmSpendReport } from "@/app/lib/llm-spend-audit";
 import { compareReadAmounts, type AmountFacts, type AmountTruth } from "@/app/lib/reading-amounts";
 
 const COMPAT_RE = /[⺀-⿟豈-﫿]/u;
@@ -38,6 +39,8 @@ export type ReadingAuditReport = {
   rooms: { newRows: number; notCanonical: number; aixNotCanonical: number };
   amounts: Record<"rent" | "admin" | "deposit" | "key", { n: number; bad: number }> & { pairs: number };
   vacancy: { rows: number; moveInAsVacate: number };
+  /** LLM の使った額（直近 days 日の日ごと・模型ごと・前の週との差）。LLM_SPEND_AUDIT=off で null（app/lib/llm-spend-audit.ts） */
+  llmSpend: LlmSpendReport | null;
   alerts: string[]; errors: string[];
 };
 
@@ -48,7 +51,7 @@ export async function weeklyReadingAudit(opts: { days?: number } = {}): Promise<
     ok: true, days, since, kanji: { rows: 0, byTable: {} }, names: { visionNames: 0, fixable: 0, uncertain: 0, staffMisread: 0, examples: [] },
     rooms: { newRows: 0, notCanonical: 0, aixNotCanonical: 0 },
     amounts: { pairs: 0, rent: { n: 0, bad: 0 }, admin: { n: 0, bad: 0 }, deposit: { n: 0, bad: 0 }, key: { n: 0, bad: 0 } },
-    vacancy: { rows: 0, moveInAsVacate: 0 }, alerts: [], errors: [],
+    vacancy: { rows: 0, moveInAsVacate: 0 }, llmSpend: null, alerts: [], errors: [],
   };
   const step = async (name: string, fn: () => Promise<void>) => { try { await fn(); } catch (e) { r.errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`); } };
 
@@ -150,6 +153,13 @@ export async function weeklyReadingAudit(opts: { days?: number } = {}): Promise<
       const key = ym ? (m.day ? `${+ym[1]}/${m.day}` : m.part ? `${+ym[1]}/${m.part}` : null) : null;
       if (key && vac.includes(key)) r.vacancy.moveInAsVacate++;
     }
+  });
+
+  // ── LLM の使った額（2026-10-15・llm_usage_logs を読むだけ・印は llm-spend-audit.ts の線）
+  if (process.env.LLM_SPEND_AUDIT !== "off") await step("llmSpend", async () => {
+    const { fetchLlmSpend } = await import("@/app/lib/llm-spend-audit");
+    r.llmSpend = await fetchLlmSpend({ days });
+    r.alerts.push(...r.llmSpend.alerts);
   });
 
   // ── 落ちた印（どれも直した後は 0 のはず・金額は 1割を超えたら）

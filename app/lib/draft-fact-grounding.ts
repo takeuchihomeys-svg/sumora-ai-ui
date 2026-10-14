@@ -17,6 +17,7 @@
 // 戻す: DRAFT_FACT_GROUNDING=off（止める印を出さない）。種類ごとに止めるのは DRAFT_FACT_GROUNDING_KINDS（既定は監査で誤検知 0 だった種類だけ）。
 import { splitPropertyName, buildingKeyOf, voicingFold } from "./customer-state";
 import { similarity } from "./property-name-match";
+import { withLatinHead } from "./latin-name-head";
 
 export type DraftFactKind =
   | "date" | "time" | "room" | "property_name" | "facility"
@@ -117,7 +118,7 @@ export function extractDraftFacts(draft: string | null | undefined): DraftFact[]
     for (const m of s.matchAll(TIME_RE)) { const k = timeKey(m); if (k) out.push({ kind: "time", value: m[0], key: k, sentence: s }); }
     for (const m of s.matchAll(ROOM_RE)) out.push({ kind: "room", value: m[0], key: roomKey(m[1]), sentence: s });
     for (const m of s.matchAll(NAME_ROOM_RE)) {
-      const ref = splitPropertyName(`${m[1]} ${m[2]}号室`);
+      const ref = splitPropertyName(`${withLatinHead(s, (m.index ?? 0) + m[0].indexOf(m[1]), m[1])} ${m[2]}号室`);
       if (!ref || ref.buildingKey.length < 3) continue;
       if (/^(?:こちら|その|この|お部屋|物件|同じ|別の|他の|お送り|送って|ご紹介)/.test(ref.building)) continue;
       // 文の切れ端（「現在募集中の」「礼金は1ヶ月となり」「LOHAS豊中稲津町は3階部分の」）は物件名にしない（2026-10-09 監査の実物）

@@ -98,7 +98,8 @@ export type RecommendViewable = {
   viewableFrom: string | null;
   /** 退去予定を伝える一文（資料から作れた時だけ。本文・ブレインが出どころの時は null＝本文に既にある／日付はブレインの viewableFrom） */
   line: string | null;
-  source: "text" | "material" | "brain";
+  /** sent_image＝送った資料の画像の読み（2通目だけ・recommend-vacating-source.ts。材料に渡すだけで出口では足さない） */
+  source: "text" | "material" | "brain" | "sent_image";
   /** 資料の入居可能の時期（文には入れない・出口の目印だけ）。資料から決めた時だけ */
   moveInWhen?: string | null;
 };
