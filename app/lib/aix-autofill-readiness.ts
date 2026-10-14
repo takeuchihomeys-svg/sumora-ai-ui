@@ -22,6 +22,7 @@ import { extractDateMentions, fixedViewingSlots } from "./customer-sim-material"
 import { extractRequestedViewingDates } from "./viewing-date-request";
 import { aixAutoSendGate, type AutoSendGate } from "./staff-confirm-facts";
 import { decideApplySubMode } from "./apply-sub-mode";
+import { withLatinHead } from "./latin-name-head";
 
 export type AutofillLevel = "auto" | "auto_calendar" | "staff_confirm" | "needs_material" | "unknown";
 export type AixAutofill = {
@@ -115,7 +116,7 @@ function classifyAixAutofillCore(i: AutofillInput): Omit<AixAutofill, "autoSend"
       // 物件: 直前の内覧調整の文の「〇〇 203号室」
       const lastInvite = [...(i.staffTexts ?? [])].reverse().find((t) => /号室/.test(t) && /ご案内|ご内覧/.test(t));
       const room = lastInvite?.match(/([^\s／/、。！!「」]{2,30}?)\s*([0-9０-９]{2,4})\s*号室/);
-      const propertyName = i.propertyName ?? (room ? `${room[1]} ${room[2]}号室` : null);
+      const propertyName = i.propertyName ?? (room ? `${withLatinHead(lastInvite ?? "", room.index ?? 0, room[1])} ${room[2]}号室` : null);
       if (propertyName && !i.propertyName) prefilled["物件名"] = `${propertyName}（内覧調整の文）`;
       if (!propertyName) blockers.push("物件名");
       return { level: "needs_material", blockers, prefilled, request: null };

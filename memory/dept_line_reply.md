@@ -5,6 +5,12 @@
 - **全力サポート**: 「他まだありますでしょうか」を規則 not_pickup_turn が質問として物件の AIX ごと返信に戻していた（q102）→ 他の物件・新着の問い・候補の番は消さない。2つ目は候補1つの値で足す／外す（splitFinalAlts）。候補を meta.llm_raw.zc・digest.zc に記録。試験 1/6→3/6。戻す ZENRYOKU_CANDIDATE_EXIT=off
 - **了承の返事**: ack_form を決めた了承だけの番で、場面の型・往復文脈・姿勢の締め・必ず含める内容・WE DO・確認約束の禁止・最終チェックが逆を渡していた→ 1つの値（ackFormShapeLine）にそろえた。竹内さんの形に固定した試し 19番: 従った 14/18→17/18・同じ形 15/19→18/19。戻す ACK_FORM_FOLLOW=off。ack_form 自体は ACK_FORM_BRAIN=on の時だけ（本番 0）
 - 物差し `scripts/audit-ack-form-takeuchi.ts`・試し `scripts/yuma-ack-form-follow-test.ts`（YUMA5）・設計知見の案 scripts/kb-zenryoku-exit-1015.json・kb-ack-form-follow-1015.json（未投入）
+## 🧹 小さな直し（10/15 作る人・ブランチ small-fixes-1015）
+- **使った額の見張り**: 週の見張り（reading-audit-weekly・月曜 JST 9:40）に llmSpend（`app/lib/llm-spend-audit.ts`・llm_usage_logs を読むだけ・単価は llm-price.ts）。日ごと×Claude/DeepSeek/Jev・本番/手元・前の週との差。印: 週が前の週の1.5倍超かつ+$10／Claude・DeepSeek 別も同じ／1日が前週の1日平均の3倍超かつ$10以上（9/24〜10/14 の揺れ: 1日 $8〜$69・週 $184→$247）。10/15 時点の印「DeepSeek 2.14倍（$72→$154・手元 $171 が大半）」。手元 `scripts/llm-spend-audit.ts`。戻す LLM_SPEND_AUDIT=off・線 LLM_SPEND_ALERT_RATIO／_MIN_USD／LLM_SPEND_DAY_RATIO
+- **✨2通目の退去予定の材料**: 竹内さんが2通目に退去予定を書いた番（60日 66番）で売上サポの行（property_pickups）があるのは 4番だけ＝材料の出どころは送った資料の画像の読み（sent_image_properties.facts.status=move_out_planned・vacancy_date）。aix-template-generate が本文・売上サポの行で決まらない時に引く（退去予定と読めた時だけ・材料に渡すだけで出口の一文の足しはしない）。届く 25→31（読みが2通目より後に書かれた番 6・資料の読みに現況が無い 11 が残り）。`scripts/audit-recommend-vacating-source.ts`。戻す RECOMMEND_VACATING_SENT_IMAGE=off。1通目（aix/action）は手を付けていない（別の担当の AIX の材料）
+- **英字の物件名**: 「GRAN TOYONAKA 102号室」が「TOYONAKA」になる切り出し（空白を含まない名前＋号室の正規表現）を `app/lib/latin-name-head.ts` で頭を戻す（待ち合わせ・内覧の物件の先入れ・customer-mindset・draft-fact-grounding）。スタッフの文180日 2,164か所で欠け 189→0。戻す LATIN_NAME_HEAD=off
+- **物件名の直しの残り3行**: 地名を直した名前が帳簿に無い時に止まり、次に回すと series で直る2段だった（セレニティプラン雑賀→難波→セレニテフラン難波）。1回で着くように（PROPERTY_NAME_FIX_CHAIN=off）。親が `fix-property-names-stored.ts --apply` で 3行。別件: sent_image_properties の source=backfill（1,543）は直しの対象外で、直せる行が 128 ある（竹内さんの判断待ち）
+- **設計知見の食い違い**: 4d950c47（号室の0を消すのは誤り）× f7c8b201（全部で外す）→ 注記の行 `scripts/kb-room-zero-note-1015.json`（親が kb-insert）
 ## 🧠 物件検索ブレインの読みを AIX へ（10/15 作る人・ブランチ aix-property-brain-1014）
 - **洗い出し**（30日・LLM なし）: 返信の下書きは物件の中身をほぼ書けている（竹内さん手打ち163番で足したのは6番）。AIX は材料の有無が壁＝物件オススメ 239押下で売上サポの行 15%・送った資料の保存した読み（sent_image_properties.facts）64%。物件ピックアップは画像を上げ直すので行と結べない（手渡しの束のまま送った時だけ）
 - **つないだ**: 物件オススメの2通目（✨）で売上サポの行が無い時、保存した読みの駅・築年・敷礼なし＋お客様の希望との合う・満たさない（`app/lib/second-material-saved-read.ts`・`SECOND_MATERIAL_SAVED_READ=off` で旧）。材料が届く2通目 4→33/60。礼金ありの読みでは止めない（12中4が実送信「敷金礼金なし」）
