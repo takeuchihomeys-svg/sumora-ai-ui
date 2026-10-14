@@ -30,6 +30,9 @@ t("sweep: スタッフの番 → 載せない", !shouldQueueDraftAfterSweep({ me
 t("sweep: BRAIN_SWEEP_QUEUE_DRAFT=off → 載せない", !shouldQueueDraftAfterSweep({ meta: brainReply, aiDraft: null, lastSender: "customer" }, { BRAIN_SWEEP_QUEUE_DRAFT: "off" }).queue);
 t("下書きの欄: 空・印は空き／本文は空きでない", draftSlotEmpty("") && draftSlotEmpty(" [返信不要] ") && !draftSlotEmpty("はい😊！！"));
 
+t("分析の省略（cached）は判断なしと同じ → 旧の規則（止める）", decideClosedDraftSkip({ brainMeta: { ...brainReply, source: "cached" }, rule: RULE_SKIP }, ON).skip === true);
+t("sweep: 分析の省略（cached）→ 載せない", !shouldQueueDraftAfterSweep({ meta: { ...brainReply, source: "cached" }, aiDraft: null, lastSender: "customer" }, ON).queue);
+
 // 配線（文で確かめる）
 const root = join(__dirname, "..", "..", "..");
 const bg = readFileSync(join(root, "app/api/generate-draft-bg-async/route.ts"), "utf8");

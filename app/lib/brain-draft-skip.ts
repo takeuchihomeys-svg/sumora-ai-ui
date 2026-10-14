@@ -19,7 +19,16 @@ export type BrainDraftMeta = {
   note?: string | null;
   decision_source_no_aix?: string | null;
   reply_direction?: string | null;
+  source?: string | null;
 } | null | undefined;
+
+/**
+ * 2026-10-14 独立レビュー: 分析の省略（source=cached）は今回のお客様の発言を見ていない判断で、note を空・reply_mode=auto_reply に
+ *   書き換えてある（brain-core の cachedResult）。これを「ブレインは返信」と読むと、締めの後のお礼で規則の止めを外してしまう → 判断なし（T3）と同じ扱い
+ */
+function liveBrain(meta: BrainDraftMeta): BrainDraftMeta {
+  return meta && meta.source !== "cached" ? meta : null;
+}
 
 /** ブレインが「この番は返信しない（返信不要・お客様の連絡待ち）」と決めたか */
 export function brainSaysNoReply(meta: BrainDraftMeta): boolean {
@@ -45,8 +54,9 @@ export type DraftSkipVerdict = { skip: boolean; reason: string; by: "brain" | "r
  *   ブレインの判断が無い → 旧の規則（rule）のまま
  */
 export function decideClosedDraftSkip(i: { brainMeta: BrainDraftMeta; rule: { skip: boolean; reason: string } }, env: Env = process.env): DraftSkipVerdict {
-  if (!brainDraftSkipOn(env) || !i.brainMeta) return { ...i.rule, by: "rule" };
-  if (brainSaysNoReply(i.brainMeta)) return { skip: true, reason: `ブレイン: ${String(i.brainMeta.note ?? "返信不要").slice(0, 40)}`, by: "brain" };
+  const meta = brainDraftSkipOn(env) ? liveBrain(i.brainMeta) : null;
+  if (!meta) return { ...i.rule, by: "rule" };
+  if (brainSaysNoReply(meta)) return { skip: true, reason: `ブレイン: ${String(meta.note ?? "返信不要").slice(0, 40)}`, by: "brain" };
   return { skip: false, reason: i.rule.skip ? `規則は止める（${i.rule.reason}）がブレインは返信` : "ブレインは返信", by: "brain" };
 }
 
@@ -63,7 +73,7 @@ export function draftSlotEmpty(aiDraft: string | null | undefined): boolean {
 export function shouldQueueDraftAfterSweep(i: { meta: BrainDraftMeta; aiDraft: string | null | undefined; lastSender: string | null | undefined }, env: Env = process.env): { queue: boolean; reason: string } {
   if (!brainSweepQueueDraftOn(env)) return { queue: false, reason: "off" };
   if (i.lastSender !== "customer") return { queue: false, reason: "not_customer_turn" };
-  if (!i.meta) return { queue: false, reason: "no_brain" };
+  if (!liveBrain(i.meta)) return { queue: false, reason: "no_brain" };
   if (brainSaysAix(i.meta)) return { queue: false, reason: "brain_aix" };
   if (brainSaysNoReply(i.meta)) return { queue: false, reason: "brain_no_reply" };
   if (!draftSlotEmpty(i.aiDraft)) return { queue: false, reason: "has_draft" };

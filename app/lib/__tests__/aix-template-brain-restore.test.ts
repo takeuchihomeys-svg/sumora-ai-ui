@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/aix-template-brain-restore.test.ts
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { restoreMetaAfterShown, SHOWN_DRAFT_SENTINEL } from "../brain-meta-restore";
+import { restoreMetaAfterShown, staffTurnStillOpen, SHOWN_DRAFT_SENTINEL } from "../brain-meta-restore";
 
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`); } };
@@ -19,6 +19,14 @@ const base = { suggestedAixMeta: null, lastBrainMeta: last, status: "proposing",
 t("最新のお客様発言を見た判断 → 戻す", restoreMetaAfterShown({ ...base, latestCustomerMsgAt: "2026-10-10T01:00:00Z" }).restored);
 t("新しいお客様発言が後に来ている → 戻さない（stale）", restoreMetaAfterShown({ ...base, latestCustomerMsgAt: "2026-10-10T05:00:00Z" }).reason === "stale");
 t("申込以降 → 戻さない", restoreMetaAfterShown({ ...base, status: "applying", latestCustomerMsgAt: "2026-10-10T01:00:00Z" }).reason === "skip_status");
+
+// 2026-10-14 独立レビュー: 別の番（お客様の発言の後のスタッフの最初の送信から2時間超）の判断は戻さない
+const H = 3_600_000, now = Date.parse("2026-10-12T10:00:00Z");
+t("スタッフの番の中（最初の送信から30分）→ 戻す", staffTurnStillOpen(now - 0.5 * H, now, 2 * H));
+t("まだ答えていない番 → 戻す", staffTurnStillOpen(null, now, 2 * H));
+t("別の番（最初の送信から2日）→ 戻さない", !staffTurnStillOpen(now - 48 * H, now, 2 * H));
+t("読めない → 戻さない", !staffTurnStillOpen(NaN, now, 2 * H));
+t("続きの番の線は brain-meta-load が使う", /staffTurnStillOpen\(firstStaffMs/.test(load) && /other_turn/.test(load));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

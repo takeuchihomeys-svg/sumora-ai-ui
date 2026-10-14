@@ -46,9 +46,21 @@ export type ShownRestoreInput = {
 
 export type ShownRestoreReason =
   | "has_meta" | "not_shown" | "skip_status" | "no_last_meta" | "not_restorable_source"
-  | "no_ts" | "no_customer_msg" | "stale" | "restored";
+  | "no_ts" | "no_customer_msg" | "stale" | "restored"
+  /** 続きの番（AIX の後の2通目）で、判断の見たお客様の発言に答えたスタッフの番がもう終わっている（brain-meta-load.ts） */
+  | "other_turn";
 
 export type ShownRestoreResult = { meta: Record<string, unknown> | null; restored: boolean; reason: ShownRestoreReason };
+
+/**
+ * 続きの番（AIX の後の2通目）: 判断の見たお客様の発言に答えたスタッフの番がまだ続いているか。
+ *   firstStaffAfterCustomerMs = お客様の最新の発言の後のスタッフの最初の送信（無ければ null＝これから答える番）。NaN（読めない）は続いていない側
+ */
+export function staffTurnStillOpen(firstStaffAfterCustomerMs: number | null, nowMs: number, turnMs: number): boolean {
+  if (firstStaffAfterCustomerMs === null) return true;
+  if (!Number.isFinite(firstStaffAfterCustomerMs)) return false;
+  return nowMs - firstStaffAfterCustomerMs <= turnMs;
+}
 
 function asObject(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
