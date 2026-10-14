@@ -68,7 +68,16 @@ const n8 = fx("グランパシフィック桃谷", L(["グランパシフィッ�
 t("表の地名（桃谷）は触らない（名前はそのまま）", n8.status !== "fixed" && n8.name === "グランパシフィック桃谷", n8);
 const n9 = fx("セレニテ雑波ミラク", L(["セレニテ難波ミラク", "text"], ["セレニテ雑波ミラク", "text"]));
 t("読んだ名前が資料の文字の帳簿にある＝そのまま", n9.status === "known", n9);
-t("戻す（PROPERTY_NAME_FIX=off）", fixReadPropertyName("スプランディッド雜波キャトル", lg, { PROPERTY_NAME_FIX: "off" }).status === "unchanged");
+// 2026-10-15 地名の直しの後にもう1回帳簿を引く（保存済みの直しで2回に分かれていた: sent_properties 3行）
+{
+  const lgS = L(["セレニテフラン難波", "shared", 3]);
+  const s1 = fx("セレニティプラン雑賀 701号室", lgS);
+  t("雑賀→難波→帳簿のセレニテフラン難波（1回で）", s1.status === "fixed" && s1.name === "セレニテフラン難波 701号室" && /^place:.*>series\+ledger$/.test(s1.rule ?? ""), s1);
+  t("1回目の結果をもう1回通しても同じ（known）", fx(s1.name, lgS).status === "known", fx(s1.name, lgS));
+  const s0 = fixReadPropertyName("セレニティプラン雑賀 701号室", lgS, { PROPERTY_NAME_FIX_CHAIN: "off" });
+  t("戻す（PROPERTY_NAME_FIX_CHAIN=off）は地名の直しだけ", s0.status === "fixed" && s0.name === "セレニティプラン難波 701号室", s0);
+}
+t("戻す（PROPERTY_NAME_FIX=off）",fixReadPropertyName("スプランディッド雜波キャトル", lg, { PROPERTY_NAME_FIX: "off" }).status === "unchanged");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

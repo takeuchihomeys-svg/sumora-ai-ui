@@ -250,6 +250,13 @@ export function fixReadPropertyName(read: string | null | undefined, ledger: Rea
       const sure = fixes.every((x) => x.f!.sure);
       if (inLedger || sure) {
         const rule = `place:${[...new Set(fixes.map((x) => x.f!.via))].join("+")}${inLedger ? "+ledger" : ""}`;
+        // 2026-10-15 地名を直した名前が帳簿に無い時は、直した名前でもう1回だけ帳簿を引く（2回に分かれていた直し）。
+        //   保存済みの直し（scripts/fix-property-names-stored.ts --apply）の後に「セレニティプラン雑賀→セレニティプラン難波」が残り、
+        //   次に回すと「→セレニテフラン難波（series+ledger）」になっていた（sent_properties 3行）。1回で同じ所に着く形にする。戻す PROPERTY_NAME_FIX_CHAIN=off
+        if (!inLedger && (env.PROPERTY_NAME_FIX_CHAIN ?? "").trim().toLowerCase() !== "off") {
+          const again = fixReadPropertyName(fixed + tail, ledger, { ...env, PROPERTY_NAME_FIX_CHAIN: "off" });
+          if (again.status === "fixed") return { name: again.name, status: "fixed", rule: `${rule}>${again.rule}`, from: name0 };
+        }
         return { name: (inLedger ? byKey.get(fk!.key)!.name : fixed) + tail, status: "fixed", rule, from: name0 };
       }
     }
