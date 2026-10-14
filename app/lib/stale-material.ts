@@ -27,10 +27,17 @@ export function staleMaterialDays(env: Record<string, string | undefined> = proc
 
 const ASKED_TOPICS: ReadonlySet<PtTopic> = new Set<PtTopic>(["vacancy", "viewing", "cost", "discount"]);
 const APPLY_RE = /申込|申し込/;
-const FRESH_KINDS = new Set(["sent", "recommended", "check_available", "check_vacating", "check_alternative"]);
+// 2026-10-15 確かめる人: 内覧が決まった（viewing_set）も、その時に部屋が空いていた事が分かっている＝資料の新しさに数える
+const FRESH_KINDS = new Set(["sent", "recommended", "check_available", "check_vacating", "check_alternative", "viewing_set"]);
 const ms = (s: string) => Date.parse(s);
+// 2026-10-15 確かめる人（本番の形で60日を再生: 印の番 44・19件の発言のうち聞いていない番が混ざった）: 監査の除き方を本番の関数にも。
+//   内覧の取り消し（「本日内覧予定だったのですがキャンセル」）・費用でない「いくら」（「水道代…超えた場合はいくら追加」）・
+//   内覧の言葉があるだけの聞いていない文（「他物件も内見後、モラーダも検討させていただきます」）は印を出さない
+const CANCEL_RE = /キャンセル/;
+const COST_WORD_RE = /初期費用|費用|見積|総額|金額|お金/;
+const ASK_FORM_RE = /[?？]|か[。!！~〜ー\s]*$|ますか|ですか|でしょうか|たい|ください|下さい|頂け|いただけ|お願い|可能|いつ|何時|何日|できま|いけ|行け/;
 
-export type StaleMaterial = { days: number; freshAt: string; freshKind: "sent" | "recommended" | "checked"; asked: string };
+export type StaleMaterial = { days: number; freshAt: string; freshKind: "sent" | "recommended" | "checked" | "viewing"; asked: string };
 
 /**
  * 今の番（askAt・お客様の文・話題）の物件の資料が古いか。古くなければ null。
@@ -42,6 +49,10 @@ export function staleMaterialOf(r: PtRoom, askAt: string, customerText: string, 
   if (!Number.isFinite(at)) return null;
   const apply = APPLY_RE.test(customerText) && !/申込金|申込書/.test(customerText);
   if (!apply && !ASKED_TOPICS.has(topic)) return null;
+  const tx = String(customerText ?? "").trim();
+  if (tx && CANCEL_RE.test(tx)) return null;
+  if (tx && !apply && topic === "cost" && !COST_WORD_RE.test(tx)) return null;
+  if (tx && !apply && topic === "viewing" && !ASK_FORM_RE.test(tx)) return null;
   const before = r.events.filter((e) => ms(e.at) < at);
   if (!before.some((e) => e.kind === "sent" || e.kind === "recommended")) return null;
   const fresh = before.filter((e) => FRESH_KINDS.has(e.kind)).at(-1);
@@ -51,13 +62,13 @@ export function staleMaterialOf(r: PtRoom, askAt: string, customerText: string, 
   const days = (at - ms(fresh.at)) / 86400_000;
   if (days < staleMaterialDays(env)) return null;
   const asked = apply ? "申込" : topic === "vacancy" ? "空き" : topic === "viewing" ? "内覧" : "初期費用";
-  return { days, freshAt: fresh.at, freshKind: fresh.kind === "sent" || fresh.kind === "recommended" ? fresh.kind : "checked", asked };
+  return { days, freshAt: fresh.at, freshKind: fresh.kind === "sent" || fresh.kind === "recommended" ? fresh.kind : fresh.kind === "viewing_set" ? "viewing" : "checked", asked };
 }
 
 /** 台帳の文の1行（▶ の物件の下に足す）。事実と竹内さんの方針だけ・言うかどうかはブレイン */
 export function staleMaterialLine(s: StaleMaterial): string {
   const p = jstParts(s.freshAt);
-  const what = s.freshKind === "checked" ? "最後に募集状況を確認した" : s.freshKind === "recommended" ? "資料をオススメでお送りした" : "資料をお送りした";
-  return `  ・資料が古い: この物件は${p.m}/${p.d}に${what}きり（${Math.floor(s.days)}日前）で、その後の募集状況は分からない（今の番は${s.asked}の話）。`
-    + `竹内さんの方針（10/14）: 1週間以上前に送った物件を聞かれた時は、念のため募集状況を確認する方が正確`;
+  const what = s.freshKind === "checked" ? "最後に募集状況を確認した" : s.freshKind === "viewing" ? "内覧が決まった" : s.freshKind === "recommended" ? "資料をオススメでお送りした" : "資料をお送りした";
+  return `  ・資料が古い: この物件は${p.m}/${p.d}に${what}きり（${Math.floor(s.days)}日前）で、その後に募集状況を確かめた記録は無い（今の番は${s.asked}の話）。`
+    + `竹内さんの方針（10/14）: 1週間以上前に送った物件の空き・内覧・申込・費用を聞かれた時は、念のため募集状況を確認する方が正確（聞かれている事がそれでない時・もうお申込みの後は当てはまらない）`;
 }

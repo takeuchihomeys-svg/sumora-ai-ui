@@ -69,6 +69,20 @@ const lineOf = (n: string) => n.split("\n").find((l) => l.includes("資料が古
   const m = staleMaterialOf(r, "2026-10-11T14:03:00Z", "ここまだ空いてますか？", "vacancy", {})!;
   t("文に竹内さんの方針が入る（確認する・しないの指示はしない）", /竹内さんの方針/.test(staleMaterialLine(m)) && !/AIX|【物件確認した】|必ず/.test(staleMaterialLine(m)), staleMaterialLine(m));
 }
+{
+  // 2026-10-15 確かめる人: 本番の形の再生で聞いていない番に印が出た実物（9b9b81ba・60e6d3ab・2ae0d94e）
+  const s = base("ここまだ空いてますか？", "2026-10-11T14:03:00Z");
+  const r = s.rooms.find((x) => x.ref.display.startsWith("エスリード"))!;
+  const at = "2026-10-11T14:03:00Z";
+  t("内覧のキャンセル → null", staleMaterialOf(r, at, "では本日内覧予定だったのですがキャンセル目お願いします。", "viewing", {}) === null);
+  t("費用でない「いくら」（水道代）→ null", staleMaterialOf(r, at, "水道代2,500円は、月何㎥までが含まれていて、超えた場合はいくら追加になりますか？", "cost", {}) === null);
+  t("内覧の言葉があるだけの聞いていない文 → null", staleMaterialOf(r, at, "昨日はありがとうございました！ 他物件も内見後、モラーダも検討させていただきます🙏🏻", "viewing", {}) === null);
+  t("内覧の質問 → 印", staleMaterialOf(r, at, "ここ内見可能でしょうか？", "viewing", {}) !== null);
+  t("初期費用の質問 → 印", staleMaterialOf(r, at, "こちらって初期費用いくらでしょうか？？", "cost", {}) !== null);
+  const rv = { ...r, events: [...r.events, { at: "2026-10-09T00:00:00Z", kind: "viewing_set" as const, by: "record" as const }] };
+  t("資料の後に内覧が決まった（2日前）→ 印なし", staleMaterialOf(rv, at, "ここまだ空いてますか？", "vacancy", {}) === null);
+  t("聞かれている事でない時・申込後は当てはまらない、を文に", /当てはまらない/.test(staleMaterialLine(staleMaterialOf(r, at, "ここ内見可能でしょうか？", "viewing", {})!)));
+}
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exitCode = 1;
