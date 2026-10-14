@@ -80,6 +80,11 @@ t("費用の場面でも電話で分かった事が渡る", /電話で分かっ�
 process.env.STAFF_CAPTURE_CALL = "off";
 t("off で渡さない", buildCustomerMemoNote({ memo: r1.memo, told: [], scene: "cost", nowMs: now }) === "");
 delete process.env.STAFF_CAPTURE_CALL;
+// 竹内さん 10/14: 先頭に出すのは14日まで・古い物は普通のメモ／判断に使うが書かない
+t("書き写さない指示が付く", /お客様への文にそのまま書き写さない/.test(mn), mn);
+const old = buildCustomerMemoNote({ memo: r1.memo, told: [], scene: "cost", nowMs: now + 20 * 86_400_000 });
+t("15日以上前は先頭に出さず普通のメモ（📞の行なし・電話で分かった事: の行あり）", !/📞/.test(old) && /- 電話で分かった事: /.test(old) && /書き写さない/.test(old), old);
+t("14日以内は先頭", /📞/.test(buildCustomerMemoNote({ memo: r1.memo, told: [], scene: "cost", nowMs: now + 13 * 86_400_000 })));
 
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

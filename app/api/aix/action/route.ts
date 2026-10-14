@@ -7542,7 +7542,9 @@ ${PHONE_FOLLOWUP_STAFF_EXAMPLES.map((t, i) => `例${i + 1}:\n${t}`).join("\n\n")
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\n で）"}`;
       // 2026-10-13: ブレインの本質（aixContractNote）はここには渡さない＝電話の後の文は電話で話した内容（スタッフのメモ）だけで書く。前の依頼はもう電話で答えている事がある
-      const pfDynamicSuffix = `【電話でお話しした内容（スタッフのメモ・この内容だけで書く）】\n${pfNotes}`;
+      // 2026-10-14 竹内さん「判断に使うが書かない」: メモの【】は画面のタップの印（電話の結果）。こちらの見立て（他社で検討中・見送り 等）は書き写さない
+      const pfDynamicSuffix = `【電話でお話しした内容（スタッフのメモ・この内容だけで書く）】\n${pfNotes}`
+        + ((process.env.STAFF_RECORD_NO_COPY ?? "").trim().toLowerCase() !== "off" && /【[^】]+】/.test(pfNotes) ? `\n※【】の中は電話の結果の印（スタッフの判断の材料）。そのまま書き写さない。「他社で検討中」「見送り」「家族と相談」等のこちらの見立ては書かない（お客様と電話で決めた事・こちらがする事だけを書く）` : "");
       // ブロック: [shared 1h] → [global ルール 1h] → [固有文＋action 別ルール 5m] → [メモ（動的）]
       const pfShared = splitSharedPrefix(pfStaticSystem);
       const pfSystemSpec: SystemSpecBlocks = {
