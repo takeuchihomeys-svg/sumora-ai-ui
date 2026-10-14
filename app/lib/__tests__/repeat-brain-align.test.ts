@@ -98,5 +98,21 @@ t("既定は旧（受けだけ・試しで日付の言い直しが出たため�
   t("待ちの形の1文の判定（確認・探す）", isCompactWaitLine("確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！") && isCompactWaitLine("ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！") && !isCompactWaitLine("火曜日に無事1番手でお申込出来ているか確認させて頂き、確認出来次第ご連絡させて頂きます！！"));
   t("材料の注記: wait_line／receive_only でブレインの判断を書く", /待ちの形の短い1文/.test(confirmAckMaterialFor("募集状況の確認", "wait_line")) && /受けだけ/.test(confirmAckMaterialFor("募集状況の確認", "receive_only")) && /待ちの形/.test(pickupAckMaterialFor("wait_line")));
 }
+{
+  console.log("⑩ 10/15 ack_form を出口にそろえる（ACK_FORM_FOLLOW）");
+  const rb = require("../repeat-brain-align") as typeof import("../repeat-brain-align");
+  t("既定 on・off で旧", rb.ackFormFollowEnabled({}) && !rb.ackFormFollowEnabled({ ACK_FORM_FOLLOW: "off" }));
+  t("受けだけの形の1行は待ちの形・約束を書かせない", /受けだけ/.test(rb.ackFormShapeLine("receive_only")) && /待ちの形（〜次第/.test(rb.ackFormShapeLine("receive_only")));
+  t("待ちの形の1行は短い1文だけ", /待ちの形の短い1文/.test(rb.ackFormShapeLine("wait_line")) && /言い切りの約束/.test(rb.ackFormShapeLine("wait_line")));
+  t("締めの行", /何卒よろしくお願い致します！！」で終える/.test(rb.ackFormCloserLine("receive_only")) && /待ちの形の1文/.test(rb.ackFormCloserLine("wait_line")));
+  t("必ず含める内容から外す: 約束の進行（確認・見積・ピックアップ）／残す: 気持ちの受け", rb.ackFormDropTopic("全物件の募集状況確認と御見積書作成進行の一言") && rb.ackFormDropTopic("初期費用を抑えられる物件のピックアップを進める") && !rb.ackFormDropTopic("お礼を受け止める一言"));
+  const tc: TurnContract = { source: "brain", asks: [{ quote: "お願いします", kind: "report", route: "reply", answer: "かしこまりました。費用を抑えられる物件のピックアップを進めます。", basis: "judgement", aixKey: null }], leadWith: 0, closeOnly: false, mustNot: [], proposals: [], feeling: { kind: null, acknowledge: false }, alreadySaid: [], settled: [], humanChecks: [], ackForm: "receive_only", ackFollow: true } as unknown as TurnContract;
+  t("本質の答えの要点に約束の進行があれば渡さない（ack_form の番）", !/ピックアップを進めます/.test(renderTurnContractNote(tc)));
+  t("ACK_FORM_FOLLOW=off なら旧（渡す）", (() => { process.env.ACK_FORM_FOLLOW = "off"; const r = /ピックアップを進めます/.test(renderTurnContractNote(tc)); delete process.env.ACK_FORM_FOLLOW; return r; })());
+  t("了承の返事の番は行動宣言を足させる指摘を書き直しに渡さない", issueContradictsContract({ code: "WE_DO_MISSING" }, tc, {}));
+  // review: ack_form は質問・急ぎの番にも出る（材料が「質問あり」でも出す）→ 了承だけの番でない（ackFollow なし）は答えの要点・指摘を今まで通り
+  const tq = { ...tc, ackFollow: false } as TurnContract;
+  t("了承だけの番でない（ackFollow なし）→ 答えの要点を渡す・指摘も渡す", /ピックアップを進めます/.test(renderTurnContractNote(tq)) && !issueContradictsContract({ code: "WE_DO_MISSING" }, tq, {}));
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

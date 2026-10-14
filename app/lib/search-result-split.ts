@@ -180,7 +180,7 @@ export function applySearchSplit(o: {
  */
 // 10/13 レビュー: 「他の物件／他のお部屋／他にも物件・お部屋（がありますか）／他（に）まだありますか／新着」に寄せる。
 //   「他に質問はありません」（他に＋別の語）・「このお部屋まだありますか」（1件の募集状況の確認・他が無い）は拾わない
-export const OTHER_PROPERTY_ASK_RE = /(?:他|ほか)の(?:物件|お部屋|部屋)|(?:他|ほか)に(?:も)?(?:(?:いい|良い|おすすめの|オススメの)?(?:物件|お部屋|部屋))|(?:他|ほか)(?:に|は)?(?:も)?(?:まだ)?(?:あり|ある|ない|無い)(?:ます|ません|です)?(?:か|\?|？)|新着/;
+export const OTHER_PROPERTY_ASK_RE = /(?:他|ほか)の(?:物件|お部屋|部屋)|(?:他|ほか)に(?:も)?(?:(?:いい|良い|おすすめの|オススメの)?(?:物件|お部屋|部屋))|(?:他|ほか)(?:に|は)?(?:も)?(?:まだ)?(?:あり|ある|ない|無い)(?:ます|ません|です)?(?:でしょう)?(?:か|\?|？)|新着/; // 10/15 q102「他まだありますでしょうか」
 /**
  * 全力サポートを候補にするかの材料を渡す番か（物件を探す番になりうる時だけ・決定論の網＝候補を拾うだけ）。
  *   条件の場面（もっと探して・条件の変更）／場面の証拠の候補が物件の AIX か全力サポート／お客様が他の物件・新着を聞いた／今送れる候補がある
@@ -211,6 +211,24 @@ export function zenryokuCandidateMaterial(o: { sentPropertyCount: number; lastSe
  *   既定 off（入れる: ZENRYOKU_CANDIDATE_STRONG=on）。10/14 試験（DeepSeek・出し切り7問＋AIX:左右 1問＋新規2問）: 強めない 6/10（出し切り 3/7）→ 強める 4/10（2/7）。
  *   強めても候補は 8番中 1番しか立たなかった（brain:search-split-right candidate:false 7）＝材料の文では動かない。次は候補にする判断の場所（出力の項目の説明・2層のどちらで出すか）を調べる
  */
+/**
+ * 2026-10-15 作る人（zenryoku-ack-1015）: 左右の形の番の2つ目の並び（出口）を、ブレインの zenryoku_candidate 1つの値に従わせる。
+ *   候補にしていない → 規則（search-result-choice の2択）が足した全力サポートを外す（10/13 から）。
+ *   候補にした → 右（全力サポート）を必ず出す（10/15 から）。旧は「出し切りの明示の印（applySearchSplit）」か「売上サポに今送れる候補が無い（searchResultAltActions）」の
+ *     時しか足さなかった＝ブレインが「他にありますか」の番で候補にしても、印が無い・売上サポに候補がある・お礼の番（出し切りの判定を飛ばす）では右が出なかった。
+ *   申込以降・左右の形でない番は触らない。戻す: ZENRYOKU_CANDIDATE_EXIT=off（候補にしても足さない＝旧）
+ */
+export function zenryokuCandidateExitEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.ZENRYOKU_CANDIDATE_EXIT ?? "").trim().toLowerCase() !== "off";
+}
+export function splitFinalAlts(o: { splitTurn: boolean; zenryokuCandidate: boolean; finalAix: string | null | undefined; altActions: string[] | undefined; postApply: boolean; env?: Record<string, string | undefined> }): { altActions: string[] | undefined; added: boolean } {
+  if (!o.splitTurn || o.finalAix === "zenryoku_support") return { altActions: o.altActions, added: false };
+  if (!o.zenryokuCandidate) return { altActions: o.altActions?.filter((a) => a !== "zenryoku_support"), added: false };
+  const alts = o.altActions ?? [];
+  if (alts.includes("zenryoku_support") || o.postApply || !zenryokuCandidateExitEnabled(o.env)) return { altActions: o.altActions, added: false };
+  return { altActions: [...alts.filter((a) => a !== o.finalAix), "zenryoku_support"], added: true };
+}
+
 export function zenryokuCandidateStrongEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.ZENRYOKU_CANDIDATE_STRONG ?? "").trim().toLowerCase() === "on";
 }
