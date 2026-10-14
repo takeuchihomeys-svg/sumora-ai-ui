@@ -317,6 +317,9 @@ import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { logWatchMaterial, noteWatchMaterials, noteWatchSuppressedDraft } from "@/app/lib/line-watch-materials-server";
 import { replyMaterialSizes } from "@/app/lib/line-watch-materials";
 import { splitRequests, buildRequestLedgerNote, requestLedgerEnabled } from "@/app/lib/request-ledger";
+import { replyHintBrainEnabled } from "@/app/lib/reply-hint-auto";
+import { brainOpenerMetaEnabled, brainOpenerKind, normalizeBrainOpener } from "@/app/lib/opener-rates";
+import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
 
@@ -1786,6 +1789,9 @@ ${aixDone.answeredByAix
     // T2/T3補完: brainのmessage-local分析が使えない時のみ、brain-core共有の条件問い合わせ検出を追加適用する
     // （fresh時はbrainの condition_change_type 判定が正。募集状況確認文脈は availabilityCheckNote が正のため除外）
     || (!brainFreshForMessage && !isAvailabilityCheckContext && PROPERTY_CONDITION_INQUIRY_RE.test(customerMessage));
+  // 2026-10-15 監査の残り #10: この注記・入居時期の注記・在庫質問の注記（確定・最優先）は、本質がブレインの番は組み立ての所で
+  //   demoteFixedNote（app/lib/fixed-content-notes.ts）が「材料・型の候補」に下げる（30日: 新条件の注記 45番・竹内さんの実送信 10番のうち
+  //   型に従わない 6番は日程の確定・内覧キャンセル・見積と入居日の依頼などの語の誤爆で、竹内さんはブレインの向きのとおり）。戻す FIXED_NOTE_BRAIN=off
   const newConditionRequestNote = (isNewConditionMsg && !conditionChangeNote)
     ? `\n【🆕 新条件・追加要望の検出（確定・最優先）】お客様は新しい条件・要望（「〇〇の条件のお部屋はありますか」「〇〇でも大丈夫です」等）を出しています。今のフェーズは「その条件でお部屋を探し直す」段階。
 【返信の型（この要素以外を入れない）】
@@ -1925,7 +1931,7 @@ ${aixDone.answeredByAix
   //   dbRules ブロックは学習で変わる DB 由来の塊なので、原則の増減で書き直しになるのはこのブロックだけ（区切りは4つのまま）
   const dynamicBlock =`${replyContentNote}
 ${propertyStatusNote}
-${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? moveInTimingNote : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + newConditionRequestNote + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
+${actionLedgerNote}${turnPairNote}${stanceNote}${tpoGuidanceNote}${applyReadinessNote ? `\n${applyReadinessNote}\n` : ""}${sceneKeep("closingFallback") ? closingNote + closingFallback : ""}${brainGuidanceNote}${sceneKeep("direction") ? directionNote : ""}${nameNote}${sceneKeep("conditions") ? conditionsNote + inlineConditionsFallback + missingConditionsNote : ""}${sceneKeep("summary") ? opinionsNote + summaryNote : ""}${dateNote}${greetingNote}${sceneStyleNoteText}${empathyPhraseNote}${secondClosingNote}${viewingAppointmentAckNote}${sceneKeep("moveInTiming") ? demoteFixedNote(moveInTimingNote, brainContractOn) : ""}${sceneKeep("management") ? managementNote : ""}${repetitionNote}${sceneKeep("questions") ? questionsNote : ""}${sceneKeep("conditionChange") ? conditionChangeNote + demoteFixedNote(newConditionRequestNote, brainContractOn) + conditionExpansionNote + searchAgainNote : ""}${[promiseEchoNote, waitFormAckNote, pickupPromiseAckNote, estimatePromiseAckNote, aixDoneAckNote].map((n) => demoteRepeatNote(n, brainContractOn)).join("")}
 ${staffContextNote}
 ${aixPropertyRecommendationNote}${aixPropertySendNote}
 ${sceneKeep("knowledge") ? knowledgeNote : ""}
@@ -1935,7 +1941,7 @@ ${quotedContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
 ${history || "なし"}
 
-${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${sharedPropertyNote}${propertyChoiceNote}${confirmationGateNote}${availabilityCheckNote}${sceneKeep("budgetInventory") ? budgetInventoryNote : ""}${estimateGateNote}${aixTimingNote}
+${customerMsgBlock}${applicationFormNote}${viewingFactNote}${viewingNoteBlock}${viewingIntentShortReplyNote}${linkRequestNote}${sharedPropertyNote}${propertyChoiceNote}${confirmationGateNote}${availabilityCheckNote}${sceneKeep("budgetInventory") ? demoteFixedNote(budgetInventoryNote, brainContractOn) : ""}${estimateGateNote}${aixTimingNote}
 
 ${examples}${examplesInstruction}
 
@@ -3023,6 +3029,8 @@ async function handleGenerateReply(req: NextRequest) {
   // 2026-10-09 調査の担当（audit-brain-interference）: 自動で足す指定（募集状況確認中・受け身モード）は replyHint（「通常の生成ルールをすべて上書き」・ブレインの AIX 判断を消す）に入れず、
   //   ここに貯めて、本質（turn-contract）がブレインの判断の時は材料の注記に下げる（無い時は今まで通り replyHint に足す）。戻す TURN_CONTRACT_AUTOHINT=off
   const autoHints: { text: string; at: "head" | "tail" }[] = [];
+  /** 2026-10-15 #7: 呼ぶ側の自動の手がかり（replyHintAuto）。本質がブレインの番は材料の注記・無い番は今まで通り replyHint の上書き */
+  let replyHintAutoOrig = "";
   // 呼び出し元から渡された生の名前（多くの経路で LINE表示名そのもの）。
   // 生成には使わず、生成後クリーニングで「本文に混入した表示名」を検出・除去するために保持する。
   let lineDisplayName = "";
@@ -3101,6 +3109,8 @@ async function handleGenerateReply(req: NextRequest) {
       summaryJson?: ReplySummaryJson;
       customerStructured?: CustomerStructured;
       replyHint?: string;
+      /** 2026-10-15 #7: replyHint が呼ぶ側の決定論の自動の手がかり（bg-async・画面の再生成・generate-draft-bg）。スタッフが書いた指定（✨）は付けない */
+      replyHintAuto?: boolean;
       viewingNote?: string;
       screenshotBase64?: string;
       screenshotMediaType?: string;
@@ -3169,6 +3179,14 @@ async function handleGenerateReply(req: NextRequest) {
     bodySummaryJson = body.summaryJson;
     customerStructured = body.customerStructured;
     replyHint = body.replyHint || "";
+    // 2026-10-15 監査の残り #7（scripts/audit-rest-1015.ts --part=hint・30日）: 自動の手がかり（お客様の文の語だけで作る）が
+    //   【🔴✨ 指定生成モード（全ルールの上書き）】になり、ブレインの本質・AIX の注記・本文の安全・返信側の AIX の判断を外していた
+    //   （当たった 263番・ブレインの判断あり 100番・その時ブレインの AIX あり 55番でスタッフが押したのは 16番／中身がぶつかった 9番で竹内さん=ブレイン 8・手がかり 1）。
+    //   自動の分は autoHints（下の本質の判断で材料の注記に下げる・無い時は今まで通り replyHint の上書き）に回す。戻す REPLY_HINT_BRAIN=off
+    if (body.replyHintAuto && replyHint && replyHintBrainEnabled()) {
+      replyHintAutoOrig = replyHint;
+      replyHint = "";
+    }
     activeTaskTypes = body.activeTaskTypes ?? [];
     screenshotBase64 = body.screenshotBase64;
     screenshotMediaType = body.screenshotMediaType;
@@ -3219,7 +3237,7 @@ async function handleGenerateReply(req: NextRequest) {
   // 2026-09-13 監査: どの経路の生成か（ティア率を経路別に測るため step2-tier・tpo_debug に残す）。
   //   bg_async_direct=ブレイン直列の自動生成 / auto=自動（cron 等・DB から判断を読む）/ manual=画面の再生成 / manual_hint=返信ヒント付き・✨ / template_optimize
   const generationCaller: "bg_async_direct" | "auto" | "template_optimize" | "manual_hint" | "manual" =
-    externalBrainGate ? "bg_async_direct" : enforceReplyModeGate ? "auto" : isTemplateOptimize ? "template_optimize" : replyHint ? "manual_hint" : "manual";
+    externalBrainGate ? "bg_async_direct" : enforceReplyModeGate ? "auto" : isTemplateOptimize ? "template_optimize" : (replyHint || replyHintAutoOrig) ? "manual_hint" : "manual";
 
   // ─── 2026-09-20 竹内「ステータス申込以降は別の管理ツールで LINE しているので返信生成しなくて良い」───
   //   「審査落ちて物件提案中に戻るときあるからその時はまた生成するようにする」
@@ -5607,6 +5625,18 @@ async function handleGenerateReply(req: NextRequest) {
       substanceKinds: substance.kinds,
       isDeliverableReply: isDeliverableReplyForGreeting,
     });
+    // 2026-10-15 監査の残り #9: ブレインが書き出し（reply_opener）を決めた番は、開口語の決定（生成の【⏰ 挨拶ルール】の開口語・出口の enforceOpener）を
+    //   ブレインの値にそろえる（旧は reply_opener が meta に届かず、決定論の opener と「実測の分布」だけで決まっていた）。
+    //   挨拶の行（初回・1日1回・お待たせの禁止）と竹内さんが名指しした場面（openerStrict）はそのまま＝安全の線。戻す BRAIN_OPENER_META=off
+    if (brainOpenerMetaEnabled() && brainFreshForMessage && !isCachedMeta && !shouldPrependGreeting && !greetingDecision.openerStrict) {
+      const bk = brainOpenerKind(normalizeBrainOpener((brainMeta as { reply_opener?: unknown } | null)?.reply_opener));
+      if (bk && bk !== greetingDecision.opener) {
+        console.log(JSON.stringify({ tag: "greeting:brain-opener", conversationId, from: greetingDecision.opener, to: bk }));
+        greetingDecision.opener = bk;
+        greetingDecision.openerReason = `ブレインの書き出し（reply_opener）＝${bk}`;
+      }
+      if (bk && !greetingDecision.openerAllowed.includes(bk)) greetingDecision.openerAllowed = [bk, ...greetingDecision.openerAllowed];
+    }
     console.log("[greeting]", greetingDecision.kind, greetingDecision.opener, greetingDecision.reason, `audit.waitedMs=${greetingDecision.audit.waitedMs ?? "-"}`);
 
     const latestCustomerMsg = [...recentMessages].reverse().find(m => m.sender === "customer");
@@ -5628,9 +5658,22 @@ async function handleGenerateReply(req: NextRequest) {
       } else {
         const head = autoHints.filter((h) => h.at === "head").map((h) => h.text);
         const tail = autoHints.filter((h) => h.at === "tail").map((h) => h.text);
-        replyHint = [...head, ...(replyHint ? [replyHint] : []), ...tail].join("\n");
+        // #7: 呼ぶ側の自動の手がかりは、旧と同じ並び（自動の head → 呼ぶ側の手がかり → tail）に戻す
+        replyHint = [...head, ...(replyHintAutoOrig ? [replyHintAutoOrig] : []), ...(replyHint ? [replyHint] : []), ...tail].join("\n");
+        replyHintAutoOrig = "";
       }
       console.log(JSON.stringify({ tag: "turn-contract:autohint", conversationId, toMaterial, n: autoHints.length }));
+    }
+    // 2026-10-15 #7: 呼ぶ側の自動の手がかり（お客様の文の語だけで作った物）。本質がブレインの番は材料の注記（AIX の注記・本文の安全・返信側の AIX の判断を残す）
+    if (replyHintAutoOrig) {
+      const toMaterialAuto = turnContract?.source === "brain";
+      if (toMaterialAuto) {
+        autoHintMaterialNote += `\n【📎 お客様の文から拾った手がかり（材料・中身と長さは【🧭 この番の本質】に従う）】\n- ${replyHintAutoOrig}\n`;
+      } else {
+        replyHint = [replyHintAutoOrig, ...(replyHint ? [replyHint] : [])].join("\n");
+      }
+      console.log(JSON.stringify({ tag: "reply-hint:auto", conversationId, toMaterial: toMaterialAuto }));
+      replyHintAutoOrig = "";
     }
 
     // ─── テンプレート最適化モード: プロンプト最末尾に注入する上書きブロックを構築 ───

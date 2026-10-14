@@ -129,6 +129,8 @@ export type FreshDigest = {
   /** 2026-10-13: 生の本質の道の数（reconcile の前・llm_raw.tc）。tc は規則の後の値 */
   ltc?: string | null;
   /** 2026-10-15 ブレインの zenryoku_candidate */ zc?: boolean;
+  /** 2026-10-15 監査の残り #9: ブレインの書き出し（reply_opener）。下書きの出口（enforceOpener）・竹内さんの実送信と比べて数える */
+  op?: string | null;
   /** 2026-10-09 お客様の状態（customer-mindset.mindsetDigest＝状態|不安の向き|迷い|決め手の残り）と決め手の残りの中身（物件・点・解き方・言葉）。メモと試験で読む */
   ms?: string | null;
   mg?: { p: string | null; pt: string; s: string; q: string } | null;
@@ -162,6 +164,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     ltc: str((meta.llm_raw as { tc?: unknown } | undefined)?.tc, 20),
     // 2026-10-15 作る人: ブレインの zenryoku_candidate（true/false・出していない番は欄なし）。出口（alt_actions の全力サポート）と比べて数える
     ...(typeof (meta.llm_raw as { zc?: unknown } | undefined)?.zc === "boolean" ? { zc: (meta.llm_raw as { zc: boolean }).zc } : {}),
+    ...(str(meta.reply_opener, 20) ? { op: str(meta.reply_opener, 20) } : {}),
     ms: mindsetDigest((meta.customer_mindset as CustomerMindset | null | undefined) ?? null),
     mg: (() => { const g = (meta.customer_mindset as CustomerMindset | null | undefined)?.decideGap; return g ? { p: g.property, pt: g.point, s: g.solve, q: g.quote } : null; })(),
     tc: (() => {

@@ -4020,6 +4020,7 @@ export default function Home() {
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
           customerStructured: linkedCustomerForGen?.structured ?? undefined,
           replyHint: genReplyHint || undefined,
+          replyHintAuto: !!genReplyHint, // 2026-10-15 #7: bg-async と同じ自動の手がかり（本質がブレインの番は材料に・✨のスタッフの指定は付けない）
           hasViewed: selectedConversation.hasViewed ?? false,
           activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
           recentMessages: (() => {

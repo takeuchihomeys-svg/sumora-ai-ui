@@ -119,6 +119,7 @@ export async function POST(req: NextRequest) {
         customerConditions,
         customerSummary: pcData?.ai_summary || "",
         replyHint,
+        replyHintAuto: !!replyHint, // 2026-10-15 #7: 自動の手がかり（本質がブレインの番は材料に）
         // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
         // （knowledge_apply_log 記録 → text_retention / deal_outcome フィードバック対象化）
         // ※ generate-reply 側も ai_draft を保存するが同一内容の冪等上書きのため二重化の実害なし
