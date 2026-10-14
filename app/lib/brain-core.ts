@@ -3329,11 +3329,12 @@ ${history}`;
       console.log(JSON.stringify({ tag: "brain:staff-promise-demoted", conversationId, kind: promiseAix.kind, would: promiseAix.action, brain: finalAix ?? null }));
       promiseAix = null;
     }
-    // 2026-10-14 竹内さんの決定（設計知見 P1）: 約束の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する（その後に約束を果たす AIX）。
-    //   旧はこの番に約束を果たす AIX を立てていた（試験 q110・q112 が毎回 AIX:property_send）。約束の催促は今まで通り AIX。戻す ACK_AFTER_PROMISE_REPLY=off
+    // 2026-10-14 竹内さんの決定 C: ピックアップの約束の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する（その後に約束を果たす AIX）。
+    //   旧はこの番に物件の AIX を立てていた（試験 q110・q112 が毎回 AIX:property_send）。確認・見積の約束の直後のお礼は旧のまま（約束を果たす AIX・約8割はスタッフが後で AIX）。
+    //   約束の催促は今まで通り AIX。戻す ACK_AFTER_PROMISE_REPLY=off
     let ackAfterPromise: { kind: string; laterAix: string | null } | null = null;
     if (ackAfterPromiseReplyEnabled() && customerAckAfter && !isPromiseNudge(unrepliedTurn.text ?? "")
-      && (promiseAix || (brainLedger.facts.pickupPromisedUnfulfilled && !!finalAix && PROPERTY_AIX.has(finalAix)))) {
+      && (promiseAix ? promiseAix.kind === "pickup" : (brainLedger.facts.pickupPromisedUnfulfilled && !!finalAix && PROPERTY_AIX.has(finalAix)))) {
       ackAfterPromise = { kind: promiseAix?.kind ?? "pickup", laterAix: promiseAix?.action ?? finalAix ?? null };
       console.log(JSON.stringify({ tag: "brain:ack-after-promise-reply", conversationId, kind: ackAfterPromise.kind, would: ackAfterPromise.laterAix, llm: finalAix ?? null }));
       promiseAix = null;
@@ -3354,7 +3355,7 @@ ${history}`;
       if (promiseAix.checkPattern) sceneSignalCheckPattern = promiseAix.checkPattern;
     }
     // 10巡目（10/08 竹内さんの答え7）: 交渉・申請の約束（台帳が約束と読まない）の直後のお礼・了承は、約束を果たす AIX【確認した→初期費用について】（further-discount.ts・NEGOTIATION_PROMISE_AIX=off）
-    if (!promiseAix && !(ackAfterPromiseReplyEnabled() && customerAckAfter && !isPromiseNudge(unrepliedTurn.text ?? "")) && negotiationPromisePending({
+    if (!promiseAix && negotiationPromisePending({
       lastStaffText: [...messagesOldestFirst].reverse().find((m) => m.sender !== "customer" && (m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]/.test(m.text ?? ""))?.text ?? "",
       customerAckOnly: customerAckAfter, reportedAfter: false,
     })) {

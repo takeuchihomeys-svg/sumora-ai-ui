@@ -1,7 +1,8 @@
 // ack-exhausted-reply.ts — 竹内さんの決定（2026-10-14・設計知見 P1）の2つ（純関数）
 //
-// 1. 約束（確認・見積・ピックアップ・交渉 等）の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する（その後に約束を果たす AIX）。
-//    旧: 台帳の約束（resolveStaffPromiseAix）・交渉の約束が、お礼・了承だけの番に約束を果たす AIX（物件の AIX 等）を立てていた（試験 q110・q112 は毎回 AIX:property_send で落ちた）。
+// 1. 決定 C（10/14）: **ピックアップの約束**の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する（その後に約束を果たす AIX）。
+//    旧: 台帳の約束（resolveStaffPromiseAix）が、お礼・了承だけの番に物件の AIX を立てていた（試験 q110・q112 は毎回 AIX:property_send で落ちた）。
+//    確認・見積・交渉の約束の直後のお礼は旧のまま＝約束を果たす AIX（約8割はスタッフが後で約束を果たす AIX を送る・q094）。
 //    受けだけか待ちの形の1文かは ack_form（竹内さんの使い分け・repeat-brain-align）。約束の催促（「まだですか」）は今まで通り約束を果たす AIX。
 //    戻す: ACK_AFTER_PROMISE_REPLY=off
 // 2. 物件を出し切った後にお客様が条件を足した・言い直した番は、左右のボタン（物件の AIX＋全力サポート）ではなく返信で締める
@@ -46,6 +47,6 @@ export function exhaustedConditionMaterial(env: Env = envOf()): string {
 /** LLM の前の材料（約束が残っている番の行に足す） */
 export function ackAfterPromiseMaterial(env: Env = envOf()): string {
   return ackAfterPromiseReplyEnabled(env)
-    ? "（竹内さんの決定 10/14: 約束の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する＝aix は null・受けだけか待ちの形の1文は ack_form。約束を果たす AIX はその後で出す。約束の催促は約束を果たす AIX）"
+    ? "（竹内さんの決定 10/14 C: ピックアップの約束の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する＝aix は null・受けだけか待ちの形の1文は ack_form・物件の AIX はその後で出す。確認・見積の約束の直後のお礼は約束を果たす AIX のまま。約束の催促は約束を果たす AIX）"
     : "";
 }
