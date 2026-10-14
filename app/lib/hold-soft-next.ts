@@ -90,12 +90,18 @@ export function holdSoftNextMaterial(i: { customerText: string; scene: string; r
  *   生成に「その1文を扉の文の後に入れる」と渡す。再生（YUMA4・前後各11番）で、ブレインの方向に「ご都合の良い日に内覧案内できる旨の柔らかい1文」が
  *   あるのに下書きから落ちた番があった（他の材料の「訴求の率 11%」「迷い: 押すのは少ない」に負けた）。ブレインが書いていない番は何も渡さない
  */
-export function holdSoftReplyNote(i: { customerText: string; brainDirection: string | null | undefined; env?: Record<string, string | undefined> }): string {
+export function holdSoftReplyNote(i: { customerText: string; brainDirection: string | null | undefined; scene?: string | null; room?: string | null; env?: Record<string, string | undefined> }): string {
   if (!holdSoftNextEnabled(i.env) || !holdTurnKind(i.customerText)) return "";
+  // fix(review) 10/15: ブレインの材料と同じ網（物件を見せた後の場面だけ・申込の手続きの後は渡さない）。場面が読めない時（null）は今まで通り方向だけで決める
+  if (i.scene && !SHOWN.has(i.scene)) return "";
   const d = N(i.brainDirection);
   if (!d.trim()) return "";
-  const apply = /抑え|押さえ/.test(d);
-  const viewing = /内覧|ご案内|案内/.test(d) && !/内覧[^。、]{0,6}(?:しない|入れない|書かない|は不要)/.test(d);
+  // fix(review) 10/15: 方向の打ち消し（内覧・案内・申込を控える/しない/まだできない）と、申込の後（抑えました）は渡さない
+  const NEG = "(?:控え|しない|せず|入れない|書かない|不要|避け|触れない|まだ(?:でき|出来)|(?:でき|出来)ない|不可)";
+  if (/(?:抑え|押さえ)(?:ました|ている|てい|てお)/.test(d)) return "";
+  // 「押しを抑える」「初期費用を抑える」は申込で抑えるの1文ではない
+  const apply = /(?:申込|申し込|お部屋)[^。、]{0,12}(?:抑え|押さえ)/.test(d) && !new RegExp(`(?:抑え|押さえ)[^。、]{0,8}${NEG}`).test(d);
+  const viewing = /内覧|内見|(?:お部屋|お日にち|ご都合)[^。]{0,12}ご?案内/.test(d) && !new RegExp(`(?:内覧|内見|案内)[^。、]{0,10}${NEG}`).test(d) && i.room !== "move_out_not_viewable";
   if (!apply && !viewing) return "";
   const line = apply ? HOLD_SOFT_LINES.apply : HOLD_SOFT_LINES.viewing;
   return `- 【保留の番の柔らかい次の一手（ブレインの判断）】ブレインがこの保留の番に次の一手の1文を添えると決めた。受け止め・扉の文はそのまま、「${line}」の形の1文を1つだけ入れる（押さない・日時の候補・期限・催促は書かない）。この1文は扉の文で、避ける話題の申込誘導・内見誘導・申込の催促に当たらない`;

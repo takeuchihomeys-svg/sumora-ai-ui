@@ -5806,17 +5806,19 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     );
     // 2026-10-07 竹内（R・チンシャン）訴求のタイミング: 場面×お客様の反応×部屋の状況から 申込（お部屋を抑える）／内覧／入れない を材料で渡す
     //   （app/lib/appeal-timing.ts・同じ申込の材料の欄に並べる・APPEAL_TIMING=off で止まる）
+    // fix(review) 10/15: 保留の番の1文（holdSoftReplyNote）を訴求のタイミングと同じ場面・部屋の読みで絞る
+    const appealSceneRoom: { scene: string; room: string }[] = [];
     const appealReplyNote = (() => {
       if (isTemplateOptimize || !appealTimingEnabled()) return "";
       try {
         const base = Date.now() - recentMessages.length * 60_000;
-        const v = resolveAppealTiming(buildAppealInput({
+        const v = resolveAppealTiming(((inp) => { appealSceneRoom.push({ scene: inp.scene, room: inp.room }); return inp; })(buildAppealInput({
           msgs: recentMessages.map((m, idx) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt ?? new Date(base + idx * 60_000).toISOString() })),
           aixLogs: recentAixRows.filter((r) => r.sent_at ?? r.created_at).map((r) => ({ aixType: r.aix_type, at: (r.sent_at ?? r.created_at) as string })),
           customerKind: customerResponse.kind,
           viewingStage: ledger.facts.viewingFlow?.stage ?? null,
           notViewable: (brainMeta as { property_state?: { notViewable?: boolean } | null } | null)?.property_state?.notViewable ?? null,
-        }));
+        })));
         if (v.note) console.info("[appeal-timing]", JSON.stringify({ conversationId, kind: v.kind, level: v.level, reason: v.reason }));
         return buildAppealReplyNote(v);
       } catch (e) {
@@ -5849,7 +5851,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch (e) { console.warn("[generate-reply] 物件ごとの台帳を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e)); return ""; }
     })();
     // 2026-10-15 竹内さん（7番 営業マンの思考）: 保留の番でブレインが柔らかい次の一手を添えると決めた時だけ、その1文を生成に渡す（届かない側の直し・HOLD_SOFT_NEXT=off で旧）
-    const holdSoftNote = !isTemplateOptimize && brainLocalFresh ? holdSoftReplyNote({ customerText: message ?? "", brainDirection: brainMeta?.reply_direction ?? null }) : "";
+    const holdSoftNote = !isTemplateOptimize && brainLocalFresh ? holdSoftReplyNote({ customerText: message ?? "", brainDirection: brainMeta?.reply_direction ?? null, scene: appealSceneRoom[0]?.scene ?? null, room: appealSceneRoom[0]?.room ?? null }) : "";
     if (holdSoftNote) console.info(JSON.stringify({ tag: "reply:hold-soft-next", conversationId }));
     const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote, holdSoftNote, propertyBrainReplyNote].filter(Boolean).join("\n");
     if (applyReadiness.level !== "low") {

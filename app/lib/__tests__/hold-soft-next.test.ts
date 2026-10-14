@@ -43,6 +43,15 @@ it("ブレインが抑える → 抑えるの1文", () => ok(holdSoftReplyNote({
 it("ブレインが待つだけ → 空", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "検討を見守る待ちの姿勢で締める", env: ON }), ""));
 it("保留でない番 → 空", () => eq(holdSoftReplyNote({ customerText: "内覧できますか？", brainDirection: "内覧案内する", env: ON }), ""));
 it("off → 空", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "内覧案内の1文を添える", env: OFF }), ""));
+// fix(review) 10/15: 言い過ぎの道
+it("押しを抑えて待つ → 抑えるの1文にしない", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "押しを抑えて検討を見守る待ちの姿勢で締める", env: ON }), ""));
+it("初期費用を抑えた → 抑えるの1文にしない", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "初期費用を抑えた点を添えて見守る", env: ON }), ""));
+it("内覧はまだできない → 空", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "退去予定で内覧はまだできないため、案内は控えて見守る", env: ON }), ""));
+it("新着が出次第ご案内 → 内覧の1文にしない", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "新着が出次第ご案内する旨で閉じる", env: ON }), ""));
+it("申込の催促はせず・内覧案内を添える → 内覧の1文", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "申込の催促はせず、お気に召されたらご都合のよい日に内覧案内する1文を添える", env: ON }).includes("ご案内させて")));
+it("退去予定のお部屋（room）→ 内覧の1文は渡さない", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "内覧案内の1文を添える", scene: "after_recommend", room: "move_out_not_viewable", env: ON }), ""));
+it("申込の後（scene）→ 空", () => eq(holdSoftReplyNote({ customerText: "確認します", brainDirection: "申込でお部屋を抑える1文を添える", scene: "post_apply", room: "vacant", env: ON }), ""));
+it("抑えました（申込の後の言い方）→ 空", () => eq(holdSoftReplyNote({ customerText: "確認します", brainDirection: "お申込でお部屋を押さえました旨を伝える", env: ON }), ""));
 
 console.log("■ 迷いの返し方（customer-mindset）");
 it("家族・同居人に相談 → 扉＋柔らかい一手の但し書き", () => ok(hesitationMoveOf("家族・同居人に相談", ON).includes("柔らかい次の一手")));
