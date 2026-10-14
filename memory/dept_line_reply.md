@@ -1,6 +1,10 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-15
+## 📅 資料の古さ・当て方の統合（10/15 作る人・ブランチ stale-and-match-1015）
+- **当て方の統合**: 保存した読みを1通目の物件に当てる建物の当て方（鍵の一致・濁点違い・号室付きの名前・先頭の飾り・同じ長さで1字違い）を `app/lib/saved-read-building-match.ts` の1つに（second-material-saved-read・recommend-vacating-source の両方から）。号室のそろえ方は呼ぶ側のまま。両テスト・監査2本の出力が前後で同一
+- **資料の古さ**（竹内さん 10/14「1週間以上前に送った物件を言われたら念のため募集状況を確認」）: 60日の数え（`scripts/audit-stale-material.ts`・LLM なし）＝こちらの物件を引用/名指しで空き・内覧・申込・初期費用を聞いた番 74、資料（送った・オススメ・物件確認の一番新しい物）から 0〜3日 58・3〜7日 6・7日以上 10（約1番/週）＋名指し無しの「まだ空いてますか」で7日以上 7。7日以上の空きの質問は竹内さんが4中3で確認・2番が申込あり/募集終了。①売上サポ3日内 1/10・②SUUMO URL 1/10 しか無い → ①②は作らず印だけ
+- **入れた**: `app/lib/stale-material.ts` が台帳の文（property-thread の ▶ の物件の下）に「資料が古い: M/Dに資料をお送りしたきり（N日前）…竹内さんの方針」の1行。こちらの物件・聞く事が空き/内覧/申込/初期費用（値下げ含む）・その後に募集終了が分かっていない時だけ。確認するかはブレイン（決定論で AIX を変えない）。戻す STALE_MATERIAL_NOTE=off・線 STALE_MATERIAL_DAYS（既定7）。主語の無い番（turnReferent）には出ない
 ## 🧹 小さな直し（10/15 作る人・ブランチ small-fixes-1015）
 - **使った額の見張り**: 週の見張り（reading-audit-weekly・月曜 JST 9:40）に llmSpend（`app/lib/llm-spend-audit.ts`・llm_usage_logs を読むだけ・単価は llm-price.ts）。日ごと×Claude/DeepSeek/Jev・本番/手元・前の週との差。印: 週が前の週の1.5倍超かつ+$10／Claude・DeepSeek 別も同じ／1日が前週の1日平均の3倍超かつ$10以上（9/24〜10/14 の揺れ: 1日 $8〜$69・週 $184→$247）。10/15 時点の印「DeepSeek 2.14倍（$72→$154・手元 $171 が大半）」。手元 `scripts/llm-spend-audit.ts`。戻す LLM_SPEND_AUDIT=off・線 LLM_SPEND_ALERT_RATIO／_MIN_USD／LLM_SPEND_DAY_RATIO
 - **✨2通目の退去予定の材料**: 竹内さんが2通目に退去予定を書いた番（60日 66番）で売上サポの行（property_pickups）があるのは 4番だけ＝材料の出どころは送った資料の画像の読み（sent_image_properties.facts.status=move_out_planned・vacancy_date）。aix-template-generate が本文・売上サポの行で決まらない時に引く（退去予定と読めた時だけ・材料に渡すだけで出口の一文の足しはしない）。届く 25→31（読みが2通目より後に書かれた番 6・資料の読みに現況が無い 11 が残り）。`scripts/audit-recommend-vacating-source.ts`。戻す RECOMMEND_VACATING_SENT_IMAGE=off。1通目（aix/action）は手を付けていない（別の担当の AIX の材料）
