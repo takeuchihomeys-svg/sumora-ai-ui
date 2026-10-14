@@ -2,7 +2,7 @@
   "title": "AIX の後の2通目（✨テンプレート）にブレインの判断が届いていなかった — 1通目の送信が suggested_aix_meta を消すため。同じスタッフの番の続きは last_brain_meta から同じ線で戻す",
   "category": "ai_design",
   "priority": 2,
-  "insight": "画面は AIX の1通目を送ると conversations.suggested_aix_meta と ai_draft を消す。直後の2通目（aix-template-generate）は表示の印（__SHOWN__）の時しか last_brain_meta から戻さなかったので、10/08〜10/14 の ✨ 生成 51回中 49回が brain=none（それまでは 367回中 247回がブレインあり）。49回中 42回は最新のお客様発言を見たブレインの判断があった。続きの番（afterStaffSend）では表示の印が無くても同じ線（最新のお客様発言を見た判断・申込以降でない・戻せる出どころ）で戻す。今の DB の状態でスタッフの番の会話 92件: ブレインあり 8 → 56。同じ型の穴は『生成の入口が判断を読む列が、別の操作（送信）で消される』所に出る。判断を消す操作と読む操作の順番を書き出して確かめる。",
+  "insight": "画面は AIX の1通目を送ると conversations.suggested_aix_meta と ai_draft を消す。直後の2通目（aix-template-generate）は表示の印（__SHOWN__）の時しか last_brain_meta から戻さなかったので、10/08〜10/14 の ✨ 生成 51回中 49回が brain=none（それまでは 367回中 247回がブレインあり）。49回中 42回は最新のお客様発言を見たブレインの判断があった。続きの番（afterStaffSend）では表示の印が無くても同じ線（最新のお客様発言を見た判断・申込以降でない・戻せる出どころ）で戻す。今の DB の状態でスタッフの番の会話 92件: ブレインあり 8 → 56。同じ型の穴は『生成の入口が判断を読む列が、別の操作（送信）で消される』所に出る。判断を消す操作と読む操作の順番を書き出して確かめる。 戻すのは続きの番だけ: お客様の発言の後のスタッフの最初の送信と同じ日（日本時間・竹内悠馬 10/14「その日のうち」）。分析を省略した判断（source=cached）は判断なし扱い。",
   "rationale": "竹内悠馬 2026-10-14「AIX の後の返信を AIX テンプレートとして竹内さんの基準に・テンプレートがブレイン・AIX ツールの材料を使って文を作る」。材料が届いていないのが一番大きな原因（文の言い回しの直しより先）。",
   "context": "ブランチ aix-after-reply-1014。scripts/audit-aix-after-text.ts（AIX の後の文の材料と竹内さんの実送信）・aix_generate_log.conditions_snapshot.brain で数えた。",
   "applied_to": "app/lib/brain-meta-load.ts（resolveBrainMetaForGeneration の opts.afterStaffSend・戻す AIX_TEMPLATE_BRAIN_RESTORE=off）・app/api/aix-template-generate/route.ts",
