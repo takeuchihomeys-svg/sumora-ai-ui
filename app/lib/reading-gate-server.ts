@@ -29,6 +29,8 @@ export function attrNameFixPlacelessEnabled(env: Record<string, string | undefin
 }
 /** 読み直した名前を使う時の、1回目の名前との近さの下限（まったく別の建物の名前に入れ替えない） */
 export const RECHECK_NAME_MIN_SIM = 0.3;
+/** 読み直しに要る最小の時間（これ未満の残り時間なら読み直さない＝関数の時間切れで記録ごと失わない） */
+export const RECHECK_MIN_MS = 10_000;
 
 export type GateResult = {
   /** 直した名前（無ければ null）・直した理由 */
@@ -46,7 +48,7 @@ async function loadAttrRows(rent: number, area: number): Promise<AttrRow[]> {
   try {
     const { data } = await supabase.from("rent_observations")
       .select("property_name, room_no, rent, area_sqm, floor_plan, total_floors, deposit_months, key_money_months")
-      .eq("rent", rent).gte("area_sqm", area - 0.05).lte("area_sqm", area + 0.05).limit(60);
+      .eq("rent", rent).gte("area_sqm", area - 0.05).lte("area_sqm", area + 0.05).limit(500); // 2026-10-14 確かめる人: 60 で切ると別の建物の行が落ちて「1つに決まる」を誤り得る
     return (data ?? []) as AttrRow[];
   } catch { return []; }
 }
@@ -63,6 +65,8 @@ export async function runReadingGate(input: {
   facts: Record<string, unknown> | null;
   /** llm_usage_logs に残すか（scripts の確かめは false） */
   recordUsage?: boolean;
+  /** 読み直しに使ってよい時間（呼び出し側の関数の残り時間・既定 45秒）。RECHECK_MIN_MS 未満なら読み直さない（印だけ） */
+  recheckTimeoutMs?: number;
 }): Promise<GateResult> {
   const out: GateResult = { name: null, room: null, facts: null, signals: { name: [], room: [], amount: [] }, rechecked: false, log: [] };
   if (!readingConfidenceEnabled()) return out;
@@ -101,7 +105,9 @@ export async function runReadingGate(input: {
     // ── ②: 残った欄だけ、拡大して1回読み直す
     if (nameOpen || rs.length || unitOpen.length) {
       const { readingRecheckEnabled, recheckImageFields } = await import("@/app/lib/reading-recheck-server");
-      const again = readingRecheckEnabled() ? await recheckImageFields(input.imageUrl, { timeoutMs: 45_000, record: input.recordUsage !== false }) : null;
+      const budget = Math.min(45_000, input.recheckTimeoutMs ?? 45_000);
+      if (budget < RECHECK_MIN_MS) out.log.push(`recheck:skipped-no-time ${budget}ms`);
+      const again = readingRecheckEnabled() && budget >= RECHECK_MIN_MS ? await recheckImageFields(input.imageUrl, { timeoutMs: budget, record: input.recordUsage !== false }) : null;
       out.rechecked = !!again;
       if (again) out.log.push(`recheck tiles=${again.tiles} ms=${again.ms} in=${again.usage?.input ?? 0} out=${again.usage?.output ?? 0}`);
       if (again && nameOpen && again.propertyName) {

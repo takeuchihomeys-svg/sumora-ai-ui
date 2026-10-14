@@ -68,6 +68,9 @@ t("号室 1K → 403", adoptRecheckedRoom("1K", "403") === "403");
 t("号室 3077 → 307（1字の足し引き）", adoptRecheckedRoom("3077", "307") === "307");
 t("号室 140 → 1402", adoptRecheckedRoom("140", "1402") === "1402");
 t("号室 3077 → 202（まったく別の数）は使わない", adoptRecheckedRoom("3077", "202") === null);
+t("号室 階数超え 1002 → 202（別の数）は使わない・→102 は使う", adoptRecheckedRoom("1002", "202") === null && adoptRecheckedRoom("1002", "102") === "102");
+t("号室 「7階605」→702 は使わない・→605 は使う", adoptRecheckedRoom("7階605", "702") === null && adoptRecheckedRoom("7階605", "605") === "605");
+t("号室 「1K 202」→202・「5K3」→503（元に号室の数字の並びが無い）", adoptRecheckedRoom("1K 202", "202") === "202" && adoptRecheckedRoom("5K3", "503") === "503");
 t("読み直しも号室の形でない → 使わない", adoptRecheckedRoom("1K", "1K") === null && adoptRecheckedRoom("不明", "") === null);
 
 console.log("■ 敷金・礼金の単位を決める（①売上サポ ②読み直し ③単位不明の印）");

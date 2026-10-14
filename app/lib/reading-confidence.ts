@@ -192,8 +192,10 @@ export function adoptRecheckedName(first: NameFixResult, again: NameFixResult | 
 
 /**
  * 号室: 読み直した号室が普通の号室の形（印なし・1〜4字の数字＋頭／尻の英字）で、1回目と違う時だけ使う。
- *   1回目が号室の数字として読めていた物（下2桁が40以上「3077」・5字以上）は、読み直しが1回目と1字の足し引き・入れ替えの時だけ
- *   （3077→307・140→1402）＝まったく別の数（3077→202）には変えない
+ *   1回目に2字以上の数字の並びがある時（「3077」「140」「1002」（階数超え）「7階605」「1K 202」）は、読み直しの数字が
+ *   その並びの中にあるか、1字の足し引き・入れ替えの時だけ（3077→307・140→1402・1K 202→202）＝まったく別の数（3077→202・1002→202）には変えない。
+ *   1回目に号室の数字の並びが無い時（「1K」「不明」「5K3」）だけ、形の正しい読み直しをそのまま使う（元の値は号室として使えない）
+ * 2026-10-14 確かめる人: 旧は印が room_tail・room_digits の時だけ守っていた（階数超え「1002」・日本語混じり「7階605」は別の数に変わり得た）
  */
 export function adoptRecheckedRoom(first: string | null | undefined, again: string | null | undefined): string | null {
   const c = canonicalRoomNo(again ?? "", {});
@@ -201,14 +203,21 @@ export function adoptRecheckedRoom(first: string | null | undefined, again: stri
   if (!/^(?:[A-Z]{1,2}-?)?\d{1,4}[A-Z]?$/.test(c)) return null;
   const f = canonicalRoomNo(first ?? "", {});
   if (c === f) return null;
-  const sig = roomSignals(first);
-  if (sig.includes("room_tail") || sig.includes("room_digits")) {
-    const a = f.replace(/\D/g, ""), b = c.replace(/\D/g, "");
-    const oneEdit = a.startsWith(b) && a.length - b.length === 1 || b.startsWith(a) && b.length - a.length === 1
-      || (a.length === b.length && [...a].filter((ch, i) => ch !== b[i]).length === 1);
-    if (!oneEdit) return null;
+  const runs = (String(first ?? "").normalize("NFKC").match(/\d{2,}/g) ?? []).map((r) => r.replace(/^0+(?=\d)/, ""));
+  if (runs.length) {
+    const b = c.replace(/\D/g, "");
+    if (!runs.some((a) => a.includes(b) || withinOneEdit(a, b))) return null;
   }
   return c;
+}
+/** 1字の足し引き・入れ替えの範囲か */
+function withinOneEdit(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) return [...a].filter((ch, i) => ch !== b[i]).length === 1;
+  const [s, l] = a.length < b.length ? [a, b] : [b, a];
+  for (let i = 0; i < l.length; i++) if (l.slice(0, i) + l.slice(i + 1) === s) return true;
+  return false;
 }
 
 /** 敷金・礼金の単位の決め方の結果。facts に足す印（unclear）は「断定するか確認の約束にするかはブレインが決める」材料 */
