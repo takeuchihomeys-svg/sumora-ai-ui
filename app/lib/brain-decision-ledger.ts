@@ -27,8 +27,10 @@ export function brainDecisionLedgerCols(meta: Record<string, unknown>, turnText:
 }
 
 /** digest に足す短い項目（無い物は入れない） */
-export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: boolean; pp?: boolean; cp?: string; cs?: string } {
-  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string } = {};
+export function brainDecisionDigestExtra(meta: Record<string, unknown>): { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown> } {
+  const out: { tc?: boolean; pp?: boolean; cp?: string; cs?: string; dc?: Record<string, unknown> } = {};
+  // 2026-10-15 追加の調査（brain-deep-check）をかけた番だけ（2回目の呼び出しの割合・変わった率を数える）
+  if (meta.deep_check && typeof meta.deep_check === "object") out.dc = meta.deep_check as Record<string, unknown>;
   if (meta.two_choice_mode === true) out.tc = true;
   if (meta.pending_pickup === true) out.pp = true;
   if (typeof meta.checkpoint_stage === "string" && meta.checkpoint_stage.trim()) out.cp = meta.checkpoint_stage.trim().slice(0, 20);

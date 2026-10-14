@@ -323,6 +323,8 @@ export type SuggestedAixMeta = {
   request_status?: import("@/app/lib/request-ledger").BrainRequestStatus;
   /** 10/09: LLM が選んだ AIX（決定論の規則で変わる前・記録用） */
   aix_llm?: string;
+  /** 2026-10-15 追加の調査（brain-deep-check）をかけた番だけ。by＝brain/net・src＝新しく足した材料・second＝2回目の判断を使った・changed＝本質の道か AIX が変わった */
+  deep_check?: { by: string | null; topics: string[]; src: string[]; second: boolean; changed: boolean | null; before?: string | null; after?: string | null };
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
   llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null };
   // 2026-09-10 Fable5 みく事例: これは **conversation-scope**（会話全体で2回以上登場した論点）。
@@ -2953,6 +2955,8 @@ ${history}`;
   //   経路の名札を層で分ける（brain_fresh＝毎回の分析 ／ brain_full＝会話全体の分析）。
   //   これで LLM_ALT_ACTIONS に brain_fresh だけ書けば、毎回の分析だけを別クラウドに回せる（全体の分析は Claude のまま）。
   //   申込以降の会話は回さない（竹内「申込以降はいれない」）。会話 ID も残して、どちらのモデルが判断したか後から追えるようにする
+  /** 2026-10-15 追加の調査（brain-deep-check）の記録。digest.dc に残す */
+  let deepCheckInfo: { by: string | null; topics: string[]; src: string[]; second: boolean; changed: boolean | null; before?: string | null; after?: string | null } | null = null;
   const brainHeaders: Record<string, string> = {
     [LLM_ACTION_HEADER]: isFreshLayer ? "brain_fresh" : "brain_full",
     ...(conversationId ? { [LLM_CONVERSATION_HEADER]: conversationId } : {}),
@@ -3031,6 +3035,43 @@ ${history}`;
       logLlmUsage("brain:alt-empty-direction", retry.usage, { conversationId });
       const retryParsed = tryParseBrainJson(retry.content.find((c) => c.type === "text")?.text ?? "");
       if (retryParsed && String(retryParsed.reply_direction ?? "").trim()) parsedAny = retryParsed;
+    }
+
+    // 2026-10-15 竹内さん（設計知見 56ecf24a・P1）「自信が無い時・根拠が見つからない時は深く調査する…全部に毎回かけない」:
+    //   1回目の判断で根拠の足りない依頼（ブレインの gap="material"／網＝約束にした依頼が資料で答えられる型）がある時だけ、
+    //   足りない種類の材料を追加で引き（ブレインの言い換え・current_property で網と対象を引き直す・古い履歴の該当行）、新しい材料があればもう1回だけ判断させる。
+    //   返信か約束かは2回目のブレインが決める（P0 9eb6aa9c）。管理会社しか知らない事・申込以降はかけない。戻す BRAIN_DEEP_CHECK=off
+    try {
+      const { decideDeepCheck, deepCheckBlock } = await import("@/app/lib/brain-deep-check");
+      const dc = decideDeepCheck({ parsed: parsedAny, customerText: unrepliedTurn.text ?? "", postApply: isPostApplyStatus(convStatus) });
+      if (dc.run) {
+        const { loadDeepCheckMaterial } = await import("@/app/lib/brain-deep-check-server");
+        const mat = await loadDeepCheckMaterial({
+          conversationId, queries: dc.queries, topics: dc.topics, customerText: unrepliedTurn.text ?? "",
+          currentProperty: typeof parsedAny.current_property === "string" ? parsedAny.current_property : null,
+          fallbackTarget: focusRoomForMaterial, alreadyGiven: customerSpecificText, turnStartIso: lastStaffAtIso ?? null, account: convAccount,
+        });
+        deepCheckInfo = { by: dc.by, topics: dc.topics, src: mat.sources, second: false, changed: null };
+        if (mat.notes.length) {
+          const block = deepCheckBlock({ queries: dc.queries, notes: mat.notes });
+          const second = await client.messages.create({
+            ...brainRequestBase(sys),
+            max_tokens: 4000,
+            messages: [{ role: "user", content: [...userContent, { type: "text" as const, text: maskPII(block, maskNames) }] }],
+          }, { headers: brainHeaders });
+          logLlmUsage("brain:deep-check", second.usage, { conversationId, mode: isFreshLayer ? "fresh" : (opts?.mode ?? "full") });
+          const secondParsed = tryParseBrainJson(second.content.find((c) => c.type === "text")?.text ?? "");
+          if (secondParsed && String(secondParsed.reply_direction ?? "").trim()) {
+            const before = rawContractRouteDigest((parsedAny as { turn_contract?: unknown }).turn_contract);
+            const after = rawContractRouteDigest((secondParsed as { turn_contract?: unknown }).turn_contract);
+            deepCheckInfo = { ...deepCheckInfo, second: true, changed: before !== after || String(parsedAny.aix ?? "") !== String(secondParsed.aix ?? ""), before, after };
+            parsedAny = secondParsed;
+          }
+        }
+        console.log(JSON.stringify({ tag: "brain:deep-check", conversationId, reason: dc.reason, queries: dc.queries.map((q) => q.slice(0, 30)), sources: mat.sources, notes: mat.notes.length, ms: mat.ms, ...deepCheckInfo }));
+      }
+    } catch (e) {
+      console.warn("[brain-core] deep-check skipped:", conversationId, e instanceof Error ? e.message : String(e));
     }
 
     // 2026-10-14 区切り4 #14（P0 89bc2c3e）: 出力の文の中国の字形を日本の字形に直す（物件名の欄 current_property(ies) は触らない・JAPANESE_GLYPH_FIX=off）
@@ -4807,6 +4848,8 @@ ${history}`;
       request_status: requestCands.length ? (await import("@/app/lib/request-ledger")).normalizeBrainRequestStatus((parsed as { request_status?: unknown }).request_status, requestCands, requestStatusAt) ?? undefined : undefined,
       turn_contract: TURN_CONTRACT_BRAIN_ON ? (exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote && exhaustedNote !== SEARCH_SPLIT_EXHAUSTED_NOTE) ?? undefined) : undefined,
       aix_llm: normalizeAixActionKey(parsed.aix) ?? undefined,
+      // 2026-10-15 追加の調査（brain-deep-check）: かけた番だけ（記録・digest.dc）
+      deep_check: deepCheckInfo ?? undefined,
       // 10/09 試験の担当の案（承認済み）: LLM の最初の判断（決定論の規則で変わる前）。本番の見張りでも本質と最終を分けて数える
       llm_raw: { action: normalizeAixActionKey(parsed.aix) ?? null, reply_mode: typeof parsed.reply_mode === "string" ? parsed.reply_mode : null, dir: typeof parsed.reply_direction === "string" ? parsed.reply_direction.slice(0, 40) : null,
         // 2026-10-13 棚卸し B-6: LLM が出した current_property（ゲートの前・記録だけ）
