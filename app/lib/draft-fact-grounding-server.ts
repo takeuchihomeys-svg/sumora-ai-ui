@@ -3,7 +3,7 @@
 //   scripts/audit-draft-fact-grounding.ts の材料と同じ形（監査で線を引いた材料と本番の材料をそろえる）。
 import { supabase } from "@/app/lib/supabase";
 import { COMPANY_FACTS } from "@/app/lib/company-facts";
-import { extractDraftFacts, findUngroundedFacts, groundingKinds, aixForUngroundedFact, type DraftFactKind } from "@/app/lib/draft-fact-grounding";
+import { extractDraftFacts, findUngroundedFacts, groundingKinds, aixForUngroundedFact, groundFactsText, unclearUnitKinds, dropUnclearUnitLines, type DraftFactKind } from "@/app/lib/draft-fact-grounding";
 
 /**
  * 下書きの事実の照らしの結果（画面の帯・要対応・学習の記録の材料）。本文は変えない。
@@ -52,12 +52,20 @@ export async function loadDraftGroundExtra(conversationId: string): Promise<stri
     ]);
     const lines: string[] = [];
     for (const a of (aix.data ?? []) as Array<{ generated_text: string | null; property_names: string[] | null }>) lines.push(a.generated_text ?? "", ...(a.property_names ?? []));
-    for (const s of (sip.data ?? []) as Array<{ property_name: string | null; room_no: string | null; facts: unknown }>) lines.push(`${s.property_name ?? ""} ${s.room_no ?? ""}号室`, s.facts ? JSON.stringify(s.facts) : "");
+    // 2026-10-14 単位不明の敷金・礼金（facts.<k>_unit="unclear"）は値を材料から外す＝「敷金2ヶ月」の言い切りを根拠ありにしない（DEPOSIT_UNIT_UNCLEAR=off で旧）
+    const unclearByUrl = new Map<string, Array<"deposit" | "key_money">>();
+    for (const s of (sip.data ?? []) as Array<{ image_url?: string | null; property_name: string | null; room_no: string | null; facts: unknown }>) {
+      lines.push(`${s.property_name ?? ""} ${s.room_no ?? ""}号室`, s.facts ? groundFactsText(s.facts) : "");
+      const uk = unclearUnitKinds(s.facts);
+      if (uk.length && s.image_url) unclearByUrl.set(s.image_url, [...new Set([...(unclearByUrl.get(s.image_url) ?? []), ...uk])]);
+    }
     // 2026-10-09: 送った資料の画像の中身の行（image_details.lines＝向き・ペット・設備・現況・入居可能日）。生成が資料の事実で答えた文を「根拠なし」にしない
     const urls = [...new Set(((sip.data ?? []) as Array<{ image_url?: string | null }>).map((s) => s.image_url).filter((u): u is string => !!u))];
     for (let i = 0; i < urls.length; i += 40) {
-      const { data: det } = await supabase.from("image_details").select("lines").in("image_url", urls.slice(i, i + 40));
-      for (const d of (det ?? []) as Array<{ lines: unknown }>) if (Array.isArray(d.lines)) lines.push((d.lines as string[]).join("\n"));
+      const { data: det } = await supabase.from("image_details").select("image_url, lines").in("image_url", urls.slice(i, i + 40));
+      for (const d of (det ?? []) as Array<{ image_url?: string | null; lines: unknown }>) {
+        if (Array.isArray(d.lines)) lines.push(dropUnclearUnitLines((d.lines as string[]).map(String), unclearByUrl.get(d.image_url ?? "") ?? []).join("\n"));
+      }
     }
     for (const e of (est.data ?? []) as Array<{ property_name: string | null; room_no: string | null }>) lines.push(`${e.property_name ?? ""} ${e.room_no ?? ""}号室`);
     for (const v of (vw.data ?? []) as Array<{ viewing_date: string | null; viewing_time: string | null }>) lines.push(`${v.viewing_date ?? ""} ${v.viewing_time ?? ""}`);
