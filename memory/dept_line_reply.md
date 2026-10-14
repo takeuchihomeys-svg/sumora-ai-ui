@@ -1,6 +1,12 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-10-14
+最終更新: 2026-10-15
+## 🧹 小さな直し（10/15 作る人・ブランチ small-fixes-1015）
+- **使った額の見張り**: 週の見張り（reading-audit-weekly・月曜 JST 9:40）に llmSpend（`app/lib/llm-spend-audit.ts`・llm_usage_logs を読むだけ・単価は llm-price.ts）。日ごと×Claude/DeepSeek/Jev・本番/手元・前の週との差。印: 週が前の週の1.5倍超かつ+$10／Claude・DeepSeek 別も同じ／1日が前週の1日平均の3倍超かつ$10以上（9/24〜10/14 の揺れ: 1日 $8〜$69・週 $184→$247）。10/15 時点の印「DeepSeek 2.14倍（$72→$154・手元 $171 が大半）」。手元 `scripts/llm-spend-audit.ts`。戻す LLM_SPEND_AUDIT=off・線 LLM_SPEND_ALERT_RATIO／_MIN_USD／LLM_SPEND_DAY_RATIO
+- **✨2通目の退去予定の材料**: 竹内さんが2通目に退去予定を書いた番（60日 66番）で売上サポの行（property_pickups）があるのは 4番だけ＝材料の出どころは送った資料の画像の読み（sent_image_properties.facts.status=move_out_planned・vacancy_date）。aix-template-generate が本文・売上サポの行で決まらない時に引く（退去予定と読めた時だけ・材料に渡すだけで出口の一文の足しはしない）。届く 25→31（読みが2通目より後に書かれた番 6・資料の読みに現況が無い 11 が残り）。`scripts/audit-recommend-vacating-source.ts`。戻す RECOMMEND_VACATING_SENT_IMAGE=off。1通目（aix/action）は手を付けていない（別の担当の AIX の材料）
+- **英字の物件名**: 「GRAN TOYONAKA 102号室」が「TOYONAKA」になる切り出し（空白を含まない名前＋号室の正規表現）を `app/lib/latin-name-head.ts` で頭を戻す（待ち合わせ・内覧の物件の先入れ・customer-mindset・draft-fact-grounding）。スタッフの文180日 2,164か所で欠け 189→0。戻す LATIN_NAME_HEAD=off
+- **物件名の直しの残り3行**: 地名を直した名前が帳簿に無い時に止まり、次に回すと series で直る2段だった（セレニティプラン雑賀→難波→セレニテフラン難波）。1回で着くように（PROPERTY_NAME_FIX_CHAIN=off）。親が `fix-property-names-stored.ts --apply` で 3行。別件: sent_image_properties の source=backfill（1,543）は直しの対象外で、直せる行が 128 ある（竹内さんの判断待ち）
+- **設計知見の食い違い**: 4d950c47（号室の0を消すのは誤り）× f7c8b201（全部で外す）→ 注記の行 `scripts/kb-room-zero-note-1015.json`（親が kb-insert）
 ## 🔁 返信側の残り（10/14 作る人・ブランチ reply-followups-1014）
 - **決定 C をブレイン基準に**（P0 9eb6aa9c ②・見直し役の指摘）: 規則（rule:ack_after_promise_reply）が LLM の物件 AIX を null にしていた → 網（ack-exhausted-reply.ackAfterPickupTurn＝お礼・了承だけ×台帳の最後の約束がピックアップ×確認・見積が残っていない）で今の番を見つけ LLM の前に「今の番（材料）」の1行。規則は aix の欄が無い時の網だけ・ブレインが AIX を選んだら上書きせず demoted_overrides（ACK_AFTER_PROMISE_BRAIN=off で旧）。約束の材料（staffPromiseMaterialLine・pickupReadyMaterialLine）の「お礼・了承なら AIX」に決定 C の但し書き。出し切りの後の条件の足しも同じ形（EXHAUSTED_CONDITION_BRAIN=off で旧）。試験（DeepSeek・q094 q110 q112 q003 q004 q006 q007・前後1回）道 6/7→7/7・本質（LLM の最初の答え）も決定どおり（q112 q006 q007 物件 AIX→返信・q094 AIX のまま）
 - **敷金の単位不明の印**: facts.deposit_unit/key_money_unit="unclear" を契約条件の材料に（route=confirm＋候補・言い切るか確認かはブレイン・allInMaterial にしない）・下書きの照らしは値を外す（「敷金2ヶ月」を根拠ありにしない）。DEPOSIT_UNIT_UNCLEAR=off。本番の印の行は今 0
