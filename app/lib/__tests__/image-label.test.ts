@@ -162,6 +162,23 @@ console.log("── ★ 支払いの控え・携帯番号（2026-10-09）");
   on("IMAGE_MOBILE_MASK", "off", () => t("IMAGE_MOBILE_MASK=off で伏せない", imageTextForSave("other", OVERLAP).includes("090-0000-0000")));
 }
 
+console.log("── 2026-10-14 種類不明で個人情報の語（迷う物は個人情報側）");
+{
+  const on2 = (k: string, v: string | undefined, f: () => void) => { const o = process.env[k]; if (v == null) delete process.env[k]; else process.env[k] = v; try { f(); } finally { if (o == null) delete process.env[k]; else process.env[k] = o; } };
+  // 実物の形（4fde147b・重要事項説明書の写真。氏名・番号は伏せた）
+  const JUSETSU = "重要事項説明書【建物賃貸借用】\n2026年 9月 30日\n\n〇〇 〇〇　　　様\n\n下記の不動産について、宅地建物取引業法第35条の規定に基づき…\n免許証番号　大阪府知事（1）第 00000 号";
+  const s = imageTextForSave("other", JUSETSU);
+  t("重説の写真（種類不明＋様）は書き起こしを残さない", s === "[画像] 【物件以外：個人情報の載った画像】", s);
+  t("保存した見出しを読み戻せる", savedImageKind(s) === "personal_unknown" && customerImageGroup(s, "other") === "non_property");
+  t("勤務先・年収の語（種類不明）も残さない", imageTextForSave("other", "お名前 〇〇\n勤務先 株式会社〇〇\n年収 400万円").startsWith("[画像] 【物件以外：個人情報の載った画像】"));
+  // 物件の画像・見積書には当てない
+  const MAISOKU = "物件種目：マンション\n物件名：エスリード〇〇\n号室名：502\n賃料 6.5万円 管理費 8,000円\n1K 25.3㎡\n地下鉄御堂筋線「本町」徒歩5分";
+  t("物件の資料（floor_plan）は変えない", imageTextForSave("floor_plan", MAISOKU).startsWith("[画像] 【物件の資料】\n"));
+  t("物件の資料（other）も変えない", !imageTextForSave("other", MAISOKU).includes("個人情報"));
+  on2("IMAGE_PERSONAL_HINT_DROP", "off", () => t("IMAGE_PERSONAL_HINT_DROP=off で旧（種類不明＋書き起こし）", imageTextForSave("other", JUSETSU).startsWith("[画像] 【種類不明】\n")));
+  t("condition-source-gate の見出しの行に当たる（物件以外：…24字以内）", IMAGE_KIND_LABEL.personal_unknown.replace(/^物件以外：/, "").length <= 24);
+}
+
 console.log("── ★ つながり（webhook・ブレイン）");
 {
   const webhook = readFileSync("app/api/line-webhook/route.ts", "utf8");
