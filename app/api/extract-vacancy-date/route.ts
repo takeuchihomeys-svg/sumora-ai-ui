@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     const parsed = parseExtractVacancyResponse(raw);
     if (parsed.fields) console.log(JSON.stringify({ tag: "extract-vacancy-date:fields", fields: parsed.fields, vacancyDate: parsed.vacancyDate, from: parsed.vacancyFrom ?? null }));
     // 2026-10-14 読み取りの化け（プレアール速里小野・スプランディッド雜波キャトル）を直してから AIX の欄に入れる（候補が1つの時だけ・property-name-fix.ts）。
-    //   ここで入った名前はスタッフがそのまま送り、帳簿の「スタッフの入力」になる（直した化けの名前 173種類のうち 10種類は、スタッフがその字のまま AIX で送っていた）
+    //   ここで入った名前はスタッフがそのまま送り、帳簿の「スタッフの入力」になる（直した化けの名前 166種類のうち 9種類は、スタッフがその字のまま AIX で送っていた）
     let propertyName = parsed.propertyName;
     if (propertyName) {
       try {
