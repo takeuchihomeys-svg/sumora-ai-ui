@@ -39,7 +39,7 @@ it("★ ```json で囲まれていても読める（実測で囲まれる事が�
 it("★ 配列で返ってきても読める（thinking disabled の時の形・実測）", () => {
   const r = parseReadResult('[{"物件名":"RISING Maison 本町筋","号室":"1005"},{"物件名":"RISING Maison 本町筋","号室":"0402"}]');
   expect(r.items.length).toBe(2);
-  expect(r.items[1].roomNumber).toBe("0402");
+  expect(r.items[1].roomNumber).toBe("402")  // 2026-10-14 号室は先頭の0を読まない（room-no.ts）;
 });
 
 it("指定した形（items つき）をそのまま読める", () => {

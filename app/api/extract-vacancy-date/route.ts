@@ -3,6 +3,7 @@ import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 import { NextResponse } from "next/server";
 import { extractVacancyDateSystem, parseExtractVacancyResponse, EXTRACT_VACANCY_USER_TEXT } from "@/app/lib/extract-vacancy-date-prompt";
 import { sheetVacancyFieldsEnabled } from "@/app/lib/sheet-vacancy";
+import { canonicalRoomLabel } from "@/app/lib/room-no";
 
 // 2026-09-29 API 費用の調査: 名札だけ付ける（動きは変えない）
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, defaultHeaders: sumoraLlmMarks("extract_vacancy_date") });
@@ -39,7 +40,19 @@ export async function POST(req: Request) {
     const raw = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const parsed = parseExtractVacancyResponse(raw);
     if (parsed.fields) console.log(JSON.stringify({ tag: "extract-vacancy-date:fields", fields: parsed.fields, vacancyDate: parsed.vacancyDate, from: parsed.vacancyFrom ?? null }));
-    return NextResponse.json({ propertyName: parsed.propertyName, vacancyDate: parsed.vacancyDate });
+    // 2026-10-14 読み取りの化け（プレアール速里小野・スプランディッド雜波キャトル）を直してから AIX の欄に入れる（候補が1つの時だけ・property-name-fix.ts）。
+    //   ここで入った名前はスタッフがそのまま送り、帳簿の「スタッフの入力」になる（直した化けの名前 166種類のうち 9種類は、スタッフがその字のまま AIX で送っていた）
+    let propertyName = parsed.propertyName;
+    if (propertyName) {
+      try {
+        const { fixReadPropertyNameWithLedger } = await import("@/app/lib/property-name-ledger-server");
+        const nf = await fixReadPropertyNameWithLedger(propertyName);
+        if (nf.status === "fixed") { console.log(JSON.stringify({ tag: "property-name-fix", route: "extract-vacancy-date", from: propertyName, to: nf.name, rule: nf.rule })); propertyName = nf.name; }
+      } catch { /* 直せなくても読んだ名前のまま */ }
+    }
+    // 2026-10-14 号室は先頭の0を読まない形で欄に入れる（「KTIレジデンス西中島II 0202号室」→「… 202号室」・room-no.ts）
+    if (propertyName) propertyName = canonicalRoomLabel(propertyName);
+    return NextResponse.json({ propertyName, vacancyDate: parsed.vacancyDate });
   } catch {
     return NextResponse.json({ propertyName: null, vacancyDate: null });
   }

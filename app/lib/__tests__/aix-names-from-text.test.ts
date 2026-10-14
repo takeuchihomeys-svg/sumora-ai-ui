@@ -27,7 +27,8 @@ t("ブラービ南船場 / 7階…607号室現在募集中", reportNamesFromText
 
 console.log("■ 記録の物件名を本文に合わせる");
 t("未桜 10/9: エステムコート難波IVアトリ → レジュールアッシュ難波MINAMI", JSON.stringify(reconcileAixPropertyNames(["エステムコート難波IVアトリ"], MIOU, same, {}).names) === JSON.stringify(["レジュールアッシュ難波MINAMI"]));
-t("YUMA 9/27: エステムコート大阪WEST → プレサンス難波WEST 0205号室", reconcileAixPropertyNames(["エステムコート大阪WEST"], YUMA1, same, {}).names?.[0] === "プレサンス難波WEST 0205号室");
+// 2026-10-14 記録は号室の先頭の0を読まない形（room-no.ts）
+t("YUMA 9/27: エステムコート大阪WEST → プレサンス難波WEST 205号室", reconcileAixPropertyNames(["エステムコート大阪WEST"], YUMA1, same, {}).names?.[0] === "プレサンス難波WEST 205号室");
 t("本文に名前が無ければ触らない", reconcileAixPropertyNames(["エステムコート大阪WEST"], YUMA3, same, {}).changed === false);
 t("画面の名前が本文に出る時は触らない", reconcileAixPropertyNames(["レジュールアッシュ難波MINAMI"], MIOU, same, {}).changed === false);
 t("書き方の違いでも同じ物件なら触らない（サンライトあべの8／阿倍野8）", reconcileAixPropertyNames(["サンライト阿倍野8 202号室"], "サンライトあべの8 202号室につきまして確認中です", same, {}).changed === false);

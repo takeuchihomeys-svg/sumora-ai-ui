@@ -24,6 +24,7 @@
 import { parseDetailResult, type DetailResult } from "./property-image-read";
 import { resolveReadProperty } from "./property-name-match";
 import { alignVacancyLines } from "./sheet-vacancy";
+import { JA_KANJI_INSTRUCTION } from "./ja-kanji";
 
 export type DetailSource = "text" | "image" | "none";
 
@@ -72,7 +73,8 @@ export const PROPERTY_TEXT_DETAIL_SYSTEM = `次に渡す文字は、賃貸物件
   ペット／楽器／保証会社／連帯保証人／洗濯機置場／設備／フリーレント／入居条件
 - **金額・住所・駅徒歩・専有面積は書かない**（別の所で扱う）
 - 値は資料の文字をそのまま短く写す。推測しない。「不明」「記載なし」という行も作らない
-- 文字の並びが崩れていても（表の行と列が入れ替わって見えても）見出しと値の組を読む`;
+- 文字の並びが崩れていても（表の行と列が入れ替わって見えても）見出しと値の組を読む
+${JA_KANJI_INSTRUCTION}`;
 
 /**
  * 2026-09-29（B・その2）送った画像を**書き写した文字**（readPropertyImageDetailByTranscript）から読む時の指示。

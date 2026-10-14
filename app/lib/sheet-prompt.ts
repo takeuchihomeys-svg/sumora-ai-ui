@@ -15,9 +15,11 @@
 //   - 帖数・図の中の㎡は読ませる（2026-09-24 以前は「数字は書かせない」だったが、今回はお客様向けの文ではなく
 //     「読んだ図がこの部屋の物か」を文字層と突き合わせる材料にする。本文・画面の点には使わない）
 import type { CropMode } from "./sheet-layout";
+import { JA_KANJI_INSTRUCTION, jaKanji } from "./ja-kanji";
 
 /** 前置きを変えたら上げる（保存した読み取りを使い回すかの鍵にも使う） */
-export const SHEET_PROMPT_VERSION = "sheet-v8";
+// 2026-10-14 v9: 共通の頭に「日本語の漢字で書き写す」（P0 89bc2c3e）を足した。v8 の保存は使い回さない（読み直しは1件 約0.02円）
+export const SHEET_PROMPT_VERSION = "sheet-v9";
 /** 推論なしの出力は実測 120〜171 トークン。崩れた時の読み直し（推論 low）だけ大きく取る */
 export const SHEET_READ_MAX_TOKENS = 600;
 export const SHEET_RETRY_MAX_TOKENS = 12000;
@@ -53,6 +55,7 @@ export const SHEET_COMMON_HEAD = `あなたは賃貸物件の資料（マイソ�
 - storage.closets: labels のうち下駄箱（SB・SCL・Shoes・シューズ・下足入）・MB・PS を除いた数（WIC も1つ）
 - 窓の外の細長い区画（バルコニー・ベランダ・バル）は balcony「あり」。そこに「洗」の四角があれば laundry「屋外」
 - 見えない・書いていない事は必ず「不明」か null（推測で埋めない）
+${JA_KANJI_INSTRUCTION}
 `;
 
 /** 型ごとの説明（どこに何があるか）。キーは切り出しの形 */
@@ -165,7 +168,7 @@ const numOrNull = (v: unknown, min: number, max: number): number | null => {
   })();
   return Number.isFinite(n) && n >= min && n <= max ? Math.round(n * 100) / 100 : null;
 };
-const str = (v: unknown, max = 80) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+const str = (v: unknown, max = 80) => jaKanji(String(v ?? "")).replace(/\s+/g, " ").trim().slice(0, max);
 
 /** 返事の JSON を読む。崩れた返事・選択肢に無い値は「不明」に倒す。JSON が無ければ null */
 export function parseSheetImageFacts(text: string): SheetImageFacts | null {

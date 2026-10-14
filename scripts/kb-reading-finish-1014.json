@@ -1,0 +1,32 @@
+[
+  {
+    "title": "読み取りの物件名の化けは地名の表・帳簿・化けの癖で直す — 候補が1つ・区別の印が同じ・地名の違いが似ている時だけ（迷えばそのまま）",
+    "category": "data_model",
+    "insight": "画像から読んだ物件名はシリーズ名＋地名の地名の部分が化ける（難波→雑賀・堺筋→堤筋・芦原橋→戸原橋・今福→令福・遠里小野→速里小野）。直し方（app/lib/property-name-fix.ts）: ①漢字の並びが地名の表（osaka-geo の駅・町名・区市＋資料の文字から覚えた並び）に無い時だけ地名を疑う ②旧字（大國町）と、2つ以上の建物で見た化けの癖（雑賀→難波）は確か＝そのまま直す ③1字違いの地名（梅出→梅田）は帳簿（資料の文字・スタッフ2回・共有3回）に直した名前がある時だけ ④シリーズ名の化けは地名が同じで1〜2字違いの帳簿の名前が1つの時だけ。寄せない線: 区別の印（数字・ローマ数字・方角・棟/館の印・第二）が違う／地名の違いが似ていない（日向→中宮）／名前の鍵が5字以下／片方が片方の頭（カーザSun→カーザSun I）。",
+    "rationale": "1,592種類の読み取りの名前で、帳簿だけで寄せると同じシリーズの別の建物（プレステージ日向→中宮・クリエオーレ葛連→長橋・深江橋第二コーポ→深江橋コーポ）に寄った。全件を目で読んで線を引き、直す 166 → 確かめる人の見直しで地名の無い片仮名・英字だけの名前は寄せない（実在する別の建物と見分けられない・竹内さんと打ち合わせ中・住所や家賃で照らす案）ので 145・資料に読んだ名前の方が出た（誤り）0。化けた名前はスタッフが AIX の欄の先入れのまま送り（9種類）、帳簿を汚すので、先入れの前（/api/extract-vacancy-date）で直す。",
+    "context": "2026-10-14 竹内さん「物件名はシリーズ名＋地名…実在しない地名は化けと見て正しい地名に直す（候補が1つの時だけ）」・作る人・ブランチ reading-finish-1014",
+    "applied_to": "app/lib/property-name-fix.ts・property-name-ledger-server.ts・property-name-confusions.ts（生成物）・sent-image-record.ts・api/extract-vacancy-date・scripts/build-property-name-ledger.ts・audit-property-name-fix-runtime.ts",
+    "tags": ["静かに壊れる", "物件名", "読み取り", "画像", "監査"],
+    "priority": 2
+  },
+  {
+    "title": "読み取りの金額の「万」は円に直して書かせ、12以下は月数と読む所の読み違いを賃料と照らして直す（2・3 は見分けられないので触らない）",
+    "category": "prompt_engineering",
+    "insight": "DeepSeek（推論なし）は「2万円」「20万円」「5.5万円」の敷金・礼金を 2・20・5.5 と書き、candidate-facts は 12以下を月数・それより上を円と読むので「20円」「5.5ヶ月」になっていた。指示に「万円は 10000 倍した円の数字」を足し（例の値は書かない）、安全の線（reading-amounts.ts）で 円の値が1,000未満→×1万（賃料の6倍以下）・月数が3を超え万円と見ると賃料の3倍以下→円。2・3 は「2ヶ月」と「2万円」を見分けられないので触らない。",
+    "rationale": "送った画像 × 同じ部屋の売上サポの資料 368組で 礼金 345→347・誤って直した 0。読み直し4枚で敷金・礼金の取り違え 6→1。",
+    "context": "2026-10-14 竹内さん「賃料・管理費・敷金・礼金…の読み取りを実データで測る。売上サポの同じ物件の行で答え合わせ」",
+    "applied_to": "app/lib/property-image-read.ts（PROPERTY_IMAGE_PROMPT）・app/lib/reading-amounts.ts・sent-image-record.ts・scripts/audit-reading-amounts.ts・verify-reading-amounts-prompt.ts",
+    "tags": ["静かに壊れる", "読み取り", "DeepSeek", "金額"],
+    "priority": 2
+  },
+  {
+    "title": "お客様の URL だけの物件（SUUMO）はどこでも読んでいなかった — ページを開いて建物名を候補に出す（表示だけ・先入れしない）",
+    "category": "architecture",
+    "insight": "120日のお客様のポータルの発言: 共有文に名前 211（SUUMO 202・athome 9）・名前の無い共有文 33・スクショ 103（Vision で書き起こし済み）・URL だけ 211（未読）。portal-page-read.ts が SUUMO のページを開き（LLM なし・1回3件・1時間覚える）、title の建物名・家賃・間取り・駅・404＝掲載終了 を読む。AIX の物件名の候補の最後に足すだけ。名前の無い共有文を駅・家賃・間取りで売上サポに結ぶ案は 60件中2件しか決まらず1件は一覧のスクショ＝つながない。",
+    "rationale": "お客様が自分で見つけた物件はこちらの DB に無いことが多く、照らすより元のページを読む方が確か。ページは古い・別の部屋の掲載もあるので、本文・先入れには使わない（設計知見 90d263b1）。",
+    "context": "2026-10-14 竹内さん「SUUMO を送ってきた時に中身を読む仕組みが既にあるか確かめ…読めていない所をつなぐ」",
+    "applied_to": "app/lib/portal-page-read.ts・app/api/portal-page-read・app/components/AixModal.tsx・app/lib/portal-listing-match.ts・scripts/audit-portal-listing.ts",
+    "tags": ["物件確認", "SUUMO", "監査", "AIX"],
+    "priority": 2
+  }
+]
