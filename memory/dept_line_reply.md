@@ -1,6 +1,12 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-14
+## 🖼 お客様が送った物件（画像・URL）を物件検索ブレインへ・個人情報の画像は線で止める（10/14 作る人・ブランチ customer-images-1014）
+- **物差し** `scripts/audit-customer-sent-properties.ts`（LLM なし・180日 お客様の画像 1,023・URL つき 708）: 受け取った時点の仕分けは既にある（見出し・本人確認書類 111・書類 16 は種類だけ）。読み取り前の「[画像]」434 は 6〜8月の昔の行（9月以降 1）。物件の画像 362（値が取れる 357）・物件の URL 543 は🌟・判定・好みの学習のどれにも入っていなかった（転送 0）。お客様の画像が DeepSeek の読み取りの表（sent_image_properties・image_details）にある数 0
+- **見つけた道**: 毎週の好みの読み（pref_read_customer・DeepSeek）が発言を画像の書き起こしごと渡していた（456行・個人情報の語つき 4）→ 物件は値だけ・それ以外は見出しだけ（CUSTOMER_PREF_IMAGE_GATE=off で旧）。【種類不明】で全文が残る重説の写真（お客様の氏名つき）→ 受け取りで書き起こしを残さない（IMAGE_PERSONAL_HINT_DROP=off）
+- **転送** `customer-sent-property.ts`（線: 物件の見出しだけ・個人情報の指紋が1つでも当たれば落とす・種類不明は通さない）→ `pickup-rank.loadRankConditions(…, convIdEff)` が🌟の条件の外に「お客様が自分で送ってきた物件」のブロック（値＋前後20分の一言・伏せ字）。向きは DeepSeek が一言から読む。申込の線より後だけ。SUUMO のページは30日以内を最大2件・3秒（CUSTOMER_SENT_PORTAL_FETCH=off）。全体 CUSTOMER_SENT_PROPERTY=off
+- 見本（作り物・DeepSeek 3回・Claude 0）: 材料なし [2,3,1] →「高いので無し」の一言つきの似た物件を渡すと [3,1,2]。好きの一言は同じ1位で変わらず
+- 残り（竹内さん判断）: 種類不明のまま書き起こしが残る 振込の控え（振込人名つき）・会員 ID の画面 → 受け取りの指紋を足すか
 ## 📥 スタッフしか知らない事を AIX の入力からブレインへ（10/14 作る人・ブランチ capture-staff-info-1014・設計知見 37af1885）
 - **物差し** `scripts/audit-staff-info-capture.ts`（LLM なし）: 120日 物件カードの「別の部屋」7番＝次のブレインの今の物件がその部屋 0/6・台帳に募集中の出来事 0/7（状態 alternative を誰も読まない）／上の「別の部屋が募集してた」9番＝記録の名前 0／内覧後の挨拶 9番＝内覧の内容 0／電話をかけるボタン 19回・電話終了後 0回・電話の記録 0
 - **直し** `app/lib/staff-capture.ts`: ①台帳 check_alternative・状況 check_available（STAFF_CAPTURE_ALTERNATIVE=off）→ 台帳 0→7 ②上の別の部屋は本文の建物名＋『代わりに案内するお部屋』の号室で記録 ③内覧後: タップ（結果・気に入った点・気になった点・次の動き）→ viewing_report・生成の前に保存を待つ ④電話終了後: タップ＋『記録だけする』→ お客様のメモ kind=call（場面に関係なくブレイン・返信へ・STAFF_CAPTURE_CALL=off）。画面は NEXT_PUBLIC_STAFF_CAPTURE_UI=off で旧
