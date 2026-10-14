@@ -1,0 +1,32 @@
+[
+  {
+    "title": "【決定】物件の AIX（ピックアップ・オススメ・探す）は、お礼・了承だけでない番では約束の返信（2段）— お礼・了承の番は、ピックアップの約束の直後なら返信で短く締め（決定 C）、それ以外は AIX のまま",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "two-stage pickup_unless_ack（brain-core が ackOnly を渡す・TWO_STAGE_PICKUP_UNLESS_ACK=off）。お礼・了承だけでない番（条件・質問・費用・内覧・検討中・申込）は、売上サポの候補や前の約束があっても、物件の AIX ではなくピックアップの約束の返信が先（6/26〜 の正解の表: 条件の番 竹内さん 約束126／AIX5・従業員 106／4、質問 19／11、費用 12／2、内覧 7／2、検討中 7／1、申込 4／0）。お礼・了承だけの番は2つに分かれる: ①直前のこちらの約束が「ピックアップしてお送りする」でまだ物件を送っていない番は、物件の AIX をまだ出さずお礼に短く返信して締める（竹内さんの決定 C 10/14・2b1e0044。受けだけか待ちの形の1文かは ack_form。物件の AIX はスタッフが探した後の別の番）②それ以外（確認・見積の約束の後・約束が残っていない番）は AIX のまま（黙って後で果たす）。約束の催促は約束を果たす AIX。どちらもブレインが材料（今の番の行・約束の行）を読んで決める（P0 9eb6aa9c）。",
+    "rationale": "b0be2568 の「お礼・了承の番だけ AIX のまま」は、ピックアップの約束の直後のお礼（試験 q110・q112 の正解は返信）で決定 C とぶつかる。決定 C は約束の種類で分ける（ピックアップだけ返信・確認／見積は AIX＝q094）。お礼以外の番の約束の返信の線（竹内さん 96%）はそのまま。",
+    "context": "2026-10-14 決定 C をブレイン基準にした作業（ブランチ reply-followups-1014）で b0be2568 の但し書きを決定 C に合わせて書き直した",
+    "applied_to": "app/lib/two-stage.ts・app/lib/brain-core.ts・app/lib/ack-exhausted-reply.ts（ackAfterPickupTurn・ackAfterPickupTurnLine）",
+    "tags": ["竹内さんの決定", "2段", "AIX", "ブレイン", "約束", "お礼", "場面:条件", "場面:短いお礼"]
+  },
+  {
+    "title": "竹内さんの決定（返信か AIX か）を規則で書き換えない — 今の番がその決定の番かを網で見つけて LLM の前の材料（今の番の行）で渡し、ブレイン自身に決めさせる。材料どうしの食い違いを先に消す",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "決定 C（ピックアップの約束の直後のお礼・了承だけ＝返信）と出し切りの後の条件の足し（＝返信で締める）は、LLM の後の規則が物件の AIX を finalAix=null に書き換えていた（rule:ack_after_promise_reply・rule:exhausted_condition_reply）＝P0 9eb6aa9c ②とぶつかる。直し方: ①網（ack-exhausted-reply.ackAfterPickupTurn＝お礼・了承だけ×台帳の最後の約束がピックアップ×確認・見積の約束が残っていない／出し切りの印）で今の番を見つけ、LLM の前に「今の番（材料）」の1行で竹内さんの使い分けと aix・reply_mode の形を渡す ②後の規則は、ブレインが決められなかった時（aix の欄が無い）だけの網。ブレインが AIX を選んだ番は上書きせず demoted_overrides に記録 ③ブレインが返信を選んだ番は、方向の文もブレインの文（空の時だけ規則の方向）④同じ番に効く材料の文（staffPromiseMaterialLine「お礼・了承だけなら約束を果たす AIX」・pickupReadyMaterialLine「お礼や了承だけの番は物件の AIX を直接」）が決定とぶつかっていたので、決定 C の但し書きを入れてそろえた。戻す ACK_AFTER_PROMISE_BRAIN=off・EXHAUSTED_CONDITION_BRAIN=off。",
+    "rationale": "試験（DeepSeek・q094 q110 q112 q003 q004 q006 q007・前後1回）: 前は本質（LLM の最初の答え）が q112 q006 q007 で物件の AIX＝規則が書き換えて合格（q007 は書き換えでも不合格）・道 6/7。後は材料だけで本質も最終も決定どおり 7/7（q094 は AIX のまま）。規則で書き換えると、ブレインの方向の文・ack_form・reason が決定と食い違ったまま残る。材料が食い違っていると LLM は古い方（約束を果たす AIX）に寄る。",
+    "context": "2026-10-14 見直し役の指摘（brain-core の isAckOnly の決定論が LLM の物件 AIX を消す）・ブランチ reply-followups-1014",
+    "applied_to": "app/lib/ack-exhausted-reply.ts・app/lib/brain-core.ts・app/lib/override-demote.ts・scripts/brain-exam（q094 q110 q112 q003 q004 q006 q007）",
+    "tags": ["ブレイン", "出口の決定論", "材料", "約束", "お礼", "出し切り", "場面:短いお礼", "場面:条件"]
+  },
+  {
+    "title": "読み取りで単位が決まらない敷金・礼金（facts.deposit_unit=\"unclear\"）は言い切れる材料にしない — 印と候補をブレインに渡し、下書きの照らしでは根拠から外す",
+    "category": "data_model",
+    "priority": 2,
+    "insight": "読み取り（reading-gate-server）が敷金・礼金の「2」を 2ヶ月か2万円か決められない時、sent_image_properties.facts に deposit_unit/key_money_unit=\"unclear\"＋候補（2ヶ月・2万円）を書く。返信側: ①契約条件の材料（contract-terms-question.routeContractTerm）は、値が画像の読みの行だけから来た時（売上サポの数値・リアプロの文字層の行が無い）に route=confirm＋unitUnclear（候補）にし、注記に「単位が決まらない・言い切るのは会話や資料の別の所で単位が分かる時だけ・分からなければ確認の約束・どちらかはブレインが決める」と書く（allInMaterial にしない＝規則で返信に倒さない）②下書きの事実の照らし（draft-fact-grounding・loadDraftGroundExtra）は、単位不明の値を facts から外して「敷金 単位不明（候補 …）」の行にし、その画像の書き写しの敷金の行も外す＝「敷金2ヶ月」の言い切りは根拠なし（自動送信を止め、AIX の番として記録）。戻す DEPOSIT_UNIT_UNCLEAR=off。",
+    "rationale": "値の JSON（\"deposit_months\":2）が材料にあると、単位の分からない値でも「敷金2ヶ月」が根拠ありで通っていた。印を付けるのは読み側・言い切るか確認するかは返信側のブレイン（P0 9eb6aa9c）。10/14 時点で本番の印の行は 0（読み取り側が入ったばかり）＝テストだけで確かめた。",
+    "context": "2026-10-14 読み取りの確信度のゲート（reading-confidence-1014）の続き・ブランチ reply-followups-1014",
+    "applied_to": "app/lib/contract-terms-question.ts・app/lib/contract-terms-answer-server.ts・app/lib/draft-fact-grounding.ts・app/lib/draft-fact-grounding-server.ts",
+    "tags": ["読み取り", "敷金", "金額", "作り話", "ブレイン", "場面:初期費用", "場面:質問"]
+  }
+]

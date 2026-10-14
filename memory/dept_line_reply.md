@@ -1,6 +1,11 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-14
+## 🔁 返信側の残り（10/14 作る人・ブランチ reply-followups-1014）
+- **決定 C をブレイン基準に**（P0 9eb6aa9c ②・見直し役の指摘）: 規則（rule:ack_after_promise_reply）が LLM の物件 AIX を null にしていた → 網（ack-exhausted-reply.ackAfterPickupTurn＝お礼・了承だけ×台帳の最後の約束がピックアップ×確認・見積が残っていない）で今の番を見つけ LLM の前に「今の番（材料）」の1行。規則は aix の欄が無い時の網だけ・ブレインが AIX を選んだら上書きせず demoted_overrides（ACK_AFTER_PROMISE_BRAIN=off で旧）。約束の材料（staffPromiseMaterialLine・pickupReadyMaterialLine）の「お礼・了承なら AIX」に決定 C の但し書き。出し切りの後の条件の足しも同じ形（EXHAUSTED_CONDITION_BRAIN=off で旧）。試験（DeepSeek・q094 q110 q112 q003 q004 q006 q007・前後1回）道 6/7→7/7・本質（LLM の最初の答え）も決定どおり（q112 q006 q007 物件 AIX→返信・q094 AIX のまま）
+- **敷金の単位不明の印**: facts.deposit_unit/key_money_unit="unclear" を契約条件の材料に（route=confirm＋候補・言い切るか確認かはブレイン・allInMaterial にしない）・下書きの照らしは値を外す（「敷金2ヶ月」を根拠ありにしない）。DEPOSIT_UNIT_UNCLEAR=off。本番の印の行は今 0
+- 見積書送付の後の行を a43ade78（2通目はご査収のまま）と別の対象と明記／間取り図の読みはキッチンの形・向きを字がある時だけ（material-plan-v4・MATERIAL_PLAN_TEXT_ONLY=off）
+- 設計知見の案: scripts/kb-answer-brain-1014.json（区切り1〜6）・scripts/kb-ack-after-promise-brain-1014.json（b0be2568 の書き直し・決定 C のブレイン基準・単位不明）。DB には未投入
 ## 🔎 読み取りの確信度のゲート（10/14 作る人・設計知見 56ecf24a「自信が無い時だけ深く調べる」・ブランチ reading-confidence-1014）
 - **印**（`app/lib/reading-confidence.ts`・数え `scripts/audit-reading-confidence.ts`＝送った画像の1回目 2,409件 × 売上サポの行）: 物件名＝会話の名前に寄らず、直しが迷った・地名が表に無い・似た名前2つ以上（13.7%・精度 77%。帳簿に無いだけは 37% に出るので印にしない）／号室＝1K・不明・5K3・3077・5字以上・階数超え（2.6%）／敷金＝1〜3 の整数（2.4%・礼金は 22% に出て当たりが少ないので印にしない・READING_CONFIDENCE_KEY_MONEY=on）。どれか 9.2%
 - **調べ方**（`reading-gate-server.ts`・sent-image-record の照合の後・今読んだ1件の画像だけ）: ① 売上サポの行（rent_observations）と照らす＝名前は賃料・㎡・間取りで1つの建物に決まり名前が似ている時（栄養→栄美・輝渡→難波）・敷金は同じ部屋の行（2→20,000円）② 決まらない欄だけ全体＋4分割の拡大で1回読み直す（`reading-recheck-server.ts`・DeepSeek・入力 約4,200・$0.00065/回）③ 敷金が決まらなければ facts.deposit_unit="unclear"＋候補（ブレインの材料に渡すのは返信側の担当＝読み側は印を付けるまで）
