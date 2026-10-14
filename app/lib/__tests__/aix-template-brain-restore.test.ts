@@ -2,7 +2,7 @@
 // 実行: npx tsx app/lib/__tests__/aix-template-brain-restore.test.ts
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { restoreMetaAfterShown, staffTurnStillOpen, SHOWN_DRAFT_SENTINEL } from "../brain-meta-restore";
+import { restoreMetaAfterShown, staffTurnStillOpen, staffTurnSameJstDay, SHOWN_DRAFT_SENTINEL } from "../brain-meta-restore";
 
 let passed = 0, failed = 0;
 const t = (name: string, ok: boolean) => { if (ok) { passed++; console.log(`  ✓ ${name}`); } else { failed++; console.log(`  ✗ ${name}`); } };
@@ -26,6 +26,13 @@ t("スタッフの番の中（最初の送信から30分）→ 戻す", staffTur
 t("まだ答えていない番 → 戻す", staffTurnStillOpen(null, now, 2 * H));
 t("別の番（最初の送信から2日）→ 戻さない", !staffTurnStillOpen(now - 48 * H, now, 2 * H));
 t("読めない → 戻さない", !staffTurnStillOpen(NaN, now, 2 * H));
+{
+  const j = (s: string) => Date.parse(s);
+  t("その日のうち: JST 9時の送信 → 同じ日の23時 → 戻す", staffTurnSameJstDay(j("2026-10-14T00:00:00Z"), j("2026-10-14T14:00:00Z")));
+  t("その日のうち: JST 23時の送信 → 翌日0時半 → 戻さない", !staffTurnSameJstDay(j("2026-10-14T14:00:00Z"), j("2026-10-14T15:30:00Z")));
+  t("その日のうち: まだ答えていない → 戻す", staffTurnSameJstDay(null, now));
+  t("その日のうち: 読めない → 戻さない", !staffTurnSameJstDay(NaN, now));
+}
 t("続きの番の線は brain-meta-load が使う", /staffTurnStillOpen\(firstStaffMs/.test(load) && /other_turn/.test(load));
 
 console.log(`\n${passed} passed, ${failed} failed`);

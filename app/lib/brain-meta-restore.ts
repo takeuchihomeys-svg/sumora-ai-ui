@@ -62,6 +62,21 @@ export function staffTurnStillOpen(firstStaffAfterCustomerMs: number | null, now
   return nowMs - firstStaffAfterCustomerMs <= turnMs;
 }
 
+/** 日本時間の日付（YYYY-MM-DD） */
+function jstDay(ms: number): string {
+  return new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * 2026-10-14 竹内悠馬「その日のうち」: 続きの番は、お客様の発言の後のスタッフの最初の送信と今が日本時間で同じ日の間。
+ *   firstStaffAfterCustomerMs の扱いは staffTurnStillOpen と同じ（null＝これから答える番・NaN＝読めない）
+ */
+export function staffTurnSameJstDay(firstStaffAfterCustomerMs: number | null, nowMs: number): boolean {
+  if (firstStaffAfterCustomerMs === null) return true;
+  if (!Number.isFinite(firstStaffAfterCustomerMs)) return false;
+  return jstDay(firstStaffAfterCustomerMs) === jstDay(nowMs);
+}
+
 function asObject(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
