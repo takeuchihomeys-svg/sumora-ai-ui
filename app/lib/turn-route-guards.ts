@@ -10,6 +10,7 @@
 // 戻す: TURN_ROUTE_GUARDS=off（全部）
 import { STATION_LINES, WARD_COORDS } from "./osaka-geo";
 import { splitRequests } from "./request-ledger";
+import { OTHER_PROPERTY_ASK_RE, zenryokuCandidateExitEnabled } from "./search-result-split";
 
 export function turnRouteGuardsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TURN_ROUTE_GUARDS ?? "").toLowerCase() !== "off";
@@ -37,6 +38,8 @@ export function placeMentioned(text: string): string | null {
 }
 
 // 試験 q061「選択肢増えるかな」・q079「白基調の部屋はあんまりないですかね」も探す側
+/** 1件の物件を指す（その物件の募集状況・内見の確認＝他の物件を探す問いではない）。10/15 review */
+export const SINGLE_PROPERTY_REF_RE = /https?:\/\/|(?:こちら|この|その)の?(?:物件|お部屋|部屋)|(?:ここ|そこ)(?:って|は|も)?まだ?(?:空|募集)|新着で(?:スーモ|SUUMO|suumo|ホームズ|HOME|アットホーム|出て|出てる|載って|あり)/;
 const PICKUP_ASK_RE = /探し|探して|ピックアップ|選択肢|増え|(?:あんまり|あまり)(?:ない|無い)|ないですかね|他の(?:物件|お部屋|部屋)|(?:物件|お部屋|部屋)[^。\n]{0,8}(?:送って|下さい|ください|ほしい|欲しい|ありますか|ありませんか)|もう少し(?:見|探)/;
 const CANCEL_RE = /キャンセル|取り消|やめ(?:ます|たい|とき|ておき)|見送/;
 const HOLD_HES = new Set(["thinking", "callback", "waiting"]);
@@ -46,9 +49,15 @@ const CHANGE_CCT = new Set(["area_change", "rent_change", "layout_change", "equi
  * 物件を探す依頼でない番か（物件の AIX・ピックアップの約束を付けない＝返信の番）。
  *   お礼・了承だけの番は別の線（約束の後のお礼は AIX のまま黙って果たす）なので false。
  */
-export function notPickupTurn(i: { text: string; ackOnly: boolean; conditionChangeType: string | null | undefined; hesitancy: string | null | undefined; companyFactAsked: boolean }): { yes: boolean; why: string } {
+export function notPickupTurn(i: { text: string; ackOnly: boolean; conditionChangeType: string | null | undefined; hesitancy: string | null | undefined; companyFactAsked: boolean; zenryokuCandidate?: boolean; env?: Record<string, string | undefined> }): { yes: boolean; why: string } {
   const t = String(i.text ?? "").normalize("NFKC");
   if (!t.trim() || i.ackOnly) return { yes: false, why: "お礼・了承だけ" };
+  // 2026-10-15 作る人（zenryoku-ack-1015）: 「他まだありますか」（新着・他にあるかの問い）は探す番（竹内さんの決定 B の右を出す番・試験 q102）。
+  //   旧は「質問（探す依頼でない）」で物件の AIX を消し、ブレインの zenryoku_candidate も画面に届かなかった。ブレインが全力サポートを候補にした番も消さない。
+  //   戻す ZENRYOKU_CANDIDATE_EXIT=off
+  //   10/15 review（実データ 30日 1112番で網に新しく当たった 3番のうち 2番は「こちらの物件新着でスーモ出てる…まだ募集ないですか」「SUUMO の URL…新着でありましたが」＝1件の募集状況の確認）:
+  //   1件の物件を指す番（URL・こちら/この/その物件・ここ空いてますか・新着で（ポータルに）出てる）は網で拾わない（ブレインが候補にした番は別）
+  if (zenryokuCandidateExitEnabled(i.env) && ((OTHER_PROPERTY_ASK_RE.test(t) && !SINGLE_PROPERTY_REF_RE.test(t)) || i.zenryokuCandidate === true)) return { yes: false, why: i.zenryokuCandidate ? "ブレインが全力サポートを候補にした" : "他の物件・新着の問い" };
   if (i.conditionChangeType && CHANGE_CCT.has(i.conditionChangeType)) return { yes: false, why: "条件の変更・ピックアップの依頼" };
   if (placeMentioned(t)) return { yes: false, why: "地名を言った" };
   if (PICKUP_ASK_RE.test(t)) return { yes: false, why: "探す依頼の言い方" };

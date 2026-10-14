@@ -1,0 +1,10 @@
+{
+  "title": "了承の返事（ack_form）はブレインの1つの値を生成の全部の出口にそろえる — 場面の型・往復文脈・姿勢の締め・必ず含める内容・WE DO・確認約束の禁止・最終チェック",
+  "category": "ai_design",
+  "priority": 2,
+  "insight": "ブレインが ack_form（receive_only／wait_line）を決めても、生成の指示の7か所が逆を渡していた: 場面の型「次のアクション文を1つ添える（募集状況確認出来次第ご連絡）」・往復文脈の役割と型（最後は行動宣言で終える）・姿勢の締め・温度（行動宣言で終える）・必ず含める内容（約束の進行＝不合格の強さ）・本質の答えの要点（ピックアップを進めます）・WE DO 宣言（必須）・確認約束の禁止（wait_line の短い1文まで禁止）。最終チェックも本質に無い確認の約束として短い1文を指摘していた。了承だけの番でブレインが ack_form を決めた時は ackFormShapeLine／ackFormCloserLine の1つの値を全部に渡し、約束の進行の項目は外す（ACK_FORM_FOLLOW）。ack_form は材料が「質問あり」「急ぎ」の番にも出るので、本質の側（答えの要点を外す・足させる指摘を見送る・確認の約束の指摘を見送る）も了承だけの番に限る（turn_contract.ackFollow・generate-reply が isAckOnlyTurn で立てる）＝中身のある番の答えを外さない（レビューで直した）。",
+  "rationale": "c9368e68（同じ場面に書けと書くなを並べない）の再発。竹内さんの実送信（scripts/audit-ack-form-takeuchi.ts・90日 了承の返事 27番）を物差しに、生成の ack_form を竹内さんの形に固定して前後を比べた（YUMA5・DeepSeek・19番×1回）: 従った 14/18 → 17/18・竹内さんと同じ形 15/19 → 18/19・言い直し 0。ブレイン自身の ack_form と竹内さんの一致は 15/19（確認の約束で受けだけに寄る 3）＝ACK_FORM_BRAIN を本番で on にするかは別の判断。",
+  "context": "2026-10-15 作る人（ブランチ zenryoku-ack-1015）。ack_form は ACK_FORM_BRAIN=on の時だけ出る（既定 off・本番の brain_decision_logs の digest.tc に :w/:o は 10日で 0）。この直しは on にした時に効く。決定 C（2b1e0044: ピックアップの約束の後のお礼は返信で締める）とは同じ向き（返信の形を ack_form が決める）。",
+  "applied_to": "app/lib/repeat-brain-align.ts（ackFormFollowEnabled・ackFormShapeLine・ackFormCloserLine・ackFormDropTopic）・app/api/generate-reply/route.ts・app/lib/reply-context.ts（buildTurnPairNote・buildStanceNote）・app/lib/turn-contract.ts・app/lib/final-check-brain-align.ts・scripts/yuma-ack-form-follow-test.ts。戻す ACK_FORM_FOLLOW=off",
+  "tags": ["ブレイン", "約束", "お礼", "generate-reply", "final-check", "穴:G1", "場面:短いお礼"]
+}

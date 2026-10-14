@@ -17,10 +17,11 @@
 // テスト: app/lib/__tests__/turn-contract.test.ts
 
 import type { RequestItem, RequestTopic } from "./request-ledger";
-import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormContractLine, isCompactWaitLine, type AckForm } from "./repeat-brain-align";
+import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormContractLine, isCompactWaitLine, ackFormFollowEnabled, ackFormDropTopic, type AckForm } from "./repeat-brain-align";
 import { promiseTopics } from "./draft-repeat";
 import { truncateAtBoundary } from "./brain-strategy-note";
 import { closeOnlyShape } from "./ack-form-takeuchi";
+import { brainDeepCheckGapEnabled, BRAIN_DEEP_CHECK_ASK_FIELD, BRAIN_DEEP_CHECK_RULE } from "./brain-deep-check";
 
 /** 1つの依頼への答え方 */
 export type AnswerRoute =
@@ -54,6 +55,8 @@ export type TurnContract = {
   humanChecks: HumanCheckId[];
   /** 2026-10-13: 前の約束への了承の返事（ブレインが決めた時だけ・ACK_FORM_BRAIN=on）。receive_only＝受けだけ／wait_line＝待ちの形の短い1文 */
   ackForm?: AckForm | null;
+  /** 2026-10-15 review: ackForm を本質の側の出口（答えの要点を外す・足させる指摘を見送る・確認の約束の指摘を見送る）にも当てる番か＝お客様の今の発言が了承だけの番（generate-reply が isAckOnlyTurn で立てる）。ack_form は「質問あり」「急ぎ」の番にも出うるので、中身のある番では立てない */
+  ackFollow?: boolean;
   /** brain＝今の番を見たブレイン／ledger＝決定論の一覧だけ（予備） */
   source: "brain" | "ledger";
 };
@@ -96,7 +99,7 @@ export function turnContractFinalCheckEnabled(env: Record<string, string | undef
 
 // ── ブレインへの指示（brain-core の出力の指定に入れる文）───────────────────────
 /** ブレインの JSON に足す欄の説明（brain-core の出力の指定・今回の発言の層の出力の指定の両方に入れる） */
-export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
+export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"${brainDeepCheckGapEnabled() ? `, ${BRAIN_DEEP_CHECK_ASK_FIELD}` : ""}}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
 
 /** ブレインの判断の仕方（出力の指定の後ろに置く短い規則・竹内さん 10/08 の答え Q1〜Q10 をそのまま） */
 export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract）の決め方 — 返信の中身はここだけで決まる】
@@ -112,7 +115,8 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - feeling: 不安・恐縮・謝罪・急ぎ・落胆がある時は kind を付け、受ける一言が要るなら acknowledge=true。
 - proposals: お客様がすぐ来られない事情（今週は無理・出張中・予定が詰まって・遠方）があり物件が刺さっている時の「お申込みでお部屋を抑える」「オンライン内見・室内の撮影」の申し出は proposals に入れる（返信で消さない・「ご内覧可否確認」に置き換えない）。内覧したいだけの依頼は aix=viewing_invite（確認の約束にしない）。
 - must_not: 聞かれていない事・この場面で言うと外れる事（この番の会話から書く）。${ackFormBrainEnabled() ? `
-- ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}`;
+- ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}${brainDeepCheckGapEnabled() ? `
+${BRAIN_DEEP_CHECK_RULE}` : ""}`;
 
 // ── ブレインの出力を読む ─────────────────────────────────────────────
 export type BrainTurnContractRaw = {
@@ -273,7 +277,9 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   if (c.closeOnly) L.push(`- 返事の要らない番: ${closeOnlyShape()}。前にした約束・予定・日付を言い直さない${c.ackForm === "wait_line" ? "（ただし下の「了承の返事」＝待ちの形の短い1文は可）" : allowance && c.ackForm !== "receive_only" ? "（ただし下の「もう言った事」の竹内さんの形＝待ちの形のピックアップの1文は可）" : ""}。新しい約束・提案・説明を足さない（お客様が『決まったら連絡します』等と待ってと言った時は「お決まりになりましたらご連絡ください」の形・物件を送り続ける約束をしない）。`);
   const ackLine = ackFormContractLine(c.ackForm);
   if (ackLine) L.push(ackLine);
-  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」→ ${ROUTE_JA[a.route]}${a.answer ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
+  // 2026-10-15: 了承の返事の形を決めた番は、答えの要点に前の約束の中身（ピックアップを進める・確認する）が入っていても渡さない（ack_form とぶつかる・ACK_FORM_FOLLOW=off で旧）
+  const dropAns = (ans: string | null | undefined) => !!c.ackForm && !!c.ackFollow && !!ans && ackFormFollowEnabled() && ackFormDropTopic(ans);
+  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);
@@ -305,6 +311,8 @@ export function issueContradictsContract(issue: { code: string; message?: string
   // 2026-10-14 区切り2（#8）: 閉じる番に文を足させる骨格の指摘（EMPTY_CLOSER・SPLIT_ACK_REPLY・PROMISE_ECHO_MISSING）も同じ（足すと閉じる番が開く）
   const ADD_CODES = /^(?:WE_DO_MISSING|WE_DO_MISSING_DET|CLOSER_MISSING|PAIR_ELEMENT_MISSING|STAGE_MISMATCH|EMPTY_CLOSER|SPLIT_ACK_REPLY|PROMISE_ECHO_MISSING)$/;
   if (c.closeOnly && ADD_CODES.test(issue.code)) return true;
+  // 2026-10-15: 了承の返事の形を決めた番も同じ（行動宣言・約束の復唱を足させない・ACK_FORM_FOLLOW=off で旧）
+  if (c.ackForm && c.ackFollow && ackFormFollowEnabled(env) && ADD_CODES.test(issue.code)) return true;
   const msg = `${issue.message ?? ""} ${issue.evidence ?? ""} ${issue.suggestion ?? ""}`;
   // 2026-10-13（了承の返事はブレインに任せる）: ブレインが待ちの形の1文と決めた番は、その短い1文を言い直し・二重の宣言と見る指摘を書き直しに渡さない
   if (c.ackForm === "wait_line" && /DOUBLE_DECLARATION|REDECLAR|REPEAT|PAIR_AVOID|CELL_AVOID/.test(issue.code)

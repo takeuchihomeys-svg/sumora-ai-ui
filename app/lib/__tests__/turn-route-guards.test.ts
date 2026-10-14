@@ -17,6 +17,15 @@ t("q079 白基調の部屋はあんまりないですかね（探す側）", !np
 t("q062 京橋辺りもですか（地名＝探す側）", !np("なるほどですね。\n京橋辺りもですか？").yes);
 t("条件の変更（ブレインの cct）は探す側", !np("もう少し安いところがいいです", { cct: "rent_change" }).yes);
 t("お礼・了承だけは触らない", !np("ありがとうございます", { ack: true }).yes);
+// 10/15 q102: 新着を1件送った後の「他まだありますか」は探す番（決定 B の右を出す番）。ZENRYOKU_CANDIDATE_EXIT=off で旧（質問として返信に戻す）
+t("q102 他まだありますでしょうか → 探す側", !np("ありがとうございます。\n他まだありますでしょうか？").yes);
+t("q102 ZENRYOKU_CANDIDATE_EXIT=off → 旧（返信に戻す）", notPickupTurn({ text: "ありがとうございます。\n他まだありますでしょうか？", ackOnly: false, conditionChangeType: null, hesitancy: null, companyFactAsked: false, env: { ZENRYOKU_CANDIDATE_EXIT: "off" } }).yes);
+t("ブレインが全力サポートを候補にした質問 → 探す側", !notPickupTurn({ text: "最速で入居できるとしていつくらいになりそうですか？", ackOnly: false, conditionChangeType: null, hesitancy: null, companyFactAsked: false, zenryokuCandidate: true }).yes);
+// 10/15 review: 実データ 30日で網に新しく当たった1件の募集状況の確認は今まで通り返信
+t("こちらの物件新着でスーモ出てる…まだ募集ないですか → 返信", np("かしこまりました。\nお願いします\nこちらの物件新着でスーモ出てるんですけどまだ募集ないですか？").yes);
+t("SUUMO の URL＋新着でありましたが → 返信", np("内見は可能でしょうか？\n募集終了て言われた物件がSUUMOで即入居でありますが見落としとかではないですか？\nhttps://suumo.jp/chintai/bc_1/\n新着でありましたが").yes);
+t("新着ありますか（他にあるかの問い）→ 探す側", !np("新着ありますか？").yes);
+t("q065 候補にしていない質問は今まで通り返信", np("ありがとうございます\n最速で入居できるとしていつくらいになりそうですか？").yes);
 
 // 地名
 t("神崎川（駅）", placeMentioned("神崎川はすんでましたが\n不便だったので汗") === "神崎川");

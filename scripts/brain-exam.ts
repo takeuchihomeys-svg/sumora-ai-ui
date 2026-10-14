@@ -285,7 +285,7 @@ function installRawBrainCapture() {
   globalThis.fetch = wrapped;
 }
 // 10/09: ブレインの出力では AIX の種類は aix の欄（action は「スタッフが次にすべき事」の自由文・reply_mode=aix は「人の確認」の意味）。aix を控えないと本質の道が AIX にならなかった
-const RAW_KEYS = ["reply_mode", "aix", "action", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reason", "turn_contract", "asks"];
+const RAW_KEYS = ["reply_mode", "aix", "action", "check_pattern", "reply_direction", "key_topics", "avoid_topics", "customer_questions", "next_steps", "reason", "turn_contract", "asks", "zenryoku_candidate"];
 function rawPlanOf(o: Record<string, unknown> | undefined): Record<string, unknown> | null {
   if (!o) return null;
   return Object.fromEntries(RAW_KEYS.filter((k) => o[k] !== undefined && o[k] !== null && o[k] !== "").map((k) => [k, o[k]]));
@@ -719,7 +719,7 @@ async function main() {
       }
       if (!meta) throw new Error("ブレインが null");
       row.brain = planOf(meta);
-      row.trace = { ...(row.trace ?? {}), ...Object.fromEntries(TRACE_KEYS.filter((k) => meta![k] !== undefined && meta![k] !== null).map((k) => [k, meta![k]])) };
+      row.trace = { ...(row.trace ?? {}), zc: (meta.llm_raw as { zc?: unknown } | undefined)?.zc ?? null, ...Object.fromEntries(TRACE_KEYS.filter((k) => meta![k] !== undefined && meta![k] !== null).map((k) => [k, meta![k]])) };
       const rawOut = rawBrainOutputs[rawBrainOutputs.length - 1];
       row.raw = rawPlanOf(rawOut);
       const code = brainPathCode(meta as BrainExamOutput);

@@ -17,6 +17,7 @@
 // 戻す: FINAL_CHECK_BRAIN_ALIGN=off（旧の「引用が本文にそのまま」だけ・理由の注記なし・ぶつかる指摘も画面に出す）
 import type { TurnContract } from "./turn-contract";
 import { CONFIRM_PROMISE_SENTENCE_RE, SEARCH_CONFIRM_RE } from "./confirmation-context";
+import { ackFormFollowEnabled, isCompactWaitLine } from "./repeat-brain-align";
 
 type Env = Record<string, string | undefined>;
 const envOf = (env?: Env): Env => env ?? (typeof process !== "undefined" ? process.env : {});
@@ -174,6 +175,8 @@ export function contractConfirmMiss(draft: string, contract: TurnContract | null
   if (contract.asks.some(canConfirm)) return null;
   const hit = findConfirmPromiseSentence(draft, env);
   if (!hit) return null;
+  // 2026-10-15: ブレインが了承の返事を待ちの形の1文と決めた番の短い1文（確認出来次第ご連絡させて頂きますので、何卒）は指摘しない（ACK_FORM_FOLLOW=off で旧）
+  if (contract.ackForm === "wait_line" && contract.ackFollow && ackFormFollowEnabled(envOf(env)) && isCompactWaitLine(hit)) return null;
   const promise = contract.asks.find((a) => a.route === "promise" && a.answer)?.answer ?? null;
   return {
     sentence: hit.slice(0, 80),
