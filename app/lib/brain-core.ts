@@ -150,7 +150,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
 import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine } from "@/app/lib/ack-exhausted-reply";
-import { applySearchSplit, splitReplyToAix, splitMaterialLine, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
+import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
 import { BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract } from "@/app/lib/turn-contract";
@@ -324,7 +324,7 @@ export type SuggestedAixMeta = {
   /** 10/09: LLM が選んだ AIX（決定論の規則で変わる前・記録用） */
   aix_llm?: string;
   /** 2026-10-13 棚卸し B-6: cp＝LLM が出した current_property（実在ゲートの前）。ゲートで落ちた番と LLM が null にした番を分けて数える（記録だけ） */
-  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null };
+  llm_raw?: { action: string | null; reply_mode: string | null; dir: string | null; cp?: string | null; tc?: string | null; /** 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ） */ rt?: string | null; /** 2026-10-15 zenryoku_candidate（記録だけ） */ zc?: boolean | null };
   // 2026-09-10 Fable5 みく事例: これは **conversation-scope**（会話全体で2回以上登場した論点）。
   // 「今回のメッセージが懸念である」ことを一切示さない。reply-context.ts の分類器（mergeBrainEvidence /
   // classifyCustomerResponse）には toBrainConversationScope 経由でしか渡らず、型として渡せない
@@ -3818,6 +3818,8 @@ ${history}`;
           conditionChangeType: typeof parsed.condition_change_type === "string" ? parsed.condition_change_type : null,
           hesitancy: typeof parsed.hesitancy_pattern === "string" ? parsed.hesitancy_pattern : null,
           companyFactAsked: matchCompanyFacts(turnTextNoImg).length > 0,
+          // 10/15: ブレインが全力サポートを候補にした番（新着・他にあるか）は物件の AIX を消さない（ZENRYOKU_CANDIDATE_EXIT=off で旧）
+          zenryokuCandidate: (parsed as { zenryoku_candidate?: unknown }).zenryoku_candidate === true,
         });
         if (np.yes && applyOverride(demotedOverrides, "turn_route_guards", "guard:not_pickup_turn", null, finalAix)) {
           console.log(JSON.stringify({ tag: "brain:not-pickup-turn", conversationId, from: finalAix, why: np.why }));
@@ -4741,8 +4743,10 @@ ${history}`;
     // 左右の形の番（ブレインの一手が物件を探す番）のメモは決め打ちしない言い方にそろえる（search-result-split）
     const splitTurn = searchSplitServerEnabled() && !isTwoChoiceMode && isSearchSplitTurn({ brainAction: finalAix ?? null });
     // 左右の形の番で、ブレインが全力サポートを候補にしていない（新規など）時は、規則（search-result-choice の2択）が足した全力サポートを外す（右を出さない）
-    const finalAlts = splitTurn && !zenCandidate && finalAix !== "zenryoku_support" ? searchChoice.altActions?.filter((a) => a !== "zenryoku_support") : searchChoice.altActions;
-    if (splitTurn) console.log(JSON.stringify({ tag: "brain:search-split-right", conversationId, aix: finalAix ?? null, candidate: zenCandidate, right: zenryokuShown({ brainAction: finalAix ?? null, altActions: finalAlts }) }));
+    // 10/15: ブレインが候補にした番は右を必ず出す（出し切りの印・売上サポの候補・お礼の番に関係なく・splitFinalAlts・ZENRYOKU_CANDIDATE_EXIT=off で旧）
+    const splitAlts = splitFinalAlts({ splitTurn, zenryokuCandidate: zenCandidate, finalAix: finalAix ?? null, altActions: searchChoice.altActions, postApply: isPostApplyStatus(convStatus) });
+    const finalAlts = splitAlts.altActions;
+    if (splitTurn) console.log(JSON.stringify({ tag: "brain:search-split-right", conversationId, aix: finalAix ?? null, candidate: zenCandidate, right: zenryokuShown({ brainAction: finalAix ?? null, altActions: finalAlts }), added: splitAlts.added }));
     if (searchChoice.added) console.log(JSON.stringify({ tag: "brain:search-result-choice", conversationId, aix: finalAix, alts: searchChoice.altActions }));
 
     if (demotedOverrides.length) console.log(JSON.stringify({ tag: "brain:override-demoted", conversationId, final: finalAix ?? null, demoted: compactDemoted(demotedOverrides) }));
@@ -4814,7 +4818,9 @@ ${history}`;
         // 2026-10-13 棚卸しの表 2: 生の本質の道の数（reconcile の前）。digest.tc は規則の後の値なので、2段の食い違いはこちらで数える
         tc: rawContractRouteDigest((parsed as { turn_contract?: unknown }).turn_contract),
         // 2026-10-14 返信か AIX かの材料の型（brain-route-type・記録だけ）
-        rt: routeTypeNow },
+        rt: routeTypeNow,
+        // 2026-10-15 作る人: ブレインが全力サポートを候補にしたか（zenryoku_candidate・出口で使われたかを数える。出していない番は null）
+        zc: typeof (parsed as { zenryoku_candidate?: unknown }).zenryoku_candidate === "boolean" ? (parsed as { zenryoku_candidate: boolean }).zenryoku_candidate : null },
       repeated_concern: repeatedConcern,
       current_property: currentProperty,
       // 2026-10-13 当たり率の直し（区切り5）: 今の番の物件の並び（ブレインの物件を先・台帳の ▶ を後ろ）。LLM の出力は変えない。戻す CURRENT_PROPERTIES=off

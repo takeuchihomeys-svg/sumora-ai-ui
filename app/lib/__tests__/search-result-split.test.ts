@@ -1,6 +1,6 @@
 // 2026-10-13 竹内さん（KAORI）「左右にボタンを分ける。物件あった場合（複数＝物件ピックアップ・1件＝物件オススメ）／物件なかった場合（全力サポート）」（search-result-split.ts）
 // 実行: npx tsx app/lib/__tests__/search-result-split.test.ts
-import { searchSplitView, isSearchSplitTurn, applySearchSplit, searchSplitServerEnabled, splitReplyToAix, splitMaterialLine, searchSplitNote, zenryokuShown, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, OTHER_PROPERTY_ASK_RE } from "../search-result-split";
+import { searchSplitView, isSearchSplitTurn, applySearchSplit, searchSplitServerEnabled, splitReplyToAix, splitMaterialLine, searchSplitNote, zenryokuShown, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, OTHER_PROPERTY_ASK_RE, splitFinalAlts } from "../search-result-split";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -140,6 +140,25 @@ it("材料に今送れる候補の有無を1行（答えは書かない）", () 
   eq(/今送れる物件の候補（売上サポのピックアップ）がある/.test(zenryokuCandidateMaterial({ sentPropertyCount: 3, lastSentAt: null, exhaustLine: "", customerText: "", pickupReady: true })), true);
   eq(/は無い（探してみないと分からない）/.test(zenryokuCandidateMaterial({ sentPropertyCount: 3, lastSentAt: null, exhaustLine: "", customerText: "", pickupReady: false })), true);
   eq(/売上サポ/.test(zenryokuCandidateMaterial({ sentPropertyCount: 3, lastSentAt: null, exhaustLine: "", customerText: "" })), false);
+});
+
+console.log("■ 出口: 左右の形の2つ目はブレインの zenryoku_candidate に従う（10/15）");
+it("候補にした・印も売上サポの空きも無い（2つ目が空）→ 右を足す", () => {
+  eq(splitFinalAlts({ splitTurn: true, zenryokuCandidate: true, finalAix: "property_send", altActions: undefined, postApply: false }), { altActions: ["zenryoku_support"], added: true });
+});
+it("候補にした・既に右がある → そのまま", () => {
+  eq(splitFinalAlts({ splitTurn: true, zenryokuCandidate: true, finalAix: "property_send", altActions: ["zenryoku_support"], postApply: false }).added, false);
+});
+it("候補にしていない → 規則が足した右を外す（新規）", () => {
+  eq(splitFinalAlts({ splitTurn: true, zenryokuCandidate: false, finalAix: "property_send", altActions: ["property_recommendation", "zenryoku_support"], postApply: false }).altActions, ["property_recommendation"]);
+});
+it("一手が全力サポート・左右の形でない番・申込以降 → 触らない", () => {
+  eq(splitFinalAlts({ splitTurn: true, zenryokuCandidate: false, finalAix: "zenryoku_support", altActions: ["property_send"], postApply: false }).altActions, ["property_send"]);
+  eq(splitFinalAlts({ splitTurn: false, zenryokuCandidate: true, finalAix: "estimate_sheet", altActions: undefined, postApply: false }).altActions, undefined);
+  eq(splitFinalAlts({ splitTurn: true, zenryokuCandidate: true, finalAix: "property_send", altActions: undefined, postApply: true }).altActions, undefined);
+});
+it("ZENRYOKU_CANDIDATE_EXIT=off → 候補にしても足さない（旧）", () => {
+  eq(splitFinalAlts({ splitTurn: true, zenryokuCandidate: true, finalAix: "property_send", altActions: undefined, postApply: false, env: { ZENRYOKU_CANDIDATE_EXIT: "off" } }).altActions, undefined);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

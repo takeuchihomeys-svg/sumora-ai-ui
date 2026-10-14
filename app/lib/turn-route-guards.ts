@@ -10,6 +10,7 @@
 // 戻す: TURN_ROUTE_GUARDS=off（全部）
 import { STATION_LINES, WARD_COORDS } from "./osaka-geo";
 import { splitRequests } from "./request-ledger";
+import { OTHER_PROPERTY_ASK_RE, zenryokuCandidateExitEnabled } from "./search-result-split";
 
 export function turnRouteGuardsEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TURN_ROUTE_GUARDS ?? "").toLowerCase() !== "off";
@@ -46,9 +47,13 @@ const CHANGE_CCT = new Set(["area_change", "rent_change", "layout_change", "equi
  * 物件を探す依頼でない番か（物件の AIX・ピックアップの約束を付けない＝返信の番）。
  *   お礼・了承だけの番は別の線（約束の後のお礼は AIX のまま黙って果たす）なので false。
  */
-export function notPickupTurn(i: { text: string; ackOnly: boolean; conditionChangeType: string | null | undefined; hesitancy: string | null | undefined; companyFactAsked: boolean }): { yes: boolean; why: string } {
+export function notPickupTurn(i: { text: string; ackOnly: boolean; conditionChangeType: string | null | undefined; hesitancy: string | null | undefined; companyFactAsked: boolean; zenryokuCandidate?: boolean; env?: Record<string, string | undefined> }): { yes: boolean; why: string } {
   const t = String(i.text ?? "").normalize("NFKC");
   if (!t.trim() || i.ackOnly) return { yes: false, why: "お礼・了承だけ" };
+  // 2026-10-15 作る人（zenryoku-ack-1015）: 「他まだありますか」（新着・他にあるかの問い）は探す番（竹内さんの決定 B の右を出す番・試験 q102）。
+  //   旧は「質問（探す依頼でない）」で物件の AIX を消し、ブレインの zenryoku_candidate も画面に届かなかった。ブレインが全力サポートを候補にした番も消さない。
+  //   戻す ZENRYOKU_CANDIDATE_EXIT=off
+  if (zenryokuCandidateExitEnabled(i.env) && (OTHER_PROPERTY_ASK_RE.test(t) || i.zenryokuCandidate === true)) return { yes: false, why: i.zenryokuCandidate ? "ブレインが全力サポートを候補にした" : "他の物件・新着の問い" };
   if (i.conditionChangeType && CHANGE_CCT.has(i.conditionChangeType)) return { yes: false, why: "条件の変更・ピックアップの依頼" };
   if (placeMentioned(t)) return { yes: false, why: "地名を言った" };
   if (PICKUP_ASK_RE.test(t)) return { yes: false, why: "探す依頼の言い方" };
