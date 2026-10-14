@@ -68,10 +68,10 @@ export function brainDeepCheckNetEnabled(env: Record<string, string | undefined>
 }
 
 /** ブレインの出力の指定に足す1行（turn_contract.asks の1つずつに付ける欄の説明） */
-export const BRAIN_DEEP_CHECK_ASK_FIELD = `"gap": "route=promise か答えが分からない依頼で、資料・会話・会社の事実に書いてあれば返信で答えられる事なのに、渡された材料に根拠が見つからない時だけ \\"material\\"。管理会社・スタッフしか知らない事（空き・内覧の可否・審査・交渉・見積の金額・写真）は \\"staff\\"。根拠がある・関係ない時は null"`;
+export const BRAIN_DEEP_CHECK_ASK_FIELD = `"gap": "確認の約束（promise）や確認の AIX（property_check_result 等）にした依頼で、資料・会話・会社の事実に書いてあれば返信で答えられる事なのに、渡された材料に根拠が見つからない時だけ \\"material\\"。管理会社・スタッフしか知らない事（空き・内覧の可否・審査・交渉・見積の金額・写真）は \\"staff\\"。根拠がある・関係ない時は null"`;
 
 /** ブレインの判断の仕方に足す短い規則 */
-export const BRAIN_DEEP_CHECK_RULE = `- gap（根拠の足りなさの印・竹内さん 10/15「自信が無い時だけ深く調べる」）: 資料・会話・会社の事実で答えられる種類の問い（設備・駐車場・ペット・敷金礼金・保証会社・入居時期・間取り・広さ・待ち合わせ 等）なのに、渡された材料に答えが見つからず確認の約束（promise）にした依頼だけ gap="material" を付ける（コードが材料を追加で調べて、もう1回だけ判断を頼む）。分かっている時・管理会社しか知らない時は付けない。`;
+export const BRAIN_DEEP_CHECK_RULE = `- gap（根拠の足りなさの印・竹内さん 10/15「自信が無い時だけ深く調べる」）: 資料・会話・会社の事実で答えられる種類の問い（設備・駐車場・ペット・敷金礼金・保証会社・入居時期・間取り・広さ・待ち合わせ 等）なのに、渡された材料に答えが見つからず確認の約束（promise）や確認の AIX にした依頼だけ gap="material" を付ける（コードが材料を追加で調べて、もう1回だけ判断を頼む）。分かっている時・管理会社しか知らない時は付けない。`;
 
 export type DeepCheckAsk = { quote: string; route: string | null; gap: string | null; basis: string | null };
 
@@ -114,7 +114,8 @@ export function decideDeepCheck(i: {
   if (!brainDeepCheckEnabled(env)) return none("off");
   if (i.postApply) return none("post_apply");
   const asks = readContractAsks(i.parsed);
-  const brainGaps = asks.filter((a) => a.gap === "material" && a.quote.trim() && !STAFF_ONLY_RE.test(a.quote));
+  // 返信で答えた依頼（route=reply）は印があってもかけない（10/15 試験 q146: 答えた依頼に gap が付き、2回目で約束に倒れた）
+  const brainGaps = asks.filter((a) => a.gap === "material" && (a.route === "promise" || a.route === "aix") && a.quote.trim() && !STAFF_ONLY_RE.test(a.quote));
   if (brainGaps.length) {
     const topics = [...new Set(brainGaps.flatMap((a) => classifyDeepCheckTopics(questionize(a.quote))))];
     return { run: true, by: "brain", queries: brainGaps.map((a) => a.quote), topics, reason: "brain_gap" };
@@ -122,7 +123,7 @@ export function decideDeepCheck(i: {
   if (!brainDeepCheckNetEnabled(env)) return none("no_brain_gap");
   // ブレインが gap 欄を1つでも出していれば（null を含む）ブレインの判断に任せる＝網は出さない
   if (asks.some((a) => a.gap !== null)) return none("brain_judged");
-  const promised = asks.filter((a) => a.route === "promise" && a.quote.trim() && !STAFF_ONLY_RE.test(a.quote));
+  const promised = asks.filter((a) => (a.route === "promise" || a.route === "aix") && a.quote.trim() && !STAFF_ONLY_RE.test(a.quote));
   const hits = promised.map((a) => ({ a, topics: classifyDeepCheckTopics(questionize(a.quote)) })).filter((x) => x.topics.length);
   if (!hits.length) return none(asks.length ? "no_promise_topic" : "no_asks");
   // 網の確かめ: お客様の文にも同じ型の質問がある（ブレインの言い換えだけで当たった物は外す）
@@ -130,6 +131,17 @@ export function decideDeepCheck(i: {
   const both = hits.filter((x) => x.topics.some((t) => turnTopics.has(t)));
   if (!both.length) return none("turn_not_question");
   return { run: true, by: "net", queries: both.map((x) => x.a.quote), topics: [...new Set(both.flatMap((x) => x.topics.filter((t) => turnTopics.has(t))))], reason: "net_promise_topic" };
+}
+
+/**
+ * 2回目の判断を使うか（安全の線）: 追加の材料で返信で答えた依頼が増えた時だけ使う。
+ *   増えない（やはり確認の約束・AIX）時は1回目の判断のまま＝空振りの2回目で AIX の種類・2段の印が揺れない
+ *   （10/15 試験 q149 q151: 2回目が aix→promise に言い換え、2段の印が消えて返信になった）
+ */
+export function adoptSecondJudgement(first: Record<string, unknown> | null | undefined, second: Record<string, unknown> | null | undefined): { adopt: boolean; firstReply: number; secondReply: number } {
+  const replies = (p: Record<string, unknown> | null | undefined) => readContractAsks(p).filter((a) => a.route === "reply").length;
+  const f = replies(first), s = replies(second);
+  return { adopt: !!second && s > f, firstReply: f, secondReply: s };
 }
 
 /** ブレインの quote（「駐車場の有無」等の名詞止め）を網に当たる質問の形にする */
@@ -155,7 +167,7 @@ export function newMaterialOnly(notes: ReadonlyArray<string | null | undefined>,
 /** 2回目の判断に足す材料のブロック */
 export function deepCheckBlock(i: { queries: string[]; notes: string[] }): string {
   return `\n\n【追加で調べた材料（1回目の判断で根拠が見つからなかった依頼: ${i.queries.map((q) => `「${q.slice(0, 40)}」`).join("・")}）】
-※1回目の判断では、この依頼の答えが材料に見つからず確認の約束にした。追加で資料・会話・会社の事実を調べた結果が下。ここに答えがあれば返信で答え（basis を material/conversation/company_fact に）、書いていない・言い切れない時は今まで通り確認の約束（promise）か AIX にする。管理会社しか知らない事（空き・内覧の可否・審査・交渉・見積の金額）は書いてあっても約束・AIX のまま。gap は付けない。
+※1回目の判断では、この依頼の答えが材料に見つからず確認の約束にした。追加で資料・会話・会社の事実を調べた結果が下。ここに答えがあれば返信で答え（basis を material/conversation/company_fact に）、書いていない・言い切れない時は1回目と同じ判断（同じ route・同じ AIX）のままにする。管理会社しか知らない事（空き・内覧の可否・審査・交渉・見積の金額）は書いてあっても約束・AIX のまま。gap は付けない。
 ${i.notes.join("\n\n")}`;
 }
 
@@ -165,8 +177,12 @@ export function pastConversationLines(i: {
   topics: ReadonlyArray<DeepCheckTopic>;
   beforeMs: number;
   max?: number;
+  /** 型に当たらない依頼（火災保険・フリーレント 等）は依頼の言葉の語で探す（queryKeywords） */
+  keywords?: ReadonlyArray<string>;
 }): string[] {
   const res = i.topics.map((t) => PAST_LINE_RE[t]).filter(Boolean) as RegExp[];
+  const kws = (i.keywords ?? []).filter((k) => k.length >= 2);
+  if (kws.length) res.push(new RegExp(kws.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")));
   if (!res.length) return [];
   const out: string[] = [];
   const msgs = [...i.messages].filter((m) => Date.parse(m.created_at) < i.beforeMs).reverse();
@@ -181,6 +197,15 @@ export function pastConversationLines(i: {
     }
   }
   return out;
+}
+/** 依頼の言葉から探す語（漢字2字以上・片仮名3字以上・英字3字以上。どの会話にも出る語は外す） */
+const KW_STOP = new Set(["物件", "部屋", "確認", "大丈夫", "認識", "必要", "昨日", "今日", "明日", "感じ", "場合", "可能", "連絡", "管理会社", "本当", "問題", "以外", "教", "最短", "入居"]);
+export function queryKeywords(quotes: ReadonlyArray<string>): string[] {
+  const out = new Set<string>();
+  for (const q of quotes) for (const m of String(q).normalize("NFKC").matchAll(/[一-龯々]{2,}|[ァ-ヶー]{3,}|[A-Za-z]{3,}/g)) {
+    if (!KW_STOP.has(m[0])) out.add(m[0]);
+  }
+  return [...out].slice(0, 8);
 }
 const PAST_LINE_RE: Partial<Record<DeepCheckTopic, RegExp>> = {
   parking: /駐車|駐輪|パーキング|お停め/,

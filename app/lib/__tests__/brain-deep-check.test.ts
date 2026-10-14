@@ -1,7 +1,7 @@
 // app/lib/__tests__/brain-deep-check.test.ts — 根拠が足りない時だけ追加で調べる（実行: npx tsx app/lib/__tests__/brain-deep-check.test.ts）
 //   例は 30日の洗い出し（scripts/audit-brain-deep-check.ts）の番を伏せて作った
 import assert from "node:assert/strict";
-import { classifyDeepCheckTopics, decideDeepCheck, newMaterialOnly, deepCheckBlock, pastConversationLines, STAFF_ONLY_RE } from "../brain-deep-check";
+import { classifyDeepCheckTopics, decideDeepCheck, newMaterialOnly, deepCheckBlock, pastConversationLines, STAFF_ONLY_RE, queryKeywords, adoptSecondJudgement } from "../brain-deep-check";
 
 let n = 0;
 const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
@@ -62,5 +62,19 @@ t("過去の会話の行（型の語・新しい順・時点より前）", () =>
     topics: ["parking"], beforeMs: Date.parse("2026-10-05T00:00:00Z"),
   });
   assert.equal(lines.length, 1); assert.ok(lines[0].includes("コインパーキング"));
+});
+t("型に当たらない依頼は言葉の語で探す", () => {
+  const kw = queryKeywords(["火災保険って、昨日の話のルームサポートの中に入ってるから他で入る必要ない？"]);
+  assert.ok(kw.includes("火災保険") && kw.includes("ルームサポート"), kw.join(","));
+  const lines = pastConversationLines({
+    messages: [{ sender: "staff", text: "ルームサポートには火災保険も含まれております", created_at: "2026-10-12T01:00:00Z" }, { sender: "customer", text: "こんにちは", created_at: "2026-10-12T02:00:00Z" }],
+    topics: [], keywords: kw, beforeMs: Date.parse("2026-10-13T00:00:00Z"),
+  });
+  assert.equal(lines.length, 1);
+});
+t("2回目は返信で答えた依頼が増えた時だけ使う・返信の依頼の印ではかけない", () => {
+  assert.equal(adoptSecondJudgement(tc([{ quote: "x", route: "aix" }]), tc([{ quote: "x", route: "promise" }])).adopt, false);
+  assert.equal(adoptSecondJudgement(tc([{ quote: "x", route: "aix" }]), tc([{ quote: "x", route: "reply" }])).adopt, true);
+  assert.equal(decideDeepCheck({ parsed: tc([{ quote: "洗面台とトイレ一緒か", route: "reply", gap: "material" }]), customerText: "洗面台とトイレ一緒ですか？", postApply: false, env: {} }).run, false);
 });
 console.log(`${n} passed`);

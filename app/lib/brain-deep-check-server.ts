@@ -6,7 +6,7 @@ import { supabase } from "@/app/lib/supabase";
 import { buildCompanyFactsNote } from "@/app/lib/company-facts";
 import { detectConfirmTopics } from "@/app/lib/procedure-question";
 import { splitPropertyName } from "@/app/lib/customer-state";
-import { pastConversationLines, newMaterialOnly, type DeepCheckTopic } from "@/app/lib/brain-deep-check";
+import { pastConversationLines, newMaterialOnly, queryKeywords, type DeepCheckTopic } from "@/app/lib/brain-deep-check";
 
 export type DeepCheckMaterial = { notes: string[]; sources: string[]; ms: number };
 
@@ -44,14 +44,16 @@ export async function loadDeepCheckMaterial(o: {
   add("company_fact", Promise.resolve(buildCompanyFactsNote(text, { account: o.account ?? null })));
   // 過去の会話（1回目の履歴より前も・依頼の型の語がある行だけ・最大6行）
   add("past_conversation", (async () => {
-    if (!o.topics.length) return null;
-    const beforeMs = o.turnStartIso ? Date.parse(o.turnStartIso) : Date.now();
+    const keywords = queryKeywords(o.queries);
+    if (!o.topics.length && !keywords.length) return null;
+    // 前のこちらの文（約束・資料の送付）も含める（線はその文の直後）
+    const beforeMs = o.turnStartIso ? Date.parse(o.turnStartIso) + 1 : Date.now();
     const { data } = await supabase.from("messages").select("sender, text, created_at").eq("conversation_id", o.conversationId)
       .lt("created_at", new Date(beforeMs).toISOString()).order("created_at", { ascending: false }).limit(400);
     const rows = ((data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).reverse();
-    const lines = pastConversationLines({ messages: rows, topics: o.topics, beforeMs, max: 8 })
-      .filter((l) => !o.alreadyGiven.includes(l.replace(/^- \[[^\]]+\] /, "").slice(0, 40)));
-    return lines.length ? `【過去の会話から（依頼に関係する行・古い履歴を含む・新しい順）】\n${lines.slice(0, 6).join("\n")}` : null;
+    // 履歴に既にある行も抜き出して見せる（1回目は履歴にあっても根拠に気づかなかった＝焦点を当てる）
+    const lines = pastConversationLines({ messages: rows, topics: o.topics, beforeMs, max: 6, keywords });
+    return lines.length ? `【過去の会話から（依頼に関係する行・古い履歴を含む・新しい順）】\n${lines.join("\n")}` : null;
   })());
   await Promise.race([Promise.all(jobs), new Promise((r) => setTimeout(r, budget + 1_000))]);
   const fresh = newMaterialOnly(notes.map((n) => n.note), o.alreadyGiven);

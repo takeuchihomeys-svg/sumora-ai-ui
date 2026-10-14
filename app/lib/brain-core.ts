@@ -3042,7 +3042,7 @@ ${history}`;
     //   足りない種類の材料を追加で引き（ブレインの言い換え・current_property で網と対象を引き直す・古い履歴の該当行）、新しい材料があればもう1回だけ判断させる。
     //   返信か約束かは2回目のブレインが決める（P0 9eb6aa9c）。管理会社しか知らない事・申込以降はかけない。戻す BRAIN_DEEP_CHECK=off
     try {
-      const { decideDeepCheck, deepCheckBlock } = await import("@/app/lib/brain-deep-check");
+      const { decideDeepCheck, deepCheckBlock, adoptSecondJudgement } = await import("@/app/lib/brain-deep-check");
       const dc = decideDeepCheck({ parsed: parsedAny, customerText: unrepliedTurn.text ?? "", postApply: isPostApplyStatus(convStatus) });
       if (dc.run) {
         const { loadDeepCheckMaterial } = await import("@/app/lib/brain-deep-check-server");
@@ -3064,11 +3064,13 @@ ${history}`;
           if (secondParsed && String(secondParsed.reply_direction ?? "").trim()) {
             const before = rawContractRouteDigest((parsedAny as { turn_contract?: unknown }).turn_contract);
             const after = rawContractRouteDigest((secondParsed as { turn_contract?: unknown }).turn_contract);
-            deepCheckInfo = { ...deepCheckInfo, second: true, changed: before !== after || String(parsedAny.aix ?? "") !== String(secondParsed.aix ?? ""), before, after };
-            parsedAny = secondParsed;
+            // 返信で答えた依頼が増えた時だけ2回目を使う（増えない時は1回目のまま＝AIX の種類・2段の印を揺らさない）
+            const adopt = adoptSecondJudgement(parsedAny, secondParsed).adopt;
+            deepCheckInfo = { ...deepCheckInfo, second: adopt, changed: adopt && (before !== after || String(parsedAny.aix ?? "") !== String(secondParsed.aix ?? "")), before, after };
+            if (adopt) parsedAny = secondParsed;
           }
         }
-        console.log(JSON.stringify({ tag: "brain:deep-check", conversationId, reason: dc.reason, queries: dc.queries.map((q) => q.slice(0, 30)), sources: mat.sources, notes: mat.notes.length, ms: mat.ms, ...deepCheckInfo }));
+        console.log(JSON.stringify({ tag: "brain:deep-check", conversationId, reason: dc.reason, queries: dc.queries.map((q) => q.slice(0, 30)), sources: mat.sources, notes: mat.notes.map((n) => n.replace(/\s+/g, " ").slice(0, 160)), ms: mat.ms, ...deepCheckInfo }));
       }
     } catch (e) {
       console.warn("[brain-core] deep-check skipped:", conversationId, e instanceof Error ? e.message : String(e));
