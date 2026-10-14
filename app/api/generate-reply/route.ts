@@ -1450,7 +1450,11 @@ ${aixDone.answeredByAix
   // 2026-10-13 竹内さん（ゆーた）「挨拶はお客さん1人につき1日一度」: 今日すでに挨拶・会話文を送った番で、ブレインの書き出しが「お世話になっております」
   //   だった時はそれを渡さない（挨拶の事実が勝つ・出口の enforceOpening も外す）。戻す: GREETING_ONCE_PER_DAY=off
   const brainOpenerRaw = (brainMeta as { reply_opener?: string | null } | null)?.reply_opener ?? null;
-  const brainOpener = brainOpenerRaw === "お世話になっております" && alreadyGreetedToday === true && greetingOncePerDayEnabled() ? null : brainOpenerRaw;
+  // 2026-10-15 レビュー（#9）: reply_opener が meta に届くようになったので、初回でない番の「はじめまして」は渡さない（安全の線・挨拶の行の決まりが正。
+  //   ブレインの判断材料は「条件フォーム受領: はじめまして55%」で、2回目以降のフォーム受領でも選びうる）
+  const brainOpener = (brainOpenerRaw === "お世話になっております" && alreadyGreetedToday === true && greetingOncePerDayEnabled())
+    || (brainOpenerRaw === "はじめまして" && greetingDecision && greetingDecision.kind !== "first")
+    ? null : brainOpenerRaw;
   const openerNote = templateNote ? "" : (() => {
     if (brainOpener) return `\n\n【最後に確認：書き出し】ブレインはこの場面の書き出しを「${brainOpener}」と判断した。これに合わせる。`;
     const rates = buildOpenerRateNote(sceneFromTpo(tpoGuidanceNote || null));
