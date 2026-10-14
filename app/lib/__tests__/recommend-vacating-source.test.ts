@@ -23,6 +23,21 @@ eq("新しい行が先（空室）", sipVacating([rows[0], { ...rows[0], created
 eq("occupied も退去予定扱い", sipVacating([{ ...rows[0], facts: { status: "occupied" } }], head), { status: "occupied", notViewable: true, vacancyDate: null });
 eq("日付の形でない vacancy_date は捨てる", sipVacating([{ ...rows[0], facts: { status: "move_out_planned", vacancy_date: "未定" } }], head)?.vacancyDate, null);
 
+// 2026-10-15 確かめる人: 頭6字の一致でシリーズ名の別の建物に当たらない（second-material-saved-read と同じ当て方）
+{
+  const mv = { status: "move_out_planned", vacancy_date: "10月31日" };
+  const sr = [
+    { property_name: "スプランディッド本町グラン", room_no: "1309", created_at: "2026-09-10T02:00:00Z", facts: mv },
+    { property_name: "エステムコート難波サウスプレイズⅥ", room_no: "607", created_at: "2026-09-10T02:00:00Z", facts: mv },
+    { property_name: "アドバンス大阪セレーノ", room_no: "906", created_at: "2026-09-10T02:00:00Z", facts: mv },
+    { property_name: "村上ハイツ301", room_no: "301", created_at: "2026-09-10T02:00:00Z", facts: mv },
+  ];
+  eq("シリーズ名が同じ別の建物には当てない", sipVacating(sr, { name: "スプランディッド堀江", room: "1309" }), null);
+  eq("Ⅴ と Ⅵ（別の棟）には当てない", sipVacating(sr, { name: "エステムコート難波サウスプレイスⅤ", room: "607" }), null);
+  eq("1字だけの読み違いは当てる", sipVacating(sr, { name: "アドバンス大阪セレーネ", room: "906" })?.status, "move_out_planned");
+  eq("読みの名前に号室が付いた形は当てる", sipVacating(sr, { name: "村上ハイツ", room: "301" })?.status, "move_out_planned");
+}
+
 // 一文
 eq("日付あり", sentImageViewable({ status: "move_out_planned", notViewable: true, vacancyDate: "9月30日" }, NOW),
   { notViewable: true, viewableFrom: "10月1日", line: "9月30日退去予定のため、10月1日以降ご内覧可能となります！！", source: "sent_image" });
