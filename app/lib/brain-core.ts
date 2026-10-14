@@ -68,6 +68,7 @@ import { costQuestionNotEstimate } from "@/app/lib/cost-question-kind";
 import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
+import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
 import { meetingPromisePending } from "@/app/lib/meeting-promise";
@@ -1292,8 +1293,8 @@ ${BRAIN_RULES_678_FACTS_ON ? RULE6_FACTS : "ルール⑥（感謝・了承への
 
 ${BRAIN_RULES_678_FACTS_ON ? RULE7_FACTS : "ルール⑦（ネガ文脈の感謝には営業を一切乗せない）: 直前スタッフ発言または直近顧客発言に「断り」「キャンセル」「できません」「否決」「募集終了」「申し訳」「残念」「難し」等が含まれる場合 → reply_direction を「受け止めのみ（50〜110字）」にする。avoid_topics に「物件提案」「見積提案」「申込誘導」を追加する。key_topics は空にする。成約会話分析でこの文脈での営業は最も高い離脱率につながっている。迷った時: ネガワードが直近3メッセージ以内にあれば適用する。"}
 
-${BRAIN_RULES_678_FACTS_ON ? RULE8_FACTS : "ルール⑧（強推し直後の了承には再推奨しない）: 直前AIXアクションが property_recommendation または property_check_result（空き確認済み）であり、かつ顧客の最新メッセージが感謝・了承のみ（「かしこまりました」「ありがとうございます」等、60字未満・質問・要望なし）の場合 → reply_direction を「感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）」にする。aix は null にする（直前と同じAIXアクションを繰り返さない）。avoid_topics に「他物件の募集状況確認」「新規物件ピックアップ」「別物件の提案」「申込誘導」を追加する。key_topics は空にする。根拠: 強く1件を推した直後にさらに推す・別物件を探すと「しつこさ」になり離脱率が上がる。顧客が了承した時点でボールは顧客側にある。待つことが最善。迷った時: 直近AIX履歴に property_recommendation/property_check_result があり顧客が感謝・了承を返したら必ず適用する。"}
-　【解除の一文（2026-09-23 竹内・あっぴ事例）】直前のスタッフ送信に**物件ピックアップの宣言**（「新着で…出次第お送りさせて頂きます」「ピックアップしてお送りさせて頂きます」等）があり、**その後まだ物件を送っていない**場合はルール⑧を適用しない（engagement_stance を 'wait' にしない・aix を null にしない）。宣言した時点でボールはこちら側にあり、待つ相手がいない。この時の aix は property_send、reply_direction は「宣言したピックアップを実行して届ける」にする。${ackAfterPromiseReplyEnabled() ? "ただしお客様の今の発言がお礼・了承だけの番は、aix を null にしてお礼に短く返信する（受けだけか待ちの形の1文は ack_form・約束を果たす AIX はその後・竹内さんの決定 10/14）。" : ""}根拠: 「出次第お送りします」宣言104件の79.8%は14日以内に実際の物件送付で果たされている（＝待ちではなく未履行の仕事）。
+${BRAIN_RULES_678_FACTS_ON ? RULE8_FACTS : "ルール⑧（強推し直後の了承には再推奨しない）: 直前AIXアクションが property_recommendation または property_check_result（空き確認済み）であり、かつ顧客の最新メッセージが感謝・了承のみ（「かしこまりました」「ありがとうございます」等、60字未満・質問・要望なし）の場合 → reply_direction を「感謝を1行で受け取り、検討を見守る待ちの姿勢で締める（50〜110字）」にする" + rule8HoldDirectionSuffix() + "。aix は null にする（直前と同じAIXアクションを繰り返さない）。avoid_topics に「他物件の募集状況確認」「新規物件ピックアップ」「別物件の提案」「申込誘導」を追加する。key_topics は空にする。根拠: 強く1件を推した直後にさらに推す・別物件を探すと「しつこさ」になり離脱率が上がる。顧客が了承した時点でボールは顧客側にある。待つことが最善。迷った時: 直近AIX履歴に property_recommendation/property_check_result があり顧客が感謝・了承を返したら必ず適用する。"}
+${rule8HoldNote()}　【解除の一文（2026-09-23 竹内・あっぴ事例）】直前のスタッフ送信に**物件ピックアップの宣言**（「新着で…出次第お送りさせて頂きます」「ピックアップしてお送りさせて頂きます」等）があり、**その後まだ物件を送っていない**場合はルール⑧を適用しない（engagement_stance を 'wait' にしない・aix を null にしない）。宣言した時点でボールはこちら側にあり、待つ相手がいない。この時の aix は property_send、reply_direction は「宣言したピックアップを実行して届ける」にする。${ackAfterPromiseReplyEnabled() ? "ただしお客様の今の発言がお礼・了承だけの番は、aix を null にしてお礼に短く返信する（受けだけか待ちの形の1文は ack_form・約束を果たす AIX はその後・竹内さんの決定 10/14）。" : ""}根拠: 「出次第お送りします」宣言104件の79.8%は14日以内に実際の物件送付で果たされている（＝待ちではなく未履行の仕事）。
 
 ルール⑨（提案物件への懸念には「事実回答＋条件変換した再ピックアップ」）: 顧客が最新メッセージで提案物件・見積への懸念（階・階段・広さ・古さ・費用の高さ・駅距離・日当たり・審査・子連れ・ペット等。「〜どうかな」「迷います」「不安」「高いですね」等の迷い表現を含む）を述べた場合 → customer_concern を必ず埋め、reply_direction を「懸念に事実で回答し、懸念を条件に変換した再ピックアップ宣言（例: 2階→1階またはエレベーター付き中心／狭い→広め中心／高い→初期費用を抑えられる別物件／審査不安→通りやすい保証会社中心）」にする。key_topics に「懸念→条件変換の再ピックアップ宣言」を入れる。共感語（お気持ち・ご心配・お察し）・内覧の再打診・懸念を質問で返すことは avoid_topics に入れる。迷った時: 対象語（階・お風呂・家賃・審査 等）と迷い語が同じメッセージにあれば適用する。
 
@@ -2427,7 +2428,12 @@ ${catalogBlockForBrain(brainScene)}
       return null;
     }
   })() : null;
-  const appealTimingText = appealTiming ? buildAppealBrainText(appealTiming.input, appealTiming.verdict) : "";
+  // 2026-10-15 竹内さん（7番 営業マンの思考）: 物件をお送りした後の保留の番は「待つ＝何も置かない」ではなく、竹内さんは扉の文に柔らかい次の一手を1文添える（今ご内覧頂けるお部屋の保留の 47%）。
+  //   置くかどうかはブレインが決める材料（app/lib/hold-soft-next.ts・scripts/audit-hold-soft-next.ts）。場面・部屋の読みは訴求のタイミングと同じ値。戻す HOLD_SOFT_NEXT=off
+  const holdSoftNextText = appealTiming && appealTiming.input.scene !== "post_apply"
+    ? holdSoftNextMaterial({ customerText: unrepliedTurn.text ?? "", scene: appealTiming.input.scene, room: appealTiming.input.room, delayed: !!appealTiming.input.viewingDelayed })
+    : "";
+  const appealTimingText = (appealTiming ? buildAppealBrainText(appealTiming.input, appealTiming.verdict) : "") + holdSoftNextText;
   let brainAixFeedback: FeedbackRow[] = [];
   try {
     const { data: fbRows } = await supabase

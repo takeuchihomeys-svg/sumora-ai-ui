@@ -26,6 +26,7 @@
 //       DECIDE_GAP_HOLD_CLOSE=off（確認の結果の締め）／HESITATION_NOTE=off（迷いの中身の注記）／MINDSET_REPLY_LINES=off（返信の任意の1行の材料）
 // テスト: app/lib/__tests__/customer-mindset.test.ts（実物の発言・伏せ字）
 import { withLatinHead } from "./latin-name-head";
+import { holdSoftNextEnabled } from "./hold-soft-next";
 
 const envOf = (env?: Record<string, string | undefined>) => env ?? (typeof process !== "undefined" ? process.env : {});
 const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
@@ -94,6 +95,17 @@ export const HESITATION_MOVE: Record<HesitationKind, string> = {
   決め手が無い: "押さずに扉を開けて待つ・新着でオススメが出次第お送りする",
   "急がない・保留": "押さずに扉を開けて待つ（竹内さん 扉 76%）",
 };
+
+/**
+ * 2026-10-15 竹内さん（7番 営業マンの思考）: 「押さずに扉を開けて待つ」は「何も置かない」と読まれていた（ブレインの方向「押さずに待つ」→ 下書きは扉の文だけ）。
+ *   竹内さんの手打ち（物件をお送りした後の保留の番 180日 54番・scripts/audit-hold-soft-next.ts）は、今ご内覧頂けるお部屋の保留の 47% で扉の文に
+ *   「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます」を1文添える（催促ではない）。戻す HOLD_SOFT_NEXT=off
+ */
+export const HOLD_SOFT_NEXT_SUFFIX = "。物件をお送りした後は、押さないまま扉の文に柔らかい次の一手（お気に召されましたらご都合よろしいお日にちにご案内）を1文添えるかを決める（竹内さん 今ご内覧頂けるお部屋の保留の 47%・催促ではない）";
+const WAIT_KINDS: ReadonlySet<HesitationKind> = new Set(["家族・同居人に相談", "急がない・保留", "決め手が無い"]);
+export function hesitationMoveOf(kind: HesitationKind, env?: Record<string, string | undefined>): string {
+  return HESITATION_MOVE[kind] + (WAIT_KINDS.has(kind) && holdSoftNextEnabled(env ?? (typeof process !== "undefined" ? process.env : {})) ? HOLD_SOFT_NEXT_SUFFIX : "");
+}
 
 const HES_RES: Array<[HesitationKind, RegExp]> = [
   ["内覧してから決めたい", /(?:見て|内覧して|内見して|実際に(?:見|確認))(?:から|みて)[^。\n]{0,8}(?:決め|考え|検討|判断)|(?:直接|実物を?)(?:見て|みて)から/],
@@ -327,6 +339,7 @@ export function buildMindsetReplyLinesNote(state: string | null | undefined, hes
   if (!mindsetReplyLinesEnabled(env) || !state) return "";
   const line = STATE_LINES[state as MindsetState];
   const hes = state === "迷い" && hesitation === "急がない・保留" ? "（迷いの中身が保留の時は扉の一文 62%）" : "";
+  // 2026-10-15: 保留の番の柔らかい次の一手は、ブレインが方向に書いた時だけ返信の材料に渡す（hold-soft-next.holdSoftReplyNote）。ここ（状態だけの1行）では足さない＝再生で退去予定の部屋に内覧の1文が出た（YUMA4 6b7d）
   return line ? `【今のお客様の状態（${state}）で竹内さんが足している1行（竹内さんの手打ち 180日の率・材料）】\n- ${line}${hes}` : "";
 }
 
@@ -340,7 +353,7 @@ export function buildDecideGapNote(i: { gaps: ReadonlyArray<DecideGap>; brainGap
     if (sig.strong) lines.push(`- ★決める寸前の信号: ${sig.why}。確かめた結果が問題無ければ、その結果の文で「お気に召されましたらお申込みしお部屋抑えさせて頂きます」につなぐ（竹内さんの実送信 4通・申込 3/4・弱い参考）`);
   }
   // 「検討します」だけ（急がない・保留）は決まった言い方では中身が分からない（det-check: DeepSeek の細分と同じ 13/52）＝出さない。中身はブレインが流れで読む
-  if (i.hesitation && i.hesitation.kind !== "急がない・保留" && hesitationNoteEnabled(i.env)) lines.push(`- 迷いの中身: ${i.hesitation.kind}「${i.hesitation.quote}」→ 竹内さんの返し方: ${HESITATION_MOVE[i.hesitation.kind]}`);
+  if (i.hesitation && i.hesitation.kind !== "急がない・保留" && hesitationNoteEnabled(i.env)) lines.push(`- 迷いの中身: ${i.hesitation.kind}「${i.hesitation.quote}」→ 竹内さんの返し方: ${hesitationMoveOf(i.hesitation.kind, i.env)}`);
   if (!lines.length) return "";
   return `【決め手の残り・迷いの中身（決まった言い方で読んだ候補・判断はブレイン・数字は相関の弱い参考）】\n${lines.join("\n")}`;
 }
@@ -358,7 +371,7 @@ export function emotionChoicesText(env?: Record<string, string | undefined>): st
 /** 今回の発言の層の「追加で出力する項目」の1つ目（mindset／旧 emotion） */
 export function mindsetFreshOutputItem(env?: Record<string, string | undefined>): string {
   return customerMindsetEnabled(env)
-    ? `${MINDSET_BRAIN_FIELD}（"emotion" は出さない＝コードが mindset から作る）`
+    ? `${holdSoftNextEnabled(env ?? (typeof process !== "undefined" ? process.env : {})) ? MINDSET_BRAIN_FIELD.replace("急がない・保留と家族・同居人に相談→押さずに扉を開けて待つ", "急がない・保留と家族・同居人に相談→押さずに扉を開けて待つ（物件をお送りした後は扉の文に柔らかい次の一手を1文添えるかを【保留の番の柔らかい次の一手】で決める）") : MINDSET_BRAIN_FIELD}（"emotion" は出さない＝コードが mindset から作る）`
     : `"emotion"（${LEGACY_EMOTION_CHOICES} のいずれか。今回の発言の感情。【気持ちの流れ】があれば言葉だけでなく前回からの変化も見て決める）`;
 }
 

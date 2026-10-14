@@ -268,6 +268,7 @@ import { detectConditionExpansion, buildExpansionNote } from "@/app/lib/conditio
 import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinceViewingMove, CUSTOMER_FOUND_PROPERTY_VOCAB, type PremiseFacts } from "@/app/lib/example-premise";
 import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-readiness";
 import { appealTimingEnabled, buildAppealInput, resolveAppealTiming, buildAppealReplyNote } from "@/app/lib/appeal-timing";
+import { holdSoftReplyNote } from "@/app/lib/hold-soft-next";
 // 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている他のお客様の条件を伏せる
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
@@ -5847,7 +5848,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
         return await propertyThreadNoteFor(conversationId);
       } catch (e) { console.warn("[generate-reply] 物件ごとの台帳を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e)); return ""; }
     })();
-    const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote, propertyBrainReplyNote].filter(Boolean).join("\n");
+    // 2026-10-15 竹内さん（7番 営業マンの思考）: 保留の番でブレインが柔らかい次の一手を添えると決めた時だけ、その1文を生成に渡す（届かない側の直し・HOLD_SOFT_NEXT=off で旧）
+    const holdSoftNote = !isTemplateOptimize && brainLocalFresh ? holdSoftReplyNote({ customerText: message ?? "", brainDirection: brainMeta?.reply_direction ?? null }) : "";
+    if (holdSoftNote) console.info(JSON.stringify({ tag: "reply:hold-soft-next", conversationId }));
+    const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote, holdSoftNote, propertyBrainReplyNote].filter(Boolean).join("\n");
     if (applyReadiness.level !== "low") {
       console.log(`[generate-reply] 申込が近い合図: ${applyReadiness.level} ${applyReadiness.score}点 (${applyReadiness.reason}) 窓${applyReadiness.windowCount}通`);
     }
