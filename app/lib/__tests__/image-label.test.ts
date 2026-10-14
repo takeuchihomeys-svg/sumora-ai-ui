@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import {
   parseVisionTypeOutput, splitLeakedTypeLine, classifyCustomerImage, labeledImageText,
-  savedImageKind, stripImageLabel, customerImageGroup, IMAGE_KIND_LABEL,
+  savedImageKind, stripImageLabel, customerImageGroup, IMAGE_KIND_LABEL, personalHintIn,
 } from "../image-label";
 import { imageTextForSave, imageTypeForSave, ID_DOCUMENT_TEXT } from "../id-document-guard";
 import { extractScreenshotProperty } from "../own-property-match";
@@ -158,8 +158,32 @@ console.log("── ★ 支払いの控え・携帯番号（2026-10-09）");
   t("★ 見積書の「振り込み期日」は支払いの控えにしない（書き起こしを残す）", imageTextForSave("estimate", EST_FURIKOMI) === `[画像] 【見積書・初期費用の明細】\n${EST_FURIKOMI}`);
   t("★ 種類不明の書き起こしの携帯番号は伏せる", imageTextForSave("other", OVERLAP).includes("（携帯番号）") && !imageTextForSave("other", OVERLAP).includes("090-0000-0000"));
   t("物件の資料の業者の番号（06・0120）は伏せない", labeledImageText("property_material", MAISOKU + "\nTEL 06-1234-5678 / 0120-000-000").includes("06-1234-5678"));
-  on("IMAGE_PAYMENT_DROP", "off", () => t("IMAGE_PAYMENT_DROP=off で旧の形（見出し＋書き起こし）", imageTextForSave("other", TRANSFER).startsWith("[画像] 【物件以外：振込・支払いの控え】\n")));
+  on("IMAGE_PERSONAL_HINT_DROP", "off", () => on("IMAGE_PAYMENT_DROP", "off", () => t("IMAGE_PAYMENT_DROP=off で旧の形（見出し＋書き起こし）", imageTextForSave("other", TRANSFER).startsWith("[画像] 【物件以外：振込・支払いの控え】\n"))));
   on("IMAGE_MOBILE_MASK", "off", () => t("IMAGE_MOBILE_MASK=off で伏せない", imageTextForSave("other", OVERLAP).includes("090-0000-0000")));
+}
+
+console.log("── 2026-10-14 種類不明で個人情報の語（迷う物は個人情報側）");
+{
+  const on2 = (k: string, v: string | undefined, f: () => void) => { const o = process.env[k]; if (v == null) delete process.env[k]; else process.env[k] = v; try { f(); } finally { if (o == null) delete process.env[k]; else process.env[k] = o; } };
+  // 実物の形（4fde147b・重要事項説明書の写真。氏名・番号は伏せた）
+  const JUSETSU = "重要事項説明書【建物賃貸借用】\n2026年 9月 30日\n\n〇〇 〇〇　　　様\n\n下記の不動産について、宅地建物取引業法第35条の規定に基づき…\n免許証番号　大阪府知事（1）第 00000 号";
+  const s = imageTextForSave("other", JUSETSU);
+  t("重説の写真（種類不明＋様）は書き起こしを残さない", s === "[画像] 【物件以外：個人情報の載った画像】", s);
+  t("保存した見出しを読み戻せる", savedImageKind(s) === "personal_unknown" && customerImageGroup(s, "other") === "non_property");
+  t("勤務先・年収の語（種類不明）も残さない", imageTextForSave("other", "お名前 〇〇\n勤務先 株式会社〇〇\n年収 400万円").startsWith("[画像] 【物件以外：個人情報の載った画像】"));
+  // 物件の画像・見積書には当てない
+  const MAISOKU = "物件種目：マンション\n物件名：エスリード〇〇\n号室名：502\n賃料 6.5万円 管理費 8,000円\n1K 25.3㎡\n地下鉄御堂筋線「本町」徒歩5分";
+  t("物件の資料（floor_plan）は変えない", imageTextForSave("floor_plan", MAISOKU).startsWith("[画像] 【物件の資料】\n"));
+  t("物件の資料（other）も変えない", !imageTextForSave("other", MAISOKU).includes("個人情報"));
+  on2("IMAGE_PERSONAL_HINT_DROP", "off", () => t("IMAGE_PERSONAL_HINT_DROP=off で旧（種類不明＋書き起こし）", imageTextForSave("other", JUSETSU).startsWith("[画像] 【種類不明】\n")));
+  t("condition-source-gate の見出しの行に当たる（物件以外：…24字以内）", IMAGE_KIND_LABEL.personal_unknown.replace(/^物件以外：/, "").length <= 24);
+  // 独立レビュー: 手続きの画面（書き起こしを残す物件以外）に氏名が載る形（実物 9f5fdba7・2321d918 の形・氏名は伏せた）
+  const PROC_NAME = "フレックス少額短期保険：入金完了 山田 花子 様 フレックス少額短期保険です。2026/08/25 にお申込みいただいた保険契約の入金を確認しました。";
+  t("手続きの画面＋「姓 名 様」は書き起こしを残さない", imageTextForSave("other", PROC_NAME) === "[画像] 【物件以外：個人情報の載った画像】", imageTextForSave("other", PROC_NAME));
+  t("手続きの画面＋「氏名 姓 名」も残さない", imageTextForSave("other", "電子契約 「本人」が登録されている。 氏名 山田 花子 氏名フリガナ ヤマダ ハナコ").startsWith("[画像] 【物件以外：個人情報の載った画像】"));
+  t("名前の無い手続きの画面は見出し＋書き起こしのまま", imageTextForSave("other", "フレックス少額短期保険：入金完了 フレックス少額短期保険です。保険契約の入金を確認しました。").startsWith("[画像] 【物件以外：契約・入居の手続きの画面】\n"));
+  t("物件の資料（担当者名つきでない）に氏名の網が当たらない", !personalHintIn(MAISOKU));
+  t("振込人・会員IDの画面は網に当たる・物件は当たらない（10/15 迷う物は個人情報側）", personalHintIn("パソコン振込 ハスサギ ヨウ") && personalHintIn("会員ID 123456") && !personalHintIn("2LDK 駅徒歩5分 敷金1ヶ月"));
 }
 
 console.log("── ★ つながり（webhook・ブレイン）");

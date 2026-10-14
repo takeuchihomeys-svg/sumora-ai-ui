@@ -18,6 +18,7 @@ import { isTestConversation, YUMA_CONVERSATION_ID } from "./test-conversations";
 import { customerStrength, type CustomerStrength, type StrengthLevel } from "./recommend-score-drift";
 import { isApplicationPayload } from "./pii-pseudonym";
 import { maskPII } from "./pii-mask";
+import { imageTextForDeepSeekRead } from "./customer-sent-property";
 import { loadDeepseekCutoff, isAfterCutoff } from "./post-apply";
 import {
   bundleSends, episodeFromBundle, sentFamilyFit, prefStrength, conditionsReadableAt, materialSummary,
@@ -154,7 +155,7 @@ export async function loadPrefEpisodes(sb: SupabaseClient, opts: { days: number;
   const msgSince = new Date(Math.min(...sends.map((s) => Date.parse(s.sent_at)), ...snapTimes, until) - 60 * D).toISOString();
   const appealRows: Row[] = [];
   for (const c of chunks(convIds, 40)) {
-    for (const r of await all((a, b) => sb.from("messages").select("conversation_id, text, created_at").in("conversation_id", c).eq("sender", "customer").gte("created_at", msgSince).range(a, b) as never)) {
+    for (const r of await all((a, b) => sb.from("messages").select("conversation_id, text, image_type, created_at").in("conversation_id", c).eq("sender", "customer").gte("created_at", msgSince).range(a, b) as never)) {
       (msgsOf.get(String(r.conversation_id)) ?? msgsOf.set(String(r.conversation_id), []).get(String(r.conversation_id))!).push(r);
     }
     // 訴求の文: 🌟の本文と AIX 物件ピックアップの文（送った時刻で束に結ぶ）
@@ -300,7 +301,7 @@ export async function loadPrefEpisodes(sb: SupabaseClient, opts: { days: number;
     const r = readableAt(pc, latest.at);
     customers.set(k, {
       customerKey: k, pc, cv, latestAt: latest.at, customerName: cust?.customer_name ? String(cust.customer_name) : null, conditions: r?.c ?? null,
-      messages: messagesBefore(cv, Date.parse(latest.at)).map((x) => ({ text: String(x.text ?? ""), at: String(x.created_at) })).filter((x) => x.text.trim() && !isApplicationPayload(x.text)),
+      messages: messagesBefore(cv, Date.parse(latest.at)).map((x) => ({ text: imageTextForDeepSeekRead(String(x.text ?? ""), x.image_type as string | null), at: String(x.created_at) })).filter((x) => x.text.trim() && !isApplicationPayload(x.text)),
     });
   }
   counts.customers = customers.size;

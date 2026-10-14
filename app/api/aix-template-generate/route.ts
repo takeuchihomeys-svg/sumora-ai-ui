@@ -86,7 +86,9 @@ import { staffSentTodayFromDb } from "@/app/lib/daily-greeting-server";
 import { isTestConversation, isTestOnlyConversation } from "@/app/lib/test-conversations";
 // 2026-09-30 竹内「2通目の言い回しが AI くさい。実際使っている言い回しが出るように／場面で違う／資料も読み取ったのを渡す」:
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
-import { buildSecondSceneNote, buildSecondMaterialNote, secondSceneOf, aixTakeuchiFormOn, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
+import { secondMaterialSavedReadEnabled, pickSavedReadForHead, secondRowFromSavedRead, savedReadFitLines, appendSavedReadLines, type SavedReadRow } from "@/app/lib/second-material-saved-read";
+import type { CandidateFacts } from "@/app/lib/candidate-facts";
+import { buildSecondSceneNote, buildSecondMaterialNote,secondSceneOf, aixTakeuchiFormOn, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
 import { fixSecondPersonOkyaku } from "@/app/lib/okyaku-address";
 import { dedupeRepeatedEmoji } from "@/app/lib/emoji-repeat";
@@ -1529,7 +1531,43 @@ export async function POST(req: NextRequest) {
   const secondScene = pickupPushLabel ? "compare" as const : firstDeclaresNew ? (aixTakeuchiFormOn() ? "new_listing" as const : "single" as const) : secondSceneOf(recommendationScenario);
   // 2通目の出口（別の物件の号室が出ていないか）で「1通目の物件」として見る文。ピックアップの後は推す物件だけ
   const secondFirstForCheck = pickupPushLabel ? `🌟${pickupPushLabel}` : sentMessage;
-  const secondMaterialNote = isRecSecond ? buildSecondMaterialNote(materialRow) : "";
+  // 2026-10-15 竹内さん「物件検索ブレインを有効に活用できる部分あれば使う」: 物件オススメの2通目で売上サポの行が無い時（30日 226件中 191件）は、
+  //   送った資料を送った時に読んで保存してある読み（sent_image_properties.facts）から材料を作る（その場で読み直さない）＋お客様の希望との合う・満たさない。
+  //   現況（退去予定・内覧できるか）は今まで通り（上の secondViewable は変えない）。app/lib/second-material-saved-read.ts・戻すのは SECOND_MATERIAL_SAVED_READ=off
+  let savedReadExtra: string[] = [];
+  if (isRecSecond && !materialRow && !pickupPushLabel && conversationId && secondMaterialSavedReadEnabled()) {
+    try {
+      const head = headOfFirstMessage(sentMessage);
+      if (head) {
+        const { data: sip } = await supabase.from("sent_image_properties").select("property_name, room_no, facts, created_at")
+          .eq("conversation_id", conversationId).not("facts", "is", null).order("created_at", { ascending: false }).limit(60);
+        const hit = pickSavedReadForHead((sip ?? []) as SavedReadRow[], head);
+        const conv = hit ? secondRowFromSavedRead(hit.facts) : null;
+        if (hit && conv) {
+          materialRow = conv.row;
+          let fit: string[] = [];
+          try {
+            const { data: cl } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+            const pcId = (cl as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+            const { data: pc } = pcId
+              ? await supabase.from("property_customers").select("rent_max, floor_plan, walk_minutes, building_age, initial_cost_limit, pet, move_in_time, floor_area_min, preferences, ng_points, other_requests, additional_conditions").eq("id", pcId).maybeSingle()
+              : { data: null };
+            const p = (pc ?? null) as Record<string, any> | null;
+            const msgs = (Array.isArray(recentMessages) ? recentMessages : []).filter((m) => m?.sender === "customer").map((m) => String(m.text ?? ""));
+            const { customerWants } = await import("@/app/lib/recommendation-gaps");
+            const { buildAppealPoints } = await import("@/app/lib/recommend-appeal-points");
+            const wants = customerWants({ conditions: p as never, messages: msgs });
+            fit = savedReadFitLines(buildAppealPoints(hit.facts as CandidateFacts, wants, { rentMax: p?.rent_max ?? null, walkMax: p?.walk_minutes ?? null, ageMax: p?.building_age ?? null, sqmMin: p?.floor_area_min ?? null }));
+          } catch { /* 希望が読めない時は事実だけ */ }
+          savedReadExtra = [...conv.extraLines, ...fit];
+          console.log(JSON.stringify({ tag: "aix-template-generate:second-saved-read", head: `${head.name} ${head.room}`, extra: savedReadExtra.length, fit: fit.length }));
+        }
+      }
+    } catch (e) {
+      console.warn("[aix-template-generate] second saved-read failed:", e instanceof Error ? e.message : e);
+    }
+  }
+  const secondMaterialNote = isRecSecond ? appendSavedReadLines(buildSecondMaterialNote(materialRow), savedReadExtra) : "";
   // 2026-10-08 竹内さんの実送信: 2通目の挨拶は「今日の会話文」で決まる（今送った🌟カード・【】見積の本体・画像は数えない）。
   //   前の会話文なし → 挨拶から 物件オススメ 73%（95/131）・見積書 82%（31/38）。旧は🌟カード自体を「今日送った」と数え、挨拶を一律に消していた（staffSentTodayFromDb）
   //   数え方 scripts/audit-r11-second-greeting.ts。戻すのは AIX_TAKEUCHI_FORM=off

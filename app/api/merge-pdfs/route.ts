@@ -519,7 +519,7 @@ export async function POST(req: NextRequest) {
         // 2026-09-25 任務B: 🌟 の判断に資料の表の事実（敷礼・築年・入居時期・よく訴求する設備）を「資料:」の1行で渡す（説明文・LINE の本文は変えない）
         const rankMaterials = summariesWithAd && summariesWithAd.length > 1 ? await buildRankMaterials(pdfBase64List) : null;
         // 2026-09-25 YUMA テスト: 🌟 に渡す条件は DB の条件の要約（設備・入居時期・初期費用・通勤も入る・家賃を丸めない）。無ければ拡張の文（loadRankConditions）
-        const rankConditions = summariesWithAd && summariesWithAd.length > 1 ? await loadRankConditions(resolvedCustomerId, customer_conditions) : customer_conditions;
+        const rankConditions = summariesWithAd && summariesWithAd.length > 1 ? await loadRankConditions(resolvedCustomerId, customer_conditions, convIdEff) : customer_conditions;
         // 2026-09-25 竹内「分析 DeepSeek で必ず行う。クロードに切り替えない」: DeepSeek が2回とも答えなければ🌟なし＋最後に「読み取れなかった」の1行（Claude Haiku には倒さない）
         const rankOutcome = summariesWithAd && summariesWithAd.length > 0
           ? await rankAndAnnotateSummariesDetailed(summariesWithAd, rankConditions, rankMaterials)

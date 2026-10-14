@@ -119,9 +119,14 @@ export const RANK_PROMPT_PREFIX = `あなたは賃貸仲介のスタッフです
 
 /** 🌟 の順位付けに渡す文（DeepSeek だけ。読み直しも**同じ文**＝前置きキャッシュが当たる）。materials は物件ごとの「資料:」の1行（プロンプトだけに入れる・説明文は変えない） */
 export function buildRankPrompt(summaries: string[], customerConditions?: string | null, materials?: Array<string | null> | null): string {
-  const conditionsBlock = customerConditions
-    ? `【お客様の希望条件（最優先で照らし合わせること）】\n${customerConditions}\n\n`
-    : "";
+  // 2026-10-14 お客様が送ってきた物件（loadRankConditions が後ろに足す）は「希望条件（最優先）」の見出しの外に別のブロックで置く（条件より弱い材料）
+  const SENT_HEAD = "【お客様が自分で送ってきた物件";
+  const si = customerConditions ? customerConditions.indexOf(SENT_HEAD) : -1;
+  const condOnly = customerConditions && si >= 0 ? customerConditions.slice(0, si).trim() : customerConditions;
+  const sentBlock = customerConditions && si >= 0 ? `${customerConditions.slice(si).trim()}\n\n` : "";
+  const conditionsBlock = (condOnly
+    ? `【お客様の希望条件（最優先で照らし合わせること）】\n${condOnly}\n\n`
+    : "") + sentBlock;
   // 2026-09-25 YUMA テスト（鉄骨以上のお客様・scripts/yuma-structure-ad-test.ts）: 「AD 10,000円」（約0.1ヶ月・判定は利益が出ない保留）の
   //   鉄骨・徒歩1分・3階が、AD 1ヶ月の RC・徒歩7分・1階より上の🌟★になった。円の AD を月数に直して添える案を6通り試したが、
   //   添える場所・書き方で答えが入れ替わるだけ（3/6）で安定しなかった → 足していない（前置きの文の工夫では止め切れない。材料を増やさない）
@@ -207,7 +212,25 @@ export function rankStructureExcluded(customerConditions: string | null | undefi
  * 🌟 に渡す条件の文を DB の条件欄から作る（merge-pdfs と YUMA テストが同じ関数を使う）。DB だけ（DeepSeek は呼ばない＝保存済みの要約だけ使う）。
  * 失敗・お客様が無い時は拡張の文のまま（fail-open）
  */
-export async function loadRankConditions(propertyCustomerId: string | null, extConditions: string | null | undefined): Promise<string | null> {
+export async function loadRankConditions(propertyCustomerId: string | null, extConditions: string | null | undefined, conversationId?: string | null): Promise<string | null> {
+  const base = await loadRankConditionsBase(propertyCustomerId, extConditions);
+  // 2026-10-14 竹内さん「お客さんから送られてきた物件の画像や物件 URL はスコアリングの基準をつくるのに有効…お客さん毎の AIX ツールに転送」:
+  //   お客様が自分で送ってきた物件（画像の物件の値・URL）を好みの参考として条件の後ろに足す（向きは DeepSeek が一言から読む・条件より弱く）。
+  //   個人情報の画像は customer-sent-property の線で落とす。申込以降の会話は渡さない。戻す: CUSTOMER_SENT_PROPERTY=off
+  if (!conversationId) return base;
+  try {
+    const [{ supabase }, { loadCustomerSentPropertyBlock }] = await Promise.all([import("@/app/lib/supabase"), import("@/app/lib/customer-sent-property-server")]);
+    const r = await loadCustomerSentPropertyBlock(supabase, conversationId);
+    console.log(JSON.stringify({ tag: "rank:customer-sent", conversationId, reason: r.reason, items: r.items.length, stats: r.stats ?? null }));
+    if (!r.block) return base;
+    return base ? `${base}\n\n${r.block}` : r.block;
+  } catch (e) {
+    console.warn("[merge-pdfs] 🌟 のお客様が送ってきた物件をスキップ:", e instanceof Error ? e.message : String(e));
+    return base;
+  }
+}
+
+async function loadRankConditionsBase(propertyCustomerId: string | null, extConditions: string | null | undefined): Promise<string | null> {
   if (!propertyCustomerId) return buildRankConditions(extConditions, null);
   try {
     const [{ supabase }, { loadConditionSummary, SUMMARY_COLS }, { detectWantsLowInitialCost }] = await Promise.all([

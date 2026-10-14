@@ -37,6 +37,7 @@ export type ImageKind =
   | "estimate"
   | "payment" | "procedure" | "defect_report" | "chat" | "search_condition" | "route"
   | "pet_photo" | "person_photo" | "pet_document"
+  | "personal_unknown"
   | "unknown";
 
 /** 見出しの文字（会話本文にそのまま入る。received-document の書類名の語＝申込書・口座・保険 等を含めない） */
@@ -55,6 +56,7 @@ export const IMAGE_KIND_LABEL: Readonly<Record<ImageKind, string>> = {
   pet_photo: "物件以外：ペットの写真",
   person_photo: "物件以外：人物の写真",
   pet_document: "物件以外：ペットの書類",
+  personal_unknown: "物件以外：個人情報の載った画像",
   unknown: "種類不明",
 };
 
@@ -63,7 +65,7 @@ const KIND_GROUP: Readonly<Record<ImageKind, ImageGroup>> = {
   estimate: "estimate",
   payment: "non_property", procedure: "non_property", defect_report: "non_property", chat: "non_property",
   search_condition: "non_property", route: "non_property", pet_photo: "non_property", person_photo: "non_property",
-  pet_document: "non_property",
+  pet_document: "non_property", personal_unknown: "non_property",
   unknown: "unknown",
 };
 
@@ -72,7 +74,23 @@ const KIND_GROUP: Readonly<Record<ImageKind, ImageGroup>> = {
 //   実データ（お客様の画像の全期間）で支払いの控え 6件の全部に 振込依頼人名・お客様氏名・携帯番号・引落口座の番号 が残っていた。
 //   書き起こしを読む所は無い（物件の取り出し・条件の読み取りは物件以外を飛ばす）＝見出し「支払いの控えが届いた」だけで足りる。
 //   戻す: IMAGE_PAYMENT_DROP=off（見出し＋書き起こしの旧の形）
-const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_document", "payment"]);
+const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_document", "payment", "personal_unknown"]);
+
+/**
+ * 種類が決まらない画像（【種類不明】）の書き起こしに当たったら、書き起こしを残さない個人情報の語（迷う物は個人情報側に倒す）。
+ * 2026-10-14 竹内さん「本人確認書類と明確に分ける」: 身分証・書類の指紋（id-document-guard・personal-document-guard）に当たらず
+ *   【種類不明】で全文が残る画像があった（180日・お客様の画像 1,023件のうち 重要事項説明書の写真 1件＝お客様の氏名つき）。
+ *   会話本文は返信の生成・ブレイン（DeepSeek に回る経路あり）・学習に載るので、入口（保存する前）で捨てる。
+ *   物件の画像（物件の資料・画面・写真 362件）・見積書に当たる語は入れない（実データで 0件）。
+ *   戻す: IMAGE_PERSONAL_HINT_DROP=off（【種類不明】＋書き起こしの旧の形）
+ */
+export const PERSONAL_HINT_RE = /生年月日|保険者番号|被保険者|記号\s*番号|口座番号|マイナンバー|個人番号|本籍|勤務先|年収|旅券番号|在留(?:カード|資格|期間)|免許証番号|印鑑登録|続柄|(?:契約者|申込者|入居者|借主)(?:の)?(?:氏名|名前)|(?:重要事項説明書|賃貸借契約書)[\s\S]{0,120}様|氏名(?:\s*フリガナ)?\s*[:：]?\s*[\p{Script=Han}\p{Script=Katakana}]{1,6}[ 　]?[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}]{1,6}|名義人|振込(?:依頼)?人|パソコン振込|会員s*(?:ID|ＩＤ|番号)|(?<![\p{Script=Han}])[\p{Script=Han}]{1,4}[ 　][\p{Script=Han}\p{Script=Hiragana}]{1,4}\s*様/u;
+export function personalHintIn(content: string | null | undefined): boolean {
+  return PERSONAL_HINT_RE.test(String(content ?? "").normalize("NFKC"));
+}
+export function personalHintDropEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.IMAGE_PERSONAL_HINT_DROP ?? "").trim().toLowerCase() !== "off";
+}
 const dropsTranscript = (kind: ImageKind): boolean =>
   DROP_TRANSCRIPT.has(kind) && !(kind === "payment" && process.env.IMAGE_PAYMENT_DROP === "off");
 
@@ -165,6 +183,16 @@ function hasPropertyValues(t: string): boolean {
  * content: 書き起こし（"[画像] " を除いた物）
  */
 export function classifyCustomerImage(imageType: string | null | undefined, content: string | null | undefined): ImageKind {
+  const kind = classifyCustomerImageBase(imageType, content);
+  // 種類が決まらない物で個人情報の語が当たれば、書き起こしを残さない種類にする（PERSONAL_HINT_RE の注記）
+  // 2026-10-14 独立レビュー: 【種類不明】だけでなく、書き起こしを残す物件以外（契約・入居の手続きの画面・やり取りの画面 等）も同じ網に掛ける。
+  //   実データ（お客様の画像 全期間）で手続きの画面 5件に お客様の氏名（「姓 名 様」「氏名 姓 名」）が全文で残っていた。
+  //   氏名の形（氏名のラベル＋値・名義人・「姓 名 様」）も網に足した（画像 6,642件で物件の画像・見積書・スタッフの画像に当たる物 0件）
+  if ((kind === "unknown" || (KIND_GROUP[kind] === "non_property" && !dropsTranscript(kind))) && personalHintDropEnabled() && personalHintIn(content)) return "personal_unknown";
+  return kind;
+}
+
+function classifyCustomerImageBase(imageType: string | null | undefined, content: string | null | undefined): ImageKind {
   const type = (imageType ?? "").trim().toLowerCase();
   const t = (content ?? "").normalize("NFKC").trim();
 
