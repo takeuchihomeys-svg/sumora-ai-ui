@@ -88,5 +88,16 @@ it("退去予定でも締めの誘導は必須ではない・空室では申込�
   expect(b).toContain("4.7%");
 });
 
+// 2026-10-14: 比較の場面（compareAllowed=true＝直近の束の中の🌟）なら、台帳の件数が 1 以下でも比較の形を消さない（竹内さん 30日 8番が出口で外されていた）
+it("比較の場面なら件数 1 以下でも比較の形を残す・場面の判定が無い時は今まで通り外す", () => {
+  const t = "お送りさせて頂きましたお部屋の中でも特にCITY SPIRE難波WEST 305号室が敷金礼金なしで、Aさんにかなりオススメ出来るお部屋となります！！";
+  expect(fixRecommendClosing(t, { sentPropertyCount: 1, compareAllowed: true }).text).toBe(t);
+  expect(fixRecommendClosing(t, { sentPropertyCount: 1, compareAllowed: null }).applied.join(",")).toContain("comparison_frame");
+  expect(fixRecommendClosing(t, { sentPropertyCount: 8, compareAllowed: false }).applied.join(",")).toContain("comparison_frame");
+  const prev = process.env.COMPARE_FRAME_SCENARIO_FIRST; process.env.COMPARE_FRAME_SCENARIO_FIRST = "off";
+  expect(fixRecommendClosing(t, { sentPropertyCount: 1, compareAllowed: true }).applied.join(",")).toContain("comparison_frame");
+  if (prev === undefined) delete process.env.COMPARE_FRAME_SCENARIO_FIRST; else process.env.COMPARE_FRAME_SCENARIO_FIRST = prev;
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

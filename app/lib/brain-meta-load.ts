@@ -23,8 +23,17 @@ export async function resolveBrainMetaForGeneration(
   conversationId: string,
   row: BrainMetaRow | null,
   route: string,
+  opts: { afterStaffSend?: boolean } = {},
 ): Promise<ShownRestoreResult> {
-  const base = { suggestedAixMeta: row?.suggested_aix_meta ?? null, lastBrainMeta: row?.last_brain_meta ?? null, aiDraft: row?.ai_draft ?? null, status: row?.status ?? null, skipStatuses: BRAIN_SKIP_STATUSES };
+  // 2026-10-14 竹内さん「AIX の後の返信（AIX テンプレート）をブレイン基準に」: AIX の1通目を送ると画面が suggested_aix_meta と ai_draft を消す（page.tsx の送信）。
+  //   その直後の2通目（aix-template-generate）は同じスタッフの番の続きなのに、表示の印（__SHOWN__）が無いので戻さず「ブレインなし」で作っていた
+  //   （10/08〜10/14 の ✨ 生成 51回中 49回が brain=none・うち 42回は最新のお客様発言を見たブレインの判断があった）。
+  //   続きの番（afterStaffSend）では、表示の印が無くても同じ線（最新のお客様発言を見た判断・申込以降でない・戻せる出どころ）で last_brain_meta から戻す。
+  //   戻す AIX_TEMPLATE_BRAIN_RESTORE=off
+  const continuing = !!opts.afterStaffSend && (process.env.AIX_TEMPLATE_BRAIN_RESTORE ?? "").toLowerCase() !== "off"
+    && !row?.suggested_aix_meta && row?.ai_draft !== SHOWN_DRAFT_SENTINEL && !!row?.last_brain_meta;
+  if (continuing) row = { ...row, ai_draft: SHOWN_DRAFT_SENTINEL };
+  const base ={ suggestedAixMeta: row?.suggested_aix_meta ?? null, lastBrainMeta: row?.last_brain_meta ?? null, aiDraft: row?.ai_draft ?? null, status: row?.status ?? null, skipStatuses: BRAIN_SKIP_STATUSES };
   // 表示済みで判断が空の時だけ最新のお客様発言を読む（それ以外は DB を余計に読まない）
   if (row?.suggested_aix_meta || row?.ai_draft !== SHOWN_DRAFT_SENTINEL) {
     return restoreMetaAfterShown({ ...base, latestCustomerMsgAt: null });
@@ -38,7 +47,7 @@ export async function resolveBrainMetaForGeneration(
   } catch { /* 戻さない */ }
   const result = restoreMetaAfterShown({ ...base, latestCustomerMsgAt });
   console.log(JSON.stringify({
-    tag: result.restored ? "brain:meta-restored" : "brain:meta-not-restored", route, conversationId, reason: result.reason,
+    tag: result.restored ? "brain:meta-restored" : "brain:meta-not-restored", route, conversationId, reason: continuing ? `after_staff_send:${result.reason}` : result.reason,
     analyzed_msg_ts: (result.meta?.analyzed_msg_ts as string | undefined) ?? null, latestCustomerMsgAt,
   }));
   return result;

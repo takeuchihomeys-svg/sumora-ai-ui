@@ -93,6 +93,17 @@ export function readCustomerReaction(
   }
 }
 
+/**
+ * 2026-10-14: AIX の後の2通目（aix-template-generate）で「決められない」時に竹内さんの形（誘導）にするか。
+ *   ブレインが押さない（engagement_stance=wait）と言っている時は使わない（呼び出し側）。**既定 off**（入れる RECOMMEND_CTA_TAKEUCHI=on）:
+ *   竹内さんの物件オススメの2通目 90番で、誘導の率は 57% だが、旧（決められない→ご査収）も新（→誘導）も1番ごとの一致は 53%→54% で変わらない。
+ *   採点・お客様の反応・ブレインの温度（sig）・1通目の締め・新着か・前の内覧誘導・内覧の有無のどれも竹内さんの誘導の有無を分けない（scripts/audit-recommend-cta-takeuchi.ts）
+ *   ＝率だけ合わせる浅い直しになるので入れない。竹内さんが何で誘導を付けるか（材料）が分かってから決める
+ */
+export function recommendCtaTakeuchiOn(env: { RECOMMEND_CTA_TAKEUCHI?: string } = process.env as { RECOMMEND_CTA_TAKEUCHI?: string }): boolean {
+  return (env.RECOMMEND_CTA_TAKEUCHI ?? "").toLowerCase() === "on";
+}
+
 /** 押してはいけない反応 */
 const HOLD_BACK_KINDS: ReadonlySet<string> = new Set(["concern", "condition_change", "decline"]);
 
@@ -113,6 +124,13 @@ export function resolveRecommendCta(input: {
   reaction?: CustomerReaction | null;
   /** まだご内覧頂けない（退去予定・解禁日が明日以降）。ブレインの判断（property-send-state） */
   notViewable: boolean;
+  /**
+   * 2026-10-14 竹内さん「AIX の後の返信を竹内さんの基準に」: 採点が読めず・お客様の反応も決め手にならない（＝決められない）時の締め。
+   *   既定 "receipt"（旧: 迷う時は ご査収）。"cta" は竹内さんの実送信の形（物件オススメの2通目 30日 90通で誘導あり 53＝59%・ご査収だけ 30＝33%。
+   *   生成は誘導 12/50＝24%）。ブレインの購買の温度（digest.sig）と竹内さんの誘導の有無は関係が無かった（sig=none でも 12/20 で誘導）。
+   *   押さない線（懸念・条件の変更・断り）は上の HOLD_BACK、ブレインの wait は呼び出し側で守る
+   */
+  undecided?: "receipt" | "cta";
 }): RecommendCtaDecision {
   const p = appealFromPickup(input.pickup);
   const r = input.reaction ?? null;
@@ -126,6 +144,9 @@ export function resolveRecommendCta(input: {
   } else if (r?.kind === "positive") {
     appeal = "strong";
     reason = `採点なし・お客様が前向き(${r.positiveKind ?? "positive"})`;
+  } else if (input.undecided === "cta") {
+    appeal = "strong";
+    reason = `採点なし・お客様の反応=${r?.kind ?? "-"}（決められない→竹内さんの形＝誘導）`;
   } else {
     reason = `採点なし・お客様の反応=${r?.kind ?? "-"}（決められない→ご査収）`;
   }
