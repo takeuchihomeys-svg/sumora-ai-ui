@@ -49,6 +49,7 @@ import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyN
 import { meetingSecondLine, meetingDayWordOn } from "../lib/meeting-place-form";
 import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
 import { canonicalRoomNo } from "../lib/room-no";
+import { portalUrlsIn } from "../lib/portal-page-read";
 // 2026-10-13 竹内さん（くれあ）: 物件確認した（物件あった）で見積書を同封する時は物件ごとに［資料・見積書 → 費用の文］→ 最後に確認の結果の文。
 //   戻す: NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE=off（今まで通りの並び）
 const CHECK_ESTIMATE_BUNDLE_ON = checkResultEstimateBundleOn(process.env.NEXT_PUBLIC_CHECK_RESULT_ESTIMATE_BUNDLE);
@@ -827,14 +828,44 @@ export default function AixModal({
   // 2026-10-13 P1 0593a0aa（未桜）: 候補の一番上にブレインの今の物件を出す（ブレインの判断が今のお客様の発言に対して新しい時だけ）。
   //   **先入れ（namePrefill）には使わない**＝候補の表示だけ（設計知見 90d263b1・当たり率は scripts/audit-brain-property-display.ts）。
   //   戻す: NEXT_PUBLIC_BRAIN_PROPERTY_DISPLAY=off
-  const customerPropertyOptions = useMemo(() => {
+  const customerPropertyOptionsWithBrain = useMemo(() => {
     const latestCustomerAt = [...(recentMessages ?? [])].reverse().find((m) => m.sender === "customer")?.rawCreatedAt ?? null;
     return withBrainPropertyFirst(customerPropertyBaseOptions, brainPropertyPick ?? null, {
       latestCustomerAt, env: brainPropertyDisplayEnvFromPublic(), conversationTexts: (recentMessages ?? []).map((m) => m.text),
     });
   }, [customerPropertyBaseOptions, brainPropertyPick, recentMessages]);
+  // 2026-10-14 竹内さん「SUUMO の URL を送ってきた時に中身を読む…読めていない所をつなぐ」: 共有文の無い URL だけの発言（120日 211通）は
+  //   物件名がどこにも無かった → SUUMO のページを開いて建物名を読み（/api/portal-page-read・portal-page-read.ts）、候補の最後に足す。
+  //   **候補の表示だけ**（先入れ・本文には使わない＝ページは古い・別の部屋の掲載もある）。戻す: NEXT_PUBLIC_PORTAL_PAGE_READ=off
+  const [portalPageOptions, setPortalPageOptions] = useState<Array<{ name: string; label: string; url: string | null; at: string | null; fromBrain?: boolean; fromPortal: true }>>([]);
+  useEffect(() => {
+    if ((process.env.NEXT_PUBLIC_PORTAL_PAGE_READ ?? "").toLowerCase() === "off") return;
+    const custs = (recentMessages ?? []).filter((m) => m.sender === "customer").slice(-12).reverse();
+    const urls: Array<{ url: string; at: string | null }> = [];
+    for (const m of custs) {
+      // 共有文に物件名がある発言は今まで通り（customerPropertyBaseOptions）
+      if (customerPropertyOptionsForAix([{ sender: "customer", text: m.text, rawCreatedAt: m.rawCreatedAt }], {}).length) continue;
+      for (const u of portalUrlsIn(m.text)) if (!urls.some((x) => x.url === u)) urls.push({ url: u, at: m.rawCreatedAt ?? null });
+    }
+    if (!urls.length) { setPortalPageOptions([]); return; }
+    let alive = true;
+    fetch("/api/portal-page-read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: urls.slice(0, 3).map((x) => x.url) }) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { pages?: Array<{ url: string; status: string; name: string | null; floor: number | null }> } | null) => {
+        if (!alive || !j?.pages) return;
+        setPortalPageOptions(j.pages.filter((p) => p.status === "ok" && p.name).map((p) => ({
+          name: p.name!, label: `${p.name}${p.floor ? ` ${p.floor}階` : ""}（SUUMO のページ）`, url: p.url, at: urls.find((x) => x.url === p.url)?.at ?? null, fromPortal: true as const,
+        })));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [recentMessages]);
+  const customerPropertyOptions = useMemo(
+    () => [...customerPropertyOptionsWithBrain, ...portalPageOptions.filter((p) => !customerPropertyOptionsWithBrain.some((c) => c.name === p.name))],
+    [customerPropertyOptionsWithBrain, portalPageOptions],
+  );
   /** ブレインの物件がお客様の送った物件に無く、足した時（見出しを「物件の候補」にする＝件数をお客様が送った物件と混ぜない） */
-  const customerPropertyHasBrainOnly = customerPropertyOptions.length > customerPropertyBaseOptions.length;
+  const customerPropertyHasBrainOnly = customerPropertyOptionsWithBrain.length > customerPropertyBaseOptions.length;
   // 別の部屋について確認した専用: 物件名 + 画像OCR + 有無ピッカー（会話を合わせる専用パターン）
   const [otherRoomPropertyName, setOtherRoomPropertyName] = useState<string>("");
   const [otherRoomImagePreview, setOtherRoomImagePreview] = useState<string>("");
