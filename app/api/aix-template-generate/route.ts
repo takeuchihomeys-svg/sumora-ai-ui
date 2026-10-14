@@ -66,6 +66,7 @@ import { isGroupConversationName } from "@/app/lib/line-target";
 // 2026-09-21 竹内「付けるかはブレインが判断する／お客さんの反応見て刺さっているなら誘導する」
 import { resolveCtaGuidance } from "@/app/lib/cta-guidance";
 import { adjustCtaForRoom, appealTimingEnabled } from "@/app/lib/appeal-timing";
+import { sipVacating, sentImageViewable, recommendVacatingSentImageOn, type SipRow } from "@/app/lib/recommend-vacating-source";
 import { resolveRecommendCta, recommendCtaTakeuchiOn, readCustomerReaction, setRecommendClosing, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage, hasClosingKind, type RecommendCtaDecision, type PickupLookupRow } from "@/app/lib/recommend-cta";
 // お客様の反応の分類は返信生成・往復文脈と同じ関数（四者同名）
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
@@ -1473,6 +1474,24 @@ export async function POST(req: NextRequest) {
       if (isRecSecond) {
         // ピックアップの1通目は複数の物件の宣言なので、退去予定日は推す物件の資料だけから読む
         secondViewable = resolveRecommendViewable({ text: pickupPush ? null : sentMessage, material: materialRow, brain: { notViewable: recommendState.notViewable, viewableFrom: recommendState.viewableFrom } });
+        // 2026-10-15: 本文・売上サポの行で決まらない時は、送った資料の画像の読み（sent_image_properties の現況・退去予定日）を見る。
+        //   竹内さんが2通目に退去予定を書いた番（60日 66番）で売上サポの行があるのは 4番だけ・送った資料の読みに退去予定は 24番
+        //   （scripts/audit-recommend-vacating-source.ts）。退去予定と読めた時だけ材料に渡す（出口で一文は足さない）。戻す RECOMMEND_VACATING_SENT_IMAGE=off
+        if (secondViewable.source === "brain" && conversationId && recommendVacatingSentImageOn()) {
+          try {
+            const sipHead = pickupPush?.property_name && pickupPush.room_no ? { name: String(pickupPush.property_name), room: String(pickupPush.room_no) } : headOfFirstMessage(sentMessage);
+            if (sipHead) {
+              const { data } = await supabase.from("sent_image_properties").select("property_name, room_no, created_at, facts")
+                .eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - 14 * 86400_000).toISOString())
+                .order("created_at", { ascending: false }).limit(60);
+              const sv = sentImageViewable(sipVacating((data ?? []) as SipRow[], sipHead));
+              if (sv) secondViewable = sv;
+              console.log(JSON.stringify({ tag: "aix-template-generate:vacating-sent-image", rows: (data ?? []).length, notViewable: sv?.notViewable ?? null, line: sv?.line ?? null }));
+            }
+          } catch (e) {
+            console.warn("[aix-template-generate] vacating-sent-image failed:", e instanceof Error ? e.message : e);
+          }
+        }
         secondNotViewable = secondViewable.notViewable;
         secondViewableFrom = secondViewable.viewableFrom;
       }
@@ -2162,7 +2181,7 @@ ${text}
 
     // 物件オススメの直後の2通目: 絵文字が1つも無ければ最後の「！！」の直前に 😊（実送信で絵文字なしは 11%・位置は文末が 86%。足すだけ）
     // 2026-10-01: 資料から退去予定と分かっていて、1通目も2通目も退去予定に触れていない → 決まった一文を締めの直前に入れる（足すだけ・1通目と同じ関数）
-    if (isRecSecond && (pickupPushLabel || !mentionsVacating(sentMessage))) {
+    if (isRecSecond && secondViewable.source !== "sent_image" && (pickupPushLabel || !mentionsVacating(sentMessage))) {
       const vl = ensureVacatingLine(text, secondViewable);
       if (vl.added) { console.log(JSON.stringify({ tag: "aix-template-generate:second-vacating-line-added", line: secondViewable.line })); text = vl.text; }
     }
