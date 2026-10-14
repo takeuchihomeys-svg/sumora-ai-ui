@@ -39,7 +39,8 @@ const HELP = `設計知見を引く（読むだけ）
 const arg = (k: string, d = "") => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=").slice(1).join("=");
 if (process.argv.includes("--help") || process.argv.includes("-h") || process.argv.length <= 2) { console.log(HELP); process.exit(0); }
 const tags = arg("tags").split(",").map((s) => s.trim()).filter(Boolean);
-const q = arg("q");
+// 2026-10-14: 「kb.ts "言葉"」の形（--q= なし）でも問いとして引く（なしだと問いが無視され新しい順の10件になっていた）
+const q = arg("q") || (process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "");
 const limit = Number(arg("limit", "10"));
 const full = process.argv.includes("--full");
 const sceneArg = arg("scene");

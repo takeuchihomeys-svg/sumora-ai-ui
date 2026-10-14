@@ -48,6 +48,9 @@ async function knownPropertyNames(conversationId: string, propertyCustomerId?: s
   return [...known].filter((s) => s.length >= 2);
 }
 
+/** 確信度のゲートの読み直しを始めてよい締め切り（この関数の始めから・呼び出し元で一番短い extract-property-info の 90秒より前に記録を書き終える） */
+const GATE_DEADLINE_MS = 70_000;
+
 /**
  * 送った画像の物件を記録する（失敗しても投げない）。
  * @param source 照合できた時の記録の出所（"aix:property_send" / "staff_image" / "vision" など）
@@ -62,6 +65,7 @@ export async function recordSentImageProperty(opts: {
   // 経路は渡された source から決める（照合できなかった時の 'vision' への落とし込みより前・2026-09-24 竹内「どれ物件ピックアップで送ったか…わかる」）
   const channel = channelFromSource(source);
   const out: SentImageRecordResult = { read: "failed", matched: false, propertyName: null, roomNo: null, sentProperties: "skipped" };
+  const t0 = Date.now();
   try {
     const [{ sharedPropertyImageRead, SENT_IMAGE_READ_TIMEOUT_MS }, { resolveReadProperty }, { isSameProperty }] = await Promise.all([
       import("@/app/lib/property-image-read"),
@@ -78,6 +82,9 @@ export async function recordSentImageProperty(opts: {
     // 2026-09-25 竹内「候補の記憶を太くする」: 読んだ画像1枚ごとの値（家賃・管理費・敷礼・間取り・㎡・駅と徒歩・築年月・AD）。
     //   一覧の画像（号室が複数）は部屋ごとに値が違うので残さない（1件の画像だけ）
     let freshFacts: Record<string, unknown> | null = null;
+    // 2026-10-14 確信度のゲート（reading-gate-server.ts）に渡す: 名前の直しの結果・1件の画像か
+    let nameFixResult: import("@/app/lib/property-name-fix").NameFixResult | null = null;
+    let singleItem = false;
     if (prev?.property_name) {
       item = { propertyName: prev.property_name, roomNumber: prev.room_no ?? "" };
       out.read = "reused";
@@ -102,12 +109,14 @@ export async function recordSentImageProperty(opts: {
       try {
         const { fixReadPropertyNameWithLedger } = await import("@/app/lib/property-name-ledger-server");
         const nf = await fixReadPropertyNameWithLedger(item.propertyName);
+        nameFixResult = nf;
         if (nf.status === "fixed") {
           console.log(JSON.stringify({ tag: "property-name-fix", route: "sent-image-record", from: item.propertyName, to: nf.name, rule: nf.rule }));
           item = { ...item, propertyName: nf.name };
         }
       } catch { /* 直せなくても記録は続ける */ }
       if (read.items.length === 1) {
+        singleItem = true;
         try {
           const { factsFromImageRead } = await import("@/app/lib/candidate-facts");
           const { fixReadStationName } = await import("@/app/lib/property-name-fix");
@@ -129,7 +138,31 @@ export async function recordSentImageProperty(opts: {
       const { data: conv } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
       pcId = (conv as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
     }
-    const fixed = resolveReadProperty(item, await knownPropertyNames(conversationId, pcId));
+    const known = await knownPropertyNames(conversationId, pcId);
+    let fixed = resolveReadProperty(item, known);
+    // ②' 2026-10-14 竹内さん「自信が無い時だけ深く調べる」（設計知見 56ecf24a）: 今読んだ1件の画像だけ、怪しい印のある欄を
+    //   売上サポの行と照らし、決まらなければ拡大して読み直す（reading-gate-server.ts・READING_CONFIDENCE=off で止める）
+    //   2026-10-14 確かめる人: 呼び出し元の関数の時間（send-line-message 120秒・extract-property-info 90秒）を超えると
+    //   下の記録ごと失うので、読み取りの始めから GATE_DEADLINE_MS までの残りだけ読み直しに使う。ゲートの失敗は記録を止めない
+    if (out.read === "deepseek" && singleItem && nameFixResult) try {
+      const { runReadingGate } = await import("@/app/lib/reading-gate-server");
+      const g = await runReadingGate({ imageUrl, nameFix: { ...nameFixResult, name: item.propertyName }, matched: !!fixed, roomNumber: item.roomNumber || null, facts: freshFacts, recheckTimeoutMs: GATE_DEADLINE_MS - (Date.now() - t0) });
+      if (g.name) {
+        item = { ...item, propertyName: g.name.name };
+        fixed = resolveReadProperty(item, known);
+      }
+      if (g.room) { item = { ...item, roomNumber: g.room }; if (fixed) fixed = { ...fixed, roomNumber: g.room }; }
+      if (g.facts) freshFacts = g.facts;
+      if (g.room && freshFacts) {
+        const { floorFromRoomNo } = await import("@/app/lib/candidate-facts");
+        const fl = floorFromRoomNo(g.room);
+        freshFacts = { ...freshFacts, room_no: g.room, ...(fl != null ? { floor: fl } : {}) };
+        if (fl == null) delete freshFacts.floor;
+      }
+      if (g.signals.name.length || g.signals.room.length || g.signals.amount.length) {
+        console.log(JSON.stringify({ tag: "reading-gate", imageUrl: imageUrl.slice(-40), signals: g.signals, rechecked: g.rechecked, log: g.log }));
+      }
+    } catch (e) { console.warn("[sent-image-record] 確信度のゲート失敗（元の値で続ける）:", e instanceof Error ? e.message : e); }
     const named = fixed ?? item;
     out.matched = !!fixed;
     out.propertyName = named.propertyName?.trim() || null;

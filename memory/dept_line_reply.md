@@ -5,6 +5,12 @@
 - **物差し** `scripts/audit-staff-info-capture.ts`（LLM なし）: 120日 物件カードの「別の部屋」7番＝次のブレインの今の物件がその部屋 0/6・台帳に募集中の出来事 0/7（状態 alternative を誰も読まない）／上の「別の部屋が募集してた」9番＝記録の名前 0／内覧後の挨拶 9番＝内覧の内容 0／電話をかけるボタン 19回・電話終了後 0回・電話の記録 0
 - **直し** `app/lib/staff-capture.ts`: ①台帳 check_alternative・状況 check_available（STAFF_CAPTURE_ALTERNATIVE=off）→ 台帳 0→7 ②上の別の部屋は本文の建物名＋『代わりに案内するお部屋』の号室で記録 ③内覧後: タップ（結果・気に入った点・気になった点・次の動き）→ viewing_report・生成の前に保存を待つ ④電話終了後: タップ＋『記録だけする』→ お客様のメモ kind=call（場面に関係なくブレイン・返信へ・STAFF_CAPTURE_CALL=off）。画面は NEXT_PUBLIC_STAFF_CAPTURE_UI=off で旧
 - DeepSeek 見本 `scripts/yuma-staff-capture-test.ts`（YUMA4・前後各1回・Claude 0）: 電話の後「当日どこに」→ 前は会話に無い物件の待ち合わせ・後は記録（駐車場）を踏まえる。別の部屋は前も M1 の空き状況で 502 を言えた番あり（揺れ）
+## 🔎 読み取りの確信度のゲート（10/14 作る人・設計知見 56ecf24a「自信が無い時だけ深く調べる」・ブランチ reading-confidence-1014）
+- **印**（`app/lib/reading-confidence.ts`・数え `scripts/audit-reading-confidence.ts`＝送った画像の1回目 2,409件 × 売上サポの行）: 物件名＝会話の名前に寄らず、直しが迷った・地名が表に無い・似た名前2つ以上（13.7%・精度 77%。帳簿に無いだけは 37% に出るので印にしない）／号室＝1K・不明・5K3・3077・5字以上・階数超え（2.6%）／敷金＝1〜3 の整数（2.4%・礼金は 22% に出て当たりが少ないので印にしない・READING_CONFIDENCE_KEY_MONEY=on）。どれか 9.2%
+- **調べ方**（`reading-gate-server.ts`・sent-image-record の照合の後・今読んだ1件の画像だけ）: ① 売上サポの行（rent_observations）と照らす＝名前は賃料・㎡・間取りで1つの建物に決まり名前が似ている時（栄養→栄美・輝渡→難波）・敷金は同じ部屋の行（2→20,000円）② 決まらない欄だけ全体＋4分割の拡大で1回読み直す（`reading-recheck-server.ts`・DeepSeek・入力 約4,200・$0.00065/回）③ 敷金が決まらなければ facts.deposit_unit="unclear"＋候補（ブレインの材料に渡すのは返信側の担当＝読み側は印を付けるまで）
+- 見本 34回（$0.016）: 敷金の単位の取り違え 2/2 直る・月数5件は確かめて変えず・名前 2件直る（アーネックス御幣筋本町→アーバネックス堺筋本町）・号室 1K→403・3077→307・誤って直す 0。読み直しは読み取りの約 8.5%（約3回/日・$0.002/日）
+- 竹内さんの判断待ち: 地名の無い名前（片仮名・英字だけ）を賃料・㎡・間取りで直す＝5件・誤り 0（目視）→ PROPERTY_NAME_ATTR_FIX_PLACELESS=on（既定 off）
+- 戻す: READING_CONFIDENCE=off（全部）・READING_RECHECK=off（LLM だけ）・PROPERTY_NAME_ATTR_FIX=off（名前の照らし）
 ## 🔁 AIX の後の文（✨テンプレート）と「返信なのに下書きが無い番」をブレイン基準に（10/14 作る人・ブランチ aix-after-reply-1014）
 - **物差し**: scripts/audit-aix-after-text.ts（AIX を送った直後15分以内にスタッフが打った文 × 画面にあった材料＝✨・🟣・下書き）・scripts/audit-reply-no-draft.ts（audit-split-reply-aix の --out × line_watch_turns・10/01 以降だけ理由が分かる）・scripts/audit-recommend-cta-takeuchi.ts。30日 AIX の後の文 340番（竹内さん 168: 材料あり 47%・直さず 5%・似ている度 0.66／10/08 以降 30番: 材料 87%・0.68）
 - **原因1（材料が届いていない）**: AIX の1通目の送信で画面が suggested_aix_meta を消し、✨ 2通目は __SHOWN__ の時しか last_brain_meta から戻さない → 10/08〜 ✨ 51回中 49回 brain=none（42回は新しい判断があった）。brain-meta-load の opts.afterStaffSend で同じ線で戻す（AIX_TEMPLATE_BRAIN_RESTORE=off）。今の DB のスタッフの番 92会話でブレインあり 8→56
