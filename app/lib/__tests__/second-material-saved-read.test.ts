@@ -6,6 +6,7 @@ import { buildAppealPoints } from "../recommend-appeal-points";
 import { customerWants } from "../recommendation-gaps";
 
 let pass = 0, fail = 0;
+const NOW = Date.parse("2026-10-05T00:00:00Z");
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, info === undefined ? "" : JSON.stringify(info)); } };
 
 // 実物の形（sent_image_properties.facts）
@@ -19,11 +20,24 @@ const rows: any[] = [
 
 t("既定 on・off で旧", secondMaterialSavedReadEnabled({}) && !secondMaterialSavedReadEnabled({ SECOND_MATERIAL_SAVED_READ: "off" }));
 {
-  const h = pickSavedReadForHead(rows, { name: "ルミエール住吉", room: "102" });
+  const h = pickSavedReadForHead(rows, { name: "ルミエール住吉", room: "102" }, NOW);
   t("号室（頭の0を外して）と建物名の頭で当てる・一番新しい物", h?.facts?.rent === 51000, h);
-  t("号室が違えば当てない", pickSavedReadForHead(rows, { name: "ルミエール住吉", room: "305" }) === null);
-  t("建物名が違えば当てない", pickSavedReadForHead(rows, { name: "グランパシフィック", room: "102" }) === null);
-  t("見出しが無ければ null", pickSavedReadForHead(rows, null) === null);
+  t("号室が違えば当てない", pickSavedReadForHead(rows, { name: "ルミエール住吉", room: "305" }, NOW) === null);
+  t("建物名が違えば当てない", pickSavedReadForHead(rows, { name: "グランパシフィック", room: "102" }, NOW) === null);
+  // 2026-10-15 確かめる人: シリーズ名の別の建物（実データ「スプランディッド堀江 1309」→「スプランディッド本町グラン 1309」）
+  const sr: any[] = [
+    { property_name: "スプランディッド本町グラン", room_no: "1309", facts: F, created_at: "2026-10-04T00:00:00Z" },
+    { property_name: "エステムコート難波サウスプレイズⅥ", room_no: "607", facts: F, created_at: "2026-10-04T00:00:00Z" },
+    { property_name: "アドバンス大阪セレーノ", room_no: "906", facts: F, created_at: "2026-10-04T00:00:00Z" },
+    { property_name: "村上ハイツ301", room_no: "301", facts: F, created_at: "2026-10-04T00:00:00Z" },
+    { property_name: "グランパシフィック今宮", room_no: "604", facts: F, created_at: "2026-09-10T00:00:00Z" },
+  ];
+  t("シリーズ名が同じ別の建物には当てない", pickSavedReadForHead(sr, { name: "スプランディッド堀江", room: "1309" }, NOW) === null);
+  t("Ⅴ と Ⅵ（別の棟）には当てない", pickSavedReadForHead(sr, { name: "エステムコート難波サウスプレイスⅤ", room: "607" }, NOW) === null);
+  t("1字だけの読み違い（セレーネ/セレーノ）は当てる", pickSavedReadForHead(sr, { name: "アドバンス大阪セレーネ", room: "906" }, NOW) !== null);
+  t("読みの名前に号室が付いた形は当てる", pickSavedReadForHead(sr, { name: "村上ハイツ", room: "301" }, NOW) !== null);
+  t("14日より古い読みは今の事実として渡さない", pickSavedReadForHead(sr, { name: "グランパシフィック今宮", room: "604" }, NOW) === null);
+  t("見出しが無ければ null", pickSavedReadForHead(rows, null, NOW) === null);
 }
 {
   const c = secondRowFromSavedRead(F as never)!;

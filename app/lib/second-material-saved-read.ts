@@ -17,6 +17,7 @@
 import type { CandidateFacts } from "./candidate-facts";
 import type { SecondMaterialRow } from "./second-message-scene";
 import type { AppealPoints } from "./recommend-appeal-points";
+import { normalizePropertyName } from "./property-name-match";
 
 export function secondMaterialSavedReadEnabled(env: Record<string, string | undefined> = (typeof process !== "undefined" ? process.env : {})): boolean {
   return String(env.SECOND_MATERIAL_SAVED_READ ?? "on").trim().toLowerCase() !== "off";
@@ -24,24 +25,45 @@ export function secondMaterialSavedReadEnabled(env: Record<string, string | unde
 
 export type SavedReadRow = { property_name: string | null; room_no: string | null; facts: CandidateFacts | null; created_at?: string | null };
 
-const nn = (s: string | null | undefined) => String(s ?? "").normalize("NFKC").replace(/[\s　・\-ー－‐]/g, "").toLowerCase();
+// 建物の鍵（customer-state.buildingKeyOf と同じ形: NFKC → 〜を外す → normalizePropertyName）
+const bkey = (s: string | null | undefined) => normalizePropertyName(String(s ?? "").normalize("NFKC").replace(/[〜~～]/g, ""));
 const roomKey = (r: string | null | undefined) => String(r ?? "").normalize("NFKC").replace(/号室?$/, "").replace(/^0+/, "").trim();
+const fold = (s: string) => s.normalize("NFD").replace(/[゙゚]/g, "").normalize("NFC");
+/** 同じ長さで1字だけ違う（読み取りの取り違え「セレーネ/セレーノ」「今宮/令宮」） */
+const oneCharOff = (a: string, b: string) => {
+  if (a.length !== b.length || a.length < 4) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++d > 1) return false;
+  return d === 1;
+};
+/** 2026-10-15 確かめる人: 読みを今の事実として渡すのは、この日数までに読んだ物だけ（敷礼なし・キャンペーンは変わる）。実データの当たりは最大 3.1日 */
+export const SAVED_READ_MAX_AGE_DAYS = 14;
 
 /**
- * 1通目の見出し（建物名・号室）に当たる保存した読み。号室が同じで建物名の頭（6字）がどちらかに含まれる物の一番新しい物。
- * 号室が無い・名前が短すぎる時は null（別の物件の事実を渡さない側）
+ * 1通目の見出し（建物名・号室）に当たる保存した読み。号室が同じで、建物の鍵が同じ（濁点違い・読みの名前に号室が付いた形・
+ * 先頭の飾り「★築浅★」を含む）か、同じ長さで1字だけ違う（読み取りの取り違え）物。同じ鍵の物を先に・その中で一番新しい物。
+ * 号室が無い・名前が短すぎる・古すぎる時は null（別の物件の事実を渡さない側）
+ * 2026-10-15 確かめる人（実データ 30日・当たり 29）: 旧の「建物名の頭6字」は シリーズ名で別の建物に当たった
+ *   （「スプランディッド堀江 1309」→「スプランディッド本町グラン 1309」）。同じ会話で同じ号室のシリーズ違いは全体で 60組中 十数組
  */
-export function pickSavedReadForHead<T extends SavedReadRow>(rows: ReadonlyArray<T>, head: { name: string; room: string } | null): T | null {
+export function pickSavedReadForHead<T extends SavedReadRow>(rows: ReadonlyArray<T>, head: { name: string; room: string } | null, nowMs: number = Date.now()): T | null {
   if (!head) return null;
-  const hn = nn(head.name).slice(0, 6), hr = roomKey(head.room);
-  if (hn.length < 2 || !hr) return null;
-  const hits = rows.filter((r) => {
-    if (!r.facts || typeof r.facts !== "object") return false;
-    const rn = nn(r.property_name);
-    return rn.length >= 2 && roomKey(r.room_no) === hr && (rn.includes(hn) || nn(head.name).includes(rn.slice(0, 6)));
-  });
+  const hk = bkey(head.name), hr = roomKey(head.room);
+  if (hk.length < 2 || !hr) return null;
+  const rk = hr.toLowerCase();
+  const exact = (k: string) => k === hk || fold(k) === fold(hk) || k === hk + rk || hk === k + rk
+    || (Math.min(k.length, hk.length) >= 5 && (k.endsWith(hk) || hk.endsWith(k)));
+  const tier = (r: T): number => {
+    if (!r.facts || typeof r.facts !== "object") return 0;
+    const at = Date.parse(r.created_at ?? "");
+    if (!Number.isFinite(at) || nowMs - at > SAVED_READ_MAX_AGE_DAYS * 864e5) return 0;
+    const k = bkey(r.property_name);
+    if (k.length < 2 || roomKey(r.room_no) !== hr) return 0;
+    return exact(k) ? 2 : oneCharOff(k, hk) ? 1 : 0;
+  };
+  const hits = rows.map((r) => ({ r, t: tier(r) })).filter((x) => x.t > 0);
   if (!hits.length) return null;
-  return [...hits].sort((a, b) => Date.parse(b.created_at ?? "") - Date.parse(a.created_at ?? ""))[0];
+  return [...hits].sort((a, b) => b.t - a.t || Date.parse(b.r.created_at ?? "") - Date.parse(a.r.created_at ?? ""))[0].r;
 }
 
 /** 築年月 "YYYY-MM" → 「2014年3月築」（年だけなら「2014年築」）。読めなければ null */

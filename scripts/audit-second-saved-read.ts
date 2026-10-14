@@ -48,7 +48,7 @@ function supported(f: string, note: string, first: string): boolean {
     if (pick) nPick++;
     else {
       const { data: sip } = await sb.from("sent_image_properties").select("property_name, room_no, facts, created_at").eq("conversation_id", r.conversation_id).not("facts", "is", null).lte("created_at", r.created_at).order("created_at", { ascending: false }).limit(60);
-      const hit = pickSavedReadForHead((sip ?? []) as any, head);
+      const hit = pickSavedReadForHead((sip ?? []) as any, head, Date.parse(r.created_at));
       const conv = hit ? secondRowFromSavedRead(hit.facts) : null;
       if (hit && conv) {
         const { data: cl } = await sb.from("conversations").select("property_customer_id").eq("id", r.conversation_id).maybeSingle();
