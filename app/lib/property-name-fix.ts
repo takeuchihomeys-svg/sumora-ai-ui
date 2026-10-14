@@ -285,6 +285,9 @@ export function fixReadPropertyName(read: string | null | undefined, ledger: Rea
   if (!samePlaces(building, cand.name)) return { name: name0, status: "unchanged" };
   // 短い名前（MRS→MARS・ダイレ・エス→ダイレ・エヌ＝鍵5字以下）・片方が片方の頭（カーザSun→カーザSun I・ハイツカトレア→ハイツカトレア B）・建物の番号が違う物は寄せない
   const [ka, kb] = [me.key, cand.key];
+  // fix(review): 地名の並びが1つも無い名前（ガーデンプラッツ・グラスフィールド・エムズスイツ・メゾン ド ボヌール）は、
+  //   片仮名1〜2字違いの実在する別の建物と見分ける手がかりが無い＝寄せない（確かではない）
+  if (!runs.length) return { name: name0, status: "uncertain", candidates: [cand.name] };
   if (Math.min(Array.from(ka).length, Array.from(kb).length) < 6 || ka.startsWith(kb) || kb.startsWith(ka) || buildingNumeralOf(building) !== buildingNumeralOf(cand.name) || unitMarks(building) !== unitMarks(cand.name)) {
     return { name: name0, status: "uncertain", candidates: [cand.name] };
   }

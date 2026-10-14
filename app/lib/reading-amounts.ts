@@ -23,6 +23,12 @@ export function readAmountGuardEnabled(env: Record<string, string | undefined> =
   return (env.READ_AMOUNT_GUARD ?? "").trim().toLowerCase() !== "off";
 }
 
+/** 額が賃料の 0.5 ヶ月刻み（0.5〜3）にほぼ一致するか（±2%） */
+function monthLike(yen: number, rent: number): boolean {
+  const r = yen / rent;
+  return [0.5, 1, 1.5, 2, 2.5, 3].some((k) => Math.abs(r - k) <= k * 0.02);
+}
+
 export function checkReadAmounts<T extends ReadAmountFacts>(facts: T, env: Record<string, string | undefined> = process.env): { facts: T & ReadAmountFacts; changes: string[] } {
   const changes: string[] = [];
   if (!readAmountGuardEnabled(env)) return { facts, changes };
@@ -35,7 +41,9 @@ export function checkReadAmounts<T extends ReadAmountFacts>(facts: T, env: Recor
     if (typeof y === "number" && y > 0 && y < 1000 && y * 10000 <= rent * 6) {
       out[yk] = Math.round(y * 10000);
       changes.push(`${yk}:${y}→${out[yk]}`);
-    } else if (typeof m === "number" && m > 3 && m * 10000 <= rent * 3) {
+    } else if (typeof m === "number" && m > 3 && m * 10000 <= rent * 3 && (!Number.isInteger(m) || monthLike(m * 10000, rent))) {
+      // fix(review): 整数の月数（4ヶ月・5ヶ月）は関西の保証金・敷金に本当にある＝「4万円」と見分けられない。
+      //   整数は、万円と見た額が賃料のちょうど 0.5/1/1.5/2/2.5/3 ヶ月分の時だけ直す（5.5 のような端数は月数として不自然なので今まで通り直す）
       delete out[mk];
       out[yk] = Math.round(m * 10000);
       changes.push(`${mk}:${m}→${yk}:${out[yk]}`);

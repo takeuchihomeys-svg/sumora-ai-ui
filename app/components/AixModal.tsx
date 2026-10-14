@@ -838,8 +838,9 @@ export default function AixModal({
   //   物件名がどこにも無かった → SUUMO のページを開いて建物名を読み（/api/portal-page-read・portal-page-read.ts）、候補の最後に足す。
   //   **候補の表示だけ**（先入れ・本文には使わない＝ページは古い・別の部屋の掲載もある）。戻す: NEXT_PUBLIC_PORTAL_PAGE_READ=off
   const [portalPageOptions, setPortalPageOptions] = useState<Array<{ name: string; label: string; url: string | null; at: string | null; fromBrain?: boolean; fromPortal: true }>>([]);
-  useEffect(() => {
-    if ((process.env.NEXT_PUBLIC_PORTAL_PAGE_READ ?? "").toLowerCase() === "off") return;
+  // fix(review): 取りに行くのは URL の並びが変わった時だけ（recentMessages の配列が作り直されるたびに開き直さない＝連打で断られる）
+  const portalUrlsKey = useMemo(() => {
+    if ((process.env.NEXT_PUBLIC_PORTAL_PAGE_READ ?? "").toLowerCase() === "off") return "";
     const custs = (recentMessages ?? []).filter((m) => m.sender === "customer").slice(-12).reverse();
     const urls: Array<{ url: string; at: string | null }> = [];
     for (const m of custs) {
@@ -847,6 +848,10 @@ export default function AixModal({
       if (customerPropertyOptionsForAix([{ sender: "customer", text: m.text, rawCreatedAt: m.rawCreatedAt }], {}).length) continue;
       for (const u of portalUrlsIn(m.text)) if (!urls.some((x) => x.url === u)) urls.push({ url: u, at: m.rawCreatedAt ?? null });
     }
+    return urls.length ? JSON.stringify(urls) : "";
+  }, [recentMessages]);
+  useEffect(() => {
+    const urls: Array<{ url: string; at: string | null }> = portalUrlsKey ? JSON.parse(portalUrlsKey) : [];
     if (!urls.length) { setPortalPageOptions([]); return; }
     let alive = true;
     fetch("/api/portal-page-read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: urls.slice(0, 3).map((x) => x.url) }) })
@@ -859,7 +864,7 @@ export default function AixModal({
       })
       .catch(() => {});
     return () => { alive = false; };
-  }, [recentMessages]);
+  }, [portalUrlsKey]);
   const customerPropertyOptions = useMemo(
     () => [...customerPropertyOptionsWithBrain, ...portalPageOptions.filter((p) => !customerPropertyOptionsWithBrain.some((c) => c.name === p.name))],
     [customerPropertyOptionsWithBrain, portalPageOptions],

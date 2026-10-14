@@ -74,6 +74,10 @@ export function parseSuumoPage(url: string, html: string, httpStatus = 200): Por
   return base;
 }
 
+function isSuumoHost(url: string): boolean {
+  try { const u = new URL(url); return (u.protocol === "https:" || u.protocol === "http:") && /(^|\.)suumo\.jp$/.test(u.hostname) && !u.port; } catch { return false; }
+}
+
 const CACHE_MS = 60 * 60_000;
 const cache = new Map<string, { at: number; v: PortalPage }>();
 /** ページを開いて読む（SUUMO だけ・失敗しても投げない・1時間覚える） */
@@ -84,13 +88,25 @@ export async function readPortalPage(url: string, opts: { timeoutMs?: number } =
   const hit = cache.get(url);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.v;
   try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36", "Accept-Language": "ja" },
-      redirect: "follow", signal: AbortSignal.timeout(opts.timeoutMs ?? 8000),
-    });
+    // fix(review): リダイレクトは手で追い、行き先も suumo.jp の時だけ開く（任意の URL をサーバーから開かない＝SSRF の線）
+    const signal = AbortSignal.timeout(opts.timeoutMs ?? 8000);
+    let cur = url;
+    let r: Response | null = null;
+    for (let hop = 0; hop < 4; hop++) {
+      if (!isSuumoHost(cur)) return { ...empty, site: "suumo", status: "failed" };
+      r = await fetch(cur, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36", "Accept-Language": "ja" },
+        redirect: "manual", signal,
+      });
+      const loc = r.status >= 300 && r.status < 400 ? r.headers.get("location") : null;
+      if (!loc) break;
+      cur = new URL(loc, cur).toString();
+      r = null;
+    }
+    if (!r) return { ...empty, site: "suumo", status: "failed" };
     const html = r.status === 200 ? await r.text() : "";
     const v = parseSuumoPage(url, html, r.status);
-    if (v.status !== "failed") cache.set(url, { at: Date.now(), v });
+    if (v.status !== "failed") { if (cache.size > 500) cache.clear(); cache.set(url, { at: Date.now(), v }); }
     return v;
   } catch {
     return { ...empty, site: "suumo", status: "failed" };
