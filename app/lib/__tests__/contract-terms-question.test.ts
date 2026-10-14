@@ -3,7 +3,7 @@
 // 2026-10-08 竹内（8巡目）「資料に書いてある事は返信の本文で答えて良い」
 // 文はすべて実物（scripts/audit-r8-contract-terms.ts --days=180）。会話は id の先頭8文字。資料の行・文字層も実物（property_pickups）。
 // 実行: npx tsx app/lib/__tests__/contract-terms-question.test.ts
-import { detectContractTermTopics, isTermsInquiryOnSentProperty, routeContractTerm, buildContractTermsNote, contractTermsAllInMaterial, motodukeOfPdf } from "../contract-terms-question";
+import { detectContractTermTopics, isTermsInquiryOnSentProperty, routeContractTerm, buildContractTermsNote, contractTermsAllInMaterial, motodukeOfPdf, unitUnclearOfFacts, depositUnitUnclearEnabled } from "../contract-terms-question";
 import { materialGroundsAssertion, materialDateTokens } from "../validate-reply";
 import { vacancyDateFromMaterial, vacatingViewingAnswer } from "../viewing-check-first";
 import { freeRentFactsFromStaffText, collectStaffFreeRent, staffFreeRentFor, ungroundedFreeRentSentence } from "../staff-free-rent";
@@ -189,6 +189,30 @@ describe("9巡目: 送った物件を指した契約条件の質問（ピック�
   it("資料で答える番の注記に「頼まれていない御見積書の約束を足さない」", () => {
     const n = buildContractTermsNote({ name: "アバンティオアネーロ", room: "202" } as never, [{ topic: "key_money", route: "material", facts: ["礼金: 1ヶ月"], why: "terms" }]);
     ok(/御見積書を作成しお送り.*足さない/.test(n), n);
+  });
+});
+
+describe("読み取りの単位不明の印（2026-10-14・reading-gate-server の facts.deposit_unit）", () => {
+  const facts = { deposit_months: 2, deposit_unit: "unclear", deposit_unit_candidates: ["2ヶ月", "2万円"] };
+  it("facts から候補を読む", () => { eq(unitUnclearOfFacts(facts), { deposit: ["2ヶ月", "2万円"] }); eq(unitUnclearOfFacts({ deposit_months: 2 }), null); });
+  it("画像の読みの行だけの敷金は言い切れる材料にしない（confirm・候補つき・allInMaterial にしない）", () => {
+    const r = routeContractTerm("deposit", { lines: ["敷金: 2"], unitUnclear: unitUnclearOfFacts(facts) });
+    eq([r.route, r.unitUnclear], ["confirm", ["2ヶ月", "2万円"]]);
+    eq(contractTermsAllInMaterial([r]), false);
+    const note = buildContractTermsNote({ name: "テスト", roomNo: "101" }, [r]);
+    ok(/単位が決まらない/.test(note) && /ブレインが決める/.test(note), note);
+  });
+  it("売上サポの数値・文字層の行があれば今まで通り", () => {
+    eq(routeContractTerm("deposit", { terms: { deposit: 1 }, lines: ["敷金: 2"], unitUnclear: { deposit: ["2ヶ月", "2万円"] } }).route, "material");
+    eq(routeContractTerm("deposit", { pdfText: "敷金 2ヶ月", unitUnclear: { deposit: ["2ヶ月", "2万円"] } }).route, "material");
+  });
+  it("礼金だけ不明なら敷金は今まで通り", () => {
+    eq(routeContractTerm("deposit", { lines: ["敷金: 1ヶ月"], unitUnclear: { key_money: ["2ヶ月", "2万円"] } }).route, "material");
+  });
+  it("DEPOSIT_UNIT_UNCLEAR=off で旧", () => {
+    const prev = process.env.DEPOSIT_UNIT_UNCLEAR; process.env.DEPOSIT_UNIT_UNCLEAR = "off";
+    try { eq(routeContractTerm("deposit", { lines: ["敷金: 2"], unitUnclear: { deposit: ["2ヶ月", "2万円"] } }).route, "material"); eq(depositUnitUnclearEnabled(), false); }
+    finally { if (prev === undefined) delete process.env.DEPOSIT_UNIT_UNCLEAR; else process.env.DEPOSIT_UNIT_UNCLEAR = prev; }
   });
 });
 

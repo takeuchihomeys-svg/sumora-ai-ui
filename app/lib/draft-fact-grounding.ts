@@ -203,6 +203,42 @@ function groundExtra(f: DraftFact, g: GroundIndex): boolean {
   }
 }
 
+// ── 2026-10-14 読み取りの「単位不明」の印（sent_image_properties.facts.<k>_unit="unclear"・reading-gate-server） ──
+// 単位が決まらない敷金・礼金（「2」が 2ヶ月か2万円か）は、下書きの「敷金2ヶ月」の根拠にしない（根拠なし＝自動送信を止め、AIX の番として記録）。
+//   材料の側から値を外し、「敷金 単位不明」の行だけ残す（言い切りの照らしに当たらない形）。資料の書き写しの行（image_details）の同じ欄も外す。
+//   戻す DEPOSIT_UNIT_UNCLEAR=off（contract-terms-question と同じ変数）
+const UNIT_KINDS = [["deposit", "敷金", /敷金|保証金|敷引/], ["key_money", "礼金", /礼金/]] as const;
+function unitUnclearOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.DEPOSIT_UNIT_UNCLEAR ?? "").trim().toLowerCase() !== "off";
+}
+/** facts の単位不明の欄（"deposit"・"key_money"） */
+export function unclearUnitKinds(facts: unknown, env?: Record<string, string | undefined>): Array<"deposit" | "key_money"> {
+  if (!unitUnclearOn(env) || !facts || typeof facts !== "object") return [];
+  const f = facts as Record<string, unknown>;
+  return UNIT_KINDS.filter(([k]) => f[`${k}_unit`] === "unclear").map(([k]) => k);
+}
+/** 照らしの材料にする facts の文（単位不明の欄の値を外し、「敷金 単位不明（候補 …）」の行に置き換える） */
+export function groundFactsText(facts: unknown, env?: Record<string, string | undefined>): string {
+  if (!facts) return "";
+  const kinds = unclearUnitKinds(facts, env);
+  if (!kinds.length) return JSON.stringify(facts);
+  const f = { ...(facts as Record<string, unknown>) };
+  const notes: string[] = [];
+  for (const [k, label] of UNIT_KINDS) {
+    if (!kinds.includes(k)) continue;
+    const cand = Array.isArray(f[`${k}_unit_candidates`]) ? (f[`${k}_unit_candidates`] as unknown[]).map(String).join("／") : "";
+    for (const key of [`${k}_months`, `${k}_yen`, `${k}_unit_candidates`]) delete f[key];
+    notes.push(`${label} 単位不明${cand ? `（候補 ${cand}）` : ""}`);
+  }
+  return `${JSON.stringify(f)}\n${notes.join("\n")}`;
+}
+/** 資料の書き写しの行から、単位不明の欄の行を外す */
+export function dropUnclearUnitLines(lines: ReadonlyArray<string>, kinds: ReadonlyArray<"deposit" | "key_money">): string[] {
+  if (!kinds.length) return [...lines];
+  const res = UNIT_KINDS.filter(([k]) => kinds.includes(k)).map(([, , re]) => re);
+  return lines.filter((l) => !res.some((re) => re.test(String(l))));
+}
+
 /** 下書きの事実のうち根拠の無い物（あいまいな物は uncertain つきで含めない＝止めない） */
 export function findUngroundedFacts(draft: string | null | undefined, groundText: string | null | undefined, kinds?: ReadonlySet<DraftFactKind>): DraftFactHit[] {
   if (!groundText) return [];

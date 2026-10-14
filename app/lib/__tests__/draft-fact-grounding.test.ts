@@ -1,7 +1,7 @@
 // 下書きの事実の照らし（app/lib/draft-fact-grounding.ts・canAutoReply ⑥-3c）のテスト。
 // 2026-10-09。文は scripts/audit-draft-fact-grounding.ts（90日）の実物の形（名前・番号は伏せ・物件名だけ残す）。
 // 実行: npx tsx app/lib/__tests__/draft-fact-grounding.test.ts
-import { extractDraftFacts, findUngroundedFacts, groundingKinds, buildGroundIndex, groundFact, aixForUngroundedFact } from "../draft-fact-grounding";
+import { extractDraftFacts, findUngroundedFacts, groundingKinds, buildGroundIndex, groundFact, aixForUngroundedFact, groundFactsText, dropUnclearUnitLines, unclearUnitKinds } from "../draft-fact-grounding";
 import { canAutoReply, type AutoReplyInput } from "../auto-reply-policy";
 
 let pass = 0, fail = 0;
@@ -74,6 +74,19 @@ console.log("── canAutoReply ⑥-3c");
   t("★ 作った入居可能日の下書きは自動で送らない", !v.ok && v.reason === "staff_only_fact:ungrounded_date", v.reason);
   const ok = canAutoReply({ ...base, draft: "かしこまりました！！\n8/3〜8/7頃のご入居も可能となります！！よろしくお願い致します！！", groundText: GROUND_MOVEIN });
   t("材料にある日付だけなら止めない", ok.reason !== "staff_only_fact:ungrounded_date", ok.reason);
+}
+
+// ── 2026-10-14 読み取りの単位不明の敷金（facts.deposit_unit="unclear"）は「敷金2ヶ月」の根拠にしない ──
+{
+  const facts = { rent: 65000, deposit_months: 2, deposit_unit: "unclear", deposit_unit_candidates: ["2ヶ月", "2万円"], key_money_months: 1 };
+  const draft = "ありがとうございます！！\nこちらのお部屋は敷金2ヶ月となります😊！！";
+  t("印なしの facts なら根拠あり（旧と同じ）", findUngroundedFacts(draft, JSON.stringify({ deposit_months: 2 }), groundingKinds({})).length === 0);
+  const g = groundFactsText(facts, {});
+  t("単位不明の敷金は根拠なし", findUngroundedFacts(draft, g, groundingKinds({})).some((h) => h.kind === "cost_item"), g);
+  t("礼金は今まで通り根拠あり", findUngroundedFacts("礼金1ヶ月となります！！", g, groundingKinds({})).length === 0, g);
+  t("材料に候補の行が残る", /敷金 単位不明（候補 2ヶ月／2万円）/.test(g), g);
+  t("書き写しの行の敷金も外す", JSON.stringify(dropUnclearUnitLines(["敷金: 2ヶ月", "礼金: 1ヶ月", "向き: 南"], unclearUnitKinds(facts, {}))) === JSON.stringify(["礼金: 1ヶ月", "向き: 南"]));
+  t("DEPOSIT_UNIT_UNCLEAR=off で旧", findUngroundedFacts(draft, groundFactsText(facts, { DEPOSIT_UNIT_UNCLEAR: "off" }), groundingKinds({})).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

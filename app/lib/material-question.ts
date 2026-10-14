@@ -66,13 +66,17 @@ export function detectMaterialQuestion(text: string | null | undefined): Materia
 export const PLAN_READ_TOPICS: ReadonlySet<MaterialTopic> = new Set(["water_layout", "room_layout", "size", "storage", "kitchen"]);
 
 // ── その場の間取り図の読み（material-answer-server が DeepSeek に渡す・保存して使い回す） ─────────────────
-export const MATERIAL_PLAN_PROMPT_VERSION = "material-plan-v3";
+// 2026-10-14 キッチンの形（壁付け・対面・独立）と向きは、図・資料に字で書いてある時だけ（設計知見 1e9fb6be・aa5280ce: 図の形から「対面キッチン」と推し量って誤った）。
+//   水回りの配置は竹内さんの決定どおり図の囲みから読んでよい。版を上げて保存済みの読み（v3）は読み直す。戻す MATERIAL_PLAN_TEXT_ONLY=off（v3 の指示）
+const MATERIAL_PLAN_TEXT_ONLY = (typeof process === "undefined" ? "" : (process.env.MATERIAL_PLAN_TEXT_ONLY ?? "")).trim().toLowerCase() !== "off";
+export const MATERIAL_PLAN_PROMPT_VERSION = MATERIAL_PLAN_TEXT_ONLY ? "material-plan-v4" : "material-plan-v3";
 export const MATERIAL_PLAN_MAX_TOKENS = 500;
 export const MATERIAL_PLAN_PROMPT = `あなたは日本の賃貸物件の資料（マイソク・間取り図）を読む係です。日本の不動産資料を日本語の漢字（日本の字形・新字体）で書き写してください（中国の字形は使わない）。
 次の JSON 1つだけで返してください（説明文・コードブロック不要）。図や文字から分からない項目は "不明"（数は null）。推測で埋めないこと。
 水回りは間取り図の部屋の囲みで決める: 便器の記号と洗面台の記号が同じ囲み（パウダールーム・サニタリー・洗面室）の中なら washbasin は "トイレと同じ空間"（アメリカンセパレート）。
 浴室（バスルーム・UB）が別の囲みなら bath_toilet は "別"。設備欄の「洗面台（独立）」は浴室と別という意味で使われる事があるので、図の囲みを優先する。
-{"bath_toilet":"別|同室|不明","washbasin":"独立した洗面所|脱衣所|浴室内|トイレと同じ空間|不明","laundry":"室内|屋外|不明","madori":"1K 等","rooms":[{"name":"洋室","jo":6.0}],"kitchen":"壁付け|対面|独立|不明","storage":"クローゼット等の記載（無ければ空）","balcony":"あり|なし|不明","floor":null,"direction":"南 等|不明","note":"図で読めた水回りの並び（例: トイレと洗面台が同じ空間・浴室は別）を30字まで"}`;
+${MATERIAL_PLAN_TEXT_ONLY ? `kitchen と direction は、資料に字で書いてある時だけ書く（「対面キッチン」「カウンターキッチン」「壁付けキッチン」「独立キッチン」「南向き」「向き: 南」「バルコニー: 南」等）。図の形・コンロの位置・方位記号の向きから推し量らない。字が無ければ "不明"。
+` : ""}{"bath_toilet":"別|同室|不明","washbasin":"独立した洗面所|脱衣所|浴室内|トイレと同じ空間|不明","laundry":"室内|屋外|不明","madori":"1K 等","rooms":[{"name":"洋室","jo":6.0}],"kitchen":"壁付け|対面|独立|不明","storage":"クローゼット等の記載（無ければ空）","balcony":"あり|なし|不明","floor":null,"direction":"南 等|不明","note":"図で読めた水回りの並び（例: トイレと洗面台が同じ空間・浴室は別）を30字まで"}`;
 
 export type MaterialPlanRead = {
   bath_toilet: "別" | "同室" | "不明";
