@@ -17,7 +17,7 @@
 import type { CandidateFacts } from "./candidate-facts";
 import type { SecondMaterialRow } from "./second-message-scene";
 import type { AppealPoints } from "./recommend-appeal-points";
-import { normalizePropertyName } from "./property-name-match";
+import { buildingKey, buildingMatchTier } from "./saved-read-building-match";
 
 export function secondMaterialSavedReadEnabled(env: Record<string, string | undefined> = (typeof process !== "undefined" ? process.env : {})): boolean {
   return String(env.SECOND_MATERIAL_SAVED_READ ?? "on").trim().toLowerCase() !== "off";
@@ -25,17 +25,8 @@ export function secondMaterialSavedReadEnabled(env: Record<string, string | unde
 
 export type SavedReadRow = { property_name: string | null; room_no: string | null; facts: CandidateFacts | null; created_at?: string | null };
 
-// 建物の鍵（customer-state.buildingKeyOf と同じ形: NFKC → 〜を外す → normalizePropertyName）
-const bkey = (s: string | null | undefined) => normalizePropertyName(String(s ?? "").normalize("NFKC").replace(/[〜~～]/g, ""));
+// 建物の当て方は saved-read-building-match.ts（recommend-vacating-source.ts と共通・2026-10-15 まとめた）
 const roomKey = (r: string | null | undefined) => String(r ?? "").normalize("NFKC").replace(/号室?$/, "").replace(/^0+/, "").trim();
-const fold = (s: string) => s.normalize("NFD").replace(/[゙゚]/g, "").normalize("NFC");
-/** 同じ長さで1字だけ違う（読み取りの取り違え「セレーネ/セレーノ」「今宮/令宮」） */
-const oneCharOff = (a: string, b: string) => {
-  if (a.length !== b.length || a.length < 4) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++d > 1) return false;
-  return d === 1;
-};
 /** 2026-10-15 確かめる人: 読みを今の事実として渡すのは、この日数までに読んだ物だけ（敷礼なし・キャンペーンは変わる）。実データの当たりは最大 3.1日 */
 export const SAVED_READ_MAX_AGE_DAYS = 14;
 
@@ -48,18 +39,15 @@ export const SAVED_READ_MAX_AGE_DAYS = 14;
  */
 export function pickSavedReadForHead<T extends SavedReadRow>(rows: ReadonlyArray<T>, head: { name: string; room: string } | null, nowMs: number = Date.now()): T | null {
   if (!head) return null;
-  const hk = bkey(head.name), hr = roomKey(head.room);
-  if (hk.length < 2 || !hr) return null;
+  const hr = roomKey(head.room);
+  if (buildingKey(head.name).length < 2 || !hr) return null;
   const rk = hr.toLowerCase();
-  const exact = (k: string) => k === hk || fold(k) === fold(hk) || k === hk + rk || hk === k + rk
-    || (Math.min(k.length, hk.length) >= 5 && (k.endsWith(hk) || hk.endsWith(k)));
   const tier = (r: T): number => {
     if (!r.facts || typeof r.facts !== "object") return 0;
     const at = Date.parse(r.created_at ?? "");
     if (!Number.isFinite(at) || nowMs - at > SAVED_READ_MAX_AGE_DAYS * 864e5) return 0;
-    const k = bkey(r.property_name);
-    if (k.length < 2 || roomKey(r.room_no) !== hr) return 0;
-    return exact(k) ? 2 : oneCharOff(k, hk) ? 1 : 0;
+    if (roomKey(r.room_no) !== hr) return 0;
+    return buildingMatchTier(r.property_name, head.name, rk);
   };
   const hits = rows.map((r) => ({ r, t: tier(r) })).filter((x) => x.t > 0);
   if (!hits.length) return null;
