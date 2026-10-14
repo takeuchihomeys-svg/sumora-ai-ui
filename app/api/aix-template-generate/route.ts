@@ -66,7 +66,7 @@ import { isGroupConversationName } from "@/app/lib/line-target";
 // 2026-09-21 竹内「付けるかはブレインが判断する／お客さんの反応見て刺さっているなら誘導する」
 import { resolveCtaGuidance } from "@/app/lib/cta-guidance";
 import { adjustCtaForRoom, appealTimingEnabled } from "@/app/lib/appeal-timing";
-import { resolveRecommendCta, readCustomerReaction, setRecommendClosing, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage, hasClosingKind, type RecommendCtaDecision, type PickupLookupRow } from "@/app/lib/recommend-cta";
+import { resolveRecommendCta, recommendCtaTakeuchiOn, readCustomerReaction, setRecommendClosing, buildSecondMessageCtaNote, pickupForFirstMessage, headOfFirstMessage, hasClosingKind, type RecommendCtaDecision, type PickupLookupRow } from "@/app/lib/recommend-cta";
 // お客様の反応の分類は返信生成・往復文脈と同じ関数（四者同名）
 import { analyzeSubstance, classifyLastStaffTurn, classifyCustomerResponse } from "@/app/lib/reply-context";
 import { stripVagueQuantifier } from "@/app/lib/vague-quantifier";
@@ -833,7 +833,7 @@ export async function POST(req: NextRequest) {
   const brainMeta = testBrainMeta && typeof testBrainMeta === "object" && isTestModeAllowed(process.env) && isTestOnlyConversation(conversationId)
     ? testBrainMeta as BrainMeta
     : conversationId
-    ? ((await resolveBrainMetaForGeneration(conversationId, (convResult.data ?? null) as BrainMetaRow | null, "aix-template-generate")).meta as BrainMeta | null)
+    ? ((await resolveBrainMetaForGeneration(conversationId, (convResult.data ?? null) as BrainMetaRow | null, "aix-template-generate", { afterStaffSend: true })).meta as BrainMeta | null)
     : null;
 
   // 汎用ルール（generate_reply+global）とアクション別ルール（LEARN-AIX-*含む）を結合
@@ -1480,6 +1480,9 @@ export async function POST(req: NextRequest) {
         pickup,
         reaction: readCustomerReaction(Array.isArray(recentMessages) ? recentMessages : []),
         notViewable: secondNotViewable,
+        // 2026-10-14 竹内さん「AIX の後の返信を竹内さんの基準に」: AIX の後の2通目で決められない時は竹内さんの形（誘導 59%）。
+        //   ブレインが押さない（engagement_stance=wait）時はご査収のまま。既定 off（入れる RECOMMEND_CTA_TAKEUCHI=on・一致が上がらないため・recommend-cta.ts）
+        undecided: isRecSecond && recommendCtaTakeuchiOn() && brainMeta?.engagement_stance !== "wait" ? "cta" : "receipt",
       });
       console.log(JSON.stringify({ tag: "aix-template-generate:recommend-cta", kind: recCta.kind, appeal: recCta.appeal, notViewable: recCta.notViewable, reason: recCta.reason, pickupFound: !!pickup, firstHasSame: hasClosingKind(sentMessage, recCta.kind) }));
     } catch (e) {

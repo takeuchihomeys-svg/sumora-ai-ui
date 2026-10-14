@@ -108,7 +108,9 @@ function brainNullPath(d: Dec): { path: string; kind: string } {
 }
 
 type Row = {
-  conv: string; at: string; period2: boolean; writer: string; scene: string; sub: string; intent: string; ack: boolean;
+  conv: string; at: string; period2: boolean;
+  /** 2026-10-14 下書きの無い番の調べ（audit-reply-no-draft.ts）: 番の最初のお客様の通の時刻（line_watch_turns.customer_turn_at と結ぶ）・スタッフの最初の行動 */
+  turnAt?: string; staffFirstAt?: string | null; writer: string; scene: string; sub: string; intent: string; ack: boolean;
   brain: string; brainKey: string; brainLate: boolean; brainSrc: string; brainDir: string; tc: boolean;
   truth: string; truthKey: string; truthFam: string | null; promise: Promise2; laterAix: string[];
   /** 2026-10-14 区切り6: 人の文に AIX の中身があったので AIX の番に数えた */
@@ -210,7 +212,7 @@ type Row = {
         } else { const n = brainNullPath(d); brain = n.path; brainKey = n.path === "2段" ? `2段:${n.kind}` : n.kind ? `返信:${n.kind}` : n.path; }
       } else if (ds.length) { brain = "判断なし"; brainKey = "申込以降の判断"; }
       const row: Row = {
-        conv, at: custLast, period2: ms(custLast) >= ms(SINCE2), writer, scene, sub, intent, ack: isAckOnlyTurn(custTexts),
+        conv, at: custLast, turnAt, staffFirstAt: w.staffFirstAt ?? null, period2: ms(custLast) >= ms(SINCE2), writer, scene, sub, intent, ack: isAckOnlyTurn(custTexts),
         brain, brainKey, brainLate, brainSrc, brainDir, tc,
         truth, truthKey, truthFam, promise, laterAix, replyKind, draft, sent, exId, aixByText,
         customer: mask(custText).slice(0, 160), staffText: mask(bt).slice(0, 160), prevStaff: mask(prevStaff?.text ?? "").slice(-90),

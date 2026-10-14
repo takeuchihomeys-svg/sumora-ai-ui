@@ -284,5 +284,13 @@ describe("1通目は締めを書かない（removeRecommendClosing）", () => {
   });
 });
 
+describe("2026-10-14 決められない時の締め（AIX の後の2通目・竹内さんの形）", () => {
+  it("既定（undecided なし）は旧どおりご査収", () => { expect(resolveRecommendCta({ pickup: null, reaction: { kind: "ack" as never, positiveKind: null }, notViewable: false }).kind).toBe("receipt"); });
+  it("undecided=cta: 空室は内覧誘導", () => { expect(resolveRecommendCta({ pickup: null, reaction: { kind: "ack" as never, positiveKind: null }, notViewable: false, undecided: "cta" }).kind).toBe("viewing"); });
+  it("undecided=cta: 退去予定は申込誘導", () => { expect(resolveRecommendCta({ pickup: null, reaction: null, notViewable: true, undecided: "cta" }).kind).toBe("apply"); });
+  it("undecided=cta でも懸念を言っている時は押さない", () => { expect(resolveRecommendCta({ pickup: null, reaction: { kind: "concern", positiveKind: null }, notViewable: false, undecided: "cta" }).kind).toBe("receipt"); });
+  it("undecided=cta でも採点が外れ寄りならご査収（採点が先）", () => { expect(resolveRecommendCta({ pickup: { verdict: "pass", reason_codes: ["FIT_ALL", "RENT_SLIGHTLY_OVER"] }, reaction: null, notViewable: false, undecided: "cta" }).kind).toBe("receipt"); });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

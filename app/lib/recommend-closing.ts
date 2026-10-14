@@ -80,7 +80,14 @@ export function fixRecommendClosing(
   let out = src;
 
   // ① 比較フレーム（2件以上送っている時・比較の場面の時だけ使える）
-  if ((o.sentPropertyCount <= 1 || o.compareAllowed === false) && COMPARISON_FRAME_RE.test(out)) {
+  // 2026-10-14 竹内さん「AIX の後の返信を竹内さんの基準に」: 比較の場面（compareAllowed=true＝直近の束の中の🌟を推す・recommendation-frame の判定）なのに、
+  //   件数（ブレインの台帳の propertiesSentCount・無ければ AIX の送付の回数）が 1 以下で比較の形を消していた。
+  //   30日の竹内さんの物件オススメの2通目で、束の3時間以内・🌟が束の中（束 6〜10件）で竹内さんが「お送りさせて頂きましたお部屋の中でも」と書いた 17番のうち、
+  //   テンプレートが出していたのは 2番（12番は比べない形・うち 8番は場面＝比べる（conditions_snapshot.scenario=compare）なのに出口で外された形「{物件}号室が〜」）。件数の線は場面の判定が無い時だけにする。
+  //   戻す COMPARE_FRAME_SCENARIO_FIRST=off
+  const scenarioFirst = (process.env.COMPARE_FRAME_SCENARIO_FIRST ?? "").toLowerCase() !== "off";
+  const countSaysSingle = o.sentPropertyCount <= 1 && !(scenarioFirst && o.compareAllowed === true);
+  if ((countSaysSingle || o.compareAllowed === false) && COMPARISON_FRAME_RE.test(out)) {
     // 「みやびさんにお送りさせて頂きましたお部屋の中でもリアライズ南巽は…」→ 「みやびさんにリアライズ南巽は」と壊れないよう、
     //   呼びかけの「に」は落として呼びかけを1行にする（実送信の「林田さん／〜」の形・全件監査で1件）
     out = out.replace(NAME_BEFORE_FRAME_RE, "$1\n");

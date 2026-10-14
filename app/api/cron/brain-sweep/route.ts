@@ -16,6 +16,7 @@ import { pendingApplySummaryConversations, ensureApplyPeriodSummary } from "@/ap
 // 2026-09-29 竹内「クロードの部分、キャッシュを営業時間中温める」: 最終チェック4段・お客様の要約・次の一手の前置きもここ（対象0件の分岐）で温める
 import { tryPrefixWarms, compactPrefixWarmResults, PREFIX_WARM_QUIET_REASONS, type PrefixWarmResult } from "@/app/lib/prefix-warm-server";
 import { tryConvWarms } from "@/app/lib/cache-warm-switch-server";
+import { brainSweepQueueDraftOn, shouldQueueDraftAfterSweep, type BrainDraftMeta } from "@/app/lib/brain-draft-skip";
 
 // ── brain-sweep: 脳分析バックストップ（5分毎）─────────────────────────────
 // FIX(Fable5 #2): 分析の主経路は line-webhook のイベント駆動（顧客メッセージ受信 =
@@ -328,6 +329,22 @@ export async function GET(req: NextRequest) {
       });
       if (saved) processed++;
       else failed++;
+      // 2026-10-14 竹内さん「返信なのに下書きが無い番をブレイン基準に」: sweep はブレインだけ走らせて下書きを作らなかった
+      //   （10/01〜10/14 で 5番・ブレインは返信なのに下書きが無くスタッフが手で書いた）。ブレインが返信と決めた時は下書きの待ち行列に載せる
+      //   （generate-pending-drafts が1分後に拾う・ブレインは新しいので走らせ直さない）。戻す BRAIN_SWEEP_QUEUE_DRAFT=off
+      if (saved && brainSweepQueueDraftOn()) {
+        try {
+          const { data: c } = await supabase.from("conversations").select("ai_draft, last_sender, suggested_aix_meta").eq("id", conv.id).maybeSingle();
+          const q = shouldQueueDraftAfterSweep({ meta: ((typeof saved === "object" ? saved.meta : null) ?? c?.suggested_aix_meta ?? null) as BrainDraftMeta, aiDraft: (c?.ai_draft as string | null) ?? null, lastSender: (c?.last_sender as string | null) ?? null });
+          if (q.queue) {
+            // 60秒の待ちを済ませた時刻にする（pending の窓は 60秒〜10分前）
+            await supabase.from("conversations").update({ draft_pending_at: new Date(Date.now() - 61_000).toISOString() }).eq("id", conv.id).eq("last_sender", "customer");
+          }
+          console.log(JSON.stringify({ tag: "brain-sweep:queue-draft", conversationId: conv.id, queue: q.queue, reason: q.reason }));
+        } catch (e) {
+          console.warn("[brain-sweep] queue-draft failed:", conv.id, e instanceof Error ? e.message : e);
+        }
+      }
     };
     if (firstAlone) { await sweepOne(rows[0]); await withConcurrency(rows.slice(1), 3, sweepOne); }
     else await withConcurrency(rows, 3, sweepOne);
