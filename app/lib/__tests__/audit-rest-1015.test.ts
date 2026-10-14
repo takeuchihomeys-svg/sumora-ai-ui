@@ -2,7 +2,7 @@
 //   例は監査（scripts/audit-rest-1015.ts）で読んだ実際の番の形を伏せて使う
 import { autoReplyHintOf, replyHintBrainEnabled } from "../reply-hint-auto";
 import { demoteFixedNote, classifyFixedNoteTriggers, isNewConditionText, fixedNoteBrainEnabled } from "../fixed-content-notes";
-import { normalizeBrainOpener, brainOpenerKind, brainOpenerMetaEnabled } from "../opener-rates";
+import { normalizeBrainOpener, brainOpenerKind, brainOpenerMetaEnabled, brainOpenerUseEnabled } from "../opener-rates";
 import { toFreshDigest } from "../brain-layers";
 
 let pass = 0, fail = 0;
@@ -49,6 +49,7 @@ console.log("#9 ブレインの書き出し");
   t("null・外の値は null", normalizeBrainOpener(null) === null && normalizeBrainOpener("null") === null && normalizeBrainOpener("よろしく") === null);
   t("出口の種類は はい/かしこまりました/なし だけ", brainOpenerKind("はい") === "hai" && brainOpenerKind("かしこまりました") === "kashikomari" && brainOpenerKind("開口語なし") === "none" && brainOpenerKind("お世話になっております") === null && brainOpenerKind(null) === null);
   t("既定 on・=off で旧", brainOpenerMetaEnabled({}) && !brainOpenerMetaEnabled({ BRAIN_OPENER_META: "off" }));
+  t("使うのは BRAIN_OPENER_USE=on の時だけ（既定 off）", !brainOpenerUseEnabled({}) && brainOpenerUseEnabled({ BRAIN_OPENER_USE: "on" }) && !brainOpenerUseEnabled({ BRAIN_OPENER_USE: "on", BRAIN_OPENER_META: "off" }));
   const dg = toFreshDigest({ reply_opener: "はい", analyzed_msg_ts: null }, null);
   t("判断ログの要点に op", dg.op === "はい", dg);
   t("無い時は欄なし", !("op" in toFreshDigest({ analyzed_msg_ts: null }, null)));

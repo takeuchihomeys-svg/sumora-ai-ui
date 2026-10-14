@@ -89,6 +89,11 @@ const BRAIN_OPENER_VALUES: readonly OpenerLabel[] = ["かしこまりました",
 export function brainOpenerMetaEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.BRAIN_OPENER_META ?? "").toLowerCase() !== "off";
 }
+/** 2026-10-15 確かめる人: 試験でブレインの書き出しが 8/8「かしこまりました」（LLM の癖）で竹内さんの実送信から離れた。
+ *   meta への写し・digest.op の記録は続け（本番で竹内さんの実送信と数える）、生成と出口で使うのは BRAIN_OPENER_USE=on の時だけ（既定 off＝旧の決め方）。 */
+export function brainOpenerUseEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return brainOpenerMetaEnabled(env) && (env.BRAIN_OPENER_USE ?? "").toLowerCase() === "on";
+}
 /** LLM の reply_opener を選べる値にそろえる（「承知」「了解」はかしこまりました・「なし」は開口語なし）。外の値は null */
 export function normalizeBrainOpener(v: unknown): OpenerLabel | null {
   if (typeof v !== "string") return null;

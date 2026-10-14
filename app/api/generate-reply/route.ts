@@ -318,7 +318,7 @@ import { logWatchMaterial, noteWatchMaterials, noteWatchSuppressedDraft } from "
 import { replyMaterialSizes } from "@/app/lib/line-watch-materials";
 import { splitRequests, buildRequestLedgerNote, requestLedgerEnabled } from "@/app/lib/request-ledger";
 import { replyHintBrainEnabled } from "@/app/lib/reply-hint-auto";
-import { brainOpenerMetaEnabled, brainOpenerKind, normalizeBrainOpener } from "@/app/lib/opener-rates";
+import { brainOpenerUseEnabled, brainOpenerKind, normalizeBrainOpener } from "@/app/lib/opener-rates";
 import { demoteFixedNote } from "@/app/lib/fixed-content-notes";
 /** shadow=計算＋差分ログのみ／inject=生成注入＋検査（既定）／enforce=sentPropertiesCount・aixDone も台帳に統一。ロールバックは ACTION_LEDGER_MODE=shadow */
 const ACTION_LEDGER_MODE = (process.env.ACTION_LEDGER_MODE ?? "inject") as "shadow" | "inject" | "enforce";
@@ -1450,9 +1450,10 @@ ${aixDone.answeredByAix
   // 2026-10-13 竹内さん（ゆーた）「挨拶はお客さん1人につき1日一度」: 今日すでに挨拶・会話文を送った番で、ブレインの書き出しが「お世話になっております」
   //   だった時はそれを渡さない（挨拶の事実が勝つ・出口の enforceOpening も外す）。戻す: GREETING_ONCE_PER_DAY=off
   const brainOpenerRaw = (brainMeta as { reply_opener?: string | null } | null)?.reply_opener ?? null;
+  // 2026-10-15: 写した値を生成で使うのは BRAIN_OPENER_USE=on の時だけ（既定 off・本番で数えてから）
   // 2026-10-15 レビュー（#9）: reply_opener が meta に届くようになったので、初回でない番の「はじめまして」は渡さない（安全の線・挨拶の行の決まりが正。
   //   ブレインの判断材料は「条件フォーム受領: はじめまして55%」で、2回目以降のフォーム受領でも選びうる）
-  const brainOpener = (brainOpenerRaw === "お世話になっております" && alreadyGreetedToday === true && greetingOncePerDayEnabled())
+  const brainOpener = !brainOpenerUseEnabled() ? null : (brainOpenerRaw === "お世話になっております" && alreadyGreetedToday === true && greetingOncePerDayEnabled())
     || (brainOpenerRaw === "はじめまして" && greetingDecision && greetingDecision.kind !== "first")
     ? null : brainOpenerRaw;
   const openerNote = templateNote ? "" : (() => {
@@ -5632,7 +5633,7 @@ async function handleGenerateReply(req: NextRequest) {
     // 2026-10-15 監査の残り #9: ブレインが書き出し（reply_opener）を決めた番は、開口語の決定（生成の【⏰ 挨拶ルール】の開口語・出口の enforceOpener）を
     //   ブレインの値にそろえる（旧は reply_opener が meta に届かず、決定論の opener と「実測の分布」だけで決まっていた）。
     //   挨拶の行（初回・1日1回・お待たせの禁止）と竹内さんが名指しした場面（openerStrict）はそのまま＝安全の線。戻す BRAIN_OPENER_META=off
-    if (brainOpenerMetaEnabled() && brainFreshForMessage && !isCachedMeta && !shouldPrependGreeting && !greetingDecision.openerStrict) {
+    if (brainOpenerUseEnabled() && brainFreshForMessage && !isCachedMeta && !shouldPrependGreeting && !greetingDecision.openerStrict) {
       const bk = brainOpenerKind(normalizeBrainOpener((brainMeta as { reply_opener?: unknown } | null)?.reply_opener));
       if (bk && bk !== greetingDecision.opener) {
         console.log(JSON.stringify({ tag: "greeting:brain-opener", conversationId, from: greetingDecision.opener, to: bk }));
