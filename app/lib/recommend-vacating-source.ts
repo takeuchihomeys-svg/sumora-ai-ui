@@ -7,7 +7,7 @@
 import { pickupForFirstMessage, type PickupLookupRow } from "./recommend-cta";
 import { readPropertyStateFromText } from "./property-send-state";
 import { VACATING_NO_DATE_LINE, type RecommendViewable } from "./recommend-viewable";
-import { normalizePropertyName } from "./property-name-match";
+import { buildingKey, buildingMatchTier } from "./saved-read-building-match";
 
 /** 戻す: RECOMMEND_VACATING_SENT_IMAGE=off（✨2通目が送った資料の読みを見ない＝旧） */
 export function recommendVacatingSentImageOn(env: Record<string, string | undefined> = process.env): boolean {
@@ -24,25 +24,12 @@ export function pickupForHeadLoose<T extends PickupLookupRow>(rows: ReadonlyArra
 export type SipRow = { property_name?: string | null; room_no?: string | null; created_at?: string | null; facts?: Record<string, unknown> | null };
 export type SipVacating = { status: string; notViewable: boolean; vacancyDate: string | null };
 
-// 2026-10-15 確かめる人: 建物の当て方を「頭6字が互いに含まれる」から建物の鍵の一致に（second-material-saved-read.ts の bfc16049 と同じ形）。
+// 2026-10-15 確かめる人: 建物の当て方を「頭6字が互いに含まれる」から建物の鍵の一致に。
 //   頭6字だとシリーズ名の別の建物（「スプランディッド堀江 1309」→「スプランディッド本町グラン 1309」）に当たり、別の部屋の退去予定を渡す。
-//   両方が main に入ったら1つの関数にまとめる
-const bkey = (s: string | null | undefined) => normalizePropertyName(String(s ?? "").normalize("NFKC").replace(/[〜~～]/g, ""));
-const fold = (s: string) => s.normalize("NFD").replace(/[゙゚]/g, "").normalize("NFC");
-/** 同じ長さで1字だけ違う（読み取りの取り違え「セレーネ/セレーノ」） */
-const oneCharOff = (a: string, b: string) => {
-  if (a.length !== b.length || a.length < 4) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++d > 1) return false;
-  return d === 1;
-};
+//   当て方の本体は saved-read-building-match.ts（second-material-saved-read.ts と共通・2026-10-15 まとめた）
 /** 2＝同じ建物（濁点違い・読みの名前に号室が付いた形・先頭の飾りを含む）／1＝同じ長さで1字だけの読み違い／0＝別の建物 */
 export function sameBuildingTier(readName: string | null | undefined, headName: string, room: string): number {
-  const k = bkey(readName), hk = bkey(headName), rk = roomKey(room);
-  if (k.length < 2 || hk.length < 2) return 0;
-  if (k === hk || fold(k) === fold(hk) || (rk !== "" && (k === hk + rk || hk === k + rk))
-    || (Math.min(k.length, hk.length) >= 5 && (k.endsWith(hk) || hk.endsWith(k)))) return 2;
-  return oneCharOff(k, hk) ? 1 : 0;
+  return buildingMatchTier(readName, headName, roomKey(room));
 }
 
 /**
@@ -54,7 +41,7 @@ export function sameBuildingTier(readName: string | null | undefined, headName: 
 export function sipVacating(rows: ReadonlyArray<SipRow>, head: { name: string; room: string } | null): SipVacating | null {
   if (!head) return null;
   const hr = roomKey(head.room);
-  if (bkey(head.name).length < 2 || !hr) return null;
+  if (buildingKey(head.name).length < 2 || !hr) return null;
   const hits = rows.map((r) => {
     const rr = roomKey(String(r.room_no ?? (r.facts?.room_no as string | undefined) ?? ""));
     return { r, t: rr === hr && typeof r.facts?.status === "string" ? sameBuildingTier(r.property_name, head.name, head.room) : 0 };

@@ -24,6 +24,7 @@
 import { splitPropertyName, matchRoomRefs, buildingKeyOf, type RoomRef } from "./customer-state";
 import { alternativeCaptureEnabled } from "./staff-capture";
 import { jstParts } from "./jst-date";
+import { staleMaterialOf, staleMaterialLine } from "./stale-material";
 // 2026-10-08 8巡目（記録の続き・竹内「オススメした物件と、お客さんが送ってきた物件をちゃんと保管できていればできる」）
 import { extractScreenshotProperty, seriesTokens } from "./own-property-match";
 import { similarity } from "./property-name-match";
@@ -610,6 +611,10 @@ export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOther
     const src = roomSourceLine(r);
     if (src) lines.push(`  ・${src}`);
     for (const e of r.events.slice(-maxEvents)) lines.push(`  ・${eventLine(e)}`);
+    // 2026-10-15 資料の古さの印（stale-material.ts・戻す: STALE_MATERIAL_NOTE=off）。言うか・確認するかはブレイン
+    const lastT = ts.at(-1);
+    const stale = lastT ? staleMaterialOf(r, lastT.at, lastT.customerText, lastT.topic) : null;
+    if (stale) lines.push(staleMaterialLine(stale));
     // 今の番の「こちら」がどの物件かを1行で（引用先が名前の無い見積書の画像でも、根拠と一緒に名前を渡す）
     for (const t of ts) {
       const why = t.why ? t.why : t.by === "inferred" ? "（引用先はこちらが送った見積書の画像・その前にお客様が初期費用を聞いた物件の見積書と推定）" : t.by === "quote" ? "（引用先の画像の物件）" : "（物件名の名指し）";
