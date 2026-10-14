@@ -114,7 +114,11 @@ export async function recordSentImageProperty(opts: {
           const it0 = read.items[0];
           // 駅の名前は確かな直しだけ（旧字「大國町→大国町」・3つ以上の建物で見た化け）
           const f = factsFromImageRead({ ...it0, station: it0.station ? fixReadStationName(it0.station) : it0.station });
-          if (Object.keys(f).length) freshFacts = { ...f, src: "image", model: process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash" };
+          // 2026-10-14 敷金・礼金の「万」の読み違い（20→200,000・5.5→55,000）を同じ読み取りの賃料で直す（reading-amounts.ts・READ_AMOUNT_GUARD=off）
+          const { checkReadAmounts } = await import("@/app/lib/reading-amounts");
+          const g = checkReadAmounts(f);
+          if (g.changes.length) console.log(JSON.stringify({ tag: "read-amount-guard", imageUrl: imageUrl.slice(-40), changes: g.changes }));
+          if (Object.keys(g.facts).length) freshFacts = { ...g.facts, src: "image", model: process.env.PROPERTY_IMAGE_MODEL ?? "deepseek-flash" };
         } catch { /* 値が読めなくても物件の記録は続ける */ }
       }
     }
