@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { customerMemoView, applyStaffMemoEdit } from "@/app/lib/customer-memo-server";
-import { LLM_MEMO_KINDS, type MemoKind } from "@/app/lib/customer-memo";
+import { LLM_MEMO_KINDS, CALL_MEMO_CHARS, type MemoKind } from "@/app/lib/customer-memo";
 
 export const maxDuration = 20;
 const ID_RE = /^[0-9a-f-]{36}$/i;
@@ -29,13 +29,14 @@ export async function POST(req: NextRequest) {
   const b = (await req.json().catch(() => null)) as { conversation_id?: string; op?: string; id?: string; kind?: string; text?: string; reason?: string } | null;
   const conversationId = String(b?.conversation_id ?? "").trim();
   if (!ID_RE.test(conversationId)) return NextResponse.json({ ok: false, error: "bad request" }, { status: 400 });
-  const text = String(b?.text ?? "").trim().slice(0, 60);
+  // 2026-10-14（37af1885）: 電話で分かった事（call）は200字まで（AIX【電話する→電話終了後】から）
+  const text = String(b?.text ?? "").trim().slice(0, b?.kind === "call" || b?.op === "update" ? CALL_MEMO_CHARS : 60); // update は行の種類で applyMemoOps が切る
   const id = String(b?.id ?? "").trim();
   let r: { ok: boolean; error?: string };
   switch (b?.op) {
     case "add":
-      // 2026-10-09 決め手の残り（decide_gap）はスタッフが手で足せる（DeepSeek の読み取りには出させない）
-      if (!text || !(LLM_MEMO_KINDS.includes(b.kind as MemoKind) || b.kind === "decide_gap")) return NextResponse.json({ ok: false, error: "kind/text required" }, { status: 400 });
+      // 2026-10-09 決め手の残り（decide_gap）・2026-10-14 電話で分かった事（call）はスタッフが手で足せる（DeepSeek の読み取りには出させない）
+      if (!text || !(LLM_MEMO_KINDS.includes(b.kind as MemoKind) || b.kind === "decide_gap" || b.kind === "call")) return NextResponse.json({ ok: false, error: "kind/text required" }, { status: 400 });
       r = await applyStaffMemoEdit(conversationId, { op: "add", kind: b.kind as MemoKind, text }); break;
     case "update":
       if (!id || !text) return NextResponse.json({ ok: false, error: "id/text required" }, { status: 400 });

@@ -2483,7 +2483,8 @@ ${catalogBlockForBrain(brainScene)}
     available: "空室あり（申込可）",
     unavailable: "募集終了",
     vacating: "退去予定（空室予定）",
-    alternative: "代替提案物件",
+    // 2026-10-14（37af1885）: 聞かれた部屋が埋まり、同じ建物の募集中の別の部屋をこちらが案内した（この部屋が今の候補の中心になりうる）
+    alternative: "別の部屋（聞かれた部屋の代わりに案内・募集中）",
   };
   const propStatusByName = new Map<string, string>();
   for (const l of aixLogs) {
