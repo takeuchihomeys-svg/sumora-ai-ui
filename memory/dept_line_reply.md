@@ -5,6 +5,18 @@
 - **洗い出し**（30日・LLM なし）: 返信の下書きは物件の中身をほぼ書けている（竹内さん手打ち163番で足したのは6番）。AIX は材料の有無が壁＝物件オススメ 239押下で売上サポの行 15%・送った資料の保存した読み（sent_image_properties.facts）64%。物件ピックアップは画像を上げ直すので行と結べない（手渡しの束のまま送った時だけ）
 - **つないだ**: 物件オススメの2通目（✨）で売上サポの行が無い時、保存した読みの駅・築年・敷礼なし＋お客様の希望との合う・満たさない（`app/lib/second-material-saved-read.ts`・`SECOND_MATERIAL_SAVED_READ=off` で旧）。材料が届く2通目 4→33/60。礼金ありの読みでは止めない（12中4が実送信「敷金礼金なし」）
 - 前後（YUMA・DeepSeek 3番×2回・$0.14）: 竹内さんの実送信との近さは揺れの内（0.455→0.466）。間取り・家賃まで渡すと長くなる（0.48→0.46）ので外した。測り `scripts/audit-second-saved-read.ts`
+最終更新: 2026-10-14
+## 🖼 お客様が送った物件（画像・URL）を物件検索ブレインへ・個人情報の画像は線で止める（10/14 作る人・ブランチ customer-images-1014）
+- **物差し** `scripts/audit-customer-sent-properties.ts`（LLM なし・180日 お客様の画像 1,023・URL つき 708）: 受け取った時点の仕分けは既にある（見出し・本人確認書類 111・書類 16 は種類だけ）。読み取り前の「[画像]」434 は 6〜8月の昔の行（9月以降 1）。物件の画像 362（値が取れる 357）・物件の URL 543 は🌟・判定・好みの学習のどれにも入っていなかった（転送 0）。お客様の画像が DeepSeek の読み取りの表（sent_image_properties・image_details）にある数 0
+- **見つけた道**: 毎週の好みの読み（pref_read_customer・DeepSeek）が発言を画像の書き起こしごと渡していた（456行・個人情報の語つき 4）→ 物件は値だけ・それ以外は見出しだけ（CUSTOMER_PREF_IMAGE_GATE=off で旧）。【種類不明】で全文が残る重説の写真（お客様の氏名つき）→ 受け取りで書き起こしを残さない（IMAGE_PERSONAL_HINT_DROP=off）
+- **転送** `customer-sent-property.ts`（線: 物件の見出しだけ・個人情報の指紋が1つでも当たれば落とす・種類不明は通さない）→ `pickup-rank.loadRankConditions(…, convIdEff)` が🌟の条件の外に「お客様が自分で送ってきた物件」のブロック（値＋前後20分の一言・伏せ字）。向きは DeepSeek が一言から読む。申込の線より後だけ。SUUMO のページは30日以内を最大2件・3秒（CUSTOMER_SENT_PORTAL_FETCH=off）。全体 CUSTOMER_SENT_PROPERTY=off
+- 見本（作り物・DeepSeek 3回・Claude 0）: 材料なし [2,3,1] →「高いので無し」の一言つきの似た物件を渡すと [3,1,2]。好きの一言は同じ1位で変わらず
+- 残り（竹内さん判断）: 種類不明のまま書き起こしが残る 振込の控え（振込人名つき）・会員 ID の画面 → 受け取りの指紋を足すか
+## 🔁 返信側の残り（10/14 作る人・ブランチ reply-followups-1014）
+- **決定 C をブレイン基準に**（P0 9eb6aa9c ②・見直し役の指摘）: 規則（rule:ack_after_promise_reply）が LLM の物件 AIX を null にしていた → 網（ack-exhausted-reply.ackAfterPickupTurn＝お礼・了承だけ×台帳の最後の約束がピックアップ×確認・見積が残っていない）で今の番を見つけ LLM の前に「今の番（材料）」の1行。規則は aix の欄が無い時の網だけ・ブレインが AIX を選んだら上書きせず demoted_overrides（ACK_AFTER_PROMISE_BRAIN=off で旧）。約束の材料（staffPromiseMaterialLine・pickupReadyMaterialLine）の「お礼・了承なら AIX」に決定 C の但し書き。出し切りの後の条件の足しも同じ形（EXHAUSTED_CONDITION_BRAIN=off で旧）。試験（DeepSeek・q094 q110 q112 q003 q004 q006 q007・前後1回）道 6/7→7/7・本質（LLM の最初の答え）も決定どおり（q112 q006 q007 物件 AIX→返信・q094 AIX のまま）
+- **敷金の単位不明の印**: facts.deposit_unit/key_money_unit="unclear" を契約条件の材料に（route=confirm＋候補・言い切るか確認かはブレイン・allInMaterial にしない）・下書きの照らしは値を外す（「敷金2ヶ月」を根拠ありにしない）。DEPOSIT_UNIT_UNCLEAR=off。本番の印の行は今 0
+- 見積書送付の後の行を a43ade78（2通目はご査収のまま）と別の対象と明記／間取り図の読みはキッチンの形・向きを字がある時だけ（material-plan-v4・MATERIAL_PLAN_TEXT_ONLY=off）
+- 設計知見の案: scripts/kb-answer-brain-1014.json（区切り1〜6）・scripts/kb-ack-after-promise-brain-1014.json（b0be2568 の書き直し・決定 C のブレイン基準・単位不明）。DB には未投入
 ## 📥 スタッフしか知らない事を AIX の入力からブレインへ（10/14 作る人・ブランチ capture-staff-info-1014・設計知見 37af1885）
 - **物差し** `scripts/audit-staff-info-capture.ts`（LLM なし）: 120日 物件カードの「別の部屋」7番＝次のブレインの今の物件がその部屋 0/6・台帳に募集中の出来事 0/7（状態 alternative を誰も読まない）／上の「別の部屋が募集してた」9番＝記録の名前 0／内覧後の挨拶 9番＝内覧の内容 0／電話をかけるボタン 19回・電話終了後 0回・電話の記録 0
 - **直し** `app/lib/staff-capture.ts`: ①台帳 check_alternative・状況 check_available（STAFF_CAPTURE_ALTERNATIVE=off）→ 台帳 0→7 ②上の別の部屋は本文の建物名＋『代わりに案内するお部屋』の号室で記録 ③内覧後: タップ（結果・気に入った点・気になった点・次の動き）→ viewing_report・生成の前に保存を待つ ④電話終了後: タップ＋『記録だけする』→ お客様のメモ kind=call（場面に関係なくブレイン・返信へ・STAFF_CAPTURE_CALL=off）。画面は NEXT_PUBLIC_STAFF_CAPTURE_UI=off で旧

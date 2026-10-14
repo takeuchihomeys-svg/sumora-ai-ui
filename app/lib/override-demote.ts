@@ -89,7 +89,7 @@ export function compactDemoted(list: DemotedOverride[]): Array<{ f: OverrideFami
 export function pickupReadyMaterialLine(ready: boolean, promised: boolean | null = null, env: Env = process.env): string {
   // 2026-10-14 竹内さん（10/13「AIX か返信か分別」）: 約束していない番の物件の AIX は、竹内さんはまず約束（条件の番 竹内さん 約束 126／AIX 5・two-stage の線）
   const notPromised = ready && promised === false && directPropertyNeedsPromise(env)
-    ? "。ただし、この件ではまだピックアップしてお送りする約束をしていない＝竹内さんはまず約束の返信（条件の番 約束 126・物件の AIX を直接 5）。物件の AIX を直接出すのは、もう約束している・今日もう同じ約束をした・お礼や了承だけの番"
+    ? `。ただし、この件ではまだピックアップしてお送りする約束をしていない＝竹内さんはまず約束の返信（条件の番 約束 126・物件の AIX を直接 5）。物件の AIX を直接出すのは、もう約束している・今日もう同じ約束をした・お礼や了承だけの番${ackCMaterialOn(true, env) ? "（ピックアップの約束の直後のお礼・了承だけの番は決定 C で返信）" : ""}`
     : "";
   return ready
     ? `【送れる物件の候補（材料）】売上サポに今送れる新しい物件の候補がある＝物件の AIX（物件ピックアップした・1件特にオススメ）を直接出せる。ただし今のお客様の発言が条件の言い直し・質問・ご事情なら、先に答えてピックアップの約束（turn_contract の該当の route は promise）でもよい。どちらかを aix と turn_contract で同じに書く${notPromised}`
@@ -104,7 +104,15 @@ export function staffPromiseMaterialLine(f: { estimatePromisedUnfulfilled?: bool
   if (f.estimatePromisedUnfulfilled) ks.push("御見積書（果たすのは AIX【見積書送る】）");
   if (f.pickupPromisedUnfulfilled) ks.push("ピックアップ（果たすのは AIX【物件ピックアップした】／【物件オススメ】）");
   if (!ks.length) return "";
-  return `【まだ果たしていないこちらの約束（材料）】${ks.join("・")}。お客様の今の発言がお礼・了承だけ・約束の催促なら、約束を果たす AIX の番。お客様が新しい問い・ご事情を書いた番は、その問いに答える返信が先のこともある（30日・確認の約束が残る番の食い違い: ブレインの答えが正 12・約束の AIX が正 4）`;
+  // 2026-10-14 決定 C をブレイン基準に: ピックアップの約束の直後のお礼・了承だけは返信（材料どうしを食い違わせない・ACK_AFTER_PROMISE_BRAIN=off で旧の文）
+  const cNote = ackCMaterialOn(f.pickupPromisedUnfulfilled) ? "（ただしピックアップの約束の直後のお礼・了承だけの番は、竹内さんの決定 C で返信＝物件の AIX はその後）" : "";
+  return `【まだ果たしていないこちらの約束（材料）】${ks.join("・")}。お客様の今の発言がお礼・了承だけ・約束の催促なら、約束を果たす AIX の番${cNote}。お客様が新しい問い・ご事情を書いた番は、その問いに答える返信が先のこともある（30日・確認の約束が残る番の食い違い: ブレインの答えが正 12・約束の AIX が正 4）`;
+}
+/** 決定 C（ピックアップの約束の直後のお礼・了承だけ＝返信）を材料の文にも書くか（ack-exhausted-reply の2つの環境変数と同じ・ここで読む） */
+function ackCMaterialOn(pickup: boolean | undefined, env: Env = process.env): boolean {
+  if (!pickup) return false;
+  const off = (k: string) => (env[k] ?? "").trim().toLowerCase() === "off";
+  return !off("ACK_AFTER_PROMISE_REPLY") && !off("ACK_AFTER_PROMISE_BRAIN");
 }
 /**
  * 約束の催促か（「まだですか」「どうなりましたか」「いつ頃になりますか」「物件まだ？」）。10/14 確かめる人: 催促はお礼・了承だけではないが、

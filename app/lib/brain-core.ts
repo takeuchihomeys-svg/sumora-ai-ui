@@ -149,7 +149,7 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial } from "@/app/lib/ack-exhausted-reply";
+import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
@@ -653,7 +653,7 @@ const PHASE_TEMPLATE_HINTS = `
 - property_send（駅指定・希望条件から外れる旨の告知あり）→ 「駅周辺物件ピックアップ（後続）」。実測1分33秒。AI最適化必須: 駅名置換＋「〜のみの募集となります」の断定化リライト
 - property_send（ピックアップ全件が即入居可能）→ 「【全件案内可能】」相当文。「審査通過次第ご入居可能」の一括保証でAIXが残した唯一の不安（いつ入れるか）を潰す。実測8分56秒→顧客が2分45秒で物件確定した最強事例あり（原文一致なしの手打ちのため骨格のみ流用）
 - property_recommendation（1件詳細）→ 「1件特にオススメ」。実測1分22秒。※原文そのままの送信実績はゼロ。1件に絞って感情的に推す"思想"だけを流用し全面リライトすること
-${BRAIN_ENTRY_TRIM_ON ? "- estimate_sheet（見積書送付の後）→ 必須の追撃は無い。竹内さんの実送信（60日・見積書送る 153回）: 5分以内に内覧のご案内 70回（46%）・申込の語 39回（25%）。内覧の前なら内覧のご案内、内覧の後でお客様が前向きなら「【申込誘導】」。どちらも会話を読んで決める（毎回は付けない）" : "- estimate_sheet（見積書送付直後・同分〜1分以内が必須）→ 「【申込誘導】」。実測33秒／1分06秒。AI最適化必須: 物件名・号室を文中に溶かす（「〇〇901号室の最大限割引させていただいたお見積書をお送りさせて頂きました」）。顧客の申込まで最短2分の実証あり"}
+${BRAIN_ENTRY_TRIM_ON ? "- estimate_sheet（見積書送付の後）→ 必須の追撃は無い。竹内さんの実送信（60日・見積書送る 153回）: 5分以内に内覧のご案内 70回（46%）・申込の語 39回（25%）。内覧の前なら内覧のご案内。内覧の後は、AIX の後の2通目（見積書送る【AIX】の✨）の締めは決まりどおりご査収のまま（申込誘導を足さない）。「【申込誘導】」は、それとは別に、内覧を終えたお客様が今の発言で前向き（申込みたい・ここに決めたい）を言った番の次の一手。どれも会話を読んで決める（毎回は付けない）" : "- estimate_sheet（見積書送付直後・同分〜1分以内が必須）→ 「【申込誘導】」。実測33秒／1分06秒。AI最適化必須: 物件名・号室を文中に溶かす（「〇〇901号室の最大限割引させていただいたお見積書をお送りさせて頂きました」）。顧客の申込まで最短2分の実証あり"}
 - application_push で①申込時フォーマット本体を送った直後 → 「②申込時フォーマット（続き）」。実測32秒〜4分48秒。★一字一句そのまま送る（AI最適化禁止）。トリガーは顧客の申込意思表示ではなく「①を送ったこと」そのもの（意思表示は数時間前にあることが多い）。2会話2/2で申込情報の全項目を回収した唯一の再現性100%テンプレ
 - property_check_result（2番手での申込が可能と判明）→ 「（2番手・申込）」。実測1分29秒・顧客名の置換のみ。AIXが別物件の見積を送っていても社内進捗（2番手確保済み）を差し込むと顧客の関心が戻り内覧アポに転換する
 - 条件ヒアリングAIX後 → 「ヒアリング締め」／「物件探しテンプレート【続き】」。実測1分17秒でそのまま送る（顧客名と関係性の文脈だけ補正）
@@ -2637,6 +2637,20 @@ ${catalogBlockForBrain(brainScene)}
     const spLine = staffPromiseMaterialLine(brainLedger.facts);
     if (spLine) customerStateBlockText += `\n\n${spLine}${ackAfterPromiseMaterial()}`;
   }
+  // 2026-10-14 決定 C をブレイン基準に（P0 9eb6aa9c ②）: 今の番が決定 C の番か（網）を材料で渡し、返信か AIX かはブレインが決める。
+  //   後の rule:ack_after_promise_reply は aix の欄が無い時だけの網（ACK_AFTER_PROMISE_BRAIN=off で旧の上書き）
+  let ackAfterPickupNow = false;
+  if (ackAfterPromiseReplyEnabled() && ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
+    const lastIsCust = typedMessages[0]?.sender === "customer";
+    const f = brainLedger.facts;
+    ackAfterPickupNow = ackAfterPickupTurn({
+      ackOnly: lastIsCust && !unrepliedTurn.hasImage && !!unrepliedTurn.text.trim() && analyzeSubstance(unrepliedTurn.text, [unrepliedTurn.text]).isAckOnly,
+      nudge: isPromiseNudge(unrepliedTurn.text ?? ""),
+      lastEntry: f.lastStaffEntry?.status === "promised" ? f.lastStaffEntry : (f.lastStaffAixTextPromise ?? f.lastStaffEntry),
+      pickupOpen: f.pickupPromisedUnfulfilled, estimateOpen: f.estimatePromisedUnfulfilled, confirmOpen: f.confirmationPromisedUnfulfilled,
+    });
+    if (ackAfterPickupNow) customerStateBlockText += `\n\n${ackAfterPickupTurnLine()}`;
+  }
   if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
     try {
       const { data: pendNow } = await supabase.from("property_pickups").select("created_at, expired_at").eq("conversation_id", conversationId).eq("status", "pending").order("created_at", { ascending: false }).limit(50);
@@ -2665,6 +2679,11 @@ ${catalogBlockForBrain(brainScene)}
       const line = searchSplitServerEnabled() ? splitMaterialLine(exNow) : exhaustedMaterialLine(exNow);
       if (line && !searchSplitServerEnabled()) customerStateBlockText += `\n\n${line}`;
       if (searchSplitServerEnabled()) splitExhaustLine = line ? `${line}${exhaustedConditionMaterial()}` : line;
+      // 2026-10-14 出し切りの後の条件の足しをブレイン基準に（EXHAUSTED_CONDITION_BRAIN）: 今の番の行で材料を渡す（後の規則と同じ印の強さだけ）
+      if (exhaustedConditionBrainEnabled() && exNow.exhausted && !(exNow.strength === "weak" && weakExhaustDemoted())) {
+        const tl = exhaustedConditionTurnLine();
+        if (tl) customerStateBlockText += `\n\n${tl}`;
+      }
     } catch (e) { console.warn("[brain-core] exhausted material skipped:", e instanceof Error ? e.message : String(e)); }
   }
   // 2026-10-13 竹内さんの決定（B）「新規のときには使わない。新着物件のところや、他に物件あるのかの部分で使う」:
@@ -3333,15 +3352,33 @@ ${history}`;
     // 2026-10-14 竹内さんの決定 C: ピックアップの約束の直後にお客様がお礼・了承だけを言った番は、お礼に短く返信する（その後に約束を果たす AIX）。
     //   旧はこの番に物件の AIX を立てていた（試験 q110・q112 が毎回 AIX:property_send）。確認・見積の約束の直後のお礼は旧のまま（約束を果たす AIX・約8割はスタッフが後で AIX）。
     //   約束の催促は今まで通り AIX。戻す ACK_AFTER_PROMISE_REPLY=off
-    let ackAfterPromise: { kind: string; laterAix: string | null } | null = null;
+    // 2026-10-14 ブレイン基準に（P0 9eb6aa9c ②・見直し役の指摘）: 今の番が決定 C の番か（網）は LLM の前に材料（ackAfterPickupTurnLine）で渡した。
+    //   ブレインが返信（aix null）を選んだ → 返信のまま（約束の AIX で上書きしない・方向はブレインの文）。
+    //   ブレインが AIX を選んだ → 上書きしない（食い違いを demoted_overrides に記録）。aix の欄が無い（決められなかった）時だけ規則で返信（網）。
+    //   戻す ACK_AFTER_PROMISE_BRAIN=off（旧: 規則が LLM の物件の AIX を null にする）
+    let ackAfterPromise: { kind: string; laterAix: string | null; byBrain: boolean } | null = null;
+    const llmAixRawC = normalizeAixActionKey(parsed.aix) ?? null;
     if (ackAfterPromiseReplyEnabled() && customerAckAfter && !isPromiseNudge(unrepliedTurn.text ?? "")
-      && (promiseAix ? promiseAix.kind === "pickup" : (brainLedger.facts.pickupPromisedUnfulfilled && !!finalAix && PROPERTY_AIX.has(finalAix)))) {
-      ackAfterPromise = { kind: promiseAix?.kind ?? "pickup", laterAix: promiseAix?.action ?? finalAix ?? null };
-      console.log(JSON.stringify({ tag: "brain:ack-after-promise-reply", conversationId, kind: ackAfterPromise.kind, would: ackAfterPromise.laterAix, llm: finalAix ?? null }));
-      promiseAix = null;
-      finalAix = null;
-      sceneSignalCheckPattern = null;
-      decisionSource = `rule:ack_after_promise_reply(${ackAfterPromise.kind})`;
+      && (promiseAix ? promiseAix.kind === "pickup" : (brainLedger.facts.pickupPromisedUnfulfilled && ((!!finalAix && PROPERTY_AIX.has(finalAix)) || (ackAfterPickupNow && !llmAixRawC))))) {
+      const laterAix = promiseAix?.action ?? finalAix ?? null;
+      const brainMode = ackAfterPromiseBrainEnabled();
+      const llmAixPresent = Object.prototype.hasOwnProperty.call(parsed, "aix");
+      if (ackAfterPromiseRuleApplies({ brainMode, llmAixPresent })) {
+        ackAfterPromise = { kind: promiseAix?.kind ?? "pickup", laterAix, byBrain: false };
+        console.log(JSON.stringify({ tag: "brain:ack-after-promise-reply", conversationId, kind: ackAfterPromise.kind, would: laterAix, llm: llmAixRawC, by: "rule" }));
+        promiseAix = null; finalAix = null; sceneSignalCheckPattern = null;
+        decisionSource = `rule:ack_after_promise_reply(${ackAfterPromise.kind})`;
+      } else if (!llmAixRawC) {
+        // ブレイン自身が返信を選んだ（決定 C どおり）
+        ackAfterPromise = { kind: promiseAix?.kind ?? "pickup", laterAix, byBrain: true };
+        console.log(JSON.stringify({ tag: "brain:ack-after-promise-reply", conversationId, kind: ackAfterPromise.kind, would: laterAix, llm: null, by: "brain" }));
+        promiseAix = null; finalAix = null; sceneSignalCheckPattern = null;
+        decisionSource = `llm:ack_after_promise(${ackAfterPromise.kind})`;
+      } else {
+        // ブレインが AIX を選んだ＝上書きしない（食い違いだけ残す）
+        addDemoted(demotedOverrides, { family: "staff_promise", src: "rule:ack_after_promise_reply", would: null, brain: llmAixRawC });
+        console.log(JSON.stringify({ tag: "brain:ack-after-promise-brain-aix", conversationId, llm: llmAixRawC, promise: promiseAix?.action ?? null }));
+      }
     }
     if (promiseAix) {
       finalAix = promiseAix.action;
@@ -4231,7 +4268,8 @@ ${history}`;
       // 2026-10-01 竹内（ひまり「家賃込の価格でしょうか？」）: 家賃込みかの質問だけ → 返信で答える方向（LLM の「初期費用について AIX で…」を残さない）
       : rentIncludedReply ? "初期費用（御見積書の金額）は翌月分の前家賃込みであることを本文で答える（ご入居日によって別途日割家賃・金額は書かない）"
       : null;
-    const replyDirection = ackAfterPromise ? ackAfterPromiseDirection(ackAfterPromise.kind, ackAfterPromise.laterAix) : waitingCustomerInfo ? `お客様の連絡待ち（こちらから「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み）。ピックアップ・新しい提案・約束はしない。返信するなら短い受け止めだけ` : twoStage ? twoStage.direction : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
+    // 2026-10-14 決定 C をブレイン基準に: ブレイン自身が返信を選んだ番はブレインの方向の文のまま（空の時だけ規則の方向）
+    const replyDirection = ackAfterPromise ? (ackAfterPromise.byBrain && rentGuard.text ? rentGuard.text : ackAfterPromiseDirection(ackAfterPromise.kind, ackAfterPromise.laterAix)) : waitingCustomerInfo ? `お客様の連絡待ち（こちらから「${(waitingInfo.evidence ?? "").slice(0, 40)}」とお伝え済み）。ピックアップ・新しい提案・約束はしない。返信するなら短い受け止めだけ` : twoStage ? twoStage.direction : procedureDirection !== null ? procedureDirection : focusedEstimateOverride !== null
       ? `${focusedEstimateOverride ? `${focusedEstimateOverride}の` : ""}最大限割引した初期費用の御見積書を作成してお送りする（募集状況の確認の宣言はしない）`
       : rentGuard.text ?? (rentGuard.dropped ? "ご条件に合うお部屋を引き続きピックアップしてお届けする（家賃の交渉には触れない）" : null);
 
@@ -4645,7 +4683,14 @@ ${history}`;
       // 2026-10-13 ブレイン基準（棚卸し B-1）: 送付だけの印（weak）での出し切りは上書きしない（材料は LLM の前に渡した・食い違いは demoted_overrides）。明示の印（strong）は今まで通り
       const weakOnly = exh.exhausted && exh.strength === "weak" && weakExhaustDemoted();
       // 2026-10-14 竹内さんの決定: 出し切った後に条件を足した・言い直した番は左右のボタンではなく返信で締める（新着が出次第お送りする約束）。戻す EXHAUSTED_CONDITION_REPLY=off
-      if (exhaustedConditionAddTurn({ conditionChangeType, exhausted: exh.exhausted && !weakOnly && !isPostApplyStatus(convStatus), ackOnly: ackOnlyNow })) {
+      // 2026-10-14 ブレイン基準に（EXHAUSTED_CONDITION_BRAIN・既定は ack-exhausted-reply の EXHAUSTED_CONDITION_BRAIN_DEFAULT）: ブレイン自身が物件の AIX を選んだ番は上書きしない（食い違いを記録）
+      const exhCondTurn = exhaustedConditionAddTurn({ conditionChangeType, exhausted: exh.exhausted && !weakOnly && !isPostApplyStatus(convStatus), ackOnly: ackOnlyNow });
+      const llmRawPropertyAix = (() => { const a = normalizeAixActionKey(parsed.aix) ?? null; return !!a && PROPERTY_AIX.has(a); })();
+      if (exhCondTurn && exhaustedConditionBrainEnabled() && llmRawPropertyAix) {
+        addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:exhausted_condition_reply", would: null, brain: normalizeAixActionKey(parsed.aix) ?? null });
+        console.log(JSON.stringify({ tag: "brain:exhausted-condition-brain-aix", conversationId, llm: normalizeAixActionKey(parsed.aix) ?? null, cct: conditionChangeType }));
+      }
+      if (exhCondTurn && !(exhaustedConditionBrainEnabled() && llmRawPropertyAix)) {
         console.log(JSON.stringify({ tag: "brain:exhausted-condition-reply", conversationId, from: finalAix ?? (twoStagePickupNow ? "two_stage:pickup" : null), cct: conditionChangeType, markerAt: exh.markerAt }));
         exhaustedConditionReply = true;
         finalAix = null; twoStage = null; replyMode = "auto_reply"; sceneSignalCheckPattern = null;

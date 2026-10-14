@@ -1,0 +1,62 @@
+[
+  {
+    "title": "出口ごとの変化（消えた文・足された文・理由）を tpo_debug に残してから直す — 記録の穴があると「どの出口が正しい文を消したか」が分からない",
+    "category": "architecture",
+    "priority": 2,
+    "insight": "返信の下書きは gen1・gen2・最終チェックの書き直し・書き直しの後の applySurfaceFixes・最終チェックの後の掛け直し（gen 0）の出口を通る。それぞれの出口で消えた文・足された文・理由を tpo_debug.postprocess.exitEdits に残す（app/lib/exit-edits.ts・EXIT_EDITS_LOG=off）。送った例の tpo_debug は14日 412行中 38% が欠けていたので、画面から来ない時は会話の ai_draft_check が同じ番（下書きの hash・お客様の発言／連投の最後の1通の hash＝context_last_hash）の時だけサーバーで補う（app/lib/tpo-debug-fallback.ts・TPO_DEBUG_SERVER_FALLBACK=off）。欠けの多くは下書きの無い手打ちの番＝補えない。",
+    "rationale": "竹内さん 10/14「出口の規則が正しい文を消す」。直す前に、どの出口がどの文を消したかを1番ずつ読めないと、ゲートを直しても別の出口が同じ文を消す（出口の玉突き e64e77b6 と同じ型）。違う番の記録を混ぜないように hash が合う時だけ補う。",
+    "context": "2026-10-14 答える返信の改善（ブランチ answer-brain-1014）区切り1・e28c4ab2",
+    "applied_to": "app/lib/exit-edits.ts・app/lib/tpo-debug-fallback.ts・app/api/generate-reply/route.ts",
+    "tags": ["出口の決定論", "記録", "generate-reply", "静かに壊れる", "line-reply"]
+  },
+  {
+    "title": "見積作成宣言・空室確認の再宣言のゲートは物件ごと・時間の窓・ブレインの本質で解く — 実送信の人の文を消していた（見積 48・空室 28 → 0）",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "出口の再宣言のゲート（app/lib/redeclare-gate.ts）: 見積作成宣言の繰り返しは、見積は物件ごと（aix_usage_logs.property_names×ブレインの今の物件）・7日の窓・費用の質問（物件の参照なしでも）で解く。空室確認の再宣言は同じ物件の確認だけ・空室の話題の文だけ（「管理会社」の語では当てない）・結果の報告（させて頂きましたところ・〜とのこと）を除く。消さない: ブレインの本質に見積／確認の約束か AIX【見積書送る】【物件確認した】がある・contractProtectsSentence・新しい相手への約束（他のお部屋・お送り頂けましたら・新着・〜も一緒に・送った物件と別の物件名）。残す線（安全の線）: 二重の約束（直前のこちらの文が同じ約束）・送っていないのに送ったと書く文。最終チェックの block の道でも文体の指摘を書き直しに渡さない（FINAL_CHECK_BLOCK_STYLE_SKIP=off）。戻す REDECLARE_GATE_BRAIN=off。",
+    "rationale": "会話単位の旗（見積を一度送った・確認を一度約束した）が別の物件・何日も後・新しい依頼まで止めていた。実送信（手打ち30日 1,281通・scripts/audit-redeclare-gates.ts）に当てると人の文を 見積 未来20・報告28／空室 未来20・報告8 消す形だった＝0 にした。下書きで2つの規則が消した19文（45日）は新で消す1・残す18（スタッフが送った4は全部残る）。P0 9eb6aa9c（約束するかはブレインが決める・規則は安全の線だけ）。",
+    "context": "2026-10-14 答える返信の改善（ブランチ answer-brain-1014）区切り2・6f498ab1",
+    "applied_to": "app/lib/redeclare-gate.ts・app/api/generate-reply/route.ts・scripts/audit-redeclare-gates.ts",
+    "tags": ["出口の決定論", "ブレイン", "見積書", "空室確認", "約束", "line-reply", "場面:初期費用"]
+  },
+  {
+    "title": "物件資料で答えられる質問（間取り・水回りの配置・広さ・階・向き・収納・キッチン）は物件検索ブレインの読みを材料にして本文で答える — 材料が無いと「確認させて頂きます」か作り話に倒れる",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "網（app/lib/material-question.ts）＝間取り・水回りの配置・広さ・階・向き・収納・キッチンの質問（画像の通は外す）。対象＝送った物件（equipment と同じ決まり）＋ブレインの主のお部屋。読み（app/lib/material-answer-server.ts）＝送った資料の書き写し image_details・売上サポの間取り図の読み property_sheet_facts・その場の間取り図の読み（横長の資料は間取り図の枠を3倍・室内写真の枠を2倍に切り出し・mplan|<url> で保存して使い回す・階は図から使わない・漢字は日本の字形）。ブレイン（brain-core の材料）と返信（generate-reply の注記・staffSourceText・contractMaterialFacts）に同じ文を渡す。水回りの配置は図の囲みで読む（便器と洗面台が同じ囲み＝アメリカンセパレート）。キッチンの形と向きは図・資料に字で書いてある時だけ（1e9fb6be・aa5280ce）。戻す MATERIAL_ANSWER=off・MATERIAL_ANSWER_READ=off。",
+    "rationale": "竹内さん 10/14「答えに要る事実が届かずブレインが確認の約束に倒れる」。055d4212（洗面台とトイレ一緒か）: 直す前の読みは独立と誤読・図の囲みで読ませると 3/3 でアメリカンセパレート・独立の物件（Alivis新町）は独立のまま・図の無い資料は不明。YUMA 再生（DeepSeek）: 材料なし＝「確認させて頂きます」1・作り話のアメリカンセパレート1／材料あり＝本質も下書きも資料のとおり 5/5。60日の答える番 1,709 で網が当たる 18。",
+    "context": "2026-10-14 答える返信の改善（ブランチ answer-brain-1014）区切り3・8e2875ab",
+    "applied_to": "app/lib/material-question.ts・app/lib/material-answer-server.ts・app/lib/brain-core.ts・app/api/generate-reply/route.ts",
+    "tags": ["ブレイン", "物件資料", "間取り図", "読み取り", "DeepSeek", "line-reply", "場面:質問"]
+  },
+  {
+    "title": "ブレインと返信の入口の昔の決まりを外して実送信と reply_opener に任せる — 冒頭の禁止語の列・見積の後の申込誘導の必須・来阪の枠・申込経験者の訴求文・評価文の重要原則",
+    "category": "prompt_engineering",
+    "priority": 1,
+    "insight": "入口（プロンプト）で固定していた決まりを外し、判断材料に下げた: #4 返信の冒頭は reply_opener と実送信に任せる（許可は2つだけ・禁止語の列を外す・1日1回の挨拶は守る・BRAIN_OPENER_FREE=off）／#5 見積書送付の直後の申込誘導の必須を外し実送信の率を材料に（竹内さん 見積書送る 153回: 5分以内に内覧のご案内 46%・申込の語 25%・BRAIN_ENTRY_TRIM=off）／#6 申込経験者の訴求文を外す（同じ変数）／#7 来阪の枠の固定を外す（BRAIN_RAIHAN_SLOT=on で旧）・avoid の枠 8（BRAIN_AVOID_TOPICS_MAX）・must_not の例文を外す／#9 update-knowledge の評価文の principle を imp 6 に（UPDATE_KNOWLEDGE_PRINCIPLE_IMP）・ブレインの重要原則と返信の RAG から評価文を外す（app/lib/principle-eval.ts・PRINCIPLE_EVAL_FILTER=off）・見出しは knowledgeHeading（BRAIN_PRINCIPLE_HEADING=off）／#10 customer-state は「記録から作った値（参考）」として渡す（CUSTOMER_STATE_REFERENCE=off）／#11 会話の履歴に月日＋時刻と今の時刻（BRAIN_HISTORY_TIME=off）／#14 ブレインの指示に日本の漢字の1行・ブレインの文と生成の出口で中国の字形を直す（app/lib/japanese-glyph.ts・JAPANESE_GLYPH_FIX=off）。",
+    "rationale": "P0 9eb6aa9c（判断はブレイン基準・規則は網と安全の線だけ）。入口の固定の決まりは実送信と食い違い（見積の後の申込誘導は竹内さんの実送信で 25%・来阪の枠は会話によらず入っていた）、ブレインの判断を上書きしていた。上位60件の重要原則のうち 48 が評価文（「〜が良かった」）で、判断の材料になっていなかった。60日の送った例 5,353 で下書きの中国の字形 1（a2d4befd・直した後 0）・人の文の誤直し 0。",
+    "context": "2026-10-14 答える返信の改善（ブランチ answer-brain-1014）区切り4・6e46e633",
+    "applied_to": "app/lib/brain-core.ts・app/api/generate-reply/route.ts・app/lib/principle-eval.ts・app/lib/japanese-glyph.ts・app/api/update-knowledge",
+    "tags": ["ブレイン", "入口", "prompt", "line-reply", "実送信", "場面:初期費用", "場面:その他"]
+  },
+  {
+    "title": "会社の事実を4つ足す（竹内さん承認 10/14）: 他社で内覧した物件も弊社で申込できる・学生名義は親の代理契約・申込の LINE での内覧の項目・即入居の物件 — 聞かれた時だけ",
+    "category": "data_model",
+    "priority": 1,
+    "insight": "app/lib/company-facts.ts に other_company_viewing（他社で内覧した物件も弊社で申込して抑えられる・弊社でも内覧可）・student_contract（学生名義は親の代理契約が一番通りやすい）・apply_line_viewing_items・immediate_move_in を足した。どれも聞かれた時だけ材料に出す（90日のお客様の発言で誤当たりを外した: 即入居の物件を探す条件・内見の日・電子契約）。戻す COMPANY_FACT_1014=off。DB の行は無い（コードの表）。",
+    "rationale": "答えに要る会社の事実が材料に無いと、ブレインが確認の約束に倒れるか作り話を書く。会社の事実は竹内さんが承認した文だけ（作らない）。",
+    "context": "2026-10-14 答える返信の改善（ブランチ answer-brain-1014）区切り5・adcaed31",
+    "applied_to": "app/lib/company-facts.ts",
+    "tags": ["会社の事実", "竹内さんの決定", "line-reply", "場面:質問", "場面:申込"]
+  },
+  {
+    "title": "返信か AIX かの物差し: 人の文に AIX の中身（根拠の無い事実・スタッフの予定）があれば、その番は AIX の番（scripts/audit-split-reply-aix.ts）",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "scripts/audit-split-reply-aix.ts（読むだけ）: スタッフが手で送った文に AIX の中身（aix-content-gate.classifyAixContent の根拠の無い文＋スタッフの予定）があれば、その番は本来 AIX の番と数える。30日 835番で 24番（竹内さん 7・目で読んで 20前後が正しい）。--no-aix-text で旧（AIX を押したかだけ）。",
+    "rationale": "AIX を押したかだけで「返信の番／AIX の番」を分けると、スタッフが AIX の中身（空き・入居日・内覧の候補）を手で打った番を返信の番と数え、ブレインの言い過ぎ・言い足りなさを測り違える。",
+    "context": "2026-10-14 答える返信の改善（ブランチ answer-brain-1014）区切り6",
+    "applied_to": "scripts/audit-split-reply-aix.ts・app/lib/aix-content-gate.ts",
+    "tags": ["物差し", "監査", "AIX", "返信", "実データ"]
+  }
+]

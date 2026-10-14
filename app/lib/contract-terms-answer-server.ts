@@ -12,7 +12,7 @@ import { supabase } from "@/app/lib/supabase";
 import { pickEquipmentTargets, type SentPropertyLite } from "@/app/lib/equipment-question";
 import { collectStaffFreeRent, staffFreeRentFor, type StaffFreeRentFact } from "@/app/lib/staff-free-rent";
 import {
-  detectContractTermTopics, routeContractTerm, buildContractTermsNote, contractTermsAllInMaterial,
+  detectContractTermTopics, routeContractTerm, buildContractTermsNote, contractTermsAllInMaterial, depositUnitUnclearEnabled, unitUnclearOfFacts,
   type ContractTermTopic, type ContractRoute, type ContractMaterial, type ContractTarget,
 } from "@/app/lib/contract-terms-question";
 
@@ -51,7 +51,20 @@ export async function loadContractMaterial(o: { conversationId: string; name: st
   }
   const lines = [...(pick?.image_lines ?? []), ...detLines.filter((l) => !(pick?.image_lines ?? []).includes(l))];
   const source: ContractTermsMaterial["source"] = pick && detLines.length ? "both" : pick ? "pickup" : detLines.length ? "image_details" : "none";
-  return { material: { terms: pick?.terms ?? null, lines, pdfText: pick?.pdf_text ?? null }, source };
+  // 2026-10-14 読み取りの「単位不明」の印（reading-gate-server が sent_image_properties.facts に付ける）を材料に渡す（DEPOSIT_UNIT_UNCLEAR=off）
+  let unitUnclear: ContractMaterial["unitUnclear"] = null;
+  if (depositUnitUnclearEnabled()) {
+    try {
+      // 画像が分かる時はその1枚・分からない時は同じ物件名（号室が合う物）の読み取り
+      const q = supabase.from("sent_image_properties").select("facts, room_no").eq("conversation_id", o.conversationId);
+      const { data: sip } = await (o.imageUrl ? q.eq("image_url", o.imageUrl) : q.eq("property_name", o.name)).limit(10);
+      for (const r of (sip ?? []) as Array<{ facts: unknown; room_no: string | null }>) {
+        if (!o.imageUrl && rn && roomNorm(r.room_no) !== rn) continue;
+        const u = unitUnclearOfFacts(r.facts); if (u) { unitUnclear = u; break; }
+      }
+    } catch { /* 読めなければ印なし＝今まで通り */ }
+  }
+  return { material: { terms: pick?.terms ?? null, lines, pdfText: pick?.pdf_text ?? null, unitUnclear }, source };
 }
 
 /**

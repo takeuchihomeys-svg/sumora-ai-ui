@@ -93,7 +93,27 @@ export type ContractMaterial = {
   pdfText?: string | null;
   /** この物件についてスタッフが送った文のフリーレント（staff-free-rent.staffFreeRentFor）。フリーレントはこれだけを根拠にする */
   staffFreeRent?: StaffFreeRentFact | null;
+  /** 2026-10-14 送った画像の読み取りで単位が決まらなかった欄（facts.deposit_unit / key_money_unit="unclear"）の候補（「2ヶ月」「2万円」） */
+  unitUnclear?: { deposit?: string[] | null; key_money?: string[] | null } | null;
 };
+
+/** 単位不明の印を材料に渡すか（戻す DEPOSIT_UNIT_UNCLEAR=off） */
+export function depositUnitUnclearEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.DEPOSIT_UNIT_UNCLEAR ?? "").trim().toLowerCase() !== "off";
+}
+/** facts（sent_image_properties.facts）から単位不明の欄と候補を読む */
+export function unitUnclearOfFacts(facts: unknown): { deposit?: string[]; key_money?: string[] } | null {
+  if (!facts || typeof facts !== "object") return null;
+  const f = facts as Record<string, unknown>;
+  const out: { deposit?: string[]; key_money?: string[] } = {};
+  for (const k of ["deposit", "key_money"] as const) {
+    if (f[`${k}_unit`] !== "unclear") continue;
+    const c = f[`${k}_unit_candidates`];
+    const m = f[`${k}_months`];
+    out[k] = Array.isArray(c) && c.length ? c.map(String) : typeof m === "number" ? [`${m}ヶ月`, `${m}万円`] : ["単位不明"];
+  }
+  return out.deposit || out.key_money ? out : null;
+}
 
 export type ContractRoute = {
   topic: ContractTermTopic;
@@ -103,6 +123,8 @@ export type ContractRoute = {
   facts: string[];
   /** なぜその道か（ログ・監査・プロンプト用の短い語） */
   why: string;
+  /** 2026-10-14 読み取りで単位が決まらない（候補）。言い切るか確認の約束かはブレインが決める */
+  unitUnclear?: string[];
 };
 
 const clean = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -163,6 +185,13 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial,
     const facts = [row ?? evText ?? lineHit[0] ?? null].filter((x): x is string => !!x);
     if (typeof num === "number" && Number.isFinite(num)) {
       return { topic, route: "material", facts: facts.length ? facts : [`${label} ${monthsLabel(num)}`], why: `資料に${label}の記載` };
+    }
+    // 2026-10-14 読み取りの「単位不明」の印（sent_image_properties.facts.<k>_unit="unclear"・reading-gate-server）:
+    //   値が画像の読み取りの行だけから来た時（売上サポの数値・文字層の行が無い）は、言い切れる材料にしない。
+    //   印と候補を渡し、言い切るか確認の約束にするかはブレインが決める（route は confirm＝allInMaterial にしない・規則で返信に倒さない）。戻す DEPOSIT_UNIT_UNCLEAR=off
+    const unclear = depositUnitUnclearEnabled() ? m.unitUnclear?.[topic] : null;
+    if (unclear && !row) {
+      return { topic, route: "confirm", facts, why: `資料の読み取りで${label}の単位が決まらない（候補 ${unclear.join("／")}）`, unitUnclear: unclear };
     }
     if (facts.length) return { topic, route: "material", facts, why: `資料に${label}の記載` };
     return { topic, route: "confirm", facts: [], why: `資料に${label}の記載なし` };
@@ -282,7 +311,9 @@ export function buildContractTermsNote(target: ContractTarget | null, routes: re
   if (!target || routes.length === 0) return "";
   const out: string[] = [`【📄 お客様が聞いた契約条件（対象: ${targetLabel(target)}）— 資料に書いてある事は本文で答えてよい／無い事は AIX【確認した】】`];
   for (const r of routes) {
-    out.push(r.route === "material"
+    out.push(r.unitUnclear?.length
+      ? `- ${CONTRACT_TERM_LABEL[r.topic]}: ⚠ 資料の読み取りで単位が決まらない（読めた文字「${r.facts.join("／") || "—"}」・候補 ${r.unitUnclear.join("／")}）→ 根拠の確かな値ではない。「${r.unitUnclear[0]}」「${r.unitUnclear[1] ?? r.unitUnclear[0]}」のどちらかで言い切るのは、会話・お客様の資料の別の所で単位が分かる時だけ。分からなければ管理会社に確認してお伝えする約束（AIX【確認した（条件・交渉）】）。どちらにするかはブレインが決める`
+      : r.route === "material"
       ? `- ${CONTRACT_TERM_LABEL[r.topic]}: 資料に記載あり（文字のまま）「${r.facts.join("／")}」→ **本文で資料のとおりに答える**。${HOW[r.topic]}`
       : `- ${CONTRACT_TERM_LABEL[r.topic]}: 資料では答えられない（${r.why}${r.facts.length ? `: ${r.facts.join("／")}` : ""}）→ 本文で断言しない。管理会社に確認して AIX【確認した（条件・交渉）】で答える`);
   }
