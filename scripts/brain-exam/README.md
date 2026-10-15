@@ -38,6 +38,13 @@ REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-fix1.json LLM_TEST_MODE=d
 - 数えは `results/<label>.cost.json` にも残る（問題ごと・名札ごと・変わった所）。前の取り置きはこれで「回していたら幾ら」を出す。
 - 共通の入口（`scripts/lib/llm-test-harness.ts`）に入れたので、他のテスト（yuma-* 等）も `LLM_CASSETTE=record|replay|strict` で同じ録音・再生が使える。
 
+## 調べで見つけた穴の歯止め（app/lib・本番では全部「何もしない」）
+
+- **最後の Claude の1日の上限**: `LLM_TEST_FINAL_CLAUDE=1` の Claude の出口（開発サーバ /api/* もスクリプトも）で、今日（JST）の env=local:final-claude の Claude の行＋この process の分が上限に達したら止める。既定 60回・`LLM_TEST_FINAL_CLAUDE_DAILY_MAX=<回数|off>`。
+- **最終チェックは選んだ物だけ Claude**: `LLM_TEST_FINAL_CHECK_CLAUDE=final_check_rule_check,final_check_verify` → それ以外の final_check_* は DeepSeek（`none`＝全部 DeepSeek・無い/`all`＝今までどおり）。ブレインと返信の本文は Claude のまま。
+- **その日の合計**: 共通の入口の終わりに、final-claude なら今日の env=local:final-claude の合計（Claude／DeepSeek の回数・$・上限の残り）を出す（開発サーバの分も含む）。
+- **入口を通らないテストは止める**: スクリプトの process で `setupLlmTest` を通らずに、テストの印（LLM_TEST_MODE／LLM_TEST_FINAL_CLAUDE）か YUMA・テスト専用の会話で LLM（Anthropic・DeepSeek・Jev・OpenAI 等）を呼ぶと止める（llm-usage-recorder を読んだ時に入る網）。単体テスト（__tests__）と `LLM_TEST_HARNESS_GUARD=off` は外す。
+
 ## 前後の見込み（10/13〜14 の llm_usage_logs の実測から）
 
 | 試験 | 今まで（前＋今を毎回） | 新しい道具（2回目から） |

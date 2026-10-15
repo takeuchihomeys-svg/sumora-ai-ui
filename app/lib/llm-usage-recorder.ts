@@ -14,7 +14,7 @@
 //   → 呼び出し側がリクエストの headers に x-sumora-llm-action / x-sumora-llm-conversation を付け、出口で読んで action / conversation_id に残す。
 //   この2つは Anthropic に送らない（送る前に取り除く）。sys_key_full は system 全ブロックを "\n\n" で結合した全文のハッシュ（プロンプト変更の検出用）。
 
-import { usageEnvLabel, readTestRun, testConversationRefusal, strictClaudeBlockReason, noteTestBlocked } from "./llm-test-mode";
+import { usageEnvLabel, readTestRun, testConversationRefusal, strictClaudeBlockReason, noteTestBlocked, finalClaudeDailyCapReason, jstDayStartIso, outsideHarnessRefusal, isScriptProcess, underLlmTestHarness } from "./llm-test-mode";
 import { sendWithClaudeModelMap, effectiveActionName, type ClaudeModelEnv } from "./claude-model-map";
 import { testPiiRefusal } from "./test-pii-guard";
 
@@ -327,6 +327,7 @@ export function wrapFetchWithLlmUsageRecorder(original: FetchLike, deps: Recorde
       deps.keepAlive(deps.insert({ ...buildRow(route, req, emptyUsage(), 0, "test_blocked", 0, null, deps.env ?? null), action: marks.action, conversation_id: marks.conversationId }).catch(() => {}));
       throw noteTestBlocked(blocked);
     }
+    if (readTestRun(process.env) === "final-claude") noteFinalClaudeSent(); // 2026-10-15 (a) 今日の回数に足す
     const sendInit = restoreTestApiKey(init);
     // 2026-09-29 竹内「Sonnet を Sonnet 5.5 に置き換え」: 名札で選んだ呼び出しだけ Sonnet 5 → 5.5 に写す（claude-model-map・既定は何もしない）。
     //   写しは記録の内側＝下の sendAndRecord が「実際に送った本文」（model・thinking_mode）を記録する。断り／400 の時の Sonnet 5 への送り直しも1行ずつ残る
@@ -396,6 +397,7 @@ export function wrapFetchStripSumoraMarks(original: FetchLike): FetchLike {
     // 2026-10-01: 記録を止めている時もテストの歯止めは同じ（本番は null）
     const blocked = testClaudeExitBlock(marks.init, marks);
     if (blocked) return Promise.reject(noteTestBlocked(blocked));
+    if (readTestRun(process.env) === "final-claude") noteFinalClaudeSent();
     return sendWithClaudeModelMap(original, input, restoreTestApiKey(marks.init), marks.action);
   };
 }
@@ -422,8 +424,70 @@ export function testClaudeExitBlock(init: RequestInit | undefined, marks: { acti
   if (refusal) return refusal;
   const pii = testPiiRefusal(env, typeof init?.body === "string" ? init.body : "", "Claude");
   if (pii) return pii;
-  return strictClaudeBlockReason(env, { action: exitActionName(init, marks.action), why: "Claude の出口まで来た（DeepSeek に回されなかった）" });
+  const action = exitActionName(init, marks.action);
+  return strictClaudeBlockReason(env, { action, why: "Claude の出口まで来た（DeepSeek に回されなかった）" })
+    // 2026-10-15 (a): 最後の Claude の1日の上限（開発サーバ /api/* もスクリプトも同じ出口で数える・本番は readTestRun が null）
+    ?? (readTestRun(env) === "final-claude" ? finalClaudeDailyCapReason(env, finalClaudeUsedToday(), action) : null);
 }
+
+// ── 2026-10-15 (a) 最後の Claude の今日の回数（竹内「テストの時 API 使いすぎてる」）────────────────────────────────
+//   今日（JST）の env=local:final-claude の Claude の行を llm_usage_logs から数え（2分ごとに読み直す）、この process で出した分を足す。
+//   開発サーバとスクリプトが同時に走っても、読み直しの間（2分）の分しかずれない。本番では使わない（readTestRun が null）
+type FinalBudget = { day: string; db: number; dbAt: number; local: number; refreshing: Promise<void> | null };
+const FINAL_BUDGET_SLOT = Symbol.for("sumora.finalClaudeBudget");
+let finalClaudeCounter: ((sinceIso: string) => Promise<number | null>) | null = null;
+function finalBudget(): FinalBudget {
+  const g = globalThis as unknown as Record<symbol, FinalBudget | undefined>;
+  const day = jstDayStartIso();
+  let b = g[FINAL_BUDGET_SLOT];
+  if (!b || b.day !== day) { b = { day, db: 0, dbAt: 0, local: 0, refreshing: null }; g[FINAL_BUDGET_SLOT] = b; }
+  return b;
+}
+function refreshFinalBudget(b: FinalBudget, force = false): Promise<void> {
+  if (!finalClaudeCounter) return Promise.resolve();
+  if (b.refreshing) return b.refreshing;
+  if (!force && Date.now() - b.dbAt < 120_000) return Promise.resolve();
+  const counter = finalClaudeCounter;
+  b.refreshing = counter(b.day).then((n) => { if (n !== null) { b.db = n; b.local = 0; } b.dbAt = Date.now(); }).catch(() => { b.dbAt = Date.now(); }).finally(() => { b.refreshing = null; });
+  return b.refreshing;
+}
+/** 今日すでに出した最後の Claude の回数（DB の数＋この process の分） */
+export function finalClaudeUsedToday(): number { const b = finalBudget(); void refreshFinalBudget(b); return b.db + b.local; }
+function noteFinalClaudeSent(): void { finalBudget().local++; }
+
+// ── 2026-10-15 (d) 共通の入口を通らないテストの LLM 呼び出しを止める網（スクリプトの process だけ・本番と開発サーバは入れない）────────
+const LLM_GUARD_HOSTS = [/(^|\.)api\.anthropic\.com$/, /(^|\.)api\.deepseek\.com$/, /(^|\.)api\.typesafe\.ai$/, /(^|\.)api\.openai\.com$/, /^dashscope[\w-]*\.aliyuncs\.com$/, /\.services\.ai\.azure\.com$/];
+const OUTSIDE_GUARD_FLAG = Symbol.for("sumora.outsideHarnessGuard");
+/** 単体テスト（__tests__ の中のファイル）は外す。テストは自分で fetch を差し替えて歯止めそのものを試すため */
+function isUnitTestProcess(): boolean { try { return /[\\/]__tests__[\\/]/.test(String(process.argv?.[1] ?? "")); } catch { return false; } }
+export function installOutsideHarnessGuard(env: Record<string, string | undefined> = process.env): boolean {
+  if (typeof window !== "undefined" || typeof process === "undefined" || !Array.isArray(process.argv)) return false; // ブラウザ・Edge では入れない
+  if (!isScriptProcess(env) || isUnitTestProcess()) return false;
+  const g = globalThis as unknown as { fetch?: FetchLike & Record<PropertyKey, unknown> } & Record<symbol, unknown>;
+  if (typeof g.fetch !== "function" || g[OUTSIDE_GUARD_FLAG]) return false;
+  g[OUTSIDE_GUARD_FLAG] = true;
+  const inner = g.fetch.bind(globalThis);
+  const guarded: FetchLike = (input, init) => {
+    if (!underLlmTestHarness()) {
+      const url = requestUrl(input);
+      if (url && LLM_GUARD_HOSTS.some((re) => re.test(url.hostname))) {
+        let conv: string | null = null;
+        try { const raw = new Headers(init?.headers).get(LLM_CONVERSATION_HEADER); conv = raw ? decodeURIComponent(raw) : null; } catch { conv = null; }
+        const refusal = outsideHarnessRefusal(process.env, conv);
+        if (refusal) return Promise.reject(noteTestBlocked(refusal));
+      }
+    }
+    return inner(input, init);
+  };
+  for (const k of [...Object.getOwnPropertyNames(g.fetch), ...Object.getOwnPropertySymbols(g.fetch)]) {
+    if (k === "length" || k === "name" || k === "prototype") continue;
+    try { (guarded as unknown as Record<PropertyKey, unknown>)[k] = g.fetch[k]; } catch { /* */ }
+  }
+  g.fetch = guarded as FetchLike & Record<PropertyKey, unknown>;
+  return true;
+}
+// 読まれた時に入れる（LLM を呼ぶ道はほぼ全部この記録のモジュールを読む）。入口（setupLlmTest）は先に印を付けるので素通し
+installOutsideHarnessGuard();
 
 /**
  * スクリプトの共通の入口（scripts/lib/llm-test-harness.ts）が deepseek-all の間だけ ANTHROPIC_API_KEY を偽の値に差し替える。
@@ -569,6 +633,15 @@ async function buildRecorderDeps(): Promise<AltRecorder | null> {
     workStore = (mod as unknown as { workAsyncStorage?: WorkStore }).workAsyncStorage ?? null;
   } catch { workStore = null; }
   let warned = false;
+  // 2026-10-15 (a): 最後の Claude の今日の回数を DB から数える口（final-claude の時だけ・本番は readTestRun が null）
+  if (readTestRun(process.env) === "final-claude") {
+    const envLabel = usageEnvLabel(process.env);
+    finalClaudeCounter = async (sinceIso: string) => {
+      const { count, error } = await db.from("llm_usage_logs").select("id", { count: "exact", head: true })
+        .eq("env", envLabel).gte("created_at", sinceIso).ilike("model", "claude%").gt("status", 0).lt("status", 400);
+      return error ? null : (count ?? 0);
+    };
+  }
   return {
     insert: async (row: LlmUsageRow) => {
       const { error } = await db.from("llm_usage_logs").insert(row);
@@ -592,6 +665,8 @@ export async function installLlmUsageRecorder(): Promise<boolean> {
     installWrapped(g, g.fetch, wrapFetchStripSumoraMarks(g.fetch.bind(globalThis)));
     return false;
   }
+  // 2026-10-15 (a): 最初の呼び出しの前に今日の回数を読んでおく（最大3秒・読めなければ0から）
+  if (finalClaudeCounter) await Promise.race([refreshFinalBudget(finalBudget(), true), new Promise((r) => setTimeout(r, 3000))]);
   const original = g.fetch;
   // 別クラウド（DeepSeek）に回った呼び出しも同じ口から書く（llm-alt-provider が recordAltUsage を呼ぶ）
   altRecorder = deps;

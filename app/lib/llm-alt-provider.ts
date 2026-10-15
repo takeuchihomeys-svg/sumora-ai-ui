@@ -23,7 +23,7 @@ import { LLM_ACTION_HEADER, LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER, LLM_CON
 import { DRAFT_SKIP_STATUSES } from "./conversation-status";
 import { parseCutoffMark, countCutoffLeaks, type CutoffMark } from "./post-apply";
 import { currentDeepseekScope } from "./deepseek-scope";
-import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, strictClaudeBlockReason, testConversationRefusal, noteTestBlocked, LlmTestBlockedError, type LlmTestMode } from "./llm-test-mode";
+import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReason, strictClaudeBlockReason, testConversationRefusal, noteTestBlocked, LlmTestBlockedError, finalCheckSelective, finalCheckToDeepseek, type LlmTestMode } from "./llm-test-mode";
 import { AIX_PICKERS } from "./aix-pickers";
 import { isTestOnlyConversation } from "./test-conversations";
 import { testPiiRefusal } from "./test-pii-guard";
@@ -203,15 +203,17 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const routeTargets = readAltRoutes(env);
   const firstRouteProvider = routeTargets.size > 0 ? [...routeTargets.values()][0].provider : "";
   const explicitProvider = (env.LLM_ALT_PROVIDER ?? "").trim().toLowerCase();
-  const provider = explicitProvider || (testMode ? "deepseek" : "") || firstRouteProvider;
+  // 2026-10-15 (b): 最後の Claude の時に最終チェックの一部だけ DeepSeek に回す切り替え（LLM_TEST_FINAL_CHECK_CLAUDE・本番では常に false）
+  const finalSel = finalCheckSelective(env);
+  const provider = explicitProvider || (testMode || finalSel ? "deepseek" : "") || firstRouteProvider;
   const actionsRaw = (env.LLM_ALT_ACTIONS ?? "").trim();
-  if (!actionsRaw && !testMode && routeTargets.size === 0) return null;
+  if (!actionsRaw && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-29 検証の反証: 主の相手（LLM_ALT_PROVIDER）もテスト用の切り替えも無く**振り分けだけ**の時は、主は無い（振り分けた名前だけ回す）。
   //   旧は最初の振り分けの相手が主になり、LLM_ALT_ACTIONS=reply_generate が残っていると本文が Qwen に行った（PROVIDER 無しなら旧来は null＝Claude）
-  const routesOnly = !explicitProvider && !testMode;
+  const routesOnly = !explicitProvider && !testMode && !finalSel;
   if (routesOnly && actionsRaw) console.warn("[llm-alt] LLM_ALT_PROVIDER が無いので LLM_ALT_ACTIONS は効かない（振り分け LLM_ALT_ROUTES の名前だけ回す）");
   const actions = routesOnly ? new Set<string>() : new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
-  if (actions.size === 0 && !testMode && routeTargets.size === 0) return null;
+  if (actions.size === 0 && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-23 竹内「これなら質落ちるから毎回の分析もクロードの方が良いね」:
   //   ブレインは**毎回の分析（brain_fresh）も会話全体の分析（brain_full）も Claude のまま**。既定では回さない。
   //   一度 DeepSeek に回して実測した結果（scripts/shadow-brain-deepseek.ts・10会話・同じ入力で両方を走らせた）:
@@ -283,6 +285,8 @@ export function shouldRouteAlt(cfg: AltProviderConfig | null, routeName: string 
   if (cfg.routes?.has(routeName)) return true;
   // 2026-09-23: ブレインは層で名札を分けた（brain_fresh / brain_full）。設定に古い "brain" と書いてあれば両方を指す
   if (routeName.startsWith("brain_") && cfg.actions.has("brain")) return true;
+  // 2026-10-15 (b): 最後の Claude でも、LLM_TEST_FINAL_CHECK_CLAUDE に書いていない最終チェックは DeepSeek（本番では常に false）
+  if (finalCheckToDeepseek(process.env, routeName)) return true;
   return routedByTestMode(cfg, routeName, systemHead);
 }
 

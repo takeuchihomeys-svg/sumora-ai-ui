@@ -18,5 +18,15 @@
     "applied_to": "scripts/lib/llm-cassette.ts（maskVolatile・normalizeBody・diffHint）",
     "tags": ["テスト", "再生", "汎用", "静かに壊れる", "API費用"],
     "priority": 3
+  },
+  {
+    "title": "テストの費用の網は出口に置く — 最後の Claude の1日の上限・最終チェックは選んだ物だけ Claude・入口（setupLlmTest）を通らないテストの LLM 呼び出しは止める",
+    "category": "ai_design",
+    "insight": "(a) LLM_TEST_FINAL_CLAUDE=1 の Claude の出口（llm-usage-recorder の testClaudeExitBlock）で、今日（JST）の env=local:final-claude の Claude の行（2分ごとに DB を読み直す）＋この process の分が LLM_TEST_FINAL_CLAUDE_DAILY_MAX（既定 60・off）に達したら止める＝開発サーバ /api/* もスクリプトも同じ網。(b) LLM_TEST_FINAL_CHECK_CLAUDE=<名札,...> で、最後の Claude の時も最終チェック（final_check_*）は書いた物だけ Claude・他は DeepSeek（別クラウドの包みの shouldRouteAlt・none＝全部 DeepSeek）。ブレインと返信の本文は Claude のまま。(c) 共通の入口の終わりに final-claude のその日の合計（全 route・開発サーバの分も）と上限の残りを出す。(d) スクリプトの process（Next の外・本番でない）で入口の印が無く、テストの印か YUMA・テスト専用の会話の LLM 呼び出しは、llm-usage-recorder を読んだ時に入る fetch の網で止める（単体テスト・LLM_TEST_HARNESS_GUARD=off は外す）。",
+    "rationale": "竹内悠馬 2026-10-15「テストの時 API 使いすぎてる」の調べで、最後の Claude の回数に上限が無い・最終チェック（1問 約3〜5回）が全部 Claude・道具の外で書いた試験（gen-model 型）が入口を通らず記録と歯止めの外で払う、が見つかった。呼び出し側（86 ファイル）ではなく全部が通る出口で止める（設計知見『LLM 呼び出しの出口の型』）。",
+    "context": "2026-10-15 exam-saver-1015（コーディネータの追加の依頼）。LLM_TEST_MODE を使うのに入口を通らないスクリプト（customer-sim・yuma-aix-template-gen 等 11本）は、手元で直に LLM を呼ぶ所が止まる。",
+    "applied_to": "app/lib/llm-test-mode.ts・app/lib/llm-usage-recorder.ts・app/lib/llm-alt-provider.ts・scripts/lib/llm-test-harness.ts・app/lib/__tests__/llm-test-saver.test.ts",
+    "tags": ["テスト", "API費用", "静かに壊れる", "出口", "ブレイン"],
+    "priority": 2
   }
 ]
