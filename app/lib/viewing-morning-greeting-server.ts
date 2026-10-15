@@ -59,6 +59,9 @@ async function todaysMorningItems(nowMs: number): Promise<Map<string, { id: stri
   const m = new Map<string, { id: string; status: string }>();
   for (const r of (data ?? []) as Array<{ id: string; conversation_id: string; status: string; resolution_note: string | null }>) {
     // 朝の行（rule:…）か、朝の行が送信で済みになった行（resolution_note が書き換わる）。ブレインの行（check_pattern before・note なし）も今日あれば立て直さない
+    // fix(review): check_pattern "before" はブレインの依頼の行（resolution_note なし）とも同じ。未完了・取り下げの行は朝の行（note が rule:…）だけを数える
+    //   （ブレインの未完了の行を「今日の朝の行」と読むと、日の変更などで viewing_changed としてブレインの行を取り下げてしまう）。済みの行は挨拶を送った印なのでどちらも数える
+    if (r.status !== "done" && !isMorningGreetingItem(r)) continue;
     const cur = m.get(String(r.conversation_id));
     if (!cur || r.status === "pending") m.set(String(r.conversation_id), { id: r.id, status: r.status });
   }
