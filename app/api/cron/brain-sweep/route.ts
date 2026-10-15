@@ -7,7 +7,7 @@ import {
 } from "@/app/lib/brain-core";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import { AIX_NOTICE_FRESH_MS } from "@/app/lib/aix-action-text";
-import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, sweepRunFirstAlone, type BrainWarmUsageKind } from "@/app/lib/brain-warm";
+import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, sweepRunFirstAlone, warmRealCallEnv, type BrainWarmUsageKind } from "@/app/lib/brain-warm";
 import { decideNightDeferNow, isOffSwitch } from "@/app/lib/brain-night-defer";
 import { willRouteAlt } from "@/app/lib/llm-alt-provider";
 import { jstDayStartMs } from "@/app/lib/jst-date";
@@ -85,11 +85,14 @@ async function tryBrainWarm(nowMs: number): Promise<BrainWarmResult> {
   const key = brainSysKeyFull(sys);
   const hash = BRAIN_WARM_HASH_PREFIX + key;
   const dayStartIso = new Date(jstDayStartMs(nowMs)).toISOString();
+  // 2026-10-15: 最後の本物は本番の Claude の行だけ（手元の試験の行を取り違えて too_soon が続き、本番の前置きが切れていた・brain-warm.warmRealCallEnv）
+  const realEnv = warmRealCallEnv();
+  let lastRealQ = supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", BRAIN_REAL_ACTIONS).lt("status", 400).eq("sys_key_full", key);
+  if (realEnv) lastRealQ = lastRealQ.like("model", "claude%").eq("env", realEnv);
   const [lastReal, warmedToday, claimRow] = await Promise.all([
     // 2026-09-24 反証: created_at は応答を読み終えた後の insert 時刻（DEFAULT NOW()）で、Anthropic が TTL を延ばす「リクエスト時刻」より
     //   duration_ms（brain_full は最大 60s）だけ遅い。リクエスト開始時刻 = created_at − duration_ms を「最後の本物」にする（枠の端で TTL を跨がない）
-    supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", BRAIN_REAL_ACTIONS).lt("status", 400).eq("sys_key_full", key)
-      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    lastRealQ.order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("llm_usage_logs").select("*", { count: "exact", head: true }).eq("action", BRAIN_WARM_ACTION).gte("created_at", dayStartIso),
     supabase.from("llm_warm_prefixes").select("last_warmed_at, retired_at, warm_count").eq("hash", hash).maybeSingle(),
   ]);
@@ -320,8 +323,12 @@ export async function GET(req: NextRequest) {
     let failed = 0;
     // 2026-10-07 ③キャッシュ: 前置きが冷えている時（朝9時の夜間見送りの明け等）は1本目だけ先に流し、残りを読む側に回す（中身は同じ・並べ方だけ）。
     //   BRAIN_SWEEP_FIRST_ALONE=off で今まで通り3本同時
+    //   2026-10-15: 本番の行だけ（手元の Claude 試験 env=local:final-claude を本番の呼び出しと取り違えない・BRAIN_WARM_REAL_ENV=any で旧）
+    const firstAloneEnv = warmRealCallEnv();
     const lastRealRes = rows.length >= 2
-      ? await supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", BRAIN_REAL_ACTIONS).lt("status", 400).like("model", "claude%")
+      ? await (firstAloneEnv
+        ? supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", BRAIN_REAL_ACTIONS).lt("status", 400).like("model", "claude%").eq("env", firstAloneEnv)
+        : supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", BRAIN_REAL_ACTIONS).lt("status", 400).like("model", "claude%"))
         .order("created_at", { ascending: false }).limit(1).maybeSingle()
       : null;
     const lastRealAt = lastRealRes?.data?.created_at ? Date.parse(String(lastRealRes.data.created_at)) - Math.max(0, Number(lastRealRes.data.duration_ms) || 0) : null;

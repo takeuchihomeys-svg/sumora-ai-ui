@@ -19,6 +19,7 @@ import {
 import { isOffSwitch } from "./brain-night-defer";
 import { willRouteAlt } from "./llm-alt-provider";
 import { isWarmHourJst, parseHoursJst } from "./reply-warm-prefix";
+import { warmRealCallEnv } from "./brain-warm";
 import { jstDayStartMs } from "./jst-date";
 import { sumoraLlmMarks } from "./llm-usage-recorder";
 import { suggestNextActionLlmEnabled } from "./next-action-unify";
@@ -82,7 +83,12 @@ async function warmOne(t: PrefixWarmTarget, nowMs: number, hoursJst: string): Pr
   //   鍵で絞らない分、手元の試験（env=local:final-claude 等で Claude の aix_template を回した行）を本番の呼び出しと取り違えて温めを始めないよう env=production に絞る（2026-10-15 review）
   const lastRealQ = t.anyRealKey
     ? supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).like("model", "claude%").eq("env", "production")
-    : supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).eq("sys_key_full", t.key);
+    : (() => {
+      // 2026-10-15: 鍵で絞る温めも本番の Claude の行だけ（手元の試験の同じ鍵の行で too_soon が続いて温めが止まっていた・brain-warm.warmRealCallEnv・BRAIN_WARM_REAL_ENV=any で旧）
+      const q = supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).eq("sys_key_full", t.key);
+      const realEnv = warmRealCallEnv();
+      return realEnv ? q.like("model", "claude%").eq("env", realEnv) : q;
+    })();
   const [lastReal, warmedToday, claimRow] = await Promise.all([
     lastRealQ.order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("llm_usage_logs").select("*", { count: "exact", head: true }).eq("action", t.name).gte("created_at", dayStartIso),

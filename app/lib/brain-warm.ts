@@ -110,6 +110,18 @@ export function classifyBrainWarmUsage(u: { cache_read: number; cache_write_1h: 
  *   冷えている時は1本目だけ先に流し（そこで書く）、残りは読む側に回す。送る中身は1文字も変わらない（並べ方だけ）。
  *   冷えているか＝最後の本物の呼び出し（リクエスト開始の時刻）から coldAfterMinutes 以上（1h TTL の手前・温めの窓 50〜58 分と同じ考え）。記録が無い時も冷えている側。
  */
+/**
+ * 2026-10-15 竹内「キャッシュの見直し・質が落ちないように」: 温め（brain-warm・prefix-warm）と「冷えているか」の判断が読む「最後の本物の呼び出し」を
+ *   本番の Claude の行だけに絞る。旧は鍵（sys_key_full）と名札だけで探していて、手元の試験（env=local:deepseek-all の DeepSeek の brain_full 等・
+ *   同じ前置き＝同じ鍵）の行を本番の呼び出しと取り違えていた。試験を回している間は 5分毎の sweep が「too_soon（2分前に本物）」と判断し続けて温めず、
+ *   本番の前置き（system 42k・1h）が切れて次の本物が書き直していた（10/15 9:55 の温め → 10:45〜10:53 の窓は too_soon・試験の行 01:31〜02:14 UTC が 2分おき
+ *   → 11:36 の本物が 43k を書き直し）。本番 8日で昼の書き直し 5回（$0.17/回）がこの形。
+ *   既定 "production"（本番の行だけ）。BRAIN_WARM_REAL_ENV=any で旧（env で絞らない）。送る中身は何も変わらない（温めるかどうかの判断だけ）
+ */
+export function warmRealCallEnv(env: Record<string, string | undefined> = process.env): string | null {
+  return (env.BRAIN_WARM_REAL_ENV ?? "").trim().toLowerCase() === "any" ? null : "production";
+}
+
 export const SWEEP_FIRST_ALONE_COLD_MINUTES = 55;
 export function sweepRunFirstAlone(i: { count: number; nowMs: number; lastRealCallMs: number | null; coldAfterMinutes?: number; enabled?: boolean }): boolean {
   if (i.enabled === false || i.count < 2) return false;

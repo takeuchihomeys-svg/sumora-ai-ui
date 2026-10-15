@@ -2,7 +2,7 @@
 //   温める／温めないの判断（decideBrainWarm）の窓・上限・retire と、効いたかの読み方（classifyBrainWarmUsage）の閾値を固定する。
 //   llm_usage_logs の印（x-sumora-llm-action: brain-warm）が action になり Anthropic には送られない事も既存の fetch ラッパーで1件確認する
 // 実行: npx tsx app/lib/__tests__/brain-warm.test.ts（自己完結ハーネス・env 不要。全 OK で exit 0）
-import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, sweepRunFirstAlone, type BrainWarmInput } from "../brain-warm";
+import { decideBrainWarm, classifyBrainWarmUsage, BRAIN_WARM_DEFAULTS, sweepRunFirstAlone, warmRealCallEnv, type BrainWarmInput } from "../brain-warm";
 import { wrapFetchWithLlmUsageRecorder, LLM_ACTION_HEADER, type LlmUsageRow } from "../llm-usage-recorder";
 
 let passed = 0, failed = 0;
@@ -82,6 +82,18 @@ console.log("── sweepRunFirstAlone（朝9時の重ね書き: 冷えている
   t("1本だけ → 分けない", sweepRunFirstAlone({ count: 1, nowMs: now, lastRealCallMs: null }) === false);
   t("止める（enabled=false）→ 今まで通り", sweepRunFirstAlone({ count: 3, nowMs: now, lastRealCallMs: null, enabled: false }) === false);
   t("55分ちょうど → 冷えている側", sweepRunFirstAlone({ count: 3, nowMs: now, lastRealCallMs: now - 55 * 60_000 }) === true);
+}
+
+console.log("── warmRealCallEnv（2026-10-15: 最後の本物は本番の行だけ・手元の試験の行で too_soon が続かない）");
+{
+  t("既定 → production", warmRealCallEnv({}) === "production");
+  t("BRAIN_WARM_REAL_ENV=any → 絞らない（旧）", warmRealCallEnv({ BRAIN_WARM_REAL_ENV: " ANY " }) === null);
+  t("壊れた値 → production", warmRealCallEnv({ BRAIN_WARM_REAL_ENV: "local" }) === "production");
+  // 10/15 の実際の形: 本番の温め 09:55 JST、試験の DeepSeek brain_full（同じ鍵）が 2分おき → 旧は too_soon、新（本番の行だけ）は窓で温める
+  const now = Date.parse("2026-10-15T01:50:40Z");
+  const base = { nowMs: now, retiredMs: null, warmedTodayCount: 1, enabled: true, altRouted: false };
+  t("旧: 試験の行が最後の本物 → too_soon（本番の前置きが切れる）", decideBrainWarm({ ...base, lastRealCallMs: Date.parse("2026-10-15T01:49:56Z"), lastWarmedMs: Date.parse("2026-10-15T00:55:00Z") }).reason === "too_soon");
+  t("新: 本番の最後の本物（00:01 UTC）と温め（00:55）だけ → 55分で warm", decideBrainWarm({ ...base, lastRealCallMs: Date.parse("2026-10-15T00:01:00Z"), lastWarmedMs: Date.parse("2026-10-15T00:55:00Z") }).warm === true);
 }
 
 console.log("── 記録の型: x-sumora-llm-action: brain-warm を付けた fetch は action='brain-warm' で残り、Anthropic には送られない");
