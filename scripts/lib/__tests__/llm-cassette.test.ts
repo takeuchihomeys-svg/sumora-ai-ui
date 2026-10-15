@@ -106,6 +106,36 @@ const quiet = () => {};
   ok("構成の hash は順に依らない", configHash(examConfig({ TWO_STAGE_Y: "on", BRAIN_X: "1" }, { repeat: 1, layer: "prod" })) === configHash(examConfig({ BRAIN_X: "1", TWO_STAGE_Y: "on" }, { layer: "prod", repeat: 1 })));
   ok("問題の hash は中身で変わる", problemHash({ id: "q1", accept: ["返信"] }) !== problemHash({ id: "q1", accept: ["2段:check"] }));
 
+  // 2026-10-15 RPC match_*（似た物探し）の録音・再生: 同じ本文なら DB を読まずに録った結果・失敗は録らない・LLM の数えに入れない・off で素通し
+  {
+    let dbCalls = 0, failNext = false;
+    const db = async () => { dbCalls++; if (failNext) { failNext = false; return new Response(JSON.stringify({ message: "canceling statement due to statement timeout" }), { status: 500, headers: { "content-type": "application/json" } }); } return new Response(JSON.stringify([{ id: `k${dbCalls}` }]), { status: 200, headers: { "content-type": "application/json" } }); };
+    const RPC = "https://abc.supabase.co/rest/v1/rpc/match_reply_knowledge";
+    const rq = (q: string) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query_embedding: q, match_count: 5 }) });
+    const s1 = newStats("replay");
+    const f1 = makeCassetteFetch(db, { mode: "replay", dir, stats: s1, env: {}, log: quiet });
+    failNext = true;
+    const x0 = await f1(RPC, rq("[0.1,0.2]")); await flushCassette();
+    ok("RPC: 失敗（時間切れ）は録らない", x0.status === 500 && s1.rpc?.failed === 1 && s1.rpc?.recorded === 0);
+    const x1 = await (await f1(RPC, rq("[0.1,0.2]"))).text(); await flushCassette();
+    const s2 = newStats("strict");
+    const f2 = makeCassetteFetch(db, { mode: "strict", dir, stats: s2, env: {}, log: quiet });
+    const before = dbCalls;
+    const x2 = await (await f2(RPC, rq("[0.1,0.2]"))).text();
+    const x3 = await (await f2(RPC, rq("[0.1,0.2]"))).text();
+    ok("RPC: 2回目からは DB を読まずに録った結果（同じ回で2度目も同じ）", dbCalls === before && x2 === x1 && x3 === x1 && s2.rpc?.replayed === 2, `${x1} ${x2} ${x3}`);
+    ok("RPC: LLM の数えには入らない", s2.total.real === 0 && s2.total.replayed === 0 && s2.total.missed === 0);
+    const x4 = await f2(RPC, rq("[0.3]"));
+    ok("RPC: strict でも録音に無い RPC は読む（止めない）", x4.status === 200 && dbCalls === before + 1);
+    const f3 = makeCassetteFetch(db, { mode: "replay", dir, stats: newStats("replay"), env: { LLM_CASSETTE_RPC: "off" }, log: quiet });
+    await f3(RPC, rq("[0.1,0.2]"));
+    ok("RPC: LLM_CASSETTE_RPC=off は素通し", dbCalls === before + 2);
+    const f4 = makeCassetteFetch(db, { mode: "replay", dir, stats: newStats("replay"), env: {}, log: quiet });
+    await f4("https://abc.supabase.co/rest/v1/rpc/increment_knowledge_used_count", rq("x"));
+    await f4("https://abc.supabase.co/rest/v1/rpc/increment_knowledge_used_count", rq("x"));
+    ok("RPC: match_* 以外（書く RPC）は録らない", dbCalls === before + 4);
+  }
+
   rmSync(dir, { recursive: true, force: true });
   console.log(`llm-cassette: ${pass} PASS / ${fail} FAIL`);
   if (fail) process.exitCode = 1;

@@ -1,0 +1,42 @@
+[
+  {
+    "title": "温めの『最後の本物』は本番の Claude の行だけで探す — 手元の試験が同じ前置き（同じ鍵）で回っていると too_soon が続き、本番の 42k の前置きが切れて書き直していた",
+    "category": "ai_design",
+    "insight": "brain-sweep の温め（brain-warm）と prefix-warm の鍵で絞る対象は、llm_usage_logs を名札＋sys_key_full だけで探して『最後の本物』にしていた。手元の DeepSeek 試験（env=local:deepseek-all）の brain_full は本番と同じ前置き＝同じ鍵なので、試験を回している間は5分毎の sweep が『2分前に本物』と見て too_soon を出し続け、本番の Claude の前置き（system 42k・1h）が切れた。10/15 は 9:55 の温めの後、10:45〜10:53 の窓が too_soon（試験の行が 01:31〜02:14 UTC に 2分おき）→ 11:36 の本物が 43k を書き直し。本番8日で営業時間内の書き直し 5回（$0.17/回・週 約 $0.6〜0.7）がこの形。直し: brain-warm.warmRealCallEnv（既定 production）で env と model claude% に絞る（brain-sweep の温め・1本目だけ先の判断・prefix-warm の鍵で絞る対象）。BRAIN_WARM_REAL_ENV=any で旧。",
+    "rationale": "温めは『本番の Claude のキャッシュの寿命』を延ばす物なので、寿命を延ばしたかどうかは本番の Claude の行でしか分からない。同じ鍵の行でも別の env・別のモデルは Anthropic のキャッシュに触れていない。4fcba01b の AIX 先頭ブロックの温めで同じ穴を塞いだが、鍵で絞る側（ブレイン・最終チェック・要約）は残っていた＝同じ型の穴は全部の読み手を grep して塞ぐ。",
+    "context": "2026-10-15 竹内『キャッシュの見直し。質が落ちないように改善する形で』。brain-cache-1015。usage.json（本番 10/07〜15）の brain 系の 1h 書き直しを時刻と直前の本物／温めで並べ、cron_run_logs（brain-sweep の result_json.warm.reason）と llm_usage_logs の env 別の行で原因を確かめた。",
+    "applied_to": "app/lib/brain-warm.ts（warmRealCallEnv）・app/api/cron/brain-sweep/route.ts・app/lib/prefix-warm-server.ts・app/lib/__tests__/brain-warm.test.ts",
+    "tags": ["プロンプトキャッシュ", "API費用", "ブレイン", "brain-sweep", "静かに壊れる", "汎用", "温め"],
+    "priority": 2
+  },
+  {
+    "title": "ブレインの素の入力（brain_fresh 19k/回・費用の61%）は会話×番ごとの材料で、今の呼び出しの密度ではキャッシュに乗せると損 — 会話の中の区切りは当たり 28% 以下（1h の損益分岐 53%）・場面ごとの一覧を会話をまたいで共有しても当たり 48%（週 −$0.1）",
+    "category": "ai_design",
+    "insight": "本番 8日（10/07〜15）brain_fresh 443回 $27.7（週 約 $24）: 素の入力 19.1k/回＝61%・読み 13%・1h 書き 13%・出力 13%。素の入力の中身（見張りの行 line_watch_turns.materials.brain.blocks・175番・文字の平均）: user の最後のブロック 17.7k字＝アクション別ルール 2.5k・今の状況 2.2k・会話履歴 1.7k・送った物件 1.6k・RAG 1.0k・AIX のボタン一覧（場面ごと 2.2〜5.2k）ほか＋会話専用ブロック A/B（プロフィール・戦略・セーブデータ 約2.5k・印なし）。①同じ会話の次の brain_fresh は p50 65分・5分以内 22%・60分以内 49%、間に戦略／全体分析／セーブデータが走らない組で 60分以内 28%・5分以内 12%（上限＝場面・送った物件・時刻の行も変わる）→ 1h の印は当たり 53%、5分の印は 22% が損益分岐で、どちらも届かない。②AIX のボタン一覧は場面だけで決まる（9種）が、会話専用ブロックより前に並べ替えないと会話をまたいで読めず、本番の時刻×場面の分布でくじを引くと当たり 1h 48%（週 −$0.12）・5分 13%（−$0.28）＝損。③1h 書き直し（system 42k）は朝9時の1回とデプロイ・DB の日次更新・温めの空振り（試験の行の取り違え・別の知見）。brain_full（p50 22時間）・brain_strategy（p50 10時間）・brain_checkpoint（同じ会話の次は 60分以内 0）も同じで、会話ごとの材料は乗らない。→ 文字を1つも変えずに減らせるのは温めの直しだけ。素の入力を減らすには材料そのもの（量・場面での絞り）を変える必要があり、それは質の確かめが要る別の作業。",
+    "rationale": "キャッシュは『同じ前置きが TTL の間にもう一度来る』時だけ得をする。会話専用・番ごとの材料は、来る間隔（分布）と途中で変わる確率を掛けて損益分岐（1h: 書き2倍・読み0.1倍 → 当たり 53%）と比べる。全体の天井（素の入力の額）だけ見て『もっと乗せられる』と考えない。",
+    "context": "2026-10-15 竹内『キャッシュの見直しを行う。質が落ちないように改善する形で』。scripts/audit-brain-cache-1015-materials.ts（見張りの行の材料の文字数・場面）・usage.json の間隔と内訳（scratchpad の集計）。",
+    "applied_to": "app/lib/brain-core.ts（変えていない）・app/lib/cache-warm-switch.ts（変えていない）",
+    "tags": ["プロンプトキャッシュ", "API費用", "ブレイン", "監査", "汎用"],
+    "priority": 2
+  },
+  {
+    "title": "AIX の2通目の後ろのブロック（DB 由来 24〜33k）は『全員共通（原則＋失注＋全体のルール 25k字）』と『ボタン別（0〜9.8k字）』に分けて印を付け、温めを共通部分まで伸ばす — 繋ぐと旧の1ブロックと1文字も同じ",
+    "category": "ai_design",
+    "insight": "aix_template（本番 8日 57回 $10.1・週 約 $8.8）の費用の 76% は 1h 書き（33.8k/回）。前置き＝先頭（コードだけ 36k字≈35.5k）＋後ろ1ブロック（絶対原則＋失注 4.9k字・generate_reply の全体のルール 20.2k字・ボタン別ルール 0〜9.8k字）。本番 DB の実物で 6状態×6ボタンを組むと、全体のルールは6状態で同じ（条件付きは applying 等の少数）・原則＋全体のルールの 25,085字はボタンに依らず同じで、変わるのはボタン別だけ。旧は1つの印なので、ボタンか状態が前と違うだけで後ろを丸ごと書き直していた（d927898b＝ボタン別なし 23,849 トークン）。直し: aix-template-cache.aixTemplateDbKnowledgeParts で global／state／action の3ブロック（区切りの文字は後ろのブロックの先頭へ・末尾の空白も次へ送る・繋いで旧と同じ時だけ分ける）＋先頭で印4つ（上限）。温め（aix_template_warm）は先頭＋global＋state（本物の先頭3ブロックと JSON で同じ・aixTemplateSharedParts は action ありの形で切る）。DeepSeek に回る時は分けない（flattenContent が \\n で繋ぐ＝空行が増える・試験の再生の鍵も変わる）。見込み: 後ろの書き込みが 1回 約28k → ボタン別 約5k（当たらない時だけ）＝週 約 $2〜2.5 減（温めの読み 24k×$0.2/M を差し引き）。戻す: AIX_TEMPLATE_BLOCK_SPLIT=off／AIX_TEMPLATE_WARM_SHARED=off。",
+    "rationale": "1つのブロックの中に『変わらない大きな物』と『呼び出しごとに変わる小さな物』が混ざっていると、小さな物が変わるたびに大きな物も書き直す。並びを変えずにブロックの境目を足すだけなら送る文字は同じで、変わらない物は前の印までで読める。境目に区切りの空白をどちらに置くかで、ブロックを空白で終わらせない。",
+    "context": "2026-10-15 竹内『AIX の2通目もキャッシュを効かせる』（ブレインのキャッシュの見直しの続き）。scripts/audit-aix-template-block2.ts（本番 DB の実物で 36通り SAME）・usage.json（aix_template 57回の鍵と書き込み）。",
+    "applied_to": "app/lib/aix-template-cache.ts・app/api/aix-template-generate/route.ts・app/lib/prefix-warm.ts・app/lib/prefix-warm-server.ts・app/lib/__tests__/aix-template-cache.test.ts・app/lib/__tests__/prefix-warm.test.ts",
+    "tags": ["プロンプトキャッシュ", "API費用", "AIX", "aix-template-generate", "温め", "汎用"],
+    "priority": 2
+  },
+  {
+    "title": "試験の再生が同じコードの2回目でも外れるのは、DB の似た物探し（RAG）が時間切れで空になる回があるから — RPC match_* も録って返すと 2回目の新しい呼び出しが 0 になる",
+    "category": "ai_design",
+    "insight": "10/15 夕方の試験 33回（全作業ツリーの results/*.cost.json）: 新しく呼んだ 797回 $5.53・再生 121回（$1.01 分）・前の使い回し 22問／main で回した 33問。DeepSeek 自身のキャッシュは効いている（env=local:deepseek-all 584回: 命中 80%・$6.72／キャッシュ無しなら $26.5）。外れの中身（scripts/audit-cassette-misses.ts）は大半が直した所（ブレインの指示の版の違い・main と枝の交互）とその連鎖（全体分析の答え→プロフィール→毎回の分析）で正しい。ただし同じコードを2回回しても q025 は brain_full が【関連ナレッジ（RAG 検索）】の有無だけで外れ、続く brain_fresh・判定も新しく呼んだ（2回目 8回中 4回）。原因は match_reply_knowledge の statement timeout（本番でも出ている）で材料が回ごとに変わる事。埋め込みは録音から返るので RPC の本文（ベクトル）は同じ＝結果を録って返せば材料も同じになる。直し: scripts/lib/llm-cassette.ts で Supabase の /rest/v1/rpc/match_* を録って返す（成功だけ録る・strict でも止めない・LLM の数えと別に数える・LLM_CASSETTE_RPC=off）。確かめ: 同じ2問を4回（a 8回 → b 4回＋再生3 → c 0回・RPC 録る10 → d 0回・RPC 再生10）。",
+    "rationale": "再生の鍵はブレインへの要求の本文なので、要求の材料を作る途中に『呼ぶたびに変わり得る物』（DB の時間切れ・並びの揺れ）があると、同じコードでも外れて呼び直す。材料の出所の読み取りも同じ録音に入れると、同じコードの試験は決まった材料で回る（前後の比べの揺れも減る）。",
+    "context": "2026-10-15 竹内『DeepSeek の試験の API の節約が本当に効いているかを確かめて改善する』。scripts/audit-exam-saver-1015.ts・audit-cassette-misses.ts・audit-exam-deepseek-cache.ts（読むだけ）。",
+    "applied_to": "scripts/lib/llm-cassette.ts・scripts/lib/__tests__/llm-cassette.test.ts・scripts/brain-exam/README.md",
+    "tags": ["テスト", "API費用", "試験", "再生", "RAG", "静かに壊れる", "汎用"],
+    "priority": 2
+  }
+]

@@ -33,6 +33,9 @@ REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-fix1.json LLM_TEST_MODE=d
 - `--replay`: 鍵は宛先＋名札＋本文（日時・UUID・時刻は伏せる）。録音が無い・本文が変わった呼び出しだけ本当に呼んで録る。
   `--repeat=3` の n 回目は n 番目の録音（足りなければ呼んで足す＝揺れは今まで通り測れる）。判定（DeepSeek）も同じく再生される。
   - 伏せる物を足す: `LLM_CASSETTE_MASK=<正規表現>,...`／伏せない: `LLM_CASSETTE_KEY=exact`／録らない: `--no-record`
+  - 10/15: 読むだけの似た物探し（Supabase の RPC `match_*`＝RAG・手本・勝ちパターン・テンプレ）も録って返す。旧は RAG が DB の時間切れで空になる回と当たる回で
+    ブレインの材料が変わり、同じコードの2回目でも再生が外れていた（q025・q153 で 2回目 8回中4回が新しい呼び出し → 直した後は 0回）。止める: `LLM_CASSETTE_RPC=off`
+  - 外れた理由を調べる: `npx tsx scripts/audit-cassette-misses.ts --since=<時刻> --action=brain_full`（同じ問題・名札の録音の組で、本文の最初に違う所を出す）
   - strict で止まった問題の答案は失敗になる。出た「変わった所」が直した所（材料・指示）なら正しい → `--replay` で回す。直していない所が変わっていたら、毎回変わる物（伏せ漏れ）か混ざり。
 - `--stage=auto`: 問題の `stage`（spec.json）→ `scripts/brain-exam/stage-by-type.json`（例 `{"約束": "draft", "*": "brain"}`）→ brain。`--draft` は `--stage=draft` と同じ。
 - 数えは `results/<label>.cost.json` にも残る（問題ごと・名札ごと・変わった所）。前の取り置きはこれで「回していたら幾ら」を出す。

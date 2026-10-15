@@ -178,6 +178,8 @@ export type CassetteStats = {
   byAction: Map<string, CassetteTally>;
   byTag: Map<string, CassetteTally>;
   misses: Array<{ action: string | null; tag: Record<string, string>; hint: string }>;
+  /** 2026-10-15: RPC match_*（読むだけの似た物探し）の録音・再生の数（LLM の数えとは別） */
+  rpc?: { replayed: number; recorded: number; failed: number };
 };
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -207,6 +209,18 @@ function headersOf(input: RequestInfo | URL, init?: RequestInit): Headers {
   return new Headers(init?.headers ?? (typeof input === "object" && input instanceof Request ? input.headers : undefined));
 }
 export function isLlmUrl(u: URL | null): boolean { return !!u && LLM_HOSTS.some((re) => re.test(u.hostname)); }
+/**
+ * 2026-10-15（試験の節約の確かめ）: 読むだけの似た物探し（Supabase の RPC match_*＝RAG・手本・勝ちパターン・テンプレ）も録って返す。
+ *   同じ番を2回回しても、RAG が DB の時間切れ（statement timeout）で空になる回と当たる回で材料が変わり、ブレインの要求が変わって
+ *   再生が外れていた（10/15 cache1015b: q025 の brain_full が【関連ナレッジ】の有無だけで外れ、続く brain_fresh・判定も新しく呼んだ）。
+ *   埋め込み（OpenAI）は録音から返るので、同じ要求なら RPC の本文（ベクトル）も同じ＝録った結果を返せば材料も同じになる。
+ *   録るのは成功した答えだけ。strict でも RPC は止めない（DB を読むだけで費用は無い）。止める: LLM_CASSETTE_RPC=off
+ */
+export function isMatchRpcUrl(u: URL | null, env: Record<string, string | undefined> = process.env): boolean {
+  if (!u || String(env.LLM_CASSETTE_RPC ?? "").trim().toLowerCase() === "off") return false;
+  return /\.supabase\.co$/.test(u.hostname) && /\/rest\/v1\/rpc\/match_[a-z_]+$/.test(u.pathname);
+}
+export type CassetteRpcTally = { replayed: number; recorded: number; failed: number };
 
 /**
  * 包みを作る（純粋に inner を包む・テストで使う）。stats に数える。
@@ -223,6 +237,7 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
   };
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const u = urlOf(input);
+    if (o.mode !== "off" && isMatchRpcUrl(u, env)) return rpcCassette(inner, input, init, u!, o, seen);
     if (o.mode === "off" || !isLlmUrl(u)) return inner(input, init);
     const headers = headersOf(input, init);
     const action = headers.get("x-sumora-llm-action");
@@ -269,6 +284,40 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     return res;
   };
 }
+/** RPC match_* の録音・再生（LLM の数えには入れない・stats.rpc に数える）。record は全部呼んで録る・replay/strict は録音があれば返す */
+async function rpcCassette(
+  inner: FetchLike, input: RequestInfo | URL, init: RequestInit | undefined, u: URL,
+  o: { mode: CassetteMode; dir: string; stats: CassetteStats; env?: Record<string, string | undefined>; log?: (s: string) => void },
+  seen: Map<string, number>,
+): Promise<Response> {
+  const env = o.env ?? process.env;
+  const rpc = (o.stats.rpc ??= { replayed: 0, recorded: 0, failed: 0 });
+  const body = typeof init?.body === "string" ? init.body : null;
+  if (body === null) return inner(input, init);
+  const action = `rpc:${u.pathname.split("/").pop()}`;
+  const normBody = normalizeBody(body, env);
+  // 鍵に問い合わせの文字（select・limit 等）も入れる
+  const key = cassetteKey({ host: u.host, path: `${u.pathname}${u.search}`, action, normBody });
+  const nth = seen.get(key) ?? 0; seen.set(key, nth + 1);
+  const entry = o.mode !== "record" ? readEntry(o.dir, key) : null;
+  // DB の読み取りは同じ要求なら同じ答えでよい（--repeat の n 回目も最後の録音を返す）
+  const hit = entry?.responses.length ? entry.responses[Math.min(nth, entry.responses.length - 1)] : null;
+  if (hit) { rpc.replayed++; return new Response(hit.body, { status: hit.status, headers: { "content-type": hit.contentType, [CASSETTE_HEADER]: "replay" } }); }
+  const res = await inner(input, init);
+  if (res.status >= 200 && res.status < 300) {
+    const at = new Date().toISOString();
+    const ct = res.headers.get("content-type") ?? "application/json";
+    const done = res.clone().text().then((text) => {
+      rpc.recorded++;
+      const cur = readEntry(o.dir, key);
+      const e: CassetteEntry = cur ?? { key, host: u.host, path: `${u.pathname}${u.search}`, action, reqModel: null, tag: { ...currentTag }, firstAt: at, normBody, responses: [] };
+      if (!cur || o.mode === "record") e.responses.push({ at, status: res.status, contentType: ct, body: text, usage: { model: null, input_uncached: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0, output_tokens: 0 }, usd: 0 });
+      writeEntry(o.dir, e);
+    }).catch(() => { /* 録れなくても続ける */ });
+    pending.add(done); void done.finally(() => pending.delete(done));
+  } else rpc.failed++;
+  return res;
+}
 const pending = new Set<Promise<unknown>>();
 /** 録音の書き込みを待つ（終わりに数える前に） */
 export async function flushCassette(): Promise<void> { while (pending.size) await Promise.allSettled([...pending]); }
@@ -295,6 +344,7 @@ export function formatCassetteStats(s: CassetteStats, extra: { reusedProblems?: 
   L.push(`  再生で済んだ   ${t.replayed}回（呼んでいたら $${t.replayUsd.toFixed(4)}）`);
   if (t.missed) L.push(`  録音なし・要求が変わった（strict で呼ばずに止めた） ${t.missed}回`);
   if (t.unrecordable) L.push(`  録れない形（本文が文字でない）${t.unrecordable}回（そのまま呼んだ）`);
+  if (s.rpc && (s.rpc.replayed || s.rpc.recorded || s.rpc.failed)) L.push(`  似た物探し（RPC match_*・DB を読むだけ）: 再生 ${s.rpc.replayed}・録った ${s.rpc.recorded}・失敗 ${s.rpc.failed}（失敗は録らない＝次の回にもう一度読む）`);
   if (extra.reusedProblems != null) L.push(`  前の結果を使い回した ${extra.reusedProblems}問${extra.reusedUsd ? `（前を回していたら約 $${extra.reusedUsd.toFixed(4)}）` : ""}`);
   const acts = [...s.byAction].sort((a, b) => (b[1].real + b[1].replayed + b[1].missed) - (a[1].real + a[1].replayed + a[1].missed));
   if (acts.length) L.push(`  名札ごと（呼んだ/再生/止めた）: ${acts.map(([k, v]) => `${k} ${v.real}/${v.replayed}${v.missed ? `/${v.missed}` : ""}`).join("・")}`);
