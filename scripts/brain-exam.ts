@@ -617,6 +617,16 @@ function prepareMainWorktree(commit: string): string {
   mkdirSync(join(wt, "scripts/.replay-out"), { recursive: true }); mkdirSync(join(wt, RESULTS_DIR), { recursive: true });
   return wt;
 }
+/**
+ * 2026-10-15 確かめ（独立レビュー）: 手元の main の枝は誰も進めない（10/15 に origin/main より 158 commit 古かった）→ 2日前の版を「前」にしていた。
+ *   "main" は origin/main を取り直して（失敗しても続ける）、origin/main が先なら origin/main を使う。main@<ref> で書いた物はそのまま
+ */
+function resolveMainRef(ref: string): string {
+  if (ref !== "main") return ref;
+  try { execFileSync("git", ["fetch", "-q", "origin", "main"], { stdio: "ignore", timeout: 30_000 }); } catch { /* 手元だけで続ける */ }
+  try { execFileSync("git", ["rev-parse", "--verify", "origin/main^{commit}"], { stdio: "ignore" }); } catch { return "main"; }
+  try { execFileSync("git", ["merge-base", "--is-ancestor", "origin/main", "main"], { stdio: "ignore" }); return "main"; } catch { return "origin/main"; }
+}
 /** 取り置きを読み、無い問題を main で回して足し、比べる「前」の結果ファイルを組み立てる。--baseline-dry の時は計画だけ出して false */
 async function prepareMainBaseline(): Promise<boolean> {
   const B = await import("./lib/brain-exam-baseline");
@@ -624,7 +634,7 @@ async function prepareMainBaseline(): Promise<boolean> {
   const bArg = arg("baseline");
   const ref = bArg.includes("@") ? bArg.slice(bArg.indexOf("@") + 1) : arg("baseline-ref", "main");
   if (!/^[\w./-]+$/.test(ref)) throw new Error(`--baseline=main@<ref> の ref が読めない: ${ref}`);
-  const commit = execFileSync("git", ["rev-parse", "--verify", `${ref}^{commit}`]).toString().trim();
+  const commit = execFileSync("git", ["rev-parse", "--verify", `${resolveMainRef(ref)}^{commit}`]).toString().trim();
   const cfg = B.examConfig(process.env, {
     layer: LAYER, ledger: USE_LEDGER, stage: STAGE, stageByType: existsSync(STAGE_BY_TYPE_FILE) ? B.sha(readFileSync(STAGE_BY_TYPE_FILE, "utf8")).slice(0, 10) : null,
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
@@ -663,7 +673,9 @@ async function prepareMainBaseline(): Promise<boolean> {
   BASELINE = baseLabel;
   const reusedUsd = plan.reuse.reduce((s, id) => { const c = now.get(id)?.cost; return s + (c ? c.realUsd + c.replayUsd : 0); }, 0);
   baselineReuse = { reused: plan.reuse.length, ran: plan.run.length, reusedUsd, commit, dir };
-  console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${plan.run.length}問・取り置きの無い問題 ${picked.filter((p) => !now.has(p.id)).length}）`);
+  const missing = picked.filter((p) => !now.has(p.id)).length;
+  console.log(`  前の結果: ${baseLabel}（使い回した ${plan.reuse.length}問・新しく回した ${Math.max(0, plan.run.length - missing)}問・取り置きの無い問題 ${missing}）`);
+  if (missing) console.warn(`  ⚠ 前（main）の答案が ${missing}問 無い（上の「前」の実行の失敗を見る）。その問題は前との比べに入らない`);
   return true;
 }
 

@@ -27,7 +27,7 @@ REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-fix1.json LLM_TEST_MODE=d
 ... scripts/brain-exam.ts --label=x --types=出し切り --baseline=main --baseline-dry
 ```
 
-- `--baseline=main`: 前の取り置きに無い問題は `.claude/worktrees/brain-exam-main`（main の commit に合わせた作業ツリー・今の試験の道具を写す）で子として回してから、今の方を回す（同時1本）。
+- `--baseline=main`: "main" は origin/main を取り直し、手元の main の枝より先なら origin/main の commit を使う（手元の main は誰も進めない・10/15 に 158 commit 古かった）。前の取り置きに無い問題は `.claude/worktrees/brain-exam-main`（main の commit に合わせた作業ツリー・今の試験の道具を写す）で子として回してから、今の方を回す（同時1本）。
   構成（試験に効く環境変数 BRAIN_*/TWO_STAGE_*/SEARCH_*/LLM_TEST_MODE 等・層・台帳・stage・回数・判定の回数）か問題の中身が変われば別の取り置き。`--baseline-refresh` で回し直す。
   失敗した問題は取り置かない。`--baseline=<label>` は今まで通り（その label の結果と比べる）。
 - `--replay`: 鍵は宛先＋名札＋本文（日時・UUID・時刻は伏せる）。録音が無い・本文が変わった呼び出しだけ本当に呼んで録る。
