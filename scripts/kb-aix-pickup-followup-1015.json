@@ -1,0 +1,22 @@
+[
+  {
+    "title": "AIX の続き（2通目）の番は画面の一時的な状態でなく会話の記録で決める — 最後の AIX の本文の後にお客様の発言もこちらの会話文も無い・今日（日本時間）",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "帯「◯◯【AIX】の続きを送る」は AIX を送った画面の一時的な状態（postAixTemplateMap）だけで出ていて、開き直し・別の端末・2通目を送った後の扱いが記録と食い違っていた。続きの番は app/lib/post-aix-turn.ts の1か所で、メッセージ（is_aix_generated の本文・画像と室内イメージの URL は数えない）と aix_usage_logs の最後の AIX（sent_at・picker_choices.closing_in_first＝2通目を送らないと決めた物は番にしない）から決める。2通目を送った・お客様が返した後は帯を出さない。物件オススメは帯の「AIX テンプレートを入れる」でテンプレート一覧の ✨ と同じ本文（buildAixTemplateRequestBody）で生成し入力欄を切り替え、元の下書きに戻せる。同じ型の穴は『番を画面の状態だけで持つ』所に出る。",
+    "rationale": "竹内悠馬 2026-10-15（KAORI さん・ギガ賃貸）「続きを送るの所が AIX テンプレート（2通目）になっているはずなのに、なっていない事が多い。押したら切り替えられるように。今は AIX の続きの番かをちゃんと判断できるように」。21日の物件オススメ 167回で2通目を送った 137回のうち ✨ を使った 92・手で書いた 45。✨ のブレインの判断は 10/14 の続きの番の戻し（83850290）後 11回中 7回で戻り、戻らない 4回は お客様の発言が数日前（別の番）か分析の省略（cached）＝正しく止めている。",
+    "context": "ブランチ aix-pickup-followup-1015。調べ: aix_usage_logs × aix_generate_log（conditions_snapshot.source=aix-template-generate・brain）× messages、Vercel のログ brain:meta-restored / not-restored。",
+    "applied_to": "app/lib/post-aix-turn.ts・app/page.tsx（selectedPostAix・帯 P7.5・NEXT_PUBLIC_POST_AIX_TURN_FROM_LOG=off／NEXT_PUBLIC_POST_AIX_TEMPLATE_DIRECT=off で旧）・app/components/TemplateModal.tsx",
+    "tags": ["AIX", "aix-template-generate", "続きの番", "帯", "静かに壊れる", "場面:物件オススメ"]
+  },
+  {
+    "title": "物件オススメの2通目は竹内さんの型＝希望と違う条件を正直に先に・良い条件を具体的に・相場は根拠がある時だけ — ずれは希望のエリアと物件の駅の比べ、駅の名前は確かめた出どころだけ",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "aix-template-generate の物件オススメの2通目に、①希望のエリア（property_customers.desired_area）と物件の駅を area-want.matchArea で比べたずれ（希望そのもの＝希望の駅・区・路線・範囲だけを中とみる。隣の駅・2km 内も竹内さんは『外れる』と書く）②家賃管理費込の合計（1通目の字）③相場（rent_observations・希望のエリアの同じ間取り10件以上・下25%以下の時だけ『好条件』）を渡し、出口でずれの1行を書き出しに置く（ensureWishGapOpening・決定論）。駅の名前を書くのはスタッフが送った1通目か売上サポの行に駅がある時だけ。送った資料の画像の読みだけの駅は『（希望のエリア）から少し外れますが』（KAORI さん: 読みは四条畷・AIX の下書きは河内山本・実際は瓢箪山）。家賃の金額は相場より安い時だけ（d94a966c）。新着の宣言の形はずれを書く時は使わない（1件の形）。",
+    "rationale": "竹内悠馬 2026-10-15 のお手本（10/12 21:01 KAORI さん）「最寄り駅瓢箪山駅となりますがこちらのお部屋如何でしょうか！！ 家賃管理費込75,700円、…と好条件で…」。実送信120日: 『〜となりますがこちらのお部屋如何でしょうか』型 13通（江坂・花園町）。試験（YUMA2・2番×前後）: DeepSeek 3巡で近さ 前 0.55/0.51 → 後 0.62〜0.71/0.56〜0.69・ずれの書き出し 出口後 4/4。最後の Claude 1巡: 0.62→0.63（KAORI）・0.55→0.63（HONOKA）。⚠ 90日の実送信では、比べでずれがある番で2通目にずれを書いたのは 10/156（竹内さんの単独の番でも 4/34）＝割合では少数。竹内さんの決めた型（割合を正解にしない＝feedback_recommend_cta_by_appeal）として既定 on・RECOMMEND_SECOND_WISH_GAP=off で戻す。",
+    "context": "ブランチ aix-pickup-followup-1015。scripts/audit-second-wish-gap.ts（読むだけ・LLM なし）・scripts/yuma-aix-brain-link-test.ts --toggle=RECOMMEND_SECOND_WISH_GAP。",
+    "applied_to": "app/lib/recommend-second-wish-gap.ts・app/api/aix-template-generate/route.ts（second-wish-gap の注記・場面の形・出口・aix_generate_log.conditions_snapshot.wish_gap）",
+    "tags": ["AIX", "aix-template-generate", "物件オススメ", "2通目", "相場", "希望のエリア", "出口の決定論", "竹内さんの決定", "場面:物件オススメ"]
+  }
+]

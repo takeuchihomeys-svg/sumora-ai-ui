@@ -102,6 +102,7 @@ import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）"; // 10/13 レビュー（軽微2）: ✨ を押した時はブレインの判断がほぼ無いので AIX の入力だけを指す
 
 import { buildAixContractNote, type AixContractMeta } from "@/app/lib/aix-brain-contract";
+import { secondWishGapEnabled, resolveWishAreaGap, rentTotalOfFirst, planOfFirst, cheapVsMarket, buildSecondWishGapNote, planGroupOf, ensureWishGapOpening, type WishGap } from "@/app/lib/recommend-second-wish-gap";
 
 export const maxDuration = 60;
 
@@ -1434,6 +1435,9 @@ export async function POST(req: NextRequest) {
   //   送った資料を送った時に読んで保存してある読み（sent_image_properties.facts）から材料を作る（その場で読み直さない）＋お客様の希望との合う・満たさない。
   //   現況（退去予定・内覧できるか）は今まで通り（上の secondViewable は変えない）。app/lib/second-material-saved-read.ts・戻すのは SECOND_MATERIAL_SAVED_READ=off
   let savedReadExtra: string[] = [];
+  /** 2通目の型（希望とのずれ）: 売上サポの行は資料の交通（確かめた駅）・保存した読みの駅は名前を書かない出どころ（recommend-second-wish-gap.ts） */
+  const materialIsPickupRow = !!materialRow;
+  let savedReadStations: Array<{ station: string; walk: number | null }> = [];
   if (isRecSecond && !materialRow && !pickupPushLabel && conversationId && secondMaterialSavedReadEnabled()) {
     try {
       const head = headOfFirstMessage(sentMessage);
@@ -1444,6 +1448,7 @@ export async function POST(req: NextRequest) {
         const conv = hit ? secondRowFromSavedRead(hit.facts) : null;
         if (hit && conv) {
           materialRow = conv.row;
+          savedReadStations = (conv.row.location?.stations ?? []).filter((x) => x?.station).map((x) => ({ station: String(x.station), walk: typeof x.walk === "number" ? x.walk : null }));
           let fit: string[] = [];
           try {
             const { data: cl } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
@@ -1467,6 +1472,57 @@ export async function POST(req: NextRequest) {
     }
   }
   const secondMaterialNote = isRecSecond ? [appendSavedReadLines(buildSecondMaterialNote(materialRow), savedReadExtra), pickupPushLabel ? bundleCommonNote2 : ""].filter(Boolean).join("\n") : "";
+  // 2026-10-15 竹内悠馬（KAORI さんの実送信 10/12 21:01）: 物件オススメの2通目の型＝①希望と違う条件を正直に先に ②良い条件を具体的に（家賃管理費込）
+  //   ③なぜ良いか（相場は根拠がある時だけ）。ずれはお客様の希望のエリアと物件の駅の比べ・相場は希望のエリアの同じ間取りの材料（10件以上・下25%）だけで決める。
+  //   駅の名前はスタッフが送った1通目か売上サポの行にある時だけ（保存した読みだけの駅は名前を書かない）。app/lib/recommend-second-wish-gap.ts・戻す RECOMMEND_SECOND_WISH_GAP=off
+  let secondWishGapNote = "";
+  let secondWishGapKind: "station" | "area" | null = null;
+  let secondWishGap: WishGap | null = null;
+  if (isRecSecond && !pickupPushLabel && conversationId && secondWishGapEnabled()) {
+    try {
+      const testPc = (body as { testPropertyCustomer?: unknown }).testPropertyCustomer;
+      const testSr = (body as { testSavedReadStations?: unknown }).testSavedReadStations;
+      const testOk = isTestModeAllowed(process.env) && isTestOnlyConversation(conversationId);
+      let pc: Record<string, any> | null = testOk && testPc && typeof testPc === "object" ? testPc as Record<string, any> : null;
+      if (!pc) {
+        const { data: cl } = await supabase.from("conversations").select("property_customer_id").eq("id", conversationId).maybeSingle();
+        const pcId = (cl as { property_customer_id?: string | null } | null)?.property_customer_id ?? null;
+        if (pcId) {
+          const { data } = await supabase.from("property_customers").select("desired_area, preferences, other_requests, floor_plan, rent_max, pet, building_age").eq("id", pcId).maybeSingle();
+          pc = (data ?? null) as Record<string, any> | null;
+        }
+      }
+      if (testOk && Array.isArray(testSr)) savedReadStations = testSr as typeof savedReadStations;
+      if (pc) {
+        const gapRes = resolveWishAreaGap({
+          desiredArea: pc.desired_area ?? null,
+          freeText: [pc.preferences, pc.other_requests].filter(Boolean).join("\n"),
+          firstMessage: sentMessage,
+          materialStations: materialIsPickupRow ? (materialRow?.location?.stations ?? []).filter((x) => x?.station).map((x) => ({ station: String(x.station), walk: typeof x.walk === "number" ? x.walk : null })) : null,
+          materialAreaCode: materialIsPickupRow ? (materialRow?.location?.area?.code ?? null) : null,
+          savedReadStations,
+        });
+        const rentTotal = rentTotalOfFirst(sentMessage);
+        const planGroup = planGroupOf(planOfFirst(sentMessage));
+        let cheap = false, marketBasis: string | null = null;
+        if (rentTotal && planGroup) {
+          const { customerWards, loadRentObservations } = await import("@/app/lib/area-rent-server");
+          const { customerAreaPlan } = await import("@/app/lib/area-want");
+          const { rentBand } = await import("@/app/lib/area-rent-explain");
+          const wards = customerWards(pc as never, customerAreaPlan(pc.desired_area ?? null, [pc.preferences, pc.other_requests].filter(Boolean).join("\n")));
+          const band = wards.length ? rentBand(await loadRentObservations(wards), wards, planGroup) : null;
+          cheap = cheapVsMarket(rentTotal, band);
+          if (band) marketBasis = `${wards.slice(0, 3).map((w) => w.replace(/^大阪市/, "")).join("・")}の${planGroup} ${band.n}件・下から25%が${band.p25.toLocaleString("ja-JP")}円・中央値${band.p50.toLocaleString("ja-JP")}円`;
+        }
+        secondWishGapNote = buildSecondWishGapNote({ gap: gapRes.gap, rentTotal, cheap, marketBasis, name: resolvedCustomerName });
+        secondWishGapKind = gapRes.gap?.kind ?? null;
+        secondWishGap = gapRes.gap;
+        console.log(JSON.stringify({ tag: "aix-template-generate:second-wish-gap", gap: gapRes.gap?.kind ?? null, reason: gapRes.reason, rentTotal, planGroup, cheap, marketBasis }));
+      }
+    } catch (e) {
+      console.warn("[aix-template-generate] second wish-gap failed:", e instanceof Error ? e.message : e);
+    }
+  }
   // 2026-10-08 竹内さんの実送信: 2通目の挨拶は「今日の会話文」で決まる（今送った🌟カード・【】見積の本体・画像は数えない）。
   //   前の会話文なし → 挨拶から 物件オススメ 73%（95/131）・見積書 82%（31/38）。旧は🌟カード自体を「今日送った」と数え、挨拶を一律に消していた（staffSentTodayFromDb）
   //   数え方 scripts/audit-r11-second-greeting.ts。戻すのは AIX_TAKEUCHI_FORM=off
@@ -1482,7 +1538,8 @@ export async function POST(req: NextRequest) {
   const greetSentToday = secondTalkedToday ?? staffSentToday;
   const secondSceneNote = isRecSecond
     ? buildSecondSceneNote({
-        scene: secondScene,
+        // 希望とのずれを先に書く時は、新着の宣言の形（1行目「1件新着で…」）ではなく1件の形（「こちらのお部屋如何でしょうか」）＝竹内さんの実送信（recommend-second-wish-gap.ts）
+        scene: secondWishGapKind && secondScene === "new_listing" ? "single" as const : secondScene,
         vacating: secondNotViewable,
         name: resolvedCustomerName,
         propertyLabel: secondPropertyLabel,
@@ -1673,6 +1730,8 @@ export async function POST(req: NextRequest) {
     // 物件オススメの直後の2通目: 資料の事実 → 場面の形（実送信の実物）→ 締め の順で最後に置く
     secondMaterialNote,
     secondSceneNote,
+    // 竹内さんの2通目の型（希望とのずれ・家賃管理費込・相場の好条件）。場面の形の後・締めの前（締めは下の CTA の指示のまま）
+    secondWishGapNote,
     // CTA の有無は**お客様の反応と AIX の種類**で決める（実測・cta-guidance）。最後に置くのは上と同じ理由
     recCta
       ? buildSecondMessageCtaNote(recCta, { firstMessage: sentMessage, viewableFrom: isRecSecond ? secondViewableFrom : recommendState.viewableFrom })
@@ -1834,7 +1893,7 @@ export async function POST(req: NextRequest) {
     //   線: scripts/audit-second-message-phrasing.ts（365日・実送信の2通目 477組）でこの検査に当たる実送信は 0 ＝ 誤って作り直しになる数 0。
     //   作り直しても残った時は、当たりの少ない方を返して warn を残す（入力欄で人が読んで送る。止めはしない）
     if (isRecSecond) {
-      const allowed = `${sentMessage ?? ""}\n${secondMaterialNote}\n${pickupPushLabel ?? ""}`;
+      const allowed = `${sentMessage ?? ""}\n${secondMaterialNote}\n${secondWishGapNote}\n${pickupPushLabel ?? ""}`;
       const styleHits = (t: string) => {
         const cost = unfoundedCostClaim(t, materialRow, sentMessage);
         return [...findAiPhrases(t).map((h) => `「${h.match}」`), ...leakedExampleFacts(t, allowed).map((f) => `手本の「${f}」`), ...(cost ? [`「${cost}」（資料では敷金か礼金があるお部屋）`] : [])];
@@ -2118,6 +2177,8 @@ ${text}
               source: "aix-template-generate",
               brain: describeBrainStrategyNote(brainMeta, { fresh: !isStaleMeta }),
               brain_action: brainMeta?.action ?? null,
+              // 2026-10-15 2通目の型（希望とのずれ・相場の好条件）を渡したか（数える用・recommend-second-wish-gap.ts）
+              wish_gap: secondWishGapNote ? (/最寄り駅/.test(secondWishGapNote) ? "station" : /外れますが/.test(secondWishGapNote) ? "area" : "market") : null,
               scenario: recommendationScenario ?? null,
               pickup_type: pickupType ?? null,
               property_state: describePropertySendState(recommendState),
@@ -2186,6 +2247,11 @@ ${text}
     if (aixTakeuchiFormOn()) {
       const joined = joinNameOnlyLine(text);
       if (joined !== text) { console.log(JSON.stringify({ tag: "aix-template-generate:name-line-joined", actionType })); text = joined; }
+    }
+    // 2026-10-15 竹内悠馬（KAORI さん）: 希望とのずれは書き出しの1行（「最寄り駅◯◯駅となりますがこちらのお部屋如何でしょうか！！」）に置く（決定論・recommend-second-wish-gap.ts）
+    if (secondWishGap) {
+      const wg = ensureWishGapOpening(text, secondWishGap);
+      if (wg.applied) { console.log(JSON.stringify({ tag: "aix-template-generate:wish-gap-opening", applied: wg.applied, kind: secondWishGap.kind })); text = wg.text; }
     }
     // 2026-09-20 竹内「生成される文が長すぎる」: 長さを**記録する**（切らない）。
     //   出口で切ると文の途中で終わって壊れるので、ここでは測ってログに残すだけ。
