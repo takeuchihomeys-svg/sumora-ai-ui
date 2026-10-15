@@ -1,13 +1,13 @@
 // app/lib/__tests__/viewing-morning-greeting.test.ts — 内覧当日の朝の挨拶の要対応（10/08 竹内さん「作る」）
 // 実行: npx tsx app/lib/__tests__/viewing-morning-greeting.test.ts
-import { morningViewingGreetingPlan, keepViewingGreetingItem, morningGreetingNoticeLine, isMorningGreetingItem, viewingDayGreetingDue, viewingFlowCancelled } from "../viewing-day-greeting";
+import { morningViewingGreetingPlan, keepViewingGreetingItem, morningGreetingNoticeLine, isMorningGreetingItem, viewingDayGreetingDue, viewingFlowCancelled, viewingGreetingSetMinute, minuteLabel, morningGreetingCardDue, morningGreetingCardNote } from "../viewing-day-greeting";
 import { staffTextFulfillsAixItem } from "../aix-item-cleanup";
 import { buildActionLedger } from "../action-ledger";
 import { aixButtonText } from "../aix-action-text";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, extra = "") => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name} ${extra}`); } };
 
-const now = Date.parse("2026-10-09T00:15:00Z"); // JST 10/9（金）9:15＝cron の時刻
+const now = Date.parse("2026-10-09T01:00:00Z"); // JST 10/9（金）10:00＝セットの時刻（2026-10-15〜。旧は 9:15）
 // 実物: 10/8 14:22 JST の AIX【待ち合わせ場所】（翌日の内覧）
 const MP = "かしこまりました！！\n10/9（金）ご案内させて頂きます！！\n\n10/9 16:00にクリエオーレ一津屋II 103号室\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n住所: 大阪府摂津市一津屋2丁目25-10";
 const ledgerOf = (extra: Array<{ sender: string; text: string; createdAt: string }> = [], nowMs = now) => buildActionLedger({
@@ -78,5 +78,32 @@ t("off で旧", !keepViewingGreetingItem({ action: "greeting_viewing", check_pat
 // 通知の文
 t("通知のボタン名", aixButtonText("greeting_viewing", "before") === "AIX【内覧挨拶→内覧前】", aixButtonText("greeting_viewing", "before"));
 t("通知の2行目", morningGreetingNoticeLine({ time: "16:00", place: "クリエオーレ一津屋II 103号室" }) === "本日 16:00 のご内覧（クリエオーレ一津屋II 103号室）の前に内覧挨拶");
+
+// ─── 2026-10-15 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする」───
+const at = (hhmm: string) => Date.parse(`2026-10-09T${hhmm}:00+09:00`);
+t("セットの時刻: 13:00 の内覧 → 10:00", minuteLabel(viewingGreetingSetMinute("13:00", {})) === "10:00");
+t("セットの時刻: 11:00 の内覧 → 9:00（2時間前）", minuteLabel(viewingGreetingSetMinute("11:00", {})) === "9:00");
+t("セットの時刻: 10:30 の内覧 → 8:30", minuteLabel(viewingGreetingSetMinute("10:30", {})) === "8:30");
+t("セットの時刻: 12:00 の内覧 → 10:00", minuteLabel(viewingGreetingSetMinute("12:00", {})) === "10:00");
+t("セットの時刻: 時刻なし → 10:00", minuteLabel(viewingGreetingSetMinute(null, {})) === "10:00");
+t("セットの時刻: 「9時」→ 7:00", minuteLabel(viewingGreetingSetMinute("9時", {})) === "7:00");
+t("VIEWING_GREETING_SET_TIME=off → 旧の 9:15", minuteLabel(viewingGreetingSetMinute("13:00", { VIEWING_GREETING_SET_TIME: "off" })) === "9:15");
+t("9:30（16:00 の内覧）→ まだ（not_yet）", morningViewingGreetingPlan({ ...base(l1), nowMs: at("09:30") }).why === "not_yet");
+t("10:00（16:00 の内覧）→ 立てる", morningViewingGreetingPlan({ ...base(l1), nowMs: at("10:00") }).why === "due");
+t("14:30（16:00 の内覧・その日に予約が入った）→ 立てる", morningViewingGreetingPlan({ ...base(l1), nowMs: at("14:30") }).why === "due");
+t("8:30（10:30 の内覧）→ 立てる（2時間前）", morningViewingGreetingPlan({ ...base(l1), appointmentTime: "10:30", nowMs: at("08:30") }).why === "due");
+t("8:00（10:30 の内覧）→ まだ", morningViewingGreetingPlan({ ...base(l1), appointmentTime: "10:30", nowMs: at("08:00") }).why === "not_yet");
+t("監査の probe（ignoreSetTime）は時刻で止めない", morningViewingGreetingPlan({ ...base(l1), nowMs: at("06:00"), ignoreSetTime: true }).why === "due");
+t("off の時は 9:15 を過ぎれば立てる（旧）", morningViewingGreetingPlan({ ...base(l1), nowMs: at("09:30"), env: { VIEWING_GREETING_SET_TIME: "off" } }).why === "due");
+
+// 画面の主のボタン（朝の行がある間）
+const mItem = { created_at: "2026-10-09T01:00:10Z", resolution_note: "rule:viewing_morning_greeting 10/9 16:00 クリエオーレ一津屋II 103号室" };
+t("主のボタン: 今日立てた朝の行・挨拶まだ → 出す", morningGreetingCardDue({ item: mItem, staffMessages: [], nowMs: at("10:05") }));
+t("主のボタン: 挨拶を送った → 消す（読み直しを待たない）", !morningGreetingCardDue({ item: mItem, staffMessages: [{ text: greeted.text, createdAt: "2026-10-09T01:03:00Z" }], nowMs: at("10:05") }));
+t("主のボタン: 前の日の行 → 出さない", !morningGreetingCardDue({ item: mItem, staffMessages: [], nowMs: Date.parse("2026-10-10T01:00:00Z") }));
+t("主のボタン: ブレインの行（note なし）→ 対象外", !morningGreetingCardDue({ item: { created_at: mItem.created_at, resolution_note: null }, staffMessages: [], nowMs: at("10:05") }));
+t("主のボタン: NEXT_PUBLIC_VIEWING_GREETING_MAIN_BUTTON=off", !morningGreetingCardDue({ item: mItem, staffMessages: [], nowMs: at("10:05"), off: true }));
+t("カードの一行", morningGreetingCardNote(mItem.resolution_note) === "本日 16:00 のご内覧（クリエオーレ一津屋II 103号室）の前に内覧挨拶", morningGreetingCardNote(mItem.resolution_note));
+t("カードの一行（時刻なし）", morningGreetingCardNote("rule:viewing_morning_greeting 10/9  ") === "本日のご内覧の前に内覧挨拶", morningGreetingCardNote("rule:viewing_morning_greeting 10/9  "));
 
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

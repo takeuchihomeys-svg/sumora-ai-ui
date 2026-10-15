@@ -255,6 +255,11 @@ export type AixButtonView = {
   listBadge: boolean;
   /** I: 返信の後に AIX要対応から戻した判断（カードの元。DB の判断がある時・戻さない時は null） */
   pendingMeta: AixViewMeta | null;
+  /**
+   * 2026-10-15 内覧当日の内覧挨拶をカードに足した時の、カードを描く判断（無ければ null＝今まで通り DB の判断／pendingMeta で描く）。
+   * ブレインのカードが無い時は【内覧挨拶】が主のボタン・ブレインのカードがある時はその下に2つ目のボタンとして並べる
+   */
+  cardMeta?: AixViewMeta | null;
 };
 
 export type AixButtonViewInput = {
@@ -271,8 +276,16 @@ export type AixButtonViewInput = {
   pendingItem?: PendingAixItem;
   /** 物件を探す番の左右の形を止める（NEXT_PUBLIC_SEARCH_SPLIT_CHOICE=off） */
   searchSplitOff?: boolean;
+  /**
+   * 2026-10-15 内覧当日の内覧挨拶（cron が当日 10:00・11時より前の内覧は2時間前に立てた AIX要対応の朝の行）。
+   * due: 今日立てた・今日まだ当日の挨拶を送っていない（viewing-day-greeting.morningGreetingCardDue）。note: カードの一行
+   */
+  morningGreeting?: { due: boolean; note?: string | null } | null;
   legacy?: boolean;
 };
+
+/** 内覧当日の内覧挨拶をカードに出した判断の印（ブレインの判断ではない＝suggested_aix_meta には書かない） */
+export const MORNING_GREETING_CARD_SOURCE = "rule:viewing_morning_greeting";
 
 /** 今の値で画面が出す AIX（page.tsx はこれを呼ぶだけ・お客様役の検査・監査も同じ関数を当てる） */
 export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
@@ -329,6 +342,24 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
     else if (metaFresh && meta?.action === "estimate_sheet" && !d.estimateSheet) earlyBanner = "estimate_sheet";
   }
 
+  // 2026-10-15 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする。そうしたら内覧あることをちゃんと確認できるため」:
+  //   朝の行（cron が当日 10:00／11時より前の内覧は2時間前に立てる）がある間、画面の主のボタンを【内覧挨拶】にする。
+  //   ブレインの判断は上書きしない: ブレインのカード（1つのボタン）がある時はその下に2つ目として並べる・2択／左右の形／単独の帯の番は
+  //   そのまま（内覧挨拶は上の「やること」に出る）。ブレインが同じ内覧挨拶なら何もしない。DB の判断（suggested_aix_meta）には書かない
+  let cardMeta: AixViewMeta | null = null;
+  let morningMain = false;
+  if (!legacy && input.morningGreeting?.due && !flow && !d.brainHint) {
+    const greet: AixViewMeta = { action: "greeting_viewing", check_pattern: "before", note: input.morningGreeting.note ?? null, analyzed_msg_ts: latestCustomerTs(messages), reply_mode: "aix", source: MORNING_GREETING_CARD_SOURCE };
+    if (!card && !earlyBanner) {
+      card = { kind: "brain_button", action: "greeting_viewing", altActions: [], replyDirectionLabel: null };
+      cardMeta = greet;
+      morningMain = true;
+    } else if (card && card.kind === "brain_button" && !card.split && card.action !== "greeting_viewing" && !card.altActions.includes("greeting_viewing") && meta) {
+      card = { ...card, altActions: [...card.altActions, "greeting_viewing"] };
+      cardMeta = { ...meta, alt_actions: [...(meta.alt_actions ?? []), "greeting_viewing"] };
+    }
+  }
+
   // 旧: 2択の判断があれば（鮮度・カードの有無を見ずに）AIX ボタンを隠していた。F: カードを実際に出している時だけ
   const aixMenuButtonHidden = legacy
     ? !!(meta?.two_choice_mode && !d.brainHint)
@@ -336,7 +367,7 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
 
   const menuHighlight = legacy
     ? (guideCheck ? "property_check_result" : guideMeeting ? "meeting_place" : meta?.action === "estimate_sheet" ? "estimate_sheet" : null)
-    : (flow ? null : brainAixAction);
+    : (flow ? null : brainAixAction ?? (morningMain ? "greeting_viewing" : null));
 
   return {
     brainAixAction,
@@ -349,6 +380,7 @@ export function resolveAixButtonView(input: AixButtonViewInput): AixButtonView {
     menuHighlight,
     listBadge: isAixListBadge({ meta: input.meta, lastSender, messages }, legacy),
     pendingMeta,
+    cardMeta,
   };
 }
 
