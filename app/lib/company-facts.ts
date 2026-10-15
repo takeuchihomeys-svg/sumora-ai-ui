@@ -209,8 +209,11 @@ export const COMPANY_FACTS: CompanyFact[] = [
     // 2026-10-08 8巡目 竹内さん「車で来る方には近くのパーキングを案内する」。人の手打ち（365日）: 「お近くにパーキングございましたらそちらに駐車の程よろしくお願いいたします！！」
     //   「お近くのパーキングにお停めください！！」「Dパーキング平野北2丁目第一が1番近くのパーキングとなります！！」（3通・物件の駐車場には停めない）。
     //   お客様の形: 「車で行かせて頂いてもよろしかったですかね？」「車で向かいますので14時くらいです！」。入居の日の荷物（引越し）・物件の駐車場の契約は別の話（not）。戻す COMPANY_FACT_CAR_VISIT=off
+    // 2026-10-15 軸の直し（田邉さん 84434172 10/06 内覧当日「駐車場は近くのパーキングでよろしいですか？」→ 竹内さん「はい！！お近くのパーキングにお停めください！！」）:
+    //   「車で」の語が無くても、近くのパーキング・コインパーキングに停めてよいかの問いは内覧当日の来方（物件の駐車場の空き・契約ではない）
     ask: (t) => process.env.COMPANY_FACT_CAR_VISIT !== "off"
-      && /車で(?:行|伺|向か|来|うかが|お伺|参|内[覧見]|見に)|(?:内[覧見]|見学|ご案内)[^。\n]{0,12}車で|車(?:は|って)?(?:どこ|どちら)に?(?:停|止|置)/.test(t.normalize("NFKC")),
+      && (/車で(?:行|伺|向か|来|うかが|お伺|参|内[覧見]|見に)|(?:内[覧見]|見学|ご案内)[^。\n]{0,12}車で|車(?:は|って)?(?:どこ|どちら)に?(?:停|止|置)/.test(t.normalize("NFKC"))
+        || (process.env.COMPANY_FACT_CAR_VISIT_PARKING !== "off" && /(?:近く|周辺|付近|近辺)の?(?:コイン)?パーキング[^。\n]{0,12}(?:よろし|大丈夫|いい|良い|OK|停め|止め|ですか|でしょうか)|(?:コイン)?パーキングに(?:停め|止め)(?:て|れば|たら)?[^。\n]{0,8}(?:よろし|大丈夫|いい|良い|ですか|でしょうか)/i.test(t.normalize("NFKC")))),
     not: /荷物|引っ?越|搬入|契約|月極|駐車場(?:の|を)?(?:契約|空き|借り)|電車|自転車/,
     n: 3,
     fact: "内覧に車で来られる時は、**お近くのコインパーキングに停めて頂く**（物件の駐車場・敷地内には停めない）。言い方は実送信の形「お近くのパーキングにお停めください！！」「お近くにパーキングございましたらそちらに駐車の程よろしくお願いいたします！！」。パーキングの名前・場所は分かる時だけ（推測で名前を書かない）。",
@@ -472,6 +475,17 @@ export const COMPANY_FACTS: CompanyFact[] = [
     n: 1,
     fact: "**即入居のお部屋は、審査通過と契約手続きの完了でご入居できる**（お申込み→審査→契約手続き→ご入居の流れ・物件ごとの入居可能日は資料のとおり）。",
   },
+  {
+    id: "busy_season",
+    // 2026-10-15 軸の直し（紗季さん 58ae93f3 10/11 07:45「4月とかの繁忙期より、今みたいな時期の方が家賃安いですかね」）: 最終チェックは答えの抜けを指摘したのに、
+    //   材料（業界の知識）が無く本文に入らなかった。竹内さんの実送信（同じ番 08:13）を正として、なぜそうなのか（仕組み→何が起きるか→だからどうする）の形で渡す。
+    //   物件ごとの家賃・礼金は変わる＝ここは一般の傾向だけ（「必ず安い」と言い切らない）。戻す COMPANY_FACT_BUSY_SEASON=off
+    ask: (t) => process.env.COMPANY_FACT_BUSY_SEASON !== "off"
+      && /繁忙期|閑散期|(?:[1-4１-４]月|春|年明け)[^。\n]{0,14}(?:より|と比べ|に比べ|の方が|のほうが)[^。\n]{0,20}(?:安|高|お得|空き|物件)|(?:今|この時期|今の時期|今みたいな時期)[^。\n]{0,10}(?:の方が|のほうが)[^。\n]{0,10}(?:安|高|お得)|(?:時期|季節)(?:によって|で)[^。\n]{0,10}(?:家賃|初期費用|値段|安|高)/.test(t.normalize("NFKC")),
+    not: /入居日|退去|ご入居可能/,
+    n: 1,
+    fact: "**一般の傾向（物件ごとには変わる）**: 4月の入居に向けて**1月〜3月が繁忙期**で、探す方が多いので**家賃が高くなったり礼金等の初期費用が高くなる傾向**がある。また**条件の良い物件はすぐに募集が埋まる**。だから**ご入居日にお決まりが無い場合は今の期間に探すのがおすすめ**（仕組み→何が起きるか→だからどうするか、の順で答える）。言い方は竹内さんの実送信の形「また4月へのご入居にむけて、1月〜3月の期間が繁忙期となり家賃が高くなったり、礼金等の初期費用が高くなる傾向になります！！また条件の良い物件はすぐに募集が埋まってしまう形となります。そのためご入居日にお決まりがない場合今の期間にお部屋探しを行っていくことを推奨させていただきます！！」。特定の物件の家賃が下がると言い切らない。",
+  },
 ];
 
 /** 通の区切り（reply-context.MSG_SEP と同じ。依存ゼロを保つためここで持つ） */
@@ -494,13 +508,26 @@ function unitsOf(customerText: string | string[] | null | undefined): string[] {
 }
 
 /** お客様の発言に当たる事実だけを返す（当たらなければ空）。配列なら1通ずつ判定（画像の通は外す） */
-export type CompanyFactOpts = { account?: string | null };
+/**
+ * abouts: 2026-10-15 軸の直し — ブレインが決めたこの番の依頼の「何について」（turn_contract.asks[].about）。
+ *   語の網は候補。ブレインが内覧の当日（viewing_day）と読んだ駐車場・車の話には car_visit を渡し、物件の設備・空き（property_equipment・vacancy）と読んだ駐車場の話には渡さない。
+ *   戻す COMPANY_FACT_AXIS=off（語の網だけ）
+ */
+export type CompanyFactOpts = { account?: string | null; abouts?: ReadonlyArray<string> | null };
+const PARKING_WORD_RE = /駐車|パーキング|車で|お車|車は|車って/;
 export function matchCompanyFacts(customerText: string | string[] | null | undefined, opts: CompanyFactOpts = {}): CompanyFact[] {
   const units = unitsOf(customerText);
   if (units.length === 0) return [];
   const asked = (f: CompanyFact, t: string) => (typeof f.ask === "function" ? f.ask(t) : f.ask.test(t));
   const acct = (opts.account ?? "").trim().toLowerCase();
-  return COMPANY_FACTS.filter((f) => (!f.brand || (f.brand as readonly string[]).includes(acct)) && units.some((t) => asked(f, t) && !(f.not && f.not.test(t))));
+  const hit = COMPANY_FACTS.filter((f) => (!f.brand || (f.brand as readonly string[]).includes(acct)) && units.some((t) => asked(f, t) && !(f.not && f.not.test(t))));
+  const ab = process.env.COMPANY_FACT_AXIS === "off" ? [] : (opts.abouts ?? []);
+  if (!ab.length) return hit;
+  const parking = units.some((t) => PARKING_WORD_RE.test(t.normalize("NFKC")));
+  const car = COMPANY_FACTS.find((f) => f.id === "car_visit");
+  if (parking && car && ab.includes("viewing_day") && !hit.includes(car)) return [...hit, car];
+  if (parking && ab.every((a) => a === "property_equipment" || a === "vacancy")) return hit.filter((f) => f.id !== "car_visit");
+  return hit;
 }
 
 /**

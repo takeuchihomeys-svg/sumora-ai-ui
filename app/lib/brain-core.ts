@@ -2753,6 +2753,24 @@ ${catalogBlockForBrain(brainScene)}
       const rlNote = [buildRequestLedgerNote(askStatus ? [] : rlLedger, currentTurnRequests(lm)), askStatus ? buildRequestStatusAsk(requestCands) : ""].filter(Boolean).join("\n\n");
       if (rlNote) { customerStateBlockText += `\n\n${rlNote}`; console.log(JSON.stringify({ tag: "brain:request-ledger", conversationId, chars: rlNote.length, cands: requestCands.length })); }
     } catch (e) { console.warn("[brain-core] request-ledger skipped:", e instanceof Error ? e.message : String(e)); }
+    // 2026-10-15 軸の直し③（送った束・sent-bundles.ts）: こちらが AIX で送った資料・見積書・URL・現況を物件ごとに束ねた材料。
+    //   「ここ」「こちら」の物件・資料で答えられるか・確認事項の済み（資料・空きを答えた）をブレインが決める材料。
+    //   渡すのは今のお客様の発言が束を引用した時か、直近の束から3日以内の時だけ（毎回は渡さない）。戻す SENT_BUNDLES=off
+    try {
+      const { sentBundlesEnabled, bundleOfQuoted, buildSentBundlesNote } = await import("@/app/lib/sent-bundles");
+      if (sentBundlesEnabled()) {
+        const { loadSentBundles } = await import("@/app/lib/sent-bundles-server");
+        const bundles = await Promise.race([loadSentBundles(conversationId), new Promise<[]>((r) => setTimeout(() => r([]), 4_000))]);
+        const lastCust = typedMessages.find((m) => m.sender === "customer");
+        const quoted = bundleOfQuoted(bundles, lastCust?.quoted_message_id ?? null);
+        const recent = bundles[0] && lastCust && Date.parse(lastCust.created_at) - Date.parse(bundles[0].sentAt) <= 3 * 86_400_000;
+        if (bundles.length && (quoted || recent)) {
+          const note = buildSentBundlesNote(bundles, { max: 4, quoted });
+          customerStateBlockText += `\n\n${note}`;
+          console.log(JSON.stringify({ tag: "brain:sent-bundles", conversationId, n: bundles.length, quoted: quoted?.property ?? null }));
+        }
+      }
+    } catch (e) { console.warn("[brain-core] sent-bundles skipped:", e instanceof Error ? e.message : String(e)); }
     // 2026-10-08 竹内さん「人間でいうメモ」「気持ちの判断の強化」: お客様のメモ（芯・事情・決める人・気にしている事・好き嫌い・伝えた事・聞かれた事＋もう伝えた事の種類）と
     //   気持ちの流れ（このお客様のいつもとの違い・前の提案への反応・前回までの気持ち）。場面で要る種類だけ（customer-memo-server.ts・CUSTOMER_MEMO=off／CUSTOMER_MOOD_FLOW=off）
     try {
@@ -4029,6 +4047,13 @@ ${history}`;
         }),
         viewingCheckVacating: viewingVacating?.vacating,
         asksCost: /初期費用|見積|いくら|費用/.test(unrepliedTurn.text ?? ""),
+        // 2026-10-15 軸の直し: 確認の約束の文はブレインの「何について」（先に答える依頼の about）で決める（two-stage TWO_STAGE_AXIS=off で前の形）
+        askAbout: (() => {
+          const tc = normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract);
+          const asks = (tc?.asks ?? []) as Array<{ about?: string; route?: string }>;
+          const lead = typeof tc?.lead_with === "number" ? asks[tc.lead_with] : asks.find((a) => a.route === "promise" || a.route === "aix") ?? asks[0];
+          return lead?.about ?? null;
+        })(),
         estimateTarget: focusedEstimateOverride,
         customerText: unrepliedTurn.text ?? "",
         // 3巡目（10/07）: 約束の直後のお礼・了承だけ（ZWJ の絵文字 🙇🏻‍♀️ もお礼と読む isAckOnlyTurn）

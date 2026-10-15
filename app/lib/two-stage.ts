@@ -44,7 +44,13 @@ export type TwoStageInput = {
   viewingCheckFirst?: boolean;
   /** 6巡目: 内覧を希望されたお部屋が退去予定か（viewingRoomVacating）。false（VIEWING_CHECK_VACATING_ONLY=off で今見られる部屋に確認を挟む時）は 5巡目の文 */
   viewingCheckVacating?: boolean;
+  /** 2026-10-15 軸: ブレインの turn_contract の先に答える依頼の「何について」（about）。あれば確認の約束の文はこれで決める（語の網は使わない・TWO_STAGE_AXIS=off で前の形） */
+  askAbout?: string | null;
 };
+/** 2026-10-15 軸の直し: 2段の約束の文をブレインの about に従わせる（既定 on） */
+export function twoStageAxisEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TWO_STAGE_AXIS ?? "").trim().toLowerCase() !== "off";
+}
 
 // 2026-10-02 ⑫ 最後の確かめ（Claude）: 夜職のアリバイ会社の質問で、確認の約束の方向から「アリバイ会社の利用可否を管理会社に確認させて頂きます」と書いた（2回）。
 //   実送信（お客様がアリバイ・勤務先の用意を聞いた 9番）: スタッフは「お仕事面こちらでサポートさせて頂きます😊！！」「お仕事先こちらでご用意させて頂きます」と答え、
@@ -342,7 +348,11 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
     //   （設備・入居日・保証会社・手続き…）なら「募集状況を確認する約束」にしない＝聞かれた事の答え（資料・会話・会社の事実にあれば答える・無ければその事の確認の約束）
     //   旧は ack_to_check の時だけこの形で、LLM の物件確認したは聞かれていない募集状況の約束になった（2段の後 44番中 5番）。戻す: TWO_STAGE_CHECK_BY_QUESTION=off
     const ct = i.customerText ?? "";
-    const askedOther = !i.asksCost && !/空い|空き|募集|まだ(?:あり|残)|埋ま|https?:|\[画像\]/.test(ct) && /[?？]|ですか|ますか|でしょうか|かな/.test(ct)
+    // 2026-10-15 軸: ブレインが「何について」を決めていればそれで分ける（空き・募集状況＝募集状況の約束／費用＝見積と一緒／それ以外＝聞かれた事に答える）
+    //   語の網（空い・募集…）は about が無い時の予備
+    const about = twoStageAxisEnabled() ? (i.askAbout ?? null) : null;
+    const askedOtherByAxis = about ? !["vacancy", "property_cost"].includes(about) && !i.asksCost : null;
+    const askedOther = (askedOtherByAxis ?? (!i.asksCost && !/空い|空き|募集|まだ(?:あり|残)|埋ま|https?:|\[画像\]/.test(ct) && /[?？]|ですか|ますか|でしょうか|かな/.test(ct)))
       && (typeof process === "undefined" || (process.env?.TWO_STAGE_CHECK_BY_QUESTION ?? "").toLowerCase() !== "off");
     if (askedOther && !/ack_to_check/.test(i.decisionSource ?? "")) {
       return {

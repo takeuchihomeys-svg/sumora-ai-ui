@@ -131,4 +131,10 @@ t("(d) 約束の直後でなければ今まで通り", resolveTwoStage({ ...base
 { const prev = process.env.TWO_STAGE_ACK_FULFIL; process.env.TWO_STAGE_ACK_FULFIL = "off";
   t("(d) TWO_STAGE_ACK_FULFIL=off で旧", JSON.stringify(resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate", ackRightAfterPromise: true })) === JSON.stringify(resolveTwoStage({ ...base, finalAix: "estimate_sheet", decisionSource: "promise:estimate" })));
   if (prev === undefined) delete process.env.TWO_STAGE_ACK_FULFIL; else process.env.TWO_STAGE_ACK_FULFIL = prev; }
+// 2026-10-15 軸の直し: 確認の約束の文はブレインの about で決める（語の網より先）
+t("軸: about=viewing_day（駐車場は近くのパーキング？）→ 聞かれた事に答える（募集状況の約束にしない）", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "駐車場は近くのパーキングでよろしいですか？", askAbout: "viewing_day" })?.source === "rule:two_stage_promise(check_question)");
+t("軸: about=vacancy は「空いて」の語が無くても募集状況の約束", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "こちらどうですか？", askAbout: "vacancy" })?.keyTopic === "募集状況を確認する約束");
+{ const prev = process.env.TWO_STAGE_AXIS; process.env.TWO_STAGE_AXIS = "off";
+  t("軸: TWO_STAGE_AXIS=off は語の網（「どうですか？」は聞かれた事への答え）", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "こちらどうですか？", askAbout: "vacancy" })?.source === "rule:two_stage_promise(check_question)");
+  if (prev === undefined) delete process.env.TWO_STAGE_AXIS; else process.env.TWO_STAGE_AXIS = prev; }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

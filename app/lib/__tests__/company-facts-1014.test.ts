@@ -38,6 +38,14 @@ it("確かめる人: 契約・鍵渡し・入居の当日の持ち物・退去�
   has("申込の方法を教えてください", "apply_line_viewing_items");
   has("このお部屋いつから住めますか？退去予定って書いてあったので", "immediate_move_in", false);
 });
+it("2026-10-15 軸の直し: 内覧当日の近くのパーキング（車の語なし）・繁忙期", () => {
+  has("駐車場は近くのパーキングでよろしいですか？", "car_visit");
+  has("近くのコインパーキングに停めれば大丈夫ですか？", "car_visit");
+  has("駐車場の空きはありますか？", "car_visit", false);
+  has("あと、4月とかの繁忙期より、今みたいな時期の方が家賃安いですかね、", "busy_season");
+  has("今の時期の方が安いですか？", "busy_season");
+  has("4月入居予定です", "busy_season", false);
+});
 it("止めれば渡さない", () => {
   process.env.COMPANY_FACT_1014 = "off";
   has("学生で審査通すにはどうしたらいいですかね", "student_contract", false);

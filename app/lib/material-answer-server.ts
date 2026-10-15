@@ -21,6 +21,8 @@ import {
 import { fixChineseGlyphs } from "@/app/lib/japanese-glyph";
 import { brainNameMatchesAny } from "@/app/lib/property-name-loose";
 import { REALPRO_SLOTS } from "@/app/lib/sheet-layout";
+import { loadSentBundles } from "@/app/lib/sent-bundles-server";
+import { bundleOfQuoted, type SentBundle } from "@/app/lib/sent-bundles";
 
 const FACTS_TABLE = "property_sheet_facts";
 const MAX_DAYS = 60;
@@ -158,6 +160,19 @@ export async function loadMaterialAnswer(o: {
   // 対象: 送った物件（名前・引用・直前の送付＝equipment と同じ決まり）を先に、主のお部屋（ブレイン側の focus）が別ならそれも並べる（どちらの話かはブレインが決める）
   //   YUMA の再生（055d4212）で、主のお部屋が前の別の物件のまま「ここって〜」の直前の送付と食い違った
   let targets: Array<Pick<EquipTarget, "property_name" | "room_no" | "by">> = pickEquipmentTargets(o.customerText, sentRows, { askedAt, quotedImageUrl, customerImageAts: ((custImgs ?? []) as Array<{ created_at: string }>).map((r) => r.created_at), max: 2 });
+  // 2026-10-15 軸の直し③（送った束・未桜さん 22b2511e 10/09）: 引用した通が画像でない（室内イメージの URL・🌟の文）時も、その通が入っている AIX の束の物件を先に
+  //   （束は文の物件名と画像の読みの名前が合う物だけ・sent-bundles.ts）。戻す SENT_BUNDLES=off
+  let quotedBundle: SentBundle | null = null;
+  if (quotedLineId && !quotedImageUrl) {
+    const bundles = await loadSentBundles(o.conversationId, { untilIso: askedAt }).catch(() => [] as SentBundle[]);
+    quotedBundle = bundleOfQuoted(bundles, quotedLineId);
+    if (quotedBundle) {
+      const qb = quotedBundle;
+      targets = [{ property_name: qb.property, room_no: null, by: "quote" as EquipTarget["by"] }, ...targets.filter((t) => !brainNameMatchesAny(qb.property, [t.property_name]))];
+      for (const im of qb.images) if (!sentRows.some((r) => r.image_url === im.url)) sentRows.push({ property_name: qb.property, room_no: null, channel: "aix", created_at: qb.sentAt, image_url: im.url } as SentPropertyLite);
+      console.log(JSON.stringify({ tag: "material-answer:quoted-bundle", conversationId: o.conversationId, property: qb.property, images: qb.images.length, urls: qb.urls.length }));
+    }
+  }
   if (o.target?.name && !targets.some((t) => brainNameMatchesAny(o.target!.name, [t.property_name]))) {
     const same = sentRows.find((r) => brainNameMatchesAny(o.target!.name, [r.property_name]));
     targets = [...targets, { property_name: same?.property_name ?? o.target.name, room_no: o.target.roomNo ?? same?.room_no ?? null, by: "brain_focus" as EquipTarget["by"] }];
