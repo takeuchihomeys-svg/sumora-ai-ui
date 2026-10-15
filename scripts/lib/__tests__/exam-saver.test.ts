@@ -21,10 +21,10 @@ const tmp = mkdtempSync(join(tmpdir(), "exam-saver-test-"));
   ok("import の書き方を全部拾う", importSpecs(`import a from "./a";\nimport type { T } from "@/app/lib/t";\nexport { x } from '../x';\nconst m = await import("./dyn");\nrequire("./req");\nimport "./side";`).sort().join() === ["../x", "./a", "./dyn", "./req", "./side", "@/app/lib/t"].sort().join());
   const files: FileMap = new Map([
     ["app/lib/brain-core.ts", `import { s } from "./shared"; import { b } from "@/app/lib/brain-only"; import x from "./brain-layers";`],
-    ["app/lib/brain-layers.ts", ``], ["app/lib/deepseek-scope.ts", ``], ["app/lib/reply-context.ts", `import "./shared.js";`],
+    ["app/lib/brain-layers.ts", ``], ["app/lib/deepseek-scope.ts", ``], ["app/lib/reply-context.ts", `import "./shared.js"; import "./ctx-deep";`], ["app/lib/ctx-deep.ts", ``],
     ["app/lib/shared.ts", `export const s = 1;`],
     ["app/lib/brain-only.ts", `import "./brain-deep";`], ["app/lib/brain-deep.ts", ``],
-    ["app/api/generate-reply/route.ts", `import { s } from "@/app/lib/shared"; import "@/app/lib/draft-only"; import { analyzeConversation } from "@/app/lib/brain-core";`],
+    ["app/api/generate-reply/route.ts", `import { s } from "@/app/lib/shared"; import "@/app/lib/draft-only"; import { analyzeConversation } from "@/app/lib/brain-core"; import { x } from "@/app/lib/reply-context";`],
     ["app/lib/draft-only.ts", ``], ["app/lib/reply-hint-auto.ts", ``],
     ["app/lib/unused.ts", ``], ["app/components/Page.tsx", `import "@/app/lib/shared";`],
     ["scripts/brain-exam.ts", `import "./lib/score"; import "../app/lib/brain-core";`], ["scripts/brain-exam-add.ts", ``], ["scripts/lib/score.ts", ``],
@@ -32,7 +32,8 @@ const tmp = mkdtempSync(join(tmpdir(), "exam-saver-test-"));
   ok("@/ と ./ と .js→.ts を解く", resolveSpec("app/lib/reply-context.ts", "./shared.js", (p) => files.has(p)) === "app/lib/shared.ts" && resolveSpec("x/y.ts", "@/app/lib/shared", (p) => files.has(p)) === "app/lib/shared.ts" && resolveSpec("x.ts", "react", () => true) === null);
   const g = examGraph(files);
   const cls = (f: string, exists = true) => classifyFile(f, g, exists).cls;
-  ok("ブレインだけが読む → brain（下書きの線はブレインの入口の先へ辿らない）", cls("app/lib/brain-only.ts") === "brain" && cls("app/lib/brain-deep.ts") === "brain" && cls("app/lib/brain-core.ts") === "brain", JSON.stringify([...g.draft]));
+  ok("ブレインだけが読む → brain（下書きの線はブレインの入口の先へ辿らない）", cls("app/lib/brain-only.ts") === "brain" && cls("app/lib/brain-deep.ts") === "brain", JSON.stringify([...g.draft]));
+  ok("brain-core 自身は下書きも読む（定数）→ both・下書きが直に使う reply-context とその先 → both（止めない）", cls("app/lib/brain-core.ts") === "both" && cls("app/lib/reply-context.ts") === "both" && cls("app/lib/ctx-deep.ts") === "both", JSON.stringify([...g.draft]));
   ok("下書きだけが読む → draft", cls("app/lib/draft-only.ts") === "draft" && cls("app/api/generate-reply/route.ts") === "draft");
   ok("両方が読む → both", cls("app/lib/shared.ts") === "both");
   ok("試験の道具・問題・設定 → both", cls("scripts/lib/score.ts") === "both" && cls("scripts/brain-exam/spec.json") === "both" && cls("package.json") === "both" && cls("tsconfig.json") === "both");

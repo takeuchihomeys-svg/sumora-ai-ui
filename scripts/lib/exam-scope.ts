@@ -19,6 +19,8 @@ export type FileMap = Map<string, string>;
 
 /** ブレインの段の入口（brain-exam.ts が読む物） */
 export const BRAIN_ENTRIES = ["app/lib/brain-core.ts", "app/lib/brain-layers.ts", "app/lib/deepseek-scope.ts", "app/lib/reply-context.ts"];
+/** ブレインを走らせる所（下書きの段では答案を固定するので、この先は下書きに効かない） */
+const BRAIN_RUNNER = "app/lib/brain-core.ts";
 /** 下書きの段の入口（generate-reply・--auto-hint の手がかり） */
 export const DRAFT_ENTRIES = ["app/api/generate-reply/route.ts", "app/lib/reply-hint-auto.ts"];
 /** 試験の道具（採点・入口・録音・問題）＝変われば全部の段に効く */
@@ -73,9 +75,10 @@ export function reach(entries: string[], files: FileMap, stop: ReadonlySet<strin
 export type ExamGraph = { brain: Set<string>; draft: Set<string>; tool: Set<string> };
 export function examGraph(files: FileMap): ExamGraph {
   const brain = reach(BRAIN_ENTRIES, files);
-  // 下書きの段はブレインの答案を固定して流す＝ブレインの入口の先は下書きの段では動かない
-  const draft = reach(DRAFT_ENTRIES, files, new Set(BRAIN_ENTRIES));
-  for (const b of BRAIN_ENTRIES) if (!DRAFT_ENTRIES.includes(b)) draft.delete(b);
+  // 下書きの段はブレインの答案を固定して流す（brainMetaDirect＝generate-reply は runBrainAndNotify を呼ばない）＝ブレインを走らせる brain-core の先は下書きの段では動かない。
+  //   2026-10-15 確かめる人: 止めるのは brain-core の先だけ。brain-core 自身は generate-reply が定数（PROPERTY_CONDITION_INQUIRY_RE）を読む＝下書きにも効く（両方）。
+  //   reply-context・deepseek-scope は generate-reply が直に使う共有の部品＝止めない（旧はここで止めて消していた＝reply-context を直しても下書きを回さなかった）
+  const draft = reach(DRAFT_ENTRIES, files, new Set([BRAIN_RUNNER]));
   const toolAll = reach(TOOL_ENTRIES, files, new Set([...BRAIN_ENTRIES, ...DRAFT_ENTRIES]));
   const tool = new Set([...toolAll].filter((f) => !brain.has(f) && !draft.has(f) && ![...BRAIN_ENTRIES, ...DRAFT_ENTRIES].includes(f)));
   return { brain, draft, tool };
