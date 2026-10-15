@@ -27,6 +27,7 @@ import { readTestMode, isTestModeAllowed, isTestModeTarget, testModeBlockedReaso
 import { AIX_PICKERS } from "./aix-pickers";
 import { isTestOnlyConversation } from "./test-conversations";
 import { testPiiRefusal } from "./test-pii-guard";
+import { altPiiSignal, altPiiGateEnabled } from "./alt-pii-gate";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 
@@ -182,6 +183,27 @@ export function isAltRouteDenied(name: string): boolean {
 }
 
 /**
+ * ブレインの部品ごとの DeepSeek のスイッチ（2026-10-15 竹内「核となるブレインはアンソロピック（Claude）に。核じゃない所を DeepSeek にする。
+ *   個人情報は渡さないのを徹底。そうすれば質は落ちずに費用が下がる」）。
+ * 核（Claude のまま・ここに載せない）: 今の番の判断 brain_fresh・会話全体の分析 brain_full・戦略の層 brain_strategy（毎回の判断の前提に入る）・
+ *   追加の調査の2回目（判断を差し替える）・定期見直し brain-sweep（判断の取りこぼしを拾う＝同じ brain_fresh／brain_full）・お客様の要約 customer_summary（ブレインに「必ず読むこと」で入る）。
+ * 載せる物は「今の番の判断に直接は効かない」と確かめた物だけ。既定は全部 off（Claude）＝比べて差が無いと確かめた物だけ既定を on にする。
+ *   brain_checkpoint（セーブデータ）: 10/15 に比べた（scripts/compare-checkpoint-deepseek.ts・5会話）。創作は Claude・DeepSeek とも0だが、
+ *     Claude が残した数字の 19%／34%（同じ入力の1回目／2回目）を DeepSeek は落とす＝『永久保持』の事実が消える → 既定 off のまま。
+ *   回るのは時刻の線が「全部渡してよい（申込の記録が無い）」会話だけ（maybeCreateCheckpoint が印を付ける・それ以外は Claude）。
+ * env の値 "on" で回す・"off" で止める（無ければ def）。
+ */
+export const BRAIN_DS_PARTS: Readonly<Record<string, { env: string; def: "on" | "off" }>> = {
+  brain_checkpoint: { env: "BRAIN_DS_CHECKPOINT", def: "off" },
+};
+/** on になっているブレインの部品の名札 */
+export function brainDsPartsOn(env: EnvLike = process.env): string[] {
+  return Object.entries(BRAIN_DS_PARTS)
+    .filter(([, p]) => ((env[p.env] ?? p.def).trim().toLowerCase() || p.def) === "on")
+    .map(([name]) => name);
+}
+
+/**
  * 環境変数から設定を読む。欠けていたら null（＝何もしない）。
  *   LLM_ALT_PROVIDER=azure
  *   AZURE_AI_ENDPOINT=https://<リソース名>.services.ai.azure.com/openai/v1/chat/completions
@@ -205,14 +227,18 @@ export function readAltConfig(env: EnvLike = process.env): AltProviderConfig | n
   const explicitProvider = (env.LLM_ALT_PROVIDER ?? "").trim().toLowerCase();
   // 2026-10-15 (b): 最後の Claude の時に最終チェックの一部だけ DeepSeek に回す切り替え（LLM_TEST_FINAL_CHECK_CLAUDE・本番では常に false）
   const finalSel = finalCheckSelective(env);
-  const provider = explicitProvider || (testMode || finalSel ? "deepseek" : "") || firstRouteProvider;
-  const actionsRaw = (env.LLM_ALT_ACTIONS ?? "").trim();
+  // 2026-10-15 ブレインの部品ごとのスイッチ（BRAIN_DS_PARTS・既定 off）。on の部品は LLM_ALT_ACTIONS に書いたのと同じ扱い（主の相手が無ければ DeepSeek 本家）
+  const partsOn = brainDsPartsOn(env);
+  const provider = explicitProvider || (testMode || finalSel || partsOn.length ? "deepseek" : "") || firstRouteProvider;
+  const actionsRaw = [(env.LLM_ALT_ACTIONS ?? "").trim(), ...partsOn].filter(Boolean).join(",");
   if (!actionsRaw && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-29 検証の反証: 主の相手（LLM_ALT_PROVIDER）もテスト用の切り替えも無く**振り分けだけ**の時は、主は無い（振り分けた名前だけ回す）。
   //   旧は最初の振り分けの相手が主になり、LLM_ALT_ACTIONS=reply_generate が残っていると本文が Qwen に行った（PROVIDER 無しなら旧来は null＝Claude）
   const routesOnly = !explicitProvider && !testMode && !finalSel;
-  if (routesOnly && actionsRaw) console.warn("[llm-alt] LLM_ALT_PROVIDER が無いので LLM_ALT_ACTIONS は効かない（振り分け LLM_ALT_ROUTES の名前だけ回す）");
-  const actions = routesOnly ? new Set<string>() : new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
+  const envActionsRaw = (env.LLM_ALT_ACTIONS ?? "").trim();
+  if (routesOnly && envActionsRaw) console.warn("[llm-alt] LLM_ALT_PROVIDER が無いので LLM_ALT_ACTIONS は効かない（振り分け LLM_ALT_ROUTES の名前だけ回す）");
+  //   主の相手が無い時、部品のスイッチは効く（部品の名前だけ）・LLM_ALT_ACTIONS は今までどおり効かない
+  const actions = routesOnly ? new Set<string>(partsOn) : new Set(actionsRaw.split(",").map((s) => s.trim()).filter(Boolean));
   if (actions.size === 0 && !testMode && !finalSel && routeTargets.size === 0) return null;
   // 2026-09-23 竹内「これなら質落ちるから毎回の分析もクロードの方が良いね」:
   //   ブレインは**毎回の分析（brain_fresh）も会話全体の分析（brain_full）も Claude のまま**。既定では回さない。
@@ -1024,6 +1050,18 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     // 2026-10-01 再生の場面に記入済みの申込フォームが混ざり DeepSeek に渡った事故（⑦・会話 ae321772）: テストの間は個人の値がある本文を送らない（本番は null）
     const piiRefusal = testPiiRefusal(process.env, altBodyText(body), "DeepSeek");
     if (piiRefusal) blockAndThrow(piiRefusal);
+    // 2026-10-15 竹内「個人情報は渡さないのを徹底」: 本番でも、回す本文に個人の値（携帯番号・メール・記入済みの申込フォーム・生年月日・個人番号・口座番号）が
+    //   残っていれば DeepSeek に出さない（入口の伏せ漏れの最後の歯止め・alt-pii-gate.ts）。実データ 10/01〜15 の 2,830通: 伏せた後も当たる通 6
+    //   （空白区切りの携帯番号・記入済みの申込フォーム＝申込へ を押す前に届くと時刻の線が引かれない）・スタッフ／AIX の通 0。
+    //   物件の判断・読み取り（Claude に倒さない名札）は送らずに失敗にする。費用0の行を残す（後から回数を数える）。止める LLM_ALT_PII_GATE=off
+    const piiGate = altPiiGateEnabled(process.env) ? altPiiSignal(altBodyText(body)) : null;
+    if (piiGate) {
+      recordAltUsage({ model: targetConfigFor(cfg, routeName).model, action: routeName, conversationId: convForGate, usage: {}, status: 0, errorType: "alt_skipped_pii",
+        durationMs: 0, stream: !!body.stream, sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null });
+      console.warn("[llm-alt] 本文に個人の値 → DeepSeek に出さない", JSON.stringify({ route: routeName, signal: piiGate, conversationId: convForGate }));
+      if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: 本文に個人の値（${piiGate}）があるので DeepSeek に送らない（Claude には倒さない）`);
+      return toClaude(`本文に個人の値（${piiGate}）`);
+    }
     // 開発環境だけ: DeepSeek に送る本文を書き出す（線より前の中身が入っていないかを目で確かめる用・本番では VERCEL_ENV が付くので動かない）
     if (process.env.DEBUG_PROMPT_DIR && !process.env.VERCEL_ENV) {
       try {
