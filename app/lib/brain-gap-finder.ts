@@ -137,17 +137,44 @@ const UNAVAILABLE_RE = /募集(?:が)?終了|満室|申込(?:が|み)?入|埋ま
 const INVITE_RE = /ご案内|ご内覧|内覧|内見|お申込|お申し込み|お部屋抑え/;
 const SECOND_RE = /[2２二]番手|[1１一]番手|キャンセル待ち/;
 const SECOND_PARALLEL_RE = /申し?込[^\n。]{0,30}並行して|並行して[^\n。]{0,20}申し?込/;
+// 2026-10-15 review: 前のこちらの送信の「2番手」は、お客様が今2番手で申込んでいる状態の時だけ数える（別の物件の募集状況の「2番手以降でのお申込となります」・
+//   2番手のキャンセル・スライドの案内は外す）。スタッフの文の「2番手」はブレインが申込へ進めた時だけ（物件確認の結果の中継は状況の穴ではない）
+const SECOND_STATE_RE = /[2２二]番手(?:で|にて)?(?:の)?お?申し?込み?(?:が|は)?(?:完了|済|中|しており|して(?:おり|い)|させて(?:頂|いただ)き(?:ました|まし))/;
+const SECOND_CANCEL_RE = /キャンセル|取り下げ|スライド/;
 const APPLY_RE = /申し?込(?:み|ませ|みた|みま|もう)|申込(?:書|フォーマット)|(?:ここ|こちら|この部屋|このお部屋)にし(?:ます|たい)|契約したい/;
 const STAFF_APPLY_AIX = /apply|application|form/;
 const REASK_CUE_RE = /まだ|どうなり|その後|先ほど|さっき|改めて|再度|もう一度|返事|ご連絡(?:は|まだ)/;
 
 /** 名前を伏せて30字に縮める（呼び方の「〇〇さん」と既知の名前・電話・メールを伏せる） */
 export function brief(text: string | null | undefined, mask: (s: string) => string = (s) => s, n = 30): string {
-  const s = mask(String(text ?? ""))
-    .replace(/^[^\n！!。、\s]{1,12}?(?:さん|様)/u, "〇〇さん")
+  // 2026-10-15 review: maskPII の「漢字1字＋様」は人の呼び方でない語（お子様・お父様・緊急連絡先様・管理会社様）まで「お客様」にするので先に避け、
+  //   英字・ひらがなの呼び方（〇〇さんの英字・ひらがなの名前）は maskPII が伏せないのでここで伏せる
+  const keep: string[] = [];
+  const pre = String(text ?? "").replace(BRIEF_KEEP_RE, (m) => { keep.push(m); return `\u0000${keep.length - 1}\u0000`; });
+  const s = mask(pre)
+    .replace(/^[^\n！!。、\s\u0000]{1,12}?(?:さん|様)/u, "〇〇さん")
+    .replace(/(^|[^A-Za-zＡ-Ｚａ-ｚぁ-ん〇])(?:[A-Za-zＡ-Ｚａ-ｚ]{1,12}|[ぁ-ん]{1,6})(?:さん|くん|ちゃん)/gu, "$1〇〇さん")
+    .replace(/\u0000(\d+)\u0000/g, (_, i: string) => keep[Number(i)] ?? "")
     .replace(/https?:\/\/\S+/g, "[URL]")
     .replace(/\s+/g, " ").trim();
   return s ? [...s].slice(0, n).join("") : "（画像・資料・様式だけ）";
+}
+
+const BRIEF_KEEP_RE = /お子様|お父様|お母様|ご両親様|ご家族様|ご主人様|ご友人様|緊急連絡先様|連帯保証人様|保証人様|契約者様|入居者様|管理会社様|保証会社様|貸主様|担当者様/g;
+
+/**
+ * 下書きもブレインの判断も画面に届いていない番が続いた区間（障害・記録の止まり）。番を時刻順に並べ、届いていない番が minRun 以上続いた区間の番の id を返す。
+ *   2026-10-15 review: 10/13 01時〜10/14 18時（JST）の 69 番は下書き・判断が1つも届いておらず（DeepSeek の障害の頃）、「手で打った」「ブレインが走っていない」
+ *   「text_but_aix」に混ざってブレインの穴の数を倍にしていた。障害の区間は穴に数えず別に数える（普段の届いていない番は1日2〜4・続いても数番）
+ */
+export function outageTurnIds(turns: ReadonlyArray<{ id: number | string; at: string; missing: boolean }>, minRun = 8): Set<string> {
+  const out = new Set<string>();
+  const sorted = [...turns].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  let run: string[] = [];
+  const flush = () => { if (run.length >= minRun) for (const id of run) out.add(id); run = []; };
+  for (const t of sorted) { if (t.missing) run.push(String(t.id)); else flush(); }
+  flush();
+  return out;
 }
 
 /** 今日の型の印（customer・前後の流れの語で決める。印は原因の型の手がかりにもなる） */
@@ -162,7 +189,9 @@ export function todayTagsOf(t: GapTurn): TodayTag[] {
   const afterUnavailable = t.prevCheckPattern === "unavailable" || t.prevCheckPattern === "exclusive" || UNAVAILABLE_RE.test(prev);
   const brainInvites = /viewing_invite|application_push|greeting_viewing/.test(t.brainAction ?? "");
   if (afterUnavailable && ((INVITE_RE.test(draft) && !INVITE_RE.test(staff)) || (brainInvites && !t.staffAix.includes(t.brainAction ?? "")))) out.push("invite_after_unavailable");
-  if (SECOND_RE.test(c) || SECOND_RE.test(staff) || SECOND_RE.test(prev) || SECOND_PARALLEL_RE.test(staff)) out.push("second_applicant");
+  const brainApply = [t.brainAction, t.digest?.la, t.digest?.aix].some((x) => STAFF_APPLY_AIX.test(x ?? ""));
+  const prevSecondState = prev.split(/[。\n]/).some((x) => SECOND_STATE_RE.test(x) && !SECOND_CANCEL_RE.test(x));
+  if (SECOND_RE.test(c) || (SECOND_RE.test(staff) && brainApply) || prevSecondState || SECOND_PARALLEL_RE.test(staff)) out.push("second_applicant");
   if (APPLY_RE.test(c) && (t.staffAix.some((a) => STAFF_APPLY_AIX.test(a)) || /申込|お申し込み/.test(staff)) && !/申込|お申し込み/.test(draft) && !STAFF_APPLY_AIX.test(t.brainAction ?? "")) out.push("apply_band");
   return out;
 }
@@ -186,7 +215,8 @@ export function classifyCause(t: GapTurn, kind: GapKind, tags: ReadonlyArray<Tod
   // 2. 決まりがブレインを上書き
   const dg = t.digest;
   const ruleSrc = !!dg?.ds && /^(?:rule|correction)[:_]/.test(dg.ds);
-  if (ruleSrc && (dg?.la ?? null) !== (dg?.aix ?? null)) {
+  // 2026-10-15 review: スタッフも規則の出した AIX を押した時は規則が当たっている（上書きの穴に数えない）
+  if (ruleSrc && (dg?.la ?? null) !== (dg?.aix ?? null) && !(dg?.aix && t.staffAix.includes(dg.aix))) {
     const staffFollowedLlm = !!dg?.la && t.staffAix.includes(dg.la);
     const staffTextWhenLlmNone = !dg?.la && t.staffAix.length === 0 && t.staffTexts.length > 0;
     if (staffFollowedLlm || staffTextWhenLlmNone || kind === "brain_mismatch") return { cause: "rule_override", sub: `${dg?.ds}: ${dg?.la ?? "なし"}→${dg?.aix ?? "なし"}` };
@@ -196,6 +226,13 @@ export function classifyCause(t: GapTurn, kind: GapKind, tags: ReadonlyArray<Tod
   // 下書きの文はスタッフと同じだった（食い違いは返信か AIX か・スタッフだけの事実だけ）→ 文の中身の型（軸・知識・材料）には数えない
   const textSame = (t.detail as { text_verdict?: string } | null)?.text_verdict === "same" || (t.detail as { text_verdict?: string } | null)?.text_verdict === "same_meaning";
   if (textSame) return { cause: "unknown", sub: `文は同じ・返信かAIXか: ${d.reason ?? ""}` };
+  // 2026-10-15 review: ブレインが走っていない番・初回のあいさつの番は、文の中身の型（軸・状況・材料・知識）に数えない（ブレインの読みの穴ではない）。話題の手がかりは sub に残す
+  const firstGreeting = /はじめまして|この度ご連絡頂き/.test(staff);
+  if (d.reason === "no_brain" || firstGreeting) {
+    const topic = GENERAL_KNOWLEDGE_RE.exec(t.customerText)?.[0];
+    const head = d.reason === "no_brain" ? (firstGreeting ? "ブレインが走っていない番・初回のあいさつ" : "ブレインが走っていない番") : "初回のあいさつの番";
+    return { cause: "unknown", sub: `${head}（${d.reason ?? ""}${topic ? `・話題:${topic}` : ""}）` };
+  }
   // 3. 今日の型の印から
   if (tags.includes("parking") && (VIEWING_SCHEDULED_RE.test(t.prevStaffText) || /コインパーキング|近くのパーキング/.test(staff))) return { cause: "axis", sub: "when:内覧当日の来方（物件の駐車場ではない）" };
   if (tags.includes("budget_over")) return { cause: "axis", sub: "about:送った物件への反応（探す条件の変化ではない）" };
@@ -218,7 +255,6 @@ export function classifyCause(t: GapTurn, kind: GapKind, tags: ReadonlyArray<Tod
   }
   // 6. 返信か AIX か（食い違いだけ・手がかりなし）
   if (kind === "brain_mismatch") return { cause: "unknown", sub: `返信かAIXか: ${d.reason ?? ""}（ブレイン ${d.brain_aix ?? t.brainAction ?? "返信"}／実送信 ${t.staffAix.join("+") || "文"}）` };
-  if (d.reason === "no_brain") return { cause: "unknown", sub: /はじめまして|この度ご連絡頂き/.test(staff) ? "ブレインが走っていない番・初回のあいさつ（no_brain）" : "ブレインが走っていない番（no_brain）" };
   if (d.reason === "no_draft" || d.reason === "sentinel_only") return { cause: "unknown", sub: `下書きが無い（${d.reason}）` };
   return { cause: "unknown", sub: (d.reason as string | undefined) ?? "" };
 }

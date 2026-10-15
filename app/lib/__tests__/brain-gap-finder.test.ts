@@ -1,6 +1,6 @@
 // 2026-10-15 ブレインの穴を自分で見つける見張り（brain-gap-finder.ts）。お客様の発言は実物の形（名前・物件名は伏せた）
 // 実行: npx tsx app/lib/__tests__/brain-gap-finder.test.ts
-import { findingsOfTurn, todayTagsOf, classifyCause, longOpenItems, reopenedItems, summarizeGaps, brief, isBroughtBundle, brainGapFinderEnabled, type GapTurn } from "../brain-gap-finder";
+import { findingsOfTurn, todayTagsOf, classifyCause, longOpenItems, reopenedItems, summarizeGaps, brief, isBroughtBundle, brainGapFinderEnabled, outageTurnIds, type GapTurn } from "../brain-gap-finder";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -118,6 +118,44 @@ it("戻す環境変数 BRAIN_GAP_FINDER=off", () => {
   eq(brainGapFinderEnabled({}), true);
   eq(brainGapFinderEnabled({ BRAIN_GAP_FINDER: "off" }), false);
 });
+
+// 2026-10-15 review（本番の7日分を目で見て外れていた型）
+it("review: 別の物件の募集状況の「2番手以降」・2番手のキャンセル・スライドの案内の後は2番手の印を付けない", () => {
+  for (const prev of ["〇〇の募集状況確認させて頂きましたところ、現在お部屋お申込が入っており、2番手以降でのお申込となります！！", "〇〇号室は1番手の方がご契約となりますので、2番手お申込みがキャンセルとなっております。", "お気に召されましたら903号室2番手お申込みスライド可能です！！"]) {
+    const t = base({ customerText: "ありがとうございます！", prevStaffText: prev, draft: "ありがとうございます！！", staffTexts: ["かしこまりました！！"] });
+    eq(todayTagsOf(t).includes("second_applicant"), false, prev);
+  }
+  const t2 = base({ customerText: "お願いします", prevStaffText: "2番手でお申し込み完了しております！！ 並行してお部屋探しさせて頂きます", draft: "x", staffTexts: ["y"] });
+  ok(todayTagsOf(t2).includes("second_applicant"));
+});
+it("review: スタッフの物件確認の結果の中の「2番手」は、ブレインが申込へ進めていない時は印を付けない", () => {
+  const t = base({ customerText: "お願いします", staffTexts: ["〇〇 1番手でお申込みが入っており、2番手でのお申込みが可能となります！！"], staffAix: ["property_check_result"], verdict: "different", detail: { reason: "text_but_aix" } });
+  eq(todayTagsOf(t).includes("second_applicant"), false);
+  const t2 = base({ ...t, brainAction: "application_push" });
+  ok(todayTagsOf(t2).includes("second_applicant"));
+});
+it("review: ブレインが走っていない番・初回のあいさつの番は中身の型に数えない（話題は sub に残す）", () => {
+  const t = base({ customerText: "火災保険って入る必要ありますか？", staffTexts: ["はい！！サポート費用に含んでおります！！"], verdict: "na", detail: { reason: "no_brain" } });
+  const f = findingsOfTurn(t)[0];
+  eq(f.cause, "unknown"); ok(f.sub.includes("話題:火災保険"), f.sub);
+  const t2 = base({ customerText: "ミナミで1LDK ペット可 ありますか？", staffTexts: ["〇〇さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！"], verdict: "na", detail: { reason: "no_draft" }, companyFactHit: true });
+  eq(findingsOfTurn(t2)[0].cause, "unknown");
+});
+it("review: 下書きも判断も届いていない番が8つ以上続いた区間だけ障害として外す", () => {
+  const at = (h: number) => new Date(Date.UTC(2026, 9, 13, h)).toISOString();
+  const turns = [{ id: 1, at: at(0), missing: false }, ...Array.from({ length: 9 }, (_, i) => ({ id: 10 + i, at: at(1 + i), missing: true })), { id: 2, at: at(12), missing: false }, { id: 3, at: at(13), missing: true }, { id: 4, at: at(14), missing: false }];
+  eq([...outageTurnIds(turns)].sort(), Array.from({ length: 9 }, (_, i) => String(10 + i)).sort());
+});
+it("review: 要旨は人の呼び方でない「〇様」（お子様・緊急連絡先様）を伏せず、英字・ひらがなの呼び方を伏せる", () => {
+  const mask = (s: string) => s.replace(/(?:[一-龯々]{1,4}|[ァ-ヶー]{2,6})(?:様|さま|さん)/g, "お客様");
+  eq(brief("1階のみお子様ご入居可能・緊急連絡先様での審査", mask), "1階のみお子様ご入居可能・緊急連絡先様での審査");
+  eq(brief("はい！ Moeさんにオススメ・りさんへ", mask), "はい！ 〇〇さんにオススメ・〇〇さんへ");
+});
+it("review: スタッフも規則の出した AIX を押した時は決まりの上書きに数えない", () => {
+  const t = base({ verdict: "different", detail: { reason: "aix_other" }, digest: { la: null, aix: "greeting_viewing", ds: "rule:viewing_day_ack" }, staffAix: ["application_push", "greeting_viewing"], brainAction: "greeting_viewing" });
+  eq(findingsOfTurn(t).some((x) => x.cause === "rule_override"), false);
+});
+
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log("  ✗", f); process.exit(1); }

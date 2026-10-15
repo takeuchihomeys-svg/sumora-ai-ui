@@ -23,6 +23,7 @@ const KIND = arg("kind", ""), CAUSE = arg("cause", ""), TAG = arg("tag", "");
   console.log(`● 確認事項: 未対応のまま48時間以上 ${r.ledger.open}（${Object.entries(r.ledger.topics).map(([k, v]) => `${k} ${v}`).join("・") || "-"}）／完了の判定が覆った ${r.ledger.reopened}`);
   console.log(`● 初回の持ち込み: 番 ${r.brought.turns}・下書きあり ${r.brought.withDraft}・最大限割引の御見積書の一言なし ${r.brought.missing}（うちスタッフは書いた ${r.brought.staffHad}）`);
   console.log(`● 新しい turn_contract の軸（about/property/when/whose）が入った番: ${r.axisTurns}${r.axisTurns ? "" : "（本番に入る前＝語と前後の流れの手がかりだけで分けた）"}`);
+  if (r.skippedOutage) console.log(`● 下書きも判断も届いていない番が続いた区間（障害の疑い・穴に数えない）: ${r.skippedOutage}番（${r.outageRange?.from.slice(5, 16)}〜${r.outageRange?.to.slice(5, 16)} UTC）`);
   if (r.errors.length) console.log("⚠ 読めなかった物:", r.errors.slice(0, 5).join(" / "));
   if (LIST > 0) {
     const pick = (f: GapFinding) => (!KIND || KIND.split(",").includes(f.kind)) && (!CAUSE || CAUSE.split(",").includes(f.cause)) && (!TAG || f.tags.some((t) => TAG.split(",").includes(t)));

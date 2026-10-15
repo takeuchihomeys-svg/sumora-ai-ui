@@ -7,7 +7,7 @@
 //   2026-10-15 竹内さん（設計知見【最優先】97ea82f3）。戻す: BRAIN_GAP_FINDER=off
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  findingsOfTurn, isBroughtBundle, longOpenItems, reopenedItems, summarizeGaps, brief,
+  findingsOfTurn, isBroughtBundle, outageTurnIds, longOpenItems, reopenedItems, summarizeGaps, brief,
   type GapTurn, type GapFinding, type GapSummary,
 } from "@/app/lib/brain-gap-finder";
 import { buildRequestLedger, splitRequests, TOPIC_JA, type LedgerMsg } from "@/app/lib/request-ledger";
@@ -23,8 +23,13 @@ export function customerOwnWords(text: string | null | undefined): string {
   const t = String(text ?? "");
   if (/^\s*\[(?:画像|動画|ファイル|スタンプ)\]/.test(t)) return "";
   if (isConditionFormMessage(t) || /【お?お?客様記入欄】|【お申込者様記入欄】|^\s*①【/m.test(t)) return "";
-  return t.split(/\n+/).filter((l) => !/https?:\/\/|^\s*by\s+\S+\s*$/i.test(l)).join("\n").trim();
+  const lines = t.split(/\n+/).filter((l) => !/https?:\/\/|^\s*by\s+\S+\s*$/i.test(l));
+  // 2026-10-15 review: 括弧の無い申込の記入（緊急連絡先・勤務先・生年月日…を行ごとに書いた物）は第三者の氏名・生年が要旨に出ていたので、
+  //   記入の行が3つ以上ある時は問いの行（？・か）だけ残す
+  if (lines.filter((l) => APPLICATION_LINE_RE.test(l)).length >= 3) return lines.filter((l) => !APPLICATION_LINE_RE.test(l) && /[?？]|か[。！!]*\s*$/.test(l)).join("\n").trim();
+  return lines.join("\n").trim();
 }
+const APPLICATION_LINE_RE = /緊急連絡先|連帯保証人|生年月日|昭和|平成|〒|[0-9０-９]{2,4}[-ー－][0-9０-９]{2,4}[-ー－][0-9０-９]{3,4}|続柄|勤務先|勤続|居住年数|住居年数|年収|携帯|フリガナ|^\s*[ァ-ヶー]{2,}[\s　]*[ァ-ヶー]*\s*$|(?:19|20)\d{2}\s*年/;
 type Row = Record<string, unknown>;
 type TurnRow = {
   id: number; conversation_id: string; customer_turn_at: string; customer_last_at: string | null; conv_status: string | null;
@@ -60,11 +65,14 @@ export type BrainGapReport = {
   axisTurns: number;
   /** 申込の後でブレインを回さない番（決まり通り・穴に数えない） */
   skippedPostApply: number;
+  /** 下書きも判断も届いていない番が続いた区間（障害の疑い）の番の数と区間（穴に数えない） */
+  skippedOutage: number;
+  outageRange: { from: string; to: string } | null;
   errors: string[];
 };
 
 /** 期間の番を読んで穴を集める（[sinceMs, untilMs)） */
-async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, errors: string[]): Promise<{ findings: GapFinding[]; turns: number; ledger: BrainGapReport["ledger"]; brought: BrainGapReport["brought"]; axisTurns: number; skippedPostApply: number }> {
+async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, errors: string[]): Promise<{ findings: GapFinding[]; turns: number; ledger: BrainGapReport["ledger"]; brought: BrainGapReport["brought"]; axisTurns: number; skippedPostApply: number; skippedOutage: number; outageRange: BrainGapReport["outageRange"] }> {
   const since = new Date(sinceMs).toISOString(), until = new Date(untilMs).toISOString();
   const turns = (await readAll<TurnRow>((f, t) => sb.from("line_watch_turns")
     .select("id, conversation_id, customer_turn_at, customer_last_at, conv_status, draft_last, draft_sentinel, brain_action, brain_reply_mode, verdict, verdict_detail, final_check, staff_texts, staff_aix, decision_id")
@@ -113,7 +121,11 @@ async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, err
     }
   }
 
+  // 下書きも判断も届いていない番が続いた区間（障害）は穴に数えない（outageTurnIds）
+  const outage = outageTurnIds(turns.map((r) => ({ id: r.id, at: r.customer_turn_at, missing: !r.draft_last && !r.draft_sentinel && !r.brain_action })));
+  let skippedOutage = 0;
   for (const r of turns) {
+    if (outage.has(String(r.id))) { skippedOutage++; continue; }
     const list = msgs.get(r.conversation_id) ?? [];
     const conv = convs.get(r.conversation_id);
     const tAt = Date.parse(r.customer_turn_at), tLast = Date.parse(r.customer_last_at ?? r.customer_turn_at);
@@ -176,20 +188,22 @@ async function collect(sb: SupabaseClient, sinceMs: number, untilMs: number, err
       findings.push({ kind: "ledger_reopen", cause: "situation", sub: `完了の判定（${TOPIC_JA[x.item.topic as keyof typeof TOPIC_JA] ?? x.item.topic}）が早い`, tags: ["confirmed_judgement"], conversationId: cid, turnId: `R:${cid.slice(0, 8)}:${x.at}`, at: x.at, customer: brief(x.again, mask), staff: `前の問い「${brief(x.item.quote, mask, 20)}」` });
     }
   }
-  return { findings, turns: turns.length - skippedPostApply, ledger, brought, axisTurns, skippedPostApply };
+  const outAt = turns.filter((r) => outage.has(String(r.id))).map((r) => r.customer_turn_at).sort();
+  const outageRange = outAt.length ? { from: outAt[0], to: outAt[outAt.length - 1] } : null;
+  return { findings, turns: turns.length - skippedPostApply - skippedOutage, ledger, brought, axisTurns, skippedPostApply, skippedOutage, outageRange };
 }
 
 export async function runBrainGapFinder(sb: SupabaseClient, opts: { days?: number; nowMs?: number; examples?: number } = {}): Promise<BrainGapReport & { findings: GapFinding[] }> {
   const days = opts.days ?? 7, now = opts.nowMs ?? Date.now();
   const sinceMs = now - days * DAY;
   const errors: string[] = [];
-  const r: BrainGapReport & { findings: GapFinding[] } = { ok: true, days, since: new Date(sinceMs).toISOString(), until: new Date(now).toISOString(), summary: null, ledger: { open: 0, reopened: 0, topics: {} }, brought: { turns: 0, withDraft: 0, missing: 0, staffHad: 0 }, axisTurns: 0, skippedPostApply: 0, errors, findings: [] };
+  const r: BrainGapReport & { findings: GapFinding[] } = { ok: true, days, since: new Date(sinceMs).toISOString(), until: new Date(now).toISOString(), summary: null, ledger: { open: 0, reopened: 0, topics: {} }, brought: { turns: 0, withDraft: 0, missing: 0, staffHad: 0 }, axisTurns: 0, skippedPostApply: 0, skippedOutage: 0, outageRange: null, errors, findings: [] };
   try {
     const cur = await collect(sb, sinceMs, now, errors);
     let prevFindings: GapFinding[] = [];
     try { prevFindings = (await collect(sb, sinceMs - days * DAY, sinceMs, errors)).findings; } catch (e) { errors.push(`prev: ${e instanceof Error ? e.message : String(e)}`); }
     r.summary = summarizeGaps(cur.findings, prevFindings, cur.turns, { examples: opts.examples ?? 3 });
-    r.ledger = cur.ledger; r.brought = cur.brought; r.axisTurns = cur.axisTurns; r.skippedPostApply = cur.skippedPostApply; r.findings = cur.findings;
+    r.ledger = cur.ledger; r.brought = cur.brought; r.axisTurns = cur.axisTurns; r.skippedPostApply = cur.skippedPostApply; r.skippedOutage = cur.skippedOutage; r.outageRange = cur.outageRange; r.findings = cur.findings;
   } catch (e) {
     r.ok = false; errors.push(e instanceof Error ? e.message : String(e));
   }
@@ -201,7 +215,7 @@ export function compactGapReport(r: BrainGapReport): Record<string, unknown> {
   const s = r.summary;
   const ex = (e: GapFinding) => ({ c: e.conversationId.slice(0, 8), at: e.at.slice(0, 16), k: e.kind, sub: e.sub.slice(0, 60), cust: e.customer, staff: e.staff });
   return {
-    ok: r.ok, days: r.days, since: r.since, until: r.until, axisTurns: r.axisTurns, skippedPostApply: r.skippedPostApply, ledger: r.ledger, brought: r.brought, errors: r.errors.slice(0, 5),
+    ok: r.ok, days: r.days, since: r.since, until: r.until, axisTurns: r.axisTurns, skippedPostApply: r.skippedPostApply, skippedOutage: r.skippedOutage, outageRange: r.outageRange, ledger: r.ledger, brought: r.brought, errors: r.errors.slice(0, 5),
     turns: s?.turns ?? 0, findings: s?.findings ?? 0, byKind: s?.byKind ?? null, byKindPrev: s?.byKindPrev ?? null,
     byCause: (s?.byCause ?? []).map((c) => ({ cause: c.cause, n: c.n, prev: c.prev, diff: c.diff, fix: c.fix, subs: c.subs, examples: c.examples.map(ex) })),
     byTag: (s?.byTag ?? []).map((t) => ({ tag: t.tag, n: t.n, causes: t.causes, examples: t.examples.map(ex) })),
