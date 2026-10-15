@@ -161,10 +161,12 @@ it("この方の審査が動いている文（実物）は形跡", () => {
     "野口さん お世話になっております！！ 管理会社に入居日交渉させていただき、無事11/16日からのご入居で許可をいただきました😊！！ 野口さん問題なければこれよりオーナーの最終審査に移行となります！！",
     "確認しましたところ現在まだ審査中となります！！ 審査状況進捗あり次第ご連絡させて頂きます！！",
     "無事保証会社の審査通過致しました！！ 貸主による最終審査に移行致します！",
-    "かしこまりました！！ ルネフラッツ〇〇606号室お申込みさせていただきます😊！！",
     "Sさん お送りいただきありがとうございます！！ こちらでお申し込みフォーマット入力完了となりますので、管理会社にご連絡させていただきます😊！！",
     "くぼさん 2番手でお申込み完了しております！！ 1番手に繰り上がり次第審査開始となります！！ 審査の進捗あり次第ご連絡させていただきます😌！！",
   ]) eq(screeningEvidenceOf(S(t)), "screening_text", t.slice(0, 30));
+  // 2026-10-15 軸の直し: 受けの宣言は申込フォームの受領・本人確認の画像がある時だけ形跡（ryou さん 9/26 の宣言で 10/10 に帯が出ていた）
+  eq(screeningEvidenceOf(S("かしこまりました！！ ルネフラッツ〇〇606号室お申込みさせていただきます😊！！"), { formReceived: true }), "screening_text", "宣言＋フォーム受領");
+  eq(screeningEvidenceOf(S("かしこまりました！！ ルネフラッツ〇〇606号室お申込みさせていただきます😊！！")), null, "宣言だけ");
   for (const t of ["おはようございます！ 審査結果ってまだ分からない感じでしょうか？？", "オーナー審査どうなりましたか🥲", "審査通過ありがとうございます！ 10/31日入居でお願いいたします！", "お世話になっております。審査こんなに遅いことあるんですか？？"])
     eq(screeningEvidenceOf(C(t)), "screening_text", t.slice(0, 30));
 });
@@ -190,6 +192,13 @@ it("促す: 申込より前の段階・21日以内・戻した後・その後に
   const rejected = [...msgs, { sender: "staff", text: "管理会社より保証会社審査が否決となり、審査継続不可能とのご連絡がございました。", createdAt: iso(NOW - DAY / 2) }];
   eq(resolveApplyStageNudge({ status: "proposing", messages: rejected, nowMs: NOW }), null, "否決の後は切り替えの番");
   eq(isPreApplyForNudge("hearing"), true); eq(isPreApplyForNudge(""), false);
+  // ryou さん（f895b126）: 9/26 の受けの宣言だけ・申込の情報は来ていない → 10/10 の「1番手の方審査否決…2番手お申込み可能」の後も帯を出さない
+  const ryou = [
+    { sender: "staff", text: "かしこまりました！！\n〇〇904号室お申込みさせていただきます😊！！", createdAt: iso(NOW - 14 * DAY) },
+    { sender: "staff", text: "現在1番手でお申込みが入っており2番手お申込みが可能なお部屋となります！！\n\n1番手の方審査否決・キャンセルで繰り上がり審査開始となりますがお部屋のお申込み自体は可能となります", createdAt: iso(NOW - DAY) },
+  ];
+  eq(resolveApplyStageNudge({ status: "proposing", messages: ryou, nowMs: NOW }), null, "宣言だけ・他の申込者の話");
+  eq(resolveApplyStageNudge({ status: "proposing", messages: ryou, nowMs: NOW, applyingTextReceived: true })?.kind, "screening_text", "フォーム受領あり");
 });
 
 // ─── 見張りの一致率（auto-reply-readiness の関所） ────────────────────

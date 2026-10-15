@@ -33,9 +33,17 @@ const STAFF_SCREENING_RE = new RegExp([
   "審査(?:完了|通過)(?:の|との)?(?:ご)?連絡(?:を)?(?:頂|いただ)",
   "審査(?:の)?(?:進捗|状況)(?:あり次第|が?分かり次第|わかり次第|確認(?:出来|でき)次第)",
   "お申し?込み?(?:フォーマット|フォーム)?(?:の)?入力(?:が)?完了",
-  // こちらが代わりに申し込む（「かしこまりました！！ 〇〇302号室お申し込みさせていただきます」）。「よろしければ…お申込みさせて頂きます」の誘いは下の打ち消しで外す
-  "お申し?込み?(?:を)?(?:させて(?:頂|いただ)きま(?:す|した)|致しました|いたしました)",
 ].join("|"));
+/**
+ * こちらが代わりに申し込む宣言（「かしこまりました！！ 〇〇302号室お申し込みさせていただきます」）。「よろしければ…お申込みさせて頂きます」の誘いは下の打ち消しで外す。
+ * 2026-10-15 軸の直し（ryou さん f895b126 9/26〜10/10）: 受けの宣言だけでは申込の情報（フォーム・本人確認）はまだ来ていない＝この方の審査は動いていない。
+ *   宣言は、申込フォームの受領（applying_text_received・お客様のフォームの文）か本人確認の画像（applying_image_received）がある時だけ形跡にする。
+ *   戻す APPLY_STAGE_NUDGE_AXIS=off（宣言だけでも形跡＝前の形）
+ */
+const STAFF_APPLY_DECLARATION_RE = /お申し?込み?(?:を)?(?:させて(?:頂|いただ)きま(?:す|した)|致しました|いたしました)/;
+export function applyStageNudgeAxisOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.APPLY_STAGE_NUDGE_AXIS ?? "").trim().toLowerCase() !== "off";
+}
 /** お客様の文: 審査の結果を待っている・通った */
 //   お客様は「審査の結果ってまだ分からない感じでしょうか？」「オーナー審査どうなりましたか」のように問いの形で聞くので、問いの形は外さない
 const CUSTOMER_SCREENING_RE = /審査(?:の)?結果(?:って|は|が)?(?:まだ|どう|出|いつ)|審査(?:って|は)?どうなり|審査[^\n。]{0,6}遅い|審査(?:通過|通りました|が通りました|通った)(?:ありがとう|しました|完了|です)/;
@@ -51,8 +59,25 @@ const sentences = (t: string) => t.normalize("NFKC").split(/\n|(?<=[。！!])/);
 export type NudgeMessage = { sender: string; text: string | null; createdAt: string };
 export type ApplyStageNudge = { kind: "screening_text" | "application_form"; at: string; by: "staff" | "customer" };
 
-/** 1通がこの方の審査の形跡か（純関数・テストと監査で使う） */
-export function screeningEvidenceOf(m: NudgeMessage): ApplyStageNudge["kind"] | null {
+/** こちらの受けの宣言（申込させて頂きます）の文があるか（誘い・問い・他の申込者の文は外す） */
+export function isStaffApplyDeclaration(m: NudgeMessage): boolean {
+  if (m.sender === "customer") return false;
+  const t = String(m.text ?? "");
+  if (!t.trim() || /流れ(?:を|について)?(?:ご案内|ご説明)|申し?込み?後の流れ/.test(t)) return false;
+  return sentences(t).some((s) => STAFF_APPLY_DECLARATION_RE.test(s) && !SCREENING_NEGATE_RE.test(s) && !STAFF_NEGATE_RE.test(s));
+}
+
+/**
+ * 1通がこの方の審査の形跡か（純関数・テストと監査で使う）。
+ *   o.formReceived: 申込フォームの受領・本人確認の画像の記録がある（無い時、こちらの受けの宣言だけでは形跡にしない・APPLY_STAGE_NUDGE_AXIS=off で前の形）
+ */
+export function screeningEvidenceOf(m: NudgeMessage, o: { formReceived?: boolean } = {}): ApplyStageNudge["kind"] | null {
+  const kind = screeningEvidenceCore(m);
+  if (kind) return kind;
+  if (isStaffApplyDeclaration(m) && (!applyStageNudgeAxisOn() || o.formReceived)) return "screening_text";
+  return null;
+}
+function screeningEvidenceCore(m: NudgeMessage): ApplyStageNudge["kind"] | null {
   const t = String(m.text ?? "");
   if (!t.trim() || /^\s*\[(?:画像|動画)\]/.test(t)) return null;
   if (m.sender === "customer" && isApplicationFormMessage(t).detected) return "application_form";
@@ -73,14 +98,18 @@ export function resolveApplyStageNudge(i: {
   status: string | null; messages: ReadonlyArray<NudgeMessage>; nowMs: number;
   /** 最後に段階を申込以降→申込前に戻した時刻（status_manual_back_at・stage_history） */
   lastBackAt?: string | null;
+  /** 2026-10-15: 申込フォームの受領（conversations.applying_text_received）・本人確認の画像（applying_image_received） */
+  applyingTextReceived?: boolean | null;
+  applyingImageReceived?: boolean | null;
 }): ApplyStageNudge | null {
   if (!isPreApplyForNudge(i.status)) return null;
   const from = Math.max(i.nowMs - NUDGE_LOOKBACK_DAYS * 86_400_000, i.lastBackAt ? Date.parse(i.lastBackAt) || -Infinity : -Infinity);
   const msgs = [...i.messages].filter((m) => Date.parse(m.createdAt) > from).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   let found: ApplyStageNudge | null = null;
+  const formReceived = !!i.applyingTextReceived || !!i.applyingImageReceived || msgs.some((m) => m.sender === "customer" && isApplicationFormMessage(String(m.text ?? "")).detected);
   for (const m of msgs) {
     if (sentences(String(m.text ?? "")).some((s) => REJECT_OR_CANCEL_RE.test(s) && !/場合|たら|ますか|ですか|\?|？/.test(s))) { found = null; continue; }
-    const kind = screeningEvidenceOf(m);
+    const kind = screeningEvidenceOf(m, { formReceived });
     if (kind) found = { kind, at: m.createdAt, by: m.sender === "customer" ? "customer" : "staff" };
   }
   return found;

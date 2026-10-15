@@ -7,6 +7,7 @@ import { flagOn } from "@/app/lib/brain-attention";
 //   そのまま移した（中身は変えていない・署名の確認と POST の振り分けは route.ts に残す）。route.ts は Next の決まりで
 //   POST 等しか export できないので、共通の処理はここに置く。
 
+import { applyConditionPolarity } from "@/app/lib/condition-polarity";
 import { after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
@@ -1508,6 +1509,12 @@ ${customerText.slice(0, 600)}
 絶対に譲れない条件には[必須]、あれば嬉しい条件には[希望]タグを付けること。
 例: 風呂トイレ別[必須]・オートロック[希望]。顧客の言い方（「絶対」「〜じゃないと無理」→[必須]、「できれば」「あったら嬉しい」→[希望]）から判定。判断できない場合はタグなし。
 
+【ゆるめる・外す（最重要・逆に読まない）】
+「〇〇じゃなくてもいい」「〇〇でなくても大丈夫」「〇〇にこだわらない」は条件をゆるめる（外す）意味。ng_points にも preferences にも入れない（例:「ペット可じゃなくてもいい」→ ペット可を外す。「ペット可NG」と書かない）。
+
+【家賃の込み】
+「共益費込み10万」「管理費込みで8万以内」は rent_max にその額を入れ、other_requests に「家賃上限は共益費込み」（管理費なら「家賃上限は管理費込み」）を入れる。
+
 読み取れた条件のみ以下の形式で返してください（不明な項目は省略してください）。
 ※お客さんの返信に明示された条件のみ。スタッフのメッセージに含まれる数字・条件は絶対に抽出しないこと。
 金額はすべて円単位の整数（「8万」→80000、「8万円」→80000）。
@@ -1595,6 +1602,15 @@ ${customerText.slice(0, 600)}
     if (gg.dropped.length) console.log(JSON.stringify({ tag: "P4:source-gate", convId, dropped: gg.dropped }));
     extracted = gg.extracted;
   }
+  // 2026-10-15 軸の直し（condition-polarity.ts）: ゆるめる（「ペット可じゃなくてもいい」）を NG・こだわりにしない＋今の登録からも外す／家賃の「共益費込み」の印を残す（CONDITION_POLARITY=off で前の形）
+  let relaxPatch: { preferences?: string | null; ng_points?: string | null } = {};
+  {
+    const pol = applyConditionPolarity(customerText, extracted, existingPcRec as { preferences?: string | null; ng_points?: string | null } | null);
+    extracted = pol.extracted;
+    if (pol.preferencesAfterRelax !== undefined) relaxPatch.preferences = pol.preferencesAfterRelax;
+    if (pol.ngAfterRelax !== undefined) relaxPatch.ng_points = pol.ngAfterRelax;
+    if (pol.relaxed.length || pol.feeIncluded) console.log(JSON.stringify({ tag: "P4:condition-polarity", convId, relaxed: pol.relaxed, fee: pol.feeIncluded }));
+  }
   // 2026-09-27 家賃・広さの決まり（rent-raise.ts）: 「家賃を上げて」＝登録の上限 +2万（金額を言えばその金額）・
   //   下限はお客様が言った時だけ（野口さん: スタッフの文「合計88,000円」を下限と読んだ）・「N帖以上」→ floor_area_min。
   //   相対の上げはここ（P4）だけが行う（ブレインの橋・条件ブレインは follow で家賃に触らない＝二重に上げない）
@@ -1635,7 +1651,8 @@ ${customerText.slice(0, 600)}
   for (const f of CONDITION_FIELDS) {
     const v = extracted[f];
     if (v === null || v === undefined || v === "") continue;
-    const existingVal = (existingPc as Record<string, unknown> | null)?.[f];
+    // ゆるめた語を外した後の今の登録（relaxPatch）を土台にする
+    const existingVal = f in relaxPatch ? relaxPatch[f as "preferences" | "ng_points"] : (existingPc as Record<string, unknown> | null)?.[f];
     if (FREE_TEXT_FIELDS.has(f)) {
       const merged = mergeFreeText(existingVal as string | null | undefined, typeof v === "string" ? v : String(v));
       if (merged === null) continue;
@@ -1649,6 +1666,10 @@ ${customerText.slice(0, 600)}
     if (existingVal !== v) changedFields[f] = v;
   }
 
+  // ゆるめて今の登録から外した欄（新しく足す値が無い時も書く）
+  for (const [f, v] of Object.entries(relaxPatch)) {
+    if (updates[f] === undefined) { updates[f] = v ?? null; changedFields[f] = v ?? null; }
+  }
   if (Object.keys(updates).length === 0) return; // 抽出条件なし → スキップ
   // 2026-10-02 ⑫: 家賃の下限＞上限の行を作らない（rent-raise.withRentOrder・1191b1eb の 50,000＞20,000）
   {

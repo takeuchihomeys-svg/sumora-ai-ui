@@ -45,17 +45,17 @@ export async function GET(req: NextRequest) {
   if (applyStageNudgeEnabled(process.env)) {
     try {
       const [{ data: conv }, { data: hist }, { data: msgs }] = await Promise.all([
-        supabase.from("conversations").select("status, status_manual_back_at").eq("id", conversationId).maybeSingle(),
+        supabase.from("conversations").select("status, status_manual_back_at, applying_text_received, applying_image_received").eq("id", conversationId).maybeSingle(),
         supabase.from("conversation_stage_history").select("from_status, to_status, changed_at").eq("conversation_id", conversationId).order("changed_at", { ascending: false }).limit(50),
         supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(200),
       ]);
-      const c = conv as { status: string | null; status_manual_back_at: string | null } | null;
+      const c = conv as { status: string | null; status_manual_back_at: string | null; applying_text_received?: boolean | null; applying_image_received?: boolean | null } | null;
       if (c) {
         const back = ((hist ?? []) as Array<{ from_status: string | null; to_status: string | null; changed_at: string }>)
           .find((h) => APPLYING.has(h.from_status ?? "") && !APPLYING.has(h.to_status ?? ""));
         const lastBackAt = [back?.changed_at ?? null, c.status_manual_back_at].filter((x): x is string => !!x).sort().pop() ?? null;
         const n = resolveApplyStageNudge({
-          status: c.status, lastBackAt, nowMs,
+          status: c.status, lastBackAt, nowMs, applyingTextReceived: c.applying_text_received ?? null, applyingImageReceived: c.applying_image_received ?? null,
           messages: ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string }>).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at })),
         });
         if (n) nudge = { ...n, text: applyStageNudgeText(n) };
