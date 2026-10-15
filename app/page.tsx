@@ -37,12 +37,8 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
-<<<<<<< HEAD
-import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA, ABOUT_JA as REQUEST_ABOUT_JA } from "./lib/request-ledger";
-=======
 import { morningGreetingCardDue, morningGreetingCardNote } from "./lib/viewing-day-greeting";
-import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA } from "./lib/request-ledger";
->>>>>>> origin/main
+import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA, ABOUT_JA as REQUEST_ABOUT_JA } from "./lib/request-ledger";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 // 2026-10-08 竹内さんの決定「ブレイン最優先・判断はブレインに一本化」: 要対応・やること・ブレイン以外の帯をブレインの判断で（純関数・画面から import してよい）
 import { brainNeedsStaff, flagOn, nonBrainBannerAllowed, extraBannerAllowed } from "./lib/brain-attention";
