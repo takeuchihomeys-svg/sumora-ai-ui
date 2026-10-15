@@ -1,0 +1,10 @@
+{
+  "title": "ブレインの出力の欄を足した時は「他の欄を省かない」を書く — ack_form に文を入れて reply_direction を落とすと、空の方向の取り直しで道（AIX か返信か）ごと入れ替わる",
+  "category": "ai_design",
+  "priority": 1,
+  "insight": "brain-merge-1015 の独立レビュー（10/15）。待って・閉じるで q112・q022・q025 が main 3/3 → ブランチ 2/3。5つのなぜ: q112 は DeepSeek が turn_contract.ack_form（値は receive_only/wait_line）に返事の文を入れ reply_direction と closing_strategy を省いた → brain-core の『方向が空なら取り直す』（brain_fresh_claude）が丸ごと別の答え（property_send）を採った。ack_form の説明に『値は2語だけ・reply_direction は省かない』を足して 3/3。q022 はルール③の『確定の日は橋渡し（AIX【確認した→入居可能日】）』が橋渡し＝AIX と読ませ、物件確認した/mgmt_move_in を直接選んだ → 『この番は確認の約束の返信・結果が後で AIX』に直して 3/3。q025 は刺さりの材料（HOLD_SOFT_1015）で保留を『刺さっていない＝新着待ち＋全力サポート』と読む揺れ（HOLD_SOFT_1015=off で 3/3・直し後 on のまま 3/3）。取り直しは空の欄を埋めるだけのはずが道まで変える（main からある仕組み・空の率は main・ブランチとも約1割）。",
+  "rationale": "試験（--stage=brain --repeat=3・YUMA5・DeepSeek のみ）: 既定 q022/q025/q112 各 2/3 → スイッチ1つずつ off（HOLD_SOFT_1015=off で q025 3/3・ACK_FORM_BRAIN=off で q112 3/3）→ 直し後 全部 on で 各 3/3。",
+  "context": "2026-10-15 確かめる人（brain-merge-1015 レビュー）。コミット 97da6428・07a14f43・f94d7286。",
+  "applied_to": "app/lib/turn-contract.ts（ack_form の説明）・app/lib/brain-core.ts（ルール③）・app/lib/hold-soft-next.ts（PIERCE_MATERIAL: 締めた文への返事のお礼は刺さりの読みの番ではない）・app/lib/override-demote.ts（brainContractPromisesPickup: 資料・写真・図面の約束を外す）",
+  "tags": ["ブレイン", "出力の欄", "取り直し", "ack_form", "入居可能日", "刺さり", "試験"]
+}
