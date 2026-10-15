@@ -7,6 +7,7 @@
 //   ③claim 先行（llm_warm_prefixes・hash='warm:<名札>:<鍵>'）・送信に失敗したら claim を戻す
 //   ④usage を hit / dynamic_rewrite / cold / no_cache に分け、cold・no_cache は 6h retire（書き込みは次の本物に払わせる）
 //   ⑤env で絞らない（キャッシュは Anthropic アカウント×内容の鍵。local の温めも本番の蓄えを温める）
+//     ただし「最後の本物の呼び出し」は 2026-10-15 から本番の Claude の行だけで数える（手元の試験の同じ鍵の行で too_soon が続かないよう・BRAIN_WARM_REAL_ENV=any で旧）
 //   止める: PREFIX_WARM=off。時間帯: PREFIX_WARM_HOURS_JST（既定 "9-22"）。1対象 1日20回まで
 import { supabase } from "./supabase";
 import { getCachedPromptRules, getCachedTopPrinciples, getCachedLossPatterns } from "./prompt-cache";
