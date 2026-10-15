@@ -146,7 +146,7 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - feeling: 不安・恐縮・謝罪・急ぎ・落胆がある時は kind を付け、受ける一言が要るなら acknowledge=true。
 - proposals: お客様がすぐ来られない事情（今週は無理・出張中・予定が詰まって・遠方）があり物件が刺さっている時の「お申込みでお部屋を抑える」「オンライン内見・室内の撮影」の申し出は proposals に入れる（返信で消さない・「ご内覧可否確認」に置き換えない）。内覧したいだけの依頼は aix=viewing_invite（確認の約束にしない）。
 - must_not: 聞かれていない事・この場面で言うと外れる事（この番の会話から書く）。${ackFormBrainEnabled() ? `
-- ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}${brainDeepCheckGapEnabled() ? `
+- ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。ack_form の値はこの2つの語だけ（返事の文は入れない）。ack_form を選んだ番も reply_direction・closing_strategy は省かずに書く（10/15 確かめる人: ack_form に文を入れて reply_direction を落とすと取り直しで道が変わった）。` : ""}${brainDeepCheckGapEnabled() ? `
 ${BRAIN_DEEP_CHECK_RULE}` : ""}${turnContractAxisEnabled() ? `
 ${BRAIN_AXIS_RULES}` : ""}`;
 
