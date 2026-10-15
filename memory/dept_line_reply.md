@@ -1,6 +1,12 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-15
+## 🏠 内覧の当日 10:00 に主のボタン【内覧挨拶】（10/15 作る人・ブランチ viewing-day-greet-1015）
+- **指示** 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする。そうしたら内覧あることをちゃんと確認できるため」。11時より前の内覧は2時間前
+- **仕組み** cron viewing-morning-greeting を 9:15 の1回 → JST 6:00〜20:30 の30分おき。`viewingGreetingSetMinute` を過ぎた最初の回で朝の行（rule:viewing_morning_greeting）を立てる・1会話1日1回・取りやめ/日の変更/申込で取り下げ（viewing_changed:*）。画面は `aix-button-view` の morningGreeting: ブレインのカード無し→主のボタン【内覧挨拶】／1つのボタンのカード有り→2つ目に並べる／2択・左右・単独の帯はそのまま。suggested_aix_meta には書かない
+- **旧の穴** 9:15 の行は通知と やること にしか出ず画面のボタンに出ていなかった（brain_analyzed_msg_ts が無い行は pendingItemMeta が使わない）
+- **30日** 内覧当日 23 番・挨拶を送った 19（中央 10:48・最早 7:15）・新のセットより前に送った 1。`scripts/audit-viewing-greet-set-time.ts`
+- **戻す** VIEWING_GREETING_SET_TIME=off／NEXT_PUBLIC_VIEWING_GREETING_MAIN_BUTTON=off／VIEWING_MORNING_GREETING=off
 ## 🔎 ブレインの穴を自分で見つける見張り（10/15 作る人・設計知見【最優先】97ea82f3・ブランチ brain-gap-finder-1015）
 - **仕組み** `app/lib/brain-gap-finder.ts`（純関数）＋`-server.ts`（DB を読むだけ・LLM なし・$0）。手元 `scripts/brain-gap-finder.ts [--days=7] [--list=20 --cause= --kind= --tag=]`／毎週月曜 `/api/cron/reading-audit-weekly` の同じ回で cron_run_logs の `brain-gap-finder` に残す。戻す BRAIN_GAP_FINDER=off
 - **集める番**: line_watch_turns の判定（直して送った・手で打った・取りこぼし系の最終チェックが残った・ブレインと実送信の食い違い）＋確認事項の48時間以上の未対応・完了の後の問い直し＋初回の持ち込みの見積の一言。**原因の型**: 決まりの上書き（digest ds rule:/correction: で la≠aix）・軸・状況・材料・知識・要確認。文が同じ番は中身の型に数えない。お客様の文は本人の言葉だけ（画像の読み・様式・URL を外す）

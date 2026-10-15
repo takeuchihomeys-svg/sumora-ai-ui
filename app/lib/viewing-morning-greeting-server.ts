@@ -9,14 +9,15 @@ import { supabase } from "@/app/lib/supabase";
 import { buildActionLedger, type LedgerAixRow } from "@/app/lib/action-ledger";
 import { loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { isPostApplyStatus } from "@/app/lib/llm-alt-provider";
-import { morningViewingGreetingPlan, morningGreetingNoticeLine, VIEWING_MORNING_GREETING_PATTERN, MORNING_GREETING_NOTE_PREFIX, isMorningGreetingItem, viewingFlowCancelled, type MorningGreetingWhy } from "@/app/lib/viewing-day-greeting";
+import { morningViewingGreetingPlan, morningGreetingNoticeLine, VIEWING_MORNING_GREETING_PATTERN, MORNING_GREETING_NOTE_PREFIX, isMorningGreetingItem, viewingFlowCancelled, viewingGreetingSetMinute, minuteLabel, type MorningGreetingWhy } from "@/app/lib/viewing-day-greeting";
 import { registerRuleAixActionItem } from "@/app/lib/aix-action-items";
 import { isTestConversation } from "@/app/lib/test-conversations";
 
 const DAY = 86_400_000;
 const jstYmd = (ms: number) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
 
-export type MorningGreetingRow = { conversationId: string; customerName: string; why: MorningGreetingWhy | "read_failed"; appointment: string | null; registered: boolean };
+/** setAt: その会話の内覧挨拶をセットする時刻（JST「10:00」・11時より前の内覧は2時間前）。withdrawn: 今日立てた行を取りやめ・変更で取り下げた */
+export type MorningGreetingRow = { conversationId: string; customerName: string; why: MorningGreetingWhy | "read_failed"; appointment: string | null; registered: boolean; setAt?: string; withdrawn?: boolean };
 
 /** 候補の会話（30日以内に待ち合わせを送った・今日の内覧の予定がある） */
 async function candidateConversations(nowMs: number): Promise<string[]> {
@@ -47,11 +48,35 @@ async function dismissPastGreetingItems(nowMs: number, dryRun: boolean): Promise
   return ids.length;
 }
 
-export async function runViewingMorningGreeting(opts: { nowMs?: number; dryRun?: boolean; only?: string[]; ignorePending?: boolean } = {}): Promise<{ rows: MorningGreetingRow[]; dismissed: number }> {
+/**
+ * 今日（JST）立てた朝の行（どの状態でも）。2026-10-15〜 cron は30分おきに走るので、今日すでに立てた会話は立て直さない（通知の重ね打ちを防ぐ）。
+ *   pending の行は内覧の取りやめ・日の変更・申込を見て取り下げる（viewing_changed）ために返す
+ */
+async function todaysMorningItems(nowMs: number): Promise<Map<string, { id: string; status: string }>> {
+  const todayStart = new Date(Date.parse(`${jstYmd(nowMs)}T00:00:00+09:00`)).toISOString();
+  const { data } = await supabase.from("aix_action_items").select("id, conversation_id, status, resolution_note, created_at").eq("action", "greeting_viewing")
+    .eq("check_pattern", VIEWING_MORNING_GREETING_PATTERN).gte("created_at", todayStart).lte("created_at", new Date(nowMs).toISOString()).limit(500);
+  const m = new Map<string, { id: string; status: string }>();
+  for (const r of (data ?? []) as Array<{ id: string; conversation_id: string; status: string; resolution_note: string | null }>) {
+    // 朝の行（rule:…）か、朝の行が送信で済みになった行（resolution_note が書き換わる）。ブレインの行（check_pattern before・note なし）も今日あれば立て直さない
+    const cur = m.get(String(r.conversation_id));
+    if (!cur || r.status === "pending") m.set(String(r.conversation_id), { id: r.id, status: r.status });
+  }
+  return m;
+}
+
+/** 取りやめ・日の変更・申込で、今日立てた朝の行を取り下げる理由（それ以外は null） */
+const CHANGED_WHYS = new Set<MorningGreetingWhy>(["not_today", "not_confirmed", "cancelled", "post_apply"]);
+
+export async function runViewingMorningGreeting(opts: { nowMs?: number; dryRun?: boolean; only?: string[]; ignorePending?: boolean; probe?: boolean } = {}): Promise<{ rows: MorningGreetingRow[]; dismissed: number }> {
   const nowMs = opts.nowMs ?? Date.now();
   const dryRun = !!opts.dryRun;
   const dismissed = await dismissPastGreetingItems(nowMs, dryRun);
-  const ids = opts.only?.length ? opts.only : await candidateConversations(nowMs);
+  // 2026-10-15: 今日すでに立てた会話は読まない（30分おきの cron で1会話1日1回）。pending の行は取りやめ・変更を見るためだけに読む。戻す VIEWING_GREETING_SET_TIME=off（その時も1日1回は守る）
+  const todays = opts.ignorePending ? new Map<string, { id: string; status: string }>() : await todaysMorningItems(nowMs);
+  const baseIds = opts.only?.length ? opts.only : await candidateConversations(nowMs);
+  const ids = [...new Set([...baseIds, ...(opts.only?.length ? [] : [...todays.entries()].filter(([, v]) => v.status === "pending").map(([k]) => k))])]
+    .filter((id) => !todays.has(id) || todays.get(id)!.status === "pending");
   const rows: MorningGreetingRow[] = [];
   const todayDay = Math.floor((nowMs + 9 * 3600_000) / DAY);
   for (const id of ids) {
@@ -78,19 +103,33 @@ export async function runViewingMorningGreeting(opts: { nowMs?: number; dryRun?:
     const appt = ledger.facts.viewingAppointment;
     const aixTypesToday = (input.aixRows as Array<{ aix_type?: string | null; created_at?: string | null }>).filter((r) => before(r.created_at))
       .filter((r) => Math.floor((Date.parse(String(r.created_at ?? "")) + 9 * 3600_000) / DAY) === todayDay).map((r) => String(r.aix_type ?? ""));
+    const todayPending = todays.get(id)?.status === "pending" ? todays.get(id)! : null;
     const plan = morningViewingGreetingPlan({
       appointmentDay: appt?.day ?? null,
       flowConfirmed: ledger.facts.viewingFlow ? ledger.facts.viewingFlow.confirmed : null,
       flowCancelled: viewingFlowCancelled(ledger.facts.viewingFlow?.reason),
       appointmentTime: appt?.time ?? null,
       postApply: isPostApplyStatus(input.status),
-      pending: opts.ignorePending ? null : ((rows: Array<{ action: string; check_pattern: string | null; resolution_note: string | null }>) =>
+      // 今日の朝の行が pending の会話は「今も立てる番か」を見る（取りやめ・変更の取り下げ用）ので未完了で止めない
+      pending: opts.ignorePending || todayPending ? null : ((rows: Array<{ action: string; check_pattern: string | null; resolution_note: string | null }>) =>
         rows.find((r) => isMorningGreetingItem(r)) ?? rows[0] ?? null)((open ?? []) as Array<{ action: string; check_pattern: string | null; resolution_note: string | null }>),
       staffMessages: messages.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text, createdAt: m.createdAt ?? "" })),
       aixTypesToday,
       nowMs,
+      ignoreSetTime: !!opts.probe || !!todayPending,
     });
     const apptLabel = appt ? `${appt.dateMD ?? "?"} ${appt.time ?? ""} ${appt.place ?? ""}`.trim() : null;
+    const setAt = minuteLabel(viewingGreetingSetMinute(appt?.time ?? null));
+    if (todayPending) {
+      // 2026-10-15 竹内さん「内覧がキャンセル・変更なら変更後の日で」: 今日立てた行は、取りやめ・日の変更・申込になったら取り下げる（画面の主のボタンから消える）
+      const changed = CHANGED_WHYS.has(plan.why);
+      if (changed && !dryRun) {
+        await supabase.from("aix_action_items").update({ status: "dismissed", dismissed_reason: `viewing_changed:${plan.why}`, updated_at: new Date(nowMs).toISOString() })
+          .eq("id", todayPending.id).eq("status", "pending");
+      }
+      rows.push({ conversationId: id, customerName, why: changed ? plan.why : "already_pending", appointment: apptLabel, registered: false, setAt, withdrawn: changed });
+      continue;
+    }
     let registered = false;
     if (plan.register && !dryRun) {
       registered = await registerRuleAixActionItem({
@@ -99,9 +138,9 @@ export async function runViewingMorningGreeting(opts: { nowMs?: number; dryRun?:
         note: `${MORNING_GREETING_NOTE_PREFIX} ${apptLabel ?? ""}`,
       });
     }
-    rows.push({ conversationId: id, customerName, why: plan.why, appointment: apptLabel, registered });
+    rows.push({ conversationId: id, customerName, why: plan.why, appointment: apptLabel, registered, setAt });
   }
-  console.log(JSON.stringify({ tag: "viewing-morning-greeting", dryRun, candidates: ids.length, dismissed, due: rows.filter((r) => r.why === "due").length, registered: rows.filter((r) => r.registered).length,
+  console.log(JSON.stringify({ tag: "viewing-morning-greeting", dryRun, candidates: ids.length, dismissed, skippedToday: todays.size, withdrawn: rows.filter((r) => r.withdrawn).length, due: rows.filter((r) => r.why === "due").length, registered: rows.filter((r) => r.registered).length,
     whys: rows.reduce<Record<string, number>>((a, r) => { a[r.why] = (a[r.why] ?? 0) + 1; return a; }, {}) }));
   return { rows, dismissed };
 }

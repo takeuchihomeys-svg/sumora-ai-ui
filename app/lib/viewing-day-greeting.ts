@@ -49,7 +49,7 @@ export const VIEWING_DAY_GREETING_SOURCE = "rule:viewing_day_greeting_before";
 
 // ─── 朝の要対応（2026-10-08 竹内さん「作る」）───
 // お客様の発言の無い朝でも、待ち合わせ場所の AIX で確定した内覧の当日なら、内覧の前に AIX【内覧挨拶→内覧前】を
-// AIX要対応（売上番長グループの通知）に立てる。cron /api/cron/viewing-morning-greeting（JST 9:15）が会話ごとにこの1関数で決める。
+// AIX要対応（売上番長グループの通知）に立てる。cron /api/cron/viewing-morning-greeting（2026-10-15〜 JST 6:00〜20:30 の30分おき・当日 10:00／11時より前の内覧は2時間前にセット）が会話ごとにこの1関数で決める。
 //   ・確定＝行動台帳の viewingAppointment（AIX【待ち合わせ場所】・待ち合わせの本文・内覧後のお礼の前）が今日 かつ 内覧の流れ（viewing-flow）が confirmed
 //     （取りやめ「キャンセルで」の後は流れが none・理由 customer_cancelled_after_confirm になる＝flowCancelled で止める）
 //   ・今日すでに当日の挨拶（本日…よろしく・お気をつけて・内覧挨拶の AIX）を送った → 立てない（viewingDayGreetingDue と同じ線）
@@ -71,8 +71,34 @@ export type MorningGreetingInput = ViewingDayGreetingInput & {
   postApply: boolean;
   /** 同じ会話の未完了の AIX要対応 */
   pending: { action: string; check_pattern: string | null } | null;
+  /** 監査用: セットの時刻で止めない */
+  ignoreSetTime?: boolean;
 };
-export type MorningGreetingWhy = "off" | "not_today" | "not_confirmed" | "cancelled" | "post_apply" | "already_greeted" | "too_late" | "already_pending" | "other_pending" | "due";
+export type MorningGreetingWhy = "off" | "not_today" | "not_confirmed" | "cancelled" | "post_apply" | "already_greeted" | "not_yet" | "too_late" | "already_pending" | "other_pending" | "due";
+
+// ─── セットする時刻（2026-10-15 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする。そうしたら内覧あることをちゃんと確認できるため」）───
+//   内覧の当日 JST 10:00 にセットする。内覧が 11:00 より前（10時では2時間を切る）の時は内覧の2時間前にセットする。時刻の分からない内覧は 10:00。
+//   cron（/api/cron/viewing-morning-greeting）は朝〜夕方に30分おきに走り、セットの時刻を過ぎた最初の回で立てる（1会話1日1回）。
+//   戻す: VIEWING_GREETING_SET_TIME=off（旧の 9:15 の1回と同じ線＝9:15 を過ぎていれば立てる）
+export const VIEWING_GREETING_SET_MIN = 10 * 60;
+export const VIEWING_GREETING_EARLY_LEAD_MIN = 120;
+const LEGACY_SET_MIN = 9 * 60 + 15;
+/** 「13:00」「9時」→ 分（読めなければ null） */
+export function appointmentMinutes(time: string | null | undefined): number | null {
+  const tm = String(time ?? "").normalize("NFKC").match(/(\d{1,2})\s*[:：時]\s*(\d{2})?/);
+  if (!tm) return null;
+  const h = Number(tm[1]), m = Number(tm[2] ?? 0);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59 ? h * 60 + m : null;
+}
+/** その日の内覧挨拶をセットする時刻（JST・その日の 0:00 からの分）。10:00・内覧が 11:00 より前なら内覧の2時間前 */
+export function viewingGreetingSetMinute(appointmentTime: string | null | undefined, env: Record<string, string | undefined> = (typeof process !== "undefined" ? process.env : {})): number {
+  if ((env.VIEWING_GREETING_SET_TIME ?? "").toLowerCase() === "off") return LEGACY_SET_MIN;
+  const appt = appointmentMinutes(appointmentTime);
+  if (appt == null) return VIEWING_GREETING_SET_MIN;
+  return Math.max(0, Math.min(VIEWING_GREETING_SET_MIN, appt - VIEWING_GREETING_EARLY_LEAD_MIN));
+}
+/** 分 → 「10:00」 */
+export const minuteLabel = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
 
 /** 朝の要対応を立てるか（純関数）。due の時だけ立てる */
 export function morningViewingGreetingPlan(i: MorningGreetingInput): { register: boolean; why: MorningGreetingWhy } {
@@ -84,13 +110,12 @@ export function morningViewingGreetingPlan(i: MorningGreetingInput): { register:
   if (i.flowCancelled) return no("cancelled");
   if (i.postApply) return no("post_apply");
   if (!viewingDayGreetingDue({ ...i, env: {} })) return no("already_greeted");
-  const tm = String(i.appointmentTime ?? "").normalize("NFKC").match(/(\d{1,2})\s*[:：時]\s*(\d{2})?/);
-  if (tm) {
-    const apptMin = Number(tm[1]) * 60 + Number(tm[2] ?? 0);
-    const jst = new Date(i.nowMs + JST);
-    const nowMin = jst.getUTCHours() * 60 + jst.getUTCMinutes();
-    if (apptMin - nowMin < MORNING_MIN_LEAD_MIN) return no("too_late");
-  }
+  const jst = new Date(i.nowMs + JST);
+  const nowMin = jst.getUTCHours() * 60 + jst.getUTCMinutes();
+  // 2026-10-15: セットの時刻（10:00・11時より前の内覧は2時間前）より前は立てない（監査の probe は時刻で止めない）
+  if (!i.ignoreSetTime && nowMin < viewingGreetingSetMinute(i.appointmentTime, env)) return no("not_yet");
+  const apptMin = appointmentMinutes(i.appointmentTime);
+  if (apptMin != null && apptMin - nowMin < MORNING_MIN_LEAD_MIN) return no("too_late");
   if (i.pending) {
     if (i.pending.action === "greeting_viewing") return no("already_pending");
     if ((env.VIEWING_MORNING_GREETING_SIDE ?? "").toLowerCase() === "off") return no("other_pending");
@@ -119,5 +144,31 @@ export function keepViewingGreetingItem(open: { action: string; check_pattern: s
   const day = (ms: number) => Math.floor((ms + 9 * 3600_000) / 86_400_000);
   const at = Date.parse(String(open.created_at ?? ""));
   return Number.isFinite(at) && day(at) === day(nowMs);
+}
+
+/**
+ * 画面の主のボタンに【内覧挨拶】を出すか（純関数・2026-10-15 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする」）。
+ *   item: この会話の未完了の朝の行（cron がセットの時刻に立てた・resolution_note が MORNING_GREETING_NOTE_PREFIX）。
+ *   今日（JST）立てた行で、今日まだ当日の挨拶（本日…よろしく・お気をつけて 等）を送っていない間だけ（送ったら次の読み直しを待たず消す）。
+ *   戻す: NEXT_PUBLIC_VIEWING_GREETING_MAIN_BUTTON=off（旧＝上の「やること」と売上番長グループの通知だけ）
+ */
+export function morningGreetingCardDue(i: {
+  item: { created_at?: string | null; resolution_note?: string | null } | null | undefined;
+  staffMessages: ReadonlyArray<{ text: string | null | undefined; createdAt: string | null | undefined }>;
+  nowMs: number;
+  off?: boolean;
+}): boolean {
+  if (i.off || !i.item || !isMorningGreetingItem(i.item)) return false;
+  const at = Date.parse(String(i.item.created_at ?? ""));
+  const today = jstDay(i.nowMs);
+  if (!Number.isFinite(at) || jstDay(at) !== today) return false;
+  return !i.staffMessages.some((m) => jstDay(Date.parse(String(m.createdAt ?? ""))) === today && VIEWING_DAY_GREETED_RE.test(String(m.text ?? "").normalize("NFKC")));
+}
+
+/** カードの一行（朝の行の resolution_note「rule:viewing_morning_greeting 10/10 13:00 リヴィエール桜之町東 102号室」→「本日 13:00 のご内覧（…）の前に内覧挨拶」） */
+export function morningGreetingCardNote(resolutionNote: string | null | undefined): string {
+  const rest = String(resolutionNote ?? "").replace(MORNING_GREETING_NOTE_PREFIX, "").trim();
+  const m = rest.match(/^(?:(\d{1,2}\/\d{1,2})\s*)?(?:(\d{1,2}:\d{2})\s*)?(.*)$/);
+  return morningGreetingNoticeLine({ time: m?.[2] ?? null, place: (m?.[3] ?? "").trim() || null });
 }
 

@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】内覧の当日 10:00（内覧が11時より前なら内覧の2時間前）に、画面の主のボタンを AIX【内覧挨拶】にセットする（ブレインの判断は上書きしない・並べる）（10/15 竹内さん）",
+    "category": "ai_design",
+    "insight": "竹内さん「内覧日の10時には内覧挨拶がセットされるようにする。そうしたら内覧あることをちゃんと確認できるため」。cron /api/cron/viewing-morning-greeting を JST 6:00〜20:30 の30分おき（0,30 0-11,21-23 * * *）にし、viewing-day-greeting.viewingGreetingSetMinute（10:00・内覧が11:00より前は内覧の2時間前・時刻不明は10:00）を過ぎた最初の回で AIX要対応の朝の行（greeting_viewing/before・resolution_note rule:viewing_morning_greeting）を立て売上番長グループへ1件通知（旧は 9:15 の1回）。今日すでに立てた会話は読み直さない（1会話1日1回）。今日立てた行は取りやめ・日の変更・申込で取り下げる（dismissed_reason viewing_changed:*）。画面: page.tsx が朝の行を別に読み（morningGreetItems）、aix-button-view.resolveAixButtonView の morningGreeting で、ブレインのカードが無い時は【内覧挨拶】を主のボタン（cardMeta・suggested_aix_meta には書かない）、ブレインのカード（1つのボタン）がある時はその下に2つ目、2択・左右の形・単独の帯の番はそのまま（上の やること に出る）。当日の挨拶を送ったら読み直しを待たず消す（morningGreetingCardDue）。",
+    "rationale": "旧の 9:15 の朝の行は通知と やること にしか出ず、画面の主のボタンには出ていなかった（pendingItemMeta は brain_analyzed_msg_ts の無い行を使わない）。実データ30日（scripts/audit-viewing-greet-set-time.ts）: 内覧の当日の番 23・実際に当日の挨拶を送った 19（送った時刻の中央 10:48・最早 7:15・最遅 14:50）・新のセットの時刻より前に送った 1・後 18・送らなかった 4。10/10 13:00 リヴィエール桜之町東 102号室（615499ba）は 9:15 に行は立ったが画面のボタンは出ず、11:19 に送った。",
+    "context": "2026-10-15 竹内さんの指示（viewing-day-greet-1015）。LLM なし・$0。戻す: VIEWING_GREETING_SET_TIME=off（9:15 の線）・NEXT_PUBLIC_VIEWING_GREETING_MAIN_BUTTON=off（画面のボタンを旧に）・VIEWING_MORNING_GREETING=off（全部止める）・schedule を 15 0 * * * に戻す",
+    "applied_to": "app/lib/viewing-day-greeting.ts, app/lib/viewing-morning-greeting-server.ts, app/lib/aix-button-view.ts, app/page.tsx, app/api/cron/viewing-morning-greeting/route.ts, vercel.json, scripts/audit-viewing-greet-set-time.ts",
+    "tags": ["竹内さんの決定", "AIX", "内覧", "aix_action_items", "場面:内覧"],
+    "priority": 1
+  }
+]

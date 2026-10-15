@@ -224,5 +224,50 @@ console.log("■ I: 返信の後も AIX要対応が pending の間はカード�
     expect(v.card).toBe(null);
   });
 }
+console.log("■ 2026-10-15 内覧当日の内覧挨拶（朝の行）を主のボタンに");
+{
+  const mg = { due: true, note: "本日 13:00 のご内覧（リヴィエール桜之町東 102号室）の前に内覧挨拶" };
+  it("ブレインの判断なし（お客様の発言の無い朝）→ 主のボタン【内覧挨拶】", () => {
+    const v = resolveAixButtonView({ meta: null, messages: [cust(C1), staff(C2)], lastSender: "staff", morningGreeting: mg });
+    expect(v.card?.action).toBe("greeting_viewing"); expect(v.cardMeta?.action).toBe("greeting_viewing"); expect(v.cardMeta?.note).toBe(mg.note);
+    expect(v.menuHighlight).toBe("greeting_viewing");
+    expect(v.brainAixAction).toBe(null); // ブレインの判断は作らない（点滅・バッジ・学習の元は変えない）
+    expect(v.listBadge).toBe(false);
+  });
+  it("ブレインが AIX なし（今の発言に返信）→ 内覧挨拶を出す（返信の下書きはそのまま）", () => {
+    const v = resolveAixButtonView({ meta: brain(""), messages: [cust(C1)], morningGreeting: mg });
+    expect(v.card?.action).toBe("greeting_viewing");
+  });
+  it("ブレインのカードがある → ブレインが主・内覧挨拶は2つ目に並べる（上書きしない）", () => {
+    const v = resolveAixButtonView({ meta: brain("property_check_result"), messages: [cust(C1)], morningGreeting: mg });
+    expect(v.card?.action).toBe("property_check_result"); expect(v.card?.altActions).toBe(["greeting_viewing"]);
+    expect(v.cardMeta?.action).toBe("property_check_result"); expect(v.cardMeta?.alt_actions).toBe(["greeting_viewing"]);
+    expect(v.brainAixAction).toBe("property_check_result");
+  });
+  it("ブレインが同じ内覧挨拶 → そのまま（二重にしない）", () => {
+    const v = resolveAixButtonView({ meta: brain("greeting_viewing"), messages: [cust(C1)], morningGreeting: mg });
+    expect(v.card?.action).toBe("greeting_viewing"); expect(v.card?.altActions).toBe([]); expect(v.cardMeta ?? null).toBe(null);
+  });
+  it("単独の帯の番（見積書）→ 帯はそのまま（内覧挨拶は上の やること に出る）", () => {
+    const v = resolveAixButtonView({ meta: brain("estimate_sheet"), messages: [cust(C1)], morningGreeting: mg });
+    expect(v.earlyBanner).toBe("estimate_sheet"); expect(v.card).toBe(null);
+  });
+  it("2択の番 → 2択のまま", () => {
+    const v = resolveAixButtonView({ meta: brain("property_recommendation", { two_choice_mode: true }), messages: [cust(C1)], morningGreeting: mg });
+    expect(v.card?.kind).toBe("two_choice"); expect(v.cardMeta ?? null).toBe(null);
+  });
+  it("✕ で閉じた・AIX のフロー中 → 出さない", () => {
+    expect(resolveAixButtonView({ meta: null, messages: [cust(C1)], morningGreeting: mg, dismissed: { brainHint: true } }).card).toBe(null);
+    expect(resolveAixButtonView({ meta: null, messages: [cust(C1)], morningGreeting: mg, activeAixFlow: "greeting_viewing" }).card).toBe(null);
+  });
+  it("朝の行なし／due=false → 今まで通り", () => {
+    expect(resolveAixButtonView({ meta: null, messages: [cust(C1)], morningGreeting: { due: false } }).card).toBe(null);
+    expect(resolveAixButtonView({ meta: null, messages: [cust(C1)] }).cardMeta ?? null).toBe(null);
+  });
+  it("legacy は触らない", () => {
+    expect(resolveAixButtonView({ meta: null, messages: [cust(C1)], morningGreeting: mg, legacy: true }).card).toBe(null);
+  });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exit(1); }
