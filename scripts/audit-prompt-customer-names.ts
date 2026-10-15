@@ -6,7 +6,7 @@ import * as fs from "fs";
 import { loadKnownCustomerNames } from "../app/lib/pii-known-names";
 
 const arg = (k: string, d: string) => (process.argv.find((a) => a.startsWith(`--${k}=`)) ?? `--${k}=${d}`).split("=")[1];
-const FILES = arg("files", "app/lib/brain-core.ts,app/lib/line-reply-prompts.ts,app/api/generate-reply/route.ts,app/api/aix/action/route.ts,app/api/aix-template-generate/route.ts").split(",");
+const FILES = arg("files", "app/lib/brain-core.ts,app/lib/line-reply-prompts.ts,app/api/generate-reply/route.ts,app/api/aix/action/route.ts,app/api/aix-template-generate/route.ts,app/lib/aix-template-system.ts").split(",");
 const hide = (s: string) => s.replace(/[0-9０-９]/g, "#");
 
 async function main() {

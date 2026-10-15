@@ -79,8 +79,9 @@ async function warmOne(t: PrefixWarmTarget, nowMs: number, hoursJst: string): Pr
   const hash = prefixWarmHash(t);
   const dayStartIso = new Date(jstDayStartMs(nowMs)).toISOString();
   // 2026-10-15: 先頭ブロックだけ温める対象（anyRealKey・aix_template_warm）は、本物の鍵が後ろのブロック込みで別の値になる → 名札だけで最後の本物（Claude の行）を探す
+  //   鍵で絞らない分、手元の試験（env=local:final-claude 等で Claude の aix_template を回した行）を本番の呼び出しと取り違えて温めを始めないよう env=production に絞る（2026-10-15 review）
   const lastRealQ = t.anyRealKey
-    ? supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).like("model", "claude%")
+    ? supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).like("model", "claude%").eq("env", "production")
     : supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).eq("sys_key_full", t.key);
   const [lastReal, warmedToday, claimRow] = await Promise.all([
     lastRealQ.order("created_at", { ascending: false }).limit(1).maybeSingle(),

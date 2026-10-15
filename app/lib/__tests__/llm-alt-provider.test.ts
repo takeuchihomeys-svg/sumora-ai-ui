@@ -11,6 +11,7 @@ import {
 import { LLM_AUTO_SEND_HEADER, LLM_POST_APPLY_HEADER } from "../llm-usage-recorder";
 import { AIX_SHARED_SYSTEM_PREFIX, buildSystemBlocks } from "../aix-system-blocks";
 import { createMasker } from "../pii-pseudonym";
+import { aixTemplateStaticSystemText } from "../aix-template-system";
 
 let pass = 0, fail = 0;
 function t(name: string, cond: boolean, extra = "") {
@@ -255,9 +256,12 @@ console.log("── ★ 見分けの語が実際のプロンプトと合って�
     ROUTE_MARKERS.brain.some((m) => brainCore.includes(m)),
     "app/lib/brain-core.ts のプロンプト冒頭を変えたらここも直す");
 
+  // 2026-10-15: system の先頭ブロックは app/lib/aix-template-system.ts に移した（温めと共有）。route.ts がそれを system[0] に使い、先頭 200 字に印があること
   const aixTemplate = readFileSync("app/api/aix-template-generate/route.ts", "utf8");
+  const aixHead = aixTemplateStaticSystemText().slice(0, 200);
   t("★ AIX テンプレ生成に『ハルシネーション絶対禁止』がある（返信文と混ざらない）",
-    aixTemplate.includes(ROUTE_MARKERS.aix_template));
+    /text:\s*aixTemplateStaticSystemText\(\)/.test(aixTemplate) && aixHead.includes(ROUTE_MARKERS.aix_template)
+      && resolveRouteName(null, aixHead) === "aix_template");
 
   // 自動返信の印が、返信生成の呼び出しに実際に付いているか（付け忘れると守れない）
   t("★ 返信生成が自動返信の会話に印を付けている",
