@@ -84,7 +84,7 @@ const DROP_TRANSCRIPT: ReadonlySet<ImageKind> = new Set<ImageKind>(["pet_documen
  *   物件の画像（物件の資料・画面・写真 362件）・見積書に当たる語は入れない（実データで 0件）。
  *   戻す: IMAGE_PERSONAL_HINT_DROP=off（【種類不明】＋書き起こしの旧の形）
  */
-export const PERSONAL_HINT_RE = /生年月日|保険者番号|被保険者|記号\s*番号|口座番号|マイナンバー|個人番号|本籍|勤務先|年収|旅券番号|在留(?:カード|資格|期間)|免許証番号|印鑑登録|続柄|(?:契約者|申込者|入居者|借主)(?:の)?(?:氏名|名前)|(?:重要事項説明書|賃貸借契約書)[\s\S]{0,120}様|氏名(?:\s*フリガナ)?\s*[:：]?\s*[\p{Script=Han}\p{Script=Katakana}]{1,6}[ 　]?[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}]{1,6}|名義人|振込(?:依頼)?人|パソコン振込|会員s*(?:ID|ＩＤ|番号)|(?<![\p{Script=Han}])[\p{Script=Han}]{1,4}[ 　][\p{Script=Han}\p{Script=Hiragana}]{1,4}\s*様/u;
+export const PERSONAL_HINT_RE = /生年月日|保険者番号|被保険者|記号\s*番号|口座番号|マイナンバー|個人番号|本籍|勤務先|年収|旅券番号|在留(?:カード|資格|期間)|免許証番号|印鑑登録|続柄|(?:契約者|申込者|入居者|借主)(?:の)?(?:氏名|名前)|(?:重要事項説明書|賃貸借契約書)[\s\S]{0,120}様|氏名(?:\s*フリガナ)?\s*[:：]?\s*[\p{Script=Han}\p{Script=Katakana}]{1,6}[ 　]?[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}]{1,6}|名義人|振込(?:依頼)?人|パソコン振込|会員\s*(?:ID|ＩＤ|番号)|(?<![\p{Script=Han}])[\p{Script=Han}]{1,4}[ 　][\p{Script=Han}\p{Script=Hiragana}]{1,4}\s*様/u;
 export function personalHintIn(content: string | null | undefined): boolean {
   return PERSONAL_HINT_RE.test(String(content ?? "").normalize("NFKC"));
 }

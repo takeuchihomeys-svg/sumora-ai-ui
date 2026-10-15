@@ -40,7 +40,7 @@ import { buildCampaignLine, CAMPAIGN_PLACEHOLDER } from "../lib/estimate-campaig
 const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}`, ...staffDeviceHeader() };
 import { weekdayForMonthDay, jstParts } from "../lib/jst-date";
 import { detectPlaceholders } from "../lib/validate-reply";
-import { firstSentPickupId } from "../lib/sent-image-order";
+import { firstSentPickupId, pickupIdsForSentFiles } from "../lib/sent-image-order";
 import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, mergeHearingKnown } from "../lib/hearing-form";
 import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
@@ -2628,6 +2628,13 @@ export default function AixModal({
         if (initialPickupIds && initialSendImages && initialPickupIds.length === initialSendImages.length
           && sendImageFiles.length === initialSendImages.length && sendImageFiles.every((f, i) => f === initialSendImages[i])) {
           body.pickup_ids = initialPickupIds;
+        } else if ((process.env.NEXT_PUBLIC_PICKUP_IDS_PER_IMAGE ?? "").trim().toLowerCase() !== "off" && initialPickupIds?.length && sendImageFiles.length > 0) {
+          // 2026-10-15 竹内さん「入れれるようにする」（束に共通の事実）: 画像を外した・並べ替えた・足した時も、セットした画像の行 ID は1枚ずつ持ち回す
+          //   （同じ File の同一性で結ぶ・足した画像は null）。全部の画像に行が付く時（外した・並べ替えた）は今まで通り pickup_ids で渡す。
+          //   戻す: NEXT_PUBLIC_PICKUP_IDS_PER_IMAGE=off（旧＝セットしたまま送る時だけ）
+          const byImage = pickupIdsForSentFiles({ handoffIds: initialPickupIds, handoffFiles: initialSendImages, sentFiles: sendImageFiles });
+          if (byImage.length && byImage.every((v) => v != null)) body.pickup_ids = byImage;
+          else if (byImage.some((v) => v != null)) body.pickup_ids_by_image = byImage;
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         body.send_mode = sendMode;
