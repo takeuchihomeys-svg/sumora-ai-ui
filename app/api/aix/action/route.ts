@@ -145,6 +145,8 @@ import { loadRecommendBundleFacts } from "@/app/lib/recommend-bundle-server";
 // 2026-10-06 ⑰: 物件ピックアップの文に、拡張が実際に検索した条件を渡す（AIXツールと連携）
 import { searchedConditionsFrom, searchedConditionsFromBatch, buildSearchedConditionsNote, type SearchAuditRow } from "@/app/lib/pickup-search-facts";
 import { findUnmetWantClaims } from "@/app/lib/pickup-wants-fit";
+import { bundleCommonFacts, buildBundleCommonFactsNote, parsePickupIdsByImage, pickupCommonFactsEnabled, type CommonFactRow } from "@/app/lib/pickup-bundle-common-facts";
+import { pickupRowForProperty } from "@/app/lib/property-detail-source";
 import { findUnsupportedNewBuild } from "@/app/lib/new-build-claim";
 import { enforceChosenPropertyName, propertyNameNearMisses, knownPropertyNamesFrom, availableNameGrounded } from "@/app/lib/property-name-verbatim";
 import { dedupeScheduleLines } from "@/app/lib/schedule-line-dedupe";
@@ -2523,6 +2525,50 @@ async function handleAction(request: NextRequest): Promise<Response> {
           .catch(() => ({ note: "", points: null }))
       : { note: "", points: null };
     if (recAppeal.points) console.log(JSON.stringify({ tag: "aix:recommend-appeal-points", conversationId, points: recAppeal.points.points.map((p) => p.fact), widened: recAppeal.points.widened.map((w) => w.code), unmet: recAppeal.points.unmet.map((u) => u.label) }));
+    // 2026-10-15 竹内さん「入れれるようにする」: 束の全部屋に共通の事実（敷金礼金なし・礼金あり・敷地内駐車場あり 等）を②の材料に。
+    //   材料は売上サポの行（terms・equipment＝資料の文字から決定論）。行 ID は画面が画像ごとに持ち回す（pickup_ids_by_image・足した画像は null）。
+    //   行 ID の無い画像は、その URL の保存した読み（sent_image_properties の物件名・号室）があれば会話の売上サポの行に名前で結ぶ。
+    //   全部屋の行がそろった時だけ作る（書くかは生成が決める・app/lib/pickup-bundle-common-facts.ts）。戻す PICKUP_COMMON_FACTS=off
+    const bundleCommonNote = await (async (): Promise<string> => {
+      if (action !== "property_send" || !conversationId || !pickupCommonFactsEnabled()) return "";
+      const urls = (Array.isArray(image_urls) ? (image_urls as unknown[]) : []).map((u) => (typeof u === "string" ? u.trim() : ""));
+      if (urls.length < 2) return "";
+      try {
+        let slots: Array<CommonFactRow> = [];
+        let from = "pickup_ids";
+        if (pickupRowsForFacts.length === urls.length) slots = pickupRowsForFacts;
+        else {
+          from = "by_image";
+          type ConvPickup = { id: number; property_name: string | null; room_no: string | null; created_at: string | null; terms: unknown; equipment: unknown };
+          const { data: convRows } = await supabase.from("property_pickups").select("id, property_name, room_no, created_at, terms, equipment")
+            .eq("conversation_id", conversationId).gte("created_at", new Date(Date.now() - 14 * 86400_000).toISOString()).order("created_at", { ascending: false }).limit(300);
+          const rows = (convRows ?? []) as ConvPickup[];
+          const byId = new Map(rows.map((r) => [r.id, r]));
+          const byImage = parsePickupIdsByImage(body.pickup_ids_by_image, urls.length) ?? urls.map(() => null);
+          slots = byImage.map((id) => (id != null ? byId.get(id) ?? null : null));
+          const missing = urls.filter((u, i) => !slots[i] && u);
+          if (missing.length && rows.length) {
+            const { data: sip } = await supabase.from("sent_image_properties").select("image_url, property_name, room_no").in("image_url", missing);
+            const sipBy = new Map(((sip ?? []) as Array<{ image_url: string; property_name: string | null; room_no: string | null }>).map((s) => [s.image_url, s]));
+            const taken = new Set(slots.filter(Boolean).map((s) => (s as ConvPickup).id));
+            slots = slots.map((s, i) => {
+              if (s) return s;
+              const hit = sipBy.get(urls[i]);
+              const row = hit ? pickupRowForProperty({ propertyName: hit.property_name, roomNumber: hit.room_no }, rows, Date.now()) : null;
+              if (!row || taken.has(row.id)) return null;
+              taken.add(row.id);
+              return row;
+            });
+          }
+        }
+        const facts = bundleCommonFacts(slots);
+        console.log(JSON.stringify({ tag: "aix:pickup-common-facts", conversationId, from, known: slots.filter(Boolean).length, total: urls.length, facts }));
+        return buildBundleCommonFactsNote(facts, urls.length);
+      } catch (e) {
+        console.warn("[aix] 束に共通の事実を作れない:", e instanceof Error ? e.message : e);
+        return "";
+      }
+    })();
     if (bundleFit) console.log(JSON.stringify({ tag: "aix:pickup-wants-fit", conversationId, toneRead: bundleFit.toneRead, wants: bundleFit.fit.wants.map((w) => `${w.label}:${w.verdict}(${w.ok}/${w.ng}/${w.unknown})`) }));
     // 2026-09-30: 物件オススメの見出し「🌟建物 号室」を資料の字に揃えられなかった時の注意（揃えた時は null のまま）
     let recHeadMismatch: string | null = null;
@@ -3467,7 +3513,7 @@ ${aixTakeuchiFormOn() ? "・形・書き出し・締めはユーザーメッセ�
       const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
       // 今回送る物件の事実（売上サポから来た時だけ・間取り・家賃のみ）
       // 2026-09-27: 送る物件の所在地（区）も渡す（YUMA「大阪市北区・福島区から」で西区・大正区の20件を送った）
-      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote, searchedConditionsNote, bundleFit?.note ?? ""].filter(Boolean).join("\n");
+      const pickupFactsNote = [buildPickupFactsNote(pickupFacts, conditionsInfo), buildPickupWardNote(pickupWards, pickupWards.length), mustSendNote, searchedConditionsNote, bundleFit?.note ?? "", bundleCommonNote].filter(Boolean).join("\n");
       const conditionsRule = conditionsInfo && aixTakeuchiPickupOn()
         ? takeuchiPickupConditionsRule()
         : conditionsInfo

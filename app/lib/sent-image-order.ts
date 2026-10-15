@@ -41,3 +41,22 @@ export function firstSentPickupId<F>(p: { handoffIds: ReadonlyArray<number> | nu
   const i = files.indexOf(sent[0]);
   return i >= 0 ? ids[i] : null;
 }
+
+/**
+ * 送る直前の画像の並び（sentFiles）の1枚ずつに、売上サポの行 ID を付ける（セットした画像でない物＝スタッフが足した画像は null）。
+ * 2026-10-15 竹内さん「入れれるようにする」（束に共通の事実）: 旧は画像が1枚でも外れる・足される・並びが変わると行 ID を全部捨てていた。
+ *   売上サポから来た押下 16回（60日）のうち、セットしたまま送ったのは 1回・15回はスタッフが画像を足していた（＝行 ID は1つも渡らなかった）。
+ *   同一性（同じ File）で1枚ずつ結べば、外した・並べ替えた時も残った画像の行 ID はそのまま使える。
+ * セットした画像と行 ID の数が合わない時は全部 null
+ */
+export function pickupIdsForSentFiles<F>(p: { handoffIds: ReadonlyArray<number> | null | undefined; handoffFiles: ReadonlyArray<F> | null | undefined; sentFiles: ReadonlyArray<F> | null | undefined }): Array<number | null> {
+  const ids = p.handoffIds ?? [], files = p.handoffFiles ?? [], sent = p.sentFiles ?? [];
+  if (ids.length === 0 || ids.length !== files.length) return sent.map(() => null);
+  const used = new Set<number>();
+  return sent.map((f) => {
+    const i = files.indexOf(f);
+    if (i < 0 || used.has(i)) return null;
+    used.add(i);
+    return ids[i];
+  });
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "title": "【決定】保存済みのお客様の画像の書き起こしも今の個人情報の網で見出しだけに書き直す — 新しく届く画像と同じ関数で作り直し、書き起こしを捨てる結果になる行だけを書く",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "2026-10-15 竹内さん「書き直す」: 入口の網（id-document-guard.imageTextForSave／image-label.personalHintIn）は新しく届く画像にしか効かず、網を足す前に保存された行は messages.text に全文が残って返信の生成・ブレイン（LLM）に渡っていた。scripts/fix-personal-image-text-stored.ts は全期間のお客様の画像の行（[画像] で始まる 1,029行）を同じ関数で作り直し、①作り直しても書き起こしが残る行（物件の資料・画面・写真・見積書・ペット/人物の写真）②既に書類の名前だけの行（[画像] 収入証明書（給与明細） 等）③保存の見出しが物件・見積書の行（既定で除く）は触らない。当たるのは 11行（見出しなし other 8・【種類不明】3 → 【物件以外：個人情報の載った画像】）で、確かめる人の見つけた8行を全部含む。お客様以外の画像（5,617行）で網に当たる物 0・物件/見積書の見出しの行で当たる物 0。--apply は本文が読んだ時のままの行だけ書く（eq text）。",
+    "rationale": "網を足したら保存済みの行にも同じ関数を流す（判定を2か所に持たない）。書き直しの線は『作り直した結果が書き起こしを捨てる形か』だけにすると、物件の資料を誤って消さない（作り直しても書き起こしが残る物は網に当たっていない）。既に書類の名前だけの行を中身と取り違えると『収入証明書（給与明細）』→『収入証明書』と情報を減らす（初版で 15行を誤って数えた）ので、1行・40字以内・コロンなしは書き起こし無しとみなす。",
+    "context": "2026-10-15 竹内さんの決定（作る人・ブランチ decisions-data-1015）。数は 2026-10-15 時点・LLM 0回",
+    "applied_to": "scripts/fix-personal-image-text-stored.ts・app/lib/id-document-guard.ts・app/lib/image-label.ts",
+    "tags": ["竹内さんの決定", "個人情報", "画像", "書き直し", "静かに壊れる"]
+  },
+  {
+    "title": "【決定】物件ピックアップした の束に全部屋共通の事実（敷金礼金なし・礼金あり・敷地内駐車場あり 等）を材料に入れる — 全部屋の売上サポの行がそろった時だけ・書くかは生成が決める",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "2026-10-15 竹内さん「入れれるようにする」: app/lib/pickup-bundle-common-facts.ts（bundleCommonFacts・buildBundleCommonFactsNote）が売上サポの行の terms（敷金・礼金・入居時期・新築・フリーレント＝資料の表の数字）と equipment（設備欄の ok だけ・記載なしは分からない扱い）から『全部屋がそう書いてある物』だけを短い言い方で作る。aix/action（1通目）は pickupFactsNote（生成・psmNotes の両方に入る）、aix-template-generate（ピックアップの後の2通目）は secondMaterialNote に足す。画面は画像ごとに行 ID を持ち回す（sent-image-order.pickupIdsForSentFiles・同じ File の同一性で結ぶ・足した画像は null）。全部に行が付けば旧の pickup_ids、一部なら pickup_ids_by_image。サーバーは行 ID の無い画像を、その URL の保存した読み（sent_image_properties の物件名・号室）があれば pickupRowForProperty で会話の行に結ぶ。60日の実データ: 物件ピックアップした 押下 311（2枚以上で送った 80）。売上サポから来た押下 16 のうちセットしたまま送ったのは 1・15 はスタッフが画像を足していた＝旧は行 ID が1つも渡らなかった（後: 16 全部に画像ごとの行 ID・ただし足した画像に行が無いので1通目で束の全部屋がそろうのは 1 のまま）。送った後（2通目）は送った印の行が送った枚数とそろう束が 18/80・そのうち共通の事実が作れる束 15（語: オートロック 7・バストイレ別 7・2階以上 6・敷金礼金なし 5・ネット無料 5・室内洗濯機置場 5）。戻す: PICKUP_COMMON_FACTS=off（材料）・NEXT_PUBLIC_PICKUP_IDS_PER_IMAGE=off（画面の持ち回し）。",
+    "rationale": "束の事として言い切れるのは全部屋の資料がそろった時だけ（1部屋でも分からなければ作らない）。礼金は送った画像の読みが揺れる（f36803ad）ので資料の表の数字だけ。駐車場は近隣・空き不明を束の事にしない。1通目で材料が届かない一番の原因は配線より『スタッフが足した画像に行が無い』こと＝次の一手は足す画像を売上サポの画面から選べるようにする等の入口側。",
+    "context": "2026-10-15 竹内さんの決定（作る人・ブランチ decisions-data-1015）。LLM 0回",
+    "applied_to": "app/lib/pickup-bundle-common-facts.ts・app/lib/sent-image-order.ts・app/components/AixModal.tsx・app/api/aix/action/route.ts・app/api/aix-template-generate/route.ts・app/lib/__tests__/pickup-bundle-common-facts.test.ts",
+    "tags": ["竹内さんの決定", "AIX", "物件ピックアップ", "売上サポ", "束", "場面:その他"]
+  },
+  {
+    "title": "【決定】古い取り込みの資料の読み（sent_image_properties source=backfill）も物件名の化けの直しの対象に入れる",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "2026-10-15 竹内さん「入れる」: scripts/fix-property-names-stored.ts の既定の対象を vision＋backfill にした（--sources=vision で旧に戻す）。backfill 1,543行のうち直す 128行（名前 119種類）・vision は既に直し済みで 0。直しの決まりは property-name-fix（候補が1つの時だけ・帳簿にある名前に寄せる）のまま。見本の全件を目で読み、地名の取り違え（雑賀→難波・令福→今福・堤筋→堺筋 等）とシリーズ名の1字違いが大半。確かめてほしい物: 「パラゴン小島→パラゴン小路」（小島も地名）・「robot home 太子橋(旧robot)」が帳簿の途中で切れた名前「…(旧:robot」に寄る形。",
+    "rationale": "古い取り込みも返信・物件の照合の材料に使われるので、読みの化けは同じ決まりで直す。対象を増やす時は引数の既定で入れ、旧に戻せる形にする。",
+    "context": "2026-10-15 竹内さんの決定（作る人・ブランチ decisions-data-1015）。LLM 0回",
+    "applied_to": "scripts/fix-property-names-stored.ts・app/lib/property-name-fix.ts",
+    "tags": ["竹内さんの決定", "物件名", "読み取り", "書き直し"]
+  },
+  {
+    "title": "【決定】資料の読みが「居住中」で日付が無い時、物件オススメの2通目の材料は「退去予定のお部屋となります！！」のまま",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "2026-10-15 竹内さん「それで」: recommend-vacating-source.sentImageViewable は、送った資料の読み（sent_image_properties.facts.status）が move_out_planned・occupied（居住中）で退去予定日が無い時、VACATING_NO_DATE_LINE「退去予定のお部屋となります！！」を2通目の材料に渡す（出口で一文は足さない・書くかは生成が決める）。今の作りを変えない（テスト recommend-vacating-source.test.ts『日付なし』で確かめた）。",
+    "rationale": "居住中で日付の無い資料は、まだご内覧頂けない事だけが確か。日付を作らず、竹内さんの実送信の言い方のまま渡す。",
+    "context": "2026-10-15 竹内さんの決定（作る人・ブランチ decisions-data-1015）。コードは変えていない（コメントに決定を記した）",
+    "applied_to": "app/lib/recommend-vacating-source.ts・app/lib/recommend-viewable.ts",
+    "tags": ["竹内さんの決定", "AIX", "2通目", "退去予定", "場面:物件オススメ"]
+  }
+]
