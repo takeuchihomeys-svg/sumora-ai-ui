@@ -414,6 +414,13 @@ type ReadResult<T> = { value: T | null; usd: number; ok: boolean; model: string;
 /** 物件の判断と同じ口（推論なし・温度0・同じ前置きで1回読み直し・Claude に倒さない）。使用量は llm_usage_logs に名札付き */
 async function deepseekRead<T>(action: string, system: string, user: string, maxTokens: number, parseFn: (t: string) => T | null, conversationId: string | null, timeoutMs: number): Promise<ReadResult<T>> {
   const { callDeepSeekRead, VISION_ALT_MODEL_DEFAULT } = await import("./vision-alt-provider");
+  // 2026-10-15 確かめる人: ここは llm-alt-provider の包みを通らない直の出口で、伏せは maskPII だけ（空白区切りの携帯番号を伏せない）
+  //   → 出口の門（alt-pii-gate）と同じ網に当たる本文は送らない（読めなかった扱い・LLM_ALT_PII_GATE=off で今まで通り）
+  const { altPiiSignal, altPiiGateEnabled } = await import("./alt-pii-gate");
+  if (altPiiGateEnabled(process.env) && altPiiSignal(`${system}\n${user}`)) {
+    console.warn("[pref-learning] 本文に個人の値 → DeepSeek に出さない", JSON.stringify({ action, conversationId }));
+    return { value: null, usd: 0, ok: false, model: VISION_ALT_MODEL_DEFAULT, input: 0, cacheHit: 0, output: 0 };
+  }
   const out = await callDeepSeekRead(system, user, { maxTokens, timeoutMs }, parseFn);
   let usd = 0, input = 0, cacheHit = 0, output = 0;
   const now = new Date().toISOString();

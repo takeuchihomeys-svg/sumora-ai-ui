@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { supabase } from "@/app/lib/supabase";
 import { maskPII } from "@/app/lib/pii-mask";
+import { altPiiSignal, altPiiGateEnabled } from "@/app/lib/alt-pii-gate";
 import { callDeepSeekRead } from "@/app/lib/vision-alt-provider";
 import {
   buildConditionSummary, conditionFreeText, buildSummaryUserText, parseSummaryResponse, maskClause, formatSummaryLine, uncheckableLabels, dropAiCoveredByRule,
@@ -85,9 +86,14 @@ export async function loadConditionSummary(propertyCustomerId: string | null, op
   const clauses = [...summary.unread, ...summary.unchecked];
   // 鍵が無い環境（テスト・ローカル）では呼ばない＝空の使用量の行（status 0・no_response）を llm_usage_logs に残さない
   const hasKey = !!(process.env.DEEPSEEK_API_KEY ?? "").trim();
-  if (!saved && opts.allowLlm && hasKey && clauses.length > 0 && propertyCustomerId) {
-    const names = [cust.customer_name].filter(Boolean) as string[];
-    const masked = clauses.map((x) => maskClause(maskPII(x, names)));
+  // 2026-10-15 確かめる人: maskClause は空白区切りの携帯番号（080 1234 5678）を伏せない → 出口の門（alt-pii-gate）と同じ網に当たる節は
+  //   DeepSeek に渡さない（この読み取りは llm-alt-provider の包みを通らない直の出口）。LLM_ALT_PII_GATE=off で今まで通り
+  const gateOn = altPiiGateEnabled(process.env);
+  const names = [cust.customer_name].filter(Boolean) as string[];
+  const masked = !saved && opts.allowLlm && hasKey && clauses.length > 0
+    ? clauses.map((x) => maskClause(maskPII(x, names))).filter((x) => !gateOn || !altPiiSignal(x))
+    : [];
+  if (!saved && opts.allowLlm && hasKey && masked.length > 0 && propertyCustomerId) {
     // 2026-09-25 竹内「抜けの内容にプロンプトキャッシュを効かせる」「クロードに切り替えない」: 固定の前置き（SUMMARY_SYSTEM_PROMPT）が system・読めない節は後ろ。
     //   答えない・崩れた時は同じ前置きのまま1回だけ読み直す（callDeepSeekRead）。2回とも駄目なら保存しない＝次の回（売上サポに届いた時）で読み直す・readFailed の印
     //   「条件が無い」という正しい答え（{"items":[]}）は読めた扱い（保存して次から呼ばない）。JSON が崩れた・items が無い時だけ読み直す
