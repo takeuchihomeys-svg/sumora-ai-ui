@@ -653,6 +653,142 @@ export function createSseConverter(model: string) {
   };
 }
 
+// ── DeepSeek が混んでいる・落ちている時の予備（2026-10-15）────────────────────────────
+// 2026-10-15 10:33 JST〜 DeepSeek（deepseek-v4-pro）が「200 を返したまま1文字も流さない」状態になり、
+//   返信生成（reply_generate・1文字ずつの形）が 28回全部 90秒待って stream_error（出力0）。
+//   旧の作りは 200 の時点で Response を返していたので、その後に止まっても Claude に戻す所（下の catch）を通らず、
+//   呼び出し側は空の文を受け取り「empty draft」で下書きが無い（または挨拶1行だけの下書き）になった。
+//   AIX（property_check_result・読み切りの形）は 90秒待って失敗→Claude に戻したが、呼び出し側の 25秒の signal が
+//   既に切れていて Claude 側が 3ms で fetch_error（予備が効かなかった）。
+// 直し:
+//   ① 1文字ずつの形は「最初の1文字」が来るまで Response を返さない（既定 15秒・DEEPSEEK_FIRST_TOKEN_MS）。
+//      来なければ・何も来ずに終われば失敗として投げる → いつもの catch で Claude に作り直す
+//      （本番7日の reply_generate は全体でも p99 9.4秒・最大 12秒なので、15秒で最初の1文字が来ないのは異常）
+//   ② 読み切りの形の待ちの上限を 90秒 → 60秒（DEEPSEEK_TIMEOUT_MS・本番7日の最大は property_recommendation 36秒）
+//   ③ 回路の遮断: 混雑の失敗（5xx・429・時間切れ・最初の1文字が来ない・空）が続けて 2回起きたら、
+//      5分間（DEEPSEEK_BREAKER_COOLDOWN_MS）は DeepSeek を試さず最初から Claude（待ちを払わない）。
+//      5分たったら1回だけ試し、通れば元に戻す・駄目ならまた 5分。インスタンスごとの記憶（DB は見ない）
+//   ④ Claude に戻す時、呼び出し側の signal が待っている間に切れていたら、新しい 45秒の signal で送る
+//   戻す: DEEPSEEK_FALLBACK_CLAUDE=off（①〜④を全部やめて今までどおり・90秒）。
+//   変わらない所: 物件の判断・読み取り（NO_CLAUDE_FALLBACK_ACTIONS）は Claude に倒さない・テスト用の切り替えの間は Claude に戻さない・
+//     LLM_ALT_FALLBACK=off なら戻さない。申込以降・自動返信オフ等で Claude に行く歯止めはこの前で済んでいる（Claude に回すのは安全側）
+
+export type AltBusyGuard = {
+  enabled: boolean;
+  /** 1文字ずつの形: 最初の1文字が来るまでの上限（ms） */
+  firstTokenMs: number;
+  /** 読み切りの形・1文字ずつの形の全体の上限（ms） */
+  totalMs: number;
+  /** 続けて何回の混雑の失敗で回路を遮断するか */
+  breakerFailures: number;
+  /** 遮断している時間（ms） */
+  breakerCooldownMs: number;
+};
+
+const intEnv = (v: string | undefined, def: number, min: number, max: number): number => {
+  const n = Number((v ?? "").trim());
+  return Number.isFinite(n) && n > 0 ? Math.min(max, Math.max(min, Math.round(n))) : def;
+};
+
+/** 環境変数から予備の設定を読む（純関数）。DEEPSEEK_FALLBACK_CLAUDE=off で今までどおり（全体 90秒・最初の1文字は待たない・遮断なし） */
+export function readBusyGuard(env: EnvLike = process.env): AltBusyGuard {
+  const enabled = (env.DEEPSEEK_FALLBACK_CLAUDE ?? "on").trim().toLowerCase() !== "off";
+  if (!enabled) return { enabled: false, firstTokenMs: 0, totalMs: 90_000, breakerFailures: 0, breakerCooldownMs: 0 };
+  return {
+    enabled: true,
+    firstTokenMs: intEnv(env.DEEPSEEK_FIRST_TOKEN_MS, 15_000, 3_000, 90_000),
+    totalMs: intEnv(env.DEEPSEEK_TIMEOUT_MS, 60_000, 10_000, 90_000),
+    breakerFailures: intEnv(env.DEEPSEEK_BREAKER_FAILURES, 2, 1, 20),
+    breakerCooldownMs: intEnv(env.DEEPSEEK_BREAKER_COOLDOWN_MS, 5 * 60_000, 10_000, 60 * 60_000),
+  };
+}
+
+/** 混雑・無応答による失敗（回路の遮断に数える物）。400 等の「送り方が悪い」失敗は数えない */
+export class AltBusyError extends Error {
+  constructor(public readonly kind: "first_token_timeout" | "empty_stream" | "timeout" | "http_5xx" | "http_429" | "network", message: string) {
+    super(message);
+    this.name = "AltBusyError";
+  }
+}
+
+/** 投げられた物が混雑の失敗か（純関数） */
+export function isBusyFailure(e: unknown): boolean {
+  if (e instanceof AltBusyError) return true;
+  if (e instanceof Error) {
+    if (e.name === "TimeoutError" || e.name === "AbortError") return true;
+    if (e.name === "TypeError" && /fetch failed|network|ECONN|socket/i.test(e.message)) return true;
+    if (/\b(5\d\d|429)\b/.test(e.message.slice(0, 20))) return true; // callOpenAICompatible の「deepseek 503: …」
+  }
+  return false;
+}
+
+/** 回路の遮断（相手ごと・インスタンスの中だけの記憶）。now を渡せるのはテスト用 */
+export function createAltBreaker(guard: Pick<AltBusyGuard, "breakerFailures" | "breakerCooldownMs">, now: () => number = Date.now) {
+  let consecutive = 0;
+  let openUntil = 0;
+  return {
+    /** 今は DeepSeek を試さず最初から Claude にするか */
+    isOpen(): boolean { return guard.breakerFailures > 0 && now() < openUntil; },
+    onSuccess(): void { consecutive = 0; openUntil = 0; },
+    onFailure(busy: boolean): void {
+      if (!busy || guard.breakerFailures <= 0) return;
+      consecutive++;
+      // 遮断が明けた後の1回目（試し）が駄目なら、すぐまた遮断（consecutive は数え続けている）
+      if (consecutive >= guard.breakerFailures) openUntil = now() + guard.breakerCooldownMs;
+    },
+    state: () => ({ consecutive, openUntil }),
+  };
+}
+const breakers = new Map<string, ReturnType<typeof createAltBreaker>>();
+function breakerFor(target: AltProviderConfig, guard: AltBusyGuard) {
+  const key = `${target.provider}:${target.model}`;
+  let b = breakers.get(key);
+  if (!b) { b = createAltBreaker(guard); breakers.set(key, b); }
+  return b;
+}
+/** テスト用: 遮断の記憶を消す */
+export function resetAltBreakers(): void { breakers.clear(); }
+
+/**
+ * 1文字ずつの形の本文を、最初の中身（Anthropic の SSE が1つ以上出る所）まで読む。
+ * 来れば読んだ分を返し、後はそのまま読み続けられる。来ないまま終わる・上限を過ぎると AltBusyError。
+ * keep-alive の行（": keep-alive"）や空の行は中身に数えない。
+ */
+export async function readUntilFirstContent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  conv: { push(line: string): string[] },
+  firstTokenMs: number,
+  /** 続きを読む側と同じ decoder（文字の途中で chunk が切れた時の持ち越しを失わない） */
+  dec: TextDecoder = new TextDecoder(),
+): Promise<{ events: string[]; rest: string }> {
+  let buf = "";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => rej(new AltBusyError("first_token_timeout", `最初の1文字が ${firstTokenMs}ms 来ない`)), firstTokenMs);
+  });
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      if (done) {
+        const events = conv.push(buf);
+        if (events.length > 0) return { events, rest: "" };
+        throw new AltBusyError("empty_stream", "1文字も来ないまま終わった");
+      }
+      buf += dec.decode(value, { stream: true });
+      const events: string[] = [];
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        events.push(...conv.push(line));
+      }
+      if (events.length > 0) return { events, rest: buf };
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
  * OpenAI 互換のエンドポイント（Azure AI Foundry / DeepSeek 本家）を呼ぶ。
  * 本文の形が同じなので、宛先と鍵の渡し方だけ変えれば同じ変換処理が使える。
@@ -664,6 +800,8 @@ async function callOpenAICompatible(
   // 2026-09-23 竹内「おこなう」: 1文字ずつの形は**読み切れなくても必ず1行残す**（errorType に切れ方を入れる）。
   //   旧: 最後まで読み切った時だけ書いていたので、途中で切れる・受け手が閉じると行が無く、費用の検算で数が合わなかった
   onUsage?: (u: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number }, errorType: string | null) => void,
+  // 2026-10-15 DeepSeek の障害の予備（readBusyGuard）。省略時は今までどおり（全体 90秒・最初の1文字は待たない）
+  guard: AltBusyGuard = readBusyGuard({ DEEPSEEK_FALLBACK_CLAUDE: "off" }),
 ): Promise<Response | null> {
   // 1文字ずつの形は DeepSeek だけ通す（Anthropic の SSE に組み直す変換を用意しているため）
   const allowStream = cfg.provider === "deepseek";
@@ -684,9 +822,14 @@ async function callOpenAICompatible(
     // 2026-10-07 3巡目: 文字数で切った所で絵文字（サロゲートの組）が半分になると、JSON に孤立した \udXXX が入り
     //   DeepSeek が 400「unexpected end of hex escape」で断る（再生のブレインで 54番中 1番・Claude は通す）→ 送る前に孤立した半分を U+FFFD に置き換える
     body: wellFormedJson(payload),
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(guard.totalMs),
   });
-  if (!res.ok) throw new Error(`${cfg.provider} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const msg = `${cfg.provider} ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`;
+    // 混雑（5xx・429）は回路の遮断に数える。400 等（送り方が悪い）は数えない（今までどおり Claude に戻すだけ）
+    if (guard.enabled && (res.status >= 500 || res.status === 429)) throw new AltBusyError(res.status === 429 ? "http_429" : "http_5xx", msg);
+    throw new Error(msg);
+  }
 
   // ── 1文字ずつの形: OpenAI の SSE を読みながら Anthropic の SSE を書き出す ──
   if (body.stream && allowStream) {
@@ -695,6 +838,16 @@ async function callOpenAICompatible(
     const enc = new TextEncoder();
     const dec = new TextDecoder();
     const reader = res.body.getReader();
+    // 2026-10-15: 最初の1文字が来るまで Response を返さない（来なければ投げる＝呼び出し元の catch で Claude に作り直す）
+    let head: { events: string[]; rest: string } = { events: [], rest: "" };
+    if (guard.enabled) {
+      try {
+        head = await readUntilFirstContent(reader, conv, guard.firstTokenMs, dec);
+      } catch (e) {
+        reader.cancel().catch(() => { /* 既に終わっている */ });
+        throw e;
+      }
+    }
     // 記録は1回だけ（読み切り・途中で切れた・受け手が閉じた、のどれか1つ）
     let reported = false;
     const report = (errorType: string | null) => {
@@ -704,8 +857,9 @@ async function callOpenAICompatible(
     };
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
-        let buf = "";
+        let buf = head.rest;
         try {
+          for (const ev of head.events) controller.enqueue(enc.encode(ev));
           for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -793,6 +947,8 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
   if (blocked) console.warn("[llm-test-mode] 無視:", blocked);
   const cfg = readAltConfig(env);
   if (!cfg) return false; // 設定が無ければ何もしない＝今までどおり Anthropic
+  // 2026-10-15 DeepSeek の障害の予備（最初の1文字の上限・回路の遮断）。DEEPSEEK_FALLBACK_CLAUDE=off で今までどおり
+  const guard = readBusyGuard(env);
   // 2026-09-27: 包みの内側（素通しの先）を箱に入れる。開発サーバで記録の包みが外れた時（Next の resetFetch）に、
   //   llm-usage-recorder.ensureLlmFetchChainInDev が**この包みの内側**へ記録の包みを差し込めるように（本番と同じ順を保つ）
   const box: { fn: typeof fetch } = { fn: globalThis.fetch };
@@ -876,6 +1032,22 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     const conversationId = headers.get(LLM_CONVERSATION_HEADER);
     // 2026-09-29 名前ごとの振り分け（LLM_ALT_ROUTES）があればその相手（Qwen 等）・無ければ主の相手
     const target = targetConfigFor(cfg, routeName);
+    // 2026-10-15 Claude に作り直してよい呼び出しか（物件の判断・読み取り・テストの間・LLM_ALT_FALLBACK=off は戻さない＝遮断もしない）
+    const mayFallBack = guard.enabled && cfg.fallbackToAnthropic && !cfg.testMode && !(routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName));
+    // Claude に戻す時、呼び出し側の signal が DeepSeek を待つ間に切れていたら新しい 45秒で送る
+    //   （10/15 13:01 AIX property_check_result: DeepSeek 90秒の後に 25秒の signal で Claude を呼び 3ms で fetch_error）
+    const claudeInit = (): RequestInit | undefined => (guard.enabled && init?.signal?.aborted ? { ...init, signal: AbortSignal.timeout(45_000) } : init);
+    const breaker = mayFallBack ? breakerFor(target, guard) : null;
+    if (breaker?.isOpen()) {
+      // 回路の遮断中: DeepSeek を試さず最初から Claude（待ちを払わない）。費用を後から数えられるよう0円の行を1つ残す
+      recordAltUsage({
+        model: target.model, action: routeName, conversationId: headers.get(LLM_CONVERSATION_HEADER), usage: {},
+        status: 0, errorType: "alt_skipped_breaker", durationMs: 0, stream: !!body.stream,
+        sysHead, sysKeyFull, maxTokens: typeof body.max_tokens === "number" ? body.max_tokens : null,
+      });
+      console.warn("[llm-alt] DeepSeek の回路を遮断中 → 最初から Claude", JSON.stringify({ route: routeName, ...breaker.state() }));
+      return original(input as RequestInfo, init);
+    }
     try {
       const writeUsage = (usage: Record<string, number>, ms: number, errorType: string | null = null) => recordAltUsage({
         model: target.model, action: routeName, conversationId,
@@ -885,13 +1057,14 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       const res = target.provider === "bedrock"
         ? await callBedrock(target, body)
         // 1文字ずつの形は応答を読み切ってから usage が分かるので、コールバックで受ける（切れた時も errorType 付きで1行）
-        : await callOpenAICompatible(target, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType));
+        : await callOpenAICompatible(target, body, original, (u, errorType) => writeUsage(u as unknown as Record<string, number>, Date.now() - started, errorType), guard);
       if (!res) {
         // 物件の判断・読み取りは変換できなくても Claude に倒さない（呼び出し側が「読み取れなかった」の印を付ける）
         if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw new Error(`${routeName}: DeepSeek に送れない形（Claude には倒さない）`);
         // テスト用の切り替えでも画像つきは DeepSeek（文字だけ）に送れない。2026-10-01: 黙って Claude にせず止める（extract_estimate 7回が漏れていた）
         return toClaude("DeepSeek に送れない形（画像つき・1文字ずつの形 等）"); // 画像等は今までどおり（本番）
       }
+      breaker?.onSuccess();
       const ms = Date.now() - started;
       console.log("[llm-alt]", JSON.stringify({ route: routeName, provider: target.provider, model: target.model, stream: !!body.stream, ms, ...(cfg.testMode ? { testMode: cfg.testMode } : {}) }));
       // 2026-09-19 本番の検証で見つけた穴: fetch の出口の記録は Anthropic 宛てだけを見るので、
@@ -907,7 +1080,9 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
     } catch (e) {
       // 2026-10-01 テストの歯止めで止めた物（画像つき等）は DeepSeek の失敗ではない＝そのまま投げる（本番では起きない）
       if (e instanceof LlmTestBlockedError) throw e;
-      console.warn("[llm-alt] failed:", String(e));
+      const busy = isBusyFailure(e);
+      breaker?.onFailure(busy);
+      console.warn("[llm-alt] failed:", String(e), JSON.stringify({ route: routeName, busy, ...(breaker ? breaker.state() : {}) }));
       // 失敗も1行残す（フォールバックの回数が後から数えられる）
       recordAltUsage({
         model: target.model, action: routeName, conversationId, usage: {},
@@ -921,7 +1096,7 @@ export function installAltProvider(env: EnvLike = process.env): boolean {
       //   本番（testMode は常に null）はここを通らない＝今までどおり Anthropic にフォールバック
       if (cfg.testMode) { console.error(`[llm-test-mode] ⛔ DeepSeek が失敗（${routeName}）。テストの間は Claude に戻さない: ${String(e).slice(0, 200)}`); throw e; }
       if (routeName && NO_CLAUDE_FALLBACK_ACTIONS.has(routeName)) throw e; // 物件の判断・読み取りは Claude に倒さない
-      return original(input as RequestInfo, init); // 失敗したら今までどおり Anthropic で返す
+      return original(input as RequestInfo, claudeInit()); // 失敗したら今までどおり Anthropic で返す
     }
   }) as typeof fetch;
   (globalThis.fetch as unknown as Record<string, unknown>)[ALT_FETCH_MARK] = true;

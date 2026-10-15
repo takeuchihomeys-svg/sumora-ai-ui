@@ -128,8 +128,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-DROP TRIGGER IF EXISTS update_property_customers_updated_at ON property_customers;
-CREATE TRIGGER update_property_customers_updated_at
+CREATE OR REPLACE TRIGGER update_property_customers_updated_at
   BEFORE UPDATE ON property_customers
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -561,8 +560,7 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_trigger_action_rules_set_category ON trigger_action_rules;
-CREATE TRIGGER trg_trigger_action_rules_set_category
+CREATE OR REPLACE TRIGGER trg_trigger_action_rules_set_category
 BEFORE INSERT OR UPDATE ON trigger_action_rules
 FOR EACH ROW EXECUTE FUNCTION set_trigger_action_rule_category();
 
@@ -3852,8 +3850,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-DROP TRIGGER IF EXISTS trg_conversations_deepseek_cutoff ON conversations;
-CREATE TRIGGER trg_conversations_deepseek_cutoff
+CREATE OR REPLACE TRIGGER trg_conversations_deepseek_cutoff
 BEFORE UPDATE OF status, is_post_apply, status_manual_back_at ON conversations
 FOR EACH ROW EXECUTE FUNCTION stamp_deepseek_cutoff();
 
@@ -4189,8 +4186,8 @@ BEGIN
   RETURN NULL;
 END;
 $$;
-DROP TRIGGER IF EXISTS trg_conversations_line_watch ON conversations;
-CREATE TRIGGER trg_conversations_line_watch
+-- 2026-10-15: DROP→CREATE を2文で流すと、毎晩の cron（300秒で時間切れ）が間で切れてトリガーが消えた（10/13 0:10〜10/15 0:10 番の記録が空）。1文の CREATE OR REPLACE にする（切れても前のトリガーが残る）
+CREATE OR REPLACE TRIGGER trg_conversations_line_watch
 AFTER UPDATE OF ai_draft, ai_draft_check, suggested_aix_meta ON conversations
 FOR EACH ROW
 WHEN (OLD.ai_draft IS DISTINCT FROM NEW.ai_draft OR OLD.ai_draft_check IS DISTINCT FROM NEW.ai_draft_check OR OLD.suggested_aix_meta IS DISTINCT FROM NEW.suggested_aix_meta)
@@ -4318,8 +4315,7 @@ EXCEPTION WHEN OTHERS THEN
   RETURN NEW;
 END;
 $$;
-DROP TRIGGER IF EXISTS rent_observe_pool_trg ON property_candidate_pools;
-CREATE TRIGGER rent_observe_pool_trg AFTER INSERT OR UPDATE OF candidates ON property_candidate_pools
+CREATE OR REPLACE TRIGGER rent_observe_pool_trg AFTER INSERT OR UPDATE OF candidates ON property_candidate_pools
   FOR EACH ROW EXECUTE FUNCTION rent_observe_pool();
 
 -- お客様へ実際に届けた物件（グループ共有・物件確認・見積書は数えない＝pickup-ad-priority.isProposalSend と同じ）
@@ -4337,8 +4333,7 @@ EXCEPTION WHEN OTHERS THEN
   RETURN NEW;
 END;
 $$;
-DROP TRIGGER IF EXISTS rent_observe_sent_trg ON sent_properties;
-CREATE TRIGGER rent_observe_sent_trg AFTER INSERT ON sent_properties
+CREATE OR REPLACE TRIGGER rent_observe_sent_trg AFTER INSERT ON sent_properties
   FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
 
 -- 資料のペット可否（property_pickups.equipment.facts.pet: s=ok＝可・相談／ng＝不可）
@@ -4357,8 +4352,7 @@ EXCEPTION WHEN OTHERS THEN
   RETURN NEW;
 END;
 $$;
-DROP TRIGGER IF EXISTS rent_observe_pickup_pet_trg ON property_pickups;
-CREATE TRIGGER rent_observe_pickup_pet_trg AFTER INSERT OR UPDATE OF equipment ON property_pickups
+CREATE OR REPLACE TRIGGER rent_observe_pickup_pet_trg AFTER INSERT OR UPDATE OF equipment ON property_pickups
   FOR EACH ROW EXECUTE FUNCTION rent_observe_pickup_pet();
 
 -- 区×間取りの相場（管理費込み・期間で切らない）。p_pet=true はペット可（相談含む）が分かる戸だけ
@@ -4501,8 +4495,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 DROP TRIGGER IF EXISTS rent_observe_pickup_pet_trg ON property_pickups;
-DROP TRIGGER IF EXISTS rent_observe_pickup_trg ON property_pickups;
-CREATE TRIGGER rent_observe_pickup_trg AFTER INSERT OR UPDATE OF equipment, terms, status, sent_at, recommended, location ON property_pickups
+CREATE OR REPLACE TRIGGER rent_observe_pickup_trg AFTER INSERT OR UPDATE OF equipment, terms, status, sent_at, recommended, location ON property_pickups
   FOR EACH ROW EXECUTE FUNCTION rent_observe_pickup();
 
 -- お客様へ届けた（手順1の rent_observe_sent に段と経路を足す）・興味ありは段4
@@ -4523,8 +4516,7 @@ EXCEPTION WHEN OTHERS THEN
   RETURN NEW;
 END;
 $$;
-DROP TRIGGER IF EXISTS rent_observe_sent_trg ON sent_properties;
-CREATE TRIGGER rent_observe_sent_trg AFTER INSERT OR UPDATE OF customer_reaction ON sent_properties
+CREATE OR REPLACE TRIGGER rent_observe_sent_trg AFTER INSERT OR UPDATE OF customer_reaction ON sent_properties
   FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
 
 -- ════════════════════════════════════════════════════════════════════
@@ -4754,8 +4746,7 @@ BEGIN
   RETURN NEW;
 END;
 $func$ LANGUAGE plpgsql;
-DROP TRIGGER IF EXISTS trg_fill_message_staff_writer ON messages;
-CREATE TRIGGER trg_fill_message_staff_writer BEFORE INSERT OR UPDATE OF speaker_user_id, line_message_id ON messages
+CREATE OR REPLACE TRIGGER trg_fill_message_staff_writer BEFORE INSERT OR UPDATE OF speaker_user_id, line_message_id ON messages
   FOR EACH ROW EXECUTE FUNCTION fill_message_staff_writer();
 -- 竹内さんの個人 LINE（グループの発言者・今の staff_line_user_ids の1件）。違っていれば直す
 INSERT INTO hanbancyo_settings (key, value) VALUES ('takeuchi_line_user_id', 'U3d8d9e48f947d85f270da34a32413a67') ON CONFLICT (key) DO NOTHING;
