@@ -35,6 +35,8 @@
 //      「どこが変わったか」を出す（API 0回）。--no-record で録らない
 //   ③ --stage=brain（ブレインまで・下書きを作らない）／--stage=draft（下書きまで＝旧 --draft）／--stage=auto（問題の stage → scripts/brain-exam/stage-by-type.json の型 → brain）
 //   ④ 終わりに「新しく呼んだ・再生で済んだ・使い回した」の数と費用を出す（<label>.cost.json に問題ごと）
+// 2026-10-15 夜 追加の4つ（scripts/brain-exam/README.md）: --stage=diff（直したファイルで段を選ぶ）／前の取り置きは main の「試験に効く所の中身」の鍵
+//   （--baseline-key=commit で旧）／問題を全部の作業ツリーで共有（EXAM_SHARED_PROBLEMS=off）／--repeat-flaky（揺れる問題だけ繰り返す・揺れの記録は EXAM_FLAKE_RECORD=off）
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, copyFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -47,11 +49,45 @@ import { brainPathCode, judgePath, problemScore, rateByType, aixFamily, judgeCur
 import { similarity } from "../app/lib/property-name-match";
 import { autoReplyHintOf } from "../app/lib/reply-hint-auto";
 import type { ExamProblem, LedgerRow } from "./brain-exam-add";
+import { decideStageFromDiff, examVersionKey } from "./lib/exam-scope";
+import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
+import { atomicWriteJson } from "./lib/exam-shared-file";
+import { cassetteStats as cassetteStatsNow } from "./lib/llm-cassette";
+/** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
+function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
+import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
+const SPEC_FILE = "scripts/brain-exam/spec.json";
 const RESULTS_DIR = "scripts/brain-exam/results";
 const PREFIX = "bexam-";
 const args = process.argv.slice(2);
+/**
+ * 2026-10-15 ③ 問題を読む。手元の problems.json が今の正解（spec.json）と違う問題・手元に無い問題（手元の problems.json が無い時か --only で名指しした時）は
+ *   全部の作業ツリーで共有する置き場（.claude/exam-cache/brain-exam-problems）の同じ正解の物を使い、手元の problems.json を書き直す（.gitignore）。
+ *   手元の今の正解の問題は共有の置き場に置く（他の担当が DB から作り直さない）。止める: EXAM_SHARED_PROBLEMS=off
+ */
+let problemsCache: ExamProblem[] | null = null;
+function loadProblems(): ExamProblem[] {
+  if (problemsCache) return problemsCache;
+  const local = existsSync(PROBLEMS_FILE) ? JSON.parse(readFileSync(PROBLEMS_FILE, "utf8")) as ExamProblem[] : [];
+  if (!sharedProblemsEnabled() || !existsSync(SPEC_FILE)) return (problemsCache = local);
+  const spec = JSON.parse(readFileSync(SPEC_FILE, "utf8")) as Array<Record<string, unknown>>;
+  const only = arg("only").split(",").filter(Boolean);
+  const r = fillProblemsFromShared<ExamProblem>(spec, local, { addMissing: (id) => !local.length || only.includes(id) });
+  if (r.changed) {
+    atomicWriteJson(PROBLEMS_FILE, r.problems, true);
+    console.log(`問題: 共有の置き場から ${r.fromShared.length}問（${r.fromShared.slice(0, 8).join(",")}${r.fromShared.length > 8 ? "…" : ""}）を使った（${SHARED_PROBLEMS_DIR}）`);
+  }
+  if (r.staleKept.length) console.warn(`⚠ 問題 ${r.staleKept.join(",")} は手元の problems.json が今の正解と違う（共有にも無い）→ 古いまま使う。作り直す: scripts/brain-exam-add.ts --rebuild --only=${r.staleKept.join(",")}`);
+  if (r.missing.length) console.warn(`⚠ 問題 ${r.missing.join(",")} が無い（手元にも共有にも）。作る: scripts/brain-exam-add.ts --rebuild --only=${r.missing.join(",")}`);
+  try {
+    const specIds = new Set(spec.map((s) => String(s.id))), stale = new Set(r.staleKept);
+    const n = publishProblems(r.problems.filter((p) => specIds.has(p.id) && !stale.has(p.id)) as unknown as Array<Record<string, unknown>>);
+    if (n) console.log(`問題: 共有の置き場に ${n}問を置いた（他の作業ツリーが作り直さない）`);
+  } catch (e) { console.warn("問題を共有の置き場に置けない:", String(e)); }
+  return (problemsCache = r.problems);
+}
 const arg = (k: string, d = "") => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const flag = (k: string) => args.includes(`--${k}`);
 const LABEL = arg("label", arg("report"));
@@ -71,12 +107,17 @@ const NO_JUDGE = flag("no-judge");
 // 比べる「前」の label。--baseline=main の時は main の版の取り置きから組み立てた label に置き換える（prepareMainBaseline）
 let BASELINE = arg("baseline");
 let baselineReuse: { reused: number; ran: number; reusedUsd: number; commit: string; dir: string } | null = null;
+let flakeSkip: { n: number; byVerdict: Record<string, number> } | null = null; // 2026-10-15 ④ --repeat-flaky で省いた回
 const GAP_MS = Number(arg("gap-ms", "2000"));
 const LAYER = arg("layer", "prod") === "combined" ? "combined" : "prod";
 const USE_LEDGER = !flag("no-ledger");
 // 2026-10-15 ③ 回す所を絞る: --stage=brain|draft|auto（--draft は --stage=draft と同じ）。auto は問題ごと（spec の stage → stage-by-type.json の型 → brain）
 const STAGE_ARG = arg("stage", flag("draft") ? "draft" : "auto");
-const STAGE: "brain" | "draft" | "auto" = STAGE_ARG === "draft" ? "draft" : STAGE_ARG === "brain" ? "brain" : "auto";
+// 2026-10-15 ① --stage=diff: origin/main との分かれ目から変わったファイルを、試験が読むコードの線で分けて段を決める（分からない時は両方＝draft）
+const STAGE_DECISION = STAGE_ARG === "diff" ? decideStageFromDiff(".") : null;
+const STAGE: "brain" | "draft" | "auto" = STAGE_DECISION ? STAGE_DECISION.stage : STAGE_ARG === "draft" ? "draft" : STAGE_ARG === "brain" ? "brain" : "auto";
+// 2026-10-15 ④ --repeat-flaky: --repeat=N（--majority）の時、揺れる問題だけ N 回・安定した問題は1回（1回目がいつもと違えば N 回まで）・分からない問題は2回
+const REPEAT_FLAKY = flag("repeat-flaky");
 const STAGE_BY_TYPE_FILE = "scripts/brain-exam/stage-by-type.json";
 const STAGE_BY_TYPE: Record<string, string> = (() => { try { return existsSync(STAGE_BY_TYPE_FILE) ? JSON.parse(readFileSync(STAGE_BY_TYPE_FILE, "utf8")) as Record<string, string> : {}; } catch { return {}; } })();
 function stageOf(p: { type: string; tags?: string[] } & { stage?: string }): "brain" | "draft" {
@@ -485,7 +526,7 @@ function rescore(rows: ResultRow[], probs: Map<string, ExamProblem>): ResultRow[
   });
 }
 function summarize(label: string, baseline: string | null): string {
-  const probs = existsSync(PROBLEMS_FILE) ? new Map((JSON.parse(readFileSync(PROBLEMS_FILE, "utf8")) as ExamProblem[]).map((p) => [p.id, effectiveProblem(p)])) : new Map<string, ExamProblem>();
+  const probs = new Map(loadProblems().map((p) => [p.id, effectiveProblem(p)]));
   const rows = rescore(readResults(label), probs);
   const pp = perProblem(rows);
   const L: string[] = [];
@@ -627,6 +668,26 @@ function resolveMainRef(ref: string): string {
   try { execFileSync("git", ["rev-parse", "--verify", "origin/main^{commit}"], { stdio: "ignore" }); } catch { return "main"; }
   try { execFileSync("git", ["merge-base", "--is-ancestor", "origin/main", "main"], { stdio: "ignore" }); return "main"; } catch { return "origin/main"; }
 }
+/**
+ * 2026-10-15 ② main が進んだかを出す（前回「前」に使った main と比べる）。版の鍵が同じ＝試験に効く所は変わらない（取り置きをそのまま使う）、
+ *   違う＝新しい main で回し直す（変わった app のファイルを数個出す）。置き場の main-head.json に今の main を書く（同時に書いても壊れない）
+ */
+function noteMainAdvance(root: string, commit: string, vk: string | null) {
+  const f = join(root, "main-head.json");
+  let prev: { commit?: string; versionKey?: string | null } = {};
+  try { prev = JSON.parse(readFileSync(f, "utf8")) as typeof prev; } catch { /* 初回 */ }
+  if (prev.commit && prev.commit !== commit) {
+    let ahead = false; try { execFileSync("git", ["merge-base", "--is-ancestor", prev.commit, commit], { stdio: "ignore" }); ahead = true; } catch { /* */ }
+    if (!vk || !prev.versionKey) console.log(`  main が変わった（${prev.commit.slice(0, 7)} → ${commit.slice(0, 7)}）`);
+    else if (prev.versionKey === vk) console.log(`  main が${ahead ? "進んだ" : "変わった"}（${prev.commit.slice(0, 7)} → ${commit.slice(0, 7)}）が、試験に効く所は同じ（版 ${vk}）→ 前の取り置きをそのまま使う`);
+    else {
+      let names: string[] = [];
+      try { names = execFileSync("git", ["diff", "--name-only", prev.commit, commit]).toString().split("\n").filter((x) => /^(?:app|lib)\//.test(x) && !/__tests__/.test(x)); } catch { /* */ }
+      console.log(`  main が${ahead ? "進んだ" : "変わった"}（${prev.commit.slice(0, 7)} → ${commit.slice(0, 7)}）・試験に効く所が変わった（版 ${prev.versionKey} → ${vk}・app ${names.length}ファイル: ${names.slice(0, 6).join(" ")}${names.length > 6 ? " …" : ""}）→ 新しい main の取り置きで比べる（古い main の答案は使わない）`);
+    }
+  }
+  if (prev.commit !== commit) { try { atomicWriteJson(f, { commit, versionKey: vk, at: new Date().toISOString() }, true); } catch { /* */ } }
+}
 /** 取り置きを読み、無い問題を main で回して足し、比べる「前」の結果ファイルを組み立てる。--baseline-dry の時は計画だけ出して false */
 async function prepareMainBaseline(): Promise<boolean> {
   const B = await import("./lib/brain-exam-baseline");
@@ -638,18 +699,37 @@ async function prepareMainBaseline(): Promise<boolean> {
   const cfg = B.examConfig(process.env, {
     layer: LAYER, ledger: USE_LEDGER, stage: STAGE, stageByType: existsSync(STAGE_BY_TYPE_FILE) ? B.sha(readFileSync(STAGE_BY_TYPE_FILE, "utf8")).slice(0, 10) : null,
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
+    // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
+    ...(REPEAT_FLAKY && REPEAT > 1 ? { repeatFlaky: true } : {}),
   });
   const ch = B.configHash(cfg);
-  const dir = B.baselineDirOf(commit, ch);
-  const picked = pick(JSON.parse(readFileSync(PROBLEMS_FILE, "utf8")) as ExamProblem[]);
+  // 2026-10-15 ② 比べる相手の版: main の commit ではなく「試験に効く所の中身」の鍵で置く。main が進んでも試験に効く所が同じなら同じ置き場（使い回す）、
+  //   変わっていれば別の置き場（古い main の答案を新しい main の比べに使わない）。旧の commit ごとの置き場は同じ commit の分だけ読み足す。
+  //   止める: --baseline-key=commit（または EXAM_BASELINE_KEY=commit）＝今まで通り commit ごと
+  const byCommit = (arg("baseline-key") || process.env.EXAM_BASELINE_KEY || "").trim() === "commit";
+  const memoFile = join(B.BASELINE_DIR, "version-keys.json");
+  let vk: string | null = null;
+  if (!byCommit) { try { vk = examVersionKey(commit, memoFile); } catch (e) { console.warn(`  ⚠ main の版の鍵が出せない（commit ごとで続ける）: ${String(e).slice(0, 120)}`); } }
+  const dir = vk ? B.baselineDirOfVersion(vk, ch) : B.baselineDirOf(commit, ch);
+  noteMainAdvance(B.BASELINE_DIR, commit, vk);
+  const picked = pick(loadProblems());
   const hashOf = new Map(picked.map((p) => [p.id, B.problemHash(p)]));
-  const cached = flag("baseline-refresh") ? new Map() : B.loadBaseline<ResultRow>(dir);
-  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)! })), cached, REPEAT);
+  const altOf = new Map(picked.map((p) => [p.id, [B.legacyProblemHash(p)]]));
+  // 同じ版の鍵だった commit の旧の置き場（<commit>-<構成>）も読む＝前に回した分を捨てない
+  const legacyDirs = (() => {
+    if (!vk) return [];
+    let memo: Record<string, string> = {}; try { memo = JSON.parse(readFileSync(memoFile, "utf8")) as Record<string, string>; } catch { /* */ }
+    const cs = new Set([commit, ...Object.entries(memo).filter(([, k]) => k === vk).map(([c]) => c)]);
+    return [...cs].map((c) => B.baselineDirOf(c, ch));
+  })();
+  const loadAll = () => B.mergeBaselines(B.loadBaseline<ResultRow>(dir), ...legacyDirs.map((d) => B.loadBaseline<ResultRow>(d)));
+  const cached = flag("baseline-refresh") ? new Map() : loadAll();
+  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY });
   const baseLabel = `main-${commit.slice(0, 7)}-${ch}`;
-  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length}問・回す ${plan.run.length}問${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""} ===`);
+  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length}問・回す ${plan.run.length}問${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""} ===`);
   if (plan.run.length) {
     const runLabel = `${baseLabel}-r${Date.now().toString(36)}`;
-    const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${plan.run.join(",")}`, ...B.childArgs(args)];
+    const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${plan.run.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
     const cassetteDir = resolve(String(process.env.LLM_CASSETTE_DIR ?? "").trim() || DEFAULT_CASSETTE_DIR);
     const childEnv = { ...process.env, REPLAY_FLOOR_FILE: `scripts/.replay-out/brain-exam-floor-${runLabel}.json`, LLM_CASSETTE_DIR: cassetteDir, BRAIN_EXAM_BASELINE_CHILD: "1" };
     if (flag("baseline-dry")) { console.log(`（--baseline-dry: 回さない）main の作業ツリーで: npx ${cmd.join(" ")}\n  録音の置き場（共有）: ${cassetteDir}`); return false; }
@@ -663,12 +743,13 @@ async function prepareMainBaseline(): Promise<boolean> {
       const rs = rows.filter((x) => x.id === id);
       if (!rs.length || rs.some((x) => x.error)) continue; // 失敗した問題は取り置かない（次にまた回す）
       const c = cost.byTag?.[id];
-      B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: new Date().toISOString(), fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null });
+      B.saveBaseline<ResultRow>(dir, { id, problemHash: hashOf.get(id)!, commit, config: cfg, savedAt: new Date().toISOString(), fromLabel: runLabel, rows: rs, cost: c ? { real: c.real, realUsd: c.realUsd, replayed: c.replayed, replayUsd: c.replayUsd } : null,
+        ...(vk ? { versionKey: vk } : {}), ...(REPEAT_FLAKY && REPEAT > 1 ? { complete: true } : {}) });
     }
   } else if (flag("baseline-dry")) { console.log("（--baseline-dry: 全部使い回せる）"); return false; }
   // 比べる「前」の結果ファイルを組み立てる（今回の問題だけ）
-  const now = B.loadBaseline<ResultRow>(dir);
-  const lines = picked.flatMap((p) => { const b = now.get(p.id); return b && b.problemHash === hashOf.get(p.id) ? b.rows : []; });
+  const now = loadAll();
+  const lines = picked.flatMap((p) => { const b = now.get(p.id); return b && B.sameProblem(b, { hash: hashOf.get(p.id)!, alt: altOf.get(p.id) }) ? b.rows : []; });
   writeFileSync(`${RESULTS_DIR}/${baseLabel}.jsonl`, lines.map((l) => JSON.stringify(l)).join("\n") + (lines.length ? "\n" : ""));
   BASELINE = baseLabel;
   const reusedUsd = plan.reuse.reduce((s, id) => { const c = now.get(id)?.cost; return s + (c ? c.realUsd + c.replayUsd : 0); }, 0);
@@ -684,6 +765,11 @@ async function main() {
   mkdirSync(RESULTS_DIR, { recursive: true });
   if (arg("report")) { const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
   // 2026-10-15 ① 前（main の版）: 取り置きを使い、無い問題だけ main の作業ツリーで回す（自分の鍵・線を取る前に＝同時1本）
+  if (STAGE_DECISION) {
+    const d = STAGE_DECISION, cnt = (c: string) => d.files.filter((f) => f.cls === c).length;
+    console.log(`--stage=diff → ${d.stage}（${d.cls === "both" ? "両方" : d.cls === "brain" ? "ブレインだけ" : d.cls === "draft" ? "下書きだけ" : "試験に効く変更なし"}・main との分かれ目 ${d.base?.slice(0, 7) ?? "-"}・変わったファイル ${d.files.length}: ブレイン ${cnt("brain")}・下書き ${cnt("draft")}・両方 ${cnt("both")}・効かない ${cnt("none")}）${d.note ? ` ${d.note}` : ""}`);
+    for (const f of d.files.filter((x) => x.cls !== "none").slice(0, 12)) console.log(`  ${f.cls.padEnd(5)} ${f.file}（${f.why}）`);
+  }
   if (BASELINE_MAIN && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") { const go = await prepareMainBaseline(); if (!go) return; }
   // 2026-10-09: --conv（テスト専用の会話）の時は鍵を取り、線のファイル・条件の写しの控えを会話ごとに分ける（REPLAY_FLOOR_FILE は supabase を読む前に要る＝ここで入れる）
   if (CONV_ARG) {
@@ -707,7 +793,7 @@ async function main() {
   const { extractStrategy } = await import("../app/lib/brain-layers");
   const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
   const { MSG_SEP } = await import("../app/lib/reply-context");
-  const problems = pick((JSON.parse(readFileSync(PROBLEMS_FILE, "utf8")) as ExamProblem[]).map(effectiveProblem));
+  const problems = pick(loadProblems().map(effectiveProblem));
   const DRAFT = problems.some((p) => stageOf(p) === "draft");
   const POST = DRAFT ? (await import("../app/api/generate-reply/route")).POST : null;
   const callsPer = LAYER === "prod" ? 2 : 1;
@@ -719,6 +805,24 @@ async function main() {
     // 10/14 構成のスイッチ（試験の頃の環境変数・BRAIN_*/TWO_STAGE_*/SEARCH_*/TURN_* 等）。答案の比べで「どの構成か」を残す
     switches: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:BRAIN_|TWO_STAGE_|SEARCH_|TURN_|NEXT_PUBLIC_SEARCH_|AIX_|CONFIRM_|REPEAT_|FINAL_CHECK_|PICKUP_|VIEWING_|EXHAUSTED_|ROOM_PHOTO_|CONTRACT_)/.test(k) && !/KEY|SECRET|TOKEN/.test(k)).sort()) }, null, 1));
   console.log(`問題 ${problems.length}・回 ${REPEAT}・${model}・層 ${LAYER}・台帳 ${USE_LEDGER ? "写す" : "写さない"}・下書き ${DRAFT ? `あり（--stage=${STAGE}・${problems.filter((p) => stageOf(p) === "draft").length}問）` : `なし（--stage=${STAGE}）`}・録音 ${CASSETTE_MODE}・判定 ${NO_JUDGE ? "なし" : "DeepSeek"}`);
+  // 2026-10-15 ④ 揺れの記録と、揺れる問題だけ繰り返す決め方（--repeat-flaky）
+  const B0 = await import("./lib/brain-exam-baseline");
+  const codeKey = currentCodeKey() ?? `run:${LABEL}:${process.pid}`;
+  const verdictOf = new Map<string, FlakeVerdict>();
+  const flakeOf = (p: ExamProblem): FlakeVerdict => {
+    let v = verdictOf.get(p.id);
+    if (!v) { v = flakeVerdict(readObs(p.id), { problemHash: B0.problemHash(p), model }); verdictOf.set(p.id, v); }
+    return v;
+  };
+  const doneSigs = new Map<string, string[]>();
+  for (const r of readResults(LABEL).filter((r) => !r.error).sort((a, b) => a.rep - b.rep)) doneSigs.set(r.id, [...(doneSigs.get(r.id) ?? []), sigOfRow(r)]);
+  const skippedReps = { n: 0, byVerdict: { stable: 0, unknown: 0, flaky: 0 } as Record<string, number> };
+  if (REPEAT_FLAKY && REPEAT > 1) {
+    const c = { flaky: 0, stable: 0, unknown: 0 } as Record<string, number>;
+    for (const p of problems) c[flakeOf(p).verdict]++;
+    console.log(`揺れる問題だけ繰り返す（--repeat-flaky・最大 ${REPEAT}回）: 揺れる ${c.flaky}問（${REPEAT}回）・安定 ${c.stable}問（1回・いつもと違えば足す）・分からない ${c.unknown}問（2回・割れたら足す）`);
+    for (const p of problems.filter((x) => flakeOf(x).verdict === "flaky")) console.log(`  揺れる ${p.id}: ${flakeOf(p).why}`);
+  }
   const yumaPc = await yumaPcId();
   if (existsSync(PC_BACKUP) && readFileSync(PC_BACKUP, "utf8").trim()) {
     const bk = JSON.parse(readFileSync(PC_BACKUP, "utf8")) as { id: string; row: Record<string, unknown> };
@@ -762,6 +866,9 @@ async function main() {
   const pcRetries = new Map<string, number>();
   for (const p of problems) for (let rep = 1; rep <= REPEAT; rep++) {
     if (done.has(`${p.id}#${rep}`)) continue;
+    // 2026-10-15 ④ 揺れない問題の2回目以降を省く（1回目は必ず回す）
+    if (REPEAT_FLAKY && REPEAT > 1 && !shouldRunRep(rep, flakeOf(p), doneSigs.get(p.id) ?? [], REPEAT)) { skippedReps.n++; skippedReps.byVerdict[flakeOf(p).verdict]++; continue; }
+    const realBefore = nonJudgeReal();
     const row: ResultRow = { id: p.id, rep, type: p.type, tags: p.tags ?? [], label: LABEL, model, layer: LAYER, at: new Date().toISOString(), brain: null, path: { code: "", acceptHit: null, mustNotHit: null, ok: false }, asks: null, ng: null, score: { path: false, asks: null, ng: null, pass: false } };
     const acc = acceptOf(p), mn = p.mustNot ?? [];
     currentProblemId = p.id;
@@ -898,9 +1005,22 @@ async function main() {
       if (n < 2) { pcRetries.set(k, n + 1); console.warn(`  ↻ ${p.id}#${rep} 条件の行が混ざった（${row.pcMismatch.join(",")}）→ 回し直す（${n + 1}回目）`); rep--; await new Promise((r) => setTimeout(r, GAP_MS)); continue; }
     }
     appendFileSync(OUT, JSON.stringify(row) + "\n");
+    if (!row.error) {
+      doneSigs.set(p.id, [...(doneSigs.get(p.id) ?? []), sigOfRow(row)]);
+      // 揺れの記録（共有）。録音の再生だけで出た回は前の答えの写し＝independent=false（安定の証拠に数えない）
+      if (flakeEnabled()) {
+        const st = cassetteStatsNow();
+        const independent = !st || st.mode === "record" || nonJudgeReal() > realBefore;
+        try { recordObs({ id: p.id, problemHash: B0.problemHash(p), model, codeKey, label: LABEL, rep, at: row.at, sig: sigOfRow(row), pathSig: pathSigOfRow(row), independent }); } catch (e) { console.warn("揺れの記録を書けない:", String(e)); }
+      }
+    }
     const miss = row.asks?.filter((a) => !a.covered).length ?? 0, vio = row.ng?.filter((g) => g.violated).length ?? 0;
     console.log(`${row.score.pass ? "○" : "✕"} ${p.id}#${rep} [${p.type}] ${row.essence ? `本質=${row.essence.code} ` : ""}ブレイン=${row.path.code || "-"}${row.draft ? ` 下書き=${row.draft.code}${row.draft.pass ? "○" : "✕"}` : ""} 正解=${acc.join("|")}${row.path.mustNotHit ? ` ⛔${row.path.mustNotHit}` : ""}${miss ? ` 依頼の抜け${miss}` : ""}${vio ? ` 違反${vio}` : ""}${row.ledger?.errors.length ? ` 台帳の失敗 ${row.ledger.errors.join("／")}` : ""}${row.pcMismatch ? ` 条件の混ざり ${row.pcMismatch.join(",")}` : ""}${row.error ? ` 失敗: ${row.error}` : ""}`);
     await new Promise((r) => setTimeout(r, GAP_MS));
+  }
+  if (REPEAT_FLAKY && REPEAT > 1) {
+    flakeSkip = skippedReps;
+    console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
   }
   const s = summarize(LABEL, BASELINE || null);
   console.log(`\n${s}`);
@@ -921,7 +1041,7 @@ main().catch((e) => { console.error(e instanceof Error ? e.message : e); process
     const cst = cas.cassetteStats();
     if (baselineReuse) console.log(`前（main ${baselineReuse.commit.slice(0, 7)}）: 使い回した ${baselineReuse.reused}問${baselineReuse.reusedUsd ? `（回していたら約 $${baselineReuse.reusedUsd.toFixed(4)}）` : ""}・新しく回した ${baselineReuse.ran}問（費用は上の「前」の実行の終わりに出ている）`);
     if (cst && LABEL) {
-      try { writeFileSync(`${RESULTS_DIR}/${LABEL}.cost.json`, JSON.stringify({ mode: cst.mode, total: cst.total, byTag: cas.tallyByTagJson(cst), byAction: Object.fromEntries(cst.byAction), misses: cst.misses, judge: judgeCost, baseline: baselineReuse }, null, 1)); } catch { /* */ }
+      try { writeFileSync(`${RESULTS_DIR}/${LABEL}.cost.json`, JSON.stringify({ mode: cst.mode, total: cst.total, byTag: cas.tallyByTagJson(cst), byAction: Object.fromEntries(cst.byAction), misses: cst.misses, judge: judgeCost, baseline: baselineReuse, flakeSkip, stage: STAGE_DECISION ? { mode: "diff", stage: STAGE_DECISION.stage, cls: STAGE_DECISION.cls, files: STAGE_DECISION.files.length } : STAGE }, null, 1)); } catch { /* */ }
       if (cst.mode === "strict" && cst.total.missed) console.log(`⚠ --replay=strict で録音の無い・変わった要求が ${cst.total.missed}回（呼んでいない）。その問題の答案は失敗になっている。変わった所が直した所なら --replay（変わった所だけ呼ぶ）で回す`);
     }
   }

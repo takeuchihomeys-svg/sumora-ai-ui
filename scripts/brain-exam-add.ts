@@ -30,6 +30,7 @@ import { APPLY_FORM_RE } from "../app/lib/customer-sim-shadow";
 import { STAFF_FAIL_RE } from "../app/lib/post-apply-brain-gate";
 import { addressNamesOf, maskExamText } from "./lib/brain-exam-mask";
 import { rollbackPcToTurn, type PcAsOf, type PcHist } from "./lib/brain-exam-pc";
+import { publishProblems, readSharedProblem, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 
 export const EXAM_DIR = "scripts/brain-exam";
 export const SPEC_FILE = `${EXAM_DIR}/spec.json`;
@@ -196,6 +197,12 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
   };
 }
 
+/** 2026-10-15 ③ 作った問題を全部の作業ツリーで共有する置き場に置く（.claude/exam-cache/brain-exam-problems・.gitignore）。EXAM_SHARED_PROBLEMS=off で止める */
+function sharePublish(ps: ExamProblem[]) {
+  if (!sharedProblemsEnabled()) return;
+  try { const n = publishProblems(ps as unknown as Array<Record<string, unknown>>); if (n) console.log(`共有の置き場に ${n}問を置いた（${SHARED_PROBLEMS_DIR}）`); }
+  catch (e) { console.warn("共有の置き場に置けない:", String(e)); }
+}
 export function readSpec(): ExamSpec[] { return existsSync(SPEC_FILE) ? JSON.parse(readFileSync(SPEC_FILE, "utf8")) as ExamSpec[] : []; }
 export function readProblems(): ExamProblem[] { return existsSync(PROBLEMS_FILE) ? JSON.parse(readFileSync(PROBLEMS_FILE, "utf8")) as ExamProblem[] : []; }
 
@@ -204,15 +211,21 @@ async function rebuild(only: string[] = []) {
   const prev = new Map(readProblems().map((p) => [p.id, p]));
   const out: ExamProblem[] = [];
   const skipped: string[] = [];
+  // 2026-10-15 ③ 共有の置き場（全部の作業ツリー）に同じ正解の問題があれば DB から作り直さずに使う。--fresh で必ず作り直す・EXAM_SHARED_PROBLEMS=off で止める
+  const useShared = sharedProblemsEnabled() && !flag("fresh");
+  let fromShared = 0;
   for (const s of spec) {
     if (only.length && !only.includes(s.id)) { const p = prev.get(s.id); if (p) out.push(p); continue; }
+    const sp = useShared ? readSharedProblem<ExamProblem>(s as unknown as Record<string, unknown>) : null;
+    if (sp) { out.push(sp); fromShared++; continue; }
     const r = await buildProblem(s);
     if (typeof r === "string") { skipped.push(`${s.id}（${s.type}）: ${r}`); continue; }
     out.push(r);
     console.log(`${r.id} [${r.type}] ${r.sub} 客「${oneLine(r.customer).slice(0, 60)}」 正解=${r.accept.join("|")}`);
   }
   writeFileSync(PROBLEMS_FILE, JSON.stringify(out, null, 1));
-  console.log(`\n問題 ${out.length} 問（spec ${spec.length}）→ ${PROBLEMS_FILE}`);
+  console.log(`\n問題 ${out.length} 問（spec ${spec.length}${fromShared ? `・共有の置き場から ${fromShared}問` : ""}）→ ${PROBLEMS_FILE}`);
+  sharePublish(out);
   if (skipped.length) console.log(`作れなかった ${skipped.length}:\n  ${skipped.join("\n  ")}`);
   const c = new Map<string, number>(); for (const p of out) c.set(p.type, (c.get(p.type) ?? 0) + 1);
   console.log(`型ごと: ${[...c].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("・")}`);
@@ -236,6 +249,7 @@ async function add() {
   if (typeof built === "string") throw new Error(`この番は問題にできません: ${built}`);
   writeFileSync(SPEC_FILE, JSON.stringify([...spec, s], null, 1));
   writeFileSync(PROBLEMS_FILE, JSON.stringify([...readProblems(), built], null, 1));
+  sharePublish([built]);
   console.log(`足した: ${s.id} [${type}] ${built.sub}\n  客「${oneLine(built.customer).slice(0, 120)}」\n  竹内さん「${oneLine(built.staffText).slice(0, 160)}」\n  当時のブレイン: ${JSON.stringify(built.prodBrain)}`);
 }
 
@@ -359,6 +373,7 @@ async function addBatch() {
   }
   writeFileSync(SPEC_FILE, JSON.stringify(spec, null, 1));
   writeFileSync(PROBLEMS_FILE, JSON.stringify(probs, null, 1));
+  sharePublish(probs);
   console.log(`\n足した ${items.length - skipped.length}・飛ばした ${skipped.length}${skipped.length ? `\n  ${skipped.join("\n  ")}` : ""}`);
 }
 
@@ -403,6 +418,8 @@ async function suggestScenes() {
 if (require.main === module) {
   (async () => {
     if (flag("rebuild")) await rebuild(arg("only").split(",").filter(Boolean));
+    // 2026-10-15 ③ 手元の problems.json の今の正解の問題を共有の置き場に置くだけ（DB を読まない）
+    else if (flag("share")) { const ids = new Map(readSpec().map((s) => [s.id, s])); const { specHashOf } = await import("./lib/exam-problems-store"); sharePublish(readProblems().filter((p) => ids.has(p.id) && specHashOf(p as unknown as Record<string, unknown>) === specHashOf(ids.get(p.id) as unknown as Record<string, unknown>))); }
     else if (flag("add")) await add();
     else if (flag("suggest")) await suggest();
     else if (flag("suggest-sends")) await suggestSends();

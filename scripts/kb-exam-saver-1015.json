@@ -1,32 +1,42 @@
 [
   {
-    "title": "試験の API は『前の使い回し』『要求が同じなら録った答え』『回す所を絞る』の3つで減らす — 決まり・出口だけの直しは要求が変わらないので API 0回で確かめられる",
+    "title": "試験の取り置きの鍵に『作った時刻』を入れると作業ツリーをまたいで一度も当たらない — 中身の hash から builtAt を外し、問題は全部の作業ツリーで1問1ファイルに共有する",
     "category": "ai_design",
-    "insight": "ブレインの試験（scripts/brain-exam.ts）は直す前と後を毎回両方回していた（7問で 前30回＋今28回・下書きありは1問 約7.5回）。①前（main）は commit×構成（試験に効く環境変数・層・台帳・stage・回数）×問題の中身の hash が同じなら何度回しても同じ物を測る → <倉庫の根>/.claude/exam-cache/brain-exam-baseline に問題単位で取り置き、--baseline=main で無い問題だけ main の作業ツリー（.claude/worktrees/brain-exam-main・今の試験の道具を写す）で回す。②LLM の要求と答えを録り（共通の入口 llm-test-harness の一番外＝別クラウド・使用量の記録より外・scripts/lib/llm-cassette.ts）、鍵は宛先＋名札＋本文（日時・UUID・時刻を伏せ、JSON を鍵の順に並べた物）の sha256。--replay は同じ要求を再生し変わった所だけ呼ぶ、--replay=strict は呼ばずに 400 にして『最初に違う所』を出す。--repeat=3 の n 回目は n 番目の録音（足りなければ呼んで足す＝揺れは測れる）。③--stage=brain|draft|auto で下書き（返信の生成＋最終チェック 約5回/問）を要る問題だけに。④終わりに新しく呼んだ・再生・使い回した数と $ を出し、<label>.cost.json に問題ごとに残す（取り置きの『回していたら』に使う）。",
-    "rationale": "竹内悠馬 2026-10-15「テストの時 API 使いすぎてる。もっと質高く重点的に API も節約してテストを回す」。10/13〜14 の llm_usage_logs（route=script:brain-exam-*）で、同じ直しを3〜5回回し直す系列（deepcheck 5回 239回 $1.86）や before/after の組で、前の側と変わらない呼び出しが大半だった。再生は一番外に置かないと llm_usage_logs に再生分が費用として残る・別クラウドの包みの印（__sumoraAltProvider）を写さないと willRouteAlt が『包みが外れた』と見て一番外にもう1枚包む（wrapGlobalFetch で写す）。録音・取り置きは作業ツリーごとだと他の担当の物が使えないので倉庫の根の .claude/exam-cache に共有。",
-    "context": "2026-10-15 exam-saver-1015（試験の道具だけ・app は触らない）。DeepSeek の障害中に作ったので本物の試験では未確かめ（scripts/lib/__tests__/llm-cassette.test.ts 24件で包みの動きを確かめた）。",
-    "applied_to": "scripts/lib/llm-cassette.ts・scripts/lib/brain-exam-baseline.ts・scripts/lib/llm-test-harness.ts・scripts/brain-exam.ts・scripts/brain-exam/README.md",
-    "tags": ["テスト", "API費用", "ブレイン", "試験", "再生", "キャッシュ", "汎用"],
+    "insight": "ブレインの試験の「前（main）」の取り置きは問題の hash（JSON.stringify(problem)）が同じ時だけ使い回すが、problems.json は作業ツリーごとに brain-exam-add --rebuild で作り直しており builtAt が毎回違った。q150 は6つの作業ツリーで中身（builtAt を除く hash 018158b6b03a）は同じなのに旧の hash は4通り＝他の担当が回した「前」が一度も使えず、毎回 main で回し直していた。直し: problemHash から builtAt を外す（旧の hash も alt で読む）・問題を <倉庫の根>/.claude/exam-cache/brain-exam-problems/<id>/<正解の hash>.json に1問1ファイルで共有（正解の hash＝spec の欄だけの hash＝正解を直したら別ファイル・中身が鍵で決まるので一時ファイル→rename だけで同時に書いても壊れない・鍵不要）。手元の problems.json が無い・正解が古い時は共有の物を使い、回す問題の集まりは今まで通り（手元に無い問題は手元の problems.json が無い時か --only で名指しした時だけ足す）。",
+    "rationale": "竹内悠馬 2026-10-15「試験の費用が本番より高い（14日で DeepSeek 約$223・Claude 約$37.5）・API 節約が最優先・質は落とさない」。5回のなぜ: 前の使い回しが効かない → 問題の hash が違う → builtAt が違う → 作業ツリーごとに作り直す → 問題の置き場が作業ツリーの中（.gitignore）で共有されていなかった。",
+    "context": "2026-10-15 exam-saver（夜・4つの追加）。scripts/lib/exam-problems-store.ts・exam-shared-file.ts・brain-exam-baseline.ts（problemHash・legacyProblemHash）。共有の置き場に 144問を置いた。止める: EXAM_SHARED_PROBLEMS=off",
+    "applied_to": "scripts/lib/exam-problems-store.ts・scripts/lib/exam-shared-file.ts・scripts/lib/brain-exam-baseline.ts・scripts/brain-exam.ts（loadProblems）・scripts/brain-exam-add.ts（--rebuild が共有を使う・--share・--fresh）",
+    "tags": ["テスト", "API費用", "試験", "キャッシュ", "静かに壊れる", "汎用"],
     "priority": 2
   },
   {
-    "title": "【汎用】LLM の再生テストの鍵は『毎回変わる物を伏せた要求』で取る — 伏せ漏れ（台帳の連番の id・今の分）があると毎回『変わった』になり節約にならない",
+    "title": "比べる相手（main）の取り置きは commit ではなく『試験が読むファイルの中身』の鍵で持つ — main が進んでも試験に効く所が同じなら回さない・違えば古い main の答案を使わない",
     "category": "ai_design",
-    "insight": "試験は場面を今の時刻に置き、日付を今日へ週単位でずらし、台帳の行を新しい id で写すので、要求の文字は毎回違う。鍵は本文の JSON を鍵の順に並べ、ISO の日時・YYYY-MM-DD・M/D・M月D日・HH:MM・UUID・13桁のミリ秒・alt_ の id を伏せてから sha256 を取る。中身（金額・物件名・会話・指示）は伏せない＝直した所の材料・指示が変われば必ず『変わった』になる。伏せ漏れは --replay=strict の『最初に違う所（前／今の前後 90字）』で見つけ、LLM_CASSETTE_MASK=<正規表現> で足す。全部伏せずに確かめたい時は LLM_CASSETTE_KEY=exact。失敗した答え（2xx 以外）は録らない（直った後も失敗が再生される）。",
-    "rationale": "2026-10-15 竹内悠馬の『API を節約してテスト』の設計で、再生の命中率を決めるのは鍵の取り方だった。伏せすぎると直した所が見えず（偽の一致）、伏せなさすぎると毎回呼ぶ。",
-    "context": "2026-10-15 exam-saver-1015。",
-    "applied_to": "scripts/lib/llm-cassette.ts（maskVolatile・normalizeBody・diffHint）",
-    "tags": ["テスト", "再生", "汎用", "静かに壊れる", "API費用"],
+    "insight": "--baseline=main の取り置きは <commit>-<構成> ごとで、main に試験と関係ない commit（画面・文書・別の API）が入るたびに全部の問題を main で回し直していた。版の鍵＝ブレインの入口（brain-core・brain-layers・deepseek-scope・reply-context）・下書きの入口（generate-reply・reply-hint-auto）・試験の道具から import の線で辿れる app のファイルと設定（package.json・tsconfig 等）の blob の hash を並べた sha256（git ls-tree＋cat-file --batch で1回・約0.6秒・commit→鍵は置き場に控える）。置き場は v-<鍵>-<構成>。同じ commit の旧の置き場も読み足す。前回使った main と比べて『進んだ・試験に効く所は同じ（使い回す）／変わった（app のファイル）』を出す。止める: --baseline-key=commit。",
+    "rationale": "竹内悠馬 2026-10-15「本番が進んだら比べる相手の録音を自動で新しい main に合わせる（古い main の録音を新しい main の比べに使わない・main の録音は main の版の鍵で持ち、同じ版なら使い回す）」。鍵を commit にすると『同じ版』が狭すぎ、作業ツリーの中身にすると広すぎる → 試験が実際に読むコードの中身にした。LLM の録音（cassette）は要求の中身が鍵なので、もともと main が進んでも同じ要求の答えしか返さない。",
+    "context": "2026-10-15 exam-saver（夜）。scripts/lib/exam-scope.ts（examVersionKey・examVersionKeyOf）・brain-exam.ts（prepareMainBaseline・noteMainAdvance）。",
+    "applied_to": "scripts/lib/exam-scope.ts・scripts/lib/brain-exam-baseline.ts（baselineDirOfVersion・mergeBaselines・sameProblem）・scripts/brain-exam.ts",
+    "tags": ["テスト", "API費用", "試験", "キャッシュ", "汎用"],
+    "priority": 2
+  },
+  {
+    "title": "試験の段（ブレインだけ／下書きも）は直したファイルを import の線で分けて決める — 下書きの線はブレインの入口の先へ辿らない・分からない物は両方",
+    "category": "ai_design",
+    "insight": "--stage=diff: origin/main との分かれ目から今の作業ツリーまで（作業中・まだ入れていない新しいファイルも）変わったファイルを、ブレインの入口と下書きの入口から import（静的・動的・require・export from・@/ と相対・.js→.ts）で辿った集まりで分ける。試験の下書きはブレインの答案を固定して generate-reply を流す（brainMetaDirect）ので、下書きの線は brain-core 等の入口で止める（止めないとブレインのファイルが全部『両方』になり分ける意味が無い）。今の木で ブレインだけ 107・下書きだけ 97・両方 176 ファイル。ブレインだけ → brain（下書き 約5回/問 を作らない）／下書きだけ・両方・試験の道具・設定・消した app のコード・main との分かれ目が取れない → draft（安全側＝両方）／どこからも読まれない（画面・文書・単体テスト）→ brain の最小。main の子には決めた段を渡す（子で決めると main との差が無くいつも brain になる）。",
+    "rationale": "竹内悠馬 2026-10-15「直したファイルを見て試すべき段階を自動で選ぶ。分からない時は安全側」。設計知見 b1a3ac8f『試験は直した所を重点的に』。静的な線は DB のプロンプトや読み込むテキストを見ない（app/lib に文字列で組み立てる import は無いのを確かめた）。",
+    "context": "2026-10-15 exam-saver（夜）。scripts/lib/exam-scope.ts（examGraph・classifyFile・decideStageFromDiff）。",
+    "applied_to": "scripts/lib/exam-scope.ts・scripts/brain-exam.ts（STAGE_DECISION）・scripts/lib/brain-exam-baseline.ts（childArgs の resolvedStage）",
+    "tags": ["テスト", "API費用", "試験", "ブレイン", "汎用"],
     "priority": 3
   },
   {
-    "title": "テストの費用の網は出口に置く — 最後の Claude の1日の上限・最終チェックは選んだ物だけ Claude・入口（setupLlmTest）を通らないテストの LLM 呼び出しは止める",
+    "title": "過半数の試験は揺れる問題だけ繰り返す — 同じコードで答えが割れた問題は3回・ずっと同じは1回（1回目がいつもと違えば足す）・分からないは2回（割れたら足す）。録音の再生の回は安定の証拠に数えない",
     "category": "ai_design",
-    "insight": "(a) LLM_TEST_FINAL_CLAUDE=1 の Claude の出口（llm-usage-recorder の testClaudeExitBlock）で、今日（JST）の env=local:final-claude の Claude の行（2分ごとに DB を読み直す）＋この process の分が LLM_TEST_FINAL_CLAUDE_DAILY_MAX（既定 60・off）に達したら止める＝開発サーバ /api/* もスクリプトも同じ網。(b) LLM_TEST_FINAL_CHECK_CLAUDE=<名札,...> で、最後の Claude の時も最終チェック（final_check_*）は書いた物だけ Claude・他は DeepSeek（別クラウドの包みの shouldRouteAlt・none＝全部 DeepSeek）。ブレインと返信の本文は Claude のまま。(c) 共通の入口の終わりに final-claude のその日の合計（全 route・開発サーバの分も）と上限の残りを出す。(d) スクリプトの process（Next の外・本番でない）で入口の印が無く、テストの印か YUMA・テスト専用の会話の LLM 呼び出しは、llm-usage-recorder を読んだ時に入る fetch の網で止める（単体テスト・LLM_TEST_HARNESS_GUARD=off は外す）。",
-    "rationale": "竹内悠馬 2026-10-15「テストの時 API 使いすぎてる」の調べで、最後の Claude の回数に上限が無い・最終チェック（1問 約3〜5回）が全部 Claude・道具の外で書いた試験（gen-model 型）が入口を通らず記録と歯止めの外で払う、が見つかった。呼び出し側（86 ファイル）ではなく全部が通る出口で止める（設計知見『LLM 呼び出しの出口の型』）。",
-    "context": "2026-10-15 exam-saver-1015（コーディネータの追加の依頼）。LLM_TEST_MODE を使うのに入口を通らないスクリプト（customer-sim・yuma-aix-template-gen 等 11本）は、手元で直に LLM を呼ぶ所が止まる。",
-    "applied_to": "app/lib/llm-test-mode.ts・app/lib/llm-usage-recorder.ts・app/lib/llm-alt-provider.ts・scripts/lib/llm-test-harness.ts・app/lib/__tests__/llm-test-saver.test.ts",
-    "tags": ["テスト", "API費用", "静かに壊れる", "出口", "ブレイン"],
+    "insight": "--repeat=3 --repeat-flaky: 答えの印（道｜合格｜下書き）を毎回 <倉庫の根>/.claude/exam-cache/brain-exam-flake/<id>/<label>-<pid>.jsonl に残す（実行ごとに別ファイル＝鍵不要）。同じ問題 hash・同じモデル・同じコードの鍵（HEAD＋作業中の差の hash）で印が割れた → 揺れる。独立に回した（録音の再生でなくブレイン・下書きを本当に呼んだ）直近3回以上が同じ → 安定。コードの違う回で違うだけなら直した効果かもしれない → 分からない。旧の結果（全作業ツリーの results・209ファイル 3950行）は道だけ取り込み、同じ実行の中で道が割れたら揺れる・録音でない別々の実行3つ以上で5回以上同じ道なら道だけで安定。10/15 夜の 144問: 揺れる 39・安定 25・分からない 80 → 432回が初回 約300回。q029（安定）で 3回→1回（2回分 約$0.03 を呼ばない）を確かめた。取り置きは『揃った』印で1回でも使い回す。",
+    "rationale": "竹内悠馬 2026-10-15「過去の結果から結果が揺れた問題だけ繰り返し、安定した問題は1回（揺れの記録を残す）」。設計知見 acb3548d（3回では揺れを効果と取り違える）から、揺れる問題は減らさない・安定の1回目が違えば3回に戻す＝質を落とさずに減らす所だけ減らす。再生の回を数えると同じ録音を何度読んでも『安定』に見える。",
+    "context": "2026-10-15 exam-saver（夜）。scripts/lib/exam-flake.ts・scripts/brain-exam-flake.ts（--import・--show）・brain-exam.ts。止める: --repeat-flaky を付けない・記録は EXAM_FLAKE_RECORD=off。合格（判定の揺れ）は旧の結果では見ていない＝今の記録で同じコードの合格が割れたら揺れるに変わる。",
+    "applied_to": "scripts/lib/exam-flake.ts・scripts/brain-exam-flake.ts・scripts/brain-exam.ts・scripts/lib/brain-exam-baseline.ts（planBaseline の acceptComplete）",
+    "tags": ["テスト", "API費用", "試験", "揺れ", "ブレイン", "汎用"],
     "priority": 2
   }
 ]

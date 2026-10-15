@@ -41,6 +41,18 @@ REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-fix1.json LLM_TEST_MODE=d
 - 数えは `results/<label>.cost.json` にも残る（問題ごと・名札ごと・変わった所）。前の取り置きはこれで「回していたら幾ら」を出す。
 - 共通の入口（`scripts/lib/llm-test-harness.ts`）に入れたので、他のテスト（yuma-* 等）も `LLM_CASSETTE=record|replay|strict` で同じ録音・再生が使える。
 
+## 追加の4つ（2026-10-15 夜・竹内さん「API 節約が最優先・質は落とさない」）
+
+| 道具 | 付け方（止め方） | 何が減るか |
+|---|---|---|
+| ① 段の自動選び | `--stage=diff`（使わなければ今まで通り） | origin/main との分かれ目から変わったファイルを、試験が読むコードの線（import）で分ける。ブレインだけ → `brain`（下書き 約5回/問 を作らない）／下書きだけ・両方・試験の道具・設定・分からない → `draft`（安全側＝両方）／どこからも読まれない → `brain` の最小。決めた段と理由（ファイルごと）を最初に出す。main の子には決めた段を渡す |
+| ② 比べる相手の版 | 既定で入る（`--baseline-key=commit` か `EXAM_BASELINE_KEY=commit` で旧の commit ごと） | 「前」の取り置きを main の commit ではなく**試験に効く所の中身の鍵**（ブレイン・下書き・試験の道具から辿れる app のファイルと設定の blob）で置く（`v-<鍵>-<構成>`）。main が進んでも試験に効く所が同じなら回さない・変わっていれば新しい main で回す（古い main の答案は使わない）。前回と比べて「main が進んだ・試験に効く所が同じ／変わった（app のファイル）」を出す。同じ commit の旧の置き場も読む |
+| ③ 問題の共有 | 既定で入る（`EXAM_SHARED_PROBLEMS=off` で止める） | 問題を `.claude/exam-cache/brain-exam-problems/<id>/<正解の hash>.json` に1問1ファイルで共有（一時ファイル → rename・同時に書いても壊れない・.gitignore）。手元の problems.json が無い・正解が古い時は共有の物を使う（手元に無い問題は手元の problems.json が無い時か `--only` で名指しした時だけ足す＝回す問題は今まで通り）。`brain-exam-add.ts --rebuild` も共有にある問題は DB から作り直さない（`--fresh` で作り直す）。`--share` で手元の物を置くだけ |
+| ④ 揺れる問題だけ繰り返す | `--repeat=3 --repeat-flaky`（`--majority --repeat-flaky`） | 揺れの記録（`.claude/exam-cache/brain-exam-flake/<id>/`）から: 同じコードで答えが割れた問題 → 3回／ずっと同じ答えの問題 → 1回（1回目がいつもと違えば3回まで足す）／分からない → 2回（割れたら3回）。毎回の答えを自動で記録（`EXAM_FLAKE_RECORD=off` で止める・録音の再生だけの回は安定の証拠に数えない）。旧の結果は `npx tsx scripts/brain-exam-flake.ts --import` で取り込む（`--show` で一覧） |
+
+- 問題の hash から作った時刻（builtAt）を外した: 作業ツリーごとに problems.json を作り直すと中身が同じでも builtAt が違い、「前」の取り置きが作業ツリーをまたいで一度も使い回せていなかった（q150: 6つの作業ツリーで中身の hash は同じ・旧の hash は4通り）。旧の hash の取り置きも読む。
+- 10/15 夜の取り込み（144問・deepseek-all）: 揺れる 39・道だけで安定 25・分からない 80 → `--repeat=3` の 432回 が初回 約300回、記録が溜まるほど減る。
+
 ## 調べで見つけた穴の歯止め（app/lib・本番では全部「何もしない」）
 
 - **最後の Claude の1日の上限**: `LLM_TEST_FINAL_CLAUDE=1` の Claude の出口（開発サーバ /api/* もスクリプトも）で、今日（JST）の env=local:final-claude の Claude の行＋この process の分が上限に達したら止める。既定 60回・`LLM_TEST_FINAL_CLAUDE_DAILY_MAX=<回数|off>`。

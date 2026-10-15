@@ -5,9 +5,10 @@
 //   → <倉庫の根>/.claude/exam-cache/brain-exam-baseline/<commit>-<構成の hash>/<問題>.json に問題ごとの答案を置き、同じ問題（中身の hash も同じ）は回さずに使う。
 //     無い問題だけ main の作業ツリー（.claude/worktrees/brain-exam-main）で回して足す。置き場は .gitignore（答案に伏せた会話が入る）。
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { examCacheRoot } from "./llm-cassette";
+import { atomicWriteJson } from "./exam-shared-file";
 
 /** 置き場（全部の作業ツリーで共有＝他の担当が回した main の「前」も使える）。<倉庫の根>/.claude/exam-cache/brain-exam-baseline（EXAM_CACHE_DIR で変える） */
 export const BASELINE_DIR = join(examCacheRoot(), "brain-exam-baseline");
@@ -33,12 +34,29 @@ export function examConfig(env: Record<string, string | undefined>, args: ExamCo
 }
 export function sha(s: string): string { return createHash("sha256").update(s).digest("hex"); }
 export function configHash(c: ExamConfig): string { return sha(JSON.stringify(c)).slice(0, 10); }
-/** 問題の中身の hash（spec を直したら別物） */
-export function problemHash(p: unknown): string { return sha(JSON.stringify(p)).slice(0, 12); }
+/**
+ * 問題の中身の hash（spec を直したら別物）。2026-10-15 ③: 作った時刻（builtAt）は外す＝作業ツリーごとに作り直しても同じ中身なら同じ hash
+ *   （旧は builtAt 込み＝作業ツリーごとに違い、他の担当の「前」を使い回せなかった。旧の hash は legacyProblemHash で読む）
+ */
+export function problemHash(p: unknown): string {
+  if (p && typeof p === "object" && !Array.isArray(p) && "builtAt" in (p as Record<string, unknown>)) {
+    const rest = { ...(p as Record<string, unknown>) }; delete rest.builtAt;
+    return sha(JSON.stringify(rest)).slice(0, 12);
+  }
+  return sha(JSON.stringify(p)).slice(0, 12);
+}
+/** 旧の hash（builtAt 込み）。前に取り置いた物を読むためだけ */
+export function legacyProblemHash(p: unknown): string { return sha(JSON.stringify(p)).slice(0, 12); }
 
 export function baselineDirOf(commit: string, cfgHash: string, root = BASELINE_DIR): string { return join(root, `${commit.slice(0, 10)}-${cfgHash}`); }
+/** 2026-10-15 ②: main の版の鍵（試験に効く所の中身・exam-scope.examVersionKey）ごとの置き場。commit が違っても中身が同じなら同じ置き場 */
+export function baselineDirOfVersion(versionKey: string, cfgHash: string, root = BASELINE_DIR): string { return join(root, `v-${versionKey}-${cfgHash}`); }
 
-export type BaselineFile<R> = { id: string; problemHash: string; commit: string; config: ExamConfig; savedAt: string; fromLabel: string; rows: R[]; cost?: { real: number; realUsd: number; replayed: number; replayUsd: number } | null };
+export type BaselineFile<R> = {
+  id: string; problemHash: string; commit: string; config: ExamConfig; savedAt: string; fromLabel: string; rows: R[]; cost?: { real: number; realUsd: number; replayed: number; replayUsd: number } | null;
+  /** 2026-10-15 ②: 版の鍵（v- の置き場の時） */ versionKey?: string;
+  /** 2026-10-15 ④: 揺れる問題だけ繰り返した（--repeat-flaky）＝回が repeat より少なくても揃っている */ complete?: boolean;
+};
 
 export function loadBaseline<R>(dir: string): Map<string, BaselineFile<R>> {
   const m = new Map<string, BaselineFile<R>>();
@@ -50,24 +68,41 @@ export function loadBaseline<R>(dir: string): Map<string, BaselineFile<R>> {
 }
 export function saveBaseline<R>(dir: string, b: BaselineFile<R>): void {
   mkdirSync(dir, { recursive: true });
-  if (!existsSync(join(dir, "config.json"))) writeFileSync(join(dir, "config.json"), JSON.stringify({ commit: b.commit, config: b.config }, null, 1));
-  writeFileSync(join(dir, `${b.id}.json`), JSON.stringify(b));
+  // 2026-10-15 ③: 他の担当と同時に書いても壊れないよう一時ファイル → rename
+  if (!existsSync(join(dir, "config.json"))) atomicWriteJson(join(dir, "config.json"), { commit: b.commit, versionKey: b.versionKey ?? null, config: b.config }, true);
+  atomicWriteJson(join(dir, `${b.id}.json`), b);
 }
 
-/** 使い回せる問題と回す問題を分ける（同じ問題 hash・回の数が足りる・失敗の回が無い） */
-export function planBaseline<R extends { rep: number; error?: string }>(problems: Array<{ id: string; hash: string }>, cached: Map<string, BaselineFile<R>>, repeat: number): { reuse: string[]; run: string[]; stale: string[] } {
+/** 取り置きの問題 hash が今の問題と同じか（新しい hash か旧の hash のどちらか） */
+export function sameProblem(b: { problemHash: string }, p: { hash: string; alt?: string[] }): boolean { return b.problemHash === p.hash || !!p.alt?.includes(b.problemHash); }
+/**
+ * 使い回せる問題と回す問題を分ける（同じ問題 hash・回の数が足りる・失敗の回が無い）。
+ * 2026-10-15 ④ acceptComplete: 揺れる問題だけ繰り返した取り置き（complete の印・1回目あり）は回が repeat より少なくても揃っている
+ */
+export function planBaseline<R extends { rep: number; error?: string }>(problems: Array<{ id: string; hash: string; alt?: string[] }>, cached: Map<string, BaselineFile<R>>, repeat: number, o: { acceptComplete?: boolean } = {}): { reuse: string[]; run: string[]; stale: string[] } {
   const reuse: string[] = [], run: string[] = [], stale: string[] = [];
   for (const p of problems) {
     const b = cached.get(p.id);
     if (!b) { run.push(p.id); continue; }
-    if (b.problemHash !== p.hash) { run.push(p.id); stale.push(p.id); continue; }
+    if (!sameProblem(b, p)) { run.push(p.id); stale.push(p.id); continue; }
     const ok = new Set(b.rows.filter((r) => !r.error).map((r) => r.rep));
+    if (o.acceptComplete && b.complete && ok.has(1) && !b.rows.some((r) => r.error)) { reuse.push(p.id); continue; }
     if (Array.from({ length: repeat }, (_, i) => i + 1).every((k) => ok.has(k))) reuse.push(p.id); else run.push(p.id);
   }
   return { reuse, run, stale };
 }
+/** 版の置き場に無い問題を、旧の置き場（同じ commit の <commit>-<構成>）から足す（前に取り置いた物を捨てない） */
+export function mergeBaselines<R>(primary: Map<string, BaselineFile<R>>, ...legacy: Array<Map<string, BaselineFile<R>>>): Map<string, BaselineFile<R>> {
+  const m = new Map(primary);
+  for (const l of legacy) for (const [id, b] of l) if (!m.has(id)) m.set(id, b);
+  return m;
+}
 
-/** 引数から「前」（main の版）を回す時に渡さない物を外す（label・only・types・per-type・baseline・report は子が自分で決める） */
-export function childArgs(args: string[]): string[] {
-  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|report)(?:=|$)/.test(a));
+/**
+ * 引数から「前」（main の版）を回す時に渡さない物を外す（label・only・types・per-type・baseline・report は子が自分で決める）。
+ * 2026-10-15 ①: --stage=diff は子（main の作業ツリー）で決めると main との差が無い＝いつも brain になる → 親で決めた段（resolvedStage）に置き換える
+ */
+export function childArgs(args: string[], o: { resolvedStage?: string } = {}): string[] {
+  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|report)(?:=|$)/.test(a))
+    .map((a) => (a === "--stage=diff" && o.resolvedStage ? `--stage=${o.resolvedStage}` : a));
 }
