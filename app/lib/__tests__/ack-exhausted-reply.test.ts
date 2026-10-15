@@ -58,8 +58,10 @@ it("出し切りの後の条件の足しのブレイン基準（既定 on・off 
   eq(exhaustedConditionTurnLine({ EXHAUSTED_CONDITION_REPLY: "off" }), "");
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-if (failed) { console.log(failures.join("\n")); process.exit(1); }it("軸（10/15 q153・q154）: ゆるめた・外した番と、探す条件の依頼が無い番（送った物件への反応）は対象外・足した番は今まで通り", () => {
+
+
+
+it("軸（10/15 q153・q154）: ゆるめた・外した番と、探す条件の依頼が無い番（送った物件への反応）は対象外・足した番は今まで通り", () => {
   const b = { conditionChangeType: "rent_change", exhausted: true, ackOnly: false, env: {} };
   eq(exhaustedConditionAddTurn({ ...b, conditionChangeType: "equip_add", axisAsks: [{ about: "search_condition", polarity: "relax" }] }), false, "relax");
   eq(exhaustedConditionAddTurn({ ...b, axisAsks: [{ about: "reaction_to_sent", polarity: null }] }), false, "reaction");
@@ -70,5 +72,5 @@ if (failed) { console.log(failures.join("\n")); process.exit(1); }it("軸（10/
   eq(/ゆるめた/.test(exhaustedConditionTurnLine({})) && /予算オーバー/.test(exhaustedConditionMaterial({})), true);
   eq(/ゆるめた/.test(exhaustedConditionTurnLine({ EXHAUSTED_CONDITION_AXIS: "off" })), false);
 });
-
-
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed) { console.log(failures.join("\n")); process.exit(1); }

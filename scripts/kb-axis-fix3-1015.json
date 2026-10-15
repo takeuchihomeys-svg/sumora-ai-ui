@@ -1,0 +1,10 @@
+{
+  "title": "出し切りの後の「条件を足した番＝新着待ちの返信」はブレインの軸で範囲を決める（ゆるめた番・送った物件への反応は外＝ピックアップの約束）／ブレインのピックアップの約束（AIX 空）は2段に通す／同じ日の2通目はまだ果たしていない約束だけ数える",
+  "category": "ai_design",
+  "priority": 1,
+  "insight": "外れ3問の5つのなぜ（10/15）。q154「ペット可じゃなくてもいい」: 材料の行（exhaustedConditionTurnLine）が送付だけの印（weak）でも「出し切った印がある・条件を言い直した番は新着が出次第の返信」と渡し、同じ材料の【出し切りの材料】は「1回送っただけで印は無い」と書いていた（矛盾）。規則は condition_relax を外していたが材料には外す理由が無く、LLM 自身が新着待ちを選んだ（決まりの上書きではなく材料の誤誘導）。q153「予算オーバー」: 送った物件への反応（about=reaction_to_sent・登録の条件は変わらない）を旧の condition_change_type=rent_change で規則が新着待ちに書き換え、直した後は LLM が route=promise（再ピックアップ）を言うのに AIX の欄が空で2段に乗らなかった。q155: 別の物件の見積の約束を1分後に果たした日に、お客様の新しい持ち込みが「同じ件の2通目」と読まれ確認の約束を飛ばして AIX になった。直し: exhaustedConditionAddTurn にブレインの軸（relax/remove・about に search_condition が無い→対象外・EXHAUSTED_CONDITION_AXIS=off）＋材料の行に理由つきの範囲。ゆるめた番は出し切りの取り消しにも数える。brainContractPromisesPickup（route=promise・about search_condition/reaction_to_sent・中身が探す/送る）で AIX が空の番を property_send→2段 pickup（BRAIN_PROMISE_PICKUP=off）。promiseKindsToday は後で果たした見積・確認を数えない（TWO_STAGE_SAME_DAY_OPEN_ONLY=off）。",
+  "rationale": "竹内さんの実送信: q153「家賃10万円以内でお子様がご入居可能なお部屋をお送りさせて頂きます」・q154「ペット可条件は外し、改めてピックアップしてお送りさせて頂きます」・q155 は確認の約束＋繁忙期は返信。竹内さん Q4「広がった時は除く」・10/08「同じ件で1日に何度も送ってきたら2通目から直接」",
+  "context": "2026-10-15 brain-merge-1015（作る人）。試験 YUMA4 --stage=brain DeepSeek: 前 0/3 → 後 3/3（q153・q154・q155）",
+  "applied_to": "app/lib/ack-exhausted-reply.ts（exhaustedConditionAddTurn の axisAsks・exhaustedConditionScope）・app/lib/brain-core.ts（exhAxisAsks・brainRelaxedNow・contract-promise-pickup）・app/lib/override-demote.ts（brainContractPromisesPickup）・app/lib/two-stage.ts（promiseKindsToday の果たした約束）",
+  "tags": ["ブレイン診断", "軸", "出し切り", "2段", "約束", "竹内さんの決定", "場面:条件"]
+}

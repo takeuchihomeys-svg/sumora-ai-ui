@@ -1,6 +1,12 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-15
+## 🧭 軸の直しの外れ3問の根本（10/15 作る人・ブランチ brain-merge-1015・dc09dd4c）
+- **q154（ペット可じゃなくてもいい）** 決まりの上書きではなかった（最終＝LLM の生の答え）。材料の行「出し切った印がある・条件を言い直した番は新着待ち」が送付だけ（weak）の印でも出て、同じ材料の「1回送っただけで印は無い」と矛盾＋ゆるめた番を外す理由が無かった → LLM が新着待ち。直し: 材料に理由つきの範囲（ゆるめた・送った物件への反応は外）・規則はブレインの軸（polarity relax/remove・about に search_condition 無し→対象外・EXHAUSTED_CONDITION_AXIS=off）
+- **q153（予算オーバー）** 旧の condition_change_type=rent_change で規則が新着待ちに書き換え → 軸で外す。さらに LLM が AIX の欄を空のまま route=promise（再ピックアップ）を言う番を2段 pickup に通す（brainContractPromisesPickup・BRAIN_PROMISE_PICKUP=off）
+- **q155（持ち込み＋繁忙期）** 同じ日の2通目の直接 AIX が、別の物件の見積の約束（1分後に果たした）を数えていた → まだ果たしていない今日の約束だけ（TWO_STAGE_SAME_DAY_OPEN_ONLY=off）
+- **試験** YUMA4 --stage=brain 前 0/3 → 後 3/3。軸 on/off 関係しない5問は差なし（3/5 同じ）。待って・閉じる＋q059・q145（draft・YUMA5・前 main）: 合格 main 12 → 10（q022・q112 は --repeat=3 で 2/3・main 3/3＝LLM の揺れ・ブランチ全体の差・3問の直しの道は通らない）。q094・q091・q103: 2 → 2
+- **会社の事実** 「申込に必要な書類」は apply_docs の持ち場（apply_line_viewing_items は方法・その日の契約に要る物・内覧の持ち物だけ・c2cd6a43）
 ## 🏠 内覧の当日 10:00 に主のボタン【内覧挨拶】（10/15 作る人・ブランチ viewing-day-greet-1015）
 - **指示** 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする。そうしたら内覧あることをちゃんと確認できるため」。11時より前の内覧は2時間前
 - **仕組み** cron viewing-morning-greeting を 9:15 の1回 → JST 6:00〜20:30 の30分おき。`viewingGreetingSetMinute` を過ぎた最初の回で朝の行（rule:viewing_morning_greeting）を立てる・1会話1日1回・取りやめ/日の変更/申込で取り下げ（viewing_changed:*）。画面は `aix-button-view` の morningGreeting: ブレインのカード無し→主のボタン【内覧挨拶】／1つのボタンのカード有り→2つ目に並べる／2択・左右・単独の帯はそのまま。suggested_aix_meta には書かない
