@@ -81,7 +81,7 @@ async function main() {
   // 2026-09-29 竹内「クロードの部分、キャッシュを営業時間中温める」: 温める3つ（最終チェック4段・お客様の要約・次の一手）の前置きの鍵の種類数と書き直しの回数、温めの効き。
   //   正常: 本物は鍵が1〜2種類（DB ルール／ガイドの更新で替わるだけ）・writes が営業時間中に減る・温め（*_warm）は hit が大半で cold が続かない
   const warmReal = ["final_check_rule_check", "final_check_anomaly_scan", "final_check_context_check", "final_check_revision", "customer_summary", "suggest_next_action"];
-  const warmNames = ["final_check_warm_rule_check", "final_check_warm_anomaly_scan", "final_check_warm_context_check", "final_check_warm_revision", "customer_summary_warm", "suggest_next_action_warm"];
+  const warmNames = ["final_check_warm_rule_check", "final_check_warm_anomaly_scan", "final_check_warm_context_check", "final_check_warm_revision", "customer_summary_warm", "suggest_next_action_warm", "aix_template_warm"];
   const wr = rows.filter((r) => String(r.model).startsWith("claude") && (warmReal.includes(String(r.action)) || warmNames.includes(String(r.action))));
   if (wr.length) {
     console.log(`\n=== ⑦ 温める3つの前置き（本物 × 温め）: 鍵の種類数・書き直し・命中（日別の鍵の替わりは ⑧） ===`);

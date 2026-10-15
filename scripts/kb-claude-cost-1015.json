@@ -1,0 +1,10 @@
+{
+  "title": "Claude の費用を減らす前に『本当の重複』を入力の鍵で数える — ブレインは同じ入力の二重が6%しか無く、残りは入力が変わった走り直し。効くのは1h切れの前置き（AIX の文作りの先頭35k）の温め",
+  "category": "ai_design",
+  "priority": 2,
+  "insight": "本番7日 brain_fresh 392回 $25.2 を、会話×最新のお客様の発言（番）×その後のスタッフ送信・AIX の数を鍵にして並べると、304番のうち224番は1回だけ。2回目以降88回のうち鍵が同じ（本当の重複）は22回 $1.5（6%）で、内訳は 6時間の再利用（UNCHANGED_REUSE_HOURS）を過ぎた翌日の開き直し 約9回・cron（generate-pending-drafts と brain-sweep）が同じ秒に同じ会話を回した 約4回・画像の読み取り/消えた発言の端。二重の判断は 20/21 が前と同じ（違った1件は2日空き＝時間の経過で変わる）。残り66回はスタッフの宣言の後（send-line-message の forceIncremental）と連投の2通目＝入力が変わった走り直しで止めない（判断が前と同じでも 54%）。既存の止め（analysisInFlight・isDuplicateRun 45秒・nothingNewSinceLastAnalysis）は効いている。費用の残りは素の入力 約20k/回（brain_fresh の 62%）の方。aix_template（$0.17/回）は 24回が前置き全体 65〜69k の 1h 書き直しで、間隔は全部 63分以上＝中身の揺れでなく寿命切れ。先頭ブロック（コードだけで決まる 35.5k）だけを prefix-warm の型で温めると同じ実物で $7.42→$5.77/週（後ろの DB ブロックは状態×ボタンで変わるので温めない。最後の鍵ごと温めても $5.50 で差は小さい）。",
+  "rationale": "『呼び出しを減らすと質が落ちるか』は、入力が同じ二重（判断はくじ引き＝分析強化の原則③）と入力が変わった走り直しを分けて数えれば答えが出る。前者だけ止めれば判断は変わらない。キャッシュは『前置きの鍵が割れている』のか『寿命切れ』なのかを、書き直しの直前の呼び出しからの間隔で分ける（同じ鍵で1h以内の書き直し＝揺れ・1h超＝寿命）。",
+  "context": "2026-10-15 竹内さん最優先「本番の Claude の API を、質を落とさずに減らす」（ブランチ claude-cost-1015）。数え方: llm_usage_logs（6時間ずつ）＋brain_decision_logs（analyzed_msg_ts・action・reply_mode）＋messages＋aix_usage_logs。試験 q001・q002（--baseline=main --replay --stage=brain）は今の方 9回すべて再生（ブレインの要求が1文字も変わらない）・結果同じ・Claude 0回。",
+  "applied_to": "app/api/cron/brain-sweep/route.ts（draft_attempted_at 5分以内は拾わない・BRAIN_SWEEP_SKIP_DRAFT_CLAIM=off）・app/lib/prefix-warm.ts（buildAixTemplateWarmTarget・anyRealKey・AIX_TEMPLATE_WARM=off）・app/lib/prefix-warm-server.ts・app/lib/aix-template-system.ts（先頭の文を route.ts から移動・文面同じ）・app/lib/claude-model-map.ts（組 aix_template/aix_template_warm）",
+  "tags": ["API費用", "プロンプトキャッシュ", "ブレイン", "brain-sweep", "aix-template-generate", "監査", "点検表"]
+}

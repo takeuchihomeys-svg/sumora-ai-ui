@@ -39,6 +39,8 @@ const IN_FLIGHT_GRACE_MS = 3 * 60 * 1000; // 3 minutes
 // H3(Fable5): 失敗バックオフ — analyzeAndSaveBrainMeta は失敗時も brain_analyzed_at を書くため、
 // 直近30分以内に試行済みの行は再試行しない（決定的に失敗する会話の永久リトライ・sweep飢餓を防ぐ）
 const RETRY_BACKOFF_MS = 30 * 60 * 1000; // 30 minutes
+// 2026-10-15: 下書きの組み立て（generate-pending-drafts・bg-async）が claim（draft_attempted_at）してからこの間は sweep が拾わない（同じ入力の二重のブレイン）
+const DRAFT_CLAIM_GRACE_MS = 5 * 60 * 1000;
 const EMBEDDING_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // embedding_cache は30日で消す
 
 // ── ブレインの前置きの温め（brain-warm・営業時間 JST 9〜22 だけ）──────────────────────────
@@ -260,6 +262,15 @@ export async function GET(req: NextRequest) {
       .or("line_status.is.null,line_status.not.in.(blocked,unfollowed)")
       // H3(Fable5): 30分バックオフ（未試行 or 前回試行から30分経過した行のみ）
       .or(`brain_analyzed_at.is.null,brain_analyzed_at.lt.${backoffCutoff}`)
+      // 2026-10-15 竹内「本番の Claude の API を、質を落とさずに減らす」: 下書きの組み立て（generate-pending-drafts・bg-async）が
+      //   直近5分に claim（draft_attempted_at）した会話は、そちらが同じ入力でブレインを回している最中 → sweep は拾わない（次の5分で拾う）。
+      //   本番7日（10/08〜15）: 同じ入力（新しい発言・スタッフ送信・AIX なし）のブレインの二重 22回のうち、sweep と下書きの cron が
+      //   同じ秒に同じ会話を回した物が見つかった（22b2511e 07:01:00 pend→07:01:01 sweep・判断は同じ auto_reply）。
+      //   updated_at の3分の猶予（IN_FLIGHT_GRACE_MS）は「お客様の発言の直後」しか守らない（下書きの cron は発言から何分も後にも回る）。
+      //   戻す: BRAIN_SWEEP_SKIP_DRAFT_CLAIM=off
+      .or(isOffSwitch(process.env.BRAIN_SWEEP_SKIP_DRAFT_CLAIM)
+        ? "id.not.is.null"
+        : `draft_attempted_at.is.null,draft_attempted_at.lt.${new Date(Date.now() - DRAFT_CLAIM_GRACE_MS).toISOString()}`)
       .lt("updated_at", cutoff)
       // 2026-09-12 竹内（Sky・AKANE 事例）: sweep は「webhook 分析の失敗の補填」＝今のお客様発言だけが対象。
       //   何日も前に止まった会話（申込中の積み残し等）を今分析すると、今の要対応ではない会話に AIX 通知が飛んだ。

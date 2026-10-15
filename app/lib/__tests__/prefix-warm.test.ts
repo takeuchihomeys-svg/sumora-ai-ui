@@ -8,7 +8,8 @@ import {
 } from "../final-check";
 import { buildCustomerSummarySystemBlocks, buildCustomerSummaryWarmBody, buildNextActionRulesNote, CUSTOMER_SUMMARY_SYSTEM } from "../customer-summary-prompt";
 import { buildSuggestNextActionSystemBlocks, buildSuggestNextActionWarmBody, type SuggestNextActionPrefixInputs } from "../suggest-next-action-prompt";
-import { buildPrefixWarmTargets, classifyPrefixWarmUsage, decidePrefixWarm, prefixWarmHash, PREFIX_WARM_DEFAULTS, PREFIX_WARM_HASH_PREFIX } from "../prefix-warm";
+import { buildPrefixWarmTargets, classifyPrefixWarmUsage, decidePrefixWarm, prefixWarmHash, PREFIX_WARM_DEFAULTS, PREFIX_WARM_HASH_PREFIX, buildAixTemplateWarmTarget, aixTemplateWarmEnabled } from "../prefix-warm";
+import { aixTemplateStaticSystemText } from "../aix-template-system";
 import { systemFullKey, parseAnthropicRequest } from "../llm-usage-recorder";
 import { isBrainCall } from "../llm-test-mode";
 
@@ -157,6 +158,25 @@ console.log("── 判断（ブレインの温めと同じ）と usage の読�
   t("cold: revision で read が閾値未満", classifyPrefixWarmUsage({ cache_read: 0, cache_write_1h: 25885 }, 2000) === "cold");
   t("no_cache: 両方 0（最低長未満か cache_control が効いていない）", classifyPrefixWarmUsage({ cache_read: 0, cache_write_1h: 0 }, Infinity) === "no_cache");
   t("5m の書きも write に数える", classifyPrefixWarmUsage({ cache_read: 0, cache_write_1h: 0, cache_write_5m: 100 }, Infinity) === "cold");
+}
+
+console.log("── 2026-10-15 AIX の文作り（aix_template）の先頭ブロックの温め");
+{
+  const base = { finalCheck: { dbRules, finalCheckRules }, summary: { systemPrompt: CUSTOMER_SUMMARY_SYSTEM, nextActionRuleContents: ["ルールA"] }, nextAction: null };
+  const off = buildPrefixWarmTargets(base);
+  const on = buildPrefixWarmTargets({ ...base, aixTemplate: true });
+  t("aixTemplate が無い → 今まで通り（aix_template_warm 無し）", !off.some((x) => x.name === "aix_template_warm"));
+  t("aixTemplate: true → 末尾に1つ足すだけ（他の対象・鍵は同じ）", on.length === off.length + 1 && on.at(-1)!.name === "aix_template_warm" && off.every((x, i) => x.key === on[i].key));
+  const a = buildAixTemplateWarmTarget();
+  t("先頭ブロックの text は route.ts と同じ関数・cache_control 1h・1ブロック", a.body.system.length === 1 && a.body.system[0].text === aixTemplateStaticSystemText() && a.body.system[0].cache_control?.ttl === "1h");
+  t("本物と同じモデル名・thinking disabled・max_tokens 1", a.model === "claude-sonnet-5" && a.body.model === "claude-sonnet-5" && (a.body as { thinking?: { type: string } }).thinking?.type === "disabled" && a.body.max_tokens === 1);
+  t("本物の名札 aix_template・鍵は名札だけで探す（anyRealKey）・1ブロックなので書いたら cold", a.realActions.join() === "aix_template" && a.anyRealKey === true && a.staticHitMinRead === Infinity);
+  t("名札は brain で始まらない・鍵は sys_key_full と同じ計算", !isBrainCall(a.name, a.body.system[0].text) && a.key === parseAnthropicRequest(JSON.stringify(a.body)).sys_key_full);
+  // 本物の system は [先頭(1h), DB 由来(1h)]。先頭が温めと同じ物なら、先頭のブロックの区切りまでの前置きが温めのキャッシュに当たる
+  const real = { model: "claude-sonnet-5", system: [{ type: "text", text: aixTemplateStaticSystemText(), cache_control: { type: "ephemeral", ttl: "1h" } }, { type: "text", text: "【📌 絶対原則】…", cache_control: { type: "ephemeral", ttl: "1h" } }] };
+  t("本物の system[0] と温めの system[0] が JSON で同じ", JSON.stringify(real.system[0]) === JSON.stringify(a.body.system[0]));
+  t("既定 on・AIX_TEMPLATE_WARM=off で止まる・寿命 5m の時は温めない", aixTemplateWarmEnabled({}) && !aixTemplateWarmEnabled({ AIX_TEMPLATE_WARM: "off" }) && !aixTemplateWarmEnabled({ AIX_TEMPLATE_CACHE_TTL: "5m" }));
+  t("先頭ブロックは 1024 トークンより十分長い（キャッシュの最低長）", aixTemplateStaticSystemText().length > 20_000);
 }
 
 console.log(`\n${passed} OK / ${failed} NG`);

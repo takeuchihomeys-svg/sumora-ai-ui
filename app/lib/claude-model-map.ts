@@ -47,6 +47,8 @@ const CACHE_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ["reply_generate", "keep-warm"],
   ["customer_summary", "customer_summary_warm"],
   ["suggest_next_action", "suggest_next_action_warm"],
+  // 2026-10-15: AIX の文作りの先頭ブロックの温め（prefix-warm.buildAixTemplateWarmTarget）
+  ["aix_template", "aix_template_warm"],
   ...(["rule_check", "anomaly_scan", "context_check", "revision"] as const).map((p) => [`final_check_${p}`, `final_check_warm_${p}`]),
 ];
 

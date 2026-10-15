@@ -1,6 +1,11 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-15
+## 💰 本番の Claude を質を落とさず減らす（10/15 作る人・ブランチ claude-cost-1015）
+- **ブレインの重複は少ない** 本番7日 brain_fresh 392回 $25.2・会話の番 304。同じ入力（間にお客様の発言・スタッフ送信・AIX 無し）の二重は 22回 $1.5（6%）。内訳: 6時間の再利用（UNCHANGED_REUSE_HOURS）を過ぎた翌日の開き直し 約9回・cron の同じ秒の二重 約4回・画像/消えた発言の端。二重の判断は 20/21 が前と同じ（違った1件は2日空き）。入力が変わった走り直しも action・reply_mode が前と同じ 54%（止めない）。付いて走る物（full・strategy・checkpoint）に二重はほぼ無い（strategy 15分以内 9回 $0.2）
+- **直した** ① brain-sweep は下書きの claim（draft_attempted_at）5分以内の会話を拾わない（pend/bg と同じ秒の二重・週 2〜5回 $0.2〜0.6・BRAIN_SWEEP_SKIP_DRAFT_CLAIM=off） ② aix_template の先頭ブロック 35.5k を prefix-warm で温める（24回の全書き直しは全部 1h 切れ・前置き $7.42→$5.77/週・AIX_TEMPLATE_WARM=off）。先頭の文は app/lib/aix-template-system.ts に1文字も変えず移した（温めと同じ関数）
+- **最終チェック** 1下書き 約3.9回 $0.038・週 $7.9。同じ確かめの2回は無い（recheck は直した文・verify は作り事の照合）。案: context_check（Sonnet $2.5）を Haiku に（試験が要る）
+- **案（質に関わる・未実施）** 6時間の再利用を「同じ日」まで延ばす（週 約$0.6・日付の変わる約束がある会話は除く）／ブレインの素の入力 約20k が brain_fresh の費用の 62%（会話専用キャッシュ BRAIN_CACHE_WARM の見直し）
 ## 🧭 軸の直しの外れ3問の根本（10/15 作る人・ブランチ brain-merge-1015・dc09dd4c）
 - **q154（ペット可じゃなくてもいい）** 決まりの上書きではなかった（最終＝LLM の生の答え）。材料の行「出し切った印がある・条件を言い直した番は新着待ち」が送付だけ（weak）の印でも出て、同じ材料の「1回送っただけで印は無い」と矛盾＋ゆるめた番を外す理由が無かった → LLM が新着待ち。直し: 材料に理由つきの範囲（ゆるめた・送った物件への反応は外）・規則はブレインの軸（polarity relax/remove・about に search_condition 無し→対象外・EXHAUSTED_CONDITION_AXIS=off）
 - **q153（予算オーバー）** 旧の condition_change_type=rent_change で規則が新着待ちに書き換え → 軸で外す。さらに LLM が AIX の欄を空のまま route=promise（再ピックアップ）を言う番を2段 pickup に通す（brainContractPromisesPickup・BRAIN_PROMISE_PICKUP=off）

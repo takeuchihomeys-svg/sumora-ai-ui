@@ -13,7 +13,7 @@ import { getCachedPromptRules } from "./prompt-cache";
 import { loadCustomerSummaryPrefixInputs } from "./customer-summary-prompt-server";
 import { loadSuggestNextActionPrefixInputs } from "./suggest-next-action-prompt-server";
 import {
-  buildPrefixWarmTargets, decidePrefixWarm, classifyPrefixWarmUsage, prefixWarmHash, PREFIX_WARM_DEFAULTS,
+  buildPrefixWarmTargets, decidePrefixWarm, classifyPrefixWarmUsage, prefixWarmHash, PREFIX_WARM_DEFAULTS, aixTemplateWarmEnabled,
   type PrefixWarmInputs, type PrefixWarmTarget, type PrefixWarmUsageKind,
 } from "./prefix-warm";
 import { isOffSwitch } from "./brain-night-defer";
@@ -47,7 +47,8 @@ export async function loadPrefixWarmInputs(): Promise<PrefixWarmInputs> {
     // 2026-10-08 竹内「一本化する」: 次の一手の LLM を止めている間は前置きを読まず・温めない（戻す: SUGGEST_NEXT_ACTION_LLM=on）
     suggestNextActionLlmEnabled(process.env.SUGGEST_NEXT_ACTION_LLM) ? loadSuggestNextActionPrefixInputs() : Promise.resolve(null),
   ]);
-  return { finalCheck: { dbRules, finalCheckRules }, summary, nextAction };
+  // 2026-10-15: AIX の文作りの先頭ブロック（コードだけで決まる・DB を読まない）。止める AIX_TEMPLATE_WARM=off
+  return { finalCheck: { dbRules, finalCheckRules }, summary, nextAction, aixTemplate: aixTemplateWarmEnabled() };
 }
 
 export type PrefixWarmUsage = { cache_read: number; cache_write_1h: number; cache_write_5m: number; input_uncached: number; request_id: string | null };
@@ -77,9 +78,12 @@ async function warmOne(t: PrefixWarmTarget, nowMs: number, hoursJst: string): Pr
   const altRouted = willRouteAlt(t.realActions[0] ?? null);
   const hash = prefixWarmHash(t);
   const dayStartIso = new Date(jstDayStartMs(nowMs)).toISOString();
+  // 2026-10-15: 先頭ブロックだけ温める対象（anyRealKey・aix_template_warm）は、本物の鍵が後ろのブロック込みで別の値になる → 名札だけで最後の本物（Claude の行）を探す
+  const lastRealQ = t.anyRealKey
+    ? supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).like("model", "claude%")
+    : supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).eq("sys_key_full", t.key);
   const [lastReal, warmedToday, claimRow] = await Promise.all([
-    supabase.from("llm_usage_logs").select("created_at, duration_ms").in("action", t.realActions).lt("status", 400).eq("sys_key_full", t.key)
-      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    lastRealQ.order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("llm_usage_logs").select("*", { count: "exact", head: true }).eq("action", t.name).gte("created_at", dayStartIso),
     supabase.from("llm_warm_prefixes").select("last_warmed_at, retired_at, warm_count").eq("hash", hash).maybeSingle(),
   ]);
