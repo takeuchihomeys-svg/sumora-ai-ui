@@ -33,6 +33,11 @@ t("off → 確認した系は今まで通り確認", cOff.route === "confirm");
 const facts = r.facts.join("\n");
 t("最終チェックの免除: 目安の旬の文は資料のとおり", materialGroundsAssertion("MOVEIN_DATE_ASSERTION", "最短で11月中旬〜下旬のご入居となります！！", facts));
 t("最終チェック: 目安に無い日付は免除しない", !materialGroundsAssertion("MOVEIN_DATE_ASSERTION", "11月5日からご入居可能です！！", facts));
+// fix(review) 10/15: 退去予定日を入居の日にした文は免除しない（資料に退去予定日が有っても）
+t("最終チェック: 退去予定日からご入居可能 → 免除しない", !materialGroundsAssertion("MOVEIN_DATE_ASSERTION", "10/31からご入居可能です！！", facts));
+t("最終チェック: 10月31日からご入居いただけます → 免除しない", !materialGroundsAssertion("MOVEIN_DATE_ASSERTION", "10月31日からご入居いただけます！！", "現況: 退去予定(2026年10月31日)"));
+t("最終チェック: 退去予定日＋目安の1文 → 免除", materialGroundsAssertion("MOVEIN_DATE_ASSERTION", "10月31日退去予定のため、最短で11月中旬〜下旬のご入居となります！！", facts));
+t("最終チェック: 退去予定日＋目安に無い月 → 免除しない", !materialGroundsAssertion("MOVEIN_DATE_ASSERTION", "10月31日退去予定のため、11月1日からご入居可能です！！", facts));
 
 console.log("■ check_pattern（ブレインが決める・決まりは網）");
 const mgmtEq = propertyCheckKindFor("mgmt_equipment");

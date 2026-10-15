@@ -108,7 +108,7 @@ export function holdSoftNextMaterial(i: { customerText: string; scene: string; r
   if (holdSoft1015Enabled(i.env)) {
     const move = holdSoftMoveFor({ scene: i.scene, room: i.room, delayed: i.delayed });
     const why = notViewable ? "お送りしたお部屋は退去予定（まだ内覧できない）" : i.delayed ? "お客様はすぐには内覧に来られない（遠方・期間が空きそう）" : after ? "内覧の後" : "今ご内覧頂けるお部屋（空室）";
-    return `\n【保留の番の柔らかい次の一手（竹内さんの決定 2026-10-15）】お客様は物件の話の後に保留（${kind}${kind === "相談" ? "・ご家族やご友人との相談も同じ" : ""}）。押さない（急かす・期限・申込の催促・日時の候補は書かない）のはそのまま、扉の文に次に進む時の柔らかい1文を添える。${why}なので「${HOLD_SOFT_LINES[move]}」（空室で今内覧できる→内覧のご案内／退去予定・すぐ来られない・内覧の後→お申込みで抑える）。この1文は扉の文で、申込の催促・申込誘導には当たらない。reply_direction に「受け止め＋扉の文＋その1文」と書く。ただしこの1文はお送りした物件が刺さっている（物件名・中身に触れた前向きな反応・内覧や詳細を聞く・温度が高い）時だけ。刺さっていない（物件に触れない・反応が薄い）保留は内覧・申込に誘わず、新着を探し続ける＋全力でサポートの文で締める（下の【送った物件が刺さっているか】）。添えないのは刺さっていない・離れかけ・不満・断り・他で決めた・家族の反対・同じ1文を直前に送った時`;
+    return `\n【保留の番の柔らかい次の一手（竹内さんの決定 2026-10-15）】お客様は物件の話の後に保留（${kind}${kind === "相談" ? "・ご家族やご友人との相談も同じ" : ""}）。押さない（急かす・期限・申込の催促・日時の候補は書かない）のはそのまま、扉の文に次に進む時の柔らかい1文を添える。${why}なので「${HOLD_SOFT_LINES[move]}」（空室で今内覧できる→内覧のご案内／退去予定・すぐ来られない・内覧の後→お申込みで抑える）。この1文は扉の文で、申込の催促・申込誘導には当たらない。reply_direction に「受け止め＋扉の文＋その1文」と書く。ただしこの1文はお送りした物件が刺さっている（物件名・中身に触れた前向きな反応・内覧や詳細を聞く・温度が高い）時だけ。刺さっていない（物件に触れない・反応が薄い）保留は内覧・申込に誘わず、新着を探し続ける＋全力でサポートの文で締める（竹内さんの実送信「${PIERCE_NOT_CLOSE_EXAMPLE.replace(/\n/g, "／")}」の形・保留の受け止めはそのまま）。添えないのは刺さっていない・離れかけ・不満・断り・他で決めた・家族の反対・同じ1文を直前に送った時`;
   }
   const situ = notViewable
     ? `お送りしたお部屋はまだ内覧できない（退去予定）。竹内さんはこの場面の保留では添えない事が多い（2/15）`
@@ -139,8 +139,9 @@ export function holdSoftReplyNote(i: { customerText: string; brainDirection: str
   const v1015 = holdSoft1015Enabled(i.env);
   const viewing = viewingWord && (v1015 || i.room !== "move_out_not_viewable");
   if (!apply && !viewing) return "";
-  const line = v1015 && i.scene ? HOLD_SOFT_LINES[holdSoftMoveFor({ scene: i.scene, room: i.room, delayed: i.delayed })]
-    : apply ? HOLD_SOFT_LINES.apply : HOLD_SOFT_LINES.viewing;
+  // fix(review) 10/15（P0 ②）: 向きはブレインの書いた語のとおり。場面で上書きするのは安全の線だけ＝まだ内覧できないお部屋に内覧の1文（事実と違う）→ 申込で抑える。
+  //   空室で抑える・すぐ来られない/内覧の後で内覧 は竹内さんの決定の向きを材料で渡した上でのブレインの判断なので上書きしない
+  const line = apply ? HOLD_SOFT_LINES.apply : v1015 && i.room === "move_out_not_viewable" ? HOLD_SOFT_LINES.apply : HOLD_SOFT_LINES.viewing;
   return `- 【保留の番の柔らかい次の一手（ブレインの判断）】ブレインがこの保留の番に次の一手の1文を添えると決めた。受け止め・扉の文はそのまま、「${line}」の形の1文を1つだけ入れる（押さない・日時の候補・期限・催促は書かない）。この1文は扉の文で、避ける話題の申込誘導・内見誘導・申込の催促に当たらない`;
 }
 

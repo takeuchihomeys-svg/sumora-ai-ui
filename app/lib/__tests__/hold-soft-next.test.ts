@@ -61,8 +61,9 @@ it("家族・友人に相談 → 添える（相談も同じ）", () => { const 
 it("すぐ来られない（delayed）→ 申込で抑える", () => ok(holdSoftNextMaterial({ customerText: "検討します", scene: "after_recommend", room: "vacant", delayed: true, env: V15 }).includes("お申込みしお部屋抑えさせて")));
 it("内覧の後 → 申込で抑える", () => ok(holdSoftNextMaterial({ customerText: "検討します", scene: "post_viewing", room: "vacant", env: V15 }).includes("お申込みしお部屋抑えさせて")));
 it("返信: 退去予定の部屋でブレインが内覧と書いても抑えるの1文", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "受け止め＋扉の文＋お気に召されたら内覧案内の1文", scene: "after_recommend", room: "move_out_not_viewable", env: V15 }).includes("抑えさせて")));
-it("返信: 空室でブレインが抑えると書いても場面どおり内覧の1文", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "扉の文に申込でお部屋を抑える1文を添える", scene: "after_recommend", room: "vacant", env: V15 }).includes("ご案内させて")));
-it("返信: すぐ来られない → 抑えるの1文", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "内覧案内の1文を添える", scene: "after_recommend", room: "vacant", delayed: true, env: V15 }).includes("抑えさせて")));
+// fix(review) 10/15（P0 ②）: 向きはブレインの語のとおり（場面で上書きするのは まだ内覧できないお部屋の内覧 だけ）
+it("返信: 空室でブレインが抑えると書いた → ブレインのとおり抑えるの1文", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "扉の文に申込でお部屋を抑える1文を添える", scene: "after_recommend", room: "vacant", env: V15 }).includes("抑えさせて")));
+it("返信: すぐ来られない番でもブレインが内覧と書いた → ブレインのとおり（材料で向きは渡してある）", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "内覧案内の1文を添える", scene: "after_recommend", room: "vacant", delayed: true, env: V15 }).includes("ご案内させて")));
 it("ルール⑧の但し書き: 退去予定・すぐ来られない → 抑える", () => ok(rule8HoldNote(V15).includes("退去予定のお部屋・遠方などすぐ来られない")));
 it("迷いの返し方: 10/15 の文", () => ok(hesitationMoveOf("家族・同居人に相談", V15).includes("退去予定・遠方などすぐ来られない")));
 
