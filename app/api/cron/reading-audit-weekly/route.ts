@@ -3,9 +3,13 @@
 //   中国の字形・号室・金額・退去日）を自動で数える仕組み」）。中身は app/lib/reading-audit-server.ts（DB を読むだけ・LLM なし・$0）。
 //   結果は cron_run_logs.result_json（alerts が落ちた印）。LINE には送らない（送る案は memory/dept_line_reply.md の 10/14 読み取りの仕上げ）
 //   ?days=N … 数える日数（既定 7）／?dry=1 … cron_run_logs に書かない
+//   2026-10-15: 同じ回でブレインの穴の見張り（app/lib/brain-gap-finder-server.ts・cron_run_logs の brain-gap-finder）も回す。戻す BRAIN_GAP_FINDER=off
 import { NextRequest, NextResponse } from "next/server";
 import { weeklyReadingAudit } from "@/app/lib/reading-audit-server";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { supabase } from "@/app/lib/supabase";
+import { runBrainGapFinder, compactGapReport } from "@/app/lib/brain-gap-finder-server";
+import { brainGapFinderEnabled } from "@/app/lib/brain-gap-finder";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -21,5 +25,20 @@ export async function GET(req: NextRequest) {
   const report = await weeklyReadingAudit({ days });
   await finishCronLog(logId, report.ok, report as unknown as Record<string, unknown>, report.errors[0]);
   if (report.alerts.length) console.warn(JSON.stringify({ tag: "reading-audit:alerts", alerts: report.alerts }));
-  return NextResponse.json(report, { status: report.ok ? 200 : 500 });
+  // 2026-10-15 竹内さん（設計知見【最優先】97ea82f3）: ブレインの穴を自分で見つける見張りを同じ週の見張りで回す（DB を読むだけ・LLM なし・$0）。
+  //   結果は cron_run_logs の cron_name="brain-gap-finder"（型ごとの数・前の週との差・代表の番）。戻す BRAIN_GAP_FINDER=off
+  let brainGaps: Record<string, unknown> | null = null;
+  if (brainGapFinderEnabled()) {
+    const gapLogId = dry ? null : await startCronLog("brain-gap-finder");
+    try {
+      const g = await runBrainGapFinder(supabase, { days });
+      brainGaps = compactGapReport(g);
+      await finishCronLog(gapLogId, g.ok, brainGaps, g.errors[0]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      brainGaps = { ok: false, error: msg };
+      await finishCronLog(gapLogId, false, brainGaps, msg);
+    }
+  }
+  return NextResponse.json({ ...report, brainGaps }, { status: report.ok ? 200 : 500 });
 }

@@ -197,3 +197,76 @@ export function usageEnvLabel(env: EnvLike): string {
   const run = readTestRun(env);
   return run ? `${base}:${run}` : base;
 }
+
+// ── 2026-10-15 試験の API の節約（竹内「テストの時 API 使いすぎてる。もっと質高く重点的に API も節約してテストを回す」）────────────
+// 本番（Vercel・NODE_ENV=production）では readTestRun が null・isScriptProcess が false ＝下は全部「何もしない」。
+
+/**
+ * (a) 最後の Claude（LLM_TEST_FINAL_CLAUDE=1）の1日の回数の上限。開発サーバ（/api/*）とスクリプトの両方の Claude の出口（llm-usage-recorder）で数える。
+ *   LLM_TEST_FINAL_CLAUDE_DAILY_MAX=<回数>（既定 60・"off"/"0" で上限なし）。数は env=local:final-claude の今日（JST）の Claude の行（llm_usage_logs）＋この process で出した分
+ */
+export const FINAL_CLAUDE_DAILY_MAX_DEFAULT = 60;
+export function finalClaudeDailyMax(env: EnvLike): number | null {
+  const raw = (env.LLM_TEST_FINAL_CLAUDE_DAILY_MAX ?? "").trim().toLowerCase();
+  if (raw === "off" || raw === "0") return null;
+  const n = Number(raw);
+  return raw && Number.isFinite(n) && n > 0 ? Math.floor(n) : FINAL_CLAUDE_DAILY_MAX_DEFAULT;
+}
+/** 上限に達したら止める理由（final-claude でない時・上限なし・まだ余る時は null）。used は今日すでに出した Claude の回数 */
+export function finalClaudeDailyCapReason(env: EnvLike, used: number, action: string | null): string | null {
+  if (readTestRun(env) !== "final-claude") return null;
+  const max = finalClaudeDailyMax(env);
+  if (max === null || used < max) return null;
+  return `[llm-test-mode] ⛔ 最後の Claude（LLM_TEST_FINAL_CLAUDE=1）は今日 ${used}回で上限 ${max}回に達したので止めました（名札: ${action ?? "(名札なし)"}）。` +
+    `\n  どうするか: ①録った答えの再生（scripts の --replay・LLM_CASSETTE=replay）で同じ要求を呼ばずに確かめる ②試行錯誤は LLM_TEST_MODE=deepseek-all に戻す` +
+    `\n            ③本当に足りない時だけ LLM_TEST_FINAL_CLAUDE_DAILY_MAX=<回数> を起動コマンドに付ける（費用は報告に書く）`;
+}
+/** JST の今日の 0時（ISO）。上限と「今日の合計」を数える起点 */
+export function jstDayStartIso(now: number = Date.now()): string {
+  const j = now + 9 * 3600_000;
+  return new Date(j - (j % 86_400_000) - 9 * 3600_000).toISOString();
+}
+
+/**
+ * (b) 最後の Claude の時も、最終チェック（final_check_*）は選んだ物だけ Claude にする切り替え。
+ *   LLM_TEST_FINAL_CHECK_CLAUDE=final_check_rule_check,final_check_verify → それ以外の final_check_* は DeepSeek（別クラウドの包みで回す）。
+ *   無い・"all"・"*" は今までどおり全部 Claude。"none" は最終チェックを全部 DeepSeek。ブレイン・返信の本文（reply_generate）は対象外＝Claude のまま
+ */
+export function finalCheckToDeepseek(env: EnvLike, routeName: string | null): boolean {
+  if (!finalCheckSelective(env)) return false;
+  const name = (routeName ?? "").trim();
+  if (!name.startsWith("final_check")) return false;
+  const keep = new Set(String(env.LLM_TEST_FINAL_CHECK_CLAUDE ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  return !keep.has(name);
+}
+/** 切り替えが入っているか（別クラウドの設定を作る判断にも使う） */
+export function finalCheckSelective(env: EnvLike): boolean {
+  if (readTestRun(env) !== "final-claude") return false;
+  const raw = (env.LLM_TEST_FINAL_CHECK_CLAUDE ?? "").trim().toLowerCase();
+  return !!raw && raw !== "all" && raw !== "*";
+}
+
+/**
+ * (d) 共通の入口（scripts/lib/llm-test-harness.ts）を通らないテストの LLM 呼び出しを止める。
+ *   10/15 の調べ: 道具の外で書いた試験（gen-model 型＝モデルを比べる使い捨てのスクリプト）が入口を通らずに LLM を呼び、記録・歯止め・費用の数えの外で払っていた。
+ *   スクリプトの process（Next の中でない・本番でない）で、入口の印が無く、テストの印（LLM_TEST_MODE／LLM_TEST_FINAL_CLAUDE）か
+ *   テスト用の会話（YUMA・YUMA2〜）の呼び出しなら止める。LLM_TEST_HARNESS_GUARD=off で外す（単体テスト用）
+ */
+const HARNESS_FLAG = Symbol.for("sumora.llmTestHarness");
+export function markLlmTestHarness(name: string): void { (globalThis as unknown as Record<symbol, string>)[HARNESS_FLAG] = name; }
+export function underLlmTestHarness(): boolean { return !!(globalThis as unknown as Record<symbol, unknown>)[HARNESS_FLAG]; }
+/** スクリプトの process か（Next の中でない・本番でない） */
+export function isScriptProcess(env: EnvLike): boolean {
+  return isTestModeAllowed(env) && !(env.NEXT_RUNTIME ?? "").trim();
+}
+export function outsideHarnessRefusal(env: EnvLike, conversationId: string | null | undefined): string | null {
+  if (!isScriptProcess(env) || underLlmTestHarness()) return null;
+  if ((env.LLM_TEST_HARNESS_GUARD ?? "").trim().toLowerCase() === "off") return null;
+  const id = String(conversationId ?? "").trim();
+  const testConv = !!id && (id === YUMA_ID || isTestOnlyConversation(id));
+  const run = readTestRun(env);
+  if (!run && !testConv) return null;
+  return `[llm-test-mode] ⛔ テストの LLM 呼び出しが共通の入口（scripts/lib/llm-test-harness.ts の setupLlmTest）を通っていないので止めました（${run ? (run === "final-claude" ? "LLM_TEST_FINAL_CLAUDE" : "LLM_TEST_MODE") : `テスト用の会話 ${id.slice(0, 8)}`}）。` +
+    `\n  どうするか: スクリプトの最初に const h = await setupLlmTest("<名前>") を呼び、LLM を呼ぶモジュールはその後に dynamic import する（最後に h.finish()）。` +
+    `\n  試験は scripts/brain-exam.ts（--replay・--baseline=main で API を節約）を使う。手順書: memory/test_protocol_brain.md`;
+}

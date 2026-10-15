@@ -37,7 +37,12 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
+<<<<<<< HEAD
 import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA, ABOUT_JA as REQUEST_ABOUT_JA } from "./lib/request-ledger";
+=======
+import { morningGreetingCardDue, morningGreetingCardNote } from "./lib/viewing-day-greeting";
+import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA } from "./lib/request-ledger";
+>>>>>>> origin/main
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 // 2026-10-08 竹内さんの決定「ブレイン最優先・判断はブレインに一本化」: 要対応・やること・ブレイン以外の帯をブレインの判断で（純関数・画面から import してよい）
 import { brainNeedsStaff, flagOn, nonBrainBannerAllowed, extraBannerAllowed } from "./lib/brain-attention";
@@ -1229,6 +1234,8 @@ export default function Home() {
   //   カレンダーの【必ず】（お客様への約束・未履行）を会話ごとに持ち、会話画面のバナーと一覧のバッジに出す（カレンダーを開かなくても届く）
   // 2026-09-27 竹内「それでおねがい」: 売上番長グループの AIX要対応（aix_action_items の pending）。返信の後もカードを残す元（aix-button-view の I）
   const [pendingAixItems, setPendingAixItems] = useState<Record<string, PendingAixItem>>({});
+  // 2026-10-15 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする」: 内覧当日の朝の行（ブレインの行とは別の行）。画面の主のボタン【内覧挨拶】の元
+  const [morningGreetItems, setMorningGreetItems] = useState<Record<string, { created_at: string | null; resolution_note: string | null }>>({});
   const [openPromises, setOpenPromises] = useState<Record<string, Array<{ id: number; event_type: string | null; title: string; start_at: string; notes: string | null }>>>({});
   // 2026-09-18 竹内「自動ボタンをつける。デフォルトは自動ではない。自動モードにしていないお客さんは絶対に勝手に自動モードにしない」:
   //   自動に切り替えた会話の ID だけを持つ（入っていない＝手動。既定は必ず手動）
@@ -1963,16 +1970,21 @@ export default function Home() {
     // 2026-09-27 竹内「それでおねがい」: AIX要対応（pending）も30秒の読み直しで取る。返信の後もその判断のカードを残し、
     //   ✅（AIX を送った）・取り下げ（ブレインが AIX なしと判断し直した・48時間）になったら次の読み直しで消える
     const refreshPendingAixItems = () =>
-      supabase.from("aix_action_items").select("conversation_id, action, check_pattern, brain_analyzed_msg_ts, resolution_note")
+      supabase.from("aix_action_items").select("conversation_id, action, check_pattern, brain_analyzed_msg_ts, resolution_note, created_at")
         .eq("status", "pending").limit(500)
         .then(({ data }) => {
           const map: Record<string, PendingAixItem> = {};
-          for (const r of (data ?? []) as Array<{ conversation_id: string; action: string | null; check_pattern: string | null; brain_analyzed_msg_ts: string | null; resolution_note?: string | null }>) {
+          const morning: Record<string, { created_at: string | null; resolution_note: string | null }> = {};
+          for (const r of (data ?? []) as Array<{ conversation_id: string; action: string | null; check_pattern: string | null; brain_analyzed_msg_ts: string | null; resolution_note?: string | null; created_at?: string | null }>) {
+            if (r.action === "greeting_viewing" && String(r.resolution_note ?? "").startsWith("rule:viewing_morning_greeting")) {
+              morning[String(r.conversation_id)] = { created_at: r.created_at ?? null, resolution_note: r.resolution_note ?? null };
+            }
             // 2026-10-08: 内覧当日の朝の挨拶の行（別の行）より、ブレインの依頼の行をカードに使う
             if (map[String(r.conversation_id)] && String(r.resolution_note ?? "").startsWith("rule:viewing_morning_greeting")) continue;
             map[String(r.conversation_id)] = { action: r.action, check_pattern: r.check_pattern, brain_analyzed_msg_ts: r.brain_analyzed_msg_ts };
           }
           setPendingAixItems(map);
+          setMorningGreetItems(morning);
         }, () => {});
 
     refreshActiveTasks();
@@ -3210,6 +3222,18 @@ export default function Home() {
       viewingTemplatePending: !!suggestViewingTemplateMap[id],
       pendingItem: selectedPendingAixItem,
       searchSplitOff: process.env.NEXT_PUBLIC_SEARCH_SPLIT_CHOICE === "off",
+      // 2026-10-15 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする」: 朝の行がある間は主のボタン【内覧挨拶】（ブレインのカードがあれば2つ目）。
+      //   戻す: NEXT_PUBLIC_VIEWING_GREETING_MAIN_BUTTON=off
+      morningGreeting: (() => {
+        const item = morningGreetItems[id];
+        const due = morningGreetingCardDue({
+          item: item ? { ...item, resolution_note: item.resolution_note } : null,
+          staffMessages: (selectedConversation.messages || []).filter((m) => m.sender !== "customer").map((m) => ({ text: m.text, createdAt: m.rawCreatedAt ?? null })),
+          nowMs: Date.now(),
+          off: process.env.NEXT_PUBLIC_VIEWING_GREETING_MAIN_BUTTON === "off",
+        });
+        return due ? { due, note: morningGreetingCardNote(item?.resolution_note) } : null;
+      })(),
       dismissed: {
         brainHint: has(dismissedBrainHintIds),
         viewingSpecific: has(dismissedViewingSpecificIds),
@@ -3220,7 +3244,7 @@ export default function Home() {
       },
     });
   }, [selectedConversation?.id, selectedConversation.suggestedAixMeta, selectedConversation.messages, selectedConversation.lastSender, suggestedAix, activeAixFlow,
-      suggestViewingTemplateMap, aixDismissKeyList, selectedPendingAixItem, dismissedBrainHintIds, dismissedViewingSpecificIds, dismissedMeetingPlaceIds, dismissedNewListingIds, dismissedViewingInviteIds, dismissedEstimateSheetIds]);
+      suggestViewingTemplateMap, aixDismissKeyList, selectedPendingAixItem, dismissedBrainHintIds, dismissedViewingSpecificIds, dismissedMeetingPlaceIds, dismissedNewListingIds, dismissedViewingInviteIds, dismissedEstimateSheetIds, morningGreetItems]);
   // ブレインが「今の顧客発言に対して AIX が必要」と判断した AIX（無ければ null）。
   // 2026-09-12 竹内方針: AIX が必要かどうかはブレインだけが判断する。画面の AIX 誘導はすべてこの値だけを見る。
   const brainAixAction = aixView.brainAixAction;
@@ -9468,7 +9492,8 @@ export default function Home() {
               // AIXアクション（ボタンあり）の場合: 上部バナーは非表示にし、このカードに
               // 「大きいAIXボタン（メイン）+ 小さい指示テキスト」を統合表示する
               // 2026-09-27（I）: 返信の後は DB の判断が消えるので、AIX要対応から戻した判断（aixView.pendingMeta・note なし）でカードを出す
-              const brainMeta = (selectedConversation.suggestedAixMeta ?? aixView.pendingMeta) as Conversation["suggestedAixMeta"];
+              // 2026-10-15: 内覧当日の内覧挨拶を足したカード（主のボタン／2つ目のボタン）は aixView.cardMeta で描く（DB の判断は書き換えない）
+              const brainMeta = (aixView.cardMeta ?? selectedConversation.suggestedAixMeta ?? aixView.pendingMeta) as Conversation["suggestedAixMeta"];
               // 診断修正P2(a): action が空でも note があればフォールバック表示する。
               // [AIX誘導中] センチネルでドラフトが非表示のとき、旧条件（action && note 必須）だと
               // brain が action="" を返した場合に何も表示されない完全空白状態になる穴を塞ぐ
@@ -9690,6 +9715,13 @@ export default function Home() {
                               setAixInspectLabel(null);
                               setActiveAixFlow(alt as AixActionType);
                               if (alt === "property_recommendation") openPropertyRecommendationPicker("withImage");
+                              else if (alt === "greeting_viewing") {
+                                // 2026-10-15 内覧当日の内覧挨拶（2つ目のボタン）: 挨拶は AixModal 非対応＝メニューと同じ専用ピッカー
+                                setGreetingViewingMode(null);
+                                setGreetingViewingDate(""); setGreetingViewingTime("");
+                                setGreetingViewingReport(""); setGreetingViewingTaps({}); setGreetingViewingReportSaved(null);
+                                setShowGreetingViewingPicker(true);
+                              }
                               else openAixDirect(alt as AixActionType);
                             }}
                             className="mt-1.5 block w-full rounded-xl px-4 py-2 text-[13px] font-bold text-white text-center active:opacity-80"

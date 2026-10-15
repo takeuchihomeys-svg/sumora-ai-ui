@@ -1,6 +1,23 @@
 # LINE返信AI部署 倉庫（#L）
 
 最終更新: 2026-10-15
+## 🏠 内覧の当日 10:00 に主のボタン【内覧挨拶】（10/15 作る人・ブランチ viewing-day-greet-1015）
+- **指示** 竹内さん「内覧日の10時には内覧挨拶がセットされるようにする。そうしたら内覧あることをちゃんと確認できるため」。11時より前の内覧は2時間前
+- **仕組み** cron viewing-morning-greeting を 9:15 の1回 → JST 6:00〜20:30 の30分おき。`viewingGreetingSetMinute` を過ぎた最初の回で朝の行（rule:viewing_morning_greeting）を立てる・1会話1日1回・取りやめ/日の変更/申込で取り下げ（viewing_changed:*）。画面は `aix-button-view` の morningGreeting: ブレインのカード無し→主のボタン【内覧挨拶】／1つのボタンのカード有り→2つ目に並べる／2択・左右・単独の帯はそのまま。suggested_aix_meta には書かない
+- **旧の穴** 9:15 の行は通知と やること にしか出ず画面のボタンに出ていなかった（brain_analyzed_msg_ts が無い行は pendingItemMeta が使わない）
+- **30日** 内覧当日 23 番・挨拶を送った 19（中央 10:48・最早 7:15）・新のセットより前に送った 1。`scripts/audit-viewing-greet-set-time.ts`
+- **戻す** VIEWING_GREETING_SET_TIME=off／NEXT_PUBLIC_VIEWING_GREETING_MAIN_BUTTON=off／VIEWING_MORNING_GREETING=off
+## 🔎 ブレインの穴を自分で見つける見張り（10/15 作る人・設計知見【最優先】97ea82f3・ブランチ brain-gap-finder-1015）
+- **仕組み** `app/lib/brain-gap-finder.ts`（純関数）＋`-server.ts`（DB を読むだけ・LLM なし・$0）。手元 `scripts/brain-gap-finder.ts [--days=7] [--list=20 --cause= --kind= --tag=]`／毎週月曜 `/api/cron/reading-audit-weekly` の同じ回で cron_run_logs の `brain-gap-finder` に残す。戻す BRAIN_GAP_FINDER=off
+- **集める番**: line_watch_turns の判定（直して送った・手で打った・取りこぼし系の最終チェックが残った・ブレインと実送信の食い違い）＋確認事項の48時間以上の未対応・完了の後の問い直し＋初回の持ち込みの見積の一言。**原因の型**: 決まりの上書き（digest ds rule:/correction: で la≠aix）・軸・状況・材料・知識・要確認。文が同じ番は中身の型に数えない。お客様の文は本人の言葉だけ（画像の読み・様式・URL を外す）
+- **本番7日（10/15）**: 番 216・穴 151。決まりの上書き 21（前の週 3・two_stage_promise(pickup_unless_ack) 11）／状況 10（2番手 9）／材料 8／知識 4／軸 2／要確認 106（ブレインが走っていない番 33・text_but_aix 21）。手で打った番 20→57
+- **今日の型**: 駐車場・洗面台・確認済みの判定・予算オーバー・ペット・繁忙期・2番手 は拾えた。申込の帯（画面の帯は番の記録に無い）・募集なしの後の誘い（10/15 の番は夜の判定の前）は 0。turn_contract の about 等が本番に入ったら axis で照らす（今は 0 番）
+- **独立レビュー（10/15）**: 最初の数の約半分は 10/13 01時〜10/14 18時（JST）の 74 番＝下書き・判断が1つも届いていない区間（DeepSeek 障害の頃）→ 8 番以上続く区間は穴に数えず skippedOutage へ。直した後: 番 142・穴 80・決まりの上書き 11（前 1・10/09 97504047 の pickup_unless_ack+search_exhausted→zenryoku_support、10/13 以降 0）・材料 4・状況 3・知識 3・軸 2・要確認 57。2番手の印を絞る・no_brain／初回のあいさつは中身の型に数えない・規則の AIX をスタッフも押した番は上書きに数えない・括弧の無い申込の記入を要旨から外す・お子様／緊急連絡先様の伏せすぎを避ける。外れ率 40%→25%
+## 🗂 竹内さんの決定 10/15 のデータ・画面の側（作る人・ブランチ decisions-data-1015・LLM 0回）
+- **①書き直す**: `scripts/fix-personal-image-text-stored.ts`（既定は数えるだけ）。全期間のお客様の画像 1,029行 → 書き直す 11行（【物件以外：個人情報の載った画像】へ）・確かめる人の8行を全部含む・お客様以外/物件/見積書の行は 0
+- **②入れれるようにする**: `app/lib/pickup-bundle-common-facts.ts`（束の全部屋に共通の事実・全部屋の売上サポの行がそろった時だけ）→ aix/action の pickupFactsNote・aix-template-generate の2通目の材料。画面は画像ごとに行 ID を持ち回す（`pickupIdsForSentFiles`）。戻す PICKUP_COMMON_FACTS=off／NEXT_PUBLIC_PICKUP_IDS_PER_IMAGE=off
+- **③入れる**: `scripts/fix-property-names-stored.ts` の既定を vision＋backfill に（--sources=vision で旧）。backfill の直す 128行・119種類
+- **④それで**: 居住中で日付なし → 「退去予定のお部屋となります！！」のまま（変えない・コメントに記録）
 ## 🧭 営業マンの思考: 保留の番の「柔らかい次の一手」（10/15 作る人・竹内さん7番・ブランチ sales-mind-1015）
 - **差の型**（`scripts/audit-sales-mind.ts`・竹内さんの手打ちの営業の番・LLM なし）: 30日 107番の直さず送れた割合 迷い 17%・押し引き 0%・提案への反応 40%・条件 53%。迷いの番を読むと、保留（検討します・相談してまた連絡・帰ってから見ます）でブレインの方向が「検討を見守る待ちの姿勢で締める」（ルール⑧）・「押さずに待つ」（迷いの返し方）＝**ブレインに無い**型。60日の他の型（新着待ち↔今すぐ再ピックアップ 15・確認の約束の足し引き 21/11 等）は既に出し切り・本質の担当が手当て中
 - **率**（`scripts/audit-hold-soft-next.ts`・180日 54番）: 竹内さんは扉の文に「お気に召されましたらご都合よろしいお日にちにお部屋ご案内」を添える 今ご内覧頂けるお部屋 17/36（47%）・確認の保留 6/11・退去予定 2/15・従業員 5/33

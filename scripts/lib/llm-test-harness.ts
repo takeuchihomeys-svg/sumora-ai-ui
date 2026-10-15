@@ -21,6 +21,8 @@
 //   await h.finish();   // 最後に必ず（失敗しても finally で）
 import { createClient } from "@supabase/supabase-js";
 import { readTestRun, readTestMode, readFinalClaude, readAllowClaude, testBlockedLog, isTestModeAllowed, applyFinalClaudeProductionModels, type LlmTestRun } from "../../app/lib/llm-test-mode";
+// 2026-10-15 確かめ: 試験の「前」（--baseline=main）はこのファイルを main の作業ツリーに写して回す → main に無い名前（10/15 に足した物）でも落ちないよう、まとめて読んで有れば使う
+import * as testModeLib from "../../app/lib/llm-test-mode";
 import { YUMA_CONVERSATION_ID, isTestOnlyConversation } from "../../app/lib/test-conversations";
 import { claudeUsageUsd, altUsageUsd } from "../../app/lib/llm-price";
 import { cutBeforeApplicationMaterial, applicationMaterialReason } from "../../app/lib/test-pii-guard";
@@ -70,6 +72,8 @@ function fail(msg: string): never {
 
 export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
   const env = process.env;
+  // 2026-10-15 (d): 入口を通った印（llm-usage-recorder の網は、印の無いスクリプトのテストの LLM 呼び出しを止める）
+  testModeLib.markLlmTestHarness?.(name);
   if (!isTestModeAllowed(env)) fail("本番の環境（VERCEL・NODE_ENV=production）ではテストの入口を使えません");
   const strict = readTestMode(env) === "deepseek-all";
   const final = readFinalClaude(env);
@@ -91,6 +95,10 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
   const alt = await import("../../app/lib/llm-alt-provider");
   const altOn = alt.installAltProvider();
   if (strict && !altOn) fail("deepseek-all なのに DeepSeek の包みが入りません（DEEPSEEK_API_KEY／LLM_ALT_DEEPSEEK_KEY が .env.local にあるか）");
+  // 2026-10-15 竹内「テストの時 API 使いすぎてる」: LLM の要求と答えを録る・同じ要求は録った答えを返す（LLM_CASSETTE=record|replay|strict・scripts/lib/llm-cassette.ts）。
+  //   一番外に入れる＝再生した呼び出しは別クラウド・使用量の記録を通らない（llm_usage_logs に行が残らない＝新しく呼んだ物だけが数に入る）
+  const cassette = await import("./llm-cassette");
+  cassette.installLlmCassette(env);
 
   // ③ deepseek-all の間は Claude の鍵を偽の値に（包みを通らない呼び出しを 401 で落とす）。LLM_TEST_ALLOW_CLAUDE の名札だけ包みの中で本物に戻す
   if (strict) {
@@ -168,12 +176,30 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
   };
 
   const finish = async () => {
+    const cas = await import("./llm-cassette");
+    await cas.flushCassette();
     const s = await summary();
+    const cst = cas.cassetteStats();
+    if (cst) console.log(`\n${cas.formatCassetteStats(cst)}`);
     const blockedLog = testBlockedLog();
     console.log(`\n=== llm_usage_logs（route=${routeLabel}・この回）: ${s.rows}行 ===`);
     for (const b of s.byKey) console.log(`  ${String(b.calls).padStart(3)}回 $${b.usd.toFixed(4)}  ${b.key}`);
     console.log(`  Claude ${s.claudeCalls}回 $${s.claudeUsd.toFixed(4)}／DeepSeek・Jev 等 ${s.altCalls}回 $${s.altUsd.toFixed(4)}／止めた ${Math.max(s.blocked, blockedLog.length)}回`);
     console.log("  ※ 開発サーバ経由（/api/...）の呼び出しはこの数に入らない。scripts/test-llm-usage.ts --since=" + t0 + " で YUMA・env 全体を数える");
+    // 2026-10-15 (c): 最後の Claude はその日の env=local:final-claude の合計（開発サーバ /api/* の分も・全部の route）と上限の残りを出す
+    if (run === "final-claude") {
+      try {
+        const since = testModeLib.jstDayStartIso?.() ?? new Date(Date.now() - 86_400_000).toISOString();
+        const { data } = await sb().from("llm_usage_logs").select("created_at, model, status, error_type, input_uncached, cache_read, cache_write_5m, cache_write_1h, cache_write, output_tokens")
+          .eq("env", envLabel).gte("created_at", since).limit(10000);
+        const rows = (data ?? []) as Array<Record<string, unknown> & { model: string | null; status: number; created_at: string }>;
+        const cl = rows.filter((r) => /claude/.test(r.model ?? "") && r.status > 0 && r.status < 400);
+        const al = rows.filter((r) => !/claude/.test(r.model ?? "") && r.status > 0 && r.status < 400);
+        const usd = cl.reduce((s, r) => s + claudeUsageUsd(r), 0) + al.reduce((s, r) => s + altUsageUsd(r), 0);
+        const max = testModeLib.finalClaudeDailyMax?.(env) ?? null;
+        console.log(`  今日（JST）の env=${envLabel} の合計: Claude ${cl.length}回・DeepSeek 等 ${al.length}回 $${usd.toFixed(4)}（開発サーバの分も含む）${max ? `・Claude の上限 ${max}回（残り ${Math.max(0, max - cl.length)}回・LLM_TEST_FINAL_CLAUDE_DAILY_MAX）` : "・上限なし"}`);
+      } catch (e) { console.warn(`  今日の final-claude の合計を読めない: ${e instanceof Error ? e.message : e}`); }
+    }
     if (blockedLog.length) { console.error(`\n⛔ テストの歯止めで止めた呼び出し ${blockedLog.length}回（上のログの理由を読んで直す）:`); for (const b of blockedLog.slice(0, 10)) console.error(`  ${b}`); process.exitCode = 1; }
     if (run === "deepseek-all" && s.claudeCalls > 0 && readAllowClaude(env).size === 0) { console.error(`\n⛔ deepseek-all なのに Claude が ${s.claudeCalls}回記録されています（漏れ）。手順書の「漏れの見つけ方」を見てください`); process.exitCode = 1; }
     return s;

@@ -87,6 +87,7 @@ import { isTestConversation, isTestOnlyConversation } from "@/app/lib/test-conve
 // 2026-09-30 竹内「2通目の言い回しが AI くさい。実際使っている言い回しが出るように／場面で違う／資料も読み取ったのを渡す」:
 //   物件オススメの直後の2通目は、場面ごとの実送信の実物（second-message-scene）で形を決め、AI だけが書く言い回し（second-message-style）を出口で見る
 import { secondMaterialSavedReadEnabled, pickSavedReadForHead, secondRowFromSavedRead, savedReadFitLines, appendSavedReadLines, type SavedReadRow } from "@/app/lib/second-material-saved-read";
+import { bundleCommonFacts, buildBundleCommonFactsNote, pickupCommonFactsEnabled } from "@/app/lib/pickup-bundle-common-facts";
 import type { CandidateFacts } from "@/app/lib/candidate-facts";
 import { buildSecondSceneNote, buildSecondMaterialNote,secondSceneOf, aixTakeuchiFormOn, leakedExampleFacts, unfoundedCostClaim, pickPickupSecondTarget, type SecondMaterialRow, type PickupPushRow } from "@/app/lib/second-message-scene";
 import { findAiPhrases, ensureOneEmoji, fixMissingNi } from "@/app/lib/second-message-style";
@@ -1433,6 +1434,7 @@ export async function POST(req: NextRequest) {
   // 2026-10-01 竹内さん了承「実送信の形に合わせる」(b): 物件ピックアップ（複数）の直後の2通目も、物件オススメの2通目と同じ形にする。
   //   推す物件は売上サポで送った行（送った印つき）の並びの先頭（=送った画像の1枚目・👑が先頭）。行が2件以上読めない時は今まで通り
   let pickupPush: PickupPushRow | null = null;
+  let bundleCommonNote2 = "";
   if (actionType === "property_send" && (sentMessage ?? "").trim() && conversationId) {
     try {
       const sinceIso = new Date(Date.now() - 2 * 3600_000).toISOString();
@@ -1441,12 +1443,28 @@ export async function POST(req: NextRequest) {
         .eq("conversation_id", conversationId).gte("sent_at", sinceIso).order("sent_at", { ascending: false }).limit(20);
       // 2026-10-01 竹内「送った資料の1枚目が一番オススメの物件にする形 1枚目の👑」: 送った画像の1枚目＝AIX【物件ピックアップした】の記録（picker_choices.first_pickup_id）
       let firstSentId: number | null = null;
+      let sentImageCount: number | null = null;
       try {
         const { data: lg } = await supabase.from("aix_usage_logs").select("picker_choices, created_at")
           .eq("conversation_id", conversationId).eq("aix_type", "property_send").gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(1);
         const v = (lg?.[0]?.picker_choices as { first_pickup_id?: unknown } | null | undefined)?.first_pickup_id;
         if (typeof v === "number" && Number.isInteger(v)) firstSentId = v;
+        const ic = (lg?.[0]?.picker_choices as { image_count?: unknown } | null | undefined)?.image_count;
+        if (typeof ic === "number" && Number.isInteger(ic) && ic > 0) sentImageCount = ic;
       } catch { /* 記録が読めなければ画面の並びの先頭 */ }
+      // 2026-10-15 竹内さん「入れれるようにする」: 送った束の全部屋に共通の事実（送った印の行＝最後の送付の回の行が、送った画像の枚数とそろう時だけ）
+      if (pickupCommonFactsEnabled() && sentImageCount && sentImageCount >= 2) {
+        const sentRows = (data ?? []) as Array<{ sent_at: string | null; terms: unknown; equipment: unknown }>;
+        const last = Math.max(...sentRows.map((r) => Date.parse(r.sent_at ?? "") || 0));
+        // 2026-10-15 確かめる人: 送った印は1回の送付で同じ時刻（property-pickups/send の now）で付く。±10分の窓は前の送付の行を混ぜうる
+        //   （前に1部屋・今回は1部屋＋足した画像1枚＝枚数2・行2 で別の束を数える）ので、同じ時刻の行だけを今回の束とみる
+        const sameSend = last > 0 ? sentRows.filter((r) => (Date.parse(r.sent_at ?? "") || 0) === last) : [];
+        if (sameSend.length === sentImageCount) {
+          const facts = bundleCommonFacts(sameSend);
+          bundleCommonNote2 = buildBundleCommonFactsNote(facts, sentImageCount);
+          console.log(JSON.stringify({ tag: "aix-template-generate:pickup-common-facts", total: sentImageCount, facts }));
+        }
+      }
       pickupPush = pickPickupSecondTarget((data ?? []) as PickupPushRow[], { firstSentId });
       console.log(JSON.stringify({ tag: "aix-template-generate:pickup-push", rows: (data ?? []).length, firstSentId, target: pickupPush ? `${pickupPush.property_name} ${pickupPush.room_no}` : null, byFirstSent: !!pickupPush && pickupPush.id === firstSentId }));
     } catch (e) {
@@ -1567,7 +1585,7 @@ export async function POST(req: NextRequest) {
       console.warn("[aix-template-generate] second saved-read failed:", e instanceof Error ? e.message : e);
     }
   }
-  const secondMaterialNote = isRecSecond ? appendSavedReadLines(buildSecondMaterialNote(materialRow), savedReadExtra) : "";
+  const secondMaterialNote = isRecSecond ? [appendSavedReadLines(buildSecondMaterialNote(materialRow), savedReadExtra), pickupPushLabel ? bundleCommonNote2 : ""].filter(Boolean).join("\n") : "";
   // 2026-10-08 竹内さんの実送信: 2通目の挨拶は「今日の会話文」で決まる（今送った🌟カード・【】見積の本体・画像は数えない）。
   //   前の会話文なし → 挨拶から 物件オススメ 73%（95/131）・見積書 82%（31/38）。旧は🌟カード自体を「今日送った」と数え、挨拶を一律に消していた（staffSentTodayFromDb）
   //   数え方 scripts/audit-r11-second-greeting.ts。戻すのは AIX_TAKEUCHI_FORM=off

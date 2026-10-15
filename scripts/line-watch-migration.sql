@@ -210,8 +210,7 @@ BEGIN
   RETURN NULL;
 END;
 $$;
-DROP TRIGGER IF EXISTS trg_conversations_line_watch ON conversations;
-CREATE TRIGGER trg_conversations_line_watch
+CREATE OR REPLACE TRIGGER trg_conversations_line_watch
 AFTER UPDATE OF ai_draft, ai_draft_check, suggested_aix_meta ON conversations
 FOR EACH ROW
 WHEN (OLD.ai_draft IS DISTINCT FROM NEW.ai_draft OR OLD.ai_draft_check IS DISTINCT FROM NEW.ai_draft_check OR OLD.suggested_aix_meta IS DISTINCT FROM NEW.suggested_aix_meta)

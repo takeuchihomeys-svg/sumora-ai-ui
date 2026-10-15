@@ -62,6 +62,7 @@ export function sipVacating(rows: ReadonlyArray<SipRow>, head: { name: string; r
  *   退去予定と読めた時だけ返す（空室と読めた時は返さない＝ブレインのまま。読みの「空室」で退去予定を消さない: 竹内さんが退去予定と書いた番に open の読みが 3/66 あった）。
  *   退去予定日があり今日より後 → 「◯月◯日退去予定のため、◯月◯日以降ご内覧可能となります！！」（売上サポの行と同じ形）
  *   退去予定日が過ぎていた → null（もう見られる・決めない）／日付なし → 「退去予定のお部屋となります！！」
+ *     （2026-10-15 竹内さん「それで」: 読みが「居住中」で日付が無い時もこの一文のまま。変えない）
  *   出口で一文を足す（ensureVacatingLine）のは売上サポの行の時だけ。ここは材料に渡すだけ（書くかは生成が決める）
  */
 export function sentImageViewable(sip: SipVacating | null, nowMs: number = Date.now()): RecommendViewable | null {
