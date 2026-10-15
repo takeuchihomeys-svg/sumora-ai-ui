@@ -154,5 +154,19 @@ console.log("⑧ 確認の約束の取りこぼしの直し（2026-10-13・CONFI
   t("戻す: 文の途中の「ました」で外れる（旧）", findConfirmPromiseSentence("お送り頂きました物件の募集状況を確認させて頂きます！！", OFF) === null);
 }
 
+console.log("⑳ 2026-10-15 ブレインが走らなかった番（本質＝依頼の一覧）でも、一覧の返信の項目を指す取りこぼしは裏付け（58ae93f3 繁忙期）");
+{
+  const ledgerC: TurnContract = { ...base, source: "ledger", asks: [
+    { quote: "あと、4月とかの繁忙期より、今みたいな時期の方が家賃安いですかね、", topic: "other", kind: "question", route: "reply", answer: null, basis: null, aixKey: null },
+    { quote: "ここって空いてますでしょうか？？", topic: "vacancy", kind: "question", route: "aix", answer: null, basis: null, aixKey: null },
+  ] };
+  const miss: AlignIssue = { code: "MISSED_QUESTION", severity: "warning", evidence: "4月とかの繁忙期より、今みたいな時期の方が家賃安いですかね", message: "繁忙期の質問に答えていない" };
+  t("一覧の返信の項目 → 裏付け", brainBacksIssue(miss, ledgerC, []) === true);
+  t("一覧の AIX の項目（空き）→ 裏付けなし", brainBacksIssue({ code: "MISSED_QUESTION", severity: "warning", evidence: "ここって空いてますでしょうか" }, ledgerC, []) === false);
+  process.env.FINAL_CHECK_LEDGER_BACK = "off";
+  t("FINAL_CHECK_LEDGER_BACK=off は前の形", brainBacksIssue(miss, ledgerC, []) === false);
+  delete process.env.FINAL_CHECK_LEDGER_BACK;
+}
+
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

@@ -115,6 +115,13 @@ export function brainBacksIssue(issue: AlignIssue, contract: TurnContract | null
     if (askHit) return askHit.route === "reply" || askHit.route === "promise";
     // 本質の項目に無い質問は、ブレインが読んだ質問（customer_questions）にあれば裏付け
   }
+  // 2026-10-15 軸の直し⑤（紗季さん 58ae93f3 10/11: 夜〜朝でブレインが走らなかった番に、最終チェックが答えの抜け「繁忙期」を2件指摘したのに本文に入らなかった）:
+  //   ブレインが走らなかった番（本質が依頼の一覧＝ledger）でも、取りこぼしの指摘が一覧の「返信で答える／約束」の項目を指していれば裏付けにする
+  //   （AIX の項目は通さない＝安全の線はそのまま）。戻す FINAL_CHECK_LEDGER_BACK=off
+  if (contract && contract.source === "ledger" && (envOf().FINAL_CHECK_LEDGER_BACK ?? "").toLowerCase() !== "off") {
+    const ledgerHit = contract.asks.find((a) => refersTo(text, a.quote));
+    if (ledgerHit) return ledgerHit.route === "reply" || ledgerHit.route === "promise";
+  }
   return (customerQuestions ?? []).some((q) => String(q ?? "").trim() && !/^\(未対応\)/.test(String(q)) && refersTo(text, String(q)));
 }
 

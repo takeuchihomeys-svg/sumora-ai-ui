@@ -200,6 +200,7 @@ import { aixMetaKnowledgeBonus, extractMetaKeywords, type AixMetaRerankSignals }
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
 import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, AIX_ACTION_REPLY_DIRECTION, buildAixLineNote, normalizeAixActionKey } from "@/app/lib/aix-taxonomy";
+import { unavailableAckAxisEnabled, checkResultAllUnavailable, UNAVAILABLE_ACK_WEDO, UNAVAILABLE_ACK_DIRECTION, UNAVAILABLE_ACK_FORBID } from "@/app/lib/unavailable-ack";
 // 2026-09-09 Fable5 往復文脈（Turn-Pair）＋実質判定（Substance）: 生成・検査・few-shot・tpo_debug の四者同名（reply-context.ts が単一真実源）
 import {
   MSG_SEP, splitMessageUnits, analyzeSubstance, mergeBrainEvidence,
@@ -713,7 +714,7 @@ function buildAvailabilityCheckNote(): string {
 // 2026-09-12 竹内方針「AIX のセットはブレインが判断する」段1: 2つに分ける
 //   r（ブレインが決めた AIX・fresh の時だけ）→「どの AIX で送るか」の見出し＋橋渡しの型
 //   safety（証拠がある時）→「テキストで物件情報・金額を書かない・橋渡し文」だけ（AIX ボタンの指示は書かない）
-function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null, viewingScheduledAck: string | null = null, waitFormConfirmAck = false, checkAnswered = false): string {
+function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null, viewingScheduledAck: string | null = null, waitFormConfirmAck = false, checkAnswered = false, checkUnavailable = false): string {
   if (!r && !safety) return "";
   const src = r
     ? { aix: r.action, label: r.label, chained: r.chained, urgency: r.urgency, highlight: r.highlight, extra: r.extra, forbidden: r.forbiddenText, bridge0: r.bridge }
@@ -729,6 +730,8 @@ function buildAixTimingNote(r: ReplyAix | null, safety: BodySafety | null = null
       // 2026-09-26（穴1）: 待ちの形で言い終えた確認・連絡の約束への了承には、橋渡しの実例にも確認の約束を載せない
       : (src.aix === "property_check_result" || src.aix === "acknowledge_check") && waitFormConfirmAck ? "はい😊！！気になる点等出てきましたらいつでもお気軽にご連絡ください！！"
       // 2026-09-26（穴2）: 確認結果を AIX で送った直後の連投は、橋渡しの実例も次の一手（確認の約束を載せない）
+      // 2026-10-15 軸の直し④: 確認の結果が全部 募集に出ていない時は誘い（お気に召されましたら…ご案内）でなく受け＋何卒
+      : (src.aix === "property_check_result" || src.aix === "acknowledge_check") && checkUnavailable ? UNAVAILABLE_ACK_WEDO
       : (src.aix === "property_check_result" || src.aix === "acknowledge_check") && checkAnswered ? AIX_ACTION_REPLY_DIRECTION.property_check_result.weDo
       : src.bridge0 ?? AIX_ACTION_REPLY_DIRECTION[src.aix]?.weDo ?? "かしこまりました！！",
   };
@@ -877,6 +880,8 @@ type AixDoneFlags = {
   pickupGateReason?: string;
   /** 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の最後の発言にはもう AIX で答えた（done-state.customerAnsweredByAix） */
   answeredByAix?: boolean;
+  /** 2026-10-15 軸の直し④: 直近の物件確認した の結果が全部 unavailable（募集に出ていない）。次の一手の見本を誘いでなく受け＋何卒にする（UNAVAILABLE_ACK_AXIS=off で前の形） */
+  checkAllUnavailable?: boolean;
 };
 
 type PromptOverrides = {
@@ -1374,7 +1379,7 @@ function buildGenerationMessages(
 スタッフは既に以下のAIXアクションを実行し、その結果をLINEでお客様に送信済み。
 【実行済み】${aixDone.labels.join(" / ")}
 → 実行済みのアクションを「これから行います」と未来形で宣言することは絶対禁止（既にやったことをもう一度やると言う二重宣言になり、お客様に「話を聞いていない」と受け取られる）
-${bans.map((b) => `→ ${b}`).join("\n")}
+${bans.map((b) => `→ ${b}`).join("\n")}${aixDone.checkAllUnavailable ? `\n→ ${UNAVAILABLE_ACK_DIRECTION}（例「${UNAVAILABLE_ACK_WEDO}」）。禁止: ${UNAVAILABLE_ACK_FORBID}` : ""}
 ${aixDone.answeredByAix
     // 2026-09-26（穴2・YUMA の前後比較）: 連投の途中でお客様の発言にもう AIX で答えた時に「今回のお客様の反応に直接答える」を渡すと、
     //   3分前に AIX で送った確認結果（募集中・募集終了）を本文でもう一度書いた（後の木 4回中2回）。答え終えた事は繰り返させない
@@ -1545,7 +1550,7 @@ ${aixDone.answeredByAix
   const waitFormConfirmAck = ackForm !== "wait_line" && ((!isFollowUp && isShortAckMsg && waitFormInLast.some((w) => w.kind !== "見積"))
     || (echoToWait && /募集状況|確認/.test(staffPromise?.label ?? "")));   // 2026-10-13 レビュー: 本質がブレインの番の確認の約束の受けも同じ（上の echoToWait）・ブレインが待ちの形と決めた番は3注記で止めない
   const checkAnswered = !!doneState?.checkAnsweredFollowUp;
-  const aixTimingNote = buildAixTimingNote(aixTiming, bodySafety, doneState?.viewingScheduled.scheduled ? viewingAckLine(doneState.viewingAppointment) : null, waitFormConfirmAck, checkAnswered);
+  const aixTimingNote = buildAixTimingNote(aixTiming, bodySafety, doneState?.viewingScheduled.scheduled ? viewingAckLine(doneState.viewingAppointment) : null, waitFormConfirmAck, checkAnswered, !!aixDone?.checkAllUnavailable);
 
   // G26（2026-09-08 Fable5）: 確認約束 verdict に合成（route.ts confirmCtxFinal と同じ pure 関数・同じ根拠 → 三層で同値）
   //   根拠 = 証拠が確認の要る質問（S1/S2/S3）または ブレインの action が property_check_result / acknowledge_check
@@ -3885,6 +3890,9 @@ async function handleGenerateReply(req: NextRequest) {
       const meetingPlace = fresh.some((l) => l.aix_type === "meeting_place");
 
       if (!vacancyCheck && !mgmtCheck && !propertySend && !viewingInvite && !meetingPlace) return null;
+      // 2026-10-15 軸の直し④（ゆなまるさん 63fa0c26 10/09）: 直近の物件確認した の結果が全部 募集に出ていない（unavailable-ack.ts・UNAVAILABLE_ACK_AXIS=off で前の形）
+      const lastCheck = fresh.find((l) => l.aix_type === "property_check_result");
+      const checkAllUnavailable = vacancyCheck && unavailableAckAxisEnabled() && checkResultAllUnavailable(lastCheck as Parameters<typeof checkResultAllUnavailable>[0]);
 
       const AIX_DONE_LABEL: Record<string, string> = {
         property_check_result: "空室・募集状況の確認",
@@ -3922,7 +3930,7 @@ async function handleGenerateReply(req: NextRequest) {
           return `${base}（${when}${result}）`;
         });
 
-      return { vacancyCheck, mgmtCheck, propertySend, viewingInvite, meetingPlace, labels, asksNewPickup: rel && asksNewPickup, answeredByAix };
+      return { vacancyCheck, mgmtCheck, propertySend, viewingInvite, meetingPlace, labels, asksNewPickup: rel && asksNewPickup, answeredByAix, checkAllUnavailable };
     })();
     // 2026-09-26（穴2・YUMA の前後比較）: 連投の途中で、お客様の確認の依頼にもう AIX【物件確認した】で答えた。
     //   お客様の発言（「今も空いてますか？」）を読み直す注記（確認対象・管理会社の状況・AIX の橋渡し・往復文脈の「質問に直接回答」）が
@@ -3945,9 +3953,30 @@ async function handleGenerateReply(req: NextRequest) {
     // brain直列アーキテクチャ: brainMetaDirect 指定時（bg-async経由）は DB 再フェッチをスキップ。
     // bg-async が直前に brain を直列実行して書いた値なので DB と同値（むしろ順序保証つき）＝常にT1（fresh）。
     // 重複フェッチ解消(2026-08): チェックポイントAのスナップショットがあれば再利用（毎分cron積算のDB往復1回削減）
-    const brainGateRaw = externalBrainGate ?? gateFromCheckpointA ?? ((conversationId && !isTemplateOptimize)
+    let brainGatePre = externalBrainGate ?? gateFromCheckpointA ?? ((conversationId && !isTemplateOptimize)
       ? await fetchReplyModeGate(conversationId)
       : null);
+    // 2026-10-15 軸の直し⑤（紗季さん 58ae93f3 10/11 07:45・夜〜朝9時はブレインを回さない時間帯）: ブレインが今のお客様の発言を見ていない番で、
+    //   スタッフが下書きを作る（手動の生成）時は、生成の前にブレインを1回走らせてから使う（軸・本質・材料がブレイン無しの決まりだけで決まるのを防ぐ）。
+    //   今までは生成の後ろで起動していた（下書きには間に合わない）。待ちは最大25秒（過ぎたら今まで通り古い判断で生成し、後ろの起動に任せる）。
+    //   自動の経路（bg-async・cron・enforceReplyModeGate）は自前でブレインを直列に回すので対象外。戻す BRAIN_BEFORE_GENERATE=off
+    if (persist && conversationId && !isTemplateOptimize && !externalBrainGate && !enforceReplyModeGate && (process.env.BRAIN_BEFORE_GENERATE ?? "").toLowerCase() !== "off"
+      && !(state && DRAFT_SKIP_STATUSES.has(state))) {
+      const lastCustAtPre = [...recentMessages].reverse().find((m) => m.sender === "customer")?.createdAt ?? null;
+      const preTier = detectBrainTier(brainGatePre?.meta ?? null, lastCustAtPre);
+      const analyzedAtMsPre = brainGatePre?.brainAnalyzedAt ? new Date(brainGatePre.brainAnalyzedAt).getTime() : NaN;
+      const hasEarlierStaff = recentMessages.some((m) => m.sender !== "customer");
+      if (lastCustAtPre && !preTier.brainFreshForMessage && hasEarlierStaff && (Number.isNaN(analyzedAtMsPre) || Date.now() - analyzedAtMsPre > 60_000)) {
+        const t0 = Date.now();
+        const ran = await Promise.race([
+          runBrainAndNotify(conversationId, undefined, { origin: "staff" }).then(() => true, (e) => { console.warn("[generate-reply] brain-before-generate failed:", conversationId, e instanceof Error ? e.message : e); return false; }),
+          new Promise<false>((r) => setTimeout(() => r(false), 25_000)),
+        ]);
+        if (ran) brainGatePre = await fetchReplyModeGate(conversationId);
+        console.log(JSON.stringify({ tag: "brain:before-generate", conversationId, ran, ms: Date.now() - t0, fresh: ran ? detectBrainTier(brainGatePre?.meta ?? null, lastCustAtPre).brainFreshForMessage : false }));
+      }
+    }
+    const brainGateRaw = brainGatePre;
     // 2026-09-26 時刻の線: DeepSeek に送る時は、線より前の発言を見て作ったブレインの判断・会話の方向は渡さない（T3 の扱いになる）
     const brainGate = deepseekCutActive ? cutBrainGate(brainGateRaw, deepseekCutoff) : brainGateRaw;
     const brainMeta = brainGate?.meta ?? null;
@@ -4073,6 +4102,9 @@ async function handleGenerateReply(req: NextRequest) {
           weDo: viewingAckLine(ledger.facts.viewingAppointment),
           forbid: "「ご都合よろしいお日にちに」「内覧の詳細については（改めて）ご連絡」・新しい日程の打診・住所の創作",
         }
+      // 2026-10-15 軸の直し④: 物件確認した の結果が全部 募集に出ていない時は、次の一手の見本（お気に召されましたら…ご案内）を渡さない
+      : a === "property_check_result" && aixDone?.checkAllUnavailable
+        ? { direction: UNAVAILABLE_ACK_DIRECTION, weDo: UNAVAILABLE_ACK_WEDO, forbid: UNAVAILABLE_ACK_FORBID }
       : AIX_ACTION_REPLY_DIRECTION[a];
 
     // ── 2026-09-16 竹内（𝒮 さん事例）「根本的な部分を、住所わかっている」────────────────────
@@ -4771,7 +4803,9 @@ async function handleGenerateReply(req: NextRequest) {
         `禁止：2行目の具体宣言の代わりに「ご条件に合ったお部屋」「全力でサポート」「お探しします」等の抽象語だけで済ませること（3行目の締めとしての伴走宣言は必須）／「新着あれば」「日々更新」等の受け身文／「本日中」「なるべく早く」等の時間約束／足りない条件の聞き返し（まず送る）／「〜をご希望ですね」の単体確認文／条件の実現可能性への言及（難しい・厳しい・少ない・可能性・かもしれません）／条件緩和・代替案の先回り提案（条件を1つ変えた場合・優先順位・妥協・〇〇未満まで広げる）／顧客の自己ヘッジ「難しいと思う」「あれば教えて」の復唱。エリア名と家賃表記は必ず原文どおり本文に埋め込むこと`;
     })();
     const effectiveReplyDirection: string | null = (() => {
-      if (checkAnsweredFollowUp) return `確認結果は直前の AIX で送り済み（この返信は続きの1通）。確認の約束・結果（募集中・募集終了）の繰り返しを書かず、次の一手を1文だけ添える（例:「${AIX_ACTION_REPLY_DIRECTION.property_check_result.weDo}」）。20〜80字`;
+      if (checkAnsweredFollowUp) return aixDone?.checkAllUnavailable
+        ? `確認結果（募集に出ていない）は直前の AIX で送り済み（この返信は続きの1通）。確認の約束・結果の繰り返しを書かず、受け＋何卒で閉じる（例:「${UNAVAILABLE_ACK_WEDO}」）。内覧・申込に誘わない。20〜60字`
+        : `確認結果は直前の AIX で送り済み（この返信は続きの1通）。確認の約束・結果（募集中・募集終了）の繰り返しを書かず、次の一手を1文だけ添える（例:「${AIX_ACTION_REPLY_DIRECTION.property_check_result.weDo}」）。20〜80字`;
       if (isConditionPresented) return conditionDirection;
       if (isViewingCancel) return "内覧キャンセルの受け止め（50〜100字）。開口語は「かしこまりました！！」（単独行）。謝罪・残念語禁止。「またご都合の良い日がございましたらいつでもお申し付けください」の1文で別日を軽く開放するのみ。物件追加提案・申込誘導禁止";
       if (negativeDetail.kind === "withdrawal") return "顧客自身の断り・キャンセルの受け止め（50〜110字）。開口語は「かしこまりました！！」（単独行）。2行目「またお部屋探しの際はいつでもお気軽にご連絡ください😊！！」で扉を開け、3行目「この度はありがとうございました！！」で締める。謝罪禁止・「申し訳ございません」「残念ながら」等のネガティブ語禁止・引き留め提案（他にもオススメ〜）禁止・「かしこまりました！！」単独終了禁止";
@@ -5367,7 +5401,9 @@ async function handleGenerateReply(req: NextRequest) {
       //   会社として答えが決まっている事（店舗の有無・緊急連絡先のルール・キャンセルできる時期）を
       //   AI が知らずに作文していた。聞かれた時だけ確実に渡す。詳細は app/lib/company-facts.ts
       //   ⚠ 物件・保証会社によって変わる事は入れない（竹内「物件によって保証会社に違いあるから適当に答えない」）
-      const companyFacts = buildCompanyFactsNote(message, { account: convAccount }) + brandCostOverrideNote(convAccount);   // 10/08 Q11・Q-C ブランド別
+      // 2026-10-15 軸の直し: ブレインの「何について」で会社の事実の材料を選ぶ（内覧当日の駐車場＝car_visit・物件の駐車場の空き＝渡さない）
+      const tcAbouts = turnContract?.source === "brain" ? turnContract.asks.map((a) => a.axis?.about).filter((x): x is NonNullable<typeof x> => !!x) : [];
+      const companyFacts = buildCompanyFactsNote(message, { account: convAccount, abouts: tcAbouts }) + brandCostOverrideNote(convAccount);   // 10/08 Q11・Q-C ブランド別
       if (companyFacts) lines.push(companyFacts.trim());
       // 2026-10-02 ⑫ 竹内さん「相場の知識は物件検索ブレインからもらう形」: ブレインがこの発言で受けた相場の材料（meta.rent_market・
       //   物件検索のブレインの1つの元 area-rent-server から）。このメッセージについての材料なので fresh の時だけ使う。数字は材料の文の物だけ
@@ -5385,7 +5421,7 @@ async function handleGenerateReply(req: NextRequest) {
       //   ブロックの中で「必ず答える」と書くだけでは弱く、3回中1回しか直らなかった。
       //   → **必ず含める内容そのものに足す**（同じ強さにする。受け止めとは両立するので打ち消し合わない）。
       //   実データでは 2.0%（120日で48件）と少ないが、自動返信では事故になる場面。
-      const factTopics = buildCompanyFactsNote(message, { account: convAccount })
+      const factTopics = buildCompanyFactsNote(message, { account: convAccount, abouts: tcAbouts })
         ? [`お客様が聞いている会社の事実（上の【🏢】の内容）への直接の回答`]
         : [];
       // 10/15: 了承の返事の番は前の約束の中身（確認・見積・ピックアップの進行）を必ず含める内容から外す（ack_form と書けと書くなを並べない）

@@ -82,7 +82,7 @@ const TOPIC_RE: Array<[RequestTopic, RegExp]> = [
   ["contract", /礼金|敷金|保証会社|管理会社|更新料|フリーレント|仲介手数料|契約/],
 ];
 /** 依頼・質問の形（文の終わり・決まった言い方） */
-const ASK_RE = /[？?]|(?:行き|見|伺い|内見し|内覧し)たいです|(?:ます|です|でしょう|ません|ません|ある|いける|行ける|できる|出来る)か(?:ね|な)?[。！!〜…\s]*$|教えて|おしえて|知りたい|欲しい|ほしい|頂け(?:ます|ません)|いただけ(?:ます|ません)|もらえ(?:ます|ません)|(?:可能|大丈夫)(?:です|でしょう)?か|ください|下さい|お願い(?:します|致します|いたします|できますか)/;
+const ASK_RE = /[？?]|(?:行き|見|伺い|内見し|内覧し)たいです|(?:ます|です|でしょう|ません|ません|ある|いける|行ける|できる|出来る)か(?:ね|な)?[。、,！!〜…\s]*$|教えて|おしえて|知りたい|欲しい|ほしい|頂け(?:ます|ません)|いただけ(?:ます|ません)|もらえ(?:ます|ません)|(?:可能|大丈夫)(?:です|でしょう)?か|ください|下さい|お願い(?:します|致します|いたします|できますか)/;
 /** 懸念（審査が不安・高い 等）＝質問の形でなくても項目にする */
 const CONCERN_RE = /厳しい|不安|心配|無理かも|難しいかも|通らない|高い(?:です|な|かも)/;
 /** 依頼でも質問でもない定型（お礼・了承・締め） */
@@ -151,10 +151,11 @@ export function splitRequests(bundle: ReadonlyArray<string>, saidAt: string): Re
       if (!isAsk && !isConcern) continue;
       const topic = topicOf(s);
       // 「よろしくお願いします」を含むだけの文・中身の種類が無いお願い（「お願いします🙇」）は項目にしない
-      if (topic === "other" && !/[？?]|か[。！!]*$|教えて|おしえて|知りたい/.test(s)) continue;
+      // 2026-10-15: 「〜安いですかね、」の読点で終わる問い（58ae93f3 紗季さん）も問いと読む
+      if (topic === "other" && !/[？?]|か(?:ね|な)?[。、,！!]*$|教えて|おしえて|知りたい/.test(s)) continue;
       const quote = s.slice(0, 60);
       if (out.some((x) => x.quote === quote)) continue;
-      out.push({ quote, topic, route: routeOf(topic), saidAt, kind: isConcern ? "concern" : /[？?]|か(?:ね|な)?[。！!〜…\s]*$/.test(s) ? "question" : "request", ...(DEFERRED_RE.test(s) ? { deferred: true } : {}) });
+      out.push({ quote, topic, route: routeOf(topic), saidAt, kind: isConcern ? "concern" : /[？?]|か(?:ね|な)?[。、,！!〜…\s]*$/.test(s) ? "question" : "request", ...(DEFERRED_RE.test(s) ? { deferred: true } : {}) });
     }
   }
   if (brought > 0 && !out.some((x) => x.topic === "vacancy" || x.topic === "cost")) {

@@ -27,6 +27,21 @@ export function unavailableReportOf(staffText: string | null | undefined): boole
 
 /** 気に入って頂いた時の内覧・申込の誘いの1文（扉の文）。あればその文を返す */
 const INVITE_RE = /(?:お気に召され|気に入られ|お気に入り(?:頂|いただ)け)[^。！!\n]{0,40}(?:ご?案内|ご?内覧|お?申込|お?申し込み|抑え|押さえ)|ご都合(?:よろしい|の良い|のよい)お日にち/;
+/**
+ * 2026-10-15 軸の直し④（axis-brain-1015）: 物件確認した の結果が全部 unavailable の時、その後のお礼・続きの番の「次の一手の見本」を
+ *   aix-taxonomy の weDo（お気に召されましたら…ご案内）ではなく、受け＋何卒にする（指すお部屋が無い）。
+ *   記録（aix_usage_logs）の prop_statuses が全部 unavailable／物件1件で check_pattern=unavailable／記録の文が募集に出ていない報告だけ のどれか。
+ */
+export const UNAVAILABLE_ACK_WEDO = "はい😊！！何卒よろしくお願い致します！！";
+export const UNAVAILABLE_ACK_DIRECTION = "物件確認の結果は【募集に出ていない】（直前の AIX で報告済み・新着のお約束も送り済みなら繰り返さない）。お礼・了承には受け＋何卒で短く閉じる";
+export const UNAVAILABLE_ACK_FORBID = "内覧・申込の誘い（「お気に召されましたら」「ご都合よろしいお日にち」「ご案内させて頂きます」）／募集に出ていないお部屋の話を続ける事／新着の約束の言い直し";
+export function checkResultAllUnavailable(log: { aix_type?: string | null; check_pattern?: string | null; prop_statuses?: ReadonlyArray<string | null> | null; generated_text?: string | null } | null | undefined): boolean {
+  if (!log || log.aix_type !== "property_check_result") return false;
+  const st = (log.prop_statuses ?? []).map((s) => String(s ?? "").toLowerCase()).filter(Boolean);
+  if (st.length) return st.every((s) => s === "unavailable");
+  if ((log.check_pattern ?? "") === "unavailable") return true;
+  return unavailableReportOf(log.generated_text ?? null);
+}
 export function inviteSentenceOf(text: string | null | undefined): string | null {
   const t = N(text);
   for (const s of t.split(/\n|(?<=[!！。])(?![!！])/)) if (INVITE_RE.test(s)) return s.trim();
