@@ -1,0 +1,10 @@
+{
+  "title": "ブレインの穴は自分で見つける — 週1回、本番の番から『ブレインが足りなかった番』を集め、原因の型（軸・状況・知識・材料・決まりの上書き・要確認）に分けて数と前の週との差を出す（LLM なし・$0）",
+  "category": "ai_design",
+  "priority": 1,
+  "insight": "2026-10-15 竹内さん「ブレインを強化するのが質を上げるために最重要。足りていない部分を見つけられるようにする。隙のない精度の高い考えができるために」（97ea82f3）。スクショを待たずに穴を集める: app/lib/brain-gap-finder.ts（純関数）＋brain-gap-finder-server.ts（DB を読むだけ）。集める番＝line_watch_turns の判定から ①下書きを直して送った（文の判定 partial/different）②下書きなしで手で打った ③最終チェックの取りこぼし系（MISSED_QUESTION・CONCERN_UNADDRESSED・STAFF_REQUEST_OMITTED）が残った ④ブレインの判断と実送信の食い違い（aix_other・aix_but_text・text_but_aix 等）＋確認事項（request-ledger）の48時間以上の未対応・完了の後の問い直し＋初回の持ち込みで『最大限割引した初期費用の御見積書』が無い下書き。原因の型は決定論の手がかりだけ: 決まりの上書き＝digest の ds が rule:/correction: で LLM の AIX（la）と最終（aix）が違う・demoted_overrides・出口の削り／軸＝送った物件への反応（予算オーバー）・内覧当日の駐車場・ペット可を外す・物件の取り違え／状況＝2番手の申込・募集なしの後の誘い・完了の判定が早い／材料＝送った資料・会社の事実があるのに約束に倒れた／知識＝会社の事実・業界の語に無い話題で約束・手で答えた。文がスタッフと同じ番は中身の型に数えない。お客様の文は画像の読み・条件の様式・申込の様式・URL を外した本人の言葉だけで見る（誤爆と個人情報を避ける）。turn_contract の about/property/when/whose（brain-merge-1015）が本番に入ったら、その値と今日の型を照らす（axis）。申込の後でブレインを回さない番（no_brain×申込中・審査中）は穴に数えない。",
+  "rationale": "10/15 本番7日（番 216・穴のある番 151）: 決まりがブレインを上書き 21（前の週 3・+18・rule:two_stage_promise(pickup_unless_ack) 11）／状況 10（2番手の申込 9）／材料 8（送った資料で答えられる 4・会社の事実があるのに 3）／知識 4（繁忙期・仲介手数料・持ち込みの見積の一言）／軸 2（予算オーバー＝送った物件への反応・物件の取り違え）／要確認 106（ブレインが走っていない番 33・返信か AIX か text_but_aix 21・下書きなし 9）。手で打った番が 20→57 に増えた。今日の型: 駐車場 1・洗面台 1・確認済みの判定 1・予算オーバー 1・ペット 3・繁忙期 2・2番手 11 を拾えた／申込の帯・募集なしの後の誘いは 0（画面の帯は番の記録に無い・10/15 の番は夜の判定の前）",
+  "context": "ブレインの強化の作業の始め（何から直すか）・毎週月曜の見張りの結果を読む時・スクショで違和感が届いた時に同じ型が何件あるか数える時",
+  "applied_to": "app/lib/brain-gap-finder.ts・app/lib/brain-gap-finder-server.ts・scripts/brain-gap-finder.ts（--days --list --kind --cause --tag）・/api/cron/reading-audit-weekly（cron_run_logs の brain-gap-finder・月曜 JST 9:40）。戻す BRAIN_GAP_FINDER=off",
+  "tags": ["ブレイン", "最優先", "穴を見つける", "ブレイン診断", "見張り", "竹内さんの決定", "LLMなし", "場面:その他"]
+}
