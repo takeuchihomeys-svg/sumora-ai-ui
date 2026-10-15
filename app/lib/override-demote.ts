@@ -159,6 +159,20 @@ export function brainContractSaysDirectPropertyAix(raw: unknown, finalAix: strin
 }
 
 /**
+ * 2026-10-15（q153）: ブレインが AIX の欄を空にしたまま、turn_contract で「お部屋をピックアップしてお送りする」約束（route=promise）を言った番。
+ *   探す条件の話（about=search_condition）か送った物件への反応（reaction_to_sent）の依頼で、約束の中身が探す・送る（見積・確認でない）時だけ。
+ *   brain-core はこの時、2段（ピックアップの約束の返信→後で物件の AIX）に乗せる＝ブレインの約束を道に通す（語の網ではなくブレインの route と about で決める）。
+ *   戻す: BRAIN_PROMISE_PICKUP=off
+ */
+export function brainContractPromisesPickup(raw: unknown, env: Env = process.env): boolean {
+  if ((env.BRAIN_PROMISE_PICKUP ?? "").trim().toLowerCase() === "off") return false;
+  const asks = raw && typeof raw === "object" && Array.isArray((raw as { asks?: unknown }).asks) ? (raw as { asks: Array<Record<string, unknown>> }).asks : [];
+  return asks.some((a) => a?.route === "promise" && (a?.about === "search_condition" || a?.about === "reaction_to_sent")
+    && /ピックアップ|探し|探す|(?:お部屋|物件)[^。\n]{0,12}(?:お送り|送り|送る|ご紹介)/.test(String(a?.answer ?? ""))
+    && !/見積|確認/.test(String(a?.answer ?? "")));
+}
+
+/**
  * 2026-10-13 棚卸しの表 2（作る人・2段の約束をブレイン基準に）:
  *   ブレインが同じ出力の turn_contract で「この番は約束をしない」（約束の項目も AIX の項目も無く、閉じる番 close_only か、答える・触れないだけ）と
  *   言っている時、2段の規則（物件・確認・見積の AIX → 約束の返信）は上書きしない（食い違いは demoted_overrides に記録）。

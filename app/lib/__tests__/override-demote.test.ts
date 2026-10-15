@@ -1,6 +1,6 @@
 // app/lib/__tests__/override-demote.test.ts — 2026-10-13 決定論の上書きを材料＋食い違いのログに下げる
 //   実行: npx tsx app/lib/__tests__/override-demote.test.ts
-import { overrideDemoted, applyOverride, compactDemoted, DEMOTE_ENV, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "../override-demote";
+import { overrideDemoted, applyOverride, compactDemoted, DEMOTE_ENV, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractPromisesPickup, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, type DemotedOverride } from "../override-demote";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 
@@ -45,4 +45,13 @@ t("BRAIN_DEMOTE_VIEWING_DAY_ACK=off で戻す", !overrideDemoted("viewing_day_ac
 t("BRAIN_DEMOTE_CLOSED_ACK=off で戻す", !overrideDemoted("closed_ack_wait", { BRAIN_DEMOTE_CLOSED_ACK: "off" }) && overrideDemoted("closed_ack_wait", {}));
 
 console.log(`\n${pass} pass / ${fail} fail`);
-if (fail) process.exit(1);
+if (fail) process.exit(1);// 2026-10-15（q153）: ブレインが AIX を空にしてピックアップの約束（route=promise）を言った番
+t("約束（送った物件への反応・ピックアップして送る）→ true", brainContractPromisesPickup({ asks: [{ route: "promise", about: "reaction_to_sent", answer: "予算10万円以内の物件を再度ピックアップして送ります" }] }, {}));
+t("約束（探す条件・お部屋をお送り）→ true", brainContractPromisesPickup({ asks: [{ route: "promise", about: "search_condition", answer: "ペット可を外したお部屋をお送りする" }] }, {}));
+t("確認・見積の約束・返信・about 無しは false", !brainContractPromisesPickup({ asks: [{ route: "promise", about: "vacancy", answer: "募集状況を確認する" }] }, {})
+  && !brainContractPromisesPickup({ asks: [{ route: "promise", about: "reaction_to_sent", answer: "御見積書をお送りする" }] }, {})
+  && !brainContractPromisesPickup({ asks: [{ route: "reply", about: "search_condition", answer: "ピックアップします" }] }, {})
+  && !brainContractPromisesPickup({ asks: [{ route: "promise", answer: "ピックアップします" }] }, {}));
+t("BRAIN_PROMISE_PICKUP=off で false", !brainContractPromisesPickup({ asks: [{ route: "promise", about: "search_condition", answer: "ピックアップします" }] }, { BRAIN_PROMISE_PICKUP: "off" }));
+
+

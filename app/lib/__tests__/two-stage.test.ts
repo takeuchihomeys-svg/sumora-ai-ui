@@ -1,5 +1,5 @@
 // app/lib/__tests__/two-stage.test.ts — 2026-10-02 竹内さんの決定「2段の場面: 先に約束の返信・後で AIX」（実行: npx tsx app/lib/__tests__/two-stage.test.ts）
-import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, conditionChangedThisTurn } from "../two-stage";
+import { resolveTwoStage, TWO_STAGE_WORDING, twoStageOtherQuestions, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, conditionChangedThisTurn, promiseKindsToday } from "../two-stage";
 import { resolveStaffPromiseAix } from "../aix-task-link";
 import { classifyStaffTextFacts } from "../action-ledger";
 let pass = 0, fail = 0;
@@ -137,4 +137,12 @@ t("軸: about=vacancy は「空いて」の語が無くても募集状況の約�
 { const prev = process.env.TWO_STAGE_AXIS; process.env.TWO_STAGE_AXIS = "off";
   t("軸: TWO_STAGE_AXIS=off は語の網（「どうですか？」は聞かれた事への答え）", resolveTwoStage({ ...base, finalAix: "property_check_result", customerText: "こちらどうですか？", askAbout: "vacancy" })?.source === "rule:two_stage_promise(check_question)");
   if (prev === undefined) delete process.env.TWO_STAGE_AXIS; else process.env.TWO_STAGE_AXIS = prev; }
-console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);
+console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);// 2026-10-15（q155）: 今日の約束のうち、後で果たした物（御見積書を送った・確認の結果を伝えた）は「同じ件の2通目」に数えない
+{ const now = Date.parse("2026-10-15T07:00:00+09:00"); const at = (h: number) => new Date(now - h * 3600_000).toISOString();
+  t("今日の見積の約束を後で果たした（初期費用：〇〇円の束）→ 数えない", JSON.stringify(promiseKindsToday([{ text: "初期費用確認出来次第、最大限割引させていただいたお見積書お送りさせていただきます！！", createdAt: at(4) }, { text: "【〇〇】初期費用さらに🌟68,000円割引させて頂き 初期費用：274,965円", createdAt: at(3.9) }], now)) === "[]");
+  t("今日の見積の約束がまだ果たされていない → 数える", JSON.stringify(promiseKindsToday([{ text: "最大限割引させていただいたお見積書作成しお送りさせて頂きます！！", createdAt: at(2) }], now)) === '["estimate"]');
+  t("今日の確認の約束の後に確認の結果を伝えた → 数えない", JSON.stringify(promiseKindsToday([{ text: "募集状況確認させていただきます！！確認出来次第ご連絡させて頂きます！！", createdAt: at(3) }, { text: "管理会社に確認しましたところ、現在募集中です！！", createdAt: at(2) }], now)) === "[]");
+  const prev = process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY; process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY = "off";
+  t("TWO_STAGE_SAME_DAY_OPEN_ONLY=off は前の形（果たしても数える）", JSON.stringify(promiseKindsToday([{ text: "最大限割引させていただいたお見積書作成しお送りさせて頂きます！！", createdAt: at(4) }, { text: "初期費用：274,965円", createdAt: at(3.9) }], now)) === '["estimate"]');
+  if (prev === undefined) delete process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY; else process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY = prev; }
+

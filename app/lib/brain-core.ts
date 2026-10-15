@@ -22,7 +22,7 @@ import { sanitizeAfterAixTemplate } from "@/app/lib/post-aix-template-rec";
 import { currentPropertyExists, refineCurrentProperty, currentPropertiesOf } from "@/app/lib/current-property-gate";
 // 2026-10-13 竹内さん（ブレインの使い残し 4）: 決定論の上書きを「ブレインへの材料＋食い違いのログ」に下げる（家族ごとに戻す環境変数）
 import { ackFormBrainEnabled, ackFormFacts, ackFormMaterialLine } from "@/app/lib/repeat-brain-align";
-import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, staffPromiseMaterialLine, samePromiseFamily, isPromiseNudge, type DemotedOverride } from "@/app/lib/override-demote";
+import { applyOverride, addDemoted, compactDemoted, overrideDemoted, pickupReadyMaterialLine, brainContractSaysDirectPropertyAix, brainContractPromisesPickup, brainContractRejectsPromise, twoStageSourceDemotable, rawContractRouteDigest, closedAckMaterialLine, viewingDayAckMaterialLine, pickupPromiseOpen, directPropertyNeedsPromise, staffPromiseMaterialLine, samePromiseFamily, isPromiseNudge, type DemotedOverride } from "@/app/lib/override-demote";
 import {
   AIX_STAFF_NOTES,
   AIX_BUTTON_LABELS,
@@ -153,11 +153,11 @@ import { isViewingDayNotice } from "@/app/lib/reply-subscene";
 // 2026-09-16 竹内（慶次事例）: 「AIX か返信か」の2択をセットする場面の判定
 import { resolveTwoChoice } from "@/app/lib/two-choice";
 import { searchResultAltActions, SEARCH_RESULT_CHOICE_NOTE, PROPERTY_AIX } from "@/app/lib/search-result-choice";
-import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine } from "@/app/lib/ack-exhausted-reply";
+import { ackAfterPromiseReplyEnabled, ackAfterPromiseDirection, exhaustedConditionAddTurn, EXHAUSTED_CONDITION_DIRECTION, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPromiseBrainEnabled, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled } from "@/app/lib/ack-exhausted-reply";
 import { applySearchSplit, splitReplyToAix, splitMaterialLine, splitFinalAlts, zenryokuCandidateMaterial, zenryokuCandidateTurn, llmAixRestorable, zenryokuShown, searchSplitNote, isSearchSplitTurn, searchSplitServerEnabled, SEARCH_SPLIT_EXHAUSTED_NOTE, SEARCH_SPLIT_DIRECTION } from "@/app/lib/search-result-split";
 import { searchExhausted, applySearchExhausted, exhaustedMaterialLine, weakExhaustDemoted, searchExhaustedEnabled } from "@/app/lib/search-exhausted";
 import { turnRouteGuardsEnabled, notPickupTurn, viewingInviteToReply, textWithoutImages, placeMentioned, onlineViewingAck, estimateToReply, guarantorAsCondition } from "@/app/lib/turn-route-guards";
-import { BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract } from "@/app/lib/turn-contract";
+import { BRAIN_TURN_CONTRACT_FIELD, BRAIN_TURN_CONTRACT_RULES, normalizeBrainTurnContract, reconcileTurnContractWithAix, exhaustContract, turnContractAxisEnabled } from "@/app/lib/turn-contract";
 /** 2026-10-08 本質の仕様（turn-contract.ts）をブレインに出させるか。戻す TURN_CONTRACT_BRAIN=off（出力・指示を足さない＝静的 system も旧に戻る） */
 // 2026-10-13 棚卸しの表14: avoid_topics に「来阪」を必ず入れるか。既定は今まで通り入れる（試験で q108 が悪くなり、切り分けられなかった＝案）。BRAIN_RAIHAN_SLOT=off で入れない（返信側の固定の決まりで止める）
 // 2026-10-14 区切り4 #7: 来阪は avoid_topics の枠に固定しない（返信側の固定の決まりで止めている・竹内さんの実送信に来阪 0）。旧に戻す BRAIN_RAIHAN_SLOT=on
@@ -3951,6 +3951,15 @@ ${history}`;
       finalAix = "property_check_result";
       decisionSource = decisionSource ? `${decisionSource}+ack_to_check` : "correction:ack_to_check";
     }
+    // 2026-10-15（q153）: ブレインが AIX の欄を空にしたまま turn_contract で「お部屋をピックアップしてお送りする」約束（route=promise・探す条件／送った物件への反応）を
+    //   言った番は、その約束を2段（約束の返信→後で物件の AIX）に通す。規則が何も変えていない番（decisionSource 無し）・お礼だけでない番だけ。戻す BRAIN_PROMISE_PICKUP=off
+    if (!finalAix && decisionSource === null && !promiseAix && !isPostApplyStatus(convStatus)
+      && !(customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")))
+      && brainContractPromisesPickup((parsed as { turn_contract?: unknown }).turn_contract)) {
+      console.log(JSON.stringify({ tag: "brain:contract-promise-pickup", conversationId }));
+      finalAix = "property_send";
+      decisionSource = "brain:contract_promise_pickup";
+    }
     let twoStage: TwoStageVerdict | null = null;
     let pickupReadyForChoice: boolean | null = null; // 10/08 検索の結果で選ぶ2択（search-result-choice.ts）に渡す
 
@@ -4752,13 +4761,16 @@ ${history}`;
     const replyCondTurn = !finalAix && !twoStagePickupNow && !promiseAix && /^(?:equip_add|rent_change|layout_change|pickup_request|multi)$/.test(String(conditionChangeType ?? ""));
     // 10/09 試験の分解⑥（q024）: お礼・了承だけの番は出し切りの振り替えをしない（約束の後のお礼は黙って果たす・閉じる番）
     const ackOnlyNow = customerAckAfter || isAckOnlyTurn(unrepliedTurn.text ?? "");
+    // 2026-10-15 軸（q153・q154）: ブレインの依頼の軸（about・polarity）。ゆるめた番は出し切りの取り消し・条件の足しの判定はこれで（EXHAUSTED_CONDITION_AXIS=off で旧）
+    const exhAxisAsks = turnContractAxisEnabled() ? ((normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract)?.asks ?? []) as Array<{ about?: string | null; polarity?: string | null }>) : [];
+    const brainRelaxedNow = exhaustedConditionAxisEnabled() && exhAxisAsks.some((a) => a.about === "search_condition" && (a.polarity === "relax" || a.polarity === "remove"));
     if (((finalAix && PROPERTY_AIX.has(finalAix)) || twoStagePickupNow || replyCondTurn) && !ackOnlyNow) {
       const exh = searchExhausted(
         brainLedgerInput.messages.filter((m) => !!m.createdAt).map((m) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt as string, isAix: m.isAix ?? null })),
         {
           // 10/09 試験（q006 q007）: 絞り込み（設備の追加・エリアを狭める）は出し切ったまま。広げた時だけ（condition_relax・広げる言い方は searchExhausted の中で読む）
           // 10/09 試験 q036（審査落ちの後の「保証会社はクレカ系は控えたい」）: 保証会社の種類の条件は新しい条件で探し直す番（出し切りでない）。戻す EXHAUSTED_GUARANTOR_CONDITION=off
-          conditionChangedThisTurn: conditionChangeType === "condition_relax"
+          conditionChangedThisTurn: conditionChangeType === "condition_relax" || brainRelaxedNow
             || ((process.env.EXHAUSTED_GUARANTOR_CONDITION ?? "").toLowerCase() !== "off" && turnRouteGuardsEnabled() && guarantorAsCondition(turnTextNoImg)),
           pickupReady: pickupReadyForChoice,
           placeMentioned: turnRouteGuardsEnabled() && !!placeMentioned(turnTextNoImg),
@@ -4770,7 +4782,7 @@ ${history}`;
       const weakOnly = exh.exhausted && exh.strength === "weak" && weakExhaustDemoted();
       // 2026-10-14 竹内さんの決定: 出し切った後に条件を足した・言い直した番は左右のボタンではなく返信で締める（新着が出次第お送りする約束）。戻す EXHAUSTED_CONDITION_REPLY=off
       // 2026-10-14 ブレイン基準に（EXHAUSTED_CONDITION_BRAIN・既定は ack-exhausted-reply の EXHAUSTED_CONDITION_BRAIN_DEFAULT）: ブレイン自身が物件の AIX を選んだ番は上書きしない（食い違いを記録）
-      const exhCondTurn = exhaustedConditionAddTurn({ conditionChangeType, exhausted: exh.exhausted && !weakOnly && !isPostApplyStatus(convStatus), ackOnly: ackOnlyNow });
+      const exhCondTurn = exhaustedConditionAddTurn({ conditionChangeType, exhausted: exh.exhausted && !weakOnly && !isPostApplyStatus(convStatus), ackOnly: ackOnlyNow, axisAsks: exhAxisAsks });
       const llmRawPropertyAix = (() => { const a = normalizeAixActionKey(parsed.aix) ?? null; return !!a && PROPERTY_AIX.has(a); })();
       if (exhCondTurn && exhaustedConditionBrainEnabled() && llmRawPropertyAix) {
         addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:exhausted_condition_reply", would: null, brain: normalizeAixActionKey(parsed.aix) ?? null });

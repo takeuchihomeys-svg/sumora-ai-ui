@@ -30,9 +30,31 @@ export function ackAfterPromiseDirection(kind: string, laterAix: string | null):
 }
 
 /** 出し切った後に条件を足した・言い直した番か（ブレインの condition_change_type で読む。広げる＝condition_relax・物件を送ってほしい＝pickup_request は外す） */
-export function exhaustedConditionAddTurn(o: { conditionChangeType: string | null | undefined; exhausted: boolean; ackOnly: boolean; env?: Env }): boolean {
+export function exhaustedConditionAddTurn(o: { conditionChangeType: string | null | undefined; exhausted: boolean; ackOnly: boolean; env?: Env;
+  /** 2026-10-15 軸（q153・q154）: ブレインの turn_contract の依頼の軸（about・polarity）。あればこれで決める（condition_change_type は旧の網） */
+  axisAsks?: ReadonlyArray<{ about?: string | null; polarity?: string | null }> | null }): boolean {
   if (!exhaustedConditionReplyEnabled(o.env) || !o.exhausted || o.ackOnly) return false;
-  return /^(?:equip_add|rent_change|layout_change|area_change|multi)$/.test(String(o.conditionChangeType ?? ""));
+  if (!/^(?:equip_add|rent_change|layout_change|area_change|multi)$/.test(String(o.conditionChangeType ?? ""))) return false;
+  // 軸がある時はブレインの「何について・向き」で決める（EXHAUSTED_CONDITION_AXIS=off で前の形）:
+  //   ゆるめた・外した（relax・remove）＝新しい条件ではまだ探していない＝出し切りの外（竹内さん Q4「広がった時は除く」・q154「ペット可じゃなくてもいい」→改めてピックアップ）
+  //   探す条件の依頼が無い（送った物件への反応「予算オーバー」等・登録の条件は変わっていない）＝条件を足した番ではない（q153 →今の条件でお送りする約束）
+  const axis = (o.axisAsks ?? []).filter((a) => !!a && !!a.about);
+  if (exhaustedConditionAxisEnabled(o.env) && axis.length) {
+    if (axis.some((a) => a.polarity === "relax" || a.polarity === "remove")) return false;
+    if (!axis.some((a) => a.about === "search_condition")) return false;
+  }
+  return true;
+}
+/** 出し切りの後の条件の足しをブレインの軸（about・polarity）で決めるか（既定 on・EXHAUSTED_CONDITION_AXIS=off で condition_change_type だけ） */
+export function exhaustedConditionAxisEnabled(env: Env = envOf()): boolean {
+  return (env.EXHAUSTED_CONDITION_AXIS ?? "").trim().toLowerCase() !== "off";
+}
+/** 材料の行の範囲の1文（足した・絞った番だけ。ゆるめた番・送った物件への反応の番は外＝理由つき） */
+function exhaustedConditionScope(env: Env): string {
+  return exhaustedConditionAxisEnabled(env)
+    ? "ただし、条件をゆるめた・外した・広げた番（「〇〇じゃなくてもいい」・家賃を上げる・エリアを広げる）は新しい条件ではまだ探していない＝出し切りの外で、竹内さんはゆるめた条件で改めてピックアップしてお送りする約束にする。"
+      + "送った物件への反応（「予算オーバー」「ここは無理」等）で登録の条件が変わっていない番も条件を足した番ではない＝今の条件でお部屋をお送りする約束にする"
+    : "";
 }
 
 export const EXHAUSTED_CONDITION_DIRECTION = "今の条件のお部屋は出し切った後にお客様が条件を足した・言い直した番＝返信で締める: 足した条件を受け止め（お詫びには一言）、その条件も含めて新着状況を随時確認し、募集に出次第お送りする約束で閉じる（改めてピックアップとは言わない・物件の AIX や全力サポートのボタンにしない）";
@@ -40,7 +62,7 @@ export const EXHAUSTED_CONDITION_DIRECTION = "今の条件のお部屋は出し�
 /** LLM の前の材料（出し切りの印がある番だけ・splitMaterialLine に足す） */
 export function exhaustedConditionMaterial(env: Env = envOf()): string {
   return exhaustedConditionReplyEnabled(env)
-    ? "（竹内さんの決定 10/14: 出し切った後にお客様が条件を足した・言い直した番は、左右のボタンではなく返信で締める＝足した条件を受け止め、新着が出次第お送りする約束で閉じる。左右の形は「もっと送って・他にあるか・新着」の物件を探す番だけ）"
+    ? `（竹内さんの決定 10/14: 出し切った後にお客様が条件を足した・言い直した番は、左右のボタンではなく返信で締める＝足した条件を受け止め、新着が出次第お送りする約束で閉じる。左右の形は「もっと送って・他にあるか・新着」の物件を探す番だけ。${exhaustedConditionScope(env)}）`
     : "";
 }
 
@@ -63,7 +85,7 @@ export function exhaustedConditionTurnLine(env: Env = envOf()): string {
   if (!exhaustedConditionReplyEnabled(env)) return "";
   return "【今の番（材料・竹内さんの決定 10/14）】この会話には「今の条件のお部屋は出し切った」印がある。お客様の今の発言が条件を足した・言い直した（設備・家賃・間取り・エリアを変えた）番なら、"
     + "竹内さんは物件の AIX（物件ピックアップした）も全力サポートのボタンも出さず、返信で締める＝足した条件を受け止め、その条件も含めて新着を随時確認し出次第お送りする約束で閉じる（aix は null・reply_mode は auto_reply）。"
-    + "「もっと送って・他にあるか・新着は」の物件を探す番だけは物件の AIX と全力サポートの左右";
+    + "「もっと送って・他にあるか・新着は」の物件を探す番だけは物件の AIX と全力サポートの左右。" + exhaustedConditionScope(env);
 }
 
 /** LLM の前の材料（約束が残っている番の行に足す） */

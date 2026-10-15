@@ -226,16 +226,24 @@ export function promiseKindsToday(staffMsgs: ReadonlyArray<{ text: string | null
   const day = (ms: number) => Math.floor((ms + 9 * 3600_000) / 86_400_000);
   const today = day(nowMs);
   const out = new Set<TwoStageKind>();
-  for (const m of staffMsgs) {
-    const at = Date.parse(m.createdAt);
-    if (!Number.isFinite(at) || day(at) !== today || at > nowMs) continue;
-    const t = String(m.text ?? "").normalize("NFKC");
-    if (TODAY_ESTIMATE_RE.test(t)) out.add("estimate");
-    if (TODAY_CHECK_RE.test(t)) out.add("check");
-    if (TODAY_PICKUP_RE.test(t)) out.add("pickup");
+  // 2026-10-15（q155）: 「同じ件」＝今日の約束がまだ続いている物だけ。後のこちらの送信で果たした約束（御見積書を送った・確認の結果を伝えた）は数えない
+  //   （別の物件の見積の約束を1分後に果たした日に、お客様が新しい物件の URL を送った番が「2通目」と読まれ、確認の約束を飛ばして AIX になっていた）。
+  //   戻す TWO_STAGE_SAME_DAY_OPEN_ONLY=off
+  const openOnly = typeof process === "undefined" || (process.env?.TWO_STAGE_SAME_DAY_OPEN_ONLY ?? "").toLowerCase() !== "off";
+  const timed = staffMsgs.map((m) => ({ at: Date.parse(m.createdAt), t: String(m.text ?? "").normalize("NFKC") })).filter((m) => Number.isFinite(m.at) && m.at <= nowMs);
+  const fulfilledAfter = (at: number, re: RegExp) => openOnly && timed.some((m) => m.at > at && re.test(m.t));
+  for (const m of timed) {
+    if (day(m.at) !== today) continue;
+    if (TODAY_ESTIMATE_RE.test(m.t) && !fulfilledAfter(m.at, ESTIMATE_DELIVERED_RE)) out.add("estimate");
+    if (TODAY_CHECK_RE.test(m.t) && !fulfilledAfter(m.at, CHECK_REPORTED_RE)) out.add("check");
+    if (TODAY_PICKUP_RE.test(m.t)) out.add("pickup");
   }
   return [...out];
 }
+/** 御見積書を送った（金額つきの見積の束・「御見積書となります」・「お見積書お送りさせて頂きました」の過去形。打ち間違い「いたままきました」も） */
+const ESTIMATE_DELIVERED_RE = /初期費用[:：]\s*[0-9０-９][0-9０-９,，]*円|(?:御|お)見積(?:書|もり)?(?:と|に)なります|(?:御|お)見積(?:書|もり)?[^\n。！!？?]{0,12}(?:お送り|送ら)させて[^\n。！!？?]{0,6}ました/;
+/** 確認の結果を伝えた（「確認しましたところ」「確認が取れました」「募集中です／募集終了となって」） */
+const CHECK_REPORTED_RE = /確認(?:致し|いたし|させて(?:頂|いただ)き)?ましたところ|確認(?:が)?取れました|(?:募集中|空室|募集終了|募集が終了)(?:です|でした|となって|との事|とのこと)/;
 function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   const a = (i.finalAix ?? "").trim();
   if (!a || i.postApply) return null;

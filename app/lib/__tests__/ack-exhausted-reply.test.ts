@@ -1,6 +1,6 @@
 // 竹内さんの決定 10/14（約束の直後のお礼・了承＝返信／出し切りの後の条件の足し＝返信で締める）の純関数のテスト
 // 実行: npx tsx app/lib/__tests__/ack-exhausted-reply.test.ts
-import { exhaustedConditionAddTurn, ackAfterPromiseDirection, ackAfterPromiseReplyEnabled, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, ackAfterPromiseBrainEnabled, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine } from "../ack-exhausted-reply";
+import { exhaustedConditionAddTurn, ackAfterPromiseDirection, ackAfterPromiseReplyEnabled, exhaustedConditionMaterial, ackAfterPromiseMaterial, ackAfterPickupTurn, ackAfterPickupTurnLine, ackAfterPromiseRuleApplies, ackAfterPromiseBrainEnabled, exhaustedConditionBrainEnabled, exhaustedConditionTurnLine, exhaustedConditionAxisEnabled } from "../ack-exhausted-reply";
 
 let passed = 0, failed = 0; const failures: string[] = [];
 function it(name: string, fn: () => void) {
@@ -59,4 +59,16 @@ it("出し切りの後の条件の足しのブレイン基準（既定 on・off 
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
-if (failed) { console.log(failures.join("\n")); process.exit(1); }
+if (failed) { console.log(failures.join("\n")); process.exit(1); }it("軸（10/15 q153・q154）: ゆるめた・外した番と、探す条件の依頼が無い番（送った物件への反応）は対象外・足した番は今まで通り", () => {
+  const b = { conditionChangeType: "rent_change", exhausted: true, ackOnly: false, env: {} };
+  eq(exhaustedConditionAddTurn({ ...b, conditionChangeType: "equip_add", axisAsks: [{ about: "search_condition", polarity: "relax" }] }), false, "relax");
+  eq(exhaustedConditionAddTurn({ ...b, axisAsks: [{ about: "reaction_to_sent", polarity: null }] }), false, "reaction");
+  eq(exhaustedConditionAddTurn({ ...b, conditionChangeType: "equip_add", axisAsks: [{ about: "search_condition", polarity: "add" }] }), true, "add");
+  eq(exhaustedConditionAddTurn({ ...b, axisAsks: [] }), true, "軸なし");
+  eq(exhaustedConditionAddTurn({ ...b, env: { EXHAUSTED_CONDITION_AXIS: "off" }, axisAsks: [{ about: "reaction_to_sent", polarity: null }] }), true, "off");
+  eq(exhaustedConditionAxisEnabled({}), true);
+  eq(/ゆるめた/.test(exhaustedConditionTurnLine({})) && /予算オーバー/.test(exhaustedConditionMaterial({})), true);
+  eq(/ゆるめた/.test(exhaustedConditionTurnLine({ EXHAUSTED_CONDITION_AXIS: "off" })), false);
+});
+
+
