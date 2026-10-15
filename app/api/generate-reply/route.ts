@@ -269,6 +269,7 @@ import { buildPremiseExcludeRe, missingPremiseKeys, derivePremiseLabel, daysSinc
 import { detectApplyReadiness, buildApplyReadinessNote } from "@/app/lib/apply-readiness";
 import { appealTimingEnabled, buildAppealInput, resolveAppealTiming, buildAppealReplyNote } from "@/app/lib/appeal-timing";
 import { holdSoftReplyNote } from "@/app/lib/hold-soft-next";
+import { vacatingMoveInPromptLine, vacateMoveInEstimateEnabled } from "@/app/lib/vacate-move-in-estimate";
 // 2026-09-19 竹内（慶次事例）: 手本の言い回しに埋まっている他のお客様の条件を伏せる
 import { maskKnowledgeSpecifics, MASKED_NOTE } from "@/app/lib/knowledge-placeholder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
@@ -670,7 +671,7 @@ function buildPropertyStatusNote(status: PropertyStatus): string {
   if (status === "move_out_scheduled" || status === "occupied") {
     return `\n【🚨 物件募集状況（確定事実・最優先 — 他のどのルールより上位）】この物件は退去予定/入居中です。現地内覧は退去日の翌日以降のみ可能で、今は現地内覧できません。
 ・内覧日程（[日付][時間帯]や2択日程提示）は絶対に提案しない。「〇日にご内覧いかがですか」等の現地内覧日の提示も禁止。
-・入居可能時期を聞かれたら「ご入居可能日を管理会社に確認しご連絡させて頂きます😊！！」のみ伝える（AIが「クリーニング・鍵交換で2〜3週間」等から日程を自動計算して断定案内することは絶対禁止）。
+・入居可能時期を聞かれたら${vacatingMoveInPromptLine()}。
 ・内覧・興味を示されたら「退去前のため現在は現地ご案内ができません。退去後ご案内させて頂きます！！お気に召されましたらお申込みでお部屋を先に押さえておくことも可能です😊！！」の方向で返す。`;
   }
   return "";
@@ -1638,7 +1639,7 @@ ${aixDone.answeredByAix
   const estimateGateNote = buildEstimateGateNote(estimateVerdict);
 
   // 空室確認結果・入居可能日・保証会社等の物件固有情報はAIXの「物件確認した」系ボタン専用。generate-replyでは管理会社確認前の結果捏造を防ぐ（estimateGateNote と同型の常時注入ゲート）
-  const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「〇〇（対象: 募集状況／ご入居可能日／ペット飼育の可否／駐車場の空き状況／保証会社・審査条件 等）確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」の宣言のみ（確認対象を必ず本文に書く。対象の無い「確認しご連絡」は禁止）。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。告知事項（事故・トラブル・騒音・心理的瑕疵）の有無、「審査は大丈夫です」等の根拠なし安心も同じく管理会社・保証会社の確認結果が無い限り断言しない。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。\n・【⚠️ 退去予定の断言禁止】「退去後すぐにご案内できます」「退去後すぐにご内覧いただけます」「〇月以降ご案内可能です」のような退去予定を前提とした案内文は、管理会社から退去予定が確認済みである事実が会話履歴にある場合のみ使用すること。確認していない場合は「空室状況を確認してご連絡させて頂きます😊！！」とし、退去予定を勝手に断定しない。\n・【⚠️ 対象の無い確認約束の禁止】お客様が物件固有の事実を聞いていない返信で「確認しご連絡させて頂きます」「確認出来次第ご連絡」を締めに使うことは禁止（創作約束。final-check CONFIRM_NO_OBJECT で block）。確認事項が実在する場合（【✅ 確認対象（決定論）】が出ている時）は上記の対象付き宣言1文のみ書き、同じ返信内で二重に確認宣言しない。水道代・インターネット・設備の有無など管理会社への確認事項も「設備・利用条件確認させて頂きます」のように対象を書く。\n・【⚠️ スタッフが送った物件画像への「内容確認します」禁止】お客様が画像（物件資料・見積書）を送り返してきた場合、その画像はスタッフが先に送った物件の資料であることが多い。「お送り頂きました画像の内容を確認させて頂きます」「画像を確認しご連絡します」のように、まるで初めて見る資料かのように「内容確認します」と書いてはいけない。お客様の具体的な質問（「ここは誰か住んでいましたか？」等）にはその質問に直接答えるか、分からない場合は「確認いたします！！」とのみ伝える。`;
+  const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「〇〇（対象: 募集状況／ご入居可能日／ペット飼育の可否／駐車場の空き状況／保証会社・審査条件 等）確認させて頂きます！！確認出来次第ご連絡させて頂きます！！」の宣言のみ（確認対象を必ず本文に書く。対象の無い「確認しご連絡」は禁止）。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。告知事項（事故・トラブル・騒音・心理的瑕疵）の有無、「審査は大丈夫です」等の根拠なし安心も同じく管理会社・保証会社の確認結果が無い限り断言しない。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。${vacateMoveInEstimateEnabled() ? "また、材料の【最短の入居時期の目安（逆算）】（退去予定日＋退去後の工事の期間・2026-10-15 竹内さんの決定）は「最短で〇月〇旬〜〇旬のご入居」と目安として書いてよい（確定の日は退去後に決まると添える・具体の日付を作らない）。" : ""}新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。\n・【⚠️ 退去予定の断言禁止】「退去後すぐにご案内できます」「退去後すぐにご内覧いただけます」「〇月以降ご案内可能です」のような退去予定を前提とした案内文は、管理会社から退去予定が確認済みである事実が会話履歴にある場合のみ使用すること。確認していない場合は「空室状況を確認してご連絡させて頂きます😊！！」とし、退去予定を勝手に断定しない。\n・【⚠️ 対象の無い確認約束の禁止】お客様が物件固有の事実を聞いていない返信で「確認しご連絡させて頂きます」「確認出来次第ご連絡」を締めに使うことは禁止（創作約束。final-check CONFIRM_NO_OBJECT で block）。確認事項が実在する場合（【✅ 確認対象（決定論）】が出ている時）は上記の対象付き宣言1文のみ書き、同じ返信内で二重に確認宣言しない。水道代・インターネット・設備の有無など管理会社への確認事項も「設備・利用条件確認させて頂きます」のように対象を書く。\n・【⚠️ スタッフが送った物件画像への「内容確認します」禁止】お客様が画像（物件資料・見積書）を送り返してきた場合、その画像はスタッフが先に送った物件の資料であることが多い。「お送り頂きました画像の内容を確認させて頂きます」「画像を確認しご連絡します」のように、まるで初めて見る資料かのように「内容確認します」と書いてはいけない。お客様の具体的な質問（「ここは誰か住んでいましたか？」等）にはその質問に直接答えるか、分からない場合は「確認いたします！！」とのみ伝える。`;
 
   // 待ち合わせ確定文はAIXの「待ち合わせ」ボタン専用。generate-replyでは住所・集合場所・集合時間の出力を禁止（propertyFactGateNoteと同型の常時注入ゲート）
   // 2026-09-16 竹内（𝒮 さん事例）: 禁止するのは「まだ決まっていない待ち合わせをこの返信で決めること」。
@@ -1774,7 +1775,7 @@ ${aixDone.answeredByAix
 【✅ 正しい回答方針（必ず守る）】
 ・即入居可能物件の場合: 「お申込から最短で2週間程でご入居出来ます！！申込後に保証会社審査（3日〜10日）が完了し、ご契約書類の記入と初期費用のご入金が完了次第ご入居頂けます！！」と直接答える
 ・今日の日付（${getJSTDateString()}）を基準に「〇月末入居が現実的かどうか」を判断して回答する。今日から2週間以内が入居希望日なら「最短で2週間かかるため〇月末は難しい状況です。〇月〜〇月のご入居が理想的な流れとなります！！」と伝える
-・退去予定物件の場合は「ご入居可能日を管理会社に確認しご連絡させて頂きます😊！！」のみ（日程の自動計算は絶対禁止）
+・退去予定物件の場合は${vacatingMoveInPromptLine()}
 【🚫 絶対禁止】「お部屋が決まり次第ご連絡いたします」「詳細は改めてご連絡いたします」等の先送り表現。この質問は今この場で答えられる。`
       : `\n【🏠 入居可能時期の質問（確定・最優先）】お客様は「最長いつまで入居を伸ばせますか」「入居はいつまで可能ですか」等の入居タイミングについて質問しています。
 【✅ 正しい回答方針（必ず守る）】
@@ -5855,12 +5856,12 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 2026-10-07 竹内（R・チンシャン）訴求のタイミング: 場面×お客様の反応×部屋の状況から 申込（お部屋を抑える）／内覧／入れない を材料で渡す
     //   （app/lib/appeal-timing.ts・同じ申込の材料の欄に並べる・APPEAL_TIMING=off で止まる）
     // fix(review) 10/15: 保留の番の1文（holdSoftReplyNote）を訴求のタイミングと同じ場面・部屋の読みで絞る
-    const appealSceneRoom: { scene: string; room: string }[] = [];
+    const appealSceneRoom: { scene: string; room: string; delayed?: boolean }[] = [];
     const appealReplyNote = (() => {
       if (isTemplateOptimize || !appealTimingEnabled()) return "";
       try {
         const base = Date.now() - recentMessages.length * 60_000;
-        const v = resolveAppealTiming(((inp) => { appealSceneRoom.push({ scene: inp.scene, room: inp.room }); return inp; })(buildAppealInput({
+        const v = resolveAppealTiming(((inp) => { appealSceneRoom.push({ scene: inp.scene, room: inp.room, delayed: !!inp.viewingDelayed }); return inp; })(buildAppealInput({
           msgs: recentMessages.map((m, idx) => ({ sender: m.sender, text: m.text, createdAt: m.createdAt ?? new Date(base + idx * 60_000).toISOString() })),
           aixLogs: recentAixRows.filter((r) => r.sent_at ?? r.created_at).map((r) => ({ aixType: r.aix_type, at: (r.sent_at ?? r.created_at) as string })),
           customerKind: customerResponse.kind,
@@ -5899,7 +5900,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch (e) { console.warn("[generate-reply] 物件ごとの台帳を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e)); return ""; }
     })();
     // 2026-10-15 竹内さん（7番 営業マンの思考）: 保留の番でブレインが柔らかい次の一手を添えると決めた時だけ、その1文を生成に渡す（届かない側の直し・HOLD_SOFT_NEXT=off で旧）
-    const holdSoftNote = !isTemplateOptimize && brainLocalFresh ? holdSoftReplyNote({ customerText: message ?? "", brainDirection: brainMeta?.reply_direction ?? null, scene: appealSceneRoom[0]?.scene ?? null, room: appealSceneRoom[0]?.room ?? null }) : "";
+    const holdSoftNote = !isTemplateOptimize && brainLocalFresh ? holdSoftReplyNote({ customerText: message ?? "", brainDirection: brainMeta?.reply_direction ?? null, scene: appealSceneRoom[0]?.scene ?? null, room: appealSceneRoom[0]?.room ?? null, delayed: appealSceneRoom[0]?.delayed }) : "";
     if (holdSoftNote) console.info(JSON.stringify({ tag: "reply:hold-soft-next", conversationId }));
     const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote, holdSoftNote, propertyBrainReplyNote].filter(Boolean).join("\n");
     if (applyReadiness.level !== "low") {

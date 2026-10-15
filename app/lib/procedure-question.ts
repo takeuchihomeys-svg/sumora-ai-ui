@@ -34,7 +34,8 @@
 // ① 手続きの質問の検出
 // ═════════════════════════════════════════════════════════════════════════════
 
-import { readSheetVacancy, sheetVacancyFieldsEnabled } from "./sheet-vacancy";
+import { readSheetVacancy, sheetVacancyFieldsEnabled, vacateMonthDay } from "./sheet-vacancy";
+import { moveInEstimateFromVacate, MOVE_IN_ESTIMATE_HOW } from "./vacate-move-in-estimate";
 export type ProcedureKind = "screening_period" | "move_in_lead" | "flow" | "docs" | "id_doc";
 export type ProcedureQuestion = {
   kinds: ProcedureKind[];
@@ -207,6 +208,11 @@ export function routeConfirmTopic(topic: ConfirmTopic, lines: readonly (string |
   if (topic === "move_in") {
     const m = readMoveInMaterial(lines);
     if (m.kind === "immediate" || m.kind === "date") return { topic, route: "material", lines: m.lines, why: m.kind === "immediate" ? "資料に即入居の記載" : "資料に入居可能日の記載" };
+    // 2026-10-15 竹内さんの決定②: 退去予定で退去予定日（日・末）が資料にある → 最短の入居時期の目安を逆算して資料の答えにする（確定は AIX・戻す VACATE_MOVE_IN_ESTIMATE=off）
+    if (m.kind === "leaving" && sheetVacancyFieldsEnabled()) {
+      const est = moveInEstimateFromVacate(vacateMonthDay(readSheetVacancy(m.lines.join("\n")).vacate));
+      if (est) return { topic, route: "material", lines: [...m.lines, est.fact], why: "資料に退去予定日の記載（最短の入居時期の目安は逆算・確定は退去後）" };
+    }
     return { topic, route: "confirm", lines: m.lines, why: m.kind === "leaving" ? "退去予定・居住中で入居可能日の日付が資料に無い" : m.lines.length ? "資料の入居時期が相談・未定" : "資料に入居時期の記載なし" };
   }
   if (topic === "pet") {
@@ -325,6 +331,7 @@ export function buildProcedureAnswerNote(plan: ProcedurePlan): string {
       out.push(`- 対象のお部屋（${targetLabel(plan.target)}）の資料の入居時期（文字のまま）: ${plan.moveIn.lines.join("／")}`);
       out.push(plan.moveIn.why.includes("即入居")
         ? `→ 資料に即入居の記載あり。${PROCEDURE_FACTS.lead}`
+        : plan.moveIn.why.includes("逆算") ? `→ 退去予定のお部屋。${MOVE_IN_ESTIMATE_HOW}。審査・契約の期間は上の事実のとおり。`
         : "→ 入居できる日は**資料の入居可能日のとおり**に書く（日付・旬は資料の文字のまま。早めたり「即入居」「最短2週間でご入居」と書かない）。審査・契約の期間は上の事実のとおり。");
     } else {
       out.push(`- 対象のお部屋（${targetLabel(plan.target)}）の入居時期は資料で分からない（${plan.moveIn?.why ?? "記載なし"}${plan.moveIn?.lines.length ? `: ${plan.moveIn.lines.join("／")}` : ""}）。`);
@@ -350,7 +357,7 @@ export function procedureReplyDirection(plan: ProcedurePlan): string {
   //   → 連帯保証人の事実（company-facts joint_guarantor）で答える方向にする
   if (plan.question.jointGuarantor) parts.push("連帯保証人について聞かれた事に会社の事実で答える（審査の際に本人確認のお電話が入る可能性・ご契約の際に直筆の署名と実印での押印・印鑑証明書の原本が必要）");
   else if (plan.question.kinds.includes("docs")) parts.push("申込に必要な物（フォーマットのご入力・ご本人確認書類）を答える");
-  const tail = plan.moveIn?.route === "material" ? "入居時期は資料の記載のとおりに書く"
+  const tail = plan.moveIn?.route === "material" ? (plan.moveIn.why.includes("逆算") ? "入居時期は退去予定日から逆算した目安で書く（確定は退去後）" : "入居時期は資料の記載のとおりに書く")
     : plan.moveIn ? "このお部屋の入居可能日は断言しない" : "";
   return `${parts.join("・")}（管理会社への確認の宣言はしない${tail ? `・${tail}` : ""}）`.slice(0, plan.question.jointGuarantor ? 200 : 120);
 }
@@ -375,7 +382,7 @@ export function buildConfirmTopicNote(target: ProcedureTarget, routes: readonly 
   const out: string[] = [`【🔎 お客様が聞いた入居・ペット・駐車場（対象: ${targetLabel(target)}）— 資料に記載あり→資料で答える／無し→AIX【確認した】】`];
   for (const r of routes) {
     out.push(r.route === "material"
-      ? `- ${CONFIRM_TOPIC_LABEL[r.topic]}: 資料に記載あり（文字のまま）「${r.lines.join("／")}」→ **本文で資料のとおりに答える**（日付・可否は資料の文字のまま。足さない・早めない）`
+      ? `- ${CONFIRM_TOPIC_LABEL[r.topic]}: 資料に記載あり（文字のまま）「${r.lines.join("／")}」→ **本文で資料のとおりに答える**（日付・可否は資料の文字のまま。足さない・早めない）${r.why.includes("逆算") ? `。${MOVE_IN_ESTIMATE_HOW}` : ""}`
       : `- ${CONFIRM_TOPIC_LABEL[r.topic]}: 資料では答えられない（${r.why}${r.lines.length ? `: ${r.lines.join("／")}` : ""}）→ 本文で可否・日付を断言しない。スタッフが管理会社に確認して AIX【確認した（条件・交渉）→${CONFIRM_TOPIC_LABEL[r.topic]}】で答える`);
   }
   out.push("→ 「物件確認した」は物件そのもの（空き・募集状況）の報告。設備・入居・ペット・駐車場など管理会社に確認が要る事は「確認した（条件・交渉）」。");

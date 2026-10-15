@@ -26,7 +26,7 @@
 //       DECIDE_GAP_HOLD_CLOSE=off（確認の結果の締め）／HESITATION_NOTE=off（迷いの中身の注記）／MINDSET_REPLY_LINES=off（返信の任意の1行の材料）
 // テスト: app/lib/__tests__/customer-mindset.test.ts（実物の発言・伏せ字）
 import { withLatinHead } from "./latin-name-head";
-import { holdSoftNextEnabled } from "./hold-soft-next";
+import { holdSoftNextEnabled, holdSoft1015Enabled } from "./hold-soft-next";
 
 const envOf = (env?: Record<string, string | undefined>) => env ?? (typeof process !== "undefined" ? process.env : {});
 const off = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "off";
@@ -102,9 +102,13 @@ export const HESITATION_MOVE: Record<HesitationKind, string> = {
  *   「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます」を1文添える（催促ではない）。戻す HOLD_SOFT_NEXT=off
  */
 export const HOLD_SOFT_NEXT_SUFFIX = "。物件をお送りした後は、押さないまま扉の文に柔らかい次の一手（お気に召されましたらご都合よろしいお日にちにご案内）を1文添えるかを決める（竹内さん 今ご内覧頂けるお部屋の保留の 47%・催促ではない）";
+export const HOLD_SOFT_NEXT_SUFFIX_1015 = "。物件をお送りした後は、押さないまま扉の文に柔らかい次の一手を1文添える（空室で今内覧できるお部屋→ご都合よろしいお日にちにご案内／退去予定・遠方などすぐ来られない→お申込みしお部屋抑える・ご家族やご友人との相談でも添える・竹内さんの決定 10/15・催促ではない）";
 const WAIT_KINDS: ReadonlySet<HesitationKind> = new Set(["家族・同居人に相談", "急がない・保留", "決め手が無い"]);
 export function hesitationMoveOf(kind: HesitationKind, env?: Record<string, string | undefined>): string {
-  return HESITATION_MOVE[kind] + (WAIT_KINDS.has(kind) && holdSoftNextEnabled(env ?? (typeof process !== "undefined" ? process.env : {})) ? HOLD_SOFT_NEXT_SUFFIX : "");
+  const e = env ?? (typeof process !== "undefined" ? process.env : {});
+  if (!WAIT_KINDS.has(kind) || !holdSoftNextEnabled(e)) return HESITATION_MOVE[kind];
+  // 10/15 竹内さんの決定④: 空室なら内覧のご案内・退去予定やすぐ来られない時はお申込みで抑える（家族・友人の相談でも添える）。戻す HOLD_SOFT_1015=off
+  return HESITATION_MOVE[kind] + (holdSoft1015Enabled(e) ? HOLD_SOFT_NEXT_SUFFIX_1015 : HOLD_SOFT_NEXT_SUFFIX);
 }
 
 const HES_RES: Array<[HesitationKind, RegExp]> = [

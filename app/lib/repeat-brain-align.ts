@@ -170,7 +170,7 @@ export function contractAlreadySaidRepeat(
 //     探す（ピックアップ）の約束が言い切り → 待ちの形の1文 7・受けだけ 0・言い切りの言い直し 1／探すが待ちの形 → 待ちの形 2・受けだけ 2
 //     確認・連絡・見積・審査の約束 → 受けだけ 5・待ちの形 3（言い切り 受け 2・待ち 1／待ちの形 受け 3・待ち 2）
 //     前の約束に日付が入っている（「9月30日に改めてご連絡」d3a56a97）→ 受けだけ／お客様が急ぎ・日付・質問を足した → 待ちの形が増える
-//   既定 off（再生で竹内さんの形に近づいたら on）。ACK_FORM_BRAIN=on で材料・ack_form・生成と最終チェックの従い方が全部入る
+//   2026-10-15 竹内さんの決定で既定 on（ACK_FORM_BRAIN=off で旧＝ブレインに決めさせない）。on で材料・ack_form・生成と最終チェックの従い方が全部入る
 export type AckForm = "receive_only" | "wait_line";
 /** 竹内さんの短い待ちの形の1文か（確認の「確認出来次第ご連絡させて頂きますので、何卒」・探すの「ピックアップ出来次第お送りさせて頂きますので」） */
 export function isCompactWaitLine(s: string): boolean {
@@ -178,7 +178,7 @@ export function isCompactWaitLine(s: string): boolean {
   return CONFIRM_WAIT_LINE_RE.test(n) || /^(?:ピックアップ|お部屋|物件)?(?:出来|でき)次第お送りさせて頂きますので何卒/.test(n);
 }
 export function ackFormBrainEnabled(env: Env = process.env): boolean {
-  return repeatBrainAlignEnabled(env) && (env.ACK_FORM_BRAIN ?? "").trim().toLowerCase() === "on";
+  return repeatBrainAlignEnabled(env) && (env.ACK_FORM_BRAIN ?? "").trim().toLowerCase() !== "off";
 }
 export function normalizeAckForm(v: unknown): AckForm | null {
   return v === "receive_only" || v === "wait_line" ? v : null;

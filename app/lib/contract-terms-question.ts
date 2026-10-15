@@ -11,7 +11,8 @@ import { readMoveInMaterial } from "./procedure-question";
 import { guarantorFromMaterial } from "./guarantor-material";
 import { GUARANTOR_TYPE_SHORT, guarantorTypeForText } from "./guarantor-companies";
 import type { StaffFreeRentFact } from "./staff-free-rent";
-import { readSheetVacancy, sheetVacancyFieldsEnabled } from "./sheet-vacancy";
+import { readSheetVacancy, sheetVacancyFieldsEnabled, vacateMonthDay } from "./sheet-vacancy";
+import { moveInEstimateFromVacate, MOVE_IN_ESTIMATE_HOW } from "./vacate-move-in-estimate";
 
 export type ContractTermTopic =
   | "key_money" | "deposit" | "free_rent" | "guarantor_company" | "guarantor_person" | "move_in" | "parking" | "management_company";
@@ -237,7 +238,11 @@ export function routeContractTerm(topic: ContractTermTopic, m: ContractMaterial,
     const outDate = sheetVacancyFieldsEnabled()
       ? readSheetVacancy(mv.lines.join("\n")).vacate
       : mv.lines.find((l) => /退去予定[^0-9０-９]{0,4}[(（]?\s*(?:\d{4}年)?\d{1,2}\s*[月/]\s*(?:\d{1,2}|[上中下]旬)/.test(l.normalize("NFKC")));
-    if (outDate) return { topic, route: "material", facts: mv.lines, why: "資料に退去予定日の記載" };
+    if (outDate) {
+      // 2026-10-15 竹内さんの決定②「退去予定の最短の入居時期の目安は返信で答えてよい・ちゃんと逆算して入れる」: 退去予定日＋退去後の工事の期間の目安を材料に足す（vacate-move-in-estimate・戻す VACATE_MOVE_IN_ESTIMATE=off）
+      const est = moveInEstimateFromVacate(sheetVacancyFieldsEnabled() ? vacateMonthDay(outDate) : null);
+      return { topic, route: "material", facts: est ? [...mv.lines, est.fact] : mv.lines, why: est ? "資料に退去予定日の記載（最短の入居時期の目安は逆算）" : "資料に退去予定日の記載" };
+    }
     return { topic, route: "confirm", facts: mv.lines, why: mv.kind === "leaving" ? "退去予定・居住中で日付が資料に無い" : mv.lines.length ? "資料の入居時期が相談・未定" : "資料に入居時期の記載なし" };
   }
   if (topic === "parking") {
@@ -314,7 +319,7 @@ export function buildContractTermsNote(target: ContractTarget | null, routes: re
     out.push(r.unitUnclear?.length
       ? `- ${CONTRACT_TERM_LABEL[r.topic]}: ⚠ 資料の読み取りで単位が決まらない（読めた文字「${r.facts.join("／") || "—"}」・候補 ${r.unitUnclear.join("／")}）→ 根拠の確かな値ではない。「${r.unitUnclear[0]}」「${r.unitUnclear[1] ?? r.unitUnclear[0]}」のどちらかで言い切るのは、会話・お客様の資料の別の所で単位が分かる時だけ。分からなければ管理会社に確認してお伝えする約束（AIX【確認した（条件・交渉）】）。どちらにするかはブレインが決める`
       : r.route === "material"
-      ? `- ${CONTRACT_TERM_LABEL[r.topic]}: 資料に記載あり（文字のまま）「${r.facts.join("／")}」→ **本文で資料のとおりに答える**。${HOW[r.topic]}`
+      ? `- ${CONTRACT_TERM_LABEL[r.topic]}: 資料に記載あり（文字のまま）「${r.facts.join("／")}」→ **本文で資料のとおりに答える**。${HOW[r.topic]}${r.topic === "move_in" && r.facts.some((f) => f.startsWith("最短の入居時期の目安（逆算）")) ? `。入居の時期を聞かれた時は: ${MOVE_IN_ESTIMATE_HOW}` : ""}`
       : `- ${CONTRACT_TERM_LABEL[r.topic]}: 資料では答えられない（${r.why}${r.facts.length ? `: ${r.facts.join("／")}` : ""}）→ 本文で断言しない。管理会社に確認して AIX【確認した（条件・交渉）】で答える`);
   }
   out.push("→ 資料の値は書いてある文字のまま使う（月数・金額・日付を足さない・丸めない）。資料に無い項目を「無い」と言わない。");
