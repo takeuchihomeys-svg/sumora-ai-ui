@@ -190,7 +190,8 @@ function setCell(ws: ExcelJS.Worksheet, addr: string, value: string | number) {
 
 function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account): number {
   // B3（B3:E3マージ）: お客様名を挨拶行に書き込む（入力画面参照数式を上書き）
-  ws.getCell("B3").value = d.customerName ? `${d.customerName} 様` : "";
+  // 2026-10-15 竹内さん: 書式の側（E3）に「様」が既にあるので、名前だけを書く（「様 様」の二重を防ぐ）。名前の末尾に付いた様・さまも外す
+  ws.getCell("B3").value = d.customerName ? d.customerName.replace(/\s*(?:様|さま|サマ)\s*$/u, "") : "";
   // M9（住所欄）: 入力画面参照数式を削除後に#REF!にならないようクリア
   ws.getCell("M9").value = "";
   // 動的行（15〜24）のみクリア（B=ラベル, E/F=金額）
