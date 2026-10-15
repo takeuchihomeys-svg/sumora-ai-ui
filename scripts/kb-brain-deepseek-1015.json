@@ -1,0 +1,32 @@
+[
+  {
+    "title": "ブレインの『核じゃない部品』は今の番の判断に材料として入るかで見分ける — 戦略・全体の分析・定期見直し・追加調査の2回目・要約・セーブデータは全部判断に入る＝核。費用の9割以上が核で、DeepSeek に移せる部品はブレインの中にほぼ無い",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "本番7日（10/08〜15）のブレインの Claude は約$37: brain_fresh 398回 $25.9（返信の組み立て 204・送信後 81・brain-sweep 72・webhook 26・cron 15）、brain_full 68回 $4.1、brain_strategy 107回 $2.6、brain_checkpoint 63回 $1.9、customer_summary 143回 $2.2、brain-warm $0.13。コードで確かめると、戦略の層（brain_strategy）は毎回の brain_fresh の前提 JSON（closing_strategy・next_steps）＝一番長く居座る層、brain_full は戦略が無い時の今の番の判断と戦略の作り直し、brain-sweep は判断の取りこぼしを拾う同じ brain_fresh、追加の調査（brain-deep-check）の2回目は判断を差し替える、customer_summary は ai_summary として『必ず読むこと』で入る、セーブデータは『確認済み事実の全量・最重要・矛盾する提案をしない』で入り返信の事実確認の正解データでもある。brain-gap-finder は LLM を呼ばない。迷ったら核の決まりで全部 Claude のまま。候補として一番遠いセーブデータだけを比べた（下の別の行）。",
+    "rationale": "『核＝今の番の判断の呼び出し』と名札で決めると、判断の前提に入る派生データ（戦略・要約・セーブデータ）を外に出してしまう。DeepSeek の既知の壊れ方（していない約束を書く 9/23・事実を落とす 10/15）は、前提の層にあると毎ターン効き続けるので、名札ではなく『材料として判断に入るか』で線を引く。",
+    "context": "2026-10-15 竹内「核となるブレインはアンソロピック（Claude）に。核じゃない所を DeepSeek にする。個人情報は渡さないのを徹底。そうすれば質は落ちずに費用が下がる」（作業ツリー agent-ace7ecd84c29b8093）。数え方: llm_usage_logs の env=production・7日を action×route で集計（読むだけ）。",
+    "applied_to": "app/lib/llm-alt-provider.ts（BRAIN_DS_PARTS＝部品ごとのスイッチ・核は載せない・既定 off）",
+    "tags": ["ブレイン", "DeepSeek", "API費用", "設計", "brain-core", "セーブデータ", "戦略の層"]
+  },
+  {
+    "title": "セーブデータ（brain_checkpoint）を DeepSeek にすると創作は無いが事実を落とす — 5会話で Claude が残した数字の19%（1回目）・34%（2回目）を落とし、同じ入力で 3 と 15 の揺れ。既定 off のまま",
+    "category": "ai_design",
+    "priority": 2,
+    "insight": "scripts/compare-checkpoint-deepseek.ts（試験の問題＝伏せた会話の写し30〜37通を本番と同じ buildCheckpointUserContent・maskPII に通す・Claude は1回録って使い回す・DeepSeek v4-pro は2回）。物差しは決定論: ①読めたか 15/15 ②創作の疑い（出力の数字で入力に無い物）Claude 0・DeepSeek 0 ③stage 一致 10/10 ④長さ Claude 863〜1121字・DeepSeek 321〜740字 ⑤落とした数字（Claude が残した入力にある数字のうち DeepSeek に無い物）1回目 19/102・2回目 35/102、q121 は 3→15 の揺れ。プロンプトは『家賃・初期費用・物件名・部屋番号・駅名・入居日・内覧日は永久保持（絶対に省略しない）』で、セーブデータはブレインに『確認済み事実の全量』として入るので、落ちた事実はブレインから見えなくなる。費用は1回 $0.023→$0.002（約9割減・週 約$1.7）だが質の差が大きいので BRAIN_DS_CHECKPOINT は既定 off。",
+    "rationale": "創作の数だけを見ると『差が無い』に見える（9/23 の一致率と同じ罠）。要約の部品は『入っているべき物が残ったか』（再現）を先に数え、同じ入力を2回走らせて揺れを見る（設計知見 224edc43）。",
+    "context": "2026-10-15 竹内「核じゃない所を DeepSeek にする」。API: Claude 5回 $0.114・DeepSeek 10回 $0.023。録った答えは scripts/.replay-out/compare-checkpoint-cache.json（倉庫に上げない）。",
+    "applied_to": "app/lib/brain-core.ts（checkpointCutoffHeader: スイッチ on の時だけ時刻の線の印・申込の記録が無い会話だけ all・他は blocked）、scripts/compare-checkpoint-deepseek.ts",
+    "tags": ["ブレイン", "DeepSeek", "セーブデータ", "テスト", "揺れ", "brain-core"]
+  },
+  {
+    "title": "DeepSeek の出口に本番でも『個人の値』の門を置く — maskPII は空白区切りの携帯番号と記入済みの申込フォームの一部を伏せず、申込へ を押す前に届いたフォームは時刻の線も引かれない。値だけを見て当たれば Claude に戻す",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "今までの出口の守りは 申込以降の印・時刻の線の印（会話の呼び出し）・線より前の発言の網（cut の時だけ）で、本文の値を見る網はテストの間だけ（test-pii-guard.testPiiRefusal）だった。実データ（10/01〜15 の 2,830通・scripts/audit-alt-pii-gate.ts）で maskPII を通した後も当たる通が6（お客様の記入済みの申込フォーム4・空白区切りの携帯番号『080 XXXX XXXX』2）、スタッフ／AIX の通は0。申込へ を押す前に記入済みのフォームが届いた会話は時刻の線が『全部渡してよい』のままなので、返信生成・AIX で DeepSeek に行き得た。→ app/lib/alt-pii-gate.ts の altPiiSignal を出口（llm-alt-provider の installAltProvider・時刻の線の後）に置き、当たれば Claude（物件の読み取りの名札は失敗）・費用0の行 error_type=alt_skipped_pii を残す。見るのは値だけ: 携帯番号・メール・記入済みの申込フォーム・生年月日の欄と値・個人番号/免許証番号の欄と値・口座番号の値。当てない: 指示文の語・『平成27年3月』（物件の築年月と同じ形）・欄の無い12桁（レインズの物件番号・SUUMO の jnc_）・URL の中・会社の固定電話。止める LLM_ALT_PII_GATE=off（既定 on＝安全側）。",
+    "rationale": "伏せ（入口）と線（時刻）は入口ごとの作りに依存し、漏れは『静かに壊れる』。出口で値だけを見る網を1か所に置けば、入口が増えても最後に止まる。語で止めると指示文で全部止まり DeepSeek が使えなくなるので、値の形と欄との組だけにする（test-pii-guard の②と同じ考え）。",
+    "context": "2026-10-15 竹内「個人情報は渡さないのを徹底」。残り: maskPII の電話の形に空白区切りを足す・申込フォームの記入を時刻の線の起点に足す（どちらも入口側・別の作業）。",
+    "applied_to": "app/lib/alt-pii-gate.ts、app/lib/llm-alt-provider.ts（installAltProvider）、app/lib/__tests__/alt-pii-gate.test.ts、scripts/audit-alt-pii-gate.ts",
+    "tags": ["個人情報", "DeepSeek", "出口の決定論", "静かに壊れる", "post-apply", "pii-mask"]
+  }
+]

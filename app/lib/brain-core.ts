@@ -32,14 +32,15 @@ import {
   normalizeAixActionKey,
 } from "@/app/lib/aix-taxonomy";
 import { BRAIN_SKIP_STATUSES } from "@/app/lib/conversation-status";
-import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, shortHash, ensureLlmFetchChainInDev } from "@/app/lib/llm-usage-recorder";
+import { LLM_ACTION_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, shortHash, ensureLlmFetchChainInDev } from "@/app/lib/llm-usage-recorder";
 // 2026-10-02 竹内「1日に何度も連絡きたらキャッシュあたためて効かせれるように…切り替わるスイッチ…判断するようにブレインが」（cache-warm-switch.ts）
 import { cacheWarmMode, convBlockCacheControl, convBlockMarkEnabled, compactCacheWarm, buildConvBlocks, type CacheWarmDecision } from "@/app/lib/cache-warm-switch";
 import { loadCacheWarmDecision, saveConvWarmPrefix } from "@/app/lib/cache-warm-switch-server";
 // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から」: 夜の見送りの判定（純関数）と起点の名札
 import { decideNightDeferNow, type BrainOrigin } from "@/app/lib/brain-night-defer";
 export type { BrainOrigin };
-import { isPostApplyStatus, willRouteAlt } from "@/app/lib/llm-alt-provider";
+import { isPostApplyStatus, willRouteAlt, brainDsPartsOn } from "@/app/lib/llm-alt-provider";
+import { loadDeepseekCutoff, cutoffMarkOf, formatCutoffMark } from "@/app/lib/post-apply";
 import { buildSendReplyTimingNote } from "@/app/lib/send-reply-timing";
 import { buildAixSceneNote } from "@/app/lib/aix-scene-stats";
 import { buildCompanyFactsNote, brandCostOverrideNote, matchCompanyFacts } from "@/app/lib/company-facts";
@@ -5026,7 +5027,7 @@ function formatJstDateShort(iso: string | null): string {
 
 // H3(Fable5): checkpoint 生成の静的命令を system に分離し prompt caching を適用。
 // 動的部分（prevSummary・historyText・カウント）のみ user メッセージに残す。
-const CHECKPOINT_STATIC_SYSTEM = `あなたは不動産賃貸仲介のLINE会話の記録係です。会話の「セーブデータ」（チェックポイント）を作成してください。
+export const CHECKPOINT_STATIC_SYSTEM = `あなたは不動産賃貸仲介のLINE会話の記録係です。会話の「セーブデータ」（チェックポイント）を作成してください。
 このセーブデータは後で返信AIの事実確認（ハルシネーション検査）の正解データとして使われます。
 会話に書かれていない事実を1つでも書くと、誤った返信が「正しい」と判定される事故になります。
 
@@ -5066,7 +5067,7 @@ JSON形式のみで返答（説明・コードブロック不要）:
 stage は hearing/proposing/applying/contract のいずれか。
 該当事実の無いセクション行は省略可。key_facts の type は confirmed_fact/aix_sent/unresolved の3種のみ。`;
 
-function buildCheckpointUserContent(
+export function buildCheckpointUserContent(
   prevSummary: string | null, historyText: string, total: number, shown: number, startOffset: number,
 ): string {
   return `【前回のセーブデータ】
@@ -5074,6 +5075,18 @@ ${prevSummary ? prevSummary.slice(0, 3500) : "（なし・今回が最初のセ�
 
 【新しい会話（全${total}件のうち${startOffset + 1}〜${startOffset + shown}件目・日付付き。スタッフ(AIX)=AIツールで送信済み）】
 ${historyText}`;
+}
+
+/**
+ * 2026-10-15 セーブデータを DeepSeek に回すスイッチ（BRAIN_DS_CHECKPOINT・既定 off）が on の時だけ、時刻の線の印を付ける。
+ *   セーブデータは会話の先頭から読む（前回のセーブデータ＝線より前から作った派生データも入る）ので、回してよいのは
+ *   「申込の記録が無い＝全部渡してよい」会話だけ。それ以外（申込中・切り替えた後・読めない）は blocked＝Claude のまま。
+ *   スイッチが off の時は印を付けない＝出口が「印なし」で Claude に倒す（今までどおり・DB も読まない）
+ */
+async function checkpointCutoffHeader(conversationId: string): Promise<Record<string, string>> {
+  if (!brainDsPartsOn().includes("brain_checkpoint")) return {};
+  const mark = cutoffMarkOf(await loadDeepseekCutoff(supabase, conversationId));
+  return { [LLM_CUTOFF_HEADER]: mark.kind === "all" ? formatCutoffMark(mark) : "blocked" };
 }
 
 // 2026-09-13: 画像の連投では1リクエスト内でブレインが連続実行され、同じ会話のセーブデータ作成が同時に7回走っていた（7回とも LLM を呼ぶ）。
@@ -5150,7 +5163,7 @@ export async function maybeCreateCheckpoint(conversationId: string, customerName
       // 2026-09-27: 戦略の層と同じく名札と会話 ID を付ける（llm_usage_logs の action・conversation_id が空だった）。
       //   名札なしの時は system の先頭で "classify" 扱いだった（本番は Claude のまま＝LLM_ALT_ACTIONS に classify も brain も無い）。
       //   brain_ で始めるのでテスト用の切り替えでもブレインとして外れる（今までは system の先頭の語で外していた）
-      headers: { [LLM_ACTION_HEADER]: "brain_checkpoint", [LLM_CONVERSATION_HEADER]: conversationId },
+      headers: { [LLM_ACTION_HEADER]: "brain_checkpoint", [LLM_CONVERSATION_HEADER]: conversationId, ...(await checkpointCutoffHeader(conversationId)) },
     });
     logLlmUsage("checkpoint", response.usage, { conversationId, stop: response.stop_reason });
     // analyzeConversation と同じ content.find() で thinking ブロック対策
