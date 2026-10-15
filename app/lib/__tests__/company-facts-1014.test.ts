@@ -36,6 +36,9 @@ it("確かめる人: 契約・鍵渡し・入居の当日の持ち物・退去�
   has("鍵渡し当日は何か持っていくものありますか？", "apply_line_viewing_items", false);
   has("入居当日に準備するものは？", "apply_line_viewing_items", false);
   has("申込の方法を教えてください", "apply_line_viewing_items");
+  // 10/15: 申込に必要な書類は apply_docs の持ち場（両方は渡さない）・契約に必要な書類はこちら
+  has("申込に必要な書類は何ですか？", "apply_line_viewing_items", false);
+  has("契約に必要な書類はありますか？", "apply_line_viewing_items");
   has("このお部屋いつから住めますか？退去予定って書いてあったので", "immediate_move_in", false);
 });
 it("2026-10-15 軸の直し: 内覧当日の近くのパーキング（車の語なし）・繁忙期", () => {
