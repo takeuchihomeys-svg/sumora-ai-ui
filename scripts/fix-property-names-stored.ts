@@ -6,6 +6,8 @@
 // 実行: npx tsx --env-file=.env.local scripts/fix-property-names-stored.ts [--show=30] [--apply]
 //   --apply は親（承認の後）が流す
 import { createClient } from "@supabase/supabase-js";
+import { appendFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
 const APPLY = process.argv.includes("--apply");
 const SHOW = Number((process.argv.find((a) => a.startsWith("--show=")) ?? "--show=30").split("=")[1]);
@@ -30,7 +32,21 @@ async function main() {
   const sip = await all<{ image_url: string; property_name: string | null; source: string | null; facts: Record<string, unknown> | null }>("sent_image_properties", "image_url, property_name, source, facts");
 
   const memo = new Map<string, ReturnType<typeof fix.fixReadPropertyName>>();
-  const fixOf = (n: string) => { if (!memo.has(n)) memo.set(n, fix.fixReadPropertyName(n, ledger, {})); return memo.get(n)!; };
+  // 2026-10-15 確かめる人: 括弧の閉じた名前を、帳簿の途中で切れた名前（「robot　home　太子橋(旧:robot」）に寄せない（字が減る直し）。
+  //   読みの側も切れている時（「robot home 木子橋（旧：robot」→ 太子橋）は寄せてよい
+  const openParens = (x: string) => (x.match(/[(（]/g) ?? []).length - (x.match(/[)）]/g) ?? []).length;
+  const cutsClosed = (from: string, to: string) => openParens(from) === 0 && openParens(to) > 0;
+  const fixOf = (n: string) => {
+    if (!memo.has(n)) {
+      const f = fix.fixReadPropertyName(n, ledger, {});
+      memo.set(n, f.status === "fixed" && cutsClosed(n, f.name) ? { ...f, status: "uncertain" } : f);
+    }
+    return memo.get(n)!;
+  };
+  // --apply の控え（元に戻す用・書く前の値を1行ずつ書いてから DB に書く）。既定は OS の一時フォルダ・--backup=<path> で変える
+  const backupPath = (process.argv.find((a) => a.startsWith("--backup=")) ?? "").split("=")[1] || `${tmpdir()}/fix-property-names-stored-${Date.now()}.jsonl`;
+  const backup = { push: (o: Record<string, unknown>) => appendFileSync(backupPath, JSON.stringify(o) + "\n") };
+  if (APPLY) console.log(`控え: ${backupPath}`);
   const examples = new Map<string, string>();
   let nSip = 0, nSp = 0, nStation = 0, wrote = 0;
   const nSipBy = new Map<string, number>();
@@ -48,14 +64,20 @@ async function main() {
         patch.facts = { ...r.facts, station: fs, ...(stations ? { stations } : {}) }; nStation++; examples.set(`駅 ${st}`, fs);
       }
     }
-    if (APPLY && Object.keys(patch).length) { const { error } = await sb.from("sent_image_properties").update(patch).eq("image_url", r.image_url); if (error) console.log("  ✗", error.message); else wrote++; }
+    if (APPLY && Object.keys(patch).length) {
+      backup.push({ table: "sent_image_properties", image_url: r.image_url, property_name: r.property_name, facts: r.facts });
+      // 読んだ時の名前のままの行だけ書く
+      let q = sb.from("sent_image_properties").update(patch).eq("image_url", r.image_url);
+      if (r.property_name) q = q.eq("property_name", r.property_name);
+      const { error } = await q; if (error) console.log("  ✗", error.message); else wrote++;
+    }
   }
   for (const r of sp) {
     if (r.source !== "vision" || !r.property_name) continue;
     const f = fixOf(r.property_name);
     if (f.status !== "fixed" || f.name === r.property_name) continue;
     nSp++; examples.set(r.property_name, `${f.name} [${f.rule}]`);
-    if (APPLY) { const { error } = await sb.from("sent_properties").update({ property_name: f.name }).eq("id", r.id); if (error) console.log("  ✗", error.message); else wrote++; }
+    if (APPLY) { backup.push({ table: "sent_properties", id: r.id, property_name: r.property_name }); const { error } = await sb.from("sent_properties").update({ property_name: f.name }).eq("id", r.id).eq("property_name", r.property_name); if (error) console.log("  ✗", error.message); else wrote++; }
   }
   const visionNames = new Set([...sip.filter((r) => SIP_SOURCES.has(r.source ?? "")), ...sp.filter((r) => r.source === "vision")].map((r) => r.property_name ?? "").filter(Boolean));
   const st = { known: 0, fixed: 0, uncertain: 0, unchanged: 0 };

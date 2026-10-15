@@ -1456,7 +1456,9 @@ export async function POST(req: NextRequest) {
       if (pickupCommonFactsEnabled() && sentImageCount && sentImageCount >= 2) {
         const sentRows = (data ?? []) as Array<{ sent_at: string | null; terms: unknown; equipment: unknown }>;
         const last = Math.max(...sentRows.map((r) => Date.parse(r.sent_at ?? "") || 0));
-        const sameSend = sentRows.filter((r) => Math.abs((Date.parse(r.sent_at ?? "") || 0) - last) <= 10 * 60_000);
+        // 2026-10-15 確かめる人: 送った印は1回の送付で同じ時刻（property-pickups/send の now）で付く。±10分の窓は前の送付の行を混ぜうる
+        //   （前に1部屋・今回は1部屋＋足した画像1枚＝枚数2・行2 で別の束を数える）ので、同じ時刻の行だけを今回の束とみる
+        const sameSend = last > 0 ? sentRows.filter((r) => (Date.parse(r.sent_at ?? "") || 0) === last) : [];
         if (sameSend.length === sentImageCount) {
           const facts = bundleCommonFacts(sameSend);
           bundleCommonNote2 = buildBundleCommonFactsNote(facts, sentImageCount);

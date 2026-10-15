@@ -77,9 +77,10 @@ export function bundleCommonFacts(rows: ReadonlyArray<CommonFactRow>): string[] 
       continue;
     }
     if (k === "parking") {
-      // 駐車場は「空きあり」「敷地内」の時だけ（近隣・空き不明は束の事として言い切らない）
-      if (!facts.every((f) => f?.d !== "近隣")) continue;
-      out.push(facts.every((f) => /敷地内/.test(String(f?.ev ?? ""))) ? "敷地内駐車場あり" : phrase);
+      // 駐車場は全部屋が「敷地内・空きあり」と書いてある時だけ（近隣・敷地外・空き不明〔設備あり〕は束の事として言い切らない）。
+      //   2026-10-15 確かめる人: itandi の欄は証拠（ev）が「駐車場空きあり」だけで敷地内/敷地外/近隣が落ちる（listing-equipment の pTok）＝
+      //   d が「空きあり」でも近隣の事がある。旧は d≠近隣 なら「駐車場あり」を出していた（近隣・空き不明も束の事になった）
+      if (facts.every((f) => f?.d === "空きあり" && /敷地内/.test(String(f?.ev ?? "")))) out.push("敷地内駐車場あり");
       continue;
     }
     out.push(phrase);

@@ -9,6 +9,8 @@
 // 実行: npx tsx --env-file=.env.local scripts/fix-personal-image-text-stored.ts [--show=20] [--apply]
 //   --show は id の頭8桁と見出しの前後だけを出す（中身は出さない）。--apply は親（承認の後）が流す
 import { createClient } from "@supabase/supabase-js";
+import { appendFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { imageTextForSave, imageTypeForSave } from "../app/lib/id-document-guard";
 import { savedImageKind, stripImageLabel, imageKindGroup } from "../app/lib/image-label";
 
@@ -78,7 +80,11 @@ async function main() {
 
   if (!APPLY) { console.log("（数えただけ・--apply で書く）"); return; }
   let wrote = 0;
+  // 2026-10-15 確かめる人: 元に戻す控え（書く前の本文・image_type を1行ずつ・お客様の書き起こしを含むので戻し終えたら消す）。--backup=<path> で変える
+  const backupPath = (process.argv.find((a) => a.startsWith("--backup=")) ?? "").split("=")[1] || `${tmpdir()}/fix-personal-image-text-stored-${Date.now()}.jsonl`;
+  console.log(`控え: ${backupPath}（中身にお客様の書き起こしを含む・確かめたら消す）`);
   for (const { r, w } of targets) {
+    appendFileSync(backupPath, JSON.stringify({ id: r.id, text: r.text, image_type: r.image_type }) + "\n");
     // 読んだ後に書き換わっていないかを本文の一致で確かめてから書く
     const { data, error } = await sb.from("messages").update({ text: w.text, image_type: w.type }).eq("id", r.id).eq("text", r.text ?? "").select("id");
     if (error) { console.log("  ✗", r.id.slice(0, 8), error.message); continue; }

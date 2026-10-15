@@ -24,6 +24,8 @@ eq("1部屋", bundleCommonFacts([row(0, 0)]), []);
 const park = { s: "ok", ev: "敷地内駐車場／空きあり", d: "空きあり" };
 eq("敷地内駐車場", bundleCommonFacts([row(1, 1, { parking: park }), row(1, 1, { parking: park })]), ["礼金あり", "敷地内駐車場あり"]);
 eq("近隣駐車場は出さない", bundleCommonFacts([row(null, null, { parking: { s: "ok", ev: "近隣駐車場", d: "近隣" } }), row(null, null, { parking: park })]), []);
+eq("敷地内の書きが無い（itandi の欄）は出さない", bundleCommonFacts([row(null, null, { parking: { s: "ok", ev: "駐車場空きあり", d: "空きあり" } }), row(null, null, { parking: park })]), []);
+eq("設備あり（空き不明）は出さない", bundleCommonFacts([row(null, null, { parking: { s: "ok", ev: "駐車場:あり", d: "あり" } }), row(null, null, { parking: { s: "ok", ev: "駐車場:あり", d: "あり" } })]), []);
 eq("記載なしは共通にしない", bundleCommonFacts([row(null, null, { autolock: { s: "ok" } }), row(null, null, {})]), []);
 eq("ペット相談を含む", bundleCommonFacts([row(null, null, { pet: { s: "ok", d: "可" } }), row(null, null, { pet: { s: "ok", d: "相談" } })]), ["ペット飼育可能（相談の部屋を含む）"]);
 eq("バストイレ別・オートロック", bundleCommonFacts([row(null, null, { bath_toilet: { s: "ok" }, autolock: { s: "ok" } }), row(null, null, { bath_toilet: { s: "ok" }, autolock: { s: "ok" } })]), ["バス・トイレ別", "オートロック付き"]);
