@@ -91,7 +91,8 @@ describe("資料の道", () => {
   it("入居可能日の日付は資料で", () => eq(routeContractTerm("move_in", { lines: LECIEL_LINES }).route, "material"));
   it("退去予定の日付は資料で", () => {
     const r = routeContractTerm("move_in", { lines: ["現況: 退去予定(10/31)", "入居可能日: 相談"] });
-    eq([r.route, r.why], ["material", "資料に退去予定日の記載"]);
+    // 10/15 竹内さんの決定②: 退去予定日がまだ先なら最短の入居時期の目安（逆算）も添える
+    eq([r.route, r.why.startsWith("資料に退去予定日の記載")], ["material", true]);
   });
   it("退去予定で日付なしは確認", () => eq(routeContractTerm("move_in", { lines: ["現況: 退去予定", "入居可能日: 相談"] }).route, "confirm"));
   it("駐車場の行が無ければ確認（無いとは言わない）", () => eq(routeContractTerm("parking", { lines: LECIEL_LINES.filter((l) => !/駐/.test(l)) }).route, "confirm"));

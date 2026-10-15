@@ -885,11 +885,37 @@ export function materialGroundsAssertion(code: AssertionBanCode, sentence: strin
   }
   const immediate = /即(?:日|入居|入)/.test(s);
   if (immediate && !/即入|即時|即日/.test(facts)) return false;
+  // fix(review) 10/15: 入居の言い切りでは退去予定日を入居の日の根拠にしない（「10/31 からご入居可能」が資料の「退去予定(10/31)」で免除される穴）。
+  //   退去の日付の書き方（「10/31退去」「退去予定(10/31)」）は文・資料の両方で入居の日付の照合から外す
+  if (code === "MOVEIN_DATE_ASSERTION") {
+    const rest = stripVacateDates(s);
+    const ds = materialDateTokens(rest);
+    if (ds.length === 0) {
+      if (immediate) return true;
+      // 文の日付が退去の日付だけ（「10/31退去予定のため退去後のご入居」）→ 退去の日付が資料のとおりなら従来どおり
+      const raw = materialDateTokens(s);
+      if (!raw.length || /\d{1,2}\s*月|来月|今月|翌月|来週|今週|明日|すぐ/.test(rest)) return false;
+      const all = new Set(materialDateTokens(facts));
+      return raw.every((d) => all.has(d));
+    }
+    const fset = new Set(materialDateTokens(stripVacateDates(facts)));
+    return ds.every((d) => fset.has(d));
+  }
   const ds = materialDateTokens(s);
-  if (code === "MOVEIN_DATE_ASSERTION" && ds.length === 0 && !immediate) return false;
   const fset = new Set(materialDateTokens(facts));
   // 「10/31」は資料の「10月下旬」とは別（足さない・早めない）。日付は全部が資料に有る時だけ
   return ds.every((d) => fset.has(d));
+}
+const VACATE_DATE = String.raw`\d{1,2}\s*[/月]\s*(?:\d{1,2}\s*日?|上旬|中旬|下旬|初旬|末|頭)`;
+const VACATE_DATE_RES = [
+  new RegExp(`(?:${VACATE_DATE})\\s*(?:に|の|で)?\\s*(?:ご?退去|退室|解約)`, "g"),
+  new RegExp(`(?:ご?退去|退室|解約)(?:予定)?日?\\s*(?:は|:|：)?\\s*[(（]?\\s*(?:${VACATE_DATE})`, "g"),
+];
+/** 退去の日付の書き方（「10/31退去」「退去予定(10/31)」「退去予定日: 10月末」）を外す（入居の日付の照合用） */
+export function stripVacateDates(text: string): string {
+  let t = String(text ?? "").normalize("NFKC").replace(/\d{4}\s*年/g, "");
+  for (const re of VACATE_DATE_RES) t = t.replace(re, " ");
+  return t;
 }
 
 /** ゲートの判定に使う文脈（顧客条件の復唱免除に使う） */

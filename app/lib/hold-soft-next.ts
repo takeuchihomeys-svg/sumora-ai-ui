@@ -21,6 +21,22 @@ export function holdSoftNextEnabled(env: Record<string, string | undefined> = ty
   return (env.HOLD_SOFT_NEXT ?? "").trim().toLowerCase() !== "off";
 }
 
+// 2026-10-15 竹内さんの決定④（同じ日の夕方）「保留の時の柔らかい次の一手」:
+//   ・退去予定のお部屋でも「申込で抑える」1文は入れる（旧: 添えない事が多い 2/15 を材料に渡していた）
+//   ・家族や友人に相談すると言われた時も添える
+//   ・空室（今内覧できる）なら内覧の案内、退去予定のお部屋なら申込（で抑える）の案内
+//   ・期間が空きそう（遠方にいる・すぐ来られない等）は申込で抑える（内覧の後も、もう一度の内覧ではなく抑える）
+//   どちらの1文かは場面と部屋の読みで決まる（holdSoftMoveFor）。添えない（離れかけ・不満・断り・他で決めた・家族の反対・同じ1文を直前に送った）はブレインが読む。
+//   戻す HOLD_SOFT_1015=off（朝の版＝率の参考だけ・退去予定は添えない事が多い・内覧の1文だけ）
+export function holdSoft1015Enabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return holdSoftNextEnabled(env) && (env.HOLD_SOFT_1015 ?? "").trim().toLowerCase() !== "off";
+}
+/** 竹内さんの決定④: 添える1文の向き（空室で今内覧できる→内覧／退去予定・すぐ来られない・内覧の後→申込で抑える） */
+export function holdSoftMoveFor(i: { scene: string; room: string | null | undefined; delayed?: boolean }): "viewing" | "apply" {
+  if (i.room === "move_out_not_viewable" || i.delayed || i.scene === "post_viewing") return "apply";
+  return "viewing";
+}
+
 export type HoldKind = "検討" | "相談" | "確認";
 /** 保留の言い方。質問・依頼が主の番は当てない（それはその番の中身に答える） */
 const HOLD_RE: Array<[HoldKind, RegExp]> = [
@@ -59,6 +75,16 @@ export function notViewableYet(hist: ReadonlyArray<HistMsg>): boolean {
   return hist.slice(-12).some((m) => m.sender !== "customer" && /退去予定|内覧(?:が)?(?:まだ)?(?:出来ない|できない|不可)|ご内覧(?:が)?(?:まだ)?出来ない/.test(N(m.text)));
 }
 
+/** お礼・了承だけ（物件の中身・質問・保留の語が無い） */
+export function isThanksOnly(customerText: string | null | undefined): boolean {
+  const t = N(customerText).replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\s！!。、〜ー♪✨]/gu, "");
+  if (!t || t.length > 30 || /[?？]/.test(t)) return false;
+  return /^(?:はい|わかりました|分かりました|了解(?:です|しました)?|承知(?:しました|致しました|いたしました)?|かしこまりました)?(?:ありがとう(?:ございます|ございました)?|有難う(?:ございます)?|助かります|お願い(?:します|いたします|致します))(?:よろしくお願い(?:します|いたします|致します))?$/.test(t);
+}
+/** 10/15 竹内さんの追加の決定の手本（紗季さん 10/11・物件ピックアップした 2部屋の後「ありがとうございます🙇」だけ） */
+export const PIERCE_NOT_CLOSE_EXAMPLE = "はい😊！！\n新着物件も随時確認させて頂き、〇〇さんにオススメ出来る新着のお部屋が募集に出次第お送りさせて頂きます！！\nご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます！何卒よろしくお願い致します！！";
+export const PIERCE_MATERIAL = `【送った物件が刺さっているか（竹内さんの決定 2026-10-15・判断はブレイン）】お客様の反応は物件を見せた後のお礼だけ。刺さっているか（物件名・中身に触れた前向きな反応・内覧や詳細を聞く・温度）を会話から読む。刺さっていない（お礼だけ・反応が薄い・物件に触れない）時は内覧・申込に誘わず、新着を探し続ける＋全力でサポートの文で締める＝信頼を得る締め（竹内さんの実送信「${PIERCE_NOT_CLOSE_EXAMPLE.replace(/\n/g, "／")}」）。刺さっている時だけ内覧／申込の柔らかい1文（空室→内覧のご案内・退去予定やすぐ来られない→お申込みで抑える）。前のこちらの約束（ピックアップ・確認）がまだ果たせていない番は、その約束への了承の返事（ack_form・決定 C）が先。reply_direction にどちらの締めかを書く`;
+
 export const HOLD_SOFT_LINES = {
   viewing: "お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！",
   apply: "お気に召されましたらお申込みしお部屋抑えさせていただきます！！",
@@ -74,9 +100,16 @@ const SHOWN = new Set(["after_recommend", "after_pickup", "after_estimate", "aft
 export function holdSoftNextMaterial(i: { customerText: string; scene: string; room: string; delayed?: boolean; env?: Record<string, string | undefined> }): string {
   if (!holdSoftNextEnabled(i.env)) return "";
   const kind = holdTurnKind(i.customerText);
+  // 10/15 竹内さんの追加の決定（紗季さん 10/11）: 物件を見せた後のお礼だけの番は、刺さっているかをブレインが読む材料を渡す
+  if (!kind && SHOWN.has(i.scene) && i.scene !== "post_viewing" && holdSoft1015Enabled(i.env) && isThanksOnly(i.customerText)) return `\n${PIERCE_MATERIAL}`;
   if (!kind || !SHOWN.has(i.scene)) return "";
   const notViewable = i.room === "move_out_not_viewable";
   const after = i.scene === "post_viewing";
+  if (holdSoft1015Enabled(i.env)) {
+    const move = holdSoftMoveFor({ scene: i.scene, room: i.room, delayed: i.delayed });
+    const why = notViewable ? "お送りしたお部屋は退去予定（まだ内覧できない）" : i.delayed ? "お客様はすぐには内覧に来られない（遠方・期間が空きそう）" : after ? "内覧の後" : "今ご内覧頂けるお部屋（空室）";
+    return `\n【保留の番の柔らかい次の一手（竹内さんの決定 2026-10-15）】お客様は物件の話の後に保留（${kind}${kind === "相談" ? "・ご家族やご友人との相談も同じ" : ""}）。押さない（急かす・期限・申込の催促・日時の候補は書かない）のはそのまま、扉の文に次に進む時の柔らかい1文を添える。${why}なので「${HOLD_SOFT_LINES[move]}」（空室で今内覧できる→内覧のご案内／退去予定・すぐ来られない・内覧の後→お申込みで抑える）。この1文は扉の文で、申込の催促・申込誘導には当たらない。reply_direction に「受け止め＋扉の文＋その1文」と書く。ただしこの1文はお送りした物件が刺さっている（物件名・中身に触れた前向きな反応・内覧や詳細を聞く・温度が高い）時だけ。刺さっていない（物件に触れない・反応が薄い）保留は内覧・申込に誘わず、新着を探し続ける＋全力でサポートの文で締める（竹内さんの実送信「${PIERCE_NOT_CLOSE_EXAMPLE.replace(/\n/g, "／")}」の形・保留の受け止めはそのまま）。添えないのは刺さっていない・離れかけ・不満・断り・他で決めた・家族の反対・同じ1文を直前に送った時`;
+  }
   const situ = notViewable
     ? `お送りしたお部屋はまだ内覧できない（退去予定）。竹内さんはこの場面の保留では添えない事が多い（2/15）`
     : after || i.delayed
@@ -90,7 +123,7 @@ export function holdSoftNextMaterial(i: { customerText: string; scene: string; r
  *   生成に「その1文を扉の文の後に入れる」と渡す。再生（YUMA4・前後各11番）で、ブレインの方向に「ご都合の良い日に内覧案内できる旨の柔らかい1文」が
  *   あるのに下書きから落ちた番があった（他の材料の「訴求の率 11%」「迷い: 押すのは少ない」に負けた）。ブレインが書いていない番は何も渡さない
  */
-export function holdSoftReplyNote(i: { customerText: string; brainDirection: string | null | undefined; scene?: string | null; room?: string | null; env?: Record<string, string | undefined> }): string {
+export function holdSoftReplyNote(i: { customerText: string; brainDirection: string | null | undefined; scene?: string | null; room?: string | null; delayed?: boolean; env?: Record<string, string | undefined> }): string {
   if (!holdSoftNextEnabled(i.env) || !holdTurnKind(i.customerText)) return "";
   // fix(review) 10/15: ブレインの材料と同じ網（物件を見せた後の場面だけ・申込の手続きの後は渡さない）。場面が読めない時（null）は今まで通り方向だけで決める
   if (i.scene && !SHOWN.has(i.scene)) return "";
@@ -101,9 +134,14 @@ export function holdSoftReplyNote(i: { customerText: string; brainDirection: str
   if (/(?:抑え|押さえ)(?:ました|ている|てい|てお)/.test(d)) return "";
   // 「押しを抑える」「初期費用を抑える」は申込で抑えるの1文ではない
   const apply = /(?:申込|申し込|お部屋)[^。、]{0,12}(?:抑え|押さえ)/.test(d) && !new RegExp(`(?:抑え|押さえ)[^。、]{0,8}${NEG}`).test(d);
-  const viewing = /内覧|内見|(?:お部屋|お日にち|ご都合)[^。]{0,12}ご?案内/.test(d) && !new RegExp(`(?:内覧|内見|案内)[^。、]{0,10}${NEG}`).test(d) && i.room !== "move_out_not_viewable";
+  const viewingWord = /内覧|内見|(?:お部屋|お日にち|ご都合)[^。]{0,12}ご?案内/.test(d) && !new RegExp(`(?:内覧|内見|案内)[^。、]{0,10}${NEG}`).test(d);
+  // 10/15 竹内さんの決定④: 退去予定・すぐ来られない・内覧の後は申込で抑える／空室は内覧のご案内（場面が読める時は向きをそれに合わせる）
+  const v1015 = holdSoft1015Enabled(i.env);
+  const viewing = viewingWord && (v1015 || i.room !== "move_out_not_viewable");
   if (!apply && !viewing) return "";
-  const line = apply ? HOLD_SOFT_LINES.apply : HOLD_SOFT_LINES.viewing;
+  // fix(review) 10/15（P0 ②）: 向きはブレインの書いた語のとおり。場面で上書きするのは安全の線だけ＝まだ内覧できないお部屋に内覧の1文（事実と違う）→ 申込で抑える。
+  //   空室で抑える・すぐ来られない/内覧の後で内覧 は竹内さんの決定の向きを材料で渡した上でのブレインの判断なので上書きしない
+  const line = apply ? HOLD_SOFT_LINES.apply : v1015 && i.room === "move_out_not_viewable" ? HOLD_SOFT_LINES.apply : HOLD_SOFT_LINES.viewing;
   return `- 【保留の番の柔らかい次の一手（ブレインの判断）】ブレインがこの保留の番に次の一手の1文を添えると決めた。受け止め・扉の文はそのまま、「${line}」の形の1文を1つだけ入れる（押さない・日時の候補・期限・催促は書かない）。この1文は扉の文で、避ける話題の申込誘導・内見誘導・申込の催促に当たらない`;
 }
 
@@ -113,11 +151,13 @@ export function holdSoftReplyNote(i: { customerText: string; brainDirection: str
  */
 export function rule8HoldDirectionSuffix(env?: Record<string, string | undefined>): string {
   if (!holdSoftNextEnabled(env)) return "";
+  if (holdSoft1015Enabled(env)) return "（お客様の発言が検討します・家族や友人と相談してまた連絡等の保留の時は、締めの扉の文に次に進む時の柔らかい1文（空室なら内覧のご案内・退去予定やすぐ来られない時はお申込みで抑える）を添え、この方向に「＋その1文」と書く。向きは【保留の番の柔らかい次の一手】の材料のとおり）";
   return "（お客様の発言が検討します・相談してまた連絡等の保留の時は、締めの扉の文に次に進む時の柔らかい1文を添えるかを【保留の番の柔らかい次の一手】の材料で決め、添えるならこの方向に「＋その1文」と書く）";
 }
 
 /** ブレインのルール⑧（強推し直後の了承には再推奨しない・旧の文）に足す但し書き（保留の番は待ちでも柔らかい1文を置いてよい） */
 export function rule8HoldNote(env?: Record<string, string | undefined>): string {
   if (!holdSoftNextEnabled(env)) return "";
+  if (holdSoft1015Enabled(env)) return "　【但し書き（2026-10-15 竹内さんの決定）】お客様の発言が「検討します・家族や友人と相談してまた連絡します・帰ってからゆっくり見ます」等の保留の時は、待ちの姿勢の締めの扉の文に、次に進む時の柔らかい1文を添える: 空室で今ご内覧頂けるお部屋なら「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます」／退去予定のお部屋・遠方などすぐ来られない（期間が空きそう）・内覧の後なら「お気に召されましたらお申込みしお部屋抑えさせていただきます」。これは再推奨・申込誘導・催促に当たらない（avoid_topics の『申込誘導』はお申込いかがでしょうか・お早めに等の催促）。向きは【保留の番の柔らかい次の一手】の材料のとおり。添えるのはお送りした物件が刺さっている時だけ。お礼だけ・反応が薄い（刺さっていない）時の待ちの締めは「新着物件も随時確認させて頂き…募集に出次第お送り」＋「ご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます」（【送った物件が刺さっているか】・竹内さんの決定 10/15）。\n";
   return "　【但し書き（2026-10-15 竹内さんの手打ち）】お客様の発言が「検討します・相談してまた連絡します・帰ってからゆっくり見ます」等の保留の時は、待ちの姿勢の締めの扉の文に、次に進む時の柔らかい1文（今ご内覧頂けるお部屋なら「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます」）を添えてよい（竹内さん 今ご内覧頂けるお部屋の保留の 47%）。これは再推奨・申込誘導・催促に当たらない（avoid_topics の『申込誘導』はお申込いかがでしょうか・お早めに等の催促）。添えるかは【保留の番の柔らかい次の一手】の材料で決める。\n";
 }

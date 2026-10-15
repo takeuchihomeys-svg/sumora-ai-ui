@@ -122,12 +122,12 @@ t("TURN_CONTRACT=off", turnContractEnabled({ TURN_CONTRACT: "off" }) === false &
   const raw = { asks: [{ quote: "宜しくお願いします", route: "none" }], close_only: true, ack_form: "wait_line" };
   t("normalize が ack_form を残す", (normalizeBrainTurnContract(raw) as { ack_form?: string } | null)?.ack_form === "wait_line");
   const prev = process.env.ACK_FORM_BRAIN;
-  delete process.env.ACK_FORM_BRAIN;
+  process.env.ACK_FORM_BRAIN = "off";
   const off = buildTurnContract({ brain: raw, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] });
   process.env.ACK_FORM_BRAIN = "on";
   const on = buildTurnContract({ brain: raw, brainFresh: true, ledgerItems: [], alreadySaid: ["確認出来次第ご連絡させて頂きます！！"], settled: [] });
   if (prev === undefined) delete process.env.ACK_FORM_BRAIN; else process.env.ACK_FORM_BRAIN = prev;
-  t("既定は ack_form を使わない", !off.ackForm);
+  t("ACK_FORM_BRAIN=off は ack_form を使わない", !off.ackForm);
   t("on で ack_form を本質に入れ、本質の行に出す・閉じる番の行に待ちの形の例外", on.ackForm === "wait_line" && /待ちの形の短い1文/.test(renderTurnContractNote(on)) && /了承の返事」＝待ちの形の短い1文は可/.test(renderTurnContractNote(on)));
   t("wait_line の番は短い待ちの形への二重の宣言の指摘を書き直しに渡さない", issueContradictsContract({ code: "DOUBLE_DECLARATION", evidence: "確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！" }, on) === true);
   t("wait_line でも中身を並べ直した文の指摘はそのまま", issueContradictsContract({ code: "DOUBLE_DECLARATION", evidence: "火曜日に無事1番手でお申込出来ているか確認させて頂き、確認出来次第ご連絡させて頂きます！！" }, on) === false);

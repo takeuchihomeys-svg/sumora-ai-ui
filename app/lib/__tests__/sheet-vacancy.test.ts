@@ -164,7 +164,8 @@ it("routeContractTerm: 入居時期の日付だけの資料は「資料に入居
   const r = routeContractTerm("move_in", { lines: ["現況/入居時期 退去予定 / 2026年11月28日"] });
   eq([r.route, r.why], ["material", "資料に入居可能日の記載"]);
   const r2 = routeContractTerm("move_in", { lines: ["現況/入居時期 退去予定(10/31) / 相談"] });
-  eq([r2.route, r2.why], ["material", "資料に退去予定日の記載"]);
+  // fix(review) 10/15: 退去予定日がまだ先の時は最短の入居時期の目安（逆算）が添わる（vacate-move-in-estimate・日付で変わるので前方一致）
+  eq([r2.route, r2.why.startsWith("資料に退去予定日の記載")], ["material", true]);
 });
 it("moveInFactOfPickup: 資料の文字のままの1行に、欄で分けた行を添える", () => {
   const f = moveInFactOfPickup({ pdf_text: "現況/入居時期 退去予定 / 2026年11月28日\n賃料 170,000 円" });

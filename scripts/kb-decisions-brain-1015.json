@@ -1,0 +1,62 @@
+[
+  {
+    "title": "【決定】了承の返事の形（受けだけ／待ちの形の1文）はブレインが決める — ACK_FORM_BRAIN を既定 on",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "前の約束への了承だけの番の返事の形は、ブレインの turn_contract.ack_form（receive_only／wait_line）が決め、生成・最終チェックはその1つの値に従う（ACK_FORM_FOLLOW と同じ向き）。既定を on にした（ACK_FORM_BRAIN=off で旧＝ブレインに決めさせない）。",
+    "rationale": "竹内さんの決定（2026-10-15）「了承の返事の形をブレインが決める（ACK_FORM_BRAIN）を on にする」。物差しは竹内さんの実送信（scripts/audit-ack-form-takeuchi.ts）。",
+    "context": "2026-10-15 作る人（decisions-brain-1015）。app/lib/repeat-brain-align.ts ackFormBrainEnabled の既定を反転。試験（待って・閉じる 13問・q094・q091・q103）で前後を見た。",
+    "applied_to": "app/lib/repeat-brain-align.ts（ackFormBrainEnabled）・テスト repeat-brain-align / turn-contract。戻す ACK_FORM_BRAIN=off",
+    "tags": ["竹内さんの決定", "ブレイン", "約束", "お礼", "了承", "場面:短いお礼"]
+  },
+  {
+    "title": "【決定】退去予定のお部屋の最短の入居時期の目安は返信で答える — 退去予定日＋退去後の工事2〜4週間を逆算して旬で言う（確定は AIX）",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "資料の退去予定日（日・末だけ・まだ先）から、退去後のクリーニング・鍵交換の期間（14〜28日）を足して「最短で〇月〇旬〜〇旬のご入居」の目安を決定論で作り（vacate-move-in-estimate.moveInEstimateFromVacate）、契約条件・確認した系の入居の材料の資料の答えにする（返信・aix null）。確定の日は退去後の業者の手配で決まる＝具体の日を聞かれたら『確定のご入居日は退去後に決まる』を添え、確定の入居可能日は AIX【確認した→入居可能日】。旬だけ・日付の無い退去予定・もう過ぎた退去日は逆算せず今まで通り確認の約束。生成の『日程の自動計算は絶対禁止』は『材料の目安を写す（自分で計算しない）』に置き換え、最終チェックの断言の免除は材料の目安の旬で通す。",
+    "rationale": "竹内さんの決定（2026-10-15）「ちゃんと逆算して入れる」。実送信（scripts/audit-vacate-movein-gap.ts・150日 29通）: 『退去後クリーニング、鍵交換完了後…2週間〜3週間程』『早ければ2週間後遅くても1ヶ月後』／退去予定日→答えた旬 11組（10月末→11月中旬〜下旬 ×2・9月末→10月中旬・9/29→10月下旬・7/20→8月中旬・8/30→9月中旬・8/19→9月上旬・7/31→8月下旬・6/20→7/4・6月末→7月下旬 等）は14〜28日の幅に全部入る（14〜21日だと4組で1旬早い）。具体の日の質問には竹内さん『退去後に業者を手配するまで期間は分からない』（8590144d・q059）。",
+    "context": "2026-10-15 作る人（decisions-brain-1015）。試験 q145・q059。ブレインの『入居日の確定は AIX』の線（ルール③）は残し、目安だけ返信に開いた。",
+    "applied_to": "app/lib/vacate-move-in-estimate.ts（新）・contract-terms-question.routeContractTerm(move_in)・procedure-question.routeConfirmTopic/buildProcedureAnswerNote・brain-core ルール③・generate-reply（buildPropertyStatusNote・moveInTimingNote・propertyFactGateNote）。測り scripts/audit-vacate-movein-gap.ts。戻す VACATE_MOVE_IN_ESTIMATE=off",
+    "tags": ["竹内さんの決定", "ブレイン", "入居時期", "退去予定", "資料", "場面:質問"]
+  },
+  {
+    "title": "【決定】「物件確認した」のピッカーの細目（check_pattern）はブレインが決める — 決まりは網・決まりが AIX を決めた番だけ決まりの値",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "ブレインの出力に check_pattern（availability＝物件確認した（募集状況）／interior_photo／mgmt_* 等）を足し、aix が property_check_result の時はその値を使う（brain-check-pattern.resolveCheckKindWithBrain）。ブレインが値を出さない・読めない値の時は今まで通り resolveBrainCheckPattern（網）。場面の信号・管理会社の名前・手続きの2択など決まりが AIX そのものを決めた番は決まりの値（安全の線）。お客様が持ち込んだ物件・まだ募集状況を確かめていない物件への条件の質問は先に availability。",
+    "rationale": "竹内さんの決定（2026-10-15）。実測（scripts/audit-rest-1015.ts --part=check・30日）: 決まりが値を出した7番でスタッフと合ったのは1番。違った6番は全部、決まりが条件の細目（mgmt_initial_cost 2・mgmt_guarantor 2・mgmt_equipment・mgmt_pet）を出し、スタッフは募集状況の結果（物件あった4・なかった1・別の部屋1）を押した＝持ち込み物件＋条件の質問で募集状況の確認が先。",
+    "context": "2026-10-15 作る人（decisions-brain-1015）。ログ tag brain:check-pattern（brain・rule・used・source）で本番の当たりを数え直す。",
+    "applied_to": "app/lib/brain-check-pattern.ts（新）・brain-core（出力の項目・resolveCheckKindWithBrain）。戻す BRAIN_CHECK_PATTERN=off",
+    "tags": ["竹内さんの決定", "ブレイン", "AIX", "ピッカー", "物件確認", "check_pattern", "場面:質問"]
+  },
+  {
+    "title": "【決定】保留の番の柔らかい次の一手 — 空室は内覧のご案内・退去予定／遠方などすぐ来られない／内覧の後はお申込みで抑える・家族や友人の相談でも添える",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "物件をお送りした後の保留（検討・相談・確認）の番は、扉の文に柔らかい1文を添える。向きは場面と部屋の読み（holdSoftMoveFor）: 空室で今内覧できる→「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」／退去予定のお部屋・すぐ来られない（期間が空きそう）・内覧の後→「お気に召されましたらお申込みしお部屋抑えさせていただきます！！」。ご家族・ご友人に相談する保留でも添える。返信の注（holdSoftReplyNote）の向きはブレインが方向に書いた語のとおり（材料で場面の向きは渡す）。場面で上書きするのは安全の線＝まだ内覧できないお部屋に内覧の1文だけ（→申込で抑える・fix(review) 10/15 P0 ②）。催促・期限・日時の候補は書かない。",
+    "rationale": "竹内さんの決定（2026-10-15）。朝の版は率の参考（退去予定 2/15＝添えない事が多い）を材料にしていたが、竹内さんが線を決めた。",
+    "context": "2026-10-15 作る人（decisions-brain-1015）。試験 待って・閉じる 13問・保留の見本（hold-turns-pick 11番＋紗季さん）。",
+    "applied_to": "app/lib/hold-soft-next.ts（holdSoft1015Enabled・holdSoftMoveFor・holdSoftNextMaterial・holdSoftReplyNote・rule8HoldNote・rule8HoldDirectionSuffix）・customer-mindset.hesitationMoveOf・generate-reply（delayed を渡す）。戻す HOLD_SOFT_1015=off",
+    "tags": ["竹内さんの決定", "ブレイン", "保留", "内覧", "申込", "退去予定", "場面:検討"]
+  },
+  {
+    "title": "【決定】送った物件が刺さっているかはブレインが読む — 刺さっていない（お礼だけ・物件に触れない）時は内覧に誘わず『新着を随時確認＋全力でサポート』で締める",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "物件を見せた後のお礼だけの番（isThanksOnly）と保留の番に【送った物件が刺さっているか】の材料を渡す。刺さっている（物件名・中身に触れた前向きな反応・内覧や詳細を聞く・温度が高い）時だけ内覧／申込の柔らかい1文。刺さっていない時は内覧・申込に誘わず、手本「はい😊！！／新着物件も随時確認させて頂き、〇〇さんにオススメ出来る新着のお部屋が募集に出次第お送りさせて頂きます！！／ご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます！何卒よろしくお願い致します！！」の形で締める＝信頼を得る締め。前の約束がまだ果たせていない番は了承の返事（ack_form・決定 C）が先。ルール⑧の待ちの締めもこの形。",
+    "rationale": "竹内さんの決定（2026-10-15）「刺さってないので、ここでは全力サポートの文で締めている。これをする事でお客さんからの信頼を手に入れる。刺さっているのかの判断の部分を強化したらもっと良い返しが出来るようになる」。事例 紗季さん（58ae93f3・10/11）: 物件ピックアップした2部屋の後「ありがとうございます🙇‍♀️」だけ → 竹内さんは上の手本。",
+    "context": "2026-10-15 作る人（decisions-brain-1015）。保留の見本に紗季さんの番を足して確かめた。",
+    "applied_to": "app/lib/hold-soft-next.ts（isThanksOnly・PIERCE_MATERIAL・PIERCE_NOT_CLOSE_EXAMPLE・holdSoftNextMaterial・rule8HoldNote）。戻す HOLD_SOFT_1015=off",
+    "tags": ["竹内さんの決定", "ブレイン", "お礼", "全力サポート", "刺さり", "場面:短いお礼", "場面:検討"]
+  },
+  {
+    "title": "【確認】7日以上前の物件で見積もりを頼まれた時は見積書が先・『資料が古い』の線は7日のまま（変えない）",
+    "category": "ai_design",
+    "priority": 1,
+    "insight": "竹内さんの確認（2026-10-15）: 7日以上前に送った物件で見積もりを頼まれた番は今まで通り見積書（estimate_sheet）が先。資料が古いとみなす線は7日のまま。",
+    "rationale": "竹内さんの決定（2026-10-15）⑤（変えない確認）。",
+    "context": "2026-10-15 作る人（decisions-brain-1015）。コードの変更なし。",
+    "applied_to": "変更なし（確認だけ）",
+    "tags": ["竹内さんの決定", "見積", "資料の古さ", "場面:見積"]
+  }
+]

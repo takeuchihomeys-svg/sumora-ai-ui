@@ -86,7 +86,7 @@ t("既定は旧（受けだけ・試しで日付の言い直しが出たため�
   t("材料: 前に約束が無い → null", ackFormFacts([{ sender: "staff", text: "ご連絡頂きありがとうございます！！" }, { sender: "customer", text: "はい" }]) === null);
   const line = ackFormMaterialLine(f, ONF);
   t("材料の1行: 竹内さんの並びと ack_form の選び方（答えは書かない）", /ack_form/.test(line) && /受けだけ 5・待ちの形 3/.test(line) && /日付が入っている→受けだけ/.test(line));
-  t("既定（ACK_FORM_BRAIN 無し）は材料を出さない", ackFormMaterialLine(f, {}) === "");
+  t("10/15 既定（ACK_FORM_BRAIN 無し）で材料を出す・off で出さない", ackFormMaterialLine(f, {}) !== "" && ackFormMaterialLine(f, { ACK_FORM_BRAIN: "off" }) === "");
   t("本質の行: receive_only／wait_line／null", /受けだけ/.test(ackFormContractLine("receive_only")) && /待ちの形の短い1文/.test(ackFormContractLine("wait_line")) && ackFormContractLine(null) === "");
   const cell = { id: "CP_ACK_WAIT", direction: "受けの締め1文だけ。同じ約束を言い直さない", mustNot: ["直前の約束（〜次第ご連絡・確認させて頂きます）の言い直し"], example: "はい😊！！" };
   const c2 = ackFormCell(cell, "wait_line");
