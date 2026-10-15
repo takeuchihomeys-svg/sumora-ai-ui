@@ -32,6 +32,8 @@ import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { sentByStaffToday } from "./lib/daily-greeting";
+import { resolvePostAixTurn, postAixTurnFromLogEnabled, postAixTurnState, buildAixTemplateRequestBody, postAixDirectTemplateOn } from "./lib/post-aix-turn";
+import { resolveTemplateSentMessage } from "./lib/aix-template-source";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
@@ -1105,7 +1107,7 @@ export default function Home() {
   // 2026-09-14 竹内「申込の AIX 押したあとは AIX テンプレートも申込へのところにする」:
   //   会話ごとの最後に送った AIX（DB の aix_usage_logs・72時間以内）。postAixTemplateMap は画面の一時的な状態で、
   //   開き直し・別の端末からの送信では消えるため、テンプレート一覧の初期カテゴリの拠り所をこちらにも持つ
-  const [latestAixByConv, setLatestAixByConv] = useState<Record<string, { aixType: string; checkPattern: string | null; at: string }>>({});
+  const [latestAixByConv, setLatestAixByConv] = useState<Record<string, { aixType: string; checkPattern: string | null; at: string; noSecond?: boolean }>>({});
   // CHAIN-2: テンプレ送信後、学習済みシーケンス（recommended_template_sequence）の次テンプレを誘導するバナー（会話ID → 次テンプレID）
   const [chainNextTemplateMap, setChainNextTemplateMap] = useState<Record<string, string>>({});
   const [dismissedChainNextIds, setDismissedChainNextIds] = useState<Set<string>>(new Set());
@@ -3138,14 +3140,21 @@ export default function Home() {
     let cancelled = false;
     void (async () => {
       try {
-        const { data } = await supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at")
+        const { data } = await supabase.from("aix_usage_logs").select("aix_type, check_pattern, created_at, sent_at, picker_choices")
           .eq("conversation_id", cid).order("created_at", { ascending: false }).limit(1).maybeSingle();
         if (cancelled || !data?.aix_type) return;
-        setLatestAixByConv((prev) => ({ ...prev, [cid]: { aixType: data.aix_type as string, checkPattern: (data.check_pattern as string | null) ?? null, at: (data.sent_at ?? data.created_at) as string } }));
+        // noSecond: 「2通目を送らない」と決めて送った AIX（1通目に締め＝picker_choices.closing_in_first）は続きの番にしない（post-aix-turn.ts）
+        const noSecond = !!(data.picker_choices as { closing_in_first?: unknown } | null)?.closing_in_first;
+        const at = (data.sent_at ?? data.created_at) as string;
+        // この画面で今送った AIX（記録の書き込みより先に読み直した時）を、前の AIX の記録で上書きしない
+        setLatestAixByConv((prev) => (prev[cid] && Date.parse(prev[cid].at) > Date.parse(at) + 60_000 ? prev
+          : { ...prev, [cid]: { aixType: data.aix_type as string, checkPattern: (data.check_pattern as string | null) ?? null, at, noSecond } }));
       } catch { /* 読めなければ従来どおり（前回見ていたカテゴリ） */ }
     })();
     return () => { cancelled = true; };
-  }, [selectedConversation.id]);
+    // 2026-10-15: 別の端末から AIX を送った時も続きの番を出せるよう、スタッフの送信（メッセージの件数）でも読み直す（1行だけ）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConversation.id, selectedConversation.messages?.length]);
 
   // 本文検索でヒットしたメッセージID（LINEと同じく、トークは全件表示してヒット位置へ飛ぶ・枠で強調する）。
   // 顧客名に一致する検索・AI検索中は対象外（それぞれ全件表示／AI検索のヒットを使う）
@@ -3650,6 +3659,81 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedConversation.id, selectedConversation.messages?.length]
   );
+
+  // ===== AIX の続き（2通目）の番（2026-10-15 竹内悠馬・KAORI さん）=====
+  //   帯「◯◯【AIX】の続きを送る」は画面の一時的な状態（postAixTemplateMap）だけで出ていた → 開き直し・別の端末の後も、
+  //   会話の記録（最後の AIX の本文の後にお客様の発言もこちらの会話文も無い・今日）で番を決める（post-aix-turn.ts・戻す NEXT_PUBLIC_POST_AIX_TURN_FROM_LOG=off）
+  const selectedPostAix = useMemo((): { category: string; color: string; actionType?: string; sentMessage?: string } | null => {
+    const id = selectedConversation.id;
+    if (!id) return null;
+    const mem = postAixTemplateMap[id];
+    if (mem) return mem;
+    if (!postAixTurnFromLogEnabled(process.env.NEXT_PUBLIC_POST_AIX_TURN_FROM_LOG)) return null;
+    const turn = resolvePostAixTurn({
+      messages: (selectedConversation.messages || []).map((m: Message) => ({ sender: m.sender, text: m.text, isAix: m.isAix, rawCreatedAt: m.rawCreatedAt ?? null })),
+      latestAix: latestAixByConv[id], nowMs: Date.now(),
+    });
+    if (!turn) return null;
+    const category = templateCategoryForLatestAix(latestAixByConv[id]);
+    if (!category) return null;
+    return { category, color: AIX_ACTION_META[turn.actionType]?.color ?? "#607D8B", actionType: turn.actionType, sentMessage: turn.sentMessage };
+  }, [selectedConversation.id, selectedConversation.messages, postAixTemplateMap, latestAixByConv]);
+
+  // 帯の「AIX テンプレートを入れる」: テンプレート一覧の ✨ と同じ本文で生成して、入力欄をその文に切り替える（元の下書きに戻せる）。
+  //   物件オススメだけ（確かめた物）。戻す NEXT_PUBLIC_POST_AIX_TEMPLATE_DIRECT=off（帯はテンプレート一覧を開くだけ）
+  const [postAixGen, setPostAixGen] = useState<Record<string, { status: "loading" | "done" | "error"; error?: string; prevDraft?: string; prevAiDraft?: string; prevIsAix?: boolean }>>({});
+  const selectedIdForPostAixRef = useRef<string>("");
+  useEffect(() => { selectedIdForPostAixRef.current = selectedConversation.id ?? ""; }, [selectedConversation.id]);
+  const insertPostAixTemplate = async () => {
+    const cid = selectedConversation.id;
+    const tmpl = selectedPostAix;
+    if (!cid || !tmpl?.actionType) return;
+    setPostAixGen((prev) => ({ ...prev, [cid]: { status: "loading" } }));
+    try {
+      const recent = (selectedConversation.messages || []).slice(-25).map((m: Message) => ({
+        sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt, isAix: m.isAix || false,
+      }));
+      const src = resolveTemplateSentMessage({ actionType: tmpl.actionType, postAixSent: tmpl.sentMessage ?? null, recent });
+      const linked = linkedCustomerMap[cid];
+      const res = await fetch("/api/aix-template-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildAixTemplateRequestBody({
+          actionType: tmpl.actionType, actionCategory: tmpl.category, conversationId: cid, customerName: preferredCustomerName,
+          conversationState: selectedConversation.status, recentMessages: recent,
+          customerConditions: linked?.conditions || memos[cid] || "", customerSummary: linked?.ai_summary ?? null, noEmoji: false,
+          pendingScheduledMessages: scheduledMsgsList.filter((m) => m.text),
+          staffMessagedToday: sentByStaffToday((selectedConversation.messages || []).map((m: Message) => ({ sender: m.sender, rawCreatedAt: m.rawCreatedAt ?? null }))),
+          pickupType: lastPickupTypeByConvRef.current.get(cid) ?? null, lastAixCheckPattern: lastCheckPatternByConvRef.current.get(cid) ?? null,
+          sentMessage: src.text, sentMessageSource: src.source, ctaPreference: null,
+        })),
+      });
+      const data = await res.json() as { ok: boolean; text?: string; error?: string };
+      if (!res.ok || !data.ok || !data.text) throw new Error(data.error || `生成エラー (${res.status})`);
+      // 生成中に別の会話へ移っていたら入力欄は触らない（帯の状態だけ）
+      if (selectedIdForPostAixRef.current !== cid) { setPostAixGen((prev) => ({ ...prev, [cid]: { status: "error", error: "別の会話に移ったので入れませんでした" } })); return; }
+      const prev = { prevDraft: replyDraft, prevAiDraft: aiDraftRef.current, prevIsAix: isAixTemplateDraftRef.current };
+      // テンプレート一覧の「📤 この文を使う」と同じ入れ方（AIX のテンプレートは通常の返信の学習に入れない・テンプレートの選択記録は無し）
+      aiDraftRef.current = "";
+      selectedTemplateIdRef.current = "";
+      isAixTemplateDraftRef.current = true;
+      templateSelectionMetaRef.current = null;
+      pendingSecondMsgRef.current = null;
+      setReplyDraft(normalizePetWording(data.text.replace(/アカウント名/g, preferredCustomerName), { PET_WORDING: process.env.NEXT_PUBLIC_PET_WORDING }).text);
+      setPostAixGen((p) => ({ ...p, [cid]: { status: "done", ...prev } }));
+    } catch (e) {
+      setPostAixGen((prev) => ({ ...prev, [cid]: { status: "error", error: e instanceof Error ? e.message : "生成に失敗しました" } }));
+    }
+  };
+  const restorePostAixPrevDraft = () => {
+    const cid = selectedConversation.id;
+    const st = postAixGen[cid];
+    if (!cid || st?.status !== "done") return;
+    aiDraftRef.current = st.prevAiDraft ?? "";
+    isAixTemplateDraftRef.current = !!st.prevIsAix;
+    setReplyDraft(st.prevDraft ?? "");
+    setPostAixGen((p) => { const n = { ...p }; delete n[cid]; return n; });
+  };
 
   // ===== 各picker開く時の推奨サブモード自動検知 =====
   // viewing picker
@@ -9840,21 +9924,38 @@ export default function Home() {
               );
 
               // P7.5: B5 AIX送信完了後 → 同カテゴリのテンプレートを続けて送る（専用チェーンバナーが無い場合の汎用フォロー）
-              const postAixTmpl = postAixTemplateMap[id];
-              if (postAixTmpl && !dismissedPostAixTemplateIds.has(id) && bannerOk(null)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 px-3 py-2 flex items-center gap-2" style={{ borderColor: postAixTmpl.color, backgroundColor: `${postAixTmpl.color}14` }}>
-                  <span className="text-[12px] font-bold flex-1" style={{ color: postAixTmpl.color }}>
+              // 2026-10-15 竹内悠馬（KAORI さん）: 帯は会話の記録からも出す（selectedPostAix）・2通目を送った／お客様が返した後は出さない（post-aix-turn.ts）
+              const postAixTmpl = selectedPostAix;
+              const postAixClosed = postAixTurnFromLogEnabled(process.env.NEXT_PUBLIC_POST_AIX_TURN_FROM_LOG)
+                && postAixTurnState(msgs.map((m: Message) => ({ sender: m.sender, text: m.text, isAix: m.isAix }))).state === "closed";
+              const postAixDirect = !!postAixTmpl && postAixDirectTemplateOn(postAixTmpl.actionType, process.env.NEXT_PUBLIC_POST_AIX_TEMPLATE_DIRECT);
+              const postAixSt = postAixGen[id];
+              if (postAixTmpl && !postAixClosed && !dismissedPostAixTemplateIds.has(id) && bannerOk(null)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 px-3 py-2 flex flex-wrap items-center gap-2" style={{ borderColor: postAixTmpl.color, backgroundColor: `${postAixTmpl.color}14` }}>
+                  <span className="text-[12px] font-bold flex-1 min-w-0" style={{ color: postAixTmpl.color }}>
                     <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
-                    ✉️ {postAixTmpl.category}の続きを送る
+                    {postAixDirect && postAixSt?.status === "done" ? `✓ ${postAixTmpl.category}の続き（AIX テンプレート）を入れました` : `✉️ ${postAixTmpl.category}の続きを送る`}
+                    {postAixDirect && postAixSt?.status === "error" && <span className="block text-[10px] font-bold text-red-600">{postAixSt.error}</span>}
                   </span>
+                  {postAixDirect && postAixSt?.status !== "done" && (
+                    <button onClick={() => { void insertPostAixTemplate(); }}
+                      disabled={postAixSt?.status === "loading"}
+                      className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white ${postAixSt?.status === "loading" ? "opacity-60" : ""}`}
+                      style={{ background: postAixTmpl.color }}>{postAixSt?.status === "loading" ? "生成中…" : "AIX テンプレートを入れる"}</button>
+                  )}
+                  {postAixDirect && postAixSt?.status === "done" && (
+                    <button onClick={restorePostAixPrevDraft}
+                      className="shrink-0 rounded-full border px-3 py-1 text-[11px] font-bold bg-white"
+                      style={{ borderColor: postAixTmpl.color, color: postAixTmpl.color }}>元の下書きに戻す</button>
+                  )}
                   <button onClick={() => {
                       // バナーは消すがmapは残す（テンプレモーダルのinitialCategory参照用。次のAIX送信で上書きされる）
                       setDismissedPostAixTemplateIds((prev) => new Set([...prev, id]));
                       setTemplateOpenContext("post_aix");
                       setShowTemplateModal(true);
                     }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: postAixTmpl.color }}>テンプレを開く</button>
+                    className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold ${postAixDirect ? "border bg-white" : "text-white"}`}
+                    style={postAixDirect ? { borderColor: postAixTmpl.color, color: postAixTmpl.color } : { background: postAixTmpl.color }}>テンプレを開く</button>
                   <button onClick={() => setDismissedPostAixTemplateIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-[11px] font-bold" style={{ color: postAixTmpl.color, opacity: 0.6 }}>✕</button>
                 </div>
@@ -11233,11 +11334,11 @@ export default function Home() {
           onClose={closeTemplateModal}
           initialSearch={templateInitialSearch}
           postAixContext={
-            postAixTemplateMap[selectedConversation.id]
+            selectedPostAix
               ? {
                   conversationId: selectedConversation.id,
-                  actionType: postAixTemplateMap[selectedConversation.id]?.actionType ?? "",
-                  sentMessage: postAixTemplateMap[selectedConversation.id]?.sentMessage ?? "",
+                  actionType: selectedPostAix?.actionType ?? "",
+                  sentMessage: selectedPostAix?.sentMessage ?? "",
                   // 2026-09-27: 直前の AIX のピッカー（テンプレ選択の記録 picker_mode と同じ値）を AI 最適化に渡す
                   pickerMode: lastPickerModeByConvRef.current.get(selectedConversation.id) ?? null,
                 }
@@ -11308,7 +11409,7 @@ export default function Home() {
                   original_text: resolvedText.slice(0, 2000),
                   adapted_text: (wasAdapted ?? false) ? resolvedText.slice(0, 2000) : null,
                   // B5バナー経由（AIXModal閉じた後）は postAixTemplateMap から actionType を補完
-                  aix_action_type: activeAixFlow ?? postAixTemplateMap[selectedConversation.id]?.actionType ?? null,
+                  aix_action_type: activeAixFlow ?? selectedPostAix?.actionType ?? null,
                   // CHAIN-1: どのバナー/フローからテンプレモーダルを開いたか（AIXフロー中は aix_flow・単独オープンは direct）
                   open_context: templateOpenContext ?? (activeAixFlow ? "aix_flow" : "direct"),
                   // CHAIN-1: AIXピッカーのサブモード。AixModalクローズ後（post_aix）は直近AIX送信時の値で補完
@@ -11363,14 +11464,14 @@ export default function Home() {
             // CHAIN-2: チェーン誘導経由は次テンプレのカテゴリで開く
             templateOpenContext === "chain_next" ? (templateCache.find((t) => t.id === chainNextTemplateMap[selectedConversation.id])?.category) :
             templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.category) :
-            templateOpenContext === "post_aix" ? (postAixTemplateMap[selectedConversation.id]?.category) :
+            templateOpenContext === "post_aix" ? (selectedPostAix?.category) :
             templateOpenContext === "viewing_follow" ? "内覧" :
             // 2026-09-14: 申込のテンプレート（①申込・②申込時フォーマット（続き））は「申込へ！【AIX】」にある（旧「申込・審査」カテゴリは存在しない＝空の一覧で開いていた）
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込へ！【AIX】" :
             activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
             // AIX送信直後の手動テンプレートボタン押下 → 送信したAIXと同じカテゴリで開く
             // （バナー経由の post_aix と同じ体験を手動ボタンでも提供）
-            postAixTemplateMap[selectedConversation.id] ? postAixTemplateMap[selectedConversation.id]?.category :
+            selectedPostAix ? selectedPostAix?.category :
             // 2026-09-14 竹内「申込の AIX 押したあとは AIX テンプレートも申込へのところにする」:
             //   開き直し・別の端末から送った後でも、この会話で最後に送った AIX（DB・72時間以内）のカテゴリで開く。
             //   旧: 前回ほかの会話で見ていたカテゴリ（例: ヒアリング【AIX】）で開いていた
@@ -11616,7 +11717,7 @@ export default function Home() {
               // テンプレート一覧の初期カテゴリ用（送った AIX を正にする・予約送信はまだ送っていないので除く）
               if (!meta?.scheduled) {
                 const _latestCid = selectedConversation.id;
-                setLatestAixByConv((prev) => ({ ...prev, [_latestCid]: { aixType: aixModalType, checkPattern: meta?.checkPattern ?? null, at: new Date().toISOString() } }));
+                setLatestAixByConv((prev) => ({ ...prev, [_latestCid]: { aixType: aixModalType, checkPattern: meta?.checkPattern ?? null, at: new Date().toISOString(), noSecond: !!meta?.noSecondMessage } }));
               }
               // 物件ピックアップ or 物件オススメ送信 → 「物件送った」を自動記録
               if ((aixModalType === "property_send" || aixModalType === "property_recommendation") && !meta?.scheduled) {
@@ -11806,6 +11907,8 @@ export default function Home() {
                 }
                 setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Category, color: _b5Meta?.color ?? "#607D8B", actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
                 setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
+                // 前の AIX の「AIX テンプレートを入れました」を残さない（新しい AIX の続きの番）
+                setPostAixGen((prev) => { if (!prev[_b5ConvId]) return prev; const n = { ...prev }; delete n[_b5ConvId]; return n; });
               }
             }
             // AIXボタンからLINE送信 → その AIX に対応する未完了タスクだけを完了（対応表は aix-task-link.ts）

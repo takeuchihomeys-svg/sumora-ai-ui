@@ -5,6 +5,7 @@ import { fetchCalendarSlots, VIEWING_DAY_START, VIEWING_DAY_END, type CalendarDa
 // 2026-09-16 竹内（𝒮 さん事例）: 1日に出す内覧の時間は1つ
 import { pickDaySlots } from "../lib/viewing-slots";
 import { resolveTemplateSentMessage, ctaPreferenceOf } from "../lib/aix-template-source";
+import { buildAixTemplateRequestBody } from "../lib/post-aix-turn";
 
 // iOS風スクロールホイールピッカー
 function WheelPicker({ items, selectedIdx, onSelect }: {
@@ -2381,17 +2382,18 @@ export default function TemplateModal({
       const res = await fetch("/api/aix-template-generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        // 2026-10-15: 本文は帯の「AIX テンプレートを入れる」（page.tsx）と同じ組み立て（post-aix-turn.buildAixTemplateRequestBody）
+        body: JSON.stringify(buildAixTemplateRequestBody({
           actionType: genAction,
           actionCategory: category,
-          conversationId,
-          customerName,
+          conversationId: conversationId ?? "",
+          customerName: customerName ?? "",
           conversationState,
-          recentMessages: (recentMessages ?? []).slice(-15),
+          recentMessages: (recentMessages ?? []) as Array<Record<string, unknown>>,
           customerConditions: linkedCustomer?.conditions || memo || "",
           customerSummary: linkedCustomer?.ai_summary ?? null,
           noEmoji,
-          pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
+          pendingScheduledMessages: pendingScheduledMessages ?? [],
           staffMessagedToday: staffMessagedToday ?? false,
           // 「1件特にオススメ」の訴求シナリオ判定用（比較選択型/代替新規提案型/初回提案型）
           pickupType: pickupType ?? null,
@@ -2405,7 +2407,7 @@ export default function TemplateModal({
           sentMessageSource: src.source,
           // 2026-10-01: 画面の「訴求方法を選択する！！」（🏃内覧に誘う／🚀申込へ押し込む）を押している時は、その締めを生成に渡す（刺さり具合の判定よりスタッフの選択が先）
           ctaPreference: category === "物件オススメ【AIX】" ? ctaPreferenceOf(aixPurposeFilter) : null,
-        }),
+        })),
       });
       const data = await res.json() as { ok: boolean; text?: string; error?: string };
       if (!res.ok || !data.ok || !data.text) throw new Error(data.error || `生成エラー (${res.status})`);
