@@ -37,7 +37,7 @@ import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from ".
 // 2026-09-21 竹内「個人とLINEのグループ分けて認識」: 送信停止の表示と、グループの会話で初回の挨拶を付けない判定
 import { sendBlockedMessage, isMultiPersonTarget } from "./lib/line-target";
 import { BRAIN_AIX_LABELS, brainAixButtonLabel, sameAixAction, resolveAixButtonView, aixDismissKeys, pendingItemMeta, isAixListBadge, latestCustomerTs, type KeptAix, type PendingAixItem } from "./lib/aix-button-view";
-import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA } from "./lib/request-ledger";
+import { buildRequestLedger, applyBrainRequestStatus, TOPIC_JA as REQUEST_TOPIC_JA, ABOUT_JA as REQUEST_ABOUT_JA } from "./lib/request-ledger";
 import { immediateAixOutcome, immediateTextOutcome } from "./lib/brain-outcome";
 // 2026-10-08 竹内さんの決定「ブレイン最優先・判断はブレインに一本化」: 要対応・やること・ブレイン以外の帯をブレインの判断で（純関数・画面から import してよい）
 import { brainNeedsStaff, flagOn, nonBrainBannerAllowed, extraBannerAllowed } from "./lib/brain-attention";
@@ -8213,7 +8213,7 @@ export default function Home() {
                   <div key={`${x.saidAt}-${n}`} className="flex items-start gap-2">
                     <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold text-white ${x.status === "open" ? "bg-[#d32f2f]" : "bg-[#5c6bc0]"}`}>{x.status === "open" ? "未対応" : "約束済み"}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] font-bold text-[#b71c1c]">{REQUEST_TOPIC_JA[x.topic]}「{x.quote}」</span>
+                      <span className="block truncate text-[12px] font-bold text-[#b71c1c]">{x.about && x.about !== "other" ? REQUEST_ABOUT_JA[x.about] : REQUEST_TOPIC_JA[x.topic]}「{x.quote}」</span>
                       <span className="block text-[10px] text-[#8e24aa]">→ {x.route === "aix" ? "AIX で送る" : x.route === "promise" ? "約束の返信→結果を AIX で送ったら完了" : "返信で答える"}</span>
                     </span>
                   </div>

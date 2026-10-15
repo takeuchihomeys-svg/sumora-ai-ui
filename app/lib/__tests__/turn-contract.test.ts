@@ -132,5 +132,25 @@ t("TURN_CONTRACT=off", turnContractEnabled({ TURN_CONTRACT: "off" }) === false &
   t("wait_line の番は短い待ちの形への二重の宣言の指摘を書き直しに渡さない", issueContradictsContract({ code: "DOUBLE_DECLARATION", evidence: "確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！" }, on) === true);
   t("wait_line でも中身を並べ直した文の指摘はそのまま", issueContradictsContract({ code: "DOUBLE_DECLARATION", evidence: "火曜日に無事1番手でお申込出来ているか確認させて頂き、確認出来次第ご連絡させて頂きます！！" }, on) === false);
 }
+// ⑳ 2026-10-15 軸（axis-brain-1015）: 何について・どの物件の・いつ・誰の事か・条件の向き・今の状況
+{
+  // 田邊さん（84434172 10/06）「駐車場は近くのパーキングでよろしいですか？」＝内覧当日の来方（設備ではない）
+  const brain = { asks: [{ quote: "駐車場は近くのパーキングでよろしいですか？", kind: "question", route: "reply", answer: "近くのコインパーキングに", basis: "company_fact", about: "viewing_day", when: "viewing_day", whose: "customer", property: null, polarity: null }], situation: "内覧の日時が決まり当日の来方の確認" };
+  const ledger = splitRequests(["駐車場は近くのパーキングでよろしいですか？"], NOW);
+  t("網は駐車場を設備と読む（前の形）", ledger[0]?.topic === "equipment", ledger);
+  const c = buildTurnContract({ brain, brainFresh: true, ledgerItems: ledger, alreadySaid: [], settled: [] });
+  t("軸: about=viewing_day が種類を決める（網の設備で上書きしない）", c.asks.length === 1 && c.asks[0].topic === "viewing" && c.asks[0].axis?.about === "viewing_day", c.asks);
+  const note = renderTurnContractNote(c);
+  t("軸: 注記に軸の札と今の状況", note.includes("〔内覧の当日") && note.includes("内覧当日の事") && note.includes("今の状況（ブレイン）: 内覧の日時が決まり"), note);
+  // 未桜さん（22b2511e 10/09）「ここって洗面台とトイレ一緒な感じですか？」＝送った束の物件の設備
+  const n2 = normalizeBrainTurnContract({ asks: [{ quote: "ここって洗面台とトイレ一緒な感じですか？", route: "reply", about: "property_equipment", property: "エステムコート難波Ⅳアトリ", when: "now", whose: "customer", polarity: "null" }] });
+  t("軸: normalize が about・property を残し、外れた値は落とす", (n2?.asks?.[0] as { about?: string; property?: string; polarity?: unknown } | undefined)?.about === "property_equipment" && (n2?.asks?.[0] as { property?: string }).property === "エステムコート難波Ⅳアトリ" && (n2?.asks?.[0] as { polarity?: unknown }).polarity === null, n2);
+  t("軸: 知らない about は落とす", (normalizeBrainTurnContract({ asks: [{ quote: "x?", about: "parking" }] })?.asks?.[0] as { about?: string } | undefined)?.about === undefined);
+  const prev = process.env.TURN_CONTRACT_AXIS;
+  process.env.TURN_CONTRACT_AXIS = "off";
+  const off = buildTurnContract({ brain, brainFresh: true, ledgerItems: ledger, alreadySaid: [], settled: [] });
+  if (prev === undefined) delete process.env.TURN_CONTRACT_AXIS; else process.env.TURN_CONTRACT_AXIS = prev;
+  t("TURN_CONTRACT_AXIS=off は前の形（網の種類・状況なし）", off.asks[0].topic === "equipment" && !off.asks[0].axis && !off.situation, off);
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exitCode = 1;

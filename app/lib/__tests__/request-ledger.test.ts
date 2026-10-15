@@ -183,6 +183,14 @@ console.log("ブレインの判断（request_status）");
     eq(applyBrainRequestStatus(led2, st, c2, { ui: false })[1].status, "done");
   });
   it("ブレインの判断が無ければ網のまま", () => eq(applyBrainRequestStatus(led, null, c, { ui: false }).map((x) => x.status), led.map((x) => x.status)));
+  it("2026-10-15 軸: 値の3・4番目（何について|道）が種類と道を決める（駐車場＝内覧当日の来方→返信）", () => {
+    const cands = requestCandidatesForBrain(led);
+    const st = normalizeBrainRequestStatus({ r1: "open||viewing_day|reply", r2: "done|返信|parking|aix" }, cands, at(5));
+    eq(st?.items.map((x) => `${x.about ?? "-"}:${x.route ?? "-"}`), ["viewing_day:reply", "-:-"], "知らない about は落とす");
+    const out = applyBrainRequestStatus(led, st, c, { ui: false });
+    eq([out[0].topic, out[0].route, out[0].about], ["viewing", "reply", "viewing_day"]);
+    has(buildRequestStatusAsk(cands), "何について");
+  });
   it("一覧のバッジもブレインの判断を使う", () => {
     const rows = c.map((m) => ({ conversation_id: "a", sender: m.sender, text: m.text ?? "", created_at: m.createdAt, is_aix_generated: false }));
     const before = countOpenRequestsByConversation(rows, Date.parse(at(10)));

@@ -29,7 +29,41 @@ export type RequestItem = {
   /** 先の時期の相談（「来年あたりにその際再度相談させてもらってもいいですか？」）＝会話画面の帯には出すが、一覧の「確認事項 未対応」の数には入れない */
   deferred?: boolean;
 };
-export type LedgerItem = RequestItem & { status: RequestStatus; doneAt?: string | null; doneBy?: string | null };
+export type LedgerItem = RequestItem & { status: RequestStatus; doneAt?: string | null; doneBy?: string | null; /** 2026-10-15 軸: ブレインが決めた「何について」（無ければ網の種類のまま） */ about?: RequestAbout | null };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-10-15 軸の直し（axis-brain-1015・竹内さん「何について・誰の・いつの事かを人間のように読む」）:
+//   確認事項の種類と道は語の網（TOPIC_RE・routeOf）が決めていた → 田邊さん「駐車場は近くのパーキングでよろしいですか？」（内覧当日の来方）が
+//   「設備→約束→AIX」に、未桜さん「ここって洗面台とトイレ一緒？」（送った束の物件の資料で答えられる）が約束に。
+//   ブレインが request_status の値に about（何について）と道を足して返す → 画面の帯・バッジはそれを使う（網は候補と目安だけ）。
+//   戻す: REQUEST_STATUS_AXIS=off（ブレインに about を聞かない・帯は網の種類）
+// ─────────────────────────────────────────────────────────────────────────────
+export type RequestAbout =
+  | "property_equipment" | "property_cost" | "vacancy" | "viewing_day" | "procedure" | "company"
+  | "search_condition" | "reaction_to_sent" | "other_party" | "self" | "other";
+export const ABOUT_VALUES: ReadonlyArray<RequestAbout> = ["property_equipment", "property_cost", "vacancy", "viewing_day", "procedure", "company", "search_condition", "reaction_to_sent", "other_party", "self", "other"];
+export const ABOUT_JA: Record<RequestAbout, string> = {
+  property_equipment: "物件の設備・間取り", property_cost: "物件の費用", vacancy: "空き・募集状況", viewing_day: "内覧の当日（来方・時間・持ち物）",
+  procedure: "手続き・流れ", company: "会社の決まり・一般の事", search_condition: "探す条件", reaction_to_sent: "送った物件への反応",
+  other_party: "他の方・管理会社の事", self: "お客様ご自身の事情", other: "その他",
+};
+/** about → 確認事項の種類。種類に当たらない物は null（網の種類のまま） */
+export function topicOfAbout(about: RequestAbout | null | undefined): RequestTopic | null {
+  switch (about) {
+    case "property_equipment": return "equipment";
+    case "property_cost": return "cost";
+    case "vacancy": return "vacancy";
+    case "viewing_day": return "viewing";
+    case "procedure": return "contract";
+    case "search_condition": return "pickup";
+    default: return null;
+  }
+}
+export function requestStatusAxisOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  let v = "";
+  try { v = `${env.REQUEST_STATUS_AXIS ?? ""}|${env.NEXT_PUBLIC_REQUEST_STATUS_AXIS ?? ""}`; } catch { v = ""; }
+  return !/\boff\b/i.test(v);
+}
 export type LedgerMsg = { sender: string; text: string | null | undefined; createdAt: string; isAix?: boolean | null };
 
 export const TOPIC_JA: Record<RequestTopic, string> = {
@@ -313,7 +347,7 @@ export function countOpenRequestsByConversation(
 //   戻す: REQUEST_STATUS_BRAIN=off（ブレインに聞かない）／NEXT_PUBLIC_REQUEST_STATUS_BRAIN=off（画面・バッジがブレインの判断を使わない）
 // ─────────────────────────────────────────────────────────────────────────────
 export type BrainRequestState = "done" | "promised" | "open" | "withdrawn";
-export type BrainRequestStatusItem = { key: string; status: BrainRequestState; via: string | null };
+export type BrainRequestStatusItem = { key: string; status: BrainRequestState; via: string | null; /** 2026-10-15 軸 */ about?: RequestAbout | null; route?: RequestRoute | null };
 /** suggested_aix_meta.request_status に保存する形。at＝ブレインが読んだ最後の通の時刻 */
 export type BrainRequestStatus = { at: string; items: BrainRequestStatusItem[] };
 export type RequestCandidate = { id: string; key: string; item: LedgerItem };
@@ -348,7 +382,7 @@ export function buildRequestStatusAsk(cands: ReadonlyArray<RequestCandidate>): s
   const fmt = (iso: string) => { const d = new Date(Date.parse(iso) + 9 * 3600_000); return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
   return `【お客様の確認事項の候補（決定論の網が拾った物・状態はあなたが会話を読んで決める）】
 ${cands.map((c) => `${c.id}. ${fmt(c.item.saidAt)} ${TOPIC_JA[c.item.topic]}「${c.item.quote}」（網の見立て: ${NET_JA[c.item.status]}${c.item.doneBy ? `・${c.item.doneBy}` : ""}）`).join("\n")}
-→ 出力の JSON に次の "request_status" を足す。鍵は r1〜r${cands.length} の ${cands.length} 個すべて（済みの物も省かない・鍵を消さない）。値は「状態|手段」（状態＝done/promised/open/withdrawn、手段＝返信/AIX/電話・対面/内覧の確定/取り下げ。open は手段なし）:
+→ 出力の JSON に次の "request_status" を足す。鍵は r1〜r${cands.length} の ${cands.length} 個すべて（済みの物も省かない・鍵を消さない）。値は「状態|手段${requestStatusAxisOn() ? "|何について|道" : ""}」（状態＝done/promised/open/withdrawn、手段＝返信/AIX/電話・対面/内覧の確定/取り下げ。open は手段なし（空のまま「open||viewing_day|reply」の形）${requestStatusAxisOn() ? `。何について＝${ABOUT_VALUES.join("/")}（語ではなく文の意味で決める: 内覧の日が決まった後の「駐車場は近くのパーキングで？」は viewing_day、送った物件への「予算オーバー」は reaction_to_sent）。道＝reply（会話・送った資料・会社の事実・一般の事で答えられる）/promise（確認・作成の約束→結果は AIX）/aix（スタッフだけが知る事）` : ""}）:
   "request_status": {${cands.map((c) => `"${c.id}": ""`).join(", ")}}
   - done＝こちらがその問いに答えた・結果を送った（手打ちの返信・AIX・電話や内覧の場で話した・内覧の日が決まった等、手段は問わない。言い回しが違っても中身で答えていれば done）
   - promised＝「確認させて頂きます」等の約束だけで、結果はまだ送っていない／open＝まだ触れていない／withdrawn＝お客様が「もう大丈夫です」等で取り下げた・別の流れで要らなくなった
@@ -361,8 +395,8 @@ export function normalizeBrainRequestStatus(raw: unknown, cands: ReadonlyArray<R
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     raw = Object.entries(raw as Record<string, unknown>).map(([id, v]) => {
       if (v && typeof v === "object") return { id, ...(v as Record<string, unknown>) };
-      const [status, via] = String(v ?? "").split(/[|｜]/).map((z) => z.trim());
-      return { id, status, via: via ?? null };
+      const [status, via, about, route] = String(v ?? "").split(/[|｜]/).map((z) => z.trim());
+      return { id, status, via: via || null, about: about || null, route: route || null };
     });
   }
   if (!cands.length || !Array.isArray(raw)) return null;
@@ -374,7 +408,11 @@ export function normalizeBrainRequestStatus(raw: unknown, cands: ReadonlyArray<R
     const st = String(r.status ?? "").trim().toLowerCase();
     if (!key || !["done", "promised", "open", "withdrawn"].includes(st) || items.some((x) => x.key === key)) continue;
     const via = typeof r.via === "string" && r.via.trim() && r.via.trim() !== "null" ? r.via.trim().slice(0, 12) : null;
-    items.push({ key, status: st as BrainRequestState, via });
+    const ab = String(r.about ?? "").trim();
+    const rt = String(r.route ?? "").trim();
+    const axis = requestStatusAxisOn() && (ABOUT_VALUES as ReadonlyArray<string>).includes(ab)
+      ? { about: ab as RequestAbout, ...(["reply", "promise", "aix"].includes(rt) ? { route: rt as RequestRoute } : {}) } : {};
+    items.push({ key, status: st as BrainRequestState, via, ...axis });
   }
   return items.length ? { at, items } : null;
 }
@@ -384,6 +422,14 @@ function asBrainStatus(v: unknown): BrainRequestStatus | null {
   const o = v as { at?: unknown; items?: unknown };
   if (typeof o.at !== "string" || !Array.isArray(o.items)) return null;
   return { at: o.at, items: (o.items as BrainRequestStatusItem[]).filter((x) => x && typeof x.key === "string" && typeof x.status === "string") };
+}
+
+/** 2026-10-15 軸: ブレインが決めた「何について」と道を項目に当てる（種類・道の札・帯の文）。無い・REQUEST_STATUS_AXIS=off ならそのまま */
+function withBrainAxis(x: LedgerItem, b: BrainRequestStatusItem): LedgerItem {
+  if (!b.about || !requestStatusAxisOn()) return x;
+  const topic = topicOfAbout(b.about) ?? x.topic;
+  const route: RequestRoute = b.route ?? (b.about === "viewing_day" || b.about === "company" || b.about === "reaction_to_sent" || b.about === "self" ? "reply" : topic === x.topic ? x.route : routeOf(topic));
+  return { ...x, topic, route, about: b.about };
 }
 
 /**
@@ -399,10 +445,12 @@ export function applyBrainRequestStatus(ledger: ReadonlyArray<LedgerItem>, brain
   const staffAfter = Number.isFinite(at) && msgs.some((m) => m.sender !== "customer" && Date.parse(m.createdAt) > at && String(m.text ?? "").trim() && !/^\[(?:画像|動画|スタンプ|ファイル)\]$/.test(String(m.text ?? "").trim()));
   const by = new Map(brain.items.map((x) => [x.key, x]));
   return ledger.map((x) => {
-    const b = by.get(requestKey(x));
-    if (!b) return x;
-    if (b.status === "done" || b.status === "withdrawn") return { ...x, status: "done" as RequestStatus, doneBy: `ブレイン:${b.via ?? (b.status === "withdrawn" ? "取り下げ" : "済み")}` };
-    if (staffAfter) return x; // ブレインの「まだ」の後にこちらが送った＝その送信は網で見る
-    return { ...x, status: b.status === "promised" ? "promised" as RequestStatus : "open" as RequestStatus, doneBy: b.status === "promised" ? "ブレイン:約束済み" : null };
+    const b0 = by.get(requestKey(x));
+    if (!b0) return x;
+    const b = b0;
+    const xa = withBrainAxis(x, b);
+    if (b.status === "done" || b.status === "withdrawn") return { ...xa, status: "done" as RequestStatus, doneBy: `ブレイン:${b.via ?? (b.status === "withdrawn" ? "取り下げ" : "済み")}` };
+    if (staffAfter) return xa; // ブレインの「まだ」の後にこちらが送った＝その送信は網で見る（種類・道はブレインの軸のまま）
+    return { ...xa, status: b.status === "promised" ? "promised" as RequestStatus : "open" as RequestStatus, doneBy: b.status === "promised" ? "ブレイン:約束済み" : null };
   });
 }

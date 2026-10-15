@@ -16,7 +16,8 @@
 // 戻す: TURN_CONTRACT=off（全部）／TURN_CONTRACT_CONFIRM_GATE=off（確認の約束の関門だけ旧の語判定）／TURN_CONTRACT_FINAL_CHECK=off（最終チェックの書き直しの見送りだけ）
 // テスト: app/lib/__tests__/turn-contract.test.ts
 
-import type { RequestItem, RequestTopic } from "./request-ledger";
+import type { RequestItem, RequestTopic, RequestAbout } from "./request-ledger";
+import { ABOUT_VALUES, ABOUT_JA, topicOfAbout } from "./request-ledger";
 import { alreadySaidAllowance, ackFormBrainEnabled, normalizeAckForm, ackFormContractLine, isCompactWaitLine, ackFormFollowEnabled, ackFormDropTopic, type AckForm } from "./repeat-brain-align";
 import { promiseTopics } from "./draft-repeat";
 import { truncateAtBoundary } from "./brain-strategy-note";
@@ -40,7 +41,22 @@ export type ContractAsk = {
   basis: "conversation" | "material" | "company_fact" | "general" | "judgement" | null;
   /** route=aix の時の AIX（aix-catalog の鍵: "ボタン" か "ボタン/ピッカー"） */
   aixKey: string | null;
+  /** 2026-10-15 軸（axis-brain-1015）: 何について・どの物件の・いつの・誰の事か・条件の向き（ブレインが決める・TURN_CONTRACT_AXIS=off で出さない） */
+  axis?: AskAxis | null;
 };
+
+/** 何について（about）: 種類と道を決めるのは語の網ではなくこれ（定義は request-ledger＝画面からも読む・ここは型の別名） */
+export type AskAbout = RequestAbout;
+export { ABOUT_VALUES, ABOUT_JA, topicOfAbout };
+export type AskWhen = "now" | "viewing_day" | "after_move" | "future";
+export type AskWhose = "customer" | "other_applicant" | "company";
+export type AskPolarity = "add" | "relax" | "remove" | "ng";
+export type AskAxis = { about: AskAbout; property: string | null; when: AskWhen | null; whose: AskWhose | null; polarity: AskPolarity | null };
+
+/** 軸の欄を出させる（既定 on・TURN_CONTRACT_AXIS=off で前の形） */
+export function turnContractAxisEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.TURN_CONTRACT_AXIS ?? "").trim().toLowerCase() !== "off";
+}
 
 export type TurnContract = {
   asks: ContractAsk[];
@@ -57,6 +73,8 @@ export type TurnContract = {
   ackForm?: AckForm | null;
   /** 2026-10-15 review: ackForm を本質の側の出口（答えの要点を外す・足させる指摘を見送る・確認の約束の指摘を見送る）にも当てる番か＝お客様の今の発言が了承だけの番（generate-reply が isAckOnlyTurn で立てる）。ack_form は「質問あり」「急ぎ」の番にも出うるので、中身のある番では立てない */
   ackFollow?: boolean;
+  /** 2026-10-15 軸: 今の状況（ブレインが短く・例「2番手で申込＋並行して探す・お客様承諾済み」「物件確認の結果は募集に出ていない」）。無ければ null */
+  situation?: string | null;
   /** brain＝今の番を見たブレイン／ledger＝決定論の一覧だけ（予備） */
   source: "brain" | "ledger";
 };
@@ -98,8 +116,21 @@ export function turnContractFinalCheckEnabled(env: Record<string, string | undef
 }
 
 // ── ブレインへの指示（brain-core の出力の指定に入れる文）───────────────────────
+/** 2026-10-15 軸（axis-brain-1015）: asks の1件ずつに足す欄（追加の LLM 呼び出しなし） */
+export const BRAIN_AXIS_ASK_FIELD = `"about": "${ABOUT_VALUES.join("|")}（何について）", "property": "どの物件の事か（会話・送った束に出た表記のまま。「ここ」「こちら」は引用・直前の送付の束から1件に決める。物件の話でなければ null）", "when": "now|viewing_day|after_move|future（いつの事か）", "whose": "customer|other_applicant|company（誰の事か）", "polarity": "add|relax|remove|ng|null（探す条件の変化の時だけ。add=足す・relax=ゆるめる（〜じゃなくてもいい）・remove=外す・ng=避けたい）"`;
+
+/** 軸の決め方（竹内さんの実送信の例・2026-10-15 の7件の原因調べから） */
+export const BRAIN_AXIS_RULES = `- ★軸（何について・どの物件の・いつの・誰の事か）は語ではなく文の意味で決める。種類・道・材料・確認事項はこの軸に従う（語の網は候補の目安）:
+  ・内覧の日が決まった後の「駐車場は近くのパーキングでよろしいですか」＝about=viewing_day・when=viewing_day（内覧当日の来方。物件の駐車場の空きではない）→ 返信（会社の事実「車で来る時」）。竹内さん「はい😊！！近くのコインパーキングにお停め頂けますと幸いです！！」の形
+  ・束（資料・見積書・室内イメージの URL）を送った直後の「ここって洗面台とトイレ一緒な感じですか」＝about=property_equipment・property=引用した／直前に送った束の物件 → 資料（【送った束】・物件資料の読み取り）で答える。資料に無い時だけ確認の約束
+  ・送った物件への「予算オーバーです」＝about=reaction_to_sent・property=その物件（探す条件の言い直しではない＝登録の条件は変えない）。竹内さんは「ご査収頂きありがとうございます」で受けて次の手
+  ・「ペット可じゃなくてもいい」＝about=search_condition・polarity=relax（ペット可を外す。NG にしない）。「共益費込み10万」＝家賃の上限は共益費込みの額
+  ・スタッフの文の「1番手の方審査否決…」は他の申込者の事（whose=other_applicant）。お客様の審査の事と取り違えない
+  ・「4月等の繁忙期より今の方が家賃安いですか」＝about=company（一般の傾向）→ 返信で答える（会社の事実「繁忙期」・なぜそうなのかを入れる）
+  ・募集に出ていない／空きが無いと伝えた後の「ありがとうございます！」＝about=reaction_to_sent・situation に「物件確認の結果は募集に出ていない」→ 受け＋何卒（内覧・申込に誘わない）
+- situation: 今の状況を短く（例「2番手で申込＋並行して探す・お客様承諾済み」）。2番手の申込と並行探しをお客様が承諾した番は、申込フォーマットと「〇〇号室をお申込し、並行してお部屋お探しさせて頂きます」の番。`;
 /** ブレインの JSON に足す欄の説明（brain-core の出力の指定・今回の発言の層の出力の指定の両方に入れる） */
-export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"${brainDeepCheckGapEnabled() ? `, ${BRAIN_DEEP_CHECK_ASK_FIELD}` : ""}}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
+export const BRAIN_TURN_CONTRACT_FIELD = `"turn_contract": {"asks": [{"quote": "お客様の今の連投の依頼・質問・懸念を1つずつ（お客様の言葉・40字以内）", "kind": "request|question|concern|report|feeling", "route": "reply|promise|aix|none", "answer": "reply なら答えの要点・promise なら約束の中身（40字以内）・aix/none は null", "basis": "conversation|material|company_fact|general|judgement", "aix": "route=aix の時だけ AIX のキー（上の能力マップ）。他は null"${turnContractAxisEnabled() ? `, ${BRAIN_AXIS_ASK_FIELD}` : ""}${brainDeepCheckGapEnabled() ? `, ${BRAIN_DEEP_CHECK_ASK_FIELD}` : ""}}], "lead_with": "先に答える asks の番号（0始まり）か null", "close_only": "true/false", "must_not": ["この返信で言ってはいけない事（最大4件・各20字）"], "proposals": ["こちらから添える提案（お申込みでお部屋を抑える・オンライン内見・室内の撮影 等。お客様の事情と刺さり具合で・最大2件・各30字。無ければ []）"], "feeling": {"kind": "anxious|apologetic|hurried|disappointed|positive|null", "acknowledge": "true/false"}${turnContractAxisEnabled() ? `, "situation": "今の状況を40字以内で（何がどこまで進み・お客様が何を承諾し・こちらが何を約束しているか。例「2番手で申込＋並行して探す・お客様承諾済み」「物件確認の結果は募集に出ていない」）"` : ""}${ackFormBrainEnabled() ? `, "ack_form": "receive_only|wait_line|null（【前の約束への了承】の材料がある番だけ。無ければ null）"` : ""}}`;
 
 /** ブレインの判断の仕方（出力の指定の後ろに置く短い規則・竹内さん 10/08 の答え Q1〜Q10 をそのまま） */
 export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract）の決め方 — 返信の中身はここだけで決まる】
@@ -116,11 +147,13 @@ export const BRAIN_TURN_CONTRACT_RULES = `【この番の本質（turn_contract�
 - proposals: お客様がすぐ来られない事情（今週は無理・出張中・予定が詰まって・遠方）があり物件が刺さっている時の「お申込みでお部屋を抑える」「オンライン内見・室内の撮影」の申し出は proposals に入れる（返信で消さない・「ご内覧可否確認」に置き換えない）。内覧したいだけの依頼は aix=viewing_invite（確認の約束にしない）。
 - must_not: 聞かれていない事・この場面で言うと外れる事（この番の会話から書く）。${ackFormBrainEnabled() ? `
 - ack_form（竹内さん 10/13「ブレインに任せる」）: 【前の約束への了承】の材料がある番だけ、了承への返事を "receive_only"（受けだけ）か "wait_line"（待ちの形の短い1文）から選ぶ。材料の竹内さんの並びを読んで決める（答えは決まっていない）。日付の入った約束・言い切りの約束を言い直す返事は選ばない。` : ""}${brainDeepCheckGapEnabled() ? `
-${BRAIN_DEEP_CHECK_RULE}` : ""}`;
+${BRAIN_DEEP_CHECK_RULE}` : ""}${turnContractAxisEnabled() ? `
+${BRAIN_AXIS_RULES}` : ""}`;
 
 // ── ブレインの出力を読む ─────────────────────────────────────────────
 export type BrainTurnContractRaw = {
-  asks?: Array<{ quote?: unknown; topic?: unknown; kind?: unknown; route?: unknown; answer?: unknown; basis?: unknown; aix?: unknown }>;
+  asks?: Array<{ quote?: unknown; topic?: unknown; kind?: unknown; route?: unknown; answer?: unknown; basis?: unknown; aix?: unknown; about?: unknown; property?: unknown; when?: unknown; whose?: unknown; polarity?: unknown }>;
+  situation?: unknown;
   lead_with?: unknown;
   close_only?: unknown;
   must_not?: unknown;
@@ -146,6 +179,27 @@ export function clipAtBoundary(s: unknown, n: number, env: Record<string, string
 const clip = (s: unknown, n: number) => clipAtBoundary(s, n);
 const truthy = (v: unknown) => v === true || v === "true";
 
+const WHENS: ReadonlySet<string> = new Set(["now", "viewing_day", "after_move", "future"]);
+const WHOSES: ReadonlySet<string> = new Set(["customer", "other_applicant", "company"]);
+const POLS: ReadonlySet<string> = new Set(["add", "relax", "remove", "ng"]);
+const ABOUTS: ReadonlySet<string> = new Set(ABOUT_VALUES);
+const nn = (v: unknown) => (v == null || v === "null" || v === "" ? null : String(v).trim());
+/** 生の ask から軸の欄だけを取り出す（型の外れた値は落とす・about が無ければ何も足さない） */
+function axisRawOf(a: { about?: unknown; property?: unknown; when?: unknown; whose?: unknown; polarity?: unknown } | null | undefined): { about?: string; property?: string | null; when?: string | null; whose?: string | null; polarity?: string | null } {
+  if (!a || !turnContractAxisEnabled()) return {};
+  const about = nn(a.about);
+  if (!about || !ABOUTS.has(about)) return {};
+  const w = nn(a.when), wh = nn(a.whose), p = nn(a.polarity);
+  const prop = nn(a.property);
+  return { about, property: prop ? clipAtBoundary(prop, 40) : null, when: w && WHENS.has(w) ? w : null, whose: wh && WHOSES.has(wh) ? wh : null, polarity: p && POLS.has(p) ? p : null };
+}
+/** 保存した生の ask の軸を型にする（無ければ null） */
+export function askAxisOf(a: { about?: unknown; property?: unknown; when?: unknown; whose?: unknown; polarity?: unknown } | null | undefined): AskAxis | null {
+  const r = axisRawOf(a);
+  if (!r.about) return null;
+  return { about: r.about as AskAbout, property: r.property ?? null, when: (r.when as AskWhen | null) ?? null, whose: (r.whose as AskWhose | null) ?? null, polarity: (r.polarity as AskPolarity | null) ?? null };
+}
+
 /** brain-core が保存する前にブレインの turn_contract を整える（型の外れた値は落とす・最大6件）。無ければ null */
 export function normalizeBrainTurnContract(raw: unknown): BrainTurnContractRaw | null {
   if (!raw || typeof raw !== "object") return null;
@@ -157,19 +211,23 @@ export function normalizeBrainTurnContract(raw: unknown): BrainTurnContractRaw |
     answer: a?.answer == null || a?.answer === "null" ? null : clip(a?.answer, 40) || null,
     basis: BASES.has(String(a?.basis)) ? String(a?.basis) : null,
     aix: typeof a?.aix === "string" && a.aix && a.aix !== "null" ? clip(a.aix, 60) : null,
+    ...axisRawOf(a),
   })).filter((a) => a.quote).slice(0, 6);
+  const situation = turnContractAxisEnabled() && typeof r.situation === "string" && r.situation.trim() && r.situation.trim() !== "null" ? clip(r.situation, 60) : null;
   const lw = typeof r.lead_with === "number" ? r.lead_with : typeof r.lead_with === "string" && /^\d+$/.test(r.lead_with) ? Number(r.lead_with) : null;
   const mustNot = (Array.isArray(r.must_not) ? r.must_not : []).map((s) => clip(s, 20)).filter(Boolean).slice(0, 4);
   const proposals = (Array.isArray(r.proposals) ? r.proposals : []).map((s) => clip(s, 30)).filter(Boolean).slice(0, 2);
   const fk = r.feeling && FEELINGS.has(String(r.feeling.kind)) ? String(r.feeling.kind) : null;
   const af = normalizeAckForm(r.ack_form);
-  if (!asks.length && !truthy(r.close_only) && !mustNot.length && !fk && !proposals.length && !af) return null;
+  if (!asks.length && !truthy(r.close_only) && !mustNot.length && !fk && !proposals.length && !af && !situation) return null;
   return {
+    ...(situation ? { situation } : {}),
     asks, lead_with: lw != null && lw >= 0 && lw < asks.length ? lw : null, close_only: truthy(r.close_only), must_not: mustNot, proposals,
     feeling: fk ? { kind: fk, acknowledge: truthy(r.feeling?.acknowledge) } : null,
     ...(af ? { ack_form: af } : {}),
   };
 }
+
 
 export type TurnContractFacts = {
   /** 今の条件の物件を出し切った（search-exhausted） */
@@ -206,14 +264,16 @@ export function buildTurnContract(input: {
   if (b) {
     for (const a of b.asks ?? []) {
       const quote = String(a.quote);
-      asks.push({ quote, topic: "other", kind: a.kind as ContractAsk["kind"], route: a.route as AnswerRoute, answer: (a.answer as string | null) ?? null, basis: (a.basis as ContractAsk["basis"]) ?? null, aixKey: (a.aix as string | null) ?? null });
+      const axis = askAxisOf(a);
+      asks.push({ quote, topic: axis ? topicOfAbout(axis.about) ?? "other" : "other", kind: a.kind as ContractAsk["kind"], route: a.route as AnswerRoute, answer: (a.answer as string | null) ?? null, basis: (a.basis as ContractAsk["basis"]) ?? null, aixKey: (a.aix as string | null) ?? null, ...(axis ? { axis } : {}) });
       keys.push(keyOf(quote));
     }
   }
   for (const it of input.ledgerItems) {
     const k = keyOf(it.quote);
     const hit = keys.findIndex((x) => x && k && (x.includes(k.slice(0, 6)) || k.includes(x.slice(0, 6))));
-    if (hit >= 0) { if (asks[hit].topic === "other") asks[hit].topic = it.topic; continue; }
+    // 2026-10-15 軸: ブレインが about を出した項目は、網の種類（語の一致）で上書きしない（TURN_CONTRACT_AXIS=off で前の形）
+    if (hit >= 0) { if (asks[hit].topic === "other" && !asks[hit].axis) asks[hit].topic = it.topic; continue; }
     asks.push({ quote: it.quote.slice(0, 40), topic: it.topic, kind: it.kind, route: it.route, answer: null, basis: null, aixKey: null });
     keys.push(k);
   }
@@ -243,6 +303,7 @@ export function buildTurnContract(input: {
     alreadySaid: input.alreadySaid.map((s) => clip(s, 60)).filter(Boolean).slice(0, 6),
     settled: input.settled.map((s) => clip(s, 60)).filter(Boolean).slice(0, 4),
     feeling, humanChecks, source: b ? "brain" : "ledger",
+    situation: b && typeof b.situation === "string" ? b.situation : null,
     ackForm: b && ackFormBrainEnabled() ? normalizeAckForm(b.ack_form) : null,
   };
 }
@@ -279,7 +340,8 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   if (ackLine) L.push(ackLine);
   // 2026-10-15: 了承の返事の形を決めた番は、答えの要点に前の約束の中身（ピックアップを進める・確認する）が入っていても渡さない（ack_form とぶつかる・ACK_FORM_FOLLOW=off で旧）
   const dropAns = (ans: string | null | undefined) => !!c.ackForm && !!c.ackFollow && !!ans && ackFormFollowEnabled() && ackFormDropTopic(ans);
-  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
+  if (c.situation && turnContractAxisEnabled()) L.push(`- 今の状況（ブレイン）: ${c.situation}`);
+  c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);
@@ -289,6 +351,16 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   L.push(`- 人の当たり前: ${c.humanChecks.map((h) => HUMAN_CHECK_JA[h]).join("／")}`);
   if (c.source === "brain") L.push("- この一覧に無い確認・作成・探す・交渉の約束は書かない（route=約束 の項目だけ約束してよい）。");
   return L.join("\n");
+}
+/** 依頼1件の軸の短い札（「〔内覧の当日・物件: 〇〇・他の申込者の事〕」）。軸が無い・TURN_CONTRACT_AXIS=off なら空 */
+export function axisLabel(x: AskAxis | null | undefined): string {
+  if (!x || !turnContractAxisEnabled()) return "";
+  const parts = [ABOUT_JA[x.about]];
+  if (x.property) parts.push(`物件: ${x.property}`);
+  if (x.when && x.when !== "now") parts.push(x.when === "viewing_day" ? "内覧当日の事" : x.when === "after_move" ? "入居後の事" : "先の事");
+  if (x.whose && x.whose !== "customer") parts.push(x.whose === "other_applicant" ? "他の申込者の事" : "会社・管理会社の事");
+  if (x.polarity) parts.push(x.polarity === "relax" ? "条件をゆるめる（NG にしない）" : x.polarity === "remove" ? "条件を外す" : x.polarity === "ng" ? "避けたい" : "条件を足す");
+  return `〔${parts.join("・")}〕`;
 }
 const FEELING_JA: Record<FeelingKind, string> = { anxious: "不安", apologetic: "恐縮・謝罪", hurried: "急ぎ", disappointed: "落胆", positive: "前向き" };
 
