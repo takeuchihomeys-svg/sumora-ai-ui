@@ -97,8 +97,10 @@ const SHOWN = new Set(["after_recommend", "after_pickup", "after_estimate", "aft
  * ブレインに渡す材料の1行（保留の番・物件をお送りした後だけ・申込の手続きの後は呼ぶ側で外す）。置くかどうか・どちらかはブレインが決める。
  *   scene / room / delayed は appeal-timing の読み（resolveAppealFromConversation の input）をそのまま使う（同じ番を2つの物差しで読まない）
  */
-export function holdSoftNextMaterial(i: { customerText: string; scene: string; room: string; delayed?: boolean; env?: Record<string, string | undefined> }): string {
+export function holdSoftNextMaterial(i: { customerText: string; scene: string; room: string; delayed?: boolean; checkAllUnavailable?: boolean; env?: Record<string, string | undefined> }): string {
   if (!holdSoftNextEnabled(i.env)) return "";
+  // brain-merge 10/15（指摘6）: 直前の物件確認の結果が全部 募集に出ていない番は、刺さっているか・保留の1文の材料を出さない（指すお部屋が無い・締めは受け＋何卒＝unavailable-ack）
+  if (i.checkAllUnavailable) return "";
   const kind = holdTurnKind(i.customerText);
   // 10/15 竹内さんの追加の決定（紗季さん 10/11）: 物件を見せた後のお礼だけの番は、刺さっているかをブレインが読む材料を渡す
   if (!kind && SHOWN.has(i.scene) && i.scene !== "post_viewing" && holdSoft1015Enabled(i.env) && isThanksOnly(i.customerText)) return `\n${PIERCE_MATERIAL}`;
@@ -123,8 +125,10 @@ export function holdSoftNextMaterial(i: { customerText: string; scene: string; r
  *   生成に「その1文を扉の文の後に入れる」と渡す。再生（YUMA4・前後各11番）で、ブレインの方向に「ご都合の良い日に内覧案内できる旨の柔らかい1文」が
  *   あるのに下書きから落ちた番があった（他の材料の「訴求の率 11%」「迷い: 押すのは少ない」に負けた）。ブレインが書いていない番は何も渡さない
  */
-export function holdSoftReplyNote(i: { customerText: string; brainDirection: string | null | undefined; scene?: string | null; room?: string | null; delayed?: boolean; env?: Record<string, string | undefined> }): string {
+export function holdSoftReplyNote(i: { customerText: string; brainDirection: string | null | undefined; scene?: string | null; room?: string | null; delayed?: boolean; checkAllUnavailable?: boolean; env?: Record<string, string | undefined> }): string {
   if (!holdSoftNextEnabled(i.env) || !holdTurnKind(i.customerText)) return "";
+  // brain-merge 10/15（指摘6）: 直前の物件確認の結果が全部 募集に出ていない番は内覧・申込の1文を渡さない
+  if (i.checkAllUnavailable) return "";
   // fix(review) 10/15: ブレインの材料と同じ網（物件を見せた後の場面だけ・申込の手続きの後は渡さない）。場面が読めない時（null）は今まで通り方向だけで決める
   if (i.scene && !SHOWN.has(i.scene)) return "";
   const d = N(i.brainDirection);

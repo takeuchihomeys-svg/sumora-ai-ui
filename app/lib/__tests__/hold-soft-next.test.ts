@@ -83,6 +83,11 @@ it("HOLD_SOFT_1015=off → 出さない", () => eq(holdSoftNextMaterial({ custom
 it("内覧の後は対象外", () => eq(holdSoftNextMaterial({ customerText: "ありがとうございます", scene: "post_viewing", room: "vacant", env: V15 }), ""));
 it("保留の材料も刺さっていない時は添えない", () => ok(holdSoftNextMaterial({ customerText: "検討します", scene: "after_pickup", room: "vacant", env: V15 }).includes("刺さっていない")));
 it("ルール⑧の但し書き: お礼だけの締めは全力サポート", () => ok(rule8HoldNote(V15).includes("全力でサポート")));
+// brain-merge 10/15（decisions-brain の指摘6）: 物件確認した の結果が全部 募集に出ていない後のお礼の番は、刺さっているか・保留の材料を出さない（axis 側の受け＋何卒と食い違わない）
+it("物件確認の結果が全部 募集に出ていない → お礼の番に刺さっているかの材料を出さない", () => eq(holdSoftNextMaterial({ customerText: "ありがとうございます！", scene: "after_check", room: "vacant", checkAllUnavailable: true, env: V15 }), ""));
+it("物件確認の結果が全部 募集に出ていない → 保留の材料も出さない", () => eq(holdSoftNextMaterial({ customerText: "検討します", scene: "after_check", room: "vacant", checkAllUnavailable: true, env: V15 }), ""));
+it("物件確認の結果が全部 募集に出ていない → 返信の1文も渡さない", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "受け止め＋扉の文＋内覧のご案内の1文", scene: "after_check", room: "vacant", checkAllUnavailable: true, env: V15 }), ""));
+it("一部募集中（checkAllUnavailable=false）は今まで通り材料を出す", () => ok(holdSoftNextMaterial({ customerText: "ありがとうございます！", scene: "after_check", room: "vacant", checkAllUnavailable: false, env: V15 }).includes("刺さっているか")));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exitCode = 1; }

@@ -1,6 +1,6 @@
 // 2026-10-15 軸の直し④: 物件確認した の結果が全部 募集に出ていない時（unavailable-ack.ts）。文は実物（名前・物件名は伏せた）
 // 実行: npx tsx app/lib/__tests__/unavailable-ack.test.ts
-import { unavailableReportOf, inviteSentenceOf, checkResultAllUnavailable } from "../unavailable-ack";
+import { unavailableReportOf, inviteSentenceOf, checkResultAllUnavailable, lastPropertyMoveAllUnavailable } from "../unavailable-ack";
 
 let passed = 0, failed = 0;
 function it(name: string, fn: () => void) {
@@ -19,6 +19,16 @@ it("記録: prop_statuses が全部 unavailable", () => {
   eq(checkResultAllUnavailable({ aix_type: "property_check_result", check_pattern: "unavailable" }), true);
   eq(checkResultAllUnavailable({ aix_type: "property_check_result", check_pattern: "available", generated_text: YUNA }), true, "記録の文で");
   eq(checkResultAllUnavailable({ aix_type: "property_send", prop_statuses: ["unavailable"] }), false);
+});
+// brain-merge 10/15（指摘6）: 直前の物件の動きが全部 募集に出ていない確認か（新しい順・72時間）
+it("直前の物件の動き: 全部 unavailable の確認 → true／後から物件を送った・古い・off → false", () => {
+  const now = Date.parse("2026-10-15T10:00:00Z");
+  const chk = { aix_type: "property_check_result", created_at: "2026-10-15T09:00:00Z", prop_statuses: ["unavailable", "unavailable"] };
+  eq(lastPropertyMoveAllUnavailable([{ aix_type: "viewing_invite", created_at: "2026-10-15T09:30:00Z" }, chk], now, {}), true, "間に物件以外の AIX");
+  eq(lastPropertyMoveAllUnavailable([{ aix_type: "property_send", created_at: "2026-10-15T09:30:00Z" }, chk], now, {}), false, "後から送り直し");
+  eq(lastPropertyMoveAllUnavailable([{ ...chk, prop_statuses: ["unavailable", "available"] }], now, {}), false, "一部募集中");
+  eq(lastPropertyMoveAllUnavailable([{ ...chk, created_at: "2026-10-10T09:00:00Z" }], now, {}), false, "72時間より前");
+  eq(lastPropertyMoveAllUnavailable([chk], now, { UNAVAILABLE_ACK_AXIS: "off" }), false, "off");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

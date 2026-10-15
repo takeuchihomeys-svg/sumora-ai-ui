@@ -42,6 +42,26 @@ export function checkResultAllUnavailable(log: { aix_type?: string | null; check
   if ((log.check_pattern ?? "") === "unavailable") return true;
   return unavailableReportOf(log.generated_text ?? null);
 }
+/**
+ * 2026-10-15 brain-merge（decisions-brain の確かめる人の指摘6）: 直前の物件の動き（物件確認した・物件を送る・おすすめ）が
+ *   「物件確認した の結果が全部募集に出ていない」か。この時は 保留の柔らかい1文・送った物件が刺さっているか（hold-soft-next）の材料を出さない
+ *   （指すお部屋が無い・この番の締めは受け＋何卒＝axis 側）。後から物件を送り直していれば false（新しいお部屋の話）。
+ *   rows は新しい順。窓は generate-reply の AIX 実行済みの窓（72時間）と同じ。UNAVAILABLE_ACK_AXIS=off で常に false
+ */
+const PROPERTY_MOVE_AIX = new Set(["property_check_result", "property_send", "property_recommendation"]);
+export function lastPropertyMoveAllUnavailable(
+  rows: ReadonlyArray<{ aix_type?: string | null; created_at?: string | null; check_pattern?: string | null; prop_statuses?: ReadonlyArray<string | null> | null; generated_text?: string | null }>,
+  now: number = Date.now(),
+  env?: Record<string, string | undefined>,
+  windowMs = 72 * 60 * 60 * 1000,
+): boolean {
+  if (!unavailableAckAxisEnabled(env)) return false;
+  const last = rows.find((r) => PROPERTY_MOVE_AIX.has(r.aix_type ?? ""));
+  if (!last) return false;
+  const t = Date.parse(last.created_at ?? "");
+  if (!Number.isFinite(t) || now - t > windowMs) return false;
+  return checkResultAllUnavailable(last);
+}
 export function inviteSentenceOf(text: string | null | undefined): string | null {
   const t = N(text);
   for (const s of t.split(/\n|(?<=[!！。])(?![!！])/)) if (INVITE_RE.test(s)) return s.trim();

@@ -200,7 +200,7 @@ import { aixMetaKnowledgeBonus, extractMetaKeywords, type AixMetaRerankSignals }
 // AIXボタン種別アナウンス統一（2026-08）: スタッフ向けボタン誘導メモは aix-taxonomy.ts の
 // AIX_STAFF_NOTES を単一ソースとして brain-core の AIX_BRAIN_NOTES と共有する（文言乖離の構造的防止）
 import { AIX_STAFF_NOTES, AIX_BUTTON_LABELS, AIX_LINE_LABELS, AIX_ACTION_REPLY_DIRECTION, buildAixLineNote, normalizeAixActionKey } from "@/app/lib/aix-taxonomy";
-import { unavailableAckAxisEnabled, checkResultAllUnavailable, UNAVAILABLE_ACK_WEDO, UNAVAILABLE_ACK_DIRECTION, UNAVAILABLE_ACK_FORBID } from "@/app/lib/unavailable-ack";
+import { unavailableAckAxisEnabled, checkResultAllUnavailable, lastPropertyMoveAllUnavailable, UNAVAILABLE_ACK_WEDO, UNAVAILABLE_ACK_DIRECTION, UNAVAILABLE_ACK_FORBID } from "@/app/lib/unavailable-ack";
 // 2026-09-09 Fable5 往復文脈（Turn-Pair）＋実質判定（Substance）: 生成・検査・few-shot・tpo_debug の四者同名（reply-context.ts が単一真実源）
 import {
   MSG_SEP, splitMessageUnits, analyzeSubstance, mergeBrainEvidence,
@@ -5936,7 +5936,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch (e) { console.warn("[generate-reply] 物件ごとの台帳を読めない（無しで続ける）:", e instanceof Error ? e.message : String(e)); return ""; }
     })();
     // 2026-10-15 竹内さん（7番 営業マンの思考）: 保留の番でブレインが柔らかい次の一手を添えると決めた時だけ、その1文を生成に渡す（届かない側の直し・HOLD_SOFT_NEXT=off で旧）
-    const holdSoftNote = !isTemplateOptimize && brainLocalFresh ? holdSoftReplyNote({ customerText: message ?? "", brainDirection: brainMeta?.reply_direction ?? null, scene: appealSceneRoom[0]?.scene ?? null, room: appealSceneRoom[0]?.room ?? null, delayed: appealSceneRoom[0]?.delayed }) : "";
+    const holdSoftNote = !isTemplateOptimize && brainLocalFresh ? holdSoftReplyNote({ customerText: message ?? "", brainDirection: brainMeta?.reply_direction ?? null, scene: appealSceneRoom[0]?.scene ?? null, room: appealSceneRoom[0]?.room ?? null, delayed: appealSceneRoom[0]?.delayed, checkAllUnavailable: !!aixDone?.checkAllUnavailable || lastPropertyMoveAllUnavailable(recentAixRows) }) : "";
     if (holdSoftNote) console.info(JSON.stringify({ tag: "reply:hold-soft-next", conversationId }));
     const applyReadinessNote = [buildApplyReadinessNote(applyReadiness), appealReplyNote, holdSoftNote, propertyBrainReplyNote].filter(Boolean).join("\n");
     if (applyReadiness.level !== "low") {

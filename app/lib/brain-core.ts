@@ -71,6 +71,7 @@ import { pickupConditionsReady } from "@/app/lib/hearing-form";
 import { resolveTwoStage, twoStageOtherQuestions, type TwoStageVerdict, freshPickupReady, broughtPropertyAsk, broughtPropertyCount, broughtTitleOnly, firstContactCheckTwoStage, conditionChangedThisTurn } from "@/app/lib/two-stage";
 import { appealTimingEnabled, resolveAppealFromConversation, buildAppealBrainText, withAppealDirection } from "@/app/lib/appeal-timing";
 import { holdSoftNextMaterial, rule8HoldNote, rule8HoldDirectionSuffix } from "@/app/lib/hold-soft-next";
+import { lastPropertyMoveAllUnavailable } from "@/app/lib/unavailable-ack";
 import { resolveCostQuestionEstimate, costQuestionInputFrom, CLEAR_NOT_ESTIMATE_REASONS } from "@/app/lib/cost-question-estimate";
 import { phoneButtonJustSent, callJustFinished } from "@/app/lib/phone-button-sent";
 import { meetingPromisePending } from "@/app/lib/meeting-promise";
@@ -2434,7 +2435,7 @@ ${catalogBlockForBrain(brainScene)}
   // 2026-10-15 竹内さん（7番 営業マンの思考）: 物件をお送りした後の保留の番は「待つ＝何も置かない」ではなく、竹内さんは扉の文に柔らかい次の一手を1文添える（今ご内覧頂けるお部屋の保留の 47%）。
   //   置くかどうかはブレインが決める材料（app/lib/hold-soft-next.ts・scripts/audit-hold-soft-next.ts）。場面・部屋の読みは訴求のタイミングと同じ値。戻す HOLD_SOFT_NEXT=off
   const holdSoftNextText = appealTiming && appealTiming.input.scene !== "post_apply"
-    ? holdSoftNextMaterial({ customerText: unrepliedTurn.text ?? "", scene: appealTiming.input.scene, room: appealTiming.input.room, delayed: !!appealTiming.input.viewingDelayed })
+    ? holdSoftNextMaterial({ customerText: unrepliedTurn.text ?? "", scene: appealTiming.input.scene, room: appealTiming.input.room, delayed: !!appealTiming.input.viewingDelayed, checkAllUnavailable: lastPropertyMoveAllUnavailable(aixLogs) })
     : "";
   const appealTimingText = (appealTiming ? buildAppealBrainText(appealTiming.input, appealTiming.verdict) : "") + holdSoftNextText;
   let brainAixFeedback: FeedbackRow[] = [];
