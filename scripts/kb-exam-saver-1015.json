@@ -1,0 +1,22 @@
+[
+  {
+    "title": "試験の API は『前の使い回し』『要求が同じなら録った答え』『回す所を絞る』の3つで減らす — 決まり・出口だけの直しは要求が変わらないので API 0回で確かめられる",
+    "category": "ai_design",
+    "insight": "ブレインの試験（scripts/brain-exam.ts）は直す前と後を毎回両方回していた（7問で 前30回＋今28回・下書きありは1問 約7.5回）。①前（main）は commit×構成（試験に効く環境変数・層・台帳・stage・回数）×問題の中身の hash が同じなら何度回しても同じ物を測る → <倉庫の根>/.claude/exam-cache/brain-exam-baseline に問題単位で取り置き、--baseline=main で無い問題だけ main の作業ツリー（.claude/worktrees/brain-exam-main・今の試験の道具を写す）で回す。②LLM の要求と答えを録り（共通の入口 llm-test-harness の一番外＝別クラウド・使用量の記録より外・scripts/lib/llm-cassette.ts）、鍵は宛先＋名札＋本文（日時・UUID・時刻を伏せ、JSON を鍵の順に並べた物）の sha256。--replay は同じ要求を再生し変わった所だけ呼ぶ、--replay=strict は呼ばずに 400 にして『最初に違う所』を出す。--repeat=3 の n 回目は n 番目の録音（足りなければ呼んで足す＝揺れは測れる）。③--stage=brain|draft|auto で下書き（返信の生成＋最終チェック 約5回/問）を要る問題だけに。④終わりに新しく呼んだ・再生・使い回した数と $ を出し、<label>.cost.json に問題ごとに残す（取り置きの『回していたら』に使う）。",
+    "rationale": "竹内悠馬 2026-10-15「テストの時 API 使いすぎてる。もっと質高く重点的に API も節約してテストを回す」。10/13〜14 の llm_usage_logs（route=script:brain-exam-*）で、同じ直しを3〜5回回し直す系列（deepcheck 5回 239回 $1.86）や before/after の組で、前の側と変わらない呼び出しが大半だった。再生は一番外に置かないと llm_usage_logs に再生分が費用として残る・別クラウドの包みの印（__sumoraAltProvider）を写さないと willRouteAlt が『包みが外れた』と見て一番外にもう1枚包む（wrapGlobalFetch で写す）。録音・取り置きは作業ツリーごとだと他の担当の物が使えないので倉庫の根の .claude/exam-cache に共有。",
+    "context": "2026-10-15 exam-saver-1015（試験の道具だけ・app は触らない）。DeepSeek の障害中に作ったので本物の試験では未確かめ（scripts/lib/__tests__/llm-cassette.test.ts 24件で包みの動きを確かめた）。",
+    "applied_to": "scripts/lib/llm-cassette.ts・scripts/lib/brain-exam-baseline.ts・scripts/lib/llm-test-harness.ts・scripts/brain-exam.ts・scripts/brain-exam/README.md",
+    "tags": ["テスト", "API費用", "ブレイン", "試験", "再生", "キャッシュ", "汎用"],
+    "priority": 2
+  },
+  {
+    "title": "【汎用】LLM の再生テストの鍵は『毎回変わる物を伏せた要求』で取る — 伏せ漏れ（台帳の連番の id・今の分）があると毎回『変わった』になり節約にならない",
+    "category": "ai_design",
+    "insight": "試験は場面を今の時刻に置き、日付を今日へ週単位でずらし、台帳の行を新しい id で写すので、要求の文字は毎回違う。鍵は本文の JSON を鍵の順に並べ、ISO の日時・YYYY-MM-DD・M/D・M月D日・HH:MM・UUID・13桁のミリ秒・alt_ の id を伏せてから sha256 を取る。中身（金額・物件名・会話・指示）は伏せない＝直した所の材料・指示が変われば必ず『変わった』になる。伏せ漏れは --replay=strict の『最初に違う所（前／今の前後 90字）』で見つけ、LLM_CASSETTE_MASK=<正規表現> で足す。全部伏せずに確かめたい時は LLM_CASSETTE_KEY=exact。失敗した答え（2xx 以外）は録らない（直った後も失敗が再生される）。",
+    "rationale": "2026-10-15 竹内悠馬の『API を節約してテスト』の設計で、再生の命中率を決めるのは鍵の取り方だった。伏せすぎると直した所が見えず（偽の一致）、伏せなさすぎると毎回呼ぶ。",
+    "context": "2026-10-15 exam-saver-1015。",
+    "applied_to": "scripts/lib/llm-cassette.ts（maskVolatile・normalizeBody・diffHint）",
+    "tags": ["テスト", "再生", "汎用", "静かに壊れる", "API費用"],
+    "priority": 3
+  }
+]

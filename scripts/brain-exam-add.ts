@@ -47,6 +47,8 @@ export type ExamSpec = {
   noDateShift?: boolean;
   /** 2026-10-09 主語の抜け: 今の番の物件の正解（竹内さんの返事が指した建物）。ブレインの current_property と照らす（brain-exam-score.judgeCurrentProperty） */
   property?: string;
+  /** 2026-10-15 回す所（brain-exam.ts --stage=auto の時）: brain＝ブレインまで／draft＝下書きまで。無ければ scripts/brain-exam/stage-by-type.json の型 → brain */
+  stage?: "brain" | "draft";
 };
 export type ExamMsg = { s: "customer" | "staff"; t: string; aix: boolean; ago: number };
 export type ExamProblem = ExamSpec & {

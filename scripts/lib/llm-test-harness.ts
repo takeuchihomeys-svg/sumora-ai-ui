@@ -91,6 +91,10 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
   const alt = await import("../../app/lib/llm-alt-provider");
   const altOn = alt.installAltProvider();
   if (strict && !altOn) fail("deepseek-all なのに DeepSeek の包みが入りません（DEEPSEEK_API_KEY／LLM_ALT_DEEPSEEK_KEY が .env.local にあるか）");
+  // 2026-10-15 竹内「テストの時 API 使いすぎてる」: LLM の要求と答えを録る・同じ要求は録った答えを返す（LLM_CASSETTE=record|replay|strict・scripts/lib/llm-cassette.ts）。
+  //   一番外に入れる＝再生した呼び出しは別クラウド・使用量の記録を通らない（llm_usage_logs に行が残らない＝新しく呼んだ物だけが数に入る）
+  const cassette = await import("./llm-cassette");
+  cassette.installLlmCassette(env);
 
   // ③ deepseek-all の間は Claude の鍵を偽の値に（包みを通らない呼び出しを 401 で落とす）。LLM_TEST_ALLOW_CLAUDE の名札だけ包みの中で本物に戻す
   if (strict) {
@@ -168,7 +172,11 @@ export async function setupLlmTest(name: string): Promise<LlmTestHarness> {
   };
 
   const finish = async () => {
+    const cas = await import("./llm-cassette");
+    await cas.flushCassette();
     const s = await summary();
+    const cst = cas.cassetteStats();
+    if (cst) console.log(`\n${cas.formatCassetteStats(cst)}`);
     const blockedLog = testBlockedLog();
     console.log(`\n=== llm_usage_logs（route=${routeLabel}・この回）: ${s.rows}行 ===`);
     for (const b of s.byKey) console.log(`  ${String(b.calls).padStart(3)}回 $${b.usd.toFixed(4)}  ${b.key}`);
