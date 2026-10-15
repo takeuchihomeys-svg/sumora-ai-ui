@@ -3681,9 +3681,12 @@ export default function Home() {
 
   // 帯の「AIX テンプレートを入れる」: テンプレート一覧の ✨ と同じ本文で生成して、入力欄をその文に切り替える（元の下書きに戻せる）。
   //   物件オススメだけ（確かめた物）。戻す NEXT_PUBLIC_POST_AIX_TEMPLATE_DIRECT=off（帯はテンプレート一覧を開くだけ）
-  const [postAixGen, setPostAixGen] = useState<Record<string, { status: "loading" | "done" | "error"; error?: string; prevDraft?: string; prevAiDraft?: string; prevIsAix?: boolean }>>({});
+  const [postAixGen, setPostAixGen] = useState<Record<string, { status: "loading" | "done" | "error"; error?: string; prevDraft?: string; prevAiDraft?: string; prevIsAix?: boolean; prevTemplateId?: string; prevTemplateMeta?: typeof templateSelectionMetaRef.current; prevSecondMsg?: typeof pendingSecondMsgRef.current }>>({});
   const selectedIdForPostAixRef = useRef<string>("");
   useEffect(() => { selectedIdForPostAixRef.current = selectedConversation.id ?? ""; }, [selectedConversation.id]);
+  // レビュー 10/16: 生成中に打った下書きも「元の下書き」に残す（押した時の下書きではなく入れる直前の下書き）
+  const replyDraftLatestRef = useRef<string>("");
+  useEffect(() => { replyDraftLatestRef.current = replyDraft; }, [replyDraft]);
   const insertPostAixTemplate = async () => {
     const cid = selectedConversation.id;
     const tmpl = selectedPostAix;
@@ -3712,7 +3715,8 @@ export default function Home() {
       if (!res.ok || !data.ok || !data.text) throw new Error(data.error || `生成エラー (${res.status})`);
       // 生成中に別の会話へ移っていたら入力欄は触らない（帯の状態だけ）
       if (selectedIdForPostAixRef.current !== cid) { setPostAixGen((prev) => ({ ...prev, [cid]: { status: "error", error: "別の会話に移ったので入れませんでした" } })); return; }
-      const prev = { prevDraft: replyDraft, prevAiDraft: aiDraftRef.current, prevIsAix: isAixTemplateDraftRef.current };
+      const prev = { prevDraft: replyDraftLatestRef.current, prevAiDraft: aiDraftRef.current, prevIsAix: isAixTemplateDraftRef.current,
+        prevTemplateId: selectedTemplateIdRef.current, prevTemplateMeta: templateSelectionMetaRef.current, prevSecondMsg: pendingSecondMsgRef.current };
       // テンプレート一覧の「📤 この文を使う」と同じ入れ方（AIX のテンプレートは通常の返信の学習に入れない・テンプレートの選択記録は無し）
       aiDraftRef.current = "";
       selectedTemplateIdRef.current = "";
@@ -3731,6 +3735,10 @@ export default function Home() {
     if (!cid || st?.status !== "done") return;
     aiDraftRef.current = st.prevAiDraft ?? "";
     isAixTemplateDraftRef.current = !!st.prevIsAix;
+    // レビュー 10/16: 元の下書きがテンプレートだった時の選択の記録・2通目の設定も戻す
+    selectedTemplateIdRef.current = st.prevTemplateId ?? "";
+    templateSelectionMetaRef.current = st.prevTemplateMeta ?? null;
+    pendingSecondMsgRef.current = st.prevSecondMsg ?? null;
     setReplyDraft(st.prevDraft ?? "");
     setPostAixGen((p) => { const n = { ...p }; delete n[cid]; return n; });
   };

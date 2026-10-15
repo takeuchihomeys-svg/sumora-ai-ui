@@ -103,7 +103,8 @@ export function resolveWishAreaGap(i: WishGapInput): { gap: WishGap | null; reas
   ].filter((s) => s.reads.length);
   let anyOut = false, anyIn = false;
   if (i.materialAreaCode) {
-    if (/FAR|CLOSE|EXCLUDED|WIDE|NEAR|2STOPS/.test(i.materialAreaCode)) anyOut = true;
+    // レビュー 10/16: 近い・遠い（NEAR/CLOSE/FAR）は希望の市区の真ん中からの距離のことがある（駅の市区が表に無い時・東大阪市×瓢箪山）→ 行の駅の比べ（下）に任せる
+    if (/EXCLUDED|WIDE|2STOPS/.test(i.materialAreaCode)) anyOut = true;
     else if (/MATCH|REGION|ANCHOR/.test(i.materialAreaCode)) anyIn = true;
   }
   let verifiedStation: string | null = null;
@@ -112,7 +113,9 @@ export function resolveWishAreaGap(i: WishGapInput): { gap: WishGap | null; reas
     const m: AreaMatch | null = matchArea(want, loc);
     if (!m) continue;
     if (IN_AREA.has(m.result)) anyIn = true;
-    else if (OUT_AREA.has(m.result)) {
+    // レビュー 10/16: 希望が市区（東大阪市・堺市・豊中市）で駅の市区が表に無い時の near/close/far は、市区の真ん中からの距離だけ＝市の中の駅でも「外れ」と出る
+    //   （東大阪市×瓢箪山 3.4km・堺市×中百舌鳥・豊中市×服部天神）→ 外れとは言わない側（決めない）
+    else if (OUT_AREA.has(m.result) && !(/^(?:near|close|far)$/.test(m.result) && /[市区]$/.test(m.anchor ?? "") && !loc.ward)) {
       anyOut = true;
       if (s.verified && !verifiedStation && loc.stations[0]) verifiedStation = loc.stations[0].station;
     }
@@ -176,21 +179,34 @@ export function wishGapLine(gap: WishGap): string {
 export function ensureWishGapOpening(text: string, gap: WishGap | null): { text: string; applied: string | null } {
   if (!gap || !text.trim()) return { text, applied: null };
   const lines = text.split("\n");
-  const greetIdx = /^お世話になっております/.test(lines[0]?.trim() ?? "") ? 1 : 0;
+  // 挨拶の行（「KAORIさん お世話になっております！！」と名前がつながった形も）の次が書き出し
+  const greetIdx = /^(?:[^\s、。！!]{1,15}さん[ \t　]*)?お世話になっております/.test(lines[0]?.trim() ?? "") ? 1 : 0;
   let first = greetIdx;
   while (first < lines.length && !lines[first].trim()) first++;
   const GAP_IN = /(?:最寄り駅?[^\s、。！!]{1,12}?駅となりますが|[^\s、。！!]{1,16}?から少し外れますが)[、,]?/;
-  if (GAP_IN.test(lines[first] ?? "")) return { text, applied: null };
+  const prefix = gap.kind === "station" ? `最寄り駅${gap.station}駅となりますが` : `${gap.area}から少し外れますが`;
+  const firstHit = (lines[first] ?? "").match(GAP_IN);
+  if (firstHit) {
+    if (lines[first].includes(prefix)) return { text, applied: null };
+    // レビュー 10/16: 書き出しのずれの言い方が決めた物と違う（資料の読みの駅「四条畷」・エリアの形なのに駅の名前）→ 決めた言い方に替える
+    //   名前の頭（「YUMAさん」）は外してから替える（名前の途中から当たって「YUMA布施…」と壊さない・ずれの1行は名前なしの形）
+    lines[first] = lines[first].replace(/^[^\s、。！!]{1,12}?さん[ \t　]*/, "").replace(GAP_IN, prefix);
+    return { text: lines.join("\n"), applied: "corrected" };
+  }
   let removed = false;
   for (let k = 0; k < lines.length; k++) {
     if (k === first) continue;
     if (GAP_IN.test(lines[k])) { lines[k] = lines[k].replace(GAP_IN, ""); removed = true; }
   }
   const line = wishGapLine(gap);
-  const m = (lines[first] ?? "").match(/^(?:[^\s、。！!]{1,12}さん)?こちらのお部屋如何でしょうか([\p{Extended_Pictographic}\u{FE0F}]*)！+$/u);
+  const ASK = /^(?:[^\s、。！!]{1,12}さん)?こちらのお部屋如何でしょうか([\p{Extended_Pictographic}\u{FE0F}]*)！+/u;
+  const m = (lines[first] ?? "").match(ASK);
   if (m) {
-    lines[first] = line.replace(/！！$/, `${m[1] ?? ""}！！`);
-    return { text: lines.join("\n"), applied: removed ? "moved" : "replaced" };
+    // 同じ行に続きがあれば残す（「こちらのお部屋如何でしょうか😊！！ 家賃管理費込…」）
+    lines[first] = line.replace(/！！$/, `${m[1] ?? ""}！！`) + lines[first].slice(m[0].length);
+    // 途中のずれを外した後に「こちらのお部屋如何でしょうか」だけが残った行は重ねない
+    const out = lines.filter((l, k) => k === first || !(removed && ASK.test(l.trim()) && !l.trim().replace(ASK, "").trim()));
+    return { text: out.join("\n"), applied: removed ? "moved" : "replaced" };
   }
   lines.splice(greetIdx, 0, line);
   return { text: lines.join("\n"), applied: removed ? "moved_insert" : "inserted" };

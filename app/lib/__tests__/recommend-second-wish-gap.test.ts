@@ -78,6 +78,27 @@ t("件数が足りない → 言わない", !cheapVsMarket(60000, { ...band, say
   t("出口: 名前つきの書き出し・エリアの形", e.text === "布施・八戸の里から少し外れますがこちらのお部屋如何でしょうか！！\n\n家賃管理費込75,700円", e);
   t("出口: ずれ無し → 触らない", ensureWishGapOpening("abc", null).applied === null);
 }
+// レビュー 10/16: 誤爆・書き出しの直し
+{
+  const st = (s: string) => `🌟A\n・「${s}」駅徒歩6分`;
+  t("レビュー: 東大阪市×瓢箪山（市の中・駅の市が表に無い）→ 外れと言わない", resolveWishAreaGap({ desiredArea: "東大阪市", firstMessage: st("瓢箪山") }).gap === null);
+  t("レビュー: 堺市×中百舌鳥 → 外れと言わない", resolveWishAreaGap({ desiredArea: "堺市", firstMessage: st("中百舌鳥") }).gap === null);
+  t("レビュー: 豊中市×服部天神 → 外れと言わない", resolveWishAreaGap({ desiredArea: "豊中市", firstMessage: st("服部天神") }).gap === null);
+  t("レビュー: 売上サポの照らし AREA_CLOSE だけでは外れと言わない", resolveWishAreaGap({ desiredArea: "東大阪市", firstMessage: KAORI_FIRST, materialAreaCode: "AREA_CLOSE" }).gap === null);
+  t("レビュー: 大阪市内×江坂（吹田市）→ 外れ", resolveWishAreaGap({ desiredArea: "大阪市内", firstMessage: st("江坂") }).gap?.kind === "station");
+  const A = { kind: "area" as const, area: "布施・八戸の里" };
+  const S = { kind: "station" as const, station: "瓢箪山", area: "布施・八戸の里" };
+  const a = ensureWishGapOpening("最寄り駅四条畷駅となりますがこちらのお部屋如何でしょうか😊！！\n2019年9月築", A);
+  t("レビュー: エリアの形なのに駅の名前（読みの四条畷）→ エリアの形に替える", a.text === "布施・八戸の里から少し外れますがこちらのお部屋如何でしょうか😊！！\n2019年9月築" && a.applied === "corrected", a);
+  const b = ensureWishGapOpening("最寄り駅河内山本駅となりますがこちらのお部屋如何でしょうか！！\n2019年9月築", S);
+  t("レビュー: 違う駅 → 決めた駅に替える", b.text.startsWith("最寄り駅瓢箪山駅となりますが") && !/河内山本/.test(b.text), b);
+  const c = ensureWishGapOpening("KAORIさん お世話になっております！！\nこちらのお部屋如何でしょうか😊！！\n2019年", S);
+  t("レビュー: 名前つきの挨拶の次に置く", c.text === "KAORIさん お世話になっております！！\n最寄り駅瓢箪山駅となりますがこちらのお部屋如何でしょうか😊！！\n2019年", c);
+  const d = ensureWishGapOpening("お世話になっております！！\nこちらのお部屋如何でしょうか😊！！\n最寄り駅瓢箪山駅となりますが、こちらのお部屋如何でしょうか😊！！\n築浅", S);
+  t("レビュー: 如何でしょうかの行を重ねない", d.text === "お世話になっております！！\n最寄り駅瓢箪山駅となりますがこちらのお部屋如何でしょうか😊！！\n築浅", d);
+  const e = ensureWishGapOpening("こちらのお部屋如何でしょうか😊！！ 家賃管理費込75,700円", S);
+  t("レビュー: 同じ行の続きは残す・重ねない", e.text === "最寄り駅瓢箪山駅となりますがこちらのお部屋如何でしょうか😊！！ 家賃管理費込75,700円", e);
+}
 t("既定 on・off で止まる", secondWishGapEnabled({}) && !secondWishGapEnabled({ RECOMMEND_SECOND_WISH_GAP: "off" }));
 
 console.log(`\n${passed} passed, ${failed} failed`);
