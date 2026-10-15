@@ -169,7 +169,8 @@ export function brainContractPromisesPickup(raw: unknown, env: Env = process.env
   const asks = raw && typeof raw === "object" && Array.isArray((raw as { asks?: unknown }).asks) ? (raw as { asks: Array<Record<string, unknown>> }).asks : [];
   return asks.some((a) => a?.route === "promise" && (a?.about === "search_condition" || a?.about === "reaction_to_sent")
     && /ピックアップ|探し|探す|(?:お部屋|物件)[^。\n]{0,12}(?:お送り|送り|送る|ご紹介)/.test(String(a?.answer ?? ""))
-    && !/見積|確認/.test(String(a?.answer ?? "")));
+    // 10/15 確かめる人: 資料・図面・写真・動画・間取・見積・確認の約束は物件の AIX にしない（「物件資料をお送りします」が網に掛かっていた）
+    && !/見積|確認|資料|図面|写真|画像|動画|間取/.test(String(a?.answer ?? "")));
 }
 
 /**

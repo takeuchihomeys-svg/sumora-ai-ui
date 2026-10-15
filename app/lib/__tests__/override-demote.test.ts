@@ -52,6 +52,8 @@ t("約束（送った物件への反応・ピックアップして送る）→ t
 t("約束（探す条件・お部屋をお送り）→ true", brainContractPromisesPickup({ asks: [{ route: "promise", about: "search_condition", answer: "ペット可を外したお部屋をお送りする" }] }, {}));
 t("確認・見積の約束・返信・about 無しは false", !brainContractPromisesPickup({ asks: [{ route: "promise", about: "vacancy", answer: "募集状況を確認する" }] }, {})
   && !brainContractPromisesPickup({ asks: [{ route: "promise", about: "reaction_to_sent", answer: "御見積書をお送りする" }] }, {})
+  && !brainContractPromisesPickup({ asks: [{ route: "promise", about: "reaction_to_sent", answer: "物件資料をお送りします" }] }, {})
+  && !brainContractPromisesPickup({ asks: [{ route: "promise", about: "reaction_to_sent", answer: "お部屋の写真をお送りします" }] }, {})
   && !brainContractPromisesPickup({ asks: [{ route: "reply", about: "search_condition", answer: "ピックアップします" }] }, {})
   && !brainContractPromisesPickup({ asks: [{ route: "promise", answer: "ピックアップします" }] }, {}));
 t("BRAIN_PROMISE_PICKUP=off で false", !brainContractPromisesPickup({ asks: [{ route: "promise", about: "search_condition", answer: "ピックアップします" }] }, { BRAIN_PROMISE_PICKUP: "off" }));
