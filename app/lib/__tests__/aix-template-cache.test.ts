@@ -3,7 +3,7 @@
 //   ここでは ①文面が旧の組み立て（route.ts の 10/08 以前のコードをそのまま写した oldBlock）と1文字も同じ
 //   ②DB がどの並びで返しても同じ文字列（＝鍵が割れない）③入る原則の集まりは同じ（足さない・抜かない）④戻すスイッチ、を固定する。
 // 実行: npx tsx app/lib/__tests__/aix-template-cache.test.ts（自己完結・env 不要。全 OK で exit 0）
-import { buildAixTemplateDbKnowledgeBlock, stableKnowledgeOrder, aixTemplateCacheTtl, type AixKnowledgeItem } from "../aix-template-cache";
+import { buildAixTemplateDbKnowledgeBlock, stableKnowledgeOrder, aixTemplateCacheTtl, aixTemplateDbKnowledgeParts, aixTemplateSharedParts, type AixKnowledgeItem } from "../aix-template-cache";
 
 let passed = 0, failed = 0;
 function t(name: string, ok: boolean, extra?: unknown) {
@@ -85,6 +85,39 @@ console.log("④ 戻すスイッチ");
   t("寿命の既定は 1h", aixTemplateCacheTtl({}) === "1h");
   t("AIX_TEMPLATE_CACHE_TTL=5m で旧", aixTemplateCacheTtl({ AIX_TEMPLATE_CACHE_TTL: "5m" }) === "5m");
   t("知らない値は 1h", aixTemplateCacheTtl({ AIX_TEMPLATE_CACHE_TTL: "10m" }) === "1h");
+}
+
+console.log("── 2026-10-15 後ろのブロックを変わる単位（全員共通／状態／ボタン）で分ける — 繋ぐと旧の1ブロックと1文字も同じ");
+{
+  const P: AixKnowledgeItem[] = [{ id: "b", title: "原則B", content: "内容B", importance: 10 }, { id: "a", title: null, content: "内容A", importance: 10 }];
+  const L: AixKnowledgeItem[] = [{ id: "l1", content: "失注1", importance: 9 }];
+  const GEN = "【会社ルール】\n- ルール1\n- ルール2";
+  const ACT = "【ボタン別】\n- 物件の訴求は3点";
+  const cases: Array<[string, AixKnowledgeItem[], AixKnowledgeItem[], string, string]> = [
+    ["全部あり", P, L, GEN, ACT],
+    ["ボタン別が空", P, L, GEN, ""],
+    ["全体のルールが空", P, L, "", ACT],
+    ["ルールが両方空", P, L, "", ""],
+    ["原則も失注も無い", [], [], GEN, ACT],
+    ["前後に空白", P, L, "\n  " + GEN + "  ", ACT + "\n\n"],
+    ["全体のルールの末尾が改行", P, L, GEN + "\n", ACT],
+    ["何も無い", [], [], "", ""],
+  ];
+  for (const [name, p, l, g, a] of cases) {
+    const parts = aixTemplateDbKnowledgeParts(p, l, g, a, {});
+    const whole = oldBlock(stableKnowledgeOrder(p, {}), stableKnowledgeOrder(l, {}), [g, a].filter(Boolean).join("\n"));
+    t(`${name}: 繋ぐと旧と同じ・空白だけのブロックなし・末尾に空白なし`, parts.map((x) => x.text).join("") === whole
+      && parts.every((x) => x.text.trim().length > 0 && x.text === x.text.trimEnd()), parts);
+  }
+  const full = aixTemplateDbKnowledgeParts(P, L, GEN, ACT, {});
+  t("全部あり → global・state・action の3つ（先頭の印と合わせて4つ＝上限）", full.map((x) => x.kind).join(",") === "global,state,action", full);
+  const other = aixTemplateDbKnowledgeParts(P, L, GEN, "【ボタン別】\n- 別のボタン", {});
+  t("ボタンが違っても global・state は同じ文字列（読める）", other[0].text === full[0].text && other[1].text === full[1].text && other[2].text !== full[2].text);
+  t("AIX_TEMPLATE_BLOCK_SPLIT=off → 1ブロック（旧）", aixTemplateDbKnowledgeParts(P, L, GEN, ACT, { AIX_TEMPLATE_BLOCK_SPLIT: "off" }).length === 1);
+  t("温めの共通部分 = 本物（ボタン別あり）の先頭2つと同じ文字列", JSON.stringify(aixTemplateSharedParts(P, L, GEN, {})) === JSON.stringify(full.slice(0, 2)));
+  t("温めの共通部分 = 本物（ボタン別なし）の先頭2つとも同じ", JSON.stringify(aixTemplateSharedParts(P, L, GEN, {}).map((x) => x.text)) === JSON.stringify(aixTemplateDbKnowledgeParts(P, L, GEN, "", {}).map((x) => x.text)));
+  t("全体のルールが空 → 温めは global だけ（本物も global が先頭）", aixTemplateSharedParts(P, L, "", {}).length === 1 && aixTemplateSharedParts(P, L, "", {})[0].text === aixTemplateDbKnowledgeParts(P, L, "", ACT, {})[0].text);
+  t("分けない設定 → 温めは先頭だけ（共通部分なし）", aixTemplateSharedParts(P, L, GEN, { AIX_TEMPLATE_BLOCK_SPLIT: "off" }).length === 0);
 }
 
 console.log(`\n${passed} OK / ${failed} NG`);

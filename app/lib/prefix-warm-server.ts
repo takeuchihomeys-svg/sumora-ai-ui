@@ -9,7 +9,8 @@
 //   ⑤env で絞らない（キャッシュは Anthropic アカウント×内容の鍵。local の温めも本番の蓄えを温める）
 //   止める: PREFIX_WARM=off。時間帯: PREFIX_WARM_HOURS_JST（既定 "9-22"）。1対象 1日20回まで
 import { supabase } from "./supabase";
-import { getCachedPromptRules } from "./prompt-cache";
+import { getCachedPromptRules, getCachedTopPrinciples, getCachedLossPatterns } from "./prompt-cache";
+import { aixTemplateSharedParts } from "./aix-template-cache";
 import { loadCustomerSummaryPrefixInputs } from "./customer-summary-prompt-server";
 import { loadSuggestNextActionPrefixInputs } from "./suggest-next-action-prompt-server";
 import {
@@ -49,7 +50,23 @@ export async function loadPrefixWarmInputs(): Promise<PrefixWarmInputs> {
     suggestNextActionLlmEnabled(process.env.SUGGEST_NEXT_ACTION_LLM) ? loadSuggestNextActionPrefixInputs() : Promise.resolve(null),
   ]);
   // 2026-10-15: AIX の文作りの先頭ブロック（コードだけで決まる・DB を読まない）。止める AIX_TEMPLATE_WARM=off
-  return { finalCheck: { dbRules, finalCheckRules }, summary, nextAction, aixTemplate: aixTemplateWarmEnabled() };
+  const aixTemplate = aixTemplateWarmEnabled();
+  // 2026-10-15（キャッシュの見直し）: 後ろのブロックのうちボタンに依らない部分（絶対原則＋失注＋generate_reply の全体のルール）も温める。
+  //   route.ts と同じ取り方（getCachedTopPrinciples・getCachedLossPatterns・getCachedPromptRules("generate_reply", { conversation_state })）。
+  //   状態の条件付きルールは applying 等の少数だけ＝代表の proposing（10/15 実測: hearing〜contract の6状態で全体のルールは同じ 20,194字）。
+  //   読めない時は先頭だけ（旧）。止める AIX_TEMPLATE_WARM_SHARED=off
+  let aixTemplateShared: { text: string }[] = [];
+  if (aixTemplate && !isOffSwitch(process.env.AIX_TEMPLATE_WARM_SHARED)) {
+    try {
+      const [tp, lp, gen] = await Promise.all([
+        getCachedTopPrinciples(), getCachedLossPatterns(), getCachedPromptRules("generate_reply", { conversation_state: "proposing" }),
+      ]);
+      aixTemplateShared = aixTemplateSharedParts(tp, lp, gen);
+    } catch (e) {
+      console.warn("[prefix-warm] aix_template の共通部分を読めない（先頭だけ温める）:", e instanceof Error ? e.message : String(e));
+    }
+  }
+  return { finalCheck: { dbRules, finalCheckRules }, summary, nextAction, aixTemplate, aixTemplateShared };
 }
 
 export type PrefixWarmUsage = { cache_read: number; cache_write_1h: number; cache_write_5m: number; input_uncached: number; request_id: string | null };

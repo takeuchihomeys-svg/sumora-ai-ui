@@ -96,7 +96,7 @@ import { customerAskedEstimate } from "@/app/lib/customer-mindset";
 import { loadEstimateAppeal } from "@/app/lib/estimate-appeal-server";
 // 2026-10-01: 今ご内覧頂けるか・退去予定の一文は、1通目（aix/action）と同じ関数・同じ材料で決める
 import { resolveRecommendViewable, ensureVacatingLine, mentionsVacating, tidyVacatingAndClosing, type RecommendViewable } from "@/app/lib/recommend-viewable";
-import { buildAixTemplateDbKnowledgeBlock, aixTemplateCacheTtl } from "@/app/lib/aix-template-cache";
+import { buildAixTemplateDbKnowledgeBlock, aixTemplateCacheTtl, aixTemplateDbKnowledgeParts } from "@/app/lib/aix-template-cache";
 import { knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
 // 2026-10-13 棚卸しの表 8: 学習の見出しを返信生成と同じ形に（中身の上は AIX の入力・安全の線は必ず守る）。戻す KNOWLEDGE_HEADING_FORM=off
 const AIX_TEMPLATE_KNOWLEDGE_ANCHOR = "AIX の入力（構造化データ＝AIX が正）"; // 10/13 レビュー（軽微2）: ✨ を押した時はブレインの判断がほぼ無いので AIX の入力だけを指す
@@ -1708,12 +1708,27 @@ export async function POST(req: NextRequest) {
         cache_control: { type: "ephemeral", ttl: cacheTtl },
       },
     ];
-    if (dbKnowledgeBlock) {
+    // 2026-10-15 竹内「キャッシュの見直し。質が落ちないように」: 後ろのブロックを変わる単位（全員共通／状態／ボタン）で分けて印を付ける。
+    //   繋ぐと旧の dbKnowledgeBlock と1文字も同じ（aixTemplateDbKnowledgeParts の安全網）。ボタンが違っても共通部分は読める・温めも共通部分まで届く。
+    //   印は先頭＋最大3つ＝4つ（上限）。AIX_TEMPLATE_BLOCK_SPLIT=off で旧の1ブロック
+    //   別クラウド（DeepSeek）に回る時は分けない: 回す側（llm-alt-provider.flattenContent）はブロックを "\n" で繋ぐので、分けると空行が1つ増える
+    //   （Claude には区切りの文字を後ろのブロックの先頭に付けた形で、同じ文字が同じ順に届く）。DeepSeek の試験の再生・使い回しの鍵も変えない
+    let altRoutedAix = false;
+    try { altRoutedAix = (await import("@/app/lib/llm-alt-provider")).willRouteAlt("aix_template"); } catch { /* 判定できない時は分ける（本番の Claude の形） */ }
+    const dbParts = altRoutedAix
+      ? (dbKnowledgeBlock ? [{ kind: "all" as const, text: dbKnowledgeBlock }] : [])
+      : aixTemplateDbKnowledgeParts(topPrinciples, lossPatterns, dbRulesGeneric, dbRulesAction);
+    for (const part of dbParts) {
       systemBlocks.push({
         type: "text",
-        text: dbKnowledgeBlock,
+        text: part.text,
         cache_control: { type: "ephemeral", ttl: cacheTtl },
       });
+    }
+    if (dbKnowledgeBlock && systemBlocks.slice(1).map((b) => b.text).join("") !== dbKnowledgeBlock) {
+      // 起きない想定（安全網）。中身が旧と違うなら旧の1ブロックに戻す
+      console.warn("[aix-template-generate] split blocks mismatch → 1ブロックに戻す");
+      systemBlocks.splice(1, systemBlocks.length - 1, { type: "text", text: dbKnowledgeBlock, cache_control: { type: "ephemeral", ttl: cacheTtl } });
     }
 
     const callClaude = async (prompt: string): Promise<{ ok: true; text: string } | { ok: false; status: number }> => {

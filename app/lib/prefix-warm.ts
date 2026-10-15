@@ -62,6 +62,8 @@ export type PrefixWarmInputs = {
   nextAction: SuggestNextActionPrefixInputs | null;
   /** true＝AIX の文作り（aix_template）の先頭ブロックも温める（aixTemplateWarmEnabled）。無い／false＝温めない（今まで通り） */
   aixTemplate?: boolean;
+  /** 2026-10-15: aix_template の後ろのブロックのうちボタンに依らない部分（aixTemplateSharedParts）。無い＝先頭だけ温める */
+  aixTemplateShared?: readonly { text: string }[];
 };
 
 function chars(blocks: WarmSystemBlock[]): number { return blocks.reduce((n, b) => n + b.text.length, 0); }
@@ -98,7 +100,7 @@ export function buildPrefixWarmTargets(i: PrefixWarmInputs): PrefixWarmTarget[] 
       staticHitMinRead: naBlocks.length >= 2 ? 4_000 : Infinity, chars: chars(naBlocks),
     });
   }
-  if (i.aixTemplate) out.push(buildAixTemplateWarmTarget());
+  if (i.aixTemplate) out.push(buildAixTemplateWarmTarget(i.aixTemplateShared ?? []));
   return out;
 }
 
@@ -116,15 +118,24 @@ export function aixTemplateWarmEnabled(env: Record<string, string | undefined> =
   return !isOffSwitch(env.AIX_TEMPLATE_WARM) && aixTemplateCacheTtl(env) === "1h";
 }
 
-/** route.ts の system[0] と同じ物（text・cache_control 1h）＋本物と同じ model・thinking。user は「.」・max_tokens 1 */
-export function buildAixTemplateWarmTarget(): PrefixWarmTarget {
-  const system: WarmSystemBlock[] = [{ type: "text", text: aixTemplateStaticSystemText(), cache_control: { type: "ephemeral", ttl: "1h" } }];
+/**
+ * route.ts の system[0] と同じ物（text・cache_control 1h）＋本物と同じ model・thinking。user は「.」・max_tokens 1
+ * 2026-10-15（キャッシュの見直し）: shared（aix-template-cache.aixTemplateSharedParts＝後ろのブロックのうちボタンに依らない
+ *   全員共通の原則＋全体のルール・本物と同じ関数）を渡すと、先頭＋共通部分まで温める（本物は route.ts で同じ単位に分けて印を付ける）。
+ *   本物のボタン別ルールだけが毎回の書き込みに残る。無い時は先頭だけ（旧）。
+ */
+export function buildAixTemplateWarmTarget(shared: readonly { text: string }[] = []): PrefixWarmTarget {
+  const cc = { type: "ephemeral" as const, ttl: "1h" as const };
+  const system: WarmSystemBlock[] = [
+    { type: "text", text: aixTemplateStaticSystemText(), cache_control: cc },
+    ...shared.filter((p) => p.text.trim()).map((p) => ({ type: "text" as const, text: p.text, cache_control: cc })),
+  ];
   return {
     name: "aix_template_warm", realActions: ["aix_template"], model: AIX_TEMPLATE_MODEL,
     key: systemFullKey(system) ?? "",
     body: { model: AIX_TEMPLATE_MODEL, max_tokens: 1, thinking: { type: "disabled" }, system, messages: [{ role: "user", content: "." }] },
-    // 1ブロック: 書いたら cold（6h retire・次の本物に書かせる）
-    staticHitMinRead: Infinity, chars: chars(system), anyRealKey: true,
+    // 1ブロック: 書いたら cold（6h retire・次の本物に書かせる）。共通部分つき: 先頭（約35k）が読めて後ろだけ書いた＝DB の原則・ルールの更新の前払い
+    staticHitMinRead: system.length >= 2 ? 30_000 : Infinity, chars: chars(system), anyRealKey: true,
   };
 }
 

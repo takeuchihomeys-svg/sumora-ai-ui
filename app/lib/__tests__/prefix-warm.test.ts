@@ -10,6 +10,7 @@ import { buildCustomerSummarySystemBlocks, buildCustomerSummaryWarmBody, buildNe
 import { buildSuggestNextActionSystemBlocks, buildSuggestNextActionWarmBody, type SuggestNextActionPrefixInputs } from "../suggest-next-action-prompt";
 import { buildPrefixWarmTargets, classifyPrefixWarmUsage, decidePrefixWarm, prefixWarmHash, PREFIX_WARM_DEFAULTS, PREFIX_WARM_HASH_PREFIX, buildAixTemplateWarmTarget, aixTemplateWarmEnabled } from "../prefix-warm";
 import { aixTemplateStaticSystemText } from "../aix-template-system";
+import { aixTemplateSharedParts, aixTemplateDbKnowledgeParts } from "../aix-template-cache";
 import { systemFullKey, parseAnthropicRequest } from "../llm-usage-recorder";
 import { isBrainCall } from "../llm-test-mode";
 
@@ -177,6 +178,25 @@ console.log("── 2026-10-15 AIX の文作り（aix_template）の先頭ブロ
   t("本物の system[0] と温めの system[0] が JSON で同じ", JSON.stringify(real.system[0]) === JSON.stringify(a.body.system[0]));
   t("既定 on・AIX_TEMPLATE_WARM=off で止まる・寿命 5m の時は温めない", aixTemplateWarmEnabled({}) && !aixTemplateWarmEnabled({ AIX_TEMPLATE_WARM: "off" }) && !aixTemplateWarmEnabled({ AIX_TEMPLATE_CACHE_TTL: "5m" }));
   t("先頭ブロックは 1024 トークンより十分長い（キャッシュの最低長）", aixTemplateStaticSystemText().length > 20_000);
+}
+
+console.log("── 2026-10-15 キャッシュの見直し: AIX の温めを共通部分（原則＋失注＋全体のルール）まで伸ばす — 本物の先頭3ブロックと JSON で同じ");
+{
+  const P = [{ id: "a", title: "原則", content: "内容", importance: 10 }];
+  const L = [{ id: "l", content: "失注", importance: 9 }];
+  const GEN = "【会社ルール】\n- ルール1";
+  const shared = aixTemplateSharedParts(P, L, GEN, {});
+  const w = buildAixTemplateWarmTarget(shared);
+  const cc = { type: "ephemeral", ttl: "1h" };
+  // route.ts の組み立て（先頭＋aixTemplateDbKnowledgeParts の各部分に 1h の印）
+  const realSystem = [{ type: "text", text: aixTemplateStaticSystemText(), cache_control: cc },
+    ...aixTemplateDbKnowledgeParts(P, L, GEN, "【ボタン別】\n- 訴求", {}).map((p) => ({ type: "text", text: p.text, cache_control: cc }))];
+  t("温めは3ブロック・本物は4ブロック（印4つ＝上限）", w.body.system.length === 3 && realSystem.length === 4);
+  t("温めの3ブロック = 本物の先頭3ブロック（JSON で同じ）", JSON.stringify(w.body.system) === JSON.stringify(realSystem.slice(0, 3)));
+  t("共通部分つき: 先頭が読めて後ろだけ書いた → dynamic_rewrite（DB 更新の前払い）", w.staticHitMinRead === 30_000 && classifyPrefixWarmUsage({ cache_read: 35_459, cache_write_1h: 23_849, cache_write_5m: 0 }, w.staticHitMinRead) === "dynamic_rewrite");
+  t("共通部分なし → 旧（先頭だけ・1ブロック）", buildAixTemplateWarmTarget([]).body.system.length === 1);
+  const base = { finalCheck: { dbRules, finalCheckRules }, summary: { systemPrompt: CUSTOMER_SUMMARY_SYSTEM, nextActionRuleContents: ["ルールA"] }, nextAction: null };
+  t("buildPrefixWarmTargets が aixTemplateShared を渡す", buildPrefixWarmTargets({ ...base, aixTemplate: true, aixTemplateShared: shared }).at(-1)!.body.system.length === 3);
 }
 
 console.log(`\n${passed} OK / ${failed} NG`);

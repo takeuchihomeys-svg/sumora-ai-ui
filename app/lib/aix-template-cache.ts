@@ -60,3 +60,72 @@ export function buildAixTemplateDbKnowledgeBlock(
 export function aixTemplateCacheTtl(env: Record<string, string | undefined> = process.env): "5m" | "1h" {
   return (env.AIX_TEMPLATE_CACHE_TTL ?? "").trim().toLowerCase() === "5m" ? "5m" : "1h";
 }
+
+/**
+ * 2026-10-15 竹内「キャッシュの見直し。質が落ちないように改善する形で」（AIX の2通目）:
+ *   後ろのブロック（DB 由来・24〜33k）を、変わる単位で3つに分ける（中身・並びは1文字も変えない＝3つを "" で繋ぐと旧の1ブロックと同じ文字列）。
+ *     global … 絶対原則＋失注（全員・全ボタンで同じ。DB の学習で日に1回程度変わる）
+ *     state  … generate_reply＋全体のルール（会話の状態で変わる）
+ *     action … ボタン別のルール（LEARN-AIX 含む・ボタン×状態で変わる）
+ *   旧は1つの印で、ボタンか状態のどちらかが前の呼び出しと違うだけで後ろを丸ごと書き直していた。
+ *   分けると、ボタン・状態が違っても global（と同じ状態なら state）は読める。印は先頭ブロック＋3つ＝4つ（上限）。
+ *   区切りの文字（"\n\n"・"\n"）は後ろのブロックの先頭に付ける（ブロックの末尾に空白を残さない）。
+ *   分けられない形（片方が空・境目が trim で消える）は1ブロック（旧と同じ）。AIX_TEMPLATE_BLOCK_SPLIT=off で旧（1ブロック）。
+ */
+export type AixDbKnowledgePart = { kind: "global" | "state" | "action" | "all"; text: string };
+
+export function aixTemplateBlockSplitEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.AIX_TEMPLATE_BLOCK_SPLIT ?? "").trim().toLowerCase() !== "off";
+}
+
+export function aixTemplateDbKnowledgeParts(
+  topPrinciples: readonly AixKnowledgeItem[],
+  lossPatterns: readonly AixKnowledgeItem[],
+  dbRulesGeneric: string,
+  dbRulesAction: string,
+  env: Record<string, string | undefined> = process.env,
+): AixDbKnowledgePart[] {
+  const raw = [dbRulesGeneric, dbRulesAction].filter(Boolean).join("\n");
+  const whole = buildAixTemplateDbKnowledgeBlock(topPrinciples, lossPatterns, raw, env);
+  if (!whole) return [];
+  const one: AixDbKnowledgePart[] = [{ kind: "all", text: whole }];
+  if (!aixTemplateBlockSplitEnabled(env)) return one;
+  const g = buildAixTemplateDbKnowledgeBlock(topPrinciples, lossPatterns, "", env);
+  const r = raw.trim();
+  if (!g || !r) return one;
+  const parts: AixDbKnowledgePart[] = [{ kind: "global", text: g }];
+  const lead = raw.length - raw.trimStart().length;
+  // r の中で action が始まる位置（generic と action の間の "\n" の次）
+  const idx = dbRulesGeneric && dbRulesAction ? dbRulesGeneric.length + 1 - lead : -1;
+  const st = idx > 1 ? r.slice(0, idx - 1) : "";
+  const ac = idx > 1 ? r.slice(idx) : "";
+  if (st.trim() && ac.trim() && r.charAt(idx - 1) === "\n") {
+    parts.push({ kind: "state", text: `\n\n${st}` }, { kind: "action", text: `\n${ac}` });
+  } else {
+    parts.push({ kind: dbRulesAction && !dbRulesGeneric ? "action" : "state", text: `\n\n${r}` });
+  }
+  // ブロックの末尾の空白は次のブロックの先頭へ送る（繋いだ文字列は同じ・ブロックが空白で終わらない）
+  for (let i = 0; i < parts.length - 1; i++) {
+    const core = parts[i].text.trimEnd();
+    if (core.length < parts[i].text.length) { parts[i + 1].text = parts[i].text.slice(core.length) + parts[i + 1].text; parts[i].text = core; }
+  }
+  // 安全網: 繋いで旧の1ブロックと1文字も違わない時だけ分ける（空白だけのブロックも作らない）
+  return parts.map((p) => p.text).join("") === whole && parts.every((p) => p.text.trim()) ? parts : one;
+}
+
+/**
+ * 温め（prefix-warm・aix_template_warm）用: ボタンに依らない後ろのブロック（global＋state）を、ボタン別のルールがある本物と同じ形で作る。
+ *   本物は action が空でない時 state を generic.trimStart() で切る → ここでも「action あり」の形で切って action を捨てる（同じ関数・同じ文字列）。
+ *   分けない設定（AIX_TEMPLATE_BLOCK_SPLIT=off）や分けられない形の時は [] ＝先頭ブロックだけ温める（旧）。
+ */
+export function aixTemplateSharedParts(
+  topPrinciples: readonly AixKnowledgeItem[],
+  lossPatterns: readonly AixKnowledgeItem[],
+  dbRulesGeneric: string,
+  env: Record<string, string | undefined> = process.env,
+): AixDbKnowledgePart[] {
+  const parts = aixTemplateDbKnowledgeParts(topPrinciples, lossPatterns, dbRulesGeneric, "x", env);
+  if (parts.length === 3 && parts[0].kind === "global" && parts[1].kind === "state") return parts.slice(0, 2);
+  if (parts.length === 2 && parts[0].kind === "global" && parts[1].kind === "action") return parts.slice(0, 1); // 全体のルールが空
+  return [];
+}
