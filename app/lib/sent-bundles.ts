@@ -76,7 +76,16 @@ export function buildSentBundles(logs: ReadonlyArray<BundleLog>, msgs: ReadonlyA
   const readBy = new Map(reads.map((r) => [r.image_url, r]));
   const aixMsgs = msgs.filter((m) => m.sender !== "customer" && !!m.is_aix_generated && Number.isFinite(Date.parse(m.created_at)));
   const out: SentBundle[] = [];
-  for (const lg of logs) {
+  // 2026-10-15 review: 名前の手がかりの無い通（読みの名前が無い画像・物件名の無い URL の文）は、時刻が一番近い AIX の記録（物件名のある物）の物だけにする。
+  //   1件オススメを40秒おきに続けて送った会話（実データ 直近21日で 7会話・束の画像 61枚中 14枚）で ±60秒の窓が重なり、別の物件の画像が2つの束に入っていた
+  const logAts = logs.map((l) => ((l.property_names ?? []).length ? Date.parse(l.sent_at ?? l.created_at) : NaN));
+  const nearestLog = (iso: string): number => {
+    const t = Date.parse(iso);
+    let bi = -1, bd = Infinity;
+    logAts.forEach((a, i) => { if (Number.isFinite(a) && Math.abs(t - a) < bd) { bd = Math.abs(t - a); bi = i; } });
+    return bi;
+  };
+  for (const [li, lg] of logs.entries()) {
     const names = (lg.property_names ?? []).map((n) => String(n ?? "").trim()).filter(Boolean);
     if (!names.length) continue;
     const at = Date.parse(lg.sent_at ?? lg.created_at);
@@ -90,9 +99,9 @@ export function buildSentBundles(logs: ReadonlyArray<BundleLog>, msgs: ReadonlyA
       const images = near.filter((m) => !!m.image_url).filter((m) => {
         const r = readBy.get(String(m.image_url));
         if (r?.property_name) return brainNameMatchesAny(name, [r.property_name]) || textMentionsProperty(r.property_name, name);
-        return names.length === 1;
+        return names.length === 1 && nearestLog(m.created_at) === li;
       }).map((m) => ({ url: String(m.image_url), kind: readBy.get(String(m.image_url))?.kind ?? null }));
-      const urlMsgs = texts.filter((m) => /https?:\/\//.test(String(m.text ?? "")) && (names.length === 1 || textMentionsProperty(m.text, name)));
+      const urlMsgs = texts.filter((m) => /https?:\/\//.test(String(m.text ?? "")) && ((names.length === 1 && nearestLog(m.created_at) === li) || textMentionsProperty(m.text, name)));
       const urls = [...new Set(urlMsgs.flatMap((m) => String(m.text ?? "").match(URL_RE) ?? []))];
       const star = texts.find((m) => /🌟/.test(String(m.text ?? "")) && textMentionsProperty(m.text, name)) ?? texts.find((m) => textMentionsProperty(m.text, name));
       const st = String(lg.prop_statuses?.[i] ?? (lg.aix_type === "property_check_result" && names.length === 1 ? lg.check_pattern ?? "" : "")).toLowerCase();

@@ -52,5 +52,20 @@ it("安全の線: 別の部屋・問いより前の束・募集に出ていな�
 it("材料の文に引用した束の印", () => { const n = buildSentBundlesNote(bundles, { quoted: bundles[0] }); if (!n.includes("←お客様が今引用した束") || !n.includes("室内イメージの URL 1件")) throw new Error(n); });
 it("名前の揺れ（Ⅳ／IV・号室）", () => { eq(textMentionsProperty("🌟エステムコート難波IVアトリ 502号室", "エステムコート難波Ⅳアトリ"), true); eq(textMentionsProperty("レジュールアッシュ難波", "エステムコート難波Ⅳアトリ"), false); });
 
+it("review: 1件オススメを40秒おきに続けて送った時、名前の無い画像は近い方の束だけ（窓が重なっても2つの束に入れない）", () => {
+  const m2 = [
+    S("x1", "2026-10-10T01:00:00.000Z", { img: "u/x.jpeg" }),
+    S("x2", "2026-10-10T01:00:01.000Z", { text: "🌟グレイスカルム 201号室\n・家賃6万" }),
+    S("y1", "2026-10-10T01:00:40.000Z", { img: "u/y.jpeg" }),
+    S("y2", "2026-10-10T01:00:41.000Z", { text: "🌟ラモーナ出口 202号室\n・家賃5万" }),
+  ];
+  const l2 = [
+    { line_message_id: "x2", sent_at: "2026-10-10T01:00:01.000Z", created_at: "2026-10-10T01:00:03Z", aix_type: "property_recommendation", property_names: ["グレイスカルム 201号室"] },
+    { line_message_id: "y2", sent_at: "2026-10-10T01:00:41.000Z", created_at: "2026-10-10T01:00:43Z", aix_type: "property_recommendation", property_names: ["ラモーナ出口 202号室"] },
+  ];
+  const b2 = buildSentBundles(l2, m2, []);
+  eq(b2.map((b) => [b.property, b.images.map((i) => i.url)]), [["ラモーナ出口 202号室", ["u/y.jpeg"]], ["グレイスカルム 201号室", ["u/x.jpeg"]]]);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

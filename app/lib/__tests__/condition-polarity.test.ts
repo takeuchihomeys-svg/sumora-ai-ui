@@ -26,6 +26,16 @@ it("込みの印: 「共益費込み10万以内で」→ other_requests に家�
   const r = applyConditionPolarity("共益費込み10万以内でお願いします", { rent_max: 100000 }, null, {});
   eq(r.extracted.other_requests, "家賃上限は共益費込み");
 });
+it("review: ゆるめた語が今の登録に無い時は区切りを直さず「変わった」にしない（エリア・家賃の欄には触らない）", () => {
+  eq(dropRelaxedClauses("WIC、南向き", ["ペット可"]), "WIC、南向き");
+  const r = applyConditionPolarity("ペット可じゃなくてもいい", { area: "梅田" }, { preferences: "WIC、南向き", ng_points: "1階" }, {});
+  eq([r.preferencesAfterRelax, r.ngAfterRelax, r.extracted.area], [undefined, undefined, "梅田"]);
+});
+it("review: 「保証人不要」は物件の条件（ゆるめるではない）＝取り出した条件を消さない", () => {
+  eq(relaxedTermsOf("部屋の、広さ1ルーム 保証人不要。 エアコンつき、"), []);
+  const r = applyConditionPolarity("部屋の、広さ1ルーム 保証人不要。", { preferences: "保証人不要[必須]・エアコン付き" }, null, {});
+  eq(r.extracted.preferences, "保証人不要[必須]・エアコン付き");
+});
 it("CONDITION_POLARITY=off は前の形（そのまま）", () => {
   const r = applyConditionPolarity("ペット可じゃなくてもいい", { ng_points: "ペット可NG" }, null, { CONDITION_POLARITY: "off" });
   eq(r.extracted.ng_points, "ペット可NG");

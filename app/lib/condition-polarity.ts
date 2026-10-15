@@ -13,14 +13,16 @@ export function conditionPolarityEnabled(env: Record<string, string | undefined>
   return (env.CONDITION_POLARITY ?? "").trim().toLowerCase() !== "off";
 }
 
-/** 「Xじゃなくてもいい」「Xでなくても大丈夫」「Xは無くてもいい」「Xにこだわらない」「X不要」の X（条件の語）。無ければ [] */
-const RELAX_RE = /([^\s、。,!！?？]{1,12}?)(?:じゃ|では|で)?(?:なく|無く)ても(?:いい|良い|よい|大丈夫|OK|ok|構いません|かまいません|いけ)|([^\s、。,!！?？]{1,12}?)(?:に|は)?(?:こだわらない|こだわりません|こだわりは(?:ない|ありません))|([^\s、。,!！?？]{1,12}?)(?:は)?(?:不要|いらない|要らない)(?:です)?(?:[。！!]|$)/g;
+/** 「Xじゃなくてもいい」「Xでなくても大丈夫」「Xは無くてもいい」「Xにこだわらない」の X（条件の語）。無ければ [] */
+const RELAX_RE = /([^\s、。,!！?？]{1,12}?)(?:じゃ|では|で)?(?:なく|無く)ても(?:いい|良い|よい|大丈夫|OK|ok|構いません|かまいません|いけ)|([^\s、。,!！?？]{1,12}?)(?:に|は)?(?:こだわらない|こだわりません|こだわりは(?:ない|ありません))/g;
+// review 2026-10-15: 「X不要」「Xいらない」は外した。実データで「保証人不要」（＝保証人のいらない物件を探す・条件そのもの）を
+//   ゆるめると読み、取り出した「保証人不要[必須]」を消す逆読みになるため（直近120日のお客様の文で確認）
 
 export function relaxedTermsOf(text: string): string[] {
   const t = String(text ?? "").normalize("NFKC").replace(/\s*\n\s*/g, "");
   const out: string[] = [];
   for (const m of t.matchAll(RELAX_RE)) {
-    let w = (m[1] ?? m[2] ?? m[3] ?? "").replace(/^(?:別に|特に|もう|なので|けど|が|は|も)/, "").replace(/(?:の物件|のお部屋|の部屋|物件|お部屋)$/, "").trim();
+    let w = (m[1] ?? m[2] ?? "").replace(/^(?:別に|特に|もう|なので|けど|が|は|も)/, "").replace(/(?:の物件|のお部屋|の部屋|物件|お部屋)$/, "").trim();
     // 「一階とかだと鉄筋コンクリートじゃなくても」→ 鉄筋コンクリート（とかだと 等の前置きを外す）
     w = w.replace(/^.*(?:とかだと|だと|なら|でも)/, "").trim();
     if (w.length >= 2 && !/^(?:それ|これ|そこ|ここ|今|すぐ|急ぎ|無理)$/.test(w)) out.push(w);
@@ -38,6 +40,8 @@ export function dropRelaxedClauses(v: string | null | undefined, relaxed: Readon
   if (!keys.length) return v;
   const parts = String(v).split(/[・、,，／\/]/).map((s) => s.trim()).filter(Boolean);
   const kept = parts.filter((p) => !keys.some((k) => core(p).includes(k)));
+  // review: 何も外さない時は元の文字列のまま（区切りを「・」に直しただけで「変わった」と書き込まない）
+  if (kept.length === parts.length) return v;
   return kept.length ? kept.join("・") : null;
 }
 
