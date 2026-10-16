@@ -157,6 +157,12 @@ export function rateByType(rows: ReadonlyArray<{ type: string; tags?: string[]; 
  *   竹内さんの実送信（db3722・ed7695・ac7c7f）と同じ「確認＋見積」の形なので、正解が 2段:check の時は 2段:check に数える。
  */
 export function normalizeDraftCode(code: string, draft: string | null | undefined, accept: ReadonlyArray<string>): string {
+  // 2026-10-16 下書きの関所: 判定（DeepSeek）が「募集状況確認させて頂きます」「管理会社に交渉させて頂きます」の約束の下書きを 返信 と付ける揺れ（q157 で 3回中2回）。
+  //   確認・交渉の約束の文（結果の報告「確認させて頂きましたところ」は除く）がある下書きは 2段:check に数える（前・今の両方に同じく当たる）
+  if (code === "返信") {
+    const t0 = String(draft ?? "").normalize("NFKC");
+    if (/(?:確認|交渉)(?:させて|致し|し)(?:頂|いただ)?き?ます(?!た)|確認出来次第ご連絡/.test(t0) && !/確認させて(?:頂|いただ)きましたところ/.test(t0)) return "2段:check";
+  }
   if (code !== "2段:estimate" || !accept.includes("2段:check") || accept.includes("2段:estimate")) return code;
   const t = String(draft ?? "").normalize("NFKC");
   return /(?:募集状況|空室状況|空き状況)[^\n]{0,20}確認/.test(t) && /御?見積/.test(t) ? "2段:check" : code;
