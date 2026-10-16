@@ -24,7 +24,11 @@ async function embed(texts: string[]): Promise<{ vectors: Array<number[] | null>
 }
 async function maskFn(): Promise<(s: string) => string> {
   const { maskForEmbedding } = await import("../../app/lib/pii-mask");
-  return (s: string) => maskForEmbedding(maskExamText(s, null));
+  return (s: string) => maskRoomNo(maskForEmbedding(maskExamText(s, null)));
+}
+/** 2026-10-16 確かめる人: 部屋番号も表に入れない（「403号室」「号室：1202」が 144問中 41問の言葉・正解に残っていた）。物件名は残す（場面の言葉として要る） */
+export function maskRoomNo(s: string): string {
+  return s.replace(/[0-9０-９]{1,5}\s*号室/g, "◯号室").replace(/(号室|部屋番号)\s*[:：]\s*[0-9０-９A-Za-z-]{1,8}/g, "$1：◯");
 }
 const kbText = (r: KbRow) => `${r.title}\n${r.insight}\n${r.rationale ?? ""}\n${(r.tags ?? []).join(" ")}`;
 export function kbHashMap(rows: KbRow[]): Record<string, string> { return Object.fromEntries(rows.map((r) => [r.id, hashText(kbText(r))])); }
@@ -132,8 +136,11 @@ export async function ragSelect(sb: SupabaseClient, problems: P[], o: { stageOf:
   if (hitTop.length) { const ev = await kbEmbeddings(sb, hitTop); for (const [id, v] of ev) { const ps = nearProblemsOf(v, cards, 2, 0.45); if (ps.length) kbNear[id] = ps; } }
   // 差分・言葉・commit の文に問題の id（q112 等）が書いてあれば必ず入れる（直す人が名指しした問題）
   let msgs = "";
-  if (o.range) { try { msgs = execFileSync("git", ["log", "--format=%B", o.range], { cwd }).toString(); } catch { /* */ } }
-  const mentioned = [...new Set([...`${q}\n${msgs}`.matchAll(/\bq\d{3,4}\b/g)].map((m) => m[0]))].filter((id) => cards.some((c) => c.id === id));
+  //   2026-10-16 確かめる人: 作業ツリーの時も main との分かれ目からの commit の文を読む（枝で commit してから回すと名指しが読まれなかった）。
+  //   名指しは切り詰める前の差分の全文から探す（差分の言葉は 3000 字で切る＝後ろの方の q112 を取りこぼしていた）
+  const logRange = o.range ?? (decision.base ? `${decision.base}..HEAD` : null);
+  if (logRange) { try { msgs = execFileSync("git", ["log", "--format=%B", logRange], { cwd, maxBuffer: 16 * 1024 * 1024 }).toString(); } catch { /* */ } }
+  const mentioned = [...new Set([...`${q}\n${diff}\n${msgs}`.matchAll(/\bq\d{3,4}\b/g)].map((m) => m[0]))].filter((id) => cards.some((c) => c.id === id));
   // 前に落ちた・新しい（揺れの記録 30日）
   const failedBefore = new Set<string>(), fresh = new Set<string>();
   const freshMs = (o.freshDays ?? 7) * 86_400_000;

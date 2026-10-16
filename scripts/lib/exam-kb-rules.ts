@@ -9,7 +9,7 @@ export type KbRuleHit = { kbId: string; name: string; why: string };
 
 const STATION_RE = /([ぁ-んァ-ヶ一-龠々ーA-Za-z]{1,10})駅/g;
 /** 駅の名前の前の言葉（「最寄り」「各」等は駅の名前ではない） */
-const NOT_STATION = /^(?:最寄|最寄り|各|同|当|この|その|両|始発|ターミナル|近く|主要|複数|大きい|乗換|乗り換え|の)$/;
+const NOT_STATION = /^(?:最寄|最寄り|各|同|当|この|その|あの|どの|両|始発|終着|途中|停車|急行停車|快速停車|地下鉄|私鉄|隣|お隣|ターミナル|近く|主要|複数|大きい|乗換|乗り換え|の)$/;
 
 export const KB_RULES: ReadonlyArray<KbRule> = [
   {
@@ -22,8 +22,12 @@ export const KB_RULES: ReadonlyArray<KbRule> = [
       for (const m of draft.matchAll(STATION_RE)) {
         // 漢字・カタカナで終わる時は最後の平仮名より後ろだけ（助詞・「近くの」等を外す。「清水が丘」のように短く切れたら下の2字未満で見ない＝誤爆より見逃し）。
         //   「なんば」のような平仮名だけの駅はそのまま
-        const nm = /[一-龠々ァ-ヶーA-Za-z]$/.test(m[1]) ? (m[1].match(/[一-龠々ァ-ヶーA-Za-z]+$/)?.[0] ?? m[1]) : m[1];
-        if (nm.length < 2 || NOT_STATION.test(nm)) continue;
+        //   2026-10-16 確かめる人: 平仮名で終わり平仮名だけでない（「お部屋は駅」「ご希望の駅」「隣の駅」「谷町線の駅」）は助詞の後＝駅の名前が無い → 見ない。
+        //   平仮名だけは3字以上だけ見る（「どの駅」「ひと駅」を外す）
+        const endsKana = /[ぁ-ん]$/.test(m[1]);
+        if (endsKana && !/^[ぁ-ん]+$/.test(m[1])) continue;
+        const nm = endsKana ? m[1] : (m[1].match(/[一-龠々ァ-ヶーA-Za-z]+$/)?.[0] ?? m[1]);
+        if (nm.length < (endsKana ? 3 : 2) || NOT_STATION.test(nm)) continue;
         if (!src.includes(nm)) bad.add(`${nm}駅`);
       }
       return bad.size ? `会話・条件の行に無い駅の名前: ${[...bad].join("・")}` : null;

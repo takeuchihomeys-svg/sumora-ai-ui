@@ -109,4 +109,4 @@ npx tsx --env-file=.env.local scripts/exam-rag.ts --link --problem=q151 --kb=tit
 入れる前の最後の関所は今まで通り全部（または `--types=` の型ごと）で回す。直す人は `--select-q` か差分のコメントに対象の問題 id と場面の言葉を書く。
 
 置き場: 表（`exam_problem_index`・`exam_problem_kb_links`・設計 `scripts/exam-rag-migration.sql`・竹内さんの OK まで作らない）があれば表、無ければ
-`<倉庫の根>/.claude/exam-cache/brain-exam-rag/`（cards.json・kb-links.json・kb-snapshot.json・prefix.json・kb-links-pending.json）。表を作ると自動で表に切り替わる（`EXAM_RAG_STORE=local` で止める）。
+`<倉庫の根>/.claude/exam-cache/brain-exam-rag/`（cards.json・kb-links.json・kb-snapshot.json・prefix.json・kb-links-pending.json）。表を作ると自動で表に切り替わる（`EXAM_RAG_STORE=local` で止める）。ただし `SUPABASE_SERVICE_ROLE_KEY` がある時だけ（表は RLS で方針なし＝anon の鍵では 0 行に見え書けない → 手元の置き場のまま）。表への書き込みが失敗しても試験は止めず手元の置き場に書く・`--select=rag` が失敗したら全部で回す。

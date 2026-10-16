@@ -27,6 +27,9 @@ let tableOk: boolean | null = null;
 export async function useDbStore(sb: SupabaseClient | null, env: Record<string, string | undefined> = process.env): Promise<boolean> {
   if (!sb || String(env.EXAM_RAG_STORE ?? "").trim().toLowerCase() === "local") return false;
   if (tableOk != null) return tableOk;
+  // 2026-10-16 確かめる人: 表は RLS で方針なし＝anon の select はエラー無しで 0 行を返す（表があるのに札が空に見え、書き込みは失敗する）。
+  //   service role の鍵が無い時（手元の .env.local は anon だけ）は表に切り替えない＝手元の置き場
+  if (!String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim()) { tableOk = false; return false; }
   const { error } = await sb.from(CARD_TABLE).select("id").limit(1);
   tableOk = !error;
   return tableOk;
@@ -52,11 +55,14 @@ export async function loadCards(sb: SupabaseClient | null): Promise<Record<strin
 }
 export async function saveCards(sb: SupabaseClient | null, cards: ExamCard[]): Promise<"db" | "local"> {
   if (await useDbStore(sb)) {
-    for (let i = 0; i < cards.length; i += 50) {
-      const { error } = await sb!.from(CARD_TABLE).upsert(cards.slice(i, i + 50).map(toRow), { onConflict: "id" });
-      if (error) throw new Error(`${CARD_TABLE} upsert: ${error.message}`);
-    }
-    return "db";
+    // 2026-10-16 確かめる人: 表への書き込みが失敗しても試験を止めない（手元の置き場に書く・次の読みで札が無い問題は安全側で入る）
+    try {
+      for (let i = 0; i < cards.length; i += 50) {
+        const { error } = await sb!.from(CARD_TABLE).upsert(cards.slice(i, i + 50).map(toRow), { onConflict: "id" });
+        if (error) throw new Error(`${CARD_TABLE} upsert: ${error.message}`);
+      }
+      return "db";
+    } catch (e) { console.warn(`表に書けない → 手元の置き場に書く: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
   }
   updateJsonFile<{ version: number; cards: Record<string, ExamCard> }>(CARDS_FILE, () => ({ version: 1, cards: {} }), (cur) => {
     const next = { ...cur.cards };
@@ -87,7 +93,7 @@ export async function loadLinks(sb: SupabaseClient | null): Promise<Record<strin
 }
 /** 問題ごとに紐付けを置き換える（change は今の紐付けを受けて次を返す） */
 export async function updateLinks(sb: SupabaseClient | null, change: (cur: Record<string, KbLink[]>) => Record<string, KbLink[]>): Promise<"db" | "local"> {
-  if (await useDbStore(sb)) {
+  if (await useDbStore(sb)) try {
     const cur = await loadLinks(sb);
     const next = change(cur);
     for (const [pid, ls] of Object.entries(next)) {
@@ -101,7 +107,7 @@ export async function updateLinks(sb: SupabaseClient | null, change: (cur: Recor
       }
     }
     return "db";
-  }
+  } catch (e) { console.warn(`紐付けの表に書けない → 手元の置き場に書く: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`); }
   updateJsonFile<Record<string, KbLink[]>>(LINKS_FILE, () => ({}), change);
   return "local";
 }

@@ -111,6 +111,9 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
 
   // ─── 置き場（表が無い間は共有のファイル） ───
   const fakeSb = { from: () => ({ select: () => ({ limit: async () => ({ error: { message: "relation does not exist" } }) }) }) } as never;
+  // 確かめる人（10/16）: 表があっても service role の鍵が無ければ（anon は RLS でエラー無しの 0 行）手元の置き場
+  const okSb = { from: () => ({ select: () => ({ limit: async () => ({ data: [], error: null }) }) }) } as never;
+  ok("service role の鍵が無ければ表に切り替えない", (await S.useDbStore(okSb, { SUPABASE_SERVICE_ROLE_KEY: "" })) === false);
   ok("表が無ければ共有のファイル", (await S.useDbStore(fakeSb)) === false);
   ok("置き場は EXAM_CACHE_DIR の下", S.CARDS_FILE.startsWith(tmp));
   await S.saveCards(fakeSb, [{ ...card, embedding: [1, 2], embeddingHash: "z" }]);
@@ -137,6 +140,10 @@ function ok(name: string, cond: boolean, detail = "") { if (cond) pass++; else {
   const h2 = K.checkKbRules("相場より安い家賃管理費込65,500円です", ctx);
   ok("相場: 材料が無いのに相場と比べたら違反（知見 d94a966c）", h2.some((h) => h.kbId.startsWith("d94a966c")));
   ok("相場: 材料があれば通す", K.checkKbRules("相場より安いです", { ...ctx, contextText: "この辺りの相場は7万" }).length === 0);
+  // 確かめる人（10/16）: 助詞の後の「駅」・指す言葉の誤爆を出さない・部屋番号を伏せる
+  for (const d of ["お部屋は駅から徒歩5分です", "どの駅でも大丈夫です", "ご希望の駅周辺で探します", "隣の駅まで歩けます", "谷町線の駅から近い", "途中駅で乗り換え", "ひと駅隣です"]) ok(`駅: 誤爆しない「${d}」`, K.checkKbRules(d, ctx).length === 0, JSON.stringify(K.checkKbRules(d, ctx)));
+  ok("駅: 平仮名だけの駅名（3字以上）は見る", K.checkKbRules("なんば駅から近いです", ctx).some((h) => h.why.includes("なんば駅")));
+  ok("部屋番号を伏せる", run.maskRoomNo("Luxe難波WEST 403号室\n号室：1202（12階部分）") === "Luxe難波WEST ◯号室\n号室：◯（12階部分）", run.maskRoomNo("Luxe難波WEST 403号室\n号室：1202（12階部分）"));
   ok("決まりの採点の切り替え", K.kbRulesMode(undefined, {}) === "show" && K.kbRulesMode("score", {}) === "score" && K.kbRulesMode(undefined, { EXAM_KB_RULES: "off" }) === "off");
 
   rmSync(tmp, { recursive: true, force: true });

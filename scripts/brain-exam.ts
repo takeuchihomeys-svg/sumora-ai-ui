@@ -681,6 +681,7 @@ async function selectByRag(): Promise<void> {
   console.log(`=== --select=rag: ${r.mode === "all" ? `全部 ${r.picked.length}問` : `${r.picked.length}問 を選んだ（${base.length}問中・省いた ${r.skipped}）`}・差分の段 ${d.cls}（変わったファイル ${d.files.length}）・差分の言葉 ${r.queryChars}字・知見の変化 ${r.kbChanged}・差分で当たった知見 ${r.kbHits.length}・埋め込み ${r.tokens}トークン${r.note ? `・${r.note}` : ""} ===`);
   for (const h of r.kbHits.slice(0, 5)) console.log(`  当たった知見 ${h.id.slice(0, 8)}（${h.score.toFixed(2)}）${(h.title ?? "").slice(0, 50)}`);
   if (r.mode === "rag") for (const p of r.picked) console.log(`  ${p.must ? "◆" : "・"} ${p.id}: ${p.why.join("／")}`);
+  if (r.mode === "rag") console.log("  ⚠ RAG の選びは直しの途中の確かめ用。main に入れる前の最後の関所は --select を付けずに全部（または --types= の型ごと）で回す");
   SELECTED = new Set(r.picked.map((p) => p.id));
   selectKbNow = r.kbNow;
 }
@@ -824,7 +825,10 @@ async function main() {
     for (const f of d.files.filter((x) => x.cls !== "none").slice(0, 12)) console.log(`  ${f.cls.padEnd(5)} ${f.file}（${f.why}）`);
   }
   // 2026-10-16 --select=rag は「前」を回す前に決める（前も選んだ問題だけ・main の子には --only で渡る）
-  if (SELECT === "rag" && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") await selectByRag();
+  //   選びが失敗しても（埋め込み・KB・表が読めない等）試験は止めない＝安全側で全部
+  if (SELECT === "rag" && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") {
+    try { await selectByRag(); } catch (e) { SELECTED = null; selectKbNow = null; console.warn(`--select=rag が失敗 → 安全側で全部の問題: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`); }
+  }
   else if (SELECT && SELECT !== "rag") throw new Error(`--select=${SELECT} は無い（--select=rag だけ）`);
   if (BASELINE_MAIN && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") { const go = await prepareMainBaseline(); if (!go) return; }
   // 2026-10-09: --conv（テスト専用の会話）の時は鍵を取り、線のファイル・条件の写しの控えを会話ごとに分ける（REPLAY_FLOOR_FILE は supabase を読む前に要る＝ここで入れる）
