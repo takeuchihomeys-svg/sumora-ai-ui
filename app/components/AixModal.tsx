@@ -27,7 +27,8 @@ import { staffTalkedToday } from "../lib/daily-greeting";
 import { countCustomerSentProperties } from "../lib/customer-property-count";
 // 2026-09-16 竹内（YUYA 事例）: お客様が送ってくれた物件の名前（SUUMO の共有文等）を候補に出す
 import { customerPropertyOptionsForAix, customerNameAfterShareEnvFromPublic } from "../lib/customer-property-names";
-import { withBrainPropertyFirst, brainPropertyDisplayEnvFromPublic, type BrainPropertyPick } from "../lib/brain-property-display";
+import { withBrainPropertyFirst, brainPropertyDisplayEnvFromPublic, brainPickRef, type BrainPropertyPick } from "../lib/brain-property-display";
+import { cbImagesByPropertyEnabled, pickCostBreakdownImages, type CbSentRow, type CbMsg } from "../lib/cost-breakdown-images";
 // 2026-09-15 竹内（YUYA 事例）: 保証会社について。名寄せ・種類のマスタは lib に1表（画面とサーバで共用）
 import { GUARANTOR_COMPANY_MASTER, GUARANTOR_TYPES, GUARANTOR_TYPE_LABELS, resolveGuarantor, resolveGuarantorForText, buildGuarantorListText, detectGuarantorFromMessages, parseGuarantorTypeJa, guarantorTypeJa, normalizeGuarantorType, type GuarantorType } from "../lib/guarantor-companies";
 import { extractPropertyLabels } from "../lib/action-ledger";
@@ -2016,6 +2017,20 @@ export default function AixModal({
     cbPrefilledRef.current = true;
     void (async () => {
       try {
+        // 2026-10-16 竹内悠馬（事例 g）: ブレインの今の物件で実際に送った画像（物件資料＋直後の御見積書）を先に探す（cost-breakdown-images.ts・NEXT_PUBLIC_CB_IMAGES_BY_PROPERTY=off で旧）
+        const target = cbImagesByPropertyEnabled(process.env.NEXT_PUBLIC_CB_IMAGES_BY_PROPERTY) ? brainPickRef(brainPropertyPick ?? null) : null;
+        if (target) {
+          const [sip, sp, ms] = await Promise.all([
+            supabase.from("sent_image_properties").select("property_name, room_no, image_url").eq("conversation_id", conversationId).limit(200),
+            supabase.from("sent_properties").select("property_name, room_no, image_url, sent_at").eq("conversation_id", conversationId).limit(200),
+            supabase.from("messages").select("id, image_url, created_at, sender").eq("conversation_id", conversationId).eq("sender", "staff").not("image_url", "is", null).order("created_at", { ascending: false }).limit(200),
+          ]);
+          const picked = pickCostBreakdownImages(target, [...((sip.data ?? []) as CbSentRow[]), ...((sp.data ?? []) as CbSentRow[])], (ms.data ?? []) as CbMsg[]);
+          if (picked?.length) {
+            setCbImages((prev) => prev.length > 0 ? prev : picked.map((m) => ({ key: `h_${m.id}`, url: m.image_url!, preview: m.image_url!, fromHistory: true })));
+            return;
+          }
+        }
         const { data: logs } = await supabase.from("aix_usage_logs").select("created_at")
           .eq("conversation_id", conversationId).eq("aix_type", "estimate_sheet")
           .order("created_at", { ascending: false }).limit(1);
@@ -2033,6 +2048,7 @@ export default function AixModal({
         console.warn("[AixModal] 初期費用について: 直近の御見積書の取得失敗:", e);
       }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, conversationId]);
 
   // 初期費用について: 貼り付け・選択した画像を追加（最大3枚）

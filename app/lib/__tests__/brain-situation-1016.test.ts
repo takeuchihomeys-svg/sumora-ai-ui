@@ -3,6 +3,8 @@
 import { roomToldOf, roomToldLines } from "../property-told";
 import { fixUnsentReviewAck, sentSinceLastAttachment } from "../unsent-review-ack";
 import { fixProxyNegotiate } from "../takeuchi-wording-r11";
+import { pickCostBreakdownImages } from "../cost-breakdown-images";
+import { splitPropertyName } from "../customer-state";
 import { normalizeBrainTurnContract, buildTurnContract, renderTurnContractNote } from "../turn-contract";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -54,5 +56,24 @@ t("返信の本質に背景と支える一言", /この発言の背景（ブレ�
 t("背景だけでも本質は残る", normalizeBrainTurnContract({ background: "x の背景" })?.background === "x の背景");
 t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_BACKGROUND = "off"; const r = normalizeBrainTurnContract({ background: "y", asks: [{ quote: "a" }] }); delete process.env.BRAIN_TURN_BACKGROUND; return !r?.background; })());
 
+// ── 初期費用についての画像（事例 g）: 5件の束から今の物件の資料＋直後の御見積書だけ ──
+{
+
+
+  const at = (s: number) => new Date(Date.parse("2026-10-09T08:24:00Z") + s * 1000).toISOString();
+  const msgs = [
+    { id: "1", image_url: "sheetA", created_at: at(0), sender: "staff" }, { id: "2", image_url: "estA", created_at: at(1), sender: "staff" },
+    { id: "3", image_url: "sheetB", created_at: at(30), sender: "staff" }, { id: "4", image_url: "estB", created_at: at(31), sender: "staff" },
+  ];
+  const sent = [{ property_name: "アーバネックス堺筋本町", room_no: "501", image_url: "sheetA" }, { property_name: "ソルテラスUMEDA NORTH", room_no: "207", image_url: "sheetB" }];
+  const got = pickCostBreakdownImages(splitPropertyName("アーバネックス堺筋本町 501号室"), sent, msgs);
+  t("今の物件の資料＋直後の御見積書だけ（別の物件の画像は入れない）", JSON.stringify(got?.map((m) => m.id)) === JSON.stringify(["1", "2"]));
+  t("記録が無い物件は null（旧の決め方）", pickCostBreakdownImages(splitPropertyName("知らない物件 101号室"), sent, msgs) === null);
+}
+// ── 材料の主語（竹内さん→お客様に変えない）──
+{
+  const { maskPII } = require("../pii-mask") as typeof import("../pii-mask");
+  t("材料の「竹内さん」は伏せない・お客様の「田中さん」は伏せる", maskPII("竹内さんはこの番を締める。田中さん", ["YUMA"]) === "竹内さんはこの番を締める。お客様");
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

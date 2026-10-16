@@ -94,7 +94,17 @@ const DAY_DATE_REGEX = /([1-9]|1[0-2])月\s*([1-9]|[12]\d|3[01])日/g;
  * 敬称マッチが SAFE ワードの一部かどうかを判定する。
  * 例: "客様" にマッチしても直前が "お" なら "お客様" なので置換しない。
  */
+/**
+ * 2026-10-16 根本の穴（ブレインの材料の主語の入れ替わり）: 材料の文は「竹内さんの決定」「竹内さんの実送信」「竹内さんはこの番を…で締め」と書くが、
+ *   敬称の網（〇〇さん→お客様）で「お客様の決定」「お客様はこの番を…で締め」に変わってブレイン（Claude も DeepSeek も）に渡っていた
+ *   （試験の録音で確かめた・材料の行の主語がお客様とスタッフで入れ替わる）。オーナーの名前（竹内さん）は伏せない。戻す PII_MASK_KEEP_OWNER=off
+ */
+const OWNER_HONORIFIC_WORDS: string[] = ['竹内さん', '竹内様'];
+function ownerKeepEnabled(): boolean {
+  return typeof process === 'undefined' || (process.env?.PII_MASK_KEEP_OWNER ?? '').toLowerCase() !== 'off';
+}
 function isSafeHonorific(match: string, offset: number, fullText: string): boolean {
+  if (ownerKeepEnabled() && OWNER_HONORIFIC_WORDS.some((w) => match === w || match.endsWith(w))) return true;
   for (const safe of SAFE_HONORIFIC_WORDS) {
     // マッチ自体が安全語、または安全語で終わる（例: 管理会社さん）
     if (match === safe || match.endsWith(safe)) {
