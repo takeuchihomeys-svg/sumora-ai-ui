@@ -298,7 +298,7 @@ import { sceneStyleNote, replyStyleR11Enabled, noRepeatNote, noNewArrivalNote, r
 import { demoteRepeatNote, pickupAckMaterial, pendingPickupAckLine, ackEchoToWait, repeatBrainAlignEnabled, confirmAckMaterialFor, pickupAckMaterialFor, ackFormCell, ackFormFollowEnabled, ackFormShapeLine, ackFormCloserLine, ackFormDropTopic } from "@/app/lib/repeat-brain-align";
 import { isAckOnlyTurn } from "@/app/lib/draft-repeat";
 import { ackLengthGuide, pickupAckLengthPhrase, knowledgeHeading } from "@/app/lib/ack-form-takeuchi";
-import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
+import { buildTurnContract, renderTurnContractNote, applyContractToConfirm, turnContractEnabled, auditDraftAgainstContract, contractProtectsSentence, issueContradictsContract, contractSkipsInsertion, turnNeedsSupport, SUPPORT_CLOSER_LINE, type TurnContract, type BrainTurnContractRaw } from "@/app/lib/turn-contract";
 import { classifyAixContent } from "@/app/lib/aix-content-gate";
 import { dedupeExamplesBySent, isReplyUnsafeKnowledge, ragReplyCleanEnabled } from "@/app/lib/rag-garbage";
 import { draftFactGroundingCheck } from "@/app/lib/draft-fact-grounding-server";
@@ -5367,7 +5367,7 @@ async function handleGenerateReply(req: NextRequest) {
     const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
-    const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : null });
+    const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : turnNeedsSupport(turnContract) ? SUPPORT_CLOSER_LINE : null });
 
     const tpoGuidanceNote = (() => {
       const lines: string[] = [];

@@ -348,6 +348,18 @@ export function isConfirmPromiseAsk(a: Pick<ContractAsk, "route" | "aixKey" | "a
   return a.topic !== "cost" && a.topic !== "pickup";
 }
 const canConfirm = (a: ContractAsk) => isConfirmPromiseAsk(a);
+/** ブレインの背景の文に焦り・不安の事情がある（審査否決・落ちた・期限・間に合う・急ぐ・迫る・焦る・不安・心配） */
+const ANXIOUS_BACKGROUND_RE = /焦|不安|心配|間に合|期限|迫|否決|審査落|落ちた|急い|急ぎ/;
+/** 不安・焦りの背景で一言支える番か（ブレインの feeling か背景の言葉）。了承だけの返事の番（ack_form）は出さない */
+export function turnNeedsSupport(c: TurnContract | null | undefined): boolean {
+  if (!c || !c.background || !turnBackgroundEnabled() || c.closeOnly) return false;
+  return c.feeling.kind === "anxious" || c.feeling.kind === "hurried" || c.feeling.kind === "disappointed" || ANXIOUS_BACKGROUND_RE.test(c.background);
+}
+/**
+ * 2026-10-16 下書きの関所（q157・5回のなぜ）: 支える一言が本質の帯にあっても、姿勢の「🔚 締め: 追加の締め文なし（…）・『全力でサポート』『何卒よろしく』を足さない」が
+ *   同じ番に並び、生成は締めの指示に従って書かなかった（3回中0回）。支える番は締めの行そのものを支える一言にする（書けと書くなを並べない）。
+ */
+export const SUPPORT_CLOSER_LINE = "- 🔚 締め（不安・焦りの背景・ブレインの判断）: 本題（約束・答え）の後、最後に一言で支える「無事ご入居間に合いますように最善を尽くさせて頂きます！！」の形（お客様の事情に合わせて言い換えてよい・言い切り・新しい約束は足さない）";
 const ROUTE_JA: Record<AnswerRoute, string> = { reply: "返信で答える", promise: "約束する（結果は後で AIX）", aix: "AIX の番（結果の中身は本文に書かない。まだ送っていなければ約束の一文で受ける＝確認・見積の AIX は「確認／作成しお送りさせて頂きます」・内覧日調整の AIX は確認の約束にしない）", none: "触れない" };
 
 /** 生成プロンプトの最上位に置く1ブロック（場面と返信方針の一番上）。中身が無ければ空 */
@@ -368,7 +380,9 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   // 2026-10-16 背景（ブレインの答える前の整理）。不安・焦りの背景は最後に一言で支える（竹内さんの実送信「無事ご入居間に合いますように最善を尽くさせて頂きます」の形・新しい約束は足さない）
   if (c.background && turnBackgroundEnabled()) {
     L.push(`- この発言の背景（ブレイン）: ${c.background}`);
-    if (c.feeling.kind === "anxious" || c.feeling.kind === "hurried" || c.feeling.kind === "disappointed") L.push("- 不安・焦りの背景がある番: 本題の後、締めの前に一言で支える（例の形「無事ご入居間に合いますように最善を尽くさせて頂きます」・言い切り・新しい約束・決まり文句の上乗せはしない）");
+    // 2026-10-16 下書きの関所（q157 の揺れ）: ブレインが背景に焦り・不安（審査否決の後・期限が迫る）を書いたのに feeling を空にする回があり、支える一言が入ったり入らなかったりした。
+    //   ブレイン自身の背景の言葉でも支える（ブレインの判断を下書きまで届ける）
+    if (turnNeedsSupport(c)) L.push("- 不安・焦りの背景がある番: 本題の後、締めの前に一言で支える（例の形「無事ご入居間に合いますように最善を尽くさせて頂きます」・言い切り・新しい約束・決まり文句の上乗せはしない）");
   }
   c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
@@ -484,6 +498,8 @@ const RESULT_CLAIM_RE = /[0-9０-９][0-9０-９,，]{2,}\s*円|募集(?:中|終
 export function contractProtectsSentence(c: TurnContract | null | undefined, sentence: string, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   if (!c || c.source !== "brain" || (env.TURN_CONTRACT_PROTECT ?? "").toLowerCase() === "off") return false;
   const s = String(sentence ?? "");
+  // 2026-10-16 不安・焦りの背景の番の支える一言（SUPPORT_CLOSER_LINE）は、最終チェックの「頼まれていない約束」で消さない
+  if (turnNeedsSupport(c) && /最善を尽く|間に合いますよう/.test(s)) return true;
   if (!PROMISE_SENT_RE.test(s) || RESULT_CLAIM_RE.test(s)) return false;
   return c.asks.some((a) => {
     if (a.route !== "promise" && a.route !== "aix") return false;

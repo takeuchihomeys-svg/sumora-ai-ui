@@ -6,7 +6,7 @@ import { fixProxyNegotiate } from "../takeuchi-wording-r11";
 import { moveOutViewingVerdict } from "../move-out-context";
 import { pickCostBreakdownImages } from "../cost-breakdown-images";
 import { splitPropertyName } from "../customer-state";
-import { normalizeBrainTurnContract, buildTurnContract, renderTurnContractNote } from "../turn-contract";
+import { normalizeBrainTurnContract, buildTurnContract, renderTurnContractNote, turnNeedsSupport, SUPPORT_CLOSER_LINE, contractProtectsSentence } from "../turn-contract";
 import { ackFormShapeLine, ackFormCloserLine, isCompactWaitLine } from "../repeat-brain-align";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
@@ -60,6 +60,7 @@ t("送った後にお客様が話しこちらが答えた（固まりが別）�
 // ── 代理契約は交渉（事例 e）──
 t("代理契約の約束は交渉", fixProxyNegotiate("クリエオーレ一津屋Ⅱの代理契約が可能かどうかを管理会社に確認させて頂きます！！", true).text === "クリエオーレ一津屋Ⅱの代理契約が可能かどうかを管理会社に交渉させて頂きます！！");
 t("結果の報告（確認させて頂きましたところ）は触らない", fixProxyNegotiate("代理契約可能か確認させて頂きましたところ", true).changes.length === 0);
+t("「代理契約の可否も併せて確認」も交渉（試験 q157 の下書き）", fixProxyNegotiate("クリエオーレ一津屋Ⅱの代理契約の可否も併せて確認させて頂きます！！", true).text === "クリエオーレ一津屋Ⅱの代理契約の可否も併せて交渉させて頂きます！！");
 t("代理契約の書類の確認は交渉にしない", fixProxyNegotiate("代理契約の必要書類につきまして確認させて頂きます！！", true).changes.length === 0);
 t("募集状況も同じ文で確認する約束は替えない", fixProxyNegotiate("〇〇の募集状況と代理契約が可能か確認させて頂きます", true).changes.length === 0);
 
@@ -69,6 +70,15 @@ t("背景を読む", raw?.background === "審査否決の後で代理契約を�
 const tc = buildTurnContract({ brain: raw, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] });
 const note = renderTurnContractNote(tc);
 t("返信の本質に背景と支える一言", /この発言の背景（ブレイン）/.test(note) && /一言で支える/.test(note));
+{
+  const r2 = normalizeBrainTurnContract({ background: "審査否決の後、出産前の引越し期限が迫る中で物件を次々送っている", asks: [{ quote: "代理契約は難しいですか", route: "promise" }] });
+  t("feeling が空でも背景に焦りの事情があれば支える", /一言で支える/.test(renderTurnContractNote(buildTurnContract({ brain: r2, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] }))));
+  const r3 = normalizeBrainTurnContract({ background: "数分前にこちらが送った2件のうち1件を引用して気に入った", asks: [{ quote: "気になります", route: "aix" }] });
+  const tcS = buildTurnContract({ brain: r2, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] });
+  t("支える番は締めの行も支える一言（書くな の締めと並べない）", turnNeedsSupport(tcS) && /最善を尽くさせて頂きます/.test(SUPPORT_CLOSER_LINE));
+  t("支える一言は最終チェックで消さない", contractProtectsSentence(tcS, "無事ご入居間に合いますように最善を尽くさせて頂きます！！", {}));
+  t("焦りの無い背景には支える一言を出さない", !/一言で支える/.test(renderTurnContractNote(buildTurnContract({ brain: r3, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] }))));
+}
 t("背景だけでも本質は残る", normalizeBrainTurnContract({ background: "x の背景" })?.background === "x の背景");
 t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_BACKGROUND = "off"; const r = normalizeBrainTurnContract({ background: "y", asks: [{ quote: "a" }] }); delete process.env.BRAIN_TURN_BACKGROUND; return !r?.background; })());
 
