@@ -62,5 +62,14 @@ it("ブレインの呼び出しに層の名札が付いている（brain_fresh /
   expect(alt).toContain("routeName.startsWith(\"brain_\")");
 });
 
+// 2026-10-16 オーナーの名前（材料の主語）は残す・同じ姓のお客様への呼びかけは伏せる（PII_MASK_KEEP_OWNER）
+it("オーナー: 材料の『竹内さんの決定』は残し、呼びかけ・前に漢字が付く名前・お客様の名前は伏せる", () => {
+  expect(maskPII("【竹内さんの決定】返信／竹内さんはこの番を約束で締め", ["はなこ"])).toContain("竹内さんの決定");
+  expect(maskPII("竹内さん\nお世話になっております！！", ["はなこ"])).notToContain("竹内");
+  expect(maskPII("竹内さん、承知しました", ["はなこ"])).notToContain("竹内");
+  expect(maskPII("大竹内さんの件", [])).notToContain("竹内");
+  expect(maskPII("竹内さんの決定", ["竹内 花子"])).notToContain("竹内");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

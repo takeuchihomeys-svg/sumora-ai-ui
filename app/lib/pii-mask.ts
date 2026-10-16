@@ -104,7 +104,9 @@ function ownerKeepEnabled(): boolean {
   return typeof process === 'undefined' || (process.env?.PII_MASK_KEEP_OWNER ?? '').toLowerCase() !== 'off';
 }
 function isSafeHonorific(match: string, offset: number, fullText: string): boolean {
-  if (ownerKeepEnabled() && OWNER_HONORIFIC_WORDS.some((w) => match === w || match.endsWith(w))) return true;
+  // 2026-10-16 確かめる人: 同じ姓のお客様への呼びかけ（「竹内さん\nお世話に」「竹内さん、」）は伏せたまま＝オーナーとして残すのは
+  //   語そのもの（前に漢字が付かない）で、後ろが呼びかけの区切り（改行・読点・！・空白・終わり）でない時だけ（材料の「竹内さんの決定」「竹内さんは」「竹内さん「」は残る）
+  if (ownerKeepEnabled() && OWNER_HONORIFIC_WORDS.includes(match) && !/^(?:$|[\s、，,！!。😊😌])/.test(fullText.slice(offset + match.length, offset + match.length + 1))) return true;
   for (const safe of SAFE_HONORIFIC_WORDS) {
     // マッチ自体が安全語、または安全語で終わる（例: 管理会社さん）
     if (match === safe || match.endsWith(safe)) {
