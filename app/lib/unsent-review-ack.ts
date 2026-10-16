@@ -19,23 +19,40 @@ export type UraMsg = { sender: string; text?: string | null; isAix?: boolean | n
 const ATTACH_RE = /^\s*\[(?:画像|動画|ファイル)\]|^（室内イメージ）|^https?:\/\/\S+$/;
 const REVIEW_ASK_RE = /(?:お手隙の際に|お手すきの際に)?\s*ご査収(?:くださ|下さ)い[^\n！!。]*[！!。]*[😊😌]*[！!]*/;
 const CONTACT_CLOSE_RE = /お気軽にご連絡/;
+const DRAFT_SENDS_RE = /(?:見積書?|資料|詳細(?:情報)?|図面|写真|動画)[^\n。！!]{0,12}(?:となります|お送り(?:させて)?(?:頂|いただ)きました|同封)/;
 const REPLACEMENT = "気になる点等出てきましたらいつでもお気軽にご連絡ください！！";
 
 function isAttachment(m: UraMsg): boolean {
   return m.sender === "staff" && (!!m.imageUrl || !!m.isAix || ATTACH_RE.test(String(m.text ?? "").trim()));
 }
 
-/** messages は古い順（今の下書きが答えるお客様の発言まで） */
+/**
+ * messages は古い順（今の下書きが答えるお客様の発言まで）。
+ * 2026-10-16 確かめる人の残り（線: 竹内さんの手打ちのご査収 310通）:
+ *   ① [画像] の後の添え文（「御見積書となります」「お送り頂きました〇〇現在募集中となります」）→ お客様のお礼 の番は送った番。
+ *      旧は添え文を「送った後の会話文」と数えて置き換えていた（約15通）。お客様の発言の直前のこちらの通の固まり（間にお客様が入らない連投）に
+ *      資料・AIX があれば送った番＝置き換えない。送った後にお客様が話し、こちらが答えた（固まりが別）時だけ「送った物はもう話した」。
+ *   ② 窓に資料・AIX が無い時は、送ったかどうかが分からない（窓の外・写しの漏れ）＝置き換えない（旧は置き換える側に倒れていた）。
+ */
 export function sentSinceLastAttachment(messages: ReadonlyArray<UraMsg>): boolean {
   let lastAttach = -1;
   messages.forEach((m, i) => { if (isAttachment(m)) lastAttach = i; });
-  // 資料・AIX を送った記録が窓に無い＝この番に送った物は無い
-  if (lastAttach < 0) return true;
-  return messages.slice(lastAttach + 1).some((m) => m.sender === "staff" && !isAttachment(m) && String(m.text ?? "").trim());
+  if (lastAttach < 0) return false;
+  // お客様の発言（今の番）の直前のこちらの固まり
+  let end = messages.length - 1;
+  while (end >= 0 && messages[end].sender !== "staff") end--;
+  if (end < 0) return false;
+  let start = end;
+  while (start > 0 && messages[start - 1].sender === "staff") start--;
+  if (lastAttach >= start) return false;
+  return messages.slice(start, end + 1).some((m) => !isAttachment(m) && String(m.text ?? "").trim());
 }
 
 export function fixUnsentReviewAck(draft: string, messages: ReadonlyArray<UraMsg>, enabled = unsentReviewAckEnabled()): { text: string; changed: string | null } {
   if (!enabled || !draft || !REVIEW_ASK_RE.test(draft)) return { text: draft, changed: null };
+  // 下書きそのものが新しい資料を添える文（「御見積書となります」「お見積書お送りさせて頂きました」「詳細情報となります」）なら、この番に送る物がある＝そのまま
+  //   （線: 手打ちのご査収のうち窓では送った後に話している 13通の多くがこの形＝この通と一緒に資料を送っていた）
+  if (DRAFT_SENDS_RE.test(draft)) return { text: draft, changed: null };
   if (!sentSinceLastAttachment(messages)) return { text: draft, changed: null };
   const m = draft.match(REVIEW_ASK_RE)!;
   const hasClose = CONTACT_CLOSE_RE.test(draft.replace(m[0], ""));

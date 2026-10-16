@@ -44,6 +44,17 @@ t("ご査収 → お気軽にご連絡", !!f.changed && /お気軽にご連絡�
 const justSent = [{ sender: "staff", text: "[画像]", isAix: true }, { sender: "customer", text: "ありがとうございます" }];
 t("送った直後のお礼への「ご査収ください」は竹内さんの形＝そのまま", !fixUnsentReviewAck("はい😊！！\nお手隙の際にご査収ください😌！！", justSent, true).changed);
 t("「ご査収頂きありがとうございます」は触らない", !fixUnsentReviewAck("ご査収頂きありがとうございます！！", conv, true).changed);
+t("下書きが新しい資料を添える文ならそのまま", !fixUnsentReviewAck("それぞれの初期費用お見積書お送りさせていただきました😊！！\nお手隙の際にご査収ください😌！！", conv, true).changed);
+// 確かめる人の残り: [画像] の後の添え文 → お客様のお礼 は送った番（添え文を会話文と数えない）
+const captioned = [
+  { sender: "customer", text: "見積お願いします" },
+  { sender: "staff", text: "[画像]", imageUrl: "u" },
+  { sender: "staff", text: "お待たせ致しました！！\nこちら最大限割引しました初期費用の御見積書となります！！" },
+  { sender: "customer", text: "ありがとうございます" },
+];
+t("添え文の後のお礼は送った番＝そのまま", !sentSinceLastAttachment(captioned) && !fixUnsentReviewAck("はい😊！！\nお手隙の際にご査収ください😌！！", captioned, true).changed);
+t("窓に資料が無い時は分からない＝そのまま", !fixUnsentReviewAck("お手隙の際にご査収ください😌！！", [{ sender: "staff", text: "確認させて頂きます！！" }, { sender: "customer", text: "ありがとうございます" }], true).changed);
+t("送った後にお客様が話しこちらが答えた（固まりが別）＝替える", sentSinceLastAttachment([...captioned, { sender: "staff", text: "即入居可能です！！" }, { sender: "customer", text: "分かりました！" }]));
 
 // ── 代理契約は交渉（事例 e）──
 t("代理契約の約束は交渉", fixProxyNegotiate("クリエオーレ一津屋Ⅱの代理契約が可能かどうかを管理会社に確認させて頂きます！！", true).text === "クリエオーレ一津屋Ⅱの代理契約が可能かどうかを管理会社に交渉させて頂きます！！");
