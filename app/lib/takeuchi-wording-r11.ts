@@ -39,6 +39,8 @@ export function fixProxyNegotiate(text: string, enabled = proxyNegotiateEnabled(
   const s = outsideQuotes(text, (seg) => seg.replace(PROXY_PROMISE_RE, (m, head: string) => {
     // 同じ文で募集状況・空きも確認する約束は替えない（「募集状況と代理契約を交渉」にならない）
     if (/募集状況|空き|空室|内覧/.test(head)) return m;
+    // 2026-10-16 確かめる人: 交渉は「代理契約が出来るか（可能か）を管理会社に」の時だけ（「代理契約の必要書類につきまして確認」は交渉にしない）
+    if (!/可能|出来|できる|管理会社|オーナー|貸主/.test(head)) return m;
     changes.push(`代理契約の約束は交渉: ${m.slice(-24)}`);
     return `${head}交渉させて頂きます`;
   }));
