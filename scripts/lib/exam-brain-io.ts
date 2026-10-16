@@ -12,7 +12,7 @@ import { examCacheRoot } from "./llm-cassette";
 import { atomicWriteJson, atomicWriteText } from "./exam-shared-file";
 import { BRAIN_ENTRIES, DRAFT_ENTRIES, TOOL_ENTRIES, reach, workingFiles } from "./exam-scope";
 import { fillProblemsFromShared } from "./exam-problems-store";
-import type { RowLite } from "./exam-brain";
+import type { DbPart, RowLite } from "./exam-brain";
 import { NO_LINE_TEST_CONVERSATIONS, YUMA_CONVERSATION_ID } from "../../app/lib/test-conversations";
 
 export const EXAM_BRAIN_DIR = join(examCacheRoot(), "exam-brain");
@@ -61,6 +61,73 @@ export function workingScopeKeys(cwd = "."): { brain: string; draft: string; too
   for (const f of cfg) { brain.add(f); draft.add(f); }
   const blobs = blobsOf([...new Set([...brain, ...draft, ...tool])], cwd);
   return { brain: keyOf(brain, blobs), draft: keyOf(draft, blobs), tool: keyOf(tool, blobs) };
+}
+
+// ─── 6. DB の表の指紋（使い回しの鍵に足す・読むだけ） ─────────────────────────────
+/**
+ * ブレイン（brain）と下書き（draft＝generate-reply）が毎回読む、会話に依らない表（知見・決まり・手本・統計・地図）。
+ *   2026-10-17 コードから確かめた（BRAIN_ENTRIES・DRAFT_ENTRIES から辿れる app/lib・app/api の .from("…")・.rpc("match_…") の表）。
+ *   入れない物: 会話ごとの表（messages・conversations・property_customers・viewings・brain_decision_logs 等＝試験が自分で入れる・会話で絞る）・
+ *   書くだけの記録（llm_usage_logs・*_logs の書き込み・embedding_cache・llm_warm_prefixes）・中身が答えに効かない設定（hanbancyo_settings の通知先）。
+ *   ts＝最終の時刻の欄（無い表は件数だけ）・counts＝中身の変化を拾う絞った件数・hash＝小さい表は欄の中身の hash（置き換えの編集も拾う）
+ *   使う回数・最後に使った時刻（used_count・last_used_at・use_count・win_rate 等）は本番で毎回変わる＝指紋に入れない
+ */
+export type DbTableSpec = { table: string; stages: Array<"brain" | "draft">; ts?: "updated_at" | "created_at"; counts?: Record<string, [string, "eq" | "neq", string | number | boolean]>; hash?: { cols: string[]; order: string[] } };
+export const DB_FINGERPRINT_TABLES: DbTableSpec[] = [
+  // 知見（ブレインの原則・当てはめの型・RAG の match_reply_knowledge）。updated_at が無い＝作った時刻＋絞った件数（昇格・却下・合流の削除を拾う）
+  { table: "ai_reply_knowledge", stages: ["brain", "draft"], ts: "created_at", counts: { principle: ["category", "eq", "principle"], applying: ["category", "eq", "applying_pattern"], rejected: ["hypothesis_status", "eq", "rejected"], imp10: ["importance", "eq", 10] } },
+  { table: "ai_prompt_rules", stages: ["brain", "draft"], ts: "updated_at", counts: { active: ["is_active", "eq", true] } },
+  { table: "ai_reply_examples", stages: ["brain", "draft"], ts: "created_at", counts: { starred: ["is_starred", "eq", true] } },
+  { table: "trigger_action_rules", stages: ["brain", "draft"], ts: "updated_at" },
+  { table: "aix_action_attribution", stages: ["brain", "draft"], hash: { cols: ["action_type", "win_rate", "usage_count"], order: ["action_type"] } },
+  { table: "aix_transition_stats", stages: ["brain", "draft"], hash: { cols: ["from_aix_type", "to_aix_type", "count"], order: ["from_aix_type", "to_aix_type"] } },
+  { table: "brain_aix_feedback", stages: ["brain", "draft"], ts: "updated_at" },
+  { table: "brain_meta_insights", stages: ["brain", "draft"], ts: "updated_at" },
+  { table: "templates", stages: ["brain", "draft"], hash: { cols: ["id", "category", "label", "text", "sort_order"], order: ["id"] } },
+  { table: "winning_patterns", stages: ["brain", "draft"], ts: "updated_at" },
+  { table: "property_search_knowledge", stages: ["brain", "draft"], ts: "updated_at" },
+  { table: "rent_observations", stages: ["brain", "draft"] },
+  { table: "region_map", stages: ["brain", "draft"], ts: "created_at" },
+  { table: "station_map", stages: ["brain", "draft"], ts: "created_at" },
+  { table: "line_stations", stages: ["brain", "draft"] },
+  // 下書き（generate-reply）だけが読む表
+  { table: "adaptation_improvement_rules", stages: ["draft"], hash: { cols: ["id", "category", "rule_text", "confidence", "example_count", "is_active"], order: ["id"] } },
+  { table: "ai_prompts", stages: ["draft"], ts: "updated_at" },
+  { table: "phrase_dictionary", stages: ["draft"], ts: "created_at", counts: { active: ["is_active", "eq", true] } },
+  { table: "template_selection_logs", stages: ["draft"], ts: "created_at" },
+];
+export const dbTablesOf = (stage: "brain" | "draft", specs = DB_FINGERPRINT_TABLES) => specs.filter((s) => s.stages.includes(stage)).map((s) => s.table);
+/** 表ごとの指紋を1回読む（並べて・読むだけ・費用0）。読めない表は ok=false（その表を読む段は使い回さない） */
+export async function readDbFingerprint(sb: SupabaseClient, specs = DB_FINGERPRINT_TABLES): Promise<DbPart[]> {
+  const HASH_MAX = 2000;
+  return Promise.all(specs.map(async (s): Promise<DbPart> => {
+    try {
+      const parts: string[] = [];
+      const c = await sb.from(s.table).select("*", { count: "exact", head: true });
+      if (c.error || c.count === null) return { table: s.table, ok: false, sig: "", why: c.error?.message ?? "件数が読めない" };
+      parts.push(`n=${c.count}`);
+      for (const [name, [col, op, val]] of Object.entries(s.counts ?? {})) {
+        const q = sb.from(s.table).select("*", { count: "exact", head: true });
+        const r = await (op === "eq" ? q.eq(col, val) : q.neq(col, val));
+        if (r.error || r.count === null) return { table: s.table, ok: false, sig: "", why: `${name}: ${r.error?.message ?? "件数が読めない"}` };
+        parts.push(`${name}=${r.count}`);
+      }
+      if (s.ts) {
+        const r = await sb.from(s.table).select(s.ts).order(s.ts, { ascending: false, nullsFirst: false }).limit(1);
+        if (r.error) return { table: s.table, ok: false, sig: "", why: `${s.ts}: ${r.error.message}` };
+        parts.push(`${s.ts}=${String(((r.data ?? [])[0] as Record<string, unknown> | undefined)?.[s.ts] ?? "-")}`);
+      }
+      if (s.hash) {
+        if (c.count > HASH_MAX) return { table: s.table, ok: false, sig: "", why: `中身の hash の上限 ${HASH_MAX} 行を超えた（${c.count}）` };
+        let q = sb.from(s.table).select(s.hash.cols.join(","));
+        for (const o of s.hash.order) q = q.order(o, { ascending: true });
+        const r = await q.range(0, HASH_MAX - 1);
+        if (r.error) return { table: s.table, ok: false, sig: "", why: `中身: ${r.error.message}` };
+        parts.push(`h=${createHash("sha256").update(JSON.stringify(r.data ?? [])).digest("hex").slice(0, 12)}`);
+      }
+      return { table: s.table, ok: true, sig: parts.join(";") };
+    } catch (e) { return { table: s.table, ok: false, sig: "", why: String(e instanceof Error ? e.message : e).slice(0, 120) }; }
+  }));
 }
 
 // ─── 6. 使い回しの置き場 ───────────────────────────────────────────────

@@ -25,12 +25,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rea
 import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import {
-  mergePicks, firstReps, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse,
-  modelOf, estimateUsd, DEFAULT_STOP, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind,
+  mergePicks, firstReps, confirmTargets, draftTargets, compareProblem, brainChangedOf, stopDecision, decideWhen, isCheapWindow, reuseKey, kbKeyOf, canReuse, dbKeyOf,
+  modelOf, estimateUsd, DEFAULT_STOP, type PlanProblem, type Pick, type Cmp, type RowLite, type PlanItem, type When, type ChangeClass, type FlakeKind, type DbPart,
 } from "./lib/exam-brain";
 import {
   loadExamProblems, workingScopeKeys, readReuse, writeReuse, appendLedger, readLedger, readRows, readCost, weakSpotProblems, enqueue, readQueue, dequeue,
-  planCleanup, runCleanup, EXAM_BRAIN_DIR, MODEL_CHECK_FILE, RESULTS_DIR, type AnyProblem, type LedgerLine,
+  planCleanup, runCleanup, readDbFingerprint, dbTablesOf, EXAM_BRAIN_DIR, MODEL_CHECK_FILE, RESULTS_DIR, type AnyProblem, type LedgerLine,
 } from "./lib/exam-brain-io";
 import { decideStageFromDiff } from "./lib/exam-scope";
 import { problemHash, examConfig, configHash } from "./lib/brain-exam-baseline";
@@ -104,6 +104,8 @@ type Plan = {
   label: string; cls: ChangeClass; clsNote: string; picks: Pick[]; items: Map<string, PlanItem & { stage1: "brain"; draftWhy: string; flake: FlakeKind; flakeWhy: string; key: string; draftKey: string; hash: string }>;
   probs: Map<string, AnyProblem>; draftPlan: { ids: string[]; why: string; mode: "all" | "if-changed" | "none" };
   keys: { brain: string; draft: string; tool: string }; cfgHash: string; ragNote: string;
+  /** DB の表の指紋（段ごと）。null＝読めない表がある＝その段は使い回さない・使い回しの置き場にも書かない */
+  db: { parts: DbPart[] | null; brain: string | null; draft: string | null };
 };
 async function makePlan(label: string): Promise<Plan> {
   const { spec, full } = loadExamProblems();
@@ -133,6 +135,9 @@ async function makePlan(label: string): Promise<Plan> {
   const picks = mergePicks(scope as PlanProblem[], rag, { gate: GATE, named: list("name"), weakSpotProblems: weak });
   // 2. 何回・6. 使い回し・8. モデル
   const keys = workingScopeKeys(".");
+  // 6. 使い回しの鍵に DB の中身（穴③）: ブレインと下書きが読む表の指紋を1回だけ読む（読むだけ）。--no-reuse の時は読まない
+  const dbParts = flag("no-reuse") ? null : await readDbFingerprint(sb).catch((e) => { log(`（DB の指紋が読めない → 使い回さない: ${String(e).slice(0, 100)}）`); return null; });
+  const db = { parts: dbParts, brain: dbKeyOf(dbParts, dbTablesOf("brain")), draft: dbKeyOf(dbParts, dbTablesOf("draft")) };
   const cfgHash = configHash(examConfig(process.env, { judge: JUDGE, judgePrefix: JUDGE_PREFIX, layer: "prod", ledger: true, repeat: MAX_REPS, exhaustedRule: EXHAUSTED_RULE }));
   const mc = readModelCheck();
   const modelMode = (arg("model", "pro") as "pro" | "flash" | "auto");
@@ -145,18 +150,18 @@ async function makePlan(label: string): Promise<Plan> {
     const reps = firstReps(fv.verdict, MAX_REPS, { gate: GATE });
     const hash = problemHash(p);
     const kbKey = kbKeyOf(links[p.id], kbNow);
-    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey });
-    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey });
-    const reuse = !flag("no-reuse") && canReuse(readReuse(p.id, key), key, reps);
+    const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.brain ?? "-" });
+    const draftKey = reuseKey({ problemHash: hash, stage: "draft", scopeKey: keys.draft, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey, dbKey: db.draft ?? "-" });
+    const reuse = !flag("no-reuse") && !!db.brain && canReuse(readReuse(p.id, key), key, reps);
     items.set(p.id, { id: p.id, reps, draft: false, reuse, model, why: pk.why, stage1: "brain", draftWhy: "", flake: fv.verdict, flakeWhy: fv.why, key, draftKey, hash });
   }
   // 3. どこまで（下書きの見込み）
   const pl = scope.filter((p) => items.has(p.id)) as PlanProblem[];
   const dAll = draftTargets(cls, pl, new Set(pl.map((p) => p.id)), { gate: GATE });
-  const draftMode: "all" | "if-changed" | "none" = cls === "draft" || cls === "both" ? "all" : dAll.ids.length ? "if-changed" : "none";
+  const draftMode: "all" | "if-changed" | "none" = GATE || cls === "draft" || cls === "both" ? "all" : dAll.ids.length ? "if-changed" : "none";
   const draftPlan = { ids: draftMode === "all" ? dAll.ids : [], why: draftMode === "all" ? dAll.why : "ブレインの判断が前（main）と変わった問題だけ（1段目の後に決める）", mode: draftMode };
   for (const id of draftPlan.ids) { const it = items.get(id); if (it) { it.draft = true; it.draftWhy = draftPlan.why; } }
-  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote };
+  return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote, db };
 }
 function printPlan(pl: Plan, now: Date) {
   const its = [...pl.items.values()];
@@ -166,6 +171,8 @@ function printPlan(pl: Plan, now: Date) {
   log(`\n=== 試験のブレインの計画（${pl.label}・${jst(now)} JST）===`);
   log(`変わった所: ${pl.cls === "both" ? "ブレインと下書きの両方" : pl.cls === "brain" ? "ブレインだけ" : pl.cls === "draft" ? "下書きだけ" : "試験に効く変更なし"}${pl.clsNote ? `（${pl.clsNote}）` : ""}${pl.ragNote ? `・選び: ${pl.ragNote}` : ""}`);
   log(`効く所の鍵: ブレイン ${pl.keys.brain}・下書き ${pl.keys.draft}・試験の道具 ${pl.keys.tool}・構成 ${pl.cfgHash}・判定 ${JUDGE}/${JUDGE_PREFIX}`);
+  const bad = (pl.db.parts ?? []).filter((x) => !x.ok);
+  log(`DB の指紋（使い回しの鍵）: ${pl.db.parts ? `${pl.db.parts.length}表・ブレイン ${pl.db.brain ?? "読めない表あり"}・下書き ${pl.db.draft ?? "読めない表あり"}${bad.length ? `（読めない: ${bad.map((x) => `${x.table}＝${x.why ?? ""}`).join("／")} → その段は使い回さない）` : ""}` : "読まない（--no-reuse か読めない）＝使い回さない"}`);
   log(`問題 ${its.length}問（使い回し ${its.filter((x) => x.reuse).length}・揺れる ${its.filter((x) => x.flake === "flaky").length}・flash ${its.filter((x) => x.model === "flash").length}）`);
   for (const it of its) log(`  ${it.reuse ? "♻" : "▶"} ${it.id} [${pl.probs.get(it.id)?.type}] 回 ${it.reps}${it.flake === "flaky" ? "（揺れる）" : ""}・段 ブレイン${it.draft ? "→下書き" : pl.draftPlan.mode === "if-changed" && draftEligibleOf(pl, it.id) ? "（判断が変われば下書き）" : ""}${it.model === "flash" ? "・flash" : ""}${it.reuse ? "・前の結果を使う（使う物が同じ）" : ""} ← ${it.why.slice(0, 3).join("／")}`);
   log(`段: 1段目＝全部をブレインの判断まで（stage=brain）／2段目＝${pl.draftPlan.mode === "all" ? `下書きまで ${pl.draftPlan.ids.length}問（${pl.draftPlan.why}）` : pl.draftPlan.mode === "if-changed" ? `判断が前と変わった問題だけ下書きまで（最大 ${ifChangedMax}問）` : "下書きなし"}`);
@@ -190,7 +197,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   for (const id of ids) {
     const it = pl.items.get(id)!;
     const key = stage === "brain" ? it.key : it.draftKey;
-    const e = flag("no-reuse") ? null : readReuse(id, key);
+    const e = flag("no-reuse") || !(stage === "brain" ? pl.db.brain : pl.db.draft) ? null : readReuse(id, key);
     if (!canReuse(e, key, it.reps)) continue;
     const rows = e!.rows.filter((r) => !have.has(`${r.id}#${r.rep}`)).map((r) => ({ ...r, label, reusedFrom: e!.label }));
     if (rows.length) { mkdirSync(RESULTS_DIR, { recursive: true }); appendFileSync(join(RESULTS_DIR, `${label}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n"); }
@@ -262,7 +269,7 @@ function finishPhase(pl: Plan, ph: PhaseResult, stage: "brain" | "draft", model:
     const c = ph.cmps.find((x) => x.id === id) ?? { cmp: "nocur" as Cmp, why: "" };
     const ok = rs.filter((r) => !r.error);
     const reused = rs.some((r) => (r as Record<string, unknown>).reusedFrom);
-    if (ok.length && ok.length === rs.length && !reused && !ph.stopped) writeReuse({ id, key: stage === "brain" ? it.key : it.draftKey, savedAt: new Date().toISOString(), label: ph.label, stage, model, rows: ok });
+    if (ok.length && ok.length === rs.length && !reused && !ph.stopped && (stage === "brain" ? pl.db.brain : pl.db.draft)) writeReuse({ id, key: stage === "brain" ? it.key : it.draftKey, savedAt: new Date().toISOString(), label: ph.label, stage, model, rows: ok });
     if (!ok.length) continue;
     const maj = (f: (r: RowLite) => boolean) => ok.filter(f).length * 2 > ok.length;
     out.push({ at: new Date().toISOString(), label: ph.label, id, type: String(pl.probs.get(id)?.type ?? ""), stage, model: model === "flash" ? FLASH_MODEL : PRO_MODEL, head, scopeKey: stage === "brain" ? pl.keys.brain : pl.keys.draft, base: ph.baseLabels.join(",") || null,
@@ -324,7 +331,7 @@ async function runMain() {
   log(`\n=== 試験のブレインの結果（${label}）===`);
   for (const ph of phases) {
     const st = ledger.filter((l) => l.label === ph.label);
-    log(`${ph.label}: ${st.length}問・道 ${st.filter((l) => l.pathOk).length}・合格 ${st.filter((l) => l.pass).length}・前より悪い ${st.filter((l) => l.cmp === "worse").length}・良い ${st.filter((l) => l.cmp === "better").length}・判断だけ変わった ${st.filter((l) => l.cmp === "changed").length}・前が無い ${st.filter((l) => l.cmp === "nobase").length}${ph.stopped ? `・止めた（${ph.stopWhy}）` : ""}${ph.confirm.length ? `・確かめた ${ph.confirm.length}` : ""}`);
+    log(`${ph.label}: ${st.length}問・道 ${st.filter((l) => l.pathOk).length}・合格 ${st.filter((l) => l.pass).length}・前より悪い ${st.filter((l) => l.cmp === "worse").length}・良い ${st.filter((l) => l.cmp === "better").length}・判断だけ変わった ${st.filter((l) => l.cmp === "changed").length}・turn_contract の形だけ変わった ${st.filter((l) => l.cmp === "shape").length}・前が無い ${st.filter((l) => l.cmp === "nobase").length}${ph.stopped ? `・止めた（${ph.stopWhy}）` : ""}${ph.confirm.length ? `・確かめた ${ph.confirm.length}` : ""}`);
   }
   for (const l of by("worse")) log(`  ✕ 悪化 ${l.id}[${l.stage}] ${l.cmpWhy}・${l.verdict === "real" ? "本当の悪化（確かめの回でも同じ）" : l.verdict === "flake" ? "揺れ（回で割れた・揺れる問題）" : "1回だけ（確かめていない）"}`);
   for (const l of by("better")) log(`  ○ 良くなった ${l.id}[${l.stage}] ${l.cmpWhy}・${l.verdict ?? ""}`);

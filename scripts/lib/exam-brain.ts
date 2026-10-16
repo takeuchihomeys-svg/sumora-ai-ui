@@ -64,16 +64,34 @@ export type ChangeClass = "brain" | "draft" | "both" | "none";
  */
 export function draftTargets(cls: ChangeClass, ps: PlanProblem[], brainChanged: Set<string>, o: { gate?: boolean } = {}): { ids: string[]; why: string } {
   const el = ps.filter(draftEligible);
-  // 2026-10-17: 関所も2段に倣う（下書きに効くファイルを直した時は全部・ブレインだけの直しは判断が変わった問題だけ）。o.gate は互換のため残す
-  void o.gate;
+  // 2026-10-17 穴②（確かめる人）: 下書きは brainMetaDirect でブレインの meta を丸ごと受け取る＝道・合否・道の符号が同じでも、ブレインだけのファイル
+  //   （例 app/lib/open-search-ack.ts の材料の見出し）を直すと下書きが変わり得る（10/16 q158 の型）。最後の関所は直した所が何でも下書きを全部流す
+  //   （夜中の予約・使う物が同じ問題は前の結果を使う）。直しの確かめは「判断が変わった問題」に turn_contract の形の変化（cmp=shape）も入れる
+  if (o.gate) return { ids: el.map((p) => p.id), why: "最後の関所（下書きはブレインの meta を丸ごと受け取る＝判断が同じでも変わり得るので全部）" };
   if (cls === "draft" || cls === "both") return { ids: el.map((p) => p.id), why: cls === "draft" ? "下書きに効くファイルを直した" : "ブレインと下書きの両方に効くファイルを直した" };
   const ids = el.filter((p) => brainChanged.has(p.id)).map((p) => p.id);
   return { ids, why: ids.length ? "ブレインの判断が前（main）と変わった問題だけ" : "判断が前と変わった問題が無い（下書きは前と同じ見込み）" };
 }
 
 // ─── 比べ（前＝main と今） ─────────────────────────────────────────────
-export type RowLite = { id: string; rep: number; error?: string; path?: { code?: string; ok?: boolean }; score?: { pass?: boolean }; draft?: { code?: string; pass?: boolean; ok?: boolean } | null };
-export type Cmp = "worse" | "better" | "same" | "changed" | "nobase" | "nocur";
+export type RowLite = { id: string; rep: number; error?: string; path?: { code?: string; ok?: boolean }; score?: { pass?: boolean }; draft?: { code?: string; pass?: boolean; ok?: boolean } | null; brain?: { turn_contract?: unknown } | null };
+export type Cmp = "worse" | "better" | "same" | "changed" | "shape" | "nobase" | "nocur";
+/**
+ * turn_contract の形（自由文でない欄だけ）: 依頼の数・依頼ごとの route と aix（並びは見ない）・close_only・ack_form・気持ちを受けるか。
+ *   quote・answer・must_not・proposals・situation・background は回ごとに言い回しが違う＝比べない。turn_contract が無い答案は null（比べない）。
+ *   形は app/lib/brain-layers.ts の tc の要約（数:r/p/a/n:c:w）に倣い、aix のキーと気持ちを受けるかを足した物
+ */
+export function contractShape(tc: unknown): string | null {
+  if (!tc || typeof tc !== "object") return null;
+  const c = tc as { asks?: unknown; close_only?: unknown; ack_form?: unknown; feeling?: unknown };
+  const asks = Array.isArray(c.asks) ? (c.asks as Array<Record<string, unknown> | null>) : [];
+  const s = (v: unknown) => { const t = typeof v === "string" ? v.trim() : v === null || v === undefined ? "" : String(v); return t === "null" ? "" : t; };
+  const routes = asks.map((a) => `${s(a?.route) || "-"}${s(a?.aix) ? `:${s(a?.aix)}` : ""}`).sort();
+  const close = c.close_only === true || c.close_only === "true";
+  const af = s(c.ack_form);
+  const ack = (c.feeling as { acknowledge?: unknown } | null | undefined)?.acknowledge;
+  return `${asks.length}[${routes.join(",")}]${close ? ":c" : ""}${af ? `:${af}` : ""}${ack === true || ack === "true" ? ":f" : ""}`;
+}
 const majority = (xs: boolean[]) => xs.filter(Boolean).length * 2 > xs.length;
 /** 問題ごとの比べ: 道の過半数 → 合格の過半数 → 下書き（両方にある時）。道の符号の集まりが違えば changed（同じ合否でも判断が変わった） */
 export function compareProblem(cur: RowLite[], base: RowLite[]): { cmp: Cmp; why: string } {
@@ -91,11 +109,15 @@ export function compareProblem(cur: RowLite[], base: RowLite[]): { cmp: Cmp; why
   }
   const codes = (rs: RowLite[]) => [...new Set(rs.map((r) => String(r.path?.code ?? "")))].sort().join("/");
   if (codes(c) !== codes(b)) return { cmp: "changed", why: `判断 ${codes(b)}→${codes(c)}（合否は同じ）` };
+  // 2026-10-17 穴②: 道・合否・道の符号が同じでも turn_contract の形（route・close_only 等）が変われば下書きが変わり得る。両方に形がある時だけ比べる（古い答案は比べない）
+  const shapes = (rs: RowLite[]) => [...new Set(rs.map((r) => contractShape(r.brain?.turn_contract)).filter((x): x is string => x !== null))].sort().join("/");
+  const csh = shapes(c), bsh = shapes(b);
+  if (csh && bsh && csh !== bsh) return { cmp: "shape", why: `turn_contract の形 ${bsh}→${csh}（道・合否は同じ）` };
   return { cmp: "same", why: "同じ" };
 }
-/** 判断が前と変わった（下書きまで流す理由）＝道・合格・判断の符号のどれかが違う */
+/** 判断が前と変わった（下書きまで流す理由）＝道・合格・判断の符号・turn_contract の形のどれかが違う（形だけの変化は確かめの回には足さない＝合否は同じ） */
 export function brainChangedOf(cmps: Array<{ id: string; cmp: Cmp }>): Set<string> {
-  return new Set(cmps.filter((c) => c.cmp === "worse" || c.cmp === "better" || c.cmp === "changed" || c.cmp === "nobase").map((c) => c.id));
+  return new Set(cmps.filter((c) => c.cmp === "worse" || c.cmp === "better" || c.cmp === "changed" || c.cmp === "shape" || c.cmp === "nobase").map((c) => c.id));
 }
 
 // ─── 5. 途中で止める ────────────────────────────────────────────────────
@@ -146,9 +168,20 @@ export function decideWhen(o: { when: When; estUsd: number; gate?: boolean; now:
 }
 
 // ─── 6. 前の結果の使い回し ─────────────────────────────────────────────
-/** 問題の結果の鍵＝この問題が使う物（問題の hash・段・効くファイルの中身の鍵・試験の道具の鍵・構成・モデル・紐付く知見の版） */
-export function reuseKey(o: { problemHash: string; stage: "brain" | "draft"; scopeKey: string; toolKey: string; cfgHash: string; model: string; kbKey: string }): string {
-  return createHash("sha256").update(JSON.stringify([o.problemHash, o.stage, o.scopeKey, o.toolKey, o.cfgHash, o.model, o.kbKey])).digest("hex").slice(0, 16);
+/** 問題の結果の鍵＝この問題が使う物（問題の hash・段・効くファイルの中身の鍵・試験の道具の鍵・構成・モデル・紐付く知見の版・その段が読む DB の表の指紋） */
+export function reuseKey(o: { problemHash: string; stage: "brain" | "draft"; scopeKey: string; toolKey: string; cfgHash: string; model: string; kbKey: string; dbKey: string }): string {
+  return createHash("sha256").update(JSON.stringify([o.problemHash, o.stage, o.scopeKey, o.toolKey, o.cfgHash, o.model, o.kbKey, o.dbKey])).digest("hex").slice(0, 16);
+}
+// 2026-10-17 穴③（確かめる人）: 使い回しの鍵に DB の中身が入っていなかった（ブレインが毎回読む ai_reply_knowledge・ai_prompt_rules 等を変えても前の結果を使っていた）。
+//   表ごとの指紋（件数・最終の時刻・小さい表は中身の hash）を試験の始めに1回読み（exam-brain-io.ts の readDbFingerprint・読むだけ）、段の鍵に足す
+export type DbPart = { table: string; ok: boolean; sig: string; why?: string };
+/** 段の DB の鍵: その段が読む表の指紋の hash。1つでも読めない（または読んでいない）表があれば null＝使い回さない（安全側） */
+export function dbKeyOf(parts: DbPart[] | null, tables: string[]): string | null {
+  if (!parts) return null;
+  const by = new Map(parts.map((p) => [p.table, p]));
+  const sigs: string[] = [];
+  for (const t of [...new Set(tables)].sort()) { const p = by.get(t); if (!p || !p.ok) return null; sigs.push(`${t}=${p.sig}`); }
+  return createHash("sha256").update(sigs.join("\n")).digest("hex").slice(0, 12);
 }
 /** 紐付く知見の版（知見 id → 本文の hash のうち、その問題に紐付く物だけ） */
 export function kbKeyOf(links: Array<{ kbId: string }> | undefined, kbNow: Record<string, string> | null): string {

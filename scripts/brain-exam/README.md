@@ -137,10 +137,10 @@ npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --lab
 |---|---|
 | どの問題 | RAG の選び（直したファイル・差分の言葉・変えた知見・前に落ちた・新しい・名指し）＋必ず流す（`--name`・札「お手本」「竹内さんの番」・毎日の弱い所 weak-spots の知見に紐付く問題）。試験の道具・設定を直した／分からない時は全部 |
 | 何回 | 直しの確かめは全部1回 → 1回目が前（main）と違った問題だけ3回まで足す（揺れか本当かを分ける・はっきり良い時は良くなった・悪くなった問題だけ）。最後の関所は揺れる問題だけ3回。brain-exam に `--reps-file` で渡す |
-| どこまで | 1段目＝全部を stage=brain。2段目＝下書きに効くファイルを直した時は下書きの意味がある全部・それ以外は判断（道・合否・道の符号）が前と変わった問題だけ（関所も同じ） |
+| どこまで | 1段目＝全部を stage=brain。2段目＝下書きに効くファイルを直した時は下書きの意味がある全部・それ以外は判断（道・合否・道の符号・turn_contract の形＝依頼ごとの route と aix・close_only・ack_form・気持ちを受けるか。自由文の欄は比べない）が前と変わった問題だけ。最後の関所は直した所が何でも下書きの意味がある全部（下書きはブレインの meta を丸ごと受け取る＝判断が同じでも変わり得る・2026-10-17 穴②） |
 | いつ | `--when=auto`: 関所・見込み $1 以上は DeepSeek の安い時間（JST 1:30〜9:30・llm-price の混雑の外）に予約（`--wait` で待って流す） |
 | 途中で止める | 最初の4問以上で前より悪い問題が3問（良くなった分を引く・揺れる問題は数えない）→ `EXAM_STOP_FILE` で次の問題の前に止める（片付けはいつも通り） |
-| 使い回し | 問題ごとの鍵＝問題の hash・段・効くファイルの中身（ブレイン／下書きの入口から辿れる app と設定の blob）・試験の道具の中身・構成・モデル・紐付く知見の版。同じなら前の結果（7日まで）。置き場 `.claude/exam-cache/exam-brain/results/` |
+| 使い回し | 問題ごとの鍵＝問題の hash・段・効くファイルの中身（ブレイン／下書きの入口から辿れる app と設定の blob）・試験の道具の中身・構成・モデル・紐付く知見の版・その段が読む DB の表の指紋（ai_reply_knowledge・ai_prompt_rules・ai_reply_examples・trigger_action_rules・ai_prompts・adaptation_improvement_rules・phrase_dictionary 等 19表の件数・最終の時刻・小さい表は中身の hash。試験の始めに1回読む・読めない表がある段は使い回さない。一覧は exam-brain-io.ts の DB_FINGERPRINT_TABLES・2026-10-17 穴③）。同じなら前の結果（7日まで）。置き場 `.claude/exam-cache/exam-brain/results/` |
 | 採点 | 既定 `--judge=lazy`（道が外れ・本質の道も決まりで出る時は判定を呼ばない＝合否は同じ）。判定の並べ替え（rubric）は既定にしない（下の確かめ）。束ねる採点は入れていない（判定は1問回 約 $0.0005・費用の大半はブレイン） |
 | モデル | 既定 pro。`--model=auto` は model-check で3問以上・道が同じ9割以上・合う数が pro 以上の型だけ flash（判定は pro のまま） |
 | 台帳 | `.claude/exam-cache/exam-brain/ledger.jsonl`（問題×実行×版×前との比べ×揺れか本当か）＋揺れの記録 |
