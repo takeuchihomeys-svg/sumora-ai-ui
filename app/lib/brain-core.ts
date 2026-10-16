@@ -4005,7 +4005,12 @@ ${history}`;
     let twoStage: TwoStageVerdict | null = null;
     let pickupReadyForChoice: boolean | null = null; // 10/08 検索の結果で選ぶ2択（search-result-choice.ts）に渡す
 
-    if (finalAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet|guarantor_info|viewing_invite)$/.test(finalAix)) {
+    // 2026-10-16（q133・q150・q157）: 本質が確認・見積の約束で最後の aix が null の番も 2段の判定に入れる（brain-route-keep.promiseAixFromContract・BRAIN_TC_PROMISE_TWO_STAGE=off）
+    const { promiseAixFromContract, tcPromiseTwoStageEnabled } = await import("@/app/lib/brain-route-keep");
+    const tcPromiseAix = !finalAix && tcPromiseTwoStageEnabled() ? promiseAixFromContract((parsed as { turn_contract?: unknown }).turn_contract) : null;
+    if (tcPromiseAix) console.log(JSON.stringify({ tag: "brain:tc-promise-two-stage", conversationId, aix: tcPromiseAix }));
+    const twoStageAix = finalAix ?? tcPromiseAix;
+    if (twoStageAix && /^(?:property_send|property_recommendation|property_search|property_check_result|acknowledge_check|estimate_sheet|guarantor_info|viewing_invite)$/.test(twoStageAix)) {
       let pickupReady = false;
       if (finalAix === "property_send" || finalAix === "property_recommendation" || finalAix === "property_search") {
         try {
@@ -4089,10 +4094,6 @@ ${history}`;
           } catch (e) { console.warn("[brain-core] 退去予定日の読み取りに失敗（確認の約束）:", e instanceof Error ? e.message : String(e)); }
         }
       }
-      // 2026-10-16（q133・q150・q157）: 本質が確認・見積の約束で最後の aix が null の番も 2段の判定に入れる（brain-route-keep.promiseAixFromContract・BRAIN_TC_PROMISE_TWO_STAGE=off）
-      const { promiseAixFromContract, tcPromiseTwoStageEnabled } = await import("@/app/lib/brain-route-keep");
-      const tcPromiseAix = !finalAix && tcPromiseTwoStageEnabled() ? promiseAixFromContract((parsed as { turn_contract?: unknown }).turn_contract) : null;
-      if (tcPromiseAix) console.log(JSON.stringify({ tag: "brain:tc-promise-two-stage", conversationId, aix: tcPromiseAix }));
       twoStage = resolveTwoStage({
         finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
