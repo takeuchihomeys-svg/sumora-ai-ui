@@ -69,3 +69,44 @@ REPLAY_FLOOR_FILE=scripts/.replay-out/brain-exam-floor-fix1.json LLM_TEST_MODE=d
 | 同じ直しを 3〜5回 回し直す（deepcheck: 5回 239回 $1.86） | 毎回 前＋今 | 前 1回分＋変わった所だけ |
 
 初回（録音も取り置きも無い時）は今までと同じだけ呼ぶ。2回目から減る。
+
+## RAG で選ぶ・並べ方・期限・設計知見との連動（2026-10-16）
+
+竹内さん「試験の問題を DB にためて RAG 検索で選ぶ」「試験と設計知見（KB）をちゃんと連動させる」。LLM は呼ばない（埋め込みと KB の検索だけ・1回 $0.0001 未満）。
+
+| 道具 | 付け方（止め方） | 何をする |
+|---|---|---|
+| 問題の札 | `scripts/exam-rag.ts --index`（`--select=rag` も無い札は自動で作る） | 問題ごとに 場面・言葉（伏せた物）・効く部品（段・入口のファイル・録音で見た名札）・正解（竹内さんの実送信・伏せた物）・関係する知見 id（埋め込みの近さの候補）を持つ。文が変わった問題だけ埋め直す（144問で 53,084トークン $0.001） |
+| RAG で選ぶ | `--select=rag [--select-n=12] [--select-q="言葉"]`（付けなければ今まで通り） | 差分の言葉の近さの上位 N 問＋必ず入れる問題（下）。選んだ理由を1問ずつ出す。main の「前」も選んだ問題だけ |
+| 並べ方 | 既定（`--order=as-is`・`EXAM_ORDER=as-is` で旧） | 段（ブレインだけ → 下書きまで）→ 録音で見た前置きの印 → 型。答えは問題 id で束ねて比べる＝順番で結果は変わらない |
+| 判定の前置き | `--judge-prefix=rubric`（既定は旧の並び） | 判定の user を「正解の依頼・言ってはいけない事 → 場面 → 答案」に（文は変えない）。入れると判定の録音は1回取り直し |
+| 比べる相手の期限 | 既定 7日（`--baseline-max-age=<日|off>`・`EXAM_BASELINE_MAX_AGE_DAYS`） | main の取り置きの savedAt が古ければ流し直す（DB の中身・モデル側の変化は鍵に入らない） |
+| 知見の決まりの採点 | 既定 show（`--kb-rules=score` で下書きの合格に入れる・`off`） | 決まりで判定できる知見（駅の名前は確かめた出どころだけ 015f2950・相場は根拠がある時だけ d94a966c）の違反を知見の id と出す。足す口は `scripts/lib/exam-kb-rules.ts` の KB_RULES |
+| 直して通った紐付け | `--link-kb=<知見 id|id8|title:題>`（または `exam-rag.ts --link --problem= --kb=`） | 全部の回で合格した問題をその知見に「固定」で結ぶ。まだ KB に無い題は控え、親の kb-insert の後の `--index` で id に解く |
+
+必ず入れる問題（`--select=rag`）:
+- 差分・`--select-q`・（`--select-range` の時は commit の文）に問題 id（q112 等）が書いてある
+- 前に落ちた＝直前の2回は道が合っていたのに一番新しい答えで道が外れた（`EXAM_RAG_FAILED=last` で「一番新しい道が外れ」全部・`off` で入れない）。ずっと外れの問題（解けていない）は言葉が近ければ入る
+- 新しい問題（揺れの記録が無い・足して7日以内）＝竹内さんの新しいお手本は `brain-exam-add.ts --add ... --tags=お手本` で足すと次の回に必ず入る（例: KAORI さん 10/12 21:01 の物件オススメ2通目）
+- 入れた・変えた・退役した知見（前の控え kb-snapshot と比べる）に紐付く問題・紐付けの無い新しい知見に近い問題
+- 差分の言葉で KB を引いて当たった知見に紐付く問題・当たった上位3件の知見に近い問題（0.45 以上・2問まで）
+
+全部にする（安全側）: 試験の道具・設定・消した app のコードを直した／main との分かれ目が分からない／差分の埋め込みが取れない／埋め込みの無い問題が半分を超える。
+下書きだけの変更はブレインだけの問題を選ばない。試験に効く変更が無ければ必ず入れる問題だけ。
+
+落ちた・前より悪くなった問題には、結果に「関係する知見（固定 → 近さ順の上位3件・id・題・決めた事）」を出す（根本原因を探す入口）。
+
+```bash
+# 選び方だけ見る（試験は回さない）。過去の直しで試す: --select-range=<a>..<b>
+npx tsx --env-file=.env.local scripts/exam-rag.ts --select [--select-range=07a14f43~1..07a14f43]
+# 直した後の確かめ（選んだ問題だけ・前は main の取り置き）
+... scripts/brain-exam.ts --label=fix1 --select=rag --baseline=main --replay --stage=diff --conv=YUMA4
+# 通ったら知見に結ぶ（親が kb-insert した後に --index で解く）
+npx tsx --env-file=.env.local scripts/exam-rag.ts --link --problem=q151 --kb=title:<題>
+```
+
+注意: RAG の選びは直しの途中の確かめ用。差分の言葉の近さは 0.45〜0.6 に固まりやすい（10/16 の試し: 07a14f43 の直しで q112 は近さの上位 40 に入らず、commit の文の名指しで入った）。
+入れる前の最後の関所は今まで通り全部（または `--types=` の型ごと）で回す。直す人は `--select-q` か差分のコメントに対象の問題 id と場面の言葉を書く。
+
+置き場: 表（`exam_problem_index`・`exam_problem_kb_links`・設計 `scripts/exam-rag-migration.sql`・竹内さんの OK まで作らない）があれば表、無ければ
+`<倉庫の根>/.claude/exam-cache/brain-exam-rag/`（cards.json・kb-links.json・kb-snapshot.json・prefix.json・kb-links-pending.json）。表を作ると自動で表に切り替わる（`EXAM_RAG_STORE=local` で止める）。

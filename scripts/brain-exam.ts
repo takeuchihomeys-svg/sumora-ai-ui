@@ -37,6 +37,11 @@
 //   ④ 終わりに「新しく呼んだ・再生で済んだ・使い回した」の数と費用を出す（<label>.cost.json に問題ごと）
 // 2026-10-15 夜 追加の4つ（scripts/brain-exam/README.md）: --stage=diff（直したファイルで段を選ぶ）／前の取り置きは main の「試験に効く所の中身」の鍵
 //   （--baseline-key=commit で旧）／問題を全部の作業ツリーで共有（EXAM_SHARED_PROBLEMS=off）／--repeat-flaky（揺れる問題だけ繰り返す・揺れの記録は EXAM_FLAKE_RECORD=off）
+// 2026-10-16 追加（scripts/brain-exam/README.md「RAG で選ぶ・並べ方・期限・設計知見との連動」）:
+//   --select=rag [--select-n=12] [--select-q="言葉"] … 直したファイル・差分の言葉・変えた知見から関係する問題だけ（前に落ちた・新しい問題は必ず・分からない時は全部）
+//   並べ方: 既定でキャッシュが効く順（段 → 前置きの印 → 型）。止める --order=as-is（EXAM_ORDER=as-is）。判定の前置き: --judge-prefix=rubric（EXAM_JUDGE_PREFIX=rubric・既定は旧の順）
+//   --baseline-max-age=<日|off>（EXAM_BASELINE_MAX_AGE_DAYS・既定 7日）… main の取り置きが古ければ流し直す
+//   --kb-rules=show|score|off（既定 show）… 決まりで判定できる知見の違反を出す／--link-kb=<知見 id|id8|title:題>,… … 通った問題を知見に結ぶ
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, mkdirSync, copyFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -55,6 +60,8 @@ import { atomicWriteJson } from "./lib/exam-shared-file";
 import { cassetteStats as cassetteStatsNow } from "./lib/llm-cassette";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
+import { formatLinks, orderForCache, topLinks, type KbLink } from "./lib/exam-rag";
+import { checkKbRules, kbRulesMode, type KbRuleHit } from "./lib/exam-kb-rules";
 import { currentCodeKey, flakeEnabled, flakeVerdict, readObs, recordObs, shouldRunRep, sigOfRow, pathSigOfRow, type FlakeVerdict } from "./lib/exam-flake";
 
 const PROBLEMS_FILE = "scripts/brain-exam/problems.json";
@@ -118,6 +125,18 @@ const STAGE_DECISION = STAGE_ARG === "diff" ? decideStageFromDiff(".") : null;
 const STAGE: "brain" | "draft" | "auto" = STAGE_DECISION ? STAGE_DECISION.stage : STAGE_ARG === "draft" ? "draft" : STAGE_ARG === "brain" ? "brain" : "auto";
 // 2026-10-15 ④ --repeat-flaky: --repeat=N（--majority）の時、揺れる問題だけ N 回・安定した問題は1回（1回目がいつもと違えば N 回まで）・分からない問題は2回
 const REPEAT_FLAKY = flag("repeat-flaky");
+// 2026-10-16 RAG で選ぶ（--select=rag）・キャッシュが効く並べ方（既定・--order=as-is で旧）・判定の前置き（--judge-prefix=rubric）・設計知見の決まりの採点
+const SELECT = arg("select");
+const SELECT_N = Math.max(1, Number(arg("select-n", "12")) || 12);
+const ORDER = (arg("order") || process.env.EXAM_ORDER || "cache").trim() === "as-is" ? "as-is" : "cache";
+const JUDGE_RUBRIC_FIRST = (arg("judge-prefix") || process.env.EXAM_JUDGE_PREFIX || "").trim() === "rubric";
+const KB_RULES_MODE = kbRulesMode(arg("kb-rules"));
+const LINK_KB = arg("link-kb").split(",").map((s) => s.trim()).filter(Boolean);
+/** --select=rag で選んだ問題（null＝選んでいない＝今まで通り） */
+let SELECTED: Set<string> | null = null;
+let selectKbNow: Record<string, string> | null = null;
+/** 落ちた問題に出す知見（summarize の前に読む） */
+let kbLinksForReport: Record<string, KbLink[]> = {};
 const STAGE_BY_TYPE_FILE = "scripts/brain-exam/stage-by-type.json";
 const STAGE_BY_TYPE: Record<string, string> = (() => { try { return existsSync(STAGE_BY_TYPE_FILE) ? JSON.parse(readFileSync(STAGE_BY_TYPE_FILE, "utf8")) as Record<string, string> : {}; } catch { return {}; } })();
 function stageOf(p: { type: string; tags?: string[] } & { stage?: string }): "brain" | "draft" {
@@ -183,6 +202,8 @@ type ResultRow = {
   pcMismatch?: string[];
   /** 10/13 厳しい採点（物件の AIX の種類まで分ける）の道 */
   pathStrict?: boolean;
+  /** 2026-10-16 決まりで判定できる設計知見の違反（下書き・exam-kb-rules） */
+  kbRules?: KbRuleHit[];
 };
 
 // ─── YUMA の写し（yuma-r10-brain-replay と同じ線） ─────────────────────────
@@ -444,12 +465,13 @@ async function judgeOnce(p: ExamProblem, meta: Record<string, unknown> | null, r
     `③ raw_path: 【LLM の最初の答え】（決まりで直される前）が、この番の返信をどの道にしようとしていたかを1つ選ぶ: ${PATH_CHOICES.join(" / ")}（返信＝約束なしで答える／2段:〇＝後で送る・確認する約束の返信／なし＝お客様の連絡待ちで送らない）。【LLM の最初の答え】が無ければ null。`,
     '出力は JSON だけ: {"asks":[{"i":1,"route":true,"covered":true,"why":"20字"}],"ng":[{"i":1,"violated":false,"why":"20字"}],"raw_path":"返信"}',
   ].join("\n");
-  const user = [
-    contextText(p),
+  const answer = [
     `【ブレインの答案（最終）】\n${JSON.stringify(plan, null, 1)}${act ? `\n（AIX の名前: ${AIX_JA[act] ?? act}）` : ""}`,
     `【LLM の最初の答え】\n${needRawPath && raw ? JSON.stringify(raw, null, 1) : "（なし）"}`,
-    asksNgText(p),
-  ].join("\n\n");
+  ];
+  // 2026-10-16 --judge-prefix=rubric: 採点の決まり（正解の依頼・言ってはいけない事）と場面を先に、毎回変わる答案を後ろに（文は変えない・並びだけ）。
+  //   同じ問題の回（--repeat）・判定の過半数で前置きが同じになり DeepSeek の自動キャッシュが効く。既定は旧の並び（録音の鍵を変えない）
+  const user = (JUDGE_RUBRIC_FIRST ? [asksNgText(p), contextText(p), ...answer] : [contextText(p), ...answer, asksNgText(p)]).join("\n\n");
   const o = await deepseekJson(sys, user);
   if (!o) return null;
   const A = (o.asks ?? []) as Array<{ i: number; covered: boolean; route?: boolean; why?: string }>, G = (o.ng ?? []) as Array<{ i: number; violated: boolean; why?: string }>;
@@ -474,7 +496,7 @@ async function judgeDraftOnce(p: ExamProblem, draft: string): Promise<{ code: st
     "③ ng: 正解の『言ってはいけない事』を下書きが言っているか（violated）。",
     '出力は JSON だけ: {"path":"返信","asks":[{"i":1,"covered":true}],"ng":[{"i":1,"violated":false}]}',
   ].join("\n");
-  const o = await deepseekJson(sys, `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`);
+  const o = await deepseekJson(sys, JUDGE_RUBRIC_FIRST ? `${asksNgText(p)}\n\n${contextText(p)}\n\n【下書き】\n${draft}` : `${contextText(p)}\n\n【下書き】\n${draft}\n\n${asksNgText(p)}`);
   if (!o) return null;
   const A = (o.asks ?? []) as Array<{ i: number; covered: boolean }>, G = (o.ng ?? []) as Array<{ i: number; violated: boolean }>;
   const code = typeof o.path === "string" && PATH_CHOICES.includes(o.path) ? o.path : "返信";
@@ -521,7 +543,7 @@ function rescore(rows: ResultRow[], probs: Map<string, ExamProblem>): ResultRow[
     const pathStrict = judgePath(brainPathCode(r.brain as BrainExamOutput), acceptStrictOf(p), mn, { strict: true }).ok;
     const asks = r.asks ? r.asks.map((a) => a.covered) : null, ng = r.ng ? r.ng.map((g) => g.violated) : null;
     const essence = r.essence ? (() => { const v = judgePath(codeFromString(r.essence!.code), acc, mn); return { ...r.essence!, acceptHit: v.acceptHit, mustNotHit: v.mustNotHit, ok: v.ok }; })() : r.essence;
-    const draft = r.draft ? (() => { const v = judgePath(codeFromString(normalizeDraftCode(r.draft!.code, r.draft!.text, acc)), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) }; })() : r.draft;
+    const draft = r.draft ? (() => { const v = judgePath(codeFromString(normalizeDraftCode(r.draft!.code, r.draft!.text, acc)), acc, mn); return { ...r.draft!, ok: v.ok, pass: v.ok && (!r.draft!.asks || r.draft!.asks.every(Boolean)) && (!r.draft!.ng || !r.draft!.ng.some(Boolean)) && !(KB_RULES_MODE === "score" && r.kbRules?.length) }; })() : r.draft;
     return { ...r, path: { ...r.path, acceptHit: pv.acceptHit, mustNotHit: pv.mustNotHit, ok: pv.ok }, pathStrict, score: problemScore(pv, asks, ng), essence, draft };
   });
 }
@@ -590,6 +612,10 @@ function summarize(label: string, baseline: string | null): string {
     const missAsk = last.asks?.filter((a) => !a.covered).map((a) => `「${a.q.slice(0, 24)}」`).join("") ?? "";
     const vio = last.ng?.filter((g) => g.violated).map((g) => `「${g.text.slice(0, 24)}」`).join("") ?? "";
     L.push(`  ${p.pass ? "○" : "✕"} ${p.id} [${p.type}] ${last.essence ? `本質=${last.essence.code} ` : ""}ブレイン=${p.codes.join("/")}${last.draft ? ` 下書き=${last.draft.code}${last.draft.pass ? "○" : "✕"}` : ""}${p.n > 1 ? `（合格 ${p.passN}/${p.n}）` : ""} 正解=${pr ? acceptOf(pr).join("|") : "?"}${last.path.mustNotHit ? ` ⛔${last.path.mustNotHit}` : ""}${missAsk ? ` 抜け${missAsk}` : ""}${vio ? ` 違反${vio}` : ""}${last.ledger?.errors.length ? ` 台帳の写しの失敗${last.ledger.errors.length}` : ""}${last.pcMismatch?.length ? ` 条件の行の混ざり(${last.pcMismatch.join(",")})` : ""}`);
+    // 2026-10-16 落ちた問題に関係する設計知見（根本原因を探す入口・LLM は呼ばない＝紐付けの控えを読むだけ）と、決まりで判定した知見の違反
+    const kbr = p.rows.flatMap((r) => r.kbRules ?? []);
+    if (kbr.length) L.push(`      知見の決まりに反した: ${[...new Map(kbr.map((h) => [h.kbId, h])).values()].map((h) => `${h.kbId.slice(0, 8)}「${h.name}」${h.why}`).join("／")}`);
+    if (!p.pass || (last.draft && !last.draft.pass)) { const ls = topLinks(kbLinksForReport[p.id]); if (ls.length) L.push(`      関係する知見: ${formatLinks(ls)}`); }
   }
   if (baseline) {
     const bRows = rescore(readResults(baseline), probs);
@@ -607,6 +633,7 @@ function summarize(label: string, baseline: string | null): string {
     L.push(`  悪くなった ${worse.length}: ${worse.map((p) => `${p.id}[${p.type}] ${bp.get(p.id)!.codes.join("/")}→${p.codes.join("/")}`).join("、") || "なし"}`);
     L.push(`  良くなった ${better.length}: ${better.map((p) => `${p.id}[${p.type}] ${bp.get(p.id)!.codes.join("/")}→${p.codes.join("/")}`).join("、") || "なし"}`);
     if (worse.length && !crossModel) L.push(`  ⚠ 悪くなった問題がある＝この変更はそのまま入れない（DeepSeek の揺れか、--repeat=3 で回し直して確かめる）`);
+    for (const p of worse) { const ls = topLinks(kbLinksForReport[p.id]); if (ls.length) L.push(`    ${p.id} に関係する知見: ${formatLinks(ls)}`); }
   }
   L.push(`\n判定の費用（DeepSeek 直・この回の実行分）: ${judgeCost.calls}回 $${judgeCost.usd.toFixed(4)}${judgeCost.fail ? `・失敗 ${judgeCost.fail}` : ""}`);
   return L.join("\n");
@@ -633,7 +660,29 @@ function pick(all: ExamProblem[]): ExamProblem[] {
   if (ONLY.length) ps = ps.filter((p) => ONLY.includes(p.id));
   if (TYPES.length) ps = ps.filter((p) => TYPES.includes(p.type) || (p.tags ?? []).some((t) => TYPES.includes(t)));
   if (PER_TYPE > 0) { const c = new Map<string, number>(); ps = ps.filter((p) => { const n = c.get(p.type) ?? 0; if (n >= PER_TYPE) return false; c.set(p.type, n + 1); return true; }); }
+  if (SELECTED) ps = ps.filter((p) => SELECTED!.has(p.id)); // 2026-10-16 --select=rag
   return ps;
+}
+/** 2026-10-16 キャッシュが効く並べ方（段 → 録音で見た前置きの印 → 型）。答えは問題 id で束ねて比べる＝並べ替えで比べの結果は変わらない */
+async function orderProblems(ps: ExamProblem[]): Promise<ExamProblem[]> {
+  if (ORDER === "as-is" || ps.length < 2) return ps;
+  const { readPrefixes } = await import("./lib/exam-rag-store");
+  const pre = readPrefixes();
+  const out = orderForCache(ps, { stageOf, prefixOf: (id) => pre[id]?.prefix ?? null });
+  if (out.some((p, k) => p.id !== ps[k].id)) console.log(`並べ方（キャッシュ・--order=as-is で旧）: ${out.map((p) => p.id).join(",").slice(0, 300)}`);
+  return out;
+}
+/** 2026-10-16 --select=rag: 直したファイル・差分の言葉・変えた知見から関係する問題を選ぶ（LLM は呼ばない・埋め込みと KB の検索だけ） */
+async function selectByRag(): Promise<void> {
+  const { ragSelect } = await import("./lib/exam-rag-run");
+  const base = pick(loadProblems().map(effectiveProblem));
+  const r = await ragSelect(sb, base as never, { stageOf: stageOf as never, topN: SELECT_N, extraQuery: arg("select-q") || undefined });
+  const d = r.decision;
+  console.log(`=== --select=rag: ${r.mode === "all" ? `全部 ${r.picked.length}問` : `${r.picked.length}問 を選んだ（${base.length}問中・省いた ${r.skipped}）`}・差分の段 ${d.cls}（変わったファイル ${d.files.length}）・差分の言葉 ${r.queryChars}字・知見の変化 ${r.kbChanged}・差分で当たった知見 ${r.kbHits.length}・埋め込み ${r.tokens}トークン${r.note ? `・${r.note}` : ""} ===`);
+  for (const h of r.kbHits.slice(0, 5)) console.log(`  当たった知見 ${h.id.slice(0, 8)}（${h.score.toFixed(2)}）${(h.title ?? "").slice(0, 50)}`);
+  if (r.mode === "rag") for (const p of r.picked) console.log(`  ${p.must ? "◆" : "・"} ${p.id}: ${p.why.join("／")}`);
+  SELECTED = new Set(r.picked.map((p) => p.id));
+  selectKbNow = r.kbNow;
 }
 /** 10/09 ③: 線（REPLAY_FLOOR）の表に無い・YUMA を conversation_id で持つ表の行（ブレインが読むと前の実行の状況が混ざる） */
 async function floorGaps(): Promise<Record<string, number>> {
@@ -701,6 +750,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     repeat: REPEAT, judgeRepeat: JUDGE_REPEAT, noJudge: NO_JUDGE, autoHint: flag("auto-hint"), draftFirstOnly: flag("draft-first-only"), exhaustedRule: arg("exhausted-rule") || null,
     // 2026-10-15 ④ 新しいスイッチは「入れた時だけ」構成に足す（入れない時の構成の hash＝今までの取り置きを変えない）
     ...(REPEAT_FLAKY && REPEAT > 1 ? { repeatFlaky: true } : {}),
+    // 2026-10-16 判定の並び・知見の決まりを合否に入れる時も、入れた時だけ構成に足す
+    ...(JUDGE_RUBRIC_FIRST ? { judgePrefix: "rubric" } : {}), ...(KB_RULES_MODE === "score" ? { kbRules: "score" } : {}),
   });
   const ch = B.configHash(cfg);
   // 2026-10-15 ② 比べる相手の版: main の commit ではなく「試験に効く所の中身」の鍵で置く。main が進んでも試験に効く所が同じなら同じ置き場（使い回す）、
@@ -724,9 +775,11 @@ async function prepareMainBaseline(): Promise<boolean> {
   })();
   const loadAll = () => B.mergeBaselines(B.loadBaseline<ResultRow>(dir), ...legacyDirs.map((d) => B.loadBaseline<ResultRow>(d)));
   const cached = flag("baseline-refresh") ? new Map() : loadAll();
-  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY });
+  // 2026-10-16 期限: 取り置きの savedAt が N 日（既定 7）より古ければ流し直す（DB の中身・モデル側の変化は鍵に入らない）
+  const maxAgeMs = B.baselineMaxAgeMs(arg("baseline-max-age"));
+  const plan = B.planBaseline(picked.map((p) => ({ id: p.id, hash: hashOf.get(p.id)!, alt: altOf.get(p.id) })), cached, REPEAT, { acceptComplete: REPEAT_FLAKY, maxAgeMs });
   const baseLabel = `main-${commit.slice(0, 7)}-${ch}`;
-  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length}問・回す ${plan.run.length}問${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""} ===`);
+  console.log(`=== 前＝main（${ref}・${commit.slice(0, 7)}${vk ? `・版 ${vk}` : ""}・構成 ${ch}・置き場 ${dir}）: 使い回す ${plan.reuse.length}問・回す ${plan.run.length}問${plan.stale.length ? `（問題が直った ${plan.stale.join(",")}）` : ""}${plan.expired.length ? `（${maxAgeMs! / 86_400_000}日より古い ${plan.expired.join(",")}・--baseline-max-age=off で使い回す）` : ""} ===`);
   if (plan.run.length) {
     const runLabel = `${baseLabel}-r${Date.now().toString(36)}`;
     const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", `--label=${runLabel}`, `--only=${plan.run.join(",")}`, ...B.childArgs(args, { resolvedStage: STAGE_DECISION?.stage })];
@@ -763,13 +816,16 @@ async function prepareMainBaseline(): Promise<boolean> {
 async function main() {
   if (!LABEL) throw new Error("--label=<名前> が要る（結果のファイル名・続きからの印）");
   mkdirSync(RESULTS_DIR, { recursive: true });
-  if (arg("report")) { const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
+  if (arg("report")) { await loadKbLinksForReport(); const s = summarize(LABEL, BASELINE || null); console.log(s); writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s); return; }
   // 2026-10-15 ① 前（main の版）: 取り置きを使い、無い問題だけ main の作業ツリーで回す（自分の鍵・線を取る前に＝同時1本）
   if (STAGE_DECISION) {
     const d = STAGE_DECISION, cnt = (c: string) => d.files.filter((f) => f.cls === c).length;
     console.log(`--stage=diff → ${d.stage}（${d.cls === "both" ? "両方" : d.cls === "brain" ? "ブレインだけ" : d.cls === "draft" ? "下書きだけ" : "試験に効く変更なし"}・main との分かれ目 ${d.base?.slice(0, 7) ?? "-"}・変わったファイル ${d.files.length}: ブレイン ${cnt("brain")}・下書き ${cnt("draft")}・両方 ${cnt("both")}・効かない ${cnt("none")}）${d.note ? ` ${d.note}` : ""}`);
     for (const f of d.files.filter((x) => x.cls !== "none").slice(0, 12)) console.log(`  ${f.cls.padEnd(5)} ${f.file}（${f.why}）`);
   }
+  // 2026-10-16 --select=rag は「前」を回す前に決める（前も選んだ問題だけ・main の子には --only で渡る）
+  if (SELECT === "rag" && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") await selectByRag();
+  else if (SELECT && SELECT !== "rag") throw new Error(`--select=${SELECT} は無い（--select=rag だけ）`);
   if (BASELINE_MAIN && process.env.BRAIN_EXAM_BASELINE_CHILD !== "1") { const go = await prepareMainBaseline(); if (!go) return; }
   // 2026-10-09: --conv（テスト専用の会話）の時は鍵を取り、線のファイル・条件の写しの控えを会話ごとに分ける（REPLAY_FLOOR_FILE は supabase を読む前に要る＝ここで入れる）
   if (CONV_ARG) {
@@ -793,7 +849,7 @@ async function main() {
   const { extractStrategy } = await import("../app/lib/brain-layers");
   const { runInDeepseekScope, setDeepseekScope } = await import("../app/lib/deepseek-scope");
   const { MSG_SEP } = await import("../app/lib/reply-context");
-  const problems = pick(loadProblems().map(effectiveProblem));
+  const problems = await orderProblems(pick(loadProblems().map(effectiveProblem)));
   const DRAFT = problems.some((p) => stageOf(p) === "draft");
   const POST = DRAFT ? (await import("../app/api/generate-reply/route")).POST : null;
   const callsPer = LAYER === "prod" ? 2 : 1;
@@ -984,7 +1040,10 @@ async function main() {
             const dj = NO_JUDGE ? null : await judgeDraft(ps, text);
             const dcode = normalizeDraftCode(dj?.code ?? "返信", text, acc); // 10/13 確認＋見積の1文は 2段:check にも数える
             const dv = judgePath(codeFromString(dcode), acc, mn);
-            row.draft = { text, code: dcode, ok: dv.ok, asks: dj?.asks ?? null, ng: dj?.ng ?? null, pass: dv.ok && (!dj || (dj.asks.every(Boolean) && !dj.ng.some(Boolean))) };
+            // 2026-10-16 決まりで判定できる設計知見（費用0）。出どころは問題の会話（日付をずらした物）と条件の行
+            const kbHits = KB_RULES_MODE === "off" ? [] : checkKbRules(text, { contextText: texts.join("\n"), pcText: p.pc ? JSON.stringify(p.pc) : "" });
+            if (kbHits.length) row.kbRules = kbHits;
+            row.draft = { text, code: dcode, ok: dv.ok, asks: dj?.asks ?? null, ng: dj?.ng ?? null, pass: dv.ok && (!dj || (dj.asks.every(Boolean) && !dj.ng.some(Boolean))) && !(KB_RULES_MODE === "score" && kbHits.length) };
           } else row.draft = { text: null, skipped: skipped ?? "下書きなし", code: "（下書きなし）", ok: false, asks: null, ng: null, pass: false };
         }
       }
@@ -1022,9 +1081,30 @@ async function main() {
     flakeSkip = skippedReps;
     console.log(`揺れる問題だけ繰り返した: 省いた回 ${skippedReps.n}（安定 ${skippedReps.byVerdict.stable}・分からない ${skippedReps.byVerdict.unknown}）＝ブレイン${LAYER === "prod" ? "2" : "1"}回＋判定${NO_JUDGE ? 0 : JUDGE_REPEAT}回／回 の分を呼んでいない`);
   }
+  await loadKbLinksForReport();
   const s = summarize(LABEL, BASELINE || null);
   console.log(`\n${s}`);
   writeFileSync(`${RESULTS_DIR}/${LABEL}.summary.txt`, s);
+  await afterRunKb(problems);
+}
+/** 2026-10-16 落ちた問題に出す知見の紐付けを読む（読めなくても試験は止めない） */
+async function loadKbLinksForReport(): Promise<void> {
+  try { const { loadLinks } = await import("./lib/exam-rag-store"); kbLinksForReport = await loadLinks(sb); } catch (e) { console.warn("知見の紐付けが読めない:", String(e).slice(0, 120)); }
+}
+/**
+ * 2026-10-16 試験の後: ①--select=rag の時は知見の控えを今に進める（次は、この後に変わった知見だけを「変わった」と見る）
+ *   ②--link-kb=<知見> の時、全部の回で合格した問題をその知見に結ぶ（直して通った紐付け＝次から同じ知見に触れる直しで必ず選ばれる）
+ */
+async function afterRunKb(problems: ExamProblem[]): Promise<void> {
+  const { commitKbSnapshot, recordFixedLinks } = await import("./lib/exam-rag-run");
+  const rows = readResults(LABEL);
+  const allDone = problems.every((p) => rows.some((r) => r.id === p.id && !r.error));
+  if (selectKbNow && allDone) { commitKbSnapshot(selectKbNow); console.log("知見の控えを今に進めた（次の --select=rag はこの後に変わった知見だけを見る）"); }
+  if (LINK_KB.length) {
+    const passed = perProblem(rescore(rows, new Map(loadProblems().map((p) => [p.id, effectiveProblem(p)])))).filter((p) => p.passN === p.n && (p.drMaj ?? true)).map((p) => p.id);
+    if (passed.length) { recordFixedLinks(passed, LINK_KB, `brain-exam ${LABEL}`); console.log(`直して通った紐付けを控えた: ${passed.join(",")} ↔ ${LINK_KB.join(",")}（知見がまだ KB に無い題は、親の kb-insert の後の scripts/exam-rag.ts --index で id に解く）`); }
+    else console.log("--link-kb: 全部の回で合格した問題が無い（紐付けない）");
+  }
 }
 
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }).finally(async () => {

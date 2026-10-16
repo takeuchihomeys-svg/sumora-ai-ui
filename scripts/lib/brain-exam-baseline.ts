@@ -79,17 +79,30 @@ export function sameProblem(b: { problemHash: string }, p: { hash: string; alt?:
  * 使い回せる問題と回す問題を分ける（同じ問題 hash・回の数が足りる・失敗の回が無い）。
  * 2026-10-15 ④ acceptComplete: 揺れる問題だけ繰り返した取り置き（complete の印・1回目あり）は回が repeat より少なくても揃っている
  */
-export function planBaseline<R extends { rep: number; error?: string }>(problems: Array<{ id: string; hash: string; alt?: string[] }>, cached: Map<string, BaselineFile<R>>, repeat: number, o: { acceptComplete?: boolean } = {}): { reuse: string[]; run: string[]; stale: string[] } {
-  const reuse: string[] = [], run: string[] = [], stale: string[] = [];
+export function planBaseline<R extends { rep: number; error?: string }>(problems: Array<{ id: string; hash: string; alt?: string[] }>, cached: Map<string, BaselineFile<R>>, repeat: number, o: { acceptComplete?: boolean; maxAgeMs?: number | null; now?: number } = {}): { reuse: string[]; run: string[]; stale: string[]; expired: string[] } {
+  const reuse: string[] = [], run: string[] = [], stale: string[] = [], expired: string[] = [];
+  const now = o.now ?? Date.now();
   for (const p of problems) {
     const b = cached.get(p.id);
     if (!b) { run.push(p.id); continue; }
     if (!sameProblem(b, p)) { run.push(p.id); stale.push(p.id); continue; }
+    // 2026-10-16 比べる相手の答えに期限: DB の中身・モデル側の変化は鍵に入らない → savedAt が古ければ流し直す（savedAt が読めない物も古いとみる）
+    if (o.maxAgeMs && o.maxAgeMs > 0) { const t = Date.parse(String(b.savedAt ?? "")); if (!Number.isFinite(t) || now - t > o.maxAgeMs) { run.push(p.id); expired.push(p.id); continue; } }
     const ok = new Set(b.rows.filter((r) => !r.error).map((r) => r.rep));
     if (o.acceptComplete && b.complete && ok.has(1) && !b.rows.some((r) => r.error)) { reuse.push(p.id); continue; }
     if (Array.from({ length: repeat }, (_, i) => i + 1).every((k) => ok.has(k))) reuse.push(p.id); else run.push(p.id);
   }
-  return { reuse, run, stale };
+  return { reuse, run, stale, expired };
+}
+/**
+ * 2026-10-16 比べる相手（main の取り置き）の期限（日）。--baseline-max-age=<日|off> → EXAM_BASELINE_MAX_AGE_DAYS → 既定 7日。0・off で期限なし（旧の動き）
+ */
+export const BASELINE_MAX_AGE_DAYS_DEFAULT = 7;
+export function baselineMaxAgeMs(argVal: string | undefined, env: Record<string, string | undefined> = process.env): number | null {
+  const v = String(argVal || env.EXAM_BASELINE_MAX_AGE_DAYS || "").trim().toLowerCase();
+  if (v === "off" || v === "0") return null;
+  const d = v ? Number(v) : BASELINE_MAX_AGE_DAYS_DEFAULT;
+  return (Number.isFinite(d) && d > 0 ? d : BASELINE_MAX_AGE_DAYS_DEFAULT) * 86_400_000;
 }
 /** 版の置き場に無い問題を、旧の置き場（同じ commit の <commit>-<構成>）から足す（前に取り置いた物を捨てない） */
 export function mergeBaselines<R>(primary: Map<string, BaselineFile<R>>, ...legacy: Array<Map<string, BaselineFile<R>>>): Map<string, BaselineFile<R>> {
@@ -103,6 +116,6 @@ export function mergeBaselines<R>(primary: Map<string, BaselineFile<R>>, ...lega
  * 2026-10-15 ①: --stage=diff は子（main の作業ツリー）で決めると main との差が無い＝いつも brain になる → 親で決めた段（resolvedStage）に置き換える
  */
 export function childArgs(args: string[], o: { resolvedStage?: string } = {}): string[] {
-  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|report)(?:=|$)/.test(a))
+  return args.filter((a) => !/^--(?:label|only|types|only-type|per-type|baseline|baseline-ref|baseline-refresh|baseline-dry|baseline-key|baseline-max-age|select|select-n|select-q|link-kb|report)(?:=|$)/.test(a))
     .map((a) => (a === "--stage=diff" && o.resolvedStage ? `--stage=${o.resolvedStage}` : a));
 }
