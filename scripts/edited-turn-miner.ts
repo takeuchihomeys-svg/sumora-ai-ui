@@ -92,7 +92,9 @@ async function llmLabel(turns: MinedTurn[], masks: Map<string, (s: string) => st
   const usageFile = join(dir, "llm-usage.json");
   const usedToday = existsSync(usageFile) ? (JSON.parse(readFileSync(usageFile, "utf8")) as Usage).calls : 0;
   const usage: Usage = { calls: 0, input: 0, cacheHit: 0, output: 0, usd: 0, skippedPii: 0, skippedCap: 0 };
-  if (flag("llm")) {
+  // 2026-10-16 確かめる人: 会話の状態が読めなかった時は申込以降の止めが効かないので DeepSeek に出さない
+  if (flag("llm") && rep.errors.length) console.log("⚠ 読めなかった物があるので DeepSeek は呼ばない（申込以降の止めが効かない）");
+  else if (flag("llm")) {
     await llmLabel(rep.turns, masks, usage, Math.max(0, LLM_MAX - usedToday));
     writeFileSync(usageFile, JSON.stringify({ ...usage, calls: usedToday + usage.calls }, null, 1));
   }

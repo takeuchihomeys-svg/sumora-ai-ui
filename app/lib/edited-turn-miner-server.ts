@@ -94,6 +94,8 @@ export async function mineEditedTurns(sb: SupabaseClient, o: { sinceMs: number; 
   }
 
   for (const r of rows) {
+    // 2026-10-16 確かめる人: 番の時は申込前でも、今は申込以降の会話は外す（AIX の例と同じく今の状態で見る＝DeepSeek に出す前の止めと揃える。14日で6番）
+    if (isPostApplyStatus(status.get(r.conversation_id) ?? null)) { skipped.postApply++; continue; }
     const picked = pickJudgeDraft(r);
     const draft = picked.src === "last" || picked.src === "first" ? cleanDraft(picked.draft).text : null;
     if (!draft) continue;
