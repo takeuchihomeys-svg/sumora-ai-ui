@@ -3,6 +3,7 @@
 import { roomToldOf, roomToldLines } from "../property-told";
 import { fixUnsentReviewAck, sentSinceLastAttachment } from "../unsent-review-ack";
 import { fixProxyNegotiate } from "../takeuchi-wording-r11";
+import { moveOutViewingVerdict } from "../move-out-context";
 import { pickCostBreakdownImages } from "../cost-breakdown-images";
 import { splitPropertyName } from "../customer-state";
 import { normalizeBrainTurnContract, buildTurnContract, renderTurnContractNote } from "../turn-contract";
@@ -101,7 +102,7 @@ t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_B
 }
 {
   // 確かめる人 10/16: 新しい束の例外（MOVE_OUT_NEW_BUNDLE）は、同じ退去予定のお部屋の資料を送り直した束には効かない
-  const { moveOutViewingVerdict } = await import("../move-out-context");
+
   const base = [
     { sender: "staff", text: "メゾンラトゥール 103号室現在募集中となります！！\n10月30日退去予定となりますので、お申込みで抑えることをオススメ致します😊" },
     { sender: "customer", text: "ありがとうございます、他も見たいです" },
