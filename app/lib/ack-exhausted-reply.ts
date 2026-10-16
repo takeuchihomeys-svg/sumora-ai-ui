@@ -50,6 +50,8 @@ export function exhaustedConditionAxisEnabled(env: Env = envOf()): boolean {
   return (env.EXHAUSTED_CONDITION_AXIS ?? "").trim().toLowerCase() !== "off";
 }
 /** 材料の行の範囲の1文（足した・絞った番だけ。ゆるめた番・送った物件への反応の番は外＝理由つき） */
+/** 戻す EXHAUSTED_BROUGHT_FIRST=off */
+export function exhaustedBroughtFirstEnabled(env: Env): boolean { return (env.EXHAUSTED_BROUGHT_FIRST ?? "").toLowerCase() !== "off"; }
 function exhaustedConditionScope(env: Env): string {
   return exhaustedConditionAxisEnabled(env)
     ? "ただし、条件をゆるめた・外した・広げた番（「〇〇じゃなくてもいい」・家賃を上げる・エリアを広げる）は新しい条件ではまだ探していない＝出し切りの外で、竹内さんはゆるめた条件で改めてピックアップしてお送りする約束にする。"
@@ -85,7 +87,9 @@ export function exhaustedConditionTurnLine(env: Env = envOf()): string {
   if (!exhaustedConditionReplyEnabled(env)) return "";
   return "【今の番（材料・竹内さんの決定 10/14）】この会話には「今の条件のお部屋は出し切った」印がある。お客様の今の発言が条件を足した・言い直した（設備・家賃・間取り・エリアを変えた）番なら、"
     + "竹内さんは物件の AIX（物件ピックアップした）も全力サポートのボタンも出さず、返信で締める＝足した条件を受け止め、その条件も含めて新着を随時確認し出次第お送りする約束で閉じる（aix は null・reply_mode は auto_reply）。"
-    + "「もっと送って・他にあるか・新着は」の物件を探す番だけは物件の AIX と全力サポートの左右。" + exhaustedConditionScope(env);
+    + "「もっと送って・他にあるか・新着は」の物件を探す番だけは物件の AIX と全力サポートの左右。" + exhaustedConditionScope(env)
+    // 2026-10-16（q133）: 材料の主語の直し（竹内さん→お客様に伏せていた）で、この行がそのまま効くようになり、同じ連投の持ち込みの物件の約束まで出し切りの締めに倒れた
+    + (exhaustedBroughtFirstEnabled(env) ? "同じ連投でお客様が物件（URL・画像）を送ってきた・特定の物件の見積や空きを頼んだ番は、その物件の約束（募集状況の確認・御見積書）が先（出し切りの締めにしない）。" : "");
 }
 
 /** LLM の前の材料（約束が残っている番の行に足す） */

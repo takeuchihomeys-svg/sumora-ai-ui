@@ -618,7 +618,7 @@ export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOther
     for (const e of r.events.slice(-maxEvents)) lines.push(`  ・${eventLine(e)}`);
     // 2026-10-16 このお部屋でもう伝えた事・募集状況の鮮度・目安（決めるのはブレイン・property-told.ts）
     const lastTold = ts.at(-1);
-    if (r.told && lastTold) lines.push(...roomToldLines({ told: r.told, origin: r.origin, topic: lastTold.topic, turnAt: lastTold.at, jst: jstShort }));
+    if (r.told && lastTold) lines.push(...roomToldLines({ told: r.told, origin: r.origin, topic: lastTold.topic, turnAt: lastTold.at, jst: jstShort, customerText: lastTold.customerText }));
     // 2026-10-15 資料の古さの印（stale-material.ts・戻す: STALE_MATERIAL_NOTE=off）。言うか・確認するかはブレイン
     const lastT = ts.at(-1);
     const stale = lastT ? staleMaterialOf(r, lastT.at, lastT.customerText, lastT.topic) : null;

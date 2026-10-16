@@ -21,6 +21,8 @@ const told = roomToldOf([{ at: sentAt, kind: "sent" }, { at: "2026-10-15T10:56:0
 t("初期費用を伝え済み・ご案内に誘った", !!told.cost && /2,980円/.test(told.cost.quote) && told.viewingInvited);
 const lines = roomToldLines({ told, origin: "ours", topic: "like", turnAt: "2026-10-15T10:56:03.000Z", jst });
 t("目安は内覧の日程（確認・見積の約束にしない）", lines.some((l) => /aix=viewing_invite/.test(l)) && lines.some((l) => /送った時点で募集中/.test(l)));
+t("質問の番（「202は子ども不可ですか」）には内覧の目安を出さない", !roomToldLines({ told, origin: "ours", topic: "other", turnAt: "2026-10-15T10:56:03.000Z", jst, customerText: "202は子ども不可ですか" }).some((l) => /目安/.test(l)));
+t("「こちらの物件気になります」（話題は other）には出す", roomToldLines({ told, origin: "ours", topic: "other", turnAt: "2026-10-15T10:56:03.000Z", jst, customerText: "こちらの物件気になります" }).some((l) => /aix=viewing_invite/.test(l)));
 t("お客様の持ち込みには目安を出さない", !roomToldLines({ told, origin: "customer", topic: "like", turnAt: "2026-10-15T10:56:03.000Z", jst }).some((l) => /目安/.test(l)));
 t("3日より前に送った物件は募集中と言わない", !roomToldLines({ told, origin: "ours", topic: "like", turnAt: "2026-10-20T10:56:03.000Z", jst }).some((l) => /募集中/.test(l)));
 // 事例 g: 見積書を送った物件の費用の質問

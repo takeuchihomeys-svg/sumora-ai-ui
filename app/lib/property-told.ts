@@ -65,7 +65,11 @@ export function roomToldOf(events: ReadonlyArray<ToldEvent>, msgs: ReadonlyArray
 }
 
 /** 材料の行（▶ の物件の下）。topic は今の番の話題（property-thread の PtTopic）。jst は時刻の短い書き方 */
-export function roomToldLines(i: { told: RoomTold; origin: "ours" | "customer" | null | undefined; topic: string; turnAt: string; jst: (iso: string) => string }): string[] {
+/** 前向きな反応（質問ではない）。2026-10-16 gate1（q150）: 「202は子ども不可ですか」（質問）にも内覧の目安を出していた → 質問の番には出さない */
+const LIKE_RE = /気にな|いい(?:です|な|ね|感じ)|良い|良さ|素敵|好き|ここ(?:が|で|に)|見てみたい|見に行きたい|内覧|内見/;
+const QUESTION_RE = /[?？]|ですか|ますか|でしょうか|かな|可能|できますか|出来ますか/;
+export function isPositiveReaction(text: string | null | undefined): boolean { const t = String(text ?? ""); return LIKE_RE.test(t) && !QUESTION_RE.test(t); }
+export function roomToldLines(i: { told: RoomTold; origin: "ours" | "customer" | null | undefined; topic: string; turnAt: string; jst: (iso: string) => string; customerText?: string | null }): string[] {
   const { told, origin } = i;
   const L: string[] = [];
   const parts: string[] = [];
@@ -80,7 +84,7 @@ export function roomToldLines(i: { told: RoomTold; origin: "ours" | "customer" |
   const costKnown = !!told.cost || !!told.estimate;
   if (i.topic === "cost" && told.estimate) {
     L.push("  → 目安: 御見積書は送り済み＝金額・内訳・最終のお支払いの質問は、送った御見積書で答える AIX【初期費用について】（route=aix・aix=cost_breakdown。作り直す約束・確認の約束にしない）");
-  } else if (freshOurs && /^(?:like|viewing|detail|other)$/.test(i.topic)) {
+  } else if (freshOurs && (i.topic === "like" || i.topic === "viewing" || isPositiveReaction(i.customerText))) {
     L.push(costKnown
       ? "  → 目安: 初期費用まで伝え済み・送った時点で募集中＝前向きな反応の次は内覧の日程（route=aix・aix=viewing_invite＝AIX【内覧日調整】・このお部屋だけ・約束の返信にしない）。募集状況の確認・御見積書を作る約束にしない（お客様が他の事を聞いていればそれに答える）"
       : "  → 目安: 送った時点で募集中・費用はまだ＝前向きな反応の次は御見積書（route=aix・aix=estimate_sheet）か内覧の日程（aix=viewing_invite）。募集状況の確認の約束にしない");
