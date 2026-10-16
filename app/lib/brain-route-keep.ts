@@ -25,6 +25,9 @@ export function tcLeadAix(topAix: string | null | undefined, tc: unknown, normal
   const lead = typeof lw === "number" ? asks[lw] : typeof lw === "string" && /^\d+$/.test(lw) ? asks[Number(lw)] : undefined;
   const aixKeys = [...new Set(asks.filter((a) => a?.route === "aix").map((a) => normalize(String(a.aix ?? "").split("/")[0])).filter((k): k is string => !!k))];
   const leadKey = lead?.route === "aix" ? normalize(String(lead.aix ?? "").split("/")[0]) : null;
+  // 確かめる人 10/16（関所 q048）: 最後の欄の AIX も本質の AIX の依頼の1つなら食い違いではない（2つの依頼のどちらを先に AIX にするかの選び）＝触らない。
+  //   旧は lead_with（見積）で最後の欄（待ち合わせ場所＝竹内さんの正解）を上書きしていた。そろえるのは最後の欄が本質のどの依頼にも無い AIX の時だけ（q156 の型）
+  if (aixKeys.includes(top)) return null;
   const pick = leadKey ?? (aixKeys.length === 1 ? aixKeys[0] : null);
   return pick && pick !== top ? pick : null;
 }
