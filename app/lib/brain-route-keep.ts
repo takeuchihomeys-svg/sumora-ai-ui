@@ -8,6 +8,27 @@
 // 決め: 道の欄は最初の答えのまま。方向（reply_direction）は取り直しから入れ、最初の答えで空の欄だけ取り直しで埋める。
 //   戻す: BRAIN_EMPTY_DIRECTION_KEEP_ROUTE=off（旧の丸ごと入れ替え）
 
+/**
+ * 2026-10-16 本質（turn_contract）と最後の AIX の食い違い: ブレインが同じ答えの中で、依頼の答え方（asks の aix）と最後の aix の欄に別の AIX を書く。
+ *   本番（Claude）3日で2番: 10/13 の事例 g（依頼の答え cost_breakdown＝竹内さんの正解／最後の欄 viewing_invite）・10/14 の1番。試験の q156（依頼 viewing_invite＝正解／最後 application_push）。
+ *   決め: 両方に AIX があって違い、AIX の依頼が1種類だけ（または先に答える依頼 lead_with が AIX）なら、本質の AIX にそろえる（返信の中身は本質で決まる＝同じ答えの中の矛盾は本質を勝たせる）。
+ *   最後の欄が null の時は触らない（2段＝約束の後で AIX の作り）。戻す BRAIN_TC_AIX_ALIGN=off
+ */
+export function tcAixAlignEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.BRAIN_TC_AIX_ALIGN ?? "").trim().toLowerCase() !== "off";
+}
+export function tcLeadAix(topAix: string | null | undefined, tc: unknown, normalize: (k: unknown) => string | null): string | null {
+  const top = normalize(topAix);
+  if (!top || !tc || typeof tc !== "object") return null;
+  const asks = Array.isArray((tc as { asks?: unknown }).asks) ? ((tc as { asks: Array<{ route?: unknown; aix?: unknown }> }).asks) : [];
+  const lw = (tc as { lead_with?: unknown }).lead_with;
+  const lead = typeof lw === "number" ? asks[lw] : typeof lw === "string" && /^\d+$/.test(lw) ? asks[Number(lw)] : undefined;
+  const aixKeys = [...new Set(asks.filter((a) => a?.route === "aix").map((a) => normalize(String(a.aix ?? "").split("/")[0])).filter((k): k is string => !!k))];
+  const leadKey = lead?.route === "aix" ? normalize(String(lead.aix ?? "").split("/")[0]) : null;
+  const pick = leadKey ?? (aixKeys.length === 1 ? aixKeys[0] : null);
+  return pick && pick !== top ? pick : null;
+}
+
 /** 道を決める欄（最初の答えのまま残す。null も「AIX なし」という正当な道なので埋めない） */
 export const ROUTE_KEYS = [
   "action", "aix", "reply_mode", "two_stage", "turn_contract", "check_pattern", "template_hint", "after_aix_template",

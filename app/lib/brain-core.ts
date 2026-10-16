@@ -3209,6 +3209,16 @@ ${history}`;
     let finalAix: string | null = normalizeAixActionKey(parsed.aix);
     // 2026-09-12 段2: 判断の出どころ（brain_decision_logs.decision_source・brain-aix-eval で出どころ別の一致率を測る）
     let decisionSource: string | null = finalAix ? "llm" : null;
+    // 2026-10-16 本質と最後の AIX の食い違いは本質にそろえる（brain-route-keep.tcLeadAix・BRAIN_TC_AIX_ALIGN=off）
+    {
+      const { tcLeadAix, tcAixAlignEnabled } = await import("@/app/lib/brain-route-keep");
+      const aligned = tcAixAlignEnabled() ? tcLeadAix(parsed.aix, (parsed as { turn_contract?: unknown }).turn_contract, (k: unknown) => normalizeAixActionKey(typeof k === "string" ? k : null)) : null;
+      if (aligned) {
+        console.log(JSON.stringify({ tag: "brain:tc-aix-aligned", conversationId, from: finalAix, to: aligned }));
+        finalAix = aligned;
+        decisionSource = "llm"; // 本質もブレインの答え（llm のまま＝llm の時だけ当てる後の決まりを変えない）
+      }
+    }
     // 2026-10-13（ブレインの使い残し 4）: 下げた上書き（規則は当たったがブレインの判断のまま）。meta.demoted_overrides とログ brain:override-demoted に残す
     const demotedOverrides: DemotedOverride[] = [];
     // 場面の信号（S2/S3）で決まった時の check_pattern（証拠の check_pattern を優先する）
