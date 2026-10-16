@@ -70,6 +70,13 @@ t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_B
   t("今の物件の資料＋直後の御見積書だけ（別の物件の画像は入れない）", JSON.stringify(got?.map((m) => m.id)) === JSON.stringify(["1", "2"]));
   t("記録が無い物件は null（旧の決め方）", pickCostBreakdownImages(splitPropertyName("知らない物件 101号室"), sent, msgs) === null);
 }
+// ── 内覧日調整の物件名は引用した1件（事例 d）──
+{
+  const { narrowToQuotedProperty } = require("../quoted-viewing-target") as typeof import("../quoted-viewing-target");
+  t("引用した1件だけに絞る", narrowToQuotedProperty("グランパシフィック桜川南 902号室、セレッソコート西心斎橋Ⅲ 305号室", [{ display: "グランパシフィック桜川南 902号室", by: "quote" }]) === "グランパシフィック桜川南 902号室");
+  t("名指し・推定は触らない", narrowToQuotedProperty("A 101号室、B 202号室", [{ display: "A 101号室", by: "named" }]) === null);
+  t("欄が1件なら触らない", narrowToQuotedProperty("A 101号室", [{ display: "A 101号室", by: "quote" }]) === null);
+}
 // ── 材料の主語（竹内さん→お客様に変えない）──
 {
   const { maskPII } = require("../pii-mask") as typeof import("../pii-mask");

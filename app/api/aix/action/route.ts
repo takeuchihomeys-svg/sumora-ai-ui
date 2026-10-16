@@ -4494,7 +4494,23 @@ Mさんお気に召されたお部屋ご都合よろしいお日にちにお部�
         : vacancy_status === "vacant"
         ? `\n【物件状況】空室（今すぐ内覧可能）`
         : "";
-      const propNamePart = property_name ? `\n【物件名】${property_name}` : "";
+      // 2026-10-16 竹内悠馬（事例 d）: お客様が引用返信で1件を指した時は、物件名の欄の複数の物件からその1件だけにする（quoted-viewing-target.ts・AIX_VIEWING_QUOTED_ONLY=off）
+      let viewingPropName: string | null = (property_name as string | null | undefined) ?? null;
+      let viewingQuotedNarrowed = false;
+      try {
+        const { viewingQuotedOnlyEnabled, narrowToQuotedProperty } = await import("@/app/lib/quoted-viewing-target");
+        if (viewingQuotedOnlyEnabled() && conversationId && viewingPropName) {
+          const { loadPropertyThreads } = await import("@/app/lib/property-thread-server");
+          const st = await Promise.race([loadPropertyThreads(conversationId), new Promise<null>((r) => setTimeout(() => r(null), 4_000))]);
+          const narrowed = st ? narrowToQuotedProperty(viewingPropName, st.turnTargets) : null;
+          if (narrowed && narrowed !== viewingPropName) {
+            console.log(JSON.stringify({ tag: "aix:viewing-quoted-only", conversationId, from: viewingPropName.slice(0, 80), to: narrowed }));
+            viewingPropName = narrowed;
+            viewingQuotedNarrowed = true;
+          }
+        }
+      } catch (e) { console.warn("[aix/action] viewing quoted narrow skipped:", e instanceof Error ? e.message : String(e)); }
+      const propNamePart = viewingPropName ? `\n【物件名】${viewingPropName}${viewingQuotedNarrowed ? "（お客様が引用返信で指したお部屋。このお部屋だけを案内し、同じ時に送った他のお部屋・部屋数は書かない）" : ""}` : "";
       // 2026-09-17 竹内（AIX キャッシュ点検）: [global 1h] → [固有文＋action 別ルール＋確認済みルール 5m] → [ブレイン改善ルール・顧客ガイダンス cache なし]
       //   （ブレイン改善ルールは従来 static 内にあったが呼び出しごとに変わり得るので動的へ）
       const viewingSystemSpec: SystemSpecBlocks = {

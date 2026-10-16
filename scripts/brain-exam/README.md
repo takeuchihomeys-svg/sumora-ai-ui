@@ -110,3 +110,9 @@ npx tsx --env-file=.env.local scripts/exam-rag.ts --link --problem=q151 --kb=tit
 
 置き場: 表（`exam_problem_index`・`exam_problem_kb_links`・設計 `scripts/exam-rag-migration.sql`・竹内さんの OK まで作らない）があれば表、無ければ
 `<倉庫の根>/.claude/exam-cache/brain-exam-rag/`（cards.json・kb-links.json・kb-snapshot.json・prefix.json・kb-links-pending.json）。表を作ると自動で表に切り替わる（`EXAM_RAG_STORE=local` で止める）。ただし `SUPABASE_SERVICE_ROLE_KEY` がある時だけ（表は RLS で方針なし＝anon の鍵では 0 行に見え書けない → 手元の置き場のまま）。表への書き込みが失敗しても試験は止めず手元の置き場に書く・`--select=rag` が失敗したら全部で回す。
+
+## 引用返信を写す（2026-10-16）
+
+旧の写し（ExamMsg）は引用が無く、引用返信の番（「こちらの物件気になります」）でブレインが「どれか未特定」と読んでいた（q156・本番は引用で1件に決まる）。
+引用した通（`q`）・引用された通（`lm`）・こちらの画像の URL（`img`・こちらの画像だけ）を問題に持ち、YUMA に写す時に新しい id でつなぐ（台帳の sent_properties の image_url と照らして「引用返信→スタッフが送った物件資料〈物件名〉」が本番と同じく出る）。
+引用の無い問題の中身は変わらない。引用のある古い問題に入れるには `brain-exam-add.ts --rebuild --only=<id> --fresh`（共有の置き場の同じ正解の物は上書きしないので、古いファイルを消してから）。
