@@ -77,6 +77,20 @@ t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_B
   t("名指し・推定は触らない", narrowToQuotedProperty("A 101号室、B 202号室", [{ display: "A 101号室", by: "named" }]) === null);
   t("欄が1件なら触らない", narrowToQuotedProperty("A 101号室", [{ display: "A 101号室", by: "quote" }]) === null);
 }
+// ── 5日前の別のお部屋の「退去予定・お申込で抑え」で、新しい束への「気になります」を申込へにしない（事例 c）──
+{
+  const { moveOutViewingVerdict } = require("../move-out-context") as typeof import("../move-out-context");
+  const msgs = [
+    { sender: "staff", text: "10月末退去予定で1件かなりオススメ出来るお部屋が募集に出ました！！\nお気に召されましたらお申込しお部屋抑えさせて頂きます😊！！" },
+    { sender: "customer", text: "初期費用無料のところもあると見たのですが" },
+    { sender: "staff", text: "ピックアップしお送りさせていただきます！！" },
+    { sender: "customer", text: "ありがとうございます。" },
+    { sender: "staff", text: "[画像]" },
+    { sender: "staff", text: "こちらの2件初期費用2,980円＋前家賃でご入居出来るお部屋となります！！" },
+    { sender: "customer", text: "こちらの物件気になります" },
+  ];
+  t("新しい束への反応は退去予定の縛りに入れない", moveOutViewingVerdict(msgs, "oldest_first").blocks === false);
+}
 // ── 材料の主語（竹内さん→お客様に変えない）──
 {
   const { maskPII } = require("../pii-mask") as typeof import("../pii-mask");
