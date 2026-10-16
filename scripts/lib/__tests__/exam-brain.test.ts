@@ -23,8 +23,9 @@ const all = [P("q1"), P("q2", "t", ["AIX:x"]), P("q3", "t", ["返信"], ["お手
   ok("無い id は足さない", !mergePicks(all, { mode: "rag", picked: [] }, { named: ["q999"] }).some((x) => x.id === "q999"));
 }
 // 2. 何回
-ok("揺れる問題だけ3回", firstReps("flaky") === 3 && firstReps("stable") === 1 && firstReps("unknown") === 1);
-ok("確かめは前と違った問題（揺れる問題は既に3回）", confirmTargets([{ id: "a", cmp: "worse" }, { id: "b", cmp: "same" }, { id: "c", cmp: "better" }, { id: "d", cmp: "worse" }], new Set(["d"])).join() === "a,c");
+ok("直しの確かめは全部1回", firstReps("flaky") === 1 && firstReps("stable") === 1 && firstReps("unknown") === 1);
+ok("関所は揺れる問題だけ3回", firstReps("flaky", 3, { gate: true }) === 3 && firstReps("stable", 3, { gate: true }) === 1);
+ok("確かめは前と違った問題（もう max 回ある問題は除く）", confirmTargets([{ id: "a", cmp: "worse" }, { id: "b", cmp: "same" }, { id: "c", cmp: "better" }, { id: "d", cmp: "worse" }], new Set(["d"])).join() === "a,c");
 ok("はっきり良い時は良くなった問題だけ", confirmTargets([{ id: "a", cmp: "changed" }, { id: "c", cmp: "better" }], new Set(), { clearlyGood: true }).join() === "c");
 // 3. どこまで
 ok("下書きの意味: AIX だけの正解は無し", !draftEligible(all[1]) && draftEligible(all[0]));
@@ -32,7 +33,7 @@ ok("下書きの意味: 出し切りの正解も見る", draftEligible({ id: "x"
 ok("下書きに効く変更は全部の候補", draftTargets("draft", all, new Set()).ids.join() === "q1,q3,q4,q5");
 ok("ブレインだけの変更は判断が変わった問題だけ", draftTargets("brain", all, new Set(["q4", "q2"])).ids.join() === "q4");
 ok("変更なし・判断も同じは0", draftTargets("none", all, new Set()).ids.length === 0);
-ok("gate は全部の候補", draftTargets("none", all, new Set(), { gate: true }).ids.length === 4);
+ok("関所も2段（変更なし・判断も同じは0）", draftTargets("none", all, new Set(), { gate: true }).ids.length === 0);
 // 比べ
 const R = (ok1: boolean, pass1: boolean, code = "返信", d?: boolean): RowLite => ({ id: "x", rep: 1, path: { code, ok: ok1 }, score: { pass: pass1 }, draft: d === undefined ? null : { pass: d } });
 ok("道が悪化", compareProblem([R(false, false)], [R(true, true)]).cmp === "worse");

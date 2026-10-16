@@ -246,7 +246,12 @@ export function makeCassetteFetch(inner: FetchLike, o: { mode: CassetteMode; dir
     const method = (init?.method ?? (typeof input === "object" && input instanceof Request ? input.method : "GET")).toUpperCase();
     if (body === null && method !== "GET") { bump(action, (t) => t.unrecordable++); return inner(input, init); }
     const normBody = normalizeBody(body ?? "", env);
-    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody });
+    // 2026-10-17: 要求は別クラウドへ振り替える前（Anthropic の形）で録る＝DEEPSEEK_MODEL を既定（deepseek-v4-pro）から替えた回も同じ鍵になり、
+    //   pro の答えを flash の回に返していた（モデルの比べが全部「同じ」に見えた）。既定と違う時だけ鍵にモデルを足す（既定の鍵は今まで通り）
+    //   DeepSeek へ直に送る要求（判定など）は本文にモデル名がある＝足さない
+    const dsm = String(env.DEEPSEEK_MODEL ?? "").trim();
+    const salt = dsm && dsm !== "deepseek-v4-pro" && !/deepseek/.test(u!.host) ? `\n#model=${dsm}` : "";
+    const key = cassetteKey({ host: u!.host, path: u!.pathname, action, normBody: normBody + salt });
     const nth = seen.get(key) ?? 0; seen.set(key, nth + 1);
     const entry = readEntry(o.dir, key);
     const hit = o.mode !== "record" ? entry?.responses[nth] ?? null : null;

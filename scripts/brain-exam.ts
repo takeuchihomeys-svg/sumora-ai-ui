@@ -802,7 +802,8 @@ async function prepareMainBaseline(): Promise<boolean> {
     if (flag("baseline-dry")) { console.log(`（--baseline-dry: 回さない）main の作業ツリーで: npx ${cmd.join(" ")}\n  録音の置き場（共有）: ${cassetteDir}`); return false; }
     const wt = prepareMainWorktree(commit);
     console.log(`  main の作業ツリー ${wt} で「前」を回す: npx ${cmd.join(" ")}`);
-    const r = spawnSync("npx", cmd, { cwd: wt, stdio: "inherit", env: childEnv, shell: process.platform === "win32" });
+    // 2026-10-17: shell で回す時（Windows）は空白・引用符を含む引数を囲む（置き場のパスに「竹内 悠馬」の空白がある＝--reps-file が切れていた）
+    const r = spawnSync("npx", process.platform === "win32" ? cmd.map((x) => (/[\s"]/.test(x) ? `"${x.replace(/"/g, '\\"')}"` : x)) : cmd, { cwd: wt, stdio: "inherit", env: childEnv, shell: process.platform === "win32" });
     if (r.status !== 0) console.warn(`  ⚠ 前（main）の実行が ${r.status} で終わった（取れた問題だけ取り置く）`);
     const rows = (() => { const f = join(wt, RESULTS_DIR, `${runLabel}.jsonl`); return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ResultRow) : []; })();
     const cost = (() => { try { return JSON.parse(readFileSync(join(wt, RESULTS_DIR, `${runLabel}.cost.json`), "utf8")) as { byTag?: Record<string, { real: number; realUsd: number; replayed: number; replayUsd: number }> }; } catch { return {}; } })();

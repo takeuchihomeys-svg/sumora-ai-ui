@@ -38,11 +38,15 @@ export function mergePicks(all: PlanProblem[], rag: { mode: "all" | "rag"; picke
 
 // ─── 2. 何回 ───────────────────────────────────────────────────────────
 export type FlakeKind = "flaky" | "stable" | "unknown";
-/** 最初の回数: 揺れる問題だけ max（既定3）・それ以外は1回（前と違えば後で足す＝confirmTargets） */
-export function firstReps(v: FlakeKind, max = 3): number { return v === "flaky" ? Math.max(1, max) : 1; }
-/** 足して確かめる問題: 1回目が前（main）と違った問題（揺れか本当の変化かを分ける）。はっきり良い時は良くなった問題だけ */
-export function confirmTargets(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<string>, o: { clearlyGood?: boolean } = {}): string[] {
-  return cmps.filter((c) => !flaky.has(c.id) && (o.clearlyGood ? c.cmp === "better" : c.cmp === "worse" || c.cmp === "better" || c.cmp === "changed")).map((c) => c.id);
+/**
+ * 最初の回数。直しの確かめ（既定）は全部1回＝前（main）と同じ答えなら揺れを測る意味が無い（深掘りは迷った時だけ）。前と違った問題だけ後で max 回まで足す（confirmTargets）。
+ *   最後の関所（gate）は揺れる問題だけ max（既定3）・それ以外は1回。
+ *   2026-10-17 実測: 揺れる問題は 150問中 66問（44%）。直しの確かめで最初から3回にすると、今の1回の確かめより高くなる（1日の見込みが下がらない）
+ */
+export function firstReps(v: FlakeKind, max = 3, o: { gate?: boolean } = {}): number { return o.gate && v === "flaky" ? Math.max(1, max) : 1; }
+/** 足して確かめる問題: 1回目が前（main）と違った問題（揺れか本当の変化かを分ける・揺れる問題も）。はっきり良い時は良くなった問題だけ。done＝もう max 回ある問題 */
+export function confirmTargets(cmps: Array<{ id: string; cmp: Cmp }>, done: Set<string>, o: { clearlyGood?: boolean } = {}): string[] {
+  return cmps.filter((c) => !done.has(c.id) && (o.clearlyGood ? c.cmp === "better" : c.cmp === "worse" || c.cmp === "better" || c.cmp === "changed")).map((c) => c.id);
 }
 
 // ─── 3. どこまで（2段） ─────────────────────────────────────────────────
@@ -53,11 +57,12 @@ export function draftEligible(p: PlanProblem): boolean {
 export type ChangeClass = "brain" | "draft" | "both" | "none";
 /**
  * 下書きまで流す問題: 下書きに効くファイルを直した（draft・both）→ 下書きの意味がある全部の候補／ブレインだけ直した → 判断が前と変わった問題だけ／
- *   試験に効く変更なし → 判断が前と変わった問題だけ（無ければ0）。gate は下書きの意味がある全部。
+ *   試験に効く変更なし → 判断が前と変わった問題だけ（無ければ0）。最後の関所も同じ決め方（全部の型を流すのは1段目）。
  */
 export function draftTargets(cls: ChangeClass, ps: PlanProblem[], brainChanged: Set<string>, o: { gate?: boolean } = {}): { ids: string[]; why: string } {
   const el = ps.filter(draftEligible);
-  if (o.gate) return { ids: el.map((p) => p.id), why: "最後の関所（下書きの意味がある全部）" };
+  // 2026-10-17: 関所も2段に倣う（下書きに効くファイルを直した時は全部・ブレインだけの直しは判断が変わった問題だけ）。o.gate は互換のため残す
+  void o.gate;
   if (cls === "draft" || cls === "both") return { ids: el.map((p) => p.id), why: cls === "draft" ? "下書きに効くファイルを直した" : "ブレインと下書きの両方に効くファイルを直した" };
   const ids = el.filter((p) => brainChanged.has(p.id)).map((p) => p.id);
   return { ids, why: ids.length ? "ブレインの判断が前（main）と変わった問題だけ" : "判断が前と変わった問題が無い（下書きは前と同じ見込み）" };

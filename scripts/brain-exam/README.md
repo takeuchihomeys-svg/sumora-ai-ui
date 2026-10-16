@@ -116,3 +116,40 @@ npx tsx --env-file=.env.local scripts/exam-rag.ts --link --problem=q151 --kb=tit
 旧の写し（ExamMsg）は引用が無く、引用返信の番（「こちらの物件気になります」）でブレインが「どれか未特定」と読んでいた（q156・本番は引用で1件に決まる）。
 引用した通（`q`）・引用された通（`lm`）・こちらの画像の URL（`img`・こちらの画像だけ）を問題に持ち、YUMA に写す時に新しい id でつなぐ（台帳の sent_properties の image_url と照らして「引用返信→スタッフが送った物件資料〈物件名〉」が本番と同じく出る）。
 引用の無い問題の中身は変わらない。引用のある古い問題に入れるには `brain-exam-add.ts --rebuild --only=<id> --fresh`（共有の置き場の同じ正解の物は上書きしないので、古いファイルを消してから）。
+
+## 試験のブレイン（2026-10-17・設計知見 4c91ffd9「判断する所はブレインにまとめて、質を高く節約する」）
+
+入口は1つ: `npx tsx --env-file=.env.local scripts/exam-brain.ts`（計画を先に出してから brain-exam.ts を子で回す・今の brain-exam.ts の引数は壊さない）。
+決め方は `scripts/lib/exam-brain.ts`（純関数・単体テスト `scripts/lib/__tests__/exam-brain.test.ts`）、読み書きは `scripts/lib/exam-brain-io.ts`。
+
+```bash
+npx tsx --env-file=.env.local scripts/exam-brain.ts --plan --conv=YUMA4               # 計画だけ（選んだ問題と理由・段・回数・使い回し・見込み・いつ）
+npx tsx --env-file=.env.local scripts/exam-brain.ts --conv=YUMA4 [--select-q="言葉 q112"] [--name=q153]   # 直した後の確かめ
+npx tsx --env-file=.env.local scripts/exam-brain.ts --gate --conv=YUMA5 [--types=..] [--wait]          # 最後の関所（昼なら安い時間に予約）
+npx tsx --env-file=.env.local scripts/exam-brain.ts --warm-main --conv=YUMA5                          # 本番に入れた版の答えを夜中に取り置く
+npx tsx --env-file=.env.local scripts/exam-brain.ts --run-queue                                       # 予約を流す（JST 1:30〜9:30 だけ）
+npx tsx scripts/exam-brain.ts --ledger [--id=q153]                                                   # 試験の台帳
+npx tsx --env-file=.env.local scripts/exam-brain.ts --model-check --conv=YUMA4 [--types=..] [--n=8]   # flash と pro の比べ（型ごとに累計）
+npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --label=<止まった label> [--apply]  # 止まった実行の残り
+```
+
+| 決める事 | 決め方 |
+|---|---|
+| どの問題 | RAG の選び（直したファイル・差分の言葉・変えた知見・前に落ちた・新しい・名指し）＋必ず流す（`--name`・札「お手本」「竹内さんの番」・毎日の弱い所 weak-spots の知見に紐付く問題）。試験の道具・設定を直した／分からない時は全部 |
+| 何回 | 直しの確かめは全部1回 → 1回目が前（main）と違った問題だけ3回まで足す（揺れか本当かを分ける・はっきり良い時は良くなった問題だけ）。最後の関所は揺れる問題だけ3回。brain-exam に `--reps-file` で渡す |
+| どこまで | 1段目＝全部を stage=brain。2段目＝下書きに効くファイルを直した時は下書きの意味がある全部・それ以外は判断（道・合否・道の符号）が前と変わった問題だけ（関所も同じ） |
+| いつ | `--when=auto`: 関所・見込み $1 以上は DeepSeek の安い時間（JST 1:30〜9:30・llm-price の混雑の外）に予約（`--wait` で待って流す） |
+| 途中で止める | 最初の4問以上で前より悪い問題が3問（良くなった分を引く・揺れる問題は数えない）→ `EXAM_STOP_FILE` で次の問題の前に止める（片付けはいつも通り） |
+| 使い回し | 問題ごとの鍵＝問題の hash・段・効くファイルの中身（ブレイン／下書きの入口から辿れる app と設定の blob）・試験の道具の中身・構成・モデル・紐付く知見の版。同じなら前の結果（7日まで）。置き場 `.claude/exam-cache/exam-brain/results/` |
+| 採点 | 既定 `--judge=lazy`（道が外れ・本質の道も決まりで出る時は判定を呼ばない＝合否は同じ）。判定の並べ替え（rubric）は既定にしない（下の確かめ）。束ねる採点は入れていない（判定は1問回 約 $0.0005・費用の大半はブレイン） |
+| モデル | 既定 pro。`--model=auto` は model-check で3問以上・道が同じ9割以上・合う数が pro 以上の型だけ flash（判定は pro のまま） |
+| 台帳 | `.claude/exam-cache/exam-brain/ledger.jsonl`（問題×実行×版×前との比べ×揺れか本当か）＋揺れの記録 |
+
+確かめ（10/17）:
+- 同じ3問（q112・q113・q129）を旧のやり方（--stage=draft・判定 全部）と試験のブレイン（2段・lazy・回数・判定の並び as-is）で: 1回目の道・合否・下書きは全部同じ。判定の並び rubric では q113 の下書きの合否が 2/3→0/3 に変わった＝並べ替えは判定の答えを変える（既定は as-is）。
+- brain-exam の main の子は Windows で shell を通して回すのに引数を囲んでいなかった（置き場のパスの空白「竹内 悠馬」で --reps-file が切れた）→ 囲む。
+- 録音の鍵は別クラウドへ振り替える前の要求＝DEEPSEEK_MODEL を替えても pro の答えを返していた（モデルの比べが全部「同じ」）→ 既定と違うモデルの時だけ鍵にモデルを足す。
+- flash の比べ（8問・ブレインだけ）: 道が同じ 7/8・合否・本質の道は 3〜4問で違う → まだ flash にしない。flash のブレインは1回 約 $0.0023（pro 約 $0.009）。
+- 揺れる問題は 150問中 66問（44%）→ 直しの確かめで最初から3回にすると今より高くなる＝前と違った時だけ足す。
+- 1日の見込み（10/13〜16 の llm_usage_logs の試験 env を決まりで計算し直し）: 今 1日 $21 → 試験のブレイン（pro）約 $10〜14 → 型ごとの比べが通って直しの確かめを flash にできれば 約 $4。残りの大半は「別々の直しの確かめ」が1日 28〜63回あること。
+- 材料の長さ: ブレイン1回 約44kトークンのうち前置き（キャッシュ・$0.022/M）が 約36k・毎回変わる所が 約8k（入力の費用の 65%）・出力 約1k（25%）。前置きを削っても1回 約 $0.0008 しか減らない／変わる所（会話・台帳）を削ると答えが変わる＝この回は削っていない。

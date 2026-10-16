@@ -16,7 +16,7 @@
 //   片付け:     npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --label=dg1016-a [--from=<作業ツリー>] [--apply]
 // 決める事の引数（既定は試験のブレインが決める）:
 //   --when=auto|now|night（auto: 最後の関所・見込み $1 以上は安い時間 JST 1:30〜9:30 に予約）・--wait（予約の代わりにその時間まで待って流す）
-//   --max-reps=3・--no-early-stop・--stop-worse=3・--no-reuse・--judge=lazy|full（既定 lazy）・--judge-prefix=rubric|as-is（既定 rubric）
+//   --max-reps=3・--no-early-stop・--stop-worse=3・--no-reuse・--judge=lazy|full（既定 lazy）・--judge-prefix=as-is|rubric（既定 as-is）
 //   --model=pro|flash|auto（既定 pro・auto は model-check で道が同じだった型だけ flash）・--replay=strict・--select-n=12・--only=（範囲を絞る）
 //   -- の後ろは brain-exam.ts にそのまま渡す
 import { createClient } from "@supabase/supabase-js";
@@ -48,7 +48,8 @@ const CONV = arg("conv");
 const MAX_REPS = Math.max(1, Number(arg("max-reps", "3")) || 3);
 const GATE = flag("gate");
 const JUDGE = arg("judge", "lazy") === "full" ? "full" : "lazy";
-const JUDGE_PREFIX = arg("judge-prefix", "rubric") === "as-is" ? "as-is" : "rubric";
+// 2026-10-17 確かめ: rubric の並べ替えは判定の答えを変える（q113 の下書き 2/3→0/3）＝既定は旧の並び（as-is）。rubric は別に比べてから
+const JUDGE_PREFIX = arg("judge-prefix", "as-is") === "rubric" ? "rubric" : "as-is";
 const REPLAY = arg("replay") === "strict" ? "--replay=strict" : "--replay";
 const PRO_MODEL = "deepseek-v4-pro", FLASH_MODEL = "deepseek-flash";
 const STAGE_BY_TYPE: Record<string, string> = (() => { try { return JSON.parse(readFileSync("scripts/brain-exam/stage-by-type.json", "utf8")) as Record<string, string>; } catch { return {}; } })();
@@ -71,7 +72,9 @@ function runBrainExam(a: string[], env: Record<string, string>, watch?: (out: Ch
     const cmd = ["tsx", "--env-file=.env.local", "scripts/brain-exam.ts", ...a];
     log(`\n▶ npx ${cmd.join(" ")}${Object.keys(env).length ? `（${Object.entries(env).filter(([k]) => !/KEY|SECRET|TOKEN/.test(k)).map(([k, v]) => `${k}=${v}`).join(" ")}）` : ""}`);
     const out: ChildOut = { code: 0, baseLabels: [], mainLabels: [], stopped: false };
-    const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", cmd.map(q), { env: { ...process.env, ...env }, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
+    // 試験は既定で DeepSeek（最後の Claude は LLM_TEST_FINAL_CLAUDE=1 を自分で付ける）
+    const base = process.env.LLM_TEST_MODE || process.env.LLM_TEST_FINAL_CLAUDE ? {} : { LLM_TEST_MODE: "deepseek-all" };
+    const ch = spawn(process.platform === "win32" ? "npx.cmd" : "npx", cmd.map(q), { env: { ...process.env, ...base, ...env }, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
     let buf = "";
     const onData = (d: Buffer, err: boolean) => {
       const t = d.toString(); (err ? process.stderr : process.stdout).write(t);
@@ -139,7 +142,7 @@ async function makePlan(label: string): Promise<Plan> {
     const model = modelOf(p as PlanProblem, { mode: modelMode, flashOkTypes: mc.okTypes, gate: GATE });
     const modelLabel = model === "flash" ? `deepseek-all:${FLASH_MODEL}` : "deepseek-all";
     const fv = flakeVerdict(readObs(p.id), { problemHash: problemHash(p), model: modelLabel });
-    const reps = GATE ? Math.min(MAX_REPS, fv.verdict === "stable" ? 1 : MAX_REPS) : firstReps(fv.verdict, MAX_REPS);
+    const reps = firstReps(fv.verdict, MAX_REPS, { gate: GATE });
     const hash = problemHash(p);
     const kbKey = kbKeyOf(links[p.id], kbNow);
     const key = reuseKey({ problemHash: hash, stage: "brain", scopeKey: keys.brain, toolKey: keys.tool, cfgHash, model: modelLabel, kbKey });
@@ -150,7 +153,7 @@ async function makePlan(label: string): Promise<Plan> {
   // 3. どこまで（下書きの見込み）
   const pl = scope.filter((p) => items.has(p.id)) as PlanProblem[];
   const dAll = draftTargets(cls, pl, new Set(pl.map((p) => p.id)), { gate: GATE });
-  const draftMode: "all" | "if-changed" | "none" = GATE || cls === "draft" || cls === "both" ? "all" : dAll.ids.length ? "if-changed" : "none";
+  const draftMode: "all" | "if-changed" | "none" = cls === "draft" || cls === "both" ? "all" : dAll.ids.length ? "if-changed" : "none";
   const draftPlan = { ids: draftMode === "all" ? dAll.ids : [], why: draftMode === "all" ? dAll.why : "ブレインの判断が前（main）と変わった問題だけ（1段目の後に決める）", mode: draftMode };
   for (const id of draftPlan.ids) { const it = items.get(id); if (it) { it.draft = true; it.draftWhy = draftPlan.why; } }
   return { label, cls, clsNote, picks, items, probs, draftPlan, keys, cfgHash, ragNote };
@@ -222,7 +225,7 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   if (res.stopped) return res;
   // 2. 確かめの回: 1回目が前と違った問題（揺れか本当の変化か）を max 回まで。はっきり良い時は良くなった問題だけ
   const d = stopDecision(res.cmps, flaky);
-  const conf = confirmTargets(res.cmps, flaky, { clearlyGood: d.action === "fewer" }).filter((id) => (pl.items.get(id)!.reps < MAX_REPS));
+  const conf = confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= MAX_REPS)), { clearlyGood: d.action === "fewer" });
   if (conf.length) {
     log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${MAX_REPS}回まで${d.action === "fewer" ? "・はっきり良いので良くなった問題だけ" : ""}）: ${conf.join(",")}`);
     for (const id of conf) pl.items.get(id)!.reps = MAX_REPS;
@@ -351,7 +354,7 @@ async function warmMain() {
   const { spec, full } = loadExamProblems();
   const types = list("types");
   const ids = spec.filter((p) => !types.length || types.includes(p.type)).map((p) => p.id);
-  const reps = Object.fromEntries(ids.map((id) => { const p = effective((full.get(id) ?? spec.find((s) => s.id === id)!) as AnyProblem); return [id, firstReps(flakeVerdict(readObs(id), { problemHash: problemHash(p), model: "deepseek-all" }).verdict, MAX_REPS)]; }));
+  const reps = Object.fromEntries(ids.map((id) => { const p = effective((full.get(id) ?? spec.find((s) => s.id === id)!) as AnyProblem); return [id, firstReps(flakeVerdict(readObs(id), { problemHash: problemHash(p), model: "deepseek-all" }).verdict, MAX_REPS, { gate: true })]; }));
   mkdirSync(join(EXAM_BRAIN_DIR, "run"), { recursive: true });
   const repsFile = resolve(join(EXAM_BRAIN_DIR, "run", `warm-${Date.now().toString(36)}.reps.json`));
   writeFileSync(repsFile, JSON.stringify(reps));
