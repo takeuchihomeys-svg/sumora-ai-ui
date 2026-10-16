@@ -99,5 +99,17 @@ t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_B
   const { maskPII } = require("../pii-mask") as typeof import("../pii-mask");
   t("材料の「竹内さん」は伏せない・お客様の「田中さん」は伏せる", maskPII("竹内さんはこの番を締める。田中さん", ["YUMA"]) === "竹内さんはこの番を締める。お客様");
 }
+{
+  // 確かめる人 10/16: 新しい束の例外（MOVE_OUT_NEW_BUNDLE）は、同じ退去予定のお部屋の資料を送り直した束には効かない
+  const { moveOutViewingVerdict } = await import("../move-out-context");
+  const base = [
+    { sender: "staff", text: "メゾンラトゥール 103号室現在募集中となります！！\n10月30日退去予定となりますので、お申込みで抑えることをオススメ致します😊" },
+    { sender: "customer", text: "ありがとうございます、他も見たいです" },
+  ];
+  const same = [...base, { sender: "staff", text: "メゾンラトゥール 103号室の資料です" }, { sender: "staff", text: "[画像]" }, { sender: "customer", text: "こちらの物件気になります" }];
+  const other = [...base, { sender: "staff", text: "こちらの2件いかがでしょうか" }, { sender: "staff", text: "[画像]" }, { sender: "customer", text: "こちらの物件気になります" }];
+  t("同じ退去予定のお部屋の束は先押さえのまま", moveOutViewingVerdict(same as never, "oldest_first").reason === "hold_advised");
+  t("名前の無い新しい束は別のお部屋の話", moveOutViewingVerdict(other as never, "oldest_first").reason === "switched_to_other_property");
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

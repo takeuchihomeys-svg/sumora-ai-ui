@@ -275,7 +275,8 @@ export function moveOutViewingVerdict(msgs: ReadonlyArray<SenderText>, order: "n
     // ②' 2026-10-16（10/16 の事例 c）: 退去予定の話の後、お客様の発言を挟んでこちらが新しく物件の資料（画像の束）を送った → 名前が本文に無くても新しいお部屋の話
     //   （旧: 「こちらの2件…」の束を引用した「こちらの物件気になります」が、5日前の別のお部屋の「退去予定・お申込で抑え」で 申込へ に差し替わっていた）。戻す MOVE_OUT_NEW_BUNDLE=off
     //   お客様の今の連投の直前のこちらの束（最後のこちらの連投）の画像だけ（ad97cd40: 束の後にこちらが別の話をし、お客様が退去予定のお部屋を名前で言った番は旧のまま）
-    if (!isMoveOutMsg && /^\s*\[画像\]/.test(t) && since.slice(1, i).some((x) => x.sender === "customer") && !since.slice(i + 1).some((x) => x.sender === "customer" && since.indexOf(x) < since.length - tail.length)
+    //   束の名前が退去予定のお部屋（同じお部屋の資料を送り直した）なら新しいお部屋の話ではない（確かめる人 10/16: aboutMoveOut を見る）
+    if (!isMoveOutMsg && !aboutMoveOut && /^\s*\[画像\]/.test(t) && since.slice(1, i).some((x) => x.sender === "customer") && !since.slice(i + 1).some((x) => x.sender === "customer" && since.indexOf(x) < since.length - tail.length)
       && (typeof process === "undefined" || (process.env?.MOVE_OUT_NEW_BUNDLE ?? "").toLowerCase() !== "off")) {
       return { blocks: false, reason: "switched_to_other_property", moveOutProps };
     }
