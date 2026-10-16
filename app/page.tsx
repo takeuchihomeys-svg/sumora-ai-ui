@@ -2798,6 +2798,7 @@ export default function Home() {
             // お客様の新しい発言は会話の更新時刻も動くので、行が変わった時だけ集計を取り直す（43KB）
             void refreshLastCustomerAt();
           }
+          setPageLoading(false);
           return;
         }
         // 失敗した時は丸ごとに落とす
@@ -7398,7 +7399,9 @@ export default function Home() {
                 >クリア</button>
               </div>
             )}
-            {pageLoading ? (
+            {/* 2026-10-16 竹内「一覧に戻るさいにたまに固まる」: 引っ張って更新・名前を押した読み直しでも pageLoading が true になり、
+                出ている一覧を丸ごと「読み込み中」に置き換えていた（読み込みが止まると一覧が消えたまま）。一覧が1件でもあれば出したまま裏で読む */}
+            {pageLoading && conversations.length === 0 ? (
               <div className="p-4 text-sm text-[#667781]">読み込み中...</div>
             ) : filteredConversations.length === 0 ? (
               <div className="p-4 text-sm text-[#667781]">
@@ -7646,12 +7649,12 @@ export default function Home() {
               })()
             )}
             {/* 番兵: ここが見えたら次の40行を描く（2026-09-21 公式LINE と同じく下までスクロールした時に出す） */}
-            {!pageLoading && filteredConversations.length > listRenderCount && (
+            {!(pageLoading && conversations.length === 0) && filteredConversations.length > listRenderCount && (
               <div ref={listSentinelRef} className="py-3 text-center text-[11px] text-[#aab4ba]">
                 さらに表示中…（残り {filteredConversations.length - listRenderCount} 件）
               </div>
             )}
-            {hasMoreConversations && !pageLoading && filteredConversations.length <= listRenderCount && (
+            {hasMoreConversations && !(pageLoading && conversations.length === 0) && filteredConversations.length <= listRenderCount && (
               <button
                 onClick={() => void loadMoreConversations()}
                 disabled={loadingMoreConv}
