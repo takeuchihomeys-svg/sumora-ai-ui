@@ -1,0 +1,10 @@
+{
+  "title": "ブレインの判断が下書きに届かない時は、同じ番に並ぶ『書くな』の指示（締めの行・了承の形の見出し）を探して1つの値にそろえる — 支える一言・探す約束の締め・ご査収の置き換え（下書きの関所 10/16）",
+  "category": "ai_design",
+  "priority": 1,
+  "insight": "10/16 の束（事例 a〜g）の後の下書きの関所（stage=draft・37問・deepseek-all・前＝c31d365f）: 合格 24→25/37・最終の道 72→79%・依頼 70→73%・下書き 道 76/90→79/91・合格 70/90→71/91。悪化2問（q003・q111）は同じ下書きで判定が割れた揺れ（本当の悪化 0）。揺れの直し: ①q157 支える一言は本質の帯に『一言で支える』があっても、姿勢の『🔚 締め: 追加の締め文なし・全力でサポートを足さない』が同じ番に並び、生成は 3回中0回書かなかった（録音で確認）→ 支える番は締めの行そのものを支える一言にし、必ず含める内容にも足し、最終チェックで消さない。feeling が空でもブレインの背景の言葉（否決・期限・焦り）で支える。②q158 探す約束の材料の見出しが ack_form の決まり（【前の約束への了承】の材料がある番だけ）と違う名前で、DeepSeek のブレインは直前の答えへの了承と読み 3回中3回 receive_only → 同じ見出しにし、turn_contract.open_search（決まった処理）で下書きの待ちの形を『お気軽にご連絡＋新着出次第お送り』にした。Claude（本番のブレイン）は 1/1 wait_line → 竹内さんの実送信と同じ文。DeepSeek は 1/3。③q157 代理契約は『可否』も交渉に・判定が約束の下書きを 返信 と付ける揺れは試験の採点で 2段:check に数える（3/3 合格に）。④ご査収の置き換え: 竹内さんの手打ちのご査収（180日・お客様の後の番 64）で置き換え 旧 48 → 新 6（添え文の後のお礼の番・窓に資料が無い番・下書きが新しい資料を添える番は置き換えない）。",
+  "rationale": "生成の指示は場所が多く（本質の帯・場面の型・姿勢の締め・必ず含める内容・WE DO）、ブレインの判断を1か所に書いても別の場所の『書くな』が勝つ（設計知見 zenryoku-ack-1015 の ack_form を出口にそろえた件と同じ型）。決まりの後付けで文を足すより、ブレインの判断（turn_contract）を同じ1つの値で全部の場所に渡す。材料の見出しが決まりの見出しと違うと、ブレインは材料を決まりの対象と読まない。",
+  "context": "2026-10-16〜17 作る人（worktree-agent-a64d00d5306ea9f55）。試験 dg1016-b（今・HEAD 6e8b125d＝束＋ご査収の直し）と main-c31d365-15c4048fae（前の取り置き）、直した後 dg1016-fix1・fix2・claude2。費用 約 $5.9（DeepSeek 中心・Claude 1巡 $0.29）。調べる係を試す問題 q160 q161 を足した（BRAIN_RESEARCHER は off のまま）。",
+  "applied_to": "app/lib/turn-contract.ts（turnNeedsSupport・SUPPORT_CLOSER_LINE・open_search・contractProtectsSentence）・app/lib/repeat-brain-align.ts（ackForm*Line の新着の形・isCompactWaitLine）・app/lib/brain-core.ts（open_search）・app/lib/open-search-ack.ts（見出し）・app/lib/unsent-review-ack.ts・app/lib/takeuchi-wording-r11.ts（可否）・app/lib/property-told.ts（内覧の意向を聞き直さない）・app/api/generate-reply/route.ts・scripts/lib/brain-exam-score.ts・scripts/brain-exam/spec.json（q160 q161）",
+  "tags": ["ブレイン", "下書き", "判断はすべてブレイン基準", "書けと書くな", "試験", "揺れ", "ご査収", "代理契約", "探す約束", "支える一言", "line-reply"]
+}
