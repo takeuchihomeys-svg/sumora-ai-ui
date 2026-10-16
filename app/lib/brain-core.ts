@@ -2667,6 +2667,8 @@ ${catalogBlockForBrain(brainScene)}
   // 2026-10-14 決定 C をブレイン基準に（P0 9eb6aa9c ②）: 今の番が決定 C の番か（網）を材料で渡し、返信か AIX かはブレインが決める。
   //   後の rule:ack_after_promise_reply は aix の欄が無い時だけの網（ACK_AFTER_PROMISE_BRAIN=off で旧の上書き）
   let ackAfterPickupNow = false;
+  /** 2026-10-16（事例 f）: 了承だけの番の、まだ果たしていない探す約束の文（turn_contract.open_search に入れて下書きの待ちの形まで届ける） */
+  let openSearchQuote: string | null = null;
   if (ackAfterPromiseReplyEnabled() && ackAfterPromiseBrainEnabled() && !isPostApplyStatus(convStatus)) {
     const lastIsCust = typedMessages[0]?.sender === "customer";
     const f = brainLedger.facts;
@@ -2686,7 +2688,7 @@ ${catalogBlockForBrain(brainScene)}
           propertyAixAts: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),
           nowMs: Date.now(),
         });
-        if (osp) customerStateBlockText += `\n\n${openSearchAckLine(osp, jstMDHm)}`;
+        if (osp) { customerStateBlockText += `\n\n${openSearchAckLine(osp, jstMDHm)}`; openSearchQuote = osp.quote || null; }
       }
     }
   }
@@ -4956,7 +4958,7 @@ ${history}`;
       // 10/09 調査の担当: 決定論の規則で finalAix を変えた時は本質も合わせる（AIX が外れて2段の約束になった項目は promise に・食い違いは記録）
       // 2026-10-13 P0: 確認事項の候補ごとの状態（済み／約束済み／まだ／取り下げ・どの手段で）。画面の帯・一覧のバッジがそのまま使う（request-ledger.applyBrainRequestStatus）
       request_status: requestCands.length ? (await import("@/app/lib/request-ledger")).normalizeBrainRequestStatus((parsed as { request_status?: unknown }).request_status, requestCands, requestStatusAt) ?? undefined : undefined,
-      turn_contract: TURN_CONTRACT_BRAIN_ON ? (exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote && exhaustedNote !== SEARCH_SPLIT_EXHAUSTED_NOTE) ?? undefined) : undefined,
+      turn_contract: TURN_CONTRACT_BRAIN_ON ? (((tc0) => tc0 && openSearchQuote ? { ...tc0, open_search: openSearchQuote } : tc0)(exhaustContract(reconcileTurnContractWithAix(normalizeBrainTurnContract((parsed as { turn_contract?: unknown }).turn_contract), finalAix ?? null, conversationId), !!exhaustedNote && exhaustedNote !== SEARCH_SPLIT_EXHAUSTED_NOTE)) ?? undefined) : undefined,
       aix_llm: normalizeAixActionKey(parsed.aix) ?? undefined,
       // 2026-10-15 追加の調査（brain-deep-check）: かけた番だけ（記録・digest.dc）
       deep_check: deepCheckInfo ?? undefined,

@@ -175,8 +175,13 @@ export type AckForm = "receive_only" | "wait_line";
 /** 竹内さんの短い待ちの形の1文か（確認の「確認出来次第ご連絡させて頂きますので、何卒」・探すの「ピックアップ出来次第お送りさせて頂きますので」） */
 export function isCompactWaitLine(s: string): boolean {
   const n = normalizeSentence(s).replace(/^はい/, "");
-  return CONFIRM_WAIT_LINE_RE.test(n) || /^(?:ピックアップ|お部屋|物件)?(?:出来|でき)次第お送りさせて頂きますので何卒/.test(n);
+  return CONFIRM_WAIT_LINE_RE.test(n) || /^(?:ピックアップ|お部屋|物件)?(?:出来|でき)次第お送りさせて頂きますので何卒/.test(n)
+    // 2026-10-16（事例 f）: 探す約束の続きの待ちの形「引き続き新着でご条件に合ったお部屋が出次第お送りさせて頂きます」
+    || OPEN_SEARCH_WAIT_RE.test(n);
 }
+const OPEN_SEARCH_WAIT_RE = /^(?:引き続き)?[^。！!]{0,20}新着[^。！!]{0,40}(?:出|で)次第(?:随時)?お送りさせて(?:頂|いただ)きます/;
+/** 2026-10-16（事例 f）: 了承だけの番で、まだ果たしていない探す約束がありブレインが待ちの形を選んだ時の形（竹内さんの実送信・同じ会話 10/04 の形） */
+const OPEN_SEARCH_WAIT_SHAPE = "「気になる点等出てきましたらいつでもお気軽にご連絡ください！！」→「引き続き新着でご条件に合ったお部屋が出次第お送りさせて頂きます😌！！」";
 export function ackFormBrainEnabled(env: Env = process.env): boolean {
   return repeatBrainAlignEnabled(env) && (env.ACK_FORM_BRAIN ?? "").trim().toLowerCase() !== "off";
 }
@@ -222,7 +227,8 @@ export function ackFormMaterialLine(f: AckFormFacts | null, env: Env = process.e
 → ack_form に "receive_only"（受けだけ＝約束・日付を言い直さない）か "wait_line"（「〜出来次第ご連絡（お送り）させて頂きますので、何卒…」の短い1文だけ・何を・いつ・日付を並べ直さない・言い切りの約束を書かない）を入れる。`;
 }
 /** 生成の本質の行（ブレインが ack_form を決めた番） */
-export function ackFormContractLine(f: AckForm | null | undefined): string {
+export function ackFormContractLine(f: AckForm | null | undefined, openSearch?: string | null): string {
+  if (f === "wait_line" && openSearch) return `- 前の約束への了承の返事（ブレインの判断＝待ちの形・まだ果たしていない探す約束「${openSearch}」の続き）: ${OPEN_SEARCH_WAIT_SHAPE} の2文だけ。条件・物件名・日付を並べ直さない・申込や内覧の提案を足さない。`;
   if (f === "receive_only") return "- 前の約束への了承の返事（ブレインの判断）: 受けだけ（約束・日付・確認の中身を言い直さない・待ちの形の1文も書かない）。";
   if (f === "wait_line") return "- 前の約束への了承の返事（ブレインの判断）: 待ちの形の短い1文だけ（「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」／探す約束なら「ピックアップ出来次第お送りさせて頂きますので、何卒…」）。何を・いつ・誰から・日付を並べ直さない・言い切りの約束（「〜確認させて頂きます」）を書かない。";
   return "";
@@ -252,13 +258,15 @@ export function ackFormFollowEnabled(env: Env = process.env): boolean {
   return (env.ACK_FORM_FOLLOW ?? "").trim().toLowerCase() !== "off";
 }
 /** 了承の返事の形の1行（場面の型・往復文脈の役割・avoid の「代わりに」に同じ値を渡す） */
-export function ackFormShapeLine(f: AckForm): string {
+export function ackFormShapeLine(f: AckForm, openSearch?: string | null): string {
+  if (f === "wait_line" && openSearch) return `前の約束への了承の返事（ブレインの判断＝待ちの形・まだ果たしていない探す約束の続き）: 開口語「はい😊！！」→${OPEN_SEARCH_WAIT_SHAPE}だけ。条件・物件名・日付を並べ直さない・申込や内覧の提案を足さない。30〜90字`;
   return f === "wait_line"
     ? "前の約束への了承の返事（ブレインの判断＝待ちの形の短い1文）: 開口語「はい！！」→「確認出来次第ご連絡させて頂きますので、何卒よろしくお願い致します😌！！」（探す約束なら「ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」）だけ。何を・いつ・日付・条件を並べ直さない・言い切りの約束（〜させて頂きます！！）を書かない。20〜70字"
     : "前の約束への了承の返事（ブレインの判断＝受けだけ）: 開口語「はい😊！！」→締め「何卒よろしくお願い致します！！」（または「気になる点出てきましたら何時でもお気軽にご連絡ください！！」）だけ。約束・確認・ピックアップ・日付・待ちの形（〜次第・〜出来ましたら）の文は書かない。10〜60字";
 }
 /** 姿勢の締めの行（了承の返事の番） */
-export function ackFormCloserLine(f: AckForm): string {
+export function ackFormCloserLine(f: AckForm, openSearch?: string | null): string {
+  if (f === "wait_line" && openSearch) return "- 🔚 締め（了承の返事・ブレインの判断）: 「引き続き新着でご条件に合ったお部屋が出次第お送りさせて頂きます😌！！」で終える（申込・内覧の提案・行動宣言を足さない）";
   return f === "wait_line"
     ? "- 🔚 締め（了承の返事・ブレインの判断）: 待ちの形の1文の「…ので、何卒よろしくお願い致します😌！！」で終える（行動宣言・サポート継続宣言を足さない）"
     : "- 🔚 締め（了承の返事・ブレインの判断）: 「何卒よろしくお願い致します！！」で終える（行動宣言・待ちの形・サポート継続宣言を足さない）";

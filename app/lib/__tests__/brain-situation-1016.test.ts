@@ -7,6 +7,7 @@ import { moveOutViewingVerdict } from "../move-out-context";
 import { pickCostBreakdownImages } from "../cost-breakdown-images";
 import { splitPropertyName } from "../customer-state";
 import { normalizeBrainTurnContract, buildTurnContract, renderTurnContractNote } from "../turn-contract";
+import { ackFormShapeLine, ackFormCloserLine, isCompactWaitLine } from "../repeat-brain-align";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
 const jst = (iso: string) => iso.slice(5, 16);
@@ -122,6 +123,19 @@ t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_B
   const other = [...base, { sender: "staff", text: "こちらの2件いかがでしょうか" }, { sender: "staff", text: "[画像]" }, { sender: "customer", text: "こちらの物件気になります" }];
   t("同じ退去予定のお部屋の束は先押さえのまま", moveOutViewingVerdict(same as never, "oldest_first").reason === "hold_advised");
   t("名前の無い新しい束は別のお部屋の話", moveOutViewingVerdict(other as never, "oldest_first").reason === "switched_to_other_property");
+}
+// ── 探す約束の続きの了承（事例 f）: ブレインの wait_line ＋ 決まった処理の open_search が下書きの形まで届く ──
+{
+  const raw = normalizeBrainTurnContract({ asks: [{ quote: "分かりました！", kind: "feeling", route: "none" }], close_only: true, ack_form: "wait_line", proposals: ["空室1部屋のためお申込みでお部屋を抑える提案"], open_search: "独立洗面台・トイレ別のご条件で引き続きお部屋お探しさせて頂きます" });
+  const tc2 = buildTurnContract({ brain: raw, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] });
+  const note2 = renderTurnContractNote(tc2);
+  t("open_search を読む", tc2.openSearch === "独立洗面台・トイレ別のご条件で引き続きお部屋お探しさせて頂きます");
+  t("待ちの形は新着の形（お気軽にご連絡＋新着出次第お送り）", /お気軽にご連絡/.test(note2) && /新着でご条件に合ったお部屋が出次第お送り/.test(note2));
+  t("申込の提案は添えない", !/お申込みでお部屋を抑える/.test(note2));
+  t("形の行・締めの行も新着の形", /新着/.test(ackFormShapeLine("wait_line", tc2.openSearch)) && /新着/.test(ackFormCloserLine("wait_line", tc2.openSearch)));
+  t("受けだけの判断なら新着の形にしない", !/新着/.test(ackFormShapeLine("receive_only", tc2.openSearch)));
+  t("探す約束が無ければ今まで通り", !/新着/.test(ackFormShapeLine("wait_line", null)));
+  t("新着の待ちの1文は短い待ちの形に数える", isCompactWaitLine("引き続き新着でご条件に合ったお部屋が出次第お送りさせて頂きます😌！！"));
 }
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);

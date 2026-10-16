@@ -77,6 +77,8 @@ export type TurnContract = {
   situation?: string | null;
   /** 2026-10-16 この発言の背景（ブレインの答える前の整理・BRAIN_TURN_BACKGROUND=off で無し） */
   background?: string | null;
+  /** 2026-10-16（事例 f）: 了承だけの番の、まだ果たしていない探す約束（brain-core の決まった処理）。ブレインが wait_line の時、待ちの1文を新着の形にする */
+  openSearch?: string | null;
   /** brain＝今の番を見たブレイン／ledger＝決定論の一覧だけ（予備） */
   source: "brain" | "ledger";
 };
@@ -175,6 +177,8 @@ export type BrainTurnContractRaw = {
   proposals?: unknown;
   feeling?: { kind?: unknown; acknowledge?: unknown } | null;
   ack_form?: unknown;
+  /** 2026-10-16（事例 f・決まった処理）: 了承だけの番で、まだ果たしていない「引き続き探す・新着をお送り」のこちらの約束の文（brain-core が open-search-ack から入れる・LLM は書かない） */
+  open_search?: unknown;
 };
 
 const ROUTES: ReadonlySet<string> = new Set(["reply", "promise", "aix", "none"]);
@@ -242,6 +246,7 @@ export function normalizeBrainTurnContract(raw: unknown): BrainTurnContractRaw |
     asks, lead_with: lw != null && lw >= 0 && lw < asks.length ? lw : null, close_only: truthy(r.close_only), must_not: mustNot, proposals,
     feeling: fk ? { kind: fk, acknowledge: truthy(r.feeling?.acknowledge) } : null,
     ...(af ? { ack_form: af } : {}),
+    ...(typeof r.open_search === "string" && r.open_search.trim() ? { open_search: clip(r.open_search, 50) } : {}),
   };
 }
 
@@ -322,6 +327,7 @@ export function buildTurnContract(input: {
     feeling, humanChecks, source: b ? "brain" : "ledger",
     situation: b && typeof b.situation === "string" ? b.situation : null,
     background: b && typeof b.background === "string" ? b.background : null,
+    openSearch: b && typeof b.open_search === "string" ? b.open_search : null,
     ackForm: b && ackFormBrainEnabled() ? normalizeAckForm(b.ack_form) : null,
   };
 }
@@ -354,7 +360,7 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   const allowance = c.alreadySaid.some((s) => promiseTopics(s).includes("pickup") || /撮影/.test(s)) ? alreadySaidAllowance() : "";
   L.push(`【🧭 この番の本質（${c.source === "brain" ? "ブレインの判断" : "依頼の一覧"}・最上位）】中身（何に答える・何を約束する・何を言わない）はここで決まる。下の場面の型・学習ルール・手本・注記は**形**（開口語・字数・言い回し・締め）だけに使い、ここと違う中身を足さない・消さない。ただし安全の線（スタッフだけが知る事・金額・空き・内覧の確定を本文で言い切らない）はここより上。`);
   if (c.closeOnly) L.push(`- 返事の要らない番: ${closeOnlyShape()}。前にした約束・予定・日付を言い直さない${c.ackForm === "wait_line" ? "（ただし下の「了承の返事」＝待ちの形の短い1文は可）" : allowance && c.ackForm !== "receive_only" ? "（ただし下の「もう言った事」の竹内さんの形＝待ちの形のピックアップの1文は可）" : ""}。新しい約束・提案・説明を足さない（お客様が『決まったら連絡します』等と待ってと言った時は「お決まりになりましたらご連絡ください」の形・物件を送り続ける約束をしない）。`);
-  const ackLine = ackFormContractLine(c.ackForm);
+  const ackLine = ackFormContractLine(c.ackForm, c.openSearch);
   if (ackLine) L.push(ackLine);
   // 2026-10-15: 了承の返事の形を決めた番は、答えの要点に前の約束の中身（ピックアップを進める・確認する）が入っていても渡さない（ack_form とぶつかる・ACK_FORM_FOLLOW=off で旧）
   const dropAns = (ans: string | null | undefined) => !!c.ackForm && !!c.ackFollow && !!ans && ackFormFollowEnabled() && ackFormDropTopic(ans);
@@ -368,7 +374,8 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
   if (c.settled.length) L.push(`- 決まった事（蒸し返さない・日付はこのまま）: ${c.settled.join(" ／ ")}`);
   if (c.mustNot.length) L.push(`- 言わない: ${c.mustNot.join(" ／ ")}`);
-  if (c.proposals.length) L.push(`- こちらから添える提案（消さない・確認の約束に置き換えない）: ${c.proposals.join(" ／ ")}`);
+  // 2026-10-16（事例 f）: 探す約束の続きの待ちの形で締める了承の番は、申込・内覧の提案を添えない（竹内さんの実送信は締め＋新着の約束だけ）
+  if (c.proposals.length && !(c.closeOnly && c.ackForm === "wait_line" && c.openSearch)) L.push(`- こちらから添える提案（消さない・確認の約束に置き換えない）: ${c.proposals.join(" ／ ")}`);
   if (c.feeling.acknowledge && c.feeling.kind) L.push(`- 気持ち（${FEELING_JA[c.feeling.kind]}）を本題の前に一言で受ける（お客様が書いた言葉に触れる・新しい言い回しを作らない）`);
   if (c.humanChecks.includes("H14_exhausted")) L.push("- 出し切った番: 物件の話は AIX【全力サポート】で送る（本文に新着待ち・再ピックアップを書かない）。");
   L.push(`- 人の当たり前: ${c.humanChecks.map((h) => HUMAN_CHECK_JA[h]).join("／")}`);

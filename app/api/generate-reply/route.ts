@@ -4291,7 +4291,7 @@ async function handleGenerateReply(req: NextRequest) {
     // 2026-10-15 作る人（zenryoku-ack-1015）: ブレインが了承の返事の形（ack_form）を決めた了承だけの番は、場面の型・往復文脈・姿勢の締め・必ず含める内容・WE DO の
     //   出口をその1つの値にそろえる（repeat-brain-align.ackFormShapeLine・戻す ACK_FORM_FOLLOW=off）
     const ackFollowForm = turnContract?.source === "brain" && turnContract.ackForm && ackFormFollowEnabled() && !isFollowUp && isAckOnlyTurn(customerMsgUnits) ? turnContract.ackForm : null;
-    const ackShape = ackFollowForm ? ackFormShapeLine(ackFollowForm) : null;
+    const ackShape = ackFollowForm ? ackFormShapeLine(ackFollowForm, turnContract?.openSearch ?? null) : null;
     // 10/15 review: 本質の側（答えの要点・最終チェック）も了承だけの番に限る（ack_form は質問・急ぎの番にも出うる＝中身の答えを外さない）
     if (turnContract && ackFollowForm) turnContract.ackFollow = true;
     if (ackFollowForm) console.info("[ack-form-follow]", JSON.stringify({ conversationId, ackForm: ackFollowForm }));
@@ -5367,7 +5367,7 @@ async function handleGenerateReply(req: NextRequest) {
     const actionLedgerNote = (!ledgerActive ? "" : isFollowUp ? buildFollowUpDoneNote(ledger) : buildLedgerNote(ledger, { customerName: customerName ?? "" })) + viewingReportNote + applyPeriodNote;
     const ledgerAnnotation = isFollowUp || !ledgerActive ? "" : buildLastStaffAnnotation(ledger);
     // 2026-09-09 Fable5 みく事例: 【🧭 姿勢】ブロック（ヘッジ判定・条件トークン・締めリテラル・即答・日程提案形・温度）。決定論の値を LLM に選ばせない
-    const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm) : null });
+    const stanceNote = isFollowUp || isTemplateOptimize ? "" : buildStanceNote(pairContext, hedge, closerVerdict, { customerName: customerName ?? "", customerText: message ?? "", ackCloserLine: ackFollowForm ? ackFormCloserLine(ackFollowForm, turnContract?.openSearch ?? null) : null });
 
     const tpoGuidanceNote = (() => {
       const lines: string[] = [];
