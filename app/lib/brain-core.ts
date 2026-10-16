@@ -4829,7 +4829,9 @@ ${history}`;
       const weakOnly = exh.exhausted && exh.strength === "weak" && weakExhaustDemoted();
       // 2026-10-14 竹内さんの決定: 出し切った後に条件を足した・言い直した番は左右のボタンではなく返信で締める（新着が出次第お送りする約束）。戻す EXHAUSTED_CONDITION_REPLY=off
       // 2026-10-14 ブレイン基準に（EXHAUSTED_CONDITION_BRAIN・既定は ack-exhausted-reply の EXHAUSTED_CONDITION_BRAIN_DEFAULT）: ブレイン自身が物件の AIX を選んだ番は上書きしない（食い違いを記録）
-      const exhCondTurn = exhaustedConditionAddTurn({ conditionChangeType, exhausted: exh.exhausted && !weakOnly && !isPostApplyStatus(convStatus), ackOnly: ackOnlyNow, axisAsks: exhAxisAsks });
+      // 2026-10-16（q133）: 同じ連投の持ち込み・見積の依頼で 2段（確認・見積の約束）に決まった番は、出し切りの締めで上書きしない（その約束が先）。戻す EXHAUSTED_KEEP_CHECK_PROMISE=off
+      const keepCheckPromise = (process.env.EXHAUSTED_KEEP_CHECK_PROMISE ?? "").toLowerCase() !== "off" && !!twoStage && (twoStage.kind === "check" || twoStage.kind === "estimate");
+      const exhCondTurn = !keepCheckPromise && exhaustedConditionAddTurn({ conditionChangeType, exhausted: exh.exhausted && !weakOnly && !isPostApplyStatus(convStatus), ackOnly: ackOnlyNow, axisAsks: exhAxisAsks });
       const llmRawPropertyAix = (() => { const a = normalizeAixActionKey(parsed.aix) ?? null; return !!a && PROPERTY_AIX.has(a); })();
       if (exhCondTurn && exhaustedConditionBrainEnabled() && llmRawPropertyAix) {
         addDemoted(demotedOverrides, { family: "search_exhausted", src: "rule:exhausted_condition_reply", would: null, brain: normalizeAixActionKey(parsed.aix) ?? null });
