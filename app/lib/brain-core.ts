@@ -3063,7 +3063,12 @@ ${history}`;
       const retry = await callBrain({ ...brainHeaders, [LLM_ACTION_HEADER]: "brain_fresh_claude" });
       logLlmUsage("brain:alt-empty-direction", retry.usage, { conversationId });
       const retryParsed = tryParseBrainJson(retry.content.find((c) => c.type === "text")?.text ?? "");
-      if (retryParsed && String(retryParsed.reply_direction ?? "").trim()) parsedAny = retryParsed;
+      // 2026-10-16 竹内さん（弱い所③）: 旧は取り直しの答えを丸ごと採用＝最初の答えの道（返信／約束／AIX の種類）ごと入れ替わっていた。
+      //   取り直すのは「方向が空」だけなので、道は最初の答えのまま残し、方向（と方向に付く欄）だけ取り直しから入れる（brain-route-keep.ts・戻す BRAIN_EMPTY_DIRECTION_KEEP_ROUTE=off）
+      if (retryParsed && String(retryParsed.reply_direction ?? "").trim()) {
+        const { mergeEmptyDirectionRetry, emptyDirectionKeepRouteEnabled } = await import("@/app/lib/brain-route-keep");
+        parsedAny = emptyDirectionKeepRouteEnabled() ? mergeEmptyDirectionRetry(parsedAny, retryParsed) : retryParsed;
+      }
     }
 
     // 2026-10-15 竹内さん（設計知見 56ecf24a・P1）「自信が無い時・根拠が見つからない時は深く調査する…全部に毎回かけない」:
