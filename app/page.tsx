@@ -732,6 +732,11 @@ type LineListCache = {
 };
 const lineListCache = (): LineListCache | null => cacheGet<LineListCache>(LINE_LIST_CACHE_KEY, LINE_LIST_CACHE_MAX_AGE_MS)?.value ?? null;
 const LIST_RENDER_STEP = 40;
+/**
+ * 2026-10-16 竹内「トーク送ったあとにLINE一覧に戻るさいにたまに固まってしまう」: 一覧の読み込み（会話・最後のお客様の発言の集計）に時間切れが無く、
+ *   スマホで通信が止まる（画面の切り替え・電波の切り替え）と await が返らず「読み込み中...」のままだった。時間切れで失敗として扱い、既存の再試行に乗せる
+ */
+const LIST_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * DB の会話の行 → 一覧の1件（一覧の最初の40件と全件の読み込みで同じ関数を使う＝表示が食い違わない）。
@@ -2683,7 +2688,7 @@ export default function Home() {
     });
   }, [conversations, selectedId, linkedCustomerMap, lastCustomerAtMap, postApplyConvIds, hotConvIds, flaggedConvIds, linkedLineUserIds, hasMoreConversations]);
   const refreshLastCustomerAt = async () => {
-    const { data, error } = await supabase.rpc("conversation_last_customer_at");
+    const { data, error } = await supabase.rpc("conversation_last_customer_at").abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS));
     if (error || !data) return;
     const map: Record<string, string> = {};
     for (const r of data as Array<{ conversation_id: string; last_customer_at: string }>) map[String(r.conversation_id)] = r.last_customer_at;
@@ -2754,7 +2759,8 @@ export default function Home() {
         .from("conversations")
         .select(CONVERSATION_LIST_COLUMNS)
         .order("updated_at", { ascending: false })
-        .limit(FIRST_PAGE_CONVERSATIONS);
+        .limit(FIRST_PAGE_CONVERSATIONS)
+        .abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS));
       if (!firstErr && firstRows && firstRows.length > 0) {
         const rows = firstRows as unknown as SupabaseConversationRow[];
         setConversations((prev) => {
@@ -2789,7 +2795,8 @@ export default function Home() {
           // ブレイン・下書きの書き込みは updated_at を動かさない事があるので、その時刻の列でも拾う（Realtime が届かない時の保険）
           .or(`updated_at.gte.${since},brain_analyzed_at.gte.${since},draft_attempted_at.gte.${since},auto_sent_at.gte.${since},draft_pending_at.gte.${since}`)
           .order("updated_at", { ascending: false })
-          .limit(200);
+          .limit(200)
+          .abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS));
         refreshStatsRef.current.delta++;
         if (!deltaErr) {
           const rows = (deltaRows ?? []) as unknown as SupabaseConversationRow[];
@@ -2798,6 +2805,7 @@ export default function Home() {
             // お客様の新しい発言は会話の更新時刻も動くので、行が変わった時だけ集計を取り直す（43KB）
             void refreshLastCustomerAt();
           }
+          setPageLoading(false);
           return;
         }
         // 失敗した時は丸ごとに落とす
@@ -2814,7 +2822,8 @@ export default function Home() {
         .from("conversations")
         .select(CONVERSATION_LIST_COLUMNS)
         .order("updated_at", { ascending: false })
-        .limit(CONV_LIMIT),
+        .limit(CONV_LIMIT)
+        .abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS)),
       refreshLastCustomerAt(),
     ]);
 
@@ -7398,7 +7407,9 @@ export default function Home() {
                 >クリア</button>
               </div>
             )}
-            {pageLoading ? (
+            {/* 2026-10-16 竹内「一覧に戻るさいにたまに固まる」: 引っ張って更新・名前を押した読み直しでも pageLoading が true になり、
+                出ている一覧を丸ごと「読み込み中」に置き換えていた（読み込みが止まると一覧が消えたまま）。一覧が1件でもあれば出したまま裏で読む */}
+            {pageLoading && conversations.length === 0 ? (
               <div className="p-4 text-sm text-[#667781]">読み込み中...</div>
             ) : filteredConversations.length === 0 ? (
               <div className="p-4 text-sm text-[#667781]">
@@ -7646,12 +7657,12 @@ export default function Home() {
               })()
             )}
             {/* 番兵: ここが見えたら次の40行を描く（2026-09-21 公式LINE と同じく下までスクロールした時に出す） */}
-            {!pageLoading && filteredConversations.length > listRenderCount && (
+            {!(pageLoading && conversations.length === 0) && filteredConversations.length > listRenderCount && (
               <div ref={listSentinelRef} className="py-3 text-center text-[11px] text-[#aab4ba]">
                 さらに表示中…（残り {filteredConversations.length - listRenderCount} 件）
               </div>
             )}
-            {hasMoreConversations && !pageLoading && filteredConversations.length <= listRenderCount && (
+            {hasMoreConversations && !(pageLoading && conversations.length === 0) && filteredConversations.length <= listRenderCount && (
               <button
                 onClick={() => void loadMoreConversations()}
                 disabled={loadingMoreConv}
