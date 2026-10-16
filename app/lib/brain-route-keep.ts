@@ -29,6 +29,29 @@ export function tcLeadAix(topAix: string | null | undefined, tc: unknown, normal
   return pick && pick !== top ? pick : null;
 }
 
+/**
+ * 2026-10-16 関所（q133・q150・q157）: ブレインが本質（asks）で「募集状況を確認する／御見積書を作る」を route=promise に決め、最後の aix の欄を null にした番は、
+ *   2段（約束の返信＋後で AIX）の印が立たず、ただの返信の番になっていた（約束の後の AIX【物件確認した】【見積書送る】が出ない）。
+ *   最後の aix が null で、約束の依頼が確認・見積の時だけ、2段の判定（resolveTwoStage）に渡す AIX をその約束から作る（finalAix は変えない）。戻す BRAIN_TC_PROMISE_TWO_STAGE=off
+ */
+export function tcPromiseTwoStageEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.BRAIN_TC_PROMISE_TWO_STAGE ?? "").trim().toLowerCase() !== "off";
+}
+export function promiseAixFromContract(tc: unknown): "property_check_result" | "estimate_sheet" | null {
+  if (!tc || typeof tc !== "object") return null;
+  const c = tc as { asks?: Array<{ route?: unknown; aix?: unknown; answer?: unknown; about?: unknown }>; close_only?: unknown };
+  if (c.close_only === true || c.close_only === "true") return null;
+  const promises = (Array.isArray(c.asks) ? c.asks : []).filter((a) => a?.route === "promise");
+  if (!promises.length) return null;
+  const keys = promises.map((a) => String(a.aix ?? ""));
+  if (keys.some((k) => /^property_check_result/.test(k))) return "property_check_result";
+  if (keys.some((k) => /^estimate_sheet/.test(k))) return "estimate_sheet";
+  const ans = promises.map((a) => `${a.answer ?? ""}`).join(" ");
+  if (/募集状況|空き|空室|管理会社に確認|可否.*確認|確認.*可否/.test(ans)) return "property_check_result";
+  if (/見積/.test(ans)) return "estimate_sheet";
+  return null;
+}
+
 /** 道を決める欄（最初の答えのまま残す。null も「AIX なし」という正当な道なので埋めない） */
 export const ROUTE_KEYS = [
   "action", "aix", "reply_mode", "two_stage", "turn_contract", "check_pattern", "template_hint", "after_aix_template",

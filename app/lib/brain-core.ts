@@ -4089,8 +4089,12 @@ ${history}`;
           } catch (e) { console.warn("[brain-core] 退去予定日の読み取りに失敗（確認の約束）:", e instanceof Error ? e.message : String(e)); }
         }
       }
+      // 2026-10-16（q133・q150・q157）: 本質が確認・見積の約束で最後の aix が null の番も 2段の判定に入れる（brain-route-keep.promiseAixFromContract・BRAIN_TC_PROMISE_TWO_STAGE=off）
+      const { promiseAixFromContract, tcPromiseTwoStageEnabled } = await import("@/app/lib/brain-route-keep");
+      const tcPromiseAix = !finalAix && tcPromiseTwoStageEnabled() ? promiseAixFromContract((parsed as { turn_contract?: unknown }).turn_contract) : null;
+      if (tcPromiseAix) console.log(JSON.stringify({ tag: "brain:tc-promise-two-stage", conversationId, aix: tcPromiseAix }));
       twoStage = resolveTwoStage({
-        finalAix, decisionSource, pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
+        finalAix: finalAix ?? tcPromiseAix, decisionSource: decisionSource ?? (tcPromiseAix ? "llm" : null), pickupReady, postApply: isPostApplyStatus(convStatus), roomPhoto,
         // 5巡目（10/07）: 内覧の希望（日時の指定なし・内覧できるかまだ伝えていない）はまず内覧できるかの確認の約束（viewing-check-first）
         viewingCheckFirst: finalAix === "viewing_invite" && !viewingDateAnswer && !!brainLedger.facts.viewingFlow && viewingCheckFirst({
           stage: brainLedger.facts.viewingFlow.stage, currentReply: brainLedger.facts.viewingFlow.currentReply, currentWish: brainLedger.facts.viewingFlow.currentWish,

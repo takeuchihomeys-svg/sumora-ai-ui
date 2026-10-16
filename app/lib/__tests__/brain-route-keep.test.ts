@@ -23,5 +23,12 @@ t("既定 on・off で戻す", emptyDirectionKeepRouteEnabled({}) && !emptyDirec
   t("最後の欄が null（2段）→ 触らない", tcLeadAix(null, { asks: [{ route: "aix", aix: "viewing_invite" }] }, norm) === null);
   t("同じなら触らない", tcLeadAix("viewing_invite", { asks: [{ route: "aix", aix: "viewing_invite" }] }, norm) === null);
 }
+{
+  const { promiseAixFromContract } = require("../brain-route-keep") as typeof import("../brain-route-keep");
+  t("約束が見積 → estimate_sheet", promiseAixFromContract({ asks: [{ route: "promise", aix: null, answer: "敷金礼金無しで" }, { route: "promise", aix: "estimate_sheet" }] }) === "estimate_sheet");
+  t("約束が確認（答えの文）→ property_check_result", promiseAixFromContract({ asks: [{ route: "promise", answer: "お子様の入居可否を管理会社に確認" }] }) === "property_check_result");
+  t("確認と見積の両方 → 確認が先", promiseAixFromContract({ asks: [{ route: "promise", aix: "estimate_sheet" }, { route: "promise", aix: "property_check_result" }] }) === "property_check_result");
+  t("ピックアップの約束・返信だけ・閉じる番は null", promiseAixFromContract({ asks: [{ route: "promise", answer: "ご条件でピックアップしお送り" }] }) === null && promiseAixFromContract({ asks: [{ route: "reply" }] }) === null && promiseAixFromContract({ close_only: true, asks: [{ route: "promise", aix: "estimate_sheet" }] }) === null);
+}
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
