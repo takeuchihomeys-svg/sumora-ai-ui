@@ -146,7 +146,8 @@ export function replaceDisplayStandalone(text: string, display: string, replacem
   //   字の種類の境目を見ても「42.75㎡の1LDK」「阿倍野8の202号室」（表示名「の」）・「J’S Garden」「S-FORT」（表示名「S」）は
   //   記号・数字に挟まれて語の外に見え、物件名・面積が壊れていた（実送信1,986通に当てて の18通・S16通）。
   //   1〜2字の字が敬称なしで単独に出る所は、ほぼ全部が名前ではない。呼びかけ（「〇さん」）は上の敬称つきの置き換えが受け持つ
-  if (chars.length <= 2 && /[\p{L}\p{N}]/u.test(display)) return { text, count: 0 };
+  //   2026-10-16 確かめる人: 「字だけ」に限る（「a🤫」「S.」のように絵文字・記号が混じる表示名は名前と分かるので今まで通り置き換える）
+  if (chars.length <= 2 && /^[\p{L}\p{N}]+$/u.test(display)) return { text, count: 0 };
   const headCls = charClass(chars[0]);
   const tailCls = charClass(chars[chars.length - 1]);
   let out = "";
@@ -191,7 +192,9 @@ export function enforceCustomerName(
     const addressReSrc = `${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)${TRAILING_PARTICLE_RE_SRC}`;
     // 2026-10-16 短い名前の点検: 敬称の前の表示名も、左隣が同じ字の種類なら別の名前の一部（表示名「し」で「たかしさん」→「たか〇〇さん」・
     //   表示名「あ」で「ゆりあさん」→「ゆり〇〇さん」。実送信1,986通に当てて し8通・あ27通）。左隣が同じ種類の字の時は触らない
-    const headCls = charClass(Array.from(display)[0]);
+    //   2026-10-16 確かめる人: 左の境目は短い表示名（1〜2字）だけに当てる。長い表示名が他の名前の一部になる事はほぼ無く、
+    //   当てると「…沿線から〈5字の表示名〉さんご希望の」（直前が「から」）の呼びかけを直せなくなっていた（下書き・送信 400日で3通・同じ1文）
+    const headCls = Array.from(display).length <= 2 ? charClass(Array.from(display)[0]) : null;
     let addrHit = 0;
     if (new RegExp(addressReSrc, "g").test(cleaned)) {
       cleaned = cleaned.replace(

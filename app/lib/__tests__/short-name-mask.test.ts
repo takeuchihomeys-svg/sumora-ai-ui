@@ -32,6 +32,8 @@ t("短い表示名は敬称なしの所を置き換えない（の・S）",
 t("長い表示名は語の外なら今まで通り置き換える",
   replaceDisplayStandalone("H!tom!.Mご希望のお部屋", "H!tom!.M", "山田").text === "山田ご希望のお部屋");
 t("絵文字の表示名は今まで通り置き換える", replaceDisplayStandalone("🐥ご希望の", "🐥", "ひよ").text === "ひよご希望の");
+t("字と絵文字が混じる2字の表示名（a🤫）は今まで通り置き換える", replaceDisplayStandalone("ご案内です。a🤫ご希望の", "a🤫", "山本").count === 1);
+t("長い表示名の呼びかけは左隣が日本語でも呼び名に直す（沿線からミナト★さん）", enforceCustomerName("沿線からミナト★さんご希望の", { customerName: "山本", lineDisplayName: "ミナト★" }).cleaned === "沿線から山本さんご希望の");
 
 // ── 名前の読み替え（DeepSeek に渡す前に伏せて、出口で戻す） ──
 for (const party of ["し", "の", "ア", "田", "はる", "まし", "ユキ"]) {
