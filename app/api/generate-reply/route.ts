@@ -5427,7 +5427,9 @@ async function handleGenerateReply(req: NextRequest) {
         ? [`お客様が聞いている会社の事実（上の【🏢】の内容）への直接の回答`]
         : [];
       // 10/15: 了承の返事の番は前の約束の中身（確認・見積・ピックアップの進行）を必ず含める内容から外す（ack_form と書けと書くなを並べない）
-      const mustInclude = [...factTopics, ...(ackFollowForm ? effectiveKeyTopics.filter((t) => !ackFormDropTopic(t)) : effectiveKeyTopics)];
+      // 2026-10-16 下書きの関所（q157）: 支える一言は締めの行・本質の帯に置いても生成が書かない（3回中0回・録音で確認）→ 必ず含める内容にも同じ1つの値を足す
+      const supportTopic = turnNeedsSupport(turnContract) ? ["最後に一言で支える（「無事ご入居間に合いますように最善を尽くさせて頂きます！！」の形・お客様の事情に合わせて）"] : [];
+      const mustInclude = [...factTopics, ...(ackFollowForm ? effectiveKeyTopics.filter((t) => !ackFormDropTopic(t)) : effectiveKeyTopics), ...supportTopic];
       if (mustInclude.length) {
         lines.push(`- ✅ 必ず含める内容（${mustInclude.length}件すべて必須）: ${mustInclude.join(" / ")}`);
         lines.push("  → 各項目を返信本文で最低1文、明示的に扱うこと。1つでも欠けた返信は不合格。ただし箇条書きの丸写しではなく会話の流れに自然に織り込む");
