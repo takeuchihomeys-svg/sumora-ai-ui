@@ -159,7 +159,8 @@ export function rateByType(rows: ReadonlyArray<{ type: string; tags?: string[]; 
 export function normalizeDraftCode(code: string, draft: string | null | undefined, accept: ReadonlyArray<string>): string {
   // 2026-10-16 下書きの関所: 判定（DeepSeek）が「募集状況確認させて頂きます」「管理会社に交渉させて頂きます」の約束の下書きを 返信 と付ける揺れ（q157 で 3回中2回）。
   //   確認・交渉の約束の文（結果の報告「確認させて頂きましたところ」は除く）がある下書きは 2段:check に数える（前・今の両方に同じく当たる）
-  if (code === "返信") {
+  // 2026-10-17 確かめる人: 正解に 2段:check がある問題だけ（正解が 返信 だけの q007「募集状況随時確認させて頂きます＋出次第お送り」の竹内さんの形を 2段:check に替えて落としていた）
+  if (code === "返信" && accept.includes("2段:check")) {
     const t0 = String(draft ?? "").normalize("NFKC");
     if (/(?:確認|交渉)(?:させて|致し|し)(?:頂|いただ)?き?ます(?!た)|確認出来次第ご連絡/.test(t0) && !/確認させて(?:頂|いただ)きましたところ/.test(t0)) return "2段:check";
   }

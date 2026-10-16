@@ -72,6 +72,10 @@ eq("型ごと", r.map((x) => `${x.type}:${x.pass}/${x.n}`), ["出し切り:1/2",
 eq("確認＋見積→check", normalizeDraftCode("2段:estimate", "お送り頂きました2件の物件、募集状況を確認させて頂きます！！\n確認出来次第、最大限割引させて頂いた初期費用の御見積書をお送りさせて頂きます！！", ["2段:check"]), "2段:check");
 eq("見積だけ→そのまま", normalizeDraftCode("2段:estimate", "御見積書を作成しお送りさせて頂きます！！", ["2段:check"]), "2段:estimate");
 eq("正解に estimate がある→そのまま", normalizeDraftCode("2段:estimate", "募集状況確認させて頂きます 御見積書", ["2段:check", "2段:estimate"]), "2段:estimate");
+// 10/16〜17: 判定が 返信 と付けた確認・交渉の約束の下書きは、正解に 2段:check がある時だけ 2段:check に数える
+eq("確認の約束・正解 check→check", normalizeDraftCode("返信", "募集状況確認させて頂きます！！", ["2段:check"]), "2段:check");
+eq("結果の報告は替えない", normalizeDraftCode("返信", "確認させて頂きましたところ募集中です", ["2段:check"]), "返信");
+eq("正解が 返信 だけ（q007 の形）は替えない", normalizeDraftCode("返信", "募集状況随時確認させて頂きます！！ご条件に合ったお部屋出次第お送りさせて頂きます！！", ["返信"]), "返信");
 
 console.log(`${pass} PASS / ${fail} FAIL`);
 if (fail) process.exit(1);

@@ -77,7 +77,14 @@ t("返信の本質に背景と支える一言", /この発言の背景（ブレ�
   const tcS = buildTurnContract({ brain: r2, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] });
   t("支える番は締めの行も支える一言（書くな の締めと並べない）", turnNeedsSupport(tcS) && /最善を尽くさせて頂きます/.test(SUPPORT_CLOSER_LINE));
   t("支える一言は最終チェックで消さない", contractProtectsSentence(tcS, "無事ご入居間に合いますように最善を尽くさせて頂きます！！", {}));
-  t("焦りの無い背景には支える一言を出さない", !/一言で支える/.test(renderTurnContractNote(buildTurnContract({ brain: r3, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] }))));
+  // 10/17 確かめる人: 期限の事情だけで締めを必須にする（否決・急ぎ・気持ちだけの番は締めにしない）
+  const mk = (bg: string, fk?: string, extra: Record<string, unknown> = {}) => buildTurnContract({ brain: normalizeBrainTurnContract({ background: bg, asks: [{ quote: "書類はどれですか", route: "reply" }], ...(fk ? { feeling: { kind: fk, acknowledge: false } } : {}), ...extra }), brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] });
+  t("否決の後の事務の番は締めを必須にしない", !turnNeedsSupport(mk("審査否決の後、別の保証会社で審査を進め必要書類を聞いている")));
+  t("急ぎの気持ちだけの番は締めを必須にしない（本質の帯の1行は残る）", (() => { const c = mk("内覧を急いで決めたい", "hurried"); return !turnNeedsSupport(c) && /一言で支える/.test(renderTurnContractNote(c)); })());
+  t("退去に間に合うかの背景は支える", turnNeedsSupport(mk("月末の退去に間に合うか焦って物件を送っている")));
+  t("了承だけの返事の番（ackFollow）は支えない", (() => { const c = mk("出産前の引越し期限が迫る"); c.ackFollow = true; return !turnNeedsSupport(c); })());
+  t("「ペット可否」と代理契約の同じ文は交渉にしない", fixProxyNegotiate("ペット可否と代理契約について確認させて頂きます！！", true).changes.length === 0);
+  t("焦りの無い背景には支える一言を出さない",!/一言で支える/.test(renderTurnContractNote(buildTurnContract({ brain: r3, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] }))));
 }
 t("背景だけでも本質は残る", normalizeBrainTurnContract({ background: "x の背景" })?.background === "x の背景");
 t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_BACKGROUND = "off"; const r = normalizeBrainTurnContract({ background: "y", asks: [{ quote: "a" }] }); delete process.env.BRAIN_TURN_BACKGROUND; return !r?.background; })());
@@ -144,7 +151,8 @@ t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_B
   t("申込の提案は添えない", !/お申込みでお部屋を抑える/.test(note2));
   t("形の行・締めの行も新着の形", /新着/.test(ackFormShapeLine("wait_line", tc2.openSearch)) && /新着/.test(ackFormCloserLine("wait_line", tc2.openSearch)));
   t("受けだけの判断なら新着の形にしない", !/新着/.test(ackFormShapeLine("receive_only", tc2.openSearch)));
-  t("探す約束が無ければ今まで通り", !/新着/.test(ackFormShapeLine("wait_line", null)));
+  t("出し切った番は新着の待ちの形にしない（H14 とぶつけない）", buildTurnContract({ brain: raw, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [], facts: { exhausted: true } }).openSearch === null);
+  t("探す約束が無ければ今まで通り",!/新着/.test(ackFormShapeLine("wait_line", null)));
   t("新着の待ちの1文は短い待ちの形に数える", isCompactWaitLine("引き続き新着でご条件に合ったお部屋が出次第お送りさせて頂きます😌！！"));
 }
 console.log(`\n${pass} OK / ${fail} NG`);

@@ -327,7 +327,8 @@ export function buildTurnContract(input: {
     feeling, humanChecks, source: b ? "brain" : "ledger",
     situation: b && typeof b.situation === "string" ? b.situation : null,
     background: b && typeof b.background === "string" ? b.background : null,
-    openSearch: b && typeof b.open_search === "string" ? b.open_search : null,
+    // 2026-10-17 確かめる人: 出し切った番は H14（本文に新着待ちを書かない・AIX【全力サポート】）と新着の待ちの形がぶつかる → 出し切りを優先
+    openSearch: b && typeof b.open_search === "string" && !facts.exhausted ? b.open_search : null,
     ackForm: b && ackFormBrainEnabled() ? normalizeAckForm(b.ack_form) : null,
   };
 }
@@ -348,12 +349,17 @@ export function isConfirmPromiseAsk(a: Pick<ContractAsk, "route" | "aixKey" | "a
   return a.topic !== "cost" && a.topic !== "pickup";
 }
 const canConfirm = (a: ContractAsk) => isConfirmPromiseAsk(a);
-/** ブレインの背景の文に焦り・不安の事情がある（審査否決・落ちた・期限・間に合う・急ぐ・迫る・焦る・不安・心配） */
-const ANXIOUS_BACKGROUND_RE = /焦|不安|心配|間に合|期限|迫|否決|審査落|落ちた|急い|急ぎ/;
-/** 不安・焦りの背景で一言支える番か（ブレインの feeling か背景の言葉）。了承だけの返事の番（ack_form）は出さない */
+/**
+ * ブレインの背景の文に「入居・退去の期限に間に合うか」の事情がある。
+ * 2026-10-17 確かめる人: 竹内さんの実送信で支える一言（最善を尽く・間に合いますよう）は 4266 番中 1 回だけ（q157＝審査否決の後・出産前の引越し期限）。
+ *   旧の線（feeling が anxious/hurried/disappointed か 焦・不安・急ぎ・否決 の語）は、本番のブレインの気持ちの欄で 18% の番に当たり、
+ *   否決は一度出ると以後の背景に残る（否決の後の番は全体の 15%）＝事務の番・申込以降にも締めの一言を必須にしてしまう。期限の事情に絞る
+ */
+const DEADLINE_BACKGROUND_RE = /間に合|(?:入居|退去|引越|引っ越|転居|出産)[^。、]{0,10}(?:期限|迫)|期限が迫|日が迫|迫って/;
+/** 期限の事情の背景で一言支える番か（締めの行・必ず含める内容・最終チェックで消さない）。了承だけの返事の番（ack_form）は出さない */
 export function turnNeedsSupport(c: TurnContract | null | undefined): boolean {
-  if (!c || !c.background || !turnBackgroundEnabled() || c.closeOnly) return false;
-  return c.feeling.kind === "anxious" || c.feeling.kind === "hurried" || c.feeling.kind === "disappointed" || ANXIOUS_BACKGROUND_RE.test(c.background);
+  if (!c || !c.background || !turnBackgroundEnabled() || c.closeOnly || c.ackFollow) return false;
+  return DEADLINE_BACKGROUND_RE.test(c.background);
 }
 /**
  * 2026-10-16 下書きの関所（q157・5回のなぜ）: 支える一言が本質の帯にあっても、姿勢の「🔚 締め: 追加の締め文なし（…）・『全力でサポート』『何卒よろしく』を足さない」が
@@ -382,7 +388,8 @@ export function renderTurnContractNote(c: TurnContract | null | undefined): stri
     L.push(`- この発言の背景（ブレイン）: ${c.background}`);
     // 2026-10-16 下書きの関所（q157 の揺れ）: ブレインが背景に焦り・不安（審査否決の後・期限が迫る）を書いたのに feeling を空にする回があり、支える一言が入ったり入らなかったりした。
     //   ブレイン自身の背景の言葉でも支える（ブレインの判断を下書きまで届ける）
-    if (turnNeedsSupport(c)) L.push("- 不安・焦りの背景がある番: 本題の後、締めの前に一言で支える（例の形「無事ご入居間に合いますように最善を尽くさせて頂きます」・言い切り・新しい約束・決まり文句の上乗せはしない）");
+    // 2026-10-17 確かめる人: 気持ちだけ（期限の事情なし）の番は前の通り本質の帯の1行だけ（締め・必ず含める内容にはしない）
+    if (turnNeedsSupport(c) || c.feeling.kind === "anxious" || c.feeling.kind === "hurried" || c.feeling.kind === "disappointed") L.push("- 不安・焦りの背景がある番: 本題の後、締めの前に一言で支える（例の形「無事ご入居間に合いますように最善を尽くさせて頂きます」・言い切り・新しい約束・決まり文句の上乗せはしない）");
   }
   c.asks.forEach((a, i) => L.push(`- ${i === c.leadWith ? "★先に " : ""}${i + 1}. 「${a.quote}」${axisLabel(a.axis)}→ ${ROUTE_JA[a.route]}${a.answer && !dropAns(a.answer) ? `：${a.answer}` : ""}${a.route === "aix" && a.aixKey ? `（AIX ${a.aixKey}）` : ""}`));
   if (c.alreadySaid.length) L.push(`- もう言った事（繰り返さない・言い直さない）: ${c.alreadySaid.map((s) => `「${s}」`).join(" ")}${allowance && !c.ackForm ? `\n${allowance}` : ""}`);
