@@ -105,3 +105,33 @@ export function postAixDirectTemplateOn(actionType: string | null | undefined, v
   if ((v ?? "").trim().toLowerCase() === "off") return false;
   return actionType === "property_recommendation";
 }
+
+// ─── 2026-10-16 竹内悠馬（10/16 の画面の事例 a・b）: AIX の続きは「同じテンプレの2通目」とは限らない ───────────────
+//   (a) 物件ピックアップした の後は、その中から1件オススメ＝AIX【物件オススメ】へつながる（帯が「物件ピックアップした【AIX】の続き」のままだった）。
+//       30日の本番（aix_usage_logs・読むだけ）: 物件ピックアップした の後にお客様の発言が無いまま次の AIX を送った 83回 → 物件オススメ 65回（78%）。
+//       物件ピックアップした は一覧の文（ご査収ください）まで AIX の中で送るので、同じテンプレの2通目は無い。
+//   (b) お客様が送った物件が募集に出ていなかった（物件確認した・unavailable）→ 条件をまだもらっていなければ条件を聞く（AIX【ヒアリング】）→
+//       条件がそろっていれば条件に合う物件を新しくピックアップ（AIX【物件ピックアップした】）。60日: unavailable の後にお客様の発言なしで次の AIX 15回 →
+//       物件オススメ 7・物件ピックアップした 4・見積書 2・ヒアリング 1（代わりの物件を出す）。
+//   決め: 帯は「次の AIX」を出し、押すとその AIX を開く。それ以外は今まで通り（同じテンプレの続き）。戻す NEXT_PUBLIC_POST_AIX_NEXT=off
+export function postAixNextEnabled(v: string | null | undefined): boolean {
+  return (v ?? "").trim().toLowerCase() !== "off";
+}
+export type NextAixAfterAix = { action: "property_recommendation" | "condition_hearing" | "property_send"; why: string };
+/**
+ * 直前に送った AIX の後の「次の AIX」（同じテンプレの2通目でない時だけ）。無ければ null（今まで通りの帯）。
+ * hasConditions: 希望の条件（エリアと家賃）がそろっているか
+ */
+export function nextAixAfterAix(i: { aixType: string | null | undefined; checkPattern?: string | null; hasConditions: boolean }): NextAixAfterAix | null {
+  if (i.aixType === "property_send") return { action: "property_recommendation", why: "物件ピックアップした の続き＝その中から1件オススメ" };
+  if (i.aixType === "property_check_result" && /^(?:unavailable|all_unavailable|none_available)$/.test(String(i.checkPattern ?? ""))) {
+    return i.hasConditions
+      ? { action: "property_send", why: "送って頂いた物件が募集に出ていない＝ご条件に合う物件を新しくピックアップ" }
+      : { action: "condition_hearing", why: "送って頂いた物件が募集に出ていない・ご条件がまだ＝条件を聞く" };
+  }
+  return null;
+}
+/** 条件の行（property_customers）から「エリアと家賃がそろっている」 */
+export function hasSearchConditions(row: { desired_area?: string | null; rent_max?: number | null } | null | undefined): boolean {
+  return !!(row && String(row.desired_area ?? "").trim() && typeof row.rent_max === "number" && row.rent_max > 0);
+}

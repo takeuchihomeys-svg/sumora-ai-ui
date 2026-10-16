@@ -954,9 +954,18 @@ async function main() {
       const times = h.sceneTimes(texts.length, { stepSec: 90 });
       // 連投の始まり（最後のお客様の通のまとまり）
       let burst = p.context.length; while (burst - 1 >= 0 && p.context[burst - 1].s === "customer") burst--;
+      // 2026-10-16 引用返信（ExamMsg の lm/q/img）: 引用された通と引用した通を同じ新しい id でつなぐ（元の LINE の id は使わない）。
+      //   こちらの画像の URL も写す＝台帳の sent_properties（image_url）と照らして「引用返信→スタッフが送った物件資料〈物件名〉」が本番と同じく出る
+      const lmMap = new Map<string, string>();
+      const newLm = (orig: string) => { let v = lmMap.get(orig); if (!v) { v = `${PREFIX}${randomUUID()}`; lmMap.set(orig, v); } return v; };
       const insertMsgs = async (from: number, to: number) => {
         if (to <= from) return;
-        const ins = await sb.from("messages").insert(p.context.slice(from, to).map((m, k) => ({ conversation_id: CONV, sender: m.s, text: texts[from + k] || "[画像]", is_aix_generated: m.aix, line_message_id: `${PREFIX}${randomUUID()}`, created_at: times[from + k] }))).select("id");
+        const ins = await sb.from("messages").insert(p.context.slice(from, to).map((m, k) => ({
+          conversation_id: CONV, sender: m.s, text: texts[from + k] || "[画像]", is_aix_generated: m.aix,
+          line_message_id: m.lm ? newLm(m.lm) : `${PREFIX}${randomUUID()}`, created_at: times[from + k],
+          ...(m.q ? { quoted_message_id: newLm(m.q) } : {}),
+          ...(m.img && m.s === "staff" ? { image_url: m.img } : {}),
+        }))).select("id");
         if (ins.error) throw new Error(ins.error.message);
         own = [...own, ...((ins.data ?? []) as Array<{ id: string }>).map((r) => r.id)];
       };

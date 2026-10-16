@@ -51,7 +51,15 @@ export type ExamSpec = {
   /** 2026-10-15 回す所（brain-exam.ts --stage=auto の時）: brain＝ブレインまで／draft＝下書きまで。無ければ scripts/brain-exam/stage-by-type.json の型 → brain */
   stage?: "brain" | "draft";
 };
-export type ExamMsg = { s: "customer" | "staff"; t: string; aix: boolean; ago: number };
+export type ExamMsg = {
+  s: "customer" | "staff"; t: string; aix: boolean; ago: number;
+  /**
+   * 2026-10-16 引用返信（竹内さん 10/16 の事例 c・d「どの物件の話か読めていない」）: 試験の写しに引用が無く、ブレインは「2件のどちらか未特定」と読んでいた。
+   *   引用した通（q＝引用先の LINE の id）と引用された通（lm＝自分の LINE の id・img＝こちらが送った画像の URL）だけに付ける（他の問題の中身は変えない）。
+   *   img はこちらの送った画像だけ（お客様の画像は書類の恐れがあるので写さない）。brain-exam.ts が YUMA に写す時に id を新しく振り直す
+   */
+  lm?: string; q?: string; img?: string;
+};
 export type ExamProblem = ExamSpec & {
   sub: string; hourJst: number; customer: string; context: ExamMsg[]; pc: Record<string, unknown> | null;
   staffText: string; prodBrain: { action: string | null; mode: string | null; cp: string | null; src: string | null; dir: string } | null;
@@ -117,13 +125,13 @@ const ms = (s: string) => Date.parse(s);
 const jstHour = (iso: string) => new Date(ms(iso) + 9 * 3600_000).getUTCHours();
 const oneLine = (s: string) => String(s ?? "").replace(/\n/g, "⏎");
 
-type Msg = { id: number | string; sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; staff_writer?: string | null };
+type Msg = { id: number | string; sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; staff_writer?: string | null; line_message_id?: string | null; quoted_message_id?: string | null; image_url?: string | null };
 
 /** 1問の会話を作る。作れない時は理由（文字列）を返す */
 export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string> {
   if (isTestConversation(spec.conv)) return "テスト・社内の会話";
   const { data: conv } = await sb.from("conversations").select("customer_name, property_customer_id").eq("id", spec.conv).maybeSingle();
-  const { data } = await sb.from("messages").select("id, sender, text, created_at, is_aix_generated, staff_writer").eq("conversation_id", spec.conv).lte("created_at", spec.at).order("created_at", { ascending: false }).limit(60);
+  const { data } = await sb.from("messages").select("id, sender, text, created_at, is_aix_generated, staff_writer, line_message_id, quoted_message_id, image_url").eq("conversation_id", spec.conv).lte("created_at", spec.at).order("created_at", { ascending: false }).limit(60);
   const msgs = ((data ?? []) as Msg[]).reverse();
   let end = msgs.length - 1; while (end >= 0 && msgs[end].sender !== "customer") end--;
   if (end < 0) return "お客様の通が無い";
@@ -156,7 +164,14 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
   const names = addressNamesOf([...msgs, ...afterMsgs].filter((m) => m.sender !== "customer").map((m) => m.text ?? ""));
   const mask = (s: string | null) => maskExamText(s, name, names);
   const at = ms(spec.at);
-  const context: ExamMsg[] = [...ctx, ...cust].map((m) => ({ s: m.sender === "customer" ? "customer" : "staff", t: mask(m.text) || "[画像]", aix: !!m.is_aix_generated, ago: Math.round((at - ms(m.created_at)) / 60_000) }));
+  // 2026-10-16 引用返信を写す（引用した通・引用された通だけ・ExamMsg の lm/q/img の説明）
+  const sceneMsgs = [...ctx, ...cust];
+  const quotedIds = new Set(sceneMsgs.map((m) => m.quoted_message_id).filter((x): x is string => !!x && sceneMsgs.some((o) => o.line_message_id === x)));
+  const context: ExamMsg[] = sceneMsgs.map((m) => ({
+    s: m.sender === "customer" ? "customer" : "staff", t: mask(m.text) || "[画像]", aix: !!m.is_aix_generated, ago: Math.round((at - ms(m.created_at)) / 60_000),
+    ...(m.quoted_message_id && quotedIds.has(m.quoted_message_id) ? { q: m.quoted_message_id } : {}),
+    ...(m.line_message_id && quotedIds.has(m.line_message_id) ? { lm: m.line_message_id, ...(m.sender !== "customer" && m.image_url ? { img: m.image_url } : {}) } : {}),
+  }));
   // 竹内さんの実送信（次のお客様の通まで・最初の通から30分）
   const nextCust = afterMsgs.find((m) => m.sender === "customer");
   const staffAfter = afterMsgs.filter((m) => m.sender !== "customer" && (!nextCust || ms(m.created_at) < ms(nextCust.created_at)));

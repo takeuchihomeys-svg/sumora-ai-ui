@@ -32,7 +32,7 @@ import type { CheckIssue, CheckResult } from "./lib/final-check";
 // 2026-09-09 Fable5: 未返信メッセージの結合区切り（1通内の改行と複数通を区別。generate-reply の splitMessageUnits と同名）
 import { MSG_SEP, CUST_WILL_SEND_SELF_PRED } from "./lib/reply-context";
 import { sentByStaffToday } from "./lib/daily-greeting";
-import { resolvePostAixTurn, postAixTurnFromLogEnabled, postAixTurnState, buildAixTemplateRequestBody, postAixDirectTemplateOn } from "./lib/post-aix-turn";
+import { resolvePostAixTurn, postAixTurnFromLogEnabled, postAixTurnState, buildAixTemplateRequestBody, postAixDirectTemplateOn, postAixNextEnabled, nextAixAfterAix, hasSearchConditions } from "./lib/post-aix-turn";
 import { resolveTemplateSentMessage } from "./lib/aix-template-source";
 import { taskTypesCompletedByAix } from "./lib/aix-task-link";
 import { firstReplyStateOrNull, staffHasEngaged, resolveManualBackMark } from "./lib/conversation-status";
@@ -9941,6 +9941,34 @@ export default function Home() {
                 && postAixTurnState(msgs.map((m: Message) => ({ sender: m.sender, text: m.text, isAix: m.isAix }))).state === "closed";
               const postAixDirect = !!postAixTmpl && postAixDirectTemplateOn(postAixTmpl.actionType, process.env.NEXT_PUBLIC_POST_AIX_TEMPLATE_DIRECT);
               const postAixSt = postAixGen[id];
+              // 2026-10-16 竹内悠馬（10/16 の事例 a・b）: 続きが「同じテンプレの2通目」でない AIX（物件ピックアップした→物件オススメ／募集に出ていない→ヒアリング・新しくピックアップ）は
+              //   次の AIX を出して押すと開く（post-aix-turn.nextAixAfterAix・戻す NEXT_PUBLIC_POST_AIX_NEXT=off）
+              const postAixNextAix = postAixTmpl && postAixNextEnabled(process.env.NEXT_PUBLIC_POST_AIX_NEXT)
+                ? nextAixAfterAix({ aixType: postAixTmpl.actionType ?? latestAixByConv[id]?.aixType, checkPattern: latestAixByConv[id]?.checkPattern ?? null, hasConditions: hasSearchConditions(linkedCustomerMap[id]?.rawData ?? null) })
+                : null;
+              if (postAixTmpl && postAixNextAix && !postAixClosed && !dismissedPostAixTemplateIds.has(id) && bannerOk(null)) {
+                const nm = AIX_ACTION_META[postAixNextAix.action];
+                const color = nm?.color ?? postAixTmpl.color;
+                return (
+                  <div className="mx-1 mb-1 rounded-2xl border-2 px-3 py-2 flex flex-wrap items-center gap-2" style={{ borderColor: color, backgroundColor: `${color}14` }}>
+                    <span className="text-[12px] font-bold flex-1 min-w-0" style={{ color }}>
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      次は AIX【{nm?.label ?? postAixNextAix.action}】
+                      <span className="block text-[10px] font-semibold opacity-80">{postAixNextAix.why}</span>
+                    </span>
+                    <button onClick={() => {
+                        setDismissedPostAixTemplateIds((prev) => new Set([...prev, id]));
+                        setShowAixMenu(false);
+                        setAixInspectLabel(null);
+                        openAixWithParams(postAixNextAix.action as AixActionType);
+                      }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: color }}>AIX {nm?.label ?? postAixNextAix.action}</button>
+                    <button onClick={() => setDismissedPostAixTemplateIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-[11px] font-bold" style={{ color, opacity: 0.6 }}>✕</button>
+                  </div>
+                );
+              }
               if (postAixTmpl && !postAixClosed && !dismissedPostAixTemplateIds.has(id) && bannerOk(null)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 px-3 py-2 flex flex-wrap items-center gap-2" style={{ borderColor: postAixTmpl.color, backgroundColor: `${postAixTmpl.color}14` }}>
                   <span className="text-[12px] font-bold flex-1 min-w-0" style={{ color: postAixTmpl.color }}>
