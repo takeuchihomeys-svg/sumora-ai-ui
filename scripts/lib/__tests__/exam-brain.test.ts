@@ -26,7 +26,8 @@ const all = [P("q1"), P("q2", "t", ["AIX:x"]), P("q3", "t", ["返信"], ["お手
 ok("直しの確かめは全部1回", firstReps("flaky") === 1 && firstReps("stable") === 1 && firstReps("unknown") === 1);
 ok("関所は揺れる問題だけ3回", firstReps("flaky", 3, { gate: true }) === 3 && firstReps("stable", 3, { gate: true }) === 1);
 ok("確かめは前と違った問題（もう max 回ある問題は除く）", confirmTargets([{ id: "a", cmp: "worse" }, { id: "b", cmp: "same" }, { id: "c", cmp: "better" }, { id: "d", cmp: "worse" }], new Set(["d"])).join() === "a,c");
-ok("はっきり良い時は良くなった問題だけ", confirmTargets([{ id: "a", cmp: "changed" }, { id: "c", cmp: "better" }], new Set(), { clearlyGood: true }).join() === "c");
+ok("はっきり良い時も悪化は確かめる（揺れる問題の悪化を1回で見逃さない）", confirmTargets([{ id: "a", cmp: "changed" }, { id: "w", cmp: "worse" }, { id: "c", cmp: "better" }], new Set(), { clearlyGood: true }).join() === "w,c");
+ok("はっきり良い時は良くなった問題だけ",confirmTargets([{ id: "a", cmp: "changed" }, { id: "c", cmp: "better" }], new Set(), { clearlyGood: true }).join() === "c");
 // 3. どこまで
 ok("下書きの意味: AIX だけの正解は無し", !draftEligible(all[1]) && draftEligible(all[0]));
 ok("下書きの意味: 出し切りの正解も見る", draftEligible({ id: "x", type: "t", accept: ["AIX:z"], acceptWhen: { searchExhausted: ["返信"] } }));

@@ -94,8 +94,8 @@ function runBrainExam(a: string[], env: Record<string, string>, watch?: (out: Ch
 }
 
 // ─── 前（main）との比べ ──────────────────────────────────────────────────────
-function compareAll(ids: string[], label: string, baseLabels: string[]): Array<{ id: string; cmp: Cmp; why: string }> {
-  const cur = readRows(label), base = baseLabels.flatMap((b) => readRows(b));
+function compareAll(ids: string[], label: string, baseLabels: string[], baseRows?: RowLite[]): Array<{ id: string; cmp: Cmp; why: string }> {
+  const cur = readRows(label), base = baseRows ?? baseLabels.flatMap((b) => readRows(b));
   return ids.map((id) => ({ id, ...compareProblem(cur.filter((r) => r.id === id), base.filter((r) => r.id === id)) }));
 }
 
@@ -169,7 +169,7 @@ function printPlan(pl: Plan, now: Date) {
   log(`問題 ${its.length}問（使い回し ${its.filter((x) => x.reuse).length}・揺れる ${its.filter((x) => x.flake === "flaky").length}・flash ${its.filter((x) => x.model === "flash").length}）`);
   for (const it of its) log(`  ${it.reuse ? "♻" : "▶"} ${it.id} [${pl.probs.get(it.id)?.type}] 回 ${it.reps}${it.flake === "flaky" ? "（揺れる）" : ""}・段 ブレイン${it.draft ? "→下書き" : pl.draftPlan.mode === "if-changed" && draftEligibleOf(pl, it.id) ? "（判断が変われば下書き）" : ""}${it.model === "flash" ? "・flash" : ""}${it.reuse ? "・前の結果を使う（使う物が同じ）" : ""} ← ${it.why.slice(0, 3).join("／")}`);
   log(`段: 1段目＝全部をブレインの判断まで（stage=brain）／2段目＝${pl.draftPlan.mode === "all" ? `下書きまで ${pl.draftPlan.ids.length}問（${pl.draftPlan.why}）` : pl.draftPlan.mode === "if-changed" ? `判断が前と変わった問題だけ下書きまで（最大 ${ifChangedMax}問）` : "下書きなし"}`);
-  log(`途中で止める: ${flag("no-early-stop") ? "しない" : `最初の ${DEFAULT_STOP.minSeen}問以上で前より悪い問題が ${Number(arg("stop-worse", String(DEFAULT_STOP.worseN)))}問（揺れる問題は数えない）`}・前と違った問題は確かめに ${MAX_REPS}回まで足す（はっきり良い時は良くなった問題だけ）`);
+  log(`途中で止める: ${flag("no-early-stop") ? "しない" : `最初の ${DEFAULT_STOP.minSeen}問以上で前より悪い問題が ${Number(arg("stop-worse", String(DEFAULT_STOP.worseN)))}問（揺れる問題は数えない）`}・前と違った問題は確かめに ${MAX_REPS}回まで足す（はっきり良い時は良くなった・悪くなった問題だけ）`);
   log(`見込みの費用（今の側・${peak ? "混雑時の値段込み" : "安い時間"}）: 約 $${est.now.toFixed(2)}＋判断が変わった問題の下書き 最大 $${(ifChangedMax * 0.015 * (peak ? 1.6 : 1)).toFixed(2)}／前（main）の取り置きが無い問題は main でも回す（1問 約 $0.03・夜中の --warm-main で作っておけば0）`);
 }
 function draftEligibleOf(pl: Plan, id: string): boolean { const p = pl.probs.get(id); return !!p && [...(p.accept ?? []), ...(((p.acceptWhen as { searchExhausted?: string[] } | undefined)?.searchExhausted) ?? [])].some((a) => !a.startsWith("AIX")); }
@@ -220,19 +220,25 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
   };
   const o1 = await runBrainExam(baseArgs(ids), env, watch);
   res.baseLabels = o1.baseLabels; res.mainLabels = o1.mainLabels;
-  res.cmps = compareAll(ids, label, res.baseLabels);
+  // 2026-10-17 確かめる人: brain-exam は「前」の結果ファイル（<baseLabel>.jsonl）を --only の問題だけで毎回書き直す＝確かめの回（--only=前と違った問題）の後に
+  //   読み直すと他の問題が全部「前が無い（nobase）」になり、2段目の下書きが全部の候補になっていた。1回目の「前」を控え、確かめの回の分だけ差し替える
+  let baseRows: RowLite[] = res.baseLabels.flatMap((b) => readRows(b));
+  res.cmps = compareAll(ids, label, res.baseLabels, baseRows);
   if (o1.code !== 0) log(`⚠ brain-exam が ${o1.code} で終わった（取れた問題だけ比べる）`);
   if (res.stopped) return res;
-  // 2. 確かめの回: 1回目が前と違った問題（揺れか本当の変化か）を max 回まで。はっきり良い時は良くなった問題だけ
+  // 2. 確かめの回: 1回目が前と違った問題（揺れか本当の変化か）を max 回まで。はっきり良い時は良くなった・悪くなった問題だけ
   const d = stopDecision(res.cmps, flaky);
   const conf = confirmTargets(res.cmps, new Set(ids.filter((id) => pl.items.get(id)!.reps >= MAX_REPS)), { clearlyGood: d.action === "fewer" });
   if (conf.length) {
-    log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${MAX_REPS}回まで${d.action === "fewer" ? "・はっきり良いので良くなった問題だけ" : ""}）: ${conf.join(",")}`);
+    log(`\n🔁 確かめの回（前と違った ${conf.length}問 を ${MAX_REPS}回まで${d.action === "fewer" ? "・はっきり良いので判断だけ変わった問題は省く" : ""}）: ${conf.join(",")}`);
     for (const id of conf) pl.items.get(id)!.reps = MAX_REPS;
     writeReps(Object.fromEntries(ids.map((id) => [id, pl.items.get(id)!.reps])));
     const o2 = await runBrainExam(baseArgs(conf), env);
     res.baseLabels = [...new Set([...res.baseLabels, ...o2.baseLabels])]; res.mainLabels = [...new Set([...res.mainLabels, ...o2.mainLabels])];
-    res.cmps = compareAll(ids, label, res.baseLabels);
+    const b2 = o2.baseLabels.flatMap((b) => readRows(b)).filter((r) => conf.includes(r.id));
+    const got = new Set(b2.map((r) => r.id));
+    baseRows = [...baseRows.filter((r) => !got.has(r.id)), ...b2];
+    res.cmps = compareAll(ids, label, res.baseLabels, baseRows);
     res.confirm = conf;
   }
   return res;
@@ -241,7 +247,8 @@ async function runPhase(pl: Plan, stage: "brain" | "draft", ids: string[], label
 // ─── 台帳・使い回しの保存・報告 ───────────────────────────────────────────────
 function verdictOf(id: string, cmp: Cmp, rows: RowLite[], flaky: boolean): LedgerLine["verdict"] {
   if (cmp !== "worse" && cmp !== "better" && cmp !== "changed") return null;
-  if (flaky) return "flake";
+  // 2026-10-17 確かめる人: 揺れる問題を回を見ずに「揺れ」にすると、3回とも前より悪い（本当の悪化）も「入れてよい」に数えていた＝揺れる問題も回で決める
+  void flaky;
   const ok = rows.filter((r) => !r.error);
   if (ok.length < 2) return "unconfirmed";
   return new Set(ok.map((r) => `${!!r.path?.ok}|${!!r.score?.pass}`)).size === 1 ? "real" : "flake";

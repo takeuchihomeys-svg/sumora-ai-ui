@@ -208,7 +208,9 @@ export async function runCleanup(sb: SupabaseClient, pl: CleanupPlan, apply: boo
   const { data: convRow } = await sb.from("conversations").select("id, property_customer_id").eq("id", pl.conv.id).maybeSingle();
   if (!convRow) throw new Error(`会話 ${pl.conv.name} が DB に無い`);
   // ① 条件の行（控えの id が会話の行の id と同じ時だけ戻す）
-  if (pl.pcBackup) {
+  // 2026-10-17 確かめる人: 止まった実行の線の鍵が無くても、他の生きている実行がこの会話を使っていれば条件の行は戻さない（その実行の写しを上書きする）
+  if (pl.pcBackup && pl.leaseLock?.alive) log(`  ⚠ ${pl.conv.name} を他の実行（pid ${pl.leaseLock.pid}）が使っている → 条件の行は戻さない（止まってから片付け直す）`);
+  else if (pl.pcBackup) {
     if (pl.pcBackup.id !== convRow.property_customer_id) throw new Error(`条件の行の控えの id（${pl.pcBackup.id}）が ${pl.conv.name} の行（${convRow.property_customer_id}）と違う → 戻さない`);
     log(`  条件の行 ${pl.pcBackup.id.slice(0, 8)}: 控えの ${Object.keys(pl.pcBackup.row).length}欄 を戻す`);
     if (apply) {

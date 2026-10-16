@@ -44,9 +44,12 @@ export type FlakeKind = "flaky" | "stable" | "unknown";
  *   2026-10-17 実測: 揺れる問題は 150問中 66問（44%）。直しの確かめで最初から3回にすると、今の1回の確かめより高くなる（1日の見込みが下がらない）
  */
 export function firstReps(v: FlakeKind, max = 3, o: { gate?: boolean } = {}): number { return o.gate && v === "flaky" ? Math.max(1, max) : 1; }
-/** 足して確かめる問題: 1回目が前（main）と違った問題（揺れか本当の変化かを分ける・揺れる問題も）。はっきり良い時は良くなった問題だけ。done＝もう max 回ある問題 */
+/**
+ * 足して確かめる問題: 1回目が前（main）と違った問題（揺れか本当の変化かを分ける・揺れる問題も）。はっきり良い時は良くなった問題と悪くなった問題（判断だけ変わった問題は省く）。done＝もう max 回ある問題
+ *   2026-10-17 確かめる人: はっきり良い（揺れない問題の悪化0）でも揺れる問題の悪化はあり得る＝悪化は必ず確かめる（1回だけの悪化を見逃さない）
+ */
 export function confirmTargets(cmps: Array<{ id: string; cmp: Cmp }>, done: Set<string>, o: { clearlyGood?: boolean } = {}): string[] {
-  return cmps.filter((c) => !done.has(c.id) && (o.clearlyGood ? c.cmp === "better" : c.cmp === "worse" || c.cmp === "better" || c.cmp === "changed")).map((c) => c.id);
+  return cmps.filter((c) => !done.has(c.id) && (c.cmp === "worse" || c.cmp === "better" || (!o.clearlyGood && c.cmp === "changed"))).map((c) => c.id);
 }
 
 // ─── 3. どこまで（2段） ─────────────────────────────────────────────────
@@ -109,7 +112,7 @@ export function stopDecision(cmps: Array<{ id: string; cmp: Cmp }>, flaky: Set<s
   if (seen.length >= rule.minSeen && worse.length >= rule.worseN && worse.length - better.length >= rule.worseN)
     return { action: "stop", why: `${seen.length}問中 ${worse.length}問が前より悪い（良くなった ${better.length}）＝はっきり悪化`, worse, better };
   if (seen.length >= rule.minSeen && better.length >= rule.betterN && !worse.length)
-    return { action: "fewer", why: `${seen.length}問中 ${better.length}問が良くなり悪化0＝はっきり良い（確かめは良くなった問題だけ）`, worse, better };
+    return { action: "fewer", why: `${seen.length}問中 ${better.length}問が良くなり悪化0＝はっきり良い（確かめは良くなった・悪くなった問題だけ）`, worse, better };
   return { action: "go", why: `${seen.length}問: 悪化 ${worse.length}・良くなった ${better.length}`, worse, better };
 }
 
