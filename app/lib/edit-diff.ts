@@ -207,6 +207,24 @@ export function classifyEdit(generated: string, sent: string): EditDiff {
   return { amount, sim, kinds: order.filter((k) => kinds.has(k)), deleted, rephrased, added };
 }
 
+/**
+ * 消えた行・足された行の中身（classifyEdit と同じ行の対応・同じ線 0.4）。行は core（絵文字・空白を落とした形）。
+ *   2026-10-16 直された番の拾い出し（edited-turn-miner.ts）が「何を消した・足したか」の型を数えるのに使う（数だけの classifyEdit と同じ物差し）
+ */
+export function editLines(generated: string, sent: string): { deleted: string[]; added: string[] } {
+  const gu = units(String(generated ?? "").trim()), su = units(String(sent ?? "").trim());
+  const deleted: string[] = [], added: string[] = [];
+  const usedS = new Set<number>();
+  for (const x of gu) {
+    let best = -1, bestSim = 0;
+    su.forEach((y, j) => { const v = x === y ? 1 : bigramSim(x, y); if (v > bestSim) { bestSim = v; best = j; } });
+    if (bestSim >= 0.4 || su.some((y) => y.includes(x))) { if (best >= 0) usedS.add(best); continue; }
+    deleted.push(x);
+  }
+  su.forEach((y, j) => { if (!usedS.has(j) && !gu.some((x) => x === y || x.includes(y) || bigramSim(x, y) >= 0.4)) added.push(y); });
+  return { deleted, added };
+}
+
 /** 生成文を送らなかった（別の文を送った）時の差。型は dropped だけ（中身の型を数えると別の文との比べになり型の上位を汚す） */
 export function droppedEdit(sim: number): EditDiff {
   return { amount: "rewrite", sim, kinds: ["dropped"], deleted: 0, rephrased: 0, added: 0 };

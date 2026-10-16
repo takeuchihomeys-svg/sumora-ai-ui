@@ -1,0 +1,12 @@
+[
+  {
+    "title": "大きく直された番を毎日拾う: 下書き・AIX の文と実送信を比べ（近さ0.6未満）、人しか知らない事は AIX の番に分け、竹内さんの番だけ試験の問題の候補に・全部を弱い所の候補（箱×場面×型＋設計知見 id）に",
+    "category": "ai_design",
+    "insight": "app/lib/edited-turn-miner.ts（純）・edited-turn-miner-server.ts（読むだけ）。材料は既存の組だけ: 返信＝line_watch_turns（pickJudgeDraft の下書き↔返事のまとまりの手打ち・押した AIX・書き手）、AIX＝ai_reply_examples entry_source='aix_action'（ai_draft↔sent_reply）。量は edit-diff.classifyEdit（large/rewrite＝近さ0.6未満）、型は editLines の消えた行・足した行に audit-draft-gap-types と同じ語の網（確認の約束に逃げた・人が確認の約束にした・対象のない約束を消した・余計な一文・誘いを消した/足した・挨拶・呼びかけ・締め・作業メモ・金額日時物件・長さ・書き直し）。箱は3つ: reply_edit（返信の外れ）／aix_text_edit（AIX の文の外れ）／aix_turn＝実送信が人しか知らない事（staffFactsOf の手打ちの AIX の中身・findStaffOnlyFact で下書きに無い型・会話にも下書きにも無い金額・日時＝staff_value）か AIX を押した番＝返信の外れに数えない。AIX の文で値を入れただけの直しも aix_turn。試験の候補は竹内さんの番・返信の番だけ（ce349a3f）: 正解の道は実送信から（手打ち＝返信・確認の約束＝2段:check・AIX/人しか知らない事＝AIX の族）、依頼の point は実送信を maskExamText→maskForEmbedding→部屋番号の2重で伏せた物、型は 返信かAIXか／一般的な事を保留しない（確認の約束に逃げた）／直された番、stage は道の問題＝brain・文の問題＝draft。brain-exam-add --add-batch がそのまま読む形（申込以降は buildProblem が落とす）。弱い所の候補は型→設計知見 id の表（EDIT_TYPE_KB）を添える＝費用0。",
+    "rationale": "竹内悠馬 2026-10-16「竹内さんが画面を送らなくても、直された場面から弱い所が見つかり、試験の問題も毎日増える」「人しか知らない所は AIX から送る」「出来る限り DeepSeek」。本番14日で返信の組181・AIX の組341 → 拾った173（竹内さん49）: AIX の文60・AIX の番59・返信54。弱い所の上位は AIX 新着の書き直し（検索の条件が送った文と違う＝1a35e6d6 の『入力に無い事実』と同じ）・返信の金額日時物件の直し・物件を送ってきた番の物件確認の結果。試験の候補17（竹内さんの番）→ --add-batch で2問作れた（1つは申込以降で落ちた）。副産物: 1字の LINE 名の会話（66c08958 の頭8字の hash）で下書きの『し』が全部お客様の名前に置き換わっていた6番を見つけた（pii-pseudonym の戻しの疑い・未診断）。",
+    "context": "2026-10-16 edited-turn-miner。毎日の見張りは /api/cron/line-watch-daily の後に 48〜24時間前の番を数だけ cron_run_logs の edited-turn-miner へ（文なし）。試験の候補と伏せた例は手で回す scripts/edited-turn-miner.ts（<倉庫の根>/.claude/exam-cache/edited-turns/<日付>/exam-batch.json・weak-spots.json・seen.json＝同じ番を2回出さない）。--llm は量の型だけの番を DeepSeek flash（推論なし・温度0・固定の前置き）で『どう直したか』1語に・申込の書類の印と alt-pii-gate で止める・1日の上限 30回・llm_usage_logs に書かない（8回 $0.0012）。止める EDITED_TURN_MINER=off。",
+    "applied_to": "app/lib/edited-turn-miner.ts・app/lib/edited-turn-miner-server.ts・app/lib/edit-diff.ts（editLines）・app/api/cron/line-watch-daily/route.ts・scripts/edited-turn-miner.ts",
+    "tags": ["試験", "ブレイン", "穴を見つける", "AIX", "下書き", "差分", "DeepSeek", "汎用"],
+    "priority": 2
+  }
+]
