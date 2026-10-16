@@ -1,0 +1,42 @@
+[
+  {
+    "title": "試験の問題は札（場面・伏せた言葉・効く部品・正解・関係する知見）にして、直した所の言葉の近さ＋必ず入れる問題で選ぶ — 試験の道具・設定を直した・分からない時は全部",
+    "category": "ai_design",
+    "insight": "scripts/exam-rag.ts --index で問題ごとに札（型・小場面・札・お客様の今の発言と直前のこちらの送信（伏せた物）・竹内さんの実送信（伏せた物）・段と入口のファイル・録音で見た名札・関係する知見 id）を作り text-embedding-3-small で埋める（144問 53,084トークン $0.001・文が変わった問題だけ埋め直す）。brain-exam.ts --select=rag は origin/main との差分の行（日本語の行を先に）とファイル名で問いを作り、近さの上位 N（既定12・下限0.2）＋必ず入れる問題: 差分・--select-q・commit の文で名指しされた問題 id／前は道が合っていたのに一番新しい答えで道が外れた問題／まだ回していない・足して7日以内の問題／入れた・変えた・退役した知見に紐付く問題／差分で当たった知見に紐付く・近い問題。試験の道具・設定・消した app のコード・分かれ目が分からない・差分の埋め込みが取れない・札の無い問題が半分を超える時は全部。下書きだけの変更はブレインだけの問題を選ばない。main の「前」も選んだ問題だけ（子には --only）。",
+    "rationale": "竹内悠馬 2026-10-16「試験の問題を DB にためて RAG 検索で選ぶ（API 節約と質の両方）」。5回のなぜ（前に落ちたの数え方）: 最初は『30日で一度でも ✕』で 144問中 130問超 → 『一番新しい答えが ✕』でも 72問（判定の要点の揺れ）→ 道で見ても 45問（main でもずっと外れ＝解けていない問題）→ 行ったり来たりも 36問（DeepSeek の揺れ）→ 『直前2回は道が合っていて一番新しいので外れた』で 5問。根は『落ちた』と『解けていない』『揺れる』を分けていなかった事。近さだけでは 07a14f43（q112・q022 の直し）で q112 が上位40にも入らず、commit の文の名指しで入った＝RAG は直しの途中の確かめ用・入れる前の関所は全部。",
+    "context": "2026-10-16 exam-rag。scripts/lib/exam-rag.ts（純・selectProblems・cardOfProblem）・exam-rag-run.ts（ragSelect・buildIndex・pathFailedSig・decisionOfRange）・exam-rag-store.ts。試し: --select-range=07a14f43~1..07a14f43 → 40/144問（q112・q022 名指し）・dc09dd4c → 37/144問（q153〜155 名指し）。止める: --select を付けない。前に落ちたの数え方: EXAM_RAG_FAILED=fell|last|off。",
+    "applied_to": "scripts/exam-rag.ts・scripts/lib/exam-rag.ts・scripts/lib/exam-rag-run.ts・scripts/lib/exam-rag-store.ts・scripts/brain-exam.ts（--select=rag・selectByRag）・scripts/lib/brain-exam-baseline.ts（childArgs）",
+    "tags": ["テスト", "API費用", "試験", "RAG", "汎用"],
+    "priority": 2
+  },
+  {
+    "title": "試験の問題の表は伏せた言葉だけ・会話 id は hash・知見の本文の写しを持たない・RLS で service role だけ — 表が無い間は共有の置き場で同じ形に動き、表ができたら自動で切り替える",
+    "category": "ai_design",
+    "insight": "設計 scripts/exam-rag-migration.sql（まだ流さない・竹内さんの OK が要る）: exam_problem_index（id・spec_hash・type・sub・tags・stage・words≤600字・answer≤400字・accept・parts jsonb・conv_hash・added_at・source・embedding vector(1536)・embedding_hash）と exam_problem_kb_links（problem_id・kb_id → system_design_thinking・kind auto|fixed・score・note）・RPC match_exam_problems。words/answer は maskExamText → maskForEmbedding の2重で伏せた物だけ。会話 id は sha256 の頭16字。知見の題・本文は写さない（KB の本文に会話の名前が残る行があり、maskForEmbedding でも英字の名前は残る）＝読む時に kb_id で引いて伏せる。RLS を入れて方針を作らない。表が無い間は <倉庫の根>/.claude/exam-cache/brain-exam-rag/（cards・kb-links・kb-snapshot・prefix・kb-links-pending）に同じ形で置き、select が通れば表を読む・書く（EXAM_RAG_STORE=local で止める）。",
+    "rationale": "竹内悠馬 2026-10-16「DB の表はまだ作らない（本番 DB の書き込みは OK が要る）。表の設計と migration だけ・表ができたら切り替わる作り」。紐付けを作った時に知見の決めた事の頭に会話の名前（『〇〇様の希望エリアに…』）が写ったのを見つけた → 写しを持たない設計にした。",
+    "context": "2026-10-16 exam-rag。scripts/lib/exam-rag-store.ts（useDbStore・loadCards・saveCards・loadLinks・updateLinks・kbTextMask）。",
+    "applied_to": "scripts/exam-rag-migration.sql・scripts/lib/exam-rag-store.ts",
+    "tags": ["試験", "個人情報", "データベース", "RLS", "汎用"],
+    "priority": 2
+  },
+  {
+    "title": "試験と設計知見をつなぐ: 問題 ↔ 知見の紐付け（自動の近さ＋直して通った固定）で、変えた知見の問題を必ず選び、落ちた問題に関係する知見を出し、決まりで判定できる知見は費用0の採点にする",
+    "category": "ai_design",
+    "insight": "①紐付け: --index で問題の埋め込みから RPC match_design_thinking_exact の上位5（0.3以上）を自動の候補に。直して通った時は --link-kb=<id|id8|title:題>（全部の回で合格した問題）か exam-rag.ts --link で固定に結ぶ（KB にまだ無い題は控え、親の kb-insert の後の --index で id に解く）。自動の入れ替えでも固定は残る。②知見の変化: 現行の行の文の hash の控え（kb-snapshot）と比べて入れた・変えた・退役した知見を出し、紐付いた問題を必ず選ぶ・紐付けの無い新しい知見は埋め込みの近い問題を入れる。控えは --select=rag の試験が全部回り切った時に進める。差分の言葉で KB を引いて当たった知見（0.35以上）の紐付く問題・上位3件に近い問題（0.45以上・2問）も入れる。③落ちた・悪くなった問題には関係する知見（固定 → 近さ・上位3・題と決めた事・伏せた物）を結果に出す（LLM は呼ばない）。④ scripts/lib/exam-kb-rules.ts の KB_RULES に決まりで判定できる知見を足す口（015f2950 駅の名前は会話・条件の行に出た物だけ／d94a966c 相場と比べるのは相場の材料がある時だけ）。既定は表示だけ・--kb-rules=score で下書きの合格に入れる・off で止める。",
+    "rationale": "竹内悠馬 2026-10-16「試験と設計知見（KB）をちゃんと連動させ、試験の質を上げる」。問題 → 知見の近さは問題の言葉から引くので設計の言葉の知見とは出にくい（0.3〜0.6）＝知見 → 問題の逆向きでも引いた。決まりの採点は誤爆より見逃し（駅の名前は前の平仮名を外し、2字未満は見ない）。",
+    "context": "2026-10-16 exam-rag。scripts/lib/exam-rag.ts（kbChanges・topLinks・mergeAutoLinks・addFixedLink）・exam-rag-run.ts（recordFixedLinks・commitKbSnapshot）・exam-kb-rules.ts・brain-exam.ts（summarize の『関係する知見』・afterRunKb）。試し: q153 の外れに 9de893ed・d94a966c・321e63e9 を出した。",
+    "applied_to": "scripts/lib/exam-kb-rules.ts・scripts/lib/exam-rag.ts・scripts/lib/exam-rag-run.ts・scripts/brain-exam.ts",
+    "tags": ["試験", "設計知見", "RAG", "採点", "汎用"],
+    "priority": 2
+  },
+  {
+    "title": "試験の並べ方は『段 → 前置きの印 → 型』でまとめ、比べは問題 id で束ねる（順番に依存しない）— 比べる相手の取り置きには savedAt の期限（既定7日）を付ける",
+    "category": "ai_design",
+    "insight": "orderForCache: ブレインだけの問題を先に、下書きまでの問題を後ろにまとめ（generate-reply・最終チェックの前置きが5分の切れの内に続く）、録音で見たブレインの system と最初の user の cache_control の付いた塊までの hash（prefix.json）が同じ問題を続ける・無ければ型。録音を調べるとブレインの system（約4.3万字・1h）は版ごとに同じで問題ごとには変わらない＝ブレインの段の得は小さく、主な得は下書きの段と DeepSeek。答えの比べ（perProblem・planBaseline・揺れの記録）は問題 id で束ねる＝並べ替えで結果は変わらない（単体テストで入りの順を変えても使い回し・回す問題が同じ）。止める: --order=as-is。判定は --judge-prefix=rubric で『正解の依頼・言ってはいけない事 → 場面 → 答案』（文は変えない）＝旧も場面が答案より前なので得は依頼の塊の分だけ・入れると判定の録音を1回取り直す＝既定は旧。main の取り置きは savedAt が --baseline-max-age（EXAM_BASELINE_MAX_AGE_DAYS・既定7日・off）より古ければ流し直す（DB の中身・モデル側の変化は版の鍵に入らない）。",
+    "rationale": "竹内悠馬 2026-10-16「キャッシュが効く並べ方（順番に依存しない事を確かめる）」「比べる相手の答えに期限」。",
+    "context": "2026-10-16 exam-rag。scripts/lib/exam-rag.ts（orderForCache・prefixKeyOfBody）・exam-rag-store.ts（scanCassetteForProblems）・brain-exam-baseline.ts（planBaseline の maxAgeMs・baselineMaxAgeMs）・brain-exam.ts（orderProblems・judgeOnce の JUDGE_RUBRIC_FIRST）。",
+    "applied_to": "scripts/lib/exam-rag.ts・scripts/lib/brain-exam-baseline.ts・scripts/brain-exam.ts",
+    "tags": ["テスト", "API費用", "試験", "キャッシュ", "汎用"],
+    "priority": 3
+  }
+]
