@@ -16,6 +16,7 @@
 //   ピックアップ: 「〇〇さんご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます！！」・「〇〇さんにオススメできるお部屋ピックアップさせていただきます！！」
 //   見積書: 「最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」・「お部屋の募集状況と最大限割引させて頂いたお見積書お送りさせていただきます！！」
 import { splitRequests } from "./request-ledger";
+import { jstParts } from "./jst-date";
 export type TwoStageKind = "pickup" | "check" | "estimate";
 export type TwoStageInput = {
   finalAix: string | null;
@@ -214,6 +215,12 @@ const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|estimat
 function sameDayDirect(v: TwoStageVerdict, i: TwoStageInput): boolean {
   if (typeof process !== "undefined" && (process.env?.TWO_STAGE_SAME_DAY_DIRECT ?? "").toLowerCase() === "off") return false;
   if (!SAME_DAY_SOURCES.test(v.source)) return false;
+  // 2026-10-16 竹内悠馬（10/16 の画面の事例 e・実送信 21:25「本日は管理会社の営業時間が終了しておりますので、明日一番で確認しご連絡させて頂きます」）:
+  //   管理会社の営業時間外（18時〜翌9時・日本時間）は今は確認も結果の AIX も送れない＝2通目でも約束の返信のまま（AIX は明日）。戻す TWO_STAGE_SAME_DAY_NIGHT=off
+  if ((typeof process === "undefined" || (process.env?.TWO_STAGE_SAME_DAY_NIGHT ?? "").toLowerCase() !== "off")) {
+    const h = jstParts().hour;
+    if (h >= 18 || h < 9) return false;
+  }
   const kinds = i.promisedTodayKinds ?? [];
   return v.kind === "estimate" ? kinds.includes("estimate") : kinds.includes("check") || (v.source.includes("brought_both") && kinds.includes("estimate"));
 }

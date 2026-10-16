@@ -625,9 +625,20 @@ function sseEvent(type: string, payload: Record<string, unknown>): string {
  *   end()      … 終端のイベントを返す
  * usage は DeepSeek が最後の chunk（stream_options.include_usage）で返すので、message_delta に載せる。
  */
+/**
+ * 2026-10-16 竹内悠馬（弱い所②「下書きが挨拶1行だけ残る穴」）: 10/15 03:00〜04:47 JST の DeepSeek の詰まりで、最初の1文字の後に止まった1文字ずつの形は
+ *   旧は end_turn で閉じていた＝呼び出し側は「最後まで書けた」と読み、挨拶1行だけの下書き（「〇〇さんお世話になっております！！」）を保存した
+ *   （本番 line_watch_turns: 10/15 03:20 の2番・同じ時刻に [llm-alt] stream error）。
+ *   途中で切れた（読み取りの失敗・終わりの印 finish_reason が来ないまま閉じた）時は stop_reason をこの値にする＝呼び出し側が作り直せる。
+ */
+export const ALT_STREAM_CUT_STOP = "alt_stream_cut";
+/** 戻す ALT_STREAM_CUT=off（旧: 途中で切れても end_turn） */
+export function altStreamCutEnabled(env: Record<string, string | undefined> = process.env): boolean { return (env.ALT_STREAM_CUT ?? "").trim().toLowerCase() !== "off"; }
 export function createSseConverter(model: string) {
   let started = false;
   let finish = "end_turn";
+  let gotFinish = false;
+  let errored = false;
   let out = 0, inUncached = 0, inCached = 0;
   let closed = false;
   const startEvents = (): string[] => {
@@ -661,7 +672,7 @@ export function createSseConverter(model: string) {
         inUncached = j.usage.prompt_cache_miss_tokens ?? j.usage.prompt_tokens ?? inUncached;
       }
       const c = j.choices?.[0];
-      if (c?.finish_reason) finish = c.finish_reason === "length" ? "max_tokens" : "end_turn";
+      if (c?.finish_reason) { finish = c.finish_reason === "length" ? "max_tokens" : "end_turn"; gotFinish = true; }
       const text = c?.delta?.content;
       if (typeof text === "string" && text.length > 0) {
         if (!started) res.push(...startEvents());
@@ -675,10 +686,12 @@ export function createSseConverter(model: string) {
       const res: string[] = [];
       if (!started) res.push(...startEvents()); // 1文字も来なかった時も形を壊さない
       res.push(sseEvent("content_block_stop", { index: 0 }));
-      res.push(sseEvent("message_delta", { delta: { stop_reason: finish, stop_sequence: null }, usage: { output_tokens: out } }));
+      res.push(sseEvent("message_delta", { delta: { stop_reason: (errored || !gotFinish) && altStreamCutEnabled() ? ALT_STREAM_CUT_STOP : finish, stop_sequence: null }, usage: { output_tokens: out } }));
       res.push(sseEvent("message_stop", {}));
       return res;
     },
+    /** 読み取りが途中で失敗した（終わりの印は ALT_STREAM_CUT_STOP） */
+    fail(): void { errored = true; },
     usage: () => ({ input_tokens: inUncached, output_tokens: out, cache_read_input_tokens: inCached }),
   };
 }
@@ -907,6 +920,7 @@ async function callOpenAICompatible(
           report(null);
         } catch (e) {
           // 途中で切れた時も形は閉じる（呼び出し側の parser を壊さない）。行も残す（読めた分の usage＋切れ方）
+          conv.fail();
           try { for (const ev of conv.end()) controller.enqueue(enc.encode(ev)); } catch { /* 閉じ済み */ }
           console.warn("[llm-alt] stream error:", String(e));
           report("stream_error");

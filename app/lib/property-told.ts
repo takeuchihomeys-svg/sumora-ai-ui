@@ -79,11 +79,11 @@ export function roomToldLines(i: { told: RoomTold; origin: "ours" | "customer" |
   // 目安（決めるのはブレイン）。こちらの物件で、費用の質問・前向きな反応・内覧・詳細の番だけ
   const costKnown = !!told.cost || !!told.estimate;
   if (i.topic === "cost" && told.estimate) {
-    L.push("  → 目安: 御見積書は送り済み＝金額・内訳・最終のお支払いの質問は、送った御見積書で答える AIX【初期費用について】（作り直す約束・確認の約束にしない）");
+    L.push("  → 目安: 御見積書は送り済み＝金額・内訳・最終のお支払いの質問は、送った御見積書で答える AIX【初期費用について】（route=aix・aix=cost_breakdown。作り直す約束・確認の約束にしない）");
   } else if (freshOurs && /^(?:like|viewing|detail|other)$/.test(i.topic)) {
     L.push(costKnown
-      ? "  → 目安: 初期費用まで伝え済み・送った時点で募集中＝前向きな反応の次は内覧の日程（AIX【内覧日調整】・このお部屋だけ）。募集状況の確認・御見積書を作る約束にしない（お客様が他の事を聞いていればそれに答える）"
-      : "  → 目安: 送った時点で募集中・費用はまだ＝前向きな反応の次は御見積書（AIX【見積書送る】）か内覧の日程。募集状況の確認の約束にしない");
+      ? "  → 目安: 初期費用まで伝え済み・送った時点で募集中＝前向きな反応の次は内覧の日程（route=aix・aix=viewing_invite＝AIX【内覧日調整】・このお部屋だけ・約束の返信にしない）。募集状況の確認・御見積書を作る約束にしない（お客様が他の事を聞いていればそれに答える）"
+      : "  → 目安: 送った時点で募集中・費用はまだ＝前向きな反応の次は御見積書（route=aix・aix=estimate_sheet）か内覧の日程（aix=viewing_invite）。募集状況の確認の約束にしない");
   }
   return L;
 }

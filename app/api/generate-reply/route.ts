@@ -8,8 +8,8 @@ import { logLlmUsage } from "@/app/lib/llm-usage-log";
 // 2026-09-17 竹内（返信生成の keep-warm）: 生成モデルの設定は1か所（cron/keep-warm と共有）。実際に送った prefix を記録して cron が読み直す
 import { createGenerationModel } from "@/app/lib/reply-generation-model";
 // 2026-09-19 竹内: 自動返信オンの会話の下書きは Claude のまま（印を付けて llm-alt-provider が守る）
-import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER } from "@/app/lib/llm-usage-recorder";
-import { willRouteAlt } from "@/app/lib/llm-alt-provider";
+import { LLM_AUTO_SEND_HEADER, LLM_CONVERSATION_HEADER, LLM_POST_APPLY_HEADER, LLM_CUTOFF_HEADER, LLM_ACTION_HEADER } from "@/app/lib/llm-usage-recorder";
+import { willRouteAlt, ALT_STREAM_CUT_STOP } from "@/app/lib/llm-alt-provider";
 // 2026-09-23 竹内「AIXの申込へボタンがトリガーにする」: 申込以降の判定は status だけでなく 申込へ押下・本人確認書類の受信も根拠にする
 import { loadPostApplyFacts, resolvePostApply, deepseekSafeCutoff, loadDeepseekCutoff, cutoffMs, isAfterCutoff, filterAfterCutoff, cutoffMarkOf, formatCutoffMark, loadPreCutoffCustomerChunks, NO_CUTOFF, type DeepseekCutoff, type CutoffMark } from "@/app/lib/post-apply";
 // 2026-09-26 竹内「申込の間の部分は DeepSeek に渡さず、切り替えたところ以降渡せば個人情報防げる」: 線で派生データを切る・出口の印を置く箱
@@ -6504,7 +6504,14 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             };
             // 1回目の生成
             genIndex = 1;
-            const gen1 = await consumeGeneration(genStream);
+            let gen1 = await consumeGeneration(genStream);
+            // 2026-10-16 弱い所②（下書きが挨拶1行だけ残る穴）: DeepSeek の1文字ずつの形が途中で切れた（llm-alt の ALT_STREAM_CUT_STOP）時は、
+            //   切れた文を下書きにせず Claude で1回だけ作り直す（名札を reply_generate_claude にすると別クラウドへ回らない）。戻す ALT_STREAM_CUT=off
+            if (String(gen1.stopReason ?? "") === ALT_STREAM_CUT_STOP && !isTemplateOptimize) {
+              console.warn(JSON.stringify({ tag: "gen:alt-stream-cut", conversationId, partialChars: gen1.body.length, head: gen1.body.slice(0, 30) }));
+              rawGenerations.length = 0;
+              gen1 = await consumeGeneration(createGenerationModel({ defaultHeaders: { ...autoSendHeaders, [LLM_ACTION_HEADER]: "reply_generate_claude" } }).stream(messages));
+            }
             draftBody = gen1.body;
             genStopReason = gen1.stopReason;
             // 2026-09-09 Fable5 行動台帳: 生成直後の決定論自動修正（Sonnet 不使用）。台帳に実績が無い「再度／改めて／お送りした〇〇／完了形」を

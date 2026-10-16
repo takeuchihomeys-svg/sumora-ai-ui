@@ -74,8 +74,14 @@ export function shouldQueueDraftAfterSweep(i: { meta: BrainDraftMeta; aiDraft: s
   if (!brainSweepQueueDraftOn(env)) return { queue: false, reason: "off" };
   if (i.lastSender !== "customer") return { queue: false, reason: "not_customer_turn" };
   if (!liveBrain(i.meta)) return { queue: false, reason: "no_brain" };
-  if (brainSaysAix(i.meta)) return { queue: false, reason: "brain_aix" };
+  // 2026-10-16 竹内悠馬（弱い所①「AIX で下書きが無い」）: sweep（webhook の分析が落ちた・夜の見送りの後）のブレインが AIX と決めた番は、
+  //   今まで待ち行列に載せず [AIX誘導中]＋押す AIX が出なかった（7日で 15番・下書きの欄が空のまま）。載せると generate-reply の門が LLM を呼ばずに
+  //   [AIX誘導中] と suggested_aix を保存しスタッフに通知する（applyAixGateAndRespond）。戻す BRAIN_SWEEP_QUEUE_AIX=off
+  if (brainSaysAix(i.meta)) return (env.BRAIN_SWEEP_QUEUE_AIX ?? "").toLowerCase() !== "off" && draftSlotEmptyStrict(i.aiDraft) ? { queue: true, reason: "brain_aix_gate" } : { queue: false, reason: "brain_aix" };
   if (brainSaysNoReply(i.meta)) return { queue: false, reason: "brain_no_reply" };
   if (!draftSlotEmpty(i.aiDraft)) return { queue: false, reason: "has_draft" };
   return { queue: true, reason: "brain_reply" };
 }
+
+/** 下書きの欄が本当に空（[AIX誘導中] の残りも埋まっている扱い＝AIX の門を二度通さない） */
+function draftSlotEmptyStrict(v: string | null | undefined): boolean { return !String(v ?? "").trim(); }

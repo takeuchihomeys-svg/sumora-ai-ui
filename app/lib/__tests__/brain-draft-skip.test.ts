@@ -23,7 +23,9 @@ t("note が「返信不要」で始まる時だけ返信不要（文中の語で
 
 t("sweep: ブレイン返信・下書き空 → 待ち行列", shouldQueueDraftAfterSweep({ meta: brainReply, aiDraft: null, lastSender: "customer" }, ON).queue);
 t("sweep: ブレイン返信・[AIX誘導中] の残り → 待ち行列", shouldQueueDraftAfterSweep({ meta: brainReply, aiDraft: "[AIX誘導中]", lastSender: "customer" }, ON).queue);
-t("sweep: ブレイン AIX → 載せない", !shouldQueueDraftAfterSweep({ meta: { reply_mode: "aix", action: "property_send" }, aiDraft: null, lastSender: "customer" }, ON).queue);
+t("sweep: ブレイン AIX・欄が空 → 門へ（10/16 [AIX誘導中]＋押す AIX）", shouldQueueDraftAfterSweep({ meta: { reply_mode: "aix", action: "property_send" }, aiDraft: null, lastSender: "customer" }, ON).reason === "brain_aix_gate");
+t("sweep: ブレイン AIX・[AIX誘導中] 済み → 載せない", !shouldQueueDraftAfterSweep({ meta: { reply_mode: "aix", action: "property_send" }, aiDraft: "[AIX誘導中]", lastSender: "customer" }, ON).queue);
+t("sweep: BRAIN_SWEEP_QUEUE_AIX=off → 載せない（旧）", !shouldQueueDraftAfterSweep({ meta: { reply_mode: "aix", action: "property_send" }, aiDraft: null, lastSender: "customer" }, { BRAIN_SWEEP_QUEUE_AIX: "off" }).queue);
 t("sweep: ブレイン返信不要 → 載せない", !shouldQueueDraftAfterSweep({ meta: brainWait, aiDraft: null, lastSender: "customer" }, ON).queue);
 t("sweep: 本文の下書きが残っている → 触らない", !shouldQueueDraftAfterSweep({ meta: brainReply, aiDraft: "かしこまりました！！", lastSender: "customer" }, ON).queue);
 t("sweep: スタッフの番 → 載せない", !shouldQueueDraftAfterSweep({ meta: brainReply, aiDraft: null, lastSender: "staff" }, ON).queue);

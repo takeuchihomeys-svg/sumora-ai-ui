@@ -2642,6 +2642,20 @@ ${catalogBlockForBrain(brainScene)}
     const ptNote = await Promise.race([propertyThreadNoteFor(conversationId), new Promise<string>((r) => setTimeout(() => r(""), 8_000))]);
     if (ptNote) { customerStateBlockText += `\n\n${ptNote}`; propertyThreadNoteText = ptNote; }
   } catch (e) { console.warn("[brain-core] property-thread skipped:", e instanceof Error ? e.message : String(e)); }
+  // 2026-10-16 竹内悠馬（直す事5・調べる係）: 決まった処理で拾えない「さっきの部屋」「前に言ってた条件」等は、DeepSeek が何を調べるか決め、
+  //   コードが記録を読んで行のまま渡す（まとめ直さない・申込以降・個人の値は出さない・止まったら飛ばす）。brain-researcher.ts・BRAIN_RESEARCHER=on で入る（既定 off）
+  try {
+    const { brainResearcherEnabled, researcherTrigger } = await import("@/app/lib/brain-researcher");
+    if (brainResearcherEnabled() && conversationId) {
+      const trig = researcherTrigger({ customerText: unrepliedTurn.text ?? "", postApply: isPostApplyStatus(convStatus), propertyResolved: /▶ 今の番の物件:/.test(propertyThreadNoteText) });
+      if (trig.run) {
+        const { researchVagueReference } = await import("@/app/lib/brain-researcher-server");
+        const rr = await researchVagueReference({ conversationId, customerText: unrepliedTurn.text ?? "", customerName: opts?.customerName ?? null, budgetMs: 8_000 });
+        if (rr.block) customerStateBlockText += `\n\n${rr.block}`;
+        console.log(JSON.stringify({ tag: "brain:researcher", conversationId, lookups: rr.lookups, chars: rr.block.length, ms: rr.ms, skipped: rr.skipped ?? null }));
+      }
+    }
+  } catch (e) { console.warn("[brain-core] researcher skipped:", e instanceof Error ? e.message : String(e)); }
   // 2026-10-13（ブレインの使い残し 4-3）: 送れる物件が手元にあるか（2段の約束をブレインが決める材料・申込以降は出さない）
   let pickupReadyMaterial: boolean | null = null; // 10/13 全力サポートを候補にするかの材料にも使う
   let pickupPromisedOpenNow: boolean | null = null; // 10/14 この件のピックアップの約束がもうあるか（4-3 で物件の AIX を直接にしてよいか）
@@ -2663,6 +2677,18 @@ ${catalogBlockForBrain(brainScene)}
       pickupOpen: f.pickupPromisedUnfulfilled, estimateOpen: f.estimatePromisedUnfulfilled, confirmOpen: f.confirmationPromisedUnfulfilled,
     });
     if (ackAfterPickupNow) customerStateBlockText += `\n\n${ackAfterPickupTurnLine()}`;
+    // 2026-10-16（事例 f）: 了承だけの番で、まだ果たしていない「引き続き探す・新着をお送り」の約束がある時の締めの材料（open-search-ack.ts・ACK_OPEN_SEARCH_CLOSE=off）
+    if (!ackAfterPickupNow && lastIsCust && !unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? "")) {
+      const { ackOpenSearchCloseEnabled, openSearchPromise, openSearchAckLine } = await import("@/app/lib/open-search-ack");
+      if (ackOpenSearchCloseEnabled()) {
+        const osp = openSearchPromise({
+          staffMsgs: typedMessages.filter((m) => m.sender !== "customer"),
+          propertyAixAts: (brainLedgerInput.recentAixRows ?? []).filter((r) => (r.aix_type === "property_send" || r.aix_type === "property_recommendation") && r.sent_at).map((r) => r.sent_at as string),
+          nowMs: Date.now(),
+        });
+        if (osp) customerStateBlockText += `\n\n${openSearchAckLine(osp, jstMDHm)}`;
+      }
+    }
   }
   if (overrideDemoted("two_stage_promise") && !isPostApplyStatus(convStatus)) {
     try {
