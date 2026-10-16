@@ -308,7 +308,8 @@ const stripWaitedForExample = (t: string) => (ragReplyCleanEnabled() ? stripWait
 import { consideringCloseEnabled, CONSIDERING_CLOSE_DIRECTION, CONSIDERING_CLOSE_AVOID, consideringDirectionFor, normalizeItsudemo, fixSanTachi, isAckOnlyAgree, ACK_ONLY_NOTE, nanisotsuNote } from "@/app/lib/takeuchi-reply-form-r13";
 import { writerFromText } from "@/app/lib/staff-writer";
 import { applyPromptR11, promptR11Enabled } from "@/app/lib/prompt-r11";
-import { fixTakeuchiWording } from "@/app/lib/takeuchi-wording-r11";
+import { fixTakeuchiWording, fixProxyNegotiate } from "@/app/lib/takeuchi-wording-r11";
+import { fixUnsentReviewAck } from "@/app/lib/unsent-review-ack";
 import { buildSituationNote } from "@/app/lib/customer-situation-r11";
 import { resolveReplyScene, sceneMaterialsEnabled, keepMaterial, phaseGuideForScene, stripKnowledgeSections, SCENE_EXAMPLE_BOOST, consideringAvoidTopics, consideringDoorEnabled, CONSIDERING_DOOR_LINES, CONSIDERING_DOOR_EXEMPT_NOTE, filterRulesTextForScene, type ReplyScene } from "@/app/lib/reply-scene";
 import { previewRetiredRules, RETIRE_RULE_KEYS } from "@/app/lib/rules-retire-preview";
@@ -7030,6 +7031,10 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               const uq = unquoteConditions(draftBody); if (uq.removed.length) { w.push(...uq.removed.map((x) => `条件の「」を外す: ${x}`)); draftBody = uq.text; }
               // 2026-10-08 11巡目: 約束の文末の「ね」を取る（竹内さんの手打ち 0通・takeuchi-wording-r11.ts・TAKEUCHI_WORDING_R11=off）
               const tw = fixTakeuchiWording(draftBody); if (tw.changes.length) { w.push(...tw.changes); draftBody = tw.text; }
+              // 2026-10-16 答えた後の見直し（決まり）: 送った物の話が済んだ後の「お手隙の際にご査収ください」→「気になる点等…お気軽にご連絡ください」（unsent-review-ack.ts・UNSENT_REVIEW_ACK=off）
+              const ura = fixUnsentReviewAck(draftBody, recentMessages); if (ura.changed) { w.push(`送っていない番のご査収: ${ura.changed}`); draftBody = ura.text; }
+              // 2026-10-16 代理契約の約束は「交渉させて頂きます」（竹内さんの手打ちの約束の形・takeuchi-wording-r11.fixProxyNegotiate・TAKEUCHI_PROXY_NEGOTIATE=off）
+              const pn = fixProxyNegotiate(draftBody); if (pn.changes.length) { w.push(...pn.changes); draftBody = pn.text; }
               // 2026-10-08 竹内さん: 「何時でも／いつでも」（当日・申込は何時でも・それ以外はいつでも）／手がかりの無い「〇〇さん達」は「さん」（takeuchi-reply-form-r13.ts）
               if (!isTemplateOptimize) {
                 const it = normalizeItsudemo(draftBody, { customerText: message ?? "", scene: resolveReplyScene({ customerText: message ?? "" }).scene });

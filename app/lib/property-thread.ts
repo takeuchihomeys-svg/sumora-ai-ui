@@ -32,6 +32,8 @@ import { customerSharedPropertyNames, customerNamedAfterShare, type NamedAfterSh
 import { collectStaffFreeRent, staffFreeRentFor, type StaffFreeRentFact } from "./staff-free-rent";
 // 2026-10-09 主語の抜けた発言の物件の候補（turn-referent.ts・既定 on・PROPERTY_REFERENT_FALLBACK=off で止まる）
 import { resolveTurnReferent, turnReferentEnabled, turnReferentLines, type ReferentMention, type TurnReferent } from "./turn-referent";
+// 2026-10-16 このお部屋でもう伝えた事・募集状況の鮮度・目安（property-told.ts・PROPERTY_TOLD_NOTE=off）
+import { roomToldOf, roomToldLines, propertyToldEnabled, type RoomTold } from "./property-told";
 
 export function propertyThreadEnabled(): boolean {
   return (process.env.PROPERTY_THREAD_NOTE ?? "").toLowerCase() !== "off";
@@ -104,6 +106,8 @@ export type PtRoom = {
   hooked?: { at: string; topic: PtTopic } | null;
   /** スタッフが送った文に書いたフリーレント（staff-free-rent・資料からは読まない） */
   freeRent?: StaffFreeRentFact | null;
+  /** 2026-10-16 このお部屋でもう伝えた事（送った時のこちらの文・見積）と募集状況の鮮度（property-told.ts） */
+  told?: RoomTold | null;
 };
 export type PtTurnTarget = { roomKey: string; display: string; topic: PtTopic; by: "quote" | "named" | "inferred"; customerText: string; at: string; why?: string };
 export type PropertyThreadState = {
@@ -399,6 +403,7 @@ export function resolvePropertyThreads(input: PtInput): PropertyThreadState {
       const h = r.events.find((e) => e.kind === "customer_ask" && e.topic !== "ng");
       r.hooked = h ? { at: h.at, topic: h.topic ?? "other" } : null;
       r.freeRent = freeRent.length ? staffFreeRentFor(freeRent, r.ref.building, r.ref.room) : null;
+      if (propertyToldEnabled()) r.told = roomToldOf(r.events, msgs);
     }
     // 物件の名前が同じ行に無いフリーレント（「グランメール弁天 503号室現在募集中…\nこちらフリーレント1ヶ月…」）は、その通に名前が出た物件が1つならその物件
     for (const f of freeRent) {
@@ -611,6 +616,9 @@ export function buildPropertyThreadNote(s: PropertyThreadState, opts: { maxOther
     const src = roomSourceLine(r);
     if (src) lines.push(`  ・${src}`);
     for (const e of r.events.slice(-maxEvents)) lines.push(`  ・${eventLine(e)}`);
+    // 2026-10-16 このお部屋でもう伝えた事・募集状況の鮮度・目安（決めるのはブレイン・property-told.ts）
+    const lastTold = ts.at(-1);
+    if (r.told && lastTold) lines.push(...roomToldLines({ told: r.told, origin: r.origin, topic: lastTold.topic, turnAt: lastTold.at, jst: jstShort }));
     // 2026-10-15 資料の古さの印（stale-material.ts・戻す: STALE_MATERIAL_NOTE=off）。言うか・確認するかはブレイン
     const lastT = ts.at(-1);
     const stale = lastT ? staleMaterialOf(r, lastT.at, lastT.customerText, lastT.topic) : null;

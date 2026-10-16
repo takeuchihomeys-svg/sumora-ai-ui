@@ -17,6 +17,8 @@ const KINDS: Array<[string, string]> = [
 export default function CustomerMemoBar({ conversationId, refreshKey, authHeader }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [mood, setMood] = useState<Mood | null>(null);
+  // 2026-10-16 竹内悠馬「背景の読みをメモ欄に1行で」: ブレインの答える前の整理（turn_contract.background）。戻す NEXT_PUBLIC_TURN_BACKGROUND_MEMO=off
+  const [background, setBackground] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -26,16 +28,17 @@ export default function CustomerMemoBar({ conversationId, refreshKey, authHeader
   authRef.current = authHeader;
 
   useEffect(() => {
-    setRows([]); setMood(null);
+    setRows([]); setMood(null); setBackground(null);
     if (!conversationId || process.env.NEXT_PUBLIC_CUSTOMER_MEMO === "off") return;
     const ac = new AbortController();
     (async () => {
       try {
         const r = await fetch(`/api/customer-memo?conversation_id=${encodeURIComponent(conversationId)}`, { headers: authRef.current, signal: ac.signal, cache: "no-store" });
         if (!r.ok) return;
-        const j = (await r.json()) as { ok?: boolean; rows?: Row[]; mood?: Mood | null };
+        const j = (await r.json()) as { ok?: boolean; rows?: Row[]; mood?: Mood | null; background?: { text: string } | null };
         if (ac.signal.aborted || !j.ok) return;
         setRows(j.rows ?? []); setMood(j.mood ?? null);
+        setBackground(process.env.NEXT_PUBLIC_TURN_BACKGROUND_MEMO === "off" ? null : j.background?.text ?? null);
       } catch { /* 出さないだけ */ }
     })();
     return () => ac.abort();
@@ -46,7 +49,7 @@ export default function CustomerMemoBar({ conversationId, refreshKey, authHeader
   if (process.env.NEXT_PUBLIC_CUSTOMER_MEMO === "off") return null;
   const memoRows = rows.filter((r) => r.origin !== "rule");
   const toldRows = rows.filter((r) => r.origin === "rule");
-  if (!memoRows.length && !toldRows.length && !mood) return null;
+  if (!memoRows.length && !toldRows.length && !mood && !background) return null;
 
   const post = async (body: Record<string, unknown>) => {
     try {
@@ -61,12 +64,13 @@ export default function CustomerMemoBar({ conversationId, refreshKey, authHeader
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 text-left">
         <span className="shrink-0 rounded-full bg-[#3949ab] px-1.5 py-0.5 text-[9px] font-bold text-white">メモ</span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-[#283593]">
-          {memoRows.length ? `${memoRows.length}件` : "まだ無し"}{toldRows.length ? `・もう伝えた ${toldRows.length}種類` : ""}{moodText ? `・気持ち ${moodText}` : ""}
+          {memoRows.length ? `${memoRows.length}件` : "まだ無し"}{toldRows.length ? `・もう伝えた ${toldRows.length}種類` : ""}{moodText ? `・気持ち ${moodText}` : ""}{background ? `・背景 ${background}` : ""}
         </span>
         <span className="text-[10px] text-[#5c6bc0]">{open ? "閉じる" : "開く"}</span>
       </button>
       {open && (
         <div className="mt-1 space-y-0.5 pl-[42px]">
+          {background && <p className="text-[11px] text-[#4a148c]"><span className="font-bold">背景の読み（ブレイン）:</span> {background}</p>}
           {mood && mood.changes.length > 0 && <p className="text-[10px] text-[#6a1b9a]">流れ: {mood.changes.join("／")}</p>}
           {memoRows.map((r) => (
             <div key={r.id} className="flex items-start gap-1 text-[11px]">

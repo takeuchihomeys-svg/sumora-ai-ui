@@ -22,3 +22,25 @@ export function fixTakeuchiWording(text: string, enabled = takeuchiWordingEnable
   const s = outsideQuotes(text, (seg) => seg.replace(PROMISE_NE_RE, (m, a: string) => { changes.push(`約束の文末の「ね」: ${m}`); return a; }));
   return { text: s, changes };
 }
+
+/**
+ * 2026-10-16 竹内悠馬（10/16 の画面の事例 e）「代理契約は『交渉させて頂きます』」:
+ *   竹内さんの手打ち（180日）で代理契約のこれからの約束は「交渉させて頂きます」2/2（「確認させて頂きましたところ」は結果の報告＝過去の形）。
+ *   同じ文に代理契約があり、これからの約束（確認させて頂きます／確認致します）の時だけ「交渉させて頂きます」に替える。過去の形・「」の中は触らない。
+ *   戻す TAKEUCHI_PROXY_NEGOTIATE=off
+ */
+export function proxyNegotiateEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.TAKEUCHI_PROXY_NEGOTIATE ?? "").toLowerCase() !== "off";
+}
+const PROXY_PROMISE_RE = /([^。！!\n]*代理契約[^。！!\n]*?)確認(?:させて(?:頂|いただ)きます|致します|いたします)/g;
+export function fixProxyNegotiate(text: string, enabled = proxyNegotiateEnabled()): { text: string; changes: string[] } {
+  if (!enabled || !text || !text.includes("代理契約")) return { text, changes: [] };
+  const changes: string[] = [];
+  const s = outsideQuotes(text, (seg) => seg.replace(PROXY_PROMISE_RE, (m, head: string) => {
+    // 同じ文で募集状況・空きも確認する約束は替えない（「募集状況と代理契約を交渉」にならない）
+    if (/募集状況|空き|空室|内覧/.test(head)) return m;
+    changes.push(`代理契約の約束は交渉: ${m.slice(-24)}`);
+    return `${head}交渉させて頂きます`;
+  }));
+  return { text: s, changes };
+}

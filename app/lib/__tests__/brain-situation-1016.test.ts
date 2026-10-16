@@ -1,0 +1,58 @@
+// app/lib/__tests__/brain-situation-1016.test.ts — 2026-10-16 状況の読み（伝え済み・背景・送っていない番のご査収・代理契約の交渉）
+//   実行: npx tsx app/lib/__tests__/brain-situation-1016.test.ts
+import { roomToldOf, roomToldLines } from "../property-told";
+import { fixUnsentReviewAck, sentSinceLastAttachment } from "../unsent-review-ack";
+import { fixProxyNegotiate } from "../takeuchi-wording-r11";
+import { normalizeBrainTurnContract, buildTurnContract, renderTurnContractNote } from "../turn-contract";
+let pass = 0, fail = 0;
+const t = (name: string, ok: boolean) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`); } };
+const jst = (iso: string) => iso.slice(5, 16);
+
+// ── 伝え済み（事例 c）──
+const sentAt = "2026-10-15T10:54:41.000Z";
+const msgs = [
+  { sender: "staff", text: "[画像]", created_at: sentAt, image_url: "u1" },
+  { sender: "staff", text: "Xさんお待たせ致しました！！\nこちらの2件初期費用2,980円＋前家賃でご入居出来るお部屋となります！！\nお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！", created_at: "2026-10-15T10:54:42.000Z" },
+  { sender: "customer", text: "こちらの物件気になります", created_at: "2026-10-15T10:56:03.000Z" },
+];
+const told = roomToldOf([{ at: sentAt, kind: "sent" }, { at: "2026-10-15T10:56:03.000Z", kind: "customer_ask" }], msgs);
+t("初期費用を伝え済み・ご案内に誘った", !!told.cost && /2,980円/.test(told.cost.quote) && told.viewingInvited);
+const lines = roomToldLines({ told, origin: "ours", topic: "like", turnAt: "2026-10-15T10:56:03.000Z", jst });
+t("目安は内覧の日程（確認・見積の約束にしない）", lines.some((l) => /内覧の日程（AIX【内覧日調整】/.test(l)) && lines.some((l) => /送った時点で募集中/.test(l)));
+t("お客様の持ち込みには目安を出さない", !roomToldLines({ told, origin: "customer", topic: "like", turnAt: "2026-10-15T10:56:03.000Z", jst }).some((l) => /目安/.test(l)));
+t("3日より前に送った物件は募集中と言わない", !roomToldLines({ told, origin: "ours", topic: "like", turnAt: "2026-10-20T10:56:03.000Z", jst }).some((l) => /募集中/.test(l)));
+// 事例 g: 見積書を送った物件の費用の質問
+const told2 = roomToldOf([{ at: "2026-10-09T08:19:00.000Z", kind: "estimate", text: "初期費用 170,480円" }], []);
+t("見積書を送った物件の費用の質問 → AIX【初期費用について】", roomToldLines({ told: told2, origin: "customer", topic: "cost", turnAt: "2026-10-13T05:13:00.000Z", jst }).some((l) => /AIX【初期費用について】/.test(l)));
+
+// ── 送っていない番のご査収（事例 f）──
+const conv = [
+  { sender: "staff", text: "[画像]", isAix: true },
+  { sender: "staff", text: "【〇〇 405号室】初期費用…", isAix: true },
+  { sender: "customer", text: "ここは入居可能日いつ頃ですか？" },
+  { sender: "staff", text: "即入居可能なお部屋となります！！" },
+  { sender: "customer", text: "分かりました！" },
+];
+t("送った後にこちらが話している＝送っていない番", sentSinceLastAttachment(conv));
+const f = fixUnsentReviewAck("はい😊！！\nお手隙の際にご査収ください😌！！\n何卒よろしくお願い致します！！", conv, true);
+t("ご査収 → お気軽にご連絡", !!f.changed && /お気軽にご連絡ください/.test(f.text) && !/ご査収/.test(f.text));
+const justSent = [{ sender: "staff", text: "[画像]", isAix: true }, { sender: "customer", text: "ありがとうございます" }];
+t("送った直後のお礼への「ご査収ください」は竹内さんの形＝そのまま", !fixUnsentReviewAck("はい😊！！\nお手隙の際にご査収ください😌！！", justSent, true).changed);
+t("「ご査収頂きありがとうございます」は触らない", !fixUnsentReviewAck("ご査収頂きありがとうございます！！", conv, true).changed);
+
+// ── 代理契約は交渉（事例 e）──
+t("代理契約の約束は交渉", fixProxyNegotiate("クリエオーレ一津屋Ⅱの代理契約が可能かどうかを管理会社に確認させて頂きます！！", true).text === "クリエオーレ一津屋Ⅱの代理契約が可能かどうかを管理会社に交渉させて頂きます！！");
+t("結果の報告（確認させて頂きましたところ）は触らない", fixProxyNegotiate("代理契約可能か確認させて頂きましたところ", true).changes.length === 0);
+t("募集状況も同じ文で確認する約束は替えない", fixProxyNegotiate("〇〇の募集状況と代理契約が可能か確認させて頂きます", true).changes.length === 0);
+
+// ── 背景（答える前の整理）──
+const raw = normalizeBrainTurnContract({ background: "審査否決の後で代理契約を気にし、月末の退去に間に合うか焦っている", asks: [{ quote: "代理契約は難しいですか", route: "promise", answer: "管理会社に交渉する" }], feeling: { kind: "hurried", acknowledge: true } });
+t("背景を読む", raw?.background === "審査否決の後で代理契約を気にし、月末の退去に間に合うか焦っている");
+const tc = buildTurnContract({ brain: raw, brainFresh: true, ledgerItems: [], alreadySaid: [], settled: [] });
+const note = renderTurnContractNote(tc);
+t("返信の本質に背景と支える一言", /この発言の背景（ブレイン）/.test(note) && /一言で支える/.test(note));
+t("背景だけでも本質は残る", normalizeBrainTurnContract({ background: "x の背景" })?.background === "x の背景");
+t("BRAIN_TURN_BACKGROUND=off で読まない", (() => { process.env.BRAIN_TURN_BACKGROUND = "off"; const r = normalizeBrainTurnContract({ background: "y", asks: [{ quote: "a" }] }); delete process.env.BRAIN_TURN_BACKGROUND; return !r?.background; })());
+
+console.log(`\n${pass} OK / ${fail} NG`);
+if (fail) process.exit(1);

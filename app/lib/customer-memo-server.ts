@@ -178,10 +178,29 @@ export async function customerMemoNoteFor(conversationId: string, o: { scene?: s
 }
 
 /** 画面用（行・気持ちの見立て） */
-export async function customerMemoView(conversationId: string): Promise<{ rows: MemoViewRow[]; mood: { hint: string; changes: string[]; prevEmotions: string[] } | null; llmAt: string | null }> {
+/**
+ * 2026-10-16 竹内悠馬「背景の読みを画面のメモ欄に1行で」: ブレインの答える前の整理（turn_contract.background）をメモの帯に出す（読むだけ・LLM なし）。
+ *   今のお客様の発言より古い判断（analyzed_msg_ts が最後のお客様の通より前）は出さない。戻す NEXT_PUBLIC_TURN_BACKGROUND_MEMO=off（画面）
+ */
+export async function loadTurnBackground(conversationId: string): Promise<{ text: string; at: string | null } | null> {
+  try {
+    const { data } = await supabase.from("conversations").select("suggested_aix_meta").eq("id", conversationId).maybeSingle();
+    const meta = (data?.suggested_aix_meta ?? null) as { turn_contract?: { background?: unknown } | null; analyzed_msg_ts?: string | null; analyzed_at?: string | null } | null;
+    const text = typeof meta?.turn_contract?.background === "string" ? meta.turn_contract.background.trim() : "";
+    if (!text) return null;
+    const { data: last } = await supabase.from("messages").select("created_at").eq("conversation_id", conversationId).eq("sender", "customer").order("created_at", { ascending: false }).limit(1);
+    const lastAt = (last ?? [])[0]?.created_at as string | undefined;
+    const at = meta?.analyzed_msg_ts ?? null;
+    if (lastAt && at && Date.parse(at) + 1000 < Date.parse(lastAt)) return null;
+    return { text: text.slice(0, 90), at: meta?.analyzed_at ?? at };
+  } catch { return null; }
+}
+
+export async function customerMemoView(conversationId: string): Promise<{ rows: MemoViewRow[]; mood: { hint: string; changes: string[]; prevEmotions: string[] } | null; llmAt: string | null; background?: { text: string; at: string | null } | null }> {
   const now = Date.now();
-  const b = await loadMemoBundle(conversationId, { nowMs: now });
+  const [b, background] = await Promise.all([loadMemoBundle(conversationId, { nowMs: now }), loadTurnBackground(conversationId)]);
   return {
+    background,
     rows: [
       ...memoViewRows({ memo: b.memo, told: b.told, nowMs: now }),
       ...(summaryStyleText(b.summaryStyle) ? [{ id: "summary:style", kind: "style" as const, label: "言葉づかい", text: summaryStyleText(b.summaryStyle), source: `AI の要約${b.summaryStyle?.at ? ` ${mdOf(b.summaryStyle.at)}` : ""}`, origin: "rule" as const, locked: false }] : []),
