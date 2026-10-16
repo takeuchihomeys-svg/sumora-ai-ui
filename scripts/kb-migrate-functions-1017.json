@@ -1,0 +1,10 @@
+{
+  "title": "migrate-schema の関数は CREATE OR REPLACE だけ・正本は1か所 — DROP と CREATE を別の呼び出しにすると時間切れの間で関数が消える。戻り値を変える時だけ @atomic-begin〜end で1回の呼び出しにまとめる・毎朝 要る関数とトリガーを見張る",
+  "category": "ai_design",
+  "priority": 1,
+  "insight": "migrate-schema（毎晩 JST 0:10・maxDuration 300秒）は SQL を約1000文に分け、exec_sql を1文ずつ別の呼び出し（＝別のトランザクション）で流す。DROP FUNCTION IF EXISTS X と CREATE FUNCTION X が別の呼び出しだと、その間で時間切れになると X が消えたままになる（10/17 match_design_thinking_exact が消え、設計知見の RAG が失敗）。さらに match_reply_knowledge・match_reply_examples は戻り値の違う古い版が前の方にも残っていて、毎晩『古い版に戻す→後ろで正本に戻す』を往復していた（間で止まると古い版のまま）。直し: 古い版を外して正本を1か所にし、全部 CREATE OR REPLACE（戻り値が本番と同じなら DROP は要らない・grant も残る）。戻り値を変える時だけ『-- @atomic-begin』〜『-- @atomic-end』で囲む＝splitSql が分けずに1回の exec_sql に渡す（exec_sql は EXECUTE sql なので複数文を流せ、1回の呼び出し＝1つのトランザクションで途中失敗なら DROP も戻る）。トリガーも同じ（23339086 の CREATE OR REPLACE TRIGGER）。新しい試験が『DROP だけの呼び出し→後で同じ関数を作る』組と同じ関数の二重定義を落とす。見張り: morning-report が毎朝コードの .rpc() の関数と migrate-schema のトリガーの有無を読むだけで確かめ、cron_run_logs（schema-objects-check）に ok=false と朝の報告の1行を残す。",
+  "rationale": "11個の DROP（9組の DROP→CREATE＋overload 2つ）のうち9組が別の呼び出しだった。本番は今は全部あり（10/17 親が戻した後）。時間切れの主因は1文ごとの往復（手元で exec_sql 1回 約180ms・50文を1回で 109ms）で、約1000文×往復で 300秒に届き、後ろの約76文（約400行）が毎晩流れていない。2fec2dbc（DROP→CREATE の2段で戻り値を変える）はこの呼び出し方では危ない＝この知見で置き換える。",
+  "context": "2026-10-17 作る人（ブランチ fix-migrate-functions-1017）。LLM なし・費用0。時間切れの直しは別（案: 文をまとめて1回の呼び出しで流す・失敗したまとまりだけ1文ずつ流し直す／SQL の指紋が変わった夜だけ流す）。",
+  "applied_to": "app/api/migrate-schema/route.ts（古い版の削除・CREATE OR REPLACE・rent_observe_sent と pickup_pet_trg の往復も外す）・app/lib/sql-split.ts（splitSql・@atomic・findSplitDropCreate）・app/lib/schema-objects-check.ts・app/api/cron/morning-report/route.ts・scripts/apply-design-knowledge-rag.ts・app/lib/__tests__/schema-objects-check.test.ts",
+  "tags": ["汎用", "静かに壊れる", "migrate-schema", "Supabase", "見張り", "点検表", "postgres"]
+}

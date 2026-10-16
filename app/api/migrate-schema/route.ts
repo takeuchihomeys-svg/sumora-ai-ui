@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { splitSql } from "@/app/lib/sql-split";
 
 const SQL = `
 -- conversations テーブル（LINEトーク一覧）
@@ -484,28 +485,12 @@ RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
   WHERE id = p_id;
 $$;
 CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
--- created_at を戻り値に追加（generate-reply の鮮度スコアリングで使用）。
--- 戻り値の型変更は CREATE OR REPLACE では不可のため既存関数を先に DROP する
--- match_reply_knowledge: 4引数版(boost_state付き)を正本とする。3引数overloadはPGRST203の原因になるため削除。
--- boost_state=NULLで呼び出すと従来の3引数版と同じ動作（後方互換）。
--- ※ 正本は末尾の「RAG の厳密化」節（2026-09-13: 加点方式・source 返却）。戻り値の型が違うので再実行時の型エラー防止に先に DROP する
+-- match_reply_knowledge: 4引数版(boost_state付き)を正本とする。3引数overloadはPGRST203の原因になるため削除（正本と別の関数なので消しても困らない）。
+-- ※ 正本は末尾の「RAG の厳密化」節（2026-09-13: 加点方式・source 返却）だけに置く。
+--   2026-10-17: ここと⑥にあった古い版（戻り値が違う）の DROP→CREATE を外した。毎晩「古い版に戻す→正本に戻す」を繰り返し、
+--   300秒の時間切れで間に止まると関数が消える／古い版のまま残るため（同じ事故: match_design_thinking_exact が消えた）。
+--   決まり: 関数は CREATE OR REPLACE だけ。戻り値を変える時だけ「-- @atomic-begin」〜「-- @atomic-end」で DROP と CREATE を1回の呼び出し（1つのトランザクション）にまとめる
 DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
-DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer, text);
-CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
-RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
-LANGUAGE sql STABLE AS $$
-  SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
-    (1 - (ak.embedding <=> query_embedding))::float AS similarity,
-    ak.hypothesis_status,
-    ak.created_at
-  FROM ai_reply_knowledge ak
-  WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
-    AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
-  ORDER BY
-    CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0 ELSE 1 END,
-    ak.embedding <=> query_embedding
-  LIMIT match_count
-$$;
 
 -- トリガーアクションルールテーブル（キーワード→AIXアクション マッピング）
 CREATE TABLE IF NOT EXISTS trigger_action_rules (
@@ -722,20 +707,8 @@ CREATE INDEX IF NOT EXISTS idx_viewings_date ON viewings(viewing_date);
 CREATE INDEX IF NOT EXISTS idx_viewings_conversation ON viewings(conversation_id);
 ALTER TABLE viewings DISABLE ROW LEVEL SECURITY;
 
--- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
--- 戻り値型変更のためDROP→CREATEが必要
-DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);
-CREATE OR REPLACE FUNCTION match_reply_examples(query_embedding vector(1536), match_count int, filter_states text[])
-RETURNS TABLE (id uuid, customer_message text, sent_reply text, conversation_state text, is_starred boolean, reply_angle text, similarity float)
-LANGUAGE sql STABLE AS $func$
-  SELECT ae.id, ae.customer_message, ae.sent_reply, ae.conversation_state, ae.is_starred, ae.reply_angle, (1 - (ae.embedding <=> query_embedding))::float AS similarity
-  FROM ai_reply_examples ae
-  WHERE ae.conversation_state = ANY(filter_states)
-    AND ae.embedding IS NOT NULL
-    AND ae.entry_source = 'line_reply'
-  ORDER BY ae.embedding <=> query_embedding
-  LIMIT match_count
-$func$;
+-- match_reply_examples: 正本は「customer_intent × staff_reply_intent ペア学習（2026-08-24）」節だけに置く
+--   （2026-10-17: ここにあった古い版＝customer_intent なしの DROP→CREATE を外した。毎晩の作り直しの間に止まると消える・古い版が残るため）
 
 -- ai_reply_examples: 会話紐付け（返信→成果の帰属追跡・ループ学習用）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL;
@@ -1120,28 +1093,7 @@ ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFA
 -- AixModal側でaiDraftとpreviewを比較して算出し、log-aix-usage経由で記録される
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS was_edited BOOLEAN;
 
--- ⑥ match_reply_knowledge を hypothesis_status ADD COLUMN の後に再定義
---    （line 479 での定義は hypothesis_status が存在しない新規環境で失敗するため、
---      hypothesis_status ADD COLUMN（line 802）の後にも再実行する）
---    4引数版(boost_state付き)を正本として再定義。3引数overloadはDROPして解消（PGRST203防止）。
---    ※ 正本は末尾の「RAG の厳密化」節（2026-09-13）。戻り値の型が違うので先に DROP する
-DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
-DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer, text);
-CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
-RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
-LANGUAGE sql STABLE AS $$
-  SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
-    (1 - (ak.embedding <=> query_embedding))::float AS similarity,
-    ak.hypothesis_status,
-    ak.created_at
-  FROM ai_reply_knowledge ak
-  WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
-    AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
-  ORDER BY
-    CASE WHEN boost_state IS NOT NULL AND ak.conversation_state = boost_state THEN 0 ELSE 1 END,
-    ak.embedding <=> query_embedding
-  LIMIT match_count
-$$;
+-- ⑥ match_reply_knowledge の古い版の再定義はここから外した（2026-10-17）。正本は末尾の「RAG の厳密化」節（2026-09-13）だけ
 
 -- 自動返信化準備スコアの時系列スナップショット（週次 upsert で最新1件になるのを防ぐ）
 CREATE TABLE IF NOT EXISTS aix_readiness_snapshots (
@@ -2808,8 +2760,7 @@ ALTER TABLE winning_patterns ADD COLUMN IF NOT EXISTS customer_intent TEXT;
 ALTER TABLE winning_patterns ADD COLUMN IF NOT EXISTS staff_reply_intent TEXT;
 
 -- match_reply_examples: customer_intent を返り値に追加（意図一致+0.2ブーストのため）
--- ※ 返り値型変更のため DROP→CREATE が必要
-DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);
+-- ※ 2026-10-17: 本番の戻り値はこの形のまま → CREATE OR REPLACE だけ（DROP を外した・間に止まっても消えない）
 CREATE OR REPLACE FUNCTION match_reply_examples(query_embedding vector(1536), match_count int, filter_states text[])
 RETURNS TABLE (id uuid, customer_message text, sent_reply text, conversation_state text, is_starred boolean, reply_angle text, customer_intent text, similarity float)
 LANGUAGE sql STABLE AS $func$
@@ -2824,8 +2775,7 @@ $func$;
 
 -- match_winning_patterns: customer_intent / staff_reply_intent を返り値に追加（2026-08-24）
 -- checkpoint_stage を返り値に追加（2026-08-27）
--- ※ 返り値型変更のため DROP→CREATE が必要
-DROP FUNCTION IF EXISTS match_winning_patterns(vector, int, text, int);
+-- ※ 2026-10-17: 本番の戻り値はこの形のまま → CREATE OR REPLACE だけ（DROP を外した）
 CREATE OR REPLACE FUNCTION match_winning_patterns(
   query_embedding vector,
   match_count int DEFAULT 5,
@@ -3147,7 +3097,7 @@ CREATE INDEX IF NOT EXISTS idx_are_ctx_has ON ai_reply_examples (((reply_context
 --   FROM ai_reply_examples WHERE reply_context_snapshot ? 'stance_draft' AND created_at >= now() - interval '14 days' GROUP BY 1,2,3 ORDER BY 4 DESC
 CREATE INDEX IF NOT EXISTS idx_are_ctx_closer ON ai_reply_examples ((reply_context_snapshot->'stance_draft'->>'closer_kind')) WHERE reply_context_snapshot IS NOT NULL;
 
-DROP FUNCTION IF EXISTS match_aix_reply_examples(vector, integer, text);
+-- ※ 2026-10-17: 本番の戻り値はこの形のまま → CREATE OR REPLACE だけ（DROP を外した）
 CREATE OR REPLACE FUNCTION match_aix_reply_examples(
   query_embedding vector,
   match_count integer,
@@ -3416,8 +3366,8 @@ END;
 $$;
 -- match_reply_knowledge 正本（2026-09-13 改善5）: boost_state 一致を「必ず先頭」から距離への 0.03 の加点へ
 --   （本番の問い24件で類似度上位30件との重なり 平均約9 → 約27）。source を返す（成約分析 closed_won_analysis の仮説上限の免除に使う）
-DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer, text);
-CREATE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
+--   2026-10-17: 本番の戻り値はこの形のまま → CREATE OR REPLACE だけ（DROP を外した・間に止まっても消えない。SET は下の DO ブロックが付け直す）
+CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7, boost_state text DEFAULT NULL)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity double precision, hypothesis_status text, created_at timestamptz, source text)
 LANGUAGE sql STABLE AS $$
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
@@ -4318,23 +4268,8 @@ $$;
 CREATE OR REPLACE TRIGGER rent_observe_pool_trg AFTER INSERT OR UPDATE OF candidates ON property_candidate_pools
   FOR EACH ROW EXECUTE FUNCTION rent_observe_pool();
 
--- お客様へ実際に届けた物件（グループ共有・物件確認・見積書は数えない＝pickup-ad-priority.isProposalSend と同じ）
-CREATE OR REPLACE FUNCTION rent_observe_sent() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-  IF NEW.delivery = 'customer' AND coalesce(NEW.channel, '') NOT IN ('check', 'estimate')
-     AND coalesce(NEW.source, '') NOT IN ('aix:property_check_result', 'aix:estimate_sheet') THEN
-    UPDATE rent_observations SET sent_to_customer = true
-      WHERE branch_id = 'osaka' AND unit_key = rent_unit_key(NEW.property_name, NEW.room_no) AND NOT sent_to_customer;
-  END IF;
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  RAISE WARNING 'rent_observe_sent: %', SQLERRM;
-  RETURN NEW;
-END;
-$$;
-CREATE OR REPLACE TRIGGER rent_observe_sent_trg AFTER INSERT ON sent_properties
-  FOR EACH ROW EXECUTE FUNCTION rent_observe_sent();
+-- お客様へ実際に届けた物件: rent_observe_sent と rent_observe_sent_trg の正本は下の「お客様へ届けた（手順1の rent_observe_sent に段と経路を足す）」だけ
+--   （2026-10-17: ここにあった古い版を外した。毎晩「古い版→新しい版」に作り直し、間に止まると古い版＝段なし・INSERT だけのまま残るため）
 
 -- 資料のペット可否（property_pickups.equipment.facts.pet: s=ok＝可・相談／ng＝不可）
 CREATE OR REPLACE FUNCTION rent_observe_pickup_pet() RETURNS trigger
@@ -4352,8 +4287,7 @@ EXCEPTION WHEN OTHERS THEN
   RETURN NEW;
 END;
 $$;
-CREATE OR REPLACE TRIGGER rent_observe_pickup_pet_trg AFTER INSERT OR UPDATE OF equipment ON property_pickups
-  FOR EACH ROW EXECUTE FUNCTION rent_observe_pickup_pet();
+-- rent_observe_pickup_pet_trg は rent_observe_pickup_trg（下）に置き換え済み。2026-10-17: ここで毎晩作って下で消すのをやめた（間に止まると2つ動く）
 
 -- 区×間取りの相場（管理費込み・期間で切らない）。p_pet=true はペット可（相談含む）が分かる戸だけ
 CREATE OR REPLACE FUNCTION area_rent_stats(p_branch text DEFAULT 'osaka', p_ward text DEFAULT NULL, p_plan text DEFAULT NULL, p_pet boolean DEFAULT NULL)
@@ -4576,8 +4510,8 @@ COMMENT ON COLUMN design_rules_digest.review IS '要確認の一覧（area=要�
 ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS embedding_hash TEXT;
 COMMENT ON COLUMN system_design_thinking.embedding_hash IS 'embedding を作った文（題＋本文＋根拠＋札）の指紋。違えば埋め直す（scripts/kb-embed.ts）';
 DROP INDEX IF EXISTS idx_system_design_thinking_embedding;
-DROP FUNCTION IF EXISTS match_design_thinking_exact(vector, integer);
-CREATE FUNCTION match_design_thinking_exact(query_embedding vector(1536), match_count INT DEFAULT 40)
+-- 2026-10-17: 10/17 の朝に本番で消えていた（毎晩の DROP の直後に 300秒の時間切れ）→ CREATE OR REPLACE だけ（戻り値は同じ）
+CREATE OR REPLACE FUNCTION match_design_thinking_exact(query_embedding vector(1536), match_count INT DEFAULT 40)
 RETURNS TABLE(id UUID, similarity FLOAT)
 LANGUAGE sql STABLE AS $$
   SELECT dt.id, 1 - (dt.embedding <=> query_embedding) AS similarity
@@ -4597,8 +4531,7 @@ CREATE INDEX IF NOT EXISTS idx_system_design_thinking_priority ON system_design_
 ALTER TABLE property_pickups ADD COLUMN IF NOT EXISTS search_conditions JSONB;
 COMMENT ON COLUMN property_pickups.search_conditions IS 'この回の一覧を検索した時の条件 {v:1, site, at, complete, intended:{area_mode, station_names, city_codes, rent_min, rent_max, floor_plan, is_wide…}, filled:{rent_min, rent_max, layouts, stations, city_codes…}}（拡張 search-stamp.js）';
 -- 似ている組（週の整理）: 新しい行ごとに近い現行の行（全件比較）
-DROP FUNCTION IF EXISTS design_thinking_neighbors(uuid, integer, double precision);
-CREATE FUNCTION design_thinking_neighbors(p_id UUID, match_count INT DEFAULT 5, min_similarity FLOAT DEFAULT 0.8)
+CREATE OR REPLACE FUNCTION design_thinking_neighbors(p_id UUID, match_count INT DEFAULT 5, min_similarity FLOAT DEFAULT 0.8)
 RETURNS TABLE(id UUID, similarity FLOAT)
 LANGUAGE sql STABLE AS $$
   SELECT o.id, 1 - (o.embedding <=> s.embedding) AS similarity
@@ -4921,25 +4854,7 @@ export async function GET(req: Request) {
   return NextResponse.json({ ok: errors.length === 0, errors, appliedAt: new Date().toISOString() });
 }
 
-// SQLをステートメント単位に分割する（ドル引用符 $$...$$ / $func$...$func$ 内のセミコロンでは分割しない）
-// ※単純な split(";") だと関数定義本体が破壊されるため必須
-function splitSql(sql: string): string[] {
-  const stmts: string[] = [];
-  let buf = "";
-  let inDollar = false;
-  for (const line of sql.split("\n")) {
-    // $$の出現数が奇数なら引用符ブロックの開始/終了
-    const dollarCount = (line.match(/\$\$|\$func\$/g) || []).length;
-    if (dollarCount % 2 === 1) inDollar = !inDollar;
-    buf += line + "\n";
-    if (!inDollar && /;\s*$/.test(line.trimEnd())) {
-      if (buf.trim()) stmts.push(buf.trim());
-      buf = "";
-    }
-  }
-  if (buf.trim()) stmts.push(buf.trim());
-  return stmts;
-}
+// SQL をステートメント単位に分割する（ドル引用符内のセミコロンでは分けない・@atomic-begin〜end は1回の呼び出し）→ app/lib/sql-split.ts
 
 // POST: 実際にマイグレーションを実行（デプロイ後に一度叩く）
 export async function POST(req: Request) {

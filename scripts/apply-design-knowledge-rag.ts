@@ -7,8 +7,8 @@ const STMTS = [
   `ALTER TABLE system_design_thinking ADD COLUMN IF NOT EXISTS embedding_hash TEXT;`,
   `COMMENT ON COLUMN system_design_thinking.embedding_hash IS 'embedding を作った文（題＋本文＋根拠＋札）の指紋。違えば埋め直す（scripts/kb-embed.ts）';`,
   `DROP INDEX IF EXISTS idx_system_design_thinking_embedding;`,
-  `DROP FUNCTION IF EXISTS match_design_thinking_exact(vector, integer);`,
-  `CREATE FUNCTION match_design_thinking_exact(query_embedding vector(1536), match_count INT DEFAULT 40)
+  // 2026-10-17: DROP と CREATE を別の呼び出しにすると間で止まった時に消える（10/17 本番で消えた）→ CREATE OR REPLACE だけ
+  `CREATE OR REPLACE FUNCTION match_design_thinking_exact(query_embedding vector(1536), match_count INT DEFAULT 40)
 RETURNS TABLE(id UUID, similarity FLOAT)
 LANGUAGE sql STABLE AS $$
   SELECT dt.id, 1 - (dt.embedding <=> query_embedding) AS similarity
@@ -17,8 +17,7 @@ LANGUAGE sql STABLE AS $$
   ORDER BY dt.embedding <=> query_embedding
   LIMIT match_count
 $$;`,
-  `DROP FUNCTION IF EXISTS design_thinking_neighbors(uuid, integer, double precision);`,
-  `CREATE FUNCTION design_thinking_neighbors(p_id UUID, match_count INT DEFAULT 5, min_similarity FLOAT DEFAULT 0.8)
+  `CREATE OR REPLACE FUNCTION design_thinking_neighbors(p_id UUID, match_count INT DEFAULT 5, min_similarity FLOAT DEFAULT 0.8)
 RETURNS TABLE(id UUID, similarity FLOAT)
 LANGUAGE sql STABLE AS $$
   SELECT o.id, 1 - (o.embedding <=> s.embedding) AS similarity

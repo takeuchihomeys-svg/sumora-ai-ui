@@ -9,6 +9,7 @@ import { aixButtonText } from "@/app/lib/aix-action-text";
 import { legacyActionWinRatesEnabled, outcomeApplyBasisEnabled, attributionLineOf } from "@/app/lib/application-reach";
 import { pickConfirmCandidate, outcomeConfirmEnabled } from "@/app/lib/outcome-confirm";
 import { checkRagProbes, ragProbesWarningLine } from "@/app/lib/rag-probes-check";
+import { checkSchemaObjects, schemaObjectsWarningLine } from "@/app/lib/schema-objects-check";
 
 export const maxDuration = 60;
 
@@ -644,6 +645,16 @@ export async function GET(req: NextRequest) {
       const w = ragProbesWarningLine(probes);
       if (w) { loopWarnings.push(w); console.warn(JSON.stringify({ tag: "rag:probes-missing", funcs: probes.status === "missing" ? probes.funcs : [] })); }
       else if (probes.status === "unknown") console.warn(JSON.stringify({ tag: "rag:probes-check-failed", error: probes.error }));
+    }
+    // 2026-10-17 要る関数・トリガーの見張り: migrate-schema の作り直しの途中で止まって消えていないか（読むだけ・schema-objects-check.ts）。
+    //   結果は cron_run_logs（schema-objects-check）に毎朝1行（足りなければ ok=false）
+    {
+      const logId = await startCronLog("schema-objects-check");
+      const so = await checkSchemaObjects(supabase);
+      const w = schemaObjectsWarningLine(so);
+      if (w) { loopWarnings.push(w); console.warn(JSON.stringify({ tag: "schema:objects-missing", ...(so.status === "missing" ? { funcs: so.funcs, triggers: so.triggers } : {}) })); }
+      await finishCronLog(logId, so.status === "ok", so as unknown as Record<string, unknown>,
+        so.status === "missing" ? w : so.status === "unknown" ? so.error : undefined);
     }
     const loopWarningBlock = loopWarnings.length > 0 ? `\n${loopWarnings.join("\n")}` : "";
     statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}${boundaryLine ? `\n${boundaryLine}` : ""}\n${alignLine}${loopWarningBlock}`);
