@@ -142,6 +142,12 @@ function charClass(ch: string | undefined): "ja" | "alnum" | "letter" | null {
 export function replaceDisplayStandalone(text: string, display: string, replacement: string): { text: string; count: number } {
   if (!display || !text.includes(display)) return { text, count: 0 };
   const chars = Array.from(display);
+  // 2026-10-16 短い名前の点検: 字（かな・漢字・英数字）だけの短い表示名（1〜2字）は、敬称の無い所では置き換えない。
+  //   字の種類の境目を見ても「42.75㎡の1LDK」「阿倍野8の202号室」（表示名「の」）・「J’S Garden」「S-FORT」（表示名「S」）は
+  //   記号・数字に挟まれて語の外に見え、物件名・面積が壊れていた（実送信1,986通に当てて の18通・S16通）。
+  //   1〜2字の字が敬称なしで単独に出る所は、ほぼ全部が名前ではない。呼びかけ（「〇さん」）は上の敬称つきの置き換えが受け持つ
+  //   2026-10-16 確かめる人: 「字だけ」に限る（「a🤫」「S.」のように絵文字・記号が混じる表示名は名前と分かるので今まで通り置き換える）
+  if (chars.length <= 2 && /^[\p{L}\p{N}]+$/u.test(display)) return { text, count: 0 };
   const headCls = charClass(chars[0]);
   const tailCls = charClass(chars[chars.length - 1]);
   let out = "";
@@ -184,10 +190,22 @@ export function enforceCustomerName(
   if (display && display !== canonical && !isPlausiblePersonName(display)) {
     const esc = escapeRegExp(display);
     const addressReSrc = `${esc}\\s*${HONORIFIC_RE_SRC}([、,]?\\s*)${TRAILING_PARTICLE_RE_SRC}`;
+    // 2026-10-16 短い名前の点検: 敬称の前の表示名も、左隣が同じ字の種類なら別の名前の一部（表示名「し」で「たかしさん」→「たか〇〇さん」・
+    //   表示名「あ」で「ゆりあさん」→「ゆり〇〇さん」。実送信1,986通に当てて し8通・あ27通）。左隣が同じ種類の字の時は触らない
+    //   2026-10-16 確かめる人: 左の境目は短い表示名（1〜2字）だけに当てる。長い表示名が他の名前の一部になる事はほぼ無く、
+    //   当てると「…沿線から〈5字の表示名〉さんご希望の」（直前が「から」）の呼びかけを直せなくなっていた（下書き・送信 400日で3通・同じ1文）
+    const headCls = Array.from(display).length <= 2 ? charClass(Array.from(display)[0]) : null;
+    let addrHit = 0;
     if (new RegExp(addressReSrc, "g").test(cleaned)) {
       cleaned = cleaned.replace(
         new RegExp(addressReSrc, "g"),
-        (m0: string, tail: string, particle: string | undefined) => {
+        (m0: string, tail: string, particle: string | undefined, offset: number, full: string) => {
+          const before = Array.from(full.slice(Math.max(0, offset - 2), offset)).pop();
+          // 助詞（「本日はしさんに」の「は」＝その前がひらがなでない）は語の外。「みにあさん」の「に」（前がひらがな）は名前の一部
+          const before2 = Array.from(full.slice(Math.max(0, offset - 4), offset)).slice(-2, -1)[0];
+          const isParticle = /^[はがをにでともへのや]$/.test(before ?? "") && !/^[ぁ-ゖ]$/.test(before2 ?? "");
+          if (headCls !== null && charClass(before) === headCls && !isParticle) return m0;
+          addrHit++;
           const p = particle ?? "";
           if (canonical) return `${canonical}さん${tail}${p}`;
           // 2026-10-02 竹内「そのように呼ぶけど」（Sさん・💞さん・a🤫さん）: 名前が分からない時に表示名の呼びかけを消さない。
@@ -195,7 +213,7 @@ export function enforceCustomerName(
           return plainDisp && plainDisp !== display ? `${plainDisp}さん${tail}${p}` : m0;
         },
       );
-      if (canonical || (plainDisp && plainDisp !== display)) fixes.push(`LINE表示名の呼びかけ「${display}さん」→「${canonical ? `${canonical}さん` : `${plainDisp}さん`}」`);
+      if (addrHit > 0 && (canonical || (plainDisp && plainDisp !== display))) fixes.push(`LINE表示名の呼びかけ「${display}さん」→「${canonical ? `${canonical}さん` : `${plainDisp}さん`}」`);
     }
     // 2026-10-06 竹内（し 事例・「か角田こまりま角田た」）: 旧実装は本文中の表示名を **語の境目を見ずに全部** 正の名前へ置き換えていた
     //   （split(display).join(canonical)）。表示名「し」・呼び名「角田」で「かしこまりました」の「し」が全部「角田」になり、
