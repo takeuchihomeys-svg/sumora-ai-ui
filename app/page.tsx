@@ -732,11 +732,6 @@ type LineListCache = {
 };
 const lineListCache = (): LineListCache | null => cacheGet<LineListCache>(LINE_LIST_CACHE_KEY, LINE_LIST_CACHE_MAX_AGE_MS)?.value ?? null;
 const LIST_RENDER_STEP = 40;
-/**
- * 2026-10-16 竹内「トーク送ったあとにLINE一覧に戻るさいにたまに固まってしまう」: 一覧の読み込み（会話・最後のお客様の発言の集計）に時間切れが無く、
- *   スマホで通信が止まる（画面の切り替え・電波の切り替え）と await が返らず「読み込み中...」のままだった。時間切れで失敗として扱い、既存の再試行に乗せる
- */
-const LIST_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * DB の会話の行 → 一覧の1件（一覧の最初の40件と全件の読み込みで同じ関数を使う＝表示が食い違わない）。
@@ -2688,7 +2683,7 @@ export default function Home() {
     });
   }, [conversations, selectedId, linkedCustomerMap, lastCustomerAtMap, postApplyConvIds, hotConvIds, flaggedConvIds, linkedLineUserIds, hasMoreConversations]);
   const refreshLastCustomerAt = async () => {
-    const { data, error } = await supabase.rpc("conversation_last_customer_at").abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS));
+    const { data, error } = await supabase.rpc("conversation_last_customer_at");
     if (error || !data) return;
     const map: Record<string, string> = {};
     for (const r of data as Array<{ conversation_id: string; last_customer_at: string }>) map[String(r.conversation_id)] = r.last_customer_at;
@@ -2759,8 +2754,7 @@ export default function Home() {
         .from("conversations")
         .select(CONVERSATION_LIST_COLUMNS)
         .order("updated_at", { ascending: false })
-        .limit(FIRST_PAGE_CONVERSATIONS)
-        .abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS));
+        .limit(FIRST_PAGE_CONVERSATIONS);
       if (!firstErr && firstRows && firstRows.length > 0) {
         const rows = firstRows as unknown as SupabaseConversationRow[];
         setConversations((prev) => {
@@ -2795,8 +2789,7 @@ export default function Home() {
           // ブレイン・下書きの書き込みは updated_at を動かさない事があるので、その時刻の列でも拾う（Realtime が届かない時の保険）
           .or(`updated_at.gte.${since},brain_analyzed_at.gte.${since},draft_attempted_at.gte.${since},auto_sent_at.gte.${since},draft_pending_at.gte.${since}`)
           .order("updated_at", { ascending: false })
-          .limit(200)
-          .abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS));
+          .limit(200);
         refreshStatsRef.current.delta++;
         if (!deltaErr) {
           const rows = (deltaRows ?? []) as unknown as SupabaseConversationRow[];
@@ -2822,8 +2815,7 @@ export default function Home() {
         .from("conversations")
         .select(CONVERSATION_LIST_COLUMNS)
         .order("updated_at", { ascending: false })
-        .limit(CONV_LIMIT)
-        .abortSignal(AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS)),
+        .limit(CONV_LIMIT),
       refreshLastCustomerAt(),
     ]);
 
