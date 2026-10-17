@@ -194,7 +194,9 @@ import { isSimulatedCustomerTurn } from "@/app/lib/customer-sim-guard";
 import { isExplicitNoAix, isMeaninglessRuleKeyword, humanKeywordRuleHit, summedKeywordRuleHit, adoptSignalAixOverBrainNull } from "@/app/lib/brain-keyword-rules";
 // 2026-09-27 ②: お客様の「審査落ちた」（別物件への切り替え）に 物件確認した を選ばせない（本番の線は 物件ピックアップ）
 import { resolveScreeningFailedSwitch } from "@/app/lib/screening-failed-switch";
-import { decidePostApplyBrainGate, POST_APPLY_GATE_STATUSES, type GateMsg } from "@/app/lib/post-apply-brain-gate";
+import { loadPostApplyBrainGate } from "@/app/lib/post-apply-brain-gate-server";
+// 2026-10-18: 同じ入力の鍵で2回ブレインを回さない（brain-input-key.ts）
+import { brainInputKeyOf, decideInputKeyReuse } from "@/app/lib/brain-input-key";
 // 2026-09-27 ③: 資料の現況が「審査中」のお送りしたお部屋をブレインに渡す（資料の文字のまま）
 import { buildScreeningRoomsBrainText } from "@/app/lib/listing-deal-status";
 // 2026-09-29 送った物件の設備の質問＝資料の設備欄から読んだ事実（equipment-question.ts・林田さん事例）
@@ -272,6 +274,8 @@ export const URGENT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 export type SuggestedAixMeta = {
   action: string;
+  /** 2026-10-18: この判断が見た入力の鍵（brain-input-key.ts）。同じ鍵の次の呼び出しは LLM を呼ばずにこの判断を使う */
+  input_key?: string | null;
   note: string;
   source: string;
   // "optional" は cached 返却パス（stale meta の強制アクション抑制）でのみ設定される
@@ -5585,6 +5589,19 @@ async function brainWriteBlock(
   return null;
 }
 
+/** 入力の鍵（brain-input-key.ts）を記録から引く。直近 20 通＋最後の AIX の押下。読めなければ例外（呼び出し側は回す側） */
+async function loadBrainInputKey(conversationId: string): Promise<string> {
+  const [msgs, press] = await Promise.all([
+    supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false }).limit(20),
+    supabase.from("aix_usage_logs").select("created_at").eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (msgs.error) throw new Error(`messages: ${msgs.error.message}`);
+  if (press.error) throw new Error(`aix_usage_logs: ${press.error.message}`);
+  return brainInputKeyOf((msgs.data ?? []) as Array<{ sender: string; text: string | null; created_at: string }>, (press.data?.created_at as string | undefined) ?? null);
+}
+
 /** true: 分析して書いた / false: 書かなかった・失敗 / "unchanged": 前回の分析から何も届いていないので分析も書き込みもしなかった（保存済みの判断が最新） */
 export type BrainRunResult = boolean | "unchanged";
 
@@ -5644,22 +5661,17 @@ async function analyzeAndSaveBrainMetaInner(
   //   （scripts/audit-brain-post-apply.ts の F・scripts/audit-post-apply-brain-gate.ts）。申込前に戻した会話（status が申込前）はこの関門に入らない＝今まで通り。
   //   読めない時は回す（今まで通り）。戻す: BRAIN_POST_APPLY_GATE=off
   //   ⚠ 9/12 の「申込中も分析対象」（下のコメント）はこの決定で否決・取り消し・クレームの番だけに狭めた
-  if (status && POST_APPLY_GATE_STATUSES.has(status) && (process.env.BRAIN_POST_APPLY_GATE ?? "").toLowerCase() !== "off") {
-    try {
-      const { data: pushRow } = await supabase.from("aix_usage_logs").select("created_at")
-        .eq("conversation_id", conversationId).eq("aix_type", "application_push")
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
-      const pushAt = (pushRow?.created_at as string | undefined) ?? null;
-      let q = supabase.from("messages").select("sender, text, created_at").eq("conversation_id", conversationId);
-      if (pushAt) q = q.gte("created_at", pushAt);
-      const { data: gm, error: gmErr } = await q.order("created_at", { ascending: false }).limit(pushAt ? 300 : 60);
-      if (gmErr) throw gmErr;
-      const gate = decidePostApplyBrainGate({ status, msgs: ((gm ?? []) as GateMsg[]).slice().reverse(), applicationPushAt: pushAt });
-      console.log(JSON.stringify({ tag: "brain:post-apply-gate", conversationId, status, run: gate.run, reason: gate.reason, origin: runOpts?.origin ?? null }));
+  //   2026-10-18: status が提案中・内覧のまま遅れていても、記録（申込へ押下・本人確認書類・印＝bg-async と同じ resolvePostApply）で申込以降なら関所に入れる
+  //   （lagging＝申込が流れた動き〔③の語・申込前の AIX・物件の URL〕があれば回す）。判定と読み込みは post-apply-brain-gate-server.ts（sweep の対象選びと同じ関数）。
+  //   戻す: BRAIN_POST_APPLY_RECORDS=off（status だけ）
+  try {
+    const gate = await loadPostApplyBrainGate(conversationId, status);
+    if (gate) {
+      console.log(JSON.stringify({ tag: "brain:post-apply-gate", conversationId, status, run: gate.run, reason: gate.reason, lagging: gate.lagging, origin: runOpts?.origin ?? null }));
       if (!gate.run) return stampSkipped(conversationId, `post_apply_gate:${gate.reason}`);
-    } catch (e) {
-      console.warn("[brain-core] post-apply gate read failed (run as before):", conversationId, e instanceof Error ? e.message : e);
     }
+  } catch (e) {
+    console.warn("[brain-core] post-apply gate read failed (run as before):", conversationId, e instanceof Error ? e.message : e);
   }
   // 2026-09-12 竹内（名無しの権兵衛事例）: 旧「申込以降バッジあり（is_post_apply）→ 分析不要」は廃止。
   //   申込中でもお客様は並行して別の物件の内見・初期費用を聞く（「因みに、昭和グランドハイツ恵比寿の初期費用教えて下さい」→ AIX 見積書送る）。
@@ -5670,6 +5682,42 @@ async function analyzeAndSaveBrainMetaInner(
   // H6(Fable5): ブロック済み/フォロー解除の顧客は分析しない（Haiku浪費 + 無意味な提案の防止）
   const lineStatus = (conv.line_status as string | null) ?? null;
   if (lineStatus === "blocked" || lineStatus === "unfollowed") return stampSkipped(conversationId, `line_status=${lineStatus}`);
+
+  // 2026-10-18 竹内さん「質を落とさずに API を減らす」（本番14日: 同じ入力で毎回の分析が2回回った番 60回・5.4%）:
+  //   入力の鍵（最後のお客様の発言・最後のこちらの送信・最後の AIX の押下の時刻＋今のお客様の番の文の指紋・brain-input-key.ts）を引き金ごとにログに残し、
+  //   前回の本分析（last_brain_meta.input_key）と同じ鍵なら LLM を呼ばずに前回の判断を使う。
+  //   旧の二重の止め（isDuplicateRun 45秒・nothingNewSinceLastAnalysis）は「保存済みの判断（suggested_aix_meta）がある時」しか効かず、
+  //   お客様の発言で webhook が判断を消した後・下書きを作らずに終える時の追いかけ（bg-async finishWithoutDraft）・sweep の拾い直し（判断が空のまま残った会話）を素通りしていた。
+  //   判断が空なら同じ鍵の前回の判断を戻す（brain-meta-restore の __SHOWN__ の戻しと同じ考え）。鍵が変われば必ず回す・forced（宣言直後・画像の読み取り）は必ず回す。
+  //   戻す: BRAIN_INPUT_KEY_REUSE=off（鍵のログは残る）
+  const inputKey = await loadBrainInputKey(conversationId).catch((e) => {
+    console.warn("[brain-core] input key read failed (run as before):", conversationId, e instanceof Error ? e.message : e);
+    return null;
+  });
+  {
+    const lastMetaObj = (conv.last_brain_meta ?? null) as Record<string, unknown> | null;
+    const prevKey = typeof lastMetaObj?.input_key === "string" ? (lastMetaObj.input_key as string) : null;
+    const forced = !!runOpts?.forceIncremental || !!runOpts?.inputUpdatedAt;
+    const reuse = inputKey
+      ? decideInputKeyReuse({ key: inputKey, prevKey, prevSource: (lastMetaObj?.source as string | undefined) ?? null, prevAnalyzedAt: (conv.brain_full_analyzed_at as string | null) ?? null, forced, nowMs: Date.now() })
+      : { reuse: false, reason: "key_unreadable" };
+    console.log(JSON.stringify({ tag: "brain:input-key", conversationId, origin: runOpts?.origin ?? null, forced, key: inputKey, prevKey, reuse: reuse.reuse, reason: reuse.reason, hasSuggestedMeta: !!conv.suggested_aix_meta }));
+    if (reuse.reuse && lastMetaObj) {
+      if (!conv.suggested_aix_meta) {
+        const { error: rsErr } = await supabase.from("conversations")
+          .update({ suggested_aix_meta: lastMetaObj, brain_analyzed_at: new Date().toISOString() })
+          .eq("id", conversationId).is("suggested_aix_meta", null);
+        if (rsErr) {
+          console.warn("[brain-core] input-key restore failed (run as before):", conversationId, rsErr.message);
+        } else {
+          console.log(JSON.stringify({ tag: "brain:input-key-restored", conversationId, origin: runOpts?.origin ?? null, analyzed_msg_ts: lastMetaObj.analyzed_msg_ts ?? null }));
+          return "unchanged";
+        }
+      } else if ((conv.suggested_aix_meta as { source?: string } | null)?.source !== "cached") {
+        return "unchanged";
+      }
+    }
+  }
 
   // 2026-09-18 竹内「重複だけ直す」: 同じ出来事の二重起動（別インスタンスで並走した分）を止める。
   //   上の analysisInFlight は同一インスタンス内だけなので、DB の打刻でも見る。
@@ -5928,9 +5976,11 @@ async function analyzeAndSaveBrainMetaInner(
   // incremental分析の結果は source を brain_incremental にする（full は analyzeConversation の source をそのまま使用）
   // last_aix_history は meta に含まれている（analyzeConversation L2467 で recentAixSeqText を格納済み）
   // 2026-09-13 2層ブレイン: 今回の発言の層は戦略の層と合成して保存する（組み合わせの規則は brain-layers.ts mergeBrainLayers）
-  const metaToWrite = useFreshLayer
+  const metaToWriteBase = useFreshLayer
     ? ({ ...(mergeBrainLayers(meta as unknown as Record<string, unknown>, brainStrategy) as unknown as NonNullable<SuggestedAixMeta>), source: "brain_fresh" } as NonNullable<SuggestedAixMeta>)
     : { ...meta, ...(analysisMode === "incremental" ? { source: "brain_incremental" } : {}) };
+  // 2026-10-18: この分析が見た入力の鍵（分析の前に引いた物。次の呼び出しが同じ鍵なら LLM を呼ばない）。読めなかった時は書かない＝次は必ず回る
+  const metaToWrite: NonNullable<SuggestedAixMeta> = inputKey ? { ...metaToWriteBase, input_key: inputKey } : metaToWriteBase;
 
   // 2026-09-13 監査 H-4（T3 の解消）: 書き込み条件を「updated_at が分析開始時と同じ」から「すでに保存されている判断より古くない」に変えた。
   //   旧: updated_at は下書き保存・フラグ・hot 昇格など分析と関係ない更新でも変わるため、正しい分析結果まで捨てていた

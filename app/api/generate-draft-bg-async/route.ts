@@ -296,6 +296,12 @@ export async function POST(req: NextRequest) {
   if (!convId) return NextResponse.json({ ok: false }, { status: 400 });
 
   const db = getDb();
+  // 2026-10-18 竹内さん「質を落とさずに API を減らす」: 止まった理由をログに残す（旧は already_has_draft 等が黙って 200 を返し、
+  //   ブレインが本当に要る番なのに動かなかった取りこぼしの原因を追えなかった）。BG_ASYNC_SKIP_LOG=off で出さない
+  const logSkip = (reason: string, extra?: Record<string, unknown>) => {
+    if ((process.env.BG_ASYNC_SKIP_LOG ?? "").trim().toLowerCase() === "off") return;
+    console.log(JSON.stringify({ tag: "bg-async:skip", conversationId: convId, source: source ?? null, reason, ...(extra ?? {}) }));
+  };
 
   // ── 同期プリチェック ──
   // スキップ理由をレスポンスの skipped フィールドで返し、UI側が「準備中...」を即座に解除できるようにする
@@ -308,9 +314,10 @@ export async function POST(req: NextRequest) {
 
   if (convErr || !conv) {
     console.error("[bg-async] conv fetch error:", convErr?.message ?? "not found", "convId:", convId);
+    logSkip("not_found");
     return NextResponse.json({ ok: true, skipped: "not_found" });
   }
-  if (conv.last_sender !== "customer") return NextResponse.json({ ok: true, skipped: "not_customer_turn" });
+  if (conv.last_sender !== "customer") { logSkip("not_customer_turn"); return NextResponse.json({ ok: true, skipped: "not_customer_turn" }); }
   // 2026-09-24 竹内「22時〜9時のお客さんは分析せずに9時から分析するように仕組化したら他での浪費も防げるのでは？」:
   //   夜（JST 22〜9）はお客様起点（webhook の direct）と画面の自動起動（先回り・開いた時＝source なし）の下書きを作らない（ブレインも返信生成も）。
   //   brain-core だけで止めると T3（判断なし）の下書きを夜に作って generate-reply（冷えた書き直し ≈$0.7）が走り逆効果なので、入口で止める。
@@ -326,15 +333,43 @@ export async function POST(req: NextRequest) {
   // "[AIX誘導中]" センチネルは初回バグで貼られた可能性があるため通過させて再生成を試みる
   // 2026-09-21: "[返信不要]" も同じ扱い（新しいお客様の発言が来たら作り直せるようにする。貼ったまま固まらせない）
   if (conv.ai_draft && conv.ai_draft !== "[AIX誘導中]" && conv.ai_draft !== DRAFT_SENTINEL_NO_REPLY) {
+    // 2026-10-18: お客様の新しい発言（direct）なのに下書きが残っている＝webhook が「生成中（draft_attempted_at が5分以内）」と見て前の下書きを残した番。
+    //   この時ブレインは新しい発言を一度も見ていない（webhook が判断を消した後、誰も回さない → sweep が3〜10分後に拾うまで AIX の判断が空）。
+    //   下書きはそのまま（触らない）、ブレインだけ今回す＝分析が早くなる（sweep の後の1回と同じ回数・費用は増えない）。戻す BG_ASYNC_DRAFT_PRESENT_BRAIN=off
+    let brainMissed: boolean | null = null;
+    let draftAttemptedAgoSec: number | null = null;
+    try {
+      const [{ data: seen }, { data: lastCust }] = await Promise.all([
+        db.from("conversations").select("draft_attempted_at, s_ts:suggested_aix_meta->>analyzed_msg_ts, l_ts:last_brain_meta->>analyzed_msg_ts").eq("id", convId).maybeSingle(),
+        db.from("messages").select("created_at").eq("conversation_id", convId).eq("sender", "customer").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      const row = (seen ?? null) as Record<string, string | null> | null;
+      const vals = [row?.s_ts ?? null, row?.l_ts ?? null];
+      brainMissed = brainMissedCustomerMessage(lastCust?.created_at as string | undefined, vals);
+      const att = row?.draft_attempted_at ? Date.parse(row.draft_attempted_at) : NaN;
+      draftAttemptedAgoSec = Number.isFinite(att) ? Math.round((Date.now() - att) / 1000) : null;
+    } catch (e) {
+      console.warn("[bg-async] already_has_draft の読み取り失敗:", e instanceof Error ? e.message : String(e));
+    }
+    const catchUp = source === "direct" && brainMissed === true && (process.env.BG_ASYNC_DRAFT_PRESENT_BRAIN ?? "").trim().toLowerCase() !== "off"
+      && !BG_ASYNC_SKIP_STATUSES.has(conv.status as string);
+    logSkip("already_has_draft", { draftLen: String(conv.ai_draft).length, draftIsShown: conv.ai_draft === "__SHOWN__", draftAttemptedAgoSec, brainMissed, brainCatchUp: catchUp });
+    if (catchUp) {
+      // 申込以降・夜の見送りはブレイン本体の関所が止める（origin を渡す）
+      after(async () => {
+        await runBrainWithFollowups(convId, undefined, { origin: "customer_message" })
+          .catch((e) => console.warn("[bg-async] already_has_draft の後のブレイン失敗:", convId, String(e)));
+      });
+    }
     return NextResponse.json({ ok: true, skipped: "already_has_draft" });
   }
-  if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: "status" });
+  if (BG_ASYNC_SKIP_STATUSES.has(conv.status as string)) { logSkip("status", { status: conv.status }); return NextResponse.json({ ok: true, skipped: "status" }); }
   // 2026-09-23 竹内「申込中は別のツールで文生成しているので、ここ文生成しなくて大丈夫なところとなる」:
   //   status は27.4%の会話で遅れるので、申込へ押下・本人確認書類・スタッフの印も見る（否決で戻したら時間順で解く。app/lib/post-apply.ts）。
   //   記録が読めなければ止めない（status の判定は上で済んでいる）
   try {
     const pa = resolvePostApply(await loadPostApplyFacts(db, convId));
-    if (pa.postApply) return NextResponse.json({ ok: true, skipped: "post_apply", reason: pa.reason });
+    if (pa.postApply) { logSkip("post_apply", { why: pa.reason, status: conv.status }); return NextResponse.json({ ok: true, skipped: "post_apply", reason: pa.reason }); }
   } catch (e) {
     console.warn("[bg-async] post-apply の記録が読めない → status の判定のまま続行:", e instanceof Error ? e.message : String(e));
   }
@@ -343,6 +378,7 @@ export async function POST(req: NextRequest) {
   //   失敗の DB 書き込み → realtime → 先回り生成、の輪で開いている端末の数だけ5分ごとにブレイン＋返信生成を繰り返し得た。
   //   スタッフの「再生成」ボタンは generate-reply を直接呼ぶのでここは通らない（画面は fail_limit で再生成の案内を出す）
   if ((conv.draft_fail_count ?? 0) >= BG_ASYNC_FAIL_LIMIT && source !== "direct") {
+    logSkip("fail_limit", { failCount: conv.draft_fail_count });
     return NextResponse.json({ ok: true, skipped: "fail_limit" });
   }
 
@@ -352,6 +388,7 @@ export async function POST(req: NextRequest) {
 
   if (msgsErr) {
     console.error("[bg-async] msgs fetch error:", msgsErr.message);
+    logSkip("msgs_fetch_error");
     return NextResponse.json({ ok: true, skipped: "msgs_fetch_error" });
   }
 
@@ -379,6 +416,7 @@ export async function POST(req: NextRequest) {
     // 画像・動画のみで返信対象テキストなし → 生成不能。
     // draft_pending_at を残すとcronが永久リトライするためクリアして終了
     await db.from("conversations").update({ draft_pending_at: null }).eq("id", convId);
+    logSkip("no_text_message");
     return NextResponse.json({ ok: true, skipped: "no_text_message" });
   }
 
@@ -412,10 +450,11 @@ export async function POST(req: NextRequest) {
   if (claimErr) {
     // DB障害を「別プロセスが生成中」と誤判定するとサイレント未生成になるため区別する
     console.error("[bg-async] claim UPDATE error:", claimErr.message, "convId:", convId);
+    logSkip("claim_db_error");
     return NextResponse.json({ ok: false, skipped: "claim_db_error" }, { status: 200 });
   }
   if (!claimed?.length) {
-    console.log("[bg-async] 同時生成をスキップ（atomic claim失敗）, convId:", convId);
+    logSkip("in_progress");
     return NextResponse.json({ ok: true, skipped: "in_progress" });
   }
 

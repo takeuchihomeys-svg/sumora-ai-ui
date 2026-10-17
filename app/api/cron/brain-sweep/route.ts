@@ -17,6 +17,7 @@ import { pendingApplySummaryConversations, ensureApplyPeriodSummary } from "@/ap
 import { tryPrefixWarms, compactPrefixWarmResults, PREFIX_WARM_QUIET_REASONS, type PrefixWarmResult } from "@/app/lib/prefix-warm-server";
 import { tryConvWarms } from "@/app/lib/cache-warm-switch-server";
 import { brainSweepQueueDraftOn, shouldQueueDraftAfterSweep, type BrainDraftMeta } from "@/app/lib/brain-draft-skip";
+import { loadPostApplyBrainGate } from "@/app/lib/post-apply-brain-gate-server";
 
 // ── brain-sweep: 脳分析バックストップ（5分毎）─────────────────────────────
 // FIX(Fable5 #2): 分析の主経路は line-webhook のイベント駆動（顧客メッセージ受信 =
@@ -30,6 +31,8 @@ export const maxDuration = 120;
 // 1回の sweep で分析する最大会話数（コスト・レイテンシガード）
 // claude-sonnet-5 extended thinking: 1件最大60s × 並列3 = 1ラウンド最大60s → maxDuration=120s 内に収まるよう3件に制限
 const MAX_SWEEP_PER_RUN = 3;
+// 2026-10-18: 申込以降の関所で止まる会話を飛ばして3件を選ぶため、候補は多めに読む（関所は DB 読みだけ）
+const SWEEP_CANDIDATES = 10;
 
 // webhook の after() 分析が進行中の可能性がある直近の会話はスキップ（二重分析防止）
 // M4(Fable5): 2分→3分 — 旧値は webhook の maxDuration=120秒とちょうど同値で、境界上の after() 分析と
@@ -246,9 +249,10 @@ export async function GET(req: NextRequest) {
     const cutoff = new Date(Date.now() - IN_FLIGHT_GRACE_MS).toISOString();
     const backoffCutoff = new Date(Date.now() - RETRY_BACKOFF_MS).toISOString();
     const freshCutoff = new Date(Date.now() - AIX_NOTICE_FRESH_MS).toISOString();
+    const postApplyPick = !isOffSwitch(process.env.BRAIN_POST_APPLY_RECORDS) && !isOffSwitch(process.env.BRAIN_POST_APPLY_GATE);
     const { data: conversations, error } = await supabase
       .from("conversations")
-      .select("id")
+      .select("id, status")
       .is("suggested_aix_meta", null)
       // FIX(post-Fable5): sweep の存在意義は「webhook brain が失敗した会話の補填」。
       // webhook は顧客メッセージ受信時のみ brain を起動するため、失敗行は必ず last_sender="customer"。
@@ -283,14 +287,37 @@ export async function GET(req: NextRequest) {
       // ai_draft が NULL のことが多く、まさに sweep が拾うべき行が漏れていた
       .or("ai_draft.is.null,ai_draft.neq.__SHOWN__")
       .order("updated_at", { ascending: false })
-      .limit(MAX_SWEEP_PER_RUN);
+      .limit(postApplyPick ? SWEEP_CANDIDATES : MAX_SWEEP_PER_RUN);
 
     if (error) {
       await finishCronLog(runLogId, false, undefined, error.message);
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     }
 
-    const rows = (conversations ?? []) as Array<{ id: string }>;
+    // 2026-10-18 竹内さん「質を落とさずに API を減らす」（本番14日: sweep のブレイン 176回のうち 145回が記録では申込以降・status は提案中・内覧のまま遅れていた）:
+    //   10/07 の決定（設計知見 d23150a0「申込中・審査中は否決・取り消し・クレームの時だけ回す」）を sweep の対象選びでも効かせる。
+    //   bg-async と同じ記録の判定（resolvePostApply）で申込以降なら、ブレイン本体と同じ関所（post-apply-brain-gate-server）で回す番だけ残す。
+    //   止めた会話は brain_analyzed_at だけ打刻（30分の待ち・次の5分で同じ会話を選び続けない）。申込以降でない会話・読めない時は今まで通り回す。
+    //   戻す: BRAIN_POST_APPLY_RECORDS=off（候補も3件に戻る）
+    let rows: Array<{ id: string; status?: string | null }> = [];
+    const gateStopped: Array<{ id: string; reason: string }> = [];
+    for (const c of (conversations ?? []) as Array<{ id: string; status: string | null }>) {
+      if (rows.length >= MAX_SWEEP_PER_RUN) break;
+      if (postApplyPick) {
+        const gate = await loadPostApplyBrainGate(c.id, c.status ?? null).catch((e) => {
+          console.warn("[brain-sweep] post-apply gate read failed (run as before):", c.id, e instanceof Error ? e.message : e);
+          return null;
+        });
+        if (gate && !gate.run) {
+          gateStopped.push({ id: c.id, reason: gate.reason });
+          await supabase.from("conversations").update({ brain_analyzed_at: new Date().toISOString() }).eq("id", c.id);
+          continue;
+        }
+      }
+      rows.push(c);
+    }
+    if (gateStopped.length) console.log(JSON.stringify({ tag: "brain-sweep:post-apply-skip", stopped: gateStopped.map((g) => ({ id: g.id.slice(0, 8), reason: g.reason })) }));
+    rows = rows.slice(0, MAX_SWEEP_PER_RUN);
     if (rows.length === 0) {
       console.log("[brain-sweep] 対象なし（0件）— suggested_aix_meta=null の会話はありません");
       // 2026-09-24: 分析が0件の時だけ前置きを温める（分析が走った回はそれ自体が温め。llm_usage_logs の非同期遅れで直後に二重に温めるのも防ぐ）。
@@ -315,7 +342,7 @@ export async function GET(req: NextRequest) {
         console.log(JSON.stringify({ tag: "conv-warm:" + convWarm.mode, on: convWarm.on, results: convWarm.results.slice(0, 10) }));
       }
       const convWarmCompact = { mode: convWarm.mode, on: convWarm.on, warmed: convWarm.results.filter((r) => r.warmed).length };
-      await finishCronLog(runLogId, true, { processed: 0, warm, prefixWarm: prefixWarmCompact, convWarm: convWarmCompact });
+      await finishCronLog(runLogId, true, { processed: 0, postApplySkipped: gateStopped.length, warm, prefixWarm: prefixWarmCompact, convWarm: convWarmCompact });
       return NextResponse.json({ ok: true, processed: 0, warm, prefixWarm: prefixWarmCompact, convWarm: convWarmCompact });
     }
 
@@ -369,7 +396,7 @@ export async function GET(req: NextRequest) {
 
     console.log(`[brain-sweep] 完了: 対象${rows.length}件 / 成功${processed}件 / 失敗${failed}件`);
 
-    const result = { processed, failed, total: rows.length };
+    const result = { processed, failed, total: rows.length, postApplySkipped: gateStopped.length };
     await finishCronLog(runLogId, true, result);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

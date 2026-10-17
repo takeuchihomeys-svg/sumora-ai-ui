@@ -1,6 +1,6 @@
 // app/lib/__tests__/post-apply-brain-gate.test.ts — 申込中・審査中はブレインを否決・取り消し・クレームの時だけ回す（10/07 竹内さんの決定）
 // 実行: npx tsx app/lib/__tests__/post-apply-brain-gate.test.ts  （文は本番の申込中のお客様の番・scripts/audit-post-apply-brain-gate.ts）
-import { decidePostApplyBrainGate, latestCustomerTurnText, type GateMsg } from "../post-apply-brain-gate";
+import { decidePostApplyBrainGate, latestCustomerTurnText, postApplyAnchorAt, type GateMsg } from "../post-apply-brain-gate";
 let pass = 0, fail = 0;
 const t = (name: string, ok: boolean, info?: unknown) => { if (ok) { pass++; console.log(`  OK  ${name}`); } else { fail++; console.log(`  NG  ${name}`, info ?? ""); } };
 let n = 0;
@@ -58,6 +58,27 @@ for (const [name, txt] of [
 t("提案中（申込前に戻した）は今まで通り回す", decidePostApplyBrainGate({ status: "proposing", msgs: [c("ありがとうございます")], env: {} }).run);
 t("BRAIN_POST_APPLY_GATE=off で今まで通り回す", gate([c("ありがとうございます")], "applying", { BRAIN_POST_APPLY_GATE: "off" }).run);
 t("審査中（screening）も関門に入る", !gate([c("ありがとうございます")], "screening").run);
+// 2026-10-18 status が遅れている会話（記録では申込以降・status は提案中・内覧＝lagging）
+{
+  const lag = (msgs: GateMsg[], presses: Array<{ aix_type: string; created_at: string }> = [], env: Record<string, string> = {}) =>
+    decidePostApplyBrainGate({ status: "proposing", lagging: true, msgs, presses, applicationPushAt: PUSH, env });
+  t("遅れ: 申込の手続きの番は止める", !lag([s("代理契約のフォーマットです"), c("分かりました！確認して明日中に送ります！")]).run);
+  t("遅れ: お礼だけは止める", !lag([s("お申込みさせていただきます！！"), c("お願い致します")]).run);
+  t("遅れ: 申込へを押した後に「他のお部屋にしようかと」→ 後のお礼でも回す",
+    lag([c("他のお部屋にしようかと思います🙇🙇"), s("かしこまりました！！"), c("物件また送っていただけるとありがたいです!!")]).reason.startsWith("after_customer_alert"));
+  t("遅れ: 「同じ条件で他の場所探しても」は回す", lag([s("x"), c("同じ条件で他の場所探してもよろしいですか？")]).run);
+  t("遅れ: 申込へを押した後にスタッフが物件確認を押した（2番手キャンセルの後の物件探し）→ 回す",
+    lag([s("2番手お申込みがキャンセルとなっております"), c("15日いけますか？")], [{ aix_type: "property_check_result", created_at: "2026-10-01T00:00:00Z" }]).reason === "after_pre_apply_aix:property_check_result");
+  t("遅れ: 申込へより前の物件確認は数えない",
+    !lag([s("x"), c("お願いします")], [{ aix_type: "property_check_result", created_at: "2026-09-29T00:00:00Z" }]).run);
+  t("遅れ: 申込中に押す AIX（電話）は数えない", !lag([s("x"), c("お願いします")], [{ aix_type: "phone_call", created_at: "2026-10-01T00:00:00Z" }]).run);
+  t("遅れ: 今の番に物件の URL（最後ここだけ募集してるか）→ 回す", lag([s("x"), c("最後ここだけ募集してるか確認してもらうことはできますか？ https://suumo.jp/chintai/x")]).reason === "turn_url");
+  t("遅れ: 否決を伝えた後は回す", lag([s("審査否決となってしまいました"), c("ありがとうございます")]).reason === "after_staff_fail");
+  t("遅れ: BRAIN_POST_APPLY_GATE=off は回す", lag([s("x"), c("お願いします")], [], { BRAIN_POST_APPLY_GATE: "off" }).run);
+  t("lagging でない提案中は今まで通り回す", decidePostApplyBrainGate({ status: "proposing", msgs: [c("お願いします")], env: {} }).reason === "not_post_apply");
+  t("起点＝申込へ押下と書類の新しい方", postApplyAnchorAt("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z") === "2026-10-02T00:00:00Z"
+    && postApplyAnchorAt(null, null) === null && postApplyAnchorAt("2026-10-03T00:00:00Z", "bad") === "2026-10-03T00:00:00Z");
+}
 t("今の番＝最後のお客様の連投（こちらが最後でも1つ前の連投）", latestCustomerTurnText([c("A"), s("x"), c("B"), c("C"), s("y")]).replace(/[\s⁣]/g, "") === "BC");
 console.log(`\n${pass} OK / ${fail} NG`);
 if (fail) process.exit(1);
