@@ -41,7 +41,7 @@
 //   検査も同じ関数（四者同名）で場面を決める。聞かれていない時の断定は anomaly_scan の [COMPANY_FACTS] にも載らないので、
 //   ここでは見ない（監査で「聞かれていない時の断定」が実送信に無いことも確かめてある＝ゲート無しでも 0通）。
 
-import { matchCompanyFacts, COMPANY_FACTS, isVendorNameQuestion } from "./company-facts";
+import { matchCompanyFacts, COMPANY_FACTS, isVendorNameQuestion, paymentLumpTransferOnly } from "./company-facts";
 
 /** 文の中（区切りをまたがない） */
 const SEG = "[^。！!？?\\n]";
@@ -57,6 +57,8 @@ export type CompanyFactContradiction = {
   label: string;
   /** 修正ループに渡す直し方（実送信の正解の形） */
   suggestion: string;
+  /** 2026-10-18 支払いの決まり（paymentLumpTransferOnly）で切り替える規則。card＝旧のカード払い可の時だけ／lump＝一括のお振込のみの時だけ／無し＝常に */
+  policy?: "card" | "lump";
 };
 
 export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
@@ -91,7 +93,7 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
     suggestion: "店舗・事務所での相談を受け入れる文を削除し「弊社はオンライン専門の不動産サービスで、お部屋の紹介・内覧の日程調整は LINE とお電話で行っております」の形にする",
   },
   {
-    factId: "credit_card",
+    factId: "credit_card", policy: "card",
     // 「クレジットカード（払い・決済）は対応していない／利用できない／不可」
     re: new RegExp(
       `(?:(?:クレジット|クレカ)(?:カード)?|カード)(?:払い|決済|でのお?支払い?|支払い|で)?(?:は|には|に|も|の)?${SEG}{0,10}?` +
@@ -106,7 +108,7 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
     suggestion: "断定の文を削除し「初期費用はクレジットカード払いにも対応しております（決済手数料3.24%が別途かかります）」の形にする",
   },
   {
-    factId: "credit_card",
+    factId: "credit_card", policy: "card",
     // 2026-09-30 竹内（みこと）: 「初期費用の分割払いは難しいですが」→ 分割はクレジットカード支払いなら出来る（会社の事実）。
     //   「分割（払い）は難しい／出来ない／不可／対応していない」の断定。実送信（365日・スタッフ 13,093通）で 0通
     //   （9/30 の1通は AI の下書きをそのまま送った物＝この事例そのもの）・scripts/audit-payment-method-question.ts ③。
@@ -120,7 +122,7 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
     suggestion: "断定の文を削除し「初期費用はクレジットカードでのお支払いですと分割が可能となります（カード手数料としまして合計金額に3.24%別途必要となります）」の形にする",
   },
   {
-    factId: "credit_card",
+    factId: "credit_card", policy: "card",
     // 2026-10-02 竹内さんの決定「カード払いなら分割可（手数料3.24%）にそろえる」: 「お支払い方法は一括でのお振込のみ」「お振込での一括のみでの対応」は
     //   カード払い（＝分割）が出来る事実と逆。実送信（5/17〜・scripts/audit-installment-lump-sum.ts・一括/分割/振込のみ を含むスタッフの送信 17通）で
     //   この形は 3通（7/07 3644eaa9・9/14 f193d13d・10/01 c024b7b9＝竹内さんが規則と食い違うと判断した送信そのもの）。
@@ -132,6 +134,29 @@ export const COMPANY_FACT_CONTRADICTIONS: CompanyFactContradiction[] = [
     exclude: /クレジット|クレカ|カード|滞納|審査|保証会社|家賃(?:の|は)/,
     label: "初期費用はクレジットカード払い（カード払いなら分割可・カード手数料として合計金額に3.24%が別途）に対応しているのに「一括（お振込）のみ」と断定しています",
     suggestion: "断定の文を削除し「初期費用はお振込かクレジットカードでのお支払いとなり、クレジットカードでのお支払いですと分割が可能となります（カード手数料としまして合計金額に3.24%別途必要となります）」の形にする",
+  },
+  {
+    factId: "credit_card", policy: "lump",
+    // 2026-10-18 竹内さん 10/16「支払いは一括の振込だけ」: 「クレジットカード払い（にも）対応しております／カード払いが可能」の断定は事実と逆。
+    //   否定の文（「クレジットカード払いはご対応しておりません」）・保証会社の審査の話（クレカ系・滞納・信用情報）・他のカード（マイナンバーカード等）は当てない
+    re: new RegExp(
+      `(?:(?:クレジット|クレカ)(?:カード)?|カード(?=払|決済|での?お?支払))(?:払い|決済|でのお?支払い?|支払い|で)?(?:は|にも|に|も|の|が)?${SEG}{0,12}?` +
+      `(?:対応(?:して|いたして|致して|し)?(?:おります|います|可能)|可能(?:です|でございます|となります|となっております)?|(?:でき|出来)(?:ます|る)|(?:ご利用|利用|お使い)(?:いただけ|頂け)ます|承って(?:おります|います))`,
+    ),
+    exclude: /ておらず|ておりません|ていません|できません|出来ません|できない|出来ない|不可|難し|以外|ない場合|無い場合|ブラック|滞納|審査|保証会社|クレカ系|信用情報|延滞|マイナンバー|在留|キャッシュ/,
+    label: "初期費用のお支払いは一括のお振込のみ（会社の事実・2026-10-16 竹内さん）なのに「クレジットカード払いに対応／可能」と断定しています",
+    suggestion: "カード払いの文を削除し「初期費用のお支払い方法はお振込での一括のみでの対応となります！！」の形にする（費用の不安には「最大限割引させて頂いた御見積書を作成しお送りさせて頂きます」を添えてよい）",
+  },
+  {
+    factId: "credit_card", policy: "lump",
+    // 「分割（払い）も可能／出来ます／対応しております」の断定。否定・送り方（分割して送る）・保証会社の審査の話は当てない
+    re: new RegExp(
+      `分割(?:払い|でのお?支払い?|のお?支払い?|払)?(?:は|も|が|に|で|には|での)?${SEG}{0,12}?` +
+      `(?:可能(?:です|でございます|となります|となっております)?|(?:でき|出来)(?:ます|る)|(?:対応|ご対応)(?:して|いたして|致して|し)?(?:おります|います|可能)|承って(?:おります|います)|頂けます|いただけます)`,
+    ),
+    exclude: /ておらず|ておりません|ていません|できません|出来ません|できない|出来ない|不可|難し|無理|ない場合|無い場合|して(?:お)?送|でお送|滞納|リボ|審査|保証会社/,
+    label: "初期費用のお支払いは一括のお振込のみ（会社の事実・分割は無い・2026-10-16 竹内さん）なのに「分割が可能」と断定しています",
+    suggestion: "分割の文を削除し「初期費用のお支払い方法はお振込での一括のみでの対応となります！！」の形にする",
   },
   {
     factId: "credit_card",
@@ -248,8 +273,10 @@ export function splitSentencesForFactGuard(text: string): string[] {
  */
 export function findCompanyFactContradictionsUngated(body: string | null | undefined): CompanyFactContradictionHit[] {
   const out: CompanyFactContradictionHit[] = [];
+  const policy = paymentLumpTransferOnly() ? "lump" : "card";
   for (const s of splitSentencesForFactGuard(body ?? "")) {
     for (const c of COMPANY_FACT_CONTRADICTIONS) {
+      if (c.policy && c.policy !== policy) continue;
       if (!c.re.test(s)) continue;
       if (c.exclude && c.exclude.test(s)) continue;
       out.push({ factId: c.factId, sentence: s, label: c.label, suggestion: c.suggestion });
@@ -333,6 +360,8 @@ export type MissingCardFeeHit = { sentence: string; label: string; suggestion: s
 
 /** お客様が支払い方法（分割・カード）を聞き、本文がカード払い・分割が出来ると答えているのに 3.24% が無い */
 export function findMissingCardFee(body: string | null | undefined, customerTexts: ReadonlyArray<string | null | undefined>): MissingCardFeeHit | null {
+  // 2026-10-18 竹内さん 10/16「支払いは一括の振込だけ」: カード払いが無いので手数料の一文も無い（カード払いの断定は上の lump の規則が止める）
+  if (paymentLumpTransferOnly()) return null;
   const text = String(body ?? "");
   if (/3[.．]24/.test(text)) return null;
   const asked = new Set(matchCompanyFacts(customerTexts.map((t) => t ?? "")).map((f) => f.id));

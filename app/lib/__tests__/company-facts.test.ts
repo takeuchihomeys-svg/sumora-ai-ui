@@ -1,6 +1,8 @@
 // 会社として答えが決まっている事実を、聞かれた時だけ渡す関数のテスト（自己完結ハーネス）
 // 実行: npx tsx app/lib/__tests__/company-facts.test.ts
 import { buildCompanyFactsNote, matchCompanyFacts, COMPANY_FACTS, brandCostOverrideNote } from "../company-facts";
+// 2026-10-18 竹内さん 10/16「支払いは一括の振込だけ」で既定は一括のお振込のみ。このファイルは旧のカード払いの事実（COMPANY_FACT_PAYMENT_LUMP=off）の回帰を見る（新の既定は company-facts-1016.test.ts）
+process.env.COMPANY_FACT_PAYMENT_LUMP = "off";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }

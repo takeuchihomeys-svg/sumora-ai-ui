@@ -2849,7 +2849,8 @@ export const SCHEDULE_ASK_RE = /(?:如何|いかが)でしょうか/;
 export const KNOWN_FACT_ANSWERS: Array<{ key: string; ask: RegExp; answer: string; next: string }> = [
   { key: "remote_contract", ask: /(?:写真|画像)(?:だけ|のみ)[^\n]{0,24}(?:契約|申込)|(?:内見|内覧)(?:せず|なし|が難しい|できない|行けない)[^\n]{0,24}(?:契約|申込|決め)/, answer: "写真やお部屋の詳細情報のみでご契約可能です！！", next: "オンライン内見や室内の撮影もご対応させて頂きます😊！！" },
   { key: "osaka_all", ask: /(?:大阪|府内|他のエリア|どこでも)[^\n]{0,12}(?:対応|探せ|扱え|可能)/, answer: "大阪府域の物件全てご対応可能です！！", next: "気になるお部屋お送り頂けましたら募集状況確認と御見積書作成しお送りさせて頂きます😌！！" },
-  { key: "card_pay", ask: /クレジット|カード払い|カードで/, answer: "初期費用のクレジットカード払い対応しております！！", next: "" },
+  // 2026-10-18 竹内さん 10/16「支払いは一括の振込だけ」（company-facts paymentLumpTransferOnly と同じ線・依存を増やさないためここで読む）。戻す COMPANY_FACT_PAYMENT_LUMP=off
+  { key: "card_pay", ask: /クレジット|カード払い|カードで/, get answer() { return (process.env.COMPANY_FACT_PAYMENT_LUMP ?? "").trim().toLowerCase() !== "off" ? "初期費用のお支払い方法はお振込での一括のみでの対応となります！！" : "初期費用のクレジットカード払い対応しております！！"; }, next: "" },
   { key: "second_apply", ask: /(?:申込|申し込み)(?:入って|済み|が入って)[^\n]{0,12}(?:でも|も)?(?:申込|申し込め|可能)/, answer: "2番手以降でのお申込みが可能です！！", next: "" },
 ];
 export const DEFERRED_ANSWER_RE = /(?:社内|上司|担当|管理会社)?(?:で|に)?(?:確認|お調べ)(?:させて(?:頂|いただ)き|いたし|致し)ます/;

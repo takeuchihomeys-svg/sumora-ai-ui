@@ -10,6 +10,8 @@ import {
   findMissingCardFee,
 } from "../company-fact-guard";
 import { runDeterministicChecks } from "../final-check";
+// 2026-10-18 竹内さん 10/16「支払いは一括の振込だけ」で既定は一括のお振込のみ。このファイルは旧のカード払いの規則（COMPANY_FACT_PAYMENT_LUMP=off）の回帰を見る（新の既定は company-facts-1016.test.ts）
+process.env.COMPANY_FACT_PAYMENT_LUMP = "off";
 
 let passed = 0, failed = 0; const failures: string[] = []; let current = "";
 function describe(name: string, fn: () => void) { current = name; fn(); }
