@@ -86,5 +86,29 @@ eq("同じ駅の2路線・まで・管理費は見出しの行だけ", [f3.stati
 eq("中央線「弁天町」8分・神崎川・JR東淀川・天王寺駅まで は ok", checkFirstMessageFacts({ message: "・中央線「弁天町」徒歩8分\n・阪急宝塚本線「神崎川」徒歩14分\n・JR東淀川駅徒歩4分", ledger: f3 }).map((d) => d.verdict), ["ok", "ok", "ok"]);
 eq("駅の表だけの食い違いは unverified（③では落とさない）", checkFirstMessageFacts({ message: "・近鉄大阪線「河内山本」駅徒歩15分", ledger: noSt, geo: { 河内山本: { ward: "八尾市", lines: ["近鉄大阪線"] } }, addressWard: "東大阪市" }).map((d) => d.verdict), ["unverified"]);
 
+// 確かめる人（2026-10-17）: 写しが崩れて見出しが2つ（管理費 10,000・共益費 38,500）の台帳で、正しい1通目の管理費を合計に書き換えない
+{
+  const tr = ["【物件の資料】", "物件名: テスト", "賃料: 70,000 円", "管理費: 10,000 円", "交通: Osaka Metro中央線 九条駅 徒歩 1 分", "賃料: 17,000 円", "共益費: 38,500 円"].join("\n");
+  const f = parseLedgerFacts(tr);
+  const msg = "・家賃70,000円・管理費10,000円（合計80,000円）";
+  const ds = checkFirstMessageFacts({ message: msg, ledger: f });
+  eq("見出しの1つと同じ管理費は ok", ds.filter((d) => d.kind === "admin_fee").map((d) => d.verdict), ["ok"]);
+  eq("見出しの1つと同じ管理費は書き換えない", applyFactDecisions(msg, ds, { exit: true, mode: "on" }).text, msg);
+  const msg2 = "・家賃70,000円・管理費9,000円（合計79,000円）";
+  const ds2 = checkFirstMessageFacts({ message: msg2, ledger: f });
+  eq("見出しが2つ以上で合わない管理費は直さない", [ds2.filter((d) => d.kind === "admin_fee").map((d) => d.verdict), applyFactDecisions(msg2, ds2, { exit: true, mode: "on" }).text], [["unverified"], msg2]);
+}
+
+// 確かめる人（2026-10-17）: 駅の書き方の揺れ・会社の前置きの残り・文の中で抜いた後の壊れた文
+{
+  const L = parseLedgerFacts(["【物件の資料】", "交通: 南海本線 難波駅 徒歩8分 / 阪急宝塚線 梅田駅 徒歩10分 / JR東西線 新福島駅 徒歩3分"].join(String.fromCharCode(10)));
+  eq("なんば＝難波・大阪梅田＝梅田は ok", checkFirstMessageFacts({ message: ["・南海本線「なんば」駅徒歩8分", "・阪急「大阪梅田」駅徒歩10分"].join(String.fromCharCode(10)), ledger: L }).map((d) => d.verdict), ["ok", "ok"]);
+  const m = "・JR東西線「新福島」駅徒歩3分・阪神「福島」駅徒歩5分";
+  eq("会社の前置きごと落とす", applyFactDecisions(m, checkFirstMessageFacts({ message: m, ledger: L }), { exit: true, mode: "on" }).text, "・JR東西線「新福島」駅徒歩3分");
+  eq("文の頭の駅を抜いたら助詞も外す", dropPhrase("桜川駅徒歩4分で、家賃管理費込105,000円となります！！", "桜川駅徒歩4分"), "家賃管理費込105,000円となります！！");
+  eq("・の後の駅を抜いたら・も外す", dropPhrase("家賃管理費込63,000円・「十三」駅徒歩6分の1LDKとなります！！", "「十三」駅徒歩6分"), "家賃管理費込63,000円の1LDKとなります！！");
+  eq("〜の立地の文は文ごと落とす", dropPhrase("敷金礼金なしです！！北巽駅徒歩5分の立地です！！洋室7帖です！！", "北巽駅徒歩5分"), "敷金礼金なしです！！洋室7帖です！！");
+}
+
 if (fail) { console.log(`\n${fail} 件 FAIL`); process.exit(1); }
 console.log("\nALL PASS");

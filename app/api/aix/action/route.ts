@@ -7853,7 +7853,8 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
           //   台帳には同じ会話の送った後の記録（recordSentImageProperty → sharedPropertyImageRead）が URL か指紋で引き当てる
           let propertyDetails: Record<string, unknown> | null = null;
           if (currentAction === "property_recommendation" && recLedgerPromise) {
-            const led0 = await recLedgerPromise.catch(() => null);
+            // 確かめる人: 生成ログの insert が台帳の読み直し（最長 40秒超）を待って遅れると、その間に送った時の status=used の更新が当たらない＝待ちは 20秒まで
+            const led0 = await Promise.race([recLedgerPromise.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 20_000))]);
             if (led0) {
               const { propertyDetailsFromLedger, withNameFallback } = await import("@/app/lib/image-read-ledger");
               const led = withNameFallback(led0, cleanedMessage, pickupRowsForFacts.length === 1 ? pickupRowsForFacts[0].property_name : null);

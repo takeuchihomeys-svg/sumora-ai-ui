@@ -115,7 +115,7 @@ export function ledgerFromStored(v: unknown): ImageLedger | null {
   return {
     v: 1, hash: typeof o.hash === "string" ? o.hash : null, url: o.url, kind: (o.kind as ImageKind) ?? "other",
     transcript: String(o.transcript ?? ""), truncated: !!o.truncated, items: o.items as ReadItem[], isProperty: !!o.isProperty,
-    lines: Array.isArray(o.lines) ? o.lines.map(String) : [], facts: (o.facts as LedgerFacts) ?? parseLedgerFacts(String(o.transcript ?? "")),
+    lines: Array.isArray(o.lines) ? o.lines.map(String) : [], facts: (o.facts as LedgerFacts | undefined)?.adminFeeParts ? (o.facts as LedgerFacts) : parseLedgerFacts(String(o.transcript ?? "")),
     model: String(o.model ?? ""), at: String(o.at ?? ""),
   };
 }

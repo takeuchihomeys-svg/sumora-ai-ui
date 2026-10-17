@@ -22,6 +22,8 @@ export type Washbasin = "independent" | "with_toilet" | "with_bath" | "other" | 
 export type LedgerFacts = {
   stations: LedgerStation[];
   adminFee: number | null;
+  /** 管理費・共益費の見出しの行ごとの金額（2つ以上ある時は合計が正しいか決められない＝直さない）。旧の台帳には無い */
+  adminFeeParts?: number[];
   parking: number | null;
   areaSqm: number | null;
   jo: number[];
@@ -45,8 +47,13 @@ export function stationKey(raw: string): string {
   const i = s.lastIndexOf("線");
   if (i >= 1 && i < s.length - 1) s = s.slice(i + 1);
   s = s.replace(/^(?:JR|ＪＲ|阪急|阪神|南海|近鉄|京阪|大阪メトロ|OsakaMetro|地下鉄|市営)(?=.{2,})/, "");
-  return s.replace(/國/g, "国").replace(/[ヶケヵ]/g, "ケ").replace(/之/g, "ノ").replace(/の(?=[^\s]*$)/, "ノ");
+  s = s.replace(/國/g, "国").replace(/[ヶケヵ]/g, "ケ").replace(/之/g, "ノ").replace(/の(?=[^\s]*$)/, "ノ");
+  // 確かめる人（2026-10-17）: 同じ駅の書き方の揺れ（資料「難波」・1通目「なんば」／阪急・阪神の旧名「梅田」と新名「大阪梅田」）で正しい駅を落としていた
+  return STATION_ALIAS[s] ?? s;
 }
+const STATION_ALIAS: Record<string, string> = { なんば: "難波", 大阪難波: "難波", 大阪梅田: "梅田", 大阪上本町: "上本町", 大阪阿部野橋: "阿部野橋" };
+/** 路線の字の無い会社の前置き（「阪神「福島」駅徒歩5分」の「阪神」）。駅を落とす時に前置きだけが残らないよう主張の字に含める */
+const COMPANY_TAIL_RE = /(?:JR|ＪＲ|阪急|阪神|南海|近鉄|京阪|大阪メトロ|Osaka\s?Metro|地下鉄|北大阪急行|大阪モノレール|モノレール)\s*$/;
 
 const STATION_RE = /(?:([^\s「」『』:：/／、,，（）()・！!。？?]{1,24}?線)\s*)?[「『]?([^\s「」『』:：/／、,，（）()\d・！!。？?]{1,12}?)[」』]?\s*駅?\s*(?:から|より)?\s*(?:徒歩|歩)\s*(?:約)?\s*(\d{1,2})\s*分/g;
 
@@ -75,12 +82,14 @@ export function parseLedgerFacts(transcript: string): LedgerFacts {
   };
   // 管理費・共益費（両方あれば合計）。見出しと値の組の行だけ（「駐車場」の金額は入れない）
   let admin: number | null = null;
+  const adminParts: number[] = [];
   for (const l of lines) {
     const m = l.match(/^(?:管理費|共益費|管理費[・/／]共益費|共益費[・/／]管理費|管理費等)\s*[:：]\s*([^\s/／]+)/);
     if (!m) continue;
     const v = /^(?:なし|無し|無|0円?|ー|-|—|一)$/.test(m[1]) ? 0 : yen(m[1]);
     if (v === null) continue;
     admin = (admin ?? 0) + v;
+    adminParts.push(v);
   }
   // 見出しの行が無い時だけ、行の中の「共益費6,000円」を読む（最初の1つ。備考の「共益費9,000円増額」と足さない）
   if (admin === null) {
@@ -108,6 +117,7 @@ export function parseLedgerFacts(transcript: string): LedgerFacts {
   return {
     stations: stationsInText(lines.filter((l) => !/^【間取り図の洗面】/.test(l)).join("\n")),
     adminFee: admin,
+    adminFeeParts: adminParts,
     parking: parkingRaw ? yen(parkingRaw) : null,
     areaSqm: areaRaw ? Number(areaRaw) : null,
     jo: [...new Set(jo)],
@@ -130,7 +140,8 @@ export function claimsInFirstMessage(message: string): Claim[] {
   for (const m of t.matchAll(STATION_RE)) {
     const st = stationKey(m[2] ?? "");
     if (!st || /^(最寄り?|駅)$/.test(st)) continue;
-    out.push({ kind: "station", text: m[0], line: m[1] ? nk(m[1]) : null, station: st, walk: m[3] ? Number(m[3]) : null });
+    const pre = !m[1] ? (t.slice(Math.max(0, (m.index ?? 0) - 12), m.index ?? 0).match(COMPANY_TAIL_RE)?.[0] ?? "") : "";
+    out.push({ kind: "station", text: pre + m[0], line: m[1] ? nk(m[1]) : null, station: st, walk: m[3] ? Number(m[3]) : null });
   }
   for (const m of t.matchAll(/(?:管理費|共益費)(?:[・/／](?:管理費|共益費))?\s*[:：]?\s*([\d,，]{3,7})\s*円/g)) {
     const v = yen(m[1]); if (v !== null) out.push({ kind: "admin_fee", text: m[0], value: v });
@@ -198,6 +209,11 @@ export function checkFirstMessageFacts(input: GuardInput): Decision[] {
     } else if (c.kind === "admin_fee") {
       if (L?.adminFee == null) { out.push({ kind: "admin_fee", claim: c.text, verdict: "unverified", why: "台帳に管理費・共益費の見出しが無い" }); continue; }
       if (L.adminFee === c.value) { out.push({ kind: "admin_fee", claim: c.text, verdict: "ok", why: "台帳と同じ" }); continue; }
+      // 2026-10-17 確かめる人: 見出しが2つ以上（「管理費: 10,000円」と崩れた写しの「共益費: 38,500円」＝実の台帳）だと合計 48,500円に
+      //   正しい1通目を書き換えていた。見出しの1つと同じなら ok・0 でない見出しが2つ以上なら決められない（直さない）
+      const parts = (L.adminFeeParts ?? []).filter((n) => n > 0);
+      if (parts.includes(c.value)) { out.push({ kind: "admin_fee", claim: c.text, verdict: "ok", why: "台帳の見出しの1つと同じ" }); continue; }
+      if (parts.length >= 2) { out.push({ kind: "admin_fee", claim: c.text, verdict: "unverified", why: `台帳に管理費・共益費の見出しが2つ以上（${parts.join("・")}円）＝どれか決められない` }); continue; }
       const why = L.parking != null && L.parking === c.value ? `駐車場の金額（${c.value}円）を管理費にした` : `台帳は ${L.adminFee}円`;
       out.push({ kind: "admin_fee", claim: c.text, verdict: "fix", why, to: c.text.replace(/([\d,，]{3,7})(\s*円)$/, `${L.adminFee.toLocaleString("ja-JP")}$2`) });
     } else if (c.kind === "area") {
@@ -253,7 +269,24 @@ export function dropPhrase(text: string, phrase: string): string {
     const head = l.slice(0, at);
     let tail = l.slice(at + phrase.length);
     if (!head.trim()) tail = tail.replace(/^[・、,]\s*/, "");
-    let nl = head + tail;
+    // 確かめる人（2026-10-17・実送信 70件で1件）: 文の中の駅を抜くと「で、家賃管理費込…」「1K で、の立地となります」「最寄りは、専有面積…」と
+    //   文が壊れていた。文の頭なら続く助詞を外す・助詞や「、」の後に「の」「、」が続く形はその文（「！！」「。」まで）ごと落とす
+    const atSentenceHead = !head.trim() || /[！!。]\s*$/.test(head);
+    if (atSentenceHead) tail = tail.replace(/^(?:で|と|から|より|に|が|は|も)?[、,]?\s*/, "");
+    let h2 = head;
+    if (!atSentenceHead && /[・]\s*$/.test(head) && /^の/.test(tail)) h2 = head.replace(/[・]\s*$/, "");   // 「63,000円・十三駅徒歩6分の1LDK」→「63,000円の1LDK」
+    else if ((atSentenceHead && /^の/.test(tail)) || (!atSentenceHead && /[、,]\s*$/.test(head) && /^の/.test(tail))
+      || (!atSentenceHead && /[はがも]\s*$/.test(head) && /^\s*(?:[、,]|の)/.test(tail))
+      || (!atSentenceHead && /^\s*の(?:立地|場所|距離)/.test(tail))) {
+      const sHead = head.search(/[^！!。]*$/);
+      const endM = tail.match(/[！!。]+/);
+      const sTail = endM && endM.index !== undefined ? tail.slice(endM.index + endM[0].length) : "";
+      const merged = (head.slice(0, sHead) + sTail.replace(/^\s+/, "")).trim();
+      if (!merged) { lines.splice(i, 1); return lines.join("\n"); }
+      lines[i] = merged;
+      return lines.join("\n");
+    }
+    let nl = h2 + tail;
     nl = nl.replace(/([・、,])\s*[・、,]/g, "$1").replace(/[・、,]\s*([！!。]|$)/, "$1");
     lines[i] = nl;
     return lines.join("\n");
