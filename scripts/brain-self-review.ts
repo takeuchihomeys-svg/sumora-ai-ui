@@ -21,7 +21,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  excerptOf, keywordsOf, buildPacket, parseExplanation, bundleProposals, renderMarkdown, morningLine, usdOf, estimateUsdOf, splitLines, EXPLAIN_SYSTEM,
+  excerptOf, keywordsOf, buildPacket, maskBareRoomNo, parseExplanation, bundleProposals, renderMarkdown, morningLine, usdOf, estimateUsdOf, splitLines, EXPLAIN_SYSTEM,
   type PacketSection, type CaseResult, type Explanation,
 } from "./lib/brain-self-review";
 import {
@@ -36,7 +36,7 @@ import { maskRoomNo } from "./lib/exam-rag-run";
 import { maskForEmbedding } from "../app/lib/pii-mask";
 import { altPiiSignal } from "../app/lib/alt-pii-gate";
 import { cutBeforeApplicationMaterial } from "../app/lib/test-pii-guard";
-import { loadDeepseekCutoff, isAfterCutoff } from "../app/lib/post-apply";
+import { loadDeepseekCutoff, isAfterCutoff, cutoffMs, NO_CUTOFF } from "../app/lib/post-apply";
 import { isDeepseekPeakAt, altPriceOf } from "../app/lib/llm-price";
 
 const args = process.argv.slice(2);
@@ -76,7 +76,9 @@ async function examCase(sb: SupabaseClient, p: AnyProblem, rows: Row[], o: { car
   // 申込以降の線（線より後だけ渡してよい・申込中は渡さない）
   const cut = await loadDeepseekCutoff(sb as never, conv);
   // --show-packet（手元に出すだけ・LLM に出さない）の時は線の外でも作って見せる
-  const postApply = !isAfterCutoff(at, cut);
+  // 2026-10-18 確かめる人: 線が「時刻」（否決で戻した会話）の時は、問題の時刻が線より後でも DeepSeek に渡さない。
+  //   材料（録音の要求）の会話履歴・要約・セーブデータは線より前（申込中）の中身を含み、日時は <md> に伏せてあって時刻で切れない（実物 q093: 要約に審査否決の中身）
+  const postApply = !isAfterCutoff(at, cut) || cutoffMs(cut) !== NO_CUTOFF;
   const cutSkip = postApply && POST_APPLY !== "claude" ? "申込以降の会話（deepseek の線の外）＝DeepSeek に出さない（--post-apply=claude で Claude に）" : null;
   if (cutSkip && !arg("show-packet")) return { ...base, skip: cutSkip };
   if (postApply) base.llm = "claude";
@@ -85,7 +87,7 @@ async function examCase(sb: SupabaseClient, p: AnyProblem, rows: Row[], o: { car
   const ctx = (Array.isArray(p.context) ? p.context : []) as Array<{ s: string; t: string }>;
   // こちらの担当（竹内・鈴木）は伏せない（材料の「竹内さんの型」等の意味が変わる）
   const names = addressNamesOf([...ctx.filter((m) => m.s === "staff").map((m) => m.t), String(p.staffText ?? "")]).filter((n) => !/^(竹内|鈴木|スモラ)$/.test(n));
-  const mask = (s: string) => maskRoomNo(maskForEmbedding(maskExamText(s, name, names)));
+  const mask = (s: string) => maskBareRoomNo(maskRoomNo(maskForEmbedding(maskExamText(s, name, names))));
   const fail = rows.find((r) => r.score?.pass === false) ?? rows[0];
   if (!fail) return { ...base, skip: "答案が見つからない" };
   const raw = (fail.raw ?? {}) as Record<string, unknown>, brain = (fail.brain ?? {}) as Record<string, unknown>, draft = (fail.draft ?? null) as { text?: string; code?: string } | null;
@@ -152,7 +154,7 @@ async function examCase(sb: SupabaseClient, p: AnyProblem, rows: Row[], o: { car
 
 // ─── 毎日拾った弱い所 → まとめた材料（本番の番の材料の写しは無い） ───────────────────
 function minerCase(day: string, s: Spot, kbTitle: (id8: string) => { id: string; title: string } | null): Case {
-  const mask = (x: string) => maskRoomNo(maskForEmbedding(x));
+  const mask = (x: string) => maskBareRoomNo(maskRoomNo(maskForEmbedding(x)));
   const kb = s.kb.map(kbTitle).filter((x): x is { id: string; title: string } => !!x);
   const lines = [
     `箱: ${s.bucket}・場面: ${s.scene}・直し方の型: ${s.typeJa}・数 ${s.n}・うち竹内さんの番 ${s.takeuchi}`,

@@ -1,7 +1,7 @@
 // ブレインの自己点検（scripts/lib/brain-self-review.ts）の決め方の単体テスト（LLM も DB も使わない）
 // 実行: npx tsx scripts/lib/__tests__/brain-self-review.test.ts（全 PASS で exit 0）
 import {
-  splitLines, keywordsOf, excerptOf, buildPacket, quoteInLine, checkEvidence, parseExplanation, bundleProposals, similarKey, causeCore, renderMarkdown, morningLine,
+  splitLines, keywordsOf, excerptOf, buildPacket, maskBareRoomNo, quoteInLine, checkEvidence, parseExplanation, bundleProposals, similarKey, causeCore, renderMarkdown, morningLine,
   usdOf, estimateUsdOf, WHERE, FIX, EXPLAIN_SYSTEM, type CaseResult,
 } from "../brain-self-review";
 import { pickEntry, readLocalSpendToday, appendLocalSpend, type CassetteIndexRow } from "../brain-self-review-io";
@@ -40,6 +40,12 @@ ok("quoteInLine: 違う文は false", !quoteInLine("内覧の日程を決める"
 ok("checkEvidence: 1行ずれは直す", checkEvidence({ line: 2, quote: "探す約束（材料）" }, pk).line === 3 && checkEvidence({ line: 2, quote: "探す約束（材料）" }, pk).ok === true);
 ok("checkEvidence: 無い引用は ok=false", checkEvidence({ line: 3, quote: "審査の結果を推測" }, pk).ok === false);
 ok("checkEvidence: 区分の名前", checkEvidence({ line: 1, quote: "receive_only" }, pk).section === "判断");
+
+// 2026-10-18 確かめる人: 全角半角・1字の引用・素の部屋番号
+ok("quoteInLine: 全角英数・全角記号・半角カナの違いは許す", quoteInLine("ＲＥＣＥＩＶＥ＿ＯＮＬＹ", "ack_form: receive_only") && quoteInLine("ﾋﾟｯｸｱｯﾌﾟ（材料）", "ピックアップ(材料)の行"));
+ok("quoteInLine: 1字の引用は根拠にしない", !quoteInLine("の", "探す約束の行") && !quoteInLine("「は」", "はい"));
+ok("maskBareRoomNo: 物件名＋素の部屋番号を伏せる", maskBareRoomNo("action=Mv.fm大阪大正405の") === "action=Mv.fm大阪大正◯の" && maskBareRoomNo("- ルクレ堺筋本町レジデンス 303（未送付）") === "- ルクレ堺筋本町レジデンス ◯（未送付）" && maskBareRoomNo("ライオンズ渋谷401") === "ライオンズ渋谷◯" && maskBareRoomNo("AIA難波南102を確認") === "AIA難波南◯を確認", maskBareRoomNo("action=Mv.fm大阪大正405の"));
+ok("maskBareRoomNo: 金額・回数・日・トークン・2桁は触らない", ["家賃119,000円", "実送信365日", "131回のうち", "出力 1500 トークン", "徒歩15分", "築2005年"].every((x) => maskBareRoomNo(x) === x), ["家賃119,000円", "実送信365日", "131回のうち", "出力 1500 トークン"].map(maskBareRoomNo).join("|"));
 
 // ─── LLM の答えを読む ───
 const good = parseExplanation({

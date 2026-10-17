@@ -92,6 +92,15 @@ export function excerptOf(part: ExcerptPart, keywords: ReadonlyArray<string>): E
   return { name: part.name, lines: out, total, kept: idx.length };
 }
 
+/**
+ * 物件名に付いた素の部屋番号（「ライオンズ渋谷401」「レジデンス 303（」「大正405の」）も伏せる（maskRoomNo は「号室」付きだけ）。
+ *   2026-10-18 確かめる人: ブレインの action・送付済み物件の行に号室なしの部屋番号が残り、DeepSeek と report に出ていた。
+ *   誤りを減らすため: 直前が漢字・カタカナ（または英字2字）・3〜4桁・直後が終わりか区切りの記号の時だけ（「1500 トークン」「365日」「131回」は触らない）
+ */
+export function maskBareRoomNo(s: string): string {
+  return String(s ?? "").replace(/(?<=[一-龯々ァ-ヴー]|[A-Za-z]{2})(\s?)[0-9０-９]{3,4}(?=$|[のをがにはでとやもへ（()）・、。'"」』:：\]】/／]|[,，](?![0-9０-９]))/gm, "$1◯");
+}
+
 // ─── 1つにまとめた材料（行番号つき） ─────────────────────────────────────
 export type PacketSection = { name: string; lines: string[] };
 export type Packet = { text: string; lines: Array<{ n: number; section: string; text: string }>; chars: number };
@@ -113,12 +122,13 @@ export type Evidence = { line: number; quote: string; absent?: boolean; section?
 export type Finding = { where: Where; why: string; evidence: Evidence[]; brainOk: boolean | null; causeKey: string; confidence: "高" | "中" | "低"; grounded: boolean };
 export type Proposal = { kind: FixKind; plan: string; target: string; needsTakeuchi: boolean; question: string | null };
 export type Explanation = { findings: Finding[]; fix: Proposal | null; raw?: unknown; invalid: string[] };
-const norm = (s: string) => String(s ?? "").replace(/[\s　「」『』"'`、。,.!！?？…・]/g, "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).toLowerCase();
+const norm = (s: string) => String(s ?? "").normalize("NFKC").replace(/[\s　「」『』"'`、。,.!！?？…・]/g, "").replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).toLowerCase();
 function bigrams(s: string): Set<string> { const c = [...norm(s)]; const o = new Set<string>(); for (let i = 0; i + 1 < c.length; i++) o.add(c[i] + c[i + 1]); return o; }
 /** 引用がその行にあるか（そのまま含む・または2字の組の 7割以上が行にある） */
 export function quoteInLine(quote: string, line: string): boolean {
   const q = norm(quote), l = norm(line);
-  if (!q) return false;
+  // 1字の引用（「は」「の」）はどの行にもあるので根拠にしない
+  if ([...q].length < 2) return false;
   if (l.includes(q)) return true;
   const qb = bigrams(quote), lb = bigrams(line);
   if (qb.size < 3) return false;
