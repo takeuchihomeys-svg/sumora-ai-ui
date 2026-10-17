@@ -198,7 +198,9 @@ function groundExtra(f: DraftFact, g: GroundIndex): boolean {
       return new RegExp(`${item}\\s*[:：]?\\s*${esc(months)}\\s*(?:ヶ|か|カ)?月`).test(t);
     }
     case "movein_immediate": return /即入居|即日入居|入居(?:可能)?(?:日|時期)?\s*[:：]?\s*即/.test(t);
-    case "vacate": return /退去予定|move_out_planned/.test(t);
+    // 2026-10-18 竹内さん 10/16「居住中で退去日が分からない資料は、2通目に『退去予定のお部屋となります！！』と書いてよい」: 資料の現況が居住中・入居中も根拠に数える。
+    //   戻す VACATE_GROUND_OCCUPIED=off（退去予定の字だけ）
+    case "vacate": return /退去予定|move_out_planned/.test(t) || ((process.env.VACATE_GROUND_OCCUPIED ?? "").trim().toLowerCase() !== "off" && /居住中|入居中|賃貸中|"current"\s*:\s*"occupied"/.test(t));
     case "cancel_fee": return /キャンセル(?:料|費)/.test(t);
     default: return false;
   }

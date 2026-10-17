@@ -107,6 +107,37 @@ function memPut(ledger: ImageLedger): void {
 }
 const inflight = new Map<string, Promise<ImageLedger | null>>();
 
+/**
+ * 2026-10-18 竹内さん 10/16「1通目の前に資料を AI で読み直すのはやめ、売上サポの保存済みの事実（台帳・sheet-facts）とつなぐ（費用0）」:
+ *   売上サポから来た物件オススメ（行 ID がある1件）は、行に保存してある資料の文字（文字層 pdf_text の1ページ目・条件の行 image_lines）から台帳を作る（LLM なし）。
+ *   文字層の「共益費・管理費 14,000円」「専有面積 31.01㎡」「所在地⏎大阪府…」は見出しと値をつないで台帳の読み（parseLedgerFacts）にかける。
+ *   2ページ目（まとめ PDF・元付の控え）は足さない＝管理費を2回足さない。駅・管理費・面積のどれも読めない時は null（呼び出し側は今まで通り読む）。
+ *   戻す REC_LEDGER_FROM_PICKUP=off（売上サポの行があっても画像を読む＝10/17 の形）
+ */
+export function savedLedgerFromPickupEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.REC_LEDGER_FROM_PICKUP ?? "").trim().toLowerCase() !== "off";
+}
+export function savedLedgerFromPickup(url: string, row: { property_name?: string | null; pdf_text?: string | null; image_lines?: string[] | null }): ImageLedger | null {
+  const pdf = String(row.pdf_text ?? "").normalize("NFKC");
+  // 1ページ目だけ（2回目の「出力日:」か「物件種目」の手前まで）
+  const cutAt = (re: RegExp) => { const all = [...pdf.matchAll(re)]; return all.length >= 2 ? all[1].index ?? -1 : -1; };
+  const cuts = [cutAt(/出力日\s*[:：]/g), cutAt(/物件種目/g)].filter((i) => i > 0);
+  const page1 = cuts.length ? pdf.slice(0, Math.min(...cuts)) : pdf;
+  const raw = page1.split("\n").map((l) => l.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const l = raw[i];
+    if (/^(?:所在地|住所)$/.test(l) && raw[i + 1]) { out.push(`所在地: ${raw[i + 1]}`); i++; continue; }
+    const m = l.match(/^(共益費[・/／]管理費|管理費[・/／]共益費|管理費等?|共益費|専有面積)\s+(?![:：])(.+)$/);
+    out.push(m ? `${m[1]}: ${m[2]}` : l);
+  }
+  const lines = (row.image_lines ?? []).map(String).filter(Boolean);
+  const transcript = [...out, ...lines.filter((l) => !/^(?:管理費|共益費)/.test(l) || !out.some((o) => /^(?:管理費|共益費|共益費[・/／]管理費|管理費[・/／]共益費)\s*:/.test(o)))].join("\n").slice(0, 6000);
+  const facts = parseLedgerFacts(transcript);
+  if (!facts.stations.length && facts.adminFee == null && facts.areaSqm == null) return null;
+  return { v: 1, hash: null, url, kind: "property", transcript, truncated: false, items: [], isProperty: true, lines, facts, model: "pickup_saved", at: new Date().toISOString() };
+}
+
 /** 生成ログに残した台帳の形 → 台帳（形が違えば null） */
 export function ledgerFromStored(v: unknown): ImageLedger | null {
   if (!v || typeof v !== "object") return null;

@@ -46,6 +46,7 @@ import { buildHearingForm, parseConditionText, hearingKnownFromCustomerTexts, me
 import { detectCoResidentWithOccupants } from "../lib/co-resident";
 import { APP_FORMAT_SECTIONS } from "../lib/application-format";
 import ZumenZipImport from "./ZumenZipImport";
+import PickupListImport, { type PickedPickup } from "./PickupListImport";
 import { isPlaceholderPropertyName, missingPropertyNameIndexes, missingPropertyNameMessage } from "../lib/property-name-required";
 import { meetingSecondLine, meetingDayWordOn } from "../lib/meeting-place-form";
 import { CHECK_RESULT_MAX_PROPS as CHECK_MAX_PROPS, circled, checkResultEstimateBundleOn, shouldUseEstimateBundle, buildCheckResultSendPlan, describeSendPlan, type BundlePropertyInput } from "../lib/check-result-estimate-bundle";
@@ -955,6 +956,8 @@ export default function AixModal({
   const [checkCalendarLoading, setCheckCalendarLoading] = useState(false);
   // 物件ピックアップした専用: 複数画像 + 退去予定メモ + カレンダー自動取得
   const [sendImageFiles, setSendImageFiles] = useState<File[]>(initialSendImages ?? []);
+  // 2026-10-18 竹内さん 10/16: 売上サポの物件一覧から足した画像（行 ID と一緒に持つ・送る時に画像ごとの行 ID に結ぶ）
+  const [addedPickups, setAddedPickups] = useState<PickedPickup[]>([]);
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [sendKeyword, setSendKeyword] = useState("");
@@ -2644,11 +2647,15 @@ export default function AixModal({
         if (initialPickupIds && initialSendImages && initialPickupIds.length === initialSendImages.length
           && sendImageFiles.length === initialSendImages.length && sendImageFiles.every((f, i) => f === initialSendImages[i])) {
           body.pickup_ids = initialPickupIds;
-        } else if ((process.env.NEXT_PUBLIC_PICKUP_IDS_PER_IMAGE ?? "").trim().toLowerCase() !== "off" && initialPickupIds?.length && sendImageFiles.length > 0) {
+        } else if ((process.env.NEXT_PUBLIC_PICKUP_IDS_PER_IMAGE ?? "").trim().toLowerCase() !== "off" && (initialPickupIds?.length || addedPickups.length) && sendImageFiles.length > 0) {
           // 2026-10-15 竹内さん「入れれるようにする」（束に共通の事実）: 画像を外した・並べ替えた・足した時も、セットした画像の行 ID は1枚ずつ持ち回す
           //   （同じ File の同一性で結ぶ・足した画像は null）。全部の画像に行が付く時（外した・並べ替えた）は今まで通り pickup_ids で渡す。
           //   戻す: NEXT_PUBLIC_PICKUP_IDS_PER_IMAGE=off（旧＝セットしたまま送る時だけ）
-          const byImage = pickupIdsForSentFiles({ handoffIds: initialPickupIds, handoffFiles: initialSendImages, sentFiles: sendImageFiles });
+          // 2026-10-18: 売上サポの物件一覧から足した画像の行 ID も同じ File の同一性で結ぶ
+          const hN = Math.min(initialPickupIds?.length ?? 0, initialSendImages?.length ?? 0);
+          const hIds = (initialPickupIds ?? []).slice(0, hN);
+          const hFiles = (initialSendImages ?? []).slice(0, hN);
+          const byImage = pickupIdsForSentFiles({ handoffIds: [...hIds, ...addedPickups.map((x) => x.id)], handoffFiles: [...hFiles, ...addedPickups.map((x) => x.file)], sentFiles: sendImageFiles });
           if (byImage.length && byImage.every((v) => v != null)) body.pickup_ids = byImage;
           else if (byImage.some((v) => v != null)) body.pickup_ids_by_image = byImage;
         }
@@ -4289,6 +4296,7 @@ export default function AixModal({
                 </button>
                 <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
                 <ZumenZipImport onAdd={addSendImageFiles} />
+                <PickupListImport conversationId={conversationId} onAdd={(picked) => { setAddedPickups((prev) => [...prev, ...picked]); addSendImageFiles(picked.map((x) => x.file)); }} />
               </div>
               {/* モード選択 */}
               <div>

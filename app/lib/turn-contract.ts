@@ -123,15 +123,22 @@ export function turnContractFinalCheckEnabled(env: Record<string, string | undef
 /** 2026-10-15 軸（axis-brain-1015）: asks の1件ずつに足す欄（追加の LLM 呼び出しなし） */
 export const BRAIN_AXIS_ASK_FIELD = `"about": "${ABOUT_VALUES.join("|")}（何について）", "property": "どの物件の事か（会話・送った束に出た表記のまま。「ここ」「こちら」は引用・直前の送付の束から1件に決める。物件の話でなければ null）", "when": "now|viewing_day|after_move|future（いつの事か）", "whose": "customer|other_applicant|company（誰の事か）", "polarity": "add|relax|remove|ng|null（探す条件の変化の時だけ。add=足す・relax=ゆるめる（〜じゃなくてもいい）・remove=外す・ng=避けたい）"`;
 
+/**
+ * 2026-10-18 竹内さん 10/16「予算オーバーの別物件の依頼は AIX のピックアップで返す。この場面は物件オススメ／ピックアップ／全力サポートの3択で選べるように」。
+ *   戻す BUDGET_OVER_PICKUP_CHOICE=off（受けて次の手だけ＝10/15 の形）
+ */
+const BUDGET_OVER_NEXT_RULE = (typeof process !== "undefined" ? (process.env.BUDGET_OVER_PICKUP_CHOICE ?? "") : "").trim().toLowerCase() === "off"
+  ? ""
+  : "。予算オーバーで別の物件を求められた（「他にありますか」「もう少し安い所」等）番は、本文の約束で返さず AIX【物件ピックアップした】（property_send）で返す。この場面は aix=property_send・alt_actions に property_recommendation と zenryoku_support を入れて、物件オススメ／物件ピックアップ／全力サポート の3択の札でスタッフが選べるようにする（送れる物件が無い時は全力サポートを主に）";
 /** 軸の決め方（竹内さんの実送信の例・2026-10-15 の7件の原因調べから） */
 export const BRAIN_AXIS_RULES = `- ★軸（何について・どの物件の・いつの・誰の事か）は語ではなく文の意味で決める。種類・道・材料・確認事項はこの軸に従う（語の網は候補の目安）:
   ・内覧の日が決まった後の「駐車場は近くのパーキングでよろしいですか」＝about=viewing_day・when=viewing_day（内覧当日の来方。物件の駐車場の空きではない）→ 返信（会社の事実「車で来る時」）。竹内さん「はい😊！！近くのコインパーキングにお停め頂けますと幸いです！！」の形
   ・束（資料・見積書・室内イメージの URL）を送った直後の「ここって洗面台とトイレ一緒な感じですか」＝about=property_equipment・property=引用した／直前に送った束の物件 → 資料（【送った束】・物件資料の読み取り）で答える。資料に無い時だけ確認の約束
-  ・送った物件への「予算オーバーです」＝about=reaction_to_sent・property=その物件（探す条件の言い直しではない＝登録の条件は変えない）。竹内さんは「ご査収頂きありがとうございます」で受けて次の手
+  ・送った物件への「予算オーバーです」＝about=reaction_to_sent・property=その物件（探す条件の言い直しではない＝登録の条件は変えない）。竹内さんは「ご査収頂きありがとうございます」で受けて次の手${BUDGET_OVER_NEXT_RULE}
   ・「ペット可じゃなくてもいい」＝about=search_condition・polarity=relax（ペット可を外す。NG にしない）。「共益費込み10万」＝家賃の上限は共益費込みの額
   ・スタッフの文の「1番手の方審査否決…」は他の申込者の事（whose=other_applicant）。お客様の審査の事と取り違えない
   ・「4月等の繁忙期より今の方が家賃安いですか」＝about=company（一般の傾向）→ 返信で答える（会社の事実「繁忙期」・なぜそうなのかを入れる）
-  ・募集に出ていない／空きが無いと伝えた後の「ありがとうございます！」＝about=reaction_to_sent・situation に「物件確認の結果は募集に出ていない」→ 受け＋何卒（内覧・申込に誘わない）
+  ・募集に出ていない／空きが無いと伝えた後の「ありがとうございます！」＝about=reaction_to_sent・situation に「物件確認の結果は募集に出ていない」→ 受け＋何卒（内覧・申込に誘わない${(typeof process !== "undefined" ? (process.env.UNAVAILABLE_ACK_SUPPORT ?? "") : "").trim().toLowerCase() === "off" ? "" : "・竹内さん 10/16: 締めに「ご条件に合ったお部屋が見つかるまで全力でサポートさせて頂きます」の姿勢を入れる"}）
 - situation: 今の状況を短く（例「2番手で申込＋並行して探す・お客様承諾済み」）。2番手の申込と並行探しをお客様が承諾した番は、申込フォーマットと「〇〇号室をお申込し、並行してお部屋お探しさせて頂きます」の番。`;
 /**
  * 2026-10-16 竹内悠馬「どの物件のことを、どんな背景・意図で言っているかを読む」「隙のない精度の高い考え」（答える前に整理する）:

@@ -146,4 +146,11 @@ t("軸: about=vacancy は「空いて」の語が無くても募集状況の約�
   const prev = process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY; process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY = "off";
   t("TWO_STAGE_SAME_DAY_OPEN_ONLY=off は前の形（果たしても数える）", JSON.stringify(promiseKindsToday([{ text: "最大限割引させていただいたお見積書作成しお送りさせて頂きます！！", createdAt: at(4) }, { text: "初期費用：274,965円", createdAt: at(3.9) }], now)) === '["estimate"]');
   if (prev === undefined) delete process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY; else process.env.TWO_STAGE_SAME_DAY_OPEN_ONLY = prev; }
+// 2026-10-18 竹内さん 10/16: 古い資料（届いて7日以上）の見積依頼は先に最新の募集状況を確認する旨
+{ const v = resolveTwoStage({ ...base, finalAix: "estimate_sheet", estimateTarget: "エスリード難波", estimateMaterialAgeDays: 9 });
+  t("資料が9日前 → 一度最新の募集状況を確認させて頂き…御見積書の約束", v?.source === "rule:two_stage_promise(estimate_stale)" && /一度最新の募集状況を確認させて頂き/.test(v?.direction ?? ""));
+  t("資料が3日前 → 今まで通りの見積の約束", resolveTwoStage({ ...base, finalAix: "estimate_sheet", estimateTarget: "エスリード難波", estimateMaterialAgeDays: 3 })?.source === "rule:two_stage_promise(estimate)");
+  process.env.ESTIMATE_STALE_RECHECK = "off";
+  t("ESTIMATE_STALE_RECHECK=off → 今まで通り", resolveTwoStage({ ...base, finalAix: "estimate_sheet", estimateTarget: "エスリード難波", estimateMaterialAgeDays: 9 })?.source === "rule:two_stage_promise(estimate)");
+  delete process.env.ESTIMATE_STALE_RECHECK; }
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

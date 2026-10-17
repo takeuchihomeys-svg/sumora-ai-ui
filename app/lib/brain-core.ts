@@ -3785,6 +3785,8 @@ ${history}`;
     //   室内写真（S11）・保証会社（S3）・安さへの不審（S8）・費用の中身（S9）・入居日の質問（S2）は、それぞれの決まり・ブレインの判断が先（S8/S9 は見積書送るも上書きする）。
     //   空き状況・内覧も同じ連投で聞かれた時は上書きしない（物件確認した＋御見積書同封なら両方に1通で答えられる）
     let focusedEstimateOverride: string | null = null;
+    // 2026-10-18 竹内さん 10/16: 見積もるお部屋の資料が届いてからの日数（こちらの送付・お客様の共有・募集状況の確認の一番新しい時）。7日以上なら先に最新の募集状況を確認する旨（two-stage estimate_stale）
+    let focusedEstimateAgeDays: number | null = null;
     if (!promiseAix && !rentIncludedReply && (finalAix === null || finalAix === "acknowledge_check" || finalAix === "property_check_result")
       && sceneEvidence?.reasonCode !== "room_photo_request" && sceneEvidence?.reasonCode !== "guarantor_question"
       && sceneEvidence?.scene !== "S8_cost_doubt" && sceneEvidence?.scene !== "S9_cost_breakdown" && sceneEvidence?.scene !== "S2_move_in") {
@@ -3796,6 +3798,10 @@ ${history}`;
         sceneSignalCheckPattern = null;
         decisionSource = "signal:focused_estimate_request";
         focusedEstimateOverride = fe.focusName;
+        if (focusRoom) {
+          const fresh = focusRoom.events.filter((e) => e.kind === "sent" || e.kind === "customer_shared" || e.kind === "check_available" || e.kind === "check_vacating").map((e) => Date.parse(e.at)).filter((x) => Number.isFinite(x));
+          if (fresh.length) focusedEstimateAgeDays = (Date.now() - Math.max(...fresh)) / 86_400_000;
+        }
       }
     }
     // 2026-09-14 竹内（ゆうこ事例）「見積書は物件が送られた時や物件の画像が送られた時等や見積依頼があった時」:
@@ -4120,6 +4126,7 @@ ${history}`;
           return lead?.about ?? null;
         })(),
         estimateTarget: focusedEstimateOverride,
+        estimateMaterialAgeDays: focusedEstimateAgeDays,
         customerText: unrepliedTurn.text ?? "",
         // 3巡目（10/07）: 約束の直後のお礼・了承だけ（ZWJ の絵文字 🙇🏻‍♀️ もお礼と読む isAckOnlyTurn）
         ackRightAfterPromise: (customerAckAfter || (!unrepliedTurn.hasImage && isAckOnlyTurn(unrepliedTurn.text ?? ""))) && brainLedger.facts.lastStaffEntry?.status === "promised",

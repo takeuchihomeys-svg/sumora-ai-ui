@@ -73,6 +73,21 @@ export async function GET(req: NextRequest) {
       .map((r) => toPickupHandoffItem(withPickupRetention(r, nowMs)));
     return NextResponse.json({ ok: true, items });
   }
+  // 2026-10-18 竹内さん 10/16「物件ピックアップの画像を、売上サポの物件一覧から選んで足せるようにする（1通目で束がそろわない時の入口）」:
+  //   ?view=handoff&conv=<会話> → その会話の売上サポの物件（保存期間の内・画像のある物だけ・新しい回から）を ids と同じ形で返す（説明文・AD は返さない）
+  if (req.nextUrl.searchParams.get("view") === "handoff") {
+    const conv = req.nextUrl.searchParams.get("conv");
+    if (!conv) return NextResponse.json({ ok: false, error: "conv が要ります" }, { status: 400 });
+    const sinceH = new Date(Date.now() - 7 * 86400_000).toISOString();
+    const { data, error } = await supabase.from("property_pickups").select("id, created_at, expired_at, rank, property_name, room_no, conversation_id, trim_image_url, page_image_url, sent_at")
+      .eq("conversation_id", conv).gte("created_at", sinceH).order("created_at", { ascending: false }).order("rank", { ascending: true }).limit(40);
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    const nowMs = Date.now();
+    const items = ((data ?? []) as Array<{ id: number; created_at: string; expired_at: string | null; rank: number; property_name: string; room_no: string | null; conversation_id: string | null; trim_image_url: string | null; page_image_url: string | null; sent_at: string | null }>)
+      .map((r) => ({ ...toPickupHandoffItem(withPickupRetention(r, nowMs)), created_at: r.created_at, sent_at: r.sent_at }))
+      .filter((it) => !!it.image_url);
+    return NextResponse.json({ ok: true, items });
+  }
   const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get("days") ?? "30")));
   const since = new Date(Date.now() - days * 86400_000).toISOString();
 

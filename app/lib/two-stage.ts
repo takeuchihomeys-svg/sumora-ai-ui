@@ -47,7 +47,14 @@ export type TwoStageInput = {
   viewingCheckVacating?: boolean;
   /** 2026-10-15 軸: ブレインの turn_contract の先に答える依頼の「何について」（about）。あれば確認の約束の文はこれで決める（語の網は使わない・TWO_STAGE_AXIS=off で前の形） */
   askAbout?: string | null;
+  /** 2026-10-18 竹内さん 10/16: 見積もる物件の資料が届いて（こちらが送った・お客様が送った・最後に募集状況を確かめた）からの日数。7日以上なら先に最新の募集状況を確認する旨を伝える */
+  estimateMaterialAgeDays?: number | null;
 };
+/** 2026-10-18 竹内さん 10/16「古い資料（届いて7日以上）の物件の見積依頼は『一度最新の募集状況を確認させて頂きます』旨を伝えてから AIX で送る」。戻す ESTIMATE_STALE_RECHECK=off */
+export const ESTIMATE_STALE_DAYS = 7;
+export function estimateStaleRecheckEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.ESTIMATE_STALE_RECHECK ?? "").trim().toLowerCase() !== "off";
+}
 /** 2026-10-15 軸の直し: 2段の約束の文をブレインの about に従わせる（既定 on） */
 export function twoStageAxisEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.TWO_STAGE_AXIS ?? "").trim().toLowerCase() !== "off";
@@ -211,7 +218,7 @@ function multiPromiseDirection(extra: readonly ExtraPromise[]): string {
  *   （聞かれた事への答え check_question・お仕事面・室内写真の撮影・内覧の確認・ピックアップは対象外＝ピックアップは条件の番で約束が 96%）。
  *   戻す: TWO_STAGE_SAME_DAY_DIRECT=off
  */
-const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|estimate)\)$/;
+const SAME_DAY_SOURCES = /^rule:two_stage_promise\((?:check|brought_both|estimate|estimate_stale)\)$/;
 function sameDayDirect(v: TwoStageVerdict, i: TwoStageInput): boolean {
   if (typeof process !== "undefined" && (process.env?.TWO_STAGE_SAME_DAY_DIRECT ?? "").toLowerCase() === "off") return false;
   if (!SAME_DAY_SOURCES.test(v.source)) return false;
@@ -393,6 +400,14 @@ function resolveTwoStageCore(i: TwoStageInput): TwoStageVerdict | null {
   }
   if (a === "estimate_sheet") {
     const target = (i.estimateTarget ?? "").trim();
+    if (estimateStaleRecheckEnabled() && typeof i.estimateMaterialAgeDays === "number" && i.estimateMaterialAgeDays >= ESTIMATE_STALE_DAYS) {
+      return {
+        kind: "estimate",
+        direction: `${target ? `${target}の` : ""}資料は届いてから${Math.floor(i.estimateMaterialAgeDays)}日たっている（${ESTIMATE_STALE_DAYS}日以上）→ 先に一度最新の募集状況を確認する旨を伝え、最大限割引した初期費用の御見積書を作成しお送りすると約束する返信にする（結果・金額は書かない・送るのは後で AIX【見積書送る】）。言い方「かしこまりました！！一度最新の募集状況を確認させて頂き、${target ? `${target}の` : ""}最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます😊！！」（竹内さん 10/16・実送信 7/09「弊社で最新の募集状況を確認させて頂きます」）`,
+        keyTopic: "最新の募集状況の確認と御見積書をお送りする約束",
+        source: "rule:two_stage_promise(estimate_stale)",
+      };
+    }
     return {
       kind: "estimate",
       direction: `${target ? `${target}の` : ""}最大限割引した初期費用の御見積書を作成しお送りすると約束する返信にする（金額は書かない・送るのは後で AIX【見積書送る】）。言い方は実際の送信の形「かしこまりました！！${target ? `${target}の` : ""}最大限割引させていただいた初期費用の御見積書を作成しお送りさせて頂きます😊！！」`,

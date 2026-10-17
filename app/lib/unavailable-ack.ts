@@ -32,8 +32,16 @@ const INVITE_RE = /(?:お気に召され|気に入られ|お気に入り(?:頂|�
  *   aix-taxonomy の weDo（お気に召されましたら…ご案内）ではなく、受け＋何卒にする（指すお部屋が無い）。
  *   記録（aix_usage_logs）の prop_statuses が全部 unavailable／物件1件で check_pattern=unavailable／記録の文が募集に出ていない報告だけ のどれか。
  */
-export const UNAVAILABLE_ACK_WEDO = "はい😊！！何卒よろしくお願い致します！！";
-export const UNAVAILABLE_ACK_DIRECTION = "物件確認の結果は【募集に出ていない】（直前の AIX で報告済み・新着のお約束も送り済みなら繰り返さない）。お礼・了承には受け＋何卒で短く閉じる";
+// 2026-10-18 竹内さん 10/16「募集終了（そのお部屋は募集が終わっていました）の後のお礼の締めに『条件に合った物件が見つかるまでサポートする』姿勢を入れる」。
+//   受け＋サポートの姿勢の1文＋何卒。新着のお約束の繰り返しではない（姿勢）。戻す UNAVAILABLE_ACK_SUPPORT=off（受け＋何卒だけ＝10/15 の形）
+const UNAVAILABLE_ACK_SUPPORT = (typeof process !== "undefined" ? (process.env.UNAVAILABLE_ACK_SUPPORT ?? "") : "").trim().toLowerCase() !== "off";
+export const UNAVAILABLE_ACK_SUPPORT_LINE = "〇〇さんのご条件に合ったお部屋が見つかるまで全力でサポートさせて頂きます！！";
+export const UNAVAILABLE_ACK_WEDO = UNAVAILABLE_ACK_SUPPORT
+  ? `はい😊！！${UNAVAILABLE_ACK_SUPPORT_LINE}何卒よろしくお願い致します！！`
+  : "はい😊！！何卒よろしくお願い致します！！";
+export const UNAVAILABLE_ACK_DIRECTION = UNAVAILABLE_ACK_SUPPORT
+  ? "物件確認の結果は【募集に出ていない】（直前の AIX で報告済み・新着のお約束も送り済みなら繰り返さない）。お礼・了承には受け＋「ご条件に合ったお部屋が見つかるまで全力でサポートさせて頂きます」の姿勢の1文＋何卒で短く閉じる（竹内さん 10/16）"
+  : "物件確認の結果は【募集に出ていない】（直前の AIX で報告済み・新着のお約束も送り済みなら繰り返さない）。お礼・了承には受け＋何卒で短く閉じる";
 export const UNAVAILABLE_ACK_FORBID = "内覧・申込の誘い（「お気に召されましたら」「ご都合よろしいお日にち」「ご案内させて頂きます」）／募集に出ていないお部屋の話を続ける事／新着の約束の言い直し";
 export function checkResultAllUnavailable(log: { aix_type?: string | null; check_pattern?: string | null; prop_statuses?: ReadonlyArray<string | null> | null; generated_text?: string | null } | null | undefined): boolean {
   if (!log || log.aix_type !== "property_check_result") return false;

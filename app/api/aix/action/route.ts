@@ -2689,8 +2689,13 @@ async function handleAction(request: NextRequest): Promise<Response> {
       if (!image_url) throw new Error("物件資料画像が必要です");
       // 2026-10-17 ②: 生成と並べて資料を1回だけ読む（書き写し1回＋文字2回・待ちは生成と重なる）。出口（下の fact-guard）と生成ログ・送った後の記録が使う
       const recLedgerT0 = Date.now();
+      // 2026-10-18 竹内さん 10/16: 売上サポから来た1件は行に保存した資料の文字から台帳を作る（AI で読み直さない・費用0）。作れない時だけ今まで通り読む（REC_LEDGER_FROM_PICKUP=off で旧）
       recLedgerPromise = import("@/app/lib/image-read-ledger")
-        .then((m) => m.loadOrReadLedger(String(image_url), { conversationId: conversationId ? String(conversationId) : null, timeoutMs: 40_000 }))
+        .then((m) => {
+          const saved = pickupRowsForFacts.length === 1 && m.savedLedgerFromPickupEnabled() ? m.savedLedgerFromPickup(String(image_url), pickupRowsForFacts[0]) : null;
+          if (saved) { console.log(JSON.stringify({ tag: "aix:ledger-from-pickup", conversationId, pickupId: pickupRowsForFacts[0].id, stations: saved.facts.stations.length, adminFee: saved.facts.adminFee, areaSqm: saved.facts.areaSqm })); return saved; }
+          return m.loadOrReadLedger(String(image_url), { conversationId: conversationId ? String(conversationId) : null, timeoutMs: 40_000 });
+        })
         .catch(() => null);
 
       // 実例・knowledge・DBプロンプトを並列取得
