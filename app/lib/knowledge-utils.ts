@@ -99,6 +99,7 @@ export interface PropertyImageDetails {
   features?: string[] | null;
 }
 
+// 2026-10-17: 呼び出し元なし（AIX【物件オススメ】の生成ログは資料の台帳 image-read-ledger に置き換えた・外部送信の止め）。消さずに残す
 export async function extractPropertyDetailsFromImage(imageUrl: string): Promise<PropertyImageDetails | null> {
   const rawKey = process.env.OPENAI_API_KEY ?? "";
   const apiKey = rawKey.charCodeAt(0) === 0xFEFF ? rawKey.slice(1) : rawKey;

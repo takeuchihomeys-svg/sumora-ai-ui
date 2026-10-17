@@ -33,7 +33,7 @@ import { isGroupConversationName } from "@/app/lib/line-target";
 import { avoidTopicsForAix } from "@/app/lib/aix-staff-first";
 import { viewingReportNoteForReply } from "@/app/lib/viewing-report";
 import { loadViewingReports } from "@/app/lib/viewing-report-store";
-import { generateEmbedding, extractPropertyDetailsFromImage } from "@/app/lib/knowledge-utils";
+import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules, fetchPromptRulesSplit } from "@/app/lib/prompt-rules";
 import { isPlausiblePersonName, oneCharCallName } from "@/app/lib/validate-reply";
@@ -2482,10 +2482,27 @@ async function handleAction(request: NextRequest): Promise<Response> {
         // 2026-10-06 ⑰（⑯ v2.5.81）: ①送る束の行の search_conditions（時刻の窓なし・同じお客様の案内の検索から来た束だけ）を先に。
         //   列が無い・空の時だけ ②今まで通り search_audits（12時間）。列はまだ無い環境もあるので行の事実の select とは分けて読む
         let searched: ReturnType<typeof searchedConditionsFrom> = null;
-        let from: "batch" | "audits" | null = null;
+        let from: "batch" | "conv_batch" | "audits" | null = null;
         if (pickupRowsForFacts.length > 0) {
           const { data: scRows, error: scErr } = await supabase.from("property_pickups").select("id, search_conditions").in("id", pickupRowsForFacts.map((r) => r.id));
           if (!scErr) { searched = searchedConditionsFromBatch((scRows ?? []) as Array<{ search_conditions?: unknown }>); if (searched) from = "batch"; }
+        }
+        // 2026-10-17 ④ 竹内さん「順に改善おねがい」（新着の物件を送るの書き直し: スタッフはエリア・家賃帯を広げて探したのに下書きは最初の希望条件）:
+        //   行 ID が来ない送付（画像を足した・外した・手で入れた＝直近10日の送付 39回のうち行 ID の束に当たるのは一部）でも、
+        //   その会話の24時間以内の売上サポの行に検索の条件（search_conditions）があれば、一番新しい束（同じ検索の時刻 at）の条件を使う。
+        //   戻す PICKUP_SEARCH_FACTS_CONV=off
+        if (!searched && conversationId && (process.env.PICKUP_SEARCH_FACTS_CONV ?? "on").trim() !== "off") {
+          const { data: convSc, error: convErr } = await supabase.from("property_pickups").select("id, created_at, search_conditions")
+            .eq("conversation_id", conversationId).not("search_conditions", "is", null)
+            .gte("created_at", new Date(Date.now() - 24 * 3_600_000).toISOString()).order("created_at", { ascending: false }).limit(60);
+          if (!convErr && convSc && convSc.length > 0) {
+            const rows = convSc as Array<{ created_at: string; search_conditions?: { at?: string | null } | null }>;
+            const at0 = rows[0].search_conditions?.at ?? null;
+            const t0 = Date.parse(rows[0].created_at);
+            const batch = rows.filter((r) => (at0 && r.search_conditions?.at === at0) || (!at0 && Math.abs(Date.parse(r.created_at) - t0) <= 10 * 60_000));
+            searched = searchedConditionsFromBatch(batch);
+            if (searched) from = "conv_batch";
+          }
         }
         if (!searched && resolvedPCID) {
           const { data: audits } = await supabase.from("search_audits").select("site, is_wide, created_at, status, filled")
@@ -2495,7 +2512,9 @@ async function handleAction(request: NextRequest): Promise<Response> {
           if (searched) from = "audits";
         }
         const note = buildSearchedConditionsNote(searched, imgCount || null);
-        if (note) console.log(JSON.stringify({ tag: "aix:pickup-searched-conditions", conversationId, from, sites: searched?.sites ?? [], widened: searched?.widened ?? false }));
+        console.log(JSON.stringify({ tag: "aix:pickup-searched-conditions", conversationId, from, used: !!note, sendMode: body.send_mode ?? null, pickupRows: pickupRowsForFacts.length, sites: searched?.sites ?? [], widened: searched?.widened ?? false }));
+        conditionsSnapshot.send_mode = typeof body.send_mode === "string" ? body.send_mode : null;
+        conditionsSnapshot.searched_conditions = note ? { from, widened: searched?.widened ?? false, rent_max: searched?.rentMax ?? null, wards: (searched?.wards ?? []).slice(0, 8), stations: (searched?.stations ?? []).slice(0, 10) } : { from: null };
         return note;
       } catch { return ""; }
     })();
@@ -2661,10 +2680,17 @@ async function handleAction(request: NextRequest): Promise<Response> {
     // ── 🏠 物件オススメ ───────────────────────────────────────────
     let recCtaDecision: RecommendCtaDecision | null = null;
     let recViewable: RecommendViewable | null = null;
+    // 2026-10-17 竹内さん「順に改善おねがい」②: 資料の画像の読みの台帳（1回だけ読む・1通目の出口・生成ログ・送った後の記録が同じ読みを使う）
+    let recLedgerPromise: Promise<import("@/app/lib/image-read-ledger").ImageLedger | null> | null = null;
     // 2026-10-01 竹内「(iii)『2通目を送らない』と決めた時だけ、1通目に締めを付ける」: 画面（AixModal の物件オススメ）の切り替え。既定は OFF（1通目は締めなし・締めは2通目）
     const recClosingInFirst = action === "property_recommendation" && body.closing_in_first === true;
     if (action === "property_recommendation") {
       if (!image_url) throw new Error("物件資料画像が必要です");
+      // 2026-10-17 ②: 生成と並べて資料を1回だけ読む（書き写し1回＋文字2回・待ちは生成と重なる）。出口（下の fact-guard）と生成ログ・送った後の記録が使う
+      const recLedgerT0 = Date.now();
+      recLedgerPromise = import("@/app/lib/image-read-ledger")
+        .then((m) => m.loadOrReadLedger(String(image_url), { conversationId: conversationId ? String(conversationId) : null, timeoutMs: 40_000 }))
+        .catch(() => null);
 
       // 実例・knowledge・DBプロンプトを並列取得
       const DEFAULT_PROP_SYSTEM = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
@@ -3150,6 +3176,37 @@ ${SMORA_COMMON_RULES}`;
             scenario: recScenario, reason: frameViolation,
           }));
         }
+      }
+      // ── 2026-10-17 竹内さん「順に改善おねがい」①③: 1通目の駅・管理費・㎡・帖・独立洗面台を台帳と駅の表で確かめる（app/lib/recommend-fact-guard.ts）──
+      //   ③ 台帳と違う駅（別の駅・市区が所在地と違う・路線に無い）は落とし、管理費・㎡・徒歩の分は台帳の値に直す（AIX_FACT_EXIT=off で止める）
+      //   ① 確かめる出どころの無い駅・間取り図と合わない独立洗面台は影の運用（AIX_FACT_GUARD=shadow 既定・on で落とす・数はログと生成ログに）
+      //   台帳が間に合わない時（生成より読みが遅い）は待ちを 12秒までにして確かめを飛ばす（読みは後ろで続き、生成ログ・送った後の記録に残る）
+      if (recLedgerPromise && !body.simple_mode) {
+        try {
+          const g = await import("@/app/lib/recommend-fact-guard");
+          const mode = g.factGuardMode();
+          const exit = g.factExitEnabled();
+          if (mode !== "off" || exit) {
+            const tWait = Date.now();
+            const led = await Promise.race([recLedgerPromise, new Promise<null>((r) => setTimeout(() => r(null), 12_000))]);
+            const waitMs = Date.now() - tWait;
+            if (!led) {
+              console.log(JSON.stringify({ tag: "aix:fact-guard-skip", conversationId, reason: "ledger_not_ready", waitMs, sinceStart: Date.now() - recLedgerT0 }));
+              conditionsSnapshot.fact_guard = { skipped: "ledger_not_ready", wait_ms: waitMs };
+            } else {
+              const { loadStationGeo, addressWardOf } = await import("@/app/lib/recommend-fact-guard-server");
+              const material = pickupRowsForFacts.map((r) => `${r.property_name ?? ""}\n${r.pdf_text ?? ""}`).join("\n");
+              const geo = await loadStationGeo(supabase, message_text);
+              const decisions = g.checkFirstMessageFacts({ message: message_text, ledger: led.facts, materialText: material || null, geo, addressWard: addressWardOf(led.facts, material) });
+              const res = g.applyFactDecisions(message_text, decisions, { exit, mode });
+              const shadow = mode === "shadow" ? g.applyFactDecisions(message_text, decisions, { exit, mode: "on" }).applied.filter((d) => !res.applied.includes(d)) : [];
+              const summary = decisions.filter((d) => d.verdict !== "ok").map((d) => ({ kind: d.kind, verdict: d.verdict, claim: d.claim.slice(0, 40), why: d.why.slice(0, 60), ...(d.to ? { to: d.to.slice(0, 40) } : {}) }));
+              console.log(JSON.stringify({ tag: "aix:fact-guard", conversationId, mode, exit, waitMs, applied: res.applied.map((d) => `${d.kind}:${d.verdict}`), shadowWouldDrop: shadow.map((d) => `${d.kind}:${d.claim.slice(0, 30)}`), decisions: summary }));
+              conditionsSnapshot.fact_guard = { mode, exit, wait_ms: waitMs, applied: res.applied.map((d) => `${d.kind}:${d.verdict}`), shadow_would_drop: shadow.map((d) => d.kind), decisions: summary };
+              if (res.applied.length > 0) message_text = res.text;
+            }
+          }
+        } catch (e) { console.warn("[aix] fact-guard failed:", e instanceof Error ? e.message : e); }
       }
       // 見積書同封時は締め文を追加
       if (has_estimate) {
@@ -7780,10 +7837,25 @@ ${(giShape === "list" ? GUARANTOR_INFO_STAFF_EXAMPLES : GUARANTOR_ANSWER_STAFF_E
     if (conversationId) {
       after(async () => {
         try {
-          // property_recommendation のみ: GPT-5.4-nano で物件画像から構造データを抽出
-          let propertyDetails = null;
-          if (currentAction === "property_recommendation" && image_url) {
-            propertyDetails = await extractPropertyDetailsFromImage(String(image_url)).catch(() => null);
+          // 2026-10-17 ②: 旧は GPT-5.4-nano で同じ画像をもう1回読んでいた（llm_usage_logs に残らない外部送信・結果は物件名だけ学習の cron が使い誤読もあった）。
+          //   → 資料の台帳（生成と並べて1回だけ読んだ物）を残す。property_details.name は今まで通り学習の cron（property-selection-learning）が読む。
+          //   台帳には同じ会話の送った後の記録（recordSentImageProperty → sharedPropertyImageRead）が URL か指紋で引き当てる
+          let propertyDetails: Record<string, unknown> | null = null;
+          if (currentAction === "property_recommendation" && recLedgerPromise) {
+            const led0 = await recLedgerPromise.catch(() => null);
+            if (led0) {
+              const { propertyDetailsFromLedger, withNameFallback } = await import("@/app/lib/image-read-ledger");
+              const led = withNameFallback(led0, cleanedMessage, pickupRowsForFacts.length === 1 ? pickupRowsForFacts[0].property_name : null);
+              propertyDetails = propertyDetailsFromLedger(led);
+              // 売上サポの行が無い資料は、台帳の条件の行を image_details にも写す（送った後の ensureImageDetail が書き写しを読み直さない）
+              if (pickupRowsForFacts.length === 0 && led.kind === "property" && led.lines.length > 0 && image_url) {
+                const { error: idErr } = await supabase.from("image_details").upsert(
+                  { image_url: String(image_url), conversation_id: conversationId, kind: led.kind, lines: led.lines, model: `ledger:${led.model}` },
+                  { onConflict: "image_url", ignoreDuplicates: true },
+                );
+                if (idErr) console.warn("[aix] image_details（台帳）upsert failed:", idErr.message);
+              }
+            }
           }
           await supabase.from("aix_generate_log").insert({
             action_type: currentAction,

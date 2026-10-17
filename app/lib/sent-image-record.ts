@@ -98,7 +98,7 @@ export async function recordSentImageProperty(opts: {
       }
       // 2026-09-29 API 費用: 推論なし・温度0（property-image-read.ts 末尾の注記）。同じ画像を ensureImageDetail が物件名で
       //   売上サポの行に結ぶ時もこの1回の読み取りを待つだけ（sharedPropertyImageRead＝同じ URL は1回）
-      const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS });
+      const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS, conversationId });
       out.tokens = read.usage ?? null;
       // 見積書・本人確認書類は物件として記録しない
       if (!read.isProperty || read.items.length === 0) { out.read = !read.isProperty && read.raw.startsWith("{") ? "not_property" : "failed"; return out; }

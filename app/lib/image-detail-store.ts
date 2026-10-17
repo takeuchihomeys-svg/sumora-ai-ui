@@ -84,7 +84,7 @@ async function detailFromPickupByProperty(imageUrl: string, conversationId: stri
     let item: { propertyName: string; roomNumber: string } | null = sip?.property_name ? { propertyName: sip.property_name, roomNumber: sip.room_no ?? "" } : null;
     let via: "record" | "read" = "record";
     if (!item) {
-      const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS });
+      const read = await sharedPropertyImageRead(imageUrl, { timeoutMs: SENT_IMAGE_READ_TIMEOUT_MS, conversationId });
       if (!read.isProperty || read.items.length !== 1) return null;
       item = { propertyName: read.items[0].propertyName, roomNumber: read.items[0].roomNumber };
       via = "read";

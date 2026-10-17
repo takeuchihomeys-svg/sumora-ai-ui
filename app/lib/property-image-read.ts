@@ -423,6 +423,15 @@ export function parseTranscript(text: string): { kind: ImageKind | null; body: s
   return { kind: null, body: t };
 }
 
+/**
+ * 旧の画像読み（readPropertyImageDetail・property_image_detail・推論 low）を使うか（2026-10-17 既定 off・PROPERTY_IMAGE_DETAIL=on で戻す）。
+ * 本番 llm_usage_logs 10/03〜10/17: 22回中 時間切れ 19・HTTP 400 2・成功 1（平均 58秒）。書き写し（推論なし）が失敗した時と
+ * 売上サポの文字層の無い行・文字層の読みが失敗した時だけの倒し先だったが、倒しても材料は残っていなかった
+ */
+export function propertyImageDetailEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.PROPERTY_IMAGE_DETAIL ?? "").trim().toLowerCase() === "on";
+}
+
 /** 送った画像の条件の行をどう読むか（既定は書き写し・SENT_IMAGE_DETAIL_MODE=image で旧の推論 low の画像読みに戻す） */
 export function sentImageDetailMode(env: Record<string, string | undefined> = process.env): "transcribe" | "image" {
   return (env.SENT_IMAGE_DETAIL_MODE ?? "").trim().toLowerCase() === "image" ? "image" : "transcribe";
@@ -444,7 +453,9 @@ export async function readPropertyImageDetailByTranscript(
   const budget = opts?.timeoutMs ?? 60_000;
   const startedAt = Date.now();
   const fallback = async (why: string) => {
-    console.warn(JSON.stringify({ tag: "image-detail:transcribe-fallback", why, imageUrl: imageUrl.slice(-40) }));
+    console.warn(JSON.stringify({ tag: "image-detail:transcribe-fallback", why, imageUrl: imageUrl.slice(-40), imageDetail: propertyImageDetailEnabled() }));
+    // 2026-10-17 ②: 旧の画像読み（property_image_detail・推論 low）は 14日で 22回中 19回が時間切れ・成功 1回（60秒×費用だけ払う壊れた道）→ 既定で呼ばない
+    if (!propertyImageDetailEnabled()) return { kind: "other" as const, lines: [] as string[], raw: "", via: "image_fallback" as const };
     const left = Math.max(10_000, budget - (Date.now() - startedAt));
     return { ...(await readPropertyImageDetail(imageUrl, { apiKey, model, timeoutMs: left })), via: "image_fallback" as const };
   };
@@ -521,12 +532,25 @@ export function propertyImageReadThinking(env: Record<string, string | undefined
  */
 const SHARED_READ_TTL_MS = 3 * 60_000;
 const sharedReads = new Map<string, { at: number; p: Promise<ReadResult> }>();
-export function sharedPropertyImageRead(imageUrl: string, opts?: { timeoutMs?: number }): Promise<ReadResult> {
+export function sharedPropertyImageRead(imageUrl: string, opts?: { timeoutMs?: number; conversationId?: string | null }): Promise<ReadResult> {
   const now = Date.now();
   for (const [k, v] of sharedReads) if (now - v.at > SHARED_READ_TTL_MS) sharedReads.delete(k);
   const hit = sharedReads.get(imageUrl);
   if (hit) return hit.p;
-  const p = readPropertyImage(imageUrl, { timeoutMs: opts?.timeoutMs }).then((r) => {
+  // 2026-10-17 ②: AIX【物件オススメ】が生成の時に読んだ台帳（image-read-ledger・生成ログに残る）があれば読み直さない
+  //   ＝1通目の出口・送った後の記録（sent_image_properties.facts＝2通目・ブレインの材料）が同じ読み。IMAGE_READ_LEDGER=off で旧
+  const fromLedger = async (): Promise<ReadResult | null> => {
+    if (!opts?.conversationId) return null;
+    try {
+      const m = await import("./image-read-ledger");
+      if (!m.imageReadLedgerEnabled()) return null;
+      const led = await m.findStoredLedger({ url: imageUrl, conversationId: opts.conversationId });
+      if (!led || led.items.length === 0) return null;
+      console.log(JSON.stringify({ tag: "image-read:from-ledger", conversationId: opts.conversationId, items: led.items.length }));
+      return m.readResultFromLedger(led);
+    } catch { return null; }
+  };
+  const p = fromLedger().then((led) => led ?? readPropertyImage(imageUrl, { timeoutMs: opts?.timeoutMs })).then((r) => {
     if (r.items.length === 0 && !r.raw.startsWith("{")) sharedReads.delete(imageUrl);
     return r;
   }, (e) => { sharedReads.delete(imageUrl); throw e; });

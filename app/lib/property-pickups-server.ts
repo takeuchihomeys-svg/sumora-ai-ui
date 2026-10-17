@@ -20,7 +20,9 @@ import { parseListingTerms, type ListingTerms } from "@/app/lib/listing-terms";
 import { buildPickupTerms } from "@/app/lib/pickup-terms";
 import { renovationOfText } from "@/app/lib/listing-renovation";
 import { loadCustomerProfit } from "@/app/lib/estimate-profit-server";
-import { readPropertyImageDetail } from "@/app/lib/property-image-read";
+import { readPropertyImageDetail, readPropertyImageDetailByTranscript, propertyImageDetailEnabled } from "@/app/lib/property-image-read";
+// 2026-10-17 ②: 文字層の無い行の画像読みは書き写し（推論なし）に。旧の画像読み（property_image_detail）は PROPERTY_IMAGE_DETAIL=on の時だけ（14日で 22回中 19回が時間切れ）
+const readSheetImage = (url: string, timeoutMs: number, conversationId: string | null) => (propertyImageDetailEnabled() ? readPropertyImageDetail(url, { timeoutMs }) : readPropertyImageDetailByTranscript(url, { timeoutMs, conversationId }));
 // 2026-09-29 資料の中身は文字層があれば文字層から（画像の推論の出力が費用の 96%）・同じ物件は 7日以内の行から写す
 import { detailSourceFor, readPropertyDetailFromText, reusableLinesByPdfUrl, planDetailSource, detailModelLabel, type TextDetailResult } from "@/app/lib/property-detail-source";
 import { readFloorPlanFacts } from "@/app/lib/property-brain-image";
@@ -443,14 +445,14 @@ export async function recordPickupBatch(input: RecordPickupInput): Promise<{ row
       const [detail0, facts] = await Promise.all([
         plan.source === "reuse" ? Promise.resolve({ kind: "property" as const, lines: plan.lines, raw: "" })
           : plan.source === "text" ? readPropertyDetailFromText(it.pdfText as string, { conversationId })
-          : plan.source === "image" && url ? readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS })
+          : plan.source === "image" && url ? readSheetImage(url, IMAGE_READ_TIMEOUT_MS, conversationId ?? null)
           : Promise.resolve({ kind: "other" as const, lines: [] as string[], raw: "" }),
         wants.length > 0 && url ? readFloorPlanFacts(url, wants, { timeoutMs: Math.min(IMAGE_READ_TIMEOUT_MS, 60_000) }) : Promise.resolve(null),
       ]);
       let detail: { kind: string; lines: string[]; raw: string } = detail0;
       // 文字層の読み取りが失敗（DeepSeek の一時障害・空返事2回）したら旧どおり画像に倒す（費用は失敗した回だけ）
       if (plan.source === "text" && (detail0 as TextDetailResult).failed && url) {
-        detail = await readPropertyImageDetail(url, { timeoutMs: IMAGE_READ_TIMEOUT_MS });
+        detail = await readSheetImage(url, IMAGE_READ_TIMEOUT_MS, conversationId ?? null);
         source = "image";
         console.warn(JSON.stringify({ tag: "property-pickups:text-detail-fallback", batch: input.batchId.slice(0, 40), i }));
       }
