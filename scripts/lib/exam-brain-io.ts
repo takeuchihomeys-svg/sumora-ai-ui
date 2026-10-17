@@ -220,6 +220,8 @@ export async function readDailySpend(sb: SupabaseClient, now = new Date()): Prom
     }
     if (!data || data.length < 1000) break;
   }
+  // 2026-10-18: DB に書かない LLM の費用（ブレインの自己点検 等・local-llm-spend.jsonl）も同じ1日の上限に数える
+  try { const { readLocalSpendToday } = await import("./brain-self-review-io"); usd += readLocalSpendToday(now).usd; } catch { /* 読めない時は DB の分だけ */ }
   return { usd, rows, since };
 }
 

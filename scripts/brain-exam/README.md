@@ -157,3 +157,20 @@ npx tsx --env-file=.env.local scripts/exam-brain.ts --cleanup --conv=YUMA2 --lab
 - 揺れる問題は 150問中 66問（44%）→ 直しの確かめで最初から3回にすると今より高くなる＝前と違った時だけ足す。
 - 1日の見込み（10/13〜16 の llm_usage_logs の試験 env を決まりで計算し直し）: 今 1日 $21 → 試験のブレイン（pro）約 $10〜14 → 型ごとの比べが通って直しの確かめを flash にできれば 約 $4。残りの大半は「別々の直しの確かめ」が1日 28〜63回あること。
 - 材料の長さ: ブレイン1回 約44kトークンのうち前置き（キャッシュ・$0.022/M）が 約36k・毎回変わる所が 約8k（入力の費用の 65%）・出力 約1k（25%）。前置きを削っても1回 約 $0.0008 しか減らない／変わる所（会話・台帳）を削ると答えが変わる＝この回は削っていない。
+
+## ブレインの自己点検（2026-10-18・竹内さん 10/16 OK「ブレイン同士で会話させて自己改善する輪」）
+
+輪: 毎日拾うブレイン（`scripts/edited-turn-miner.ts`）→ 試験のブレイン（`scripts/exam-brain.ts`）→ **自己点検（`scripts/brain-self-review.ts`）＝なぜ外れたかを説明し、直しの案を出す** → 試験のブレインが確かめる。直しの案は自動で入れない（貯めて竹内さんに見せる）。決め方は `scripts/lib/brain-self-review.ts`（単体テスト `scripts/lib/__tests__/brain-self-review.test.ts`）。
+
+| 事 | 形 |
+|----|----|
+| 回す | `npx tsx --env-file=.env.local scripts/brain-self-review.ts [--from=exam\|miner\|both] [--max=10]`（試験の台帳の落ちた問題・前より悪くなった問題＋毎日拾った弱い所） |
+| 1回の答案から | `--label=dg1016-b [--ids=q157,q158] [--results=<dir\|file>]`（作業ツリーの `scripts/brain-exam/results` から探す） |
+| 見るだけ | `--dry`（見込みと材料の大きさ）・`--show-packet=q158`（渡す材料＝伏せた物を手元に出す・LLM に出さない）・`--report`（今日の説明から一覧と朝の1行を作り直す） |
+| 1つにまとめる物 | 問題と正解（竹内さんの実送信・伏せた物）・ブレインの最初の出力（turn_contract）・決まり・出口の後と trace・下書きと判定・材料（録音の brain_fresh と下書きの要求を、問題の言葉・ブレインの札（ack_form・rule:）・【…（材料）】の塊・下書きの指示の行（締め・足さない）で抜いた物）・関係する設計知見。全部に L 番号 |
+| 説明の語 | どこで: 材料に無かった／材料にあったのに読めなかった／判断は合っていて下書きで崩れた／決まり・出口が上書きした／人しか知らない事（AIX の番）／採点・問題の側／分けられない。直し: 知識を足す／材料をつなぐ／決まりを変える／出口を直す／お手本を足す／竹内さんに聞く |
+| 根拠 | L 番号＋その行からの引用。引用が行に無い説明は「根拠なし」（確かさは低） |
+| 束ね | 直しの種類・外れの場所が同じで、原因の名前の芯（「の見落とし」等の語尾を外す）が近い物。数の多い順。竹内さんの決定が要る物は「竹内さんに聞く」に分ける |
+| 置き場 | `.claude/exam-cache/self-review/<日付>/`（explanations.jsonl・proposals.json・report.md・morning-line.txt）・`self-review/latest.md`。表の設計は `scripts/brain-self-review-migration.sql`（まだ流さない） |
+| 費用 | DeepSeek（試験の判定と同じ: v4-pro・温度0・推論なし・json）1件 約 $0.013〜0.024。1日の上限は試験のブレインと同じ（`EXAM_DAILY_CAP_USD`・既定 $10）＝ `readDailySpend` が `local-llm-spend.jsonl`（DB に書かない LLM の費用）も足す。平日 JST 10〜13・15〜19 は流さない（`--allow-peak`） |
+| 個人情報 | maskExamText → maskForEmbedding → 部屋番号 の2重・申込の書類の印の行と alt-pii-gate の行は落とす・申込以降の会話（`loadDeepseekCutoff` の線の外＝今申込以降の会話）は出さない。止める: `BRAIN_SELF_REVIEW=off` |
